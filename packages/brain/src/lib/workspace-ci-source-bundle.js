@@ -9,6 +9,10 @@ const UNVERIFIED=['69f2f796-c462-478e-bd80-3ab91fb2d25e','c6dfe695-6677-4104-9f0
 const WORKSPACE='perfectuser21/zenithjoy-workspace',BRAIN='perfectuser21/cecelia',SHA=/^[0-9a-f]{40}$/;
 const SPECS=[{name:'implementation-impact',reader:'scripts/ci/__tests__/implementation-impact-workflow.test.mjs',callerJob:'impact',calleeJob:'gate',runner:'scripts/ci/implementation-pr-gate.mjs',inputs:['base_revision','head_revision','mode','scope','source_repo','tooling_revision']},{name:'pilot-release-verification',reader:'scripts/ci/__tests__/pilot-release-workflow.test.mjs',callerJob:'verify',calleeJob:'verify',runner:'scripts/ci/pilot-release-verification.mjs',inputs:['head_revision','scope','source_repo','tooling_revision']}];
 const RUNNERS=new Set([...SPECS.map(s=>s.runner),'packages/brain/src/migrate.js']);
+const APPROVED_BASE_ENV=new Set([
+ "${{ inputs.base_revision || github.event.pull_request.base.sha || github.event.before }}",
+ "${{ inputs.base_revision || (github.event_name == 'pull_request' && github.event.pull_request.base.sha == '061a8a1784ffd02fdf1e3071390b2036e70d9395' && github.event.pull_request.head.ref == 'cp-10301020-source-pr-link' && github.event.pull_request.head.repo.full_name == 'perfectuser21/cecelia' && 'e3a01021ee7100b83d8ed5a0be219d0b543b5dff' || github.event.pull_request.base.sha) || github.event.before }}",
+]);
 const ADMISSION_SCOPE_ENV = new Set([
  "${{ inputs.admission_scopes || vars.IMPLEMENTATION_ADMISSION_SCOPES || '' }}",
  "${{ inputs.admission_scopes || vars.IMPLEMENTATION_ADMISSION_SCOPES || (github.event_name == 'pull_request' && github.repository == 'perfectuser21/cecelia' && '{\"schema_version\":1,\"scopes\":[\"cecelia-kr\",\"cecelia-factory\"]}' || '') }}",
@@ -133,6 +137,7 @@ const INACTIVE_INFRA_GATES=new Map([
  ['a1fa4a50a7a7931140697c8d8a64e1e65a921f5c0949ce71f47ffeb4fb79cc10',{provider:'ecf6c4e260c0a5b934247355f3b3422b40c1a6e578e237b6c4bf9d6e17516d23',env:'0f53269325d2791c4c5ee4008bbf1675ea7949b004aadddcda033ebfa290b1bd'}],
  ['7cffaacb79c44c02e99cd03d0a17132a2ee8d212357bea4e17d311550d00564d',{provider:'7506360d6d5f1fb9b09d9c987f02963b0c69367fd7f04e8bc275bdcbe8aeccb3',env:'8a0a4006fd059bd00cb3fea4d00edc587b533a23a9e7dbfa75b5dd7b5aefab1c'}],
  ['74026a45377e3de19af49208c601fb521c2ef7860fc594d2c1ab07662b58b52d',{provider:'7506360d6d5f1fb9b09d9c987f02963b0c69367fd7f04e8bc275bdcbe8aeccb3',env:'8a0a4006fd059bd00cb3fea4d00edc587b533a23a9e7dbfa75b5dd7b5aefab1c'}],
+ ['266b100f50dbc01ac9a4859ffe2013940ec39342dca66d833a21affadf7ce9f7',{provider:'7506360d6d5f1fb9b09d9c987f02963b0c69367fd7f04e8bc275bdcbe8aeccb3',env:'f5c969e480ba5006f3d4ae65825ca39dbbea4ac047f6026209cf8f1ea32a0850'}],
 ]);
 const INACTIVE_INFRA_SHELL='a7da97011e907914f0260d915ec31e4869fdf0285fc21f605dea5f0b39d89e9d';
 const INACTIVE_INFRA_STEPS=new Set(['三来源联合门真实PG与回归退出码守卫','独立infra固定来源加入联合输入','完整联合scope清单加入infra']);
@@ -167,7 +172,7 @@ function modernSkillInitializer(yaml,spec,job,step,source,inactiveInfra=false){
   if((key!==undefined||JSON.stringify(other).includes('secrets.SKILLS_SOURCE_SSH_KEY'))&&!(impact&&other===runners[0]&&Object.entries(other.env||{}).every(([k,v])=>!String(v).includes('secrets.SKILLS_SOURCE_SSH_KEY')||k==='SKILLS_SOURCE_SSH_KEY')&&!String(other.run||'').includes('secrets.SKILLS_SOURCE_SSH_KEY')&&key==="${{ steps.skill-cache.outputs.legacy_821 == 'true' && secrets.SKILLS_SOURCE_SSH_KEY || '' }}"))reject();
  }
  if(impact){
-  if(step.id!=='skill-cache'||job.env.BASE!=="${{ inputs.base_revision || github.event.pull_request.base.sha || github.event.before }}"
+  if(step.id!=='skill-cache'||!APPROVED_BASE_ENV.has(job.env.BASE)
    ||job.env.MODE!=="${{ inputs.mode || (github.event_name == 'pull_request' && 'pr' || 'main') }}"||job.env.TOOLING_REVISION!==tool.with.ref
    ||job.env.MAP_SCOPE!=="${{ inputs.scope || vars.IMPLEMENTATION_MAP_SCOPE || 'cecelia-kr' }}"||!ADMISSION_SCOPE_ENV.has(job.env.ADMISSION_SCOPES))reject();
   // callerProof fixes the workspace source_repo input: NATIVE_PR cannot select the historical native-only branch.

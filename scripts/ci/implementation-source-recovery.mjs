@@ -11,6 +11,8 @@ import {stepSha256} from '../../packages/brain/scripts/sync-steps-from-workspace
 import {extractImplementationAdmissionSnapshots,validateImplementationSnapshot,exportImplementationSnapshot} from '../../packages/brain/src/lib/implementation-ci-snapshot.js';
 const REPO='perfectuser21/cecelia',SHA=/^[0-9a-f]{40}$/;
 export const RECOVERY_BRIDGE=Object.freeze({baseline:'f63efa7d82a8f9f9f0084b85a70e562f0a499c7e',directBase:'706f2e834afef562f4690a44e7fd1e3c80f25c83',pr:6591,prHead:'f99b83a656d73a1378dcaaa83b3865280f9a9652'});
+export const RECOVERY_SOURCE_BRIDGE=Object.freeze({baseline:'e3a01021ee7100b83d8ed5a0be219d0b543b5dff',directBase:'061a8a1784ffd02fdf1e3071390b2036e70d9395',pr:6705,prHead:'ccb91741f947b0bd864ea01f38aed85af15adcf8'});
+const recoveryBridge=(base,directBase)=>[RECOVERY_BRIDGE,RECOVERY_SOURCE_BRIDGE].find(b=>b.baseline===base&&b.directBase===directBase);
 const REVIEWED_DEPLOYS=new Set([
  'a77963695be92a5e55f6a5260c283d1d18ce6ce7398be8915d39ea49380e059e', // 旧生产脚本
  '6858cc545b52fc20c15c401161cb73cec3fbbf96abf59762255507961cfe945b', // drain P1 固定候选
@@ -57,13 +59,23 @@ export function validateSourceDelta(repoRoot,base,head){
   if(JSON.stringify(before)!==JSON.stringify(after))fail('SOURCE_RECOVERY_CI_CHANGE_INVALID');
  }
  const path='.github/workflows/implementation-impact.yml';
- if((changed.includes(path)||base===bootstrapBase)&&digest(blob(repoRoot,head,path))!=='231892f86050742912681feba690d1cb71891f6d15183bb65299489a943cd912')fail('SOURCE_RECOVERY_WORKFLOW_UNREVIEWED');
+ if(changed.includes(path)||base===bootstrapBase){
+  const reviewed=base===RECOVERY_SOURCE_BRIDGE.directBase?'4e59206bd6dd08b77ea3a59e0feb44a2371ffc0fa9139b81f67e64a0169a9cf9':'231892f86050742912681feba690d1cb71891f6d15183bb65299489a943cd912';
+  if(digest(blob(repoRoot,head,path))!==reviewed)fail('SOURCE_RECOVERY_WORKFLOW_UNREVIEWED');
+ }
  const before=yaml.load(blob(repoRoot,base,path).toString()),after=yaml.load(blob(repoRoot,head,path).toString());
  if(changed.includes(path)){
   const original="${{ vars.IMPLEMENTATION_INFRA_ADMISSION == 'true' && github.repository == 'perfectuser21/cecelia' && (inputs.scope || vars.IMPLEMENTATION_MAP_SCOPE || 'cecelia-kr') == 'cecelia-kr' && 'true' || 'false' }}";
   const guarded="${{ inputs.source_baseline_recovery != true && vars.IMPLEMENTATION_INFRA_ADMISSION == 'true' && github.repository == 'perfectuser21/cecelia' && (inputs.scope || vars.IMPLEMENTATION_MAP_SCOPE || 'cecelia-kr') == 'cecelia-kr' && 'true' || 'false' }}";
-  if(before.jobs.gate.env?.INFRA_ADMISSION!==original||after.jobs.gate.env?.INFRA_ADMISSION!==guarded)fail('SOURCE_RECOVERY_PR_GATE_CHANGED');
-  before.jobs.gate.env.INFRA_ADMISSION=guarded;
+  if(base===RECOVERY_SOURCE_BRIDGE.directBase){
+   const oldBase="${{ inputs.base_revision || github.event.pull_request.base.sha || github.event.before }}";
+   const recoveredBase="${{ inputs.base_revision || (github.event_name == 'pull_request' && github.event.pull_request.base.sha == '061a8a1784ffd02fdf1e3071390b2036e70d9395' && github.event.pull_request.head.ref == 'cp-10301020-source-pr-link' && github.event.pull_request.head.repo.full_name == 'perfectuser21/cecelia' && 'e3a01021ee7100b83d8ed5a0be219d0b543b5dff' || github.event.pull_request.base.sha) || github.event.before }}";
+   if(before.jobs.gate.env?.INFRA_ADMISSION!==guarded||after.jobs.gate.env?.INFRA_ADMISSION!==guarded||before.jobs.gate.env?.BASE!==oldBase||after.jobs.gate.env?.BASE!==recoveredBase)fail('SOURCE_RECOVERY_PR_GATE_CHANGED');
+   before.jobs.gate.env.BASE=recoveredBase;
+  }else{
+   if(before.jobs.gate.env?.INFRA_ADMISSION!==original||after.jobs.gate.env?.INFRA_ADMISSION!==guarded)fail('SOURCE_RECOVERY_PR_GATE_CHANGED');
+   before.jobs.gate.env.INFRA_ADMISSION=guarded;
+  }
  }
  if(JSON.stringify(before.jobs.gate)!==JSON.stringify(after.jobs.gate))fail('SOURCE_RECOVERY_PR_GATE_CHANGED');
  return changed;
@@ -102,7 +114,9 @@ async function verifyMergedPull({revision,parent,allowMissingBase=false},{api,re
  const match=impact.details_url?.match(/^https:\/\/github\.com\/perfectuser21\/cecelia\/actions\/runs\/(\d+)\/job\/(\d+)$/);
  if(!match||impact.app?.slug!=='github-actions')fail('SOURCE_RECOVERY_IMPACT_ORIGIN_INVALID');
  const run=await api(`repos/${REPO}/actions/runs/${match[1]}`),result=missing?'failure':'success';
- if(run?.id!==Number(match[1])||run?.status!=='completed'||run.conclusion!==result||!Number.isSafeInteger(run.run_attempt)||run.run_attempt<1||run.event!=='pull_request'||run.path!=='.github/workflows/implementation-impact.yml'||run.head_sha!==pr.head.sha||run.repository?.full_name!==REPO||run.head_repository?.full_name!==REPO||!run.pull_requests?.some(p=>p.number===pr.number&&p.base?.sha===parent&&p.head?.sha===pr.head.sha))fail('SOURCE_RECOVERY_IMPACT_ORIGIN_INVALID');
+ // GitHub 会在 PR 合并后把旧 Actions run 的 pull_requests 置空；非空时仍须精确匹配。
+ const linked=run?.pull_requests;
+ if(run?.id!==Number(match[1])||run?.status!=='completed'||run.conclusion!==result||!Number.isSafeInteger(run.run_attempt)||run.run_attempt<1||run.event!=='pull_request'||run.path!=='.github/workflows/implementation-impact.yml'||run.head_sha!==pr.head.sha||run.repository?.full_name!==REPO||run.head_repository?.full_name!==REPO||!Array.isArray(linked)||(linked.length>0&&!linked.some(p=>p.number===pr.number&&p.base?.sha===parent&&p.head?.sha===pr.head.sha)))fail('SOURCE_RECOVERY_IMPACT_ORIGIN_INVALID');
  const job=await api(`repos/${REPO}/actions/jobs/${match[2]}`);
  if(job?.id!==Number(match[2])||job.run_id!==Number(match[1])||job.run_attempt!==run.run_attempt||job.head_sha!==pr.head.sha||job.status!=='completed'||job.conclusion!==result||job.name!==impact.name||job.check_run_url!==impact.url||impact.url!==`https://api.github.com/repos/${REPO}/check-runs/${impact.id}`)fail('SOURCE_RECOVERY_IMPACT_JOB_INVALID');
  let gapProof=null;
@@ -124,7 +138,8 @@ async function verifyMergedPull({revision,parent,allowMissingBase=false},{api,re
 export async function verifyRecoveryAuthority({repoRoot,base,head},{github:api=github,readArtifact=readRecoveryArtifact,context=executionContext()}={}){
  if(!SHA.test(base)||!SHA.test(head)||base===head||git(repoRoot,'rev-parse','HEAD')!==head)fail('SOURCE_RECOVERY_SOURCE_MISMATCH');
  const directBase=git(repoRoot,'rev-parse',`${head}^1`),bridged=directBase!==base;
- if(bridged&&(base!==RECOVERY_BRIDGE.baseline||directBase!==RECOVERY_BRIDGE.directBase||git(repoRoot,'rev-parse',`${directBase}^1`)!==base))fail('SOURCE_RECOVERY_BRIDGE_INVALID');
+ const bridgeIdentity=bridged?recoveryBridge(base,directBase):null;
+ if(bridged&&(!bridgeIdentity||git(repoRoot,'rev-parse',`${directBase}^1`)!==base))fail('SOURCE_RECOVERY_BRIDGE_INVALID');
  if(git(repoRoot,'status','--porcelain=v1','--untracked-files=no'))fail('SOURCE_RECOVERY_DIRTY_SOURCE');
  const origin=git(repoRoot,'remote','get-url','origin');
  if(![`https://github.com/${REPO}.git`,`https://github.com/${REPO}`,`git@github.com:${REPO}.git`].includes(origin))fail('SOURCE_RECOVERY_REPO_MISMATCH');
@@ -133,7 +148,7 @@ export async function verifyRecoveryAuthority({repoRoot,base,head},{github:api=g
  if(bridged){
   assertRecoveryDispatch({...context,head});
   bridge=await verifyMergedPull({revision:directBase,parent:base},{api,readArtifact});
-  if(bridge.pr_number!==RECOVERY_BRIDGE.pr||bridge.pr_head!==RECOVERY_BRIDGE.prHead)fail('SOURCE_RECOVERY_BRIDGE_INVALID');
+  if(bridge.pr_number!==bridgeIdentity.pr||bridge.pr_head!==bridgeIdentity.prHead)fail('SOURCE_RECOVERY_BRIDGE_INVALID');
  }
 if(JSON.parse(blob(repoRoot,head,'packages/brain/package.json')).cecelia_source_only!==true||!REVIEWED_DEPLOYS.has(digest(blob(repoRoot,head,'scripts/brain-deploy.sh'))))fail('SOURCE_RECOVERY_DEPLOY_GUARD_MISSING');
  const proof=await verifyMergedPull({revision:head,parent:directBase,allowMissingBase:bridged},{api,readArtifact});
@@ -175,7 +190,7 @@ export function assertRecoveryDispatch({eventName,ref,event,runId,head}){
 export function verifyRecoveryGateProof({repoRoot,base,head,inputs,context}){
  assertRecoveryDispatch({...context,head});
  const directBase=git(repoRoot,'rev-parse',`${head}^1`);
- if(directBase!==base&&(base!==RECOVERY_BRIDGE.baseline||directBase!==RECOVERY_BRIDGE.directBase||git(repoRoot,'rev-parse',`${directBase}^1`)!==base))fail('SOURCE_RECOVERY_BRIDGE_INVALID');
+ if(directBase!==base&&(!recoveryBridge(base,directBase)||git(repoRoot,'rev-parse',`${directBase}^1`)!==base))fail('SOURCE_RECOVERY_BRIDGE_INVALID');
  const changed=validateSourceDelta(repoRoot,directBase,head),actual=recoveryRuntimeAt(repoRoot,head);
  for(const s of inputs.head){
   assertRecoveryPurpose(s,'pr');const p=s.source_baseline;
