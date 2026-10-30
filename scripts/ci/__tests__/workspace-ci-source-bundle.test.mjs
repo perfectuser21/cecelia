@@ -201,6 +201,7 @@ for(const [name,mutate]of[
  ['不固定scope来源',job=>job.env.MAP_SCOPE='cecelia-device-patrol'],
  ['预读shell字节变动',job=>job.steps.find(s=>s.if==="env.MAP_SCOPE == 'cecelia-device-patrol'").run+='\nexit 0'],
  ['外部caller强开infra',job=>job.env.INFRA_ADMISSION='${{ true }}'],
+ ['来源恢复BASE分支漂移',job=>job.env.BASE=job.env.BASE.replace('cp-10301020-source-pr-link','cp-any-other-branch')],
 ])test(`scope预读不得放宽核心合同：${name}`,async t=>{
  const f=fixture(t);addActualPatrolPrelude(f,mutate);const r=await extractWorkspaceCiSourceBundle(f.options);
  assert.equal(r.status,'unknown');

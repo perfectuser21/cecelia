@@ -82,11 +82,11 @@ test('固定来源候选仅接受已隔离infra刷新的workflow字节',()=>{
   execFileSync('git',['clone','-q','--shared',source,scratch]);
   const g=(...args)=>execFileSync('git',args,{cwd:scratch,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
   g('config','user.name','Fixture');g('config','user.email','fixture@example.invalid');g('config','core.hooksPath','/dev/null');
+  g('checkout','-q','--detach','061a8a1784ffd02fdf1e3071390b2036e70d9395');
   const path='.github/workflows/implementation-impact.yml';
   const reviewedFiles=[path,'packages/brain/VERSION'];
-  for(const file of reviewedFiles)writeFileSync(join(scratch,file),file===path
-   ?execFileSync('git',['show',`061a8a1784ffd02fdf1e3071390b2036e70d9395:${file}`],{cwd:source})
-   :readFileSync(join(source,file)));
+  for(const file of reviewedFiles)writeFileSync(join(scratch,file),
+   execFileSync('git',['show',`061a8a1784ffd02fdf1e3071390b2036e70d9395:${file}`],{cwd:source}));
   g('add','--',...reviewedFiles);g('commit','--allow-empty','-qm','source-only infra guard');
   const reviewed=g('rev-parse','HEAD');
   assert.doesNotThrow(()=>validateSourceDelta(scratch,'e3a01021ee7100b83d8ed5a0be219d0b543b5dff',reviewed));
@@ -104,7 +104,7 @@ test('VERSION 真身对齐并拒绝改动已受信版本门禁',()=>{
   g('config','user.name','Fixture');g('config','user.email','fixture@example.invalid');g('config','core.hooksPath','/dev/null');
   g('checkout','-q','--detach','061a8a1784ffd02fdf1e3071390b2036e70d9395');
   const paths=['packages/brain/VERSION'];
-  for(const path of paths)writeFileSync(join(scratch,path),readFileSync(join(source,path)));
+  for(const path of paths)writeFileSync(join(scratch,path),execFileSync('git',['show',`061a8a1784ffd02fdf1e3071390b2036e70d9395:${path}`],{cwd:source}));
   g('add','--',...paths);g('commit','--allow-empty','-qm','reviewed version sync');
   const reviewed=g('rev-parse','HEAD');
   assert.doesNotThrow(()=>validateSourceDelta(scratch,'e3a01021ee7100b83d8ed5a0be219d0b543b5dff',reviewed));
@@ -112,7 +112,7 @@ test('VERSION 真身对齐并拒绝改动已受信版本门禁',()=>{
   writeFileSync(join(scratch,versionFile),'1.445.84\n');
   g('commit','-qam','version drift');
   assert.throws(()=>validateSourceDelta(scratch,'e3a01021ee7100b83d8ed5a0be219d0b543b5dff',g('rev-parse','HEAD')),/SOURCE_RECOVERY_VERSION_INVALID/);
-  writeFileSync(join(scratch,versionFile),readFileSync(join(source,versionFile)));
+  writeFileSync(join(scratch,versionFile),execFileSync('git',['show',`061a8a1784ffd02fdf1e3071390b2036e70d9395:${versionFile}`],{cwd:source}));
   const guard='scripts/check-version-sync.sh';
   writeFileSync(join(scratch,guard),Buffer.concat([readFileSync(join(scratch,guard)),Buffer.from('\n# unreviewed drift\n')]));
   g('commit','-qam','unreviewed version guard');
@@ -232,6 +232,8 @@ test('已审6705来源桥连接e3a基线和后续修复PR，旧run的空关联�
   const oldBase='BASE: ${{ inputs.base_revision || github.event.pull_request.base.sha || github.event.before }}';
   const approvedBase="BASE: ${{ inputs.base_revision || (github.event_name == 'pull_request' && github.event.pull_request.base.sha == '061a8a1784ffd02fdf1e3071390b2036e70d9395' && github.event.pull_request.head.ref == 'cp-10301020-source-pr-link' && github.event.pull_request.head.repo.full_name == 'perfectuser21/cecelia' && 'e3a01021ee7100b83d8ed5a0be219d0b543b5dff' || github.event.pull_request.base.sha) || github.event.before }}";
   assert.ok(before.includes(oldBase));writeFileSync(join(root,workflow),before.replace(oldBase,approvedBase));
+  const reviewedTest='packages/brain/src/lib/__tests__/workspace-ci-source-bundle.test.js';
+  writeFileSync(join(root,reviewedTest),readFileSync(join(root,reviewedTest),'utf8')+'\n// source recovery fixture\n');
   g('add','.');g('commit','-qm','source-only repair');
   const repaired=g('rev-parse','HEAD'),parent='061a8a1784ffd02fdf1e3071390b2036e70d9395',first='e3a01021ee7100b83d8ed5a0be219d0b543b5dff',prHead='ccb91741f947b0bd864ea01f38aed85af15adcf8';
   const required=['ci-passed','Harness V5 Gate Passed','Smoke Glob Runner Passed','Skill source ownership','Implementation impact gate'];

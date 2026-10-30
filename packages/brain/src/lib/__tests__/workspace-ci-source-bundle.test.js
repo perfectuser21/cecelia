@@ -134,9 +134,11 @@ it.each([
 ])('现代helper%s漂移不能冒已审源码封套',async(_name,change)=>{const p=await modernBundle(()=>{},null,{changeSource:(bytes,path)=>path===MODERN?Buffer.from(change(bytes.toString())):bytes});expect(p.status).toBe('unknown');});
 
 const infraStep=(y,name)=>y.jobs.gate.steps.find(s=>s.name===name);
+const priorBaseEnv='${{ inputs.base_revision || github.event.pull_request.base.sha || github.event.before }}';
 const oldInfraGuard=y=>{
  y.jobs['snapshot-infra'].if=y.jobs['snapshot-infra'].if.replace('inputs.source_baseline_recovery != true && ','');
  y.jobs.gate.env.INFRA_ADMISSION=y.jobs.gate.env.INFRA_ADMISSION.replace('inputs.source_baseline_recovery != true && ','');
+ y.jobs.gate.env.BASE=priorBaseEnv;
 };
 it('旧infra封套和新恢复隔离封套均有精确来源证明',async()=>{
  const previous=await modernBundle(()=>{},null,{mutateImpact:oldInfraGuard});
@@ -181,6 +183,7 @@ it.each([
 
 it('保留原双scope单needs与旧cache完整封套',async()=>{
  const p=await modernBundle(()=>{},null,{mutateImpact:y=>{
+  y.jobs.gate.env.BASE=priorBaseEnv;
   delete y.jobs['snapshot-infra'];delete y.on.workflow_dispatch.inputs.export_infra_baseline;
   y.jobs.gate.needs=['snapshot-main'];delete y.jobs.gate.env.INFRA_ADMISSION;
   y.jobs.gate.steps=y.jobs.gate.steps.filter(s=>!['三来源联合门真实PG与回归退出码守卫','独立infra固定来源加入联合输入','完整联合scope清单加入infra'].includes(s.name));
@@ -193,6 +196,7 @@ it('保留原双scope单needs与旧cache完整封套',async()=>{
 const baselineDownload=y=>y.jobs.gate.steps.find(s=>String(s.run||'').includes('implementation-baseline-$HEAD'));
 it('旧精确下载封套仍可证明外部调用，原生祖先恢复不改变workspace分支',async()=>{
  const proof=await modernBundle(()=>{},null,{mutateImpact:y=>{
+  y.jobs.gate.env.BASE=priorBaseEnv;
   const step=baselineDownload(y),start=step.run.indexOf('  if [[ "${NATIVE_PR_BASELINE:-false}" == true ]]; then\n'),end=step.run.indexOf('  else\n',start);
   expect(start).toBeGreaterThan(0);expect(end).toBeGreaterThan(start);
   step.run=step.run.slice(0,start)+step.run.slice(end+7);
