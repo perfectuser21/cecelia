@@ -403,7 +403,7 @@ for(const [eventName,enabled,ref] of [['push','true','refs/heads/main'],['workfl
  }finally{for(const [k,v]of Object.entries(old))if(v===undefined)delete process.env[k];else process.env[k]=v;}
 });
 
-test('显式来源恢复成功仅向生产中央GET，既不POST也不部署',async t=>{
+test('显式来源恢复只认固定历史基线，不读取可变中央快照或部署',async t=>{
  const dir=mkdtempSync(join(tmpdir(),'recovery-get-only-'));t.after(()=>rmSync(dir,{recursive:true,force:true}));
  const source=join(dir,'source');mkdirSync(source);
  const git=(...args)=>execFileSync('git',args,{cwd:source,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
@@ -418,17 +418,16 @@ test('显式来源恢复成功仅向生产中央GET，既不POST也不部署',as
   github:async endpoint=>{assert.equal(endpoint,`repos/${repo}/commits/main`);return {sha:head};},
   verifyAuthority:async()=>({repo,base_revision:base,direct_base_revision:base,head_revision:head}),
   inspectRuntime:async()=>readiness,
-  fetchFn:async(url,options)=>{requests.push({url:String(url),method:options.method});return new Response(JSON.stringify(baseline));},
+  fetchFn:async(url,options)=>{requests.push({url:String(url),method:options.method});throw Error('mutable central must not be read');},
   compile:async()=>bundle(head).snapshot,
   runGate:async options=>{assert.match(options.outputDir,/source-recovery-verification-/);return {receipt:{verdict:'PASS'}};},
  });
  assert.equal(result.status,'source_only');assert.equal(result.runtime_status,'not_deployed');
- assert.equal(requests.length,2);assert.ok(requests.every(request=>request.method==='GET'&&request.url.includes('/implementation-ci/snapshot')));
- assert.ok(requests.every(request=>!request.url.includes('/deploy')));
+ assert.equal(requests.length,0);
  assert.equal(existsSync(join(dir,'output/head.json')),true);
 });
 
-for(const fault of ['fullgate','runtime_drift','central_drift'])test(`真实publisher编译成功但${fault}失败时不发布正式head`,async t=>{
+for(const fault of ['fullgate','runtime_drift'])test(`真实publisher编译成功但${fault}失败时不发布正式head`,async t=>{
  const dir=mkdtempSync(join(tmpdir(),'recovery-publish-order-'));t.after(()=>rmSync(dir,{recursive:true,force:true}));
  const source=join(dir,'source');mkdirSync(source);
  const git=(...args)=>execFileSync('git',args,{cwd:source,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
@@ -440,11 +439,12 @@ for(const fault of ['fullgate','runtime_drift','central_drift'])test(`真实publ
  await assert.rejects(publishRecoveryBaseline({repoRoot:source,base,head,brainUrl:'http://fixture.invalid',token:'fixture',output:join(dir,'output'),baseline,readiness},{
   github:async()=>({sha:head}),verifyAuthority:async()=>({repo,base_revision:base,direct_base_revision:base,head_revision:head}),
   inspectRuntime:async()=>{observations++;return {...readiness,runtime:fault==='runtime_drift'&&observations===2?{...identity,git_sha:'f'.repeat(40)}:identity};},
-  fetchFn:async()=>{reads++;const value=structuredClone(baseline);if(fault==='central_drift'&&reads===2){const {snapshot_sha256,...body}=value.snapshot;body.map={manifest:null,observed_drift:true};value.snapshot=seal(body);}return new Response(JSON.stringify(value));},
+  fetchFn:async()=>{reads++;throw Error('mutable central must not be read');},
   compile:async()=>{compiled=true;return bundle(head).snapshot;},
   runGate:async options=>{executed=true;mkdirSync(options.outputDir,{recursive:true});writeFileSync(join(options.outputDir,'receipt.json'),JSON.stringify({verdict:fault==='fullgate'?'FAIL':'PASS'}));return {receipt:{verdict:fault==='fullgate'?'FAIL':'PASS'}};},
- }),{code:{fullgate:'SOURCE_RECOVERY_FULL_GATE_FAILED',runtime_drift:'SOURCE_RECOVERY_RUNTIME_CHANGED',central_drift:'SOURCE_RECOVERY_CENTRAL_CHANGED'}[fault]});
+ }),{code:{fullgate:'SOURCE_RECOVERY_FULL_GATE_FAILED',runtime_drift:'SOURCE_RECOVERY_RUNTIME_CHANGED'}[fault]});
  assert.equal(compiled,true);assert.equal(executed,true);assert.equal(existsSync(join(dir,'output/head.json')),false);assert.equal(existsSync(join(dir,'output/base.json')),false);assert.equal(existsSync(join(dir,'output/diagnostics/source-only-verification/receipt.json')),true);
+ assert.equal(reads,0);
 });
 
 test('上传前回归的真实子进程不继承中央或部署凭据',async t=>{

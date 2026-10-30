@@ -135,10 +135,12 @@ it.each([
 
 const infraStep=(y,name)=>y.jobs.gate.steps.find(s=>s.name===name);
 const priorBaseEnv='${{ inputs.base_revision || github.event.pull_request.base.sha || github.event.before }}';
+const removeGateToken=y=>delete infraStep(y,'实际变更影响与固定回归').env.GH_TOKEN;
 const oldInfraGuard=y=>{
  y.jobs['snapshot-infra'].if=y.jobs['snapshot-infra'].if.replace('inputs.source_baseline_recovery != true && ','');
  y.jobs.gate.env.INFRA_ADMISSION=y.jobs.gate.env.INFRA_ADMISSION.replace('inputs.source_baseline_recovery != true && ','');
  y.jobs.gate.env.BASE=priorBaseEnv;
+ removeGateToken(y);
 };
 it('旧infra封套和新恢复隔离封套均有精确来源证明',async()=>{
  const previous=await modernBundle(()=>{},null,{mutateImpact:oldInfraGuard});
@@ -147,6 +149,11 @@ it('旧infra封套和新恢复隔离封套均有精确来源证明',async()=>{
  const current=await modernBundle();
  expect(current.status,JSON.stringify(current.gaps)).toBe('verified');
  expect(current.executable).toBe(false);
+});
+it('新Gate仅接受固定步骤的精确GH_TOKEN来源字节',async()=>{
+ const proof=await modernBundle(()=>{},null,{mutateImpact:y=>{infraStep(y,'实际变更影响与固定回归').env.GH_TOKEN='${{ secrets.UNREVIEWED_TOKEN }}';}});
+ expect(proof.status).toBe('unknown');
+ expect(proof.gaps).toEqual(expect.arrayContaining([expect.objectContaining({code:'CALLEE_INACTIVE_INFRA_UNPROVEN'})]));
 });
 it.each([
  ['旧gate配新provider',y=>{y.jobs.gate.env.INFRA_ADMISSION=y.jobs.gate.env.INFRA_ADMISSION.replace('inputs.source_baseline_recovery != true && ','');}],
@@ -197,6 +204,7 @@ const baselineDownload=y=>y.jobs.gate.steps.find(s=>String(s.run||'').includes('
 it('旧精确下载封套仍可证明外部调用，原生祖先恢复不改变workspace分支',async()=>{
  const proof=await modernBundle(()=>{},null,{mutateImpact:y=>{
   y.jobs.gate.env.BASE=priorBaseEnv;
+  removeGateToken(y);
   const step=baselineDownload(y),start=step.run.indexOf('  if [[ "${NATIVE_PR_BASELINE:-false}" == true ]]; then\n'),end=step.run.indexOf('  else\n',start);
   expect(start).toBeGreaterThan(0);expect(end).toBeGreaterThan(start);
   step.run=step.run.slice(0,start)+step.run.slice(end+7);
