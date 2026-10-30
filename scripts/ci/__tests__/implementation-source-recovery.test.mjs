@@ -36,6 +36,11 @@ function api(overrides={}){
 test('合并main由旧base的独立PR准入成功后才准许来源编译',async()=>{
  const proof=await verifyRecoveryAuthority(opts,{github:api()});assert.equal(proof.base_revision,base);assert.equal(proof.head_revision,head);assert.equal(proof.impact_run_id,7);
 });
+test('PR合并后Actions运行不再返回pull_requests时仍凭固定PR与check run准入',async()=>{
+ const route=`repos/${repo}/actions/runs/7`,original=await api()(route);
+ const proof=await verifyRecoveryAuthority(opts,{github:api({[route]:{...original,pull_requests:[]}})});
+ assert.equal(proof.pr_number,9);assert.equal(proof.impact_run_id,7);
+});
 test('旧生产部署脚本保持来源恢复准入，任意漂移拒绝',()=>{
  const sourceRoot=fileURLToPath(new URL('../../../',import.meta.url));
  const legacy=execFileSync('git',['show','e3a01021ee7100b83d8ed5a0be219d0b543b5dff:scripts/brain-deploy.sh'],{cwd:sourceRoot});
@@ -79,7 +84,9 @@ test('固定来源候选仅接受已隔离infra刷新的workflow字节',()=>{
   g('config','user.name','Fixture');g('config','user.email','fixture@example.invalid');g('config','core.hooksPath','/dev/null');
   const path='.github/workflows/implementation-impact.yml';
   const reviewedFiles=[path,'packages/brain/VERSION'];
-  for(const file of reviewedFiles)writeFileSync(join(scratch,file),readFileSync(join(source,file)));
+  for(const file of reviewedFiles)writeFileSync(join(scratch,file),file===path
+   ?execFileSync('git',['show',`061a8a1784ffd02fdf1e3071390b2036e70d9395:${file}`],{cwd:source})
+   :readFileSync(join(source,file)));
   g('add','--',...reviewedFiles);g('commit','--allow-empty','-qm','source-only infra guard');
   const reviewed=g('rev-parse','HEAD');
   assert.doesNotThrow(()=>validateSourceDelta(scratch,'e3a01021ee7100b83d8ed5a0be219d0b543b5dff',reviewed));
@@ -210,4 +217,34 @@ test('单桥独审SHA必须与最终main一致',async()=>assert.rejects(verifyBr
 test('单桥缺source-only标记不能编译',async()=>{
  delete manifest.cecelia_source_only;writeFileSync(join(bridgeRoot,'packages/brain/package.json'),JSON.stringify(manifest,null,2)+'\n');bg('commit','--amend','-qam','missing marker');const badHead=bg('rev-parse','HEAD');
  await assert.rejects(verifyRecoveryAuthority({...bridgeOptions,head:badHead},{github:bridgeApi({head:badHead}),readArtifact:async()=>missingGap,context:{...bridgeContext,event:{inputs:{source_baseline_recovery:true,source_reviewed_head:badHead}}}}),/SOURCE_RECOVERY_DEPLOY_GUARD_MISSING/);
+});
+
+test('已审6705来源桥连接e3a基线和后续修复PR，旧run的空关联仍须通过独立检查',async()=>{
+ const root=mkdtempSync(join(tmpdir(),'source-recovery-6705-'));
+ try{
+  execFileSync('git',['clone','--shared','--no-checkout','-q',realRoot,root]);
+  const g=(...args)=>execFileSync('git',args,{cwd:root,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
+  g('config','user.name','Fixture');g('config','user.email','fixture@example.invalid');g('config','core.hooksPath','/dev/null');
+  g('remote','set-url','origin',`https://github.com/${repo}.git`);g('checkout','-q','--detach','061a8a1784ffd02fdf1e3071390b2036e70d9395');
+  const fixture='scripts/ci/__tests__/source-bridge-fixture.test.mjs';writeFileSync(join(root,fixture),'// source-only repair\n');
+  const workflow='.github/workflows/implementation-impact.yml',before=readFileSync(join(root,workflow),'utf8');
+  const oldBase='BASE: ${{ inputs.base_revision || github.event.pull_request.base.sha || github.event.before }}';
+  const approvedBase="BASE: ${{ inputs.base_revision || (github.event_name == 'pull_request' && github.event.pull_request.base.sha == '061a8a1784ffd02fdf1e3071390b2036e70d9395' && github.event.pull_request.head.ref == 'cp-10301020-source-pr-link' && github.event.pull_request.head.repo.full_name == 'perfectuser21/cecelia' && 'e3a01021ee7100b83d8ed5a0be219d0b543b5dff' || github.event.pull_request.base.sha) || github.event.before }}";
+  assert.ok(before.includes(oldBase));writeFileSync(join(root,workflow),before.replace(oldBase,approvedBase));
+  g('add','.');g('commit','-qm','source-only repair');
+  const repaired=g('rev-parse','HEAD'),parent='061a8a1784ffd02fdf1e3071390b2036e70d9395',first='e3a01021ee7100b83d8ed5a0be219d0b543b5dff',prHead='ccb91741f947b0bd864ea01f38aed85af15adcf8';
+  const required=['ci-passed','Harness V5 Gate Passed','Smoke Glob Runner Passed','Skill source ownership','Implementation impact gate'];
+  const routes={[`repos/${repo}/commits/main`]:{sha:repaired},[`repos/${repo}/branches/main/protection/required_status_checks`]:{strict:true,contexts:required}};
+  for(const [revision,baseSha,headSha,number,runId,jobId] of [[parent,first,prHead,6705,70,71],[repaired,parent,'a'.repeat(40),9999,72,73]]){
+   routes[`repos/${repo}/commits/${revision}/pulls`]=[{number}];
+   routes[`repos/${repo}/pulls/${number}`]={number,merged:true,merge_commit_sha:revision,base:{sha:baseSha,ref:'main',repo:{full_name:repo}},head:{sha:headSha,repo:{full_name:repo}}};
+   routes[`repos/${repo}/commits/${headSha}/check-runs?per_page=100`]={total_count:5,check_runs:required.map((name,i)=>({id:i===4?jobId:i+1,url:`https://api.github.com/repos/${repo}/check-runs/${i===4?jobId:i+1}`,name,status:'completed',conclusion:'success',head_sha:headSha,app:{slug:'github-actions'},details_url:`https://github.com/${repo}/actions/runs/${runId}/job/${jobId}`}))};
+   routes[`repos/${repo}/actions/runs/${runId}`]={id:runId,status:'completed',conclusion:'success',run_attempt:1,event:'pull_request',path:'.github/workflows/implementation-impact.yml',head_sha:headSha,repository:{full_name:repo},head_repository:{full_name:repo},pull_requests:[]};
+   routes[`repos/${repo}/actions/jobs/${jobId}`]={id:jobId,run_id:runId,run_attempt:1,head_sha:headSha,name:'Implementation impact gate',check_run_url:`https://api.github.com/repos/${repo}/check-runs/${jobId}`,status:'completed',conclusion:'success'};
+  }
+  const result=await verifyRecoveryAuthority({repoRoot:root,base:first,head:repaired},{github:async p=>structuredClone(routes[p]),context:{eventName:'workflow_dispatch',ref:'refs/heads/main',runId:'99',event:{inputs:{source_baseline_recovery:true,source_reviewed_head:repaired}}}});
+  assert.equal(result.bridge.pr_number,6705);assert.equal(result.pr_number,9999);assert.equal(result.direct_base_revision,parent);
+  const wrong=structuredClone(routes);wrong[`repos/${repo}/pulls/6705`].head.sha='f'.repeat(40);
+  await assert.rejects(verifyRecoveryAuthority({repoRoot:root,base:first,head:repaired},{github:async p=>structuredClone(wrong[p]),context:{eventName:'workflow_dispatch',ref:'refs/heads/main',runId:'99',event:{inputs:{source_baseline_recovery:true,source_reviewed_head:repaired}}}}));
+ }finally{rmSync(root,{recursive:true,force:true});}
 });
