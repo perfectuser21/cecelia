@@ -42,6 +42,8 @@ Brain/Engine/API 的共享依赖变更会选择共享运行组及 Ops 回归；�
 
 数据库 URI 只注入实际 PG 跑道，避免单测文件里的条件集成用例被环境变量意外启用。混合文件的原生断言留在单测，其真实 PG 用例由深度配置显式执行。
 
+深度夹具也必须隔离：影响半径和任务列表使用本人私有 schema；部署后批次过滤使用正式迁移列结构的临时 tasks 表，真实执行 verifier 并独立读回。测试不能默认连接生产库，也不能让批次扫描其他测试的任务。
+
 外置 Skill 正文合同使用独立的 `skill-source-tests.mjs` 集合和各组件专项配置，归 `Pinned Skill Sources`：恢复固定 revision、校验 46 份投影后真实执行。普通单测保留原生 loader、prompt、launcher、Runner、callback 与 Judge 机制，用隔离 provider/cwd/HOME 验证；不以本机私有正文是否存在决定这些测试是否运行。已明确停用的 Reviewer v5 合同不计入任何通过保障。
 
 完整组件测试保留各包已声明的测试范围；它不等于所有历史测试均健康。现存 exclude/skip 不因本次重整而被解释为业务正确。

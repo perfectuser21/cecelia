@@ -18,6 +18,8 @@
   Test: manual:node scripts/ci/run-basic-check.mjs brain-integration
 - [x] [BEHAVIOR] 现役 API、Dashboard、Quality、MCP、Engine及Shell和Brain正式镜像已分别执行真实验证；六片Brain发现的旧接线断言逐项迁移。
   Test: manual:node scripts/ci/run-basic-check.mjs scripts
+- [ ] [BEHAVIOR] 深度回归实际完成完整PG集合、Walking与Map Manifest；固定历史来源机制不认领当前候选，旧连接默认与共享任务污染已消除。
+  Test: manual:bash -c 'gh run list --workflow nightly-regression.yml --branch cp-10302220-ci-minimum --repo perfectuser21/cecelia --limit 3 --json headSha,status,conclusion,url'
 - [ ] [BEHAVIOR] 固定候选SHA在GitHub实际运行全部选定检查并给出「源码保底通过」。
   Test: manual:bash -c 'gh pr checks cp-10302220-ci-minimum --repo perfectuser21/cecelia --required'
 - [ ] [BEHAVIOR] GitHub分支保护及规则集均只认新检查，旧PR不能用旧绿灯继承资格，保护强度其余项保留并读回。

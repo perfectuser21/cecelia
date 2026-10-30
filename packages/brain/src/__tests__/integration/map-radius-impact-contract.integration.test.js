@@ -1,7 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createHash, randomUUID } from 'node:crypto';
-import pool from '../../db.js';
 import { resolveImpactRadius } from '../../map/radius.js';
+import { versionsDatabase } from '../fixtures/definition-versions-db.js';
+import { minimumMapSchema } from '../fixtures/minimum-map-schema.js';
+import { migrationSql, migrationSlice } from '../fixtures/minimum-definition-schema.js';
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const describePg = testDatabaseUrl ? describe : describe.skip;
@@ -16,16 +18,28 @@ const assertionDigest = createHash('sha256').update(assertionRef).digest('hex');
 
 describePg('Map radius × Impact Contract [PostgreSQL]', () => {
   let client;
+  let fixture;
   let linkId;
 
   beforeAll(async () => {
-    client = await pool.connect();
+    fixture = await versionsDatabase();
+    client = fixture.client;
+    await minimumMapSchema(client);
+    await client.query(migrationSql('295_journey_features_kind_group.sql'));
+    await client.query(migrationSlice('343_journey_features_guard_ref.sql',
+      'ALTER TABLE journey_features ADD COLUMN', '-- 扩展 status CHECK'));
     await client.query('BEGIN');
+    const valueStreamId = randomUUID();
+    await client.query('INSERT INTO value_streams(id,name) VALUES($1,$2)', [valueStreamId, 'Radius fixture']);
+    await client.query(
+      'INSERT INTO capabilities(id,name,parent_journey_id,capability_code) VALUES($1,$2,$3,$4)',
+      [capabilityJourneyId, '工厂 · F1 开发闭环', valueStreamId, 'F1'],
+    );
     const featureId = randomUUID();
     const stepId = randomUUID();
     linkId = randomUUID();
     await client.query(
-      `INSERT INTO journey_steps (id, journey_id, name, step_number, status)
+      `INSERT INTO activities (id, journey_id, name, step_number, status)
        VALUES ($1, $2, $3, $4, 'planned')`,
       [stepId, capabilityJourneyId, `map-radius-${process.pid}`, 900_000 + (process.pid % 90_000)],
     );
@@ -36,7 +50,7 @@ describePg('Map radius × Impact Contract [PostgreSQL]', () => {
       [featureId, capabilityJourneyId, stepId, assertionRef],
     );
     await client.query(
-      `INSERT INTO journey_step_links (
+      `INSERT INTO activity_cells (
          id, journey_id, step_id, cell_kind, cell_key, cell_status,
          feature_id, assertion_ref, status
        ) VALUES ($1, $2, $3, 'capability', 'F1', 'green', $4, $5, 'planned')`,
@@ -76,16 +90,13 @@ describePg('Map radius × Impact Contract [PostgreSQL]', () => {
   });
 
   afterAll(async () => {
-    if (client) {
-      await client.query('ROLLBACK');
-      client.release();
-    }
-    await pool.end();
+    await fixture?.close();
   });
 
   function dependencies(revision = baseRevision) {
     return {
       db: client,
+      repoScope: repo => repo === 'perfectuser21/cecelia' ? 'cecelia' : null,
       projectionForRevision: async () => ({
         id: randomUUID(),
         manifest_digest: manifestDigest,
