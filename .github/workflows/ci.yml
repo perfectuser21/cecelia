@@ -959,11 +959,8 @@ jobs:
         if: steps.scope.outputs.mode != 'skip'
         env:
           NODE_OPTIONS: '--max-old-space-size=4096'
-        # vitest forks 模式下，fork 进程跑完后可能因内存碎片 OOM 退出，
-        # tinypool 报 "Worker exited unexpectedly"，导致 vitest 返回 exit 1，
-        # 即使所有测试均已通过。此脚本在 exit 非 0 时检查是否无 test 失败，
-        # 若无则认为是 OOM worker exit（非测试失败），返回 0。
-        # PR 模式额外：--changed 过滤命中 0 测试也视为 pass（变更不影响 brain test）。
+        # 合法空集合由 Vitest 原生选项返回成功；异常/不完整回报不能凭 passed 文本放行。
+        # Vitest 或日志记录任一非零均失败，subshell 保留调用者的 shell 选项。
         #
         # fs 读取型守卫测试根治（#3506 / 2026-07-02 两次应验）：
         #   vitest --changed 只跑静态 import 依赖图命中的测试；但大量守卫测试用 fs.readFileSync
@@ -974,25 +971,16 @@ jobs:
         run: |
           cd packages/brain
           SHARD=${{ matrix.shard }}
-          # 单次 vitest 调用 + OOM/0命中 容错封装
-          run_vitest() {
+          run_vitest() (
             local label="$1"; local covdir="$2"; shift 2
             set +e
-            npx vitest run --shard=$SHARD/6 "$@" --exclude='src/__tests__/integration/**' --reporter=verbose --coverage --coverage.reporter=lcov --coverage.reportsDirectory="$covdir" 2>&1 | tee /tmp/vitest-$label.txt
-            local exit=${PIPESTATUS[0]}
-            if [ $exit -ne 0 ]; then
-              if grep -qE "Tests.*[0-9]+ passed" /tmp/vitest-$label.txt && ! grep -qE "Tests.*[0-9]+ failed" /tmp/vitest-$label.txt; then
-                echo "[brain-unit shard $SHARD/6 · $label] OOM worker exit but all tests passed — treating as success"
-                return 0
-              fi
-              if grep -qiE "No test files found|filter matched no test files" /tmp/vitest-$label.txt; then
-                echo "[brain-unit shard $SHARD/6 · $label] 过滤命中 0 测试 — 视为 pass"
-                return 0
-              fi
-              return $exit
+            npx vitest run --passWithNoTests --shard=$SHARD/6 "$@" --exclude='src/__tests__/integration/**' --reporter=verbose --coverage --coverage.reporter=lcov --coverage.reportsDirectory="$covdir" 2>&1 | tee /tmp/vitest-$label.txt
+            local -a pipeline_status=("${PIPESTATUS[@]}")
+            if [ "${pipeline_status[0]}" -ne 0 ]; then
+              return "${pipeline_status[0]}"
             fi
-            return 0
-          }
+            return "${pipeline_status[1]}"
+          )
           MODE="${{ steps.scope.outputs.mode }}"
           if [ "$MODE" = "changed" ] || [ "$MODE" = "guards" ]; then
             # 快路：import 依赖图命中的测试（guards 模式无 brain 变更，不跑）
@@ -1336,6 +1324,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - name: Permanent Brain unit exit contract
+        run: node --test scripts/ci/__tests__/brain-unit-exit-contract.test.mjs
       - name: Install yq (mikefarah)
         run: |
           sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
