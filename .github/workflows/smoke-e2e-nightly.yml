@@ -1,4 +1,4 @@
-name: Smoke E2E Nightly（staging 5222）
+name: Legacy E2E Diagnostics
 
 # 每夜对真实 staging（5222）全量跑 scripts/smoke/e2e/ 池。
 # 失败发 Bark 晨报，结果写 Brain KV (smoke-nightly-last-run)。
@@ -14,10 +14,8 @@ name: Smoke E2E Nightly（staging 5222）
 #   scripts/smoke/e2e/deploy-daily-drill.sh
 #   scripts/smoke/e2e/relay-53710094.sh
 
+# 历史/环境诊断按需运行；通用源码保障归 ci.yml，深度回归归 nightly-regression.yml。
 on:
-  schedule:
-    # 北京时间 03:00（UTC 19:00 前夜）
-    - cron: '0 19 * * *'
   workflow_dispatch:
     inputs:
       dry_run:

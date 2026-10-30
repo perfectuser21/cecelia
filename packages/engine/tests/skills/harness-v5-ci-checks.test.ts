@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
+import yaml from 'js-yaml';
 
 const REPO_ROOT = join(__dirname, '../../../..');
 const WORKFLOW_PATH = join(REPO_ROOT, '.github/workflows/harness-v5-checks.yml');
@@ -34,12 +35,11 @@ describe('harness-v5 CI checks 结构', () => {
     expect(workflow).toMatch(/^\s*skeleton-shape-check:/m);
   });
 
-  it('workflow 通过 changes job 过滤——只在合同相关改动时真跑（required 化后无 workflow 级 paths）', () => {
-    // 2026-07-06 required 化（#3565）：workflow 级 paths 过滤移除，
-    // 改为 changes job 三点 diff 检测 + 各 job 条件 skip
-    expect(workflow).toMatch(/^\s*changes:/m);
-    expect(workflow).toMatch(/sprints\//);
-    expect(workflow).toMatch(/needs\.changes\.outputs\.contracts == 'true'/);
+  it('旧合同诊断仅保留主动调用，普通PR不再承担过时Sprint合同门禁', () => {
+    const definition = yaml.load(workflow) as {on: Record<string, unknown>};
+    expect(definition.on).toHaveProperty('workflow_dispatch');
+    expect(definition.on).not.toHaveProperty('pull_request');
+    expect(definition.on).not.toHaveProperty('push');
   });
 
   it('Sprint Tests 使用隔离 test DB、完整连接参数与 PR base SHA', () => {
@@ -62,7 +62,7 @@ describe('harness-v5 CI checks 结构', () => {
     expect(runSprintStep).toContain('DB_USER: cecelia');
     expect(runSprintStep).toContain('DB_PASSWORD: cecelia');
     expect(runSprintStep).toContain(
-      'CONTRACT_BASE_SHA: ${{ github.event.pull_request.base.sha }}',
+      'CONTRACT_BASE_SHA: ${{ github.event.pull_request.base.sha || inputs.base_revision }}',
     );
   });
 

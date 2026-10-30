@@ -30,7 +30,7 @@ updated: 2026-08-14
 | 整体架构、子系统关系 | `docs/current/SYSTEM_MAP.md` | 权威，每10个PR审计一次 |
 | **Kernel Harness / 能力（Capability）体系**（完成定义+非功能需求/7项合同/两套派发分流/provider注入链/数据账本） | `docs/current/KERNEL_HARNESS_MAP.md` | 权威指针地图，只放指针不放快照 |
 | **术语对照表**（价值流/能力/主干活动/特性/使能项/验收标准…） | `packages/workflows/KERNEL_CONTEXT.md` | 决策 a340f100 正本，对话/UI/文档统一用词 |
-| CI 流水线（L1-L4） | `docs/current/CI_PIPELINE.md` | ⚠️ 过期待重写（2026-03旧结构），仅存档参考 |
+| CI 最低保障与独立回归 | `docs/current/CI_PIPELINE.md` | 源码 CI、深度回归、发布/运维与历史诊断边界；保护规则另查 GitHub |
 | /dev 工作流 | `docs/current/DEV_PIPELINE.md` | ⚠️ 过期待重写（2026-03旧结构），仅存档参考 |
 | PR 学习记录 | `docs/learnings/cp-MMDDHHNN-xxx.md` | 每个PR自动写 |
 | 架构审查结果 | `docs/arch-reviews/YYYY-MM-DD.md` | 最新：2026-08-14 04:00 UTC，CRITICAL（12 高/18 中；当前 review 已恢复单执行，但 run-id/heartbeat/CRITICAL callback 仍无权威终态；staging hard-off 继续运行 Promotion，DB_HOST 与持久化源漂移，schema parity、Controller lease、调度测试与 nightly/release 仍未闭合） |

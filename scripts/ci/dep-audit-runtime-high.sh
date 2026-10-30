@@ -56,8 +56,13 @@ ALLOW_PKGS=(
   "braces"
 )
 
-JSON=$(npm audit --audit-level=high --omit=dev --json 2>/dev/null || true)
-[ -z "$JSON" ] && { echo "[dep-audit-runtime-high] npm audit 无输出，视为通过"; exit 0; }
+JSON=$(npm audit --audit-level=high --omit=dev --json 2>/dev/null)
+AUDIT_EXIT=$?
+if [ "$AUDIT_EXIT" -gt 1 ]; then
+  echo "依赖审计工具异常退出：$AUDIT_EXIT" >&2
+  exit 1
+fi
+printf '%s' "$JSON" | node "$(dirname "${BASH_SOURCE[0]}")/validate-npm-audit.mjs" || exit 1
 
 UNWAIVED=$(echo "$JSON" | ALLOW="${ALLOW_PKGS[*]:-}" python3 -c "
 import sys, json, os
@@ -83,7 +88,7 @@ for name, v in d.get('vulnerabilities', {}).items():
     bad[name] = (own_high[0].get('severity'), '; '.join(t for t in titles if t)[:70])
 for n, (sev, t) in sorted(bad.items()):
     print(f'{n}\t{sev}\t{t}')
-")
+") || exit 1
 
 if [ -n "$UNWAIVED" ]; then
   echo "::error::dep-audit-runtime-high 发现未豁免的 runtime high+ 漏洞："

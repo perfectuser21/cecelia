@@ -9,16 +9,27 @@ import {planChecks} from '../basic-scope.mjs';
 
 const cli = fileURLToPath(new URL('../basic-scope.mjs', import.meta.url));
 const components = rows => [...new Set(rows.map(row => row.component))];
-const all = ['brain-unit', 'brain-integration', 'engine', 'quality', 'mcp', 'api', 'dashboard', 'frontend', 'scripts'];
+const all = ['brain-unit', 'brain-integration', 'image', 'engine', 'quality', 'mcp', 'api', 'dashboard', 'scripts'];
+
+test('全量只覆盖现役组件；旧frontend自身改动仍明确验证', () => {
+  assert.equal(planChecks([], {full: true}).some(row => row.component === 'frontend'), false);
+  assert.deepEqual(components(planChecks(['frontend/src/App.tsx'])), ['frontend', 'scripts']);
+  assert.ok(components(planChecks(['frontend/vite.config.ts'])).includes('frontend'));
+});
 
 test('文档改动仍运行基础 CI 回归，且不触发应用测试', () => {
   assert.deepEqual(planChecks(['docs/guide.md', 'README.md', 'docs/diagram.svg']), [{component: 'scripts'}]);
 });
 
+test('Android改动必须执行真实Android单测，不能用JS测试替代', () => {
+  assert.deepEqual(components(planChecks(['apps/android-agent/app/src/main/java/Agent.kt'])), ['android', 'scripts']);
+  assert.ok(components(planChecks(['apps/android-agent/tsconfig.json'])).includes('android'));
+});
+
 test('Brain、Engine 与 API 共享依赖，完整运行相关组件与六个 Brain 分片', () => {
   for (const path of ['packages/brain/src/routes.js', 'packages/engine/src/index.ts', 'apps/api/src/index.ts']) {
     const rows = planChecks([path]);
-    assert.deepEqual(components(rows), ['brain-unit', 'brain-integration', 'engine', 'api', 'scripts']);
+    assert.deepEqual(components(rows), ['brain-unit', 'brain-integration', 'image', 'engine', 'api', 'scripts']);
     assert.deepEqual(rows.filter(row => row.component === 'brain-unit').map(row => row.shard), [1, 2, 3, 4, 5, 6]);
   }
 });

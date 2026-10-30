@@ -1,132 +1,103 @@
 ---
 id: current-ci-pipeline
-version: 1.1.0
-created: 2026-03-10
-updated: 2026-03-10
+version: 2.0.0
+updated: 2026-10-30
 authority: CURRENT_STATE
-changelog:
-  - 1.0.0: 初始版本（审计来源有误，基于非 main 分支旧结构）
-  - 1.1.0: 修正为四层 gate 架构（基于 main 分支 worktree 实际审计）
 ---
 
-# CI 流水线（当前事实版）
+# Cecelia CI：最小保障与独立诊断
 
-> **Authority: CURRENT_STATE**
-> 基于当前 main 分支 `.github/workflows/` 实际文件（在 worktree 中审计）。
-> 审计时间：2026-03-10。
+配置以本分支 `.github/workflows/` 和 `scripts/ci/` 为准。GitHub 合并保护是独立的外部配置，迁移时必须读回核对；修改 YAML 不会自动更新保护规则。
 
----
+## 最低保障
 
-## 1. 当前 Workflow 列表
+`ci.yml` 是 PR 和 main 的源码验证入口。最终合并检查名为 **源码保底通过**（job id 为 `ci-passed`）。新名字用于切换：旧 PR 的旧绿灯不能自动继承新基线资格。
 
+| 顶层任务 | 实际责任 | 失败含义 |
+|---|---|---|
+| plan | 真实 Git 差分选择完整组件；main/按需调用运行现役服务全量 | 无有效差分、未知 revision、计划异常都不能继续 |
+| security | Gitleaks 凭据扫描、运行依赖 high+ 与全依赖 critical 审计 | 缺失/错误报告、工具异常或未豁免漏洞均失败 |
+| checks | 按组件执行真实单测、类型检查、构建、Shell 回归、镜像和隔离运行验收 | 任一实际进程非零或信号退出均失败 |
+| ci-passed | 等待 plan/security/checks，三者都必须 success | skipped/cancelled/空值/未知值均不能通过 |
+
+检查计划使用 `basic-scope.mjs`，实际命令使用 `run-basic-check.mjs`。没有重复维护几十个汇总依赖的清单。
+
+| 组件 | 保障内容 |
+|---|---|
+| Brain | 完整单测六分片；第一片还跑 lint 与全部 Fleet Shell 回归 |
+| Brain runtime | 新建专用 PG 后执行正式迁移；启动当前源码；HTTP 创建、读回、领取、防抢领和完成任务；独立 SQL 读回结果和完成时间；确认本人进程关闭 |
+| Brain image | 使用正式 Dockerfile 构建真实镜像 |
+| Engine | 类型检查、完整单测、unit/integration/integrity Shell 回归及构建 |
+| API | 类型检查、完整单测和编译 |
+| Dashboard | 完整单测和生产构建 |
+| Quality / MCP | 各组件单测；Quality 历史共享服务探测已改为隔离 HTTP 测试 |
+| scripts | CI 自身行为回归、事实/版本一致性、迁移同号与 Skill 所有权检查 |
+| Android | 仅相关客户端改动选择 Gradle/JVM 测试，纳入同一个 ci-passed |
+| frontend | 路由表标记 Legacy/deploy:false；现役发布使用 apps/dashboard。旧目录自身变更仍检查构建和浏览器；未修改旧应用不阻断现役服务全量 |
+
+Brain/Engine/API 的共享依赖变更会选择共享运行组；全局脚本、依赖和配置变更保守选择现役服务全量。未知可执行路径不会被当成纯文档略过。文档改动仍运行 CI 自身回归和安全扫描。
+
+普通源码 CI 使用一次性本机 `cecelia_scratch` 和固定测试口令；不需要生产账号、内网、模型服务或私有 Skill 仓库访问密钥。运行验收强制拒绝远端和非 scratch 数据库。
+
+完整组件测试保留各包已声明的测试范围；它不等于所有历史测试均健康。现存 exclude/skip 不因本次重整而被解释为业务正确。
+
+## 深度回归
+
+`nightly-regression.yml` 每夜/按需运行：
+
+| 跑道 | 用途 |
+|---|---|
+| brain-integration | 用正式迁移和独立 PG，运行共享数据库清单及 integration 目录回归；显式 POSTGRES_INTEGRATION=1 |
+| walking-ci-e2e | 历史 Walking demo 的真实容器 callback、PG checkpoint 和重启恢复 |
+| real-env-smoke | Map Manifest 的授权真实 PG 正例；普通单测不获得写授权 |
+| open-issue-on-failure | 深度回归失败时记录对应 job 和运行链接，按日期去重 |
+
+深度回归不替代最低源码保障；源码绿色也不代表自动调度、真机执行或生产发布已通过。旧单分片近似覆盖率与缺产物即通过的“80%门禁”已移除，不再宣称提供全量覆盖率保证。
+
+## 独立职责
+
+| 工作流 | 定位 |
+|---|---|
+| implementation-impact.yml | 来源准入；main/按需保留原保护，PR 只在来源定义相关路径变更时运行 |
+| skill-source-ownership.yml | 所有权专项；最低 scripts 跑道也执行同一个真实检查 |
+| ci-dashboard-pwa-e2e.yml | 当前 Dashboard 的 PWA/任务台浏览器专项 |
+| app-server-canary / attempt-runtime-limits / linux-resource-canary / node-onboarding / us-price-lease | 各组件按路径触发的专项回归 |
+| preview-deploy / preview-cleanup | 当前 Apps 的预览环境创建与回收；依赖更新 bot 不占预览环境 |
+| auto-staging-deploy / deploy / brain-ci-deploy / pilot-release-verification | 发布与来源资格；以 GitHub 启用状态、宿主发布脚本和实际回执为准 |
+| heartbeat-sentinel / ci-red-alert / verify-tailscale-brain | 运维监控、告警与连接诊断 |
+| archive-learnings / cleanup-merged-artifacts / auto-version | 仓库维护；不是代码正确性证明 |
+
+`cecelia_source_only` 及生产拒绝逻辑保留。来源准入失败应报告未就绪，不能通过删除来源保护来获得“全绿”。
+
+## 已退出自动通用门禁的旧入口
+
+| 入口 | 处理理由 |
+|---|---|
+| harness-v5-checks | 旧 Sprint 合同纯度、测试形状和提交顺序；仅保留按需兼容诊断 |
+| ci-smoke-glob-runner | 旧 allow/debt/deny 全池；按需诊断，最低运行验收由真实任务生命周期承接 |
+| integration-nightly | 旧接口夹具与重复夜间入口；完整数据库回归已集中 |
+| nightly-real-machine / smoke-e2e-nightly | 假定常驻 5222 与历史任务 ID；按需环境诊断，不冒充每个源码版本的验收 |
+| pr-review | 在线 AI 辅助审查按需调用，不再自动依赖付费 API 或截断 diff 判合并资格 |
+| ci-l5-e2e-frontend | 旧应用浏览器诊断按需调用 |
+| ci.yml 内旧 DoD 动态 eval、TDD 顺序、Learning 格式、分支名、PR 大小、正则测试形状与台账棘轮 | 不构成最低源码正确性证明；实际行为与 Shell 回归仍归属相应组件 |
+
+开发前仍遵循 AGENTS.md 的 DevGate 和 PR 流程。退役工作流形状断言已迁到真实范围选择、失败传播、隔离和业务行为测试，不用把旧任务名留在新 CI 中来满足历史字符串测试。
+
+## 本地复核
+
+```bash
+npm ci --ignore-scripts
+node scripts/ci/run-basic-check.mjs scripts
+node scripts/ci/run-basic-check.mjs api
+node scripts/ci/run-basic-check.mjs dashboard
+node scripts/ci/run-basic-check.mjs brain-unit 1
 ```
-.github/workflows/
-├── ci-l1-process.yml      L1 Process Gate    — PR only，快速（2-5min）
-├── ci-l2-consistency.yml  L2 Consistency Gate — push + PR
-├── ci-l3-code.yml         L3 Code Gate        — push + PR，Brain 变动时
-├── ci-l4-runtime.yml      L4 Runtime Gate     — push + PR，Brain 变动时
-├── deploy.yml             部署 workflow（内容未完整审计）
-└── auto-version.yml       自动版本管理
-```
 
----
+运行数据库验收需自行创建本机专用临时 PG 并显式设置 DATABASE_URL/DB_*；不读取默认生产连接。CI 的 service 自动提供该资源。禁止把用户现有服务或生产库当测试夹具。
 
-## 2. 四层 Gate 架构
+## 外部切换验收
 
-```
-PR 提交
-  │
-  ├──► L1 Process Gate    [PR only]      分支合规 / PRD-DoD 格式 / Learning 格式 / 元测试
-  ├──► L2 Consistency Gate [push+PR]     CI Evolution Check
-  ├──► L3 Code Gate        [push+PR]     Brain Unit Tests（ubuntu，无 DB）
-  └──► L4 Runtime Gate     [push+PR]     Brain Integration（macOS + PostgreSQL + GoldenPath）
-```
-
----
-
-## 3. L1 Process Gate（ci-l1-process.yml）
-
-**触发**：pull_request → main（仅 PR）
-
-| Job | 职责 |
-|-----|------|
-| `changes` | 检测 engine 是否有变更 |
-| `verify-dev-workflow` | 分支名必须符合 `cp-XXXXXXXX-task-name` |
-| `dod-check` | DoD 文件格式校验 |
-| `cleanup-check` | Cleanup 产物检查 |
-| `check-prd` | PRD 文件检查（禁止 .prd/.dod 进 main） |
-| `check-learning` | Learning 格式（`### 根本原因` + `### 下次预防` + `- [ ]` checklist） |
-| `quality-meta-tests` | 质量元测试 |
-| `ci-config-audit` | CI 配置审计（engine 有变更时运行） |
-
----
-
-## 4. L2 Consistency Gate（ci-l2-consistency.yml）
-
-**触发**：push → main ｜ pull_request → main ｜ workflow_dispatch
-
-| Job | 职责 |
-|-----|------|
-| `changes` | 路径检测 |
-| `evolution-check` | `node scripts/ci-evolution-check.mjs`：检测未注册子系统和测试分类 |
-| `l2-passed` | 汇总 gate（always 运行） |
-
----
-
-## 5. L3 Code Gate（ci-l3-code.yml）
-
-**触发**：push → main ｜ pull_request → main ｜ workflow_dispatch
-**条件**：仅 brain 有变更时运行
-
-| Job | 职责 | Runner |
-|-----|------|--------|
-| `changes` | 检测 brain 变更 | ubuntu |
-| `brain-unit` | Brain 单元测试（无 DB，vi.mock db.js，不带 --coverage） | ubuntu |
-
----
-
-## 6. L4 Runtime Gate（ci-l4-runtime.yml）
-
-**触发**：push → main ｜ pull_request → main ｜ workflow_dispatch
-**条件**：仅 brain 有变更时运行
-
-| Job | 职责 | Runner |
-|-----|------|--------|
-| `changes` | 检测 brain 变更 | ubuntu |
-| `brain-integration` | 完整集成测试 + Coverage 门禁 + GoldenPath E2E | macOS |
-
-**brain-integration 配置**：
-- Homebrew postgresql@17 + pgvector，缓存 key `v2`（含 share/postgresql@17）
-- 初始化 `/tmp/pgdata`，pg_isready 前置检查（防静默失败）
-- 运行全部迁移文件 → `npx vitest run --coverage`
-- Coverage threshold 硬门禁（不可绕过）
-- OOM 容错：vitest 非 0 退出但所有测试通过 → exit 0
-- `bash scripts/goldenpath-check.sh`
-
----
-
-## 7. auto-version.yml
-
-**触发**：push → main，根据 commit 前缀自动 bump 版本（5 个文件同步）
-
-| 前缀 | bump |
-|------|------|
-| `fix:` | patch |
-| `feat:` | minor |
-| `feat!:` / `BREAKING:` | major |
-| `docs:`, `test:`, `chore:` | 不 bump |
-
----
-
-## 8. 约束汇总
-
-| 约束 | Gate | 时机 |
-|------|------|------|
-| 分支名 `cp-XXXXXXXX-task-name` | L1 / verify-dev-workflow | 所有 PR |
-| Learning 格式（3 个必要元素） | L1 / check-learning | 所有 PR |
-| PRD/DoD 不进 main | L1 / check-prd | 所有 PR |
-| DoD 格式 | L1 / dod-check | 所有 PR |
-| CI Evolution（未注册子系统） | L2 / evolution-check | 所有 push + PR |
-| Brain 单元测试（无 DB） | L3 / brain-unit | brain 变更 |
-| Brain 集成 + Coverage | L4 / brain-integration | brain 变更 |
-| GoldenPath E2E | L4 / brain-integration | brain 变更 |
+1. 固定候选 SHA 的源码 CI 真正通过。
+2. 读回 GitHub required checks；旧 Harness/Smoke/普遍来源准入改为单一 `源码保底通过` 后再允许按新规则合并。
+3. 保留 strict、管理员受限、禁止强推及 PR 要求；规则变更不能被描述为测试证据。
+4. 合并后读回 main 对应 SHA 的真实 CI；生产就绪仍由独立发布/来源保护判断。

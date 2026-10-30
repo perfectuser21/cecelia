@@ -1,8 +1,18 @@
-# DoD
+# DoD：Cecelia 最小可靠 CI
 
-- [x] [BEHAVIOR] 有持久化headed-session+非空owner且无runId的任务，在startup保留状态与认领。
-  Test: manual:bash -c 'cd packages/brain && node ../../node_modules/vitest/vitest.mjs run src/__tests__/executor-startup-sync.test.js --maxWorkers=1 --minWorkers=1'
-- [x] [BEHAVIOR] 真实scratch中Task/原authoring结果/lease全行不变；普通brainlocal和无owner仍恢复；过期lease仍由原reaper失效。
-  Test: manual:bash -c 'cd packages/brain && node ../../node_modules/vitest/vitest.mjs run --config vitest.integration.config.js src/__tests__/integration/executor-startup-headed-owner.pg.integration.test.js --maxWorkers=1 --minWorkers=1'
-- [x] [BEHAVIOR] 部署canary在syncOrphanTasksOnStartup内不查询或改共享Task，普通primary继续恢复本地孤儿。
-  Test: manual:bash -c 'cd packages/brain && node ../../node_modules/vitest/vitest.mjs run src/__tests__/executor-startup-sync.test.js --maxWorkers=1 --minWorkers=1'
+- [x] [BEHAVIOR] 范围选择采用真实 Git 差分，完整组件执行；未知/无效/空范围不静默放行。
+  Test: manual:node --test scripts/ci/__tests__/basic-scope.test.mjs
+- [x] [BEHAVIOR] 测试异常、信号、空集合、取消和跳过均被真实入口与最终汇总阻断。
+  Test: manual:node --test scripts/ci/__tests__/run-basic-check.test.mjs scripts/ci/__tests__/basic-results.test.mjs scripts/ci/__tests__/basic-workflow.test.mjs scripts/ci/__tests__/basic-npm-test.test.mjs
+- [x] [BEHAVIOR] 漏洞扫描缺少有效报告或工具异常必须失败，原安全级别和已登记例外保留。
+  Test: manual:node --test scripts/ci/__tests__/basic-dependency-audit.test.mjs
+- [x] [BEHAVIOR] 正式迁移前拒绝生产/远端/不一致连接；新 scratch 的543条迁移后实际服务任务生命周期、防抢领与SQL落库验收通过，进程清理已确认。
+  Test: manual:node --test scripts/ci/__tests__/basic-runtime.test.mjs
+- [x] [BEHAVIOR] 现役 API、Dashboard、Quality、MCP、Engine及Shell和Brain正式镜像已分别执行真实验证；六片Brain发现的旧接线断言逐项迁移。
+  Test: manual:node scripts/ci/run-basic-check.mjs scripts
+- [ ] [BEHAVIOR] 固定候选SHA在GitHub实际运行全部选定检查并给出「源码保底通过」。
+  Test: manual:bash -c 'gh pr checks cp-10302220-ci-minimum --repo perfectuser21/cecelia --required'
+- [ ] [BEHAVIOR] GitHub分支保护及规则集均只认新检查，旧PR不能用旧绿灯继承资格，保护强度其余项保留并读回。
+  Test: manual:bash -c 'gh api repos/perfectuser21/cecelia/branches/main/protection'
+- [ ] [BEHAVIOR] PR经正常保护合并，main对应SHA的实际源码CI通过，任务账写入事实、证据和actor。
+  Test: manual:bash -c 'gh run list --repo perfectuser21/cecelia --workflow ci.yml --event push --limit 5'

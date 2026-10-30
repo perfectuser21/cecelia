@@ -7,21 +7,41 @@
       "enabled": true,
       "slug": "perfectuser21/cecelia",
       "origin": "https://github.com/perfectuser21/cecelia.git",
-      "aliases": ["cecelia"],
+      "aliases": [
+        "cecelia"
+      ],
       "clone": "~/perfect21/cecelia-cw-runner",
       "worktree_base": "~/worktrees/cecelia-cw",
       "state_ns": "",
-      "required_checks": ["ci-passed", "Harness V5 Gate Passed", "Smoke Glob Runner Passed"],
-      "base_fresh_check": "lint-base-fresh",
-      "install": ["npm", "ci", "--legacy-peer-deps", "--ignore-scripts"],
+      "required_checks": [
+        "源码保底通过"
+      ],
+      "base_fresh_check": null,
+      "install": [
+        "npm",
+        "ci",
+        "--legacy-peer-deps",
+        "--ignore-scripts"
+      ],
       "qa_smoke": {
         "dir": "packages/brain/scripts/smoke",
         "allowlist": "packages/quality/smoke-allowlist.txt",
         "write_targets": "packages/quality/smoke-write-targets.txt"
       },
-      "version_fragment": { "src_re": "^packages/brain/src/", "dir": "changes" },
-      "preview": { "type": "brain_preview", "base_repo": "cecelia" },
-      "production_re": [":5221\\b", "\\b(?:localhost|127\\.0\\.0\\.1)\\s+5221\\b", "100\\.79\\.41\\.61", "\\bus-vps\\b"],
+      "version_fragment": {
+        "src_re": "^packages/brain/src/",
+        "dir": "changes"
+      },
+      "preview": {
+        "type": "brain_preview",
+        "base_repo": "cecelia"
+      },
+      "production_re": [
+        ":5221\\b",
+        "\\b(?:localhost|127\\.0\\.0\\.1)\\s+5221\\b",
+        "100\\.79\\.41\\.61",
+        "\\bus-vps\\b"
+      ],
       "automerge": true,
       "prechecks": "cecelia",
       "rules_prompt": "prompts/repo-rules/cecelia.md"
@@ -33,7 +53,10 @@
       "_note": "第一阶段：C7 已开闸（runner 认领、Brain 无头 zenithjoy 编码单改投 coding_workflow）；QA 走 local（不起预览），回归 smoke 不固化；紧急关闸 = plist 设 CODING_WF_REPOS=cecelia 或本行 enabled=false。合入 main 会经 pilot-release-verification → deploy-phone-adb-controller 自动部署生产 mmv/xian-m4 手机控制器，所以 automerge=false（已批准→Bark→人工合并）。38.23.47.81 是 MMV（US Mac M4）公网 IP，不是 zenithjoy 生产，不进 production_re。",
       "slug": "perfectuser21/zenithjoy-workspace",
       "origin": "https://github.com/perfectuser21/zenithjoy-workspace.git",
-      "aliases": ["zenithjoy", "zenithjoy-workspace"],
+      "aliases": [
+        "zenithjoy",
+        "zenithjoy-workspace"
+      ],
       "clone": "~/perfect21/zenithjoy-cw-runner",
       "worktree_base": "~/worktrees/zenithjoy-cw",
       "state_ns": "zenithjoy-workspace",
@@ -52,11 +75,21 @@
         "Android CI Gate Passed"
       ],
       "base_fresh_check": null,
-      "install": ["npm", "ci", "--ignore-scripts"],
+      "install": [
+        "npm",
+        "ci",
+        "--ignore-scripts"
+      ],
       "qa_smoke": null,
       "version_fragment": null,
-      "preview": { "type": "local" },
-      "production_re": [":5200\\b", "100\\.86\\.118\\.99", "\\bhk-vps\\b"],
+      "preview": {
+        "type": "local"
+      },
+      "production_re": [
+        ":5200\\b",
+        "100\\.86\\.118\\.99",
+        "\\bhk-vps\\b"
+      ],
       "automerge": false,
       "prechecks": "zenithjoy",
       "rules_prompt": "prompts/repo-rules/zenithjoy.md"

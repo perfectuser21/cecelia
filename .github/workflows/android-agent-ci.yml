@@ -1,12 +1,8 @@
 name: Android Agent CI
 
+# Gradle 检查由主 CI 的相关组件矩阵承担，独立入口仅供按需诊断。
 on:
-  push:
-    paths:
-      - 'apps/android-agent/**'
-  pull_request:
-    paths:
-      - 'apps/android-agent/**'
+  workflow_dispatch:
 
 concurrency:
   group: android-agent-ci-${{ github.ref }}
