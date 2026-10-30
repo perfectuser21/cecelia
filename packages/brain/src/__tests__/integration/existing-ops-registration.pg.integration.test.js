@@ -4,6 +4,7 @@ import '../../../../../tests/regression/version-gate-silent/check-brain-version-
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { readFixedExistingOpsGitFixture, fixtureGit } from '../../lib/__tests__/helpers/fixed-existing-ops-git-fixture.js';
 import { versionsDatabase } from '../fixtures/definition-versions-db.js';
 import { EXISTING_OPS_IDENTITIES } from '../../lib/existing-ops-source.js';
 import * as registration from '../../lib/existing-ops-registration.js';
@@ -34,15 +35,10 @@ it('factory source anchor plan preserves fields and rejects foreign or incomplet
   }
 });
 const root = fileURLToPath(new URL('../../../../../', import.meta.url));
-// Freeze the actual checkout once: hosted CI deliberately has shallow history.
-// This is test input provenance, never a claim that the candidate is trusted main.
-const revision = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
-const paths = execFileSync('git', ['ls-tree', '-rz', '--name-only', revision], { cwd: root, encoding: 'utf8' }).replace(/\0$/, '').split('\0');
-const cache = new Map();
-const readSource = async path => {
-  if (!cache.has(path)) cache.set(path, execFileSync('git', ['show', `${revision}:${path}`], { cwd: root, encoding: 'utf8', maxBuffer: 16000000 }));
-  return cache.get(path);
-};
+// 正样本仅为已知历史 Git fixture，不赋予当前候选来源或发布资格。
+const sourceFixture = readFixedExistingOpsGitFixture();
+const { revision, paths, tree: treeSha, entries: treeEntries } = sourceFixture;
+const readSource = async path => sourceFixture.read(path);
 let fixture;
 beforeEach(async () => {
   fixture = await versionsDatabase(); await fixture.migrate(); await minimumMapSchema(fixture.db);
@@ -154,7 +150,7 @@ it('真实PG封存毕业池选择与required版本gate来源，未知配置不�
     readSource: async path => path === 'packages/brain/vitest.config.js' ? (await readSource(path)).replace('exclude: [', 'exclude: [...UNKNOWN_TESTS,') : readSource(path) }))).rejects.toThrow();
   expect((await fixture.db.query('SELECT count(*)::int n FROM activity_definition_versions')).rows[0].n).toBe(count);
 });
-it('真实main消费者只append不可执行历史，保留全部旧登记和六个UNKNOWN', async () => {
+it('已知历史Git fixture的main消费者只append不可执行历史，保留全部旧登记和六个UNKNOWN', async () => {
   expect(registration.registerExistingOpsSources).toBeTypeOf('function');
   const before = await registration.readExistingOpsRegistry(fixture.db);
   const receipt = await registration.registerExistingOpsSources(fixture.db, options({ expectedRegistrySha256: before.registry_sha256 }));
@@ -206,8 +202,6 @@ it('生产refresh拒绝外部proof、scratch旗标及未认证来源；失败不
 });
 it('正式refresh只读固定main commit/tree字节，来源未知和截断树不能写历史',async()=>{
   await factoryMap(); const before=await registration.readExistingOpsRegistry(fixture.db);
-  const treeSha=execFileSync('git',['rev-parse',`${revision}^{tree}`],{cwd:root,encoding:'utf8'}).trim();
-  const treeEntries=execFileSync('git',['ls-tree','-rz',revision],{cwd:root,encoding:'utf8',maxBuffer:16e6}).split('\0').filter(Boolean).map(line=>{const [meta,path]=line.split('\t'),[mode,type,sha]=meta.split(' ');return {mode,type,sha,path};});
   let truncated=true,reads=0;
   const fetchFn=async(url,options)=>{
     reads++;expect(options.redirect).toBe('error');
@@ -228,11 +222,11 @@ it('正式refresh只读固定main commit/tree字节，来源未知和截断树�
   expect(snapshot.consumer_registry.registry_sha256).toBe(before.registry_sha256);
   expect(snapshot.execution_status).toBe('unknown');expect(await registration.readExistingOpsRegistry(fixture.db)).toEqual(before);
 });
-it('候选只在真实scratch冻结head消费者与地图，不激活任何旧current',async()=>{
+it('已知历史Git fixture只在真实scratch冻结消费者与地图，不激活任何旧current',async()=>{
   const before=await registration.readExistingOpsRegistry(fixture.db);
   await registration.registerExistingOpsSources(fixture.db,options({expectedRegistrySha256:before.registry_sha256}));await factoryMap();
   const baseline=await exportImplementationSnapshot(fixture.db,{scope:'cecelia-factory',repo:'perfectuser21/cecelia',revision});
-  const head=execFileSync('git',['rev-parse','HEAD'],{cwd:root,encoding:'utf8'}).trim();
+  const head=revision;
   const candidate=await buildPrImplementationSnapshot(fixture.db,baseline,head,root);
   expect(candidate.status,JSON.stringify(candidate.gaps)).toBe('verified');expect(candidate.revision).toBe(head);
   expect(candidate.definitions.workflows.every(w=>w.source_commit===head&&w.payload.definition_scope==='consumer_evidence')).toBe(true);
@@ -243,10 +237,13 @@ it('完整Factory候选在不含decisions的真实scratch重放冻结地图，�
   const before=await registration.readExistingOpsRegistry(fixture.db);
   await registration.registerExistingOpsSources(fixture.db,options({expectedRegistrySha256:before.registry_sha256}));await factoryMap();
   const baseline=await exportImplementationSnapshot(fixture.db,{scope:'cecelia-factory',repo:'perfectuser21/cecelia',revision});
-  const candidateRoot=mkdtempSync(join(tmpdir(),'factory-candidate-shallow-'));
+  const temporary=mkdtempSync(join(tmpdir(),'factory-candidate-shallow-'));
+  const candidateRoot=join(temporary,'candidate'),historicalRoot=join(temporary,'historical');
   try{
-    // Real depth-one Git input, including hosted checkout without HEAD^.
-    execFileSync('git',['clone','--depth','1','--single-branch',`file://${root}`,candidateRoot],{stdio:'pipe'});
+    // 本人临时clone固定历史fixture分支，再生成真实depth-one输入，保留无HEAD^边界。
+    execFileSync('git',['clone','--quiet','--shared','--no-checkout',root,historicalRoot]);
+    execFileSync('git',['update-ref','refs/heads/historical-fixture',revision],{cwd:historicalRoot});
+    execFileSync('git',['clone','--depth','1','--single-branch','--branch','historical-fixture',`file://${historicalRoot}`,candidateRoot],{stdio:'pipe'});
     const git=(...args)=>execFileSync('git',args,{cwd:candidateRoot,encoding:'utf8'}).trim();
     expect(git('rev-list','--count','HEAD')).toBe('1');
     expect(git('rev-parse','HEAD')).toBe(revision);
@@ -262,7 +259,7 @@ it('完整Factory候选在不含decisions的真实scratch重放冻结地图，�
     expect(candidate.execution_status).toBe('unknown');
     expect(await registration.readExistingOpsRegistry(fixture.db)).toEqual(before);
     expect((await fixture.db.query("SELECT to_regclass('decisions') id")).rows[0].id).toBeNull();
-  }finally{rmSync(candidateRoot,{recursive:true,force:true});}
+  }finally{rmSync(temporary,{recursive:true,force:true});}
 });
 
 it('scratch地图推进真实CAS冲突回滚，非scratch与外来scope在写入前拒绝',async()=>{
@@ -306,4 +303,18 @@ it('工厂冻结来源必须重核实际Git字节，重算外层digest也不能�
     const {snapshot_sha256,...body}=changed; changed.snapshot_sha256=stepSha256(body);
     await expect(frozenSource.verifySnapshotSource(changed,root)).rejects.toMatchObject({code:'IMPLEMENTATION_CI_CONSUMER_SOURCE_MISMATCH'});
   }
+});
+
+it('当前HEAD新CI不能继承历史来源资格，scratch拒绝且历史地图current全部零写',async()=>{
+ const before=await registration.readExistingOpsRegistry(fixture.db);
+ await registration.registerExistingOpsSources(fixture.db,options({expectedRegistrySha256:before.registry_sha256}));
+ await factoryMap();
+ const baseline=await exportImplementationSnapshot(fixture.db,{scope:'cecelia-factory',repo:'perfectuser21/cecelia',revision});
+ const tables=['workflow_definition_versions','activity_definition_versions','map_manifest_versions','map_projection_runs','map_scope_repositories'];
+ const state=async()=>({registry:await registration.readExistingOpsRegistry(fixture.db),
+  tables:await Promise.all(tables.map(async table=>(await fixture.db.query(`SELECT * FROM ${table} ORDER BY 1`)).rows))});
+ const unchanged=await state();
+ const head=fixtureGit('rev-parse','HEAD').trim();expect(head).not.toBe(revision);
+ await expect(buildPrImplementationSnapshot(fixture.db,baseline,head,root)).rejects.toMatchObject({code:'OPS_SOURCE_UNKNOWN'});
+ expect(await state()).toEqual(unchanged);
 });

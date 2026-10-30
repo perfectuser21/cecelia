@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, expect, it } from 'vitest';
-import { execFileSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { readFixedExistingOpsGitFixture } from '../../lib/__tests__/helpers/fixed-existing-ops-git-fixture.js';
 import { versionsDatabase } from '../fixtures/definition-versions-db.js';
 import { EXISTING_OPS_IDENTITIES } from '../../lib/existing-ops-source.js';
 import * as registration from '../../lib/existing-ops-registration.js';
@@ -13,15 +12,10 @@ import {createImplementationCiRouter} from '../../routes/implementation-ci.js';
 import {prepareNativeConsumerSelection,selectNativeConsumerDefinition} from '../../lib/native-consumer-source-selection.js';
 import {stepSha256} from '../../../scripts/sync-steps-from-workspace.mjs';
 
-const root = fileURLToPath(new URL('../../../../../', import.meta.url));
-// 一次冻结真实 checkout；CI 浅历史不依赖旧提交，也不授予候选 main 身份。
-const revision = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
-const paths = execFileSync('git', ['ls-tree', '-rz', '--name-only', revision], { cwd: root, encoding: 'utf8' }).replace(/\0$/, '').split('\0');
-const cache = new Map();
-const readSource = async path => {
-  if (!cache.has(path)) cache.set(path, execFileSync('git', ['show', `${revision}:${path}`], { cwd: root, encoding: 'utf8', maxBuffer: 16000000 }));
-  return cache.get(path);
-};
+// 正样本仅为已知历史 Git fixture，不赋予当前候选来源或发布资格。
+const sourceFixture = readFixedExistingOpsGitFixture();
+const { revision, paths, tree: treeSha, entries } = sourceFixture;
+const readSource = async path => sourceFixture.read(path);
 let fixture;
 beforeEach(async () => {
   fixture = await versionsDatabase(); await fixture.migrate(); await minimumMapSchema(fixture.db);
@@ -48,10 +42,6 @@ afterEach(async () => { await fixture?.close(); });
 const options = extra => ({ scope: 'cecelia-factory', repo: 'perfectuser21/cecelia', revision, paths, readSource, checkMain: async () => {}, actor: 'test-real-main', ...extra });
 
 // 真实固定 Git 内容经模拟 GitHub transport 传递；不向生产发请求、不注入 proof。
-const treeSha=execFileSync('git',['rev-parse',`${revision}^{tree}`],{cwd:root,encoding:'utf8'}).trim();
-const entries=execFileSync('git',['ls-tree','-rz',revision],{cwd:root,encoding:'utf8',maxBuffer:16e6}).split('\0').filter(Boolean).map(line=>{
- const [meta,path]=line.split('\t'),[mode,type,sha]=meta.split(' ');return {mode,type,sha,path};
-});
 function transport(change=()=>{}){
  const calls=[];
  const fetchFn=async(url)=>{
