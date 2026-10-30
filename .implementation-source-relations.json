@@ -2,6 +2,18 @@
   "schema_version": 1,
   "repo": "perfectuser21/cecelia",
   "relations": [
+    {"owner_path":"packages/brain/scripts/coding-workflow/runner/run-once.mjs","path":"sprints/10281421-cw-800eef4e/05-qa-report-r1.md","role":"documentation"},
+    {"owner_path":"packages/brain/scripts/coding-workflow/runner/run-once.mjs","path":"sprints/10281421-cw-800eef4e/01-intent.md","role":"documentation"},
+    {"owner_path":"packages/brain/scripts/coding-workflow/runner/run-once.mjs","path":"sprints/10281421-cw-800eef4e/01-invariants.md","role":"documentation"},
+    {"owner_path":"packages/brain/scripts/coding-workflow/runner/run-once.mjs","path":"sprints/10281421-cw-800eef4e/02-response-r1.md","role":"documentation"},
+    {"owner_path":"packages/brain/scripts/coding-workflow/runner/run-once.mjs","path":"sprints/10281421-cw-800eef4e/02-response-r2.md","role":"documentation"},
+    {"owner_path":"packages/brain/scripts/coding-workflow/runner/run-once.mjs","path":"sprints/10281421-cw-800eef4e/02-review-r1.md","role":"documentation"},
+    {"owner_path":"packages/brain/scripts/coding-workflow/runner/run-once.mjs","path":"sprints/10281421-cw-800eef4e/02-review-r2.md","role":"documentation"},
+    {"owner_path":"packages/brain/scripts/coding-workflow/runner/run-once.mjs","path":"sprints/10281421-cw-800eef4e/02-review-r3.md","role":"documentation"},
+    {"owner_path":"packages/brain/scripts/coding-workflow/runner/run-once.mjs","path":"sprints/10281421-cw-800eef4e/02-review.md","role":"documentation"},
+    {"owner_path":"packages/brain/scripts/coding-workflow/runner/run-once.mjs","path":"sprints/10281421-cw-800eef4e/02-spec.md","role":"documentation"},
+    {"owner_path":"packages/brain/scripts/coding-workflow/runner/run-once.mjs","path":"sprints/10281421-cw-800eef4e/03-build.md","role":"documentation"},
+    {"owner_path":"packages/brain/scripts/coding-workflow/runner/run-once.mjs","path":"sprints/10281421-cw-800eef4e/04-evidence.md","role":"documentation"},
     {
       "owner_path": "packages/brain/scripts/coding-workflow/runner/run-once.mjs",
       "path": "sprints/10272102-cw-b3d6f213/05-qa-report-r7.md",
