@@ -171,7 +171,7 @@ async function collectDocImports({ selected, paths, parse, read, readSource, rev
     relations.push(...edges.values());
   } catch { requireProof(false, 'doc_static_import_unproven'); }
 }
-export async function collectRuntimeSources({ parse, paths, selectors, read, readSource, revision, relations, requireProof, ci }) {
+export async function collectRuntimeSources({ parse, paths, selectors, read, readSource, revision, relations, requireProof, ci, basicCi = false }) {
   const selected = paths.filter(path => /^packages\/brain\/scripts\/coding-workflow\/.+\.(?:test|spec)\.(?:m?js)$/.test(path) && !path.split('/').some(p => p.startsWith('.'))
     && selectors.include.some(p => p.test(path)) && !selectors.exclude.some(p => p.test(path)));
   const relation = (consumer_path,input_path,kind) => relations.push({consumer_path,input_path,kind,revision});
@@ -197,10 +197,10 @@ export async function collectRuntimeSources({ parse, paths, selectors, read, rea
     const source = checkout && guard && run && rootRun(doc,job,run,undefined) && rootRun(doc,job,guard,'tooling') && run.if === undefined && guard.if === undefined && checkout.if === undefined
       && job.steps.indexOf(checkout) < job.steps.indexOf(guard) && job.steps.indexOf(guard) < job.steps.indexOf(run)
       && job.if === "inputs.export_device_patrol_source_identity != true && github.event_name != 'pull_request' && github.ref == 'refs/heads/main'";
-    if (requireProof(source && testRun && testJob.if === undefined && rootRun(ciDoc,testJob,testRun,undefined) && ciDoc.jobs['ci-passed']?.needs?.includes('lint-auto-merge-decision'),'native_provider_execution_unproven')) {
-      await read(PROVIDER); await read(PROVIDER_TEST);
-      await collectRootNpm({parse,paths,read,readSource,revision,relations,requireProof,ci});
-      relation(WORKFLOW,PROVIDER,'trusted_main_snapshot_node_entry'); relation('.github/workflows/ci.yml',PROVIDER_TEST,'required_node_test');
+    if (requireProof(source && (basicCi || testRun && testJob.if === undefined && rootRun(ciDoc,testJob,testRun,undefined) && ciDoc.jobs['ci-passed']?.needs?.includes('lint-auto-merge-decision')),'native_provider_execution_unproven')) {
+      await read(PROVIDER); if (!basicCi) await read(PROVIDER_TEST);
+      if (!basicCi) await collectRootNpm({parse,paths,read,readSource,revision,relations,requireProof,ci});
+      relation(WORKFLOW,PROVIDER,'trusted_main_snapshot_node_entry'); if (!basicCi) relation('.github/workflows/ci.yml',PROVIDER_TEST,'required_node_test');
     }
   }
 }
@@ -328,7 +328,7 @@ const REVIEWED_FILES={
   "scripts/lib/brain-staging.sh": ["57697254e538f75b6a99e276e0b3d95405eb29f95c6a01686f5fd66dd5227089", "66b077f7f395ed77b16254219231a5308f72c1ba7d3739a4e7f2adecd59a9170"],
   "scripts/staging-verify.sh": ["7174239878cb2b159e6cd8cc3ab8cb2af102ef75a7c188e1c6d73fae48932925", "4cea6715002cdf642248da1f277192cee9fe8a03a85a45315a6796063569bcba"],
   "scripts/wait-for-staging.sh": "feed4d74afc960f4c6ce73b27c63cf2249aef8cd5b17c9dea10199e3ab1251c0",
-  "scripts/brain-deploy.sh": ["b75e43593d5d24ddbfeec4a5eb46ba20602259aeb27664268401eb3de6d7a428", "a77963695be92a5e55f6a5260c283d1d18ce6ce7398be8915d39ea49380e059e", "6858cc545b52fc20c15c401161cb73cec3fbbf96abf59762255507961cfe945b"],
+  "scripts/brain-deploy.sh": ["b75e43593d5d24ddbfeec4a5eb46ba20602259aeb27664268401eb3de6d7a428", "a77963695be92a5e55f6a5260c283d1d18ce6ce7398be8915d39ea49380e059e", "6858cc545b52fc20c15c401161cb73cec3fbbf96abf59762255507961cfe945b", "cfacb800dfb02c846bbfbb739e090b845a55611abde0cbfd89dbf49b84ce9529"],
   "scripts/lib/brain-bootstrap.sh": "703dfbb061e938c8b7b58426389960c3de718d20fd4772bc238928823887f714"
 };
 const ROUTE_AST_SHA='7190b4987ffa5adbab19d5fcf17d341586db536bba7dfeb97c205aab63c910c4';
@@ -338,7 +338,7 @@ const BUDGET_STAGING_FILES={
   "scripts/lib/brain-staging.sh": ["66b077f7f395ed77b16254219231a5308f72c1ba7d3739a4e7f2adecd59a9170", "0adad6c3b8f8e3f398fb7621af31876a60f31a9303346d14fac55e5401f01b00"],
   "scripts/staging-verify.sh": ["7174239878cb2b159e6cd8cc3ab8cb2af102ef75a7c188e1c6d73fae48932925", "4cea6715002cdf642248da1f277192cee9fe8a03a85a45315a6796063569bcba"],
   "scripts/wait-for-staging.sh": "6ca3e437f2583ce77e0ac916958a726ad0c884637d032e7b76003700a69b2467",
-  "scripts/brain-deploy.sh": ["b75e43593d5d24ddbfeec4a5eb46ba20602259aeb27664268401eb3de6d7a428", "a77963695be92a5e55f6a5260c283d1d18ce6ce7398be8915d39ea49380e059e", "6858cc545b52fc20c15c401161cb73cec3fbbf96abf59762255507961cfe945b"],
+  "scripts/brain-deploy.sh": ["b75e43593d5d24ddbfeec4a5eb46ba20602259aeb27664268401eb3de6d7a428", "a77963695be92a5e55f6a5260c283d1d18ce6ce7398be8915d39ea49380e059e", "6858cc545b52fc20c15c401161cb73cec3fbbf96abf59762255507961cfe945b", "cfacb800dfb02c846bbfbb739e090b845a55611abde0cbfd89dbf49b84ce9529"],
   "scripts/lib/brain-bootstrap.sh": "703dfbb061e938c8b7b58426389960c3de718d20fd4772bc238928823887f714"
 };
 const BUDGET_FILES={
@@ -454,7 +454,7 @@ export async function collectIsolatedStagingSources({read,requireProof,relations
   const source=await read(path);requireProof(source&&(Array.isArray(digest)?digest:[digest]).includes(stagingHash(source)),'isolated_staging_source_unproven');
   if(path==='scripts/brain-deploy.sh'&&source){
    const deployDigest=stagingHash(source);
-   sourceOnlyDeploy=['a77963695be92a5e55f6a5260c283d1d18ce6ce7398be8915d39ea49380e059e','6858cc545b52fc20c15c401161cb73cec3fbbf96abf59762255507961cfe945b'].includes(deployDigest);
+   sourceOnlyDeploy=['a77963695be92a5e55f6a5260c283d1d18ce6ce7398be8915d39ea49380e059e','6858cc545b52fc20c15c401161cb73cec3fbbf96abf59762255507961cfe945b','cfacb800dfb02c846bbfbb739e090b845a55611abde0cbfd89dbf49b84ce9529'].includes(deployDigest);
    bootstrapDeploy=deployDigest==='6858cc545b52fc20c15c401161cb73cec3fbbf96abf59762255507961cfe945b';
   }
  }
@@ -481,41 +481,4 @@ export async function collectIsolatedStagingSources({read,requireProof,relations
 }
 
 // 仅证明真实nightly回归消费链；不声称生产版本发布已经运行。
-const AUTO_VERSION_TEST='packages/brain/src/__tests__/auto-version-decision.test.js';
-const AUTO_VERSION_WORKFLOW='.github/workflows/auto-version.yml';
-const AUTO_VERSION_FILES={
-  "packages/brain/src/__tests__/auto-version-decision.test.js": "2a242093e5c91a35e243bf100e46ddfd26478210478094a7bca8d0186b09c25f",
-  ".github/workflows/auto-version.yml": "c4dd4558b9d3c72583bd2fa8ad2391ca5ecbc11fec7c7ba2271cc66374fc16b0",
-  "packages/brain/scripts/auto-version-decision.mjs": "2264d26f91cb4ab6662abfc1eb6eb487fcb884ddb6f582781484c3df0d20c045",
-  "packages/brain/scripts/auto-version-apply.mjs": "a8560b338a8fa6e20f985e24a7d6dbf673790ecd11b7c67979f8b0cd535f8b8b",
-  "scripts/ci/implementation-auxiliary-evidence.mjs": ["f5d052b9965825c1facb602084f18fa5063c687f8825f6f7711299c419bb09d0", "f96a4c4639f1d8a43acde5e646c5910abc5b0896efadd063939a0cda3f7de3ba"],
-  "packages/brain/src/lib/gp-assertion-command.js": "d47bbd492971ad5ed5ec9d4c6915b85bb318c990bc998f84c808ad24aa3f3fe0",
-  "packages/brain/src/lib/step-probe-spec.js": "c9c3e710368c0e57e7926b8a6c4a352efbb769210c45e00d13cb47729786f025"
-};
-export async function collectAutoVersionTestSources({read,requireProof,relations,revision,parse,selectors}) {
-  requireProof(Boolean(selectors&&selectors.include.some(pattern=>pattern.test(AUTO_VERSION_TEST))&&!selectors.exclude.some(pattern=>pattern.test(AUTO_VERSION_TEST))),'auto_version_test_selector_unproven');
-  const texts=new Map();
-  for(const[path,expected]of Object.entries(AUTO_VERSION_FILES)) {
-    const text=await read(path);texts.set(path,text);
-    requireProof(text&&[expected].flat().includes(createHash('sha256').update(text).digest('hex')),'auto_version_test_source_unproven');
-  }
-  const relation=(consumer_path,input_path,kind)=>relations.push({consumer_path,input_path,kind,revision});
-  relation('packages/brain/vitest.config.js',AUTO_VERSION_TEST,'literal_vitest_verification_selector');
-  relation(AUTO_VERSION_TEST,AUTO_VERSION_WORKFLOW,'verified_test_yaml_read');
-  for(const input of ['packages/brain/scripts/auto-version-decision.mjs','packages/brain/scripts/auto-version-apply.mjs']) {
-    relation(AUTO_VERSION_TEST,input,'verified_test_workflow_bash_script');
-    relation(AUTO_VERSION_WORKFLOW,input,'fixed_node_script_verification_input');
-  }
-  // 从实际冻结语法读取本仓import，不靠出现在traversal里猜直接绑定。
-  for(const[path,text]of texts) {
-    if(!/\.[cm]?js$/.test(path)||!text)continue;
-    for(const node of parse(text).body.filter(node=>node.type==='ImportDeclaration')) {
-      const input=node.source.value;if(!input.startsWith('.'))continue;
-      const segments=path.split('/').slice(0,-1);
-      for(const part of input.split('/')){if(part==='..')segments.pop();else if(part!=='.')segments.push(part);}
-      const resolved=segments.join('/');
-      requireProof(Object.hasOwn(AUTO_VERSION_FILES,resolved),'auto_version_test_dependency_unproven');
-      if(Object.hasOwn(AUTO_VERSION_FILES,resolved))relation(path,resolved,'fixed_relative_verification_import');
-    }
-  }
-}
+export { collectAutoVersionTestSources } from './existing-ops-workspace-source.js';

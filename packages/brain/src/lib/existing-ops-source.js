@@ -1,4 +1,5 @@
 /** 已有工厂活动的只读消费者证据；不执行源码，也不声明完整流程可运行。 */
+import { basicCiSelectorEnabled, collectBasicCiSources, collectDeepCiSources, skillExcludeSpread, deepPostgresDirectorySelected } from './existing-ops-workspace-source.js';
 import { createHash } from 'node:crypto';
 import { posix } from 'node:path';
 import yaml from 'js-yaml';
@@ -15,6 +16,7 @@ export const EXISTING_OPS_REPO = 'perfectuser21/cecelia';
 export const EXISTING_OPS_SCOPE = 'cecelia-factory';
 // 仅固定 Git 源携带此版本才扩展证据；旧冻结修订的消费者绑定必须保持原样。
 export const EXISTING_OPS_SELECTOR_SCHEMA = 2;
+export const EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = 0;
 export const EXISTING_OPS_RUNTIME_SELECTOR_SCHEMA = 1;
 export const EXISTING_OPS_BUILD_SELECTOR_SCHEMA = 1;
 export const EXISTING_OPS_AGGREGATE_SELECTOR_SCHEMA = 1;
@@ -80,7 +82,7 @@ function nativeTestSelectorProven(text) {
   return include?.type === 'ArrayExpression' && include.elements.some(n => literal(n, 'src/**/*.{test,spec}.?(c|m)[jt]s?(x)'));
 }
 /** 仅证明现有毕业池，避免逐个远程读取整个 unit 树。未知配置/语法不能扩大认领。 */
-function regressionSelectors(text) {
+function regressionSelectors(text, skillExcludes = null) {
   const program = ast(text);
   const imported = program.body.find(n => n.type === 'ImportDeclaration' && literal(n.source, 'vitest/config'));
   if (!imported?.specifiers.some(n => n.type === 'ImportSpecifier' && n.imported.name === 'defineConfig' && n.local.name === 'defineConfig')) throw Error('selector_import_unproven');
@@ -100,6 +102,7 @@ function regressionSelectors(text) {
     return node.elements.flatMap(n => {
       if (n?.type === 'Literal' && typeof n.value === 'string') return [n.value];
       if (n?.type === 'SpreadElement' && n.argument?.name === 'POSTGRES_INTEGRATION_TESTS') return postgres;
+      if (skillExcludes && skillExcludeSpread(n, program, 'brain')) return skillExcludes;
       throw Error('selector_literal_unproven');
     });
   };
@@ -375,23 +378,25 @@ export async function buildExistingOpsSources({ scope, repo, revision, paths, re
     const nightly = await read('.github/workflows/nightly-regression.yml');
     const ci = await read('.github/workflows/ci.yml');
     const config = await read('packages/brain/vitest.config.js');
-    const integrationConfig = await read('packages/brain/vitest.integration.config.js');
+    const schemaText = tree.has('packages/brain/src/lib/existing-ops-source.js') ? await readSource('packages/brain/src/lib/existing-ops-source.js', revision) : '';
+    const basicCi = schemaText && basicCiSelectorEnabled(schemaText, ast);
+    const integrationConfig = basicCi ? null : await read('packages/brain/vitest.integration.config.js');
+    const skillExcludes = basicCi ? await collectBasicCiSources({ read, ci, revision, relations, parse: ast, paths }) : null;
+    if (basicCi) await collectDeepCiSources({ read, revision, relations });
     const nightlyRuns = nightly ? workflowRuns(nightly) : [];
-    requireProof(nightlyRuns.some(r => shellLines(r.run).some(line => /^npx vitest run --shard=\$SHARD\/6\b/.test(line))), 'nightly_full_unit_unproven');
-    requireProof(nightlyRuns.some(r => shellLines(r.run).some(line => /^cd packages\/brain && npx vitest run (?:--config vitest\.integration\.config\.js )?src\/__tests__\/integration\/(?:\s|$)/.test(line))), 'nightly_integration_unproven');
-    requireProof(ci && workflowRuns(ci).some(r => shellLines(r.run.replace(/\\\r?\n/g, ' ')).some(line => /^npx vitest run\s+--config vitest\.integration\.config\.js\b/.test(line))), 'ci_integration_unproven');
+    requireProof(basicCi || nightlyRuns.some(r => shellLines(r.run).some(line => /^npx vitest run --shard=\$SHARD\/6\b/.test(line))), 'nightly_full_unit_unproven');
+    requireProof(basicCi || nightlyRuns.some(r => shellLines(r.run).some(line => /^cd packages\/brain && npx vitest run (?:--config vitest\.integration\.config\.js )?src\/__tests__\/integration\/(?:\s|$)/.test(line))), 'nightly_integration_unproven');
+    requireProof(basicCi || ci && workflowRuns(ci).some(r => shellLines(r.run.replace(/\\\r?\n/g, ' ')).some(line => /^npx vitest run\s+--config vitest\.integration\.config\.js\b/.test(line))), 'ci_integration_unproven');
     requireProof(config && nativeTestSelectorProven(config), 'native_test_selector_unproven');
-    requireProof(integrationConfig && nativeIntegrationConfigProven(integrationConfig), 'native_integration_config_unproven');
-    const schemaPath = 'packages/brain/src/lib/existing-ops-source.js';
+    requireProof(basicCi || integrationConfig && nativeIntegrationConfigProven(integrationConfig), 'native_integration_config_unproven');
     // 读取固定修订的协议标记，不向旧修订追加新的 binding 或重写其摘要。
-    const schemaText = tree.has(schemaPath) ? await readSource(schemaPath, revision) : '';
     const expanded = schemaText && expandedSelectorSchema(schemaText);
     const runtime = schemaText && runtimeSelectorEnabled(schemaText, ast);
     const buildInputs = schemaText && buildSelectorEnabled(schemaText, ast);
     const aggregate = schemaText && ciEntrySelectorEnabled(schemaText, ast, 'EXISTING_OPS_AGGREGATE_SELECTOR_SCHEMA');
     const goldset = schemaText && ciEntrySelectorEnabled(schemaText, ast, 'EXISTING_OPS_GOLDSET_SELECTOR_SCHEMA');
-    if (aggregate || goldset) await collectCiEntrySources({ aggregate, goldset, parse: ast, read, ci, revision, relations, requireProof });
-    const selectors = expanded && config ? regressionSelectors(config) : null;
+    if (!basicCi && (aggregate || goldset)) await collectCiEntrySources({ aggregate, goldset, parse: ast, read, ci, revision, relations, requireProof });
+    const selectors = expanded && config ? regressionSelectors(config, skillExcludes) : null;
     const autoVersion=schemaText&&ciEntrySelectorEnabled(schemaText,ast,'EXISTING_OPS_AUTO_VERSION_SELECTOR_SCHEMA');
     if(autoVersion)await collectAutoVersionTestSources({read,requireProof,relations,revision,parse:ast,selectors});
     if (selectors) for (const path of paths.filter(path => path.startsWith('tests/regression/') && !path.split('/').some(part => part.startsWith('.'))
@@ -404,7 +409,7 @@ export async function buildExistingOpsSources({ scope, repo, revision, paths, re
     const proofRead = reviewedA ? async path => reviewedA.normalize(path, await read(path)) : read;
     const proofSource = reviewedA ? async (path, rev) => reviewedA.normalize(path, await readSource(path, rev)) : readSource;
     if (reviewedA) await reviewedA.record({ read, relations, buildInputs });
-    if (runtime && selectors) await collectRuntimeSources({ parse: ast, paths, selectors, read: proofRead, readSource: proofSource, revision, relations, requireProof, ci });
+    if (runtime && selectors) await collectRuntimeSources({ parse: ast, paths, selectors, read: proofRead, readSource: proofSource, revision, relations, requireProof, ci, basicCi });
     if (buildInputs) {
       if (requireProof(Boolean(runtime && selectors), 'build_selector_parent_unproven'))
         await collectBuildSources({ parse: ast, paths, selectors, read: proofRead, readSource: proofSource, revision, relations, requireProof });
@@ -439,7 +444,7 @@ export async function buildExistingOpsSources({ scope, repo, revision, paths, re
       relations.push({consumer_path:IMPACT_WORKFLOW,input_path:MULTI_ENTRY,kind:'conditional_pr_admission_runner',revision},
         ...[[MULTI_ENTRY,MULTI_SOURCE],[MULTI_ENTRY,prPath],[MULTI_SOURCE,gatePath]].map(([consumer_path,input_path])=>({consumer_path,input_path,kind:'reachable_named_import_call',revision})));
     }
-    if(tree.has(NIGHTLY_READER)){
+    if(!basicCi&&tree.has(NIGHTLY_READER)){
       const doc=ci?yaml.load(ci):null,job='lint-auto-merge-decision';
       const invoked=doc?.jobs?.[job]?.steps?.some(s=>typeof s.run==='string'&&shellLines(s.run).includes(`node --test ${NIGHTLY_READER}`));
       requireProof(invoked&&doc.jobs['ci-passed']?.needs?.includes(job),'nightly_reader_ci_unproven');
@@ -453,15 +458,15 @@ export async function buildExistingOpsSources({ scope, repo, revision, paths, re
         {consumer_path:F5_SMOKE,input_path:HEALTH_SMOKE,kind:'relative_bash_call',revision});
     }
     // CI确实还原配置literal PG清单；没有实际选择器的其它文件继续不认领。
-    const explicit=paths.filter(path => /^packages\/brain\/src\/__tests__\/integration\/[^\n]+\.(?:test|spec)\.(?:[cm]?js)$/.test(path));
-    const configured=config?integrationConfigInputs(config).filter(path=>tree.has(path)&&/\.(?:[cm]?js)$/.test(path)):[];
+    const explicit=paths.filter(path => (basicCi ? deepPostgresDirectorySelected(path) : /^packages\/brain\/src\/__tests__\/integration\/[^\n]+\.(?:test|spec)\.(?:[cm]?js)$/.test(path)));
+    const configured=config?[...integrationConfigInputs(config), ...(basicCi ? ['packages/brain/src/orchestrator/__tests__/contract-store.test.js', 'packages/brain/src/__tests__/migration-370-gp-governance-decisions.test.js', 'packages/brain/src/__tests__/nightly-orchestrator.integration.test.js'] : [])].filter(path=>tree.has(path)&&/\.(?:[cm]?js)$/.test(path)):[];
     for (const path of [...new Set([...explicit,...configured])]) {
       const test = await read(path);
       if (!test) continue;
-      relations.push({ consumer_path: explicit.includes(path)?'.github/workflows/nightly-regression.yml':'packages/brain/vitest.integration.config.js', input_path: path,
-        kind: explicit.includes(path)?'explicit_vitest_directory':'literal_postgres_config_input', revision });
+      relations.push({ consumer_path: basicCi?'scripts/ci/deep-integration.config.mjs':explicit.includes(path)?'.github/workflows/nightly-regression.yml':'packages/brain/vitest.integration.config.js', input_path: path,
+        kind: basicCi?'deep_postgres_config_input':explicit.includes(path)?'explicit_vitest_directory':'literal_postgres_config_input', revision });
       // URL必须真实readFileSync直接输入，SQL关系来自调用表达式而非目录名字。
-      const inputs = literalSqlInputs(test);
+      const inputs = basicCi && !/\.[cm]?js$/.test(path) ? [] : literalSqlInputs(test);
       for (const inputPath of inputs) {
         const segments = path.split('/').slice(0, -1);
         for (const part of inputPath.split('/')) { if (part === '..') segments.pop(); else if (part !== '.') segments.push(part); }

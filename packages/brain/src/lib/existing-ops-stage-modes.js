@@ -43,3 +43,10 @@ export const REVIEWED_STAGE_MODES=Object.freeze([base,{
  'lib/repo-profile.mjs':base['lib/repo-profile.mjs'].replace("['cecelia', 'zenithjoy']", "['cecelia', 'zenithjoy', 'skills']"),
  'repos.json':JSON.stringify({...repos,repos:[...repos.repos,SKILLS_PROFILE]}),
 }]);
+
+// 只改变Cecelia登记的必需汇总名，其余完整仓库模式保持已审Skills变体。
+export const BASIC_CI_STAGE_MODE=Object.freeze({
+ ...REVIEWED_STAGE_MODES[1],
+ 'repos.json':JSON.stringify({...JSON.parse(REVIEWED_STAGE_MODES[1]['repos.json']),repos:JSON.parse(REVIEWED_STAGE_MODES[1]['repos.json']).repos.map(repo=>
+  repo.key==='cecelia'?{...repo,required_checks:['源码保底通过'],base_fresh_check:null}:repo)}),
+});

@@ -107,7 +107,7 @@ export const REMAINING_LEGACY_SITES = {
   // 语义相近但值不同——第3份独立维护，PR1 只搬家不合并）+ BASE_LABELS（:1021，task_type→短展示
   // 标签，第5份独立维护的 label 映射，无匹配注册表字段）
   'routes/harness.js': ['936:TASK_TYPE_TO_SKILL', '1024:BASE_LABELS'],
-  // kind: map（long-lived）— Task 4 评估：:902 description 是 GET /api/brain/task-types
+  // kind: map（long-lived）— Task 4 评估：:926（#6712前为:915）description 是 GET /api/brain/task-types
   // 的人类可读展示文案（仅5个类型有文案，不是"哪类"的分类标签），要对应注册表字段需给全部
   // ~80 个 task_type 逐个写产品文案，属独立的文档撰写工作，非 PR1 零行为变化范围
   'routes/tasks.js': ['926:description'],
