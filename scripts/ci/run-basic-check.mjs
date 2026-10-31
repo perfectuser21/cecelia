@@ -38,6 +38,8 @@ export function commandsFor(component, shard) {
       ];
     case 'api':
       return [step('apps/api', 'npm', 'run', 'typecheck'), vitest('apps/api'), step('apps/api', 'npm', 'run', 'build')];
+    case 'api-integration':
+      return [step('apps/api', 'npx', '--no-install', 'vitest', 'run', '--config', 'vitest.integration.config.ts')];
     case 'dashboard':
       return [vitest('apps/dashboard'), step('apps/dashboard', 'npm', 'run', 'build')];
     case 'frontend':
@@ -48,9 +50,13 @@ export function commandsFor(component, shard) {
     case 'mcp': return [vitest('packages/mcp-readonly')];
     case 'ops': return opsChecks(root);
     case 'scripts': {
-      const tests = readdirSync(resolve(root, 'scripts/ci/__tests__'))
-        .filter(name => /^(basic-.*|run-basic-check|brain-source-only-deploy)\.test\.mjs$/.test(name))
-        .sort().map(name => `scripts/ci/__tests__/${name}`);
+      const tests = readdirSync(resolve(root, 'scripts/ci/__tests__'), { withFileTypes: true })
+        .filter(entry => /^(basic-.*|run-basic-check|brain-source-only-deploy)\.test\.mjs$/.test(entry.name))
+        .map(entry => {
+          if (!entry.isFile()) throw new Error(`Node测试入口必须是普通文件：${entry.name}`);
+          return entry.name;
+        }).sort().map(name => `scripts/ci/__tests__/${name}`);
+      if (!tests.length) throw new Error('Node测试集合为空');
       return [
         step('.', 'node', '--test', ...tests),
         step('.', 'node', 'scripts/facts-check.mjs'),

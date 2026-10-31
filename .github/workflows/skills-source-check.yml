@@ -1,39 +1,9 @@
 name: Pinned Skill Sources
 on:
   pull_request:
-    paths:
-      - '.skills-source.json'
-      - 'scripts/*skills-source*'
-      - '.github/actions/skills-source/**'
-      - '.github/workflows/skills-source-check.yml'
-      - 'scripts/ci/skill-source-tests.mjs'
-      - 'scripts/ci/run-skill-source-check.mjs'
-      - 'packages/*/vitest.skill-source.config.mjs'
-      - 'vitest.skill-source.config.mjs'
-      - 'packages/brain/**/*.skill-source.test.*'
-      - 'packages/engine/**/*.skill-source.test.*'
-      - 'packages/quality/**/*.skill-source.test.*'
-      - '**/*.skill-source.test.*'
-      - 'packages/brain/scripts/ci/__tests__/skill-contract.test.mjs'
-      - 'packages/brain/src/__tests__/unified-map-consumers.test.js'
-      - 'packages/brain/src/workflows/__tests__/*skill*.test.js'
-      - 'packages/brain/src/workflows/__tests__/b20-planner-thin-prd-subject.test.js'
-      - 'packages/brain/src/workflows/__tests__/b31-eval-cookie-isolate.test.js'
-      - 'packages/brain/src/workflows/__tests__/planner-role-branch-contract.test.js'
-      - 'packages/brain/src/orchestrator/__tests__/*-skill.test.js'
-      - 'packages/engine/tests/proxy/phase8*-points.test.ts'
-      - 'packages/engine/tests/skills/coding-workflow-entry-docs.test.ts'
-      - 'packages/engine/tests/skills/harness-*.test.ts'
-      - 'packages/engine/tests/skills/language-rule.test.ts'
-      - 'packages/engine/tests/skills/research-proxy-integration.test.ts'
-      - 'packages/quality/tests/regression/harness-android-target-environment.test.ts'
-      - 'tests/skills/harness-planner-push-noise.test.js'
-      - 'packages/brain/src/golden-path-contract-task.js'
-      - 'packages/brain/src/harness-shared.js'
-      - 'packages/brain/scripts/ci/skill-contract-check.mjs'
-      - 'docker/cecelia-runner/entrypoint.sh'
-      - 'scripts/extract-contract-e2e.cjs'
-      - 'packages/brain/src/orchestrator/__tests__/evaluator-evidence-bridge.fixture.js'
+    branches: [main]
+  push:
+    branches: [main]
   workflow_dispatch:
 permissions:
   contents: read
@@ -79,3 +49,22 @@ jobs:
         uses: ./.github/actions/skills-source
         with:
           ssh-key: ${{ secrets.SKILLS_SOURCE_SSH_KEY }}
+
+  passed:
+    name: 固定Skill合同通过
+    if: always()
+    needs: [contracts, restore]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every selected contract and restoration result
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          node --input-type=module <<'NODE'
+          const needs = JSON.parse(process.env.NEEDS_JSON || 'null');
+          for (const job of ['contracts', 'restore']) {
+            if (needs?.[job]?.result !== 'success') throw new Error(`${job} 未完成：${needs?.[job]?.result || 'missing'}`);
+          }
+          console.log('固定Skill合同全部通过');
+          NODE

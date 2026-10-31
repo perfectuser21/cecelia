@@ -76,7 +76,7 @@ jobs:
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     services:
       postgres:
-        image: ${{ matrix.component == 'brain-integration' && 'mirror.gcr.io/pgvector/pgvector:pg15' || '' }}
+        image: ${{ (matrix.component == 'brain-integration' || matrix.component == 'api-integration') && 'mirror.gcr.io/pgvector/pgvector:pg15' || '' }}
         env:
           POSTGRES_USER: ci
           POSTGRES_PASSWORD: isolated-ci
@@ -86,6 +86,7 @@ jobs:
     env:
       CI: 'true'
       POSTGRES_INTEGRATION: ${{ matrix.component == 'brain-integration' && '1' || '0' }}
+      API_PG_INTEGRATION: ${{ matrix.component == 'api-integration' && '1' || '0' }}
       CODEX_RELAY_HOME: /tmp/ci-fake-codex-home
       DB_HOST: '127.0.0.1'
       DB_PORT: '5432'

@@ -3,12 +3,12 @@ import {appendFileSync} from 'node:fs';
 import {resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 
-const ORDER = ['brain-unit', 'brain-integration', 'image', 'engine', 'quality', 'mcp', 'api', 'dashboard', 'frontend', 'android', 'ops', 'scripts'];
+const ORDER = ['brain-unit', 'brain-integration', 'image', 'engine', 'quality', 'mcp', 'api', 'api-integration', 'dashboard', 'frontend', 'android', 'ops', 'scripts'];
 // ci/routing-map.yml 将 frontend 标为 Legacy/deploy:false；现役发布入口为 apps/dashboard。
 // 保留旧目录自身变更的验证，但现役全量不隐含重新发布旧应用。
 // Android 客户端自身修改必须运行 Gradle；服务端全量不重复构建未变更的移动客户端。
 const ACTIVE = ORDER.filter(component => !['frontend', 'android'].includes(component));
-const SHARED_RUNTIME = ['brain-unit', 'brain-integration', 'image', 'engine', 'api', 'ops'];
+const SHARED_RUNTIME = ['brain-unit', 'brain-integration', 'image', 'engine', 'api', 'api-integration', 'ops'];
 const DOCUMENT = /\.(?:md|txt|rst|png|jpe?g|gif|svg|webp|pdf)$/i;
 const DOCUMENT_NAME = /(?:^|\/)(?:README|CHANGELOG|CONTRIBUTING|CODE_OF_CONDUCT|SECURITY|LICENSE)\.md$/i;
 const ROOT_DOCUMENT = /^(?:AGENTS|CLAUDE|DEFINITION|PRD|DoD)\.md$/i;

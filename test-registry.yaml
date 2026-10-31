@@ -89,35 +89,35 @@ tests:
   # — alertness 系统（Brain 活跃模块，tick loop 每次调用）——————————————————————
 
   - id: alertness-diagnosis
-    path: tests/alertness/diagnosis.test.js
+    path: packages/brain/src/__tests__/alertness/diagnosis.test.js
     type: unit
     ci: L3
     status: active
-    note: "问题诊断、趋势分析、异常预测"
+    note: "实际异常模式识别、严重度及建议动作"
 
   - id: alertness-escalation
-    path: tests/alertness/escalation.test.js
+    path: packages/brain/src/__tests__/alertness/escalation.test.js
     type: unit
     ci: L3
     status: active
     note: "4级响应体系(L0/L1/L2/L3)触发逻辑"
 
   - id: alertness-healing
-    path: tests/alertness/healing.test.js
+    path: packages/brain/src/__tests__/alertness/healing.test.js
     type: unit
     ci: L3
     status: active
     note: "自愈策略定义、恢复阶段"
 
   - id: alertness-levels
-    path: tests/alertness/levels.test.js
+    path: packages/brain/src/__tests__/alertness/levels.test.js
     type: unit
     ci: L3
     status: active
     note: "5级警觉等级状态转换"
 
   - id: alertness-metrics
-    path: tests/alertness/metrics.test.js
+    path: packages/brain/src/__tests__/alertness/metrics.test.js
     type: unit
     ci: L3
     status: active

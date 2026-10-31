@@ -1,7 +1,7 @@
 ---
 id: current-ci-pipeline
 version: 2.0.0
-updated: 2026-10-30
+updated: 2026-11-01
 authority: CURRENT_STATE
 ---
 
@@ -29,6 +29,7 @@ authority: CURRENT_STATE
 | Brain image | 使用正式 Dockerfile 构建真实镜像 |
 | Engine | 类型检查、完整原生单测、unit/integration/integrity Shell 回归及构建 |
 | API | 类型检查、完整单测和编译 |
+| API PG | 临时HTTP服务与每文件私有scratch schema，memory/planning/dev-session共45项真实合同；缺DB或未知外连失败，收尾关闭HTTP与pool并删除本人schema |
 | Dashboard | 完整单测和生产构建 |
 | Quality / MCP | 各组件单测；Quality 历史共享服务探测已改为隔离 HTTP 测试 |
 | Ops | 部署、预览、镜像保留与回退、Runner、进程清理等既有 Node/Shell 夹具；自动发现同类新增测试，关键类别为空即失败 |
@@ -50,7 +51,7 @@ Brain/Engine/API 的共享依赖变更会选择共享运行组及 Ops 回归；�
 
 完整组件测试保留各包已声明的测试范围；它不等于所有历史测试均健康。现存 exclude/skip 不因本次重整而被解释为业务正确。
 
-审计清理按实际保障归并：API 意图识别与 Brain 判级仅保留一份同环境回归；账龄测试统一在真实函数的 `.js` 测试中，保留 F6 回归并验证查询、计数、间隔与告警边界；Dashboard 全景测试直接导入产品组件。三个账龄空骨架、组件复制实现及已删除旧图实现的停用合同退出测试发现。代表性错误变体在专用副本中验证，不能改坏共享源码来制造红灯。现役 API 缺隔离环境、历史 watchdog 失败债务与故意拒绝旧运行时复活的负例继续单独记账，不能因为停用或路径不存在就自动删除。
+审计清理按实际保障归并：API 意图识别与 Brain 判级仅保留一份同环境回归；账龄测试统一在真实函数的 `.js` 测试中，保留 F6 回归并验证查询、计数、间隔与告警边界；Dashboard 全景测试直接导入产品组件。三个账龄空骨架、组件复制实现及已删除旧图实现的停用合同退出测试发现。代表性错误变体在专用副本中验证，不能改坏共享源码来制造红灯。现役 API 的三个历史skip已迁入独立PG跑道；两份watchdog crisis测试修正过期平台fixture后回到默认测试，API巡查的旧skip改为隔离真实子进程。故意拒绝旧运行时复活的负例继续保留，不能因为路径不存在就自动删除。
 
 ## 深度回归
 
@@ -69,9 +70,9 @@ Brain/Engine/API 的共享依赖变更会选择共享运行组及 Ops 回归；�
 
 | 工作流 | 定位 |
 |---|---|
-| implementation-impact.yml | 来源准入；main/按需保留原保护，PR 只在来源定义相关路径变更时运行 |
+| implementation-impact.yml | 来源准入；所有目标main的PR、main push与按需调用均执行，保留真实差分与来源资格保护 |
 | skill-source-ownership.yml | 所有权专项；最低 scripts 跑道也执行同一个真实检查 |
-| skills-source-check.yml | 固定 Skill 来源的三系统恢复校验及 Brain/Engine/Quality/root 正文合同；测试与原生对齐输入变更都触发，独立于普通源码 CI |
+| skills-source-check.yml | 固定 Skill 来源的三系统恢复校验及 Brain/Engine/Quality/root 正文合同；所有目标main的PR与main push执行，固定Skill合同通过严格汇总全部结果 |
 | ci-dashboard-pwa-e2e.yml | 当前 Dashboard 的 PWA/任务台浏览器专项 |
 | skill-distillation-eval.yml | 按需运行固定截图的真实在线模型评测；沿用原阈值和凭据引用，服务或报告失败真实报红，不作为所有源码 PR 的前置条件 |
 | app-server-canary / attempt-runtime-limits / linux-resource-canary / node-onboarding / us-price-lease | 各组件按路径触发的专项回归 |
@@ -115,6 +116,18 @@ node scripts/ci/run-basic-check.mjs brain-unit 1
 ## 外部切换验收
 
 1. 固定候选 SHA 的源码 CI 真正通过。
-2. 读回 GitHub required checks；旧 Harness/Smoke/普遍来源准入改为单一 `源码保底通过` 后再允许按新规则合并。
+2. 读回 GitHub required checks；以 `源码保底通过` 和 `固定Skill合同通过` 替换旧 Harness/Smoke/ci-passed，继续要求 `Implementation impact gate` 的真实来源准入。三个必需检查均对所有目标main的PR产生结果。
 3. 保留 strict、管理员受限、禁止强推及 PR 要求；规则变更不能被描述为测试证据。
 4. 合并后读回 main 对应 SHA 的真实 CI；生产就绪仍由独立发布/来源保护判断。
+
+第二批清理保留真实行为：能力向量CLI、capture triage、Radius→cascade、通知缓存、预算接口、进程诊断和GTD页面不再测试常量或复制实现。意识门控以语法控制流验证，不以附近50行文本判断。五份旧alertness规格迁到现役native入口并同步注册表；OOM旧毕业副本由原生回归及真实HTTP退出码写回替代。
+
+CI自检直接解析维护中测试：新增字面量自比较不能通过，字符串fixture和真实函数结果不误报。这个窄规则只拦显然空断言，不把所有字符串匹配判为垃圾。测试替代还需真实错误变体与独立审查。源码变体只在隔离副本或加载器内存中执行，不改坏共享源码。
+
+provenance测试仅复用不可变的初始Git夹具，每例使用私有可写副本；并发push必须互不污染。保留了完整实测有收益的record夹具优化；source-merge收益受抖动影响，已恢复原实现，不以删行数或理论估算承诺提速。
+
+Node测试入口仅接受匹配名称的普通文件；同名目录、符号链接及空集合直接失败，避免Node递归发现超出已证明的执行范围。来源选择器严格对应Deep实际glob与排除规则，隐藏目录和node_modules不能凭路径名获得“已执行”关系。
+
+排除项不再作为一整块“数据库测试”隐藏：27份隔离测试恢复默认执行，连同额度耗尽保护和真实executor孤儿恢复，共29文件418项通过默认配置。两份逐字相同的额度测试归并；两份已退役initiative推进规格由现役不查数据库、返回零变更的守卫承接。
+
+`scripts/ci/brain-test-debt.json` 精确登记剩余69份未被自动配置接收的测试：7份隔离夹具、59份真实资源依赖、3份旧规格。CI按实际维护glob与源码/Deep/Pinned/real-env入口计算差集；新增遗漏或清单漂移报错。root手动配置不计自动保障，配置接收也不等于文件内全部用例实际通过，59份资源测试本轮未执行。

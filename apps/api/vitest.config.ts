@@ -29,6 +29,11 @@ export default defineConfig({
       ]
     },
     include: ['**/*.{test,spec}.{ts,tsx}'],
-    exclude: ['node_modules', 'dist', '.idea', '.git', '.cache']
+    exclude: [
+      'node_modules', 'dist', '.idea', '.git', '.cache',
+      'src/system/__tests__/memory.test.ts',
+      'src/system/__tests__/planning.test.ts',
+      'src/system/__tests__/dev-session.test.ts',
+    ]
   }
 });
