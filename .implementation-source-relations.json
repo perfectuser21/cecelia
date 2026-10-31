@@ -2532,7 +2532,7 @@
       "path": "packages/brain/src/__tests__/harness-worktree-recovery.test.js",
       "role": "verification"
     },
-    
+
     {
       "owner_path": "packages/brain/src/lib/existing-ops-build-source.js",
       "path": "docs/learnings/cp-10271820-b-source.md",
@@ -2547,11 +2547,6 @@
       "owner_path": "packages/brain/src/lib/existing-ops-build-source.js",
       "path": "packages/brain/src/lib/__tests__/existing-ops-b-legacy-compat.test.js",
       "role": "verification"
-    },
-    {
-      "owner_path": "packages/brain/src/lib/existing-ops-build-source.js",
-      "path": "changes/cp-10281318-b840-source.md",
-      "role": "release"
     },
     {
       "owner_path": "packages/brain/src/lib/existing-ops-build-source.js",
@@ -2572,11 +2567,6 @@
       "owner_path": "packages/brain/src/harness-watchdog.js",
       "path": "tests/gp/f1/step1-headed-lease.test.js",
       "role": "verification"
-    },
-    {
-      "owner_path": "packages/brain/src/harness-watchdog.js",
-      "path": "changes/cp-10312350-headed-watchdog.md",
-      "role": "release"
     }
   ]
 }
