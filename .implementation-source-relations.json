@@ -678,6 +678,11 @@
       "role": "verification"
     },
     {
+      "owner_path": "packages/brain/src/notion-relay-projection.js",
+      "path": "packages/brain/src/__tests__/notion-relay-projection.test.js",
+      "role": "verification"
+    },
+    {
       "owner_path": "packages/brain/src/notion-push-sync.js",
       "path": "packages/brain/src/projection/__tests__/task-progress.test.js",
       "role": "verification"
