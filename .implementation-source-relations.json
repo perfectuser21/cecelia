@@ -694,6 +694,11 @@
     },
     {
       "owner_path": "packages/brain/src/notion-relay-projection.js",
+      "path": "packages/brain/scripts/smoke/relay-mirror-smoke.sh",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/notion-relay-projection.js",
       "path": "packages/brain/src/__tests__/notion-relay-projection.projects.test.js",
       "role": "verification"
     },
