@@ -8,12 +8,12 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { execSync, spawnSync } from 'child_process';
-import { mkdtempSync, rmSync, appendFileSync, writeFileSync, readFileSync, mkdirSync, copyFileSync, existsSync } from 'fs';
+import { mkdtempSync, rmSync, appendFileSync, writeFileSync, readFileSync, readdirSync, mkdirSync, chmodSync, existsSync } from 'fs';
+import { createHash } from 'crypto';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
 const SCRIPT = new URL('../../../../scripts/deploy-local.sh', import.meta.url).pathname;
-const SAMPLER = new URL('../../../../scripts/host-disk-sampler.sh', import.meta.url).pathname;
 const GIT_ID = '-c user.email=t@t.t -c user.name=t';
 
 let base, clone;
@@ -47,9 +47,8 @@ function runDeploy(extraEnv = {}) {
   });
 }
 
-function seedTrackedHostSample({ failingSampler = false } = {}) {
+function seedTrackedHostSample() {
   mkdirSync(join(clone, '.runtime'));
-  mkdirSync(join(clone, 'scripts'));
   const samplePath = join(clone, '.runtime', 'host-disk.json');
   writeFileSync(samplePath, JSON.stringify({
     sampled_at_epoch: 1,
@@ -58,10 +57,7 @@ function seedTrackedHostSample({ failingSampler = false } = {}) {
     effective_free_bytes: 50392907776,
     usage_pct: 76,
   }));
-  const samplerPath = join(clone, 'scripts', 'host-disk-sampler.sh');
-  if (failingSampler) writeFileSync(samplerPath, '#!/usr/bin/env bash\nexit 9\n');
-  else copyFileSync(SAMPLER, samplerPath);
-  sh(`git -C "${clone}" add .runtime/host-disk.json scripts/host-disk-sampler.sh && git -C "${clone}" ${GIT_ID} commit -q -m 'add tracked sample' && git -C "${clone}" push -q origin main`);
+  sh(`git -C "${clone}" add .runtime/host-disk.json && git -C "${clone}" ${GIT_ID} commit -q -m 'add tracked sample' && git -C "${clone}" push -q origin main`);
   writeFileSync(samplePath, JSON.stringify({
     sampled_at_epoch: Math.floor(Date.now() / 1000),
     data_avail_bytes: 973357056,
@@ -70,6 +66,10 @@ function seedTrackedHostSample({ failingSampler = false } = {}) {
     usage_pct: 97,
   }));
   return samplePath;
+}
+
+function sha256(path) {
+  return createHash('sha256').update(readFileSync(path)).digest('hex');
 }
 
 describe('deploy-root-guard', () => {
@@ -98,23 +98,39 @@ describe('deploy-root-guard', () => {
     expect(dirty).toBe('');
   });
 
-  it('AUTORESET=1：重置 tracked 磁盘样本后，部署判定前重新采集真实宿主数据', () => {
+  it('AUTORESET=1：重置 tracked 磁盘样本后原样恢复宿主采样字节', () => {
     const samplePath = seedTrackedHostSample();
-    const startedAt = Math.floor(Date.now() / 1000);
+    const beforeSha = sha256(samplePath);
+    const beforeEpoch = JSON.parse(readFileSync(samplePath, 'utf8')).sampled_at_epoch;
     const r = runDeploy({ CECELIA_DEPLOY_AUTORESET: '1' });
     expect(r.status).toBe(0);
     const sample = JSON.parse(readFileSync(samplePath, 'utf8'));
-    expect(sample.sampled_at_epoch).toBeGreaterThanOrEqual(startedAt);
-    expect(sample.effective_free_bytes).toBeGreaterThan(0);
-    expect(r.stdout).toContain('host-disk');
+    expect(sha256(samplePath)).toBe(beforeSha);
+    expect(sample.sampled_at_epoch).toBe(beforeEpoch);
+    expect(sample.effective_free_bytes).toBe(973357056);
+    expect(r.stdout).toContain('宿主磁盘采样已恢复');
+    expect(readdirSync(join(clone, '.runtime')).filter(name => name.startsWith('.host-disk-deploy-'))).toEqual([]);
   });
 
-  it('AUTORESET=1：重采样失败则清除 Git 旧样本并阻断部署', () => {
-    const samplePath = seedTrackedHostSample({ failingSampler: true });
+  it('AUTORESET=1：原本无活样本时清除 Git 重置带回的历史样本', () => {
+    const samplePath = seedTrackedHostSample();
+    rmSync(samplePath);
     const r = runDeploy({ CECELIA_DEPLOY_AUTORESET: '1' });
-    expect(r.status).not.toBe(0);
+    expect(r.status).toBe(0);
     expect(existsSync(samplePath)).toBe(false);
-    expect(r.stdout + r.stderr).toContain('磁盘采样失败');
+  });
+
+  it('AUTORESET=1：活样本备份失败时硬红且原样保留', () => {
+    const samplePath = seedTrackedHostSample();
+    const beforeSha = sha256(samplePath);
+    const fakeBin = join(base, 'fake-bin');
+    mkdirSync(fakeBin);
+    writeFileSync(join(fakeBin, 'mktemp'), '#!/usr/bin/env bash\nexit 9\n');
+    chmodSync(join(fakeBin, 'mktemp'), 0o755);
+    const r = runDeploy({ CECELIA_DEPLOY_AUTORESET: '1', PATH: `${fakeBin}:${process.env.PATH}` });
+    expect(r.status).not.toBe(0);
+    expect(r.stdout + r.stderr).toContain('宿主磁盘采样备份失败');
+    expect(sha256(samplePath)).toBe(beforeSha);
   });
 
   it('干净 main → 通过守卫，无相关改动 exit 0', () => {
