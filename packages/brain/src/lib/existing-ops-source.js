@@ -1,5 +1,5 @@
 /** 已有工厂活动的只读消费者证据；不执行源码，也不声明完整流程可运行。 */
-import { basicCiSelectorEnabled, collectBasicCiSources, collectDeepCiSources, skillExcludeSpread, deepPostgresDirectorySelected } from './existing-ops-workspace-source.js';
+import { collectBasicDiagnosticInputs, basicCiSelectorEnabled, collectBasicCiSources, collectDeepCiSources, skillExcludeSpread, deepPostgresDirectorySelected } from './existing-ops-workspace-source.js';
 import { createHash } from 'node:crypto';
 import { posix } from 'node:path';
 import yaml from 'js-yaml';
@@ -397,6 +397,7 @@ export async function buildExistingOpsSources({ scope, repo, revision, paths, re
     const goldset = schemaText && ciEntrySelectorEnabled(schemaText, ast, 'EXISTING_OPS_GOLDSET_SELECTOR_SCHEMA');
     if (!basicCi && (aggregate || goldset)) await collectCiEntrySources({ aggregate, goldset, parse: ast, read, ci, revision, relations, requireProof });
     const selectors = expanded && config ? regressionSelectors(config, skillExcludes) : null;
+    if(basicCi)await collectBasicDiagnosticInputs({paths,read,parse:ast,revision,relations});
     const autoVersion=schemaText&&ciEntrySelectorEnabled(schemaText,ast,'EXISTING_OPS_AUTO_VERSION_SELECTOR_SCHEMA');
     if(autoVersion)await collectAutoVersionTestSources({read,requireProof,relations,revision,parse:ast,selectors});
     if (selectors) for (const path of paths.filter(path => path.startsWith('tests/regression/') && !path.split('/').some(part => part.startsWith('.'))
