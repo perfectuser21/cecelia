@@ -1,7 +1,8 @@
 /** 仅证明已审真实测试消费阶段入口；不改变业务执行、不声明实际模型或业务验收成功。 */
 import {STAGE_ENVELOPES as REVIEWED, ISOLATION_STAGE_ENVELOPES, MERGE_STAGE_ENVELOPES} from './existing-ops-stage-envelopes.js';
 import {nativeEvidenceStages,nativeStageTest,NATIVE_PROVENANCE_PATHS,NATIVE_HISTORY_PATH,nativeStaticEdges,nativeEvaluateEdges} from './existing-ops-native-evidence-source.js';
-import {REVIEWED_STAGE_MODES} from './existing-ops-stage-modes.js';
+import {basicCiEnabledAt,collectBasicCiSources,BASIC_CI} from './existing-ops-workspace-source.js';
+import {REVIEWED_STAGE_MODES,BASIC_CI_STAGE_MODE} from './existing-ops-stage-modes.js';
 export const EXISTING_OPS_REPO_RULES_INPUT_SCHEMA=1;
 const PREFIX='packages/brain/scripts/coding-workflow/';
 const STAGES=['intent','spec','spec-review','verify','evaluate'];
@@ -143,7 +144,11 @@ export async function collectStageSources({parse,paths,selectors,read,readSource
   }
   mode={};for(const p of Object.keys(REVIEWED.mode)){const text=await readSource(PREFIX+p,revision);mode[p]=p.endsWith('.json')?JSON.parse(text):parse(text);}
   // 接受完整旧模式或完整已审Skills扩展，禁止分别挑文件拼接成未知组合。
-  if(!REVIEWED_STAGE_MODES.some(expected=>Object.keys(expected).every(p=>same(mode[p],p.endsWith('.json')?JSON.parse(expected[p]):reviewed(expected[p],parse)))))throw Error('stage mode');
+  const matches=expected=>Object.keys(expected).every(p=>same(mode[p],p.endsWith('.json')?JSON.parse(expected[p]):reviewed(expected[p],parse)));
+  if(!REVIEWED_STAGE_MODES.some(matches)){
+   if(!matches(BASIC_CI_STAGE_MODE)||!await basicCiEnabledAt({paths,readSource,revision,parse}))throw Error('stage mode');
+   await collectBasicCiSources({read:async path=>{if(!paths.includes(path))throw Error('missing basic source');return readSource(path,revision);},ci:await readSource(BASIC_CI,revision),revision,relations:[],parse});
+  }
   const repos=mode['repos.json'].repos;
   if(repos.find(r=>r.key==='zenithjoy-workspace')?.preview?.type!=='local'||repos.find(r=>r.default)?.preview?.type!=='brain_preview')throw Error('stage modes');
   // The new reviewed Skills profile always declares these inputs; the marker also upgrades a new two-repo tree.
