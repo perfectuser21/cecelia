@@ -46,6 +46,16 @@ describe('buildProjectProps / Body', () => {
     for(const v of ['候选已准备，业务未验','https://github.com/owner/repo/pull/2352','actions/runs/123','actions/runs/456','123456789abcdef','同一候选预发'])expect(props+body).toContain(v);
     expect(digestOf(buildProjectProps(ROOT,snap),buildProjectBody(ROOT,snap))).not.toBe(digestOf(buildProjectProps(ROOT,SNAP),buildProjectBody(ROOT,SNAP)));
   });
+  it('正文保留多个进行中任务，避免摘要只显示最近两项时遗漏第三项', () => {
+    const children=Array.from({length:3},(_,i)=>({id:`c${i}`,title:`任务${i}`,status:'in_progress',updated_at:`2026-10-31T16:48:0${i}Z`,result:{facts:[`事实${i}`]}}));
+    const snap={...SNAP,children};const props=JSON.stringify(buildProjectProps(ROOT,snap));const body=JSON.stringify(buildProjectBody(ROOT,snap));
+    expect(props).not.toContain('事实0');expect(body).toContain('事实0');expect(body).toContain('事实1');expect(body).toContain('事实2');
+  });
+  it('任务转为阻断后保留事实证据与下一步并如实显示状态', () => {
+    const snap={...SNAP,children:[{id:'c',title:'评分异常',status:'blocked',updated_at:'2026-10-31T17:09:57Z',result:{leadgen_103_false_exclusion_progress:{facts:['候选未验收'],evidence:{pr:'https://github.com/o/r/pull/2352'},next_step:'排查'}}}]};
+    const output=JSON.stringify(buildProjectProps(ROOT,snap))+JSON.stringify(buildProjectBody(ROOT,snap));
+    for(const value of ['已阻断','候选未验收','https://github.com/o/r/pull/2352','排查'])expect(output).toContain(value);
+  });
   it('属性：Status 映射、AI Project、Run ID、Remark 含 1/2 棒 + 待拍板 1', () => {
     const p = buildProjectProps(ROOT, SNAP);
     expect(p.Status.status.name).toBe('In Progress');

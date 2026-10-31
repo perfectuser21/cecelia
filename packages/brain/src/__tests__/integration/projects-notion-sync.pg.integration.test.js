@@ -119,6 +119,10 @@ describe.sequential('Projects 双向同步：真实 PG 与有状态 Notion 接�
     expect((await sync()).ok).toBe(true);
     expect(notionText(page.properties['AI 进展'].rich_text)).toContain('业务已验');
     expect(notionText(page.properties.Remark.rich_text)).toBe('人工备注');
+    await client.query(`UPDATE tasks SET status='blocked',updated_at=now() WHERE id=$1`,[id]);
+    expect((await sync()).ok).toBe(true);
+    expect(notionText(page.properties['AI 进展'].rich_text)).toContain('已阻断');
+    expect(notionText(page.properties['AI 进展'].rich_text)).toContain('业务已验');
   });
   it('超过30行全量推送、两轮幂等、双改人赢、导入人工正文始终保留', async () => {
     const roots = [];
