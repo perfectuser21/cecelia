@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, existsSync, rmSync } from 'node:fs';
+import { mkdtempSync, existsSync, rmSync, mkdirSync, copyFileSync, writeFileSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -79,4 +79,31 @@ test('API真实数据库合同使用独立完整集成配置，不能归入DOM�
   assert.equal(steps.length, 1);
   assert.ok(steps[0].cwd.endsWith('/apps/api'));
   assert.deepEqual(steps[0].args, ['--no-install', 'vitest', 'run', '--config', 'vitest.integration.config.ts']);
+});
+
+
+function isolatedScriptList(t, withFile) {
+  const directory = realpathSync(mkdtempSync(join(tmpdir(), 'ci-script-list-')));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const ci = join(directory, 'scripts/ci');
+  mkdirSync(join(ci, '__tests__'), { recursive: true });
+  for (const name of ['run-basic-check.mjs', 'ops-checks.mjs']) copyFileSync(new URL(`../${name}`, import.meta.url), join(ci, name));
+  if (withFile) writeFileSync(join(ci, '__tests__/basic-real.test.mjs'), "import {test} from 'node:test'; test('real', () => {});");
+  return { directory, ci, run: () => spawnSync(process.execPath, [join(ci, 'run-basic-check.mjs'), '--list', 'scripts'], { encoding: 'utf8' }) };
+}
+
+test('Node测试发现拒绝伪装成.test.mjs的目录，不能把未证明的递归测试交给Node', t => {
+  const f = isolatedScriptList(t, true);
+  mkdirSync(join(f.ci, '__tests__/basic-fake.test.mjs'));
+  writeFileSync(join(f.ci, '__tests__/basic-fake.test.mjs/nested.test.mjs'), 'throw new Error("must not execute");');
+  const result = f.run();
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /普通文件|regular file/);
+});
+
+test('Node测试发现集合为空必须失败，不能退回默认递归发现或空成功', t => {
+  const f = isolatedScriptList(t, false);
+  const result = f.run();
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /集合为空|empty/);
 });
