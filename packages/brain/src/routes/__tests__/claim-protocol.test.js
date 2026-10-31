@@ -154,6 +154,21 @@ describe('A. tasks.js PATCH /:task_id → in_progress: 自动写 claimed_by + ex
     expect(updateCall[1]).toContain('session:engine-patch');
   });
 
+  it('blocked 有头账本恢复须先由真实执行者 claim，PATCH 不得占成 session:engine-patch', async () => {
+    mockSelectOk({
+      status: 'blocked',
+      claimed_by: null,
+      executor_kind: 'headed-session',
+      payload: { headed_manual: true },
+    });
+    const res = await request(app)
+      .patch('/api/brain/tasks/task-1')
+      .send({ status: 'in_progress' });
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe('CLAIM_REQUIRED_FOR_BLOCKED_RECOVERY');
+    expect(mockPool.query.mock.calls.some(([sql]) => String(sql).includes('UPDATE tasks'))).toBe(false);
+  });
+
   it('status→completed 时 UPDATE 不写 executor_kind 列', async () => {
     mockSelectOk({ status: 'in_progress', claimed_by: 'session:x', executor_kind: 'headed-session' });
     mockUpdateOk();
