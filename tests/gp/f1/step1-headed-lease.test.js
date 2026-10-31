@@ -26,6 +26,19 @@ const scan = pool => resumeStalledHarnessDrivers({ pool, maxFreshStarts: 3, exec
 const row = async id => (await fx.pool.query('SELECT status,claimed_by FROM tasks WHERE id=$1', [id])).rows[0];
 
 describe.sequential('有效租约保护无 initiative_runs 的有头会话（真实 PG）', () => {
+  it.each([true, 'true'])('headed_manual=%s 的有头账本无需 run 或租约也不因 claim 年龄误杀', async headedManual => {
+    const id = await seedTask(fx.pool, {
+      task_type: 'harness_initiative',
+      payload: { orchestrator: 'skill-relay', headed_manual: headedManual },
+    });
+    await claimTaskWithLease(fx.pool, {
+      taskId: id, claimer: 'codex:103-false-exclusion-fix', executorKind: 'headed-session',
+    });
+    await fx.pool.query("UPDATE tasks SET status='in_progress', claimed_at=NOW()-INTERVAL '90 minutes' WHERE id=$1", [id]);
+    await scan(fx.pool);
+    expect(await row(id)).toEqual({ status: 'in_progress', claimed_by: 'codex:103-false-exclusion-fix' });
+  });
+
   it('开工已超 grace，但同 owner 租约有效时不清 claim、不降级', async () => {
     const id = await staleHeadedTask();
     await scan(fx.pool);

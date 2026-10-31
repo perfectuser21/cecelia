@@ -48,6 +48,30 @@ beforeEach(async () => {
 });
 
 describe('resumeStalledHarnessDrivers — never-started branch (fabf6bd6)', () => {
+  it('活跃有头账本不以缺 initiative_runs 判死：候选和锁内都排除 headed_manual，任意 Codex claimer 生效', async () => {
+    mockPoolQuery.mockImplementation(async () => ({ rows: [] }));
+    await resumeStalledHarnessDrivers({});
+    const candidateSql = mockPoolQuery.mock.calls
+      .map(([sql]) => String(sql))
+      .find(sql => isNeverStartedCandidateSql(sql));
+    expect(candidateSql).toMatch(/t\.payload->>'headed_manual'[\s\S]*<>\s*'true'/i);
+
+    const TASK_ID = '70a56d85-3b88-451b-a683-7112284eca6d';
+    let lockSql = '';
+    const dbPool = {
+      query: vi.fn(async sql => isNeverStartedCandidateSql(String(sql))
+        ? { rows: [{ id: TASK_ID }] } : { rows: [] }),
+      connect: vi.fn(async () => ({
+        query: vi.fn(async sql => {
+          if (isTaskLockSql(String(sql))) lockSql = String(sql);
+          return { rows: [] };
+        }),
+        release: vi.fn(),
+      })),
+    };
+    await resumeStalledHarnessDrivers({ pool: dbPool, execFn: () => '' });
+    expect(lockSql).toMatch(/tasks\.payload->>'headed_manual'[\s\S]*<>\s*'true'/i);
+  });
   it('never-started 候选按版本感知身份排除 v2 current_task、v1 initiative 和无身份 legacy v2 run', async () => {
     mockPoolQuery.mockImplementation(async () => ({ rows: [] }));
 
