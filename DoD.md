@@ -17,6 +17,8 @@
   Test: manual:node --test scripts/ci/__tests__/run-basic-check.test.mjs scripts/ci/__tests__/basic-results.test.mjs scripts/ci/__tests__/basic-workflow.test.mjs scripts/ci/__tests__/basic-npm-test.test.mjs
 - [x] [BEHAVIOR] 漏洞扫描缺少有效报告或工具异常必须失败，原安全级别和已登记例外保留。
   Test: manual:node --test scripts/ci/__tests__/basic-dependency-audit.test.mjs
+- [x] [BEHAVIOR] 真实审计拦截的 follow-redirects 1.16.1 升级到兼容修复版1.16.2，保留漏洞拦截与既有例外边界。
+  Test: manual:bash -c 'bash scripts/ci/dep-audit-runtime-high.sh && bash scripts/ci/dep-audit-critical.sh'
 - [x] [BEHAVIOR] 既有 Ops、部署、Runner 和预览行为回归有真实执行入口；关键类别为空失败，实际完整集合通过。
   Test: manual:node scripts/ci/run-basic-check.mjs ops
 - [x] [BEHAVIOR] 只读部署诊断不能写共享部署状态或结算retention；真实部署成功、失败出口保持原结算。
