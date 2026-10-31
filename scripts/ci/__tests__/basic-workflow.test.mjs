@@ -83,12 +83,12 @@ test('必需来源准入始终接收main PR和push，不能因路径过滤缺少
   assert.ok(impact.jobs.gate.steps.length > 0, '保留实际来源准入执行');
 });
 
-test('来源准入先执行真实基线选择与只读就绪工具单测，不能仅保留脚本调用', () => {
+test('来源准入先执行发布、跨仓、技能与巡查机制回归，不能仅保留脚本调用', () => {
   const impact = yaml.load(readFileSync(new URL('../../../.github/workflows/implementation-impact.yml', import.meta.url), 'utf8'));
   const steps = impact.jobs.gate.steps;
-  const command = 'node --test scripts/ci/__tests__/implementation-pr-baseline.test.mjs scripts/ci/__tests__/implementation-source-ready.test.mjs';
+  const command = 'node --test scripts/ci/__tests__/implementation-main-snapshot.test.mjs scripts/ci/__tests__/workspace-ci-source-bundle.test.mjs scripts/ci/__tests__/implementation-skill-source.test.mjs scripts/ci/__tests__/device-patrol-governance.test.mjs';
   const checks = steps.filter(step => step.run === command);
-  assert.equal(checks.length, 1, '两份来源工具回归必须接入必需来源检查');
+  assert.equal(checks.length, 1, '原有四份来源机制入口必须接入必需来源检查');
   const [step] = checks;
   assert.equal(step['working-directory'], 'source');
   for (const key of ['if', 'continue-on-error', 'env', 'shell']) assert.equal(step[key], undefined, `${key}不能掩盖工具单测结果`);
