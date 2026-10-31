@@ -13,16 +13,19 @@ function fixture(row = root) {
     if (/UPDATE projects/.test(sql) && /human_baseline/.test(sql)) saved.notion_props.human_baseline = JSON.parse(values[1]);
     return { rows: [] };
   }) };
-  const req = vi.fn(async (_t, path, method) => {
+  let blocks = [];
+  const req = vi.fn(async (_t, path, method, body) => {
     if (method === 'GET' && path.startsWith('/pages/')) return { id: 'page', parent: { database_id: 'd83c40c2-ba63-8323-8dc7-01cc291c4d9b' }, properties: humanProps(brainHuman(saved)), results: [] };
-    if (method === 'POST' && path === '/pages') return { id: 'new-page' };
-    return { results: [] };
+    if (method === 'POST' && path === '/pages') { blocks = body.children.map((b, i) => ({ ...b, id: `block-${i}` })); return { id: 'new-page' }; }
+    if (method === 'PATCH' && path.startsWith('/blocks/')) { const created = body.children.map((b, i) => ({ ...b, id: `block-${i}` })); blocks.push(...created); return { results: created }; }
+    if (method === 'GET' && path.includes('/blocks/block-')) return { results: blocks.find(b => path.includes(b.id))?.toggle.children || [], has_more: false };
+    return { results: blocks, has_more: false };
   });
   return { pool, req, saved };
 }
 describe('项目同步推送回归', () => {
   it('新建AI列尚为空时填出默认知情', async () => {
-    const f = fixture({ ...root, notion_props: { notion_id: 'page', human_baseline: brainHuman(root) } });
+    const f = fixture({ ...root, notion_props: { notion_id: 'page', human_baseline: brainHuman(root), body_digest: digestOf({}, buildProjectBody(root, snap)) } });
     const original = f.req.getMockImplementation();
     f.req.mockImplementation(async (...args) => {
       const result = await original(...args);
@@ -38,14 +41,14 @@ describe('项目同步推送回归', () => {
     expect((await pushProjectRoots(f.pool, 'tok', { notionReq: f.req })).failed).toBe(0);
     expect(f.req.mock.calls.some(([, path]) => path.startsWith('/blocks/'))).toBe(false);
   });
-  it('正文删除失败不能报告成功，也不能继续追加重复正文', async () => {
+  it('正文追加失败不能报告成功，也不能删除已有正文', async () => {
     const req = vi.fn(async (_t, _p, method) => {
-      if (method === 'GET') return { results: [{ id: 'b1' }] };
-      if (method === 'DELETE') throw new Error('429');
+      if (method === 'GET') return { results: [{ id: 'b1' }], has_more: false };
+      if (method === 'PATCH') throw new Error('429');
       return {};
     });
     await expect(replacePageBody(req, 'tok', 'page', [{}])).rejects.toThrow('429');
-    expect(req.mock.calls.some(([, , m]) => m === 'PATCH')).toBe(false);
+    expect(req.mock.calls.some(([, , m]) => m === 'DELETE')).toBe(false);
   });
   it('已归档→Discard，规划→In Progress；人工备注与机器进展分列', () => {
     expect(PROJECT_STATUS_TO_NOTION.archived).toBe('Discard');
