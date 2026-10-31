@@ -297,7 +297,7 @@ const BASIC_PROTOCOLS = {
     ...REVIEWED,
     'packages/brain/vitest.config.js': 'fbc5d407a66e895386510bf053232623b3ace335f8a9df4fc130dd6083e2315d',
     'scripts/ci/basic-scope.mjs': '9844bb702db2c1a9507f88f1c6c330f676b786cb784592dc4aaefc096b93d6ef',
-    [BASIC_RUNNER]: '1a36a3ea958803824682464036487c70ce079da835f596f7894638a8a7c5c214',
+    [BASIC_RUNNER]: 'c9c1318dcd6b35981453aa06f656f5a99cb6283d2b7e4ea4a1cf8f6772103f6d',
     'apps/api/vitest.config.ts': '06e1a3d6e071c95de35b874e9f2ca3ddd05bd673257f9761340c6d9b29c16409',
     'apps/api/vitest.integration.config.ts': '6c2a55ccba874bf8fcae7858f0b9f21295f6728f430860a4ee60c1612cc59dec',
     [PINNED_READER]: '3cf300333012557b0191ca6eba5a1bc112c99cbff1daf4ea85da8e2d33f96f66',
@@ -344,6 +344,15 @@ export function skillExcludeSpread(node, program, component) {
     && imports[0].specifiers[0].local.name === 'skillSourceExcludes'
     && !program.body.some(n => n.type === 'VariableDeclaration' && n.declarations.some(d => d.id.name === 'skillSourceExcludes'));
 }
+/** 仅解释已封印Deep的integration目录glob；dot默认关闭，显式排除任意层node_modules。 */
+export function deepPostgresDirectorySelected(path) {
+  const prefix = 'packages/brain/src/';
+  if (typeof path !== 'string' || !path.startsWith(prefix)) return false;
+  const segments = path.slice(prefix.length).split('/');
+  if (segments.some(segment => !segment || segment.startsWith('.') || segment === 'node_modules')) return false;
+  return segments.slice(0, -1).includes('integration')
+    && /\.(?:test|spec)\.(?:[cm])?[jt]s(?:x)?$/.test(segments.at(-1));
+}
 export async function collectBasicCiSources({ read, ci, revision, relations, parse, paths }) {
   const protocol = BASIC_PROTOCOLS[workflowHash(ci)];
   if (!protocol) reject();
@@ -352,8 +361,14 @@ export async function collectBasicCiSources({ read, ci, revision, relations, par
   if (Object.hasOwn(protocol, PINNED_READER)) {
     if (!Array.isArray(paths)) reject();
     const prefix = 'scripts/ci/__tests__/';
+    const testName = /^(basic-.*|run-basic-check|brain-source-only-deploy)\.test\.mjs$/;
+    for (const path of paths.filter(path => path.startsWith(prefix))) {
+      const relative = path.slice(prefix.length);
+      // Git列出的是叶子；同名目录会让旧node --test递归执行，不能当作一级文件集合认领。
+      if (relative.includes('/') && testName.test(relative.split('/')[0])) reject();
+    }
     const selected = paths.filter(path => path.startsWith(prefix) && !path.slice(prefix.length).includes('/')
-      && /^(basic-.*|run-basic-check|brain-source-only-deploy)\.test\.mjs$/.test(path.slice(prefix.length))).sort();
+      && testName.test(path.slice(prefix.length))).sort();
     if (!selected.includes(PINNED_READER)) reject();
     for (const path of selected) {
       if (!await read(path)) reject();

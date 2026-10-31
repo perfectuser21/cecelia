@@ -1,5 +1,5 @@
 /** 已有工厂活动的只读消费者证据；不执行源码，也不声明完整流程可运行。 */
-import { basicCiSelectorEnabled, collectBasicCiSources, collectDeepCiSources, skillExcludeSpread } from './existing-ops-workspace-source.js';
+import { basicCiSelectorEnabled, collectBasicCiSources, collectDeepCiSources, skillExcludeSpread, deepPostgresDirectorySelected } from './existing-ops-workspace-source.js';
 import { createHash } from 'node:crypto';
 import { posix } from 'node:path';
 import yaml from 'js-yaml';
@@ -458,7 +458,7 @@ export async function buildExistingOpsSources({ scope, repo, revision, paths, re
         {consumer_path:F5_SMOKE,input_path:HEALTH_SMOKE,kind:'relative_bash_call',revision});
     }
     // CI确实还原配置literal PG清单；没有实际选择器的其它文件继续不认领。
-    const explicit=paths.filter(path => (basicCi ? /^packages\/brain\/src\/.+\/integration\/[^\n]+\.(?:test|spec)\.(?:[cm]?js)$/ : /^packages\/brain\/src\/__tests__\/integration\/[^\n]+\.(?:test|spec)\.(?:[cm]?js)$/).test(path));
+    const explicit=paths.filter(path => (basicCi ? deepPostgresDirectorySelected(path) : /^packages\/brain\/src\/__tests__\/integration\/[^\n]+\.(?:test|spec)\.(?:[cm]?js)$/.test(path)));
     const configured=config?[...integrationConfigInputs(config), ...(basicCi ? ['packages/brain/src/orchestrator/__tests__/contract-store.test.js', 'packages/brain/src/__tests__/migration-370-gp-governance-decisions.test.js', 'packages/brain/src/__tests__/nightly-orchestrator.integration.test.js'] : [])].filter(path=>tree.has(path)&&/\.(?:[cm]?js)$/.test(path)):[];
     for (const path of [...new Set([...explicit,...configured])]) {
       const test = await read(path);
@@ -466,7 +466,7 @@ export async function buildExistingOpsSources({ scope, repo, revision, paths, re
       relations.push({ consumer_path: basicCi?'scripts/ci/deep-integration.config.mjs':explicit.includes(path)?'.github/workflows/nightly-regression.yml':'packages/brain/vitest.integration.config.js', input_path: path,
         kind: basicCi?'deep_postgres_config_input':explicit.includes(path)?'explicit_vitest_directory':'literal_postgres_config_input', revision });
       // URL必须真实readFileSync直接输入，SQL关系来自调用表达式而非目录名字。
-      const inputs = literalSqlInputs(test);
+      const inputs = basicCi && !/\.[cm]?js$/.test(path) ? [] : literalSqlInputs(test);
       for (const inputPath of inputs) {
         const segments = path.split('/').slice(0, -1);
         for (const part of inputPath.split('/')) { if (part === '..') segments.pop(); else if (part !== '.') segments.push(part); }
