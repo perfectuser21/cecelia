@@ -56,6 +56,10 @@ describe('buildProjectProps / Body', () => {
     const output=JSON.stringify(buildProjectProps(ROOT,snap))+JSON.stringify(buildProjectBody(ROOT,snap));
     for(const value of ['已阻断','候选未验收','https://github.com/o/r/pull/2352','排查'])expect(output).toContain(value);
   });
+  it('多个业务回执按记录时间选最新，不能依靠 JSON 字段顺序', () => {
+    const snap={...SNAP,children:[{id:'c',title:'任务',status:'in_progress',result:{z_old:{facts:['旧事实'],recorded_at:'2026-10-30T00:00:00Z'},a_new:{facts:['新事实'],recorded_at:'2026-10-31T00:00:00Z'}}}]};
+    const output=JSON.stringify(buildProjectBody(ROOT,snap));expect(output).toContain('新事实');expect(output).not.toContain('旧事实');
+  });
   it('属性：Status 映射、AI Project、Run ID、Remark 含 1/2 棒 + 待拍板 1', () => {
     const p = buildProjectProps(ROOT, SNAP);
     expect(p.Status.status.name).toBe('In Progress');

@@ -76,7 +76,9 @@ function activeProgress(snap) {
   const output = [];
   for (const child of children) {
     const result = normalizeTaskProgress(child.result);
-    const entries = [...(result.updates || []).reverse(), result];
+    const entries = [...(result.updates || [])]
+      .sort((a,b) => (Date.parse(b.recorded_at) || 0) - (Date.parse(a.recorded_at) || 0));
+    entries.push(result);
     for (const e of entries) {
       if (!meaningful(e.facts) && !meaningful(e.summary) && !meaningful(e.evidence) && !meaningful(e.pr_url)) continue;
       const value = v => typeof v === 'string' ? v : JSON.stringify(v);
