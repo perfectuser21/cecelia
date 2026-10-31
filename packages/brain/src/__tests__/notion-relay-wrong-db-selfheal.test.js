@@ -34,9 +34,12 @@ describe('relay project 错库 400 自愈', () => {
     const updates = [];
     const root = { id: 'cf1bae42-0a0d-42e6-aff1-7c848de71620', title: '接力棒：验证层', description: 'd', status: 'queued',
       notion_props: { notion_id: 'legacy' } };
+    let createdBlock;
     const req = vi.fn(async (t, path, method, body) => {
       if (method === 'PATCH' && path === '/pages/legacy') throw new Error(WRONG_DB_MSG);
-      if (method === 'POST' && path === '/pages') { expect(body.parent.database_id).toBe(PROJECTS_DB); return { id: 'new-proj-page' }; }
+      if (method === 'POST' && path === '/pages') { expect(body.parent.database_id).toBe(PROJECTS_DB); createdBlock = { ...body.children[0], id: 'created-block' }; return { id: 'new-proj-page' }; }
+      if (method === 'GET' && path.startsWith('/blocks/new-proj-page/')) return { results: [createdBlock], has_more: false };
+      if (method === 'GET' && path.startsWith('/blocks/created-block/')) return { results: createdBlock.toggle.children, has_more: false };
       return {};
     });
     const s = await pushProjectRoots(poolFor(root, updates), 'tok', { notionReq: req, log: { warn: () => {} } });

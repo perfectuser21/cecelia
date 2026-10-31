@@ -713,6 +713,11 @@
       "role": "verification"
     },
     {
+      "owner_path": "packages/brain/src/notion-relay-projection.js",
+      "path": "packages/brain/src/__tests__/notion-relay-wrong-db-selfheal.test.js",
+      "role": "verification"
+    },
+    {
       "owner_path": "packages/brain/src/notion-push-sync.js",
       "path": "packages/brain/src/__tests__/notion-issue-body.test.js",
       "role": "verification"
