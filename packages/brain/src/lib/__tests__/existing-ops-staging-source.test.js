@@ -1,14 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { fileURLToPath } from 'node:url';
 import { parse } from 'acorn';
 import { buildExistingOpsSources } from './helpers/existing-ops-proof-builder.js';
+import { fixtureGit as git, readFixedExistingOpsGitFixture } from './helpers/fixed-existing-ops-git-fixture.js';
 
-const root = fileURLToPath(new URL('../../../../../', import.meta.url));
-const git = (...args) => execFileSync('git', ['--no-replace-objects', ...args], { cwd: root, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
-const revision = git('rev-parse', 'HEAD').trim();
-const paths = git('ls-tree', '-rz', '--name-only', revision).replace(/\0$/, '').split('\0');
+const { revision, paths, read } = readFixedExistingOpsGitFixture();
 const sourcePath = 'packages/brain/src/lib/existing-ops-source.js';
 const workflow = '.github/workflows/auto-staging-deploy.yml';
 const route = 'packages/brain/src/routes/ops.js';
@@ -38,11 +34,6 @@ printf '%s' "$projection" | node -e '
 '
 printf 'STAGING_LEADGEN_PROJECTION_OK %s\n' "$projection"
 `;
-const cache = new Map();
-const read = path => {
-  if (!cache.has(path)) cache.set(path, git('show', `${revision}:${path}`));
-  return cache.get(path);
-};
 const leadgenVerify = () => read(verify).replace("echo 'STAGING_OK", `${leadgenVerifyBlock}echo 'STAGING_OK`);
 function wrapRoute(text, wrap) {
   const entry = parse(text, { ecmaVersion: 'latest', sourceType: 'module' }).body.find(n => n.type === 'ExpressionStatement'
@@ -64,7 +55,7 @@ async function build({ patch = {}, marker = 2, missing } = {}) {
   return result.consumers.find(c => c.workflow_key === 'factory_f2_ops');
 }
 
-describe('staging 正式调用链的固定来源，不声明部署成功', () => {
+describe('已知历史Git fixture 的 staging 来源，不声明当前候选或部署成功', () => {
   it('旧发布修订没有 bootstrap 文件时仍可核源，且不虚构新调用边', async () => {
     const oldRevision = 'e3a01021ee7100b83d8ed5a0be219d0b543b5dff';
     const oldPaths = git('ls-tree', '-rz', '--name-only', oldRevision).replace(/\0$/, '').split('\0');

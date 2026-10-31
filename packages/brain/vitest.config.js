@@ -1,6 +1,7 @@
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { defineConfig } from 'vitest/config';
+import {skillSourceExcludes} from '../../scripts/ci/skill-source-tests.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -200,6 +201,7 @@ export default defineConfig({
     // 以下测试需要真实 PostgreSQL 连接或有其他 CI 环境 pre-existing 失败
     // brain-unit 跑纯单元测试（有 vi.mock('db.js') 的），集成测试走 brain-integration
     exclude: [
+      ...skillSourceExcludes('brain'),
       // 与 CI unit 一致：真实 PG 与建库迁移 fixture 只交集成层。
       'src/__tests__/integration/**',
       'src/__tests__/real-env/**',
@@ -309,8 +311,6 @@ export default defineConfig({
       // watchdog-crisis-*: checkRunaways 返回 0 kills vs expected 1+（真实逻辑 bug）
       'src/__tests__/watchdog-crisis-kill.test.js',
       'src/__tests__/watchdog-crisis-min-rss.test.js',
-      // harness-module-constants: imports ../harness.js，已被 6fa2c9460 移走到 harness-router.js 但 test 未同步
-      'src/__tests__/harness-module-constants.test.js',
       // 需要真实 PostgreSQL 连接的集成测试
       'src/__tests__/integration/pipeline-rescue.integration.test.js',
       // capacity-gate/preview-destroyer: 真连 cecelia_test Postgres（禁 mock db.js），走 brain-integration
@@ -355,9 +355,6 @@ export default defineConfig({
       '../../tests/regression/cockpit-route-wire/e2e-verify.spec.ts',
       '../../tests/regression/relay-07b2fd3b/inbox-e2e.spec.ts',
       '../../tests/regression/capture-destination-link/capture-destination-link.spec.ts',
-      // Dashboard contract imports dashboard-only test dependencies. The broad
-      // regression glob must not select it in the Brain unit workspace.
-      '../../tests/regression/relay-28e7c41a/OpsPanoramaCard.test.tsx',
       // Pre-existing failure (PR #4109): 读取 sprints/07191312-relay-57e25e92/e2e-verify.sh，
       // 该文件已 rename 到 scripts/smoke/e2e/relay-57e25e92.sh，sprint 目录未提交 repo
       '../../tests/regression/relay-57e25e92/headed-smoke-contract.test.ts',

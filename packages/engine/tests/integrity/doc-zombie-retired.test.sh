@@ -31,11 +31,11 @@ assert_not_contains() {
   local pattern="$2"
   local label="${3:-$pattern}"
   if grep -qF "$pattern" "$REPO_ROOT/$file" 2>/dev/null; then
-    echo -e "${RED}[FAIL]${NC} 断言: 文件 $file 仍含「$label」"
-    ERRORS+=("文件 $file 仍含「$label」")
+    echo -e "${RED}[FAIL]${NC} 断言: 文件 $file 仍含「${label}」"
+    ERRORS+=("文件 $file 仍含「${label}」")
     FAIL=$((FAIL + 1))
   else
-    echo -e "${GREEN}[PASS]${NC} 断言: 文件 $file 不含「$label」"
+    echo -e "${GREEN}[PASS]${NC} 断言: 文件 $file 不含「${label}」"
     PASS=$((PASS + 1))
   fi
 }

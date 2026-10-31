@@ -1,17 +1,13 @@
 import {it,expect} from 'vitest';
-import {execFileSync} from 'node:child_process';
-import {fileURLToPath} from 'node:url';
 import {parse} from 'acorn';
 import yaml from 'js-yaml';
 import {collectWorkspaceInputEdges} from '../../lib/existing-ops-workspace-source.js';
-const root=fileURLToPath(new URL('../../../../../',import.meta.url));
-const revision=execFileSync('git',['rev-parse','HEAD'],{cwd:root,encoding:'utf8'}).trim();
-const paths=execFileSync('git',['ls-tree','-rz','--name-only',revision],{cwd:root,encoding:'utf8'}).split('\0').filter(Boolean);
-const cache=new Map(),read=p=>{if(!cache.has(p))cache.set(p,execFileSync('git',['show',`${revision}:${p}`],{cwd:root,encoding:'utf8'}));return cache.get(p);};
+import {readFixedExistingOpsGitFixture,fixtureGit} from '../../lib/__tests__/helpers/fixed-existing-ops-git-fixture.js';
+const {revision,paths,read}=readFixedExistingOpsGitFixture();
 const ci='.github/workflows/ci.yml',config='packages/engine/vitest.config.ts';
 const test='packages/engine/tests/skills/worktree-cleanup-set-e.test.ts',script='packages/engine/skills/dev/scripts/worktree-manage.sh';
 const collect=overrides=>collectWorkspaceInputEdges({revision,paths,parse:t=>parse(t,{ecmaVersion:'latest',sourceType:'module'}),readSource:async p=>overrides?.[p]??read(p)});
-it('真实固定Git CI→serial选择→实际spawn脚本输入，双端摘要完整',async()=>{
+it('已知历史Git fixture CI→serial选择→实际spawn脚本输入，双端摘要完整',async()=>{
  const edges=await collect();
  for(const [src,dst] of [[ci,config],[config,test],[test,script]])expect(edges).toContainEqual(expect.objectContaining({src_path:src,dst_path:dst,detail:expect.objectContaining({source_revision:revision,consumer_sha256:expect.stringMatching(/^[a-f0-9]{64}$/),input_sha256:expect.stringMatching(/^[a-f0-9]{64}$/)})}));
 });
@@ -50,4 +46,12 @@ it('有效SCRIPT身份也不能把注释、未调用函数、mock和提前返回
  }
  const positive=await collect({[test]:prefix+"describe('real',()=>{it('exec',()=>{"+call+"});});"});
  expect(positive.some(e=>e.dst_path===script)).toBe(true);
+});
+
+it('当前HEAD新CI不能继承历史Engine serial消费者来源边', async () => {
+ const candidate=readFixedExistingOpsGitFixture(fixtureGit('rev-parse','HEAD').trim());
+ expect(candidate.revision).not.toBe(revision);
+ const edges=await collectWorkspaceInputEdges({revision:candidate.revision,paths:candidate.paths,
+  parse:t=>parse(t,{ecmaVersion:'latest',sourceType:'module'}),readSource:candidate.read});
+ expect(edges).toEqual([]);
 });

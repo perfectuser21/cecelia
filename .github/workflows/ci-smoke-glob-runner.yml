@@ -1,4 +1,4 @@
-name: Smoke Glob Runner（棘轮闸）
+name: Legacy Smoke Diagnostics
 
 # Smoke 脚本棘轮闸：
 #   ALLOWLIST 内脚本失败 → 红（基线保护）
@@ -9,11 +9,8 @@ name: Smoke Glob Runner（棘轮闸）
 # 分类文件：packages/quality/smoke-{allowlist,denylist,debt}.txt
 # 执行器：  packages/quality/scripts/run-smoke-ratchet.sh
 
+# 历史/环境诊断按需运行；通用源码保障归 ci.yml，深度回归归 nightly-regression.yml。
 on:
-  pull_request:
-    branches: [main]
-  push:
-    branches: [main]
   workflow_dispatch:
 
 concurrency:

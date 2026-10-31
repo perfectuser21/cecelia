@@ -418,10 +418,10 @@ describe('metrics.sh 时间窗口', () => {
 `
     )
 
-    // 上个月的 PR（先设置 day=1 再减月，避免月末溢出，如 3月31日-1月→2月31日→3月3日）
+    // 指标按UTC月过滤；先设UTC day=1再减月，同时避免月末和时区跨月。
     const lastMonth = new Date()
-    lastMonth.setDate(1)
-    lastMonth.setMonth(lastMonth.getMonth() - 1)
+    lastMonth.setUTCDate(1)
+    lastMonth.setUTCMonth(lastMonth.getUTCMonth() - 1)
     fs.writeFileSync(
       path.join(testDir, '.history', 'PR-199-20251222-1000.dod.md'),
       `<!-- pr:199 base:develop priority:P0 head:bbb2222 merged: created:${lastMonth.toISOString()} -->
@@ -448,9 +448,9 @@ describe('metrics.sh 时间窗口', () => {
 
   it('--month 可以指定其他月份', () => {
     const lastMonth = new Date()
-    lastMonth.setDate(1)
-    lastMonth.setMonth(lastMonth.getMonth() - 1)
-    const monthStr = `${lastMonth.getFullYear()}-${String(lastMonth.getMonth() + 1).padStart(2, '0')}`
+    lastMonth.setUTCDate(1)
+    lastMonth.setUTCMonth(lastMonth.getUTCMonth() - 1)
+    const monthStr = `${lastMonth.getUTCFullYear()}-${String(lastMonth.getUTCMonth() + 1).padStart(2, '0')}`
 
     const output = runMetrics(`--format json --month ${monthStr}`, testDir)
     const json = JSON.parse(output)
@@ -458,6 +458,23 @@ describe('metrics.sh 时间窗口', () => {
     expect(json.prs.p0).toBe(1)
     expect(json.prs.p1).toBe(0)
     expect(json.prs.total).toBe(1)
+  })
+
+  it('按UTC月边界统计带时区的快照，月初本地时间不得误入本月', () => {
+    const root = fs.mkdtempSync(path.join(tmpdir(), 'metrics-utc-boundary-'))
+    try {
+      fs.mkdirSync(path.join(root, '.history'))
+      execSync('git init --quiet', {cwd: root})
+      for (const [pr, priority, created] of [
+        ['201', 'P0', '2026-09-01T00:30:00Z'],
+        ['202', 'P1', '2026-09-01T00:30:00+08:00'],
+      ]) {
+        fs.writeFileSync(path.join(root, '.history', `PR-${pr}-20260901-0030.dod.md`),
+          `<!-- pr:${pr} base:develop priority:${priority} head:abc merged: created:${created} -->\n\n# DoD\n- [ ] boundary\n  Test: tests/example.test.ts\n`)
+      }
+      const result = JSON.parse(runMetrics('--format json --month 2026-09', root))
+      expect(result.prs).toMatchObject({p0: 1, p1: 0, total: 1})
+    } finally { fs.rmSync(root, {recursive: true, force: true}) }
   })
 })
 

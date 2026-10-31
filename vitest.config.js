@@ -1,4 +1,5 @@
 import { defineConfig } from 'vitest/config';
+import {skillSourceExcludes} from './scripts/ci/skill-source-tests.mjs';
 
 // 根目录 vitest 配置：用于 harness CI Sprint Tests 跑 sprints/**/*.test.ts，
 // 以及 brain CI 防线的 skill 契约测试 packages/brain/scripts/ci/__tests__/**。
@@ -19,6 +20,8 @@ export default defineConfig({
       'tests/**/*.{test,spec}.?(c|m)[jt]s?(x)',
     ],
     exclude: [
+      ...skillSourceExcludes('root'),
+      'packages/brain/scripts/ci/__tests__/skill-contract.test.mjs',
       'sprints/archive/**',
       'node_modules/**',
       '**/node_modules/**',

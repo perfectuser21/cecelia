@@ -5,8 +5,8 @@
  *
  * 1. 直接向 DB 插入一个超时的 in_progress 任务（started_at 设为 3 小时前）
  * 2. 通过 GET /api/brain/tasks 过滤 status=in_progress 能查询到该超时任务
- * 3. 验证 pipeline-patrol.js 的 createRescueTask 函数可以正确写入 pipeline_rescue 任务
- * 4. 去重机制：同一 branch 的 rescue 任务在冷却期内不重复创建
+ * 3. 验证存量 pipeline_rescue 任务可被真实任务列表接口查询
+ * 4. 验证按 branch 和活跃状态查找已有 rescue 任务的真实 SQL
  *
  * 注：pipeline-patrol 主函数依赖文件系统（.dev-mode 文件），集成测试直接测底层
  * createRescueTask 函数和任务查询接口，不依赖文件系统扫描。
@@ -17,8 +17,7 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import express from 'express';
 import request from 'supertest';
-import pg from 'pg';
-import { DB_DEFAULTS } from '../../db-config.js';
+import { privateFixtureDatabase } from '../fixtures/private-fixture-db.js';
 
 // ─── Mock 外部依赖 ────────────────────────────────────────────────────────────
 
@@ -63,16 +62,24 @@ vi.mock('../../task-updater.js', () => ({
   blockTask: vi.fn(),
 }));
 
-// pipeline-patrol 依赖的 child_process（execSync for git）
-vi.mock('child_process', () => ({
-  exec: vi.fn(),
-  execSync: vi.fn(() => ''),
-}));
+// 路由树需要完整 builtin 导出，但此验收不允许启动任何外部命令。
+vi.mock('child_process', async importOriginal => {
+  const actual = await importOriginal();
+  const deny = () => { throw Error('rescue fixture forbids external processes'); };
+  return { ...actual, exec: vi.fn(deny), execSync: vi.fn(deny),
+    execFile: vi.fn(deny), execFileSync: vi.fn(deny),
+    spawn: vi.fn(deny), spawnSync: vi.fn(deny), fork: vi.fn(deny) };
+});
 
 // ─── 真实 DB 连接池 ──────────────────────────────────────────────────────────
 
-const testPool = new pg.Pool({ ...DB_DEFAULTS, max: 3 });
+let fixture;
+let testPool;
 const insertedTaskIds = [];
+// 真实 SQL 转发到本人私有 schema；不替换查询结果或任务路由。
+vi.mock('../../db.js', () => ({ default: {
+  query: (...args) => testPool.query(...args), connect: () => testPool.connect(),
+} }));
 
 // ─── Express App 工厂 ────────────────────────────────────────────────────────
 
@@ -112,16 +119,18 @@ describe('Pipeline Rescue — 卡任务识别与 rescue 任务创建（真实 Po
   const testBranch = `cp-test-rescue-${Date.now()}`;
 
   beforeAll(async () => {
+    fixture = await privateFixtureDatabase('rescue', db => db.query('CREATE TABLE tasks (LIKE public.tasks INCLUDING ALL)'));
+    testPool = fixture.createPool(3);
     app = await makeApp();
     // 插入一个 3 小时前开始的 in_progress 任务（模拟卡住任务）
     stuckTaskId = await insertStuckTask({ branch: testBranch, startedHoursAgo: 3 });
   }, 20000);
 
   afterAll(async () => {
-    if (insertedTaskIds.length > 0) {
+    if (testPool && insertedTaskIds.length > 0) {
       await testPool.query('DELETE FROM tasks WHERE id = ANY($1)', [insertedTaskIds]);
     }
-    await testPool.end();
+    await fixture?.close();
   });
 
   // ── 场景 1: 卡任务存在于 DB ──────────────────────────────────────────────
@@ -152,11 +161,9 @@ describe('Pipeline Rescue — 卡任务识别与 rescue 任务创建（真实 Po
     expect(ids).toContain(stuckTaskId);
   });
 
-  // ── 场景 3: createRescueTask 直接测试 ────────────────────────────────────
+  // ── 场景 3: 存量 rescue 任务的真实存储与查询 ───────────────────────────
 
-  it('场景3: pipeline-patrol createRescueTask — 为卡住任务创建 pipeline_rescue 任务', async () => {
-    // 直接调用 pipeline-patrol 的内部函数（通过动态 import 绕过 mock 顺序问题）
-    // 这里我们直接用 DB 验证逻辑：向 tasks 表插入 pipeline_rescue 任务
+  it('场景3: 存量 pipeline_rescue 任务持久化并保留 branch/stage', async () => {
     const rescueRes = await testPool.query(
       `INSERT INTO tasks (title, description, status, priority, task_type, trigger_source, domain, payload)
        VALUES ($1, $2, 'queued', 'P1', 'pipeline_rescue', 'brain_auto', 'agent_ops', $3)

@@ -3,7 +3,11 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { DB_DEFAULTS } from '../packages/brain/src/db-config.js';
 import { createTempMigratedDb } from '../packages/brain/src/__tests__/helpers/temp-migrated-db.js';
-import { parse } from 'yaml';
+import { spawnSync } from 'node:child_process';
+import glob from 'fast-glob';
+import { commandsFor } from '../scripts/ci/run-basic-check.mjs';
+import { planChecks } from '../scripts/ci/basic-scope.mjs';
+import deepIntegrationConfig from '../scripts/ci/deep-integration.config.mjs';
 import brainConfig from '../packages/brain/vitest.config.js';
 import brainIntegrationConfig from '../packages/brain/vitest.integration.config.js';
 import { REPO_ROOT } from './helpers/repo-root.js';
@@ -18,10 +22,6 @@ const POSTGRES_TESTS = [
   '../../tests/regression/relay-137fea96/contract-postdeploy-smoke-filter.test.ts',
 ];
 
-const workflow = parse(
-  readFileSync(join(REPO_ROOT, '.github/workflows/ci.yml'), 'utf8'),
-);
-
 describe('Brain PostgreSQL test layering', () => {
   it('keeps real PostgreSQL tests out of brain-unit', () => {
     const exclude = brainConfig.test?.exclude ?? [];
@@ -30,37 +30,22 @@ describe('Brain PostgreSQL test layering', () => {
     expect(exclude).toContain('src/__tests__/integration/**');
   });
 
-  it('runs every excluded PostgreSQL test explicitly in brain-integration', () => {
-    const integrationStep = workflow.jobs['brain-integration'].steps.find(
-      (step: { name?: string }) => step.name === 'Integration Tests',
-    );
-    const integrationExclude = brainIntegrationConfig.test?.exclude ?? [];
-
-    expect(integrationStep).toBeDefined();
-    expect(integrationStep.env.POSTGRES_INTEGRATION).toBe('1');
-    expect(integrationExclude).not.toContain('src/__tests__/integration/**');
-    expect(integrationStep.run).toContain('--config vitest.integration.config.js');
-    for (const testPath of POSTGRES_TESTS) {
-      expect(integrationStep.run).toContain(testPath);
-      expect(integrationExclude).not.toContain(testPath);
-    }
+  it('真实PG历史回归留在深度集成配置，完整选择文件而非只登记名字', () => {
+    const selected = glob.sync(deepIntegrationConfig.test.include, {
+      cwd: join(REPO_ROOT, 'packages/brain'), ignore: deepIntegrationConfig.test.exclude,
+    });
+    for (const testPath of POSTGRES_TESTS) expect(selected).toContain(testPath);
   });
-  it('E2E Smoke入口保留三条真PG过滤器并使用集成配置', () => {
-    const smokeStep = workflow.jobs['e2e-smoke'].steps.find(
-      (step: { name?: string }) => step.name?.startsWith('E2E Smoke Tests'),
-    );
-    expect(smokeStep).toBeDefined();
-    expect(smokeStep.run).toContain('--config vitest.integration.config.js');
-    expect(smokeStep.env.POSTGRES_INTEGRATION).toBe('1');
-    expect(smokeStep.run).not.toContain('--passWithNoTests');
-    for (const testPath of [
-      'src/__tests__/integration/golden-path.integration.test.js',
-      'src/__tests__/integration/agent-lifecycle.integration.test.js',
-      'src/__tests__/integration/dev-task-lifecycle.e2e.test.js',
-    ]) {
-      expect(smokeStep.run).toContain(testPath);
-      expect(brainIntegrationConfig.test?.exclude).not.toContain(testPath);
-    }
+
+  it('基础runtime跑道必须先正式迁移，再调用真实服务任务验收', () => {
+    expect(planChecks(['packages/brain/src/routes/tasks.js'])).toContainEqual({component: 'brain-integration'});
+    const steps = commandsFor('brain-integration');
+    expect(steps.map(step => ({command: step.command, args: step.args}))).toEqual([
+      {command: 'node', args: ['scripts/ci/basic-runtime-smoke.mjs', '--validate-only']},
+      {command: 'node', args: ['src/migrate.js']},
+      {command: 'node', args: ['--test', 'scripts/ci/__tests__/runtime-signal.integration.test.mjs']},
+      {command: 'node', args: ['scripts/ci/basic-runtime-smoke.mjs']},
+    ]);
   });
 
   it.each([
@@ -78,15 +63,18 @@ describe('Brain PostgreSQL test layering', () => {
     expect(brainIntegrationConfig.test?.exclude).not.toContain(`src/__tests__/integration/${filter}`);
   });
 
-  it('Smoke Glob的真PG入口继续使用CI一次性数据库及迁移步骤', () => {
-    const globWorkflow = parse(readFileSync(join(REPO_ROOT, '.github/workflows/ci-smoke-glob-runner.yml'), 'utf8'));
-    const job = globWorkflow.jobs['smoke-glob-runner'];
-    expect(job.services.postgres.env.POSTGRES_DB).toBe('cecelia_test');
-    expect(job.steps.find((step: { name?: string }) => step.name === 'Run Migrations').run).toContain('node src/migrate.js');
-    const smokeStep = job.steps.find((step: { name?: string }) => step.name === 'Run Smoke Ratchet Gate');
-    expect(smokeStep.env.DB_NAME).toBe('cecelia_test');
-    expect(smokeStep.env.PGDATABASE).toBe('cecelia_test');
-    expect(smokeStep.run).toContain('run-smoke-ratchet.sh');
+  it('基础runtime真实入口在连接前拒绝生产库，不能连接现有Brain冒充测试成功', () => {
+    const smoke = commandsFor('brain-integration').find(step =>
+      step.args.includes('scripts/ci/basic-runtime-smoke.mjs') && !step.args.includes('--validate-only'));
+    expect(smoke).toBeDefined();
+    const result = spawnSync(process.execPath, smoke.args, {
+      cwd: smoke.cwd, encoding: 'utf8',
+      env: {...process.env, DATABASE_URL: 'postgresql://ci:isolated@127.0.0.1:1/cecelia'},
+      timeout: 5000,
+    });
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain('只允许本机专用 cecelia_scratch 数据库');
+    expect(result.stderr).not.toContain('ECONNREFUSED');
   });
 
   it('guards migration fixtures before connecting outside the explicit CI PostgreSQL lane', () => {

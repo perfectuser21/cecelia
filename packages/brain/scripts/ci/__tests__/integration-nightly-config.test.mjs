@@ -13,6 +13,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync, accessSync, constants } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import yaml from 'js-yaml';
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 // __tests__ → ci → scripts → brain → packages → repo root
@@ -74,16 +75,19 @@ describe('刀B integration-nightly 配置守卫', () => {
       expect(() => readFile(WORKFLOW_PATH)).not.toThrow();
     });
 
-    it('workflow 含 schedule 定义', () => {
-      const yml = readFile(WORKFLOW_PATH);
-      expect(yml).toMatch(/schedule:/);
-      expect(yml).toMatch(/cron:/);
+    it('旧集成入口改为主动诊断，自动回归由统一nightly承担', () => {
+      const legacy = yaml.load(readFile(WORKFLOW_PATH));
+      const deep = yaml.load(readFile('.github/workflows/nightly-regression.yml'));
+      expect(legacy.on.schedule).toBeUndefined();
+      expect(legacy.on.workflow_dispatch).toBeDefined();
+      expect(deep.on.schedule.length).toBeGreaterThan(0);
     });
 
-    it('workflow 调度时间为 UTC 20:30（北京 04:30，等 刀A 完成）', () => {
-      const yml = readFile(WORKFLOW_PATH);
-      // cron: '30 20 * * *'
-      expect(yml).toMatch(/30\s+20\s+\*/);
+    it('统一夜间入口实际运行数据库回归、容器闭环和授权正例', () => {
+      const deep = yaml.load(readFile('.github/workflows/nightly-regression.yml'));
+      expect(Object.keys(deep.jobs)).toEqual(expect.arrayContaining(['brain-integration', 'walking-ci-e2e', 'real-env-smoke']));
+      expect(deep.jobs['brain-integration'].env.POSTGRES_INTEGRATION).toBe('1');
+      expect(deep.jobs['brain-integration'].steps.some(step => step.run?.includes('--config ../../scripts/ci/deep-integration.config.mjs'))).toBe(true);
     });
 
     it('workflow 含 workflow_dispatch', () => {

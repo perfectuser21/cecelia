@@ -1,4 +1,8 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import yaml from 'js-yaml';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import unit from '../../vitest.config.js';
@@ -25,23 +29,37 @@ describe('真实 Map Manifest smoke 的 CI 执行归属', () => {
     expect(negative).toContain('SMOKE_ALLOW_WRITE');
     expect(negative).toContain('existsSync(marker)');
   });
-  it('完整串行smoke及启动清理保留至少40分钟总预算', () => {
-    const workflow = readFileSync(new URL('../../../../.github/workflows/ci.yml', import.meta.url), 'utf8');
-    const real = workflow.match(/\n  real-env-smoke:[\s\S]*?(?=\n  [\w-]+:|$)/)?.[0];
-    expect(real, 'real-env-smoke job必须存在').toBeDefined();
-    const budget = real.match(/^    timeout-minutes: (\d+)$/m);
-    expect(budget, '必须明确配置该job的总预算').not.toBeNull();
-    expect(Number(budget[1]), '30分钟已在571通过/0失败/1委托后取消，需启动清理余量').toBeGreaterThanOrEqual(40);
+  it('专属正例有明确预算和独立owner，不重新执行572条串行smoke', () => {
+    const workflow = yaml.load(readFileSync(new URL('../../../../.github/workflows/nightly-regression.yml', import.meta.url), 'utf8'));
+    const job = workflow.jobs['real-env-smoke'];
+    expect(job.if).toBeUndefined();
+    expect(Number.isInteger(job['timeout-minutes'])).toBe(true);
+    expect(job['timeout-minutes']).toBeGreaterThan(0);
+    expect(job.steps.filter(step => step.run?.includes('--config vitest.real-env-smoke.config.js'))).toHaveLength(1);
+    expect(job.steps.some(step => /run-smoke-ratchet|for .*scripts\/smoke/.test(step.run || ''))).toBe(false);
+    expect(job.steps.some(step => step.uses?.includes('skills-source'))).toBe(false);
+    for (const step of job.steps.filter(step => step.run))
+      expect(spawnSync('bash', ['-n'], {input: step.run, encoding: 'utf8'}).status, step.name).toBe(0);
   });
-  it('专属容器job明确接线真实PG正例及严格授权/身份，不给普通PG job授权', () => {
-    const workflow = readFileSync(new URL('../../../../.github/workflows/ci.yml', import.meta.url), 'utf8');
-    const real = workflow.slice(workflow.indexOf('\n  real-env-smoke:'));
-    expect(real).toMatch(/Map Manifest real PG positive[\s\S]*SMOKE_ALLOW_WRITE: '1'[\s\S]*BRAIN_CONTAINER: cecelia-brain-smoke[\s\S]*--config vitest\.real-env-smoke\.config\.js/);
-    expect(real).toContain('POSTGRES_DB: cecelia_test');
-    expect(real).toContain('-e DB_NAME=cecelia_test');
-    const pg = workflow.match(/\n  brain-integration:[\s\S]*?(?=\n  [\w-]+:|$)/)[0];
-    expect(pg).toContain('- name: Integration Tests');
-    expect(pg).not.toContain('SMOKE_ALLOW_WRITE');
-    expect(workflow.match(/--config vitest\.real-env-smoke\.config\.js/g)).toHaveLength(1);
+  it('专属正例明确授权且普通PG无授权，实际cleanup仅操作专属容器', () => {
+    const workflow = yaml.load(readFileSync(new URL('../../../../.github/workflows/nightly-regression.yml', import.meta.url), 'utf8'));
+    const job = workflow.jobs['real-env-smoke'];
+    const positive = job.steps.find(step => step.run?.includes('--config vitest.real-env-smoke.config.js'));
+    expect(positive.env).toMatchObject({SMOKE_ALLOW_WRITE: '1', BRAIN_CONTAINER: 'cecelia-brain-smoke'});
+    expect(job.services.postgres.env.POSTGRES_DB).toBe('cecelia_test');
+    expect(workflow.jobs['brain-integration'].env.SMOKE_ALLOW_WRITE).toBeUndefined();
+    expect(workflow.jobs['brain-integration'].steps.every(step => step.env?.SMOKE_ALLOW_WRITE === undefined)).toBe(true);
+    const cleanup = job.steps.find(step => step.name === 'Cleanup brain container');
+    expect(cleanup.if).toBe('always()');
+    const temp = mkdtempSync(join(tmpdir(), 'map-ci-cleanup-'));
+    const capture = join(temp, 'docker-commands');
+    writeFileSync(join(temp, 'docker'), `#!/usr/bin/env node\nrequire('node:fs').appendFileSync(process.env.CI_DOCKER_CAPTURE, JSON.stringify(process.argv.slice(2))+'\\n');\n`, {mode: 0o755});
+    try {
+      const result = spawnSync('bash', ['-c', cleanup.run], {encoding: 'utf8',
+        env: {...process.env, PATH: `${temp}:${process.env.PATH}`, CI_DOCKER_CAPTURE: capture}});
+      expect(result.status).toBe(0);
+      expect(readFileSync(capture, 'utf8').trim().split('\n').map(line => JSON.parse(line)))
+        .toEqual([['logs', 'cecelia-brain-smoke'], ['rm', '-f', 'cecelia-brain-smoke']]);
+    } finally {rmSync(temp, {recursive: true, force: true});}
   });
 });

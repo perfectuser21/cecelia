@@ -1,46 +1,31 @@
-import { describe, it, expect } from 'vitest';
-import { execSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { writeFileSync, chmodSync } from 'node:fs';
 import { join } from 'node:path';
-import os from 'os';
+import { nativeWorktreeFixture, WORKTREE_MANAGE } from '../helpers/native-worktree-fixture';
 
-const WORKTREE_MANAGE = join(os.homedir(), '.claude', 'skills', 'dev', 'scripts', 'worktree-manage.sh');
-const scriptExists = existsSync(WORKTREE_MANAGE);
-
-function runResolve(extraEnv: Record<string, string> = {}): string {
-  const bashScript = `source "${WORKTREE_MANAGE}" 2>/dev/null || { echo "SOURCE_FAIL"; exit 1; }
-if ! declare -f _resolve_claude_session_id >/dev/null; then echo "NO_FUNC"; exit 1; fi
-_resolve_claude_session_id
-`;
-  const env = { ...process.env, ...extraEnv };
-  return execSync(`bash -c '${bashScript.replace(/'/g, `'"'"'`)}'`, {
-    shell: '/bin/bash',
-    env,
-  }).toString().trim();
-}
-
-describe('Phase 7.1 _resolve_claude_session_id', () => {
-  it.skipIf(!scriptExists)('env var 路径：CLAUDE_SESSION_ID 有值时直接返回', () => {
-    const out = runResolve({ CLAUDE_SESSION_ID: 'env-test-uuid-12345' });
-    expect(out).toBe('env-test-uuid-12345');
+describe('tracked _resolve_claude_session_id', () => {
+  let fixture: ReturnType<typeof nativeWorktreeFixture>;
+  beforeEach(() => {
+    fixture = nativeWorktreeFixture();
+    // PPID是外部输入；固定父链，真实解析函数完整运行，避免读取宿主Agent命令行。
+    writeFileSync(join(fixture.bin, 'ps'), '#!/bin/sh\nif [ "$2" = "args=" ]; then printf "%s\\n" "$FIXTURE_PARENT_ARGS"; else echo 1; fi\n');
+    chmodSync(join(fixture.bin, 'ps'), 0o755);
   });
-
-  it.skipIf(!scriptExists)('env var 空串时退到 PPID fallback（CI 父链无 claude→空 / 本地主 claude 内→UUID）', () => {
-    const out = runResolve({ CLAUDE_SESSION_ID: '' });
-    // 鲁棒断言：CI vitest 父链无 claude --session-id → 空；本地主 claude 进程内 PPID 链能找到 → UUID
-    // 两种都视为 fallback 路径正常运行（不是 SOURCE_FAIL/NO_FUNC）
-    expect(out === '' || /^[a-f0-9-]{8,}$/.test(out)).toBe(true);
+  afterEach(() => { fixture.dispose(); });
+  function resolve(overrides: Record<string, string>) {
+    const result = fixture.shell('source "$1"; _resolve_claude_session_id', [WORKTREE_MANAGE], overrides);
+    expect(result.status, result.stderr).toBe(0);
+    return result.stdout.trim();
+  }
+  it('显式session优先于父进程session', () => {
+    expect(resolve({ CLAUDE_SESSION_ID: 'env-test-uuid-12345', FIXTURE_PARENT_ARGS: 'claude --session-id aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee' })).toBe('env-test-uuid-12345');
   });
-
-  it.skipIf(!scriptExists)('env var 未设置时也走 fallback（CI 空 / 本地 UUID）', () => {
-    // 单独设一个干净 env 去掉 CLAUDE_SESSION_ID
-    const env = { ...process.env };
-    delete env.CLAUDE_SESSION_ID;
-    const bashScript = `source "${WORKTREE_MANAGE}" 2>/dev/null || { echo "SOURCE_FAIL"; exit 1; }
-declare -f _resolve_claude_session_id >/dev/null || { echo "NO_FUNC"; exit 1; }
-_resolve_claude_session_id
-`;
-    const out = execSync(`bash -c '${bashScript.replace(/'/g, `'"'"'`)}'`, { shell: '/bin/bash', env }).toString().trim();
-    expect(out === '' || /^[a-f0-9-]{8,}$/.test(out)).toBe(true);
+  it('空session沿PPID解析真实参数中的UUID', () => {
+    expect(resolve({ CLAUDE_SESSION_ID: '', FIXTURE_PARENT_ARGS: 'claude --session-id aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee' })).toBe('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee');
+  });
+  it('session未设置且父链没有Claude时返回空', () => {
+    const result = fixture.shell('unset CLAUDE_SESSION_ID; source "$1"; _resolve_claude_session_id', [WORKTREE_MANAGE], { FIXTURE_PARENT_ARGS: 'node vitest' });
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout.trim()).toBe('');
   });
 });

@@ -1,14 +1,7 @@
 name: L5 E2E Frontend
 
+# 旧 frontend 目录无现役发布入口；仅其自身变更由主 CI 核查，独立浏览器诊断按需运行。
 on:
-  pull_request:
-    paths:
-      - 'frontend/**'
-      - '.github/workflows/ci-l5-e2e-frontend.yml'
-  push:
-    branches: [main]
-    paths:
-      - 'frontend/**'
   workflow_dispatch:
 
 jobs:

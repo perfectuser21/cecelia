@@ -5,9 +5,17 @@ name: PR Auto Review (DeepSeek)
 # 结果以评论形式发布到 PR
 # 若发现🔴严重问题 → job 失败，阻塞合并
 
+# 在线 AI 审查为按需辅助；结果不属于源码 CI 的强制成功结论。
 on:
-  pull_request:
-    types: [opened, synchronize]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: '需要辅助审查的 PR 编号'
+        required: true
+        type: number
+
+env:
+  PR_NUMBER: ${{ inputs.pr_number }}
 
 jobs:
   deepseek-review:
@@ -38,7 +46,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           # 沿用500行审查范围；内容只经文件传递，单行生成物不能污染进程环境。
-          gh pr diff ${{ github.event.pull_request.number }} > "$RUNNER_TEMP/pr-review-raw.diff"
+          gh pr diff "$PR_NUMBER" > "$RUNNER_TEMP/pr-review-raw.diff"
           head -n 500 "$RUNNER_TEMP/pr-review-raw.diff" > "$RUNNER_TEMP/pr-review.diff"
 
       - name: 调用 OpenRouter API 进行代码审查（含重试，fail-closed）
@@ -66,7 +74,7 @@ jobs:
           输出格式：
           - 用简洁的 Markdown 列表总结发现的问题
           - 区分严重问题（🔴）、建议优化（🟡）、正面反馈（🟢）
-          - 如果没有发现严重问题，在🔴严重问题下明确写"未发现严重问题""
+          - 如果没有发现严重问题，在🔴严重问题下明确写\"未发现严重问题\""
 
           jq -n --arg sys "$SYSTEM_PROMPT" --rawfile diff "$RUNNER_TEMP/pr-review.diff" \
             '{model:"deepseek/deepseek-chat",messages:[
@@ -77,7 +85,6 @@ jobs:
           # 调用 OpenRouter API（DeepSeek V3）— 最多重试 3 次，fail-closed
           MAX_RETRY=3
           RETRY_COUNT=0
-          API_ERROR=false
           REVIEW_CONTENT=""
 
           while [[ $RETRY_COUNT -lt $MAX_RETRY ]]; do
@@ -113,7 +120,6 @@ jobs:
               echo "::warning::OpenRouter API rate limit（429），跳过审查，不阻止 PR 合并"
               exit 0
             fi
-            API_ERROR=true
             echo "❌ OpenRouter API 调用全部失败（已重试 ${MAX_RETRY} 次），阻止 PR 合并" >&2
             exit 1
           fi
@@ -134,7 +140,7 @@ jobs:
           ---
           *由 [OpenRouter](https://openrouter.ai) 提供 DeepSeek V3 模型审查*"
 
-          gh pr comment ${{ github.event.pull_request.number }} \
+          gh pr comment "$PR_NUMBER" \
             --body "$COMMENT_BODY" 2>/dev/null || \
           echo "评论发布失败（可能权限不足），继续执行严重问题检测"
 

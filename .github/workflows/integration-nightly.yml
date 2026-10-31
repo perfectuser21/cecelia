@@ -16,11 +16,10 @@
 # 绿 → 自动关已有 [integration-red] Issue
 # ═══════════════════════════════════════════════════════════════════
 
-name: "Integration Nightly（刀B 跨组件 E2E）"
+name: Legacy Integration Diagnostics
 
+# 历史/环境诊断按需运行；通用源码保障归 ci.yml，深度回归归 nightly-regression.yml。
 on:
-  schedule:
-    - cron: '30 20 * * *'   # UTC 20:30 = 北京 04:30（刀A 19:30 跑完后）
   workflow_dispatch:
     inputs:
       fire_test:

@@ -1,18 +1,15 @@
-/**
- * Test: strategist_decision 任务的 skill 路由 + prompt 参数注入
- *
- * PR3674 只完成了任务创建侧（line-strategist-dispatch.js），executor.js 执行侧
- * 完全没接：getSkillForTaskType 的 skillMap 缺 strategist_decision，fallback 成 /dev；
- * _prepareDefaultPrompt 也不会把 payload.journey_id 等塞进 prompt。
- *
- * 修法：skillMap 补项 + 仿 _prepareHarnessReportPrompt 模式新增
- * _prepareStrategistDecisionPrompt（inline SKILL.md + 参数块）。
- *
- * 注意：本测试**不 mock fs**，让 loadSkillContent 读到真实的
- * packages/workflows/skills/line-strategist/SKILL.md（Step 1 已同步）。
- */
+// 验证真实 executor 的 Skill 内联与参数；外置正文由固定来源专项负责。
 
 import { describe, it, expect, vi } from 'vitest';
+
+const skillLoader = vi.hoisted(() => vi.fn((name) => {
+  if (name !== 'line-strategist') throw new Error(`unexpected skill: ${name}`);
+  return 'NATIVE_STRATEGIST_SKILL_FIXTURE_83c2';
+}));
+vi.mock('../harness-shared.js', async importOriginal => ({
+  ...await importOriginal(),
+  loadSkillContent: skillLoader,
+}));
 
 const mockQuery = vi.fn().mockResolvedValue({ rows: [], rowCount: 0 });
 vi.mock('../db.js', () => ({ default: { query: mockQuery } }));
@@ -69,8 +66,8 @@ describe('strategist_decision — executor 执行侧接线', () => {
     // 1) 不能以裸 slash command 开头（容器 headless 不展开 → 空 SKILL 静默降级）
     expect(prompt.startsWith('/')).toBe(false);
 
-    // 2) 必须 inline 了真实 line-strategist SKILL.md 的内容特征串
-    expect(prompt).toContain('Line 军师(line-strategist)');
+    // 2) 完整内联独立 loader 返回的正文，不能回落到裸 slash
+    expect(prompt).toContain('NATIVE_STRATEGIST_SKILL_FIXTURE_83c2');
 
     // 3) 必须注入四个参数，值来自 payload
     expect(prompt).toContain('LINE_ID: journey-abc-123');
@@ -92,5 +89,10 @@ describe('strategist_decision — executor 执行侧接线', () => {
     const prompt = await preparePrompt(task);
     expect(prompt).toContain('TRIGGER: manual');
     expect(prompt).toContain('LINE_ID: journey-xyz');
+  });
+  it('外置正文加载失败必须传播，不能静默生成降级 prompt', async () => {
+    const { preparePrompt } = await import('../executor.js');
+    skillLoader.mockImplementationOnce(() => { throw new Error('fixture skill unavailable'); });
+    await expect(preparePrompt({ id: 'strategist-missing', task_type: 'strategist_decision', payload: {} })).rejects.toThrow('fixture skill unavailable');
   });
 });

@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import pg from 'pg';
 import { runPostdeployVerifier, _resetThrottleForTest } from '../../../packages/brain/src/postdeploy-verifier.js';
+import { DB_DEFAULTS } from '../../../packages/brain/src/db-config.js';
+import { assertPrivateFixtureTarget } from '../../../packages/brain/src/__tests__/fixtures/private-fixture-db.js';
 
 /**
  * Golden Path Step 4 — fetchPendingBatch 排除 smoke: 前缀任务 [BEHAVIOR]
@@ -19,7 +21,6 @@ import { runPostdeployVerifier, _resetThrottleForTest } from '../../../packages/
  * 命令用白名单内的 `sh -c "echo ok"`，不产生真实副作用；执行环境要求同上一测试文件。
  */
 
-const DB_URL = process.env.DB || 'postgresql://localhost/cecelia';
 const RUN_TAG = `137fea96-${Date.now()}`;
 
 let client: pg.Client;
@@ -27,8 +28,12 @@ let smokeTaskId: string;
 let controlTaskId: string;
 
 beforeAll(async () => {
-  client = new pg.Client(DB_URL);
+  assertPrivateFixtureTarget();
+  client = new pg.Client(DB_DEFAULTS);
   await client.connect();
+  expect((await client.query('SELECT current_database() AS name')).rows[0].name).toBe(DB_DEFAULTS.database);
+  // 正式迁移后的列/约束；临时表让批次只消费本人夹具，绝不扫描共享 tasks。
+  await client.query('CREATE TEMP TABLE tasks (LIKE public.tasks INCLUDING ALL)');
 
   const r1 = await client.query<{ id: string }>(
     `INSERT INTO tasks (task_type, status, title, payload)

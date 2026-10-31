@@ -21,9 +21,9 @@ name: Preview Deploy
 on:
   pull_request:
     types: [opened, synchronize, reopened]
-    paths-ignore:
-      - 'docs/**'
-      - '**/*.md'
+    paths:
+      - 'apps/dashboard/**'
+      - 'apps/api/**'
 
 concurrency:
   group: preview-deploy-${{ github.head_ref }}
@@ -36,7 +36,7 @@ jobs:
     # and the dedicated Kernel acceptance run. A UI preview is unrelated and
     # must not couple those stages to the host preview-disk admission gate.
     # 自动版本号 PR 不需要预览（只改版本五件套），不占预览名额（上限 6 个）
-    if: ${{ !contains(github.event.pull_request.labels.*.name, 'harness') && !startsWith(github.head_ref, 'auto-version-bump-') }}
+    if: ${{ github.actor != 'dependabot[bot]' && github.event.pull_request.head.repo.full_name == github.repository && !contains(github.event.pull_request.labels.*.name, 'harness') && !startsWith(github.head_ref, 'auto-version-bump-') }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     permissions:
@@ -47,18 +47,13 @@ jobs:
       - name: Checkout 代码
         uses: actions/checkout@v4
 
-      - name: Restore pinned skill sources
-        if: hashFiles('.skills-source.json') != ''
-        uses: ./.github/actions/skills-source
-        with:
-          ssh-key: ${{ secrets.SKILLS_SOURCE_SSH_KEY }}
       - name: 检查 Tailscale secret 是否配置
         id: check_ts
         run: |
           if [ -n "$SECRET_TS" ]; then
-            echo "configured=true" >> $GITHUB_OUTPUT
+            echo "configured=true" >> "$GITHUB_OUTPUT"
           else
-            echo "configured=false" >> $GITHUB_OUTPUT
+            echo "configured=false" >> "$GITHUB_OUTPUT"
             echo "TS_AUTHKEY secret 未配置，跳过预览部署"
           fi
         env:
@@ -92,8 +87,8 @@ jobs:
             echo "无法获取预览端口，Brain 响应: $RESP"
             exit 1
           fi
-          echo "port=$PORT" >> $GITHUB_OUTPUT
-          echo "brain_uptime=$BRAIN_UPTIME" >> $GITHUB_OUTPUT
+          echo "port=$PORT" >> "$GITHUB_OUTPUT"
+          echo "brain_uptime=$BRAIN_UPTIME" >> "$GITHUB_OUTPUT"
           echo "预览端口已分配: $PORT"
 
       - name: 轮询 preview 状态直到 active（max 600s）
@@ -119,7 +114,7 @@ jobs:
           BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.71.151.105:5241' }}
         run: |
           HOST=$(echo "$BRAIN_URL" | sed -E 's#^https?://##; s#:[0-9]+$##')
-          echo "host=$HOST" >> $GITHUB_OUTPUT
+          echo "host=$HOST" >> "$GITHUB_OUTPUT"
 
       - name: 健康检查预览 Brain
         id: healthcheck
@@ -134,7 +129,7 @@ jobs:
               | python3 -c "import sys,json; print(json.load(sys.stdin).get('status',''))" 2>/dev/null || echo "")
             if [ "$STATUS" = "running" ]; then
               echo "健康检查通过"
-              echo "preview_url=$PREVIEW_URL" >> $GITHUB_OUTPUT
+              echo "preview_url=$PREVIEW_URL" >> "$GITHUB_OUTPUT"
               exit 0
             fi
             echo "  尝试 $i/12: status=${STATUS}，等待..."
@@ -150,7 +145,7 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const previewUrl = '${{ steps.healthcheck.outputs.preview_url }}';
-            const branch = '${{ github.head_ref }}';
+            const branch = context.payload.pull_request.head.ref;
             const port = '${{ steps.start_preview.outputs.port }}';
             await github.rest.issues.createComment({
               owner: context.repo.owner,
@@ -175,7 +170,7 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const branch = '${{ github.head_ref }}';
+            const branch = context.payload.pull_request.head.ref;
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -189,7 +184,7 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const branch = '${{ github.head_ref }}';
+            const branch = context.payload.pull_request.head.ref;
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,

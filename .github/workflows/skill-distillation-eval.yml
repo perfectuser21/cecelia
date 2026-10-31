@@ -1,0 +1,25 @@
+name: Skill Distillation Eval
+
+# 在线模型的能力评测有独立入口，不占用每个源码 PR 的最低保障。
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  goldset-eval:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Evaluate fixed screenshots against the registered threshold
+        env:
+          TOAPIS_API_KEY: ${{ secrets.TOAPIS_API_KEY }}
+          TOAPIS_BASE_URL: ${{ secrets.TOAPIS_BASE_URL }}
+        run: node packages/quality/skill-distillation/scripts/goldset-eval.mjs

@@ -68,10 +68,10 @@ describe('runner CI 红自动修复（ci_fix）', () => {
     ] },
     logs: { 4242: '2026-10-08T10:40:00.4048853Z FAIL install.test.mjs > XML 转义\n2026-10-08T10:40:00.4061634Z AssertionError: expected <lt;', 4243: 'brain-unit failed' },
   });
-  const go = async (ghState, { mode = 'fix', extra = {}, tasks = [] } = {}) => {
+  const go = async (ghState, { mode = 'fix', extra = {}, tasks = [], baseFreshCheck } = {}) => {
     fs.writeFileSync(files.ghState, JSON.stringify(ghState));
     brain = await startFakeBrain({ tasks });
-    return runOnceProcess(runnerEnv(sb, brain.url, {
+    const env = runnerEnv(sb, brain.url, {
       CODING_WF_CIFIX: '1',
       CODING_WF_GH_BIN: FAKE_GH_CI,
       FAKE_GH_CI: files.ghState,
@@ -79,7 +79,13 @@ describe('runner CI 红自动修复（ci_fix）', () => {
       FAKE_CIFIX_MODE: mode,
       FAKE_CIFIX_PROMPT: files.prompt,
       ...extra,
-    }));
+    });
+    if (baseFreshCheck !== undefined) {
+      const profile = JSON.parse(fs.readFileSync(env.CODING_WF_REPOS_FILE, 'utf8'));
+      profile.repos.find(repo => repo.default).base_fresh_check = baseFreshCheck;
+      fs.writeFileSync(env.CODING_WF_REPOS_FILE, JSON.stringify(profile));
+    }
+    return runOnceProcess(env);
   };
   const remoteHead = () => git(sb.origin, 'rev-parse', BRANCH).trim();
   const state = () => JSON.parse(fs.readFileSync(path.join(sb.logDir, 'cifix-77.json'), 'utf8'));
@@ -262,9 +268,9 @@ describe('runner CI 红自动修复（ci_fix）', () => {
     expect(state().escalated).toMatchObject({ type: 'ci_fix_exhausted', reason: 'rerun_still_failing' });
   });
 
-  it('落后 main（lint-base-fresh 红）→ 程序 gh pr update-branch，不派 claude、不占修复次数；超过 3 次升级', async () => {
+  it('旧profile明确启用lint-base-fresh：落后main程序update-branch，不派claude、不占修复次数；超过3次升级', async () => {
     const behind = () => ({ ...red(), checks: { 77: [{ name: 'lint-base-fresh', bucket: 'fail', link: JOB_URL }, { name: 'ci-passed', bucket: 'fail', link: JOB_URL }] } });
-    let r = await go(behind());
+    let r = await go(behind(), { baseFreshCheck: 'lint-base-fresh' });
     expect(r.exitCode, r.stderr).toBe(0);
     expect(readJsonLines(sb.ghLog)).toContainEqual(['pr', 'update-branch', '77']);
     expect(fs.existsSync(files.prompt)).toBe(false);
@@ -272,8 +278,35 @@ describe('runner CI 红自动修复（ci_fix）', () => {
     await brain.close();
     brain = null;
     writeState({ attempts: [], update_branch: [{ head: 'a' }, { head: 'b' }, { head: 'c' }] });
-    r = await go(behind());
+    r = await go(behind(), { baseFreshCheck: 'lint-base-fresh' });
     expect(state().escalated).toMatchObject({ type: 'ci_fix_exhausted', reason: 'update_branch_exhausted' });
+  });
+
+  it('当前profile无lint freshness：GitHub strict拒绝批准head且BEHIND时程序update-branch，不派AI、不计修复次数', async () => {
+    seedQaPassed();
+    fs.writeFileSync(path.join(sb.logDir, 'qa-77.json'), JSON.stringify({ ...qaState(), approved: { head, round: 1 } }));
+    const attempts = [{ head: 'a'.repeat(40), result: 'pushed' }];
+    writeState({ attempts });
+    const r = await go({
+      prs: [pr()], requiredContexts: ['源码保底通过'],
+      required: { 77: [{ name: '源码保底通过', bucket: 'pass' }] }, checks: { 77: [] },
+      mergeExit: 1, mergeable: 'MERGEABLE', mergeStateStatus: 'BEHIND',
+    }, { baseFreshCheck: null, extra: { CODING_WF_QA_GATE: '1' }, tasks: [{ id: TASK, status: 'completed', result: {} }] });
+    expect(r.exitCode, r.stderr).toBe(0);
+    const profile = JSON.parse(fs.readFileSync(path.join(sb.root, 'fixture-repos.json'), 'utf8'));
+    expect(profile.repos.find(repo => repo.default).base_fresh_check).toBeNull();
+    expect(ghCalls()).toContainEqual(['pr', 'merge', '77', '--squash', '--delete-branch', '--match-head-commit', head]);
+    expect(ghCalls()).toContainEqual(['pr', 'view', '77', '--json', 'mergeable,mergeStateStatus']);
+    expect(ghCalls()).toContainEqual(['pr', 'update-branch', '77']);
+    expect(ghCalls().some(args => args.includes('--admin'))).toBe(false);
+    expect(fs.existsSync(files.prompt)).toBe(false);
+    expect(fs.existsSync(sb.execLog)).toBe(false);
+    expect(state().attempts).toEqual(attempts);
+    expect(qaState().escalated).toBeUndefined();
+    expect(qaState().merged).toBeUndefined();
+    expect(brain.spans.some(span => span.occurrence_key.startsWith('ci_fix:'))).toBe(false);
+    expect(remoteHead()).toBe(head);
+    expect(r.stderr).toContain('落后 main，update-branch 成功');
   });
 
   it('配置：默认开启、每 PR 最多 2 次；CODING_WF_CIFIX=0 关闭', () => {

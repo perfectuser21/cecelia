@@ -2,6 +2,18 @@ name: Implementation impact
 on:
   pull_request:
     branches: [main]
+    # 来源定义变更才执行来源准入；通用源码与依赖更新由 ci.yml 负责。
+    paths:
+      - '.github/workflows/implementation-impact.yml'
+      - '.skills-source.json'
+      - '.implementation-*.json'
+      - 'packages/brain/config/**'
+      - 'packages/brain/scripts/coding-workflow/repos.json'
+      - 'scripts/ci/implementation-*'
+      - 'scripts/ci/prepare-fixed-skill-cache.mjs'
+      - 'packages/brain/src/lib/implementation-*'
+      - 'packages/brain/src/lib/existing-ops-*'
+      - 'packages/brain/src/lib/native-consumer-runtime*'
   push:
     branches: [main]
   workflow_dispatch:
