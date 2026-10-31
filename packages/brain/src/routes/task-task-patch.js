@@ -24,7 +24,7 @@ export function registerTaskPatchRoute(router, { pool, terminalStatuses }) {
 
       if (status !== undefined) {
         const current = await pool.query(
-          `SELECT status, payload, result,
+          `SELECT status, claimed_by, payload, result,
                   task_type,
                   payload->>'orchestrator' AS orchestrator,
                   EXISTS (
@@ -50,6 +50,14 @@ export function registerTaskPatchRoute(router, { pool, terminalStatuses }) {
         const currentTask = current.rows[0];
         const authoringError = authoringMutationError(currentTask, { status });
         if (authoringError) return res.status(409).json(authoringError);
+        if (status === 'in_progress' && currentTask.status === 'blocked'
+          && (currentTask.payload?.headed_manual === true || currentTask.payload?.headed_manual === 'true')
+          && !currentTask.claimed_by) {
+          return res.status(409).json({
+            code: 'CLAIM_REQUIRED_FOR_BLOCKED_RECOVERY',
+            error: '有头任务恢复前须先 POST /tasks/:id/claim，由真实执行者认领',
+          });
+        }
         if (
           currentTask.status === 'blocked'
           && ['queued', 'in_progress', 'completed'].includes(status)

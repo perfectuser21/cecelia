@@ -299,11 +299,13 @@ export async function resumeStalledHarnessDrivers({
   // 区段 A/B 都靠 JOIN/EXISTS initiative_runs 判活，这类任务对它们完全不可见。
   // 没有 checkpoint 可续 → 不是 resume，直接标 failed 释放 claim，让上游/用户重新点火。
   //
-  // 有头豁免（并行血管P2，decision 45a2bcfb）：有头 /dev 会话（claimed_by 含
-  // interactive-dev-skill）在 PrepPRD/探索/TDD 阶段 40min 内不写 initiative_runs 属正常
-  // 在工，不是野鬼——docker 容器探测救不了有头（没有 cecelia-relay-* 容器）。
-  // 超 HEADED_CLAIM_GRACE_MINUTES 无任何 run 活动才落回判死（防真死会话永久占坑）。
+  // 存量兼容：旧有头账本可能仅用 interactive-dev-skill 标记。新账本以
+  // headed_manual 为准，不能用 claimed_at 的年龄推断会话是否存活。
+  // 旧格式暂保留 40min 宽限与 blocked 降级，避免变更其原有处置语义。
   const neverStartedThresholdMin = staleMinutesA; // 复用 A 阶段阈值，不新增参数
+  // headed_manual 是有头 /dev 的账本声明：这类会话按设计不写 initiative_runs。
+  // 缺 run 和 claim 年龄均不能证明会话已死；只把真正的无头 graph 候选交给本段。
+  const headlessGraphPredicate = (alias) => `COALESCE(${alias}.payload->>'headed_manual', 'false') <> 'true'`;
   const headedExemptPredicate = (alias) => `NOT (
           ${alias}.claimed_by LIKE '%interactive-dev-skill%'
           AND ${alias}.claimed_at >= NOW() - INTERVAL '${HEADED_CLAIM_GRACE_MINUTES} minutes'
@@ -326,6 +328,7 @@ export async function resumeStalledHarnessDrivers({
                WHERE ${runIdentityPredicate('ir', 't.id')})
         AND t.claimed_at IS NOT NULL
         AND t.claimed_at < NOW() - ($1 || ' minutes')::interval
+        AND ${headlessGraphPredicate('t')}
         AND ${headedExemptPredicate('t')}
         AND ${noActiveLeasePredicate('t')}
       ORDER BY t.claimed_at ASC
@@ -368,6 +371,7 @@ export async function resumeStalledHarnessDrivers({
               AND status = 'in_progress'
               AND claimed_at IS NOT NULL
               AND claimed_at < NOW() - ($2 || ' minutes')::interval
+              AND ${headlessGraphPredicate('tasks')}
               AND ${headedExemptPredicate('tasks')}
               AND ${noActiveLeasePredicate('tasks')}
             FOR UPDATE`,

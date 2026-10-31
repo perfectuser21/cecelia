@@ -169,6 +169,21 @@ describe('A. tasks.js PATCH /:task_id → in_progress: 自动写 claimed_by + ex
     expect(mockPool.query.mock.calls.some(([sql]) => String(sql).includes('UPDATE tasks'))).toBe(false);
   });
 
+  it('blocked 有头账本已由真实执行者 claim 后可恢复且保留 owner', async () => {
+    mockSelectOk({
+      status: 'blocked',
+      claimed_by: 'codex:104-exact-order-scope',
+      executor_kind: 'headed-session',
+      payload: { headed_manual: true },
+    });
+    mockUpdateOk();
+    const res = await request(app)
+      .patch('/api/brain/tasks/task-1')
+      .send({ status: 'in_progress' });
+    expect(res.status).toBe(200);
+    expect(mockPool.query.mock.calls.some(([sql]) => String(sql).includes('UPDATE tasks'))).toBe(true);
+  });
+
   it('status→completed 时 UPDATE 不写 executor_kind 列', async () => {
     mockSelectOk({ status: 'in_progress', claimed_by: 'session:x', executor_kind: 'headed-session' });
     mockUpdateOk();
@@ -295,5 +310,17 @@ describe('C. task-tasks.js PATCH /:id → in_progress: 补写 claimed_by + execu
     );
     expect(updateCall[0]).toMatch(/claimed_by/);
     expect(updateCall[0]).toMatch(/COALESCE/i);
+  });
+
+  it('blocked 有头账本也不能由通用 PATCH 抢先填充占位 owner', async () => {
+    mockPool.query.mockResolvedValueOnce({ rows: [{
+      status: 'blocked', claimed_by: null, payload: { headed_manual: true },
+    }] });
+    const res = await request(app)
+      .patch('/tasks/task-5')
+      .send({ status: 'in_progress' });
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe('CLAIM_REQUIRED_FOR_BLOCKED_RECOVERY');
+    expect(mockPool.query.mock.calls.some(([sql]) => String(sql).includes('UPDATE tasks'))).toBe(false);
   });
 });
