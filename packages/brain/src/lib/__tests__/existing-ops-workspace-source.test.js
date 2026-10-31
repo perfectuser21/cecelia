@@ -5,7 +5,10 @@ import yaml from 'js-yaml';
 import { buildExistingOpsSources } from './helpers/existing-ops-proof-builder.js';
 import { collectWorkspaceInputEdges } from '../existing-ops-workspace-source.js';
 import { parse, parse as acorn } from 'acorn';
-import { readFileSync } from 'node:fs';
+import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, symlinkSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { readFixedLocalGitBlob } from '../../../../../scripts/ci/fixed-local-git.mjs';
 import { createHash } from 'node:crypto';
 import { gunzipSync } from 'node:zlib';
 import { readNativeConsumerRuntime, assertNativeConsumerRuntime } from '../native-consumer-runtime.js';
@@ -152,10 +155,11 @@ const fixtureBlobs = {
   ".github/workflows/skills-source-check.yml": "7807461817f1c373d53b96c12e02be656588cdf4",
 };
 if (fixtureArchive.schema_version !== 1 || fixtureArchive.base_revision !== revision) throw Error('fixture base mismatch');
+const fixtureBlobSha = text => createHash('sha1').update('blob ' + Buffer.byteLength(text) + '\0').update(text).digest('hex');
 const archivedFiles = [...fixtureArchive.files, ...fixtureArchive.protocol_inputs];
 if (JSON.stringify(archivedFiles.map(f => f.path).sort()) !== JSON.stringify(Object.keys(fixtureBlobs).sort())) throw Error('fixture path set mismatch');
 for (const f of archivedFiles) {
-  const blob = createHash('sha1').update('blob ' + Buffer.byteLength(f.text) + '\0').update(f.text).digest('hex');
+  const blob = fixtureBlobSha(f.text);
   if (blob !== f.git_blob_sha1 || blob !== fixtureBlobs[f.path]) throw Error('fixture Git blob mismatch');
 }
 const basePaths = execFileSync('git', ['--no-replace-objects', 'ls-tree', '-rz', '--name-only', revision], { cwd: root, encoding: 'utf8' }).split('\0').filter(Boolean);
@@ -175,8 +179,8 @@ const scope = 'scripts/ci/basic-scope.mjs', results = 'scripts/ci/check-basic-re
 const marker = '\nexport const EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = 1;';
 const parse = text => acorn(text, { ecmaVersion: 'latest', sourceType: 'module' });
 const reader = overrides => async path => overrides[path] ?? (path === schema ? read(path) + marker : read(path));
-const collect = (overrides = {}, missing = []) => basicBuilder({ scope: 'cecelia-factory', repo: 'perfectuser21/cecelia', revision,
-  paths: paths.filter(path => !missing.includes(path)), readSource: reader(overrides) });
+const collect = (overrides = {}, missing = [], additional = []) => basicBuilder({ scope: 'cecelia-factory', repo: 'perfectuser21/cecelia', revision,
+  paths: [...new Set([...paths, ...additional])].filter(path => !missing.includes(path)), readSource: reader(overrides) });
 const workspace = (overrides = {}, missing = []) => collectWorkspaceInputEdges({ revision,
   paths: paths.filter(path => !missing.includes(path)), parse, readSource: reader(overrides) });
 const mutateCi = fn => { const doc = yaml.load(read(ci)); fn(doc); return yaml.dump(doc); };
@@ -199,7 +203,8 @@ const apiTuple = {
     doc.jobs.checks.env.API_PG_INTEGRATION = "${{ matrix.component == 'api-integration' && '1' || '0' }}";
   }),
   [scope]: read(scope).replace("'api', 'dashboard'", "'api', 'api-integration', 'dashboard'").replace("'api', 'ops'", "'api', 'api-integration', 'ops'"),
-  [runner]: read(runner).replace("    case 'dashboard':", "    case 'api-integration':\n      return [step('apps/api', 'npx', '--no-install', 'vitest', 'run', '--config', 'vitest.integration.config.ts')];\n    case 'dashboard':"),
+  [runner]: read(runner).replace("    case 'dashboard':", "    case 'api-integration':\n      return [step('apps/api', 'npx', '--no-install', 'vitest', 'run', '--config', 'vitest.integration.config.ts')];\n    case 'dashboard':")
+    .replace("      const tests = readdirSync(resolve(root, 'scripts/ci/__tests__'))\n        .filter(name => /^(basic-.*|run-basic-check|brain-source-only-deploy)\\.test\\.mjs$/.test(name))\n        .sort().map(name => `scripts/ci/__tests__/${name}`);\n", "      const tests = readdirSync(resolve(root, 'scripts/ci/__tests__'), { withFileTypes: true })\n        .filter(entry => /^(basic-.*|run-basic-check|brain-source-only-deploy)\\.test\\.mjs$/.test(entry.name))\n        .map(entry => {\n          if (!entry.isFile()) throw new Error(`Node测试入口必须是普通文件：${entry.name}`);\n          return entry.name;\n        }).sort().map(name => `scripts/ci/__tests__/${name}`);\n      if (!tests.length) throw new Error('Node测试集合为空');\n"),
   'apps/api/vitest.config.ts': read('apps/api/vitest.config.ts').replace("exclude: ['node_modules', 'dist', '.idea', '.git', '.cache']", "exclude: [\n      'node_modules', 'dist', '.idea', '.git', '.cache',\n      'src/system/__tests__/memory.test.ts',\n      'src/system/__tests__/planning.test.ts',\n      'src/system/__tests__/dev-session.test.ts',\n    ]"),
   'apps/api/vitest.integration.config.ts': `import { defineConfig } from 'vitest/config';
 
@@ -220,10 +225,42 @@ export default defineConfig({
 });
 `,
 };
-const collectApi = (overrides = {}, missing = []) => basicBuilder({ scope: 'cecelia-factory', repo: 'perfectuser21/cecelia', revision,
-  paths: [...new Set([...paths, ...apiInputs, ...fixtureArchive.protocol_inputs.map(f => f.path)])].filter(path => !missing.includes(path)), readSource: reader({...apiTuple, ...overrides}) });
+const collectApi = (overrides = {}, missing = [], additional = []) => basicBuilder({ scope: 'cecelia-factory', repo: 'perfectuser21/cecelia', revision,
+  paths: [...new Set([...paths, ...apiInputs, ...fixtureArchive.protocol_inputs.map(f => f.path), ...additional])].filter(path => !missing.includes(path)), readSource: reader({...apiTuple, ...overrides}) });
 
 describe('显式源码保底 CI 固定来源协议', () => {
+  it('Deep目录glob遵循零层globstar、扩展名、dot=false及任意层node_modules排除', async () => {
+    const cases = [
+      ['src/node_modules/integration/never.test.js', false], ['src/a/integration/node_modules/never.test.js', false],
+      ['src/a/integration/.hidden/never.test.js', false], ['src/.hidden/integration/never.test.js', false],
+      ['src/a/integration/.never.test.js', false], ['src/integration/never.test.js.map', false],
+      ['src/a/not-integration/never.test.js', false], ['src/a/integration/never.test.py', false],
+      ['src/integration/root.test.js', true], ['src/a/integration/deeper/yes.spec.mts', true],
+      ['src/a/integration/node_modules-tools/yes.test.tsx', true], ['src/a/integration/deep.with.dot/yes.test.cjs', true],
+    ].map(([path, selected]) => ['packages/brain/' + path, selected]);
+    const source = path => path.endsWith('.mts') || path.endsWith('.tsx') ? 'const fixture: number = 1;' : 'const fixture = 1;';
+    const f3 = (await collect(Object.fromEntries(cases.map(([path]) => [path, source(path)])), [], cases.map(([path]) => path))).consumers[1];
+    expect(f3.status, JSON.stringify(f3.gaps)).toBe('verified');
+    const candidates = new Set(cases.map(([path]) => path)), wanted = cases.filter(([, selected]) => selected).map(([path]) => path).sort();
+    expect(f3.input_relations.filter(r => r.kind === 'deep_postgres_config_input' && candidates.has(r.input_path)).map(r => r.input_path).sort()).toEqual(wanted);
+    expect(f3.bindings.filter(b => candidates.has(b.path)).map(b => b.path).sort()).toEqual(wanted);
+  }, 120000);
+  it('匹配Node入口文件名的目录不能被冒充为未执行的普通文件', async () => {
+    const path = 'scripts/ci/__tests__/basic-fake.test.mjs/nested.test.mjs';
+    const f3 = (await collectApi({[path]: 'const fixture = 1;'}, [], [path])).consumers[1];
+    expect(f3.status).toBe('unknown'); expect(f3.bindings).toEqual([]); expect(f3.input_relations).toEqual([]);
+  }, 120000);
+  it('固定Git读取边界拒绝symlink入口，不能读取链接文字冒充普通测试', () => {
+    const root = mkdtempSync(join(tmpdir(), 'ops-node-kind-'));
+    const git = args => execFileSync('git', args, {cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe']}).trim();
+    try {
+      git(['init', '--quiet']); mkdirSync(join(root, 'scripts/ci/__tests__'), {recursive: true});
+      writeFileSync(join(root, 'scripts/ci/__tests__/real.test.mjs'), 'const fixture = 1;');
+      symlinkSync('real.test.mjs', join(root, 'scripts/ci/__tests__/basic-link.test.mjs'));
+      git(['add', '.']); git(['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', '-c', 'core.hooksPath=/dev/null', 'commit', '--quiet', '-m', 'test: source kind']);
+      expect(() => readFixedLocalGitBlob(root, {revision: git(['rev-parse', 'HEAD']), path: 'scripts/ci/__tests__/basic-link.test.mjs'})).toThrow(/NOT_REGULAR_BLOB/);
+    } finally { rmSync(root, {recursive: true, force: true}); }
+  });
   it('新tuple逐项展开scripts实际Node选择并绑定固定Skill的真实验证输入', async () => {
     const f3 = (await collectApi()).consumers[1];
     expect(f3.status, JSON.stringify(f3.gaps)).toBe('verified');
@@ -244,10 +281,11 @@ describe('显式源码保底 CI 固定来源协议', () => {
   }, 120000);
   it('CI输入fixture锚定已合入main的稳定历史而不依赖候选分支对象', () => {
     expect(revision).toBe('ae9b4d45fe2f6cfffe70c03cbfcde3d5e385fc25');
+    expect(fixtureBlobSha(apiTuple[runner])).toBe('cab79b9b4bdd4f1baf4925bd3f2110ddb29f2061');
     for (const [path, expected] of [['scripts/brain-deploy.sh', '1c6e40a3bddcf6ff288cffe7c618ce0b6b0a681e'],
       ['packages/brain/scripts/coding-workflow/repos.json', '2e0610098fc69f17d8c48436073c3923c3e0f485']]) {
       const text = read(path);
-      expect(createHash('sha1').update('blob ' + Buffer.byteLength(text) + '\0').update(text).digest('hex')).toBe(expected);
+      expect(fixtureBlobSha(text)).toBe(expected);
     }
   });
   it('来源协议保持既有16文件信任边界且单模块不超过500行', () => {
