@@ -433,6 +433,17 @@ router.patch('/tasks/:task_id', rateLimit(TASK_MUTATION_RATE_LIMIT_OPTIONS), hea
     const authoringError = authoringMutationError(task, { status });
     if (authoringError) return res.status(409).json(authoringError);
     const currentStatus = task.status;
+    // 看门狗误阻断后的有头恢复必须先走原子 claim。否则 PATCH 会把空 owner
+    // 自动填成 session:engine-patch，真正执行者随后 claim 得到 409。
+    if (status === 'in_progress' && currentStatus === 'blocked'
+      && (task.payload?.headed_manual === true || task.payload?.headed_manual === 'true')
+      && !task.claimed_by) {
+      return res.status(409).json({
+        success: false,
+        code: 'CLAIM_REQUIRED_FOR_BLOCKED_RECOVERY',
+        error: '有头任务恢复前须先 POST /tasks/:id/claim，由真实执行者认领',
+      });
+    }
 
     // handoff 下一步四类（主理人 2026-10-11 决策）：写入前把 next_steps 规范成带 kind 的对象，
     // 未标/认不出/旧值条目按有头/无头默认归类，响应里回报每条被当成了什么（handoff_next_steps）。
