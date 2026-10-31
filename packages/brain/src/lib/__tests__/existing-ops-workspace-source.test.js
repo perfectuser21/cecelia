@@ -186,10 +186,7 @@ const workspace = (overrides = {}, missing = []) => collectWorkspaceInputEdges({
 const mutateCi = fn => { const doc = yaml.load(read(ci)); fn(doc); return yaml.dump(doc); };
 const apiInputs = ['apps/api/vitest.config.ts', 'apps/api/vitest.integration.config.ts',
   'apps/api/src/system/__tests__/memory.test.ts', 'apps/api/src/system/__tests__/planning.test.ts', 'apps/api/src/system/__tests__/dev-session.test.ts'];
-// 显式下一版fixture，不依赖待合入工作树；仍只证明选择器，绝不授予当前发布资格。
-const apiTuple = {
-  ...Object.fromEntries(fixtureArchive.protocol_inputs.map(f => [f.path, f.text])),
-  'packages/brain/vitest.config.js': read('packages/brain/vitest.config.js').split('\n').filter(line => ![
+const supersededApiBrainConfig = read('packages/brain/vitest.config.js').split('\n').filter(line => ![
     '// Pre-existing failures on main — 之前靠 vitest OOM worker 崩溃跳过被掩盖，',
     '// 现在 workers 稳定后暴露。已创 Brain task 追踪，不是本 PR scope。',
     '// watchdog-crisis-*: checkRunaways 返回 0 kills vs expected 1+（真实逻辑 bug）',
@@ -197,7 +194,58 @@ const apiTuple = {
     '// Pre-existing failures: wrong import paths (../../brain/src/ instead of ../../packages/brain/src/)',
     '// Added to exclude list in skill-repo-decouple PR (not caused by this PR)',
     ...['diagnosis', 'escalation', 'healing', 'metrics', 'levels'].map(name => `'../../tests/alertness/${name}.test.js',`),
-  ].includes(line.trim())).join('\n'),
+  ].includes(line.trim())).join('\n');
+// 仅对未发布API变体作显式审查变换；归档中的历史CI输入保持原字节。
+const restoredApiBrainLines = [
+  "'src/__tests__/area-scheduler.test.js',",
+  "'src/__tests__/capabilities-api.test.js',",
+  "'src/__tests__/capability-scanner.test.js',",
+  "'src/__tests__/content-pipeline-orphan.test.ts',",
+  "'src/__tests__/contract-scan-scheduler.test.js',",
+  "'src/__tests__/daily-publish-scheduler.test.js',",
+  "'src/__tests__/decisions-context.test.js',",
+  "'src/__tests__/desire-feedback.test.js',",
+  "'src/__tests__/desire-suggestions.test.js',",
+  "'src/__tests__/emotion-layer.test.js',",
+  "'src/__tests__/evolution-synthesizer.test.js',",
+  "'src/__tests__/fact-extractor.test.js',",
+  "'src/__tests__/health-monitor.test.js',",
+  "'src/__tests__/initiative-closer.test.js',",
+  "'src/__tests__/initiative-completion.test.js',",
+  "'src/__tests__/initiative-queue.test.js',",
+  "'src/__tests__/intent-match.test.js',",
+  "'src/__tests__/memory-capabilities-search.test.js',",
+  "'src/__tests__/model-profile.test.js',",
+  "'src/__tests__/notebook-feeder.test.js',",
+  "'src/__tests__/okr-closer.test.js',",
+  "'src/__tests__/pending-conversations.test.js',",
+  "'src/__tests__/person-model.test.js',",
+  "'src/__tests__/quota-exhausted-no-quarantine.test.js',",
+  "'src/__tests__/quota-exhausted.test.js',",
+  "'src/__tests__/rumination-scheduler.test.js',",
+  "'src/__tests__/startup-recovery.test.js',",
+  "'src/__tests__/stats.test.js',",
+  "'src/__tests__/task-generator-dedup.test.js',",
+  "'src/__tests__/tick-layer2-health.test.js',",
+  "'src/__tests__/tick-rampup.test.js',",
+  "// zombie-cleaner.test.js：曾尝试移出 exclude（2026-07-09），本地62/62全绿，",
+  "// 但CI里连续3次在完全相同的4个用例上失败，均紧跟shard内heap撞到~8092MB附近的",
+  "// OOM崩溃之后——这个shard的既有文件总量本就贴着packages/brain/vitest.config.js",
+  "// 里注释写明的8192MB上限，把这个文件加回shard刚好把内存推过界，不是逻辑bug。",
+  "// 放回exclude维持原状；三处修好的fixture陈旧问题（resetAllMocks误清withLock工厂",
+  "// mock/WORKTREE_BASE硬编码值不一致/findTaskIdForWorktree mock字段不匹配实现）",
+  "// 依然留在文件里，本地`npx vitest run src/__tests__/zombie-cleaner.test.js`可",
+  "// 随时验证62/62绿，只是CI暂不跑它——需要先解决shard内存分配才能重新接入。",
+  "'src/__tests__/zombie-cleaner.test.js',",
+];
+const finalApiBrainConfig = supersededApiBrainConfig.split('\n')
+  .filter(line => !restoredApiBrainLines.includes(line.trim())).join('\n')
+  .replace('// DB 集成测试（pool.query 直连，beforeAll import pool）', '// 剩余真实资源依赖与旧夹具债务见 scripts/ci/brain-test-debt.json。');
+if (createHash('sha256').update(finalApiBrainConfig).digest('hex') !== '906b91dbaaf68ea004b60a252ab0af88bda443cde8418d8a3b812b48ebe4c0f8') throw Error('final API Brain fixture mismatch');
+// 显式下一版fixture，不依赖待合入工作树；仍只证明选择器，绝不授予当前发布资格。
+const apiTuple = {
+  ...Object.fromEntries(fixtureArchive.protocol_inputs.map(f => [f.path, f.text])),
+  'packages/brain/vitest.config.js': finalApiBrainConfig,
   [ci]: mutateCi(doc => {
     doc.jobs.checks.services.postgres.image = "${{ (matrix.component == 'brain-integration' || matrix.component == 'api-integration') && 'mirror.gcr.io/pgvector/pgvector:pg15' || '' }}";
     doc.jobs.checks.env.API_PG_INTEGRATION = "${{ matrix.component == 'api-integration' && '1' || '0' }}";
@@ -305,6 +353,8 @@ describe('显式源码保底 CI 固定来源协议', () => {
     expect(proof.consumers[1].status, JSON.stringify(proof.consumers[1].gaps)).toBe('verified');
     expect(proof.consumers[1].input_relations).toContainEqual({ consumer_path: runner, input_path: 'apps/api/vitest.integration.config.ts', kind: 'isolated_api_postgres_config', revision });
     for (const path of apiInputs.slice(2)) expect(proof.consumers[1].input_relations).toContainEqual({ consumer_path: 'apps/api/vitest.integration.config.ts', input_path: path, kind: 'literal_api_postgres_selector', revision });
+    const superseded = (await collectApi({'packages/brain/vitest.config.js': supersededApiBrainConfig})).consumers[1];
+    expect(superseded.status).toBe('unknown'); expect(superseded.bindings).toEqual([]); expect(superseded.input_relations).toEqual([]);
     for (const path of [ci, scope, runner, 'packages/brain/vitest.config.js']) {
       const mixed = (await collectApi({[path]: read(path)})).consumers[1];
       expect(mixed.status).toBe('unknown'); expect(mixed.bindings).toEqual([]); expect(mixed.input_relations).toEqual([]);
