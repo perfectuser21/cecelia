@@ -8,7 +8,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { execSync, spawnSync } from 'child_process';
-import { mkdtempSync, rmSync, appendFileSync, writeFileSync, readFileSync, readdirSync, mkdirSync, chmodSync, existsSync } from 'fs';
+import { mkdtempSync, rmSync, appendFileSync, writeFileSync, readFileSync, readdirSync, mkdirSync, chmodSync, statSync, existsSync } from 'fs';
 import { createHash } from 'crypto';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -109,6 +109,7 @@ describe('deploy-root-guard', () => {
     expect(sample.sampled_at_epoch).toBe(beforeEpoch);
     expect(sample.effective_free_bytes).toBe(973357056);
     expect(r.stdout).toContain('宿主磁盘采样已恢复');
+    expect(statSync(samplePath).mode & 0o777).toBe(0o600);
     expect(readdirSync(join(clone, '.runtime')).filter(name => name.startsWith('.host-disk-deploy-'))).toEqual([]);
   });
 
@@ -131,6 +132,24 @@ describe('deploy-root-guard', () => {
     expect(r.status).not.toBe(0);
     expect(r.stdout + r.stderr).toContain('宿主磁盘采样备份失败');
     expect(sha256(samplePath)).toBe(beforeSha);
+  });
+
+  it('AUTORESET=1：恢复失败时硬红、清除 Git 旧样本并保留 600 权限备份', () => {
+    const samplePath = seedTrackedHostSample();
+    const beforeSha = sha256(samplePath);
+    const fakeBin = join(base, 'fake-bin');
+    mkdirSync(fakeBin);
+    writeFileSync(join(fakeBin, 'mv'), '#!/usr/bin/env bash\nexit 9\n');
+    chmodSync(join(fakeBin, 'mv'), 0o755);
+    const r = runDeploy({ CECELIA_DEPLOY_AUTORESET: '1', PATH: `${fakeBin}:${process.env.PATH}` });
+    expect(r.status).not.toBe(0);
+    expect(r.stdout + r.stderr).toContain('宿主磁盘采样恢复失败');
+    expect(existsSync(samplePath)).toBe(false);
+    const backups = readdirSync(join(clone, '.runtime')).filter(name => name.startsWith('.host-disk-deploy-'));
+    expect(backups).toHaveLength(1);
+    const backupPath = join(clone, '.runtime', backups[0]);
+    expect(sha256(backupPath)).toBe(beforeSha);
+    expect(statSync(backupPath).mode & 0o777).toBe(0o600);
   });
 
   it('干净 main → 通过守卫，无相关改动 exit 0', () => {
