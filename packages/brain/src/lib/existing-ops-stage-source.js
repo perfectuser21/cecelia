@@ -147,7 +147,7 @@ export async function collectStageSources({parse,paths,selectors,read,readSource
   const matches=expected=>Object.keys(expected).every(p=>same(mode[p],p.endsWith('.json')?JSON.parse(expected[p]):reviewed(expected[p],parse)));
   if(!REVIEWED_STAGE_MODES.some(matches)){
    if(!matches(BASIC_CI_STAGE_MODE)||!await basicCiEnabledAt({paths,readSource,revision,parse}))throw Error('stage mode');
-   await collectBasicCiSources({read:async path=>{if(!paths.includes(path))throw Error('missing basic source');return readSource(path,revision);},ci:await readSource(BASIC_CI,revision),revision,relations:[],parse});
+   await collectBasicCiSources({read:async path=>{if(!paths.includes(path))throw Error('missing basic source');return readSource(path,revision);},ci:await readSource(BASIC_CI,revision),revision,relations:[],parse,paths});
   }
   const repos=mode['repos.json'].repos;
   if(repos.find(r=>r.key==='zenithjoy-workspace')?.preview?.type!=='local'||repos.find(r=>r.default)?.preview?.type!=='brain_preview')throw Error('stage modes');

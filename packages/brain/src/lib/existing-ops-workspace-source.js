@@ -214,7 +214,7 @@ async function collectEngineInputs({paths,read,parse,revision,relations,basicCi=
  if(!job&&!basicCi)return;
  let skillExcludes=null;
  if(basicCi){
-  await collectBasicCiSources({read,ci:text,revision,relations:[],parse});
+  await collectBasicCiSources({read,ci:text,revision,relations:[],parse,paths});
   skillExcludes=skillSourceLiteralExcludes(await read(SKILL_SELECTOR),'engine',parse);
  }
  if(!basicCi){
@@ -271,6 +271,8 @@ export async function collectWorkspaceInputEdges({ revision, paths, readSource, 
 export const BASIC_CI = '.github/workflows/ci.yml';
 export const BASIC_RUNNER = 'scripts/ci/run-basic-check.mjs';
 export const SKILL_SELECTOR = 'scripts/ci/skill-source-tests.mjs';
+const PINNED_READER = 'scripts/ci/__tests__/basic-skill-source-coverage.test.mjs';
+const PINNED_WORKFLOW = '.github/workflows/skills-source-check.yml';
 const SOURCE = 'packages/brain/src/lib/existing-ops-source.js';
 const hash = text => createHash('sha256').update(text).digest('hex');
 const sorted = x => Array.isArray(x) ? x.map(sorted) : x && typeof x === 'object'
@@ -298,6 +300,8 @@ const BASIC_PROTOCOLS = {
     [BASIC_RUNNER]: '1a36a3ea958803824682464036487c70ce079da835f596f7894638a8a7c5c214',
     'apps/api/vitest.config.ts': '06e1a3d6e071c95de35b874e9f2ca3ddd05bd673257f9761340c6d9b29c16409',
     'apps/api/vitest.integration.config.ts': '6c2a55ccba874bf8fcae7858f0b9f21295f6728f430860a4ee60c1612cc59dec',
+    [PINNED_READER]: '3cf300333012557b0191ca6eba5a1bc112c99cbff1daf4ea85da8e2d33f96f66',
+    [PINNED_WORKFLOW]: 'aaf1a1cdc30961114927231193c071d53d27976eb09971e0c72e63a8176eb129',
   },
 };
 const reject = () => { throw Error('basic_ci_source_unproven'); };
@@ -340,11 +344,24 @@ export function skillExcludeSpread(node, program, component) {
     && imports[0].specifiers[0].local.name === 'skillSourceExcludes'
     && !program.body.some(n => n.type === 'VariableDeclaration' && n.declarations.some(d => d.id.name === 'skillSourceExcludes'));
 }
-export async function collectBasicCiSources({ read, ci, revision, relations, parse }) {
+export async function collectBasicCiSources({ read, ci, revision, relations, parse, paths }) {
   const protocol = BASIC_PROTOCOLS[workflowHash(ci)];
   if (!protocol) reject();
   for (const [path, digest] of Object.entries(protocol)) if (hash(await read(path)) !== digest) reject();
   const relation = (consumer_path, input_path, kind) => relations.push({ consumer_path, input_path, kind, revision });
+  if (Object.hasOwn(protocol, PINNED_READER)) {
+    if (!Array.isArray(paths)) reject();
+    const prefix = 'scripts/ci/__tests__/';
+    const selected = paths.filter(path => path.startsWith(prefix) && !path.slice(prefix.length).includes('/')
+      && /^(basic-.*|run-basic-check|brain-source-only-deploy)\.test\.mjs$/.test(path.slice(prefix.length))).sort();
+    if (!selected.includes(PINNED_READER)) reject();
+    for (const path of selected) {
+      if (!await read(path)) reject();
+      relation(BASIC_RUNNER, path, 'reviewed_scripts_node_test_selector');
+    }
+    // 完整已审reader证明真实URL读取；这条边只声明验证输入，绝不宣称私有源workflow已运行。
+    relation(PINNED_READER, PINNED_WORKFLOW, 'literal_url_workflow_verification_input');
+  }
   for (const [path, kind] of [['scripts/ci/basic-scope.mjs', 'required_basic_ci_plan'], [BASIC_RUNNER, 'required_basic_ci_matrix_runner'],
     ['scripts/ci/check-basic-results.mjs', 'required_basic_ci_success_aggregate']]) relation(BASIC_CI, path, kind);
   for (const path of ['scripts/ci/basic-runtime-smoke.mjs', 'packages/brain/src/migrate.js', 'scripts/ci/__tests__/runtime-signal.integration.test.mjs']) {

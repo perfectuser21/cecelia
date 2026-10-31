@@ -381,7 +381,7 @@ export async function buildExistingOpsSources({ scope, repo, revision, paths, re
     const schemaText = tree.has('packages/brain/src/lib/existing-ops-source.js') ? await readSource('packages/brain/src/lib/existing-ops-source.js', revision) : '';
     const basicCi = schemaText && basicCiSelectorEnabled(schemaText, ast);
     const integrationConfig = basicCi ? null : await read('packages/brain/vitest.integration.config.js');
-    const skillExcludes = basicCi ? await collectBasicCiSources({ read, ci, revision, relations, parse: ast }) : null;
+    const skillExcludes = basicCi ? await collectBasicCiSources({ read, ci, revision, relations, parse: ast, paths }) : null;
     if (basicCi) await collectDeepCiSources({ read, revision, relations });
     const nightlyRuns = nightly ? workflowRuns(nightly) : [];
     requireProof(basicCi || nightlyRuns.some(r => shellLines(r.run).some(line => /^npx vitest run --shard=\$SHARD\/6\b/.test(line))), 'nightly_full_unit_unproven');
