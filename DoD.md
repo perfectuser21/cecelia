@@ -59,7 +59,7 @@
   Test: manual:bash -c 'gh run list --workflow nightly-regression.yml --branch cp-10302220-ci-minimum --repo perfectuser21/cecelia --limit 3 --json headSha,status,conclusion,url'
 - [ ] [BEHAVIOR] 固定候选SHA在GitHub实际运行全部选定检查并给出「源码保底通过」。
   Test: manual:bash -c 'gh pr checks cp-10302220-ci-minimum --repo perfectuser21/cecelia --required'
-- [ ] [BEHAVIOR] GitHub分支保护及规则集均只认新检查，旧PR不能用旧绿灯继承资格，保护强度其余项保留并读回。
+- [ ] [BEHAVIOR] GitHub分支保护及规则集要求源码、固定Skill、Skill所有权及来源准入四项；旧Harness/Smoke/ci-passed不再授予资格，其余保护保留并读回。
   Test: manual:bash -c 'gh api repos/perfectuser21/cecelia/branches/main/protection'
 - [ ] [BEHAVIOR] PR经正常保护合并，main对应SHA的实际源码CI通过，任务账写入事实、证据和actor。
   Test: manual:bash -c 'gh run list --repo perfectuser21/cecelia --workflow ci.yml --event push --limit 5'

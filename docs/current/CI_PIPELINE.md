@@ -71,7 +71,7 @@ Brain/Engine/API 的共享依赖变更会选择共享运行组及 Ops 回归；�
 | 工作流 | 定位 |
 |---|---|
 | implementation-impact.yml | 来源准入；所有目标main的PR、main push与按需调用均执行，保留真实差分与来源资格保护 |
-| skill-source-ownership.yml | 所有权专项；最低 scripts 跑道也执行同一个真实检查 |
+| skill-source-ownership.yml | 所有权专项的单元测试及真实校验；最低 scripts 跑道也运行同一校验器，专项继续作为独立必需检查 |
 | skills-source-check.yml | 固定 Skill 来源的三系统恢复校验及 Brain/Engine/Quality/root 正文合同；所有目标main的PR与main push执行，固定Skill合同通过严格汇总全部结果 |
 | ci-dashboard-pwa-e2e.yml | 当前 Dashboard 的 PWA/任务台浏览器专项 |
 | skill-distillation-eval.yml | 按需运行固定截图的真实在线模型评测；沿用原阈值和凭据引用，服务或报告失败真实报红，不作为所有源码 PR 的前置条件 |
@@ -116,7 +116,7 @@ node scripts/ci/run-basic-check.mjs brain-unit 1
 ## 外部切换验收
 
 1. 固定候选 SHA 的源码 CI 真正通过。
-2. 读回 GitHub required checks；以 `源码保底通过` 和 `固定Skill合同通过` 替换旧 Harness/Smoke/ci-passed，继续要求 `Implementation impact gate` 的真实来源准入。三个必需检查均对所有目标main的PR产生结果。
+2. 读回 GitHub required checks；以 `源码保底通过` 和 `固定Skill合同通过` 替换旧 Harness/Smoke/ci-passed，继续要求 `Skill source ownership` 的专项单测与校验，以及 `Implementation impact gate` 的真实来源准入。四个必需检查均对所有目标main的PR产生结果。
 3. 保留 strict、管理员受限、禁止强推及 PR 要求；规则变更不能被描述为测试证据。
 4. 合并后读回 main 对应 SHA 的真实 CI；生产就绪仍由独立发布/来源保护判断。
 
