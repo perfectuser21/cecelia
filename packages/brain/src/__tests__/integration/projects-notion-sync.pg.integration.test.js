@@ -86,7 +86,7 @@ beforeAll(async () => {
     brief jsonb NOT NULL DEFAULT '{}', notion_props jsonb NOT NULL DEFAULT '{}', end_date date,
     created_at timestamptz DEFAULT now(), updated_at timestamptz DEFAULT now());
     CREATE TABLE tasks (id uuid PRIMARY KEY, project_id uuid, title text, status text, task_type text,
-      sequence_no int, result jsonb, created_at timestamptz, completed_at timestamptz);
+      sequence_no int, result jsonb, created_at timestamptz, completed_at timestamptz, updated_at timestamptz);
     CREATE TABLE decisions (id uuid PRIMARY KEY, status text, trigger text, context jsonb, created_at timestamptz,
       topic text, decision text, priority text, reason text, notion_id text, notion_synced_at timestamptz);
     CREATE TABLE ops_notion_ingest_cursor(db_key text PRIMARY KEY,last_seen timestamptz,updated_at timestamptz);
@@ -104,6 +104,26 @@ afterAll(async () => {
 });
 
 describe.sequential('Projects 双向同步：真实 PG 与有状态 Notion 接缝', () => {
+  it('进行中业务包装事实更新后项目进展同步，人工备注保留', async () => {
+    const project = await insertProject({ remark: '人工备注' });
+    const id = randomUUID();
+    await client.query(`INSERT INTO tasks(id,project_id,title,status,task_type,created_at,updated_at,result)
+      VALUES($1,$2,'真实业务','in_progress','dev',now(),now(),$3::jsonb)`, [id, project.id,
+      JSON.stringify({leadgen_103_false_exclusion_progress:{facts:['候选已准备'],evidence:{pr:'https://github.com/o/r/pull/2352'},next_step:'同一候选预发',secret:'SECRET_TOKEN'}})]);
+    expect((await sync()).ok).toBe(true);
+    const page=pageFor(project.id), first=notionText(page.properties['AI 进展'].rich_text);
+    for(const v of ['候选已准备','https://github.com/o/r/pull/2352','同一候选预发'])expect(first).toContain(v);
+    expect(first).not.toContain('SECRET_TOKEN');
+    expect(notionText(page.properties.Remark.rich_text)).toBe('人工备注');
+    await client.query(`UPDATE tasks SET result=jsonb_set(result,'{leadgen_103_false_exclusion_progress,facts}','["业务已验"]'::jsonb),updated_at=now() WHERE id=$1`,[id]);
+    expect((await sync()).ok).toBe(true);
+    expect(notionText(page.properties['AI 进展'].rich_text)).toContain('业务已验');
+    expect(notionText(page.properties.Remark.rich_text)).toBe('人工备注');
+    await client.query(`UPDATE tasks SET status='blocked',updated_at=now() WHERE id=$1`,[id]);
+    expect((await sync()).ok).toBe(true);
+    expect(notionText(page.properties['AI 进展'].rich_text)).toContain('已阻断');
+    expect(notionText(page.properties['AI 进展'].rich_text)).toContain('业务已验');
+  });
   it('超过30行全量推送、两轮幂等、双改人赢、导入人工正文始终保留', async () => {
     const roots = [];
     for (let i = 0; i < 35; i++) roots.push(await insertProject({ name: `项目 ${i}`, status: i === 34 ? 'archived' : 'active' }));
