@@ -1,27 +1,11 @@
-/**
- * 组件测试 — OpsPanoramaCard
- * Task: 28e7c41a-9384-405b-9e82-aa5b9871293f
- * 覆盖 BEHAVIOR-16 ~ BEHAVIOR-22
- *
- * 运行: npx vitest run sprints/07231722-relay-28e7c41a/tests/OpsPanoramaCard.test.tsx
- * 或: npx vitest run --reporter=verbose
- */
-
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, act, waitFor } from '@testing-library/react';
 import React from 'react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { act, cleanup, render, screen } from '@testing-library/react';
+import { OpsPanoramaCard, type OpsPanoramaData } from './OpsPanoramaCard';
 
-// Mock fetch
-const mockFetch = vi.fn();
-global.fetch = mockFetch;
-
-// Mock OpsPanoramaCard 接口定义（用于 import 时无实际文件的情况）
-const MOCK_PANORAMA = {
-  sampled_at: new Date(Date.now() - 15000).toISOString(), // 15s 前
-  tasks: {
-    in_progress_count: 3,
-    vendor_dist: { claude: 2, codex: 1, grok: 0, unknown: 0 },
-  },
+const PANORAMA: OpsPanoramaData = {
+  sampled_at: '2026-10-31T07:59:45Z',
+  tasks: { in_progress_count: 3, vendor_dist: { claude: 2, codex: 1 } },
   relay: { container_count: 4 },
   sessions: { headed: 1, headless: 2 },
   host: { cpu_usage_pct: 55.2, mem_used_pct: 72.1 },
@@ -30,10 +14,9 @@ const MOCK_PANORAMA = {
     sentinel: 'ok',
     vendors: {
       claude: {
-        available_count: 2,
-        total_count: 3,
+        available_count: 2, total_count: 3,
         accounts: [
-          { id: 'account1', available: true, five_hour_pct: 30 },
+          { id: 'account1', name: '账号一', available: true, five_hour_pct: 30 },
           { id: 'account2', available: true, five_hour_pct: 55 },
           { id: 'account3', available: false, five_hour_pct: 85 },
         ],
@@ -43,223 +26,127 @@ const MOCK_PANORAMA = {
     },
   },
 };
+const mockFetch = vi.fn<typeof fetch>();
 
-const MOCK_PANORAMA_NULL_RELAY = {
-  ...MOCK_PANORAMA,
-  relay: { container_count: null },
-};
-
-// ── 内联 OpsPanoramaCard 组件（用于测试时无真实文件的情况）──────
-// 实际 planner 应创建 apps/dashboard/src/pages/live-monitor/OpsPanoramaCard.tsx
-// 此处内联实现仅供合同验收使用
-
-interface OpsPanoramaData {
-  sampled_at: string;
-  tasks: { in_progress_count: number; vendor_dist: Record<string, number> };
-  relay: { container_count: number | null };
-  sessions: { headed: number; headless: number };
-  host: { cpu_usage_pct: number; mem_used_pct: number };
-  processes: { claude_total: number; codex_total: number };
-  llm_capacity: {
-    sentinel: string;
-    vendors: Record<string, { available_count: number; total_count: number; accounts: Array<{ id: string; available: boolean; five_hour_pct?: number }> }>;
-  } | null;
+function respond(data: OpsPanoramaData) {
+  mockFetch.mockImplementation(async () => new Response(JSON.stringify(data), {
+    status: 200, headers: { 'Content-Type': 'application/json' },
+  }));
 }
 
-function fmtAgo(iso: string): string {
-  const diff = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
-  if (diff < 60) return `${diff}s 前`;
-  return `${Math.floor(diff / 60)}m 前`;
+async function showCard() {
+  const view = render(<OpsPanoramaCard />);
+  await act(async () => {});
+  return view;
 }
 
-function usageColor(pct: number): string {
-  if (pct > 80) return '#ef4444';
-  if (pct > 50) return '#f59e0b';
-  return '#10b981';
-}
-
-function OpsPanoramaCard() {
-  const [data, setData] = React.useState<OpsPanoramaData | null>(null);
-  const [updatedAt, setUpdatedAt] = React.useState<string | null>(null);
-
-  const load = React.useCallback(async () => {
-    try {
-      const res = await fetch('/api/brain/ops-panorama');
-      if (!res.ok) return;
-      const json: OpsPanoramaData = await res.json();
-      setData(json);
-      setUpdatedAt(new Date().toISOString());
-    } catch { /* 静默 */ }
-  }, []);
-
-  React.useEffect(() => {
-    load();
-    const t = setInterval(load, 30000);
-    return () => clearInterval(t);
-  }, [load]);
-
-  if (!data) return <div data-testid="ops-panorama-loading">加载中…</div>;
-
-  const relayCount = data.relay.container_count;
-
-  return (
-    <div data-testid="ops-panorama-card">
-      <div data-testid="ops-panorama-title">执行全景</div>
-
-      {/* sampled_at */}
-      {data.sampled_at && (
-        <div data-testid="ops-panorama-sampled-at">{fmtAgo(data.sampled_at)}</div>
-      )}
-
-      {/* host metrics */}
-      <div data-testid="ops-panorama-cpu">
-        <div>CPU</div>
-        <div
-          role="progressbar"
-          aria-valuenow={data.host.cpu_usage_pct}
-          aria-valuemin={0}
-          aria-valuemax={100}
-          data-value={data.host.cpu_usage_pct}
-        />
-        <span data-testid="ops-panorama-cpu-value">{data.host.cpu_usage_pct.toFixed(1)}%</span>
-      </div>
-      <div data-testid="ops-panorama-mem">
-        <div>MEM</div>
-        <div
-          role="progressbar"
-          aria-valuenow={data.host.mem_used_pct}
-          aria-valuemin={0}
-          aria-valuemax={100}
-          data-value={data.host.mem_used_pct}
-        />
-        <span data-testid="ops-panorama-mem-value">{data.host.mem_used_pct.toFixed(1)}%</span>
-      </div>
-
-      {/* tasks */}
-      <div data-testid="ops-panorama-tasks-count">{data.tasks.in_progress_count}</div>
-
-      {/* processes */}
-      <div data-testid="ops-panorama-claude-procs">{data.processes.claude_total}</div>
-      <div data-testid="ops-panorama-codex-procs">{data.processes.codex_total}</div>
-
-      {/* relay */}
-      <div data-testid="ops-panorama-relay">
-        {relayCount !== null ? relayCount : '—'}
-      </div>
-
-      {/* llm_capacity accounts */}
-      {data.llm_capacity && data.llm_capacity.vendors.claude.accounts.map(acc => (
-        <div key={acc.id} data-testid={`ops-panorama-account-${acc.id}`}>
-          <div
-            role="progressbar"
-            aria-label={`${acc.id} usage`}
-            aria-valuenow={acc.five_hour_pct ?? 0}
-            aria-valuemin={0}
-            aria-valuemax={100}
-            style={{ background: usageColor(acc.five_hour_pct ?? 0) }}
-            data-color={usageColor(acc.five_hour_pct ?? 0)}
-          />
-          <span>{acc.five_hour_pct ?? 0}%</span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-// ── Tests ──────────────────────────────────────────────────────
-
-describe('OpsPanoramaCard', () => {
+describe('OpsPanoramaCard 真实组件', () => {
   beforeEach(() => {
     vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-10-31T08:00:00Z'));
     mockFetch.mockReset();
-    mockFetch.mockResolvedValue({
-      ok: true,
-      json: async () => MOCK_PANORAMA,
-    });
+    vi.stubGlobal('fetch', mockFetch);
+    respond(PANORAMA);
   });
 
   afterEach(() => {
+    cleanup();
+    vi.clearAllTimers();
     vi.useRealTimers();
+    vi.unstubAllGlobals();
   });
 
-  it('BEHAVIOR-16: 存在含"执行全景"的标题元素', async () => {
-    render(<OpsPanoramaCard />);
-    await act(async () => { await Promise.resolve(); });
+  it('BEHAVIOR-16/22: 从全景接口展示标题、任务、进程和Relay数量', async () => {
+    await showCard();
+    expect(mockFetch).toHaveBeenCalledWith('/api/brain/ops-panorama');
     expect(screen.getByTestId('ops-panorama-title')).toHaveTextContent('执行全景');
+    expect(screen.getByTestId('ops-panorama-tasks-count')).toHaveTextContent(/^3$/);
+    expect(screen.getByTestId('ops-panorama-claude-procs')).toHaveTextContent(/^3$/);
+    expect(screen.getByTestId('ops-panorama-codex-procs')).toHaveTextContent(/^1$/);
+    expect(screen.getByTestId('ops-panorama-relay')).toHaveTextContent(/^4$/);
   });
 
-  it('BEHAVIOR-17: 每 30s 自动轮询（interval 设置为 30000ms）', async () => {
-    render(<OpsPanoramaCard />);
-    // 初始加载
-    await act(async () => { await Promise.resolve(); });
+  it('BEHAVIOR-17: 30秒前保持当前数据，30秒时更新，卸载后停止轮询', async () => {
+    const view = await showCard();
+    respond({ ...PANORAMA, tasks: { ...PANORAMA.tasks, in_progress_count: 7 } });
+    await act(async () => { await vi.advanceTimersByTimeAsync(29999); });
     expect(mockFetch).toHaveBeenCalledTimes(1);
-
-    // 前进 30s，触发第二次轮询
-    await act(async () => { vi.advanceTimersByTime(30000); await Promise.resolve(); });
+    expect(screen.getByTestId('ops-panorama-tasks-count')).toHaveTextContent(/^3$/);
+    await act(async () => { await vi.advanceTimersByTimeAsync(1); });
     expect(mockFetch).toHaveBeenCalledTimes(2);
-
-    // 前进再 30s，触发第三次轮询
-    await act(async () => { vi.advanceTimersByTime(30000); await Promise.resolve(); });
+    expect(screen.getByTestId('ops-panorama-tasks-count')).toHaveTextContent(/^7$/);
+    await act(async () => { await vi.advanceTimersByTimeAsync(30000); });
+    expect(mockFetch).toHaveBeenCalledTimes(3);
+    view.unmount();
+    expect(vi.getTimerCount()).toBe(0);
+    await act(async () => { await vi.advanceTimersByTimeAsync(60000); });
     expect(mockFetch).toHaveBeenCalledTimes(3);
   });
 
-  it('BEHAVIOR-18: 展示 cpu/mem 进度条', async () => {
-    render(<OpsPanoramaCard />);
-    await act(async () => { await Promise.resolve(); });
-
-    const progressBars = screen.getAllByRole('progressbar');
-    expect(progressBars.length).toBeGreaterThanOrEqual(2);
-
-    // cpu value text
+  it('BEHAVIOR-18: CPU和内存进度条数值与显示百分比一致', async () => {
+    await showCard();
+    expect(screen.getByRole('progressbar', { name: 'CPU' })).toHaveAttribute('aria-valuenow', '55.2');
+    expect(screen.getByRole('progressbar', { name: 'MEM' })).toHaveAttribute('aria-valuenow', '72.1');
     expect(screen.getByTestId('ops-panorama-cpu-value')).toHaveTextContent('55.2%');
     expect(screen.getByTestId('ops-panorama-mem-value')).toHaveTextContent('72.1%');
   });
 
-  it('BEHAVIOR-19: 账号余量颜色编码（<50%绿，50-80%黄，>80%红）', async () => {
-    render(<OpsPanoramaCard />);
-    await act(async () => { await Promise.resolve(); });
-
-    // account1: 30% → 绿
-    const acc1 = screen.getByTestId('ops-panorama-account-account1');
-    const bar1 = acc1.querySelector('[role="progressbar"]') as HTMLElement;
-    expect(bar1?.dataset.color).toBe('#10b981');
-
-    // account2: 55% → 黄
-    const acc2 = screen.getByTestId('ops-panorama-account-account2');
-    const bar2 = acc2.querySelector('[role="progressbar"]') as HTMLElement;
-    expect(bar2?.dataset.color).toBe('#f59e0b');
-
-    // account3: 85% → 红
-    const acc3 = screen.getByTestId('ops-panorama-account-account3');
-    const bar3 = acc3.querySelector('[role="progressbar"]') as HTMLElement;
-    expect(bar3?.dataset.color).toBe('#ef4444');
+  it.each([
+    [30, '#10b981'], [50, '#10b981'], [51, '#f59e0b'],
+    [80, '#f59e0b'], [81, '#ef4444'], [85, '#ef4444'],
+  ])('BEHAVIOR-19: 使用率 %s 的账号显示对应颜色 %s', async (pct, color) => {
+    respond({ ...PANORAMA, llm_capacity: {
+      sentinel: 'ok', vendors: { claude: {
+        available_count: 1, total_count: 1,
+        accounts: [{ id: 'boundary', name: '边界账号', available: true, five_hour_pct: pct }],
+      } },
+    } });
+    await showCard();
+    const bar = screen.getByRole('progressbar', { name: 'boundary usage' });
+    expect(bar).toHaveAttribute('aria-valuenow', String(pct));
+    expect(bar.firstElementChild).toHaveStyle({ background: color, width: `${pct}%` });
+    expect(screen.getByText('边界账号')).toBeInTheDocument();
+    expect(screen.getByText(`${pct}%`)).toBeInTheDocument();
   });
 
-  it('BEHAVIOR-20: 展示 sampled_at 抓取时间（相对时间）', async () => {
-    render(<OpsPanoramaCard />);
-    await act(async () => { await Promise.resolve(); });
-
-    const sampledEl = screen.getByTestId('ops-panorama-sampled-at');
-    expect(sampledEl.textContent).toMatch(/前$/); // "15s 前"
+  it.each([
+    ['2026-10-31T07:59:45Z', '15s 前'],
+    ['2026-10-31T07:58:00Z', '2m 前'],
+    ['2026-10-31T06:00:00Z', '2h 前'],
+  ])('BEHAVIOR-20: 抓取时间%s显示为%s', async (sampled_at, expected) => {
+    respond({ ...PANORAMA, sampled_at });
+    await showCard();
+    expect(screen.getByTestId('ops-panorama-sampled-at')).toHaveTextContent(expected);
   });
 
-  it('BEHAVIOR-21: relay.container_count 为 null 时显示"—"不崩溃', async () => {
-    mockFetch.mockResolvedValue({
-      ok: true,
-      json: async () => MOCK_PANORAMA_NULL_RELAY,
-    });
-    render(<OpsPanoramaCard />);
-    await act(async () => { await Promise.resolve(); });
-
+  it('BEHAVIOR-21: Relay未知与LLM容量为空时仍展示其余指标', async () => {
+    respond({ ...PANORAMA, relay: { container_count: null }, llm_capacity: null });
+    await showCard();
     expect(screen.getByTestId('ops-panorama-relay')).toHaveTextContent('—');
+    expect(screen.queryByText('LLM 容量')).not.toBeInTheDocument();
+    expect(screen.getByRole('progressbar', { name: 'CPU' })).toHaveAttribute('aria-valuenow', '55.2');
   });
 
-  it('BEHAVIOR-22: 展示 tasks.in_progress_count 和 processes.claude_total/codex_total', async () => {
-    render(<OpsPanoramaCard />);
-    await act(async () => { await Promise.resolve(); });
+  it('请求失败时保留上次成功数据，下次轮询仍能恢复', async () => {
+    await showCard();
+    mockFetch.mockRejectedValueOnce(new Error('离线'));
+    await act(async () => { await vi.advanceTimersByTimeAsync(30000); });
+    expect(screen.getByTestId('ops-panorama-tasks-count')).toHaveTextContent(/^3$/);
+    respond({ ...PANORAMA, tasks: { ...PANORAMA.tasks, in_progress_count: 9 } });
+    await act(async () => { await vi.advanceTimersByTimeAsync(30000); });
+    expect(screen.getByTestId('ops-panorama-tasks-count')).toHaveTextContent(/^9$/);
+  });
 
-    expect(screen.getByTestId('ops-panorama-tasks-count')).toHaveTextContent('3');
-    expect(screen.getByTestId('ops-panorama-claude-procs')).toHaveTextContent('3');
-    expect(screen.getByTestId('ops-panorama-codex-procs')).toHaveTextContent('1');
+  it.each([
+    { label: 'null', payload: null, status: 200 },
+    { label: '数组', payload: [], status: 200 },
+    { label: 'HTTP错误', payload: { error: '服务不可用' }, status: 503 },
+  ])('拒绝$label响应，保持加载状态', async ({ payload, status }) => {
+    mockFetch.mockResolvedValue(new Response(JSON.stringify(payload), {
+      status,
+    }));
+    await showCard();
+    expect(screen.getByTestId('ops-panorama-loading')).toHaveTextContent('加载中');
+    expect(screen.queryByTestId('ops-panorama-card')).not.toBeInTheDocument();
   });
 });

@@ -1,5 +1,14 @@
 # DoD：Cecelia 最小可靠 CI
 
+- [x] [BEHAVIOR] 意图识别与判级的同环境副本归并，原有58项独有回归语义及默认组件入口保留。
+  Test: manual:bash -c 'cd apps/api && npx --no-install vitest run tests/intent-recognizer.test.ts'
+- [x] [BEHAVIOR] 账龄测试调用真实实现，保留F6回归并覆盖计数、重试参数、间隔和错误；三份空骨架退出执行，代表性错误变体可被拦住。
+  Test: manual:bash -c 'cd packages/brain && npx --no-install vitest run src/__tests__/capture-aging.test.js'
+- [x] [BEHAVIOR] Dashboard全景测试导入真实组件，验证轮询、可见数据和边界，删除内联实现与副本，错误组件变体必须失败。
+  Test: manual:bash -c 'cd apps/dashboard && npx --no-install vitest run src/pages/live-monitor/OpsPanoramaCard.test.tsx'
+- [x] [BEHAVIOR] 已消失实现对应的旧常量、watcher与图线程停用合同退役；当前orchestrator拒绝和禁止旧运行时复活的真实回归仍通过。
+  Test: manual:bash -c 'cd packages/brain && npx --no-install vitest run src/__tests__/harness-orchestrator-lockdown.test.js src/__tests__/dispatcher-dev-no-langgraph.test.js'
+
 - [x] [BEHAVIOR] 范围选择采用真实 Git 差分，完整组件执行；未知/无效/空范围不静默放行。
   Test: manual:node --test scripts/ci/__tests__/basic-scope.test.mjs
 - [ ] [BEHAVIOR] CodeQL正式扫描解除本PR新增的两条告警；配置文件名不触发指数回溯，测试Shell路径仅经参数传递，保留参数、退出码与清理回归。
