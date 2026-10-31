@@ -15,6 +15,7 @@ import { isWrongDatabaseError } from './lib/notion-projection-engine.js';
 import { normalizeBrief } from './lib/project-brief.js';
 import { PROJECTS_DB, PROJECT_STATUS_TO_NOTION, brainHuman, humanProps, HUMAN_COLUMNS } from './lib/project-notion-human.js';
 import { pullProjects, ingestProjectPage } from './project-notion-ingest.js';
+import { normalizeTaskProgress } from './projection/task-progress.js';
 export { PROJECTS_DB, PROJECT_STATUS_TO_NOTION };
 
 
@@ -43,7 +44,8 @@ export function digestOf(props, blocks) {
  */
 export async function buildProjectSnapshot(pool, root) {
   const { rows: children } = await pool.query(
-    `SELECT id, title, status, task_type, sequence_no, completed_at,
+    `SELECT id, title, status, task_type, sequence_no, completed_at, updated_at,
+            CASE WHEN status IN ('in_progress', 'blocked') THEN result END AS result,
             result->'handoff'->>'verdict' AS verdict,
             result->'handoff'->'done'->>0 AS last_done
        FROM tasks WHERE project_id = $1::uuid AND task_type <> 'project'
@@ -66,14 +68,44 @@ export async function buildProjectSnapshot(pool, root) {
   return { children, pending, log: logRows.map((r) => r.entry) };
 }
 
+function activeProgress(snap) {
+  const meaningful = v => typeof v === 'string' ? Boolean(v.trim()) : Array.isArray(v) ? v.some(meaningful)
+    : v && typeof v === 'object' ? Object.values(v).some(meaningful) : v !== null && v !== undefined;
+  const children = snap.children.filter(c => c.status === 'in_progress' || c.status === 'blocked').slice()
+    .sort((a,b) => (Date.parse(b.updated_at) || 0) - (Date.parse(a.updated_at) || 0));
+  const output = [];
+  for (const child of children) {
+    const result = normalizeTaskProgress(child.result);
+    const entries = [...(result.updates || [])]
+      .sort((a,b) => (Date.parse(b.recorded_at) || 0) - (Date.parse(a.recorded_at) || 0));
+    entries.push(result);
+    for (const e of entries) {
+      if (!meaningful(e.facts) && !meaningful(e.summary) && !meaningful(e.evidence) && !meaningful(e.pr_url)) continue;
+      const value = v => typeof v === 'string' ? v : JSON.stringify(v);
+      const facts = value(e.facts || e.summary || '').slice(0, 160);
+      const proof = e.evidence && typeof e.evidence === 'object' ? e.evidence : {};
+      const highlights = [proof.pr || e.pr_url, proof.pilot_run || proof.l4_e2e_run,
+        proof.candidate_run, proof.merged_sha || e.sha].filter(v => typeof v === 'string');
+      const evidence = (highlights.length ? highlights.join(' · ') : value(Object.keys(proof).length ? proof : '未记录')).slice(0, 350);
+      const next = value(e.next_step || e.next_steps || '未记录').slice(0, 160);
+      output.push({ title: String(child.title || '').slice(0, 80), status: child.status, facts, evidence, next });
+      break;
+    }
+    if (output.length === 10) break;
+  }
+  return output;
+}
+
 export function buildProjectProps(root, snap) {
   const total = snap.children.length;
   const done = snap.children.filter((c) => c.status === 'completed').length;
   const latest = snap.log[0];
+  const active = activeProgress(snap);
   const remark = [
     total ? `${done}/${total} 棒完成` : '尚无子任务',
     snap.pending.length ? `待拍板 ${snap.pending.length}` : null,
     latest ? `最近：${String(latest.done?.[0] || latest.title || '').slice(0, 80)}` : null,
+    ...active.slice(0, 2).map(a => `${a.status === 'blocked' ? '已阻断' : '进行中'}：${a.title} · 事实：${a.facts} · 证据：${a.evidence} · 下一步：${a.next}`),
   ].filter(Boolean).join(' · ');
   return {
     Name: { title: rt(String(root.title || root.name || root.id).slice(0, 180)) },
@@ -94,6 +126,10 @@ function buildBriefBlocks(brief, fallbackGoal) {
   const blocks = [];
   blocks.push(heading('目标'));
   blocks.push(para(b.goal || fallbackGoal || '（未写目标）'));
+  if (b.goal && fallbackGoal && b.goal !== fallbackGoal) {
+    blocks.push(heading('项目计划'));
+    blocks.push(para(fallbackGoal));
+  }
   blocks.push(heading('现状'));
   blocks.push(para(b.status || '（未写现状）'));
   blocks.push(heading('已知事实'));
@@ -115,6 +151,11 @@ function buildBriefBlocks(brief, fallbackGoal) {
 
 export function buildProjectBody(root, snap) {
   const blocks = [...buildBriefBlocks(root.brief, root.description)];
+  const active = activeProgress(snap);
+  if (active.length) {
+    blocks.push(heading('未完成任务最新进展'));
+    for (const a of active) blocks.push(para(`${a.status === 'blocked' ? '已阻断' : '进行中'}：${a.title}\n事实：${a.facts}\n证据：${a.evidence}\n下一步：${a.next}`));
+  }
   blocks.push(heading(`链（${snap.children.length} 棒）`));
   if (!snap.children.length) blocks.push(para('还没有子任务。下一棒会由上一棒的 handoff.next_steps 自动登记。'));
   for (const c of snap.children.slice(0, 25)) {

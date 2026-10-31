@@ -678,6 +678,16 @@
       "role": "verification"
     },
     {
+      "owner_path": "packages/brain/src/notion-relay-projection.js",
+      "path": "packages/brain/src/__tests__/integration/relay-mirror-smoke.pg.integration.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/notion-relay-projection.js",
+      "path": "packages/brain/src/__tests__/notion-relay-projection.test.js",
+      "role": "verification"
+    },
+    {
       "owner_path": "packages/brain/src/notion-push-sync.js",
       "path": "packages/brain/src/projection/__tests__/task-progress.test.js",
       "role": "verification"
@@ -2572,11 +2582,6 @@
       "owner_path": "scripts/deploy-local.sh",
       "path": "packages/brain/src/__tests__/deploy-root-guard.test.js",
       "role": "verification"
-    },
-    {
-      "owner_path": "scripts/deploy-local.sh",
-      "path": "changes/cp-11011854-host-disk-autoreset.md",
-      "role": "release"
     }
   ]
 }

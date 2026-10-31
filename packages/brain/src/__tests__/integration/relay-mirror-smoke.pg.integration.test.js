@@ -23,7 +23,7 @@ beforeAll(async () => {
     brief jsonb DEFAULT '{}',custom_props jsonb DEFAULT '{}',metadata jsonb,notion_props jsonb DEFAULT '{}',
     ai_tier text DEFAULT '知情',end_date date,updated_at timestamptz DEFAULT now());
     CREATE TABLE tasks(id uuid PRIMARY KEY,title text,status text,task_type text,project_id uuid,
-      sequence_no integer,result jsonb,created_at timestamptz,completed_at timestamptz);
+      sequence_no integer,result jsonb,created_at timestamptz,completed_at timestamptz,updated_at timestamptz);
     CREATE TABLE decisions(id uuid PRIMARY KEY,topic text,decision text,reason text,status text,
       trigger text,context jsonb,priority text,created_at timestamptz,notion_id text,notion_synced_at timestamptz);`);
   await client.query(`INSERT INTO projects(id,name,description,status) VALUES($1,'smoke 项目','目标：看得见','in_progress'),
