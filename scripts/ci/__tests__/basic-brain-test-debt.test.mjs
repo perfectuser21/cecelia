@@ -45,6 +45,10 @@ function fixtureSelection(directory) {
   return {maintained, selected: ['src/active.test.js'], manualRoot: []};
 }
 
+function configurationInventory(config, cwd = brainRoot) {
+  return {maintained: select({...config, test: {...config.test, exclude: []}}, cwd), selected: select(config, cwd)};
+}
+
 test('新遗漏测试必须失败；有root手动配置也不能冒充自动覆盖', () => {
   const directory = mkdtempSync(join(tmpdir(), 'brain-debt-guard-'));
   try {
@@ -70,35 +74,75 @@ test('重复、不存在、已恢复和空理由均不得留在债务清单', ()
   assert.throws(() => assertDebtMatches({...fixture, entries: [{...entry, category: 'discard'}]}), /分类/);
 });
 
+for (const [name, include] of [
+  ['include收窄', ['src/__tests__/active.test.js']],
+  ['include负模式', ['src/**/*.test.js', '!src/__tests__/quota-exhausted.test.js']],
+]) {
+  test(`维护分母独立于${name}，额度保护测试消失必须登记`, () => {
+    const directory = mkdtempSync(join(tmpdir(), 'brain-debt-include-'));
+    const cwd = join(directory, 'packages/brain');
+    try {
+      mkdirSync(join(cwd, 'src/__tests__'), {recursive: true});
+      for (const file of ['active', 'quota-exhausted']) writeFileSync(join(cwd, `src/__tests__/${file}.test.js`), '');
+      const config = {...brain, test: {...brain.test, include, exclude: []}};
+      assert.throws(() => assertDebtMatches({...configurationInventory(config, cwd), manualRoot: [], entries: []}), /未登记/);
+    } finally {
+      rmSync(directory, {recursive: true, force: true});
+    }
+  });
+}
+
 function workflowRuns(workflow, expression) {
   return Object.values(workflow.jobs).some(job => !job.if && job.steps?.some(step =>
     !step.if && step.run?.split('\n').map(line => line.trim()).filter(line => !line.startsWith('#')).some(line => expression.test(line))));
 }
 
-test('当前无人自动接收的Brain测试与精确债务清单一致', () => {
-  const basic = yaml.load(readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8'));
-  const nightly = yaml.load(readFileSync(join(root, '.github/workflows/nightly-regression.yml'), 'utf8'));
-  const pinned = yaml.load(readFileSync(join(root, '.github/workflows/skills-source-check.yml'), 'utf8'));
-  const selected = [];
-  // 只把真实CI入口接入的配置算作自动接收，独立但无人调用的config不算。
+function loadWorkflows() {
+  return Object.fromEntries([['basic', 'ci.yml'], ['nightly', 'nightly-regression.yml'], ['pinned', 'skills-source-check.yml']]
+    .map(([name, file]) => [name, yaml.load(readFileSync(join(root, '.github/workflows', file), 'utf8'))]));
+}
+
+function automaticLanes({basic, nightly, pinned}) {
+  const lanes = [];
   if (workflowRuns(basic, /^node scripts\/ci\/run-basic-check\.mjs/) && commandsFor('brain-unit', '1').some(command =>
-    command.command === 'npx' && command.args.includes('vitest') && command.args.includes('run'))) {
-    selected.push(...select(brain, brainRoot));
-  }
-  if (nightly.on?.schedule?.length && workflowRuns(nightly, /^(?:cd packages\/brain && )?npx(?: --no-install)? vitest run .*--config \.\.\/\.\.\/scripts\/ci\/deep-integration\.config\.mjs/)) {
-    selected.push(...select(deep, brainRoot));
-  }
-  if (nightly.on?.schedule?.length && workflowRuns(nightly, /^npx(?: --no-install)? vitest run .*--config vitest\.real-env-smoke\.config\.js/)) {
-    selected.push(...select(realEnv, brainRoot));
-  }
+    command.command === 'npx' && command.args.includes('vitest') && command.args.includes('run'))) lanes.push('default');
+  if (nightly.on?.schedule?.length && workflowRuns(nightly, /^(?:cd packages\/brain && )?npx(?: --no-install)? vitest run .*--config \.\.\/\.\.\/scripts\/ci\/deep-integration\.config\.mjs/)) lanes.push('deep');
+  if (nightly.on?.schedule?.length && workflowRuns(nightly, /^npx(?: --no-install)? vitest run .*--config vitest\.real-env-smoke\.config\.js/)) lanes.push('real-env');
   const contracts = pinned.jobs.contracts;
   if (pinned.on?.pull_request && !contracts.if && contracts.steps.some(step => !step.if && /^node scripts\/ci\/run-skill-source-check\.mjs/m.test(step.run || ''))) {
-    for (const [component, cwd] of [['brain', brainRoot], ['root', root]]) {
-      if (contracts.strategy.matrix.component.includes(component)) selected.push(...select(skillSourceConfig(component), cwd));
-    }
+    for (const component of ['brain', 'root']) if (contracts.strategy.matrix.component.includes(component)) lanes.push(`pinned-${component}`);
   }
+  return lanes;
+}
+
+for (const [name, change] of [
+  ['manual-only加--list', workflow => {
+    workflow.on = {workflow_dispatch: {}};
+    workflow.jobs.checks.steps.find(step => step.run?.includes('run-basic-check.mjs')).run += ' --list';
+  }],
+  ['if false包裹命令', workflow => {
+    const step = workflow.jobs.checks.steps.find(step => step.run?.includes('run-basic-check.mjs'));
+    step.run = `if false; then\n${step.run}\nfi`;
+  }],
+  ['heredoc只打印命令', workflow => {
+    const step = workflow.jobs.checks.steps.find(step => step.run?.includes('run-basic-check.mjs'));
+    step.run = `cat <<'PRINTED'\n${step.run}\nPRINTED`;
+  }],
+  ['正常命令但仅workflow_dispatch', workflow => { workflow.on = {workflow_dispatch: {}}; }],
+]) {
+  test(`default自动接入拒绝${name}`, () => {
+    const workflows = loadWorkflows();
+    change(workflows.basic);
+    assert.ok(!automaticLanes(workflows).includes('default'));
+  });
+}
+
+test('当前无人自动接收的Brain测试与精确债务清单一致', () => {
+  const configurations = {default: [brain, brainRoot], deep: [deep, brainRoot], 'real-env': [realEnv, brainRoot],
+    'pinned-brain': [skillSourceConfig('brain'), brainRoot], 'pinned-root': [skillSourceConfig('root'), root]};
+  const selected = automaticLanes(loadWorkflows()).flatMap(lane => select(...configurations[lane]));
   const manifest = require('../brain-test-debt.json');
   assert.equal(manifest.version, 1);
-  assertDebtMatches({maintained: select({...brain, test: {...brain.test, exclude: []}}, brainRoot), selected,
+  assertDebtMatches({maintained: configurationInventory(brain).maintained, selected,
     manualRoot: select(rootConfig, root), entries: manifest.tests});
 });
