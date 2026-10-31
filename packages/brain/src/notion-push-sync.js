@@ -279,7 +279,11 @@ async function pushIssues(pool, token) {
  * 手机的活在 Notion 上走**每机每天一条汇总**的独立通道（独立 push 函数 + 独立
  * 日配额），逐单明细只留在工作机页；这里一条都不推。
  */
-const TASK_RESULT_SQL = `(SELECT COALESCE(jsonb_object_agg(key,value),'{}'::jsonb) FROM jsonb_each(CASE WHEN jsonb_typeof(t.result)='object' THEN t.result WHEN jsonb_typeof(t.result)='string' THEN jsonb_build_object('summary',t.result) ELSE '{}'::jsonb END) WHERE key=ANY(ARRAY[${TASK_PROGRESS_FIELDS.map(key=>`'${key}'`).join(',')}]::text[]))`;
+const TASK_RESULT_KEYS_SQL = `ARRAY[${TASK_PROGRESS_FIELDS.map(key=>`'${key}'`).join(',')}]::text[]`;
+const TASK_RESULT_SQL = `(SELECT COALESCE(jsonb_object_agg(key,CASE WHEN key=ANY(${TASK_RESULT_KEYS_SQL}) THEN value ELSE
+  (SELECT COALESCE(jsonb_object_agg(n.key,n.value),'{}'::jsonb) FROM jsonb_each(value) n WHERE n.key=ANY(${TASK_RESULT_KEYS_SQL})) END),'{}'::jsonb)
+  FROM jsonb_each(CASE WHEN jsonb_typeof(t.result)='object' THEN t.result WHEN jsonb_typeof(t.result)='string' THEN jsonb_build_object('summary',t.result) ELSE '{}'::jsonb END)
+  WHERE key=ANY(${TASK_RESULT_KEYS_SQL}) OR (jsonb_typeof(value)='object' AND value ?| ${TASK_RESULT_KEYS_SQL}))`;
 const TASK_CONTENT_HASH_SQL = `md5(jsonb_build_array(t.title,t.description,${TASK_RESULT_SQL},t.priority,t.status)::text)`;
 const TASK_PROJECT_SQL = "COALESCE(NULLIF(project.notion_props->>'notion_id',''),proj.notion_id)";
 export const PUSH_TASKS_QUERY = `

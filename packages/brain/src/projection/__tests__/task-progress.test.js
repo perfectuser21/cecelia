@@ -90,7 +90,7 @@ const handoff={
   "created_at": "2026-10-20T18:23:09.011769+00:00"
 };
 import {beforeEach,expect,it,vi} from 'vitest';
-import {TASK_PROGRESS_MARKER} from '../task-progress.js';
+import {TASK_PROGRESS_MARKER,buildTaskProgressBlock} from '../task-progress.js';
 const {request}=vi.hoisted(()=>({request:vi.fn()}));
 vi.mock('../../recurring-notion-sync.js',()=>({notionReq:request,getToken:()=> 'token'}));
 import {pushTasksForTest,buildTaskNotionProperties,ingestDelegatedPage} from '../../notion-push-sync.js';
@@ -99,6 +99,19 @@ let blocks,sequence,query;
 const task=()=>({id:'task-one',title:'修复发布门禁',description:'最初目标不能遗忘',status:'in_progress',priority:'P1',task_type:'dev',
  notion_id:'page-one',notion_props:{pushed_status:'in_progress'},project_notion_id:'project-one',content_hash:'hash-one',
  result:{phase:'验证',facts:['采集已读回'],pr_url:'https://github.com/owner/repo/pull/12',handoff:{summary:'已完成门禁修复',next_steps:[{kind:'task',title:'实际部署核验'}]}}});
+it('业务包装的真实进度保留事实、证据与下一步，私密字段不投影',()=>{
+ const t=task();t.result={leadgen_103_false_exclusion_progress:{facts:['真实采集未完成'],evidence:{pr:'https://github.com/owner/repo/pull/2352'},next_step:'按同一候选预发',access_token:'SECRET_TOKEN'}};
+ const body=JSON.stringify(buildTaskProgressBlock(t));
+ for(const v of ['真实采集未完成','https://github.com/owner/repo/pull/2352','按同一候选预发'])expect(body).toContain(v);
+ expect(body).not.toContain('SECRET_TOKEN');
+});
+it('业务包装进度重复推送幂等，保留人工正文',async()=>{
+ const t=task();t.result={leadgen_103_false_exclusion_progress:{facts:['候选通过'],evidence:{pr:'https://github.com/owner/repo/pull/2352'},next_step:'验收',secret:'SECRET_TOKEN'}};
+ await pushTasksForTest({query},'token',[t]);await pushTasksForTest({query},'token',[t]);
+ expect(blocks.filter(b=>b.type==='toggle')).toHaveLength(1);
+ const body=JSON.stringify(blocks);for(const v of ['候选通过','https://github.com/owner/repo/pull/2352','验收','人写的备注必须保留'])expect(body).toContain(v);
+ expect(body).not.toContain('SECRET_TOKEN');
+});
 beforeEach(()=>{
  blocks=[{id:'human',type:'paragraph',paragraph:{rich_text:[{text:{content:'人写的备注必须保留'}}]}}];sequence=0;query=vi.fn(async()=>({rows:[]}));
  request.mockReset();request.mockImplementation(async(_token,path,method='GET',body)=>{
