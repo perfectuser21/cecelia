@@ -35,6 +35,8 @@
 
 - [x] [BEHAVIOR] 范围选择采用真实 Git 差分，完整组件执行；未知/无效/空范围不静默放行。
   Test: manual:node --test scripts/ci/__tests__/basic-scope.test.mjs
+- [x] [BEHAVIOR] 发布快照、跨仓、技能与巡查的四份原生来源机制入口迁入必需来源检查，包含基线选择与只读就绪回归；失败先阻止后续准入。
+  Test: manual:node --test scripts/ci/__tests__/basic-workflow.test.mjs scripts/ci/__tests__/implementation-main-snapshot.test.mjs scripts/ci/__tests__/workspace-ci-source-bundle.test.mjs scripts/ci/__tests__/implementation-skill-source.test.mjs scripts/ci/__tests__/device-patrol-governance.test.mjs
 - [ ] [BEHAVIOR] CodeQL正式扫描解除本PR新增的两条告警；配置文件名不触发指数回溯，测试Shell路径仅经参数传递，保留参数、退出码与清理回归。
   Test: manual:bash -c 'gh pr checks cp-10302220-ci-minimum --repo perfectuser21/cecelia --json name,state,link'
 - [x] [BEHAVIOR] 测试异常、信号、空集合、取消和跳过均被真实入口与最终汇总阻断。

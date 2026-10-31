@@ -300,6 +300,9 @@ jobs:
         working-directory: tooling
       - run: npm ci --ignore-scripts
         working-directory: source
+      - name: 来源机制完整单元回归
+        working-directory: source
+        run: node --test scripts/ci/__tests__/implementation-main-snapshot.test.mjs scripts/ci/__tests__/workspace-ci-source-bundle.test.mjs scripts/ci/__tests__/implementation-skill-source.test.mjs scripts/ci/__tests__/device-patrol-governance.test.mjs
       - name: scratch正式迁移
         run: node tooling/packages/brain/src/migrate.js
       - name: 三来源联合门真实PG与回归退出码守卫
