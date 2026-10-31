@@ -457,6 +457,7 @@ jobs:
           printf 'ADMISSION_SCOPES=%s\n' "$scopes" >> "$GITHUB_ENV"
       - name: 实际变更影响与固定回归
         env:
+          GH_TOKEN: ${{ github.token }}
           SKILLS_SOURCE_SSH_KEY: ${{ steps.skill-cache.outputs.legacy_821 == 'true' && secrets.SKILLS_SOURCE_SSH_KEY || '' }}
         run: |
           set -euo pipefail

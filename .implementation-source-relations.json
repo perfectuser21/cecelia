@@ -673,6 +673,11 @@
       "role": "verification"
     },
     {
+      "owner_path": "scripts/ci/implementation-source-recovery.mjs",
+      "path": "scripts/ci/__tests__/implementation-historical-recovery.test.mjs",
+      "role": "verification"
+    },
+    {
       "owner_path": "packages/brain/src/lib/activity-contract-store.js",
       "path": "packages/brain/src/__tests__/integration/activity-contract-locks.pg.integration.test.js",
       "role": "verification"

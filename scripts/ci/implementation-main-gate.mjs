@@ -6,7 +6,7 @@ import {canonicalRepoIdentity} from '../../packages/brain/src/lib/gp-assertion-c
 import {extractImplementationAdmissionSnapshots,validateImplementationSnapshot} from '../../packages/brain/src/lib/implementation-ci-snapshot.js';
 import {collectImplementationPrEvidence} from './implementation-pr-gate.mjs';
 import {resolveScopedImplementationReports,runScopedImplementationGate} from './implementation-multi-scope.mjs';
-import {verifyRecoveryGateProof} from './implementation-source-recovery.mjs';
+import {verifyRecoveryGateProof,verifyHistoricalE3aAtGate,HISTORICAL_E3A} from './implementation-source-recovery.mjs';
 const scopes=['cecelia-kr','cecelia-factory'];
 const fail=code=>{throw Object.assign(Error(code),{code});};
 const save=(root,name,value)=>writeFileSync(join(root,name),JSON.stringify(value,null,2)+'\n');
@@ -39,6 +39,11 @@ export async function runImplementationMainGate(options){
    if(!inputs.head.every(s=>s.source_baseline))fail('SOURCE_RECOVERY_PROVENANCE_INVALID');
    const context={eventName:process.env.GITHUB_EVENT_NAME,ref:process.env.GITHUB_REF,runId:process.env.GITHUB_RUN_ID,event:process.env.GITHUB_EVENT_PATH?JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH,'utf8')):null};
    verifyRecoveryGateProof({repoRoot,base,head,inputs,context});
+   if(base===HISTORICAL_E3A.head){
+    const {readPublishedArtifact}=await import('./implementation-main-snapshot.mjs');
+    await verifyHistoricalE3aAtGate({repoRoot,baseline:JSON.parse(readFileSync(snapshotBase,'utf8')),
+     proof:inputs.head[0].source_baseline.historical_baseline,outputDir},{readArtifact:readPublishedArtifact});
+   }
   }
   const reports=[];
   for(const [index,target] of targets.entries()){

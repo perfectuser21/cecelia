@@ -6,7 +6,7 @@ import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {Agent} from 'undici';
 import {validateImplementationSnapshot,extractImplementationAdmissionSnapshots} from '../../packages/brain/src/lib/implementation-ci-snapshot.js';
-import {publishRecoveryBaseline} from './implementation-source-recovery.mjs';
+import {publishRecoveryBaseline,rebuildHistoricalE3a,HISTORICAL_E3A} from './implementation-source-recovery.mjs';
 const SHA=/^[a-f0-9]{40}$/;
 const REFRESHABLE=new Set(['definition_snapshot_missing','scope_manifest_missing','manifest_source_mismatch']);
 const CAS_CODES=new Set(['MAP_MANIFEST_ACTIVE_CONFLICT']);
@@ -101,7 +101,7 @@ export function validatePublishedSnapshot(body,{scope,repo,revision,complete=fal
  return s;
 }
 /** 中央只保留当前 active manifest；旧 SHA 只能回退到同 SHA 的正式 provider 产物。 */
-export function readPublishedArtifact({repo,revision,diagnostics,scope}){
+export function readPublishedArtifact({repo,revision,diagnostics,scope,withOrigin=false}){
  const gh=(endpoint,binary=false)=>execFileSync('gh',['api',endpoint],{encoding:binary?undefined:'utf8',timeout:60000,maxBuffer:16*1024*1024,stdio:['ignore','pipe','pipe']});
  const json=endpoint=>JSON.parse(gh(endpoint));
  const infra=scope==='cecelia-infra',job=infra?'snapshot-infra':'snapshot-main';
@@ -125,10 +125,12 @@ export function readPublishedArtifact({repo,revision,diagnostics,scope}){
   ||!jobs.jobs.some(j=>j.name===job&&j.status==='completed'&&j.conclusion==='success'))throw fail('IMPLEMENTATION_CI_SNAPSHOT_PROVIDER_FAILED');
  const temporary=mkdtempSync(join(diagnostics,'historical-artifact-'));
  try{
-  const archive=join(temporary,'snapshot.zip');writeFileSync(archive,gh(`${prefix}/artifacts/${artifact.id}/zip`,true));
+  const archive=join(temporary,'snapshot.zip'),bytes=gh(`${prefix}/artifacts/${artifact.id}/zip`,true);
+  if(withOrigin&&artifact.digest!==`sha256:${createHash('sha256').update(bytes).digest('hex')}`)throw fail('IMPLEMENTATION_CI_ARTIFACT_ORIGIN_INVALID');
+  writeFileSync(archive,bytes);
   const body=JSON.parse(execFileSync('unzip',['-p',archive,'head.json'],{encoding:'utf8',timeout:30000,maxBuffer:16*1024*1024,stdio:['ignore','pipe','pipe']}));
   writeFileSync(join(diagnostics,infra?`historical-infra-${revision}-source.json`:'historical-base-source.json'),JSON.stringify({repo,revision,artifact_id:artifact.id,run_id:runId,provider_job:job,provider_status:'success'})+'\n');
-  return body;
+  return withOrigin?{body,origin:{artifact_id:artifact.id,artifact_digest:artifact.digest,run_id:runId,provider_job:job}}:body;
  }finally{rmSync(temporary,{recursive:true,force:true});}
 }
 function refreshable(snapshot){
@@ -250,8 +252,12 @@ if(process.argv[1]&&realpathSync(process.argv[1])===realpathSync(fileURLToPath(i
   if(process.env.SOURCE_BASELINE_RECOVERY!=='true')return publishMainSnapshots(options);
   if(options.repo!=='perfectuser21/cecelia'||options.scope!=='cecelia-kr')throw fail('IMPLEMENTATION_CI_REPOSITORY_INPUT_INVALID');
   const output='evidence',diagnostics=join(output,'diagnostics');mkdirSync(diagnostics,{recursive:true});
-  const baseline=readPublishedArtifact({repo:options.repo,revision:options.base,scope:options.scope,diagnostics});
-  return publishRecoveryBaseline({...options,repoRoot:'tooling',output,baseline,readiness:JSON.parse(readFileSync('evidence/source-readiness/receipt.json','utf8'))});
+  let baseline,historicalProof=null;
+  if(options.base===HISTORICAL_E3A.head){
+   const rebuilt=await rebuildHistoricalE3a({repoRoot:'tooling',requestedBase:options.base,outputDir:output},{readArtifact:readPublishedArtifact});
+   baseline=rebuilt.baseline;historicalProof=rebuilt.proof;
+  }else baseline=readPublishedArtifact({repo:options.repo,revision:options.base,scope:options.scope,diagnostics});
+  return publishRecoveryBaseline({...options,repoRoot:'tooling',output,baseline,historicalProof,readiness:JSON.parse(readFileSync('evidence/source-readiness/receipt.json','utf8'))});
  };
  run()
   .then(result=>process.stdout.write(JSON.stringify(result)+'\n')).catch(error=>{process.stderr.write(`${safeCode(readProperty(error,'code'))??'IMPLEMENTATION_CI_PUBLISH_FAILED'}\n`);process.exitCode=1;});
