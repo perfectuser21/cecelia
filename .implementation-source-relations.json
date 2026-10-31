@@ -2567,6 +2567,16 @@
       "owner_path": "packages/brain/src/harness-watchdog.js",
       "path": "tests/gp/f1/step1-headed-lease.test.js",
       "role": "verification"
+    },
+    {
+      "owner_path": "scripts/deploy-local.sh",
+      "path": "packages/brain/src/__tests__/deploy-root-guard.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "scripts/deploy-local.sh",
+      "path": "changes/cp-11011854-host-disk-autoreset.md",
+      "role": "release"
     }
   ]
 }
