@@ -1,10 +1,11 @@
 import * as frozenSource from '../../../../../scripts/ci/implementation-snapshot.mjs';
 // 同一来源登记合同同时执行真实版本 gate 行为，避免登记到从未运行的治理测试。
 import '../../../../../tests/regression/version-gate-silent/check-brain-version-bump.test.js';
-import { afterEach, beforeEach, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeEach, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { readFixedExistingOpsGitFixture, fixtureGit } from '../../lib/__tests__/helpers/fixed-existing-ops-git-fixture.js';
+import { readFixedExistingOpsGitFixture } from '../../lib/__tests__/helpers/fixed-existing-ops-git-fixture.js';
+import {isolatedExistingOpsGitFixture} from '../../lib/__tests__/helpers/isolated-existing-ops-git-fixture.js';
 import { versionsDatabase } from '../fixtures/definition-versions-db.js';
 import { EXISTING_OPS_IDENTITIES } from '../../lib/existing-ops-source.js';
 import * as registration from '../../lib/existing-ops-registration.js';
@@ -36,7 +37,8 @@ it('factory source anchor plan preserves fields and rejects foreign or incomplet
 });
 const root = fileURLToPath(new URL('../../../../../', import.meta.url));
 // 正样本仅为已知历史 Git fixture，不赋予当前候选来源或发布资格。
-const sourceFixture = readFixedExistingOpsGitFixture();
+const sourceFixture = isolatedExistingOpsGitFixture({revision:readFixedExistingOpsGitFixture().revision,requireRuntime:false});
+afterAll(()=>sourceFixture.close());
 const { revision, paths, tree: treeSha, entries: treeEntries } = sourceFixture;
 const readSource = async path => sourceFixture.read(path);
 let fixture;
@@ -53,13 +55,13 @@ beforeEach(async () => {
     }
   }
 });
-async function factoryMap() {
-  const decision=randomUUID(), manifestId=randomUUID(), binding=(entity_type,entity_id)=>({entity_type,entity_id,source_repo:'perfectuser21/cecelia',source_revision:revision});
+async function factoryMap(sourceRevision=revision) {
+  const decision=randomUUID(), manifestId=randomUUID(), binding=(entity_type,entity_id)=>({entity_type,entity_id,source_repo:'perfectuser21/cecelia',source_revision:sourceRevision});
   const manifest={scope_key:'cecelia-factory',schema_version:1,source_decision_id:decision,boundaries:[],crosscut_pool:[],shared_prerequisites:{applicable:false,items:[],reason:"两个现存工厂消费者独立验证来源，无共享执行前置"},value_streams:[{key:'factory',name:'研发工厂',perceiver:'主理人',order:1,brain_binding:binding('value_stream','aaaaaaaa-f0f0-4000-8000-000000000001')}],capabilities:EXISTING_OPS_IDENTITIES.map((i,n)=>({key:`F${n+2}`,name:i.workflow_key,order:n+1,value_stream_key:'factory',brain_binding:binding('capability',i.capability_id)}))};
   await fixture.db.query("INSERT INTO decisions(id,category,topic,decision,status) VALUES($1,'feature','test','真实工厂来源隔离测试','active')",[decision]);
   await fixture.db.query("INSERT INTO map_scope_repositories(scope_key,repo,adapter_key,adapter_config) VALUES('cecelia-factory','cecelia-factory-source','legacy-ledger-v1',$1)",[{source_repo:'perfectuser21/cecelia'}]);
   await fixture.db.query("INSERT INTO map_manifest_versions(id,scope_key,version,source_decision_id,manifest,digest,status,activated_at) VALUES($1,'cecelia-factory',1,$2,$3,$4,'active',NOW())",[manifestId,decision,manifest,'a'.repeat(64)]);
-  await fixture.db.query("INSERT INTO map_projection_runs(scope_key,manifest_version_id,manifest_digest,fact_revisions,projector_version,projection_digest,status,activated_at) VALUES('cecelia-factory',$1,$2,$3,'fixture',$2,'active',NOW())",[manifestId,'a'.repeat(64),{'cecelia-factory-source':revision}]);
+  await fixture.db.query("INSERT INTO map_projection_runs(scope_key,manifest_version_id,manifest_digest,fact_revisions,projector_version,projection_digest,status,activated_at) VALUES('cecelia-factory',$1,$2,$3,'fixture',$2,'active',NOW())",[manifestId,'a'.repeat(64),{'cecelia-factory-source':sourceRevision}]);
 }
 afterEach(async () => { await fixture?.close(); });
 
@@ -201,7 +203,10 @@ it('生产refresh拒绝外部proof、scratch旗标及未认证来源；失败不
  expect((await fixture.db.query('SELECT count(*)::int n FROM workflow_definition_versions')).rows[0].n).toBe(0);
 });
 it('正式refresh只读固定main commit/tree字节，来源未知和截断树不能写历史',async()=>{
-  await factoryMap(); const before=await registration.readExistingOpsRegistry(fixture.db);
+ const consistent=isolatedExistingOpsGitFixture();
+ try{
+  const {revision,tree:treeSha,entries:treeEntries}=consistent,readSource=async path=>consistent.read(path);
+  await factoryMap(revision); const before=await registration.readExistingOpsRegistry(fixture.db);
   let truncated=true,reads=0;
   const fetchFn=async(url,options)=>{
     reads++;expect(options.redirect).toBe('error');
@@ -221,6 +226,7 @@ it('正式refresh只读固定main commit/tree字节，来源未知和截断树�
   expect(snapshot.status,JSON.stringify(snapshot.gaps)).toBe('verified');expect(reads).toBeGreaterThan(10);
   expect(snapshot.consumer_registry.registry_sha256).toBe(before.registry_sha256);
   expect(snapshot.execution_status).toBe('unknown');expect(await registration.readExistingOpsRegistry(fixture.db)).toEqual(before);
+ }finally{consistent.close();}
 });
 it('已知历史Git fixture只在真实scratch冻结消费者与地图，不激活任何旧current',async()=>{
   const before=await registration.readExistingOpsRegistry(fixture.db);
@@ -305,7 +311,7 @@ it('工厂冻结来源必须重核实际Git字节，重算外层digest也不能�
   }
 });
 
-it('当前HEAD新CI不能继承历史来源资格，scratch拒绝且历史地图current全部零写',async()=>{
+it('私有HEAD真实篡改CI selector不能继承历史来源资格，scratch拒绝且历史地图current全部零写',async()=>{
  const before=await registration.readExistingOpsRegistry(fixture.db);
  await registration.registerExistingOpsSources(fixture.db,options({expectedRegistrySha256:before.registry_sha256}));
  await factoryMap();
@@ -314,7 +320,13 @@ it('当前HEAD新CI不能继承历史来源资格，scratch拒绝且历史地图
  const state=async()=>({registry:await registration.readExistingOpsRegistry(fixture.db),
   tables:await Promise.all(tables.map(async table=>(await fixture.db.query(`SELECT * FROM ${table} ORDER BY 1`)).rows))});
  const unchanged=await state();
- const head=fixtureGit('rev-parse','HEAD').trim();expect(head).not.toBe(revision);
- await expect(buildPrImplementationSnapshot(fixture.db,baseline,head,root)).rejects.toMatchObject({code:'OPS_SOURCE_UNKNOWN'});
+ const current=isolatedExistingOpsGitFixture();let candidate;
+ try{
+  const path='.github/workflows/ci.yml',bytes=current.read(path).replace('run: node scripts/ci/run-basic-check.mjs "$COMPONENT" "$SHARD"','run: echo unproven fixture selector');
+  expect(bytes).not.toBe(current.read(path));
+  candidate=isolatedExistingOpsGitFixture({revision:current.revision,changes:{[path]:bytes}});
+  expect(candidate.revision).not.toBe(current.revision);
+  await expect(buildPrImplementationSnapshot(fixture.db,baseline,candidate.revision,candidate.dir)).rejects.toMatchObject({code:'OPS_SOURCE_UNKNOWN'});
+ }finally{candidate?.close();current.close();}
  expect(await state()).toEqual(unchanged);
 });

@@ -1,5 +1,5 @@
-import { afterEach, beforeEach, expect, it } from 'vitest';
-import { readFixedExistingOpsGitFixture } from '../../lib/__tests__/helpers/fixed-existing-ops-git-fixture.js';
+import { afterAll, afterEach, beforeEach, expect, it } from 'vitest';
+import {isolatedExistingOpsGitFixture} from '../../lib/__tests__/helpers/isolated-existing-ops-git-fixture.js';
 import { versionsDatabase } from '../fixtures/definition-versions-db.js';
 import { EXISTING_OPS_IDENTITIES } from '../../lib/existing-ops-source.js';
 import * as registration from '../../lib/existing-ops-registration.js';
@@ -12,8 +12,9 @@ import {createImplementationCiRouter} from '../../routes/implementation-ci.js';
 import {prepareNativeConsumerSelection,selectNativeConsumerDefinition} from '../../lib/native-consumer-source-selection.js';
 import {stepSha256} from '../../../scripts/sync-steps-from-workspace.mjs';
 
-// 正样本仅为已知历史 Git fixture，不赋予当前候选来源或发布资格。
-const sourceFixture = readFixedExistingOpsGitFixture();
+// 每次固定完整HEAD，核对实际16collector与CI输入；只测来源机制，不赋予生产资格。
+const sourceFixture = isolatedExistingOpsGitFixture();
+afterAll(()=>sourceFixture.close());
 const { revision, paths, tree: treeSha, entries } = sourceFixture;
 const readSource = async path => sourceFixture.read(path);
 let fixture;

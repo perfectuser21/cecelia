@@ -2,7 +2,8 @@ import {it,expect} from 'vitest';
 import {parse} from 'acorn';
 import yaml from 'js-yaml';
 import {collectWorkspaceInputEdges} from '../../lib/existing-ops-workspace-source.js';
-import {readFixedExistingOpsGitFixture,fixtureGit} from '../../lib/__tests__/helpers/fixed-existing-ops-git-fixture.js';
+import {readFixedExistingOpsGitFixture} from '../../lib/__tests__/helpers/fixed-existing-ops-git-fixture.js';
+import {isolatedExistingOpsGitFixture} from '../../lib/__tests__/helpers/isolated-existing-ops-git-fixture.js';
 const {revision,paths,read}=readFixedExistingOpsGitFixture();
 const ci='.github/workflows/ci.yml',config='packages/engine/vitest.config.ts';
 const test='packages/engine/tests/skills/worktree-cleanup-set-e.test.ts',script='packages/engine/skills/dev/scripts/worktree-manage.sh';
@@ -48,10 +49,16 @@ it('有效SCRIPT身份也不能把注释、未调用函数、mock和提前返回
  expect(positive.some(e=>e.dst_path===script)).toBe(true);
 });
 
-it('当前HEAD新CI不能继承历史Engine serial消费者来源边', async () => {
- const candidate=readFixedExistingOpsGitFixture(fixtureGit('rev-parse','HEAD').trim());
- expect(candidate.revision).not.toBe(revision);
- const edges=await collectWorkspaceInputEdges({revision:candidate.revision,paths:candidate.paths,
-  parse:t=>parse(t,{ecmaVersion:'latest',sourceType:'module'}),readSource:candidate.read});
- expect(edges).toEqual([]);
+it('私有HEAD真实篡改Engine selector不能继承合法消费者来源边', async () => {
+ const current=isolatedExistingOpsGitFixture();let candidate;
+ const inputs=f=>({revision:f.revision,paths:f.paths,parse:t=>parse(t,{ecmaVersion:'latest',sourceType:'module'}),readSource:f.read});
+ try{
+  const edges=await collectWorkspaceInputEdges(inputs(current));
+  expect(edges).toContainEqual(expect.objectContaining({dst_path:script}));
+  const bytes=current.read(config).replaceAll("'**/node_modules/**',","'tests/skills/**', '**/node_modules/**',");
+  expect(bytes).not.toBe(current.read(config));
+  candidate=isolatedExistingOpsGitFixture({revision:current.revision,changes:{[config]:bytes}});
+  expect(candidate.revision).not.toBe(current.revision);
+  await expect(collectWorkspaceInputEdges(inputs(candidate))).rejects.toMatchObject({code:'WORKSPACE_INPUT_SOURCE_UNPROVEN'});
+ }finally{candidate?.close();current.close();}
 });
