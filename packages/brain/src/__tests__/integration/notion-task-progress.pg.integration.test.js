@@ -25,6 +25,18 @@ it('Project真身关联与原始目标/结果入投影；状态不变的进度�
  expect((await read())[0].result.phase).toBe('读回完成');
  await fixture.client.query('UPDATE tasks SET project_id=NULL WHERE id=$1',[id]);expect((await read())[0].project_notion_id).toBeNull();
 });
+it('业务包装下的事实更新会重新入选，只有心跳的包装不会',async()=>{
+ const id=randomUUID();
+ await fixture.client.query(`INSERT INTO tasks(id,title,status,task_type,description,result,notion_id,notion_props)
+ VALUES($1,'任务','in_progress','dev','目标','{"leadgen_103_progress":{"facts":["初始事实"],"next_step":"下一步"}}','page','{"pushed_status":"in_progress"}')`,[id]);
+ const first=(await read())[0];
+ await fixture.client.query("UPDATE tasks SET notion_props=jsonb_build_object('pushed_status',status,'pushed_content',$2::text) WHERE id=$1",[id,first.content_hash]);
+ expect(await read()).toHaveLength(0);
+ await fixture.client.query(`UPDATE tasks SET result='{"leadgen_103_progress":{"facts":["初始事实"],"next_step":"下一步","heartbeat_count":5}}' WHERE id=$1`,[id]);
+ expect(await read()).toHaveLength(0);
+ await fixture.client.query(`UPDATE tasks SET result='{"leadgen_103_progress":{"facts":["新的事实"],"next_step":"下一步"}}' WHERE id=$1`,[id]);
+ expect(await read()).toHaveLength(1);
+});
 it('保留旧task project根关联，现代Project晚建页后自动补挂',async()=>{
  const id=randomUUID(),root=randomUUID(),project=randomUUID();
  await fixture.client.query("INSERT INTO tasks(id,title,status,task_type,notion_id) VALUES($1,'旧根','in_progress','project','legacy-page')",[root]);

@@ -8,7 +8,8 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { execSync, spawnSync } from 'child_process';
-import { mkdtempSync, rmSync, appendFileSync, writeFileSync } from 'fs';
+import { mkdtempSync, rmSync, appendFileSync, writeFileSync, readFileSync, readdirSync, mkdirSync, chmodSync, statSync, existsSync } from 'fs';
+import { createHash } from 'crypto';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
@@ -46,6 +47,31 @@ function runDeploy(extraEnv = {}) {
   });
 }
 
+function seedTrackedHostSample() {
+  mkdirSync(join(clone, '.runtime'));
+  const samplePath = join(clone, '.runtime', 'host-disk.json');
+  writeFileSync(samplePath, JSON.stringify({
+    sampled_at_epoch: 1,
+    data_avail_bytes: 50392907776,
+    apfs_unallocated_bytes: 50392907776,
+    effective_free_bytes: 50392907776,
+    usage_pct: 76,
+  }));
+  sh(`git -C "${clone}" add .runtime/host-disk.json && git -C "${clone}" ${GIT_ID} commit -q -m 'add tracked sample' && git -C "${clone}" push -q origin main`);
+  writeFileSync(samplePath, JSON.stringify({
+    sampled_at_epoch: Math.floor(Date.now() / 1000),
+    data_avail_bytes: 973357056,
+    apfs_unallocated_bytes: 973357056,
+    effective_free_bytes: 973357056,
+    usage_pct: 97,
+  }));
+  return samplePath;
+}
+
+function sha256(path) {
+  return createHash('sha256').update(readFileSync(path)).digest('hex');
+}
+
 describe('deploy-root-guard', () => {
   it('部署根不在 main 分支 → 硬红 exit≠0', () => {
     sh(`git -C "${clone}" checkout -q -b cp-somework`);
@@ -70,6 +96,60 @@ describe('deploy-root-guard', () => {
     expect(branch).toBe('main');
     const dirty = sh(`git -C "${clone}" status --porcelain --untracked-files=no`).trim();
     expect(dirty).toBe('');
+  });
+
+  it('AUTORESET=1：重置 tracked 磁盘样本后原样恢复宿主采样字节', () => {
+    const samplePath = seedTrackedHostSample();
+    const beforeSha = sha256(samplePath);
+    const beforeEpoch = JSON.parse(readFileSync(samplePath, 'utf8')).sampled_at_epoch;
+    const r = runDeploy({ CECELIA_DEPLOY_AUTORESET: '1' });
+    expect(r.status).toBe(0);
+    const sample = JSON.parse(readFileSync(samplePath, 'utf8'));
+    expect(sha256(samplePath)).toBe(beforeSha);
+    expect(sample.sampled_at_epoch).toBe(beforeEpoch);
+    expect(sample.effective_free_bytes).toBe(973357056);
+    expect(r.stdout).toContain('宿主磁盘采样已恢复');
+    expect(statSync(samplePath).mode & 0o777).toBe(0o600);
+    expect(readdirSync(join(clone, '.runtime')).filter(name => name.startsWith('.host-disk-deploy-'))).toEqual([]);
+  });
+
+  it('AUTORESET=1：原本无活样本时清除 Git 重置带回的历史样本', () => {
+    const samplePath = seedTrackedHostSample();
+    rmSync(samplePath);
+    const r = runDeploy({ CECELIA_DEPLOY_AUTORESET: '1' });
+    expect(r.status).toBe(0);
+    expect(existsSync(samplePath)).toBe(false);
+  });
+
+  it('AUTORESET=1：活样本备份失败时硬红且原样保留', () => {
+    const samplePath = seedTrackedHostSample();
+    const beforeSha = sha256(samplePath);
+    const fakeBin = join(base, 'fake-bin');
+    mkdirSync(fakeBin);
+    writeFileSync(join(fakeBin, 'mktemp'), '#!/usr/bin/env bash\nexit 9\n');
+    chmodSync(join(fakeBin, 'mktemp'), 0o755);
+    const r = runDeploy({ CECELIA_DEPLOY_AUTORESET: '1', PATH: `${fakeBin}:${process.env.PATH}` });
+    expect(r.status).not.toBe(0);
+    expect(r.stdout + r.stderr).toContain('宿主磁盘采样备份失败');
+    expect(sha256(samplePath)).toBe(beforeSha);
+  });
+
+  it('AUTORESET=1：恢复失败时硬红、清除 Git 旧样本并保留 600 权限备份', () => {
+    const samplePath = seedTrackedHostSample();
+    const beforeSha = sha256(samplePath);
+    const fakeBin = join(base, 'fake-bin');
+    mkdirSync(fakeBin);
+    writeFileSync(join(fakeBin, 'mv'), '#!/usr/bin/env bash\nexit 9\n');
+    chmodSync(join(fakeBin, 'mv'), 0o755);
+    const r = runDeploy({ CECELIA_DEPLOY_AUTORESET: '1', PATH: `${fakeBin}:${process.env.PATH}` });
+    expect(r.status).not.toBe(0);
+    expect(r.stdout + r.stderr).toContain('宿主磁盘采样恢复失败');
+    expect(existsSync(samplePath)).toBe(false);
+    const backups = readdirSync(join(clone, '.runtime')).filter(name => name.startsWith('.host-disk-deploy-'));
+    expect(backups).toHaveLength(1);
+    const backupPath = join(clone, '.runtime', backups[0]);
+    expect(sha256(backupPath)).toBe(beforeSha);
+    expect(statSync(backupPath).mode & 0o777).toBe(0o600);
   });
 
   it('干净 main → 通过守卫，无相关改动 exit 0', () => {

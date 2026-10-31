@@ -1,8 +1,8 @@
 # DoD
 
-- [x] [BEHAVIOR] 有持久化headed-session+非空owner且无runId的任务，在startup保留状态与认领。
-  Test: manual:bash -c 'cd packages/brain && node ../../node_modules/vitest/vitest.mjs run src/__tests__/executor-startup-sync.test.js --maxWorkers=1 --minWorkers=1'
-- [x] [BEHAVIOR] 真实scratch中Task/原authoring结果/lease全行不变；普通brainlocal和无owner仍恢复；过期lease仍由原reaper失效。
-  Test: manual:bash -c 'cd packages/brain && node ../../node_modules/vitest/vitest.mjs run --config vitest.integration.config.js src/__tests__/integration/executor-startup-headed-owner.pg.integration.test.js --maxWorkers=1 --minWorkers=1'
-- [x] [BEHAVIOR] 部署canary在syncOrphanTasksOnStartup内不查询或改共享Task，普通primary继续恢复本地孤儿。
-  Test: manual:bash -c 'cd packages/brain && node ../../node_modules/vitest/vitest.mjs run src/__tests__/executor-startup-sync.test.js --maxWorkers=1 --minWorkers=1'
+- [x] [BEHAVIOR] 业务包装中的任务事实、证据与下一步可投影；未知键不投影；重复更新保留人工正文。
+  Test: manual:npm exec --workspace cecelia-brain -- vitest run src/projection/__tests__/task-progress.test.js
+- [x] [BEHAVIOR] 项目进展显示最近进行中和阻断任务的事实、证据与下一步，未改变任务结果时指纹稳定。
+  Test: manual:npm exec --workspace cecelia-brain -- vitest run src/__tests__/notion-relay-projection.test.js src/__tests__/notion-relay-projection.projects.test.js
+- [x] [BEHAVIOR] 状态不变时事实更新可重新投影，真实隔离 PG 到 Notion 接缝验证项目及任务，人工列保留。
+  Test: manual:DB_HOST=/tmp DB_NAME=cecelia_scratch npm exec --workspace cecelia-brain -- vitest run --config vitest.integration.config.js src/__tests__/integration/notion-task-progress.pg.integration.test.js src/__tests__/integration/projects-notion-sync.pg.integration.test.js
