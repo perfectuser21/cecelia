@@ -126,6 +126,10 @@ function buildBriefBlocks(brief, fallbackGoal) {
   const blocks = [];
   blocks.push(heading('目标'));
   blocks.push(para(b.goal || fallbackGoal || '（未写目标）'));
+  if (b.goal && fallbackGoal && b.goal !== fallbackGoal) {
+    blocks.push(heading('项目计划'));
+    blocks.push(para(fallbackGoal));
+  }
   blocks.push(heading('现状'));
   blocks.push(para(b.status || '（未写现状）'));
   blocks.push(heading('已知事实'));

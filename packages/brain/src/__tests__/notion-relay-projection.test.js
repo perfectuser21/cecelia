@@ -111,6 +111,13 @@ describe('buildProjectProps / Body', () => {
     expect(txt).not.toContain('未写目标');
     expect(txt).toContain('未写现状'); // 现状没有退回字段，仍是占位
   });
+  it('项目填写独立目标后仍保留 description 中的原始项目计划', () => {
+    const root={...ROOT,description:'原项目计划：先完成验收，预算80–150分钟',brief:{...ROOT.brief,goal:'智能获客真实可用'}};
+    const text=JSON.stringify(buildProjectBody(root,SNAP));
+    expect(text).toContain('智能获客真实可用');
+    expect(text).toContain('项目计划');
+    expect(text).toContain('原项目计划：先完成验收，预算80–150分钟');
+  });
 });
 
 function poolWith({ roots, snap = SNAP, updates = [] }) {
