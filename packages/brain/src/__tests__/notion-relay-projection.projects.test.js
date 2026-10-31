@@ -17,7 +17,7 @@ function fixture(row = root) {
   const req = vi.fn(async (_t, path, method, body) => {
     if (method === 'GET' && path.startsWith('/pages/')) return { id: 'page', parent: { database_id: 'd83c40c2-ba63-8323-8dc7-01cc291c4d9b' }, properties: humanProps(brainHuman(saved)), results: [] };
     if (method === 'POST' && path === '/pages') { blocks = body.children.map((b, i) => ({ ...b, id: `block-${i}` })); return { id: 'new-page' }; }
-    if (method === 'PATCH' && path.startsWith('/blocks/')) { const created = body.children.map((b, i) => ({ ...b, id: `block-${i}` })); blocks.push(...created); return { results: created }; }
+    if (method === 'PATCH' && path.startsWith('/blocks/')) { const created = body.children.map((b, i) => ({ ...b, id: `block-${i}` })); if (body.position?.type === 'start') blocks.unshift(...created); else blocks.push(...created); return { results: created }; }
     if (method === 'GET' && path.includes('/blocks/block-')) return { results: blocks.find(b => path.includes(b.id))?.toggle.children || [], has_more: false };
     return { results: blocks, has_more: false };
   });

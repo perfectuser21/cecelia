@@ -185,7 +185,7 @@ function projectManagedBlock(blocks) {
 
 /** 先追加并读回机器区块，再删除旧机器区块；保留未知归属的历史/人工正文。 */
 export async function replacePageBody(notionReq, token, pageId, blocks) {
-  await syncManagedBodyBlock(token, pageId, projectManagedBlock(blocks), notionReq, PROJECT_BODY_MARKER);
+  await syncManagedBodyBlock(token, pageId, projectManagedBlock(blocks), notionReq, PROJECT_BODY_MARKER, { position: { type: 'start' } });
 }
 
 // 页被删(404)、页/库进回收站(400 archived ancestor)，或 legacy notion_id 指向错库(400 schema 不符，

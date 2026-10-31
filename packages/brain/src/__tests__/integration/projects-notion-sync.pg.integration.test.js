@@ -58,7 +58,7 @@ function notionFixture() {
       const child = page ? null : [...pages.values()].flatMap(p => p.children).find(b => b.id === blocks[1]);
       if (method === 'GET') return structuredClone({ results: page ? page.children : child?.toggle?.children || [], has_more: false });
       const created = body.children.map(b => ({ ...structuredClone(b), id: randomUUID() }));
-      page.children.push(...created);
+      if (body.position?.type === 'start') page.children.unshift(...created); else page.children.push(...created);
       edit(page, {}); return { results: structuredClone(created) };
     }
     if (path.startsWith('/blocks/') && method === 'DELETE') {
