@@ -121,8 +121,8 @@ describe('claude-channel-retired.reader-tuples 防复活守卫完整九reader组
 export function registerReaderTupleGuardTests({ BRAIN_ROOT, ENVELOPE_FILE, ENVELOPE_CONSUMER, NATIVE_HELPER, NATIVE_DATA, PROVENANCE_READER_HASHES, findClaudeInvocations }) {
 describe('sourceprep history reader完整新组合',()=>{
  const root=path.join(BRAIN_ROOT,'src/lib');
- const six=['source','build-source','stage-source','provenance-envelope','native-evidence-source','native-evidence-envelopes','runtime-source'].map(n=>path.join(root,'existing-ops-'+n+'.js'));
- const base=()=>new Map([...new Set([ENVELOPE_FILE,ENVELOPE_CONSUMER,...PROVENANCE_READER_HASHES.keys(),...six,path.join(root,'existing-ops-us-compose-source.js')])].map(f=>[f,readFileSync(f,'utf8')]));
+ const six=['source','build-source','stage-source','provenance-envelope','native-evidence-source','native-evidence-envelopes','stage-modes','workspace-source','runtime-source'].map(n=>path.join(root,'existing-ops-'+n+'.js'));
+ const base=()=>new Map([...new Set([ENVELOPE_FILE,ENVELOPE_CONSUMER,...PROVENANCE_READER_HASHES.keys(),...six,path.join(root,'existing-ops-us-compose-source.js'),path.join(BRAIN_ROOT,'../../scripts/ci/implementation-snapshot.mjs')])].map(f=>[f,readFileSync(f,'utf8')]));
  const scan=(s,f=NATIVE_DATA)=>findClaudeInvocations(s.get(f),{file:f,sources:s});
  it.each([ENVELOPE_FILE,NATIVE_DATA,path.join(root,'existing-ops-stage-envelopes.js')])('新完整caller/runtime/reader使%s取得资格',f=>expect(scan(base(),f)).toEqual([]));
  it.each(six)('新组合混入旧%s拒绝',f=>{
@@ -252,6 +252,18 @@ const B_RECOVERY_STAGING_HASHES = {...B_RECOVERY_QA_HASHES,
 const B_RECOVERY_DRAIN_STAGING_HASHES = {...B_RECOVERY_QA_HASHES,
  'existing-ops-runtime-source.js':B_DRAIN_STAGING_HASHES['existing-ops-runtime-source.js'],
 };
+// 本次只读CI来源闭包：helper移动后必须整组固定，不能按成员混合历史摘要。
+const CI_TOOL_HASHES = {...B_RECOVERY_DRAIN_STAGING_HASHES,
+ '../../../../scripts/ci/implementation-snapshot.mjs':'3c9323fee71c1354fe9e6b3dd3ca03d1a87ef0059e31af4763561b049f4cfc9c',
+ 'existing-ops-source.js':'58219f05a2884e076ddb07de6b1c24134b93e58a44440260cbeba27fa9c278f0',
+ 'existing-ops-runtime-source.js':'ee2356c88e24bf957822d5f4bb84f0b0d42f9c068caa29da52c7ce78b2cde754',
+ 'existing-ops-workspace-source.js':'b85ce2ec5c56693054b0b66428df95ae373156d2b40107337540c534db3d8d62',
+ 'existing-ops-stage-source.js':'468a0f42ea1cbd2a83f744d9220b917d323b6537d7802bb2749ef4d1591f5afc',
+ 'existing-ops-stage-modes.js':'cccab22f5265503733294f12aeb141e8153c39c77d2b4d90fed458b50e601620',
+};
+const CI_ENABLED_HASHES = {...CI_TOOL_HASHES,
+ 'existing-ops-source.js':'9eba36f6430c8d68c843298a8da7165c8c240e7f3aafe46e4a2000be3352c4da',
+};
 const cache=new Map(), referenceCache=new Map();
 function hash(text,parse,shape){
  if(!cache.has(text))cache.set(text,createHash('sha256').update(shape(parse(text))).digest('hex'));
@@ -270,9 +282,12 @@ export function reviewedADataRanges(src,{file,sources,root,parse,shape,rows,deco
   const isRecovery=typeof build==='string'&&hash(build,parse,shape)===B_RECOVERY_QA_HASHES['existing-ops-build-source.js'];
   const isStaging=runtimeHash===B_STAGING_HASHES['existing-ops-runtime-source.js'];
   const isDrainStaging=runtimeHash===B_DRAIN_STAGING_HASHES['existing-ops-runtime-source.js'];
-  if(isRecovery&&!isQa&&!isStaging&&!isDrainStaging)return null;
-  const selected=isRecovery?(isDrainStaging?B_RECOVERY_DRAIN_STAGING_HASHES:isStaging?B_RECOVERY_STAGING_HASHES:B_RECOVERY_QA_HASHES):isB?(isDrainStaging?B_DRAIN_STAGING_HASHES:isStaging?B_STAGING_HASHES:isQa?B_QA_HASHES:B_HASHES):isQa?QA_HASHES
-   :hash(runtime,parse,shape)===US_HASHES['existing-ops-runtime-source.js']?US_HASHES:HASHES;
+  const ciTuple=[CI_TOOL_HASHES,CI_ENABLED_HASHES].find(tuple=>Object.entries(tuple).every(([name,digest])=>{
+   const text=sources.get(path.join(root,name));return typeof text==='string'&&hash(text,parse,shape)===digest;
+  }));
+  if(isRecovery&&!isQa&&!isStaging&&!isDrainStaging&&!ciTuple)return null;
+  const selected=ciTuple??(isRecovery?(isDrainStaging?B_RECOVERY_DRAIN_STAGING_HASHES:isStaging?B_RECOVERY_STAGING_HASHES:B_RECOVERY_QA_HASHES):isB?(isDrainStaging?B_DRAIN_STAGING_HASHES:isStaging?B_STAGING_HASHES:isQa?B_QA_HASHES:B_HASHES):isQa?QA_HASHES
+   :hash(runtime,parse,shape)===US_HASHES['existing-ops-runtime-source.js']?US_HASHES:HASHES);
   const closure=new Set(Object.keys(selected).map(name=>path.join(root,name)));
   for(const [name,digest] of Object.entries(selected)){
    const text=sources.get(path.join(root,name));
@@ -293,10 +308,11 @@ export function reviewedADataRanges(src,{file,sources,root,parse,shape,rows,deco
 
 export function registerReviewedAGuardTests({ BRAIN_ROOT, findClaudeInvocations }) {
  const root=path.join(BRAIN_ROOT,'src/lib');
- const names=['source','build-source','build-envelopes','runtime-source','us-compose-source','stage-source','stage-envelopes','stage-modes','provenance-envelope','provenance-core-envelope','provenance-entry-envelopes','provenance-local-envelopes','native-evidence-source','native-evidence-envelopes'];
+ const names=['source','workspace-source','build-source','build-envelopes','runtime-source','us-compose-source','stage-source','stage-envelopes','stage-modes','provenance-envelope','provenance-core-envelope','provenance-entry-envelopes','provenance-local-envelopes','native-evidence-source','native-evidence-envelopes'];
  const files=names.map(n=>path.join(root,`existing-ops-${n}.js`));
  const data=path.join(root,'existing-ops-build-envelopes.js');
- const base=()=>new Map(files.map(f=>[f,readFileSync(f,'utf8')]));
+ const snapshot=path.join(BRAIN_ROOT,'../../scripts/ci/implementation-snapshot.mjs');
+ const base=()=>new Map([...files,snapshot].map(f=>[f,readFileSync(f,'utf8')]));
  const legacyBase=()=>new Map(files.map(f=>[f,execFileSync('git',['show','6e9076aab2002e301304256b4936e2790f9de8e7:packages/brain/src/lib/'+path.basename(f)],{cwd:BRAIN_ROOT,encoding:'utf8'})]));
  const scan=(s,f=data)=>findClaudeInvocations(s.get(f),{file:f,sources:s});
  describe('A封套精确只读闭包及执行防复活',()=>{
@@ -305,6 +321,33 @@ export function registerReviewedAGuardTests({ BRAIN_ROOT, findClaudeInvocations 
    expect(scan(current)).toEqual([]);
    const changed=base();changed.set(runtime,changed.get(runtime)+'\nexport const unknownStagingSource=true;');
    expect(scan(changed).some(h=>h.rule==='E1')).toBe(true);
+  });
+  it('CI来源完整组合仅接受已审marker0及marker1，未知selector不能继承只读资格',()=>{
+   const source=path.join(root,'existing-ops-source.js'),s=base();
+   const original=s.get(source).replace(/EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = [01]/,'EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = 0');
+   for(const marker of [0,1]){const variant=new Map(s);variant.set(source,original.replace('EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = 0','EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = '+marker));expect(scan(variant)).toEqual([]);}
+   const unknown=new Map(s);unknown.set(source,original.replace('EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = 0','EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = 2'));
+   expect(scan(unknown).some(h=>h.rule==='E1')).toBe(true);
+  });
+  it.each(['eval','raw export','process'])('移动至workspace的helper出现%s仍失败关闭',kind=>{
+   const s=base(),file=path.join(root,'existing-ops-workspace-source.js');
+   const edits={eval:'\neval(candidate);','raw export':"\nimport {STAGE_ENVELOPES} from './existing-ops-stage-envelopes.js';export const raw=STAGE_ENVELOPES;",process:"\nimport {spawn as launch} from 'node:child_process';launch('claude',['-p']);"};
+   s.set(file,s.get(file)+edits[kind]);expect(scan(s).some(h=>h.rule==='E1')).toBe(true);
+   if(kind==='process')expect(scan(s,file).some(h=>h.rule==='R1')).toBe(true);
+  });
+  it('CI scratch既有实际调用方缺失不能取得完整闭包资格',()=>{
+   const s=base();expect(scan(s)).toEqual([]);s.delete(snapshot);expect(scan(s).some(h=>h.rule==='E1')).toBe(true);
+  });
+  it.each(['unknown','eval callback','raw export','process'])('CI scratch调用方%s仍失败关闭',kind=>{
+   const s=base(),old=s.get(snapshot);
+   const edited=kind==='eval callback'?old.replace('parse:text=>parse(text,','parse:text=>eval(text,')
+    :old+({unknown:'\nexport const unknownCaller=true;','raw export':'\nexport const rawWorkspace=collectWorkspaceInputEdges;',process:"\nimport {spawn as launch} from 'node:child_process';launch('claude',['-p']);"}[kind]);
+   expect(edited).not.toBe(old);s.set(snapshot,edited);expect(scan(s).some(h=>h.rule==='E1')).toBe(true);
+   if(kind==='process')expect(scan(s,snapshot).some(h=>h.rule==='R1')).toBe(true);
+  });
+  it('未知workspace第三消费者不能借已审scratch调用方取得资格',()=>{
+   const s=base();s.set(path.join(root,'unknown-workspace-reader.js'),"import {collectWorkspaceInputEdges} from './existing-ops-workspace-source.js';collectWorkspaceInputEdges({parse:eval});");
+   expect(scan(s).some(h=>h.rule==='E1')).toBe(true);
   });
   it('旧main完整13成员仍可审，新runtime缺新增前置不能借旧闭包',()=>{
    const s=legacyBase(),runtime=path.join(root,'existing-ops-runtime-source.js'),helper=path.join(root,'existing-ops-us-compose-source.js');
@@ -320,7 +363,7 @@ export function registerReviewedAGuardTests({ BRAIN_ROOT, findClaudeInvocations 
   });
   it.each(['build-source','build-envelopes'])('B只读闭包禁止A/B混配 %s',name=>{const s=base();s.set(path.join(root,`existing-ops-${name}.js`),execFileSync('git',['show',`5dd82456a80b77dda054f5994d1561e1106317eb:packages/brain/src/lib/existing-ops-${name}.js`],{encoding:'utf8'}));expect(scan(s).some(h=>h.rule==='E1')).toBe(true)});
   it('旧B完整组合继续接受，新旧两成员混配均拒绝',()=>{
-   const old=base(), names=['build-source','build-envelopes'];
+   const old=new Map(files.map(f=>[f,execFileSync('git',['show','baa3f3424dcffe4908b966bdfba9a38fba733c23:packages/brain/src/lib/'+path.basename(f)],{cwd:BRAIN_ROOT,encoding:'utf8'})])), names=['build-source','build-envelopes'];
    for(const name of names){const f=path.join(root,`existing-ops-${name}.js`);old.set(f,execFileSync('git',['show',`c58724ba85b932d6d7ca2408d57a5b0c2baef15e:packages/brain/src/lib/existing-ops-${name}.js`],{cwd:BRAIN_ROOT,encoding:'utf8'}));}
    expect(scan(old)).toEqual([]);
    for(const name of names){const f=path.join(root,`existing-ops-${name}.js`);const mixed=base();mixed.set(f,old.get(f));expect(scan(mixed).some(h=>h.rule==='E1')).toBe(true);}
