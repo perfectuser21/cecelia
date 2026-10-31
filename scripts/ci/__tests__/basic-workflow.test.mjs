@@ -71,12 +71,16 @@ test('只给实际PG跑道设置数据库URI，不能意外启用单测文件里
     "${{ matrix.component == 'brain-integration' && 'postgresql://ci:isolated-ci@127.0.0.1:5432/cecelia_scratch' || '' }}");
 });
 
-test('来源准入的路径过滤必须覆盖当前真实定义文件', () => {
+test('必需来源准入始终接收main PR和push，不能因路径过滤缺少检查结果', () => {
   const impact = yaml.load(readFileSync(new URL('../../../.github/workflows/implementation-impact.yml', import.meta.url), 'utf8'));
-  const files = require('fast-glob').sync(impact.on.pull_request.paths, { cwd: root, dot: true });
-  for (const path of ['.implementation-source-relations.json', 'packages/brain/config/company-kr-workflow.json', 'packages/brain/scripts/coding-workflow/repos.json']) {
-    assert.ok(files.includes(path), `${path} 的来源定义变更不能漏掉准入`);
+  assert.deepEqual(impact.on.pull_request.branches, ['main']);
+  assert.deepEqual(impact.on.push.branches, ['main']);
+  for (const key of ['paths', 'paths-ignore', 'branches-ignore']) {
+    assert.equal(impact.on.pull_request[key], undefined, `${key} 会令必需检查没有结果`);
+    assert.equal(impact.on.push[key], undefined);
   }
+  assert.equal(impact.jobs.gate.name, 'Implementation impact gate');
+  assert.ok(impact.jobs.gate.steps.length > 0, '保留实际来源准入执行');
 });
 
 
