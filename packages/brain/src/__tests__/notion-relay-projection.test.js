@@ -39,6 +39,13 @@ const SNAP = {
 };
 
 describe('buildProjectProps / Body', () => {
+  it('项目页展示进行中任务的最新事实、证据和下一步，更新时指纹改变', () => {
+    const snap={...SNAP,children:[...SNAP.children.slice(0,1),{...SNAP.children[1],updated_at:'2026-10-31T16:48:35Z',result:{leadgen_103_false_exclusion_progress:{facts:['候选已准备，业务未验'],evidence:{pr:'https://github.com/owner/repo/pull/2352',pilot_run:'https://github.com/owner/repo/actions/runs/123',candidate_run:'https://github.com/owner/repo/actions/runs/456',merged_sha:'123456789abcdef'},next_step:'同一候选预发'}}}]};
+    const props=JSON.stringify(buildProjectProps(ROOT,snap));
+    const body=JSON.stringify(buildProjectBody(ROOT,snap));
+    for(const v of ['候选已准备，业务未验','https://github.com/owner/repo/pull/2352','actions/runs/123','actions/runs/456','123456789abcdef','同一候选预发'])expect(props+body).toContain(v);
+    expect(digestOf(buildProjectProps(ROOT,snap),buildProjectBody(ROOT,snap))).not.toBe(digestOf(buildProjectProps(ROOT,SNAP),buildProjectBody(ROOT,SNAP)));
+  });
   it('属性：Status 映射、AI Project、Run ID、Remark 含 1/2 棒 + 待拍板 1', () => {
     const p = buildProjectProps(ROOT, SNAP);
     expect(p.Status.status.name).toBe('In Progress');
