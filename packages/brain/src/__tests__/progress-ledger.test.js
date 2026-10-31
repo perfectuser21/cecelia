@@ -528,25 +528,19 @@ describe('Progress Ledger', () => {
       expect(results[0].reviewReason).toContain('minutes');
     });
 
-    it('过慢任务（超过 60 分钟阈值）应标记为 retry + medium', async () => {
-      // step_age_ms > 30min * 2 = 60min，但 < 1h stall 阈值不成立
-      // 因为 stalled 阈值是 60min = 3600000ms，而 slow 是 30*60*1000*2 = 3600000ms
-      // 需要 step_age_ms > 3600000 才触发 stalled（优先级更高）
-      // slow 条件: step_status=in_progress && step_age_ms > 3600000
-      // 但 stalled 也是 step_age_ms > 3600000...两个阈值相同，stalled 先判断
-      // 要触发 slow 而不是 stalled，需要 step_age_ms 略大于 slow 阈值但不触发 stalled
-      // 实际代码: stalled = step_age_ms > 60*60*1000 = 3600000
-      //           slow = step_age_ms > 30*60*1000*2 = 3600000
-      // 两者阈值相同，slow 永远在 else if 分支 → 如果 stalled 匹配了就不会走 slow
-      // 因此 slow 分支实际只在 stalled 不匹配时才走 → 即 step_status !== 'in_progress' 时
-      // 但 slow 条件也要求 step_status === 'in_progress'...
-      // 结论：以当前阈值，slow 分支不可达（stalled 和 slow 阈值相同且都要求 in_progress）
-      // 为了触发 retry，需要让 stalled 条件不满足但 slow 条件满足 → 不可能
-      // 跳过此测试，标注为代码行为
-      // 注：如果 STALLED_THRESHOLD_MS 和 SLOW_STEP_THRESHOLD 不同，可以覆盖
-
-      // 但我们仍可以验证 retry_count >= 3 的分支
-      expect(true).toBe(true); // 占位 - slow 分支在当前阈值下不可达
+    it.each([
+      [3600000, 'continue', 'low', false],
+      [3600001, 'escalate', 'high', true],
+    ])('执行时长%s毫秒遵守停滞边界，不能落入伪装已覆盖的retry分支', async (age, action, risk, alert) => {
+      mockPool.query.mockResolvedValueOnce({ rows: [{
+        task_id: taskId, title: '边界任务', task_status: 'in_progress', run_id: runId,
+        step_sequence: 1, step_name: 'build', step_status: 'in_progress',
+        started_at: new Date(), retry_count: 0, confidence_score: 0.9, step_age_ms: age,
+      }] });
+      mockPool.query.mockResolvedValueOnce({ rows: [], rowCount: 1 });
+      const results = await evaluateProgressInTick(tickId, tickNumber);
+      expect(results).toHaveLength(1);
+      expect(results[0]).toMatchObject({ reviewAction: action, riskAssessment: risk, shouldAlert: alert });
     });
 
     it('重试过多（>=3次）应标记为 pause + high', async () => {

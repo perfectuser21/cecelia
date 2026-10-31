@@ -13,11 +13,16 @@ it('已知历史Git fixture 保持 F2/F3 消费者来源协议',async()=>{
  expect(proof.consumers.every(c=>c.status==='verified'),JSON.stringify(proof.consumers.map(c=>c.gaps))).toBe(true);
 });
 
-it('当前HEAD新CI尚未准入，不得继承历史Git fixture的消费者资格', async () => {
+it('当前HEAD的未审部署与CI字节不得继承历史Git fixture的消费者资格', async () => {
  const candidate = readFixedExistingOpsGitFixture(fixtureGit('rev-parse', 'HEAD').trim());
  expect(candidate.revision).not.toBe(revision);
  const proof = await buildExistingOpsSources({scope:'cecelia-factory',repo:'perfectuser21/cecelia',
-  revision:candidate.revision,paths:candidate.paths,readSource:candidate.read});
+  revision:candidate.revision,paths:candidate.paths,readSource:async path=>{
+   const text=candidate.read(path);
+   if(path==='scripts/brain-deploy.sh')return text+'\necho unreviewed-deployment';
+   if(path==='.github/workflows/ci.yml')return 'name: unreviewed CI\njobs: {}\n';
+   return text;
+  }});
  expect(proof.revision).toBe(candidate.revision);
  for (const consumer of proof.consumers) {
   expect(consumer.status, JSON.stringify(consumer.gaps)).toBe('unknown');
@@ -26,7 +31,7 @@ it('当前HEAD新CI尚未准入，不得继承历史Git fixture的消费者资�
   expect(consumer.input_relations).toEqual([]);
  }
  expect(proof.consumers[0].gaps).toContainEqual({code:'isolated_staging_source_unproven'});
- expect(proof.consumers[1].gaps).toContainEqual({code:'nightly_full_unit_unproven'});
+ expect(proof.consumers[1].gaps.length).toBeGreaterThan(0);
  for (const workflow of proof.workflows) {
   expect(workflow.executable).toBe(false);
   expect(workflow.coverage.status).toBe('unknown');

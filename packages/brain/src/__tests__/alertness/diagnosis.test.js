@@ -86,6 +86,7 @@ describe('alertness/diagnosis', () => {
       }));
       const result = await diagnoseProblem(metrics, history);
       expect(result.issues).toContain('memory_leak');
+      expect(result.recommendations).toEqual(['force_garbage_collection', 'restart_process']);
     });
 
     it('MEMORY_LEAK：RSS < 200MB 时不触发', async () => {
@@ -116,6 +117,7 @@ describe('alertness/diagnosis', () => {
       }));
       const result = await diagnoseProblem(metrics, history);
       expect(result.issues).toContain('response_degradation');
+      expect(result.severity).toBe('medium');
       expect(result.recommendations).toContain('optimize_slow_queries');
     });
 

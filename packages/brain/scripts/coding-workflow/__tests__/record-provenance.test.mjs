@@ -1,14 +1,16 @@
-import { beforeEach, afterEach, it, expect, vi } from 'vitest';
+import { beforeEach, afterEach, afterAll, it, expect, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { directorySnapshot } from './helpers/directory-snapshot.mjs';
 import { beginEvaluateIsolation, withRecordProvenance, captureNativeExecution, sealStageEvidence, beginRecordRegistration, observeRecordRegistration, finalizeRecordRegistration, verifyRecordProvenance, verifyPendingStageEvidence, provenanceProjection, provenanceRequired, controllerIdentity } from '../lib/record-provenance.mjs';
 
 const taskId = '088c3431-57ca-4f2a-8a50-14601518e2a2', sprintDir = 'sprints/10121524-cw-088c3431';
 const M = '.implementation-source-relations.json', owner = 'packages/brain/scripts/coding-workflow/runner/run-once.mjs';
 let temp, worktree, root, options, controller, lastQaStageId;
+let snapshot, qaSnapshot, initialController;
 const git = (...args) => { const env = { ...process.env };for (const k of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE']) delete env[k];return execFileSync('git', ['-C', worktree, '-c', 'core.hooksPath=/dev/null', ...args], { encoding: 'utf8', env }).trim(); };
 const put = (p, text) => { fs.mkdirSync(path.dirname(path.join(worktree, p)), { recursive: true });fs.writeFileSync(path.join(worktree, p), text); };
 const fm = (step, body = 'observed report') => `---\ntask_id: ${taskId}\nstep: ${step}\nupstream: []\n---\n${body}\n`;
@@ -23,20 +25,33 @@ function register(files) {
   put(M, JSON.stringify(before));observeRecordRegistration(token, [M]);commit();return finalizeRecordRegistration(token);
 }
 function prepareQa() {
+  if (qaSnapshot) {
+    fs.rmSync(temp, { recursive: true, force: true });
+    temp = qaSnapshot.fork();worktree = path.join(temp, 'repo');root = path.join(temp, 'protected');
+    options = { root, worktree, taskId, sprintDir, controller };return;
+  }
   for (const [stage, name] of [['build', '03-build.md'], ['verify', '04-evidence.md']]) {
     put(file(name), fm(stage));seal(stage, [file(name)]);
   }
   register([file('01-intent.md'), file('03-build.md'), file('04-evidence.md')]);
+  qaSnapshot = directorySnapshot(temp);
 }
 beforeEach(() => {
   lastQaStageId = undefined;
-  temp = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'provenance-core-'));worktree = path.join(temp, 'repo');root = path.join(temp, 'protected');fs.mkdirSync(worktree);
+  temp = snapshot ? snapshot.fork() : fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'provenance-core-'));
+  worktree = path.join(temp, 'repo');root = path.join(temp, 'protected');
+  if (snapshot) {
+    controller = initialController;options = { root, worktree, taskId, sprintDir, controller };return;
+  }
+  fs.mkdirSync(worktree);
   git('init', '-qb', 'cp-10121524-cw-088c3431');git('config', 'user.name', 'fixture');git('config', 'user.email', 'fixture@example.invalid');git('remote', 'add', 'origin', 'https://github.com/perfectuser21/cecelia.git');
   put('README.md', 'base');put(owner, '// controller');put(M, JSON.stringify({ schema_version: 1, repo: 'perfectuser21/cecelia', relations: [] }));commit();
   controller = controllerIdentity(new URL(`file://${path.join(worktree, owner)}`));options = { root, worktree, taskId, sprintDir, controller };
   put(file('01-intent.md'), fm('intent'));seal('intent', [file('01-intent.md')]);
+  initialController = controller;snapshot = directorySnapshot(temp);
 });
 afterEach(() => { vi.restoreAllMocks();fs.rmSync(temp, { recursive: true, force: true }); });
+afterAll(() => { snapshot?.cleanup();qaSnapshot?.cleanup(); });
 it('真实阶段封存、登记和提交后可按固定Git验证，投影不泄露报告正文', () => {
   put(file('03-build.md'), fm('build', 'secret developer statement'));seal('build', [file('03-build.md')]);register([file('01-intent.md'), file('03-build.md')]);
   const result = verifyRecordProvenance({ ...options, head: git('rev-parse', 'HEAD') });expect(result.status).toBe('verified');expect(result.records).toHaveLength(2);expect(JSON.stringify(provenanceProjection(result))).not.toContain('secret developer statement');

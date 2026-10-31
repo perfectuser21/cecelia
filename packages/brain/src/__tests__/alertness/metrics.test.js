@@ -39,7 +39,7 @@ describe('alertness/metrics', () => {
     vi.clearAllMocks();
 
     mockRelease.mockImplementation(() => {});
-    mockClientQuery.mockResolvedValue({ rows: [], rowCount: 0 });
+    mockClientQuery.mockResolvedValue({ rows: [{ count: '0' }], rowCount: 1 });
     mockConnect.mockResolvedValue({
       query: mockClientQuery,
       release: mockRelease
@@ -76,7 +76,7 @@ describe('alertness/metrics', () => {
 
   describe('collectMetrics', () => {
     it('返回包含5种指标的对象', async () => {
-      mockClientQuery.mockResolvedValue({ rows: [], rowCount: 0 });
+      mockClientQuery.mockResolvedValue({ rows: [{ count: '0' }], rowCount: 1 });
       const metrics = await collectMetrics();
       expect(metrics).toHaveProperty('memory');
       expect(metrics).toHaveProperty('cpu');
@@ -86,7 +86,7 @@ describe('alertness/metrics', () => {
     });
 
     it('每个指标包含 value/status/unit/timestamp', async () => {
-      mockClientQuery.mockResolvedValue({ rows: [], rowCount: 0 });
+      mockClientQuery.mockResolvedValue({ rows: [{ count: '0' }], rowCount: 1 });
       const metrics = await collectMetrics();
       for (const [key, metric] of Object.entries(metrics)) {
         expect(metric).toHaveProperty('value');
@@ -97,7 +97,7 @@ describe('alertness/metrics', () => {
     });
 
     it('内存指标 value 为正数（RSS MB）', async () => {
-      mockClientQuery.mockResolvedValue({ rows: [], rowCount: 0 });
+      mockClientQuery.mockResolvedValue({ rows: [{ count: '0' }], rowCount: 1 });
       const metrics = await collectMetrics();
       expect(typeof metrics.memory.value).toBe('number');
       expect(metrics.memory.value).toBeGreaterThanOrEqual(0);
@@ -105,17 +105,17 @@ describe('alertness/metrics', () => {
     });
 
     it('CPU 指标单位为 %', async () => {
-      mockClientQuery.mockResolvedValue({ rows: [], rowCount: 0 });
+      mockClientQuery.mockResolvedValue({ rows: [{ count: '0' }], rowCount: 1 });
       const metrics = await collectMetrics();
       expect(metrics.cpu.unit).toBe('%');
       expect(typeof metrics.cpu.value).toBe('number');
     });
 
     it('CPU status 根据阈值正确分级', async () => {
-      // loadavg[0]=0.4, cpus=4 → cpuPercent=10%, smoothed=10 → normal (< 30)
+      // 首次自身 CPU 采样保守取 0；全机 loadavg 仅保留为压力观测。
       mockLoadavg.mockReturnValue([0.4]);
       mockCpus.mockReturnValue([1, 2, 3, 4]);
-      mockClientQuery.mockResolvedValue({ rows: [], rowCount: 0 });
+      mockClientQuery.mockResolvedValue({ rows: [{ count: '0' }], rowCount: 1 });
       const metrics = await collectMetrics();
       expect(metrics.cpu.status).toBe('normal');
     });
@@ -138,7 +138,7 @@ describe('alertness/metrics', () => {
     });
 
     it('错误率基于 operationHistory', async () => {
-      mockClientQuery.mockResolvedValue({ rows: [], rowCount: 0 });
+      mockClientQuery.mockResolvedValue({ rows: [{ count: '0' }], rowCount: 1 });
       // 先记录一些操作
       recordOperation(true, 'op1');
       recordOperation(false, 'op2');
@@ -151,7 +151,7 @@ describe('alertness/metrics', () => {
     });
 
     it('无操作历史时错误率为 0', async () => {
-      mockClientQuery.mockResolvedValue({ rows: [], rowCount: 0 });
+      mockClientQuery.mockResolvedValue({ rows: [{ count: '0' }], rowCount: 1 });
       const metrics = await collectMetrics();
       expect(metrics.errorRate.value).toBe(0);
     });
@@ -183,15 +183,14 @@ describe('alertness/metrics', () => {
     });
 
     it('超过上限时移除旧记录（不无限增长）', async () => {
-      mockClientQuery.mockResolvedValue({ rows: [], rowCount: 0 });
+      mockClientQuery.mockResolvedValue({ rows: [{ count: '0' }], rowCount: 1 });
       // 添加 15 个操作（上限 10）
       for (let i = 0; i < 15; i++) {
         recordOperation(i % 2 === 0);
       }
       const metrics = await collectMetrics();
-      // 最新的 10 个：8个成功，2个失败 → 20%
-      // 或者不同顺序，只要不超过 MAX_OPERATION_HISTORY
-      expect(metrics.errorRate.total).toBeLessThanOrEqual(10);
+      // 最新 10 个是序号 5..14：5 次成功、5 次失败。
+      expect(metrics.errorRate).toMatchObject({ total: 10, failed: 5, value: 50 });
     });
   });
 
@@ -205,17 +204,17 @@ describe('alertness/metrics', () => {
     });
 
     it('超过上限时移除旧记录', async () => {
-      mockClientQuery.mockResolvedValue({ rows: [], rowCount: 0 });
+      mockClientQuery.mockResolvedValue({ rows: [{ count: '0' }], rowCount: 1 });
       // 添加 15 个 tick 时间（上限 10）
       for (let i = 0; i < 15; i++) {
         recordTickTime(1000 + i * 100);
       }
       const metrics = await collectMetrics();
-      expect(metrics.responseTime.samples).toBeLessThanOrEqual(10);
+      expect(metrics.responseTime).toMatchObject({ samples: 10, value: 1950 });
     });
 
     it('多次记录后响应时间为平均值', async () => {
-      mockClientQuery.mockResolvedValue({ rows: [], rowCount: 0 });
+      mockClientQuery.mockResolvedValue({ rows: [{ count: '0' }], rowCount: 1 });
       recordTickTime(1000);
       recordTickTime(3000);
       const metrics = await collectMetrics();
@@ -271,8 +270,7 @@ describe('alertness/metrics', () => {
         cpu: { status: 'danger' }
       };
       const score = calculateHealthScore(metrics);
-      expect(score).toBeGreaterThanOrEqual(0);
-      expect(score).toBeLessThanOrEqual(100);
+      expect(score).toBe(25);
     });
 
     it('空对象时返回 0', () => {
@@ -289,7 +287,7 @@ describe('alertness/metrics', () => {
         queueDepth: { status: 'normal' }
       };
       const score = calculateHealthScore(metrics);
-      expect(Number.isInteger(score)).toBe(true);
+      expect(score).toBe(68);
     });
   });
 
@@ -341,4 +339,44 @@ describe('alertness/metrics', () => {
       }
     });
   });
+
+  describe('旧路径迁入：真实采样后的阈值与历史语义', () => {
+    afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
+
+    it.each([[199, 'normal'], [200, 'warning'], [299, 'warning'], [300, 'danger']])(
+      'RSS=%sMB 经 collectMetrics 判为 %s', async (rss, expected) => {
+        vi.spyOn(process, 'memoryUsage').mockReturnValue({ rss: rss * 1024 * 1024, heapTotal: 0, heapUsed: 0, external: 0, arrayBuffers: 0 });
+        mockClientQuery.mockResolvedValue({ rows: [{ count: '0' }], rowCount: 1 });
+        const metrics = await collectMetrics();
+        expect(metrics.memory).toMatchObject({ value: rss, status: expected, unit: 'MB' });
+      },
+    );
+
+    it.each([[49, 'normal'], [50, 'warning'], [79, 'warning'], [80, 'danger']])(
+      '自身 CPU=%s%% 经增量采样和平滑后判为 %s', async (cpu, expected) => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-11-01T00:00:00Z'));
+        let user = 0;
+        vi.spyOn(process, 'cpuUsage').mockImplementation(() => ({ user, system: 0 }));
+        mockClientQuery.mockResolvedValue({ rows: [{ count: '0' }], rowCount: 1 });
+        await collectMetrics(); // 首采样只建立增量基线
+        let metrics;
+        for (let sample = 0; sample < 3; sample++) {
+          await vi.advanceTimersByTimeAsync(1000);
+          user += cpu * 10000; // 一秒内 cpu% 的微秒数，独立输入原始 OS 计数
+          metrics = await collectMetrics();
+        }
+        expect(metrics.cpu).toMatchObject({ value: cpu, raw: cpu, status: expected });
+      },
+    );
+
+    it('429 限流不计入失败率，真正的 500 失败仍计入', async () => {
+      recordOperation(false, 'limited', { statusCode: 429 });
+      recordOperation(true, 'success');
+      recordOperation(false, 'failed', { statusCode: 500 });
+      mockClientQuery.mockResolvedValue({ rows: [{ count: '0' }], rowCount: 1 });
+      expect((await collectMetrics()).errorRate).toMatchObject({ total: 2, failed: 1, value: 50 });
+    });
+  });
+
 });

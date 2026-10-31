@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
+import {spawnSync} from 'node:child_process';
 import {createRequire} from 'node:module';
 import {fileURLToPath} from 'node:url';
 import test from 'node:test';
@@ -57,11 +58,25 @@ test('专项明确覆盖每个组件，使用固定来源恢复后实际运行�
   const run = job.steps.findIndex(step => step.run?.includes('run-skill-source-check.mjs'));
   assert.ok(restored >= 0 && run > restored);
   assert.ok(job.steps.some(step => step.run?.includes('npm ci')));
-  for (const component of Object.keys(directory)) {
-    assert.ok(workflow.on.pull_request.paths.includes(`${directory[component] === '.' ? '' : directory[component]+'/'}**/*.skill-source.test.*`));
-  }
-  const triggered = glob.sync(workflow.on.pull_request.paths, {cwd:root, dot:true});
-  for (const path of ['scripts/extract-contract-e2e.cjs', 'packages/brain/src/orchestrator/__tests__/evaluator-evidence-bridge.fixture.js']) {
-    assert.ok(triggered.includes(path), `${path}的真实来源对齐合同不能漏触发`);
+  assert.deepEqual(workflow.on.pull_request, {branches:['main']});
+  assert.deepEqual(workflow.on.push, {branches:['main']});
+});
+
+test('固定Skill最终结果覆盖所有专项，任一失败/跳过/取消/缺结果都不能通过', () => {
+  const workflow = yaml.load(readFileSync(new URL('../../../.github/workflows/skills-source-check.yml', import.meta.url), 'utf8'));
+  const gate = workflow.jobs.passed;
+  assert.equal(gate?.name, '固定Skill合同通过');
+  assert.equal(gate.if, 'always()');
+  assert.deepEqual([...gate.needs].sort(), ['contracts', 'restore']);
+  assert.deepEqual(Object.keys(workflow.jobs).sort(), ['contracts', 'passed', 'restore']);
+  const step = gate.steps.find(step => step.env?.NEEDS_JSON);
+  assert.equal(step.env.NEEDS_JSON, '${{ toJSON(needs) }}');
+  for (const contracts of ['success', 'failure', 'cancelled', 'skipped', undefined]) {
+    for (const restore of ['success', 'failure', 'cancelled', 'skipped', undefined]) {
+      const result = spawnSync('bash', ['-e', '-o', 'pipefail', '-c', step.run], {
+        cwd: root, encoding: 'utf8', env: {...process.env, NEEDS_JSON: JSON.stringify({contracts:{result:contracts}, restore:{result:restore}})},
+      });
+      assert.equal(result.status === 0, contracts === 'success' && restore === 'success', result.stderr);
+    }
   }
 });

@@ -78,3 +78,12 @@ test('来源准入的路径过滤必须覆盖当前真实定义文件', () => {
     assert.ok(files.includes(path), `${path} 的来源定义变更不能漏掉准入`);
   }
 });
+
+
+test('API PG跑道拥有临时Postgres服务和独立开关，普通unit不能启用它', () => {
+  const job = workflow.jobs.checks;
+  assert.equal(job.env.API_PG_INTEGRATION, "${{ matrix.component == 'api-integration' && '1' || '0' }}");
+  assert.equal(job.services.postgres.image,
+    "${{ (matrix.component == 'brain-integration' || matrix.component == 'api-integration') && 'mirror.gcr.io/pgvector/pgvector:pg15' || '' }}");
+  assert.ok(planChecks(['apps/api/src/system/routes.ts']).some(row => row.component === 'api-integration'));
+});

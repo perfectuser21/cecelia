@@ -15,8 +15,8 @@ import os from 'os';
 // 与本测试无关——stub 掉 db.js（本测试只断言 CPU 指标）。
 vi.mock('../../db.js', () => ({
   default: {
-    query: async () => ({ rows: [] }),
-    connect: async () => ({ query: async () => ({ rows: [] }), release: () => {} }),
+    query: async () => ({ rows: [{ count: '0' }], rowCount: 1 }),
+    connect: async () => ({ query: async () => ({ rows: [{ count: '0' }], rowCount: 1 }), release: () => {} }),
   },
   getPoolHealth: () => ({ total: 1, idle: 1, waiting: 0 }),
 }));

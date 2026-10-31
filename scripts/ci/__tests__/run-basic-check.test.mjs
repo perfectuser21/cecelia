@@ -71,3 +71,12 @@ test('空检查集合必须失败', () => {
   const result = fixture('[]', tmpdir());
   assert.notEqual(result.status, 0);
 });
+
+
+test('API真实数据库合同使用独立完整集成配置，不能归入DOM单测或空集合成功', async () => {
+  const { commandsFor } = await import('../run-basic-check.mjs');
+  const steps = commandsFor('api-integration');
+  assert.equal(steps.length, 1);
+  assert.ok(steps[0].cwd.endsWith('/apps/api'));
+  assert.deepEqual(steps[0].args, ['--no-install', 'vitest', 'run', '--config', 'vitest.integration.config.ts']);
+});

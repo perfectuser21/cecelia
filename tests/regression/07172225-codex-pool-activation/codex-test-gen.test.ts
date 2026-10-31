@@ -13,7 +13,8 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { readFileSync, existsSync } from 'fs';
+import { readFileSync, existsSync, mkdtempSync, writeFileSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -73,9 +74,19 @@ describe('codex-test-gen 核心文件过滤 [BEHAVIOR]', () => {
     try {
       // @ts-ignore — 模块未实现时预期 import 失败
       const mod = await import('../../../packages/brain/src/codex-test-gen.js');
-      if (typeof mod.scanMissingTestFiles === 'function') {
+      expect(typeof mod.scanMissingTestFiles).toBe('function');
+      {
         // 如果有扫描函数，验证返回结果不含核心文件
-        scanTargets = await mod.scanMissingTestFiles({ dryRun: true });
+        const srcDir = mkdtempSync(join(tmpdir(), 'codex-scan-'));
+        try {
+          for (const name of ['dispatcher.js', 'slot-allocator.js', 'migration-guard.js', 'ordinary-feature.js']) {
+            writeFileSync(join(srcDir, name), 'export const feature = true;');
+          }
+          scanTargets = await mod.scanMissingTestFiles({ srcDir });
+          expect(scanTargets).toEqual(['packages/brain/src/ordinary-feature.js']);
+        } finally {
+          rmSync(srcDir, { recursive: true, force: true });
+        }
         const hasForbidden = scanTargets.some((f: string) =>
           FORBIDDEN_PATTERNS.some(p => f.includes(p))
         );
@@ -96,19 +107,10 @@ describe('codex-test-gen 去重机制 [BEHAVIOR]', () => {
     try {
       // @ts-ignore
       const mod = await import('../../../packages/brain/src/codex-test-gen.js');
-      if (typeof mod.checkDedup === 'function') {
-        // 注入已知 recentFiles 集合（避免真实 DB），验证去重跳过逻辑
-        const targetFile = 'packages/brain/src/test-dedup-target.js';
-        const result = await mod.checkDedup({
-          targetFile,
-          recentFiles: new Set([targetFile]),
-        });
-        expect(result.skipped).toBe(true);
-        expect(result.reason).toBeDefined();
-      } else if (typeof mod.runCodexTestGen === 'function') {
-        // 主函数存在但无单独 checkDedup
-        expect(true).toBe(true); // 集成测试中验证
-      }
+      const targetFile = 'packages/brain/src/test-dedup-target.js';
+      const result = await mod.checkDedup({ targetFile, recentFiles: new Set([targetFile]) });
+      expect(result.skipped).toBe(true);
+      expect(result.reason).toBeDefined();
     } catch {
       throw new Error('codex-test-gen.js 模块未实现，TDD Red 阶段预期 FAIL');
     }
