@@ -46,6 +46,31 @@ describe.sequential('device-lock-helpers on PostgreSQL', () => {
     expect(second.lock.locked_by).toBe(String(taskId));
   }, 15_000);
 
+  it('P1：failed 手机 Task 在有效租约内不得被 sweeper 或内部终态回收释放', async () => {
+    const holder = await seedTask('failed');
+    await testPool.query(
+      "UPDATE device_locks SET locked_by=$1, locked_at=NOW(), expires_at=NOW() + INTERVAL '30 minutes' WHERE device_name=$2",
+      [holder, PHONE],
+    );
+    expect(await sweepStaleDeviceLocks(testPool)).toBe(0);
+    expect(await releaseDeviceLocksHeldBy(holder, testPool)).toBe(0);
+    const { rows } = await testPool.query('SELECT locked_by FROM device_locks WHERE device_name=$1', [PHONE]);
+    expect(rows[0].locked_by).toBe(holder);
+  }, 15_000);
+
+  it('P1：failed 手机 Task 的 TTL 过期也不得让竞争者 CAS 再占', async () => {
+    const holder = await seedTask('failed');
+    const rival = await seedTask('queued');
+    await testPool.query(
+      "UPDATE device_locks SET locked_by=$1, locked_at=NOW() - INTERVAL '2 hours', expires_at=NOW() - INTERVAL '1 minute' WHERE device_name=$2",
+      [holder, PHONE],
+    );
+    expect(await sweepStaleDeviceLocks(testPool)).toBe(0);
+    const attempt = await acquireDeviceLock(rival, PHONE, 30, testPool);
+    expect(attempt.result).toBe('locked');
+    expect(attempt.holder.locked_by).toBe(holder);
+  }, 15_000);
+
   it('过期 + 持有任务仍 in_progress → 不可抢', async () => {
     const holder = await seedTask('in_progress');
     const rival = await seedTask('queued');
