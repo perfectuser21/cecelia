@@ -356,12 +356,81 @@ async function collectSourceNodeInputs({read,paths,revision,relations}){
  for(const name of dependencies.keys())visit(name);
  const job_headers=Object.fromEntries(Object.entries(jobs).map(([name,definition])=>[name,Object.fromEntries(Object.entries(definition).filter(([key])=>key!=='steps'))]));
  const controls={workflow_header,job_headers,gate_prefix:job.steps.slice(0,index+1)};
- if(digest(JSON.stringify(stable(controls)))!=='79a7691ad48ec12828c779e2f58251f598788bba81566f19dd5d41aaa4765525')fail();
+ const controlHash=digest(JSON.stringify(stable(controls))),native=controlHash==='5dca68dd419fb7025d945179e5e038eefb9074ae60557e5144f587bd92ce4f1a';
+ if(!native&&controlHash!=='79a7691ad48ec12828c779e2f58251f598788bba81566f19dd5d41aaa4765525')fail();
  const step=job.steps[index],checkout=job.steps.find(s=>s.uses==='actions/checkout@v4'&&s.with?.path==='source');
  if(!checkout||checkout.with.ref!=='${{ inputs.head_revision || github.event.pull_request.head.sha || github.sha }}'
-  ||step['working-directory']!=='source'||step.run!=='node --test '+SOURCE_NODE_ROOTS.join(' ')||step.if!==undefined)fail();
+  ||step['working-directory']!=='source'||step.run!=='node --test '+SOURCE_NODE_ROOTS.join(' ')||step.if!==(native?"github.repository == 'perfectuser21/cecelia' && (!inputs.source_repo || inputs.source_repo == github.repository)":undefined))fail();
  for(const path of SOURCE_NODE_ROOTS){
   if(!paths.includes(path))fail();await read(path);
-  relations.push({consumer_path:IMPACT_WORKFLOW,input_path:path,kind:'unconditional_source_node_test_entry',revision});
+  relations.push({consumer_path:IMPACT_WORKFLOW,input_path:path,kind:native?'native_repository_source_node_test_entry':'unconditional_source_node_test_entry',revision});
  }
+}
+
+// 自身active入口与foreign inactive证明分离。完整原子版本同时封workflow、controller、opaque lease及真实register链。
+const ACTIVE_TYPED_PATHS = [
+ ".github/workflows/ci-admission-baseline.yml",
+ ".github/workflows/implementation-impact.yml","scripts/ci/implementation-multi-pr-gate.mjs",
+ "scripts/ci/implementation-pr-gate.mjs","scripts/ci/implementation-multi-scope.mjs",
+ "scripts/ci/implementation-snapshot.mjs","scripts/ci/implementation-scratch.mjs",
+ "scripts/ci/implementation-gate.mjs","scripts/ci/implementation-pr-baseline.mjs",
+ "scripts/ci/implementation-infra-inputs.mjs","scripts/ci/implementation-skill-source.mjs",
+ "scripts/ci/ci-admission-inputs.mjs","scripts/ci/ci-admission-handoff.mjs",
+ "scripts/ci/ci-admission-artifact.mjs","scripts/ci/ci-admission-envelope.mjs",
+ "scripts/ci/ci-admission-authority.mjs","scripts/ci/ci-admission-archive.mjs",
+ "scripts/ci/ci-admission-scratch.mjs","scripts/ci/ci-admission-seed.mjs",
+ "scripts/ci/ci-admission-builder.mjs","scripts/ci/ci-admission-worker.mjs",
+ "scripts/ci/ci-admission-worker-runner.mjs","scripts/ci/ci-admission-publisher.mjs",
+ "scripts/ci/implementation-verification-inputs.mjs","scripts/ci/implementation-verification-context.mjs",
+ "scripts/ci/implementation-verification-selectors.mjs","scripts/ci/implementation-verification-retirements.mjs",
+ "scripts/ci/implementation-auxiliary-evidence.mjs","scripts/ci/fixed-local-git.mjs",
+ "packages/brain/src/lib/existing-ops-registration.js","packages/brain/src/lib/implementation-ci-snapshot.js",
+ "scripts/ci/config/ci-admission-registry.json",
+];
+const ACTIVE_TYPED_TUPLE = '1f344aa06be1c859b47cb167031e583f7aa7e8ae76b484b4ee9b299fb5954b96';
+/** null只表示旧入口；未来入口证明失败绝不回落到legacy资格。 */
+export async function collectNativeFutureImpactSources({basicCi,read,parse,revision,relations}){
+ const workflow=await read(IMPACT_WORKFLOW);
+ if(!workflow||!workflow.includes('IMPLEMENTATION_CI_ADMISSION_INPUT_DIR'))return null;
+ if(!basicCi)return false;
+ try{
+  const texts=new Map([[IMPACT_WORKFLOW,workflow]]),rows=[];
+  for(const path of ACTIVE_TYPED_PATHS){const text=texts.get(path)??await read(path);if(!text)return false;texts.set(path,text);rows.push([path,digest(text)]);}
+  if(digest(JSON.stringify(rows))!==ACTIVE_TYPED_TUPLE)return false;
+  const programs=new Map([...texts].filter(([p])=>p.endsWith('.mjs')||p.endsWith('.js')).map(([p,text])=>[p,parse(text)]));
+  const ci=name=>'scripts/ci/'+name+'.mjs',program=name=>programs.get(ci(name));
+  const fn=(name,id)=>{const nodes=[];inspectNodes(program(name),n=>{if(n.type==='FunctionDeclaration'&&n.id?.name===id)nodes.push(n);});if(nodes.length!==1)fail();return nodes[0];};
+  const calls=(body,name)=>{const nodes=[];inspectNodes(body,n=>{if(n.type==='CallExpression'&&n.callee.type==='Identifier'&&n.callee.name===name)nodes.push(n);});return nodes;};
+  const returned=(body,name)=>{const nodes=[];inspectNodes(body,n=>{if(n.type==='ReturnStatement'){const c=n.argument?.type==='AwaitExpression'?n.argument.argument:n.argument;if(c?.type==='CallExpression'&&c.callee.name===name)nodes.push(c);}});if(nodes.length!==1)fail();return nodes[0];};
+  const field=(object,key)=>property(object,key),id=(node,name)=>node?.type==='Identifier'&&node.name===name;
+  const member=(node,object,key)=>node?.type==='MemberExpression'&&!node.computed&&id(node.object,object)&&id(node.property,key);
+  const multi=fn('implementation-multi-pr-gate','runImplementationCiAdmissionHandleGate');
+  const handoff=returned(multi,'withCiAdmissionInputsScratch'),callback=handoff.arguments[1];
+  if(!id(handoff.arguments[0],'handle')||callback?.type!=='ArrowFunctionExpression'||!callback.async)fail();
+  const collected=calls(callback,'collectImplementationPrEvidenceInScratch');if(collected.length!==1)fail();
+  const input=collected[0].arguments[0];
+  if(!['db','base','head','mode','repoRoot','toolingRoot'].every(k=>id(field(input,k),k))||!['snapshotBase','snapshotHead'].every(k=>id(field(input,k),'snapshot'))||!member(field(input,'scope'),'snapshot','scope'))fail();
+  const entry=fn('implementation-multi-pr-gate','runImplementationMultiPrGate');
+  if(calls(entry,'loadCiAdmissionInputs').length!==1||calls(entry,'runImplementationCiAdmissionHandleGate').length!==1)fail();
+  const collect=fn('implementation-pr-gate','collectImplementationPrEvidenceInScratch'),evidence=returned(collect,'implementationPrEvidence');
+  if(!id(evidence.arguments[0],'options')||!literal(evidence.arguments[1],false)||!member(field(evidence.arguments[2],'db'),'options','db'))fail();
+  const projected=calls(fn('implementation-pr-gate','implementationPrEvidence'),'buildPrImplementationSnapshot');
+  if(projected.length!==1||!member(projected[0].arguments[0],'scratch','db')||!id(projected[0].arguments[2],'head'))fail();
+  const native=calls(fn('implementation-snapshot','buildPrImplementationSnapshot'),'registerExistingOpsSources');
+  if(native.length!==1||!id(native[0].arguments[0],'db')||!id(field(native[0].arguments[1],'readSource'),'nativeRead')||!member(field(native[0].arguments[1],'revision'),'anchor','revision')||!literal(field(native[0].arguments[1],'mode'),'scratch_candidate'))fail();
+  const lease=fn('ci-admission-inputs','withCiAdmissionInputsScratch'),leases=calls(lease,'withCiAdmissionScratch');
+  if(leases.length!==1||!member(field(leases[0].arguments[1],'db'),'scratch','db')||!literal(field(leases[0].arguments[1],'usage'),'pr'))fail();
+  const builder=calls(fn('ci-admission-builder','buildCiAdmissionDraft'),'registerExistingOpsSources');
+  if(builder.length!==1||!id(builder[0].arguments[0],'db')||!id(field(builder[0].arguments[1],'revision'),'sourceRevision')||!literal(field(builder[0].arguments[1],'mode'),'scratch_candidate'))fail();
+  // 所有边均来自同一read包装实际读到的、完整封印版本；不执行候选源码。
+  relations.push({consumer_path:IMPACT_WORKFLOW,input_path:ci('implementation-multi-pr-gate'),kind:'ci_admission_only_native_pr_runner',revision});
+  for(const [path,program]of programs)inspectNodes(program,node=>{
+   const specifier=node.type==='ImportDeclaration'?node.source:node.type==='ImportExpression'?node.source:null;
+   if(typeof specifier?.value!=='string'||!specifier.value.startsWith('.'))return;
+   const resolved=new URL(specifier.value,'file:///'+path).pathname.slice(1);
+   if(texts.has(resolved))relations.push({consumer_path:path,input_path:resolved,kind:'sealed_ci_admission_import',revision});
+  });
+  relations.push({consumer_path:ci('ci-admission-builder'),input_path:'scripts/ci/config/ci-admission-registry.json',kind:'sealed_synthetic_ci_registry',revision});
+  return true;
+ }catch{return false;}
 }
