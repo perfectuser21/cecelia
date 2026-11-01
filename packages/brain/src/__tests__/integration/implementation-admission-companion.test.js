@@ -1,10 +1,11 @@
 import {beforeEach,afterEach,it,expect} from 'vitest';
-import {execFileSync,spawnSync} from 'node:child_process';
+import {spawnSync} from 'node:child_process';
 import {mkdtempSync,writeFileSync,readFileSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {randomUUID} from 'node:crypto';
+import { readFixedExistingOpsGitFixture } from '../../lib/__tests__/helpers/fixed-existing-ops-git-fixture.js';
 import {versionsDatabase} from '../fixtures/definition-versions-db.js';
 import {minimumMapSchema} from '../fixtures/minimum-map-schema.js';
 import {EXISTING_OPS_IDENTITIES} from '../../lib/existing-ops-source.js';
@@ -12,15 +13,10 @@ import * as registration from '../../lib/existing-ops-registration.js';
 import * as snapshotApi from '../../lib/implementation-ci-snapshot.js';
 import {stepSha256} from '../../../scripts/sync-steps-from-workspace.mjs';
 const root = fileURLToPath(new URL('../../../../../', import.meta.url));
-// Freeze the actual checkout once: hosted CI deliberately has shallow history.
-// This is test input provenance, never a claim that the candidate is trusted main.
-const revision = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
-const paths = execFileSync('git', ['ls-tree', '-rz', '--name-only', revision], { cwd: root, encoding: 'utf8' }).replace(/\0$/, '').split('\0');
-const cache = new Map();
-const readSource = async path => {
-  if (!cache.has(path)) cache.set(path, execFileSync('git', ['show', `${revision}:${path}`], { cwd: root, encoding: 'utf8', maxBuffer: 16000000 }));
-  return cache.get(path);
-};
+// 正样本仅为已知历史 Git fixture，不赋予当前候选来源或发布资格。
+const sourceFixture = readFixedExistingOpsGitFixture();
+const { revision, paths } = sourceFixture;
+const readSource = async path => sourceFixture.read(path);
 let fixture;
 beforeEach(async () => {
   fixture = await versionsDatabase(); await fixture.migrate(); await minimumMapSchema(fixture.db);

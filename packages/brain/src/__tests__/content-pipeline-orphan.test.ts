@@ -1,198 +1,155 @@
-/**
- * Tests for content-pipeline orphan fixes:
- *
- * Fix 1: syncOrphanTasksOnStartup should requeue tasks with run_id=null
- *   (inline orchestration tasks like content-pipeline that never spawn a process)
- *
- * Fix 2 (legacy): zombie subtask cleanup — used to live inside in-Brain
- *   executeQueuedContentTasks. The orchestrator has been retired (search now lives
- *   in ZJ pipeline-worker, PR zenithjoy#216), so this section now just verifies the
- *   underlying SQL semantics that the cleanup relied on.
- */
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { describe, it, expect, beforeEach, afterEach, beforeAll } from 'vitest';
+// ZJ owns the retired executeQueuedContentTasks cleanup. This file protects the
+// still-active startup-sync contract by calling the actual executor entry point.
+const boundary = vi.hoisted(() => {
+  const unexpected: string[] = [];
+  return {
+    query: vi.fn(),
+    aliveTaskIds: new Set<string>(),
+    unexpected,
+    blocked: vi.fn((operation: string) => {
+      unexpected.push(operation);
+      throw new Error(`External operation forbidden: ${operation}`);
+    }),
+  };
+});
+vi.mock('../db.js', () => ({
+  default: { query: boundary.query, connect: () => boundary.blocked('DB connect') },
+  getPoolHealth: () => ({ waiting: 0, idle: 1, total: 1, activeCount: 0 }),
+}));
+vi.mock('child_process', async importOriginal => {
+  const actual = await importOriginal<typeof import('child_process')>();
+  const operations = {
+    execSync: vi.fn((command: string) => {
+      const match = command.match(/^ps aux \| grep -F "([a-zA-Z0-9_-]+)" \| grep -v grep \| wc -l$/);
+      if (match) return boundary.aliveTaskIds.has(match[1]) ? '1\n' : '0\n';
+      return boundary.blocked(`execSync:${command}`);
+    }),
+    execFileSync: () => boundary.blocked('execFileSync'),
+    exec: () => boundary.blocked('exec'),
+    spawn: () => boundary.blocked('spawn'),
+  };
+  return { ...actual, ...operations, default: { ...actual, ...operations } };
+});
+vi.mock('fs', async importOriginal => {
+  const actual = await importOriginal<typeof import('fs')>();
+  const { fileURLToPath } = await import('node:url');
+  const root = fileURLToPath(new URL('../../../../', import.meta.url));
+  const filename = (file: unknown) => file instanceof URL ? fileURLToPath(file) : String(file);
+  const operations = {
+    readFileSync: (file: unknown, ...args: unknown[]) => {
+      if (!filename(file).startsWith(root)) return boundary.blocked(`read:${filename(file)}`);
+      return Reflect.apply(actual.readFileSync, actual, [file, ...args]);
+    },
+    existsSync: (file: unknown) => filename(file).startsWith(root) && actual.existsSync(filename(file)),
+    readdirSync: (file: unknown, ...args: unknown[]) => filename(file).startsWith(root)
+      ? Reflect.apply(actual.readdirSync, actual, [file, ...args]) : [],
+    writeFileSync: () => boundary.blocked('writeFileSync'),
+    mkdirSync: () => boundary.blocked('mkdirSync'),
+    unlinkSync: () => boundary.blocked('unlinkSync'),
+    rmSync: () => boundary.blocked('rmSync'),
+  };
+  return { ...actual, ...operations, default: { ...actual, ...operations } };
+});
+vi.mock('fs/promises', async importOriginal => {
+  const actual = await importOriginal<typeof import('fs/promises')>();
+  return { ...actual, writeFile: () => boundary.blocked('writeFile'), mkdir: () => boundary.blocked('mkdir') };
+});
 
-let pool: any;
-
+interface StartupTask {
+  id: string;
+  title: string;
+  task_type: string;
+  executor_kind: string;
+  claimed_by: null;
+  payload: Record<string, unknown> | null;
+  started_at: string;
+  error_message: string | null;
+}
+function inlineTask(payload: StartupTask['payload']): StartupTask {
+  return { id: 'inline-pipeline', title: '重启时的内联编排标记', task_type: 'content-pipeline',
+    executor_kind: 'external-worker', claimed_by: null, payload,
+    started_at: '2026-11-01T00:00:00Z', error_message: 'obsolete transient error' };
+}
+let executor: typeof import('../executor.js');
+let signal: ReturnType<typeof vi.spyOn>;
+let network: ReturnType<typeof vi.fn>;
 beforeAll(async () => {
-  const db = await import('../db.js');
-  pool = db.default;
+  signal = vi.spyOn(process, 'kill').mockImplementation(() => boundary.blocked('process.kill'));
+  network = vi.fn(() => boundary.blocked('fetch'));
+  vi.stubGlobal('fetch', network);
+  try {
+    executor = await import('../executor.js');
+    expect(boundary.unexpected).toEqual([]);
+    expect(signal).not.toHaveBeenCalled();
+    expect(network).not.toHaveBeenCalled();
+  } finally { vi.restoreAllMocks(); vi.unstubAllGlobals(); }
+});
+beforeEach(() => {
+  boundary.query.mockReset();
+  boundary.aliveTaskIds.clear();
+  boundary.unexpected.length = 0;
+  vi.stubEnv('BRAIN_DEPLOY_CANARY', '0');
+  signal = vi.spyOn(process, 'kill').mockImplementation(() => boundary.blocked('process.kill'));
+  network = vi.fn(() => boundary.blocked('fetch'));
+  vi.stubGlobal('fetch', network);
+});
+afterEach(() => {
+  try {
+    expect(boundary.unexpected).toEqual([]);
+    expect(signal).not.toHaveBeenCalled();
+    expect(network).not.toHaveBeenCalled();
+  } finally {
+    executor.removeActiveProcess('inline-pipeline');
+    vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs();
+  }
 });
 
-// ────────────────────────────────────────────────
-// Fix 1: syncOrphanTasksOnStartup + run_id=null
-// ────────────────────────────────────────────────
+function selectTasks(rows: StartupTask[]) {
+  boundary.query.mockImplementation(async (sql: string) => {
+    if (/SELECT id, title, payload/.test(sql)) return { rows, rowCount: rows.length };
+    if (/UPDATE tasks/.test(sql)) return { rows: [], rowCount: 1 };
+    return boundary.blocked(`Unexpected SQL: ${sql}`);
+  });
+}
 
-describe('syncOrphanTasksOnStartup — inline tasks (run_id=null)', () => {
-  let pipelineTaskId: string;
-
-  beforeEach(async () => {
-    const result = await pool.query(`
-      INSERT INTO tasks (title, task_type, status, payload)
-      VALUES (
-        '[测试] content-pipeline inline orphan',
-        'content-pipeline',
-        'in_progress',
-        '{"pipeline_keyword":"测试关键词","content_type":"solo-company-case"}'::jsonb
-      )
-      RETURNING id
-    `);
-    pipelineTaskId = result.rows[0].id;
+describe('真实 syncOrphanTasksOnStartup：content-pipeline 无 runId 标记', () => {
+  it.each([
+    { pipeline_keyword: 'fixture', content_type: 'solo-company-case', watchdog_retry_count: 7 },
+    { pipeline_keyword: 'fixture', current_run_id: null, watchdog_retry_count: 2 },
+    null,
+  ])('没有活进程时重排队、清错误、重置重试；payload=%j', async payload => {
+    selectTasks([inlineTask(payload)]);
+    expect(await executor.syncOrphanTasksOnStartup()).toEqual({ orphans_found: 1, orphans_fixed: 0, requeued: 1, rebuilt: 0, external_skipped: 0 });
+    expect(boundary.query).toHaveBeenCalledTimes(2);
+    const [sql, params] = boundary.query.mock.calls[1];
+    expect(sql).toContain("status = 'queued'");
+    expect(sql).toContain('error_message = NULL');
+    expect(sql).toContain("payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb");
+    expect(sql).toContain('WHERE id = $1');
+    expect(params).toEqual(['inline-pipeline', '{"watchdog_retry_count":0}']);
   });
 
-  afterEach(async () => {
-    await pool.query(`DELETE FROM tasks WHERE title LIKE '%content-pipeline inline orphan%'`);
+  it('存在匹配活进程时重建执行登记，不回队、不标失败；重复同步仍不回队', async () => {
+    selectTasks([inlineTask({ pipeline_keyword: 'alive' })]);
+    boundary.aliveTaskIds.add('inline-pipeline');
+    expect(await executor.syncOrphanTasksOnStartup()).toEqual({ orphans_found: 0, orphans_fixed: 0, requeued: 0, rebuilt: 1, external_skipped: 0 });
+    expect(boundary.query).toHaveBeenCalledOnce();
+    boundary.query.mockClear();
+    expect((await executor.syncOrphanTasksOnStartup()).rebuilt).toBe(1);
+    expect(boundary.query).toHaveBeenCalledOnce();
   });
 
-  it('should requeue content-pipeline task with run_id=null (not kill it)', async () => {
-    // Simulate what syncOrphanTasksOnStartup does:
-    // 1. Task is in_progress, run_id = null, no process alive → should requeue
-    const taskBefore = await pool.query(
-      `SELECT status, payload FROM tasks WHERE id = $1`,
-      [pipelineTaskId]
-    );
-    expect(taskBefore.rows[0].status).toBe('in_progress');
-    expect(taskBefore.rows[0].payload.current_run_id).toBeUndefined();
-
-    // The fix: tasks with run_id = null get requeued with watchdog_retry_count reset
-    // We test the expected DB state after the fix is applied
-    await pool.query(
-      `UPDATE tasks SET
-        status = 'queued',
-        error_message = NULL,
-        payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb
-       WHERE id = $1`,
-      [pipelineTaskId, JSON.stringify({ watchdog_retry_count: 0 })]
-    );
-
-    const taskAfter = await pool.query(
-      `SELECT status, payload, error_message FROM tasks WHERE id = $1`,
-      [pipelineTaskId]
-    );
-    expect(taskAfter.rows[0].status).toBe('queued');
-    expect(taskAfter.rows[0].error_message).toBeNull();
-    expect(taskAfter.rows[0].payload.watchdog_retry_count).toBe(0);
-  });
-});
-
-// ────────────────────────────────────────────────
-// Fix 2: executeQueuedContentTasks parent check
-// ────────────────────────────────────────────────
-
-describe('executeQueuedContentTasks — zombie subtask cleanup', () => {
-  let failedPipelineId: string;
-  let zombieSubtaskId: string;
-  let alivePipelineId: string;
-  let liveSubtaskId: string;
-
-  beforeEach(async () => {
-    // Create a failed parent pipeline
-    const failedRes = await pool.query(`
-      INSERT INTO tasks (title, task_type, status, payload)
-      VALUES (
-        '[测试] 已失败的 content-pipeline',
-        'content-pipeline',
-        'failed',
-        '{"pipeline_keyword":"测试关键词"}'::jsonb
-      )
-      RETURNING id
-    `);
-    failedPipelineId = failedRes.rows[0].id;
-
-    // Create a zombie subtask under the failed pipeline
-    const zombieRes = await pool.query(`
-      INSERT INTO tasks (title, task_type, status, payload)
-      VALUES (
-        '[测试] 僵尸子任务',
-        'content-copywriting',
-        'queued',
-        jsonb_build_object('parent_pipeline_id', $1::text, 'pipeline_keyword', '测试关键词')
-      )
-      RETURNING id
-    `, [failedPipelineId]);
-    zombieSubtaskId = zombieRes.rows[0].id;
-
-    // Create an alive parent pipeline
-    const aliveRes = await pool.query(`
-      INSERT INTO tasks (title, task_type, status, payload)
-      VALUES (
-        '[测试] 活跃的 content-pipeline',
-        'content-pipeline',
-        'in_progress',
-        '{"pipeline_keyword":"测试关键词2"}'::jsonb
-      )
-      RETURNING id
-    `);
-    alivePipelineId = aliveRes.rows[0].id;
-
-    // Create a live subtask under the alive pipeline
-    const liveRes = await pool.query(`
-      INSERT INTO tasks (title, task_type, status, payload)
-      VALUES (
-        '[测试] 活跃子任务',
-        'content-copywriting',
-        'queued',
-        jsonb_build_object('parent_pipeline_id', $1::text, 'pipeline_keyword', '测试关键词2')
-      )
-      RETURNING id
-    `, [alivePipelineId]);
-    liveSubtaskId = liveRes.rows[0].id;
+  it('没有 in_progress 任务时只读取，不凭空写入恢复记录', async () => {
+    selectTasks([]);
+    expect(await executor.syncOrphanTasksOnStartup()).toEqual({ orphans_found: 0, orphans_fixed: 0, requeued: 0, rebuilt: 0, external_skipped: 0 });
+    expect(boundary.query).toHaveBeenCalledOnce();
   });
 
-  afterEach(async () => {
-    await pool.query(`DELETE FROM tasks WHERE title LIKE '%[测试]%'`);
-  });
-
-  it('zombie subtask should have failed parent', async () => {
-    const parentResult = await pool.query(
-      `SELECT status FROM tasks WHERE id = $1`,
-      [failedPipelineId]
-    );
-    expect(parentResult.rows[0].status).toBe('failed');
-  });
-
-  it('alive subtask should have in_progress parent', async () => {
-    const parentResult = await pool.query(
-      `SELECT status FROM tasks WHERE id = $1`,
-      [alivePipelineId]
-    );
-    expect(parentResult.rows[0].status).toBe('in_progress');
-  });
-
-  it('alive parent IDs are correctly identified via SQL', async () => {
-    const subtasks = await pool.query(
-      `SELECT id, payload->>'parent_pipeline_id' AS parent_id
-       FROM tasks
-       WHERE task_type = 'content-copywriting'
-         AND status = 'queued'
-         AND title LIKE '%[测试]%'`
-    );
-
-    const parentIds = subtasks.rows.map((r: any) => r.parent_id).filter(Boolean);
-    expect(parentIds.length).toBe(2);
-
-    const aliveResult = await pool.query(
-      `SELECT id FROM tasks WHERE id = ANY($1::uuid[]) AND status IN ('queued','in_progress')`,
-      [parentIds]
-    );
-    const aliveSet = new Set(aliveResult.rows.map((r: any) => r.id));
-
-    expect(aliveSet.has(alivePipelineId)).toBe(true);
-    expect(aliveSet.has(failedPipelineId)).toBe(false);
-  });
-
-  it('zombie subtask is cancelled when parent is failed', async () => {
-    // Simulate what executeQueuedContentTasks now does for zombie subtasks
-    await pool.query(
-      `UPDATE tasks SET status = 'cancelled', completed_at = NOW(), error_message = $2 WHERE id = $1`,
-      [zombieSubtaskId, '父 pipeline 已失败，子任务自动取消']
-    );
-
-    const result = await pool.query(
-      `SELECT status, error_message FROM tasks WHERE id = $1`,
-      [zombieSubtaskId]
-    );
-    expect(result.rows[0].status).toBe('cancelled');
-    expect(result.rows[0].error_message).toContain('父 pipeline 已失败');
+  it('读取任务失败时传播原始数据库错误，不伪报恢复成功', async () => {
+    boundary.query.mockRejectedValueOnce(new Error('fixture DB read failed'));
+    await expect(executor.syncOrphanTasksOnStartup()).rejects.toThrow('fixture DB read failed');
+    expect(boundary.query).toHaveBeenCalledOnce();
   });
 });

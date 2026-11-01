@@ -70,9 +70,11 @@ describe('pr-review.yml — workflow 配置验证', () => {
     expect(existsSync(PR_REVIEW_WORKFLOW), `${PR_REVIEW_WORKFLOW} 应存在`).toBe(true);
   });
 
-  it('B2: workflow 必须在 pull_request 时触发', () => {
+  it('B2: 在线辅助审查仅按需调用，普通PR不依赖付费模型', () => {
     const content = readFileSync(PR_REVIEW_WORKFLOW, 'utf8');
-    expect(content).toContain('pull_request');
+    expect(content).toContain('workflow_dispatch:');
+    expect(content).not.toMatch(/^  pull_request:/m);
+    expect(content).toContain('pr_number:');
   });
 
   it('B3: workflow 必须有 pull-requests: write 权限', () => {

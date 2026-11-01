@@ -1,27 +1,25 @@
-import { afterEach, beforeEach, expect, it } from 'vitest';
-import { execFileSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { afterAll, afterEach, beforeEach, expect, it } from 'vitest';
+import {historicalConsumerRuntimeFixture,isolatedExistingOpsGitFixture} from '../../lib/__tests__/helpers/isolated-existing-ops-git-fixture.js';
+import yaml from 'js-yaml';
 import { versionsDatabase } from '../fixtures/definition-versions-db.js';
-import { EXISTING_OPS_IDENTITIES } from '../../lib/existing-ops-source.js';
-import * as registration from '../../lib/existing-ops-registration.js';
+import { EXISTING_OPS_IDENTITIES,buildExistingOpsSources as buildCurrentSources } from '../../lib/existing-ops-source.js';
+import {readFixedExistingOpsGitFixture,fixtureGit} from '../../lib/__tests__/helpers/fixed-existing-ops-git-fixture.js';
+import * as currentRegistration from '../../lib/existing-ops-registration.js';
 import { minimumMapSchema } from '../fixtures/minimum-map-schema.js';
-import { exportImplementationSnapshot,refreshImplementationSnapshot } from '../../lib/implementation-ci-snapshot.js';
 import { randomUUID,createHash } from 'node:crypto';
 import express from 'express';
 import request from 'supertest';
-import {createImplementationCiRouter} from '../../routes/implementation-ci.js';
-import {prepareNativeConsumerSelection,selectNativeConsumerDefinition} from '../../lib/native-consumer-source-selection.js';
 import {stepSha256} from '../../../scripts/sync-steps-from-workspace.mjs';
 
-const root = fileURLToPath(new URL('../../../../../', import.meta.url));
-// 一次冻结真实 checkout；CI 浅历史不依赖旧提交，也不授予候选 main 身份。
-const revision = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
-const paths = execFileSync('git', ['ls-tree', '-rz', '--name-only', revision], { cwd: root, encoding: 'utf8' }).replace(/\0$/, '').split('\0');
-const cache = new Map();
-const readSource = async path => {
-  if (!cache.has(path)) cache.set(path, execFileSync('git', ['show', `${revision}:${path}`], { cwd: root, encoding: 'utf8', maxBuffer: 16000000 }));
-  return cache.get(path);
-};
+// 真实历史16collector与逐字当前controller使用同一私有Git/module闭包，不授当前候选资格。
+const sourceFixture = await historicalConsumerRuntimeFixture();
+const {registration,snapshot,selection,router}=sourceFixture.modules;
+const {exportImplementationSnapshot,refreshImplementationSnapshot}=snapshot;
+const {prepareNativeConsumerSelection,selectNativeConsumerDefinition}=selection;
+const {createImplementationCiRouter}=router;
+afterAll(()=>sourceFixture.close());
+const { revision, paths, tree: treeSha, entries } = sourceFixture;
+const readSource = async path => sourceFixture.read(path);
 let fixture;
 beforeEach(async () => {
   fixture = await versionsDatabase(); await fixture.migrate(); await minimumMapSchema(fixture.db);
@@ -48,10 +46,6 @@ afterEach(async () => { await fixture?.close(); });
 const options = extra => ({ scope: 'cecelia-factory', repo: 'perfectuser21/cecelia', revision, paths, readSource, checkMain: async () => {}, actor: 'test-real-main', ...extra });
 
 // 真实固定 Git 内容经模拟 GitHub transport 传递；不向生产发请求、不注入 proof。
-const treeSha=execFileSync('git',['rev-parse',`${revision}^{tree}`],{cwd:root,encoding:'utf8'}).trim();
-const entries=execFileSync('git',['ls-tree','-rz',revision],{cwd:root,encoding:'utf8',maxBuffer:16e6}).split('\0').filter(Boolean).map(line=>{
- const [meta,path]=line.split('\t'),[mode,type,sha]=meta.split(' ');return {mode,type,sha,path};
-});
 function transport(change=()=>{}){
  const calls=[];
  const fetchFn=async(url)=>{
@@ -93,6 +87,39 @@ async function history(){return {
  projections:(await fixture.db.query('SELECT * FROM map_projection_runs ORDER BY id')).rows,
  activities:(await fixture.db.query('SELECT * FROM activity_definition_versions ORDER BY id')).rows,
 };}
+it('代际选版正例必须是真实历史Git全资格来源，16collector与当前controller闭包完整',async()=>{
+ const proof=await buildCurrentSources({scope:'cecelia-factory',repo:'perfectuser21/cecelia',revision,paths,readSource});
+ expect(proof.consumers.map(c=>c.status),JSON.stringify(proof.consumers.map(c=>c.gaps))).toEqual(['verified','verified']);
+ const historical=readFixedExistingOpsGitFixture();expect(sourceFixture.historicalRevision).toBe(historical.revision);
+ expect(sourceFixture.runtime.files).toHaveLength(16);
+ for(const file of sourceFixture.runtime.files){
+  expect(await readSource(file.path)).toBe(historical.read(file.path));
+  expect(createHash('sha256').update(await readSource(file.path)).digest('hex')).toBe(file.sha256);
+ }
+ expect(sourceFixture.controllers.map(c=>c.path)).toEqual(expect.arrayContaining(['packages/brain/src/lib/existing-ops-registration.js','packages/brain/src/lib/native-consumer-source-selection.js','packages/brain/src/lib/implementation-ci-snapshot.js','packages/brain/src/routes/implementation-ci.js']));
+ for(const controller of sourceFixture.controllers)expect(createHash('sha256').update(await readSource(controller.path)).digest('hex')).toBe(controller.current_sha256);
+});
+it('私有Git篡改实际workflow权限不能继承历史资格，当前登记拒绝且历史current和地图全部零写',async()=>{
+ const current=readFixedExistingOpsGitFixture(fixtureGit('rev-parse','HEAD').trim()),before=await history();
+ const workflow='.github/workflows/implementation-impact.yml',original=current.read(workflow),doc=yaml.load(original);
+ const permission='permissions: {contents: read,';expect(original.split(permission)).toHaveLength(2);
+ expect(doc.permissions.contents).toBe('read');doc.permissions.contents='write';
+ const changed=original.replace(permission,permission.replace('contents: read','contents: write'));
+ expect(yaml.load(changed)).toEqual(doc);
+ const bad=isolatedExistingOpsGitFixture({revision:current.revision,changes:{[workflow]:changed}});
+ try{
+  expect(bad.git('diff','--name-only',current.revision,bad.revision).trim().split('\n')).toEqual([workflow]);
+  expect(bad.git('diff','--numstat',current.revision,bad.revision).trim()).toBe(`1\t1\t${workflow}`);
+  expect(bad.read('scripts/ci/implementation-pr-gate.mjs')).toBe(current.read('scripts/ci/implementation-pr-gate.mjs'));
+  const badOptions=options({revision:bad.revision,paths:bad.paths,readSource:async path=>bad.read(path),expectedRegistrySha256:before.registry.registry_sha256});
+  const proof=await buildCurrentSources(badOptions),unknown=proof.consumers.find(c=>c.workflow_key==='factory_f3_ops');
+  expect(unknown.status).toBe('unknown');expect(unknown.bindings).toEqual([]);expect(unknown.input_relations).toEqual([]);
+  expect(unknown.gaps).toContainEqual(expect.objectContaining({code:'source_structure_unproven'}));
+  await expect(currentRegistration.registerExistingOpsSources(fixture.db,badOptions)).rejects.toMatchObject({code:'OPS_SOURCE_UNKNOWN'});
+  expect(await history()).toEqual(before);
+ }finally{bad.close();}
+});
+
 it('same-SHA 两代完整链：唯一固定Git匹配导出且不改历史/current/登记',async()=>{
  const {old,fresh}=await twoGenerations();
  const oldF3=old.definitions.activities.find(a=>a.payload.contract.key==='factory_f3_ops');

@@ -1,14 +1,71 @@
-# DoD：CI verification context 可信性能修复
+# DoD：Cecelia 最小可靠 CI
 
-以下为本地可执行合同；正式远端门禁与 main 基线读回以对应实际 SHA 的独立证据为准。
+以下为本地可执行验收；远端来源检查、main 基线读回与保护迁移以对应实际 SHA 的正式运行及独立读回记录为准。
 
-- [x] [BEHAVIOR] 同一次 context 构建中的普通输入与退休证明共享 report 摘要，输出及摘要逐字等价；新调用重新计算，不复用过期结果，不改变预算。
-  Test: manual:node --test scripts/ci/__tests__/basic-verification-context-digest.test.mjs
-- [x] [BEHAVIOR] 当前 active 只认完整新32成员；未发布且超时的4ba在当前工具拒绝，固定D旧collector历史回放仍成功，1f的BC历史回放与已发布legacy资格保留。
-  Test: manual:node -e "require('node:child_process').execFileSync(process.execPath,['../../node_modules/vitest/vitest.mjs','run','src/lib/__tests__/existing-ops-source-impact.test.js'],{cwd:'packages/brain',stdio:'inherit'});"
-- [x] [BEHAVIOR] 五个普通blob的固定commit/tree/字节摘要可核，helper只处理数据与私有Git，显式已审collector self-import绑定自身16runtime；不执行workflow或应用。
+- [x] [BEHAVIOR] 意图识别与判级的同环境副本归并，原有58项独有回归语义及默认组件入口保留。
+  Test: manual:bash -c 'cd apps/api && npx --no-install vitest run tests/intent-recognizer.test.ts'
+- [x] [BEHAVIOR] 账龄测试调用真实实现，保留F6回归并覆盖计数、重试参数、间隔和错误；三份空骨架退出执行，代表性错误变体可被拦住。
+  Test: manual:bash -c 'cd packages/brain && npx --no-install vitest run src/__tests__/capture-aging.test.js'
+- [x] [BEHAVIOR] Dashboard全景测试导入真实组件，验证轮询、可见数据和边界，删除内联实现与副本，错误组件变体必须失败。
+  Test: manual:bash -c 'cd apps/dashboard && npx --no-install vitest run src/pages/live-monitor/OpsPanoramaCard.test.tsx'
+- [x] [BEHAVIOR] 已消失实现对应的旧常量、watcher与图线程停用合同退役；当前orchestrator拒绝和禁止旧运行时复活的真实回归仍通过。
+  Test: manual:bash -c 'cd packages/brain && npx --no-install vitest run src/__tests__/harness-orchestrator-lockdown.test.js src/__tests__/dispatcher-dev-no-langgraph.test.js'
+
+
+- [x] [BEHAVIOR] 能力向量、分拣和Radius原骨架执行真实CLI/任务写入/回退行为，错误变体实际失败，重复triage副本归并。
+  Test: manual:bash -c 'cd packages/brain && npx --no-install vitest run src/__tests__/generate-capability-embeddings.test.js src/routes/__tests__/capture-triage-routes.test.ts ../../tests/regression/radius-rerun-gate/'
+- [x] [BEHAVIOR] 现役system API的45项合同通过私有scratch schema和随机HTTP端口实际执行，缺DB不能静默通过。
+  Test: manual:node scripts/ci/run-basic-check.mjs api-integration
+- [x] [BEHAVIOR] 字面量自比较被真实清单守卫拒绝，源码/runner变更选中API PG且所有检查归总；缺命令/空集合仍失败。
+  Test: manual:node --test scripts/ci/__tests__/basic-test-assertions.test.mjs scripts/ci/__tests__/basic-scope.test.mjs scripts/ci/__tests__/basic-workflow.test.mjs scripts/ci/__tests__/run-basic-check.test.mjs
+- [x] [BEHAVIOR] 通知缓存、实际预算路由、诊断结算、GTD请求与进度边界不再测试复制实现，代表性真实源码内存变体能报错。
+  Test: manual:bash -c 'cd packages/brain && npx --no-install vitest run src/__tests__/notifier-memleak.test.js src/__tests__/dual-capacity.test.js src/__tests__/executor-diagnostics.test.js src/__tests__/progress-ledger.test.js'
+- [x] [BEHAVIOR] 旧alertness规格归并到现役行为并同步注册表，OOM退出码写回由真实HTTP路由永久回归。
+  Test: manual:bash -c 'cd packages/brain && npx --no-install vitest run src/__tests__/alertness/ src/alertness/__tests__/ src/__tests__/oom-aware-retry.test.js src/routes/__tests__/relay-exit-code.test.js'
+- [x] [BEHAVIOR] 意识副作用必须位于启用分支，空if/注释/else不能骗过守卫；非LLM扫描按现行政策运行。
+  Test: manual:bash -c 'cd packages/brain && npx --no-install vitest run src/__tests__/tick-consciousness-guard.test.js'
+- [x] [BEHAVIOR] provenance夹具只复用不可变初始快照，每例私有Git且并发push互不污染，原断言与真实登记链保留。
+  Test: manual:bash -c 'cd packages/brain && npx --no-install vitest run scripts/coding-workflow/__tests__/record-provenance.test.mjs scripts/coding-workflow/__tests__/directory-snapshot.test.mjs'
+
+
+- [x] [BEHAVIOR] 两份watchdog crisis过期平台fixture已修复并接回默认CI，API巡查skip改为隔离真实子进程；预算/RSS边界/启动保护与派发参数错误变体实际失败。
+  Test: manual:bash -c 'cd packages/brain && npx --no-install vitest run src/__tests__/watchdog-crisis-kill.test.js src/__tests__/watchdog-crisis-min-rss.test.js'
+- [x] [BEHAVIOR] 27份被误排除的隔离测试恢复默认执行；额度耗尽保留真实隔离保护，内容孤儿恢复直接调用executor，副本和已退役initiative旧规格归并到现役安全守卫。
+  Test: manual:bash -c 'cd packages/brain && npx --no-install vitest run src/__tests__/quota-exhausted.test.js src/__tests__/content-pipeline-orphan.test.ts src/__tests__/initiative-closer.test.js'
+- [x] [BEHAVIOR] 剩余69份未被自动配置接收的测试逐项登记；真实配置和工作流接线决定接收集合，新增遗漏、重复、已恢复、不存在和手动配置冒充自动均失败。
+  Test: manual:node --test scripts/ci/__tests__/basic-brain-test-debt.test.mjs
+
+- [x] [BEHAVIOR] 范围选择采用真实 Git 差分，完整组件执行；未知/无效/空范围不静默放行。
+  Test: manual:node --test scripts/ci/__tests__/basic-scope.test.mjs
+- [x] [BEHAVIOR] 发布快照、跨仓、技能与巡查的四份原生来源机制入口迁入必需来源检查，包含基线选择与只读就绪回归；失败先阻止后续准入。
+  Test: manual:node --test scripts/ci/__tests__/basic-workflow.test.mjs scripts/ci/__tests__/implementation-main-snapshot.test.mjs scripts/ci/__tests__/workspace-ci-source-bundle.test.mjs scripts/ci/__tests__/implementation-skill-source.test.mjs scripts/ci/__tests__/device-patrol-governance.test.mjs
+- [x] [BEHAVIOR] 测试异常、信号、空集合、取消和跳过均被真实入口与最终汇总阻断。
+  Test: manual:node --test scripts/ci/__tests__/run-basic-check.test.mjs scripts/ci/__tests__/basic-results.test.mjs scripts/ci/__tests__/basic-workflow.test.mjs scripts/ci/__tests__/basic-npm-test.test.mjs
+- [x] [BEHAVIOR] 漏洞扫描缺少有效报告或工具异常必须失败，原安全级别和已登记例外保留。
+  Test: manual:node --test scripts/ci/__tests__/basic-dependency-audit.test.mjs
+- [x] [BEHAVIOR] 真实审计拦截的 follow-redirects 1.16.1 升级到兼容修复版1.16.2，保留漏洞拦截与既有例外边界。
+  Test: manual:bash -c 'bash scripts/ci/dep-audit-runtime-high.sh && bash scripts/ci/dep-audit-critical.sh'
+- [x] [BEHAVIOR] 既有 Ops、部署、Runner 和预览行为回归有真实执行入口；关键类别为空失败，实际完整集合通过。
+  Test: manual:node scripts/ci/run-basic-check.mjs ops
+- [x] [BEHAVIOR] 只读部署诊断不能写共享部署状态或结算retention；真实部署成功、失败出口保持原结算。
+  Test: manual:bash scripts/__tests__/brain-deploy-sha-readonly.test.sh
+- [x] [BEHAVIOR] 本地准备检查实际执行对应lint/typecheck/build与CI自检，缺入口、工具、差分基线或命令异常阻断；合法pending映射可通过，互斥锁保留，完整组件测试仍由GitHub验收。
+  Test: manual:bash -c 'cd packages/engine && npx --no-install vitest run tests/scripts/quickcheck-preflight.test.ts tests/devgate/quickcheck-dod-guard.test.ts tests/scripts/quickcheck-mutex.test.ts'
+- [x] [BEHAVIOR] 外置正文合同有固定来源恢复/校验/实跑入口及真实输入触发，原生混合断言留在默认CI；历史来源fixture不授予当前候选资格。
+  Test: manual:node --test scripts/ci/__tests__/basic-skill-source-coverage.test.mjs
+- [x] [BEHAVIOR] 正式迁移前拒绝生产/远端/不一致连接；新 scratch 的543条迁移后实际服务任务生命周期、防抢领、KV读写与SQL落库验收通过；SIGINT/SIGTERM中断关闭本人Brain并清理交接目录。
+  Test: manual:node scripts/ci/run-basic-check.mjs brain-integration
+- [x] [BEHAVIOR] 现役 API、Dashboard、Quality、MCP、Engine及Shell和Brain正式镜像已分别执行真实验证；六片Brain发现的旧接线断言逐项迁移。
+  Test: manual:node scripts/ci/run-basic-check.mjs scripts
+
+- [x] [BEHAVIOR] 新版 Core 与来源工作流采用 CI-first opaque 三来源准入；仅两侧完整旧 consumer 原件可协商旧格式，官方 CI 身份与原 ZIP 验证机制的本地边界及篡改回归保留，坏官方凭据不回退，根级 resolver 诊断不泄露裸 snapshot。
+  Test: manual:node --test scripts/ci/__tests__/implementation-pr-baseline.test.mjs scripts/ci/__tests__/basic-ci-admission-resolver.test.mjs scripts/ci/__tests__/factory-workflow-config-source.test.mjs
+- [x] [BEHAVIOR] 已发布历史 readonly 与 legacy cohort 及固定历史 Git 身份断言保留；未发布坏 active1f 与超时 active4ba 明确拒绝，solefaeb 完整成员与五 blob 自身 collector 回放通过，固定 BC/D 历史 collector 回放保留，逐成员篡改及混搭清空来源关系，执行资格与覆盖状态不擅升。
+  Test: manual:node -e "require('node:child_process').execFileSync(process.execPath,['../../node_modules/vitest/vitest.mjs','run','src/lib/__tests__/existing-ops-source-impact.test.js','src/__tests__/claude-channel-retired.guard.test.js','src/__tests__/claude-channel-retired.reader-tuples.test.js'],{cwd:'packages/brain',stdio:'inherit'});"
+- [x] [BEHAVIOR] 固定五个普通 blob 的 commit、tree 与摘要实际校验；helper 只解码数据与重建私有 Git，显式 self-import 仅运行已审 collector，不执行捕获 workflow 或应用，损坏和越界拒绝。
   Test: manual:node --test scripts/ci/__tests__/fixed-local-git.test.mjs
-- [x] [BEHAVIOR] 新readonly 0/1完整cohort实际扫树，已发布ABC/D全部组合逐字保留，缺项、篡改、混搭和未知消费仍拒绝。
-  Test: manual:node -e "require('node:child_process').execFileSync(process.execPath,['../../node_modules/vitest/vitest.mjs','run','src/__tests__/claude-channel-retired.guard.test.js','src/__tests__/claude-channel-retired.reader-tuples.test.js'],{cwd:'packages/brain',stdio:'inherit'});"
-- [x] [BEHAVIOR] 六版本同步98，source-only保留；旧CI91eb、Impact4e、marker0与16运行文件清单保持，生产晋级仍禁止。
+- [x] [BEHAVIOR] 六份版本同步 1.445.99，source-only 保留；当前候选的新版 Core、完整 Impact 与 marker1 逐字保留，生产晋级仍由独立保护判定。
   Test: manual:node -e "require('node:child_process').execFileSync('bash',['scripts/check-version-sync.sh'],{stdio:'inherit'});"
+
+- [x] [BEHAVIOR] 单次 verification context 构建内普通输入与退休证明共享 report 摘要，输出及 digest 与旧 D 逐字段一致；跨调用重新计算，预算保持，永久回归由 basic-* 自动发现。
+  Test: manual:node --test scripts/ci/__tests__/basic-verification-context-digest.test.mjs

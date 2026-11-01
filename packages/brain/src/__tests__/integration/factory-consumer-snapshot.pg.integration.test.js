@@ -4,6 +4,7 @@ import {mkdtempSync,writeFileSync,existsSync,rmSync,realpathSync} from 'node:fs'
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { readFixedExistingOpsGitFixture } from '../../lib/__tests__/helpers/fixed-existing-ops-git-fixture.js';
 import { versionsDatabase } from '../fixtures/definition-versions-db.js';
 import { EXISTING_OPS_IDENTITIES } from '../../lib/existing-ops-source.js';
 import * as registration from '../../lib/existing-ops-registration.js';
@@ -18,14 +19,10 @@ import { parse } from 'acorn';
 import { collectWorkspaceInputEdges } from '../../lib/existing-ops-workspace-source.js';
 
 const root = fileURLToPath(new URL('../../../../../', import.meta.url));
-// 一次冻结真实 checkout；CI 浅历史不依赖旧提交，也不授予候选 main 身份。
-const revision = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
-const paths = execFileSync('git', ['ls-tree', '-rz', '--name-only', revision], { cwd: root, encoding: 'utf8' }).replace(/\0$/, '').split('\0');
-const cache = new Map();
-const readSource = async path => {
-  if (!cache.has(path)) cache.set(path, execFileSync('git', ['show', `${revision}:${path}`], { cwd: root, encoding: 'utf8', maxBuffer: 16000000 }));
-  return cache.get(path);
-};
+// 正样本仅为已知历史 Git fixture，不赋予当前候选来源或发布资格。
+const sourceFixture = readFixedExistingOpsGitFixture();
+const { revision, paths } = sourceFixture;
+const readSource = async path => sourceFixture.read(path);
 let fixture;
 beforeEach(async () => {
   fixture = await versionsDatabase(); await fixture.migrate(); await minimumMapSchema(fixture.db);
@@ -54,7 +51,7 @@ const options = extra => ({ scope: 'cecelia-factory', repo: 'perfectuser21/cecel
 it('旧固定定义不变：浅历史也以离线旧协议Git模型验证真实UI输入图',async()=>{
  const temporary=mkdtempSync(join(tmpdir(),'workspace-history-')),checkout=join(temporary,'source');
  try{
-  // Smoke使用浅checkout：只依赖当前真实固定tree，离线生成另一个明确标作模型的旧协议commit。
+  // Smoke使用浅checkout：只依赖已知历史Git fixture tree，离线生成另一个明确标作模型的旧协议commit。
   // 真实历史b580的字节/来源仍由独立固定Git单测与官方artifact联合门禁验证。
   execFileSync('git',['clone','--quiet','--shared','--no-checkout',root,checkout]);
   const git=(args,extra={})=>execFileSync('git',args,{cwd:checkout,encoding:'utf8',maxBuffer:32*1024*1024,...extra}).trim();

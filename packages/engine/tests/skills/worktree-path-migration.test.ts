@@ -1,85 +1,76 @@
-/**
- * Worktree 路径迁移测试
- *
- * 验证 worktree 路径从 ${main_wt}-wt-${name} 迁移到 .claude/worktrees/${name}
- * 以及 Stop Hook 强制清理 worktree 的兜底机制
- */
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync, chmodSync } from 'node:fs';
+import { join, resolve, basename } from 'node:path';
+import { nativeWorktreeFixture, WORKTREE_MANAGE, CLEANUP, worktreePathFromOutput } from '../helpers/native-worktree-fixture';
 
-import { describe, it, expect } from "vitest";
-import { execSync } from "child_process";
-import { existsSync, readFileSync } from "fs";
-import { resolve, join } from "path";
-import os from "os";
+const PROJECT_ROOT = resolve(__dirname, '../..');
 
-const PROJECT_ROOT = resolve(__dirname, "../..");
-// scripts moved to ~/.claude/skills (zenithjoy-skills repo)
-const WORKTREE_MANAGE = join(os.homedir(), '.claude', 'skills', 'dev', 'scripts', 'worktree-manage.sh');
-const CLEANUP = join(os.homedir(), '.claude', 'skills', 'dev', 'scripts', 'cleanup.sh');
-const scriptExists = existsSync(WORKTREE_MANAGE);
-const cleanupExists = existsSync(CLEANUP);
-const GITIGNORE = resolve(PROJECT_ROOT, ".gitignore");
-const VITEST_CONFIG = resolve(PROJECT_ROOT, "vitest.config.ts");
-
-describe("Worktree path migration", () => {
-  describe("worktree-manage.sh", () => {
-    it.skipIf(!scriptExists)("should pass syntax check", () => {
-      expect(() => {
-        execSync(`bash -n "${WORKTREE_MANAGE}"`, { encoding: "utf-8" });
-      }).not.toThrow();
-    });
-
-    it.skipIf(!scriptExists)("should generate persistent worktree path using WORKTREE_BASE", () => {
-      const content = readFileSync(WORKTREE_MANAGE, "utf-8");
-      expect(content).toContain('generate_worktree_path()');
-      // v1.3.0: 新路径格式使用 WORKTREE_BASE，默认 ~/worktrees/{project}
-      expect(content).toContain('WORKTREE_BASE');
-      expect(content).toContain('HOME/worktrees');
-    });
-
-    it.skipIf(!scriptExists)("should auto-add .claude/worktrees/ to .gitignore on create", () => {
-      const content = readFileSync(WORKTREE_MANAGE, "utf-8");
-      expect(content).toContain('.claude/worktrees/');
-      expect(content).toContain('.gitignore');
-    });
-
-    it.skipIf(!scriptExists)("should support both new and old paths in safe_rm_rf", () => {
-      const content = readFileSync(WORKTREE_MANAGE, "utf-8");
-      // 新路径检测
-      expect(content).toContain('"$worktree_path" == *"/.claude/worktrees/"*');
-      // 旧路径 fallback
-      expect(content).toContain('dirname "$(get_main_worktree)"');
-    });
-
-    it.skipIf(!scriptExists)("should mkdir -p parent directory before creating worktree", () => {
-      const content = readFileSync(WORKTREE_MANAGE, "utf-8");
-      expect(content).toContain('mkdir -p "$(dirname "$worktree_path")"');
-    });
+describe('tracked Worktree path migration', () => {
+  let fixture: ReturnType<typeof nativeWorktreeFixture>;
+  beforeEach(() => { fixture = nativeWorktreeFixture(); });
+  afterEach(() => { fixture.dispose(); });
+  function shell(script: string, ...args: string[]) {
+    const result = fixture.shell(script, [WORKTREE_MANAGE, ...args]);
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+    return result.stdout.trim();
+  }
+  it('tracked worktree-manage通过真实bash语法检查', () => {
+    expect(fixture.run('bash', ['-n', WORKTREE_MANAGE]).status).toBe(0);
   });
-
-  describe("cleanup.sh", () => {
-    it.skipIf(!cleanupExists)("should pass syntax check", () => {
-      expect(() => {
-        execSync(`bash -n "${CLEANUP}"`, { encoding: "utf-8" });
-      }).not.toThrow();
-    });
-
-    it.skipIf(!cleanupExists)("should delegate worktree cleanup to external worktree-gc.sh", () => {
-      const content = readFileSync(CLEANUP, "utf-8");
-      expect(content).toContain('worktree-gc.sh');
-    });
+  it('路径函数遵循WORKTREE_BASE，未设置时只使用隔离HOME', () => {
+    expect(shell('source "$1"; generate_worktree_path "$2"', 'task')).toBe(join(fixture.worktrees, basename(fixture.repo), 'task'));
+    expect(shell('unset WORKTREE_BASE; source "$1"; generate_worktree_path "$2"', 'task')).toBe(join(fixture.home, 'worktrees', basename(fixture.repo), 'task'));
   });
-
-  describe(".gitignore", () => {
-    it("should include .claude/worktrees/", () => {
-      const content = readFileSync(GITIGNORE, "utf-8");
-      expect(content).toContain(".claude/worktrees/");
-    });
+  it('真实create自动建立父目录并将仓库内worktree路径加入gitignore', () => {
+    const base = join(fixture.repo, '.claude/worktrees');
+    expect(existsSync(base)).toBe(false);
+    const result = fixture.run('bash', [WORKTREE_MANAGE, 'create', 'nested'], { WORKTREE_BASE: base });
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+    const path = join(base, basename(fixture.repo), 'nested');
+    expect(worktreePathFromOutput(result.stdout)).toBe(path);
+    expect(existsSync(join(path, '.git'))).toBe(true);
+    expect(fixture.git('check-ignore', '.claude/worktrees/repo/nested')).toBe('.claude/worktrees/repo/nested');
+    expect(fixture.git('worktree', 'list', '--porcelain')).toContain(`worktree ${path}`);
   });
+  it.each(['persistent', 'legacy'])('git移除失败时原生安全fallback能清理%s路径', kind => {
+    const path = kind === 'persistent'
+      ? join(fixture.worktrees, basename(fixture.repo), 'remove-me')
+      : join(fixture.repo, '.claude/worktrees/remove-me');
+    fixture.git('worktree', 'add', '-q', '-b', 'cp-remove-fixture', path, 'main');
+    shell('source "$1"; git() { if [[ "$1" == worktree && "$2" == remove ]]; then return 1; fi; command git "$@"; }; cmd_remove "$2"', 'cp-remove-fixture');
+    expect(existsSync(path)).toBe(false);
+    expect(fixture.git('worktree', 'list', '--porcelain')).not.toContain(`worktree ${path}`);
+  });
+  it('safe_rm_rf拒绝允许父目录以外的路径并保留文件', () => {
+    const keep = join(fixture.base, 'keep'); mkdirSync(keep); writeFileSync(join(keep, 'sentinel'), 'keep');
+    const result = fixture.shell('source "$1"; safe_rm_rf "$2" "$3"', [WORKTREE_MANAGE, keep, fixture.repo]);
+    expect(result.status).toBe(1);
+    expect(readFileSync(join(keep, 'sentinel'), 'utf8')).toBe('keep');
+  });
+  it('tracked cleanup通过真实bash语法检查', () => {
+    expect(fixture.run('bash', ['-n', CLEANUP]).status).toBe(0);
+  });
+  it('未修改的native cleanup从主仓调度外部GC边界并实际完成本地分支清理', async () => {
+    const scripts = join(fixture.base, 'cleanup-image'); mkdirSync(scripts);
+    const cleanup = join(scripts, 'cleanup.sh'); copyFileSync(CLEANUP, cleanup);
+    writeFileSync(join(scripts, 'worktree-gc.sh'), '#!/bin/sh\npwd > "$HOME/gc-cwd"\n');
+    // 调度是被测边界，GC实现不属于本用例；避免macOS没有setsid造成平台性跳过。
+    writeFileSync(join(fixture.bin, 'setsid'), '#!/bin/sh\nexec "$@"\n'); chmodSync(join(fixture.bin, 'setsid'), 0o755);
+    fixture.git('branch', 'cp-cleanup-fixture');
+    const result = fixture.run('bash', [cleanup, 'cp-cleanup-fixture', 'main']);
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+    const marker = join(fixture.home, 'gc-cwd');
+    for (let i = 0; i < 100 && !existsSync(marker); i++) await new Promise(resolve => setTimeout(resolve, 10));
+    expect(readFileSync(marker, 'utf8').trim()).toBe(fixture.repo);
+    expect(fixture.git('branch', '--list', 'cp-cleanup-fixture')).toBe('');
+  });
+});
 
-  describe("vitest.config.ts", () => {
-    it("should exclude .claude/worktrees/ from test scanning", () => {
-      const content = readFileSync(VITEST_CONFIG, "utf-8");
-      expect(content).toContain("**/.claude/worktrees/**");
-    });
+describe('本仓原生工作树扫描配置', () => {
+  it('.gitignore保留.claude/worktrees/', () => {
+    expect(readFileSync(join(PROJECT_ROOT, '.gitignore'), 'utf8')).toContain('.claude/worktrees/');
+  });
+  it('Vitest排除工作树里的嵌套测试', () => {
+    expect(readFileSync(join(PROJECT_ROOT, 'vitest.config.ts'), 'utf8')).toContain('**/.claude/worktrees/**');
   });
 });

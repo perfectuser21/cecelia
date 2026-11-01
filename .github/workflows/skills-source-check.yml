@@ -1,15 +1,41 @@
 name: Pinned Skill Sources
 on:
   pull_request:
-    paths:
-      - '.skills-source.json'
-      - 'scripts/*skills-source*'
-      - '.github/actions/skills-source/**'
-      - '.github/workflows/skills-source-check.yml'
+    branches: [main]
+  push:
+    branches: [main]
   workflow_dispatch:
 permissions:
   contents: read
 jobs:
+  contracts:
+    name: Fixed Skill contracts (${{ matrix.component }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        component: [brain, engine, quality, root]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install locked test dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Restore pinned skill sources
+        uses: ./.github/actions/skills-source
+        with:
+          ssh-key: ${{ secrets.SKILLS_SOURCE_SSH_KEY }}
+      - name: Run actual source contracts
+        env:
+          COMPONENT: ${{ matrix.component }}
+          CI: 'true'
+          POSTGRES_INTEGRATION: '0'
+        run: node scripts/ci/run-skill-source-check.mjs "$COMPONENT"
   restore:
     strategy:
       fail-fast: false
@@ -23,3 +49,22 @@ jobs:
         uses: ./.github/actions/skills-source
         with:
           ssh-key: ${{ secrets.SKILLS_SOURCE_SSH_KEY }}
+
+  passed:
+    name: 固定Skill合同通过
+    if: always()
+    needs: [contracts, restore]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every selected contract and restoration result
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          node --input-type=module <<'NODE'
+          const needs = JSON.parse(process.env.NEEDS_JSON || 'null');
+          for (const job of ['contracts', 'restore']) {
+            if (needs?.[job]?.result !== 'success') throw new Error(`${job} 未完成：${needs?.[job]?.result || 'missing'}`);
+          }
+          console.log('固定Skill合同全部通过');
+          NODE

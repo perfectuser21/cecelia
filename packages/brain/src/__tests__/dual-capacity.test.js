@@ -14,103 +14,31 @@
  * - D3-2: PUT /api/brain/budget-cap 端点
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import os from 'os';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-// ============================================================
-// Unit tests for capacity model (pure function logic)
-// ============================================================
-
-// Replicate the PHYSICAL_CAPACITY formula for validation
-function computePhysicalCapacity() {
-  const CPU_CORES = os.cpus().length;
-  const TOTAL_MEM_MB = Math.round(os.totalmem() / 1024 / 1024);
-  const MEM_PER_TASK_MB = 500;
-  const CPU_PER_TASK = 0.5;
-  const USABLE_MEM_MB = TOTAL_MEM_MB * 0.8;
-  const USABLE_CPU = CPU_CORES * 0.8;
-  return Math.max(Math.floor(Math.min(USABLE_MEM_MB / MEM_PER_TASK_MB, USABLE_CPU / CPU_PER_TASK)), 2);
-}
-
-describe('双层容量模型 — D2', () => {
-  // D2-1: PHYSICAL_CAPACITY = auto-calculated hardware ceiling
-  it('D2-1: PHYSICAL_CAPACITY 等于基于 CPU/Memory 的自动计算值', () => {
-    const expected = computePhysicalCapacity();
-    expect(expected).toBeGreaterThanOrEqual(2); // minimum floor
-    expect(expected).toBeTypeOf('number');
-    expect(Number.isInteger(expected)).toBe(true);
-  });
-
-  it('D2-1: PHYSICAL_CAPACITY 至少为 2（最小保护）', () => {
-    const result = computePhysicalCapacity();
-    expect(result).toBeGreaterThanOrEqual(2);
-  });
-
-  // D2-2: CECELIA_BUDGET_SLOTS 设置 budget cap
-  it('D2-2: CECELIA_BUDGET_SLOTS 环境变量设置 budget cap', () => {
-    // Simulating the env parsing logic
-    const envBudget = '6';
-    const parsed = parseInt(envBudget, 10);
-    expect(parsed).toBe(6);
-    expect(parsed > 0).toBe(true);
-  });
-
-  // D2-3: 向后兼容 CECELIA_MAX_SEATS
-  it('D2-3: 无 CECELIA_BUDGET_SLOTS 时回退到 CECELIA_MAX_SEATS', () => {
-    // Simulating the fallback logic
-    const budgetSlots = undefined;
-    const maxSeats = '8';
-    const result = budgetSlots
-      ? parseInt(budgetSlots, 10)
-      : (maxSeats ? parseInt(maxSeats, 10) : null);
-    expect(result).toBe(8);
-  });
-
-  it('D2-3: 两个变量都不存在时 budget = null（使用物理容量）', () => {
-    const budgetSlots = undefined;
-    const maxSeats = undefined;
-    const result = budgetSlots
-      ? parseInt(budgetSlots, 10)
-      : (maxSeats ? parseInt(maxSeats, 10) : null);
-    expect(result).toBeNull();
-  });
-
-  // D2-4: MAX_SEATS = min(physical, budget)
-  it('D2-4: effective = min(physical, budget) 当 budget < physical', () => {
-    const physical = 12;
-    const budget = 8;
-    const effective = Math.min(budget, physical);
-    expect(effective).toBe(8);
-  });
-
-  it('D2-4: effective = physical 当 budget > physical', () => {
-    const physical = 12;
-    const budget = 20;
-    const effective = Math.min(budget, physical);
-    expect(effective).toBe(12);
-  });
-
-  it('D2-4: effective = physical 当 budget = null', () => {
-    const physical = 12;
-    const budget = null;
-    const effective = (budget && budget > 0) ? Math.min(budget, physical) : physical;
-    expect(effective).toBe(12);
-  });
+afterEach(() => {
+  vi.doUnmock('../executor.js');
+  vi.doUnmock('../fleet-resource-cache.js');
+  vi.doUnmock('child_process');
 });
-
-// ============================================================
-// Integration tests (importing real executor functions)
-// ============================================================
+// 容量公式与环境解析由 platform-utils / cpu-sampler 的真实实现测试负责。
+// 此文件保留实际 executor 预算变更与 slot-allocator 消费行为。
 
 // Hoist mock variables for vi.mock factory
 const mockReadFileSync = vi.hoisted(() => vi.fn(() => {
   throw new Error('ENOENT'); // default: /proc/stat not available
 }));
 
-vi.mock('fs', () => ({
-  readFileSync: mockReadFileSync,
-  existsSync: vi.fn(() => false),
-}));
+vi.mock('fs', async original => {
+  const actual = await original();
+  const repositoryRoot = new URL('../../../../', import.meta.url).pathname;
+  return {
+    ...actual,
+    readFileSync: vi.fn((file, ...args) => String(file).includes(repositoryRoot)
+      ? actual.readFileSync(file, ...args) : mockReadFileSync(file, ...args)),
+    existsSync: vi.fn(() => false),
+  };
+});
 
 vi.mock('../db.js', () => ({
   default: {
@@ -241,11 +169,29 @@ describe('API 端点 — D3', () => {
     expect(status).toHaveProperty('total_capacity', 12);
   });
 
-  // D3-2: PUT /api/brain/budget-cap 端点 — tested via setBudgetCap in earlier describe block
-  // The endpoint delegates to setBudgetCap, which is already tested in D2-6.
-  it('D3-2: budget-cap 端点委托 setBudgetCap（D2-6 已覆盖）', () => {
-    // Endpoint logic is: setBudgetCap(req.body.slots ?? null)
-    // This is tested via D2-6 tests above.
-    expect(true).toBe(true);
+  it('D3-2: 真实budget-cap路由设置、清除预算并拒绝无效值', async () => {
+    vi.doUnmock('../executor.js');
+    vi.doUnmock('child_process');
+    const [{ default: express }, { default: request }, { default: router }, executor] = await Promise.all([
+      import('express'), import('supertest'), import('../routes/execution.js'), import('../executor.js'),
+    ]);
+    const app = express();
+    app.use(express.json());
+    app.use('/api/brain', router);
+    try {
+      const set = await request(app).put('/api/brain/budget-cap').send({ slots: 6 });
+      expect(set.status).toBe(200);
+      expect(set.body).toMatchObject({ budget: 6, effective: 6 });
+      expect(executor.getBudgetCap().budget).toBe(6);
+      const invalid = await request(app).put('/api/brain/budget-cap').send({ slots: -1 });
+      expect(invalid.status).toBe(400);
+      expect(executor.getBudgetCap().budget).toBe(6);
+      const clear = await request(app).put('/api/brain/budget-cap').send({});
+      expect(clear.status).toBe(200);
+      expect(clear.body.budget).toBeNull();
+      expect(clear.body.effective).toBe(executor.PHYSICAL_CAPACITY);
+    } finally {
+      executor.setBudgetCap(null);
+    }
   });
 });

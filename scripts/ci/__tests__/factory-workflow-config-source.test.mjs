@@ -11,7 +11,7 @@ import yaml from 'js-yaml';
 import {fileURLToPath} from 'node:url';
 import {join,resolve} from 'node:path';
 import {cruise} from 'dependency-cruiser';
-import {VERIFICATION_GIT_OPTIONS,cleanupVerificationFixture,immutableVerificationSeed,disposeVerificationSeed,fixedInputFixture as inputFixture,assertTypedResolverOutputLayout} from './fixtures/verification-input-git.mjs';
+import {VERIFICATION_GIT_OPTIONS,cleanupVerificationFixture,immutableVerificationSeed,disposeVerificationSeed,fixedInputFixture as inputFixture,assertTypedResolverOutputLayout,assertWorkflowSchemaReaderInputs} from './fixtures/verification-input-git.mjs';
 
 // 根扫描器依赖只在npm ci全根的CI来源suite执行；Brain-only单测保留运行配置行为测试。
 test('默认运行配置由原生依赖图绑定到实际读取器',async()=>{
@@ -492,7 +492,9 @@ test('非执行变更缺失侧显式冻结absence，不能给已删除head造普
 test('退休合同CI登记逐项绑定真实退休实现且没有重复或错误角色', () => {
  const require = createRequire(import.meta.url);
  const {relations} = require('../../../.implementation-source-relations.json');
- for (const path of ['scripts/ci/__tests__/basic-verification-retirements.test.mjs', 'packages/brain/src/__tests__/ci-verification-retirement-contracts.test.js']) {
+ for (const path of ['scripts/ci/__tests__/basic-verification-retirements.test.mjs']) {
   assert.deepEqual(relations.filter(row => row.path === path), [{owner_path: 'scripts/ci/implementation-verification-retirements.mjs', path, role: 'verification'}]);
  }
+ for(const path of ['packages/brain/src/__tests__/ci-verification-retirement-contracts.test.js','packages/brain/src/__tests__/ci-admission-baseline-contracts.test.js'])assert.deepEqual(relations.filter(row=>row.path===path),[]);
 });
+test('实际schema reader为九个workflow真实diff派生输入且不声称执行',t=>assertWorkflowSchemaReaderInputs(t,{basicEntryFixture,derived,root:fileURLToPath(new URL('../../../',import.meta.url))}));

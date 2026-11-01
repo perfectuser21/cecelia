@@ -2,33 +2,13 @@ name: Implementation impact
 on:
   pull_request:
     branches: [main]
-  push:
-    branches: [main]
   workflow_dispatch:
     inputs:
-      base_revision:
-        description: '固定基线40位SHA（须已有中央历史定义）'
-        required: true
-        type: string
-      export_infra_baseline:
-        description: '可信main首次导出独立infra基线；不启用业务或替代原双scope'
-        required: false
-        type: boolean
-        default: false
-      source_baseline_recovery:
-        description: '仅已独立准入并合并的来源bootstrap：隔离编译来源基线，不声明部署就绪'
-        required: false
-        type: boolean
-        default: false
-      source_reviewed_head:
-        description: '仅来源恢复：已独立审查的最终main SHA，必须等于本次运行SHA'
-        required: false
-        type: string
-      export_device_patrol_source_identity:
-        description: '仅可信main导出已登记巡查来源身份；不执行候选源码'
-        required: false
-        type: boolean
-        default: false
+      base_revision: {description: '固定基线40位SHA（须已有中央历史定义）', required: true, type: string}
+      export_infra_baseline: {description: '可信main首次导出独立infra基线；不启用业务或替代原双scope', required: false, type: boolean, default: false}
+      source_baseline_recovery: {description: '仅已独立准入并合并的来源bootstrap：隔离编译来源基线，不声明部署就绪', required: false, type: boolean, default: false}
+      source_reviewed_head: {description: '仅来源恢复：已独立审查的最终main SHA，必须等于本次运行SHA', required: false, type: string}
+      export_device_patrol_source_identity: {description: '仅可信main导出已登记巡查来源身份；不执行候选源码', required: false, type: boolean, default: false}
   workflow_call:
     inputs:
       source_repo: {required: true, type: string}
@@ -44,11 +24,7 @@ on:
       BRAIN_DEPLOY_URL: {required: false}
       CECELIA_ACTIONS_READ_TOKEN: {required: false}
       SKILLS_SOURCE_SSH_KEY: {required: false}
-permissions:
-  contents: read
-  actions: read
-  checks: read
-  pull-requests: read
+permissions: {contents: read, actions: read, checks: read, pull-requests: read}
 concurrency:
   group: implementation-impact-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -81,8 +57,7 @@ jobs:
           git merge-base --is-ancestor HEAD origin/main
       - uses: actions/setup-node@v4
         if: steps.scope.outputs.applicable == 'true'
-        with:
-          node-version: '22'
+        with: {node-version: '22'}
       - uses: tailscale/github-action@v2
         if: steps.scope.outputs.applicable == 'true'
         with:
@@ -116,10 +91,7 @@ jobs:
     services:
       postgres:
         image: ${{ inputs.source_baseline_recovery == true && 'mirror.gcr.io/pgvector/pgvector:pg15' || '' }}
-        env:
-          POSTGRES_USER: ci
-          POSTGRES_PASSWORD: isolated-ci
-          POSTGRES_DB: cecelia_scratch
+        env: {POSTGRES_USER: ci, POSTGRES_PASSWORD: isolated-ci, POSTGRES_DB: cecelia_scratch}
         ports: ['5432:5432']
         options: --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
     steps:
@@ -136,8 +108,7 @@ jobs:
           set -euo pipefail
           git merge-base --is-ancestor HEAD origin/main
       - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
+        with: {node-version: '22'}
       - run: npm ci --ignore-scripts
         working-directory: tooling
       - name: 下载本次真实来源身份观察
@@ -215,8 +186,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
+        with: {node-version: '22'}
       - run: npm ci --ignore-scripts
         working-directory: tooling
       - uses: tailscale/github-action@v2
@@ -255,10 +225,7 @@ jobs:
     services:
       postgres:
         image: mirror.gcr.io/pgvector/pgvector:pg15
-        env:
-          POSTGRES_USER: ci
-          POSTGRES_PASSWORD: isolated-ci
-          POSTGRES_DB: cecelia_scratch
+        env: {POSTGRES_USER: ci, POSTGRES_PASSWORD: isolated-ci, POSTGRES_DB: cecelia_scratch}
         ports: ['5432:5432']
         options: --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
     env:
@@ -292,14 +259,17 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
+        with: {node-version: '22'}
       - name: 固定回归依赖
         run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends zsh jq libxml2-utils python3
       - run: npm ci --ignore-scripts
         working-directory: tooling
       - run: npm ci --ignore-scripts
         working-directory: source
+      - name: 来源机制完整单元回归
+        if: github.repository == 'perfectuser21/cecelia' && (!inputs.source_repo || inputs.source_repo == github.repository)
+        working-directory: source
+        run: node --test scripts/ci/__tests__/implementation-main-snapshot.test.mjs scripts/ci/__tests__/workspace-ci-source-bundle.test.mjs scripts/ci/__tests__/implementation-skill-source.test.mjs scripts/ci/__tests__/device-patrol-governance.test.mjs
       - name: scratch正式迁移
         run: node tooling/packages/brain/src/migrate.js
       - name: 三来源联合门真实PG与回归退出码守卫
@@ -348,6 +318,11 @@ jobs:
                 --input-dir "$RUNNER_TEMP/implementation-input" --output-dir "$RUNNER_TEMP/implementation-output")"
               [[ "$BASE" =~ ^[0-9a-f]{40}$ ]]
               printf 'BASE=%s\n' "$BASE" >> "$GITHUB_ENV"
+              if [[ -e "$RUNNER_TEMP/implementation-input/ci-admission" || -L "$RUNNER_TEMP/implementation-input/ci-admission" ]]; then
+                test -d "$RUNNER_TEMP/implementation-input/ci-admission" && test ! -L "$RUNNER_TEMP/implementation-input/ci-admission"
+                export IMPLEMENTATION_CI_ADMISSION_INPUT_DIR="$RUNNER_TEMP/implementation-input/ci-admission"
+                printf 'IMPLEMENTATION_CI_ADMISSION_INPUT_DIR=%s\n' "$IMPLEMENTATION_CI_ADMISSION_INPUT_DIR" >> "$GITHUB_ENV"
+              fi
             else
             artifact=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=implementation-snapshot-$BASE" | jq -r --arg base "$BASE" '.artifacts | map(select(.expired == false and .workflow_run.head_branch == "main" and .workflow_run.head_sha == $base and .workflow_run.repository_id == .workflow_run.head_repository_id)) | sort_by(.created_at, .id) | reverse | first | .id // empty')
             if [[ -z "$artifact" ]]; then
@@ -372,7 +347,7 @@ jobs:
             mkdir -p "$RUNNER_TEMP/implementation-input/head"
             cp "$RUNNER_TEMP/implementation-input/base/base.json" "$RUNNER_TEMP/implementation-input/head/head.json"
             fi
-            if [[ -n "${ADMISSION_SCOPES:-}" ]]; then
+            if [[ -z "${IMPLEMENTATION_CI_ADMISSION_INPUT_DIR:-}" && -n "${ADMISSION_SCOPES:-}" ]]; then
               jq -e 'type == "object" and keys == ["schema_version", "scopes"] and .schema_version == 1 and (.scopes | type == "array" and length > 0 and all(.[]; type == "string" and test("^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$")) and length == (unique | length))' <<< "$ADMISSION_SCOPES" >/dev/null
               gap_code=IMPLEMENTATION_CI_SCOPE_COMPANION_INVALID
               printf '%s\n' "$ADMISSION_SCOPES" > "$RUNNER_TEMP/implementation-input/admission-scopes.json"
@@ -387,7 +362,7 @@ jobs:
             fi
           fi
       - name: 独立infra固定来源加入联合输入
-        if: env.INFRA_ADMISSION == 'true'
+        if: env.INFRA_ADMISSION == 'true' && env.IMPLEMENTATION_CI_ADMISSION_INPUT_DIR == ''
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -397,6 +372,7 @@ jobs:
       - name: 准备固定中央Skill对象缓存
         id: skill-cache
         env:
+          GH_TOKEN: ${{ github.token }}
           SKILLS_SOURCE_SSH_KEY: ${{ secrets.SKILLS_SOURCE_SSH_KEY }}
           NATIVE_PR: ${{ github.repository == 'perfectuser21/cecelia' && github.event_name == 'pull_request' && !inputs.source_repo && !inputs.tooling_revision && !inputs.scope && !inputs.head_revision && !inputs.base_revision && !inputs.mode && !inputs.admission_scopes }}
         run: |
@@ -406,7 +382,12 @@ jobs:
           tooling_sha="$(git -C tooling rev-parse --verify HEAD)"
           test "$tooling_sha" = "$TOOLING_REVISION"
           # 仅精确已发布、reader及锁字节一致的旧工具；仍运行原完整双scope gate。
-          if [[ "$NATIVE_PR" == true && "$GITHUB_REPOSITORY" == perfectuser21/cecelia && "$GITHUB_EVENT_NAME" == pull_request && "$SOURCE_REPO" == perfectuser21/cecelia && "$MODE" == pr && ( "$BASE" == 821dac5ae926cd5120d7b94fcd8012dd1f09bc23 || "$BASE" == b8985542133fb7dcf87a2adf9151de43d0694185 || "$BASE" == a72ff8372d4eb2100e1b9b7572d88a22969bef2f || "$BASE" == b977d068919ff699318581214ddb07c314629e56 || "$BASE" == 8665e5683c972f5a88649b5783e3d196b32e9a38 ) && "$TOOLING_REVISION" == "$BASE" && "$MAP_SCOPE" == cecelia-kr && "$ADMISSION_SCOPES" == '{"schema_version":1,"scopes":["cecelia-kr","cecelia-factory"]}' ]]; then
+          if [[ -n "${IMPLEMENTATION_CI_ADMISSION_INPUT_DIR:-}" ]]; then
+            test "$MODE" = pr && test "$NATIVE_PR" = true && test "$SOURCE_REPO" = perfectuser21/cecelia
+            cache="$(node tooling/scripts/ci/implementation-skill-source.mjs --prepare-ci-cache "$GITHUB_WORKSPACE/source" "$SOURCE_REPO" "$BASE" "$HEAD")"
+            case "$cache" in "$RUNNER_TEMP"/implementation-skills-ci-*/objects) test -d "$cache" ;; *) exit 1 ;; esac
+            printf 'IMPLEMENTATION_SKILLS_SOURCE_DIR=%s\n' "$cache" >> "$GITHUB_ENV"
+          elif [[ "$NATIVE_PR" == true && "$GITHUB_REPOSITORY" == perfectuser21/cecelia && "$GITHUB_EVENT_NAME" == pull_request && "$SOURCE_REPO" == perfectuser21/cecelia && "$MODE" == pr && ( "$BASE" == 821dac5ae926cd5120d7b94fcd8012dd1f09bc23 || "$BASE" == b8985542133fb7dcf87a2adf9151de43d0694185 || "$BASE" == a72ff8372d4eb2100e1b9b7572d88a22969bef2f || "$BASE" == b977d068919ff699318581214ddb07c314629e56 || "$BASE" == 8665e5683c972f5a88649b5783e3d196b32e9a38 ) && "$TOOLING_REVISION" == "$BASE" && "$MAP_SCOPE" == cecelia-kr && "$ADMISSION_SCOPES" == '{"schema_version":1,"scopes":["cecelia-kr","cecelia-factory"]}' ]]; then
             node --input-type=module <<'JS'
           import {readImplementationSource} from './tooling/scripts/ci/implementation-skill-source.mjs';
           import {readFixedLocalGitBlob} from './tooling/scripts/ci/fixed-local-git.mjs';
@@ -450,17 +431,23 @@ jobs:
             printf 'IMPLEMENTATION_SKILLS_SOURCE_DIR=%s\n' "$cache" >> "$GITHUB_ENV"
           fi
       - name: 完整联合scope清单加入infra
-        if: env.INFRA_ADMISSION == 'true' && env.MODE == 'pr'
+        if: env.INFRA_ADMISSION == 'true' && env.MODE == 'pr' && env.IMPLEMENTATION_CI_ADMISSION_INPUT_DIR == ''
         run: |
           set -euo pipefail
           scopes=$(jq -ce 'select(.schema_version == 1 and .scopes == ["cecelia-kr","cecelia-factory"]) | .scopes += ["cecelia-infra"]' <<< "$ADMISSION_SCOPES")
           printf 'ADMISSION_SCOPES=%s\n' "$scopes" >> "$GITHUB_ENV"
       - name: 实际变更影响与固定回归
         env:
+          GH_TOKEN: ${{ github.token }}
           SKILLS_SOURCE_SSH_KEY: ${{ steps.skill-cache.outputs.legacy_821 == 'true' && secrets.SKILLS_SOURCE_SSH_KEY || '' }}
         run: |
           set -euo pipefail
-          if [[ "$MODE" == pr && -n "$ADMISSION_SCOPES" ]]; then
+          if [[ -n "${IMPLEMENTATION_CI_ADMISSION_INPUT_DIR:-}" ]]; then
+            test "$MODE" = pr && test "$SOURCE_REPO" = perfectuser21/cecelia
+            node tooling/scripts/ci/implementation-multi-pr-gate.mjs --repo-root "$GITHUB_WORKSPACE/source" \
+              --tooling-root "$GITHUB_WORKSPACE/tooling" --base "$BASE" --head "$HEAD" --mode pr \
+              --ci-admission-input-dir "$IMPLEMENTATION_CI_ADMISSION_INPUT_DIR" --output-dir "$RUNNER_TEMP/implementation-output"
+          elif [[ "$MODE" == pr && -n "$ADMISSION_SCOPES" ]]; then
             jq -e 'type == "object" and keys == ["schema_version", "scopes"] and .schema_version == 1 and (.scopes | type == "array" and length > 0 and all(.[]; type == "string" and test("^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$")) and length == (unique | length))' <<< "$ADMISSION_SCOPES" >/dev/null
             jq --arg root "$RUNNER_TEMP/implementation-input" '.scopes | map({scope:.,snapshotBase:($root+"/base/base-"+.+".json"),snapshotHead:($root+"/head/head-"+.+".json")})' <<< "$ADMISSION_SCOPES" > "$RUNNER_TEMP/implementation-input/scopes.json"
             node tooling/scripts/ci/implementation-multi-pr-gate.mjs --repo-root "$GITHUB_WORKSPACE/source" \

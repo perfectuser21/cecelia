@@ -6,7 +6,7 @@
 // fix 轮无限循环。执行器必须像 Brain 侧 gp-assertion-command.js 一样，以断言文件所在最近的
 // package.json 目录为 cwd（该包自己的 vitest 配置生效）。
 const { spawnSync } = require('node:child_process');
-const { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, realpathSync, chmodSync, rmSync } = require('node:fs');
+const { copyFileSync, existsSync, mkdtempSync, mkdirSync, writeFileSync, symlinkSync, realpathSync, chmodSync, rmSync } = require('node:fs');
 const { join, dirname } = require('node:path');
 const os = require('node:os');
 const assert = require('node:assert');
@@ -16,6 +16,16 @@ const executor = join(here, '..', 'assertion-exec.mjs');
 const repoNodeModules = realpathSync(join(here, '..', '..', '..', 'node_modules'));
 const root = realpathSync(mkdtempSync(join(os.tmpdir(), 'assertion-exec-pkgroot-')));
 try {
+  const image = join(root, 'runner-image');
+  mkdirSync(image, { mode: 0o700 });
+  const imageNode = join(image, 'node');
+  copyFileSync(realpathSync(process.execPath), imageNode);
+  // Homebrew macOS Node 动态链接同发行版的 libnode；Linux toolcache Node 无此依赖。
+  const libnode = join(dirname(realpathSync(process.execPath)), '..', 'lib', `libnode.${process.versions.modules}.dylib`);
+  if (process.platform === 'darwin' && existsSync(libnode)) {
+    copyFileSync(realpathSync(libnode), join(image, `libnode.${process.versions.modules}.dylib`));
+  }
+  chmodSync(imageNode, 0o755);
   writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'mono-root', private: true }));
   writeFileSync(join(root, 'vitest.config.mjs'),
     "export default { test: { include: ['tests/**/*.test.js'] } };\n");
@@ -44,12 +54,25 @@ try {
     CECELIA_TRUSTED_ASSERTION: '1',
     CECELIA_ASSERTION_TRACKED_PATHS_FILE: tracked,
   };
-  const describe = spawnSync(process.execPath, [executor, '--describe', JSON.stringify(assertion)],
+  // 可写的工具链不能成为可信执行入口，describe 和 run 都必须默认拒绝。
+  for (const mode of [0o775, 0o757]) {
+    chmodSync(imageNode, mode);
+    for (const action of ['--describe', '--run']) {
+      const denied = spawnSync(imageNode, [executor, action, JSON.stringify(assertion)],
+        { cwd: root, env, encoding: 'utf8', timeout: 10000 });
+      assert.strictEqual(denied.status, 64,
+        `${action} must reject writable Node mode=${mode.toString(8)}: ${denied.stderr}`);
+      assert.match(denied.stderr, /node is not owned by the runner image/);
+      assert.strictEqual(denied.stdout, '', 'untrusted Node must not execute the assertion');
+    }
+  }
+  chmodSync(imageNode, 0o755);
+  const describe = spawnSync(imageNode, [executor, '--describe', JSON.stringify(assertion)],
     { cwd: root, env, encoding: 'utf8' });
   assert.strictEqual(describe.status, 0, `describe failed: ${describe.stderr}`);
   assert.deepStrictEqual(JSON.parse(describe.stdout.trim()), ['npx', 'vitest', 'run', testRel]);
 
-  const run = spawnSync(process.execPath, [executor, '--run', JSON.stringify(assertion)],
+  const run = spawnSync(imageNode, [executor, '--run', JSON.stringify(assertion)],
     { cwd: root, env, encoding: 'utf8', timeout: 180000 });
   const out = `${run.stdout}\n${run.stderr}`;
   assert.ok(!/No test files found/.test(out),

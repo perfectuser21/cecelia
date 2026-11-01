@@ -1,4 +1,3 @@
-import './basic-ci-admission-workflow.test.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {execFile} from 'node:child_process';
@@ -7,7 +6,6 @@ import {tmpdir} from 'node:os';
 import {join,dirname,resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {cruise} from 'dependency-cruiser';
-import yaml from 'js-yaml';
 import {extractSpawnEdges} from '../../../packages/brain/src/lib/graph-extract.js';
 import {publishCiAdmissionBaseline} from '../ci-admission-publisher.mjs';
 import {buildCiAdmissionDraft} from '../ci-admission-builder.mjs';
@@ -43,28 +41,10 @@ test('轻入口真实worker进程拒绝错误argv，不写draft且不继承线�
 
 test('现行Node根实际导入轻入口，正式静态图与spawn抽取器必须见到受测生产链',async()=>{
  const entry='scripts/ci/__tests__/basic-ci-admission-native-entry.test.mjs',nodeRoot='scripts/ci/__tests__/implementation-main-snapshot.test.mjs';
- const impactReader='scripts/ci/__tests__/basic-ci-admission-impact-workflow.test.mjs',contractRoot='scripts/ci/__tests__/device-patrol-governance.test.mjs',aggregate='scripts/ci/__tests__/ci-admission-mechanisms.test.mjs';
- const factory='scripts/ci/__tests__/factory-workflow-config-source.test.mjs';
- const nodeRoots=[nodeRoot,'scripts/ci/__tests__/workspace-ci-source-bundle.test.mjs','scripts/ci/__tests__/implementation-skill-source.test.mjs',contractRoot];
- const result=await cruise([...nodeRoots,entry,impactReader],{baseDir:root,doNotFollow:{path:'node_modules'},exclude:{path:'node_modules'}}),graph=typeof result.output==='string'?JSON.parse(result.output):result.output;
+ const impactReader='scripts/ci/__tests__/basic-ci-admission-impact-workflow.test.mjs';
+ const result=await cruise([nodeRoot,entry,impactReader],{baseDir:root,doNotFollow:{path:'node_modules'},exclude:{path:'node_modules'}}),graph=typeof result.output==='string'?JSON.parse(result.output):result.output;
  const dependency=(from,to)=>graph.modules.some(m=>m.source===from&&m.dependencies.some(d=>!d.couldNotResolve&&resolve(root,d.resolved)===resolve(root,to)));
  assert.ok(dependency(nodeRoot,entry),'actual selected Node root must consume the light regression');
- const heavyRoots=nodeRoots.filter(from=>dependency(from,aggregate));
- assert.equal(heavyRoots.length,1,'full contracts must run on one installed root-dependency Node lane');
- assert.equal(dependency(contractRoot,aggregate),false,'Brain-only patrol wrappers must not import root-dependency contracts');
- assert.equal(nodeRoots.filter(from=>dependency(from,factory)).length,1,'exactly one actual selected Node root must import factory regressions');
- const workflows=['.github/workflows/ci.yml','.github/workflows/implementation-impact.yml'].map(path=>yaml.load(readFileSync(join(root,path),'utf8')));
- for(const path of nodeRoots){
-  const ready=workflows.some(doc=>Object.values(doc.jobs).some(job=>(job.steps||[]).some((step,index,steps)=>{
-   const args=typeof step.run==='string'?step.run.trim().split(/\s+/):[];
-   if(args[0]!=='node'||args[1]!=='--test'||!args.slice(2).includes(path))return false;
-   const directory=item=>item['working-directory']??job.defaults?.run?.['working-directory']??doc.defaults?.run?.['working-directory']??'';
-   return steps.slice(0,index).some(install=>install.run==='npm ci --ignore-scripts'&&directory(install)===directory(step));
-  })));
-  assert.ok(ready,'selected Node root must have full root dependencies installed in its actual directory: '+path);
- }
- assert.equal(dependency(nodeRoot,aggregate),false,'heavy contracts must not return to the expensive root');
- assert.equal(existsSync(join(root,'packages/brain/src/__tests__/ci-admission-baseline-contracts.test.js')),false,'Brain-only npm install cannot run root-dependency contracts');
  assert.ok(dependency(impactReader,'scripts/ci/implementation-multi-pr-gate.mjs'),'workflow/provider verification must consume the actual provider API');
  for(const path of ['scripts/ci/ci-admission-publisher.mjs','scripts/ci/ci-admission-builder.mjs'])assert.ok(dependency(entry,path),path);
  assert.ok(extractSpawnEdges(readFileSync(new URL(import.meta.url),'utf8'),entry).some(e=>e.src_path===entry&&e.dst_path==='scripts/ci/ci-admission-worker.mjs'&&e.edge_type==='spawn'));
@@ -87,9 +67,9 @@ test('现行Node根实际导入轻入口，正式静态图与spawn抽取器必�
   {"owner_path":"scripts/ci/ci-admission-seed.mjs","path":"scripts/ci/__tests__/basic-ci-admission-seed.test.mjs","role":"verification"},
   {"owner_path":"scripts/ci/implementation-skill-source.mjs","path":"scripts/ci/__tests__/basic-ci-admission-skill-cache.test.mjs","role":"verification"},
   {"owner_path":"scripts/ci/ci-admission-worker-runner.mjs","path":"scripts/ci/__tests__/basic-ci-admission-worker.test.mjs","role":"verification"},
-  {"owner_path":"scripts/ci/ci-admission-publisher.mjs","path":"scripts/ci/__tests__/basic-ci-admission-workflow.test.mjs","role":"verification"},
-  {"owner_path":"scripts/ci/ci-admission-publisher.mjs","path":"scripts/ci/__tests__/ci-admission-mechanisms.test.mjs","role":"verification"}
+  {"owner_path":"scripts/ci/ci-admission-publisher.mjs","path":"scripts/ci/__tests__/basic-ci-admission-workflow.test.mjs","role":"verification"}
  ];
  for(const row of expected)assert.deepEqual(relations.filter(item=>item.path===row.path),[row]);
+ assert.equal(existsSync(join(root,'scripts/ci/__tests__/ci-admission-mechanisms.test.mjs')),false);assert.deepEqual(relations.filter(row=>row.path==='scripts/ci/__tests__/ci-admission-mechanisms.test.mjs'),[]);
  for(const path of ['scripts/ci/ci-admission-publisher.mjs','scripts/ci/ci-admission-builder.mjs','scripts/ci/ci-admission-worker.mjs'])assert.equal(relations.some(row=>row.path===path),false,'production source must have a real native carrier');
 });

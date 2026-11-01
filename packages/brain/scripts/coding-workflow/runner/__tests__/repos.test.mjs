@@ -3,6 +3,8 @@ import { describe, it, expect } from 'vitest';
 import { loadRepos, resolveRepo, enabledRepos, resolveEntry, repoView, repoViews, reposFile, REPOS_FILE, normalizeRepoName, REQUIRED_FIELDS } from '../lib/repos.mjs';
 import { PRODUCTION_TARGET_RE } from '../../lib/qa-report.mjs';
 import { QA_SMOKE_DIR } from '../../lib/qa-smoke.mjs';
+import { readFileSync } from 'node:fs';
+import yaml from 'js-yaml';
 
 const repos = loadRepos();
 const byKey = (key) => repos.find((r) => r.key === key);
@@ -21,8 +23,10 @@ describe('repos.json', () => {
   it('cecelia：默认仓、启用、自动合并、状态命名空间为空（沿用旧文件名，零迁移），与现行代码口径一致', () => {
     const c = byKey('cecelia');
     expect(c).toMatchObject({ default: true, enabled: true, automerge: true, state_ns: '', slug: 'perfectuser21/cecelia',
-      clone: '~/perfect21/cecelia-cw-runner', worktree_base: '~/worktrees/cecelia-cw', base_fresh_check: 'lint-base-fresh' });
-    expect(c.required_checks).toEqual(['ci-passed', 'Harness V5 Gate Passed', 'Smoke Glob Runner Passed']);
+      clone: '~/perfect21/cecelia-cw-runner', worktree_base: '~/worktrees/cecelia-cw', base_fresh_check: null });
+    const workflow = yaml.load(readFileSync(new URL('../../../../../../.github/workflows/ci.yml', import.meta.url), 'utf8'));
+    expect(c.required_checks).toEqual([workflow.jobs['ci-passed'].name]);
+    expect(c.required_checks).toEqual(['源码保底通过']);
     expect(new RegExp(c.production_re.join('|')).source).toBe(PRODUCTION_TARGET_RE.source);
     expect(c.qa_smoke.dir).toBe(QA_SMOKE_DIR);
     expect(c.preview).toMatchObject({ type: 'brain_preview', base_repo: 'cecelia' });
@@ -106,7 +110,7 @@ describe('resolveEntry / repoView：每仓库的运行时视图', () => {
     expect(repoView(cfg, z)).toMatchObject({ trustedRepo: '/a', repoAutomerge: false, baseFreshCheck: null,
       install: ['npm', 'ci', '--ignore-scripts'], previewType: 'local' });
     const c = resolveEntry(byKey('cecelia'), { HOME: '/h' });
-    expect(repoView(cfg, c)).toMatchObject({ trustedRepo: '/a', repoAutomerge: true, baseFreshCheck: 'lint-base-fresh',
+    expect(repoView(cfg, c)).toMatchObject({ trustedRepo: '/a', repoAutomerge: true, baseFreshCheck: null,
       install: ['npm', 'ci', '--legacy-peer-deps', '--ignore-scripts'], previewType: 'brain_preview', previewBaseRepo: 'cecelia' });
   });
 

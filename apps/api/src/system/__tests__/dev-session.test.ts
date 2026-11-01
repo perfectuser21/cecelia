@@ -1,416 +1,168 @@
-/**
- * Dev Session Tests - KR1 Implementation
- *
- * Tests for headless /dev session management:
- * - Session ID generation and validation
- * - Session CRUD operations via API
- * - Quality gate validation
- * - Summary generation
- */
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import type { DevSession, SessionSummary } from '../dev-session.js';
+import { createSystemApiFixture, type SystemApiFixture } from './helpers/system-api-fixture.js';
 
-import { describe, it, expect, afterAll } from 'vitest';
-
-const API_BASE = 'http://localhost:5211/api/system';
-
-interface ApiResponse {
+type JsonSession = Omit<DevSession, 'started_at' | 'completed_at' | 'summary'> & {
+  started_at: string;
+  completed_at: string;
+  summary: SessionSummary;
+};
+interface SessionBody {
   success: boolean;
-  [key: string]: unknown;
+  session_id: string;
+  session: JsonSession;
+  sessions: JsonSession[];
+  count: number;
+  summary: SessionSummary;
+}
+let api: SystemApiFixture<SessionBody>;
+beforeAll(async () => { api = await createSystemApiFixture<SessionBody>(); });
+afterAll(async () => { await api?.close(); });
+beforeEach(async () => { await api.reset(); });
+
+async function create(overrides: Record<string, string> = {}) {
+  const response = await api.json('/dev-session', { branch: 'cp-api-test', prd_path: '.prd-test.md', project: '测试项目', ...overrides });
+  expect(response.status).toBe(201);
+  const data = await response.json();
+  expect(data.success).toBe(true);
+  expect(data.session.session_id).toMatch(/^dev_\d{8}_\d{6}_[a-z0-9]{6}$/);
+  return data.session;
+}
+async function stored(key: string) {
+  const { rows } = await api.pool.query('SELECT layer,category,value FROM memory_entries WHERE key=$1', [key]);
+  expect(rows).toHaveLength(1);
+  return rows[0];
+}
+async function steppedSession() {
+  const session = await create();
+  const add = await api.json(`/dev-session/${session.session_id}/step`, { step_number: 1, name: '实现接口' });
+  expect(add.status).toBe(200);
+  const complete = await api.json(`/dev-session/${session.session_id}/step/1/complete`, { artifacts: { files_touched: ['src/api.ts', 'src/api.ts'], scripts_run: ['npm test'] } });
+  expect(complete.status).toBe(200);
+  return session;
 }
 
-interface SessionResponse extends ApiResponse {
-  session?: {
-    session_id: string;
-    branch: string;
-    prd_path: string;
-    project: string;
-    status: string;
-    steps: unknown[];
-    quality_gates?: {
-      all_passed: boolean;
-    };
-    summary?: {
-      files_modified: string[];
-      scripts_executed: string[];
-      next_steps: string[];
-      duration_ms: number;
-    };
-  };
-}
-
-describe.skip('Dev Session API (KR1) (needs live server at localhost:5211)', () => {
-  const createdSessionIds: string[] = [];
-
-  // Clean up test sessions after all tests
-  afterAll(async () => {
-    for (const sessionId of createdSessionIds) {
-      try {
-        // Delete from memory
-        await fetch(`${API_BASE}/memory/dev_session_${sessionId}`, { method: 'DELETE' });
-        await fetch(`${API_BASE}/memory/summary_${sessionId}`, { method: 'DELETE' });
-      } catch {
-        // Ignore cleanup errors
-      }
-    }
+describe('Dev Session API — 真实路由与 episodic 持久化', () => {
+  it('generate-id 返回有效 session ID', async () => {
+    const response = await api.request('/dev-session/generate-id');
+    expect(response.status).toBe(200);
+    const data = await response.json();
+    expect(data.success).toBe(true);
+    expect(data.session_id).toMatch(/^dev_\d{8}_\d{6}_[a-z0-9]{6}$/);
   });
 
-  describe('Session ID Generation', () => {
-    it('should generate a valid session ID', async () => {
-      const response = await fetch(`${API_BASE}/dev-session/generate-id`);
-      const data = (await response.json()) as ApiResponse;
-
-      expect(data.success).toBe(true);
-      expect(data.session_id).toBeDefined();
-
-      // Validate format: dev_YYYYMMDD_HHMMSS_xxxxxx
-      const sessionId = data.session_id as string;
-      expect(sessionId).toMatch(/^dev_\d{8}_\d{6}_[a-z0-9]{6}$/);
-    });
-
-    it('should generate unique session IDs', async () => {
-      const response1 = await fetch(`${API_BASE}/dev-session/generate-id`);
-      const data1 = (await response1.json()) as ApiResponse;
-
-      const response2 = await fetch(`${API_BASE}/dev-session/generate-id`);
-      const data2 = (await response2.json()) as ApiResponse;
-
-      expect(data1.session_id).not.toBe(data2.session_id);
-    });
+  it('连续生成不同 session ID', async () => {
+    const first = await (await api.request('/dev-session/generate-id')).json();
+    const second = await (await api.request('/dev-session/generate-id')).json();
+    expect(first.success).toBe(true);
+    expect(second.success).toBe(true);
+    expect(first.session_id).not.toBe(second.session_id);
   });
 
-  describe('Session Creation', () => {
-    it('should create a new dev session', async () => {
-      const response = await fetch(`${API_BASE}/dev-session`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          branch: 'test-branch',
-          prd_path: '.prd-test.md',
-          project: 'test-project',
-        }),
-      });
-
-      const data = (await response.json()) as SessionResponse;
-      expect(response.status).toBe(201);
-      expect(data.success).toBe(true);
-      expect(data.session).toBeDefined();
-      expect(data.session?.session_id).toMatch(/^dev_\d{8}_\d{6}_[a-z0-9]{6}$/);
-      expect(data.session?.status).toBe('running');
-      expect(data.session?.branch).toBe('test-branch');
-
-      if (data.session?.session_id) {
-        createdSessionIds.push(data.session.session_id);
-      }
-    });
-
-    it('should reject session creation without required fields', async () => {
-      const response = await fetch(`${API_BASE}/dev-session`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          branch: 'test-branch',
-          // missing prd_path and project
-        }),
-      });
-
-      const data = (await response.json()) as ApiResponse;
-      expect(response.status).toBe(400);
-      expect(data.success).toBe(false);
-    });
-
-    it('should allow custom session ID', async () => {
-      const customId = `dev_${new Date().toISOString().slice(0, 10).replace(/-/g, '')}_${new Date().toISOString().slice(11, 19).replace(/:/g, '')}_custom`;
-
-      const response = await fetch(`${API_BASE}/dev-session`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          branch: 'test-branch-custom',
-          prd_path: '.prd-test.md',
-          project: 'test-project',
-          session_id: customId,
-        }),
-      });
-
-      const data = (await response.json()) as SessionResponse;
-      expect(data.success).toBe(true);
-      expect(data.session?.session_id).toBe(customId);
-
-      if (data.session?.session_id) {
-        createdSessionIds.push(data.session.session_id);
-      }
-    });
+  it('创建 running 会话，并在数据库保留分支、PRD与项目', async () => {
+    const session = await create();
+    expect(session).toMatchObject({ branch: 'cp-api-test', prd_path: '.prd-test.md', project: '测试项目', status: 'running', steps: [] });
+    expect(await stored(`dev_session_${session.session_id}`)).toEqual({ layer: 'episodic', category: 'event', value: session });
   });
 
-  describe('Session Query', () => {
-    it('should query dev sessions', async () => {
-      const response = await fetch(`${API_BASE}/dev-session`);
-      const data = (await response.json()) as ApiResponse;
-
-      expect(data.success).toBe(true);
-      expect(data.sessions).toBeDefined();
-      expect(Array.isArray(data.sessions)).toBe(true);
-    });
-
-    it('should get a specific session by ID', async () => {
-      // First create a session
-      const createResponse = await fetch(`${API_BASE}/dev-session`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          branch: 'test-get-branch',
-          prd_path: '.prd-get-test.md',
-          project: 'test-get-project',
-        }),
-      });
-
-      const createData = (await createResponse.json()) as SessionResponse;
-      const sessionId = createData.session?.session_id;
-
-      if (sessionId) {
-        createdSessionIds.push(sessionId);
-
-        // Then get it
-        const response = await fetch(`${API_BASE}/dev-session/${sessionId}`);
-        const data = (await response.json()) as SessionResponse;
-
-        expect(data.success).toBe(true);
-        expect(data.session?.session_id).toBe(sessionId);
-        expect(data.session?.branch).toBe('test-get-branch');
-      }
-    });
-
-    it('should return 404 for non-existent session', async () => {
-      const fakeId = 'dev_20260101_000000_fakeid';
-      const response = await fetch(`${API_BASE}/dev-session/${fakeId}`);
-      const data = (await response.json()) as ApiResponse;
-
-      expect(response.status).toBe(404);
-      expect(data.success).toBe(false);
-    });
+  it('缺少必填字段返回 400，不写入会话', async () => {
+    const response = await api.json('/dev-session', { branch: 'cp-api-test' });
+    expect(response.status).toBe(400);
+    expect((await response.json()).success).toBe(false);
+    expect((await api.pool.query('SELECT key FROM memory_entries')).rows).toEqual([]);
   });
 
-  describe('Quality Gates', () => {
-    it('should set quality gates on a session', async () => {
-      // Create session
-      const createResponse = await fetch(`${API_BASE}/dev-session`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          branch: 'test-qg-branch',
-          prd_path: '.prd-qg-test.md',
-          project: 'test-qg-project',
-        }),
-      });
-
-      const createData = (await createResponse.json()) as SessionResponse;
-      const sessionId = createData.session?.session_id;
-
-      if (sessionId) {
-        createdSessionIds.push(sessionId);
-
-        // Set quality gates
-        const response = await fetch(`${API_BASE}/dev-session/${sessionId}/quality-gates`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            qa_decision: true,
-            audit_pass: true,
-            gate_file: true,
-          }),
-        });
-
-        const data = (await response.json()) as SessionResponse;
-        expect(data.success).toBe(true);
-        expect(data.quality_gates).toBeDefined();
-        expect((data.quality_gates as { all_passed: boolean }).all_passed).toBe(true);
-      }
-    });
-
-    it('should report all_passed=false when not all gates pass', async () => {
-      // Create session
-      const createResponse = await fetch(`${API_BASE}/dev-session`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          branch: 'test-qg-fail-branch',
-          prd_path: '.prd-qg-fail.md',
-          project: 'test-qg-fail-project',
-        }),
-      });
-
-      const createData = (await createResponse.json()) as SessionResponse;
-      const sessionId = createData.session?.session_id;
-
-      if (sessionId) {
-        createdSessionIds.push(sessionId);
-
-        // Set quality gates with one failing
-        const response = await fetch(`${API_BASE}/dev-session/${sessionId}/quality-gates`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            qa_decision: true,
-            audit_pass: false, // This one fails
-            gate_file: true,
-          }),
-        });
-
-        const data = (await response.json()) as SessionResponse;
-        expect(data.success).toBe(true);
-        expect((data.quality_gates as { all_passed: boolean }).all_passed).toBe(false);
-      }
-    });
+  it('允许合法自定义 session ID，并使用相同身份存储', async () => {
+    const session = await create({ session_id: 'dev_20261101_090000_custom' });
+    expect(session.session_id).toBe('dev_20261101_090000_custom');
+    expect((await stored('dev_session_dev_20261101_090000_custom')).value.session_id).toBe(session.session_id);
   });
 
-  describe('Summary Generation', () => {
-    it('should generate a session summary', async () => {
-      // Create session
-      const createResponse = await fetch(`${API_BASE}/dev-session`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          branch: 'test-summary-branch',
-          prd_path: '.prd-summary-test.md',
-          project: 'test-summary-project',
-        }),
-      });
-
-      const createData = (await createResponse.json()) as SessionResponse;
-      const sessionId = createData.session?.session_id;
-
-      if (sessionId) {
-        createdSessionIds.push(sessionId);
-
-        // Generate summary
-        const response = await fetch(`${API_BASE}/dev-session/${sessionId}/summary`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-        });
-
-        const data = (await response.json()) as ApiResponse;
-        expect(data.success).toBe(true);
-        expect(data.summary).toBeDefined();
-
-        const summary = data.summary as {
-          files_modified: string[];
-          scripts_executed: string[];
-          next_steps: string[];
-          duration_ms: number;
-          total_steps: number;
-          completed_steps: number;
-        };
-
-        // Check summary structure
-        expect(Array.isArray(summary.files_modified)).toBe(true);
-        expect(Array.isArray(summary.scripts_executed)).toBe(true);
-        expect(Array.isArray(summary.next_steps)).toBe(true);
-        expect(typeof summary.duration_ms).toBe('number');
-        expect(typeof summary.total_steps).toBe('number');
-        expect(typeof summary.completed_steps).toBe('number');
-      }
-    });
-
-    it('should store summary in episodic memory', async () => {
-      // Create session
-      const createResponse = await fetch(`${API_BASE}/dev-session`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          branch: 'test-memory-branch',
-          prd_path: '.prd-memory-test.md',
-          project: 'test-memory-project',
-        }),
-      });
-
-      const createData = (await createResponse.json()) as SessionResponse;
-      const sessionId = createData.session?.session_id;
-
-      if (sessionId) {
-        createdSessionIds.push(sessionId);
-
-        // Generate summary
-        await fetch(`${API_BASE}/dev-session/${sessionId}/summary`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-        });
-
-        // Check memory for summary
-        const memoryResponse = await fetch(`${API_BASE}/memory/summary_${sessionId}`);
-        const memoryData = (await memoryResponse.json()) as ApiResponse;
-
-        expect(memoryData.success).toBe(true);
-        expect(memoryData.entry).toBeDefined();
-      }
-    });
+  it('查询会话实际按 project/status 筛选并遵守 limit', async () => {
+    const running = await create({ project: '目标项目' });
+    const failed = await create({ project: '目标项目' });
+    expect((await api.json(`/dev-session/${failed.session_id}/complete`, { status: 'failed' })).status).toBe(200);
+    await create({ project: '其他项目' });
+    const response = await api.request(`/dev-session?project=${encodeURIComponent('目标项目')}&status=running&limit=1`);
+    expect(response.status).toBe(200);
+    const data = await response.json();
+    expect(data.success).toBe(true);
+    expect(data.count).toBe(1);
+    expect(data.sessions.map((session: { session_id: string }) => session.session_id)).toEqual([running.session_id]);
   });
 
-  describe('Session Completion', () => {
-    it('should complete a session successfully', async () => {
-      // Create session
-      const createResponse = await fetch(`${API_BASE}/dev-session`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          branch: 'test-complete-branch',
-          prd_path: '.prd-complete-test.md',
-          project: 'test-complete-project',
-        }),
-      });
+  it('按 ID 返回指定会话，而非其他会话', async () => {
+    const first = await create({ branch: 'cp-first' });
+    await create({ branch: 'cp-second' });
+    const response = await api.request(`/dev-session/${first.session_id}`);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ success: true, session: first });
+  });
 
-      const createData = (await createResponse.json()) as SessionResponse;
-      const sessionId = createData.session?.session_id;
+  it('有效格式但不存在的会话返回 404', async () => {
+    const response = await api.request('/dev-session/dev_20260101_000000_fakeid');
+    expect(response.status).toBe(404);
+    expect((await response.json()).success).toBe(false);
+  });
 
-      if (sessionId) {
-        createdSessionIds.push(sessionId);
+  it('三个质量门全部成功才持久化 all_passed=true', async () => {
+    const session = await create();
+    const response = await api.json(`/dev-session/${session.session_id}/quality-gates`, { qa_decision: true, audit_pass: true, gate_file: true });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ success: true, quality_gates: { qa_decision: true, audit_pass: true, gate_file: true, all_passed: true } });
+    expect((await stored(`dev_session_${session.session_id}`)).value.quality_gates.all_passed).toBe(true);
+  });
 
-        // Complete session
-        const response = await fetch(`${API_BASE}/dev-session/${sessionId}/complete`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            status: 'completed',
-            pr_url: 'https://github.com/test/repo/pull/123',
-          }),
-        });
+  it('任一个质量门失败必须持久化 all_passed=false', async () => {
+    const session = await create();
+    const response = await api.json(`/dev-session/${session.session_id}/quality-gates`, { qa_decision: true, audit_pass: false, gate_file: true });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ success: true, quality_gates: { all_passed: false, audit_pass: false } });
+    expect((await stored(`dev_session_${session.session_id}`)).value.quality_gates.all_passed).toBe(false);
+  });
 
-        const data = (await response.json()) as SessionResponse;
-        expect(data.success).toBe(true);
-        expect(data.session?.status).toBe('completed');
-        expect(data.session?.summary).toBeDefined();
-      }
-    });
+  it('summary 聚合真实步骤产物、去重文件并统计完成数', async () => {
+    const session = await steppedSession();
+    const response = await api.json(`/dev-session/${session.session_id}/summary`);
+    expect(response.status).toBe(200);
+    const data = await response.json();
+    expect(data.success).toBe(true);
+    expect(data.summary).toMatchObject({ files_modified: ['src/api.ts'], scripts_executed: ['npm test'], total_steps: 1, completed_steps: 1 });
+    expect(data.summary.next_steps).toHaveLength(3);
+    expect(data.summary.duration_ms).toBeGreaterThanOrEqual(0);
+    expect(data.summary.commit_hash).toMatch(/^[a-f0-9]{40}$/);
+  });
 
-    it('should mark session as failed', async () => {
-      // Create session
-      const createResponse = await fetch(`${API_BASE}/dev-session`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          branch: 'test-fail-branch',
-          prd_path: '.prd-fail-test.md',
-          project: 'test-fail-project',
-        }),
-      });
+  it('summary 实际写入 episodic memory 并保留 session 回链', async () => {
+    const session = await steppedSession();
+    const data = await (await api.json(`/dev-session/${session.session_id}/summary`)).json();
+    expect(data.success).toBe(true);
+    const entry = await stored(`summary_${session.session_id}`);
+    expect(entry).toMatchObject({ layer: 'episodic', category: 'event', value: { session_id: session.session_id, project: '测试项目', branch: 'cp-api-test', status: 'running', summary: data.summary } });
+    expect((await stored(`dev_session_${session.session_id}`)).value.summary).toEqual(data.summary);
+  });
 
-      const createData = (await createResponse.json()) as SessionResponse;
-      const sessionId = createData.session?.session_id;
+  it('complete 持久化 completed、完成时间、汇总与 PR URL', async () => {
+    const session = await create();
+    const response = await api.json(`/dev-session/${session.session_id}/complete`, { status: 'completed', pr_url: 'https://github.com/test/repo/pull/123' });
+    expect(response.status).toBe(200);
+    const data = await response.json();
+    expect(data.success).toBe(true);
+    expect(data.session.status).toBe('completed');
+    expect(data.session.summary.pr_url).toBe('https://github.com/test/repo/pull/123');
+    expect(Date.parse(data.session.completed_at)).toBeGreaterThanOrEqual(Date.parse(data.session.started_at));
+    expect((await stored(`dev_session_${session.session_id}`)).value).toEqual(data.session);
+  });
 
-      if (sessionId) {
-        createdSessionIds.push(sessionId);
-
-        // Fail session
-        const response = await fetch(`${API_BASE}/dev-session/${sessionId}/complete`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            status: 'failed',
-          }),
-        });
-
-        const data = (await response.json()) as SessionResponse;
-        expect(data.success).toBe(true);
-        expect(data.session?.status).toBe('failed');
-      }
-    });
+  it('失败完成会话实际持久化 failed，并产生失败复盘汇总', async () => {
+    const session = await create();
+    const response = await api.json(`/dev-session/${session.session_id}/complete`, { status: 'failed' });
+    expect(response.status).toBe(200);
+    const data = await response.json();
+    expect(data.success).toBe(true);
+    expect(data.session.status).toBe('failed');
+    expect(data.session.summary.next_steps).toHaveLength(2);
+    expect((await stored(`dev_session_${session.session_id}`)).value.status).toBe('failed');
+    expect((await stored(`summary_${session.session_id}`)).value.status).toBe('failed');
   });
 });

@@ -51,7 +51,7 @@ describe('headed smoke contract [BEHAVIOR]', () => {
     expect(script).not.toContain('sprint' + '_dir');
   });
 
-  it('ci.yml claude-headed 分支 seed executor=claude 且不回归 codex-headed 既有分支', () => {
+  it('旧 wrapper 保留两种 executor 的兼容记录，源码 CI 不再生成旧 provider seed', () => {
     const script = readWrapper();
     expect(script).toContain('.github/workflows/ci.yml');
     expect(script).toContain('skill-relay-claude-headed');
@@ -60,29 +60,26 @@ describe('headed smoke contract [BEHAVIOR]', () => {
     expect(script).toContain('"executor":"codex"');
 
     const ciYml = readCiYml();
-    expect(ciYml).toContain('skill-relay-claude-headed');
-    expect(ciYml).toContain('skill-relay-codex-headed');
-    expect(ciYml).toContain('"executor":"claude"');
-    expect(ciYml).toContain('"executor":"codex"');
+    expect(ciYml).not.toContain('skill-relay-claude-headed');
+    expect(ciYml).not.toContain('skill-relay-codex-headed');
+    expect(ciYml).not.toContain('"executor":"claude"');
+    expect(ciYml).not.toContain('"executor":"codex"');
   });
 
-  it('ci.yml claude-headed 精确分支优先于 codex 通用/兜底分支（顺序性静态断言，Plan A — 防弱 oracle）', () => {
+  it('旧 wrapper 自身保留精确 seed 顺序保护，通用 CI 由统一真实运行入口承接', () => {
     // wrapper 脚本必须内嵌行号顺序性断言，而不是只做 4 条字符串存在性 grep
     const script = readWrapper();
     expect(script).toContain('CLAUDE_LINE=$(grep -n "skill-relay-claude-headed"');
     expect(script).toContain('CODEX_SEED_LINE=$(grep -n');
     expect(script).toMatch(/"\$CLAUDE_LINE"\s+-lt\s+"\$CODEX_SEED_LINE"/);
 
-    // 真实 ci.yml 上验证：claude-headed 精确判定行号必须早于 codex 通用/兜底 executor seed 行号，
-    // 否则 generator 只需在文件任意处（含注释/死分支）堆出 4 个目标字符串就能让存在性检查全绿，
-    // 而"claude-headed 被误 seed 成 codex"的真实回归可能原封不动。
+    // 旧动态 DoD/provider seed 入口退役；不能把两种 provider 再混入基础源码验证。
     const ciYml = readCiYml();
-    const lines = ciYml.split('\n');
-    const claudeLineIdx = lines.findIndex((l) => l.includes('skill-relay-claude-headed'));
-    const codexSeedLineIdx = lines.findIndex((l) => l.includes('"executor":"codex"'));
-    expect(claudeLineIdx).toBeGreaterThan(-1);
-    expect(codexSeedLineIdx).toBeGreaterThan(-1);
-    expect(claudeLineIdx).toBeLessThan(codexSeedLineIdx);
+    expect(ciYml).toContain('node scripts/ci/run-basic-check.mjs');
+    expect(ciYml).not.toContain('dod-behavior-dynamic:');
+    const runtime = readFileSync(path.join(ROOT, 'scripts/ci/basic-runtime-smoke.mjs'), 'utf8');
+    expect(runtime).toContain("task_type: 'research'");
+    expect(runtime).toContain('CECELIA_LLM_DISABLED');
   });
 
   it('wrapper 结构性锚点 + 本 sprint 合同已记录 claude-headed relay DoD', () => {

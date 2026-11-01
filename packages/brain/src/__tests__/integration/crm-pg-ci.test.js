@@ -1,7 +1,10 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { describe, it, expect } from 'vitest';
 import unit from '../../../vitest.config.js';
 import integration from '../../../vitest.integration.config.js';
+import deepIntegration from '../../../../../scripts/ci/deep-integration.config.mjs';
+import glob from 'fast-glob';
+import { fileURLToPath } from 'node:url';
 const api = await import('../helpers/crm-pg-fixture.js').catch(() => ({}));
 const files = ['crm-store.pg.integration.test.js', 'crm-contact-resolve.pg.integration.test.js'];
 describe('CRM真PG由既有CI集成消费者运行', () => {
@@ -9,12 +12,11 @@ describe('CRM真PG由既有CI集成消费者运行', () => {
     for (const name of files) expect(existsSync(new URL(`./${name}`, import.meta.url))).toBe(true);
     expect(unit.test.exclude).toContain('src/__tests__/integration/**');
     expect(integration.test.exclude).not.toContain('src/__tests__/integration/**');
-    const workflow = readFileSync(new URL('../../../../../.github/workflows/ci.yml', import.meta.url), 'utf8');
-    const job = workflow.match(/\n  brain-integration:[\s\S]*?(?=\n  [\w-]+:|$)/)?.[0];
-    expect(job).toContain("POSTGRES_INTEGRATION: '1'");
-    expect(job).toContain('--config vitest.integration.config.js');
-    expect(job).toContain('src/__tests__/integration/');
-    expect(job).toContain('DATABASE_URL: postgresql://cecelia:');
+    const selected = glob.sync(deepIntegration.test.include, {
+      cwd: fileURLToPath(new URL('../../../', import.meta.url)),
+      ignore: deepIntegration.test.exclude,
+    });
+    for (const name of files) expect(selected).toContain(`src/__tests__/integration/${name}`);
   });
   it('CI标记直接启用，DATABASE_URL优先，URL实际database不得覆盖成生产', () => {
     expect(api.crmPgTestConfig({ POSTGRES_INTEGRATION: '1', DATABASE_URL: 'postgresql://ci-user:test@localhost:5432/cecelia_test', DB_NAME: 'cecelia' })).toMatchObject({ enabled: true, database: 'cecelia_test', config: { connectionString: 'postgresql://ci-user:test@localhost:5432/cecelia_test' } });

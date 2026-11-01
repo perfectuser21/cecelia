@@ -283,4 +283,40 @@ describe('alertness/escalation', () => {
       expect(results[1].success).toBe(true);
     });
   });
+
+  describe('旧路径迁入：持续时间边界必须实际改变响应级别', () => {
+    afterEach(() => vi.useRealTimers());
+
+    it.each([
+      [2, 299999, 'auto_recovery'],
+      [2, 300000, 'graceful_degrade'],
+      [3, 119999, 'graceful_degrade'],
+      [3, 120000, 'emergency_brake'],
+    ])('alertness=%s 持续 %sms → %s', async (level, elapsed, expected) => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-11-01T00:00:00Z'));
+      await escalateResponse(level, { summary: '持续异常', issues: [] });
+      await vi.advanceTimersByTimeAsync(elapsed);
+      const response = await escalateResponse(level, { summary: '持续异常', issues: [] });
+      expect(response.level).toBe(expected);
+      expect(getCurrentResponseLevel()).toBe(expected);
+      const actions = response.actions.map(action => action.type);
+      expect(actions).toEqual(expected === 'auto_recovery'
+        ? ['monitor', 'collect_metrics']
+        : expected === 'graceful_degrade'
+          ? ['reduce_concurrency', 'increase_interval', 'pause_low_priority']
+          : ['stop_dispatch', 'cancel_pending', 'enable_safe_mode']);
+    });
+
+    it('L0 监控响应返回实际监控结果，且不写任务状态', async () => {
+      const response = await escalateResponse(2, { summary: '观察', issues: [] });
+      mockQuery.mockClear();
+      expect(await executeResponse(response)).toEqual([
+        { action: 'monitor', success: true, result: { monitoring: true, interval: 60000 } },
+        { action: 'collect_metrics', success: true, result: { collecting: true } },
+      ]);
+      expect(mockQuery.mock.calls.some(([sql]) => /UPDATE tasks/.test(sql))).toBe(false);
+    });
+  });
+
 });

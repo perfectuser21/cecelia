@@ -8,9 +8,11 @@ import {
   readFileSync,
   rmSync,
   existsSync,
+  readdirSync,
 } from 'node:fs';
-import { tmpdir, homedir } from 'node:os';
+import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { nativeWorktreeFixture, WORKTREE_MANAGE, worktreePathFromOutput } from '../helpers/native-worktree-fixture';
 
 /**
  * Phase 7.4 — /dev 完整 7 棒接力链 + Stop Hook 循环机制 E2E regression
@@ -29,8 +31,11 @@ import { join, resolve } from 'node:path';
 const PROJECT_ROOT = resolve(__dirname, '../../../../');
 const LAUNCHER = join(PROJECT_ROOT, 'scripts/claude-launch.sh');
 const STOP_SH = join(PROJECT_ROOT, 'hooks/stop.sh');
-const WORKTREE_MANAGE = join(homedir(), '.claude', 'skills', 'dev', 'scripts', 'worktree-manage.sh');
-const worktreeManageExists = existsSync(WORKTREE_MANAGE);
+
+function isolatedEnv(home: string): Record<string, string> {
+  return { PATH: process.env.PATH || '/usr/bin:/bin', HOME: home, LANG: 'C.UTF-8',
+    BRAIN_URL: 'http://127.0.0.1:1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' };
+}
 
 describe('Phase 7.4 /dev 7 棒接力链 E2E regression', () => {
   let tmpRoot: string;
@@ -58,12 +63,15 @@ describe('Phase 7.4 /dev 7 棒接力链 E2E regression', () => {
       `#!/usr/bin/env bash
 echo "CLAUDE_SESSION_ID_ENV=\${CLAUDE_SESSION_ID:-<empty>}"
 echo "ARGS=$*"
+echo "FIXTURE_HOME=$HOME"
+echo "BRAIN_URL=$BRAIN_URL"
+echo "TOKEN_PRESENT=\${CECELIA_INTERNAL_TOKEN:+yes}"
 `,
     );
     chmodSync(mockClaude, 0o755);
 
     const env: Record<string, string> = {
-      ...process.env,
+      ...isolatedEnv(tmpRoot),
       PATH: `${mockDir}:${process.env.PATH}`,
       CLAUDE_SESSION_ID: 'phase74-s1-fixed-uuid',
       // Phase 7.7: S1 只验 session-id 透传，关掉自动 worktree（CI 主仓 checkout 会误触发真建）
@@ -72,6 +80,7 @@ echo "ARGS=$*"
     // launcher 优先 CLAUDE_CODE_EXECPATH，必须 unset 才能让 PATH 里 mock claude 生效
     delete env.CLAUDE_CODE_EXECPATH;
     const out = execSync(`bash "${LAUNCHER}" --help`, {
+      cwd: tmpRoot,
       shell: '/bin/bash',
       env,
     }).toString();
@@ -82,6 +91,9 @@ echo "ARGS=$*"
     expect(out).toContain('--session-id phase74-s1-fixed-uuid');
     // 断言 3：额外参数透传（--help）
     expect(out).toContain('--help');
+    expect(out).toContain(`FIXTURE_HOME=${tmpRoot}`);
+    expect(out).toContain('BRAIN_URL=http://127.0.0.1:1');
+    expect(out).toContain('TOKEN_PRESENT=\n');
   });
 
   // ==========================================================================
@@ -89,62 +101,22 @@ echo "ARGS=$*"
   //   CLAUDE_SESSION_ID 在环境里 → cmd_create 写入 .dev-lock.* 的 owner_session
   //   破坏点：worktree-manage.sh::_resolve_claude_session_id（Phase 7.1 加的 env 优先分支）
   // ==========================================================================
-  it.skipIf(!worktreeManageExists)('[S2] worktree-manage cmd_create 把 CLAUDE_SESSION_ID 写进 .dev-lock owner_session', () => {
-    // 临时 git repo
-    const repo = join(tmpRoot, 'repo');
-    mkdirSync(repo, { recursive: true });
-    execSync(`git init -q -b main "${repo}"`, { stdio: 'pipe' });
-    execSync(`git -C "${repo}" config user.email test@test.com`, { stdio: 'pipe' });
-    execSync(`git -C "${repo}" config user.name test`, { stdio: 'pipe' });
-    execSync(`git -C "${repo}" commit --allow-empty -qm init`, { stdio: 'pipe' });
-
-    // WORKTREE_BASE 指向 tmpRoot 下一个独立目录，避免污染真实 ~/worktrees
-    const worktreeBase = join(tmpRoot, 'wts');
-    mkdirSync(worktreeBase, { recursive: true });
-
-    const envSessionId = 'phase74-s2-env-uuid';
-    const out = execSync(
-      `cd "${repo}" && bash "${WORKTREE_MANAGE}" create phase74-s2-task 2>&1`,
-      {
-        shell: '/bin/bash',
-        env: {
-          ...process.env,
-          CLAUDE_SESSION_ID: envSessionId,
-          WORKTREE_BASE: worktreeBase,
-          // 覆盖 HOME 以防 _resolve fallback 读主机 env var 干扰
-          HOME: tmpRoot,
-        },
-      },
-    ).toString();
-
-    // 最后一行是 worktree_path（stdout，非 stderr）
-    const lines = out.split('\n').filter(Boolean);
-    const worktreePath = lines[lines.length - 1];
-    expect(worktreePath).toContain(worktreeBase);
-    expect(existsSync(worktreePath)).toBe(true);
-
-    // 找 .dev-lock.<branch>
-    const lockFiles = execSync(
-      `ls "${worktreePath}"/.dev-lock.* 2>/dev/null || true`,
-      { shell: '/bin/bash' },
-    )
-      .toString()
-      .split('\n')
-      .filter(Boolean);
-    expect(lockFiles.length).toBeGreaterThan(0);
-
-    const lockContent = readFileSync(lockFiles[0], 'utf8');
-    // 关键断言：owner_session 等于传入的 env var
-    expect(lockContent).toContain(`owner_session: ${envSessionId}`);
-
-    // 清理 worktree（释放 git 引用）
+  it('[S2] tracked worktree-manage cmd_create 把 CLAUDE_SESSION_ID 写进 .dev-lock owner_session', () => {
+    const native = nativeWorktreeFixture();
     try {
-      execSync(`git -C "${repo}" worktree remove --force "${worktreePath}"`, {
-        stdio: 'pipe',
-      });
-    } catch {
-      /* ignore */
-    }
+      const envSessionId = 'phase74-s2-env-uuid';
+      const result = native.run('bash', [WORKTREE_MANAGE, 'create', 'phase74-s2-task'], { CLAUDE_SESSION_ID: envSessionId });
+      expect(result.status, result.stdout + result.stderr).toBe(0);
+      const worktreePath = worktreePathFromOutput(result.stdout);
+      expect(worktreePath).toBe(join(native.worktrees, 'repo/phase74-s2-task'));
+      expect(existsSync(worktreePath)).toBe(true);
+      const lockFiles = readdirSync(worktreePath).filter(name => name.startsWith('.dev-lock.'));
+      expect(lockFiles).toHaveLength(1);
+      const lock = JSON.parse(readFileSync(join(worktreePath, lockFiles[0]), 'utf8'));
+      expect(lock.owner_session).toBe(envSessionId);
+      expect(lock.worktree_path).toBe(worktreePath);
+      expect(lock.branch).toMatch(/^cp-/);
+    } finally { native.dispose(); }
   });
 
   // ==========================================================================
@@ -204,7 +176,7 @@ exit 0
         const stdout = execSync(`bash "${join(hookDir, 'stop.sh')}" 2>&1`, {
           cwd: repo,
           encoding: 'utf8',
-          env: { ...process.env, CLAUDE_HOOK_STDIN_JSON_OVERRIDE: stdin },
+          env: { ...isolatedEnv(tmpRoot), CLAUDE_HOOK_STDIN_JSON_OVERRIDE: stdin },
         });
         return { exitCode: 0, stdout };
       } catch (e: any) {
@@ -249,7 +221,7 @@ exit 0
       `cd "${empty}" && bash "${STOP_SH}" 2>&1; echo "EXIT=$?"`,
       {
         shell: '/bin/bash',
-        env: { ...process.env, CLAUDE_HOOK_STDIN_JSON_OVERRIDE: stdinJSON },
+        env: { ...isolatedEnv(tmpRoot), CLAUDE_HOOK_STDIN_JSON_OVERRIDE: stdinJSON },
       },
     ).toString();
 

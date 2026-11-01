@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { existsSync, readFileSync } from 'fs';
+import { existsSync } from 'fs';
 import { execFileSync } from 'child_process';
 import { join } from 'path';
 
@@ -9,7 +9,6 @@ const ROUTER = join(ROOT, 'packages/brain/scripts/ci/changed-test-router.mjs');
 const CHECKER = join(ROOT, 'packages/brain/scripts/ci/skill-contract-check.mjs');
 const EXISTS = join(ROOT, 'packages/brain/scripts/ci/contract-exists.mjs');
 const FIXTURES = join(ROOT, 'packages/brain/scripts/ci/__tests__/fixtures');
-const EVALUATOR = join(ROOT, 'packages/workflows/skills/harness-evaluator/SKILL.md');
 
 function runNode(file: string, args: string[]): { code: number; out: string } {
   try {
@@ -39,12 +38,12 @@ describe('CI 防线三件套 [BEHAVIOR]', () => {
   it('Step3 篡改检出: checkEvaluator 删 env_missing 后 ok=false 且 missing 含 env_missing', async () => {
     expect(existsSync(CHECKER)).toBe(true);
     const m: any = await import(CHECKER);
-    const content = readFileSync(EVALUATOR, 'utf8');
+    const content = '# evaluator fixture\nenv_missing\nB-1.6\nB-1.8';
     const tampered = content.replace(/env_missing/g, 'ENV_REMOVED');
     const r = m.checkEvaluator(tampered);
     expect(r.ok).toBe(false);
     expect(r.missing).toContain('env_missing');
-    // 现网真实快照应全绿
+    // 合法 fixture 必须先通过，再验证删除必需声明会报错
     expect(m.checkEvaluator(content).ok).toBe(true);
   });
 

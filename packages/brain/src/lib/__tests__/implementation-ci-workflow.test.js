@@ -5,9 +5,32 @@ import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync,execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import {readFixedLocalGitBlob} from '../../../../../scripts/ci/fixed-local-git.mjs';
+const LEGACY_REVISION='35e2a91d971e8dc432d6f36361c65cded5d64ec8';
+function legacyImpactWorkflow(){
+ const root=fileURLToPath(new URL('../../../../../',import.meta.url));
+ const bytes=readFixedLocalGitBlob(root,{revision:LEGACY_REVISION,path:'.github/workflows/implementation-impact.yml'});
+ expect(createHash('sha256').update(bytes).digest('hex')).toBe('4e59206bd6dd08b77ea3a59e0feb44a2371ffc0fa9139b81f67e64a0169a9cf9');
+ return yaml.load(bytes.toString('utf8'));
+}
 describe('implementation-ci-workflow',()=>{
-it('main显式来源环境只启用官方self main push和dispatch，冻结主run与PR来源保持',()=>{
+it('当前future工作流只由PR、显式manual或call进入，成功条件与只读token保持真实边界',()=>{
  const workflow=yaml.load(readFileSync(new URL('../../../../../.github/workflows/implementation-impact.yml',import.meta.url),'utf8'));
+ expect(Object.keys(workflow.on).sort()).toEqual(['pull_request','workflow_call','workflow_dispatch']);
+ expect(workflow.on.pull_request.branches).toEqual(['main']);expect(workflow.on.push).toBeUndefined();
+ expect(workflow.permissions).toEqual({contents:'read',actions:'read',checks:'read','pull-requests':'read'});
+ const expression=workflow.jobs.gate.if.replaceAll('needs.snapshot-main','needs["snapshot-main"]');
+ const evaluate=new Function('github','needs','always',`return (${expression});`);
+ for(const [event,result,expected]of [['pull_request','skipped',true],['workflow_dispatch','success',true],['workflow_call','success',true],['push','success',false],['release','success',false],['workflow_dispatch','failure',false]]){
+  const enabled=Object.hasOwn(workflow.on,event)&&evaluate({event_name:event},{'snapshot-main':{result}},()=>true);
+  expect(Boolean(enabled),event+':'+result).toBe(expected);
+ }
+ const gate=JSON.stringify(workflow.jobs.gate);expect(gate).not.toContain('CECELIA_INTERNAL_TOKEN');
+ for(const name of ['准备固定中央Skill对象缓存','实际变更影响与固定回归'])expect(workflow.jobs.gate.steps.find(step=>step.name===name).env.GH_TOKEN).toBe('${{ github.token }}');
+});
+it('固定legacy兼容：main显式来源环境只启用官方self main push和dispatch，冻结主run与PR来源保持',()=>{
+ const workflow=legacyImpactWorkflow();
  const env=workflow.jobs.gate.env,run=workflow.jobs.gate.steps.find(s=>s.name==='实际变更影响与固定回归').run;
  expect(createHash('sha256').update(run).digest('hex')).toBe('8e54cd03b82a18c8c94eaf0a438744193e093d680aa133f416e33ba4ca3ae21d');
  expect(env.ADMISSION_SCOPES).toBe('${{ inputs.admission_scopes || vars.IMPLEMENTATION_ADMISSION_SCOPES || (github.event_name == \'pull_request\' && github.repository == \'perfectuser21/cecelia\' && \'{"schema_version":1,"scopes":["cecelia-kr","cecelia-factory"]}\' || \'\') }}');
@@ -25,20 +48,28 @@ it('正常Brain单测执行巡查可信baseline实际ZIP与治理行为回归',(
  expect(workflow.on.workflow_dispatch).toBeDefined();expect(JSON.stringify(workflow.jobs)).toContain('refs/heads/main');
  expect(JSON.stringify(workflow.jobs['device-patrol-baseline'])).not.toContain('--data-binary');expect(JSON.stringify(workflow.jobs['device-patrol-baseline'])).not.toContain('pull_request');
 });
-it('主CI集成入口安装根扫描器与Brain锁依赖，不能被子workspace安装裁剪',()=>{
+it('主CI集成入口安装根扫描器与Brain锁依赖，不能被子workspace安装裁剪',async()=>{
  const workflow=yaml.load(readFileSync(new URL('../../../../../.github/workflows/ci.yml',import.meta.url),'utf8'));
- const steps=workflow.jobs['brain-integration'].steps;
- const tests=steps.findIndex(s=>s.name==='Integration Tests');
- const installs=steps.slice(0,tests).filter(s=>/npm ci/.test(s.run||''));
+ const steps=workflow.jobs.checks.steps;
+ const tests=steps.findIndex(s=>s.run?.includes('node scripts/ci/run-basic-check.mjs'));
+ const installs=steps.slice(0,tests).filter(s=>!s.if&&/npm ci/.test(s.run||''));
  expect(installs.length).toBeGreaterThan(0);
  expect(installs.at(-1)['working-directory']||'.').toBe('.');
  expect(installs.at(-1).run.trim()).toMatch(/^npm ci(?: --(?:ignore-scripts|no-audit|no-fund))*$/);
- expect(steps[tests].run).toContain('src/__tests__/integration/');
+ expect(steps[tests].run).toContain('scripts/ci/run-basic-check.mjs');
+ const {commandsFor}=await import('../../../../../scripts/ci/run-basic-check.mjs');
+ const root=join(fileURLToPath(new URL('../../../../../',import.meta.url)),'.');
+ expect(commandsFor('brain-integration')).toEqual([
+  {cwd:root,command:'node',args:['scripts/ci/basic-runtime-smoke.mjs','--validate-only']},
+  {cwd:join(root,'packages/brain'),command:'node',args:['src/migrate.js']},
+  {cwd:root,command:'node',args:['--test','scripts/ci/__tests__/runtime-signal.integration.test.mjs']},
+  {cwd:root,command:'node',args:['scripts/ci/basic-runtime-smoke.mjs']},
+ ]);
 });
-it('实际PR/main触发存在，中央凭据只在main快照job，回归job不持Brain token',()=>{
+it('固定legacy兼容：实际PR/main触发存在，中央凭据只在main快照job，回归job不持Brain token',()=>{
   const path=new URL('../../../../../.github/workflows/implementation-impact.yml',import.meta.url);
   expect(existsSync(path),'不能只交CLI测试，必须有实际workflow').toBe(true);
-  const workflow=yaml.load(readFileSync(path,'utf8'));
+  const workflow=legacyImpactWorkflow();
   expect(workflow.on.pull_request.branches).toContain('main');expect(workflow.on.push.branches).toContain('main');
   expect(workflow.jobs['snapshot-main'].if).toContain("github.event_name != 'pull_request'");
   expect(JSON.stringify(workflow.jobs['snapshot-main'])).toContain('CECELIA_INTERNAL_TOKEN');
@@ -54,8 +85,8 @@ it('执行产物与候选源码的job不能保存受信分支npm缓存',()=>{
  }
 });
 
-it('自仓PR仅精确native双scope消费同一官方artifact companion，main exporter字节接口保持单scope',()=>{
- const workflow=yaml.load(readFileSync(new URL('../../../../../.github/workflows/implementation-impact.yml',import.meta.url),'utf8'));
+it('固定legacy兼容：自仓PR仅精确native双scope消费同一官方artifact companion，main exporter字节接口保持单scope',()=>{
+ const workflow=legacyImpactWorkflow();
  const producer=workflow.jobs['snapshot-main'];
  expect(producer.steps.find(s=>s.env).env.ADMISSION_SCOPES).toBeUndefined();
  expect(producer.steps.filter(s=>(s.uses||'').startsWith('actions/upload-artifact')).map(s=>({path:s.with.path,condition:s.if}))).toEqual([

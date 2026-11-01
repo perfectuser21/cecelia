@@ -2643,11 +2643,6 @@
       "role": "verification"
     },
     {
-      "owner_path": "scripts/ci/implementation-verification-retirements.mjs",
-      "path": "packages/brain/src/__tests__/ci-verification-retirement-contracts.test.js",
-      "role": "verification"
-    },
-    {
       "owner_path": "scripts/ci/ci-admission-publisher.mjs",
       "path": "packages/brain/scripts/smoke/ci-admission-bootstrap-smoke.sh",
       "role": "verification"
@@ -2740,11 +2735,6 @@
     {
       "owner_path": "scripts/ci/ci-admission-publisher.mjs",
       "path": "scripts/ci/__tests__/basic-ci-admission-workflow.test.mjs",
-      "role": "verification"
-    },
-    {
-      "owner_path": "scripts/ci/ci-admission-publisher.mjs",
-      "path": "scripts/ci/__tests__/ci-admission-mechanisms.test.mjs",
       "role": "verification"
     }
   ]

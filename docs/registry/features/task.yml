@@ -336,7 +336,6 @@ features:
         - packages/brain/src/__tests__/quarantine-release.test.js
         - packages/brain/src/__tests__/quarantine-systemic.test.js
         - packages/brain/src/__tests__/quarantine.test.js
-        - packages/brain/src/__tests__/quota-exhausted-no-quarantine.test.js
         - packages/brain/src/__tests__/quota-exhausted.test.js
       integration: []
       e2e: []
@@ -356,7 +355,6 @@ features:
             - packages/brain/src/__tests__/quarantine-release.test.js
             - packages/brain/src/__tests__/quarantine-systemic.test.js
             - packages/brain/src/__tests__/quarantine.test.js
-            - packages/brain/src/__tests__/quota-exhausted-no-quarantine.test.js
             - packages/brain/src/__tests__/quota-exhausted.test.js
           integration: []
           e2e: []
