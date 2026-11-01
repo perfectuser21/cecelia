@@ -3,7 +3,7 @@
   "repo": "perfectuser21/cecelia",
   "relations": [
     {
-      "owner_path": "packages/brain/scripts/coding-workflow/runner/runner.sh",
+      "owner_path": "packages/brain/scripts/coding-workflow/runner/run-once.mjs",
       "path": "packages/brain/scripts/coding-workflow/runner/__tests__/runner-sh.test.mjs",
       "role": "verification"
     },
