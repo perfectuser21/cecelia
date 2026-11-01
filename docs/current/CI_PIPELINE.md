@@ -1,6 +1,6 @@
 ---
 id: current-ci-pipeline
-version: 2.0.0
+version: 2.1.0
 updated: 2026-11-01
 authority: CURRENT_STATE
 ---
@@ -8,6 +8,14 @@ authority: CURRENT_STATE
 # Cecelia CI：最小保障与独立诊断
 
 配置以本分支 `.github/workflows/` 和 `scripts/ci/` 为准。GitHub 合并保护是独立的外部配置，迁移时必须读回核对；修改 YAML 不会自动更新保护规则。
+
+| CI 类型 | 触发与目的 | 执行范围 |
+|---|---|---|
+| PR CI | 合并前验证候选及其累计变更 | 受影响组件的完整测试、安全与四项合并门禁 |
+| Main CI | 验证真正合入主干的版本，供下一批 PR 使用 | 全部现役源码组件；成功后单独生成 CI 专用来源基线 |
+| Nightly CI | 集中运行较慢的数据库和容器回归 | 完整 PG 集合、Walking 与 Map Manifest |
+
+PR 和 Main 共用 `ci.yml`，Nightly 使用 `nightly-regression.yml`；下方的来源、Skill 和基线工作流承担独立合同，不能按工作流文件数理解为重复执行同一组测试。通用 CI 不占手机或社媒账号，真实账号验收另走受控队列。
 
 ## 最低保障
 
@@ -71,6 +79,7 @@ Brain/Engine/API 的共享依赖变更会选择共享运行组及 Ops 回归；�
 | 工作流 | 定位 |
 |---|---|
 | implementation-impact.yml | 来源准入；先执行发布快照、跨仓、技能与巡查的原生机制回归（含基线选择与只读就绪），再进行真实差分准入；所有目标main的PR均接收，中央/live快照只保留按需及跨仓显式调用，来源资格保护保留 |
+| ci-admission-baseline.yml | main 的源码 CI 真实成功后，用专属 PG 重建三个来源并执行完整登记断言；发布 CI 专用原始 ZIP，供后续 PR 复验，不读取线上 Brain 或生成发布资格 |
 | skill-source-ownership.yml | 所有权专项的单元测试及真实校验；最低 scripts 跑道也运行同一校验器，专项继续作为独立必需检查 |
 | skills-source-check.yml | 固定 Skill 来源的三系统恢复校验及 Brain/Engine/Quality/root 正文合同；所有目标main的PR与main push执行，固定Skill合同通过严格汇总全部结果 |
 | ci-dashboard-pwa-e2e.yml | 当前 Dashboard 的 PWA/任务台浏览器专项 |
@@ -84,6 +93,10 @@ Brain/Engine/API 的共享依赖变更会选择共享运行组及 Ops 回归；�
 `cecelia_source_only` 及生产拒绝逻辑保留。来源准入失败应报告未就绪，不能通过删除来源保护来获得“全绿”。
 
 来源选择器机制测试使用不可变历史 Git 样本，保留真实字节、AST、篡改、超时和缓存验证；另验证当前候选仍不能继承该样本资格。机制测试通过不等于候选来源已准入，实际 Implementation impact 继续独立判定当前修订。
+
+CI 基线保留 121 个登记格、17 项断言绑定和 4 个实际命令；没有登记断言的 104 个格继续为 UNKNOWN，四个命令通过不会把它们标成已验收。基线封套明确为 `ci_admission_only`，不能用作生产、恢复或业务执行凭据。兼容引导仅接受逐字节固定的旧完整 CI 配置及其真实 `ci-passed` 官方成功记录；新版使用真实 `源码保底通过`，两种身份都进入封套并在消费时重验。
+
+PR 从原始 ZIP 和官方 run/job/check/App 身份重新建立内存能力，三个 scope 共用同一个本人 `ci_admission_*` schema，完成原生投影和断言前后复验后清理；报告可以保存，内部裸快照不能落盘。若最近 main 尚无基线，仅按真实 first-parent 向前选择有效祖先并检查累计变更；遇到已存在但损坏的产物、身份或摘要不符时直接失败，不能改用较旧证据掩盖错误。
 
 ## 已退出自动通用门禁的旧入口
 
