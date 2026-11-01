@@ -338,6 +338,19 @@ export function registerReviewedAGuardTests({ BRAIN_ROOT, findClaudeInvocations 
    const unknown=new Map(s);unknown.set(source,original.replace('EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = 0','EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = 2'));
    expect(scan(unknown).some(h=>h.rule==='E1')).toBe(true);
   });
+  it('C独立A只读cohort保留旧完整0/1，新source与workspace缺项或混搭均拒绝',()=>{
+   const current=base(),source=path.join(root,'existing-ops-source.js'),workspace=path.join(root,'existing-ops-workspace-source.js');
+   expect(hashSource(current.get(snapshot))).toBe('3c9323fee71c1354fe9e6b3dd3ca03d1a87ef0059e31af4763561b049f4cfc9c');
+   expect(hashSource(current.get(workspace))).toBe('debf69ed808e420fcc52507e661e740f66d969f8354cef6bff0093a9cbad859f');
+   const historical=new Map([...current.keys()].map(f=>[f,execFileSync('git',['--no-replace-objects','show','35e2a91d971e8dc432d6f36361c65cded5d64ec8:'+path.relative(path.resolve(BRAIN_ROOT,'../..'),f)],{cwd:BRAIN_ROOT,encoding:'utf8',maxBuffer:1024*1024})]));
+   for(const sources of [historical,current])for(const marker of [0,1]){
+    const variant=new Map(sources);variant.set(source,variant.get(source).replace(/EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = [01]/,'EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = '+marker));expect(scan(variant)).toEqual([]);
+   }
+   for(const file of [source,workspace]){
+    const mixed=new Map(current);mixed.set(file,historical.get(file));expect(scan(mixed).some(h=>h.rule==='E1')).toBe(true);
+    const missing=new Map(current);missing.delete(file);expect(scan(missing).some(h=>h.rule==='E1')).toBe(true);
+   }
+  });
   it('已发布cb7对应main原子marker0/1完整组合保留，新旧移动成员不得混搭',()=>{
    const published=new Map([...base().keys()].map(f=>[f,execFileSync('git',['show','e8d727e21867aabe1e9246b5a940e08ecd063f33:'+path.relative(path.resolve(BRAIN_ROOT,'../..'),f)],{cwd:BRAIN_ROOT,encoding:'utf8',maxBuffer:1024*1024})]));
    const source=path.join(root,'existing-ops-source.js');
