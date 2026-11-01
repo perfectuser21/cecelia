@@ -9,6 +9,7 @@ import { describe, it, expect, vi } from 'vitest';
 vi.mock('../project-notion-ingest.js', () => ({ ingestProjectPage: vi.fn(async () => null), pullProjects: vi.fn() }));
 
 vi.mock('../recurring-notion-sync.js', () => ({ notionReq: vi.fn(), getToken: () => 'tok' }));
+vi.mock('../projection/workflow-body.js', () => ({ syncManagedBodyBlock: vi.fn(async () => true) }));
 
 import {
   buildProjectProps, buildProjectBody, buildPendingDecisionProps, pushProjectRoots, pushPendingDecisions, digestOf,
@@ -136,7 +137,7 @@ describe('pushProjectRoots', () => {
     const updates = [];
     const pool = poolWith({ roots: [ROOT], updates });
     const req = vi.fn(async (t, path, method, body) => {
-      if (method === 'POST' && path === '/pages') { expect(body.children.length).toBeGreaterThan(4); return { id: 'page-1' }; }
+      if (method === 'POST' && path === '/pages') { expect(body.children[0].toggle.children.length).toBeGreaterThan(4); return { id: 'page-1' }; }
       return {};
     });
     const s = await pushProjectRoots(pool, 'tok', { notionReq: req });
@@ -153,12 +154,12 @@ describe('pushProjectRoots', () => {
     expect(s.skipped).toBe(1);
     expect(req).not.toHaveBeenCalled();
   });
-  it('指纹变了 → PATCH 属性 + 删旧块 + 追加新正文', async () => {
+  it('指纹变了 → PATCH 属性并同步受管正文', async () => {
     const pool = poolWith({ roots: [{ ...ROOT, notion_props: { notion_id: 'page-1', project_digest: 'stale' } }] });
     const calls = [];
     const req = vi.fn(async (t, path, method) => { calls.push(`${method} ${path}`); if (method === 'GET') return { results: [{ id: 'b1' }, { id: 'b2' }] }; return {}; });
     await pushProjectRoots(pool, 'tok', { notionReq: req });
-    expect(calls).toEqual(['GET /pages/page-1', 'PATCH /pages/page-1', 'GET /blocks/page-1/children?page_size=100', 'DELETE /blocks/b1', 'DELETE /blocks/b2', 'PATCH /blocks/page-1/children']);
+    expect(calls).toEqual(['GET /pages/page-1', 'PATCH /pages/page-1']);
   });
   it('页被删（404）→ 重建新页', async () => {
     const updates = [];

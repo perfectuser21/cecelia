@@ -55,9 +55,11 @@ function notionFixture() {
     const blocks = path.match(/^\/blocks\/([^/]+)\/children/);
     if (blocks) {
       const page = pages.get(blocks[1]);
-      if (method === 'GET') return structuredClone({ results: page.children, has_more: false });
-      page.children.push(...body.children.map(b => ({ ...structuredClone(b), id: randomUUID() })));
-      edit(page, {}); return { results: [] };
+      const child = page ? null : [...pages.values()].flatMap(p => p.children).find(b => b.id === blocks[1]);
+      if (method === 'GET') return structuredClone({ results: page ? page.children : child?.toggle?.children || [], has_more: false });
+      const created = body.children.map(b => ({ ...structuredClone(b), id: randomUUID() }));
+      if (body.position?.type === 'start') page.children.unshift(...created); else page.children.push(...created);
+      edit(page, {}); return { results: structuredClone(created) };
     }
     if (path.startsWith('/blocks/') && method === 'DELETE') {
       for (const page of pages.values()) page.children = page.children.filter(b => b.id !== path.slice('/blocks/'.length));
