@@ -297,6 +297,13 @@ const CI_ACTIVE_B_TOOL_HASHES={...CI_ADMISSION_TOOL_HASHES,
 const CI_ACTIVE_B_ENABLED_HASHES={...CI_ACTIVE_B_TOOL_HASHES,
  'existing-ops-source.js':CI_ACTIVE_A_ENABLED_HASHES['existing-ops-source.js'],
 };
+// D仅扩完整B快照调用方cohort；旧十组与旧A快照的资格不变。
+const CI_OUTPUT_TOOL_HASHES={...CI_ACTIVE_B_TOOL_HASHES,
+ 'existing-ops-workspace-source.js':'2ddbbf19d4d5a89b07b3792e801c5e281248dc778f99169456fe218bfc66c54c',
+};
+const CI_OUTPUT_ENABLED_HASHES={...CI_OUTPUT_TOOL_HASHES,
+ 'existing-ops-source.js':CI_ACTIVE_B_ENABLED_HASHES['existing-ops-source.js'],
+};
 const cache=new Map(), referenceCache=new Map();
 function hash(text,parse,shape){
  if(!cache.has(text))cache.set(text,createHash('sha256').update(shape(parse(text))).digest('hex'));
@@ -315,7 +322,7 @@ export function reviewedADataRanges(src,{file,sources,root,parse,shape,rows,deco
   const isRecovery=typeof build==='string'&&hash(build,parse,shape)===B_RECOVERY_QA_HASHES['existing-ops-build-source.js'];
   const isStaging=runtimeHash===B_STAGING_HASHES['existing-ops-runtime-source.js'];
   const isDrainStaging=runtimeHash===B_DRAIN_STAGING_HASHES['existing-ops-runtime-source.js'];
-  const ciTuple=[CI_TOOL_HASHES,CI_ENABLED_HASHES,CI_EDGE_TOOL_HASHES,CI_EDGE_ENABLED_HASHES,CI_ADMISSION_TOOL_HASHES,CI_ADMISSION_ENABLED_HASHES,CI_ACTIVE_A_TOOL_HASHES,CI_ACTIVE_A_ENABLED_HASHES,CI_ACTIVE_B_TOOL_HASHES,CI_ACTIVE_B_ENABLED_HASHES].find(tuple=>Object.entries(tuple).every(([name,digest])=>{
+  const ciTuple=[CI_TOOL_HASHES,CI_ENABLED_HASHES,CI_EDGE_TOOL_HASHES,CI_EDGE_ENABLED_HASHES,CI_ADMISSION_TOOL_HASHES,CI_ADMISSION_ENABLED_HASHES,CI_ACTIVE_A_TOOL_HASHES,CI_ACTIVE_A_ENABLED_HASHES,CI_ACTIVE_B_TOOL_HASHES,CI_ACTIVE_B_ENABLED_HASHES,CI_OUTPUT_TOOL_HASHES,CI_OUTPUT_ENABLED_HASHES].find(tuple=>Object.entries(tuple).every(([name,digest])=>{
    const text=sources.get(path.join(root,name));return typeof text==='string'&&hash(text,parse,shape)===digest;
   }));
   if(isRecovery&&!isQa&&!isStaging&&!isDrainStaging&&!ciTuple)return null;
