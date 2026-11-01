@@ -4,7 +4,10 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {execFileSync} from 'node:child_process';
 let legacySeed;
-export function disposeVerificationSeed(){if(legacySeed)rmSync(legacySeed,{recursive:true,force:true});}
+export function cleanupVerificationFixture(root,{remove=rmSync}={}){
+ return remove(root,{recursive:true,force:true});
+}
+export function disposeVerificationSeed(){if(legacySeed)cleanupVerificationFixture(legacySeed);}
 export function immutableVerificationSeed(root){
  if(legacySeed)return legacySeed;legacySeed=realpathSync(mkdtempSync(join(tmpdir(),'derived-immutable-git-')));
  const git=(...args)=>execFileSync('git',args,{cwd:legacySeed,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
@@ -13,7 +16,7 @@ export function immutableVerificationSeed(root){
 }
 export function fixedInputFixture(t,{kind='regular'}={}){
  const root=mkdtempSync(join(tmpdir(),'derived-input-git-'));
- t.after(()=>rmSync(root,{recursive:true,force:true}));
+ t.after(()=>cleanupVerificationFixture(root));
  const git=(...args)=>execFileSync('git',['--no-replace-objects','-c','core.hooksPath=/dev/null','-c','commit.gpgSign=false',...args],{cwd:root,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
  git('init','-q');git('remote','add','origin','https://github.com/perfectuser21/cecelia.git');
  const path='packages/brain/src/__tests__/actual.test.js';mkdirSync(join(root,'packages/brain/src/__tests__'),{recursive:true});
