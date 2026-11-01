@@ -2,33 +2,13 @@ name: Implementation impact
 on:
   pull_request:
     branches: [main]
-  push:
-    branches: [main]
   workflow_dispatch:
     inputs:
-      base_revision:
-        description: '固定基线40位SHA（须已有中央历史定义）'
-        required: true
-        type: string
-      export_infra_baseline:
-        description: '可信main首次导出独立infra基线；不启用业务或替代原双scope'
-        required: false
-        type: boolean
-        default: false
-      source_baseline_recovery:
-        description: '仅已独立准入并合并的来源bootstrap：隔离编译来源基线，不声明部署就绪'
-        required: false
-        type: boolean
-        default: false
-      source_reviewed_head:
-        description: '仅来源恢复：已独立审查的最终main SHA，必须等于本次运行SHA'
-        required: false
-        type: string
-      export_device_patrol_source_identity:
-        description: '仅可信main导出已登记巡查来源身份；不执行候选源码'
-        required: false
-        type: boolean
-        default: false
+      base_revision: {description: '固定基线40位SHA（须已有中央历史定义）', required: true, type: string}
+      export_infra_baseline: {description: '可信main首次导出独立infra基线；不启用业务或替代原双scope', required: false, type: boolean, default: false}
+      source_baseline_recovery: {description: '仅已独立准入并合并的来源bootstrap：隔离编译来源基线，不声明部署就绪', required: false, type: boolean, default: false}
+      source_reviewed_head: {description: '仅来源恢复：已独立审查的最终main SHA，必须等于本次运行SHA', required: false, type: string}
+      export_device_patrol_source_identity: {description: '仅可信main导出已登记巡查来源身份；不执行候选源码', required: false, type: boolean, default: false}
   workflow_call:
     inputs:
       source_repo: {required: true, type: string}
@@ -286,6 +266,10 @@ jobs:
         working-directory: tooling
       - run: npm ci --ignore-scripts
         working-directory: source
+      - name: 来源机制完整单元回归
+        if: github.repository == 'perfectuser21/cecelia' && (!inputs.source_repo || inputs.source_repo == github.repository)
+        working-directory: source
+        run: node --test scripts/ci/__tests__/implementation-main-snapshot.test.mjs scripts/ci/__tests__/workspace-ci-source-bundle.test.mjs scripts/ci/__tests__/implementation-skill-source.test.mjs scripts/ci/__tests__/device-patrol-governance.test.mjs
       - name: scratch正式迁移
         run: node tooling/packages/brain/src/migrate.js
       - name: 三来源联合门真实PG与回归退出码守卫
