@@ -3,11 +3,6 @@
   "repo": "perfectuser21/cecelia",
   "relations": [
     {
-      "owner_path": "packages/brain/src/projection/workflow-body.js",
-      "path": "changes/cp-route-api-cbd635aa.md",
-      "role": "release"
-    },
-    {
       "owner_path": "packages/brain/scripts/coding-workflow/runner/run-once.mjs",
       "path": "packages/brain/scripts/coding-workflow/runner/__tests__/runner-sh.test.mjs",
       "role": "verification"
