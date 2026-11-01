@@ -5,9 +5,16 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {createRequire} from 'node:module';
 import {execFileSync,spawnSync} from 'node:child_process';
+import {createHash} from 'node:crypto';
 const yaml=createRequire(import.meta.url)('js-yaml');
 const workflow=()=>yaml.load(readFileSync(new URL('../../../.github/workflows/implementation-impact.yml',import.meta.url),'utf8'));
 const named=(name)=>workflow().jobs.gate.steps.find(s=>s.name===name);
+test('完整旧Core CI仍在时，未来typed路由必须先作为未激活工具受信',()=>{
+ const digest=path=>createHash('sha256').update(readFileSync(new URL('../../../'+path,import.meta.url))).digest('hex');
+ if(digest('.github/workflows/ci.yml')==='91eb26e207d3f15cf810fe1dec4e9137d0f31d1c8004f7938ded7cb7112335e2')
+  assert.equal(digest('.github/workflows/implementation-impact.yml'),'4e59206bd6dd08b77ea3a59e0feb44a2371ffc0fa9139b81f67e64a0169a9cf9');
+ else assert.equal(digest('.github/workflows/implementation-impact.yml'),'17d29709a4990f9a0b4c2bbc63ad2dbcb7ce4f2b635a5d1fb416e8239d30f3b6');
+});
 test('typed来源仅作路由，准备和准入使用只读官方API令牌再核原产物',()=>{
  const w=workflow();assert.equal(w.permissions.actions,'read');assert.equal(w.permissions.checks,'read');
  for(const name of ['准备固定中央Skill对象缓存','实际变更影响与固定回归'])assert.equal(named(name).env.GH_TOKEN,'${{ github.token }}');
