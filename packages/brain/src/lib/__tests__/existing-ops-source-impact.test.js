@@ -2,7 +2,7 @@ import {it,expect} from 'vitest';
 import {createHash} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
-import {readFileSync,mkdtempSync,rmSync} from 'node:fs';
+import {mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import yaml from 'js-yaml';
@@ -138,20 +138,43 @@ it('被声明的入口源字节缺失仍UNKNOWN，不保留成功绑定',async()
  const f3=await build({[entry]:''});expect(f3.status).toBe('unknown');expect(f3.bindings).toEqual([]);
 });
 
-it.each(['current','706f2e834afef562f4690a44e7fd1e3c80f25c83'])('旧YAML真实单scope在已审%s联合CLI时仍有来源，未运行的联合分支不冒Factory消费者',async cli=>{
- const doc=yaml.load(read(workflow));doc.jobs.gate.steps=[{run:legacyRun}];delete doc.jobs.gate.env.IMPLEMENTATION_MAIN_SCOPES;
- const overrides=new Map([[workflow,yaml.dump(doc)],...['scripts/ci/implementation-pr-gate.mjs',entry,multi].map(path=>[path,readFileSync(new URL(path,new URL('../../../../../',import.meta.url)),'utf8')])]);
- if(cli!=='current')overrides.set('scripts/ci/implementation-pr-gate.mjs',execFileSync('git',['show',`${cli}:scripts/ci/implementation-pr-gate.mjs`],{cwd:root,encoding:'utf8'}));
- const f3=(await buildExistingOpsSources({scope:'cecelia-factory',repo:'perfectuser21/cecelia',revision,paths:[...new Set([...paths,entry,multi])],readSource:async path=>overrides.get(path)??read(path)})).consumers[1];
+const legacyCliPath='scripts/ci/implementation-pr-gate.mjs';
+const reviewedLegacyRevision='5ac11b500b77dd7ccfd89e41d964ec786c83e225';
+const readReviewedLegacyCli=sha=>execFileSync('git',['--no-replace-objects','show',`${sha}:${legacyCliPath}`],{cwd:root,encoding:'utf8'});
+const reviewedLegacyCli=readReviewedLegacyCli(reviewedLegacyRevision);
+function legacySingleDoc(){
+ const doc=yaml.load(read(workflow));doc.jobs.gate.steps=[{run:legacyRun}];delete doc.jobs.gate.env.IMPLEMENTATION_MAIN_SCOPES;return doc;
+}
+async function legacySingleProof(pr,doc=legacySingleDoc()){
+ const overrides=new Map([[workflow,yaml.dump(doc)],[legacyCliPath,pr]]);
+ return (await buildExistingOpsSources({scope:'cecelia-factory',repo:'perfectuser21/cecelia',revision,
+  paths:[...new Set([...paths,entry,multi])],readSource:async path=>overrides.get(path)??read(path)})).consumers[1];
+}
+// 仅缓存同一不可变历史正例；每个拒绝变体都先核实其原始CLI确实被旧recipe接受。
+let reviewedLegacyProof;
+async function assertReviewedLegacyBaseline(){
+ const proof=await (reviewedLegacyProof??=legacySingleProof(reviewedLegacyCli));
+ expect(proof.status,JSON.stringify(proof.gaps)).toBe('verified');
+ expect(proof.input_relations).toContainEqual(expect.objectContaining({consumer_path:workflow,input_path:legacyCliPath,kind:'direct_admission_runner'}));
+}
+it.each([reviewedLegacyRevision,'706f2e834afef562f4690a44e7fd1e3c80f25c83'])('旧YAML真实单scope在已审%s联合CLI时仍有来源，未运行的联合分支不冒Factory消费者',async cli=>{
+ const f3=await legacySingleProof(readReviewedLegacyCli(cli));
  expect(f3.status,JSON.stringify(f3.gaps)).toBe('verified');
- expect(f3.input_relations).toContainEqual(expect.objectContaining({consumer_path:workflow,input_path:'scripts/ci/implementation-pr-gate.mjs',kind:'direct_admission_runner'}));
+ expect(f3.input_relations).toContainEqual(expect.objectContaining({consumer_path:workflow,input_path:legacyCliPath,kind:'direct_admission_runner'}));
  expect(f3.input_relations.some(r=>r.kind==='conditional_pr_admission_runner')).toBe(false);
+});
+it('当前新CLI不继承旧单scope recipe的历史审定资格',async()=>{
+ const current=read(legacyCliPath).toString();expect(current).not.toBe(reviewedLegacyCli);
+ const f3=await legacySingleProof(current);
+ expect(f3.status).toBe('unknown');expect(f3.bindings).toEqual([]);expect(f3.input_relations).toEqual([]);
+ expect(f3.gaps).toContainEqual(expect.objectContaining({code:'legacy_impact_runner_unproven'}));
 });
 
 it.each(['base_guard','head_guard','mode','import'])('旧单scope拒绝来源用途闸%s被改动的未知CLI',async kind=>{
  const doc=yaml.load(read(workflow));doc.jobs.gate.steps=[{run:legacyRun}];delete doc.jobs.gate.env.IMPLEMENTATION_MAIN_SCOPES;
  const path='scripts/ci/implementation-pr-gate.mjs';
- const original=readFileSync(new URL(path,new URL('../../../../../',import.meta.url)),'utf8');
+ await assertReviewedLegacyBaseline();
+ const original=reviewedLegacyCli;
  const changed=kind==='base_guard'?original.replace("assertRecoveryPurpose(b,'pr');",'')
   :kind==='head_guard'?original.replace('assertRecoveryPurpose(h,mode);','')
   :kind==='mode'?original.replace('assertRecoveryPurpose(h,mode);',"assertRecoveryPurpose(h,'pr');")
@@ -163,8 +186,9 @@ it.each(['base_guard','head_guard','mode','import'])('旧单scope拒绝来源用
 });
 
 it.each(['condition','callee','argument','else','side_effect','workflow_env','job_env','step_env','null_env','step_injection','forced_parse','undefined_shadow','forced_option','object_assign','computed_option','alias_option','entry_options','module_env','prototype_option'])('旧单scope不得把 %s 的main分支误证为未运行',async kind=>{
- const doc=yaml.load(read(workflow));doc.jobs.gate.steps=[{run:legacyRun}];delete doc.jobs.gate.env.IMPLEMENTATION_MAIN_SCOPES;
- let pr=readFileSync(new URL('scripts/ci/implementation-pr-gate.mjs',new URL('../../../../../',import.meta.url)),'utf8');
+ await assertReviewedLegacyBaseline();
+ const doc=legacySingleDoc();
+ let pr=reviewedLegacyCli;
  if(kind==='condition')pr=pr.replace('options.mainScopes!==undefined','options.mainScopes===undefined');
  if(kind==='callee')pr=pr.replace('return runImplementationMainGate(options);','return otherGate(options);');
  if(kind==='argument')pr=pr.replace('return runImplementationMainGate(options);','return runImplementationMainGate({});');
@@ -184,6 +208,7 @@ it.each(['condition','callee','argument','else','side_effect','workflow_env','jo
  if(kind==='workflow_env')doc.env={IMPLEMENTATION_MAIN_SCOPES:false};
  if(kind==='job_env')doc.jobs.gate.env.IMPLEMENTATION_MAIN_SCOPES='';
  if(kind==='step_env')doc.jobs.gate.steps[0].env={IMPLEMENTATION_MAIN_SCOPES:'active'};
+ expect(pr!==reviewedLegacyCli||yaml.dump(doc)!==yaml.dump(legacySingleDoc())).toBe(true);
  const overrides=new Map([[workflow,yaml.dump(doc)],['scripts/ci/implementation-pr-gate.mjs',pr]]);
  const f3=(await buildExistingOpsSources({scope:'cecelia-factory',repo:'perfectuser21/cecelia',revision,paths,readSource:async path=>overrides.get(path)??read(path)})).consumers[1];
  expect(f3.status,JSON.stringify(f3.gaps)).toBe('unknown');expect(f3.bindings).toEqual([]);
