@@ -14,11 +14,13 @@ import { readImplementationImpact } from '../../packages/brain/src/lib/implement
 import * as snapshotApi from '../../packages/brain/src/lib/implementation-ci-snapshot.js';
 import {runImplementationMultiPrGate,parseImplementationMultiArgs} from './implementation-multi-pr-gate.mjs';
 import {runImplementationMainGate} from './implementation-main-gate.mjs';
+import {collectVerificationInputEvidence,verificationInputKind,collectVerificationRetirementEntryEvidence,verificationRetirementOwnerPaths} from './implementation-verification-inputs.mjs';
+import {verificationInputOwnerPaths} from './implementation-verification-context.mjs';
 import {assertRecoveryPurpose} from './implementation-source-recovery.mjs';
 const git=(root,...args)=>execFileSync('git',args,{cwd:root,encoding:'utf8',maxBuffer:32*1024*1024}).trim();
 const read=path=>{const data=JSON.parse(readFileSync(path,'utf8'));return data.snapshot||data;};
 const save=(dir,name,data)=>writeFileSync(join(dir,name),JSON.stringify(data,null,2)+'\n');
-async function implementationPrEvidence({repoRoot,scope,base,head,mode,snapshotBase,snapshotHead,outputDir},execute){
+async function implementationPrEvidence({repoRoot,scope,base,head,mode,snapshotBase,snapshotHead,outputDir,toolingRoot,toolingRevision},execute,lease){
   if(scope==='cecelia-device-patrol'){
     if(!execute)throw ciFailure('PATROL_ADMISSION_COLLECTOR_UNSUPPORTED');
     const {runDevicePatrolGate}=await import('./implementation-device-patrol-gate.mjs');
@@ -30,38 +32,58 @@ async function implementationPrEvidence({repoRoot,scope,base,head,mode,snapshotB
     const repo=canonicalRepoIdentity(git(repoRoot,'remote','get-url','origin')).replace(/^github\.com\//,'');
     if(git(repoRoot,'rev-parse','HEAD')!==head||git(repoRoot,'status','--porcelain=v1','--untracked-files=no'))throw ciFailure('SOURCE_MISMATCH');
     git(repoRoot,'merge-base','--is-ancestor',base,head);
-    const b=validateImplementationSnapshot(read(snapshotBase));let h=validateImplementationSnapshot(read(snapshotHead));
+    const b=validateImplementationSnapshot(lease?snapshotBase:read(snapshotBase));let h=validateImplementationSnapshot(lease?snapshotHead:read(snapshotHead));
     assertRecoveryPurpose(b,'pr');assertRecoveryPurpose(h,mode);
     if(b.scope!==scope||h.scope!==scope||b.repo!==repo||h.repo!==repo||b.revision!==base||mode==='main'&&h.revision!==head)
       throw ciFailure('SNAPSHOT_SOURCE_MISMATCH','snapshot必须匹配实际repo/base/head');
     // 输入与固定来源已通过才进入真实scratch路径；Brain-only的无效入口不依赖根扫描器。
     const {createImplementationScratch,importImplementationSnapshot,projectImplementationSnapshot,buildPrImplementationSnapshot}
       =await import('./implementation-snapshot.mjs');
-    scratch=await createImplementationScratch();
+    scratch=lease?{db:lease.db,close:async()=>{}}:await createImplementationScratch();
     parent=mkdtempSync(join(tmpdir(),'implementation-base-'));worktree=join(parent,'checkout');
     git(repoRoot,'worktree','add','--detach',worktree,base);
     headWorktree=join(parent,'head');git(repoRoot,'worktree','add','--detach',headWorktree,head);
     await importImplementationSnapshot(scratch.db,b);await projectImplementationSnapshot(scratch.db,b,worktree);
     await importImplementationSnapshot(scratch.db,h);
-    if(mode==='pr'){h=await buildPrImplementationSnapshot(scratch.db,h,head,repoRoot);save(outputDir,'candidate.json',h);}
+    if(mode==='pr'){h=await buildPrImplementationSnapshot(scratch.db,h,head,repoRoot);if(!lease)save(outputDir,'candidate.json',h);}
     await projectImplementationSnapshot(scratch.db,h,headWorktree);
     const changed_files=execFileSync('git',['diff','--no-renames','--name-only','-z',base,head,'--'],{cwd:repoRoot,encoding:'utf8'}).split('\0').filter(Boolean).map(path=>({path}));
     const source={repo,base_revision:base,head_revision:head};
+    let verification=null,retirements=null,retirementEntries=null;
+    if(lease&&repo==='perfectuser21/cecelia'){
+      const readerPaths={base:[],head:[]};
+      const helpers=changed_files.filter(c=>verificationInputKind(c.path)==='test_helper').map(c=>c.path);
+      if(helpers.length)for(const side of['base','head']){
+        const rows=(await scratch.db.query('SELECT DISTINCT src_path FROM graph_edge_snapshots WHERE repo=$1 AND source_revision=$2 AND dst_path=ANY($3::text[]) ORDER BY src_path',[b.map.repositories[0].repo,source[side+'_revision'],helpers])).rows;
+        readerPaths[side]=rows.map(r=>r.src_path).filter(p=>verificationInputKind(p)==='test_source');
+      }
+      verification=collectVerificationInputEvidence(repoRoot,{source:{...source,changed_files},readerPaths});
+      const {collectVerificationRetirementCandidates}=await import('./implementation-verification-retirements.mjs');
+      const retired=collectVerificationRetirementCandidates(repoRoot,{source:{...source,changed_files},toolingRoot,toolingRevision,purpose:'admission_only'});
+      if(retired.rows.length){retirements=retired;retirementEntries=collectVerificationRetirementEntryEvidence(repoRoot,{source:{...source,changed_files},proof:retired});}
+    }
+    const verificationOwners=[...new Set([...verificationInputOwnerPaths(verification),...verificationRetirementOwnerPaths(retirementEntries)])];
     const auxiliary=collectAuxiliarySourceEvidence(repoRoot,source),owners=auxiliaryOwnerPaths(auxiliary);
-    const queryPaths=[...changed_files,...owners.filter(p=>!changed_files.some(f=>f.path===p)).map(path=>({path}))];
+    const queryOwners=[...new Set([...owners,...verificationOwners])];
+    const queryPaths=[...changed_files,...queryOwners.filter(p=>!changed_files.some(f=>f.path===p)).map(path=>({path}))];
     const report=await readImplementationImpact(scratch.db,{scope,...source,changed_files:queryPaths});
     // owner查询使用同一固定图/定义；PR真实diff仍保持原样，绝不把辅助关系写成import边。
-    const ownerCoverage={};
+    const ownerCoverage={},verificationCoverage={};
     for(const side of ['base','head']){
+      verificationCoverage[side]=verificationOwners.map(path=>report[side].file_coverage.find(f=>f.path===path)).filter(Boolean).map(({path,matched_paths,truncated})=>({path,matched_paths,truncated,source_revision:source[side+'_revision'],graph_sha256:report[side].graph_snapshot?.digest}));
       ownerCoverage[side]=owners.map(path=>report[side].file_coverage.find(f=>f.path===path)).filter(Boolean).map(({path,matched_paths,truncated})=>({path,matched_paths,truncated}));
       report[side].file_coverage=report[side].file_coverage.slice(0,changed_files.length);
     }
     report.source.changed_files=changed_files;
     const actualPaths=new Set(changed_files.map(f=>f.path));
     report.unclaimed_paths=report.unclaimed_paths.filter(f=>actualPaths.has(f.path));
+    // 候选owner查询不是Git变更；空命中不会给派生输入授资格，也不能制造额外变更gap。
+    report.gaps=report.gaps.filter(g=>g.code!=='changed_file_unclaimed'||actualPaths.has(g.path)||owners.includes(g.path));
     for(const gap of report.gaps)if(gap.code==='changed_file_unclaimed'&&!actualPaths.has(gap.path))gap.code='auxiliary_owner_unclaimed';
     applyAuxiliarySourceEvidence(report,auxiliary,ownerCoverage);
     report.ci_context={purpose:mode==='pr'?'admission_only':'release',base_snapshot_sha256:b.snapshot_sha256,head_snapshot_sha256:h.snapshot_sha256};
+    if(verification){report.verification_input_evidence=verification;report.verification_owner_coverage=verificationCoverage;}
+    if(retirements){report.verification_retirement_candidates=retirements;report.verification_retirement_entry_evidence=retirementEntries;}
     applyGovernanceCoverage(report,collectGovernanceEvidence(repoRoot,report.source));
     save(outputDir,'report.json',report);
     if(!execute)return {report};
@@ -76,6 +98,13 @@ async function implementationPrEvidence({repoRoot,scope,base,head,mode,snapshotB
   }
 }
 // collector不是gate：保留真实UNKNOWN报告，供完整差异联合准入执行各自真实回归。
+export async function collectImplementationPrEvidenceInScratch(options){
+  if(options?.mode!=='pr')throw ciFailure('ADMISSION_ONLY');
+  if(!options.db||!['base','head'].every(side=>/^[a-f0-9]{40}$/.test(options[side]||''))||typeof options.scope!=='string'||!options.scope)throw ciFailure('INPUT_INVALID');
+  const identity=(await options.db.query('SELECT current_database() AS database,current_schema() AS schema')).rows[0];
+  if(identity?.database!=='cecelia_scratch'||!/^ci_admission_[a-f0-9]{32}$/.test(identity.schema||''))throw ciFailure('SCRATCH_REQUIRED');
+  return implementationPrEvidence(options,false,{db:options.db});
+}
 export function collectImplementationPrEvidence(options){return implementationPrEvidence(options,false);}
 export async function runImplementationPrGate(options){
   if(options.mainScopes!==undefined)return runImplementationMainGate(options);

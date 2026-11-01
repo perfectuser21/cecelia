@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /** 显式多来源快照→完整原生报告→联合准入；不创建业务运行release。 */
 import {execFileSync} from 'node:child_process';
-import {mkdirSync,readFileSync,writeFileSync,realpathSync} from 'node:fs';
+import {mkdirSync,readFileSync,writeFileSync,realpathSync,readdirSync} from 'node:fs';
 import {join,resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {canonicalRepoIdentity} from '../../packages/brain/src/lib/gp-assertion-command.js';
@@ -9,7 +9,20 @@ import {collectImplementationPrEvidence} from './implementation-pr-gate.mjs';
 import {resolveScopedImplementationReports,runScopedImplementationGate} from './implementation-multi-scope.mjs';
 const fail=code=>{throw Object.assign(Error(code),{code});};
 const save=(root,name,value)=>writeFileSync(join(root,name),JSON.stringify(value,null,2)+'\n');
-export async function runImplementationMultiPrGate({repoRoot,base,head,mode,scopes,outputDir}){
+/** typed输出只允许报告/回执；原ZIP/memory view不能以legacy快照形式逸出。 */
+export function assertCiAdmissionOutputFiles(root){
+ const scopes=['cecelia-kr','cecelia-factory','cecelia-infra'],files=['report.json','receipt.json','gap.json'];
+ const legacy=value=>value&&typeof value==='object'&&(value.schema_version===1&&typeof value.scope==='string'&&typeof value.snapshot_sha256==='string'||Object.values(value).some(legacy));
+ const walk=(directory,depth)=>{for(const entry of readdirSync(directory,{withFileTypes:true})){
+  const path=join(directory,entry.name);
+  if(entry.isDirectory()){if(depth!==0||!scopes.includes(entry.name))fail('IMPACT_MULTISCOPE_ADMISSION_OUTPUT_INVALID');walk(path,1);continue;}
+  if(!entry.isFile()||!files.includes(entry.name))fail('IMPACT_MULTISCOPE_ADMISSION_OUTPUT_INVALID');
+  let body;try{body=JSON.parse(readFileSync(path,'utf8'));}catch{fail('IMPACT_MULTISCOPE_ADMISSION_OUTPUT_INVALID');}
+  if(legacy(body))fail('IMPACT_MULTISCOPE_ADMISSION_OUTPUT_INVALID');
+ }};walk(root,0);return true;
+}
+export async function runImplementationMultiPrGate({repoRoot,base,head,mode,scopes,outputDir,toolingRoot,ciAdmissionInputDir}){
+  if(toolingRoot!==undefined||ciAdmissionInputDir!==undefined)fail('IMPACT_MULTISCOPE_ADMISSION_INPUT_UNAVAILABLE');
   mkdirSync(outputDir,{recursive:true});
   try{
     if(mode!=='pr')fail('IMPACT_MULTISCOPE_ADMISSION_ONLY');

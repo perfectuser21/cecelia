@@ -2577,7 +2577,6 @@
       "path": "packages/brain/src/__tests__/harness-worktree-recovery.test.js",
       "role": "verification"
     },
-
     {
       "owner_path": "packages/brain/src/lib/existing-ops-build-source.js",
       "path": "docs/learnings/cp-10271820-b-source.md",
@@ -2616,6 +2615,16 @@
     {
       "owner_path": "scripts/deploy-local.sh",
       "path": "packages/brain/src/__tests__/deploy-root-guard.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "scripts/ci/implementation-verification-retirements.mjs",
+      "path": "scripts/ci/__tests__/basic-verification-retirements.test.mjs",
+      "role": "verification"
+    },
+    {
+      "owner_path": "scripts/ci/implementation-verification-retirements.mjs",
+      "path": "packages/brain/src/__tests__/ci-verification-retirement-contracts.test.js",
       "role": "verification"
     }
   ]
