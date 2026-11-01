@@ -1,20 +1,10 @@
-/** 只证明固定Git内nightly实际选择的workspace测试；源码依赖仍由原生扫描器解析。 */
+/** 只证明固定Git声明的真实测试选择与诊断输入；源码依赖仍由原生扫描器解析。 */
 import yaml from 'js-yaml';
 import { createHash } from 'node:crypto';
 import * as nodeModule from 'node:module';
+import { BASIC_CI, BASIC_RUNNER, SKILL_SELECTOR, basicCiEnabledAt, skillSourceLiteralExcludes, skillExcludeSpread, collectBasicCiSources, property, literals, fail } from './existing-ops-stage-source.js';
+export { BASIC_CI, BASIC_RUNNER, SKILL_SELECTOR, basicCiSelectorEnabled, basicCiEnabledAt, basicCiWorkflowProven, skillSourceLiteralExcludes, skillExcludeSpread, deepPostgresDirectorySelected, collectBasicCiSources, collectDeepCiSources, collectAutoVersionTestSources } from './existing-ops-stage-source.js';
 const WORKFLOW = '.github/workflows/nightly-regression.yml';
-const fail = () => { throw Error('workspace_selector_unproven'); };
-const key = property => property.key?.name ?? property.key?.value;
-function property(object, name, required = true) {
-  if (object?.type !== 'ObjectExpression' || object.properties.some(p => p.type !== 'Property' || p.computed || p.kind !== 'init')) fail();
-  const matches = object.properties.filter(p => key(p) === name);
-  if (matches.length > 1 || required && matches.length !== 1) fail();
-  return matches[0]?.value;
-}
-function literals(node) {
-  if (node?.type !== 'ArrayExpression' || node.elements.some(n => n?.type !== 'Literal' || typeof n.value !== 'string')) fail();
-  return node.elements.map(n => n.value);
-}
 // 现行配置用到的有限glob语法；新语法必须显式重审。
 function glob(pattern) {
   if (!pattern || pattern.startsWith('/') || pattern.split('/').some(p => p === '..' || p === '.') || /[\\\0]/.test(pattern)) fail();
@@ -260,6 +250,7 @@ export async function collectWorkspaceInputEdges({ revision, paths, readSource, 
     }
     const basicCi=await basicCiEnabledAt({paths,readSource,revision,parse});
     await collectEngineInputs({paths,read,parse,revision,relations,basicCi});
+    if(basicCi)await collectBasicDiagnosticInputs({paths,read,parse,revision,relations});
   } catch { unknown(); }
   return relations.map(row => ({ src_path: row.consumer_path, dst_path: row.input_path, edge_type: 'import', detail: {
     via: 'fixed_git_workspace_input', selector_kind: row.kind, source_revision: revision,
@@ -267,182 +258,110 @@ export async function collectWorkspaceInputEdges({ revision, paths, readSource, 
   } }));
 }
 
-/** 源码保底协议 v1：只解释经过正反例审查的固定 Git 字节，绝不执行候选代码。 */
-export const BASIC_CI = '.github/workflows/ci.yml';
-export const BASIC_RUNNER = 'scripts/ci/run-basic-check.mjs';
-export const SKILL_SELECTOR = 'scripts/ci/skill-source-tests.mjs';
-const PINNED_READER = 'scripts/ci/__tests__/basic-skill-source-coverage.test.mjs';
-const PINNED_WORKFLOW = '.github/workflows/skills-source-check.yml';
-const SOURCE = 'packages/brain/src/lib/existing-ops-source.js';
-const hash = text => createHash('sha256').update(text).digest('hex');
-const sorted = x => Array.isArray(x) ? x.map(sorted) : x && typeof x === 'object'
-  ? Object.fromEntries(Object.keys(x).sort().map(k => [k, sorted(x[k])])) : x;
-const workflowHash = text => hash(JSON.stringify(sorted(yaml.load(text))));
-// 完整封印包括plan的组件集合/六分片、真实命令/退出码、scratch隔离和拒绝非success的汇总。
-// 更新封印必须先重跑真实命令正反例；候选自己声明marker并不能修改受信任解析器内的封印。
-const REVIEWED = {
-  'packages/brain/vitest.config.js': '689878adaa1135e5783a0904b6c10918f40cd380a8e8bdd9046e32ec7e382e89',
-  'packages/engine/vitest.config.ts': '87652971ef852d98a08dceb5f2ecbef2cd6eb2336f1fbce6879d3fa6dc77c2f8',
-  'scripts/ci/basic-scope.mjs': '5171c4eed9ab91e2dab79a06a0f7ca775320e35d146d26aa2e0f26a7a656734d',
-  [BASIC_RUNNER]: 'c4e57861903b8ad1d2a6b6d3e3385311b8f5ea97c64736fa66e54c4e329b0530',
-  'scripts/ci/check-basic-results.mjs': 'b6c0b93e15320deff680e765f4558fcdb2a8d98c65d7a926d94f2158af6641e2',
-  'scripts/ci/basic-runtime-smoke.mjs': 'b386b8c0c8631de5b6a0eec19494835f48c6ca3822a4533ee154ce8767a21eec',
-  'scripts/ci/ops-checks.mjs': '96023fd57f11eb1277396b77419bad94a050d0ef64b1c5993db258d87797df82',
-  'scripts/ci/run-isolated-staging-smoke.mjs': 'fa19da1eaf14621a75d95763229fa8d6de40ce3e55940401458346da37f8fbaf',
-  [SKILL_SELECTOR]: '1daf4f27f6fa97b3c8f3d9a9e1a9e86e44fbe92b84c962d1c2ce3b90db32b147',
-};
-const BASIC_PROTOCOLS = {
-  '04474b3e5c646767cdf49a4d03e32b3a2f4042027594dd87ef4d6975390f6298': REVIEWED,
-  '7fee2a6d842c7c2595fa882fa61f75750ec6b2787186fdaf8747e1084a64fcee': {
-    ...REVIEWED,
-    'packages/brain/vitest.config.js': '906b91dbaaf68ea004b60a252ab0af88bda443cde8418d8a3b812b48ebe4c0f8',
-    'scripts/ci/basic-scope.mjs': '9844bb702db2c1a9507f88f1c6c330f676b786cb784592dc4aaefc096b93d6ef',
-    [BASIC_RUNNER]: 'c9c1318dcd6b35981453aa06f656f5a99cb6283d2b7e4ea4a1cf8f6772103f6d',
-    'apps/api/vitest.config.ts': '06e1a3d6e071c95de35b874e9f2ca3ddd05bd673257f9761340c6d9b29c16409',
-    'apps/api/vitest.integration.config.ts': '6c2a55ccba874bf8fcae7858f0b9f21295f6728f430860a4ee60c1612cc59dec',
-    [PINNED_READER]: '3cf300333012557b0191ca6eba5a1bc112c99cbff1daf4ea85da8e2d33f96f66',
-    [PINNED_WORKFLOW]: 'aaf1a1cdc30961114927231193c071d53d27976eb09971e0c72e63a8176eb129',
-  },
-};
-const reject = () => { throw Error('basic_ci_source_unproven'); };
-export function basicCiSelectorEnabled(text, parse) {
-  const name = 'EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA';
-  const declarations = parse(text).body.flatMap(row => {
-    const statement = row.type === 'ExportNamedDeclaration' ? row.declaration : row;
-    return (statement?.declarations || []).filter(d => d.id?.name === name).map(d => ({ row, statement, d }));
-  });
-  if (!declarations.length) return false;
-  const [{ row, statement, d }] = declarations;
-  if (declarations.length !== 1 || row.type !== 'ExportNamedDeclaration' || statement.kind !== 'const' || d.init?.type !== 'Literal' || ![0, 1].includes(d.init.value)) reject();
-  return d.init.value === 1;
-}
-export async function basicCiEnabledAt({ paths, readSource, revision, parse }) {
-  return paths.includes(SOURCE) && basicCiSelectorEnabled(await readSource(SOURCE, revision), parse);
-}
-export function basicCiWorkflowProven(text) {
-  return Object.hasOwn(BASIC_PROTOCOLS, workflowHash(text));
-}
-/** 返回明确的排除字面量；不调用外置helper，也不将动态JS猜为选择器。 */
-export function skillSourceLiteralExcludes(text, component, parse) {
-  if (hash(text) !== REVIEWED[SKILL_SELECTOR]) reject();
-  const program = parse(text), object = name => program.body.find(n => n.type === 'ExportNamedDeclaration' && n.declaration?.type === 'VariableDeclaration'
-    && n.declaration.declarations.some(d => d.id.name === name))?.declaration.declarations.find(d => d.id.name === name)?.init;
-  const literals = (node, name) => {
-    const value = node?.properties?.find(p => (p.key.name ?? p.key.value) === name)?.value;
-    if (!value) return [];
-    if (value.type !== 'ArrayExpression' || value.elements.some(n => n?.type !== 'Literal' || typeof n.value !== 'string')) reject();
-    return value.elements.map(n => n.value);
-  };
-  const tests = object('SKILL_SOURCE_TESTS'), retired = object('RETIRED_SKILL_TESTS');
-  return [...literals(tests, component), ...literals(retired, component), ...(component === 'brain' ? literals(tests, 'root').map(p => '../../' + p) : [])];
-}
-export function skillExcludeSpread(node, program, component) {
-  if (node?.type !== 'SpreadElement' || node.argument?.type !== 'CallExpression' || node.argument.callee?.name !== 'skillSourceExcludes'
-    || node.argument.arguments.length !== 1 || node.argument.arguments[0]?.value !== component) return false;
-  const imports = program.body.filter(n => n.type === 'ImportDeclaration' && n.source.value === '../../scripts/ci/skill-source-tests.mjs');
-  return imports.length === 1 && imports[0].specifiers.length === 1 && imports[0].specifiers[0].imported?.name === 'skillSourceExcludes'
-    && imports[0].specifiers[0].local.name === 'skillSourceExcludes'
-    && !program.body.some(n => n.type === 'VariableDeclaration' && n.declarations.some(d => d.id.name === 'skillSourceExcludes'));
-}
-/** 仅解释已封印Deep的integration目录glob；dot默认关闭，显式排除任意层node_modules。 */
-export function deepPostgresDirectorySelected(path) {
-  const prefix = 'packages/brain/src/';
-  if (typeof path !== 'string' || !path.startsWith(prefix)) return false;
-  const segments = path.slice(prefix.length).split('/');
-  if (segments.some(segment => !segment || segment.startsWith('.') || segment === 'node_modules')) return false;
-  return segments.slice(0, -1).includes('integration')
-    && /\.(?:test|spec)\.(?:[cm])?[jt]s(?:x)?$/.test(segments.at(-1));
-}
-export async function collectBasicCiSources({ read, ci, revision, relations, parse, paths }) {
-  const protocol = BASIC_PROTOCOLS[workflowHash(ci)];
-  if (!protocol) reject();
-  for (const [path, digest] of Object.entries(protocol)) if (hash(await read(path)) !== digest) reject();
-  const relation = (consumer_path, input_path, kind) => relations.push({ consumer_path, input_path, kind, revision });
-  if (Object.hasOwn(protocol, PINNED_READER)) {
-    if (!Array.isArray(paths)) reject();
-    const prefix = 'scripts/ci/__tests__/';
-    const testName = /^(basic-.*|run-basic-check|brain-source-only-deploy)\.test\.mjs$/;
-    for (const path of paths.filter(path => path.startsWith(prefix))) {
-      const relative = path.slice(prefix.length);
-      // Git列出的是叶子；同名目录会让旧node --test递归执行，不能当作一级文件集合认领。
-      if (relative.includes('/') && testName.test(relative.split('/')[0])) reject();
-    }
-    const selected = paths.filter(path => path.startsWith(prefix) && !path.slice(prefix.length).includes('/')
-      && testName.test(path.slice(prefix.length))).sort();
-    if (!selected.includes(PINNED_READER)) reject();
-    for (const path of selected) {
-      if (!await read(path)) reject();
-      relation(BASIC_RUNNER, path, 'reviewed_scripts_node_test_selector');
-    }
-    // 完整已审reader证明真实URL读取；这条边只声明验证输入，绝不宣称私有源workflow已运行。
-    relation(PINNED_READER, PINNED_WORKFLOW, 'literal_url_workflow_verification_input');
-  }
-  for (const [path, kind] of [['scripts/ci/basic-scope.mjs', 'required_basic_ci_plan'], [BASIC_RUNNER, 'required_basic_ci_matrix_runner'],
-    ['scripts/ci/check-basic-results.mjs', 'required_basic_ci_success_aggregate']]) relation(BASIC_CI, path, kind);
-  for (const path of ['scripts/ci/basic-runtime-smoke.mjs', 'packages/brain/src/migrate.js', 'scripts/ci/__tests__/runtime-signal.integration.test.mjs']) {
-    await read(path); relation(BASIC_RUNNER, path, 'isolated_scratch_runtime_check');
-  }
-  for (const [consumer, input] of [[BASIC_RUNNER, 'scripts/ci/ops-checks.mjs'], ['scripts/ci/ops-checks.mjs', 'scripts/ci/run-isolated-staging-smoke.mjs']]) relation(consumer, input, 'reviewed_basic_ci_named_call');
-  for (const path of ['package.json', 'package-lock.json']) { await read(path); relation(BASIC_CI, path, 'root_npm_ci_manifest_input'); }
-  await read('packages/brain/vitest.config.js');
-  relation(BASIC_RUNNER, 'packages/brain/vitest.config.js', 'complete_brain_unit_six_shards');
-  relation('packages/brain/vitest.config.js', SKILL_SELECTOR, 'reviewed_skill_source_exclusion');
-  const apiConfig = 'apps/api/vitest.integration.config.ts';
-  if (Object.hasOwn(protocol, apiConfig)) {
-    relation(BASIC_RUNNER, apiConfig, 'isolated_api_postgres_config');
-    const config = parse(await read(apiConfig)).body.find(n => n.type === 'ExportDefaultDeclaration').declaration.arguments[0];
-    for (const selected of property(property(config, 'test'), 'include').elements) {
-      const path = 'apps/api/' + selected.value;
-      await read(path); relation(apiConfig, path, 'literal_api_postgres_selector');
-    }
-    relation(BASIC_RUNNER, 'apps/api/vitest.config.ts', 'separate_api_unit_config');
-  }
-  return skillSourceLiteralExcludes(await read(SKILL_SELECTOR), 'brain', parse);
-}
-/** Deep 的全 PG 清单独立绑定，不把它声明为普通 PR 中执行过。 */
-export async function collectDeepCiSources({ read, revision, relations }) {
-  const workflow = '.github/workflows/nightly-regression.yml', config = 'scripts/ci/deep-integration.config.mjs';
-  if (workflowHash(await read(workflow)) !== '6be8812458c47df1bb10a841aaa8278b716adb17c3268387a8435f0127ba0724'
-    || hash(await read(config)) !== 'ce5df18b0016ce03ed08bf20def00a10ef68652ba7566f665021d8773467e75e') reject();
-  relations.push({ consumer_path: workflow, input_path: config, kind: 'scheduled_or_manual_full_postgres_entry', revision },
-    { consumer_path: config, input_path: 'packages/brain/vitest.config.js', kind: 'shared_postgres_literal_config', revision });
-}
 
-const AUTO_VERSION_TEST='packages/brain/src/__tests__/auto-version-decision.test.js';
-const AUTO_VERSION_WORKFLOW='.github/workflows/auto-version.yml';
-const AUTO_VERSION_FILES={
-  "packages/brain/src/__tests__/auto-version-decision.test.js": "2a242093e5c91a35e243bf100e46ddfd26478210478094a7bca8d0186b09c25f",
-  ".github/workflows/auto-version.yml": "c4dd4558b9d3c72583bd2fa8ad2391ca5ecbc11fec7c7ba2271cc66374fc16b0",
-  "packages/brain/scripts/auto-version-decision.mjs": "2264d26f91cb4ab6662abfc1eb6eb487fcb884ddb6f582781484c3df0d20c045",
-  "packages/brain/scripts/auto-version-apply.mjs": "a8560b338a8fa6e20f985e24a7d6dbf673790ecd11b7c67979f8b0cd535f8b8b",
-  "scripts/ci/implementation-auxiliary-evidence.mjs": ["f5d052b9965825c1facb602084f18fa5063c687f8825f6f7711299c419bb09d0", "f96a4c4639f1d8a43acde5e646c5910abc5b0896efadd063939a0cda3f7de3ba"],
-  "packages/brain/src/lib/gp-assertion-command.js": "d47bbd492971ad5ed5ec9d4c6915b85bb318c990bc998f84c808ad24aa3f3fe0",
-  "packages/brain/src/lib/step-probe-spec.js": "c9c3e710368c0e57e7926b8a6c4a352efbb769210c45e00d13cb47729786f025"
-};
-export async function collectAutoVersionTestSources({read,requireProof,relations,revision,parse,selectors}) {
-  requireProof(Boolean(selectors&&selectors.include.some(pattern=>pattern.test(AUTO_VERSION_TEST))&&!selectors.exclude.some(pattern=>pattern.test(AUTO_VERSION_TEST))),'auto_version_test_selector_unproven');
-  const texts=new Map();
-  for(const[path,expected]of Object.entries(AUTO_VERSION_FILES)) {
-    const text=await read(path);texts.set(path,text);
-    requireProof(text&&[expected].flat().includes(createHash('sha256').update(text).digest('hex')),'auto_version_test_source_unproven');
-  }
-  const relation=(consumer_path,input_path,kind)=>relations.push({consumer_path,input_path,kind,revision});
-  relation('packages/brain/vitest.config.js',AUTO_VERSION_TEST,'literal_vitest_verification_selector');
-  relation(AUTO_VERSION_TEST,AUTO_VERSION_WORKFLOW,'verified_test_yaml_read');
-  for(const input of ['packages/brain/scripts/auto-version-decision.mjs','packages/brain/scripts/auto-version-apply.mjs']) {
-    relation(AUTO_VERSION_TEST,input,'verified_test_workflow_bash_script');
-    relation(AUTO_VERSION_WORKFLOW,input,'fixed_node_script_verification_input');
-  }
-  // 从实际冻结语法读取本仓import，不靠出现在traversal里猜直接绑定。
-  for(const[path,text]of texts) {
-    if(!/\.[cm]?js$/.test(path)||!text)continue;
-    for(const node of parse(text).body.filter(node=>node.type==='ImportDeclaration')) {
-      const input=node.source.value;if(!input.startsWith('.'))continue;
-      const segments=path.split('/').slice(0,-1);
-      for(const part of input.split('/')){if(part==='..')segments.pop();else if(part!=='.')segments.push(part);}
-      const resolved=segments.join('/');
-      requireProof(Object.hasOwn(AUTO_VERSION_FILES,resolved),'auto_version_test_dependency_unproven');
-      if(Object.hasOwn(AUTO_VERSION_FILES,resolved))relation(path,resolved,'fixed_relative_verification_import');
-    }
-  }
+const QUALITY_CONFIG='packages/quality/vitest.config.ts';
+const GOLDSET_TEST='packages/quality/__tests__/goldset-eval-cli.test.js';
+const GOLDSET_SCRIPT='packages/quality/skill-distillation/scripts/goldset-eval.mjs';
+const VERSION_TEST='tests/regression/version-gate-silent/check-brain-version-bump.test.js';
+const VERSION_SCRIPT='scripts/ci/check-brain-version-bump.sh';
+const IMPACT_WORKFLOW='.github/workflows/implementation-impact.yml';
+const SOURCE_NODE_ROOTS=['implementation-main-snapshot','workspace-ci-source-bundle','implementation-skill-source','device-patrol-governance']
+ .map(name=>`scripts/ci/__tests__/${name}.test.mjs`);
+const digest=text=>createHash('sha256').update(text).digest('hex');
+const stable=value=>Array.isArray(value)?value.map(stable):value&&typeof value==='object'
+ ?Object.fromEntries(Object.keys(value).sort().map(k=>[k,stable(value[k])])):value;
+/** 完整源码封印之外再锚定实际值流；不把出现命令字符串当作执行证明。 */
+function diagnosticCall(tree,kind){
+ const all=[];inspectNodes(tree,n=>all.push(n));
+ const variable=(name,body=tree)=>{const found=[];inspectNodes(body,n=>{if(n.type==='VariableDeclarator'&&n.id.name===name)found.push(n.init);});return found.length===1?found[0]:null;};
+ const namedCall=(node,name)=>node?.type==='CallExpression'&&node.callee.name===name;
+ const member=(node,object,name)=>node?.type==='MemberExpression'&&!node.computed&&node.object.name===object&&node.property.name===name;
+ const functions=name=>all.filter(n=>n.type==='FunctionDeclaration'&&n.id.name===name);
+ if(kind==='goldset'){
+  const distill=variable('distill'),entry=variable('entry'),fn=functions('evaluate');
+  if(distill?.type!=='NewExpression'||distill.callee.name!=='URL'||!literal(distill.arguments[0],'../skill-distillation/')
+   ||!namedCall(entry,'fileURLToPath')||entry.arguments[0]?.type!=='NewExpression'||entry.arguments[0].callee.name!=='URL'
+   ||!literal(entry.arguments[0].arguments[0],'scripts/goldset-eval.mjs')||entry.arguments[0].arguments[1]?.name!=='distill'||fn.length!==1)return false;
+  const args=variable('args',fn[0]),spawn=[];inspectNodes(fn[0],n=>{if(namedCall(n,'spawn'))spawn.push(n);});
+  return args?.type==='ArrayExpression'&&args.elements[0]?.name==='entry'&&spawn.length===1
+   &&member(spawn[0].arguments[0],'process','execPath')&&spawn[0].arguments[1]?.name==='args'
+   &&all.some(n=>namedCall(n,'evaluate')&&n.start>fn[0].end);
+ }
+ const script=variable('SCRIPT'),fn=functions('runScript'),spawn=[];
+ if(!namedCall(script,'resolve')||script.arguments[0]?.name!=='__dirname'||!literal(script.arguments[1],'../../../scripts/ci/check-brain-version-bump.sh')||fn.length!==1)return false;
+ inspectNodes(fn[0],n=>{if(namedCall(n,'spawnSync'))spawn.push(n);});
+ return spawn.length===1&&literal(spawn[0].arguments[0],'bash')&&spawn[0].arguments[1]?.type==='ArrayExpression'
+  &&spawn[0].arguments[1].elements[0]?.name==='SCRIPT'&&all.some(n=>namedCall(n,'runScript')&&n.start>fn[0].end);
+}
+/** 只对已审新API组合补全选择；旧f92协议不增加声明。完整basic证明先于任何边。 */
+export async function collectBasicDiagnosticInputs({paths,read,parse,revision,relations}){
+ const ci=await read(BASIC_CI),proof=[],skillText=await read(SKILL_SELECTOR);
+ await collectBasicCiSources({ci,read,parse,paths,revision,relations:proof});
+ if(!proof.some(r=>r.kind==='separate_api_unit_config'))return;
+ const relation=(consumer_path,input_path,kind)=>relations.push({consumer_path,input_path,kind,revision});
+ const apiConfig='apps/api/vitest.config.ts',selected=selectors(await read(apiConfig),parse),prefix='apps/api/';
+ for(const path of paths.filter(p=>p.startsWith(prefix)&&/\.(?:test|spec)\.(?:ts|tsx)$/.test(p))){
+  const relative=path.slice(prefix.length),parts=relative.split('/');
+  if(parts.some(p=>p.startsWith('.')||['node_modules','dist','cypress'].includes(p))||
+   /(?:^|\/)(?:karma|rollup|webpack|vite|vitest|jest|ava|babel|nyc|cypress|tsup|build|eslint|prettier)\.config\./.test(relative))continue;
+  const ancestors=parts.slice(0,-1).map((_,i,ps)=>ps.slice(0,i+1).join('/'));
+  if(!selected.include.some(p=>p.test(relative))||selected.exclude.some(p=>p.test(relative)||ancestors.some(a=>p.test(a))))continue;
+  await read(path);relation(apiConfig,path,'literal_workspace_vitest_selector');
+ }
+ const hasDiagnostics=paths.includes(GOLDSET_TEST)||digest(await read(QUALITY_CONFIG))==='a9163321496b5f40a73bfdd3efab18478f3d2da16e3906f413b7f7fb119f4001';
+ if(!hasDiagnostics){if(paths.includes(IMPACT_WORKFLOW))await collectSourceNodeInputs({read,paths,revision,relations});return;}
+ // 默认Quality选择器是Vitest默认include，排除集必须是已审配置及封印的Skill字面量。
+ // 固定版本配置的完整封印同时证明没有projects/dir/testNamePattern或排除该版本fixture。
+ for(const [config,test,script,configDigest,testDigest]of[
+  [QUALITY_CONFIG,GOLDSET_TEST,GOLDSET_SCRIPT,['09e80d81e95b55086e4fcc5c5d3deb476e2d510a5ae2e578ec7f9b56115c084e','a9163321496b5f40a73bfdd3efab18478f3d2da16e3906f413b7f7fb119f4001'],'8515a4c95b0d8e55b9ca967a66948ee3de8470ad4da0655d095b5a6a4548eecd'],
+  ['packages/brain/vitest.config.js',VERSION_TEST,VERSION_SCRIPT,'906b91dbaaf68ea004b60a252ab0af88bda443cde8418d8a3b812b48ebe4c0f8','d06ad5482e7200ff5101cb30b0859b3539adf460cf14204a33b2c3240c56c53e'],
+ ]){
+  // 未出现的新测试不被历史协议假称执行；一旦声明该诊断，完整前置与真实目标都不可缺。
+  if(!paths.includes(test))fail();
+  const configText=await read(config),text=await read(test);
+  if(![configDigest].flat().includes(digest(configText))||digest(text)!==testDigest)fail();
+  const tree=parse(text);
+  if(test===GOLDSET_TEST){
+   const selected=property(parse(configText).body.find(n=>n.type==='ExportDefaultDeclaration').declaration.arguments[0],'test');
+   if(property(selected,'include',false))fail();
+   const excluded=property(selected,'exclude').elements.flatMap(n=>skillExcludeSpread(n,parse(configText),'quality')
+    ?skillSourceLiteralExcludes(skillText,'quality',parse):literals({type:'ArrayExpression',elements:[n]}));
+   // 下列完整已审测试包含it.each/it -> evaluate -> Promise executor -> spawn(process.execPath,args)。
+   // entry来自fileURLToPath(new URL('scripts/goldset-eval.mjs',distill))，不执行候选脚本。
+   if(excluded.map(glob).some(p=>p.test('__tests__/goldset-eval-cli.test.js')||p.test('__tests__')))fail();
+   if(!namedImport(tree,'spawn','node:child_process')||!namedImport(tree,'fileURLToPath','node:url')||!diagnosticCall(tree,'goldset'))fail();
+  }else if(!namedImport(tree,'spawnSync','child_process')||!namedImport(tree,'resolve','path')||!diagnosticCall(tree,'version'))fail();
+  await read(script);relation(BASIC_RUNNER,config,'reviewed_default_unit_config');
+  relation(config,test,'reviewed_default_vitest_diagnostic_selector');
+  relation(test,script,'reviewed_actual_test_subprocess_diagnostic');
+ }
+ if(paths.includes(IMPACT_WORKFLOW))await collectSourceNodeInputs({read,paths,revision,relations});
+}
+/** 将checkout、Node22/npm安装、环境和无条件命令前置作为一个原子证明，不能拼配。 */
+async function collectSourceNodeInputs({read,paths,revision,relations}){
+ const doc=yaml.load(await read(IMPACT_WORKFLOW)),job=doc?.jobs?.gate;
+ const index=job?.steps?.findIndex(s=>s.name==='来源机制完整单元回归');
+ // 此步尚未迁入的历史workflow不宣称执行Node专项；已有main-only调用也不会变成PR执行。
+ if(index===undefined||index<0)return;
+ const {jobs,...workflow_header}=doc;
+ if(!jobs||typeof jobs!=='object'||Array.isArray(jobs))fail();
+ const dependencies=new Map(),active=new Set(),done=new Set();
+ for(const [name,definition]of Object.entries(jobs)){
+  if(!definition||typeof definition!=='object'||Array.isArray(definition))fail();
+  const needs=definition.needs===undefined?[]:Array.isArray(definition.needs)?definition.needs:[definition.needs];
+  if(new Set(needs).size!==needs.length||needs.some(parent=>typeof parent!=='string'||!Object.hasOwn(jobs,parent)))fail();
+  dependencies.set(name,needs);
+ }
+ const visit=name=>{if(active.has(name))fail();if(done.has(name))return;active.add(name);for(const parent of dependencies.get(name))visit(parent);active.delete(name);done.add(name);};
+ for(const name of dependencies.keys())visit(name);
+ const job_headers=Object.fromEntries(Object.entries(jobs).map(([name,definition])=>[name,Object.fromEntries(Object.entries(definition).filter(([key])=>key!=='steps'))]));
+ const controls={workflow_header,job_headers,gate_prefix:job.steps.slice(0,index+1)};
+ if(digest(JSON.stringify(stable(controls)))!=='79a7691ad48ec12828c779e2f58251f598788bba81566f19dd5d41aaa4765525')fail();
+ const step=job.steps[index],checkout=job.steps.find(s=>s.uses==='actions/checkout@v4'&&s.with?.path==='source');
+ if(!checkout||checkout.with.ref!=='${{ inputs.head_revision || github.event.pull_request.head.sha || github.sha }}'
+  ||step['working-directory']!=='source'||step.run!=='node --test '+SOURCE_NODE_ROOTS.join(' ')||step.if!==undefined)fail();
+ for(const path of SOURCE_NODE_ROOTS){
+  if(!paths.includes(path))fail();await read(path);
+  relations.push({consumer_path:IMPACT_WORKFLOW,input_path:path,kind:'unconditional_source_node_test_entry',revision});
+ }
 }
