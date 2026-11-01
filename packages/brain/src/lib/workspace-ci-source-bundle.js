@@ -138,24 +138,29 @@ const INACTIVE_INFRA_GATES=new Map([
  ['7cffaacb79c44c02e99cd03d0a17132a2ee8d212357bea4e17d311550d00564d',{provider:'7506360d6d5f1fb9b09d9c987f02963b0c69367fd7f04e8bc275bdcbe8aeccb3',env:'8a0a4006fd059bd00cb3fea4d00edc587b533a23a9e7dbfa75b5dd7b5aefab1c'}],
  ['74026a45377e3de19af49208c601fb521c2ef7860fc594d2c1ab07662b58b52d',{provider:'7506360d6d5f1fb9b09d9c987f02963b0c69367fd7f04e8bc275bdcbe8aeccb3',env:'8a0a4006fd059bd00cb3fea4d00edc587b533a23a9e7dbfa75b5dd7b5aefab1c'}],
  ['266b100f50dbc01ac9a4859ffe2013940ec39342dca66d833a21affadf7ce9f7',{provider:'7506360d6d5f1fb9b09d9c987f02963b0c69367fd7f04e8bc275bdcbe8aeccb3',env:'f5c969e480ba5006f3d4ae65825ca39dbbea4ac047f6026209cf8f1ea32a0850'}],
+ ['8dd3cc059e7cb98ee53612fa43ab29d0cd159bfb4b61df04ec167468331edccc',{provider:'7506360d6d5f1fb9b09d9c987f02963b0c69367fd7f04e8bc275bdcbe8aeccb3',env:'f5c969e480ba5006f3d4ae65825ca39dbbea4ac047f6026209cf8f1ea32a0850'}],
+ ['a7cf68049d8b7b1818b49df2e2e3336a08b1365824728759ad2304574c38e5ed',{provider:'7506360d6d5f1fb9b09d9c987f02963b0c69367fd7f04e8bc275bdcbe8aeccb3',env:'f5c969e480ba5006f3d4ae65825ca39dbbea4ac047f6026209cf8f1ea32a0850'}],
 ]);
+const OLD_CACHE='b1f25afef715d230f573068a8cf1c54a65345e3583edebb91ab9bd8785df6ebd',CI_CACHE='edbefc06a20f7029b31bd936713f9606f454a17c33cf8bc714d39b50c7d0e661';
+const FUTURE_GATE='a7cf68049d8b7b1818b49df2e2e3336a08b1365824728759ad2304574c38e5ed';
+const FUTURE_RUNNER='90a85c5d4be0cd7e56fa62f2eef28d428c59b967475877e608f0817cc33c10d9';
 const INACTIVE_INFRA_SHELL='a7da97011e907914f0260d915ec31e4869fdf0285fc21f605dea5f0b39d89e9d';
-const INACTIVE_INFRA_STEPS=new Set(['三来源联合门真实PG与回归退出码守卫','独立infra固定来源加入联合输入','完整联合scope清单加入infra']);
+const INACTIVE_INFRA_STEPS=new Set(['来源机制完整单元回归','三来源联合门真实PG与回归退出码守卫','独立infra固定来源加入联合输入','完整联合scope清单加入infra']);
 function canonicalConfig(value){
  if(Array.isArray(value))return value.map(canonicalConfig);
  return value&&typeof value==='object'?Object.fromEntries(Object.keys(value).sort().map(key=>[key,canonicalConfig(value[key])])):value;
 }
 function reviewedInactiveInfra(yaml){
- const reviewed=INACTIVE_INFRA_GATES.get(sha(Buffer.from(JSON.stringify(canonicalConfig(yaml.jobs?.gate)))));
- return reviewed&&sha(Buffer.from(JSON.stringify(canonicalConfig(yaml.jobs?.['snapshot-infra']))))===reviewed.provider?reviewed:false;
+ const gate=sha(Buffer.from(JSON.stringify(canonicalConfig(yaml.jobs?.gate)))),reviewed=INACTIVE_INFRA_GATES.get(gate);
+ return reviewed&&sha(Buffer.from(JSON.stringify(canonicalConfig(yaml.jobs?.['snapshot-infra']))))===reviewed.provider?{...reviewed,gate,future:gate===FUTURE_GATE}:false;
 }
 function modernSkillInitializer(yaml,spec,job,step,source,inactiveInfra=false){
  const reject=()=>fail('CALLEE_SKILL_INITIALIZER_UNPROVEN',{path:spec.name});
  const steps=job.steps||[],at=steps.indexOf(step),impact=spec.name==='implementation-impact';
  const secret=yaml.on?.workflow_call?.secrets?.SKILLS_SOURCE_SSH_KEY;
- const initEnv=impact?{SKILLS_SOURCE_SSH_KEY:"${{ secrets.SKILLS_SOURCE_SSH_KEY }}",NATIVE_PR:NATIVE_PR_ENV}:{SKILLS_SOURCE_SSH_KEY:"${{ secrets.SKILLS_SOURCE_SSH_KEY }}"};
+ const initEnv=impact?{...(inactiveInfra.future?{GH_TOKEN:'${{ github.token }}'}:{}),SKILLS_SOURCE_SSH_KEY:"${{ secrets.SKILLS_SOURCE_SSH_KEY }}",NATIVE_PR:NATIVE_PR_ENV}:{SKILLS_SOURCE_SSH_KEY:"${{ secrets.SKILLS_SOURCE_SSH_KEY }}"};
  if(step.if!==undefined||step['continue-on-error']||step['working-directory']!==undefined||step.shell!==undefined||job.defaults?.run!==undefined||yaml.defaults?.run!==undefined
-  ||!secret||Object.keys(secret).join(',')!=='required'||secret.required!==false||sha(Buffer.from(source))!==(inactiveInfra?INACTIVE_INFRA_SHELL:MODERN_SHELL_HASHES[spec.name])
+  ||!secret||Object.keys(secret).join(',')!=='required'||secret.required!==false||sha(Buffer.from(source))!==(inactiveInfra?(inactiveInfra.future?'8f6fd98c1d6f3f09244682b3f0deead07e2cf6999212c9cc7dcb4846d8eb0860':INACTIVE_INFRA_SHELL):MODERN_SHELL_HASHES[spec.name])
   ||Object.keys(step.env||{}).sort().join(',')!==Object.keys(initEnv).sort().join(',')||Object.entries(initEnv).some(([key,value])=>step.env[key]!==value)
   ||yaml.env!==undefined||sha(Buffer.from(JSON.stringify(Object.fromEntries(Object.entries(job.env||{}).sort()))))!==(inactiveInfra?inactiveInfra.env:MODERN_ENV_HASHES[spec.name])
   ||job.env?.SOURCE_REPO!=="${{ inputs.source_repo || github.repository }}"
@@ -165,7 +170,7 @@ function modernSkillInitializer(yaml,spec,job,step,source,inactiveInfra=false){
  if(tools.length!==1||checkouts.length!==1||steps.indexOf(tool)>=at||steps.indexOf(checkout)>=at||tool.if!==undefined||tool['continue-on-error']||tool.with?.repository!==BRAIN||tool.with?.['persist-credentials']!==false
   ||checkout.if!==undefined||checkout['continue-on-error']||checkout.with.repository!=="${{ inputs.source_repo || github.repository }}"
   ||checkout.with.ref!==job.env.HEAD||checkout.with['fetch-depth']!==0||checkout.with['persist-credentials']!==false)reject();
- const runners=steps.filter(s=>directNodeCommands(String(s.run||'')).some(m=>m[1]===spec.runner)||impact&&sha(Buffer.from(String(s.run||'')))==='8e54cd03b82a18c8c94eaf0a438744193e093d680aa133f416e33ba4ca3ae21d');
+ const runners=steps.filter(s=>directNodeCommands(String(s.run||'')).some(m=>m[1]===spec.runner)||impact&&sha(Buffer.from(String(s.run||'')))===(inactiveInfra.future?FUTURE_RUNNER:'8e54cd03b82a18c8c94eaf0a438744193e093d680aa133f416e33ba4ca3ae21d'));
  if(runners.length!==1||steps.indexOf(runners[0])<=at)reject();
  for(const other of steps.filter(s=>s!==step)){
   const key=other.env?.SKILLS_SOURCE_SSH_KEY;
@@ -182,7 +187,7 @@ function modernSkillInitializer(yaml,spec,job,step,source,inactiveInfra=false){
   const legacyDownload=digest==='51c728cdec33a877e94b11bfbd88eecb472ba24221ccf23d1b0d2c90a1fc2ca7'&&envKeys==='GH_TOKEN,RUN_ID';
   // 外部调用固定source_repo，故此精确原生条件在该调用面恒为假。
   // 同时固定已审shell字节和完整条件；不接受任意选择器。
-  const nativeDownload=digest==='4bb58d602deb0f52ab0d02f21a319888688dd5a13d279fef8b87d09abb0172b1'
+  const nativeDownload=digest===(inactiveInfra.future?'7b1c309fed1f57e4fbd30697e252651bdefa9852ec03e660f03be4f93711a722':'4bb58d602deb0f52ab0d02f21a319888688dd5a13d279fef8b87d09abb0172b1')
    &&envKeys==='GH_TOKEN,NATIVE_PR_BASELINE,RUN_ID'&&download.env.NATIVE_PR_BASELINE===NATIVE_PR_ENV;
   if(steps.indexOf(download)>=at||download.if!=="env.MAP_SCOPE != 'cecelia-device-patrol'"||download['continue-on-error']||download.shell!==undefined||download['working-directory']!==undefined
    ||(!legacyDownload&&!nativeDownload)||download.env.GH_TOKEN!=="${{ github.token }}"||download.env.RUN_ID!=="${{ github.run_id }}")reject();
@@ -190,12 +195,14 @@ function modernSkillInitializer(yaml,spec,job,step,source,inactiveInfra=false){
   const downloads=steps.filter(s=>s.uses?.startsWith('actions/download-artifact@')&&s.with?.path==='snapshot'),download=downloads[0];
   if(downloads.length!==1||steps.indexOf(download)>=at||download.if!==undefined||download['continue-on-error']||download.with.name!=="pilot-release-snapshot-${{ inputs.scope || 'cecelia-kr' }}-${{ inputs.head_revision || github.sha }}")reject();
  }
- return [MODERN_SKILL_INITIALIZER,...MODERN_SKILL_INPUTS].map(path=>({path,selector:`jobs.${spec.calleeJob}.steps.fixed_skill_cache_exact_contract`,reviewedCache:path===MODERN_SKILL_INITIALIZER}));
+ const pilotCurrent=!impact&&sha(Buffer.from(JSON.stringify(canonicalConfig(job))))==='8be19e341e3436979d5cd5f7676e5bc961653df768f309a59148edbad5690ea5';
+ const allowedCaches=inactiveInfra.future?[CI_CACHE]:inactiveInfra.gate==='266b100f50dbc01ac9a4859ffe2013940ec39342dca66d833a21affadf7ce9f7'||pilotCurrent?[OLD_CACHE,CI_CACHE]:[OLD_CACHE];
+ return [MODERN_SKILL_INITIALIZER,...MODERN_SKILL_INPUTS].map(path=>({path,selector:`jobs.${spec.calleeJob}.steps.fixed_skill_cache_exact_contract`,reviewedCache:path===MODERN_SKILL_INITIALIZER?allowedCaches:null}));
 }
-function reviewedSkillCache(source){
+function reviewedSkillCache(source,allowedCaches){
  // Reviewed AST envelope includes all budget, historical snapshots and HEAD-only data materialization logic.
  // A changed program must be reviewed again; binding a different digest alone cannot assert this capability.
- if(sha(source)!=='b1f25afef715d230f573068a8cf1c54a65345e3583edebb91ab9bd8785df6ebd')fail('CALLEE_SKILL_CACHE_SOURCE_UNPROVEN',{path:MODERN_SKILL_INITIALIZER});
+ if(!allowedCaches.includes(sha(source)))fail('CALLEE_SKILL_CACHE_SOURCE_UNPROVEN',{path:MODERN_SKILL_INITIALIZER});
  let ast;try{ast=parse(source.toString(),{ecmaVersion:'latest',sourceType:'module'});}catch{fail('CALLEE_SKILL_CACHE_SOURCE_UNPROVEN',{path:MODERN_SKILL_INITIALIZER});}
  const imports=ast.body.filter(n=>n.type==='ImportDeclaration'&&n.source.value.startsWith('.')).map(n=>posix.normalize(posix.join(posix.dirname(MODERN_SKILL_INITIALIZER),n.source.value))).sort();
  if(imports.join(',')!==[...MODERN_SKILL_INPUTS].sort().join(','))fail('CALLEE_SKILL_CACHE_SOURCE_UNPROVEN',{path:MODERN_SKILL_INITIALIZER});
@@ -237,11 +244,11 @@ function calleeProof(yaml,spec,admissionScopesRequested=false){
    continue;
   }
   // schema-v1的完整已审阅分支字节；复杂或改变后的shell仍UNKNOWN。
-  if(spec.name==='implementation-impact'&&optional&&sha(Buffer.from(source))==='8e54cd03b82a18c8c94eaf0a438744193e093d680aa133f416e33ba4ca3ae21d'){
+  if(spec.name==='implementation-impact'&&optional&&sha(Buffer.from(source))===(inactiveInfra.future?FUTURE_RUNNER:'8e54cd03b82a18c8c94eaf0a438744193e093d680aa133f416e33ba4ca3ae21d')){
    if(job.env?.MODE!=="${{ inputs.mode || (github.event_name == 'pull_request' && 'pr' || 'main') }}"||!ADMISSION_SCOPE_ENV.has(job.env?.ADMISSION_SCOPES))fail('CALLEE_INTERFACE_MISMATCH',{path:spec.name});
    commands=[...source.matchAll(/^\s*node\s+tooling\/([-A-Za-z0-9_./]+\.(?:mjs|js))(?:\s|$)/gm)];conditional=true;
   }
-  for(const m of commands){
+  for(const m of inactiveInfra.future?commands.filter((m,i,a)=>a.findIndex(x=>x[1]===m[1])===i):commands){
    if(step.if!==undefined||step['continue-on-error'])fail('CALLEE_REQUIRED_JOB_MISSING',{path:spec.name});
    if(!RUNNERS.has(m[1])&&!(conditional&&m[1]==='scripts/ci/implementation-multi-pr-gate.mjs'))fail('CALLEE_SOURCE_OUTSIDE_CONTRACT',{path:m[1]});
    runners.push({path:m[1],selector:`jobs.${spec.calleeJob}.steps.${conditional?'fixed_versioned_conditional_node_tooling':'node_tooling'}`});
@@ -279,7 +286,7 @@ export async function extractWorkspaceCiSourceBundle({workspace,brain,readSource
    const calleeSide={repo:BRAIN,revision:callerEvidence.brainRevision};
    const callee=await yaml(calleeSide,path),runners=calleeProof(callee.value,spec,callerEvidence.admissionScopesRequested);
    relations.push({consumer:caller.source,input:callee.source,kind:'fixed_reusable_workflow',selector:`jobs.${spec.callerJob}.uses+tooling_revision`});
-   for(const runner of runners){const code=await read(calleeSide,runner.path);if(runner.reviewedCache){const bytes=await readSource({...calleeSide,path:runner.path});if(sha(bytes)!==code.content_sha256)fail('SOURCE_CHANGED_DURING_READ',{repo:calleeSide.repo,path:runner.path});reviewedSkillCache(bytes);}relations.push({consumer:callee.source,input:code,kind:'fixed_job_node_source',selector:runner.selector});}
+   for(const runner of runners){const code=await read(calleeSide,runner.path);if(runner.reviewedCache){const bytes=await readSource({...calleeSide,path:runner.path});if(sha(bytes)!==code.content_sha256)fail('SOURCE_CHANGED_DURING_READ',{repo:calleeSide.repo,path:runner.path});reviewedSkillCache(bytes,runner.reviewedCache);}relations.push({consumer:callee.source,input:code,kind:'fixed_job_node_source',selector:runner.selector});}
   }
   if(brainRevisions.some(revision=>!bindings.some(b=>b.repo===BRAIN&&b.revision===revision)))fail('SOURCE_IDENTITY_UNUSED');
  }catch(e){gaps.push({code:e.code||'SOURCE_PROTOCOL_INVALID',...(e.details||{})});}
