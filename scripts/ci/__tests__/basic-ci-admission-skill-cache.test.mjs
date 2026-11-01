@@ -1,10 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtempSync,writeFileSync,rmSync,readdirSync} from 'node:fs';
+import {mkdtempSync,writeFileSync,rmSync,readdirSync,mkdirSync,symlinkSync,copyFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join,dirname} from 'node:path';
-import {execFileSync} from 'node:child_process';
-import {pilotPlanHash} from '../../../packages/brain/src/lib/pilot-release-verification.js';
+import {execFileSync,spawnSync} from 'node:child_process';
+import {fileURLToPath} from 'node:url';
+import {bundle} from './fixtures/admission-bundle.mjs';
+import {infraSnapshot} from './fixtures/infra-snapshot.mjs';
 import * as skill from '../implementation-skill-source.mjs';
 const repo='perfectuser21/cecelia';
 function fixture(t){
@@ -12,10 +14,8 @@ function fixture(t){
  const git=(...args)=>execFileSync('git',['-C',root,'-c','core.hooksPath=/dev/null','-c','commit.gpgSign=false',...args],{encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
  git('init','-q');git('remote','add','origin','https://github.com/'+repo+'.git');
  const commit=text=>{writeFileSync(join(root,'product.txt'),text);git('add','.');git('-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','test: source');return git('rev-parse','HEAD');};
- const base=commit('base'),head=commit('head'),snapshots=['cecelia-kr','cecelia-factory','cecelia-infra'].map(scope=>{
-  const body={schema_version:1,scope,repo,revision:base,status:'verified',gaps:[],definitions:{workflows:[],activities:[]}};
-  return {...body,snapshot_sha256:pilotPlanHash(body)};
- });
+ const base=commit('base'),head=commit('head'),parent=bundle(base).snapshot;
+ const snapshots=[parent,parent.admission_companion.snapshot,infraSnapshot(base).snapshot];
  return {root,base,head,snapshots,git};
 }
 function request(f,extra={}){return {repoRoot:f.root,repo,revisions:[f.base,f.head],inputDir:join(f.root,'verified-input'),toolingRoot:f.root,mode:'pr',repository:repo,eventName:'pull_request',event:{},toolingRevision:f.base,...extra};}
@@ -40,4 +40,29 @@ test('authority错误、固定base/head漂移、缺scope均拒绝且不退回leg
   await assert.rejects(run(request(f),{loadCiAdmissionInputs:async()=>({}),withCiAdmissionInputsScratch:async(_,consume)=>consume({snapshots:f.snapshots,source:{repo,base_revision:f.base,head_revision:f.head},...patch})}),/CI_ADMISSION|SKILL_CACHE/);
  }
  assert.deepEqual(readdirSync(f.root).sort(),['.git','product.txt']);
+});
+test('真实CLI的typed定位变量不能授权main或跨仓，也不能在拒绝前读取event或候选Git',()=>{
+ const entry=fileURLToPath(new URL('../implementation-skill-source.mjs',import.meta.url));
+ for(const patch of[{MODE:'main'},{MODE:'release'},{GITHUB_EVENT_NAME:'workflow_dispatch'},{GITHUB_REPOSITORY:'foreign/repo'}]){
+  const result=spawnSync(process.execPath,[entry,'--prepare-ci-cache','/nonexistent-ci-candidate',repo,'a'.repeat(40),'b'.repeat(40)],{encoding:'utf8',env:{...process.env,IMPLEMENTATION_CI_ADMISSION_INPUT_DIR:'/nonexistent-ci-artifact',MODE:'pr',GITHUB_EVENT_NAME:'pull_request',GITHUB_REPOSITORY:repo,GITHUB_EVENT_PATH:'/nonexistent-ci-event',...patch}});
+  assert.equal(result.status,1);assert.match(result.stderr,/SKILL_CACHE_CI_ADMISSION_CONTEXT_INVALID/);assert.doesNotMatch(result.stderr,/ENOENT|ERR_MODULE_NOT_FOUND/);
+ }
+});
+test('typed与legacy参数混合先拒用途及混合，不能读取不存在的snapshot',()=>{
+ const entry=fileURLToPath(new URL('../implementation-skill-source.mjs',import.meta.url));
+ for(const mode of ['main','pr']){
+  const r=spawnSync(process.execPath,[entry,'--prepare-ci-cache','/nonexistent-ci-candidate',repo,'a'.repeat(40),'b'.repeat(40),'--snapshot','/nonexistent-must-not-read-legacy'],{encoding:'utf8',env:{...process.env,IMPLEMENTATION_CI_ADMISSION_INPUT_DIR:'/nonexistent-ci-artifact',MODE:mode,GITHUB_EVENT_NAME:'pull_request',GITHUB_REPOSITORY:repo}});
+  assert.equal(r.status,1);assert.match(r.stderr,mode==='main'?/SKILL_CACHE_CI_ADMISSION_CONTEXT_INVALID/:/SKILL_CACHE_CI_ADMISSION_LEGACY_MIXED/);assert.doesNotMatch(r.stderr,/ENOENT|SyntaxError/);
+ }
+});
+test('真实CLI在慢authority边界替身后只materialize一次，不使用启动时的过期预算',t=>{
+ const f=fixture(t),mirror=mkdtempSync(join(tmpdir(),'ci-admission-cache-tooling-'));t.after(()=>rmSync(mirror,{recursive:true,force:true}));
+ const original=fileURLToPath(new URL('../../../',import.meta.url)),ci=join(mirror,'scripts/ci');mkdirSync(ci,{recursive:true});
+ for(const path of ['packages','node_modules'])symlinkSync(join(original,path),join(mirror,path),'dir');
+ for(const file of ['implementation-skill-source.mjs','fixed-local-git.mjs'])copyFileSync(join(original,'scripts/ci',file),join(ci,file));
+ // 只模拟已核输入能力的时间/回调边界，实际Git、snapshot校验与缓存创建执行原实现。
+ writeFileSync(join(ci,'ci-admission-inputs.mjs'),`const started=Date.now();export async function loadCiAdmissionInputs(){Date.now=()=>started+61000;return{};}export async function withCiAdmissionInputsScratch(handle,consume){return consume(${JSON.stringify({snapshots:f.snapshots,source:{repo,base_revision:f.base,head_revision:f.head}})});}`);
+ const event=join(mirror,'event.json');writeFileSync(event,'{}');
+ const r=spawnSync(process.execPath,[join(ci,'implementation-skill-source.mjs'),'--prepare-ci-cache',f.root,repo,f.base,f.head],{encoding:'utf8',env:{...process.env,RUNNER_TEMP:mirror,GITHUB_WORKSPACE:mirror,IMPLEMENTATION_CI_ADMISSION_INPUT_DIR:join(mirror,'ci-admission'),MODE:'pr',GITHUB_EVENT_NAME:'pull_request',GITHUB_REPOSITORY:repo,GITHUB_EVENT_PATH:event,TOOLING_REVISION:f.base}});
+ assert.equal(r.status,0,r.stderr);assert.ok(r.stdout.trim().startsWith(join(mirror,'implementation-skills-ci-')));assert.equal(f.git('status','--porcelain'),'');
 });
