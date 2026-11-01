@@ -58,6 +58,7 @@ export function buildVerificationInputContext({source,evidence,reports,raw_consu
  const metadata=[];
  for(const row of evidence.metadata_candidates||[]){
   const input=row.input_facts,side=input?.source?.side,graphs=graphFacts?.scopes.map(s=>s[side]);
+  assertMetadataSideFacts(source,evidence,input.path);
   if(!['documentation_change','reference_catalog_change'].includes(row.kind)||input.role!==row.kind||input.non_executable!==true||input.owner_verified!==false||input.entry_verified!==false
    ||input.source.revision!==source[side+'_revision']||!source.changed_files.some(c=>c.path===input.path))fail('METADATA_INVALID');
   if(graphs?.length&&graphFacts.scopes.every(scope=>['base','head'].every(side=>{const row=scope[side].rows.find(r=>r.path===input.path);return row&&row.truncated===false&&equal(row.reverse_paths,[input.path]);}))&&reports.every(report=>['base','head'].every(side=>{const row=report[side].file_coverage.find(r=>r.path===input.path);return row&&row.truncated===false&&row.matched_paths.length===0&&!Object.hasOwn(row,'coverage_kind')&&!Object.hasOwn(row,'native_matched_paths');})))metadata.push({path:input.path,side,kind:row.kind,metadata_witness_sha256:row.metadata_witness_sha256,raw_graph_facts_sha256_by_scope:graphFacts.scopes.map(s=>({scope_key:s.scope_key,sha256:s[side].raw_graph_facts_sha256}))});
@@ -88,6 +89,16 @@ export function verifyVerificationInputContext(root,{source,reports,context,purp
  verifyVerificationInputEvidence(root,{source,evidence:expected.input_evidence,purpose});return expected;
 }
 
+function assertMetadataSideFacts(source,evidence,path){
+ const pair=(evidence.metadata_git_facts||[]).filter(row=>row.path===path);
+ if(pair.length!==2||!['base','head'].every(side=>pair.filter(r=>r.side===side).length===1))fail('METADATA_SIDE_FACTS_REQUIRED');
+ for(const row of pair){
+  const fact=row.exists===true?row.input_facts:null,origin=fact?.source||row.source;
+  if(!origin||origin.repo!==source.repo||origin.revision!==source[row.side+'_revision']||!/^[a-f0-9]{40}$/.test(origin.tree_sha1||''))fail('METADATA_SIDE_FACTS_INVALID');
+  if(row.exists===true){if(fact.path!==path||fact.source.side!==row.side||!['100644','100755'].includes(fact.mode)||fact.non_executable!==true||fact.owner_verified!==false||fact.entry_verified!==false)fail('METADATA_SIDE_FACTS_INVALID');}
+  else if(row.exists!==false||Object.hasOwn(row,'input_facts'))fail('METADATA_SIDE_FACTS_INVALID');
+ }
+}
 function authorizeRetirements(source,reports,owners,graphs,proof,entries){
  if(!proof&&!entries)return[];
  const {retirement_candidates_sha256,...body}=proof||{},entryBody={...entries};delete entryBody.retirement_entry_candidates_sha256;

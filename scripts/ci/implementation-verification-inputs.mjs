@@ -244,9 +244,8 @@ function auditedToolReader(read,side,path,entry,paths){
  }
  return null;
 }
-function metadataCandidate(root,source,side,path,entry,read,git,purpose){
- const kind=nonExecutableChangeKind(path);if(!kind||entry?.profile!=='basic')return null;
- const input_facts=fixedInputFacts(root,{source,side,path,purpose,allowMissing:true},git,kind,kind);if(!input_facts)return null;
+function metadataCandidate(source,side,path,entry,read,input_facts){
+ const kind=nonExecutableChangeKind(path);if(!kind||entry?.profile!=='basic'||!input_facts)return null;
  if(kind==='reference_catalog_change'){
   let doc;try{doc=yaml.load(read(side,path).text,{schema:yaml.JSON_SCHEMA});}catch{return null;}
   if(path==='docs/registry/features/task.yml'&&!(doc?.system_id==='task'&&Array.isArray(doc.features)&&doc.features.length&&doc.features.every(f=>typeof f.feature_id==='string')))return null;
@@ -258,11 +257,15 @@ function metadataCandidate(root,source,side,path,entry,read,git,purpose){
 }
 export function collectVerificationInputEvidence(root,{source,purpose='admission_only',readerPaths={base:[],head:[]}}){
  if(!readerPaths||Object.keys(readerPaths).sort().join(',')!=='base,head'||Object.values(readerPaths).some(rows=>!Array.isArray(rows)||rows.length>1000||new Set(rows).size!==rows.length||rows.some(p=>!location(p)||verificationInputKind(p)!=='test_source')))fail('READERS_INVALID');
- if(purpose!=='admission_only')fail('ADMISSION_ONLY');const git=checkedSource(root,source),read=supportReader(root,source,git),rows=[],states=[],metadata=[];
+ if(purpose!=='admission_only')fail('ADMISSION_ONLY');const git=checkedSource(root,source),read=supportReader(root,source,git),rows=[],states=[],metadata=[],metadataFacts=[];
  const paths=source.changed_files.map(c=>c.path);
  for(const side of ['base','head']){
   const entry=unitEntry(read,side);
-  for(const path of paths.filter(nonExecutableChangeKind)){const row=metadataCandidate(root,source,side,path,entry,read,git,purpose);if(row)metadata.push(row);}
+  for(const path of paths.filter(nonExecutableChangeKind)){
+   const kind=nonExecutableChangeKind(path),facts=fixedInputFacts(root,{source,side,path,purpose,allowMissing:true},git,kind,kind);
+   metadataFacts.push({path,side,exists:facts!==null,...(facts?{input_facts:facts}:{source:{repo:source.repo,revision:source[side+'_revision'],tree_sha1:git(['rev-parse',source[side+'_revision']+'^{tree}'])}})});
+   const row=metadataCandidate(source,side,path,entry,read,facts);if(row)metadata.push(row);
+  }
   for(const path of paths.filter(p=>verificationInputKind(p))){
    const input_facts=fixedInputFacts(root,{source,side,path,purpose,allowMissing:true},git);
    if(!input_facts){states.push({path,side,selection_state:'absent'});continue;}
@@ -289,7 +292,7 @@ export function collectVerificationInputEvidence(root,{source,purpose='admission
   }
  }
  checkedSource(root,source);
- const body={schema_version:1,purpose,evidence_kind:'derived_verification_input_candidates',source:structuredClone(source),rows,metadata_candidates:metadata,selection_states:states,
+ const body={schema_version:1,purpose,evidence_kind:'derived_verification_input_candidates',source:structuredClone(source),rows,metadata_candidates:metadata,metadata_git_facts:metadataFacts,selection_states:states,
   unproven:states.filter(s=>!['selected','absent'].includes(s.selection_state)).map(({path,side,selection_state})=>({path,side,reason:selection_state})),
   entry_authorization:'declaration_only',native_owner_authorized:false,reader_paths:structuredClone(readerPaths),execution_status:'not_evaluated',coverage:'unknown'};
  return {...body,verification_inputs_sha256:sha(JSON.stringify(canonical(body)))};
