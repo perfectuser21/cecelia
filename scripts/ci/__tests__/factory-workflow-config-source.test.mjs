@@ -11,7 +11,7 @@ import yaml from 'js-yaml';
 import {fileURLToPath} from 'node:url';
 import {join,resolve} from 'node:path';
 import {cruise} from 'dependency-cruiser';
-import {VERIFICATION_GIT_OPTIONS,cleanupVerificationFixture,immutableVerificationSeed,disposeVerificationSeed,fixedInputFixture as inputFixture} from './fixtures/verification-input-git.mjs';
+import {VERIFICATION_GIT_OPTIONS,cleanupVerificationFixture,immutableVerificationSeed,disposeVerificationSeed,fixedInputFixture as inputFixture,assertTypedResolverOutputLayout} from './fixtures/verification-input-git.mjs';
 
 // 根扫描器依赖只在npm ci全根的CI来源suite执行；Brain-only单测保留运行配置行为测试。
 test('默认运行配置由原生依赖图绑定到实际读取器',async()=>{
@@ -470,6 +470,7 @@ test('原生registry身份本身缺失或非法时，不以双方undefined相等
 test('typed输出边界拒绝裸legacy文件与report内嵌snapshot，普通报告不借此获得资格',async t=>{
  const multi=await import('../implementation-multi-pr-gate.mjs'),root=mkdtempSync(join(tmpdir(),'typed-output-contract-'));t.after(()=>rmSync(root,{recursive:true,force:true}));
  assert.equal(typeof multi.assertCiAdmissionOutputFiles,'function');mkdirSync(join(root,'cecelia-factory'));const report=join(root,'cecelia-factory/report.json');writeFileSync(report,'{}');assert.doesNotThrow(()=>multi.assertCiAdmissionOutputFiles(root));
+ assertTypedResolverOutputLayout(root,multi.assertCiAdmissionOutputFiles);
  const candidate=join(root,'cecelia-factory/candidate.json');writeFileSync(candidate,'{}');assert.throws(()=>multi.assertCiAdmissionOutputFiles(root),/ADMISSION_OUTPUT/);rmSync(candidate);
  writeFileSync(report,JSON.stringify({schema_version:1,scope:'cecelia-factory',snapshot_sha256:'a'.repeat(64)}));assert.throws(()=>multi.assertCiAdmissionOutputFiles(root),/ADMISSION_OUTPUT/);
 });
