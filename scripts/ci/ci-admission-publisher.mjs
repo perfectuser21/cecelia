@@ -3,7 +3,7 @@
 import {readFileSync,mkdirSync,writeFileSync,realpathSync,rmSync,appendFileSync} from 'node:fs';
 import {resolve,join} from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {verifyCiAdmissionPublicationAuthority,isLegacyCiPublicationDiagnostic} from './ci-admission-authority.mjs';
+import {verifyCiAdmissionAuthority} from './ci-admission-authority.mjs';
 import {createCiAdmissionEnvelope} from './ci-admission-envelope.mjs';
 import {runCiAdmissionWorker} from './ci-admission-worker-runner.mjs';
 import {fixedLocalGit} from './fixed-local-git.mjs';
@@ -17,11 +17,10 @@ export async function publishCiAdmissionBaseline(options,deps={}){
  checkouts(o);
  const authOptions={repoRoot:o.controlRoot,sourceRevision:o.sourceRevision,controlRevision:o.controlRevision,sourceRunId:o.sourceRunId,
   publisher:{runId:o.publisherRunId,attempt:o.publisherAttempt,phase:'publishing'}};
- const initial=await verifyCiAdmissionPublicationAuthority(authOptions,deps);
- if(isLegacyCiPublicationDiagnostic(initial))return initial;
+ await verifyCiAdmissionAuthority(authOptions,deps);
  const draft=await (deps.runWorker||runCiAdmissionWorker)(o);checkouts(o);
  // 网络/执行隔离结束后重新读取真实官方身份；不能沿用过期预检。
- const authority=await verifyCiAdmissionPublicationAuthority(authOptions,deps),envelope=await createCiAdmissionEnvelope({authority,controlRoot:o.controlRoot,draft});
+ const authority=await verifyCiAdmissionAuthority(authOptions,deps),envelope=await createCiAdmissionEnvelope({authority,controlRoot:o.controlRoot,draft});
  const output=resolve(o.outputDir);mkdirSync(output,{mode:0o700});
  try{writeFileSync(join(output,'ci-admission.json'),JSON.stringify(envelope)+'\n',{mode:0o600,flag:'wx'});
   writeFileSync(join(output,'assertions.json'),JSON.stringify(envelope.ci_assertions)+'\n',{mode:0o600,flag:'wx'});

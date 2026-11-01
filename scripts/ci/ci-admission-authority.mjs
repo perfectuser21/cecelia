@@ -5,7 +5,6 @@ import {stepSha256 as hash} from '../../packages/brain/scripts/sync-steps-from-w
 import {unpackCiAdmissionArchive} from './ci-admission-archive.mjs';
 import {readFixedLocalGitBlob} from './fixed-local-git.mjs';
 const REPO='perfectuser21/cecelia',PREFIX=`repos/${REPO}`,SHA=/^[a-f0-9]{40}$/;
-const legacyDiagnostics=new WeakSet();
 const LEGACY_CI_RECIPE='91eb26e207d3f15cf810fe1dec4e9137d0f31d1c8004f7938ded7cb7112335e2';
 const proofs=new WeakMap(),documents=new WeakMap(),positive=n=>Number.isSafeInteger(n)&&n>0;
 const need=(ok,code)=>{if(!ok)throw Object.assign(Error(code),{code});};
@@ -16,14 +15,7 @@ export function ciAuthorityProof(capability){
  need(proofs.has(capability),'CI_ADMISSION_AUTHORITY_REQUIRED');return structuredClone(proofs.get(capability));
 }
 export function ciAuthorityDocument(capability){need(documents.has(capability),'CI_ADMISSION_ARTIFACT_BOUND_REQUIRED');return structuredClone(documents.get(capability));}
-export function isLegacyCiPublicationDiagnostic(value){return legacyDiagnostics.has(value);}
-export async function verifyCiAdmissionAuthority(options,deps={}){return verifyAuthority(options,deps,false);}
-// Only an in-flight publisher may classify this exact old recipe. This is never source/artifact authority.
-export async function verifyCiAdmissionPublicationAuthority(options,deps={}){
- need(options?.publisher?.phase==='publishing'&&options.artifactId===undefined,'CI_ADMISSION_PUBLICATION_PHASE_REQUIRED');
- return verifyAuthority(options,deps,true);
-}
-async function verifyAuthority({repoRoot,sourceRevision,controlRevision,sourceRunId,publisher,artifactId},deps,publication){
+export async function verifyCiAdmissionAuthority({repoRoot,sourceRevision,controlRevision,sourceRunId,publisher,artifactId},deps={}){
  need(SHA.test(sourceRevision||'')&&SHA.test(controlRevision||'')&&positive(sourceRunId),'CI_ADMISSION_AUTHORITY_INPUT');
  if(publisher)need(positive(publisher.runId)&&positive(publisher.attempt)
   &&Object.keys(publisher).every(k=>['runId','attempt','artifactCreatedAt','phase'].includes(k))
@@ -89,18 +81,15 @@ async function verifyAuthority({repoRoot,sourceRevision,controlRevision,sourceRu
   if(artifactCreatedAt!==undefined)need(time(artifactCreatedAt)&&Date.parse(job.started_at)<=Date.parse(artifactCreatedAt)&&Date.parse(artifactCreatedAt)<=Date.parse(job.completed_at),'CI_ADMISSION_ARTIFACT_PROVIDER_TIME');
   return {...result,job_id:job.id,check_run_id:id,app_id:15368};
  };
- let legacy=false;
- if(publication){
-  try{legacy=createHash('sha256').update(readFixedLocalGitBlob(repoRoot,{revision:sourceRevision,path:'.github/workflows/ci.yml'},{deadline})).digest('hex')===LEGACY_CI_RECIPE;}catch{legacy=false;}
- }
- const ci=await checkRun({runId:sourceRunId,revision:sourceRevision,path:'.github/workflows/ci.yml',name:legacy?'ci-passed':'源码保底通过',event:'push'});
+ let recipe;
+ try{recipe=readFixedLocalGitBlob(repoRoot,{revision:sourceRevision,path:'.github/workflows/ci.yml'},{deadline});}
+ catch{need(false,'CI_ADMISSION_SOURCE_RECIPE_REQUIRED');}
+ const recipeSha256=createHash('sha256').update(recipe).digest('hex'),legacy=recipeSha256===LEGACY_CI_RECIPE;
+ // The reviewed full legacy recipe and the current Basic CI are distinct, immutable provider identities.
+ const providerName=legacy?'ci-passed':'源码保底通过';
+ const ci={...await checkRun({runId:sourceRunId,revision:sourceRevision,path:'.github/workflows/ci.yml',name:providerName,event:'push'}),
+  profile:legacy?'legacy_full_ci_v1':'basic_ci_v1',provider_name:providerName,recipe_sha256:recipeSha256};
  const provider=publisher?await checkRun({runId:publisher.runId,revision:controlRevision,path:'.github/workflows/ci-admission-baseline.yml',name:'ci-admission-baseline',event:'workflow_run',...publisher}):null;
- if(legacy){
-  const diagnostic=Object.freeze({schema:'cecelia.ci-publication-diagnostic/v1',kind:'legacy_ci_not_applicable',published:false,
-   purpose:'ci_publication_diagnostic_only',source_revision:sourceRevision,control_revision:controlRevision,legacy_ci_recipe_sha256:LEGACY_CI_RECIPE,
-   source_run_id:ci.run_id,source_job_id:ci.job_id,source_check_run_id:ci.check_run_id,app_id:ci.app_id,publisher_run_id:provider.run_id,publisher_attempt:provider.attempt});
-  legacyDiagnostics.add(diagnostic);return diagnostic;
- }
  let artifact=null,document;
  if(artifactId!==undefined){
   const meta=await call(`${PREFIX}/actions/artifacts/${artifactId}`);
