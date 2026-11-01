@@ -7,6 +7,7 @@ import {tmpdir} from 'node:os';
 import {join,dirname,resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {cruise} from 'dependency-cruiser';
+import yaml from 'js-yaml';
 import {extractSpawnEdges} from '../../../packages/brain/src/lib/graph-extract.js';
 import {publishCiAdmissionBaseline} from '../ci-admission-publisher.mjs';
 import {buildCiAdmissionDraft} from '../ci-admission-builder.mjs';
@@ -43,13 +44,23 @@ test('轻入口真实worker进程拒绝错误argv，不写draft且不继承线�
 test('现行Node根实际导入轻入口，正式静态图与spawn抽取器必须见到受测生产链',async()=>{
  const entry='scripts/ci/__tests__/basic-ci-admission-native-entry.test.mjs',nodeRoot='scripts/ci/__tests__/implementation-main-snapshot.test.mjs';
  const impactReader='scripts/ci/__tests__/basic-ci-admission-impact-workflow.test.mjs',contractRoot='scripts/ci/__tests__/device-patrol-governance.test.mjs',aggregate='scripts/ci/__tests__/ci-admission-mechanisms.test.mjs';
- const factoryRoot='scripts/ci/__tests__/implementation-skill-source.test.mjs',factory='scripts/ci/__tests__/factory-workflow-config-source.test.mjs';
- const result=await cruise([nodeRoot,entry,impactReader,contractRoot,factoryRoot],{baseDir:root,doNotFollow:{path:'node_modules'},exclude:{path:'node_modules'}}),graph=typeof result.output==='string'?JSON.parse(result.output):result.output;
+ const factory='scripts/ci/__tests__/factory-workflow-config-source.test.mjs';
+ const nodeRoots=[nodeRoot,'scripts/ci/__tests__/workspace-ci-source-bundle.test.mjs','scripts/ci/__tests__/implementation-skill-source.test.mjs',contractRoot];
+ const result=await cruise([...nodeRoots,entry,impactReader],{baseDir:root,doNotFollow:{path:'node_modules'},exclude:{path:'node_modules'}}),graph=typeof result.output==='string'?JSON.parse(result.output):result.output;
  const dependency=(from,to)=>graph.modules.some(m=>m.source===from&&m.dependencies.some(d=>!d.couldNotResolve&&resolve(root,d.resolved)===resolve(root,to)));
  assert.ok(dependency(nodeRoot,entry),'actual selected Node root must consume the light regression');
  assert.ok(dependency(contractRoot,aggregate),'full contracts must run on an existing root-dependency Node lane');
- assert.ok(dependency(factoryRoot,factory),'factory regressions must share the existing parallel root-dependency step');
- assert.equal(dependency(nodeRoot,factory),false,'factory regressions must not serialize with HTTP cases');
+ assert.equal(nodeRoots.filter(from=>dependency(from,factory)).length,1,'exactly one actual selected Node root must import factory regressions');
+ const workflows=['.github/workflows/ci.yml','.github/workflows/implementation-impact.yml'].map(path=>yaml.load(readFileSync(join(root,path),'utf8')));
+ for(const path of nodeRoots){
+  const ready=workflows.some(doc=>Object.values(doc.jobs).some(job=>(job.steps||[]).some((step,index,steps)=>{
+   const args=typeof step.run==='string'?step.run.trim().split(/\s+/):[];
+   if(args[0]!=='node'||args[1]!=='--test'||!args.slice(2).includes(path))return false;
+   const directory=item=>item['working-directory']??job.defaults?.run?.['working-directory']??doc.defaults?.run?.['working-directory']??'';
+   return steps.slice(0,index).some(install=>install.run==='npm ci --ignore-scripts'&&directory(install)===directory(step));
+  })));
+  assert.ok(ready,'selected Node root must have full root dependencies installed in its actual directory: '+path);
+ }
  assert.equal(dependency(nodeRoot,aggregate),false,'heavy contracts must not return to the expensive root');
  assert.equal(existsSync(join(root,'packages/brain/src/__tests__/ci-admission-baseline-contracts.test.js')),false,'Brain-only npm install cannot run root-dependency contracts');
  assert.ok(dependency(impactReader,'scripts/ci/implementation-multi-pr-gate.mjs'),'workflow/provider verification must consume the actual provider API');
