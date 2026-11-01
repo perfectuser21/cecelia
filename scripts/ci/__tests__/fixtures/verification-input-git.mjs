@@ -66,6 +66,10 @@ export function assertTypedResolverOutputLayout(root, assertOutput) {
  const path = join(root, 'baseline-resolution.json');
  writeFileSync(path, JSON.stringify(metadata));
  assert.doesNotThrow(() => assertOutput(root));
+ const nestedMetadata = join(root, 'cecelia-factory', 'baseline-resolution.json');
+ writeFileSync(nestedMetadata, JSON.stringify(metadata));
+ assert.throws(() => assertOutput(root), /ADMISSION_OUTPUT/);
+ rmSync(nestedMetadata);
  writeFileSync(path, JSON.stringify({ ...metadata, debug: {
   snapshot: { schema_version: 1, scope: 'cecelia-factory', snapshot_sha256: digest },
  } }));
