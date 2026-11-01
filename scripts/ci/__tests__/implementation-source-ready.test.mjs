@@ -8,6 +8,7 @@ import {createServer} from 'node:http';
 import {createHash} from 'node:crypto';
 import yaml from 'js-yaml';
 import {expectedSourceRuntime,waitForSourceRuntime} from '../implementation-source-ready.mjs';
+import {futureCiAdmissionImpactWorkflow} from './fixtures/ci-admission-impact-workflow.mjs';
 const legacyPaths=['source','runtime-source','build-source','build-envelopes','workspace-source'].map(n=>`packages/brain/src/lib/existing-ops-${n}.js`).sort();
 const provenancePaths=['envelope','core-envelope','entry-envelopes','local-envelopes'].map(n=>`packages/brain/src/lib/existing-ops-provenance-${n}.js`).sort();
 const priorPaths=[...legacyPaths,...provenancePaths].sort();
@@ -179,7 +180,12 @@ test('显式来源恢复的联合门不索取被跳过的infra产物',()=>{
   {IMPLEMENTATION_INFRA_ADMISSION:'true',IMPLEMENTATION_MAP_SCOPE:'cecelia-kr'});
  assert.equal(active(true),'false','source-only 不应下载或要求普通 infra 快照');
  assert.equal(active(false),'true','普通准入仍保留 infra 联合门');
- assert.equal(workflow.jobs.gate.steps.find(s=>s.name==='独立infra固定来源加入联合输入').if,"env.INFRA_ADMISSION == 'true'");
+ // 当前旧Core仍核原恢复语义；typed路由只核已审未来数据，不冒当前已激活。
+ const condition=yaml.load(futureCiAdmissionImpactWorkflow).jobs.gate.steps.find(s=>s.name==='独立infra固定来源加入联合输入').if;
+ const accepts=env=>Function('env',`return (${condition})`)(env);
+ assert.equal(accepts({INFRA_ADMISSION:'true',IMPLEMENTATION_CI_ADMISSION_INPUT_DIR:''}),true,'旧独立infra输入仍真实执行');
+ assert.equal(accepts({INFRA_ADMISSION:'true',IMPLEMENTATION_CI_ADMISSION_INPUT_DIR:'/verified/ci-admission'}),false,'CI封套已包含三scope，不独立混入另一份infra');
+ assert.equal(accepts({INFRA_ADMISSION:'false',IMPLEMENTATION_CI_ADMISSION_INPUT_DIR:''}),false);
 });
 test('固定Git输入可在真实depth1浅克隆运行',()=>{
  const clone=join(root,'shallow');execFileSync('git',['clone','--quiet','--depth','1',`file://${root}`,clone]);
