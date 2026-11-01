@@ -92,6 +92,7 @@ test('控制目录的catalog symlink不是普通审核blob',()=>{
 });
 const replacements=[...['diagnosis','escalation','healing','levels','metrics'].map(n=>`packages/brain/src/__tests__/alertness/${n}.test.js`),...['diagnosis','escalation','healing','metrics'].map(n=>`packages/brain/src/alertness/__tests__/${n}.test.js`),'packages/brain/src/__tests__/alertness-index-refactor.test.js','packages/brain/src/__tests__/alertness-recovery.test.js'];
 for(const path of replacements)test(`固定11替代/支撑测试逐项字节漂移拒绝：${path}`,()=>{
+ assert.equal(git(sourceRoot,'config','--bool','--get','core.sparseCheckoutCone'),'false','追加单文件必须继承已经固定的非cone模式');
  needApi();try{git(sourceRoot,'sparse-checkout','add','--no-cone','/'+path);const file=join(sourceRoot,path);writeFileSync(file,Buffer.concat([readFileSync(file),Buffer.from('\n// byte drift\n')]));commit(sourceRoot);assert.throws(()=>api.collectVerificationRetirementCandidates(sourceRoot,options()),/REPLACEMENT/);}finally{reset();}
 });
 function retireExtra(){for(const path of EXTRA_OLD)git(sourceRoot,'update-index','--force-remove',path);commit(sourceRoot);}
