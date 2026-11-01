@@ -1,19 +1,21 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {execFileSync} from 'node:child_process';
-import {mkdirSync,writeFileSync,readFileSync,symlinkSync,existsSync} from 'node:fs';
+import {mkdirSync,writeFileSync,readFileSync,symlinkSync,existsSync,unlinkSync} from 'node:fs';
 import {join,dirname} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {createHash} from 'node:crypto';
 import {authorityFixture} from './fixtures/ci-admission-authority.mjs';
 import * as authority from '../ci-admission-authority.mjs';
 import {publishCiAdmissionBaseline} from '../ci-admission-publisher.mjs';
+import {createCiAdmissionEnvelope} from '../ci-admission-envelope.mjs';
 const repoRoot=fileURLToPath(new URL('../../..',import.meta.url)),prefix='repos/perfectuser21/cecelia';
 const recipe=execFileSync('git',['show','b217cd52336767b9637410ef921397a0e9297f2b:.github/workflows/ci.yml'],{cwd:repoRoot});
 function fixture(t,{bytes=recipe,symlink=false,missing=false}={}){
  const f=authorityFixture(t),path=join(f.root,'.github/workflows/ci.yml');mkdirSync(dirname(path),{recursive:true});
  if(missing){}else if(symlink){writeFileSync(join(f.root,'recipe'),bytes);symlinkSync('../../recipe',path);}else writeFileSync(path,bytes);
  writeFileSync(join(f.root,'source'),'actual source CI');f.git('add','.');f.git('commit','-qm','actual old CI source');f.source=f.git('rev-parse','HEAD');
+ if(existsSync(path))unlinkSync(path);writeFileSync(path,'name: CI\non: {push: {branches: [main]}}\njobs: {source: {name: 源码保底通过, runs-on: ubuntu-latest, steps: [{run: true}]}}\n');
  writeFileSync(join(f.root,'later-control'),'publisher can be newer');f.git('add','.');f.git('commit','-qm','later publisher control');f.control=f.git('rev-parse','HEAD');
  f.data.get(`${prefix}/branches/main`).commit.sha=f.control;
  for(const [runId,checkId,revision,name]of [[11,34,f.source,'ci-passed'],[22,44,f.control,'ci-admission-baseline']]){
@@ -29,11 +31,11 @@ function fixture(t,{bytes=recipe,symlink=false,missing=false}={}){
  return f;
 }
 test('真实旧recipe CI晚于较新control完成仅返回NA，不授capability/不启动worker或写artifact',async t=>{
- const f=fixture(t);assert.equal(createHash('sha256').update(recipe).digest('hex'),'91eb26e207d3f15cf810fe1dec4e9137d0f31d1c8004f7938ded7cb7112335e2');
+ const f=fixture(t);assert.notEqual(createHash('sha256').update(f.git('show',f.control+':.github/workflows/ci.yml')).digest('hex'),'91eb26e207d3f15cf810fe1dec4e9137d0f31d1c8004f7938ded7cb7112335e2');assert.equal(createHash('sha256').update(recipe).digest('hex'),'91eb26e207d3f15cf810fe1dec4e9137d0f31d1c8004f7938ded7cb7112335e2');
  let workers=0;const result=await publishCiAdmissionBaseline(f.publisher,{api:f.api,runWorker:async()=>{workers++;throw Error('must not run');}});
  assert.equal(result.published,false);assert.equal(result.kind,'legacy_ci_not_applicable');assert.equal(result.source_revision,f.source);assert.equal(result.control_revision,f.control);
  assert.equal(workers,0);assert.equal(existsSync(f.publisher.outputDir),false);assert.equal(Object.isFrozen(result),true);
- const diagnostic=await f.publication();assert.throws(()=>authority.ciAuthorityProof(diagnostic),/AUTHORITY_REQUIRED/);assert.throws(()=>authority.ciAuthorityProof({...diagnostic}),/AUTHORITY_REQUIRED/);assert.throws(()=>authority.ciAuthorityDocument(diagnostic),/ARTIFACT_BOUND_REQUIRED/);
+ const diagnostic=await f.publication();assert.equal(authority.isLegacyCiPublicationDiagnostic(diagnostic),true);assert.equal(authority.isLegacyCiPublicationDiagnostic({...diagnostic}),false);await assert.rejects(createCiAdmissionEnvelope({authority:diagnostic,controlRoot:f.root,draft:{}}),/AUTHORITY_REQUIRED/);assert.throws(()=>authority.ciAuthorityProof(diagnostic),/AUTHORITY_REQUIRED/);assert.throws(()=>authority.ciAuthorityProof({...diagnostic}),/AUTHORITY_REQUIRED/);assert.throws(()=>authority.ciAuthorityDocument(diagnostic),/ARTIFACT_BOUND_REQUIRED/);
  await assert.rejects(authority.verifyCiAdmissionAuthority(f.options,{api:f.api}),/CI_ADMISSION_PROVIDER_AMBIGUOUS/);
 });
 for(const variant of ['recipe-byte','missing-recipe','symlink','wrong-app','failed-job','wrong-job','wrong-check-link','wrong-source-path','unprotected','pr-event','missing-publisher','nonpublishing','artifact'])test('旧CI NA精确边界拒绝：'+variant,async t=>{
@@ -57,4 +59,10 @@ test('真实CLI旧CI NA输出published=false且不留下专用artifact目录',as
  const event=join(f.root,'event.json'),output=join(f.root,'github-output');writeFileSync(event,JSON.stringify(f.publisher.event));
  const text=execFileSync(process.execPath,[fileURLToPath(new URL('../ci-admission-publisher.mjs',import.meta.url)),f.publisher.sourceRoot,f.root,f.publisher.outputDir],{encoding:'utf8',env:{PATH:bin+':'+process.env.PATH,GITHUB_EVENT_PATH:event,GITHUB_OUTPUT:output,GITHUB_REPOSITORY:f.publisher.repository,GITHUB_EVENT_NAME:'workflow_run',GITHUB_SHA:f.control,GITHUB_RUN_ID:'22',GITHUB_RUN_ATTEMPT:'1'},timeout:15000});
  assert.equal(JSON.parse(text).published,false);assert.equal(readFileSync(output,'utf8'),'published=false\n');assert.equal(existsSync(f.publisher.outputDir),false);
+});
+
+for(const side of ['source','control'])test('旧CI NA也不能掩盖实际checkout漂移：'+side,async t=>{
+ const f=fixture(t);writeFileSync(join(side==='source'?f.publisher.sourceRoot:f.root,'source'),'dirty tracked bytes');let workers=0;
+ await assert.rejects(publishCiAdmissionBaseline(f.publisher,{api:f.api,runWorker:()=>{workers++;}}),/CI_ADMISSION_PUBLISHER_CHECKOUT/);
+ assert.equal(workers,0);assert.equal(existsSync(f.publisher.outputDir),false);
 });

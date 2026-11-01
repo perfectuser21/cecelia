@@ -66,6 +66,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: node control/scripts/ci/ci-admission-publisher.mjs "$GITHUB_WORKSPACE/source" "$GITHUB_WORKSPACE/control" "$RUNNER_TEMP/ci-admission-publication"
       - uses: actions/upload-artifact@v4
+        if: steps.publish.outputs.published == 'true'
         with:
           name: implementation-ci-admission-baseline-${{ github.event.workflow_run.head_sha }}
           path: |
