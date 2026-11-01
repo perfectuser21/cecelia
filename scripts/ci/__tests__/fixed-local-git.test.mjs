@@ -8,7 +8,7 @@ import {createHash} from 'node:crypto';
 import {pilotPlanHash} from '../../../packages/brain/src/lib/pilot-release-verification.js';
 function fixture(t){
  const root=mkdtempSync(join(tmpdir(),'fixed-ci-git-'));t.after(()=>rmSync(root,{recursive:true,force:true}));
- const git=(...args)=>execFileSync('git',['-C',root,...args],{encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
+ const git=(...args)=>execFileSync('git',[...VERIFICATION_GIT_OPTIONS,'-C',root,...args],{encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
  git('init','-q','-b','cp-fixture');git('config','core.hooksPath','/dev/null');
  const commit=body=>{writeFileSync(join(root,'contract.json'),body);git('add','.');git('-c','user.name=fixture','-c','user.email=fixture@example.invalid','commit','-qm','fixture');return git('rev-parse','HEAD');};
  const revision=commit('original fixed bytes');return {root,git,revision,commit};
@@ -116,9 +116,9 @@ test('published八对象私有Git冷还原读取canonical两blob，替换、环�
  assert.equal(existsSync(join(f.directory,'.git/objects/info/alternates')),false);assert.throws(()=>f.git('remote','get-url','origin'));
  const hashes=[['.github/workflows/implementation-impact.yml','5a43bfd48709018ee641952747b15f3c949099f2'],['scripts/ci/implementation-skill-source.mjs','2351ae6a69b066a7e15dbb17e2e6babc13a31305']];
  const check=()=>{for(const[path,hash]of hashes){const bytes=f.read(path);assert.equal(createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex'),hash);}};check();
- const tree=f.git('mktree').toString().trim(),forged=execFileSync('git',['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit-tree',tree,'-p',f.revision],{cwd:f.directory,env:f.env,input:'isolated replacement\n'}).toString().trim();
+ const tree=f.git('mktree').toString().trim(),forged=execFileSync('git',[...VERIFICATION_GIT_OPTIONS,'-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit-tree',tree,'-p',f.revision],{cwd:f.directory,env:f.env,input:'isolated replacement\n'}).toString().trim();
  f.git('replace',f.revision,forged);
- assert.throws(()=>execFileSync('git',['show',`${f.revision}:${hashes[0][0]}`],{cwd:f.directory,env:f.env,stdio:'pipe'}));check();
+ assert.throws(()=>execFileSync('git',[...VERIFICATION_GIT_OPTIONS,'show',`${f.revision}:${hashes[0][0]}`],{cwd:f.directory,env:f.env,stdio:'pipe'}));check();
  const names=['GIT_DIR','GIT_WORK_TREE','GIT_OBJECT_DIRECTORY'],prior=Object.fromEntries(names.map(key=>[key,process.env[key]]));
  Object.assign(process.env,{GIT_DIR:join(f.directory,'outside.git'),GIT_WORK_TREE:join(f.directory,'outside'),GIT_OBJECT_DIRECTORY:join(f.directory,'outside-objects')});
  try{check();}finally{for(const[key,value]of Object.entries(prior)){if(value===undefined)delete process.env[key];else process.env[key]=value;}}
@@ -127,7 +127,7 @@ test('published八对象私有Git冷还原读取canonical两blob，替换、环�
  f.close();assert.equal(existsSync(f.directory),false);
 });
 
-import {cleanupVerificationFixture} from './fixtures/verification-input-git.mjs';
+import {VERIFICATION_GIT_OPTIONS,cleanupVerificationFixture} from './fixtures/verification-input-git.mjs';
 function assertOwnedCleanup(root,target,options){
  assert.equal(target,root);assert.deepEqual(options,{recursive:true,force:true});
 }
