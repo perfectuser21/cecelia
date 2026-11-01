@@ -1,12 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,rmSync,existsSync} from 'node:fs';
+import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,rmSync,existsSync,realpathSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {createRequire} from 'node:module';
 import {execFileSync,spawnSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import {futureCiAdmissionImpactWorkflow} from './fixtures/ci-admission-impact-workflow.mjs';
+import {parseImplementationMultiArgs} from '../implementation-multi-pr-gate.mjs';
 const yaml=createRequire(import.meta.url)('js-yaml');
 const workflow=()=>yaml.load(futureCiAdmissionImpactWorkflow);
 const named=(name)=>workflow().jobs.gate.steps.find(s=>s.name===name);
@@ -37,6 +38,14 @@ test('执行已审未来workflow三个Shell正文：typed bundle不提取裸快�
  assert.equal(existsSync(join(root,'implementation-input/base')),false);assert.equal(existsSync(join(root,'implementation-input/head')),false);
  run('准备固定中央Skill对象缓存');run('实际变更影响与固定回归');
  const commands=readFileSync(log,'utf8').trim().split('\n').map(line=>JSON.parse(line));assert.equal(commands.length,3);
+ const admission=commands.find(args=>args[0].endsWith('implementation-multi-pr-gate.mjs'));assert.ok(admission);
+ const args=admission.slice(1),parsed=parseImplementationMultiArgs(args);
+ assert.equal(parsed.repoRoot,realpathSync(join(root,'source')));assert.equal(parsed.toolingRoot,realpathSync(join(root,'tooling')));
+ assert.equal(parsed.ciAdmissionInputDir,realpathSync(env.IMPLEMENTATION_CI_ADMISSION_INPUT_DIR));assert.equal(parsed.mode,'pr');
+ assert.equal(parsed.base,base);assert.equal(parsed.head,head);assert.equal(parsed.scopes,undefined);
+ assert.throws(()=>parseImplementationMultiArgs([...args,'--scopes-file',join(root,'forbidden.json')]),/IMPACT_MULTISCOPE/);
+ const mainArgs=[...args];mainArgs[mainArgs.indexOf('--mode')+1]='main';assert.throws(()=>parseImplementationMultiArgs(mainArgs),/IMPACT_MULTISCOPE/);
+
  assert.equal(existsSync(join(root,'implementation-input/scopes.json')),false);
  assert.equal(existsSync(join(root,'implementation-input/admission-scopes.json')),false);
 });
