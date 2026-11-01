@@ -23,11 +23,12 @@ import {createHash} from 'node:crypto';
 import {load,dump} from 'js-yaml';
 import {execFileSync} from 'node:child_process';
 import {futureCiAdmissionImpactWorkflow} from '../../../../../scripts/ci/__tests__/fixtures/ci-admission-impact-workflow.mjs';
+import {readFixedLocalGitBlob} from '../../../../../scripts/ci/fixed-local-git.mjs';
 const root=new URL('../../../../../',import.meta.url);
 // 未来协议只读已审原始数据；旧Core CI阶段的实际路由保持固定main原件。
 const currentFile=path=>path==='.github/workflows/implementation-impact.yml'?Buffer.from(futureCiAdmissionImpactWorkflow):readFileSync(new URL(path,root));
 const PUBLISHED='b217cd52336767b9637410ef921397a0e9297f2b';
-const publishedFile=(path,gitRoot=root)=>execFileSync('git',['show',PUBLISHED+':'+path],{cwd:gitRoot,maxBuffer:1024*1024});
+const publishedFile=(path,gitRoot=fileURLToPath(root))=>readFixedLocalGitBlob(gitRoot,{revision:PUBLISHED,path});
 function isolatedPublishedGit(consume){
  const directory=mkdtempSync(join(tmpdir(),'workspace-published-git-'));
  const env=Object.fromEntries(Object.entries(process.env).filter(([key])=>!key.startsWith('GIT_')));
