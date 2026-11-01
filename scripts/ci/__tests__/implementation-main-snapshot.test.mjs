@@ -1,5 +1,5 @@
 import './factory-workflow-config-source.test.mjs';
-import './implementation-verification-context-digest.test.mjs';
+import './basic-verification-context-digest.test.mjs';
 import './basic-ci-admission-native-entry.test.mjs';
 import './implementation-main-transport.test.mjs';
 import {bundle} from './fixtures/admission-bundle.mjs';

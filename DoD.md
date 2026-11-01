@@ -3,7 +3,7 @@
 以下为本地可执行合同；正式远端门禁与 main 基线读回以对应实际 SHA 的独立证据为准。
 
 - [x] [BEHAVIOR] 同一次 context 构建中的普通输入与退休证明共享 report 摘要，输出及摘要逐字等价；新调用重新计算，不复用过期结果，不改变预算。
-  Test: manual:node --test scripts/ci/__tests__/implementation-verification-context-digest.test.mjs
+  Test: manual:node --test scripts/ci/__tests__/basic-verification-context-digest.test.mjs
 - [x] [BEHAVIOR] 当前 active 只认完整新32成员；未发布且超时的4ba在当前工具拒绝，固定D旧collector历史回放仍成功，1f的BC历史回放与已发布legacy资格保留。
   Test: manual:node -e "require('node:child_process').execFileSync(process.execPath,['../../node_modules/vitest/vitest.mjs','run','src/lib/__tests__/existing-ops-source-impact.test.js'],{cwd:'packages/brain',stdio:'inherit'});"
 - [x] [BEHAVIOR] 五个普通blob的固定commit/tree/字节摘要可核，helper只处理数据与私有Git，显式已审collector self-import绑定自身16runtime；不执行workflow或应用。
