@@ -8,6 +8,7 @@ import {tmpdir} from 'node:os';
 import {pathToFileURL,fileURLToPath} from 'node:url';
 import {readCiAdmissionBaseline} from './ci-admission-artifact.mjs';
 import {writeCiAdmissionInputs} from './ci-admission-handoff.mjs';
+import {readFixedLocalGitBlob} from './fixed-local-git.mjs';
 const REPO='perfectuser21/cecelia',SHA=/^[a-f0-9]{40}$/,SCOPES=['cecelia-kr','cecelia-factory'];
 const digest=b=>createHash('sha256').update(b).digest('hex');
 const fail=code=>{throw Object.assign(Error(code),{code});};
@@ -21,6 +22,13 @@ const git=(root,...args)=>{
 function samePr(pr,base,head){
  return pr?.base?.sha===base&&pr.base.ref==='main'&&pr.base.repo?.full_name===REPO
   &&pr.head?.sha===head&&pr.head.repo?.full_name===REPO;
+}
+// 格式能力取实际执行的固定consumer：旧recipe只会消费legacy文件，不能接typed交接目录。
+// 必须两侧均为完整已审原件；新source17d即使tooling仍旧，也保持CI-first及坏证据拒绝。
+function reviewedLegacyConsumer(repoRoot,toolingRoot,head,base,deadline){
+ const path='.github/workflows/implementation-impact.yml',expected='4e59206bd6dd08b77ea3a59e0feb44a2371ffc0fa9139b81f67e64a0169a9cf9';
+ try{return [[repoRoot,head],[toolingRoot,base]].every(([root,revision])=>digest(readFixedLocalGitBlob(root,{revision,path},{deadline}))===expected);}
+ catch{return false;}
 }
 /** 注入接缝仅供测试；CLI没有base/head/证据覆盖参数。 */
 export async function resolvePrBaseline(options,deps={}){
@@ -48,17 +56,20 @@ export async function resolvePrBaseline(options,deps={}){
  };
  const prefix=`repos/${REPO}/actions`;
  need(samePr(await call(`repos/${REPO}/pulls/${event.number}`),original,head),'PR_BASELINE_PR_CHANGED');
+ const legacyConsumer=reviewedLegacyConsumer(repoRoot,toolingRoot,head,original,deadline);
  const chain=runGit(repoRoot,'rev-list','--first-parent',`--max-count=${maxDepth}`,original).split('\n').filter(Boolean);
  need(chain[0]===original&&chain.every(r=>SHA.test(r)),'PR_BASELINE_CHAIN_INVALID');
  const evidence=[];
  for(const revision of chain){
-  const ci=await readCiAdmissionBaseline({revision,repoRoot,controlRoot:toolingRoot},{api:path=>call(path),download:path=>call(path,true)});
-  if(ci){
-   evidence.push({revision,status:'selected',artifact_kind:'ci_admission_only',artifact_id:ci.artifact.id,artifact_digest:ci.artifact.digest,run_id:ci.artifact.workflow_run.id});
-   const changed_files=runGit(repoRoot,'diff','--no-renames','--name-only','-z',revision,head,'--').split('\0').filter(Boolean).sort();
-   return {body:ci.envelope,ciAdmission:ci,resolution:{schema_version:1,purpose:'admission_only',baseline_kind:'ci_admission_only',status:'selected',repo:REPO,pr_number:event.number,
-    original_pr_base_revision:original,effective_base_revision:revision,tooling_revision:original,head_revision:head,chain:evidence,
-    base_ci_admission_sha256:ci.envelope.ci_envelope_sha256,scope_hashes:ci.scopeHashes,changed_files,business_runtime_status:'not_evaluated'}};
+  if(!legacyConsumer){
+   const ci=await readCiAdmissionBaseline({revision,repoRoot,controlRoot:toolingRoot},{api:path=>call(path),download:path=>call(path,true)});
+   if(ci){
+    evidence.push({revision,status:'selected',artifact_kind:'ci_admission_only',artifact_id:ci.artifact.id,artifact_digest:ci.artifact.digest,run_id:ci.artifact.workflow_run.id});
+    const changed_files=runGit(repoRoot,'diff','--no-renames','--name-only','-z',revision,head,'--').split('\0').filter(Boolean).sort();
+    return {body:ci.envelope,ciAdmission:ci,resolution:{schema_version:1,purpose:'admission_only',baseline_kind:'ci_admission_only',status:'selected',repo:REPO,pr_number:event.number,
+     original_pr_base_revision:original,effective_base_revision:revision,tooling_revision:original,head_revision:head,chain:evidence,
+     base_ci_admission_sha256:ci.envelope.ci_envelope_sha256,scope_hashes:ci.scopeHashes,changed_files,business_runtime_status:'not_evaluated'}};
+   }
   }
   const name=`implementation-snapshot-${revision}`;
   const list=await call(`${prefix}/artifacts?name=${name}&per_page=100`);
@@ -97,6 +108,7 @@ export async function resolvePrBaseline(options,deps={}){
   evidence.push({revision,status:'selected',artifact_id:artifact.id,artifact_digest:artifact.digest,run_id:runId,...providers[0]});
   const changed_files=runGit(repoRoot,'diff','--no-renames','--name-only','-z',revision,head,'--').split('\0').filter(Boolean).sort();
   const resolution={schema_version:1,purpose:'admission_only',status:'selected',repo:REPO,pr_number:event.number,
+   ...(legacyConsumer?{baseline_kind:'legacy_snapshot',consumer_profile:'impact_4e592_v1'}:{}),
    original_pr_base_revision:original,effective_base_revision:revision,tooling_revision:original,head_revision:head,
    chain:evidence,base_snapshot_sha256:validated.snapshot_sha256,scope_hashes:validated.scope_hashes,changed_files,
    business_runtime_status:'not_evaluated'};
