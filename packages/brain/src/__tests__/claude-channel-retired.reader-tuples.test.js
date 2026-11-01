@@ -273,6 +273,14 @@ const CI_EDGE_TOOL_HASHES = {...CI_TOOL_HASHES,
 const CI_EDGE_ENABLED_HASHES = {...CI_EDGE_TOOL_HASHES,
  'existing-ops-source.js':'ce86445ef3bdfc826a1c257c44cd8d71f46157b0bfb38c39c40b175af7f5c131',
 };
+// C独立沿用A的snapshot3c932闭包，仅新增已审source/workspace完整0/1组合。
+const CI_ACTIVE_A_TOOL_HASHES={...CI_EDGE_TOOL_HASHES,
+ 'existing-ops-source.js':'bde68680dee202bdbfe94c72b1da215200d60adca56853b224ecc87b820067b2',
+ 'existing-ops-workspace-source.js':'debf69ed808e420fcc52507e661e740f66d969f8354cef6bff0093a9cbad859f',
+};
+const CI_ACTIVE_A_ENABLED_HASHES={...CI_ACTIVE_A_TOOL_HASHES,
+ 'existing-ops-source.js':'430ec81c636771cd0e1f878b1341e9f4ff3b9712fbaa5f3746926ca9842d0373',
+};
 const cache=new Map(), referenceCache=new Map();
 function hash(text,parse,shape){
  if(!cache.has(text))cache.set(text,createHash('sha256').update(shape(parse(text))).digest('hex'));
@@ -291,7 +299,7 @@ export function reviewedADataRanges(src,{file,sources,root,parse,shape,rows,deco
   const isRecovery=typeof build==='string'&&hash(build,parse,shape)===B_RECOVERY_QA_HASHES['existing-ops-build-source.js'];
   const isStaging=runtimeHash===B_STAGING_HASHES['existing-ops-runtime-source.js'];
   const isDrainStaging=runtimeHash===B_DRAIN_STAGING_HASHES['existing-ops-runtime-source.js'];
-  const ciTuple=[CI_TOOL_HASHES,CI_ENABLED_HASHES,CI_EDGE_TOOL_HASHES,CI_EDGE_ENABLED_HASHES].find(tuple=>Object.entries(tuple).every(([name,digest])=>{
+  const ciTuple=[CI_TOOL_HASHES,CI_ENABLED_HASHES,CI_EDGE_TOOL_HASHES,CI_EDGE_ENABLED_HASHES,CI_ACTIVE_A_TOOL_HASHES,CI_ACTIVE_A_ENABLED_HASHES].find(tuple=>Object.entries(tuple).every(([name,digest])=>{
    const text=sources.get(path.join(root,name));return typeof text==='string'&&hash(text,parse,shape)===digest;
   }));
   if(isRecovery&&!isQa&&!isStaging&&!isDrainStaging&&!ciTuple)return null;
