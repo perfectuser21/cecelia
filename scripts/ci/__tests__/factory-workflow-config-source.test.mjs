@@ -11,6 +11,7 @@ import yaml from 'js-yaml';
 import {fileURLToPath} from 'node:url';
 import {join,resolve} from 'node:path';
 import {cruise} from 'dependency-cruiser';
+import {immutableVerificationSeed,disposeVerificationSeed,fixedInputFixture as inputFixture} from './fixtures/verification-input-git.mjs';
 
 // 根扫描器依赖只在npm ci全根的CI来源suite执行；Brain-only单测保留运行配置行为测试。
 test('默认运行配置由原生依赖图绑定到实际读取器',async()=>{
@@ -85,18 +86,6 @@ test('纯selector只持AST与字面量能力，不加载Brain受保护reader或�
 });
 
 const fixedInputs=await import('../implementation-verification-inputs.mjs').catch(error=>{if(error.code!=='ERR_MODULE_NOT_FOUND')throw error;return{};});
-function inputFixture(t,{kind='regular'}={}){
- const root=mkdtempSync(join(tmpdir(),'derived-input-git-'));
- t.after(()=>rmSync(root,{recursive:true,force:true}));
- const git=(...args)=>execFileSync('git',['--no-replace-objects','-c','core.hooksPath=/dev/null','-c','commit.gpgSign=false',...args],{cwd:root,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
- git('init','-q');git('remote','add','origin','https://github.com/perfectuser21/cecelia.git');
- const path='packages/brain/src/__tests__/actual.test.js';mkdirSync(join(root,'packages/brain/src/__tests__'),{recursive:true});
- writeFileSync(join(root,'packages/brain/src/business.js'),'export const business=true;\n');
- writeFileSync(join(root,path),'export const before=true;\n');git('add','.');git('-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','test: base');const base=git('rev-parse','HEAD');
- if(kind==='deleted')rmSync(join(root,path));else if(kind==='symlink'){rmSync(join(root,path));symlinkSync('../business.js',join(root,path));}else writeFileSync(join(root,path),'export const after=true;\n');
- git('add','.');git('-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','test: head');const head=git('rev-parse','HEAD');
- return{root,path,git,source:{repo:'perfectuser21/cecelia',base_revision:base,head_revision:head,changed_files:[{path}]}};
-}
 const facts=(fixture,side,options={})=>{
  assert.equal(typeof fixedInputs.readVerificationInputFacts,'function','必须从实际固定Git证明输入，不能自填摘要');
  return fixedInputs.readVerificationInputFacts(fixture.root,{source:fixture.source,side,path:fixture.path,...options});
@@ -125,18 +114,11 @@ test('业务模块、外跳路径、不在真实delta、错误side及main/releas
  const wrong={...f,source:structuredClone(f.source)};wrong.source.repo='foreign/repo';assert.throws(()=>facts(wrong,'head'),/VERIFICATION_INPUT/);
 });
 
-let legacySeed;
-after(()=>{if(legacySeed)rmSync(legacySeed,{recursive:true,force:true});});
-function immutableLegacySeed(){
- if(legacySeed)return legacySeed;legacySeed=realpathSync(mkdtempSync(join(tmpdir(),'derived-immutable-git-')));
- const root=fileURLToPath(new URL('../../../',import.meta.url)),git=(...args)=>execFileSync('git',args,{cwd:legacySeed,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
- git('init','--bare','-q');const objects=execFileSync('git',['rev-parse','--path-format=absolute','--git-common-dir'],{cwd:root,encoding:'utf8'}).trim()+'/objects';
- writeFileSync(join(legacySeed,'objects/info/alternates'),objects+'\n');git('update-ref','refs/heads/immutable-68','68b996a5641b69e6f21705a114a4524e407fe097');git('symbolic-ref','HEAD','refs/heads/immutable-68');return legacySeed;
-}
+after(disposeVerificationSeed);
 function legacyEntryFixture(t,{path='packages/brain/src/__tests__/derived-input.test.js',deleted=false}={}){
  const root=mkdtempSync(join(tmpdir(),'derived-entry-git-'));t.after(()=>rmSync(root,{recursive:true,force:true}));
  const git=(...args)=>execFileSync('git',['--no-replace-objects','-c','core.hooksPath=/dev/null','-c','commit.gpgSign=false',...args],{cwd:root,encoding:'utf8',stdio:['ignore','pipe','pipe'],maxBuffer:32*1024*1024}).trim();
- git('clone','--shared','--no-checkout',immutableLegacySeed(),'.');git('sparse-checkout','set','--no-cone','/.github/workflows/ci.yml','/packages/brain/vitest.config.js','/scripts/ci/skill-source-tests.mjs','/packages/brain/vitest.skill-source.config.mjs','/packages/engine/vitest.skill-source.config.mjs','/packages/quality/vitest.skill-source.config.mjs','/vitest.skill-source.config.mjs','/'+path);git('checkout','--detach','68b996a5641b69e6f21705a114a4524e407fe097');git('remote','set-url','origin','https://github.com/perfectuser21/cecelia.git');
+ git('clone','--shared','--no-checkout',immutableVerificationSeed(fileURLToPath(new URL('../../../',import.meta.url))),'.');git('sparse-checkout','set','--no-cone','/.github/workflows/ci.yml','/packages/brain/vitest.config.js','/scripts/ci/skill-source-tests.mjs','/packages/brain/vitest.skill-source.config.mjs','/packages/engine/vitest.skill-source.config.mjs','/packages/quality/vitest.skill-source.config.mjs','/vitest.skill-source.config.mjs','/'+path);git('checkout','--detach','68b996a5641b69e6f21705a114a4524e407fe097');git('remote','set-url','origin','https://github.com/perfectuser21/cecelia.git');
  mkdirSync(join(root,path.slice(0,path.lastIndexOf('/'))),{recursive:true});writeFileSync(join(root,path),'export const baseInput=true;\n');
  const commit=()=>{git('add','--sparse','-A');git('-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','--allow-empty','-qm','test: fixed input source');return git('rev-parse','HEAD');};
  const base=commit();if(deleted)rmSync(join(root,path));else writeFileSync(join(root,path),'export const headInput=true;\n');const head=commit();
@@ -494,4 +476,15 @@ test('typed输出边界拒绝裸legacy文件与report内嵌snapshot，普通报�
 test('Pinned包装器的base配置缺失或提前退出时，不能只凭include表宣称实际选择输入',t=>{
  const path='packages/brain/src/__tests__/ci-defense.skill-source.test.js',f=basicEntryFixture(t,path),base='packages/brain/vitest.config.js';
  for(const code of["process.exit(0);\n",null]){if(code===null){rmSync(join(f.root,base),{force:true});f.git('update-index','--force-remove',base);}else writeFileSync(join(f.root,base),code);f.source.head_revision=f.commit();f.source.changed_files=f.git('diff','--name-only',f.source.base_revision,f.source.head_revision).split('\n').map(path=>({path}));assert.equal(derived(f).rows.some(r=>r.input_facts.path===path&&r.input_facts.source.side==='head'),false);}
+});
+
+test('旧CI base元数据symlink不能借head普通blob与清白图取得非执行合同',t=>{
+ const path='docs/current/README.md',f=basicEntryFixture(t,path),ci='.github/workflows/ci.yml',headCi=f.git('show',f.source.head_revision+':'+ci);
+ writeFileSync(join(f.root,ci),f.git('show','68b996a5641b69e6f21705a114a4524e407fe097:'+ci));rmSync(join(f.root,path));symlinkSync('../../scripts/quickcheck.sh',join(f.root,path));f.source.base_revision=f.commit();
+ rmSync(join(f.root,path));writeFileSync(join(f.root,path),'actual document\n');writeFileSync(join(f.root,ci),headCi);f.source.head_revision=f.commit();f.source.changed_files=f.git('diff','--name-only',f.source.base_revision,f.source.head_revision).split('\n').map(path=>({path}));
+ assert.throws(()=>derived(f),/REGULAR_BLOB|VERIFICATION_INPUT/);
+});
+test('非执行变更缺失侧显式冻结absence，不能给已删除head造普通blob',t=>{
+ const path='docs/current/README.md',f=legacyEntryFixture(t,{path,deleted:true}),proof=derived(f);
+ assert.ok(proof.metadata_git_facts.some(r=>r.path===path&&r.side==='base'&&r.exists===true));assert.ok(proof.metadata_git_facts.some(r=>r.path===path&&r.side==='head'&&r.exists===false));
 });
