@@ -491,3 +491,10 @@ test('非执行变更缺失侧显式冻结absence，不能给已删除head造普
  const path='docs/current/README.md',f=legacyEntryFixture(t,{path,deleted:true}),proof=derived(f);
  assert.ok(proof.metadata_git_facts.some(r=>r.path===path&&r.side==='base'&&r.exists===true));assert.ok(proof.metadata_git_facts.some(r=>r.path===path&&r.side==='head'&&r.exists===false));
 });
+test('退休合同CI登记逐项绑定真实退休实现且没有重复或错误角色', () => {
+ const require = createRequire(import.meta.url);
+ const {relations} = require('../../../.implementation-source-relations.json');
+ for (const path of ['scripts/ci/__tests__/basic-verification-retirements.test.mjs', 'packages/brain/src/__tests__/ci-verification-retirement-contracts.test.js']) {
+  assert.deepEqual(relations.filter(row => row.path === path), [{owner_path: 'scripts/ci/implementation-verification-retirements.mjs', path, role: 'verification'}]);
+ }
+});
