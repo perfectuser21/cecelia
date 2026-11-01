@@ -18,7 +18,7 @@ export function assertCiAdmissionOutputFiles(root){
  const walk=(directory,depth)=>{for(const entry of readdirSync(directory,{withFileTypes:true})){
   const path=join(directory,entry.name);
   if(entry.isDirectory()){if(depth!==0||!scopes.includes(entry.name))fail('IMPACT_MULTISCOPE_ADMISSION_OUTPUT_INVALID');walk(path,1);continue;}
-  if(!entry.isFile()||!files.includes(entry.name))fail('IMPACT_MULTISCOPE_ADMISSION_OUTPUT_INVALID');
+  if(!entry.isFile()||(!files.includes(entry.name)&&!(depth===0&&entry.name==='baseline-resolution.json')))fail('IMPACT_MULTISCOPE_ADMISSION_OUTPUT_INVALID');
   let body;try{body=JSON.parse(readFileSync(path,'utf8'));}catch{fail('IMPACT_MULTISCOPE_ADMISSION_OUTPUT_INVALID');}
   if(legacy(body))fail('IMPACT_MULTISCOPE_ADMISSION_OUTPUT_INVALID');
  }};walk(root,0);return true;

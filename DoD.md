@@ -1,5 +1,7 @@
 # DoD：Cecelia 最小可靠 CI
 
+以下为本地可执行验收；远端来源检查、main 基线读回与保护迁移以对应实际 SHA 的正式运行及独立读回记录为准。
+
 - [x] [BEHAVIOR] 意图识别与判级的同环境副本归并，原有58项独有回归语义及默认组件入口保留。
   Test: manual:bash -c 'cd apps/api && npx --no-install vitest run tests/intent-recognizer.test.ts'
 - [x] [BEHAVIOR] 账龄测试调用真实实现，保留F6回归并覆盖计数、重试参数、间隔和错误；三份空骨架退出执行，代表性错误变体可被拦住。
@@ -55,3 +57,12 @@
   Test: manual:node scripts/ci/run-basic-check.mjs brain-integration
 - [x] [BEHAVIOR] 现役 API、Dashboard、Quality、MCP、Engine及Shell和Brain正式镜像已分别执行真实验证；六片Brain发现的旧接线断言逐项迁移。
   Test: manual:node scripts/ci/run-basic-check.mjs scripts
+
+- [x] [BEHAVIOR] 新版 Core 与来源工作流采用 CI-first opaque 三来源准入；仅两侧完整旧 consumer 原件可协商旧格式，官方 CI 身份与原 ZIP 验证机制的本地边界及篡改回归保留，坏官方凭据不回退，根级 resolver 诊断不泄露裸 snapshot。
+  Test: manual:node --test scripts/ci/__tests__/implementation-pr-baseline.test.mjs scripts/ci/__tests__/basic-ci-admission-resolver.test.mjs scripts/ci/__tests__/factory-workflow-config-source.test.mjs
+- [x] [BEHAVIOR] 已发布历史 readonly 与 legacy cohort 及固定历史 Git 身份断言保留；未发布坏 active1f 明确拒绝，sole4ba 完整成员与四 blob 自身 collector 回放通过，逐成员篡改及混搭清空来源关系，执行资格与覆盖状态不擅升。
+  Test: manual:node -e "require('node:child_process').execFileSync(process.execPath,['../../node_modules/vitest/vitest.mjs','run','src/lib/__tests__/existing-ops-source-impact.test.js','src/__tests__/claude-channel-retired.guard.test.js','src/__tests__/claude-channel-retired.reader-tuples.test.js'],{cwd:'packages/brain',stdio:'inherit'});"
+- [x] [BEHAVIOR] 固定四个普通 blob 的 commit、tree 与摘要实际校验；helper 只解码数据与重建私有 Git，显式 self-import 仅运行已审 collector，不执行捕获 workflow 或应用，损坏和越界拒绝。
+  Test: manual:node --test scripts/ci/__tests__/fixed-local-git.test.mjs
+- [x] [BEHAVIOR] 六份版本同步 1.445.98，source-only 保留；当前候选的新版 Core、完整 Impact 与 marker1 逐字保留，生产晋级仍由独立保护判定。
+  Test: manual:node -e "require('node:child_process').execFileSync('bash',['scripts/check-version-sync.sh'],{stdio:'inherit'});"
