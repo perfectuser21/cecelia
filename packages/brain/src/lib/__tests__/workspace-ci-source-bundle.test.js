@@ -15,7 +15,7 @@ it('未固定source SHA不读任何源码，保持unknown且不可执行',async(
  expect(result.executable).toBe(false);expect(reads).toBe(0);
 });
 
-import {readFileSync,mkdtempSync,rmSync} from 'node:fs';
+import {readFileSync,mkdtempSync,rmSync,existsSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -39,6 +39,15 @@ function isolatedPublishedGit(consume){
  }finally{rmSync(directory,{recursive:true,force:true});}
 }
 const expectPublishedHelper=bytes=>expect(createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex')).toBe('2351ae6a69b066a7e15dbb17e2e6babc13a31305');
+it('固定published夹具自包含真实commit/tree与两blob，不依赖当前仓历史或远端',()=>{
+ isolatedPublishedGit(({directory,git})=>{
+  expect(existsSync(join(directory,'.git/objects/info/alternates'))).toBe(false);
+  expect(()=>git('remote','get-url','origin')).toThrow();
+  expectPublishedHelper(publishedFile('scripts/ci/implementation-skill-source.mjs',directory));
+  const workflow=publishedFile('.github/workflows/implementation-impact.yml',directory);
+  expect(createHash('sha1').update(`blob ${workflow.length}\0`).update(workflow).digest('hex')).toBe('5a43bfd48709018ee641952747b15f3c949099f2');
+ });
+});
 it('历史原件读取禁用真实refs/replace，不把被替换缺文件当canonical缺失',()=>{
  isolatedPublishedGit(({directory,git,env})=>{
   const tree=execFileSync('git',['mktree'],{cwd:directory,env,input:''}).toString().trim();
