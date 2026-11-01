@@ -1,0 +1,23 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import yaml from 'js-yaml';
+const path=new URL('../../../.github/workflows/ci-admission-baseline.yml',import.meta.url);
+test('独立publisher仅CI workflow_run main push成功触发，token全只读且无生产能力',()=>{
+ const text=readFileSync(path,'utf8'),w=yaml.load(text);
+ assert.deepEqual(w.on,{workflow_run:{workflows:['CI'],types:['completed'],branches:['main']}});
+ assert.deepEqual(w.permissions,{contents:'read',actions:'read',checks:'read'});assert.deepEqual(Object.keys(w.jobs),['ci-admission-baseline']);
+ const job=w.jobs['ci-admission-baseline'];assert.equal(job.name,'ci-admission-baseline');
+ for(const clause of ["github.repository == 'perfectuser21/cecelia'","github.event.workflow_run.event == 'push'","github.event.workflow_run.head_branch == 'main'","github.event.workflow_run.conclusion == 'success'","github.event.workflow_run.head_repository.full_name == 'perfectuser21/cecelia'"])assert.ok(job.if.includes(clause),clause);
+ const checkouts=job.steps.filter(s=>s.uses==='actions/checkout@v4');assert.equal(checkouts.length,2);
+ assert.deepEqual(checkouts.map(s=>s.with.ref),['${{ github.sha }}','${{ github.event.workflow_run.head_sha }}']);
+ assert.deepEqual(checkouts.map(s=>s.with.path),['control','source']);assert.ok(checkouts.every(s=>s.with['persist-credentials']===false&&s.with['fetch-depth']===0));
+ assert.equal(job.env.DB_NAME,'cecelia_scratch');assert.equal(job.env.DB_USER,'ci');assert.equal(job.env.NODE_ENV,'test');
+ assert.equal(job.services.postgres.env.POSTGRES_DB,'cecelia_scratch');
+ const publish=job.steps.find(s=>s.id==='publish');assert.equal(publish.env.GH_TOKEN,'${{ github.token }}');
+ assert.equal(publish.run.trim(),'node control/scripts/ci/ci-admission-publisher.mjs "$GITHUB_WORKSPACE/source" "$GITHUB_WORKSPACE/control" "$RUNNER_TEMP/ci-admission-publication"');
+ const upload=job.steps.find(s=>s.uses==='actions/upload-artifact@v4');assert.equal(upload.with.name,'implementation-ci-admission-baseline-${{ github.event.workflow_run.head_sha }}');assert.equal(upload.with['if-no-files-found'],'error');
+ assert.deepEqual(upload.with.path.trim().split('\n'),['${{ runner.temp }}/ci-admission-publication/ci-admission.json','${{ runner.temp }}/ci-admission-publication/assertions.json']);
+ assert.ok(job.steps.some(s=>s.run==='node control/packages/brain/src/migrate.js'));assert.ok(job.steps.some(s=>s.run==='node --test control/scripts/ci/__tests__/ci-admission-inputs.pg.test.mjs'));
+ assert.doesNotMatch(text,/secrets\.|tailscale|BRAIN_API|BRAIN_DEPLOY|SSH_KEY|source-runtime-ready|snapshot-main|deploy\.sh/);
+});
