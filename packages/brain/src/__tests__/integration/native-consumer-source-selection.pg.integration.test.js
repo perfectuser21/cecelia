@@ -1,7 +1,9 @@
 import { afterAll, afterEach, beforeEach, expect, it } from 'vitest';
 import {isolatedExistingOpsGitFixture} from '../../lib/__tests__/helpers/isolated-existing-ops-git-fixture.js';
 import { versionsDatabase } from '../fixtures/definition-versions-db.js';
-import { EXISTING_OPS_IDENTITIES } from '../../lib/existing-ops-source.js';
+import { EXISTING_OPS_IDENTITIES,buildExistingOpsSources as buildCurrentSources } from '../../lib/existing-ops-source.js';
+import {readFixedExistingOpsGitFixture,fixtureGit} from '../../lib/__tests__/helpers/fixed-existing-ops-git-fixture.js';
+import * as currentRegistration from '../../lib/existing-ops-registration.js';
 import * as registration from '../../lib/existing-ops-registration.js';
 import { minimumMapSchema } from '../fixtures/minimum-map-schema.js';
 import { exportImplementationSnapshot,refreshImplementationSnapshot } from '../../lib/implementation-ci-snapshot.js';
@@ -84,6 +86,28 @@ async function history(){return {
  projections:(await fixture.db.query('SELECT * FROM map_projection_runs ORDER BY id')).rows,
  activities:(await fixture.db.query('SELECT * FROM activity_definition_versions ORDER BY id')).rows,
 };}
+it('代际选版正例必须是真实历史Git全资格来源，16collector与当前controller闭包完整',async()=>{
+ const proof=await buildCurrentSources({scope:'cecelia-factory',repo:'perfectuser21/cecelia',revision,paths,readSource});
+ expect(proof.consumers.map(c=>c.status),JSON.stringify(proof.consumers.map(c=>c.gaps))).toEqual(['verified','verified']);
+ const historical=readFixedExistingOpsGitFixture();expect(sourceFixture.historicalRevision).toBe(historical.revision);
+ expect(sourceFixture.runtime.files).toHaveLength(16);
+ for(const file of sourceFixture.runtime.files){
+  expect(await readSource(file.path)).toBe(historical.read(file.path));
+  expect(createHash('sha256').update(await readSource(file.path)).digest('hex')).toBe(file.sha256);
+ }
+ expect(sourceFixture.controllers.map(c=>c.path)).toEqual(expect.arrayContaining(['packages/brain/src/lib/existing-ops-registration.js','packages/brain/src/lib/native-consumer-source-selection.js','packages/brain/src/lib/implementation-ci-snapshot.js','packages/brain/src/routes/implementation-ci.js']));
+ for(const controller of sourceFixture.controllers)expect(createHash('sha256').update(await readSource(controller.path)).digest('hex')).toBe(controller.current_sha256);
+});
+it('当前未知候选不继承历史正例资格，实际登记拒绝且历史current和地图全部零写',async()=>{
+ const current=readFixedExistingOpsGitFixture(fixtureGit('rev-parse','HEAD').trim()),before=await history();
+ const currentOptions=options({revision:current.revision,paths:current.paths,readSource:async path=>current.read(path),expectedRegistrySha256:before.registry.registry_sha256});
+ const proof=await buildCurrentSources(currentOptions),unknown=proof.consumers.find(c=>c.workflow_key==='factory_f3_ops');
+ expect(unknown.status).toBe('unknown');expect(unknown.bindings).toEqual([]);expect(unknown.input_relations).toEqual([]);
+ expect(unknown.gaps).toContainEqual(expect.objectContaining({code:'legacy_impact_runner_unproven'}));
+ await expect(currentRegistration.registerExistingOpsSources(fixture.db,currentOptions)).rejects.toMatchObject({code:'OPS_SOURCE_UNKNOWN'});
+ expect(await history()).toEqual(before);
+});
+
 it('same-SHA 两代完整链：唯一固定Git匹配导出且不改历史/current/登记',async()=>{
  const {old,fresh}=await twoGenerations();
  const oldF3=old.definitions.activities.find(a=>a.payload.contract.key==='factory_f3_ops');
