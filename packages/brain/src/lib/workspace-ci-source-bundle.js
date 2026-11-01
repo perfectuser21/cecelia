@@ -138,9 +138,11 @@ const INACTIVE_INFRA_GATES=new Map([
  ['7cffaacb79c44c02e99cd03d0a17132a2ee8d212357bea4e17d311550d00564d',{provider:'7506360d6d5f1fb9b09d9c987f02963b0c69367fd7f04e8bc275bdcbe8aeccb3',env:'8a0a4006fd059bd00cb3fea4d00edc587b533a23a9e7dbfa75b5dd7b5aefab1c'}],
  ['74026a45377e3de19af49208c601fb521c2ef7860fc594d2c1ab07662b58b52d',{provider:'7506360d6d5f1fb9b09d9c987f02963b0c69367fd7f04e8bc275bdcbe8aeccb3',env:'8a0a4006fd059bd00cb3fea4d00edc587b533a23a9e7dbfa75b5dd7b5aefab1c'}],
  ['266b100f50dbc01ac9a4859ffe2013940ec39342dca66d833a21affadf7ce9f7',{provider:'7506360d6d5f1fb9b09d9c987f02963b0c69367fd7f04e8bc275bdcbe8aeccb3',env:'f5c969e480ba5006f3d4ae65825ca39dbbea4ac047f6026209cf8f1ea32a0850'}],
+ // 完整gate固定四Node入口的Cecelia-only条件、source cwd、依赖前置与无秘密环境；workspace caller下不可达。
+ ['8dd3cc059e7cb98ee53612fa43ab29d0cd159bfb4b61df04ec167468331edccc',{provider:'7506360d6d5f1fb9b09d9c987f02963b0c69367fd7f04e8bc275bdcbe8aeccb3',env:'f5c969e480ba5006f3d4ae65825ca39dbbea4ac047f6026209cf8f1ea32a0850'}],
 ]);
 const INACTIVE_INFRA_SHELL='a7da97011e907914f0260d915ec31e4869fdf0285fc21f605dea5f0b39d89e9d';
-const INACTIVE_INFRA_STEPS=new Set(['三来源联合门真实PG与回归退出码守卫','独立infra固定来源加入联合输入','完整联合scope清单加入infra']);
+const INACTIVE_INFRA_STEPS=new Set(['三来源联合门真实PG与回归退出码守卫','独立infra固定来源加入联合输入','完整联合scope清单加入infra','来源机制完整单元回归']);
 function canonicalConfig(value){
  if(Array.isArray(value))return value.map(canonicalConfig);
  return value&&typeof value==='object'?Object.fromEntries(Object.keys(value).sort().map(key=>[key,canonicalConfig(value[key])])):value;

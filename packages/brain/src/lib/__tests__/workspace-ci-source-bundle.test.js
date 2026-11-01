@@ -156,7 +156,9 @@ it.each([
  expect(proof.status).toBe('unknown');expect(proof.workflow_coverage.verified_reference_ids).toEqual([]);expect(proof.executable).toBe(false);
 });
 const priorBaseEnv='${{ inputs.base_revision || github.event.pull_request.base.sha || github.event.before }}';
+const priorSourceNode=y=>{y.jobs.gate.steps=y.jobs.gate.steps.filter(s=>s.name!=='来源机制完整单元回归');};
 const oldInfraGuard=y=>{
+ priorSourceNode(y);
  y.jobs['snapshot-infra'].if=y.jobs['snapshot-infra'].if.replace('inputs.source_baseline_recovery != true && ','');
  y.jobs.gate.env.INFRA_ADMISSION=y.jobs.gate.env.INFRA_ADMISSION.replace('inputs.source_baseline_recovery != true && ','');
  y.jobs.gate.env.BASE=priorBaseEnv;
@@ -204,6 +206,7 @@ it.each([
 
 it('保留原双scope单needs与旧cache完整封套',async()=>{
  const p=await modernBundle(()=>{},null,{mutateImpact:y=>{
+  priorSourceNode(y);
   y.jobs.gate.env.BASE=priorBaseEnv;
   delete y.jobs['snapshot-infra'];delete y.on.workflow_dispatch.inputs.export_infra_baseline;
   y.jobs.gate.needs=['snapshot-main'];delete y.jobs.gate.env.INFRA_ADMISSION;
@@ -217,6 +220,7 @@ it('保留原双scope单needs与旧cache完整封套',async()=>{
 const baselineDownload=y=>y.jobs.gate.steps.find(s=>String(s.run||'').includes('implementation-baseline-$HEAD'));
 it('旧精确下载封套仍可证明外部调用，原生祖先恢复不改变workspace分支',async()=>{
  const proof=await modernBundle(()=>{},null,{mutateImpact:y=>{
+  priorSourceNode(y);
   y.jobs.gate.env.BASE=priorBaseEnv;
   const step=baselineDownload(y),start=step.run.indexOf('  if [[ "${NATIVE_PR_BASELINE:-false}" == true ]]; then\n'),end=step.run.indexOf('  else\n',start);
   expect(start).toBeGreaterThan(0);expect(end).toBeGreaterThan(start);
