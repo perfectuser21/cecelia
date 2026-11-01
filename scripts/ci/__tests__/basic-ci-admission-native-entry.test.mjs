@@ -43,10 +43,13 @@ test('轻入口真实worker进程拒绝错误argv，不写draft且不继承线�
 test('现行Node根实际导入轻入口，正式静态图与spawn抽取器必须见到受测生产链',async()=>{
  const entry='scripts/ci/__tests__/basic-ci-admission-native-entry.test.mjs',nodeRoot='scripts/ci/__tests__/implementation-main-snapshot.test.mjs';
  const impactReader='scripts/ci/__tests__/basic-ci-admission-impact-workflow.test.mjs',contractRoot='scripts/ci/__tests__/device-patrol-governance.test.mjs',aggregate='scripts/ci/__tests__/ci-admission-mechanisms.test.mjs';
- const result=await cruise([nodeRoot,entry,impactReader,contractRoot],{baseDir:root,doNotFollow:{path:'node_modules'},exclude:{path:'node_modules'}}),graph=typeof result.output==='string'?JSON.parse(result.output):result.output;
+ const factoryRoot='scripts/ci/__tests__/implementation-skill-source.test.mjs',factory='scripts/ci/__tests__/factory-workflow-config-source.test.mjs';
+ const result=await cruise([nodeRoot,entry,impactReader,contractRoot,factoryRoot],{baseDir:root,doNotFollow:{path:'node_modules'},exclude:{path:'node_modules'}}),graph=typeof result.output==='string'?JSON.parse(result.output):result.output;
  const dependency=(from,to)=>graph.modules.some(m=>m.source===from&&m.dependencies.some(d=>!d.couldNotResolve&&resolve(root,d.resolved)===resolve(root,to)));
  assert.ok(dependency(nodeRoot,entry),'actual selected Node root must consume the light regression');
  assert.ok(dependency(contractRoot,aggregate),'full contracts must run on an existing root-dependency Node lane');
+ assert.ok(dependency(factoryRoot,factory),'factory regressions must share the existing parallel root-dependency step');
+ assert.equal(dependency(nodeRoot,factory),false,'factory regressions must not serialize with HTTP cases');
  assert.equal(dependency(nodeRoot,aggregate),false,'heavy contracts must not return to the expensive root');
  assert.equal(existsSync(join(root,'packages/brain/src/__tests__/ci-admission-baseline-contracts.test.js')),false,'Brain-only npm install cannot run root-dependency contracts');
  assert.ok(dependency(impactReader,'scripts/ci/implementation-multi-pr-gate.mjs'),'workflow/provider verification must consume the actual provider API');
