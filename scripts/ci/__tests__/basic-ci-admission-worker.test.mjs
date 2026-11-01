@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {mkdtempSync,rmSync,writeFileSync,mkdirSync,existsSync,readFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
+import {extractSpawnEdges} from '../../../packages/brain/src/lib/graph-extract.js';
 import {runCiAdmissionWorker} from '../ci-admission-worker-runner.mjs';
 for(const failWorker of [false,true])test(`真实Node worker没有发布凭据/私有HOME，失败/成功均清理：failure=${failWorker}`,async t=>{
  const directory=mkdtempSync(join(tmpdir(),'ci-admission-worker-fixture-'));t.after(()=>rmSync(directory,{recursive:true,force:true}));
@@ -49,4 +50,9 @@ test('worker拦截SIGTERM也必须在短预算内返回，owned进程组及HOME/
 });
 test('worker预算接缝只能缩短既有25分钟，不接受无限或更大预算',async()=>{
  for(const timeoutMs of [0,-1,1500001,Infinity,1.5])await assert.rejects(runCiAdmissionWorker({sourceRoot:'/does/not/exist',controlRoot:'/does/not/exist',sourceRevision:'a'.repeat(40),controlRevision:'b'.repeat(40)},{timeoutMs}),/CI_ADMISSION_WORKER_TIMEOUT_INVALID/);
+});
+
+test('正式spawn抽取器必须识别实际worker入口回归的脚本目标',()=>{
+ const file='scripts/ci/__tests__/basic-ci-admission-worker.test.mjs',target='scripts/ci/ci-admission-worker.mjs';
+ assert.ok(extractSpawnEdges(readFileSync(new URL(import.meta.url),'utf8'),file).some(edge=>edge.src_path===file&&edge.dst_path===target&&edge.edge_type==='spawn'));
 });
