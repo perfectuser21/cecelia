@@ -25,14 +25,15 @@ function checkState(root,revision){
 }
 function sourceProof(root,source){
  need(source&&Object.keys(source).sort().join(',')==='base_revision,changed_files,head_revision,repo'
-  &&source.repo===REPO&&source.base_revision===BASE,'BASE_SOURCE_INVALID');
+  &&source.repo===REPO&&/^[a-f0-9]{40}$/.test(source.base_revision||''),'BASE_SOURCE_INVALID');
  need(Array.isArray(source.changed_files)&&source.changed_files.length&&source.changed_files.every(c=>c&&Object.keys(c).join(',')==='path'&&safePath(c.path)),'SOURCE_PATH_INVALID');
  checkState(root,source.head_revision);
- try{git(root,'merge-base','--is-ancestor',BASE,source.head_revision);}catch{fail('ANCESTRY_MISMATCH');}
- const actual=fixedLocalGit(root,['diff','--no-renames','--name-only','-z',BASE,source.head_revision,'--'],{encoding:'utf8'}).split('\0').filter(Boolean).sort();
+ try{git(root,'merge-base','--is-ancestor',BASE,source.base_revision);}catch{fail('BASE_ANCESTRY_MISMATCH');}
+ try{git(root,'merge-base','--is-ancestor',source.base_revision,source.head_revision);}catch{fail('ANCESTRY_MISMATCH');}
+ const actual=fixedLocalGit(root,['diff','--no-renames','--name-only','-z',source.base_revision,source.head_revision,'--'],{encoding:'utf8'}).split('\0').filter(Boolean).sort();
  const supplied=source.changed_files.map(c=>c.path).sort();
  need(new Set(supplied).size===supplied.length&&JSON.stringify(supplied)===JSON.stringify(actual),'DELTA_MISMATCH');
- const tokens=fixedLocalGit(root,['diff','--find-renames=50%','--name-status','-z',BASE,source.head_revision,'--'],{encoding:'utf8'}).split('\0').filter(Boolean),changes=new Map();
+ const tokens=fixedLocalGit(root,['diff','--find-renames=50%','--name-status','-z',source.base_revision,source.head_revision,'--'],{encoding:'utf8'}).split('\0').filter(Boolean),changes=new Map();
  for(let i=0;i<tokens.length;){const status=tokens[i++],path=tokens[i++];need(path&&safePath(path),'DELTA_INVALID');changes.set(path,status);if(/^[RC]/.test(status)){const target=tokens[i++];need(target&&safePath(target),'DELTA_INVALID');changes.set(target,status);}}
  return changes;
 }
@@ -85,7 +86,7 @@ export function collectVerificationRetirementCandidates(repoRoot,{source,tooling
  const changes=sourceProof(repoRoot,source),catalogs=CATALOGS.map(spec=>({spec,catalog:readCatalog(toolingRoot,toolingRevision,spec)})),rows=[];
  for(const{spec,catalog}of catalogs){
   const records=catalog.records.filter(record=>changes.has(record.path));if(!records.length)continue;
-  const baseConfig=reviewedBlob(repoRoot,BASE,catalog.base_config,'BASE_CONFIG'),excludes=literalExcludes(baseConfig.bytes.toString());
+  const baseConfig=reviewedBlob(repoRoot,source.base_revision,catalog.base_config,'BASE_CONFIG'),excludes=literalExcludes(baseConfig.bytes.toString());
   const configs=new Map((catalog.replacement_configs||[{blob:catalog.replacement_config,component:'brain'}]).map(config=>
    [config.blob.path,{...config,...reviewedBlob(repoRoot,source.head_revision,config.blob,'HEAD_CONFIG')}]));
   const skill=reviewedBlob(repoRoot,source.head_revision,catalog.skill_selector,'HEAD_CONFIG');
@@ -102,17 +103,17 @@ export function collectVerificationRetirementCandidates(repoRoot,{source,tooling
   });
   for(const record of records){
    need(changes.get(record.path)==='D','DELETION_REQUIRED');
-   const old=reviewedBlob(repoRoot,BASE,record.old,'OLD_TEST');
+   const old=reviewedBlob(repoRoot,source.base_revision,record.old,'OLD_TEST');
    need(excludes.includes(record.exclude_literal)&&record.exclude_literal===posix.relative(posix.dirname(baseConfig.fact.path),record.path),'BASE_LITERAL_EXCLUDE_REQUIRED');
    let absent;try{absent=readFixedLocalGitBlob(repoRoot,{revision:source.head_revision,path:record.path},{allowMissing:true});}catch{fail('HEAD_ABSENCE_UNPROVEN');}
    need(absent===null,'HEAD_ABSENCE_REQUIRED');
    const policies=(record.policy_sources||[]).map(expected=>reviewedBlob(repoRoot,source.head_revision,expected,'POLICY').fact);
    for(const path of record.required_absent_paths||[])need(readFixedLocalGitBlob(repoRoot,{revision:source.head_revision,path},{allowMissing:true})===null,'POLICY_ABSENCE_REQUIRED');
    let duplicate;
-   if(record.duplicate_of){duplicate=reviewedBlob(repoRoot,BASE,record.duplicate_of,'DUPLICATE').fact;need(['mode','git_blob_sha1','sha256','byte_length'].every(k=>duplicate[k]===old.fact[k]),'DUPLICATE_BYTES_MISMATCH');}
+   if(record.duplicate_of){duplicate=reviewedBlob(repoRoot,source.base_revision,record.duplicate_of,'DUPLICATE').fact;need(['mode','git_blob_sha1','sha256','byte_length'].every(k=>duplicate[k]===old.fact[k]),'DUPLICATE_BYTES_MISMATCH');}
    const selectedInputs=replacements.filter(input=>!record.replacement_paths||record.replacement_paths.includes(input.path));need(selectedInputs.length,'REPLACEMENT_MISSING');
-   rows.push({path:record.path,change:'D',side:'base',catalog:{path:spec.path,sha256:spec.sha256},base:{...old.fact,revision:BASE,
-    config:{...baseConfig.fact,revision:BASE,exclude_literal:record.exclude_literal},...(duplicate?{duplicate_of:duplicate}:{})},
+   rows.push({path:record.path,change:'D',side:'base',catalog_anchor_revision:BASE,catalog:{path:spec.path,sha256:spec.sha256},base:{...old.fact,revision:source.base_revision,
+    config:{...baseConfig.fact,revision:source.base_revision,exclude_literal:record.exclude_literal},...(duplicate?{duplicate_of:duplicate}:{})},
     head:{revision:source.head_revision,absent:true},replacement_inputs:selectedInputs,policy_sources:policies,required_absent_paths:record.required_absent_paths||[],
     owner_candidates:[...new Map(selectedInputs.map(input=>[input.config.path,{side:'head',revision:source.head_revision,path:input.config.path,sha256:input.config.sha256}])).values()],
     audit:record.audit,catalog_limitations:catalog.limitations,requires_native_base_no_business_consumer:true,entry_verified:false,owner_verified:false,retirement_authorized:false});

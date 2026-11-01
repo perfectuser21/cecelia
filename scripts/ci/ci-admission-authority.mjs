@@ -37,7 +37,17 @@ export async function verifyCiAdmissionAuthority({repoRoot,sourceRevision,contro
  let chain;
  try{
   need(/^https:\/\/github\.com\/perfectuser21\/cecelia(?:\.git)?$|^git@github\.com:perfectuser21\/cecelia(?:\.git)?$/.test(git(repoRoot,'remote','get-url','origin')),'CI_ADMISSION_REPOSITORY');
-  chain=git(repoRoot,'rev-list','--first-parent',main.commit.sha).split('\n');
+  // worker期间main可继续前移。仅补官方第一父元数据，不fetch/切换固定source或control。
+  const prefix=[],seen=new Set();let revision=main.commit.sha;
+  for(;;){
+   let local=false;try{git(repoRoot,'cat-file','-e',revision+'^{commit}');local=true;}catch{}
+   if(local){chain=[...prefix,...git(repoRoot,'rev-list','--first-parent',revision).split('\n')];break;}
+   need(prefix.length<16&&!seen.has(revision),'CI_ADMISSION_MAIN_CHAIN');seen.add(revision);
+   const commit=await call(`${PREFIX}/git/commits/${revision}`);
+   need(commit?.sha===revision&&Array.isArray(commit.parents)&&commit.parents.length>0
+    &&commit.parents.every(p=>SHA.test(p?.sha||'')),'CI_ADMISSION_MAIN_CHAIN');
+   prefix.push(revision);revision=commit.parents[0].sha;
+  }
  }catch(error){if(error.code?.startsWith('CI_ADMISSION_'))throw error;need(false,'CI_ADMISSION_MAIN_CHAIN');}
  need(chain.includes(controlRevision)&&chain.includes(sourceRevision)&&chain.indexOf(controlRevision)<=chain.indexOf(sourceRevision),'CI_ADMISSION_MAIN_CHAIN');
  const checkRun=async({runId,revision,path,name,event,attempt,artifactCreatedAt,phase})=>{

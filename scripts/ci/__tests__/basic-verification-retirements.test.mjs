@@ -118,6 +118,13 @@ test('较晚基线的旧blob或完整config漂移不继承68审核资格',()=>{
   try{assert.throws(()=>api.collectVerificationRetirementCandidates(sourceRoot,options({source:actual})),/OLD_TEST.*BYTES|BASE_CONFIG.*BYTES/);}finally{reset();}
  }
 });
+test('退休已合入后的新基线若无退休delta，只返回空候选而不强索旧config',()=>{
+ needApi();try{
+  const base=HEAD;writeFileSync(join(sourceRoot,'after-retirement-marker'),'ordinary later change');const head=commit(sourceRoot);
+  const actual={...source(),base_revision:base,head_revision:head,changed_files:[{path:'after-retirement-marker'}]};
+  const proof=api.collectVerificationRetirementCandidates(sourceRoot,options({source:actual}));assert.equal(proof.rows.length,0);assert.equal(proof.source.base_revision,base);
+ }finally{reset();}
+});
 test('另五条精确退休独立catalog，不把十阶段常量或复制组件宣称等价覆盖',()=>{
  needApi();try{retireExtra();const proof=api.collectVerificationRetirementCandidates(sourceRoot,options());
   const rows=proof.rows.filter(r=>EXTRA_OLD.includes(r.path));assert.equal(rows.length,5);assert.equal(proof.limitations.length,3);
