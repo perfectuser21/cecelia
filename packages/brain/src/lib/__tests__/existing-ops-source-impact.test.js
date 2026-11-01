@@ -298,3 +298,9 @@ for(const path of ['scripts/ci/implementation-multi-pr-gate.mjs','scripts/ci/imp
  const relations=[];expect(await collectNativeFutureImpactSources({basicCi:true,parse:text=>acorn(text,{ecmaVersion:'latest',sourceType:'module'}),revision:typedOutputProfile.revision,relations,
   read:async p=>p===path?frozenProfile.read(p):typedOutputProfile.read(p)})).toBe(false);expect(relations).toEqual([]);
 });
+
+it('未发布且已知错误的旧active1f完整组合在新D不得继续取得资格',async()=>{
+ const old=frozenFutureGit(root),relations=[];
+ expect(await collectNativeFutureImpactSources({basicCi:true,parse:text=>acorn(text,{ecmaVersion:'latest',sourceType:'module'}),revision:old.revision,read:old.read,relations})).toBe(false);
+ expect(relations).toEqual([]);
+});
