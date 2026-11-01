@@ -5,6 +5,7 @@ import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'acorn';
+import {frozenTypedOutputFutureGit} from '../lib/__tests__/helpers/future-active-git.js';
 import { describe, it, expect } from 'vitest';
 
 const OLD_READER_HASHES = [
@@ -392,6 +393,14 @@ export function registerReviewedAGuardTests({ BRAIN_ROOT, findClaudeInvocations 
    for(const file of [workspace,snapshot]){const missing=new Map(current);missing.delete(file);expect(scan(missing).some(h=>h.rule==='E1')).toBe(true);}
    const mixed=new Map(current);mixed.set(snapshot,execFileSync('git',['--no-replace-objects','show','35e2a91d971e8dc432d6f36361c65cded5d64ec8:scripts/ci/implementation-snapshot.mjs'],{cwd:BRAIN_ROOT,encoding:'utf8'}));expect(scan(mixed).some(h=>h.rule==='E1')).toBe(true);
    const changed=new Map(current);changed.set(workspace,changed.get(workspace)+'\neval(candidate);');expect(scan(changed).some(h=>h.rule==='E1')).toBe(true);
+  });
+  it('D readonly新cohort必须实际匹配四blob捕获的source/workspace/snapshot',async()=>{
+   const repoRoot=path.resolve(BRAIN_ROOT,'../..'),captured=frozenTypedOutputFutureGit(repoRoot),sources=base();
+   const source=path.join(root,'existing-ops-source.js'),workspace=path.join(root,'existing-ops-workspace-source.js');
+   const capturedSource=await captured.read('packages/brain/src/lib/existing-ops-source.js'),capturedWorkspace=await captured.read('packages/brain/src/lib/existing-ops-workspace-source.js');
+   expect(capturedWorkspace).toBe(readFileSync(workspace,'utf8'));expect(capturedSource).toBe(readFileSync(source,'utf8').replace(/EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = [01]/,'EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = 1'));
+   sources.set(workspace,capturedWorkspace);sources.set(snapshot,await captured.read('scripts/ci/implementation-snapshot.mjs'));
+   for(const marker of [0,1]){const variant=new Map(sources);variant.set(source,capturedSource.replace('EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = 1','EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = '+marker));expect(scan(variant)).toEqual([]);}
   });
   it('已发布cb7对应main原子marker0/1完整组合保留，新旧移动成员不得混搭',()=>{
    const published=new Map([...base().keys()].map(f=>[f,execFileSync('git',['show','e8d727e21867aabe1e9246b5a940e08ecd063f33:'+path.relative(path.resolve(BRAIN_ROOT,'../..'),f)],{cwd:BRAIN_ROOT,encoding:'utf8',maxBuffer:1024*1024})]));

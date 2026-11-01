@@ -1,11 +1,12 @@
-import {it,expect} from 'vitest';
+import {it,expect,afterAll} from 'vitest';
+import {setImmediate as nativeSetImmediate} from 'node:timers';
 import {createRequire} from 'node:module';
 import {parse as acorn} from 'acorn';
 import {collectNativeFutureImpactSources} from '../existing-ops-workspace-source.js';
-import {frozenFutureGit,readFrozenFutureBytes,frozenTypedOutputFutureGit} from './helpers/future-active-git.js';
+import {frozenFutureGit,readFrozenFutureBytes,frozenTypedOutputFutureGit,materializeFrozenCollector} from './helpers/future-active-git.js';
 import {createHash} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
-import {fileURLToPath} from 'node:url';
+import {fileURLToPath,pathToFileURL} from 'node:url';
 import {mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
@@ -17,7 +18,7 @@ const paths=execFileSync('git',['ls-tree','-rz','--name-only',revision],{cwd:roo
 const cache=new Map();
 const read=path=>{if(!cache.has(path))cache.set(path,execFileSync('git',['show',`${revision}:${path}`],{cwd:root,encoding:'utf8',maxBuffer:16*1024*1024}));return cache.get(path);};
 const workflow='.github/workflows/implementation-impact.yml';
-const frozenProfile=frozenFutureGit(root);
+const frozenProfile=frozenTypedOutputFutureGit(root);
 it('巡查独立身份baseline保持当前真实Git F2/F3消费者协议',async()=>{
  const proof=await buildExistingOpsSources({scope:'cecelia-factory',repo:'perfectuser21/cecelia',revision,paths,readSource:async path=>read(path)});
  expect(proof.consumers.every(c=>c.status==='verified'),JSON.stringify(proof.consumers.map(c=>c.gaps))).toBe(true);
@@ -282,25 +283,49 @@ it('未来profile失败不得借旧multi/foreign条件回落，整个F3绑定必
  expect(proof.consumers[1].status).toBe('unknown');expect(proof.consumers[1].bindings).toEqual([]);expect(proof.consumers[1].input_relations).toEqual([]);
 });
 
+let capturedRuntime,historicalRuntime;
+afterAll(()=>{capturedRuntime?.close();historicalRuntime?.close();});
+async function ownRuntime(historical=false){
+ let entry=historical?historicalRuntime:capturedRuntime;
+ if(!entry){entry=materializeFrozenCollector(root,{historical});if(historical)historicalRuntime=entry;else capturedRuntime=entry;}
+ const url=pathToFileURL(entry.sourceFile).href;expect(url.startsWith(pathToFileURL(entry.checkout+'/').href)).toBe(true);
+ entry.api??=await import(/* @vite-ignore */ url);
+ entry.workspace??=await import(/* @vite-ignore */ pathToFileURL(entry.workspaceFile).href);
+ return entry;
+}
 const typedOutputProfile=frozenTypedOutputFutureGit(root);
-it('新完整typed输出guard与resolver组合由真实raw F3认可，旧完整bundle仍保留',async()=>{
- const proof=await buildExistingOpsSources({scope:'cecelia-factory',repo:'perfectuser21/cecelia',revision:typedOutputProfile.revision,paths:typedOutputProfile.paths,readSource:typedOutputProfile.read});
+it('新完整typed输出guard与resolver由fixture自身16runtime及raw F3实际验证',async()=>{
+ const runtime=await ownRuntime(),profile=runtime.input;
+ const {readNativeConsumerRuntime}=await import(/* @vite-ignore */ pathToFileURL(runtime.runtimeFile).href);
+ const loaded=readNativeConsumerRuntime();expect(loaded.files).toHaveLength(16);
+ for(const file of loaded.files)expect(createHash('sha256').update(await profile.read(file.path)).digest('hex')).toBe(file.sha256);
+ const proof=await runtime.api.buildExistingOpsSources({scope:'cecelia-factory',repo:'perfectuser21/cecelia',revision:profile.revision,paths:profile.paths,readSource:profile.read});
+ await new Promise(resolve=>nativeSetImmediate(resolve)); // 同原raw wrapper，交还默认30s计时器而不延长预算。
  expect(proof.consumers[1].status,JSON.stringify(proof.consumers[1].gaps)).toBe('verified');
  expect(proof.consumers[1].input_relations).toContainEqual(expect.objectContaining({consumer_path:workflow,input_path:entry,kind:'ci_admission_only_native_pr_runner'}));
  expect(proof.workflows.every(w=>w.executable===false&&w.coverage.status==='unknown')).toBe(true);
 });
 const typedOutputMembers=[".github/workflows/ci-admission-baseline.yml", ".github/workflows/implementation-impact.yml", "scripts/ci/implementation-multi-pr-gate.mjs", "scripts/ci/implementation-pr-gate.mjs", "scripts/ci/implementation-multi-scope.mjs", "scripts/ci/implementation-snapshot.mjs", "scripts/ci/implementation-scratch.mjs", "scripts/ci/implementation-gate.mjs", "scripts/ci/implementation-pr-baseline.mjs", "scripts/ci/implementation-infra-inputs.mjs", "scripts/ci/implementation-skill-source.mjs", "scripts/ci/ci-admission-inputs.mjs", "scripts/ci/ci-admission-handoff.mjs", "scripts/ci/ci-admission-artifact.mjs", "scripts/ci/ci-admission-envelope.mjs", "scripts/ci/ci-admission-authority.mjs", "scripts/ci/ci-admission-archive.mjs", "scripts/ci/ci-admission-scratch.mjs", "scripts/ci/ci-admission-seed.mjs", "scripts/ci/ci-admission-builder.mjs", "scripts/ci/ci-admission-worker.mjs", "scripts/ci/ci-admission-worker-runner.mjs", "scripts/ci/ci-admission-publisher.mjs", "scripts/ci/implementation-verification-inputs.mjs", "scripts/ci/implementation-verification-context.mjs", "scripts/ci/implementation-verification-selectors.mjs", "scripts/ci/implementation-verification-retirements.mjs", "scripts/ci/implementation-auxiliary-evidence.mjs", "scripts/ci/fixed-local-git.mjs", "packages/brain/src/lib/existing-ops-registration.js", "packages/brain/src/lib/implementation-ci-snapshot.js", "scripts/ci/config/ci-admission-registry.json"];
 for(const path of typedOutputMembers)it(`新输出profile独立篡改拒绝${path}`,async()=>{
- const relations=[];expect(await collectNativeFutureImpactSources({basicCi:true,parse:text=>acorn(text,{ecmaVersion:'latest',sourceType:'module'}),revision:typedOutputProfile.revision,relations,
+ const runtime=await ownRuntime(),relations=[];expect(await runtime.workspace.collectNativeFutureImpactSources({basicCi:true,parse:text=>acorn(text,{ecmaVersion:'latest',sourceType:'module'}),revision:typedOutputProfile.revision,relations,
   read:async p=>(await typedOutputProfile.read(p))+(p===path?'\n// unreviewed typed output':'' )})).toBe(false);expect(relations).toEqual([]);
 });
 for(const path of ['scripts/ci/implementation-multi-pr-gate.mjs','scripts/ci/implementation-pr-baseline.mjs'])it(`新旧输出controller不能单独混搭${path}`,async()=>{
  const relations=[];expect(await collectNativeFutureImpactSources({basicCi:true,parse:text=>acorn(text,{ecmaVersion:'latest',sourceType:'module'}),revision:typedOutputProfile.revision,relations,
-  read:async p=>p===path?frozenProfile.read(p):typedOutputProfile.read(p)})).toBe(false);expect(relations).toEqual([]);
+  read:async p=>p===path?frozenFutureGit(root).read(p):typedOutputProfile.read(p)})).toBe(false);expect(relations).toEqual([]);
 });
 
 it('未发布且已知错误的旧active1f完整组合在新D不得继续取得资格',async()=>{
  const old=frozenFutureGit(root),relations=[];
  expect(await collectNativeFutureImpactSources({basicCi:true,parse:text=>acorn(text,{ecmaVersion:'latest',sourceType:'module'}),revision:old.revision,read:old.read,relations})).toBe(false);
  expect(relations).toEqual([]);
+});
+
+it('固定已发布BC旧collector仅历史回放旧1f完整输入，不授予当前D active资格',async()=>{
+ const runtime=await ownRuntime(true),profile=runtime.input;
+ expect(runtime.git('rev-parse','HEAD')).toBe('bc597b839142052c33689750a33472f73bbd89d1');
+ const proof=await runtime.api.buildExistingOpsSources({scope:'cecelia-factory',repo:'perfectuser21/cecelia',revision:profile.revision,paths:profile.paths,readSource:profile.read});
+ await new Promise(resolve=>nativeSetImmediate(resolve)); // 同原raw wrapper，交还默认30s计时器而不延长预算。
+ expect(proof.consumers[1].status,JSON.stringify(proof.consumers[1].gaps)).toBe('verified');
+ const relations=[];expect(await collectNativeFutureImpactSources({basicCi:true,parse:text=>acorn(text,{ecmaVersion:'latest',sourceType:'module'}),revision:profile.revision,read:profile.read,relations})).toBe(false);expect(relations).toEqual([]);
 });

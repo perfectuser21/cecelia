@@ -1,5 +1,7 @@
 /** 捕获真实future完整树的普通Git数据，不执行其中源码；anchor为已合入受保护main。 */
-import {readFileSync} from 'node:fs';
+import {readFileSync,writeFileSync,mkdtempSync,mkdirSync,rmSync,lstatSync,chmodSync,symlinkSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join,dirname} from 'node:path';
 import {gunzipSync} from 'node:zlib';
 import {createHash} from 'node:crypto';
 import {createRequire} from 'node:module';
@@ -61,7 +63,7 @@ export function frozenFutureGit(root){
  }};
 }
 
-/** 第二个完整profile只叠固定两份controller普通blob；从不读取工作区实现。 */
+/** 完整profile叠四份已审controller/collector普通blob；从不读取工作区实现。 */
 export function readFrozenTypedOutputBytes(require=createRequire(import.meta.url)){
  const target=require.resolve('../../../../../../scripts/ci/__tests__/fixtures/future-active-typed-output-v2.json.gz');
  const extension=Object.getOwnPropertyDescriptor(require.extensions,'.gz'),cache=Object.getOwnPropertyDescriptor(require.cache,target);
@@ -75,15 +77,15 @@ export function readFrozenTypedOutputBytes(require=createRequire(import.meta.url
  }
 }
 export function decodeFrozenTypedOutputBytes(bytes=readFrozenTypedOutputBytes()){
- if(sha('sha256',bytes)!=='2d5ba8a25cc354b57c7b819846a9d5c4b4bd86f12f32d4223f3e19860d2fb702')throw Error('TYPED_OUTPUT_FIXTURE_DIGEST');
+ if(sha('sha256',bytes)!=='7af877c2f2fc289ee3052d9bcf4be686b3ab83c3e2aaf47bad6a90c08a285bd1')throw Error('TYPED_OUTPUT_FIXTURE_DIGEST');
  const data=JSON.parse(gunzipSync(bytes));
  if(data.schema_version!==1||data.extends_fixture_sha256!=='c22090326cbe99e8f345b503c5a98d1ab3b3856211294dfaf5f54028a402ab7d'
   ||data.parent_revision!=='14fce437dcccf1b30daf17423ec48a3ed4337eee'||data.parent_tree!=='f5b015b0a66e798efd666a842364c36579e163f8'
-  ||data.captured_revision!=='005a05ce728373f3af4c81c6d8aeca8db1abb3a5'||data.captured_tree!=='92020a92dfed0de39feceacd393915bc634474c4')throw Error('TYPED_OUTPUT_FIXTURE_SOURCE');
+  ||data.captured_revision!=='a1fb24ffbe9c2c58bfe0e5bf6bb44e48456b4270'||data.captured_tree!=='331f228fe36d5b18658f762ef6cd8b3ed61e8e6f')throw Error('TYPED_OUTPUT_FIXTURE_SOURCE');
  const commit=Buffer.from(data.captured_commit_base64,'base64');
  if(sha('sha1',Buffer.concat([Buffer.from(`commit ${commit.length}\0`),commit]))!==data.captured_revision
   ||!commit.toString().startsWith(`tree ${data.captured_tree}\nparent ${data.parent_revision}\n`))throw Error('TYPED_OUTPUT_FIXTURE_COMMIT');
- const paths=['scripts/ci/implementation-multi-pr-gate.mjs','scripts/ci/implementation-pr-baseline.mjs'];
+ const paths=['scripts/ci/implementation-multi-pr-gate.mjs','scripts/ci/implementation-pr-baseline.mjs','packages/brain/src/lib/existing-ops-workspace-source.js','packages/brain/src/lib/existing-ops-source.js'];
  if(JSON.stringify(data.members?.map(r=>r.path))!==JSON.stringify(paths))throw Error('TYPED_OUTPUT_FIXTURE_PATH');
  for(const row of data.members){
   if(row.mode!=='100644')throw Error('TYPED_OUTPUT_FIXTURE_MODE');
@@ -99,4 +101,36 @@ export function frozenTypedOutputFutureGit(root){
  if([...changed.keys()].some(path=>!base.paths.includes(path)))throw Error('TYPED_OUTPUT_FIXTURE_PATH');
  return {...base,data:{...base.data,captured_revision:data.captured_revision,captured_tree:data.captured_tree,controller_overlay:data},revision:data.captured_revision,
   read:async path=>changed.has(path)?changed.get(path):base.read(path)};
+}
+
+/** 仅显式测试调用：私有Git重建已校验的完整树，不自动导入或执行捕获源码。 */
+export function materializeFrozenCollector(root,{historical=false}={}){
+ const home=mkdtempSync(join(tmpdir(),'frozen-collector-runtime-')),checkout=join(home,'source');
+ const close=()=>rmSync(home,{recursive:true,force:true,maxRetries:3,retryDelay:20});
+ try{
+  fixedLocalGit(root,['clone','--shared','--no-checkout','--quiet',root,checkout],{localClone:true});
+  const git=(...args)=>fixedLocalGit(checkout,['-c','maintenance.auto=false','-c','gc.auto=0',...args],{encoding:'utf8'}).trim();
+  const input=historical?frozenFutureGit(root):frozenTypedOutputFutureGit(root);
+  if(historical)git('checkout','--quiet','--detach','bc597b839142052c33689750a33472f73bbd89d1');
+  else{
+   git('checkout','--quiet','--detach',input.data.base_revision);
+   const rows=[...input.data.delta,...input.data.controller_overlay.members];
+   for(const row of rows){
+    const target=join(checkout,row.path);let parent=dirname(target);
+    while(parent!==checkout){try{if(lstatSync(parent).isSymbolicLink())throw Error('FROZEN_RUNTIME_PARENT');}catch(error){if(error.code!=='ENOENT')throw error;}parent=dirname(parent);}
+    if(row.mode===null){rmSync(target,{recursive:true,force:true});continue;}
+    mkdirSync(dirname(target),{recursive:true});
+    try{if(lstatSync(target).isSymbolicLink())rmSync(target);}catch(error){if(error.code!=='ENOENT')throw error;}
+    writeFileSync(target,Buffer.from(row.content_base64,'base64'));chmodSync(target,row.mode==='100755'?0o755:0o644);
+   }
+   git('-c','core.filemode=true','add','-A','-f','--',...[...new Set(rows.map(row=>row.path))]);
+   if(git('write-tree')!==input.data.captured_tree)throw Error('FROZEN_RUNTIME_TREE');
+   const commitFile=join(home,'capture.commit');writeFileSync(commitFile,Buffer.from(input.data.controller_overlay.captured_commit_base64,'base64'));
+   if(git('hash-object','-t','commit','-w',commitFile)!==input.revision)throw Error('FROZEN_RUNTIME_COMMIT');
+   git('checkout','--quiet','--detach',input.revision);
+   if(git('rev-parse','HEAD^{tree}')!==input.data.captured_tree||git('status','--porcelain=v1','--untracked-files=no'))throw Error('FROZEN_RUNTIME_CHECKOUT');
+  }
+  for(const relative of ['', 'packages/brain'])symlinkSync(join(root,relative,'node_modules'),join(checkout,relative,'node_modules'),'dir');
+  return {home,checkout,input,sourceFile:join(checkout,'packages/brain/src/lib/existing-ops-source.js'),workspaceFile:join(checkout,'packages/brain/src/lib/existing-ops-workspace-source.js'),runtimeFile:join(checkout,'packages/brain/src/lib/native-consumer-runtime.js'),git,close};
+ }catch(error){close();throw error;}
 }
