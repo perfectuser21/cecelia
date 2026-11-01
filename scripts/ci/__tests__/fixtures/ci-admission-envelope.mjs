@@ -14,8 +14,8 @@ seed.scope_cells=Object.fromEntries(scopes.map(scope=>[scope,seed.required_asser
 seed.scope_cells['cecelia-kr'].push({id:'00000000-0000-4000-8000-0000000000ff',assertion_ref:null});
 seed.tables={activity_cells:Object.values(seed.scope_cells).flat()};
 const path='scripts/ci/config/ci-admission-registry.json';
-export async function admissionFixture(t){
- const f=authorityFixture(t,{controlFiles:{[path]:JSON.stringify(seed)}}),authority=await f.run(),parent=bundle(f.source).snapshot;
+export async function admissionFixture(t,sourceAuthority={}){
+ const f=authorityFixture(t,{...sourceAuthority,controlFiles:{[path]:JSON.stringify(seed)}}),authority=await f.run(),parent=bundle(f.source).snapshot;
  parent.canonical.workflows=structuredClone(template.canonical.workflows);
  const snapshots=[parent,parent.admission_companion.snapshot,infraSnapshot(f.source).snapshot];
  for(const s of snapshots)s.assertions=structuredClone(seed.scope_cells[s.scope]);

@@ -10,7 +10,7 @@ const prefix='repos/perfectuser21/cecelia';
 test('真实first-parent固定源码与较晚控制SHA分域，API run/job/check同链给opaque能力',async t=>{
  const f=authorityFixture(t),cap=await f.run(),proof=ciAuthorityProof(cap);
  assert.equal(proof.source_revision,f.source);assert.equal(proof.control_revision,f.control);
- assert.equal(proof.ci.check_run_id,34);assert.equal(proof.publisher.check_run_id,44);
+ assert.equal(proof.ci.profile,'basic_ci_v1');assert.equal(proof.ci.provider_name,'源码保底通过');assert.match(proof.ci.recipe_sha256,/^[a-f0-9]{64}$/);assert.equal(proof.ci.check_run_id,34);assert.equal(proof.publisher.check_run_id,44);
  assert.equal(JSON.stringify(cap),'{}');assert.throws(()=>ciAuthorityProof({...cap}),/CI_ADMISSION_AUTHORITY_REQUIRED/);
 });
 for(const kind of ['event','branch','sha','app','check-link','job-link','workflow','suite','cancel','skip','pagination','duplicate','attempt','unprotected','publisher-event','publisher-app','artifact-time'])test('不一致的真实来源链拒绝：'+kind,async t=>{
