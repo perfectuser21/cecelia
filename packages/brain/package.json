@@ -49,9 +49,8 @@
     "vitest": "^1.6.1",
     "zod-v3-compat": "npm:zod@3.25.76"
   },
-  "version": "1.445.100",
+  "version": "1.445.101",
   "overrides": {
     "fast-uri": "^3.1.6"
-  },
-  "cecelia_source_only": true
+  }
 }
