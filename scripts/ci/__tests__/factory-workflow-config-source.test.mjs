@@ -11,7 +11,7 @@ import yaml from 'js-yaml';
 import {fileURLToPath} from 'node:url';
 import {join,resolve} from 'node:path';
 import {cruise} from 'dependency-cruiser';
-import {cleanupVerificationFixture,immutableVerificationSeed,disposeVerificationSeed,fixedInputFixture as inputFixture} from './fixtures/verification-input-git.mjs';
+import {VERIFICATION_GIT_OPTIONS,cleanupVerificationFixture,immutableVerificationSeed,disposeVerificationSeed,fixedInputFixture as inputFixture} from './fixtures/verification-input-git.mjs';
 
 // 根扫描器依赖只在npm ci全根的CI来源suite执行；Brain-only单测保留运行配置行为测试。
 test('默认运行配置由原生依赖图绑定到实际读取器',async()=>{
@@ -117,7 +117,7 @@ test('业务模块、外跳路径、不在真实delta、错误side及main/releas
 after(disposeVerificationSeed);
 function legacyEntryFixture(t,{path='packages/brain/src/__tests__/derived-input.test.js',deleted=false}={}){
  const root=mkdtempSync(join(tmpdir(),'derived-entry-git-'));t.after(()=>cleanupVerificationFixture(root));
- const git=(...args)=>execFileSync('git',['--no-replace-objects','-c','core.hooksPath=/dev/null','-c','commit.gpgSign=false',...args],{cwd:root,encoding:'utf8',stdio:['ignore','pipe','pipe'],maxBuffer:32*1024*1024}).trim();
+ const git=(...args)=>execFileSync('git',[...VERIFICATION_GIT_OPTIONS,'--no-replace-objects','-c','core.hooksPath=/dev/null','-c','commit.gpgSign=false',...args],{cwd:root,encoding:'utf8',stdio:['ignore','pipe','pipe'],maxBuffer:32*1024*1024}).trim();
  git('clone','--shared','--no-checkout',immutableVerificationSeed(fileURLToPath(new URL('../../../',import.meta.url))),'.');git('sparse-checkout','set','--no-cone','/.github/workflows/ci.yml','/packages/brain/vitest.config.js','/scripts/ci/skill-source-tests.mjs','/packages/brain/vitest.skill-source.config.mjs','/packages/engine/vitest.skill-source.config.mjs','/packages/quality/vitest.skill-source.config.mjs','/vitest.skill-source.config.mjs','/'+path);git('checkout','--detach','68b996a5641b69e6f21705a114a4524e407fe097');git('remote','set-url','origin','https://github.com/perfectuser21/cecelia.git');
  mkdirSync(join(root,path.slice(0,path.lastIndexOf('/'))),{recursive:true});writeFileSync(join(root,path),'export const baseInput=true;\n');
  const commit=()=>{git('add','--sparse','-A');git('-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','--allow-empty','-qm','test: fixed input source');return git('rev-parse','HEAD');};
@@ -425,7 +425,7 @@ test('十项退休必须有固定目录、真实替代输入入口、head原生o
  const f=basicEntryFixture(t,'packages/brain/src/__tests__/retirement-anchor.test.js'),module=await import('../implementation-verification-retirements.mjs');
  const require=createRequire(import.meta.url),catalogs=[['config/verification-retirements/alertness-v1.json',require('../../../config/verification-retirements/alertness-v1.json')],['config/verification-retirements/legacy-five-v1.json',require('../../../config/verification-retirements/legacy-five-v1.json')]];
  const control=mkdtempSync(join(tmpdir(),'derived-retirement-control-'));t.after(()=>cleanupVerificationFixture(control));
- const controlGit=(...args)=>execFileSync('git',['-c','core.hooksPath=/dev/null','-c','commit.gpgSign=false',...args],{cwd:control,encoding:'utf8'}).trim();
+ const controlGit=(...args)=>execFileSync('git',[...VERIFICATION_GIT_OPTIONS,'-c','core.hooksPath=/dev/null','-c','commit.gpgSign=false',...args],{cwd:control,encoding:'utf8'}).trim();
  controlGit('init','-q');controlGit('remote','add','origin','https://github.com/perfectuser21/cecelia.git');
  for(const [path,catalog]of catalogs){const bytes=readFileSync(new URL('../../../'+path,import.meta.url));assert.deepEqual(JSON.parse(bytes),catalog);assert.equal(catalog.purpose,'admission_only');mkdirSync(join(control,'config/verification-retirements'),{recursive:true});writeFileSync(join(control,path),bytes);
   for(const row of catalog.records){rmSync(join(f.root,row.path),{force:true});f.git('update-index','--force-remove',row.path);for(const absent of row.required_absent_paths||[]){rmSync(join(f.root,absent),{force:true});f.git('update-index','--force-remove',absent);}}}
