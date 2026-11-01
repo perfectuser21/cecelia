@@ -22,6 +22,11 @@ function commit(where){git(where,'add','--sparse','-A');git(where,'-c','user.nam
 function source(){return {repo:'perfectuser21/cecelia',base_revision:BASE,head_revision:git(sourceRoot,'rev-parse','HEAD'),changed_files:fixedLocalGit(sourceRoot,['diff','--no-renames','--name-only','-z',BASE,'HEAD','--'],{encoding:'utf8'}).split('\0').filter(Boolean).map(path=>({path}))};}
 function options(extra={}){return {source:source(),toolingRoot:controlRoot,toolingRevision:git(controlRoot,'rev-parse','HEAD'),purpose:'admission_only',...extra};}
 function reset(){git(sourceRoot,'reset','--hard',HEAD);git(sourceRoot,'clean','-fd');}
+function addSparsePath(path){
+ assert.equal(git(sourceRoot,'config','--bool','--get','core.sparseCheckoutCone'),'false');
+ git(sourceRoot,'sparse-checkout','add','/'+path);
+ assert.equal(git(sourceRoot,'config','--bool','--get','core.sparseCheckoutCone'),'false');
+}
 before(async()=>{
  try{api=await import('../implementation-verification-retirements.mjs');}catch(error){if(error.code!=='ERR_MODULE_NOT_FOUND')throw error;}
  if(!api)return;
@@ -92,8 +97,7 @@ test('控制目录的catalog symlink不是普通审核blob',()=>{
 });
 const replacements=[...['diagnosis','escalation','healing','levels','metrics'].map(n=>`packages/brain/src/__tests__/alertness/${n}.test.js`),...['diagnosis','escalation','healing','metrics'].map(n=>`packages/brain/src/alertness/__tests__/${n}.test.js`),'packages/brain/src/__tests__/alertness-index-refactor.test.js','packages/brain/src/__tests__/alertness-recovery.test.js'];
 for(const path of replacements)test(`固定11替代/支撑测试逐项字节漂移拒绝：${path}`,()=>{
- assert.equal(git(sourceRoot,'config','--bool','--get','core.sparseCheckoutCone'),'false','追加单文件必须继承已经固定的非cone模式');
- needApi();try{git(sourceRoot,'sparse-checkout','add','--no-cone','/'+path);const file=join(sourceRoot,path);writeFileSync(file,Buffer.concat([readFileSync(file),Buffer.from('\n// byte drift\n')]));commit(sourceRoot);assert.throws(()=>api.collectVerificationRetirementCandidates(sourceRoot,options()),/REPLACEMENT/);}finally{reset();}
+ needApi();try{addSparsePath(path);const file=join(sourceRoot,path);writeFileSync(file,Buffer.concat([readFileSync(file),Buffer.from('\n// byte drift\n')]));commit(sourceRoot);assert.throws(()=>api.collectVerificationRetirementCandidates(sourceRoot,options()),/REPLACEMENT/);}finally{reset();}
 });
 function retireExtra(){for(const path of EXTRA_OLD)git(sourceRoot,'update-index','--force-remove',path);commit(sourceRoot);}
 function withLaterBase(run){
@@ -112,7 +116,7 @@ test('实际CI基线前移后仍逐blob核准原68目录，保真实base与历�
 });
 test('较晚基线的旧blob或完整config漂移不继承68审核资格',()=>{
  needApi();for(const path of [OLD[0],'packages/brain/vitest.config.js']){
-  git(sourceRoot,'checkout','--detach',ANCHOR);git(sourceRoot,'sparse-checkout','add','--no-cone','/'+path);
+  git(sourceRoot,'checkout','--detach',ANCHOR);addSparsePath(path);
   const file=join(sourceRoot,path);writeFileSync(file,Buffer.concat([readFileSync(file),Buffer.from('\n// baseline drift\n')]));const base=commit(sourceRoot);
   const head=git(sourceRoot,'-c','user.name=retirement-fixture','-c','user.email=fixture@example.invalid','commit-tree',HEAD+'^{tree}','-p',base,'-m','candidate cannot erase baseline drift');git(sourceRoot,'reset','--hard',head);
   const actual={...source(),base_revision:base,changed_files:fixedLocalGit(sourceRoot,['diff','--no-renames','--name-only','-z',base,head,'--'],{encoding:'utf8'}).split('\0').filter(Boolean).map(path=>({path}))};
@@ -141,7 +145,7 @@ test('额外catalog脏改或提交重算都不能自行批准',()=>{
  try{writeFileSync(path,Buffer.concat([readFileSync(path),Buffer.from('\n')]));assert.throws(()=>api.collectVerificationRetirementCandidates(sourceRoot,options()),/STATE/);commit(controlRoot);assert.throws(()=>api.collectVerificationRetirementCandidates(sourceRoot,options()),/CATALOG/);}finally{git(controlRoot,'reset','--hard',revision);}
 });
 for(const path of ['packages/brain/src/initiative-closer.js','packages/brain/src/routes/harness.js','packages/brain/src/quarantine.js','apps/dashboard/src/pages/live-monitor/OpsPanoramaCard.tsx'])test(`退役政策或真实组件字节变化必须重新审查：${path}`,()=>{
- needApi();try{retireExtra();git(sourceRoot,'sparse-checkout','add','--no-cone','/'+path);const file=join(sourceRoot,path);writeFileSync(file,Buffer.concat([readFileSync(file),Buffer.from('\n// policy drift\n')]));commit(sourceRoot);assert.throws(()=>api.collectVerificationRetirementCandidates(sourceRoot,options()),/POLICY/);}finally{reset();}
+ needApi();try{retireExtra();addSparsePath(path);const file=join(sourceRoot,path);writeFileSync(file,Buffer.concat([readFileSync(file),Buffer.from('\n// policy drift\n')]));commit(sourceRoot);assert.throws(()=>api.collectVerificationRetirementCandidates(sourceRoot,options()),/POLICY/);}finally{reset();}
 });
 test('harness旧实现复活与额外旧测试rename不能套用退休目录',()=>{
  needApi();const path='packages/brain/src/harness.js',file=join(sourceRoot,path);
@@ -149,5 +153,5 @@ test('harness旧实现复活与额外旧测试rename不能套用退休目录',()
  try{retireExtra();const renamed=join(sourceRoot,'packages/brain/src/__tests__/harness-constants-renamed.test.js');mkdirSync(dirname(renamed),{recursive:true});writeFileSync(renamed,fixedLocalGit(sourceRoot,['show',`${BASE}:${EXTRA_OLD[0]}`]));commit(sourceRoot);assert.throws(()=>api.collectVerificationRetirementCandidates(sourceRoot,options()),/DELETION/);}finally{reset();}
 });
 for(const path of ['packages/brain/src/__tests__/harness-stats-endpoint.test.js','packages/brain/src/__tests__/initiative-closer.test.js','packages/brain/src/__tests__/quota-exhausted.test.js','apps/dashboard/src/pages/live-monitor/OpsPanoramaCard.test.tsx','apps/dashboard/vitest.config.ts'])test(`额外真实替代或配置漂移拒绝：${path}`,()=>{
- needApi();try{retireExtra();git(sourceRoot,'sparse-checkout','add','--no-cone','/'+path);const file=join(sourceRoot,path);writeFileSync(file,Buffer.concat([readFileSync(file),Buffer.from('\n// replacement drift\n')]));commit(sourceRoot);assert.throws(()=>api.collectVerificationRetirementCandidates(sourceRoot,options()),/CONFIG|REPLACEMENT/);}finally{reset();}
+ needApi();try{retireExtra();addSparsePath(path);const file=join(sourceRoot,path);writeFileSync(file,Buffer.concat([readFileSync(file),Buffer.from('\n// replacement drift\n')]));commit(sourceRoot);assert.throws(()=>api.collectVerificationRetirementCandidates(sourceRoot,options()),/CONFIG|REPLACEMENT/);}finally{reset();}
 });
