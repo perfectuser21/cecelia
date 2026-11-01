@@ -93,13 +93,17 @@ test('固定future数据解码验证真实Git blobs，损坏payload和不存在�
  assert.equal(data.base_revision,'35e2a91d971e8dc432d6f36361c65cded5d64ec8');
  assert.equal(data.captured_revision,'14fce437dcccf1b30daf17423ec48a3ed4337eee');
  assert.equal(data.captured_tree,'f5b015b0a66e798efd666a842364c36579e163f8');
- const frozen=frozenFutureGit(fileURLToPath(new URL('../../../',import.meta.url)));
+ const repoRoot=fileURLToPath(new URL('../../../',import.meta.url)),frozen=frozenFutureGit(repoRoot);
  assert.equal(frozen.revision,data.captured_revision);
  for(const [path,blob]of[['.github/workflows/implementation-impact.yml','7002260fd7e84006037343416de6123f593afb12'],['scripts/ci/implementation-multi-pr-gate.mjs','043fd77da634c2e9ccb800f66262cca31b158e0a']]){
   const row=data.delta.find(row=>row.path===path),actual=Buffer.from(await frozen.read(path));
   assert.equal(row.blob_sha1,blob);assert.deepEqual(actual,Buffer.from(row.content_base64,'base64'));
   assert.equal(createHash('sha1').update(`blob ${actual.length}\0`).update(actual).digest('hex'),blob);
  }
+ const {readFixedLocalGitBlob}=await import('../fixed-local-git.mjs'),fallback='README.md';
+ assert.equal(data.delta.some(row=>row.path===fallback),false);
+ const ordinary=Buffer.from(await frozen.read(fallback));assert.deepEqual(ordinary,readFixedLocalGitBlob(repoRoot,{revision:data.base_revision,path:fallback}));
+ assert.equal(createHash('sha1').update(`blob ${ordinary.length}\0`).update(ordinary).digest('hex'),'ef41b1f5d27bb4db060b171c861c64d7673c9626');
  await assert.rejects(frozen.read('scripts/ci/unknown-fixture-path.mjs'),/FUTURE_FIXTURE_MISSING/);
  const corrupt=Buffer.from(bytes);corrupt[corrupt.length-1]^=1;
  assert.throws(()=>decodeFrozenFutureBytes(corrupt),/FUTURE_FIXTURE_DIGEST/);
