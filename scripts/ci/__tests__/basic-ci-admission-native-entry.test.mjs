@@ -1,4 +1,3 @@
-import './basic-ci-admission-workflow.test.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {execFile} from 'node:child_process';
