@@ -1,6 +1,8 @@
 import {test} from 'node:test';
 import {fileURLToPath} from 'node:url';
-import {readFileSync} from 'node:fs';
+import {readFileSync,mkdirSync,symlinkSync,unlinkSync} from 'node:fs';
+import {createRequire} from 'node:module';
+import {gunzipSync} from 'node:zlib';
 import yaml from 'js-yaml';
 import {stepSha256} from '../../../packages/brain/scripts/sync-steps-from-workspace.mjs';
 import {EXISTING_OPS_IDENTITIES as identities} from '../../../packages/brain/src/lib/existing-ops-source.js';
@@ -135,4 +137,61 @@ test('正式PR入口执行selector且原双scope/固定工具/Skill缓存保留�
  assert.match(steps.find(s=>s.id==='skill-cache').run,/--prepare-ci-cache "\$GITHUB_WORKSPACE\/source" "\$SOURCE_REPO" "\$BASE" "\$HEAD"/);
  assert.match(readFileSync(join(root,'scripts/ci/__tests__/implementation-main-snapshot.test.mjs'),'utf8'),/import '\.\/implementation-pr-baseline.test.mjs'/);
  const ci=yaml.load(readFileSync(join(root,'.github/workflows/ci.yml'),'utf8'));assert.ok(Object.values(ci.jobs).some(job=>job.steps?.some(s=>s.run?.includes('node --test scripts/ci/__tests__/implementation-main-snapshot.test.mjs'))));
+});
+
+// 完整已审consumer仅作为数据；不执行YAML，也不依赖可删除分支的Git对象。
+function reviewedConsumers(){
+ const require=createRequire(import.meta.url),target=require.resolve('./fixtures/reviewed-impact-consumers.json.gz');
+ const extension=Object.getOwnPropertyDescriptor(require.extensions,'.gz'),cache=Object.getOwnPropertyDescriptor(require.cache,target);
+ try{
+  Object.defineProperty(require.extensions,'.gz',{configurable:true,writable:true,value:(module,filename)=>{
+   assert.equal(filename,target);module.exports=readFileSync(filename);
+  }});delete require.cache[target];
+  const bytes=require('./fixtures/reviewed-impact-consumers.json.gz');
+  assert.equal(hash(bytes),'334ed61e5bb1006803f994c257289761ea4adb148bcac79622d8f38b6ca3de2e');
+  const data=JSON.parse(gunzipSync(bytes));assert.equal(data.schema_version,1);
+  for(const row of [data.legacy,data.typed])assert.equal(hash(row.text),row.sha256);
+  assert.equal(data.legacy.sha256,'4e59206bd6dd08b77ea3a59e0feb44a2371ffc0fa9139b81f67e64a0169a9cf9');
+  assert.equal(data.typed.sha256,'17d29709a4990f9a0b4c2bbc63ad2dbcb7ce4f2b635a5d1fb416e8239d30f3b6');return data;
+ }finally{
+  if(extension)Object.defineProperty(require.extensions,'.gz',extension);else delete require.extensions['.gz'];
+  if(cache)Object.defineProperty(require.cache,target,cache);else delete require.cache[target];
+ }
+}
+function consumerPair(t,{source='legacy',tooling='legacy',kind='regular'}={}){
+ const f=fixture(t),data=reviewedConsumers(),path='.github/workflows/implementation-impact.yml';
+ f.git('checkout','--quiet','--detach',f.base);mkdirSync(join(f.root,'.github/workflows'),{recursive:true});
+ writeFileSync(join(f.root,path),data[tooling==='changed'?'legacy':tooling].text+(tooling==='changed'?'\n# unreviewed tooling':''));
+ f.git('add',path);f.git('-c','core.hooksPath=/dev/null','commit','-qm','fixed tooling consumer');const base=f.git('rev-parse','HEAD');
+ const tool=join(f.root,'tooling-checkout');f.git('worktree','add','--quiet','--detach',tool,base);
+ if(kind==='symlink'){unlinkSync(join(f.root,path));symlinkSync('missing-workflow',join(f.root,path));}
+ else if(kind==='missing')unlinkSync(join(f.root,path));
+ else writeFileSync(join(f.root,path),data[source==='changed'?'legacy':source].text+(source==='changed'?'\n# unreviewed source':''));
+ writeFileSync(join(f.root,'candidate-change'),'real PR delta');f.git('add','--',path,'candidate-change');f.git('-c','core.hooksPath=/dev/null','commit','-qm','candidate consumer');const head=f.git('rev-parse','HEAD');
+ f.event.pull_request.base.sha=base;f.event.pull_request.head.sha=head;f.options.toolingRoot=tool;f.options.toolingRevision=base;
+ f.deps.git=(directory,...args)=>execFileSync('git',['--no-replace-objects','-C',directory,...args],{encoding:'utf8'}).trim();
+ f.add(base);const api=f.deps.api;
+ // 当前namespace有坏CI证据：旧consumer不能消费这种格式，新consumer必须拒绝而不能降级。
+ f.deps.api=async path=>path.includes('/artifacts?name=implementation-ci-admission-baseline-')
+  ?(f.calls.push(path),{total_count:1,artifacts:[{id:900,name:new URL('https://fixture.invalid/'+path).searchParams.get('name'),expired:false,created_at:'2026-11-01T00:00:00Z'}]})
+  :api(path);
+ return f;
+}
+test('完整旧4e source/tooling配对显式选择legacy格式，不把不支持的CI凭据交给旧consumer',async t=>{
+ const f=consumerPair(t),r=await f.run();assert.equal(r.resolution.baseline_kind,'legacy_snapshot');assert.equal(r.resolution.consumer_profile,'impact_4e592_v1');
+ assert.equal(r.resolution.effective_base_revision,f.event.pull_request.base.sha);assert.equal(r.ciAdmission,undefined);
+ assert.equal(f.calls.some(p=>p.includes('implementation-ci-admission-baseline-')),false);
+ assert.ok(f.calls.some(p=>p.includes('implementation-snapshot-')));
+});
+for(const options of [{source:'typed'},{source:'changed'},{tooling:'changed'},{tooling:'typed'},{kind:'symlink'},{kind:'missing'}])test('非完整旧consumer配对仍CI-first且坏CI证据致命：'+JSON.stringify(options),async t=>{
+ const f=consumerPair(t,options);await assert.rejects(f.run(),/CI_ADMISSION_/);
+ assert.ok(f.calls.some(p=>p.includes('implementation-ci-admission-baseline-')));
+ assert.equal(f.calls.some(p=>p.includes('/artifacts?name=implementation-snapshot-')),false);
+});
+test('环境与未声明的程序参数不能把新consumer改成legacy；CLI不接受格式覆盖开关',async t=>{
+ const f=consumerPair(t,{source:'typed'});f.options.baselineFormat='legacy_snapshot';
+ const previous=process.env.IMPLEMENTATION_BASELINE_FORMAT;process.env.IMPLEMENTATION_BASELINE_FORMAT='legacy_snapshot';
+ try{await assert.rejects(f.run(),/CI_ADMISSION_/);}finally{if(previous===undefined)delete process.env.IMPLEMENTATION_BASELINE_FORMAT;else process.env.IMPLEMENTATION_BASELINE_FORMAT=previous;}
+ assert.equal(f.calls.some(p=>p.includes('/artifacts?name=implementation-snapshot-')),false);
+ assert.throws(()=>execFileSync(process.execPath,[fileURLToPath(new URL('../implementation-pr-baseline.mjs',import.meta.url)),'--baseline-format','legacy_snapshot'],{stdio:['ignore','pipe','pipe']}),error=>error.status===1&&error.stderr.toString().includes('PR_BASELINE_ARGUMENT_INVALID'));
 });
