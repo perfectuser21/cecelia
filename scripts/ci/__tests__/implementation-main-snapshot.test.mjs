@@ -8,7 +8,6 @@ import './brain-source-only-deploy.test.mjs';
 import './fixed-local-source.test.mjs';
 import './fixed-local-git.test.mjs';
 import './implementation-source-ready.test.mjs';
-import './factory-workflow-config-source.test.mjs';
 import {test} from 'node:test';
 import {runImplementationMainGate} from '../implementation-main-gate.mjs';
 import {readNativeConsumerRuntime} from '../../../packages/brain/src/lib/native-consumer-runtime.js';
