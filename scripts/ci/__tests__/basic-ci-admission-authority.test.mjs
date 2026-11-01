@@ -1,7 +1,9 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {writeFileSync} from 'node:fs';
+import {writeFileSync,mkdtempSync,rmSync} from 'node:fs';
 import {join} from 'node:path';
+import {tmpdir} from 'node:os';
+import {execFileSync} from 'node:child_process';
 import {ciAuthorityProof} from '../ci-admission-authority.mjs';
 import {authorityFixture} from './fixtures/ci-admission-authority.mjs';
 const prefix='repos/perfectuser21/cecelia';
@@ -45,4 +47,23 @@ test('不能用自报publisher字段把普通CI run升级成artifact发布器',a
  const f=authorityFixture(t);f.options.controlRevision=f.source;
  f.options.publisher={runId:11,attempt:1,path:'.github/workflows/ci.yml',event:'push',name:'源码保底通过'};
  await assert.rejects(f.run(),/CI_ADMISSION_/);
+});
+function advanceUnfetchedMain(t,f,{secondParentControl=false}={}){
+ const dir=mkdtempSync(join(tmpdir(),'ci-authority-future-main-'));t.after(()=>rmSync(dir,{recursive:true,force:true}));
+ const git=(...args)=>execFileSync('git',['-c','core.hooksPath=/dev/null','-c','commit.gpgSign=false','-c','maintenance.auto=false','-c','gc.auto=0',...args],{cwd:dir,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
+ git('clone','--shared','--no-checkout','--quiet',f.root,'.');git('config','user.name','Fixture');git('config','user.email','fixture@example.invalid');
+ git('checkout','--quiet','--detach',secondParentControl?f.source:f.control);
+ if(secondParentControl)git('merge','--no-ff','--quiet','-m','second parent is not main authority',f.control);
+ else{writeFileSync(join(dir,'later-main'),'concurrent protected commit');git('add','.');git('commit','-qm','later main');}
+ const sha=git('rev-parse','HEAD'),parents=git('show','-s','--format=%P','HEAD').split(' ').map(sha=>({sha}));
+ assert.throws(()=>f.git('cat-file','-e',sha+'^{commit}'),'新提交确实还不在原checkout对象库');
+ f.data.get(`${prefix}/branches/main`).commit.sha=sha;f.data.set(`${prefix}/git/commits/${sha}`,{sha,parents});return sha;
+}
+test('main在worker期间前移且新对象未fetch，仍以官方逐first-parent元数据核验固定control/source',async t=>{
+ const f=authorityFixture(t);advanceUnfetchedMain(t,f);
+ const proof=ciAuthorityProof(await f.run());assert.equal(proof.control_revision,f.control);assert.equal(proof.source_revision,f.source);
+});
+test('未fetch的main合并提交仍不能让第二父取得control资格',async t=>{
+ const f=authorityFixture(t);advanceUnfetchedMain(t,f,{secondParentControl:true});
+ await assert.rejects(f.run(),/CI_ADMISSION_MAIN_CHAIN/);
 });

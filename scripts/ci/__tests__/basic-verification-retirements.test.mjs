@@ -95,6 +95,29 @@ for(const path of replacements)test(`固定11替代/支撑测试逐项字节漂�
  needApi();try{git(sourceRoot,'sparse-checkout','add','--no-cone','/'+path);const file=join(sourceRoot,path);writeFileSync(file,Buffer.concat([readFileSync(file),Buffer.from('\n// byte drift\n')]));commit(sourceRoot);assert.throws(()=>api.collectVerificationRetirementCandidates(sourceRoot,options()),/REPLACEMENT/);}finally{reset();}
 });
 function retireExtra(){for(const path of EXTRA_OLD)git(sourceRoot,'update-index','--force-remove',path);commit(sourceRoot);}
+function withLaterBase(run){
+ git(sourceRoot,'checkout','--detach',ANCHOR);writeFileSync(join(sourceRoot,'new-baseline-marker'),'new protected source baseline');const base=commit(sourceRoot);
+ const head=git(sourceRoot,'-c','user.name=retirement-fixture','-c','user.email=fixture@example.invalid','commit-tree',HEAD+'^{tree}','-p',base,'-m','same reviewed retirement on later baseline');
+ git(sourceRoot,'reset','--hard',head);
+ const actual={...source(),base_revision:base,changed_files:fixedLocalGit(sourceRoot,['diff','--no-renames','--name-only','-z',base,head,'--'],{encoding:'utf8'}).split('\0').filter(Boolean).map(path=>({path}))};
+ try{return run(actual);}finally{reset();}
+}
+test('实际CI基线前移后仍逐blob核准原68目录，保真实base与历史锚点分域',()=>{
+ needApi();withLaterBase(actual=>{
+  const proof=api.collectVerificationRetirementCandidates(sourceRoot,options({source:actual}));assert.equal(proof.rows.length,5);
+  for(const row of proof.rows){assert.equal(row.base.revision,actual.base_revision);assert.equal(row.catalog_anchor_revision,BASE);assert.equal(row.base.config.revision,actual.base_revision);}
+  assert.deepEqual(api.verifyVerificationRetirementCandidates(sourceRoot,{...options({source:actual}),proof}),proof);
+ });
+});
+test('较晚基线的旧blob或完整config漂移不继承68审核资格',()=>{
+ needApi();for(const path of [OLD[0],'packages/brain/vitest.config.js']){
+  git(sourceRoot,'checkout','--detach',ANCHOR);git(sourceRoot,'sparse-checkout','add','--no-cone','/'+path);
+  const file=join(sourceRoot,path);writeFileSync(file,Buffer.concat([readFileSync(file),Buffer.from('\n// baseline drift\n')]));const base=commit(sourceRoot);
+  const head=git(sourceRoot,'-c','user.name=retirement-fixture','-c','user.email=fixture@example.invalid','commit-tree',HEAD+'^{tree}','-p',base,'-m','candidate cannot erase baseline drift');git(sourceRoot,'reset','--hard',head);
+  const actual={...source(),base_revision:base,changed_files:fixedLocalGit(sourceRoot,['diff','--no-renames','--name-only','-z',base,head,'--'],{encoding:'utf8'}).split('\0').filter(Boolean).map(path=>({path}))};
+  try{assert.throws(()=>api.collectVerificationRetirementCandidates(sourceRoot,options({source:actual})),/OLD_TEST.*BYTES|BASE_CONFIG.*BYTES/);}finally{reset();}
+ }
+});
 test('另五条精确退休独立catalog，不把十阶段常量或复制组件宣称等价覆盖',()=>{
  needApi();try{retireExtra();const proof=api.collectVerificationRetirementCandidates(sourceRoot,options());
   const rows=proof.rows.filter(r=>EXTRA_OLD.includes(r.path));assert.equal(rows.length,5);assert.equal(proof.limitations.length,3);
