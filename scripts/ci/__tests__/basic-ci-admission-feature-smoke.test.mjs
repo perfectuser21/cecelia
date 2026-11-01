@@ -3,9 +3,25 @@ import assert from 'node:assert/strict';
 import {execFile} from 'node:child_process';
 import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,rmSync,existsSync} from 'node:fs';
 import {tmpdir} from 'node:os';
-import {join,dirname} from 'node:path';
+import {join,dirname,resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
+import {createRequire} from 'node:module';
+import {cruise} from 'dependency-cruiser';
 const root=fileURLToPath(new URL('../../../',import.meta.url));
+function readSmokeAllowlist(require=createRequire(import.meta.url)){
+ const target=require.resolve('../../../packages/quality/smoke-allowlist.txt');
+ const extension=Object.getOwnPropertyDescriptor(require.extensions,'.txt'),cache=Object.getOwnPropertyDescriptor(require.cache,target);
+ try{
+  Object.defineProperty(require.extensions,'.txt',{configurable:true,writable:true,enumerable:true,value:(module,filename)=>{
+   assert.equal(filename,target,'SMOKE_ALLOWLIST_DATA_TARGET');module.exports=readFileSync(filename,'utf8');
+  }});
+  delete require.cache[target];return require('../../../packages/quality/smoke-allowlist.txt');
+ }finally{
+  if(extension)Object.defineProperty(require.extensions,'.txt',extension);else delete require.extensions['.txt'];
+  if(cache)Object.defineProperty(require.cache,target,cache);else delete require.cache[target];
+ }
+}
+const entries=text=>text.split(/\r?\n/).filter(line=>line.trim()&&!line.startsWith('#'));
 function fixture(t){const directory=mkdtempSync(join(tmpdir(),'ci-admission-smoke-contract-'));t.after(()=>rmSync(directory,{recursive:true,force:true}));return {directory,env:{PATH:dirname(process.execPath)+':/usr/bin:/bin:/usr/sbin:/sbin',HOME:directory,TMPDIR:directory,GH_TOKEN:'synthetic-parent-secret-must-not-inherit',DB_PASSWORD:'synthetic-parent-database-must-not-inherit',NODE_OPTIONS:'--not-a-valid-node-flag'}};}
 const run=env=>new Promise(resolve=>execFile('bash',['packages/brain/scripts/smoke/ci-admission-bootstrap-smoke.sh'],{cwd:root,env,timeout:60000,maxBuffer:4*1024*1024},(error,stdout,stderr)=>resolve({error,stdout,stderr})));
 function assertSmokeSuccess(result){
@@ -21,9 +37,14 @@ test('feature smoke不能把真实Node全TODO的exit0当作成功',async t=>{
  assert.throws(()=>assertSmokeSuccess(result));
 });
 test('feature smoke实际跑本地Git/原ZIP/opaque/发布与子进程合同，退出传播且退休36另走Brain入口',{timeout:90000},async t=>{
+ const name='ci-admission-bootstrap-smoke.sh';
+ assert.equal(entries(readSmokeAllowlist()).filter(line=>line===name).length,1);
+ for(const list of ['smoke-denylist.txt','smoke-debt.txt'])assert.equal(entries(readFileSync(join(root,'packages/quality',list),'utf8')).includes(name),false);
  const f=fixture(t),result=await run(f.env);assertSmokeSuccess(result);assert.equal(result.stdout.includes('五个显式退休仅产生候选'),false);assert.equal((result.stdout+result.stderr).includes(f.env.GH_TOKEN),false);
  assert.equal(readFileSync(join(root,'scripts/ci/__tests__/implementation-main-snapshot.test.mjs'),'utf8').includes("import './ci-admission-mechanisms.test.mjs'"),false);
  assert.ok(existsSync(join(root,'packages/brain/src/__tests__/ci-admission-baseline-contracts.test.js')));
+ const {relations}=createRequire(import.meta.url)('../../../.implementation-source-relations.json');
+ assert.deepEqual(relations.filter(row=>row.path==='packages/brain/src/__tests__/ci-admission-baseline-contracts.test.js'),[{owner_path:'scripts/ci/ci-admission-publisher.mjs',path:'packages/brain/src/__tests__/ci-admission-baseline-contracts.test.js',role:'verification'}]);
  const aggregate=readFileSync(join(root,'scripts/ci/__tests__/ci-admission-mechanisms.test.mjs'),'utf8');assert.equal(aggregate.includes("import './basic-verification-retirements.test.mjs'"),false);assert.ok(existsSync(join(root,'packages/brain/src/__tests__/ci-verification-retirement-contracts.test.js')));
 });
 for(const major of [26,22])test(`feature smoke边界：Node${major}${major===26?'执行前拒绝':'真实失败码原样传递与最小env'}`,async t=>{
