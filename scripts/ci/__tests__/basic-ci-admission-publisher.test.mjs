@@ -18,7 +18,7 @@ async function fixture(t){
 }
 test('publisher只接受实际main CI成功与独立protected control，最终只产专用2文件',async t=>{
  const f=await fixture(t),result=await publishCiAdmissionBaseline(f.options,f.deps);
- assert.equal(result.purpose,'ci_admission_only');assert.equal(result.source_revision,f.source);assert.equal(result.control_revision,f.control);assert.equal(f.workers(),1);
+ assert.equal(result.published,true);assert.equal(result.purpose,'ci_admission_only');assert.equal(result.source_revision,f.source);assert.equal(result.control_revision,f.control);assert.equal(f.workers(),1);
  assert.deepEqual(readdirSync(f.options.outputDir).sort(),['assertions.json','ci-admission.json']);
 });
 for(const variant of ['manual','pr-ci','wrong-sha','failed-ci','wrong-app','control-pr','worker-missing-assertion'])test('publisher拒绝无授权/不完整草稿：'+variant,async t=>{

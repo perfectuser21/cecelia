@@ -16,7 +16,7 @@ test('独立publisher仅CI workflow_run main push成功触发，token全只读�
  assert.equal(job.services.postgres.env.POSTGRES_DB,'cecelia_scratch');
  const publish=job.steps.find(s=>s.id==='publish');assert.equal(publish.env.GH_TOKEN,'${{ github.token }}');
  assert.equal(publish.run.trim(),'node control/scripts/ci/ci-admission-publisher.mjs "$GITHUB_WORKSPACE/source" "$GITHUB_WORKSPACE/control" "$RUNNER_TEMP/ci-admission-publication"');
- const upload=job.steps.find(s=>s.uses==='actions/upload-artifact@v4');assert.equal(upload.with.name,'implementation-ci-admission-baseline-${{ github.event.workflow_run.head_sha }}');assert.equal(upload.with['if-no-files-found'],'error');
+ const upload=job.steps.find(s=>s.uses==='actions/upload-artifact@v4');assert.equal(upload.if,"steps.publish.outputs.published == 'true'");assert.equal(upload.with.name,'implementation-ci-admission-baseline-${{ github.event.workflow_run.head_sha }}');assert.equal(upload.with['if-no-files-found'],'error');
  assert.deepEqual(upload.with.path.trim().split('\n'),['${{ runner.temp }}/ci-admission-publication/ci-admission.json','${{ runner.temp }}/ci-admission-publication/assertions.json']);
  assert.ok(job.steps.some(s=>s.run==='node control/packages/brain/src/migrate.js'));assert.ok(job.steps.some(s=>s.run==='node --test control/scripts/ci/__tests__/ci-admission-inputs.pg.test.mjs'));
  assert.doesNotMatch(text,/secrets\.|tailscale|BRAIN_API|BRAIN_DEPLOY|SSH_KEY|source-runtime-ready|snapshot-main|deploy\.sh/);
