@@ -388,7 +388,7 @@ const ACTIVE_TYPED_PATHS = [
  "scripts/ci/config/ci-admission-registry.json",
 ];
 // 旧1f仅是未合并原型，包含已知输出缺陷；历史legacy/read-only组合另行保留。
-const ACTIVE_TYPED_TUPLE = '4ba0369ba3011622dc3a46e6b155610972d4eb79f6c3fafee73ef14554efda45';
+const ACTIVE_TYPED_TUPLE = 'faeb79e0eeff5e65a34cac57630a8859907b7cd47e61721e0aa57c8acdabba78';
 /** null只表示旧入口；未来入口证明失败绝不回落到legacy资格。 */
 export async function collectNativeFutureImpactSources({basicCi,read,parse,revision,relations}){
  const workflow=await read(IMPACT_WORKFLOW);
