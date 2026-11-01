@@ -7,8 +7,20 @@ import {join,dirname,resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {cruise} from 'dependency-cruiser';
 import yaml from 'js-yaml';
-const path=new URL('../../../.github/workflows/ci-admission-baseline.yml',import.meta.url);
-function readPublicationWorkflowText(){return readFileSync(path,'utf8');}
+// 仅同步解码这一份真实YAML数据；不compile/eval，也不改变后续模块的加载行为。
+function readPublicationWorkflowText(require=createRequire(import.meta.url)){
+ const target=require.resolve('../../../.github/workflows/ci-admission-baseline.yml');
+ const extension=Object.getOwnPropertyDescriptor(require.extensions,'.yml'),cache=Object.getOwnPropertyDescriptor(require.cache,target);
+ try{
+  Object.defineProperty(require.extensions,'.yml',{configurable:true,writable:true,enumerable:true,value:(module,filename)=>{
+   assert.equal(filename,target,'YAML_DATA_TARGET');module.exports=readFileSync(filename,'utf8');
+  }});
+  delete require.cache[target];return require('../../../.github/workflows/ci-admission-baseline.yml');
+ }finally{
+  if(extension)Object.defineProperty(require.extensions,'.yml',extension);else delete require.extensions['.yml'];
+  if(cache)Object.defineProperty(require.cache,target,cache);else delete require.cache[target];
+ }
+}
 test('独立publisher仅CI workflow_run main push成功触发，token全只读且无生产能力',()=>{
  const text=readPublicationWorkflowText(),w=yaml.load(text);
  assert.deepEqual(w.on,{workflow_run:{workflows:['CI'],types:['completed'],branches:['main']}});

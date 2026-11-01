@@ -1,9 +1,10 @@
 import {test} from 'node:test';
-import {spawn} from 'node:child_process';
+import {spawn,execFile} from 'node:child_process';
 import assert from 'node:assert/strict';
 import {mkdtempSync,rmSync,writeFileSync,mkdirSync,existsSync,readFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
-import {join} from 'node:path';
+import {join,dirname} from 'node:path';
+import {fileURLToPath} from 'node:url';
 import {extractSpawnEdges} from '../../../packages/brain/src/lib/graph-extract.js';
 import {runCiAdmissionWorker} from '../ci-admission-worker-runner.mjs';
 for(const failWorker of [false,true])test(`真实Node worker没有发布凭据/私有HOME，失败/成功均清理：failure=${failWorker}`,async t=>{
@@ -55,4 +56,12 @@ test('worker预算接缝只能缩短既有25分钟，不接受无限或更大预
 test('正式spawn抽取器必须识别实际worker入口回归的脚本目标',()=>{
  const file='scripts/ci/__tests__/basic-ci-admission-worker.test.mjs',target='scripts/ci/ci-admission-worker.mjs';
  assert.ok(extractSpawnEdges(readFileSync(new URL(import.meta.url),'utf8'),file).some(edge=>edge.src_path===file&&edge.dst_path===target&&edge.edge_type==='spawn'));
+});
+
+test('真实worker错误argv子进程拒绝且不写draft，只给私有HOME与最小env',{timeout:10000},async t=>{
+ const directory=mkdtempSync(join(tmpdir(),'ci-admission-worker-argv-'));t.after(()=>rmSync(directory,{recursive:true,force:true}));const output=join(directory,'draft.json'),root=fileURLToPath(new URL('../../../',import.meta.url));
+ const result=await new Promise(resolve=>execFile('node',['scripts/ci/ci-admission-worker.mjs',directory,root,'a'.repeat(40),'b'.repeat(40),output,'unexpected'],{
+  cwd:root,env:{PATH:dirname(process.execPath)+':/usr/bin:/bin:/usr/sbin:/sbin',HOME:directory,TMPDIR:directory,CI:'true',NODE_ENV:'test',DB_HOST:'127.0.0.1',DB_NAME:'cecelia_scratch',DB_USER:'ci',DB_PASSWORD:'isolated-ci'},timeout:5000,maxBuffer:1024*1024,
+ },(error,stdout,stderr)=>resolve({error,stdout,stderr})));
+ assert.equal(result.error?.code,1);assert.match(result.stderr,/CI_ADMISSION_WORKER_ARGUMENTS/);assert.equal(result.stdout.includes('ci_worker_format'),false);assert.equal(existsSync(output),false);
 });
