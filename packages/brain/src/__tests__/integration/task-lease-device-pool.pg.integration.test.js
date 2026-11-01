@@ -15,6 +15,7 @@ import { listPoolCandidates, selectDeviceFromPool } from '../../lib/device-pool.
 
 const PHONE = 'ANGYVB4311010223';
 const PHONE_2 = 'e6c7ef34';
+const MACHINE = 'mac-mini';
 let fx;
 let pool;
 
@@ -94,18 +95,18 @@ describe.sequential('统一领单 claim + lease', () => {
 });
 
 describe.sequential('task-lease-reaper：过期租约按任务类型语义回收', () => {
-  it('bridge 类（合同 onStale=requeue）：回队、清认领、租约 requeue_count+1、放设备锁', async () => {
+  it('bridge 类（合同 onStale=requeue）：回队、清认领、租约 requeue_count+1、放非手机资源锁', async () => {
     const id = await seedTask(pool, { status: 'in_progress', executor_kind: 'bridge' });
     await claimTaskWithLease(pool, { taskId: id, claimer: 'w', executorKind: 'bridge', leaseSeconds: 60 });
     await pool.query(`UPDATE tasks SET status = 'in_progress' WHERE id = $1`, [id]);
-    expect((await acquireDeviceLock(id, PHONE, 30, pool)).result).toBe('acquired');
+    expect((await acquireDeviceLock(id, MACHINE, 30, pool)).result).toBe('acquired');
     await expireLease(id);
     const out = await reapExpiredLeases(pool, { probe: noProbe });
     expect(out.requeued).toBe(1);
     const t = await taskRow(id);
     expect(t.status).toBe('queued');
     expect(t.claimed_by).toBeNull();
-    expect((await lockRow(PHONE)).locked_by).toBeNull();
+    expect((await lockRow(MACHINE)).locked_by).toBeNull();
     const l = await leaseRow(id);
     expect(l.released_at).not.toBeNull();
     expect(l.release_reason).toBe('expired_requeued');
@@ -114,11 +115,11 @@ describe.sequential('task-lease-reaper：过期租约按任务类型语义回收
     expect(ev.rows.map((r) => r.event_type)).toContain('lease_expired');
   });
 
-  it('openclaw-agent 类（外部执行者，onStale=fail）claim 租约过期：判 lost=failed，写 lease_expired 原因并放锁', async () => {
+  it('openclaw-agent 类 claim 租约过期：判 lost=failed，写 lease_expired 并放非手机资源锁', async () => {
     const id = await seedTask(pool, { status: 'queued', task_type: 'skill_factory_run' });
     await claimTaskWithLease(pool, { taskId: id, claimer: 'factory-dispatcher@mmv', executorKind: 'openclaw-agent', leaseSeconds: 60 });
     await pool.query(`UPDATE tasks SET status = 'in_progress' WHERE id = $1`, [id]);
-    expect((await acquireDeviceLock(id, PHONE, 30, pool)).result).toBe('acquired');
+    expect((await acquireDeviceLock(id, MACHINE, 30, pool)).result).toBe('acquired');
     await expireLease(id);
     const out = await reapExpiredLeases(pool, { probe: noProbe });
     expect(out.failed).toBe(1);
@@ -126,7 +127,18 @@ describe.sequential('task-lease-reaper：过期租约按任务类型语义回收
     expect(t.status).toBe('failed');
     expect(t.error_message).toMatch(/^lease_expired/);
     expect(t.result.lease_expired.claimer).toBe('factory-dispatcher@mmv');
-    expect((await lockRow(PHONE)).locked_by).toBeNull();
+    expect((await lockRow(MACHINE)).locked_by).toBeNull();
+  });
+
+  it('P1：手机租约失效且 Task failed 仍保留原 owner fence', async () => {
+    const id = await seedTask(pool, { status: 'queued', task_type: 'skill_factory_run' });
+    await claimTaskWithLease(pool, { taskId: id, claimer: 'factory-dispatcher@mmv', executorKind: 'openclaw-agent', leaseSeconds: 60 });
+    await pool.query("UPDATE tasks SET status = 'in_progress' WHERE id = $1", [id]);
+    expect((await acquireDeviceLock(id, PHONE, 30, pool)).result).toBe('acquired');
+    await expireLease(id);
+    expect((await reapExpiredLeases(pool, { probe: noProbe })).failed).toBe(1);
+    expect((await taskRow(id)).status).toBe('failed');
+    expect((await lockRow(PHONE)).locked_by).toBe(id);
   });
 
   it('领单方显式 on_lease_expire=requeue 覆盖类型默认', async () => {
@@ -221,10 +233,10 @@ describe.sequential('task-lease-reaper：过期租约按任务类型语义回收
 });
 
 describe.sequential('设备锁跟租约走（不再被 in_progress 无限压住）', () => {
-  async function holdExpired(holder, lockedAgo = '1 minute') {
+  async function holdExpired(holder, lockedAgo = '1 minute', device = PHONE) {
     await pool.query(
       `UPDATE device_locks SET locked_by = $1, locked_at = NOW() - $3::interval, expires_at = NOW() - INTERVAL '30 seconds' WHERE device_name = $2`,
-      [String(holder), PHONE, lockedAgo],
+      [String(holder), device, lockedAgo],
     );
   }
 
@@ -235,23 +247,23 @@ describe.sequential('设备锁跟租约走（不再被 in_progress 无限压住�
     expect((await acquireDeviceLock(await seedTask(pool), PHONE, 30, pool)).result).toBe('locked');
   });
 
-  it('持有者 in_progress 但租约已过期 → 可抢（只回收已过期的）', async () => {
+  it('非手机持有者 in_progress 但租约已过期 → 可抢', async () => {
     const holder = await seedTask(pool, { status: 'in_progress' });
     await claimTaskWithLease(pool, { taskId: holder, claimer: 'h', leaseSeconds: 600 });
     await expireLease(holder);
-    await holdExpired(holder);
+    await holdExpired(holder, '1 minute', MACHINE);
     const rival = await seedTask(pool);
-    const r = await acquireDeviceLock(rival, PHONE, 30, pool);
+    const r = await acquireDeviceLock(rival, MACHINE, 30, pool);
     expect(r.result).toBe('acquired');
     expect(r.lock.locked_by).toBe(rival);
   });
 
-  it('无租约的旧持有者 in_progress：4 小时内仍保护，超过 4 小时（TTL 上限）锁随之过期', async () => {
+  it('非手机无租约旧持有者：4 小时内保护，超过 4 小时后锁随之过期', async () => {
     const holder = await seedTask(pool, { status: 'in_progress' });
-    await holdExpired(holder, '1 hour');
-    expect((await acquireDeviceLock(await seedTask(pool), PHONE, 30, pool)).result).toBe('locked');
-    await holdExpired(holder, '5 hours');
-    expect((await acquireDeviceLock(await seedTask(pool), PHONE, 30, pool)).result).toBe('acquired');
+    await holdExpired(holder, '1 hour', MACHINE);
+    expect((await acquireDeviceLock(await seedTask(pool), MACHINE, 30, pool)).result).toBe('locked');
+    await holdExpired(holder, '5 hours', MACHINE);
+    expect((await acquireDeviceLock(await seedTask(pool), MACHINE, 30, pool)).result).toBe('acquired');
   });
 
   it('锁未过期：无论租约如何都不可抢（never take over another run）', async () => {

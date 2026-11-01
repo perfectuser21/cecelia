@@ -2,8 +2,8 @@ import {randomUUID} from 'node:crypto';
 import {afterEach,beforeEach,describe,expect,it} from 'vitest';
 import {deviceLockFixture} from '../helpers/headed-device-pg-fixture.js';
 import {takeOverHeadedTask} from '../../lib/headed-task-owner.js';
-import {acquireDeviceLock,releaseDeviceLocksHeldBy,sweepStaleDeviceLocks} from '../../device-lock-helpers.js';
-const PHONE='ANGYVB4311010223',PHONE_2='e6c7ef34';
+import {acquireDeviceLock,releaseDeviceLocksHeldBy,releaseVerifiedPhoneLocksHeldBy,sweepStaleDeviceLocks} from '../../device-lock-helpers.js';
+const PHONE='ANGYVB4311010223',PHONE_2='e6c7ef34',MACHINE='mac-mini';
 let fixture,testPool;
 async function seedTask(status) {
   const taskId = randomUUID();
@@ -71,6 +71,40 @@ describe.sequential('device-lock-helpers on PostgreSQL', () => {
     expect(attempt.holder.locked_by).toBe(holder);
   }, 15_000);
 
+  it('P1：精确 owner 的已核停止与清场证明才释放手机；缺证明保留原行', async () => {
+    const holder = await seedTask('failed');
+    const rival = await seedTask('queued');
+    expect((await acquireDeviceLock(holder, PHONE, 30, testPool)).result).toBe('acquired');
+    await expect(releaseVerifiedPhoneLocksHeldBy(holder, [PHONE], {
+      execution_stopped: true, cleanup_verified: false,
+    }, testPool)).rejects.toThrow('phone_lock_safe_stop_unverified');
+    expect((await acquireDeviceLock(rival, PHONE, 30, testPool)).result).toBe('locked');
+    expect(await releaseVerifiedPhoneLocksHeldBy(rival, [PHONE], {
+      execution_stopped: true, cleanup_verified: true,
+    }, testPool)).toBe(0);
+    expect(await releaseVerifiedPhoneLocksHeldBy(holder, [PHONE], {
+      execution_stopped: true, cleanup_verified: true,
+    }, testPool)).toBe(1);
+    expect((await acquireDeviceLock(rival, PHONE, 30, testPool)).result).toBe('acquired');
+  }, 15_000);
+
+  it('P1：手机持有人 Task 被删或自由身份 TTL 过期均不自动清空 fence', async () => {
+    const holder = await seedTask('failed');
+    const rival = await seedTask('queued');
+    await testPool.query(
+      'UPDATE device_locks SET locked_by=$1, locked_at=NOW(), expires_at=NULL WHERE device_name=$2',
+      [holder, PHONE],
+    );
+    await testPool.query('DELETE FROM tasks WHERE id=$1', [holder]);
+    expect(await sweepStaleDeviceLocks(testPool)).toBe(0);
+    expect((await acquireDeviceLock(rival, PHONE, 30, testPool)).result).toBe('locked');
+    await testPool.query(
+      "UPDATE device_locks SET locked_by='manual-owner', expires_at=NOW() - INTERVAL '1 minute' WHERE device_name=$1",
+      [PHONE_2],
+    );
+    expect((await acquireDeviceLock(rival, PHONE_2, 30, testPool)).result).toBe('locked');
+  }, 15_000);
+
   it('过期 + 持有任务仍 in_progress → 不可抢', async () => {
     const holder = await seedTask('in_progress');
     const rival = await seedTask('queued');
@@ -84,7 +118,7 @@ describe.sequential('device-lock-helpers on PostgreSQL', () => {
     expect(attempt.holder.locked_by).toBe(String(holder));
   }, 15_000);
 
-  it('过期 + 持有任务已 failed → 可抢', async () => {
+  it('非手机资源过期 + 持有任务已 failed → 可抢', async () => {
     const holder = await seedTask('failed');
     const rival = await seedTask('queued');
     await testPool.query(
@@ -92,9 +126,9 @@ describe.sequential('device-lock-helpers on PostgreSQL', () => {
           SET locked_by=$1, locked_at=NOW() - INTERVAL '2 hours',
               expires_at=NOW() - INTERVAL '1 minute'
         WHERE device_name=$2`,
-      [String(holder), PHONE],
+      [String(holder), MACHINE],
     );
-    const attempt = await acquireDeviceLock(rival, PHONE, 30, testPool);
+    const attempt = await acquireDeviceLock(rival, MACHINE, 30, testPool);
     expect(attempt.result).toBe('acquired');
     expect(attempt.lock.locked_by).toBe(String(rival));
   }, 15_000);
@@ -120,16 +154,16 @@ describe.sequential('device-lock-helpers on PostgreSQL', () => {
   it('releaseDeviceLocksHeldBy 只放本任务的锁', async () => {
     const taskA = await seedTask('in_progress');
     const taskB = await seedTask('in_progress');
-    expect((await acquireDeviceLock(taskA, PHONE, 30, testPool)).result).toBe('acquired');
+    expect((await acquireDeviceLock(taskA, MACHINE, 30, testPool)).result).toBe('acquired');
     expect((await acquireDeviceLock(taskB, PHONE_2, 30, testPool)).result).toBe('acquired');
     const released = await releaseDeviceLocksHeldBy(taskA, testPool);
     expect(released).toBe(1);
     const { rows } = await testPool.query(
       'SELECT device_name, locked_by FROM device_locks WHERE device_name = ANY($1)',
-      [[PHONE, PHONE_2]],
+      [[MACHINE, PHONE_2]],
     );
     const byName = Object.fromEntries(rows.map((r) => [r.device_name, r.locked_by]));
-    expect(byName[PHONE]).toBeNull();
+    expect(byName[MACHINE]).toBeNull();
     expect(byName[PHONE_2]).toBe(String(taskB));
   }, 15_000);
 
@@ -138,17 +172,17 @@ describe.sequential('device-lock-helpers on PostgreSQL', () => {
     const liveTask = await seedTask('in_progress');
     await testPool.query(
       'UPDATE device_locks SET locked_by=$1, locked_at=NOW(), expires_at=NOW() WHERE device_name=$2',
-      [String(doneTask), PHONE],
+      [String(doneTask), MACHINE],
     );
     expect((await acquireDeviceLock(liveTask, PHONE_2, 30, testPool)).result).toBe('acquired');
     const swept = await sweepStaleDeviceLocks(testPool);
     expect(swept).toBe(1);
     const { rows } = await testPool.query(
       'SELECT device_name, locked_by FROM device_locks WHERE device_name = ANY($1)',
-      [[PHONE, PHONE_2]],
+      [[MACHINE, PHONE_2]],
     );
     const byName = Object.fromEntries(rows.map((r) => [r.device_name, r.locked_by]));
-    expect(byName[PHONE]).toBeNull();
+    expect(byName[MACHINE]).toBeNull();
     expect(byName[PHONE_2]).toBe(String(liveTask));
   }, 15_000);
 
@@ -184,10 +218,10 @@ describe.sequential('device-lock-helpers on PostgreSQL', () => {
 
   it('sweepStaleDeviceLocks：持有 task id 不存在于 tasks 表 → 释放', async () => {
     const ghostTaskId = await seedTask('queued');
-    expect((await acquireDeviceLock(ghostTaskId,PHONE,30,testPool)).result).toBe('acquired');
+    expect((await acquireDeviceLock(ghostTaskId,MACHINE,30,testPool)).result).toBe('acquired');
     await testPool.query(
       'UPDATE device_locks SET locked_by=$1, locked_at=NOW(), expires_at=NULL WHERE device_name=$2',
-      [String(ghostTaskId), PHONE],
+      [String(ghostTaskId), MACHINE],
     );
     expect((await testPool.query('DELETE FROM tasks WHERE id=$1 RETURNING id',[ghostTaskId])).rowCount).toBe(1);
     expect((await testPool.query('SELECT id FROM tasks WHERE id=$1',[ghostTaskId])).rowCount).toBe(0);
@@ -195,19 +229,19 @@ describe.sequential('device-lock-helpers on PostgreSQL', () => {
     expect(swept).toBe(1);
     const { rows } = await testPool.query(
       'SELECT locked_by FROM device_locks WHERE device_name=$1',
-      [PHONE],
+      [MACHINE],
     );
     expect(rows[0].locked_by).toBeNull();
-    expect((await testPool.query('SELECT locked_at,expires_at FROM device_locks WHERE device_name=$1',[PHONE])).rows).toEqual([{locked_at:null,expires_at:null}]);
+    expect((await testPool.query('SELECT locked_at,expires_at FROM device_locks WHERE device_name=$1',[MACHINE])).rows).toEqual([{locked_at:null,expires_at:null}]);
     expect(await sweepStaleDeviceLocks(testPool)).toBe(0);
   }, 15_000);
 });
 
 async function orphan(){
- const id=await seedTask('queued');expect((await acquireDeviceLock(id,PHONE,30,testPool)).result).toBe('acquired');
+ const id=await seedTask('queued');expect((await acquireDeviceLock(id,MACHINE,30,testPool)).result).toBe('acquired');
  expect((await testPool.query('DELETE FROM tasks WHERE id=$1',[id])).rowCount).toBe(1);return id;
 }
-async function lockRow(){return (await testPool.query('SELECT * FROM device_locks WHERE device_name=$1',[PHONE])).rows[0];}
+async function lockRow(){return (await testPool.query('SELECT * FROM device_locks WHERE device_name=$1',[MACHINE])).rows[0];}
 async function routedTask(){
  const id=await seedTask('queued'),receipt=randomUUID();
  await testPool.query("UPDATE tasks SET payload=$2 WHERE id=$1",[id,{routing_receipt_id:receipt,work_kind:'coding_review'}]);
@@ -222,7 +256,7 @@ async function nativeOwner(pool,id){
 }
 describe.sequential('509孤儿释放最窄边界/真实PG',()=>{
  it('never-existing UUID新acquire拒绝，设备整行不变',async()=>{
-  const before=await lockRow();await expect(acquireDeviceLock(randomUUID(),PHONE,30,testPool)).rejects.toThrow('headed_task_identity_missing');expect(await lockRow()).toEqual(before);
+  const before=await lockRow();await expect(acquireDeviceLock(randomUUID(),MACHINE,30,testPool)).rejects.toThrow('headed_task_identity_missing');expect(await lockRow()).toEqual(before);
  });
  it('其它execution relation缺task仍拒；真实task_runs FK阻DELETE',async()=>{
   await expect(testPool.query('INSERT INTO task_runs(task_id) VALUES($1)',[randomUUID()])).rejects.toThrow('headed_task_identity_missing');
@@ -233,10 +267,10 @@ describe.sequential('509孤儿释放最窄边界/真实PG',()=>{
  it('孤儿完整三NULL允许，partial clear/改device_name/重绑UUID或manual拒且整行保留',async()=>{
   await orphan();const before=await lockRow();
   for(const [sql,params] of [
-   ['UPDATE device_locks SET locked_by=NULL WHERE device_name=$1',[PHONE]],
-   ['UPDATE device_locks SET device_name=$2,locked_by=NULL,locked_at=NULL,expires_at=NULL WHERE device_name=$1',[PHONE,'renamed-device']],
-   ['UPDATE device_locks SET locked_by=$2 WHERE device_name=$1',[PHONE,randomUUID()]],
-   ['UPDATE device_locks SET locked_by=$2 WHERE device_name=$1',[PHONE,'manual-rebind']]]){
+   ['UPDATE device_locks SET locked_by=NULL WHERE device_name=$1',[MACHINE]],
+   ['UPDATE device_locks SET device_name=$2,locked_by=NULL,locked_at=NULL,expires_at=NULL WHERE device_name=$1',[MACHINE,'renamed-device']],
+   ['UPDATE device_locks SET locked_by=$2 WHERE device_name=$1',[MACHINE,randomUUID()]],
+   ['UPDATE device_locks SET locked_by=$2 WHERE device_name=$1',[MACHINE,'manual-rebind']]]){
    await expect(testPool.query(sql,params)).rejects.toThrow('headed_task_identity_missing');expect(await lockRow()).toEqual(before);
   }
   expect(await sweepStaleDeviceLocks(testPool)).toBe(1);expect(await lockRow()).toMatchObject({locked_by:null,locked_at:null,expires_at:null});expect(await sweepStaleDeviceLocks(testPool)).toBe(0);
@@ -255,26 +289,26 @@ describe.sequential('509孤儿释放最窄边界/真实PG',()=>{
   expect(await releaseDeviceLocksHeldBy(id,testPool)).toBe(1);
  });
  it('真takeOver已有设备锁409；真takeOver后新占设备拒绝',async()=>{
-  const id=await routedTask();await acquireDeviceLock(id,PHONE,30,testPool);
+  const id=await routedTask();await acquireDeviceLock(id,MACHINE,30,testPool);
   await expect(takeOverHeadedTask(testPool,request(id))).rejects.toMatchObject({statusCode:409,message:'headed_takeover_active_execution'});
   await releaseDeviceLocksHeldBy(id,testPool);await takeOverHeadedTask(testPool,request(id));
-  const before=await lockRow();await expect(acquireDeviceLock(id,PHONE,30,testPool)).rejects.toThrow('headed_task_owned');expect(await lockRow()).toEqual(before);
+  const before=await lockRow();await expect(acquireDeviceLock(id,MACHINE,30,testPool)).rejects.toThrow('headed_task_owned');expect(await lockRow()).toEqual(before);
  });
  for(const recreated of [false,true])it(`native-owned-state-fixture ${recreated?'重建owned':'历史owned'}锁不释放/重绑，task+owner+整行保留`,async()=>{
   const id=randomUUID();let historical;
   try{
    historical=await deviceLockFixture({seedBeforeGuard:async pool=>{
-    await pool.query("INSERT INTO tasks(id,status) VALUES($1,'queued')",[id]);await acquireDeviceLock(id,PHONE,30,pool);
+    await pool.query("INSERT INTO tasks(id,status) VALUES($1,'queued')",[id]);await acquireDeviceLock(id,MACHINE,30,pool);
    }});
    const pool=historical.pool;
    if(recreated){await pool.query('DELETE FROM tasks WHERE id=$1',[id]);await pool.query("INSERT INTO tasks(id,status) VALUES($1,'queued')",[id]);}
    await nativeOwner(pool,id);
-   const state=async()=>({task:(await pool.query('SELECT * FROM tasks WHERE id=$1',[id])).rows[0],owner:(await pool.query('SELECT * FROM headed_task_takeovers WHERE task_id=$1',[id])).rows[0],lock:(await pool.query('SELECT * FROM device_locks WHERE device_name=$1',[PHONE])).rows[0]});
+   const state=async()=>({task:(await pool.query('SELECT * FROM tasks WHERE id=$1',[id])).rows[0],owner:(await pool.query('SELECT * FROM headed_task_takeovers WHERE task_id=$1',[id])).rows[0],lock:(await pool.query('SELECT * FROM device_locks WHERE device_name=$1',[MACHINE])).rows[0]});
    const before=await state();expect(before.owner.task_id).toBe(id);
    await expect(sweepStaleDeviceLocks(pool)).rejects.toThrow('headed_task_owned');
    await expect(releaseDeviceLocksHeldBy(id,pool)).rejects.toThrow('headed_task_owned');
-   await expect(pool.query('UPDATE device_locks SET locked_by=$2 WHERE device_name=$1',[PHONE,'manual-rebind'])).rejects.toThrow('headed_task_owned');
-   await expect(pool.query('UPDATE device_locks SET locked_by=$2 WHERE device_name=$1',[PHONE,randomUUID()])).rejects.toThrow();
+   await expect(pool.query('UPDATE device_locks SET locked_by=$2 WHERE device_name=$1',[MACHINE,'manual-rebind'])).rejects.toThrow('headed_task_owned');
+   await expect(pool.query('UPDATE device_locks SET locked_by=$2 WHERE device_name=$1',[MACHINE,randomUUID()])).rejects.toThrow();
    expect(await state()).toEqual(before);
   }finally{if(historical)await historical.close();}
  });
