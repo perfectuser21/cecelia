@@ -2,6 +2,7 @@
 // 02 = 开发方的实现规格（### S-n）+ 用户视角 QA 场景（### Q-n，evaluator 真人 QA 按它在真实环境里黑盒验收）。
 import { reportErrors, parseFrontmatter, extractAnchors } from './md-chain.mjs';
 import { invariantErrors } from './invariants.mjs';
+import { materialPlanErrors } from './spec-materials.mjs';
 
 export const SPEC_FILE = '02-spec.md';
 export const INTENT_FILE = '01-intent.md';
@@ -73,10 +74,11 @@ function qaErrors(text, intentIds) {
  * 02 自检：frontmatter/upstream 覆盖全部 I-n（reportErrors）、至少一条 `### S-n`、QA 场景合格、
  * 有铁律清单时 `## 铁律对照` 逐条交代（invariantErrors）。返回错误码数组。
  */
-export function specErrors(text, taskId, intentIds, { invariantIds = [] } = {}) {
+export function specErrors(text, taskId, intentIds, { invariantIds = [], baseline = undefined } = {}) {
   const errors = reportErrors(text, { taskId, step: 'spec', coversFile: INTENT_FILE, ids: intentIds });
   if (specIds(text).length === 0) errors.push('spec_ids_missing');
-  return [...errors, ...qaErrors(text, intentIds), ...invariantErrors(text, invariantIds), ...uncoveredErrors(text), ...judgmentErrors(text)];
+  return [...errors, ...qaErrors(text, intentIds), ...invariantErrors(text, invariantIds), ...uncoveredErrors(text), ...judgmentErrors(text),
+    ...materialPlanErrors(text, { baseline, intentIds, specIds: specIds(text), qaIds: qaScenarios(text).map(q => q.id) })];
 }
 
 /** `## <标题>` 段的正文（到下一个 `#`/`##` 标题为止，去首尾空行）；没有这一段返回 null。 */
