@@ -19,7 +19,7 @@ it('当前future工作流只由PR、显式manual或call进入，成功条件与�
   expect(Boolean(enabled),event+':'+result).toBe(expected);
  }
  const gate=JSON.stringify(workflow.jobs.gate);expect(gate).not.toContain('CECELIA_INTERNAL_TOKEN');
- for(const step of workflow.jobs.gate.steps)if(step.env?.GH_TOKEN!==undefined)expect(step.env.GH_TOKEN).toBe('${{ github.token }}');
+ for(const name of ['准备固定中央Skill对象缓存','实际变更影响与固定回归'])expect(workflow.jobs.gate.steps.find(step=>step.name===name).env.GH_TOKEN).toBe('${{ github.token }}');
 });
 it('main显式来源环境只启用官方self main push和dispatch，冻结主run与PR来源保持',()=>{
  const workflow=yaml.load(readFileSync(new URL('../../../../../.github/workflows/implementation-impact.yml',import.meta.url),'utf8'));
