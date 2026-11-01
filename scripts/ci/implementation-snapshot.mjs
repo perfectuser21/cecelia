@@ -1,6 +1,7 @@
 import {INFRA_CONSUMER_SCOPE,buildInfraConsumerSources,registerInfraConsumerSources,readInfraConsumerRegistry,prepareInfraManifestAdvance} from '../../packages/brain/src/lib/infra-consumer-source.js';
 /** 仅scratch：复用中央身份和正式投影器，固定git产生两侧不可变图。 */
-import pg from 'pg';
+import {createImplementationScratch} from './implementation-scratch.mjs';
+export {createImplementationScratch} from './implementation-scratch.mjs';
 import { registerCompanyKrWorkflow,activityContract } from '../../packages/brain/src/lib/company-kr-registration.js';
 import {fixedLocalGit,readFixedLocalGitBlob,fixedLocalSourceOptions} from './fixed-local-git.mjs';
 import { loadActivityContracts } from '../../packages/brain/src/lib/activity-contract-loader.js';
@@ -10,13 +11,11 @@ import { exportImplementationSnapshot } from '../../packages/brain/src/lib/imple
 import { stepSha256 } from '../../packages/brain/scripts/sync-steps-from-workspace.mjs';
 import { lintImplementationRegistry } from './registry-lint.mjs';
 import { classifyAssertionRef } from '../../packages/brain/src/lib/gp-assertion-command.js';
-import { randomUUID } from 'node:crypto';
 import {fileURLToPath} from 'node:url';
 import {collectScratchWorkspaceConsumerSourceSet,readWorkspaceConsumerBrainRevisions} from '../../packages/brain/src/lib/consumer-source-set.js';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import { readFileSync,realpathSync,mkdtempSync,rmSync } from 'node:fs';
-import { DB_DEFAULTS } from '../../packages/brain/src/db-config.js';
+import { realpathSync,mkdtempSync,rmSync } from 'node:fs';
 import { validateImplementationSnapshot,validateImplementationSnapshotForDatabase,implementationSourceOwners,ciFailure,isImplementationScratchDatabase } from '../../packages/brain/src/lib/implementation-ci-snapshot.js';
 import { runProjection } from '../../packages/brain/src/map/projector.js';
 import { digestMapManifest,validateMapManifest } from '../../packages/brain/src/lib/map-manifest-schema.js';
@@ -26,31 +25,6 @@ import { collectWorkspaceInputEdges } from '../../packages/brain/src/lib/existin
 import { readExistingOpsRegistry,registerExistingOpsSources,prepareExistingOpsManifestAdvance } from '../../packages/brain/src/lib/existing-ops-registration.js';
 import {preparePilotManifestAdvance,advancePilotManifest} from '../../packages/brain/src/lib/implementation-ci-pilot-manifest.js';
 
-// journeys 只给旧迁移 511 重放用（它按旧形状读 journeys）；读者读的是 value_streams / capabilities
-const TABLES=['areas','schema_version','journeys','value_streams','capabilities','workflows','activities','steps','spans',
-  'map_scope_repositories','map_manifest_versions','map_projection_runs','map_projection_nodes','map_projection_edges',
-  'skill_registry','graph_edges','graph_snapshot_versions','graph_edge_snapshots','fact_snapshot_headers','activity_cells'];
-export async function createImplementationScratch(){
-  if(!isImplementationScratchDatabase(DB_DEFAULTS.database))throw ciFailure('SCRATCH_REQUIRED','只允许本机scratch或GitHub Actions隔离test库');
-  const client=new pg.Client(DB_DEFAULTS);await client.connect();
-  const schema=`implementation_ci_${randomUUID().replaceAll('-','')}`;let schemaCreated=false;
-  const db={query:client.query.bind(client),connect:async()=>({query:client.query.bind(client),release(){}})};
-  const close=async()=>{try{if(schemaCreated){await client.query('ROLLBACK');await client.query('SET search_path TO public');await client.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);}}finally{await client.end();}};
-  try{
-    const actual=(await client.query('SELECT current_database() name')).rows[0].name;
-    if(actual!==DB_DEFAULTS.database||!isImplementationScratchDatabase(actual))throw ciFailure('SCRATCH_REQUIRED');
-    await client.query(`CREATE SCHEMA ${schema}`);schemaCreated=true;
-    for(const table of TABLES)await client.query(`CREATE TABLE ${schema}.${table}(LIKE public.${table} INCLUDING ALL)`);
-    await client.query(`SET search_path TO ${schema}`);
-    // 511 回填引用要读迁移 528 已删的 journey_id / step_number（快照来源若是旧形状库，行里还带 enabler_id）：只补在这个隔离 schema 里（511 建的旧指标视图依赖它们，不删），不影响生产库。
-    await client.query('ALTER TABLE activities ADD COLUMN journey_id uuid,ADD COLUMN step_number integer,ADD COLUMN enabler_id uuid');
-    // 511/513 是旧迁移，按旧名 journey_steps 建外键：重放期间把 activities 临时叫回旧名，之后改回（外键按对象 id 跟随）。
-    await client.query('ALTER TABLE activities RENAME TO journey_steps');
-    for(const file of ['511_shared_activity_refs.sql','513_definition_versions.sql'])await client.query(readFileSync(new URL(`../../packages/brain/migrations/${file}`,import.meta.url),'utf8'));
-    await client.query('ALTER TABLE journey_steps RENAME TO activities');
-    return {db,close,schema};
-  }catch(error){await close();throw error;}
-}
 const TABLE_KEYS={map_scope_repositories:['scope_key','repo']};
 async function insertRow(db,table,row,{immutable=false,preserve=[]}={}){
   const generated=new Set((await db.query("SELECT column_name FROM information_schema.columns WHERE table_schema=current_schema() AND table_name=$1 AND is_generated<>'NEVER'",[table])).rows.map(r=>r.column_name));

@@ -1,3 +1,4 @@
+import './ci-admission-skill-cache.pg.test.mjs';
 /** 真PG生成原生报告，真实Git和真实bash回归验证联合引擎；不是生产infra身份导出。 */
 import {test} from 'node:test';
 import assert from 'node:assert/strict';

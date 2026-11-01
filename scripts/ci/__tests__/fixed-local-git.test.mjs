@@ -1,14 +1,14 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {execFileSync,spawnSync} from 'node:child_process';
-import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,rmSync} from 'node:fs';
+import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,existsSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {createHash} from 'node:crypto';
 import {pilotPlanHash} from '../../../packages/brain/src/lib/pilot-release-verification.js';
 function fixture(t){
  const root=mkdtempSync(join(tmpdir(),'fixed-ci-git-'));t.after(()=>rmSync(root,{recursive:true,force:true}));
- const git=(...args)=>execFileSync('git',['-C',root,...args],{encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
+ const git=(...args)=>execFileSync('git',[...VERIFICATION_GIT_OPTIONS,'-C',root,...args],{encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
  git('init','-q','-b','cp-fixture');git('config','core.hooksPath','/dev/null');
  const commit=body=>{writeFileSync(join(root,'contract.json'),body);git('add','.');git('-c','user.name=fixture','-c','user.email=fixture@example.invalid','commit','-qm','fixture');return git('rev-parse','HEAD');};
  const revision=commit('original fixed bytes');return {root,git,revision,commit};
@@ -93,14 +93,65 @@ test('固定future数据解码验证真实Git blobs，损坏payload和不存在�
  assert.equal(data.base_revision,'35e2a91d971e8dc432d6f36361c65cded5d64ec8');
  assert.equal(data.captured_revision,'14fce437dcccf1b30daf17423ec48a3ed4337eee');
  assert.equal(data.captured_tree,'f5b015b0a66e798efd666a842364c36579e163f8');
- const frozen=frozenFutureGit(fileURLToPath(new URL('../../../',import.meta.url)));
+ const repoRoot=fileURLToPath(new URL('../../../',import.meta.url)),frozen=frozenFutureGit(repoRoot);
  assert.equal(frozen.revision,data.captured_revision);
  for(const [path,blob]of[['.github/workflows/implementation-impact.yml','7002260fd7e84006037343416de6123f593afb12'],['scripts/ci/implementation-multi-pr-gate.mjs','043fd77da634c2e9ccb800f66262cca31b158e0a']]){
   const row=data.delta.find(row=>row.path===path),actual=Buffer.from(await frozen.read(path));
   assert.equal(row.blob_sha1,blob);assert.deepEqual(actual,Buffer.from(row.content_base64,'base64'));
   assert.equal(createHash('sha1').update(`blob ${actual.length}\0`).update(actual).digest('hex'),blob);
  }
+ const {readFixedLocalGitBlob}=await import('../fixed-local-git.mjs'),fallback='README.md';
+ assert.equal(data.delta.some(row=>row.path===fallback),false);
+ const ordinary=Buffer.from(await frozen.read(fallback));assert.deepEqual(ordinary,readFixedLocalGitBlob(repoRoot,{revision:data.base_revision,path:fallback}));
+ assert.equal(createHash('sha1').update(`blob ${ordinary.length}\0`).update(ordinary).digest('hex'),'ef41b1f5d27bb4db060b171c861c64d7673c9626');
  await assert.rejects(frozen.read('scripts/ci/unknown-fixture-path.mjs'),/FUTURE_FIXTURE_MISSING/);
  const corrupt=Buffer.from(bytes);corrupt[corrupt.length-1]^=1;
  assert.throws(()=>decodeFrozenFutureBytes(corrupt),/FUTURE_FIXTURE_DIGEST/);
+});
+
+import {createPublishedGit,readPublishedGitFixture,PUBLISHED_CI_REVISION} from '../../../packages/brain/src/lib/__tests__/helpers/published-workspace-ci-git.js';
+test('published八对象私有Git冷还原读取canonical两blob，替换、环境外跳和损坏对象拒绝',t=>{
+ const f=createPublishedGit();t.after(f.close);
+ assert.equal(f.revision,PUBLISHED_CI_REVISION);assert.equal(f.git('rev-parse',`${f.revision}^{tree}`).toString().trim(),'4fa4b4002588ab45f537e4c63756bc4560bb8003');
+ assert.equal(existsSync(join(f.directory,'.git/objects/info/alternates')),false);assert.throws(()=>f.git('remote','get-url','origin'));
+ const hashes=[['.github/workflows/implementation-impact.yml','5a43bfd48709018ee641952747b15f3c949099f2'],['scripts/ci/implementation-skill-source.mjs','2351ae6a69b066a7e15dbb17e2e6babc13a31305']];
+ const check=()=>{for(const[path,hash]of hashes){const bytes=f.read(path);assert.equal(createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex'),hash);}};check();
+ const tree=f.git('mktree').toString().trim(),forged=execFileSync('git',[...VERIFICATION_GIT_OPTIONS,'-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit-tree',tree,'-p',f.revision],{cwd:f.directory,env:f.env,input:'isolated replacement\n'}).toString().trim();
+ f.git('replace',f.revision,forged);
+ assert.throws(()=>execFileSync('git',[...VERIFICATION_GIT_OPTIONS,'show',`${f.revision}:${hashes[0][0]}`],{cwd:f.directory,env:f.env,stdio:'pipe'}));check();
+ const names=['GIT_DIR','GIT_WORK_TREE','GIT_OBJECT_DIRECTORY'],prior=Object.fromEntries(names.map(key=>[key,process.env[key]]));
+ Object.assign(process.env,{GIT_DIR:join(f.directory,'outside.git'),GIT_WORK_TREE:join(f.directory,'outside'),GIT_OBJECT_DIRECTORY:join(f.directory,'outside-objects')});
+ try{check();}finally{for(const[key,value]of Object.entries(prior)){if(value===undefined)delete process.env[key];else process.env[key]=value;}}
+ const damaged=readPublishedGitFixture();damaged.objects[0].content_base64=Buffer.from('corrupt Git object').toString('base64');
+ assert.throws(()=>createPublishedGit({data:damaged}),{code:'ERR_ASSERTION'});
+ f.close();assert.equal(existsSync(f.directory),false);
+});
+
+import {VERIFICATION_GIT_OPTIONS,cleanupVerificationFixture} from './fixtures/verification-input-git.mjs';
+function assertOwnedCleanup(root,target,options){
+ assert.equal(target,root);assert.deepEqual(options,{recursive:true,force:true});
+}
+test('本人Git夹具清理只在ENOTEMPTY后重试并真实删除目录',t=>{
+ const f=fixture(t),error=Object.assign(Error('owned race'),{code:'ENOTEMPTY'});let calls=0;
+ cleanupVerificationFixture(f.root,{remove:(target,options)=>{
+  assertOwnedCleanup(f.root,target,options);
+  if(++calls===1)throw error;return rmSync(target,options);
+ }});
+ assert.equal(calls,2);assert.equal(existsSync(f.root),false);
+});
+test('本人Git夹具清理持续ENOTEMPTY最多四次且原样抛出',t=>{
+ const f=fixture(t),error=Object.assign(Error('persistent owned race'),{code:'ENOTEMPTY'});let calls=0;
+ assert.throws(()=>cleanupVerificationFixture(f.root,{remove:(target,options)=>{
+  assertOwnedCleanup(f.root,target,options);calls++;throw error;
+ }}),caught=>caught===error);
+ assert.equal(calls,4);assert.equal(existsSync(f.root),true);
+});
+test('本人Git夹具清理其他错误立即原样抛出不重试',t=>{
+ for(const code of ['EACCES','EPERM','ENOENT']){
+  const f=fixture(t),error=Object.assign(Error('owned '+code),{code});let calls=0;
+  assert.throws(()=>cleanupVerificationFixture(f.root,{remove:(target,options)=>{
+   assertOwnedCleanup(f.root,target,options);calls++;throw error;
+  }}),caught=>caught===error);
+  assert.equal(calls,1);assert.equal(existsSync(f.root),true);
+ }
 });

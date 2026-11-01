@@ -11,7 +11,7 @@ import yaml from 'js-yaml';
 import {fileURLToPath} from 'node:url';
 import {join,resolve} from 'node:path';
 import {cruise} from 'dependency-cruiser';
-import {immutableVerificationSeed,disposeVerificationSeed,fixedInputFixture as inputFixture} from './fixtures/verification-input-git.mjs';
+import {VERIFICATION_GIT_OPTIONS,cleanupVerificationFixture,immutableVerificationSeed,disposeVerificationSeed,fixedInputFixture as inputFixture} from './fixtures/verification-input-git.mjs';
 
 // 根扫描器依赖只在npm ci全根的CI来源suite执行；Brain-only单测保留运行配置行为测试。
 test('默认运行配置由原生依赖图绑定到实际读取器',async()=>{
@@ -116,8 +116,8 @@ test('业务模块、外跳路径、不在真实delta、错误side及main/releas
 
 after(disposeVerificationSeed);
 function legacyEntryFixture(t,{path='packages/brain/src/__tests__/derived-input.test.js',deleted=false}={}){
- const root=mkdtempSync(join(tmpdir(),'derived-entry-git-'));t.after(()=>rmSync(root,{recursive:true,force:true}));
- const git=(...args)=>execFileSync('git',['--no-replace-objects','-c','core.hooksPath=/dev/null','-c','commit.gpgSign=false',...args],{cwd:root,encoding:'utf8',stdio:['ignore','pipe','pipe'],maxBuffer:32*1024*1024}).trim();
+ const root=mkdtempSync(join(tmpdir(),'derived-entry-git-'));t.after(()=>cleanupVerificationFixture(root));
+ const git=(...args)=>execFileSync('git',[...VERIFICATION_GIT_OPTIONS,'--no-replace-objects','-c','core.hooksPath=/dev/null','-c','commit.gpgSign=false',...args],{cwd:root,encoding:'utf8',stdio:['ignore','pipe','pipe'],maxBuffer:32*1024*1024}).trim();
  git('clone','--shared','--no-checkout',immutableVerificationSeed(fileURLToPath(new URL('../../../',import.meta.url))),'.');git('sparse-checkout','set','--no-cone','/.github/workflows/ci.yml','/packages/brain/vitest.config.js','/scripts/ci/skill-source-tests.mjs','/packages/brain/vitest.skill-source.config.mjs','/packages/engine/vitest.skill-source.config.mjs','/packages/quality/vitest.skill-source.config.mjs','/vitest.skill-source.config.mjs','/'+path);git('checkout','--detach','68b996a5641b69e6f21705a114a4524e407fe097');git('remote','set-url','origin','https://github.com/perfectuser21/cecelia.git');
  mkdirSync(join(root,path.slice(0,path.lastIndexOf('/'))),{recursive:true});writeFileSync(join(root,path),'export const baseInput=true;\n');
  const commit=()=>{git('add','--sparse','-A');git('-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','--allow-empty','-qm','test: fixed input source');return git('rev-parse','HEAD');};
@@ -308,17 +308,14 @@ test('helper不能借死分支dynamic import、未selected reader或假reader路
  assert.throws(()=>derived(f,{readerPaths:{base:[],head:['../escape.test.js']}}),/VERIFICATION_INPUT/);
 });
 
-test('Phase A legacy multi CLI保留scopes并拒绝未发布typed foundation参数，不进入缺失模块',async t=>{
+test('typed multi CLI只接受显式PR双root与artifact目录，legacy scopes-file路径保留互斥',async t=>{
  const multi=await import('../implementation-multi-pr-gate.mjs'),root=fileURLToPath(new URL('../../../',import.meta.url)),output=mkdtempSync(join(tmpdir(),'derived-typed-cli-'));t.after(()=>rmSync(output,{recursive:true,force:true}));
  const common=['--repo-root',root,'--base','a'.repeat(40),'--head','b'.repeat(40),'--mode','pr','--output-dir',output];
- const scopes=join(output,'scopes.json');writeFileSync(scopes,'[]');
- assert.deepEqual(multi.parseImplementationMultiArgs([...common,'--scopes-file',scopes]).scopes,[]);
- assert.equal(multi.runImplementationCiAdmissionHandleGate,undefined);
- for(const typed of[['--tooling-root',root],['--ci-admission-input-dir',output],['--tooling-root',root,'--ci-admission-input-dir',output]]){
-  assert.throws(()=>multi.parseImplementationMultiArgs([...common,...typed]),/IMPACT_MULTISCOPE/);
-  assert.throws(()=>multi.parseImplementationMultiArgs([...common,'--scopes-file',scopes,...typed]),/IMPACT_MULTISCOPE/);
- }
- await assert.rejects(multi.runImplementationMultiPrGate({mode:'pr',outputDir:output,toolingRoot:root,ciAdmissionInputDir:output}),/IMPACT_MULTISCOPE/);
+ const typed=['--tooling-root',root,'--ci-admission-input-dir',output];
+ const options=multi.parseImplementationMultiArgs([...common,...typed]);
+ assert.equal(options.ciAdmissionInputDir,realpathSync(output));assert.equal(options.toolingRoot,realpathSync(root));assert.equal(options.scopes,undefined);
+ for(const args of[[...common,...typed,'--scopes-file',join(output,'scopes.json')],[...common,...typed.slice(0,2)],[...common,...typed.slice(2)],common.map(v=>v==='pr'?'main':v).concat(typed)])
+  assert.throws(()=>multi.parseImplementationMultiArgs(args),/IMPACT_MULTISCOPE/);
 });
 
 test('共享scratch的PR收集入口拒绝release/main和不完整固定来源，不自建或连接数据库',async()=>{
@@ -427,8 +424,8 @@ test('raw graph按真实scope registry别名读回，不把同SHA三张不同原
 test('十项退休必须有固定目录、真实替代输入入口、head原生owner和base无消费者，Ops候选不被改值',async t=>{
  const f=basicEntryFixture(t,'packages/brain/src/__tests__/retirement-anchor.test.js'),module=await import('../implementation-verification-retirements.mjs');
  const require=createRequire(import.meta.url),catalogs=[['config/verification-retirements/alertness-v1.json',require('../../../config/verification-retirements/alertness-v1.json')],['config/verification-retirements/legacy-five-v1.json',require('../../../config/verification-retirements/legacy-five-v1.json')]];
- const control=mkdtempSync(join(tmpdir(),'derived-retirement-control-'));t.after(()=>rmSync(control,{recursive:true,force:true}));
- const controlGit=(...args)=>execFileSync('git',['-c','core.hooksPath=/dev/null','-c','commit.gpgSign=false',...args],{cwd:control,encoding:'utf8'}).trim();
+ const control=mkdtempSync(join(tmpdir(),'derived-retirement-control-'));t.after(()=>cleanupVerificationFixture(control));
+ const controlGit=(...args)=>execFileSync('git',[...VERIFICATION_GIT_OPTIONS,'-c','core.hooksPath=/dev/null','-c','commit.gpgSign=false',...args],{cwd:control,encoding:'utf8'}).trim();
  controlGit('init','-q');controlGit('remote','add','origin','https://github.com/perfectuser21/cecelia.git');
  for(const [path,catalog]of catalogs){const bytes=readFileSync(new URL('../../../'+path,import.meta.url));assert.deepEqual(JSON.parse(bytes),catalog);assert.equal(catalog.purpose,'admission_only');mkdirSync(join(control,'config/verification-retirements'),{recursive:true});writeFileSync(join(control,path),bytes);
   for(const row of catalog.records){rmSync(join(f.root,row.path),{force:true});f.git('update-index','--force-remove',row.path);for(const absent of row.required_absent_paths||[]){rmSync(join(f.root,absent),{force:true});f.git('update-index','--force-remove',absent);}}}
