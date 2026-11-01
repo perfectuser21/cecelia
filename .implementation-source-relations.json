@@ -688,6 +688,41 @@
       "role": "verification"
     },
     {
+      "owner_path": "packages/brain/src/notion-relay-projection.js",
+      "path": "packages/brain/src/__tests__/notion-project-safe-body.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/notion-relay-projection.js",
+      "path": "packages/brain/scripts/smoke/relay-mirror-smoke.sh",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/notion-relay-projection.js",
+      "path": "packages/brain/src/__tests__/notion-relay-projection.projects.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/notion-relay-projection.js",
+      "path": "packages/brain/src/__tests__/integration/projects-notion-sync.pg.integration.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/notion-relay-projection.js",
+      "path": "packages/brain/src/__tests__/notion-push-archived-selfheal.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/notion-relay-projection.js",
+      "path": "packages/brain/src/__tests__/notion-relay-wrong-db-selfheal.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/notion-push-sync.js",
+      "path": "packages/brain/src/__tests__/notion-issue-body.test.js",
+      "role": "verification"
+    },
+    {
       "owner_path": "packages/brain/src/notion-push-sync.js",
       "path": "packages/brain/src/projection/__tests__/task-progress.test.js",
       "role": "verification"
@@ -2581,6 +2616,26 @@
     {
       "owner_path": "scripts/deploy-local.sh",
       "path": "packages/brain/src/__tests__/deploy-root-guard.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "scripts/ci/ci-admission-builder.mjs",
+      "path": "scripts/ci/__tests__/ci-admission-builder.pg.test.mjs",
+      "role": "verification"
+    },
+    {
+      "owner_path": "scripts/ci/ci-admission-inputs.mjs",
+      "path": "scripts/ci/__tests__/ci-admission-inputs.pg.test.mjs",
+      "role": "verification"
+    },
+    {
+      "owner_path": "scripts/ci/implementation-skill-source.mjs",
+      "path": "scripts/ci/__tests__/ci-admission-skill-cache.pg.test.mjs",
+      "role": "verification"
+    },
+    {
+      "owner_path": "scripts/ci/implementation-pr-gate.mjs",
+      "path": "scripts/ci/__tests__/ci-admission-verification-lease.pg.test.mjs",
       "role": "verification"
     }
   ]

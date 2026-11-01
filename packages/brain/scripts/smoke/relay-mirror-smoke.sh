@@ -57,6 +57,11 @@ const txt = JSON.stringify(body);
 for (const expected of ['目标：看得见', 'smoke 第一棒', 'smoke 拍板', '铺了脊柱']) assert.ok(txt.includes(expected));
 // 有状态 Notion 边界：页面读取保留完整属性，PATCH 合并，正文读/删/追加真实作用在同一页。
 const calls = [], pages = new Map();
+const makeBlock = raw => {
+  const block = { ...structuredClone(raw), id: randomUUID() };
+  if (block[block.type]?.children) block[block.type].children = block[block.type].children.map(makeBlock);
+  return block;
+};
 const fakeReq = async (_token, path, method, request) => {
   calls.push([method, path]);
   if (method === 'POST' && path.endsWith('/query')) {
@@ -67,7 +72,7 @@ const fakeReq = async (_token, path, method, request) => {
   if (method === 'POST' && path === '/pages') {
     const page = { id: randomUUID(), archived: false, parent: structuredClone(request.parent),
       properties: structuredClone(request.properties),
-      children: (request.children || []).map(block => ({ ...structuredClone(block), id: randomUUID() })) };
+      children: (request.children || []).map(makeBlock) };
     pages.set(page.id, page); return structuredClone(page);
   }
   if (path.startsWith('/pages/')) {
@@ -78,12 +83,22 @@ const fakeReq = async (_token, path, method, request) => {
     return structuredClone(page);
   }
   if (path.startsWith('/blocks/') && path.includes('/children')) {
-    const page = pages.get(path.split('/')[2]);
-    assert.ok(page, '正文所属页面必须存在');
-    if (method === 'GET') return structuredClone({ results: page.children, has_more: false });
+    const id = path.split('/')[2];
+    const page = pages.get(id);
+    const parent = page || [...pages.values()].flatMap(p => p.children).find(block => block.id === id);
+    assert.ok(parent, '正文所属页面或块必须存在');
+    const children = page ? page.children : parent[parent.type]?.children;
+    assert.ok(children, '正文父块必须支持 children');
+    if (method === 'GET') {
+      const params = new URLSearchParams(path.split('?')[1]);
+      const start = Number(params.get('start_cursor') || 0), size = Number(params.get('page_size') || 100), end = start + size;
+      return structuredClone({ results: children.slice(start, end), has_more: end < children.length, next_cursor: end < children.length ? String(end) : null });
+    }
     assert.equal(method, 'PATCH');
-    page.children.push(...request.children.map(block => ({ ...structuredClone(block), id: randomUUID() })));
-    return { results: [] };
+    assert.ok(request.children.length <= 100);
+    const created = request.children.map(makeBlock);
+    if (request.position?.type === 'start') children.unshift(...created); else children.push(...created);
+    return structuredClone({ results: created, has_more: false });
   }
   if (method === 'DELETE' && path.startsWith('/blocks/')) {
     const id = path.split('/')[2];
@@ -99,6 +114,8 @@ const after = (await client.query('SELECT notion_props FROM projects WHERE id=\$
 assert.ok(after.notion_id); assert.ok(after.project_digest);
 assert.equal(s1.pushed, 1); assert.equal(s1.failed, 0); assert.equal(s2.skipped, 1); assert.equal(s2.failed, 0);
 const page = pages.get(after.notion_id), originalBlocks = page.children.map(block => block.id);
+const human = { id: randomUUID(), type: 'paragraph', paragraph: { rich_text: [{ type: 'text', text: { content: '人工保留正文' } }] } };
+page.children.push(human);
 // 人改与 Brain 改冲突：读取既有页、事务回灌、摘要独立、正文更新后再次幂等。
 page.properties.Status = { status: { name: 'Completed' } };
 page.properties.Remark = { rich_text: [{ type: 'text', text: { content: '人工 smoke 备注' } }] };
@@ -110,6 +127,8 @@ assert.equal(merged.status, 'completed'); assert.equal(merged.custom_props.remar
 assert.equal(notionText(page.properties.Remark.rich_text), '人工 smoke 备注');
 assert.ok(notionText(page.properties['AI 进展'].rich_text).includes('1/1 棒完成'));
 assert.ok(JSON.stringify(page.children).includes('目标：更新后可见'));
+assert.equal(page.children[0].type, 'toggle');
+assert.ok(page.children.some(block => block.id === human.id), '人工正文必须保留');
 assert.ok(page.children.every(block => !originalBlocks.includes(block.id)), '旧机器正文必须真正删除');
 assert.equal((await pushProjectRoots(db, 'tok', opts)).skipped, 1);
 const d1 = await pushPendingDecisions(db, 'tok', opts);
