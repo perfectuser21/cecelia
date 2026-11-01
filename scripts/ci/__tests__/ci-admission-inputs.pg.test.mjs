@@ -1,4 +1,5 @@
 /** 显式隔离PG验证consumer callback；只使用本人UUIDschema，不访问中央。 */
+import './ci-admission-verification-lease.pg.test.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtempSync,rmSync} from 'node:fs';
