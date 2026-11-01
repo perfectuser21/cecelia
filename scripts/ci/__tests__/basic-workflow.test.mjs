@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync, readdirSync, copyFileSync, mkdirSync, mkdtempSync, writeFileSync, rmSync, realpathSync, symlinkSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
+import { join, dirname } from 'node:path';
+import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
@@ -108,4 +110,85 @@ test('API PG跑道拥有临时Postgres服务和独立开关，普通unit不能�
   assert.equal(job.services.postgres.image,
     "${{ (matrix.component == 'brain-integration' || matrix.component == 'api-integration') && 'mirror.gcr.io/pgvector/pgvector:pg15' || '' }}");
   assert.ok(planChecks(['apps/api/src/system/routes.ts']).some(row => row.component === 'api-integration'));
+});
+
+const versionEntry = '实际PR必须通过现仓库Brain版本策略';
+const versionTestPath = 'scripts/ci/__tests__/basic-workflow.test.mjs';
+function versionFixture(t, { version = '1.0.0', fragment = false } = {}) {
+  const directory = realpathSync(mkdtempSync(join(tmpdir(), 'brain-version-entry-')));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const env = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1',
+    GIT_AUTHOR_NAME: 'CI test', GIT_AUTHOR_EMAIL: 'ci@example.invalid',
+    GIT_COMMITTER_NAME: 'CI test', GIT_COMMITTER_EMAIL: 'ci@example.invalid' };
+  for (const key of Object.keys(env)) if (key.startsWith('GIT_') && !['GIT_CONFIG_GLOBAL', 'GIT_CONFIG_NOSYSTEM',
+    'GIT_AUTHOR_NAME', 'GIT_AUTHOR_EMAIL', 'GIT_COMMITTER_NAME', 'GIT_COMMITTER_EMAIL'].includes(key)) delete env[key];
+  const git = (...args) => {
+    const result = spawnSync('git', ['-c', 'core.hooksPath=/dev/null', '-c', 'maintenance.auto=false', '-c', 'gc.auto=0', ...args],
+      { cwd: directory, env, encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    return result.stdout.trim();
+  };
+  const put = (path, bytes) => { mkdirSync(dirname(join(directory, path)), { recursive: true }); writeFileSync(join(directory, path), bytes); };
+  for (const path of [versionTestPath, 'scripts/ci/basic-scope.mjs', 'scripts/ci/run-basic-check.mjs',
+    'scripts/ci/ops-checks.mjs', 'scripts/ci/check-brain-version-bump.sh', '.github/workflows/ci.yml']) {
+    mkdirSync(dirname(join(directory, path)), { recursive: true }); copyFileSync(join(root, path), join(directory, path));
+  }
+  put('package.json', '{"type":"module"}');
+  put('packages/brain/package.json', '{"version":"1.0.0"}');
+  put('packages/brain/src/probe.js', '// base\n');
+  git('init', '-q', '-b', 'main'); git('add', '.'); git('commit', '-qm', 'base');
+  const base = git('rev-parse', 'HEAD');
+  git('checkout', '-qb', 'cp-version-fixture');
+  put('packages/brain/package.json', JSON.stringify({ version }));
+  put('packages/brain/src/probe.js', '// actual source change\n');
+  if (fragment) put('changes/fixture.md', '## Brain {VERSION} — fixture\n');
+  git('add', '.'); git('commit', '-qm', 'source change');
+  const head = git('rev-parse', 'HEAD');
+  symlinkSync(require.resolve('js-yaml/package.json').replace(/\/js-yaml\/package\.json$/, ''), join(directory, 'node_modules'));
+  const event = { pull_request: { base: { sha: base }, head: { sha: head } } };
+  const run = (body = event, overrides = {}) => {
+    const eventPath = join(directory, 'event.json');
+    writeFileSync(eventPath, typeof body === 'string' ? body : JSON.stringify(body));
+    return spawnSync(process.execPath, ['--test', `--test-name-pattern=^${versionEntry}$`, versionTestPath], {
+      cwd: directory, encoding: 'utf8', timeout: 20000,
+      env: { ...env, GITHUB_ACTIONS: 'true', GITHUB_EVENT_NAME: 'pull_request', GITHUB_EVENT_PATH: eventPath, ...overrides },
+    });
+  };
+  return { directory, git, event, run };
+}
+
+for (const [version, fragment, accepted] of [['1.0.0', false, false], ['0.9.9', false, false],
+  ['1.0.1', false, true], ['1.0.0', true, true]]) {
+  test(`真实自动入口检查实际PR：version=${version},fragment=${fragment}`, t => {
+    const result = versionFixture(t, { version, fragment }).run();
+    assert.equal(result.error, undefined); assert.equal(result.signal, null);
+    assert.equal(result.status === 0, accepted, result.stdout + result.stderr);
+    assert.match(result.stdout, new RegExp(versionEntry));
+    assert.match(result.stdout, accepted ? /# pass 1\b/ : /版本未 bump/);
+  });
+}
+
+test('真实PR入口拒绝坏event、缺失base对象与不属于checkout的head', t => {
+  const f = versionFixture(t, { version: '1.0.1' });
+  for (const body of ['{', {}, { pull_request: { base: { sha: '--help' }, head: f.event.pull_request.head } },
+    { pull_request: { base: { sha: '0'.repeat(40) }, head: f.event.pull_request.head } },
+    { pull_request: { base: f.event.pull_request.base, head: f.event.pull_request.base } }]) {
+    const result = f.run(body);
+    assert.equal(result.status, 1, result.stdout + result.stderr);
+    assert.match(result.stdout, /PR_VERSION_EVENT|PR_VERSION_GIT/);
+  }
+});
+
+test('真实PR入口支持实际合并checkout，非PR明确不适用且不注册skip', t => {
+  const f = versionFixture(t, { version: '1.0.1' });
+  f.git('checkout', '-qb', 'merge-checkout', f.event.pull_request.base.sha);
+  f.git('merge', '--no-ff', '-qm', 'test merge', f.event.pull_request.head.sha);
+  const merged = f.run();
+  assert.equal(merged.status, 0, merged.stdout + merged.stderr); assert.match(merged.stdout, /# pass 1\b/);
+  for (const eventName of ['push', 'workflow_dispatch']) {
+    const result = f.run({}, { GITHUB_EVENT_NAME: eventName });
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.match(result.stdout, /not_applicable: PR-only Brain version policy/);
+    assert.match(result.stdout, /# pass 1\b/);
+  }
 });
