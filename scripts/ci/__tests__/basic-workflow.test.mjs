@@ -114,6 +114,41 @@ test('API PG跑道拥有临时Postgres服务和独立开关，普通unit不能�
 
 const versionEntry = '实际PR必须通过现仓库Brain版本策略';
 const versionTestPath = 'scripts/ci/__tests__/basic-workflow.test.mjs';
+test(versionEntry, t => {
+  const eventName = process.env.GITHUB_EVENT_NAME;
+  if (eventName !== 'pull_request') {
+    assert.ok(eventName === undefined && process.env.GITHUB_ACTIONS !== 'true' ||
+      ['push', 'workflow_dispatch', 'workflow_call', 'workflow_run', 'schedule'].includes(eventName), 'PR_VERSION_EVENT');
+    t.diagnostic(`not_applicable: PR-only Brain version policy (${eventName || 'local'})`);
+    return;
+  }
+  let pr;
+  try { pr = JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8')).pull_request; }
+  catch { assert.fail('PR_VERSION_EVENT: missing or malformed event'); }
+  const base = pr?.base?.sha, head = pr?.head?.sha;
+  assert.ok([base, head].every(sha => typeof sha === 'string' && /^[0-9a-f]{40}$/.test(sha)), 'PR_VERSION_EVENT');
+  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_')));
+  Object.assign(env, { GIT_NO_REPLACE_OBJECTS: '1', GIT_GRAFT_FILE: '/dev/null',
+    GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', BASE_REF: base });
+  const git = (...args) => {
+    const result = spawnSync('git', ['--no-replace-objects', '-c', 'core.hooksPath=/dev/null', ...args],
+      { cwd: root, env, encoding: 'utf8', timeout: 10000 });
+    assert.ok(!result.error && !result.signal && result.status === 0, `PR_VERSION_GIT: ${result.stderr || result.error || result.signal}`);
+    return result.stdout.trim();
+  };
+  for (const revision of [base, head]) assert.equal(git('cat-file', '-t', revision), 'commit', 'PR_VERSION_GIT');
+  git('merge-base', base, head);
+  const checkout = git('rev-parse', 'HEAD');
+  if (checkout !== head) assert.deepEqual(git('show', '-s', '--format=%P', 'HEAD').split(' '), [base, head], 'PR_VERSION_GIT: checkout is not this PR');
+  assert.equal(git('status', '--porcelain=v1', '--untracked-files=no'), '', 'PR_VERSION_GIT: dirty checkout');
+  const result = spawnSync('bash', ['scripts/ci/check-brain-version-bump.sh'],
+    { cwd: root, env, encoding: 'utf8', timeout: 20000 });
+  if (result.error) throw result.error;
+  assert.equal(result.signal, null, `PR_VERSION_GUARD: signal ${result.signal}`);
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  t.diagnostic(`PR_VERSION_GUARD: checked actual checkout ${checkout} against fixed base ${base}`);
+});
+
 function versionFixture(t, { version = '1.0.0', fragment = false } = {}) {
   const directory = realpathSync(mkdtempSync(join(tmpdir(), 'brain-version-entry-')));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
@@ -173,10 +208,16 @@ test('真实PR入口拒绝坏event、缺失base对象与不属于checkout的head
   const f = versionFixture(t, { version: '1.0.1' });
   for (const body of ['{', {}, { pull_request: { base: { sha: '--help' }, head: f.event.pull_request.head } },
     { pull_request: { base: { sha: '0'.repeat(40) }, head: f.event.pull_request.head } },
+    { pull_request: { base: { sha: f.git('rev-parse', 'HEAD:packages/brain/package.json') }, head: f.event.pull_request.head } },
     { pull_request: { base: f.event.pull_request.base, head: f.event.pull_request.base } }]) {
     const result = f.run(body);
     assert.equal(result.status, 1, result.stdout + result.stderr);
     assert.match(result.stdout, /PR_VERSION_EVENT|PR_VERSION_GIT/);
+  }
+  for (const overrides of [{ GITHUB_EVENT_NAME: 'unknown-event' }, { GITHUB_EVENT_NAME: undefined },
+    { GITHUB_EVENT_PATH: join(f.directory, 'missing-event.json') }]) {
+    const result = f.run(f.event, overrides);
+    assert.equal(result.status, 1, result.stdout + result.stderr); assert.match(result.stdout, /PR_VERSION_EVENT/);
   }
 });
 
@@ -191,5 +232,21 @@ test('真实PR入口支持实际合并checkout，非PR明确不适用且不注�
     assert.equal(result.status, 0, result.stdout + result.stderr);
     assert.match(result.stdout, /not_applicable: PR-only Brain version policy/);
     assert.match(result.stdout, /# pass 1\b/);
+    assert.match(result.stdout, /# skipped 0\b/);
+    assert.doesNotMatch(result.stdout, /checked actual checkout/);
   }
+});
+
+test('实际guard的signal与启动错误必须阻断，不能将null状态当作成功', t => {
+  const signalled = versionFixture(t, { version: '1.0.1' });
+  writeFileSync(join(signalled.directory, 'scripts/ci/check-brain-version-bump.sh'), '#!/bin/bash\nkill -TERM "$$"\n');
+  signalled.git('add', '.'); signalled.git('commit', '-qm', 'guard signal fixture');
+  signalled.event.pull_request.head.sha = signalled.git('rev-parse', 'HEAD');
+  const signal = signalled.run();
+  assert.equal(signal.status, 1, signal.stdout + signal.stderr); assert.match(signal.stdout, /PR_VERSION_GUARD: signal SIGTERM/);
+  const missingBash = versionFixture(t, { version: '1.0.1' });
+  const bin = join(missingBash.directory, 'git-only'); mkdirSync(bin);
+  symlinkSync('/usr/bin/git', join(bin, 'git'));
+  const error = missingBash.run(missingBash.event, { PATH: bin });
+  assert.equal(error.status, 1, error.stdout + error.stderr); assert.match(error.stdout, /spawnSync bash ENOENT/);
 });
