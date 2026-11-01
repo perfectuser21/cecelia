@@ -172,3 +172,15 @@ test('完整future数据叠已审四个普通controller/collector，真实Git bl
  const corrupt=Buffer.from(bytes);corrupt[corrupt.length-1]^=1;assert.throws(()=>decodeFrozenTypedOutputBytes(corrupt),/TYPED_OUTPUT_FIXTURE_DIGEST/);
  await assert.rejects(next.read('../escape'),/FUTURE_FIXTURE_MISSING/);
 });
+
+import {readFrozenContextMemoBytes,decodeFrozenContextMemoBytes,frozenContextMemoFutureGit} from '../../../packages/brain/src/lib/__tests__/helpers/future-active-git.js';
+test('E五blob固定Git数据保存memo实际collector与BC父身份，旧四blob只作历史',async()=>{
+ const bytes=readFrozenContextMemoBytes(),data=decodeFrozenContextMemoBytes(bytes),root=fileURLToPath(new URL('../../../',import.meta.url)),next=frozenContextMemoFutureGit(root),prior=frozenTypedOutputFutureGit(root);
+ assert.equal(data.parent_revision,'bc597b839142052c33689750a33472f73bbd89d1');assert.equal(data.members.length,5);assert.equal(next.revision,data.captured_revision);assert.deepEqual(next.paths,prior.paths);
+ for(const row of data.members){const actual=Buffer.from(await next.read(row.path));assert.deepEqual(actual,Buffer.from(row.content_base64,'base64'));assert.equal(createHash('sha1').update(`blob ${actual.length}\0`).update(actual).digest('hex'),row.blob_sha1);}
+ assert.match(await next.read('packages/brain/src/lib/existing-ops-workspace-source.js'),/faeb79e0eeff5e65a34cac57630a8859907b7cd47e61721e0aa57c8acdabba78/);
+ assert.notEqual(await next.read('scripts/ci/implementation-verification-context.mjs'),await prior.read('scripts/ci/implementation-verification-context.mjs'));
+ assert.equal(await next.read('scripts/ci/implementation-verification-context.mjs'),readFileSync(new URL('../implementation-verification-context.mjs',import.meta.url),'utf8'));
+ assert.equal(await next.read('.github/workflows/implementation-impact.yml'),await prior.read('.github/workflows/implementation-impact.yml'));
+ const corrupt=Buffer.from(bytes);corrupt[corrupt.length-1]^=1;assert.throws(()=>decodeFrozenContextMemoBytes(corrupt),/CONTEXT_MEMO_FIXTURE_DIGEST/);await assert.rejects(next.read('../escape'),/FUTURE_FIXTURE_MISSING/);
+});

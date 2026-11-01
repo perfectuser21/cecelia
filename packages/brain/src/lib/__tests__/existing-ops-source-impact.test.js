@@ -3,7 +3,7 @@ import {setImmediate as nativeSetImmediate} from 'node:timers';
 import {createRequire} from 'node:module';
 import {parse as acorn} from 'acorn';
 import {collectNativeFutureImpactSources} from '../existing-ops-workspace-source.js';
-import {frozenFutureGit,readFrozenFutureBytes,frozenTypedOutputFutureGit,materializeFrozenCollector} from './helpers/future-active-git.js';
+import {frozenFutureGit,readFrozenFutureBytes,frozenTypedOutputFutureGit,frozenContextMemoFutureGit,materializeFrozenCollector} from './helpers/future-active-git.js';
 import {createHash} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
 import {fileURLToPath,pathToFileURL} from 'node:url';
@@ -18,7 +18,7 @@ const paths=execFileSync('git',['ls-tree','-rz','--name-only',revision],{cwd:roo
 const cache=new Map();
 const read=path=>{if(!cache.has(path))cache.set(path,execFileSync('git',['show',`${revision}:${path}`],{cwd:root,encoding:'utf8',maxBuffer:16*1024*1024}));return cache.get(path);};
 const workflow='.github/workflows/implementation-impact.yml';
-const frozenProfile=frozenTypedOutputFutureGit(root);
+const frozenProfile=frozenContextMemoFutureGit(root);
 it('巡查独立身份baseline保持当前真实Git F2/F3消费者协议',async()=>{
  const proof=await buildExistingOpsSources({scope:'cecelia-factory',repo:'perfectuser21/cecelia',revision,paths,readSource:async path=>read(path)});
  expect(proof.consumers.every(c=>c.status==='verified'),JSON.stringify(proof.consumers.map(c=>c.gaps))).toBe(true);
@@ -293,7 +293,7 @@ async function ownRuntime(historical=false){
  entry.workspace??=await import(/* @vite-ignore */ pathToFileURL(entry.workspaceFile).href);
  return entry;
 }
-const typedOutputProfile=frozenTypedOutputFutureGit(root);
+const typedOutputProfile=frozenContextMemoFutureGit(root);
 it('新完整typed输出guard与resolver由fixture自身16runtime及raw F3实际验证',async()=>{
  const runtime=await ownRuntime(),profile=runtime.input;
  const {readNativeConsumerRuntime}=await import(/* @vite-ignore */ pathToFileURL(runtime.runtimeFile).href);
@@ -328,4 +328,20 @@ it('固定已发布BC旧collector仅历史回放旧1f完整输入，不授予当
  await new Promise(resolve=>nativeSetImmediate(resolve)); // 同原raw wrapper，交还默认30s计时器而不延长预算。
  expect(proof.consumers[1].status,JSON.stringify(proof.consumers[1].gaps)).toBe('verified');
  const relations=[];expect(await collectNativeFutureImpactSources({basicCi:true,parse:text=>acorn(text,{ecmaVersion:'latest',sourceType:'module'}),revision:profile.revision,read:profile.read,relations})).toBe(false);expect(relations).toEqual([]);
+});
+
+it('未发布且超时的旧4ba不得取得当前E active资格',async()=>{
+ const old=frozenTypedOutputFutureGit(root),relations=[];
+ expect(await collectNativeFutureImpactSources({basicCi:true,parse:text=>acorn(text,{ecmaVersion:'latest',sourceType:'module'}),revision:old.revision,read:old.read,relations})).toBe(false);expect(relations).toEqual([]);
+});
+it('固定已发布D collector仅历史回放4ba，不授予当前E资格',async()=>{
+ const runtime=materializeFrozenCollector(root,{historicalD:true});
+ try{
+  expect(runtime.git('rev-parse','HEAD')).toBe('f67184328cf877d438869606eb828d1d25d92d20');
+  const api=await import(/* @vite-ignore */ pathToFileURL(runtime.sourceFile).href),profile=runtime.input;
+  const proof=await api.buildExistingOpsSources({scope:'cecelia-factory',repo:'perfectuser21/cecelia',revision:profile.revision,paths:profile.paths,readSource:profile.read});
+  await new Promise(resolve=>nativeSetImmediate(resolve));
+  expect(proof.consumers[1].status,JSON.stringify(proof.consumers[1].gaps)).toBe('verified');
+  const relations=[];expect(await collectNativeFutureImpactSources({basicCi:true,parse:text=>acorn(text,{ecmaVersion:'latest',sourceType:'module'}),revision:profile.revision,read:profile.read,relations})).toBe(false);expect(relations).toEqual([]);
+ }finally{runtime.close();}
 });

@@ -7,18 +7,21 @@ import {createHash} from 'node:crypto';
 import {createRequire} from 'node:module';
 import {fixedLocalGit} from '../../../../../../scripts/ci/fixed-local-git.mjs';
 const sha=(algorithm,bytes)=>createHash(algorithm).update(bytes).digest('hex');
-export function readFrozenFutureBytes(require=createRequire(import.meta.url)){
- const target=require.resolve('../../../../../../scripts/ci/__tests__/fixtures/future-active-source.json.gz');
+function readFrozenData(require,target,read,code){
  const extension=Object.getOwnPropertyDescriptor(require.extensions,'.gz'),cache=Object.getOwnPropertyDescriptor(require.cache,target);
  try{
   Object.defineProperty(require.extensions,'.gz',{configurable:true,writable:true,enumerable:true,value:(module,filename)=>{
-   if(filename!==target)throw Error('FUTURE_DATA_TARGET');module.exports=readFileSync(filename);
-  }});
-  delete require.cache[target];return require('../../../../../../scripts/ci/__tests__/fixtures/future-active-source.json.gz');
+   if(filename!==target)throw Error(code);module.exports=readFileSync(filename);
+  }});delete require.cache[target];return read();
  }finally{
   if(extension)Object.defineProperty(require.extensions,'.gz',extension);else delete require.extensions['.gz'];
   if(cache)Object.defineProperty(require.cache,target,cache);else delete require.cache[target];
  }
+}
+
+export function readFrozenFutureBytes(require=createRequire(import.meta.url)){
+ const target=require.resolve('../../../../../../scripts/ci/__tests__/fixtures/future-active-source.json.gz');
+ return readFrozenData(require,target,()=>require('../../../../../../scripts/ci/__tests__/fixtures/future-active-source.json.gz'),'FUTURE_DATA_TARGET');
 }
 export function decodeFrozenFutureBytes(bytes=readFrozenFutureBytes()){
  if(sha('sha256',bytes)!=='c22090326cbe99e8f345b503c5a98d1ab3b3856211294dfaf5f54028a402ab7d')throw Error('FUTURE_FIXTURE_DIGEST');
@@ -66,15 +69,7 @@ export function frozenFutureGit(root){
 /** 完整profile叠四份已审controller/collector普通blob；从不读取工作区实现。 */
 export function readFrozenTypedOutputBytes(require=createRequire(import.meta.url)){
  const target=require.resolve('../../../../../../scripts/ci/__tests__/fixtures/future-active-typed-output-v2.json.gz');
- const extension=Object.getOwnPropertyDescriptor(require.extensions,'.gz'),cache=Object.getOwnPropertyDescriptor(require.cache,target);
- try{
-  Object.defineProperty(require.extensions,'.gz',{configurable:true,writable:true,enumerable:true,value:(module,filename)=>{
-   if(filename!==target)throw Error('TYPED_OUTPUT_DATA_TARGET');module.exports=readFileSync(filename);
-  }});delete require.cache[target];return require('../../../../../../scripts/ci/__tests__/fixtures/future-active-typed-output-v2.json.gz');
- }finally{
-  if(extension)Object.defineProperty(require.extensions,'.gz',extension);else delete require.extensions['.gz'];
-  if(cache)Object.defineProperty(require.cache,target,cache);else delete require.cache[target];
- }
+ return readFrozenData(require,target,()=>require('../../../../../../scripts/ci/__tests__/fixtures/future-active-typed-output-v2.json.gz'),'TYPED_OUTPUT_DATA_TARGET');
 }
 export function decodeFrozenTypedOutputBytes(bytes=readFrozenTypedOutputBytes()){
  if(sha('sha256',bytes)!=='7af877c2f2fc289ee3052d9bcf4be686b3ab83c3e2aaf47bad6a90c08a285bd1')throw Error('TYPED_OUTPUT_FIXTURE_DIGEST');
@@ -103,15 +98,49 @@ export function frozenTypedOutputFutureGit(root){
   read:async path=>changed.has(path)?changed.get(path):base.read(path)};
 }
 
+
+/** 固定五blob数据：新context、实际E collector及原typed guard/resolver作为一组。 */
+export function readFrozenContextMemoBytes(require=createRequire(import.meta.url)){
+ const target=require.resolve('../../../../../../scripts/ci/__tests__/fixtures/future-active-context-memo-v3.json.gz');
+ return readFrozenData(require,target,()=>require('../../../../../../scripts/ci/__tests__/fixtures/future-active-context-memo-v3.json.gz'),'CONTEXT_MEMO_DATA_TARGET');
+}
+export function decodeFrozenContextMemoBytes(bytes=readFrozenContextMemoBytes()){
+ if(sha('sha256',bytes)!=='91aa2a5229ad47172754dcdf1ace0ea51d461fb9c06344f20210e56c9ae5d59c')throw Error('CONTEXT_MEMO_FIXTURE_DIGEST');
+ const data=JSON.parse(gunzipSync(bytes));
+ if(data.schema_version!==1||data.extends_fixture_sha256!=='c22090326cbe99e8f345b503c5a98d1ab3b3856211294dfaf5f54028a402ab7d'
+  ||data.extends_revision!=='14fce437dcccf1b30daf17423ec48a3ed4337eee'||data.extends_tree!=='f5b015b0a66e798efd666a842364c36579e163f8'
+  ||data.parent_revision!=='bc597b839142052c33689750a33472f73bbd89d1'||data.parent_tree!=='c00f3a491b678b691f5159aedbad56c23f82dda1'
+  ||data.captured_revision!=='32309a6ba3293557ec1c5c1297561d742d8c8363'||data.captured_tree!=='c1298666dd79fc8c09f3719cc067ba64b61ec88d')throw Error('CONTEXT_MEMO_FIXTURE_SOURCE');
+ const commit=Buffer.from(data.captured_commit_base64,'base64');
+ if(sha('sha1',Buffer.concat([Buffer.from(`commit ${commit.length}\0`),commit]))!==data.captured_revision
+  ||!commit.toString().startsWith(`tree ${data.captured_tree}\nparent ${data.parent_revision}\n`))throw Error('CONTEXT_MEMO_FIXTURE_COMMIT');
+ const paths=['scripts/ci/implementation-multi-pr-gate.mjs','scripts/ci/implementation-pr-baseline.mjs','scripts/ci/implementation-verification-context.mjs','packages/brain/src/lib/existing-ops-workspace-source.js','packages/brain/src/lib/existing-ops-source.js'];
+ if(JSON.stringify(data.members?.map(r=>r.path))!==JSON.stringify(paths))throw Error('CONTEXT_MEMO_FIXTURE_PATH');
+ for(const row of data.members){
+  if(row.mode!=='100644')throw Error('CONTEXT_MEMO_FIXTURE_MODE');
+  const content=Buffer.from(row.content_base64,'base64');
+  if(sha('sha256',content)!==row.sha256||sha('sha1',Buffer.concat([Buffer.from(`blob ${content.length}\0`),content]))!==row.blob_sha1)throw Error('CONTEXT_MEMO_FIXTURE_BLOB');
+ }
+ return data;
+}
+export function frozenContextMemoFutureGit(root){
+ const base=frozenFutureGit(root),data=decodeFrozenContextMemoBytes();
+ if(base.data.captured_revision!==data.extends_revision||base.data.captured_tree!==data.extends_tree)throw Error('CONTEXT_MEMO_FIXTURE_PARENT');
+ const changed=new Map(data.members.map(row=>[row.path,Buffer.from(row.content_base64,'base64').toString('utf8')]));
+ if([...changed.keys()].some(path=>!base.paths.includes(path)))throw Error('CONTEXT_MEMO_FIXTURE_PATH');
+ return {...base,data:{...base.data,captured_revision:data.captured_revision,captured_tree:data.captured_tree,controller_overlay:data},revision:data.captured_revision,
+  read:async path=>changed.has(path)?changed.get(path):base.read(path)};
+}
+
 /** 仅显式测试调用：私有Git重建已校验的完整树，不自动导入或执行捕获源码。 */
-export function materializeFrozenCollector(root,{historical=false}={}){
+export function materializeFrozenCollector(root,{historical=false,historicalD=false}={}){
  const home=mkdtempSync(join(tmpdir(),'frozen-collector-runtime-')),checkout=join(home,'source');
  const close=()=>rmSync(home,{recursive:true,force:true,maxRetries:3,retryDelay:20});
  try{
   fixedLocalGit(root,['clone','--shared','--no-checkout','--quiet',root,checkout],{localClone:true});
   const git=(...args)=>fixedLocalGit(checkout,['-c','maintenance.auto=false','-c','gc.auto=0',...args],{encoding:'utf8'}).trim();
-  const input=historical?frozenFutureGit(root):frozenTypedOutputFutureGit(root);
-  if(historical)git('checkout','--quiet','--detach','bc597b839142052c33689750a33472f73bbd89d1');
+  const input=historical?frozenFutureGit(root):historicalD?frozenTypedOutputFutureGit(root):frozenContextMemoFutureGit(root);
+  if(historical||historicalD)git('checkout','--quiet','--detach',historicalD?'f67184328cf877d438869606eb828d1d25d92d20':'bc597b839142052c33689750a33472f73bbd89d1');
   else{
    git('checkout','--quiet','--detach',input.data.base_revision);
    const rows=[...input.data.delta,...input.data.controller_overlay.members];
