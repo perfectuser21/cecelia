@@ -299,7 +299,7 @@ const CI_ACTIVE_B_ENABLED_HASHES={...CI_ACTIVE_B_TOOL_HASHES,
 };
 // D仅扩完整B快照调用方cohort；旧十组与旧A快照的资格不变。
 const CI_OUTPUT_TOOL_HASHES={...CI_ACTIVE_B_TOOL_HASHES,
- 'existing-ops-workspace-source.js':'2ddbbf19d4d5a89b07b3792e801c5e281248dc778f99169456fe218bfc66c54c',
+ 'existing-ops-workspace-source.js':'326812d785fa71bd855bf24ae955b71935c70042ec74b6249f03692555b829eb',
 };
 const CI_OUTPUT_ENABLED_HASHES={...CI_OUTPUT_TOOL_HASHES,
  'existing-ops-source.js':CI_ACTIVE_B_ENABLED_HASHES['existing-ops-source.js'],
@@ -387,7 +387,7 @@ export function registerReviewedAGuardTests({ BRAIN_ROOT, findClaudeInvocations 
   });
   it('D输出guard与旧格式协商的完整0/1 cohort可读，旧snapshot混搭和缺项拒绝',()=>{
    const current=base(),source=path.join(root,'existing-ops-source.js'),workspace=path.join(root,'existing-ops-workspace-source.js');
-   expect(hashSource(current.get(workspace))).toBe('2ddbbf19d4d5a89b07b3792e801c5e281248dc778f99169456fe218bfc66c54c');
+   expect(hashSource(current.get(workspace))).toBe('326812d785fa71bd855bf24ae955b71935c70042ec74b6249f03692555b829eb');
    for(const marker of [0,1]){const variant=new Map(current);variant.set(source,variant.get(source).replace(/EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = [01]/,'EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = '+marker));expect(scan(variant)).toEqual([]);}
    for(const file of [workspace,snapshot]){const missing=new Map(current);missing.delete(file);expect(scan(missing).some(h=>h.rule==='E1')).toBe(true);}
    const mixed=new Map(current);mixed.set(snapshot,execFileSync('git',['--no-replace-objects','show','35e2a91d971e8dc432d6f36361c65cded5d64ec8:scripts/ci/implementation-snapshot.mjs'],{cwd:BRAIN_ROOT,encoding:'utf8'}));expect(scan(mixed).some(h=>h.rule==='E1')).toBe(true);

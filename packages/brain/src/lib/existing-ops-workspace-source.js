@@ -387,10 +387,8 @@ const ACTIVE_TYPED_PATHS = [
  "packages/brain/src/lib/existing-ops-registration.js","packages/brain/src/lib/implementation-ci-snapshot.js",
  "scripts/ci/config/ci-admission-registry.json",
 ];
-const ACTIVE_TYPED_TUPLES = new Set([
- '1f344aa06be1c859b47cb167031e583f7aa7e8ae76b484b4ee9b299fb5954b96',
- '4ba0369ba3011622dc3a46e6b155610972d4eb79f6c3fafee73ef14554efda45',
-]);
+// 旧1f仅是未合并原型，包含已知输出缺陷；历史legacy/read-only组合另行保留。
+const ACTIVE_TYPED_TUPLE = '4ba0369ba3011622dc3a46e6b155610972d4eb79f6c3fafee73ef14554efda45';
 /** null只表示旧入口；未来入口证明失败绝不回落到legacy资格。 */
 export async function collectNativeFutureImpactSources({basicCi,read,parse,revision,relations}){
  const workflow=await read(IMPACT_WORKFLOW);
@@ -399,7 +397,7 @@ export async function collectNativeFutureImpactSources({basicCi,read,parse,revis
  try{
   const texts=new Map([[IMPACT_WORKFLOW,workflow]]),rows=[];
   for(const path of ACTIVE_TYPED_PATHS){const text=texts.get(path)??await read(path);if(!text)return false;texts.set(path,text);rows.push([path,digest(text)]);}
-  if(!ACTIVE_TYPED_TUPLES.has(digest(JSON.stringify(rows))))return false;
+  if(digest(JSON.stringify(rows))!==ACTIVE_TYPED_TUPLE)return false;
   const programs=new Map([...texts].filter(([p])=>p.endsWith('.mjs')||p.endsWith('.js')).map(([p,text])=>[p,parse(text)]));
   const ci=name=>'scripts/ci/'+name+'.mjs',program=name=>programs.get(ci(name));
   const fn=(name,id)=>{const nodes=[];inspectNodes(program(name),n=>{if(n.type==='FunctionDeclaration'&&n.id?.name===id)nodes.push(n);});if(nodes.length!==1)fail();return nodes[0];};
