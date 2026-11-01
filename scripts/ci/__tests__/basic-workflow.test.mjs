@@ -142,7 +142,7 @@ test(versionEntry, t => {
   if (checkout !== head) assert.deepEqual(git('show', '-s', '--format=%P', 'HEAD').split(' '), [base, head], 'PR_VERSION_GIT: checkout is not this PR');
   assert.equal(git('status', '--porcelain=v1', '--untracked-files=no'), '', 'PR_VERSION_GIT: dirty checkout');
   const result = spawnSync('bash', ['scripts/ci/check-brain-version-bump.sh'],
-    { cwd: root, env, encoding: 'utf8', timeout: 20000 });
+    { cwd: root, env, encoding: 'utf8', timeout: 20000, killSignal: 'SIGKILL' });
   if (result.error) throw result.error;
   assert.equal(result.signal, null, `PR_VERSION_GUARD: signal ${result.signal}`);
   assert.equal(result.status, 0, result.stdout + result.stderr);
