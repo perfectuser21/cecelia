@@ -7,6 +7,20 @@ import { join } from 'node:path';
 import { spawnSync,execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 describe('implementation-ci-workflow',()=>{
+it('当前future工作流只由PR、显式manual或call进入，成功条件与只读token保持真实边界',()=>{
+ const workflow=yaml.load(readFileSync(new URL('../../../../../.github/workflows/implementation-impact.yml',import.meta.url),'utf8'));
+ expect(Object.keys(workflow.on).sort()).toEqual(['pull_request','workflow_call','workflow_dispatch']);
+ expect(workflow.on.pull_request.branches).toEqual(['main']);expect(workflow.on.push).toBeUndefined();
+ expect(workflow.permissions).toEqual({contents:'read',actions:'read',checks:'read','pull-requests':'read'});
+ const expression=workflow.jobs.gate.if.replaceAll('needs.snapshot-main','needs["snapshot-main"]');
+ const evaluate=new Function('github','needs','always',`return (${expression});`);
+ for(const [event,result,expected]of [['pull_request','skipped',true],['workflow_dispatch','success',true],['workflow_call','success',true],['push','success',false],['release','success',false],['workflow_dispatch','failure',false]]){
+  const enabled=Object.hasOwn(workflow.on,event)&&evaluate({event_name:event},{'snapshot-main':{result}},()=>true);
+  expect(Boolean(enabled),event+':'+result).toBe(expected);
+ }
+ const gate=JSON.stringify(workflow.jobs.gate);expect(gate).not.toContain('CECELIA_INTERNAL_TOKEN');
+ for(const step of workflow.jobs.gate.steps)if(step.env?.GH_TOKEN!==undefined)expect(step.env.GH_TOKEN).toBe('${{ github.token }}');
+});
 it('main显式来源环境只启用官方self main push和dispatch，冻结主run与PR来源保持',()=>{
  const workflow=yaml.load(readFileSync(new URL('../../../../../.github/workflows/implementation-impact.yml',import.meta.url),'utf8'));
  const env=workflow.jobs.gate.env,run=workflow.jobs.gate.steps.find(s=>s.name==='实际变更影响与固定回归').run;
