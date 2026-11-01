@@ -386,3 +386,31 @@ tests:
     ci: L4
     status: active
     note: "真实PG验证typed依赖、固定槽位快照、契约换构建、独立模型代码、不可变组合、并发封存与结构漂移。"
+
+  - id: ci-admission-bootstrap-smoke
+    path: packages/brain/scripts/smoke/ci-admission-bootstrap-smoke.sh
+    type: integration
+    ci: L4
+    status: active
+    note: "Node22 实跑本地 Git、原 ZIP、发布身份 API 夹具和子进程合同；无 PG、线上身份或发布资格。"
+
+  - id: ci-admission-feature-smoke-contract
+    path: scripts/ci/__tests__/basic-ci-admission-feature-smoke.test.mjs
+    type: integration
+    ci: L4
+    status: active
+    note: "默认 Brain Node wrapper 真实运行 smoke，验证 Node22、环境隔离与非零退出传播。"
+
+  - id: ci-admission-baseline-contracts
+    path: packages/brain/src/__tests__/ci-admission-baseline-contracts.test.js
+    type: integration
+    ci: L4
+    status: active
+    note: "默认 Brain wrapper 真跑148项本地 Node 基线合同；精确核对成功分母，不含 PG 构建或四条登记命令。"
+
+  - id: ci-admission-native-entry
+    path: scripts/ci/__tests__/basic-ci-admission-native-entry.test.mjs
+    type: integration
+    ci: L3
+    status: active
+    note: "旧Node根真实调用publisher/builder身份拒绝与worker错误argv，并验证workflow/静态源图；无PG或四条登记命令。"

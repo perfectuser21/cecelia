@@ -1,0 +1,19 @@
+// 旧Core过渡入口：默认Brain wrapper真实执行这些本地合同；不授予候选或生产资格。
+import './basic-ci-admission-archive.test.mjs';
+import './basic-ci-admission-artifact.test.mjs';
+import './basic-ci-admission-authority.test.mjs';
+import './basic-ci-admission-builder.test.mjs';
+import './basic-ci-admission-envelope.test.mjs';
+import './basic-ci-admission-impact-workflow.test.mjs';
+import './basic-ci-admission-infra.test.mjs';
+import './basic-ci-admission-inputs.test.mjs';
+import './basic-ci-admission-legacy.test.mjs';
+import './basic-ci-admission-publisher.test.mjs';
+import './basic-ci-admission-resolver.test.mjs';
+import './basic-ci-admission-scratch-import.test.mjs';
+import './basic-ci-admission-scratch.test.mjs';
+import './basic-ci-admission-seed.test.mjs';
+import './basic-ci-admission-skill-cache.test.mjs';
+import './basic-ci-admission-worker.test.mjs';
+import './basic-ci-admission-workflow.test.mjs';
+import './basic-ci-admission-feature-smoke.test.mjs';
