@@ -49,7 +49,9 @@ test('现行Node根实际导入轻入口，正式静态图与spawn抽取器必�
  const result=await cruise([...nodeRoots,entry,impactReader],{baseDir:root,doNotFollow:{path:'node_modules'},exclude:{path:'node_modules'}}),graph=typeof result.output==='string'?JSON.parse(result.output):result.output;
  const dependency=(from,to)=>graph.modules.some(m=>m.source===from&&m.dependencies.some(d=>!d.couldNotResolve&&resolve(root,d.resolved)===resolve(root,to)));
  assert.ok(dependency(nodeRoot,entry),'actual selected Node root must consume the light regression');
- assert.ok(dependency(contractRoot,aggregate),'full contracts must run on an existing root-dependency Node lane');
+ const heavyRoots=nodeRoots.filter(from=>dependency(from,aggregate));
+ assert.equal(heavyRoots.length,1,'full contracts must run on one installed root-dependency Node lane');
+ assert.equal(dependency(contractRoot,aggregate),false,'Brain-only patrol wrappers must not import root-dependency contracts');
  assert.equal(nodeRoots.filter(from=>dependency(from,factory)).length,1,'exactly one actual selected Node root must import factory regressions');
  const workflows=['.github/workflows/ci.yml','.github/workflows/implementation-impact.yml'].map(path=>yaml.load(readFileSync(join(root,path),'utf8')));
  for(const path of nodeRoots){

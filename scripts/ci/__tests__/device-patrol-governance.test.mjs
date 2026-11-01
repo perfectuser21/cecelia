@@ -1,4 +1,3 @@
-import './ci-admission-mechanisms.test.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {validatePatrolSecretIgnore,runDevicePatrolGate} from '../implementation-device-patrol-gate.mjs';
