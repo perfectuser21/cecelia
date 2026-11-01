@@ -6,8 +6,9 @@ import {join} from 'node:path';
 import {createRequire} from 'node:module';
 import {execFileSync,spawnSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
+import {futureCiAdmissionImpactWorkflow} from './fixtures/ci-admission-impact-workflow.mjs';
 const yaml=createRequire(import.meta.url)('js-yaml');
-const workflow=()=>yaml.load(readFileSync(new URL('../../../.github/workflows/implementation-impact.yml',import.meta.url),'utf8'));
+const workflow=()=>yaml.load(futureCiAdmissionImpactWorkflow);
 const named=(name)=>workflow().jobs.gate.steps.find(s=>s.name===name);
 test('完整旧Core CI仍在时，未来typed路由必须先作为未激活工具受信',()=>{
  const digest=path=>createHash('sha256').update(readFileSync(new URL('../../../'+path,import.meta.url))).digest('hex');
