@@ -1,5 +1,5 @@
 /** 已有工厂活动的只读消费者证据；不执行源码，也不声明完整流程可运行。 */
-import { collectBasicDiagnosticInputs, basicCiSelectorEnabled, collectBasicCiSources, collectDeepCiSources, skillExcludeSpread, deepPostgresDirectorySelected } from './existing-ops-workspace-source.js';
+import { collectNativeFutureImpactSources, collectBasicDiagnosticInputs, basicCiSelectorEnabled, collectBasicCiSources, collectDeepCiSources, skillExcludeSpread, deepPostgresDirectorySelected } from './existing-ops-workspace-source.js';
 import { createHash } from 'node:crypto';
 import { posix } from 'node:path';
 import yaml from 'js-yaml';
@@ -424,19 +424,21 @@ export async function buildExistingOpsSources({ scope, repo, revision, paths, re
         relations.push({ consumer_path: '.github/workflows/ci.yml', input_path: versionPath, kind: 'required_pr_bash_gate', revision });
     }
     // 老main没有新入口时保留旧证据；一旦入口存在，其真实条件流与所有依赖必须全部证明。
+    const nativeFuture=tree.has(IMPACT_WORKFLOW)?await collectNativeFutureImpactSources({basicCi,read,parse:ast,revision,relations}):null;
+    if(nativeFuture!==null)requireProof(nativeFuture,'native_future_impact_unproven');
     let multiWorkflow=false;
     if(tree.has(IMPACT_WORKFLOW)){
       const text=await readSource(IMPACT_WORKFLOW,revision);
       multiWorkflow=workflowRuns(text).some(step=>hash(step.run)===IMPACT_GATE_SHA256);
     }
-    if(!multiWorkflow&&tree.has(IMPACT_WORKFLOW)){
+    if(nativeFuture===null&&!multiWorkflow&&tree.has(IMPACT_WORKFLOW)){
       const workflow=await read(IMPACT_WORKFLOW),prPath='scripts/ci/implementation-pr-gate.mjs',gatePath='scripts/ci/implementation-gate.mjs';
       const pr=await read(prPath),gate=await read(gatePath);
       requireProof(workflow&&pr&&gate&&legacyImpactRunnerProven(workflow,pr,gate),'legacy_impact_runner_unproven');
       relations.push({consumer_path:IMPACT_WORKFLOW,input_path:prPath,kind:'direct_admission_runner',revision},
         {consumer_path:prPath,input_path:gatePath,kind:'reachable_named_import_call',revision});
     }
-    if(multiWorkflow){
+    if(nativeFuture===null&&multiWorkflow){
       const workflow=await read(IMPACT_WORKFLOW),entry=await read(MULTI_ENTRY),multi=await read(MULTI_SOURCE);
       const prPath='scripts/ci/implementation-pr-gate.mjs',gatePath='scripts/ci/implementation-gate.mjs';
       const pr=await read(prPath),gate=await read(gatePath);
