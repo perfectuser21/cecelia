@@ -1,4 +1,4 @@
-import {it,expect} from 'vitest';
+import {it,expect,afterAll} from 'vitest';
 import {extractWorkspaceCiSourceBundle,F3_IDENTITY} from '../workspace-ci-source-bundle.js';
 
 const source=()=>({workspace:{repo:'perfectuser21/zenithjoy-workspace',revision:'a'.repeat(40)},brain:{repo:'perfectuser21/cecelia',revision:'b'.repeat(40)},identity:{...F3_IDENTITY}});
@@ -19,6 +19,7 @@ import {readFileSync,mkdtempSync,rmSync,existsSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
+import {createRequire} from 'node:module';
 import {createHash} from 'node:crypto';
 import {load,dump} from 'js-yaml';
 import {execFileSync} from 'node:child_process';
@@ -28,16 +29,35 @@ const root=new URL('../../../../../',import.meta.url);
 // 未来协议只读已审原始数据；旧Core CI阶段的实际路由保持固定main原件。
 const currentFile=path=>path==='.github/workflows/implementation-impact.yml'?Buffer.from(futureCiAdmissionImpactWorkflow):readFileSync(new URL(path,root));
 const PUBLISHED='b217cd52336767b9637410ef921397a0e9297f2b';
-const publishedFile=(path,gitRoot=fileURLToPath(root))=>readFixedLocalGitBlob(gitRoot,{revision:PUBLISHED,path});
-function isolatedPublishedGit(consume){
+const require=createRequire(import.meta.url);
+const publishedObjects=require('./helpers/published-workspace-ci-git.json');
+function createPublishedGit(){
  const directory=mkdtempSync(join(tmpdir(),'workspace-published-git-'));
+ const close=()=>rmSync(directory,{recursive:true,force:true,maxRetries:3,retryDelay:20});
  const env=Object.fromEntries(Object.entries(process.env).filter(([key])=>!key.startsWith('GIT_')));
- const git=(...args)=>execFileSync('git',['--no-replace-objects','-c','core.hooksPath=/dev/null','-c','maintenance.auto=false','-c','gc.auto=0',...args],{cwd:directory,env});
+ Object.assign(env,{GIT_CONFIG_GLOBAL:'/dev/null',GIT_CONFIG_NOSYSTEM:'1',GIT_TERMINAL_PROMPT:'0',GIT_ALLOW_PROTOCOL:''});
+ const command=(args,input)=>execFileSync('git',['--no-replace-objects','-c','core.hooksPath=/dev/null','-c','maintenance.auto=false','-c','gc.auto=0',...args],{cwd:directory,env,input,stdio:['pipe','pipe','pipe']});
+ const git=(...args)=>command(args);
  try{
-  git('clone','--quiet','--shared','--no-checkout',fileURLToPath(root),'.');
-  consume({directory,git,env});
- }finally{rmSync(directory,{recursive:true,force:true});}
+  expect(publishedObjects.schema_version).toBe(1);expect(publishedObjects.revision).toBe(PUBLISHED);
+  expect(publishedObjects.objects).toHaveLength(8);
+  expect(publishedObjects.files).toEqual([
+   {path:'.github/workflows/implementation-impact.yml',sha1:'5a43bfd48709018ee641952747b15f3c949099f2'},
+   {path:'scripts/ci/implementation-skill-source.mjs',sha1:'2351ae6a69b066a7e15dbb17e2e6babc13a31305'},
+  ]);
+  git('init','--quiet');
+  for(const object of publishedObjects.objects){
+   expect(['commit','tree','blob']).toContain(object.type);const bytes=Buffer.from(object.content_base64,'base64');
+   expect(createHash('sha1').update(`${object.type} ${bytes.length}\0`).update(bytes).digest('hex')).toBe(object.sha1);
+   expect(command(['hash-object','-w','-t',object.type,'--stdin'],bytes).toString().trim()).toBe(object.sha1);
+  }
+  expect(git('rev-parse',PUBLISHED+'^{tree}').toString().trim()).toBe(publishedObjects.tree);
+  return {directory,git,env,close};
+ }catch(error){close();throw error;}
 }
+const published=createPublishedGit();afterAll(()=>published.close());
+const publishedFile=(path,gitRoot=published.directory)=>readFixedLocalGitBlob(gitRoot,{revision:PUBLISHED,path});
+function isolatedPublishedGit(consume){const fixture=createPublishedGit();try{return consume(fixture);}finally{fixture.close();}}
 const expectPublishedHelper=bytes=>expect(createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex')).toBe('2351ae6a69b066a7e15dbb17e2e6babc13a31305');
 it('固定published夹具自包含真实commit/tree与两blob，不依赖当前仓历史或远端',()=>{
  isolatedPublishedGit(({directory,git})=>{
