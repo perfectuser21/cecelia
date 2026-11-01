@@ -112,6 +112,9 @@ describe('alertness/healing', () => {
   });
 
   afterEach(() => {
+    vi.clearAllTimers();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
     vi.useRealTimers();
     vi.resetModules();
   });
@@ -367,4 +370,76 @@ describe('alertness/healing', () => {
       expect(result.entriesRemoved).toBe(0);
     });
   });
+
+  describe('旧路径迁入：真实恢复流程及动作产出', () => {
+    function isolatedQueries() {
+      const query = vi.fn(async sql => {
+        if (sql.includes('information_schema')) return { rows: [{ exists: true }], rowCount: 1 };
+        if (sql.includes('FROM error_logs')) return { rows: [{ count: '0' }], rowCount: 1 };
+        return { rows: [], rowCount: 0 };
+      });
+      mockConnect.mockResolvedValue({ query, release: mockRelease });
+      return query;
+    }
+
+    it('真实计时推进观察→25%→50%→75%→完成，而非仅检查阶段常量', async () => {
+      const query = isolatedQueries();
+      const gc = vi.fn();
+      vi.stubGlobal('gc', gc);
+      await startRecovery(['high_memory']);
+      await vi.advanceTimersByTimeAsync(299999);
+      expect(getRecoveryStatus()).toMatchObject({ phase: 1, capacity: 0, actionsExecuted: 0 });
+      expect(gc).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(getRecoveryStatus()).toMatchObject({ phase: 2, capacity: 25, actionsExecuted: 3 });
+      expect(gc).toHaveBeenCalledOnce();
+      expect(mockPoolQuery).toHaveBeenCalledWith(expect.stringContaining('pg_terminate_backend'));
+      await vi.advanceTimersByTimeAsync(600000);
+      expect(getRecoveryStatus()).toMatchObject({ phase: 3, capacity: 50 });
+      await vi.advanceTimersByTimeAsync(300000);
+      expect(getRecoveryStatus()).toMatchObject({ phase: 3, capacity: 75 });
+      await vi.advanceTimersByTimeAsync(1199999);
+      expect(getRecoveryStatus()).toMatchObject({ phase: 3, capacity: 75 });
+      await vi.advanceTimersByTimeAsync(1);
+      expect(getRecoveryStatus()).toMatchObject({ isRecovering: false, phase: 0, capacity: 100 });
+      expect(mockEmit).toHaveBeenCalledWith('healing:completed', { success: true });
+      const completion = query.mock.calls.find(([sql]) => sql.includes('UPDATE self_healing_log'));
+      expect(completion[1].slice(0, 2)).toEqual([true, 2400]);
+      expect(JSON.parse(completion[1][2]).map(action => action.action)).toEqual([
+        'force_garbage_collection', 'clear_expired_cache', 'compact_database_connections',
+        'force_garbage_collection', 'clear_expired_cache', 'compact_database_connections',
+      ]);
+      expect(mockExec).not.toHaveBeenCalled();
+    });
+
+    it('策略选择按优先级发出真实恢复计划，不受输入 issue 顺序影响', async () => {
+      isolatedQueries();
+      await startRecovery(['high_error_rate', 'queue_overflow', 'high_memory']);
+      const started = mockEmit.mock.calls.find(([event]) => event === 'healing:started');
+      expect(started[1].strategies.map(strategy => strategy.key)).toEqual(['memory_cleanup', 'queue_drainage', 'error_mitigation']);
+      expect(getRecoveryStatus()).toMatchObject({ phase: 1, strategiesApplied: 3, actionsExecuted: 0 });
+    });
+
+    it.each([
+      ['redistribute_tasks', { redistributed: 3 }, 'UPDATE tasks'],
+      ['cancel_duplicate_tasks', { duplicatesCanceled: 3 }, 'PARTITION BY title, goal_id, project_id'],
+      ['archive_old_tasks', { archived: 3 }, "status = 'archived'"],
+    ])('%s 返回实际 SQL 影响行数', async (action, expected, sqlFragment) => {
+      const query = vi.fn().mockResolvedValue({ rows: [], rowCount: 3 });
+      mockConnect.mockResolvedValue({ query, release: mockRelease });
+      const { executeAction } = await import('../../alertness/healing.js');
+      expect(await executeAction(action)).toEqual(expected);
+      expect(query).toHaveBeenCalledWith(expect.stringContaining(sqlFragment), ...(action === 'archive_old_tasks' ? [[]] : []));
+      expect(mockRelease).toHaveBeenCalledOnce();
+    });
+
+    it.each([
+      ['reset_process_pool', { poolReset: false, stub: true }],
+      ['switch_fallback_endpoints', { fallbackEnabled: false, stub: true }],
+    ])('%s 未实现时不得伪报恢复成功', async (action, expected) => {
+      const { executeAction } = await import('../../alertness/healing.js');
+      expect(await executeAction(action)).toEqual(expected);
+    });
+  });
+
 });

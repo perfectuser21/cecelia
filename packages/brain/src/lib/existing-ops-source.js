@@ -16,7 +16,7 @@ export const EXISTING_OPS_REPO = 'perfectuser21/cecelia';
 export const EXISTING_OPS_SCOPE = 'cecelia-factory';
 // 仅固定 Git 源携带此版本才扩展证据；旧冻结修订的消费者绑定必须保持原样。
 export const EXISTING_OPS_SELECTOR_SCHEMA = 2;
-export const EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = 0;
+export const EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = 1;
 export const EXISTING_OPS_RUNTIME_SELECTOR_SCHEMA = 1;
 export const EXISTING_OPS_BUILD_SELECTOR_SCHEMA = 1;
 export const EXISTING_OPS_AGGREGATE_SELECTOR_SCHEMA = 1;

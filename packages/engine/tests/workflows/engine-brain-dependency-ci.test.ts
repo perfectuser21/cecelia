@@ -6,11 +6,11 @@ const workflow = readFileSync(resolve(process.cwd(), '../../.github/workflows/ci
 
 describe('Engine CI cross-workspace dependency setup', () => {
   it('installs Brain and Engine dependencies atomically before Engine tests import Brain contracts', () => {
-    const engineJob = workflow.match(/^  engine-tests:\n([\s\S]*?)(?=^  [a-zA-Z0-9_-]+:\n)/m)?.[1] ?? '';
+    const engineJob = workflow.match(/^  checks:\n([\s\S]*?)(?=^  [a-zA-Z0-9_-]+:\n)/m)?.[1] ?? '';
     const workspaceInstall = engineJob.indexOf(
-      'npm ci --workspace=packages/brain --workspace=packages/engine --ignore-scripts',
+      'npm ci --ignore-scripts',
     );
-    const engineTests = engineJob.indexOf('npx vitest run');
+    const engineTests = engineJob.indexOf('node scripts/ci/run-basic-check.mjs');
 
     expect(workspaceInstall).toBeGreaterThanOrEqual(0);
     expect(engineJob).not.toContain('cd packages/engine && npm ci');

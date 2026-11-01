@@ -1,4 +1,14 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+
+const skillLoader = vi.hoisted(() => vi.fn(name => {
+  if (name !== 'harness-generator') throw new Error(`unexpected skill: ${name}`);
+  return 'NATIVE_GENERATOR_PRD_CONTENT_FIXTURE_9c1e';
+}));
+vi.mock('../harness-shared.js', async importOriginal => ({
+  ...await importOriginal(),
+  loadSkillContent: skillLoader,
+}));
+
 import { buildGeneratorPrompt } from '../harness-utils.js';
 
 const TASK = {
@@ -13,6 +23,7 @@ describe('buildGeneratorPrompt — prdContent injection', () => {
     const prompt = buildGeneratorPrompt(TASK, { prdContent: '# My PRD\nGoal: do stuff' });
     expect(prompt).toContain('## Sprint PRD');
     expect(prompt).toContain('# My PRD');
+    expect(prompt).toContain('NATIVE_GENERATOR_PRD_CONTENT_FIXTURE_9c1e');
   });
 
   it('omits Sprint PRD section when prdContent is null', () => {
@@ -32,5 +43,13 @@ describe('buildGeneratorPrompt — prdContent injection', () => {
     const prompt = buildGeneratorPrompt(TASK);
     expect(prompt).not.toContain('## Sprint PRD');
     expect(prompt).toContain('## DoD');
+  });
+
+  it('Skill provider失败时不能生成只有PRD/DoD的降级prompt', () => {
+    const failure = new Error('fixture missing harness-generator skill');
+    skillLoader.mockImplementationOnce(() => { throw failure; });
+    let received;
+    try { buildGeneratorPrompt(TASK, { prdContent: '# available PRD' }); } catch (error) { received = error; }
+    expect(received).toBe(failure);
   });
 });

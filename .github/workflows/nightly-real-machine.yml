@@ -1,12 +1,10 @@
-name: Nightly Real-Machine Smoke
+name: Staging Health Diagnostics
 
 # 每夜在真实机器（Tailscale 内网 staging，端口 5222）跑 smoke，
 # 提供常驻 Staging 的真机健康证据。
 
+# 历史/环境诊断按需运行；通用源码保障归 ci.yml，深度回归归 nightly-regression.yml。
 on:
-  schedule:
-    # 北京时间 22:00 (UTC 14:00)
-    - cron: '0 14 * * *'
   workflow_dispatch: {}
 
 concurrency:

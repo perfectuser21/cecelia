@@ -11,8 +11,8 @@
       "clone": "~/perfect21/cecelia-cw-runner",
       "worktree_base": "~/worktrees/cecelia-cw",
       "state_ns": "",
-      "required_checks": ["ci-passed", "Harness V5 Gate Passed", "Smoke Glob Runner Passed"],
-      "base_fresh_check": "lint-base-fresh",
+      "required_checks": ["源码保底通过"],
+      "base_fresh_check": null,
       "install": ["npm", "ci", "--legacy-peer-deps", "--ignore-scripts"],
       "qa_smoke": {
         "dir": "packages/brain/scripts/smoke",

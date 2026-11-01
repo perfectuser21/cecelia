@@ -5,6 +5,7 @@ import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync,execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 describe('implementation-ci-workflow',()=>{
 it('main显式来源环境只启用官方self main push和dispatch，冻结主run与PR来源保持',()=>{
  const workflow=yaml.load(readFileSync(new URL('../../../../../.github/workflows/implementation-impact.yml',import.meta.url),'utf8'));
@@ -25,15 +26,23 @@ it('正常Brain单测执行巡查可信baseline实际ZIP与治理行为回归',(
  expect(workflow.on.workflow_dispatch).toBeDefined();expect(JSON.stringify(workflow.jobs)).toContain('refs/heads/main');
  expect(JSON.stringify(workflow.jobs['device-patrol-baseline'])).not.toContain('--data-binary');expect(JSON.stringify(workflow.jobs['device-patrol-baseline'])).not.toContain('pull_request');
 });
-it('主CI集成入口安装根扫描器与Brain锁依赖，不能被子workspace安装裁剪',()=>{
+it('主CI集成入口安装根扫描器与Brain锁依赖，不能被子workspace安装裁剪',async()=>{
  const workflow=yaml.load(readFileSync(new URL('../../../../../.github/workflows/ci.yml',import.meta.url),'utf8'));
- const steps=workflow.jobs['brain-integration'].steps;
- const tests=steps.findIndex(s=>s.name==='Integration Tests');
- const installs=steps.slice(0,tests).filter(s=>/npm ci/.test(s.run||''));
+ const steps=workflow.jobs.checks.steps;
+ const tests=steps.findIndex(s=>s.run?.includes('node scripts/ci/run-basic-check.mjs'));
+ const installs=steps.slice(0,tests).filter(s=>!s.if&&/npm ci/.test(s.run||''));
  expect(installs.length).toBeGreaterThan(0);
  expect(installs.at(-1)['working-directory']||'.').toBe('.');
  expect(installs.at(-1).run.trim()).toMatch(/^npm ci(?: --(?:ignore-scripts|no-audit|no-fund))*$/);
- expect(steps[tests].run).toContain('src/__tests__/integration/');
+ expect(steps[tests].run).toContain('scripts/ci/run-basic-check.mjs');
+ const {commandsFor}=await import('../../../../../scripts/ci/run-basic-check.mjs');
+ const root=join(fileURLToPath(new URL('../../../../../',import.meta.url)),'.');
+ expect(commandsFor('brain-integration')).toEqual([
+  {cwd:root,command:'node',args:['scripts/ci/basic-runtime-smoke.mjs','--validate-only']},
+  {cwd:join(root,'packages/brain'),command:'node',args:['src/migrate.js']},
+  {cwd:root,command:'node',args:['--test','scripts/ci/__tests__/runtime-signal.integration.test.mjs']},
+  {cwd:root,command:'node',args:['scripts/ci/basic-runtime-smoke.mjs']},
+ ]);
 });
 it('实际PR/main触发存在，中央凭据只在main快照job，回归job不持Brain token',()=>{
   const path=new URL('../../../../../.github/workflows/implementation-impact.yml',import.meta.url);

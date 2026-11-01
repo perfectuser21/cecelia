@@ -1,8 +1,7 @@
 import { it, expect } from 'vitest';
 import { createHash } from 'node:crypto';
-import { execFileSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
 import { buildExistingOpsSources } from './helpers/existing-ops-proof-builder.js';
+import { readFixedExistingOpsGitFixture } from './helpers/fixed-existing-ops-git-fixture.js';
 const candidate={
   "source_revision": "ee851a5546bce56b00455e3efccf1a09fe526f0b",
   "blobs": {
@@ -24,13 +23,11 @@ const candidate={
     "packages/brain/src/lib/step-probe-spec.js": "c9c3e710368c0e57e7926b8a6c4a352efbb769210c45e00d13cb47729786f025"
   }
 };
-const root=fileURLToPath(new URL('../../../../../',import.meta.url));
-const git=(...args)=>execFileSync('git',['--no-replace-objects',...args],{cwd:root,encoding:'utf8',maxBuffer:32*1024*1024});
-const revision=git('rev-parse','HEAD').trim();
+const fixture = readFixedExistingOpsGitFixture();
+const { revision } = fixture;
 const sourcePath='packages/brain/src/lib/existing-ops-source.js';
-const paths=[...new Set([...git('ls-tree','-rz','--name-only',revision).replace(/\0$/,'').split('\0'),...Object.keys(candidate.blobs)])];
-const cache=new Map();
-const read=path=>{if(!cache.has(path))cache.set(path,candidate.blobs[path]??git('show',`${revision}:${path}`));return cache.get(path);};
+const paths=[...new Set([...fixture.paths,...Object.keys(candidate.blobs)])];
+const read=path=>candidate.blobs[path]??fixture.read(path);
 async function build({marker=1,patch={},missing}={}){
  const result=await buildExistingOpsSources({scope:'cecelia-factory',repo:'perfectuser21/cecelia',revision,paths,readSource:async path=>{
   if(path===missing)throw Error('missing fixed input');let text=patch[path]??read(path);
@@ -38,7 +35,7 @@ async function build({marker=1,patch={},missing}={}){
   return text;
  }});return result.consumers.find(c=>c.workflow_key==='factory_f3_ops');
 }
-it('固定nightly实际测试读取YAML并执行guard/apply；只证明回归消费者来源，不证明生产发布',async()=>{
+it('已知历史Git fixture 的nightly测试读取YAML并执行guard/apply；不证明当前候选或生产发布',async()=>{
  for(const[path,text]of Object.entries(candidate.blobs))expect(createHash('sha256').update(text).digest('hex')).toBe(candidate.blob_sha256[path]);
  const result=await build();expect(result.status,JSON.stringify(result.gaps)).toBe('verified');
  for(const path of Object.keys(candidate.blobs))expect(result.bindings).toContainEqual(expect.objectContaining({path,revision,digest:`sha256:${candidate.blob_sha256[path]}`}));

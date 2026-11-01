@@ -42,6 +42,10 @@ export CECELIA_INTERNAL_ENV_FILE
 # ── 部署状态文件：供 Brain 重启后感知 deploy 结果 ──────────────────────────
 DEPLOY_SUCCESS=false
 _write_deploy_status() {
+    # 只读诊断不属于部署事务；退出时也不能结算既有intent或覆盖真实部署状态。
+    if [[ "${DRY_RUN:-false}" == true || "${SHA_CHECK_ONLY:-false}" == true ]]; then
+        return 0
+    fi
     local retention_failed=false
     if [[ "$DEPLOY_SUCCESS" == "true" ]]; then
         retention_finish success || { DEPLOY_SUCCESS=false; retention_failed=true; }

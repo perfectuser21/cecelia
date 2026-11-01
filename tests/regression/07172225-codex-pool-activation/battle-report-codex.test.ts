@@ -28,12 +28,7 @@ describe('battle-report codex_test_gen 计数注入 [BEHAVIOR]', () => {
     // TDD Red: 注入前此测试 FAIL（渲染输出不含 codex 字样）
     try {
       // @ts-ignore
-      const { renderReport } = await import('../../../packages/brain/src/battle-report.js');
-      if (typeof renderReport !== 'function') {
-        // renderReport 函数可能命名不同，仅验证代码注入
-        expect(true).toBe(true);
-        return;
-      }
+      const { renderBattleReportMarkdown } = await import('../../../packages/brain/src/battle-report.js');
       // 构造最小测试数据（含 codex_test_gen 任务）
       const mockData = {
         mergedPrs: [],
@@ -50,10 +45,11 @@ describe('battle-report codex_test_gen 计数注入 [BEHAVIOR]', () => {
           codex_test_gen_24h: 2,  // 新增字段
         },
       };
-      const rendered = renderReport(mockData);
+      const rendered = renderBattleReportMarkdown(mockData);
       // 验证渲染结果包含 codex 相关计数信息
       const hasCodexMention = rendered.includes('codex') || rendered.includes('Codex') || rendered.includes('codex_test_gen');
       expect(hasCodexMention, `渲染结果未含 codex 字样: ${rendered.slice(0, 200)}`).toBe(true);
+      expect(rendered).toContain('codex_test_gen 24h 入队：2 个');
     } catch (e: unknown) {
       // 模块未修改或导出不匹配 → TDD Red 预期失败
       const errMsg = e instanceof Error ? e.message : String(e);

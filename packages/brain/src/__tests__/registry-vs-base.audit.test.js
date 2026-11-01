@@ -77,9 +77,9 @@ describe('registry-vs-base 审计脚本是 CI 棘轮（终审 I4）', () => {
 });
 
 // 用真实本地Git历史复现actions/checkout的depth语义，不替代上方正式基线审计。
-it('DoD动态命令的checkout必须能读取固定历史基线',()=>{
+it('基础CI检查的checkout必须能读取固定历史基线',()=>{
  const workflow=yaml.load(readFileSync(join(BRAIN_DIR,'../../.github/workflows/ci.yml'),'utf8'));
- const checkout=workflow.jobs['dod-behavior-dynamic'].steps.find(s=>s.uses?.startsWith('actions/checkout@'));
+ const checkout=workflow.jobs.checks.steps.find(s=>s.uses?.startsWith('actions/checkout@'));
  const depth=checkout.with?.['fetch-depth']??1;
  const root=mkdtempSync(join(tmpdir(),'dod-baseline-')),origin=join(root,'origin'),clone=join(root,'checkout');
  const git=(cwd,...args)=>execFileSync('git',args,{cwd,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();

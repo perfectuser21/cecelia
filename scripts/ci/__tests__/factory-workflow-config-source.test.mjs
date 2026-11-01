@@ -308,17 +308,14 @@ test('helper不能借死分支dynamic import、未selected reader或假reader路
  assert.throws(()=>derived(f,{readerPaths:{base:[],head:['../escape.test.js']}}),/VERIFICATION_INPUT/);
 });
 
-test('Phase A legacy multi CLI保留scopes并拒绝未发布typed foundation参数，不进入缺失模块',async t=>{
+test('typed multi CLI只接受显式PR双root与artifact目录，legacy scopes-file路径保留互斥',async t=>{
  const multi=await import('../implementation-multi-pr-gate.mjs'),root=fileURLToPath(new URL('../../../',import.meta.url)),output=mkdtempSync(join(tmpdir(),'derived-typed-cli-'));t.after(()=>rmSync(output,{recursive:true,force:true}));
  const common=['--repo-root',root,'--base','a'.repeat(40),'--head','b'.repeat(40),'--mode','pr','--output-dir',output];
- const scopes=join(output,'scopes.json');writeFileSync(scopes,'[]');
- assert.deepEqual(multi.parseImplementationMultiArgs([...common,'--scopes-file',scopes]).scopes,[]);
- assert.equal(multi.runImplementationCiAdmissionHandleGate,undefined);
- for(const typed of[['--tooling-root',root],['--ci-admission-input-dir',output],['--tooling-root',root,'--ci-admission-input-dir',output]]){
-  assert.throws(()=>multi.parseImplementationMultiArgs([...common,...typed]),/IMPACT_MULTISCOPE/);
-  assert.throws(()=>multi.parseImplementationMultiArgs([...common,'--scopes-file',scopes,...typed]),/IMPACT_MULTISCOPE/);
- }
- await assert.rejects(multi.runImplementationMultiPrGate({mode:'pr',outputDir:output,toolingRoot:root,ciAdmissionInputDir:output}),/IMPACT_MULTISCOPE/);
+ const typed=['--tooling-root',root,'--ci-admission-input-dir',output];
+ const options=multi.parseImplementationMultiArgs([...common,...typed]);
+ assert.equal(options.ciAdmissionInputDir,realpathSync(output));assert.equal(options.toolingRoot,realpathSync(root));assert.equal(options.scopes,undefined);
+ for(const args of[[...common,...typed,'--scopes-file',join(output,'scopes.json')],[...common,...typed.slice(0,2)],[...common,...typed.slice(2)],common.map(v=>v==='pr'?'main':v).concat(typed)])
+  assert.throws(()=>multi.parseImplementationMultiArgs(args),/IMPACT_MULTISCOPE/);
 });
 
 test('共享scratch的PR收集入口拒绝release/main和不完整固定来源，不自建或连接数据库',async()=>{
@@ -494,7 +491,8 @@ test('非执行变更缺失侧显式冻结absence，不能给已删除head造普
 test('退休合同CI登记逐项绑定真实退休实现且没有重复或错误角色', () => {
  const require = createRequire(import.meta.url);
  const {relations} = require('../../../.implementation-source-relations.json');
- for (const path of ['scripts/ci/__tests__/basic-verification-retirements.test.mjs', 'packages/brain/src/__tests__/ci-verification-retirement-contracts.test.js']) {
+ for (const path of ['scripts/ci/__tests__/basic-verification-retirements.test.mjs']) {
   assert.deepEqual(relations.filter(row => row.path === path), [{owner_path: 'scripts/ci/implementation-verification-retirements.mjs', path, role: 'verification'}]);
  }
+ for(const path of ['packages/brain/src/__tests__/ci-verification-retirement-contracts.test.js','packages/brain/src/__tests__/ci-admission-baseline-contracts.test.js'])assert.deepEqual(relations.filter(row=>row.path===path),[]);
 });

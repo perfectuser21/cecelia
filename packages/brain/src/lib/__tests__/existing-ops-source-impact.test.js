@@ -1,35 +1,40 @@
 import {it,expect} from 'vitest';
 import {createHash} from 'node:crypto';
-import {execFileSync} from 'node:child_process';
-import {fileURLToPath} from 'node:url';
 import {mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import yaml from 'js-yaml';
 import { buildExistingOpsSources } from './helpers/existing-ops-proof-builder.js';
-const root=fileURLToPath(new URL('../../../../../',import.meta.url));
-const revision=execFileSync('git',['rev-parse','HEAD'],{cwd:root,encoding:'utf8'}).trim();
-const paths=execFileSync('git',['ls-tree','-rz','--name-only',revision],{cwd:root,encoding:'utf8'}).split('\0').filter(Boolean);
-const cache=new Map();
-const read=path=>{if(!cache.has(path))cache.set(path,execFileSync('git',['show',`${revision}:${path}`],{cwd:root,encoding:'utf8',maxBuffer:16*1024*1024}));return cache.get(path);};
+import { fixtureGit, readFixedExistingOpsGitFixture } from './helpers/fixed-existing-ops-git-fixture.js';
+const { revision, paths, read } = readFixedExistingOpsGitFixture();
 const workflow='.github/workflows/implementation-impact.yml';
-it('巡查独立身份baseline保持当前真实Git F2/F3消费者协议',async()=>{
+it('已知历史Git fixture 保持 F2/F3 消费者来源协议',async()=>{
  const proof=await buildExistingOpsSources({scope:'cecelia-factory',repo:'perfectuser21/cecelia',revision,paths,readSource:async path=>read(path)});
  expect(proof.consumers.every(c=>c.status==='verified'),JSON.stringify(proof.consumers.map(c=>c.gaps))).toBe(true);
 });
-it('当前固定Git的未审部署与CI字节不得继承合法消费者资格',async()=>{
- const proof=await buildExistingOpsSources({scope:'cecelia-factory',repo:'perfectuser21/cecelia',revision,paths,readSource:async path=>{
-  const text=read(path);
-  if(path==='scripts/brain-deploy.sh')return text+'\necho unreviewed-deployment';
-  if(path==='.github/workflows/ci.yml')return 'name: unreviewed CI\njobs: {}\n';
-  return text;
- }});
- for(const consumer of proof.consumers){
-  expect(consumer.status).toBe('unknown');expect(consumer.gaps.length).toBeGreaterThan(0);
-  expect(consumer.bindings).toEqual([]);expect(consumer.input_relations).toEqual([]);
+
+it('当前HEAD的未审部署与CI字节不得继承历史Git fixture的消费者资格', async () => {
+ const candidate = readFixedExistingOpsGitFixture(fixtureGit('rev-parse', 'HEAD').trim());
+ expect(candidate.revision).not.toBe(revision);
+ const proof = await buildExistingOpsSources({scope:'cecelia-factory',repo:'perfectuser21/cecelia',
+  revision:candidate.revision,paths:candidate.paths,readSource:async path=>{
+   const text=candidate.read(path);
+   if(path==='scripts/brain-deploy.sh')return text+'\necho unreviewed-deployment';
+   if(path==='.github/workflows/ci.yml')return 'name: unreviewed CI\njobs: {}\n';
+   return text;
+  }});
+ expect(proof.revision).toBe(candidate.revision);
+ for (const consumer of proof.consumers) {
+  expect(consumer.status, JSON.stringify(consumer.gaps)).toBe('unknown');
+  expect(consumer.gaps.length).toBeGreaterThan(0);
+  expect(consumer.bindings).toEqual([]);
+  expect(consumer.input_relations).toEqual([]);
  }
- for(const workflow of proof.workflows){
-  expect(workflow.executable).toBe(false);expect(workflow.coverage.status).toBe('unknown');
+ expect(proof.consumers[0].gaps).toContainEqual({code:'isolated_staging_source_unproven'});
+ expect(proof.consumers[1].gaps.length).toBeGreaterThan(0);
+ for (const workflow of proof.workflows) {
+  expect(workflow.executable).toBe(false);
+  expect(workflow.coverage.status).toBe('unknown');
   expect(workflow.coverage.verified_reference_ids).toEqual([]);
  }
 });
@@ -140,7 +145,7 @@ it('被声明的入口源字节缺失仍UNKNOWN，不保留成功绑定',async()
 
 const legacyCliPath='scripts/ci/implementation-pr-gate.mjs';
 const reviewedLegacyRevision='5ac11b500b77dd7ccfd89e41d964ec786c83e225';
-const readReviewedLegacyCli=sha=>execFileSync('git',['--no-replace-objects','show',`${sha}:${legacyCliPath}`],{cwd:root,encoding:'utf8'});
+const readReviewedLegacyCli=sha=>fixtureGit('show',`${sha}:${legacyCliPath}`);
 const reviewedLegacyCli=readReviewedLegacyCli(reviewedLegacyRevision);
 function legacySingleDoc(){
  const doc=yaml.load(read(workflow));doc.jobs.gate.steps=[{run:legacyRun}];delete doc.jobs.gate.env.IMPLEMENTATION_MAIN_SCOPES;return doc;
@@ -164,7 +169,8 @@ it.each([reviewedLegacyRevision,'706f2e834afef562f4690a44e7fd1e3c80f25c83'])('�
  expect(f3.input_relations.some(r=>r.kind==='conditional_pr_admission_runner')).toBe(false);
 });
 it('当前新CLI不继承旧单scope recipe的历史审定资格',async()=>{
- const current=read(legacyCliPath).toString();expect(current).not.toBe(reviewedLegacyCli);
+ const candidate=readFixedExistingOpsGitFixture(fixtureGit('rev-parse','HEAD').trim());
+ const current=candidate.read(legacyCliPath).toString();expect(current).not.toBe(reviewedLegacyCli);
  const f3=await legacySingleProof(current);
  expect(f3.status).toBe('unknown');expect(f3.bindings).toEqual([]);expect(f3.input_relations).toEqual([]);
  expect(f3.gaps).toContainEqual(expect.objectContaining({code:'legacy_impact_runner_unproven'}));

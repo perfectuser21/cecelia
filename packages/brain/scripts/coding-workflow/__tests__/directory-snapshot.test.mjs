@@ -1,0 +1,54 @@
+import { afterEach, expect, it } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { directorySnapshot } from './helpers/directory-snapshot.mjs';
+import { git, gitPlain } from './helpers/git.mjs';
+import { childEnv } from '../lib/protocol.mjs';
+
+const roots = [], snapshots = [];
+afterEach(() => {
+  for (const snapshot of snapshots.splice(0)) snapshot.cleanup();
+  for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
+});
+it('快照副本并发提交与push互不污染，原仓删除后仍保留原始对象及凭证字节', async () => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'directory-snapshot-test-')));roots.push(root);
+  const origin = path.join(root, 'origin.git'), repo = path.join(root, 'repo');
+  gitPlain('init', '--bare', '-q', '-b', 'main', origin);gitPlain('init', '-q', '-b', 'main', repo);
+  git(repo, 'config', 'user.name', 'fixture');git(repo, 'config', 'user.email', 'fixture@example.invalid');
+  git(repo, 'config', 'core.hooksPath', '../no-hooks');
+  fs.writeFileSync(path.join(repo, 'product'), 'original');git(repo, 'add', '.');git(repo, 'commit', '-qm', 'original');
+  git(repo, 'remote', 'add', 'origin', '../origin.git');git(repo, 'push', '-q', 'origin', 'main');
+  const original = git(repo, 'rev-parse', 'HEAD').trim(), receipt = Buffer.from('{"id":"actual-sealed-event","bytes":"unaltered"}\n');
+  fs.writeFileSync(path.join(root, 'receipt.json'), receipt, { mode: 0o600 });
+  const snapshot = directorySnapshot(root);snapshots.push(snapshot);
+  const first = snapshot.fork(), second = snapshot.fork();roots.push(first, second);
+  expect(new Set([root, first, second]).size).toBe(3);
+  fs.rmSync(root, { recursive: true, force: true });
+  const firstRepo = path.join(first, 'repo'), secondRepo = path.join(second, 'repo');
+  fs.writeFileSync(path.join(firstRepo, 'product'), 'changed');git(firstRepo, 'add', '.');git(firstRepo, 'commit', '-qm', 'first only');git(firstRepo, 'push', '-q', 'origin', 'main');
+  expect(git(path.join(first, 'origin.git'), 'rev-parse', 'main').trim()).not.toBe(original);
+  expect(git(path.join(second, 'origin.git'), 'rev-parse', 'main').trim()).toBe(original);
+  expect(git(secondRepo, 'rev-parse', 'HEAD').trim()).toBe(original);
+  expect(fs.readFileSync(path.join(secondRepo, 'product'), 'utf8')).toBe('original');
+  expect(fs.readFileSync(path.join(first, 'receipt.json'))).toEqual(receipt);
+  fs.writeFileSync(path.join(first, 'receipt.json'), 'tampered');
+  expect(fs.readFileSync(path.join(second, 'receipt.json'))).toEqual(receipt);
+  expect(fs.statSync(path.join(second, 'receipt.json')).mode & 0o777).toBe(0o600);
+  const third = snapshot.fork();roots.push(third);
+  expect(git(path.join(third, 'repo'), 'rev-parse', 'HEAD').trim()).toBe(original);
+  expect(fs.readFileSync(path.join(third, 'receipt.json'))).toEqual(receipt);
+  const runGit = (repo, ...args) => promisify(execFile)('git', ['-C', repo, ...args], { env: childEnv() });
+  const pushChange = async (repo, text) => {
+    fs.writeFileSync(path.join(repo, 'product'), text);
+    await runGit(repo, 'add', '.');await runGit(repo, 'commit', '-qm', text);await runGit(repo, 'push', '-q', 'origin', 'main');
+    return (await runGit(repo, 'rev-parse', 'HEAD')).stdout.trim();
+  };
+  const [firstHead, secondHead] = await Promise.all([pushChange(firstRepo, 'parallel first'), pushChange(secondRepo, 'parallel second')]);
+  expect(firstHead).not.toBe(secondHead);
+  expect(git(path.join(first, 'origin.git'), 'rev-parse', 'main').trim()).toBe(firstHead);
+  expect(git(path.join(second, 'origin.git'), 'rev-parse', 'main').trim()).toBe(secondHead);
+  expect(git(path.join(third, 'repo'), 'rev-parse', 'HEAD').trim()).toBe(original);
+});

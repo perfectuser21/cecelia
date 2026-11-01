@@ -273,6 +273,14 @@ const CI_EDGE_TOOL_HASHES = {...CI_TOOL_HASHES,
 const CI_EDGE_ENABLED_HASHES = {...CI_EDGE_TOOL_HASHES,
  'existing-ops-source.js':'ce86445ef3bdfc826a1c257c44cd8d71f46157b0bfb38c39c40b175af7f5c131',
 };
+// Source3完整只读组合；旧四组保持，已审scratch提取的实际调用方也必须原子固定。
+const CI_ADMISSION_TOOL_HASHES = {...CI_EDGE_TOOL_HASHES,
+ '../../../../scripts/ci/implementation-snapshot.mjs':'3bd83218b5db7125a0af7c92bf916bb4bde5cc159905acd8746c263bac3e2511',
+ 'existing-ops-workspace-source.js':'41e4a5416b1e35523d6d1ea43658e1355ba8b30b7f2044dd5b0ab5b672ef402d',
+};
+const CI_ADMISSION_ENABLED_HASHES = {...CI_ADMISSION_TOOL_HASHES,
+ 'existing-ops-source.js':CI_EDGE_ENABLED_HASHES['existing-ops-source.js'],
+};
 const cache=new Map(), referenceCache=new Map();
 function hash(text,parse,shape){
  if(!cache.has(text))cache.set(text,createHash('sha256').update(shape(parse(text))).digest('hex'));
@@ -291,7 +299,7 @@ export function reviewedADataRanges(src,{file,sources,root,parse,shape,rows,deco
   const isRecovery=typeof build==='string'&&hash(build,parse,shape)===B_RECOVERY_QA_HASHES['existing-ops-build-source.js'];
   const isStaging=runtimeHash===B_STAGING_HASHES['existing-ops-runtime-source.js'];
   const isDrainStaging=runtimeHash===B_DRAIN_STAGING_HASHES['existing-ops-runtime-source.js'];
-  const ciTuple=[CI_TOOL_HASHES,CI_ENABLED_HASHES,CI_EDGE_TOOL_HASHES,CI_EDGE_ENABLED_HASHES].find(tuple=>Object.entries(tuple).every(([name,digest])=>{
+  const ciTuple=[CI_TOOL_HASHES,CI_ENABLED_HASHES,CI_EDGE_TOOL_HASHES,CI_EDGE_ENABLED_HASHES,CI_ADMISSION_TOOL_HASHES,CI_ADMISSION_ENABLED_HASHES].find(tuple=>Object.entries(tuple).every(([name,digest])=>{
    const text=sources.get(path.join(root,name));return typeof text==='string'&&hash(text,parse,shape)===digest;
   }));
   if(isRecovery&&!isQa&&!isStaging&&!isDrainStaging&&!ciTuple)return null;
@@ -343,6 +351,12 @@ export function registerReviewedAGuardTests({ BRAIN_ROOT, findClaudeInvocations 
    const source=path.join(root,'existing-ops-source.js');
    for(const marker of [0,1]){const variant=new Map(published);variant.set(source,variant.get(source).replace('EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = 0','EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = '+marker));expect(scan(variant)).toEqual([]);}
    for(const name of ['source','workspace-source','stage-source']){const f=path.join(root,`existing-ops-${name}.js`),mixed=base();mixed.set(f,published.get(f));expect(scan(mixed).some(h=>h.rule==='E1')).toBe(true);}
+  });
+  it('公开Source8原子marker0/1组合保留，新profile未知变体不借旧tuple',()=>{
+   const published=new Map([...base().keys()].map(f=>[f,execFileSync('git',['show','b217cd52336767b9637410ef921397a0e9297f2b:'+path.relative(path.resolve(BRAIN_ROOT,'../..'),f)],{cwd:BRAIN_ROOT,encoding:'utf8',maxBuffer:1024*1024})]));
+   const source=path.join(root,'existing-ops-source.js');
+   for(const marker of [0,1]){const variant=new Map(published);variant.set(source,variant.get(source).replace('EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = 0','EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = '+marker));expect(scan(variant)).toEqual([]);}
+   const forged=new Map(published),workspace=path.join(root,'existing-ops-workspace-source.js');forged.set(workspace,base().get(workspace)+'\nexport const unreviewedProfile=true;');expect(scan(forged).some(h=>h.rule==='E1')).toBe(true);
   });
   it.each(['eval','raw export','process'])('移动至workspace的helper出现%s仍失败关闭',kind=>{
    const s=base(),file=path.join(root,'existing-ops-workspace-source.js');

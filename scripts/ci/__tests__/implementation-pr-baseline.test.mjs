@@ -134,5 +134,7 @@ test('正式PR入口执行selector且原双scope/固定工具/Skill缓存保留�
  const gate=steps.find(s=>s.name==='实际变更影响与固定回归');assert.match(gate.run,/node tooling\/scripts\/ci\/implementation-multi-pr-gate.mjs/);assert.match(gate.run,/--base "\$BASE" --head "\$HEAD"/);
  assert.match(steps.find(s=>s.id==='skill-cache').run,/--prepare-ci-cache "\$GITHUB_WORKSPACE\/source" "\$SOURCE_REPO" "\$BASE" "\$HEAD"/);
  assert.match(readFileSync(join(root,'scripts/ci/__tests__/implementation-main-snapshot.test.mjs'),'utf8'),/import '\.\/implementation-pr-baseline.test.mjs'/);
- const ci=yaml.load(readFileSync(join(root,'.github/workflows/ci.yml'),'utf8'));assert.ok(Object.values(ci.jobs).some(job=>job.steps?.some(s=>s.run?.includes('node --test scripts/ci/__tests__/implementation-main-snapshot.test.mjs'))));
+ const regression=steps.find(s=>s.run==='node --test scripts/ci/__tests__/implementation-main-snapshot.test.mjs scripts/ci/__tests__/workspace-ci-source-bundle.test.mjs scripts/ci/__tests__/implementation-skill-source.test.mjs scripts/ci/__tests__/device-patrol-governance.test.mjs');
+ assert.ok(regression,'来源机制回归仍由必需来源检查自动执行');assert.equal(regression['working-directory'],'source');
+ assert.equal(regression.if,"github.repository == 'perfectuser21/cecelia' && (!inputs.source_repo || inputs.source_repo == github.repository)");assert.equal(regression['continue-on-error'],undefined);
 });

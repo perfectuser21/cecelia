@@ -1,69 +1,61 @@
-import { describe, test, expect, beforeEach, afterEach } from 'vitest';
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
+import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import ts from 'typescript';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-// D1.7b: executeTick body 移到 tick-runner.js，意识守护检查随之
-const TICK_PATH = path.resolve(__dirname, '../tick-runner.js');
+const source = readFileSync(new URL('../tick-runner.js', import.meta.url), 'utf8');
+const guarded = [
+  'generateDailyDiaryIfNeeded', 'runRumination', 'collectSelfReport', 'feedDailyIfNeeded',
+  'runSynthesisSchedulerIfNeeded', 'runSuggestionCycle', 'runConversationConsolidator',
+  'runDesireSystem', 'synthesizeEvolutionIfNeeded',
+];
 
-describe('tick consciousness guard - static source enforcement', () => {
-  let src;
+// 证明真实调用位于条件为真的语法分支，邻近注释/空if/else不能提供保护。
+function callsIn(text, name) {
+  const tree = ts.createSourceFile('tick.js', text, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+  expect(tree.parseDiagnostics).toHaveLength(0);
+  const calls = [];
+  function walk(node) {
+    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === name) {
+      let protectedCall = false;
+      for (let child = node, parent = node.parent; parent; child = parent, parent = parent.parent) {
+        if (!ts.isIfStatement(parent) || parent.thenStatement !== child) continue;
+        const condition = parent.expression;
+        if (ts.isCallExpression(condition) && ts.isIdentifier(condition.expression)
+          && condition.expression.text === 'isConsciousnessEnabled' && condition.arguments.length === 0) {
+          protectedCall = true;
+        }
+      }
+      calls.push(protectedCall);
+    }
+    ts.forEachChild(node, walk);
+  }
+  walk(tree);
+  return calls;
+}
 
-  beforeEach(() => {
-    src = fs.readFileSync(TICK_PATH, 'utf8');
+describe('意识副作用的控制流保护', () => {
+  it.each(guarded)('%s的全部真实调用位于启用分支', name => {
+    const calls = callsIn(source, name);
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls.every(Boolean)).toBe(true);
   });
 
-  // 静态分析：确保每个意识模块调用前 50 行内有 isConsciousnessEnabled() 守护
-  const guardedCalls = [
-    'generateDailyDiaryIfNeeded',
-    'runRumination',
-    'collectSelfReport',
-    'feedDailyIfNeeded',
-    'runSynthesisSchedulerIfNeeded',
-    'runSuggestionCycle',
-    'runConversationConsolidator',
-    'runDesireSystem',
-    'scanEvolutionIfNeeded',
-    'synthesizeEvolutionIfNeeded',
-  ];
+  it.each(['evaluateEmotion', 'scanEvolutionIfNeeded'])('%s按现行纯计算/非LLM政策保持可执行', name => {
+    const calls = callsIn(source, name);
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls.every(value => !value)).toBe(true);
+  });
 
-  for (const fn of guardedCalls) {
-    test(`${fn} 调用点被 isConsciousnessEnabled() 守护`, () => {
-      const lines = src.split('\n');
-      const callLines = lines
-        .map((l, i) => (l.includes(fn + '(') && !l.trim().startsWith('import') ? i : -1))
-        .filter(i => i >= 0);
+  it('同一个保护块可以包含超过50行，也可包含异步回调', () => {
+    expect(callsIn(`if (isConsciousnessEnabled()) { ${'\n'.repeat(60)} Promise.resolve().then(() => runRumination(pool)); }`, 'runRumination')).toEqual([true]);
+  });
 
-      expect(callLines.length, `期望至少 1 处 ${fn}() 调用`).toBeGreaterThan(0);
-
-      for (const idx of callLines) {
-        const context = lines.slice(Math.max(0, idx - 50), idx + 1).join('\n');
-        expect(
-          context,
-          `${fn} 在 tick-runner.js line ${idx + 1} 必须在 isConsciousnessEnabled() 守护块内（前 50 行）`
-        ).toMatch(/isConsciousnessEnabled\(\)/);
-      }
-    });
-  }
-
-  test('evaluateEmotion 不被守护（纯函数，派发依赖）', () => {
-    // 反向断言：evaluateEmotion 调用前后 3 行内不应有 isConsciousnessEnabled()
-    // 因为 spec §3.4 明确排除在守护清单外
-    const lines = src.split('\n');
-    const callLines = lines
-      .map((l, i) => (l.includes('evaluateEmotion(') && !l.trim().startsWith('import') ? i : -1))
-      .filter(i => i >= 0);
-
-    if (callLines.length === 0) return; // 可能未被当前调用
-
-    for (const idx of callLines) {
-      // 只检查紧邻 3 行范围（避免和其它守护块的 isConsciousnessEnabled 重合）
-      const near = lines.slice(Math.max(0, idx - 3), Math.min(lines.length, idx + 3)).join('\n');
-      expect(
-        near,
-        `evaluateEmotion line ${idx + 1} 不应被直接包裹在 isConsciousnessEnabled 守护里（破坏 dispatch_rate_modifier 派发链）`
-      ).not.toMatch(/if\s*\(\s*isConsciousnessEnabled\(\)\s*\)\s*\{\s*[\r\n]+\s*evaluateEmotion/);
-    }
+  it.each([
+    'if (isConsciousnessEnabled()) {} runRumination(pool);',
+    '// isConsciousnessEnabled()\nrunRumination(pool);',
+    'if (isConsciousnessEnabled()) {} else { runRumination(pool); }',
+    'if (!isConsciousnessEnabled()) { runRumination(pool); }',
+  ])('空保护/注释/反向分支不能伪造已受保护：%s', text => {
+    expect(callsIn(text, 'runRumination')).toEqual([false]);
   });
 });

@@ -89,35 +89,35 @@ tests:
   # — alertness 系统（Brain 活跃模块，tick loop 每次调用）——————————————————————
 
   - id: alertness-diagnosis
-    path: tests/alertness/diagnosis.test.js
+    path: packages/brain/src/__tests__/alertness/diagnosis.test.js
     type: unit
     ci: L3
     status: active
-    note: "问题诊断、趋势分析、异常预测"
+    note: "实际异常模式识别、严重度及建议动作"
 
   - id: alertness-escalation
-    path: tests/alertness/escalation.test.js
+    path: packages/brain/src/__tests__/alertness/escalation.test.js
     type: unit
     ci: L3
     status: active
     note: "4级响应体系(L0/L1/L2/L3)触发逻辑"
 
   - id: alertness-healing
-    path: tests/alertness/healing.test.js
+    path: packages/brain/src/__tests__/alertness/healing.test.js
     type: unit
     ci: L3
     status: active
     note: "自愈策略定义、恢复阶段"
 
   - id: alertness-levels
-    path: tests/alertness/levels.test.js
+    path: packages/brain/src/__tests__/alertness/levels.test.js
     type: unit
     ci: L3
     status: active
     note: "5级警觉等级状态转换"
 
   - id: alertness-metrics
-    path: tests/alertness/metrics.test.js
+    path: packages/brain/src/__tests__/alertness/metrics.test.js
     type: unit
     ci: L3
     status: active
@@ -386,3 +386,24 @@ tests:
     ci: L4
     status: active
     note: "真实PG验证typed依赖、固定槽位快照、契约换构建、独立模型代码、不可变组合、并发封存与结构漂移。"
+
+  - id: ci-admission-bootstrap-smoke
+    path: packages/brain/scripts/smoke/ci-admission-bootstrap-smoke.sh
+    type: integration
+    ci: L4
+    status: active
+    note: "Node22 实跑本地 Git、原 ZIP、发布身份 API 夹具和子进程合同；无 PG、线上身份或发布资格。"
+
+  - id: ci-admission-feature-smoke-contract
+    path: scripts/ci/__tests__/basic-ci-admission-feature-smoke.test.mjs
+    type: integration
+    ci: L4
+    status: active
+    note: "统一源码CI真实运行 smoke，验证 Node22、环境隔离与非零退出传播。"
+
+  - id: ci-admission-native-entry
+    path: scripts/ci/__tests__/basic-ci-admission-native-entry.test.mjs
+    type: integration
+    ci: L3
+    status: active
+    note: "来源机制Node根真实调用publisher/builder身份拒绝与worker错误argv，并验证workflow/静态源图；无PG或四条登记命令。"

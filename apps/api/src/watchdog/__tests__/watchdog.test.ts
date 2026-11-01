@@ -7,6 +7,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { spawn, type SpawnOptions } from 'child_process';
 import {
   registerAgent,
   unregisterAgent,
@@ -20,42 +21,55 @@ import {
   getConfig,
   updateConfig,
   clearAllAgents,
-  WatchedAgent,
 } from '../service.js';
 
-// Test directory for output files
-const TEST_DIR = path.join(os.tmpdir(), 'watchdog-test');
+// The patrol implementation remains real. Replace only its process boundary with
+// a real, owned Node child; no external cecelia-patrol binary can be launched.
+const patrolBoundary = vi.hoisted(() => ({
+  script: '', receipt: '', completions: [] as Array<Promise<number | null>>,
+}));
+vi.mock('child_process', async importOriginal => {
+  const actual = await importOriginal<typeof import('child_process')>();
+  const controlledSpawn = vi.fn((command: string, args: string[], options: SpawnOptions) => {
+    if (command !== 'cecelia-patrol' || !patrolBoundary.script) throw new Error(`Unexpected child command: ${command}`);
+    const child = actual.spawn(process.execPath, [patrolBoundary.script, ...args], {
+      ...options, env: { ...process.env, WATCHDOG_TEST_RECEIPT: patrolBoundary.receipt },
+    });
+    patrolBoundary.completions.push(new Promise(resolve => {
+      const timeout = setTimeout(() => { child.kill('SIGTERM'); }, 3000);
+      child.once('close', code => { clearTimeout(timeout); resolve(code); });
+    }));
+    return child;
+  });
+  // Both ESM and CommonJS default consumption must use the controlled boundary.
+  return { ...actual, spawn: controlledSpawn, default: { ...actual, spawn: controlledSpawn } };
+});
+let TEST_DIR: string;
 
 describe('Watchdog Service', () => {
   beforeEach(() => {
-    // Create test directory
-    if (!fs.existsSync(TEST_DIR)) {
-      fs.mkdirSync(TEST_DIR, { recursive: true });
-    }
-
-    // Clear all agents before each test
+    vi.clearAllMocks();
+    TEST_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'cecelia-watchdog-test-'));
+    patrolBoundary.script = path.join(TEST_DIR, 'patrol-child.cjs');
+    patrolBoundary.receipt = path.join(TEST_DIR, 'patrol-receipt.json');
+    patrolBoundary.completions = [];
+    fs.writeFileSync(patrolBoundary.script, `
+      require('node:fs').writeFileSync(process.env.WATCHDOG_TEST_RECEIPT,
+        JSON.stringify({ argv: process.argv.slice(2), pid: process.pid }));
+    `);
     clearAllAgents();
-
-    // Stop monitor if running
     stopMonitor();
+    updateConfig({ checkIntervalMs: 10000, defaultTimeoutSeconds: 120 });
   });
 
-  afterEach(() => {
-    // Cleanup test files
-    try {
-      if (fs.existsSync(TEST_DIR)) {
-        const files = fs.readdirSync(TEST_DIR);
-        for (const file of files) {
-          fs.unlinkSync(path.join(TEST_DIR, file));
-        }
-        fs.rmdirSync(TEST_DIR);
-      }
-    } catch {
-      // Ignore cleanup errors
-    }
-
-    // Stop monitor
+  afterEach(async () => {
     stopMonitor();
+    try {
+      expect(await Promise.all(patrolBoundary.completions)).toEqual(patrolBoundary.completions.map(() => 0));
+    } finally {
+      clearAllAgents();
+      fs.rmSync(TEST_DIR, { recursive: true, force: true });
+    }
   });
 
   describe('Agent Registration', () => {
@@ -190,24 +204,11 @@ describe('Watchdog Service', () => {
       expect(result.message).toContain('not found');
     });
 
-    it.skip('triggers patrol for existing agent', async () => {
+    it('triggers patrol for existing agent', async () => {
       const outputFile = path.join(TEST_DIR, 'patrol-test.output');
       fs.writeFileSync(outputFile, 'output');
 
       registerAgent('patrol-agent', outputFile);
-
-      // Mock the spawn to avoid actually running cecelia-patrol
-      vi.mock('child_process', async (importOriginal) => {
-        const actual = await importOriginal<typeof import('child_process')>();
-        return {
-          ...actual,
-          default: actual,
-          spawn: vi.fn(() => ({
-            unref: vi.fn(),
-          })),
-          execSync: vi.fn(),
-        };
-      });
 
       const result = await triggerPatrol('patrol-agent');
 
@@ -215,6 +216,12 @@ describe('Watchdog Service', () => {
       expect(result.message).toContain('Patrol triggered');
       expect(result.agent).toBeDefined();
       expect(result.agent!.status).toBe('triggered');
+      expect(spawn).toHaveBeenCalledWith('cecelia-patrol', ['--task-id', 'patrol-agent'], { detached: true, stdio: 'ignore' });
+      expect(await Promise.all(patrolBoundary.completions)).toEqual([0]);
+      const receipt = JSON.parse(fs.readFileSync(patrolBoundary.receipt, 'utf8'));
+      expect(receipt.argv).toEqual(['--task-id', 'patrol-agent']);
+      expect(receipt.pid).toBeGreaterThan(0);
+      expect(receipt.pid).not.toBe(process.pid);
     });
 
     it('updates agent status to triggered', async () => {

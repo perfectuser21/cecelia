@@ -9,6 +9,10 @@ import {createHash} from 'node:crypto';
 import {readNativeConsumerRuntime} from '../../../packages/brain/src/lib/native-consumer-runtime.js';
 import {inspectRecoveryRuntime,verifyRecoveryAuthority,sealRecoveryBundle,assertRecoveryPurpose,assertRecoveryDispatch,validateSourceDelta,RECOVERY_BRIDGE} from '../implementation-source-recovery.mjs';
 const repo='perfectuser21/cecelia',hash=x=>createHash('sha256').update(x).digest('hex');
+// 恢复机制用不可变已审部署字节；当前源码候选不能借夹具获得恢复资格。
+const sourceRoot=fileURLToPath(new URL('../../../',import.meta.url));
+const reviewedDeploy=execFileSync('git',['show','e3a01021ee7100b83d8ed5a0be219d0b543b5dff:scripts/brain-deploy.sh'],{cwd:sourceRoot});
+assert.equal(hash(reviewedDeploy),'a77963695be92a5e55f6a5260c283d1d18ce6ce7398be8915d39ea49380e059e');
 const dir=mkdtempSync(join(tmpdir(),'source-recovery-'));
 const git=(...args)=>execFileSync('git',args,{cwd:dir,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
 git('init','-q');git('config','user.name','Fixture');git('config','user.email','fixture@example.invalid');git('config','core.hooksPath','/dev/null');
@@ -17,7 +21,7 @@ const paths=readNativeConsumerRuntime().files.map(f=>f.path);
 for(const p of [...paths,'scripts/lib/brain-staging.sh','scripts/brain-deploy.sh']){mkdirSync(dirname(join(dir,p)),{recursive:true});writeFileSync(join(dir,p),`// original ${p}\n`);}
 mkdirSync(join(dir,'.github/workflows'),{recursive:true});writeFileSync(join(dir,'.github/workflows/implementation-impact.yml'),'jobs:\n  gate:\n    name: fixed-base-gate\n');
 writeFileSync(join(dir,'.github/workflows/ci.yml'),'jobs:\n  lint-auto-merge-decision:\n    steps:\n      - uses: actions/checkout@v4\n');writeFileSync(join(dir,'packages/brain/package.json'),'{}');git('add','.');git('commit','-qm','base');const base=git('rev-parse','HEAD');
-writeFileSync(join(dir,paths[0]),'// reviewed collector\n');writeFileSync(join(dir,'packages/brain/package.json'),JSON.stringify({cecelia_source_only:true}));writeFileSync(join(dir,'scripts/brain-deploy.sh'),readFileSync(new URL('../../../scripts/brain-deploy.sh',import.meta.url)));git('add','.');git('commit','-qam','merged source-only');const head=git('rev-parse','HEAD');
+writeFileSync(join(dir,paths[0]),'// reviewed collector\n');writeFileSync(join(dir,'packages/brain/package.json'),JSON.stringify({cecelia_source_only:true}));writeFileSync(join(dir,'scripts/brain-deploy.sh'),reviewedDeploy);git('add','.');git('commit','-qam','merged source-only');const head=git('rev-parse','HEAD');
 test.after(()=>rmSync(dir,{recursive:true,force:true}));
 const identity={schema_version:1,repo,git_sha:base,files:paths.map(path=>({path,sha256:hash(`// original ${path}\n`)}))};
 const opts={repoRoot:dir,base,head};
@@ -179,7 +183,7 @@ bg('config','user.name','Fixture');bg('config','user.email','fixture@example.inv
 bg('sparse-checkout','set','--no-cone','/packages/brain/package.json','/scripts/brain-deploy.sh');bg('checkout','-q','--detach',RECOVERY_BRIDGE.directBase);
 const manifest=JSON.parse(readFileSync(join(bridgeRoot,'packages/brain/package.json')));manifest.cecelia_source_only=true;
 writeFileSync(join(bridgeRoot,'packages/brain/package.json'),JSON.stringify(manifest,null,2)+'\n');
-writeFileSync(join(bridgeRoot,'scripts/brain-deploy.sh'),readFileSync(join(realRoot,'scripts/brain-deploy.sh')));
+writeFileSync(join(bridgeRoot,'scripts/brain-deploy.sh'),reviewedDeploy);
 bg('commit','-qam','reviewed source-only fixture');const bridgeHead=bg('rev-parse','HEAD');
 test.after(()=>rmSync(bridgeRoot,{recursive:true,force:true}));
 function bridgeApi({mutate=()=>{},head=bridgeHead}={}){
