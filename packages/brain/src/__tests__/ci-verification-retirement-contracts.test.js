@@ -4,6 +4,19 @@ import {fileURLToPath} from 'node:url';
 
 const repoRoot = fileURLToPath(new URL('../../../../', import.meta.url));
 
+function verifyRetirementContracts(result) {
+  const evidence = `${result.stdout || ''}\n${result.stderr || ''}`;
+  expect(result.error, evidence).toBeUndefined();
+  expect(result.signal, evidence).toBeNull();
+  expect(result.status, evidence).toBe(0);
+  expect(evidence).toMatch(/# tests 36\b/);
+  expect(evidence).toMatch(/# fail 0\b/);
+  expect(evidence).toMatch(/# skipped 0\b/);
+  expect(evidence).toMatch(/# pass 36\b/);
+  expect(evidence).toMatch(/# cancelled 0\b/);
+  expect(evidence).toMatch(/# todo 0\b/);
+}
+
 it('真实执行36项验证输入退休合同，保持非数据库验收边界', () => {
   const result = spawnSync(process.execPath, [
     '--test', 'scripts/ci/__tests__/basic-verification-retirements.test.mjs',
@@ -14,13 +27,7 @@ it('真实执行36项验证输入退休合同，保持非数据库验收边界',
     maxBuffer: 8 * 1024 * 1024,
     env: {...process.env, POSTGRES_INTEGRATION: '0'},
   });
-  const evidence = `${result.stdout || ''}\n${result.stderr || ''}`;
-  expect(result.error, evidence).toBeUndefined();
-  expect(result.signal, evidence).toBeNull();
-  expect(result.status, evidence).toBe(0);
-  expect(evidence).toMatch(/# tests 36\b/);
-  expect(evidence).toMatch(/# fail 0\b/);
-  expect(evidence).toMatch(/# skipped 0\b/);
+  verifyRetirementContracts(result);
 }, 150000);
 
 it('合同执行分母拒绝todo、取消或不足36个真实通过', () => {
