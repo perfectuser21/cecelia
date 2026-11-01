@@ -1,3 +1,4 @@
+import {frozenFutureGit} from './helpers/future-active-git.js';
 import {it,expect} from 'vitest';
 import {createHash} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
@@ -220,4 +221,13 @@ it('真实当前CLI只有mainScopes缺省才走单scope，false或空值仍进�
  try{for(const [label,extra,code]of [['absent',{},'IMPLEMENTATION_CI_INPUT_INVALID'],['undefined',{mainScopes:undefined},'IMPLEMENTATION_CI_INPUT_INVALID'],['false',{mainScopes:false},'IMPLEMENTATION_MAIN_SCOPES_INVALID'],['empty',{mainScopes:''},'IMPLEMENTATION_MAIN_SCOPES_INVALID']])
   await expect(runImplementationPrGate({mode:'main',scope:'cecelia-kr',outputDir:join(dir,label),...extra})).rejects.toMatchObject({code});
  }finally{rmSync(dir,{recursive:true,force:true});}
+});
+
+const frozenProfile=frozenFutureGit(root);
+it('自身future CI完整原件必须由raw F3 collector证明typed准入调用链',async()=>{
+ const {revision:future,paths:futurePaths,read:futureRead}=frozenProfile;
+ const proof=await buildExistingOpsSources({scope:'cecelia-factory',repo:'perfectuser21/cecelia',revision:future,paths:futurePaths,readSource:futureRead});
+ expect(proof.consumers[1].status,JSON.stringify(proof.consumers[1].gaps)).toBe('verified');
+ expect(proof.consumers[1].input_relations).toContainEqual(expect.objectContaining({consumer_path:workflow,input_path:entry,kind:'ci_admission_only_native_pr_runner'}));
+ expect(proof.workflows.every(w=>w.executable===false&&w.coverage.status==='unknown')).toBe(true);
 });
