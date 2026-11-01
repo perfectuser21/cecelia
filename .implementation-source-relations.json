@@ -4,6 +4,11 @@
   "relations": [
     {
       "owner_path": "packages/brain/scripts/coding-workflow/runner/run-once.mjs",
+      "path": "packages/brain/scripts/coding-workflow/runner/__tests__/runner-sh.test.mjs",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/scripts/coding-workflow/runner/run-once.mjs",
       "path": "sprints/10272102-cw-b3d6f213/05-qa-report-r7.md",
       "role": "documentation"
     },

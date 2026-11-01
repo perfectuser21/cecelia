@@ -359,6 +359,8 @@ fs.writeFileSync(${JSON.stringify(marker)}, JSON.stringify([process.pid,child.pi
     let zjOrigin;
     let zjSeed;
     let zjClone;
+    let skillsOrigin;
+    let skillsClone;
     let reposFile;
 
     const commitZj = (msg) => {
@@ -386,17 +388,37 @@ fs.writeFileSync(${JSON.stringify(marker)}, JSON.stringify([process.pid,child.pi
       git(zjSeed, 'config', 'core.hooksPath', path.join(root, 'no-hooks'));
       git(zjSeed, 'remote', 'add', 'origin', zjOrigin);
       commitZj('z1');
+      skillsOrigin = path.join(root, 'skills.git');
+      skillsClone = path.join(root, 'skills-clone');
+      gitPlain('clone', '--bare', '-q', zjSeed, skillsOrigin);
       const real = JSON.parse(fs.readFileSync(path.join(HERE, '../../repos.json'), 'utf8')).repos;
       const z = real.find((r) => r.key === 'zenithjoy-workspace');
       reposFile = path.join(root, 'repos.json');
-      fs.writeFileSync(reposFile, JSON.stringify({ repos: [...real.filter((r) => r.key !== z.key),
+      const localRepos = real.filter((r) => r.key !== z.key).map((r) => {
+        if (r.key === 'cecelia') return { ...r, origin, clone, worktree_base: path.join(root, 'wt-cecelia') };
+        if (r.key === 'zenithjoy-skills') return { ...r, origin: skillsOrigin, clone: skillsClone, worktree_base: path.join(root, 'wt-skills') };
+        return r;
+      });
+      fs.writeFileSync(reposFile, JSON.stringify({ repos: [...localRepos,
         { ...z, key: 'zj', aliases: ['zj'], slug: 'acme/zj', origin: zjOrigin, clone: zjClone, worktree_base: path.join(root, 'wt-zj'), state_ns: 'zj', enabled: true }] }));
+    });
+
+    it('所有启用仓库的 origin 和 clone 均限定在测试沙箱内', () => {
+      const repos = JSON.parse(fs.readFileSync(reposFile, 'utf8')).repos;
+      const inside = (candidate) => path.isAbsolute(candidate)
+        && !path.relative(root, candidate).startsWith('..')
+        && path.relative(root, candidate) !== '..';
+      for (const repo of repos.filter((entry) => entry.enabled)) {
+        expect(inside(repo.origin), `${repo.key} origin`).toBe(true);
+        expect(inside(repo.clone), `${repo.key} clone`).toBe(true);
+      }
     });
 
     it('zj 已启用且 clone 不存在 → clone 到 repos.json 的路径，照常 exec', () => {
       const r = runRunner({ ...env, CODING_WF_REPOS_FILE: reposFile });
       expect(r.status, r.stderr).toBe(0);
       expect(git(zjClone, 'rev-parse', 'HEAD')).toBe(git(zjOrigin, 'rev-parse', 'main'));
+      expect(git(skillsClone, 'rev-parse', 'HEAD')).toBe(git(skillsOrigin, 'rev-parse', 'main'));
       expect(stubOut(r).marker).toBe('RUN_ONCE_STUB');
     });
 
