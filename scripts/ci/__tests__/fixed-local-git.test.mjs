@@ -155,3 +155,20 @@ test('本人Git夹具清理其他错误立即原样抛出不重试',t=>{
   assert.equal(calls,1);assert.equal(existsSync(f.root),true);
  }
 });
+
+import {readFrozenTypedOutputBytes,decodeFrozenTypedOutputBytes,frozenTypedOutputFutureGit} from '../../../packages/brain/src/lib/__tests__/helpers/future-active-git.js';
+test('完整future数据叠已审四个普通controller/collector，真实Git blob摘要与未改workflow保持',async()=>{
+ const bytes=readFrozenTypedOutputBytes(),data=decodeFrozenTypedOutputBytes(bytes),root=fileURLToPath(new URL('../../../',import.meta.url));
+ const original=frozenFutureGit(root),next=frozenTypedOutputFutureGit(root);assert.equal(next.revision,data.captured_revision);
+ assert.ok((await next.read('packages/brain/src/lib/existing-ops-workspace-source.js')).includes('4ba0369ba3011622dc3a46e6b155610972d4eb79f6c3fafee73ef14554efda45'),'captured workspace must contain its own current active profile');
+ assert.ok((await next.read('packages/brain/src/lib/existing-ops-source.js')).includes('collectNativeFutureImpactSources'),'captured caller must actually invoke the active collector');
+ assert.deepEqual(next.paths,original.paths);
+ for(const row of data.members){
+  const actual=Buffer.from(await next.read(row.path));assert.deepEqual(actual,Buffer.from(row.content_base64,'base64'));
+  assert.notDeepEqual(actual,Buffer.from(await original.read(row.path)));
+  assert.equal(createHash('sha1').update(`blob ${actual.length}\0`).update(actual).digest('hex'),row.blob_sha1);
+ }
+ const workflow='.github/workflows/implementation-impact.yml';assert.equal(await next.read(workflow),await original.read(workflow));
+ const corrupt=Buffer.from(bytes);corrupt[corrupt.length-1]^=1;assert.throws(()=>decodeFrozenTypedOutputBytes(corrupt),/TYPED_OUTPUT_FIXTURE_DIGEST/);
+ await assert.rejects(next.read('../escape'),/FUTURE_FIXTURE_MISSING/);
+});

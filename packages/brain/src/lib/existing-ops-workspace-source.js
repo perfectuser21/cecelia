@@ -387,7 +387,8 @@ const ACTIVE_TYPED_PATHS = [
  "packages/brain/src/lib/existing-ops-registration.js","packages/brain/src/lib/implementation-ci-snapshot.js",
  "scripts/ci/config/ci-admission-registry.json",
 ];
-const ACTIVE_TYPED_TUPLE = '1f344aa06be1c859b47cb167031e583f7aa7e8ae76b484b4ee9b299fb5954b96';
+// 旧1f仅是未合并原型，包含已知输出缺陷；历史legacy/read-only组合另行保留。
+const ACTIVE_TYPED_TUPLE = '4ba0369ba3011622dc3a46e6b155610972d4eb79f6c3fafee73ef14554efda45';
 /** null只表示旧入口；未来入口证明失败绝不回落到legacy资格。 */
 export async function collectNativeFutureImpactSources({basicCi,read,parse,revision,relations}){
  const workflow=await read(IMPACT_WORKFLOW);
