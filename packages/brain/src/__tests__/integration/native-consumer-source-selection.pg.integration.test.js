@@ -1,21 +1,22 @@
 import { afterAll, afterEach, beforeEach, expect, it } from 'vitest';
-import {isolatedExistingOpsGitFixture} from '../../lib/__tests__/helpers/isolated-existing-ops-git-fixture.js';
+import {historicalConsumerRuntimeFixture,isolatedExistingOpsGitFixture} from '../../lib/__tests__/helpers/isolated-existing-ops-git-fixture.js';
+import yaml from 'js-yaml';
 import { versionsDatabase } from '../fixtures/definition-versions-db.js';
 import { EXISTING_OPS_IDENTITIES,buildExistingOpsSources as buildCurrentSources } from '../../lib/existing-ops-source.js';
 import {readFixedExistingOpsGitFixture,fixtureGit} from '../../lib/__tests__/helpers/fixed-existing-ops-git-fixture.js';
 import * as currentRegistration from '../../lib/existing-ops-registration.js';
-import * as registration from '../../lib/existing-ops-registration.js';
 import { minimumMapSchema } from '../fixtures/minimum-map-schema.js';
-import { exportImplementationSnapshot,refreshImplementationSnapshot } from '../../lib/implementation-ci-snapshot.js';
 import { randomUUID,createHash } from 'node:crypto';
 import express from 'express';
 import request from 'supertest';
-import {createImplementationCiRouter} from '../../routes/implementation-ci.js';
-import {prepareNativeConsumerSelection,selectNativeConsumerDefinition} from '../../lib/native-consumer-source-selection.js';
 import {stepSha256} from '../../../scripts/sync-steps-from-workspace.mjs';
 
-// 每次固定完整HEAD，核对实际16collector与CI输入；只测来源机制，不赋予生产资格。
-const sourceFixture = isolatedExistingOpsGitFixture();
+// 真实历史16collector与逐字当前controller使用同一私有Git/module闭包，不授当前候选资格。
+const sourceFixture = await historicalConsumerRuntimeFixture();
+const {registration,snapshot,selection,router}=sourceFixture.modules;
+const {exportImplementationSnapshot,refreshImplementationSnapshot}=snapshot;
+const {prepareNativeConsumerSelection,selectNativeConsumerDefinition}=selection;
+const {createImplementationCiRouter}=router;
 afterAll(()=>sourceFixture.close());
 const { revision, paths, tree: treeSha, entries } = sourceFixture;
 const readSource = async path => sourceFixture.read(path);
@@ -98,14 +99,25 @@ it('代际选版正例必须是真实历史Git全资格来源，16collector与�
  expect(sourceFixture.controllers.map(c=>c.path)).toEqual(expect.arrayContaining(['packages/brain/src/lib/existing-ops-registration.js','packages/brain/src/lib/native-consumer-source-selection.js','packages/brain/src/lib/implementation-ci-snapshot.js','packages/brain/src/routes/implementation-ci.js']));
  for(const controller of sourceFixture.controllers)expect(createHash('sha256').update(await readSource(controller.path)).digest('hex')).toBe(controller.current_sha256);
 });
-it('当前未知候选不继承历史正例资格，实际登记拒绝且历史current和地图全部零写',async()=>{
+it('私有Git篡改实际workflow权限不能继承历史资格，当前登记拒绝且历史current和地图全部零写',async()=>{
  const current=readFixedExistingOpsGitFixture(fixtureGit('rev-parse','HEAD').trim()),before=await history();
- const currentOptions=options({revision:current.revision,paths:current.paths,readSource:async path=>current.read(path),expectedRegistrySha256:before.registry.registry_sha256});
- const proof=await buildCurrentSources(currentOptions),unknown=proof.consumers.find(c=>c.workflow_key==='factory_f3_ops');
- expect(unknown.status).toBe('unknown');expect(unknown.bindings).toEqual([]);expect(unknown.input_relations).toEqual([]);
- expect(unknown.gaps).toContainEqual(expect.objectContaining({code:'legacy_impact_runner_unproven'}));
- await expect(currentRegistration.registerExistingOpsSources(fixture.db,currentOptions)).rejects.toMatchObject({code:'OPS_SOURCE_UNKNOWN'});
- expect(await history()).toEqual(before);
+ const workflow='.github/workflows/implementation-impact.yml',original=current.read(workflow),doc=yaml.load(original);
+ const permission='permissions: {contents: read,';expect(original.split(permission)).toHaveLength(2);
+ expect(doc.permissions.contents).toBe('read');doc.permissions.contents='write';
+ const changed=original.replace(permission,permission.replace('contents: read','contents: write'));
+ expect(yaml.load(changed)).toEqual(doc);
+ const bad=isolatedExistingOpsGitFixture({revision:current.revision,changes:{[workflow]:changed}});
+ try{
+  expect(bad.git('diff','--name-only',current.revision,bad.revision).trim().split('\n')).toEqual([workflow]);
+  expect(bad.git('diff','--numstat',current.revision,bad.revision).trim()).toBe(`1\t1\t${workflow}`);
+  expect(bad.read('scripts/ci/implementation-pr-gate.mjs')).toBe(current.read('scripts/ci/implementation-pr-gate.mjs'));
+  const badOptions=options({revision:bad.revision,paths:bad.paths,readSource:async path=>bad.read(path),expectedRegistrySha256:before.registry.registry_sha256});
+  const proof=await buildCurrentSources(badOptions),unknown=proof.consumers.find(c=>c.workflow_key==='factory_f3_ops');
+  expect(unknown.status).toBe('unknown');expect(unknown.bindings).toEqual([]);expect(unknown.input_relations).toEqual([]);
+  expect(unknown.gaps).toContainEqual(expect.objectContaining({code:'source_structure_unproven'}));
+  await expect(currentRegistration.registerExistingOpsSources(fixture.db,badOptions)).rejects.toMatchObject({code:'OPS_SOURCE_UNKNOWN'});
+  expect(await history()).toEqual(before);
+ }finally{bad.close();}
 });
 
 it('same-SHA 两代完整链：唯一固定Git匹配导出且不改历史/current/登记',async()=>{

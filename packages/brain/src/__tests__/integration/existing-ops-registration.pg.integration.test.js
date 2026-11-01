@@ -5,7 +5,7 @@ import { afterAll, afterEach, beforeEach, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { readFixedExistingOpsGitFixture } from '../../lib/__tests__/helpers/fixed-existing-ops-git-fixture.js';
-import {isolatedExistingOpsGitFixture} from '../../lib/__tests__/helpers/isolated-existing-ops-git-fixture.js';
+import {isolatedExistingOpsGitFixture,historicalConsumerRuntimeFixture} from '../../lib/__tests__/helpers/isolated-existing-ops-git-fixture.js';
 import { versionsDatabase } from '../fixtures/definition-versions-db.js';
 import { EXISTING_OPS_IDENTITIES } from '../../lib/existing-ops-source.js';
 import * as registration from '../../lib/existing-ops-registration.js';
@@ -203,7 +203,8 @@ it('生产refresh拒绝外部proof、scratch旗标及未认证来源；失败不
  expect((await fixture.db.query('SELECT count(*)::int n FROM workflow_definition_versions')).rows[0].n).toBe(0);
 });
 it('正式refresh只读固定main commit/tree字节，来源未知和截断树不能写历史',async()=>{
- const consistent=isolatedExistingOpsGitFixture();
+ const consistent=await historicalConsumerRuntimeFixture();
+ const {refreshImplementationSnapshot}=consistent.modules.snapshot;
  try{
   const {revision,tree:treeSha,entries:treeEntries}=consistent,readSource=async path=>consistent.read(path);
   await factoryMap(revision); const before=await registration.readExistingOpsRegistry(fixture.db);
