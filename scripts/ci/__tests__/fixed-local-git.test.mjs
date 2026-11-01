@@ -126,3 +126,32 @@ test('published八对象私有Git冷还原读取canonical两blob，替换、环�
  assert.throws(()=>createPublishedGit({data:damaged}),{code:'ERR_ASSERTION'});
  f.close();assert.equal(existsSync(f.directory),false);
 });
+
+import {cleanupVerificationFixture} from './fixtures/verification-input-git.mjs';
+function assertOwnedCleanup(root,target,options){
+ assert.equal(target,root);assert.deepEqual(options,{recursive:true,force:true});
+}
+test('本人Git夹具清理只在ENOTEMPTY后重试并真实删除目录',t=>{
+ const f=fixture(t),error=Object.assign(Error('owned race'),{code:'ENOTEMPTY'});let calls=0;
+ cleanupVerificationFixture(f.root,{remove:(target,options)=>{
+  assertOwnedCleanup(f.root,target,options);
+  if(++calls===1)throw error;return rmSync(target,options);
+ }});
+ assert.equal(calls,2);assert.equal(existsSync(f.root),false);
+});
+test('本人Git夹具清理持续ENOTEMPTY最多四次且原样抛出',t=>{
+ const f=fixture(t),error=Object.assign(Error('persistent owned race'),{code:'ENOTEMPTY'});let calls=0;
+ assert.throws(()=>cleanupVerificationFixture(f.root,{remove:(target,options)=>{
+  assertOwnedCleanup(f.root,target,options);calls++;throw error;
+ }}),caught=>caught===error);
+ assert.equal(calls,4);assert.equal(existsSync(f.root),true);
+});
+test('本人Git夹具清理其他错误立即原样抛出不重试',t=>{
+ for(const code of ['EACCES','EPERM','ENOENT']){
+  const f=fixture(t),error=Object.assign(Error('owned '+code),{code});let calls=0;
+  assert.throws(()=>cleanupVerificationFixture(f.root,{remove:(target,options)=>{
+   assertOwnedCleanup(f.root,target,options);calls++;throw error;
+  }}),caught=>caught===error);
+  assert.equal(calls,1);assert.equal(existsSync(f.root),true);
+ }
+});
