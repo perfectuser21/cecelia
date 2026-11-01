@@ -18,10 +18,13 @@ it('未固定source SHA不读任何源码，保持unknown且不可执行',async(
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
 import {load,dump} from 'js-yaml';
+import {execFileSync} from 'node:child_process';
 const root=new URL('../../../../../',import.meta.url);
 const currentFile=path=>readFileSync(new URL(path,root));
+const PUBLISHED='b217cd52336767b9637410ef921397a0e9297f2b';
+const publishedFile=path=>execFileSync('git',['show',PUBLISHED+':'+path],{cwd:root,maxBuffer:1024*1024});
 // 真实官方callee原件仅解析，不执行候选工作流/初始化器。
-async function officialPilotBundle(mutate=()=>{},missing=null,{modern=false,changeSource=x=>x,mutateImpact=()=>{}}={}){
+async function officialPilotBundle(mutate=()=>{},missing=null,{modern=false,changeSource=x=>x,mutateImpact=()=>{},historical=false,impactText=null,helperBytes=null}={}){
  const input=source(),repo=input.workspace.repo,files=new Map();
  for(const [name,job,readerName] of [['implementation-impact','impact','implementation-impact'],['pilot-release-verification','verify','pilot-release']]){
   const reader=`scripts/ci/__tests__/${readerName}-workflow.test.mjs`;
@@ -35,8 +38,8 @@ async function officialPilotBundle(mutate=()=>{},missing=null,{modern=false,chan
   if(q.path===missing)throw Error('missing');
   if(q.repo===repo)return files.get(`${repo}:${q.path}`);
   if(q.path===path)return Buffer.from(dump(callee,{lineWidth:-1}));
-  if(q.path==='.github/workflows/implementation-impact.yml'){const y=load(currentFile(q.path).toString());mutateImpact(y);return Buffer.from(dump(y,{lineWidth:-1}));}
-  return changeSource(currentFile(q.path),q.path);
+  if(q.path==='.github/workflows/implementation-impact.yml'){const y=load((impactText??(historical?publishedFile(q.path):currentFile(q.path))).toString());mutateImpact(y);return Buffer.from(dump(y,{lineWidth:-1}));}
+  return changeSource(q.path==='scripts/ci/implementation-skill-source.mjs'?(helperBytes??(historical?publishedFile(q.path):currentFile(q.path))):currentFile(q.path),q.path);
  }});
 }
 it('旧官方Pilot固定初始化器及直接依赖均进入真实来源集合',async()=>{
@@ -134,14 +137,37 @@ it.each([
 ])('现代helper%s漂移不能冒已审源码封套',async(_name,change)=>{const p=await modernBundle(()=>{},null,{changeSource:(bytes,path)=>path===MODERN?Buffer.from(change(bytes.toString())):bytes});expect(p.status).toBe('unknown');});
 
 const infraStep=(y,name)=>y.jobs.gate.steps.find(s=>s.name===name);
+const sourceNodeStep=y=>infraStep(y,'来源机制完整单元回归');
+const nativeSourceOnly="github.repository == 'perfectuser21/cecelia' && (!inputs.source_repo || inputs.source_repo == github.repository)";
+it('真实四Node入口仅在Cecelia源码checkout执行，跨仓完整封套证明其不可达',async()=>{
+ const workflow=load(currentFile('.github/workflows/implementation-impact.yml').toString());
+ expect(sourceNodeStep(workflow).if).toBe(nativeSourceOnly);
+ const proof=await modernBundle();expect(proof.status,JSON.stringify(proof.gaps)).toBe('verified');
+ expect(proof.consumer.bindings.some(b=>b.path==='scripts/ci/__tests__/implementation-main-snapshot.test.mjs')).toBe(false);
+ expect(proof.executable).toBe(false);expect(proof.admission.status).toBe('unknown');
+});
+it.each([
+ ['缺条件',y=>{delete sourceNodeStep(y).if;}],['恒真',y=>{sourceNodeStep(y).if='true';}],
+ ['恒假',y=>{sourceNodeStep(y).if='false';}],['假source条件',y=>{sourceNodeStep(y).if="inputs.source_repo == 'perfectuser21/cecelia'";}],
+ ['放宽source条件',y=>{sourceNodeStep(y).if="github.repository == 'perfectuser21/cecelia'";}],
+ ['替换命令',y=>{sourceNodeStep(y).run+=' --test-only';}],['错cwd',y=>{sourceNodeStep(y)['working-directory']='tooling';}],
+ ['注入env',y=>{sourceNodeStep(y).env={NODE_OPTIONS:'--import ./fake.mjs'};}],
+ ['容错',y=>{sourceNodeStep(y)['continue-on-error']=true;}],['shell覆盖',y=>{sourceNodeStep(y).shell='bash';}],
+ ['错位置',y=>{const steps=y.jobs.gate.steps;steps.push(...steps.splice(steps.indexOf(sourceNodeStep(y)),1));}],
+])('四Node跨仓隔离%s不能借新封套取得来源资格',async(_name,mutateImpact)=>{
+ const proof=await modernBundle(()=>{},null,{mutateImpact});
+ expect(proof.status).toBe('unknown');expect(proof.workflow_coverage.verified_reference_ids).toEqual([]);expect(proof.executable).toBe(false);
+});
 const priorBaseEnv='${{ inputs.base_revision || github.event.pull_request.base.sha || github.event.before }}';
+const priorSourceNode=y=>{y.jobs.gate.steps=y.jobs.gate.steps.filter(s=>s.name!=='来源机制完整单元回归');};
 const oldInfraGuard=y=>{
+ priorSourceNode(y);
  y.jobs['snapshot-infra'].if=y.jobs['snapshot-infra'].if.replace('inputs.source_baseline_recovery != true && ','');
  y.jobs.gate.env.INFRA_ADMISSION=y.jobs.gate.env.INFRA_ADMISSION.replace('inputs.source_baseline_recovery != true && ','');
  y.jobs.gate.env.BASE=priorBaseEnv;
 };
 it('旧infra封套和新恢复隔离封套均有精确来源证明',async()=>{
- const previous=await modernBundle(()=>{},null,{mutateImpact:oldInfraGuard});
+ const previous=await modernBundle(()=>{},null,{mutateImpact:oldInfraGuard,historical:true});
  expect(previous.status,JSON.stringify(previous.gaps)).toBe('verified');
  expect(previous.executable).toBe(false);
  const current=await modernBundle();
@@ -182,7 +208,8 @@ it.each([
 });
 
 it('保留原双scope单needs与旧cache完整封套',async()=>{
- const p=await modernBundle(()=>{},null,{mutateImpact:y=>{
+ const p=await modernBundle(()=>{},null,{historical:true,mutateImpact:y=>{
+  priorSourceNode(y);
   y.jobs.gate.env.BASE=priorBaseEnv;
   delete y.jobs['snapshot-infra'];delete y.on.workflow_dispatch.inputs.export_infra_baseline;
   y.jobs.gate.needs=['snapshot-main'];delete y.jobs.gate.env.INFRA_ADMISSION;
@@ -195,7 +222,8 @@ it('保留原双scope单needs与旧cache完整封套',async()=>{
 
 const baselineDownload=y=>y.jobs.gate.steps.find(s=>String(s.run||'').includes('implementation-baseline-$HEAD'));
 it('旧精确下载封套仍可证明外部调用，原生祖先恢复不改变workspace分支',async()=>{
- const proof=await modernBundle(()=>{},null,{mutateImpact:y=>{
+ const proof=await modernBundle(()=>{},null,{historical:true,mutateImpact:y=>{
+  priorSourceNode(y);
   y.jobs.gate.env.BASE=priorBaseEnv;
   const step=baselineDownload(y),start=step.run.indexOf('  if [[ "${NATIVE_PR_BASELINE:-false}" == true ]]; then\n'),end=step.run.indexOf('  else\n',start);
   expect(start).toBeGreaterThan(0);expect(end).toBeGreaterThan(start);
@@ -213,4 +241,31 @@ it.each([
  ['替换祖先选择器',y=>baselineDownload(y).run=baselineDownload(y).run.replace('node source/scripts/ci/implementation-pr-baseline.mjs','node source/foreign.mjs')],
 ])('原生基线封套%s必须保持unknown',async(_name,mutateImpact)=>{
  const proof=await modernBundle(()=>{},null,{mutateImpact});expect(proof.status).toBe('unknown');expect(proof.executable).toBe(false);
+});
+it('未来完整typed gate与新共享helper仅证明foreign legacy分支，旧main新helper单独兼容',async()=>{
+ for(const impactText of [null,publishedFile('.github/workflows/implementation-impact.yml')]){
+  const proof=await modernBundle(()=>{},null,{impactText});expect(proof.status,JSON.stringify(proof.gaps)).toBe('verified');
+  expect(proof.executable).toBe(false);expect(proof.admission.status).toBe('unknown');
+  expect(proof.consumer.bindings.some(b=>b.path==='scripts/ci/ci-admission-inputs.mjs')).toBe(false);
+ }
+});
+it('已审第六native-only封套和旧helper继续整组接受',async()=>{
+ const doc=load(publishedFile('.github/workflows/implementation-impact.yml').toString()),steps=doc.jobs.gate.steps;
+ const at=steps.findIndex(s=>s.run==='npm ci --ignore-scripts'&&s['working-directory']==='source');
+ steps.splice(at+1,0,structuredClone(load(currentFile('.github/workflows/implementation-impact.yml').toString()).jobs.gate.steps.find(s=>s.name==='来源机制完整单元回归')));
+ const proof=await modernBundle(()=>{},null,{impactText:dump(doc),helperBytes:publishedFile(MODERN)});
+ expect(proof.status,JSON.stringify(proof.gaps)).toBe('verified');
+});
+it.each([
+ ['未来gate混旧helper',{helperBytes:publishedFile(MODERN)}],
+ ['新helper混非当前旧gate',{impactText:publishedFile('.github/workflows/implementation-impact.yml'),mutateImpact:oldInfraGuard}],
+ ['强开foreign typed环境',{mutateImpact:y=>{y.jobs.gate.env.IMPLEMENTATION_CI_ADMISSION_INPUT_DIR='/fake';}}],
+ ['新增credential入口',{mutateImpact:y=>{modernStep(y,'gate').env.GH_TOKEN='${{ secrets.FOREIGN_TOKEN }}';}}],
+ ['未知helper AST',{changeSource:(b,p)=>p===MODERN?Buffer.from(b+'\nexport const unknown=true;'):b}],
+])('新tuple拒绝%s',async(_name,options)=>{
+ const proof=await modernBundle(()=>{},null,options);expect(proof.status).toBe('unknown');expect(proof.executable).toBe(false);
+});
+it('Pilot新helper必须绑定完整已审job，不能用额外GITHUB_ENV步骤解锁typed分支',async()=>{
+ const proof=await modernBundle(y=>{y.jobs.verify.steps.unshift({run:'echo IMPLEMENTATION_CI_ADMISSION_INPUT_DIR=/fake >> "$GITHUB_ENV"'});});
+ expect(proof.status).toBe('unknown');expect(proof.executable).toBe(false);
 });
