@@ -213,14 +213,14 @@ tests:
     status: active
 
   - test_id: alertness_diagnosis
-    file: packages/brain/src/__tests__/alertness/diagnosis.test.js
+    file: tests/alertness/diagnosis.test.js
     type: unit
     covers_feature: alertness_system
     ci_layer: L3
     status: active
 
   - test_id: alertness_healing
-    file: packages/brain/src/__tests__/alertness/healing.test.js
+    file: tests/alertness/healing.test.js
     type: unit
     covers_feature: alertness_system
     ci_layer: L3
