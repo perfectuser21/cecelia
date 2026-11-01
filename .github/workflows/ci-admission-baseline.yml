@@ -1,0 +1,75 @@
+name: CI admission baseline
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+permissions: {contents: read, actions: read, checks: read}
+concurrency:
+  group: ci-admission-baseline-${{ github.event.workflow_run.head_sha }}
+  cancel-in-progress: false
+jobs:
+  ci-admission-baseline:
+    name: ci-admission-baseline
+    if: >-
+      github.repository == 'perfectuser21/cecelia' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_repository.full_name == 'perfectuser21/cecelia'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    services:
+      postgres:
+        image: mirror.gcr.io/pgvector/pgvector:pg15
+        env: {POSTGRES_USER: ci, POSTGRES_PASSWORD: isolated-ci, POSTGRES_DB: cecelia_scratch}
+        ports: ['5432:5432']
+        options: --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      CI: 'true'
+      NODE_ENV: test
+      DB_HOST: localhost
+      DB_PORT: '5432'
+      DB_NAME: cecelia_scratch
+      DB_USER: ci
+      DB_PASSWORD: isolated-ci
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: perfectuser21/cecelia
+          ref: ${{ github.sha }}
+          path: control
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: perfectuser21/cecelia
+          ref: ${{ github.event.workflow_run.head_sha }}
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - name: 固定本地回归工具
+        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends zsh jq libxml2-utils python3
+      - run: npm ci --ignore-scripts
+        working-directory: control
+      - run: npm ci --ignore-scripts
+        working-directory: source
+      - name: 专属synthetic scratch迁移
+        run: node control/packages/brain/src/migrate.js
+      - name: typed consumer真实PG资源边界
+        run: node --test control/scripts/ci/__tests__/ci-admission-inputs.pg.test.mjs
+      - name: 官方CI身份复核与本地三来源重建
+        id: publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node control/scripts/ci/ci-admission-publisher.mjs "$GITHUB_WORKSPACE/source" "$GITHUB_WORKSPACE/control" "$RUNNER_TEMP/ci-admission-publication"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: implementation-ci-admission-baseline-${{ github.event.workflow_run.head_sha }}
+          path: |
+            ${{ runner.temp }}/ci-admission-publication/ci-admission.json
+            ${{ runner.temp }}/ci-admission-publication/assertions.json
+          if-no-files-found: error
+          retention-days: 30
