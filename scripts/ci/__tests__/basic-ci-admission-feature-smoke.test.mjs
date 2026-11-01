@@ -21,9 +21,27 @@ function readSmokeAllowlist(require=createRequire(import.meta.url)){
   if(cache)Object.defineProperty(require.cache,target,cache);else delete require.cache[target];
  }
 }
+function assertAllowlistLoaderRestoration(t){
+ const f=fixture(t),target=join(f.directory,'packages/quality/smoke-allowlist.txt'),other=join(f.directory,'other.txt');mkdirSync(dirname(target),{recursive:true});
+ const text='globalThis.__ciSmokeAllowlistExecuted=true;';writeFileSync(target,text);writeFileSync(other,'other data');
+ const local=createRequire(join(f.directory,'scripts/ci/__tests__/fixture.mjs'));
+ const originalExtension=Object.getOwnPropertyDescriptor(local.extensions,'.txt'),originalCache=Object.getOwnPropertyDescriptor(local.cache,target);
+ try{
+  Object.defineProperty(local.extensions,'.txt',{value:()=>{throw Error('prior loader must not run');},writable:true,enumerable:false,configurable:true});
+  Object.defineProperty(local.cache,target,{value:{exports:'prior cache'},writable:true,enumerable:false,configurable:true});
+  const extension=Object.getOwnPropertyDescriptor(local.extensions,'.txt'),cache=Object.getOwnPropertyDescriptor(local.cache,target);
+  assert.equal(readSmokeAllowlist(local),text);assert.equal(globalThis.__ciSmokeAllowlistExecuted,undefined);
+  const redirected=()=>local(other);Object.assign(redirected,{resolve:local.resolve,extensions:local.extensions,cache:local.cache});
+  assert.throws(()=>readSmokeAllowlist(redirected),/SMOKE_ALLOWLIST_DATA_TARGET/);
+  assert.deepEqual(Object.getOwnPropertyDescriptor(local.extensions,'.txt'),extension);assert.deepEqual(Object.getOwnPropertyDescriptor(local.cache,target),cache);
+ }finally{
+  if(originalExtension)Object.defineProperty(local.extensions,'.txt',originalExtension);else delete local.extensions['.txt'];
+  if(originalCache)Object.defineProperty(local.cache,target,originalCache);else delete local.cache[target];delete local.cache[other];delete globalThis.__ciSmokeAllowlistExecuted;
+ }
+}
 const entries=text=>text.split(/\r?\n/).filter(line=>line.trim()&&!line.startsWith('#'));
 function fixture(t){const directory=mkdtempSync(join(tmpdir(),'ci-admission-smoke-contract-'));t.after(()=>rmSync(directory,{recursive:true,force:true}));return {directory,env:{PATH:dirname(process.execPath)+':/usr/bin:/bin:/usr/sbin:/sbin',HOME:directory,TMPDIR:directory,GH_TOKEN:'synthetic-parent-secret-must-not-inherit',DB_PASSWORD:'synthetic-parent-database-must-not-inherit',NODE_OPTIONS:'--not-a-valid-node-flag'}};}
-const run=env=>new Promise(resolve=>execFile('bash',['packages/brain/scripts/smoke/ci-admission-bootstrap-smoke.sh'],{cwd:root,env,timeout:60000,maxBuffer:4*1024*1024},(error,stdout,stderr)=>resolve({error,stdout,stderr})));
+const run=env=>new Promise(resolve=>execFile('bash',[env.SMOKE_DIR?'packages/quality/scripts/run-smoke-ratchet.sh':'packages/brain/scripts/smoke/ci-admission-bootstrap-smoke.sh'],{cwd:root,env,timeout:60000,maxBuffer:4*1024*1024},(error,stdout,stderr)=>resolve({error,stdout,stderr})));
 function assertSmokeSuccess(result){
  assert.equal(result.error,null,result.stderr);assert.match(result.stdout,/# fail 0\b/);assert.match(result.stdout,/# skipped 0\b/);
  const count=Number(/^# tests (\d+)$/m.exec(result.stdout)?.[1]);assert.ok(count>=60);
@@ -40,7 +58,14 @@ test('feature smoke实际跑本地Git/原ZIP/opaque/发布与子进程合同，�
  const name='ci-admission-bootstrap-smoke.sh';
  assert.equal(entries(readSmokeAllowlist()).filter(line=>line===name).length,1);
  for(const list of ['smoke-denylist.txt','smoke-debt.txt'])assert.equal(entries(readFileSync(join(root,'packages/quality',list),'utf8')).includes(name),false);
- const f=fixture(t),result=await run(f.env);assertSmokeSuccess(result);assert.equal(result.stdout.includes('五个显式退休仅产生候选'),false);assert.equal((result.stdout+result.stderr).includes(f.env.GH_TOKEN),false);
+ assertAllowlistLoaderRestoration(t);
+ const reader='scripts/ci/__tests__/basic-ci-admission-feature-smoke.test.mjs';
+ const graph=await cruise([reader],{baseDir:root,doNotFollow:{path:'node_modules'},exclude:{path:'node_modules'}}),out=typeof graph.output==='string'?JSON.parse(graph.output):graph.output;
+ assert.ok(out.modules.some(m=>m.source===reader&&m.dependencies.some(d=>!d.couldNotResolve&&resolve(root,d.resolved)===resolve(root,'packages/quality/smoke-allowlist.txt'))));
+ const f=fixture(t),smokeDir=join(f.directory,'ratchet-only');mkdirSync(smokeDir);
+ // 私有ratchet输入目录仅调用真实脚本，避免本地执行其它线上smoke。
+ const actual=join(root,'packages/brain/scripts/smoke',name);writeFileSync(join(smokeDir,name),"#!/bin/bash\nexec bash '"+actual.replaceAll("'","'\\''")+"'\n",{mode:0o700});
+ const result=await run({...f.env,SMOKE_DIR:smokeDir});assertSmokeSuccess(result);assert.match(result.stdout,/GATE PASSED/);assert.match(result.stdout,/UNREGISTERED:\s+0/);assert.equal(result.stdout.includes('五个显式退休仅产生候选'),false);assert.equal((result.stdout+result.stderr).includes(f.env.GH_TOKEN),false);
  assert.equal(readFileSync(join(root,'scripts/ci/__tests__/implementation-main-snapshot.test.mjs'),'utf8').includes("import './ci-admission-mechanisms.test.mjs'"),false);
  assert.ok(existsSync(join(root,'packages/brain/src/__tests__/ci-admission-baseline-contracts.test.js')));
  const {relations}=createRequire(import.meta.url)('../../../.implementation-source-relations.json');

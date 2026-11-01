@@ -356,12 +356,13 @@ async function collectSourceNodeInputs({read,paths,revision,relations}){
  for(const name of dependencies.keys())visit(name);
  const job_headers=Object.fromEntries(Object.entries(jobs).map(([name,definition])=>[name,Object.fromEntries(Object.entries(definition).filter(([key])=>key!=='steps'))]));
  const controls={workflow_header,job_headers,gate_prefix:job.steps.slice(0,index+1)};
- if(digest(JSON.stringify(stable(controls)))!=='79a7691ad48ec12828c779e2f58251f598788bba81566f19dd5d41aaa4765525')fail();
+ const controlHash=digest(JSON.stringify(stable(controls))),native=controlHash==='5dca68dd419fb7025d945179e5e038eefb9074ae60557e5144f587bd92ce4f1a';
+ if(!native&&controlHash!=='79a7691ad48ec12828c779e2f58251f598788bba81566f19dd5d41aaa4765525')fail();
  const step=job.steps[index],checkout=job.steps.find(s=>s.uses==='actions/checkout@v4'&&s.with?.path==='source');
  if(!checkout||checkout.with.ref!=='${{ inputs.head_revision || github.event.pull_request.head.sha || github.sha }}'
-  ||step['working-directory']!=='source'||step.run!=='node --test '+SOURCE_NODE_ROOTS.join(' ')||step.if!==undefined)fail();
+  ||step['working-directory']!=='source'||step.run!=='node --test '+SOURCE_NODE_ROOTS.join(' ')||step.if!==(native?"github.repository == 'perfectuser21/cecelia' && (!inputs.source_repo || inputs.source_repo == github.repository)":undefined))fail();
  for(const path of SOURCE_NODE_ROOTS){
   if(!paths.includes(path))fail();await read(path);
-  relations.push({consumer_path:IMPACT_WORKFLOW,input_path:path,kind:'unconditional_source_node_test_entry',revision});
+  relations.push({consumer_path:IMPACT_WORKFLOW,input_path:path,kind:native?'native_repository_source_node_test_entry':'unconditional_source_node_test_entry',revision});
  }
 }

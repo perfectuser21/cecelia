@@ -5,7 +5,9 @@ import {mkdirSync,readFileSync,writeFileSync,realpathSync,readdirSync} from 'nod
 import {join,resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {canonicalRepoIdentity} from '../../packages/brain/src/lib/gp-assertion-command.js';
-import {collectImplementationPrEvidence} from './implementation-pr-gate.mjs';
+import {collectImplementationPrEvidence,collectImplementationPrEvidenceInScratch} from './implementation-pr-gate.mjs';
+import {buildVerificationInputContext,readVerificationConsumerGraphFacts} from './implementation-verification-context.mjs';
+import {nonExecutableChangeKind} from './implementation-verification-inputs.mjs';
 import {resolveScopedImplementationReports,runScopedImplementationGate} from './implementation-multi-scope.mjs';
 const fail=code=>{throw Object.assign(Error(code),{code});};
 const save=(root,name,value)=>writeFileSync(join(root,name),JSON.stringify(value,null,2)+'\n');
@@ -21,8 +23,47 @@ export function assertCiAdmissionOutputFiles(root){
   if(legacy(body))fail('IMPACT_MULTISCOPE_ADMISSION_OUTPUT_INVALID');
  }};walk(root,0);return true;
 }
+/** handle只能由可信resolver+原ZIP认证创建；此入口仍实际投影并运行原三scope断言。 */
+export async function runImplementationCiAdmissionHandleGate({repoRoot,toolingRoot,base,head,mode,outputDir},handle){
+ if(mode!=='pr')fail('IMPACT_MULTISCOPE_ADMISSION_ONLY');
+ const {inspectCiAdmissionInputs,withCiAdmissionInputsScratch}=await import('./ci-admission-inputs.mjs');
+ const metadata=inspectCiAdmissionInputs(handle);
+ if(metadata.source.repo!=='perfectuser21/cecelia'||metadata.source.base_revision!==base||metadata.source.head_revision!==head
+  ||JSON.stringify(metadata.scopes)!=='["cecelia-kr","cecelia-factory","cecelia-infra"]')fail('IMPACT_MULTISCOPE_ADMISSION_SOURCE_MISMATCH');
+ mkdirSync(outputDir,{recursive:true});
+ return withCiAdmissionInputsScratch(handle,async({db,snapshots,source,provenance})=>{
+  if(JSON.stringify(snapshots.map(s=>s.scope))!==JSON.stringify(metadata.scopes))fail('IMPACT_MULTISCOPE_SCOPE_MISMATCH');
+  const reports=[];
+  for(const snapshot of snapshots){
+   const {report}=await collectImplementationPrEvidenceInScratch({repoRoot,toolingRoot,toolingRevision:provenance.tooling_revision,base,head,mode,scope:snapshot.scope,
+    snapshotBase:snapshot,snapshotHead:snapshot,db,outputDir:join(outputDir,snapshot.scope)});reports.push(report);
+  }
+  assertCiAdmissionOutputFiles(outputDir);
+  const actualSource=reports[0].source,input=reports[0].verification_input_evidence,retirements=reports[0].verification_retirement_candidates,entries=reports[0].verification_retirement_entry_evidence;
+  if(!input||reports.some(r=>r.verification_input_evidence?.verification_inputs_sha256!==input.verification_inputs_sha256
+   ||r.verification_retirement_candidates?.retirement_candidates_sha256!==retirements?.retirement_candidates_sha256||r.verification_retirement_entry_evidence?.retirement_entry_candidates_sha256!==entries?.retirement_entry_candidates_sha256))fail('IMPACT_MULTISCOPE_VERIFICATION_DISCOVERY_MISMATCH');
+  const paths=actualSource.changed_files.map(c=>c.path).filter(path=>nonExecutableChangeKind(path)||retirements?.rows.some(r=>r.path===path));
+  const graphs=paths.length?await readVerificationConsumerGraphFacts(db,{source:actualSource,paths,reports}):undefined;
+  const context=buildVerificationInputContext({source:actualSource,evidence:input,reports,raw_consumer_graph_facts:graphs,retirement_candidates:retirements,retirement_entry_evidence:entries});
+  const resolution=resolveScopedImplementationReports({source:actualSource,expectedScopes:metadata.scopes,reports,verification_input_context:context});
+  save(outputDir,'report.json',resolution);
+  const receipt=await runScopedImplementationGate({repoRoot,evidence:resolution.evidence,verificationDb:db,verificationToolingRoot:toolingRoot,verificationToolingRevision:provenance.tooling_revision});
+  receipt.resolution_sha256=resolution.resolution_sha256;receipt.ci_admission_provenance=provenance;save(outputDir,'receipt.json',receipt);
+  assertCiAdmissionOutputFiles(outputDir);
+  if(receipt.verdict!=='PASS')fail('IMPACT_MULTISCOPE_REGRESSION_FAILED');
+  return {report:resolution,receipt};
+ });
+}
 export async function runImplementationMultiPrGate({repoRoot,base,head,mode,scopes,outputDir,toolingRoot,ciAdmissionInputDir}){
-  if(toolingRoot!==undefined||ciAdmissionInputDir!==undefined)fail('IMPACT_MULTISCOPE_ADMISSION_INPUT_UNAVAILABLE');
+  if(toolingRoot!==undefined||ciAdmissionInputDir!==undefined){
+   mkdirSync(outputDir,{recursive:true});
+   try{
+    if(mode!=='pr'||scopes!==undefined||!toolingRoot||!ciAdmissionInputDir)fail('IMPACT_MULTISCOPE_ADMISSION_INPUT_INVALID');
+    const {loadCiAdmissionInputs}=await import('./ci-admission-inputs.mjs');
+    const handle=await loadCiAdmissionInputs({inputDir:ciAdmissionInputDir,repoRoot,toolingRoot,mode});
+    return await runImplementationCiAdmissionHandleGate({repoRoot,toolingRoot,base,head,mode,outputDir},handle);
+   }catch(error){save(outputDir,'gap.json',{status:'unknown',stage:'ci_admission_scoped',code:error.code||'IMPACT_MULTISCOPE_ERROR',message:error.message});throw error;}
+  }
   mkdirSync(outputDir,{recursive:true});
   try{
     if(mode!=='pr')fail('IMPACT_MULTISCOPE_ADMISSION_ONLY');
@@ -49,11 +90,15 @@ export async function runImplementationMultiPrGate({repoRoot,base,head,mode,scop
   }catch(error){save(outputDir,'gap.json',{status:'unknown',stage:'scoped_admission',code:error.code||'IMPACT_MULTISCOPE_ERROR',message:error.message});throw error;}
 }
 export function parseImplementationMultiArgs(args){
-  const fields={'--repo-root':'repoRoot','--base':'base','--head':'head','--mode':'mode','--scopes-file':'scopesFile','--output-dir':'outputDir'},options={};
+  const fields={'--repo-root':'repoRoot','--base':'base','--head':'head','--mode':'mode','--scopes-file':'scopesFile','--tooling-root':'toolingRoot','--ci-admission-input-dir':'ciAdmissionInputDir','--output-dir':'outputDir'},options={};
   for(let i=0;i<args.length;i+=2){if(!fields[args[i]]||!args[i+1]||options[fields[args[i]]])fail('IMPACT_MULTISCOPE_ARGUMENT_INVALID');options[fields[args[i]]]=args[i+1];}
-  if(Object.values(fields).some(k=>!options[k]))fail('IMPACT_MULTISCOPE_ARGUMENT_MISSING');
+  const typed=options.toolingRoot!==undefined||options.ciAdmissionInputDir!==undefined;
+  const required=['repoRoot','base','head','mode','outputDir',...(typed?['toolingRoot','ciAdmissionInputDir']:['scopesFile'])];
+  if(required.some(k=>!options[k]))fail('IMPACT_MULTISCOPE_ARGUMENT_MISSING');
+  if(typed&&(options.scopesFile!==undefined||options.mode!=='pr'))fail('IMPACT_MULTISCOPE_ADMISSION_INPUT_INVALID');
+  if(typed){options.toolingRoot=realpathSync(options.toolingRoot);options.ciAdmissionInputDir=realpathSync(options.ciAdmissionInputDir);}
   options.repoRoot=realpathSync(options.repoRoot);options.outputDir=resolve(options.outputDir);
-  options.scopes=JSON.parse(readFileSync(options.scopesFile,'utf8'));return options;
+  if(!typed)options.scopes=JSON.parse(readFileSync(options.scopesFile,'utf8'));return options;
 }
 if(process.argv[1]&&fileURLToPath(import.meta.url)===realpathSync(process.argv[1]))runImplementationMultiPrGate(parseImplementationMultiArgs(process.argv.slice(2)))
   .then(({receipt})=>process.stdout.write(`admission_only: ${receipt.verdict}\n`))
