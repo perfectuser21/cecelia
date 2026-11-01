@@ -344,6 +344,12 @@ export function registerReviewedAGuardTests({ BRAIN_ROOT, findClaudeInvocations 
    for(const marker of [0,1]){const variant=new Map(published);variant.set(source,variant.get(source).replace('EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = 0','EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = '+marker));expect(scan(variant)).toEqual([]);}
    for(const name of ['source','workspace-source','stage-source']){const f=path.join(root,`existing-ops-${name}.js`),mixed=base();mixed.set(f,published.get(f));expect(scan(mixed).some(h=>h.rule==='E1')).toBe(true);}
   });
+  it('公开Source8原子marker0/1组合保留，新profile未知变体不借旧tuple',()=>{
+   const published=new Map([...base().keys()].map(f=>[f,execFileSync('git',['show','b217cd52336767b9637410ef921397a0e9297f2b:'+path.relative(path.resolve(BRAIN_ROOT,'../..'),f)],{cwd:BRAIN_ROOT,encoding:'utf8',maxBuffer:1024*1024})]));
+   const source=path.join(root,'existing-ops-source.js');
+   for(const marker of [0,1]){const variant=new Map(published);variant.set(source,variant.get(source).replace('EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = 0','EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = '+marker));expect(scan(variant)).toEqual([]);}
+   const forged=new Map(published),workspace=path.join(root,'existing-ops-workspace-source.js');forged.set(workspace,base().get(workspace)+'\nexport const unreviewedProfile=true;');expect(scan(forged).some(h=>h.rule==='E1')).toBe(true);
+  });
   it.each(['eval','raw export','process'])('移动至workspace的helper出现%s仍失败关闭',kind=>{
    const s=base(),file=path.join(root,'existing-ops-workspace-source.js');
    const edits={eval:'\neval(candidate);','raw export':"\nimport {STAGE_ENVELOPES} from './existing-ops-stage-envelopes.js';export const raw=STAGE_ENVELOPES;",process:"\nimport {spawn as launch} from 'node:child_process';launch('claude',['-p']);"};
