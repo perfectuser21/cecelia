@@ -2656,6 +2656,101 @@
       "owner_path": "scripts/ci/ci-admission-publisher.mjs",
       "path": "packages/brain/src/__tests__/ci-admission-baseline-contracts.test.js",
       "role": "verification"
+    },
+    {
+      "owner_path": "scripts/ci/ci-admission-archive.mjs",
+      "path": "scripts/ci/__tests__/basic-ci-admission-archive.test.mjs",
+      "role": "verification"
+    },
+    {
+      "owner_path": "scripts/ci/ci-admission-artifact.mjs",
+      "path": "scripts/ci/__tests__/basic-ci-admission-artifact.test.mjs",
+      "role": "verification"
+    },
+    {
+      "owner_path": "scripts/ci/ci-admission-authority.mjs",
+      "path": "scripts/ci/__tests__/basic-ci-admission-authority.test.mjs",
+      "role": "verification"
+    },
+    {
+      "owner_path": "scripts/ci/ci-admission-builder.mjs",
+      "path": "scripts/ci/__tests__/basic-ci-admission-builder.test.mjs",
+      "role": "verification"
+    },
+    {
+      "owner_path": "scripts/ci/ci-admission-envelope.mjs",
+      "path": "scripts/ci/__tests__/basic-ci-admission-envelope.test.mjs",
+      "role": "verification"
+    },
+    {
+      "owner_path": "scripts/ci/ci-admission-publisher.mjs",
+      "path": "scripts/ci/__tests__/basic-ci-admission-feature-smoke.test.mjs",
+      "role": "verification"
+    },
+    {
+      "owner_path": "scripts/ci/implementation-multi-pr-gate.mjs",
+      "path": "scripts/ci/__tests__/basic-ci-admission-impact-workflow.test.mjs",
+      "role": "verification"
+    },
+    {
+      "owner_path": "scripts/ci/implementation-infra-inputs.mjs",
+      "path": "scripts/ci/__tests__/basic-ci-admission-infra.test.mjs",
+      "role": "verification"
+    },
+    {
+      "owner_path": "scripts/ci/ci-admission-inputs.mjs",
+      "path": "scripts/ci/__tests__/basic-ci-admission-inputs.test.mjs",
+      "role": "verification"
+    },
+    {
+      "owner_path": "scripts/ci/ci-admission-authority.mjs",
+      "path": "scripts/ci/__tests__/basic-ci-admission-legacy.test.mjs",
+      "role": "verification"
+    },
+    {
+      "owner_path": "scripts/ci/ci-admission-publisher.mjs",
+      "path": "scripts/ci/__tests__/basic-ci-admission-publisher.test.mjs",
+      "role": "verification"
+    },
+    {
+      "owner_path": "scripts/ci/implementation-pr-baseline.mjs",
+      "path": "scripts/ci/__tests__/basic-ci-admission-resolver.test.mjs",
+      "role": "verification"
+    },
+    {
+      "owner_path": "scripts/ci/implementation-scratch.mjs",
+      "path": "scripts/ci/__tests__/basic-ci-admission-scratch-import.test.mjs",
+      "role": "verification"
+    },
+    {
+      "owner_path": "scripts/ci/ci-admission-scratch.mjs",
+      "path": "scripts/ci/__tests__/basic-ci-admission-scratch.test.mjs",
+      "role": "verification"
+    },
+    {
+      "owner_path": "scripts/ci/ci-admission-seed.mjs",
+      "path": "scripts/ci/__tests__/basic-ci-admission-seed.test.mjs",
+      "role": "verification"
+    },
+    {
+      "owner_path": "scripts/ci/implementation-skill-source.mjs",
+      "path": "scripts/ci/__tests__/basic-ci-admission-skill-cache.test.mjs",
+      "role": "verification"
+    },
+    {
+      "owner_path": "scripts/ci/ci-admission-worker-runner.mjs",
+      "path": "scripts/ci/__tests__/basic-ci-admission-worker.test.mjs",
+      "role": "verification"
+    },
+    {
+      "owner_path": "scripts/ci/ci-admission-publisher.mjs",
+      "path": "scripts/ci/__tests__/basic-ci-admission-workflow.test.mjs",
+      "role": "verification"
+    },
+    {
+      "owner_path": "scripts/ci/ci-admission-publisher.mjs",
+      "path": "scripts/ci/__tests__/ci-admission-mechanisms.test.mjs",
+      "role": "verification"
     }
   ]
 }
