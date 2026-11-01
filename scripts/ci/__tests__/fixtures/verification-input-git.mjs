@@ -1,5 +1,5 @@
 /** 每例私有可写Git仅共享不可变68对象；不改变调用仓的refs/index。 */
-import {mkdtempSync,realpathSync,writeFileSync,rmSync,mkdirSync,symlinkSync} from 'node:fs';
+import {mkdtempSync,realpathSync,writeFileSync,rmSync,mkdirSync,symlinkSync,readFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {execFileSync} from 'node:child_process';
@@ -84,4 +84,36 @@ export function assertTypedResolverOutputLayout(root, assertOutput) {
  assert.throws(() => assertOutput(root), /ADMISSION_OUTPUT/);
  rmSync(directory, { recursive: true });
  assert.doesNotThrow(() => assertOutput(root));
+}
+
+/** 使用实际schema reader字节与真实九文件diff，不能仅证明overlay中的旧reader。 */
+export function assertWorkflowSchemaReaderInputs(t, {basicEntryFixture, derived, root}) {
+ const paths = [
+  'android-agent-ci', 'ci-l5-e2e-frontend', 'harness-v5-checks',
+  'integration-nightly', 'nightly-real-machine', 'pr-review',
+  'preview-deploy', 'skill-distillation-eval', 'smoke-e2e-nightly',
+ ].map(name => `.github/workflows/${name}.yml`);
+ const reader = 'scripts/ci/__tests__/basic-workflow.test.mjs';
+ const f = basicEntryFixture(t, 'scripts/ci/__tests__/basic-schema-input-fixture.test.mjs');
+ assert.equal(f.git('config', '--get', 'core.sparseCheckoutCone'), 'false');
+ f.git('sparse-checkout', 'add', ...[reader, ...paths].map(path => '/' + path));
+ for (const path of [reader, ...paths]) writeFileSync(join(f.root, path), readFileSync(join(root, path)));
+ f.source.base_revision = f.commit();
+ for (const path of paths) writeFileSync(join(f.root, path), readFileSync(join(f.root, path), 'utf8') + '\n# schema input regression\n');
+ f.source.head_revision = f.commit();
+ f.source.changed_files = f.git('diff', '--no-renames', '--name-only', f.source.base_revision, f.source.head_revision).split('\n').map(path => ({path}));
+ assert.deepEqual(f.source.changed_files.map(row => row.path).sort(), [...paths].sort());
+ const proof = derived(f);
+ const rows = proof.rows.filter(row => row.input_facts.source.side === 'head' && paths.includes(row.input_facts.path));
+ assert.equal(rows.length, paths.length, '实际schema reader必须为九个真实YAML变更生成输入；不得借旧overlay reader证明当前源码');
+ for (const path of paths) {
+  const row = rows.find(row => row.input_facts.path === path);
+  assert.equal(row.witness.kind, 'workflow_yaml_schema_input');
+  assert.equal(row.witness.workflow_jobs_execution, 'not_evaluated');
+  assert.equal(row.input_facts.source.revision, f.source.head_revision);
+  assert.equal(row.input_facts.entry_verified, false);
+  assert.equal(row.input_facts.owner_verified, false);
+  assert.equal(row.execution_status, 'not_evaluated');
+  assert.equal(row.coverage, 'unknown');
+ }
 }
