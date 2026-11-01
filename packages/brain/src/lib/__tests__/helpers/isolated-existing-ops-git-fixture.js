@@ -13,8 +13,18 @@ const root=fileURLToPath(new URL('../../../../../../',import.meta.url));
 export function isolatedExistingOpsGitFixture({revision=fixtureGit('rev-parse','HEAD').trim(),changes={},requireRuntime=true}={}){
  assert.match(revision,/^[a-f0-9]{40}$/);
  const dir=mkdtempSync(join(tmpdir(),'ci-deep-existing-ops-'));
- const close=()=>rmSync(dir,{recursive:true,force:true});
- const git=(...args)=>execFileSync('git',['--no-replace-objects','-c','core.hooksPath=/dev/null','-c','core.autocrlf=false','-c','commit.gpgSign=false',...args],{
+ const close=()=>{
+  for(let attempt=0;;attempt++){
+   try{return rmSync(dir,{recursive:true,force:true});}
+   catch(error){
+    if(error.code!=='ENOTEMPTY'||attempt===3)throw error;
+    // 仅本人目录的短暂竞争：最多三次重试，累计退避120ms，其他错误原样抛出。
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,20*(attempt+1));
+   }
+  }
+ };
+ const git=(...args)=>execFileSync('git',['--no-replace-objects','-c','core.hooksPath=/dev/null','-c','core.autocrlf=false','-c','commit.gpgSign=false',
+  '-c','maintenance.auto=false','-c','gc.auto=0','-c','gc.autoDetach=false',...args],{
   cwd:dir,encoding:'utf8',maxBuffer:32*1024*1024,
  });
  try{
