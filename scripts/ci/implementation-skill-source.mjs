@@ -171,40 +171,10 @@ export function readImplementationSource(root,revision,path,{source}={}){
  return payload;
 }
 
-/** CI-only封套只在已核原产物的scratch能力内提供绑定，不写出legacy快照。 */
-export async function prepareCiAdmissionSkillCache(options,deps={}){
- const {repoRoot,repo,revisions,inputDir,toolingRoot,mode,repository,eventName,event,toolingRevision}=options;
- if(mode!=='pr'||repo!=='perfectuser21/cecelia'||repository!==repo||eventName!=='pull_request'
-  ||!Array.isArray(revisions)||revisions.length!==2||revisions.some(r=>!/^[a-f0-9]{40}$/.test(r||'')))fail('SKILL_CACHE_CI_ADMISSION_CONTEXT_INVALID');
- const load=deps.loadCiAdmissionInputs||(await import('./ci-admission-inputs.mjs')).loadCiAdmissionInputs;
- const handle=await load({inputDir,repoRoot,toolingRoot,mode,repository,eventName,event,toolingRevision});
- const consume=deps.withCiAdmissionInputsScratch||(await import('./ci-admission-inputs.mjs')).withCiAdmissionInputsScratch;
- let prepared;
- try{
-  const result=await consume(handle,async({snapshots,source})=>{
-   if(source?.repo!==repo||source.base_revision!==revisions[0]||source.head_revision!==revisions[1]
-    ||!Array.isArray(snapshots)||snapshots.length!==3||snapshots.some((s,i)=>s.scope!==['cecelia-kr','cecelia-factory','cecelia-infra'][i]
-     ||s.repo!==repo||s.revision!==revisions[0]))fail('SKILL_CACHE_CI_ADMISSION_IDENTITY_MISMATCH');
-   const deadline=Date.now()+60000;
-   prepared=prepareImplementationSkillCache(realpathSync(repoRoot),repo,revisions,{snapshots,deadline});
-   materializeImplementationSkills(realpathSync(repoRoot),revisions[1],repo,prepared,{deadline});
-   return {cache_path:prepared};
-  });
-  if(result?.cache_path!==prepared||typeof prepared!=='string')fail('SKILL_CACHE_CI_ADMISSION_RESULT_INVALID');
-  return prepared;
- }catch(error){if(prepared)rmSync(dirname(prepared),{recursive:true,force:true});throw error;}
-}
-
 if(process.argv[1]&&process.argv[1]!=='-'&&realpathSync(process.argv[1])===fileURLToPath(import.meta.url)){
  try{
   const deadline=Date.now()+60000,[mode,root,repo,...args]=process.argv.slice(2),revisions=[],snapshots=[];let bytes=0;
   if(mode!=='--prepare-ci-cache'||!root)fail('SKILL_CACHE_ARGUMENT_INVALID');
-  const typed=Boolean(process.env.IMPLEMENTATION_CI_ADMISSION_INPUT_DIR);
-  if(typed){
-   if(process.env.MODE!=='pr'||process.env.GITHUB_EVENT_NAME!=='pull_request'||repo!=='perfectuser21/cecelia'
-    ||process.env.GITHUB_REPOSITORY!==repo)fail('SKILL_CACHE_CI_ADMISSION_CONTEXT_INVALID');
-   if(args.includes('--snapshot'))fail('SKILL_CACHE_CI_ADMISSION_LEGACY_MIXED');
-  }
   for(let i=0;i<args.length;i++){
    if(args[i]==='--snapshot'){
     const path=args[++i];if(!path||snapshots.length>=8)fail('SKILL_CACHE_SNAPSHOT_LIMIT');
@@ -212,16 +182,8 @@ if(process.argv[1]&&process.argv[1]!=='-'&&realpathSync(process.argv[1])===fileU
     snapshots.push(JSON.parse(readFileSync(path,'utf8')));
    }else revisions.push(args[i]);
   }
-  let source;
-  if(typed){
-   const eventPath=process.env.GITHUB_EVENT_PATH,stat=eventPath&&lstatSync(eventPath);
-   if(!stat?.isFile()||stat.isSymbolicLink()||stat.size>1024*1024)fail('SKILL_CACHE_CI_ADMISSION_EVENT_INVALID');
-   source=await prepareCiAdmissionSkillCache({repoRoot:realpathSync(root),repo,revisions,
-    inputDir:process.env.IMPLEMENTATION_CI_ADMISSION_INPUT_DIR,toolingRoot:join(process.env.GITHUB_WORKSPACE||process.cwd(),'tooling'),
-    mode:process.env.MODE,repository:process.env.GITHUB_REPOSITORY,eventName:process.env.GITHUB_EVENT_NAME,
-    event:JSON.parse(readFileSync(eventPath,'utf8')),toolingRevision:process.env.TOOLING_REVISION});
-  }else source=prepareImplementationSkillCache(realpathSync(root),repo,revisions,{snapshots,deadline});
-  try{if(!typed)materializeImplementationSkills(realpathSync(root),revisions.at(-1),repo,source,{deadline});process.stdout.write(source+'\n');}
+  const source=prepareImplementationSkillCache(realpathSync(root),repo,revisions,{snapshots,deadline});
+  try{materializeImplementationSkills(realpathSync(root),revisions.at(-1),repo,source,{deadline});process.stdout.write(source+'\n');}
   catch(error){rmSync(dirname(source),{recursive:true,force:true});throw error;}
  }catch(error){process.stderr.write((error.code||'SKILL_CACHE_PREPARATION_FAILED')+'\n');process.exitCode=1;}
 }

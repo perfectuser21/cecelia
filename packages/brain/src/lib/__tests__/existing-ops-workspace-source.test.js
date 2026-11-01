@@ -13,7 +13,6 @@ import { createHash } from 'node:crypto';
 import { gunzipSync } from 'node:zlib';
 import { readNativeConsumerRuntime, assertNativeConsumerRuntime } from '../native-consumer-runtime.js';
 import { buildExistingOpsSources as basicBuilder } from '../existing-ops-source.js';
-import {futureCiAdmissionImpactWorkflow} from '../../../../../scripts/ci/__tests__/fixtures/ci-admission-impact-workflow.mjs';
 
 const root = fileURLToPath(new URL('../../../../../', import.meta.url));
 const revision = 'b5800c2d297cb121e90ff74987ebc410679371a2';
@@ -466,19 +465,6 @@ describe('新basic真实选择及来源机制单元入口闭包', () => {
     ['未知workflow控制字段',d=>{d['unknown-control']=true;}],
   ]) it(`${name}不能证明可达Node前缀`,async()=>{const doc=yaml.load(edgeInputs[impact]);edit(doc);await expect(graph({[impact]:yaml.dump(doc)})).rejects.toThrow(/workspace/i);});
   it.each([qualityTest,versionTest,...nodeRoots])('缺少实际输入%s拒绝', async path => {await expect(graph({},[path])).rejects.toThrow(/workspace/i);});
-  it('新controls5dca与精确Cecelia-only条件证明native Node入口，旧79封套仍保持',async()=>{
-   const text=futureCiAdmissionImpactWorkflow;
-   expect(createHash('sha256').update(text).digest('hex')).toBe('17d29709a4990f9a0b4c2bbc63ad2dbcb7ce4f2b635a5d1fb416e8239d30f3b6');
-   const edges=await graph({[impact]:text});for(const path of nodeRoots)expect(edges).toContainEqual(expect.objectContaining({src_path:impact,dst_path:path,detail:expect.objectContaining({selector_kind:'native_repository_source_node_test_entry'})}));
-   expect((await graph()).filter(e=>nodeRoots.includes(e.dst_path))).toHaveLength(4);
-  });
-  for(const [name,edit]of[
-   ['去native条件',d=>{delete d.jobs.gate.steps.find(s=>s.name==='来源机制完整单元回归').if;}],
-   ['native恒真',d=>{d.jobs.gate.steps.find(s=>s.name==='来源机制完整单元回归').if='true';}],
-   ['放宽sourceRepo',d=>{d.jobs.gate.steps.find(s=>s.name==='来源机制完整单元回归').if="github.repository == 'perfectuser21/cecelia'";}],
-   ['typed header混旧push',d=>{d.on.push={branches:['main']};}],
-   ['未来缺祖先',d=>{delete d.jobs['snapshot-main'];}],
-  ])it(`新native profile拒绝${name}`,async()=>{const d=yaml.load(futureCiAdmissionImpactWorkflow);edit(d);await expect(graph({[impact]:yaml.dump(d)})).rejects.toThrow(/workspace/i);});
 });
 
 }

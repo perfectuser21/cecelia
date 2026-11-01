@@ -6,8 +6,6 @@ import {readFileSync,writeFileSync,mkdirSync,mkdtempSync,rmSync,realpathSync} fr
 import {join,resolve} from 'node:path';
 import {tmpdir} from 'node:os';
 import {pathToFileURL,fileURLToPath} from 'node:url';
-import {readCiAdmissionBaseline} from './ci-admission-artifact.mjs';
-import {writeCiAdmissionInputs} from './ci-admission-handoff.mjs';
 const REPO='perfectuser21/cecelia',SHA=/^[a-f0-9]{40}$/,SCOPES=['cecelia-kr','cecelia-factory'];
 const digest=b=>createHash('sha256').update(b).digest('hex');
 const fail=code=>{throw Object.assign(Error(code),{code});};
@@ -37,8 +35,7 @@ export async function resolvePrBaseline(options,deps={}){
  runGit(repoRoot,'merge-base','--is-ancestor',original,head);
  const deadline=Date.now()+120000;let requests=0;
  const call=async(path,binary=false)=>{
-  // 每个first-parent最多探测CI/legacy两种namespace；仍共用同一120秒总deadline。
-  need(++requests<=256&&Date.now()<deadline,'PR_BASELINE_REQUEST_BUDGET');
+  need(++requests<=128&&Date.now()<deadline,'PR_BASELINE_REQUEST_BUDGET');
   try{
    const result=await (binary?deps.download:deps.api)?.(path);
    if(result!==undefined)return result;
@@ -52,14 +49,6 @@ export async function resolvePrBaseline(options,deps={}){
  need(chain[0]===original&&chain.every(r=>SHA.test(r)),'PR_BASELINE_CHAIN_INVALID');
  const evidence=[];
  for(const revision of chain){
-  const ci=await readCiAdmissionBaseline({revision,repoRoot,controlRoot:toolingRoot},{api:path=>call(path),download:path=>call(path,true)});
-  if(ci){
-   evidence.push({revision,status:'selected',artifact_kind:'ci_admission_only',artifact_id:ci.artifact.id,artifact_digest:ci.artifact.digest,run_id:ci.artifact.workflow_run.id});
-   const changed_files=runGit(repoRoot,'diff','--no-renames','--name-only','-z',revision,head,'--').split('\0').filter(Boolean).sort();
-   return {body:ci.envelope,ciAdmission:ci,resolution:{schema_version:1,purpose:'admission_only',baseline_kind:'ci_admission_only',status:'selected',repo:REPO,pr_number:event.number,
-    original_pr_base_revision:original,effective_base_revision:revision,tooling_revision:original,head_revision:head,chain:evidence,
-    base_ci_admission_sha256:ci.envelope.ci_envelope_sha256,scope_hashes:ci.scopeHashes,changed_files,business_runtime_status:'not_evaluated'}};
-  }
   const name=`implementation-snapshot-${revision}`;
   const list=await call(`${prefix}/artifacts?name=${name}&per_page=100`);
   need(Array.isArray(list?.artifacts)&&Number.isInteger(list.total_count)&&list.total_count===list.artifacts.length&&list.total_count<=100,'PR_BASELINE_LIST_INCOMPLETE');
@@ -138,8 +127,7 @@ async function main(){
  try{
   const result=await resolvePrBaseline({...options,repository:process.env.GITHUB_REPOSITORY,eventName:process.env.GITHUB_EVENT_NAME,
    event:JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH,'utf8')),toolingRevision:process.env.TOOLING_REVISION});
-  if(result.ciAdmission)writeCiAdmissionInputs({inputDir:options.inputDir,result});
-  else for(const [side,name] of [['base','base.json'],['head','head.json']]){const directory=join(options.inputDir,side);mkdirSync(directory,{recursive:true});writeFileSync(join(directory,name),JSON.stringify(result.body)+'\n');}
+  for(const [side,name] of [['base','base.json'],['head','head.json']]){const directory=join(options.inputDir,side);mkdirSync(directory,{recursive:true});writeFileSync(join(directory,name),JSON.stringify(result.body)+'\n');}
   writeFileSync(join(options.outputDir,'baseline-resolution.json'),JSON.stringify(result.resolution,null,2)+'\n');
   process.stdout.write(result.resolution.effective_base_revision+'\n');
  }catch(error){writeFileSync(join(options.outputDir,'baseline-resolution.failure.json'),JSON.stringify({status:'unknown',code:error.code||'PR_BASELINE_ERROR'})+'\n');throw error;}

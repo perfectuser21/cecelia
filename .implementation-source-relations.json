@@ -2617,26 +2617,6 @@
       "owner_path": "scripts/deploy-local.sh",
       "path": "packages/brain/src/__tests__/deploy-root-guard.test.js",
       "role": "verification"
-    },
-    {
-      "owner_path": "scripts/ci/ci-admission-builder.mjs",
-      "path": "scripts/ci/__tests__/ci-admission-builder.pg.test.mjs",
-      "role": "verification"
-    },
-    {
-      "owner_path": "scripts/ci/ci-admission-inputs.mjs",
-      "path": "scripts/ci/__tests__/ci-admission-inputs.pg.test.mjs",
-      "role": "verification"
-    },
-    {
-      "owner_path": "scripts/ci/implementation-skill-source.mjs",
-      "path": "scripts/ci/__tests__/ci-admission-skill-cache.pg.test.mjs",
-      "role": "verification"
-    },
-    {
-      "owner_path": "scripts/ci/implementation-pr-gate.mjs",
-      "path": "scripts/ci/__tests__/ci-admission-verification-lease.pg.test.mjs",
-      "role": "verification"
     }
   ]
 }

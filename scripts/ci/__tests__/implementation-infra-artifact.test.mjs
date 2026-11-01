@@ -107,9 +107,9 @@ test('正式YAML实际PR接线把第三输入加入原双来源联合gate',t=>{
  const setup=spawnSync('bash',['-c',scopes.run],{cwd:f.dir,env:{...f.env,GITHUB_ENV:envFile,ADMISSION_SCOPES:JSON.stringify({schema_version:1,scopes:['cecelia-kr','cecelia-factory']})},encoding:'utf8'});assert.equal(setup.status,0,setup.stderr);
  const combined=readFileSync(envFile,'utf8').split('\n').find(l=>l.startsWith('ADMISSION_SCOPES=')).slice('ADMISSION_SCOPES='.length);
  const gate=steps.find(s=>s.name==='实际变更影响与固定回归').run;
- const boundary=gate.lastIndexOf('node tooling/scripts/ci/implementation-multi-pr-gate.mjs');assert.ok(boundary>0);
+ const boundary=gate.indexOf('node tooling/scripts/ci/implementation-multi-pr-gate.mjs');assert.ok(boundary>0);
  const beforeInvoke=gate.slice(0,boundary)+'\nfi';
  writeFileSync(join(input,'scopes.json'),'[]');
- const q=spawnSync('bash',['-c',beforeInvoke],{cwd:f.dir,env:{...f.env,IMPLEMENTATION_CI_ADMISSION_INPUT_DIR:'',INFRA_ADMISSION:'true',RUNNER_TEMP:f.dir,ADMISSION_SCOPES:combined},encoding:'utf8'});assert.equal(q.status,0,q.stderr);
+ const q=spawnSync('bash',['-c',beforeInvoke],{cwd:f.dir,env:{...f.env,INFRA_ADMISSION:'true',RUNNER_TEMP:f.dir,ADMISSION_SCOPES:combined},encoding:'utf8'});assert.equal(q.status,0,q.stderr);
  assert.deepEqual(JSON.parse(readFileSync(join(input,'scopes.json'))).map(x=>x.scope),['cecelia-kr','cecelia-factory','cecelia-infra']);
 });
