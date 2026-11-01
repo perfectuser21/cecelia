@@ -393,6 +393,17 @@ fs.writeFileSync(${JSON.stringify(marker)}, JSON.stringify([process.pid,child.pi
         { ...z, key: 'zj', aliases: ['zj'], slug: 'acme/zj', origin: zjOrigin, clone: zjClone, worktree_base: path.join(root, 'wt-zj'), state_ns: 'zj', enabled: true }] }));
     });
 
+    it('所有启用仓库的 origin 和 clone 均限定在测试沙箱内', () => {
+      const repos = JSON.parse(fs.readFileSync(reposFile, 'utf8')).repos;
+      const inside = (candidate) => path.isAbsolute(candidate)
+        && !path.relative(root, candidate).startsWith('..')
+        && path.relative(root, candidate) !== '..';
+      for (const repo of repos.filter((entry) => entry.enabled)) {
+        expect(inside(repo.origin), `${repo.key} origin`).toBe(true);
+        expect(inside(repo.clone), `${repo.key} clone`).toBe(true);
+      }
+    });
+
     it('zj 已启用且 clone 不存在 → clone 到 repos.json 的路径，照常 exec', () => {
       const r = runRunner({ ...env, CODING_WF_REPOS_FILE: reposFile });
       expect(r.status, r.stderr).toBe(0);
