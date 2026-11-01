@@ -21,7 +21,7 @@ test('typed来源仅作路由，准备和准入使用只读官方API令牌再核
  for(const name of ['准备固定中央Skill对象缓存','实际变更影响与固定回归'])assert.equal(named(name).env.GH_TOKEN,'${{ github.token }}');
  for(const name of ['独立infra固定来源加入联合输入','完整联合scope清单加入infra'])assert.match(named(name).if,/env\.IMPLEMENTATION_CI_ADMISSION_INPUT_DIR == ''/);
 });
-test('执行真实workflow三个Shell正文：typed bundle不提取裸快照、不独立下载infra、不重建scopes-file',t=>{
+test('执行已审未来workflow三个Shell正文：typed bundle不提取裸快照、不独立下载infra、不重建scopes-file',t=>{
  const root=mkdtempSync(join(tmpdir(),'ci-admission-workflow-'));t.after(()=>rmSync(root,{recursive:true,force:true}));
  for(const dir of ['bin','source','tooling'])mkdirSync(join(root,dir));
  const git=(...args)=>execFileSync('git',['-C',join(root,'tooling'),'-c','core.hooksPath=/dev/null','-c','commit.gpgSign=false',...args],{encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
