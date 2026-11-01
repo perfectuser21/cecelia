@@ -180,6 +180,7 @@ test('E五blob固定Git数据保存memo实际collector与BC父身份，旧四blo
  for(const row of data.members){const actual=Buffer.from(await next.read(row.path));assert.deepEqual(actual,Buffer.from(row.content_base64,'base64'));assert.equal(createHash('sha1').update(`blob ${actual.length}\0`).update(actual).digest('hex'),row.blob_sha1);}
  assert.match(await next.read('packages/brain/src/lib/existing-ops-workspace-source.js'),/faeb79e0eeff5e65a34cac57630a8859907b7cd47e61721e0aa57c8acdabba78/);
  assert.notEqual(await next.read('scripts/ci/implementation-verification-context.mjs'),await prior.read('scripts/ci/implementation-verification-context.mjs'));
+ assert.equal(await next.read('scripts/ci/implementation-verification-context.mjs'),readFileSync(new URL('../implementation-verification-context.mjs',import.meta.url),'utf8'));
  assert.equal(await next.read('.github/workflows/implementation-impact.yml'),await prior.read('.github/workflows/implementation-impact.yml'));
  const corrupt=Buffer.from(bytes);corrupt[corrupt.length-1]^=1;assert.throws(()=>decodeFrozenContextMemoBytes(corrupt),/CONTEXT_MEMO_FIXTURE_DIGEST/);await assert.rejects(next.read('../escape'),/FUTURE_FIXTURE_MISSING/);
 });
