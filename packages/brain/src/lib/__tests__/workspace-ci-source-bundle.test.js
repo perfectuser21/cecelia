@@ -15,7 +15,10 @@ it('未固定source SHA不读任何源码，保持unknown且不可执行',async(
  expect(result.executable).toBe(false);expect(reads).toBe(0);
 });
 
-import {readFileSync} from 'node:fs';
+import {readFileSync,mkdtempSync,rmSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {fileURLToPath} from 'node:url';
 import {createHash} from 'node:crypto';
 import {load,dump} from 'js-yaml';
 import {execFileSync} from 'node:child_process';
@@ -24,7 +27,39 @@ const root=new URL('../../../../../',import.meta.url);
 // 未来协议只读已审原始数据；旧Core CI阶段的实际路由保持固定main原件。
 const currentFile=path=>path==='.github/workflows/implementation-impact.yml'?Buffer.from(futureCiAdmissionImpactWorkflow):readFileSync(new URL(path,root));
 const PUBLISHED='b217cd52336767b9637410ef921397a0e9297f2b';
-const publishedFile=path=>execFileSync('git',['show',PUBLISHED+':'+path],{cwd:root,maxBuffer:1024*1024});
+const publishedFile=(path,gitRoot=root)=>execFileSync('git',['show',PUBLISHED+':'+path],{cwd:gitRoot,maxBuffer:1024*1024});
+function isolatedPublishedGit(consume){
+ const directory=mkdtempSync(join(tmpdir(),'workspace-published-git-'));
+ const env=Object.fromEntries(Object.entries(process.env).filter(([key])=>!key.startsWith('GIT_')));
+ const git=(...args)=>execFileSync('git',['--no-replace-objects','-c','core.hooksPath=/dev/null','-c','maintenance.auto=false','-c','gc.auto=0',...args],{cwd:directory,env});
+ try{
+  git('clone','--quiet','--shared','--no-checkout',fileURLToPath(root),'.');
+  consume({directory,git,env});
+ }finally{rmSync(directory,{recursive:true,force:true});}
+}
+const expectPublishedHelper=bytes=>expect(createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex')).toBe('2351ae6a69b066a7e15dbb17e2e6babc13a31305');
+it('历史原件读取禁用真实refs/replace，不把被替换缺文件当canonical缺失',()=>{
+ isolatedPublishedGit(({directory,git,env})=>{
+  const tree=execFileSync('git',['mktree'],{cwd:directory,env,input:''}).toString().trim();
+  const forged=execFileSync('git',['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit-tree',tree,'-p',PUBLISHED],{cwd:directory,env,input:'isolated replacement\n'}).toString().trim();
+  git('replace',PUBLISHED,forged);
+  expect(()=>execFileSync('git',['show',PUBLISHED+':scripts/ci/implementation-skill-source.mjs'],{cwd:directory,env,stdio:'pipe'})).toThrow();
+  expectPublishedHelper(publishedFile('scripts/ci/implementation-skill-source.mjs',directory));
+ });
+});
+it('历史原件读取隔离继承的GIT_DIR与GIT_WORK_TREE，仍返回同一固定Git blob',()=>{
+ isolatedPublishedGit(({directory})=>{
+  const prior=Object.fromEntries(['GIT_DIR','GIT_WORK_TREE','GIT_OBJECT_DIRECTORY'].map(key=>[key,process.env[key]]));
+  Object.assign(process.env,{GIT_DIR:join(directory,'.git'),GIT_WORK_TREE:directory});
+  try{
+   // 该私有仓库故意没有工作树文件，调用仍须读取canonical固定对象。
+   process.env.GIT_OBJECT_DIRECTORY=join(directory,'unavailable-objects');
+   expectPublishedHelper(publishedFile('scripts/ci/implementation-skill-source.mjs'));
+  }finally{
+   for(const [key,value]of Object.entries(prior)){if(value===undefined)delete process.env[key];else process.env[key]=value;}
+  }
+ });
+});
 // 真实官方callee原件仅解析，不执行候选工作流/初始化器。
 async function officialPilotBundle(mutate=()=>{},missing=null,{modern=false,changeSource=x=>x,mutateImpact=()=>{},historical=false,impactText=null,helperBytes=null}={}){
  const input=source(),repo=input.workspace.repo,files=new Map();
