@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync, copyFileSync, mkdirSync, mkdtempSync, writeFileSync, rmSync, realpathSync, symlinkSync } from 'node:fs';
-import { spawnSync } from 'node:child_process';
+import { readFileSync, readdirSync, copyFileSync, mkdirSync, mkdtempSync, writeFileSync, rmSync, realpathSync, symlinkSync, existsSync } from 'node:fs';
+import { spawnSync, spawn } from 'node:child_process';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
@@ -190,7 +190,7 @@ function versionFixture(t, { version = '1.0.0', fragment = false } = {}) {
       env: { ...env, GITHUB_ACTIONS: 'true', GITHUB_EVENT_NAME: 'pull_request', GITHUB_EVENT_PATH: eventPath, ...overrides },
     });
   };
-  return { directory, git, event, run };
+  return { directory, git, event, run, env };
 }
 
 for (const [version, fragment, accepted] of [['1.0.0', false, false], ['0.9.9', false, false],
@@ -249,4 +249,32 @@ test('实际guard的signal与启动错误必须阻断，不能将null状态当�
   symlinkSync('/usr/bin/git', join(bin, 'git'));
   const error = missingBash.run(missingBash.event, { PATH: bin });
   assert.equal(error.status, 1, error.stdout + error.stderr); assert.match(error.stdout, /spawnSync bash ENOENT/);
+});
+
+test('真实guard拦截TERM也必须超时失败并收尾本人进程组', async t => {
+  const f = versionFixture(t, { version: '1.0.1' }), entry = join(f.directory, versionTestPath);
+  const source = readFileSync(entry, 'utf8'), budget = /(cwd: root, env, encoding: 'utf8', timeout: )20000/g;
+  assert.equal([...source.matchAll(budget)].length, 1);
+  // 仅私有副本缩短真实期限；实际入口仍保留20秒预算及全部校验。
+  writeFileSync(entry, source.replace(budget, (_match, prefix) => prefix + '100'));
+  const guard = 'scripts/ci/check-brain-version-bump.sh';
+  writeFileSync(join(f.directory, guard), '#!/usr/bin/env bash\ntrap "" TERM\nprintf ready > "${VERSION_TEST_READY:?}"\nwhile :; do :; done\n');
+  f.git('add', '--', versionTestPath, guard); f.git('commit', '-qm', 'TERM guard fixture');
+  f.event.pull_request.head.sha = f.git('rev-parse', 'HEAD');
+  const eventPath = join(f.directory, 'event.json'), ready = join(f.directory, 'guard-ready');
+  writeFileSync(eventPath, JSON.stringify(f.event));
+  const child = spawn(process.execPath, ['--test', `--test-name-pattern=^${versionEntry}$`, versionTestPath], {
+    cwd: f.directory, detached: true,
+    env: { ...f.env, GITHUB_ACTIONS: 'true', GITHUB_EVENT_NAME: 'pull_request', GITHUB_EVENT_PATH: eventPath, VERSION_TEST_READY: ready },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  const kill = () => { if (child.pid) try { process.kill(-child.pid, 'SIGKILL'); } catch (error) { if (error.code !== 'ESRCH') throw error; } };
+  let expired = false, output = '';
+  child.stdout.on('data', bytes => { output += bytes; }); child.stderr.on('data', bytes => { output += bytes; });
+  const timer = setTimeout(() => { expired = true; kill(); }, 2000);
+  try {
+    const result = await new Promise((resolve, reject) => { child.once('error', reject); child.once('close', (code, signal) => resolve({ code, signal })); });
+    assert.ok(existsSync(ready), output); assert.equal(expired, false, 'guard ignored its timeout');
+    assert.equal(result.code, 1, output); assert.equal(result.signal, null); assert.match(output, /ETIMEDOUT/);
+  } finally { clearTimeout(timer); kill(); }
 });
