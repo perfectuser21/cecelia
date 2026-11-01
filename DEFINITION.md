@@ -1,8 +1,8 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.445.97
+**Brain 版本**: 1.445.98
 
-本次 CI 准入工具修复保留 `cecelia_source_only=true` 与旧 CI/Impact 原件，仅完整已审旧 consumer 配对选择其可消费的 legacy 格式；新 consumer 继续优先官方 CI 凭据且坏证据拒绝。typed 输出仅额外容纳 resolver 的根级诊断元数据，完整未来来源封印与历史只读 cohort 分别审定，不授予生产运行资格。
+本次 CI 准入性能修复保留 `cecelia_source_only=true` 与旧 CI/Impact 原件。verification context 的 report 摘要只在单次构建内延迟复用，普通输入与退休证明共享、跨调用重新计算；来源资格由新的完整未来 tuple 审定，已发布历史 readonly/legacy 组合保留，不授予生产运行资格。
 
 发布排空修复的来源证明先行：工厂来源校验同时保留旧生产部署脚本与固定候选的精确哈希；新 bootstrap 调用边仅在候选部署脚本真实出现时登记，旧生产脚本不虚构新依赖。来源恢复门禁也只认可这两个逐字节已审版本，任意漂移继续拒绝。1.445.86 来源基线带 `cecelia_source_only` 标记，正式部署脚本会在构建前拒绝；1.445.88 消费两份变更条目并移除该标记，仅形成可进入完整 CI 与同镜像隔离预发的候选，生产切换仍以实际准入结果为准。
 
