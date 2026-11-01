@@ -70,7 +70,7 @@ Brain/Engine/API 的共享依赖变更会选择共享运行组及 Ops 回归；�
 
 | 工作流 | 定位 |
 |---|---|
-| implementation-impact.yml | 来源准入；先执行发布快照、跨仓、技能与巡查的原生机制回归（含基线选择与只读就绪），再进行真实差分准入；所有目标main的PR、main push与按需调用均接收，来源资格保护保留 |
+| implementation-impact.yml | 来源准入；先执行发布快照、跨仓、技能与巡查的原生机制回归（含基线选择与只读就绪），再进行真实差分准入；所有目标main的PR均接收，中央/live快照只保留按需及跨仓显式调用，来源资格保护保留 |
 | skill-source-ownership.yml | 所有权专项的单元测试及真实校验；最低 scripts 跑道也运行同一校验器，专项继续作为独立必需检查 |
 | skills-source-check.yml | 固定 Skill 来源的三系统恢复校验及 Brain/Engine/Quality/root 正文合同；所有目标main的PR与main push执行，固定Skill合同通过严格汇总全部结果 |
 | ci-dashboard-pwa-e2e.yml | 当前 Dashboard 的 PWA/任务台浏览器专项 |
