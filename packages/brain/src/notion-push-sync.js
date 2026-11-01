@@ -243,7 +243,19 @@ export function buildIssueNotionProperties(issue) {
   return properties;
 }
 
-async function pushIssues(pool, token) {
+const ISSUE_BODY_MARKER = '🤖 Issue 最新正文（机器维护';
+export function buildIssueBodyBlock(issue) {
+  const body = String(issue.body || '（正文为空）');
+  if (Buffer.byteLength(body, 'utf8') > 300000) throw new Error('Issue 正文超过 Notion 投影容量');
+  const chunks = body.match(/[\s\S]{1,1900}/g) || [];
+  const children = [];
+  for (let i = 0; i < chunks.length; i += 100) {
+    children.push({ object: 'block', type: 'paragraph', paragraph: { rich_text: chunks.slice(i, i + 100).map(content => ({ type: 'text', text: { content } })) } });
+  }
+  return { object: 'block', type: 'toggle', toggle: { rich_text: buildRichText(`${ISSUE_BODY_MARKER}：改事实请改 Brain）`), children } };
+}
+
+export async function pushIssues(pool, token) {
   const { rows } = await pool.query(
     `SELECT * FROM issues
       WHERE notion_synced_at IS NULL OR updated_at > notion_synced_at
@@ -253,9 +265,7 @@ async function pushIssues(pool, token) {
   await pushRegisteredRows(pool, token, {
     table: 'issues', dbId, rows, notionReq, logSyncError, isStaleRelationError, isWrongDatabaseError, label: 'issue',
     buildProps: buildIssueNotionProperties,
-    buildChildren: (issue) => issue.body ? [{
-      object: 'block', type: 'paragraph', paragraph: { rich_text: buildRichText(issue.body) },
-    }] : undefined,
+    syncBody: (issue, pageId) => syncManagedBodyBlock(token, pageId, buildIssueBodyBlock(issue), notionReq, ISSUE_BODY_MARKER),
   });
 }
 /**

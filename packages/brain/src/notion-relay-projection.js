@@ -16,6 +16,7 @@ import { normalizeBrief } from './lib/project-brief.js';
 import { PROJECTS_DB, PROJECT_STATUS_TO_NOTION, brainHuman, humanProps, HUMAN_COLUMNS } from './lib/project-notion-human.js';
 import { pullProjects, ingestProjectPage } from './project-notion-ingest.js';
 import { normalizeTaskProgress } from './projection/task-progress.js';
+import { syncManagedBodyBlock } from './projection/workflow-body.js';
 export { PROJECTS_DB, PROJECT_STATUS_TO_NOTION };
 
 
@@ -177,13 +178,14 @@ export function buildProjectBody(root, snap) {
   return blocks.slice(0, MAX_BLOCKS);
 }
 
-/** 整页正文替换：删旧块再追加（镜子页，正文完全由 Brain 拥有） */
+const PROJECT_BODY_MARKER = '🤖 项目最新进展（机器维护';
+function projectManagedBlock(blocks) {
+  return { object: 'block', type: 'toggle', toggle: { rich_text: rt(`${PROJECT_BODY_MARKER}：改事实请改 Brain）`), children: blocks } };
+}
+
+/** 先追加并读回机器区块，再删除旧机器区块；保留未知归属的历史/人工正文。 */
 export async function replacePageBody(notionReq, token, pageId, blocks) {
-  const existing = await notionReq(token, `/blocks/${pageId}/children?page_size=100`, 'GET');
-  for (const b of existing?.results || []) {
-    await notionReq(token, `/blocks/${b.id}`, 'DELETE');
-  }
-  if (blocks.length) await notionReq(token, `/blocks/${pageId}/children`, 'PATCH', { children: blocks });
+  await syncManagedBodyBlock(token, pageId, projectManagedBlock(blocks), notionReq, PROJECT_BODY_MARKER, { position: { type: 'start' } });
 }
 
 // 页被删(404)、页/库进回收站(400 archived ancestor)，或 legacy notion_id 指向错库(400 schema 不符，
@@ -255,14 +257,14 @@ export async function pushProjectRoots(pool, token, { notionReq = defaultNotionR
         }
       }
       if (!pageId) {
-        const created = await notionReq(token, '/pages', 'POST', { parent: { database_id: dbId }, properties: props, children: body });
+        const created = await notionReq(token, '/pages', 'POST', { parent: { database_id: dbId }, properties: props, children: body.length ? [projectManagedBlock(body)] : [] });
         pageId = created.id;
       }
       // 属性一成功就落基线，正文失败不得把自写回声当成人工编辑。
       await pool.query(`UPDATE projects SET notion_props = (notion_props - 'pending_human_push') ||
         jsonb_build_object('human_baseline', $2::jsonb, 'notion_id', $3::text, 'project_db', $4::text) WHERE id = $1`,
         [root.id, JSON.stringify(values), pageId, dbId]);
-      if (page && body.length && root.notion_props?.body_digest !== bodyDigest) await replacePageBody(notionReq, token, pageId, body);
+      if (body.length && (!page || root.notion_props?.body_digest !== bodyDigest)) await replacePageBody(notionReq, token, pageId, body);
       await pool.query(`UPDATE projects SET notion_props = notion_props ||
         jsonb_build_object('notion_id', $2::text, 'project_digest', $3::text, 'project_db', $4::text, 'body_digest', $5::text) WHERE id = $1`,
         [root.id, pageId, digest, dbId, bodyDigest]);

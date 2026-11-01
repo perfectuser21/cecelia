@@ -61,9 +61,12 @@ describe('archived ancestor 400 → 视同 404 自愈', () => {
       if (/UPDATE projects SET/.test(sql)) { updates.push(params); return { rows: [] }; }
       return { rows: [] };
     }) };
-    const req = vi.fn(async (t, path, method) => {
+    let createdBlock;
+    const req = vi.fn(async (t, path, method, body) => {
       if (method === 'PATCH' && path === '/pages/p1') throw new Error(ARCHIVED_MSG);
-      if (method === 'POST') return { id: 'page-new' };
+      if (method === 'POST' && path === '/pages') { createdBlock = { ...body.children[0], id: 'created-block' }; return { id: 'page-new' }; }
+      if (method === 'GET' && path.startsWith('/blocks/page-new/')) return { results: [createdBlock], has_more: false };
+      if (method === 'GET' && path.startsWith('/blocks/created-block/')) return { results: createdBlock.toggle.children, has_more: false };
       return {};
     });
     const s = await pushProjectRoots(pool, 'tok', { notionReq: req, log: { warn: () => {} } });
