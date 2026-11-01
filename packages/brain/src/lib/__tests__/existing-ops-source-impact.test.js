@@ -1,4 +1,8 @@
 import {it,expect} from 'vitest';
+import {createRequire} from 'node:module';
+import {parse as acorn} from 'acorn';
+import {collectNativeFutureImpactSources} from '../existing-ops-workspace-source.js';
+import {frozenFutureGit,readFrozenFutureBytes} from './helpers/future-active-git.js';
 import {createHash} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
@@ -13,6 +17,7 @@ const paths=execFileSync('git',['ls-tree','-rz','--name-only',revision],{cwd:roo
 const cache=new Map();
 const read=path=>{if(!cache.has(path))cache.set(path,execFileSync('git',['show',`${revision}:${path}`],{cwd:root,encoding:'utf8',maxBuffer:16*1024*1024}));return cache.get(path);};
 const workflow='.github/workflows/implementation-impact.yml';
+const frozenProfile=frozenFutureGit(root);
 it('巡查独立身份baseline保持当前真实Git F2/F3消费者协议',async()=>{
  const proof=await buildExistingOpsSources({scope:'cecelia-factory',repo:'perfectuser21/cecelia',revision,paths,readSource:async path=>read(path)});
  expect(proof.consumers.every(c=>c.status==='verified'),JSON.stringify(proof.consumers.map(c=>c.gaps))).toBe(true);
@@ -220,4 +225,59 @@ it('真实当前CLI只有mainScopes缺省才走单scope，false或空值仍进�
  try{for(const [label,extra,code]of [['absent',{},'IMPLEMENTATION_CI_INPUT_INVALID'],['undefined',{mainScopes:undefined},'IMPLEMENTATION_CI_INPUT_INVALID'],['false',{mainScopes:false},'IMPLEMENTATION_MAIN_SCOPES_INVALID'],['empty',{mainScopes:''},'IMPLEMENTATION_MAIN_SCOPES_INVALID']])
   await expect(runImplementationPrGate({mode:'main',scope:'cecelia-kr',outputDir:join(dir,label),...extra})).rejects.toMatchObject({code});
  }finally{rmSync(dir,{recursive:true,force:true});}
+});
+
+it('自身future CI完整原件必须由raw F3 collector证明typed准入调用链',async()=>{
+ const {revision:future,paths:futurePaths,read:futureRead}=frozenProfile;
+ const proof=await buildExistingOpsSources({scope:'cecelia-factory',repo:'perfectuser21/cecelia',revision:future,paths:futurePaths,readSource:futureRead});
+ expect(proof.consumers[1].status,JSON.stringify(proof.consumers[1].gaps)).toBe('verified');
+ expect(proof.consumers[1].input_relations).toContainEqual(expect.objectContaining({consumer_path:workflow,input_path:entry,kind:'ci_admission_only_native_pr_runner'}));
+ expect(proof.workflows.every(w=>w.executable===false&&w.coverage.status==='unknown')).toBe(true);
+});
+
+// 完整active profile的每个成员独立改变都会清空候选关系；不靠foreign inactive资格。
+{
+ const fixture=frozenProfile,active={basicCi:true,parse:text=>acorn(text,{ecmaVersion:'latest',sourceType:'module'}),revision:fixture.revision};
+ it('自身typed active完整tuple保留same revision真实调用边',async()=>{
+  const relations=[];expect(await collectNativeFutureImpactSources({...active,read:fixture.read,relations})).toBe(true);
+  expect(relations).toContainEqual(expect.objectContaining({input_path:'packages/brain/src/lib/existing-ops-registration.js',kind:'sealed_ci_admission_import'}));
+ });
+ for(const path of [".github/workflows/ci-admission-baseline.yml",".github/workflows/implementation-impact.yml","scripts/ci/implementation-multi-pr-gate.mjs","scripts/ci/implementation-pr-gate.mjs","scripts/ci/implementation-multi-scope.mjs","scripts/ci/implementation-snapshot.mjs","scripts/ci/implementation-scratch.mjs","scripts/ci/implementation-gate.mjs","scripts/ci/implementation-pr-baseline.mjs","scripts/ci/implementation-infra-inputs.mjs","scripts/ci/implementation-skill-source.mjs","scripts/ci/ci-admission-inputs.mjs","scripts/ci/ci-admission-handoff.mjs","scripts/ci/ci-admission-artifact.mjs","scripts/ci/ci-admission-envelope.mjs","scripts/ci/ci-admission-authority.mjs","scripts/ci/ci-admission-archive.mjs","scripts/ci/ci-admission-scratch.mjs","scripts/ci/ci-admission-seed.mjs","scripts/ci/ci-admission-builder.mjs","scripts/ci/ci-admission-worker.mjs","scripts/ci/ci-admission-worker-runner.mjs","scripts/ci/ci-admission-publisher.mjs","scripts/ci/implementation-verification-inputs.mjs","scripts/ci/implementation-verification-context.mjs","scripts/ci/implementation-verification-selectors.mjs","scripts/ci/implementation-verification-retirements.mjs","scripts/ci/implementation-auxiliary-evidence.mjs","scripts/ci/fixed-local-git.mjs","packages/brain/src/lib/existing-ops-registration.js","packages/brain/src/lib/implementation-ci-snapshot.js","scripts/ci/config/ci-admission-registry.json"])it(`自身active拒绝单独篡改${path}`,async()=>{
+  const relations=[];expect(await collectNativeFutureImpactSources({...active,read:async p=>(await fixture.read(p))+(p===path?'\n// unreviewed active bytes':''),relations})).toBe(false);expect(relations).toEqual([]);
+ });
+ it('新active入口没有同revision完整Basic前置不得借legacy授信',async()=>{
+  const relations=[];expect(await collectNativeFutureImpactSources({...active,basicCi:false,read:fixture.read,relations})).toBe(false);expect(relations).toEqual([]);
+ });
+}
+
+it('真实selected测试读取gzip数据且loader不执行数据并恢复描述符',async()=>{
+ const require=createRequire(new URL('./helpers/future-active-git.js',import.meta.url));
+ const target=require.resolve('../../../../../../scripts/ci/__tests__/fixtures/future-active-source.json.gz');
+ const extension=Object.getOwnPropertyDescriptor(require.extensions,'.gz'),cache=Object.getOwnPropertyDescriptor(require.cache,target);
+ expect(Buffer.isBuffer(readFrozenFutureBytes(require))).toBe(true);
+ expect(Object.getOwnPropertyDescriptor(require.extensions,'.gz')).toEqual(extension);expect(Object.getOwnPropertyDescriptor(require.cache,target)).toEqual(cache);
+ // 指向非目标不能交给JS编译：在调用者边界主动请求同扩展的另一路径。
+ const fake=()=>require.extensions['.gz']({},target+'.other');Object.assign(fake,{resolve:require.resolve,extensions:require.extensions,cache:require.cache});
+ expect(()=>readFrozenFutureBytes(fake)).toThrow('FUTURE_DATA_TARGET');
+ expect(Object.getOwnPropertyDescriptor(require.extensions,'.gz')).toEqual(extension);expect(Object.getOwnPropertyDescriptor(require.cache,target)).toEqual(cache);
+
+});
+for(const[name,path,before,after]of[
+ ['跳过buildPr','scripts/ci/implementation-pr-gate.mjs','h=await buildPrImplementationSnapshot(scratch.db,h,head,repoRoot)','h=h'],
+ ['缺三scope','scripts/ci/implementation-multi-pr-gate.mjs','["cecelia-kr","cecelia-factory","cecelia-infra"]','["cecelia-factory"]'],
+ ['偷换snapshot','scripts/ci/implementation-multi-pr-gate.mjs','snapshotBase:snapshot,snapshotHead:snapshot','snapshotBase:snapshot,snapshotHead:{}'],
+ ['main用途','scripts/ci/implementation-multi-pr-gate.mjs',"if(mode!=='pr')fail('IMPACT_MULTISCOPE_ADMISSION_ONLY')","if(false)fail('IMPACT_MULTISCOPE_ADMISSION_ONLY')"],
+ ['脱离sameDB','scripts/ci/ci-admission-inputs.mjs',"{db:scratch.db,usage:'pr'}","{db:{},usage:'pr'}"],
+ ['来源错误','scripts/ci/implementation-snapshot.mjs','readSource:nativeRead','readSource:read'],
+ ['删除真实注册','scripts/ci/ci-admission-builder.mjs','await registerExistingOpsSources(db,','await fakeRegistration(db,'],
+ ['提前return','scripts/ci/implementation-multi-pr-gate.mjs','return withCiAdmissionInputsScratch(handle,','return {}; return withCiAdmissionInputsScratch(handle,'],
+ ['只留注释调用','scripts/ci/implementation-pr-gate.mjs','return implementationPrEvidence(options,false,{db:options.db});','return {}; /* implementationPrEvidence(options,false,{db:options.db}); */'],
+])it(`自身active拒绝${name}`,async()=>{
+ const text=await frozenProfile.read(path);expect(text.includes(before)).toBe(true);const relations=[];
+ expect(await collectNativeFutureImpactSources({basicCi:true,parse:text=>acorn(text,{ecmaVersion:'latest',sourceType:'module'}),revision:frozenProfile.revision,relations,read:async p=>p===path?text.replace(before,after):frozenProfile.read(p)})).toBe(false);expect(relations).toEqual([]);
+});
+it('未来profile失败不得借旧multi/foreign条件回落，整个F3绑定必须清空',async()=>{
+ const pr='scripts/ci/implementation-multi-pr-gate.mjs';
+ const proof=await buildExistingOpsSources({scope:'cecelia-factory',repo:'perfectuser21/cecelia',revision:frozenProfile.revision,paths:frozenProfile.paths,readSource:async p=>p===pr?(await frozenProfile.read(p))+'\n// unreviewed active controller':frozenProfile.read(p)});
+ expect(proof.consumers[1].status).toBe('unknown');expect(proof.consumers[1].bindings).toEqual([]);expect(proof.consumers[1].input_relations).toEqual([]);
 });
