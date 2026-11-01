@@ -134,6 +134,27 @@ it.each([
 ])('现代helper%s漂移不能冒已审源码封套',async(_name,change)=>{const p=await modernBundle(()=>{},null,{changeSource:(bytes,path)=>path===MODERN?Buffer.from(change(bytes.toString())):bytes});expect(p.status).toBe('unknown');});
 
 const infraStep=(y,name)=>y.jobs.gate.steps.find(s=>s.name===name);
+const sourceNodeStep=y=>infraStep(y,'来源机制完整单元回归');
+const nativeSourceOnly="github.repository == 'perfectuser21/cecelia' && (!inputs.source_repo || inputs.source_repo == github.repository)";
+it('真实四Node入口仅在Cecelia源码checkout执行，跨仓完整封套证明其不可达',async()=>{
+ const workflow=load(currentFile('.github/workflows/implementation-impact.yml').toString());
+ expect(sourceNodeStep(workflow).if).toBe(nativeSourceOnly);
+ const proof=await modernBundle();expect(proof.status,JSON.stringify(proof.gaps)).toBe('verified');
+ expect(proof.consumer.bindings.some(b=>b.path==='scripts/ci/__tests__/implementation-main-snapshot.test.mjs')).toBe(false);
+ expect(proof.executable).toBe(false);expect(proof.admission.status).toBe('unknown');
+});
+it.each([
+ ['缺条件',y=>{delete sourceNodeStep(y).if;}],['恒真',y=>{sourceNodeStep(y).if='true';}],
+ ['恒假',y=>{sourceNodeStep(y).if='false';}],['假source条件',y=>{sourceNodeStep(y).if="inputs.source_repo == 'perfectuser21/cecelia'";}],
+ ['放宽source条件',y=>{sourceNodeStep(y).if="github.repository == 'perfectuser21/cecelia'";}],
+ ['替换命令',y=>{sourceNodeStep(y).run+=' --test-only';}],['错cwd',y=>{sourceNodeStep(y)['working-directory']='tooling';}],
+ ['注入env',y=>{sourceNodeStep(y).env={NODE_OPTIONS:'--import ./fake.mjs'};}],
+ ['容错',y=>{sourceNodeStep(y)['continue-on-error']=true;}],['shell覆盖',y=>{sourceNodeStep(y).shell='bash';}],
+ ['错位置',y=>{const steps=y.jobs.gate.steps;steps.push(...steps.splice(steps.indexOf(sourceNodeStep(y)),1));}],
+])('四Node跨仓隔离%s不能借新封套取得来源资格',async(_name,mutateImpact)=>{
+ const proof=await modernBundle(()=>{},null,{mutateImpact});
+ expect(proof.status).toBe('unknown');expect(proof.workflow_coverage.verified_reference_ids).toEqual([]);expect(proof.executable).toBe(false);
+});
 const priorBaseEnv='${{ inputs.base_revision || github.event.pull_request.base.sha || github.event.before }}';
 const oldInfraGuard=y=>{
  y.jobs['snapshot-infra'].if=y.jobs['snapshot-infra'].if.replace('inputs.source_baseline_recovery != true && ','');

@@ -91,7 +91,8 @@ test('来源准入先执行发布、跨仓、技能与巡查机制回归，不�
   assert.equal(checks.length, 1, '原有四份来源机制入口必须接入必需来源检查');
   const [step] = checks;
   assert.equal(step['working-directory'], 'source');
-  for (const key of ['if', 'continue-on-error', 'env', 'shell']) assert.equal(step[key], undefined, `${key}不能掩盖工具单测结果`);
+  assert.equal(step.if, "github.repository == 'perfectuser21/cecelia' && (!inputs.source_repo || inputs.source_repo == github.repository)");
+  for (const key of ['continue-on-error', 'env', 'shell']) assert.equal(step[key], undefined, `${key}不能掩盖工具单测结果`);
   const dependencies = steps.findIndex(step => step.run === 'npm ci --ignore-scripts' && step['working-directory'] === 'source');
   const regression = steps.findIndex(step => step.run === 'node --test scripts/ci/__tests__/implementation-infra-joint.pg.test.mjs');
   assert.ok(dependencies >= 0 && dependencies < steps.indexOf(step));

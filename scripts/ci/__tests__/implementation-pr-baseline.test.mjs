@@ -136,5 +136,5 @@ test('正式PR入口执行selector且原双scope/固定工具/Skill缓存保留�
  assert.match(readFileSync(join(root,'scripts/ci/__tests__/implementation-main-snapshot.test.mjs'),'utf8'),/import '\.\/implementation-pr-baseline.test.mjs'/);
  const regression=steps.find(s=>s.run==='node --test scripts/ci/__tests__/implementation-main-snapshot.test.mjs scripts/ci/__tests__/workspace-ci-source-bundle.test.mjs scripts/ci/__tests__/implementation-skill-source.test.mjs scripts/ci/__tests__/device-patrol-governance.test.mjs');
  assert.ok(regression,'来源机制回归仍由必需来源检查自动执行');assert.equal(regression['working-directory'],'source');
- assert.equal(regression.if,undefined);assert.equal(regression['continue-on-error'],undefined);
+ assert.equal(regression.if,"github.repository == 'perfectuser21/cecelia' && (!inputs.source_repo || inputs.source_repo == github.repository)");assert.equal(regression['continue-on-error'],undefined);
 });
