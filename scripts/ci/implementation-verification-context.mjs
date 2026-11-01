@@ -36,6 +36,11 @@ function nativeOwners(report,source,side){
 export function buildVerificationInputContext({source,evidence,reports,raw_consumer_graph_facts,retirement_candidates,retirement_entry_evidence,purpose='admission_only'}){
  assertInputEnvelope(source,evidence,purpose);
  if(!Array.isArray(reports)||!reports.length||new Set(reports.map(r=>r.scope_key)).size!==reports.length)fail('REPORTS_REQUIRED');
+ const reportDigests=new WeakMap();
+ const reportHash=report=>{
+  if(!reportDigests.has(report))reportDigests.set(report,sha(report));
+  return reportDigests.get(report);
+ };
  const owners=new Map();
  for(const report of reports)for(const side of['base','head'])owners.set(report.scope_key+':'+side,nativeOwners(report,source,side));
  const graphFacts=assertRawGraphs(source,reports,raw_consumer_graph_facts);
@@ -49,7 +54,7 @@ export function buildVerificationInputContext({source,evidence,reports,raw_consu
   for(const report of reports)for(const owner of owners.get(report.scope_key+':'+side)){
    if(!owner.matched_paths.length||!row.eligible_owner_paths.includes(owner.path))continue;
    claims.push({scope_key:report.scope_key,side,owner_path:owner.path,source_revision:owner.source_revision,graph_sha256:owner.graph_sha256,
-    matched_paths:[...owner.matched_paths],source_report_sha256:sha(report)});
+    matched_paths:[...owner.matched_paths],source_report_sha256:reportHash(report)});
   }
   if(claims.length)authorized.push({path:input.path,side,input_witness_sha256:row.input_witness_sha256,owner_claims:claims});
  }
@@ -68,7 +73,7 @@ export function buildVerificationInputContext({source,evidence,reports,raw_consu
   joint_files.push({path,input_indexes:[],metadata_indexes:metadata.flatMap((r,i)=>r.path===path?[i]:[]),resolution_kind:metadata.find(r=>r.path===path).kind,
    joint_kind:metadata.find(r=>r.path===path).kind,non_executable:true,execution_status:'not_evaluated',coverage:'unknown'});
  }
- const retired=authorizeRetirements(source,reports,owners,graphFacts,retirement_candidates,retirement_entry_evidence);
+ const retired=authorizeRetirements(source,reports,owners,graphFacts,retirement_candidates,retirement_entry_evidence,reportHash);
  for(const path of [...new Set(retired.map(r=>r.path))].sort()){
   if(joint_files.some(r=>r.path===path))fail('JOINT_ROLE_CONFLICT');
   joint_files.push({path,input_indexes:[],retirement_indexes:retired.flatMap((r,i)=>r.path===path?[i]:[]),resolution_kind:'explicit_verification_retirement',joint_kind:'explicit_verification_retirement',non_executable:true,execution_status:'not_evaluated',coverage:'unknown'});
@@ -99,7 +104,7 @@ function assertMetadataSideFacts(source,evidence,path){
   else if(row.exists!==false||Object.hasOwn(row,'input_facts'))fail('METADATA_SIDE_FACTS_INVALID');
  }
 }
-function authorizeRetirements(source,reports,owners,graphs,proof,entries){
+function authorizeRetirements(source,reports,owners,graphs,proof,entries,reportHash){
  if(!proof&&!entries)return[];
  const {retirement_candidates_sha256,...body}=proof||{},entryBody={...entries};delete entryBody.retirement_entry_candidates_sha256;
  if(!proof||proof.purpose!=='admission_only'||proof.kind!=='explicit_verification_retirement'||!equal(proof.source,source)||sha(body)!==retirement_candidates_sha256
@@ -119,7 +124,7 @@ function authorizeRetirements(source,reports,owners,graphs,proof,entries){
    if(!entry||entry.input.source.side!=='head'||entry.input.source.revision!==source.head_revision||entry.input.path!==input.path||entry.input.sha256!==input.sha256
     ||entry.input.git_blob_sha1!==input.git_blob_sha1||entry.witness.config?.sha256!==input.config.sha256||entry.witness.kind!=='vitest_config_input')continue;
    const claims=[];
-   for(const report of reports)for(const owner of owners.get(report.scope_key+':head'))if(owner.matched_paths.length&&entry.eligible_owner_paths.includes(owner.path))claims.push({scope_key:report.scope_key,side:'head',owner_path:owner.path,source_revision:owner.source_revision,graph_sha256:owner.graph_sha256,matched_paths:[...owner.matched_paths],source_report_sha256:sha(report)});
+   for(const report of reports)for(const owner of owners.get(report.scope_key+':head'))if(owner.matched_paths.length&&entry.eligible_owner_paths.includes(owner.path))claims.push({scope_key:report.scope_key,side:'head',owner_path:owner.path,source_revision:owner.source_revision,graph_sha256:owner.graph_sha256,matched_paths:[...owner.matched_paths],source_report_sha256:reportHash(report)});
    if(claims.length)replacements.push({path:input.path,entry_support_sha256:entry.entry_support_sha256,owner_claims:claims});
   }
   if(replacements.length===retired.replacement_inputs.length)authorized.push({path:retired.path,kind:'explicit_verification_retirement',catalog:retired.catalog,replacements,
