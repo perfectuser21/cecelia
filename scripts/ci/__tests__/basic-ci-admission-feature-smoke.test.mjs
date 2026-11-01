@@ -67,9 +67,9 @@ test('feature smoke实际跑本地Git/原ZIP/opaque/发布与子进程合同，�
  const actual=join(root,'packages/brain/scripts/smoke',name);writeFileSync(join(smokeDir,name),"#!/bin/bash\nexec bash '"+actual.replaceAll("'","'\\''")+"'\n",{mode:0o700});
  const result=await run({...f.env,SMOKE_DIR:smokeDir});assertSmokeSuccess(result);assert.match(result.stdout,/GATE PASSED/);assert.match(result.stdout,/UNREGISTERED:\s+0/);assert.equal(result.stdout.includes('五个显式退休仅产生候选'),false);assert.equal((result.stdout+result.stderr).includes(f.env.GH_TOKEN),false);
  assert.equal(readFileSync(join(root,'scripts/ci/__tests__/implementation-main-snapshot.test.mjs'),'utf8').includes("import './ci-admission-mechanisms.test.mjs'"),false);
- assert.ok(existsSync(join(root,'packages/brain/src/__tests__/ci-admission-baseline-contracts.test.js')));
+ assert.equal(existsSync(join(root,'packages/brain/src/__tests__/ci-admission-baseline-contracts.test.js')),false);
  const {relations}=createRequire(import.meta.url)('../../../.implementation-source-relations.json');
- assert.deepEqual(relations.filter(row=>row.path==='packages/brain/src/__tests__/ci-admission-baseline-contracts.test.js'),[{owner_path:'scripts/ci/ci-admission-publisher.mjs',path:'packages/brain/src/__tests__/ci-admission-baseline-contracts.test.js',role:'verification'}]);
+ assert.equal(relations.some(row=>row.path==='packages/brain/src/__tests__/ci-admission-baseline-contracts.test.js'),false);
  const aggregate=readFileSync(join(root,'scripts/ci/__tests__/ci-admission-mechanisms.test.mjs'),'utf8');assert.equal(aggregate.includes("import './basic-verification-retirements.test.mjs'"),false);assert.ok(existsSync(join(root,'packages/brain/src/__tests__/ci-verification-retirement-contracts.test.js')));
 });
 for(const major of [26,22])test(`feature smoke边界：Node${major}${major===26?'执行前拒绝':'真实失败码原样传递与最小env'}`,async t=>{

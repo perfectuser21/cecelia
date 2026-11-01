@@ -1,4 +1,4 @@
-// 旧Core过渡入口：默认Brain wrapper真实执行这些本地合同；不授予候选或生产资格。
+// 旧Core过渡入口：已安装根依赖的Node跑道真实执行这些本地合同；不授予候选或生产资格。
 import './basic-ci-admission-archive.test.mjs';
 import './basic-ci-admission-artifact.test.mjs';
 import './basic-ci-admission-authority.test.mjs';

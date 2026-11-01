@@ -1,3 +1,4 @@
+import './factory-workflow-config-source.test.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtempSync,mkdirSync,writeFileSync,rmSync,symlinkSync} from 'node:fs';
