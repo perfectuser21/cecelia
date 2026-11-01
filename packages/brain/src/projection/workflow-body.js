@@ -88,12 +88,12 @@ export async function syncManagedBodyBlock(token,pageId,expected,notionReq,marke
    // 先追加并核验，再删旧版本；中断时旧正文仍可读。残留正确新区块直接复用。
    let keeper=existing.find(b=>JSON.stringify(normalized(b))===want&&(!requireStart||existingFirst===b.id));
    if(!keeper){
-    const appended=await notionReq(token,`/blocks/${pageId}/children`,'PATCH',{children:[expected],...(options.position ? {position:options.position} : {})});
-    const created=(appended?.results||[]).filter(b=>b.type==='toggle'&&textOf(b.toggle?.rich_text).startsWith(marker));
-    if(created.length!==1||!created[0].id||existing.some(b=>b.id===created[0].id))throw Error('Workflow正文追加身份不一致');
+    await notionReq(token,`/blocks/${pageId}/children`,'PATCH',{children:[expected],...(options.position ? {position:options.position} : {})});
+    const existingIds=new Set(existing.map(b=>b.id));
     const verified=await machineBlocks(token,pageId,notionReq,marker);
-    keeper=verified.find(b=>b.id===created[0].id);
-    if(!keeper||JSON.stringify(normalized(keeper))!==want)throw Error('Workflow新正文读回不一致');
+    const created=verified.filter(b=>!existingIds.has(b.id));
+    if(created.length!==1||JSON.stringify(normalized(created[0]))!==want)throw Error('Workflow新正文读回不一致');
+    keeper=created[0];
    }
    if(requireStart && await firstId()!==keeper.id)throw Error('项目最新正文未在页面顶部');
    // 不移动人工正文，只清本模块其它机器块。
