@@ -2621,6 +2621,11 @@
       "owner_path": "scripts/ci/implementation-verification-retirements.mjs",
       "path": "scripts/ci/__tests__/basic-verification-retirements.test.mjs",
       "role": "verification"
+    },
+    {
+      "owner_path": "scripts/ci/implementation-verification-retirements.mjs",
+      "path": "packages/brain/src/__tests__/ci-verification-retirement-contracts.test.js",
+      "role": "verification"
     }
   ]
 }
