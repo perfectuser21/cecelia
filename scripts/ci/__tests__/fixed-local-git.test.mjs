@@ -155,3 +155,18 @@ test('本人Git夹具清理其他错误立即原样抛出不重试',t=>{
   assert.equal(calls,1);assert.equal(existsSync(f.root),true);
  }
 });
+
+import {readFrozenTypedOutputBytes,decodeFrozenTypedOutputBytes,frozenTypedOutputFutureGit} from '../../../packages/brain/src/lib/__tests__/helpers/future-active-git.js';
+test('第二完整future数据仅叠已审两个普通controller，真实Git blob摘要与未改workflow保持',async()=>{
+ const bytes=readFrozenTypedOutputBytes(),data=decodeFrozenTypedOutputBytes(bytes),root=fileURLToPath(new URL('../../../',import.meta.url));
+ const original=frozenFutureGit(root),next=frozenTypedOutputFutureGit(root);assert.equal(next.revision,data.captured_revision);
+ assert.deepEqual(next.paths,original.paths);
+ for(const row of data.members){
+  const actual=Buffer.from(await next.read(row.path));assert.deepEqual(actual,Buffer.from(row.content_base64,'base64'));
+  assert.notDeepEqual(actual,Buffer.from(await original.read(row.path)));
+  assert.equal(createHash('sha1').update(`blob ${actual.length}\0`).update(actual).digest('hex'),row.blob_sha1);
+ }
+ const workflow='.github/workflows/implementation-impact.yml';assert.equal(await next.read(workflow),await original.read(workflow));
+ const corrupt=Buffer.from(bytes);corrupt[corrupt.length-1]^=1;assert.throws(()=>decodeFrozenTypedOutputBytes(corrupt),/TYPED_OUTPUT_FIXTURE_DIGEST/);
+ await assert.rejects(next.read('../escape'),/FUTURE_FIXTURE_MISSING/);
+});

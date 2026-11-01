@@ -2,7 +2,7 @@ import {it,expect} from 'vitest';
 import {createRequire} from 'node:module';
 import {parse as acorn} from 'acorn';
 import {collectNativeFutureImpactSources} from '../existing-ops-workspace-source.js';
-import {frozenFutureGit,readFrozenFutureBytes} from './helpers/future-active-git.js';
+import {frozenFutureGit,readFrozenFutureBytes,frozenTypedOutputFutureGit} from './helpers/future-active-git.js';
 import {createHash} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
@@ -280,4 +280,21 @@ it('未来profile失败不得借旧multi/foreign条件回落，整个F3绑定必
  const pr='scripts/ci/implementation-multi-pr-gate.mjs';
  const proof=await buildExistingOpsSources({scope:'cecelia-factory',repo:'perfectuser21/cecelia',revision:frozenProfile.revision,paths:frozenProfile.paths,readSource:async p=>p===pr?(await frozenProfile.read(p))+'\n// unreviewed active controller':frozenProfile.read(p)});
  expect(proof.consumers[1].status).toBe('unknown');expect(proof.consumers[1].bindings).toEqual([]);expect(proof.consumers[1].input_relations).toEqual([]);
+});
+
+const typedOutputProfile=frozenTypedOutputFutureGit(root);
+it('新完整typed输出guard与resolver组合由真实raw F3认可，旧完整bundle仍保留',async()=>{
+ const proof=await buildExistingOpsSources({scope:'cecelia-factory',repo:'perfectuser21/cecelia',revision:typedOutputProfile.revision,paths:typedOutputProfile.paths,readSource:typedOutputProfile.read});
+ expect(proof.consumers[1].status,JSON.stringify(proof.consumers[1].gaps)).toBe('verified');
+ expect(proof.consumers[1].input_relations).toContainEqual(expect.objectContaining({consumer_path:workflow,input_path:entry,kind:'ci_admission_only_native_pr_runner'}));
+ expect(proof.workflows.every(w=>w.executable===false&&w.coverage.status==='unknown')).toBe(true);
+});
+const typedOutputMembers=[".github/workflows/ci-admission-baseline.yml", ".github/workflows/implementation-impact.yml", "scripts/ci/implementation-multi-pr-gate.mjs", "scripts/ci/implementation-pr-gate.mjs", "scripts/ci/implementation-multi-scope.mjs", "scripts/ci/implementation-snapshot.mjs", "scripts/ci/implementation-scratch.mjs", "scripts/ci/implementation-gate.mjs", "scripts/ci/implementation-pr-baseline.mjs", "scripts/ci/implementation-infra-inputs.mjs", "scripts/ci/implementation-skill-source.mjs", "scripts/ci/ci-admission-inputs.mjs", "scripts/ci/ci-admission-handoff.mjs", "scripts/ci/ci-admission-artifact.mjs", "scripts/ci/ci-admission-envelope.mjs", "scripts/ci/ci-admission-authority.mjs", "scripts/ci/ci-admission-archive.mjs", "scripts/ci/ci-admission-scratch.mjs", "scripts/ci/ci-admission-seed.mjs", "scripts/ci/ci-admission-builder.mjs", "scripts/ci/ci-admission-worker.mjs", "scripts/ci/ci-admission-worker-runner.mjs", "scripts/ci/ci-admission-publisher.mjs", "scripts/ci/implementation-verification-inputs.mjs", "scripts/ci/implementation-verification-context.mjs", "scripts/ci/implementation-verification-selectors.mjs", "scripts/ci/implementation-verification-retirements.mjs", "scripts/ci/implementation-auxiliary-evidence.mjs", "scripts/ci/fixed-local-git.mjs", "packages/brain/src/lib/existing-ops-registration.js", "packages/brain/src/lib/implementation-ci-snapshot.js", "scripts/ci/config/ci-admission-registry.json"];
+for(const path of typedOutputMembers)it(`新输出profile独立篡改拒绝${path}`,async()=>{
+ const relations=[];expect(await collectNativeFutureImpactSources({basicCi:true,parse:text=>acorn(text,{ecmaVersion:'latest',sourceType:'module'}),revision:typedOutputProfile.revision,relations,
+  read:async p=>(await typedOutputProfile.read(p))+(p===path?'\n// unreviewed typed output':'' )})).toBe(false);expect(relations).toEqual([]);
+});
+for(const path of ['scripts/ci/implementation-multi-pr-gate.mjs','scripts/ci/implementation-pr-baseline.mjs'])it(`新旧输出controller不能单独混搭${path}`,async()=>{
+ const relations=[];expect(await collectNativeFutureImpactSources({basicCi:true,parse:text=>acorn(text,{ecmaVersion:'latest',sourceType:'module'}),revision:typedOutputProfile.revision,relations,
+  read:async p=>p===path?frozenProfile.read(p):typedOutputProfile.read(p)})).toBe(false);expect(relations).toEqual([]);
 });
