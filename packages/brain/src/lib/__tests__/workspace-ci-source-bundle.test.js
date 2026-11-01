@@ -1,4 +1,4 @@
-import {it,expect} from 'vitest';
+import {it,expect,afterAll} from 'vitest';
 import {extractWorkspaceCiSourceBundle,F3_IDENTITY} from '../workspace-ci-source-bundle.js';
 
 const source=()=>({workspace:{repo:'perfectuser21/zenithjoy-workspace',revision:'a'.repeat(40)},brain:{repo:'perfectuser21/cecelia',revision:'b'.repeat(40)},identity:{...F3_IDENTITY}});
@@ -15,30 +15,31 @@ it('未固定source SHA不读任何源码，保持unknown且不可执行',async(
  expect(result.executable).toBe(false);expect(reads).toBe(0);
 });
 
-import {readFileSync,mkdtempSync,rmSync} from 'node:fs';
-import {tmpdir} from 'node:os';
+import {readFileSync,existsSync} from 'node:fs';
 import {join} from 'node:path';
-import {fileURLToPath} from 'node:url';
 import {createHash} from 'node:crypto';
 import {load,dump} from 'js-yaml';
 import {execFileSync} from 'node:child_process';
 import {futureCiAdmissionImpactWorkflow} from '../../../../../scripts/ci/__tests__/fixtures/ci-admission-impact-workflow.mjs';
 import {readFixedLocalGitBlob} from '../../../../../scripts/ci/fixed-local-git.mjs';
+import {createPublishedGit} from './helpers/published-workspace-ci-git.js';
 const root=new URL('../../../../../',import.meta.url);
 // 未来协议只读已审原始数据；旧Core CI阶段的实际路由保持固定main原件。
 const currentFile=path=>path==='.github/workflows/implementation-impact.yml'?Buffer.from(futureCiAdmissionImpactWorkflow):readFileSync(new URL(path,root));
 const PUBLISHED='b217cd52336767b9637410ef921397a0e9297f2b';
-const publishedFile=(path,gitRoot=fileURLToPath(root))=>readFixedLocalGitBlob(gitRoot,{revision:PUBLISHED,path});
-function isolatedPublishedGit(consume){
- const directory=mkdtempSync(join(tmpdir(),'workspace-published-git-'));
- const env=Object.fromEntries(Object.entries(process.env).filter(([key])=>!key.startsWith('GIT_')));
- const git=(...args)=>execFileSync('git',['--no-replace-objects','-c','core.hooksPath=/dev/null','-c','maintenance.auto=false','-c','gc.auto=0',...args],{cwd:directory,env});
- try{
-  git('clone','--quiet','--shared','--no-checkout',fileURLToPath(root),'.');
-  consume({directory,git,env});
- }finally{rmSync(directory,{recursive:true,force:true});}
-}
+const published=createPublishedGit();afterAll(()=>published.close());
+const publishedFile=(path,gitRoot=published.directory)=>readFixedLocalGitBlob(gitRoot,{revision:PUBLISHED,path});
+function isolatedPublishedGit(consume){const fixture=createPublishedGit();try{return consume(fixture);}finally{fixture.close();}}
 const expectPublishedHelper=bytes=>expect(createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex')).toBe('2351ae6a69b066a7e15dbb17e2e6babc13a31305');
+it('固定published夹具自包含真实commit/tree与两blob，不依赖当前仓历史或远端',()=>{
+ isolatedPublishedGit(({directory,git})=>{
+  expect(existsSync(join(directory,'.git/objects/info/alternates'))).toBe(false);
+  expect(()=>git('remote','get-url','origin')).toThrow();
+  expectPublishedHelper(publishedFile('scripts/ci/implementation-skill-source.mjs',directory));
+  const workflow=publishedFile('.github/workflows/implementation-impact.yml',directory);
+  expect(createHash('sha1').update(`blob ${workflow.length}\0`).update(workflow).digest('hex')).toBe('5a43bfd48709018ee641952747b15f3c949099f2');
+ });
+});
 it('历史原件读取禁用真实refs/replace，不把被替换缺文件当canonical缺失',()=>{
  isolatedPublishedGit(({directory,git,env})=>{
   const tree=execFileSync('git',['mktree'],{cwd:directory,env,input:''}).toString().trim();

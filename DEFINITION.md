@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.445.95
+**Brain 版本**: 1.445.97
 
 本轮 CI 重整候选保留 `cecelia_source_only=true`；源码、固定 Skill 合同与 CI 专用三来源基线分工验证，生产发布资格由独立保护判定。
 

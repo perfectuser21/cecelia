@@ -37,8 +37,6 @@
   Test: manual:node --test scripts/ci/__tests__/basic-scope.test.mjs
 - [x] [BEHAVIOR] 发布快照、跨仓、技能与巡查的四份原生来源机制入口迁入必需来源检查，包含基线选择与只读就绪回归；失败先阻止后续准入。
   Test: manual:node --test scripts/ci/__tests__/basic-workflow.test.mjs scripts/ci/__tests__/implementation-main-snapshot.test.mjs scripts/ci/__tests__/workspace-ci-source-bundle.test.mjs scripts/ci/__tests__/implementation-skill-source.test.mjs scripts/ci/__tests__/device-patrol-governance.test.mjs
-- [ ] [BEHAVIOR] CodeQL正式扫描解除本PR新增的两条告警；配置文件名不触发指数回溯，测试Shell路径仅经参数传递，保留参数、退出码与清理回归。
-  Test: manual:bash -c 'gh pr checks cp-10302220-ci-minimum --repo perfectuser21/cecelia --json name,state,link'
 - [x] [BEHAVIOR] 测试异常、信号、空集合、取消和跳过均被真实入口与最终汇总阻断。
   Test: manual:node --test scripts/ci/__tests__/run-basic-check.test.mjs scripts/ci/__tests__/basic-results.test.mjs scripts/ci/__tests__/basic-workflow.test.mjs scripts/ci/__tests__/basic-npm-test.test.mjs
 - [x] [BEHAVIOR] 漏洞扫描缺少有效报告或工具异常必须失败，原安全级别和已登记例外保留。
@@ -57,13 +55,3 @@
   Test: manual:node scripts/ci/run-basic-check.mjs brain-integration
 - [x] [BEHAVIOR] 现役 API、Dashboard、Quality、MCP、Engine及Shell和Brain正式镜像已分别执行真实验证；六片Brain发现的旧接线断言逐项迁移。
   Test: manual:node scripts/ci/run-basic-check.mjs scripts
-- [ ] [BEHAVIOR] 深度回归实际完成完整PG集合、Walking与Map Manifest；固定历史来源机制不认领当前候选，旧连接默认与共享任务污染已消除。
-  Test: manual:bash -c 'gh run list --workflow nightly-regression.yml --branch cp-10302220-ci-minimum --repo perfectuser21/cecelia --limit 3 --json headSha,status,conclusion,url'
-- [ ] [BEHAVIOR] 固定候选SHA在GitHub实际运行全部选定检查并给出「源码保底通过」。
-  Test: manual:bash -c 'gh pr checks cp-10302220-ci-minimum --repo perfectuser21/cecelia --required'
-- [ ] [BEHAVIOR] main真实源码CI成功后发布可复验的CI专用三来源原ZIP，当前PR实际消费该基线；真实登记断言、UNKNOWN和生产用途隔离均保留。
-  Test: manual:bash -c 'gh run list --repo perfectuser21/cecelia --workflow ci-admission-baseline.yml --branch main --limit 5 --json headSha,status,conclusion,url'
-- [ ] [BEHAVIOR] GitHub分支保护及规则集要求源码、固定Skill、Skill所有权及来源准入四项；旧Harness/Smoke/ci-passed不再授予资格，其余保护保留并读回。
-  Test: manual:bash -c 'gh api repos/perfectuser21/cecelia/branches/main/protection'
-- [ ] [BEHAVIOR] PR经正常保护合并，main对应SHA的实际源码CI通过，任务账写入事实、证据和actor。
-  Test: manual:bash -c 'gh run list --repo perfectuser21/cecelia --workflow ci.yml --event push --limit 5'

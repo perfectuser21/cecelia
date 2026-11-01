@@ -1,3 +1,4 @@
+import './factory-workflow-config-source.test.mjs';
 import './basic-ci-admission-native-entry.test.mjs';
 import './basic-ci-admission-workflow.test.mjs';
 import './implementation-main-transport.test.mjs';

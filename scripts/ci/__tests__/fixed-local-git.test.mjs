@@ -1,7 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {execFileSync,spawnSync} from 'node:child_process';
-import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,rmSync} from 'node:fs';
+import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,existsSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {createHash} from 'node:crypto';
@@ -83,4 +83,42 @@ test('merge uses authorized external central cache but rejects cache or git-dire
  assert.equal(make(f.root)(location).toString(),'original fixed bytes');
  const link=join(f.root,'cache-link');symlinkSync(f.root,link,'dir');assert.throws(()=>make(link)(location),/FIXED_LOCAL_CACHE_SYMLINK/);
  const bad=join(f.root,'cache-git-link');mkdirSync(bad);symlinkSync(join(f.root,'.git'),join(bad,'.git'),'dir');assert.throws(()=>make(bad)(location),/FIXED_LOCAL_CACHE_SYMLINK/);
+});
+
+// 真实MainSnapshot原生入口执行数据合同；不执行捕获树中的任何源码。
+import {fileURLToPath} from 'node:url';
+import {readFrozenFutureBytes,decodeFrozenFutureBytes,frozenFutureGit} from '../../../packages/brain/src/lib/__tests__/helpers/future-active-git.js';
+test('固定future数据解码验证真实Git blobs，损坏payload和不存在路径拒绝',async()=>{
+ const bytes=readFrozenFutureBytes(),data=decodeFrozenFutureBytes(bytes);
+ assert.equal(data.base_revision,'35e2a91d971e8dc432d6f36361c65cded5d64ec8');
+ assert.equal(data.captured_revision,'14fce437dcccf1b30daf17423ec48a3ed4337eee');
+ assert.equal(data.captured_tree,'f5b015b0a66e798efd666a842364c36579e163f8');
+ const frozen=frozenFutureGit(fileURLToPath(new URL('../../../',import.meta.url)));
+ assert.equal(frozen.revision,data.captured_revision);
+ for(const [path,blob]of[['.github/workflows/implementation-impact.yml','7002260fd7e84006037343416de6123f593afb12'],['scripts/ci/implementation-multi-pr-gate.mjs','043fd77da634c2e9ccb800f66262cca31b158e0a']]){
+  const row=data.delta.find(row=>row.path===path),actual=Buffer.from(await frozen.read(path));
+  assert.equal(row.blob_sha1,blob);assert.deepEqual(actual,Buffer.from(row.content_base64,'base64'));
+  assert.equal(createHash('sha1').update(`blob ${actual.length}\0`).update(actual).digest('hex'),blob);
+ }
+ await assert.rejects(frozen.read('scripts/ci/unknown-fixture-path.mjs'),/FUTURE_FIXTURE_MISSING/);
+ const corrupt=Buffer.from(bytes);corrupt[corrupt.length-1]^=1;
+ assert.throws(()=>decodeFrozenFutureBytes(corrupt),/FUTURE_FIXTURE_DIGEST/);
+});
+
+import {createPublishedGit,readPublishedGitFixture,PUBLISHED_CI_REVISION} from '../../../packages/brain/src/lib/__tests__/helpers/published-workspace-ci-git.js';
+test('published八对象私有Git冷还原读取canonical两blob，替换、环境外跳和损坏对象拒绝',t=>{
+ const f=createPublishedGit();t.after(f.close);
+ assert.equal(f.revision,PUBLISHED_CI_REVISION);assert.equal(f.git('rev-parse',`${f.revision}^{tree}`).toString().trim(),'4fa4b4002588ab45f537e4c63756bc4560bb8003');
+ assert.equal(existsSync(join(f.directory,'.git/objects/info/alternates')),false);assert.throws(()=>f.git('remote','get-url','origin'));
+ const hashes=[['.github/workflows/implementation-impact.yml','5a43bfd48709018ee641952747b15f3c949099f2'],['scripts/ci/implementation-skill-source.mjs','2351ae6a69b066a7e15dbb17e2e6babc13a31305']];
+ const check=()=>{for(const[path,hash]of hashes){const bytes=f.read(path);assert.equal(createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex'),hash);}};check();
+ const tree=f.git('mktree').toString().trim(),forged=execFileSync('git',['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit-tree',tree,'-p',f.revision],{cwd:f.directory,env:f.env,input:'isolated replacement\n'}).toString().trim();
+ f.git('replace',f.revision,forged);
+ assert.throws(()=>execFileSync('git',['show',`${f.revision}:${hashes[0][0]}`],{cwd:f.directory,env:f.env,stdio:'pipe'}));check();
+ const names=['GIT_DIR','GIT_WORK_TREE','GIT_OBJECT_DIRECTORY'],prior=Object.fromEntries(names.map(key=>[key,process.env[key]]));
+ Object.assign(process.env,{GIT_DIR:join(f.directory,'outside.git'),GIT_WORK_TREE:join(f.directory,'outside'),GIT_OBJECT_DIRECTORY:join(f.directory,'outside-objects')});
+ try{check();}finally{for(const[key,value]of Object.entries(prior)){if(value===undefined)delete process.env[key];else process.env[key]=value;}}
+ const damaged=readPublishedGitFixture();damaged.objects[0].content_base64=Buffer.from('corrupt Git object').toString('base64');
+ assert.throws(()=>createPublishedGit({data:damaged}),{code:'ERR_ASSERTION'});
+ f.close();assert.equal(existsSync(f.directory),false);
 });
