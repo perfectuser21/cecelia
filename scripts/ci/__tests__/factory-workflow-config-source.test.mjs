@@ -491,7 +491,8 @@ test('非执行变更缺失侧显式冻结absence，不能给已删除head造普
 test('退休合同CI登记逐项绑定真实退休实现且没有重复或错误角色', () => {
  const require = createRequire(import.meta.url);
  const {relations} = require('../../../.implementation-source-relations.json');
- for (const path of ['scripts/ci/__tests__/basic-verification-retirements.test.mjs', 'packages/brain/src/__tests__/ci-verification-retirement-contracts.test.js']) {
+ for (const path of ['scripts/ci/__tests__/basic-verification-retirements.test.mjs']) {
   assert.deepEqual(relations.filter(row => row.path === path), [{owner_path: 'scripts/ci/implementation-verification-retirements.mjs', path, role: 'verification'}]);
  }
+ for(const path of ['packages/brain/src/__tests__/ci-verification-retirement-contracts.test.js','packages/brain/src/__tests__/ci-admission-baseline-contracts.test.js'])assert.deepEqual(relations.filter(row=>row.path===path),[]);
 });

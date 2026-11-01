@@ -7,6 +7,7 @@ import {join,dirname,resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {createRequire} from 'node:module';
 import {cruise} from 'dependency-cruiser';
+import {commandsFor} from '../run-basic-check.mjs';
 const root=fileURLToPath(new URL('../../../',import.meta.url));
 function readSmokeAllowlist(require=createRequire(import.meta.url)){
  const target=require.resolve('../../../packages/quality/smoke-allowlist.txt');
@@ -54,7 +55,7 @@ test('feature smoke不能把真实Node全TODO的exit0当作成功',async t=>{
  assert.equal(result.error,null);assert.match(result.stdout,/# pass 0\b/);assert.match(result.stdout,/# todo 60\b/);
  assert.throws(()=>assertSmokeSuccess(result));
 });
-test('feature smoke实际跑本地Git/原ZIP/opaque/发布与子进程合同，退出传播且退休36另走Brain入口',{timeout:90000},async t=>{
+test('feature smoke真实执行且统一源码CI唯一发现全部基础与退休合同',{timeout:90000},async t=>{
  const name='ci-admission-bootstrap-smoke.sh';
  assert.equal(entries(readSmokeAllowlist()).filter(line=>line===name).length,1);
  for(const list of ['smoke-denylist.txt','smoke-debt.txt'])assert.equal(entries(readFileSync(join(root,'packages/quality',list),'utf8')).includes(name),false);
@@ -67,10 +68,14 @@ test('feature smoke实际跑本地Git/原ZIP/opaque/发布与子进程合同，�
  const actual=join(root,'packages/brain/scripts/smoke',name);writeFileSync(join(smokeDir,name),"#!/bin/bash\nexec bash '"+actual.replaceAll("'","'\\''")+"'\n",{mode:0o700});
  const result=await run({...f.env,SMOKE_DIR:smokeDir});assertSmokeSuccess(result);assert.match(result.stdout,/GATE PASSED/);assert.match(result.stdout,/UNREGISTERED:\s+0/);assert.equal(result.stdout.includes('五个显式退休仅产生候选'),false);assert.equal((result.stdout+result.stderr).includes(f.env.GH_TOKEN),false);
  assert.equal(readFileSync(join(root,'scripts/ci/__tests__/implementation-main-snapshot.test.mjs'),'utf8').includes("import './ci-admission-mechanisms.test.mjs'"),false);
- assert.ok(existsSync(join(root,'packages/brain/src/__tests__/ci-admission-baseline-contracts.test.js')));
  const {relations}=createRequire(import.meta.url)('../../../.implementation-source-relations.json');
- assert.deepEqual(relations.filter(row=>row.path==='packages/brain/src/__tests__/ci-admission-baseline-contracts.test.js'),[{owner_path:'scripts/ci/ci-admission-publisher.mjs',path:'packages/brain/src/__tests__/ci-admission-baseline-contracts.test.js',role:'verification'}]);
- const aggregate=readFileSync(join(root,'scripts/ci/__tests__/ci-admission-mechanisms.test.mjs'),'utf8');assert.equal(aggregate.includes("import './basic-verification-retirements.test.mjs'"),false);assert.ok(existsSync(join(root,'packages/brain/src/__tests__/ci-verification-retirement-contracts.test.js')));
+ const removed=['packages/brain/src/__tests__/ci-admission-baseline-contracts.test.js','packages/brain/src/__tests__/ci-verification-retirement-contracts.test.js','scripts/ci/__tests__/ci-admission-mechanisms.test.mjs'];
+ for(const path of removed){assert.equal(existsSync(join(root,path)),false,path);assert.deepEqual(relations.filter(row=>row.path===path),[],path);}
+ const selected=commandsFor('scripts')[0];assert.equal(selected.command,'node');assert.equal(selected.args[0],'--test');
+ const maintained=['archive','artifact','authority','builder','envelope','feature-smoke','impact-workflow','infra','inputs','legacy','native-entry','publisher','resolver','scratch-import','scratch','seed','skill-cache','worker','workflow'].map(name=>'scripts/ci/__tests__/basic-ci-admission-'+name+'.test.mjs');
+ for(const path of [...maintained,'scripts/ci/__tests__/basic-verification-retirements.test.mjs'])assert.equal(selected.args.filter(arg=>arg===path).length,1,path);
+ const registry=readFileSync(join(root,'test-registry.yaml'),'utf8');
+ for(const path of removed)assert.equal(registry.includes('path: '+path),false,path);
 });
 for(const major of [26,22])test(`feature smoke边界：Node${major}${major===26?'执行前拒绝':'真实失败码原样传递与最小env'}`,async t=>{
  const f=fixture(t),bin=join(f.directory,'bin'),calls=join(f.directory,'calls'),environment=join(f.directory,'environment');mkdirSync(bin);

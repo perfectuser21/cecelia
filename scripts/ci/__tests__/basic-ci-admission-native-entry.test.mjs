@@ -68,9 +68,9 @@ test('现行Node根实际导入轻入口，正式静态图与spawn抽取器必�
   {"owner_path":"scripts/ci/ci-admission-seed.mjs","path":"scripts/ci/__tests__/basic-ci-admission-seed.test.mjs","role":"verification"},
   {"owner_path":"scripts/ci/implementation-skill-source.mjs","path":"scripts/ci/__tests__/basic-ci-admission-skill-cache.test.mjs","role":"verification"},
   {"owner_path":"scripts/ci/ci-admission-worker-runner.mjs","path":"scripts/ci/__tests__/basic-ci-admission-worker.test.mjs","role":"verification"},
-  {"owner_path":"scripts/ci/ci-admission-publisher.mjs","path":"scripts/ci/__tests__/basic-ci-admission-workflow.test.mjs","role":"verification"},
-  {"owner_path":"scripts/ci/ci-admission-publisher.mjs","path":"scripts/ci/__tests__/ci-admission-mechanisms.test.mjs","role":"verification"}
+  {"owner_path":"scripts/ci/ci-admission-publisher.mjs","path":"scripts/ci/__tests__/basic-ci-admission-workflow.test.mjs","role":"verification"}
  ];
  for(const row of expected)assert.deepEqual(relations.filter(item=>item.path===row.path),[row]);
+ assert.equal(existsSync(join(root,'scripts/ci/__tests__/ci-admission-mechanisms.test.mjs')),false);assert.deepEqual(relations.filter(row=>row.path==='scripts/ci/__tests__/ci-admission-mechanisms.test.mjs'),[]);
  for(const path of ['scripts/ci/ci-admission-publisher.mjs','scripts/ci/ci-admission-builder.mjs','scripts/ci/ci-admission-worker.mjs'])assert.equal(relations.some(row=>row.path===path),false,'production source must have a real native carrier');
 });
