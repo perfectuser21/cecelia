@@ -1,0 +1,375 @@
+{
+  "schema_version": 1,
+  "kind": "explicit_verification_retirement_catalog",
+  "purpose": "admission_only",
+  "repo": "perfectuser21/cecelia",
+  "base_revision": "68b996a5641b69e6f21705a114a4524e407fe097",
+  "reviewed_replacement_revision": "077efdd5d990a96a10838f77abfa1f3eb538e7fa",
+  "base_config": {
+    "path": "packages/brain/vitest.config.js",
+    "mode": "100644",
+    "git_blob_sha1": "b15952e3b785c8c343e57cdbb5980a100755d9ee",
+    "sha256": "fef4968653bd2d3812d9064a1e448abe31039760038a1c4c63ee46498a3bc26e",
+    "byte_length": 26089
+  },
+  "replacement_config": {
+    "path": "packages/brain/vitest.config.js",
+    "mode": "100644",
+    "git_blob_sha1": "4b26d1e7227907fad7cdf9b0ead9be8d1f4c44f9",
+    "sha256": "906b91dbaaf68ea004b60a252ab0af88bda443cde8418d8a3b812b48ebe4c0f8",
+    "byte_length": 22596
+  },
+  "skill_selector": {
+    "path": "scripts/ci/skill-source-tests.mjs",
+    "mode": "100644",
+    "git_blob_sha1": "d2a9bad9cdc5bf18c5159a4c65a7b7dbe1a9ed29",
+    "sha256": "1daf4f27f6fa97b3c8f3d9a9e1a9e86e44fbe92b84c962d1c2ce3b90db32b147",
+    "byte_length": 2405
+  },
+  "replacement_inputs": [
+    {
+      "path": "packages/brain/src/__tests__/alertness/diagnosis.test.js",
+      "mode": "100644",
+      "git_blob_sha1": "e2f05cf19e6445af7b7b364e0ce0f04b3435728f",
+      "sha256": "c80a861487e5348633df123ceeb8ba6021efcad1dc42063febd20f3406641939",
+      "byte_length": 12133
+    },
+    {
+      "path": "packages/brain/src/__tests__/alertness/escalation.test.js",
+      "mode": "100644",
+      "git_blob_sha1": "8a09824a923187a57293cccfbb8ce81d2eb19720",
+      "sha256": "67bdb427cf8a14afbbfb3f863ec667c8197f3cab4effdb1223b8025890812632",
+      "byte_length": 11775
+    },
+    {
+      "path": "packages/brain/src/__tests__/alertness/healing.test.js",
+      "mode": "100644",
+      "git_blob_sha1": "79162e46b54957aeb21c27c65fcb0cc7de962ddc",
+      "sha256": "ba60256274dbb52937dcc7f012f6dbc55472a6964189ce3c522c01db1526d8fd",
+      "byte_length": 16786
+    },
+    {
+      "path": "packages/brain/src/__tests__/alertness/levels.test.js",
+      "mode": "100644",
+      "git_blob_sha1": "873e23636403e82e47f2ee4d8bc8068c5bfdcd9e",
+      "sha256": "990867f93e35226bd8384bb3ef1d1f4b76429c72d8fa79710748305d3742ec78",
+      "byte_length": 3713
+    },
+    {
+      "path": "packages/brain/src/__tests__/alertness/metrics.test.js",
+      "mode": "100644",
+      "git_blob_sha1": "7908c44357ac4e71238c8137d25363691d070f0e",
+      "sha256": "5c99fac7bfb668aba7966db2348e08568f2cb0ee07a07c8886497400b7ae1f3a",
+      "byte_length": 13795
+    },
+    {
+      "path": "packages/brain/src/alertness/__tests__/diagnosis.test.js",
+      "mode": "100644",
+      "git_blob_sha1": "c764641960f879d98e946e46ae0de4a20fa56467",
+      "sha256": "4b4eeaefb81f6a84787b165c85a2f90657c40f9a09f579e730b06ae4d2367fe7",
+      "byte_length": 3079
+    },
+    {
+      "path": "packages/brain/src/alertness/__tests__/escalation.test.js",
+      "mode": "100644",
+      "git_blob_sha1": "013fb4d62539ce1399b1ccf8406a014c5902dffd",
+      "sha256": "e8409d75cc1af094d13ae62d4c4f91f8da6a9d585e3748ded47e34d52fd30923",
+      "byte_length": 4263
+    },
+    {
+      "path": "packages/brain/src/alertness/__tests__/healing.test.js",
+      "mode": "100644",
+      "git_blob_sha1": "0c70b1dc65bfccb802a90eeeb5028b6835822d5c",
+      "sha256": "1d39fe77ef05f7c686d3f8dc342ec3521c20b8805be7969104b8260195a9ea3f",
+      "byte_length": 499
+    },
+    {
+      "path": "packages/brain/src/alertness/__tests__/metrics.test.js",
+      "mode": "100644",
+      "git_blob_sha1": "17f5e66cf8149ccbd8e20dd853bb2ef70ce89d64",
+      "sha256": "cbabdd4020507eb8503b6199be287829e7c39d6c2a1c175c9fb454ad361e3e11",
+      "byte_length": 3372
+    },
+    {
+      "path": "packages/brain/src/__tests__/alertness-index-refactor.test.js",
+      "mode": "100644",
+      "git_blob_sha1": "e310a3f6b069581f82507218755d92a8ac96b155",
+      "sha256": "469dd492df10c90e706f74c7b04fc0a0254d2f250d62c2cce05f986cd85d7d4d",
+      "byte_length": 8334
+    },
+    {
+      "path": "packages/brain/src/__tests__/alertness-recovery.test.js",
+      "mode": "100644",
+      "git_blob_sha1": "acb96b6c5e3c315c839414df4de1e168750ed769",
+      "sha256": "f5b3b3ce00d957cd3eaa93c7b4a4203fe1b3aba5a273409e95f0db46f4b46b6a",
+      "byte_length": 6138
+    }
+  ],
+  "audit_scope": "只删除tests/alertness五旧文件，保留现役独特回归并迁入真实行为",
+  "records": [
+    {
+      "path": "tests/alertness/diagnosis.test.js",
+      "old": {
+        "path": "tests/alertness/diagnosis.test.js",
+        "mode": "100644",
+        "git_blob_sha1": "9effe25ad42d267d1881efa3fbcbbd64655e3ba3",
+        "sha256": "81a307662d9e910a1cb3d49876a44473cae457a49c5e0cee9f35a4528d3bf2b3",
+        "byte_length": 9883
+      },
+      "exclude_literal": "../../tests/alertness/diagnosis.test.js",
+      "audit": {
+        "deleted": "tests/alertness/diagnosis.test.js",
+        "sha256": "81a307662d9e910a1cb3d49876a44473cae457a49c5e0cee9f35a4528d3bf2b3",
+        "old_test_declarations": 18,
+        "old_test_names": [
+          "应该识别持续高负载（连续 3 个 tick CPU > 70%）",
+          "应该识别内存泄漏（内存持续上涨 > 10MB/分钟）",
+          "应该识别响应退化（响应时间比基线慢 3 倍）",
+          "应该识别错误暴增（错误率突增 > 50%）",
+          "应该识别队列阻塞（队列深度持续 > 30）",
+          "没有异常时应该返回健康状态",
+          "多个高严重度问题应该返回 high",
+          "中等严重度问题应该返回 medium",
+          "应该分析指标上升趋势",
+          "应该识别稳定趋势",
+          "应该预测内存耗尽",
+          "应该预测 CPU 过载",
+          "应该预测队列溢出",
+          "高负载应该建议减少并发",
+          "内存泄漏应该建议垃圾回收",
+          "队列阻塞应该建议增加处理能力",
+          "应该返回所有定义的异常模式",
+          "异常模式应该包含所有定义的类型"
+        ],
+        "replacement": "packages/brain/src/__tests__/alertness/diagnosis.test.js",
+        "kept_regressions": "packages/brain/src/alertness/__tests__/diagnosis.test.js: MEMORY_LEAK短窗口、2分钟边界",
+        "migrated": [
+          "MEMORY_LEAK实际建议数组 force_garbage_collection/restart_process",
+          "RESPONSE_DEGRADATION实际严重度medium"
+        ],
+        "retired": [
+          "analyzeTrends/predictProblems不在现行模块导出或实现中",
+          "旧MEMORY_LEAK 10MB/min与QUEUE_BLOCKAGE30阈值已被现行50MB/min+RSS200+2min、queue60替代"
+        ]
+      }
+    },
+    {
+      "path": "tests/alertness/escalation.test.js",
+      "old": {
+        "path": "tests/alertness/escalation.test.js",
+        "mode": "100644",
+        "git_blob_sha1": "10fd423d0cdb7d6f4c582a5d369883bf8d26f69f",
+        "sha256": "90a8049eadc8191e5ee1cece8a644274392a9a708d1fb79201655bedf7fe8a35",
+        "byte_length": 8881
+      },
+      "exclude_literal": "../../tests/alertness/escalation.test.js",
+      "audit": {
+        "deleted": "tests/alertness/escalation.test.js",
+        "sha256": "90a8049eadc8191e5ee1cece8a644274392a9a708d1fb79201655bedf7fe8a35",
+        "old_test_declarations": 18,
+        "old_test_names": [
+          "应该定义 4 级响应体系",
+          "AWARE < 5min 应该触发 L0",
+          "L0 应该只监控不干预",
+          "AWARE > 5min 应该触发 L1",
+          "ALERT < 2min 应该触发 L1",
+          "L1 应该减少并发和延长间隔",
+          "ALERT > 2min 应该触发 L2",
+          "L2 应该停止所有派发",
+          "PANIC 即时触发 L3",
+          "L3 应该发送告警并停止所有操作",
+          "应该执行减少并发动作",
+          "应该执行暂停低优先级任务",
+          "应该执行停止派发动作",
+          "应该处理未知动作类型",
+          "应该正确记录升级状态",
+          "应该能清除升级状态",
+          "应该获取当前响应级别",
+          "应该记录升级事件"
+        ],
+        "replacement": "packages/brain/src/__tests__/alertness/escalation.test.js",
+        "kept_regressions": "packages/brain/src/alertness/__tests__/escalation.test.js:系统来源白名单、content_publish及recurring保护、可逆pause",
+        "migrated": [
+          "AWARE 299999/300000ms真实L0/L1边界",
+          "ALERT 119999/120000ms真实L1/L2边界",
+          "L0实际monitor/collect_metrics结果、不修改任务"
+        ],
+        "retired": [
+          "clearEscalation未导出且无实现；不复活旧清状态接口",
+          "RESPONSE_LEVELS只在default对象公开，原具名导入失效；行为已通过实际response.level验证"
+        ]
+      }
+    },
+    {
+      "path": "tests/alertness/healing.test.js",
+      "old": {
+        "path": "tests/alertness/healing.test.js",
+        "mode": "100644",
+        "git_blob_sha1": "36909a6fcfb6ebd19c0cea55aaa691a438cfb290",
+        "sha256": "f3e064e4ebf932c5bba3c4cd6e7398889391c2487e020bd6450c35bc21dcb8f6",
+        "byte_length": 10713
+      },
+      "exclude_literal": "../../tests/alertness/healing.test.js",
+      "audit": {
+        "deleted": "tests/alertness/healing.test.js",
+        "sha256": "f3e064e4ebf932c5bba3c4cd6e7398889391c2487e020bd6450c35bc21dcb8f6",
+        "old_test_declarations": 32,
+        "old_test_names": [
+          "应该定义内存清理策略",
+          "应该定义进程恢复策略",
+          "应该定义队列疏通策略",
+          "应该定义错误缓解策略",
+          "应该定义 5 个恢复阶段",
+          "Phase 1 观察期应该是 5 分钟",
+          "Phase 2 试探恢复应该是 10 分钟",
+          "Phase 3 逐步恢复应该是 15 分钟",
+          "Phase 4 完全恢复",
+          "应该执行强制垃圾回收",
+          "应该清理过期缓存",
+          "应该压缩数据库连接",
+          "应该查找并终止孤儿进程",
+          "应该重启卡住的执行器",
+          "应该重置进程池",
+          "应该重新分配任务",
+          "应该取消重复任务",
+          "应该归档旧任务",
+          "Phase 1 观察期只监控不执行",
+          "Phase 2 试探恢复 25% 容量",
+          "Phase 3 逐步恢复 50% → 75% 容量",
+          "Phase 4 完全恢复 100% 容量",
+          "状态变更后 5 分钟内不允许反向变更",
+          "应该设置 10% 阈值缓冲区",
+          "应该基于 3 个数据点的趋势判断",
+          "PANIC 恢复后 30 分钟内不能再次进入",
+          "应该正确报告恢复状态",
+          "应该能手动停止恢复",
+          "不应该重复启动恢复",
+          "应该根据问题选择正确的策略",
+          "应该按优先级排序策略",
+          "没有适用策略时不启动恢复"
+        ],
+        "replacement": "packages/brain/src/__tests__/alertness/healing.test.js",
+        "kept_regressions": "原生startRecovery、未知问题拒绝、重复启动、DB失败、restart_stuck_executors/retry/cache断言全部保留",
+        "migrated": [
+          "真实timer推进0%→25%→50%→75%→100%完成；gc、连接压缩SQL、完成事件和动作日志",
+          "实际策略优先级输出",
+          "redistribute/cancel_duplicate/archive实际SQL与影响行数",
+          "reset_process_pool/switch_fallback_endpoints仍stub时明确false"
+        ],
+        "retired": [
+          "stopRecovery未导出且无实现",
+          "旧5分钟反向冷却、10%缓冲、3数据点趋势均在测试中复制/自造模型，无生产行为断言",
+          "旧PANIC锁定在healing测试中只是本地算式；现行规则在index，不声称有等价重入保障",
+          "旧Phase4在30分钟的描述与现行两次5分钟稳定等待+15分钟后续等待不符；真实完成点40分钟"
+        ]
+      }
+    },
+    {
+      "path": "tests/alertness/levels.test.js",
+      "old": {
+        "path": "tests/alertness/levels.test.js",
+        "mode": "100644",
+        "git_blob_sha1": "58e73be0fbcca241740923eef2d4745b82538f8c",
+        "sha256": "5cf7a55511f1a310d9b5056a261b0271b3c3756516681916969e000e3099c4a6",
+        "byte_length": 6975
+      },
+      "exclude_literal": "../../tests/alertness/levels.test.js",
+      "audit": {
+        "deleted": "tests/alertness/levels.test.js",
+        "sha256": "5cf7a55511f1a310d9b5056a261b0271b3c3756516681916969e000e3099c4a6",
+        "old_test_declarations": 22,
+        "old_test_names": [
+          "应该定义 5 个警觉等级",
+          "应该有对应的等级名称",
+          "SLEEPING → CALM: 有新任务",
+          "CALM → AWARE: 任一指标超过警告阈值",
+          "AWARE → ALERT: 2+ 指标超过警告或 1 指标超过危险",
+          "ALERT → PANIC: 3+ 指标超过危险或系统关键错误",
+          "不应该允许跳级降低（例如 PANIC → CALM）",
+          "应该允许紧急升级到 PANIC",
+          "状态变更后 1 分钟内不允许降级（防震荡）",
+          "PANIC 恢复后 30 分钟内不能再次进入 PANIC",
+          "SLEEPING 状态不应该派发任务",
+          "CALM 状态应该 100% 派发",
+          "AWARE 状态应该 70% 派发",
+          "ALERT 状态应该 30% 派发",
+          "PANIC 状态应该禁止派发",
+          "getCurrentAlertness 应该返回当前状态信息",
+          "levelName 应该匹配 level",
+          "getDispatchRate 应该根据等级返回正确的速率",
+          "恢复 Phase 1（观察期）不应该派发",
+          "恢复 Phase 2（试探恢复）可以派发",
+          "恢复 Phase 3（逐步恢复）可以派发",
+          "恢复 Phase 4（完全恢复）可以派发"
+        ],
+        "replacement": "packages/brain/src/__tests__/alertness/levels.test.js",
+        "kept_regressions": "packages/brain/src/__tests__/alertness-index-refactor.test.js及alertness-recovery.test.js保持原样，覆盖连续critical、双标准、逐级恢复",
+        "migrated": [
+          "5个真实setManualOverride状态的levelName/canDispatch/canPlan/getDispatchRate",
+          "60秒降级冷却边界及ALERT→AWARE→CALM",
+          "SLEEPING零速率经健康评估恢复CALM"
+        ],
+        "retired": [
+          "原转换/冷却/派发率/恢复phase用例大多只有常量或复制模型，无生产调用",
+          "SLEEPING的canDispatch现行返回true，但getDispatchRate=0；旧测试标题与自身断言相反，按现行真实API保留",
+          "index.currentState.isRecovering目前无true赋值，旧恢复phase派发是不可达状态模型；不注入私有状态造保障"
+        ]
+      }
+    },
+    {
+      "path": "tests/alertness/metrics.test.js",
+      "old": {
+        "path": "tests/alertness/metrics.test.js",
+        "mode": "100644",
+        "git_blob_sha1": "f2680d8c0c83b5ca03282adf6dea89d38fd6231e",
+        "sha256": "16ed64b2a53cb22c68a6fe957dcd2ae4dda01d1bcb71388a94fafa8c04569699",
+        "byte_length": 6576
+      },
+      "exclude_literal": "../../tests/alertness/metrics.test.js",
+      "audit": {
+        "deleted": "tests/alertness/metrics.test.js",
+        "sha256": "16ed64b2a53cb22c68a6fe957dcd2ae4dda01d1bcb71388a94fafa8c04569699",
+        "old_test_declarations": 18,
+        "old_test_names": [
+          "应该收集所有 5 种核心指标",
+          "内存指标应该正确计算 RSS",
+          "CPU 指标应该基于负载均值计算",
+          "响应时间应该使用历史平均值",
+          "错误率应该基于操作历史计算",
+          "内存正常阈值 < 150MB",
+          "内存警告阈值 150-200MB",
+          "内存危险阈值 > 300MB",
+          "CPU 阈值应该正确分类",
+          "所有指标正常应该返回 100 分",
+          "所有指标危险应该返回 0 分",
+          "混合状态应该返回加权平均分",
+          "recordOperation 应该记录成功操作",
+          "recordOperation 应该记录失败操作",
+          "recordTickTime 应该记录 tick 执行时间",
+          "hasDangerousMetrics 应该检测危险指标",
+          "getDangerousMetrics 应该返回危险指标列表",
+          "getWarningMetrics 应该返回警告指标列表"
+        ],
+        "replacement": "packages/brain/src/__tests__/alertness/metrics.test.js",
+        "kept_regressions": "packages/brain/src/alertness/__tests__/metrics.test.js:邻居高负载隔离与自身CPU高负载，修完整COUNT(*) fixture以免假DB错误",
+        "migrated": [
+          "RSS199/200/299/300实际采样阈值",
+          "自身CPU49/50/79/80真实OS计数增量与平滑阈值",
+          "滚动操作10条的确切失败比例、最近10次tick均值1950ms",
+          "混合权重68与缺指标25精确分数",
+          "429不计失败，500仍计失败"
+        ],
+        "retired": [
+          "hasDangerousMetrics/getDangerousMetrics/getWarningMetrics无现行导出或实现",
+          "旧CPU按os.loadavg报警的口径已被自身process.cpuUsage替代，全机负载仅作system_pressure_pct",
+          "旧metrics.memory局部变量不存在，阈值测试复制逻辑；改为实际collectMetrics输出"
+        ]
+      }
+    }
+  ],
+  "limitations": [
+    "未连接真实DB或主机执行恢复；边界是SQL/事件/OS测量/命令替身",
+    "现行PANIC重入锁定尚无新增真实端到端断言；旧测试也没有生产调用，不声称等价",
+    "不实现已移除接口或当前stub能力"
+  ]
+}
