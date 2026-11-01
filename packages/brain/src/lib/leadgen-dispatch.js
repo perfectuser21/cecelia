@@ -8,7 +8,7 @@ import { prepareLeadgenPlan } from './leadgen-dispatch-contract.js';
 import { buildLeadgenBatchProbe } from './leadgen-batch-proof.js';
 import { buildLeadgenLaunch,buildLeadgenProbe,buildLeadgenAdbPreflight } from './leadgen-controller.js';
 import { checkDeviceLockForManualDispatch } from './manual-dispatch-device-gate.js';
-import { releaseDeviceLocksHeldBy } from '../device-lock-helpers.js';
+import { releaseVerifiedPhoneLocksHeldBy } from '../device-lock-helpers.js';
 import { setBrainLease,BRAIN_LEASE_MARGIN_SECONDS } from './task-lease.js';
 import { startRun,finishRun } from './task-run.js';
 import { finalizeTask } from './task-terminal.js';
@@ -50,7 +50,7 @@ export async function dispatchLeadgenTask(pool,task,deps={}) {
     const gate=await (deps.lockGate??(t=>checkDeviceLockForManualDispatch(t,CLAIMER)))({...task,payload:{...task.payload,device_serial:deviceSerial,device_ttl_minutes:Math.ceil(plan.timeout_sec/60)+20}});
     if(!gate.pass){
       //尚未启动业务；回收本任务已领取的其它别名，不触及foreign owner。
-      await (deps.releaseLock??releaseDeviceLocksHeldBy)(task.id,pool);
+      await (deps.releaseVerifiedPhoneLocks??((id,names,proof,db)=>releaseVerifiedPhoneLocksHeldBy(id,names,proof,db)))(task.id,leadgenDeviceLocks(plan),{execution_stopped:true,execution_started:false},pool);
       await pool.query("UPDATE tasks SET claimed_by=NULL,claimed_at=NULL WHERE id=$1 AND claimed_by=$2 AND status='queued'",[task.id,CLAIMER]);
       return 'waiting';
     }
@@ -62,7 +62,7 @@ export async function dispatchLeadgenTask(pool,task,deps={}) {
   const started=await (deps.startRun??startRun)({taskId:task.id,runId:plan.controller_run_id,source:'leadgen-dispatch',context:{workflow_key:plan.workflow_key,external_business_run_id:plan.business_run_id,source_binding_run_id:plan.source_binding_run_id??null}},{pool});
   if(!started?.id||started.run_id!==plan.controller_run_id)throw Error('控制器task_run未持久化');
   } catch(error) {
-    if(isLeadgenPhoneFlow(plan.workflow_key))await (deps.releaseLock??releaseDeviceLocksHeldBy)(task.id,pool);
+    if(isLeadgenPhoneFlow(plan.workflow_key))await (deps.releaseVerifiedPhoneLocks??((id,names,proof,db)=>releaseVerifiedPhoneLocksHeldBy(id,names,proof,db)))(task.id,leadgenDeviceLocks(plan),{execution_stopped:true,execution_started:false},pool);
     await terminal(pool,task,'failed',error.message,{phase:'before_launch'},deps);
     return 'failed';
   }
@@ -114,7 +114,14 @@ export async function reapLeadgenTask(pool,task,deps={}){
   }
   if(!outcome)return null;
   await terminal(pool,task,outcome.status,outcome.reason??null,outcome,deps);
-  if(isLeadgenPhoneFlow(plan.workflow_key))await (deps.releaseLock??releaseDeviceLocksHeldBy)(task.id,pool);
+  if(isLeadgenPhoneFlow(plan.workflow_key)){
+    const cleanup=response.receipt?.split_result?.results?.find(r=>r.activity==='cleanup');
+    const proof={execution_stopped:true,execution_started:response.execution_started!==false,
+      cleanup_verified:cleanup?.status==='completed'&&cleanup.verification?.verified===true};
+    if(proof.cleanup_verified||response.execution_started===false){
+      await (deps.releaseVerifiedPhoneLocks??((id,names,p,db)=>releaseVerifiedPhoneLocksHeldBy(id,names,p,db)))(task.id,leadgenDeviceLocks(plan),proof,pool);
+    }else await (deps.recordEvent??recordTaskEventSafe)(pool,task.id,'leadgen_phone_lock_retained_cleanup_unverified',{business_run_id:plan.business_run_id});
+  }
   const facts=Object.fromEntries(['business_outcome','outward_sent','actual_send_acceptance','scored_count','scoring_outcome','actual_scoring_acceptance'].filter(k=>outcome[k]!==undefined).map(k=>[k,outcome[k]]));
   await (deps.finishRun??finishRun)({runId:plan.controller_run_id,status:outcome.status,exitCode:response.exit_code,result:{external_business_run_id:plan.business_run_id,reconciliation:outcome.reconciliation??null,...facts}},{pool});
   return outcome.status;

@@ -111,7 +111,7 @@ export async function updateTaskStatus(taskId, status, additionalFields = {}) {
       throw new Error(`Task ${taskId} not found`);
     }
 
-    // 终态/非活跃态 → 即时释放设备锁（低延迟优化；正确性由 recovery-loop sweeper 兜底）
+    // 终态/非活跃态 → 即时释放非手机资源；手机仍需原生停止与清场证明。
     if (!['queued', 'in_progress'].includes(status)) {
       try {
         const { releaseDeviceLocksHeldBy } = await import('./device-lock-helpers.js');
