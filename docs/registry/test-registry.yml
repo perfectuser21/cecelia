@@ -296,49 +296,49 @@ tests:
   # 缺失的测试（重要 features 没有测试覆盖）
   # ============================================================
 
-  missing_tests:
-    - feature_id: pipeline_research
-      needed: [unit, integration, e2e]
-      priority: high
-      reason: 内容生产核心步骤，完全没有测试
+missing_tests:
+  - feature_id: pipeline_research
+    needed: [unit, integration, e2e]
+    priority: high
+    reason: 内容生产核心步骤，完全没有测试
 
-    - feature_id: pipeline_copywriting
-      needed: [unit, integration]
-      priority: high
+  - feature_id: pipeline_copywriting
+    needed: [unit, integration]
+    priority: high
 
-    - feature_id: pipeline_generate
-      needed: [unit, integration]
-      priority: high
+  - feature_id: pipeline_generate
+    needed: [unit, integration]
+    priority: high
 
-    - feature_id: publisher_xiaohongshu
-      needed: [unit, e2e]
-      priority: high
-      reason: 主要发布平台，无任何测试
+  - feature_id: publisher_xiaohongshu
+    needed: [unit, e2e]
+    priority: high
+    reason: 主要发布平台，无任何测试
 
-    - feature_id: publisher_douyin
-      needed: [unit, e2e]
-      priority: high
+  - feature_id: publisher_douyin
+    needed: [unit, e2e]
+    priority: high
 
-    - feature_id: memory_embedding
-      needed: [unit, integration]
-      priority: medium
+  - feature_id: memory_embedding
+    needed: [unit, integration]
+    priority: medium
 
-    - feature_id: memory_dopamine
-      needed: [unit]
-      priority: medium
+  - feature_id: memory_dopamine
+    needed: [unit]
+    priority: medium
 
-    - feature_id: area_scheduler
-      needed: [unit]
-      priority: medium
+  - feature_id: area_scheduler
+    needed: [unit]
+    priority: medium
 
-    - feature_id: engine_lite_path
-      needed: [e2e]
-      priority: high
-      reason: Lite Path E2E 流程未被测试
+  - feature_id: engine_lite_path
+    needed: [e2e]
+    priority: high
+    reason: Lite Path E2E 流程未被测试
 
-    - feature_id: circuit_breaker
-      needed: [unit, regression]
-      priority: medium
+  - feature_id: circuit_breaker
+    needed: [unit, regression]
+    priority: medium
 
 summary:
   total_test_files: 691
