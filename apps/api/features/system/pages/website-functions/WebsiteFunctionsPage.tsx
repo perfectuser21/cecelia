@@ -7,7 +7,9 @@ import { growth, verifications } from './verification';
 
 const navigation = new Set(buildCoreNavigation().flatMap(group => group.items.flatMap(item =>
   (item.children ?? [item]).map(child => child.path))));
-const operations = buildInventory(snapshot.rows, verifications, navigation);
+// 历史审计快照保留原始记录，当前视图排除已退役页面。
+const activeRows = snapshot.rows.filter(row => !row['审计编号'].startsWith('QualityMonitorPage:'));
+const operations = buildInventory(activeRows, verifications, navigation);
 const totals = summarize(operations);
 const statusStyles: Record<Status, string> = {
   verified: 'text-emerald-300 bg-emerald-950/60', readChecked: 'text-sky-300 bg-sky-950/60',
@@ -92,7 +94,7 @@ export default function WebsiteFunctionsPage() {
     <p className="text-xs leading-relaxed text-slate-400">
       可用数是已验收下限，不代表全站只有这些功能能用。读取抽查通过不等于完整可用；待验证不等于坏了。
       这是带日期的盘点快照，不是实时健康检测。统计范围为已登记清单，未盘点的新功能不计入。
-      {totals.total} 条是操作记录，含重复；{snapshot.rows.length - totals.total} 条导航或占位未计入。组合操作按主要作用计一次。
+      {totals.total} 条是操作记录，含重复；{activeRows.length - totals.total} 条导航或占位未计入；{snapshot.rows.length - activeRows.length} 条历史操作已退役。组合操作按主要作用计一次。
       页面、操作与 Workflow 数量不同，Workflow 是操作背后的处理过程。
     </p>
 
