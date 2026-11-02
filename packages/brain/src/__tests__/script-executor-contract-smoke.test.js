@@ -29,7 +29,7 @@ it('script完整shell验证471历史名单叠加508/510/512且不弱化payload�
  expect(result.code,result.output).toBe(0);expect(result.output).toContain('7 类违规输入全部被拒');
 });
 it('手机持久身份smoke在required ratchet allowlist中只登记一次',()=>{
- const entries=readFileSync(join(root,'packages/quality/smoke-allowlist.txt'),'utf8').split(/\r?\n/).filter(v=>v==='phone-dispatch-identity-smoke.sh');
+ const entries=readFileSync(join(root,'packages/brain/config/smoke/smoke-allowlist.txt'),'utf8').split(/\r?\n/).filter(v=>v==='phone-dispatch-identity-smoke.sh');
  expect(entries).toHaveLength(1);
 });
 
