@@ -338,6 +338,14 @@ export async function collectBasicCiSources({ read, ci, revision, relations, par
   }
   for (const [consumer, input] of [[BASIC_RUNNER, 'scripts/ci/ops-checks.mjs'], ['scripts/ci/ops-checks.mjs', 'scripts/ci/run-isolated-staging-smoke.mjs']]) relation(consumer, input, 'reviewed_basic_ci_named_call');
   for (const path of ['package.json', 'package-lock.json']) { await read(path); relation(BASIC_CI, path, 'root_npm_ci_manifest_input'); }
+  if (protocol[BASIC_RUNNER] === '97226ce692a63aad92d9120b378e024d64569bc21c637c9f41266735c1720271') {
+    const manifest = 'packages/engine/package.json', entry = 'packages/engine/scripts/check-syntax.mjs';
+    const pkg = JSON.parse(await read(manifest));
+    if (pkg.scripts?.lint !== 'node scripts/check-syntax.mjs' || pkg.scripts?.prelint || pkg.scripts?.postlint || !paths.includes(entry)) reject();
+    await read(entry);
+    relation(BASIC_RUNNER, manifest, 'reviewed_engine_lint_manifest');
+    relation(manifest, entry, 'literal_engine_syntax_check_entry');
+  }
   await read('packages/brain/vitest.config.js');
   relation(BASIC_RUNNER, 'packages/brain/vitest.config.js', 'complete_brain_unit_six_shards');
   relation('packages/brain/vitest.config.js', SKILL_SELECTOR, 'reviewed_skill_source_exclusion');

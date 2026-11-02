@@ -12,17 +12,25 @@ const retiredSources={
   "packages/engine/vitest.config.ts": "import { defineConfig } from 'vitest/config';\nimport {skillSourceExcludes} from '../../scripts/ci/skill-source-tests.mjs';\n\n// e2e 测试目录: tests/e2e/（串行运行，需要 shell 命令）\n\n// 无 shell/exec/spawn 依赖的测试文件 — 可并行\nconst PARALLEL_TESTS = [\n  'tests/ci/known-failures-expiry.test.ts',\n  'tests/ci/known-failures.test.ts',\n  'tests/ci/scan-rci-coverage.test.ts',\n  'tests/dev/dev-step-files.test.ts',\n  'tests/dev/step-expectations.test.ts',\n  'tests/devgate/check-changed-coverage.test.ts',\n  'tests/devgate/l2b-check.test.ts',\n  'tests/devgate/snapshot-prd-dod.test.ts',\n  'tests/scripts/stop-cleanup-bugfixes.test.ts',\n  'tests/skills/language-rule.test.ts',\n  'tests/stop-hook-flow-test.test.ts',\n  'tests/workflow-guard-2.test.ts',\n  'tests/workflow-guard-3.test.ts',\n  'tests/workflows/ci-timeout.test.ts',\n];\n\nexport default defineConfig({\n  test: {\n    globals: true,\n    environment: 'node',\n    // 排除standalone CommonJS测试脚本（由wrapper.test.ts调用）\n    exclude: ['**/node_modules/**', '**/devgate-fake-test-detection.test.cjs', '**/.claude/worktrees/**'],\n    coverage: {\n      provider: 'v8',\n      reporter: ['text', 'json-summary', 'json'],\n      reportsDirectory: './coverage',\n      // 覆盖率阈值（暂时设低，后续逐步提高）\n      thresholds: {\n        statements: 50,\n        branches: 50,\n        functions: 50,\n        lines: 50,\n      },\n    },\n    // 使用 projects 将测试分为两组：\n    // 1. parallel: 无 shell 依赖，并行运行\n    // 2. serial: 有 git/shell 命令竞争，串行运行（singleFork）\n    projects: [\n      {\n        test: {\n          name: 'parallel',\n          globals: true,\n          environment: 'node',\n          include: PARALLEL_TESTS,\n          exclude: skillSourceExcludes('engine'),\n          // fileParallelism 默认为 true，无需显式设置\n        },\n      },\n      {\n        test: {\n          name: 'serial',\n          globals: true,\n          environment: 'node',\n          // 排除并行组的文件，其余全部串行运行\n          // skills/**/__tests__/**/*.test.mjs：skill 脚本测试（如 add-feature.test.mjs），\n          // 用 execFile 起子进程，属于有 shell 依赖的测试，放串行组\n          include: ['tests/**/*.test.ts', 'src/**/*.test.ts', 'skills/**/__tests__/**/*.test.mjs'],\n          exclude: [\n            ...skillSourceExcludes('engine'),\n            '**/node_modules/**',\n            '**/devgate-fake-test-detection.test.cjs',\n            '**/.claude/worktrees/**',\n            ...PARALLEL_TESTS,\n          ],\n          poolOptions: {\n            forks: {\n              // 强制使用单个 fork，避免 git/shell 命令竞争\n              singleFork: true,\n            },\n          },\n        },\n      },\n    ],\n  },\n});\n",
   "packages/quality/vitest.config.ts": "import { defineConfig } from 'vitest/config';\nimport {skillSourceExcludes} from '../../scripts/ci/skill-source-tests.mjs';\n\nexport default defineConfig({\n  test: {\n    // 在线 Brain/Workspace CRUD 与独立 workflows 脚本需专用环境。\n    // 精确排除现存测试，避免新增本地回归被目录级规则静默排除。\n    exclude: [\n      ...skillSourceExcludes('quality'),\n      'tests/api/cross-package-integration.test.ts',\n      'tests/ci-poll-sh-regression.test.ts',\n      '**/node_modules/**',\n      'e2e/**',\n    ],\n  },\n});\n"
 };
+const retiredLintSources={
+ "packages/engine/package.json": "{\n  \"name\": \"zenithjoy-engine\",\n  \"type\": \"module\",\n  \"scripts\": {\n    \"test\": \"NODE_OPTIONS='--max-old-space-size=2048' vitest run\",\n    \"test:coverage\": \"NODE_OPTIONS='--max-old-space-size=2048' vitest run --coverage\",\n    \"test:watch\": \"vitest\",\n    \"qa\": \"npm run lint && npm run test\",\n    \"pr:check\": \"npm run qa\",\n    \"lint\": \"node scripts/check-syntax.mjs\"\n  },\n  \"keywords\": [],\n  \"author\": \"\",\n  \"license\": \"ISC\",\n  \"description\": \"AI development workflow engine\",\n  \"engines\": {\n    \"node\": \">=18.0.0\"\n  },\n  \"devDependencies\": {\n    \"@types/node\": \"^25.0.9\",\n    \"typescript\": \"^5.9.3\",\n    \"@vitest/coverage-v8\": \"^3.2.4\",\n    \"vitest\": \"^3.2.4\"\n  },\n  \"version\": \"19.7.6\",\n  \"private\": true\n}\n",
+ "packages/engine/scripts/check-syntax.mjs": "import { readdirSync } from 'node:fs';\nimport { spawnSync } from 'node:child_process';\nimport { dirname, join, relative, resolve } from 'node:path';\nimport { fileURLToPath } from 'node:url';\n\nconst root = resolve(dirname(fileURLToPath(import.meta.url)), '..');\nconst files = [];\nfunction collect(directory) {\n  for (const entry of readdirSync(join(root, directory), { withFileTypes: true })) {\n    if (['tests', '__tests__', 'node_modules'].includes(entry.name)) continue;\n    const file = join(directory, entry.name);\n    if (entry.isDirectory()) collect(file);\n    else if (entry.isFile() && (/\\.(?:sh|[cm]?js)$/.test(entry.name) || file === 'hooks/pre-commit')) files.push(file);\n  }\n}\nfor (const directory of ['hooks', 'runners', 'scripts', 'lib', 'skills/dev/scripts', 'src/harness', 'ci/scripts']) collect(directory);\nfiles.push('skill-loader.cjs');\nif (!files.some(file => file.endsWith('.sh')) || !files.some(file => /\\.[cm]?js$/.test(file))) {\n  throw new Error('Engine脚本语法检查集合不完整');\n}\nfor (const file of files.sort()) {\n  const shell = file.endsWith('.sh') || file === 'hooks/pre-commit';\n  const result = spawnSync(shell ? 'bash' : process.execPath, [shell ? '-n' : '--check', join(root, file)], { encoding: 'utf8' });\n  if (result.error || result.signal || result.status !== 0) {\n    process.stderr.write(`Engine语法检查失败：${relative(root, join(root, file))}\\n`);\n    if (result.stderr) process.stderr.write(result.stderr);\n    if (result.error) process.stderr.write(`${result.error.message}\\n`);\n    process.exit(result.status || 1);\n  }\n}\nprocess.stdout.write(`Engine脚本语法检查通过：${files.length}个真实文件\\n`);\n"
+};
 const basicMembers=['scripts/ci/basic-scope.mjs','scripts/ci/run-basic-check.mjs','packages/engine/vitest.config.ts'];
-const collect=(sources=retiredSources,missing=[])=>collectWorkspaceInputEdges({
- revision:baseline.revision,paths:baseline.paths.filter(path=>!missing.includes(path)),
+const collect=(sources=retiredSources,missing=[])=>{
+ sources=Object.hasOwn(sources,'scripts/ci/run-basic-check.mjs')?{...retiredLintSources,...sources}:sources;
+ return collectWorkspaceInputEdges({
+ revision:baseline.revision,paths:[...new Set([...baseline.paths,...Object.keys(sources)])].filter(path=>!missing.includes(path)),
  parse:text=>parse(text,{ecmaVersion:'latest',sourceType:'module'}),
  readSource:async path=>Object.hasOwn(sources,path)?sources[path]:baseline.read(path),
 });
+};
 
 it('完整现役退役组合保留Engine真实spawn与Goldset真实CLI输入边',async()=>{
  const edges=await collect();
  for(const [src,dst] of [
   ['scripts/ci/run-basic-check.mjs','packages/engine/vitest.config.ts'],
+  ['packages/engine/package.json','packages/engine/scripts/check-syntax.mjs'],
   ['packages/engine/tests/skills/worktree-cleanup-set-e.test.ts','packages/engine/skills/dev/scripts/worktree-manage.sh'],
   ['packages/quality/vitest.config.ts','packages/quality/__tests__/goldset-eval-cli.test.js'],
   ['packages/quality/__tests__/goldset-eval-cli.test.js','packages/quality/skill-distillation/scripts/goldset-eval.mjs'],
@@ -59,4 +67,12 @@ it('已审四文件不能掩盖实际CI命令被换成空成功',async()=>{
  step.run='true';
  await expect(collect({...retiredSources,[path]:yaml.dump(doc)}))
   .rejects.toMatchObject({code:'WORKSPACE_INPUT_SOURCE_UNPROVEN'});
+});
+
+for(const field of ['lint','prelint','postlint'])it(`现役Engine语法检查入口被替换或注入生命周期拒绝：${field}`,async()=>{
+ const path='packages/engine/package.json',pkg=JSON.parse(retiredLintSources[path]);pkg.scripts[field]=field==='lint'?'node unrelated.mjs':'true';
+ await expect(collect({...retiredSources,[path]:JSON.stringify(pkg)})).rejects.toMatchObject({code:'WORKSPACE_INPUT_SOURCE_UNPROVEN'});
+});
+it('现役Engine语法检查文件缺失不能认领入口',async()=>{
+ await expect(collect(retiredSources,['packages/engine/scripts/check-syntax.mjs'])).rejects.toMatchObject({code:'WORKSPACE_INPUT_SOURCE_UNPROVEN'});
 });
