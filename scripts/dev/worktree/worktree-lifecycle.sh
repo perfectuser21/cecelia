@@ -222,4 +222,3 @@ cmd_init_or_check() {
         echo "✅ worktree 已创建（见上方路径）。脚本无法 cd 调用方进程——请调用方 cd 进该 worktree 后再继续。" >&2
     fi
 }
-

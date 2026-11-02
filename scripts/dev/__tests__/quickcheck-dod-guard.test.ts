@@ -71,4 +71,3 @@ describe('quickcheck真实DoD映射门禁', () => {
     expect(result.stdout).toContain('DoD ↔ Test 映射检查');
   });
 });
-
