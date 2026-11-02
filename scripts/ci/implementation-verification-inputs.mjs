@@ -74,6 +74,12 @@ const BASIC_ENTRY_SEALS={
  'scripts/ci/check-basic-results.mjs':'b6c0b93e15320deff680e765f4558fcdb2a8d98c65d7a926d94f2158af6641e2',
  'scripts/ci/ops-checks.mjs':'96023fd57f11eb1277396b77419bad94a050d0ef64b1c5993db258d87797df82',
 };
+// 完整旧入口或完整退役入口二选一；同一候选不能逐文件混配已审版本。
+const BASIC_ENTRY_PROTOCOLS=[BASIC_ENTRY_SEALS,{
+ ...BASIC_ENTRY_SEALS,
+ 'scripts/ci/run-basic-check.mjs':'97226ce692a63aad92d9120b378e024d64569bc21c637c9f41266735c1720271',
+ 'scripts/ci/basic-scope.mjs':'4a6cb08142b42329ab6daf75bfc7a058be9b5657b7d586be0477486cc914c277',
+}];
 const UNIT_CONFIGS=[
  {component:'brain',directory:'packages/brain',path:'packages/brain/vitest.config.js'},
  {component:'engine',directory:'packages/engine',path:'packages/engine/vitest.config.ts'},
@@ -127,8 +133,14 @@ function unitEntry(read,side){
  try{doc=yaml.load(workflow.text);}catch{return null;}
  const signature=sha(JSON.stringify(canonical(doc)));if(![LEGACY_CI,BASIC_CI].includes(signature))return null;
  const support=[workflow.reference];
- if(signature===BASIC_CI)for(const[path,expected]of Object.entries(BASIC_ENTRY_SEALS)){
-  const file=read(side,path);if(!file||file.reference.sha256!==expected)return null;support.push(file.reference);
+ if(signature===BASIC_CI){
+  let selected;
+  for(const seals of BASIC_ENTRY_PROTOCOLS){
+   const files=Object.entries(seals).map(([path,expected])=>({file:read(side,path),expected}));
+   if(files.every(({file,expected})=>file?.reference.sha256===expected)){selected=files;break;}
+  }
+  if(!selected)return null;
+  support.push(...selected.map(({file})=>file.reference));
  }
  return {profile:signature===LEGACY_CI?'legacy':'basic',canonical_sha256:signature,workflow:workflow.reference,support,
   declaration_only:true,execution_status:'not_evaluated'};
@@ -320,17 +332,21 @@ export function collectVerificationEntryWitness(root,{source,side,path,purpose='
 export function collectVerificationRetirementEntryEvidence(root,{source,proof,purpose='admission_only'}){
  if(purpose!=='admission_only'||proof?.purpose!==purpose||JSON.stringify(canonical(proof.source))!==JSON.stringify(canonical(source)))fail('RETIREMENT_SOURCE_INVALID');
  const {retirement_candidates_sha256,...body}=proof;
- if(sha(JSON.stringify(canonical(body)))!==retirement_candidates_sha256||!Array.isArray(proof.rows)||proof.rows.length>10)fail('RETIREMENT_CANDIDATES_INVALID');
+ const component=proof.closed_component_bundle;
+ if(sha(JSON.stringify(canonical(body)))!==retirement_candidates_sha256||!Array.isArray(proof.rows)||proof.rows.length>(component?415:10)
+  ||component&&proof.rows.filter(r=>r.retirement_kind==='closed_component').length!==405)fail('RETIREMENT_CANDIDATES_INVALID');
  const git=checkedSource(root,source),read=supportReader(root,source,git),entryHead=unitEntry(read,'head'),cache=new Map();
- const rows=proof.rows.map(row=>({path:row.path,replacement_entries:row.replacement_inputs.map(input=>{
+ const replacements=inputs=>inputs.map(input=>{
   if(!cache.has(input.path))cache.set(input.path,entrySupportWitness(source,'head',input.path,purpose,read,entryHead));
   const entry=cache.get(input.path);
   if(!entry||entry.input.sha256!==input.sha256||entry.input.git_blob_sha1!==input.git_blob_sha1||entry.witness.config?.sha256!==input.config.sha256)return {path:input.path,entry:null};
   return {path:input.path,entry};
- })}));
+ });
+ const rows=proof.rows.filter(r=>r.retirement_kind!=='closed_component').map(row=>({path:row.path,replacement_entries:replacements(row.replacement_inputs)}));
  const result={schema_version:1,purpose,source:structuredClone(source),kind:'retirement_replacement_entry_candidates',retirement_candidates_sha256,rows,
+  ...(component?{closed_component_replacement_entries:replacements(component.replacement_inputs)}:{}),
   entry_verified:false,owner_verified:false,execution_status:'not_evaluated',coverage:'unknown'};
  checkedSource(root,source);
  return {...result,retirement_entry_candidates_sha256:sha(JSON.stringify(canonical(result)))};
 }
-export function verificationRetirementOwnerPaths(evidence){return [...new Set((evidence?.rows||[]).flatMap(r=>r.replacement_entries.flatMap(e=>e.entry?.eligible_owner_paths||[])))].sort();}
+export function verificationRetirementOwnerPaths(evidence){return [...new Set([...(evidence?.rows||[]).flatMap(r=>r.replacement_entries),...(evidence?.closed_component_replacement_entries||[])].flatMap(e=>e.entry?.eligible_owner_paths||[]))].sort();}

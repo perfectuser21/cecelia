@@ -1,8 +1,10 @@
-# DoD：退役配置的精确来源证明
+# DoD：退役 CI 配置的验证入口
 
-- [x] [BEHAVIOR] 真实来源采集器接受已审退役配置，旧配置继续有效；命令、选择器或配置漂移拒绝。
-  Test: manual:npm exec --workspace cecelia-brain -- vitest run src/lib/__tests__/existing-ops-active-ci-retirement.test.js
-- [x] [BEHAVIOR] 现行来源模块及组合封印回归通过，不改变正式门禁。
-  Test: manual:npm exec --workspace cecelia-brain -- vitest run src/lib/__tests__/existing-ops-workspace-source.test.js src/lib/__tests__/existing-ops-active-admission-retirement.test.js
-- [ ] [ARTIFACT] 版本同步并经正常 PR 与合并后源码 CI 验证。
+- [x] [BEHAVIOR] 固定 Git 事实接受完整已审的新旧入口，混配与漂移拒绝，声明不自动取得执行或 owner 资格。
+  Test: manual:node --test scripts/ci/__tests__/basic-active-ci-retirement.test.mjs
+- [ ] [BEHAVIOR] 既有验证输入与来源协议回归继续有效。
+  Test: manual:node scripts/ci/run-basic-check.mjs scripts
+- [x] [BEHAVIOR] 固定420项删除边界中405项仅经原生三scope闭包与真实head owner获准退役，15项保留原生路径；catalog、旧blob、13引用、入口与消费者漂移拒绝。
+  Test: manual:node --test scripts/ci/__tests__/basic-closed-component-retirement.test.mjs
+- [ ] [ARTIFACT] 正常 PR 合并后 Main CI 与 CI 专属基线真实通过。
   Test: manual:bash scripts/check-version-sync.sh

@@ -42,7 +42,9 @@ export async function runImplementationCiAdmissionHandleGate({repoRoot,toolingRo
   const actualSource=reports[0].source,input=reports[0].verification_input_evidence,retirements=reports[0].verification_retirement_candidates,entries=reports[0].verification_retirement_entry_evidence;
   if(!input||reports.some(r=>r.verification_input_evidence?.verification_inputs_sha256!==input.verification_inputs_sha256
    ||r.verification_retirement_candidates?.retirement_candidates_sha256!==retirements?.retirement_candidates_sha256||r.verification_retirement_entry_evidence?.retirement_entry_candidates_sha256!==entries?.retirement_entry_candidates_sha256))fail('IMPACT_MULTISCOPE_VERIFICATION_DISCOVERY_MISMATCH');
-  const paths=actualSource.changed_files.map(c=>c.path).filter(path=>nonExecutableChangeKind(path)||retirements?.rows.some(r=>r.path===path));
+  const component=retirements?.closed_component_bundle;
+  const componentPaths=new Set(component?[component.catalog.path,...component.closure_records.map(r=>r.path),...(component.reference_updates||[]).map(r=>r.path)]:[]);
+  const paths=actualSource.changed_files.map(c=>c.path).filter(path=>nonExecutableChangeKind(path)||retirements?.rows.some(r=>r.path===path)||componentPaths.has(path));
   const graphs=paths.length?await readVerificationConsumerGraphFacts(db,{source:actualSource,paths,reports}):undefined;
   const context=buildVerificationInputContext({source:actualSource,evidence:input,reports,raw_consumer_graph_facts:graphs,retirement_candidates:retirements,retirement_entry_evidence:entries});
   const resolution=resolveScopedImplementationReports({source:actualSource,expectedScopes:metadata.scopes,reports,verification_input_context:context});
