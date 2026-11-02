@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import WebsiteFunctionsPage from './WebsiteFunctionsPage';
+import snapshot from './inventory.json';
 
 afterEach(cleanup);
 
@@ -15,6 +16,14 @@ describe('网站功能清单', () => {
     expect(screen.getByText(/可用数是已验收下限/)).toBeVisible();
     expect(screen.getByText(/^盘点 2026-10-01/)).toBeVisible();
     expect(screen.getByText(/配置变更闭环增加 1 项/)).toBeVisible();
+  });
+
+  it('保留原始审计快照，已退役质量页不再进入当前功能搜索', () => {
+    expect(snapshot.rows.filter(row => row['审计编号'].startsWith('QualityMonitorPage:'))).toHaveLength(6);
+    render(<WebsiteFunctionsPage />);
+    fireEvent.change(screen.getByLabelText('搜索功能'), { target: { value: '旧质量运行控制台' } });
+    expect(screen.queryAllByRole('article')).toHaveLength(0);
+    expect(screen.getByText(/6 条历史操作已退役/)).toBeVisible();
   });
 
   it('已验收筛选只返回有证据的条目，搜索和分类继续缩小结果', () => {
