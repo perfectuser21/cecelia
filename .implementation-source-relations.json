@@ -2801,6 +2801,11 @@
       "owner_path": "packages/brain/scripts/fleet-worker/workflow-runner.cjs",
       "path": "changes/cp-common-runner-v1.md",
       "role": "release"
+    },
+    {
+      "owner_path": "packages/brain/scripts/fleet-worker/fleet-worker.cjs",
+      "path": "tests/gp/f1/step3-installer-ships-worker-runtime.test.js",
+      "role": "verification"
     }
   ]
 }
