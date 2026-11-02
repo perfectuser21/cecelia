@@ -234,9 +234,7 @@ const REVIEWED = {
   'scripts/ci/run-isolated-staging-smoke.mjs': 'fa19da1eaf14621a75d95763229fa8d6de40ce3e55940401458346da37f8fbaf',
   [SKILL_SELECTOR]: '1daf4f27f6fa97b3c8f3d9a9e1a9e86e44fbe92b84c962d1c2ce3b90db32b147',
 };
-const BASIC_PROTOCOLS = {
-  '04474b3e5c646767cdf49a4d03e32b3a2f4042027594dd87ef4d6975390f6298': REVIEWED,
-  '7fee2a6d842c7c2595fa882fa61f75750ec6b2787186fdaf8747e1084a64fcee': {
+const REVIEWED_API = {
     ...REVIEWED,
     'packages/brain/vitest.config.js': '906b91dbaaf68ea004b60a252ab0af88bda443cde8418d8a3b812b48ebe4c0f8',
     'scripts/ci/basic-scope.mjs': '9844bb702db2c1a9507f88f1c6c330f676b786cb784592dc4aaefc096b93d6ef',
@@ -245,7 +243,16 @@ const BASIC_PROTOCOLS = {
     'apps/api/vitest.integration.config.ts': '6c2a55ccba874bf8fcae7858f0b9f21295f6728f430860a4ee60c1612cc59dec',
     [PINNED_READER]: '3cf300333012557b0191ca6eba5a1bc112c99cbff1daf4ea85da8e2d33f96f66',
     [PINNED_WORKFLOW]: 'aaf1a1cdc30961114927231193c071d53d27976eb09971e0c72e63a8176eb129',
-  },
+};
+const BASIC_PROTOCOLS = {
+  '04474b3e5c646767cdf49a4d03e32b3a2f4042027594dd87ef4d6975390f6298': REVIEWED,
+  '7fee2a6d842c7c2595fa882fa61f75750ec6b2787186fdaf8747e1084a64fcee': [REVIEWED_API, {
+    ...REVIEWED_API,
+    // 同一工作流的现役退役组合：三成员必须同时匹配，禁止新旧逐文件拼接。
+    'packages/engine/vitest.config.ts': 'badec5d95b3a45bf644892f8b5bb9b77be9dd81321309d343584e1da7890bc58',
+    'scripts/ci/basic-scope.mjs': '4a6cb08142b42329ab6daf75bfc7a058be9b5657b7d586be0477486cc914c277',
+    [BASIC_RUNNER]: '97226ce692a63aad92d9120b378e024d64569bc21c637c9f41266735c1720271',
+  }],
 };
 const reject = () => { throw Error('basic_ci_source_unproven'); };
 export function basicCiSelectorEnabled(text, parse) {
@@ -297,9 +304,13 @@ export function deepPostgresDirectorySelected(path) {
     && /\.(?:test|spec)\.(?:[cm])?[jt]s(?:x)?$/.test(segments.at(-1));
 }
 export async function collectBasicCiSources({ read, ci, revision, relations, parse, paths }) {
-  const protocol = BASIC_PROTOCOLS[workflowHash(ci)];
+  let protocol;
+  for (const candidate of [BASIC_PROTOCOLS[workflowHash(ci)]].flat().filter(Boolean)) {
+    let matches = true;
+    for (const [path, digest] of Object.entries(candidate)) if (hash(await read(path)) !== digest) { matches = false; break; }
+    if (matches) { protocol = candidate; break; }
+  }
   if (!protocol) reject();
-  for (const [path, digest] of Object.entries(protocol)) if (hash(await read(path)) !== digest) reject();
   const relation = (consumer_path, input_path, kind) => relations.push({ consumer_path, input_path, kind, revision });
   if (Object.hasOwn(protocol, PINNED_READER)) {
     if (!Array.isArray(paths)) reject();
@@ -327,6 +338,14 @@ export async function collectBasicCiSources({ read, ci, revision, relations, par
   }
   for (const [consumer, input] of [[BASIC_RUNNER, 'scripts/ci/ops-checks.mjs'], ['scripts/ci/ops-checks.mjs', 'scripts/ci/run-isolated-staging-smoke.mjs']]) relation(consumer, input, 'reviewed_basic_ci_named_call');
   for (const path of ['package.json', 'package-lock.json']) { await read(path); relation(BASIC_CI, path, 'root_npm_ci_manifest_input'); }
+  if (protocol[BASIC_RUNNER] === '97226ce692a63aad92d9120b378e024d64569bc21c637c9f41266735c1720271') {
+    const manifest = 'packages/engine/package.json', entry = 'packages/engine/scripts/check-syntax.mjs';
+    const pkg = JSON.parse(await read(manifest));
+    if (pkg.scripts?.lint !== 'node scripts/check-syntax.mjs' || pkg.scripts?.prelint || pkg.scripts?.postlint || !paths.includes(entry)) reject();
+    await read(entry);
+    relation(BASIC_RUNNER, manifest, 'reviewed_engine_lint_manifest');
+    relation(manifest, entry, 'literal_engine_syntax_check_entry');
+  }
   await read('packages/brain/vitest.config.js');
   relation(BASIC_RUNNER, 'packages/brain/vitest.config.js', 'complete_brain_unit_six_shards');
   relation('packages/brain/vitest.config.js', SKILL_SELECTOR, 'reviewed_skill_source_exclusion');

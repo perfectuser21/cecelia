@@ -204,7 +204,9 @@ async function collectEngineInputs({paths,read,parse,revision,relations,basicCi=
  if(!job&&!basicCi)return;
  let skillExcludes=null;
  if(basicCi){
-  await collectBasicCiSources({read,ci:text,revision,relations:[],parse,paths});
+  const basicProof=[];
+  await collectBasicCiSources({read,ci:text,revision,relations:basicProof,parse,paths});
+  relations.push(...basicProof.filter(row=>['reviewed_engine_lint_manifest','literal_engine_syntax_check_entry'].includes(row.kind)));
   skillExcludes=skillSourceLiteralExcludes(await read(SKILL_SELECTOR),'engine',parse);
  }
  if(!basicCi){
@@ -308,12 +310,12 @@ export async function collectBasicDiagnosticInputs({paths,read,parse,revision,re
   if(!selected.include.some(p=>p.test(relative))||selected.exclude.some(p=>p.test(relative)||ancestors.some(a=>p.test(a))))continue;
   await read(path);relation(apiConfig,path,'literal_workspace_vitest_selector');
  }
- const hasDiagnostics=paths.includes(GOLDSET_TEST)||digest(await read(QUALITY_CONFIG))==='a9163321496b5f40a73bfdd3efab18478f3d2da16e3906f413b7f7fb119f4001';
+ const hasDiagnostics=paths.includes(GOLDSET_TEST)||['a9163321496b5f40a73bfdd3efab18478f3d2da16e3906f413b7f7fb119f4001','ceb3d7f9b2e4dd4e5453580ad9ad6f37979d4ba6748a5500b9f4588fbe563360'].includes(digest(await read(QUALITY_CONFIG)));
  if(!hasDiagnostics){if(paths.includes(IMPACT_WORKFLOW))await collectSourceNodeInputs({read,paths,revision,relations});return;}
  // 默认Quality选择器是Vitest默认include，排除集必须是已审配置及封印的Skill字面量。
  // 固定版本配置的完整封印同时证明没有projects/dir/testNamePattern或排除该版本fixture。
  for(const [config,test,script,configDigest,testDigest]of[
-  [QUALITY_CONFIG,GOLDSET_TEST,GOLDSET_SCRIPT,['09e80d81e95b55086e4fcc5c5d3deb476e2d510a5ae2e578ec7f9b56115c084e','a9163321496b5f40a73bfdd3efab18478f3d2da16e3906f413b7f7fb119f4001'],'8515a4c95b0d8e55b9ca967a66948ee3de8470ad4da0655d095b5a6a4548eecd'],
+  [QUALITY_CONFIG,GOLDSET_TEST,GOLDSET_SCRIPT,['09e80d81e95b55086e4fcc5c5d3deb476e2d510a5ae2e578ec7f9b56115c084e','a9163321496b5f40a73bfdd3efab18478f3d2da16e3906f413b7f7fb119f4001','ceb3d7f9b2e4dd4e5453580ad9ad6f37979d4ba6748a5500b9f4588fbe563360'],'8515a4c95b0d8e55b9ca967a66948ee3de8470ad4da0655d095b5a6a4548eecd'],
   ['packages/brain/vitest.config.js',VERSION_TEST,VERSION_SCRIPT,'906b91dbaaf68ea004b60a252ab0af88bda443cde8418d8a3b812b48ebe4c0f8','d06ad5482e7200ff5101cb30b0859b3539adf460cf14204a33b2c3240c56c53e'],
  ]){
   // 未出现的新测试不被历史协议假称执行；一旦声明该诊断，完整前置与真实目标都不可缺。
@@ -397,7 +399,8 @@ export async function collectNativeFutureImpactSources({basicCi,read,parse,revis
  try{
   const texts=new Map([[IMPACT_WORKFLOW,workflow]]),rows=[];
   for(const path of ACTIVE_TYPED_PATHS){const text=texts.get(path)??await read(path);if(!text)return false;texts.set(path,text);rows.push([path,digest(text)]);}
-  if(digest(JSON.stringify(rows))!==ACTIVE_TYPED_TUPLE)return false;
+  // 仅追加验证入口退役扩展后的完整32源组合；任一成员漂移仍不接受。
+  if(![ACTIVE_TYPED_TUPLE,'17d7123de9e9b06c8c18c83a3bb791d18f5b2f56d00f72a3c32745cc16172459'].includes(digest(JSON.stringify(rows))))return false;
   const programs=new Map([...texts].filter(([p])=>p.endsWith('.mjs')||p.endsWith('.js')).map(([p,text])=>[p,parse(text)]));
   const ci=name=>'scripts/ci/'+name+'.mjs',program=name=>programs.get(ci(name));
   const fn=(name,id)=>{const nodes=[];inspectNodes(program(name),n=>{if(n.type==='FunctionDeclaration'&&n.id?.name===id)nodes.push(n);});if(nodes.length!==1)fail();return nodes[0];};

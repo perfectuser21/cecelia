@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { parse } from 'acorn';
 import {frozenTypedOutputFutureGit,frozenContextMemoFutureGit} from '../lib/__tests__/helpers/future-active-git.js';
 import { describe, it, expect } from 'vitest';
+import {registerCiRetirementGuardTests} from './claude-channel-retired.ci-retirement.fixture.js';
 
 const OLD_READER_HASHES = [
   [
@@ -309,6 +310,13 @@ const CI_MEMO_TOOL_HASHES={...CI_OUTPUT_TOOL_HASHES,
  'existing-ops-workspace-source.js':'f661ef06ccfca5b3460bbbd749e47d53ed283877cf9d7afee68666e0296b1f61',
 };
 const CI_MEMO_ENABLED_HASHES={...CI_MEMO_TOOL_HASHES,'existing-ops-source.js':CI_OUTPUT_ENABLED_HASHES['existing-ops-source.js']};
+// 仅追加最终X退役来源的完整只读0/1组合；旧memo各成员保持原样。
+const CI_RETIREMENT_TOOL_HASHES={...CI_MEMO_TOOL_HASHES,
+ 'existing-ops-stage-source.js':'01fab0e202f588c88c6a78b5f27a4b289ff5fcb939172c6b86e2c348f16fa67a',
+ 'existing-ops-workspace-source.js':'1ca6ba441d9aaf46b56aee1de428e589f3f5de8d898ce854d5eca0e2b27fef59',
+};
+const CI_RETIREMENT_ENABLED_HASHES={...CI_RETIREMENT_TOOL_HASHES,'existing-ops-source.js':CI_MEMO_ENABLED_HASHES['existing-ops-source.js']};
+
 
 const cache=new Map(), referenceCache=new Map();
 function hash(text,parse,shape){
@@ -328,7 +336,7 @@ export function reviewedADataRanges(src,{file,sources,root,parse,shape,rows,deco
   const isRecovery=typeof build==='string'&&hash(build,parse,shape)===B_RECOVERY_QA_HASHES['existing-ops-build-source.js'];
   const isStaging=runtimeHash===B_STAGING_HASHES['existing-ops-runtime-source.js'];
   const isDrainStaging=runtimeHash===B_DRAIN_STAGING_HASHES['existing-ops-runtime-source.js'];
-  const ciTuple=[CI_TOOL_HASHES,CI_ENABLED_HASHES,CI_EDGE_TOOL_HASHES,CI_EDGE_ENABLED_HASHES,CI_ADMISSION_TOOL_HASHES,CI_ADMISSION_ENABLED_HASHES,CI_ACTIVE_A_TOOL_HASHES,CI_ACTIVE_A_ENABLED_HASHES,CI_ACTIVE_B_TOOL_HASHES,CI_ACTIVE_B_ENABLED_HASHES,CI_OUTPUT_TOOL_HASHES,CI_OUTPUT_ENABLED_HASHES,CI_MEMO_TOOL_HASHES,CI_MEMO_ENABLED_HASHES].find(tuple=>Object.entries(tuple).every(([name,digest])=>{
+  const ciTuple=[CI_TOOL_HASHES,CI_ENABLED_HASHES,CI_EDGE_TOOL_HASHES,CI_EDGE_ENABLED_HASHES,CI_ADMISSION_TOOL_HASHES,CI_ADMISSION_ENABLED_HASHES,CI_ACTIVE_A_TOOL_HASHES,CI_ACTIVE_A_ENABLED_HASHES,CI_ACTIVE_B_TOOL_HASHES,CI_ACTIVE_B_ENABLED_HASHES,CI_OUTPUT_TOOL_HASHES,CI_OUTPUT_ENABLED_HASHES,CI_MEMO_TOOL_HASHES,CI_MEMO_ENABLED_HASHES,CI_RETIREMENT_TOOL_HASHES,CI_RETIREMENT_ENABLED_HASHES].find(tuple=>Object.entries(tuple).every(([name,digest])=>{
    const text=sources.get(path.join(root,name));return typeof text==='string'&&hash(text,parse,shape)===digest;
   }));
   if(isRecovery&&!isQa&&!isStaging&&!isDrainStaging&&!ciTuple)return null;
@@ -359,8 +367,10 @@ export function registerReviewedAGuardTests({ BRAIN_ROOT, findClaudeInvocations 
  const data=path.join(root,'existing-ops-build-envelopes.js');
  const snapshot=path.join(BRAIN_ROOT,'../../scripts/ci/implementation-snapshot.mjs');
  const base=()=>new Map([...files,snapshot].map(f=>[f,readFileSync(f,'utf8')]));
+ const memoBase=()=>new Map([...files,snapshot].map(f=>[f,execFileSync('git',['--no-replace-objects','show','69de823cda6d789130898399c3ad770c15b6fb71:'+path.relative(path.resolve(BRAIN_ROOT,'../..'),f)],{cwd:BRAIN_ROOT,encoding:'utf8',maxBuffer:1024*1024})]));
  const legacyBase=()=>new Map(files.map(f=>[f,execFileSync('git',['show','6e9076aab2002e301304256b4936e2790f9de8e7:packages/brain/src/lib/'+path.basename(f)],{cwd:BRAIN_ROOT,encoding:'utf8'})]));
  const scan=(s,f=data)=>findClaudeInvocations(s.get(f),{file:f,sources:s});
+ registerCiRetirementGuardTests({root,base,memoBase,scan});
  describe('A封套精确只读闭包及执行防复活',()=>{
   it('获客预发来源兼容完整只读组合通过，未知 runtime 仍拒绝',()=>{
    const current=base(),runtime=path.join(root,'existing-ops-runtime-source.js');
@@ -400,7 +410,7 @@ export function registerReviewedAGuardTests({ BRAIN_ROOT, findClaudeInvocations 
    const changed=new Map(current);changed.set(workspace,changed.get(workspace)+'\neval(candidate);');expect(scan(changed).some(h=>h.rule==='E1')).toBe(true);
   });
   it('D readonly新cohort必须实际匹配四blob捕获的source/workspace/snapshot',async()=>{
-   const repoRoot=path.resolve(BRAIN_ROOT,'../..'),captured=frozenTypedOutputFutureGit(repoRoot),sources=base();
+   const repoRoot=path.resolve(BRAIN_ROOT,'../..'),captured=frozenTypedOutputFutureGit(repoRoot),sources=memoBase();
    const source=path.join(root,'existing-ops-source.js'),workspace=path.join(root,'existing-ops-workspace-source.js');
    const capturedSource=await captured.read('packages/brain/src/lib/existing-ops-source.js'),capturedWorkspace=await captured.read('packages/brain/src/lib/existing-ops-workspace-source.js');
    expect(capturedWorkspace).toBe(execFileSync('git',['--no-replace-objects','show','f67184328cf877d438869606eb828d1d25d92d20:packages/brain/src/lib/existing-ops-workspace-source.js'],{cwd:BRAIN_ROOT,encoding:'utf8'}));expect(capturedSource).toBe(readFileSync(source,'utf8').replace(/EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = [01]/,'EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = 1'));
@@ -408,7 +418,7 @@ export function registerReviewedAGuardTests({ BRAIN_ROOT, findClaudeInvocations 
    for(const marker of [0,1]){const variant=new Map(sources);variant.set(source,capturedSource.replace('EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = 1','EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = '+marker));expect(scan(variant)).toEqual([]);}
   });
   it('E memo完整0/1 cohort匹配五blob，历史D完整保留且未知成员或缺失拒绝',async()=>{
-   const captured=frozenContextMemoFutureGit(path.resolve(BRAIN_ROOT,'../..')),source=path.join(root,'existing-ops-source.js'),workspace=path.join(root,'existing-ops-workspace-source.js'),current=base();
+   const captured=frozenContextMemoFutureGit(path.resolve(BRAIN_ROOT,'../..')),source=path.join(root,'existing-ops-source.js'),workspace=path.join(root,'existing-ops-workspace-source.js'),current=memoBase();
    const text=await captured.read('packages/brain/src/lib/existing-ops-workspace-source.js');expect(hashSource(text)).toBe('f661ef06ccfca5b3460bbbd749e47d53ed283877cf9d7afee68666e0296b1f61');expect(text).toBe(current.get(workspace));
    expect(await captured.read('packages/brain/src/lib/existing-ops-source.js')).toBe(current.get(source).replace(/EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = [01]/,'EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = 1'));
    for(const marker of [0,1]){const variant=new Map(current);variant.set(source,variant.get(source).replace(/EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = [01]/,'EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = '+marker));expect(scan(variant)).toEqual([]);}
