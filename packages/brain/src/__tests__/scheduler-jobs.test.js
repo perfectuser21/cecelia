@@ -1,4 +1,5 @@
 vi.mock('../lib/workflow-assembly-native.js',()=>({runNativeReconcile:vi.fn().mockResolvedValue({checked:0})}));
+vi.mock('../common-runner-executor.js', () => ({ runCommonRunnerTasks: vi.fn().mockResolvedValue({ dispatched: 0, reaped: 0 }) }));
 import {runNativeReconcile} from '../lib/workflow-assembly-native.js';
 vi.mock('../image-retention-scheduler.js', () => ({ runImageRetentionJanitor: vi.fn().mockResolvedValue({ status: 'disabled' }) }));
 import { runImageRetentionJanitor } from '../image-retention-scheduler.js';

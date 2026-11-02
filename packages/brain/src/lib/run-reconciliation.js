@@ -2,6 +2,20 @@
 const layer=span=>span.enabler_id?'enabler':span.step_id?'step':'activity';
 const key=item=>JSON.stringify([item.reference_id,item.activity_id,item.activity_definition_version_id,item.step_id||null]);
 const completed=span=>span.ended_at!=null&&Number.isFinite(+new Date(span.ended_at))&&+new Date(span.ended_at)>=+new Date(span.started_at);
+// An execution observation stays unknown as a fact. Only an explicitly linked, independent
+// validation of the same frozen occurrence may resolve its derived business verdict.
+const pairedValidation=(span,spans)=>span.evidence?.kind==='execution'&&typeof span.occurrence_key==='string'
+  &&spans.some(v=>v.evidence?.kind==='validation'&&v.outcome==='pass'&&completed(v)
+    &&['run_id','run_binding_id','workflow_id','reference_id','workflow_definition_version_id','activity_definition_version_id','activity_id','attempt_key','step_id','enabler_id']
+      .every(k=>(v[k]??null)===(span[k]??null))
+    &&['profile_digest','task_id','machine_id'].every(k=>typeof span.evidence[k]==='string'&&span.evidence[k]&&v.evidence[k]===span.evidence[k])
+    &&v.evidence.execution_occurrences?.includes(span.occurrence_key)
+    &&v.evidence.questions?.A4?.source==='independent_validator'&&v.evidence.questions.A4.status==='observed'
+    &&v.evidence.questions.A4.actual?.verdict==='pass'&&v.evidence.validation?.verdict==='pass'
+    &&typeof v.evidence.questions.A4.ref==='string'&&v.evidence.questions.A4.ref
+    &&v.evidence.questions.A4.ref===v.evidence.validation.acceptance_ref
+    &&Array.isArray(v.evidence.questions.A4.actual.evidence)&&v.evidence.questions.A4.actual.evidence.length>0
+    &&Array.isArray(v.evidence.validation.evidence)&&v.evidence.validation.evidence.length>0);
 const skipEvidence=span=>typeof span.evidence?.skip_reason==='string'&&span.evidence.skip_reason.trim()
   &&span.evidence.branch_evidence!=null&&typeof span.evidence.branch_evidence==='object'&&Object.keys(span.evidence.branch_evidence).length>0;
 function durations(spans){
@@ -27,7 +41,7 @@ export function reconcileRunEvidence({run_id,context,spans=[],task_run=null,harn
   if(unexpected.length)gaps.push({code:'UNEXPECTED_PATH',count:unexpected.length});
   for(const span of valid){
     if(!completed(span))gaps.push({code:'SPAN_NOT_ENDED',span_id:span.id});
-    if(span.outcome==='unknown')gaps.push({code:'SPAN_OUTCOME_UNKNOWN',span_id:span.id});
+    if(span.outcome==='unknown'&&!pairedValidation(span,valid))gaps.push({code:'SPAN_OUTCOME_UNKNOWN',span_id:span.id});
     if(span.outcome==='skipped'&&!skipEvidence(span))gaps.push({code:'SKIP_BRANCH_EVIDENCE_MISSING',span_id:span.id});
     if(span.outcome==='skipped'&&expected.some(item=>key(item)===key(span)&&item.required!==false))gaps.push({code:'REQUIRED_PATH_SKIPPED',span_id:span.id});
   }

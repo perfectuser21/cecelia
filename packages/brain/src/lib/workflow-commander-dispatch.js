@@ -199,6 +199,7 @@ export async function dispatchWorkflowCommanderTasks(pool, deps = {}) {
   const { rows } = await pool.query(
     `SELECT * FROM tasks
       WHERE task_type = '${WORKFLOW_DISPATCH_TASK_TYPE}' AND status = 'queued' AND claimed_by IS NULL
+      AND NOT COALESCE(payload ? 'common_runner',false)
       AND NOT EXISTS (SELECT 1 FROM workflows w WHERE w.key=tasks.payload->>'workflow_key' AND w.status='paused' AND w.key=ANY(ARRAY['douyin_video_discovery','douyin_video_processing','douyin_comment_scoring','douyin_lead_outreach']))
       ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END, created_at ASC
       LIMIT ${BATCH * 10}`,

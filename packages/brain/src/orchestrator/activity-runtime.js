@@ -14,7 +14,7 @@ function hasProducts(outputs) {
 }
 
 // 显式 opt-in；onEvent 可接既有 run-event-store，无数据库/生产路由副作用。
-export async function runActivityContract(contract, input, { cwd = process.cwd(), signal, onEvent = async () => {} } = {}) {
+export async function runActivityContract(contract, input, { cwd = process.cwd(), signal, onEvent = async () => {}, prepareInput = async (_activity, value) => value } = {}) {
   const plan = parseActivityContract(contract);
   if (!object(input) || typeof input.run_tag !== 'string' || !input.run_tag.trim()) throw new Error('run_tag_required');
   const original = structuredClone(input), context = structuredClone(input);
@@ -79,7 +79,8 @@ export async function runActivityContract(contract, input, { cwd = process.cwd()
         if (grouping) activityInput[grouping.input] = structuredClone(item);
         activityInput.budget = structuredClone(a.budget);
         activityInput.attempt = attempt;
-        const recorded = await emit('ACTIVITY_STARTED', { activity: a.key, item: record.item, attempt, budget: a.budget });
+        activityInput = await prepareInput(a, activityInput);
+        const recorded = await emit('ACTIVITY_STARTED', { activity: a.key, item: record.item, attempt, budget: a.budget, input: activityInput });
         if (!recorded && a.runtime.phase !== 'finalize') throw new Error('event_sink_failed');
         transport = await callActivityProcess(a, activityInput, { cwd,
           signal: a.runtime.phase === 'finalize' ? undefined : signal,

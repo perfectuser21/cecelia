@@ -2741,6 +2741,71 @@
       "owner_path": "scripts/ci/ci-admission-publisher.mjs",
       "path": "scripts/ci/__tests__/basic-ci-admission-workflow.test.mjs",
       "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/scripts/fleet-worker/fleet-worker.cjs",
+      "path": "packages/brain/scripts/fleet-worker/workflow-http.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/scripts/fleet-worker/workflow-runner.cjs",
+      "path": "packages/brain/scripts/fleet-worker/workflow-runner.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/scripts/fleet-worker/workflow-runner.cjs",
+      "path": "packages/brain/src/__tests__/integration/common-runner-recorder.pg.integration.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/common-runner-executor.js",
+      "path": "packages/brain/src/__tests__/common-runner-executor.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/tick-dispatch-gate.js",
+      "path": "packages/brain/src/__tests__/tick-dispatch-gate.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/common-runner-dispatch.js",
+      "path": "packages/brain/src/lib/__tests__/common-runner-dispatch.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/run-reconciliation.js",
+      "path": "packages/brain/src/lib/__tests__/common-runner-reconciliation.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/orchestrator/workflow-recorder.js",
+      "path": "packages/brain/src/orchestrator/__tests__/workflow-recorder-retry.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/orchestrator/workflow-recorder.js",
+      "path": "packages/brain/src/orchestrator/__tests__/workflow-recorder.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/orchestrator/workflow-validator.js",
+      "path": "packages/brain/src/orchestrator/__tests__/workflow-validator.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/routes/common-runner.js",
+      "path": "packages/brain/src/routes/__tests__/common-runner.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/scripts/fleet-worker/workflow-runner.cjs",
+      "path": "changes/cp-common-runner-v1.md",
+      "role": "release"
+    },
+    {
+      "owner_path": "packages/brain/scripts/fleet-worker/fleet-worker.cjs",
+      "path": "tests/gp/f1/step3-installer-ships-worker-runtime.test.js",
+      "role": "verification"
     }
   ]
 }
