@@ -2,6 +2,7 @@
 import {createHash} from 'node:crypto';
 import {reverseImplementationPaths} from '../../packages/brain/src/lib/implementation-impact.js';
 import {verifyVerificationInputEvidence,collectVerificationRetirementEntryEvidence} from './implementation-verification-inputs.mjs';
+import {CLOSED_COMPONENT_CATALOG} from './implementation-verification-retirements.mjs';
 const canonical=value=>Array.isArray(value)?value.map(canonical):value&&typeof value==='object'
  ?Object.fromEntries(Object.keys(value).sort().map(k=>[k,canonical(value[k])])):value;
 const sha=value=>createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex');
@@ -74,12 +75,16 @@ export function buildVerificationInputContext({source,evidence,reports,raw_consu
    joint_kind:metadata.find(r=>r.path===path).kind,non_executable:true,execution_status:'not_evaluated',coverage:'unknown'});
  }
  const retired=authorizeRetirements(source,reports,owners,graphFacts,retirement_candidates,retirement_entry_evidence,reportHash);
+ const component=authorizeComponentBundle(source,reports,owners,graphFacts,retirement_candidates,retirement_entry_evidence,reportHash);
+ retired.push(...component.retired);
  for(const path of [...new Set(retired.map(r=>r.path))].sort()){
   if(joint_files.some(r=>r.path===path))fail('JOINT_ROLE_CONFLICT');
-  joint_files.push({path,input_indexes:[],retirement_indexes:retired.flatMap((r,i)=>r.path===path?[i]:[]),resolution_kind:'explicit_verification_retirement',joint_kind:'explicit_verification_retirement',non_executable:true,execution_status:'not_evaluated',coverage:'unknown'});
+  const kind=retired.find(r=>r.path===path).kind;
+  joint_files.push({path,input_indexes:[],retirement_indexes:retired.flatMap((r,i)=>r.path===path?[i]:[]),resolution_kind:kind,joint_kind:kind,non_executable:true,execution_status:'not_evaluated',coverage:'unknown'});
  }
+ for(const row of component.data)if(!joint_files.some(r=>r.path===row.path))joint_files.push({path:row.path,input_indexes:[],resolution_kind:row.kind,joint_kind:row.kind,non_executable:true,execution_status:'not_evaluated',coverage:'unknown'});
  const body={schema_version:1,purpose,evidence_kind:'derived_verification_input_context',source:structuredClone(source),input_evidence:structuredClone(evidence),
-  source_reports:structuredClone(reports),authorized_inputs:authorized,authorized_non_executable_changes:metadata,authorized_retirements:retired,...(retirement_candidates?{retirement_candidates:structuredClone(retirement_candidates),retirement_entry_evidence:structuredClone(retirement_entry_evidence)}:{}),...(graphFacts?{raw_consumer_graph_facts:structuredClone(graphFacts)}:{}),joint_files,execution_status:'not_evaluated',coverage:'unknown'};
+  source_reports:structuredClone(reports),authorized_inputs:authorized,authorized_non_executable_changes:metadata,authorized_retirements:retired,...(component.authority?{closed_component_authority:component.authority}:{}),...(retirement_candidates?{retirement_candidates:structuredClone(retirement_candidates),retirement_entry_evidence:structuredClone(retirement_entry_evidence)}:{}),...(graphFacts?{raw_consumer_graph_facts:structuredClone(graphFacts)}:{}),joint_files,execution_status:'not_evaluated',coverage:'unknown'};
  return {...body,context_sha256:sha(body)};
 }
 /** 纯结构复验供联合切片重建；Git入口重读仍必须在真实断言前后执行。 */
@@ -111,6 +116,7 @@ function authorizeRetirements(source,reports,owners,graphs,proof,entries,reportH
   ||!entries||entries.purpose!=='admission_only'||!equal(entries.source,source)||entries.retirement_candidates_sha256!==retirement_candidates_sha256||sha(entryBody)!==entries.retirement_entry_candidates_sha256)fail('RETIREMENT_INVALID');
  const authorized=[];
  for(const retired of proof.rows){
+  if(retired.retirement_kind==='closed_component')continue;
   if(retired.change!=='D'||retired.side!=='base'||retired.head?.absent!==true||retired.head.revision!==source.head_revision||retired.base?.revision!==source.base_revision
    ||retired.requires_native_base_no_business_consumer!==true||retired.entry_verified!==false||retired.owner_verified!==false||retired.retirement_authorized!==false)fail('RETIREMENT_INVALID');
   const baseProofs=graphs?.scopes.map(s=>s.base.rows.find(r=>r.path===retired.path));
@@ -131,6 +137,47 @@ function authorizeRetirements(source,reports,owners,graphs,proof,entries,reportH
    retired_execution_status:'not_evaluated',coverage:'unknown',limitations:retired.catalog_limitations});
  }
  return authorized;
+}
+/** 仅此已审闭包的联合反证；运行文件仍是组件退役，绝不冒充验证输入或业务覆盖。 */
+function authorizeComponentBundle(source,reports,owners,graphs,proof,entries,reportHash){
+ const denied={retired:[],data:[],authority:null},bundle=proof?.closed_component_bundle;
+ if(!bundle)return denied;
+ const closure=bundle.closure_records,rows=proof.rows.filter(r=>r.retirement_kind==='closed_component');
+ if(bundle.kind!=='closed_component_retirement_bundle'||bundle.catalog?.path!==CLOSED_COMPONENT_CATALOG.path||bundle.catalog.sha256!==CLOSED_COMPONENT_CATALOG.sha256
+  ||bundle.catalog.revision!==source.head_revision||closure?.length!==420||new Set(closure.map(r=>r.path)).size!==420||rows.length!==405
+  ||closure.filter(r=>r.classification==='native_selected').length!==15||closure.filter(r=>r.classification!=='native_selected').some(r=>!rows.some(x=>x.path===r.path))
+  ||rows.some(r=>r.change!=='D'||r.side!=='base'||r.base?.revision!==source.base_revision||r.head?.revision!==source.head_revision||r.head.absent!==true
+   ||r.requires_native_base_no_business_consumer!==true||r.retirement_authorized!==false||r.entry_verified!==false||r.owner_verified!==false))fail('COMPONENT_BUNDLE_INVALID');
+ if(!graphs||!equal(reports.map(r=>r.scope_key).sort(),['cecelia-factory','cecelia-infra','cecelia-kr']))return denied;
+ const paths=new Set(closure.map(r=>r.path));
+ const raw=(scope,side,path)=>{const found=scope[side].rows.filter(r=>r.path===path);return found.length===1?found[0]:null;};
+ for(const scope of graphs.scopes)for(const item of closure){
+  const base=raw(scope,'base',item.path),head=raw(scope,'head',item.path);
+  if(!base||!head||base.truncated||head.truncated||base.reverse_paths.some(p=>!paths.has(p))||!equal(head.reverse_paths,[item.path]))return denied;
+ }
+ for(const report of reports)for(const side of ['base','head'])for(const row of rows){
+  const facts=report[side].file_coverage.filter(f=>f.path===row.path);
+  if(facts.length!==1||facts[0].truncated||facts[0].matched_paths.length||facts[0].coverage_kind||facts[0].native_matched_paths?.length)return denied;
+ }
+ const support=entries.closed_component_replacement_entries,inputs=bundle.replacement_inputs,replacements=[];
+ if(inputs?.length!==3||support?.length!==3)return denied;
+ for(const input of inputs){
+  const matches=support.filter(r=>r.path===input.path),entry=matches[0]?.entry;
+  if(matches.length!==1||!entry||entry.witness.kind!=='vitest_config_input'||entry.input.source.side!=='head'||entry.input.source.revision!==source.head_revision
+   ||entry.input.path!==input.path||entry.input.sha256!==input.sha256||entry.input.git_blob_sha1!==input.git_blob_sha1||entry.witness.config?.sha256!==input.config.sha256)return denied;
+  const claims=[];
+  for(const report of reports)for(const owner of owners.get(report.scope_key+':head'))if(owner.matched_paths.length&&entry.eligible_owner_paths.includes(owner.path))claims.push({scope_key:report.scope_key,side:'head',owner_path:owner.path,source_revision:owner.source_revision,graph_sha256:owner.graph_sha256,matched_paths:[...owner.matched_paths],source_report_sha256:reportHash(report)});
+  if(!claims.length)return denied;
+  replacements.push({path:input.path,entry_support_sha256:entry.entry_support_sha256,owner_claims:claims});
+ }
+ const candidates=[{path:bundle.catalog.path,kind:'closed_component_catalog'},...(bundle.reference_updates||[]).map(r=>({path:r.path,kind:'reference_cleanup'}))];
+ const data=candidates.filter(item=>source.changed_files.some(c=>c.path===item.path)
+  &&graphs.scopes.every(scope=>['base','head'].every(side=>{const row=raw(scope,side,item.path);return row&&!row.truncated&&equal(row.reverse_paths,[item.path]);}))
+  &&reports.every(report=>['base','head'].every(side=>{const rows=report[side].file_coverage.filter(r=>r.path===item.path);return rows.length===1&&!rows[0].truncated&&!rows[0].matched_paths.length&&!rows[0].coverage_kind&&!rows[0].native_matched_paths?.length;})));
+ if(!data.some(r=>r.kind==='closed_component_catalog'))return denied;
+ const authority={catalog:bundle.catalog,replacements,limitations:bundle.limitations,raw_graph_facts:graphs.scopes.map(scope=>({scope_key:scope.scope_key,base:scope.base.raw_graph_facts_sha256,head:scope.head.raw_graph_facts_sha256})),execution_status:'not_evaluated',coverage:'unknown'};
+ const witness=sha(authority);
+ return {authority:{...authority,bundle_authority_sha256:witness},data,retired:rows.map(row=>({path:row.path,kind:'closed_component_retirement',bundle_authority_sha256:witness,retired_execution_status:'not_evaluated',coverage:'unknown'}))};
 }
 function assertRawGraphs(source,reports,proof){
  if(proof===undefined)return null;

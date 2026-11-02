@@ -9,6 +9,8 @@ const CATALOG='config/verification-retirements/alertness-v1.json';
 const CATALOG_SHA256='f9c3f170764dc41dbd4f710e5082551880c47f008bc7a9ca3cbc91eba2e5c73c';
 const CATALOGS=[{path:CATALOG,sha256:CATALOG_SHA256,records:5,inputs:11},
  {path:'config/verification-retirements/legacy-five-v1.json',sha256:'1392c3febd9131416ec8c960a7a5a0ff6553b496084efeee1db6e1c236f25717',records:5,inputs:4}];
+export const CLOSED_COMPONENT_CATALOG=Object.freeze({path:'config/verification-retirements/closed-components-v1.json',
+ sha256:'5b43e42d84aa1b03580b030924cf5b46e0b833f55a8735b86bd185a0bffedc99'});
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
 const canonical=x=>Array.isArray(x)?x.map(canonical):x&&typeof x==='object'
  ?Object.fromEntries(Object.keys(x).sort().map(k=>[k,canonical(x[k])])):x;
@@ -80,6 +82,60 @@ function dashboardCandidate(text,config,path){
  return {selected:false,witness:{kind:'fixed_dashboard_literal_candidate',config_path:config.path,config_sha256:config.sha256,
   file_path:path,include_literals:include.elements.map(n=>n.value),requires_selector_reverification:true}};
 }
+function componentTree(root,revision){
+ return new Map(fixedLocalGit(root,['ls-tree','-rz','--full-tree',revision],{encoding:'utf8'}).split('\0').filter(Boolean).map(line=>{
+  const [meta,path]=line.split('\t'),[mode,type,id]=meta.split(' ');return [path,{mode,type,id}];
+ }));
+}
+/** 420个固定blob只读一次Git输出；模式、长度、SHA1、SHA256逐条核对，不执行旧代码。 */
+function componentBaseFacts(root,source,records){
+ const base=componentTree(root,source.base_revision),head=componentTree(root,source.head_revision);
+ for(const record of records){
+  const entry=base.get(record.path),expected=record.old;
+  need(entry?.type==='blob'&&['100644','100755'].includes(entry.mode)&&entry.mode===expected.mode&&entry.id===expected.git_blob_sha1,'COMPONENT_BASE_BLOB_MISMATCH');
+  need(!head.has(record.path)&&![...head.keys()].some(path=>path.startsWith(record.path+'/')),'COMPONENT_HEAD_ABSENCE_REQUIRED');
+ }
+ const bytes=fixedLocalGit(root,['show',...records.map(r=>source.base_revision+':'+r.path)]);let offset=0;
+ const facts=records.map(record=>{
+  const expected=record.old,body=bytes.subarray(offset,offset+expected.byte_length);offset+=expected.byte_length;
+  const fact={path:record.path,mode:base.get(record.path).mode,git_blob_sha1:createHash('sha1').update(`blob ${body.length}\0`).update(body).digest('hex'),sha256:sha(body),byte_length:body.length};
+  need(digest(fact)===digest(expected),'COMPONENT_BASE_BYTES_MISMATCH');
+  return {path:record.path,classification:record.classification,base:{...fact,revision:source.base_revision}};
+ });
+ need(offset===bytes.length,'COMPONENT_BASE_BYTES_MISMATCH');return facts;
+}
+function closedComponentBundle(root,source,changes){
+ const spec=CLOSED_COMPONENT_CATALOG;
+ const bytes=readFixedLocalGitBlob(root,{revision:source.head_revision,path:spec.path},{allowMissing:true});
+ if(bytes===null)return null;
+ need(sha(bytes)===spec.sha256,'COMPONENT_CATALOG_DIGEST_MISMATCH');
+ const data=JSON.parse(bytes),records=data.records;
+ need(data.schema_version===1&&data.kind==='closed_component_retirement_catalog'&&data.purpose==='admission_only'&&data.repo===REPO
+  &&data.anchor_revision==='69de823cda6d789130898399c3ad770c15b6fb71'&&Array.isArray(records)&&records.length===420
+  &&new Set(records.map(r=>r.path)).size===420&&records.every(r=>safePath(r.path)&&r.old.path===r.path),'COMPONENT_CATALOG_INVALID');
+ if(!changes.has(spec.path)&&!records.some(r=>changes.has(r.path)))return null;
+ need(changes.get(spec.path)==='A'&&records.every(r=>changes.get(r.path)==='D'),'COMPONENT_COMPLETE_DELETION_REQUIRED');
+ for(const [kind,count]of [['native_selected',15],['verification_not_selected',42],['component_file',363]])need(records.filter(r=>r.classification===kind).length===count,'COMPONENT_CATALOG_INVALID');
+ try{git(root,'merge-base','--is-ancestor',data.anchor_revision,source.base_revision);}catch{fail('COMPONENT_ANCHOR_MISMATCH');}
+ const closure_records=componentBaseFacts(root,source,records);
+ need(data.reference_updates?.length===13&&new Set(data.reference_updates.map(r=>r.path)).size===13,'COMPONENT_REFERENCES_INVALID');
+ const reference_updates=data.reference_updates.map(record=>{
+  need(record.classification==='reference_cleanup'&&safePath(record.path)&&changes.get(record.path)==='M','COMPONENT_REFERENCE_CHANGE_REQUIRED');
+  const old=reviewedBlob(root,source.base_revision,record.old,'COMPONENT_REFERENCE_BASE'),head=reviewedBlob(root,source.head_revision,record.head,'COMPONENT_REFERENCE_HEAD');
+  need(old.fact.path===record.path&&head.fact.path===record.path,'COMPONENT_REFERENCES_INVALID');
+  return {path:record.path,base:{...old.fact,revision:source.base_revision},head:{...head.fact,revision:source.head_revision},execution_status:'not_evaluated',coverage:'unknown'};
+ });
+ const config=reviewedBlob(root,source.head_revision,data.replacement_config,'COMPONENT_CONFIG'),skill=reviewedBlob(root,source.head_revision,data.skill_selector,'COMPONENT_SKILL');
+ const replacement_inputs=data.replacement_inputs.map(expected=>{
+  const actual=reviewedBlob(root,source.head_revision,expected,'COMPONENT_REPLACEMENT');
+  const selected=selectVitestVerificationInput({filePath:expected.path,configPath:config.fact.path,configText:config.bytes.toString(),skillText:skill.bytes.toString(),component:'quality'});
+  need(selected.selected,'COMPONENT_REPLACEMENT_NOT_SELECTED');
+  return {...actual.fact,revision:source.head_revision,config:{...config.fact,revision:source.head_revision},selected_candidate:true,selector_witness:selected.witness,entry_verified:false,owner_verified:false};
+ });
+ need(replacement_inputs.length===3,'COMPONENT_REPLACEMENT_INVALID');
+ return {schema_version:1,kind:'closed_component_retirement_bundle',catalog:{...spec,revision:source.head_revision},anchor_revision:data.anchor_revision,
+  closure_records,replacement_inputs,reference_updates,audit_evidence:data.audit_evidence,limitations:data.limitations,execution_status:'not_evaluated',coverage:'unknown'};
+}
 /** 信任目录只从control固定Git读取。候选仓内同名JSON不参与授权。 */
 export function collectVerificationRetirementCandidates(repoRoot,{source,toolingRoot,toolingRevision,purpose}={}){
  need(purpose==='admission_only','ADMISSION_ONLY');
@@ -119,10 +175,14 @@ export function collectVerificationRetirementCandidates(repoRoot,{source,tooling
     audit:record.audit,catalog_limitations:catalog.limitations,requires_native_base_no_business_consumer:true,entry_verified:false,owner_verified:false,retirement_authorized:false});
   }
  }
+ const component=closedComponentBundle(repoRoot,source,changes);
+ if(component)for(const record of component.closure_records.filter(r=>r.classification!=='native_selected'))rows.push({path:record.path,retirement_kind:'closed_component',
+  change:'D',side:'base',base:{revision:source.base_revision},head:{revision:source.head_revision,absent:true},requires_native_base_no_business_consumer:true,
+  entry_verified:false,owner_verified:false,retirement_authorized:false});
  checkState(repoRoot,source.head_revision);checkState(toolingRoot,toolingRevision);
  const body={schema_version:1,kind:'explicit_verification_retirement',purpose,source:structuredClone(source),
   control:{revision:toolingRevision,catalog_path:CATALOG,catalog_sha256:CATALOG_SHA256,catalogs:CATALOGS.map(({path,sha256})=>({path,sha256}))},rows,limitations:catalogs[0].catalog.limitations,
-  execution_status:'not_evaluated',coverage:'unknown',business_runtime_status:'not_evaluated'};
+  ...(component?{closed_component_bundle:component}:{}),execution_status:'not_evaluated',coverage:'unknown',business_runtime_status:'not_evaluated'};
  return {...body,retirement_candidates_sha256:digest(body)};
 }
 /** 复核必须重读同一固定Git；结构自洽与自算摘要不构成审批。 */

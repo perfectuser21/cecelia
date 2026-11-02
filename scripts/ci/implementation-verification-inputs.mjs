@@ -332,17 +332,21 @@ export function collectVerificationEntryWitness(root,{source,side,path,purpose='
 export function collectVerificationRetirementEntryEvidence(root,{source,proof,purpose='admission_only'}){
  if(purpose!=='admission_only'||proof?.purpose!==purpose||JSON.stringify(canonical(proof.source))!==JSON.stringify(canonical(source)))fail('RETIREMENT_SOURCE_INVALID');
  const {retirement_candidates_sha256,...body}=proof;
- if(sha(JSON.stringify(canonical(body)))!==retirement_candidates_sha256||!Array.isArray(proof.rows)||proof.rows.length>10)fail('RETIREMENT_CANDIDATES_INVALID');
+ const component=proof.closed_component_bundle;
+ if(sha(JSON.stringify(canonical(body)))!==retirement_candidates_sha256||!Array.isArray(proof.rows)||proof.rows.length>(component?415:10)
+  ||component&&proof.rows.filter(r=>r.retirement_kind==='closed_component').length!==405)fail('RETIREMENT_CANDIDATES_INVALID');
  const git=checkedSource(root,source),read=supportReader(root,source,git),entryHead=unitEntry(read,'head'),cache=new Map();
- const rows=proof.rows.map(row=>({path:row.path,replacement_entries:row.replacement_inputs.map(input=>{
+ const replacements=inputs=>inputs.map(input=>{
   if(!cache.has(input.path))cache.set(input.path,entrySupportWitness(source,'head',input.path,purpose,read,entryHead));
   const entry=cache.get(input.path);
   if(!entry||entry.input.sha256!==input.sha256||entry.input.git_blob_sha1!==input.git_blob_sha1||entry.witness.config?.sha256!==input.config.sha256)return {path:input.path,entry:null};
   return {path:input.path,entry};
- })}));
+ });
+ const rows=proof.rows.filter(r=>r.retirement_kind!=='closed_component').map(row=>({path:row.path,replacement_entries:replacements(row.replacement_inputs)}));
  const result={schema_version:1,purpose,source:structuredClone(source),kind:'retirement_replacement_entry_candidates',retirement_candidates_sha256,rows,
+  ...(component?{closed_component_replacement_entries:replacements(component.replacement_inputs)}:{}),
   entry_verified:false,owner_verified:false,execution_status:'not_evaluated',coverage:'unknown'};
  checkedSource(root,source);
  return {...result,retirement_entry_candidates_sha256:sha(JSON.stringify(canonical(result)))};
 }
-export function verificationRetirementOwnerPaths(evidence){return [...new Set((evidence?.rows||[]).flatMap(r=>r.replacement_entries.flatMap(e=>e.entry?.eligible_owner_paths||[])))].sort();}
+export function verificationRetirementOwnerPaths(evidence){return [...new Set([...(evidence?.rows||[]).flatMap(r=>r.replacement_entries),...(evidence?.closed_component_replacement_entries||[])].flatMap(e=>e.entry?.eligible_owner_paths||[]))].sort();}
