@@ -2,7 +2,7 @@
 
 **Brain 版本**: 1.445.102
 
-本次精确登记已审退役后的 Engine／Quality 配置与源码检查命令，旧配置和失败变体仍独立验证；仅扩展 CI 来源解析，不形成生产发布证明。
+本次精确登记已审退役后的 Engine／Quality 配置与源码检查命令，旧配置和失败变体仍独立验证；仅扩展 CI 来源解析，不形成生产发布证明；候选带 `cecelia_source_only=true`，部署脚本在生产操作前拒绝。
 
 此前 CI 重整候选保留 `cecelia_source_only=true`；完整组件源码、固定 Skill 合同与 CI 专用三来源基线分工验证。typed 准入只容纳根级诊断元数据，完整新 active faeb 与已发布历史只读 cohort 分别核验，坏凭据拒绝且不授予生产运行资格。同次 verification context 构建内的 report 摘要延迟复用，普通输入与退休证明共用，跨调用重新计算且输出与 digest 等价。
 

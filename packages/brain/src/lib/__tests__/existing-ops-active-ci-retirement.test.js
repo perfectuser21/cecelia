@@ -13,8 +13,8 @@ const retiredSources={
   "packages/quality/vitest.config.ts": "import { defineConfig } from 'vitest/config';\nimport {skillSourceExcludes} from '../../scripts/ci/skill-source-tests.mjs';\n\nexport default defineConfig({\n  test: {\n    // 在线 Brain/Workspace CRUD 与独立 workflows 脚本需专用环境。\n    // 精确排除现存测试，避免新增本地回归被目录级规则静默排除。\n    exclude: [\n      ...skillSourceExcludes('quality'),\n      'tests/api/cross-package-integration.test.ts',\n      'tests/ci-poll-sh-regression.test.ts',\n      '**/node_modules/**',\n      'e2e/**',\n    ],\n  },\n});\n"
 };
 const basicMembers=['scripts/ci/basic-scope.mjs','scripts/ci/run-basic-check.mjs','packages/engine/vitest.config.ts'];
-const collect=(sources=retiredSources)=>collectWorkspaceInputEdges({
- revision:baseline.revision,paths:baseline.paths,
+const collect=(sources=retiredSources,missing=[])=>collectWorkspaceInputEdges({
+ revision:baseline.revision,paths:baseline.paths.filter(path=>!missing.includes(path)),
  parse:text=>parse(text,{ecmaVersion:'latest',sourceType:'module'}),
  readSource:async path=>Object.hasOwn(sources,path)?sources[path]:baseline.read(path),
 });
@@ -34,6 +34,11 @@ it('原合法main组合仍提供完整输入边',async()=>{
  const edges=await collect({});
  expect(edges).toContainEqual(expect.objectContaining({src_path:'packages/quality/__tests__/goldset-eval-cli.test.js',
   dst_path:'packages/quality/skill-distillation/scripts/goldset-eval.mjs'}));
+});
+
+it('新Quality配置声明的Goldset测试路径缺失必须拒绝',async()=>{
+ await expect(collect(retiredSources,['packages/quality/__tests__/goldset-eval-cli.test.js']))
+  .rejects.toMatchObject({code:'WORKSPACE_INPUT_SOURCE_UNPROVEN'});
 });
 
 it.each(Object.keys(retiredSources))('退役组合未审字节漂移拒绝：%s',async path=>{
