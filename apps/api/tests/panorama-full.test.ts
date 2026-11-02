@@ -1,108 +1,43 @@
-/**
- * Tests for /api/panorama/full endpoint
- * Verifies full system panorama aggregation
- */
-
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
+vi.mock('../src/task-system/db.js', () => ({ default: { query: vi.fn(async () => ({ rows: [] })) } }));
 
-// Store original fetch
-const originalFetch = global.fetch;
-
-describe('/api/panorama/full', () => {
+describe('现役全景状态路由', () => {
   let app: express.Application;
-  let mockFetch: ReturnType<typeof vi.fn>;
-
+  let calls: string[];
+  let failing: boolean;
   beforeEach(async () => {
-    // Create fresh mock for each test
-    mockFetch = vi.fn();
-    global.fetch = mockFetch as any;
-
-    // Clear module cache and reimport
-    vi.resetModules();
-    const panoramaRoutes = await import('../src/panorama/routes.js');
-
-    app = express();
-    app.use(express.json());
-    app.use('/api/panorama', panoramaRoutes.default);
+    vi.resetModules(); calls = []; failing = false;
+    vi.stubEnv('BRAIN_API', 'http://brain.fixture.invalid');
+    vi.stubEnv('N8N_BACKEND', 'http://n8n.fixture.invalid');
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL) => {
+      const url = new URL(String(input)); calls.push(url.href);
+      if (failing) throw new Error('fixture service unavailable');
+      if (url.hostname === 'brain.fixture.invalid' && url.pathname === '/health') return Response.json({ status: 'ok' });
+      if (url.pathname === '/api/github/panorama') return Response.json({ data: { repos: ['现役仓库'] } });
+      if (url.hostname === 'n8n.fixture.invalid' && url.pathname === '/healthz') return Response.json({ status: 'ok' });
+      throw new Error(`Unexpected service request: ${url.href}`);
+    }));
+    const router = await import('../src/panorama/routes.js');
+    app = express(); app.use('/api/panorama', router.default);
   });
-
-  afterEach(() => {
-    global.fetch = originalFetch;
-    vi.restoreAllMocks();
+  afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.restoreAllMocks(); });
+  it('保留Brain、GitHub与N8N，去除退役Quality服务', async () => {
+    const res = await request(app).get('/api/panorama/full');
+    expect(res.status).toBe(200);
+    expect(res.body.data).toMatchObject({ brain: { health: 'ok' }, github: { repos: ['现役仓库'] } });
+    expect(res.body.data).toHaveProperty('vps');
+    expect(res.body.data.services.map((s: { name: string }) => s.name)).toEqual(['semantic-brain', 'n8n']);
+    expect(res.body.data.services.every((s: { status: string }) => s.status === 'up')).toBe(true);
+    expect(res.body.data).not.toHaveProperty('quality');
+    expect(calls.some(url => new URL(url).port === '5681' || url.includes('/api/state'))).toBe(false);
   });
-
-  it('returns full panorama structure', async () => {
-    // Mock all services
-    mockFetch
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ status: 'ok', focus: { project: 'test' } }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ health: 'ok', queueLength: 2 }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ data: { repos: [] } }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-      });
-
-    const response = await request(app).get('/api/panorama/full');
-
-    expect(response.status).toBe(200);
-    expect(response.body.success).toBe(true);
-    expect(response.body.data).toHaveProperty('vps');
-    expect(response.body.data).toHaveProperty('brain');
-    expect(response.body.data).toHaveProperty('quality');
-    expect(response.body.data).toHaveProperty('github');
-    expect(response.body.data).toHaveProperty('services');
-    expect(response.body.data).toHaveProperty('timestamp');
-  });
-
-  it('returns services health status list', async () => {
-    // Mock services
-    mockFetch
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ status: 'ok' }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ health: 'ok' }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ data: {} }),
-      })
-      .mockResolvedValueOnce({ ok: true });
-
-    const response = await request(app).get('/api/panorama/full');
-
-    expect(response.status).toBe(200);
-    expect(response.body.data.services).toBeInstanceOf(Array);
-    expect(response.body.data.services.length).toBeGreaterThan(0);
-
-    const brainService = response.body.data.services.find(
-      (s: any) => s.name === 'semantic-brain'
-    );
-    expect(brainService).toBeDefined();
-    expect(brainService.port).toBe(5221);
-  });
-
-  it('marks services as down when they fail', async () => {
-    // Mock all services failing
-    mockFetch.mockRejectedValue(new Error('Connection refused'));
-
-    const response = await request(app).get('/api/panorama/full');
-
-    expect(response.status).toBe(200);
-    expect(response.body.success).toBe(true);
-    expect(response.body.data.brain.health).toBe('unavailable');
-    expect(response.body.data.quality.health).toBe('unavailable');
+  it('剩余服务失败仍报告down与unavailable', async () => {
+    failing = true;
+    const res = await request(app).get('/api/panorama/full');
+    expect(res.status).toBe(200);
+    expect(res.body.data.brain.health).toBe('unavailable');
+    expect(res.body.data.services.every((s: { status: string }) => s.status === 'down')).toBe(true);
   });
 });
