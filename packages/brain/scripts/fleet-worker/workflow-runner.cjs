@@ -2,7 +2,6 @@
 const fs=require('node:fs');
 const path=require('node:path');
 const {randomUUID}=require('node:crypto');
-const {pathToFileURL}=require('node:url');
 const {assertProfile,profileDigest,UUID}=require('./workflow-profile.cjs');
 function persist(file,value){
  const tmp=file+'.'+randomUUID()+'.tmp';let fd;
@@ -10,7 +9,7 @@ function persist(file,value){
  finally{if(fd!==undefined)fs.closeSync(fd);if(fs.existsSync(tmp))fs.unlinkSync(tmp);}
 }
 const ACTIVE=new Set(['starting','running','validating','unknown']);
-function createWorkflowRunner({stateRoot,machineId,profiles={},assertCanLaunch,assertLocalResources,createRecorder,brainUrl,headers={},runtimeRoot=path.resolve(__dirname,'../../../..')}){
+function createWorkflowRunner({stateRoot,machineId,profiles={},assertCanLaunch,assertLocalResources,createRecorder,brainUrl,headers={}}){
  if(!path.isAbsolute(stateRoot)||typeof assertCanLaunch!=='function'||typeof assertLocalResources!=='function')throw Error('workflow_configuration_required');
  fs.mkdirSync(stateRoot,{recursive:true,mode:0o700});
  const active=new Map(),recorders=new Map();
@@ -27,15 +26,15 @@ function createWorkflowRunner({stateRoot,machineId,profiles={},assertCanLaunch,a
  const makeRecorder=async s=>{
   if(recorders.has(s.identity.run_id))return recorders.get(s.identity.run_id);
   if(createRecorder){const r=createRecorder(s);recorders.set(s.identity.run_id,r);return r;}
-  const {createWorkflowRecorder}=await import(pathToFileURL(path.join(runtimeRoot,'packages/brain/src/orchestrator/workflow-recorder.js')));
+  const {createWorkflowRecorder}=await import('../../src/orchestrator/workflow-recorder.js');
   const r=createWorkflowRecorder({root:path.join(stateRoot,s.identity.run_id),runId:s.identity.run_id,taskId:s.identity.task_id,machineId,profileDigest:s.identity.profile_sha256,mode:s.identity.mode,metadata:s.profile.metadata,brainUrl,headers});
   recorders.set(s.identity.run_id,r);return r;
  };
  const project=async s=>({run_id:s.identity.run_id,task_id:s.identity.task_id,machine_id:machineId,status:s.status,mode:s.identity.mode,profile_sha256:s.identity.profile_sha256,progress:s.progress??null,validation:s.validation??null,writeback:s.writeback??{pending:null},reason:s.reason??null,cancel_requested:s.cancel_requested===true,execution_state:s.execution_state??null});
  async function execute(s,recorder,controller){
   try{
-   const {runActivityContract}=await import(pathToFileURL(path.join(runtimeRoot,'packages/brain/src/orchestrator/activity-runtime.js')));
-   const {validateWorkflow}=await import(pathToFileURL(path.join(runtimeRoot,'packages/brain/src/orchestrator/workflow-validator.js')));
+   const {runActivityContract}=await import('../../src/orchestrator/activity-runtime.js');
+   const {validateWorkflow}=await import('../../src/orchestrator/workflow-validator.js');
    s.status='running';save(s);
    const receipt=await runActivityContract(s.profile.contract,{...s.identity.input,run_tag:s.identity.input.run_tag??s.identity.run_id},{cwd:s.profile.cwd,signal:controller.signal,onEvent:async(event,receipt)=>{
      await recorder.onEvent(event,receipt);s.progress={observed_at:new Date().toISOString(),cursor:event.cursor,event_type:event.event_type,activity:event.activity??null,item:event.item??null,attempt:event.attempt??null};save(s);
@@ -89,7 +88,7 @@ function createWorkflowRunner({stateRoot,machineId,profiles={},assertCanLaunch,a
     }
    }else if(body.run_binding!==undefined)throw Error('workflow_binding_invalid');
    for(const a of profile.contract.activities){const m=profile.metadata[a.key];m.implementation={kind:m.executor_kind,entry:a.runtime.entry,sha256:profile.files[a.runtime.entry],...(m.skill?{skill:{...m.skill,sha256:profile.files[m.skill.entry]}}:{})};}
-   const {parseActivityContract}=await import(pathToFileURL(path.join(runtimeRoot,'packages/brain/src/orchestrator/activity-contract.js')));parseActivityContract(profile.contract);
+   const {parseActivityContract}=await import('../../src/orchestrator/activity-contract.js');parseActivityContract(profile.contract);
    // import 之后再查闸门，原子mkdir防其它worker进程同时启动。
    try{assertCanLaunch();}catch{return waiting();}
    const lock=path.join(stateRoot,'execution.lock');try{fs.mkdirSync(lock,{mode:0o700});}catch{

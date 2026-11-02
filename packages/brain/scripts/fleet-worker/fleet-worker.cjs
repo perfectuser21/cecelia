@@ -33,8 +33,6 @@ const {createAppServerDocker}=require('./app-server-docker.cjs');
 const {loadAppServerProfiles}=require('./app-server-profile.cjs');
 const { createScriptRunner, loadProtectedScriptProfiles } = require('./script-runner.cjs');
 const { createScriptDockerAdapter } = require('./script-docker.cjs');
-const { createWorkflowRunner } = require('./workflow-runner.cjs');
-const { loadWorkflowProfiles } = require('./workflow-profile.cjs');
 
 const MAX_STRING_LENGTH = 1_024;
 const MAX_RESPONSE_BYTES = 65_536;
@@ -369,6 +367,18 @@ function prepareMountRoot(sharedTmp) {
   return Object.freeze({ worktrees, runtime });
 }
 
+// Common runtime follows the existing orchestrator's fixed deployed checkout.
+// A repository launch uses the same literal modules; installed Workers need no new local bundle.
+function loadWorkflowModules(root) {
+  if(root===path.resolve(__dirname,'../../../..'))return {
+    ...require('./workflow-runner.cjs'),...require('./workflow-profile.cjs'),
+  };
+  return {
+    ...require(path.join(root,'packages/brain/scripts/fleet-worker/workflow-runner.cjs')),
+    ...require(path.join(root,'packages/brain/scripts/fleet-worker/workflow-profile.cjs')),
+  };
+}
+
 function createFleetWorkerRuntime({
   env = {},
   runCommand,
@@ -481,19 +491,24 @@ function createFleetWorkerRuntime({
   }
   const scriptProfiles=loadProtectedScriptProfiles(env.CECELIA_SCRIPT_PROFILES_FILE);
   const appServerProfiles=loadAppServerProfiles(env.CECELIA_APP_SERVER_PROFILES_FILE);
-  const workflowProfiles=loadWorkflowProfiles(env.CECELIA_WORKFLOW_PROFILES_FILE);
-  const workflowRunner=Object.keys(workflowProfiles).length?wrapLaunchRunner(createWorkflowRunner({
+  const workflowRoot=env.CECELIA_ORCHESTRATOR_RUNNER_ROOT??(fs.existsSync(path.resolve(__dirname,'../../src/orchestrator/activity-runtime.js'))
+    ?path.resolve(__dirname,'../../../..'):'/private/var/lib/cecelia/runner-checkout');
+  let workflowProfiles={},workflowRunner=null;
+  if(env.CECELIA_WORKFLOW_PROFILES_FILE){
+  const {loadWorkflowProfiles,createWorkflowRunner}=loadWorkflowModules(workflowRoot);
+  workflowProfiles=loadWorkflowProfiles(env.CECELIA_WORKFLOW_PROFILES_FILE);
+  workflowRunner=Object.keys(workflowProfiles).length?wrapLaunchRunner(createWorkflowRunner({
     stateRoot:path.join(dataRoot,'workflows'),machineId:workerId,profiles:workflowProfiles,assertCanLaunch,
-    runtimeRoot:env.CECELIA_ORCHESTRATOR_RUNNER_ROOT??'/private/var/lib/cecelia/runner-checkout',
     assertLocalResources:createLocalResourceAdmission({workerId,diskPaths:healthDiskPaths,...(runCommand?{runCommand}:{})}),
     brainUrl:env.CECELIA_WORKFLOW_BRAIN_URL,
     headers:env.CECELIA_WORKFLOW_BRAIN_TOKEN_FILE?{authorization:`Bearer ${protectedTokenFromFile(env.CECELIA_WORKFLOW_BRAIN_TOKEN_FILE)}`}:{},
   }),launchAdmission):null;
+  }
   const config={workerId,runnerImageDigest,postgresImageDigest,roots,healthDiskPaths,
     repoRoot:env.CECELIA_REPO_ROOT??'/var/lib/cecelia/repository',repoAllowlist:createFleetRepoAllowlist(env),
     orchestratorMaxConcurrent:Number(env.CECELIA_ORCHESTRATOR_MAX_CONCURRENT??2),
     markerPath:env.CECELIA_DRAIN_MARKER??'/var/run/cecelia/fleet-worker.drain',
-    orbstackHome:env.CECELIA_ORBSTACK_HOME??null,scriptProfiles,appServerProfiles,workflowProfiles};
+    orbstackHome:env.CECELIA_ORBSTACK_HOME??null,scriptProfiles,appServerProfiles,workflowProfiles,workflowRoot};
   const baselineProbe=createBaselineProbe({root:path.join(dataRoot,'baseline-maintenance'),gate:launchAdmission,machineId:workerId,repoRoot:env.CECELIA_REPO_ROOT??'/var/lib/cecelia/repository',workspaceBase:roots.runtime,getConfigDigest:()=>runtimeConfigDigest(config),...(runCommand?{runCommand}:{}),assertLocalResources:createLocalResourceAdmission({workerId,diskPaths:healthDiskPaths,...(runCommand?{runCommand}:{})})});
   return Object.freeze({
     baselineProbe,
