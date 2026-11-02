@@ -12,10 +12,6 @@ const SERVICE_INFO: Record<string, { description: string; endpoint: string }> = 
     description: '工作区服务，管理项目配置和文件系统',
     endpoint: '/api/workspace',
   },
-  quality: {
-    description: '质量监控服务，负责代码审计和自动化测试',
-    endpoint: '/api/quality',
-  },
   n8n: {
     description: 'N8N 工作流自动化引擎，处理任务调度',
     endpoint: 'http://localhost:5679',

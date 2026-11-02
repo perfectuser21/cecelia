@@ -18,6 +18,9 @@ const representative = [
   'scripts/preview-cache.test.mjs',
   'scripts/preview-cache-http.test.mjs',
   'scripts/__tests__/dashboard-release-bind.test.mjs',
+  'scripts/__tests__/dashboard-release-promote.test.sh',
+  'scripts/__tests__/dashboard-release-rollback.test.sh',
+  'scripts/__tests__/brain-deploy-build-isolation.test.sh',
   'scripts/preview-agent/__tests__/deploy-token.test.mjs',
   'scripts/__tests__/bluegreen-env-file.test.sh',
   'scripts/__tests__/brain-deploy-build-same-version.test.sh',
@@ -58,6 +61,7 @@ test('旧实际行为测试的代表文件都拥有 Ops 命令入口', () => {
 });
 
 const fixtureFiles = [
+  'scripts/__tests__/dashboard-release-fixture.test.sh',
   'scripts/dispatch-worker.test.mjs',
   'scripts/brain-image-retention.test.mjs',
   'scripts/brain-image-deploy.test.mjs',

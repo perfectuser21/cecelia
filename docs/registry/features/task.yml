@@ -69,13 +69,6 @@ features:
         - packages/brain/src/__tests__/task-weight-rpe.test.js
         - packages/brain/src/__tests__/task-weight.test.js
         - packages/brain/src/__tests__/tasks-status.test.js
-        - packages/quality/tests/api/contracts.test.ts
-        - packages/quality/tests/api/db.test.ts
-        - packages/quality/tests/api/error-handling.test.ts
-        - packages/quality/tests/api/integration.test.js
-        - packages/quality/tests/api/links.test.ts
-        - packages/quality/tests/api/tasks.test.ts
-        - packages/quality/tests/state.test.ts
       integration:
         - packages/brain/src/__tests__/integration/agent-lifecycle.integration.test.js
         - packages/brain/src/__tests__/integration/dev-task-lifecycle.e2e.test.js
@@ -108,13 +101,6 @@ features:
             - packages/brain/src/__tests__/task-weight-rpe.test.js
             - packages/brain/src/__tests__/task-weight.test.js
             - packages/brain/src/__tests__/tasks-status.test.js
-            - packages/quality/tests/api/contracts.test.ts
-            - packages/quality/tests/api/db.test.ts
-            - packages/quality/tests/api/error-handling.test.ts
-            - packages/quality/tests/api/integration.test.js
-            - packages/quality/tests/api/links.test.ts
-            - packages/quality/tests/api/tasks.test.ts
-            - packages/quality/tests/state.test.ts
           integration:
             - packages/brain/src/__tests__/integration/agent-lifecycle.integration.test.js
             - packages/brain/src/__tests__/integration/dev-task-lifecycle.e2e.test.js
@@ -168,7 +154,6 @@ features:
         - packages/brain/src/__tests__/task-router-intent-cto.test.js
         - packages/brain/src/__tests__/task-router-strategy-session.test.js
         - packages/brain/src/__tests__/task-router-suggestion-plan.test.js
-        - packages/quality/tests/hooks/detect-priority.test.ts
       integration: []
       e2e: []
       regression: []
@@ -199,7 +184,6 @@ features:
             - packages/brain/src/__tests__/task-router-intent-cto.test.js
             - packages/brain/src/__tests__/task-router-strategy-session.test.js
             - packages/brain/src/__tests__/task-router-suggestion-plan.test.js
-            - packages/quality/tests/hooks/detect-priority.test.ts
           integration: []
           e2e: []
         status: active
@@ -436,7 +420,6 @@ features:
         - packages/brain/src/__tests__/dispatch-success-rate.test.js
         - packages/brain/src/__tests__/dispatch-task-action.test.js
         - packages/brain/src/__tests__/dispatcher-quota-cooling.test.js
-        - packages/quality/tests/queue.test.ts
       integration:
         - packages/brain/src/__tests__/integration/tick-dispatch.integration.test.js
       e2e: []
@@ -459,7 +442,6 @@ features:
             - packages/brain/src/__tests__/dispatch-success-rate.test.js
             - packages/brain/src/__tests__/dispatch-task-action.test.js
             - packages/brain/src/__tests__/dispatcher-quota-cooling.test.js
-            - packages/quality/tests/queue.test.ts
           integration:
             - packages/brain/src/__tests__/integration/tick-dispatch.integration.test.js
           e2e: []
@@ -558,8 +540,6 @@ features:
         - packages/brain/src/__tests__/templates.test.js
         - packages/brain/src/__tests__/token-budget-planner.test.js
         - packages/brain/src/__tests__/token-pressure.test.js
-        - packages/quality/tests/api/executor.test.ts
-        - packages/quality/tests/worker.test.ts
       integration: []
       e2e: []
       regression: []
@@ -637,8 +617,6 @@ features:
             - packages/brain/src/__tests__/templates.test.js
             - packages/brain/src/__tests__/token-budget-planner.test.js
             - packages/brain/src/__tests__/token-pressure.test.js
-            - packages/quality/tests/api/executor.test.ts
-            - packages/quality/tests/worker.test.ts
           integration: []
           e2e: []
         status: active

@@ -84,7 +84,7 @@ export function runALane(task, contract, opts = {}) {
 
   // ── live: 真起 A 道 ───────────────────────────────────────────────
   const repoRoot = opts.repoRoot || process.cwd();
-  const wtScript = path.join(repoRoot, 'packages/engine/skills/dev/scripts/worktree-manage.sh');
+  const wtScript = path.join(repoRoot, 'scripts/dev/worktree/worktree-manage.sh');
   const slug = taskSlug(task);
 
   // ① engine-worktree: 建独立 worktree + cp-* 分支(在主仓库跑,解析它 echo 的路径)

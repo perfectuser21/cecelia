@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# relay-baton-smoke — 接力棒 PR2 接棒真库火：completed 无 handoff 自动合成；next_steps 落子任务与待拍板；PATCH 路由已接；stop hook 闸在。
+# relay-baton-smoke — 接力棒真库火：completed 无 handoff 自动合成；next_steps 落子任务与待拍板；PATCH 路由已接。
 set -euo pipefail
 if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-${BRAIN:-http://localhost:5221}}" "${DATABASE_URL:-postgresql://localhost/cecelia}"; then
   exit 0
@@ -11,7 +11,7 @@ PSQL="$(command -v psql)"; NODE="$(command -v node)"
 DB_NAME="$("$NODE" -e "const u=new URL(process.argv[1]); process.stdout.write(decodeURIComponent(u.pathname.slice(1)))" "$DATABASE_URL")"
 [[ "$DB_NAME" =~ (_test|_scratch)$ ]] || fail "refuse non-test db: ${DB_NAME:-empty}"
 q() { "$PSQL" -X "$DATABASE_URL" -v ON_ERROR_STOP=1 -qAtc "$1"; }
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"; BRAIN_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"; REPO_DIR="$(cd "$BRAIN_DIR/../.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"; BRAIN_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 TAG="$RANDOM$RANDOM"
 ROOT="$(q "INSERT INTO tasks (title, description, task_type, status) VALUES ('smoke 接棒根 $TAG', '目标', 'project', 'in_progress') RETURNING id")"
@@ -42,8 +42,5 @@ pass "completed 无 handoff → 合成；next_steps task→queued 子任务挂�
 grep -q "afterTerminalTransition(pool, task_id" "$BRAIN_DIR/src/routes/tasks.js" || fail "PATCH 路由未接终态接棒钩子 afterTerminalTransition"
 grep -q "relayOnComplete" "$BRAIN_DIR/src/lib/task-terminal.js" || fail "task-terminal 钩子未接 relayOnComplete"
 pass "PATCH /tasks/:id 收口已接接棒"
-
-grep -q "接力棒闸" "$REPO_DIR/hooks/stop.sh" && bash -n "$REPO_DIR/hooks/stop.sh" || fail "stop.sh 缺接力棒闸或语法错"
-pass "有头 stop hook：in_progress 无 handoff 不放行"
 
 echo "ALL PASS: relay-baton"

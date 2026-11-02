@@ -359,7 +359,6 @@ features:
         - packages/brain/src/__tests__/watchdog.test.js
         - packages/brain/src/__tests__/zombie-cleaner.test.js
         - packages/brain/src/__tests__/zombie-sweep.test.js
-        - packages/quality/tests/hooks/metrics.test.ts
         - scripts/ops/__tests__/janitor/janitor_orphan.test.sh
       integration: []
       e2e: []
@@ -402,7 +401,6 @@ features:
             - packages/brain/src/__tests__/watchdog.test.js
             - packages/brain/src/__tests__/zombie-cleaner.test.js
             - packages/brain/src/__tests__/zombie-sweep.test.js
-            - packages/quality/tests/hooks/metrics.test.ts
             - scripts/ops/__tests__/janitor/janitor_orphan.test.sh
           integration: []
           e2e: []

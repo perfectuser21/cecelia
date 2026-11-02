@@ -27,7 +27,7 @@ const stop = (code) => new Error(code);
 const FETCH_TIMEOUT_MS = 5 * 60 * 1000;
 const RUNNER_ID = ['-c', 'user.name=coding-workflow-runner', '-c', 'user.email=coding-workflow-runner@cecelia.local'];
 // 每个 PR 都往末尾追加的登记表：与 main 冲突时按并集合并（程序做，不派 claude，也不算改了 PR 的代码）
-const UNION_FILES = ['packages/quality/smoke-allowlist.txt', 'packages/quality/smoke-write-targets.txt'];
+const UNION_FILES = ['packages/brain/config/smoke/smoke-allowlist.txt', 'packages/brain/config/smoke/smoke-write-targets.txt'];
 
 /** 跑一次修复会话：会话输出边跑边写 cifix-<pr>-<ts>.log，主日志只记一行摘要；记花费；终止/超时/非 0 退出抛 Error(reason_code)。 */
 async function runFixSession(ctx, pr, prompt, worktree, tag) {

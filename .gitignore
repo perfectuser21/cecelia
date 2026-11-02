@@ -81,10 +81,10 @@ coverage/
 
 # Images (screenshots, temp assets)
 *.png
+!scripts/evals/goldset/goldset/*.png
 *.jpg
 *.jpeg
 # 金标集截图是 CI 固定输入（LLM 判定器 eval），必须进 repo
-!packages/quality/skill-distillation/goldset/*.png
 
 # Archive (old PRDs, DODs, etc.)
 .archive/
@@ -105,7 +105,6 @@ frontend/test-results/
 # trigger
 .dev-execution-log*
 .dev-seal*
-packages/quality/.test-phase1/
 
 # Ralph Loop 模式 dev session 状态（项目根，永远不进 git）
 .cecelia/dev-active-*.json
@@ -137,14 +136,7 @@ apps/dashboard/.dev-preview.log
 # Generated from pinned zenithjoy-skills; edit the central source, not these outputs.
 /.skills-source/
 /.skills-source-state.json
-/packages/engine/skills/dev/SKILL.md
-/packages/engine/skills/dev/steps/autonomous-research-proxy.md
-/packages/engine/skills/dev/steps/light-evaluator.md
-/packages/quality/skills/assurance/SKILL.md
-/packages/quality/skills/audit/SKILL.md
-/packages/quality/skills/qa/SKILL.md
-/packages/quality/skills/qa/knowledge/criteria.md
-/packages/quality/skills/qa/knowledge/testing-matrix.md
+/.claude/skills/dev/SKILL.md
 /packages/workflows/agents/autumnrice/SKILL.md
 /packages/workflows/agents/cecelia-brain/SKILL.md
 /packages/workflows/agents/cecelia/SKILL.md

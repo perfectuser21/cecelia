@@ -3,7 +3,6 @@ import {fileURLToPath} from 'node:url';
 import {readFileSync,mkdirSync,symlinkSync,unlinkSync} from 'node:fs';
 import {createRequire} from 'node:module';
 import {gunzipSync} from 'node:zlib';
-import yaml from 'js-yaml';
 import {stepSha256} from '../../../packages/brain/scripts/sync-steps-from-workspace.mjs';
 import {EXISTING_OPS_IDENTITIES as identities} from '../../../packages/brain/src/lib/existing-ops-source.js';
 import assert from 'node:assert/strict';
@@ -126,19 +125,6 @@ sys.stdout.buffer.write(b.getvalue())`,mode],{input:JSON.stringify(body),stdio:[
  f.deps.git=(path,...args)=>path===tooling?(args[0]==='status'?'':f.base):f.git(...args);
  if(mode==='complete'){const r=await f.run();assert.equal(r.resolution.effective_base_revision,f.base);assert.deepEqual(Object.keys(r.resolution.scope_hashes),['cecelia-kr','cecelia-factory']);}
  else await assert.rejects(f.run(),{code:mode==='missing-companion'?'PR_BASELINE_SNAPSHOT_INVALID':mode==='bad-digest'?'PR_BASELINE_DIGEST_MISMATCH':'PR_BASELINE_ARCHIVE_INVALID'});
-});
-
-test('正式PR入口执行selector且原双scope/固定工具/Skill缓存保留，永久CI加载本测试',()=>{
- const root=fileURLToPath(new URL('../../../',import.meta.url)),text=readFileSync(join(root,'.github/workflows/implementation-impact.yml'),'utf8');
- const workflow=yaml.load(text),steps=workflow.jobs.gate.steps,download=steps.find(s=>s.name==='下载固定SHA中央bundle（PR无中央写凭据）');
- assert.match(download.env.NATIVE_PR_BASELINE,/github.event_name == 'pull_request'/);assert.match(download.env.NATIVE_PR_BASELINE,/!inputs.base_revision/);assert.match(download.env.NATIVE_PR_BASELINE,/!inputs.tooling_revision/);
- assert.match(download.run,/node source\/scripts\/ci\/implementation-pr-baseline.mjs/);assert.match(download.run,/BASE=%s/);assert.doesNotMatch(download.run,/TOOLING_REVISION=/);
- const gate=steps.find(s=>s.name==='实际变更影响与固定回归');assert.match(gate.run,/node tooling\/scripts\/ci\/implementation-multi-pr-gate.mjs/);assert.match(gate.run,/--base "\$BASE" --head "\$HEAD"/);
- assert.match(steps.find(s=>s.id==='skill-cache').run,/--prepare-ci-cache "\$GITHUB_WORKSPACE\/source" "\$SOURCE_REPO" "\$BASE" "\$HEAD"/);
- assert.match(readFileSync(join(root,'scripts/ci/__tests__/implementation-main-snapshot.test.mjs'),'utf8'),/import '\.\/implementation-pr-baseline.test.mjs'/);
- const regression=steps.find(s=>s.run==='node --test scripts/ci/__tests__/implementation-main-snapshot.test.mjs scripts/ci/__tests__/workspace-ci-source-bundle.test.mjs scripts/ci/__tests__/implementation-skill-source.test.mjs scripts/ci/__tests__/device-patrol-governance.test.mjs');
- assert.ok(regression,'来源机制回归仍由必需来源检查自动执行');assert.equal(regression['working-directory'],'source');
- assert.equal(regression.if,"github.repository == 'perfectuser21/cecelia' && (!inputs.source_repo || inputs.source_repo == github.repository)");assert.equal(regression['continue-on-error'],undefined);
 });
 
 // 完整已审consumer仅作为数据；不执行YAML，也不依赖可删除分支的Git对象。

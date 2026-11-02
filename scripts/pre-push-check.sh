@@ -90,7 +90,7 @@ echo ""
 # ─────────────────────────────────────────
 echo "[3/4] DoD 文件格式检查"
 
-DOD_FILES=$(find . -maxdepth 2 -name ".dod-*.md" 2>/dev/null | grep -v ".claude/worktrees" || true)
+DOD_FILES=$(find . -maxdepth 2 \( -name ".dod.md" -o -name ".dod-*.md" \) 2>/dev/null | grep -v ".claude/worktrees" || true)
 
 if [ -n "$DOD_FILES" ]; then
   DOD_OK=true
@@ -105,7 +105,7 @@ if [ -n "$DOD_FILES" ]; then
     fi
 
     # 检查：DoD 中不能有未完成的 [ ] （允许最终 PR 时为空，但 push 前必须全勾）
-    UNCHECKED=$(grep -cE "^\s*-\s+\[\s+\]" "$dod" 2>/dev/null || echo "0")
+    UNCHECKED=$(grep -cE "^\s*-\s+\[\s+\]" "$dod" 2>/dev/null || true)
     if [ "$UNCHECKED" -gt 0 ]; then
       echo "  ⚠️  $dod: 有 $UNCHECKED 个未完成验收项（- [ ]），合并前需勾选为 - [x]"
     fi
@@ -119,18 +119,18 @@ if [ -n "$DOD_FILES" ]; then
     fi
   fi
 
-  # 运行 check-dod-mapping（如果 quality 依赖已安装）
-  if [ -f "packages/quality/scripts/devgate/check-dod-mapping.cjs" ] && \
-     [ -d "packages/quality/node_modules" ]; then
-    echo ""
-    echo "  运行 DoD 映射检查..."
-    if node packages/quality/scripts/devgate/check-dod-mapping.cjs 2>/dev/null; then
-      echo "  ✅ DoD 映射检查通过"
+  # 对发现的每份 DoD 执行正式 CLI；缺工具或依赖也必须阻止推送。
+  echo ""
+  echo "  运行 DoD 映射检查..."
+  while IFS= read -r dod; do
+    [ -z "$dod" ] && continue
+    if node scripts/devgate/check-dod-mapping.cjs "$dod"; then
+      echo "  ✅ DoD 映射检查通过：$dod"
     else
-      echo "  ❌ DoD 映射检查失败"
+      echo "  ❌ DoD 映射检查失败：$dod"
       PASS=false
     fi
-  fi
+  done <<< "$DOD_FILES"
 else
   echo "  ⏭  无 DoD 文件，跳过"
 fi

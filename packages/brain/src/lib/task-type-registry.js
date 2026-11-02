@@ -549,8 +549,8 @@ export const LOCATION_MAP = Object.freeze({
   'qa': 'us',         // QA → US (Sonnet)
   'audit': 'us',      // 审计 → US (Sonnet)
   'codex_qa': 'xian',  // Codex 免疫检查 → 西安 Mac mini (Codex CLI via codex-bridge)
-  'codex_dev': 'xian', // Codex /dev → 西安 Mac mini (runner.sh + devloop-check.sh SSOT)
-  // crystallize 能力蒸馏流水线 → 西安 M4 (playwright-runner.sh + CDP → PC)
+  'codex_dev': 'xian', // Codex /dev → 西安 Mac mini（Brain 自有 legacy runner）
+  // crystallize 能力蒸馏流水线 → 西安 M4 Codex Bridge 的 prompt 执行入口
   'crystallize': 'xian',
   'crystallize_scope': 'xian',
   'crystallize_forge': 'xian',

@@ -14,7 +14,7 @@ export TASK_ID
 
 BRAIN_URL="$BRAIN_URL" DATABASE_URL="$DB" bash packages/brain/scripts/smoke/codex-headed-dispatch-smoke.sh
 
-if ! grep -Fxq "codex-headed-dispatch-smoke.sh" packages/quality/smoke-allowlist.txt; then
+if ! grep -Fxq "codex-headed-dispatch-smoke.sh" packages/brain/config/smoke/smoke-allowlist.txt; then
   echo "FAIL: codex headed smoke 未在 allowlist"
   exit 1
 fi

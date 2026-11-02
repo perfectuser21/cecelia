@@ -27,6 +27,16 @@ describe('build 活动（子进程 + 假 claude + 真实 git 提交）', () => {
     worktree = path.join(root, 'wt');
     fs.mkdirSync(worktree);
     initCommittableRepo(worktree, path.join(root, 'no-hooks'));
+    const smokeDir = path.join(worktree, 'packages/brain/scripts/smoke');
+    const smokeConfig = path.join(worktree, 'packages/brain/config/smoke');
+    fs.mkdirSync(smokeDir, { recursive: true });
+    fs.mkdirSync(smokeConfig, { recursive: true });
+    fs.writeFileSync(path.join(smokeDir, 'build-fixture-smoke.sh'), '#!/usr/bin/env bash\nset -euo pipefail\nexit 0\n');
+    fs.writeFileSync(path.join(smokeConfig, 'smoke-allowlist.txt'), 'build-fixture-smoke.sh\n');
+    fs.writeFileSync(path.join(smokeConfig, 'smoke-denylist.txt'), '# 无禁止项\n');
+    fs.writeFileSync(path.join(smokeConfig, 'smoke-debt.txt'), '# 无待归类项\n');
+    git(worktree, 'add', 'packages/brain');
+    git(worktree, 'commit', '-qm', 'test: seed private smoke registration');
     sprintAbs = path.join(worktree, 'sprints/s1');
     fs.mkdirSync(sprintAbs, { recursive: true });
     fs.writeFileSync(path.join(sprintAbs, '01-intent.md'), '# intent\n');
@@ -64,7 +74,7 @@ describe('build 活动（子进程 + 假 claude + 真实 git 提交）', () => {
     expect(r.stdout.trim().split('\n')).toHaveLength(1);
     const sha = head();
     expect(sha).not.toBe(before);
-    // 临时仓库里没有 CI 门禁脚本、也没有 origin/main：默认预检全部跳过，记为通过
+    // 私有 Smoke 资源通过真实登记检查；其它 CI 脚本与 origin/main 未配置。
     expect(r.result.outputs).toEqual({ build_file: '03-build.md', build_commits: [sha], ci_precheck: { passed: true, rounds: 0, failures: [] } });
 
     const fm = parseFrontmatter(fs.readFileSync(buildFile(), 'utf8'));

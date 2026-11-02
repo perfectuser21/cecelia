@@ -9,7 +9,7 @@ export TASK_ID
 
 echo "── Step 1: 复用 claude-headed-dispatch-smoke.sh + allowlist 登记确认 ──"
 BRAIN_URL="$BRAIN_URL" DATABASE_URL="$DB" bash packages/brain/scripts/smoke/claude-headed-dispatch-smoke.sh
-grep -Fxq "claude-headed-dispatch-smoke.sh" packages/quality/smoke-allowlist.txt || { echo "FAIL: claude-headed-dispatch-smoke.sh 未在 allowlist 精确登记"; exit 1; }
+grep -Fxq "claude-headed-dispatch-smoke.sh" packages/brain/config/smoke/smoke-allowlist.txt || { echo "FAIL: claude-headed-dispatch-smoke.sh 未在 allowlist 精确登记"; exit 1; }
 echo "OK Step 1"
 
 echo "── Step 2: Brain API task payload 校验 + 敏感字段脱敏断言 ──"

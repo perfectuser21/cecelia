@@ -35,12 +35,6 @@ const manifest: FeatureManifest = {
     { path: '/claude-stats', component: 'ClaudeStats' },
     { path: '/ops/claude', redirect: '/claude-monitor' },
     { path: '/ops/claude/stats', redirect: '/claude-stats' },
-    // Quality
-    {
-      path: '/quality',
-      component: 'QualityMonitorPage',
-      navItem: { label: '质量监控', icon: 'Shield', group: 'system', order: 4 },
-    },
     // DevGate
     {
       path: '/devgate',
@@ -77,7 +71,6 @@ const manifest: FeatureManifest = {
     VpsMonitor: () => import('./pages/VpsMonitor'),
     ClaudeMonitor: () => import('./pages/ClaudeMonitor'),
     ClaudeStats: () => import('./pages/ClaudeStats'),
-    QualityMonitorPage: () => import('./pages/QualityMonitorPage'),
     DevGateMetrics: () => import('./pages/DevGateMetrics'),
     PerformanceMonitoring: () => import('./pages/PerformanceMonitoring'),
     FeatureMap: () => import('./pages/FeatureMap'),

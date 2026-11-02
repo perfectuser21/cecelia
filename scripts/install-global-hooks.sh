@@ -4,7 +4,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CECELIA_HOOKS="$SCRIPT_DIR/../packages/engine/hooks"
+CECELIA_HOOKS="$SCRIPT_DIR/dev/hooks"
 GIT_HOOKS_DIR="$HOME/.git-hooks"
 
 echo "安装全局 git pre-commit hook..."

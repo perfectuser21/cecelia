@@ -17,7 +17,7 @@ import { spawnSync } from 'node:child_process';
 const ROOT = path.resolve(import.meta.dirname, '../../');
 const CUTOVER = path.join(ROOT, 'scripts/ops/qiumi-cutover.sh');
 const INFLIGHT = path.join(ROOT, 'scripts/ops/qiumi-inflight-check.mjs');
-const ALLOWLIST = path.join(ROOT, '../quality/smoke-allowlist.txt');
+const ALLOWLIST = path.join(ROOT, 'config/smoke/smoke-allowlist.txt');
 const RUNBOOK = path.resolve(ROOT, '../../docs/runbooks/qiumi-cutover.md');
 
 const read = (p) => fs.readFileSync(p, 'utf8');

@@ -50,7 +50,7 @@ cecelia/
 ```bash
 node scripts/facts-check.mjs          # 校验 DEFINITION.md 与代码一致
 bash scripts/check-version-sync.sh    # 校验版本四处同步
-node packages/quality/scripts/devgate/check-dod-mapping.cjs  # DoD→Test 映射
+node scripts/devgate/check-dod-mapping.cjs  # DoD→Test 映射
 ```
 
 ---
@@ -65,12 +65,9 @@ node packages/quality/scripts/devgate/check-dod-mapping.cjs  # DoD→Test 映射
 - React 组件、页面、样式、用户交互
 - API 调用层
 
-### packages/engine（开发引擎）
-- Hooks、Skills、DevGate 脚本、CI 工具
-- 不是 Brain 的器官
-
-### packages/quality（QA）
-- 测试基础设施、回归契约
+### scripts/dev（开发工具）
+- 实际绑定的写入守卫、worktree、隔离回归；由主 CI scripts 组件验证
+- Skills 正文由 zenithjoy-skills 中心仓维护
 
 ### packages/workflows（Agent 协议）
 - Agent 配置、N8N 工作流、Skills SSOT
@@ -94,7 +91,7 @@ Brain (Node.js, port 5221)
 - Version bump 遵循 semver
 - Brain 改动触发 brain-ci.yml
 - Workspace 改动触发 workspace-ci.yml
-- Engine 改动触发 engine-ci.yml
+- 开发工具改动进入主 CI 的 scripts 回归
 
 ---
 
@@ -173,7 +170,7 @@ node scripts/notion-create-issue.js \
   --body "<根因描述>"
 ```
 
-Sub Area 对应关系：`packages/brain/` → brain，`packages/engine/` → engine，
+Sub Area 对应关系：`packages/brain/` → brain，`scripts/dev/` → 开发工具，
 `apps/dashboard/`(Cecelia) → dashboard，`apps/api/`(ZenithJoy) → zenithjoy
 
 **修复完成后**更新 issue 状态为 Closed，附 PR 链接。
@@ -219,7 +216,7 @@ curl -X PATCH localhost:5221/api/brain/tasks/{task_id} \
 7. 网络配置变更、分区操作、`docker rm -f` 生产容器、数据库 schema 直改、`ufw deny 22` 等危险操作，必须先告知风险并获得明确确认后才能执行。
 
 ### Brain 改动门禁（DevGate）
-8. 改动 `packages/brain` 代码前必须依次通过：`node scripts/facts-check.mjs`、`bash scripts/check-version-sync.sh`、`node packages/quality/scripts/devgate/check-dod-mapping.cjs`。
+8. 改动 `packages/brain` 代码前必须依次通过：`node scripts/facts-check.mjs`、`bash scripts/check-version-sync.sh`、`node scripts/devgate/check-dod-mapping.cjs`。
 9. DevGate 校验失败时禁止继续编码，必须先修复校验问题。
 10. 不允许凭记忆/猜测编造架构、跳过 DevGate、引用已废弃的旧路径。
 

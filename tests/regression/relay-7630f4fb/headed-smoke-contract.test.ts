@@ -11,7 +11,7 @@ const ROOT = path.resolve(fileURLToPath(import.meta.url), '../../../..');
 const WRAPPER_PATH = path.join(ROOT, 'scripts/smoke/e2e/relay-7630f4fb.sh');
 const TASK_ID = '7630f4fb-0acf-4f7a-ad42-e2dea3485089';
 const SMOKE_SCRIPT = 'packages/brain/scripts/smoke/claude-headed-dispatch-smoke.sh';
-const ALLOWLIST = 'packages/quality/smoke-allowlist.txt';
+const ALLOWLIST = 'packages/brain/config/smoke/smoke-allowlist.txt';
 
 async function readWrapper(): Promise<string> {
   return fs.readFile(WRAPPER_PATH, 'utf8');

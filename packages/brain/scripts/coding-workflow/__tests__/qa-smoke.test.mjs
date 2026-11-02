@@ -104,16 +104,16 @@ describe('prompt（决策 c8621227）', () => {
 describe('registerSmoke', () => {
   it('写脚本、登记 allowlist（写请求同时登记 write-targets）；重复登记不重复写行；返回改动的路径', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'qa-smoke-'));
-    fs.mkdirSync(path.join(root, 'packages/quality'), { recursive: true });
-    fs.writeFileSync(path.join(root, 'packages/quality/smoke-allowlist.txt'), '# allowlist\na-smoke.sh\n');
-    fs.writeFileSync(path.join(root, 'packages/quality/smoke-write-targets.txt'), '# targets\n');
+    fs.mkdirSync(path.join(root, 'packages/brain/config/smoke'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'packages/brain/config/smoke/smoke-allowlist.txt'), '# allowlist\na-smoke.sh\n');
+    fs.writeFileSync(path.join(root, 'packages/brain/config/smoke/smoke-write-targets.txt'), '# targets\n');
     const smoke = { name: 'cw-c954ebfd-qa-smoke.sh', content: '#!/usr/bin/env bash\nset -euo pipefail\n', writes: true };
     const changed = registerSmoke(root, smoke);
-    expect(changed).toEqual([`${QA_SMOKE_DIR}/cw-c954ebfd-qa-smoke.sh`, 'packages/quality/smoke-allowlist.txt', 'packages/quality/smoke-write-targets.txt']);
+    expect(changed).toEqual([`${QA_SMOKE_DIR}/cw-c954ebfd-qa-smoke.sh`, 'packages/brain/config/smoke/smoke-allowlist.txt', 'packages/brain/config/smoke/smoke-write-targets.txt']);
     registerSmoke(root, smoke);
-    const allow = fs.readFileSync(path.join(root, 'packages/quality/smoke-allowlist.txt'), 'utf8');
+    const allow = fs.readFileSync(path.join(root, 'packages/brain/config/smoke/smoke-allowlist.txt'), 'utf8');
     expect(allow.split('\n').filter((l) => l === 'cw-c954ebfd-qa-smoke.sh')).toHaveLength(1);
-    expect(fs.readFileSync(path.join(root, 'packages/quality/smoke-write-targets.txt'), 'utf8')).toContain('cw-c954ebfd-qa-smoke.sh\n');
+    expect(fs.readFileSync(path.join(root, 'packages/brain/config/smoke/smoke-write-targets.txt'), 'utf8')).toContain('cw-c954ebfd-qa-smoke.sh\n');
     expect(fs.statSync(path.join(root, QA_SMOKE_DIR, 'cw-c954ebfd-qa-smoke.sh')).mode & 0o111).toBeTruthy();
   });
 });

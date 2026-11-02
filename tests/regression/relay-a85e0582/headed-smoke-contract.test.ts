@@ -17,7 +17,7 @@ describe('headed smoke contract [BEHAVIOR]', () => {
   it('e2e wrapper 调用 codex-headed-dispatch-smoke.sh', () => {
     const script = readWrapper();
     expect(script).toContain('packages/brain/scripts/smoke/codex-headed-dispatch-smoke.sh');
-    expect(script).toContain('packages/quality/smoke-allowlist.txt');
+    expect(script).toContain('packages/brain/config/smoke/smoke-allowlist.txt');
   });
 
   it('payload 包含 mode=headed、executor=codex、orchestrator=skill-relay 且禁用 token/github_token/codex_token/thin_prd', () => {

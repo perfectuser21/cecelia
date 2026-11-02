@@ -32,7 +32,7 @@ export function defaultChecks({ branch, feature }) {
     { name: 'pr-size-check', builtin: 'pr-size' },
     { name: 'smoke-registration', builtin: 'smoke-registration' },
     // 写入型 smoke 要登记 write-targets、curl 先带 -q 等（Smoke Glob Runner 同一条守卫，离线可跑；金丝雀 4 到 CI 才红）
-    { name: 'smoke-write-guard', cmd: ['node', '--test', 'packages/quality/tests/smoke-production-guard.node-test.mjs'] },
+    { name: 'smoke-write-guard', cmd: ['node', '--test', 'packages/brain/scripts/smoke/__tests__/smoke-production-guard.node-test.mjs'] },
   ];
 }
 
@@ -88,22 +88,23 @@ export function checksFor(profile, opts) {
 }
 
 const SMOKE_DIR = 'packages/brain/scripts/smoke';
-const SMOKE_LISTS = ['smoke-allowlist.txt', 'smoke-denylist.txt', 'smoke-debt.txt'].map((f) => `packages/quality/${f}`);
+const SMOKE_LISTS = ['smoke-allowlist.txt', 'smoke-denylist.txt', 'smoke-debt.txt'].map((f) => `packages/brain/config/smoke/${f}`);
 
 /**
- * 同 Smoke Ratchet Gate（packages/quality/scripts/run-smoke-ratchet.sh）的登记检查：smoke 目录每个 .sh
- * 都要在 allowlist / denylist / debt 之一（不起 Brain、不跑脚本，只比对文件）。分类文件或目录缺失则跳过。
+ * 同 Smoke Ratchet Gate（packages/brain/scripts/smoke-tools/run-smoke-ratchet.sh）的登记检查：smoke 目录每个 .sh
+ * 都要在 allowlist / denylist / debt 之一（不起 Brain、不跑脚本，只比对文件）。分类文件或目录缺失则失败。
  */
 function smokeRegistration(worktree) {
   const dir = path.join(worktree, SMOKE_DIR);
-  if (!fs.existsSync(dir) || SMOKE_LISTS.some((f) => !fs.existsSync(path.join(worktree, f)))) {
-    return { ok: true, skipped: true, output_tail: 'smoke 目录或分类文件不存在，跳过' };
+  const missingInputs = [SMOKE_DIR, ...SMOKE_LISTS].filter(f => !fs.existsSync(path.join(worktree, f)));
+  if (missingInputs.length > 0) {
+    return { ok: false, output_tail: `smoke 必需目录或分类文件不存在：\n${missingInputs.join('\n')}` };
   }
   const registered = new Set(SMOKE_LISTS.flatMap((f) => fs.readFileSync(path.join(worktree, f), 'utf8')
     .split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#'))));
   const missing = fs.readdirSync(dir).filter((f) => f.endsWith('.sh') && !registered.has(f)).sort();
   return missing.length > 0
-    ? { ok: false, output_tail: `未登记的 smoke 脚本（新增脚本必须加入 packages/quality/smoke-allowlist.txt，因 CI 环境限制跑不了的加入 smoke-denylist.txt）：\n${missing.map((f) => `- ${f}`).join('\n')}` }
+    ? { ok: false, output_tail: `未登记的 smoke 脚本（新增脚本必须加入 packages/brain/config/smoke/smoke-allowlist.txt，因 CI 环境限制跑不了的加入 smoke-denylist.txt）：\n${missing.map((f) => `- ${f}`).join('\n')}` }
     : { ok: true, output_tail: 'smoke 脚本全部已登记' };
 }
 

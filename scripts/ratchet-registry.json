@@ -47,6 +47,6 @@
     "direction": "only_up",
     "watermark": 0.9,
     "guard": "goldset-eval CI job + ratchet-guard",
-    "source": "packages/quality/skill-distillation/eval-threshold.json pass_rate_min"
+    "source": "scripts/evals/goldset/eval-threshold.json pass_rate_min"
   }
 ]

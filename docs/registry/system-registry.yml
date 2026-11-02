@@ -1,7 +1,7 @@
 # System Registry - Cecelia 全系统总表
-# 更新时间: 2026-04-03
+# 更新时间: 2026-11-02
 # 说明: 每个 system 是一组相关 feature 的集合，详情见 features/*.yml
-# CI Jobs: secrets-scan | registry-lint | eslint | pr-size-check | engine-tests | brain-unit | brain-integration | workspace-build | ci-passed
+# CI Jobs: secrets-scan | registry-lint | eslint | pr-size-check | brain-unit | brain-integration | workspace-build | ci-passed
 
 schema_version: "2.0.0"
 repo: cecelia
@@ -74,28 +74,15 @@ systems:
       has_integration: false
       has_e2e: false
 
-  - id: engine
-    name: 开发引擎
-    package: packages/engine
-    purpose: /dev 四阶段工作流 + devloop 检查
-    features_file: features/engine.yml
-    feature_count: 2
-    ci_jobs: [engine-tests]
-    health:
-      maturity_avg: 2.0
-      has_unit: true
-      has_integration: false
-      has_e2e: false
-
 summary:
-  total_systems: 7
-  total_features: 51
-  ci_jobs_available: [secrets-scan, engine-tests, brain-unit, brain-integration, workspace-build, ci-passed]
+  total_systems: 5
+  total_features: 39
+  ci_jobs_available: [secrets-scan, brain-unit, brain-integration, workspace-build, ci-passed]
   maturity_distribution:
-    level_0: 17
-    level_1: 3
-    level_2: 14
-    level_3: 2
-    level_4: 0
+    level_0: 1
+    level_1: 7
+    level_2: 26
+    level_3: 4
+    level_4: 1
     level_5: 0
-  last_updated: "2026-04-03"
+  last_updated: "2026-11-02"

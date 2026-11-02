@@ -2,7 +2,7 @@
 
 仓库 perfectuser21/cecelia（Cecelia monorepo）。CI 的规矩（提交后程序会在本地先跑一遍这些门禁，没过会要求修；一次写对最省事；门禁脚本在 .github/workflows/scripts/ 下，看不懂日志就读脚本）：
 - lint-test-pairing：新增或修改的 packages/brain/src/**/*.js 必须有配套测试（同目录、__tests__/ 或 __tests__/integration/），测试要真引用被测模块、有真实断言。
-- lint-feature-has-smoke：需求标题不是以「修复」开头的，这个 PR 会以 feat 合入：只要改了 packages/brain/src 的非测试文件，就要新增 packages/brain/scripts/smoke/<名字>.sh（至少 5 行真实代码，真的用 curl/psql/node 等验证改动），并登记进 packages/quality/smoke-allowlist.txt（如该文件存在）。
+- lint-feature-has-smoke：需求标题不是以「修复」开头的，这个 PR 会以 feat 合入：只要改了 packages/brain/src 的非测试文件，就要新增 packages/brain/scripts/smoke/<名字>.sh（至少 5 行真实代码，真的用 curl/psql/node 等验证改动），并登记进 packages/brain/config/smoke/smoke-allowlist.txt（如该文件存在）。
 - lint-tdd-commit-order：按提交顺序，改 src 的提交之前必须已有带真实测试的提交（同一个提交里同时有测试和实现也算）。顺序不对时不要改写历史，改为在新提交里补齐测试使后续提交满足规则。
 - lint-test-quality / lint-no-fake-test / lint-no-mock-only-test：新增测试要有真实断言（不能全是 toBeDefined 之类的弱断言）、不能全是 skip、不能靠大量 mock 撑着。
 - branch-naming / pr-size-check：改动规模相对 main 新增不超过 3000 行；分支名和改动规模问题无法靠改代码解决时，在最终回复里说明原因即可，不要做无关改动。

@@ -338,7 +338,7 @@ describe('runner QA 门（evaluator AI QA）', () => {
     expect(r.exitCode, r.stderr).toBe(0);
     const files = git(sb.origin, 'show', '--name-only', '--format=', BRANCH).trim().split('\n').sort();
     expect(files).toEqual([
-      'packages/brain/scripts/smoke/cw-c954ebfd-qa-smoke.sh', 'packages/quality/smoke-allowlist.txt', 'packages/quality/smoke-write-targets.txt',
+      'packages/brain/scripts/smoke/cw-c954ebfd-qa-smoke.sh', 'packages/brain/config/smoke/smoke-allowlist.txt', 'packages/brain/config/smoke/smoke-write-targets.txt',
       `${SPRINT}/05-qa-report-r1.md`, `${SPRINT}/06-judge-r1.md`,
     ].sort());
     const script = git(sb.origin, 'show', `${BRANCH}:packages/brain/scripts/smoke/cw-c954ebfd-qa-smoke.sh`);

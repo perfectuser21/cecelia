@@ -17,7 +17,7 @@ const BRANCH = 'cp-10081835-cw-c954ebfd';
 const SPRINT = 'sprints/10081835-cw-c954ebfd';
 const NAME = 'cw-c954ebfd-qa-smoke.sh';
 const SMOKE = `packages/brain/scripts/smoke/${NAME}`;
-const ALLOW = 'packages/quality/smoke-allowlist.txt';
+const ALLOW = 'packages/brain/config/smoke/smoke-allowlist.txt';
 const PREVIEW = 'http://localhost:5301';
 const JOB = (id) => `https://github.com/perfectuser21/cecelia/actions/runs/9/job/${id}`;
 const F = '```';
@@ -54,7 +54,7 @@ describe('runner：QA 回归 smoke 在 CI 首跑失败，剔除失败条目重�
     const smoke = buildQaSmoke({ taskId: TASK, previewUrl: PREVIEW, reportText: reportOf(items) });
     fs.mkdirSync(path.join(sb.seed, path.dirname(SMOKE)), { recursive: true });
     fs.writeFileSync(path.join(sb.seed, SMOKE), smoke.content, { mode: 0o755 });
-    fs.mkdirSync(path.join(sb.seed, 'packages/quality'), { recursive: true });
+    fs.mkdirSync(path.join(sb.seed, 'packages/brain/config/smoke'), { recursive: true });
     fs.writeFileSync(path.join(sb.seed, ALLOW), `base-smoke.sh\n${NAME}\n`);
     if (api) {
       fs.mkdirSync(path.join(sb.seed, 'packages/brain/src/routes'), { recursive: true });

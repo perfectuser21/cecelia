@@ -3,12 +3,11 @@ import {appendFileSync} from 'node:fs';
 import {resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 
-const ORDER = ['brain-unit', 'brain-integration', 'image', 'engine', 'quality', 'mcp', 'api', 'api-integration', 'dashboard', 'frontend', 'android', 'ops', 'scripts'];
-// ci/routing-map.yml 将 frontend 标为 Legacy/deploy:false；现役发布入口为 apps/dashboard。
-// 保留旧目录自身变更的验证，但现役全量不隐含重新发布旧应用。
+const ORDER = ['brain-unit', 'brain-integration', 'image', 'mcp', 'api', 'api-integration', 'dashboard', 'android', 'ops', 'scripts'];
+// 现役前端为 apps/dashboard；已退役根 frontend 不再创建源码任务。
 // Android 客户端自身修改必须运行 Gradle；服务端全量不重复构建未变更的移动客户端。
-const ACTIVE = ORDER.filter(component => !['frontend', 'android'].includes(component));
-const SHARED_RUNTIME = ['brain-unit', 'brain-integration', 'image', 'engine', 'api', 'api-integration', 'ops'];
+const ACTIVE = ORDER.filter(component => component !== 'android');
+const SHARED_RUNTIME = ['brain-unit', 'brain-integration', 'image', 'api', 'api-integration', 'ops'];
 const DOCUMENT = /\.(?:md|txt|rst|png|jpe?g|gif|svg|webp|pdf)$/i;
 const DOCUMENT_NAME = /(?:^|\/)(?:README|CHANGELOG|CONTRIBUTING|CODE_OF_CONDUCT|SECURITY|LICENSE)\.md$/i;
 const ROOT_DOCUMENT = /^(?:AGENTS|CLAUDE|DEFINITION|PRD|DoD)\.md$/i;
@@ -50,18 +49,16 @@ export function planChecks(paths, {full = false} = {}) {
     // Markdown 也可能是实际运行时提示词；只有明确的文档位置/文件名才走轻量路径。
     if (DOCUMENT_NAME.test(path) || ROOT_DOCUMENT.test(path) ||
       ((path.startsWith('docs/') || path.startsWith('sprints/')) && DOCUMENT.test(path))) continue;
-    if (path.startsWith('frontend/')) selected.add('frontend');
     if (path.startsWith('apps/android-agent/')) selected.add('android');
     if (isConfiguration(path) || /^(?:\.github|scripts|config)\//.test(path) ||
       /^(?:package(?:-lock)?\.json|npm-shrinkwrap\.json|\.npmrc|\.skills-source\.json)$/.test(path)) {
       all = true;
     } else if (path.startsWith('apps/android-agent/')) selected.add('android');
-    else if (/^(?:packages\/(?:brain|engine)|apps\/api)\//.test(path)) {
+    else if (/^(?:packages\/brain|apps\/api)\//.test(path)) {
       for (const component of SHARED_RUNTIME) selected.add(component);
-    } else if (path.startsWith('packages/quality/')) selected.add('quality');
+    }
     else if (path.startsWith('packages/mcp-readonly/')) selected.add('mcp');
     else if (path.startsWith('apps/dashboard/')) selected.add('dashboard');
-    else if (path.startsWith('frontend/')) selected.add('frontend');
     else all = true;
   }
   return matrixFor(all ? new Set([...ACTIVE, ...selected]) : selected);

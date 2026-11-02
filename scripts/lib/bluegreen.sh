@@ -146,7 +146,7 @@ bluegreen_green_run_args() {
 #   green canary pre-swap smoke 恒败，见 scripts/__tests__/bluegreen-temp-port-collision.test.sh)
 #   / TARGET_VERSION(必填，镜像 tag) / HEALTH_TIMEOUT(默认 60)
 #   GREEN_RUN_ARGS(可选，起 green 的额外 docker run 参数：env/mounts 等)
-#   DEPLOY_ROOT_DIR(可选，设置后启动 compose sidecar 规避自杀竞态)
+#   DEPLOY_ROOT_DIR(核心 smoke 根目录；设置后启动 compose sidecar 规避自杀竞态)
 # 返回：0 = green 健康、blue 已删（或 sidecar 已启动将删）、compose up 将由 sidecar 完成
 #       1 = green 未通过 或 sidecar 启动失败、blue 原封不动（调用方应 exit 1 终止部署）
 bluegreen_swap() {
@@ -214,12 +214,18 @@ bluegreen_swap() {
   # ── Pre-swap 核心 smoke（T2 闸）─────────────────────────────────────────────
   # green 健康后、切换前跑 smoke-core.txt，任一失败 → 保留 blue 不切。
   # SKIP_PRE_SWAP_SMOKE=1 可紧急绕过（须 Bark 告警记录）。
-  local core_list="${DEPLOY_ROOT_DIR:-}/packages/quality/smoke-core.txt"
+  local core_list="${DEPLOY_ROOT_DIR:-}/packages/brain/config/smoke/smoke-core.txt"
   local smoke_dir="${DEPLOY_ROOT_DIR:-}/packages/brain/scripts/smoke"
   if [[ "${SKIP_PRE_SWAP_SMOKE:-0}" == "1" ]]; then
     echo "[bluegreen] ⚠️  SKIP_PRE_SWAP_SMOKE=1，跳过 pre-swap smoke（紧急模式）"
     send_bark "⚠️ brain-deploy 紧急模式：SKIP_PRE_SWAP_SMOKE=1，pre-swap smoke 已跳过，v${version}"
-  elif [[ -n "${DEPLOY_ROOT_DIR:-}" && -f "$core_list" ]]; then
+  else
+    if [[ -z "${DEPLOY_ROOT_DIR:-}" || ! -r "$core_list" ]]; then
+      echo "[bluegreen] ❌ 核心 smoke 清单不可读取或 DEPLOY_ROOT_DIR 未设置，保留 blue($blue) 不切"
+      docker rm -f "$green" >/dev/null 2>&1 || true
+      bluegreen_guard_blue "$blue"
+      return 1
+    fi
     echo "[bluegreen] 跑 pre-swap 核心 smoke（${green_url}，预算 ${SMOKE_CORE_TIMEOUT_SECS:-600}s）..."
     local _smoke_failed=0 _smoke_ran=0 _smoke_start _smoke_elapsed
     _smoke_start=$(date +%s)
@@ -228,7 +234,8 @@ bluegreen_swap() {
       [[ -z "${_script// }" ]] && continue
       local _sf="${smoke_dir}/${_script}"
       if [[ ! -f "$_sf" ]]; then
-        echo "  [pre-swap-smoke] WARN: ${_script} 不存在，跳过"
+        echo "  [pre-swap-smoke] ❌ ${_script} 不存在"
+        _smoke_failed=$((_smoke_failed + 1))
         continue
       fi
       _smoke_ran=$((_smoke_ran + 1))
@@ -245,6 +252,10 @@ bluegreen_swap() {
         _smoke_failed=$((_smoke_failed + 1))
       fi
     done < "$core_list"
+    if [[ "$_smoke_ran" -eq 0 ]]; then
+      echo "  [pre-swap-smoke] ❌ 核心 smoke 清单没有可执行条目"
+      _smoke_failed=$((_smoke_failed + 1))
+    fi
     _smoke_elapsed=$(( $(date +%s) - _smoke_start ))
     echo "  [pre-swap-smoke] 共跑 ${_smoke_ran} 条，失败 ${_smoke_failed} 条，用时 ${_smoke_elapsed}s"
     if [[ "$_smoke_failed" -gt 0 ]]; then
@@ -255,8 +266,6 @@ bluegreen_swap() {
       return 1
     fi
     echo "[bluegreen] ✅ pre-swap smoke 全部通过（${_smoke_ran} 条，${_smoke_elapsed}s），继续切换"
-  else
-    echo "[bluegreen] ℹ️  smoke-core.txt 不存在或 DEPLOY_ROOT_DIR 未设，跳过 pre-swap smoke"
   fi
   # ─────────────────────────────────────────────────────────────────────────
 

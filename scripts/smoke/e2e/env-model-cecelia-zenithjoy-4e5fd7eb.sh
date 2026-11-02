@@ -121,7 +121,7 @@ if [[ -f "$SMOKE_SCRIPT" ]]; then
 else
   log_fail "packages/brain/scripts/smoke/three-tier-smoke.sh 不存在"
 fi
-if grep -q "three-tier-smoke.sh" "$ROOT_DIR/packages/quality/smoke-allowlist.txt" 2>/dev/null; then
+if grep -q "three-tier-smoke.sh" "$ROOT_DIR/packages/brain/config/smoke/smoke-allowlist.txt" 2>/dev/null; then
   log_pass "smoke-allowlist.txt 已注册 three-tier-smoke.sh"
 else
   log_fail "smoke-allowlist.txt 未注册 three-tier-smoke.sh"

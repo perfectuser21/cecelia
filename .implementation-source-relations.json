@@ -759,7 +759,7 @@
     },
     {
       "owner_path": "scripts/brain-build.sh",
-      "path": "packages/engine/tests/integration/brain-build-isolation.test.sh",
+      "path": "scripts/__tests__/brain-deploy-build-isolation.test.sh",
       "role": "verification"
     },
     {
@@ -933,13 +933,13 @@
       "role": "verification"
     },
     {
-      "owner_path": "packages/quality/skill-distillation/scripts/goldset-eval.mjs",
+      "owner_path": "scripts/evals/goldset/goldset-eval.mjs",
       "path": "docs/learnings/cp-10170325-ci-budget-headroom.md",
       "role": "documentation"
     },
     {
-      "owner_path": "packages/quality/skill-distillation/scripts/goldset-eval.mjs",
-      "path": "packages/quality/__tests__/goldset-eval-cli.test.js",
+      "owner_path": "scripts/evals/goldset/goldset-eval.mjs",
+      "path": "packages/brain/src/__tests__/goldset-eval-cli.test.js",
       "role": "verification"
     },
     {
@@ -1479,7 +1479,7 @@
     },
     {
       "owner_path": "packages/brain/src/lib/activity-contract-loader.js",
-      "path": "packages/quality/smoke-allowlist.txt",
+      "path": "packages/brain/config/smoke/smoke-allowlist.txt",
       "role": "verification"
     },
     {
@@ -1823,8 +1823,8 @@
       "role": "verification"
     },
     {
-      "owner_path": "packages/engine/skills/dev/scripts/worktree-manage.sh",
-      "path": "packages/engine/tests/skills/worktree-cleanup-set-e.test.ts",
+      "owner_path": "scripts/dev/worktree/worktree-manage.sh",
+      "path": "scripts/dev/__tests__/worktree-cleanup-set-e.test.mjs",
       "role": "verification"
     },
     {
@@ -2444,7 +2444,7 @@
     },
     {
       "owner_path": "packages/brain/src/lib/tree-legacy-layout.js",
-      "path": "packages/quality/smoke-write-targets.txt",
+      "path": "packages/brain/config/smoke/smoke-write-targets.txt",
       "role": "verification"
     },
     {
@@ -2648,11 +2648,6 @@
       "role": "verification"
     },
     {
-      "owner_path": "scripts/ci/ci-admission-publisher.mjs",
-      "path": "packages/brain/scripts/smoke/ci-admission-bootstrap-smoke.sh",
-      "role": "verification"
-    },
-    {
       "owner_path": "scripts/ci/ci-admission-archive.mjs",
       "path": "scripts/ci/__tests__/basic-ci-admission-archive.test.mjs",
       "role": "verification"
@@ -2678,16 +2673,6 @@
       "role": "verification"
     },
     {
-      "owner_path": "scripts/ci/ci-admission-publisher.mjs",
-      "path": "scripts/ci/__tests__/basic-ci-admission-feature-smoke.test.mjs",
-      "role": "verification"
-    },
-    {
-      "owner_path": "scripts/ci/implementation-multi-pr-gate.mjs",
-      "path": "scripts/ci/__tests__/basic-ci-admission-impact-workflow.test.mjs",
-      "role": "verification"
-    },
-    {
       "owner_path": "scripts/ci/implementation-infra-inputs.mjs",
       "path": "scripts/ci/__tests__/basic-ci-admission-infra.test.mjs",
       "role": "verification"
@@ -2700,11 +2685,6 @@
     {
       "owner_path": "scripts/ci/ci-admission-authority.mjs",
       "path": "scripts/ci/__tests__/basic-ci-admission-legacy.test.mjs",
-      "role": "verification"
-    },
-    {
-      "owner_path": "scripts/ci/ci-admission-publisher.mjs",
-      "path": "scripts/ci/__tests__/basic-ci-admission-publisher.test.mjs",
       "role": "verification"
     },
     {
@@ -2735,11 +2715,6 @@
     {
       "owner_path": "scripts/ci/ci-admission-worker-runner.mjs",
       "path": "scripts/ci/__tests__/basic-ci-admission-worker.test.mjs",
-      "role": "verification"
-    },
-    {
-      "owner_path": "scripts/ci/ci-admission-publisher.mjs",
-      "path": "scripts/ci/__tests__/basic-ci-admission-workflow.test.mjs",
       "role": "verification"
     },
     {

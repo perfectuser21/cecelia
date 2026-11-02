@@ -24,7 +24,7 @@ describe('Walking actual CI owner and PG acceptance', () => {
     expect(job.steps.some(step => step.uses?.includes('skills-source'))).toBe(false);
     expect(job.env.DATABASE_URL).toBe('postgresql://cecelia:isolated-ci@localhost:5432/cecelia_test');
     expect(job.if).toBeUndefined();
-    expect(commands).toContain('node --test packages/quality/tests/walking-checkpointer-guard.node-test.mjs');
+    expect(commands).toContain('node --test packages/brain/scripts/smoke/__tests__/walking-checkpointer-guard.node-test.mjs');
   });
   it.each(['success', 'failure', 'cancelled', 'skipped', 'timed_out', '', 'unknown'])('普通PR汇总严格检查实际checks结果 %j，独立demo不伪装required', result => {
     const needs = {plan: {result: 'success'}, security: {result: 'success'}, checks: {result}};
