@@ -81,7 +81,16 @@ describe('coding_spec 八活动契约端到端（通用执行器 + 假外部依�
     git(worktree, 'config', 'core.hooksPath', emptyHooks);
     fs.writeFileSync(path.join(worktree, `.dev-mode.${BRANCH}`), 'e2e\n');
     git(worktree, 'remote', 'add', 'origin', origin);
-    git(worktree, 'commit', '-q', '--allow-empty', '-m', 'chore: init');
+    const smokeDir = path.join(worktree, 'packages/brain/scripts/smoke');
+    const smokeConfig = path.join(worktree, 'packages/brain/config/smoke');
+    fs.mkdirSync(smokeDir, { recursive: true });
+    fs.mkdirSync(smokeConfig, { recursive: true });
+    fs.writeFileSync(path.join(smokeDir, 'e2e-fixture-smoke.sh'), '#!/usr/bin/env bash\nset -euo pipefail\nexit 0\n');
+    fs.writeFileSync(path.join(smokeConfig, 'smoke-allowlist.txt'), 'e2e-fixture-smoke.sh\n');
+    fs.writeFileSync(path.join(smokeConfig, 'smoke-denylist.txt'), '# 无禁止项\n');
+    fs.writeFileSync(path.join(smokeConfig, 'smoke-debt.txt'), '# 无待归类项\n');
+    git(worktree, 'add', 'packages/brain');
+    git(worktree, 'commit', '-q', '-m', 'test: seed private smoke registration');
 
     patches = [];
     server = http.createServer((req, res) => {
@@ -146,7 +155,8 @@ describe('coding_spec 八活动契约端到端（通用执行器 + 假外部依�
   it('完整八活动 completed：build 真实提交、verify 全 PASS，PR 正文含验收摘要，Brain 恰好收到一次 PATCH', async () => {
     const r = await runCli({ contract, input: runInput() }, envFor('verify-pass'));
 
-    expect(r.exitCode, r.stderr).toBe(0);
+    const diagnostic = r.result?.activities.map((a) => ({ key: a.key, status: a.status, reason_code: a.attempts.at(-1)?.reason_code, evidence: a.attempts.at(-1)?.evidence }));
+    expect(r.exitCode, JSON.stringify(diagnostic)).toBe(0);
     expect(r.result).not.toBeNull();
     expect(r.result.status).toBe('completed');
     expect(r.result.run_tag).toBe('e2e-rt-1');
@@ -174,6 +184,7 @@ describe('coding_spec 八活动契约端到端（通用执行器 + 假外部依�
     const build = r.result.activities.find((a) => a.key === 'build').attempts.at(-1).outputs;
     expect(build.build_file).toBe('03-build.md');
     expect(build.build_commits).toHaveLength(1);
+    expect(build.ci_precheck).toEqual({ passed: true, rounds: 0, failures: [] });
     expect(r.result.outputs.verified_ids).toEqual(['I-1', 'I-2']);
     // md 链指纹贯穿全程，build/verify 的防篡改检查都实际比对过
     expect(r.result.outputs.intent_sha256).toMatch(/^[0-9a-f]{64}$/);
@@ -203,8 +214,11 @@ describe('coding_spec 八活动契约端到端（通用执行器 + 假外部依�
     // intent/spec/spec_review/build 已有产出 -> partial（执行器语义），CLI 退出码 2
     expect(r.result.status).toBe('partial');
     expect(r.exitCode).toBe(2);
-    expect(r.result.activities.map((a) => a.key)).toEqual(['intent', 'spec', 'spec_review', 'build', 'verify', 'report']);
+    expect(r.result.activities.map((a) => a.key), JSON.stringify(r.result.activities.find((a) => a.key === 'build')?.attempts.at(-1)?.evidence))
+      .toEqual(['intent', 'spec', 'spec_review', 'build', 'verify', 'report']);
 
+    const build = r.result.activities.find((a) => a.key === 'build').attempts.at(-1).outputs;
+    expect(build.ci_precheck).toEqual({ passed: true, rounds: 0, failures: [] });
     const verify = r.result.activities.find((a) => a.key === 'verify');
     expect(verify.status).toBe('failed');
     expect(verify.attempts).toHaveLength(1);
