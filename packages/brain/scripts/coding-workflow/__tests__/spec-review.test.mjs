@@ -2,7 +2,7 @@
 import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import http from 'node:http';
+import { startTestBrain } from './helpers/brain-transport.mjs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -22,11 +22,13 @@ const blocker = (id, extra = {}) => ({ id, severity: '阻断', ...extra });
 describe('spec_review 活动 v2（合同对抗）', () => {
   let worktree;
   let tmp;
+  let transport;
   const sprint = () => path.join(worktree, 'sprints/s1');
   const read = (name) => fs.readFileSync(path.join(sprint(), name), 'utf8');
 
   beforeAll(() => fs.chmodSync(FAKE, 0o755));
   beforeEach(() => {
+    transport = undefined;
     worktree = fs.mkdtempSync(path.join(os.tmpdir(), 'spec-review-v2-'));
     tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'spec-review-v2-state-'));
     gitPlain('init', '-q', worktree);
@@ -50,7 +52,7 @@ describe('spec_review 活动 v2（合同对抗）', () => {
       FAKE_GAN_STATE: path.join(tmp, 'state.json'),
       FAKE_GAN_SEEN: path.join(tmp, 'seen.log'),
       ...env,
-    });
+    }, transport?.spawnOptions());
   };
   const seen = () => fs.readFileSync(path.join(tmp, 'seen.log'), 'utf8');
 
@@ -208,35 +210,23 @@ describe('spec_review 活动 v2（合同对抗）', () => {
     let brainUrl;
     beforeEach(async () => {
       decisions = [];
-      server = http.createServer((req, res) => {
-        let raw = '';
-        req.on('data', (c) => { raw += c; });
-        req.on('end', () => {
-          res.setHeader('content-type', 'application/json');
-          if (req.method === 'POST' && req.url === '/api/brain/strategic-decisions') {
-            const body = JSON.parse(raw);
-            // 同生产约束 decisions_made_by_check（迁移 193）：made_by 只允许 user/cecelia/system，否则 500（金丝雀 4 暴露 ai 写不进）
-            if (body.made_by && !['user', 'cecelia', 'system'].includes(body.made_by)) {
-              res.statusCode = 500;
-              return res.end(JSON.stringify({ success: false, error: 'violates check constraint "decisions_made_by_check"' }));
-            }
-            const row = { id: `d-${decisions.length + 1}`, ...body };
-            decisions.push(row);
-            res.statusCode = 201;
-            return res.end(JSON.stringify({ success: true, data: row }));
-          }
-          if (req.method === 'GET' && req.url.startsWith('/api/brain/strategic-decisions?')) {
-            return res.end(JSON.stringify({ success: true, data: decisions.filter((d) => d.category === 'judgment') }));
-          }
-          res.statusCode = 404;
-          return res.end('{}');
-        });
+      server = await startTestBrain(({ method, url, body: raw }) => {
+        const reply = (status, data) => ({ status, headers: { 'content-type': 'application/json' }, body: JSON.stringify(data) });
+        if (method === 'POST' && url === '/api/brain/strategic-decisions') {
+          const body = JSON.parse(raw);
+          if (body.made_by && !['user', 'cecelia', 'system'].includes(body.made_by)) return reply(500, { success: false, error: 'violates check constraint "decisions_made_by_check"' });
+          const row = { id: `d-${decisions.length + 1}`, ...body };
+          decisions.push(row);
+          return reply(201, { success: true, data: row });
+        }
+        if (method === 'GET' && url.startsWith('/api/brain/strategic-decisions?')) return reply(200, { success: true, data: decisions.filter(d => d.category === 'judgment') });
+        return reply(404, {});
       });
-      await new Promise((r) => server.listen(0, '127.0.0.1', r));
-      brainUrl = `http://127.0.0.1:${server.address().port}`;
+      transport = server;
+      brainUrl = server.url;
       fs.appendFileSync(path.join(sprint(), '02-spec.md'), '\n## 判定点\n\n- 部署成功判定｜候选: 看 HTTP 200、看 git_sha｜所选: 看 git_sha｜依据: 200 只说明活着｜误判后果: 旧版本被当新版本验收\n');
     });
-    afterEach(() => new Promise((r) => server.close(r)));
+    afterEach(() => server.close());
 
     it('APPROVED → 判定点 POST 到 Brain（category judgment），回读计数写进 outputs.gan.judgments_written；重跑不重复写', async () => {
       let r = await run({ reviews: [{ scores: 8 }] }, {}, { brain_url: brainUrl });

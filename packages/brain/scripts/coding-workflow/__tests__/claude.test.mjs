@@ -359,6 +359,10 @@ describe('stdin收尾后的迟到写入错误', () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-late-stdin-'));
     vi.useFakeTimers();
     try {
+      vi.doMock('../lib/provenance-path.mjs', async importOriginal => ({
+        ...await importOriginal(), assertProvenanceSeparation: root => root,
+      }));
+      vi.resetModules();
       const isolated = await import('../lib/claude.mjs?late-stdin-lifecycle');
       const running = isolated.runClaude({ provider: 'codex', args: ['-p', 'x'.repeat(900000)], cwd: tmp,
         timeoutMs: 60000, tag: 'late-stdin', codexEnv: { CODING_WF_CODEX_HOME: tmp, CODING_WF_CODEX_MODEL: 'local-stub', CODING_WF_CODEX_BIN: '/local/stub' } });
@@ -374,7 +378,7 @@ describe('stdin收尾后的迟到写入错误', () => {
       expect(kill.mock.calls).toHaveLength(cleanupSignals);
       expect(vi.getTimerCount()).toBe(0);
     } finally {
-      vi.useRealTimers(); kill.mockRestore(); vi.doUnmock('node:child_process');
+      vi.useRealTimers(); kill.mockRestore(); vi.doUnmock('node:child_process'); vi.doUnmock('../lib/provenance-path.mjs');
       child.stdin.destroy(); child.stdout.destroy(); child.stderr.destroy();
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -390,7 +394,12 @@ describe('原生管道输入哈希', () => {
     fs.writeFileSync(bin, `#!/usr/bin/env node\nconst fs=require('node:fs');const bytes=fs.readFileSync(0);fs.writeFileSync(${JSON.stringify(captured)},bytes);console.log(JSON.stringify({type:'thread.started',thread_id:'local-hash-fixture'}));console.log(JSON.stringify({type:'turn.completed'}));\n`); fs.chmodSync(bin, 0o755);
     const sha = b => createHash('sha256').update(b).digest('hex');
     try {
-      const result = await runClaude({ provider: 'codex', args: ['-p', input], cwd: dir,
+      vi.doMock('../lib/provenance-path.mjs', async importOriginal => ({
+        ...await importOriginal(), assertProvenanceSeparation: root => root,
+      }));
+      vi.resetModules();
+      const isolated = await import('../lib/claude.mjs?native-stdin-hash');
+      const result = await isolated.runClaude({ provider: 'codex', args: ['-p', input], cwd: dir,
         timeoutMs: 5000, tag: 'stdin-hash', transcriptPath: path.join(dir, 'native.jsonl'),
         codexEnv: { CODING_WF_CODEX_HOME: dir, CODING_WF_CODEX_MODEL: 'local-stub', CODING_WF_CODEX_BIN: bin } });
       expect(result).toMatchObject({ code: 0, stdin_finished: true, stdin_error: null });
@@ -404,6 +413,6 @@ describe('原生管道输入哈希', () => {
       }
       expect(result.stdin_sha256).toBe(sha(actual));
       expect(result.stdin_bytes).toBe(actual.byteLength);
-    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+    } finally { vi.doUnmock('../lib/provenance-path.mjs'); fs.rmSync(dir, { recursive: true, force: true }); }
   });
 });

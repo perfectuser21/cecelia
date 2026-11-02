@@ -12,6 +12,7 @@ const argv = process.argv.slice(2);
 const prompt = argv[argv.indexOf('-p') + 1] || '';
 const field = (name) => (prompt.match(new RegExp(`^${name}: (.*)$`, 'm')) || [])[1] ?? '';
 const role = field('ROLE');
+if (process.env.FAKE_GAN_PROMPTS) fs.appendFileSync(process.env.FAKE_GAN_PROMPTS, JSON.stringify({role,prompt}) + '\n');
 const script = JSON.parse(fs.readFileSync(process.env.FAKE_GAN_SCRIPT, 'utf8'));
 const statePath = process.env.FAKE_GAN_STATE;
 const state = fs.existsSync(statePath) ? JSON.parse(fs.readFileSync(statePath, 'utf8')) : { review: 0, revise: 0 };
@@ -58,6 +59,7 @@ if (role === 'spec_review') {
     const text = fs.readFileSync(field('SPEC_PATH'), 'utf8');
     fs.writeFileSync(field('SPEC_PATH'), text.replace(/^## 铁律对照[\s\S]*?(?=^## |(?![\s\S]))/m, ''));
   }
+  if (v.replaceSpec !== undefined) fs.writeFileSync(field('SPEC_PATH'), v.replaceSpec);
   result(v.cost);
 } else {
   console.error(`fake-claude-gan: unknown role ${role}`);

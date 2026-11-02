@@ -27,7 +27,7 @@
         "empty_ok": [],
         "retryable": ["claude_failed", "claude_timeout", "spec_invalid"],
         "needs_human": { "cases": ["codex_auth", "codex_configuration", "claude_auth", "qa_mode_unsupported"] },
-        "fatal": ["sprint_dir_invalid", "task_id_missing", "intent_ids_missing", "intent_ids_invalid", "spec_missing", "spec_out_of_scope_write", "chain_tampered"]
+        "fatal": ["sprint_dir_invalid", "task_id_missing", "intent_ids_missing", "intent_ids_invalid", "spec_missing", "spec_out_of_scope_write", "chain_tampered", "baseline_invalid"]
       },
       "runtime": {
         "protocol": "json-stdio-v1",
@@ -53,6 +53,7 @@
           "chain_tampered",
           "spec_missing",
           "spec_review_out_of_scope_write",
+          "baseline_invalid",
           "review_invalid",
           "gan_budget_exceeded"
         ]

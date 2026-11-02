@@ -1,3 +1,4 @@
+import { loadBaselineContext, renderBaselineContext } from '../lib/baseline-context.mjs';
 // spec 活动：用 claude CLI + 薄 prompt 根据 01-intent.md 生成 <sprint_dir>/02-spec.md。
 // 生成后自检 02（frontmatter、upstream 覆盖全部 I-n、至少一条 S-n）；跨文件整链校验仍由 chain_check 做。
 import fs from 'node:fs';
@@ -24,13 +25,18 @@ await runActivity(async (input) => {
   const idsError = intentIdsError(intentIds);
   if (idsError) return fail('fatal', idsError);
 
+  let baseline;
+  try { baseline = loadBaselineContext(input); }
+  catch (error) { return fail('fatal', 'baseline_invalid', { evidence: [{ baseline_error: error.code || error.message }] }); }
   const specPath = path.join(dir, SPEC_FILE);
   const invariantIds = loadInvariantIds(dir);
   // 重试必须带新信息（审计 #33）：上次写出的 02 还在 = 上次没通过，把它的校验问题交给这次
   const prevErrors = fs.existsSync(specPath)
-    ? specErrors(fs.readFileSync(specPath, 'utf8'), input.task_id, intentIds, { invariantIds })
+    ? specErrors(fs.readFileSync(specPath, 'utf8'), input.task_id, intentIds, { invariantIds, baseline })
     : [];
   const prompt = loadPrompt('spec', {
+    BASELINE_POLICY: loadPrompt('baseline-policy', {}),
+    BASELINE_CONTEXT: renderBaselineContext(baseline),
     TASK_ID: input.task_id,
     INTENT_PATH: path.join(dir, INTENT_FILE),
     SPEC_PATH: specPath,
@@ -65,7 +71,7 @@ await runActivity(async (input) => {
   if (unsupported) return priced(fail('needs_human', 'qa_mode_unsupported', { evidence: [{ qa_mode: 'local', reason: unsupported[1].trim() }] }));
 
   // 02 不合格当场拦（重试一次让 claude 重写），不留给 build 报 spec_ids_missing（c2afa8ba 实测）
-  const errors = specErrors(fs.readFileSync(specPath, 'utf8'), input.task_id, intentIds, { invariantIds });
+  const errors = specErrors(fs.readFileSync(specPath, 'utf8'), input.task_id, intentIds, { invariantIds, baseline });
   if (errors.length > 0) return priced(fail('retryable', 'spec_invalid', { evidence: [{ spec_errors: errors }] }));
 
   return priced({

@@ -57,7 +57,7 @@ function withModel(args) {
 
 /** 把模板里的 `{{KEY}}` 换成 vars[KEY]（值按字面量插入，不解释 `$&` 等替换序列）。 */
 export function renderPrompt(template, vars) {
-  return Object.entries(vars).reduce((text, [key, value]) => text.replaceAll(`{{${key}}}`, () => value), template);
+  return template.replace(/\{\{([^{}]+)\}\}/g, (token, key) => Object.hasOwn(vars, key) ? vars[key] : token);
 }
 
 /** 读 prompts/<name>.md 并渲染。 */

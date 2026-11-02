@@ -1,3 +1,4 @@
+import { loadBaselineContext, renderBaselineContext } from '../lib/baseline-context.mjs';
 // spec_review 活动（合同对抗 v2）：QA 立场评审 ⇄ 开发逐条采纳/驳回并改规格，循环到代码判通过。
 // 主理人决策（02d8e749，记忆 harness-gan-design）：不设轮数上限；靠走势收敛——发散/震荡强制通过 + P1 + 升级给 coding commander；
 // 只有「真坏掉」才中止：评审连续 3 次格式不合格、累计花费超上限、claude 失败、越界写、01 被改。
@@ -117,11 +118,16 @@ await runActivity(async (input) => {
   if (idsError) return fail('fatal', idsError);
   const tamperedBefore = chainTamperFailure(dir, { intent_sha256: input.intent_sha256 });
   if (tamperedBefore) return tamperedBefore;
+  let baseline;
+  try { baseline = loadBaselineContext(input); }
+  catch (error) { return fail('fatal', 'baseline_invalid', { evidence: [{ baseline_error: error.code || error.message }] }); }
   const specPath = path.join(dir, SPEC_FILE);
   if (!fs.existsSync(specPath)) return fail('fatal', 'spec_missing');
 
   const ctx = { input, worktree, sprintDir, dir, startedAt: Date.now() };
   const base = {
+    BASELINE_POLICY: loadPrompt('baseline-policy', {}),
+    BASELINE_CONTEXT: renderBaselineContext(baseline),
     TASK_ID: taskId, INTENT_PATH: path.join(dir, INTENT_FILE), SPEC_PATH: specPath, INTENT_IDS: intentIds.join(','), INVARIANTS_PATH: path.join(dir, INVARIANTS_FILE),
   };
   const invariantIds = loadInvariantIds(dir);
@@ -134,12 +140,14 @@ await runActivity(async (input) => {
   let reviewErrors = [];
   let untracked = [];
   // 重试必须带新信息（审计 #33）：每个会话都拿到当前 02 的程序校验问题（活动被重试时，上次改写可能把规格改坏了）
-  const specErrorsNow = () => explainSpecErrors(specErrors(fs.readFileSync(specPath, 'utf8'), taskId, intentIds, { invariantIds }));
+  const specErrorsNow = () => explainSpecErrors(specErrors(fs.readFileSync(specPath, 'utf8'), taskId, intentIds, { invariantIds, baseline }));
 
   const overBudget = () => cost > budget
     && fail('fatal', 'gan_budget_exceeded', { evidence: [{ cost_usd: money(cost), budget_usd: budget, rounds: history.length, open_issues: brief(prevOpen) }] });
 
   const finish = async (verdict, round, trend, open) => {
+    const errors = specErrors(fs.readFileSync(specPath, 'utf8'), taskId, intentIds, { invariantIds, baseline });
+    if (errors.length) return fail('retryable', 'spec_invalid', { evidence: [{ spec_errors: errors }] });
     fs.copyFileSync(path.join(dir, reviewName(round)), path.join(dir, REVIEW_FILE));
     const gan = { verdict, rounds: round, trend, open_issues: brief(open), cost_usd: money(cost), scores: history.at(-1).scores };
     const outputs = { review_file: REVIEW_FILE, review_rounds: round, spec_sha256: sha256File(specPath), gan };
@@ -222,7 +230,7 @@ await runActivity(async (input) => {
     const blownAfterRevise = overBudget();
     if (blownAfterRevise) return blownAfterRevise;
     if (!fs.existsSync(specPath)) return fail('fatal', 'spec_missing');
-    const specErr = specErrors(fs.readFileSync(specPath, 'utf8'), taskId, intentIds, { invariantIds });
+    const specErr = specErrors(fs.readFileSync(specPath, 'utf8'), taskId, intentIds, { invariantIds, baseline });
     if (specErr.length > 0) return fail('retryable', 'spec_invalid', { evidence: [{ spec_errors: specErr }] });
     if (!fs.existsSync(responsePath)) return fail('retryable', 'response_missing', { evidence: [{ round }] });
     sealStageEvidence({ files: [`${sprintDir}/${responseName(round)}`, `${sprintDir}/${SPEC_FILE}`], round,
