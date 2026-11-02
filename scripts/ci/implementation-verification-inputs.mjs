@@ -74,6 +74,12 @@ const BASIC_ENTRY_SEALS={
  'scripts/ci/check-basic-results.mjs':'b6c0b93e15320deff680e765f4558fcdb2a8d98c65d7a926d94f2158af6641e2',
  'scripts/ci/ops-checks.mjs':'96023fd57f11eb1277396b77419bad94a050d0ef64b1c5993db258d87797df82',
 };
+// 完整旧入口或完整退役入口二选一；同一候选不能逐文件混配已审版本。
+const BASIC_ENTRY_PROTOCOLS=[BASIC_ENTRY_SEALS,{
+ ...BASIC_ENTRY_SEALS,
+ 'scripts/ci/run-basic-check.mjs':'97226ce692a63aad92d9120b378e024d64569bc21c637c9f41266735c1720271',
+ 'scripts/ci/basic-scope.mjs':'4a6cb08142b42329ab6daf75bfc7a058be9b5657b7d586be0477486cc914c277',
+}];
 const UNIT_CONFIGS=[
  {component:'brain',directory:'packages/brain',path:'packages/brain/vitest.config.js'},
  {component:'engine',directory:'packages/engine',path:'packages/engine/vitest.config.ts'},
@@ -127,8 +133,14 @@ function unitEntry(read,side){
  try{doc=yaml.load(workflow.text);}catch{return null;}
  const signature=sha(JSON.stringify(canonical(doc)));if(![LEGACY_CI,BASIC_CI].includes(signature))return null;
  const support=[workflow.reference];
- if(signature===BASIC_CI)for(const[path,expected]of Object.entries(BASIC_ENTRY_SEALS)){
-  const file=read(side,path);if(!file||file.reference.sha256!==expected)return null;support.push(file.reference);
+ if(signature===BASIC_CI){
+  let selected;
+  for(const seals of BASIC_ENTRY_PROTOCOLS){
+   const files=Object.entries(seals).map(([path,expected])=>({file:read(side,path),expected}));
+   if(files.every(({file,expected})=>file?.reference.sha256===expected)){selected=files;break;}
+  }
+  if(!selected)return null;
+  support.push(...selected.map(({file})=>file.reference));
  }
  return {profile:signature===LEGACY_CI?'legacy':'basic',canonical_sha256:signature,workflow:workflow.reference,support,
   declaration_only:true,execution_status:'not_evaluated'};
