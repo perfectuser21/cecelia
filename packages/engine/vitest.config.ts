@@ -8,21 +8,17 @@ const PARALLEL_TESTS = [
   'tests/ci/known-failures-expiry.test.ts',
   'tests/ci/known-failures.test.ts',
   'tests/ci/scan-rci-coverage.test.ts',
-  'tests/dev/checklist.test.ts',
   'tests/dev/dev-step-files.test.ts',
   'tests/dev/step-expectations.test.ts',
   'tests/devgate/check-changed-coverage.test.ts',
   'tests/devgate/l2b-check.test.ts',
   'tests/devgate/snapshot-prd-dod.test.ts',
-  'tests/scripts/cleanup.test.ts',
   'tests/scripts/stop-cleanup-bugfixes.test.ts',
   'tests/skills/language-rule.test.ts',
   'tests/stop-hook-flow-test.test.ts',
-  'tests/utils/mathUtils.test.ts',
   'tests/workflow-guard-2.test.ts',
   'tests/workflow-guard-3.test.ts',
   'tests/workflows/ci-timeout.test.ts',
-  'src/index.test.ts',
 ];
 
 export default defineConfig({

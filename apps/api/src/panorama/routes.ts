@@ -851,7 +851,6 @@ router.post('/execute', async (req: Request, res: Response) => {
 router.get('/full', async (_req: Request, res: Response) => {
   try {
     const BRAIN_API = process.env.BRAIN_API || 'http://localhost:5221';
-    const QUALITY_API = process.env.QUALITY_API || 'http://localhost:5681';
     const N8N_API = process.env.N8N_BACKEND || 'http://localhost:5679';
 
     // Fetch VPS data
@@ -875,21 +874,6 @@ router.get('/full', async (_req: Request, res: Response) => {
       brainData = { health: 'unavailable', error: 'Service not responding' };
     }
 
-    // Fetch quality status (with timeout)
-    let qualityData: any = { health: 'unavailable' };
-    try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 5000);
-      const response = await fetch(`${QUALITY_API}/api/state`, { signal: controller.signal });
-      clearTimeout(timeout);
-      if (response.ok) {
-        qualityData = await response.json();
-        qualityData.health = qualityData.health || 'ok';
-      }
-    } catch {
-      qualityData = { health: 'unavailable', error: 'Service not responding' };
-    }
-
     // Fetch GitHub panorama (local endpoint)
     let githubData: any = { health: 'unavailable' };
     try {
@@ -911,12 +895,6 @@ router.get('/full', async (_req: Request, res: Response) => {
         endpoint: BRAIN_API,
       },
       {
-        name: 'quality',
-        port: 5681,
-        status: qualityData.health === 'ok' || qualityData.health === 'degraded' ? 'up' : 'down',
-        endpoint: QUALITY_API,
-      },
-      {
         name: 'n8n',
         port: 5679,
         status: 'unknown', // Would need health check
@@ -930,9 +908,9 @@ router.get('/full', async (_req: Request, res: Response) => {
       const timeout = setTimeout(() => controller.abort(), 3000);
       const response = await fetch(`${N8N_API}/healthz`, { signal: controller.signal });
       clearTimeout(timeout);
-      services[2].status = response.ok ? 'up' : 'down';
+      services[1].status = response.ok ? 'up' : 'down';
     } catch {
-      services[2].status = 'down';
+      services[1].status = 'down';
     }
 
     return res.json({
@@ -941,7 +919,6 @@ router.get('/full', async (_req: Request, res: Response) => {
         timestamp: new Date().toISOString(),
         vps: vpsData.vps || vpsData,
         brain: brainData,
-        quality: qualityData,
         github: githubData,
         services,
       },

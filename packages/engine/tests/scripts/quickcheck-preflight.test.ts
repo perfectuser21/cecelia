@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 
 const source = resolve(__dirname, '../../../..');
 const packages = [
-  ['packages/brain', 'lint'], ['packages/engine', 'typecheck'],
+  ['packages/brain', 'lint'], ['packages/engine', 'lint'],
   ['apps/api', 'typecheck'], ['apps/dashboard', 'build'],
 ] as const;
 
@@ -74,7 +74,7 @@ describe('quickcheck 快速准备检查，完整单测由GitHub必需检查负�
     expect(result.status).not.toBe(0);
     expect(result.stdout).not.toContain('本地准备检查通过');
     if ('failure' in options) {
-      expect(result.markers).toEqual(['packages/engine:typecheck']);
+      expect(result.markers).toEqual(['packages/engine:lint']);
       expect(result.stdout).toContain('exit=17');
     } else if ('missingScript' in options) expect(result.stdout + result.stderr).toContain('Missing script');
     else expect(result.stdout + result.stderr).toContain('missing-quickcheck-tool');

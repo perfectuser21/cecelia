@@ -1,10 +1,17 @@
-# DoD：退役 CI 配置的验证入口
+# DoD：现役组件核验与废弃测试退役
 
-- [x] [BEHAVIOR] 固定 Git 事实接受完整已审的新旧入口，混配与漂移拒绝，声明不自动取得执行或 owner 资格。
-  Test: manual:node --test scripts/ci/__tests__/basic-active-ci-retirement.test.mjs
-- [ ] [BEHAVIOR] 既有验证输入与来源协议回归继续有效。
+- [x] [BEHAVIOR] 旧 qa:gate 无法生成假 PASSED 证书，实际 npm 子进程非零且无证书文件。
+  Test: manual:bash -c 'cd packages/quality && npx --no-install vitest run tests/retirement/quality-gate-certificate.test.ts'
+- [x] [BEHAVIOR] 旧 Quality 服务及其消费者退役，实际 API 路由不再请求5681；Brain、N8N等剩余状态仍真实呈现。
+  Test: manual:bash -c 'cd apps/api && npx --no-install vitest run tests/system-status.test.ts tests/panorama-full.test.ts'
+- [x] [BEHAVIOR] Engine 保留真实 Hook/Runner/worktree 回归；TS 演示与自证测试退役，真实语法检查能拒绝坏脚本。
+  Test: manual:node scripts/ci/run-basic-check.mjs engine
+- [x] [BEHAVIOR] 根 frontend 不再选择为 CI 任务，旧路径差分仍验证现役组件；所有现役检查真实传播失败。
+  Test: manual:node --test scripts/ci/__tests__/basic-scope.test.mjs scripts/ci/__tests__/run-basic-check.test.mjs scripts/ci/__tests__/basic-workflow.test.mjs
+- [x] [BEHAVIOR] 当前 Dashboard 在旧 frontend 完全不存在时仍能构建；现役 Quality 工具全部原生回归通过。
+  Test: manual:node scripts/ci/run-basic-check.mjs dashboard
+  Test: manual:node scripts/ci/run-basic-check.mjs quality
+- [x] [BEHAVIOR] 私有真实 worktree list 不扫描用户仓库；真实 FD201 guardian/二次create安全守卫保留且无Python缓存泄漏。
+  Test: manual:bash -c 'cd packages/engine && npx --no-install vitest run tests/e2e/dev-workflow-e2e.test.ts tests/skills/worktree-fd201-leak.test.ts'
+- [ ] [ARTIFACT] 所有删除项有当前消费者核验证据，受信源协议原字节保留，正常 PR 与实际 Main 验收成功。
   Test: manual:node scripts/ci/run-basic-check.mjs scripts
-- [x] [BEHAVIOR] 固定420项删除边界中405项仅经原生三scope闭包与真实head owner获准退役，15项保留原生路径；catalog、旧blob、13引用、入口与消费者漂移拒绝。
-  Test: manual:node --test scripts/ci/__tests__/basic-closed-component-retirement.test.mjs
-- [ ] [ARTIFACT] 正常 PR 合并后 Main CI 与 CI 专属基线真实通过。
-  Test: manual:bash scripts/check-version-sync.sh

@@ -32,6 +32,12 @@ describe('tracked worktree-manage FD201 guardian回归', () => {
     expect(create('second')).toBe(join(fixture.worktrees, basename(fixture.repo), 'second'));
     expect(fixture.guardians()).toHaveLength(2);
   });
+  it('真实Python子进程禁写bytecode，guardian退出前也不能重建HOME缓存', () => {
+    const result = fixture.run('python3', ['-c', 'import json, sys; print(int(sys.dont_write_bytecode))']);
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout.trim()).toBe('1');
+    expect(existsSync(join(fixture.home, 'Library/Caches/Python'))).toBe(false);
+  });
   it('fork入口显式关闭201，静态防线补充真实锁回归', () => {
     const lines = readFileSync(WORKTREE_MANAGE, 'utf8').split('\n').filter(line => /nohup\s+bash/.test(line));
     expect(lines.some(line => line.includes('201>&-'))).toBe(true);

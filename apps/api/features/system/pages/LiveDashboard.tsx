@@ -19,7 +19,6 @@ interface LiveData {
   health: {
     workspace: 'ok' | 'degraded' | 'unavailable';
     brain: 'ok' | 'degraded' | 'unavailable';
-    quality: 'ok' | 'degraded' | 'unavailable';
     n8n: 'ok' | 'degraded' | 'unavailable';
   };
   tasks: Array<{
@@ -193,10 +192,6 @@ export default function LiveDashboard() {
             <div className="flex items-center gap-2">
               <div className={`w-2 h-2 rounded-full ${data?.health.brain === 'ok' ? 'bg-emerald-400' : data?.health.brain === 'degraded' ? 'bg-amber-400' : 'bg-red-400'}`} />
               <span className="text-gray-400">Brain</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className={`w-2 h-2 rounded-full ${data?.health.quality === 'ok' ? 'bg-emerald-400' : data?.health.quality === 'degraded' ? 'bg-amber-400' : 'bg-red-400'}`} />
-              <span className="text-gray-400">Quality</span>
             </div>
             <div className="flex items-center gap-2">
               <div className={`w-2 h-2 rounded-full ${data?.health.n8n === 'ok' ? 'bg-emerald-400' : data?.health.n8n === 'degraded' ? 'bg-amber-400' : 'bg-red-400'}`} />

@@ -32,9 +32,8 @@ export function commandsFor(component, shard) {
       return [step('.', 'docker', 'build', '-f', 'packages/brain/Dockerfile', '-t', 'cecelia-brain:ci-basic', '.')];
     case 'engine':
       return [
-        step('packages/engine', 'npm', 'run', 'typecheck'), vitest('packages/engine'),
+        step('packages/engine', 'npm', 'run', 'lint'), vitest('packages/engine'),
         ...['unit', 'integration', 'integrity'].flatMap(kind => shellTests(`packages/engine/tests/${kind}`)),
-        step('packages/engine', 'npm', 'run', 'build'),
       ];
     case 'api':
       return [step('apps/api', 'npm', 'run', 'typecheck'), vitest('apps/api'), step('apps/api', 'npm', 'run', 'build')];
@@ -42,8 +41,6 @@ export function commandsFor(component, shard) {
       return [step('apps/api', 'npx', '--no-install', 'vitest', 'run', '--config', 'vitest.integration.config.ts')];
     case 'dashboard':
       return [vitest('apps/dashboard'), step('apps/dashboard', 'npm', 'run', 'build')];
-    case 'frontend':
-      return [step('frontend', 'npm', 'run', 'build'), step('frontend', 'npx', '--no-install', 'playwright', 'install', 'chromium', '--with-deps'), step('frontend', 'npm', 'run', 'e2e')];
     case 'android':
       return [step('apps/android-agent', './gradlew', ':app:testDebugUnitTest', '--no-daemon')];
     case 'quality': return [vitest('packages/quality')];

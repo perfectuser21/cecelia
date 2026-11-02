@@ -1,17 +1,13 @@
 {
   "name": "zenithjoy-engine",
   "type": "module",
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
   "scripts": {
-    "build": "tsc",
     "test": "NODE_OPTIONS='--max-old-space-size=2048' vitest run",
     "test:coverage": "NODE_OPTIONS='--max-old-space-size=2048' vitest run --coverage",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit",
-    "qa": "npm run typecheck && npm run test && npm run build",
-    "qa:local": "npm run typecheck",
-    "pr:check": "npm run qa"
+    "qa": "npm run lint && npm run test",
+    "pr:check": "npm run qa",
+    "lint": "node scripts/check-syntax.mjs"
   },
   "keywords": [],
   "author": "",
@@ -26,5 +22,6 @@
     "@vitest/coverage-v8": "^3.2.4",
     "vitest": "^3.2.4"
   },
-  "version": "19.7.6"
+  "version": "19.7.6",
+  "private": true
 }

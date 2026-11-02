@@ -3,27 +3,12 @@ import {skillSourceExcludes} from '../../scripts/ci/skill-source-tests.mjs';
 
 export default defineConfig({
   test: {
-    // Exclude integration tests that require local environment.
-    // Only run unit tests in tests/devgate/ and tests/hooks/ (unit subset).
-    // Run the following locally after setting up the environment:
-    // - tests/*.test.ts:           root-level integration tests (worker, gateway, heartbeat, queue, e2e)
-    // - tests/api/**:              needs running API server at localhost:5220
-    // - tests/gate/**:             needs cleanup.sh, regression-contract.yaml, and local files
-    // - pr-gate-phase1.test.ts:    needs regression-contract.yaml with specific IDs and monorepo paths
-    // - pr-gate-phase2.test.ts:    needs PRD/DoD files in working directory
-    // - install-hooks.test.ts:     needs hook-core directory from install-hooks.sh
-    // - pr-gate.test.ts:           uses stat -c %a (Linux-only), incompatible with macOS
-    // - branch-protect.test.ts:    uses stat -c %a (Linux-only), incompatible with macOS
+    // 在线 Brain/Workspace CRUD 与独立 workflows 脚本需专用环境。
+    // 精确排除现存测试，避免新增本地回归被目录级规则静默排除。
     exclude: [
       ...skillSourceExcludes('quality'),
-      'tests/*.test.ts',
-      'tests/api/**',
-      'tests/gate/**',
-      'tests/hooks/install-hooks.test.ts',
-      'tests/hooks/pr-gate-phase1.test.ts',
-      'tests/hooks/pr-gate-phase2.test.ts',
-      'tests/hooks/pr-gate.test.ts',
-      'tests/hooks/branch-protect.test.ts',
+      'tests/api/cross-package-integration.test.ts',
+      'tests/ci-poll-sh-regression.test.ts',
       '**/node_modules/**',
       'e2e/**',
     ],

@@ -50,13 +50,6 @@ tests:
     ci_layer: L4
     status: active
 
-  - test_id: e2e_gateway
-    file: packages/quality/tests/e2e-gateway.test.ts
-    type: e2e
-    covers_feature: engine_devgate
-    ci_layer: L4
-    status: active
-
   # ============================================================
   # Integration 测试
   # ============================================================
@@ -108,13 +101,6 @@ tests:
     file: apps/api/tests/panorama-full.test.ts
     type: integration
     covers_feature: okr_system
-    ci_layer: L3
-    status: active
-
-  - test_id: api_integration
-    file: packages/quality/tests/api/integration.test.js
-    type: integration
-    covers_feature: task_create
     ci_layer: L3
     status: active
 

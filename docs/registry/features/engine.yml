@@ -42,13 +42,8 @@ features:
       unit:
         - packages/engine/tests/codex-runner-v2.5.test.ts
         - packages/engine/tests/codex-runner.test.ts
-        - packages/engine/tests/dev/checklist.test.ts
         - packages/engine/tests/devgate-fake-test-detection.wrapper.test.ts
         - packages/engine/tests/playwright-runner.test.ts
-        - packages/engine/tests/stop-hook-bypass-fix.test.ts
-        - packages/quality/tests/hooks/pr-gate-phase1.test.ts
-        - packages/quality/tests/hooks/pr-gate-phase2.test.ts
-        - packages/quality/tests/hooks/pr-gate.test.ts
       integration: []
       e2e:
         - packages/engine/tests/playwright-runner.test.ts
@@ -63,13 +58,8 @@ features:
           unit:
             - packages/engine/tests/codex-runner-v2.5.test.ts
             - packages/engine/tests/codex-runner.test.ts
-            - packages/engine/tests/dev/checklist.test.ts
             - packages/engine/tests/devgate-fake-test-detection.wrapper.test.ts
             - packages/engine/tests/playwright-runner.test.ts
-            - packages/engine/tests/stop-hook-bypass-fix.test.ts
-            - packages/quality/tests/hooks/pr-gate-phase1.test.ts
-            - packages/quality/tests/hooks/pr-gate-phase2.test.ts
-            - packages/quality/tests/hooks/pr-gate.test.ts
           integration: []
           e2e:
             - packages/engine/tests/playwright-runner.test.ts

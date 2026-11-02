@@ -18,6 +18,7 @@ export function nativeWorktreeFixture() {
   const env: Record<string, string> = {
     PATH: `${bin}:${process.env.PATH || '/usr/bin:/bin'}`, HOME: home, TMPDIR: join(base, 'tmp'),
     BRAIN_URL: 'http://127.0.0.1:1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null',
+    PYTHONDONTWRITEBYTECODE: '1',
     LANG: 'C.UTF-8', WORKTREE_BASE: worktrees, CLAUDE_SESSION_ID: 'native-fixture-session', HEARTBEAT_INTERVAL: '0.1',
   };
   const run = (command: string, args: string[], overrides: Record<string, string> = {}) =>

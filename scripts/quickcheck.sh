@@ -119,7 +119,8 @@ for PKG in packages/engine packages/brain apps/api apps/dashboard; do
   if echo "$CHANGED_FILES" | grep -q "^$PKG/"; then
     case "$PKG" in
       packages/brain) run_preflight "$PKG" npm run lint ;;
-      packages/engine|apps/api) run_preflight "$PKG" npm run typecheck ;;
+      packages/engine) run_preflight "$PKG" npm run lint ;;
+      apps/api) run_preflight "$PKG" npm run typecheck ;;
       apps/dashboard) run_preflight "$PKG" npm run build ;;
     esac
   fi

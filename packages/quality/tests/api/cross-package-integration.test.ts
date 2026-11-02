@@ -5,7 +5,6 @@
  *   1. Brain API（port 5221）任务 CRUD — tasks/tasks 端点
  *   2. Brain API 战略决策 CRUD — strategic-decisions 端点
  *   3. 跨模块校验：创建的任务可通过 GET /api/brain/tasks 查询到
- *   4. Workspace API（port 5220）— 服务未运行时自动跳过
  *
  * 关键设计：
  *   - beforeAll 创建所有测试数据
@@ -16,7 +15,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 
 const BRAIN_BASE = process.env.BRAIN_BASE || 'http://localhost:5221';
-const WORKSPACE_BASE = process.env.API_BASE || 'http://localhost:5220';
 const TEST_PREFIX = '[TEST-XPKG]';
 
 // ────────────────────────────────────────────────────────────
@@ -221,64 +219,5 @@ describe('Brain API — Strategic Decisions CRUD with Auto Cleanup', () => {
     const decisions: Array<{ id: string; topic: string }> = body.data ?? body;
     const found = decisions.find((d) => d.id === createdDecisionId);
     expect(found?.topic).toContain(TEST_PREFIX);
-  });
-});
-
-// ────────────────────────────────────────────────────────────
-// Suite 3: Workspace API — 服务不可用时跳过
-// ────────────────────────────────────────────────────────────
-describe('Workspace API — 可用时执行集成校验', () => {
-  let workspaceAvailable = false;
-  let testProjectId: string;
-
-  beforeAll(async () => {
-    workspaceAvailable = await isServiceAvailable(`${WORKSPACE_BASE}/api/workspaces`);
-    if (!workspaceAvailable) return;
-
-    const wsRes = await fetch(`${WORKSPACE_BASE}/api/workspaces`);
-    const workspaces = await wsRes.json();
-    const workspaceId = workspaces[0]?.id;
-
-    const projRes = await fetch(`${WORKSPACE_BASE}/api/projects`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        workspace_id: workspaceId,
-        name: `${TEST_PREFIX} Cross-Package Test Project`,
-      }),
-    });
-    if (projRes.status === 201) {
-      const project = await projRes.json();
-      testProjectId = project.id;
-    }
-  });
-
-  afterAll(async () => {
-    if (!workspaceAvailable || !testProjectId) return;
-    await fetch(`${WORKSPACE_BASE}/api/projects/${testProjectId}`, { method: 'DELETE' });
-  });
-
-  it('Workspace API 不可用时跳过（CI 环境正常行为）', () => {
-    if (!workspaceAvailable) {
-      console.log('[SKIP] Workspace API 不可用，跳过 Workspace 集成测试');
-      return;
-    }
-    expect(testProjectId).toBeTruthy();
-  });
-
-  it('GET /api/workspaces 应返回工作区列表', async () => {
-    if (!workspaceAvailable) return;
-    const res = await fetch(`${WORKSPACE_BASE}/api/workspaces`);
-    expect(res.status).toBe(200);
-    const workspaces = await res.json();
-    expect(Array.isArray(workspaces)).toBe(true);
-  });
-
-  it('创建的测试 Project 可被 GET 查询', async () => {
-    if (!workspaceAvailable || !testProjectId) return;
-    const res = await fetch(`${WORKSPACE_BASE}/api/projects/${testProjectId}`);
-    expect(res.status).toBe(200);
-    const project = await res.json();
-    expect(project.name).toContain(TEST_PREFIX);
   });
 });

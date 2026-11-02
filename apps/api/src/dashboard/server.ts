@@ -51,9 +51,6 @@ const FEISHU_AUTH_BACKEND = process.env.FEISHU_AUTH_BACKEND || 'http://localhost
 // N8N backend (for workflow automation)
 const N8N_BACKEND = process.env.N8N_BACKEND || 'http://localhost:5678';
 
-// Cecelia Quality API (quality monitoring) - port 5681
-const QUALITY_API = process.env.QUALITY_API || 'http://localhost:5681';
-
 // Cecelia Brain API (semantic brain + orchestrator)
 const BRAIN_API = process.env.BRAIN_API || 'http://localhost:5221';
 
@@ -72,15 +69,6 @@ app.use((_req, res, next) => {
 app.use(compression() as unknown as express.RequestHandler);
 
 // Proxy routes BEFORE body parser (so request body is not consumed)
-// Proxy /api/quality to cecelia-quality API
-// Note: Express strips the mount path, so /api/quality/state becomes /state in the middleware
-// We need to prepend /api to make it /api/state for the target server
-app.use('/api/quality', createProxyMiddleware({
-  target: QUALITY_API,
-  changeOrigin: true,
-  pathRewrite: (path) => `/api${path}`  // /state → /api/state
-}));
-
 // Local orchestrator queue management routes (registered before proxy)
 // These routes handle queue operations locally: /queue, /execute-now/:id, /pause/:id
 // All other orchestrator routes are proxied to semantic-brain API
