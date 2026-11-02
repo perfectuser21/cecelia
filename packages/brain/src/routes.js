@@ -42,11 +42,13 @@ import crystalRouter from './routes/crystal.js';
 import sessionProvenanceRouter from './routes/session-provenance.js';
 import { createDirectoryProjectionRouter } from './routes/directory-projection.js';
 import directoryPool from './db.js';
+import { createCommonRunnerRouter } from './routes/common-runner.js';
 
 export { triggerAutoRCA } from './routes/brain-meta.js';
 export { resolveRelatedFailureMemories } from './routes/shared.js';
 
 const router = Router();
+router.use('/common-runner', createCommonRunnerRouter({ pool: directoryPool }));
 router.use('/workflow-assembly-maintenance',createNativeAssemblyRouter({pool:nativeAssemblyPool}));
 router.use('/session-provenance', sessionProvenanceRouter);
 router.use('/projections/notion/directory', createDirectoryProjectionRouter({ pool: directoryPool }));

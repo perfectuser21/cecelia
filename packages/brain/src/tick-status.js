@@ -11,6 +11,7 @@
  */
 
 import pool from './db.js';
+import { tickDispatchEnabled } from './tick-dispatch-gate.js';
 import { checkServerResources, MAX_SEATS, INTERACTIVE_RESERVE } from './executor.js';
 import { calculateSlotBudget } from './slot-allocator.js';
 import { getAllStates } from './circuit-breaker.js';
@@ -54,9 +55,7 @@ async function getTickStatus() {
   // 调度打到生产 bridge(3457)，Auto Staging Deploy 因此 12 连红。
   // 注意不能复用 CECELIA_TICK_ENABLED=false：CI real-env 用它起 Brain 后靠 API 动态 enableTick，
   // 把它变成永久锁死会打死 11 个 tick 类 smoke（PR #3566 首轮实锤）。
-  const enabled = process.env.CECELIA_TICK_HARD_OFF === '1'
-    ? false
-    : (memory[TICK_ENABLED_KEY]?.enabled ?? true);
+  const enabled = tickDispatchEnabled(memory[TICK_ENABLED_KEY]);
   const lastTick = memory[TICK_LAST_KEY]?.timestamp || null;
   const actionsToday = memory[TICK_ACTIONS_TODAY_KEY]?.count || 0;
 

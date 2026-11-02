@@ -98,6 +98,8 @@ export async function selectNextDispatchableTask(goalIds, excludeIds = [], optio
     WHERE ${goalCondition}
       AND t.status = 'queued'
       AND t.claimed_by IS NULL
+      -- Explicit common runner tasks belong to the HTTP completion job, never a legacy executor.
+      AND NOT COALESCE(t.payload ? 'common_runner',false)
       -- headed_manual 消费语义（task 94ee0ec4，铁律 9f14c074）：建单方标记
       -- payload.headed_manual=true（jsonb 布尔或字符串 'true' 均识别，payload->>
       -- 对两种写法都返回文本 'true'）的任务留给有头人工执行，不进无头自动派发。
