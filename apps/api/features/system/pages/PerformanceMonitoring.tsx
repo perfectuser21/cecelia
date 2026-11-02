@@ -78,7 +78,6 @@ function getMockData(): SystemMetricsResponse {
 const SERVICE_LABELS: Record<string, string> = {
   brain: 'Brain',
   workspace: 'Workspace',
-  quality: 'Quality',
   n8n: 'N8N',
 };
 
@@ -608,10 +607,6 @@ export default function PerformanceMonitoring() {
                       <stop offset="5%" stopColor="#3B82F6" stopOpacity={0.3}/>
                       <stop offset="95%" stopColor="#3B82F6" stopOpacity={0}/>
                     </linearGradient>
-                    <linearGradient id="gradientQuality" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#10B981" stopOpacity={0.3}/>
-                      <stop offset="95%" stopColor="#10B981" stopOpacity={0}/>
-                    </linearGradient>
                     <linearGradient id="gradientN8n" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="5%" stopColor="#F59E0B" stopOpacity={0.3}/>
                       <stop offset="95%" stopColor="#F59E0B" stopOpacity={0}/>
@@ -661,17 +656,6 @@ export default function PerformanceMonitoring() {
                       dataKey="workspace"
                       stroke="#3B82F6"
                       fill="url(#gradientWorkspace)"
-                      strokeWidth={2}
-                      dot={{ r: 2 }}
-                      connectNulls
-                    />
-                  )}
-                  {Object.keys(healthHistory).includes('quality') && (
-                    <Area
-                      type="monotone"
-                      dataKey="quality"
-                      stroke="#10B981"
-                      fill="url(#gradientQuality)"
                       strokeWidth={2}
                       dot={{ r: 2 }}
                       connectNulls

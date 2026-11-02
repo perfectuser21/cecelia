@@ -31,20 +31,6 @@ repos:
       lint: ruff check src/ tests/
     evidence_path: .qa-evidence.json
     contract: contracts/cecelia-semantic-brain.regression-contract.yaml
-  - id: cecelia-quality
-    name: Cecelia Quality
-    type: Infrastructure
-    path: /home/xx/dev/cecelia-quality
-    git_url: https://github.com/ZenithJoycloud/cecelia-quality
-    main_branch: develop
-    owner: Core Team
-    priority: P0
-    enabled: true
-    port: 5681
-    runners:
-      qa: npm test
-    evidence_path: .qa-evidence.json
-    contract: contracts/cecelia-quality.regression-contract.yaml
   - id: cecelia-semantic-brain-agent-monitor
     name: cecelia-semantic-brain-agent-monitor
     type: Service

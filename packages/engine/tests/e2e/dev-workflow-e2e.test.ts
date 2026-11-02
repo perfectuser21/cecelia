@@ -3,6 +3,7 @@ import { execSync, spawnSync } from 'child_process';
 import { rmSync, existsSync, readdirSync } from 'fs';
 import { resolve, join } from 'path';
 import * as os from 'os';
+import { nativeWorktreeFixture } from '../helpers/native-worktree-fixture';
 
 // ============================================================================
 // E2E: /dev 全流程关键 checkpoint 验证
@@ -47,15 +48,18 @@ describe('worktree-manage create', () => {
     expect(combined).toContain('task-name');
   });
 
-  it('list 命令能正常运行并输出当前 worktree', () => {
-    const result = spawnSync('bash', [WORKTREE_MANAGE, 'list'], {
-      encoding: 'utf8',
-      cwd: ENGINE_ROOT,
-      timeout: 30000,
-    });
-    const combined = (result.stdout || '') + (result.stderr || '');
-    expect(combined.length).toBeGreaterThan(0);
-  }, 30000);
+  it('list 命令只读取私有真实Git仓库，并输出该仓库worktree', () => {
+    const fixture = nativeWorktreeFixture();
+    try {
+      const worktree = join(fixture.worktrees, 'listed-worktree');
+      fixture.git('worktree', 'add', '-b', 'cp-list-fixture', worktree);
+      const result = fixture.run('bash', [WORKTREE_MANAGE, 'list']);
+      expect(result.error).toBeUndefined();
+      expect(result.status, result.stdout + result.stderr).toBe(0);
+      expect(result.stdout).toContain('cp-list-fixture');
+      expect(fixture.git('worktree', 'list')).toContain(worktree);
+    } finally { fixture.dispose(); }
+  });
 
   it.skip('create 实际创建 worktree，路径存在（含清理）[CI环境无git worktree]', () => {
     const taskName = `e2e-${Date.now()}`;

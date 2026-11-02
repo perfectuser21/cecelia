@@ -66,7 +66,7 @@ export async function createSystemApiFixture<Body = unknown>() {
     process.env.PGOPTIONS = `-c search_path=${schema} -c statement_timeout=5000`;
     process.env.PRD_TEMP_DIR = tempDirectory;
     for (const [key, service] of Object.entries({
-      BRAIN_API: 'brain', WORKSPACE_API: 'workspace', QUALITY_API: 'quality',
+      BRAIN_API: 'brain', WORKSPACE_API: 'workspace',
       N8N_BACKEND: 'n8n', CECELIA_EXECUTOR_URL: 'executor',
     })) process.env[key] = `http://${service}.fixture.invalid`;
 
@@ -74,7 +74,7 @@ export async function createSystemApiFixture<Body = unknown>() {
       const url = new URL(typeof input === 'string' || input instanceof URL ? String(input) : input.url);
       if (baseUrl && url.origin === new URL(baseUrl).origin) return nativeFetch(input, options);
       if (['http://brain.fixture.invalid/api/brain/tick/status', 'http://workspace.fixture.invalid/api/system/health',
-        'http://quality.fixture.invalid/api/state', 'http://n8n.fixture.invalid/healthz'].includes(url.href)
+        'http://n8n.fixture.invalid/healthz'].includes(url.href)
         && (!options?.method || options.method === 'GET')) return Response.json({ success: true });
       if (url.href === 'http://executor.fixture.invalid/execute' && options?.method === 'POST') {
         const body = JSON.parse(String(options.body));
@@ -97,7 +97,7 @@ export async function createSystemApiFixture<Body = unknown>() {
     const { default: router } = await import('../../routes.js');
     ({ stopHealthChecks } = await import('../../degrade.js'));
     stopHealthChecks();
-    // Drain the import-time health cycle; its four fetches are fixture-only.
+    // Drain the import-time health cycle; its three fetches are fixture-only.
     await new Promise(resolve => setImmediate(resolve));
     const app = express();
     app.use(express.json());

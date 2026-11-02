@@ -108,61 +108,6 @@ describe("branch-protect.sh", () => {
     expect(result).toBe("");
   });
 
-  it("should check code file extensions correctly", () => {
-    // Test that .ts files are protected
-    const codeExtensions = ["ts", "tsx", "js", "jsx", "py", "go", "sh"];
-    for (const ext of codeExtensions) {
-      const input = JSON.stringify({
-        tool_name: "Write",
-        tool_input: { file_path: `/tmp/test.${ext}` },
-      });
-
-      // Just verify no crash - actual branch check happens in git context
-      // Note: We allow errors since the hook may fail on non-git directories
-      let didThrow = false;
-      try {
-        execSync(`echo '${input}' | bash "${HOOK_PATH}"`, {
-          encoding: "utf-8",
-          stdio: ["pipe", "pipe", "pipe"],
-        });
-      } catch {
-        // Expected to throw in non-git context - that's ok
-        didThrow = true;
-      }
-      // The hook should run (either pass or fail) without crashing
-      expect(didThrow === true || didThrow === false).toBe(true);
-    }
-  });
-
-  it("should protect important directories", () => {
-    const protectedPaths = [
-      "/project/hooks/test.sh",
-      "/project/.github/workflows/ci.yml",
-    ];
-
-    for (const testPath of protectedPaths) {
-      const input = JSON.stringify({
-        tool_name: "Write",
-        tool_input: { file_path: testPath },
-      });
-
-      // Just verify no crash - actual branch check happens in git context
-      // Note: We allow errors since the hook may fail on non-git directories
-      let didThrow = false;
-      try {
-        execSync(`echo '${input}' | bash "${HOOK_PATH}"`, {
-          encoding: "utf-8",
-          stdio: ["pipe", "pipe", "pipe"],
-        });
-      } catch {
-        // Expected to throw in non-git context - that's ok
-        didThrow = true;
-      }
-      // The hook should run (either pass or fail) without crashing
-      expect(didThrow === true || didThrow === false).toBe(true);
-    }
-  });
-
   // v30: Skills protection removed — skills migrated to zenithjoy-skills repo
   describe("skills protection (v18)", () => {
     it("should allow all skills including formerly-Engine skills (v30)", () => {

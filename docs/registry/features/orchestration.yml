@@ -171,9 +171,6 @@ features:
         - packages/brain/src/__tests__/weekly-report-generator.test.js
         - packages/brain/src/__tests__/work-streams-route.test.js
         - packages/brain/src/utils/format-duration.test.js
-        - packages/quality/tests/api/dashboard.test.ts
-        - packages/quality/tests/api/registry.test.ts
-        - packages/quality/tests/heartbeat.test.ts
       integration:
         - packages/brain/src/__tests__/integration/brain-endpoint-contracts.test.js
         - packages/brain/src/__tests__/integration/critical-routes.integration.test.js
@@ -281,9 +278,6 @@ features:
             - packages/brain/src/__tests__/weekly-report-generator.test.js
             - packages/brain/src/__tests__/work-streams-route.test.js
             - packages/brain/src/utils/format-duration.test.js
-            - packages/quality/tests/api/dashboard.test.ts
-            - packages/quality/tests/api/registry.test.ts
-            - packages/quality/tests/heartbeat.test.ts
           integration:
             - packages/brain/src/__tests__/integration/brain-endpoint-contracts.test.js
             - packages/brain/src/__tests__/integration/critical-routes.integration.test.js
@@ -570,8 +564,6 @@ features:
         - packages/brain/src/__tests__/validate-okr-cycle.test.js
         - packages/brain/src/__tests__/validate-okr-spec-load.test.js
         - packages/brain/src/__tests__/validate-okr-structure.test.js
-        - packages/quality/tests/api/goals.test.ts
-        - packages/quality/tests/api/projects.test.ts
       integration:
         - packages/brain/src/__tests__/integration/okr-decomposition-flow.integration.test.js
       e2e: []
@@ -610,8 +602,6 @@ features:
             - packages/brain/src/__tests__/validate-okr-cycle.test.js
             - packages/brain/src/__tests__/validate-okr-spec-load.test.js
             - packages/brain/src/__tests__/validate-okr-structure.test.js
-            - packages/quality/tests/api/goals.test.ts
-            - packages/quality/tests/api/projects.test.ts
           integration:
             - packages/brain/src/__tests__/integration/okr-decomposition-flow.integration.test.js
           e2e: []

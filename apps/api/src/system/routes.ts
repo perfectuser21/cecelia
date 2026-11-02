@@ -4,7 +4,6 @@
  *
  * Aggregates status from all subsystems:
  * - Brain (semantic-brain): Decision, Focus, Tick, Tasks
- * - Quality (cecelia-quality): QA queue, runs
  * - Workflows (N8N): Active workers, pending tasks
  */
 
@@ -87,7 +86,6 @@ const DLQ_SCRIPT = path.resolve(__dirname, '../../../../scripts/dlq-utils.sh');
 
 // Service endpoints
 const BRAIN_API = process.env.BRAIN_API || 'http://localhost:5221';
-const QUALITY_API = process.env.QUALITY_API || 'http://localhost:5681';
 const N8N_API = process.env.N8N_BACKEND || 'http://localhost:5679';
 
 // Cache configuration
@@ -169,30 +167,6 @@ async function getBrainStatus(): Promise<ServiceStatus> {
 }
 
 /**
- * Get Quality status from cecelia-quality
- */
-async function getQualityStatus(): Promise<ServiceStatus> {
-  try {
-    const stateData = await fetchWithTimeout(`${QUALITY_API}/api/state`);
-
-    return {
-      health: stateData.health || 'ok',
-      queueLength: stateData.queueLength || 0,
-      lastRun: stateData.lastRun || null,
-      stats: stateData.stats || null,
-    };
-  } catch (error) {
-    return {
-      health: 'unavailable',
-      error: error instanceof Error ? error.message : 'Unknown error',
-      queueLength: 0,
-      lastRun: null,
-      stats: null,
-    };
-  }
-}
-
-/**
  * Get Workflows status from N8N
  */
 async function getWorkflowsStatus(): Promise<ServiceStatus> {
@@ -247,14 +221,13 @@ router.get('/status', async (_req: Request, res: Response) => {
     }
 
     // Fetch all statuses in parallel
-    const [brain, quality, workflows] = await Promise.all([
+    const [brain, workflows] = await Promise.all([
       getBrainStatus(),
-      getQualityStatus(),
       getWorkflowsStatus(),
     ]);
 
     // Determine overall health
-    const healths = [brain.health, quality.health, workflows.health];
+    const healths = [brain.health, workflows.health];
     let overallHealth: 'ok' | 'degraded' | 'unavailable' = 'ok';
     if (healths.includes('unavailable')) {
       overallHealth = healths.every(h => h === 'unavailable') ? 'unavailable' : 'degraded';
@@ -265,7 +238,6 @@ router.get('/status', async (_req: Request, res: Response) => {
     const data = {
       health: overallHealth,
       brain,
-      quality,
       workflows,
       timestamp: new Date().toISOString(),
     };
@@ -293,7 +265,7 @@ router.get('/status', async (_req: Request, res: Response) => {
  *
  * Returns:
  * - overall: healthy | degraded | unhealthy
- * - services: status and latency for each service (brain, workspace, quality, n8n)
+ * - services: status and latency for each service (brain, workspace, n8n)
  * - degraded: whether system is in degraded mode
  */
 router.get('/health', (_req: Request, res: Response) => {
@@ -1252,7 +1224,7 @@ router.post('/dev-session/:sessionId/summary', async (req: Request, res: Respons
  * Aggregated live status for dashboard - single call gets all data
  *
  * Returns:
- * - health: workspace, brain, quality, n8n status
+ * - health: workspace, brain, n8n status
  * - tasks: recent 20 tasks
  * - dev_sessions: recent 10 dev sessions
  * - governance: dlq_count, degrade_status, assertions
@@ -1261,9 +1233,8 @@ router.post('/dev-session/:sessionId/summary', async (req: Request, res: Respons
 router.get('/live', async (_req: Request, res: Response) => {
   try {
     // Fetch all data in parallel for speed
-    const [brain, quality, n8n, devSessions, planStatus, assertions, degradeState] = await Promise.all([
+    const [brain, n8n, devSessions, planStatus, assertions, degradeState] = await Promise.all([
       getBrainStatus(),
-      getQualityStatus(),
       getWorkflowsStatus(),
       queryDevSessions({ limit: 10 }),
       getPlanStatus(),
@@ -1292,7 +1263,7 @@ router.get('/live', async (_req: Request, res: Response) => {
     }
 
     // Determine overall workspace health
-    const healths = [brain.health, quality.health, n8n.health];
+    const healths = [brain.health, n8n.health];
     let workspaceHealth: 'ok' | 'degraded' | 'unavailable' = 'ok';
     if (healths.includes('unavailable')) {
       workspaceHealth = healths.every(h => h === 'unavailable') ? 'unavailable' : 'degraded';
@@ -1304,7 +1275,6 @@ router.get('/live', async (_req: Request, res: Response) => {
       health: {
         workspace: workspaceHealth,
         brain: brain.health,
-        quality: quality.health,
         n8n: n8n.health,
       },
       tasks,

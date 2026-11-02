@@ -35,7 +35,7 @@ PR 和 Main 共用 `ci.yml`，Nightly 使用 `nightly-regression.yml`；下方�
 | Brain | 完整原生单测六分片；第一片还跑 lint 与全部 Fleet Shell 回归 |
 | Brain runtime | 新建专用 PG 后执行正式迁移；启动当前源码；HTTP 任务生命周期与KV读写、独立SQL读回；交接文件仅进本人临时目录；真实SIGINT/SIGTERM回归确认本人进程关闭并清理目录 |
 | Brain image | 使用正式 Dockerfile 构建真实镜像 |
-| Engine | 类型检查、完整原生单测、unit/integration/integrity Shell 回归及构建 |
+| Engine | 现役脚本语法检查、完整原生单测、unit/integration/integrity Shell 回归 |
 | API | 类型检查、完整单测和编译 |
 | API PG | 临时HTTP服务与每文件私有scratch schema，memory/planning/dev-session共45项真实合同；缺DB或未知外连失败，收尾关闭HTTP与pool并删除本人schema |
 | Dashboard | 完整单测和生产构建 |
@@ -43,7 +43,7 @@ PR 和 Main 共用 `ci.yml`，Nightly 使用 `nightly-regression.yml`；下方�
 | Ops | 部署、预览、镜像保留与回退、Runner、进程清理等既有 Node/Shell 夹具；自动发现同类新增测试，关键类别为空即失败 |
 | scripts | CI 自身行为回归、事实/版本一致性、迁移同号与 Skill 所有权检查 |
 | Android | 仅相关客户端改动选择 Gradle/JVM 测试，纳入同一个 ci-passed |
-| frontend | 路由表标记 Legacy/deploy:false；现役发布使用 apps/dashboard。旧目录自身变更仍检查构建和浏览器；未修改旧应用不阻断现役服务全量 |
+| 已退役组件 | 根 frontend 与独立 L5 工作流、旧 Quality API／Worker／Gateway 及其专属测试已删除；现役前端为 apps/dashboard，Quality 保留共享 DevGate、Smoke 与 Goldset |
 
 Brain/Engine/API 的共享依赖变更会选择共享运行组及 Ops 回归；全局脚本、依赖和配置变更保守选择现役服务全量。未知可执行路径不会被当成纯文档略过。只有明确的文档路径/文件名走轻量检查，仍运行 CI 自身回归和安全扫描；运行时 Markdown 提示词按所属组件检查，MDX 不按普通文档免检。
 
@@ -107,12 +107,11 @@ PR 从原始 ZIP 和官方 run/job/check/App 身份重新建立内存能力，�
 | integration-nightly | 旧接口夹具与重复夜间入口；完整数据库回归已集中 |
 | nightly-real-machine / smoke-e2e-nightly | 假定常驻 5222 与历史任务 ID；按需环境诊断，不冒充每个源码版本的验收 |
 | pr-review | 在线 AI 辅助审查按需调用，不再自动依赖付费 API 或截断 diff 判合并资格 |
-| ci-l5-e2e-frontend | 旧应用浏览器诊断按需调用 |
 | ci.yml 内旧 DoD 动态 eval、TDD 顺序、Learning 格式、分支名、PR 大小、正则测试形状与台账棘轮 | 不构成最低源码正确性证明；实际行为与 Shell 回归仍归属相应组件 |
 
 开发前仍遵循 AGENTS.md 的 DevGate 和 PR 流程。退役工作流形状断言已迁到真实范围选择、失败传播、隔离和业务行为测试，不用把旧任务名留在新 CI 中来满足历史字符串测试。
 
-本地 `quickcheck` 负责快速准备：Brain lint、Engine/API 类型检查、Dashboard 构建；CI 或根依赖变更还运行 scripts 检查。保留互斥锁、真实差分、格式和失败阻断；DoD 使用正式 Test 映射校验，允许后续验收如实保持未完成。本地通过只表示准备完成，完整组件测试集中由 GitHub 的统一门禁验收。
+本地 `quickcheck` 负责快速准备：Brain lint、Engine 现役脚本语法检查、API 类型检查、Dashboard 构建；CI 或根依赖变更还运行 scripts 检查。保留互斥锁、真实差分、格式和失败阻断；DoD 使用正式 Test 映射校验，允许后续验收如实保持未完成。本地通过只表示准备完成，完整组件测试集中由 GitHub 的统一门禁验收。
 
 ## 本地复核
 

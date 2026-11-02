@@ -38,13 +38,11 @@ interface DegradeState {
   services: {
     brain: ServiceHealth;
     workspace: ServiceHealth;
-    quality: ServiceHealth;
     n8n: ServiceHealth;
   };
 }
 
 // Service endpoints
-const QUALITY_API = process.env.QUALITY_API || 'http://localhost:5681';
 const N8N_API = process.env.N8N_BACKEND || 'http://localhost:5679';
 
 // Global state
@@ -55,7 +53,6 @@ const state: DegradeState = {
   services: {
     brain: { healthy: true, lastCheck: null, lastError: null, consecutiveFailures: 0, latencyMs: null },
     workspace: { healthy: true, lastCheck: null, lastError: null, consecutiveFailures: 0, latencyMs: null },
-    quality: { healthy: true, lastCheck: null, lastError: null, consecutiveFailures: 0, latencyMs: null },
     n8n: { healthy: true, lastCheck: null, lastError: null, consecutiveFailures: 0, latencyMs: null },
   },
 };
@@ -95,7 +92,7 @@ async function checkServiceHealth(
  * Update service health state
  */
 function updateServiceHealth(
-  service: 'brain' | 'workspace' | 'quality' | 'n8n',
+  service: 'brain' | 'workspace' | 'n8n',
   result: { healthy: boolean; error: string | null; latencyMs: number }
 ): void {
   const svc = state.services[service];
@@ -177,17 +174,15 @@ async function triggerDLQReplay(): Promise<void> {
  */
 async function runHealthCheck(): Promise<void> {
   // Check all services in parallel for better performance
-  const [brainResult, workspaceResult, qualityResult, n8nResult] = await Promise.all([
+  const [brainResult, workspaceResult, n8nResult] = await Promise.all([
     checkServiceHealth('brain', `${BRAIN_API}/api/brain/tick/status`),
     checkServiceHealth('workspace', `${WORKSPACE_API}/api/system/health`),
-    checkServiceHealth('quality', `${QUALITY_API}/api/state`),
     checkServiceHealth('n8n', `${N8N_API}/healthz`),
   ]);
 
   // Update all service health states
   updateServiceHealth('brain', brainResult);
   updateServiceHealth('workspace', workspaceResult);
-  updateServiceHealth('quality', qualityResult);
   updateServiceHealth('n8n', n8nResult);
 
   // Evaluate degraded state

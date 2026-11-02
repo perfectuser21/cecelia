@@ -11,7 +11,7 @@ describe('网站功能清单', () => {
     for (const category of ['查询', '输入', '变更', '输出']) {
       expect(screen.getByRole('button', { name: category, exact: true })).toBeVisible();
     }
-    expect(screen.getByText('249')).toBeVisible();
+    expect(within(screen.getByRole('region', { name: '全站盘点数量' })).getByText('243')).toBeVisible();
     expect(screen.getByText(/可用数是已验收下限/)).toBeVisible();
     expect(screen.getByText(/^盘点 2026-10-01/)).toBeVisible();
     expect(screen.getByText(/配置变更闭环增加 1 项/)).toBeVisible();
