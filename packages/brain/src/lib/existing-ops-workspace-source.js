@@ -397,7 +397,8 @@ export async function collectNativeFutureImpactSources({basicCi,read,parse,revis
  try{
   const texts=new Map([[IMPACT_WORKFLOW,workflow]]),rows=[];
   for(const path of ACTIVE_TYPED_PATHS){const text=texts.get(path)??await read(path);if(!text)return false;texts.set(path,text);rows.push([path,digest(text)]);}
-  if(digest(JSON.stringify(rows))!==ACTIVE_TYPED_TUPLE)return false;
+  // 仅追加验证入口退役扩展后的完整32源组合；任一成员漂移仍不接受。
+  if(![ACTIVE_TYPED_TUPLE,'e9b51e677bec75583d45ec3f163c43d9b5b20b88d8e63ed39435d31fd4648c2e'].includes(digest(JSON.stringify(rows))))return false;
   const programs=new Map([...texts].filter(([p])=>p.endsWith('.mjs')||p.endsWith('.js')).map(([p,text])=>[p,parse(text)]));
   const ci=name=>'scripts/ci/'+name+'.mjs',program=name=>programs.get(ci(name));
   const fn=(name,id)=>{const nodes=[];inspectNodes(program(name),n=>{if(n.type==='FunctionDeclaration'&&n.id?.name===id)nodes.push(n);});if(nodes.length!==1)fail();return nodes[0];};
