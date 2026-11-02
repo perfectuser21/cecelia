@@ -13,10 +13,8 @@ const referenceCatalogs = [
   'docs/registry/features/task.yml',
   'docs/registry/test-registry.yml',
   'packages/engine/regression-contract.yaml',
-  'packages/quality/contracts/cecelia-quality.regression-contract.yaml',
-  'packages/quality/control-plane/repo-registry.yaml',
-  'packages/quality/regression-contract.yaml',
   'test-registry.yaml',
+  'packages/brain/config/contracts/cecelia-module-boundaries.yaml',
 ];
 
 for (const path of referenceCatalogs) {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
@@ -18,7 +18,7 @@ function quickcheck(dod: string, file = 'DoD.md') {
   };
   try {
     for (const path of ['scripts/quickcheck.sh', 'scripts/lib/quickcheck-lock.sh', 'scripts/lib/worktree-node-modules.sh',
-      'packages/quality/scripts/devgate/check-dod-mapping.cjs']) {
+      'scripts/devgate/check-dod-mapping.cjs']) {
       mkdirSync(dirname(join(root, path)), {recursive: true});
       copyFileSync(join(sourceRoot, path), join(root, path));
     }
@@ -60,6 +60,11 @@ describe('quickcheck真实DoD映射门禁', () => {
     expect(result.status).not.toBe(0);
     expect(result.stdout).toMatch(/假测试|测试文件不存在/);
   });
+  it('空DoD不能通过真实映射检查', () => {
+    const result = quickcheck('# DoD\n');
+    expect(result.status).not.toBe(0);
+    expect(result.stdout + result.stderr).toContain('未找到验收项');
+  });
   it('嵌套DoD文件同样使用真实映射校验', () => {
     const result = quickcheck('- [ ] 合并后读回\n  Test: tests/actual.test.mjs\n', 'sprints/fixture/DoD-release.md');
     expect(result.status, result.stdout + result.stderr).toBe(0);
@@ -68,9 +73,18 @@ describe('quickcheck真实DoD映射门禁', () => {
 });
 
 describe('e2e-integrity-check使用当前DoD映射入口', () => {
-  it('完整性检查核对真实validator及其接线，而不要求pending先勾选', () => {
-    const content = readFileSync(join(sourceRoot, 'packages/engine/scripts/e2e-integrity-check.sh'), 'utf8');
-    expect(content).toContain('check-dod-mapping.cjs');
-    expect(content).not.toContain("grep -q 'DoD 未勾选'");
+  it.each([false, true])('真实完整性CLI识别迁后checker的存在状态，缺失=%s', missing => {
+    const root = mkdtempSync(join(tmpdir(), 'dod-integrity-'));
+    try {
+      const paths = ['packages/engine/scripts/e2e-integrity-check.sh', 'scripts/quickcheck.sh',
+        ...(!missing ? ['scripts/devgate/check-dod-mapping.cjs'] : [])];
+      for (const path of paths) {
+        mkdirSync(dirname(join(root, path)), {recursive: true});
+        copyFileSync(join(sourceRoot, path), join(root, path));
+      }
+      const result = spawnSync('bash', ['packages/engine/scripts/e2e-integrity-check.sh'], {cwd: root, encoding: 'utf8', timeout: 10000});
+      expect(result.error).toBeUndefined();
+      expect(result.stdout).toContain(missing ? 'FAIL: quickcheck.sh 或正式DoD映射validator不存在' : 'PASS: quickcheck.sh 接通正式 DoD Test 映射校验');
+    } finally { rmSync(root, {recursive: true, force: true}); }
   });
 });

@@ -20,7 +20,7 @@ describe('headed smoke contract (task 63db6f8a) [BEHAVIOR]', () => {
   it('e2e-verify.sh 调用 claude-headed-dispatch-smoke.sh 并校验 allowlist 登记', () => {
     const script = readWrapper();
     expect(script).toContain('packages/brain/scripts/smoke/claude-headed-dispatch-smoke.sh');
-    expect(script).toContain('packages/quality/smoke-allowlist.txt');
+    expect(script).toContain('packages/brain/config/smoke/smoke-allowlist.txt');
   });
 
   it('payload 三元组齐全且禁用 token/github_token/anthropic_token/thin_prd', () => {

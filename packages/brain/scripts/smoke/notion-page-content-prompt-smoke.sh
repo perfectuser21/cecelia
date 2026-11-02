@@ -13,7 +13,7 @@
 #  5) 普通排单 description 回落文案仍在（向后兼容锚）
 #
 # 用法：bash packages/brain/scripts/smoke/notion-page-content-prompt-smoke.sh
-# CI：由 packages/quality/smoke-allowlist.txt 注册后，ci-smoke-glob-runner.yml 自动调用
+# CI：由 packages/brain/config/smoke/smoke-allowlist.txt 注册后，ci-smoke-glob-runner.yml 自动调用
 #
 # 退出码：0 = 全部通过，非 0 = 某项失败
 

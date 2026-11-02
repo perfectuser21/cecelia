@@ -3,7 +3,7 @@
 # 验证：① captures 表有 destination_type/destination_id 字段（migration 385）
 #       ② GET /api/brain/captures/aging 端点可用（capture_aging_sentinel 视图）
 #       ③ PATCH /api/brain/captures/:id 支持写入 destination_type
-# CI：由 packages/quality/smoke-allowlist.txt 注册后，ci-smoke-glob-runner.yml 自动调用
+# CI：由 packages/brain/config/smoke/smoke-allowlist.txt 注册后，ci-smoke-glob-runner.yml 自动调用
 set -euo pipefail
 
 # 真 Brain 写入必须显式授权，并核对本机测试容器。

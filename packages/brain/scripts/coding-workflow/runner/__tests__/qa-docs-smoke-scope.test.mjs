@@ -11,7 +11,7 @@ const TASK = '3a27ca36-7be9-4efc-a27f-18361dae6557';
 const SPRINT = 'sprints/10141904-cw-3a27ca36';
 const BRANCH = 'cp-10141904-cw-3a27ca36';
 const SMOKE = 'packages/brain/scripts/smoke/cw-3a27ca36-qa-smoke.sh';
-const ALLOW = 'packages/quality/smoke-allowlist.txt';
+const ALLOW = 'packages/brain/config/smoke/smoke-allowlist.txt';
 let root, server, url, calls;
 const git = (...args) => execFileSync('git', ['-C', root, ...args], { encoding: 'utf8' }).trim();
 const write = (file, text) => { fs.mkdirSync(path.dirname(path.join(root, file)), { recursive: true }); fs.writeFileSync(path.join(root, file), text); };

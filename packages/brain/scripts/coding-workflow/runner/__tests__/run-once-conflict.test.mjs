@@ -14,7 +14,7 @@ const FAKE_CLAUDE = path.join(HERE, 'fixtures/fake-claude-cifix.mjs');
 const TASK = 'bd2b1556-8a14-4042-88dc-e7972ba52075';
 const BRANCH = 'cp-10101755-cw-bd2b1556';
 const SPRINT = 'sprints/10101755-cw-bd2b1556';
-const ALLOW = 'packages/quality/smoke-allowlist.txt';
+const ALLOW = 'packages/brain/config/smoke/smoke-allowlist.txt';
 
 describe('runner 处理与 main 冲突的 cw PR', () => {
   let sb;

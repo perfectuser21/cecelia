@@ -15,7 +15,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        component: [brain, engine, quality, root]
+        component: [brain, engine, root]
     steps:
       - uses: actions/checkout@v4
         with:

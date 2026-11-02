@@ -25,7 +25,7 @@
 7. 网络配置变更、分区操作、`docker rm -f` 生产容器、数据库 schema 直改、`ufw deny 22` 等危险操作，必须先告知风险并获得明确确认后才能执行。
 
 ### Brain 改动门禁（DevGate）
-8. 改动 `packages/brain` 代码前必须依次通过：`node scripts/facts-check.mjs`、`bash scripts/check-version-sync.sh`、`node packages/quality/scripts/devgate/check-dod-mapping.cjs`。
+8. 改动 `packages/brain` 代码前必须依次通过：`node scripts/facts-check.mjs`、`bash scripts/check-version-sync.sh`、`node scripts/devgate/check-dod-mapping.cjs`。
 9. DevGate 校验失败时禁止继续编码，必须先修复校验问题。
 10. 不允许凭记忆/猜测编造架构、跳过 DevGate、引用已废弃的旧路径。
 

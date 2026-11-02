@@ -551,13 +551,13 @@ const WINDOWS_ENVS = new Set(['windows_cloud', 'windows_wechat']);
 
 /**
  * 全量 regression golden-smoke 扫描。
- * 扫描 packages/quality/tests/regression/*.golden-smoke.test.ts，
+ * 扫描 packages/brain/src/__tests__/regression/*.golden-smoke.test.ts，
  * 过滤 windows 环境文件，用 spawnSync npx vitest run 执行，返回 verdict。
  * @returns {{ verdict:'PASS'|'FAIL'|'SKIP', total:number, passed:number, failed:number, skipped:number, files:string[] }}
  */
 export function runGoldenSmokeRegression(opts = {}) {
   const repoRoot = opts.cwd || process.env.REPO_ROOT || getRepoRoot();
-  const regressionDir = path.join(repoRoot, 'packages/quality/tests/regression');
+  const regressionDir = path.join(repoRoot, 'packages/brain/src/__tests__/regression');
 
   // 1. 扫描文件（Node 22 fs.globSync，或 readdirSync 兜底）
   let allFiles = [];
@@ -606,7 +606,9 @@ export function runGoldenSmokeRegression(opts = {}) {
 
   spawnFn(
     'npx',
-    ['vitest', 'run', '--reporter=json', '--outputFile', tmpJsonPath, ...filteredFiles],
+    ['vitest', 'run', '--root', path.join(repoRoot, 'packages/brain'),
+      '--config', path.join(repoRoot, 'packages/brain/vitest.config.js'),
+      '--reporter=json', '--outputFile', tmpJsonPath, ...filteredFiles],
     { cwd: repoRoot, timeout: REGRESSION_TIMEOUT_MS, env },
   );
 

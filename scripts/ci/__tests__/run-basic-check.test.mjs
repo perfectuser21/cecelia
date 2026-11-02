@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, existsSync, rmSync, mkdirSync, copyFileSync, writeFileSync, realpathSync } from 'node:fs';
+import { mkdtempSync, existsSync, rmSync, mkdirSync, copyFileSync, writeFileSync, realpathSync, readFileSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -106,4 +106,80 @@ test('Node测试发现集合为空必须失败，不能退回默认递归发现�
   const result = f.run();
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /集合为空|empty/);
+});
+
+const smokeSafetyDirectory = 'packages/brain/scripts/smoke/__tests__';
+function isolatedBrainSafety(t) {
+  const f = isolatedScriptList(t, false);
+  mkdirSync(join(f.directory, 'packages/brain/scripts/fleet-worker'), { recursive: true });
+  writeFileSync(join(f.directory, 'packages/brain/scripts/fleet-worker/private.test.sh'), 'exit 0\n');
+  const suite = join(f.directory, smokeSafetyDirectory);
+  mkdirSync(suite, { recursive: true });
+  const list = (shard = '1') => spawnSync(process.execPath,
+    [join(f.ci, 'run-basic-check.mjs'), '--list', 'brain-unit', shard], { encoding: 'utf8' });
+  const run = steps => {
+    const env = { ...process.env };
+    // 子Node --test是独立真实执行，不能继承当前test runner的进程上下文。
+    delete env.NODE_TEST_CONTEXT;
+    return spawnSync(process.execPath, ['--input-type=module', '-e', `
+      const {runSteps} = await import(${JSON.stringify(new URL(`file://${join(f.ci, 'run-basic-check.mjs')}`).href)});
+      process.exitCode = runSteps(${JSON.stringify(steps)}, {stdio: 'pipe'});
+    `], { cwd: f.directory, encoding: 'utf8', env });
+  };
+  return { ...f, suite, list, run };
+}
+
+test('Brain六分片只在第一片显式执行全部顶层Smoke安全测试各一次，不递归fixtures', t => {
+  const f = isolatedBrainSafety(t);
+  const marker = join(f.directory, 'executed');
+  for (const name of ['z.node-test.mjs', 'a.node-test.mjs']) writeFileSync(join(f.suite, name),
+    `import {appendFileSync} from 'node:fs'; appendFileSync(${JSON.stringify(marker)}, '${name}\\n');\n`);
+  mkdirSync(join(f.suite, 'fixtures'));
+  writeFileSync(join(f.suite, 'fixtures/nested.node-test.mjs'), 'throw Error("fixture must not execute");');
+  writeFileSync(join(f.suite, 'unrelated.test.js'), 'throw Error("unselected test must not execute");');
+  const suites = [];
+  for (let shard = 1; shard <= 6; shard++) {
+    const result = f.list(String(shard));
+    assert.equal(result.status, 0, result.stderr);
+    suites.push(...JSON.parse(result.stdout).filter(step => step.command === 'node' && step.args[0] === '--test'));
+  }
+  assert.equal(suites.length, 1, 'Safety suite must run once across the six Brain shards');
+  assert.deepEqual(suites[0].args, ['--test', `${smokeSafetyDirectory}/a.node-test.mjs`, `${smokeSafetyDirectory}/z.node-test.mjs`]);
+  const result = f.run(suites);
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(readFileSync(marker, 'utf8').trim().split('\n').sort(), ['a.node-test.mjs', 'z.node-test.mjs']);
+});
+
+test('Brain Smoke安全测试集合为空时拒绝，不以Node默认发现替代', t => {
+  const f = isolatedBrainSafety(t);
+  writeFileSync(join(f.suite, 'unrelated.test.js'), 'throw Error("unselected");');
+  const result = f.list();
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /集合为空|empty/);
+});
+
+for (const kind of ['directory', 'symlink']) test(`Brain Smoke安全测试拒绝伪装入口：${kind}`, t => {
+  const f = isolatedBrainSafety(t);
+  writeFileSync(join(f.suite, 'real.node-test.mjs'), '');
+  const fake = join(f.suite, 'fake.node-test.mjs');
+  if (kind === 'directory') mkdirSync(fake);
+  else symlinkSync(join(f.suite, 'real.node-test.mjs'), fake);
+  const result = f.list();
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /普通文件|regular file/);
+});
+
+test('Brain实际发现的Smoke安全测试失败时传播失败并停止后续检查', t => {
+  const f = isolatedBrainSafety(t);
+  writeFileSync(join(f.suite, 'failure.node-test.mjs'), 'throw Error("private safety assertion failed");');
+  const planned = f.list();
+  assert.equal(planned.status, 0, planned.stderr);
+  const safety = JSON.parse(planned.stdout).filter(step => step.command === 'node' && step.args[0] === '--test');
+  assert.equal(safety.length, 1, 'discovered safety tests must enter the real Brain command chain');
+  const marker = join(f.directory, 'must-not-run');
+  const result = f.run([...safety, { command: process.execPath, args: ['-e',
+    `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'ran')`] }]);
+  assert.equal(result.status, 1);
+  assert.match(result.stdout, /private safety assertion failed/);
+  assert.equal(existsSync(marker), false);
 });

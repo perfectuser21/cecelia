@@ -6,8 +6,8 @@ name: Legacy Smoke Diagnostics
 #   DEBT 脚本失败          → 仅报告（存量债）
 #   新脚本未登记           → 红（新债不许欠）
 #
-# 分类文件：packages/quality/smoke-{allowlist,denylist,debt}.txt
-# 执行器：  packages/quality/scripts/run-smoke-ratchet.sh
+# 分类文件：packages/brain/config/smoke/smoke-{allowlist,denylist,debt}.txt
+# 执行器：  packages/brain/scripts/smoke-tools/run-smoke-ratchet.sh
 
 # 历史/环境诊断按需运行；通用源码保障归 ci.yml，深度回归归 nightly-regression.yml。
 on:
@@ -116,7 +116,7 @@ jobs:
           PGDATABASE: cecelia_test
           PGUSER: cecelia
           PGPASSWORD: ${{ secrets.CI_DB_PASSWORD }}
-        run: bash packages/quality/scripts/run-smoke-ratchet.sh
+        run: bash packages/brain/scripts/smoke-tools/run-smoke-ratchet.sh
 
       - name: Dump Brain logs on failure
         if: failure()

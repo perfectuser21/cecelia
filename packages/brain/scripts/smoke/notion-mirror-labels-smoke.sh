@@ -42,5 +42,5 @@ if (s.indexOf(\"name: 'notion-mirror-labels'\") > s.indexOf(\"name: 'scheduler-l
 "
 ls migrations/*_projection_map_reconcile.sql >/dev/null || { echo "FAIL 缺对账迁移"; exit 1; }
 ls migrations/rollback/*_projection_map_reconcile.down.sql >/dev/null || { echo "FAIL 缺对账迁移回滚"; exit 1; }
-grep -q "notion-mirror-labels-smoke.sh" ../quality/smoke-allowlist.txt || { echo "FAIL smoke 未登记 allowlist"; exit 1; }
+grep -q "notion-mirror-labels-smoke.sh" config/smoke/smoke-allowlist.txt || { echo "FAIL smoke 未登记 allowlist"; exit 1; }
 echo "[notion-mirror-labels-smoke] PASS"

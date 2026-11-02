@@ -53,9 +53,9 @@ exit 7
 
 function makeDeployRoot(dir) {
   const root = join(dir, 'deployroot');
-  mkdirSync(join(root, 'packages/quality'), { recursive: true });
+  mkdirSync(join(root, 'packages/brain/config/smoke'), { recursive: true });
   mkdirSync(join(root, 'packages/brain/scripts/smoke'), { recursive: true });
-  writeFileSync(join(root, 'packages/quality/smoke-core.txt'), 'echo-brain-url-smoke.sh\n');
+  writeFileSync(join(root, 'packages/brain/config/smoke/smoke-core.txt'), 'echo-brain-url-smoke.sh\n');
   const resultFile = join(dir, 'smoke-brain-url.txt');
   writeFileSync(
     join(root, 'packages/brain/scripts/smoke/echo-brain-url-smoke.sh'),
@@ -116,4 +116,34 @@ describe('bluegreen GREEN_URL 双模式（Gate3 全红根因回归）', () => {
     expect(existsSync(resultFile)).toBe(true);
     expect(readFileSync(resultFile, 'utf8').trim()).toBe('http://localhost:5223');
   });
+
+  it.each(['missing-list', 'empty-list', 'comment-only-list', 'missing-script', 'missing-root'])(
+    'pre-swap配置不可验证时保留blue且不启动sidecar：%s', (scenario) => {
+      const { dockerLog } = makeMocks(dir, { curlOkPattern: 'localhost:5223' });
+      const { root } = makeDeployRoot(dir);
+      const list = join(root, 'packages/brain/config/smoke/smoke-core.txt');
+      if (scenario === 'missing-list') rmSync(list);
+      if (scenario === 'empty-list') writeFileSync(list, '');
+      if (scenario === 'comment-only-list') writeFileSync(list, '# no executable entry\n   # another comment\n\n');
+      if (scenario === 'missing-script') writeFileSync(list, 'absent-smoke.sh\n');
+      let result;
+      try { runSwap(dir, { DEPLOY_ROOT_DIR: scenario === 'missing-root' ? '' : root }); }
+      catch (error) { result = error; }
+      expect(result?.status).toBeGreaterThan(0);
+      const calls = readFileSync(dockerLog, 'utf8').trim().split('\n');
+      expect(calls).not.toContain('rm -f cecelia-node-brain');
+      expect(calls.some(call => call.startsWith('run ') && call.includes('--name cecelia-bluegreen-sidecar'))).toBe(false);
+    },
+  );
+
+  it('显式紧急SKIP仍允许切换并走Bark告警入口', () => {
+    const { dockerLog, curlLog } = makeMocks(dir, { curlOkPattern: 'localhost:5223' });
+    const { root, resultFile } = makeDeployRoot(dir);
+    rmSync(join(root, 'packages/brain/config/smoke/smoke-core.txt'));
+    runSwap(dir, { DEPLOY_ROOT_DIR: root, SKIP_PRE_SWAP_SMOKE: '1', BARK_TOKEN: 'private-fixture-token' });
+    expect(existsSync(resultFile)).toBe(false);
+    expect(readFileSync(dockerLog, 'utf8').split('\n')).toContain('rm -f cecelia-node-brain');
+    expect(readFileSync(curlLog, 'utf8')).toContain('https://api.day.app/private-fixture-token/');
+  });
+
 });

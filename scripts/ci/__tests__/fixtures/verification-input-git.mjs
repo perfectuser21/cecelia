@@ -87,32 +87,35 @@ export function assertTypedResolverOutputLayout(root, assertOutput) {
  assert.doesNotThrow(() => assertOutput(root));
 }
 
-/** 使用实际schema reader字节与真实八项变更与一项删除diff，不能仅证明overlay中的旧reader。 */
+/** 使用实际schema reader字节与真实七项变更与两项删除diff，不能仅证明overlay中的旧reader。 */
 export function assertWorkflowSchemaReaderInputs(t, {basicEntryFixture, derived, root}) {
  const paths = [
   'android-agent-ci', 'ci-l5-e2e-frontend', 'harness-v5-checks',
   'integration-nightly', 'nightly-real-machine', 'pr-review',
   'preview-deploy', 'skill-distillation-eval', 'smoke-e2e-nightly',
  ].map(name => `.github/workflows/${name}.yml`);
- const retired = '.github/workflows/ci-l5-e2e-frontend.yml', active = paths.filter(path => path !== retired);
+ const retired = ['.github/workflows/ci-l5-e2e-frontend.yml','.github/workflows/android-agent-ci.yml'];
+ const active = paths.filter(path => !retired.includes(path));
  const reader = 'scripts/ci/__tests__/basic-workflow.test.mjs';
  const f = basicEntryFixture(t, 'scripts/ci/__tests__/basic-schema-input-fixture.test.mjs');
  assert.equal(f.git('config', '--get', 'core.sparseCheckoutCone'), 'false');
  f.git('sparse-checkout', 'add', ...[reader, ...paths].map(path => '/' + path));
- for (const path of [reader, ...paths]) writeFileSync(join(f.root, path), path === retired
+ for (const path of [reader, ...paths]) writeFileSync(join(f.root, path), retired.includes(path)
   ? readFixedLocalGitBlob(root,{revision:'69de823cda6d789130898399c3ad770c15b6fb71',path}) : readFileSync(join(root, path)));
  f.source.base_revision = f.commit();
  for (const path of active) writeFileSync(join(f.root, path), readFileSync(join(f.root, path), 'utf8') + '\n# schema input regression\n');
- rmSync(join(f.root, retired));
+ for (const path of retired) rmSync(join(f.root, path));
  f.source.head_revision = f.commit();
  f.source.changed_files = f.git('diff', '--no-renames', '--name-only', f.source.base_revision, f.source.head_revision).split('\n').map(path => ({path}));
  assert.deepEqual(f.source.changed_files.map(row => row.path).sort(), [...paths].sort());
  const proof = derived(f);
  const rows = proof.rows.filter(row => row.input_facts.source.side === 'head' && active.includes(row.input_facts.path));
- assert.ok(proof.rows.some(row => row.input_facts.source.side === 'base' && row.input_facts.path === retired && row.witness.kind === 'workflow_yaml_schema_input'));
- assert.ok(proof.selection_states.some(row => row.path === retired && row.side === 'head' && row.selection_state === 'absent'));
- assert.ok(!proof.rows.some(row => row.input_facts.path === retired && row.input_facts.source.side === 'head'));
- assert.equal(rows.length, active.length, '实际schema reader必须接收八项现役变更，旧工作流删除仅保留base输入');
+ for (const path of retired) {
+  assert.ok(proof.rows.some(row => row.input_facts.source.side === 'base' && row.input_facts.path === path && row.witness.kind === 'workflow_yaml_schema_input'));
+  assert.ok(proof.selection_states.some(row => row.path === path && row.side === 'head' && row.selection_state === 'absent'));
+  assert.ok(!proof.rows.some(row => row.input_facts.path === path && row.input_facts.source.side === 'head'));
+ }
+ assert.equal(rows.length, active.length, '实际schema reader必须接收七项现役变更，旧工作流删除仅保留base输入');
  for (const path of active) {
   const row = rows.find(row => row.input_facts.path === path);
   assert.equal(row.witness.kind, 'workflow_yaml_schema_input');

@@ -21,7 +21,7 @@ describe('headed smoke contract (task 57e25e92) [BEHAVIOR]', () => {
   it('e2e-verify.sh 调用 claude-headed-dispatch-smoke.sh 并校验 allowlist 登记', async () => {
     const script = await readWrapper();
     expect(script).toContain('packages/brain/scripts/smoke/claude-headed-dispatch-smoke.sh');
-    expect(script).toContain('packages/quality/smoke-allowlist.txt');
+    expect(script).toContain('packages/brain/config/smoke/smoke-allowlist.txt');
   });
 
   it('payload 四字段齐全且禁用 token/github_token/anthropic_token/thin_prd', async () => {

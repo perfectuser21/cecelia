@@ -129,10 +129,10 @@ fi
 # ─── 检测 9：quickcheck.sh DoD 验收映射守卫 ──────────────────
 # 未完成项允许保留[ ]，本地门禁核对正式validator实际接线，不要求伪造完成。
 QUICKCHECK="$PROJECT_ROOT/scripts/quickcheck.sh"
-DOD_MAPPING_CHECKER="$PROJECT_ROOT/packages/quality/scripts/devgate/check-dod-mapping.cjs"
+DOD_MAPPING_CHECKER="$PROJECT_ROOT/scripts/devgate/check-dod-mapping.cjs"
 if [[ -f "$QUICKCHECK" && -f "$DOD_MAPPING_CHECKER" ]]; then
     CONTENT=$(cat "$QUICKCHECK")
-    if echo "$CONTENT" | grep -q 'packages/quality/scripts/devgate/check-dod-mapping.cjs' \
+    if echo "$CONTENT" | grep -q 'scripts/devgate/check-dod-mapping.cjs' \
         && echo "$CONTENT" | grep -Fq 'node "$DOD_MAPPING_CHECKER" "$dod_file"'; then
         _pass "quickcheck.sh 接通正式 DoD Test 映射校验"
     else

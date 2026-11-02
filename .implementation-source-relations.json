@@ -933,13 +933,13 @@
       "role": "verification"
     },
     {
-      "owner_path": "packages/quality/skill-distillation/scripts/goldset-eval.mjs",
+      "owner_path": "scripts/evals/goldset/goldset-eval.mjs",
       "path": "docs/learnings/cp-10170325-ci-budget-headroom.md",
       "role": "documentation"
     },
     {
-      "owner_path": "packages/quality/skill-distillation/scripts/goldset-eval.mjs",
-      "path": "packages/quality/__tests__/goldset-eval-cli.test.js",
+      "owner_path": "scripts/evals/goldset/goldset-eval.mjs",
+      "path": "packages/brain/src/__tests__/goldset-eval-cli.test.js",
       "role": "verification"
     },
     {
@@ -1479,7 +1479,7 @@
     },
     {
       "owner_path": "packages/brain/src/lib/activity-contract-loader.js",
-      "path": "packages/quality/smoke-allowlist.txt",
+      "path": "packages/brain/config/smoke/smoke-allowlist.txt",
       "role": "verification"
     },
     {
@@ -2444,7 +2444,7 @@
     },
     {
       "owner_path": "packages/brain/src/lib/tree-legacy-layout.js",
-      "path": "packages/quality/smoke-write-targets.txt",
+      "path": "packages/brain/config/smoke/smoke-write-targets.txt",
       "role": "verification"
     },
     {

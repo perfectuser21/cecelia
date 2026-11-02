@@ -64,7 +64,7 @@ function walk(dir, out) {
 function getCeceliaScanDirs(root) {
   return [
     'packages/brain/src', 'packages/brain/server.js',
-    'packages/engine', 'packages/quality', 'packages/workflows',
+    'packages/engine', 'packages/workflows',
     'apps/api/src', 'apps/dashboard/src', 'scripts',
   ].filter((d) => fs.existsSync(path.join(root, d)));
 }

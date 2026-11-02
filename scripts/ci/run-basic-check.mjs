@@ -14,11 +14,22 @@ export function commandsFor(component, shard) {
     if (!files.length) throw new Error(`Shell 回归集合为空：${directory}`);
     return files.map(name => step('.', 'bash', `${directory}/${name}`));
   };
+  const smokeSafetyTests = () => {
+    const directory = 'packages/brain/scripts/smoke/__tests__';
+    const files = readdirSync(resolve(root, directory), { withFileTypes: true })
+      .filter(entry => entry.name.endsWith('.node-test.mjs'))
+      .map(entry => {
+        if (!entry.isFile()) throw new Error(`Smoke安全测试入口必须是普通文件：${entry.name}`);
+        return `${directory}/${entry.name}`;
+      }).sort();
+    if (!files.length) throw new Error(`Smoke安全测试集合为空：${directory}`);
+    return step('.', 'node', '--test', ...files);
+  };
   switch (component) {
     case 'brain-unit':
       if (!/^[1-6]$/.test(String(shard))) throw new Error('Brain 分片必须为 1–6');
       return [
-        ...(String(shard) === '1' ? [step('packages/brain', 'npm', 'run', 'lint'), ...shellTests('packages/brain/scripts/fleet-worker')] : []),
+        ...(String(shard) === '1' ? [step('packages/brain', 'npm', 'run', 'lint'), ...shellTests('packages/brain/scripts/fleet-worker'), smokeSafetyTests()] : []),
         step('packages/brain', 'npx', '--no-install', 'vitest', 'run', `--shard=${shard}/6`, '--reporter=dot', '--silent'),
       ];
     case 'brain-integration':
@@ -43,7 +54,6 @@ export function commandsFor(component, shard) {
       return [vitest('apps/dashboard'), step('apps/dashboard', 'npm', 'run', 'build')];
     case 'android':
       return [step('apps/android-agent', './gradlew', ':app:testDebugUnitTest', '--no-daemon')];
-    case 'quality': return [vitest('packages/quality')];
     case 'mcp': return [vitest('packages/mcp-readonly')];
     case 'ops': return opsChecks(root);
     case 'scripts': {

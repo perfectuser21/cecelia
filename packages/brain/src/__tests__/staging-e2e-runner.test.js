@@ -373,7 +373,7 @@ describe('runStagingE2E', () => {
     const deploy = () => ({ status: 'success', reason: null, output: 'SUCCESS' });
     const r = await runStagingE2E(task, {
       pool, deploy, loadAcceptance: async () => ACCEPTANCE, exec: () => 'ok',
-      // 必须注入：不注入会真扫 packages/quality/tests/regression/*.golden-smoke.test.ts 并 spawn vitest
+      // 必须注入：不注入会真扫 packages/brain/src/__tests__/regression/*.golden-smoke.test.ts 并 spawn vitest
       // 打 staging 端口（07-04 #3538 冻结首个 golden 文件后，单测环境无 staging 必 FAIL）
       runGoldenSmokeRegression: () => ({ verdict: 'SKIP', total: 0, passed: 0, failed: 0, skipped: 0, files: [] }),
     });
@@ -706,38 +706,49 @@ describe('Slice10: runGoldenSmokeRegression — regression 扫描', () => {
     expect(result.total).toBe(0);
   });
 
-  it('全部为 windows 环境文件时返回 SKIP（skipped=total）', async () => {
-    const os = await import('os');
-    const fs = await import('fs');
-    const tmpDir = fs.default.mkdtempSync(os.default.tmpdir() + '/gs-test-');
-    const file = tmpDir + '/feature-x.golden-smoke.test.ts';
-    fs.default.writeFileSync(file, '/**\n * target_env  : windows_cloud\n */\nit("x", () => {});\n');
-    const { runGoldenSmokeRegression } = await import('../staging-e2e-runner.js');
-    const result = runGoldenSmokeRegression({ cwd: tmpDir.replace('/packages/quality/tests/regression', '') || '/', cwd: process.cwd() });
-    fs.default.rmSync(tmpDir, { recursive: true });
-    expect(['SKIP', 'PASS']).toContain(result.verdict);
-  });
-
-  it('spawnSync 注入可覆盖执行器（PASS 路径）', async () => {
+  it('新回归目录中的 windows 文件计入 skipped 且不启动执行器', async () => {
     const os = await import('os');
     const fs = await import('fs');
     const path = await import('path');
-    const tmpDir = fs.default.mkdtempSync(os.default.tmpdir() + '/gs-regression-');
-    const regDir = path.default.join(tmpDir, 'packages/quality/tests/regression');
-    fs.default.mkdirSync(regDir, { recursive: true });
-    const file = path.default.join(regDir, 'ability-a.golden-smoke.test.ts');
-    fs.default.writeFileSync(file, '/** target_env: mac_web */\nit("smoke", () => expect(1).toBe(1));\n');
-    const jsonResult = { testResults: [{ status: 'passed', numPassingTests: 1, numFailingTests: 0 }] };
-    const tmpJson = path.default.join(os.default.tmpdir(), 'gs-mock-out.json');
-    const mockSpawn = (_cmd, _args, _opts) => {
-      fs.default.writeFileSync(tmpJson, JSON.stringify(jsonResult));
-    };
-    const { runGoldenSmokeRegression } = await import('../staging-e2e-runner.js');
-    const result = runGoldenSmokeRegression({
-      cwd: tmpDir,
-      spawnSync: mockSpawn,
-    });
-    fs.default.rmSync(tmpDir, { recursive: true });
-    expect(['PASS', 'FAIL', 'SKIP']).toContain(result.verdict);
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gs-test-'));
+    const regDir = path.join(tmpDir, 'packages/brain/src/__tests__/regression');
+    fs.mkdirSync(regDir, { recursive: true });
+    fs.writeFileSync(path.join(regDir, 'feature-x.golden-smoke.test.ts'), '/**\n * target_env: windows_cloud\n */\n');
+    const spawn = vi.fn();
+    try {
+      const { runGoldenSmokeRegression } = await import('../staging-e2e-runner.js');
+      expect(runGoldenSmokeRegression({ cwd: tmpDir, spawnSync: spawn })).toEqual({
+        verdict: 'SKIP', total: 1, passed: 0, failed: 0, skipped: 1, files: [],
+      });
+      expect(spawn).not.toHaveBeenCalled();
+    } finally { fs.rmSync(tmpDir, { recursive: true }); }
   });
+
+  it.each([[1, 0, 'PASS'], [0, 1, 'FAIL']])(
+    '新回归目录的执行结果 passed=%i failed=%i 返回 %s', async (passed, failed, verdict) => {
+      const os = await import('os');
+      const fs = await import('fs');
+      const path = await import('path');
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gs-regression-'));
+      const relative = 'packages/brain/src/__tests__/regression/ability-a.golden-smoke.test.ts';
+      const file = path.join(tmpDir, relative);
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, '/**\n * target_env: mac_web\n */\n');
+      const execute = vi.fn((command, args, options) => {
+        expect(command).toBe('npx');
+        expect(args.at(-1)).toBe(file);
+        expect(options.cwd).toBe(tmpDir);
+        fs.writeFileSync(args[args.indexOf('--outputFile') + 1], JSON.stringify({
+          numPassedTests: passed, numFailedTests: failed, numPendingTests: 0,
+        }));
+      });
+      try {
+        const { runGoldenSmokeRegression } = await import('../staging-e2e-runner.js');
+        expect(runGoldenSmokeRegression({ cwd: tmpDir, spawnSync: execute })).toEqual({
+          verdict, total: 1, passed, failed, skipped: 0, files: [relative],
+        });
+        expect(execute).toHaveBeenCalledOnce();
+      } finally { fs.rmSync(tmpDir, { recursive: true }); }
+    },
+  );
 });

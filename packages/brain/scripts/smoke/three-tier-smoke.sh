@@ -7,7 +7,7 @@
 # task_id: d063b3e5-8fb1-4d53-b176-8e8198c7a084
 #
 # 用法：bash packages/brain/scripts/smoke/three-tier-smoke.sh
-# CI：由 packages/quality/smoke-allowlist.txt 注册后，ci-smoke-glob-runner.yml 自动调用
+# CI：由 packages/brain/config/smoke/smoke-allowlist.txt 注册后，ci-smoke-glob-runner.yml 自动调用
 
 set -uo pipefail
 

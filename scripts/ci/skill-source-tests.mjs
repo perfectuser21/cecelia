@@ -1,5 +1,5 @@
 // 这些测试核验固定外置Skill正文；原生路由、Runner和launcher测试仍在组件单测中。
-export const SKILL_SOURCE_ROOTS = {brain:'packages/brain', engine:'packages/engine', quality:'packages/quality', root:'.'};
+export const SKILL_SOURCE_ROOTS = {brain:'packages/brain', engine:'packages/engine', root:'.'};
 export const SKILL_SOURCE_TESTS = {
   brain: [
     'scripts/ci/__tests__/skill-contract.test.mjs',
@@ -22,7 +22,6 @@ export const SKILL_SOURCE_TESTS = {
     'tests/skills/research-proxy-integration.test.ts',
     '**/*.skill-source.test.*',
   ],
-  quality: ['tests/regression/harness-android-target-environment.test.ts', '**/*.skill-source.test.*'],
   root: ['tests/skills/harness-planner-push-noise.test.js', 'tests/**/*.skill-source.test.*'],
 };
 

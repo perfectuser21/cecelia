@@ -32,7 +32,7 @@ echo "$_GP3_BODY" | grep -qF "is_fresh" || { echo "FAIL: GP-STEP-3 内容自证�
 # GP-STEP-1 BEGIN: 复用调用 claude-headed-dispatch-smoke.sh 并校验 allowlist 登记
 BRAIN_URL="$BRAIN_URL" DATABASE_URL="$DB" bash packages/brain/scripts/smoke/claude-headed-dispatch-smoke.sh
 
-if ! grep -Fxq "claude-headed-dispatch-smoke.sh" packages/quality/smoke-allowlist.txt; then
+if ! grep -Fxq "claude-headed-dispatch-smoke.sh" packages/brain/config/smoke/smoke-allowlist.txt; then
   echo "FAIL: claude-headed-dispatch-smoke.sh 未在 allowlist 登记"
   exit 1
 fi

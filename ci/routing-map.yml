@@ -55,16 +55,6 @@ subsystems:
     deploy: true
     description: "Workspace 前端（API 层 + React Dashboard）"
 
-  # ── Quality & Testing ─────────────────────────────────────────────────────
-
-  quality:
-    root: packages/quality
-    paths:
-      - packages/quality/**
-    layers: [l1, l3]
-    deploy: false
-    description: "QA 基础设施、回归契约"
-
   # ── Agent Workflows ───────────────────────────────────────────────────────
 
   workflows:

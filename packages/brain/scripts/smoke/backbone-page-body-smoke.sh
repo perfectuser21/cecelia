@@ -35,5 +35,5 @@ grep -q "syncActivityBodies" src/projection/directory-projector.js || { echo "FA
 ! grep -q "syncBackboneBodies" src/activity-contract-sync.js || { echo "FAIL 契约 job 仍在写正文（两处写正文会打架）"; exit 1; }
 test -f migrations/483_backbone_body_digest.sql || { echo "FAIL 缺迁移 483"; exit 1; }
 test -f migrations/rollback/483_backbone_body_digest.down.sql || { echo "FAIL 缺回滚 483"; exit 1; }
-grep -q "backbone-page-body-smoke.sh" ../quality/smoke-allowlist.txt || { echo "FAIL smoke 未登记 allowlist"; exit 1; }
+grep -q "backbone-page-body-smoke.sh" config/smoke/smoke-allowlist.txt || { echo "FAIL smoke 未登记 allowlist"; exit 1; }
 echo "[backbone-page-body-smoke] PASS"

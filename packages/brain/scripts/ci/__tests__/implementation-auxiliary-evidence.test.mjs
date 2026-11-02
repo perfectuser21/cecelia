@@ -466,8 +466,8 @@ it('只有真实图已认领固定reader后，配置才能获得独立覆盖；�
 });
 
 it('写入门禁分类表登记真实固定Git验证来源，任意其他txt仍拒绝',()=>{
- const f=fixture([]),path='packages/quality/smoke-write-targets.txt';
- mkdirSync(join(f.root,'packages/quality'),{recursive:true});
+ const f=fixture([]),path='packages/brain/config/smoke/smoke-write-targets.txt';
+ mkdirSync(join(f.root,'packages/brain/config/smoke'),{recursive:true});
  writeFileSync(join(f.root,path),'controller.sh\n');
  const row={owner_path:'src/controller.js',path,role:'verification'};
  writeFileSync(join(f.root,'.implementation-source-relations.json'),JSON.stringify({schema_version:1,repo:f.source.repo,relations:[row]}));
@@ -476,8 +476,8 @@ it('写入门禁分类表登记真实固定Git验证来源，任意其他txt仍�
  expect(evidence.head.source_revision).toBe(f.source.head_revision);
  expect(evidence.head.relations[0]).toMatchObject(row);
  expect(evidence.head.relations[0].sha256).toMatch(/^[a-f0-9]{64}$/);
- writeFileSync(join(f.root,'packages/quality/arbitrary.txt'),'controller.sh\n');
- writeFileSync(join(f.root,'.implementation-source-relations.json'),JSON.stringify({schema_version:1,repo:f.source.repo,relations:[{...row,path:'packages/quality/arbitrary.txt'}]}));
+ writeFileSync(join(f.root,'packages/brain/config/smoke/arbitrary.txt'),'controller.sh\n');
+ writeFileSync(join(f.root,'.implementation-source-relations.json'),JSON.stringify({schema_version:1,repo:f.source.repo,relations:[{...row,path:'packages/brain/config/smoke/arbitrary.txt'}]}));
  f.git('add','.');f.git('commit','-qm','unrecognized catalogue');f.source.head_revision=f.git('rev-parse','HEAD');
  expect(()=>gate.collectAuxiliarySourceEvidence(f.root,f.source)).toThrow('AUXILIARY_ROLE_INVALID');
 });

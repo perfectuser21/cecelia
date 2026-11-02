@@ -3,7 +3,7 @@ import {appendFileSync} from 'node:fs';
 import {resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 
-const ORDER = ['brain-unit', 'brain-integration', 'image', 'engine', 'quality', 'mcp', 'api', 'api-integration', 'dashboard', 'android', 'ops', 'scripts'];
+const ORDER = ['brain-unit', 'brain-integration', 'image', 'engine', 'mcp', 'api', 'api-integration', 'dashboard', 'android', 'ops', 'scripts'];
 // 现役前端为 apps/dashboard；已退役根 frontend 不再创建源码任务。
 // Android 客户端自身修改必须运行 Gradle；服务端全量不重复构建未变更的移动客户端。
 const ACTIVE = ORDER.filter(component => component !== 'android');
@@ -56,7 +56,7 @@ export function planChecks(paths, {full = false} = {}) {
     } else if (path.startsWith('apps/android-agent/')) selected.add('android');
     else if (/^(?:packages\/(?:brain|engine)|apps\/api)\//.test(path)) {
       for (const component of SHARED_RUNTIME) selected.add(component);
-    } else if (path.startsWith('packages/quality/')) selected.add('quality');
+    }
     else if (path.startsWith('packages/mcp-readonly/')) selected.add('mcp');
     else if (path.startsWith('apps/dashboard/')) selected.add('dashboard');
     else all = true;

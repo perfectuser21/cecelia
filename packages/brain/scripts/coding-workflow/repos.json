@@ -16,8 +16,8 @@
       "install": ["npm", "ci", "--legacy-peer-deps", "--ignore-scripts"],
       "qa_smoke": {
         "dir": "packages/brain/scripts/smoke",
-        "allowlist": "packages/quality/smoke-allowlist.txt",
-        "write_targets": "packages/quality/smoke-write-targets.txt"
+        "allowlist": "packages/brain/config/smoke/smoke-allowlist.txt",
+        "write_targets": "packages/brain/config/smoke/smoke-write-targets.txt"
       },
       "version_fragment": { "src_re": "^packages/brain/src/", "dir": "changes" },
       "preview": { "type": "brain_preview", "base_repo": "cecelia" },

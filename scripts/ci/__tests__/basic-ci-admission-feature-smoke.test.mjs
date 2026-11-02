@@ -10,20 +10,20 @@ import {cruise} from 'dependency-cruiser';
 import {commandsFor} from '../run-basic-check.mjs';
 const root=fileURLToPath(new URL('../../../',import.meta.url));
 function readSmokeAllowlist(require=createRequire(import.meta.url)){
- const target=require.resolve('../../../packages/quality/smoke-allowlist.txt');
+ const target=require.resolve('../../../packages/brain/config/smoke/smoke-allowlist.txt');
  const extension=Object.getOwnPropertyDescriptor(require.extensions,'.txt'),cache=Object.getOwnPropertyDescriptor(require.cache,target);
  try{
   Object.defineProperty(require.extensions,'.txt',{configurable:true,writable:true,enumerable:true,value:(module,filename)=>{
    assert.equal(filename,target,'SMOKE_ALLOWLIST_DATA_TARGET');module.exports=readFileSync(filename,'utf8');
   }});
-  delete require.cache[target];return require('../../../packages/quality/smoke-allowlist.txt');
+  delete require.cache[target];return require('../../../packages/brain/config/smoke/smoke-allowlist.txt');
  }finally{
   if(extension)Object.defineProperty(require.extensions,'.txt',extension);else delete require.extensions['.txt'];
   if(cache)Object.defineProperty(require.cache,target,cache);else delete require.cache[target];
  }
 }
 function assertAllowlistLoaderRestoration(t){
- const f=fixture(t),target=join(f.directory,'packages/quality/smoke-allowlist.txt'),other=join(f.directory,'other.txt');mkdirSync(dirname(target),{recursive:true});
+ const f=fixture(t),target=join(f.directory,'packages/brain/config/smoke/smoke-allowlist.txt'),other=join(f.directory,'other.txt');mkdirSync(dirname(target),{recursive:true});
  const text='globalThis.__ciSmokeAllowlistExecuted=true;';writeFileSync(target,text);writeFileSync(other,'other data');
  const local=createRequire(join(f.directory,'scripts/ci/__tests__/fixture.mjs'));
  const originalExtension=Object.getOwnPropertyDescriptor(local.extensions,'.txt'),originalCache=Object.getOwnPropertyDescriptor(local.cache,target);
@@ -42,7 +42,7 @@ function assertAllowlistLoaderRestoration(t){
 }
 const entries=text=>text.split(/\r?\n/).filter(line=>line.trim()&&!line.startsWith('#'));
 function fixture(t){const directory=mkdtempSync(join(tmpdir(),'ci-admission-smoke-contract-'));t.after(()=>rmSync(directory,{recursive:true,force:true}));return {directory,env:{PATH:dirname(process.execPath)+':/usr/bin:/bin:/usr/sbin:/sbin',HOME:directory,TMPDIR:directory,GH_TOKEN:'synthetic-parent-secret-must-not-inherit',DB_PASSWORD:'synthetic-parent-database-must-not-inherit',NODE_OPTIONS:'--not-a-valid-node-flag'}};}
-const run=env=>new Promise(resolve=>execFile('bash',[env.SMOKE_DIR?'packages/quality/scripts/run-smoke-ratchet.sh':'packages/brain/scripts/smoke/ci-admission-bootstrap-smoke.sh'],{cwd:root,env,timeout:60000,maxBuffer:4*1024*1024},(error,stdout,stderr)=>resolve({error,stdout,stderr})));
+const run=env=>new Promise(resolve=>execFile('bash',[env.SMOKE_DIR?'packages/brain/scripts/smoke-tools/run-smoke-ratchet.sh':'packages/brain/scripts/smoke/ci-admission-bootstrap-smoke.sh'],{cwd:root,env,timeout:60000,maxBuffer:4*1024*1024},(error,stdout,stderr)=>resolve({error,stdout,stderr})));
 function assertSmokeSuccess(result){
  assert.equal(result.error,null,result.stderr);assert.match(result.stdout,/# fail 0\b/);assert.match(result.stdout,/# skipped 0\b/);
  const count=Number(/^# tests (\d+)$/m.exec(result.stdout)?.[1]);assert.ok(count>=60);
@@ -58,11 +58,11 @@ test('feature smoke不能把真实Node全TODO的exit0当作成功',async t=>{
 test('feature smoke真实执行且统一源码CI唯一发现全部基础与退休合同',{timeout:90000},async t=>{
  const name='ci-admission-bootstrap-smoke.sh';
  assert.equal(entries(readSmokeAllowlist()).filter(line=>line===name).length,1);
- for(const list of ['smoke-denylist.txt','smoke-debt.txt'])assert.equal(entries(readFileSync(join(root,'packages/quality',list),'utf8')).includes(name),false);
+ for(const list of ['smoke-denylist.txt','smoke-debt.txt'])assert.equal(entries(readFileSync(join(root,'packages/brain/config/smoke',list),'utf8')).includes(name),false);
  assertAllowlistLoaderRestoration(t);
  const reader='scripts/ci/__tests__/basic-ci-admission-feature-smoke.test.mjs';
  const graph=await cruise([reader],{baseDir:root,doNotFollow:{path:'node_modules'},exclude:{path:'node_modules'}}),out=typeof graph.output==='string'?JSON.parse(graph.output):graph.output;
- assert.ok(out.modules.some(m=>m.source===reader&&m.dependencies.some(d=>!d.couldNotResolve&&resolve(root,d.resolved)===resolve(root,'packages/quality/smoke-allowlist.txt'))));
+ assert.ok(out.modules.some(m=>m.source===reader&&m.dependencies.some(d=>!d.couldNotResolve&&resolve(root,d.resolved)===resolve(root,'packages/brain/config/smoke/smoke-allowlist.txt'))));
  const f=fixture(t),smokeDir=join(f.directory,'ratchet-only');mkdirSync(smokeDir);
  // 私有ratchet输入目录仅调用真实脚本，避免本地执行其它线上smoke。
  const actual=join(root,'packages/brain/scripts/smoke',name);writeFileSync(join(smokeDir,name),"#!/bin/bash\nexec bash '"+actual.replaceAll("'","'\\''")+"'\n",{mode:0o700});

@@ -83,7 +83,7 @@ PASS=true
 # push后的候选CI、合并和生产读回可以仍为[ ]；每项必须有真实可核验的Test映射。
 # 复用正式validator，禁止用勾选状态或echo等假测试代替验收证据。
 DOD_FILES=$(echo "$CHANGED_FILES" | grep -E '(^|/)DoD([.-][^/]+)?\.md$' || true)
-DOD_MAPPING_CHECKER="$REPO_ROOT/packages/quality/scripts/devgate/check-dod-mapping.cjs"
+DOD_MAPPING_CHECKER="$REPO_ROOT/scripts/devgate/check-dod-mapping.cjs"
 if [[ -n "$DOD_FILES" ]]; then
   while IFS= read -r dod_rel; do
     [[ -z "$dod_rel" ]] && continue

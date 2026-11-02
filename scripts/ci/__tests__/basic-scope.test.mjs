@@ -9,7 +9,7 @@ import {planChecks} from '../basic-scope.mjs';
 
 const cli = fileURLToPath(new URL('../basic-scope.mjs', import.meta.url));
 const components = rows => [...new Set(rows.map(row => row.component))];
-const all = ['brain-unit', 'brain-integration', 'image', 'engine', 'quality', 'mcp', 'api', 'api-integration', 'dashboard', 'ops', 'scripts'];
+const all = ['brain-unit', 'brain-integration', 'image', 'engine', 'mcp', 'api', 'api-integration', 'dashboard', 'ops', 'scripts'];
 
 test('已退役frontend不再进入矩阵，旧路径差分仍保守验证全部现役组件', () => {
   assert.equal(planChecks([], {full: true}).some(row => row.component === 'frontend'), false);
@@ -48,8 +48,8 @@ test('Brain、Engine 与 API 共享依赖，完整运行相关组件与六个 Br
 });
 
 test('独立组件选择完整测试范围，结果去重且顺序稳定', () => {
-  const paths = ['apps/dashboard/src/App.tsx', 'packages/quality/tests/guard.test.js', 'packages/mcp-readonly/server.js'];
-  const expected = ['quality', 'mcp', 'dashboard', 'scripts'];
+  const paths = ['apps/dashboard/src/App.tsx', 'packages/mcp-readonly/server.js'];
+  const expected = ['mcp', 'dashboard', 'scripts'];
   assert.deepEqual(components(planChecks(paths)), expected);
   assert.deepEqual(planChecks([...paths].reverse().concat(paths)), planChecks(paths));
 });

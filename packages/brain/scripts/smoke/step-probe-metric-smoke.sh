@@ -53,7 +53,7 @@ const checks = [
   ['src/lib/step-probe-spec.js', [\"'metric'\", 'METRIC_REF_RE.test(raw.ref)']],
   ['src/notion-probe-projection.js', [\"probe.type === 'metric'\"]],
   ['src/__tests__/fixtures/social-keyword-leadgen.checks.yaml', ['coll_rescan_rate', 'type: metric']],
-  ['../quality/smoke-allowlist.txt', ['step-probe-metric-smoke.sh']],
+  ['config/smoke/smoke-allowlist.txt', ['step-probe-metric-smoke.sh']],
 ];
 let fail = false;
 for (const [file, needles] of checks) {

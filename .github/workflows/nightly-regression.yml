@@ -108,7 +108,7 @@ jobs:
           node-version: '22'
           cache: npm
       - name: Permanent actual target rejection regression
-        run: node --test packages/quality/tests/walking-checkpointer-guard.node-test.mjs
+        run: node --test packages/brain/scripts/smoke/__tests__/walking-checkpointer-guard.node-test.mjs
       - name: Install dependencies and migrate dedicated service
         run: |
           npm ci

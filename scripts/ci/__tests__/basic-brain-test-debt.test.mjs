@@ -170,7 +170,7 @@ function automaticLanes({basic, nightly, pinned}) {
   })) lanes.push('real-env');
 
   const contracts = pinned.jobs?.contracts;
-  if (mainEvents(pinned) && isDeepStrictEqual(contracts?.strategy?.matrix, {component: ['brain', 'engine', 'quality', 'root']})
+  if (mainEvents(pinned) && isDeepStrictEqual(contracts?.strategy?.matrix, {component: ['brain', 'engine', 'root']})
     && knownStep(pinned, 'contracts', {run: 'node scripts/ci/run-skill-source-check.mjs "$COMPONENT"',
       env: {COMPONENT: '${{ matrix.component }}', CI: 'true', POSTGRES_INTEGRATION: '0'}})) lanes.push('pinned-brain', 'pinned-root');
   return lanes;

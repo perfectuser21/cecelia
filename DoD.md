@@ -1,17 +1,14 @@
-# DoD：现役组件核验与废弃测试退役
+# DoD：Quality 包退役与有效能力归位
 
-- [x] [BEHAVIOR] 旧 qa:gate 无法生成假 PASSED 证书，实际 npm 子进程非零且无证书文件。
-  Test: manual:bash -c 'cd packages/quality && npx --no-install vitest run tests/retirement/quality-gate-certificate.test.ts'
-- [x] [BEHAVIOR] 旧 Quality 服务及其消费者退役，实际 API 路由不再请求5681；Brain、N8N等剩余状态仍真实呈现。
-  Test: manual:bash -c 'cd apps/api && npx --no-install vitest run tests/system-status.test.ts tests/panorama-full.test.ts'
-- [x] [BEHAVIOR] Engine 保留真实 Hook/Runner/worktree 回归；TS 演示与自证测试退役，真实语法检查能拒绝坏脚本。
-  Test: manual:node scripts/ci/run-basic-check.mjs engine
-- [x] [BEHAVIOR] 根 frontend 不再选择为 CI 任务，旧路径差分仍验证现役组件；所有现役检查真实传播失败。
-  Test: manual:node --test scripts/ci/__tests__/basic-scope.test.mjs scripts/ci/__tests__/run-basic-check.test.mjs scripts/ci/__tests__/basic-workflow.test.mjs
-- [x] [BEHAVIOR] 当前 Dashboard 在旧 frontend 完全不存在时仍能构建；现役 Quality 工具全部原生回归通过。
-  Test: manual:node scripts/ci/run-basic-check.mjs dashboard
-  Test: manual:node scripts/ci/run-basic-check.mjs quality
-- [x] [BEHAVIOR] 私有真实 worktree list 不扫描用户仓库；真实 FD201 guardian/二次create安全守卫保留且无Python缓存泄漏。
-  Test: manual:bash -c 'cd packages/engine && npx --no-install vitest run tests/e2e/dev-workflow-e2e.test.ts tests/skills/worktree-fd201-leak.test.ts'
-- [ ] [ARTIFACT] 所有删除项有当前消费者核验证据，受信源协议原字节保留，正常 PR 与实际 Main 验收成功。
-  Test: manual:node scripts/ci/run-basic-check.mjs scripts
+- [x] [BEHAVIOR] 根 DoD CLI 真实接受有效映射，拒绝空验收、假测试与缺文件；push 调用不依赖 Quality。
+  Test: manual:node --test scripts/ci/__tests__/basic-dod-mapping.test.mjs
+- [x] [BEHAVIOR] 发布和编码流程使用 Brain 的 Smoke 清单；隔离与写入防护保留，失败阻止放行。
+  Test: manual:node --test packages/brain/scripts/smoke/__tests__/*.node-test.mjs
+- [x] [BEHAVIOR] Goldset 新入口用原始 PNG、本地真实 HTTP 和原阈值拒绝无效模型回执。
+  Test: manual:npm exec --workspace cecelia-brain -- vitest run src/__tests__/goldset-eval-cli.test.js
+- [x] [BEHAVIOR] staging 实际子进程发现并执行迁后的路由回归，数据库失败真实返回500。
+  Test: manual:npm exec --workspace cecelia-brain -- vitest run src/__tests__/staging-golden-smoke-cli.test.js src/__tests__/regression/relay-runs-endpoint.golden-smoke.test.ts
+- [x] [BEHAVIOR] 旧 Quality 组件不再生成CI任务；旧命令非零退出，假通过证书不能复活。
+  Test: manual:node --test scripts/ci/__tests__/basic-retired-quality-ci.test.mjs scripts/ci/__tests__/basic-retired-quality-certificate.test.mjs
+- [ ] [ARTIFACT] 迁移、删除与调用闭包独立复核，包锁及版本同步，正常 PR 验收。
+  Test: manual:bash scripts/check-version-sync.sh

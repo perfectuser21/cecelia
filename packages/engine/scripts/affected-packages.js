@@ -18,7 +18,7 @@
 'use strict';
 
 // 所有已知包列表（用于"所有包"兜底）
-const ALL_PACKAGES = ['brain', 'engine', 'quality', 'workflows', 'api', 'dashboard'];
+const ALL_PACKAGES = ['brain', 'engine', 'workflows', 'api', 'dashboard'];
 
 /**
  * 路径前缀 → 包名映射表
@@ -27,7 +27,6 @@ const ALL_PACKAGES = ['brain', 'engine', 'quality', 'workflows', 'api', 'dashboa
 const PATH_TO_PACKAGE = [
   { prefix: 'packages/brain/', pkg: 'brain' },
   { prefix: 'packages/engine/', pkg: 'engine' },
-  { prefix: 'packages/quality/', pkg: 'quality' },
   { prefix: 'packages/workflows/', pkg: 'workflows' },
   { prefix: 'apps/api/', pkg: 'api' },
   { prefix: 'apps/dashboard/', pkg: 'dashboard' },

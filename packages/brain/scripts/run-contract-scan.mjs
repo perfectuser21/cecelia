@@ -5,7 +5,7 @@
  * 契约覆盖扫描脚本。每日由 Brain tick 自动触发（fire-and-forget）。
  *
  * 功能：
- *   1. 读取 packages/quality/contracts/cecelia-module-boundaries.yaml
+ *   1. 读取 packages/brain/config/contracts/cecelia-module-boundaries.yaml
  *   2. 检查每个契约的 test_file 是否存在
  *   3. 对未覆盖的契约，向 Brain API 创建 dev 任务
  *
@@ -33,7 +33,7 @@ const REPO_ROOT = REPO_ROOT_ARG || resolve(__dirname, '../../../');
 
 const CONTRACT_FILE = resolve(
   REPO_ROOT,
-  'packages/quality/contracts/cecelia-module-boundaries.yaml'
+  'packages/brain/config/contracts/cecelia-module-boundaries.yaml'
 );
 
 // ====== 主逻辑 ======

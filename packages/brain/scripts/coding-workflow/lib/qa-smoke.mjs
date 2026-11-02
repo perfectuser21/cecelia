@@ -7,12 +7,12 @@ import path from 'node:path';
 import { parseQaReport, PRODUCTION_TARGET_RE, PRODUCTION_ASSIGN_RE } from './qa-report.mjs';
 
 export const QA_SMOKE_DIR = 'packages/brain/scripts/smoke';
-const ALLOWLIST = 'packages/quality/smoke-allowlist.txt';
-const WRITE_TARGETS = 'packages/quality/smoke-write-targets.txt';
+const ALLOWLIST = 'packages/brain/config/smoke/smoke-allowlist.txt';
+const WRITE_TARGETS = 'packages/brain/config/smoke/smoke-write-targets.txt';
 // 目录与登记文件按仓库（repos.json qa_smoke，C6）；不传 = 默认仓（cecelia）口径
 const DEFAULT_PATHS = { dir: QA_SMOKE_DIR, allowlist: ALLOWLIST, write_targets: WRITE_TARGETS };
 const BROWSER_RE = /\bplaywright\b|\bchromium\b|\bpuppeteer\b|qa-page/i;
-// 同 packages/quality/tests/smoke-production-guard.node-test.mjs 的写请求判定
+// 同 packages/brain/scripts/smoke/__tests__/smoke-production-guard.node-test.mjs 的写请求判定
 const HTTP_WRITE_RE = /\b(?:curl|brain_curl)\b[^\n]*-X\s+(POST|PATCH|DELETE|PUT|["']?\$)/;
 
 /**

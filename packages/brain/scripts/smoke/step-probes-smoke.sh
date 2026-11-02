@@ -110,7 +110,7 @@ const checks = [
   ['migrations/476_step_probes_source_sha256.sql', ['ADD COLUMN IF NOT EXISTS source_sha256 text', \"'476'\"]],
   ['src/map/radius.js', ['PROBE_REF_PREFIX']],
   ['src/routes/step-probes.js', ['internalAuthOrLoopback', 'ON CONFLICT (probe_key) DO UPDATE', '/step-probes/drift-check']],
-  ['../quality/smoke-allowlist.txt', ['step-probes-smoke.sh']],
+  ['config/smoke/smoke-allowlist.txt', ['step-probes-smoke.sh']],
 ];
 let fail = false;
 for (const [file, needles] of checks) {

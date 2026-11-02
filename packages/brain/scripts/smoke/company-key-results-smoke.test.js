@@ -29,7 +29,7 @@ async function run(body, environment = {}) {
 }
 describe('company-key-results-smoke 真实HTTP只读合同', () => {
   it('公司只读smoke必须唯一登记在通过基线，禁止以deny或debt代替', () => {
-    const entries = name => readFileSync(new URL(`../../../quality/smoke-${name}.txt`, import.meta.url), 'utf8').split(/\r?\n/).map(line => line.trim()).filter(line => line && !line.startsWith('#'));
+    const entries = name => readFileSync(new URL(`../../config/smoke/smoke-${name}.txt`, import.meta.url), 'utf8').split(/\r?\n/).map(line => line.trim()).filter(line => line && !line.startsWith('#'));
     expect(entries('allowlist').filter(name => name === 'company-key-results-smoke.sh')).toEqual(['company-key-results-smoke.sh']);
     expect(entries('denylist')).not.toContain('company-key-results-smoke.sh');
     expect(entries('debt')).not.toContain('company-key-results-smoke.sh');
