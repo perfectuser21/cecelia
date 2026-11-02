@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createHash, createHmac } from 'node:crypto';
-import { createCommonRunnerDispatcher, commonRunnerFormalBinding, loadCommonRunnerProfiles } from '../common-runner-dispatch.js';
+import { createCommonRunnerDispatcher, commonRunnerFormalBinding, loadCommonRunnerProfiles, httpTransport } from '../common-runner-dispatch.js';
 import { runCommonRunnerTasks } from '../../common-runner-executor.js';
 
 const taskId = '10000000-0000-4000-8000-000000000001';
@@ -13,7 +13,7 @@ const token = 'contract-test-control-key-32-characters';
 const servers = [];
 afterEach(async () => { await Promise.all(servers.splice(0).map(server => new Promise(resolve => server.close(resolve)))); });
 
-async function setup({ badSignature = false, wrongNonce = false, failStart = false, failStartOn, workerResponses = [], workerReceipt = {}, receiptForRequest, centralSpans = [], definition, profilesFile, reconciliation, tickEnabled, useDefaultStartGate = false } = {}) {
+async function setup({ badSignature = false, wrongNonce = false, failStart = false, failStartOn, workerResponses = [], workerReceipt = {}, receiptForRequest, centralSpans = [], definition, profilesFile, reconciliation, tickEnabled, useDefaultStartGate = false, directoryEndpoint } = {}) {
   const requests = [];
   const server = http.createServer(async (req, res) => {
     let text = ''; for await (const chunk of req) text += chunk;
@@ -46,14 +46,15 @@ async function setup({ badSignature = false, wrongNonce = false, failStart = fal
     return { rows: [], rowCount: 1 };
   }) };
   const authority = vi.fn(async (_db, input, operation) => operation({ executionVersionId: 'version-a', grantId: 'grant-a',
-    node: { canonical_id: 'node-a', endpoints: { worker: `http://127.0.0.1:${server.address().port}` } } }, pool));
+    node: { canonical_id: 'node-a', endpoints: { worker: directoryEndpoint ?? `http://127.0.0.1:${server.address().port}` } } }, pool));
   const start = vi.fn(async () => ({ id: 'ledger-row', run_id: runId }));
   const finish = vi.fn(async () => ({ updated: true }));
   const reconcile = vi.fn(async () => reconciliation ?? { business_outcome: 'unknown', evidence_status: 'incomplete' });
   const dispatcher = createCommonRunnerDispatcher({ pool, token,
+    allowLoopbackForTests: true,
     env: { NODE_ENV: 'production', ...(profilesFile ? { COMMON_RUNNER_PROFILES_FILE: profilesFile } : {}) },
     ...(!profilesFile ? { profiles: { demo: { machine_id: 'node-a', profile_sha256: 'a'.repeat(64) } } } : {}),
-    authorizeExecution: authority, resolveBoundNode: async () => ({ canonical_id: 'node-a', endpoints: { worker: `http://127.0.0.1:${server.address().port}` } }),
+    authorizeExecution: authority, resolveBoundNode: async () => ({ canonical_id: 'node-a', endpoints: { worker: directoryEndpoint ?? `http://127.0.0.1:${server.address().port}` } }),
     executionDirectory: { current: () => ({ version: 'snapshot-a' }) }, startRun: start, finishRun: finish,
     ...(!useDefaultStartGate ? { assertCanStart: async () => {} } : {}),
     readReconciliation: reconcile,
@@ -62,6 +63,46 @@ async function setup({ badSignature = false, wrongNonce = false, failStart = fal
 }
 
 describe('common runner HTTP dispatch', () => {
+  it.each(['https://example.com', 'http://169.254.169.254:5231', 'http://127.0.0.1:5231',
+    'http://100.63.255.255:5231', 'http://100.128.0.1:5231', 'http://100.71.151.105:80',
+    'http://100.71.151.105:5231/private', 'http://100.71.151.105:5231/?redirect=evil',
+    'http://name.example:5231', 'http://user:pass@100.71.151.105:5231'])('rejects an unsafe authorized endpoint before sending credentials: %s', async endpoint => {
+    const fetchFn = vi.fn();
+    await expect(httpTransport({ endpoint, action: 'start', runId, body: {}, token, fetchFn })).rejects.toThrow('common_runner_transport_unconfigured');
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+  it.each(['http://100.64.0.1:5231', 'http://100.127.255.254:5231/'])('uses a validated numeric tailnet origin and a URL object: %s', async endpoint => {
+    const fetchFn = vi.fn(async () => ({ ok: true, body: (async function* () { yield Buffer.from('{}'); })() }));
+    await httpTransport({ endpoint, action: 'inspect', runId, body: {}, token, fetchFn });
+    const [url, options] = fetchFn.mock.calls[0];
+    expect(url).toBeInstanceOf(URL);
+    expect(url.origin).toBe(new URL(endpoint).origin);
+    expect(url.pathname).toBe(`/workflows/${encodeURIComponent(runId)}/${encodeURIComponent('inspect')}`);
+    expect(options.redirect).toBe('error');
+  });
+  it.each(['https://example.com', 'http://169.254.169.254:5231'])('cannot send a token even when the execution directory authorizes unsafe endpoint %s', async directoryEndpoint => {
+    const x = await setup({ directoryEndpoint });
+    const network = vi.spyOn(globalThis, 'fetch');
+    try {
+      const result = await x.dispatcher.dispatch('start', runId, { task_id: taskId, profile: 'demo', input: {}, mode: 'exploration' });
+      expect(result.status).toBe('unknown'); expect(result.reason).toBe('common_runner_transport_unconfigured');
+      expect(network).not.toHaveBeenCalled(); expect(x.requests).toHaveLength(0);
+    } finally { network.mockRestore(); }
+  });
+  it.each([{ runId: '../metadata', action: 'start' }, { runId, action: 'start/../../metadata' }])('rejects path injection before transport (%j)', async input => {
+    const fetchFn = vi.fn();
+    await expect(httpTransport({ endpoint: 'http://100.71.151.105:5231', ...input, body: {}, token, fetchFn })).rejects.toThrow('common_runner_request_invalid');
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+  it('does not allow loopback fixture transport in an actual production process', async () => {
+    const old = process.env.NODE_ENV; process.env.NODE_ENV = 'production';
+    const fetchFn = vi.fn();
+    try {
+      await expect(httpTransport({ endpoint: 'http://127.0.0.1:5231', action: 'inspect', runId, body: {}, token,
+        fetchFn, allowLoopbackForTests: true })).rejects.toThrow('common_runner_transport_unconfigured');
+      expect(fetchFn).not.toHaveBeenCalled();
+    } finally { process.env.NODE_ENV = old; }
+  });
   it('the automatic completion job claims an opt-in task and reaches a real Worker HTTP server', async () => {
     const x = await setup(); x.task.status = 'queued';
     x.task.payload.common_runner = { run_id: runId, profile: 'demo', input: { from: 'brain-scheduler' }, mode: 'exploration' };

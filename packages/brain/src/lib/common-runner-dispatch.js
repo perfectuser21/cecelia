@@ -45,9 +45,19 @@ export function loadCommonRunnerProfiles(filename) {
   } finally { fs.closeSync(fd); }
 }
 
-async function httpTransport({ endpoint, action, runId, body, token, fetchFn = fetch, timeoutMs = 20000 }) {
+export async function httpTransport({ endpoint, action, runId, body, token, fetchFn = fetch, timeoutMs = 20000, allowLoopbackForTests = false }) {
   if (!endpointValid(endpoint) || typeof token !== 'string' || token.length < 32) fail('common_runner_transport_unconfigured', 503);
-  const response = await fetchFn(`${new URL(endpoint).origin}/workflows/${runId}/${action}`, {
+  const url = new URL(endpoint);
+  const octets = url.hostname.split('.');
+  // No DNS resolution or arbitrary directory URL can receive the control credential.
+  const tailnet = octets.length === 4 && octets.every(part => /^(?:0|[1-9][0-9]{0,2})$/.test(part) && Number(part) <= 255)
+    && Number(octets[0]) === 100 && Number(octets[1]) >= 64 && Number(octets[1]) <= 127 && url.port === '5231';
+  const fixture = allowLoopbackForTests === true && process.env.NODE_ENV === 'test'
+    && url.hostname === '127.0.0.1' && Number(url.port) > 0 && Number(url.port) <= 65535;
+  if ((!tailnet && !fixture) || (endpoint !== url.origin && endpoint !== `${url.origin}/`)) fail('common_runner_transport_unconfigured', 503);
+  if (!UUID.test(runId) || !['start', 'inspect', 'cancel', 'flush'].includes(action)) fail('common_runner_request_invalid', 400);
+  url.pathname = `/workflows/${encodeURIComponent(runId)}/${encodeURIComponent(action)}`;
+  const response = await fetchFn(url, {
     method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
     body: JSON.stringify(body), signal: AbortSignal.timeout(timeoutMs), redirect: 'error',
   });
@@ -89,6 +99,7 @@ export function commonRunnerFormalBinding(definition, runId) {
 
 export function createCommonRunnerDispatcher({ pool, env = process.env, profiles,
   token = env.KERNEL_FLEET_BRIDGE_TOKEN, transport = httpTransport, authorizeExecution = authorize,
+  allowLoopbackForTests = false,
   resolveBoundNode = resolveCleanup, executionDirectory = directory, startRun = startCentralRun,
   finishRun = finishCentralRun,
   assertCanStart = db => assertCommonRunnerStartAllowed(env, db),
@@ -247,7 +258,7 @@ export function createCommonRunnerDispatcher({ pool, env = process.env, profiles
       ...(prepared.action === 'start' ? { profile: binding.profile, profile_sha256: binding.profile_sha256, input: binding.input, mode: binding.mode,
         ...(binding.run_binding ? { run_binding: binding.run_binding } : {}) } : {}) };
     try {
-      const envelope = await transport({ endpoint: prepared.endpoint, action: prepared.action, runId, body: request, token });
+      const envelope = await transport({ endpoint: prepared.endpoint, action: prepared.action, runId, body: request, token, allowLoopbackForTests });
       const receipt = verifyEnvelope(envelope, { run_id: runId, task_id: body.task_id, machine_id: binding.machine_id,
         request_nonce: nonce, profile_sha256: binding.profile_sha256, mode: binding.mode }, token);
       await recordNotStarted(binding, receipt, nonce, prepared.action);

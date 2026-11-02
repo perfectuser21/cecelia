@@ -6,7 +6,6 @@ import {skillSourceExcludes} from '../../scripts/ci/skill-source-tests.mjs';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export const POSTGRES_INTEGRATION_TESTS = [
-  'src/__tests__/integration/common-runner-recorder.pg.integration.test.js',
   'src/lib/__tests__/runtime-identities.test.js',
   'src/lib/__tests__/runtime-version-graph.test.js',
   'src/lib/__tests__/version-identity-preflight.test.js',
