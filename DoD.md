@@ -4,5 +4,7 @@
   Test: manual:node --test scripts/ci/__tests__/basic-active-ci-retirement.test.mjs
 - [ ] [BEHAVIOR] 既有验证输入与来源协议回归继续有效。
   Test: manual:node scripts/ci/run-basic-check.mjs scripts
+- [x] [BEHAVIOR] 固定420项删除边界中405项仅经原生三scope闭包与真实head owner获准退役，15项保留原生路径；catalog、旧blob、13引用、入口与消费者漂移拒绝。
+  Test: manual:node --test scripts/ci/__tests__/basic-closed-component-retirement.test.mjs
 - [ ] [ARTIFACT] 正常 PR 合并后 Main CI 与 CI 专属基线真实通过。
   Test: manual:bash scripts/check-version-sync.sh
