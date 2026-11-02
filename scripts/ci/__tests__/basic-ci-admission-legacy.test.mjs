@@ -1,14 +1,12 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {execFileSync} from 'node:child_process';
-import {mkdirSync,writeFileSync,readFileSync,symlinkSync,existsSync,unlinkSync,readdirSync} from 'node:fs';
+import {mkdirSync,writeFileSync,symlinkSync,existsSync,unlinkSync} from 'node:fs';
 import {join,dirname} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {createHash} from 'node:crypto';
 import {authorityFixture} from './fixtures/ci-admission-authority.mjs';
 import * as authority from '../ci-admission-authority.mjs';
-import {publishCiAdmissionBaseline} from '../ci-admission-publisher.mjs';
-import {createCiAdmissionDraft} from '../ci-admission-envelope.mjs';
 import {admissionFixture} from './fixtures/ci-admission-envelope.mjs';
 import {attachCiArchive} from './fixtures/ci-admission-archive.mjs';
 import {readCiAdmissionBaseline} from '../ci-admission-artifact.mjs';
@@ -54,36 +52,12 @@ for(const variant of ['recipe-byte','missing-recipe','symlink','wrong-app','fail
  if(variant==='artifact')f.options.artifactId=1;
  await assert.rejects(f.publication(),/CI_ADMISSION_|FIXED_GIT_/);
 });
-test('真实CLI未知旧recipe不能用ci-passed冒名发布，退出失败且无输出或目录',async t=>{
- const f=fixture(t,{bytes:Buffer.concat([recipe,Buffer.from('\n# unreviewed recipe\n')])}),bin=join(f.root,'bin');mkdirSync(bin);
- const database=join(f.root,'api.json');writeFileSync(database,JSON.stringify([...f.data]));
- writeFileSync(join(bin,'gh'),`#!${process.execPath}\nconst fs=require('node:fs');const data=new Map(JSON.parse(fs.readFileSync(${JSON.stringify(database)})));const key=process.argv.at(-1);if(!data.has(key))process.exit(9);process.stdout.write(JSON.stringify(data.get(key)));`,{mode:0o700});
- const event=join(f.root,'event.json'),output=join(f.root,'github-output');writeFileSync(event,JSON.stringify(f.publisher.event));
- assert.throws(()=>execFileSync(process.execPath,[fileURLToPath(new URL('../ci-admission-publisher.mjs',import.meta.url)),f.publisher.sourceRoot,f.root,f.publisher.outputDir],{encoding:'utf8',stdio:['ignore','pipe','pipe'],env:{PATH:bin+':'+process.env.PATH,GITHUB_EVENT_PATH:event,GITHUB_OUTPUT:output,GITHUB_REPOSITORY:f.publisher.repository,GITHUB_EVENT_NAME:'workflow_run',GITHUB_SHA:f.control,GITHUB_RUN_ID:'22',GITHUB_RUN_ATTEMPT:'1'},timeout:15000}),error=>error.status===1&&String(error.stderr).includes('CI_ADMISSION_PROVIDER_AMBIGUOUS'));
- assert.equal(existsSync(output),false);assert.equal(existsSync(f.publisher.outputDir),false);
-});
-
-for(const side of ['source','control'])test('旧完整CI也不能掩盖实际checkout漂移：'+side,async t=>{
- const f=fixture(t);writeFileSync(join(side==='source'?f.publisher.sourceRoot:f.root,'source'),'dirty tracked bytes');let workers=0;
- await assert.rejects(publishCiAdmissionBaseline(f.publisher,{api:f.api,runWorker:()=>{workers++;}}),/CI_ADMISSION_PUBLISHER_CHECKOUT/);
- assert.equal(workers,0);assert.equal(existsSync(f.publisher.outputDir),false);
-});
-
 const legacyEnvelope=t=>admissionFixture(t,{sourceCiRecipe:recipe,sourceCiProvider:'ci-passed'});
 function artifactInputs(f){
  const prefix='repos/perfectuser21/cecelia/actions',artifact=f.data.get(prefix+'/artifacts/77');
  f.data.set(prefix+`/artifacts?name=implementation-ci-admission-baseline-${f.source}&per_page=100`,{total_count:1,artifacts:[structuredClone(artifact)]});
  return {options:{revision:f.source,repoRoot:f.root,controlRoot:f.root},deps:{api:f.api,download:async path=>Buffer.from(f.data.get(path))}};
 }
-test('旧完整CI publisher仍真实调用worker边界并只写CI-only envelope与完整profile',async t=>{
- const f=await legacyEnvelope(t),sourceRoot=join(f.root,'source-checkout');f.git('worktree','add','--quiet','--detach',sourceRoot,f.source);
- f.data.get(`${prefix}/actions/runs/22`).status='in_progress';
- const draft=await createCiAdmissionDraft({controlRoot:f.root,controlRevision:f.control,sourceRevision:f.source,sourceTree:f.git('rev-parse',f.source+'^{tree}'),snapshots:f.snapshots,executions:f.executions});let workers=0;
- const o={repository:'perfectuser21/cecelia',eventName:'workflow_run',event:{action:'completed',workflow_run:structuredClone(f.data.get(`${prefix}/actions/runs/11`))},sourceRoot,controlRoot:f.root,sourceRevision:f.source,controlRevision:f.control,sourceRunId:11,publisherRunId:22,publisherAttempt:1,outputDir:join(f.root,'publication')};
- const result=await publishCiAdmissionBaseline(o,{api:f.api,runWorker:async()=>{workers++;return structuredClone(draft);}});
- assert.equal(workers,1);assert.equal(result.published,true);assert.equal(result.purpose,'ci_admission_only');assert.deepEqual(readdirSync(o.outputDir).sort(),['assertions.json','ci-admission.json']);
- assert.equal(JSON.parse(readFileSync(join(o.outputDir,'ci-admission.json'))).ci_authority.ci.profile,'legacy_full_ci_v1');
-});
 test('正式artifact reader同样重推旧完整CI profile，不能只有publishing接受',async t=>{
  const f=await legacyEnvelope(t),input=artifactInputs(f),result=await readCiAdmissionBaseline(input.options,input.deps);
  assert.equal(result.envelope.ci_purpose,'ci_admission_only');assert.equal(result.envelope.ci_authority.ci.profile,'legacy_full_ci_v1');assert.equal(result.envelope.ci_authority.ci.provider_name,'ci-passed');assert.equal(result.envelope.ci_authority.ci.recipe_sha256,createHash('sha256').update(recipe).digest('hex'));

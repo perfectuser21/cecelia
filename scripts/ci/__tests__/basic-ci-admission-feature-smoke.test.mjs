@@ -72,7 +72,7 @@ test('feature smoke真实执行且统一源码CI唯一发现全部基础与退�
  const removed=['packages/brain/src/__tests__/ci-admission-baseline-contracts.test.js','packages/brain/src/__tests__/ci-verification-retirement-contracts.test.js','scripts/ci/__tests__/ci-admission-mechanisms.test.mjs'];
  for(const path of removed){assert.equal(existsSync(join(root,path)),false,path);assert.deepEqual(relations.filter(row=>row.path===path),[],path);}
  const selected=commandsFor('scripts')[0];assert.equal(selected.command,'node');assert.equal(selected.args[0],'--test');
- const maintained=['archive','artifact','authority','builder','envelope','feature-smoke','impact-workflow','infra','inputs','legacy','native-entry','publisher','resolver','scratch-import','scratch','seed','skill-cache','worker','workflow'].map(name=>'scripts/ci/__tests__/basic-ci-admission-'+name+'.test.mjs');
+ const maintained=['archive','artifact','authority','builder','envelope','feature-smoke','infra','inputs','legacy','native-entry','resolver','scratch-import','scratch','seed','skill-cache','worker'].map(name=>'scripts/ci/__tests__/basic-ci-admission-'+name+'.test.mjs');
  for(const path of [...maintained,'scripts/ci/__tests__/basic-verification-retirements.test.mjs'])assert.equal(selected.args.filter(arg=>arg===path).length,1,path);
  const registry=readFileSync(join(root,'test-registry.yaml'),'utf8');
  for(const path of removed)assert.equal(registry.includes('path: '+path),false,path);
@@ -82,5 +82,5 @@ for(const major of [26,22])test(`feature smoke边界：Node${major}${major===26?
  writeFileSync(join(bin,'node'),`#!/bin/sh\nif [ "$1" = '-p' ]; then printf '%s\\n' '${major}'; exit 0; fi\nprintf '%s\\n' "$*" > '${calls}'\n/usr/bin/env > '${environment}'\nexit 17\n`,{mode:0o700});
  const result=await run({...f.env,PATH:bin+':'+f.env.PATH});assert.equal(result.error?.code,major===26?2:17);
  if(major===26){assert.match(result.stderr,/CI_ADMISSION_SMOKE_NODE22_REQUIRED/);assert.equal(existsSync(calls),false);}
- else{assert.deepEqual(readFileSync(calls,'utf8').trim().split(' '),['--test',...['archive','artifact','authority','envelope','inputs','publisher','skill-cache','worker'].map(name=>'scripts/ci/__tests__/basic-ci-admission-'+name+'.test.mjs')]);const text=readFileSync(environment,'utf8');assert.equal(text.includes(f.env.GH_TOKEN),false);assert.equal(text.includes(f.env.DB_PASSWORD),false);assert.equal(text.includes('NODE_OPTIONS='),false);assert.ok(!text.includes('HOME='+f.directory+'\n'));}
+ else{assert.deepEqual(readFileSync(calls,'utf8').trim().split(' '),['--test',...['archive','artifact','authority','envelope','inputs','skill-cache','worker'].map(name=>'scripts/ci/__tests__/basic-ci-admission-'+name+'.test.mjs')]);const text=readFileSync(environment,'utf8');assert.equal(text.includes(f.env.GH_TOKEN),false);assert.equal(text.includes(f.env.DB_PASSWORD),false);assert.equal(text.includes('NODE_OPTIONS='),false);assert.ok(!text.includes('HOME='+f.directory+'\n'));}
 });

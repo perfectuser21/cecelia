@@ -41,11 +41,6 @@ export function commandsFor(component, shard) {
       ];
     case 'image':
       return [step('.', 'docker', 'build', '-f', 'packages/brain/Dockerfile', '-t', 'cecelia-brain:ci-basic', '.')];
-    case 'engine':
-      return [
-        step('packages/engine', 'npm', 'run', 'lint'), vitest('packages/engine'),
-        ...['unit', 'integration', 'integrity'].flatMap(kind => shellTests(`packages/engine/tests/${kind}`)),
-      ];
     case 'api':
       return [step('apps/api', 'npm', 'run', 'typecheck'), vitest('apps/api'), step('apps/api', 'npm', 'run', 'build')];
     case 'api-integration':
@@ -66,6 +61,7 @@ export function commandsFor(component, shard) {
       if (!tests.length) throw new Error('Node测试集合为空');
       return [
         step('.', 'node', '--test', ...tests),
+        step('.', 'node', 'scripts/dev/check.mjs'),
         step('.', 'node', 'scripts/facts-check.mjs'),
         step('.', 'bash', 'scripts/check-version-sync.sh'),
         step('.', 'node', '.github/workflows/scripts/lint-migration-unique-version.cjs'),

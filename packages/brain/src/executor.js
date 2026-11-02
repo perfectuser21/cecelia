@@ -2558,26 +2558,8 @@ function buildCodexTaskBranch(task, isCodexDev) {
   return `cp-${dateStr}-${task.id.slice(0, 8)}-cx`;
 }
 
-/** Build runner config for the bridge payload (codex_dev / crystallize / prompt modes). */
-function buildCodexRunnerConfig(task, taskBranch, isCodexDev, isCrystallize) {
-  if (isCodexDev) {
-    return {
-      runner: 'packages/engine/runners/codex/runner.sh',
-      runner_args: ['--branch', taskBranch, '--task-id', task.id],
-    };
-  }
-  if (isCrystallize) {
-    return {
-      runner: 'packages/engine/runners/codex/playwright-runner.sh',
-      runner_args: ['--task-id', task.id],
-    };
-  }
-  return { runner: undefined, runner_args: undefined };
-}
-
 /** Assemble the full request body for the Codex Bridge /run endpoint. */
-function buildCodexBridgePayload(task, runId, promptContent, taskBranch, injectedAccounts, isCodexDev, isCrystallize) {
-  const { runner, runner_args } = buildCodexRunnerConfig(task, taskBranch, isCodexDev, isCrystallize);
+function buildCodexBridgePayload(task, runId, promptContent, taskBranch, injectedAccounts) {
   const brainUrl = process.env.BRAIN_URL || 'http://localhost:5221';
   return {
     task_id: task.id,
@@ -2587,8 +2569,6 @@ function buildCodexBridgePayload(task, runId, promptContent, taskBranch, injecte
     task_type: task.task_type,
     base_repo: task.payload?.base_repo || 'perfectuser21/cecelia',
     timeout_ms: 10 * 60 * 1000,
-    runner,
-    runner_args,
     branch: taskBranch,
     accounts: injectedAccounts.length > 0 ? injectedAccounts : undefined,
     callback_url: `${brainUrl}/api/brain/execution-callback`,
@@ -2616,7 +2596,7 @@ async function selectCodexAccounts() {
  * Routes codex_qa / codex_dev (and any task with provider=codex) to the Xian Codex CLI.
  *
  * codex_qa  → prompt 模式：将 task description 作为 prompt 直接传给 codex-bin exec
- * codex_dev → runner 模式：启动 runners/codex/runner.sh，source devloop-check.sh 驱动完整 /dev 循环
+ * codex_dev → Bridge 根据 task_type 启动 Brain 自有 legacy Codex runner。
  *
  * @param {Object} task - The task object from database
  * @returns {Object} - { success, taskId, runId, error? }
@@ -2626,7 +2606,6 @@ async function triggerCodexBridge(task, forceBridgeUrl = null) {
   const runId = generateRunId(task.id);
   try {
     const isCodexDev = task.task_type === 'codex_dev';
-    const isCrystallize = task.task_type === 'crystallize_forge' || task.task_type === 'crystallize_verify';
 
     console.log(`[executor] Calling Xian Codex Bridge for task=${task.id} type=${task.task_type}${forceBridgeUrl ? ` (pinned: ${forceBridgeUrl})` : ''}`);
 
@@ -2642,7 +2621,7 @@ async function triggerCodexBridge(task, forceBridgeUrl = null) {
     }
 
     const bridgeUrl = forceBridgeUrl ?? await selectBestBridge();
-    const payload = buildCodexBridgePayload(task, runId, promptContent, taskBranch, injectedAccounts, isCodexDev, isCrystallize);
+    const payload = buildCodexBridgePayload(task, runId, promptContent, taskBranch, injectedAccounts);
     const response = await withLegacyExecution({pool,provider:'codex',endpoint:bridgeUrl},()=>fetch(`${bridgeUrl}/run`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

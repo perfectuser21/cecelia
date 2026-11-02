@@ -1,8 +1,8 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.445.103
+**Brain 版本**: 1.445.104
 
-本次精确登记已审退役后的 Engine／Quality 配置与源码检查命令，旧配置和失败变体仍独立验证；仅扩展 CI 来源解析，不形成生产发布证明；候选带 `cecelia_source_only=true`，部署脚本在生产操作前拒绝。
+开发工具归位：Engine 独立包退役，实际写入守卫与工作树工具迁 scripts/dev；仍可达 Codex adapter 归 Brain。默认 CI 不再生成 Engine/Quality 组件，现役工具真实行为在 scripts 组件验证。候选保留 `cecelia_source_only=true`，尚不构成生产发布证明。
 
 Quality 独立包退役：开发门禁迁根 scripts/devgate，发布 Smoke 配置和真实调用者归 Brain，Goldset CLI 与原始样本归 scripts/evals，路由回归归 Brain；保留行为与失败阻断，移除旧包专属原型和自维护入口。
 

@@ -69,4 +69,26 @@ describe('模块边界契约的真实CLI消费者', () => {
     const covered = execute(join(f.root, relative), ['--base=HEAD~1'], f.root);
     expect(covered.status, covered.stdout + covered.stderr).toBe(0);
   });
+
+  it('当前hook边界使用迁后真实合同测试，缺测试时漂移门禁拒绝', () => {
+    const f = fixture();
+    const config = 'packages/brain/config/contracts/cecelia-module-boundaries.yaml';
+    f.put(config, readFileSync(join(repo, config)));
+    const entry = 'scripts/devgate/check-contract-drift.mjs';
+    f.put(entry, readFileSync(join(repo, entry)));
+    symlinkSync(join(repo, 'node_modules'), join(f.root, 'node_modules'), 'dir');
+    const git = (...args) => execFileSync('git', ['-c', 'core.hooksPath=/dev/null', ...args], { cwd: f.root, stdio: 'pipe' });
+    git('init', '-q'); git('config', 'user.name', 'Contract fixture'); git('config', 'user.email', 'contract@example.invalid');
+    const guard = 'scripts/dev/hooks/branch-protect.sh';
+    f.put(guard, '#!/bin/bash\nexit 0\n'); git('add', '.'); git('commit', '-qm', 'baseline');
+    f.put(guard, '#!/bin/bash\nexit 1\n'); git('add', guard); git('commit', '-qm', 'guard changed');
+    const missing = execute(join(f.root, entry), ['--base=HEAD~1'], f.root);
+    expect(missing.status, missing.stdout + missing.stderr).toBe(1);
+    expect(missing.stdout).toContain('hooks_dev_mode_format');
+    const test = 'scripts/dev/hooks/__tests__/hook-contracts.test.ts';
+    f.put(test, readFileSync(join(repo, test)));
+    const covered = execute(join(f.root, entry), ['--base=HEAD~1'], f.root);
+    expect(covered.status, covered.stdout + covered.stderr).toBe(0);
+    expect(covered.stdout).toContain('hooks_dev_mode_format');
+  });
 });

@@ -497,4 +497,4 @@ test('退休合同CI登记逐项绑定真实退休实现且没有重复或错误
  }
  for(const path of ['packages/brain/src/__tests__/ci-verification-retirement-contracts.test.js','packages/brain/src/__tests__/ci-admission-baseline-contracts.test.js'])assert.deepEqual(relations.filter(row=>row.path===path),[]);
 });
-test('实际schema reader接收七项workflow变更与两项删除且不声称执行',t=>assertWorkflowSchemaReaderInputs(t,{basicEntryFixture,derived,root:fileURLToPath(new URL('../../../',import.meta.url))}));
+test('实际schema reader接收冻结历史workflow的七项变更与两项删除且不声称执行',t=>assertWorkflowSchemaReaderInputs(t,{basicEntryFixture,derived,root:fileURLToPath(new URL('../../../',import.meta.url))}));

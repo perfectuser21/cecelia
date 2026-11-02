@@ -71,18 +71,18 @@ test('只给实际PG跑道设置数据库URI，不能意外启用单测文件里
     "${{ matrix.component == 'brain-integration' && 'postgresql://ci:isolated-ci@127.0.0.1:5432/cecelia_scratch' || '' }}");
 });
 
-test('来源准入接收全部main PR，中央live来源导出只保留显式调用', () => {
+test('发布来源准入只显式触发，不再占用PR与Main日常CI', () => {
   const impact = yaml.load(readFileSync(new URL('../../../.github/workflows/implementation-impact.yml', import.meta.url), 'utf8'));
-  assert.deepEqual(impact.on.pull_request.branches, ['main']);
+  assert.equal(impact.on.pull_request, undefined, '旧固定hash来源准入退出PR检查');
   assert.equal(impact.on.push, undefined, 'main源码CI不得自动等待生产收集器或刷新中央定义');
-  assert.deepEqual(Object.keys(impact.on).sort(), ['pull_request', 'workflow_call', 'workflow_dispatch']);
+  assert.deepEqual(Object.keys(impact.on).sort(), ['workflow_call', 'workflow_dispatch']);
   assert.ok(impact.on.workflow_dispatch.inputs.source_baseline_recovery);
   assert.ok(impact.on.workflow_call.inputs.tooling_revision);
-  for (const key of ['paths', 'paths-ignore', 'branches-ignore']) {
-    assert.equal(impact.on.pull_request[key], undefined, `${key} 会令必需检查没有结果`);
-  }
   assert.equal(impact.jobs.gate.name, 'Implementation impact gate');
   assert.ok(impact.jobs.gate.steps.length > 0, '保留实际来源准入执行');
+  assert.ok(impact.jobs['snapshot-main'], '跨仓发布仍需要固定源码snapshot');
+  assert.equal(readdirSync(new URL('../../../.github/workflows/', import.meta.url)).includes('ci-admission-baseline.yml'), false,
+    '已退休PR来源解析的重复Main publication不得继续自动运行');
 });
 
 test('来源准入先执行发布、跨仓、技能与巡查机制回归，不能仅保留脚本调用', () => {

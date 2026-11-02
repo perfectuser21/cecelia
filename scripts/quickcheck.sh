@@ -40,7 +40,7 @@ source "$REPO_ROOT/scripts/lib/worktree-node-modules.sh" || exit 1
 # 创建符号链接使本地检查入口能解析依赖
 if [[ "$REPO_ROOT" != "$MAIN_REPO_ROOT" ]]; then
   link_missing_node_modules "$ROOT_NM" "$REPO_ROOT/node_modules"
-  for package_dir in packages/engine packages/brain apps/api apps/dashboard; do
+  for package_dir in packages/brain apps/api apps/dashboard; do
     link_missing_node_modules \
       "$MAIN_REPO_ROOT/$package_dir/node_modules" \
       "$REPO_ROOT/$package_dir/node_modules"
@@ -115,11 +115,10 @@ run_preflight() {
 }
 
 # 本地按变更包运行快速准备命令，不重复 GitHub 的完整组件测试。
-for PKG in packages/engine packages/brain apps/api apps/dashboard; do
+for PKG in packages/brain apps/api apps/dashboard; do
   if echo "$CHANGED_FILES" | grep -q "^$PKG/"; then
     case "$PKG" in
       packages/brain) run_preflight "$PKG" npm run lint ;;
-      packages/engine) run_preflight "$PKG" npm run lint ;;
       apps/api) run_preflight "$PKG" npm run typecheck ;;
       apps/dashboard) run_preflight "$PKG" npm run build ;;
     esac

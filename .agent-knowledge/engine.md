@@ -1,79 +1,15 @@
-# Engine 模块详情
+# Cecelia 开发工具
 
-> 从 `packages/engine/` 提取的关键信息（更新于 2026-03-28）。
-> 详细说明书：http://38.23.47.81:9998/knowledge/engine/
+Engine 独立包已退役。开发工具归根脚本，执行 adapter 归运行组件；没有 Engine 独立版本、六文件 bump 或 `[CONFIG]` 提交要求。
 
----
+| 能力 | 归属 | 验证 |
+|---|---|---|
+| 分支、Bash、dev-mode、主仓写入守卫 | `scripts/dev/hooks/` | 同目录 `__tests__` 的真实 stdin/Git/receipt 回归 |
+| 共享 hook 函数 | `scripts/dev/lib/hook-utils.sh` | hook 合同行为 |
+| worktree 与 guardian | `scripts/dev/worktree/` | `scripts/dev/__tests__` 私有 Git/FD201/清理回归 |
+| Claude launcher | `scripts/claude-launch.sh` | `scripts/dev/__tests__` 私有 HOME/argv/cwd 回归 |
+| 旧 codex_dev adapter | `packages/brain/scripts/codex-bridge/` | Brain runner/bridge 回归 |
+| DoD 映射 | `scripts/devgate/check-dod-mapping.cjs` | 根 CI 的实际 CLI 回归 |
+| Skills 正文 | `zenithjoy-skills` 中心仓 | 固定来源恢复、所有权与合同 |
 
-## 基本信息
-
-| 项目 | 值 |
-|------|----|
-| 路径 | `packages/engine/` |
-| 版本 | `packages/engine/VERSION` |
-| 职责 | 开发工作流引擎（Hooks、DevGate、Skills、CI 工具） |
-
----
-
-## 核心组件
-
-| 组件 | 路径 | 职责 |
-|------|------|------|
-| Hooks | `packages/engine/hooks/` | 分支保护、Stop Hook、Bash Guard |
-| Skills | `packages/engine/skills/` | 内置 dev/qa/audit/assurance skill 配置 |
-| DevGate | `scripts/devgate/` + `packages/engine/scripts/devgate/` | CI 门禁脚本（DoD 映射、RCI 覆盖、版本检查） |
-| CI 配置 | `packages/engine/ci/` | GitHub Actions 工作流配置 |
-| Tests | `packages/engine/tests/` | Engine 单元测试（vitest） |
-
----
-
-## 关键 Hooks
-
-| Hook | 触发时机 | 职责 |
-|------|---------|------|
-| `branch-protect.sh` | Write/Edit | 分支保护，强制 PRD/DoD，阻止 main 直写 |
-| `stop-dev.sh` | 会话结束 | 检查 PR 是否合并，未合并时 exit 2 循环 |
-| `bash-guard.sh` | Bash 命令 | 主仓库 main 分支禁止危险 bash 命令 |
-| `credential-guard.sh` | Write | 防止凭据写入代码文件 |
-| `pre-commit` | git commit（本机全局，`~/.git-hooks` core.hooksPath，对所有仓库生效） | 强制 cp-*分支+`.dev-mode`才能提交；**例外**：git remote origin 命中 `zenithjoy-skills`（basename锚定正则 `/zenithjoy-skills(\.git)?/?$`，非子串匹配，避免误伤 `zenithjoy-skills-v2` 等同前缀仓库）直接放行——该仓库是纯 skill SSOT，改 skill 走 skill-creator→PR 不走 /dev（PR #3666 / #3668）。测试：`packages/engine/tests/integration/pre-commit.test.sh`（被下方 `engine-tests-shell` job 自动 glob 扫描，是 `ci-passed` 必过项，改坏了 CI 会红）。|
-
----
-
-## DevGate 门禁脚本
-
-```bash
-# DoD → Test 映射检查（CI L2 强制）
-node scripts/devgate/check-dod-mapping.cjs
-
-# 版本同步检查（Engine 改动后）
-bash scripts/check-version-sync.sh
-```
-
----
-
-## Engine 版本规则
-
-Engine Skills/Hooks 改动的三要素：
-
-**1. PR title 含 `[CONFIG]`**（触发 engine-ci.yml）
-
-**2. 版本 bump 6 个文件**（`packages/engine/scripts/devgate/check-engine-hygiene.cjs` 强制校验，`node packages/engine/scripts/devgate/check-engine-hygiene.cjs` 手动跑一遍确认同步）：
-```
-packages/engine/package.json       (.version 字段)
-packages/engine/package-lock.json
-packages/engine/VERSION
-packages/engine/hooks/VERSION       # 独立于上面的 VERSION，容易漏（2026-07-09 PR #3666 亲身踩过）
-packages/engine/.hook-core-version
-packages/engine/regression-contract.yaml
-```
-
-**3. 文档更新**：
-- `packages/engine/feature-registry.yml` — 新增 changelog 条目（注意：不在 `features/` 子目录下，路径是仓库根 `packages/engine/` 直属）
-
-commit 前缀 `[CONFIG]` 触发 engine-ci.yml。
-
----
-
-## 深度说明书
-
-- Engine 模块图：http://38.23.47.81:9998/knowledge/engine/
+`hooks` 是到 `scripts/dev/hooks` 的兼容符号链接；安装器使用新 owner，不依赖旧包。运行 `node scripts/dev/check.mjs`，主 CI 的 scripts 组件会执行同一入口。缺测试集合、脚本语法错误或真实子进程失败均返回非零。测试只操作私有 fixture；不得用生产 Brain 验证测试效果。

@@ -2,7 +2,13 @@ name: Deep Regression
 'on':
   schedule:
     - cron: 0 19 * * *
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      classified_smoke:
+        description: 显式运行完整分类smoke诊断（独立本机测试容器，非PR/Main最低保障）
+        type: boolean
+        required: false
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -11,7 +17,10 @@ concurrency:
 jobs:
   open-issue-on-failure:
     name: Report deep regression failure
-    needs: [brain-integration, walking-ci-e2e, real-env-smoke]
+    needs:
+      - brain-integration
+      - walking-ci-e2e
+      - real-env-smoke
     if: failure()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -22,13 +31,20 @@ jobs:
         env:
           NEEDS_JSON: ${{ toJSON(needs) }}
         with:
-          script: |
+          script: >
             const date = new Date().toISOString().slice(0, 10);
+
             const title = `[深度回归] ${date} 检查失败`;
+
             const { owner, repo } = context.repo;
-            const issues = await github.paginate(github.rest.issues.listForRepo, { owner, repo, state: 'open', per_page: 100 });
+
+            const issues = await github.paginate(github.rest.issues.listForRepo, { owner, repo, state: 'open', per_page:
+            100 });
+
             if (issues.some(issue => issue.title === title)) return;
+
             const results = JSON.parse(process.env.NEEDS_JSON);
+
             const body = Object.entries(results).map(([name, result]) => `- ${name}: ${result.result}`).join('\n')
               + `\n\n运行记录：https://github.com/${owner}/${repo}/actions/runs/${context.runId}`;
             await github.rest.issues.create({ owner, repo, title, body });
@@ -44,7 +60,9 @@ jobs:
           POSTGRES_DB: cecelia_test
         ports:
           - '5432:5432'
-        options: '--health-cmd "pg_isready -U cecelia -d cecelia_test" --health-interval 5s --health-timeout 5s --health-retries 12'
+        options: >-
+          --health-cmd "pg_isready -U cecelia -d cecelia_test" --health-interval 5s --health-timeout 5s --health-retries
+          12
     env:
       DB_HOST: localhost
       DB_PORT: '5432'
@@ -72,7 +90,20 @@ jobs:
       - name: Migrate dedicated database
         run: cd packages/brain && node src/migrate.js
       - name: Run full database regressions
-        run: cd packages/brain && npx --no-install vitest run --config ../../scripts/ci/deep-integration.config.mjs --reporter=dot
+        run: >-
+          cd packages/brain && npx --no-install vitest run --config ../../scripts/ci/deep-integration.config.mjs
+          --reporter=dot
+      - name: Run isolated launcher and utility regressions
+        run: |
+          set -euo pipefail
+          fixture_home=$(mktemp -d "${RUNNER_TEMP}/nightly-launchers.XXXXXX")
+          trap 'rm -rf "$fixture_home"' EXIT
+          export HOME="$fixture_home"
+          unset CODEX_HOME CODEX_HOMES CODEX_API_KEY OPENAI_API_KEY GROK_API_KEY BASH_ENV ENV
+          bash tests/regression/codex-grok-launcher-supervisor/install-launchers.test.sh
+          bash tests/regression/codex-grok-launcher-supervisor/codex-launch.test.sh
+          bash tests/regression/codex-grok-launcher-supervisor/grok-launch.test.sh
+          bash scripts/smoke/e2e/headed-r7.sh
   walking-ci-e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -85,7 +116,9 @@ jobs:
           POSTGRES_DB: cecelia_test
         ports:
           - '5432:5432'
-        options: '--health-cmd "pg_isready -U cecelia -d cecelia_test" --health-interval 5s --health-timeout 5s --health-retries 12'
+        options: >-
+          --health-cmd "pg_isready -U cecelia -d cecelia_test" --health-interval 5s --health-timeout 5s --health-retries
+          12
     env:
       DB_HOST: localhost
       DB_PORT: '5432'
@@ -168,7 +201,9 @@ jobs:
           POSTGRES_DB: cecelia_test
         ports:
           - '5432:5432'
-        options: '--health-cmd "pg_isready -U cecelia -d cecelia_test" --health-interval 5s --health-timeout 5s --health-retries 12'
+        options: >-
+          --health-cmd "pg_isready -U cecelia -d cecelia_test" --health-interval 5s --health-timeout 5s --health-retries
+          12
     steps:
       - uses: actions/checkout@v4
         with:
@@ -210,7 +245,8 @@ jobs:
 
           import pg from 'pg';
 
-          import { seedExecutionDirectoryPgFixture } from './packages/brain/src/__tests__/helpers/execution-directory-pg-fixture.js';
+          import { seedExecutionDirectoryPgFixture } from
+          './packages/brain/src/__tests__/helpers/execution-directory-pg-fixture.js';
 
           const pool = new
           pg.Pool({host:process.env.DB_HOST,port:Number(process.env.DB_PORT),database:process.env.DB_NAME,user:process.env.DB_USER,password:process.env.DB_PASSWORD});
@@ -277,3 +313,105 @@ jobs:
       DB_PASSWORD: isolated-ci
       DATABASE_URL: postgresql://cecelia:isolated-ci@localhost:5432/cecelia_test
       TEST_DATABASE_URL: postgresql://cecelia:isolated-ci@localhost:5432/cecelia_test
+  classified-smoke-diagnostics:
+    name: Classified Smoke Diagnostics
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: mirror.gcr.io/pgvector/pgvector:pg15
+        env:
+          POSTGRES_USER: cecelia
+          POSTGRES_PASSWORD: isolated-ci
+          POSTGRES_DB: cecelia_test
+        ports:
+          - '5432:5432'
+        options: '--health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore pinned skill sources
+        if: hashFiles('.skills-source.json') != ''
+        uses: ./.github/actions/skills-source
+        with:
+          ssh-key: ${{ secrets.SKILLS_SOURCE_SSH_KEY }}
+      - uses: ./.github/actions/dockerhub-mirror
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install Brain deps
+        run: npm ci
+      - name: Run Migrations
+        env:
+          DB_HOST: localhost
+          DB_PORT: '5432'
+          DB_NAME: cecelia_test
+          DB_USER: cecelia
+          DB_PASSWORD: isolated-ci
+        run: cd packages/brain && node src/migrate.js
+      - name: Build cecelia-brain image
+        run: docker build -f packages/brain/Dockerfile -t cecelia-brain:ci .
+      - name: Start Brain container
+        env:
+          DB_PASSWORD: isolated-ci
+        run: |
+          docker run -d --name cecelia-brain-classified-smoke \
+            --network host \
+            -e DB_HOST=localhost \
+            -e DB_PORT=5432 \
+            -e DB_NAME=cecelia_test \
+            -e DB_USER=cecelia \
+            -e DB_PASSWORD="$DB_PASSWORD" \
+            -e BRAIN_PORT=5521 \
+            -e NODE_ENV=test \
+            -e CECELIA_TICK_ENABLED=false \
+            -e ENV_REGION=us \
+            -e REPO_ROOT=/repo_root \
+            -v "$GITHUB_WORKSPACE/packages/workflows:/repo_root/packages/workflows:ro" \
+            cecelia-brain:ci
+          # 等待 Brain 就绪（最多 90s）
+          for i in $(seq 1 90); do
+            if curl -sf http://127.0.0.1:5521/api/brain/tick/status >/dev/null 2>&1; then
+              echo "✅ Brain 就绪（${i}s）"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::Brain 90s 内未就绪"
+          docker logs cecelia-brain-classified-smoke
+          exit 1
+      - name: Run classified Brain smoke diagnostics
+        env:
+          SMOKE_ALLOW_WRITE: '1'
+          BRAIN_URL: http://127.0.0.1:5521
+          BRAIN_CONTAINER: cecelia-brain-classified-smoke
+          DATABASE_URL: postgresql://cecelia:isolated-ci@localhost:5432/cecelia_test
+          DB_HOST: localhost
+          DB_PORT: '5432'
+          DB_NAME: cecelia_test
+          DB_USER: cecelia
+          DB_PASSWORD: isolated-ci
+          PGHOST: localhost
+          PGPORT: '5432'
+          PGDATABASE: cecelia_test
+          PGUSER: cecelia
+          PGPASSWORD: isolated-ci
+        run: bash packages/brain/scripts/smoke-tools/run-smoke-ratchet.sh
+      - name: Dump Brain logs on failure
+        if: failure()
+        run: docker logs cecelia-brain-classified-smoke 2>&1 | tail -200 || true
+      - name: Cleanup classified smoke fixture
+        if: always()
+        run: docker rm -f cecelia-brain-classified-smoke 2>/dev/null || true
+    if: github.event_name == 'workflow_dispatch' && inputs.classified_smoke == true
+    env:
+      CI: 'true'
+      NODE_ENV: test
+      DB_HOST: localhost
+      DB_PORT: '5432'
+      DB_NAME: cecelia_test
+      DB_USER: cecelia
+      DB_PASSWORD: isolated-ci
+      DATABASE_URL: postgresql://cecelia:isolated-ci@localhost:5432/cecelia_test
+      BRAIN_URL: http://127.0.0.1:5521
+      BRAIN_CONTAINER: cecelia-brain-classified-smoke

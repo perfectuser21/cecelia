@@ -116,9 +116,6 @@ jobs:
           cache-read-only: ${{ github.ref != 'refs/heads/main' }}
       - name: Install locked dependencies
         run: npm ci --ignore-scripts --no-audit --no-fund
-      - name: Install standalone frontend dependencies
-        if: matrix.component == 'frontend'
-        run: npm ci --prefix frontend --ignore-scripts --no-audit --no-fund
       - uses: ./.github/actions/dockerhub-mirror
         if: matrix.component == 'image'
       - name: Run actual checks

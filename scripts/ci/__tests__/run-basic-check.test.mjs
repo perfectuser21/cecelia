@@ -108,6 +108,22 @@ test('Node测试发现集合为空必须失败，不能退回默认递归发现�
   assert.match(result.stderr, /集合为空|empty/);
 });
 
+test('迁后的开发工具由实际scripts CI执行，失败不能继续事实检查', t => {
+  const f = isolatedScriptList(t, true);
+  mkdirSync(join(f.directory, 'scripts/dev'), {recursive: true});
+  writeFileSync(join(f.directory, 'scripts/dev/check.mjs'), 'throw Error("private dev guard failure");');
+  const planned = f.run();
+  assert.equal(planned.status, 0, planned.stderr);
+  const steps = JSON.parse(planned.stdout).filter(step => step.args.includes('scripts/dev/check.mjs'));
+  assert.equal(steps.length, 1, '迁后的守卫和worktree真实回归必须被CI执行一次');
+  const marker = join(f.directory, 'must-not-run');
+  const result = fixture(JSON.stringify([...steps, {command: process.execPath,
+    args: ['-e', `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'ran')`]}]), f.directory);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /private dev guard failure/);
+  assert.equal(existsSync(marker), false);
+});
+
 const smokeSafetyDirectory = 'packages/brain/scripts/smoke/__tests__';
 function isolatedBrainSafety(t) {
   const f = isolatedScriptList(t, false);

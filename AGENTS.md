@@ -46,7 +46,7 @@ curl -X POST localhost:5221/api/brain/tick
 |------|------|------|------|
 | Brain | `packages/brain/` | 核心调度、决策、保护 | → [brain/AGENTS.md](.agent-knowledge/brain.md) |
 | Kernel Harness × Golden Path | `packages/brain/src/orchestrator/` | provider 无关执行内核 + GP 治理体系 | → [KERNEL_HARNESS_MAP.md](docs/current/KERNEL_HARNESS_MAP.md) |
-| Engine | `packages/engine/` | 开发工作流（hooks/skills/CI） | → [engine/AGENTS.md](.agent-knowledge/engine.md) |
+| 开发工具 | `scripts/dev/` | 写入守卫、worktree 与回归 | → [engine/AGENTS.md](.agent-knowledge/engine.md) |
 | Apps | `apps/dashboard/` | React 前端界面 port 5211 | — |
 | Skills | `~/.claude/skills/` | 外部能力库 | — |
 
@@ -71,7 +71,7 @@ curl localhost:5221/api/brain/alertness
 ## 禁止操作
 
 - 不要直接 push 到 `main`，所有代码变更走 `/dev`
-- 不要跳过 DevGate（`scripts/devgate/` 与 `packages/engine/scripts/devgate/`）
+- 不要跳过 DevGate（`scripts/devgate/`）
 - 不要修改 `packages/brain/src/` 而不更新 `DEFINITION.md` 中的版本
 - 不要修改 Skills 文件而不通过 `/dev` 流程
 

@@ -19,7 +19,9 @@
   "devDependencies": {
     "dependency-cruiser": "^17.4.3",
     "undici": "6.29.1",
-    "js-yaml": "^4.1.1"
+    "js-yaml": "^4.1.1",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
   },
   "overrides": {
     "fast-uri": "^3.1.6"

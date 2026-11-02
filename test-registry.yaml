@@ -30,15 +30,12 @@ brain_integration_suite:
   feature_registry: docs/registry/features/{decision,memory,orchestration,pipeline,publisher,task}.yml
   note: "Brain src/__tests__/ 整体由 vitest shard 管理，L4 统一运行。所有 507 个文件已按 feature 归属注册到 capabilities。"
 
-# ─── packages/engine/ ─────────────────────────────────────────────────────────
-# Engine 测试：40 个文件，已接入 L3
-# 按 feature 归属已注册到 docs/registry/features/engine.yml
-engine_suite:
-  managed_by: packages/engine/vitest.config.ts
+# ─── scripts/dev/ ──────────────────────────────────────────────────────────
+dev_tools_suite:
+  managed_by: scripts/dev/check.mjs
   ci: L3
-  type: unit
-  count: 40
-  feature_registry: docs/registry/features/engine.yml
+  type: integration
+  note: "开发守卫与worktree真实fixture，由主CI的scripts组件执行。"
 
 # ─── apps/api/ ────────────────────────────────────────────────────────────────
 # Workspace 前端测试：44 个文件，已接入 L3

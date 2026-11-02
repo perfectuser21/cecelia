@@ -60,7 +60,6 @@ handoff-smoke.sh
 harness-bridge-bypass-smoke.sh
 harness-callback-smoke.sh
 harness-detail-report-content-smoke.sh
-harness-evaluate-coverage-smoke.sh
 harness-executor-reliability-smoke.sh
 harness-initiative-migrate-smoke.sh
 harness-intervention-routing-smoke.sh

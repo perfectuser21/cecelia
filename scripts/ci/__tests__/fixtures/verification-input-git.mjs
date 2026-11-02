@@ -87,8 +87,9 @@ export function assertTypedResolverOutputLayout(root, assertOutput) {
  assert.doesNotThrow(() => assertOutput(root));
 }
 
-/** 使用实际schema reader字节与真实七项变更与两项删除diff，不能仅证明overlay中的旧reader。 */
+/** 同一冻结历史来源的schema reader和workflow样本；不代表当前仍有执行入口。 */
 export function assertWorkflowSchemaReaderInputs(t, {basicEntryFixture, derived, root}) {
+ const workflowFixtureRevision = '69de823cda6d789130898399c3ad770c15b6fb71';
  const paths = [
   'android-agent-ci', 'ci-l5-e2e-frontend', 'harness-v5-checks',
   'integration-nightly', 'nightly-real-machine', 'pr-review',
@@ -100,8 +101,10 @@ export function assertWorkflowSchemaReaderInputs(t, {basicEntryFixture, derived,
  const f = basicEntryFixture(t, 'scripts/ci/__tests__/basic-schema-input-fixture.test.mjs');
  assert.equal(f.git('config', '--get', 'core.sparseCheckoutCone'), 'false');
  f.git('sparse-checkout', 'add', ...[reader, ...paths].map(path => '/' + path));
- for (const path of [reader, ...paths]) writeFileSync(join(f.root, path), retired.includes(path)
-  ? readFixedLocalGitBlob(root,{revision:'69de823cda6d789130898399c3ad770c15b6fb71',path}) : readFileSync(join(root, path)));
+ writeFileSync(join(f.root, reader),
+  readFixedLocalGitBlob(root,{revision:workflowFixtureRevision,path:reader}));
+ for (const path of paths) writeFileSync(join(f.root, path),
+  readFixedLocalGitBlob(root,{revision:workflowFixtureRevision,path}));
  f.source.base_revision = f.commit();
  for (const path of active) writeFileSync(join(f.root, path), readFileSync(join(f.root, path), 'utf8') + '\n# schema input regression\n');
  for (const path of retired) rmSync(join(f.root, path));
@@ -115,7 +118,7 @@ export function assertWorkflowSchemaReaderInputs(t, {basicEntryFixture, derived,
   assert.ok(proof.selection_states.some(row => row.path === path && row.side === 'head' && row.selection_state === 'absent'));
   assert.ok(!proof.rows.some(row => row.input_facts.path === path && row.input_facts.source.side === 'head'));
  }
- assert.equal(rows.length, active.length, '实际schema reader必须接收七项现役变更，旧工作流删除仅保留base输入');
+ assert.equal(rows.length, active.length, '实际schema reader必须接收七项历史样本变更，删除样本仅保留base输入');
  for (const path of active) {
   const row = rows.find(row => row.input_facts.path === path);
   assert.equal(row.witness.kind, 'workflow_yaml_schema_input');

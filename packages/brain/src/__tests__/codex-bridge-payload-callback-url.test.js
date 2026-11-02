@@ -241,7 +241,7 @@ describe('buildCodexBridgePayload — callback_url 必填字段', () => {
     const executor = await import('../executor.js');
     triggerCeceliaRun = executor.triggerCeceliaRun;
 
-    for (const taskType of ['codex_dev', 'codex_qa']) {
+    for (const taskType of ['codex_dev', 'codex_qa', 'crystallize_forge']) {
       fetchMock.mockClear();
       const task = {
         id: `${taskType}-task-id-0001`,
@@ -258,6 +258,8 @@ describe('buildCodexBridgePayload — callback_url 必填字段', () => {
       expect(payloads[0].callback_url, `${taskType} payload 必须含 callback_url`).toMatch(
         /\/api\/brain\/execution-callback$/
       );
+      expect(payloads[0]).not.toHaveProperty('runner');
+      expect(payloads[0]).not.toHaveProperty('runner_args');
     }
   });
 });

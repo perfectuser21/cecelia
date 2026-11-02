@@ -20,26 +20,6 @@ version: "1.0.0"
 
 rules:
 
-  - id: devmode-fields
-    description: >
-      devloop-check.sh 读写的 .dev-mode 字段名（step_X_xxx、cleanup_done、
-      intent_expand_task_id、cto_review_task_id 等）必须与 stop-dev.sh、
-      cleanup.sh 以及 steps/*.md 中引用的字段名保持一致。
-    ssot:
-      file: packages/engine/lib/devloop-check.sh
-      extract: >
-        grep -E 'step_[0-9]+_[a-z]+:|cleanup_done:|intent_expand_task_id:|cto_review_task_id:'
-        packages/engine/lib/devloop-check.sh |
-        grep -oE 'step_[0-9]+_[a-z]+|cleanup_done|intent_expand_task_id|cto_review_task_id' |
-        sort -u
-    consumers:
-      - packages/engine/hooks/stop-dev.sh
-      - packages/engine/skills/dev/scripts/cleanup.sh
-      - packages/workflows/skills/dev/scripts/cleanup.sh
-      - packages/engine/skills/dev/steps/*.md
-      - packages/workflows/skills/dev/steps/*.md
-    check: field-presence
-
   - id: task-types
     description: >
       task-router.js 中 VALID_TASK_TYPES 数组是 task_type 合法值的 SSOT。
@@ -70,7 +50,7 @@ rules:
         "import { SKILL_WHITELIST } from './packages/brain/src/task-router.js';
         console.log(Object.values(SKILL_WHITELIST).join('\n'));"
     consumers:
-      - packages/engine/skills/*/SKILL.md
+      - .claude/skills/dev/SKILL.md
       - packages/workflows/skills/*/SKILL.md
       - packages/workflows/agents/*/SKILL.md
     check: name-match

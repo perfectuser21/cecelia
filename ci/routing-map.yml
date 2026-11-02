@@ -33,13 +33,13 @@ subsystems:
 
   # ── Development Toolchain ─────────────────────────────────────────────────
 
-  engine:
-    root: packages/engine
+  dev-tools:
+    root: scripts/dev
     paths:
-      - packages/engine/**
+      - scripts/dev/**
     layers: [l1, l2, l3]
     deploy: false
-    description: "开发工作流引擎（hooks/skills/DevGate）"
+    description: "开发工具（Git工作树与本地动作守卫）"
 
   # ── Frontend Applications ─────────────────────────────────────────────────
   # apps/* subdirectories must be explicitly listed here.

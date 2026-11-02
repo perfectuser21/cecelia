@@ -93,7 +93,7 @@ async function createDevTask(contract) {
     ``,
     `## 参考`,
     ``,
-    `参考已有契约测试：\`packages/engine/tests/integration/hook-contracts.test.ts\``,
+    `参考已有契约测试：\`scripts/dev/hooks/__tests__/hook-contracts.test.ts\``,
   ].join('\n');
 
   // goal_id: 免疫系统成熟化 KR（契约扫描属于系统自修能力）

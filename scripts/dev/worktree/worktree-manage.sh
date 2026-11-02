@@ -1,0 +1,450 @@
+#!/usr/bin/env bash
+# Cecelia 开发工作树管理脚本
+# v1.4.0: 自动创建 .dev-lock（含 tty/session_id），修复 Stop Hook 会话隔离
+# v1.3.0: WORKTREE_BASE 支持 — 默认路径改为 ~/worktrees/{project}，跨会话持久化
+# v1.2.0: 路径迁移到 .claude/worktrees/（对齐官方 Claude Code 约定）
+# v1.1.0: rm -rf 安全验证
+# v1.0.0: 初始版本 - 创建、列表、清理 worktree
+#
+# 用法:
+#   worktree-manage.sh create <task-name>   # 创建新 worktree
+#   worktree-manage.sh list                 # 列出所有 worktree
+#   worktree-manage.sh remove <branch>      # 移除指定 worktree
+#   worktree-manage.sh cleanup              # 清理已合并的 worktree
+
+set -euo pipefail
+
+# 颜色
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+# 安全删除目录 - 验证路径有效性
+# 用法: safe_rm_rf <path> <allowed_parent>
+safe_rm_rf() {
+    local path="$1"
+    local allowed_parent="$2"
+
+    # 验证 1: 路径非空
+    if [[ -z "$path" ]]; then
+        echo -e "${RED}错误: rm -rf 路径为空，拒绝执行${NC}" >&2
+        return 1
+    fi
+
+    # 验证 2: 路径存在
+    if [[ ! -e "$path" ]]; then
+        echo -e "${YELLOW}警告: 路径不存在: $path${NC}" >&2
+        return 0
+    fi
+
+    # 验证 3: 路径在允许的父目录内
+    local real_path
+    real_path=$(realpath "$path" 2>/dev/null) || real_path="$path"
+    local real_parent
+    real_parent=$(realpath "$allowed_parent" 2>/dev/null) || real_parent="$allowed_parent"
+
+    if [[ "$real_path" != "$real_parent"* ]]; then
+        echo -e "${RED}错误: 路径 $path 不在允许范围 $allowed_parent 内，拒绝删除${NC}" >&2
+        return 1
+    fi
+
+    # 验证 4: 禁止删除根目录或 home 目录
+    if [[ "$real_path" == "/" || "$real_path" == "$HOME" || "$real_path" == "/home" ]]; then
+        echo -e "${RED}错误: 禁止删除系统关键目录: $real_path${NC}" >&2
+        return 1
+    fi
+
+    # 安全删除
+    rm -rf "$path"
+}
+
+# 获取项目根目录（主工作区）
+get_main_worktree() {
+    git worktree list 2>/dev/null | head -1 | awk '{print $1}'
+}
+
+# *-scan-main 是地图照相层扫描器专用的只读镜像仓库（cecelia-scan-main），
+# 绝不能被当作 /dev 会话工作目录：在这里建 worktree/写心跳灯文件会直接污染
+# 扫描器的 clean 判定（2026-09-23 P0 事故 9dfd873a：MMV rescan 连续拒绝 21.5h，
+# 根因就是有会话把这里当工作区跑 cmd_create，heartbeat 灯写进了 scan-main/.cecelia/）。
+# 命中时在建任何文件/worktree 前就拒绝——cmd_create 的所有副作用都源自当前 cwd 的
+# toplevel，堵在入口比事后清理更可靠。
+assert_cwd_not_scan_main() {
+    local toplevel
+    toplevel=$(git rev-parse --show-toplevel 2>/dev/null) || return 0
+    local base
+    base=$(basename "$toplevel")
+    if [[ "$base" == *-scan-main ]]; then
+        echo -e "${RED}错误: 当前目录是只读镜像仓库(scan-main)，不能在这里开发${NC}" >&2
+        echo -e "${RED}  路径: $toplevel${NC}" >&2
+        echo -e "${RED}  scan-main 专供地图照相层扫描器只读使用，在这里建 worktree 会污染扫描判定${NC}" >&2
+        echo -e "${RED}  请换到正常主仓库或已有 worktree 里运行 worktree-manage.sh create${NC}" >&2
+        return 1
+    fi
+    return 0
+}
+
+# 获取项目名称
+get_project_name() {
+    local main_wt
+    main_wt=$(get_main_worktree)
+    basename "$main_wt"
+}
+
+# 检查是否在 worktree 中
+is_in_worktree() {
+    local git_dir
+    git_dir=$(git rev-parse --git-dir 2>/dev/null)
+    [[ "$git_dir" == *"worktrees"* ]]
+}
+
+# Routing Receipt 是有头 coding 动作的唯一授权。调用方必须从 Brain/Harness
+# 注入这些 server-issued identity；缺字段仍写入 JSON，但动作闸会 fail closed。
+write_routing_dev_lock() {
+    local lock_path="$1"
+    local branch="$2"
+    local owner_session="$3"
+    local worktree_path="$4"
+    local created_at
+    created_at=$(TZ=Asia/Shanghai date +%Y-%m-%dT%H:%M:%S+08:00)
+    command -v jq >/dev/null 2>&1 || {
+        echo -e "${RED}错误: 写 Routing Receipt lock 需要 jq${NC}" >&2
+        return 1
+    }
+    jq -n \
+      --arg task_id "${CECELIA_TASK_ID:-}" \
+      --arg routing_receipt_id "${CECELIA_ROUTING_RECEIPT_ID:-}" \
+      --arg run_id "${CECELIA_RUN_ID:-}" \
+      --arg repo "${CECELIA_REPO:-}" \
+      --arg branch "$branch" \
+      --arg base_sha "${CECELIA_BASE_SHA:-}" \
+      --arg owner_session "$owner_session" \
+      --arg session_id "headed-$$-$branch" \
+      --arg worktree_path "$worktree_path" \
+      --arg created_at "$created_at" \
+      '{task_id:$task_id,routing_receipt_id:$routing_receipt_id,run_id:$run_id,
+        repo:$repo,branch:$branch,base_sha:$base_sha,owner_session:$owner_session,
+        session_id:$session_id,worktree_path:$worktree_path,created_at:$created_at}' \
+      > "$lock_path"
+}
+
+# 生成 worktree 路径（v1.3.0: 默认使用 ~/worktrees/{project}，跨会话持久化）
+# 环境变量 WORKTREE_BASE 可覆盖默认路径（默认: ~/worktrees）
+generate_worktree_path() {
+    local task_name="$1"
+    local project_name
+    project_name=$(get_project_name)
+
+    # v1.3.0: 使用 WORKTREE_BASE 环境变量，默认 ~/worktrees
+    # ~/worktrees/{project}/ 独立于主仓库目录，系统重启后依然存在
+    local worktree_base="${WORKTREE_BASE:-$HOME/worktrees}"
+    local base_path="${worktree_base}/${project_name}/${task_name}"
+    local final_path="$base_path"
+    local counter=2
+
+    # 如果路径已存在，追加序号
+    while [[ -d "$final_path" ]]; do
+        final_path="${base_path}-${counter}"
+        counter=$((counter + 1))
+    done
+
+    echo "$final_path"
+}
+
+# 创建 worktree（带 flock 防并发竞争）
+cmd_create() {
+    local task_name="${1:-}"
+
+    assert_cwd_not_scan_main || exit 1
+
+    if [[ -z "$task_name" ]]; then
+        echo -e "${RED}错误: 请提供任务名${NC}" >&2
+        echo "用法: worktree-manage.sh create <task-name>" >&2
+        exit 1
+    fi
+
+    # flock 防止多个 Cecelia 并发创建 worktree 竞争
+    local lock_dir
+    lock_dir="$(git rev-parse --git-dir 2>/dev/null || echo '/tmp')"
+    local lock_file="$lock_dir/worktree-create.lock"
+    exec 201>"$lock_file"
+    if ! flock -w 5 201; then
+        echo -e "${RED}错误: 另一个进程正在创建 worktree，请稍后重试${NC}" >&2
+        exit 1
+    fi
+
+    # 数量上限检查（不含主仓库）
+    # 支持环境变量覆盖，默认 15（8 个并发 content_publish + 若干 dev 任务）
+    local MAX_WORKTREES="${MAX_WORKTREES:-15}"
+    local existing_count
+    existing_count=$(git worktree list 2>/dev/null | tail -n +2 | wc -l | tr -d ' ')
+    if [[ $existing_count -ge $MAX_WORKTREES ]]; then
+        echo -e "${RED}ERROR: worktree 数量已达上限（$existing_count/${MAX_WORKTREES}），拒绝创建；现有工作树和分支保持原样${NC}" >&2
+        echo "  运行 git worktree list 核对现有工作树" >&2
+        exit 1
+    fi
+
+    # v1.5.0: 撞车检查 — open PR + 近7天 merged PR
+    # 1) 检查 open PR（原有逻辑）
+    local _collision_open_num
+    _collision_open_num=$(gh pr list --state open --search "$task_name" \
+        --json number,title,headRefName 2>/dev/null \
+        | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+task = '$task_name'
+hits = [p for p in data if task in p.get('headRefName','') or task in p.get('title','')]
+print(hits[0]['number'] if hits else '')
+" 2>/dev/null || echo "")
+    if [[ -n "$_collision_open_num" ]]; then
+        echo -e "${RED}[COLLISION] 疑似已被 PR#${_collision_open_num} 完成——请核对后关闭本任务，禁止重复实现${NC}" >&2
+        exit 1
+    fi
+
+    # 2) 检查近7天内 merged PR（修复时间盲区）
+    local _collision_merged_num
+    _collision_merged_num=$(gh pr list --state merged --search "$task_name" \
+        --json number,title,mergedAt,headRefName 2>/dev/null \
+        | python3 -c "
+import json, sys
+from datetime import datetime, timezone, timedelta
+data = json.load(sys.stdin)
+cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+task = '$task_name'
+for pr in data:
+    merged_at_str = pr.get('mergedAt', '')
+    if not merged_at_str:
+        continue
+    try:
+        merged_at = datetime.fromisoformat(merged_at_str.replace('Z', '+00:00'))
+    except Exception:
+        continue
+    name_match = task in pr.get('headRefName', '') or task in pr.get('title', '')
+    if merged_at >= cutoff and name_match:
+        print(pr['number'])
+        break
+" 2>/dev/null || echo "")
+    if [[ -n "$_collision_merged_num" ]]; then
+        echo -e "${RED}[COLLISION] 疑似已被 PR#${_collision_merged_num} 完成（7天内 merged）——请核对后关闭本任务，禁止重复实现${NC}" >&2
+        exit 1
+    fi
+
+    # 生成分支名和 worktree 路径
+    local timestamp
+    timestamp=$(date +%m%d%H%M%S)
+    local branch_name="cp-${timestamp}-${task_name}"
+    local worktree_path
+    worktree_path=$(generate_worktree_path "$task_name")
+
+    # 获取当前分支作为 base
+    local base_branch
+    base_branch=$(git rev-parse --abbrev-ref HEAD)
+
+    # 如果在 cp-* 或 feature/* 分支，使用其 base 分支
+    if [[ "${base_branch}" =~ ^(cp-|feature/) ]]; then
+        local saved_base
+        saved_base=$(git config "branch.${base_branch}.base-branch" 2>/dev/null || echo "")
+        if [[ -n "$saved_base" ]]; then
+            base_branch="$saved_base"
+        else
+            # 动态检测：有 develop 用 develop，否则用 main
+            if git rev-parse --verify develop &>/dev/null 2>&1; then
+                base_branch="develop"
+            else
+                base_branch="main"
+            fi
+        fi
+    fi
+
+    # 🆕 Bug 2 修复：创建前先更新 base 分支
+    echo -e "${BLUE}更新 ${base_branch} 分支...${NC}" >&2
+
+    # 获取主仓库路径
+    local main_wt
+    main_wt=$(get_main_worktree)
+
+    # 在主仓库中更新 develop
+    if git -C "$main_wt" rev-parse --verify "${base_branch}" &>/dev/null; then
+        # 检查当前分支
+        local current_branch
+        current_branch=$(git -C "$main_wt" rev-parse --abbrev-ref HEAD)
+
+        if [[ "$current_branch" == "${base_branch}" ]]; then
+            # 如果当前在 base 分支上，用 pull
+            if git -C "$main_wt" pull origin "${base_branch}" --ff-only 2>&2; then
+                echo -e "${GREEN}✅ ${base_branch} 已更新${NC}" >&2
+            else
+                echo -e "${YELLOW}⚠️  无法更新 ${base_branch}，使用当前版本${NC}" >&2
+            fi
+        else
+            # 不在 base 分支上，用 fetch + branch -f
+            if git -C "$main_wt" fetch origin "${base_branch}" 2>&2; then
+                if git -C "$main_wt" branch -f "${base_branch}" "origin/${base_branch}" 2>&2; then
+                    echo -e "${GREEN}✅ ${base_branch} 已更新${NC}" >&2
+                else
+                    echo -e "${YELLOW}⚠️  无法更新 ${base_branch}，使用当前版本${NC}" >&2
+                fi
+            else
+                echo -e "${YELLOW}⚠️  无法 fetch，使用当前版本${NC}" >&2
+            fi
+        fi
+    fi
+    echo "" >&2
+
+    # v1.3.0: 确保 worktree 父目录存在（~/worktrees/{project}/）
+    mkdir -p "$(dirname "$worktree_path")"
+
+    # v1.3.0: 若 worktree 路径在主仓库内（兼容自定义 WORKTREE_BASE 指向仓库内），
+    # 自动确保该路径在 .gitignore 中
+    local gitignore_file="$main_wt/.gitignore"
+    if [[ -f "$gitignore_file" && "$worktree_path" == "$main_wt"* ]]; then
+        local rel_path="${worktree_path#"$main_wt"/}"
+        local rel_dir
+        rel_dir="$(dirname "$rel_path")/"
+        if ! grep -qF "$rel_dir" "$gitignore_file" 2>/dev/null; then
+            {
+                echo ""
+                echo "# Claude Code worktrees"
+                echo "${rel_dir}"
+            } >> "$gitignore_file"
+            echo -e "${GREEN}✅ 已添加 ${rel_dir} 到 .gitignore${NC}" >&2
+        fi
+    fi
+
+    echo -e "${BLUE}创建 Worktree...${NC}" >&2
+    echo "  分支: $branch_name" >&2
+    echo "  路径: $worktree_path" >&2
+    echo "  Base: ${base_branch}" >&2
+    echo "" >&2
+
+    # 创建 worktree（同时创建新分支）
+    if git worktree add -b "$branch_name" "$worktree_path" "${base_branch}" 2>&2; then
+        # 保存 base 分支到 git config
+        git config "branch.$branch_name.base-branch" "${base_branch}"
+
+        echo -e "${GREEN}✅ Worktree 创建成功${NC}" >&2
+
+        # v1.5.0: .dev-lock 写入 worktree 目录（不再写主仓库，防止跨会话污染）
+        # Stop Hook 通过 _collect_search_dirs 扫描所有 worktree，能正确找到
+        # v17.0.0: owner_session 从父 claude cmdline 解析，保证 Stop Hook 按 session_id 精确匹配
+        local _claude_sid_create
+        _claude_sid_create=$(_resolve_claude_session_id 2>/dev/null || echo "")
+        [[ -z "$_claude_sid_create" ]] && _claude_sid_create="${CLAUDE_SESSION_ID:-unknown}"
+        local dev_lock_file="$worktree_path/.dev-lock.${branch_name}"
+        write_routing_dev_lock "$dev_lock_file" "$branch_name" "$_claude_sid_create" "$worktree_path"
+        echo -e "${GREEN}✅ .dev-lock 已写入: .dev-lock.${branch_name}${NC}" >&2
+
+        # v19.0.0: 同步写 .dev-mode 标准格式（stop-dev.sh 用文件存在性判 /dev 流程身份）
+        local dev_mode_file="$worktree_path/.dev-mode.${branch_name}"
+        if [[ ! -f "$dev_mode_file" ]]; then
+            cat > "$dev_mode_file" <<DEV_MODE_EOF
+dev
+branch: ${branch_name}
+session_id: ${_claude_sid_create:-unknown}
+started: $(TZ=Asia/Shanghai date +%Y-%m-%dT%H:%M:%S+08:00)
+step_1_spec: pending
+harness_mode: false
+DEV_MODE_EOF
+            echo -e "${GREEN}✅ .dev-mode 已写入: .dev-mode.${branch_name}${NC}" >&2
+        fi
+
+        # === v23 PR-3: 不再写 .cecelia/dev-active-*.json（已不被 hook 读，dev-mode-tool-guard 已切 lights/）===
+
+        # === v23 PR-2: 心跳模型 — 启动 guardian + 写灯文件 ===
+        local main_repo
+        main_repo=$(git rev-parse --show-toplevel 2>/dev/null)
+        if [[ -n "$main_repo" ]]; then
+            mkdir -p "$main_repo/.cecelia/lights"
+            local _sid_short="${_claude_sid_create:0:8}"
+            [[ -z "$_sid_short" || "$_sid_short" == "unknown" ]] && _sid_short="nosid000"
+
+            local _light_file="$main_repo/.cecelia/lights/${_sid_short}-${branch_name}.live"
+            local _guardian_lib
+            _guardian_lib="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/dev-heartbeat-guardian.sh"
+
+            if [[ -f "$_guardian_lib" ]]; then
+                # 通过 symlink 启动 guardian，避免 pkill -f 'dev-heartbeat-guardian' 误杀
+                # （测试环境的 afterEach 可能有宽泛的 pkill）
+                local _hb_link="$main_repo/.cecelia/hb.sh"
+                ln -sf "$_guardian_lib" "$_hb_link" 2>/dev/null || true
+                # v23 PR-3 修：guardian fork 必须关 FD 201（worktree-create.lock）
+                # 否则 guardian 继承 FD → 持锁不放 → 下次 cmd_create flock -w 5 失败
+                GUARDIAN_ORPHAN_MODE=1 nohup bash "$_hb_link" "$_light_file" </dev/null >/dev/null 2>&1 201>&- &
+                local _guardian_pid=$!
+                disown $_guardian_pid 2>/dev/null || true
+
+                cat > "$_light_file" <<LIGHT_EOF
+{
+  "session_id": "${_claude_sid_create:-unknown}",
+  "session_id_short": "${_sid_short}",
+  "branch": "${branch_name}",
+  "worktree_path": "${worktree_path}",
+  "started_at": "$(TZ=Asia/Shanghai date +%Y-%m-%dT%H:%M:%S+08:00)",
+  "host": "$(hostname -s 2>/dev/null || echo unknown)",
+  "guardian_pid": ${_guardian_pid},
+  "stage": "stage_0_init"
+}
+LIGHT_EOF
+                echo -e "${GREEN}✅ .cecelia/lights/${_sid_short}-${branch_name}.live 已写（guardian PID=${_guardian_pid}）${NC}" >&2
+            else
+                echo -e "${YELLOW}⚠️  dev-heartbeat-guardian.sh 不存在，跳过心跳启动${NC}" >&2
+            fi
+        fi
+
+        echo "" >&2
+        echo "下一步:" >&2
+        echo "  cd $worktree_path" >&2
+        echo "  claude  # 或继续开发" >&2
+
+        # 输出路径供脚本使用
+        echo "$worktree_path"
+    else
+        echo -e "${RED}❌ Worktree 创建失败${NC}" >&2
+        exit 1
+    fi
+}
+
+# shellcheck source=worktree-lifecycle.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/worktree-lifecycle.sh"
+
+# 主入口
+main() {
+    local cmd="${1:-}"
+    shift || true
+
+    case "$cmd" in
+        create)
+            cmd_create "$@"
+            ;;
+        init-or-check)
+            cmd_init_or_check "$@"
+            ;;
+        list)
+            cmd_list
+            ;;
+        remove)
+            cmd_remove "$@"
+            ;;
+        cleanup)
+            cmd_cleanup
+            ;;
+        *)
+            echo "ZenithJoy Engine - Worktree 管理"
+            echo ""
+            echo "用法:"
+            echo "  worktree-manage.sh create <task-name>         创建新 worktree"
+            echo "  worktree-manage.sh init-or-check <task-name>  确保在 worktree（engine-worktree skill 入口）"
+            echo "  worktree-manage.sh list                       列出所有 worktree"
+            echo "  worktree-manage.sh remove <branch>            移除指定 worktree"
+            echo "  worktree-manage.sh cleanup                    清理已合并的 worktree"
+            exit 1
+            ;;
+    esac
+}
+
+# 仅作为可执行脚本时跑 main；被 source 时跳过（让测试能拉函数）
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
+fi

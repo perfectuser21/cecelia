@@ -28,14 +28,14 @@ contracts:
   # 已有测试保护的契约
   # --------------------------------------------------------------------------
 
-  - id: hooks_worktree_format
+  - id: hooks_dev_mode_format
     description: >
-      stop-dev.sh 消费 worktree-manage.sh 输出的 .worktree-status.json 格式。
-      共享字段：active, branch, path。改任一侧必须同步更新另一侧。
-    consumer: packages/engine/hooks/stop-dev.sh
-    provider: packages/engine/hooks/worktree-manage.sh
-    signature_file: packages/engine/hooks/worktree-manage.sh
-    test_file: packages/engine/tests/integration/hook-contracts.test.ts
+      branch-protect.sh 通过 hook-utils.sh 解析当前分支的 .dev-mode 状态。
+      分支、会话及 gp_anchor 格式必须与真实 git/worktree 合同测试一致。
+    consumer: scripts/dev/hooks/branch-protect.sh
+    provider: scripts/dev/lib/hook-utils.sh
+    signature_file: scripts/dev/lib/hook-utils.sh
+    test_file: scripts/dev/hooks/__tests__/hook-contracts.test.ts
     priority: P0
 
   - id: brain_db_schema_version

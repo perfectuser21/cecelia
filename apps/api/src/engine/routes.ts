@@ -3,8 +3,7 @@
  * Base path: /api/engine
  */
 
-import { Router, Request, Response } from 'express';
-import { getEngineInfo, isEngineAccessible } from '../dashboard/services/engine-info.js';
+import { Router } from 'express';
 
 const router = Router();
 
@@ -12,42 +11,12 @@ const router = Router();
  * GET /api/engine/health
  * Health check endpoint
  */
-router.get('/health', (_req: Request, res: Response) => {
-  const accessible = isEngineAccessible();
-  return res.json({
-    success: true,
-    status: accessible ? 'healthy' : 'degraded',
-    engineAccessible: accessible,
-    timestamp: new Date().toISOString(),
-  });
-});
-
-/**
- * GET /api/engine/info
- * Get complete engine info (version, skills, hooks, changelog)
- */
-router.get('/info', (_req: Request, res: Response) => {
-  try {
-    if (!isEngineAccessible()) {
-      return res.status(503).json({
-        success: false,
-        error: 'Engine not accessible',
-      });
-    }
-
-    const engineInfo = getEngineInfo();
-
-    return res.json({
-      success: true,
-      engine: engineInfo,
-    });
-  } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    return res.status(500).json({
-      success: false,
-      error: message,
-    });
-  }
-});
+// 明确回执避免旧客户端把已退役组件误报为运行故障。
+router.get(['/health', '/info'], (_req, res) => res.status(410).json({
+  success: false,
+  status: 'retired',
+  code: 'ENGINE_RETIRED',
+  message: 'Engine 旧包已退役；开发守卫和工作树工具归属 scripts/dev。',
+}));
 
 export default router;

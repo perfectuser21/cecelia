@@ -7,12 +7,11 @@ const referenceCatalogs = [
   'ci/routing-map.yml',
   'ci/test-taxonomy.yml',
   'docs/registry/features/decision.yml',
-  'docs/registry/features/engine.yml',
   'docs/registry/features/memory.yml',
   'docs/registry/features/orchestration.yml',
   'docs/registry/features/task.yml',
+  'docs/registry/system-registry.yml',
   'docs/registry/test-registry.yml',
-  'packages/engine/regression-contract.yaml',
   'test-registry.yaml',
   'packages/brain/config/contracts/cecelia-module-boundaries.yaml',
 ];

@@ -9,7 +9,7 @@ import {planChecks} from '../basic-scope.mjs';
 
 const cli = fileURLToPath(new URL('../basic-scope.mjs', import.meta.url));
 const components = rows => [...new Set(rows.map(row => row.component))];
-const all = ['brain-unit', 'brain-integration', 'image', 'engine', 'mcp', 'api', 'api-integration', 'dashboard', 'ops', 'scripts'];
+const all = ['brain-unit', 'brain-integration', 'image', 'mcp', 'api', 'api-integration', 'dashboard', 'ops', 'scripts'];
 
 test('已退役frontend不再进入矩阵，旧路径差分仍保守验证全部现役组件', () => {
   assert.equal(planChecks([], {full: true}).some(row => row.component === 'frontend'), false);
@@ -26,7 +26,7 @@ test('文档改动仍运行基础 CI 回归，且不触发应用测试', () => {
 test('运行时Markdown提示词必须执行完整所属组件，不能因扩展名免检', () => {
   for (const path of ['packages/brain/src/prompts/attach-decision.md',
     'packages/brain/scripts/coding-workflow/prompts/build.md']) {
-    assert.deepEqual(components(planChecks([path])), ['brain-unit', 'brain-integration', 'image', 'engine', 'api', 'api-integration', 'ops', 'scripts'], path);
+    assert.deepEqual(components(planChecks([path])), ['brain-unit', 'brain-integration', 'image', 'api', 'api-integration', 'ops', 'scripts'], path);
   }
   assert.deepEqual(components(planChecks(['apps/dashboard/src/page.mdx'])), ['dashboard', 'scripts']);
   for (const path of ['unknown/prompt.md', 'docs/example.mdx']) {
@@ -39,10 +39,10 @@ test('Android改动必须执行真实Android单测，不能用JS测试替代', (
   assert.ok(components(planChecks(['apps/android-agent/tsconfig.json'])).includes('android'));
 });
 
-test('Brain、Engine 与 API 共享依赖，完整运行相关组件与六个 Brain 分片', () => {
-  for (const path of ['packages/brain/src/routes.js', 'packages/engine/hooks/branch-protect.sh', 'apps/api/src/index.ts']) {
+test('Brain 与 API 共享依赖，完整运行相关组件与六个 Brain 分片', () => {
+  for (const path of ['packages/brain/src/routes.js', 'apps/api/src/index.ts']) {
     const rows = planChecks([path]);
-    assert.deepEqual(components(rows), ['brain-unit', 'brain-integration', 'image', 'engine', 'api', 'api-integration', 'ops', 'scripts']);
+    assert.deepEqual(components(rows), ['brain-unit', 'brain-integration', 'image', 'api', 'api-integration', 'ops', 'scripts']);
     assert.deepEqual(rows.filter(row => row.component === 'brain-unit').map(row => row.shard), [1, 2, 3, 4, 5, 6]);
   }
 });

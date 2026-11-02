@@ -1,6 +1,6 @@
 # Test Registry - Cecelia 测试清单
-# 更新时间: 2026-04-01
-# 总计: 691 个测试文件
+# 更新时间: 2026-11-02
+# 当前列出: 25 项关键测试记录；不是仓库全量统计
 # 说明: 每条记录对应一个测试文件或测试脚本，标注类型、覆盖功能、CI 层级
 #
 # [DEPRECATED] SSOT 已迁移至 features/*.yml（schema v2.0.0）
@@ -35,20 +35,6 @@ tests:
     ci_layer: L4
     status: active
     description: 创建→dispatch→完成 全链路
-
-  - test_id: pipeline_integrity
-    file: packages/engine/tests/pipeline-integrity.test.ts
-    type: integration
-    covers_feature: engine_dev_workflow
-    ci_layer: L3
-    status: active
-
-  - test_id: playwright_runner
-    file: packages/engine/tests/playwright-runner.test.ts
-    type: e2e
-    covers_feature: engine_dev_workflow
-    ci_layer: L4
-    status: active
 
   # ============================================================
   # Integration 测试
@@ -87,13 +73,6 @@ tests:
     file: tests/database/integration.test.js
     type: integration
     covers_feature: task_create
-    ci_layer: L3
-    status: active
-
-  - test_id: codex_runner
-    file: packages/engine/tests/codex-runner.test.ts
-    type: integration
-    covers_feature: engine_dev_workflow
     ci_layer: L3
     status: active
 
@@ -231,46 +210,6 @@ tests:
     status: active
 
   # ============================================================
-  # Unit 测试 - Engine DevGate
-  # ============================================================
-
-  - test_id: devloop_check_gates
-    file: packages/engine/tests/scripts/devloop-check-gates.test.ts
-    type: unit
-    covers_feature: engine_dev_workflow
-    ci_layer: L3
-    status: active
-    description: devloop-check 状态机逻辑 + Lite Path 路由
-
-  - test_id: check_dod_mapping
-    file: packages/engine/tests/devgate/check-dod-mapping.test.ts
-    type: unit
-    covers_feature: engine_devgate
-    ci_layer: L3
-    status: active
-
-  - test_id: scan_rci_coverage
-    file: packages/engine/tests/devgate/scan-rci-coverage.test.ts
-    type: unit
-    covers_feature: engine_devgate
-    ci_layer: L3
-    status: active
-
-  - test_id: verify_step
-    file: packages/engine/tests/hooks/verify-step.test.ts
-    type: unit
-    covers_feature: engine_dev_workflow
-    ci_layer: L3
-    status: active
-
-  - test_id: branch_protect
-    file: packages/engine/tests/hooks/branch-protect.test.ts
-    type: unit
-    covers_feature: engine_dev_workflow
-    ci_layer: L3
-    status: active
-
-  # ============================================================
   # Unit 测试 - 内容管道
   # ============================================================
 
@@ -331,26 +270,11 @@ missing_tests:
     needed: [unit]
     priority: medium
 
-  - feature_id: engine_lite_path
-    needed: [e2e]
-    priority: high
-    reason: Lite Path E2E 流程未被测试
-
   - feature_id: circuit_breaker
     needed: [unit, regression]
     priority: medium
 
 summary:
-  total_test_files: 691
-  listed_above: 40  # 关键测试，完整列表见各包的 __tests__ 目录
-  by_type:
-    unit: 620
-    integration: 50
-    e2e: 15
-    smoke: 6
-  by_ci_layer:
-    L3: 665
-    L4: 20
-    none: 6
-  missing_tests_count: 10  # 重要功能缺少测试
-  last_updated: "2026-04-01"
+  listed_above: 25  # 仅本文件关键记录，不代表仓库全量
+  missing_tests_count: 9  # 本文件仍列出的待补测试项
+  last_updated: "2026-11-02"

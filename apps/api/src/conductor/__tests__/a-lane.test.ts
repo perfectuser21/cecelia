@@ -65,6 +65,16 @@ describe('runALane — DRY_RUN 守护(默认)', () => {
 });
 
 describe('runALane — live 真态执行序', () => {
+  it('显式repoRoot下先调用新worktree owner，后续git仍只在返回的工作树执行', () => {
+    const { exec, calls } = makeFakeExec({ 'pr create': 'https://github.com/perfectuser21/cecelia/pull/4242' });
+    runALane(task, contract, { exec, dryRun: false, repoRoot: '/private-fixture/repo' });
+    expect(calls[0]).toEqual({
+      cmd: 'bash', args: ['/private-fixture/repo/scripts/dev/worktree/worktree-manage.sh', 'init-or-check', 'cache-daily-report'],
+      cwd: '/private-fixture/repo',
+    });
+    expect(calls.filter(call => call.cmd === 'git').every(call => call.cwd === '/Users/administrator/worktrees/cecelia/cache-daily-report')).toBe(true);
+  });
+
   it('按序调用 runner: worktree-manage.sh → commit1(Red) → commit2(Green) → push → gh pr create', () => {
     const { exec, calls } = makeFakeExec({
       'pr create': 'https://github.com/perfectuser21/cecelia/pull/4242',

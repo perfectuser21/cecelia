@@ -65,9 +65,9 @@ node scripts/devgate/check-dod-mapping.cjs  # DoD→Test 映射
 - React 组件、页面、样式、用户交互
 - API 调用层
 
-### packages/engine（开发引擎）
-- Hooks、Skills、DevGate 脚本、CI 工具
-- 不是 Brain 的器官
+### scripts/dev（开发工具）
+- 实际绑定的写入守卫、worktree、隔离回归；由主 CI scripts 组件验证
+- Skills 正文由 zenithjoy-skills 中心仓维护
 
 ### packages/workflows（Agent 协议）
 - Agent 配置、N8N 工作流、Skills SSOT
@@ -91,7 +91,7 @@ Brain (Node.js, port 5221)
 - Version bump 遵循 semver
 - Brain 改动触发 brain-ci.yml
 - Workspace 改动触发 workspace-ci.yml
-- Engine 改动触发 engine-ci.yml
+- 开发工具改动进入主 CI 的 scripts 回归
 
 ---
 
@@ -170,7 +170,7 @@ node scripts/notion-create-issue.js \
   --body "<根因描述>"
 ```
 
-Sub Area 对应关系：`packages/brain/` → brain，`packages/engine/` → engine，
+Sub Area 对应关系：`packages/brain/` → brain，`scripts/dev/` → 开发工具，
 `apps/dashboard/`(Cecelia) → dashboard，`apps/api/`(ZenithJoy) → zenithjoy
 
 **修复完成后**更新 issue 状态为 Closed，附 PR 链接。

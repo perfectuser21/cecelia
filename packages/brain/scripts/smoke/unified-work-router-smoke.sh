@@ -8,7 +8,7 @@ fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
 pass() { printf 'PASS: %s\n' "$1"; }
 
 if [[ "${CI:-}" == "true" && "${CECELIA_REAL_PROVIDER_SMOKE:-}" != "1" ]]; then
-  bash packages/engine/tests/integration/dev-mode-routing-receipt-guard.test.sh
+  bash scripts/dev/hooks/__tests__/dev-mode-routing-receipt-guard.test.sh
   (cd packages/brain && npx vitest run \
     src/orchestrator/__tests__/dispatcher-routing-receipt.test.js --reporter=dot)
   bash docker/cecelia-runner/__tests__/entrypoint-generator-trust-boundary.test.sh
@@ -44,7 +44,7 @@ pass 'API / Intent / Capture 真入口与 Router/Dispatcher/Attempt/Runner 实�
   --reporter=dot --silent)
 pass 'map_recovery 不可变合同与单 Attempt 消费'
 
-bash packages/engine/tests/integration/dev-mode-routing-receipt-guard.test.sh
+bash scripts/dev/hooks/__tests__/dev-mode-routing-receipt-guard.test.sh
 (cd packages/brain && npx vitest run \
   src/orchestrator/__tests__/dispatcher-routing-receipt.test.js --reporter=dot)
 bash docker/cecelia-runner/__tests__/entrypoint-generator-trust-boundary.test.sh

@@ -39,12 +39,13 @@ function normalizeExecutionTimeoutMs(requestedTimeoutMs, pathDefaultMs) {
 }
 const KERNEL_ATTEMPT_BODY_MAX_BYTES = 1024 * 1024;
 
-// runner.sh 位置（cecelia monorepo）— 不同机器用户名不同，通过环境变量配置
+const REPO_ROOT = path.resolve(__dirname, '../../../..');
+// legacy codex_dev 适配器归 Brain 所有；部署目录由当前模块推导。
 const RUNNER_SH = process.env.RUNNER_SH
-  || path.join(os.homedir(), 'repos/cecelia/packages/engine/runners/codex/runner.sh');
+  || path.join(__dirname, 'runner.sh');
 // 默认工作目录 — codex_dev 的 cwd
 const WORK_DIR = process.env.WORK_DIR
-  || path.join(os.homedir(), 'repos/cecelia');
+  || REPO_ROOT;
 
 // 把仓库标识归一化成 owner/repo slug。上游 payload.base_repo 的写法不统一：
 // harness_initiative 任务存的是完整 URL（https://github.com/perfectuser21/cecelia），
@@ -311,7 +312,7 @@ async function callbackBrain(taskId, checkpointId, status, output, durationMs, r
 
 /**
  * 通过 runner.sh 执行完整 /dev 工作流（codex_dev 专用）
- * runner.sh 负责：PRD 预拉、devloop-check、多轮重试，直到 PR 合并
+ * runner.sh 负责：PRD 预拉、账号轮换及 legacy 多轮重试。
  *
  * @param {string} codexHome  - 主账号路径（首选账号，也作为 CODEX_HOME 兜底）
  * @param {string} taskId     - Brain Task ID
@@ -326,10 +327,12 @@ function executeRunner(codexHome, taskId, branch, workDir, options = {}) {
   if (timeoutMs > MAX_EXECUTION_TIMEOUT_MS) throw new RangeError('execution_timeout_exceeds_server_budget');
 
   return new Promise((resolve, reject) => {
+    const cwd = workDir || WORK_DIR;
     const args = [RUNNER_SH, '--task-id', taskId, '--branch', branch];
     const env = Object.assign({}, process.env, {
       CODEX_HOME: codexHome,
       BRAIN_API_URL: BRAIN_URL,  // US Brain 地址
+      CODEX_PROJECT_ROOT: cwd,
     });
 
     // 若提供了多账号路径，传入 CODEX_HOMES 供 runner.sh 轮换
@@ -337,7 +340,6 @@ function executeRunner(codexHome, taskId, branch, workDir, options = {}) {
       env.CODEX_HOMES = codexHomes;
     }
 
-    const cwd = workDir || WORK_DIR;
     const accountCount = codexHomes ? codexHomes.split(':').length : 1;
 
     console.log(`[codex-bridge] runner: CODEX_HOME=${codexHome} branch=${branch} task=${taskId} 账号数=${accountCount}条`);
@@ -602,7 +604,7 @@ async function handleBridgeRequest(
       const startTime = Date.now();
 
       if (task_type === 'codex_dev') {
-        // codex_dev → runner.sh 完整 /dev 工作流（含 devloop-check 循环）
+        // codex_dev 保留 Brain 自有的 legacy runner 入口。
         const branch = req.headers['x-branch']
           || `cp-${new Date().toLocaleString('zh-CN', {timeZone:'Asia/Shanghai'}).replace(/[/:\s]/g,'').slice(0,8)}-${task_id.slice(0,8)}-cx`;
 
@@ -804,6 +806,7 @@ module.exports = {
   cleanupTmpDir,
   createBridgeServer,
   executeCodex,
+  executeRunner,
   createKernelHandlerFromEnvironment,
   injectLocalAccount,
   kernelHealthEvidence,
