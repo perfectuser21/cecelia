@@ -128,7 +128,7 @@ let _lastDispatchTime = 0;
 
 // 设备锁释放（G5 横切件，task 104ab89f）：claim 后 revert/清理路径统一走这里。
 // 只有 payload.device_serial 的任务可能持锁——无 serial 直接跳过，不给普通任务加
-// DB round-trip。释放失败不致命（sweepStaleDeviceLocks 对账兜底）。
+// DB round-trip。非手机资源由 sweeper 对账；手机保留 fence 待安全收尾。
 async function releaseDeviceLockIfHeld(task) {
   if (!task?.payload?.device_serial || !task?.id) return;
   try {

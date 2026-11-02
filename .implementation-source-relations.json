@@ -2741,6 +2741,21 @@
       "owner_path": "scripts/ci/ci-admission-publisher.mjs",
       "path": "scripts/ci/__tests__/basic-ci-admission-workflow.test.mjs",
       "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/device-lock-helpers.js",
+      "path": "packages/brain/src/__tests__/integration/device-lock-helpers.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/device-lock-helpers.js",
+      "path": "packages/brain/src/__tests__/integration/task-lease-device-pool.pg.integration.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/device-lock-helpers.js",
+      "path": "changes/cp-route-api-fafee525.md",
+      "role": "release"
     }
   ]
 }
