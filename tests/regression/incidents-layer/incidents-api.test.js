@@ -11,12 +11,39 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 
+// 没接上真实router的DB边界时直接拒绝，禁止意外连接任何数据库。
+vi.mock('pg', async original => {
+  const actual = await original();
+  class RefusingPool {
+    on() { return this; }
+    async query() { throw new Error('incidents_test_database_boundary_unmocked'); }
+    async connect() { throw new Error('incidents_test_database_boundary_unmocked'); }
+    async end() {}
+  }
+  return {...actual, Pool: RefusingPool, default: {...actual.default, Pool: RefusingPool}};
+});
+
 // ── Mock DB pool ──────────────────────────────────────────────────────────────
 const mockQuery = vi.fn();
 vi.mock('../../../packages/brain/src/db/pool.js', () => ({
   default: { query: mockQuery },
   pool: { query: mockQuery },
 }));
+
+async function createIncidentsApp(loadRouter = () => import('../../../packages/brain/src/routes/incidents.js')) {
+  const app = express();
+  app.use(express.json());
+  try {
+    const {default: incidentsRouter} = await loadRouter();
+    app.use('/api/brain', incidentsRouter);
+  } catch {
+    app.get('/api/brain/incidents', async (_req, res) => {
+      const result = await mockQuery('SELECT * FROM incidents LIMIT 50');
+      res.json({incidents: result.rows});
+    });
+  }
+  return app;
+}
 
 // ── 测试套件 ──────────────────────────────────────────────────────────────────
 describe('[BEHAVIOR-4] GET /api/brain/incidents', () => {
@@ -56,23 +83,7 @@ describe('[BEHAVIOR-4] GET /api/brain/incidents', () => {
       ],
     });
 
-    // 动态 import 路由（mock 注册后）
-    app = express();
-    app.use(express.json());
-
-    // 尝试 import incidents 路由（实现后路径可能调整）
-    try {
-      const { default: incidentsRouter } = await import(
-        '../../../packages/brain/src/routes/incidents.js'
-      );
-      app.use('/api/brain', incidentsRouter);
-    } catch {
-      // 路由文件尚未实现，跳过（骨架阶段允许 skip）
-      app.get('/api/brain/incidents', async (_req, res) => {
-        const result = await mockQuery('SELECT * FROM incidents LIMIT 50');
-        res.json({ incidents: result.rows });
-      });
-    }
+    app = await createIncidentsApp();
   });
 
   it('应返回 HTTP 200', async () => {
@@ -103,5 +114,19 @@ describe('[BEHAVIOR-4] GET /api/brain/incidents', () => {
       (r) => r.fingerprint === 'launchd-patrol:com.cecelia.bridge'
     );
     expect(found).toBeDefined();
+  });
+
+  it('真实router导入失败必须向测试传播，不得另造成功响应', async () => {
+    await expect(createIncidentsApp(async () => { throw new Error('incidents_router_import_failed'); }))
+      .rejects.toThrow('incidents_router_import_failed');
+  });
+
+  it('真实router的SQL失败必须返回500，并且错误不能由假成功路由吞掉', async () => {
+    mockQuery.mockReset();
+    mockQuery.mockRejectedValueOnce(new Error('incidents_query_failed'));
+    const response = await request(app).get('/api/brain/incidents');
+    expect(response.status).toBe(500);
+    expect(response.body).toMatchObject({error: 'internal_error', message: 'incidents_query_failed'});
+    expect(mockQuery).toHaveBeenCalledWith(expect.stringContaining('FROM incidents'));
   });
 });

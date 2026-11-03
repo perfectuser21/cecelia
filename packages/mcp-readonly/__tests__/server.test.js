@@ -89,6 +89,22 @@ function parseSseJsonRpc(text) {
   return JSON.parse(dataLine.slice('data: '.length));
 }
 
+it('调用方持有连接池时，合法MCP请求使用它且不创建环境默认连接', async () => {
+  const release = vi.fn();
+  const databasePool = { connect: vi.fn(async () => ({
+    query: async sql => ({ rows: /SELECT/.test(sql) ? [{ version: 729 }] : [] }), release,
+  })) };
+  const app = createApp({ skipDbInit: true, databasePool, bearerToken: 'test-token' });
+  const res = await request(app).post('/mcp').set('Authorization', 'Bearer test-token')
+    .set('Accept', 'application/json, text/event-stream').send({ jsonrpc: '2.0', id: 1,
+      method: 'tools/call', params: { name: 'get_schema_version', arguments: {} } });
+  expect(res.status).toBe(200);
+  const rpc = parseSseJsonRpc(res.text);
+  expect(rpc.result.isError).not.toBe(true);
+  expect(JSON.parse(rpc.result.content[0].text)).toEqual({ current_version: 729 });
+  expect(release).toHaveBeenCalledOnce();
+});
+
 const TEST_DB_URL = process.env.TEST_DATABASE_URL;
 
 // 之前只测过鉴权失败路径（401），6 个工具"真的能被调用成功"此前只靠人工读代码验证过。
