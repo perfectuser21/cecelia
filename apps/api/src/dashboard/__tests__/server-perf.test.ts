@@ -71,4 +71,25 @@ describe('生产静态资源/压缩middleware', () => {
     expect(String(response.headers.vary)).toContain('Accept-Encoding');
     expect(gunzipSync(response.body).toString('utf8')).toBe(indexHtml);
   });
+  it('SPA文件读取预算跨路径和伪造来源共享，耗尽后返回429且健康检查仍可用', async () => {
+    const app = express();
+    app.get('/health', (_req, res) => { res.json({status: 'ok'}); });
+    app.get('*', createSpaFallback(directory, {limit: 2}));
+    const limitedServer = await startLocalHttp(app);
+    try {
+      for (const path of ['/first-page', '/second-page']) {
+        const response = await request(limitedServer).get(path);
+        expect(response.status).toBe(200);
+        expect(response.text).toBe(indexHtml);
+      }
+      await rm(join(directory, 'index.html'));
+      const blocked = await request(limitedServer).get('/different-page').set('X-Forwarded-For', '203.0.113.9');
+      expect(blocked.status).toBe(429);
+      expect(blocked.body).toEqual({error: 'dashboard_spa_rate_limited'});
+      expect(Number(blocked.headers['retry-after'])).toBeGreaterThan(0);
+      const health = await request(limitedServer).get('/health');
+      expect(health.status).toBe(200);
+      expect(health.body).toEqual({status: 'ok'});
+    } finally { await closeLocalHttp(limitedServer); }
+  });
 });
