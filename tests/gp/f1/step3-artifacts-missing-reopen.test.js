@@ -1,5 +1,6 @@
 /**
  * GP-Anchor: factory/F1 造完真验 #step3
+ * 历史循环纯逻辑合同：外部派发边完全注入，不启动已退役Kernel运行。
  *
  * 第 31 批（r62 run fa772ff4 案卷）：approved_but_contract_artifacts_missing
  * 直接 failRun 终局，而同类合同缺陷 seal_rejected 有 2 次 proposer 重写机会——
@@ -7,7 +8,12 @@
  * missing 时落 verdict:contract_seal_rejected（code=FROZEN_CONTRACT_ARTIFACTS_MISSING）
  * 并 continue，derive 既有 seal_rejected 分路自动带反馈重开 proposer（≥2 次才判死）。
  */
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+vi.mock('../../../packages/brain/src/db.js', () => ({
+  default: { query: vi.fn(() => { throw new Error('历史循环测试禁止访问默认数据库'); }) },
+}));
+import defaultPool from '../../../packages/brain/src/db.js';
+afterEach(() => expect(defaultPool.query).not.toHaveBeenCalled());
 import { runLoop } from '../../../packages/brain/src/orchestrator/loop.js';
 import { sealRejectionInstruction } from '../../../packages/brain/src/orchestrator/dispatcher.js';
 
@@ -23,7 +29,7 @@ describe('dispatcher：ARTIFACTS_MISSING 分文案', () => {
   });
 });
 
-describe('loop：artifacts missing 落 seal_rejected 行重开而非判死（r62 案卷）', () => {
+describe('历史loop：缺产物记录拒绝后，下轮真实推导proposer重写', () => {
   function makeEnv() {
     const appended = [];
     const observedPersist = {
@@ -54,7 +60,7 @@ describe('loop：artifacts missing 落 seal_rejected 行重开而非判死（r62
       ...observedPersist,
       run: { id: RUN_ID, phase: 'done', cost_usd: 0 },
     };
-    const seq = [observedPersist, observedDone];
+    const seq = [observedPersist, observedPersist, observedDone];
     let i = 0;
     let hopCounter = 0;
     const persistedRows = [];
@@ -98,18 +104,22 @@ describe('loop：artifacts missing 落 seal_rejected 行重开而非判死（r62
     return { deps, appended };
   }
 
-  it('missing → 落 verdict:contract_seal_rejected(code=FROZEN_CONTRACT_ARTIFACTS_MISSING)，不以 artifacts_missing 退出', async () => {
+  it('记录拒绝后再收集同一合同，派发proposer重写并明确退出', async () => {
     const { deps, appended } = makeEnv();
-    let result = null;
-    try {
-      result = await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
-    } catch (e) {
-      result = { exitReason: `threw:${e.message}` };
-    }
+    const result = await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
+    expect(result).toEqual({ exitReason: 'run_done', hops: 1 });
+    expect(deps.dispatch).toHaveBeenCalledTimes(1);
+    expect(deps.dispatch.mock.calls[0][0]).toBe('spawn:proposer');
+    expect(deps.dispatch.mock.calls[0][1].decision).toEqual({
+      phase: 'gan', action: 'spawn:proposer', reason: 'contract_seal_rejected_rewrite',
+    });
+    expect(deps.collectGroundTruth).toHaveBeenCalledTimes(3);
+    expect(deps.finalizeRun).not.toHaveBeenCalled();
     const sealRow = appended.find((r) => r.action === 'verdict:contract_seal_rejected');
-    expect(String(result?.exitReason ?? '')).not.toBe('approved_but_contract_artifacts_missing');
+    expect(appended.filter(r => r.action === 'verdict:contract_seal_rejected')).toHaveLength(1);
     expect(sealRow).toBeTruthy();
     expect(sealRow.detail.code).toBe('FROZEN_CONTRACT_ARTIFACTS_MISSING');
+    expect(sealRow.detail.propose_branch_sha).toBe(CONTRACT_SHA);
     expect(String(sealRow.detail.detail)).toMatch(/sprint-prd|contract-draft|tests/);
   });
 });
