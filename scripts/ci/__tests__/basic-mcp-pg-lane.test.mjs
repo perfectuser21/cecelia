@@ -28,7 +28,10 @@ function runLane({create = 0, tests = 0, drop = 0} = {}) {
   const bin = join(directory, 'bin');
   mkdirSync(bin);
   for (const [name, code] of [['createdb', create], ['npm', tests], ['dropdb', drop]]) {
-    writeFileSync(join(bin, name), `#!/bin/sh\nprintf '%s\\n' '${name}' >> "$MCP_AUDIT_COMMANDS"\nexit ${code}\n`, {mode: 0o755});
+    writeFileSync(join(bin, name), `#!${process.execPath}
+      require('node:fs').appendFileSync(process.env.MCP_AUDIT_COMMANDS, JSON.stringify({
+        command:${JSON.stringify(name)}, args:process.argv.slice(2), url:process.env.TEST_DATABASE_URL || null,
+      })+'\\n'); process.exit(${code});\n`, {mode: 0o755});
   }
   const result = spawnSync('bash', ['-c', step.run], {
     cwd: directory, encoding: 'utf8', timeout: 10000,
@@ -37,7 +40,17 @@ function runLane({create = 0, tests = 0, drop = 0} = {}) {
   });
   try {
     assert.equal(result.error, undefined);
-    return {code: result.status, commands: readFileSync(commands, 'utf8').trim().split('\n'), output: result.stdout + result.stderr};
+    const records = readFileSync(commands, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+    const ownDatabase = 'cecelia_mcp_ci_123456_2';
+    for (const record of records) {
+      assert.deepEqual(record.args, record.command === 'npm'
+        ? ['run', 'test:pg', '-w', 'packages/mcp-readonly']
+        : ['-h', '127.0.0.1', '-p', '5432', '-U', 'cecelia', ownDatabase],
+      `${record.command}必须只操作本人新建的隔离数据库`);
+      if (record.command === 'npm') assert.equal(record.url,
+        `postgresql://cecelia:isolated-ci@127.0.0.1:5432/${ownDatabase}`);
+    }
+    return {code: result.status, commands: records.map(record => record.command), output: result.stdout + result.stderr};
   } finally { rmSync(directory, {recursive: true, force: true}); }
 }
 

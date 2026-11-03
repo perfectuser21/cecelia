@@ -39,6 +39,15 @@ describe('MCP PG fixture 准入发生在任何连接或DDL之前', () => {
       expect(() => safety.assertMcpPgFixtureIdentity(bad, expected)).toThrow(/MCP_PG_FIXTURE_IDENTITY_MISMATCH/);
   });
 
+  it('容器NAT只接收显式绑定的本人service私网地址，不能放宽任意远端', () => {
+    const url = 'postgresql://ci@127.0.0.1:5544/cecelia_mcp_ci_owned';
+    const target = safety.validateMcpPgFixtureTarget(url, '172.18.0.2');
+    expect(target.serverAddress).toBe('172.18.0.2');
+    expect(() => safety.assertMcpPgFixtureIdentity({ database: target.database, address: '172.18.0.2', port: 5544 }, target)).not.toThrow();
+    expect(() => safety.assertMcpPgFixtureIdentity({ database: target.database, address: '172.18.0.3', port: 5544 }, target)).toThrow();
+    expect(() => safety.validateMcpPgFixtureTarget(url, '8.8.8.8')).toThrow(/MCP_PG_FIXTURE_TARGET_REJECTED/);
+  });
+
   it('默认unit收集器不接收PG文件，PG必须由明确入口执行', () => {
     const result = spawnSync(process.execPath, [vitest, 'list', '--filesOnly', '--json'], {
       cwd: root, encoding: 'utf8', env: { PATH: process.env.PATH, HOME: process.env.HOME, NODE_ENV: 'test' },

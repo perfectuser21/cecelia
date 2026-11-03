@@ -25,21 +25,24 @@ const select = (config, cwd) => glob.sync(config.test.include, {
   cwd, absolute: true, ignore: ['**/node_modules/**', ...(config.test.exclude || [])],
 }).map(file => relative(root, file));
 
-function assertDebtMatches({maintained, selected, manualRoot, entries}) {
+function assertDebtMatches({maintained, selected, manualRoot, entries, canonicalRoot}) {
   assert.ok(maintained.length > 0, '维护测试集合不能为空');
   assert.ok(Array.isArray(entries));
-  const existing = new Set(maintained), automatic = new Set(selected), manual = new Set(manualRoot), seen = new Set();
+  const identity = file => canonicalRoot ? realpathSync(join(canonicalRoot, file)) : file;
+  const existing = new Set(maintained), automatic = new Set(selected.map(identity)),
+    manual = new Set(manualRoot.map(identity)), seen = new Set();
   for (const entry of entries) {
     assert.ok(entry && typeof entry.file === 'string', '债务记录缺少文件');
-    assert.ok(!seen.has(entry.file), `重复债务：${entry.file}`);
-    seen.add(entry.file);
+    const key = identity(entry.file);
+    assert.ok(!seen.has(key), `重复债务：${entry.file}`);
+    seen.add(key);
     assert.ok(existing.has(entry.file), `文件不存在或不在维护集合：${entry.file}`);
-    assert.ok(!automatic.has(entry.file), `已恢复自动接收：${entry.file}`);
+    assert.ok(!automatic.has(key), `已恢复自动接收：${entry.file}`);
     assert.ok(categories.has(entry.category), `未知分类：${entry.file}`);
     assert.ok(typeof entry.reason === 'string' && entry.reason.trim(), `缺少具体理由：${entry.file}`);
-    assert.equal(entry.manualRoot, manual.has(entry.file), `root手动配置记录漂移：${entry.file}`);
+    assert.equal(entry.manualRoot, manual.has(key), `root手动配置记录漂移：${entry.file}`);
   }
-  const missing = maintained.filter(file => !automatic.has(file) && !seen.has(file));
+  const missing = maintained.filter(file => !automatic.has(identity(file)) && !seen.has(identity(file)));
   assert.deepEqual(missing.sort(), [], `未登记的测试债务：${missing.join(', ')}`);
 }
 
@@ -128,16 +131,19 @@ env:{POSTGRES_INTEGRATION:'1',NODE_ENV:'test',DB_NAME:'cecelia_scratch',DB_HOST:
 cache:false}};
 `);
     const cli = join(dirname(require.resolve('vitest/package.json', {paths: [brainRoot]})), 'vitest.mjs');
-    const run = spawnSync(process.execPath, [cli, 'run', '--config', config, '--reporter=json', `--outputFile=${report}`],
-      {cwd: root, encoding: 'utf8', timeout: 30000});
-    assert.ifError(run.error);
-    assert.equal(run.signal, null, run.stderr);
-    assert.notEqual(run.status, 0, '连接失效却全部skip，会把未执行的SQL伪装为成功');
-    const output = JSON.parse(readFileSync(report, 'utf8'));
-    assert.equal(output.testResults.length, livenessPostgres.length);
-    for (const suite of output.testResults) {
+    for (const file of livenessPostgres) {
+      rmSync(report, {force: true});
+      const run = spawnSync(process.execPath, [cli, 'run', file, '--config', config, '--reporter=default', '--reporter=json', `--outputFile=${report}`],
+        {cwd: root, encoding: 'utf8', timeout: 30000});
+      assert.ifError(run.error);
+      assert.equal(run.signal, null, run.stderr);
+      assert.notEqual(run.status, 0, '连接失效却全部skip，会把未执行的SQL伪装为成功');
+      const output = JSON.parse(readFileSync(report, 'utf8'));
+      assert.equal(output.testResults.length, 1);
+      const [suite] = output.testResults;
+      assert.ok(suite.name.endsWith(file), suite.name);
       assert.equal(suite.status, 'failed', suite.name);
-      assert.match(JSON.stringify(suite), /PG_REQUIRED_FIXTURE_CONNECTION_REFUSED/, suite.name);
+      assert.match(run.stdout + run.stderr, /PG_REQUIRED_FIXTURE_CONNECTION_REFUSED/, suite.name);
     }
   } finally { rmSync(directory, {recursive: true, force: true}); }
 });
@@ -330,6 +336,6 @@ test('当前无人自动接收的Brain测试与精确债务清单一致', () => 
   const selected = lanes.flatMap(lane => select(...configurations[lane]));
   const manifest = require('../brain-test-debt.json');
   assert.equal(manifest.version, 1);
-  assertDebtMatches({maintained: configurationInventory(brain).maintained, selected,
+  assertDebtMatches({canonicalRoot: root, maintained: configurationInventory(brain).maintained, selected,
     manualRoot: select(rootConfig, root), entries: manifest.tests});
 });

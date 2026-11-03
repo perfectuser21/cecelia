@@ -34,6 +34,7 @@ export default defineConfig({
       'src/system/__tests__/memory.test.ts',
       'src/system/__tests__/planning.test.ts',
       'src/system/__tests__/dev-session.test.ts',
+      'tests/capture/db.test.ts',
     ]
   }
 });

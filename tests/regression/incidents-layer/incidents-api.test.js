@@ -33,15 +33,8 @@ vi.mock('../../../packages/brain/src/db/pool.js', () => ({
 async function createIncidentsApp(loadRouter = () => import('../../../packages/brain/src/routes/incidents.js')) {
   const app = express();
   app.use(express.json());
-  try {
-    const {default: incidentsRouter} = await loadRouter();
-    app.use('/api/brain', incidentsRouter);
-  } catch {
-    app.get('/api/brain/incidents', async (_req, res) => {
-      const result = await mockQuery('SELECT * FROM incidents LIMIT 50');
-      res.json({incidents: result.rows});
-    });
-  }
+  const {default: incidentsRouter} = await loadRouter();
+  app.use('/api/brain', incidentsRouter);
   return app;
 }
 

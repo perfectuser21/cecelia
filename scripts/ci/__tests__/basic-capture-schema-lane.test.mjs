@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync} from 'node:fs';
 import {tmpdir} from 'node:os';
-import {join} from 'node:path';
+import {dirname, join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {spawnSync} from 'node:child_process';
 import {createRequire} from 'node:module';
@@ -10,6 +10,8 @@ import {createRequire} from 'node:module';
 const require = createRequire(import.meta.url);
 const yaml = require('js-yaml');
 const root = fileURLToPath(new URL('../../../', import.meta.url));
+const apiRoot = join(root, 'apps/api');
+const vitestCli = join(dirname(require.resolve('vitest/package.json', {paths: [apiRoot]})), 'vitest.mjs');
 
 function unavailableDatabase(connection) {
   const directory = mkdtempSync(join(tmpdir(), 'capture-schema-offline-'));
@@ -24,7 +26,7 @@ function unavailableDatabase(connection) {
   const config = join(directory, 'vitest.config.mjs');
   writeFileSync(config, `export default {resolve:{alias:{pg:${JSON.stringify(adapter)}}},
     test:{environment:'node',include:['tests/capture/db.test.ts'],testTimeout:5000,hookTimeout:5000}};`);
-  const result = spawnSync(process.execPath, [join(root, 'node_modules/vitest/vitest.mjs'),
+  const result = spawnSync(process.execPath, [vitestCli,
     'run', '--root', join(root, 'apps/api'), '--config', config, '--reporter=dot'], {
     cwd: root, encoding: 'utf8', timeout: 20000,
     env: {...process.env, CI: 'true', API_CAPTURE_SCHEMA_INTEGRATION: '1',
@@ -56,8 +58,16 @@ test('captures schema拒绝外部地址和非测试库，且拒绝前不能尝�
 });
 
 test('captures schema从无库API单元移出，并由已迁移的Nightly数据库真实接收', () => {
-  const api = readFileSync(join(root, 'apps/api/vitest.config.ts'), 'utf8');
-  assert.ok(api.includes("'tests/capture/db.test.ts'"), '无库API单元不应选入真实schema回归');
+  const directory = mkdtempSync(join(tmpdir(), 'capture-schema-collection-'));
+  try {
+    const selected = join(directory, 'selected.json');
+    const result = spawnSync(process.execPath, [vitestCli, 'list', '--filesOnly', `--json=${selected}`],
+      {cwd: apiRoot, encoding: 'utf8', timeout: 20000});
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    const files = JSON.parse(readFileSync(selected, 'utf8')).map(entry => entry.file);
+    assert.ok(files.length > 0, 'API unit收集为空不能通过');
+    assert.ok(!files.includes(join(apiRoot, 'tests/capture/db.test.ts')), '无库API单元实际选入了真实schema回归');
+  } finally { rmSync(directory, {recursive: true, force: true}); }
   const workflow = yaml.load(readFileSync(join(root, '.github/workflows/nightly-regression.yml'), 'utf8'));
   const job = workflow.jobs['brain-integration'];
   const index = job.steps.findIndex(step => step.run === 'cd apps/api && npx --no-install vitest run --config vitest.schema.config.ts --reporter=dot');

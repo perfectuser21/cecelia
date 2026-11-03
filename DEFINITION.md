@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.445.104
+**Brain 版本**: 1.445.105
 
 开发工具归位：Engine 独立包退役，实际写入守卫与工作树工具迁 scripts/dev；仍可达 Codex adapter 归 Brain。默认 CI 不再生成 Engine/Quality 组件，现役工具真实行为在 scripts 组件验证。候选保留 `cecelia_source_only=true`，尚不构成生产发布证明。
 
