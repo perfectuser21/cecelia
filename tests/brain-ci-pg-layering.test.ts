@@ -43,6 +43,12 @@ describe('Brain PostgreSQL test layering', () => {
     expect(steps.map(step => ({command: step.command, args: step.args}))).toEqual([
       {command: 'node', args: ['scripts/ci/basic-runtime-smoke.mjs', '--validate-only']},
       {command: 'node', args: ['src/migrate.js']},
+      {command: 'npx', args: [
+        '--no-install', 'vitest', 'run', '--config', '../../scripts/ci/deep-integration.config.mjs',
+        'src/__tests__/integration/task-lease-device-pool.pg.integration.test.js',
+        'src/__tests__/integration/executor-startup-headed-owner.pg.integration.test.js',
+        'src/__tests__/integration/workflow-common-terminal.pg.integration.test.js', '--reporter=dot',
+      ]},
       {command: 'node', args: ['--test', 'scripts/ci/__tests__/runtime-signal.integration.test.mjs']},
       {command: 'node', args: ['scripts/ci/basic-runtime-smoke.mjs']},
     ]);
