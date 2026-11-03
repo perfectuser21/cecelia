@@ -48,13 +48,22 @@ jobs:
         id: scan
         shell: bash
         run: |
-          set -uo pipefail
+          set -euo pipefail
           : > /tmp/alerts.txt
           for R in $WATCH_REPOS; do
             echo "── 扫描 $R"
+            WORKFLOWS=$(gh api "repos/$R/actions/workflows" --paginate \
+              --jq '.workflows[] | select(.state=="active") | [.id, .name, .path] | @tsv') || {
+              echo "::error::$R workflow 列表读取失败，扫描不完整"
+              exit 1
+            }
             while IFS=$'\t' read -r WF_ID WF_NAME WF_PATH; do
               [ -z "${WF_ID:-}" ] && continue
-              RUNS_JSON=$(gh api "repos/$R/actions/workflows/$WF_ID/runs?status=completed&per_page=$CONSECUTIVE_N" 2>/dev/null || echo '{}')
+              RUNS_JSON=$(gh api "repos/$R/actions/workflows/$WF_ID/runs?status=completed&per_page=$CONSECUTIVE_N") || {
+                echo "::error::${R}｜$WF_NAME 运行记录读取失败，扫描不完整"
+                exit 1
+              }
+              echo "$RUNS_JSON" | jq -e '.workflow_runs | type == "array"' >/dev/null
               CONCLUSIONS=$(echo "$RUNS_JSON" | jq -r '[.workflow_runs[].conclusion] | join(",")' 2>/dev/null || echo "api_error")
               LATEST_AT=$(echo "$RUNS_JSON" | jq -r '.workflow_runs[0].created_at // empty' 2>/dev/null)
               EXPECT=$(printf 'failure,%.0s' $(seq 1 $CONSECUTIVE_N)); EXPECT=${EXPECT%,}
@@ -67,11 +76,10 @@ jobs:
                 [ "$LATEST_EPOCH" -ge "$CUTOFF" ] && RECENT=true
               fi
               if [ "$CONCLUSIONS" = "$EXPECT" ] && [ "$RECENT" = "true" ]; then
-                echo "::warning::$R｜$WF_NAME（$WF_PATH）连续 ${CONSECUTIVE_N} 次失败"
+                echo "::warning::${R}｜${WF_NAME}（${WF_PATH}）连续 ${CONSECUTIVE_N} 次失败"
                 printf '%s\t%s\t%s\n' "$R" "$WF_NAME" "$WF_PATH" >> /tmp/alerts.txt
               fi
-            done < <(gh api "repos/$R/actions/workflows" --paginate \
-              --jq '.workflows[] | select(.state=="active") | [.id, .name, .path] | @tsv' 2>/dev/null)
+            done <<< "$WORKFLOWS"
           done
           COUNT=$(grep -c . /tmp/alerts.txt || true)
           echo "count=$COUNT" >> "$GITHUB_OUTPUT"
@@ -92,29 +100,46 @@ jobs:
         if: steps.scan.outputs.count != '0'
         shell: bash
         run: |
-          set -uo pipefail
+          set -euo pipefail
+          # curl --fail 不拒绝 3xx；只有 2xx 才能成为有效业务回执。
+          http_json() {
+            local response status
+            response=$(curl -fsS -m 15 -w $'\n%{http_code}' "$@") || return 1
+            status=${response##*$'\n'}
+            case "$status" in
+              2??) printf '%s' "${response%$'\n'*}" ;;
+              *) echo "::error::Brain HTTP $status" >&2; return 1 ;;
+            esac
+          }
           # 去重必须查 "In progress"：POST /api/brain/issues 新建默认 status=In progress 而非 open
           #（0706 首跑实锤：查 status=open 恒空 → 每 6h 会重复开一遍同名 issue）
-          OPEN_TITLES=$(curl -s -m 15 "$BRAIN_URL/api/brain/issues?status=In%20progress&limit=200" || echo '[]')
+          OPEN_TITLES=$(http_json "$BRAIN_URL/api/brain/issues?status=In%20progress&limit=200")
+          echo "$OPEN_TITLES" | jq -e '.issues | type == "array"' >/dev/null
           NEW=0
           SUMMARY=""
           while IFS=$'\t' read -r R WF_NAME WF_PATH; do
-            TITLE="[CI红灯] $R｜$WF_NAME 连续3次失败"
+            TITLE="[CI红灯] ${R}｜$WF_NAME 连续3次失败"
             if echo "$OPEN_TITLES" | grep -qF "$TITLE"; then
               echo "已有同名 open issue，跳过：$TITLE"
               continue
             fi
-            BODY="ci-red-alert 自动检测：$R 的 workflow「$WF_NAME」（$WF_PATH）最近 3 次 completed 运行全部 failure。请排查根因；若该 workflow 已无存在价值请删除（红着当装饰=没有闸）。"
-            curl -s -m 15 -X POST "$BRAIN_URL/api/brain/issues" \
-              -H 'Content-Type: application/json' \
-              -d "$(python3 -c "import json,sys;print(json.dumps({'title':sys.argv[1],'body':sys.argv[2],'priority':'P1'}))" "$TITLE" "$BODY")" >/dev/null \
-              && NEW=$((NEW+1)) && SUMMARY="$SUMMARY\n- $R｜$WF_NAME"
+            BODY="ci-red-alert 自动检测：$R 的 workflow「${WF_NAME}」（${WF_PATH}）最近 3 次 completed 运行全部 failure。请排查根因；若该 workflow 已无存在价值请删除（红着当装饰=没有闸）。"
+            PAYLOAD=$(jq -cn --arg title "$TITLE" --arg body "$BODY" \
+              '{title:$title,body:$body,priority:"P1"}')
+            RECEIPT=$(http_json -X POST "$BRAIN_URL/api/brain/issues" \
+              -H 'Content-Type: application/json' -d "$PAYLOAD")
+            echo "$RECEIPT" | jq -e --arg title "$TITLE" \
+              '(.id | type == "string" and length > 0) and .title == $title' >/dev/null
+            NEW=$((NEW+1))
+            SUMMARY="$SUMMARY\n- ${R}｜$WF_NAME"
           done < /tmp/alerts.txt
           if [ "$NEW" -gt 0 ]; then
             MSG=$(printf "CI Red Alert：%d 个 workflow 连续 3 次失败（已开 Brain issue）%b" "$NEW" "$SUMMARY")
-            curl -s -m 15 -X POST "$BRAIN_URL/api/brain/harness/notify" \
-              -H 'Content-Type: application/json' \
-              -d "$(python3 -c "import json,sys;print(json.dumps({'type':'general','title':'🔴 CI Red Alert','message':sys.argv[1]}))" "$MSG")" >/dev/null || \
-              echo "::warning::飞书通知发送失败（Brain notify 不可达），issue 已开"
+            PAYLOAD=$(jq -cn --arg message "$MSG" \
+              '{type:"general",title:"🔴 CI Red Alert",message:$message}')
+            NOTIFY_RECEIPT=$(http_json -X POST "$BRAIN_URL/api/brain/harness/notify" \
+              -H 'Content-Type: application/json' -d "$PAYLOAD")
+            echo "$NOTIFY_RECEIPT" | jq -e '.ok == true and .sent == true' >/dev/null
+            echo "飞书通知已确认发送"
           fi
           echo "新开 issue：$NEW 个"

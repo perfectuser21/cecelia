@@ -33,7 +33,7 @@ async function server(t, handler) {
 }
 for (const failure of ['workflow-list', 'workflow-runs']) test(`扫描 ${failure} API 故障拒绝零红灯成功`, async t => {
   const f = fixture(t, { gh: failure === 'workflow-list' ? 'exit 22' : 'case "$*" in *actions/workflows/1/runs*) exit 22;; *) printf "1\\tBroken\\tbroken.yml\\n";; esac' });
-  const result = await run(red.jobs.scan.steps.find(s => s.id === 'scan').run, { ...f.env, WATCH_REPOS: 'fixture/repo', CONSECUTIVE_N: '3', RECENT_DAYS: '7' });
+  const result = await run(red.jobs.scan.steps.find(s => s.id === 'scan').run.replaceAll('/tmp/alerts.txt', join(f.dir, 'alerts.txt')), { ...f.env, WATCH_REPOS: 'fixture/repo', CONSECUTIVE_N: '3', RECENT_DAYS: '7' });
   assert.notEqual(result.status, 0, result.out);
   assert.doesNotMatch(result.out, /共发现 0|无连续/);
 });
@@ -72,6 +72,9 @@ function condition(expression, probe) {
 for (const result of ['failure', 'cancelled', 'skipped']) test(`哨兵控制面 ${result} 且无输出仍走告警`, () => {
   assert.equal(condition(sentinel.jobs.alert.if, { result, outputs: {} }), true);
   assert.equal(condition(sentinel.jobs['close-on-success'].if, { result, outputs: {} }), false);
+  const outputs = { health_ok: 'true', kv_ok: 'true' };
+  assert.equal(condition(sentinel.jobs.alert.if, { result, outputs }), true);
+  assert.equal(condition(sentinel.jobs['close-on-success'].if, { result, outputs }), false);
 });
 test('哨兵成功必须有双份绿色证据，缺失输出触发告警', () => {
   assert.equal(condition(sentinel.jobs.alert.if, { result: 'success', outputs: { health_ok: 'true' } }), true);
@@ -82,5 +85,33 @@ test('哨兵 Issue 故障保留失败并仍执行 Bark', async t => {
   const job = sentinel.jobs.alert;
   const result = await run(job.steps[0].run, { ...f.env, REPO: 'fixture/repo', ISSUE_TITLE_PREFIX: '[heartbeat-sentinel]', ISSUE_LABEL: 'heartbeat-sentinel', HEALTH_OK: '', KV_OK: '', KV_AGE: '', PROBE_URL: '', RUN_URL: 'fixture' });
   assert.notEqual(result.status, 0, result.out);
-  assert.equal(job.steps[1].if, 'always()', 'Issue 失败后仍须执行独立通知步骤');
+  let notifications = 0;
+  const url = await server(t, (_req, res) => { notifications++; res.end('{}'); });
+  // 模拟 Actions 默认 success() 与显式 always() 的调度，再运行真实 Bark step。
+  const bark = job.steps[1];
+  const shouldRun = bark.if ? Function('always', `return (${bark.if})`)(() => true) : result.status === 0;
+  if (shouldRun) {
+    const sent = await run(bark.run, { ...f.env, BARK_URL: url, HEALTH_OK: '', KV_OK: '', KV_AGE: '', PROBE_URL: 'fixture' });
+    assert.equal(sent.status, 0, sent.out);
+  }
+  assert.equal(notifications, 1, 'Issue 故障不能阻止 Bark 的真实 HTTP 请求');
+});
+
+test('哨兵 Bark HTTP 故障不能被警告吞成成功', async t => {
+  const url = await server(t, (_req, res) => { res.statusCode = 500; res.end('{}'); });
+  const f = fixture(t);
+  const result = await run(sentinel.jobs.alert.steps[1].run, { ...f.env, BARK_URL: url, HEALTH_OK: '', KV_OK: '', KV_AGE: '', PROBE_URL: 'fixture' });
+  assert.notEqual(result.status, 0, result.out);
+});
+
+for (const [name, gh, want] of [
+  ['空列表', 'exit 0', 0],
+  ['连续三红', `case "$*" in *actions/workflows/1/runs*) printf '%s' '{"workflow_runs":[{"conclusion":"failure","created_at":"2026-11-03T00:00:00Z"},{"conclusion":"failure"},{"conclusion":"failure"}]}' ;; *) printf '1\\tBroken\\tbroken.yml\\n';; esac`, 1],
+]) test(`扫描正常${name}保留真实结果`, async t => {
+  const f = fixture(t, { gh, date: 'echo 1793664000' });
+  const alerts = join(f.dir, 'alerts.txt');
+  const result = await run(red.jobs.scan.steps.find(s => s.id === 'scan').run.replaceAll('/tmp/alerts.txt', alerts), { ...f.env, WATCH_REPOS: 'fixture/repo', CONSECUTIVE_N: '3', RECENT_DAYS: '7' });
+  assert.equal(result.status, 0, result.out);
+  assert.equal(readFileSync(f.env.GITHUB_OUTPUT, 'utf8'), `count=${want}\n`);
+  if (want) assert.equal(readFileSync(alerts, 'utf8'), 'fixture/repo\tBroken\tbroken.yml\n');
 });

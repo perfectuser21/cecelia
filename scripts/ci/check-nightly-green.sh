@@ -86,25 +86,28 @@ RUN_SHA_SHORT="${RUN_SHA:0:7}"
 
 # 计算 run 距今小时数（python3 兜底 date 解析）
 NOW_EPOCH=$(date -u +%s 2>/dev/null || python3 -c "import time; print(int(time.time()))")
-RUN_EPOCH=$(python3 -c "
+RUN_EPOCH=$(python3 - "$RUN_TIME" <<'PYTIME'
 import datetime, sys
-s = '${RUN_TIME}'
-# 兼容 2026-07-10T03:00:00Z 与 2026-07-10T03:00:00+00:00
-s = s.replace('Z','+00:00')
-dt = datetime.datetime.fromisoformat(s)
-print(int(dt.timestamp()))
-" 2>/dev/null) || {
-  echo "::warning::无法解析 run 时间 '${RUN_TIME}'，跳过时间窗口校验"
-  RUN_EPOCH=0
+try:
+    dt = datetime.datetime.fromisoformat(sys.argv[1].replace('Z', '+00:00'))
+    if dt.tzinfo is None:
+        raise ValueError('missing timezone')
+    print(int(dt.timestamp()))
+except (ValueError, OverflowError):
+    sys.exit(1)
+PYTIME
+) || {
+  echo "::error::Release Gate 阻断 — 无法解析 run 完成时间"
+  exit 1
 }
-
-HOURS_AGO=0
-if [ "$RUN_EPOCH" -gt 0 ] 2>/dev/null; then
-  SECONDS_AGO=$(( NOW_EPOCH - RUN_EPOCH ))
-  HOURS_AGO=$(( SECONDS_AGO / 3600 ))
+if [ "$RUN_EPOCH" -le 0 ] || [ "$RUN_EPOCH" -gt "$NOW_EPOCH" ]; then
+  echo "::error::Release Gate 阻断 — run 完成时间无效或位于未来"
+  exit 1
 fi
+SECONDS_AGO=$(( NOW_EPOCH - RUN_EPOCH ))
+HOURS_AGO=$(( SECONDS_AGO / 3600 ))
 
-if [ "$HOURS_AGO" -gt "$WINDOW_HOURS" ] && [ "$RUN_EPOCH" -gt 0 ]; then
+if [ "$SECONDS_AGO" -gt "$(( WINDOW_HOURS * 3600 ))" ]; then
   echo "::error::Release Gate 阻断 — 最近 success run 距今 ${HOURS_AGO}h，超出 ${WINDOW_HOURS}h 窗口"
   echo "  Run #${RUN_ID}: ${RUN_URL}"
   echo "  完成时间: ${RUN_TIME} (${HOURS_AGO}h ago)"
