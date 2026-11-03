@@ -18,7 +18,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { parse } from 'acorn';
-import { provenanceReaderTuples, matchesProvenanceReaderTuple, registerReaderTupleGuardTests, readHistoricalReader, PROVENANCE_CALLER_SHA256, registerReviewedAGuardTests, reviewedADataRanges } from './claude-channel-retired.reader-tuples.test.js';
+import { provenanceReaderTuples, matchesProvenanceReaderTuple, registerReaderTupleGuardTests, readHistoricalReader, PROVENANCE_CALLER_SHA256, registerReviewedAGuardTests, reviewedADataRanges } from './claude-channel-retired.reader-tuples.fixture.js';
 /** 模式常量只能留在已审解析闭包；每种突变均应使纯数据资格失败。 */
 function mutateStageMode(kind,sources,root){
  const file=path.join(root,'existing-ops-stage-modes.js'),other=path.join(root,'../unreviewed-mode-consumer.js');
