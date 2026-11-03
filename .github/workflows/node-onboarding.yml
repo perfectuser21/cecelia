@@ -11,6 +11,8 @@ on:
       - 'packages/brain/src/scheduler-jobs.js'
       - 'packages/brain/src/scheduler-completion-loop.js'
       - 'packages/brain/src/script-executor.js'
+      - 'packages/brain/src/script-settlement.js'
+      - 'packages/brain/src/lib/task-terminal.js'
       - 'packages/brain/src/script-reaper-state.js'
       - 'packages/brain/src/__tests__/scheduler-completion-loop.test.js'
       - 'packages/brain/src/__tests__/script-reaper-state.test.js'

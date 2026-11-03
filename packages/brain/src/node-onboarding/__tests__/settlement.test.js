@@ -40,7 +40,7 @@ suite('脚本收尾真实PG与runner闭环', () => {
       CREATE TABLE execution_nodes(machine_registry_id uuid PRIMARY KEY,current_version_id uuid);
       CREATE TABLE task_events(task_id uuid,event_type text,payload jsonb,created_at timestamptz);
       CREATE TABLE task_runs(id uuid PRIMARY KEY,task_id uuid,run_id text,status text,ended_at timestamptz,
-      result jsonb,error_message text,updated_at timestamptz);`);
+      result jsonb,context jsonb DEFAULT '{}'::jsonb,error_message text,updated_at timestamptz);`);
     const createTask = async args => ({ success: true, task: (await args.db.query(
       'INSERT INTO tasks(id,title,task_type,status,payload,parent_task_id) VALUES($1,$2,$3,$4,$5,$6) RETURNING *',
       [randomUUID(),args.title,args.task_type,args.status??'queued',args.payload,args.parent_task_id??null])).rows[0] });
