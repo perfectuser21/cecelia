@@ -102,7 +102,7 @@ function createWorkflowRunner({stateRoot,machineId,profiles={},assertCanLaunch,a
   start:async body=>{
    assertIdentity(body);
    if(Object.keys(body).some(k=>!['run_id','task_id','profile','profile_sha256','input','mode','run_binding','request_nonce'].includes(k))||!['exploration','formal'].includes(body.mode)||!body.input||Array.isArray(body.input))throw Error('workflow_request_invalid');
-   const {request_nonce,...identity}=body;
+   const {request_nonce:_request_nonce,...identity}=body;
    const prior=read(body.run_id);
    if(prior){if(prior.cancel_tombstone&&prior.identity.task_id===body.task_id)return project(prior);if(profileDigest(prior.identity)!==profileDigest(identity))throw Error('workflow_identity_conflict');return project(prior);}
    const waiting=()=>({run_id:body.run_id,task_id:body.task_id,machine_id:machineId,profile_sha256:body.profile_sha256,mode:body.mode,status:'waiting_resources',execution_state:'not_started'});
