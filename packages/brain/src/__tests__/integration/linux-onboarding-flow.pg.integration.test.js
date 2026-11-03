@@ -21,6 +21,8 @@ beforeAll(async()=>{await admin.connect();await admin.query(`CREATE SCHEMA ${sch
  CREATE UNIQUE INDEX idx_tasks_dedup_active ON tasks (
   title,COALESCE(goal_id,'00000000-0000-0000-0000-000000000000'),COALESCE(project_id,'00000000-0000-0000-0000-000000000000')
  ) WHERE status IN ('queued','in_progress') AND COALESCE(payload->>'dedup_by_notion_page','false')<>'true';
+ -- 与现役终态SQL一致：公共Runner中央确认子查询需解析这些账本列。
+ CREATE TABLE task_runs(task_id UUID,run_id TEXT,status TEXT,ended_at TIMESTAMPTZ,context JSONB DEFAULT '{}');
  CREATE TABLE work_routing_receipts(task_id UUID,source TEXT,source_id TEXT,canonical_task_type TEXT);
  CREATE TABLE task_events(task_id UUID,event_type TEXT,payload JSONB,created_at TIMESTAMPTZ DEFAULT now());
  CREATE TABLE capacity_reservations(id UUID,machine_id TEXT,status TEXT);
