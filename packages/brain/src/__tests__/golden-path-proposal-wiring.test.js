@@ -7,13 +7,13 @@ vi.mock('../runtime-safety.js', () => ({ assertExternalExecutionAllowed: () => {
  * dispatch 分支/override 排除用源码断言（同 all-features-smoke.test.js 读源模式）——
  * executeTask 全链需重基建 fake，接线正确性由字面量条件保证。
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { EXECUTOR_KIND_FOR } from '../executor-contracts.js';
 import { routeTaskCreate } from '../task-router.js';
-import { spawnSkillRelaySession, _setActiveCodexRelays } from '../harness-skill-relay.js';
+import { spawnSkillRelaySession } from '../harness-skill-relay.js';
 import { INITIATIVE_LOCK_TASK_TYPES, RETIRED_HARNESS_TYPES_DISPATCH, HARNESS_INFLIGHT_TASK_TYPES } from '../lib/task-type-registry.js';
 
 const SRC = readFileSync(
@@ -21,8 +21,8 @@ const SRC = readFileSync(
 );
 
 describe('executor: golden_path_proposal 派发接线', () => {
-  it('EXECUTOR_KIND_FOR 打标 relay-container', () => {
-    expect(EXECUTOR_KIND_FOR.golden_path_proposal).toBe('relay-container');
+  it('EXECUTOR_KIND_FOR不再提供退役GP启动执行体', () => {
+    expect(EXECUTOR_KIND_FOR.golden_path_proposal).toBeUndefined();
   });
 
   it('dispatch 分支覆盖 golden_path_proposal（复用 runHarnessInitiativeRouter）', () => {
@@ -88,61 +88,9 @@ describe('dispatcher: golden_path_proposal 防线接线', () => {
   });
 });
 
-describe('E2E smoke（DoD F2）：golden_path_proposal 路由→orchestrator校验→loadSkill 全链', () => {
-  const gpTask = {
-    id: 'aaaabbbb-cccc-dddd-eeee-ffff00000002',
-    title: 'GP 提案 smoke',
-    task_type: 'golden_path_proposal',
-    // Claude 无头通道已退役（任务 76a160b3）：GP 提案 relay 用 codex 执行体跑通全链
-    payload: { orchestrator: 'skill-relay', sprint_dir: 'sprints/gp-smoke', executor: 'codex' },
-  };
-
-  // codex 进程内并发计数每例归零：否则前例 spawn 成功后，后例会被 codex_concurrent_limit 提前挡住而误绿
-  beforeEach(() => { _setActiveCodexRelays(0); });
-
-  function makeSmokeDeps(overrides = {}) {
-    return {
-      pool: { query: vi.fn().mockResolvedValue({ rows: [] }) },
-      spawnFn: vi.fn().mockResolvedValue({ containerId: 'cid', dockerStdout: 'x' }),
-      loadSkill: vi.fn().mockReturnValue('SKILL capability-controller 全文'),
-      ensureWt: vi.fn().mockResolvedValue('/tmp/wt/gp-smoke'),
-      resolveAccountFn: vi.fn().mockImplementation(async (o) => { o.env = o.env || {}; o.env.CECELIA_CREDENTIALS = 'account1'; }),  // 新契约（5167ef48）：claude 需已解析账号
-      tokenFn: vi.fn().mockResolvedValue('gh-token'),
-      now: () => new Date('2026-07-12T04:00:00Z'),
-      execFn: vi.fn().mockReturnValue(''),
-      snapshotCodexHome: vi.fn().mockReturnValue('/tmp/fake-snapshot-dir'),
-      ...overrides,
-    };
-  }
-
-  it('task-router 路由通过（us + /capability-controller）', () => {
-    const r = routeTaskCreate({ title: gpTask.title, task_type: gpTask.task_type });
-    expect(r.location).toBe('us');
-    expect(r.skill).toBe('/capability-controller');
-  });
-
-  it('relay spawn 全链通且 loadSkill 收到 capability-controller', async () => {
-    const deps = makeSmokeDeps();
-    const r = await spawnSkillRelaySession(gpTask, deps);
-    expect(r.ok).toBe(true);
-    expect(deps.loadSkill).toHaveBeenCalledWith('capability-controller');
-  });
-
-  it('executor 缺省（claude）→ claude_channel_retired，不加载 skill、不 spawn', async () => {
-    const deps = makeSmokeDeps();
-    const r = await spawnSkillRelaySession({ ...gpTask, payload: { orchestrator: 'skill-relay', sprint_dir: 'sprints/gp-smoke' } }, deps);
-    expect(r).toMatchObject({ ok: false, error: 'claude_channel_retired' });
-    expect(deps.loadSkill).not.toHaveBeenCalled();
-    expect(deps.spawnFn).not.toHaveBeenCalled();
-  });
-
-  it('skill 未部署 → loadSkill throw → 硬失败不 spawn 半截 session（明确报错）', async () => {
-    const deps = makeSmokeDeps({
-      loadSkill: vi.fn(() => { throw new Error('loadSkillContent: SKILL.md not found for capability-controller'); }),
-    });
-    const r = await spawnSkillRelaySession(gpTask, deps);
-    expect(r.ok).toBe(false);
-    expect(deps.spawnFn).not.toHaveBeenCalled();
-    expect(r.error).toMatch(/SKILL.md not found/);
-  });
+describe('GP提案尚未迁移，拒绝旧relay新运行',()=>{
+ it.each([{}, {executor:'codex'}, {executor:'claude'}, {executor:'grok'}])('payload%j不取skill、工作区或凭据，不创建run/session',async payload=>{
+  const effect=vi.fn();const result=await spawnSkillRelaySession({id:'old',task_type:'golden_path_proposal',payload:{orchestrator:'skill-relay',...payload}},{pool:{query:effect},spawnFn:effect,execFn:effect,loadSkill:effect,ensureWt:effect,tokenFn:effect});
+  expect(result).toMatchObject({ok:false,error:'kernel_runtime_retired'});expect(effect).not.toHaveBeenCalled();
+ });
 });
