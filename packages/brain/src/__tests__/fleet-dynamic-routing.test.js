@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
+vi.mock('child_process', async () => (await import('./helpers/deny-child-process.js')).default);
+vi.mock('node:child_process', async () => (await import('./helpers/deny-child-process.js')).default);
+
 // 节点目录和 HTTP 是输入边界，资源解析、容量计算与缓存读取均使用生产实现。
 vi.mock('../execution-directory/directory.js', () => ({
   current: () => ({ nodes: [

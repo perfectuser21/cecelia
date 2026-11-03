@@ -1,13 +1,30 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
+vi.mock('child_process', async () => (await import('./helpers/deny-child-process.js')).default);
+vi.mock('node:child_process', async () => (await import('./helpers/deny-child-process.js')).default);
+
 const boundary = vi.hoisted(() => ({ query: vi.fn(), readFile: vi.fn() }));
 vi.mock('../db.js', () => ({ default: { query: boundary.query } }));
-vi.mock('fs', async importOriginal => ({
-  ...await importOriginal(), readFileSync: boundary.readFile,
-}));
-vi.mock('os', async importOriginal => ({
-  ...await importOriginal(), homedir: () => '/isolated-brain-account-fixture',
-}));
+vi.mock('fs', async importOriginal => {
+  const actual = await importOriginal();
+  const allowed = new Set([
+    new URL('../../../../scripts/ops/brain-keepalive-check.sh', import.meta.url).pathname,
+    new URL('../../../../scripts/ops/com.cecelia.brain-keepalive.plist', import.meta.url).pathname,
+  ]);
+  const controlled = {
+    readFileSync: boundary.readFile,
+    constants: actual.constants,
+    accessSync(path, mode) {
+      if (!allowed.has(path)) throw new Error('测试禁止访问非 keepalive 资源');
+      return actual.accessSync(path, mode);
+    },
+  };
+  return { ...controlled, default: controlled };
+});
+vi.mock('os', () => {
+  const controlled = { homedir: () => '/isolated-brain-account-fixture' };
+  return { ...controlled, default: controlled };
+});
 import { selectBestAccount } from '../account-usage.js';
 
 // 只隔离凭据文件和数据库；账号排序、配额判断及会话过滤均执行生产选择器。

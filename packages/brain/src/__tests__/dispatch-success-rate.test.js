@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
+vi.mock('child_process', async () => (await import('./helpers/deny-child-process.js')).default);
+vi.mock('node:child_process', async () => (await import('./helpers/deny-child-process.js')).default);
+
 const { mockQuery } = vi.hoisted(() => ({ mockQuery: vi.fn() }));
 vi.mock('../db.js', () => ({ default: { query: mockQuery } }));
 // monitor-loop 的其他处置边界不参与本次统计，不启动监控循环。
