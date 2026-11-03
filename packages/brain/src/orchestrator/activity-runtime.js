@@ -166,7 +166,7 @@ export async function runActivityContract(contract, input, {
       record.business_status = status;
       await emit('ACTIVITY_FINISHED', {activity: a.key, item: record.item, attempt, status: result.status, failure_class: result.failure_class});
       if (status === 'done' && recovering) { record.rescued = true; record.skill_rescues++; }
-      if (status !== 'done' && !recovering && (a.runtime.executor_kind ?? (activityInput?.skill ? 'agent' : 'code')) === 'code') record.code_failures++;
+      if (!['done','empty'].includes(status) && !recovering && (a.runtime.executor_kind ?? (activityInput?.skill ? 'agent' : 'code')) === 'code') record.code_failures++;
       if (!['done', 'empty'].includes(status)) await observe({type: 'error', result, verdict: check});
       if (aborted(a) && a.runtime.phase !== 'finalize') {
         result.status = record.status = lastResult.status = 'needs_review'; result.failure_class = lastResult.failure_class = 'needs_human';
