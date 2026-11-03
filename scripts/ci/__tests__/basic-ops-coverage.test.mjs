@@ -6,7 +6,7 @@ import {dirname, join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {spawnSync} from 'node:child_process';
 import {opsChecks} from '../ops-checks.mjs';
-import {commandsFor} from '../run-basic-check.mjs';
+import {commandsFor, runSteps} from '../run-basic-check.mjs';
 
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 const representative = [
@@ -17,6 +17,7 @@ const representative = [
   'scripts/bluegreen-sidecar-completion.test.mjs',
   'scripts/preview-cache.test.mjs',
   'scripts/preview-cache-http.test.mjs',
+  'scripts/frontend-proxy.test.mjs',
   'scripts/__tests__/dashboard-release-bind.test.mjs',
   'scripts/__tests__/dashboard-release-promote.test.sh',
   'scripts/__tests__/dashboard-release-rollback.test.sh',
@@ -68,6 +69,7 @@ const fixtureFiles = [
   'scripts/brain-image-rollback.test.mjs',
   'scripts/bluegreen-sidecar-completion.test.mjs',
   'scripts/preview-cache.test.mjs',
+  'scripts/frontend-proxy.test.mjs',
   'scripts/__tests__/dashboard-release-bind.test.mjs',
   'scripts/preview-agent/__tests__/fixture.test.mjs',
   'scripts/__tests__/bluegreen-fixture.test.sh',
@@ -99,6 +101,31 @@ function fixture(t) {
     `import {appendFileSync} from 'node:fs'; appendFileSync(process.env.OPS_CAPTURE, process.argv[2]+'\\n');\n`);
   return directory;
 }
+
+test('Frontend 代理测试由实际 Ops 命令执行一次', t => {
+  const directory = fixture(t);
+  const capture = join(directory, 'executed');
+  const env = {...process.env, OPS_CAPTURE: capture};
+  delete env.NODE_TEST_CONTEXT;
+  assert.equal(runSteps(opsChecks(directory), {env, stdio: 'ignore'}), 0);
+  const executed = readFileSync(capture, 'utf8').trim().split('\n');
+  assert.equal(executed.filter(file => file === 'scripts/frontend-proxy.test.mjs').length, 1,
+    '发现器必须实际运行 Frontend 代理入口，不能只选择 ops 组件');
+});
+
+test('Frontend 代理实际测试失败使 Ops 失败且不再运行后续命令', t => {
+  const directory = fixture(t);
+  writeFileSync(join(directory, 'scripts/frontend-proxy.test.mjs'),
+    `import {test} from 'node:test'; import assert from 'node:assert/strict'; test('真实失败码 fixture', () => assert.fail('frontend regression'));\n`);
+  const capture = join(directory, 'executed');
+  const env = {...process.env, OPS_CAPTURE: capture};
+  delete env.NODE_TEST_CONTEXT;
+  const later = {cwd: directory, command: process.execPath, args: ['-e',
+    `require('node:fs').appendFileSync(process.env.OPS_CAPTURE, 'must-not-run\\n')`]};
+  assert.equal(runSteps([...opsChecks(directory), later], {env, stdio: 'ignore'}), 1,
+    'node --test 的实际失败必须传到 Ops job');
+  assert.ok(!readFileSync(capture, 'utf8').includes('must-not-run'));
+});
 
 test('独立fixture实际执行 Node、Shell、CJS，结果确定排序且新增同类文件自动加入', t => {
   const directory = fixture(t);
