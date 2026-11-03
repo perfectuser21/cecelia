@@ -211,7 +211,7 @@ router.post('/alertness/clear-override', async (req, res) => {
  */
 router.get('/alertness/metrics', async (req, res) => {
   try {
-    const { getCurrentAlertness, getMetrics } = await import('./alertness/index.js');
+    const { getCurrentAlertness, getMetrics } = await import('../alertness/index.js');
     const metrics = await getMetrics();
     const alertness = getCurrentAlertness();
 
@@ -231,7 +231,7 @@ router.get('/alertness/metrics', async (req, res) => {
  */
 router.get('/alertness/history', async (req, res) => {
   try {
-    const { getHistory } = await import('./alertness/index.js');
+    const { getHistory } = await import('../alertness/index.js');
     const minutes = parseInt(req.query.minutes || '60', 10);
     const history = await getHistory(minutes);
 
@@ -252,7 +252,7 @@ router.get('/alertness/history', async (req, res) => {
  */
 router.get('/alertness/diagnosis', async (req, res) => {
   try {
-    const { getDiagnosis } = await import('./alertness/index.js');
+    const { getDiagnosis } = await import('../alertness/index.js');
     const diagnosis = getDiagnosis();
 
     res.json({
@@ -270,7 +270,7 @@ router.get('/alertness/diagnosis', async (req, res) => {
  */
 router.get('/alertness/escalation', async (req, res) => {
   try {
-    const { getEscalationStatus } = await import('./alertness/escalation.js');
+    const { getEscalationStatus } = await import('../alertness/escalation.js');
     const status = getEscalationStatus();
 
     res.json({
@@ -288,7 +288,7 @@ router.get('/alertness/escalation', async (req, res) => {
  */
 router.get('/alertness/healing', async (req, res) => {
   try {
-    const { getRecoveryStatus } = await import('./alertness/healing.js');
+    const { getRecoveryStatus } = await import('../alertness/healing.js');
     const status = getRecoveryStatus();
 
     res.json({
