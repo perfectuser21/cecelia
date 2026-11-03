@@ -10,7 +10,7 @@
 //   dry-run(默认): 只按 Contract 打印 4 步计划,不发一条外部命令、不开 PR。demo 天然走这条,安全。
 //   live(opts.dryRun===false 或 env ALANE_LIVE=1): 真起 A 道——
 //     engine-worktree(独立 worktree+cp-* 分支)
-//       → TDD(commit1 失败测试 Red / commit2 实现 Green,棘轮: Red 必先于 Green)
+//       → 两个提交 → push → PR；本模块只编排命令，不执行worker或验证TDD红绿。
 //       → push → gh pr create → 解析真实 PR URL。
 //   绝不在 main 直接提交;所有 git 变更命令都带 worktree cwd。
 //
@@ -96,12 +96,12 @@ export function runALane(task, contract, opts = {}) {
   const branch = exec('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: worktree });
   if (!/^cp-/.test(branch)) throw new Error(`worktree 分支非 cp-*(拒绝在 main 操作): ${branch}`);
 
-  // ② TDD commit1(Red): 失败测试先落地。实现产物由 fresh-context worker 写进 worktree;
-  //    本执行器负责编排 + 跑命令 + 守棘轮(Red commit 必须先于 Green commit)。
+  // ② 提交调用方预先准备的测试产物；本模块不写worker产物。
+  //    本执行器只守提交顺序，不能以commit文案作为TDD成功证据。
   exec('git', ['add', '-A'], { cwd: worktree });
   exec('git', ['commit', '-m', `test: ${task.title} 失败测试(Red)`], { cwd: worktree });
 
-  // ③ TDD commit2(Green): 实现,让测试转绿。
+  // ③ 第二次提交；仅凭该命令不能证明实现已完成或测试转绿。
   exec('git', ['add', '-A'], { cwd: worktree });
   exec('git', ['commit', '-m', `feat: ${task.title} 实现(Green)`], { cwd: worktree });
 
@@ -112,7 +112,8 @@ export function runALane(task, contract, opts = {}) {
     ['pr', 'create', '--fill', '--head', branch, '--title', `feat: ${task.title}`],
     { cwd: worktree },
   );
-  const pr = parsePrUrl(prOut) || prOut;
+  const pr = parsePrUrl(prOut);
+  if (!pr) throw new Error('gh pr create 未返回有效 PR URL');
 
   return { pr, status: 'opened', branch, worktree, steps };
 }

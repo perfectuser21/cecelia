@@ -11,23 +11,26 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const HEARTBEAT_FILE = path.join(__dirname, '.heartbeat.json');
 const STALE_MS = Number(process.env.STALE_MS || 60_000);
 
-export function beat(stage) {
-  fs.writeFileSync(HEARTBEAT_FILE, JSON.stringify({ ts: Date.now(), stage }, null, 2));
-}
-
-// 纯逻辑 stale 判定(与告警/退出解耦, 便于测)。
-// 返回 { stale, stage?, ageMs?, reason? }。
-export function isStale(thresholdMs = STALE_MS) {
-  if (!fs.existsSync(HEARTBEAT_FILE)) {
-    return { stale: true, reason: '无心跳文件,指挥从未启动或已死' };
+export function createDeadman({ heartbeatFile = HEARTBEAT_FILE, now = Date.now } = {}) {
+  function beat(stage) {
+    fs.writeFileSync(heartbeatFile, JSON.stringify({ ts: now(), stage }, null, 2));
   }
-  const { ts, stage } = JSON.parse(fs.readFileSync(HEARTBEAT_FILE, 'utf8'));
-  const ageMs = Date.now() - ts;
-  if (ageMs > thresholdMs) {
-    return { stale: true, stage, ageMs, reason: `心跳 stale ${Math.round(ageMs / 1000)}s` };
+  function isStale(thresholdMs = STALE_MS) {
+    if (!fs.existsSync(heartbeatFile)) return { stale: true, reason: '无心跳文件,指挥从未启动或已死' };
+    let record;
+    try { record = JSON.parse(fs.readFileSync(heartbeatFile, 'utf8')); }
+    catch { return { stale: true, reason: '心跳文件无效，无法确认存活' }; }
+    if (!record || !Number.isFinite(record.ts)) return { stale: true, reason: '心跳时间无效，无法确认存活' };
+    const { ts, stage } = record;
+    const ageMs = now() - ts;
+    if (ageMs > thresholdMs) return { stale: true, stage, ageMs, reason: `心跳 stale ${Math.round(ageMs / 1000)}s` };
+    return { stale: false, stage, ageMs };
   }
-  return { stale: false, stage, ageMs };
+  return { beat, isStale };
 }
+const monitor = createDeadman();
+export const beat = monitor.beat;
+export const isStale = monitor.isStale;
 
 // 飞书告警(复用 notifier.js 群机器人 webhook 模式)。
 // FEISHU_BOT_WEBHOOK 未配 → 降级返回 false(打日志不崩); 发送失败也返回 false(不抛)。

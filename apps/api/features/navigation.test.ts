@@ -36,7 +36,7 @@ describe('Cecelia 主导航', () => {
     ]);
   });
 
-  it('22 个终端入口去重且全部有可加载的页面', () => {
+  it('22 个终端入口去重且全部登记页面加载器', () => {
     const leaves = config.navGroups.flatMap(group => group.items.flatMap(item => item.children ?? [item]));
     expect(leaves).toHaveLength(22);
     expect(leaves.find(item => item.path === '/website-functions')?.label).toBe('网站功能');
@@ -47,6 +47,15 @@ describe('Cecelia 主导航', () => {
       const route = config.allRoutes.find(route => route.path === item.path);
       expect(route?.component, item.path).toBeTruthy();
       expect(config.pageComponents[route!.component!], item.path).toBeTypeOf('function');
+    }
+  });
+
+  it('主导航22入口实际加载模块并导出可渲染页面', async () => {
+    const leaves = config.navGroups.flatMap(group => group.items.flatMap(item => item.children ?? [item]));
+    for (const item of leaves) {
+      const route = config.allRoutes.find(route => route.path === item.path)!;
+      const loaded = await config.pageComponents[route.component!]();
+      expect(loaded.default, item.path).toBeTypeOf('function');
     }
   });
 

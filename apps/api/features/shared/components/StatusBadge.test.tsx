@@ -1,149 +1,41 @@
-import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
-import { StatusBadge, StatusDot } from './StatusBadge';
+import {describe,it,expect} from 'vitest';
+import {render,screen} from '@testing-library/react';
+import {StatusBadge,StatusDot} from './StatusBadge';
 
-// Mock the helper functions
-vi.mock('../utils/statusHelpers', () => ({
-  getStatusColor: vi.fn((status: string) => {
-    const s = status.toLowerCase();
-    if (s.includes('success') || s.includes('completed')) return 'bg-green-100 text-green-800';
-    if (s.includes('error') || s.includes('failed')) return 'bg-red-100 text-red-800';
-    if (s.includes('running') || s.includes('in_progress')) return 'bg-blue-100 text-blue-800';
-    if (s.includes('warning') || s.includes('pending')) return 'bg-yellow-100 text-yellow-800';
-    return 'bg-gray-100 text-gray-800';
-  }),
-  getStatusIcon: vi.fn((status: string, size: string) => {
-    const s = status.toLowerCase();
-    if (s.includes('success')) return <span className={size} data-testid="icon-check">✓</span>;
-    if (s.includes('error')) return <span className={size} data-testid="icon-x">✗</span>;
-    if (s.includes('running')) return <span className={size} data-testid="icon-spinner">↻</span>;
-    return null;
-  }),
-  getStatusLabel: vi.fn((status: string) => {
-    return status.charAt(0).toUpperCase() + status.slice(1).replace(/_/g, ' ');
-  }),
-  getStatusTextColor: vi.fn((status: string) => {
-    const s = status.toLowerCase();
-    if (s.includes('success')) return 'text-green-600';
-    if (s.includes('error')) return 'text-red-600';
-    if (s.includes('running')) return 'text-blue-600';
-    if (s.includes('warning')) return 'text-yellow-600';
-    return 'text-gray-600';
-  }),
-}));
-
-describe('StatusBadge', () => {
-  it('renders with basic status text', () => {
-    render(<StatusBadge status="success" />);
-    expect(screen.getByText('Success')).toBeInTheDocument();
+// 使用现役statusHelpers，不用替身重写状态语义。
+describe('状态徽章真实语义组合',()=>{
+  it.each([
+    ['completed','已完成','bg-green-100','text-green-700','lucide-circle-check'],
+    ['in_progress','进行中','bg-blue-100','text-blue-700','lucide-activity'],
+    ['failed','失败','bg-red-100','text-red-700','lucide-circle-x'],
+    ['queued','排队中','bg-gray-100','text-gray-700','lucide-clock'],
+    ['unrecognized','未知','bg-gray-100','text-gray-500','lucide-circle-alert'],
+  ])('%s显示实际中文、颜色及对应图形', (status,label,background,color,icon)=>{
+    const {container}=render(<StatusBadge status={status} showIcon />);
+    const badge=screen.getByText(label);
+    expect(badge).toHaveClass(background,color);
+    expect(container.querySelector('svg')).toHaveClass(icon);
   });
-
-  it('applies correct status colors for different statuses', () => {
-    const { rerender } = render(<StatusBadge status="success" />);
-    let badge = screen.getByText('Success');
-    expect(badge.className).toContain('bg-green-100');
-    expect(badge.className).toContain('text-green-800');
-
-    rerender(<StatusBadge status="error" />);
-    badge = screen.getByText('Error');
-    expect(badge.className).toContain('bg-red-100');
-    expect(badge.className).toContain('text-red-800');
-
-    rerender(<StatusBadge status="running" />);
-    badge = screen.getByText('Running');
-    expect(badge.className).toContain('bg-blue-100');
-    expect(badge.className).toContain('text-blue-800');
-
-    rerender(<StatusBadge status="pending" />);
-    badge = screen.getByText('Pending');
-    expect(badge.className).toContain('bg-yellow-100');
-    expect(badge.className).toContain('text-yellow-800');
+  it('自定义标签、隐藏标签和图标开关仍由组件控制',()=>{
+    const {rerender,container}=render(<StatusBadge status="completed" label="已验收" showIcon />);
+    expect(screen.getByText('已验收')).toBeInTheDocument();
+    expect(screen.queryByText('已完成')).not.toBeInTheDocument();
+    rerender(<StatusBadge status="completed" showLabel={false} showIcon={false} />);
+    expect(screen.queryByText('已完成')).not.toBeInTheDocument();
+    expect(container.querySelector('svg')).toBeNull();
   });
-
-  it('shows icon when showIcon is true', () => {
-    render(<StatusBadge status="success" showIcon={true} />);
-    expect(screen.getByTestId('icon-check')).toBeInTheDocument();
+  it.each([['sm','text-xs','px-2'],['md','text-sm','px-2.5'],['lg','text-base','px-3']] as const)('%s尺寸保留真实语义', (size,text,padding)=>{
+    render(<StatusBadge status="completed" size={size} className="extra" />);
+    expect(screen.getByText('已完成')).toHaveClass(text,padding,'extra');
   });
-
-  it('hides label when showLabel is false', () => {
-    render(<StatusBadge status="success" showLabel={false} />);
-    expect(screen.queryByText('Success')).not.toBeInTheDocument();
-  });
-
-  it('uses custom label when provided', () => {
-    render(<StatusBadge status="success" label="Custom Label" />);
-    expect(screen.getByText('Custom Label')).toBeInTheDocument();
-    expect(screen.queryByText('Success')).not.toBeInTheDocument();
-  });
-
-  it('applies different size classes', () => {
-    const { rerender } = render(<StatusBadge status="active" size="sm" />);
-    let badge = screen.getByText('Active');
-    expect(badge.className).toContain('text-xs');
-    expect(badge.className).toContain('px-2');
-
-    rerender(<StatusBadge status="active" size="md" />);
-    badge = screen.getByText('Active');
-    expect(badge.className).toContain('text-sm');
-    expect(badge.className).toContain('px-2.5');
-
-    rerender(<StatusBadge status="active" size="lg" />);
-    badge = screen.getByText('Active');
-    expect(badge.className).toContain('text-base');
-    expect(badge.className).toContain('px-3');
-  });
-
-  it('renders dot variant correctly', () => {
-    render(<StatusBadge status="online" variant="dot" />);
-
-    // Check for dot element
-    const dot = document.querySelector('.w-2.h-2.rounded-full');
-    expect(dot).toBeInTheDocument();
-    expect(dot?.className).toContain('bg-green-500');
-  });
-
-  it('renders outline variant correctly', () => {
-    render(<StatusBadge status="warning" variant="outline" />);
-
-    const badge = screen.getByText('Warning');
-    expect(badge.className).toContain('border');
-    expect(badge.className).toContain('border-current/30');
-  });
-
-  it('applies custom className', () => {
-    render(<StatusBadge status="custom" className="custom-badge-class" />);
-
-    const badge = screen.getByText('Custom');
-    expect(badge.className).toContain('custom-badge-class');
-  });
-
-  it('shows both icon and label when both are enabled', () => {
-    render(<StatusBadge status="success" showIcon={true} showLabel={true} />);
-
-    expect(screen.getByTestId('icon-check')).toBeInTheDocument();
-    expect(screen.getByText('Success')).toBeInTheDocument();
-  });
-});
-
-describe('StatusDot', () => {
-  it('renders green dot when online', () => {
-    const { container } = render(<StatusDot online={true} />);
-    const dot = container.querySelector('.bg-green-500');
-    expect(dot).toBeInTheDocument();
-    expect(dot?.className).toContain('rounded-full');
-    expect(dot?.className).toContain('w-2');
-    expect(dot?.className).toContain('h-2');
-  });
-
-  it('renders red dot when offline', () => {
-    const { container } = render(<StatusDot online={false} />);
-    const dot = container.querySelector('.bg-red-500');
-    expect(dot).toBeInTheDocument();
-  });
-
-  it('applies custom className', () => {
-    const { container } = render(<StatusDot online={true} className="custom-dot" />);
-    const dot = container.querySelector('.bg-green-500');
-    expect(dot?.className).toContain('custom-dot');
+  it('outline使用真实失败文字色，dot区分在线与离线',()=>{
+    const {rerender,container}=render(<StatusBadge status="failed" variant="outline" />);
+    expect(screen.getByText('失败')).toHaveClass('border-current/30','text-red-600');
+    rerender(<StatusBadge status="online" variant="dot" />);
+    expect(container.querySelector('.rounded-full')).toHaveClass('bg-green-500');
+    rerender(<StatusDot online={false} className="extra" />);
+    expect(container.firstChild).toHaveClass('bg-red-500','extra');
+    rerender(<StatusDot online />);
+    expect(container.firstChild).toHaveClass('bg-green-500','w-2','h-2');
   });
 });

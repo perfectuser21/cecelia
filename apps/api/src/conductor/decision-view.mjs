@@ -51,7 +51,7 @@ function toProperties(task, contract) {
     contract.dod ? `DoD: ${[].concat(contract.dod).join('; ')}` : '',
   ].filter(Boolean).join('\n');
   return {
-    Task: { title: rt(task.title || task.id) },
+    Task: { title: rt(`${task.id}: ${task.title || task.id}`) },
     状态: { select: { name: '待审' } },
     Lane: { select: { name: 'A' } },
     Contract: { rich_text: rt(contractFull) },
@@ -59,58 +59,71 @@ function toProperties(task, contract) {
   };
 }
 
-// 写「待决策」: env 齐 → 创 Notion 页(返回 page id); 否则降级本地文件(返回文件路径)。
-export async function publishContract(task, contract) {
-  if (notionEnabled()) {
-    const page = await notionReq('/pages', 'POST', {
-      parent: { database_id: process.env.AUTOPILOT_DECISION_DB_ID },
-      properties: toProperties(task, contract),
-    });
-    console.log(`[decision-view] 已写 Notion 待决策页: ${page.id}`);
-    return page.id;
+export function createDecisionView({ queueDir = QUEUE_DIR } = {}) {
+  // 写「待决策」: env 齐 → 创 Notion 页(返回 page id); 否则降级本地文件(返回文件路径)。
+  async function publishContract(task, contract) {
+    if (notionEnabled()) {
+      const page = await notionReq('/pages', 'POST', {
+        parent: { database_id: process.env.AUTOPILOT_DECISION_DB_ID },
+        properties: toProperties(task, contract),
+      });
+      console.log(`[decision-view] 已写 Notion 待决策页: ${page.id}`);
+      return page.id;
+    }
+    fs.mkdirSync(queueDir, { recursive: true });
+    const f = path.join(queueDir, `${task.id}.contract.json`);
+    fs.writeFileSync(f, JSON.stringify({ task, contract }, null, 2));
+    console.log(`[decision-view] Notion 未配置, 降级本地待决策: ${f}`);
+    return f;
   }
-  fs.mkdirSync(QUEUE_DIR, { recursive: true });
-  const f = path.join(QUEUE_DIR, `${task.id}.contract.json`);
-  fs.writeFileSync(f, JSON.stringify({ task, contract }, null, 2));
-  console.log(`[decision-view] Notion 未配置, 降级本地待决策: ${f}`);
-  return f;
-}
 
-// 从 Notion 查这条 task 的待决策页, 读「状态」select 翻成裁决; 待审/无页 → null。
-async function readVerdictFromNotion(taskId) {
-  const data = await notionReq(
-    `/databases/${process.env.AUTOPILOT_DECISION_DB_ID}/query`,
-    'POST',
-    { filter: { property: 'Task', title: { contains: taskId } }, page_size: 1 },
-  );
-  const page = (data.results || [])[0];
-  if (!page) return null; // 还没在待决策视图建页/被删
-  const status = page.properties?.['状态']?.select?.name;
-  if (!status || status === '待审') return null; // pause-in-place
-  if (status === 'approve') return { action: 'approve' };
-  if (status === 'redirect') {
-    const steer = (page.properties?.['裁决']?.rich_text || [])
-      .map((t) => t.plain_text ?? t.text?.content ?? '').join('').trim();
-    return { action: 'redirect', steer };
+  // 从 Notion 查这条 task 的待决策页, 读「状态」select 翻成裁决; 待审/无页 → null。
+  async function readVerdictFromNotion(taskId) {
+    const data = await notionReq(
+      `/databases/${process.env.AUTOPILOT_DECISION_DB_ID}/query`,
+      'POST',
+      { filter: { or: [
+        { property: 'Task', title: { starts_with: `${taskId}: ` } },
+        { property: 'Task', title: { equals: taskId } },
+      ] }, page_size: 1 },
+    );
+    const page = (data.results || [])[0];
+    if (!page) return null; // 还没在待决策视图建页/被删
+    const status = page.properties?.['状态']?.select?.name;
+    if (!status || status === '待审') return null; // pause-in-place
+    if (status === 'approve') return { action: 'approve' };
+    if (status === 'redirect') {
+      const steer = (page.properties?.['裁决']?.rich_text || [])
+        .map((t) => t.plain_text ?? t.text?.content ?? '').join('').trim();
+      return { action: 'redirect', steer };
+    }
+    return null; // 未知状态当未审
   }
-  return null; // 未知状态当未审
-}
 
-// verdict 来源 seam。demo: 剧本数组; once: env 齐查 Notion,否则读本地待决策文件。
-// 任一来源出错 → 降级 null(pause-in-place,不崩)。
-export async function readVerdict({ mode, script, round, taskId }) {
-  if (mode === 'demo') return script[round - 1];
+  // verdict 来源 seam。demo: 剧本数组; once: env 齐查 Notion,否则读本地待决策文件。
+  // 任一来源出错 → 降级 null(pause-in-place,不崩)。
+  async function readVerdict({ mode, script, round, taskId }) {
+    if (mode === 'demo') return script[round - 1];
 
-  if (notionEnabled()) {
-    try {
-      return await readVerdictFromNotion(taskId);
-    } catch (err) {
-      console.error(`[decision-view] 读 Notion 裁决失败, 降级 null(暂停在原地): ${err.message}`);
+    if (notionEnabled()) {
+      try {
+        return await readVerdictFromNotion(taskId);
+      } catch (err) {
+        console.error(`[decision-view] 读 Notion 裁决失败, 降级 null(暂停在原地): ${err.message}`);
+        return null;
+      }
+    }
+
+    const vf = path.join(queueDir, `${taskId}.verdict`);
+    if (!fs.existsSync(vf)) return null; // 还没审 → 暂停在原地(pause-in-place)
+    try { return JSON.parse(fs.readFileSync(vf, 'utf8')); }
+    catch {
+      console.error('[decision-view] 本地裁决文件无效，未获得批准');
       return null;
     }
   }
-
-  const vf = path.join(QUEUE_DIR, `${taskId}.verdict`);
-  if (!fs.existsSync(vf)) return null; // 还没审 → 暂停在原地(pause-in-place)
-  return JSON.parse(fs.readFileSync(vf, 'utf8'));
+  return { publishContract, readVerdict };
 }
+const view = createDecisionView();
+export const publishContract = view.publishContract;
+export const readVerdict = view.readVerdict;

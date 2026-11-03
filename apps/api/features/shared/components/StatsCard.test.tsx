@@ -1,9 +1,10 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
-import { StatsCard, GlassCard, GradientStatCard } from './StatsCard';
+import { StatsCard, GlassCard, GradientStatCard } from '../index';
 import { Activity, User, Settings } from 'lucide-react';
 
-describe('StatsCard', () => {
+// 保障shared公共导出合同；当前尚无具体业务页面消费者，不声称业务覆盖。
+describe('StatsCard公共组件', () => {
   it('renders with basic props', () => {
     render(
       <StatsCard
