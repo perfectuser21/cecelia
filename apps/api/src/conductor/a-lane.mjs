@@ -43,8 +43,9 @@ function parseWorktreePath(out) {
 
 // gh pr create 输出里捞 PR URL。
 function parsePrUrl(out) {
-  const m = String(out).match(/https:\/\/github\.com\/[^\s]+\/pull\/\d+/);
-  return m ? m[0] : '';
+  // gh可附带提示文字，但不能把畸形地址截成合法前缀或缺失仓库身份。
+  const m = String(out).match(/(?:^|[\s(<])(https:\/\/github\.com\/[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\/[A-Za-z0-9_.-]+\/pull\/[1-9]\d*)(?=$|[\s)>])/);
+  return m ? m[1] : '';
 }
 
 // 安全的 task 名 → worktree slug(worktree-manage.sh 用它拼分支/路径)。

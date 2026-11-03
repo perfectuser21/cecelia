@@ -159,3 +159,24 @@ describe('A道失败边界',()=>{
     expect(()=>runALane(task,contract,{exec,dryRun:false})).toThrow('PR URL');
   });
 });
+
+
+describe('完整GitHub PR URL身份',()=>{
+  it.each([
+    'https://github.com/owner/repo/pull/12oops',
+    'https://github.com/owner/pull/12',
+    'https://github.com/owner/repo/pull/0',
+    'https://github.com/owner/repo/pull/12/more',
+    'https://github.com.evil/owner/repo/pull/12',
+  ])('拒绝畸形完整token：%s',output=>{
+    const {exec}=makeFakeExec({'pr create':output});
+    expect(()=>runALane(task,contract,{exec,dryRun:false})).toThrow('PR URL');
+  });
+  it.each([
+    'Created pull request:\nhttps://github.com/some-owner/repo_name.js/pull/42\nReady',
+    'Created pull request (https://github.com/some-owner/repo_name.js/pull/42)',
+  ])('提示文字或换行内仍可提取合法完整URL',output=>{
+    const {exec}=makeFakeExec({'pr create':output});
+    expect(runALane(task,contract,{exec,dryRun:false})).toMatchObject({status:'opened',pr:'https://github.com/some-owner/repo_name.js/pull/42'});
+  });
+});
