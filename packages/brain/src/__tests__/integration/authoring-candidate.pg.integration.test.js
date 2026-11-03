@@ -5,7 +5,7 @@ import {prepareDefinitionFreeze} from '../../workflow-authoring/freeze.js';
 import {definitionDigest} from '../../workflow-authoring/contracts.js';
 import {resolveInvocation} from '../../invocations/resolve.js';
 import {invoke} from '../../invocations/store.js';
-import {prepareInvocationDispatch,guardInvocationCallback} from '../../invocations/runtime.js';
+import {prepareInvocationDispatch,guardInvocationCallback,runInvocationActivities} from '../../invocations/runtime.js';
 import {finishRun} from '../../lib/task-run.js';
 import {finalizeTask} from '../../lib/task-terminal.js';
 import {readInvocationLedger} from '../../workflow-authoring/execution-proof.js';
@@ -40,15 +40,28 @@ it('实际回执通道按已观察Activity产物写真实FK span，重放不重�
  const accepted=await invoke(f.pool,{target:{kind:'workflow',id:a.id},mode:'candidate',authoring_task_id:a.id,compose_sha256:definitionDigest(f.definition),input:{text:'abc'},request_key:'span-receipt'},'default',options);
  const task=(await f.pool.query('SELECT * FROM tasks WHERE id=$1',[accepted.task_id])).rows[0],runId=`observed-${randomUUID()}`;
  const {envelope:e}=await prepareInvocationDispatch(f.pool,task,runId,options);
- const receipt={protocol:'skill-invocation-result-v1',task_id:task.id,run_id:runId,tenant_id:'default',target:e.target,input_sha256:e.input_sha256,
+ const unproven={protocol:'skill-invocation-result-v1',task_id:task.id,run_id:runId,tenant_id:'default',target:e.target,input_sha256:e.input_sha256,
   activities:e.activities.map(slot=>({key:slot.key,skill_sha256:slot.skill_sha256,outputs:{text:'ABC'}})),outputs:{text:'ABC'}};
+ await expect(guardInvocationCallback(f.pool,{task_id:task.id,run_id:runId,status:'AI Done',result:unproven})).rejects.toThrow('公共Runner终态证明');
+ expect((await f.pool.query('SELECT * FROM spans WHERE run_id=$1',[runId])).rows).toHaveLength(0);
+ const outcome=await runInvocationActivities(f.pool,task,runId,{
+  executeSkill:async request=>({protocol:'skill-activity-result-v1',...request.identity,outputs:{text:request.input.text.toUpperCase()}}),
+  commander:{status:'unavailable',wake:async()=>{},sleep:async()=>{},notify:async()=>({action:'none'}),takeGuidance:()=>[]},
+  validator:async({input,outputs})=>({verdict:outputs.text===input.text.toUpperCase()?'pass':'fail',evidence:['fixture独立大写规则读回']})});
+ expect(outcome.runtime.status).toBe('completed');
+ const receipt=outcome.receipt;
+ const proof=(await f.pool.query("SELECT payload FROM task_events WHERE task_id=$1 AND event_type='invocation_runner_finalized'",[task.id])).rows;
+ expect(proof).toHaveLength(1);expect(proof[0].payload).toMatchObject({run_id:runId,status:'completed',envelope_sha256:e.envelope_sha256,receipt_sha256:definitionDigest(receipt)});
  const callback={task_id:task.id,run_id:runId,status:'AI Done',result:receipt};
  await guardInvocationCallback(f.pool,callback);await guardInvocationCallback(f.pool,callback);
+ const altered=structuredClone(receipt);altered.outputs.text='伪造';
+ await expect(guardInvocationCallback(f.pool,{...callback,result:altered})).rejects.toThrow();
  const spans=(await f.pool.query('SELECT * FROM spans WHERE run_id=$1',[runId])).rows;
  expect(spans).toHaveLength(1);expect(spans[0]).toMatchObject({workflow_id:owner.workflow_id,activity_id:owner.slots[0].activity_id,step_id:null,outcome:'pass'});
  expect(spans[0].evidence.outputs).toEqual({text:'ABC'});
  await finishRun({runId,status:'success',exitCode:0,result:{source:'callback-ledger-regression'}},{pool:f.pool});
- await finalizeTask(f.pool,task.id,'completed',{mergeResult:{handoff:{summary:'回执真实账本回归',next_steps:[]}}});
+ expect((await finalizeTask(f.pool,task.id,'completed',{relay:false,mergeResult:{handoff:{summary:'回执真实账本回归',next_steps:[]}}})).rowCount).toBe(1);
+ expect((await f.pool.query('SELECT status FROM tasks WHERE id=$1',[task.id])).rows[0].status).toBe('completed');
  expect(verifyInvocationLedger(await readInvocationLedger(f.pool,task.id),{requireSpans:true}).outputs).toEqual({text:'ABC'});
 });
 it('owner协议/租户/服务器compose、冻结引用或非授权active篡改不能重放认领',async()=>{

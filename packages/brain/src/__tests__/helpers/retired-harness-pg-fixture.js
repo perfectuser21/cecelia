@@ -14,6 +14,7 @@ export async function initializeRetirementSchema(pool){
  created_at timestamptz DEFAULT now(),updated_at timestamptz DEFAULT now(),queued_at timestamptz DEFAULT now(),
  started_at timestamptz,completed_at timestamptz,claimed_by text,claimed_at timestamptz,
  metadata jsonb DEFAULT '{}',result jsonb,status_history jsonb DEFAULT '[]',error_message text);
+ CREATE TABLE task_runs(task_id uuid,run_id text,status text,ended_at timestamptz,context jsonb);
  CREATE TABLE initiative_runs(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),current_task_id uuid,orchestrator_version text);
  CREATE TABLE initiative_contracts(id uuid PRIMARY KEY DEFAULT gen_random_uuid());
  CREATE TABLE map_scope_repositories(scope_key text,repo text,adapter_config jsonb DEFAULT '{}');
