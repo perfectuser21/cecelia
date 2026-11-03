@@ -26,8 +26,13 @@ function captureWithBackpressure(root, mode, sentinel) {
     child.stdout.pause();
     child.stderr.on('data', chunk => { stderr += chunk; });
     const resume = setTimeout(() => child.stdout.resume(), 200);
-    child.once('error', error => { clearTimeout(resume); reject(error); });
-    child.once('close', code => { clearTimeout(resume); resolve({ code, stdout, stderr, output: stdout + stderr }); });
+    const deadline = setTimeout(() => {
+      child.kill('SIGKILL');
+      reject(new Error('假 claude 背压测试超过10秒'));
+    }, 10000);
+    const cleanup = () => { clearTimeout(resume); clearTimeout(deadline); };
+    child.once('error', error => { cleanup(); reject(error); });
+    child.once('close', code => { cleanup(); resolve({ code, stdout, stderr, output: stdout + stderr }); });
   });
 }
 
