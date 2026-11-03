@@ -37,19 +37,19 @@ for (const failure of ['workflow-list', 'workflow-runs']) test(`扫描 ${failure
   assert.notEqual(result.status, 0, result.out);
   assert.doesNotMatch(result.out, /共发现 0|无连续/);
 });
-for (const scenario of ['list-500', 'create-500', 'create-no-receipt', 'notify-500', 'notify-unsent', 'success', 'duplicate']) test(`红灯真实 HTTP ${scenario}`, async t => {
+for (const scenario of ['list-500', 'list-302', 'create-500', 'create-302', 'create-no-receipt', 'notify-500', 'notify-302', 'notify-unsent', 'success', 'duplicate']) test(`红灯真实 HTTP ${scenario}`, async t => {
   let creates = 0; let notifications = 0;
   const url = await server(t, (req, res) => {
     res.setHeader('Content-Type', 'application/json');
     if (req.method === 'GET') {
-      res.statusCode = scenario === 'list-500' ? 500 : 200;
+      res.statusCode = scenario === 'list-500' ? 500 : scenario === 'list-302' ? 302 : 200;
       return res.end(JSON.stringify({ issues: scenario === 'duplicate' ? [{ id: 'existing', title: '[CI红灯] fixture/repo｜Broken 连续3次失败' }] : [] }));
     }
     if (req.url.endsWith('/notify')) {
-      notifications++; res.statusCode = scenario === 'notify-500' ? 500 : 200;
+      notifications++; res.statusCode = scenario === 'notify-500' ? 500 : scenario === 'notify-302' ? 302 : 200;
       return res.end(JSON.stringify({ ok: true, sent: scenario !== 'notify-unsent' }));
     }
-    creates++; res.statusCode = scenario === 'create-500' ? 500 : 201;
+    creates++; res.statusCode = scenario === 'create-500' ? 500 : scenario === 'create-302' ? 302 : 201;
     res.end(JSON.stringify(scenario === 'create-no-receipt' ? {} : { id: '4ef251d2-d573-493d-aecc-5eb172c24afc', title: '[CI红灯] fixture/repo｜Broken 连续3次失败' }));
   });
   const f = fixture(t); const alerts = join(f.dir, 'alerts.txt');
@@ -60,10 +60,10 @@ for (const scenario of ['list-500', 'create-500', 'create-no-receipt', 'notify-5
   assert.equal(result.status === 0, ['success', 'duplicate'].includes(scenario), result.out);
   if (scenario.startsWith('create-')) assert.equal(creates, 1, result.out);
   if (scenario.startsWith('notify-')) { assert.equal(creates, 1, result.out); assert.equal(notifications, 1, result.out); }
-  if (scenario.startsWith('create-') || scenario === 'list-500') {
+  if (scenario.startsWith('create-') || scenario.startsWith('list-')) {
     assert.doesNotMatch(result.out, /新开 issue：1/); assert.equal(notifications, 0);
   }
-  if (scenario === 'list-500' || scenario === 'duplicate') assert.equal(creates, 0);
+  if (scenario.startsWith('list-') || scenario === 'duplicate') assert.equal(creates, 0);
   if (scenario === 'success') { assert.equal(creates, 1); assert.equal(notifications, 1); assert.match(result.out, /新开 issue：1/); }
 });
 function condition(expression, probe) {
