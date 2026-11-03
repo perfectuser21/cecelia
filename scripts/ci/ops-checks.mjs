@@ -9,6 +9,7 @@ const ROOT_NODE = [
   /^brain-image-rollback.*\.test\.mjs$/,
   /^bluegreen-sidecar.*\.test\.mjs$/,
   /^preview-cache.*\.test\.mjs$/,
+  /^frontend-proxy\.test\.mjs$/,
 ];
 const ROOT_SHELL = [
   /^bluegreen-.*\.test\.sh$/,
