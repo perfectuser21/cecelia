@@ -2,7 +2,8 @@
  * WS1 TDD Red Phase — initiative_runs.journey_id + GET /initiative-runs/:id
  * 实现前全部 FAIL；Generator 完成实现后变 Green
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+import {spawnSkillRelaySession} from '../harness-skill-relay.js';
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -35,32 +36,11 @@ describe('WS1 — initiative_runs.journey_id [ARTIFACT]', () => {
   });
 });
 
-describe('WS1 — harness-skill-relay.js 两处 INSERT [BEHAVIOR]', () => {
-  it('skill-relay 文件存在', () => {
-    expect(existsSync(GRAPH_FILE)).toBe(true);
-  });
-
-  it('INSERT INTO initiative_runs 出现至少 1 次', () => {
-    const content = readFileSync(GRAPH_FILE, 'utf-8');
-    const matches = content.match(/INSERT INTO initiative_runs/g) || [];
-    expect(matches.length).toBeGreaterThanOrEqual(1);
-  });
-
-  it('所有 INSERT INTO initiative_runs 块均含 journey_id 字段', () => {
-    const content = readFileSync(GRAPH_FILE, 'utf-8');
-    // harness-skill-relay.js 的 INSERT 不带 RETURNING id，改用固定窗口截取列名段
-    const insertIdxs = [];
-    let idx = content.indexOf('INSERT INTO initiative_runs');
-    while (idx !== -1) {
-      insertIdxs.push(idx);
-      idx = content.indexOf('INSERT INTO initiative_runs', idx + 1);
-    }
-    const insertBlocks = insertIdxs.map((i) => content.slice(i, i + 300));
-    expect(insertBlocks.length, '预期至少 1 个 INSERT 块').toBeGreaterThanOrEqual(1);
-    insertBlocks.forEach((block, i) => {
-      expect(block, `INSERT 块 ${i + 1} 缺少 journey_id`).toContain('journey_id');
-    });
-  });
+describe('WS1 — 旧relay不再是run生产者 [BEHAVIOR]',()=>{
+ it('不包含新建initiative_runs的写路径',()=>{expect(readFileSync(GRAPH_FILE,'utf-8')).not.toContain('INSERT INTO initiative_runs');});
+ it('真实退役入口不写run，历史迁移与GET仍独立保留',async()=>{
+  const effect=vi.fn();const result=await spawnSkillRelaySession({id:'historical',payload:{orchestrator:'skill-relay'}},{pool:{query:effect},spawnFn:effect,execFn:effect});expect(result).toMatchObject({ok:false,error:'kernel_runtime_retired'});expect(effect).not.toHaveBeenCalled();
+ });
 });
 
 describe('WS1 — GET /initiative-runs/:id 路由 [BEHAVIOR]', () => {

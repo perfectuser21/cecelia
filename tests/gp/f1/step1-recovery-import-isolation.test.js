@@ -7,9 +7,9 @@ vi.mock('child_process', async (importOriginal) => {
   return transport;
 });
 
-it('F1普通接单能加载真实Kernel，恢复专用Git凭据仅在显式恢复时加载', async () => {
+it('F1导入历史Kernel不加载恢复凭据，新建在连接前拒绝', async () => {
   const { createKernelRun } = await import('../../../packages/brain/src/orchestrator/kernel-run-store.js');
   const connect = vi.fn();
-  await expect(createKernelRun({ connect }, { phase: 'invalid' })).rejects.toThrow('invalid Kernel run start phase');
+  await expect(createKernelRun({ connect }, { phase: 'invalid' })).rejects.toMatchObject({code:'kernel_runtime_retired'});
   expect(connect).not.toHaveBeenCalled();
 });
