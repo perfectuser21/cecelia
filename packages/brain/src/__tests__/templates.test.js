@@ -20,8 +20,6 @@ import {
   getTemplate,
   listTemplates,
   getCurrentDate,
-  validatePrd,
-  validateTrd,
   prdToJson,
   trdToJson,
   extractSection

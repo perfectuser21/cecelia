@@ -33,17 +33,6 @@ function taskUpdateSql(pool) {
   expect(calls).toHaveLength(1);
   return calls[0][0];
 }
-/**
- * Bug 1: PLACEHOLDER
- * checkExploratoryDecompositionContinue (Check 7) 已从 decomposition-checker.js 删除
- * 原 Bug 1 测试（dedup payload=continue）随函数一同移除
- */
-describe('Bug 1 (removed): Check 7 / checkExploratoryDecompositionContinue removed', () => {
-  it('placeholder: Check 7 removed with exploratory concept', () => {
-    // checkExploratoryDecompositionContinue 已删除，不再需要测试
-  });
-});
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Bug 2: Task revert to queued behavior - tested via updateTask
 // The key fix: when executor unavailable, tick.js calls updateTask({status:'queued'})
