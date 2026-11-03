@@ -22,7 +22,9 @@ test('合同存在性真实步骤在git差异读取失败时必须失败', () =>
 });
 test('未消费的旧选测router不得冒充已执行保障', () => {
   assert.doesNotMatch(JSON.stringify(guard), /changed-test-router/);
-  assert.ok(guard.steps.some(step => step.run?.includes('skill-contract.test.mjs')), '保留真实合同回归');
+  assert.ok(!guard.steps.some(step => step.run?.includes('skill-contract.test.mjs')), '旧root命令已被现行配置排除，不能继续冒充回归');
+  const current = yaml.load(readFileSync(join(root, '.github/workflows/skills-source-check.yml'), 'utf8'));
+  assert.ok(current.jobs.contracts.steps.some(step => step.run?.includes('run-skill-source-check.mjs')), '固定正文合同由现役专项执行');
 });
 test('合同CLI的缺失参数和未知参数必须失败，不能按空stdin当非harness成功', () => {
   for (const args of [['--fixture'], ['--unknown']]) {
