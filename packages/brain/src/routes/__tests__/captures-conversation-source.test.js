@@ -35,7 +35,8 @@ describe('captures route — 三工具 source 值 + session_summary nature', () 
     expect(res.statusCode).toBe(201);
     expect(res.body).toEqual(row);
     expect(res.body.status).toBe('captured');
-    expect(pool.query).toHaveBeenCalledExactlyOnceWith(
+    expect(pool.query).toHaveBeenCalledTimes(1);
+    expect(pool.query).toHaveBeenCalledWith(
       expect.stringMatching(/INSERT INTO captures[\s\S]*RETURNING id, status, dedupe_key, created_at/),
       ['测试内容', source, null, null, null, null, null, null, null, 'captured'],
     );
@@ -60,7 +61,8 @@ describe('captures route — 三工具 source 值 + session_summary nature', () 
     expect(res.statusCode).toBe(201);
     expect(res.body).toEqual(row);
     expect(res.body.status).toBe('clarified');
-    expect(pool.query).toHaveBeenCalledExactlyOnceWith(
+    expect(pool.query).toHaveBeenCalledTimes(1);
+    expect(pool.query).toHaveBeenCalledWith(
       expect.stringMatching(/INSERT INTO captures[\s\S]*RETURNING id, status, dedupe_key, created_at/),
       ['摘要内容', 'conversation-claude', 'session_summary', null, null, null, null, null, null, 'clarified'],
     );

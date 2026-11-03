@@ -246,5 +246,3 @@ export function scanFile(absPath) {
   for (const line of scanSqlHits(src)) out.push(`${line}:SQL`);
   return out.sort((a, b) => Number(a.split(':')[0]) - Number(b.split(':')[0]));
 }
-
-

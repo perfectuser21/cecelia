@@ -9,7 +9,7 @@ import {spawnSync} from 'node:child_process';
 
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 const require = createRequire(import.meta.url);
-const cli = join(dirname(require.resolve('vitest/package.json')), 'vitest.mjs');
+const cli = join(dirname(require.resolve('vitest/package.json', {paths:[join(root, 'packages/brain')]})), 'vitest.mjs');
 const capture = 'packages/brain/src/routes/__tests__/captures-conversation-source.test.js';
 const recovery = 'tests/gp/f1/step1-unblock-expired-selfheal.test.js';
 
@@ -32,7 +32,7 @@ function fixture(run) {
 function deny(){appendFileSync(${JSON.stringify(touch)}, 'called\\n');throw new Error('FORBIDDEN_DEFAULT_RESOURCE');}`;
     put('packages/brain/src/db.js', `${deny}\nexport default {query:deny};`);
     put('packages/brain/src/device-lock-helpers.js', `${deny}\nexport const sweepStaleDeviceLocks=deny;`);
-    put('vitest.config.mjs', `export default {test:{include:['**/*.test.js'],exclude:['**/node_modules/**'],
+    put('vitest.config.mjs', `export default {resolve:{alias:{vitest:${JSON.stringify(join(dirname(cli), 'dist/index.js'))}}},test:{include:['**/*.test.js'],exclude:['**/node_modules/**'],
 maxWorkers:1,minWorkers:1,cache:false}};`);
     function execute(file) {
       const report = join(directory, 'report.json');
@@ -49,7 +49,7 @@ maxWorkers:1,minWorkers:1,cache:false}};`);
 
 test('captures 正例必须成功；数据库故障不能被 not-400 弱断言放过', () => fixture(({put, execute}) => {
   const healthy = execute(capture);
-  assert.equal(healthy.status, 0, healthy.stdout + healthy.stderr);
+  assert.equal(healthy.status, 0, healthy.stdout + healthy.stderr + JSON.stringify(healthy.report.testResults));
   assert.equal(healthy.report.numPassedTests, 6);
   const source = readFileSync(join(root, 'packages/brain/src/routes/captures.js'), 'utf8');
   assert.ok(source.includes('pool.query('));
@@ -71,7 +71,7 @@ test('TTL 自愈测试正确注入 pool 与设备锁；默认资源一旦调用�
   put('packages/brain/src/recovery-loop.js', source.replace(anchor,
     `${anchor}\nif (dbPool === pool) throw new Error('DEFAULT_POOL_SELECTED');`));
   const result = execute(recovery);
-  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.equal(result.status, 0, result.stdout + result.stderr + JSON.stringify(result.report.testResults));
   assert.equal(result.report.numPassedTests, 5);
   assert.equal(existsSync(touch), false, '默认 DB 或设备锁 sweep 被调用');
   const originalTest = readFileSync(join(root, recovery), 'utf8');
