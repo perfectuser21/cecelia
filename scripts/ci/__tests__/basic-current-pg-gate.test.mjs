@@ -18,7 +18,8 @@ function selected() {
   assert.ok(step.cwd.endsWith('/packages/brain'));
   assert.ok(step.args.includes('../../scripts/ci/deep-integration.config.mjs'));
   assert.ok(!step.args.includes('--passWithNoTests'));
-  assert.ok(steps.findIndex(row => row.args.includes('src/migrate.js')) < steps.indexOf(step));
+  const migration = steps.findIndex(row => row.args.includes('src/migrate.js'));
+  assert.ok(migration >= 0 && migration < steps.indexOf(step));
   return step;
 }
 

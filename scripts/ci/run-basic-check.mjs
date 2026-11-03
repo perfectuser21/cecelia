@@ -36,6 +36,10 @@ export function commandsFor(component, shard) {
       return [
         step('.', 'node', 'scripts/ci/basic-runtime-smoke.mjs', '--validate-only'),
         step('packages/brain', 'node', 'src/migrate.js'),
+        step('packages/brain', 'npx', '--no-install', 'vitest', 'run', '--config', '../../scripts/ci/deep-integration.config.mjs',
+          'src/__tests__/integration/task-lease-device-pool.pg.integration.test.js',
+          'src/__tests__/integration/executor-startup-headed-owner.pg.integration.test.js',
+          'src/__tests__/integration/workflow-common-terminal.pg.integration.test.js', '--reporter=dot'),
         step('.', 'node', '--test', 'scripts/ci/__tests__/runtime-signal.integration.test.mjs'),
         step('.', 'node', 'scripts/ci/basic-runtime-smoke.mjs'),
       ];

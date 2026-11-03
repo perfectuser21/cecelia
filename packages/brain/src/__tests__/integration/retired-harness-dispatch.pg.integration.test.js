@@ -63,7 +63,7 @@ afterAll(async()=>{
 beforeEach(async()=>{
  fixture.mode='allow';fixture.spawns.length=0;fixture.kills.length=0;fixture.network.length=0;
  // 仅重置本test创建的两随机schema，不清任何共享库/其它任务。
- for(const db of pools)await db.query('TRUNCATE tasks,work_routing_receipts,cecelia_events,dispatch_events,working_memory');
+ for(const db of pools)await db.query('TRUNCATE task_runs,tasks,work_routing_receipts,cecelia_events,dispatch_events,working_memory');
 });
 afterEach(()=>{expect(fixture.spawns).toEqual([]);expect(fixture.kills).toEqual([]);expect(fixture.network).toEqual([]);});
 // 派发总闸 F（任务 0a70684f）起，无执行者的退役类型以 queued 建单即被 422 拒；本 fixture 验的是「存量 queued 退役单」
@@ -94,7 +94,7 @@ it('退役类型以 queued 经真实 API 建单 → 422 no_executor_for_task_typ
  expect((await pool.query("SELECT count(*)::int AS n FROM tasks WHERE task_type='harness_planner'")).rows[0].n).toBe(0);
 });
 it('实际migration ledger独立、当前库/schema与无public fallback已核',async()=>{
- expect((await pool.query('SELECT version FROM schema_version ORDER BY version')).rows.map(r=>r.version)).toEqual(['413','426','427','465']);
+ expect((await pool.query('SELECT version FROM schema_version ORDER BY version')).rows.map(r=>r.version)).toEqual(['059','413','426','427','465']);
 });
 it('真实API→dispatchNextTask→finalizeTask持久退役；另一schema的全池污染不影响自己',async()=>{
  const preserve=await neighbors();
