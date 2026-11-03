@@ -28,11 +28,8 @@ describe('Controller lease sprint 测试资产单文件行数门禁', () => {
   it('migration 416 真 PG 不超过 500 行', () => {
     expectAssetWithinLimit('./integration/migration-416-controller-session-nonblank.pg.integration.test.js');
   });
-  it('actual CLI 真 PG 不超过 500 行', () => {
-    expectAssetWithinLimit('./integration/kernel-cli-ownership-preaction.pg.integration.test.js');
-  });
-  it('永久 E2E oracle 测试不超过 500 行', () => {
-    expectAssetWithinLimit('./kernel-controller-lease-renewal-e2e-oracle.test.js');
+  it('历史 Kernel PG helper 不超过 500 行', () => {
+    expectAssetWithinLimit('./integration/helpers/kernel-history-pg-fixture.js');
   });
   it('行数门禁自身不超过 500 行', () => {
     expectAssetWithinLimit('./kernel-controller-lease-renewal-file-size.test.js');

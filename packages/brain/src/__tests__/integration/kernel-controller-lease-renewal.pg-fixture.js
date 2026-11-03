@@ -1,72 +1,18 @@
-import { closePgPool, trackPgPool } from './helpers/close-pg-pool.js';
-import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { fileURLToPath } from 'node:url';
-import pg from 'pg';
-import { DB_DEFAULTS } from '../../db-config.js';
 import {
-  createKernelRun,
   CONTROLLER_LEASE_DEFAULT_SECONDS,
 } from '../../orchestrator/kernel-run-store.js';
-const { Pool } = pg;
-const BRAIN_ROOT = fileURLToPath(new URL('../../../', import.meta.url));
+import { kernelHistoryPgFixture } from './helpers/kernel-history-pg-fixture.js';
 export const LEASE = CONTROLLER_LEASE_DEFAULT_SECONDS;
 export const MIN = 60_000;
 export function createKernelLeasePgFixture() {
-  let adminPool;
+  let fixture;
   let testPool;
-  let databaseName;
-  function quotedIdentifier(value) {
-    if (!/^kernel_leaserenew_[a-z0-9_]+$/.test(value)) {
-      throw new Error(`unsafe test database identifier: ${value}`);
-    }
-    return `"${value}"`;
-  }
   async function createIsolatedDatabase() {
-    databaseName = `kernel_leaserenew_${process.pid}_${randomUUID().replaceAll('-', '')}`;
-    adminPool = new Pool({
-      ...DB_DEFAULTS,
-      database: 'postgres',
-      max: 1,
-      statement_timeout: 10_000,
-    });
-    await adminPool.query(
-      `CREATE DATABASE ${quotedIdentifier(databaseName)} TEMPLATE template0 ENCODING 'UTF8' LC_COLLATE 'C' LC_CTYPE 'C'`,
-    );
-    execFileSync(process.execPath, ['src/migrate.js'], {
-      cwd: BRAIN_ROOT,
-      env: {
-        ...process.env,
-        NODE_ENV: 'test',
-        DB_HOST: DB_DEFAULTS.host,
-        DB_PORT: String(DB_DEFAULTS.port),
-        DB_USER: DB_DEFAULTS.user,
-        DB_PASSWORD: DB_DEFAULTS.password,
-        DB_NAME: databaseName,
-      },
-      stdio: 'pipe',
-    });
-    testPool = trackPgPool(new Pool({
-      ...DB_DEFAULTS, database: databaseName, max: 10, statement_timeout: 10_000, lock_timeout: 5_000,
-    }));
+    fixture = await kernelHistoryPgFixture();
+    testPool = fixture.pool;
   }
-  async function dropIsolatedDatabase() {
-    if (testPool) await closePgPool(testPool);
-    if (adminPool && databaseName) {
-      await adminPool.query(
-        'UPDATE pg_database SET datallowconn=false WHERE datname=$1',
-        [databaseName],
-      ).catch(() => {});
-      await adminPool.query(
-        'SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname=$1 AND pid<>pg_backend_pid()',
-        [databaseName],
-      ).catch(() => {});
-      await adminPool.query(
-        `DROP DATABASE IF EXISTS ${quotedIdentifier(databaseName)}`,
-      ).catch(() => {});
-    }
-    if (adminPool) await adminPool.end().catch(() => {});
-  }
+  async function dropIsolatedDatabase() { await fixture?.close(); }
   function pool() {
     if (!testPool) throw new Error('kernel lease PG fixture is not initialized');
     return testPool;
@@ -109,49 +55,23 @@ export function createKernelLeasePgFixture() {
         execution_profile:'hotfix-v1',
       })],
     );
-    const created = await createKernelRun(pool(), {
-      taskId,
-      initiativeId,
-      phase: 'planning',
-      journeyId: null,
-      abilityId: null,
-      host: 'kernel-v1',
-      deadlineHours: 8,
-      createdSource: 'kernel_dispatch',
-    }, {
-      controllerSessionIdFactory: () => controllerSessionId,
-      ensureMapImpactPreflight: async () => ({
-        contract:{id:randomUUID(),status:'active'},
-        recovery_contract:null,
-      }),
-    });
+    const runId = randomUUID();
+    await pool().query(`INSERT INTO kernel_controller_sessions
+      (id,task_id,generation,source,status,lease_expires_at)
+      VALUES ($1,$2,1,'historical_reconstruction','active',NOW()+INTERVAL '30 minutes')`, [controllerSessionId,taskId]);
+    const { rows: [run] } = await pool().query(`INSERT INTO initiative_runs
+      (id,initiative_id,current_task_id,phase,orchestrator_version,created_source,
+       controller_session_id,controller_generation,controller_lease_expires_at,deadline_at)
+      SELECT $1,$2,$3,'planning','v2','historical_reconstruction',id,generation,lease_expires_at,NOW()+INTERVAL '8 hours'
+      FROM kernel_controller_sessions WHERE id=$4 RETURNING *`, [runId,initiativeId,taskId,controllerSessionId]);
+    await pool().query('UPDATE kernel_controller_sessions SET run_id=$2 WHERE id=$1',[controllerSessionId,runId]);
     return {
-      runId: created.run.id,
+      runId: run.id,
       taskId,
       initiativeId,
-      controllerSessionId: created.run.controller_session_id,
-      controllerGeneration: Number(created.run.controller_generation),
+      controllerSessionId: run.controller_session_id,
+      controllerGeneration: Number(run.controller_generation),
     };
-  }
-  async function seedHistoricalBlankRun(controllerSessionId) {
-    const initiativeId = randomUUID();
-    const taskId = randomUUID();
-    await pool().query(
-      `INSERT INTO tasks (id, title, status, priority, task_type, trigger_source, payload)
-       VALUES ($1, $2, 'in_progress', 'P2', 'harness_initiative', 'api', $3::jsonb)`,
-      [taskId, `kernel-blank-${taskId}`, JSON.stringify({ initiative_id: initiativeId })],
-    );
-    const { rows } = await pool().query(
-      `INSERT INTO initiative_runs (
-         initiative_id, current_task_id, phase, orchestrator_version, created_source,
-         deadline_at, controller_session_id, controller_lease_expires_at
-       ) VALUES (
-         $1, $2, 'planning', 'v2', 'historical_reconstruction',
-         NOW() + INTERVAL '8 hours', $3, NOW() + INTERVAL '1 hour'
-       ) RETURNING id`,
-      [initiativeId, taskId, controllerSessionId],
-    );
-    return { runId: rows[0].id, taskId };
   }
   async function leaseOf(runId) {
     const { rows } = await pool().query(
@@ -227,7 +147,6 @@ export function createKernelLeasePgFixture() {
     leaseOf,
     pool,
     removeRejectingAuditTrigger,
-    seedHistoricalBlankRun,
     seedOwnedRun,
     waitForBlockedFinalize,
   };

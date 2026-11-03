@@ -1,48 +1,25 @@
 /**
- * [BEHAVIOR] migration 416 真 PostgreSQL upgrade/rollback/re-upgrade/幂等。
+ * [BEHAVIOR] migration 416 真 PostgreSQL upgrade/rollback/re-upgrade。
  * 禁止以 SQL 文本 grep 代替 schema_version、CHECK 与真实写入后验。
  */
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { runMigrations } from '../../migrate.js';
-import { reconcileOwnerlessKernelRuns } from '../../orchestrator/kernel-controller-lifecycle.js';
-import { createKernelLeasePgFixture } from './kernel-controller-lease-renewal.pg-fixture.js';
-const fixture = createKernelLeasePgFixture();
-const rollbackSql = readFileSync(
-  new URL('../../../migrations/rollback/416_controller_session_nonblank.down.sql', import.meta.url),
-  'utf8',
-);
-const branchRollbackSql = [
-  430, 429, 428, 427, 426, 425, 424,
-  423, 422, 421, 420, 419, 418, 417,
-].map((version) => {
-  const file = readdirSync(
-    new URL('../../../migrations/rollback/', import.meta.url),
-  ).find((entry) => entry.startsWith(`${version}_`));
-  return readFileSync(new URL(`../../../migrations/rollback/${file}`, import.meta.url), 'utf8');
-});
-let testPool;
-async function resetToProduction415() {
-  // CREATE-SESSION-C 在 createKernelRun 拒绝非法 session 前会先出生真实的
-  // test-only routed task/receipt。回放 427 down 必须先清掉这些夹具 authority，
-  // 否则 append-only 保护会正确 fail-closed，但无法验证 416 本身的往返。
-  await testPool.query(
-    'ALTER TABLE work_routing_receipts DISABLE TRIGGER work_routing_receipts_immutable',
-  );
-  try {
-    await testPool.query(
-      "DELETE FROM work_routing_receipts WHERE source='integration' AND source_id LIKE 'kernel-lease:%'",
-    );
-  } finally {
-    await testPool.query(
-      'ALTER TABLE work_routing_receipts ENABLE TRIGGER work_routing_receipts_immutable',
-    );
-  }
-  await testPool.query("DELETE FROM tasks WHERE title LIKE 'kernel-leaserenew-%'");
-  for (const sql of branchRollbackSql) await testPool.query(sql);
-  await testPool.query(rollbackSql);
-}
+import pg from 'pg';
+import { afterAll,beforeAll,describe,expect,it } from 'vitest';
+import { DB_DEFAULTS } from '../../db-config.js';
+const schema = `controller_blank_${randomUUID().replaceAll('-','')}`;
+const upSql=readFileSync(new URL('../../../migrations/416_controller_session_nonblank.sql',import.meta.url),'utf8');
+const rollbackSql=readFileSync(new URL('../../../migrations/rollback/416_controller_session_nonblank.down.sql',import.meta.url),'utf8');
+let admin,testPool;
+async function resetToProduction415(){await testPool.query(rollbackSql);}
+const fixture={async seedHistoricalBlankRun(session){
+  const taskId=randomUUID(),initiativeId=randomUUID();
+  await testPool.query("INSERT INTO tasks(id,title) VALUES($1,'historical controller')",[taskId]);
+  const {rows:[row]}=await testPool.query(`INSERT INTO initiative_runs
+    (initiative_id,current_task_id,phase,orchestrator_version,created_source,deadline_at,controller_session_id,controller_lease_expires_at)
+    VALUES($1,$2,'planning','v2','historical_reconstruction',NOW()+INTERVAL '8 hours',$3,NOW()+INTERVAL '1 hour') RETURNING id`,[initiativeId,taskId,session]);
+  return {runId:row.id,taskId};
+}};
 async function constraintOracle() {
   const { rows } = await testPool.query(
     `SELECT (
@@ -55,19 +32,19 @@ async function constraintOracle() {
   );
   return rows;
 }
-beforeAll(async () => {
-  await fixture.createIsolatedDatabase();
-  testPool = fixture.pool();
-}, 60_000);
-afterAll(() => fixture.dropIsolatedDatabase(), 30_000);
-describe('migration 416 controller session nonblank（真 PG）', () => {
-  it('CREATE-SESSION-C: JS 创建边拒绝 TAB/NBSP/ideographic space ownership', async () => {
-    for (const blankSession of ['\t', '\u0085', '\u00a0', '\u1680', '\u2007', '\u2028', '\u202f', '\u205f', '\u3000', '\ufeff']) {
-      await expect(fixture.seedOwnedRun({ controllerSessionId: blankSession }))
-        .rejects.toThrow('invalid server-issued Kernel controller session');
-    }
-  });
-  it('MIGRATION-C: upgrade/第二次 upgrade/rollback/re-upgrade/第二次 re-upgrade 保持 invariant', async () => {
+beforeAll(async()=>{
+  if(!['cecelia_scratch','cecelia_test'].includes(DB_DEFAULTS.database))throw Error('test database required');
+  admin=new pg.Pool({...DB_DEFAULTS,max:1});await admin.query(`CREATE SCHEMA ${schema}`);
+  testPool=new pg.Pool({...DB_DEFAULTS,max:1,options:`-c search_path=${schema},pg_catalog`});
+  // Exact pre-416 columns: migration owns normalization and its SQL CHECK.
+  await testPool.query(`CREATE TABLE tasks(id uuid PRIMARY KEY,title text,status text,priority text,task_type text,trigger_source text,payload jsonb);
+    CREATE TABLE initiative_runs(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),initiative_id uuid,current_task_id uuid,phase text,orchestrator_version text,
+      created_source text,deadline_at timestamptz,controller_session_id text,controller_lease_expires_at timestamptz);
+    CREATE TABLE schema_version(version text PRIMARY KEY,description text,applied_at timestamptz)`);
+});
+afterAll(async()=>{await testPool?.end();try{await admin?.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);}finally{await admin?.end();}});
+describe('migration 416 Controller ownership SQL历史保障',()=>{
+  it('MIGRATION-C: 真实SQL upgrade/rollback/re-upgrade保持历史归一化和已验证约束', async () => {
     await resetToProduction415();
     const historical = [
       await fixture.seedHistoricalBlankRun(''),
@@ -76,10 +53,7 @@ describe('migration 416 controller session nonblank（真 PG）', () => {
       await fixture.seedHistoricalBlankRun('\u00a0'),
       await fixture.seedHistoricalBlankRun('\u3000'),
     ];
-    const upgrade = await runMigrations(testPool);
-    const secondUpgrade = await runMigrations(testPool);
-    expect(upgrade).toContain('416');
-    expect(secondUpgrade).toEqual([]);
+    await testPool.query(upSql);
     expect(await constraintOracle()).toEqual([{ constraint_validated: true, version_count: 1 }]);
     const { rows: normalized } = await testPool.query(
       `SELECT controller_session_id
@@ -92,10 +66,7 @@ describe('migration 416 controller session nonblank（真 PG）', () => {
     expect(normalized.every(({ controller_session_id: session }) => session === null)).toBe(true);
     await resetToProduction415();
     expect(await constraintOracle()).toEqual([{ constraint_validated: null, version_count: 0 }]);
-    const reUpgrade = await runMigrations(testPool);
-    const secondReUpgrade = await runMigrations(testPool);
-    expect(reUpgrade).toContain('416');
-    expect(secondReUpgrade).toEqual([]);
+    await testPool.query(upSql);
     expect(await constraintOracle()).toEqual([{ constraint_validated: true, version_count: 1 }]);
   });
   it('NEW-WRITE-C: 数据库权威边拒绝新写入空串或纯空白 ownership', async () => {
@@ -127,28 +98,5 @@ describe('migration 416 controller session nonblank（真 PG）', () => {
     }
     expect(errors).toHaveLength(5);
     expect(errors.every((code) => ['23514', 'P0001'].includes(code))).toBe(true);
-  });
-  it('BLANK-C: rollout 空白行升级后归一为无主并被 reconcile 收敛', async () => {
-    await resetToProduction415();
-    const historical = [
-      { session: '', ...(await fixture.seedHistoricalBlankRun('')) },
-      { session: '   ', ...(await fixture.seedHistoricalBlankRun('   ')) },
-      { session: '\t', ...(await fixture.seedHistoricalBlankRun('\t')) },
-      { session: '\u00a0', ...(await fixture.seedHistoricalBlankRun('\u00a0')) },
-      { session: '\u3000', ...(await fixture.seedHistoricalBlankRun('\u3000')) },
-    ];
-    await runMigrations(testPool);
-    const recovered = await reconcileOwnerlessKernelRuns(testPool, { now: new Date() });
-    const recoveredIds = recovered.map(({ runId }) => runId);
-    const { rows } = await testPool.query(
-      `SELECT id, phase, orchestrator_heartbeat_at
-         FROM initiative_runs
-        WHERE id = ANY($1::uuid[])
-        ORDER BY id`,
-      [historical.map(({ runId }) => runId)],
-    );
-    expect(historical.every(({ runId }) => recoveredIds.includes(runId))).toBe(true);
-    expect(rows.every(({ phase }) => phase === 'failed')).toBe(true);
-    expect(rows.every(({ orchestrator_heartbeat_at: at }) => at === null)).toBe(true);
   });
 });

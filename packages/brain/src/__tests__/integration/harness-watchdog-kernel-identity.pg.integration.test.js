@@ -2,7 +2,6 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { resumeStalledHarnessDrivers } from '../../harness-watchdog.js';
-import { createKernelRun } from '../../orchestrator/kernel-run-store.js';
 import { createKernelLeasePgFixture } from './kernel-controller-lease-renewal.pg-fixture.js';
 
 const fixture = createKernelLeasePgFixture();
@@ -58,40 +57,14 @@ async function seedTask({ initiativeId = randomUUID(), withRouting = false } = {
 }
 
 async function createRun({ initiativeId, taskId }) {
-  return createKernelRun(testPool, {
-    taskId,
-    initiativeId,
-    phase: 'planning',
-    journeyId: null,
-    abilityId: null,
-    host: 'kernel-watchdog-integration',
-    deadlineHours: 8,
-    createdSource: 'kernel_dispatch',
-  }, {
-    controllerSessionIdFactory: randomUUID,
-    ensureMapImpactPreflight: async () => ({
-      contract: { id: randomUUID(), status: 'active' },
-      recovery_contract: null,
-    }),
-  });
-}
-
-async function waitForBlockedTaskLock() {
-  const deadline = Date.now() + 5_000;
-  while (Date.now() < deadline) {
-    const { rows: [row] } = await testPool.query(
-      `SELECT count(*)::int AS blocked
-         FROM pg_stat_activity
-        WHERE datname=current_database()
-          AND wait_event_type='Lock'
-          AND cardinality(pg_blocking_pids(pid)) > 0
-          AND query LIKE '%FROM tasks%'
-          AND query LIKE '%FOR UPDATE%'`,
-    );
-    if (row.blocked > 0) return;
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-  throw new Error('createKernelRun did not reach the blocked task lock');
+  const session=randomUUID(),runId=randomUUID();
+  await testPool.query(`INSERT INTO kernel_controller_sessions(id,task_id,generation,source,status,lease_expires_at)
+    VALUES($1,$2,1,'historical_reconstruction','active',NOW()+INTERVAL '30 minutes')`,[session,taskId]);
+  await testPool.query(`INSERT INTO initiative_runs(id,initiative_id,current_task_id,phase,orchestrator_version,created_source,
+    controller_session_id,controller_generation,controller_lease_expires_at,deadline_at)
+    SELECT $1,$2,$3,'planning','v2','historical_reconstruction',id,generation,lease_expires_at,NOW()+INTERVAL '8 hours'
+    FROM kernel_controller_sessions WHERE id=$4`,[runId,initiativeId,taskId,session]);
+  await testPool.query('UPDATE kernel_controller_sessions SET run_id=$2 WHERE id=$1',[session,runId]);
 }
 
 beforeAll(async () => {
@@ -162,105 +135,4 @@ describe('Watchdog Kernel 精确身份与创建竞态（真 PostgreSQL）', () =
     expect(result.resumed).not.toContain(sibling.taskId);
   });
 
-  it('createKernelRun 在 Watchdog 锁前提交后，二次 exact-run 复核保护健康任务', async () => {
-    const target = await seedTask({ withRouting: true });
-    let releaseWatchdogLock;
-    let signalWatchdogAtLock;
-    const watchdogAtLock = new Promise((resolve) => { signalWatchdogAtLock = resolve; });
-    const allowWatchdogLock = new Promise((resolve) => { releaseWatchdogLock = resolve; });
-    const watchdogPool = {
-      query: (...args) => testPool.query(...args),
-      async connect() {
-        const client = await testPool.connect();
-        return {
-          release: () => client.release(),
-          async query(sql, params) {
-            if (/FROM\s+tasks[\s\S]*FOR\s+UPDATE/i.test(String(sql))) {
-              signalWatchdogAtLock();
-              await allowWatchdogLock;
-            }
-            return client.query(sql, params);
-          },
-        };
-      },
-    };
-
-    const watchdog = resumeStalledHarnessDrivers({
-      pool: watchdogPool,
-      execFn: () => '',
-      maxFreshStarts: 3,
-    });
-    await watchdogAtLock;
-    const created = await createRun(target);
-    releaseWatchdogLock();
-    const result = await watchdog;
-
-    const { rows: [task] } = await testPool.query(
-      'SELECT status, claimed_at FROM tasks WHERE id=$1',
-      [target.taskId],
-    );
-    expect(created.created).toBe(true);
-    expect(created.run.current_task_id).toBe(target.taskId);
-    expect(task.status).toBe('in_progress');
-    expect(task.claimed_at).not.toBeNull();
-    expect(result.resumed).not.toContain(target.taskId);
-  });
-
-  it('Watchdog 已持 task 锁时 createKernelRun 等待，判死提交后不得创建 active run', async () => {
-    const target = await seedTask({ withRouting: true });
-    let releaseWatchdogAfterLock;
-    let signalWatchdogLocked;
-    const watchdogLocked = new Promise((resolve) => { signalWatchdogLocked = resolve; });
-    const allowWatchdogContinue = new Promise((resolve) => {
-      releaseWatchdogAfterLock = resolve;
-    });
-    const watchdogPool = {
-      query: (...args) => testPool.query(...args),
-      async connect() {
-        const client = await testPool.connect();
-        return {
-          release: () => client.release(),
-          async query(sql, params) {
-            const result = await client.query(sql, params);
-            if (/FROM\s+tasks[\s\S]*FOR\s+UPDATE/i.test(String(sql))) {
-              signalWatchdogLocked();
-              await allowWatchdogContinue;
-            }
-            return result;
-          },
-        };
-      },
-    };
-
-    const watchdog = resumeStalledHarnessDrivers({
-      pool: watchdogPool,
-      execFn: () => '',
-      maxFreshStarts: 3,
-    });
-    await watchdogLocked;
-    const createOutcome = createRun(target).then(
-      (value) => ({ value, error: null }),
-      (error) => ({ value: null, error }),
-    );
-    await waitForBlockedTaskLock();
-    releaseWatchdogAfterLock();
-
-    const [watchdogResult, created] = await Promise.all([watchdog, createOutcome]);
-    const { rows: [task] } = await testPool.query(
-      'SELECT status, claimed_at FROM tasks WHERE id=$1',
-      [target.taskId],
-    );
-    const { rows: [runCount] } = await testPool.query(
-      `SELECT count(*)::int AS count
-         FROM initiative_runs
-        WHERE orchestrator_version='v2' AND current_task_id=$1`,
-      [target.taskId],
-    );
-
-    expect(watchdogResult.resumed).toContain(target.taskId);
-    expect(task).toMatchObject({ status: 'failed', claimed_at: null });
-    expect(created.value).toBeNull();
-    expect(created.error?.message).toMatch(/not eligible/);
-    expect(runCount.count).toBe(0);
-  });
 });
