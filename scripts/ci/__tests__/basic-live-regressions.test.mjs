@@ -34,6 +34,13 @@ for (const spec of [
     const directory = mkdtempSync(join(tmpdir(), 'ci-live-regression-'));
     try {
       const brain = join(directory, 'packages/brain');
+      const home = join(directory,'private-home');
+      const temporary = join(directory,'private-tmp');
+      mkdirSync(home); mkdirSync(temporary);
+      const env = {PATH:process.env.PATH, HOME:home, TMPDIR:temporary, CI:'true', NODE_ENV:'test',
+        CODEX_RELAY_HOME:join(home,'relay'), DOTENV_CONFIG_PATH:join(home,'no-env'),
+        DB_HOST:'127.0.0.1', DB_PORT:'1', DB_NAME:'cecelia_scratch', DB_USER:'isolated',
+        DB_PASSWORD:'isolated', DATABASE_URL:'', PGHOST:'127.0.0.1', PGPORT:'1'};
       mkdirSync(brain, {recursive:true});
       writeFileSync(join(directory, 'package.json'), '{"type":"module"}');
       cpSync(join(root,'packages/brain/src'), join(brain,'src'), {recursive:true});
@@ -52,7 +59,7 @@ for (const spec of [
       const execute = () => {
         const reportFile = join(directory,'report.json');
         rmSync(reportFile, {force:true});
-        const result = spawnSync(process.execPath, [cli,'run','--config',config,'--reporter=json',`--outputFile=${reportFile}`], {cwd:brain,encoding:'utf8',timeout:60000});
+        const result = spawnSync(process.execPath, [cli,'run','--config',config,'--reporter=json',`--outputFile=${reportFile}`], {cwd:brain,env,encoding:'utf8',timeout:60000});
         assert.ifError(result.error);
         assert.equal(result.signal,null,result.stderr);
         assert.ok(existsSync(reportFile),result.stdout+result.stderr);
