@@ -73,7 +73,7 @@ describe('system-hub 路由退役（War Room PR-C）', () => {
 describe('execution 路由退役（War Room PR-C）', () => {
   const routes = execution.routes;
 
-  it('退役 /harness-pipeline → 直接渲染 WarRoomPage（DynamicRouter 不支持 redirect，用 component 代替）', () => {
+  it('旧 /harness-pipeline 兼容入口保留 WarRoomPage 组件映射', () => {
     const r = routeFor(routes, '/harness-pipeline');
     expect(r?.component).toBe('WarRoomPage');
     expect(r?.navItem).toBeUndefined();
