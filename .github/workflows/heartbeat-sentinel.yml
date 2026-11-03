@@ -65,14 +65,15 @@ jobs:
         run: |
           set -euo pipefail
           echo "探测: $PROBE_URL/api/brain/health"
-          RESPONSE=$(curl -sf --max-time 15 "$PROBE_URL/api/brain/health" 2>/dev/null || echo "CURL_FAIL")
+          RESPONSE=$(curl -sf --max-time 15 -w $'\n%{http_code}' "$PROBE_URL/api/brain/health" 2>/dev/null || echo "CURL_FAIL")
 
-          if [[ "$RESPONSE" == "CURL_FAIL" ]]; then
+          if [[ ! "${RESPONSE##*$'\n'}" =~ ^2[0-9][0-9]$ ]]; then
             echo "ok=false" >> "$GITHUB_OUTPUT"
             echo "detail=不可达（curl 超时/连接拒绝）" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
+          RESPONSE=${RESPONSE%$'\n'*}
           STATUS=$(echo "$RESPONSE" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('status','unknown'))" 2>/dev/null || echo "parse_error")
           if [[ "$STATUS" == "healthy" || "$STATUS" == "ok" ]]; then
             echo "ok=true" >> "$GITHUB_OUTPUT"
@@ -90,14 +91,15 @@ jobs:
           MAX_AGE_HOURS=26
           MAX_AGE_SECONDS=$(( MAX_AGE_HOURS * 3600 ))
 
-          RESPONSE=$(curl -sf --max-time 15 "$PROBE_URL/api/brain/kv/smoke-nightly-last-run" 2>/dev/null || echo "CURL_FAIL")
+          RESPONSE=$(curl -sf --max-time 15 -w $'\n%{http_code}' "$PROBE_URL/api/brain/kv/smoke-nightly-last-run" 2>/dev/null || echo "CURL_FAIL")
 
-          if [[ "$RESPONSE" == "CURL_FAIL" ]]; then
+          if [[ ! "${RESPONSE##*$'\n'}" =~ ^2[0-9][0-9]$ ]]; then
             echo "ok=false" >> "$GITHUB_OUTPUT"
             echo "age_minutes=-1" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
+          RESPONSE=${RESPONSE%$'\n'*}
           FINISHED_AT=$(echo "$RESPONSE" | python3 -c "
           import json, sys
           d = json.load(sys.stdin)
@@ -115,13 +117,26 @@ jobs:
           fi
 
           NOW_EPOCH=$(date -u +%s)
-          FINISHED_EPOCH=$(date -u -d "$FINISHED_AT" +%s 2>/dev/null || \
-                           python3 -c "from datetime import datetime,timezone; print(int(datetime.fromisoformat('$FINISHED_AT'.replace('Z','+00:00')).timestamp()))")
+          FINISHED_EPOCH=$(python3 - "$FINISHED_AT" <<'PYTIME'
+          import datetime, sys
+          try:
+              dt = datetime.datetime.fromisoformat(sys.argv[1].replace('Z', '+00:00'))
+              if dt.tzinfo is None:
+                  raise ValueError('missing timezone')
+              print(int(dt.timestamp()))
+          except (ValueError, OverflowError):
+              sys.exit(1)
+          PYTIME
+          ) || {
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            echo "age_minutes=-1" >> "$GITHUB_OUTPUT"
+            exit 0
+          }
           AGE_S=$(( NOW_EPOCH - FINISHED_EPOCH ))
           AGE_MINUTES=$(( AGE_S / 60 ))
           echo "age_minutes=$AGE_MINUTES" >> "$GITHUB_OUTPUT"
 
-          if (( AGE_S > MAX_AGE_SECONDS )); then
+          if (( AGE_S < 0 || AGE_S > MAX_AGE_SECONDS )); then
             echo "ok=false" >> "$GITHUB_OUTPUT"
           else
             echo "ok=true" >> "$GITHUB_OUTPUT"
@@ -201,16 +216,18 @@ jobs:
           if [[ -n "${BARK_URL:-}" ]]; then
             ENCODED_TITLE=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$TITLE'))")
             ENCODED_BODY=$(python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.argv[1]))" "$BODY")
-            curl -sf --max-time 10 \
+            HTTP_CODE=$(curl -sf --max-time 10 -o /dev/null -w '%{http_code}' \
               "${BARK_URL}/${ENCODED_TITLE}/${ENCODED_BODY}?group=heartbeat-sentinel&level=critical" \
-              >/dev/null 2>&1 || { echo "::error::Bark 推送失败"; exit 1; }
+              2>/dev/null) || { echo "::error::Bark 推送失败"; exit 1; }
+            [[ "$HTTP_CODE" =~ ^2[0-9][0-9]$ ]] || { echo "::error::Bark HTTP $HTTP_CODE"; exit 1; }
             echo "Bark ok"
           elif [[ -n "${BARK_TOKEN:-}" ]]; then
             ENCODED_TITLE=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$TITLE'))")
             ENCODED_BODY=$(python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.argv[1]))" "$BODY")
-            curl -sf --max-time 10 \
+            HTTP_CODE=$(curl -sf --max-time 10 -o /dev/null -w '%{http_code}' \
               "https://api.day.app/${BARK_TOKEN}/${ENCODED_TITLE}/${ENCODED_BODY}?group=heartbeat-sentinel&level=critical" \
-              >/dev/null 2>&1 || { echo "::error::Bark 推送失败"; exit 1; }
+              2>/dev/null) || { echo "::error::Bark 推送失败"; exit 1; }
+            [[ "$HTTP_CODE" =~ ^2[0-9][0-9]$ ]] || { echo "::error::Bark HTTP $HTTP_CODE"; exit 1; }
             echo "Bark ok"
           else
             echo "::warning::未配 BARK_URL / BARK_TOKEN，跳过 Bark 推送"

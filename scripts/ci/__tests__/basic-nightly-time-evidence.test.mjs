@@ -14,7 +14,7 @@ for (const [name, time, pass] of [
   const dir = mkdtempSync(join(tmpdir(), 'ci-nightly-')); t.after(() => rmSync(dir, { recursive: true, force: true }));
   const response = { total_count: 2, workflow_runs: [{ id: 2, conclusion: 'failure' }, { id: 1, conclusion: 'success', updated_at: time, head_sha: 'abcdef123', html_url: 'https://example.invalid/run/1' }] };
   writeFileSync(join(dir, 'response'), JSON.stringify(response));
-  writeFileSync(join(dir, 'curl'), '#!/bin/bash\ncat "$FIXTURE_RESPONSE"\n'); chmodSync(join(dir, 'curl'), 0o755);
+  writeFileSync(join(dir, 'curl'), '#!/bin/bash\ncat "$FIXTURE_RESPONSE"\nprintf \"\\n200\"\n'); chmodSync(join(dir, 'curl'), 0o755);
   const result = spawnSync('bash', [script], { encoding: 'utf8', env: { ...process.env, PATH: `${dir}:${process.env.PATH}`, FIXTURE_RESPONSE: join(dir, 'response'), GITHUB_TOKEN: 'isolated-fixture', GITHUB_REPOSITORY: 'fixture/repo', WINDOW_HOURS: '72', BYPASS_NIGHTLY_GATE: '', GITHUB_STEP_SUMMARY: join(dir, 'summary') } });
   assert.equal(result.status === 0, pass, result.stdout + result.stderr);
   if (!pass) assert.doesNotMatch(result.stdout, /Release Gate 通过/);

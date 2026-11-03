@@ -42,7 +42,7 @@ echo "🔍 刀C Release Gate：查 ${WORKFLOW_FILE} 最近 ${WINDOW_HOURS}h 绿�
 echo "   仓库: ${REPO}"
 
 API_URL="https://api.github.com/repos/${REPO}/actions/workflows/${WORKFLOW_FILE}/runs"
-RESP=$(curl -sf \
+RESP=$(curl -sf -w $'\n%{http_code}' \
   -H "Authorization: Bearer ${TOKEN}" \
   -H "Accept: application/vnd.github+json" \
   -H "X-GitHub-Api-Version: 2022-11-28" \
@@ -52,6 +52,12 @@ RESP=$(curl -sf \
   echo "  URL: ${API_URL}"
   exit 1
 }
+
+if [[ ! "${RESP##*$'\n'}" =~ ^2[0-9][0-9]$ ]]; then
+  echo "::error::GitHub API 未返回 HTTP 2xx"
+  exit 1
+fi
+RESP=${RESP%$'\n'*}
 
 # ── 从 runs 中找最近一次 success ───────────────────────────────────────────────
 
