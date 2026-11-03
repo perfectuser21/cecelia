@@ -1,7 +1,7 @@
 /**
  * 任务类型注册表机械守卫（铁律 76cb816c：枚举常量只允许一份）。
  *
- * 主守卫使用 lexical.test.js 中经正反回归的词法扫描器。
+ * 主守卫使用 helpers/task-type-registry.lexical.lib.js 中经正反回归的词法扫描器。
  * 原阈值与历史边界说明仍在 helpers/task-type-registry.guard.lib.js；
  * 该 helper 保留审计提取 API，主守卫仅使用其中 walk/relPath。
  *
@@ -36,7 +36,7 @@ import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { walk, relPath } from './helpers/task-type-registry.guard.lib.js';
-import { scanFile } from './task-type-registry.lexical.test.js';
+import { scanFile } from './helpers/task-type-registry.lexical.lib.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SRC = join(HERE, '..');

@@ -84,6 +84,12 @@ describe('Cecelia 主导航', () => {
     expect(visiblePaths).toContain('/knowledge/memory');
   });
 
+  it.each(['/gtd/warroom', '/gtd/warroom/:areaId'])('%s 保留跳转到流水线的兼容入口', path => {
+    expect(config.allRoutes.filter(route => route.path === path)).toEqual([
+      { path, redirect: '/pipeline', requireAuth: false },
+    ]);
+  });
+
   it.each(['/', '/workbench'])('%s 默认进入运行与诊断', path => {
     expect(config.allRoutes.find(route => route.path === path)?.redirect).toBe('/system');
   });

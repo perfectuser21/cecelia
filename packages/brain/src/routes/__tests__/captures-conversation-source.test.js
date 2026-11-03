@@ -8,7 +8,7 @@ describe('captures route — 三工具 source 值 + session_summary nature', () 
   let router, pool;
 
   beforeEach(async () => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
     pool = (await import('../../db.js')).default;
     router = (await import('../captures.js')).default;
   });
@@ -26,12 +26,20 @@ describe('captures route — 三工具 source 值 + session_summary nature', () 
   }
 
   it.each(['conversation-claude', 'conversation-codex', 'conversation-grok'])('source=%s 被接受', async (source) => {
-    pool.query.mockResolvedValueOnce({ rows: [{ id: 'x', status: 'captured', dedupe_key: null, created_at: new Date() }] });
+    const row = { id: 'x', status: 'captured', dedupe_key: null, created_at: new Date('2026-11-03T00:00:00Z') };
+    pool.query.mockResolvedValueOnce({ rows: [row] });
     const handler = findPostHandler();
     const req = { body: { content: '测试内容', source } };
     const res = mockRes();
     await handler(req, res);
-    expect(res.statusCode).not.toBe(400);
+    expect(res.statusCode).toBe(201);
+    expect(res.body).toEqual(row);
+    expect(res.body.status).toBe('captured');
+    expect(pool.query).toHaveBeenCalledTimes(1);
+    expect(pool.query).toHaveBeenCalledWith(
+      expect.stringMatching(/INSERT INTO captures[\s\S]*RETURNING id, status, dedupe_key, created_at/),
+      ['测试内容', source, null, null, null, null, null, null, null, 'captured'],
+    );
   });
 
   it('旧的 source=conversation（未分工具）不再被接受', async () => {
@@ -40,15 +48,24 @@ describe('captures route — 三工具 source 值 + session_summary nature', () 
     const res = mockRes();
     await handler(req, res);
     expect(res.statusCode).toBe(400);
+    expect(pool.query).not.toHaveBeenCalled();
   });
 
   it('nature=session_summary 被接受', async () => {
-    pool.query.mockResolvedValueOnce({ rows: [{ id: 'x', status: 'clarified', dedupe_key: null, created_at: new Date() }] });
+    const row = { id: 'x', status: 'clarified', dedupe_key: null, created_at: new Date('2026-11-03T00:00:00Z') };
+    pool.query.mockResolvedValueOnce({ rows: [row] });
     const handler = findPostHandler();
     const req = { body: { content: '摘要内容', source: 'conversation-claude', nature: 'session_summary' } };
     const res = mockRes();
     await handler(req, res);
-    expect(res.statusCode).not.toBe(400);
+    expect(res.statusCode).toBe(201);
+    expect(res.body).toEqual(row);
+    expect(res.body.status).toBe('clarified');
+    expect(pool.query).toHaveBeenCalledTimes(1);
+    expect(pool.query).toHaveBeenCalledWith(
+      expect.stringMatching(/INSERT INTO captures[\s\S]*RETURNING id, status, dedupe_key, created_at/),
+      ['摘要内容', 'conversation-claude', 'session_summary', null, null, null, null, null, null, 'clarified'],
+    );
   });
 
   it('非法 source 仍被 400 拒绝', async () => {
@@ -57,6 +74,7 @@ describe('captures route — 三工具 source 值 + session_summary nature', () 
     const res = mockRes();
     await handler(req, res);
     expect(res.statusCode).toBe(400);
+    expect(pool.query).not.toHaveBeenCalled();
     expect(res.body.error).toMatch(/source must be one of/);
   });
 });

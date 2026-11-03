@@ -6,8 +6,10 @@ import {fileURLToPath} from 'node:url';
 import {parse} from 'acorn';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
-const entries = ['guard', 'reader-tuples'].map(name =>
-  resolve(root, `packages/brain/src/__tests__/claude-channel-retired.${name}.test.js`));
+const entries = [
+  ...['guard', 'reader-tuples'].map(name => `claude-channel-retired.${name}.test.js`),
+  ...['guard', 'lexical'].map(name => `task-type-registry.${name}.test.js`),
+].map(name => resolve(root, `packages/brain/src/__tests__/${name}`));
 
 test('防复活守卫的共享依赖不得导入测试入口，避免用例被重复注册', () => {
   const visited = new Set();
