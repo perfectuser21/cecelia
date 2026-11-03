@@ -8,10 +8,10 @@
   "managed-script-capacity-smoke.sh": {"kind":"write","connection":"TEST_DATABASE_URL最高优先，否则实际DB_HOST/DB_PORT/DB_NAME；URI缺port时实际PGPORT一致校验。","evidence":"实际NodePG两callee script-capacity-reservation/script-managed-executor.pg.integration.test.js用Client及Pool CREATE/TRUNCATE/DROP私有schema；受控真实wrapper默认及有效URI/DB边界回归不运行数据库。","source_commit":"1ef58332eda5fabf1218fc4db70e4905602811fd"},
   "ability-id-chain-pr2-smoke.sh": {
     "kind": "readonly",
-    "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
-    "evidence": "INSERT仅js.match源码断言；psql两处仅information_schema SELECT列类型。",
-    "sha256": "ee3bb0cfc553f6e82f9c0bf70b1d05caef97aedc258893c2afc3d3546782a077",
-    "source_commit": "d664db65c9"
+    "connection": "实际DB_HOST/DB_PORT/DB_USER/DB_NAME参数；默认localhost/5432/cecelia/cecelia，PGPASSWORD来自DB_PASSWORD；仅只读列查询",
+    "evidence": "2026-11-03退役断言复核：INSERT仅用于检测relay源码不得创建run；实际psql两处仅information_schema.columns的SELECT列类型，未增加数据库写入。",
+    "sha256": "621a7bfad20987d9819f859359ecaf4f8219bbda65b262ffc6b8496e81524624",
+    "source_commit": "9cd5cc55f626b63793e5eb60ff779550ff58cfab"
   },
   "account-quota-gate-smoke.sh": {"kind":"write","connection":"PGHOST/PGPORT/PGDATABASE；默认localhost/5432/cecelia_test；pg.Pool与psql共用PGDATABASE显式默认","evidence":"实际SQL/写调用源码行 26,34,55,56；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。","source_commit":"d664db65c9"},
   "action-receipts-schema-smoke.sh": {
