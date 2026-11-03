@@ -11,7 +11,7 @@ const db = vi.hoisted(() => ({ query: vi.fn(), connect: vi.fn() }));
 vi.mock('../../../packages/brain/src/db.js', () => ({ default: db }));
 afterEach(() => vi.unstubAllEnvs());
 
-it.each([false,true])('F1接单：受鉴权恢复含可选目标(%s)重新进planning，原失败记录不变', async withTarget => {
+it.each([false,true])('F1接单：受鉴权恢复含可选目标(%s)仍拒绝退役Kernel新建，原失败记录不变', async withTarget => {
   const f = fixture();
   if (withTarget) {
     const snapshot = await seedExecutionDirectoryFixture();
@@ -39,18 +39,11 @@ it.each([false,true])('F1接单：受鉴权恢复含可选目标(%s)重新进pla
   expect(denied.status).toBe(401); expect(f.calls).toHaveLength(0);
   const accepted = await request(app).post('/api/brain/orchestrator/relay-runs')
     .set('X-Internal-Token', 'synthetic-recovery-token').send(body);
-  expect(accepted.status).toBe(201);
-  expect(accepted.body.run.phase).toBe('planning');
-  expect(accepted.body.run.controller_session_id).toMatch(/^[a-f0-9-]{36}$/);
-  expect(accepted.body.routing_receipt_id).not.toBe(body.recovery_rebase.expected_receipt_id);
-  expect(accepted.body.base_sha).toBe(body.recovery_rebase.base_sha);
-  expect(f.calls.some(c => /UPDATE (initiative_runs|work_routing_receipts)/.test(c.sql))).toBe(false);
-  expect(f.calls.at(-1).sql).toBe('COMMIT');
-  if (withTarget) {
-    const receipt = f.calls.find(c=>/INSERT INTO work_routing_receipts/.test(c.sql));
-    expect(JSON.parse(receipt.params[15]).recovery_rebase.execution_profile.target).toEqual(f.request.execution_target);
-  }
+  expect(accepted.status).toBe(410);
+  expect(accepted.body.error).toBe('kernel_runtime_retired');
+  expect(f.calls).toHaveLength(0); // 不改旧run/receipt，不建立新controller/run。
   const unchanged = fixture(); delete unchanged.input.recoveryRebase;
   await expect(createKernelRun(unchanged.pool, unchanged.input, unchanged.deps))
-    .rejects.toThrow('explicit recovery predecessor is invalid');
+    .rejects.toMatchObject({code:'kernel_runtime_retired'});
+  expect(unchanged.calls).toHaveLength(0);
 });
