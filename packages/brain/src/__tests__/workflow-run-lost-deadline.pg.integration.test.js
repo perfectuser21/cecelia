@@ -3,35 +3,20 @@
  *
  * fakePool 按子串匹配验不出 `COALESCE(started_at, due_at, created_at) < NOW() - ($1::bigint * interval '1 millisecond')`
  * 这类占位符/类型/区间写法错——只有真的对着 tasks 表跑一遍才测得出。ssh 仍是桩，绝不真发。
- * 门控：连不上 PG 整个 describe 跳过；每个用例 BEGIN/ROLLBACK 不污染共享测试库。
+ * Deep专属：连接失效必须失败；每个用例 BEGIN/ROLLBACK 且只写自有schema。
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
-import pg from 'pg';
-import { DB_DEFAULTS } from '../db-config.js';
+import { livenessPgFixture } from './helpers/liveness-pg-fixture.js';
 import { runWorkflowRunLostDeadline, LOST_REASON } from '../workflow-run-lost-deadline.js';
 
-let DB_AVAILABLE = false;
-{
-  let probePool;
-  try {
-    probePool = new pg.Pool({ ...DB_DEFAULTS, max: 1, connectionTimeoutMillis: 2000 });
-    await probePool.query('SELECT 1');
-    DB_AVAILABLE = true;
-  } catch {
-    DB_AVAILABLE = false;
-  } finally {
-    if (probePool) await probePool.end().catch(() => {});
-  }
-}
-
-describe.skipIf(!DB_AVAILABLE)('workflow-run-lost-deadline — pg 集成（真实到期 SQL，不 mock pg）', () => {
-  let pool;
+describe('workflow-run-lost-deadline — pg 集成（真实到期 SQL，不 mock pg）', () => {
+  let pool, fixture;
   let client;
 
-  beforeAll(async () => { pool = new pg.Pool({ ...DB_DEFAULTS, max: 1 }); });
-  afterAll(async () => { await pool.end(); });
+  beforeAll(async () => { fixture = await livenessPgFixture(); pool = fixture.pool; });
+  afterAll(async () => { await fixture?.close(); });
   beforeEach(async () => { client = await pool.connect(); await client.query('BEGIN'); });
-  afterEach(async () => { await client.query('ROLLBACK'); client.release(); });
+  afterEach(async () => { if (!client) return; try { await client.query('ROLLBACK'); } finally { client.release(); client = undefined; } });
 
   // tasks 时间列都是 timestamp without time zone：用 NOW() - interval 写入，和 job 里 NOW() 比较同一会话时区，
   // 不用 ISO 'Z' 字符串（时区被忽略当本地钟存，会话 TZ 非 UTC 时 5h 前的行看起来在未来——时区案变体）。

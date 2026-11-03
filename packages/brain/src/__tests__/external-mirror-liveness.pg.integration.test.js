@@ -3,38 +3,23 @@
  *
  * fakePool 验不出：tasks.started_at/updated_at 是无时区列（生产实证 public.tasks.*_at = timestamp without time zone，
  * 会话 TZ=Etc/UTC，容器 TZ=Asia/Shanghai → JS 解析漂 8 小时），task_runs 是 timestamptz，payload 里 ISO 串 ::timestamptz，
- * 三类混算的 GREATEST 与脏值守卫必须在真库上跑一遍。门控：连不上 PG 整体 skip；每用例 BEGIN/ROLLBACK。
+ * 三类混算的 GREATEST 与脏值守卫必须在真库上跑一遍。Deep专属：连接/schema失效必须失败；仅私有schema内每用例 BEGIN/ROLLBACK。
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
-import pg from 'pg';
-import { DB_DEFAULTS } from '../db-config.js';
+import { livenessPgFixture } from './helpers/liveness-pg-fixture.js';
 import { EXTERNAL_ACTIVITY_AGE_SQL, externalActivityAgeMs } from '../lib/external-mirror-liveness.js';
-
-let DB_AVAILABLE = false;
-{
-  let probePool;
-  try {
-    probePool = new pg.Pool({ ...DB_DEFAULTS, max: 1, connectionTimeoutMillis: 2000 });
-    await probePool.query('SELECT 1');
-    DB_AVAILABLE = true;
-  } catch {
-    DB_AVAILABLE = false;
-  } finally {
-    if (probePool) await probePool.end().catch(() => {});
-  }
-}
 
 const AGE_QUERY = `SELECT ${EXTERNAL_ACTIVITY_AGE_SQL} AS external_activity_age_sec FROM tasks WHERE tasks.id = $1`;
 
-describe.skipIf(!DB_AVAILABLE)('external-mirror-liveness — 判龄 SQL pg 集成（真实 SQL，不 mock pg）', () => {
-  let pool;
+describe('external-mirror-liveness — 判龄 SQL pg 集成（真实 SQL，不 mock pg）', () => {
+  let pool, fixture;
   let client;
   let seq = 0;
 
-  beforeAll(async () => { pool = new pg.Pool({ ...DB_DEFAULTS, max: 1 }); });
-  afterAll(async () => { await pool.end(); });
+  beforeAll(async () => { fixture = await livenessPgFixture(); pool = fixture.pool; });
+  afterAll(async () => { await fixture?.close(); });
   beforeEach(async () => { client = await pool.connect(); await client.query('BEGIN'); });
-  afterEach(async () => { await client.query('ROLLBACK'); client.release(); });
+  afterEach(async () => { if (!client) return; try { await client.query('ROLLBACK'); } finally { client.release(); client = undefined; } });
 
   async function insertTask({ taskType = 'device_job', payload = { source: 'cron' }, createdAgo = '60 minutes', startedAgo = '60 minutes', updatedAgo = '40 minutes' }) {
     seq += 1;

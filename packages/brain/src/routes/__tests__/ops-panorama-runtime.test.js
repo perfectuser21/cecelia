@@ -26,9 +26,9 @@ vi.mock('../../slot-allocator.js', () => ({ detectUserSessions: () => ({ headed:
 import router from '../ops-panorama.js';
 import { getLlmCapacitySnapshot } from '../../llm-capacity.js';
 const handler = router.stack.find((layer) => layer.route?.path === '/').route.stack[0].handle;
-const run = () => {
+const run = (rows = [{ executor: 'codex' }]) => {
   const res = { json: vi.fn() };
-  const promise = handler({ app: { locals: { pool: { query: async () => ({ rows: [{ executor: 'codex' }] }) } } } }, res);
+  const promise = handler({ app: { locals: { pool: { query: async () => ({ rows }) } } } }, res);
   return { promise, res };
 };
 beforeEach(() => { state.sleep = true; state.error = false; state.neverLlm = false; state.syncCalls = 0; vi.clearAllMocks(); });
@@ -75,6 +75,23 @@ describe('ops-panorama 真实router同步阻塞回归', () => {
     const { promise, res } = run(); await promise;
     expect(res.json.mock.calls[0][0]).toMatchObject({ relay: { container_count: null },
       processes: { claude_total: 0, codex_total: 0 }, sessions: { headed: 0, headless: 0 } });
+  });
+  it('实际任务查询把缺失和未知执行器各计一次，不增添未知厂商键', async () => {
+    state.sleep = false;
+    const {promise, res} = run([{executor: 'claude'}, {executor: null}, {executor: 'retired-provider'}]);
+    await promise;
+    expect(res.json.mock.calls[0][0].tasks).toEqual({in_progress_count: 3,
+      vendor_dist: {claude: 1, codex: 0, grok: 0, unknown: 2}});
+  });
+  it('实际LLM来源失败只降级该字段，不吞任务数据或暴露账号凭据', async () => {
+    state.sleep = false;
+    vi.mocked(getLlmCapacitySnapshot).mockRejectedValueOnce(new Error('snapshot unavailable'));
+    const {promise, res} = run();
+    await promise;
+    const body = res.json.mock.calls[0][0];
+    expect(body.llm_capacity).toBeNull();
+    expect(body.tasks).toEqual({in_progress_count: 1, vendor_dist: {claude: 0, codex: 1, grok: 0, unknown: 0}});
+    expect(body.host.mem_used_pct).toBeGreaterThanOrEqual(0);
   });
   it('LLM慢源严格5s降级，timer不残留且不修改原缓存API', async () => {
     state.sleep = false; state.neverLlm = true; vi.useFakeTimers();
