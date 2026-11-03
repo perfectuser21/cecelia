@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import net from 'node:net';
 import {spawn, spawnSync} from 'node:child_process';
-import {mkdtemp, mkdir, writeFile, rm} from 'node:fs/promises';
+import {mkdtemp, mkdir, writeFile, rm, symlink} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -15,7 +15,7 @@ const document = '<!doctype html><main>PRIVATE_DASHBOARD_' + '原始文档'.repe
 const outside = 'PRIVATE_OUTSIDE_DIST_MUST_NOT_BE_SERVED';
 
 async function listen(server) {
-  server.listen(0);
+  server.listen(0, '127.0.0.1');
   await once(server, 'listening');
   return server.address().port;
 }
@@ -170,11 +170,22 @@ test('私有Brain端口不可达时两条真实HTTP代理均502，不能伪造�
 test('真实WS升级保留head与双向字节，并改写握手path/Host/Origin', async t => {
   const f = await fixture(t);
   let handshake;
-  let postHandshake = '';
+  let forwardedBytes = '';
+  let opened = false;
   f.upstream.on('upgrade', (req, socket, head) => {
-    handshake = {path: req.url, method: req.method, host: req.headers.host, origin: req.headers.origin, head: head.toString()};
-    socket.write('HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\nUPSTREAM_BYTES');
-    socket.on('data', data => { postHandshake += data; socket.write('ECHO:' + data); });
+    handshake = {path: req.url, method: req.method, host: req.headers.host, origin: req.headers.origin};
+    const consume = data => {
+      forwardedBytes += data.toString();
+      // TCP可以把upgrade head拆到后续data；按有序完整字节验证，不假定包边界。
+      if (!opened && forwardedBytes === 'UPGRADE_HEAD') {
+        opened = true;
+        socket.write('HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\nUPSTREAM_BYTES');
+      } else if (opened && forwardedBytes === 'UPGRADE_HEADCLIENT_BYTES') {
+        socket.write('ECHO:CLIENT_BYTES');
+      }
+    };
+    socket.on('data', consume);
+    consume(head);
   });
   const client = net.createConnection({host: '127.0.0.1', port: f.port});
   t.after(() => client.destroy());
@@ -195,8 +206,8 @@ test('真实WS升级保留head与双向字节，并改写握手path/Host/Origin'
   const text = await complete;
   assert.match(text, /^HTTP\/1.1 101/);
   assert.deepEqual(handshake, {path: '/ws?private=1', method: 'GET', host: `localhost:${f.brainPort}`,
-    origin: `http://localhost:${f.port}`, head: 'UPGRADE_HEAD'});
-  assert.equal(postHandshake, 'CLIENT_BYTES');
+    origin: `http://localhost:${f.port}`});
+  assert.equal(forwardedBytes, 'UPGRADE_HEADCLIENT_BYTES');
 });
 
 test('require真实CLI模块不监听两个本人已占端口，也不留下运行资源', async t => {
@@ -215,9 +226,11 @@ test('require真实CLI模块不监听两个本人已占端口，也不留下运�
 
 test('原始URL路径越界必须拒绝，不能读取本人dist旁的私有文件', async t => {
   const f = await fixture(t);
-  const res = await httpRequest(f.port, '/../outside.txt');
-  assert.equal(res.status, 403, 'unexpected body: ' + res.body);
-  assert.ok(!res.body.includes(Buffer.from(outside)));
+  for (const path of ['/../outside.txt', '/%2e%2e/outside.txt']) {
+    const res = await httpRequest(f.port, path);
+    assert.equal(res.status, 403, 'unexpected body: ' + res.body);
+    assert.ok(!res.body.includes(Buffer.from(outside)));
+  }
 });
 
 test('查询字符串不能参与磁盘路径规范化并逃出dist', async t => {
@@ -233,4 +246,22 @@ test('缺index返回明确404且CLI存活，不能readstream异常崩溃或断�
   const res = await httpRequest(f.port, '/not-a-file').catch(error => ({error: error.code || error.message}));
   assert.equal(res.status, 404, JSON.stringify(res) + '\nCLI: ' + f.output());
   assert.equal(f.child.exitCode, null, f.output());
+});
+
+test('dist内symlink物理指向旁文件也必须403，不能只做字符串前缀判断', async t => {
+  const f = await fixture(t);
+  await symlink(join(f.root, 'outside.txt'), join(f.dist, 'linked.txt'));
+  const res = await httpRequest(f.port, '/linked.txt');
+  assert.equal(res.status, 403, 'unexpected body: ' + res.body);
+  assert.ok(!res.body.includes(Buffer.from(outside)));
+});
+
+test('正常中文和空格URI编码必须读取真实资源，不能错变SPA文档', async t => {
+  const f = await fixture(t);
+  const filename = '私有 页面.js';
+  await writeFile(join(f.dist, 'assets', filename), 'PRIVATE_ENCODED_ASSET');
+  const res = await httpRequest(f.port, '/assets/' + encodeURIComponent(filename));
+  assert.equal(res.status, 200);
+  assert.equal(res.headers['content-type'], 'application/javascript');
+  assert.equal(res.body.toString(), 'PRIVATE_ENCODED_ASSET');
 });
