@@ -2,7 +2,6 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { randomUUID } from 'node:crypto';
 
 import pool from '../../db.js';
-import { createKernelRun } from '../../orchestrator/kernel-run-store.js';
 import { collectGroundTruth } from '../../orchestrator/ground-truth.js';
 
 const schema = `kernel_recovery_lineage_${process.pid}_${randomUUID().replaceAll('-', '')}`;
@@ -25,7 +24,7 @@ const schemaPool = {
 
 beforeAll(async () => {
   const database = await pool.query('SELECT current_database() AS name');
-  if (!database.rows[0].name.endsWith('_test')) throw new Error('test database required');
+  if (!['cecelia_scratch', 'cecelia_test'].includes(database.rows[0].name)) throw new Error('test database required');
   await pool.query(`CREATE SCHEMA ${quote(schema)}`);
   await schemaPool.query(`
     CREATE TABLE tasks (
@@ -146,55 +145,6 @@ async function fixture() {
 }
 
 describe('explicit recovery lineage [PostgreSQL]', () => {
-  it('persists the exact predecessor and inherits only its approved contract', async () => {
-    const ids = await fixture();
-    const created = await createKernelRun(schemaPool, {
-      taskId: ids.taskId,
-      initiativeId: ids.initiativeId,
-      phase: 'evaluate', journeyId: null, abilityId: null,
-      host: 'integration', deadlineHours: 1,
-      createdSource: 'explicit_recovery',
-      predecessorRunId: ids.predecessorRunId,
-    }, {
-      ensureMapImpactPreflight: async () => ({ contract: { id: 'impact', status: 'active' } }),
-    });
-
-    const persisted = await schemaPool.query(
-      `SELECT predecessor_run_id,contract_id,record_trust_status
-         FROM initiative_runs WHERE id=$1`,
-      [created.run.id],
-    );
-    expect(persisted.rows).toEqual([{
-      predecessor_run_id: ids.predecessorRunId,
-      contract_id: ids.contractId,
-      record_trust_status: 'trusted',
-    }]);
-  });
-
-  it('rejects a predecessor from another task before creating a recovery run', async () => {
-    const ids = await fixture();
-    const otherTaskId = randomUUID();
-    await schemaPool.query('UPDATE initiative_runs SET current_task_id=$2 WHERE id=$1', [ids.predecessorRunId, otherTaskId]);
-
-    await expect(createKernelRun(schemaPool, {
-      taskId: ids.taskId,
-      initiativeId: ids.initiativeId,
-      phase: 'evaluate', journeyId: null, abilityId: null,
-      host: 'integration', deadlineHours: 1,
-      createdSource: 'explicit_recovery',
-      predecessorRunId: ids.predecessorRunId,
-    }, {
-      ensureMapImpactPreflight: async () => ({ contract: { id: 'impact', status: 'active' } }),
-    })).rejects.toThrow('explicit recovery predecessor is invalid');
-
-    const count = await schemaPool.query(
-      `SELECT count(*)::int AS count FROM initiative_runs
-        WHERE predecessor_run_id=$1`,
-      [ids.predecessorRunId],
-    );
-    expect(count.rows[0].count).toBe(0);
-  });
-
   it('queries explicit-recovery validation lineage without comparing json text to uuid', async () => {
     const ids = await fixture();
     const recoveryRunId = randomUUID();

@@ -75,6 +75,12 @@ it('主CI集成入口安装根扫描器与Brain锁依赖，不能被子workspace
  expect(commandsFor('brain-integration')).toEqual([
   {cwd:root,command:'node',args:['scripts/ci/basic-runtime-smoke.mjs','--validate-only']},
   {cwd:join(root,'packages/brain'),command:'node',args:['src/migrate.js']},
+  {cwd:join(root,'packages/brain'),command:'npx',args:[
+   '--no-install','vitest','run','--config','../../scripts/ci/deep-integration.config.mjs',
+   'src/__tests__/integration/task-lease-device-pool.pg.integration.test.js',
+   'src/__tests__/integration/executor-startup-headed-owner.pg.integration.test.js',
+   'src/__tests__/integration/workflow-common-terminal.pg.integration.test.js','--reporter=dot',
+  ]},
   {cwd:root,command:'node',args:['--test','scripts/ci/__tests__/runtime-signal.integration.test.mjs']},
   {cwd:root,command:'node',args:['scripts/ci/basic-runtime-smoke.mjs']},
  ]);

@@ -5,7 +5,7 @@ import { DB_DEFAULTS } from '../../db-config.js';
 
 /**
  * 统一领单租约 + 设备池（任务 c5f6e683）的私有 PG fixture：独立 schema，只建用到的表，
- * 真跑 065/448/490/553 四个迁移（553 的 SQL 形状随测试一起被钉住）。不跑全量 migrate、不写 public。
+ * 真跑 059/065/448/490/553 迁移（含统一终态 SQL 依赖的 task_runs）。不跑全量 migrate、不写 public。
  */
 export async function taskLeaseFixture() {
   if (DB_DEFAULTS.database !== 'cecelia_scratch' && !(process.env.CI === 'true' && DB_DEFAULTS.database === 'cecelia_test')) {
@@ -27,7 +27,7 @@ export async function taskLeaseFixture() {
         summary TEXT, assigned_to TEXT, priority TEXT, pr_url TEXT, pr_status TEXT, pr_merged_at TIMESTAMPTZ, blocked_detail JSONB);
       CREATE TABLE schema_version(version TEXT PRIMARY KEY, description TEXT, applied_at TIMESTAMPTZ DEFAULT now());
       CREATE TABLE task_events(id UUID PRIMARY KEY DEFAULT gen_random_uuid(), task_id UUID, event_type TEXT, payload JSONB, created_at TIMESTAMPTZ DEFAULT now());`);
-    for (const name of ['065_device_locks.sql', '448_device_locks_phones.sql', '490_phone_registry.sql', '553_task_leases_device_pools.sql']) {
+    for (const name of ['059_task_runs.sql', '065_device_locks.sql', '448_device_locks_phones.sql', '490_phone_registry.sql', '553_task_leases_device_pools.sql']) {
       await pool.query(readFileSync(new URL('../../../migrations/' + name, import.meta.url), 'utf8'));
     }
     return { pool, schema, close };

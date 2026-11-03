@@ -99,7 +99,7 @@ it('晚到旧epoch/seq反馈及status轮询不能把失败final退回blocked或�
  const status=vi.fn(()=>{throw Error('禁止旧status续起');});
  await reconcileCommanderTask(f.db,x.task.id,{status});expect(status).not.toHaveBeenCalled();
  const start=vi.fn(()=>{throw Error('禁止新业务尝试');});
- await dispatchCommanderV2(f.db,x.task.id,{startRun:start,sshDispatch:start});expect(start).not.toHaveBeenCalled();
+ await expect(dispatchCommanderV2(f.db,x.task.id,{startRun:start,sshDispatch:start})).rejects.toThrow('workflow_common_task_owned');expect(start).not.toHaveBeenCalled();
  expect((await task()).result.workflow_control).toEqual(final);expect((await task()).status).toBe('failed');
  expect((await f.db.query('SELECT COUNT(*)::int AS n FROM task_runs')).rows[0].n).toBe(1);
 });

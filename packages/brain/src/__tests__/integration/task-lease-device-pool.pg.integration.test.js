@@ -7,6 +7,8 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { taskLeaseFixture, seedTask } from '../helpers/task-lease-pg-fixture.js';
+import { randomUUID } from 'node:crypto';
+import { finalizeTask } from '../../lib/task-terminal.js';
 import { acquireDeviceLock } from '../../device-lock-helpers.js';
 import {
   claimTaskWithLease, heartbeatTaskLease, releaseTaskLease, setBrainLease, reapExpiredLeases,
@@ -333,4 +335,64 @@ describe.sequential('设备池：同平台同账号类型一池，派发从池�
     expect(r.member.serial).toBe(PHONE_2);
     expect(r.tried[0].error).toBe('resource_unhealthy');
   });
+});
+
+
+describe.sequential('租约 fixture 与现役统一终态 SQL 一致', () => {
+  it('059 迁移在私有 schema 建真实 task_runs，任务外键级联清理', async () => {
+    const relation = await pool.query(`SELECT table_schema FROM information_schema.tables
+      WHERE table_name = 'task_runs' AND table_schema = current_schema()`);
+    expect(relation.rows).toEqual([{ table_schema: fx.schema }]);
+    expect((await pool.query("SELECT version FROM schema_version WHERE version = '059'")).rows).toEqual([{ version: '059' }]);
+    const id = await seedTask(pool);
+    const runId = randomUUID();
+    await pool.query('INSERT INTO task_runs (task_id, run_id) VALUES ($1, $2)', [id, runId]);
+    expect((await pool.query('SELECT status, context, result, ended_at FROM task_runs WHERE run_id = $1', [runId])).rows)
+      .toEqual([{ status: 'running', context: {}, result: {}, ended_at: null }]);
+    await pool.query('DELETE FROM tasks WHERE id = $1', [id]);
+    expect((await pool.query('SELECT id FROM task_runs WHERE run_id = $1', [runId])).rows).toEqual([]);
+    await expect(pool.query('INSERT INTO task_runs (task_id, run_id) VALUES ($1, $2)', [id, randomUUID()]))
+      .rejects.toMatchObject({ code: '23503' });
+  });
+
+  it.each(['completed', 'failed'])('legacy 任务依旧可通过统一入口落 %s', async status => {
+    const id = await seedTask(pool, { status: 'in_progress', claimed_by: 'legacy-owner' });
+    expect((await finalizeTask(pool, id, status, { relay: false })).rowCount).toBe(1);
+    expect(await taskRow(id)).toMatchObject({ status, claimed_by: null });
+  });
+
+  it.each(['missing', 'foreign_task', 'foreign_run', 'running', 'not_ended', 'foreign_source', 'failed', 'success'])(
+    'common-owned 完成必须具备同任务同运行的真实已结束成功证明：%s', async evidence => {
+      const id = await seedTask(pool, { status: 'in_progress', claimed_by: 'common-runner' });
+      const runId = randomUUID();
+      const result = {
+        workflow_common_runner: { task_id: id, run_id: runId },
+        common_runner: { run_id: runId },
+        common_runner_observation: { evidence: {
+          central_readback: { recording_status: 'confirmed', status: 'success' },
+          authenticated_receipt: { run_id: runId, execution_unknown: false },
+        } },
+      };
+      await pool.query('UPDATE tasks SET result = $2::jsonb WHERE id = $1', [id, JSON.stringify(result)]);
+      if (evidence !== 'missing') {
+        await pool.query(`INSERT INTO task_runs (task_id, run_id, status, ended_at, context)
+          VALUES ($1, $2, $3, $4, $5::jsonb)`, [
+          evidence === 'foreign_task' ? await seedTask(pool) : id,
+          evidence === 'foreign_run' ? randomUUID() : runId,
+          ['running', 'failed'].includes(evidence) ? evidence : 'success',
+          evidence === 'not_ended' ? null : new Date(),
+          JSON.stringify({ source: evidence === 'foreign_source' ? 'other-runner' : 'workflow-common-runner' }),
+        ]);
+      }
+      const before = await taskRow(id);
+      const terminal = await finalizeTask(pool, id, 'completed', { relay: false });
+      expect(terminal.rowCount).toBe(evidence === 'success' ? 1 : 0);
+      if (evidence === 'success') {
+        expect(await taskRow(id)).toMatchObject({ status: 'completed', claimed_by: null, result });
+        expect((await taskRow(id)).completed_at).not.toBeNull();
+      } else {
+        expect(await taskRow(id)).toEqual(before);
+      }
+    },
+  );
 });

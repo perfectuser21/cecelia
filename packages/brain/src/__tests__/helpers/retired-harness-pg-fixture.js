@@ -24,7 +24,7 @@ export async function initializeRetirementSchema(pool){
  CREATE TABLE dispatch_events(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),task_id uuid,event_type text,reason text,created_at timestamptz);
  `);
  // 执行真实最低依赖migration，台账只由这些原SQL自己的footer记录。
- for(const name of ['413_work_routing_receipts.sql','426_map_repository_and_route_snapshot_authority.sql','427_direct_profile_frozen_contract.sql','465_work_routing_receipt_supersession.sql']){
+ for(const name of ['059_task_runs.sql','413_work_routing_receipts.sql','426_map_repository_and_route_snapshot_authority.sql','427_direct_profile_frozen_contract.sql','465_work_routing_receipt_supersession.sql']){
   await pool.query(readFileSync(new URL(`../../../migrations/${name}`,import.meta.url),'utf8'));
  }
 }
