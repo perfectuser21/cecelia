@@ -129,7 +129,7 @@ describe('worker-pool-dispatch：不再往 tmux 槽发射 claude', () => {
   });
 });
 
-describe('harness-skill-relay：claude 执行体下线（codex/grok 不变）', () => {
+describe('harness-skill-relay：全部旧provider relay退役', () => {
   function relayDeps() {
     return {
       env: {},
@@ -151,12 +151,12 @@ describe('harness-skill-relay：claude 执行体下线（codex/grok 不变）', 
     ['无头缺省执行体（即 claude）', {}],
     ['无头显式 executor=claude', { executor: 'claude' }],
     ['有头 executor=claude', { executor: 'claude', mode: 'headed' }],
-  ])('%s → claude_channel_retired，不起容器/不 ssh tmux', async (_label, payload) => {
+  ])('%s → kernel_runtime_retired，不起容器/不 ssh tmux', async (_label, payload) => {
     const { spawnSkillRelaySession } = await import('../harness-skill-relay.js');
     const deps = relayDeps();
     const out = await spawnSkillRelaySession({ id: 'aaaaaaaa-0000-4000-8000-000000000001', task_type: 'harness_initiative', payload }, deps);
     expect(out.ok).toBe(false);
-    expect(out.error).toBe('claude_channel_retired');
+    expect(out.error).toBe('kernel_runtime_retired');
     expect(deps.spawnFn).not.toHaveBeenCalled();
     expect(deps.sshSpawnFn).not.toHaveBeenCalled();
     expect(deps.execFn.mock.calls.some(([cmd]) => /tmux|claude/.test(String(cmd)))).toBe(false);

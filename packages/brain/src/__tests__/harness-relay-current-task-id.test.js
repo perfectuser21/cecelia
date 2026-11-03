@@ -1,20 +1,8 @@
-/**
- * 刀C1（决策 dc18d43d）：spawn 两处 INSERT initiative_runs 必须写 current_task_id，
- * 否则 GET /relay-runs?task_id= 恒空（initiatives.js:276 已有过滤但列一直是 NULL）。
- * 源码哨兵：防止未来新增/修改 INSERT 时漏列回退。
- */
-import { describe, it, expect } from 'vitest';
-import { readFile } from 'node:fs/promises';
-
-describe('C1: spawn INSERT initiative_runs 带完整身份（源码哨兵）', () => {
-  it('harness-skill-relay.js 所有 INSERT initiative_runs 均含 task 与 source', async () => {
-    const src = await readFile(new URL('../harness-skill-relay.js', import.meta.url), 'utf8');
-    const inserts = src.match(/INSERT INTO initiative_runs[\s\S]{0,400}?VALUES/g) || [];
-    expect(inserts.length).toBeGreaterThanOrEqual(2);
-    for (const ins of inserts) {
-      expect(ins).toMatch(/current_task_id/);
-      expect(ins).toMatch(/created_source/);
-    }
-    expect(src.match(/'legacy_relay'/g)).toHaveLength(inserts.length);
-  });
+/** 新run已退役，既有run身份字段由历史读回与迁移合同保留。 */
+import {describe,it,expect,vi} from 'vitest';
+import {spawnSkillRelaySession} from '../harness-skill-relay.js';
+describe('旧relay不能再产生缺身份或任意身份的新run',()=>{
+ it.each([{}, {current_task_id:'old',created_source:'legacy_relay'}])('旧身份%j不能恢复写路径',async input=>{
+  const effect=vi.fn();const result=await spawnSkillRelaySession({id:'historical',...input,payload:{orchestrator:'skill-relay'}},{pool:{query:effect},spawnFn:effect,execFn:effect});expect(result).toMatchObject({ok:false,error:'kernel_runtime_retired'});expect(effect).not.toHaveBeenCalled();
+ });
 });
