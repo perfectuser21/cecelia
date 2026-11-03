@@ -1,143 +1,110 @@
-/**
- * captures API test
- * 验证 GET/POST/PATCH /api/captures 端点行为
- * 使用 mock fetch 模拟 HTTP 请求
- */
+import { beforeEach, afterEach, describe, it, expect, vi } from 'vitest';
+import express from 'express';
+import request from 'supertest';
+import type { Server } from 'node:http';
+import { startLocalHttp, closeLocalHttp } from '../../src/dashboard/__tests__/helpers/local-http.js';
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+// 只替换外部数据库操作；实际Router、请求解析、SQL绑定与HTTP响应均为生产实现。
+const database = vi.hoisted(() => ({ query: vi.fn() }));
+vi.mock('../../src/task-system/db.js', () => ({ default: database }));
+import capturesRouter from '../../src/task-system/captures.js';
+let server: Server;
+const capture = { id: 'capture-fixture-1', content: '私有想法', source: 'dashboard', status: 'inbox', owner: 'user', area_id: null, project_id: null, extracted_to: null, destination_type: null, destination_id: null, created_at: '2026-11-03T00:00:00Z', updated_at: '2026-11-03T00:00:00Z' };
+beforeEach(async () => {
+  database.query.mockReset();
+  database.query.mockResolvedValue({ rows: [], rowCount: 0 });
+  const app = express(); app.use(express.json()); app.use('/api/captures', capturesRouter);
+  server = await startLocalHttp(app);
+});
+afterEach(async () => { await closeLocalHttp(server); });
 
-const originalFetch = global.fetch;
-
-describe('captures API endpoints', () => {
-  let mockFetch: ReturnType<typeof vi.fn>;
-
-  beforeEach(() => {
-    mockFetch = vi.fn();
-    global.fetch = mockFetch as typeof fetch;
+describe('真实captures Router（仅DB边界替身）', () => {
+  it('GET返回实际DB记录而非自造列表，默认分页绑定50/0', async () => {
+    database.query.mockResolvedValue({ rows: [capture], rowCount: 1 });
+    const response = await request(server).get('/api/captures');
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual([capture]);
+    expect(database.query).toHaveBeenCalledWith(expect.stringContaining('FROM captures'), [50, 0]);
   });
 
-  afterEach(() => {
-    global.fetch = originalFetch;
-    vi.restoreAllMocks();
+  it('GET将status/source/owner及分页实际绑定查询，不能仅转发原URL', async () => {
+    database.query.mockResolvedValue({ rows: [capture], rowCount: 1 });
+    const response = await request(server).get('/api/captures?status=inbox&source=dashboard&owner=user&limit=2&offset=5');
+    expect(response.status).toBe(200); expect(response.body).toEqual([capture]);
+    expect(database.query).toHaveBeenCalledWith(expect.stringMatching(/WHERE status = \$1 AND source = \$2 AND owner = \$3[\s\S]*LIMIT \$4 OFFSET \$5/), ['inbox', 'dashboard', 'user', 2, 5]);
   });
 
-  describe('GET /api/captures', () => {
-    it('返回 200 和 JSON 数组', async () => {
-      const mockData = [
-        { id: 'uuid-1', content: '测试想法', source: 'dashboard', status: 'inbox', owner: 'user', created_at: new Date().toISOString() },
-      ];
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        json: async () => mockData,
-      } as Response);
-
-      const res = await fetch('/api/captures');
-      expect(res.ok).toBe(true);
-      expect(res.status).toBe(200);
-      const data = await res.json();
-      expect(Array.isArray(data)).toBe(true);
-      expect(data[0]).toHaveProperty('content');
-      expect(data[0]).toHaveProperty('status');
-    });
-
-    it('支持 ?status=inbox 过滤', async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        json: async () => [],
-      } as Response);
-
-      const res = await fetch('/api/captures?status=inbox');
-      expect(res.ok).toBe(true);
-      expect(mockFetch).toHaveBeenCalledWith('/api/captures?status=inbox');
-    });
+  it('GET单条读取绑定实际id，并返回该记录', async () => {
+    database.query.mockResolvedValue({ rows: [capture], rowCount: 1 });
+    const response = await request(server).get('/api/captures/capture-fixture-1');
+    expect(response.status).toBe(200); expect(response.body).toEqual(capture);
+    expect(database.query).toHaveBeenCalledWith('SELECT * FROM captures WHERE id = $1', ['capture-fixture-1']);
   });
 
-  describe('POST /api/captures', () => {
-    it('创建 capture 返回 201', async () => {
-      const newCapture = {
-        id: 'uuid-new',
-        content: '新想法',
-        source: 'dashboard',
-        status: 'inbox',
-        owner: 'user',
-        created_at: new Date().toISOString(),
-      };
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        status: 201,
-        json: async () => newCapture,
-      } as Response);
-
-      const res = await fetch('/api/captures', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: '新想法', source: 'dashboard' }),
-      });
-      expect(res.status).toBe(201);
-      const data = await res.json();
-      expect(data).toHaveProperty('id');
-      expect(data.content).toBe('新想法');
-    });
-
-    it('content 为空时返回 400', async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: false,
-        status: 400,
-        json: async () => ({ error: 'content is required' }),
-      } as Response);
-
-      const res = await fetch('/api/captures', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: '' }),
-      });
-      expect(res.status).toBe(400);
-      const data = await res.json();
-      expect(data).toHaveProperty('error');
-    });
+  it('GET不存在的id返回404与明确错误', async () => {
+    const response = await request(server).get('/api/captures/missing');
+    expect(response.status).toBe(404); expect(response.body).toEqual({ error: 'Capture not found' });
   });
 
-  describe('PATCH /api/captures/:id', () => {
-    it('更新 status 返回 200', async () => {
-      const updated = {
-        id: 'uuid-1',
-        content: '测试想法',
-        status: 'done',
-        source: 'dashboard',
-        owner: 'user',
-      };
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        json: async () => updated,
-      } as Response);
+  it('POST修剪正文、使用默认source/owner，返回DB产生的真实编号与201', async () => {
+    database.query.mockResolvedValue({ rows: [capture], rowCount: 1 });
+    const response = await request(server).post('/api/captures').send({ content: '  私有想法  ' });
+    expect(response.status).toBe(201); expect(response.body).toEqual(capture);
+    expect(database.query).toHaveBeenCalledWith(expect.stringMatching(/INSERT INTO captures[\s\S]*RETURNING \*/), ['私有想法', 'dashboard', null, null, 'user']);
+  });
 
-      const res = await fetch('/api/captures/uuid-1', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'done' }),
-      });
-      expect(res.ok).toBe(true);
-      expect(res.status).toBe(200);
-      const data = await res.json();
-      expect(data.status).toBe('done');
-    });
+  it('POST显式来源/归属/项目不能被默认值覆盖', async () => {
+    database.query.mockResolvedValue({ rows: [{ ...capture, source: 'import', owner: 'team', area_id: 'area-1', project_id: 'project-1' }], rowCount: 1 });
+    const response = await request(server).post('/api/captures').send({ content: '私有想法', source: 'import', owner: 'team', area_id: 'area-1', project_id: 'project-1' });
+    expect(response.status).toBe(201); expect(response.body).toMatchObject({ source: 'import', owner: 'team', area_id: 'area-1', project_id: 'project-1' });
+    expect(database.query).toHaveBeenCalledWith(expect.any(String), ['私有想法', 'import', 'area-1', 'project-1', 'team']);
+  });
 
-    it('不存在的 id 返回 404', async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: false,
-        status: 404,
-        json: async () => ({ error: 'Capture not found' }),
-      } as Response);
+  it.each(['', '   '])('POST空正文%j直接400且不写数据库', async content => {
+    const response = await request(server).post('/api/captures').send({ content });
+    expect(response.status).toBe(400); expect(response.body).toEqual({ error: 'content is required' }); expect(database.query).not.toHaveBeenCalled();
+  });
 
-      const res = await fetch('/api/captures/nonexistent', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'done' }),
-      });
-      expect(res.status).toBe(404);
-    });
+  it('PATCH实际更新目标记录status并返回更新结果', async () => {
+    database.query.mockResolvedValue({ rows: [{ ...capture, status: 'done' }], rowCount: 1 });
+    const response = await request(server).patch('/api/captures/capture-fixture-1').send({ status: 'done' });
+    expect(response.status).toBe(200); expect(response.body.status).toBe('done');
+    expect(database.query).toHaveBeenCalledWith('UPDATE captures SET status = $1 WHERE id = $2 RETURNING *', ['done', 'capture-fixture-1']);
+  });
+
+  it('PATCH去向链与清空归属的null语义真正进入DB绑定', async () => {
+    database.query.mockResolvedValue({ rows: [{ ...capture, destination_type: 'task', destination_id: 'task-1', extracted_to: ['task-1'] }], rowCount: 1 });
+    const response = await request(server).patch('/api/captures/capture-fixture-1').send({ area_id: '', project_id: '', extracted_to: ['task-1'], destination_type: 'task', destination_id: 'task-1' });
+    expect(response.status).toBe(200); expect(response.body).toMatchObject({ area_id: null, project_id: null, destination_type: 'task', destination_id: 'task-1', extracted_to: ['task-1'] });
+    expect(database.query).toHaveBeenCalledWith(expect.stringContaining('WHERE id = $6 RETURNING *'), [null, null, '["task-1"]', 'task', 'task-1', 'capture-fixture-1']);
+  });
+
+  it('PATCH不存在的id返回404，不伪造更新结果', async () => {
+    const response = await request(server).patch('/api/captures/missing').send({ status: 'done' });
+    expect(response.status).toBe(404); expect(response.body).toEqual({ error: 'Capture not found' });
+  });
+
+  it('PATCH无更新字段返回400且不查询DB', async () => {
+    const response = await request(server).patch('/api/captures/capture-fixture-1').send({ ignored: true });
+    expect(response.status).toBe(400); expect(response.body).toEqual({ error: 'No fields to update' }); expect(database.query).not.toHaveBeenCalled();
+  });
+
+  it('DELETE只归档目标记录并读回归档编号', async () => {
+    database.query.mockResolvedValue({ rows: [{ id: 'capture-fixture-1' }], rowCount: 1 });
+    const response = await request(server).delete('/api/captures/capture-fixture-1');
+    expect(response.status).toBe(200); expect(response.body).toEqual({ id: 'capture-fixture-1', status: 'archived' });
+    expect(database.query).toHaveBeenCalledWith("UPDATE captures SET status = 'archived' WHERE id = $1 RETURNING id", ['capture-fixture-1']);
+  });
+
+  it('DELETE不存在记录返回404', async () => {
+    const response = await request(server).delete('/api/captures/missing');
+    expect(response.status).toBe(404); expect(response.body).toEqual({ error: 'Capture not found' });
+  });
+
+  it.each(['get', 'post', 'patch', 'delete'] as const)('%s数据库失败返回500，不能把失败记成成功', async method => {
+    database.query.mockRejectedValue(new Error('PRIVATE_DB_FAILURE'));
+    const url = method === 'get' || method === 'post' ? '/api/captures' : '/api/captures/capture-fixture-1';
+    const response = await request(server)[method](url).send({ content: '私有想法', status: 'done' });
+    expect(response.status).toBe(500); expect(response.body.error).toBeTypeOf('string'); expect(response.body.details).toBe('PRIVATE_DB_FAILURE');
   });
 });

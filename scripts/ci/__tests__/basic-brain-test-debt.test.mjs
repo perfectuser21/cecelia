@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
-import {mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync} from 'node:fs';
+import {mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync, symlinkSync, realpathSync, lstatSync} from 'node:fs';
 import {tmpdir} from 'node:os';
-import {join, relative} from 'node:path';
+import {join, relative, dirname} from 'node:path';
+import {spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {createRequire} from 'node:module';
 import test from 'node:test';
@@ -24,21 +25,24 @@ const select = (config, cwd) => glob.sync(config.test.include, {
   cwd, absolute: true, ignore: ['**/node_modules/**', ...(config.test.exclude || [])],
 }).map(file => relative(root, file));
 
-function assertDebtMatches({maintained, selected, manualRoot, entries}) {
+function assertDebtMatches({maintained, selected, manualRoot, entries, canonicalRoot}) {
   assert.ok(maintained.length > 0, '维护测试集合不能为空');
   assert.ok(Array.isArray(entries));
-  const existing = new Set(maintained), automatic = new Set(selected), manual = new Set(manualRoot), seen = new Set();
+  const identity = file => canonicalRoot ? realpathSync(join(canonicalRoot, file)) : file;
+  const existing = new Set(maintained), automatic = new Set(selected.map(identity)),
+    manual = new Set(manualRoot.map(identity)), seen = new Set();
   for (const entry of entries) {
     assert.ok(entry && typeof entry.file === 'string', '债务记录缺少文件');
-    assert.ok(!seen.has(entry.file), `重复债务：${entry.file}`);
-    seen.add(entry.file);
+    const key = identity(entry.file);
+    assert.ok(!seen.has(key), `重复债务：${entry.file}`);
+    seen.add(key);
     assert.ok(existing.has(entry.file), `文件不存在或不在维护集合：${entry.file}`);
-    assert.ok(!automatic.has(entry.file), `已恢复自动接收：${entry.file}`);
+    assert.ok(!automatic.has(key), `已恢复自动接收：${entry.file}`);
     assert.ok(categories.has(entry.category), `未知分类：${entry.file}`);
     assert.ok(typeof entry.reason === 'string' && entry.reason.trim(), `缺少具体理由：${entry.file}`);
-    assert.equal(entry.manualRoot, manual.has(entry.file), `root手动配置记录漂移：${entry.file}`);
+    assert.equal(entry.manualRoot, manual.has(key), `root手动配置记录漂移：${entry.file}`);
   }
-  const missing = maintained.filter(file => !automatic.has(file) && !seen.has(file));
+  const missing = maintained.filter(file => !automatic.has(identity(file)) && !seen.has(identity(file)));
   assert.deepEqual(missing.sort(), [], `未登记的测试债务：${missing.join(', ')}`);
 }
 
@@ -63,6 +67,86 @@ const maintainedPatterns = [
 function configurationInventory(config, cwd = brainRoot) {
   return {maintained: select({test: {include: maintainedPatterns}}, cwd), selected: select(config, cwd)};
 }
+
+test('当前六个兼容symlink与真实owner在自动单测集合只收集一次，且保留真实owner入口', () => {
+  const selected = select(brain, brainRoot);
+  const aliases = ['dept-heartbeat-plugin', 'goal-eval-plugin', 'heartbeat-plugin',
+    'kr-progress-sync-plugin', 'tick-runner', 'tick-state'].map(name => `tests/${name}.test.js`);
+  for (const alias of aliases) {
+    assert.ok(lstatSync(join(root, alias)).isSymbolicLink(), `${alias}兼容入口仍在`);
+    const owner = realpathSync(join(root, alias));
+    const sameBody = selected.filter(file => realpathSync(join(root, file)) === owner);
+    assert.deepEqual(sameBody, [relative(root, owner)], `同一真实测试不得由别名重复执行：${alias}`);
+  }
+});
+
+test('债务按真实文件认同alias与owner的同一保障，但不同文件不能借名消除遗漏', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'brain-debt-canonical-'));
+  try {
+    mkdirSync(join(directory, 'src')); mkdirSync(join(directory, 'aliases'));
+    writeFileSync(join(directory, 'src/owner.test.js'), 'actual owner');
+    writeFileSync(join(directory, 'src/other.test.js'), 'different body');
+    symlinkSync('../src/owner.test.js', join(directory, 'aliases/compat.test.js'));
+    const common = {canonicalRoot: directory, maintained: ['src/owner.test.js', 'aliases/compat.test.js'],
+      selected: ['src/owner.test.js'], manualRoot: [], entries: []};
+    assert.doesNotThrow(() => assertDebtMatches(common));
+    assert.throws(() => assertDebtMatches({...common, maintained: [...common.maintained, 'src/other.test.js']}), /未登记/);
+    assert.throws(() => assertDebtMatches({...common, selected: ['src/other.test.js']}), /未登记/);
+  } finally { rmSync(directory, {recursive: true, force: true}); }
+});
+
+const livenessPostgres = ['external-mirror-liveness', 'ops-alarm-ledger', 'ops-scheduler-liveness',
+  'workflow-run-lost-deadline'].map(name => `src/__tests__/${name}.pg.integration.test.js`);
+
+test('四组现役liveness真实PG回归只归有数据库的Deep集合，不落普通unit', () => {
+  const unit = new Set(select(brain, brainRoot)), database = new Set(select(deep, brainRoot));
+  for (const file of livenessPostgres.map(file => `packages/brain/${file}`)) {
+    assert.ok(!unit.has(file), `普通unit不得探测真实PG再整组skip：${file}`);
+    assert.ok(database.has(file), `Deep必须接收真实SQL回归：${file}`);
+  }
+});
+
+test('选中的四组PG入口遇到连接失败必须真实失败，不能以全部skip报绿', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'brain-pg-fault-boundary-'));
+  try {
+    symlinkSync(join(root, 'node_modules'), join(directory, 'node_modules'), 'dir');
+    const boundary = join(directory, 'fault-boundary.mjs'), report = join(directory, 'report.json');
+    writeFileSync(boundary, `import {vi} from 'vitest';
+vi.mock('pg', async original => {
+  const actual = await original();
+  class RefusingPool {
+    on(){return this;}
+    async query(){throw new Error('PG_REQUIRED_FIXTURE_CONNECTION_REFUSED');}
+    async connect(){throw new Error('PG_REQUIRED_FIXTURE_CONNECTION_REFUSED');}
+    async end(){}
+  }
+  return {...actual, Pool:RefusingPool, default:{...actual.default,Pool:RefusingPool}};
+});
+`);
+    const config = join(directory, 'vitest.config.mjs');
+    writeFileSync(config, `import base from ${JSON.stringify(join(root, 'packages/brain/vitest.config.js'))};
+export default {...base,root:${JSON.stringify(brainRoot)},test:{...base.test,
+include:${JSON.stringify(livenessPostgres)},exclude:[],setupFiles:[${JSON.stringify(boundary)}],
+env:{POSTGRES_INTEGRATION:'1',NODE_ENV:'test',DB_NAME:'cecelia_scratch',DB_HOST:'127.0.0.1'},
+cache:false}};
+`);
+    const cli = join(dirname(require.resolve('vitest/package.json', {paths: [brainRoot]})), 'vitest.mjs');
+    for (const file of livenessPostgres) {
+      rmSync(report, {force: true});
+      const run = spawnSync(process.execPath, [cli, 'run', file, '--config', config, '--reporter=default', '--reporter=json', `--outputFile=${report}`],
+        {cwd: root, encoding: 'utf8', timeout: 30000});
+      assert.ifError(run.error);
+      assert.equal(run.signal, null, run.stderr);
+      assert.notEqual(run.status, 0, '连接失效却全部skip，会把未执行的SQL伪装为成功');
+      const output = JSON.parse(readFileSync(report, 'utf8'));
+      assert.equal(output.testResults.length, 1);
+      const [suite] = output.testResults;
+      assert.ok(suite.name.endsWith(file), suite.name);
+      assert.equal(suite.status, 'failed', suite.name);
+      assert.match(run.stdout + run.stderr, /PG_REQUIRED_FIXTURE_CONNECTION_REFUSED/, suite.name);
+    }
+  } finally { rmSync(directory, {recursive: true, force: true}); }
+});
 
 test('新遗漏测试必须失败；有root手动配置也不能冒充自动覆盖', () => {
   const directory = mkdtempSync(join(tmpdir(), 'brain-debt-guard-'));
@@ -252,6 +336,6 @@ test('当前无人自动接收的Brain测试与精确债务清单一致', () => 
   const selected = lanes.flatMap(lane => select(...configurations[lane]));
   const manifest = require('../brain-test-debt.json');
   assert.equal(manifest.version, 1);
-  assertDebtMatches({maintained: configurationInventory(brain).maintained, selected,
+  assertDebtMatches({canonicalRoot: root, maintained: configurationInventory(brain).maintained, selected,
     manualRoot: select(rootConfig, root), entries: manifest.tests});
 });

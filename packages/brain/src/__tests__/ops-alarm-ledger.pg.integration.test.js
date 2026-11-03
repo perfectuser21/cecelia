@@ -4,31 +4,15 @@
  * fakePool 按子串匹配抓不到列名拼错、占位符错位、ON CONFLICT 目标缺唯一键、CHECK 约束被撞这类 bug，
  * 只有对着真表（517 迁移后的 ops_schedule_entries）跑一遍才测得出。
  *
- * 门控：连不上 PG，或库里还没有 517 的列（本地 DB 落后）→ 整体 skip（不 mock pg，不假装绿）。
+ * Deep专属：连接或现役结构失效必须失败；仅使用已验证数据库的私有schema。
  * 隔离：每个用例 BEGIN，结束 ROLLBACK，不污染共享测试库。
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
-import pg from 'pg';
-import { DB_DEFAULTS } from '../db-config.js';
+import { livenessPgFixture } from './helpers/liveness-pg-fixture.js';
 import { runSchedulerLiveness } from '../ops-scheduler-liveness.js';
 import { syncRecurringLedger } from '../ops-alarm-ledger.js';
 import { importInventorySnapshot } from '../ops-alarm-import.js';
 import { buildAlarmsPayload } from '../routes/agent-ops.js';
-
-let DB_READY = false;
-{
-  let probe;
-  try {
-    probe = new pg.Pool({ ...DB_DEFAULTS, max: 1, connectionTimeoutMillis: 2000 });
-    const { rows } = await probe.query(
-      `SELECT 1 FROM information_schema.columns WHERE table_name='ops_schedule_entries' AND column_name='ledger_status'`);
-    DB_READY = rows.length === 1;
-  } catch {
-    DB_READY = false;
-  } finally {
-    if (probe) await probe.end().catch(() => {});
-  }
-}
 
 /** 让 importInventorySnapshot 的 pool.connect() 复用测试事务：吞掉它自己的 BEGIN/COMMIT/ROLLBACK。 */
 function txPool(client) {
@@ -42,16 +26,16 @@ function txPool(client) {
   };
 }
 
-describe.skipIf(!DB_READY)('闹钟总账 — pg 集成（真实 SQL，不 mock pg）', () => {
-  let pool;
+describe('闹钟总账 — pg 集成（真实 SQL，不 mock pg）', () => {
+  let pool, fixture;
   let client;
   const NOW = Date.parse('2026-10-04T01:00:00Z');
   const iso = (secAgo) => new Date(NOW - secAgo * 1000).toISOString();
 
-  beforeAll(() => { pool = new pg.Pool({ ...DB_DEFAULTS, max: 1 }); });
-  afterAll(async () => { await pool.end(); });
+  beforeAll(async () => { fixture = await livenessPgFixture(); pool = fixture.pool; });
+  afterAll(async () => { await fixture?.close(); });
   beforeEach(async () => { client = await pool.connect(); await client.query('BEGIN'); });
-  afterEach(async () => { await client.query('ROLLBACK'); client.release(); });
+  afterEach(async () => { if (!client) return; try { await client.query('ROLLBACK'); } finally { client.release(); client = undefined; } });
 
   const seedSentinel = (name, rec) => client.query(
     `INSERT INTO working_memory (key, value_json, updated_at) VALUES ($1, $2, NOW())

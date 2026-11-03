@@ -6,6 +6,10 @@ import {skillSourceExcludes} from '../../scripts/ci/skill-source-tests.mjs';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export const POSTGRES_INTEGRATION_TESTS = [
+  'src/__tests__/external-mirror-liveness.pg.integration.test.js',
+  'src/__tests__/ops-alarm-ledger.pg.integration.test.js',
+  'src/__tests__/ops-scheduler-liveness.pg.integration.test.js',
+  'src/__tests__/workflow-run-lost-deadline.pg.integration.test.js',
   'src/lib/__tests__/runtime-identities.test.js',
   'src/lib/__tests__/runtime-version-graph.test.js',
   'src/lib/__tests__/version-identity-preflight.test.js',
@@ -202,6 +206,13 @@ export default defineConfig({
     // brain-unit 跑纯单元测试（有 vi.mock('db.js') 的），集成测试走 brain-integration
     exclude: [
       ...skillSourceExcludes('brain'),
+      // 根tests中的六个symlink只保兼容调用；自动收集使用src/__tests__唯一真实owner。
+      '../../tests/dept-heartbeat-plugin.test.js',
+      '../../tests/goal-eval-plugin.test.js',
+      '../../tests/heartbeat-plugin.test.js',
+      '../../tests/kr-progress-sync-plugin.test.js',
+      '../../tests/tick-runner.test.js',
+      '../../tests/tick-state.test.js',
       // 与 CI unit 一致：真实 PG 与建库迁移 fixture 只交集成层。
       'src/__tests__/integration/**',
       'src/__tests__/real-env/**',

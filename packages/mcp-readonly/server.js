@@ -221,7 +221,7 @@ function buildMcpServer({ pool, startedAt, queryFn }) {
   return server;
 }
 
-export function createApp({ skipDbInit = false, bearerToken = process.env.MCP_BEARER_TOKEN } = {}) {
+export function createApp({ skipDbInit = false, databasePool, bearerToken = process.env.MCP_BEARER_TOKEN } = {}) {
   const app = express();
   app.use(express.json());
 
@@ -229,7 +229,8 @@ export function createApp({ skipDbInit = false, bearerToken = process.env.MCP_BE
     res.status(200).json({ uptime: process.uptime() });
   });
 
-  const pool = skipDbInit ? null : createReadonlyPool(process.env.MCP_READONLY_DATABASE_URL, { max: 5 });
+  // 注入的pool由调用方持有并关闭；缺省仍使用服务自身配置创建连接池。
+  const pool = databasePool ?? (skipDbInit ? null : createReadonlyPool(process.env.MCP_READONLY_DATABASE_URL, { max: 5 }));
   const startedAt = Date.now();
   const trackedQuery = makeTrackedQuery(query, alertTracker);
 

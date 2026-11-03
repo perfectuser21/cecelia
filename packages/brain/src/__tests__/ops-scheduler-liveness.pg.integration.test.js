@@ -5,39 +5,23 @@
  * fakePool 按子串匹配会漏掉列名拼错、占位符错位、RETURNING 子查询语法错这类问题，
  * 这类 bug 只有真的对着 ops_workflows/working_memory 表跑一遍才测得出。
  *
- * 门控：无真实 PG 可连时整个 describe 跳过（不 mock pg，不假装绿）。
+ * Deep专属：真实 PG 不可用即失败，不允许整组skip。
  * 隔离：每个用例 BEGIN 一个事务，结束 ROLLBACK，不污染共享测试库。
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
-import pg from 'pg';
-import { DB_DEFAULTS } from '../db-config.js';
+import { livenessPgFixture } from './helpers/liveness-pg-fixture.js';
 import { runSchedulerLiveness, SCHEDULER_SOURCE, SCHEDULER_MACHINE } from '../ops-scheduler-liveness.js';
 
-// 探活：真的连一次，连不上就整体 skip（不是靠环境变量猜）
-let DB_AVAILABLE = false;
-{
-  let probePool;
-  try {
-    probePool = new pg.Pool({ ...DB_DEFAULTS, max: 1, connectionTimeoutMillis: 2000 });
-    await probePool.query('SELECT 1');
-    DB_AVAILABLE = true;
-  } catch {
-    DB_AVAILABLE = false;
-  } finally {
-    if (probePool) await probePool.end().catch(() => {});
-  }
-}
-
-describe.skipIf(!DB_AVAILABLE)('ops-scheduler-liveness — pg 集成（真实 upsert SQL，不 mock pg）', () => {
-  let pool;
+describe('ops-scheduler-liveness — pg 集成（真实 upsert SQL，不 mock pg）', () => {
+  let pool, fixture;
   let client;
 
   beforeAll(async () => {
-    pool = new pg.Pool({ ...DB_DEFAULTS, max: 1 });
+    fixture = await livenessPgFixture(); pool = fixture.pool;
   });
 
   afterAll(async () => {
-    await pool.end();
+    await fixture?.close();
   });
 
   beforeEach(async () => {
@@ -46,8 +30,8 @@ describe.skipIf(!DB_AVAILABLE)('ops-scheduler-liveness — pg 集成（真实 up
   });
 
   afterEach(async () => {
-    await client.query('ROLLBACK');
-    client.release();
+    if (!client) return;
+    try { await client.query('ROLLBACK'); } finally { client.release(); client = undefined; }
   });
 
   it('warn→dead 翻转发一条 Bark；再跑一次无翻转不发、未过 10min/600s 降噪不刷新', async () => {

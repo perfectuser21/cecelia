@@ -6,7 +6,8 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:pg": "vitest run --config vitest.pg.config.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.0",

@@ -6,7 +6,6 @@
 
 import 'dotenv/config';
 import express from 'express';
-import compression from 'compression';
 import { createServer } from 'http';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
@@ -37,6 +36,8 @@ import n8nApiRoutes from '../n8n-api/routes.js';
 import analysisRoutes from '../analysis/routes.js';
 import clusterRoutes from '../cluster/routes.js';
 import agentOpsWechatRoutes from '../agent-ops/wechat.js';
+import { createBrainProxy } from './brain-proxy.js';
+import { createCompressionMiddleware, createStaticAssetMiddleware, createSpaFallback } from './static-middleware.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -66,7 +67,7 @@ app.use((_req, res, next) => {
 });
 
 // Gzip compression for all responses
-app.use(compression() as unknown as express.RequestHandler);
+app.use(createCompressionMiddleware());
 
 // Proxy routes BEFORE body parser (so request body is not consumed)
 // Local orchestrator queue management routes (registered before proxy)
@@ -98,14 +99,7 @@ app.use('/api/autumnrice', createProxyMiddleware({
 // Brain API routes → proxy to cecelia-semantic-brain Node.js service
 // Must be BEFORE express.json() so the request body stream is not consumed
 const BRAIN_NODE_API = process.env.BRAIN_NODE_API || 'http://localhost:5221';
-const brainProxy = createProxyMiddleware({
-  target: BRAIN_NODE_API,
-  changeOrigin: true,
-  pathRewrite: (path) => `/api/brain${path}`,
-  // NOTE: do NOT set ws:true here — http-proxy-middleware v3 would auto-register a
-  // server.on('upgrade') listener that conflicts with the manual handler below.
-  // WebSocket upgrades for /api/brain/ws are handled exclusively in server.on('upgrade').
-});
+const brainProxy = createBrainProxy(BRAIN_NODE_API);
 app.use('/api/brain', brainProxy);
 
 // Dedicated WebSocket proxy for Brain — no pathRewrite, so /ws stays /ws at port 5221
@@ -230,17 +224,7 @@ app.use('/api/agent-ops/wechat', agentOpsWechatRoutes);
 // Frontend lives in apps/dashboard/ within this workspace
 const frontendPath = process.env.DASHBOARD_FRONTEND_PATH || join(__dirname, '../../../dashboard/dist');
 
-// Hashed assets (/assets/*) — immutable long-term cache (1 year)
-app.use('/assets', express.static(join(frontendPath, 'assets'), {
-  maxAge: '1y',
-  immutable: true,
-}));
-
-// Other static files (index.html, favicon, logos) — no cache
-app.use(express.static(frontendPath, {
-  maxAge: 0,
-  etag: true,
-}));
+app.use(createStaticAssetMiddleware(frontendPath));
 
 // 蓝绿护栏健康检查端点 — staging-e2e-runner.js 检查 :5201/health 用。
 // 必须在 SPA fallback 前注册，否则被 app.get('*') 截获返回 HTML → 护栏误判。
@@ -249,10 +233,7 @@ app.get('/health', (_req, res) => {
 });
 
 // SPA fallback — no cache for index.html
-app.get('*', (_req, res) => {
-  res.setHeader('Cache-Control', 'no-cache');
-  res.sendFile(join(frontendPath, 'index.html'));
-});
+app.get('*', createSpaFallback(frontendPath));
 
 // Error handler
 app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {

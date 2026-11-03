@@ -15,6 +15,12 @@ describe('getSchemaVersion', () => {
     const fakeQuery = vi.fn().mockResolvedValue({ rows: [{ version: 406 }] });
     const result = await getSchemaVersion(fakePool, fakeQuery);
     expect(result).toEqual({ current_version: 406 });
+    const [pool, sql, params] = fakeQuery.mock.calls[0];
+    expect(pool).toBe(fakePool);
+    expect(sql).toMatch(/MAX\(version::int\)/);
+    expect(sql).toMatch(/FROM\s+schema_version/);
+    expect(sql).toContain("WHERE version ~ '^[0-9]{1,4}$'");
+    expect(params).toEqual([]);
   });
 });
 
@@ -42,6 +48,10 @@ describe('getMapSummary', () => {
     expect(result.active_manifest_id).toBe('m1');
     expect(result.projection_status).toBe('active');
     expect(result.node_counts).toEqual({ value_stream: 3, capability: 10 });
+    const [pool, sql, params] = fakeQuery.mock.calls[2];
+    expect(pool).toBe(fakePool);
+    expect(sql).toMatch(/FROM\s+map_projection_nodes\s+WHERE\s+run_id\s*=\s*\$1\s+GROUP BY\s+node_type/);
+    expect(params).toEqual(['run1']);
   });
 });
 
