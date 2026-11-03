@@ -21,10 +21,10 @@ async function run(enabled,offline=false,mode='success'){
   await fs.writeFile(join(root,'.skills-source.json'),JSON.stringify({repository:'perfectuser21/zenithjoy-skills',revision:'a'.repeat(40)}));
   await fs.writeFile(join(root,'.skills-source-state.json'),JSON.stringify({revision:'a'.repeat(40),files:{[skillEntry]:createHash('sha256').update(skill).digest('hex')}}));
   const fake=join(root,'openclaw'),gateway=join(root,'gateway.mjs');
-  await fs.writeFile(gateway,`import fs from 'node:fs';if(${offline})process.exit(7);const args=process.argv.slice(2),x=JSON.parse(args[args.indexOf('--params')+1]);fs.appendFileSync(${JSON.stringify(join(root,'calls'))},JSON.stringify(x)+'\\n');console.log(JSON.stringify({status:'ok',runId:x.idempotencyKey,payloads:[{text:'{"action":"none"}'}]}));`);
+  await fs.writeFile(gateway,`import fs from 'node:fs';if(${offline})process.exit(7);const args=process.argv.slice(2),x=JSON.parse(args[args.indexOf('--params')+1]);fs.appendFileSync(${JSON.stringify(join(root,'calls'))},JSON.stringify(x)+'\\n');const q=JSON.parse(x.message.split('运行上下文：\\n').at(-1));const action=${JSON.stringify(mode)}==='retryable-steer'&&q.event?.type==='error'?{action:'steer',text:'按A4修正'}:{action:'none'};console.log(JSON.stringify({status:'ok',runId:x.idempotencyKey,payloads:[{text:JSON.stringify(action)}]}));`);
   await fs.writeFile(fake,`#!/bin/sh\nexec '${process.execPath.replaceAll("'","'\\''")}' '${gateway.replaceAll("'","'\\''")}' "$@"\n`,{mode:0o700});
-  await fs.writeFile(join(root,'work.mjs'),`let s='';for await(const c of process.stdin)s+=c;const x=JSON.parse(s),bad=${JSON.stringify(mode)}!=='success'&&x.attempt===1;console.log(JSON.stringify({schema_version:1,run_tag:x.run_tag,status:bad?'failed':'completed',...(bad?{failure_class:${JSON.stringify(mode)}==='fatal'?'fatal':'retryable',reason_code:${JSON.stringify(mode)}==='unregistered'?'other':'transient'}:{}),outputs:{answer:42},metrics:{},evidence:[]}));`);
-  const envelope={contract:{workflow:'offline',commander:{enabled},on_status:{done:'next',retry:'retry',failed:'stop',empty:'next',partial:'stop',needs_review:'pause'},activities:[{key:'work',order:1,budget:{max_duration_s:3,heartbeat_s:1},failure:{empty_ok:[],retryable:['transient'],fatal:['error'],needs_human:{cases:[]}},runtime:{entry:'work.mjs',phase:'source',protocol:'json-stdio-v1',max_attempts:2,retry_safe:true}}]},input:{run_tag:'offline',commander:{entry:'evil.mjs',skill:{entry:'evil.md',content:'变更规则'}}}};
+  await fs.writeFile(join(root,'work.mjs'),`let s='';for await(const c of process.stdin)s+=c;const x=JSON.parse(s),bad=${JSON.stringify(mode)}!=='success'&&x.attempt===1;console.log(JSON.stringify({schema_version:1,run_tag:x.run_tag,status:bad?'failed':'completed',...(bad?{failure_class:${JSON.stringify(mode)}==='fatal'?'fatal':'retryable',reason_code:${JSON.stringify(mode)}==='unregistered'?'other':'transient'}:{}),outputs:{answer:42,guidance:x.commander_guidance||[]},metrics:{},evidence:[]}));`);
+  const envelope={contract:{workflow:'offline',commander:{enabled},on_status:{done:'next',retry:'retry',failed:'stop',empty:'next',partial:'stop',needs_review:'pause'},activities:[{key:'work',order:1,budget:{max_duration_s:3,heartbeat_s:1},failure:{empty_ok:[],retryable:['transient'],fatal:['error'],needs_human:{cases:[]}},runtime:{entry:'work.mjs',phase:'source',protocol:'json-stdio-v1',executor_kind:'agent',max_attempts:2,retry_safe:true}}]},input:{run_tag:'offline',commander:{entry:'evil.mjs',skill:{entry:'evil.md',content:'变更规则'}}}};
   const child=spawn(process.execPath,[join(scriptDir,'activity-contract-run.js'),'--cwd',root],{env:{...process.env,PATH:root+':'+process.env.PATH},stdio:['pipe','pipe','pipe']});
   let out='',err='';child.stdout.on('data',s=>out+=s);child.stderr.on('data',s=>err+=s);const finished=new Promise(resolve=>child.on('close',resolve));child.stdin.end(JSON.stringify(envelope));
   const code=await finished;let calls=[];try{calls=(await fs.readFile(join(root,'calls'),'utf8')).trim().split('\n').map(JSON.parse);}catch{}
@@ -56,4 +56,10 @@ test('登记的retryable失败由代码映射retry并有限重试，保留原执
 });
 test.each(['fatal','unregistered'])('%s失败不得映射为可重试状态',async mode=>{
  const r=await run(true,false,mode);expect(r.code).toBe(2);expect(r.result.activities[0].attempts).toHaveLength(1);
+});
+test('真实CLI失败后Commander纠偏进入下一agent回合且逐条留记录',async()=>{
+ const r=await run(true,false,'retryable-steer');expect(r.code,r.err).toBe(0);
+ expect(r.result.activities[0].attempts[1].outputs.guidance).toEqual(['按A4修正']);
+ expect(r.result.commander_events.some(e=>e.event_type==='COMMANDER_EXCHANGE'&&e.action?.action==='steer')).toBe(true);
+ expect(r.result.activities[0].commander_interventions).toBe(1);
 });
