@@ -105,15 +105,23 @@ vi.mock('../self-report-collector.js', () => ({ collectSelfReport: vi.fn() }));
 vi.mock('../learning.js', () => ({ getRecentLearnings: vi.fn(() => []) }));
 vi.mock('../suggestion-triage.js', () => ({ createSuggestion: vi.fn(), PRIORITY_WEIGHTS: {} }));
 vi.mock('../suggestion-dispatcher.js', () => ({ dispatchSuggestions: vi.fn() }));
-vi.mock('fs', () => ({ readFileSync: vi.fn(() => ''), readdirSync: vi.fn(() => []) }));
+vi.mock('../executor.js', () => ({ triggerCeceliaRun: vi.fn(), checkCeceliaRunAvailable: vi.fn() }));
+vi.mock('../tick-helpers.js', () => ({ routeTask: vi.fn(), TASK_TYPE_AGENT_MAP: {} }));
+vi.mock('../routes/shared.js', () => ({ classifyLearningType: vi.fn().mockResolvedValue(null) }));
 // T12: mock capture-inbox（ESM export 无法 vi.spyOn，用工厂 mock；等价断言，与 handoff.test.js 手法一致）
 vi.mock('../capture-inbox.js', () => ({ pushCaptureAtom: vi.fn().mockResolvedValue('atom-1') }));
 
-// ── 直接单测路由逻辑（不加载完整 routes.js）─────────────────
+import router from '../routes/tasks.js';
+
+// 真实 Express handler；数据库和外部副作用在模块边界隔离。
 
 describe('POST /api/brain/learnings-received', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockQuery.mockReset();
+    mockCreateTask.mockReset();
+    mockQuery.mockRejectedValue(new Error('未配置的数据库访问'));
+    mockCreateTask.mockRejectedValue(new Error('未配置的任务写入'));
   });
 
   it('issues_found → 创建 fix task', async () => {
@@ -123,92 +131,30 @@ describe('POST /api/brain/learnings-received', () => {
     const app = express();
     app.use(express.json());
 
-    // 内联路由逻辑（与 routes.js 一致）
-    app.post('/api/brain/learnings-received', async (req, res) => {
-      const { issues_found = [], next_steps_suggested = [] } = req.body;
-      const results = { tasks_created: [], learnings_inserted: [] };
-
-      for (const issue of issues_found) {
-        if (!issue || typeof issue !== 'string') continue;
-        const taskResult = await mockCreateTask({
-          title: `Fix: ${issue.slice(0, 120)}`,
-          priority: 'P1',
-          task_type: 'dev',
-          trigger_source: 'learnings_received',
-        });
-        if (taskResult?.task?.id) results.tasks_created.push(taskResult.task.id);
-      }
-
-      for (const step of next_steps_suggested) {
-        if (!step || typeof step !== 'string') continue;
-        const { rows } = await mockQuery(
-          `INSERT INTO learnings (title, category, content, trigger_source, trigger_event, digested) VALUES ($1,'dev_experience',$2,'dev_workflow','learnings_received',false) RETURNING id`,
-          [step.slice(0, 120), step]
-        );
-        if (rows[0]?.id) results.learnings_inserted.push(rows[0].id);
-      }
-
-      await mockQuery('INSERT INTO cecelia_events...', []);
-
-      res.json({
-        success: true,
-        tasks_created: results.tasks_created.length,
-        learnings_inserted: results.learnings_inserted.length,
-        task_ids: results.tasks_created,
-        learning_ids: results.learnings_inserted,
-      });
-    });
+    app.use('/api/brain', router);
 
     const response = await request(app)
       .post('/api/brain/learnings-received')
-      .send({ issues_found: ['CI 失败：版本号未同步'], next_steps_suggested: [] });
+      .send({ issues_found: ['CI 失败：版本号未同步'], next_steps_suggested: [], branch_name: 'cp-test', pr_number: 42, task_id: 'source-task' });
 
     expect(response.status).toBe(200);
     expect(response.body.success).toBe(true);
-    expect(response.body.tasks_created).toBe(1);
-    expect(mockCreateTask).toHaveBeenCalledWith(
-      expect.objectContaining({
-        title: 'Fix: CI 失败：版本号未同步',
-        priority: 'P1',
-        trigger_source: 'learnings_received',
-      })
-    );
+    expect(response.body).toEqual({ success: true, tasks_created: 1, learnings_inserted: 0, task_ids: ['task-uuid-1'], learning_ids: [] });
+    expect(mockCreateTask).toHaveBeenCalledWith({
+      title: 'Fix: CI 失败：版本号未同步',
+      description: '来源：LEARNINGS_RECEIVED（分支 cp-test / PR #42）\n\nCI 失败：版本号未同步',
+      task_type: 'dev', priority: 'P1', trigger_source: 'learnings_received',
+      payload: { branch_name: 'cp-test', pr_number: 42, task_id: 'source-task', source: 'learnings_received' },
+    });
   });
 
   it('next_steps_suggested → 写 learnings 表（成长线）', async () => {
-    mockQuery
-      .mockResolvedValueOnce({ rows: [{ id: 'learning-uuid-1' }] }) // learnings INSERT
-      .mockResolvedValueOnce({ rows: [] }); // cecelia_events
+    mockQuery.mockImplementation(async (sql) => ({ rows: /INSERT INTO learnings/.test(sql) ? [{ id: 'learning-uuid-1' }] : [] }));
 
     const app = express();
     app.use(express.json());
 
-    app.post('/api/brain/learnings-received', async (req, res) => {
-      const { issues_found = [], next_steps_suggested = [] } = req.body;
-      const results = { tasks_created: [], learnings_inserted: [] };
-
-      for (const issue of issues_found) {
-        if (!issue) continue;
-        const taskResult = await mockCreateTask({ title: `Fix: ${issue}`, priority: 'P1' });
-        if (taskResult?.task?.id) results.tasks_created.push(taskResult.task.id);
-      }
-
-      for (const step of next_steps_suggested) {
-        if (!step) continue;
-        const { rows } = await mockQuery('INSERT INTO learnings...', [step.slice(0, 120), step]);
-        if (rows[0]?.id) results.learnings_inserted.push(rows[0].id);
-      }
-
-      await mockQuery('INSERT INTO cecelia_events...', []);
-
-      res.json({
-        success: true,
-        tasks_created: results.tasks_created.length,
-        learnings_inserted: results.learnings_inserted.length,
-        task_ids: results.tasks_created,
-        learning_ids: results.learnings_inserted,
-      });
-    });
+    app.use('/api/brain', router);
 
     const response = await request(app)
       .post('/api/brain/learnings-received')
@@ -219,7 +165,7 @@ describe('POST /api/brain/learnings-received', () => {
 
     expect(response.status).toBe(200);
     expect(response.body.success).toBe(true);
-    expect(response.body.learnings_inserted).toBe(1);
+    expect(response.body).toEqual({ success: true, tasks_created: 0, learnings_inserted: 1, task_ids: [], learning_ids: ['learning-uuid-1'] });
     expect(mockCreateTask).not.toHaveBeenCalled();
   });
 
@@ -229,10 +175,7 @@ describe('POST /api/brain/learnings-received', () => {
     const app = express();
     app.use(express.json());
 
-    app.post('/api/brain/learnings-received', async (req, res) => {
-      mockQuery('INSERT INTO cecelia_events...', []);
-      res.json({ success: true, tasks_created: 0, learnings_inserted: 0, task_ids: [], learning_ids: [] });
-    });
+    app.use('/api/brain', router);
 
     const response = await request(app)
       .post('/api/brain/learnings-received')
@@ -245,37 +188,12 @@ describe('POST /api/brain/learnings-received', () => {
 
   it('两条内容都有时，各自路由到正确路径', async () => {
     mockCreateTask.mockResolvedValue({ task: { id: 'task-1' } });
-    mockQuery
-      .mockResolvedValueOnce({ rows: [{ id: 'learning-1' }] })
-      .mockResolvedValue({ rows: [] });
+    mockQuery.mockImplementation(async (sql) => ({ rows: /INSERT INTO learnings/.test(sql) ? [{ id: 'learning-1' }] : [] }));
 
     const app = express();
     app.use(express.json());
 
-    app.post('/api/brain/learnings-received', async (req, res) => {
-      const { issues_found = [], next_steps_suggested = [] } = req.body;
-      const results = { tasks_created: [], learnings_inserted: [] };
-
-      for (const issue of issues_found) {
-        if (!issue) continue;
-        const r = await mockCreateTask({ title: `Fix: ${issue}`, priority: 'P1' });
-        if (r?.task?.id) results.tasks_created.push(r.task.id);
-      }
-      for (const step of next_steps_suggested) {
-        if (!step) continue;
-        const { rows } = await mockQuery('INSERT...', [step]);
-        if (rows[0]?.id) results.learnings_inserted.push(rows[0].id);
-      }
-      await mockQuery('INSERT INTO cecelia_events...', []);
-
-      res.json({
-        success: true,
-        tasks_created: results.tasks_created.length,
-        learnings_inserted: results.learnings_inserted.length,
-        task_ids: results.tasks_created,
-        learning_ids: results.learnings_inserted,
-      });
-    });
+    app.use('/api/brain', router);
 
     const response = await request(app)
       .post('/api/brain/learnings-received')
@@ -290,42 +208,41 @@ describe('POST /api/brain/learnings-received', () => {
   });
 });
 
+describe('真实 learning 路由的单项故障隔离', () => {
+  it('无效条目不建单，首项写入失败仍返回后续任务与学习的真实ID', async () => {
+    mockQuery.mockReset().mockImplementation(async sql => ({ rows: /INSERT INTO learnings/.test(sql) ? [{ id: 'learning-survivor' }] : [] }));
+    mockCreateTask.mockReset().mockRejectedValueOnce(new Error('fixture_write_failed')).mockResolvedValueOnce({ task: { id: 'task-survivor' } });
+    const app = express();
+    app.use(express.json());
+    app.use('/api/brain', router);
+    const response = await request(app).post('/api/brain/learnings-received').send({
+      issues_found: [null, 1, '', '失败项', '成功项'], next_steps_suggested: ['有效学习'], task_id: 'source-task',
+    });
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({ success: true, tasks_created: 1, learnings_inserted: 1, task_ids: ['task-survivor'], learning_ids: ['learning-survivor'] });
+    expect(mockCreateTask).toHaveBeenCalledTimes(2);
+    expect(mockCreateTask.mock.calls.map(([task]) => task.title)).toEqual(['Fix: 失败项', 'Fix: 成功项']);
+  });
+});
+
 // ── migration 151: source_branch / source_pr / repo 字段测试 ──────────
 
 describe('learnings-received: migration 151 — 来源追踪字段', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockQuery.mockReset();
+    mockCreateTask.mockReset();
+    mockQuery.mockRejectedValue(new Error('未配置的数据库访问'));
+    mockCreateTask.mockRejectedValue(new Error('未配置的任务写入'));
   });
 
   it('INSERT 时应包含 source_branch 字段（来自 branch_name）', async () => {
-    mockQuery
-      .mockResolvedValueOnce({ rows: [{ id: 'learning-src-1' }] }) // learnings INSERT
-      .mockResolvedValueOnce({ rows: [] }); // cecelia_events
+    mockQuery.mockImplementation(async (sql) => ({ rows: /INSERT INTO learnings/.test(sql) ? [{ id: 'learning-src-1' }] : [] }));
 
     const app = express();
     app.use(express.json());
 
-    app.post('/api/brain/learnings-received', async (req, res) => {
-      const { next_steps_suggested = [], branch_name, pr_number, repo = 'cecelia' } = req.body;
-      const results = { tasks_created: [], learnings_inserted: [] };
-
-      for (const step of next_steps_suggested) {
-        if (!step || typeof step !== 'string') continue;
-        const { rows } = await mockQuery(
-          `INSERT INTO learnings
-             (title, category, content, trigger_source, trigger_event, digested,
-              source_branch, source_pr, repo)
-           VALUES ($1, 'dev_experience', $2, 'dev_workflow', 'learnings_received', false,
-                   $3, $4, $5)
-           RETURNING id`,
-          [step.slice(0, 120), step, branch_name || null, pr_number ? String(pr_number) : null, repo]
-        );
-        if (rows[0]?.id) results.learnings_inserted.push(rows[0].id);
-      }
-      await mockQuery('INSERT INTO cecelia_events...', []);
-      res.json({ success: true, tasks_created: 0, learnings_inserted: results.learnings_inserted.length,
-        task_ids: [], learning_ids: results.learnings_inserted });
-    });
+    app.use('/api/brain', router);
 
     await request(app)
       .post('/api/brain/learnings-received')
@@ -347,25 +264,12 @@ describe('learnings-received: migration 151 — 来源追踪字段', () => {
   });
 
   it('branch_name 为空时 source_branch 为 null', async () => {
-    mockQuery
-      .mockResolvedValueOnce({ rows: [{ id: 'learning-src-2' }] })
-      .mockResolvedValueOnce({ rows: [] });
+    mockQuery.mockImplementation(async (sql) => ({ rows: /INSERT INTO learnings/.test(sql) ? [{ id: 'learning-src-2' }] : [] }));
 
     const app = express();
     app.use(express.json());
 
-    app.post('/api/brain/learnings-received', async (req, res) => {
-      const { next_steps_suggested = [], branch_name, pr_number, repo = 'cecelia' } = req.body;
-      for (const step of next_steps_suggested) {
-        if (!step) continue;
-        await mockQuery(
-          `INSERT INTO learnings (title, category, content, trigger_source, trigger_event, digested, source_branch, source_pr, repo) VALUES ($1,'dev_experience',$2,'dev_workflow','learnings_received',false,$3,$4,$5) RETURNING id`,
-          [step.slice(0, 120), step, branch_name || null, pr_number ? String(pr_number) : null, repo]
-        );
-      }
-      await mockQuery('INSERT INTO cecelia_events...', []);
-      res.json({ success: true, tasks_created: 0, learnings_inserted: 1, task_ids: [], learning_ids: [] });
-    });
+    app.use('/api/brain', router);
 
     await request(app)
       .post('/api/brain/learnings-received')
@@ -378,30 +282,19 @@ describe('learnings-received: migration 151 — 来源追踪字段', () => {
   });
 
   it('repo 字段默认为 cecelia', async () => {
-    mockQuery
-      .mockResolvedValueOnce({ rows: [{ id: 'lr-3' }] })
-      .mockResolvedValueOnce({ rows: [] });
+    mockQuery.mockImplementation(async (sql) => ({ rows: /INSERT INTO learnings/.test(sql) ? [{ id: 'lr-3' }] : [] }));
 
     const app = express();
     app.use(express.json());
 
-    app.post('/api/brain/learnings-received', async (req, res) => {
-      const { next_steps_suggested = [], branch_name, pr_number, repo = 'cecelia' } = req.body;
-      for (const step of next_steps_suggested) {
-        if (!step) continue;
-        await mockQuery('INSERT INTO learnings (...source_branch, source_pr, repo) VALUES ($1,$2,$3,$4,$5) RETURNING id',
-          [step.slice(0, 120), step, branch_name || null, pr_number || null, repo]);
-      }
-      await mockQuery('events', []);
-      res.json({ success: true, tasks_created: 0, learnings_inserted: 1, task_ids: [], learning_ids: [] });
-    });
+    app.use('/api/brain', router);
 
     await request(app)
       .post('/api/brain/learnings-received')
       .send({ next_steps_suggested: ['某项预防措施'], branch_name: 'cp-test' });
 
     // repo 默认值为 'cecelia'（不传 repo 时）
-    const insertCall = mockQuery.mock.calls[0];
+    const insertCall = mockQuery.mock.calls.find(([sql]) => /INSERT INTO learnings/.test(sql));
     expect(insertCall[1][4]).toBe('cecelia');
   });
 });
@@ -411,15 +304,17 @@ describe('learnings-received: migration 151 — 来源追踪字段', () => {
 describe('learnings-received: T12 — capture_atoms 收件箱补线', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockQuery.mockReset();
+    mockCreateTask.mockReset();
+    mockQuery.mockRejectedValue(new Error('未配置的数据库访问'));
+    mockCreateTask.mockRejectedValue(new Error('未配置的任务写入'));
   });
 
   it('next_steps_suggested 插入 learnings 成功后应调用 pushCaptureAtom', async () => {
     const { pushCaptureAtom } = await import('../capture-inbox.js');
     const router = (await import('../routes/tasks.js')).default;
 
-    mockQuery
-      .mockResolvedValueOnce({ rows: [{ id: 'learning-capture-1' }] }) // learnings INSERT
-      .mockResolvedValueOnce({ rows: [] }); // cecelia_events insert
+    mockQuery.mockImplementation(async (sql) => ({ rows: /INSERT INTO learnings/.test(sql) ? [{ id: 'learning-capture-1' }] : [] }));
 
     const app = express();
     app.use(express.json());
@@ -447,9 +342,7 @@ describe('learnings-received: T12 — capture_atoms 收件箱补线', () => {
     pushCaptureAtom.mockRejectedValueOnce(new Error('capture_atoms insert failed'));
     const router = (await import('../routes/tasks.js')).default;
 
-    mockQuery
-      .mockResolvedValueOnce({ rows: [{ id: 'learning-capture-2' }] })
-      .mockResolvedValueOnce({ rows: [] });
+    mockQuery.mockImplementation(async (sql) => ({ rows: /INSERT INTO learnings/.test(sql) ? [{ id: 'learning-capture-2' }] : [] }));
 
     const app = express();
     app.use(express.json());

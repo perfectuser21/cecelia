@@ -57,18 +57,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 2
+          ref: ${{ github.sha }}
+          fetch-depth: 0
       - name: Detect changed paths
         id: filter
         run: |
-          COMMIT_MSG=$(git log -1 --pretty=%B 2>/dev/null || echo "")
+          set -euo pipefail
+          COMMIT_MSG=$(git log -1 --pretty=%B)
 
-          # schedule / workflow_dispatch 触发：全量部署（不依赖 push event 的 before/after）
+          # 全量发布没有经核验的生产前驱差异；不能把未知改动当作低风险。
           if [ "${{ github.event_name }}" = "schedule" ] || [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "brain=true" >> $GITHUB_OUTPUT
             echo "workspace=true" >> $GITHUB_OUTPUT
             echo "changed_paths=packages/brain/ apps/" >> $GITHUB_OUTPUT
-            echo "risk_level=low" >> $GITHUB_OUTPUT
+            echo "risk_level=high" >> $GITHUB_OUTPUT
             echo "🕐 Release 触发（${{ github.event_name }}）— 全量部署"
             exit 0
           fi
@@ -81,11 +83,18 @@ jobs:
             echo "brain=true" >> $GITHUB_OUTPUT
             echo "workspace=true" >> $GITHUB_OUTPUT
             echo "changed_paths=packages/brain/ apps/" >> $GITHUB_OUTPUT
-            echo "risk_level=low" >> $GITHUB_OUTPUT
+            echo "risk_level=high" >> $GITHUB_OUTPUT
             exit 0
           fi
 
-          CHANGED=$(git diff --name-only "$BEFORE" "$AFTER" 2>/dev/null || git diff --name-only HEAD~1 HEAD)
+          if ! CHANGED=$(git diff --name-only "$BEFORE" "$AFTER"); then
+            echo "brain=true" >> "$GITHUB_OUTPUT"
+            echo "workspace=true" >> "$GITHUB_OUTPUT"
+            echo "changed_paths=packages/brain/ apps/" >> "$GITHUB_OUTPUT"
+            echo "risk_level=high" >> "$GITHUB_OUTPUT"
+            echo "::warning::无法核验发布前驱差异，必须经过隔离 staging"
+            exit 0
+          fi
 
           if echo "$CHANGED" | grep -qE "^packages/brain/|^DEFINITION\.md$|^\.brain-versions$"; then
             echo "brain=true" >> $GITHUB_OUTPUT
@@ -112,7 +121,7 @@ jobs:
 
           # 高风险路径：Brain 核心编排文件
           # Patterns: thalamus.js tick.js executor.js task-router.js migrate.js selfcheck.js ops.js
-          SAFE_LANE_PATTERN="^packages/brain/src/thalamus\.js$|^packages/brain/src/tick\.js$|^packages/brain/src/executor\.js$|^packages/brain/src/task-router\.js$|^packages/brain/src/migrate\.js$|^packages/brain/src/migrations/|^packages/brain/src/selfcheck\.js$|^packages/brain/src/routes/ops\.js$"
+          SAFE_LANE_PATTERN="^packages/brain/src/thalamus\.js$|^packages/brain/src/tick\.js$|^packages/brain/src/executor\.js$|^packages/brain/src/task-router\.js$|^packages/brain/src/migrate\.js$|^packages/brain/src/migrations/|^packages/brain/src/selfcheck\.js$|^packages/brain/src/routes/ops\.js$|^packages/brain/migrations/|^packages/brain/src/tick-loop\.js$|^scripts/(brain-(deploy|build)|staging-(deploy|verify))\.sh$|^scripts/lib/(brain-staging|bluegreen[^/]*)\.sh$|^docker-compose[^/]*\.yml$"
 
           if echo "$CHANGED" | grep -qE "$SAFE_LANE_PATTERN"; then
             echo "risk_level=high" >> $GITHUB_OUTPUT

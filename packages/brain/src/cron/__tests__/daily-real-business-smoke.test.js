@@ -183,7 +183,7 @@ describe('assertSmokeOutput', () => {
     vi.mocked(readdirSync).mockReturnValue([]);
   });
 
-  it('export 完成 + 图片足够 → ok=true', async () => {
+  it('export 完成 + 本地图片足够仍是NAS未核验', async () => {
     const mockPool = {
       query: vi.fn().mockResolvedValue({
         rows: [{ task_type: 'content-export', status: 'completed', summary: null }],
@@ -197,8 +197,9 @@ describe('assertSmokeOutput', () => {
     const result = await assertSmokeOutput(mockPool, 'task-1', {
       keyword: '[E2E daily smoke] 2026-04-27',
     });
-    expect(result.ok).toBe(true);
-    expect(result.nasOk).toBe(true);
+    expect(result.ok).toBe(false);
+    expect(result.nasOk).toBe(false);
+    expect(result.message).toContain('NAS');
     expect(result.imageCount).toBe(9);
   });
 
@@ -337,52 +338,12 @@ describe('runDailySmoke', () => {
     expect(mockPool.query).not.toHaveBeenCalled();
   });
 
-  it('触发窗口内 + 今天已跑 → skipped_today=true', async () => {
-    const mockPool = {
-      // hasTodaySmoke → 有记录; archiveOldSmokePipelines → 0 rowCount
-      query: vi.fn()
-        .mockResolvedValueOnce({ rowCount: 0 })       // archive
-        .mockResolvedValueOnce({ rows: [{ id: 'x' }] }),  // hasTodaySmoke
-    };
-    const inWindow = new Date('2026-04-27T20:02:00Z');
-    const result = await runDailySmoke(mockPool, inWindow);
-
-    expect(result.skipped_today).toBe(true);
-    expect(result.triggered).toBe(false);
-  });
-
-  it('触发窗口内 + 今天未跑 → triggered=true，返回 task_id', async () => {
-    const mockPool = {
-      query: vi.fn()
-        .mockResolvedValueOnce({ rowCount: 0 })          // archive
-        .mockResolvedValueOnce({ rows: [] })              // hasTodaySmoke → 未跑
-        .mockResolvedValueOnce({ rows: [{ id: 'new-task-777' }] }),  // createSmokeTask
-    };
-    const inWindow = new Date('2026-04-27T20:01:00Z');
-    mockCreateTask.mockResolvedValueOnce({ task: { id: 'new-task-777' } });
-    const result = await runDailySmoke(mockPool, inWindow);
-
-    expect(result.triggered).toBe(true);
-    expect(result.task_id).toBe('new-task-777');
-    expect(result.skipped_window).toBe(false);
-    expect(result.skipped_today).toBe(false);
-  });
-
-  it('创建 task 失败 → P0 告警，triggered=false', async () => {
-    vi.mocked(raise).mockClear();
-    const mockPool = {
-      query: vi.fn()
-        .mockResolvedValueOnce({ rowCount: 0 })    // archive
-        .mockResolvedValueOnce({ rows: [] })        // hasTodaySmoke
-        .mockRejectedValueOnce(new Error('DB down')),  // createSmokeTask 失败
-    };
-    const inWindow = new Date('2026-04-27T20:01:00Z');
-    mockCreateTask.mockRejectedValueOnce(new Error('DB down'));
-    const result = await runDailySmoke(mockPool, inWindow);
-
-    expect(result.triggered).toBe(false);
-    expect(result.error).toContain('DB down');
-    expect(raise).toHaveBeenCalledWith('P0', 'daily_smoke_create_failed', expect.stringContaining('DB down'));
+  it('触发窗口内明确停用，不读取账本、不创建新smoke任务', async () => {
+    const mockPool = { query: vi.fn() };
+    const result = await runDailySmoke(mockPool, new Date('2026-04-27T20:02:00Z'));
+    expect(result).toMatchObject({ triggered: false, disabled: true, reason: 'nas_verification_unavailable' });
+    expect(mockPool.query).not.toHaveBeenCalled();
+    expect(mockCreateTask).not.toHaveBeenCalled();
   });
 });
 
@@ -397,7 +358,7 @@ describe('waitAndAssertSmoke', () => {
     vi.useFakeTimers();
   });
 
-  it('pipeline completed + 断言通过 → 不告警', async () => {
+  it('历史pipeline completed但NAS未核验 → 明确失败告警', async () => {
     vi.mocked(existsSync).mockReturnValue(true);
     vi.mocked(readdirSync).mockReturnValue(
       Array.from({ length: 9 }, (_, i) => `e2e-daily-smoke-2026-04-27-${i + 1}.png`)
@@ -417,7 +378,7 @@ describe('waitAndAssertSmoke', () => {
     await vi.runAllTimersAsync();
     await promise;
 
-    expect(raise).not.toHaveBeenCalled();
+    expect(raise).toHaveBeenCalledWith('P0', 'daily_smoke_failed', expect.stringContaining('NAS'));
   });
 
   it('pipeline failed → P0 告警', async () => {

@@ -1,22 +1,8 @@
 /**
- * daily-real-business-smoke.js
- *
- * 每天凌晨 4:00（北京时间）= UTC 20:00，触发一条真实 content-pipeline：
- * - content_type: solo-company-case
- * - topic: "[E2E daily smoke] YYYY-MM-DD"
- *
- * 目的：防止生产腐蚀（如 NotebookLM auth 断了 1 个月没人发现）。
- *
- * 成功标准：
- * 1. pipeline status = completed
- * 2. content-export stage completed（含 NAS 上传）
- * 3. 图片数量 ≥ 9
- *
- * 失败处理：
- * - 30 min 超时 或 pipeline failed → P0 飞书告警 + 创建 Brain dev task
- * - 记录哪个 stage 失败（research / copywriting / generate / image_review / export）
- *
- * 清理：30 天后自动 archive（加 smoke-archived tag，不污染选题池）
+ * 历史每日业务 smoke 诊断。
+ * 自动入口缺少同任务 NAS 上传及远端产物读回合同，已停止创建新工作。
+ * 本地图片数量与 export completed 仅为局部诊断，不能证明 NAS 成功。
+ * 保留历史任务查询、断言及失败定位辅助函数。
  */
 
 import { existsSync, readdirSync } from 'fs';
@@ -151,7 +137,7 @@ export function findFailedStage(stages) {
 }
 
 /**
- * 断言 pipeline 产出：export stage 完成（含 NAS）+ 图片 ≥ MIN_IMAGES
+ * 诊断历史 pipeline：export 状态与本地图片计数不能替代 NAS 验收
  * @param {import('pg').Pool} db
  * @param {string} taskId
  * @param {object} payload
@@ -161,7 +147,9 @@ export async function assertSmokeOutput(db, taskId, payload) {
   const stages = await getPipelineStages(db, taskId);
 
   const exportStage = stages['content-export'];
-  const nasOk = exportStage?.status === 'completed';
+  const exportCompleted = exportStage?.status === 'completed';
+  // 尚无同任务 NAS 上传与远端读回合同；不能由本地状态推断成功。
+  const nasOk = false;
 
   // 扫描图片文件（逻辑与 output 端点一致）
   const HOME = process.env.HOME || '/Users/administrator';
@@ -187,14 +175,10 @@ export async function assertSmokeOutput(db, taskId, payload) {
 
   const enoughImages = imageCount >= MIN_IMAGES;
 
-  if (!nasOk || !enoughImages) {
-    const parts = [];
-    if (!nasOk) parts.push(`export stage 未完成（status: ${exportStage?.status || 'missing'}）`);
-    if (!enoughImages) parts.push(`图片不足（${imageCount}/${MIN_IMAGES}）`);
-    return { ok: false, imageCount, nasOk, message: parts.join('；') };
-  }
-
-  return { ok: true, imageCount, nasOk };
+  const parts = ['NAS 上传及同任务远端产物读回未核验'];
+  if (!exportCompleted) parts.push(`export stage 未完成（status: ${exportStage?.status || 'missing'}）`);
+  if (!enoughImages) parts.push(`图片不足（${imageCount}/${MIN_IMAGES}）`);
+  return { ok: false, imageCount, nasOk, message: parts.join('；') };
 }
 
 /**
@@ -266,11 +250,7 @@ export async function waitAndAssertSmoke(db, taskId, payload, maxWaitMs = ALERT_
     if (row.status === 'completed') {
       console.log(`[daily-smoke] pipeline=${taskId} 已完成，断言产出`);
       const assertion = await assertSmokeOutput(db, taskId, payload);
-      if (assertion.ok) {
-        console.log(`[daily-smoke] ✅ smoke 通过：图片=${assertion.imageCount}，NAS=${assertion.nasOk}`);
-      } else {
-        await handleSmokeFailure(db, taskId, `产出断言失败：${assertion.message}`, null);
-      }
+      await handleSmokeFailure(db, taskId, `产出断言失败：${assertion.message}`, null);
       return;
     }
 
@@ -313,49 +293,16 @@ export async function archiveOldSmokePipelines(db) {
 }
 
 /**
- * 每日 smoke 调度入口（Tick 末尾 fire-and-forget 调用）
- * @param {import('pg').Pool} db
- * @param {Date} [now]
- * @returns {Promise<{triggered: boolean, skipped_window: boolean, skipped_today: boolean, task_id?: string}>}
+ * 旧自动入口只返回停用状态，不登记或派发不可验收的付费工作。
+ * Tick 仅调用并捕获异常，不消费返回字段；原 triggered/skipped 字段保留。
+ * @returns {Promise<{triggered: boolean, skipped_window: boolean, skipped_today: boolean, disabled: boolean, reason: string}>}
  */
-export async function runDailySmoke(db, now = new Date()) {
-  if (!isInSmokeWindow(now)) {
-    return { triggered: false, skipped_window: true, skipped_today: false };
-  }
-
-  // 顺带清理旧 smoke（fire-and-forget）
-  archiveOldSmokePipelines(db).catch(e =>
-    console.warn('[daily-smoke] archive 失败（不阻断）:', e.message)
-  );
-
-  try {
-    const alreadyRan = await hasTodaySmoke(db, now);
-    if (alreadyRan) {
-      return { triggered: false, skipped_window: false, skipped_today: true };
-    }
-  } catch (err) {
-    console.warn('[daily-smoke] 去重检查失败（继续执行）:', err.message);
-  }
-
-  let taskId;
-  try {
-    taskId = await createSmokeTask(db, now);
-    console.log(`[daily-smoke] 创建 smoke pipeline task=${taskId}`);
-  } catch (err) {
-    console.error('[daily-smoke] 创建 smoke task 失败:', err.message);
-    await raise('P0', 'daily_smoke_create_failed', `每日 smoke 任务创建失败：${err.message}`);
-    return { triggered: false, skipped_window: false, skipped_today: false, error: err.message };
-  }
-
-  const payload = {
-    keyword: `[E2E daily smoke] ${now.toISOString().slice(0, 10)}`,
-    content_type: 'solo-company-case',
+export async function runDailySmoke(_db, now = new Date()) {
+  return {
+    triggered: false,
+    skipped_window: !isInSmokeWindow(now),
+    skipped_today: false,
+    disabled: true,
+    reason: 'nas_verification_unavailable',
   };
-
-  // 后台异步轮询断言（不阻塞 tick）
-  waitAndAssertSmoke(db, taskId, payload).catch(e =>
-    console.error('[daily-smoke] waitAndAssertSmoke 意外错误:', e.message)
-  );
-
-  return { triggered: true, skipped_window: false, skipped_today: false, task_id: taskId };
 }

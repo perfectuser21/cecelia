@@ -1,147 +1,20 @@
-/**
- * autoCreateTasksFromCortex 单元测试
- *
- * 测试皮层 create_task 建议自动转 Brain 任务功能。
- * 使用 mock db 避免真实 PostgreSQL 连接。
- */
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
-
-// ---- Mock 所有依赖 ----
-const mockCreateTask = vi.fn();
-const mockUpdateTask = vi.fn();
-const mockPool = { query: vi.fn() };
-
-let autoCreateTasksFromCortex;
-
-beforeAll(async () => {
-  vi.resetModules();
-
-  vi.doMock('../db.js', () => ({ default: mockPool }));
-  vi.doMock('../actions.js', () => ({
-    createTask: mockCreateTask,
-    updateTask: mockUpdateTask,
-  }));
-
-  // 其余 tick.js 依赖全部 mock，避免副作用
-  vi.doMock('../focus.js', () => ({ getDailyFocus: vi.fn() }));
-  vi.doMock('../executor.js', () => ({
-    triggerCeceliaRun: vi.fn(),
-    checkCeceliaRunAvailable: vi.fn(async () => ({ available: true })),
-    getActiveProcessCount: vi.fn(() => 0),
-    killProcess: vi.fn(),
-    checkServerResources: vi.fn(async () => ({ ok: true })),
-    probeTaskLiveness: vi.fn(),
-    syncOrphanTasksOnStartup: vi.fn(),
-    killProcessTwoStage: vi.fn(),
-    requeueTask: vi.fn(),
-    MAX_SEATS: 5,
-    INTERACTIVE_RESERVE: 1,
-    getBillingPause: vi.fn(() => false),
-  }));
-  vi.doMock('../slot-allocator.js', () => ({ calculateSlotBudget: vi.fn(() => 3) }));
-  vi.doMock('../decision.js', () => ({
-    compareGoalProgress: vi.fn(),
-    generateDecision: vi.fn(),
-    executeDecision: vi.fn(),
-    splitActionsBySafety: vi.fn(() => ({ safe: [], dangerous: [] })),
-  }));
-  vi.doMock('../planner.js', () => ({ planNextTask: vi.fn() }));
-  vi.doMock('../event-bus.js', () => ({ emit: vi.fn() }));
-  vi.doMock('../circuit-breaker.js', () => ({
-    isAllowed: vi.fn(() => true),
-    recordSuccess: vi.fn(),
-    recordFailure: vi.fn(),
-    getAllStates: vi.fn(() => ({})),
-  }));
-  vi.doMock('../events/taskEvents.js', () => ({
-    publishTaskStarted: vi.fn(),
-    publishExecutorStatus: vi.fn(),
-  }));
-  vi.doMock('../thalamus.js', () => ({
-    processEvent: vi.fn(),
-    EVENT_TYPES: {},
-    ACTION_WHITELIST: { create_task: { dangerous: false } },
-    validateDecision: vi.fn(() => ({ valid: true })),
-    recordLLMError: vi.fn(),
-    recordTokenUsage: vi.fn(),
-  }));
-  vi.doMock('../decision-executor.js', () => ({
-    executeDecision: vi.fn(),
-    expireStaleProposals: vi.fn(),
-  }));
-  vi.doMock('../alertness/index.js', () => ({
-    initAlertness: vi.fn(),
-    evaluateAlertness: vi.fn(),
-    getCurrentAlertness: vi.fn(() => ({ level: 'normal', score: 50 })),
-    canDispatch: vi.fn(() => true),
-    canPlan: vi.fn(() => true),
-    getDispatchRate: vi.fn(() => 0),
-    ALERTNESS_LEVELS: {},
-    LEVEL_NAMES: {},
-  }));
-  vi.doMock('../alertness/healing.js', () => ({ getRecoveryStatus: vi.fn(() => ({})) }));
-  vi.doMock('../alertness/metrics.js', () => ({
-    recordTickTime: vi.fn(),
-    recordOperation: vi.fn(),
-  }));
-  vi.doMock('../quarantine.js', () => ({
-    handleTaskFailure: vi.fn(),
-    getQuarantineStats: vi.fn(),
-    checkExpiredQuarantineTasks: vi.fn(),
-  }));
-  vi.doMock('../dispatch-stats.js', () => ({
-    recordDispatchResult: vi.fn(),
-    getDispatchStats: vi.fn(),
-  }));
-  vi.doMock('../health-monitor.js', () => ({ runLayer2HealthCheck: vi.fn() }));
-  vi.doMock('../dept-heartbeat.js', () => ({ triggerDeptHeartbeats: vi.fn() }));
-  vi.doMock('../daily-review-scheduler.js', () => ({
-    triggerDailyReview: vi.fn(),
-    triggerContractScan: vi.fn(),
-  }));
-  vi.doMock('../desire/index.js', () => ({ runDesireSystem: vi.fn() }));
-  vi.doMock('../rumination.js', () => ({ runRumination: vi.fn() }));
-  vi.doMock('../rumination-scheduler.js', () => ({ runSynthesisSchedulerIfNeeded: vi.fn() }));
-  vi.doMock('../notebook-feeder.js', () => ({ feedDailyIfNeeded: vi.fn() }));
-
-  // 动态导入 tick.js，提取 autoCreateTasksFromCortex（内部函数通过测试暴露方式访问）
-  // 由于 autoCreateTasksFromCortex 是模块内函数，我们通过 processCortexTask 间接测试
-  // 但这里我们直接测试其逻辑，所以导出它（或者在 tick.js 中导出它）
-  // 注意：autoCreateTasksFromCortex 未被 export，我们通过调用 processCortexTask 来间接覆盖
-  // 直接单元测试它的最简方式：在 tick.js 中 export 它，或在此文件中重建其逻辑
-  // 为保持最小改动，在此文件内内联测试相同逻辑
-
-  // 直接测试 autoCreateTasksFromCortex 逻辑（内联版本，与 tick.js 完全一致）
-  autoCreateTasksFromCortex = async function(rcaResult, context = {}) {
-    const createTaskActions = (rcaResult.recommended_actions || [])
-      .filter(a => a.type === 'create_task' && a.params?.title);
-
-    if (createTaskActions.length === 0) return [];
-
-    const created = [];
-    for (const action of createTaskActions) {
-      try {
-        const result = await mockCreateTask({
-          title: action.params.title,
-          description: action.params.description || '',
-          priority: action.params.priority || 'P1',
-          task_type: action.params.task_type || 'dev',
-          trigger_source: 'cortex',
-          goal_id: action.params.goal_id || context.goal_id || null,
-          project_id: action.params.project_id || context.project_id || null,
-        });
-        created.push({ title: action.params.title, deduplicated: result.deduplicated || false });
-      } catch (err) {
-        // log but don't throw
-      }
-    }
-    return created;
-  };
-});
+const { mockCreateTask, mockQuery } = vi.hoisted(() => ({
+  mockCreateTask: vi.fn(),
+  mockQuery: vi.fn(() => { throw new Error('未配置的数据库访问'); }),
+}));
+vi.mock('../db.js', () => ({ default: { query: mockQuery } }));
+vi.mock('../actions.js', () => ({ createTask: mockCreateTask, updateTask: vi.fn() }));
+vi.mock('../lib/task-terminal.js', () => ({ finalizeTask: vi.fn() }));
+vi.mock('../quarantine.js', () => ({ handleTaskFailure: vi.fn() }));
+vi.mock('../slot-allocator.js', () => ({ shouldBypassBackpressure: vi.fn() }));
+import { autoCreateTasksFromCortex } from '../dispatch-helpers.js';
 
 beforeEach(() => {
-  vi.clearAllMocks();
+  mockCreateTask.mockReset();
+  mockCreateTask.mockRejectedValue(new Error('未配置的任务写入'));
+  mockQuery.mockClear();
 });
 
 // ---- 测试套件 ----
@@ -248,10 +121,8 @@ describe('autoCreateTasksFromCortex', () => {
   });
 });
 
-describe('isSystemTask: cortex as system source', () => {
-  it('trigger_source=cortex 是 systemSource，不需要 goal_id', async () => {
-    // 直接测试逻辑等价：cortex 任务不应要求 goal_id
-    // 这里模拟 createTask 被以 trigger_source=cortex 调用后能正确执行
+describe('Cortex 自动建单的来源字段', () => {
+  it('无父级上下文时将 cortex 来源及空关联传入 createTask', async () => {
     mockCreateTask.mockResolvedValueOnce({ success: true, task: { id: 'sys-task' }, deduplicated: false });
 
     const rcaResult = {
@@ -260,11 +131,34 @@ describe('isSystemTask: cortex as system source', () => {
       ],
     };
 
-    // context 无 goal_id 也能成功（因为 cortex 是 systemSource）
     const result = await autoCreateTasksFromCortex(rcaResult, {});
     expect(mockCreateTask).toHaveBeenCalledWith(
-      expect.objectContaining({ trigger_source: 'cortex' })
+      expect.objectContaining({ trigger_source: 'cortex', goal_id: null, project_id: null })
     );
     expect(result).toHaveLength(1);
+  });
+});
+
+describe('真实 Cortex 建单上下文与故障隔离', () => {
+  it('建议参数优先于父级上下文，缺省项继承父级', async () => {
+    mockCreateTask.mockResolvedValue({ deduplicated: false });
+    const result = await autoCreateTasksFromCortex({ recommended_actions: [
+      { type: 'create_task', params: { title: '覆盖', description: '真实描述', priority: 'P0', task_type: 'research', goal_id: 'own-goal', project_id: 'own-project' } },
+      { type: 'create_task', params: { title: '继承' } },
+    ] }, { goal_id: 'parent-goal', project_id: 'parent-project' });
+    expect(mockCreateTask).toHaveBeenNthCalledWith(1, { title: '覆盖', description: '真实描述', priority: 'P0', task_type: 'research', trigger_source: 'cortex', goal_id: 'own-goal', project_id: 'own-project' });
+    expect(mockCreateTask).toHaveBeenNthCalledWith(2, { title: '继承', description: '', priority: 'P1', task_type: 'dev', trigger_source: 'cortex', goal_id: 'parent-goal', project_id: 'parent-project' });
+    expect(result).toEqual([{ title: '覆盖', deduplicated: false }, { title: '继承', deduplicated: false }]);
+  });
+
+  it('第一项失败后继续建第二项，返回值只包含成功项', async () => {
+    mockCreateTask.mockRejectedValueOnce(new Error('fixture_write_failed')).mockResolvedValueOnce({ deduplicated: true });
+    const result = await autoCreateTasksFromCortex({ recommended_actions: [
+      { type: 'create_task', params: { title: '失败' } },
+      { type: 'create_task', params: { title: '成功' } },
+    ] });
+    expect(mockCreateTask).toHaveBeenCalledTimes(2);
+    expect(result).toEqual([{ title: '成功', deduplicated: true }]);
+    expect(mockQuery).not.toHaveBeenCalled();
   });
 });
