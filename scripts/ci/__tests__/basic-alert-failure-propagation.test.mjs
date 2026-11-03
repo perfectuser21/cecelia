@@ -115,3 +115,49 @@ for (const [name, gh, want] of [
   assert.equal(readFileSync(f.env.GITHUB_OUTPUT, 'utf8'), `count=${want}\n`);
   if (want) assert.equal(readFileSync(alerts, 'utf8'), 'fixture/repo\tBroken\tbroken.yml\n');
 });
+
+for (const [status, body, ok] of [
+  [302, { status: 'healthy' }, false], [500, { status: 'healthy' }, false],
+  [200, { status: 'unhealthy' }, false], [200, { status: 'healthy' }, true],
+]) test(`哨兵真实 health HTTP ${status}/${body.status}`, async t => {
+  const url = await server(t, (_req, res) => { res.statusCode = status; res.end(JSON.stringify(body)); });
+  const f = fixture(t); writeFileSync(f.env.GITHUB_OUTPUT, '');
+  const result = await run(sentinel.jobs.probe.steps.find(s => s.id === 'health').run, { ...f.env, PROBE_URL: url });
+  const output = readFileSync(f.env.GITHUB_OUTPUT, 'utf8');
+  assert.equal(result.status === 0 && output.includes('ok=true'), ok, result.out + output);
+});
+for (const [name, status, finished, ok] of [
+  ['跳转', 302, () => new Date(Date.now() - 1000).toISOString(), false],
+  ['未来', 200, () => new Date(Date.now() + 3600000).toISOString(), false],
+  ['无效', 200, () => 'invalid', false],
+  ['无时区', 200, () => new Date(Date.now() - 1000).toISOString().slice(0, -1), false],
+  ['缺失', 200, () => null, false],
+  ['过期', 200, () => new Date(Date.now() - 27 * 3600000).toISOString(), false],
+  ['近期', 200, () => new Date(Date.now() - 3600000).toISOString(), true],
+]) test(`哨兵真实 KV ${name}时间与HTTP证据`, async t => {
+  const url = await server(t, (_req, res) => { res.statusCode = status; res.end(JSON.stringify({ value: { finished_at: finished() } })); });
+  const f = fixture(t); writeFileSync(f.env.GITHUB_OUTPUT, '');
+  const result = await run(sentinel.jobs.probe.steps.find(s => s.id === 'kv').run, { ...f.env, PROBE_URL: url });
+  const output = readFileSync(f.env.GITHUB_OUTPUT, 'utf8');
+  assert.equal(result.status === 0 && output.includes('ok=true'), ok, result.out + output);
+});
+test('哨兵 Bark 302 不能声明推送成功', async t => {
+  const url = await server(t, (_req, res) => { res.statusCode = 302; res.end('{}'); });
+  const f = fixture(t);
+  const result = await run(sentinel.jobs.alert.steps[1].run, { ...f.env, BARK_URL: url, HEALTH_OK: '', KV_OK: '', KV_AGE: '', PROBE_URL: 'fixture' });
+  assert.notEqual(result.status, 0, result.out);
+  assert.doesNotMatch(result.out, /Bark ok/);
+});
+for (const status of [200, 302, 500]) test(`nightly真实HTTP ${status}绿色JSON证据`, async t => {
+  let calls = 0;
+  const url = await server(t, (_req, res) => {
+    calls++; res.statusCode = status;
+    res.end(JSON.stringify({ total_count: 1, workflow_runs: [{ id: 1, conclusion: 'success', updated_at: new Date(Date.now() - 3600000).toISOString(), head_sha: 'fixture-sha', html_url: 'https://example.invalid/1' }] }));
+  });
+  // 仅改写网络目的地，真实 curl 参数和真实响应状态保留。
+  const f = fixture(t, { curl: 'args=(); for arg in "$@"; do case "$arg" in https://api.github.com/*) arg="$FIXTURE_URL";; esac; args+=("$arg"); done; exec /usr/bin/curl "${args[@]}"' });
+  const result = await run('bash scripts/ci/check-nightly-green.sh', { ...f.env, FIXTURE_URL: url, GITHUB_TOKEN: 'isolated-fixture', GITHUB_REPOSITORY: 'fixture/repo', BYPASS_NIGHTLY_GATE: '' });
+  assert.equal(calls, 1);
+  assert.equal(result.status === 0, status === 200, result.out);
+  if (status !== 200) assert.doesNotMatch(result.out, /Release Gate 通过/);
+});
