@@ -33,7 +33,7 @@ export function assertSkillEnvelope(envelope){
   requireCondition(definitionDigest(envelope.input)===envelope.input_sha256,'输入摘要不符');
   for(const a of envelope.activities)requireCondition(createHash('sha256').update(a.skill_content).digest('hex')===a.skill_sha256,'Skill 字节摘要不符');
 }
-export function invocationPrompt(envelope,taskId,runId){
+export function invocationPrompt(envelope){
   assertSkillEnvelope(envelope);
   throw new Error('整包Skill提示词已停用，必须经公共Runner逐Activity执行');
 }
