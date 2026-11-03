@@ -1,88 +1,74 @@
-import { describe, it, expect, beforeAll } from 'vitest';
-import request from 'supertest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import express from 'express';
-import { join, dirname } from 'path';
-import { fileURLToPath } from 'url';
-import { readdirSync } from 'fs';
+import request from 'supertest';
+import { get, type Server } from 'node:http';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { gunzipSync } from 'node:zlib';
+import { createCompressionMiddleware, createStaticAssetMiddleware, createSpaFallback } from '../static-middleware.js';
+import { startLocalHttp, localHttpUrl, closeLocalHttp } from './helpers/local-http.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
+const indexHtml = '<!doctype html><html><body>PRIVATE_SPA_DOCUMENT' + '压缩内容'.repeat(700) + '</body></html>';
+const asset = 'globalThis.privateBuild = "fixture-a1b2c3";';
+let directory: string;
+let server: Server;
 
-// Build a minimal test app that mirrors the server's static serving setup
-async function createTestApp() {
+beforeEach(async () => {
+  directory = await mkdtemp(join(tmpdir(), 'api-static-middleware-'));
+  await mkdir(join(directory, 'assets'));
+  await writeFile(join(directory, 'assets', 'app.a1b2c3.js'), asset);
+  await writeFile(join(directory, 'index.html'), indexHtml);
   const app = express();
-  const { default: compression } = await import('compression');
+  app.use(createCompressionMiddleware());
+  app.use(createStaticAssetMiddleware(directory));
+  // 与生产相同：健康路由先于SPA fallback，不能被HTML吞掉。
+  app.get('/health', (_req, res) => { res.json({ status: 'ok' }); });
+  app.get('*', createSpaFallback(directory));
+  server = await startLocalHttp(app);
+});
+afterEach(async () => { await closeLocalHttp(server); await rm(directory, { recursive: true, force: true }); });
 
-  // Compression (same as server.ts)
-  app.use(compression() as unknown as express.RequestHandler);
-
-  const frontendPath = join(__dirname, '../../../../dashboard/dist');
-
-  // Hashed assets — immutable long-term cache
-  app.use('/assets', express.static(join(frontendPath, 'assets'), {
-    maxAge: '1y',
-    immutable: true,
-  }));
-
-  // Other static files — no cache
-  app.use(express.static(frontendPath, {
-    maxAge: 0,
-    etag: true,
-  }));
-
-  // SPA fallback
-  app.get('*', (_req, res) => {
-    res.setHeader('Cache-Control', 'no-cache');
-    res.sendFile(join(frontendPath, 'index.html'));
+describe('生产静态资源/压缩middleware', () => {
+  it('哈希资源必须返回本人文件与一年immutable缓存，不能以404无断言通过', async () => {
+    const response = await request(server).get('/assets/app.a1b2c3.js').set('Accept-Encoding', 'identity');
+    expect(response.status).toBe(200);
+    expect(response.text).toBe(asset);
+    expect(response.headers['cache-control']).toContain('max-age=31536000');
+    expect(response.headers['cache-control']).toContain('immutable');
   });
 
-  return app;
-}
-
-describe('Server performance middleware', () => {
-  let app: express.Express;
-  beforeAll(async () => { app = await createTestApp(); });
-
-  it('hashed assets have immutable cache-control', async () => {
-    // Find an actual asset file from the build output
-    const frontendPath = join(__dirname, '../../../../dashboard/dist');
-    const assetsDir = join(frontendPath, 'assets');
-    let assetFile: string | undefined;
-    try {
-      const files = readdirSync(assetsDir);
-      assetFile = files.find(f => f.endsWith('.js'));
-    } catch {
-      // No build output, skip
-    }
-
-    if (!assetFile) return; // Skip if no build
-
-    const res = await request(app)
-      .get(`/assets/${assetFile}`)
-      .set('Accept-Encoding', 'identity');
-
-    expect(res.status).toBe(200);
-    expect(res.headers['cache-control']).toContain('max-age=31536000');
-    expect(res.headers['cache-control']).toContain('immutable');
+  it('直接index不持久缓存，浏览器能重新校验新构建', async () => {
+    const response = await request(server).get('/index.html').set('Accept-Encoding', 'identity');
+    expect(response.status).toBe(200);
+    expect(response.text).toBe(indexHtml);
+    expect(response.headers['cache-control']).toContain('max-age=0');
+    expect(response.headers.etag).toBeTruthy();
   });
 
-  it('SPA fallback returns no-cache', async () => {
-    const res = await request(app)
-      .get('/some-route')
-      .set('Accept-Encoding', 'identity');
-
-    if (res.status === 200) {
-      expect(res.headers['cache-control']).toBe('no-cache');
-    }
+  it('真实深路径返回SPA文档与no-cache，健康检查仍为JSON', async () => {
+    const response = await request(server).get('/reports/private-report').set('Accept-Encoding', 'identity');
+    expect(response.status).toBe(200);
+    expect(response.type).toBe('text/html');
+    expect(response.text).toBe(indexHtml);
+    expect(response.headers['cache-control']).toBe('no-cache');
+    const health = await request(server).get('/health');
+    expect(health.status).toBe(200);
+    expect(health.body).toEqual({ status: 'ok' });
   });
 
-  it('compression middleware adds Vary header', async () => {
-    const res = await request(app)
-      .get('/some-route')
-      .set('Accept-Encoding', 'gzip');
-
-    if (res.status === 200) {
-      expect(res.headers['vary']).toContain('Accept-Encoding');
-    }
+  it('大文档真实gzip字节解压后仍是原文，缓存协商包含Accept-Encoding', async () => {
+    const response = await new Promise<{ status: number | undefined; headers: Record<string, unknown>; body: Buffer }>((resolve, reject) => {
+      get(localHttpUrl(server) + '/reports/private-report', { headers: { 'Accept-Encoding': 'gzip' } }, incoming => {
+        const chunks: Buffer[] = [];
+        incoming.on('data', chunk => chunks.push(Buffer.from(chunk)));
+        incoming.on('error', reject);
+        incoming.on('end', () => resolve({ status: incoming.statusCode, headers: incoming.headers, body: Buffer.concat(chunks) }));
+      }).on('error', reject);
+    });
+    expect(response.status).toBe(200);
+    expect(response.headers['content-encoding']).toBe('gzip');
+    expect(String(response.headers.vary)).toContain('Accept-Encoding');
+    expect(gunzipSync(response.body).toString('utf8')).toBe(indexHtml);
   });
 });
