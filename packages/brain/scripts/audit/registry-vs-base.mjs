@@ -334,12 +334,21 @@ site({ label: 'routes/warroom.js:36 FEED_TYPES', file: 'routes/warroom.js',
 site({
   label: 'executor-contracts.js:36 EXECUTOR_KIND_FOR',
   file: 'executor-contracts.js',
-  extract: (s) => extractNamedLiteral(s, 'EXECUTOR_KIND_FOR'),
+  extract: (s) => {
+    const base = extractNamedLiteral(s, 'EXECUTOR_KIND_FOR');
+    // 决策38a8fc1e：仅移除明确退役的GP旧执行器；基线仍固定，禁止静默改历史值。
+    if (base?.golden_path_proposal !== 'relay-container') throw Error('golden_path_proposal历史执行器发生漂移');
+    delete base.golden_path_proposal;
+    return base;
+  },
   current: () => {
     // qiumi_task 是先前一刀新增（注册表新声明 executor:'openclaw-agent'）；
     // script_run 是链 bf5088a3 棒3 新增（executor=script 一等任务类型，PR #5574/#5577）——
     // 两者基线里都不存在，是已知允许的新增项，比较前剔除，其余 key/value 必须与基线原文精确相等。
     const rest = { ...EXECUTOR_KIND_FOR };
+    if (Object.hasOwn(rest, 'golden_path_proposal') || !R.HEADLESS_KERNEL_RETIRED_TASK_TYPES.includes('golden_path_proposal')) {
+      throw Error('golden_path_proposal必须保持退役且无可派发执行器');
+    }
     delete rest.qiumi_task;
     delete rest.script_run;
     delete rest.janitor;
@@ -348,7 +357,7 @@ site({
     return rest;
   },
   compare: 'object',
-  note: 'EXECUTOR_KIND_FOR 现由 {...EXECUTOR_KIND_FOR_TASK_TYPE, __bridge_path, __local_spawn} 组装；qiumi_task/script_run 是已知新增合法项，比较前剔除，其余 9 类型 + 2 sentinel 必须逐字等于基线',
+  note: '固定历史基线不变；仅golden_path_proposal旧relay-container按决策38a8fc1e退役并额外断言不可重新派发；已知新增类型剔除，其余映射逐字等于基线',
 });
 
 // ── 执行 ──────────────────────────────────────────────────────────────────
