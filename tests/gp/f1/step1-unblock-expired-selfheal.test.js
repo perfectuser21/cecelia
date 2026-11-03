@@ -16,19 +16,35 @@
 // 所以守卫不能只测 unblockExpiredTasks 函数本身好不好使（它一直好使），
 // 必须测「它有没有被一个活着的循环调用」。
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+vi.mock('../../../packages/brain/src/db.js', () => ({
+  default: { query: vi.fn(() => { throw new Error('禁止访问默认数据库'); }) },
+}));
+vi.mock('../../../packages/brain/src/device-lock-helpers.js', () => ({
+  sweepStaleDeviceLocks: vi.fn(() => { throw new Error('禁止调用默认设备锁清理'); }),
+}));
+
+import defaultPool from '../../../packages/brain/src/db.js';
+import { sweepStaleDeviceLocks as defaultSweep } from '../../../packages/brain/src/device-lock-helpers.js';
 import { runRecoveryOnce } from '../../../packages/brain/src/recovery-loop.js';
 
 const SRC = join(dirname(fileURLToPath(import.meta.url)), '../../../packages/brain/src');
 
 describe('F1 step1 · TTL 自愈接在活着的循环上', () => {
+  beforeEach(() => vi.clearAllMocks());
+  afterEach(() => {
+    expect(defaultPool.query).not.toHaveBeenCalled();
+    expect(defaultSweep).not.toHaveBeenCalled();
+    vi.restoreAllMocks();
+  });
   it('recovery-loop 会调用 unblockExpiredTasks', async () => {
     const unblockExpiredTasks = vi.fn().mockResolvedValue([{ id: 'a' }, { id: 'b' }]);
     const r = await runRecoveryOnce({
-      dbPool: { query: vi.fn().mockResolvedValue({ rows: [] }) },
+      pool: { query: vi.fn().mockResolvedValue({ rows: [] }) },
+      sweepStaleDeviceLocks: vi.fn().mockResolvedValue(0),
       cleanupStaleClaims: vi.fn().mockResolvedValue({ cleaned: 0 }),
       checkStuckPipelines: vi.fn().mockResolvedValue({ canceled: [] }),
       fetchInProgress: vi.fn().mockResolvedValue([]),
@@ -43,7 +59,8 @@ describe('F1 step1 · TTL 自愈接在活着的循环上', () => {
   it('这条网抛错不影响其他四条（各自独立 try-catch）', async () => {
     const probeTaskLiveness = vi.fn().mockResolvedValue([{ id: 'x' }]);
     const r = await runRecoveryOnce({
-      dbPool: { query: vi.fn().mockResolvedValue({ rows: [] }) },
+      pool: { query: vi.fn().mockResolvedValue({ rows: [] }) },
+      sweepStaleDeviceLocks: vi.fn().mockResolvedValue(0),
       cleanupStaleClaims: vi.fn().mockResolvedValue({ cleaned: 1 }),
       checkStuckPipelines: vi.fn().mockResolvedValue({ canceled: [] }),
       fetchInProgress: vi.fn().mockResolvedValue([]),
@@ -59,7 +76,8 @@ describe('F1 step1 · TTL 自愈接在活着的循环上', () => {
   it('恢复数进可观测输出——全 0 也要打，才证明"我在跑"', async () => {
     const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
     await runRecoveryOnce({
-      dbPool: { query: vi.fn().mockResolvedValue({ rows: [] }) },
+      pool: { query: vi.fn().mockResolvedValue({ rows: [] }) },
+      sweepStaleDeviceLocks: vi.fn().mockResolvedValue(0),
       cleanupStaleClaims: vi.fn().mockResolvedValue({ cleaned: 0 }),
       checkStuckPipelines: vi.fn().mockResolvedValue({ canceled: [] }),
       fetchInProgress: vi.fn().mockResolvedValue([]),

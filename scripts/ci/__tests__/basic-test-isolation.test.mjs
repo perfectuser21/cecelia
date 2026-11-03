@@ -50,6 +50,7 @@ maxWorkers:1,minWorkers:1,cache:false}};`);
 test('captures 正例必须成功；数据库故障不能被 not-400 弱断言放过', () => fixture(({put, execute}) => {
   const healthy = execute(capture);
   assert.equal(healthy.status, 0, healthy.stdout + healthy.stderr);
+  assert.equal(healthy.report.numPassedTests, 6);
   const source = readFileSync(join(root, 'packages/brain/src/routes/captures.js'), 'utf8');
   assert.ok(source.includes('pool.query('));
   put('packages/brain/src/routes/captures.js', source.replaceAll('pool.query(',
@@ -57,7 +58,7 @@ test('captures 正例必须成功；数据库故障不能被 not-400 弱断言�
   const broken = execute(capture);
   assert.notEqual(broken.status, 0, '数据库抛错但 source/nature 成功用例仍全部通过');
   const cases = broken.report.testResults.flatMap(suite => suite.assertionResults);
-  const positives = cases.filter(row => /被接受/.test(row.title));
+  const positives = cases.filter(row => /^(source=|nature=)/.test(row.title));
   assert.equal(positives.length, 4, '必须覆盖三个 source 和 session_summary 正例');
   assert.ok(positives.every(row => row.status === 'failed'), JSON.stringify(positives));
   assert.ok(cases.filter(row => /不再被接受|400 拒绝/.test(row.title)).every(row => row.status === 'passed'));
@@ -73,4 +74,17 @@ test('TTL 自愈测试正确注入 pool 与设备锁；默认资源一旦调用�
   assert.equal(result.status, 0, result.stdout + result.stderr);
   assert.equal(result.report.numPassedTests, 5);
   assert.equal(existsSync(touch), false, '默认 DB 或设备锁 sweep 被调用');
+  const originalTest = readFileSync(join(root, recovery), 'utf8');
+  for (const [mutation, marker] of [
+    [originalTest.replaceAll('pool: { query:', 'dbPool: { query:'), 'DEFAULT_POOL_SELECTED'],
+    [originalTest.replaceAll('sweepStaleDeviceLocks: vi.fn().mockResolvedValue(0),', ''), 'not be called at all'],
+  ]) {
+    assert.notEqual(mutation, originalTest, '反例必须实际改变测试');
+    put(recovery, mutation);
+    const broken = execute(recovery);
+    assert.notEqual(broken.status, 0, '缺少依赖注入却通过');
+    assert.equal(broken.report.numFailedTests, 3);
+    assert.match(JSON.stringify(broken.report) + broken.stdout + broken.stderr, new RegExp(marker));
+    assert.equal(existsSync(touch), false, '反例也不得调用真实资源');
+  }
 }));
