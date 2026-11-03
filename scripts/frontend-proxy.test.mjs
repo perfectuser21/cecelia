@@ -42,16 +42,40 @@ function httpRequest(port, path, {method = 'GET', body, headers = {}} = {}) {
     req.end(body);
   });
 }
+async function stopChild(child) {
+  if (!child || child.exitCode !== null || child.signalCode !== null) return;
+  const exited = once(child, 'exit');
+  const force = setTimeout(() => {
+    if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+  }, 1000);
+  let deadline;
+  child.kill('SIGTERM');
+  try {
+    await Promise.race([exited, new Promise((_, reject) => {
+      deadline = setTimeout(() => reject(new Error('Owned CLI child failed to exit')), 2500);
+    })]);
+  } finally { clearTimeout(force); clearTimeout(deadline); }
+}
 async function fixture(t) {
   const root = await mkdtemp(join(tmpdir(), 'frontend-proxy-http-'));
   const dist = join(root, 'dist');
+  let child, upstream;
+  const sockets = new Set();
+  t.after(async () => {
+    try { await stopChild(child); }
+    finally {
+      for (const socket of sockets) socket.destroy();
+      try { if (upstream?.listening) await close(upstream); }
+      finally { await rm(root, {recursive: true, force: true}); }
+    }
+  });
   await mkdir(dist);
   await mkdir(join(dist, 'assets'));
   await writeFile(join(dist, 'index.html'), document);
   await writeFile(join(root, 'outside.txt'), outside);
   const received = [];
   const response = {status: 200, body: {source: 'private-brain'}, headers: {'X-Private-Upstream': 'fixture'}};
-  const upstream = http.createServer((req, res) => {
+  upstream = http.createServer((req, res) => {
     const chunks = [];
     req.on('data', data => chunks.push(data));
     req.on('end', () => {
@@ -61,26 +85,16 @@ async function fixture(t) {
       res.end(JSON.stringify(response.body));
     });
   });
-  const sockets = new Set();
   upstream.on('connection', socket => { sockets.add(socket); socket.on('close', () => sockets.delete(socket)); });
   const brainPort = await listen(upstream);
   const port = await unusedPort();
   assert.ok(![5211, 5221, 3000, 3001].includes(port) && ![5211, 5221].includes(brainPort));
-  const child = spawn(process.execPath, [entry], {env: {PATH: process.env.PATH, HOME: root,
+  child = spawn(process.execPath, [entry], {env: {PATH: process.env.PATH, HOME: root,
     FRONTEND_PORT: String(port), BRAIN_PORT_TARGET: String(brainPort),
     DASHBOARD_STATIC_DIR: dist, LANGFUSE_PROXY_PORT: '0'}, stdio: ['ignore', 'pipe', 'pipe']});
   let output = '';
   child.stdout.on('data', data => { output += data; });
   child.stderr.on('data', data => { output += data; });
-  t.after(async () => {
-    if (child.exitCode === null && child.signalCode === null) {
-      child.kill('SIGTERM');
-      await once(child, 'exit');
-    }
-    for (const socket of sockets) socket.destroy();
-    if (upstream.listening) await close(upstream);
-    await rm(root, {recursive: true, force: true});
-  });
   await new Promise((resolve, reject) => {
     const timeout = setTimeout(() => reject(new Error('CLI readiness timeout: ' + output)), 3000);
     const ready = data => {
@@ -264,4 +278,15 @@ test('正常中文和空格URI编码必须读取真实资源，不能错变SPA�
   assert.equal(res.status, 200);
   assert.equal(res.headers['content-type'], 'application/javascript');
   assert.equal(res.body.toString(), 'PRIVATE_ENCODED_ASSET');
+});
+
+test('根内合法symlink仍按请求资源名处理SW防缓存和MIME', async t => {
+  const f = await fixture(t);
+  await writeFile(join(f.dist, 'worker-content.txt'), 'PRIVATE_WORKER_BYTES');
+  await symlink(join(f.dist, 'worker-content.txt'), join(f.dist, 'sw.js'));
+  const res = await httpRequest(f.port, '/sw.js');
+  assert.equal(res.status, 200);
+  assert.equal(res.headers['cache-control'], 'no-cache, no-store, must-revalidate');
+  assert.equal(res.headers['content-type'], 'application/javascript');
+  assert.equal(res.body.toString(), 'PRIVATE_WORKER_BYTES');
 });
