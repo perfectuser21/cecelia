@@ -1,81 +1,76 @@
-/**
- * selectBestAccountFromLocal 单元测试
- * 验证账号排序、降级、maxAccounts 限制
- */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-// 内联实现（与 executor.js 保持一致，方便单元测试）
-async function selectBestAccountFromLocal(maxAccounts = 3, { readAuth, fetchUsage } = {}) {
-  const teams = ['team1', 'team2', 'team3', 'team4', 'team5'];
-  const results = await Promise.all(teams.map(async (id) => {
-    try {
-      const auth = readAuth(id);
-      if (!auth?.tokens?.access_token) return null;
+const { readAuth, fetchUsage, forbidden } = vi.hoisted(() => ({
+  readAuth: vi.fn(), fetchUsage: vi.fn(),
+  forbidden: vi.fn(() => { throw new Error('未授权的外部副作用'); }),
+}));
+// 只替换 I/O 边界；不复制账号排序算法，不读取机器上的凭据。
+vi.mock('os', async original => ({ ...await original(), default: { ...(await original()).default, homedir: () => '/isolated-account-fixture' } }));
+vi.mock('fs', async original => ({ ...await original(), readFileSync: (...args) => readAuth(...args) }));
+vi.mock('child_process', async original => ({ ...await original(), spawn: forbidden, exec: forbidden, execSync: forbidden }));
+vi.mock('../db.js', () => ({ default: { query: forbidden } }));
+import { pickLocalAccountByDeficit } from '../executor.js';
 
-      const data = await fetchUsage(id, auth.tokens.access_token, auth.tokens.account_id);
-      if (!data) return null;
-      const usedPct = data.rate_limit?.primary_window?.used_percent ?? 100;
-      return { id, auth, usedPct };
-    } catch {
-      return null;
-    }
-  }));
-
-  return results
-    .filter(Boolean)
-    .sort((a, b) => a.usedPct - b.usedPct)
-    .slice(0, maxAccounts)
-    .map(({ id, auth }) => ({ id, auth }));
+const authFor = id => ({ tokens: { access_token: `fixture-${id}`, account_id: `fixture-account-${id}` } });
+const usage = (fiveHourPct, sevenDayPct = 0, resetAfter = 302400) => ({
+  rate_limit: { primary_window: { used_percent: fiveHourPct }, secondary_window: { used_percent: sevenDayPct, reset_after_seconds: resetAfter } },
+});
+function respondByAccount(data) {
+  fetchUsage.mockImplementation(async (url, options) => {
+    expect(url).toBe('https://chatgpt.com/backend-api/wham/usage');
+    const id = options.headers['ChatGPT-Account-Id'].replace('fixture-account-', '');
+    expect(options.headers.Authorization).toBe(`Bearer fixture-${id}`);
+    expect(options.signal).toBeInstanceOf(AbortSignal);
+    if (!data[id]) return { ok: false };
+    return { ok: true, json: async () => data[id] };
+  });
 }
-
-describe('selectBestAccountFromLocal', () => {
-  it('按 5h used_percent 升序排序', async () => {
-    const mockAuth = (id) => ({ tokens: { access_token: 'tok', account_id: 'org' }, id });
-    const usageMap = { team1: 80, team2: 10, team3: 50, team4: 20, team5: 90 };
-    const fetchUsage = async (id) => ({
-      rate_limit: { primary_window: { used_percent: usageMap[id] } },
-    });
-
-    const result = await selectBestAccountFromLocal(3, { readAuth: mockAuth, fetchUsage });
-
-    expect(result.map(a => a.id)).toEqual(['team2', 'team4', 'team3']);
+beforeEach(() => {
+  vi.clearAllMocks();
+  readAuth.mockImplementation((file, encoding) => {
+    expect(encoding).toBe('utf8');
+    const match = /^\/isolated-account-fixture\/\.codex-(team[1-5])\/auth\.json$/.exec(file);
+    if (!match) throw new Error('未配置的文件读取');
+    return JSON.stringify(authFor(match[1]));
   });
+  fetchUsage.mockReset().mockRejectedValue(new Error('未配置的 HTTP 请求'));
+  vi.stubGlobal('fetch', fetchUsage);
+});
+afterEach(() => {
+  expect(forbidden).not.toHaveBeenCalled();
+  vi.unstubAllGlobals();
+});
 
-  it('wham/usage 失败时跳过该账号', async () => {
-    const mockAuth = (id) => ({ tokens: { access_token: 'tok', account_id: 'org' } });
-    const fetchUsage = async (id) => {
-      if (id === 'team1' || id === 'team2') return null; // 模拟失败
-      return { rate_limit: { primary_window: { used_percent: 50 } } };
-    };
-
-    const result = await selectBestAccountFromLocal(5, { readAuth: mockAuth, fetchUsage });
-
-    expect(result.map(a => a.id)).not.toContain('team1');
-    expect(result.map(a => a.id)).not.toContain('team2');
-    expect(result.length).toBe(3); // team3/4/5 成功
+describe('pickLocalAccountByDeficit 真实账号选择器', () => {
+  it('同 deficit 按 5h 用量升序，返回原账号认证对象', async () => {
+    respondByAccount({ team1: usage(80), team2: usage(10), team3: usage(50), team4: usage(20), team5: usage(90) });
+    expect(await pickLocalAccountByDeficit(3)).toEqual(['team2', 'team4', 'team3'].map(id => ({ id, auth: authFor(id) })));
+    expect(fetchUsage).toHaveBeenCalledTimes(5);
   });
-
-  it('所有账号失败返回空数组', async () => {
-    const mockAuth = () => ({ tokens: { access_token: 'tok', account_id: 'org' } });
-    const fetchUsage = async () => null;
-
-    const result = await selectBestAccountFromLocal(3, { readAuth: mockAuth, fetchUsage });
-    expect(result).toEqual([]);
+  it('单账号 HTTP 失败仍保留其余账号', async () => {
+    respondByAccount({ team3: usage(50), team4: usage(50), team5: usage(50) });
+    expect((await pickLocalAccountByDeficit(5)).map(a => a.id)).toEqual(['team3', 'team4', 'team5']);
   });
-
+  it('全部 HTTP 失败返回空数组', async () => {
+    expect(await pickLocalAccountByDeficit()).toEqual([]);
+    expect(fetchUsage).toHaveBeenCalledTimes(5);
+  });
   it('maxAccounts 限制返回数量', async () => {
-    const mockAuth = () => ({ tokens: { access_token: 'tok', account_id: 'org' } });
-    const fetchUsage = async () => ({ rate_limit: { primary_window: { used_percent: 10 } } });
-
-    const result = await selectBestAccountFromLocal(2, { readAuth: mockAuth, fetchUsage });
-    expect(result.length).toBe(2);
+    respondByAccount({ team1: usage(10), team2: usage(10), team3: usage(10) });
+    expect((await pickLocalAccountByDeficit(2)).map(a => a.id)).toEqual(['team1', 'team2']);
   });
-
-  it('auth.json 无 access_token 时跳过', async () => {
-    const mockAuth = (id) => id === 'team1' ? { tokens: {} } : { tokens: { access_token: 'tok', account_id: 'org' } };
-    const fetchUsage = async () => ({ rate_limit: { primary_window: { used_percent: 10 } } });
-
-    const result = await selectBestAccountFromLocal(5, { readAuth: mockAuth, fetchUsage });
-    expect(result.map(a => a.id)).not.toContain('team1');
+  it('缺少 token 或认证文件损坏的账号不请求用量', async () => {
+    readAuth.mockImplementation(file => {
+      if (file.includes('team1')) return JSON.stringify({ tokens: {} });
+      if (file.includes('team2')) throw new Error('fixture_auth_unreadable');
+      return JSON.stringify(authFor(/codex-(team\d)/.exec(file)[1]));
+    });
+    respondByAccount({ team3: usage(10), team4: usage(10), team5: usage(10) });
+    expect((await pickLocalAccountByDeficit(5)).map(a => a.id)).toEqual(['team3', 'team4', 'team5']);
+    expect(fetchUsage).toHaveBeenCalledTimes(3);
+  });
+  it('deficit 排序优先于 5h 用量，95% 可用而超过95%被排除', async () => {
+    respondByAccount({ team1: usage(5, 45), team2: usage(95, 5), team3: usage(96, 0), team4: usage(20, 20) });
+    expect((await pickLocalAccountByDeficit(5)).map(a => a.id)).toEqual(['team2', 'team4', 'team1']);
   });
 });
