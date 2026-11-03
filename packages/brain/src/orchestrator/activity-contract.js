@@ -1,4 +1,5 @@
 // 业务契约只消费组装后的活动；不替代 AI TaskBundle/HarnessResult。
+import {assertStatusRoutes} from './activity-judgment.js';
 const FIELD = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const PATH = /^(?:\$|\$input|\$item)(?:\.[A-Za-z_][A-Za-z0-9_]*)*$/;
 const UNSAFE = new Set(['__proto__', 'constructor', 'prototype']);
@@ -25,6 +26,7 @@ export function readActivityPath(path, { context, input, item }) {
 export function parseActivityContract(contract) {
   requireValid(object(contract) && typeof contract.workflow === 'string' && contract.workflow.trim(), 'workflow_required');
   requireValid(Array.isArray(contract.activities) && contract.activities.length > 0, 'activities_required');
+  if (contract.on_status !== undefined) assertStatusRoutes(contract.on_status);
   const orders = new Set(), keys = new Set(), groups = new Set();
   const activities = structuredClone(contract.activities).sort((a, b) => a.order - b.order);
   let previous = null;
@@ -43,6 +45,9 @@ export function parseActivityContract(contract) {
     requireValid(['setup', 'source', 'per_item', 'batch_end', 'finalize'].includes(r.phase), 'activity_phase_invalid');
     requireValid(typeof r.entry === 'string' && /^(?:[a-zA-Z0-9_][a-zA-Z0-9_-]*\/)*[a-zA-Z0-9_][a-zA-Z0-9_-]*\.(?:js|mjs|sh)$/.test(r.entry), 'activity_entry_invalid');
     requireValid(r.argv === undefined || (Array.isArray(r.argv) && r.argv.every(v => typeof v === 'string')), 'activity_argv_invalid');
+    if (r.on_status !== undefined || a.on_status !== undefined) assertStatusRoutes(r.on_status ?? a.on_status);
+    for (const flag of ['retry_safe', 'recovery_safe', 'interactive']) requireValid(r[flag] === undefined || typeof r[flag] === 'boolean', 'activity_safety_flag_invalid');
+    requireValid(r.executor_kind === undefined || ['code', 'agent'].includes(r.executor_kind), 'activity_executor_kind_invalid');
     requireValid(r.on_failure === undefined || ['continue', 'stop_run'].includes(r.on_failure), 'activity_failure_policy_invalid');
     requireValid(r.max_attempts === undefined || [1, 2].includes(r.max_attempts), 'activity_attempts_invalid');
     requireValid(r.cleanup_grace_s === undefined || (Number.isSafeInteger(r.cleanup_grace_s)
@@ -70,12 +75,13 @@ export function parseActivityContract(contract) {
 
 export function parseActivityResult(value, input) {
   requireValid(object(value) && value.schema_version === 1, 'activity_result_version_invalid');
-  requireValid(['completed', 'partial', 'failed'].includes(value.status), 'activity_result_status_invalid');
+  requireValid(['completed', 'done', 'partial', 'failed', 'empty', 'retry', 'needs_review'].includes(value.status), 'activity_result_status_invalid');
   requireValid(value.run_tag === input.run_tag
     && (input.line_key === undefined || value.line_key === input.line_key), 'activity_result_identity_mismatch');
   requireValid(object(value.outputs) && Object.keys(value.outputs).every(safeField)
     && object(value.metrics) && Array.isArray(value.evidence), 'activity_result_payload_invalid');
-  requireValid(value.status === 'completed' ? value.failure_class == null
+  requireValid(['completed', 'done', 'empty'].includes(value.status) ? value.failure_class == null
+    : value.status === 'needs_review' ? value.failure_class == null || value.failure_class === 'needs_human'
     : ['retryable', 'needs_human', 'fatal'].includes(value.failure_class), 'activity_result_failure_invalid');
   return value;
 }
