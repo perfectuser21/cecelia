@@ -21,11 +21,12 @@ const CODING_WORKFLOW_FILE = /(^|\/)sprints\/[^/]+\/0[1-4]-(intent|spec|build|ev
 const CODING_WORKFLOW_DIR = /(^|\/)sprints\/\d{8}-cw-[0-9a-f]{8}\//;
 
 function parseArgs(argv) {
-  const out = { fixture: null };
-  for (let i = 0; i < argv.length; i++) {
-    if (argv[i] === '--fixture') out.fixture = argv[i + 1];
+  if (argv.length === 0) return { fixture: null };
+  if (argv.length === 2 && argv[0] === '--fixture' && argv[1] && !argv[1].startsWith('--')) {
+    return { fixture: argv[1] };
   }
-  return out;
+  console.error('contract-exists: 用法：contract-exists.mjs [--fixture <diff文件>]');
+  process.exit(2);
 }
 
 function extractPaths(text) {

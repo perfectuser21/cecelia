@@ -78,8 +78,8 @@ Brain/Engine/API 的共享依赖变更会选择共享运行组及 Ops 回归；�
 
 | 工作流 | 定位 |
 |---|---|
-| implementation-impact.yml | 来源准入；先执行发布快照、跨仓、技能与巡查的原生机制回归（含基线选择与只读就绪），再进行真实差分准入；所有目标main的PR均接收，中央/live快照只保留按需及跨仓显式调用，来源资格保护保留 |
-| ci-admission-baseline.yml | main 的源码 CI 真实成功后，用专属 PG 重建三个来源并执行完整登记断言；发布 CI 专用原始 ZIP，供后续 PR 复验，不读取线上 Brain 或生成发布资格 |
+| implementation-impact.yml | 按需及跨仓显式调用的来源准入；执行发布快照、跨仓、技能与巡查机制回归，再进行差分准入；未接入日常 PR/main 源码 CI，来源资格保护仍由实际发布消费者核验 |
+| CI admission builder / worker | 保留封套、来源与数据库重建机制及隔离测试；ci-admission-baseline.yml 已移除，当前不自动发布 main 基线，也未接入日常 PR 验收 |
 | skill-source-ownership.yml | 所有权专项的单元测试及真实校验；最低 scripts 跑道也运行同一校验器，专项继续作为独立必需检查 |
 | skills-source-check.yml | 固定 Skill 来源的三系统恢复校验及 Brain/Engine/Quality/root 正文合同；所有目标main的PR与main push执行，固定Skill合同通过严格汇总全部结果 |
 | ci-dashboard-pwa-e2e.yml | 当前 Dashboard 的 PWA/任务台浏览器专项 |
@@ -88,15 +88,15 @@ Brain/Engine/API 的共享依赖变更会选择共享运行组及 Ops 回归；�
 | preview-deploy / preview-cleanup | 当前 Apps 的预览环境创建与回收；依赖更新 bot 不占预览环境 |
 | auto-staging-deploy / deploy / brain-ci-deploy / pilot-release-verification | 发布与来源资格；以 GitHub 启用状态、宿主发布脚本和实际回执为准 |
 | heartbeat-sentinel / ci-red-alert / verify-tailscale-brain | 运维监控、告警与连接诊断 |
-| archive-learnings / cleanup-merged-artifacts / auto-version | 仓库维护；不是代码正确性证明 |
+| archive-learnings / cleanup-merged-artifacts / auto-version | 仓库维护；归档只创建普通 PR，不依赖 harness 标签或已移除的 ci.yml 自动合并 |
 
 `cecelia_source_only` 及生产拒绝逻辑保留。来源准入失败应报告未就绪，不能通过删除来源保护来获得“全绿”。
 
-来源选择器机制测试使用不可变历史 Git 样本，保留真实字节、AST、篡改、超时和缓存验证；另验证当前候选仍不能继承该样本资格。机制测试通过不等于候选来源已准入，实际 Implementation impact 继续独立判定当前修订。
+来源选择器机制测试使用不可变历史 Git 样本，保留真实字节、AST、篡改、超时和缓存验证；另验证当前候选仍不能继承该样本资格。机制测试通过不等于候选来源已准入，按需执行的 Implementation impact 独立判定当前修订。
 
-CI 基线保留 121 个登记格、17 项断言绑定和 4 个实际命令；没有登记断言的 104 个格继续为 UNKNOWN，四个命令通过不会把它们标成已验收。基线封套明确为 `ci_admission_only`，不能用作生产、恢复或业务执行凭据。兼容引导仅接受逐字节固定的旧完整 CI 配置及其真实 `ci-passed` 官方成功记录；新版使用真实 `源码保底通过`，两种身份都进入封套并在消费时重验。
+保留的 CI 基线机制包含 121 个登记格、17 项断言绑定和 4 个实际命令；没有登记断言的 104 个格继续为 UNKNOWN，四个命令通过不会把它们标成已验收。基线封套明确为 `ci_admission_only`，不能用作生产、恢复或业务执行凭据。兼容引导仅接受逐字节固定的旧完整 CI 配置及其真实 `ci-passed` 官方成功记录；新版使用真实 `源码保底通过`，两种身份都进入封套并在消费时重验。
 
-PR 从原始 ZIP 和官方 run/job/check/App 身份重新建立内存能力，三个 scope 共用同一个本人 `ci_admission_*` schema，完成原生投影和断言前后复验后清理；报告可以保存，内部裸快照不能落盘。若最近 main 尚无基线，仅按真实 first-parent 向前选择有效祖先并检查累计变更；遇到已存在但损坏的产物、身份或摘要不符时直接失败，不能改用较旧证据掩盖错误。
+未自动接线的 PR 基线消费者机制可从原始 ZIP 和官方 run/job/check/App 身份重新建立内存能力，三个 scope 共用同一个本人 `ci_admission_*` schema，完成原生投影和断言前后复验后清理；报告可以保存，内部裸快照不能落盘。若最近 main 尚无基线，仅按真实 first-parent 向前选择有效祖先并检查累计变更；遇到已存在但损坏的产物、身份或摘要不符时直接失败，不能改用较旧证据掩盖错误。
 
 ## 已退出自动通用门禁的旧入口
 
@@ -108,6 +108,10 @@ PR 从原始 ZIP 和官方 run/job/check/App 身份重新建立内存能力，�
 | nightly-real-machine / smoke-e2e-nightly | 假定常驻 5222 与历史任务 ID；按需环境诊断，不冒充每个源码版本的验收 |
 | pr-review | 在线 AI 辅助审查按需调用，不再自动依赖付费 API 或截断 diff 判合并资格 |
 | ci.yml 内旧 DoD 动态 eval、TDD 顺序、Learning 格式、分支名、PR 大小、正则测试形状与台账棘轮 | 不构成最低源码正确性证明；实际行为与 Shell 回归仍归属相应组件 |
+
+deploy.yml 的 schedule/workflow_dispatch 是全量发布，缺少已核验的生产前驱差异时一律进入既有 Safe Lane；同 SHA 和 request_id 的隔离回执成功后才允许生产步骤。已知差异的紧急 [SAFE-DEPLOY] 及 nightly BYPASS 保持原有范围，未知差异不得按安全放行。Brain push 发布仍由 brain-ci-deploy.yml 调用 HTTP 入口，宿主 brain-deploy.sh 的同镜像隔离验收先于生产迁移；这些源码关系不证明任何候选已经部署。
+
+brain-ci-deploy.yml 的兼容合同步骤执行合同存在性校验，diff/CLI 失败报错；未消费输出的旧 changed-test-router 和被默认配置排除的重复 Skill 回归命令已退出该工作流。固定正文合同由 skills-source-check.yml 的专用配置执行；兼容诊断不复活旧 Harness，也不成为新增的通用 required 检查。
 
 开发前仍遵循 AGENTS.md 的 DevGate 和 PR 流程。退役工作流形状断言已迁到真实范围选择、失败传播、隔离和业务行为测试，不用把旧任务名留在新 CI 中来满足历史字符串测试。
 

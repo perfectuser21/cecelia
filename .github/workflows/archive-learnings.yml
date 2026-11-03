@@ -3,7 +3,7 @@ name: Archive Old Learnings
 # 每月 1 号自动把 30 天前的 docs/learnings/*.md 归档成 tar.gz，
 # 按 YYYY-MM 分桶（以 git log 首次入库时间为准，不用文件 mtime）。
 # 可手动触发（workflow_dispatch）跑一次性大清理。
-# v1.1 (2026-04-20): 从 bot 直推 main 改成开 PR + harness label 自动合并。
+# 归档只创建普通 PR，合并资格由当前源码检查和仓库保护决定。
 
 on:
   schedule:
@@ -86,10 +86,8 @@ jobs:
           echo "total_archived=$TOTAL_OLD" >> "$GITHUB_OUTPUT"
           echo "buckets=$BUCKETS_DONE" >> "$GITHUB_OUTPUT"
 
-      # 走 PR 流程：main 受保护（必须 ci-passed 绿），不能 bot 直推。
-      # 创 cp-archive-YYYYMMDD-HHMM 分支，开 PR 打 harness 标签（跳过 pr-size-check），
-      # 让 ci.yml 里的 auto-merge job 在 ci-passed 绿时自动 squash merge。
-      - name: 开 PR（harness 标签触发自动合并）
+      # 走普通 PR 流程；当前 ci.yml 没有 auto-merge job。
+      - name: 开归档 PR（遵循当前源码检查与仓库保护）
         if: steps.archive.outputs.changed == 'true'
         env:
           # 必须 PAT：GITHUB_TOKEN 的 gh pr create 报 "Resource not accessible by
@@ -113,11 +111,10 @@ jobs:
           git commit -m "chore(learnings): 月度归档（${TOTAL} 文件 / ${BUCKETS} 月桶）[bot]"
           git push origin "$BRANCH"
 
-          BODY=$(printf "自动触发：archive-learnings workflow。归档 ${TOTAL} 个 30 天前的 learning 到 ${BUCKETS} 个 YYYY-MM.tar.gz。\n\nharness 标签用于跳过 pr-size-check 硬门禁（1500 行），并触发 auto-merge job。")
+          BODY=$(printf "自动触发：archive-learnings workflow。归档 ${TOTAL} 个 30 天前的 learning 到 ${BUCKETS} 个 YYYY-MM.tar.gz。\n\n合并前须通过当前源码检查及仓库保护；本工作流仅创建归档 PR。")
           PR_URL=$(gh pr create \
             --title "chore(learnings): 月度归档 ${TOTAL} 文件" \
             --body "$BODY" \
-            --label harness \
             --head "$BRANCH" \
             --base main)
           echo "✅ PR 已开: $PR_URL"
