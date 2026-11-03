@@ -58,6 +58,8 @@ for (const scenario of ['list-500', 'create-500', 'create-no-receipt', 'notify-5
   const step = red.jobs.scan.steps.find(s => s.name.startsWith('开 Brain issue'));
   const result = await run(step.run.replaceAll('/tmp/alerts.txt', alerts), { ...f.env, BRAIN_URL: url });
   assert.equal(result.status === 0, ['success', 'duplicate'].includes(scenario), result.out);
+  if (scenario.startsWith('create-')) assert.equal(creates, 1, result.out);
+  if (scenario.startsWith('notify-')) { assert.equal(creates, 1, result.out); assert.equal(notifications, 1, result.out); }
   if (scenario.startsWith('create-') || scenario === 'list-500') {
     assert.doesNotMatch(result.out, /新开 issue：1/); assert.equal(notifications, 0);
   }
