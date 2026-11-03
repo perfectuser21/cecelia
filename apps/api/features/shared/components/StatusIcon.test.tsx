@@ -6,28 +6,28 @@ describe('StatusIcon', () => {
   it('renders check icon for completed status', () => {
     const { container } = render(<StatusIcon status="completed" />);
     const icon = container.querySelector('svg');
-    expect(icon).toBeInTheDocument();
+    expect(icon).toHaveClass('lucide-circle-check');
     expect(icon?.className).toContain('text-emerald-500');
   });
 
   it('renders clock icon for in_progress status', () => {
     const { container } = render(<StatusIcon status="in_progress" />);
     const icon = container.querySelector('svg');
-    expect(icon).toBeInTheDocument();
+    expect(icon).toHaveClass('lucide-clock');
     expect(icon?.className).toContain('text-blue-500');
   });
 
   it('renders alert icon for cancelled status', () => {
     const { container } = render(<StatusIcon status="cancelled" />);
     const icon = container.querySelector('svg');
-    expect(icon).toBeInTheDocument();
+    expect(icon).toHaveClass('lucide-circle-alert');
     expect(icon?.className).toContain('text-red-500');
   });
 
   it('renders default clock icon for unknown status', () => {
     const { container } = render(<StatusIcon status="unknown" />);
     const icon = container.querySelector('svg');
-    expect(icon).toBeInTheDocument();
+    expect(icon).toHaveClass('lucide-clock');
     expect(icon?.className).toContain('text-slate-400');
   });
 
@@ -55,7 +55,7 @@ describe('StatusIcon', () => {
   it('handles empty status string', () => {
     const { container } = render(<StatusIcon status="" />);
     const icon = container.querySelector('svg');
-    expect(icon).toBeInTheDocument();
+    expect(icon).toHaveClass('lucide-clock');
     expect(icon?.className).toContain('text-slate-400');
   });
 

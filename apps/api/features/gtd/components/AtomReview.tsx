@@ -35,9 +35,12 @@ export default function AtomReview({ onCountChange }: AtomReviewProps): React.Re
   const [loading, setLoading] = useState(true);
   const [filterType, setFilterType] = useState<string>('all');
   const [acting, setActing] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const fetchAtoms = useCallback(async () => {
     setLoading(true);
+    setLoadError(null);
     try {
       const params = filterType !== 'all'
         ? `?status=pending_review&target_type=${filterType}`
@@ -48,8 +51,7 @@ export default function AtomReview({ onCountChange }: AtomReviewProps): React.Re
       setAtoms(data);
       onCountChange?.(data.length);
     } catch {
-      setAtoms([]);
-      onCountChange?.(0);
+      setLoadError('加载失败，请刷新重试');
     } finally {
       setLoading(false);
     }
@@ -59,6 +61,7 @@ export default function AtomReview({ onCountChange }: AtomReviewProps): React.Re
 
   const handleAction = async (id: string, action: 'confirm' | 'dismiss') => {
     setActing(id);
+    setActionError(null);
     try {
       const res = await fetch(`/api/capture-atoms/${id}`, {
         method: 'PATCH',
@@ -67,6 +70,8 @@ export default function AtomReview({ onCountChange }: AtomReviewProps): React.Re
       });
       if (!res.ok) throw new Error('操作失败');
       await fetchAtoms();
+    } catch {
+      setActionError('操作失败，请重试');
     } finally {
       setActing(null);
     }
@@ -116,13 +121,16 @@ export default function AtomReview({ onCountChange }: AtomReviewProps): React.Re
         </button>
       </div>
 
+      {loadError && <p role="alert" className="text-sm text-red-400">{loadError}</p>}
+      {actionError && <p role="alert" className="text-sm text-red-400">{actionError}</p>}
+
       {/* 列表 */}
       {loading ? (
         <div className="flex items-center justify-center gap-2 py-8 text-slate-500">
           <RefreshCw size={16} className="animate-spin" />
           <span className="text-sm">加载中...</span>
         </div>
-      ) : atoms.length === 0 ? (
+      ) : atoms.length === 0 && loadError ? null : atoms.length === 0 ? (
         <div className="flex flex-col items-center gap-2 py-8 text-slate-500">
           <Atom size={32} strokeWidth={1} />
           <p className="text-sm">暂无待审阅的 Atom</p>

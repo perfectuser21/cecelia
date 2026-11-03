@@ -2578,11 +2578,6 @@
       "role": "verification"
     },
     {
-      "owner_path": "packages/brain/src/harness-worktree.js",
-      "path": "packages/brain/src/__tests__/harness-worktree-recovery.test.js",
-      "role": "verification"
-    },
-    {
       "owner_path": "packages/brain/src/lib/existing-ops-build-source.js",
       "path": "docs/learnings/cp-10271820-b-source.md",
       "role": "documentation"

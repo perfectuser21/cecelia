@@ -173,11 +173,58 @@ describe('AtomReview', () => {
     });
   });
 
-  it('handles fetch error gracefully', async () => {
+  it('读取失败显示可重试错误，不能冒充空列表', async () => {
     global.fetch = vi.fn().mockRejectedValue(new Error('Network error'));
     render(<AtomReview />);
     await waitFor(() => {
-      expect(screen.getByText('暂无待审阅的 Atom')).toBeInTheDocument();
+      expect(screen.getByRole('alert')).toHaveTextContent('加载失败');
+      expect(screen.queryByText('暂无待审阅的 Atom')).not.toBeInTheDocument();
     });
+    global.fetch = mockFetchSuccess(mockAtoms);
+    fireEvent.click(screen.getByTitle('刷新'));
+    expect(await screen.findByText('完成季度报告')).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('刷新读取失败保留已经读到的卡片及计数，不清空成成功空态', async () => {
+    let reads=0;
+    global.fetch=vi.fn(async()=>{
+      reads++;
+      if(reads>1)throw Error('offline');
+      return {ok:true,json:async()=>mockAtoms};
+    }) as typeof fetch;
+    const count=vi.fn();render(<AtomReview onCountChange={count}/>);
+    await screen.findByText('完成季度报告');
+    fireEvent.click(screen.getByTitle('刷新'));
+    expect(await screen.findByRole('alert')).toHaveTextContent('加载失败');
+    expect(screen.getByText('完成季度报告')).toBeInTheDocument();
+    expect(count).toHaveBeenLastCalledWith(2);
+    expect(screen.queryByText('暂无待审阅的 Atom')).not.toBeInTheDocument();
+  });
+
+  it('操作失败保留卡片和计数，显示错误且允许重试后读回', async () => {
+    let confirmed = false;
+    let attempt = 0;
+    global.fetch = vi.fn(async (_url, options) => {
+      if (options?.method === 'PATCH') {
+        attempt++;
+        if (attempt === 1) return {ok:false,status:503};
+        confirmed = true;
+        return {ok:true,json:async()=>({})};
+      }
+      return {ok:true,json:async()=>confirmed ? [] : mockAtoms};
+    }) as typeof fetch;
+    const onCountChange = vi.fn();
+    render(<AtomReview onCountChange={onCountChange} />);
+    await screen.findByText('完成季度报告');
+    fireEvent.click(screen.getAllByTitle('确认')[0]);
+    expect(await screen.findByRole('alert')).toHaveTextContent('操作失败');
+    expect(screen.getByText('完成季度报告')).toBeInTheDocument();
+    expect(onCountChange).toHaveBeenLastCalledWith(2);
+    expect(screen.getAllByTitle('确认')[0]).not.toBeDisabled();
+    fireEvent.click(screen.getAllByTitle('确认')[0]);
+    expect(await screen.findByText('暂无待审阅的 Atom')).toBeInTheDocument();
+    expect(onCountChange).toHaveBeenLastCalledWith(0);
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 });

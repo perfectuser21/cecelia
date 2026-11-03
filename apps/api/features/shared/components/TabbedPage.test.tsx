@@ -1,192 +1,51 @@
-import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import { MemoryRouter, useLocation, useNavigate } from 'react-router-dom';
-import TabbedPage, { TabConfig } from './TabbedPage';
-import { Home, Settings, User } from 'lucide-react';
-import { Suspense } from 'react';
+import {describe,it,expect} from 'vitest';
+import {render,screen,fireEvent,act} from '@testing-library/react';
+import {MemoryRouter,useLocation} from 'react-router-dom';
+import TabbedPage,{type TabConfig} from './TabbedPage';
+import {Home,Settings} from 'lucide-react';
 
-// Mock react-router-dom hooks
-vi.mock('react-router-dom', async () => {
-  const actual = await vi.importActual<typeof import('react-router-dom')>('react-router-dom');
-  return {
-    ...actual,
-    useNavigate: vi.fn(),
-    useLocation: vi.fn(),
-  };
-});
+function Location(){return <output aria-label="当前位置">{useLocation().pathname}</output>;}
+const tabs: TabConfig[]=[
+  {id:'home',label:'首页',path:'/base',icon:Home,component:async()=>({default:()=> <p>首页内容</p>})},
+  {id:'settings',label:'设置',path:'/base/settings',icon:Settings,component:async()=>({default:()=> <p>设置内容</p>})},
+];
+function page(path='/base',entries=tabs){return render(<MemoryRouter initialEntries={[path]}><Location/><TabbedPage tabs={entries} basePath="/base" /></MemoryRouter>);}
 
-// Create test components
-const TestComponent1 = () => <div>Component 1</div>;
-const TestComponent2 = () => <div>Component 2</div>;
-const TestComponent3 = () => <div>Component 3</div>;
-
-describe('TabbedPage', () => {
-  const mockNavigate = vi.fn();
-  const mockLocation = { pathname: '/base/tab1' };
-
-  const tabs: TabConfig[] = [
-    {
-      id: 'tab1',
-      label: 'Home',
-      icon: Home,
-      path: '/base/tab1',
-      component: () => Promise.resolve({ default: TestComponent1 }),
-    },
-    {
-      id: 'tab2',
-      label: 'Settings',
-      icon: Settings,
-      path: '/base/tab2',
-      component: () => Promise.resolve({ default: TestComponent2 }),
-    },
-    {
-      id: 'tab3',
-      label: 'Profile',
-      icon: User,
-      path: '/base/tab3',
-      component: () => Promise.resolve({ default: TestComponent3 }),
-    },
-  ];
-
-  beforeEach(() => {
-    vi.mocked(useNavigate).mockReturnValue(mockNavigate);
-    vi.mocked(useLocation).mockReturnValue(mockLocation as any);
-    mockNavigate.mockClear();
+describe('页签与真实Router、懒加载组合',()=>{
+  it('点击后URL、当前内容与高亮同步改变，原页面退出',async()=>{
+    page();expect(await screen.findByText('首页内容')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button',{name:'设置'}));
+    expect(await screen.findByText('设置内容')).toBeInTheDocument();
+    expect(screen.getByLabelText('当前位置')).toHaveTextContent('/base/settings');
+    expect(screen.queryByText('首页内容')).not.toBeInTheDocument();
+    expect(screen.getByRole('button',{name:'设置'})).toHaveClass('bg-slate-700');
+    expect(screen.getByRole('button',{name:'首页'})).not.toHaveClass('bg-slate-700');
   });
-
-  it('renders all tabs', () => {
-    render(
-      <MemoryRouter>
-        <TabbedPage tabs={tabs} basePath="/base" />
-      </MemoryRouter>
-    );
-
-    expect(screen.getByText('Home')).toBeInTheDocument();
-    expect(screen.getByText('Settings')).toBeInTheDocument();
-    expect(screen.getByText('Profile')).toBeInTheDocument();
+  it('深链接优先选择最长匹配路径，不能被前面的父路径吞掉',async()=>{
+    page('/base/settings/advanced');
+    expect(await screen.findByText('设置内容')).toBeInTheDocument();
+    expect(screen.queryByText('首页内容')).not.toBeInTheDocument();
   });
-
-  it('highlights active tab based on current path', () => {
-    render(
-      <MemoryRouter>
-        <TabbedPage tabs={tabs} basePath="/base" />
-      </MemoryRouter>
-    );
-
-    const homeTab = screen.getByText('Home').closest('button');
-    expect(homeTab?.className).toContain('bg-slate-700');
-    expect(homeTab?.className).toContain('text-white');
-
-    const settingsTab = screen.getByText('Settings').closest('button');
-    expect(settingsTab?.className).toContain('text-slate-400');
+  it('路径必须按段匹配，相似前缀不能选中设置',async()=>{
+    page('/base/settings-other');
+    expect(await screen.findByText('首页内容')).toBeInTheDocument();
+    expect(screen.queryByText('设置内容')).not.toBeInTheDocument();
   });
-
-  it('navigates to tab path when clicked', () => {
-    render(
-      <MemoryRouter>
-        <TabbedPage tabs={tabs} basePath="/base" />
-      </MemoryRouter>
-    );
-
-    const settingsTab = screen.getByText('Settings').closest('button');
-    fireEvent.click(settingsTab!);
-
-    expect(mockNavigate).toHaveBeenCalledWith('/base/tab2');
+  it('未知URL回退第一个页签并实际渲染该页',async()=>{
+    page('/unknown');expect(await screen.findByText('首页内容')).toBeInTheDocument();
+    expect(screen.getByRole('button',{name:'首页'})).toHaveClass('bg-slate-700');
   });
-
-  it('renders tab icons', () => {
-    const { container } = render(
-      <MemoryRouter>
-        <TabbedPage tabs={tabs} basePath="/base" />
-      </MemoryRouter>
-    );
-
-    // Check for icon elements (Lucide icons render as svg)
-    const icons = container.querySelectorAll('svg');
-    expect(icons.length).toBeGreaterThanOrEqual(3);
-  });
-
-  it('matches nested paths correctly', () => {
-    vi.mocked(useLocation).mockReturnValue({ pathname: '/base/tab2/nested' } as any);
-
-    render(
-      <MemoryRouter>
-        <TabbedPage tabs={tabs} basePath="/base" />
-      </MemoryRouter>
-    );
-
-    const settingsTab = screen.getByText('Settings').closest('button');
-    expect(settingsTab?.className).toContain('bg-slate-700');
-  });
-
-  it('defaults to first tab when no match found', () => {
-    vi.mocked(useLocation).mockReturnValue({ pathname: '/unknown' } as any);
-
-    render(
-      <MemoryRouter>
-        <TabbedPage tabs={tabs} basePath="/base" />
-      </MemoryRouter>
-    );
-
-    const homeTab = screen.getByText('Home').closest('button');
-    expect(homeTab?.className).toContain('bg-slate-700');
-  });
-
-  it('shows loading state while component loads', async () => {
-    const slowComponent = () =>
-      new Promise<{ default: React.ComponentType<any> }>((resolve) =>
-        setTimeout(() => resolve({ default: TestComponent1 }), 100)
-      );
-
-    const slowTabs: TabConfig[] = [
-      {
-        id: 'tab1',
-        label: 'Home',
-        icon: Home,
-        path: '/base/tab1',
-        component: slowComponent,
-      },
-    ];
-
-    render(
-      <MemoryRouter>
-        <TabbedPage tabs={slowTabs} basePath="/base" />
-      </MemoryRouter>
-    );
-
-    // Should show loading initially
+  it('等待模块期间显示loading，解析后显示返回页面',async()=>{
+    let resolve!: (value:{default:()=>React.ReactElement})=>void;
+    const pending=new Promise<{default:()=>React.ReactElement}>(r=>{resolve=r;});
+    page('/base',[{...tabs[0],component:()=>pending}]);
     expect(screen.getByText('Loading...')).toBeInTheDocument();
-
-    // Wait for component to load
-    await waitFor(
-      () => {
-        expect(screen.queryByText('Loading...')).not.toBeInTheDocument();
-      },
-      { timeout: 2000 }
-    );
+    await act(async()=>resolve({default:()=> <p>延迟加载真实内容</p>}));
+    expect(await screen.findByText('延迟加载真实内容')).toBeInTheDocument();
+    expect(screen.queryByText('Loading...')).not.toBeInTheDocument();
   });
-
-  it('applies hover styles to inactive tabs', () => {
-    render(
-      <MemoryRouter>
-        <TabbedPage tabs={tabs} basePath="/base" />
-      </MemoryRouter>
-    );
-
-    const settingsTab = screen.getByText('Settings').closest('button');
-    expect(settingsTab?.className).toContain('hover:text-slate-200');
-    expect(settingsTab?.className).toContain('hover:bg-slate-700/50');
-  });
-
-  it('handles empty tabs array gracefully', () => {
-    const { container } = render(
-      <MemoryRouter>
-        <TabbedPage tabs={[]} basePath="/base" />
-      </MemoryRouter>
-    );
-
-    // Should not crash and render container
-    const wrapper = container.firstChild as HTMLElement;
-    expect(wrapper).toBeInTheDocument();
+  it('空配置不产生按钮或内容加载',()=>{
+    page('/base',[]);expect(screen.queryByRole('button')).not.toBeInTheDocument();
+    expect(screen.queryByText('Loading...')).not.toBeInTheDocument();
   });
 });

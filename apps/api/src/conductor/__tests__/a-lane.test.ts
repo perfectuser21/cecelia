@@ -1,10 +1,13 @@
-// A 道执行器(runALane)测试 —— 先失败(commit1 Red),再实现(commit2 Green)。
+// A 道CLI命令边界：隔离、失败传播与PR身份；不证明worker产物或TDD红绿。
 // vitest include 只认 .ts,故本测试用 .ts import 同目录的 .mjs。
 // 外部命令(git / gh / worktree-manage.sh)全部通过可注入的 exec runner mock,绝不真跑。
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 // @ts-expect-error —— .mjs 无类型声明,运行期可解析
 import { runALane } from '../a-lane.mjs';
+
+beforeEach(()=>vi.stubEnv('ALANE_LIVE',''));
+afterEach(()=>vi.unstubAllEnvs());
 
 const task = { id: 'cache-daily-report', title: '给 daily-report 加缓存' };
 const contract = {
@@ -75,7 +78,7 @@ describe('runALane — live 真态执行序', () => {
     expect(calls.filter(call => call.cmd === 'git').every(call => call.cwd === '/Users/administrator/worktrees/cecelia/cache-daily-report')).toBe(true);
   });
 
-  it('按序调用 runner: worktree-manage.sh → commit1(Red) → commit2(Green) → push → gh pr create', () => {
+  it('命令编排顺序为worktree、两个提交、push与PR；不将提交文案当作TDD执行证明', () => {
     const { exec, calls } = makeFakeExec({
       'pr create': 'https://github.com/perfectuser21/cecelia/pull/4242',
     });
@@ -132,5 +135,50 @@ describe('runALane — live 真态执行序', () => {
     // worktree 创建后的命令(commit/push/pr)cwd 必须是该 worktree
     const afterWt = calls.filter((c) => c.cwd === wt);
     expect(afterWt.length).toBeGreaterThan(0);
+  });
+});
+
+
+describe('A道失败边界',()=>{
+  it('非cp分支在任何git写入前拒绝',()=>{
+    const {exec,calls}=makeFakeExec({'rev-parse --abbrev-ref HEAD':'main'});
+    expect(()=>runALane(task,contract,{exec,dryRun:false})).toThrow('非 cp-*');
+    expect(calls.filter(c=>c.cmd==='git').map(c=>c.args)).toEqual([['rev-parse','--abbrev-ref','HEAD']]);
+  });
+  it.each(['worktree','commit','push'])('%s命令失败必须停止，不能开PR',stage=>{
+    const base=makeFakeExec();
+    const exec=(cmd:string,args:string[],options:{cwd?:string})=>{
+      if((stage==='worktree' && cmd==='bash') || (cmd==='git' && args[0]===stage)) throw Error(`fixture-${stage}`);
+      return base.exec(cmd,args,options);
+    };
+    expect(()=>runALane(task,contract,{exec,dryRun:false})).toThrow(`fixture-${stage}`);
+    expect(base.calls.some(c=>c.cmd==='gh')).toBe(false);
+  });
+  it.each(['','created without URL'])('PR输出缺少真实句柄%s时不能声称opened',output=>{
+    const {exec}=makeFakeExec({'pr create':output});
+    expect(()=>runALane(task,contract,{exec,dryRun:false})).toThrow('PR URL');
+  });
+});
+
+
+describe('完整GitHub PR URL身份',()=>{
+  it.each([
+    'https://github.com/owner/repo/pull/12oops',
+    'https://github.com/owner/./pull/12',
+    'https://github.com/owner/../pull/12',
+    'https://github.com/owner/pull/12',
+    'https://github.com/owner/repo/pull/0',
+    'https://github.com/owner/repo/pull/12/more',
+    'https://github.com.evil/owner/repo/pull/12',
+  ])('拒绝畸形完整token：%s',output=>{
+    const {exec}=makeFakeExec({'pr create':output});
+    expect(()=>runALane(task,contract,{exec,dryRun:false})).toThrow('PR URL');
+  });
+  it.each([
+    'Created pull request:\nhttps://github.com/some-owner/repo_name.js/pull/42\nReady',
+    'Created pull request (https://github.com/some-owner/repo_name.js/pull/42)',
+  ])('提示文字或换行内仍可提取合法完整URL',output=>{
+    const {exec}=makeFakeExec({'pr create':output});
+    expect(runALane(task,contract,{exec,dryRun:false})).toMatchObject({status:'opened',pr:'https://github.com/some-owner/repo_name.js/pull/42'});
   });
 });
