@@ -12,7 +12,7 @@ export function clientCommands(source) {
     .replace(/\b(?:echo|log|skip|fail|printf|ok|pass)\s+("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')/g,
       (command, argument) => argument.includes('$(') || argument.includes('`') ? command : '');
 }
-export async function fixture(run, { health } = {}) {
+export async function fixture(run, { health, respond } = {}) {
   const requests = [];
   const server = createServer((req, res) => {
     requests.push({ method: req.method, url: req.url });
@@ -20,6 +20,7 @@ export async function fixture(run, { health } = {}) {
     req.on('data', chunk => { body += chunk; });
     req.on('end', () => {
       res.setHeader('Content-Type', 'application/json');
+      if (respond?.({ req, res, body }) === true) return;
       if (req.url.endsWith('/health')) {
         res.end(JSON.stringify(health || { local_execution: { role: process.env.GUARD_FIXTURE_ROLE || 'executor' } }));
       } else if (req.method === 'POST') {

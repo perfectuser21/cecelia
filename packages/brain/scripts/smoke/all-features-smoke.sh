@@ -51,7 +51,7 @@ while IFS= read -r row; do
   else
     STATUS="failing"
     FAILED=$((FAILED + 1))
-    FAILED_IDS=("${FAILED_IDS[@]}" "$ID")
+    FAILED_IDS[$((FAILED - 1))]="$ID"
     echo "❌ $ID"
   fi
 
