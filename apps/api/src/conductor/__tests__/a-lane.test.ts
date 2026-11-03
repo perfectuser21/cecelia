@@ -164,6 +164,8 @@ describe('A道失败边界',()=>{
 describe('完整GitHub PR URL身份',()=>{
   it.each([
     'https://github.com/owner/repo/pull/12oops',
+    'https://github.com/owner/./pull/12',
+    'https://github.com/owner/../pull/12',
     'https://github.com/owner/pull/12',
     'https://github.com/owner/repo/pull/0',
     'https://github.com/owner/repo/pull/12/more',
