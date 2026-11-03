@@ -8,6 +8,14 @@ import test from 'node:test';
 const runner = new URL('../run-basic-check.mjs', import.meta.url).href;
 const cli = new URL('../run-basic-check.mjs', import.meta.url);
 
+test('现行scripts检查实际运行防复活守卫的测试注册回归', () => {
+  const result = spawnSync(process.execPath, [cli.pathname, '--list', 'scripts'], {encoding: 'utf8'});
+  assert.equal(result.status, 0, result.stderr);
+  const steps = JSON.parse(result.stdout);
+  assert.ok(steps.some(step => step.command === 'node' && step.args.includes('--test')
+    && step.args.includes('scripts/ci/__tests__/basic-test-registration.test.mjs')));
+});
+
 test('未知组件不能无操作成功', () => {
   const result = spawnSync(process.execPath, [cli.pathname, 'unknown-component'], { encoding: 'utf8' });
   assert.notEqual(result.status, 0);
