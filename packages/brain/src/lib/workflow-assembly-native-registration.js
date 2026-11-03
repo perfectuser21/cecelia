@@ -27,7 +27,20 @@ export async function registerNativeReconcile(pool,source,options={}){
     await db.query(`INSERT INTO workflows(id,capability_id,key,name,channel,form,version,status,source_repo,source_path)
       VALUES($1,$2,$3,$4,'internal','code',$5,'active',$6,$7) ON CONFLICT(id) DO NOTHING`,[spec.id,spec.capability_id,spec.key,spec.name,spec.version,source.repo,source.path]);
     const existing=(await db.query('SELECT * FROM activities WHERE id=$1 OR (capability_key=$2 AND activity_key=$3) FOR UPDATE',[a.id,spec.capability,a.key])).rows;
-    if(existing.some(x=>x.id!==a.id||x.workflow_id!==spec.id||x.status!=='active'||x.executor_kind!=='code'||definitionDigest(x.contract)!==definitionDigest(a)))conflict();
+    for(const x of existing){
+      if(x.id!==a.id||x.workflow_id!==spec.id||x.status!=='active'||x.executor_kind!=='code')conflict();
+      if(definitionDigest(x.contract)===definitionDigest(a))continue;
+      // 仅升级本系统精确旧合同；人工改写、其他来源或未冻结版本一律保持冲突。
+      const legacy={...a,version:'1.0.0'};
+      if(a.version!=='1.0.1'||definitionDigest(x.contract)!==definitionDigest(legacy)||x.contract_sha256!==definitionDigest(legacy))conflict();
+      const prior=(await db.query('SELECT * FROM activity_definition_versions WHERE id=$1 AND activity_id=$2 FOR SHARE',[x.current_definition_version_id,a.id])).rows[0];
+      if(!prior||prior.source_repo!==source.repo||prior.source_path!==source.path||prior.payload?.protocol!==spec.protocol
+        ||prior.payload?.definition_scope!=='native_maintenance_observation'||definitionDigest(prior.payload.contract)!==definitionDigest(legacy))conflict();
+      const updated=await db.query(`UPDATE activities SET contract=$2,contract_sha256=$3,backbone_version=$4
+        WHERE id=$1 AND current_definition_version_id=$5 AND contract_sha256=$6 RETURNING id`,
+      [a.id,a,definitionDigest(a),spec.version,x.current_definition_version_id,definitionDigest(legacy)]);
+      if(updated.rows.length!==1)conflict();
+    }
     const url=`https://github.com/${source.repo}/blob/${source.commit}/${source.path}`;
     await db.query(`INSERT INTO activities(id,name,status,workflow_id,capability_key,activity_key,executor_kind,contract,contract_sha256,contract_source,backbone_version)
       VALUES($1,$2,'active',$3,$4,$5,'code',$6,$7,$8,$9) ON CONFLICT(id) DO NOTHING`,[a.id,a.name,spec.id,spec.capability,a.key,a,definitionDigest(a),url,spec.version]);
@@ -38,7 +51,7 @@ export async function registerNativeReconcile(pool,source,options={}){
       VALUES($1,$2,$3,$4,1,true,$5,$6,$7,$8) ON CONFLICT(id) DO UPDATE SET activity_definition_version_id=$8,source_commit=$7`,[a.reference_id,spec.id,a.key,a.id,source.repo,source.path,source.commit,av]);
     const payload={protocol:spec.protocol,definition_scope:'native_maintenance_observation',capability_id:spec.capability_id,workflow_id:spec.id,key:spec.key,contract:spec,activities:[{reference_id:a.reference_id,slot_key:a.key,sequence_no:1,activity_id:a.id,activity_version_id:av}]};
     const wv=await version(db,'workflow',spec.id,payload,source);
-    await db.query('UPDATE workflows SET current_definition_version_id=$2 WHERE id=$1',[spec.id,wv]);
+    await db.query('UPDATE workflows SET current_definition_version_id=$2,version=$3 WHERE id=$1',[spec.id,wv,spec.version]);
     await db.query('UPDATE activities SET current_definition_version_id=$2,contract_source=$3 WHERE id=$1',[a.id,av,url]);
     await db.query('UPDATE ops_schedule_entries SET workflow_id=$2 WHERE id=$1 AND (workflow_id IS NULL OR workflow_id=$2)',[s.id,spec.id]);
     await db.query('UPDATE ops_workflows SET workflow_id=$2 WHERE id=$1 AND (workflow_id IS NULL OR workflow_id=$2)',[s.ops_workflow_id,spec.id]);

@@ -19,7 +19,7 @@ describe('buildTerminalUpdate', () => {
     expect(sql).toContain('claimed_at = NULL');
     expect(sql).toContain('completed_at = COALESCE(completed_at, NOW())');
     expect(sql).toContain('updated_at = NOW()');
-    expect(sql).toMatch(/WHERE id = \$1 AND .*commander-v2.*RETURNING id, status/);
+    expect(sql).toMatch(/WHERE id = \$1 AND [\s\S]*commander-v2[\s\S]*RETURNING id, status/);
     expect(params).toEqual([ID]);
   });
 
@@ -155,4 +155,18 @@ describe('applyDecisionTaskTransition', () => {
     await expect(applyDecisionTaskTransition(db, { type: 'publish', target_id: ID })).rejects.toThrow('Unsupported decision task transition');
     expect(db.query).not.toHaveBeenCalled();
   });
+});
+
+describe('migrated v2 common Runner terminal proof',()=>{
+ it('uses independent task_runs plus matching confirmed observation, never an agent protocol flag',()=>{
+  const {sql}=buildTerminalUpdate(ID,'completed');
+  expect(sql).toContain("result->'workflow_common_runner'->>'run_id'");
+  expect(sql).toContain('EXISTS (SELECT 1 FROM task_runs');
+  expect(sql).toContain("cr.context->>'source'='workflow-common-runner'");
+  expect(sql).toContain("'{common_runner_observation,evidence,central_readback,recording_status}'='confirmed'");
+ });
+ it('does not extend migrated proof to archive or failure without a matching terminal run',()=>{
+  expect(buildTerminalUpdate(ID,'archived').sql).not.toContain('EXISTS (SELECT 1 FROM task_runs');
+  expect(buildTerminalUpdate(ID,'failed').sql).toContain("cr.status IN ('failed','cancelled')");
+ });
 });

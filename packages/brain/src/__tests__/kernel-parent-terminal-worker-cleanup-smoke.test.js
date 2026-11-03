@@ -51,7 +51,8 @@ describe('parent-terminal Worker cleanup canary safety', () => {
       new URL('../../scripts/smoke/kernel-parent-terminal-worker-cleanup.mjs', import.meta.url),
       'utf8',
     );
-    expect(source).toMatch(/INSERT INTO tasks\([^)]*task_type[^)]*\)/);
+    expect(source).not.toMatch(/INSERT INTO tasks\(/);
+    expect(source).toContain('throw kernelRuntimeRetiredError()');
   });
 
   it('launches all machines concurrently instead of waiting for the prior machine', async () => {
@@ -228,8 +229,8 @@ describe('parent-terminal Worker cleanup canary safety', () => {
       new URL('../../scripts/smoke/kernel-parent-terminal-worker-cleanup.mjs', import.meta.url),
       'utf8',
     );
-    expect(source).toMatch(/harness_attempt_cleanup_outbox[\s\S]*run_id\s*=\s*\$4/);
-    expect(source).toMatch(/createAttemptCleanupWorker\(\{[\s\S]*storeFactory:/);
+    expect(source).not.toMatch(/INSERT INTO (tasks|initiative_runs|kernel_controller_sessions)/);
+    expect(source).toMatch(/async function createProductionOperations[^}]*throw kernelRuntimeRetiredError/);
   });
 
   it('defaults to a side-effect-free dry-run with no implicit machines', () => {

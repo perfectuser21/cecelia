@@ -41,13 +41,15 @@ export async function claimNativeRound(db,{runId,requestKey,trigger,source}){
   if(!row||row.workflow_id!==spec.id||Object.keys(detail).some(key=>definitionDigest(row.detail?.[key]??null)!==definitionDigest(detail[key])))conflict();
   return {created:Boolean(created),row,detail};
 }
-export async function finishNativeRound(db,claim,report,result,error){
+export async function finishNativeRound(db,claim,report,result,error,supervision){
   await db.query('BEGIN');
   try{
     await db.query("SET LOCAL statement_timeout='5000ms'");
     // 保留PostgreSQL微秒，避免pg Date截成毫秒后ended_at反而早于同毫秒的started_at。
     const ended=(await db.query('SELECT clock_timestamp()::text AS at')).rows[0].at;
-    const detail={...claim.detail,report,reason:result.reason,business_qualification:false};
+    const persisted=(await db.query('SELECT detail FROM runs WHERE run_id=$1 FOR UPDATE',[claim.row.run_id])).rows[0]?.detail;
+    const detail={...claim.detail,...(persisted?.runner_events?{runner_events:persisted.runner_events}:{}),report,reason:result.reason,business_qualification:false,
+      ...(supervision?{business_status:supervision.receipt.status,runner_receipt:supervision.receipt,runner_events:supervision.events}: {})};
     await writeSpans(db,[normalizeSpan({run_id:claim.row.run_id,workflow_id:spec.id,activity_id:spec.activities[0].id,
       executor_kind:'code',executor_id:'brain-native-maintenance',started_at:claim.row.started_at,ended_at:ended,
       occurrence_key:'native-reconcile-round',outcome:result.outcome==='pass'?'pass':result.outcome==='fail'?'fail':'unknown',

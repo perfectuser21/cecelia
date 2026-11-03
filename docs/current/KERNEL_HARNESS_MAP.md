@@ -1,4 +1,8 @@
-# Kernel Harness × 能力（Capability）权威地图
+# 公共 Activity Runner 与历史 Kernel 地图
+
+现役内核为 `activity-runtime.js` 的 `runActivityContract`：代码固定活动顺序、执行检查与独立 validator、按合同路由、记录证据，Commander 仅监督/纠偏。受保护 workflow/profile 由公共 Runner 执行，编码走 `coding_workflow`。旧 Kernel、skill-relay、Fleet orchestrator prepare/start、建 relay run 与 attempt-run、非 dry-run CLI 已明确退役；历史读回、终态归档、在途隔离保留。GP 提案尚缺公共 Runner profile/验收绑定，拒绝新派，不能宣称已经迁移。
+
+以下 Kernel 图为历史资料，不授权重新启动旧执行器。
 
 > 术语按决策 a340f100（2026-08-06）对照表书写，正本见 `packages/workflows/KERNEL_CONTEXT.md`。
 > 「能力」即旧称 Golden Path（GP 保留为内部别名），「价值流」即旧称 Line/业务线。
@@ -67,13 +71,13 @@
 
 ---
 
-## 二、Kernel v2 orchestrator（provider 无关执行内核）
+## 二、历史 Kernel v2 orchestrator（已退役）
 
 ### 入口文档
 
-子系统唯一 README：`packages/brain/src/orchestrator/README.md`（灰度开关/回滚/Commander）。
+子系统唯一 README：`packages/brain/src/orchestrator/README.md`（退役边界/历史读回/Commander）。
 
-### 两套派发系统的分流规则（此前无任何文档记载，勿再考古）
+### 历史分流规则（新运行已禁止）
 
 判定代码：`packages/brain/src/executor-contracts.js`
 
@@ -86,7 +90,7 @@ task.payload.orchestrator='skill-relay'（无 harness_runtime）
     → executor.js 老通用分发器（不含 Grok）
 ```
 
-分流靠 **payload 字段**，不靠 task_type——这是最容易被误解的一条。
+上述 payload 分流仅为历史实现；现役新业务不得经这些字段绕过公共 Runner。
 
 ### provider 无关的知识注入链（"三家 agent 都能拿到同一份上下文"的现成机制）
 

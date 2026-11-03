@@ -12,7 +12,9 @@ const require=createRequire(import.meta.url);
 export const nativeSpec=require('../../config/workflow-assembly-native.json');
 export const NATIVE_SOURCE_PATHS=Object.freeze([NATIVE_SPEC_PATH,...['workflow-assembly-native.js','workflow-assembly-native-ledger.js','workflow-assembly-native-source.js','workflow-assembly-native-registration.js',
   'workflow-assembly-reconcile-runner.js','workflow-assembly-reconcile.js','workflow-assembly-reconcile-derived.js','workflow-assembly-reconcile-tasks.js'].map(p=>'packages/brain/src/lib/'+p),
-  'packages/brain/src/workflow-authoring/assembly-driver.js','packages/brain/src/workflow-authoring/execution-proof.js']);
+  'packages/brain/src/workflow-authoring/assembly-driver.js','packages/brain/src/workflow-authoring/execution-proof.js',
+  'packages/brain/src/lib/workflow-assembly-native-supervision.js',
+  ...['activity-runtime.js','activity-contract.js','activity-judgment.js','activity-process.js','activity-supervision.js','runner-commander-bridge.js','runner-commander-transport.js'].map(p=>'packages/brain/src/orchestrator/'+p)]);
 // Docker将packages/brain平铺/app；逻辑Git路径不等于运行时物理文件路径。
 const loaded=new Map(NATIVE_SOURCE_PATHS.map(path=>[path,readFileSync(new URL('../../'+path.slice('packages/brain/'.length),import.meta.url),'utf8')]));
 const trusted=new WeakSet();

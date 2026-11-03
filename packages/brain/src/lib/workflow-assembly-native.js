@@ -4,6 +4,7 @@ import {nativeSpec as spec,prepareNativeSource,deployedNativeRevision} from './w
 import {registerNativeReconcile} from './workflow-assembly-native-registration.js';
 import {claimNativeRound,finishNativeRound} from './workflow-assembly-native-ledger.js';
 import {definitionDigest} from '../workflow-authoring/contracts.js';
+import {runSupervisedNativeRound} from './workflow-assembly-native-supervision.js';
 export function nativeReconcileOutcome(report){
   if(report.skipped)return {outcome:'skipped',reason:report.skipped};
   if(report.stopped)return {outcome:report.stopped==='budget'?'timeout':'unknown',reason:report.stopped};
@@ -38,16 +39,35 @@ export async function runNativeReconcile(pool,{request_key=randomUUID(),trigger=
       ||previous.detail?.workflow_definition_version_id!==current?.current_definition_version_id)throw Object.assign(Error('native_run_identity_conflict'),{status:409});
     return {native_run_id:runId,replayed:true,run:previous};
   }
-  let claim,settled,settleError;
+  let claim,settled,settleError,supervision;
   if(services.signal?.aborted||Date.now()>=deadline)return {native_run_id:null,report:{stopped:services.signal?.aborted?'cancelled':'budget'},run:null};
   const report=await runWorkflowAssemblyReconcile(pool,{...(services.runnerOptions??{}),budgetMs:deadline-Date.now(),limit:5,signal:services.signal,
     onLocked:async(db,{check})=>{
       const guarded={query:async(...args)=>{check();const result=await db.query(...args);check();return result;}};
       claim=await claimNativeRound(guarded,{runId,requestKey:request_key,trigger,source});return claim.created;
     },
+    runLocked:async(execute,db)=>{
+      supervision=await runSupervisedNativeRound(execute,{runId,definitionVersion:claim.detail.workflow_definition_version_id,signal:services.signal,
+        transport:services.commanderTransport,
+        onEvent:async event=>{
+          const saved=await db.query({text:`UPDATE runs SET detail=jsonb_set(detail,'{runner_events}',COALESCE(detail->'runner_events','[]'::jsonb)||$2::jsonb),updated_at=NOW()
+            WHERE run_id=$1 AND outcome='running' AND header_source='owner' RETURNING run_id`,values:[runId,JSON.stringify([event])],query_timeout:3000});
+          if(saved.rowCount!==1)throw Error('native_runner_event_unrecorded');
+          const observed=(await db.query({text:"SELECT detail->'runner_events'->-1 AS event FROM runs WHERE run_id=$1",values:[runId],query_timeout:3000})).rows[0]?.event;
+          if(definitionDigest(observed)!==definitionDigest(event))throw Error('native_runner_event_readback_mismatch');
+        },
+        readback:async()=>{
+          const row=(await db.query({text:'SELECT run_id,outcome,detail FROM runs WHERE run_id=$1',values:[runId],query_timeout:3000})).rows[0];
+          return row&&{run_id:row.run_id,outcome:row.outcome,definition_version:row.detail?.workflow_definition_version_id};
+        },
+      });
+      if(supervision.error)throw supervision.error;
+      return supervision.report;
+    },
     onSettled:async(db,result,error)=>{
       if(!claim?.created)return;
-      try{settled=await finishNativeRound(db,claim,result,error&&!result.stopped?{outcome:'fail',reason:'native_error'}:nativeReconcileOutcome(result),error&&!result.stopped?error:null);}
+      try{settled=await finishNativeRound(db,claim,result,error&&!result.stopped?{outcome:'fail',reason:'native_error'}
+        :supervision?.receipt.status==='needs_review'&&!result.stopped&&!result.errors?{outcome:'unknown',reason:'runner_needs_review'}:nativeReconcileOutcome(result),error&&!result.stopped?error:null,supervision);}
       catch(e){settleError=e;}
     },
   });

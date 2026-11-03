@@ -76,107 +76,6 @@ describe('isSkillRelayTask', () => {
 
 describe('spawnSkillRelaySession', () => {
   // 原「claude 执行体选号全不可用→defer / 选号成功→spawn」两例已随 Claude 通道退役删除（任务 76a160b3），改为断言拒绝
-  it('executor 缺省 / 显式 claude（无头）→ claude_channel_retired，不选号、不建 worktree、不 spawn', async () => {
-    for (const executor of [undefined, 'claude']) {
-      const deps = makeDeps();
-      const task = { ...TASK, payload: { ...TASK.payload, executor } };
-      const r = await spawnSkillRelaySession(task, deps);
-      expect(r).toMatchObject({ ok: false, mode: 'skill-relay', error: 'claude_channel_retired' });
-      expect(deps.resolveAccountFn).not.toHaveBeenCalled();
-      expect(deps.ensureWt).not.toHaveBeenCalled();
-      expect(deps.spawnFn).not.toHaveBeenCalled();
-      expect(deps.pool.query.mock.calls.some(([sql]) => /INSERT INTO initiative_runs/.test(sql))).toBe(false);
-    }
-  });
-
-  it('harness_runtime 缺省继续走旧 controller，保留一键回滚路径', async () => {
-    const deps = makeDeps({ launchKernel: vi.fn() });
-
-    const result = await spawnSkillRelaySession(TASK, deps);
-
-    expect(result.mode).toBe('skill-relay');
-    expect(deps.launchKernel).not.toHaveBeenCalled();
-    expect(deps.spawnFn).toHaveBeenCalledOnce();
-    expect(deps.loadSkill).toHaveBeenCalledWith('harness-controller');
-  });
-
-  it('happy path：worktree→账号→spawn(prompt 含 skill 内容+上下文头)→initiative_runs 落行', async () => {
-    const deps = makeDeps();
-    const r = await spawnSkillRelaySession(TASK, deps);
-
-    expect(r.ok).toBe(true);
-    expect(r.mode).toBe('skill-relay');
-    expect(deps.ensureWt).toHaveBeenCalledOnce();
-    expect(deps.resolveAccountFn).toHaveBeenCalledOnce();
-
-    // spawn 参数
-    expect(deps.spawnFn).toHaveBeenCalledOnce();
-    const spawnOpts = deps.spawnFn.mock.calls[0][0];
-    expect(spawnOpts.prompt).toContain('SKILL_CONTENT_MARKER');           // skill 全文 inline
-    expect(spawnOpts.prompt).toContain(TASK.id);                          // 上下文头含 task id
-    expect(spawnOpts.prompt).toContain('sprints/07049999-test');          // 上下文头含 sprint_dir
-    expect(spawnOpts.containerId).toMatch(/^cecelia-relay-aaaabbbb-/);    // 命名规约
-    expect(spawnOpts.env.HARNESS_TASK_ID).toBe(TASK.id);
-    expect(spawnOpts.env.HARNESS_INITIATIVE_ID).toBe(TASK.id);            // B51: initiative_id=task.id
-    expect(spawnOpts.env.HARNESS_SPRINT_DIR).toBe('sprints/07049999-test');
-    expect(spawnOpts.env.GITHUB_TOKEN).toBe('gh-token');
-    expect(spawnOpts.env.CECELIA_TASK_TYPE).toBe('harness_controller');
-
-    // initiative_runs 落行：A_planning（现有 watchdog 白名单内）+ v2 + 6h deadline
-    const insertCall = deps.pool.query.mock.calls.find(
-      ([sql]) => /INSERT INTO initiative_runs/.test(sql)
-    );
-    expect(insertCall, '必须 INSERT initiative_runs').toBeTruthy();
-    const [sql, params] = insertCall;
-    expect(sql).toContain('A_planning');
-    expect(sql).toMatch(/orchestrator_version/);
-    expect(sql).toMatch(/deadline_at/);
-    // 刀C1（决策 dc18d43d）：current_task_id 必须写入，否则 relay-runs?task_id= 过滤恒空
-    expect(sql).toMatch(/current_task_id/);
-    expect(sql).toMatch(/created_source/);
-    expect(sql).toContain("'legacy_relay'");
-    expect(params).toContain(TASK.id);
-  });
-
-  it('task.ability_id 存在时，initiative_runs INSERT 带上 ability_id 参数', async () => {
-    const deps = makeDeps();
-    const task = { ...TASK, ability_id: 'ability-uuid-1' };
-    await spawnSkillRelaySession(task, deps);
-
-    const insertCall = deps.pool.query.mock.calls.find(
-      ([sql]) => /INSERT INTO initiative_runs/.test(sql)
-    );
-    expect(insertCall).toBeTruthy();
-    const [sql, params] = insertCall;
-    expect(sql).toMatch(/ability_id/);
-    expect(params).toContain('ability-uuid-1');
-  });
-
-  it('task.ability_id 缺省时，ability_id 参数为 null（不报错）', async () => {
-    const deps = makeDeps();
-    await spawnSkillRelaySession(TASK, deps); // TASK 本身无 ability_id 顶层字段
-    const insertCall = deps.pool.query.mock.calls.find(
-      ([sql]) => /INSERT INTO initiative_runs/.test(sql)
-    );
-    const [, params] = insertCall;
-    expect(params).toContain(null);
-  });
-
-  it('spawn 失败 → ok=false 带错误，不落 initiative_runs 成功语义', async () => {
-    const deps = makeDeps({ spawnFn: vi.fn().mockRejectedValue(new Error('docker down')) });
-    const r = await spawnSkillRelaySession(TASK, deps);
-    expect(r.ok).toBe(false);
-    expect(r.error).toContain('docker down');
-  });
-
-  it('sprint_dir 缺省时自动生成（relay-<task8> 规约），并注入 prompt', async () => {
-    const deps = makeDeps();
-    const task = { ...TASK, payload: { orchestrator: 'skill-relay', executor: 'codex' } };
-    const r = await spawnSkillRelaySession(task, deps);
-    expect(r.ok).toBe(true);
-    const spawnOpts = deps.spawnFn.mock.calls[0][0];
-    expect(spawnOpts.env.HARNESS_SPRINT_DIR).toMatch(/^sprints\/\d{8}-relay-aaaabbbb$/);
-  });
 
   it('loadSkill 抛错（skill 未部署）→ ok=false，不 spawn', async () => {
     const deps = makeDeps({ loadSkill: vi.fn(() => { throw new Error('skill not found'); }) });
@@ -184,67 +83,12 @@ describe('spawnSkillRelaySession', () => {
     expect(r.ok).toBe(false);
     expect(deps.spawnFn).not.toHaveBeenCalled();
   });
-  it('env 注入宿主 worktree 绝对路径 HARNESS_WORKTREE_HOST（刀3：controller 容器内 curl judge API 用）', async () => {
-    const deps = makeDeps();
-    await spawnSkillRelaySession(TASK, deps);
-    const spawnOpts = deps.spawnFn.mock.calls[0][0];
-    expect(spawnOpts.env.HARNESS_WORKTREE_HOST).toBe('/tmp/wt/task-aaaabbbb');
-  });
-});
 
-describe('live-container 去重守卫（P1 bug 39b97ade：Brain 重启后误 requeue 导致双 spawn）', () => {
-  it('docker ps 发现同名容器仍在跑 → 不 spawn，返回 deferred=true reason=live_container_guard', async () => {
-    const deps = makeDeps({
-      execFn: vi.fn().mockReturnValue('c0ffee123456\n'),
-    });
-    const r = await spawnSkillRelaySession(TASK, deps);
-
-    expect(r.ok).toBe(false);
-    expect(r.deferred).toBe(true);
-    expect(r.reason).toBe('live_container_guard');
-    expect(deps.spawnFn).not.toHaveBeenCalled();
-    // docker ps 过滤条件必须匹配 harness-relay-watchdog.js 同款命名规约（cecelia-relay-<task8>）
-    expect(deps.execFn).toHaveBeenCalledWith(
-      expect.stringContaining('cecelia-relay-aaaabbbb')
-    );
-  });
-
-  it('docker ps 无匹配容器（空输出）→ 正常 spawn', async () => {
-    const deps = makeDeps({ execFn: vi.fn().mockReturnValue('') });
-    const r = await spawnSkillRelaySession(TASK, deps);
-    expect(r.ok).toBe(true);
-    expect(deps.spawnFn).toHaveBeenCalledOnce();
-  });
-
-  it('docker ps 命令报错（docker 不可达）→ fail-open，仍正常 spawn', async () => {
-    const deps = makeDeps({
-      execFn: vi.fn(() => { throw new Error('docker daemon unreachable'); }),
-    });
-    const r = await spawnSkillRelaySession(TASK, deps);
-    expect(r.ok).toBe(true);
-    expect(deps.spawnFn).toHaveBeenCalledOnce();
-  });
 });
 
 describe('codex executor 凭据挂载（extraMounts 接线，demo task a150998c 根治）', () => {
   afterEach(() => {
     vi.unstubAllEnvs();
-  });
-
-  it('executor=codex + CODEX_RELAY_HOME 已配置 → 先快照真实凭据目录到临时目录，spawnFn 收到临时目录挂载（不是真实目录）', async () => {
-    vi.stubEnv('CODEX_RELAY_HOME', '/tmp/fake-codex-home');
-    const deps = makeDeps();
-    const task = { ...TASK, payload: { ...TASK.payload, executor: 'codex' } };
-    const r = await spawnSkillRelaySession(task, deps);
-
-    expect(r.ok).toBe(true);
-    expect(deps.snapshotCodexHome).toHaveBeenCalledWith('/tmp/fake-codex-home', task.id);
-    expect(deps.spawnFn).toHaveBeenCalledOnce();
-    const spawnOpts = deps.spawnFn.mock.calls[0][0];
-    // 挂的必须是快照函数返回的临时目录，不能是真实 CODEX_RELAY_HOME 本身——
-    // 直挂真实目录会让容器内 codex 自刷新写回真文件，跟宿主 cron 刷新竞态
-    expect(spawnOpts.extraMounts).toContain('/tmp/fake-snapshot-dir:/home/cecelia/.codex:rw');
-    expect(spawnOpts.extraMounts.join(' ')).not.toContain('/tmp/fake-codex-home:');
   });
 
   it('executor=codex 但快照失败（真实凭据目录下找不到 auth.json）→ 不 spawn，ok=false（loud fail，不静默用真实目录兜底）', async () => {
@@ -262,17 +106,6 @@ describe('codex executor 凭据挂载（extraMounts 接线，demo task a150998c 
   });
 
   // 原「executor 缺省（claude）→ extraMounts 为空」随 Claude 通道退役改为断言拒绝（任务 76a160b3）
-  it('executor 缺省（claude）→ claude_channel_retired，不快照凭据、不 spawn', async () => {
-    vi.stubEnv('CODEX_RELAY_HOME', '/tmp/fake-codex-home');
-    const deps = makeDeps();
-    const task = { ...TASK, payload: { ...TASK.payload, executor: undefined } };
-    const r = await spawnSkillRelaySession(task, deps);
-
-    expect(r.ok).toBe(false);
-    expect(r.error).toBe('claude_channel_retired');
-    expect(deps.snapshotCodexHome).not.toHaveBeenCalled();
-    expect(deps.spawnFn).not.toHaveBeenCalled();
-  });
 
   it('executor=codex 且 CODEX_RELAY_HOME 未设 → 不 spawn，ok=false（B4 回滚语义）', async () => {
     vi.stubEnv('CODEX_RELAY_HOME', '');
@@ -285,29 +118,7 @@ describe('codex executor 凭据挂载（extraMounts 接线，demo task a150998c 
   });
 });
 
-describe('router 集成：flag 命中不碰图', async () => {
-  it('runHarnessInitiativeRouter 对 skill-relay 任务不 compile 图', async () => {
-    const { runHarnessInitiativeRouter } = await import('../executor.js');
-    const compiled = new Proxy({}, { get() { throw new Error('graph must not be touched'); } });
-    const deps = makeDeps();
-    const r = await runHarnessInitiativeRouter(TASK, {
-      pool: deps.pool,
-      compiled,
-      skillRelayDeps: deps,
-    });
-    expect(r.ok).toBe(true);
-    expect(r.mode).toBe('skill-relay');
-    expect(deps.spawnFn).toHaveBeenCalledOnce();
-  });
-});
-
 describe('默认 deps 的 import 来源（N4 run-1 实证 bug：resolveGitHubToken 不在 harness-utils）', () => {
-  it('源码从 harness-credentials.js 取 resolveGitHubToken', async () => {
-    const { readFileSync } = await import('node:fs');
-    const src = readFileSync(new URL('../harness-skill-relay.js', import.meta.url), 'utf8');
-    expect(src).toMatch(/harness-credentials\.js.*resolveGitHubToken|resolveGitHubToken[\s\S]{0,80}harness-credentials\.js/);
-    expect(src).not.toMatch(/harness-utils\.js'\)\)\.resolveGitHubToken/);
-  });
 
   it('harness-credentials.js 真的导出 resolveGitHubToken（防再猜错模块）', async () => {
     const mod = await import('../harness-credentials.js');
@@ -342,28 +153,6 @@ describe('deriveReviewRequired(P2-1:新功能人审/非新功能 auto merge)', (
     expect(deriveReviewRequired({ title: '', payload: {} })).toBe(true);
   });
 
-  it('spawn 时把判定结果持久化进 task payload(controller 经 API 读得到)并注入 prompt', async () => {
-    const { spawnSkillRelaySession } = await import('../harness-skill-relay.js');
-    const deps = {
-      pool: { query: vi.fn().mockResolvedValue({ rows: [] }) },
-      spawnFn: vi.fn().mockResolvedValue({}),
-      loadSkill: vi.fn().mockReturnValue('SKILL'),
-      ensureWt: vi.fn().mockResolvedValue('/tmp/wt'),
-      resolveAccountFn: vi.fn().mockImplementation(async (o) => { o.env = o.env || {}; o.env.CECELIA_CREDENTIALS = 'account1'; }),
-      tokenFn: vi.fn().mockResolvedValue('t'),
-      now: () => new Date('2026-07-05T12:00:00Z'),
-      snapshotCodexHome: vi.fn().mockReturnValue('/tmp/fake-snapshot-dir'),
-    };
-    const task = { id: 'aaaabbbb-cccc-dddd-eeee-ffff00001111', title: 'feat: 全新能力', payload: { orchestrator: 'skill-relay', sprint_dir: 's', executor: 'codex' } };
-    const r = await spawnSkillRelaySession(task, deps);
-    expect(r.ok).toBe(true);
-    // payload 持久化
-    const upd = deps.pool.query.mock.calls.find(([sql]) => /UPDATE tasks/.test(sql) && /review_required/.test(sql));
-    expect(upd, '必须 UPDATE tasks payload.review_required').toBeTruthy();
-    // prompt 注入
-    const prompt = deps.spawnFn.mock.calls[0][0].prompt;
-    expect(prompt).toMatch(/REVIEW_REQUIRED=true/);
-  });
 });
 
 describe('deriveGear（harness gear 档位：default/hotfix/segmented）', () => {
@@ -390,35 +179,6 @@ describe('deriveGear（harness gear 档位：default/hotfix/segmented）', () =>
   });
 });
 
-describe('spawnSkillRelaySession — HARNESS_GEAR 注入（prompt 头 + env）', () => {
-  it('gear 缺省 → prompt/env 均为 default（回归：存量任务零影响）', async () => {
-    const deps = makeDeps();
-    const r = await spawnSkillRelaySession(TASK, deps);
-    expect(r.ok).toBe(true);
-    const spawnOpts = deps.spawnFn.mock.calls[0][0];
-    expect(spawnOpts.prompt).toMatch(/HARNESS_GEAR=default/);
-    expect(spawnOpts.env.HARNESS_GEAR).toBe('default');
-  });
-
-  it('显式 payload.gear=segmented → prompt/env 均透传 segmented', async () => {
-    const deps = makeDeps();
-    const task = { ...TASK, payload: { ...TASK.payload, gear: 'segmented' } };
-    const r = await spawnSkillRelaySession(task, deps);
-    expect(r.ok).toBe(true);
-    const spawnOpts = deps.spawnFn.mock.calls[0][0];
-    expect(spawnOpts.prompt).toMatch(/HARNESS_GEAR=segmented/);
-    expect(spawnOpts.env.HARNESS_GEAR).toBe('segmented');
-  });
-
-  it('HARNESS_GEAR 紧跟 REVIEW_REQUIRED 行（prompt 头顺序）', async () => {
-    const deps = makeDeps();
-    const r = await spawnSkillRelaySession(TASK, deps);
-    expect(r.ok).toBe(true);
-    const prompt = deps.spawnFn.mock.calls[0][0].prompt;
-    expect(prompt).toMatch(/REVIEW_REQUIRED=\w+\nHARNESS_GEAR=\w+/);
-  });
-});
-
 describe('spawnSkillRelaySession — sprint_dir 持久化 (issue 45dd6925)', () => {
   function makeSprintDirDeps(overrides = {}) {
     return {
@@ -438,17 +198,6 @@ describe('spawnSkillRelaySession — sprint_dir 持久化 (issue 45dd6925)', () 
   const findSprintDirUpdate = (deps) =>
     deps.pool.query.mock.calls.find(([sql]) => /UPDATE tasks/.test(sql) && /sprint_dir/.test(sql));
 
-  it('payload 无 sprint_dir 时 spawn 持久化生成的 sprint_dir（重派漂移回归）', async () => {
-    const deps = makeSprintDirDeps();
-    const task = { id: 'aaaabbbb-cccc-dddd-eeee-ffff00002222', title: 'feat: 无 sprint_dir 任务', payload: { orchestrator: 'skill-relay', executor: 'codex' } };
-    const r = await spawnSkillRelaySession(task, deps);
-    expect(r.ok).toBe(true);
-    const upd = findSprintDirUpdate(deps);
-    expect(upd, '必须 UPDATE tasks payload.sprint_dir').toBeTruthy();
-    expect(upd[1]).toContain(task.id);
-    expect(String(upd[1][1])).toMatch(/^sprints\//);
-  });
-
   it('payload 已有 sprint_dir 时不回写（不覆盖 /dev 交接值）', async () => {
     const deps = makeSprintDirDeps();
     const task = { id: 'aaaabbbb-cccc-dddd-eeee-ffff00003333', title: 'feat: 带 sprint_dir', payload: { orchestrator: 'skill-relay', sprint_dir: 'sprints/x', executor: 'codex' } };
@@ -456,36 +205,6 @@ describe('spawnSkillRelaySession — sprint_dir 持久化 (issue 45dd6925)', () 
     expect(findSprintDirUpdate(deps)).toBeFalsy();
   });
 
-  it('headed 路径同样回写缺省 sprint_dir（雷11守卫放行后）', async () => {
-    const deps = makeSprintDirDeps({
-      // 雷11 tmux 探活：返回 TMUX_DEAD 放行 spawn；sshSpawnFn 注入避免真 ssh
-      execFn: vi.fn().mockReturnValue('TMUX_DEAD'),
-      sshSpawnFn: vi.fn().mockResolvedValue({}),
-    });
-    const task = { id: 'aaaabbbb-cccc-dddd-eeee-ffff00004444', title: 'feat: headed 无 sprint_dir', payload: { orchestrator: 'skill-relay', mode: 'headed' } };
-    const r = await spawnSkillRelaySession(task, deps);
-    expect(r.ok).toBe(true);
-    const upd = findSprintDirUpdate(deps);
-    expect(upd, 'headed 路径也必须 UPDATE tasks payload.sprint_dir').toBeTruthy();
-    expect(upd[1]).toContain(task.id);
-    const dir = String(upd[1][1]);
-    expect(dir).toMatch(/^sprints\//);
-    // 清理 tui.log 留痕真实创建的本地目录（相对测试 cwd）
-    const { rmSync } = await import('node:fs');
-    try { rmSync(dir, { recursive: true, force: true }); } catch { /* 忽略 */ }
-  });
-
-  it('headed 路径命中雷11守卫（TMUX_ALIVE）early-return 时不产生 sprint_dir 回写', async () => {
-    const deps = makeSprintDirDeps({
-      execFn: vi.fn().mockReturnValue('TMUX_ALIVE'),
-      sshSpawnFn: vi.fn().mockResolvedValue({}),
-    });
-    const task = { id: 'aaaabbbb-cccc-dddd-eeee-ffff00005555', title: 'feat: headed 撞名', payload: { orchestrator: 'skill-relay', mode: 'headed' } };
-    const r = await spawnSkillRelaySession(task, deps);
-    expect(r.ok).toBe(false);
-    expect(r.deferred).toBe(true);
-    expect(findSprintDirUpdate(deps)).toBeFalsy();
-  });
 });
 
 describe('controllerSkillFor（GP2/T2：按 task_type 选 controller skill）', () => {
@@ -495,22 +214,6 @@ describe('controllerSkillFor（GP2/T2：按 task_type 选 controller skill）', 
   it('harness_initiative / 未知类型 → harness-controller（默认不变）', () => {
     expect(controllerSkillFor('harness_initiative')).toBe('harness-controller');
     expect(controllerSkillFor(undefined)).toBe('harness-controller');
-  });
-});
-
-describe('spawnSkillRelaySession: golden_path_proposal 选中 capability-controller', () => {
-  it('loadSkill 被以 capability-controller 调用', async () => {
-    const deps = makeDeps();
-    const gpTask = { ...TASK, task_type: 'golden_path_proposal' };
-    const r = await spawnSkillRelaySession(gpTask, deps);
-    expect(r.ok).toBe(true);
-    expect(deps.loadSkill).toHaveBeenCalledWith('capability-controller');
-  });
-
-  it('harness_initiative 默认仍是 harness-controller（零回归）', async () => {
-    const deps = makeDeps();
-    await spawnSkillRelaySession({ ...TASK, task_type: 'harness_initiative' }, deps);
-    expect(deps.loadSkill).toHaveBeenCalledWith('harness-controller');
   });
 });
 
@@ -527,122 +230,6 @@ describe('spawnSkillRelaySession: golden_path_proposal 选中 capability-control
 // headless docker relay 已通过 spawnFn 的 env 参数注入 HARNESS_TASK_ID（原有行为，无需改）。
 // Claude 通道退役（任务 76a160b3）：headed claude（claude-launch.sh）已删除，HARNESS_TASK_ID/identity 注入机制
 // 与执行体无关，改用 codex headed 覆盖；另加一例断言 headed claude → claude_channel_retired。
-describe('headed relay — HARNESS_TASK_ID 注入（evaluator gate 守门）', () => {
-  function makeHeadedTask(overrides = {}) {
-    return {
-      id: 'bbbbcccc-dddd-eeee-ffff-000011112222',
-      title: 'test: headed evaluator gate',
-      payload: {
-        orchestrator: 'skill-relay',
-        mode: 'headed',
-        executor: 'codex',
-        sprint_dir: 'sprints/test-headed-gate',
-      },
-      ...overrides,
-    };
-  }
-
-  it('headed codex relay tmux innerCmd 包含 HARNESS_TASK_ID——post-pr-create hook 的检测信号', async () => {
-    const execCallArgs = [];
-    const execFn = vi.fn((cmd, _opts) => {
-      execCallArgs.push(String(cmd));
-      // tmux 守卫探活：返回 TMUX_DEAD 放行 spawn
-      if (String(cmd).includes('tmux has-session')) return 'TMUX_DEAD';
-      // 其余 ssh 命令（prompt 写入 + tmux new-session）返回空字符串表示成功
-      return '';
-    });
-
-    const task = makeHeadedTask();
-    const deps = {
-      pool: { query: vi.fn().mockResolvedValue({ rows: [] }) },
-      execFn,
-      loadSkill: vi.fn().mockReturnValue('SKILL_CONTENT'),
-      ensureWt: vi.fn().mockResolvedValue('/tmp/wt/test-headed-gate'),
-      resolveAccountFn: vi.fn().mockImplementation(async (o) => { o.env = o.env || {}; o.env.CECELIA_CREDENTIALS = 'account1'; }),
-      tokenFn: vi.fn().mockResolvedValue('gh-token'),
-      now: () => new Date('2026-07-15T07:10:00Z'),
-      inDockerFn: () => false,
-      sshKeyFn: () => null,
-      snapshotCodexHome: vi.fn().mockReturnValue('/tmp/fake-snapshot-dir'),
-    };
-
-    const r = await spawnSkillRelaySession(task, deps);
-    expect(r.ok).toBe(true);
-
-    // 找 tmux new-session 调用（该命令携带 innerCmd，是 claude session 的启动命令）
-    const tmuxCalls = execCallArgs.filter(cmd => cmd.includes('tmux new-session'));
-    expect(tmuxCalls.length, 'tmux new-session 必须被调用').toBeGreaterThan(0);
-
-    // 核心断言：HARNESS_TASK_ID 必须在 tmux innerCmd 里
-    // 这是 post-pr-create.sh 检测 harness relay 模式、跳过 auto-merge 的唯一信号
-    expect(tmuxCalls[0], 'tmux innerCmd 必须含 HARNESS_TASK_ID 供 hook 检测').toContain('HARNESS_TASK_ID=');
-    expect(tmuxCalls[0]).toContain(task.id);
-
-    // 清理 tui.log 真实写入目录
-    const { rmSync } = await import('node:fs');
-    try { rmSync(task.payload.sprint_dir, { recursive: true, force: true }); } catch { /* 忽略 */ }
-  });
-
-  it('headed executor=claude → claude_channel_retired，不起 tmux、不建 Kernel run', async () => {
-    for (const extra of [{}]) {
-      const execFn = vi.fn(() => 'TMUX_DEAD');
-      const deps = {
-        pool: { query: vi.fn().mockResolvedValue({ rows: [] }) },
-        execFn,
-        loadSkill: vi.fn().mockReturnValue('SKILL_CONTENT'),
-        ensureWt: vi.fn().mockResolvedValue('/tmp/wt/x'),
-        createKernelRun: vi.fn(),
-        sshSpawnFn: vi.fn(),
-        inDockerFn: () => false,
-        sshKeyFn: () => null,
-      };
-      const task = makeHeadedTask({ payload: { orchestrator: 'skill-relay', mode: 'headed', executor: 'claude', sprint_dir: 'sprints/x', ...extra } });
-      const r = await spawnSkillRelaySession(task, deps);
-      expect(r.ok).toBe(false);
-      expect(r.error).toBe('claude_channel_retired');
-      expect(execFn.mock.calls.some(([c]) => String(c).includes('tmux new-session'))).toBe(false);
-      expect(deps.createKernelRun).not.toHaveBeenCalled();
-      expect(deps.ensureWt).not.toHaveBeenCalled();
-    }
-  });
-});
-
-describe('spawnSkillRelaySession preview 隔离闸（2026-08-05 preview-4643 事故）', () => {
-  // 事故：preview Brain 从生产快照整库克隆而来，startup-sync 把克隆的 in_progress
-  // harness 任务当孤儿重点火；preview 进程继承生产 env（同一 fleet bridge token、
-  // callback 指回生产 Brain），spawn 出的 orchestrator 与生产 Brain 争抢同一 run，
-  // 毒死了生产验证 run（r35 Generator 容器环境变量被搅丢）。
-  it('BRAIN_PREVIEW=1 → 拒绝 spawn 任何 harness 会话，不建 run 不点火', async () => {
-    process.env.BRAIN_PREVIEW = '1';
-    try {
-      const deps = makeDeps();
-      const kernelTask = {
-        ...TASK,
-        payload: { ...TASK.payload, harness_runtime: 'kernel-v1' },
-      };
-      const r = await spawnSkillRelaySession(kernelTask, deps);
-      expect(r.ok).toBe(false);
-      expect(r.error).toBe('preview_brain_harness_spawn_forbidden');
-      expect(deps.spawnFn).not.toHaveBeenCalled();
-      expect(deps.createKernelRun).not.toHaveBeenCalled();
-    } finally {
-      delete process.env.BRAIN_PREVIEW;
-    }
-  });
-
-  it('BRAIN_PREVIEW=true（字符串）同样拒绝；未设置时不拦截正常路径', async () => {
-    process.env.BRAIN_PREVIEW = 'true';
-    try {
-      const deps = makeDeps();
-      const r = await spawnSkillRelaySession(TASK, deps);
-      expect(r.ok).toBe(false);
-      expect(r.error).toBe('preview_brain_harness_spawn_forbidden');
-      expect(deps.spawnFn).not.toHaveBeenCalled();
-    } finally {
-      delete process.env.BRAIN_PREVIEW;
-    }
-  });
-});
 
 /**
  * us-vps 纯调度器化第一刀（方案 A，主理人 2026-09-13 拍板；纠正决策 26c1e763
@@ -661,43 +248,3 @@ describe('spawnSkillRelaySession preview 隔离闸（2026-08-05 preview-4643 事
  *
  * PrepPRD: sprints/09130012-us-vps-scheduler-identity/prep-prd.md
  */
-describe('本机执行闸 CECELIA_LOCAL_EXECUTION_ENABLED（us-vps 纯调度器化）', () => {
-
-  it('=false 时同样拒绝普通 skill-relay 派发（咽喉拦所有路径，不只 kernel-v1）', async () => {
-    const deps = makeDeps({ env: { CECELIA_LOCAL_EXECUTION_ENABLED: 'false' } });
-    const r = await spawnSkillRelaySession(TASK, deps);
-    expect(r.ok).toBe(false);
-    expect(r.error).toBe('local_execution_disabled_on_scheduler');
-    expect(deps.spawnFn).not.toHaveBeenCalled();
-  });
-
-  it('未设置时行为零变化（防误杀：默认放行，走正常派发路径）', async () => {
-    const deps = makeDeps({ env: {} });
-    const r = await spawnSkillRelaySession(TASK, deps);
-    expect(r.error).not.toBe('local_execution_disabled_on_scheduler');
-    expect(deps.spawnFn).toHaveBeenCalled();
-  });
-
-  it("='true' 时放行（显式开启也不拦）", async () => {
-    const deps = makeDeps({ env: { CECELIA_LOCAL_EXECUTION_ENABLED: 'true' } });
-    const r = await spawnSkillRelaySession(TASK, deps);
-    expect(r.error).not.toBe('local_execution_disabled_on_scheduler');
-    expect(deps.spawnFn).toHaveBeenCalled();
-  });
-
-  it('源码哨兵：闸必须读可注入的 env（防重演「测了一段生产不可达代码」）', async () => {
-    const { readFile } = await import('node:fs/promises');
-    const src = await readFile(new URL('../harness-skill-relay.js', import.meta.url), 'utf8');
-    expect(src).toMatch(/CECELIA_LOCAL_EXECUTION_ENABLED/);
-    // 必须走 (deps.env ?? process.env) 这个可注入形式。直接读 process.env 会让闸
-    // 在测试里不可控，正是阻碍1（production-transport.js:137 判入参默认值 → 四个
-    // 生产调用方全不传 → if 恒为假 → 守卫是死代码）那个错误的形状。
-    expect(src).toMatch(/\(deps\.env \?\? process\.env\)\.CECELIA_LOCAL_EXECUTION_ENABLED/);
-    // 闸必须在 spawnSkillRelaySession 函数体内（咽喉），不在 _spawnKernelRuntime 里 ——
-    // 后者已经建过 run，拦在那儿会留半态。
-    const entryIdx = src.indexOf('export async function spawnSkillRelaySession');
-    const guardIdx = src.indexOf('CECELIA_LOCAL_EXECUTION_ENABLED');
-    expect(entryIdx).toBeGreaterThan(-1);
-    expect(guardIdx).toBeGreaterThan(entryIdx);
-  });
-});

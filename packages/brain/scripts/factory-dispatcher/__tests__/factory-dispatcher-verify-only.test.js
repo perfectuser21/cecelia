@@ -25,13 +25,7 @@ describe('仅核验消费：旧业务执行持续关闭', () => {
     expect(text).toContain('禁止读取执行会话');
     expect(text).toContain('禁止对外动作');
   });
-  it('旧执行默认仍能领，verify-only 下 poll 与直接派发均不 claim', async () => {
-    const old = verification(); old.payload.factory.stage = '3'; old.payload.skill = old.payload.factory.skill = 'android-douyin-publish';
-    const normal = world(old); await dispatcher.pollOnce(normal.deps); expect(normal.claims).toEqual([taskId]);
-    for (const call of [dispatcher.pollOnce, (deps, opts) => dispatcher.dispatchTask(old, deps, opts)]) {
-      const w = world(old); await call(w.deps, { dispatchMode: 'verify-only' }); expect(w.claims).toEqual([]);
-    }
-  });
+
   it.each(['type', 'dispatch', 'stage', 'skill', 'factorySkill', 'source', 'self', 'run', 'arrayRun'])('不完整核验契约 %s 不领', async key => {
     const t = verification();
     if (key === 'type') t.task_type = 'research';
@@ -45,10 +39,7 @@ describe('仅核验消费：旧业务执行持续关闭', () => {
     if (key === 'arrayRun') t.payload.factory_verify_run_id = ['run'];
     const w = world(t); await dispatcher.pollOnce(w.deps, { dispatchMode: 'verify-only' }); expect(w.claims).toEqual([]);
   });
-  it('合格核验在 claim 前真实读回契约，遇 409 不动锁', async () => {
-    const w = world(verification()); const result = await dispatcher.pollOnce(w.deps, { dispatchMode: 'verify-only' });
-    expect(result.outcome).toBe('claim_conflict'); expect(w.claims).toEqual([taskId]); expect(w.calls).toEqual(['read', 'claim']);
-  });
+
   it.each(['changed', 'terminal', 'foreign'])('队列快照过期 %s 在直接入口也不 claim', async key => {
     const stale = verification(), current = verification();
     if (key === 'changed') current.payload.factory.stage = '3';

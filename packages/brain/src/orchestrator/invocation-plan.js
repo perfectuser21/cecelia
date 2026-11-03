@@ -23,6 +23,7 @@ export function compileInvocation(definition, catalog = {}, options = {}) {
     const slot=definition.activities.find(s=>s.key===a.key);
     const contract=slot.reuse_activity_id ? catalog.activity_versions?.find(v=>v.id===slot.reuse_activity_definition_version_id)?.payload?.contract : slot;
     a.input_schema=contract?.input_schema;a.output_schema=contract?.output_schema;
+    a.activity_contract=structuredClone(contract);
     if (!['none','read_only'].includes(contract?.mutation_intent)) gap('mutation_unsupported',a.key);
     if (contract?.status === 'deprecated' || ['scheduler_only','deprecated'].includes(contract?.runtime?.mode)) gap('execution_mode_unsupported',a.key);
     if (contract?.resources && Object.keys(contract.resources).length) gap('resource_not_connected',a.key);

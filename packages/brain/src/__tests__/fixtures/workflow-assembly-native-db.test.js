@@ -12,7 +12,7 @@ export async function nativeMaintenanceDatabase(){
   await db.query(`INSERT INTO ops_schedule_entries(id,source,host_alias,label,kind,ops_workflow_id,active,enabled,registered_via,ledger_status)
     VALUES($1,'brain','us-vps',$2,'brain_job',$3,true,true,'brain-job','registered')`,[s.schedule.id,s.schedule.label,s.schedule.ops_workflow_id]);
   const source=await prepareNativeSource({revision:'a'.repeat(40),readFile:readSource});
-  return {...f,db,source,services:{revision:source.commit,readSource}};
+  return {...f,db,source,services:{revision:source.commit,readSource,commanderTransport:async()=>{throw Error('offline_test_commander');}}};
   }catch(error){await f.close();throw error;}
 }
 it('native夹具的真实入口拒绝生产库，连接/建schema之前停止',async()=>{

@@ -1,3 +1,11 @@
+# Factory 新启动暂停迁移
+
+`dispatchTask` 与 `pollOnce` 无条件返回 `needs_review / common_runner_migration_required`，只记录拒绝日志，不领任务、不取手机锁、不启动旧Agent会话；没有环境变量可恢复旧入口。真实schedule/账号保持不变。
+
+安全冲突：旧Agent掌锁并回写终态，缺固定Activity合同与独立validator；进程SIGKILL后未证明停止。迁移必须先补合同、代码掌锁、独立读回与未知执行隔离。不能只把整个旧流程包装为单个Activity。历史会话监督和只读helper保留；`releaseOwnLock` 默认拒绝，须有明确独立停止证明并核对锁owner，未知不释放。
+
+以下为旧实现历史资料，不授权新执行。
+
 # 技能工厂派发器（factory-dispatcher）
 
 在 MMV（本机 macOS）常驻，把 Brain 里 `task_type=skill_factory_run`（独立类型，任务 0a70684f；迁移窗口内兼容旧借壳

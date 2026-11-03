@@ -1,7 +1,7 @@
 /** 通用闭环：停止证据→独立核验→最终判定，失败在原task恢复。 */
 import { digest, isCommanderV2, PROTOCOL, requireCommander, recoveryAllowed } from './commander-v2-contract.js';
 import { transaction, writeControl, event } from './commander-v2-store.js';
-import { statusCommander, dispatchCommanderV2, launchCommander } from './commander-v2-dispatch.js';
+import { statusCommander } from './commander-v2-dispatch.js';
 import { receiveCommanderEvent } from './commander-v2-feedback.js';
 import { finishRun } from './task-run.js';
 import { releaseTaskLease } from './task-lease.js';
@@ -116,11 +116,13 @@ async function advanceVerification(pool, taskId, deps) {
 }
 export async function reconcileCommanderTask(pool, taskId, deps = {}) {
   let task = (await pool.query('SELECT * FROM tasks WHERE id=$1', [taskId])).rows[0];
-  if (!isCommanderV2(task) || task.status !== 'in_progress') return;
+  if (!isCommanderV2(task) || task.status !== 'in_progress' || task.result?.workflow_common_runner) return;
   const c = task.result?.workflow_control;
   if (!c) return;
-  if (c.phase === 'recovering') return dispatchCommanderV2(pool, taskId, deps);
-  if (c.phase === 'prepared') return launchCommander(pool, taskId, deps);
+  if (['recovering','prepared'].includes(c.phase)) {
+    // A retired execution may be read back, but cannot spawn another legacy business loop.
+    return {waiting:true,reason:'legacy_execution_read_only',run_id:c.envelope.run_id};
+  }
   if (c.phase === 'awaiting_verify' || (c.phase === 'blocked' && c.verification)) return advanceVerification(pool, taskId, deps);
   if (c.phase === 'final') return;
   let observed;
@@ -144,7 +146,7 @@ export async function reconcileCommanderTask(pool, taskId, deps = {}) {
 }
 export async function reconcileCommanderV2(pool, deps = {}) {
   const tasks = (await pool.query(`SELECT id FROM tasks WHERE task_type='workflow_dispatch' AND status='in_progress'
-    AND payload->>'commander_protocol'='commander-v2' ORDER BY updated_at,id LIMIT 20`)).rows;
+    AND payload->>'commander_protocol'='commander-v2' AND NOT COALESCE(result ? 'workflow_common_runner',false) ORDER BY updated_at,id LIMIT 20`)).rows;
   const out = [];
   for (const task of tasks) {
     try { await reconcileCommanderTask(pool, task.id, deps); out.push({ task_id: task.id, reconciled: true }); }

@@ -1,4 +1,6 @@
-import { prepareInvocationDispatch, invocationTaskPrompt, invocationBridgeRequired } from './invocations/runtime.js';
+import { prepareInvocationDispatch, invocationTaskPrompt, invocationBridgeRequired,runInvocationActivities } from './invocations/runtime.js';
+import {createInvocationActivityExecutor} from './invocations/activity-worker.js';
+import {finishRun as finishInvocationRun} from './lib/task-run.js';
 import { isPhoneDispatchTask } from './phone-dispatch/task-ownership.js';
 import { withLegacyRelayExecution } from './execution-directory/legacy-relay.js';
 import { withLegacyExecution,legacyExecutorEntries } from './execution-directory/legacy-executor.js';
@@ -2603,6 +2605,7 @@ async function selectCodexAccounts() {
  */
 async function triggerCodexBridge(task, forceBridgeUrl = null) {
   assertExternalExecutionAllowed();
+  if(task.payload?.invocation_activity)return {success:true,taskId:task.id,runId:task.payload.invocation_activity.child_run_id,executor:'shared-activity-runner',dispatchUncertain:true};
   const runId = generateRunId(task.id);
   try {
     const isCodexDev = task.task_type === 'codex_dev';
@@ -2611,6 +2614,28 @@ async function triggerCodexBridge(task, forceBridgeUrl = null) {
 
     const invocationDispatch = await prepareInvocationDispatch(pool, task, runId);
     if (invocationDispatch?.already) return { success: true, taskId: task.id, runId: invocationDispatch.runId, executor: 'codex-bridge', dispatchUncertain: true };
+    if (invocationDispatch) {
+      const runInfo=await updateTaskRunInfo(task.id,runId,'triggered');
+      if(!runInfo.success)return {success:false,taskId:task.id,runId,error:runInfo.error,executor:'shared-activity-runner'};
+      const bridgeUrl=forceBridgeUrl??await selectBestBridge();
+      const accounts=await selectCodexAccounts();
+      const executeSkill=createInvocationActivityExecutor(pool,{task,runId,submitActivity:async child=>{
+        const response=await withLegacyExecution({pool,provider:'codex',endpoint:bridgeUrl},()=>fetch(`${bridgeUrl}/run`,{
+          method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...buildCodexBridgePayload({id:child.task_id,task_type:'research',payload:{}},child.run_id,child.prompt,undefined,accounts),timeout_ms:child.timeout_ms}),signal:AbortSignal.timeout(15000)}));
+        const value=await response.json();if(!response.ok||!value.ok)throw Error('invocation_activity_dispatch_unconfirmed');return value;
+      }});
+      // 独立异步Runner持有原run；Agent子callback仅能结束子task。崩溃后预留守卫禁止整包重发。
+      void runInvocationActivities(pool,task,runId,{executeSkill}).then(async outcome=>{
+        if(!outcome.receipt)throw Error(outcome.runtime.reason_code??'invocation_needs_review');
+        const response=await fetch(`${process.env.BRAIN_URL||'http://localhost:5221'}/api/brain/execution-callback`,{
+          method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({task_id:task.id,run_id:runId,status:'AI Done',result:{result:JSON.stringify(outcome.receipt)}}),signal:AbortSignal.timeout(15000)});
+        if(!response.ok)throw Error('invocation_completion_callback_unconfirmed');
+      }).catch(async error=>{
+        await pool.query("UPDATE tasks SET status='blocked',blocked_reason='needs_review',blocked_detail=$3::jsonb,updated_at=NOW() WHERE id=$1 AND payload->>'current_run_id'=$2 AND status IN ('in_progress','dispatched')",[task.id,runId,JSON.stringify({reason:error.message,actor:'shared-runner'})]);
+        await finishInvocationRun({taskId:task.id,runId,status:'failed',result:{stage:'needs_review'}},{pool});
+      }).catch(error=>console.error('[invocation-runner] record failed:',error.message));
+      return {success:true,taskId:task.id,runId,executor:'shared-activity-runner'};
+    }
     const promptContent = await buildCodexPromptContent(task, runId);
     const taskBranch = buildCodexTaskBranch(task, isCodexDev);
     const injectedAccounts = await selectCodexAccounts();

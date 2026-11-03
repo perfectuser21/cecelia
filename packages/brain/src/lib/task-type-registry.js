@@ -179,7 +179,7 @@ export const TASK_TYPE_REGISTRY = Object.freeze({
   staging_e2e:              T('codex-review', false, false, null, 'none', true, true, 'none', true, [V, ANC, FV]),
   skill_eval:               T('none', false, false, null, 'none', true, true, 'none', true, []),
   ci_patrol:                T('codex-review', false, false, null, 'none', true, true, 'none', true, [V, ANC, FV]),
-  golden_path_proposal:     workflow(T('kernel', false, false, 'relay-container', 'kernel', true, true, 'none', true, [V, LOCK, INF, KR, ANC])),
+  golden_path_proposal:     workflow(T('none', false, false, null, 'kernel', true, true, 'none', true, [V, LOCK, INF, KR, ANC, HKR])),
   strategist_decision:      T('none', false, false, null, 'none', true, true, 'none', true, [V, ANC, FR]),
   workflow_run:             workflow(T('external', false, false, null, 'none', true, true, 'none', true, [])),
   device_job:               T('device', false, false, null, 'external-worker', false, false, 'none', true, []),

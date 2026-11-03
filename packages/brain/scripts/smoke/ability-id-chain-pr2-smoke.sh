@@ -37,13 +37,11 @@ if (!/notion_synced_at\s+TIMESTAMPTZ/i.test(sql)) throw new Error('Case 3 FAIL: 
 console.log('  PASS: notion_synced_at 列存在');
 "
 
-echo "[smoke:ability-id-chain-pr2] Case 4: harness-skill-relay.js 接线 CECELIA_ABILITY_ID + INSERT"
+echo "[smoke:ability-id-chain-pr2] Case 4: retired relay zero new run"
 node -e "
 const js = require('fs').readFileSync('$RELAY', 'utf8');
-if (!/CECELIA_ABILITY_ID:/.test(js)) throw new Error('Case 4 FAIL: env 未含 CECELIA_ABILITY_ID');
-const insertCount = (js.match(/INSERT INTO initiative_runs[\s\S]{0,200}ability_id/g) || []).length;
-if (insertCount < 2) throw new Error('Case 4 FAIL: docker/headed 两处 INSERT 未都带 ability_id（找到 ' + insertCount + ' 处）');
-console.log('  PASS: env + 两处 INSERT 均接线');
+if (/INSERT INTO initiative_runs/.test(js) || !js.includes('KERNEL_RUNTIME_RETIRED_CODE')) throw new Error('Case 4 FAIL: retired relay still creates run');
+console.log('  PASS: legacy relay retired, historical ability readback retained');
 "
 
 echo "[smoke:ability-id-chain-pr2] Case 5: notion-push-sync.js 定义并接入 pushAdvancementItems"

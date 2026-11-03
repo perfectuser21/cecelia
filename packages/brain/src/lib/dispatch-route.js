@@ -61,7 +61,7 @@ const INTERNAL = new Set(INTERNAL_HANDLER_TASK_TYPES);
 const ROUTE_REASON = Object.freeze({
   'claude-retired': 'location=us 落在已退役的 US Claude 桥接路径（任务 76a160b3），无执行者',
   'retired-harness': '已退役的 harness 子类型（归入 harness_initiative 全图），派到即终态失败',
-  'retired-harness-kernel': 'harness_initiative 只当有头账本类型（无头 kernel 入口已退役），无头编码改建 coding_workflow；有头 /dev 账本行带 payload.headed_manual=true',
+  'retired-harness-kernel': 'kernel 已退役，新业务须迁移公共Runner固定workflow/profile；编码使用 coding_workflow；有头 /dev 账本行带 payload.headed_manual=true',
   'external-mirror': '外部起跑的账本镜像（执行机自己起跑，Brain 只记账），只以 in_progress/终态入账，queued 无人领',
 });
 

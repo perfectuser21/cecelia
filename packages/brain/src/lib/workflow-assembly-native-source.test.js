@@ -4,7 +4,7 @@ import {tmpdir} from 'node:os';
 import {join,dirname} from 'node:path';
 import {createRequire} from 'node:module';
 import {execFileSync} from 'node:child_process';
-import {prepareNativeSource,assertNativeSource} from './workflow-assembly-native-source.js';
+import {prepareNativeSource,assertNativeSource,NATIVE_SOURCE_PATHS} from './workflow-assembly-native-source.js';
 it('未固定commit或实际代码字节不同，不能形成登记凭证',async()=>{
   await expect(prepareNativeSource({revision:'main'})).rejects.toThrow('revision');
   await expect(prepareNativeSource({revision:'a'.repeat(40),readFile:async()=>'{"fake":true}'})).rejects.toThrow('runtime_mismatch');
@@ -12,6 +12,8 @@ it('未固定commit或实际代码字节不同，不能形成登记凭证',async
 it('固定Git字节对应本进程才可信；序列化副本不保留授权',async()=>{
   const source=await prepareNativeSource({revision:'a'.repeat(40),readFile:async(_r,path)=>readFileSync(new URL('../../../../'+path,import.meta.url),'utf8')});
   expect(()=>assertNativeSource(source)).not.toThrow();
+  expect(source.bindings.map(b=>b.path)).toContain('packages/brain/src/orchestrator/activity-runtime.js');
+  expect(source.bindings.map(b=>b.path)).toContain('packages/brain/src/lib/workflow-assembly-native-supervision.js');
   expect(()=>assertNativeSource(JSON.parse(JSON.stringify(source)))).toThrow('unprepared');
 });
 it('真实Docker平铺Brain布局冷加载，不依赖容器里不存在的monorepo路径或.git',()=>{
@@ -37,6 +39,6 @@ it('真实Docker平铺Brain布局冷加载，不依赖容器里不存在的monor
       const runtimeDependencies=['js-yaml','argparse'].every(name=>realpathSync(require.resolve(name+'/package.json')).startsWith(realpathSync(root)+'/node_modules/'));
       console.log(JSON.stringify({bindings:source.bindings.length,revision:m.deployedNativeRevision(),yaml:yaml.load('fixed: true'),runtimeDependencies}));`;
     const out=execFileSync(process.execPath,['--input-type=module','-e',code],{cwd:directory,encoding:'utf8',env:{...process.env,GIT_SHA:'a'.repeat(40)},stdio:['ignore','pipe','pipe']});
-    expect(JSON.parse(out)).toEqual({bindings:11,revision:'a'.repeat(40),yaml:{fixed:true},runtimeDependencies:true});
+    expect(JSON.parse(out)).toEqual({bindings:NATIVE_SOURCE_PATHS.length,revision:'a'.repeat(40),yaml:{fixed:true},runtimeDependencies:true});
   }finally{rmSync(directory,{recursive:true,force:true});}
 });

@@ -1398,67 +1398,15 @@ describe('Fleet Worker Orchestrator API', () => {
     };
   }
 
-  it('accepts an authenticated orchestrator prepare with 202 and the receipt body', async () => {
-    const { createFleetWorkerServer } = await loadServerContract();
-    const orchestratorRunner = orchestratorRunnerDouble();
-    const server = createFleetWorkerServer({
-      probeHealth: vi.fn(async () => safeHealth(1)),
-      orchestratorRunner,
-      attemptToken: token,
-    });
-
-    const response = await request(server, 'POST', '/harness/orchestrators/prepare', {
-      headers: { ...auth, 'content-type': 'application/json' },
-      body: { run_id: runId, task_id: taskId, repo: 'perfectuser21/cecelia' },
-    });
-
-    expect(response.statusCode).toBe(202);
-    expect(JSON.parse(response.body)).toEqual({
-      orchestrator_id: runId,
-      status: 'prepared',
-      worktree_path: '/ws/x',
-      base_sha: '0123456789abcdef0123456789abcdef01234567',
-      pid: null,
-      host: 'us-mac-m4',
-    });
-    expect(orchestratorRunner.prepare).toHaveBeenCalledWith({
-      run_id: runId,
-      task_id: taskId,
-      repo: 'perfectuser21/cecelia',
-    });
-    server.close();
-  });
-
-  it('returns pid/host from orchestrator start with 200', async () => {
-    const { createFleetWorkerServer } = await loadServerContract();
-    const orchestratorRunner = orchestratorRunnerDouble();
-    const server = createFleetWorkerServer({
-      probeHealth: vi.fn(async () => safeHealth(1)),
-      orchestratorRunner,
-      attemptToken: token,
-    });
-
-    const response = await request(
-      server,
-      'POST',
-      `/harness/orchestrators/${runId}/start`,
-      {
-        headers: { ...auth, 'content-type': 'application/json' },
-        body: { controller_session_id: taskId, controller_generation: 1 },
-      },
-    );
-
-    expect(response.statusCode).toBe(200);
-    expect(JSON.parse(response.body)).toEqual({
-      orchestrator_id: runId,
-      status: 'running',
-      pid: 77,
-      host: 'us-mac-m4',
-    });
-    expect(orchestratorRunner.start).toHaveBeenCalledWith(runId, {
-      controller_session_id: taskId,
-      controller_generation: 1,
-    });
+  it.each(['prepare', `${runId}/start`])('authenticated retired startup %s is 410 before alternate runner', async (suffix) => {
+    const {createFleetWorkerServer}=await loadServerContract();
+    const orchestratorRunner=orchestratorRunnerDouble();
+    const server=createFleetWorkerServer({orchestratorRunner,attemptToken:token});
+    const response=await request(server,'POST',`/harness/orchestrators/${suffix}`,{headers:auth,body:{run_id:runId}});
+    expect(response.statusCode).toBe(410);
+    expect(JSON.parse(response.body)).toEqual({error:'kernel_runtime_retired'});
+    expect(orchestratorRunner.prepare).not.toHaveBeenCalled();
+    expect(orchestratorRunner.start).not.toHaveBeenCalled();
     server.close();
   });
 
@@ -1511,7 +1459,7 @@ describe('Fleet Worker Orchestrator API', () => {
   ])('5xx 白名单稳定码 %s 原样回给调用方，日志带 cause', async (code) => {
     const { createFleetWorkerServer } = await loadServerContract();
     const orchestratorRunner = orchestratorRunnerDouble();
-    orchestratorRunner.start.mockImplementation(async () => {
+    orchestratorRunner.inspect.mockImplementation(async () => {
       const error = new Error(code);
       error.statusCode = 500;
       error.cause = new Error('credential_home_no_accounts');
@@ -1525,7 +1473,7 @@ describe('Fleet Worker Orchestrator API', () => {
       attemptToken: token,
     });
     try {
-      const response = await request(server, 'POST', `/harness/orchestrators/${runId}/start`, {
+      const response = await request(server, 'POST', `/harness/orchestrators/${runId}/inspect`, {
         headers: { ...auth, 'content-type': 'application/json' },
         body: { controller_session_id: taskId, controller_generation: 1 },
       });
@@ -1542,7 +1490,7 @@ describe('Fleet Worker Orchestrator API', () => {
   it('非白名单 5xx 仍脱敏为 orchestrator_operation_failed，无 cause 时日志写 cause=-', async () => {
     const { createFleetWorkerServer } = await loadServerContract();
     const orchestratorRunner = orchestratorRunnerDouble();
-    orchestratorRunner.start.mockImplementation(async () => { throw new Error('secret_internal_detail'); });
+    orchestratorRunner.inspect.mockImplementation(async () => { throw new Error('secret_internal_detail'); });
     const errors = [];
     const spy = vi.spyOn(console, 'error').mockImplementation((...args) => { errors.push(args.join(' ')); });
     const server = createFleetWorkerServer({
@@ -1551,7 +1499,7 @@ describe('Fleet Worker Orchestrator API', () => {
       attemptToken: token,
     });
     try {
-      const response = await request(server, 'POST', `/harness/orchestrators/${runId}/start`, {
+      const response = await request(server, 'POST', `/harness/orchestrators/${runId}/inspect`, {
         headers: { ...auth, 'content-type': 'application/json' },
         body: { controller_session_id: taskId, controller_generation: 1 },
       });

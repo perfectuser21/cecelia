@@ -20,3 +20,12 @@ it('固定纯Skill调用始终要求原生research桥接，不能借其他task_t
  expect(invocationBridgeRequired({task_type:'research',payload:{}})).toBe(false);
  expect(()=>invocationBridgeRequired({task_type:'coding_workflow',payload:{invocation:{}}})).toThrow('调用任务类型');
 });
+
+it('整包Agent回执即使schema正确，没有公共Runner终态证明不能完成父任务',async()=>{
+ const {createSkillEnvelope}=await import('../orchestrator/skill-activity-adapter.js');
+ const schema={type:'object',properties:{text:{type:'string'}},required:['text']};
+ const envelope=await createSkillEnvelope({tenant_id:'t',target:{id:'a'},input:{text:'x'},input_sha256:(await import('../workflow-authoring/contracts.js')).definitionDigest({text:'x'}),plan:{output_schema:schema,output_mapping:{text:'$activity.one.text'},activities:[{key:'one',input_schema:schema,output_schema:schema,input_mapping:{text:'$input.text'},implementation:{kind:'skill',repo:'perfectuser21/cecelia',path:'skills/pure/SKILL.md',revision:'a'.repeat(40)}}]}},{readFile:async()=> '---\nname: pure\nversion: 1.0.0\n---\ntext'});
+ const receipt={protocol:'skill-invocation-result-v1',task_id:'task',run_id:'run',tenant_id:'t',target:envelope.target,input_sha256:envelope.input_sha256,activities:[{key:'one',skill_sha256:envelope.activities[0].skill_sha256,outputs:{text:'x'}}],outputs:{text:'x'}};
+ const db={query:async(sql)=>({rows:sql.includes('FROM tasks')?[{payload:{invocation:{envelope,dispatch:{run_id:'run'}}}}]:[]})};
+ await expect(guardInvocationCallback(db,{task_id:'task',run_id:'run',status:'AI Done',result:receipt})).rejects.toThrow('公共Runner');
+});

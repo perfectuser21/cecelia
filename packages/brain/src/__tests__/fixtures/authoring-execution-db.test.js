@@ -1,7 +1,8 @@
 import express from 'express';
 import request from 'supertest';
 import {createWorkflowAuthoringRouter} from '../../routes/workflow-authoring.js';
-import {prepareInvocationDispatch,guardInvocationCallback} from '../../invocations/runtime.js';
+import {prepareInvocationDispatch,guardInvocationCallback,runInvocationActivities} from '../../invocations/runtime.js';
+import {createInvocationActivityExecutor} from '../../invocations/activity-worker.js';
 import {finishRun} from '../../lib/task-run.js';
 import {finalizeTask} from '../../lib/task-terminal.js';
 import {it,expect} from 'vitest';
@@ -67,8 +68,17 @@ export async function settleInvocation(f,taskId,actualOutput){
  const task=(await f.pool.query('SELECT * FROM tasks WHERE id=$1',[taskId])).rows[0],runId=`authoring-${randomUUID()}`;
  const options={readFile:f.reader,probeRuntime:async()=>({ready:true})};
  const {envelope:e}=await prepareInvocationDispatch(f.pool,task,runId,options);
- const result=typeof actualOutput==='function'?await actualOutput(task,runId):actualOutput??{protocol:'skill-invocation-result-v1',task_id:taskId,run_id:runId,tenant_id:e.tenant_id,target:e.target,input_sha256:e.input_sha256,
-  activities:e.activities.map(a=>({key:a.key,skill_sha256:a.skill_sha256,outputs:{text:'ABC'}})),outputs:{text:'ABC'}};
+ const executeSkill=createInvocationActivityExecutor(f.pool,{task,runId,pollMs:0,submitActivity:async child=>{
+  const request=JSON.parse(child.prompt.split('\n\n').at(-1));
+  const raw=actualOutput?await actualOutput(task,runId,request):{protocol:'skill-activity-result-v1',...request.identity,outputs:{text:request.input.text.toUpperCase()}};
+  await f.pool.query("UPDATE tasks SET status='completed',payload=payload||jsonb_build_object('last_run_result',$2::jsonb) WHERE id=$1",[child.task_id,JSON.stringify({run_id:child.run_id,result_summary:raw})]);
+  await finishRun({runId:child.run_id,status:'success',exitCode:0},{pool:f.pool});return {ok:true};
+ }});
+ const outcome=await runInvocationActivities(f.pool,task,runId,{executeSkill,
+  commander:{status:'unavailable',wake:async()=>{},sleep:async()=>{},notify:async()=>({action:'none'}),takeGuidance:()=>[]},
+  validator:async({input,outputs})=>({verdict:outputs.text===input.text.toUpperCase()?'pass':'fail',evidence:['fixture独立大写规则比较']})});
+ expect(outcome.runtime.status,JSON.stringify(outcome.runtime)).toBe('completed');
+ const result=outcome.receipt;
  await guardInvocationCallback(f.pool,{task_id:taskId,run_id:runId,status:'AI Done',result});
  await finishRun({runId,status:'success',exitCode:0,result:{source:actualOutput?'actual-codex-cli':'callback-contract-regression'}},{pool:f.pool});
  await finalizeTask(f.pool,taskId,'completed',{relay:false});

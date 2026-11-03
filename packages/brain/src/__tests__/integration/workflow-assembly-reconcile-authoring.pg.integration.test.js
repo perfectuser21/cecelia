@@ -9,7 +9,7 @@ import {authoringExecutionDatabase,startPureAuthoring,settleInvocation} from '..
 import {runWorkflowAssemblyReconcile} from '../../lib/workflow-assembly-reconcile.js';
 import {JOBS,runSchedulerJobsOnce} from '../../scheduler-jobs.js';
 import {readAuthoringReadiness} from '../../workflow-authoring/execution-proof.js';
-import {invocationTaskPrompt} from '../../invocations/runtime.js';
+import {activityInvocationPrompt} from '../../orchestrator/skill-activity-adapter.js';
 it('默认scheduler真实复验链：固定Git候选破坏后自动修复并生成新运行才关闭',async()=>{
  const f=await authoringExecutionDatabase(),dir=mkdtempSync(join(tmpdir(),'assembly-reconcile-fixed-'));
  const git=args=>execFileSync('git',args,{cwd:dir,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
@@ -29,8 +29,8 @@ it('默认scheduler真实复验链：固定Git候选破坏后自动修复并生�
   const tick=()=>runSchedulerJobsOnce(f.pool,[{...job,handler:pool=>runWorkflowAssemblyReconcile(pool,{budgetMs:20000,limit:5,authoringOptions:{...adapters,freezeOptions:{readFile:f.reader},invocationOptions:adapters}})}]);
   const executionIds=[];
   const {executeCodex}=createRequire(import.meta.url)('../../../scripts/codex-bridge/codex-bridge.cjs');
-  const actual=process.env.AUTHORING_RECONCILE_REAL_CODEX==='1'?async(task,runId)=>{
-    const result=await executeCodex(process.env.CODEX_HOME,invocationTaskPrompt(task,runId),{workDir:dir,sandbox:'read-only',timeoutMs:180000});
+  const actual=process.env.AUTHORING_RECONCILE_REAL_CODEX==='1'?async(task,runId,activityRequest)=>{
+    const result=await executeCodex(process.env.CODEX_HOME,activityInvocationPrompt(activityRequest),{workDir:dir,sandbox:'read-only',timeoutMs:180000});
     return result.output;
   }:undefined;
   const finishPending=async()=>{

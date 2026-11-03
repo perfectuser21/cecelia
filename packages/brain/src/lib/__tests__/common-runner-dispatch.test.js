@@ -13,7 +13,7 @@ const token = 'contract-test-control-key-32-characters';
 const servers = [];
 afterEach(async () => { await Promise.all(servers.splice(0).map(server => new Promise(resolve => server.close(resolve)))); });
 
-async function setup({ badSignature = false, wrongNonce = false, failStart = false, failStartOn, workerResponses = [], workerReceipt = {}, receiptForRequest, centralSpans = [], definition, profilesFile, reconciliation, tickEnabled, useDefaultStartGate = false, directoryEndpoint, savedCentralRun, finishAlready = false } = {}) {
+async function setup({ badSignature = false, wrongNonce = false, failStart = false, failStartOn, workerResponses = [], workerReceipt = {}, receiptForRequest, centralSpans = [], definition, profilesFile, reconciliation, tickEnabled, useDefaultStartGate = false, directoryEndpoint, savedCentralRun, finishAlready = false, taskPolicy } = {}) {
   const requests = [];
   const server = http.createServer(async (req, res) => {
     let text = ''; for await (const chunk of req) text += chunk;
@@ -58,7 +58,7 @@ async function setup({ badSignature = false, wrongNonce = false, failStart = fal
     authorizeExecution: authority, resolveBoundNode: async () => ({ canonical_id: 'node-a', endpoints: { worker: directoryEndpoint ?? `http://127.0.0.1:${server.address().port}` } }),
     executionDirectory: { current: () => ({ version: 'snapshot-a' }) }, startRun: start, finishRun: finish,
     ...(!useDefaultStartGate ? { assertCanStart: async () => {} } : {}),
-    readReconciliation: reconcile,
+    readReconciliation: reconcile, taskPolicy,
     ...(definition ? { readDefinition: async () => definition } : {}) });
   return { dispatcher, task, requests, authority, start, finish, pool, reconcile };
 }
@@ -370,4 +370,39 @@ describe('needs_review中央闭环',()=>{
     const x=await setup(reviewEvidence(overrides));const r=await x.dispatcher.dispatch('start',runId,{task_id:taskId,profile:'demo',input:{},mode:'exploration'});
     expect(r.central_run).toMatchObject({status:'running',recording_status:'pending'});expect(x.finish).not.toHaveBeenCalled();
   });
+});
+
+describe('internal workflow source policy', () => {
+  it('retains the public agent-only guard even when payload claims workflow authority', async () => {
+    const x=await setup(); x.task.kind='workflow'; x.task.task_type='workflow_dispatch';
+    x.task.payload={common_runner_authorized:true};
+    await expect(x.dispatcher.dispatch('start',runId,{task_id:taskId,profile:'demo',input:{},mode:'exploration'})).rejects.toThrow('common_runner_task_owned');
+    expect(x.requests).toHaveLength(0);
+  });
+  it('calls trusted source authorization inside the transaction and supports immutable source ownership', async () => {
+    const policy=vi.fn(async ({task,db,action,body}) => {
+      expect(db).toBeDefined(); expect(task.task_type).toBe('workflow_dispatch'); expect(action).toBe('start');
+      return task.payload.workflow_definition?.snapshot_sha256==='f'.repeat(64) && body.profile==='demo';
+    });
+    const x=await setup({taskPolicy:policy}); x.task.kind='workflow'; x.task.task_type='workflow_dispatch';
+    x.task.payload={commander_protocol:'commander-v2',workflow_definition:{snapshot_sha256:'f'.repeat(64)}};
+    const result=await x.dispatcher.dispatch('start',runId,{task_id:taskId,profile:'demo',input:{},mode:'exploration'});
+    expect(result.authenticated).toBe(true); expect(policy).toHaveBeenCalledOnce(); expect(x.requests).toHaveLength(1);
+  });
+  it('rejects a source policy refusal before either registration or worker transport', async () => {
+    const x=await setup({taskPolicy:async()=>false}); x.task.kind='workflow';
+    await expect(x.dispatcher.dispatch('start',runId,{task_id:taskId,profile:'demo',input:{},mode:'exploration'})).rejects.toThrow('common_runner_task_owned');
+    expect(x.start).not.toHaveBeenCalled(); expect(x.requests).toHaveLength(0);
+  });
+});
+describe('central unknown execution veto',()=>{
+ it.each(['completed','failed'])('does not settle signed %s when worker admits unknown execution',async status=>{
+  const validation={workflow:{verdict:'pass',acceptance_ref:'wf',evidence:['actual']},activities:{}};
+  const centralSpans=[{occurrence_key:'validation:unknown',payload_sha256:'f'.repeat(64),evidence:{task_id:taskId,machine_id:'node-a',profile_digest:'a'.repeat(64),mode:'exploration',kind:'validation',workflow_validation:validation.workflow}}];
+  const manifest=centralSpans.map(({occurrence_key,payload_sha256})=>({occurrence_key,payload_sha256}));
+  const writeback={pending:0,blocked:0,total:1,acked:1,manifest_sha256:createHash('sha256').update(JSON.stringify(manifest)).digest('hex')};
+  const x=await setup({centralSpans,workerReceipt:{status,execution_unknown:true,validation,writeback}});
+  const result=await x.dispatcher.dispatch('start',runId,{task_id:taskId,profile:'demo',input:{},mode:'exploration'});
+  expect(result.central_run).toEqual({status:'running',recording_status:'pending'});expect(x.finish).not.toHaveBeenCalled();expect(x.task.status).toBe('in_progress');
+ });
 });

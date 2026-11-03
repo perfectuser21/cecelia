@@ -55,10 +55,10 @@ export async function invoke(db,body,tenantId='default',options={}){
     }
     const invocation={protocol:'invocation-request-v1',tenant_id:tenantId,request_key:body.request_key,
       request_sha256:requestHash,target:resolution.target,mode:body.mode,input_sha256:definitionDigest(body.input),
-      envelope:resolution.envelope,operator:options.operator??'internal-operator'};
+      envelope:resolution.envelope,runner:'shared-activity-runner',operator:options.operator??'internal-operator'};
     const routed=await (options.createTask??createRoutedTask)(client,{
       source:'api',source_id:`invocation:${tenantId}:${body.request_key}`,title:`调用 ${resolution.target.kind} ${resolution.target.id} [${tenantId}:${body.request_key}]`,
-      description:'执行服务端固定纯 Skill 快照并返回结构化产物',mutation_intent:'none',declared_domain:'research',artifact_kind:'execution',requested_task_type:'research',
+      description:'公共Runner按固定合同逐Activity执行Skill，由Commander观察并独立验收',mutation_intent:'none',declared_domain:'research',artifact_kind:'execution',requested_task_type:'research',
       task:{status:'queued',payload:{tenant_id:tenantId,invocation},phase:'exploratory',delivery_type:'artifact'},
     },null,{transaction:'existing'});
     await client.query("INSERT INTO task_events(task_id,event_type,payload) VALUES($1,'invocation_accepted',$2::jsonb)",[routed.task_id,JSON.stringify({actor:invocation.operator,tenant_id:tenantId,target:resolution.target,input_sha256:invocation.input_sha256,envelope_sha256:resolution.envelope.envelope_sha256})]);

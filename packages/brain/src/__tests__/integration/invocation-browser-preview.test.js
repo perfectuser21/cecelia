@@ -11,7 +11,8 @@ import { createInterface } from 'node:readline';
 import { createIntakeTestDatabase } from '../fixtures/task-intake-db.js';
 import { createInvocationsRouter } from '../../routes/invocations.js';
 import { definitionDigest } from '../../workflow-authoring/contracts.js';
-import { prepareInvocationDispatch,invocationTaskPrompt,guardInvocationCallback } from '../../invocations/runtime.js';
+import { prepareInvocationDispatch,runInvocationActivities,guardInvocationCallback } from '../../invocations/runtime.js';
+import {activityInvocationPrompt} from '../../orchestrator/skill-activity-adapter.js';
 import { finishRun } from '../../lib/task-run.js';
 import { finalizeTask } from '../../lib/task-terminal.js';
 
@@ -62,9 +63,9 @@ async function drive(task_id){
   const run_id=`browser-preview-${randomUUID()}`;
   const dispatch=await prepareInvocationDispatch(db,task,run_id,options);
   if(dispatch.already)return {task_id,run_id:dispatch.runId,already:true};
-  const result=await executeCodex(process.env.CODEX_HOME,invocationTaskPrompt(task,run_id),{workDir:directory,sandbox:'read-only',timeoutMs:180000});
-  await guardInvocationCallback(db,{task_id,run_id,status:'AI Done',result:result.output});
-  await finishRun({runId:run_id,status:'success',exitCode:0,result:{actual_process:true,duration_ms:result.elapsed}},{pool:db});
+  let elapsed=0;const outcome=await runInvocationActivities(db,task,run_id,{commander:{status:'unavailable',wake:async()=>{},sleep:async()=>{},notify:async()=>({action:'none'}),takeGuidance:()=>[]},validator:async({input,outputs})=>({verdict:outputs.text===input.text.toUpperCase()?'pass':'fail',evidence:['独立代码大写比较']}),executeSkill:async req=>{const value=await executeCodex(process.env.CODEX_HOME,activityInvocationPrompt(req),{workDir:directory,sandbox:'read-only',timeoutMs:180000});elapsed+=value.elapsed;return value.output;}});
+  await guardInvocationCallback(db,{task_id,run_id,status:'AI Done',result:outcome.receipt});
+  await finishRun({runId:run_id,status:'success',exitCode:0,result:{actual_process:true,duration_ms:elapsed}},{pool:db});
   await finalizeTask(db,task_id,'completed');
   return {task_id,run_id,actual_process:true};
  }finally{running=false;}

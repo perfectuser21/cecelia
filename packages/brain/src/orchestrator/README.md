@@ -1,3 +1,15 @@
+# 公共 Activity Runner
+
+现行执行与监督协议见下方「Runner vs Commander」。业务循环由 `runActivityContract` 统一持有；Commander 只监督和指导。
+
+## Kernel 已退役
+
+禁止新建、重启与延迟重派 kernel：Brain relay/run API、Fleet orchestrator prepare/start、直接 CLI 均返回 `kernel_runtime_retired`。无环境变量可重新启用。历史 load/patch/finalize/reconcile 与 Fleet inspect/terminal 保留，不杀在途进程、不释放未知资源。
+
+现行业务使用公共 Runner 的固定 workflow/profile + Commander。编码走 `coding_workflow`。`golden_path_proposal` 尚缺受保护 profile 与验收合同的迁移绑定，因此明确拒绝新派发；不能把退役视为业务已迁移。Fleet attempt transport 仍服务公共 Runner 原子执行，未被退役。
+
+以下为历史实现参考，不是现行启动操作手册。
+
 # Provider-neutral Harness Kernel
 
 本目录是 Harness 的确定性内核。它决定阶段、门禁、重试、合并与恢复；Claude
@@ -259,6 +271,13 @@ Commander 在 run 开始唤醒，结束休眠，接收 progress/question/error/s
 
 每个 Activity 保留 commander_interventions、rescued、validator_verdict，代码失败与 Skill 救援分别计数。交流、检查和路由属于观察记录，不得代替执行证据。Recorder 持久落盘并在中央内容读回后 ACK，包括最终 sleep 事件；断网只补记录，不重做业务。失败及待审只生成未确认样本候选，不自动升级成熟度或样本。
 
-本次代码统一公共 Worker、固定 Activity CLI（包括 coding workflow 初始链）与获客 101–104 的 Activity 循环；编码 PR 后处理 Commander 改为只读监督，不再改规格、追加额度或豁免 QA。运输及子进程执行器不是另一个业务 Runner。
+| 入口 | 当前代码行为 |
+|---|---|
+| 公共 Worker、固定 Activity CLI、编码主链、获客101–104 | 同一公共循环；编码 PR 后处理 Commander 只读，不再改规格、追加额度或豁免 QA |
+| Skill Invocation 与 authoring | 按冻结快照逐Activity调用独立子任务；父回调必须匹配公共Runner签发摘要，整包Agent编排已停用 |
+| native assembly 对账 | 原数据库会话锁内执行一个有界代码Activity；交流逐条持久化并读回，最后sleep先于终态落账 |
+| 普通发布与Commander V2新单 | 经固定来源适配公共HTTP Runner，保留task/run身份；缺正式profile、输入或验收实现时拒绝启动，无旧执行器回退 |
+| Kernel | 关闭registry、relay、run创建、CLI、Fleet与live smoke全部新启动入口；历史读回和安全收尾保留 |
+| 旧Factory派发 | 新启动明确needs_review/common_runner_migration_required；缺停止证明不释放旧手机占用 |
 
-仍可达的旧发布 Commander/V2、整包 Skill invocation（含 authoring 调用）、factory 单阶段派发和 native assembly 维护尚未全部汇流。kernel 的 harness_initiative 主派发退役，但 golden_path_proposal 及 Fleet 启动端点仍可达，不能声称整个 kernel 已退役。上述路径牵涉既有锁、run 身份和外部动作合同，需逐项固定适配和独立验收；本次不直接改写在途身份或重放发送。这里是明确剩余缺口，不能仅因公共模块存在就宣称所有入口已迁移。合并前的代码测试不等于现网部署或真实模型指导质量验收。
+**尚未完成的业务迁移**：GP提案、Factory缺公共固定合同及独立验收绑定；现发布合同与旧Ai办公室任务账号和素材输入冲突，且prepare/publish/verify实现manifest未完整。Invocation文字质量标准缺正式独立Validator时保留unknown/needs_review。具体发布缺口见 `docs/current/WORKFLOW_COMMON_RUNNER_MIGRATION.md`。不能换账号、猜素材、包装整块旧AI流程或把schema通过算作质量通过。本次代码不改在途身份、不重放发送、不部署；代码测试不等于生产或真实模型指导质量验收。
