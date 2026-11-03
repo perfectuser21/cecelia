@@ -15,7 +15,7 @@ export function trustedCommanderTransport(){
  if(lock.repository!=='perfectuser21/zenithjoy-skills'||state.revision!==lock.revision||!state.files?.[skillEntry])throw Error('commander_skill_source_unverified');
  const bytes=fs.readFileSync(path.join(sourceRoot,skillEntry),'utf8');
  if(createHash('sha256').update(bytes).digest('hex')!==state.files[skillEntry])throw Error('commander_skill_source_mismatch');
- const version=bytes.match(/^  version:\s*(\S+)\s*$/m)?.[1];
+ const version=bytes.match(/^ {2}version:\s*(\S+)\s*$/m)?.[1];
  if(!version)throw Error('commander_skill_version_required');
  return createOpenClawCommanderTransport({cwd:sourceRoot,profile:{kind:'openclaw',timeout_s:60,skill:{entry:skillEntry,version}},files:{[skillEntry]:state.files[skillEntry]}});
 }
