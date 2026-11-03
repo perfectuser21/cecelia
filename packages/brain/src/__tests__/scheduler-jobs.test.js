@@ -291,6 +291,10 @@ function makePool() {
 }
 
 describe('scheduler-jobs 注册表', () => {
+  it('退役 Claude worker 池不再注册周期派发任务', () => {
+    expect(JOBS.map(job => job.name)).not.toContain('worker-pool-dispatch');
+  });
+
   it('目录投影job隔离外部边界并准确传递同一pool', async () => {
     const pool = makePool();
     const job = JOBS.find(row => row.name === 'notion-directory');

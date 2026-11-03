@@ -44,6 +44,8 @@ function signed(prepared,mutate=()=>{}){
   return {receipt:copy,signature:createHmac('sha256',f.deployment.key).update(JSON.stringify(copy)).digest('hex')};});
 }
 beforeAll(async()=>{await admin.connect();await admin.query(`CREATE SCHEMA ${schema}`);await pool.query(`CREATE TABLE system_registry(id UUID PRIMARY KEY,type TEXT,name TEXT,status TEXT,metadata JSONB DEFAULT '{}');
+ -- 与现役终态SQL一致：公共Runner中央确认子查询需解析这些账本列。
+ CREATE TABLE task_runs(task_id UUID,run_id TEXT,status TEXT,ended_at TIMESTAMPTZ,context JSONB DEFAULT '{}');
  CREATE TABLE tasks(id UUID PRIMARY KEY,status TEXT,parent_task_id UUID,payload JSONB,result JSONB,claimed_by TEXT,claimed_at TIMESTAMPTZ,started_at TIMESTAMPTZ,updated_at TIMESTAMPTZ,completed_at TIMESTAMPTZ);
  CREATE TABLE harness_attempts(id UUID PRIMARY KEY,status TEXT,actual_machine_id TEXT,requested_machine_id TEXT,machine_id TEXT);
  CREATE TABLE harness_attempt_cleanup_outbox(attempt_id UUID,status TEXT,target_machine_id TEXT);

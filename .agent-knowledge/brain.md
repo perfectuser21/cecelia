@@ -1,11 +1,16 @@
 # Brain 模块详情
 
-> 从 `packages/brain/src/` 提取的关键信息（更新于 2026-03-28）。
-> 详细说明书：http://38.23.47.81:9998/knowledge/brain/
+> 本页保留 2026 年 3 月至 7 月的历史快照；旧路径、模型、周期和实现说明不代表当前启用状态。
+> 历史说明书：http://38.23.47.81:9998/knowledge/brain/（不作为当前运行状态依据）。
+
+## 当前核对入口（2026-11-03）
+
+- 启动入口：`packages/brain/server.js`；实际调度实现查 `packages/brain/src/tick-loop.js` 与 `packages/brain/src/scheduler-jobs.js`。
+- 当前部署版本查 `GET /api/brain/health` 的 `git_sha`，运行状态查 `GET /api/brain/status/full`；仓库代码或本页历史描述不能证明生产已启用、已发布或链路已贯通。
 
 ---
 
-## 基本信息
+## 历史基本信息（2026-03-28）
 
 | 项目 | 值 |
 |------|----|
@@ -27,9 +32,11 @@
 
 ---
 
-## Harness → Staging → Production（阶段2，2026-06-25）
+## Harness → Staging → Production（历史快照，阶段2，2026-06-25）
 
-把 harness「merge=终点」延长到 production：merge → staging E2E → 放行 → production。
+以下记录当时的实现说明，不代表当前自动发布链路已启用或生产已贯通；当前部署须按页首入口核对。
+
+当时的设计目标：把 harness「merge=终点」延长到 production：merge → staging E2E → 放行 → production。
 
 | 件 | 文件 | 职责 |
 |----|------|------|
