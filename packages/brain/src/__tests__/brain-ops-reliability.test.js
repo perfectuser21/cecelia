@@ -1,70 +1,94 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-vi.mock('../account-usage.js', () => ({
-  selectBestAccount: vi.fn(),
-  isSpendingCapped: vi.fn().mockReturnValue(false),
-  isAuthFailed: vi.fn().mockReturnValue(false),
-  proactiveTokenCheck: vi.fn().mockResolvedValue(undefined),
-}));
+vi.mock('child_process', async () => (await import('./helpers/deny-child-process.js')).default);
+vi.mock('node:child_process', async () => (await import('./helpers/deny-child-process.js')).default);
 
-vi.mock('../alerting.js', () => ({
-  raise: vi.fn().mockResolvedValue(undefined),
-}));
+const boundary = vi.hoisted(() => ({ query: vi.fn(), readFile: vi.fn() }));
+vi.mock('../db.js', () => ({ default: { query: boundary.query } }));
+vi.mock('fs', async importOriginal => {
+  const actual = await importOriginal();
+  const allowed = new Set([
+    new URL('../../../../scripts/ops/brain-keepalive-check.sh', import.meta.url).pathname,
+    new URL('../../../../scripts/ops/com.cecelia.brain-keepalive.plist', import.meta.url).pathname,
+  ]);
+  const controlled = {
+    readFileSync: boundary.readFile,
+    constants: actual.constants,
+    accessSync(path, mode) {
+      if (!allowed.has(path)) throw new Error('测试禁止访问非 keepalive 资源');
+      return actual.accessSync(path, mode);
+    },
+  };
+  return { ...controlled, default: controlled };
+});
+vi.mock('os', () => {
+  const controlled = { homedir: () => '/isolated-brain-account-fixture' };
+  return { ...controlled, default: controlled };
+});
+import { selectBestAccount } from '../account-usage.js';
 
-const mockPool = {
-  query: vi.fn().mockResolvedValue({ rows: [] }),
-};
-
-describe('brain-ops-reliability — 智能账号调度', () => {
-  beforeEach(() => vi.clearAllMocks());
-
-  it('场景1：account1 可用 → selectBestAccount 返回 account1', async () => {
-    const { selectBestAccount } = await import('../account-usage.js');
-    selectBestAccount.mockResolvedValueOnce({ accountId: 'account1', model: 'sonnet', modelId: 'claude-sonnet-4-6' });
-    const result = await selectBestAccount({ minSessionHours: 4 });
-    expect(result?.accountId).toBe('account1');
-  });
-
-  it('场景2：account1 限额 → 自动切换 account2', async () => {
-    const { selectBestAccount } = await import('../account-usage.js');
-    selectBestAccount.mockResolvedValueOnce({ accountId: 'account2', model: 'sonnet', modelId: 'claude-sonnet-4-6' });
-    const result = await selectBestAccount({ minSessionHours: 4 });
-    expect(result?.accountId).toBe('account2');
-  });
-
-  it('场景3：account2 session <4h → harness 任务只选 account1', async () => {
-    const { selectBestAccount } = await import('../account-usage.js');
-    selectBestAccount.mockImplementationOnce(async (opts) => {
-      if (opts?.minSessionHours === 4) {
-        return { accountId: 'account1', model: 'sonnet', modelId: 'claude-sonnet-4-6' };
-      }
-      return { accountId: 'account2', model: 'sonnet', modelId: 'claude-sonnet-4-6' };
+// 只隔离凭据文件和数据库；账号排序、配额判断及会话过滤均执行生产选择器。
+// 4h 是这些用例显式指定的输入，不代表生产调用方的默认策略。
+describe('brain-ops-reliability — 真实账号选择', () => {
+  let usage;
+  let remaining;
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+    vi.stubGlobal('fetch', vi.fn(() => { throw new Error('测试禁止外部请求'); }));
+    usage = { account1: 10, account2: 20 };
+    remaining = { account1: 300, account2: 300 };
+    boundary.readFile.mockImplementation(path => {
+      const match = /^\/isolated-brain-account-fixture\/\.claude-(account[12])\/\.credentials\.json$/.exec(path);
+      if (!match) throw new Error('测试禁止读取真实凭据');
+      const minutes = remaining[match[1]];
+      return JSON.stringify({ claudeAiOauth: {
+        ...(minutes === null ? {} : { expiresAt: Date.now() + minutes * 60000 }),
+      } });
     });
-    const result = await selectBestAccount({ minSessionHours: 4 });
-    expect(result?.accountId).toBe('account1');
+    boundary.query.mockReset().mockImplementation(async (sql, params) => {
+      expect(sql).toContain('SELECT * FROM account_usage_cache');
+      expect(sql).toContain("INTERVAL '3 minutes'");
+      const id = params[0];
+      expect(id).toMatch(/^account[12]$/);
+      return { rows: [{ account_id: id, five_hour_pct: usage[id], seven_day_pct: 20,
+        seven_day_sonnet_pct: 20, seven_day_omelette_pct: 0, extra_used: false,
+        resets_at: '2026-01-01T05:00:00Z', seven_day_resets_at: null,
+        seven_day_sonnet_resets_at: null, seven_day_omelette_resets_at: null,
+        fetched_at: '2026-01-01T00:00:00Z' }] };
+    });
   });
+  afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 
-  it('场景4：所有账号 session <4h → null → 置 paused + P1 告警', async () => {
-    const { selectBestAccount } = await import('../account-usage.js');
-    const { raise } = await import('../alerting.js');
-    selectBestAccount.mockResolvedValueOnce(null);
-
-    const taskId = 'test-initiative-001';
-    const selection = await selectBestAccount({ minSessionHours: 4 });
-    if (!selection) {
-      await mockPool.query(
-        `UPDATE tasks SET status='paused', updated_at=NOW() WHERE id=$1`,
-        [taskId]
-      );
-      await raise('P1', `no_account_harness_${taskId}`,
-        `⚠️ 所有账号均不满足 harness 任务 ${taskId} session 要求，任务已暂停`);
-    }
-
-    expect(mockPool.query).toHaveBeenCalledWith(
-      expect.stringContaining("status='paused'"),
-      [taskId]
-    );
-    expect(raise).toHaveBeenCalledWith('P1', expect.stringContaining(taskId), expect.any(String));
+  it('健康账号按用量选出 account1 与真实模型', async () => {
+    expect(await selectBestAccount({ minSessionHours: 4 })).toEqual({
+      accountId: 'account1', model: 'sonnet', modelId: 'claude-sonnet-4-6',
+    });
+  });
+  it('account1 达到5小时配额阈值后选 account2', async () => {
+    usage.account1 = 80;
+    expect((await selectBestAccount({ minSessionHours: 4 }))?.accountId).toBe('account2');
+  });
+  it('明确要求4小时：恰好4小时可选，少1分钟的低用量账号被排除', async () => {
+    usage = { account1: 20, account2: 10 };
+    remaining = { account1: 240, account2: 239 };
+    expect((await selectBestAccount({ minSessionHours: 4 }))?.accountId).toBe('account1');
+  });
+  it('明确要求4小时且所有账号不足时返回 null', async () => {
+    remaining = { account1: 60, account2: 120 };
+    expect(await selectBestAccount({ minSessionHours: 4 })).toBeNull();
+  });
+  it('低用量 account1 只剩1小时，显式过滤后选 account2', async () => {
+    remaining.account1 = 60;
+    expect((await selectBestAccount({ minSessionHours: 4 }))?.accountId).toBe('account2');
+  });
+  it('不传 minSessionHours 时1小时账号仍参与正常排序', async () => {
+    remaining.account1 = 60;
+    expect((await selectBestAccount())?.accountId).toBe('account1');
+  });
+  it('没有 expiresAt 的账号不被会话时长过滤', async () => {
+    remaining.account1 = null;
+    expect((await selectBestAccount({ minSessionHours: 4 }))?.accountId).toBe('account1');
   });
 });
 
@@ -82,39 +106,5 @@ describe('brain-keepalive-check.sh — shell 文件存在', () => {
     accessSync(
       new URL('../../../../scripts/ops/com.cecelia.brain-keepalive.plist', import.meta.url).pathname
     );
-  });
-});
-
-describe('selectBestAccount — minSessionHours 过滤逻辑', () => {
-  function filterBySession(accounts, minSessionHours) {
-    return accounts.filter(a => {
-      if (minSessionHours != null && a.sessionMins !== null) {
-        return a.sessionMins >= minSessionHours * 60;
-      }
-      return true;
-    });
-  }
-
-  it('session 剩余 1h 的账号被 minSessionHours=4 排除', () => {
-    const accounts = [
-      { id: 'account1', sessionMins: 60 },
-      { id: 'account2', sessionMins: 300 },
-    ];
-    const result = filterBySession(accounts, 4);
-    expect(result).toHaveLength(1);
-    expect(result[0].id).toBe('account2');
-  });
-
-  it('minSessionHours 未设置 → 所有账号参与（向后兼容）', () => {
-    const accounts = [
-      { id: 'account1', sessionMins: 60 },
-      { id: 'account2', sessionMins: 300 },
-    ];
-    expect(filterBySession(accounts, undefined)).toHaveLength(2);
-  });
-
-  it('sessionMins=null（API key 账号无 expiresAt）→ 不过滤', () => {
-    const accounts = [{ id: 'account1', sessionMins: null }];
-    expect(filterBySession(accounts, 4)).toHaveLength(1);
   });
 });

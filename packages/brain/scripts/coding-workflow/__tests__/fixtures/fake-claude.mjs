@@ -142,16 +142,20 @@ function emitBash(command, result) {
 }
 
 // verify-*：按 INTENT_IDS 写 04-evidence.md，并为每条证据输出对应的执行记录（verify-fabricated 不输出）
-function verify() {
+async function verify() {
   // verify-bizauth：业务命令输出里有 authentication failed，claude 以非鉴权原因非 0 退出
   if (mode === 'verify-bizauth') {
     emitBash('npm test', 'FAIL auth.test.js > login: authentication failed for user admin');
     console.log(JSON.stringify({ type: 'result', subtype: 'error_max_turns', is_error: true, result: 'max turns reached' }));
+    // 先等所有已排队的 stdout 写入完成，再保留原来的立即失败早退语义。
+    await new Promise(resolve => process.stdout.write('', resolve));
     process.exit(1);
   }
   // verify-authresult：claude 自身的 result 事件报鉴权错误
   if (mode === 'verify-authresult') {
     console.log(JSON.stringify({ type: 'result', subtype: 'error', is_error: true, result: 'Invalid API key · Please run /login' }));
+    // 先等所有已排队的 stdout 写入完成，再保留原来的立即失败早退语义。
+    await new Promise(resolve => process.stdout.write('', resolve));
     process.exit(1);
   }
   console.log(`FAKE_BUILD_PRESENT: ${fs.existsSync(path.join(path.dirname(field('EVIDENCE_PATH')), '03-build.md'))}`);
@@ -227,7 +231,7 @@ function precheckFix() {
 
 if (mode.startsWith('precheck-')) precheckFix();
 else if (mode.startsWith('build-')) build();
-else if (mode.startsWith('verify-')) verify();
+else if (mode.startsWith('verify-')) await verify();
 else if (mode.startsWith('review-')) review();
 else if (mode.startsWith('revise-')) revise();
 else {
