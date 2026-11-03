@@ -1,6 +1,6 @@
 # DoD：测试验证真实行为并由正确跑道执行
 
-- [x] [BEHAVIOR] 静态资源真实返回文件、缓存和gzip字节；Brain代理真实转发路径、body及错误状态。
+- [x] [BEHAVIOR] 静态资源真实返回文件、缓存和gzip字节；SPA fallback预算耗尽返回429而健康检查正常；Brain代理真实转发路径、body及错误状态。
   Test: manual:npm exec --workspace @cecelia/core -- vitest run src/dashboard/__tests__/server-perf.test.ts src/__tests__/brain-api-integration.test.ts
 - [x] [BEHAVIOR] captures测试调用真实Router，验证CRUD、SQL参数、返回内容与失败状态；重复intent与框架自测退出CI。
   Test: manual:npm exec --workspace @cecelia/core -- vitest run tests/capture/api.test.ts src/__tests__/intent-recognition.test.ts
