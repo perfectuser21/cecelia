@@ -14,7 +14,7 @@ import * as fsp from 'node:fs/promises';
 import { homedir, hostname } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { isFactoryTask, readDispatchMode, refreshEligibleTask, envMinutes } from './factory-dispatcher-config.js';
+import { readDispatchMode, envMinutes } from './factory-dispatcher-config.js';
 export { FACTORY_TASK_TYPE, isFactoryTask, readDispatchMode } from './factory-dispatcher-config.js';
 export const SAFE_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const TERMINAL_STATUSES = new Set(['completed', 'completed_no_pr', 'failed', 'cancelled', 'archived']);
@@ -159,33 +159,9 @@ export function parseLockStatus(stdout) {
   return { state, owner: m ? m[1] : null };
 }
 
-function makeLockClient(deps, host, profile) {
-  const run = async (sub, arg) => deps.runSsh(host, remoteLockCommand(profile, sub, arg));
-  return {
-    async status() {
-      const r = await run('lock-status');
-      return r.code === 0 ? parseLockStatus(r.stdout) : { state: 'unknown', owner: null, error: (r.stderr || '').trim() };
-    },
-    async acquire(runId) {
-      const r = await run('lock-acquire', runId);
-      const p = parseLockStatus(r.stdout);
-      if (r.code === 0 && p.state === 'acquired' && p.owner === runId) return { ok: true };
-      return { ok: false, detail: (r.stderr || r.stdout || '').trim() };
-    },
-    async refresh(runId) {
-      const r = await run('lock-refresh', runId);
-      return r.code === 0 && parseLockStatus(r.stdout).state === 'refreshed';
-    },
-    async release(runId) {
-      const r = await run('lock-release', runId);
-      const p = parseLockStatus(r.stdout);
-      return r.code === 0 && p.state === 'released' && p.owner === runId;
-    },
-  };
-}
-
 /** 只释放 owner 恰为自己 run_id 的锁，释放后回读必须 free。 */
-async function releaseOwnLock(lock, runId, log) {
+export async function releaseOwnLock(lock, runId, log, evidence = {}) {
+  if (evidence.execution_stopped !== true) return {released:false,reason:'execution_stop_unconfirmed'};
   const before = await lock.status();
   if (before.owner !== runId) {
     log(`锁不属于 ${runId}（state=${before.state} owner=${before.owner}），不释放`);
@@ -231,56 +207,8 @@ async function leaseBeat(deps, opts, taskId) {
   }
 }
 
-function makeTaskOps(deps, taskId, meta, opts = {}) {
-  return {
-    async heartbeat() {
-      if ((await leaseBeat(deps, opts, taskId)) === 'lease_lost') return 'lease_lost';
-      const t = await deps.brain.getTask(taskId);
-      if (isTerminal(t?.status)) return t.status;
-      await deps.brain.patch(taskId, { status: 'in_progress' });
-      return 'in_progress';
-    },
-    /** 落 failed；任务已是终态则不覆盖。 */
-    async fail(reason, extra = {}) {
-      const t = await deps.brain.getTask(taskId);
-      if (isTerminal(t?.status)) {
-        deps.log(`任务已是终态 ${t.status}，不覆盖（原因本应是：${reason}）`);
-        return { outcome: 'session_terminal', status: t.status };
-      }
-      await deps.brain.patch(taskId, {
-        status: 'failed',
-        result: { fail_reason: reason, factory_dispatcher: { ...meta, ...extra, failed_at: deps.now().toISOString() } },
-      });
-      deps.log(`任务 ${taskId} 落 failed：${reason}`);
-      return { outcome: 'failed', reason };
-    },
-  };
-}
-
-async function waitForLock(deps, opts, lock, runId, ops) {
-  const deadline = deps.now().getTime() + opts.lockWaitTimeoutMs;
-  let lastHolder = 'unknown';
-  for (;;) {
-    const st = await lock.status();
-    if (st.state === 'free') {
-      const acq = await lock.acquire(runId);
-      if (acq.ok) return { acquired: true };
-      // 回执异常但锁实际已在自己名下（ssh 抖动），按已领处理
-      if ((await lock.status()).owner === runId) return { acquired: true };
-      lastHolder = `acquire_failed: ${acq.detail}`;
-    } else {
-      lastHolder = st.owner ? `owner=${st.owner} state=${st.state}` : `state=${st.state}${st.error ? ` ${st.error}` : ''}`;
-    }
-    if (deps.now().getTime() >= deadline) return { acquired: false, lastHolder };
-    const beat = await ops.heartbeat();
-    if (beat === 'lease_lost') return { acquired: false, leaseLost: true };
-    if (isTerminal(beat)) return { acquired: false, terminal: true };
-    await deps.sleep(opts.lockPollMs);
-  }
-}
-
-async function superviseSession(deps, opts, ctx) {
-  const { taskId, runId, lock, handle, logFile, ops } = ctx;
+export async function superviseFactorySession(deps, opts, ctx) {
+  const { taskId, runId, lock, handle, logFile } = ctx;
   const startedAt = deps.now().getTime();
   let lastRefresh = startedAt;
   let exitedAt = null;
@@ -312,88 +240,15 @@ async function superviseSession(deps, opts, ctx) {
   }
 }
 
-/** 派发单个任务：claim → in_progress → 等锁代领 → 写消息 → 启动会话 → 守望 → 收尾放锁。 */
-export async function dispatchTask(task, deps, userOpts = {}) {
-  const opts = { ...DEFAULT_OPTS, ...userOpts };
-  task = await refreshEligibleTask(task, deps.brain, opts.dispatchMode);
-  if (!task) return { outcome: 'mode_rejected' };
-  const taskId = task.id;
-  const claim = await deps.brain.claim(taskId, opts.claimer, opts.leaseSeconds);
-  if (claim.status === 409) {
-    deps.log(`任务 ${taskId} 已被他人 claim，跳过`);
-    return { outcome: 'claim_conflict' };
-  }
-  if (claim.status < 200 || claim.status >= 300) return { outcome: 'claim_error', status: claim.status };
-  await deps.brain.patch(taskId, { status: 'in_progress' });
-
-  const parsed = parseFactoryContract(task);
-  if (!parsed.ok) return makeTaskOps(deps, taskId, {}).fail(`invalid_contract: ${parsed.error}`);
-  const { contract } = parsed;
-  const runId = buildRunId({ runPrefix: contract.run_prefix, taskId, date: deps.now(), round: contract.round });
-  const sessionId = buildSessionId(contract.stage, taskId);
-  const meta = { run_id: runId, session_id: sessionId, ssh_host: contract.device.ssh_host, profile: contract.device.profile };
-  const ops = makeTaskOps(deps, taskId, meta, opts);
-  const lock = makeLockClient(deps, contract.device.ssh_host, contract.device.profile);
-
-  const waited = await waitForLock(deps, opts, lock, runId, ops);
-  if (waited.leaseLost) {
-    deps.log(`任务 ${taskId} 租约已被 Brain 回收（lease_lost），停止等锁，不回写`);
-    return { outcome: 'lease_lost' };
-  }
-  if (waited.terminal) return { outcome: 'session_terminal' };
-  if (!waited.acquired) {
-    // 等超时：不释放任何锁（锁不是自己的）
-    return ops.fail(`lock_wait_timeout after ${opts.lockWaitTimeoutMs}ms; last ${waited.lastHolder}`);
-  }
-  deps.log(`已代领设备锁 ${runId}`);
-
-  const abort = async (reason, handle) => {
-    if (handle) await handle.kill();
-    const release = await releaseOwnLock(lock, runId, deps.log);
-    return ops.fail(reason, { lock_released: release.released });
-  };
-
-  const runDir = join(opts.stateDir, 'runs');
-  const messageFile = join(runDir, `${runId}.msg.txt`);
-  const logFile = join(runDir, `${runId}.agent.log`);
-  let handle;
-  try {
-    await deps.mkdir(runDir, { recursive: true });
-    await writeMessageFile(messageFile, buildAgentMessage({ runId, taskId, contract }), deps);
-    handle = await deps.spawnAgent({
-      command: opts.openclawBin,
-      args: ['agent', '--agent', AGENT_ID, '--session-id', sessionId, '--thinking', 'high', '--timeout', '3000', '--json', '--message-file', messageFile],
-      env: { ...(opts.baseEnv || {}), ...UTF8_ENV },
-      messageFile,
-      logFile,
-    });
-  } catch (err) {
-    return abort(`launch_failed: ${err.message}`, handle);
-  }
-  deps.log(`会话 ${sessionId} 已启动（run_id=${runId}）`);
-
-  const end = await superviseSession(deps, opts, { taskId, runId, lock, handle, logFile, ops });
-  if (end.kind === 'lease_lost') {
-    // Brain 已按租约语义处置任务（回队或判 lost）：杀会话、放自己的锁，不再回写任务
-    deps.log(`任务 ${taskId} 租约已被 Brain 回收（lease_lost），停手：杀会话、放锁、不回写`);
-    await handle.kill();
-    const release = await releaseOwnLock(lock, runId, deps.log);
-    return { outcome: 'lease_lost', lock_released: release.released };
-  }
-  if (end.kind === 'abort') return abort(end.reason, handle);
-  const release = await releaseOwnLock(lock, runId, deps.log);
-  return { outcome: 'session_terminal', status: end.status, lock_released: release.released };
+/** 安全冲突尚未迁移：不claim、不取手机锁、不创建Agent会话。 */
+function migrationRequired(deps, taskId = null) {
+  const result={outcome:'needs_review',reason:'common_runner_migration_required',task_id:taskId};
+  // 既有代码日志渠道，只记录拒绝；不伪造任务运行/业务结果。
+  deps?.log?.(JSON.stringify({event:'factory_dispatch_refused',...result}));
+  return result;
 }
-
-/** 一轮：时段外不认领；时段内挑第一个 queued 的技能工厂单派发。 */
-export async function pollOnce(deps, userOpts = {}) {
-  const opts = { ...DEFAULT_OPTS, ...userOpts };
-  if (!isWithinWorkHours(deps.now(), opts)) return { skipped: 'off_hours' };
-  const queued = await deps.brain.listQueued();
-  const task = (queued || []).find((t) => t?.status === 'queued' && isFactoryTask(t, opts.dispatchMode));
-  if (!task) return { skipped: 'no_task' };
-  return dispatchTask(task, deps, opts);
-}
+export async function dispatchTask(task, deps) { return migrationRequired(deps,task?.id??null); }
+export async function pollOnce(deps) { return migrationRequired(deps); }
 
 // ── 真实依赖 ─────────────────────────────────────────────────────────────
 /** claim 用的 executor_kind：必须在 tasks_executor_kind_check 允许值里（派给 OpenClaw skill-factory agent 执行 = openclaw-agent）。 */

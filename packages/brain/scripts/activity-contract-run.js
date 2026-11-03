@@ -3,7 +3,7 @@ import { writeFileSync, renameSync, mkdirSync, realpathSync, linkSync, unlinkSyn
 import { createHash, randomUUID } from 'node:crypto';
 import { resolve, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { runActivityContract } from '../src/orchestrator/activity-runtime.js';
+import { runActivityContractWithCommander } from '../src/orchestrator/activity-supervision.js';
 
 const EVENT_ERRORS = new Set(['activity_run_id_invalid', 'activity_source_id_invalid', 'activity_run_tag_invalid',
   'activity_source_busy', 'activity_run_not_found', 'activity_source_already_used', 'activity_event_pool_required',
@@ -101,8 +101,8 @@ export async function main(argv = process.argv.slice(2), stream = process.stdin)
       eventPool = new pg.Pool({ connectionString: process.env.ACTIVITY_EVENT_DATABASE_URL,
         max: 1, connectionTimeoutMillis: 5000, query_timeout: 5000 });
       result = await runActivityContractWithEventStore(envelope.contract, envelope.input,
-        { ...options, pool: eventPool, runId, sourceId });
-    } else result = await runActivityContract(envelope.contract, envelope.input, options);
+        { ...options, pool: eventPool, runId, sourceId, runActivity: runActivityContractWithCommander });
+    } else result = await runActivityContractWithCommander(envelope.contract, envelope.input, options);
   } catch (error) {
     const runTag = envelope?.input?.run_tag ?? null;
     result = { schema_version: 1, run_tag: eventDb && (typeof runTag !== 'string'

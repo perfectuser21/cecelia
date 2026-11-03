@@ -4,7 +4,7 @@
  * 全被占只等不接管；池空 → failed 写原因。派发成功后落 Brain 租约（超时 + 15 分钟）。
  */
 import { describe, it, expect, vi } from 'vitest';
-import { WORKFLOW_DISPATCH_TASK_TYPE, dispatchWorkflowCommanderTasks } from '../workflow-commander-dispatch.js';
+import { WORKFLOW_DISPATCH_TASK_TYPE, dispatchWorkflowCommanderTasks,resolveCommanderOrder,applyPoolMember } from '../workflow-commander-dispatch.js';
 import { resolveWorkflowConfig } from '../factory-workflow-config.js';
 
 const CFG = {
@@ -39,76 +39,22 @@ describe('真配置', () => {
   });
 });
 
-describe('dispatchWorkflowCommanderTasks × 设备池', () => {
-  it('池里选中第二台 → 调度单/设备 serial 用选中的那台，留痕 device_pool_selected，派发后落 Brain 租约', async () => {
-    const pool = fakePool();
-    const sshCalls = [];
-    const selectFromPool = vi.fn(async () => ({ ok: true, member: SECOND, tried: [{ serial: 'ANGYVB4311010223', status: 409, error: 'device_locked' }] }));
-    const lockGate = vi.fn();
-    const setLease = vi.fn(async () => ({}));
-    const recordEvent = vi.fn(async () => {});
-    const out = await dispatchWorkflowCommanderTasks(pool, {
-      resolveConfig, now: IN_HOURS, lockGate, selectFromPool, setLease, recordEvent,
-      sshDispatch: async (args, input) => { sshCalls.push({ args, input }); return 'DISPATCHED'; },
-    });
-    expect(out.dispatched).toBe(1);
-    expect(lockGate).not.toHaveBeenCalled();
-    expect(selectFromPool).toHaveBeenCalledWith(pool, 'douyin.internal', expect.objectContaining({ id: T.id }), expect.objectContaining({ ttlMinutes: 60 }));
-    expect(sshCalls[0].input).toContain('调度单：douyin_video_publish xian-m4 yueshengyun-work e6c7ef34 Ai效率笔记');
-    const pay = pool.calls.find((c) => /jsonb_build_object\('run_id'/.test(c.sql));
-    expect(pay.params[3]).toBe('e6c7ef34');
-    expect(recordEvent).toHaveBeenCalledWith(pool, T.id, 'device_pool_selected', expect.objectContaining({ pool: 'douyin.internal', serial: 'e6c7ef34' }));
-    expect(setLease).toHaveBeenCalledWith(pool, T.id, 40 * 60 + 900);
-  });
-
-  it('池里全被占 → 只等不接管：放 claim、不派、不落租约', async () => {
-    const pool = fakePool();
-    const sshDispatch = vi.fn();
-    const setLease = vi.fn();
-    const out = await dispatchWorkflowCommanderTasks(pool, {
-      resolveConfig, now: IN_HOURS, sshDispatch, setLease, recordEvent: vi.fn(async () => {}),
-      selectFromPool: async () => ({ ok: false, reason: 'all_busy', tried: [{ serial: 'ANGYVB4311010223', status: 409 }] }),
-    });
-    expect(out.waiting).toBe(1);
-    expect(sshDispatch).not.toHaveBeenCalled();
-    expect(setLease).not.toHaveBeenCalled();
-    expect(pool.calls.some((c) => /SET claimed_by = NULL/.test(c.sql))).toBe(true);
-  });
-
-  it('池空（无可用成员）→ failed 写 workflow_dispatch_pool_empty', async () => {
-    const pool = fakePool();
-    const out = await dispatchWorkflowCommanderTasks(pool, {
-      resolveConfig, now: IN_HOURS, sshDispatch: vi.fn(), recordEvent: vi.fn(async () => {}),
-      selectFromPool: async () => ({ ok: false, reason: 'pool_empty', tried: [] }),
-    });
-    expect(out.failed).toBe(1);
-    expect(JSON.stringify(pool.calls.find((c) => /status = 'failed'/.test(c.sql)).params)).toContain('workflow_dispatch_pool_empty');
-  });
-
-  it('池成员字段含非法字符 → 不拼进调度单，放锁后 failed', async () => {
-    const pool = fakePool();
-    const releaseLock = vi.fn(async () => 1);
-    const sshDispatch = vi.fn();
-    const out = await dispatchWorkflowCommanderTasks(pool, {
-      resolveConfig, now: IN_HOURS, sshDispatch, releaseLock, recordEvent: vi.fn(async () => {}),
-      selectFromPool: async () => ({ ok: true, member: { ...SECOND, account_ref: 'a b' }, tried: [] }),
-    });
-    expect(out.failed).toBe(1);
-    expect(sshDispatch).not.toHaveBeenCalled();
-    expect(releaseLock).toHaveBeenCalledWith(T.id);
-  });
-
-  it('没登记 pool 的 workflow 仍走固定 serial 单闸（老路径不变）', async () => {
-    const pool = fakePool();
-    const noPool = { ...CFG, device: { ...CFG.device, pool: undefined } };
-    const selectFromPool = vi.fn();
-    const lockGate = vi.fn(async () => ({ pass: true, acquired: true }));
-    const out = await dispatchWorkflowCommanderTasks(pool, {
-      resolveConfig: () => noPool, now: IN_HOURS, lockGate, selectFromPool, setLease: vi.fn(async () => ({})),
-      sshDispatch: async () => 'DISPATCHED',
-    });
-    expect(out.dispatched).toBe(1);
-    expect(selectFromPool).not.toHaveBeenCalled();
-    expect(lockGate.mock.calls[0][0].payload.device_serial).toBe('ANGYVB4311010223');
-  });
+describe('固定发布source与历史设备池边界',()=>{
+ it('新运行由固定发布profile选择资源，不能用旧设备池改写账号',async()=>{
+  const pool=fakePool(),selectFromPool=vi.fn(async()=>({ok:true,member:SECOND})),common=vi.fn(async()=>({dispatched:true})),sshDispatch=vi.fn();
+  const out=await dispatchWorkflowCommanderTasks(pool,{resolveConfig,now:IN_HOURS,selectFromPool,workflowCommonDispatch:common,sshDispatch});
+  expect(out.dispatched).toBe(1);expect(common).toHaveBeenCalledWith(pool,T);expect(selectFromPool).not.toHaveBeenCalled();expect(sshDispatch).not.toHaveBeenCalled();
+ });
+ it.each(['all_busy','pool_empty'])('旧设备池%s不能绕过固定source的代码资源闸',async reason=>{
+  const pool=fakePool(),sshDispatch=vi.fn(),releaseLock=vi.fn();
+  const out=await dispatchWorkflowCommanderTasks(pool,{resolveConfig,now:IN_HOURS,workflowCommonDispatch:async()=>({waiting:true,reason}),sshDispatch,releaseLock});
+  expect(out.waiting).toBe(1);expect(sshDispatch).not.toHaveBeenCalled();expect(releaseLock).not.toHaveBeenCalled();
+ });
+ it('历史调度单解析仍拒绝非法成员字符，仅供在途诊断',()=>{
+  const order=resolveCommanderOrder(T,{resolveConfig});expect(applyPoolMember(order,{...SECOND,account_ref:'a b'}).ok).toBe(false);
+ });
+ it('历史成员映射仍保留完整身份，不能只替换serial',()=>{
+  const order=resolveCommanderOrder(T,{resolveConfig}),selected=applyPoolMember(order,SECOND);
+  expect(selected.serial).toBe(SECOND.serial);expect(selected.order).toContain('yueshengyun-work e6c7ef34 Ai效率笔记');
+ });
 });

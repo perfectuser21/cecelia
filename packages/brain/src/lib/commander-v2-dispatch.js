@@ -93,6 +93,6 @@ export async function launchCommander(pool, taskId, deps = {}) {
   });
 }
 export async function dispatchCommanderV2(pool, taskId, deps = {}) {
-  await prepareCommander(pool, taskId, deps);
-  return launchCommander(pool, taskId, deps);
+  const {createWorkflowCommonAdapter}=await import('./workflow-common-runner-adapter.js');
+  return createWorkflowCommonAdapter(pool,deps.workflowCommon??{}).dispatch(taskId);
 }

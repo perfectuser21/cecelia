@@ -41,7 +41,7 @@ it('默认runtime共享真实marker，orchestrator新prepare拒绝且不执行�
   expect(runtime.appServerRunner.capabilities().worker_boot_id).toBe(runtime.launchAdmission.snapshot().boot_id);
   await expect(runtime.appServerRunner.start({})).rejects.toThrow('worker_draining');
   expect(await runtime.appServerRunner.maintenance()).toEqual({pending:0});
-  await expect(runtime.orchestratorRunner.prepare({run_id:randomUUID(),task_id:randomUUID(),repo:'perfectuser21/cecelia'})).rejects.toThrow('worker_draining');
+  await expect(runtime.orchestratorRunner.prepare({run_id:randomUUID(),task_id:randomUUID(),repo:'perfectuser21/cecelia'})).rejects.toThrow('kernel_runtime_retired');
   expect(commands).toBe(0);expect(runtime.launchAdmission.snapshot().in_flight_launches).toBe(0);
   expect(await runtime.attemptRunner.maintenance()).toEqual({pending:0});expect(await runtime.scriptRunner.maintenance()).toEqual({pending:0});expect(await runtime.orchestratorRunner.maintenance()).toEqual({preparing:0,prepared:0,running_processes:0});
  }finally{fs.rmSync(root,{recursive:true,force:true});}

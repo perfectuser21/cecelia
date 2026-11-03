@@ -45,7 +45,7 @@ describe('GP F1 step3 — Claude 无头通道已退役：执行体选择不再�
     await expect(spawn({ task: { id: TASK_ID }, env: {} })).rejects.toThrow(RETIRED);
   });
 
-  it('harness-skill-relay：显式 executor=claude / 非 kernel 无头缺省执行体 → claude_channel_retired，不建 run 不 spawn', async () => {
+  it('harness-skill-relay：显式 executor=claude / 非 kernel 无头缺省执行体 → kernel_runtime_retired，不建 run 不 spawn', async () => {
     for (const payload of [{ executor: 'claude' }, {}, { executor: 'claude', mode: 'headed' }]) {
       const deps = {
         env: {},
@@ -55,7 +55,7 @@ describe('GP F1 step3 — Claude 无头通道已退役：执行体选择不再�
         execFn: vi.fn(() => ''),
       };
       const result = await spawnSkillRelaySession({ id: TASK_ID, payload }, deps);
-      expect(result).toMatchObject({ ok: false, error: 'claude_channel_retired' });
+      expect(result).toMatchObject({ ok: false, error: 'kernel_runtime_retired' });
       expect(deps.spawnFn).not.toHaveBeenCalled();
       expect(deps.createKernelRun).not.toHaveBeenCalled();
       expect(deps.execFn).not.toHaveBeenCalled();

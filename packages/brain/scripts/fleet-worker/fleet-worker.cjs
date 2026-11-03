@@ -3,7 +3,7 @@
 const {projectGpuObservation}=require('./gpu-observation.cjs');
 
 const { Buffer } = require('node:buffer');
-const { createHmac, createHash, timingSafeEqual, randomUUID } = require('node:crypto');
+const { createHmac, createHash, timingSafeEqual } = require('node:crypto');
 const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
@@ -806,6 +806,10 @@ function createFleetWorkerServer(options = {}) {
         return;
       }
       try {
+        if (request.method === 'POST' && (request.url === '/harness/orchestrators/prepare' || /\/start$/.test(request.url))) {
+          writeJson(response, 410, {error:'kernel_runtime_retired'});
+          return;
+        }
         if (
           request.method === 'POST'
           && request.url === '/harness/orchestrators/prepare'

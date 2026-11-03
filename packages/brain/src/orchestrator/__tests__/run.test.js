@@ -47,160 +47,13 @@ describe('parseArgs', () => {
   });
 });
 
-describe('runKernelMain fatal convergence', () => {
-  it('terminalizes and closes the exact pool when dependency assembly fails', async () => {
-    const pool = { end: vi.fn() };
-    const finalizeRun = vi.fn(async () => ({ phase: 'failed' }));
-    const buildDeps = vi.fn(async ({ onPool }) => {
-      onPool(pool);
-      throw new Error('dependency_assembly_failed');
-    });
 
-    await expect(runKernelMain({
-      taskId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-      runId: '11111111-1111-4111-8111-111111111111',
-      controllerSessionId: '22222222-2222-4222-8222-222222222222',
-      controllerGeneration: 3,
-      resumeToken: null,
-      dryRun: false,
-    }, {
-      buildDeps,
-      runLoopFn: vi.fn(),
-      finalizeRun,
-    })).rejects.toThrow('dependency_assembly_failed');
-
-    expect(finalizeRun).toHaveBeenCalledWith(pool, {
-      runId: '11111111-1111-4111-8111-111111111111',
-      expectedTaskId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-      expectedControllerSessionId: '22222222-2222-4222-8222-222222222222',
-      expectedControllerGeneration: 3,
-      requireActiveControllerAuthority: true,
-      outcome: 'failed',
-      reason: 'kernel_process_fatal:dependency_assembly_failed',
-      closeControllerSession:false,
-    });
-    expect(pool.end).toHaveBeenCalledOnce();
-  });
-
-  it('terminalizes the exact run and parent task when startup fails before heartbeat', async () => {
-    const pool = { end: vi.fn() };
-    const finalizeRun = vi.fn(async () => ({ phase: 'failed' }));
-    const fatal = new Error('workspace_repo_not_supported');
-
-    await expect(runKernelMain({
-      taskId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-      runId: '11111111-1111-4111-8111-111111111111',
-      controllerSessionId: '22222222-2222-4222-8222-222222222222',
-      controllerGeneration: 7,
-      resumeToken: null,
-      dryRun: false,
-    }, {
-      buildDeps: vi.fn(async () => ({ pool })),
-      runLoopFn: vi.fn(async () => { throw fatal; }),
-      finalizeRun,
-    })).rejects.toThrow('workspace_repo_not_supported');
-
-    expect(finalizeRun).toHaveBeenCalledWith(pool, {
-      runId: '11111111-1111-4111-8111-111111111111',
-      expectedTaskId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-      expectedControllerSessionId: '22222222-2222-4222-8222-222222222222',
-      expectedControllerGeneration: 7,
-      requireActiveControllerAuthority: true,
-      outcome: 'failed',
-      reason: 'kernel_process_fatal:workspace_repo_not_supported',
-      closeControllerSession:false,
-    });
-    expect(pool.end).toHaveBeenCalledOnce();
-  });
-
-  it('redacts credentials before persisting a fatal diagnostic', async () => {
-    const pool = { end: vi.fn() };
-    const finalizeRun = vi.fn(async () => ({ phase: 'failed' }));
-
-    await expect(runKernelMain({
-      taskId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-      runId: '11111111-1111-4111-8111-111111111111',
-      controllerSessionId: '22222222-2222-4222-8222-222222222222',
-      controllerGeneration: 5,
-      resumeToken: null,
-      dryRun: false,
-    }, {
-      buildDeps: vi.fn(async () => ({ pool })),
-      runLoopFn: vi.fn(async () => {
-        throw new Error('KERNEL_FLEET_BRIDGE_TOKEN=raw-bridge-secret');
-      }),
-      finalizeRun,
-    })).rejects.toThrow('raw-bridge-secret');
-
-    const persisted = finalizeRun.mock.calls[0][1].reason;
-    expect(persisted).toContain('[REDACTED]');
-    expect(persisted).not.toContain('raw-bridge-secret');
-  });
-
-  it('非 dry-run 缺 Controller identity 时不组装依赖也不终结 run', async () => {
-    const buildDeps = vi.fn();
-    const finalizeRun = vi.fn();
-
-    await expect(runKernelMain({
-      taskId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-      runId: '11111111-1111-4111-8111-111111111111',
-      controllerSessionId: null,
-      controllerGeneration: null,
-      resumeToken: null,
-      dryRun: false,
-    }, { buildDeps, finalizeRun })).rejects.toThrow('controller_lease_identity_missing');
-
-    expect(buildDeps).not.toHaveBeenCalled();
-    expect(finalizeRun).not.toHaveBeenCalled();
-  });
-
-  it('非 dry-run 缺 runId 同样不组装依赖', async () => {
-    const buildDeps = vi.fn();
-    await expect(runKernelMain({
-      taskId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-      runId: null,
-      controllerSessionId: null,
-      controllerGeneration: null,
-      resumeToken: null,
-      dryRun: false,
-    }, { buildDeps })).rejects.toThrow('controller_lease_identity_missing');
-    expect(buildDeps).not.toHaveBeenCalled();
-  });
-});
 
 // r17 实证：task.status 运行中恒 'queued'（派发时也不置 in_progress）。以下锁死
 // runKernelMain 启动流程装载 task 后必须调用 activateQueuedTask（默认实现
 // kernel-run-store.activateQueuedKernelTask）单条 UPDATE，失败只告警不中断 loop
 // （PrepPRD: docs/prd/2026-08-04-kernel-phase-persist-prep-prd.md）。
 describe('runKernelMain：task 启动置位', () => {
-  it('非 dry-run：启动时调用 activateQueuedTask(pool, taskId)，随后照常跑 loop', async () => {
-    const pool = { end: vi.fn() };
-    const activateQueuedTask = vi.fn(async () => ({ id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' }));
-    const runLoopFn = vi.fn(async (_deps, options) => {
-      await options.onOwnershipVerified();
-      return { exitReason: 'run_done', hops: 1 };
-    });
-
-    const result = await runKernelMain({
-      taskId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-      runId: '11111111-1111-4111-8111-111111111111',
-      controllerSessionId: '22222222-2222-4222-8222-222222222222',
-      controllerGeneration: 1,
-      resumeToken: null,
-      dryRun: false,
-    }, {
-      buildDeps: vi.fn(async () => ({ pool })),
-      runLoopFn,
-      activateQueuedTask,
-    });
-
-    expect(activateQueuedTask).toHaveBeenCalledWith(
-      pool,
-      'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-    );
-    expect(runLoopFn).toHaveBeenCalled();
-    expect(result).toEqual({ exitReason: 'run_done', hops: 1 });
-  });
 
   it('dry-run：不调用 activateQueuedTask（零写入契约不破）', async () => {
     const pool = { end: vi.fn() };
@@ -221,33 +74,6 @@ describe('runKernelMain：task 启动置位', () => {
     expect(activateQueuedTask).not.toHaveBeenCalled();
   });
 
-  it('activateQueuedTask 失败只告警，不中断 loop（非关键路径）', async () => {
-    const pool = { end: vi.fn() };
-    const activateQueuedTask = vi.fn(async () => { throw new Error('connection refused'); });
-    const runLoopFn = vi.fn(async (_deps, options) => {
-      await options.onOwnershipVerified();
-      return { exitReason: 'run_done', hops: 1 };
-    });
-    const logError = vi.fn();
-
-    const result = await runKernelMain({
-      taskId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-      runId: '11111111-1111-4111-8111-111111111111',
-      controllerSessionId: '22222222-2222-4222-8222-222222222222',
-      controllerGeneration: 1,
-      resumeToken: null,
-      dryRun: false,
-    }, {
-      buildDeps: vi.fn(async () => ({ pool })),
-      runLoopFn,
-      activateQueuedTask,
-      logError,
-    });
-
-    expect(runLoopFn).toHaveBeenCalled();
-    expect(result).toEqual({ exitReason: 'run_done', hops: 1 });
-    expect(logError).toHaveBeenCalledWith(expect.stringContaining('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'));
-  });
 });
 
 describe('buildRealDeps', () => {

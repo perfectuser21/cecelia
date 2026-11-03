@@ -169,13 +169,26 @@ export function buildTerminalUpdate(taskId, status, opts = {}) {
   const failedProof = opts.commanderFailureReconciliation;
   let failedGate = '';
   if (status === 'failed' && /^[a-f0-9]{64}$/.test(failedProof?.sha256 ?? '') && /^wfd-[a-f0-9-]{36}$/.test(failedProof?.runId ?? '')) {
-    failedGate = ` OR (result->'workflow_control'->>'phase'='final' AND result->'workflow_control'->>'verdict'='FAIL'
+    failedGate = ` OR (NOT COALESCE(result ? 'workflow_common_runner',false) AND result->'workflow_control'->>'phase'='final' AND result->'workflow_control'->>'verdict'='FAIL'
       AND result->'workflow_control'->'failed_reconciliation'->>'sha256'=$${push(failedProof.sha256)}
       AND result->'workflow_control'->'envelope'->>'run_id'=$${push(failedProof.runId)}
       AND result->'workflow_control'->'failed_reconciliation'->>'effects'='unknown'
       AND result->'workflow_control'->'failed_reconciliation'->>'retry_safe'='false')`;
   }
-  where.push("(payload->>'commander_protocol' IS DISTINCT FROM 'commander-v2' OR (result->'workflow_control'->>'phase' = 'final' AND result->'workflow_control'->>'verdict' = 'PASS' AND " + (isRelayTerminalStatus(status) ? 'TRUE' : 'FALSE') + ")" + failedGate + ")");
+  // 新公共Runner只凭同一持久运行的独立中央确认完成迁移单，不能伪造旧Commander final。
+  const commonStatus=isRelayTerminalStatus(status)?'success':status==='failed'?'failed':null;
+  const commonGate=commonStatus?` OR (claimed_by='common-runner'
+    AND result->'workflow_common_runner'->>'task_id'=id::text
+    AND result->'workflow_common_runner'->>'run_id'=result->'common_runner'->>'run_id'
+    AND result#>>'{common_runner_observation,evidence,central_readback,recording_status}'='confirmed'
+    AND result#>>'{common_runner_observation,evidence,authenticated_receipt,run_id}'=result->'common_runner'->>'run_id'
+    AND result#>>'{common_runner_observation,evidence,authenticated_receipt,execution_unknown}' IS DISTINCT FROM 'true'
+    AND EXISTS (SELECT 1 FROM task_runs cr WHERE cr.task_id=tasks.id
+      AND cr.run_id::text=tasks.result->'common_runner'->>'run_id'
+      AND ${commonStatus==='success'?"cr.status='success'":"cr.status IN ('failed','cancelled')"}
+      AND cr.status=tasks.result#>>'{common_runner_observation,evidence,central_readback,status}'
+      AND cr.ended_at IS NOT NULL AND cr.context->>'source'='workflow-common-runner'))`:'';
+  where.push("((payload->>'commander_protocol' IS DISTINCT FROM 'commander-v2' AND NOT COALESCE(result ? 'workflow_common_runner',false)) OR (NOT COALESCE(result ? 'workflow_common_runner',false) AND result->'workflow_control'->>'phase' = 'final' AND result->'workflow_control'->>'verdict' = 'PASS' AND " + (isRelayTerminalStatus(status) ? 'TRUE' : 'FALSE') + ")" + failedGate + commonGate + ")");
   const returning = ['id', 'status', ...toList(opts.returning).filter((c) => c !== 'id' && c !== 'status')];
   const sql = `UPDATE tasks SET ${sets.join(', ')} WHERE ${where.join(' AND ')} RETURNING ${returning.join(', ')}`;
   return { sql, params };

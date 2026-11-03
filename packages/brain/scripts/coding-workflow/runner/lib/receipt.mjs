@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import { sumCostUsd } from '../../lib/transcript.mjs';
 
-const FINAL_STATUSES = new Set(['completed', 'partial', 'failed']);
+const FINAL_STATUSES = new Set(['completed', 'partial', 'failed', 'needs_review']);
 
 const isFinal = (r) => r !== null && typeof r === 'object' && FINAL_STATUSES.has(r.status);
 

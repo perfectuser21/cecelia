@@ -212,7 +212,7 @@ async function runRepoGates(ctx, signal) {
     if (cfg.qaGate) await settleHumanMerges(ctx);
     // 已批准的 PR：只合并被批准的 head（批准后又改了代码则撤销批准，本轮到此）
     if (cfg.qaGate && await runMergeGate(ctx)) return true;
-    // 升级了的 PR：coding commander 裁决并解除（或上交主理人），本轮到此（决策 c167d6e3）
+    // 升级了的 PR：同一Commander桥只观察并保留待审，不能改规格、预算或代替独立批准。
     if (cfg.commander && await runCommander(ctx, signal)) return true;
     // 先收尾再开新：自己开的 PR CI 红了，本轮只修它
     if (cfg.ciFix && await runCiFix(ctx, signal)) return true;

@@ -1,6 +1,6 @@
 /** 复用现有派发/回执进程；未知派发不重发，回执先核身份和结构再允许完成。 */
 import { definitionDigest, requireCondition } from '../workflow-authoring/contracts.js';
-import { assertSkillEnvelope,validateSkillReceipt,invocationPrompt } from '../orchestrator/skill-activity-adapter.js';
+import { assertSkillEnvelope,validateSkillReceipt,invocationPrompt,runSkillInvocation } from '../orchestrator/skill-activity-adapter.js';
 import { probeInvocationRuntime } from './resolve.js';
 import { startRun } from '../lib/task-run.js';
 import { normalizeCallbackStatus } from '../lib/callback-utils.js';
@@ -8,7 +8,7 @@ import {normalizeSpan,writeSpans} from '../lib/span-ingestion.js';
 import {invocationSlotInputs} from '../workflow-authoring/execution-ledger.js';
 import {requireCandidateEnvironment,readCandidateOwner} from '../workflow-authoring/assembly-orchestration.js';
 export function invocationBridgeRequired(task){
-  if(!task?.payload?.invocation)return false;
+  if(!task?.payload?.invocation&&!task?.payload?.invocation_activity)return false;
   requireCondition(task.task_type==='research','调用任务类型与固定transport不匹配',409);
   return true;
 }
@@ -86,6 +86,9 @@ export async function guardInvocationCallback(db,{task_id,run_id,status,result})
   requireCondition(run_id&&inv.dispatch?.run_id===run_id,'调用 run 身份不匹配',409);
   if(!['completed','completed_no_pr'].includes(normalizeCallbackStatus(status)))return null;
   const receipt=validateSkillReceipt(inv.envelope,result,task_id,run_id);
+  const proof=(await db.query("SELECT payload FROM task_events WHERE task_id=$1 AND event_type='invocation_runner_finalized' AND payload->>'run_id'=$2 ORDER BY created_at DESC LIMIT 1",[task_id,run_id])).rows[0]?.payload;
+  requireCondition(proof?.status==='completed'&&proof.envelope_sha256===inv.envelope.envelope_sha256
+    &&proof.receipt_sha256===definitionDigest(receipt),'缺少匹配的公共Runner终态证明',409);
   // 结构合法的真实执行回执进入原任务及事件账；相同回执重放不覆盖结果。
   const client=await db.connect();
   try{
@@ -105,4 +108,45 @@ export async function guardInvocationCallback(db,{task_id,run_id,status,result})
     await client.query('COMMIT');return receipt;
   }catch(error){await client.query('ROLLBACK').catch(()=>{});throw error;}
   finally{client.release();}
+}
+
+/** 原调用账保持唯一；公共Runner全部交换先落事件，子callback永不决定父状态。 */
+export async function runInvocationActivities(db,task,runId,options={}){
+  const inv=task.payload.invocation;
+  const onEvent=async event=>{
+    await db.query("INSERT INTO task_events(task_id,event_type,payload) VALUES($1,'invocation_runner_event',$2::jsonb)",[task.id,JSON.stringify({actor:'shared-runner',request_key:inv.request_key,target:inv.target,...event})]);
+    await options.onEvent?.(event);
+  };
+  const result=await runSkillInvocation(inv.envelope,task.id,runId,{...options,onEvent});
+  await db.query("INSERT INTO task_events(task_id,event_type,payload) VALUES($1,'invocation_runner_finalized',$2::jsonb)",[task.id,JSON.stringify({actor:'shared-runner',run_id:runId,tenant_id:inv.tenant_id,request_key:inv.request_key,target:inv.target,
+    input_sha256:inv.input_sha256,envelope_sha256:inv.envelope.envelope_sha256,status:result.runtime.status,receipt_sha256:result.receipt?definitionDigest(result.receipt):null,runtime:result.runtime})]);
+  return result;
+}
+
+/** 父控制器没有OS子进程；只有固定身份与真实运行账一致才归公共Runner管理。 */
+export async function reconcileInvocationLiveness(db,task,{entry}={}){
+  const inv=task.payload?.invocation,e=inv?.envelope,runId=inv?.dispatch?.run_id;
+  try{
+    if(task.task_type!=='research'||inv?.protocol!=='invocation-request-v1'||inv.runner!=='shared-activity-runner'
+      ||!runId||task.payload.current_run_id!==runId||e?.runner_policy?.protocol!=='skill-invocation-runner-v1')return null;
+    assertSkillEnvelope(e);
+    if(e.tenant_id!==inv.tenant_id||e.input_sha256!==inv.input_sha256||definitionDigest(e.target)!==definitionDigest(inv.target))return null;
+  }catch{return null;}
+  const run=(await db.query('SELECT run_id,status,ended_at,context FROM task_runs WHERE task_id=$1 AND run_id=$2',[task.id,runId])).rows[0];
+  try{
+    const c=run?.context;
+    if(run?.run_id!==runId||c?.source!=='skill-invocation'||c.tenant_id!==inv.tenant_id
+      ||c.input_sha256!==e.input_sha256||c.envelope_sha256!==e.envelope_sha256||definitionDigest(c.target)!==definitionDigest(e.target))return null;
+  }catch{return null;}
+  if(entry?.source==='shared-activity-runner'&&entry.runId===runId&&typeof entry.invocationController?.then==='function')return {verdict:'alive',run_id:runId};
+  // Brain重启后Promise不能恢复；旧child仍可能运行。只隔离父任务，保留运行账，不清claim、不回队。
+  const detail={actor:'shared-runner',run_id:runId,tenant_id:inv.tenant_id,request_key:inv.request_key,
+    envelope_sha256:e.envelope_sha256,reason:'invocation_controller_lost',execution_unknown:true,recovery_mode:'readback_only'};
+  await db.query(`WITH changed AS (
+    UPDATE tasks SET status='blocked',blocked_at=NOW(),blocked_reason='needs_review',blocked_detail=$4::jsonb,updated_at=NOW()
+    WHERE id=$1 AND status='in_progress' AND payload->>'current_run_id'=$2
+      AND payload#>>'{invocation,dispatch,run_id}'=$2 AND payload#>>'{invocation,envelope,envelope_sha256}'=$3 RETURNING id
+  ) INSERT INTO task_events(task_id,event_type,payload) SELECT id,'invocation_runner_interrupted',$4::jsonb FROM changed`,
+  [task.id,runId,e.envelope_sha256,JSON.stringify(detail)]);
+  return {verdict:'unknown',run_id:runId,reason:detail.reason};
 }

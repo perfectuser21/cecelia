@@ -105,8 +105,10 @@ describe('隔离环境不能通过手动派发绕过启动保护', () => {
   ])('%s 的 %s 在访问执行依赖之前拒绝', async (file, name) => {
     const source = readSource(new URL(`../${file}`, import.meta.url), 'utf8');
     const expression = source.match(new RegExp(`async function ${name}\\([^]*?^\\}`, 'm'))[0];
-    const context = { assertExternalExecutionAllowed: () => assertExternalExecutionAllowed({ NODE_ENV: 'test' }) };
+    const context = { assertExternalExecutionAllowed: () => assertExternalExecutionAllowed({ NODE_ENV: 'test' }), RELAY_FLAG:'skill-relay', KERNEL_RUNTIME_RETIRED_CODE:'kernel_runtime_retired' };
     const fn = vm.runInNewContext(`(${expression})`, context);
-    await expect(fn({ id: 'fixture', payload: {} })).rejects.toMatchObject({ code: 'EXECUTION_RUNTIME_ISOLATED' });
+    if(file==='harness-skill-relay.js'){
+      const effect=vi.fn();await expect(fn({id:'fixture',payload:{}},{pool:{query:effect},spawnFn:effect,execFn:effect})).resolves.toMatchObject({ok:false,error:'kernel_runtime_retired'});expect(effect).not.toHaveBeenCalled();
+    }else await expect(fn({ id: 'fixture', payload: {} })).rejects.toMatchObject({ code: 'EXECUTION_RUNTIME_ISOLATED' });
   });
 });

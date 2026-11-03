@@ -175,3 +175,6 @@ apps/dashboard/.dev-preview.log
 /packages/workflows/skills/workflow-authoring/SKILL.md
 /packages/workflows/skills/xiaohongshu-publisher/SKILL.md
 /packages/workflows/skills/zhihu-publisher/SKILL.md
+
+# 中心技能仓固定版本生成，正文不在业务仓维护
+/packages/brain/skills/runner-commander/

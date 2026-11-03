@@ -1,3 +1,4 @@
+import { kernelRuntimeRetiredError } from '../lib/kernel-retirement.js';
 import { startExecutionDirectory } from '../execution-directory/store.js';
 /**
  * run.js —— orchestrator CLI 入口（独立于 Brain 容器生命周期的主机进程，D6）。
@@ -521,6 +522,7 @@ export async function runKernelMain({
   activateQueuedTask = activateQueuedKernelTask,
   logError = console.error,
 } = {}) {
+  if (!dryRun) throw kernelRuntimeRetiredError();
   if (!dryRun) {
     const generation = Number(controllerGeneration);
     if (!runId || !controllerSessionId || !Number.isSafeInteger(generation) || generation < 1) {

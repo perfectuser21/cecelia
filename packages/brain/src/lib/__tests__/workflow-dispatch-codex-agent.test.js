@@ -72,22 +72,18 @@ describe('调度单带 run_id / task_id', () => {
     expect(m).toContain('"commander_skill"');
     expect(m).toMatch(/第〇节/);
   });
-  it('派发时 payload.commander_order 记带 run/task 的完整调度单', async () => {
+  it('新派发委托公共Runner保留原task身份，不再给执行Commander拼整段调度单', async () => {
     const t = wfTask();
-    const pool = fakePool([
-      [/FROM tasks[\s\S]*status = 'queued'/, () => ({ rows: [t] })],
-      [/UPDATE tasks SET claimed_by = \$2/, () => ({ rows: [t], rowCount: 1 })],
-    ]);
-    let input = '';
-    await dispatchWorkflowCommanderTasks(pool, {
-      resolveConfig: resolveWorkflowConfig, now: IN_HOURS, lockGate: async () => ({ pass: true }), target: 'mmv',
-      // 真配置登记了设备池 douyin.internal（任务 c5f6e683）：假池选中原固定机
-      selectFromPool: async () => ({ ok: true, member: { serial: 'ANGYVB4311010223', machine: 'xian-m4', profile: 'xiaolongxia', account_ref: 'Ai办公室' }, tried: [] }),
-      sshDispatch: async (_a, i) => { input = i; return 'DISPATCHED'; },
+    const pool = fakePool([[/FROM tasks[\s\S]*status = 'queued'/, () => ({ rows: [t] })]]);
+    const common = vi.fn(async () => ({dispatched:true})),sshDispatch=vi.fn();
+    const result=await dispatchWorkflowCommanderTasks(pool, {
+      resolveConfig: resolveWorkflowConfig, now: IN_HOURS,
+      workflowCommonDispatch:common,sshDispatch,
     });
-    const pay = pool.calls.find((c) => /jsonb_build_object\('run_id'/.test(c.sql));
-    expect(pay.params[2]).toBe(`douyin_video_publish xian-m4 xiaolongxia ANGYVB4311010223 Ai办公室 --run-id ${pay.params[1]} --task-id ${TASK_ID}`);
-    expect(input).toContain(`--run-id ${pay.params[1]}`);
+    expect(result.dispatched).toBe(1);
+    expect(common).toHaveBeenCalledWith(pool,t);
+    expect(sshDispatch).not.toHaveBeenCalled();
+    expect(pool.calls.some(c=>/jsonb_build_object\('run_id'/.test(c.sql))).toBe(false);
   });
 });
 

@@ -35,8 +35,9 @@ test('F1 step4：真实活动启动前先发意图，完成回执与活动产物
     expect(result.status).toBe('completed');
     expect(result.outputs.delivered).toEqual(fragments);
     expect(result.metrics.delivery.delivered).toBe(1);
-    expect(events.map(row => row.event.event_type)).toEqual(['WF_RUN_STARTED', 'ACTIVITY_STARTED', 'ACTIVITY_FINISHED', 'WF_RUN_FINALIZED']);
-    expect(events.map(row => row.event.cursor)).toEqual([1, 2, 3, 4]);
+    expect(events.map(row => row.event.event_type)).toEqual(['WF_RUN_STARTED', 'ACTIVITY_STARTED', 'ACTIVITY_FINISHED', 'ACTIVITY_ROUTED', 'WF_RUN_FINALIZED']);
+    expect(events.map(row => row.event.cursor)).toEqual([1, 2, 3, 4, 5]);
+    expect(events[3].event).toMatchObject({activity:'delivery',status:'done',route:'next'});
     expect(events.at(-1).receipt).toEqual(result);
   } finally { await rm(dir, { recursive: true, force: true }); }
 });

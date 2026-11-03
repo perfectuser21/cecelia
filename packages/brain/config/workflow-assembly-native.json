@@ -3,7 +3,7 @@
   "id": "3ef22c63-b721-4ca0-bbb9-36a17ea05bf6",
   "key": "workflow_assembly_reconcile.internal",
   "name": "工作流持续对账与修复",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "capability_id": "b5e6287e-2597-41a9-b26f-8dba2cc18db0",
   "capability": "workflow_assembly_maintenance",
   "runtime": {
@@ -29,7 +29,7 @@
       "reference_id": "9a43b09a-c2f0-4b79-b278-de3975f25130",
       "key": "reconcile_round",
       "name": "执行有界对账轮次",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "executor_kind": "code",
       "inputs": {
         "scope": "global_admin",

@@ -8,8 +8,7 @@ const fs = require('fs');
 const judge = fs.readFileSync('packages/brain/src/harness-judge.js','utf8');
 if (!/runMechanicalGate/.test(judge)) { console.error('FAIL: 机械闸缺失'); process.exit(1); }
 const relay = fs.readFileSync('packages/brain/src/harness-skill-relay.js','utf8');
-const inserts = relay.match(/INSERT INTO initiative_runs[\s\S]{0,400}?VALUES/g) || [];
-if (inserts.length < 2 || !inserts.every((s) => /current_task_id/.test(s))) { console.error('FAIL: INSERT 缺 current_task_id'); process.exit(1); }
+if (/INSERT INTO initiative_runs/.test(relay) || !relay.includes('error:KERNEL_RUNTIME_RETIRED_CODE')) { console.error('FAIL: retired relay can start new run'); process.exit(1); }
 const fin = fs.readFileSync('packages/brain/src/lib/harness-finalize.js','utf8');
 if (!/finalizeHarnessTask/.test(fin)) { console.error('FAIL: finalize 缺失'); process.exit(1); }
 for (const f of ['packages/brain/src/callback-processor.js','packages/brain/src/routes/tasks.js','packages/brain/src/routes/harness.js']) {

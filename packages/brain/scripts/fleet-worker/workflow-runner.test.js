@@ -11,7 +11,7 @@ const hash=s=>createHash('sha256').update(s).digest('hex');
 function fixture(){
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'common-runner-'));
  const code=`let s='';for await(const c of process.stdin)s+=c;const x=JSON.parse(s);const fs=await import('node:fs');fs.appendFileSync('effects','x');console.log(JSON.stringify({schema_version:1,run_tag:x.run_tag,status:'completed',outputs:{answer:42},metrics:{},evidence:[{path:'effects'}]}));`;
- const validator=`let s='';for await(const c of process.stdin)s+=c;const x=JSON.parse(s);console.log(JSON.stringify({verdict:x.receipt.outputs.answer===42?'pass':'fail',acceptance_ref:x.acceptance.ref,evidence:[{observed:x.receipt.outputs.answer}]}));`;
+ const validator=`let s='';for await(const c of process.stdin)s+=c;const x=JSON.parse(s),fs=await import('node:fs');const observed=x.phase==='start'?fs.existsSync('work.mjs'):x.receipt.outputs.answer;console.log(JSON.stringify({verdict:(x.phase==='start'?observed:observed===42)?'pass':'fail',acceptance_ref:x.acceptance.ref,evidence:[{observed}]}));`;
  fs.writeFileSync(path.join(root,'work.mjs'),code);fs.writeFileSync(path.join(root,'check.mjs'),validator);
  const profile={cwd:root,files:{'work.mjs':hash(code),'check.mjs':hash(validator)},contract:{workflow:'demo',activities:[{key:'work',order:1,budget:{max_duration_s:5,heartbeat_s:1},failure:{empty_ok:[],retryable:[],fatal:['error'],needs_human:{cases:[]}},runtime:{protocol:'json-stdio-v1',phase:'source',entry:'work.mjs'}}]},metadata:{work:{activity_id:randomUUID(),executor_kind:'code',questions:{}}},validators:{workflow:{entry:'check.mjs',acceptance:{ref:'demo-dod@1',description:'answer is 42'}}}};
  const id={run_id:randomUUID(),task_id:randomUUID(),profile:'demo',input:{run_tag:'demo'},mode:'exploration',profile_sha256:profileDigest(profile)};
@@ -59,7 +59,7 @@ test('formal profile reuses fixed versions but binds each run separately',async(
  const f=fixture();try{
  const m=f.profile.metadata.work;const uid=()=>randomUUID();
  m.questions=Object.fromEntries(['A1','A2','A3','A4','A5','A6','B1'].map(q=>[q,{ref:q==='A4'?'demo-dod@1':q+'@1',version:'1',declared:{value:q}}]));
- m.identity={identity_protocol:2,workflow_id:uid(),reference_id:uid(),workflow_definition_version_id:uid(),activity_definition_version_id:uid()};f.profile.validators.work=f.profile.validators.workflow;
+ m.identity={identity_protocol:2,workflow_id:uid(),reference_id:uid(),workflow_definition_version_id:uid(),activity_definition_version_id:uid()};f.profile.validators.work=f.profile.validators.workflow;f.profile.preconditions={work:{entry:'check.mjs',acceptance:{ref:'A2@1'}}};
  f.id.mode='formal';f.id.profile_sha256=profileDigest(f.profile);
  const binding=()=>({run_binding_id:uid(),workflow_id:m.identity.workflow_id,workflow_definition_version_id:m.identity.workflow_definition_version_id,attempt_key:uid(),activities:{work:{activity_id:m.activity_id,reference_id:m.identity.reference_id,activity_definition_version_id:m.identity.activity_definition_version_id}}});
  const r=createWorkflowRunner({stateRoot:path.join(f.root,'state'),machineId:'test',profiles:{demo:f.profile},assertCanLaunch:()=>{},assertLocalResources:async()=>{},createRecorder:recorder});
@@ -94,5 +94,14 @@ test('concurrent different runs that race the launch lock can wait and progress 
  const f=fixture();try{const r=createWorkflowRunner({stateRoot:path.join(f.root,'state'),machineId:'test',profiles:{demo:f.profile},assertCanLaunch:()=>{},assertLocalResources:async()=>{},createRecorder:recorder});const two={...f.id,run_id:randomUUID()};
  const results=await Promise.all([r.start(f.id),r.start(two)]);const waitingIndex=results.findIndex(s=>s.status==='waiting_resources');assert.notEqual(waitingIndex,-1);const accepted=waitingIndex===0?two:f.id,waiting=waitingIndex===0?f.id:two;
  assert.equal(results[waitingIndex].execution_state,'not_started');await terminal(r,accepted);await r.start(waiting);assert.equal((await terminal(r,waiting)).status,'completed');assert.equal(fs.readFileSync(path.join(f.root,'effects'),'utf8'),'xx');r.close();
+ }finally{fs.rmSync(f.root,{recursive:true,force:true});}
+});
+test('formal定义只有A2声明而无独立preconditions时拒绝启动',async()=>{
+ const f=fixture();try{const m=f.profile.metadata.work,uid=()=>randomUUID();m.questions=Object.fromEntries(['A1','A2','A3','A4','A5','A6','B1'].map(q=>[q,{ref:q==='A4'?'demo-dod@1':q+'@1',version:'1',declared:{value:q}}]));m.identity={identity_protocol:2,workflow_id:uid(),reference_id:uid(),workflow_definition_version_id:uid(),activity_definition_version_id:uid()};f.profile.validators.work=f.profile.validators.workflow;
+ const {assertProfile}=require('./workflow-profile.cjs');assert.throws(()=>assertProfile(f.profile,'formal'),/formal_precondition_required/);assert.equal(fs.existsSync(path.join(f.root,'effects')),false);
+ }finally{fs.rmSync(f.root,{recursive:true,force:true});}
+});
+test('免清场只能由显式无资源且无finalize的固定profile声明',()=>{
+ const f=fixture();try{const {assertProfile}=require('./workflow-profile.cjs');f.profile.cleanup_required=false;assert.throws(()=>assertProfile(f.profile,'exploration'),/cleanup_obligation_invalid/);f.profile.resources=[];assert.doesNotThrow(()=>assertProfile(f.profile,'exploration'));f.profile.resources=['phone'];assert.throws(()=>assertProfile(f.profile,'exploration'),/cleanup_obligation_invalid/);f.profile.resources=[];f.profile.contract.activities[0].runtime.phase='finalize';assert.throws(()=>assertProfile(f.profile,'exploration'),/cleanup_obligation_invalid/);
  }finally{fs.rmSync(f.root,{recursive:true,force:true});}
 });

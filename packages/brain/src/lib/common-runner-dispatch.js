@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import {resourceFreeReview} from './common-runner-review.js';
 import { isAbsolute } from 'node:path';
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { directory, endpointValid } from '../execution-directory/directory.js';
@@ -99,7 +100,7 @@ export function commonRunnerFormalBinding(definition, runId) {
 
 export function createCommonRunnerDispatcher({ pool, env = process.env, profiles,
   token = env.KERNEL_FLEET_BRIDGE_TOKEN, transport = httpTransport, authorizeExecution = authorize,
-  allowLoopbackForTests = false,
+  allowLoopbackForTests = false, taskPolicy,
   resolveBoundNode = resolveCleanup, executionDirectory = directory, startRun = startCentralRun,
   finishRun = finishCentralRun,
   assertCanStart = db => assertCommonRunnerStartAllowed(env, db),
@@ -122,9 +123,12 @@ export function createCommonRunnerDispatcher({ pool, env = process.env, profiles
     const planDigest = action === 'start' ? digest({ profile: body.profile, input: body.input, mode: body.mode }) : null;
     return transaction(pool, async db => {
       await db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,515))', [runId]);
-      const task = (await db.query('SELECT id,status,kind,payload,result,claimed_by FROM tasks WHERE id=$1 FOR UPDATE', [body.task_id])).rows[0];
+      const task = (await db.query('SELECT id,status,kind,task_type,payload,result,claimed_by FROM tasks WHERE id=$1 FOR UPDATE', [body.task_id])).rows[0];
       if (!task) fail('common_runner_task_missing', 404);
-      if (task.kind !== 'agent') fail('common_runner_task_owned');
+      // Only an in-process source adapter can authorize another task class.
+      const sourceAuthorized = typeof taskPolicy === 'function'
+        && await taskPolicy({ task, db, action, runId, body }) === true;
+      if (task.kind !== 'agent' && !sourceAuthorized) fail('common_runner_task_owned');
       let existing = task.result?.common_runner;
       if (existing) {
         if (existing.run_id !== runId || existing.task_id !== body.task_id || (planDigest && existing.input_digest !== planDigest)) fail('common_runner_identity_conflict');
@@ -136,7 +140,7 @@ export function createCommonRunnerDispatcher({ pool, env = process.env, profiles
           if (!['queued', 'in_progress'].includes(task.status)) fail('common_runner_task_not_runnable');
           await assertCanStart(db);
           if (task.payload?.headed_takeover || [true, 'true'].includes(task.payload?.headed_manual)
-            || task.payload?.commander_protocol === 'commander-v2' || (task.claimed_by && task.claimed_by !== 'common-runner')) fail('common_runner_task_owned');
+            || (!sourceAuthorized && task.payload?.commander_protocol === 'commander-v2') || (task.claimed_by && task.claimed_by !== 'common-runner')) fail('common_runner_task_owned');
           if (!executionDirectory.current()) await executionDirectory.refresh({ pool });
           return authorizeExecution(db, { snapshotVersion: executionDirectory.current()?.version, machineId: existing.machine_id,
             surface: 'managed_script', provider: 'script', profileId: existing.profile,
@@ -153,7 +157,7 @@ export function createCommonRunnerDispatcher({ pool, env = process.env, profiles
       await assertCanStart(db);
       if (!['queued', 'in_progress'].includes(task.status)) fail('common_runner_task_not_runnable');
       if (task.payload?.headed_takeover || [true, 'true'].includes(task.payload?.headed_manual)
-        || task.payload?.commander_protocol === 'commander-v2' || (task.claimed_by && task.claimed_by !== 'common-runner')) fail('common_runner_task_owned');
+        || (!sourceAuthorized && task.payload?.commander_protocol === 'commander-v2') || (task.claimed_by && task.claimed_by !== 'common-runner')) fail('common_runner_task_owned');
       const configured = profiles ?? loadCommonRunnerProfiles(env.COMMON_RUNNER_PROFILES_FILE);
       if (!Object.hasOwn(configured, body.profile)) fail('common_runner_profile_unavailable');
       const config = configured[body.profile];
@@ -198,8 +202,9 @@ export function createCommonRunnerDispatcher({ pool, env = process.env, profiles
   async function settle(binding, receipt) {
     const central = { status: 'running', recording_status: 'pending' };
     const wb = receipt.writeback;
-    const finalStatus = { completed: 'success', failed: 'failed', cancelled: 'cancelled' }[receipt.status];
-    if (finalStatus && wb?.pending === 0 && wb.blocked === 0 && Number.isSafeInteger(wb.total)
+    const review = receipt.status === 'needs_review';
+    const finalStatus = { completed: 'success', failed: 'failed', cancelled: 'cancelled', needs_review: 'failed' }[receipt.status];
+    if (finalStatus && receipt.execution_unknown !== true && wb?.pending === 0 && wb.blocked === 0 && Number.isSafeInteger(wb.total)
       && wb.total > 0 && wb.acked === wb.total && HASH.test(wb.manifest_sha256 ?? '')) {
       const rows = (await pool.query(`SELECT occurrence_key,payload_sha256,evidence FROM spans
         WHERE run_id=$1 AND evidence->>'profile_digest'=$2 ORDER BY occurrence_key`, [binding.run_id, binding.profile_sha256])).rows;
@@ -220,7 +225,7 @@ export function createCommonRunnerDispatcher({ pool, env = process.env, profiles
         && typeof workflow.acceptance_ref === 'string' && Array.isArray(workflow.evidence) && workflow.evidence.length > 0
         && matchesWorkflow && formalVerified);
       const cleanup = receipt.validation?.cleanup;
-      const cleanupVerified = receipt.status !== 'cancelled' || (cleanup?.verdict === 'pass'
+      const cleanupVerified = (review && resourceFreeReview(receipt)) || (!review && receipt.status !== 'cancelled') || (receipt.execution_unknown !== true && cleanup?.verdict === 'pass'
         && typeof cleanup.acceptance_ref === 'string' && Array.isArray(cleanup.evidence) && cleanup.evidence.length > 0
         && validations.some(row => digest(row.evidence.cleanup_validation) === digest(cleanup)));
       let reconciliationVerified = true;
@@ -233,12 +238,13 @@ export function createCommonRunnerDispatcher({ pool, env = process.env, profiles
           { kind: 'worker_receipt', machine_id: binding.machine_id, profile_sha256: binding.profile_sha256, status: receipt.status }];
         const summary = `公共Runner运行${receipt.status}；${wb.total}条执行记录已在Brain独立读回`;
         const result = { actor: 'common-runner', summary, evidence,
-          handoff: { summary, next_steps: [] }, common_runner: { mode: binding.mode, validation: receipt.validation, writeback: wb } };
-        const finished = await finishRun({ runId: binding.run_id, status: receipt.status, result,
+          handoff: { summary, next_steps: [] }, common_runner: { mode: binding.mode, business_status: receipt.status, validation: receipt.validation, writeback: wb } };
+        const finished = await finishRun({ runId: binding.run_id, status: review ? 'failed' : receipt.status, result,
           artifacts: [`brain:spans:${binding.run_id}`] }, { pool, strict: true });
-        const saved = finished?.updated ? null : (await pool.query('SELECT status,task_id,ended_at FROM task_runs WHERE run_id=$1', [binding.run_id])).rows[0];
-        if (finished?.updated || (saved?.status === finalStatus && saved.task_id === binding.task_id && saved.ended_at)) {
-          central.status = finalStatus; central.recording_status = 'confirmed';
+        const saved = finished?.updated ? null : (await pool.query('SELECT status,task_id,ended_at,result FROM task_runs WHERE run_id=$1', [binding.run_id])).rows[0];
+        if (finished?.updated || (saved?.status === finalStatus && saved.task_id === binding.task_id && saved.ended_at
+          && (!review || saved.result?.common_runner?.business_status === 'needs_review'))) {
+          central.status = review ? 'needs_review' : finalStatus; central.recording_status = 'confirmed';
         }
       }
     }

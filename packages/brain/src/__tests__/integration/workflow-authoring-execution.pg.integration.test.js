@@ -4,7 +4,7 @@ import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {execFileSync} from 'node:child_process';
 import {createRequire} from 'node:module';
-import {invocationTaskPrompt} from '../../invocations/runtime.js';
+import {activityInvocationPrompt} from '../../orchestrator/skill-activity-adapter.js';
 import {randomUUID} from 'node:crypto';
 import {authoringExecutionDatabase,startPureAuthoring,settleInvocation} from '../fixtures/authoring-execution-db.test.js';
 let f;afterEach(async()=>{await f?.close();f=null;});
@@ -77,8 +77,8 @@ it.runIf(process.env.AUTHORING_REAL_CODEX==='1')('固定Git纯Skill经实际Code
   git(['init','-b','cp-authoring-fixture']);git(['config','user.name','Authoring fixture']);git(['config','user.email','fixture@example.invalid']);git(['add','.']);git(['commit','-m','test: fixed pure authoring skill']);
   f.definition.source.revision=git(['rev-parse','HEAD']);f.reader=source=>git(['show',`${source.revision}:${source.path}`]);
   const run=await startPureAuthoring(f),{executeCodex}=createRequire(import.meta.url)('../../../scripts/codex-bridge/codex-bridge.cjs');
-  const actual=async(task,runId)=>{
-   const prompt=invocationTaskPrompt(task,runId);expect(prompt).toContain(f.content);
+  const actual=async(task,runId,activityRequest)=>{
+   const prompt=activityInvocationPrompt(activityRequest);expect(prompt).toContain(f.content);
    const value=await executeCodex(process.env.CODEX_HOME,prompt,{workDir:dir,sandbox:'read-only',timeoutMs:180000});return value.output;
   };
   for(let index=0;index<2;index++){

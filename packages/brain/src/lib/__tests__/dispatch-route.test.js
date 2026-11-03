@@ -46,7 +46,7 @@ describe('resolveDispatchRoute：按 executor 分支顺序判真实路由', () =
   });
 
   it('有执行者的专用路由：kernel / openclaw / script / 审查池 / 内联 handler', () => {
-    expect(route('golden_path_proposal')).toMatchObject({ route: 'kernel', available: true });
+    expect(route('golden_path_proposal')).toMatchObject({ route: 'retired-harness-kernel', available: false });
     expect(route('qiumi_task')).toMatchObject({ route: 'openclaw-agent', available: true });
     expect(route('script_run')).toMatchObject({ route: 'script', available: true });
     expect(route('code_review')).toMatchObject({ route: 'codex-review', available: true });
@@ -122,10 +122,10 @@ describe('harness_initiative 无头 kernel 入口退役（kernel 自 09-30 起�
     expect(() => assertTaskTypeHasExecutor({ task_type: 'harness_planner', status: 'queued', payload: {} })).toThrow(/no_executor_for_task_type/);
   });
 
-  it('注册表：harness_initiative surface=none 且打 headless_kernel_retired 标签；golden_path_proposal 不动', () => {
+  it('注册表：harness_initiative surface=none 且打 headless_kernel_retired 标签；golden_path_proposal 同步退役', () => {
     expect(getTaskType('harness_initiative').surface).toBe('none');
-    expect(HEADLESS_KERNEL_RETIRED_TASK_TYPES).toEqual(['harness_initiative']);
-    expect(getTaskType('golden_path_proposal').surface).toBe('kernel');
+    expect(HEADLESS_KERNEL_RETIRED_TASK_TYPES).toEqual(['harness_initiative','golden_path_proposal']);
+    expect(getTaskType('golden_path_proposal').surface).toBe('none');
     expect(SURFACE_FOR_ROUTE['retired-harness-kernel']).toBe('none');
   });
 });

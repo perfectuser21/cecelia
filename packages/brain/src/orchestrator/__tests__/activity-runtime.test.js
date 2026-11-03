@@ -117,22 +117,26 @@ describe('opt-in契约CLI真实子进程闭环', () => {
     expect(r.code, r.stderr).toBe(2);
     expect(r.events).toHaveLength(1);
   });
-  test('超时TERM触发清理，保留清理JSON/partial并执行finalize', async () => {
+  test('超时TERM保留清理JSON，缺少独立停止读回时隔离finalize', async () => {
     const a = activity('timeout', 1, { cleanup_grace_s: 1 }); a.budget.max_duration_s = 1;
     const r = await run([a, activity('finalize', 2, { phase: 'finalize' })]);
-    expect(r.code, r.stderr).toBe(2);
+    expect(r.code, r.stderr).toBe(1);
     expect(r.events.some(x => x.cleanup)).toBe(true);
     expect(r.result.outputs.fragments).toEqual([{ id: 'before-timeout' }]);
     expect(r.result.activities[0].attempts[0].reason_code).toBe('activity_timeout');
-    expect(r.result.outputs.cleanup).toBe(true);
+    expect(r.result.execution_unknown).toBe(true);
+    expect(r.result.activities.at(-1).status).toBe('blocked');
+    expect(r.result.outputs.cleanup).toBeUndefined();
   }, 10000);
-  test('清理无响应在grace后终结整棵子进程树', async () => {
+  test('清理无响应终止原进程组，未证明脱离子任务停止时隔离finalize', async () => {
     const a = activity('hang', 1, { cleanup_grace_s: 1 }); a.budget.max_duration_s = 1;
     const r = await run([a, activity('finalize', 2, { phase: 'finalize' })]);
     expect(r.code, r.stderr).toBe(1);
     expect(r.pid).toBeGreaterThan(0);
     expect(() => process.kill(r.pid, 0)).toThrow();
-    expect(r.result.outputs.cleanup).toBe(true);
+    expect(r.result.execution_unknown).toBe(true);
+    expect(r.result.activities.at(-1).status).toBe('blocked');
+    expect(r.result.outputs.cleanup).toBeUndefined();
   }, 10000);
   test.each(['fatal', 'needs_human'])('%s即使continue也停主链且不重试', async action => {
     const r = await run([activity(action, 1, { on_failure: 'continue', max_attempts: 2 }),
@@ -147,14 +151,16 @@ describe('opt-in契约CLI真实子进程闭环', () => {
     expect(r.events.map(x => x.action)).toEqual(['partial', 'finalize']);
     expect(r.result.activities[0].reason_code).toBe('undeclared_failure_class');
   });
-  test('取消仅通知活动根，子动作在安全边界自行退出并保留JSON，然后finalize', async () => {
+  test('取消仅通知活动根并保留JSON，独立停止读回前不运行finalize', async () => {
     const r = await run([activity('safe_stop', 1, { argv: ['safe-stop'], cleanup_grace_s: 1 }), activity('deliver', 2),
       activity('finalize', 3, { phase: 'finalize' })], {}, true);
-    expect(r.code, r.stderr).toBe(2);
+    expect(r.code, r.stderr).toBe(1);
     expect(r.events.some(x => x.action === 'child_term')).toBe(false);
-    expect(r.events.filter(x => !x.cleanup).map(x => x.action)).toEqual(['safe-stop', 'finalize']);
+    expect(r.events.filter(x => !x.cleanup).map(x => x.action)).toEqual(['safe-stop']);
     expect(r.result.outputs.fragments).toEqual([{ id: 'safely-retained' }]);
     expect(r.result.activities[0].attempts[0].reason_code).toBe('run_cancelled');
+    expect(r.result.execution_unknown).toBe(true);
+    expect(r.result.activities.at(-1).status).toBe('blocked');
     expect(r.durable).toEqual(r.result);
   }, 10000);
   test.each([false, true])('事件写入失败%s次后产物保留且所有finalize仍执行', async always => {

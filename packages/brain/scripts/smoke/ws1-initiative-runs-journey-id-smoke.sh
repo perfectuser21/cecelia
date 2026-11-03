@@ -39,20 +39,13 @@ if (!sql.includes('journey_id')) throw new Error('Case 2 FAIL: 缺少 journey_id
 console.log('[smoke:ws1] Case 2 PASS: migration 285 存在');
 "
 
-echo "[smoke:ws1] Case 3: harness-skill-relay.js INSERT INTO initiative_runs 均含 journey_id"
+echo "[smoke:ws1] Case 3: retired relay creates no new run"
 node -e "
 const fs = require('fs');
 const content = fs.readFileSync('$GRAPH_FILE', 'utf8');
-const marker = 'INSERT INTO initiative_runs';
-const idxs = [];
-let i = -1;
-while ((i = content.indexOf(marker, i + 1)) !== -1) idxs.push(i);
-if (idxs.length < 2) throw new Error('Case 3 FAIL: INSERT INTO initiative_runs 出现次数=' + idxs.length + '（期望≥2，spawn/headed-spawn 各一处）');
-idxs.forEach((idx, n) => {
-  const block = content.slice(idx, idx + 300);
-  if (!block.includes('journey_id')) throw new Error('Case 3 FAIL: INSERT 块 ' + (n+1) + ' 缺少 journey_id');
-});
-console.log('[smoke:ws1] Case 3 PASS: INSERT 含 journey_id (' + idxs.length + ' 处)');
+if (content.includes('INSERT INTO initiative_runs')) throw new Error('Case 3 FAIL: retired relay still creates run');
+if (!content.includes('KERNEL_RUNTIME_RETIRED_CODE')) throw new Error('Case 3 FAIL: retirement missing');
+console.log('[smoke:ws1] Case 3 PASS: retired relay zero new run');
 "
 
 echo "[smoke:ws1] Case 4: harness.js 含 initiative-runs/:id 路由 + UUID 校验 + journey_id 返回"

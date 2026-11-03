@@ -7,7 +7,7 @@ import {createRequire} from 'node:module';
 import {authoringExecutionDatabase,startPureAuthoring,settleInvocation} from '../fixtures/authoring-execution-db.test.js';
 import {createInvocationsRouter} from '../../routes/invocations.js';
 import {readCapabilitySystem} from '../../lib/capability-system.js';
-import {invocationTaskPrompt} from '../../invocations/runtime.js';
+import {activityInvocationPrompt} from '../../orchestrator/skill-activity-adapter.js';
 it.runIf(process.env.AUTHORING_BROWSER_PREVIEW==='1')('真实登记目录受控浏览器夹具及实际Bridge调用',async()=>{
  if(process.env.DB_NAME!=='cecelia_scratch'||process.env.DB_HOST!=='/tmp')throw Error('actual_scratch_required');
  const f=await authoringExecutionDatabase(),directory=mkdtempSync(join(tmpdir(),'authoring-browser-fixed-'));
@@ -20,7 +20,7 @@ it.runIf(process.env.AUTHORING_BROWSER_PREVIEW==='1')('真实登记目录受控�
  git(['init','-b','cp-authoring-browser']);git(['config','user.name','Authoring browser']);git(['config','user.email','fixture@example.invalid']);git(['add','.']);git(['commit','-m','test: fixed browser skill']);
  f.definition.source.revision=git(['rev-parse','HEAD']);f.reader=source=>git(['show',`${source.revision}:${source.path}`]);
  const run=await startPureAuthoring(f),{executeCodex}=createRequire(import.meta.url)('../../../scripts/codex-bridge/codex-bridge.cjs');
- const actual=async(task,runId)=>(await executeCodex(process.env.CODEX_HOME,invocationTaskPrompt(task,runId),{workDir:directory,sandbox:'read-only',timeoutMs:180000})).output;
+ const actual=async(task,runId,activityRequest)=>(await executeCodex(process.env.CODEX_HOME,activityInvocationPrompt(activityRequest),{workDir:directory,sandbox:'read-only',timeoutMs:180000})).output;
  for(let index=0;index<2;index++){
   const task=(await f.pool.query("SELECT id FROM tasks WHERE payload?'invocation' AND status='queued'")).rows[0];
   await settleInvocation(f,task.id,actual);const advanced=await run.post('/advance',{});expect(advanced.body.status).toBe(index===0?'awaiting_execution':'completed');

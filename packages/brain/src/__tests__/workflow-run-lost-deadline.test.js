@@ -26,10 +26,10 @@ function makePool({ stale = [], runs = [], phones = {} } = {}) {
   const query = vi.fn(async (sql, params) => {
     const text = String(sql);
     calls.push({ sql: text, params });
-    if (/FROM tasks/.test(text) && /status\s*=\s*'in_progress'/.test(text) && /SELECT/.test(text)) {
+    if (/^\s*SELECT\b/.test(text) && /FROM tasks/.test(text) && /status\s*=\s*'in_progress'/.test(text) && /SELECT/.test(text)) {
       return { rows: stale };
     }
-    if (/FROM task_runs/.test(text)) {
+    if (/^\s*SELECT\b/.test(text) && /FROM task_runs/.test(text)) {
       return { rows: runs.filter((r) => r.task_id === params[0]) };
     }
     if (/FROM phone_registry/.test(text)) {

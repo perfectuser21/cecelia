@@ -461,8 +461,12 @@ describe('task-type-registry：零行为变化', () => {
     expect(R.TICK_DISPATCH_EXCLUDED).toContain('project');
   });
 
-  it('EXECUTOR_KIND_FOR_TASK_TYPE == 替换前 EXECUTOR_KIND_FOR 的 task_type 部分 + qiumi_task', () => {
-    expect(R.EXECUTOR_KIND_FOR_TASK_TYPE).toEqual({ ...FIX_EXECUTOR_KIND, qiumi_task: 'openclaw-agent', script_run: 'script', janitor: 'preview-janitor', app_server_run:'app-server-controller', workflow_dispatch: 'openclaw-agent', skill_factory_run: 'openclaw-agent', coding_workflow: 'coding-workflow-runner' });
+  it('EXECUTOR_KIND_FOR_TASK_TYPE保留历史及新增映射，GP旧执行器按明确决策退役', () => {
+    const {golden_path_proposal:retired,...unchanged}=FIX_EXECUTOR_KIND;
+    expect(retired).toBe('relay-container');
+    expect(R.getTaskType('golden_path_proposal').executor).toBeNull();
+    expect(R.HEADLESS_KERNEL_RETIRED_TASK_TYPES).toContain('golden_path_proposal');
+    expect(R.EXECUTOR_KIND_FOR_TASK_TYPE).toEqual({ ...unchanged, qiumi_task: 'openclaw-agent', script_run: 'script', janitor: 'preview-janitor', app_server_run:'app-server-controller', workflow_dispatch: 'openclaw-agent', skill_factory_run: 'openclaw-agent', coding_workflow: 'coding-workflow-runner' });
   });
 
   it('qiumi_task 声明符合 spec 1.1（PR3：V 标签已开 + tick_dispatchable=true，第一道闸改由 QIUMI_DISPATCH_ENABLED 门控 headed_manual）', () => {

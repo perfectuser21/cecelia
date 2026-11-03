@@ -16,6 +16,9 @@ const pairedValidation=(span,spans)=>span.evidence?.kind==='execution'&&typeof s
     &&v.evidence.questions.A4.ref===v.evidence.validation.acceptance_ref
     &&Array.isArray(v.evidence.questions.A4.actual.evidence)&&v.evidence.questions.A4.actual.evidence.length>0
     &&Array.isArray(v.evidence.validation.evidence)&&v.evidence.validation.evidence.length>0);
+const observationOnly=span=>['commander','runtime_check'].includes(span.evidence?.kind)
+  && typeof span.evidence?.event?.event_type==='string'
+  && /^(?:COMMANDER_(?:REQUEST|EXCHANGE|UNAVAILABLE|BUDGET_EXHAUSTED|SLEEP)|ACTIVITY_(?:CHECKED|ROUTED|AGENT_EVENT)|WF_OWNER_REVIEW_REQUIRED)$/.test(span.evidence.event.event_type);
 const skipEvidence=span=>typeof span.evidence?.skip_reason==='string'&&span.evidence.skip_reason.trim()
   &&span.evidence.branch_evidence!=null&&typeof span.evidence.branch_evidence==='object'&&Object.keys(span.evidence.branch_evidence).length>0;
 function durations(spans){
@@ -34,18 +37,19 @@ export function reconcileRunEvidence({run_id,context,spans=[],task_run=null,harn
   const expected=binding.expected_path||[],expectedKeys=new Set(expected.map(key));
   if(!expected.length)gaps.push({code:'EXPECTED_PATH_MISSING'});
   for(const item of expected){
-    const rows=valid.filter(span=>!span.enabler_id&&key(span)===key(item));
+    const rows=valid.filter(span=>!observationOnly(span)&&!span.enabler_id&&key(span)===key(item));
     if(!rows.length){missing.push(item);gaps.push({code:item.required===false?'OPTIONAL_BRANCH_EVIDENCE_MISSING':'EXPECTED_SPAN_MISSING',reference_id:item.reference_id,step_id:item.step_id||null});}
   }
   const unexpected=valid.filter(span=>!span.enabler_id&&!expectedKeys.has(key(span))).map(span=>({span_id:span.id,reference_id:span.reference_id,step_id:span.step_id||null}));
   if(unexpected.length)gaps.push({code:'UNEXPECTED_PATH',count:unexpected.length});
   for(const span of valid){
     if(!completed(span))gaps.push({code:'SPAN_NOT_ENDED',span_id:span.id});
-    if(span.outcome==='unknown'&&!pairedValidation(span,valid))gaps.push({code:'SPAN_OUTCOME_UNKNOWN',span_id:span.id});
+    if(span.outcome==='unknown'&&!observationOnly(span)&&!pairedValidation(span,valid))gaps.push({code:'SPAN_OUTCOME_UNKNOWN',span_id:span.id});
     if(span.outcome==='skipped'&&!skipEvidence(span))gaps.push({code:'SKIP_BRANCH_EVIDENCE_MISSING',span_id:span.id});
     if(span.outcome==='skipped'&&expected.some(item=>key(item)===key(span)&&item.required!==false))gaps.push({code:'REQUIRED_PATH_SKIPPED',span_id:span.id});
   }
-  let outcome=valid.some(span=>span.outcome==='fail')?'fail':gaps.length?'unknown':valid.some(span=>span.outcome==='skipped')?'skipped':valid.length?'pass':'unknown';
+  const business=valid.filter(span=>!observationOnly(span));
+  let outcome=business.some(span=>span.outcome==='fail')?'fail':gaps.length?'unknown':business.some(span=>span.outcome==='skipped')?'skipped':business.length?'pass':'unknown';
   if(task_run?.status==='success'&&outcome==='fail'||['failed','timeout'].includes(task_run?.status)&&outcome==='pass')gaps.push({code:'LIFECYCLE_OUTCOME_CONFLICT',lifecycle_status:task_run.status});
   return {...base,business_outcome:outcome,evidence_status:gaps.length?'incomplete':'verified',gaps,missing,unexpected,duration_ms:durations(valid),span_count:valid.length,expected_count:expected.length};
 }

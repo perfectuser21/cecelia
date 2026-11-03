@@ -16,11 +16,16 @@ it('真实PG登记幂等固定版本，镜子状态不变，无生产release指�
   expect((await db.query('SELECT count(*)::int n FROM activity_release_state')).rows[0].n).toBe(0);
   const r=await runNativeReconcile(db,{request_key:'one',trigger:'manual'},services);
   expect(r.run.outcome).toBe('pass');expect(r.run.detail.reason).toBe('empty');
+  expect(r.run.detail.runner_receipt.status).toBe('completed');
+  expect(r.run.detail.runner_receipt.commander_status).toBe('unavailable');
+  expect(r.run.detail.runner_events.at(-1).event_type).toBe('COMMANDER_SLEEP');
+  expect(r.run.detail.runner_receipt.activities[0].checks.map(c=>c.phase)).toEqual(['start','end']);
   const again=await runNativeReconcile(db,{request_key:'one',trigger:'manual'},services);
   expect(again.replayed).toBe(true);
   expect((await db.query('SELECT count(*)::int n FROM runs')).rows[0].n).toBe(1);
   const spans=(await db.query('SELECT * FROM spans')).rows;
   expect(spans).toHaveLength(1);expect(spans[0].activity_id).toBe(s.activities[0].id);
+  expect(spans[0].evidence.runner_events).toEqual(r.run.detail.runner_events);
   expect(r.run.header_source).toBe('owner');expect(r.run.detail.formal_release).toBe(false);
 });
 it.each(['source','kind','host_alias','label','ops_workflow_id'])('真实PG镜子身份%s冲突全事务零登记',async field=>{
@@ -100,6 +105,9 @@ it('真实PG原锁竞争零新run；同key运行中只读回，不二次执行�
   const first=runNativeReconcile(db,{request_key:'concurrent'},{...services,runnerOptions:{readReadiness:async()=>{begin();await wait;return {};}}});
   try{
     await began;
+    const live=(await db.query("SELECT detail FROM runs WHERE trigger_ref='concurrent'")).rows[0].detail;
+    expect(live.runner_events.some(e=>e.event_type==='ACTIVITY_STARTED')).toBe(true);
+    expect(live.runner_events.some(e=>e.event_type==='COMMANDER_SLEEP')).toBe(false);
     const replay=await runNativeReconcile(db,{request_key:'concurrent'},services);expect(replay.replayed).toBe(true);expect(replay.run.outcome).toBe('running');
     const locked=await runNativeReconcile(db,{request_key:'other'},services);expect(locked.report.skipped).toBe('locked');expect(locked.native_run_id).toBeNull();
     expect((await db.query('SELECT count(*)::int n FROM runs')).rows[0].n).toBe(1);
@@ -141,3 +149,19 @@ it('真实默认native入口驱动候选、损坏修复、新run复验到closed�
   expect((await db.query('SELECT count(*)::int n FROM runs WHERE workflow_id=$1',[s.id])).rows[0].n).toBe(rounds);
   expect((await db.query('SELECT count(*)::int n FROM spans WHERE activity_id=$1',[s.activities[0].id])).rows[0].n).toBe(rounds);
 },30000);
+it('真实PG仅允许自有固定1.0.0合同CAS升级监督版，保留旧版本并拒绝人工改合同',async()=>{
+  const {db,source}=await fixture();const first=await registerNativeReconcile(db,source);
+  const {definitionDigest}=await import('../../workflow-authoring/contracts.js');
+  const legacy={...s.activities[0],version:'1.0.0'};
+  await db.query('UPDATE activities SET contract=$2,contract_sha256=$3 WHERE id=$1',[s.activities[0].id,legacy,definitionDigest(legacy)]);
+  const prior=(await db.query('SELECT * FROM activity_definition_versions WHERE id=$1',[first.activity_definition_version_id])).rows[0];
+  const payload={...prior.payload,contract:legacy};
+  await db.query('UPDATE activity_definition_versions SET payload=$2,contract_sha256=$3,payload_sha256=$4 WHERE id=$1',
+    [prior.id,payload,definitionDigest(legacy),definitionDigest({source:{repo:prior.source_repo,path:prior.source_path,commit:prior.source_commit},payload})]);
+  const upgraded=await registerNativeReconcile(db,source);
+  expect(upgraded.activity_definition_version_id).not.toBe(first.activity_definition_version_id);
+  expect((await db.query('SELECT contract FROM activities WHERE id=$1',[s.activities[0].id])).rows[0].contract.version).toBe('1.0.1');
+  expect((await db.query('SELECT payload FROM activity_definition_versions WHERE id=$1',[first.activity_definition_version_id])).rows[0].payload.contract.version).toBe('1.0.0');
+  await db.query("UPDATE activities SET contract=jsonb_set(contract,'{name}','\"changed owner\"'::jsonb) WHERE id=$1",[s.activities[0].id]);
+  await expect(registerNativeReconcile(db,source)).rejects.toMatchObject({status:409});
+});

@@ -61,6 +61,7 @@ export async function runWorkflowAssemblyReconcile(pool,options={}){
     if(!locked)return {skipped:'locked'};
     // 仅服务端原生观测入口使用：持同一会话锁，先确保持久owner头；失败禁止任何业务写。
     if(options.onLocked && await options.onLocked(connection,{deadline,check})===false)return {skipped:'replayed'};
+    const executeRound=async()=>{
     check();const last=(await client.query('SELECT value_json FROM working_memory WHERE key=$1',[CURSOR])).rows[0]?.value_json?.last_id ?? null;
     const scan=async after=>(await client.query(`SELECT * FROM tasks WHERE payload->>'workflow_authoring'='true'
       AND result#>>'{workflow_authoring,request,assembly_mode}'='true'
@@ -178,6 +179,8 @@ export async function runWorkflowAssemblyReconcile(pool,options={}){
       }
     }
     return report;
+    };
+    return options.runLocked ? await options.runLocked(executeRound,connection) : await executeRound();
   }catch(error){
     roundError=error;
     if(error.code==='assembly_reconcile_cancelled' || error.code==='assembly_reconcile_budget' || error.code==='57014' || error.message==='Query read timeout'){report.stopped=error.code==='assembly_reconcile_cancelled'?'cancelled':'budget';return report;}

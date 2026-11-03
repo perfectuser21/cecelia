@@ -10,6 +10,8 @@ export const TASK_CREATION_INVENTORY = Object.freeze([
   { module: 'linux-pool/runtime-service.js', source: 'scheduler', creates_executable_task: false, migration_status: 'routed' },
   { module: 'node-onboarding/service.js', source: 'api', creates_executable_task: true, migration_status: 'routed' },
   { module: 'actions.js', source: 'api', creates_executable_task: true, migration_status: 'routed' },
+  // 公共Runner按固定Activity创建独立子运行；同API路由边界，父回执不得代替子执行。
+  { module: 'invocations/activity-worker.js', source: 'api', creates_executable_task: true, migration_status: 'routed' },
   // 第 51 批（决策 bc242b62）：V4 attempt-run 薄端点的惰性 task 锚（status 直建 in_progress，非可执行任务）
   { module: 'routes/harness-attempt-run.js', source: 'child', creates_executable_task: false, migration_status: 'routed' },
   { module: 'active-goals-zero-trigger.js', source: 'api', creates_executable_task: true, migration_status: 'routed' },

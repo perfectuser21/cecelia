@@ -1,4 +1,6 @@
-import { prepareInvocationDispatch, invocationTaskPrompt, invocationBridgeRequired } from './invocations/runtime.js';
+import { prepareInvocationDispatch, invocationTaskPrompt, invocationBridgeRequired,runInvocationActivities,reconcileInvocationLiveness } from './invocations/runtime.js';
+import {createInvocationActivityExecutor} from './invocations/activity-worker.js';
+import {finishRun as finishInvocationRun} from './lib/task-run.js';
 import { isPhoneDispatchTask } from './phone-dispatch/task-ownership.js';
 import { withLegacyRelayExecution } from './execution-directory/legacy-relay.js';
 import { withLegacyExecution,legacyExecutorEntries } from './execution-directory/legacy-executor.js';
@@ -2603,6 +2605,7 @@ async function selectCodexAccounts() {
  */
 async function triggerCodexBridge(task, forceBridgeUrl = null) {
   assertExternalExecutionAllowed();
+  if(task.payload?.invocation_activity)return {success:true,taskId:task.id,runId:task.payload.invocation_activity.child_run_id,executor:'shared-activity-runner',dispatchUncertain:true};
   const runId = generateRunId(task.id);
   try {
     const isCodexDev = task.task_type === 'codex_dev';
@@ -2611,6 +2614,32 @@ async function triggerCodexBridge(task, forceBridgeUrl = null) {
 
     const invocationDispatch = await prepareInvocationDispatch(pool, task, runId);
     if (invocationDispatch?.already) return { success: true, taskId: task.id, runId: invocationDispatch.runId, executor: 'codex-bridge', dispatchUncertain: true };
+    if (invocationDispatch) {
+      const runInfo=await updateTaskRunInfo(task.id,runId,'triggered');
+      if(!runInfo.success)return {success:false,taskId:task.id,runId,error:runInfo.error,executor:'shared-activity-runner'};
+      const bridgeUrl=forceBridgeUrl??await selectBestBridge();
+      const accounts=await selectCodexAccounts();
+      const executeSkill=createInvocationActivityExecutor(pool,{task,runId,submitActivity:async child=>{
+        const response=await withLegacyExecution({pool,provider:'codex',endpoint:bridgeUrl},()=>fetch(`${bridgeUrl}/run`,{
+          method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...buildCodexBridgePayload({id:child.task_id,task_type:'research',payload:{}},child.run_id,child.prompt,undefined,accounts),timeout_ms:child.timeout_ms}),signal:AbortSignal.timeout(15000)}));
+        const value=await response.json();if(!response.ok||!value.ok)throw Error('invocation_activity_dispatch_unconfirmed');return value;
+      }});
+      // 独立异步Runner持有原run；Agent子callback仅能结束子task。崩溃后预留守卫禁止整包重发。
+      const invocationController=runInvocationActivities(pool,task,runId,{executeSkill}).then(async outcome=>{
+        if(!outcome.receipt)throw Error(outcome.runtime.reason_code??'invocation_needs_review');
+        const response=await fetch(`${process.env.BRAIN_URL||'http://localhost:5221'}/api/brain/execution-callback`,{
+          method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({task_id:task.id,run_id:runId,status:'AI Done',result:{result:JSON.stringify(outcome.receipt)}}),signal:AbortSignal.timeout(15000)});
+        if(!response.ok)throw Error('invocation_completion_callback_unconfirmed');
+      }).catch(async error=>{
+        await pool.query("UPDATE tasks SET status='blocked',blocked_at=NOW(),blocked_reason='needs_review',blocked_detail=$3::jsonb,updated_at=NOW() WHERE id=$1 AND payload->>'current_run_id'=$2 AND status IN ('in_progress','dispatched')",[task.id,runId,JSON.stringify({reason:error.message,actor:'shared-runner'})]);
+        await finishInvocationRun({taskId:task.id,runId,status:'failed',result:{stage:'needs_review'}},{pool});
+      }).catch(error=>console.error('[invocation-runner] record failed:',error.message));
+      activeProcesses.set(task.id,{pid:null,runId,startedAt:new Date().toISOString(),source:'shared-activity-runner',invocationController});
+      void invocationController.finally(()=>{
+        if(activeProcesses.get(task.id)?.invocationController===invocationController)activeProcesses.delete(task.id);
+      });
+      return {success:true,taskId:task.id,runId,executor:'shared-activity-runner'};
+    }
     const promptContent = await buildCodexPromptContent(task, runId);
     const taskBranch = buildCodexTaskBranch(task, isCodexDev);
     const injectedAccounts = await selectCodexAccounts();
@@ -3703,6 +3732,9 @@ async function probeTaskLiveness() {
 
   for (const task of result.rows) {
     if (task.payload?.commander_protocol === 'commander-v2') continue;
+    if(await reconcileInvocationLiveness(pool,task,{entry:activeProcesses.get(task.id)})){
+      suspectProcesses.delete(task.id);continue;
+    }
     // 已认领有头会话可能在远端；本机无 PID 不足以判死，沿用合同的 unknown 保留语义。
     if (task.executor_kind === 'headed-session'
         && typeof task.claimed_by === 'string' && task.claimed_by.trim()) {
@@ -3720,7 +3752,10 @@ async function probeTaskLiveness() {
 
     if (entry) {
       // Tracked process — check by PID or task_id in system processes
-      if (entry.pid) {
+      if(entry.source==='shared-activity-runner') {
+        // 上方固定身份核验未通过；不能借通用无PID条目获得永久alive。
+        isAlive=false;
+      } else if (entry.pid) {
         isAlive = isProcessAlive(entry.pid);
       } else if (entry.bridge) {
         // Bridge tasks: check by task_id in system processes (cecelia-run <task_id> ...)
@@ -4179,6 +4214,9 @@ async function syncOrphanTasksOnStartup() {
 
   for (const task of result.rows) {
     if (task.payload?.commander_protocol === 'commander-v2') continue;
+    if(await reconcileInvocationLiveness(pool,task,{entry:activeProcesses.get(task.id)})){
+      externalSkipped++;continue;
+    }
     // 雷11（R5 首航实证 39b97ade/a3d61486/4cedf175/174dea35 同源）：
     // skill-relay（payload.orchestrator==='skill-relay'）虽然 task_type 也是
     // harness_initiative，但它不是 LangGraph（已废弃）——它有真实进程（无头=docker
@@ -4226,7 +4264,7 @@ async function syncOrphanTasksOnStartup() {
     }
 
     // reAttachActiveExecutors 已认领（如 docker-executor 的 cecelia-task-* 容器）→ 跳过孤儿检测
-    if (activeProcesses.has(task.id)) {
+    if (activeProcesses.has(task.id)&&activeProcesses.get(task.id)?.source!=='shared-activity-runner') {
       rebuilt++;
       console.log(`[startup-sync] Already reattached by reAttachActiveExecutors: task=${task.id} title="${task.title}"`);
       continue;

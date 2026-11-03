@@ -22,12 +22,10 @@ import { Router } from 'express';
 import { rateLimit } from 'express-rate-limit';
 import pool from '../db.js';
 import {
-  createKernelRun,
   loadKernelRunById,
   patchLegacyKernelRunByInitiative,
   patchKernelRunById,
 } from '../orchestrator/kernel-run-store.js';
-import { COMMANDER_MODES } from '../orchestrator/commander-contract.js';
 import { createPlannerRecoveryRouter } from './planner-recovery.js';
 import { internalAuthOrLoopback } from '../middleware/internal-auth.js';
 import { launchDeferredSql } from '../lib/kernel-launch-deferral.js';
@@ -416,83 +414,9 @@ router.get('/relay-runs/summary', async (req, res) => {
   }
 });
 
-const CREATE_PHASES = ['planning', 'gan', 'generate', 'evaluate'];
-const CREATE_COMMANDER_MODES = new Set(COMMANDER_MODES);
 
-async function createRelayRun(req, res, legacyInitiativeId = null) {
-  const body = req.body || {};
-  const initiativeId = legacyInitiativeId ?? body.initiative_id;
-  const taskId = body.current_task_id;
-  const createdSource = body.created_source;
-  const startPhase = body.phase || 'planning';
-  // 第 27 批（决策 e3afa828）：缺省不在 API 层固化——undefined 透传给
-  // kernel-run-store 统一裁决（store 缺省 hybrid，env 逃生阀在 store）。
-  const commanderMode = body.commander_mode;
-
-  if (
-    !UUID_RE.test(initiativeId ?? '')
-    || !UUID_RE.test(taskId ?? '')
-    || typeof createdSource !== 'string'
-    || createdSource.length === 0
-  ) {
-    return res.status(400).json({
-      error: 'initiative_id, current_task_id and created_source are required',
-    });
-  }
-  if (!CREATE_PHASES.includes(startPhase)) {
-    return res.status(400).json({
-      error: 'invalid phase',
-      allowed: CREATE_PHASES,
-    });
-  }
-  if (commanderMode !== undefined && !CREATE_COMMANDER_MODES.has(commanderMode)) {
-    return res.status(400).json({
-      error: 'invalid commander_mode',
-      allowed: COMMANDER_MODES,
-    });
-  }
-
-  try {
-    const requestPool = req.app.get('pool') || pool;
-    const kernelRunStoreDeps = req.app.get('kernelRunStoreDeps') || {};
-    const result = await createKernelRun(requestPool, {
-      taskId,
-      initiativeId,
-      phase: startPhase,
-      journeyId: body.journey_id ?? null,
-      abilityId: null,
-      host: 'foreground',
-      deadlineHours: 6,
-      createdSource,
-      commanderMode,
-      predecessorRunId: body.predecessor_run_id ?? null,
-      recoveryRebase: body.recovery_rebase ?? null,
-      // 启动不变量（sprint 08131104）：foreground handoff 也须先有 Controller ownership，
-      // createKernelRun fail-closed 校验后才建 run（不可绕过路由层直接产生无主 run）。
-    }, kernelRunStoreDeps);
-    // M4：这条路径只建 run、不起跑场，没有内存态 task 需要回流，故不调
-    // syncTaskPayloadFromKernelRun；日后若在此处起跑场，必须补上回流，
-    // 否则 tasks.payload.routing_receipt_id 会停在旧代收据上。
-    return res.status(result.created ? 201 : 200).json(result);
-  } catch (err) {
-    if (err.code?.startsWith('recovery_rebase_') || err.message === 'recovery_rebase_active_run') {
-      return res.status(err.status ?? 409).json({ error: err.message });
-    }
-    if (
-      err.message?.startsWith('invalid Kernel run')
-      || err.message?.startsWith('explicit recovery predecessor')
-    ) {
-      return res.status(400).json({ error: err.message });
-    }
-    if (
-      err.message?.includes('not eligible')
-      || err.message?.includes('initiative mismatch')
-    ) {
-      return res.status(409).json({ error: err.message });
-    }
-    console.error('[POST /orchestrator/relay-runs]', err.message);
-    return res.status(500).json({ error: 'internal error' });
-  }
+async function createRelayRun(_req, res) {
+  return res.status(410).json({error:'kernel_runtime_retired',migration:'common-runner fixed workflow/profile required'});
 }
 
 /**

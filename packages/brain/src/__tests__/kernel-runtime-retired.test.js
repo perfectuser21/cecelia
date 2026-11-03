@@ -72,12 +72,14 @@ describe('A5 kernel-v1 运行时退役 — relay 咽喉', () => {
     expect(relay.isTransientRemoteLaunchError).toBeUndefined();
   });
 
-  it('非 kernel 的 relay 路径（golden_path_proposal）不被新拒绝码误伤', async () => {
+  it('GP提案旧relay同样退役，环境标记不能重新启用', async () => {
     const d = relayDeps({ CECELIA_LOCAL_EXECUTION_ENABLED: 'false' });
     const r = await relay.spawnSkillRelaySession({
       id: TASK_ID, task_type: 'golden_path_proposal', title: 'GP', payload: { orchestrator: 'skill-relay' },
     }, d);
-    expect(r.error).toBe('local_execution_disabled_on_scheduler');
+    expect(r.error).toBe('kernel_runtime_retired');
+    expect(d.pool.query).not.toHaveBeenCalled();
+    expect(d.spawnFn).not.toHaveBeenCalled();
   });
 });
 

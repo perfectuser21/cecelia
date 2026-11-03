@@ -41,10 +41,10 @@ function poolWithRun(row) {
 }
 
 describe('EXECUTOR_KIND_FOR 常量形态不变（回归锁：多处 import 依赖它是纯对象）', () => {
-  it('仍是对象，旧映射一字不动', () => {
+  it('仍是对象，保历史映射并移除退役GP新启动映射', () => {
     expect(typeof EXECUTOR_KIND_FOR).toBe('object');
     expect(EXECUTOR_KIND_FOR.harness_initiative).toBe('relay-container');
-    expect(EXECUTOR_KIND_FOR.golden_path_proposal).toBe('relay-container');
+    expect(EXECUTOR_KIND_FOR.golden_path_proposal).toBeUndefined();
     expect(EXECUTOR_KIND_FOR.dev).toBe('brain-local');
     expect(EXECUTOR_KIND_FOR.__bridge_path).toBe('bridge');
   });
@@ -55,8 +55,8 @@ describe('resolveExecutorKind — 打标点按 harness_runtime 分派', () => {
     expect(resolveExecutorKind(kernelTask())).toBe('kernel-process');
   });
 
-  it('golden_path_proposal + kernel-v1 → kernel-process', () => {
-    expect(resolveExecutorKind(kernelTask({ task_type: 'golden_path_proposal' }))).toBe('kernel-process');
+  it('golden_path_proposal新启动映射退役，kernel标记也不能恢复执行体', () => {
+    expect(resolveExecutorKind(kernelTask({ task_type: 'golden_path_proposal' }))).toBe(null);
   });
 
   it('回归锁:同 task_type 但无 kernel-v1 → 仍是 relay-container', () => {

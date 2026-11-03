@@ -7,7 +7,8 @@
  *   workflow-run-lost-deadline（判 lost）都按 workflow_run 全量收；混进主动派发要在三处各开例外，漏一处就会
  *   被看门狗接班重拉 escort 或被判 lost。新类型从注册表派生自动不进镜像集合，零例外。
  *
- * 流程（一个 scheduler job，60s 一轮）：
+ * 新运行：固定source/profile经公共Runner执行，Commander仅观察。以下旧协议仅用于在途只读收尾。
+ * 历史流程（禁止新派发）：
  *   派发：queued 的 workflow_dispatch → 按 config/factory-workflows.json 的 commander 登记解析调度单
  *        （<能力> <机器> <profile> <serial> <biz>，缺项/非法 → failed 写缺什么，不猜）→ 发布时段外不认领 →
  *        CAS 认领 → 领 Brain 设备锁（manual-dispatch-device-gate 同一闸；被占只等不接管）→
@@ -19,29 +20,25 @@
  *        合同 readback 判；陪跑 skill（commander_skill 名+版本）记进 result 与 task_runs。工厂单没交付文件 → 补标明来源的失败交付。
  * us-vps 零执行：本文件只 ssh 推活与收尸，不跑推理。
  */
-import { execFile as nodeExecFile, spawn as nodeSpawn } from 'node:child_process';
+import { execFile as nodeExecFile } from 'node:child_process';
 import { SSH_BASE_ARGS } from './ssh-args.js';
-import { sshWithStdin, sshRun } from './ssh-exec.js';
+import { sshRun } from './ssh-exec.js';
 import { resolvePrimaryWorkerId, sshTargetFor } from '../machine-registry.js';
-import { buildRemoteCommand, parseReceipt, isSafeRunId } from '../openclaw-agent-executor.js';
+import { parseReceipt, isSafeRunId } from '../openclaw-agent-executor.js';
 import { resolveWorkflowConfig } from './factory-workflow-config.js';
 import { withinPublishHours } from './factory-pusher.js';
-import { checkDeviceLockForManualDispatch } from './manual-dispatch-device-gate.js';
 import { releaseDeviceLocksHeldBy } from '../device-lock-helpers.js';
-import { selectDeviceFromPool } from './device-pool.js';
-import { setBrainLease, BRAIN_LEASE_MARGIN_SECONDS } from './task-lease.js';
 import { finalizeTask } from './task-terminal.js';
 import { recordTaskEventSafe } from './task-event-log.js';
-import { startRun, finishRun } from './task-run.js';
+import { finishRun } from './task-run.js';
 
 import { isLeadgenTask } from './leadgen-dispatch-contract.js';
 import { dispatchLeadgenTask,reapLeadgenTask } from './leadgen-dispatch.js';
-import { dispatchCommanderV2 } from './commander-v2-dispatch.js';
+import { createWorkflowCommonAdapter } from './workflow-common-runner-adapter.js';
 import { reconcileCommanderV2 } from './commander-v2-control.js';
 
 export const WORKFLOW_DISPATCH_TASK_TYPE = 'workflow_dispatch';
 export const COMMANDER_AGENT = 'work-commander';
-const CLAIMER = 'workflow-commander-dispatch';
 const DEFAULT_TIMEOUT_MIN = 40;
 const BATCH = 3;
 const REAP_SSH_TIMEOUT_MS = 15_000;
@@ -166,15 +163,8 @@ function synthesizedDelivery(runId, reason, result) {
   };
 }
 
-const defaultSshDispatch = (args, input) => sshWithStdin(nodeSpawn, args, input);
 const defaultSshProbe = (args) => sshRun(nodeExecFile, args, { timeout: REAP_SSH_TIMEOUT_MS, encoding: 'utf8' });
-const defaultLockGate = (task) => checkDeviceLockForManualDispatch(task, CLAIMER);
 const defaultReleaseLock = (taskId) => releaseDeviceLocksHeldBy(taskId);
-const defaultSetLease = (pool, taskId, seconds) => setBrainLease(pool, taskId, seconds);
-
-async function releaseClaim(pool, id) {
-  await pool.query(`UPDATE tasks SET claimed_by = NULL, claimed_at = NULL WHERE id = $1 AND claimed_by = $2 AND status = 'queued'`, [id, CLAIMER]);
-}
 
 async function failQueued(pool, id, reason, extra = {}) {
   await finalizeTask(pool, id, 'failed', {
@@ -188,13 +178,7 @@ async function failQueued(pool, id, reason, extra = {}) {
 export async function dispatchWorkflowCommanderTasks(pool, deps = {}) {
   const now = deps.now ?? (() => new Date());
   const roundStarted=Date.now();
-  const sshDispatch = deps.sshDispatch ?? defaultSshDispatch;
-  const lockGate = deps.lockGate ?? defaultLockGate;
-  const releaseLock = deps.releaseLock ?? defaultReleaseLock;
-  const setLease = deps.setLease ?? defaultSetLease;
   const recordEvent = deps.recordEvent ?? recordTaskEventSafe;
-  const selectFromPool = deps.selectFromPool
-    ?? ((p, key, task, opts) => selectDeviceFromPool(p, key, task, { ...opts, lockGate }));
   const out = { dispatched: 0, waiting: 0, failed: 0, skipped: 0 };
   const { rows } = await pool.query(
     `SELECT * FROM tasks
@@ -207,109 +191,18 @@ export async function dispatchWorkflowCommanderTasks(pool, deps = {}) {
   for (const t of rows ?? []) {
     if(out.dispatched>=BATCH||Date.now()-roundStarted>=45_000)break;
     if (isLeadgenTask(t)) { const state=await dispatchLeadgenTask(pool,t,deps.leadgen??{}); out[state]++; continue; }
-    if (t.payload?.commander_protocol !== undefined) {
-      if (t.payload.commander_protocol !== 'commander-v2') {
-        await failQueued(pool, t.id, 'workflow_dispatch_unsupported_protocol'); out.failed++; continue;
-      }
-      try {
-        const result = await dispatchCommanderV2(pool, t.id, deps);
-        if (result.dispatched) out.dispatched++; else out.waiting++;
-      } catch (err) {
-        await recordEvent(pool, t.id, 'commander_preflight_rejected', { reason: err.message }); out.waiting++;
-      }
-      continue;
+    if(t.payload?.commander_protocol!==undefined&&t.payload.commander_protocol!=='commander-v2'){
+      await failQueued(pool,t.id,'workflow_dispatch_unsupported_protocol');out.failed++;continue;
     }
-    let r = resolveCommanderOrder(t, deps);
-    if (r.ok && !withinPublishHours(now(), r.cfg.publish_hours)) { out.skipped++; continue; }
-    const claim = await pool.query(
-      `UPDATE tasks SET claimed_by = $2, claimed_at = NOW() WHERE id = $1 AND status = 'queued' AND claimed_by IS NULL RETURNING *`,
-      [t.id, CLAIMER],
-    );
-    if (!claim.rows?.length) { out.skipped++; continue; }
-    if (!r.ok) {
-      await failQueued(pool, t.id, `workflow_dispatch_unresolved: ${r.error}`);
-      out.failed++;
-      continue;
+    const cfg=(deps.resolveConfig??resolveWorkflowConfig)(t.payload?.workflow_key);
+    if(cfg&&!withinPublishHours(now(),cfg.publish_hours)){out.skipped++;continue;}
+    try{
+      const result=await(deps.workflowCommonDispatch??((db,task)=>createWorkflowCommonAdapter(db,deps.workflowCommon??{}).dispatch(task.id)))(pool,t);
+      if(result.dispatched)out.dispatched++;else out.waiting++;
+    }catch(error){
+      // 缺失正式输入/固定source不能回退到AI整块执行，也不能伪装业务已迁移成功。
+      await recordEvent(pool,t.id,'workflow_common_preflight_rejected',{reason:String(error.message).slice(0,400)});out.waiting++;
     }
-    const ttl = Math.min(240, Math.round(r.timeoutSec / 60) + 20);
-    if (r.poolKey) {
-      // 设备池（派发总闸 G）：按 priority 试锁，选中哪台调度单就写哪台；全被占只等不接管
-      const picked = await selectFromPool(pool, r.poolKey, t, { ttlMinutes: ttl });
-      if (!picked.ok) {
-        if (picked.reason === 'all_busy') {
-          await releaseClaim(pool, t.id);
-          await recordEvent(pool, t.id, 'workflow_dispatch_waiting', { pool: r.poolKey, tried: picked.tried });
-          out.waiting++;
-        } else {
-          await failQueued(pool, t.id, `workflow_dispatch_${picked.reason}: ${r.poolKey}`, { tried: picked.tried });
-          out.failed++;
-        }
-        continue;
-      }
-      const applied = applyPoolMember(r, picked.member);
-      if (!applied.ok) {
-        await releaseLock(t.id);
-        await failQueued(pool, t.id, `workflow_dispatch_pool_member_invalid: ${applied.error}`);
-        out.failed++;
-        continue;
-      }
-      r = applied;
-      await recordEvent(pool, t.id, 'device_pool_selected', {
-        pool: r.poolKey, serial: picked.member.serial, account_ref: picked.member.account_ref,
-        machine: picked.member.machine, tried: picked.tried,
-      });
-    }
-    const gate = r.poolKey ? { pass: true } : await lockGate({ ...t, payload: { ...(t.payload || {}), device_serial: r.serial, device_ttl_minutes: ttl } });
-    if (!gate.pass) {
-      if (gate.status === 422) {
-        await failQueued(pool, t.id, `workflow_dispatch_device_unknown: ${r.serial}`, { gate: gate.body });
-        out.failed++;
-        continue;
-      }
-      await releaseClaim(pool, t.id);
-      await recordTaskEventSafe(pool, t.id, 'workflow_dispatch_waiting', { serial: r.serial, gate: gate.body ?? null });
-      out.waiting++;
-      continue;
-    }
-    const runId = `wfd-${String(t.id).slice(0, 8)}-${now().getTime()}`;
-    await pool.query(
-      `UPDATE tasks SET payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object('run_id', $2::text, 'commander_order', $3::text, 'device_serial', $4::text, 'timeout_sec', $5::int), updated_at = NOW()
-        WHERE id = $1`,
-      [t.id, runId, orderWithRun(r, runId, t.id), r.serial, r.timeoutSec],
-    );
-    let spawned = null;
-    let lastErr = null;
-    for (let i = 0; i < 2 && !spawned; i++) {
-      try {
-        const remote = buildRemoteCommand({ runId, department: COMMANDER_AGENT, taskId: t.id, timeoutSec: r.timeoutSec });
-        const target = deps.target ?? sshTargetFor(resolvePrimaryWorkerId());
-        const so = await sshDispatch([...SSH_BASE_ARGS, target, remote], buildCommanderMessage(t, r, runId));
-        if (/ALREADY/.test(so)) spawned = 'already';
-        else if (/DISPATCHED/.test(so)) spawned = 'dispatched';
-        else throw new Error(`no DISPATCHED marker: ${String(so).slice(0, 120)}`);
-      } catch (err) {
-        lastErr = err;
-      }
-    }
-    if (!spawned) {
-      await releaseLock(t.id);
-      await failQueued(pool, t.id, `workflow_dispatch_spawn_failed: ${String(lastErr?.message || lastErr).slice(0, 200)}`);
-      out.failed++;
-      continue;
-    }
-    await pool.query(`UPDATE tasks SET executor_kind = 'openclaw-agent', updated_at = NOW() WHERE id = $1`, [t.id]);
-    await pool.query(
-      `UPDATE tasks SET status = 'in_progress', started_at = COALESCE(started_at, NOW()), updated_at = NOW() WHERE id = $1 AND status = 'queued'`,
-      [t.id],
-    );
-    try {
-      await setLease(pool, t.id, r.timeoutSec + BRAIN_LEASE_MARGIN_SECONDS);
-    } catch (err) {
-      console.warn(`[workflow-dispatch] 落 Brain 租约失败（不影响派发） task=${t.id}: ${err.message}`);
-    }
-    await recordTaskEventSafe(pool, t.id, 'workflow_dispatch_spawned', { run_id: runId, order: r.order, serial: r.serial, already_running: spawned === 'already' });
-    await startRun({ taskId: t.id, runId, source: 'workflow-commander', context: { workflow_key: r.key, order: orderWithRun(r, runId, t.id), agent: COMMANDER_AGENT } }, { pool });
-    out.dispatched++;
   }
   return out;
 }
@@ -320,11 +213,15 @@ export async function reapWorkflowCommanderRuns(pool, deps = {}) {
   const releaseLock = deps.releaseLock ?? defaultReleaseLock;
   const out = { completed: 0, failed: 0 };
   const { rows } = await pool.query(
-    `SELECT id, payload->>'run_id' AS run_id, payload FROM tasks
-      WHERE task_type = '${WORKFLOW_DISPATCH_TASK_TYPE}' AND status = 'in_progress' AND payload->>'run_id' IS NOT NULL
+    `SELECT id, payload->>'run_id' AS run_id, payload,result FROM tasks
+      WHERE task_type = '${WORKFLOW_DISPATCH_TASK_TYPE}' AND status = 'in_progress' AND (payload->>'run_id' IS NOT NULL OR result ? 'workflow_common_runner')
       ORDER BY started_at ASC NULLS FIRST LIMIT 10`,
   );
   for (const row of rows ?? []) {
+    if(row.result?.workflow_common_runner){
+      const result=await createWorkflowCommonAdapter(pool,deps.workflowCommon??{}).inspect(row);
+      if(result.central_run?.recording_status==='confirmed'){if(result.central_run.status==='success')out.completed++;else out.failed++;}continue;
+    }
     if (isLeadgenTask(row)) { const state=await reapLeadgenTask(pool,row,deps.leadgen??{}); if(state)out[state]++; continue; }
     if (row.payload?.commander_protocol === 'commander-v2') continue;
     if (!isSafeRunId(row.run_id)) continue;

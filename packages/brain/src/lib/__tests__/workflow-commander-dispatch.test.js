@@ -134,94 +134,31 @@ describe('parseCommanderResult', () => {
 });
 
 describe('dispatchWorkflowCommanderTasks', () => {
-  const claimed = (t) => [/UPDATE tasks SET claimed_by = \$2/, () => ({ rows: [t], rowCount: 1 })];
-  const select = (rows) => [/FROM tasks[\s\S]*status = 'queued'/, () => ({ rows })];
-
-  it('认领 → 领设备锁 → ssh 起 work-commander（调度单走 stdin）→ in_progress', async () => {
-    const t = task();
-    const pool = fakePool([select([t]), claimed(t)]);
-    const sshCalls = [];
-    const lockGate = vi.fn(async () => ({ pass: true, acquired: true }));
-    const out = await dispatchWorkflowCommanderTasks(pool, {
-      resolveConfig, now: IN_HOURS, lockGate,
-      sshDispatch: async (args, input) => { sshCalls.push({ args, input }); return 'DISPATCHED'; },
-    });
-    expect(out.dispatched).toBe(1);
-    expect(lockGate).toHaveBeenCalledTimes(1);
-    expect(lockGate.mock.calls[0][0].payload.device_serial).toBe('ANGYVB4311010223');
-    expect(sshCalls).toHaveLength(1);
-    const remote = sshCalls[0].args[sshCalls[0].args.length - 1];
-    expect(remote).toContain('--agent work-commander');
-    expect(remote).not.toContain('douyin_video_publish'); // 调度单不进命令行
-    expect(sshCalls[0].input).toContain('调度单：douyin_video_publish xian-m4');
-    const upd = pool.calls.find((c) => /status = 'in_progress'/.test(c.sql));
-    expect(upd).toBeTruthy();
-    expect(pool.calls.some((c) => /executor_kind = 'openclaw-agent'/.test(c.sql))).toBe(true);
-    // run_id 与调度单落进 payload
-    const pay = pool.calls.find((c) => /jsonb_build_object\('run_id'/.test(c.sql));
-    expect(pay.params[1]).toMatch(/^wfd-aaaaaaaa-\d+$/);
+  const select=rows=>[/FROM tasks[\s\S]*status = 'queued'/,()=>({rows})];
+  it('新运行委托公共Runner，保留task身份，禁止SSH业务Commander',async()=>{
+    const t=task(),pool=fakePool([select([t])]),common=vi.fn(async()=>({dispatched:true})),ssh=vi.fn();
+    const out=await dispatchWorkflowCommanderTasks(pool,{resolveConfig,now:IN_HOURS,workflowCommonDispatch:common,sshDispatch:ssh});
+    expect(out.dispatched).toBe(1);expect(common).toHaveBeenCalledWith(pool,t);expect(ssh).not.toHaveBeenCalled();
   });
-
-  it('设备锁被别的任务占 → 不接管、不派，放 claim 保持 queued', async () => {
-    const t = task();
-    const pool = fakePool([select([t]), claimed(t)]);
-    const sshDispatch = vi.fn();
-    const out = await dispatchWorkflowCommanderTasks(pool, {
-      resolveConfig, now: IN_HOURS, sshDispatch,
-      lockGate: async () => ({ pass: false, status: 409, body: { error: 'device_locked', locked_by: 'other' } }),
-    });
-    expect(out.dispatched).toBe(0);
-    expect(out.waiting).toBe(1);
-    expect(sshDispatch).not.toHaveBeenCalled();
-    expect(pool.calls.some((c) => /SET claimed_by = NULL/.test(c.sql))).toBe(true);
-    expect(pool.calls.some((c) => /status = 'in_progress'/.test(c.sql))).toBe(false);
+  it('代码设备闸忙时保留等待，不切换账号或启动旧Commander',async()=>{
+    const t=task(),pool=fakePool([select([t])]),ssh=vi.fn();
+    const out=await dispatchWorkflowCommanderTasks(pool,{resolveConfig,now:IN_HOURS,workflowCommonDispatch:async()=>({waiting:true,gate:{pass:false}}),sshDispatch:ssh});
+    expect(out.waiting).toBe(1);expect(out.dispatched).toBe(0);expect(ssh).not.toHaveBeenCalled();
   });
-
-  it('解析不出调度单 → 终态 failed 写缺什么，不领锁不派', async () => {
-    const t = task({ payload: { workflow_key: 'nope' } });
-    const pool = fakePool([select([t]), claimed(t)]);
-    const lockGate = vi.fn();
-    const sshDispatch = vi.fn();
-    const out = await dispatchWorkflowCommanderTasks(pool, { resolveConfig, now: IN_HOURS, lockGate, sshDispatch });
-    expect(out.failed).toBe(1);
-    expect(lockGate).not.toHaveBeenCalled();
-    expect(sshDispatch).not.toHaveBeenCalled();
-    const fin = pool.calls.find((c) => /status = 'failed'/.test(c.sql));
-    expect(fin).toBeTruthy();
-    expect(JSON.stringify(fin.params)).toContain('workflow_dispatch_unresolved');
+  it('缺正式source保持queued并记录缺口，不猜合同',async()=>{
+    const t=task(),pool=fakePool([select([t])]),recordEvent=vi.fn(),ssh=vi.fn();
+    const out=await dispatchWorkflowCommanderTasks(pool,{resolveConfig,now:IN_HOURS,workflowCommonDispatch:async()=>{throw Error('workflow_common_profile_unavailable');},recordEvent,sshDispatch:ssh});
+    expect(out.waiting).toBe(1);expect(recordEvent).toHaveBeenCalledWith(pool,t.id,'workflow_common_preflight_rejected',{reason:'workflow_common_profile_unavailable'});expect(ssh).not.toHaveBeenCalled();
   });
-
-  it('发布时段外 → 不认领（不碰锁、不派）', async () => {
-    const t = task();
-    const pool = fakePool([select([t]), claimed(t)]);
-    const lockGate = vi.fn();
-    const out = await dispatchWorkflowCommanderTasks(pool, { resolveConfig, now: OFF_HOURS, lockGate, sshDispatch: vi.fn() });
-    expect(out.dispatched).toBe(0);
-    expect(lockGate).not.toHaveBeenCalled();
-    expect(pool.calls.some((c) => /UPDATE tasks SET claimed_by = \$2/.test(c.sql))).toBe(false);
+  it('发布时段外不启动公共Runner、不领锁',async()=>{
+    const pool=fakePool([select([task()])]),common=vi.fn(),lockGate=vi.fn();
+    const out=await dispatchWorkflowCommanderTasks(pool,{resolveConfig,now:OFF_HOURS,workflowCommonDispatch:common,lockGate});
+    expect(out.skipped).toBe(1);expect(common).not.toHaveBeenCalled();expect(lockGate).not.toHaveBeenCalled();
   });
-
-  it('ssh 两次都失败 → 放锁 + failed（不留半派状态）', async () => {
-    const t = task();
-    const pool = fakePool([select([t]), claimed(t)]);
-    const releaseLock = vi.fn(async () => 1);
-    const out = await dispatchWorkflowCommanderTasks(pool, {
-      resolveConfig, now: IN_HOURS, releaseLock,
-      lockGate: async () => ({ pass: true, acquired: true }),
-      sshDispatch: async () => { throw new Error('ssh down'); },
-    });
-    expect(out.failed).toBe(1);
-    expect(releaseLock).toHaveBeenCalledWith(t.id);
-    expect(JSON.stringify(pool.calls.find((c) => /status = 'failed'/.test(c.sql)).params)).toContain('workflow_dispatch_spawn_failed');
-  });
-
-  it('别的执行体已认领（CAS 落空）→ 跳过', async () => {
-    const t = task();
-    const pool = fakePool([select([t]), [/UPDATE tasks SET claimed_by = \$2/, () => ({ rows: [], rowCount: 0 })]]);
-    const lockGate = vi.fn();
-    const out = await dispatchWorkflowCommanderTasks(pool, { resolveConfig, now: IN_HOURS, lockGate, sshDispatch: vi.fn() });
-    expect(out.dispatched).toBe(0);
-    expect(lockGate).not.toHaveBeenCalled();
+  it('未知transport回执继续inspect，不放锁重发',async()=>{
+    const t=task(),pool=fakePool([select([t])]),releaseLock=vi.fn();
+    const out=await dispatchWorkflowCommanderTasks(pool,{resolveConfig,now:IN_HOURS,workflowCommonDispatch:async()=>({status:'unknown',next_action:'inspect'}),releaseLock});
+    expect(out.waiting).toBe(1);expect(releaseLock).not.toHaveBeenCalled();
   });
 });
 

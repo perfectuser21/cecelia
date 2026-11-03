@@ -6,7 +6,9 @@ import { runActivityContract } from './activity-runtime.js';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SOURCE_TYPE = 'activity-contract';
 const EVENTS = new Set(['WF_RUN_STARTED', 'ACTIVITY_STARTED', 'ACTIVITY_HEARTBEAT',
-  'ACTIVITY_FINISHED', 'ACTIVITY_SKIPPED', 'WF_RUN_FINALIZED', 'WF_RUN_FINALIZATION_CORRECTED']);
+  'ACTIVITY_FINISHED', 'ACTIVITY_SKIPPED', 'WF_RUN_FINALIZED', 'WF_RUN_FINALIZATION_CORRECTED',
+  'ACTIVITY_CHECKED','ACTIVITY_ROUTED','ACTIVITY_AGENT_EVENT','COMMANDER_REQUEST','COMMANDER_EXCHANGE',
+  'COMMANDER_UNAVAILABLE','COMMANDER_BUDGET_EXHAUSTED','COMMANDER_SLEEP']);
 const SECRET_KEY = /token|secret|password|api[_-]?key|auth(?:entication|orization)?|credential_payload/i;
 const SECRET_TEXT = /(?:postgres(?:ql)?|https?):\/\/[^\s/@:]+:[^\s/@]+@|\bBearer\s+\S+|\b(?:password|api[_-]?key|access[_-]?token|secret)\s*[=:]\s*\S+/i;
 
@@ -122,12 +124,12 @@ export async function createActivityEventSink({ pool, runId, sourceId, runTag })
   });
 }
 
-export async function runActivityContractWithEventStore(contract, input, { pool, runId, sourceId, onEvent, ...options } = {}) {
+export async function runActivityContractWithEventStore(contract, input, { pool, runId, sourceId, onEvent, runActivity=runActivityContract, ...options } = {}) {
   assertSafe(input); assertSafe(contract);
   const sink = await createActivityEventSink({ pool, runId, sourceId, runTag: input?.run_tag });
   let rejectedFinalEvent;
   try {
-    const result = await runActivityContract(contract, input, { ...options, onEvent: async (event, snapshot) => {
+    const result = await runActivity(contract, input, { ...options, onEvent: async (event, snapshot) => {
       await sink.onEvent(event, snapshot);
       try { await onEvent?.(event, { ...publicReceipt(snapshot), event_ledger: sink.receipt() }); }
       catch (error) {
