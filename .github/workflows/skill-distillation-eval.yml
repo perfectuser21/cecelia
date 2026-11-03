@@ -22,4 +22,4 @@ jobs:
         env:
           TOAPIS_API_KEY: ${{ secrets.TOAPIS_API_KEY }}
           TOAPIS_BASE_URL: ${{ secrets.TOAPIS_BASE_URL }}
-        run: node packages/quality/skill-distillation/scripts/goldset-eval.mjs
+        run: node scripts/evals/goldset/goldset-eval.mjs

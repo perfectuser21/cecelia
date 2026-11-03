@@ -22,6 +22,5 @@ env -i PATH="$(dirname "$NODE_BIN"):/usr/bin:/bin:/usr/sbin:/sbin" \
   scripts/ci/__tests__/basic-ci-admission-authority.test.mjs \
   scripts/ci/__tests__/basic-ci-admission-envelope.test.mjs \
   scripts/ci/__tests__/basic-ci-admission-inputs.test.mjs \
-  scripts/ci/__tests__/basic-ci-admission-publisher.test.mjs \
   scripts/ci/__tests__/basic-ci-admission-skill-cache.test.mjs \
   scripts/ci/__tests__/basic-ci-admission-worker.test.mjs

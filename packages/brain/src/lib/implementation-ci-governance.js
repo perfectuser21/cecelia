@@ -6,7 +6,7 @@ export const VERSION_JSON_FILES=['package.json','package-lock.json','packages/br
 export const GOVERNANCE_CHECKS=[
   {id:'facts',path:'scripts/facts-check.mjs',runtime:'node'},
   {id:'versions',path:'scripts/check-version-sync.sh',runtime:'bash'},
-  {id:'dod',path:'packages/quality/scripts/devgate/check-dod-mapping.cjs',runtime:'node',args:['.dod.md']},
+  {id:'dod',path:'scripts/devgate/check-dod-mapping.cjs',runtime:'node',args:['.dod.md']},
 ];
 export const GOVERNANCE_POLICY_SHA256=createHash('sha256').update(JSON.stringify({repo:GOVERNANCE_REPO,files:GOVERNANCE_FILES,json:VERSION_JSON_FILES,checks:GOVERNANCE_CHECKS})).digest('hex');
 const canonical=value=>Array.isArray(value)?value.map(canonical):value&&typeof value==='object'?Object.fromEntries(Object.keys(value).sort().map(k=>[k,canonical(value[k])])):value;

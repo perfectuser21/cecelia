@@ -21,16 +21,14 @@ describe('刀A nightly-regression workflow', () => {
   });
 });
 
-describe('历史 integration 诊断与现役深度回归', () => {
-  const WF = read('.github/workflows/integration-nightly.yml');
-  it('历史入口只允许按需调用，定时数据库回归由统一deep入口承担', async () => {
+describe('现役深度数据库回归', () => {
+  it('统一deep入口承担定时数据库回归，诊断池仅显式手动调用', async () => {
     const { load } = await import('js-yaml');
-    expect(load(WF).on.workflow_dispatch).toBeDefined();
-    expect(load(WF).on.schedule).toBeUndefined();
-    expect(WF).toMatch(/postgres/);
     const deep = load(read('.github/workflows/nightly-regression.yml'));
     expect(deep.jobs['brain-integration'].services.postgres.env.POSTGRES_DB).toBe('cecelia_test');
     expect(deep.jobs['brain-integration'].env.POSTGRES_INTEGRATION).toBe('1');
+    expect(deep.on.workflow_dispatch.inputs.classified_smoke.default).toBe(false);
+    expect(deep.jobs['classified-smoke-diagnostics'].if).toBe("github.event_name == 'workflow_dispatch' && inputs.classified_smoke == true");
   });
 });
 
@@ -55,7 +53,6 @@ describe('刀C Release Gate', () => {
 describe('三把刀 workflow YAML 必须可解析（07-10 实锤：顶格 **markdown** 在 run 块里被当 alias，0-job startup failure，刀A/刀B 完全失效）', () => {
   it.each([
     '.github/workflows/nightly-regression.yml',
-    '.github/workflows/integration-nightly.yml',
     '.github/workflows/deploy.yml',
   ])('%s 可被 YAML 解析', async (p) => {
     const { load } = await import('js-yaml');

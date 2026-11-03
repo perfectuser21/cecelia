@@ -111,7 +111,7 @@ test('Pilot与Impact使用trusted tooling准备隔离缓存，secret只进准备
   assert.match(step.run,/"\$GITHUB_WORKSPACE\/source"/);assert.match(step.run,/"\$SOURCE_REPO"/);
   assert.ok(index>steps.findIndex(s=>s.with?.path==='source'));assert.ok(index<steps.findIndex(s=>s.name===consume));
   const download=steps.findIndex(s=>s.uses?.startsWith('actions/download-artifact')||s.name==='下载固定SHA中央bundle（PR无中央写凭据）');assert.ok(index>download);
-  if(jobName==='gate')assert.match(steps.find(s=>s.name===consume).env?.SKILLS_SOURCE_SSH_KEY||'',/steps\.skill-cache\.outputs\.legacy_821/);else assert.equal(steps.find(s=>s.name===consume).env?.SKILLS_SOURCE_SSH_KEY,undefined);
+  assert.equal(steps.find(s=>s.name===consume).env?.SKILLS_SOURCE_SSH_KEY,undefined);
   assert.doesNotMatch(step.run,/source\/scripts\/(?:ensure-skills-source|skills-source)/);
   assert.match(step.run,jobName==='gate'?/"\$BASE" "\$HEAD"/:/"\$HEAD"/);
  }
@@ -129,19 +129,6 @@ test('CI缓存拒绝损坏锁、跨profile、非固定SHA及未知版本，不�
   assert.throws(()=>sourceApi.prepareImplementationSkillCache(f.business,'perfectuser21/zenithjoy-workspace',['0'.repeat(40)]));
  }finally{if(prior===undefined)delete process.env.SKILLS_SOURCE_SSH_KEY;else process.env.SKILLS_SOURCE_SSH_KEY=prior;f.cleanup();}
 });
-for(const legacy of ['821dac5ae926cd5120d7b94fcd8012dd1f09bc23','b977d068919ff699318581214ddb07c314629e56','8665e5683c972f5a88649b5783e3d196b32e9a38'])test(`Impact自举只接受精确${legacy}本仓原生PR，其余缺prepare或身份不符绝不假绿`,()=>{
- const w=yaml.load(readFileSync(new URL('../../../.github/workflows/implementation-impact.yml',import.meta.url),'utf8'));
- const step=w.jobs.gate.steps.find(s=>s.name==='准备固定中央Skill对象缓存');assert.ok(step);
- const root=mkdtempSync(join(tmpdir(),'cache-workflow-step-')),bin=join(root,'bin');mkdirSync(bin);
- try{
-  writeFileSync(join(bin,'git'),'#!/bin/sh\nprintf "%s\\n" "$ACTUAL_TOOLING"\n',{mode:0o700});
-  writeFileSync(join(bin,'node'),'#!/bin/sh\nexit 0\n',{mode:0o700}); // old helper missing prepare mode: exit0+empty stdout must reject
-  const run=patch=>spawnSync('bash',['-c',step.run],{cwd:root,encoding:'utf8',env:{...process.env,PATH:bin+':'+process.env.PATH,GITHUB_WORKSPACE:root,RUNNER_TEMP:root,GITHUB_ENV:join(root,'env'),GITHUB_OUTPUT:join(root,'output'),GITHUB_REPOSITORY:'perfectuser21/cecelia',GITHUB_EVENT_NAME:'pull_request',SOURCE_REPO:'perfectuser21/cecelia',NATIVE_PR:'true',MAP_SCOPE:'cecelia-kr',ADMISSION_SCOPES:'{"schema_version":1,"scopes":["cecelia-kr","cecelia-factory"]}',MODE:'pr',BASE:legacy,HEAD:'a'.repeat(40),TOOLING_REVISION:legacy,ACTUAL_TOOLING:legacy,...patch}});
-  assert.equal(run({}).status,0);
-  for(const patch of [{TOOLING_REVISION:'b'.repeat(40),ACTUAL_TOOLING:'b'.repeat(40)},{GITHUB_EVENT_NAME:'push',MODE:'main'},{SOURCE_REPO:'perfectuser21/zenithjoy-workspace'},{GITHUB_REPOSITORY:'perfectuser21/zenithjoy-workspace'},{ACTUAL_TOOLING:'c'.repeat(40)},{BASE:'b'.repeat(40)},{NATIVE_PR:'false'},{MAP_SCOPE:'other'},{ADMISSION_SCOPES:'{"schema_version":1,"scopes":["cecelia-kr"]}'}])assert.notEqual(run(patch).status,0,JSON.stringify(patch));
- }finally{rmSync(root,{recursive:true,force:true});}
-});
-
 test('可信materialize只恢复固定catalog数据，不运行loader，不覆盖tracked或symlink',()=>{
  const f=fixture();
  try{
@@ -271,46 +258,6 @@ test('两入口先下载canonical快照再prepare历史对象，现代校验无k
   assert.match(steps[index].run,/jq -e '\.snapshot \| select\(type=="object"\)'/,'官方API包装需先提取canonical');
   assert.match(steps[index].run,/canonical/);
  }
-});
-test('唯一旧兼容升级为821真实可信reader冷启动，而非185空缓存放行',()=>{
- const w=yaml.load(readFileSync(new URL('../../../.github/workflows/implementation-impact.yml',import.meta.url),'utf8'));
- const step=w.jobs.gate.steps.find(s=>s.name==='准备固定中央Skill对象缓存');
- assert.match(step.run,/821dac5ae926cd5120d7b94fcd8012dd1f09bc23/);
- assert.match(step.run,/b8985542133fb7dcf87a2adf9151de43d0694185/,'精确已发布同字节main必须可冷启动');
- assert.match(step.run,/a72ff8372d4eb2100e1b9b7572d88a22969bef2f/,'实际新发布同reader与锁的main必须可冷启动');
- assert.match(step.run,/b977d068919ff699318581214ddb07c314629e56/,'正式cleanup main同helper/锁也必须精确冷启动');
- assert.match(step.run,/readImplementationSource/);assert.match(step.run,/packages\/engine\/skills\/dev\/SKILL\.md/);
- assert.doesNotMatch(step.run,/18552f8eeafdb2d404294bd6601bc74d00a1d422/);
-});
-for(const legacy of ['b8985542133fb7dcf87a2adf9151de43d0694185','a72ff8372d4eb2100e1b9b7572d88a22969bef2f','b977d068919ff699318581214ddb07c314629e56','8665e5683c972f5a88649b5783e3d196b32e9a38'])test(`已发布同字节版本${legacy}实际执行可信reader冷fetch，锁漂移/既存cache拒绝且不运行candidate loader`,()=>{
- const f=fixture(),workspace=dirname(f.business),tooling=join(workspace,'tooling'),bin=join(workspace,'bin');
- try{
-  symlinkSync(f.business,join(workspace,'source'));mkdirSync(tooling);git(tooling,'init','-q');git(tooling,'config','core.hooksPath','/dev/null');mkdirSync(bin);
-  const catalog=JSON.parse(git(f.central,'show','HEAD:distribution/catalog.json'));catalog.profiles.cecelia={files:[{...catalog.profiles.zenithjoy.files[0],path:'packages/engine/skills/dev/SKILL.md'}]};writeFileSync(join(f.central,'distribution/catalog.json'),JSON.stringify(catalog));
-  const lock={...JSON.parse(git(f.business,'show',`${f.after}:.skills-source.json`)),profile:'cecelia',revision:commit(f.central)};writeFileSync(join(f.business,'.skills-source.json'),JSON.stringify(lock));const head=commit(f.business);git(f.business,'remote','set-url','origin','https://github.com/perfectuser21/cecelia.git');
-  writeFileSync(join(tooling,'.skills-source.json'),JSON.stringify(lock));mkdirSync(join(tooling,'scripts/ci'),{recursive:true});
-  // The fixture aliases the published Git identity; actual reader/Git/fetch operations remain real.
-  for(const file of ['implementation-skill-source.mjs','fixed-local-git.mjs'])writeFileSync(join(tooling,'scripts/ci',file),`export * from ${JSON.stringify(new URL('../'+file,import.meta.url).href)};\n`);
-  const trusted=commit(tooling),realGit=execFileSync('which',['git'],{encoding:'utf8'}).trim(),python=execFileSync('python3',['-c','import sys;print(sys.executable)'],{encoding:'utf8'}).trim(),audit=join(workspace,'fetches');
-  writeFileSync(join(bin,'git'),`#!${python}
-import os,sys,subprocess,pathlib
-a=sys.argv[1:];root=a[a.index('-C')+1] if '-C' in a else ''
-if root=='tooling' and 'rev-parse' in a: print('${legacy}');sys.exit(0)
-revision='${trusted}' if os.path.realpath(root)==os.path.realpath(${JSON.stringify(tooling)}) else '${head}'
-a=[x.replace('${legacy}',revision) for x in a]
-if 'fetch' in a:
- assert a[-2]=='git@github.com:perfectuser21/zenithjoy-skills.git'
- pathlib.Path(${JSON.stringify(audit)}).write_text('fetch')
- a[-2]=${JSON.stringify(f.central)}
-os.execv(${JSON.stringify(realGit)},[${JSON.stringify(realGit)}]+a)
-`,{mode:0o700});
-  const w=yaml.load(readFileSync(new URL('../../../.github/workflows/implementation-impact.yml',import.meta.url),'utf8')),step=w.jobs.gate.steps.find(s=>s.name==='准备固定中央Skill对象缓存');
-  const run=selected=>spawnSync('bash',['-c',step.run],{cwd:workspace,encoding:'utf8',env:{...process.env,PATH:bin+':'+process.env.PATH,GITHUB_WORKSPACE:workspace,RUNNER_TEMP:workspace,GITHUB_ENV:join(workspace,'env'),GITHUB_OUTPUT:join(workspace,'output'),GITHUB_REPOSITORY:'perfectuser21/cecelia',GITHUB_EVENT_NAME:'pull_request',SOURCE_REPO:'perfectuser21/cecelia',NATIVE_PR:'true',MAP_SCOPE:'cecelia-kr',ADMISSION_SCOPES:'{"schema_version":1,"scopes":["cecelia-kr","cecelia-factory"]}',MODE:'pr',BASE:legacy,HEAD:selected,TOOLING_REVISION:legacy,SKILLS_SOURCE_SSH_KEY:'fixture-key'}});
-  const result=run(head);assert.equal(result.status,0,result.stderr);assert.equal(readFileSync(audit,'utf8'),'fetch');assert.match(readFileSync(join(workspace,'output'),'utf8'),/legacy_821=true/);git(join(f.business,'.skills-source'),'cat-file','-e',lock.revision+'^{commit}');
-  rmSync(audit);assert.notEqual(run(head).status,0,'existing cache不能被当可信冷启动');assert.equal(existsSync(audit),false);
-  rmSync(join(f.business,'.skills-source'),{recursive:true});writeFileSync(join(f.business,'.skills-source.json'),JSON.stringify({...lock,loader_sha256:'f'.repeat(64)}));const changed=commit(f.business);
-  assert.notEqual(run(changed).status,0,'head锁字节漂移必须拒绝');assert.equal(existsSync(audit),false);
- }finally{f.cleanup();}
 });
 test('device patrol旧reader在显式CI缓存模式只读固定对象，缺对象不fetch且拒绝缓存覆盖',()=>{
  const f=fixture(),bin=join(dirname(f.business),'bin'),marker=join(dirname(f.business),'fetch-attempt');

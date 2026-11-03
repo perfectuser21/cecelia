@@ -5,7 +5,7 @@
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
-CORE_LIST="$REPO_ROOT/packages/quality/smoke-core.txt"
+CORE_LIST="$REPO_ROOT/packages/brain/config/smoke/smoke-core.txt"
 SMOKE_DIR="$REPO_ROOT/packages/brain/scripts/smoke"
 FAILED=0
 while IFS= read -r script || [[ -n "$script" ]]; do

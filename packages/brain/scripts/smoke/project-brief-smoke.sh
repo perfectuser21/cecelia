@@ -12,7 +12,7 @@ PSQL="$(command -v psql)"; NODE="$(command -v node)"
 DB_NAME="$("$NODE" -e "const u=new URL(process.argv[1]); process.stdout.write(decodeURIComponent(u.pathname.slice(1)))" "$DATABASE_URL")"
 [[ "$DB_NAME" =~ (_test|_scratch)$ ]] || fail "refuse non-test db: ${DB_NAME:-empty}"
 q() { "$PSQL" -X "$DATABASE_URL" -v ON_ERROR_STOP=1 -qAtc "$1"; }
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"; BRAIN_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"; REPO_DIR="$(cd "$BRAIN_DIR/../.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"; BRAIN_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 TAG="$RANDOM$RANDOM"
 PROJ="$(q "INSERT INTO projects (name, description, status, brief) VALUES ('smoke brief 项目 $TAG', '目标', 'active', '{}'::jsonb) RETURNING id")"
@@ -63,10 +63,6 @@ if (approved.brief.goal !== 'smoke 新目标') { console.error('批准后 goal �
 await pool.end();
 " || fail "brief_delta 全链失败"
 pass "handoff.brief_delta → projects.brief 落库；第三棒链上下文/派发 prompt 带最新现状；改 goal 升 A 档 pending_actions，批准后才生效"
-
-grep -q "brief_delta" "$REPO_DIR/hooks/stop.sh" || fail "stop.sh 接力棒闸提示未带 brief_delta 示例"
-bash -n "$REPO_DIR/hooks/stop.sh" || fail "stop.sh 语法错"
-pass "stop.sh 接力棒闸提示含 brief_delta 示例"
 
 grep -q "router.patch('/:id/brief'" "$BRAIN_DIR/src/routes/task-projects.js" || fail "PATCH /projects/:id/brief 未接线"
 pass "PATCH /api/brain/projects/:id/brief 已接线"

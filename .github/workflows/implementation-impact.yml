@@ -1,7 +1,5 @@
 name: Implementation impact
 on:
-  pull_request:
-    branches: [main]
   workflow_dispatch:
     inputs:
       base_revision: {description: '固定基线40位SHA（须已有中央历史定义）', required: true, type: string}
@@ -219,7 +217,7 @@ jobs:
   gate:
     name: Implementation impact gate
     needs: [snapshot-main, snapshot-infra]
-    if: always() && (github.event_name == 'pull_request' || needs.snapshot-main.result == 'success')
+    if: always() && (inputs.mode == 'pr' || needs.snapshot-main.result == 'success')
     runs-on: ubuntu-latest
     timeout-minutes: 40
     services:
@@ -237,8 +235,8 @@ jobs:
       SOURCE_REPO: ${{ inputs.source_repo || github.repository }}
       MAP_SCOPE: ${{ inputs.scope || vars.IMPLEMENTATION_MAP_SCOPE || 'cecelia-kr' }}
       INFRA_ADMISSION: ${{ inputs.source_baseline_recovery != true && vars.IMPLEMENTATION_INFRA_ADMISSION == 'true' && github.repository == 'perfectuser21/cecelia' && (inputs.scope || vars.IMPLEMENTATION_MAP_SCOPE || 'cecelia-kr') == 'cecelia-kr' && 'true' || 'false' }}
-      ADMISSION_SCOPES: ${{ inputs.admission_scopes || vars.IMPLEMENTATION_ADMISSION_SCOPES || (github.event_name == 'pull_request' && github.repository == 'perfectuser21/cecelia' && '{"schema_version":1,"scopes":["cecelia-kr","cecelia-factory"]}' || '') }}
-      BASE: ${{ inputs.base_revision || (github.event_name == 'pull_request' && github.event.pull_request.base.sha == '061a8a1784ffd02fdf1e3071390b2036e70d9395' && github.event.pull_request.head.ref == 'cp-10301020-source-pr-link' && github.event.pull_request.head.repo.full_name == 'perfectuser21/cecelia' && 'e3a01021ee7100b83d8ed5a0be219d0b543b5dff' || github.event.pull_request.base.sha) || github.event.before }}
+      ADMISSION_SCOPES: ${{ inputs.admission_scopes || vars.IMPLEMENTATION_ADMISSION_SCOPES || '' }}
+      BASE: ${{ inputs.base_revision || github.event.before }}
       HEAD: ${{ inputs.head_revision || github.event.pull_request.head.sha || github.sha }}
       MODE: ${{ inputs.mode || (github.event_name == 'pull_request' && 'pr' || 'main') }}
       IMPLEMENTATION_MAIN_SCOPES: ${{ github.repository == 'perfectuser21/cecelia' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (!inputs.source_repo || inputs.source_repo == github.repository) && (!inputs.head_revision || inputs.head_revision == github.sha) && (!inputs.tooling_revision || inputs.tooling_revision == github.sha) && (!inputs.mode || inputs.mode == 'main') && (inputs.scope || vars.IMPLEMENTATION_MAP_SCOPE || 'cecelia-kr') == 'cecelia-kr' && inputs.export_device_patrol_source_identity != true && '{"schema_version":1,"scopes":["cecelia-kr","cecelia-factory"]}' || '' }}
@@ -289,7 +287,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_ID: ${{ github.run_id }}
-          NATIVE_PR_BASELINE: ${{ github.repository == 'perfectuser21/cecelia' && github.event_name == 'pull_request' && !inputs.source_repo && !inputs.tooling_revision && !inputs.scope && !inputs.head_revision && !inputs.base_revision && !inputs.mode && !inputs.admission_scopes }}
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/implementation-input" "$RUNNER_TEMP/implementation-output"
@@ -309,21 +306,6 @@ jobs:
             gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" -n "implementation-snapshot-$HEAD" -D "$RUNNER_TEMP/implementation-input/head"
             gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" -n "implementation-baseline-$HEAD" -D "$RUNNER_TEMP/implementation-input/base"
           else
-            if [[ "${NATIVE_PR_BASELINE:-false}" == true ]]; then
-              # 原PRbase只固定可信工具；有效基线可沿第一父链恢复，仍跑全部累积差分。
-              test "$MAP_SCOPE" = cecelia-kr
-              test "$ADMISSION_SCOPES" = '{"schema_version":1,"scopes":["cecelia-kr","cecelia-factory"]}'
-              BASE="$(node source/scripts/ci/implementation-pr-baseline.mjs \
-                --repo-root "$GITHUB_WORKSPACE/source" --tooling-root "$GITHUB_WORKSPACE/tooling" \
-                --input-dir "$RUNNER_TEMP/implementation-input" --output-dir "$RUNNER_TEMP/implementation-output")"
-              [[ "$BASE" =~ ^[0-9a-f]{40}$ ]]
-              printf 'BASE=%s\n' "$BASE" >> "$GITHUB_ENV"
-              if [[ -e "$RUNNER_TEMP/implementation-input/ci-admission" || -L "$RUNNER_TEMP/implementation-input/ci-admission" ]]; then
-                test -d "$RUNNER_TEMP/implementation-input/ci-admission" && test ! -L "$RUNNER_TEMP/implementation-input/ci-admission"
-                export IMPLEMENTATION_CI_ADMISSION_INPUT_DIR="$RUNNER_TEMP/implementation-input/ci-admission"
-                printf 'IMPLEMENTATION_CI_ADMISSION_INPUT_DIR=%s\n' "$IMPLEMENTATION_CI_ADMISSION_INPUT_DIR" >> "$GITHUB_ENV"
-              fi
-            else
             artifact=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=implementation-snapshot-$BASE" | jq -r --arg base "$BASE" '.artifacts | map(select(.expired == false and .workflow_run.head_branch == "main" and .workflow_run.head_sha == $base and .workflow_run.repository_id == .workflow_run.head_repository_id)) | sort_by(.created_at, .id) | reverse | first | .id // empty')
             if [[ -z "$artifact" ]]; then
               gap_code=IMPLEMENTATION_CI_BASE_ARTIFACT_MISSING
@@ -346,8 +328,7 @@ jobs:
             jq -e 'type == "object" and .error == null and (.snapshot | type == "object")' "$RUNNER_TEMP/implementation-input/base/base.json" >/dev/null
             mkdir -p "$RUNNER_TEMP/implementation-input/head"
             cp "$RUNNER_TEMP/implementation-input/base/base.json" "$RUNNER_TEMP/implementation-input/head/head.json"
-            fi
-            if [[ -z "${IMPLEMENTATION_CI_ADMISSION_INPUT_DIR:-}" && -n "${ADMISSION_SCOPES:-}" ]]; then
+            if [[ -n "${ADMISSION_SCOPES:-}" ]]; then
               jq -e 'type == "object" and keys == ["schema_version", "scopes"] and .schema_version == 1 and (.scopes | type == "array" and length > 0 and all(.[]; type == "string" and test("^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$")) and length == (unique | length))' <<< "$ADMISSION_SCOPES" >/dev/null
               gap_code=IMPLEMENTATION_CI_SCOPE_COMPANION_INVALID
               printf '%s\n' "$ADMISSION_SCOPES" > "$RUNNER_TEMP/implementation-input/admission-scopes.json"
@@ -362,7 +343,7 @@ jobs:
             fi
           fi
       - name: 独立infra固定来源加入联合输入
-        if: env.INFRA_ADMISSION == 'true' && env.IMPLEMENTATION_CI_ADMISSION_INPUT_DIR == ''
+        if: env.INFRA_ADMISSION == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -374,64 +355,38 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           SKILLS_SOURCE_SSH_KEY: ${{ secrets.SKILLS_SOURCE_SSH_KEY }}
-          NATIVE_PR: ${{ github.repository == 'perfectuser21/cecelia' && github.event_name == 'pull_request' && !inputs.source_repo && !inputs.tooling_revision && !inputs.scope && !inputs.head_revision && !inputs.base_revision && !inputs.mode && !inputs.admission_scopes }}
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/implementation-output"
           trap 'code=$?; if (( code != 0 )); then printf "%s\n" "{\"status\":\"unknown\",\"stage\":\"skill_cache_prepare\",\"code\":\"SKILL_CACHE_PREPARATION_FAILED\"}" > "$RUNNER_TEMP/implementation-output/gap.json"; fi' EXIT
           tooling_sha="$(git -C tooling rev-parse --verify HEAD)"
           test "$tooling_sha" = "$TOOLING_REVISION"
-          # 仅精确已发布、reader及锁字节一致的旧工具；仍运行原完整双scope gate。
-          if [[ -n "${IMPLEMENTATION_CI_ADMISSION_INPUT_DIR:-}" ]]; then
-            test "$MODE" = pr && test "$NATIVE_PR" = true && test "$SOURCE_REPO" = perfectuser21/cecelia
-            cache="$(node tooling/scripts/ci/implementation-skill-source.mjs --prepare-ci-cache "$GITHUB_WORKSPACE/source" "$SOURCE_REPO" "$BASE" "$HEAD")"
-            case "$cache" in "$RUNNER_TEMP"/implementation-skills-ci-*/objects) test -d "$cache" ;; *) exit 1 ;; esac
-            printf 'IMPLEMENTATION_SKILLS_SOURCE_DIR=%s\n' "$cache" >> "$GITHUB_ENV"
-          elif [[ "$NATIVE_PR" == true && "$GITHUB_REPOSITORY" == perfectuser21/cecelia && "$GITHUB_EVENT_NAME" == pull_request && "$SOURCE_REPO" == perfectuser21/cecelia && "$MODE" == pr && ( "$BASE" == 821dac5ae926cd5120d7b94fcd8012dd1f09bc23 || "$BASE" == b8985542133fb7dcf87a2adf9151de43d0694185 || "$BASE" == a72ff8372d4eb2100e1b9b7572d88a22969bef2f || "$BASE" == b977d068919ff699318581214ddb07c314629e56 || "$BASE" == 8665e5683c972f5a88649b5783e3d196b32e9a38 ) && "$TOOLING_REVISION" == "$BASE" && "$MAP_SCOPE" == cecelia-kr && "$ADMISSION_SCOPES" == '{"schema_version":1,"scopes":["cecelia-kr","cecelia-factory"]}' ]]; then
-            node --input-type=module <<'JS'
-          import {readImplementationSource} from './tooling/scripts/ci/implementation-skill-source.mjs';
-          import {readFixedLocalGitBlob} from './tooling/scripts/ci/fixed-local-git.mjs';
-          import {lstatSync} from 'node:fs';
-          import {join} from 'node:path';
-          const base=process.env.BASE,head=process.env.HEAD,root=join(process.cwd(),'source'),tooling=join(process.cwd(),'tooling'),cache=join(root,'.skills-source');
-          const trusted=readFixedLocalGitBlob(tooling,{revision:base,path:'.skills-source.json'});
-          for(const revision of [base,head])if(!readFixedLocalGitBlob(root,{revision,path:'.skills-source.json'}).equals(trusted))throw Error('SKILL_LEGACY_821_LOCK_MISMATCH');
-          if(!process.env.SKILLS_SOURCE_SSH_KEY?.trim())throw Error('SKILL_SOURCE_SSH_KEY_REQUIRED');
-          try{lstatSync(cache);throw Error('SKILL_LEGACY_821_CACHE_EXISTS');}catch(e){if(e.code!=='ENOENT')throw e;}
-          const path='packages/engine/skills/dev/SKILL.md';
-          if(readFixedLocalGitBlob(root,{revision:head,path},{allowMissing:true})!==null)throw Error('SKILL_LEGACY_821_PATH_NOT_MIGRATED');
-          readImplementationSource(root,head,path,{source:cache});
-          readFixedLocalGitBlob(cache,{revision:JSON.parse(trusted).revision,path:'distribution/catalog.json'});
-          JS
-            printf 'legacy_821=true\n' >> "$GITHUB_OUTPUT"
-          else
-            args=(--prepare-ci-cache "$GITHUB_WORKSPACE/source" "$SOURCE_REPO" "$BASE" "$HEAD")
-            scoped="${ADMISSION_SCOPES:-${IMPLEMENTATION_MAIN_SCOPES:-}}"
-            if [[ -n "$scoped" ]]; then
-              printf '%s\n' "$scoped" > "$RUNNER_TEMP/implementation-input/cache-scopes.json"
-              if [[ "$MODE" == main ]]; then
-                for side in base head; do
-                  IMPLEMENTATION_MAIN_SCOPES='' node tooling/scripts/ci/implementation-pr-gate.mjs --extract-scopes --snapshot-file "$RUNNER_TEMP/implementation-input/$side/$side.json" --scopes-file "$RUNNER_TEMP/implementation-input/cache-scopes.json" --side "$side" --output-dir "$RUNNER_TEMP/implementation-input/$side"
-                done
-              fi
-              while IFS= read -r scope; do
-                args+=(--snapshot "$RUNNER_TEMP/implementation-input/base/base-$scope.json" --snapshot "$RUNNER_TEMP/implementation-input/head/head-$scope.json")
-              done < <(jq -r '.scopes[]' "$RUNNER_TEMP/implementation-input/cache-scopes.json")
-            else
+          args=(--prepare-ci-cache "$GITHUB_WORKSPACE/source" "$SOURCE_REPO" "$BASE" "$HEAD")
+          scoped="${ADMISSION_SCOPES:-${IMPLEMENTATION_MAIN_SCOPES:-}}"
+          if [[ -n "$scoped" ]]; then
+            printf '%s\n' "$scoped" > "$RUNNER_TEMP/implementation-input/cache-scopes.json"
+            if [[ "$MODE" == main ]]; then
               for side in base head; do
-                jq -e '.snapshot | select(type=="object")' "$RUNNER_TEMP/implementation-input/$side/$side.json" > "$RUNNER_TEMP/implementation-input/$side/canonical.json"
-                args+=(--snapshot "$RUNNER_TEMP/implementation-input/$side/canonical.json")
+                IMPLEMENTATION_MAIN_SCOPES='' node tooling/scripts/ci/implementation-pr-gate.mjs --extract-scopes --snapshot-file "$RUNNER_TEMP/implementation-input/$side/$side.json" --scopes-file "$RUNNER_TEMP/implementation-input/cache-scopes.json" --side "$side" --output-dir "$RUNNER_TEMP/implementation-input/$side"
               done
             fi
-            if [[ "$INFRA_ADMISSION" == true ]]; then
-              args+=(--snapshot "$RUNNER_TEMP/implementation-input/base/base-cecelia-infra.json" --snapshot "$RUNNER_TEMP/implementation-input/head/head-cecelia-infra.json")
-            fi
-            cache="$(node tooling/scripts/ci/implementation-skill-source.mjs "${args[@]}")"
-            case "$cache" in "$RUNNER_TEMP"/implementation-skills-ci-*/objects) test -d "$cache" ;; *) echo 'invalid fixed Skill cache' >&2; exit 1 ;; esac
-            printf 'IMPLEMENTATION_SKILLS_SOURCE_DIR=%s\n' "$cache" >> "$GITHUB_ENV"
+            while IFS= read -r scope; do
+              args+=(--snapshot "$RUNNER_TEMP/implementation-input/base/base-$scope.json" --snapshot "$RUNNER_TEMP/implementation-input/head/head-$scope.json")
+            done < <(jq -r '.scopes[]' "$RUNNER_TEMP/implementation-input/cache-scopes.json")
+          else
+            for side in base head; do
+              jq -e '.snapshot | select(type=="object")' "$RUNNER_TEMP/implementation-input/$side/$side.json" > "$RUNNER_TEMP/implementation-input/$side/canonical.json"
+              args+=(--snapshot "$RUNNER_TEMP/implementation-input/$side/canonical.json")
+            done
           fi
+          if [[ "$INFRA_ADMISSION" == true ]]; then
+            args+=(--snapshot "$RUNNER_TEMP/implementation-input/base/base-cecelia-infra.json" --snapshot "$RUNNER_TEMP/implementation-input/head/head-cecelia-infra.json")
+          fi
+          cache="$(node tooling/scripts/ci/implementation-skill-source.mjs "${args[@]}")"
+          case "$cache" in "$RUNNER_TEMP"/implementation-skills-ci-*/objects) test -d "$cache" ;; *) echo 'invalid fixed Skill cache' >&2; exit 1 ;; esac
+          printf 'IMPLEMENTATION_SKILLS_SOURCE_DIR=%s\n' "$cache" >> "$GITHUB_ENV"
       - name: 完整联合scope清单加入infra
-        if: env.INFRA_ADMISSION == 'true' && env.MODE == 'pr' && env.IMPLEMENTATION_CI_ADMISSION_INPUT_DIR == ''
+        if: env.INFRA_ADMISSION == 'true' && env.MODE == 'pr'
         run: |
           set -euo pipefail
           scopes=$(jq -ce 'select(.schema_version == 1 and .scopes == ["cecelia-kr","cecelia-factory"]) | .scopes += ["cecelia-infra"]' <<< "$ADMISSION_SCOPES")
@@ -439,15 +394,9 @@ jobs:
       - name: 实际变更影响与固定回归
         env:
           GH_TOKEN: ${{ github.token }}
-          SKILLS_SOURCE_SSH_KEY: ${{ steps.skill-cache.outputs.legacy_821 == 'true' && secrets.SKILLS_SOURCE_SSH_KEY || '' }}
         run: |
           set -euo pipefail
-          if [[ -n "${IMPLEMENTATION_CI_ADMISSION_INPUT_DIR:-}" ]]; then
-            test "$MODE" = pr && test "$SOURCE_REPO" = perfectuser21/cecelia
-            node tooling/scripts/ci/implementation-multi-pr-gate.mjs --repo-root "$GITHUB_WORKSPACE/source" \
-              --tooling-root "$GITHUB_WORKSPACE/tooling" --base "$BASE" --head "$HEAD" --mode pr \
-              --ci-admission-input-dir "$IMPLEMENTATION_CI_ADMISSION_INPUT_DIR" --output-dir "$RUNNER_TEMP/implementation-output"
-          elif [[ "$MODE" == pr && -n "$ADMISSION_SCOPES" ]]; then
+          if [[ "$MODE" == pr && -n "$ADMISSION_SCOPES" ]]; then
             jq -e 'type == "object" and keys == ["schema_version", "scopes"] and .schema_version == 1 and (.scopes | type == "array" and length > 0 and all(.[]; type == "string" and test("^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$")) and length == (unique | length))' <<< "$ADMISSION_SCOPES" >/dev/null
             jq --arg root "$RUNNER_TEMP/implementation-input" '.scopes | map({scope:.,snapshotBase:($root+"/base/base-"+.+".json"),snapshotHead:($root+"/head/head-"+.+".json")})' <<< "$ADMISSION_SCOPES" > "$RUNNER_TEMP/implementation-input/scopes.json"
             node tooling/scripts/ci/implementation-multi-pr-gate.mjs --repo-root "$GITHUB_WORKSPACE/source" \

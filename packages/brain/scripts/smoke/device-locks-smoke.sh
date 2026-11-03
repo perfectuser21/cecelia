@@ -11,7 +11,7 @@
 #  6) release rowCount 透传
 #
 # 用法：bash packages/brain/scripts/smoke/device-locks-smoke.sh
-# CI：由 packages/quality/smoke-allowlist.txt 注册后，ci-smoke-glob-runner.yml 自动调用
+# CI：由 packages/brain/config/smoke/smoke-allowlist.txt 注册后，ci-smoke-glob-runner.yml 自动调用
 #
 # 退出码：0 = 全部通过，非 0 = 某项失败
 

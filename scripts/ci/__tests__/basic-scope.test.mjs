@@ -9,12 +9,13 @@ import {planChecks} from '../basic-scope.mjs';
 
 const cli = fileURLToPath(new URL('../basic-scope.mjs', import.meta.url));
 const components = rows => [...new Set(rows.map(row => row.component))];
-const all = ['brain-unit', 'brain-integration', 'image', 'engine', 'quality', 'mcp', 'api', 'api-integration', 'dashboard', 'ops', 'scripts'];
+const all = ['brain-unit', 'brain-integration', 'image', 'mcp', 'api', 'api-integration', 'dashboard', 'ops', 'scripts'];
 
-test('全量只覆盖现役组件；旧frontend自身改动仍明确验证', () => {
+test('已退役frontend不再进入矩阵，旧路径差分仍保守验证全部现役组件', () => {
   assert.equal(planChecks([], {full: true}).some(row => row.component === 'frontend'), false);
-  assert.deepEqual(components(planChecks(['frontend/src/App.tsx'])), ['frontend', 'scripts']);
-  assert.ok(components(planChecks(['frontend/vite.config.ts'])).includes('frontend'));
+  for (const path of ['frontend/src/App.tsx', 'frontend/vite.config.ts']) {
+    assert.deepEqual(components(planChecks([path])), all);
+  }
 });
 
 test('文档改动仍运行基础 CI 回归，且不触发应用测试', () => {
@@ -25,7 +26,7 @@ test('文档改动仍运行基础 CI 回归，且不触发应用测试', () => {
 test('运行时Markdown提示词必须执行完整所属组件，不能因扩展名免检', () => {
   for (const path of ['packages/brain/src/prompts/attach-decision.md',
     'packages/brain/scripts/coding-workflow/prompts/build.md']) {
-    assert.deepEqual(components(planChecks([path])), ['brain-unit', 'brain-integration', 'image', 'engine', 'api', 'api-integration', 'ops', 'scripts'], path);
+    assert.deepEqual(components(planChecks([path])), ['brain-unit', 'brain-integration', 'image', 'api', 'api-integration', 'ops', 'scripts'], path);
   }
   assert.deepEqual(components(planChecks(['apps/dashboard/src/page.mdx'])), ['dashboard', 'scripts']);
   for (const path of ['unknown/prompt.md', 'docs/example.mdx']) {
@@ -38,17 +39,17 @@ test('Android改动必须执行真实Android单测，不能用JS测试替代', (
   assert.ok(components(planChecks(['apps/android-agent/tsconfig.json'])).includes('android'));
 });
 
-test('Brain、Engine 与 API 共享依赖，完整运行相关组件与六个 Brain 分片', () => {
-  for (const path of ['packages/brain/src/routes.js', 'packages/engine/src/index.ts', 'apps/api/src/index.ts']) {
+test('Brain 与 API 共享依赖，完整运行相关组件与六个 Brain 分片', () => {
+  for (const path of ['packages/brain/src/routes.js', 'apps/api/src/index.ts']) {
     const rows = planChecks([path]);
-    assert.deepEqual(components(rows), ['brain-unit', 'brain-integration', 'image', 'engine', 'api', 'api-integration', 'ops', 'scripts']);
+    assert.deepEqual(components(rows), ['brain-unit', 'brain-integration', 'image', 'api', 'api-integration', 'ops', 'scripts']);
     assert.deepEqual(rows.filter(row => row.component === 'brain-unit').map(row => row.shard), [1, 2, 3, 4, 5, 6]);
   }
 });
 
 test('独立组件选择完整测试范围，结果去重且顺序稳定', () => {
-  const paths = ['apps/dashboard/src/App.tsx', 'frontend/src/App.tsx', 'packages/quality/tests/guard.test.js', 'packages/mcp-readonly/server.js'];
-  const expected = ['quality', 'mcp', 'dashboard', 'frontend', 'scripts'];
+  const paths = ['apps/dashboard/src/App.tsx', 'packages/mcp-readonly/server.js'];
+  const expected = ['mcp', 'dashboard', 'scripts'];
   assert.deepEqual(components(planChecks(paths)), expected);
   assert.deepEqual(planChecks([...paths].reverse().concat(paths)), planChecks(paths));
 });
@@ -124,7 +125,7 @@ test('主分支全量仍读取真实差分并补上本次修改的客户端', t 
   assert.equal(result.status, 0, result.stderr);
   const selected = components(JSON.parse(result.stdout).include);
   assert.ok(selected.includes('android'));
-  assert.ok(selected.includes('frontend'));
+  assert.equal(selected.includes('frontend'), false);
   for (const component of all) assert.ok(selected.includes(component));
 });
 

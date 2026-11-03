@@ -69,6 +69,13 @@ esac
 }
 
 function runSwap(dir, log, extraEnv = {}) {
+  const deployRoot = extraEnv.DEPLOY_ROOT_DIR ?? join(dir, 'deploy-root');
+  if (deployRoot) {
+    mkdirSync(join(deployRoot, 'packages/brain/config/smoke'), { recursive: true });
+    mkdirSync(join(deployRoot, 'packages/brain/scripts/smoke'), { recursive: true });
+    writeFileSync(join(deployRoot, 'packages/brain/config/smoke/smoke-core.txt'), 'isolated-core-smoke.sh\n');
+    writeFileSync(join(deployRoot, 'packages/brain/scripts/smoke/isolated-core-smoke.sh'), '#!/usr/bin/env bash\nexit 0\n');
+  }
   const credentialFile = extraEnv.CECELIA_INTERNAL_ENV_FILE ?? join(dir, 'cecelia-internal.env');
   if (extraEnv.CECELIA_INTERNAL_ENV_FILE === undefined) {
     writeFileSync(credentialFile, `CECELIA_INTERNAL_TOKEN=${'a'.repeat(64)}\n`);
@@ -87,6 +94,7 @@ function runSwap(dir, log, extraEnv = {}) {
           DOCKER_LOG: log,
           GREEN_STABLE_SUCCESSES: '1',
           EXPECTED_SHA: 'a'.repeat(40),
+          DEPLOY_ROOT_DIR: deployRoot,
           CECELIA_INTERNAL_ENV_FILE: credentialFile,
           ...extraEnv,
         },
@@ -136,11 +144,12 @@ describe('bluegreen_swap', () => {
     expect(code).not.toBe(0);
   });
 
-  it('green 健康时，sidecar 未设置则直接删 blue 并 return 0', () => {
+  it('green 健康且显式紧急SKIP时，无sidecar路径允许切换并调用告警', () => {
     const log = makeMockDocker(tmp, { greenHealthy: true });
-    // 不设 DEPLOY_ROOT_DIR → 无 sidecar，走旧路径
-    const { code, calls } = runSwap(tmp, log);
-    expect(calls).toMatch(/rm -f cecelia-node-brain(?!-green)/); // blue 被删
+    const { code, calls, stdout } = runSwap(tmp, log, { DEPLOY_ROOT_DIR: '', SKIP_PRE_SWAP_SMOKE: '1' });
+    expect(calls).toMatch(/rm -f cecelia-node-brain(?!-green)/);
+    expect(stdout).toContain('SKIP_PRE_SWAP_SMOKE=1');
+    expect(stdout).toContain('[bark]');
     expect(code).toBe(0);
   });
 
@@ -481,7 +490,8 @@ it('目标镜像SHA不符时，在启动异步sidecar及删除blue之前拒绝',
   const deployRoot = mkdtempSync(join(tmpdir(), 'bg-sha-root-'));
   try {
     const log = makeMockDocker(tmp, { greenHealthy: true, imageSha: 'b'.repeat(40) });
-    const { code, calls } = runSwap(tmp, log, { DEPLOY_ROOT_DIR: deployRoot });
+    const { code, calls, stdout } = runSwap(tmp, log, { DEPLOY_ROOT_DIR: deployRoot });
+    expect(stdout).toContain('目标镜像 SHA 未确认');
     expect(code).toBe(1);
     expect(calls).not.toMatch(/run .*cecelia-bluegreen-sidecar/);
     expect(calls).not.toMatch(/rm -f cecelia-node-brain(\n|$)/m);

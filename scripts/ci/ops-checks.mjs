@@ -16,6 +16,7 @@ const ROOT_SHELL = [
   /^preview-.*\.test\.sh$/,
   /^codex-remote-launch.*\.test\.sh$/,
   /^codex-request.*\.test\.sh$/,
+  /^dashboard-release.*\.test\.sh$/,
 ];
 // 仅纳入经核对的隔离 fixture 或只读部署守卫；不恢复整个历史 smoke glob。
 const SAFE_SMOKES = [

@@ -40,7 +40,7 @@ source "$REPO_ROOT/scripts/lib/worktree-node-modules.sh" || exit 1
 # 创建符号链接使本地检查入口能解析依赖
 if [[ "$REPO_ROOT" != "$MAIN_REPO_ROOT" ]]; then
   link_missing_node_modules "$ROOT_NM" "$REPO_ROOT/node_modules"
-  for package_dir in packages/engine packages/brain apps/api apps/dashboard; do
+  for package_dir in packages/brain apps/api apps/dashboard; do
     link_missing_node_modules \
       "$MAIN_REPO_ROOT/$package_dir/node_modules" \
       "$REPO_ROOT/$package_dir/node_modules"
@@ -83,7 +83,7 @@ PASS=true
 # push后的候选CI、合并和生产读回可以仍为[ ]；每项必须有真实可核验的Test映射。
 # 复用正式validator，禁止用勾选状态或echo等假测试代替验收证据。
 DOD_FILES=$(echo "$CHANGED_FILES" | grep -E '(^|/)DoD([.-][^/]+)?\.md$' || true)
-DOD_MAPPING_CHECKER="$REPO_ROOT/packages/quality/scripts/devgate/check-dod-mapping.cjs"
+DOD_MAPPING_CHECKER="$REPO_ROOT/scripts/devgate/check-dod-mapping.cjs"
 if [[ -n "$DOD_FILES" ]]; then
   while IFS= read -r dod_rel; do
     [[ -z "$dod_rel" ]] && continue
@@ -115,11 +115,11 @@ run_preflight() {
 }
 
 # 本地按变更包运行快速准备命令，不重复 GitHub 的完整组件测试。
-for PKG in packages/engine packages/brain apps/api apps/dashboard; do
+for PKG in packages/brain apps/api apps/dashboard; do
   if echo "$CHANGED_FILES" | grep -q "^$PKG/"; then
     case "$PKG" in
       packages/brain) run_preflight "$PKG" npm run lint ;;
-      packages/engine|apps/api) run_preflight "$PKG" npm run typecheck ;;
+      apps/api) run_preflight "$PKG" npm run typecheck ;;
       apps/dashboard) run_preflight "$PKG" npm run build ;;
     esac
   fi

@@ -25,7 +25,7 @@ import yaml from 'js-yaml';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '../..');
 
-const CONTRACT_FILE = join(ROOT, 'packages/quality/contracts/cecelia-module-boundaries.yaml');
+const CONTRACT_FILE = join(ROOT, 'packages/brain/config/contracts/cecelia-module-boundaries.yaml');
 
 // ─── 参数解析 ───────────────────────────────────────────────────────────────
 const BASE_ARG = process.argv.find(a => a.startsWith('--base='))?.split('=')[1];

@@ -77,8 +77,8 @@ sync_json() {
 echo '📥 同步中...'
 sync_json 'Anthropic Claude API'   anthropic.json  credential
 # ⚠️ 2026-09-07 实测：CS vault 里已经没有「OpenAI-claudecode2026」这个条目
-#    （改名或删了），所以 openai.env 一直生不出来。而
-#    packages/engine/runners/codex/playwright-runner.sh 还在 source 它。
+#    （改名或删了），所以 openai.env 一直生不出来。
+#    Codex Bridge 使用注入的订阅账号；旧 Playwright runner 已退役。
 #    保留这一行是为了条目一旦被重建就能自动接上；真要修得先确认该用哪个条目
 #    （vault 里现有 'OpenAI-JNSY Affine' 和 5 个 'Codex teamN auth'，用途不同，
 #    不能瞎指）。

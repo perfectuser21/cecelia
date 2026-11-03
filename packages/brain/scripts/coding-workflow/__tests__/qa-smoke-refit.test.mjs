@@ -80,15 +80,15 @@ describe('dropSmokeBlocks：从 runner 生成的 smoke 里剔除条目', () => {
 describe('unregisterSmoke：零固化时删脚本并撤登记', () => {
   it('删脚本、从 allowlist / write-targets 撤掉这一行，别的行不动；返回改动路径', () => {
     const wt = fs.mkdtempSync(path.join(os.tmpdir(), 'qa-unreg-'));
-    fs.mkdirSync(path.join(wt, 'packages/quality'), { recursive: true });
-    fs.writeFileSync(path.join(wt, 'packages/quality/smoke-allowlist.txt'), 'a.sh\n');
-    fs.writeFileSync(path.join(wt, 'packages/quality/smoke-write-targets.txt'), 'b.sh\n');
+    fs.mkdirSync(path.join(wt, 'packages/brain/config/smoke'), { recursive: true });
+    fs.writeFileSync(path.join(wt, 'packages/brain/config/smoke/smoke-allowlist.txt'), 'a.sh\n');
+    fs.writeFileSync(path.join(wt, 'packages/brain/config/smoke/smoke-write-targets.txt'), 'b.sh\n');
     const smoke = { ...smokeOf(['T-1']), writes: true };
     registerSmoke(wt, smoke);
     const changed = unregisterSmoke(wt, smoke.name);
     expect(fs.existsSync(path.join(wt, QA_SMOKE_DIR, smoke.name))).toBe(false);
-    expect(fs.readFileSync(path.join(wt, 'packages/quality/smoke-allowlist.txt'), 'utf8')).toBe('a.sh\n');
-    expect(fs.readFileSync(path.join(wt, 'packages/quality/smoke-write-targets.txt'), 'utf8')).toBe('b.sh\n');
-    expect(changed).toEqual([`${QA_SMOKE_DIR}/${smoke.name}`, 'packages/quality/smoke-allowlist.txt', 'packages/quality/smoke-write-targets.txt']);
+    expect(fs.readFileSync(path.join(wt, 'packages/brain/config/smoke/smoke-allowlist.txt'), 'utf8')).toBe('a.sh\n');
+    expect(fs.readFileSync(path.join(wt, 'packages/brain/config/smoke/smoke-write-targets.txt'), 'utf8')).toBe('b.sh\n');
+    expect(changed).toEqual([`${QA_SMOKE_DIR}/${smoke.name}`, 'packages/brain/config/smoke/smoke-allowlist.txt', 'packages/brain/config/smoke/smoke-write-targets.txt']);
   });
 });

@@ -27,5 +27,5 @@ if (s.indexOf(\"name: 'backbone-contract-sync'\") > s.indexOf(\"name: 'scheduler
 "
 test -f migrations/482_backbone_activity_contracts.sql || { echo "FAIL 缺迁移 482"; exit 1; }
 test -f migrations/rollback/482_backbone_activity_contracts.down.sql || { echo "FAIL 缺回滚 482"; exit 1; }
-grep -q "backbone-contract-sync-smoke.sh" ../quality/smoke-allowlist.txt || { echo "FAIL smoke 未登记 allowlist"; exit 1; }
+grep -q "backbone-contract-sync-smoke.sh" config/smoke/smoke-allowlist.txt || { echo "FAIL smoke 未登记 allowlist"; exit 1; }
 echo "[backbone-contract-sync-smoke] PASS"

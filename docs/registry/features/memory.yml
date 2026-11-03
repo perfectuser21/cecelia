@@ -488,7 +488,6 @@ features:
         - packages/brain/src/__tests__/learnings-received.test.js
         - packages/brain/src/__tests__/learnings-vectorize.test.js
         - packages/brain/src/__tests__/upsert-learning.test.js
-        - packages/quality/tests/hooks/append-learnings.test.ts
       integration: []
       e2e: []
       regression: []
@@ -506,7 +505,6 @@ features:
             - packages/brain/src/__tests__/learnings-received.test.js
             - packages/brain/src/__tests__/learnings-vectorize.test.js
             - packages/brain/src/__tests__/upsert-learning.test.js
-            - packages/quality/tests/hooks/append-learnings.test.ts
           integration: []
           e2e: []
         status: active

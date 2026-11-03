@@ -42,7 +42,7 @@ test('默认Brain与维护中组件测试不允许重新引入字面量自比较
   const files = new Set([
     ...glob.sync(brain.test.include, { cwd: `${root}packages/brain`, ignore: brain.test.exclude, absolute: true }),
     ...glob.sync(['apps/{api,dashboard}/**/*.{test,spec}.{ts,tsx}',
-      'packages/{engine,quality,mcp-readonly}/**/*.{test,spec}.{js,ts,tsx,mjs}'],
+      'packages/mcp-readonly/**/*.{test,spec}.{js,ts,tsx,mjs}', 'scripts/dev/**/*.test.ts'],
     { cwd: root, ignore: ['**/node_modules/**', '**/dist/**'], absolute: true }),
   ]);
   assert.ok(files.size > 0, '测试清单为空不能通过');

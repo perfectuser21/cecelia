@@ -15,8 +15,6 @@ const directory = SKILL_SOURCE_ROOTS;
 test('默认实际配置不选外置正文，原生混合测试仍在普通单测集合中', async () => {
   const configs = {
     brain: (await import('../../../packages/brain/vitest.config.js')).default,
-    engine: (await import('../../../packages/engine/vitest.config.ts')).default,
-    quality: (await import('../../../packages/quality/vitest.config.ts')).default,
     root: (await import('../../../vitest.config.js')).default,
   };
   const selected = {};
@@ -32,15 +30,11 @@ test('默认实际配置不选外置正文，原生混合测试仍在普通单�
   for (const path of ['src/orchestrator/__tests__/kernel-callback-flow.integration.test.js', 'src/__tests__/golden-path-contract-task.test.js', 'src/__tests__/executor-report-prompt.test.js']) {
     assert.ok(selected.brain.has(path), `${path}的原生机制丢失`);
   }
-  for (const path of ['tests/launcher/claude-launch.test.ts','tests/integration/dev-flow-e2e.test.ts','tests/skills/worktree-path-migration.test.ts']) {
-    assert.ok(selected.engine.has(path), `${path}的原生机制丢失`);
-  }
+
 });
 
 test('外置正文合同集合明确且非空，原生launcher不被整文件迁走', () => {
   assert.ok(SKILL_SOURCE_TESTS.brain.includes('scripts/ci/__tests__/skill-contract.test.mjs'));
-  assert.ok(SKILL_SOURCE_TESTS.engine.includes('tests/proxy/phase81-13-points.test.ts'));
-  assert.ok(SKILL_SOURCE_TESTS.quality.includes('tests/regression/harness-android-target-environment.test.ts'));
   for (const component of Object.keys(directory)) {
     const config = skillSourceConfig(component, {});
     const files = glob.sync(config.test.include, {cwd:`${root}/${directory[component]}`, ignore:config.test.exclude});

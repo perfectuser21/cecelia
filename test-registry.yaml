@@ -30,15 +30,12 @@ brain_integration_suite:
   feature_registry: docs/registry/features/{decision,memory,orchestration,pipeline,publisher,task}.yml
   note: "Brain src/__tests__/ 整体由 vitest shard 管理，L4 统一运行。所有 507 个文件已按 feature 归属注册到 capabilities。"
 
-# ─── packages/engine/ ─────────────────────────────────────────────────────────
-# Engine 测试：40 个文件，已接入 L3
-# 按 feature 归属已注册到 docs/registry/features/engine.yml
-engine_suite:
-  managed_by: packages/engine/vitest.config.ts
+# ─── scripts/dev/ ──────────────────────────────────────────────────────────
+dev_tools_suite:
+  managed_by: scripts/dev/check.mjs
   ci: L3
-  type: unit
-  count: 40
-  feature_registry: docs/registry/features/engine.yml
+  type: integration
+  note: "开发守卫与worktree真实fixture，由主CI的scripts组件执行。"
 
 # ─── apps/api/ ────────────────────────────────────────────────────────────────
 # Workspace 前端测试：44 个文件，已接入 L3
@@ -48,27 +45,10 @@ workspace_suite:
   type: unit
   count: 44
 
-# ─── packages/quality/ ────────────────────────────────────────────────────────
-# QA 基础设施测试：30 个文件，已接入 L3
-# 按 feature 归属已注册到 docs/registry/features/{task,engine,orchestration,memory}.yml
-quality_suite:
-  managed_by: packages/quality/vitest.config.ts
-  ci: L3
-  type: unit
-  count: 30
-  feature_registry: docs/registry/features/{task,engine,orchestration,memory}.yml
-
 # ─── apps/dashboard/ ──────────────────────────────────────────────────────────
 # Dashboard UI 测试：已接入 L3
 dashboard_suite:
   managed_by: apps/dashboard/vitest.config.ts
-  ci: L3
-  type: unit
-
-# ─── frontend/ ────────────────────────────────────────────────────────────────
-# Legacy frontend 测试：已接入 L3（迁移期间保留）
-frontend_suite:
-  managed_by: frontend/vitest.config.ts
   ci: L3
   type: unit
 
@@ -200,43 +180,6 @@ tests:
     ci: L4
     status: active
     note: "完整发布工作流：任务创建→凭证设置→记录保存（需真实DB）"
-
-  # — 前端测试 ——————————————————————————————————————————————————————————————————
-
-  - id: frontend-log-entry
-    path: tests/frontend/LogEntry.test.tsx
-    type: unit
-    ci: L3
-    status: deprecated
-    note: "老旧UI单元测试(Mar 7)，React Testing Library，低价值"
-
-  - id: frontend-log-filter
-    path: tests/frontend/LogFilter.test.tsx
-    type: unit
-    ci: L3
-    status: deprecated
-    note: "老旧UI单元测试(Mar 7)，低价值"
-
-  - id: frontend-log-viewer
-    path: tests/frontend/LogViewer.test.tsx
-    type: unit
-    ci: L3
-    status: deprecated
-    note: "老旧UI单元测试(Mar 7)，mock fetch，低价值"
-
-  - id: frontend-okr-page-preserve
-    path: tests/frontend/okr-page-preserve.test.ts
-    type: unit
-    ci: L3
-    status: active
-    note: "OKRPage回归合约：进度条、状态徽章、InlineEdit集成保护"
-
-  - id: frontend-project-detail-preserve
-    path: tests/frontend/project-detail-preserve.test.ts
-    type: unit
-    ci: L3
-    status: active
-    note: "ProjectDetail回归合约：任务列表、API调用保护"
 
   # — packages 目录下的合约测试 —————————————————————————————————————————————————
 

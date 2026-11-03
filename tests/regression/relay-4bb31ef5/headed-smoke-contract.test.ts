@@ -22,7 +22,7 @@ describe('headed smoke contract [BEHAVIOR]', () => {
   it('e2e wrapper 调用 claude-headed-dispatch-smoke.sh', () => {
     const script = readWrapper();
     expect(script).toContain('packages/brain/scripts/smoke/claude-headed-dispatch-smoke.sh');
-    expect(script).toContain('packages/quality/smoke-allowlist.txt');
+    expect(script).toContain('packages/brain/config/smoke/smoke-allowlist.txt');
   });
 
   it('payload 包含 mode=headed、executor=claude、orchestrator=skill-relay 且禁用 token/github_token/anthropic_token/thin_prd', () => {

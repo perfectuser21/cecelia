@@ -8,7 +8,7 @@ const script = fileURLToPath(new URL(
   import.meta.url,
 ));
 const denylist = fileURLToPath(new URL(
-  '../../../../quality/smoke-denylist.txt',
+  '../../../config/smoke/smoke-denylist.txt',
   import.meta.url,
 ));
 describe('unified work router role-chain smoke CI contract', () => {
