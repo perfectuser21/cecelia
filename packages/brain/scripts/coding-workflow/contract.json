@@ -1,5 +1,7 @@
 {
   "workflow": "coding_spec",
+  "commander": { "enabled": true },
+  "on_status": { "done": "next", "retry": "retry", "failed": "stop", "empty": "next", "partial": "stop", "needs_review": "pause" },
   "activities": [
     {
       "key": "intent",
@@ -33,7 +35,9 @@
         "protocol": "json-stdio-v1",
         "phase": "source",
         "entry": "activities/spec.mjs",
+        "executor_kind": "agent",
         "on_failure": "stop_run",
+        "retry_safe": true,
         "max_attempts": 2
       }
     },
@@ -61,6 +65,7 @@
         "protocol": "json-stdio-v1",
         "phase": "source",
         "entry": "activities/spec-review.mjs",
+        "executor_kind": "agent",
         "on_failure": "stop_run",
         "max_attempts": 1
       }
@@ -94,6 +99,7 @@
         "protocol": "json-stdio-v1",
         "phase": "source",
         "entry": "activities/build.mjs",
+        "executor_kind": "agent",
         "on_failure": "stop_run",
         "max_attempts": 1
       }
@@ -127,6 +133,7 @@
         "protocol": "json-stdio-v1",
         "phase": "batch_end",
         "entry": "activities/verify.mjs",
+        "executor_kind": "agent",
         "on_failure": "stop_run",
         "max_attempts": 1
       }
@@ -191,6 +198,7 @@
         "phase": "finalize",
         "entry": "activities/report.mjs",
         "on_failure": "stop_run",
+        "retry_safe": true,
         "max_attempts": 2
       }
     }

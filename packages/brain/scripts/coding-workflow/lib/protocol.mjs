@@ -1,5 +1,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import {AsyncLocalStorage} from 'node:async_hooks';
+
+const activityContext=new AsyncLocalStorage();
+export const currentCommanderGuidance=()=>{
+  const value=activityContext.getStore()?.commander_guidance;
+  return Array.isArray(value)?value.filter(x=>typeof x==='string'&&x.trim()).slice(0,10).map(x=>x.slice(0,16000)):[];
+};
 
 const OUTPUT_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const STATUSES = new Set(['completed', 'partial', 'failed']);
@@ -133,8 +140,8 @@ export async function runActivity(handler, provenance) {
     if (provenance) {
       validateBase(input);
       const { runRecordedActivity } = await import('./activity-provenance.mjs');
-      result = await runRecordedActivity(input, provenance, async (current) => buildResult(current, await handler(current)));
-    } else result = buildResult(input, await handler(input));
+      result = await runRecordedActivity(input, provenance, async (current) => buildResult(current, await activityContext.run(current,()=>handler(current))));
+    } else result = buildResult(input, await activityContext.run(input,()=>handler(input)));
   } catch (error) {
     log(error?.stack || String(error));
     result = buildResult(input, {

@@ -106,15 +106,18 @@ test('真Fleet HTTP→Runner→Activity/独立验收→Recorder→真PG；断ACK
     await new Promise(resolve => setTimeout(resolve, 10));
   }
   expect(terminal.status).toBe('completed');
-  expect(terminal.writeback.pending).toBe(1); expect(terminal.writeback.acked).toBe(1);
-  expect((await pool.query('SELECT count(*)::int AS n FROM spans')).rows[0].n).toBe(2);
+  const storedCount=(await pool.query('SELECT count(*)::int AS n FROM spans')).rows[0].n;
+  expect(terminal.writeback.pending).toBe(1);expect(terminal.writeback.acked).toBe(storedCount-1);expect(storedCount).toBeGreaterThan(2);
   runner.close(); runner = createWorkflowRunner(options); resources.push(() => runner.close());
   const recovered = await runner.flush({ run_id: f.identity.run_id, task_id: f.identity.task_id });
-  expect(recovered.writeback).toMatchObject({ total: 2, acked: 2, pending: 0, blocked: 0 });
+  expect(recovered.writeback).toMatchObject({ total: storedCount, acked: storedCount, pending: 0, blocked: 0 });
   await runner.start(f.identity); await runner.flushPending();
   expect(fs.readFileSync(path.join(f.root, 'effects'), 'utf8')).toBe('x');
   const readback = await (await fetch(`${brainUrl}/api/brain/spans?run_id=${f.identity.run_id}`)).json();
-  expect(readback.total).toBe(2);
+  expect(readback.total).toBe(storedCount);
+  expect(readback.spans.filter(s=>s.evidence.kind==='execution')).toHaveLength(1);
+  expect(readback.spans.filter(s=>s.evidence.kind==='validation')).toHaveLength(1);
+  expect(readback.spans.some(s=>s.evidence.event?.event_type==='COMMANDER_SLEEP')).toBe(true);
   const execution = readback.spans.find(s => s.evidence.kind === 'execution'), validation = readback.spans.find(s => s.evidence.kind === 'validation');
   expect(Object.keys(execution.evidence.questions)).toHaveLength(10);
   expect(execution.evidence.questions.A2.actual.input.query).toBe('actual-input');
@@ -157,7 +160,7 @@ test('取消后finalize失败必须保留unknown占用，不能把请求取消�
   expect(fs.existsSync(path.join(f.root, 'state', 'execution.lock'))).toBe(true);
 }, 15000);
 
-test('取消后所有finalize完成且独立cleanup证据pass才释放占用', async () => {
+test('取消停止未知时即使清场脚本可以自报完成仍禁止运行并保留占用', async () => {
   const f = fixture();
   const work = `import fs from 'node:fs';let t='';for await(const c of process.stdin)t+=c;fs.appendFileSync('effects','x');setInterval(()=>{},1000);`;
   const cleanup = `import fs from 'node:fs';let t='';for await(const c of process.stdin)t+=c;const x=JSON.parse(t);fs.writeFileSync('cleanup-proof','safe');console.log(JSON.stringify({schema_version:1,run_tag:x.run_tag,status:'completed',outputs:{cleaned:true},metrics:{},evidence:['cleanup-proof']}));`;
@@ -182,10 +185,11 @@ test('取消后所有finalize完成且独立cleanup证据pass才释放占用', a
     if (!['starting','running','validating'].includes(terminal.status)) break;
     await new Promise(resolve => setTimeout(resolve, 10));
   }
-  expect(terminal.status).toBe('cancelled'); expect(terminal.validation.cleanup.verdict).toBe('pass');
+  expect(terminal.status).toBe('unknown');expect(terminal.validation.cleanup.verdict).toBe('unknown');
   expect(terminal.validation.workflow.verdict).toBe('unknown');
-  expect((await runner.maintenance()).pending).toBe(0);
-  expect(fs.existsSync(path.join(f.root, 'state', 'execution.lock'))).toBe(false);
+  expect(fs.existsSync(path.join(f.root,'cleanup-proof'))).toBe(false);
+  expect((await runner.maintenance()).pending).toBe(1);
+  expect(fs.existsSync(path.join(f.root, 'state', 'execution.lock'))).toBe(true);
 }, 15000);
 
 test('输入映射预检失败也进中央错误账，不冒充已调用实现', async () => {

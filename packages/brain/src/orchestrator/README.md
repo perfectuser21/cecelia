@@ -244,3 +244,21 @@ provider_session_id、error_code，再查 `orchestrator_decision_log`。不要�
 | `loop.js` / `derive.js` / `ground-truth.js` | 主循环、纯函数推导、外部真相读取 |
 | `execution-contract.js` / `skill-bundle.js` / `provider-registry.js` / `providers/` | TaskBundle 契约、Skill 取证、provider 解析与调用描述 |
 | `pg-checkpointer.js` | **非 Kernel**：LangGraph `PostgresSaver` 单例工厂，服务 `workflows/`（见上方例外说明）|
+
+## Runner vs Commander
+
+公共 Activity 循环只有 `runActivityContract`。Fleet Worker 的 HTTP 入口和 ZenithJoy 获客适配器复用该实现；业务适配器提供执行者、固定检查器和资源读回，不另选活动或重写循环。不同 Worker 是同一 Runner 的实例。
+
+Runner 按冻结合同顺序执行，每步先检查前置条件、再调用执行者、再独立验收，按 `on_status` 将 done/retry/failed/empty/partial/needs_review 路由到 next/retry/stop/pause。未知状态转 needs_review；重试须有上限与 retry_safe，恢复须有 recovery_safe。checkpoint 在 start/end 两处都只记录，hard 的缺证据或失败阻断。旧合同保留兼容解析；未配置检查的探索步骤标记 unchecked，不成为正式通过证据。
+
+Commander 在 run 开始唤醒，结束休眠，接收 progress/question/error/stall/check_result，只能 answer、steer、abort、none。它不能判定状态或批准外部动作。不可达时记录 unavailable，按代码规则继续；一次失败检查最多给一次恢复机会，指导进入固定 Skill 下一回合，再次独立验收。没有安全恢复适配器就待审，未知副作用只允许只读恢复。旧执行停止未知时跳过现场清场、保留占用；根进程退出不能证明脱离子进程或远程动作停止。
+
+受保护 profile 的 `commander` 配置使用 `{kind:"openclaw",skill:{entry,version},timeout_s,budget}`，或 `{kind:"process",entry,argv,skill,timeout_s,budget}`；入口、Skill 和所有依赖必须列入 `files` 的 SHA-256。预算含 max_steers、max_recovery_turns（0或1）、max_calls、timeout_ms；若指定 max_cost，须同时提供每次调用预留上界 max_call_cost。Skill 正文真身在 zenithjoy-skills 的 runner-commander@1.0.0，业务仓通过 `.skills-source.json` 固定。没有可用配置会记录 unavailable，不把它当业务失败。OpenClaw沿现场既有登录调用，不创建账号或改凭据。
+
+标准进程默认使用原 JSON/EOF 协议；agent adapter 显式设 `runtime.interactive=true` 后才使用 JSONL 输入。stderr 的 `activity-agent-event/v1` progress/question/error 由 Runner 转给 Commander，纠正写入下一行 stdin；adapter须实际消费，不能把发送成功当成执行成功。stall 根据最后一次真实进展计算，不以心跳冒充进展。
+
+每个 Activity 保留 commander_interventions、rescued、validator_verdict，代码失败与 Skill 救援分别计数。交流、检查和路由属于观察记录，不得代替执行证据。Recorder 持久落盘并在中央内容读回后 ACK，包括最终 sleep 事件；断网只补记录，不重做业务。失败及待审只生成未确认样本候选，不自动升级成熟度或样本。
+
+本次代码统一公共 Worker、固定 Activity CLI（包括 coding workflow 初始链）与获客 101–104 的 Activity 循环；编码 PR 后处理 Commander 改为只读监督，不再改规格、追加额度或豁免 QA。运输及子进程执行器不是另一个业务 Runner。
+
+仍可达的旧发布 Commander/V2、整包 Skill invocation（含 authoring 调用）、factory 单阶段派发和 native assembly 维护尚未全部汇流。kernel 的 harness_initiative 主派发退役，但 golden_path_proposal 及 Fleet 启动端点仍可达，不能声称整个 kernel 已退役。上述路径牵涉既有锁、run 身份和外部动作合同，需逐项固定适配和独立验收；本次不直接改写在途身份或重放发送。这里是明确剩余缺口，不能仅因公共模块存在就宣称所有入口已迁移。合并前的代码测试不等于现网部署或真实模型指导质量验收。

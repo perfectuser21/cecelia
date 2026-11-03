@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import {resourceFreeReview} from './common-runner-review.js';
 import { isAbsolute } from 'node:path';
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { directory, endpointValid } from '../execution-directory/directory.js';
@@ -198,7 +199,8 @@ export function createCommonRunnerDispatcher({ pool, env = process.env, profiles
   async function settle(binding, receipt) {
     const central = { status: 'running', recording_status: 'pending' };
     const wb = receipt.writeback;
-    const finalStatus = { completed: 'success', failed: 'failed', cancelled: 'cancelled' }[receipt.status];
+    const review = receipt.status === 'needs_review';
+    const finalStatus = { completed: 'success', failed: 'failed', cancelled: 'cancelled', needs_review: 'failed' }[receipt.status];
     if (finalStatus && wb?.pending === 0 && wb.blocked === 0 && Number.isSafeInteger(wb.total)
       && wb.total > 0 && wb.acked === wb.total && HASH.test(wb.manifest_sha256 ?? '')) {
       const rows = (await pool.query(`SELECT occurrence_key,payload_sha256,evidence FROM spans
@@ -220,7 +222,7 @@ export function createCommonRunnerDispatcher({ pool, env = process.env, profiles
         && typeof workflow.acceptance_ref === 'string' && Array.isArray(workflow.evidence) && workflow.evidence.length > 0
         && matchesWorkflow && formalVerified);
       const cleanup = receipt.validation?.cleanup;
-      const cleanupVerified = receipt.status !== 'cancelled' || (cleanup?.verdict === 'pass'
+      const cleanupVerified = (review && resourceFreeReview(receipt)) || (!review && receipt.status !== 'cancelled') || (receipt.execution_unknown !== true && cleanup?.verdict === 'pass'
         && typeof cleanup.acceptance_ref === 'string' && Array.isArray(cleanup.evidence) && cleanup.evidence.length > 0
         && validations.some(row => digest(row.evidence.cleanup_validation) === digest(cleanup)));
       let reconciliationVerified = true;
@@ -233,12 +235,13 @@ export function createCommonRunnerDispatcher({ pool, env = process.env, profiles
           { kind: 'worker_receipt', machine_id: binding.machine_id, profile_sha256: binding.profile_sha256, status: receipt.status }];
         const summary = `公共Runner运行${receipt.status}；${wb.total}条执行记录已在Brain独立读回`;
         const result = { actor: 'common-runner', summary, evidence,
-          handoff: { summary, next_steps: [] }, common_runner: { mode: binding.mode, validation: receipt.validation, writeback: wb } };
-        const finished = await finishRun({ runId: binding.run_id, status: receipt.status, result,
+          handoff: { summary, next_steps: [] }, common_runner: { mode: binding.mode, business_status: receipt.status, validation: receipt.validation, writeback: wb } };
+        const finished = await finishRun({ runId: binding.run_id, status: review ? 'failed' : receipt.status, result,
           artifacts: [`brain:spans:${binding.run_id}`] }, { pool, strict: true });
-        const saved = finished?.updated ? null : (await pool.query('SELECT status,task_id,ended_at FROM task_runs WHERE run_id=$1', [binding.run_id])).rows[0];
-        if (finished?.updated || (saved?.status === finalStatus && saved.task_id === binding.task_id && saved.ended_at)) {
-          central.status = finalStatus; central.recording_status = 'confirmed';
+        const saved = finished?.updated ? null : (await pool.query('SELECT status,task_id,ended_at,result FROM task_runs WHERE run_id=$1', [binding.run_id])).rows[0];
+        if (finished?.updated || (saved?.status === finalStatus && saved.task_id === binding.task_id && saved.ended_at
+          && (!review || saved.result?.common_runner?.business_status === 'needs_review'))) {
+          central.status = review ? 'needs_review' : finalStatus; central.recording_status = 'confirmed';
         }
       }
     }

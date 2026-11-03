@@ -56,6 +56,14 @@ export function chainSpans(receipt, { taskId, startedAt }) {
       cursor = end;
     }
   }
+  // 监督事实沿原task/run与Activity occurrence上报；观察建议没有业务判定权。
+  for(const event of Array.isArray(receipt?.commander_events)?receipt.commander_events:[]){
+    if(typeof event?.event_type!=='string'||!event.event_type.startsWith('COMMANDER_'))continue;
+    const target=event.activity?out.findLast(s=>s.activity_id===ACTIVITY_IDS[event.activity]):event.phase==='wake'?out[0]:out.at(-1);
+    if(!target)continue;
+    target.evidence??={};target.evidence.commander_observation??={authority:'observation_only',events:[]};
+    target.evidence.commander_observation.events.push(event);
+  }
   return out;
 }
 

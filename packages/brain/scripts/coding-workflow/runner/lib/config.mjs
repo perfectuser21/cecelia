@@ -72,7 +72,7 @@ export function loadConfig(env = process.env) {
     judgeConn: resolveJudgeConfig(env),
     judgeTimeoutMs: positiveInt(env.CODING_WF_JUDGE_TIMEOUT_MS) ?? 10 * 60 * 1000,
     qaMaxJudgeBad: positiveInt(env.CODING_WF_QA_MAX_JUDGE_BAD) ?? 3,
-    // coding commander（决策 c167d6e3）：升级后起 Opus 会话裁决，每 PR 至多 commanderMax 次；上交主理人走 Bark
+    // coding Commander只观察升级并交主理人复核；原开关保持生效，不授予改规格/预算/验收权限。
     commander: env.CODING_WF_COMMANDER !== '0',
     commanderMax: positiveInt(env.CODING_WF_COMMANDER_MAX) ?? 3,
     commanderTimeoutMs: positiveInt(env.CODING_WF_COMMANDER_TIMEOUT_MS) ?? 40 * 60 * 1000,

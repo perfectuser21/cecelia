@@ -1,5 +1,6 @@
 import { createCommonRunnerDispatcher } from './lib/common-runner-dispatch.js';
 import { finalizeTask as finalizeCentralTask } from './lib/task-terminal.js';
+import { blockCommonRunnerForReview } from './lib/common-runner-review.js';
 import { recordTaskEventSafe } from './lib/task-event-log.js';
 
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
@@ -29,7 +30,7 @@ export async function runCommonRunnerTasks(pool, deps = {}) {
   const dispatcher = deps.dispatcher ?? createCommonRunnerDispatcher({ pool });
   const finalizeTask = deps.finalizeTask ?? finalizeCentralTask;
   const recordEvent = deps.recordEvent ?? recordTaskEventSafe;
-  const out = { dispatched: 0, reaped: 0, unknown: 0, failed_preflight: 0, errors: 0 };
+  const out = { dispatched: 0, reaped: 0, needs_review: 0, unknown: 0, failed_preflight: 0, errors: 0 };
   const began = Date.now();
   async function observe(task, initial) {
     const fixed = task.result?.common_runner;
@@ -44,6 +45,11 @@ export async function runCommonRunnerTasks(pool, deps = {}) {
       result = await dispatcher.dispatch('flush', plan.runId, { task_id: task.id });
     }
     const central = result.central_run;
+    if (central?.status === 'needs_review') {
+      const review = await blockCommonRunnerForReview(pool, task, plan.runId, result, {recordEvent});
+      if (review.blocked) out.needs_review++;
+      return;
+    }
     if (result.authenticated && central?.recording_status === 'confirmed' && ['success', 'failed', 'cancelled'].includes(central.status)) {
       // Task terminal vocabulary has no cancelled terminal: cancellation is failure to deliver, never success.
       const status = central.status === 'success' ? 'completed' : 'failed';

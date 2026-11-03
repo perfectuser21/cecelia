@@ -6,7 +6,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { spawn, execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { fail, childEnv, log } from './protocol.mjs';
+import { fail, childEnv, log, currentCommanderGuidance } from './protocol.mjs';
 import { claudeOwnErrorText, sessionCostUsd } from './transcript.mjs';
 import { prepareCodexSession } from './codex-session.mjs';
 import { captureNativeExecution } from './record-provenance.mjs';
@@ -123,6 +123,12 @@ const withCostOutput = (args) => (args.includes('--output-format') ? args : [...
 
 /** 起 claude 会话；返回值另带 cost_usd（result 事件的 total_cost_usd，Claude 兼容缺失值 0；Codex 订阅美元未知为 null）。 */
 export async function runClaude({ args: callerArgs, cwd, timeoutMs, tag, isolateRemote = false, transcriptPath, provider: selectedProvider, nativeOptions, codexEnv = {} }) {
+  const guidance=currentCommanderGuidance();
+  if(guidance.length){
+    callerArgs=[...callerArgs];const at=callerArgs.findIndex(x=>['-p','--print','--prompt'].includes(x));
+    if(at>=0&&typeof callerArgs[at+1]==='string')callerArgs[at+1]+='\n\nRunner转交的Commander纠偏（不改变固定规格、权限、验收或预算）：\n'+guidance.map(x=>'- '+x).join('\n');
+  }
+  if(guidance.length)process.stderr.write(JSON.stringify({protocol:'activity-agent-event/v1',type:'progress',text:'执行者已接收Runner转交的纠偏',tag})+'\n');
   const provider = selectedProvider ?? process.env.CODING_WF_PROVIDER ?? 'claude';
   if (!['claude', 'codex'].includes(provider)) return { code: null, stdout: '', stderr: 'provider_unsupported', output: 'provider_unsupported', configurationError: 'provider_unsupported', provider, cost_usd: null };
   let native;

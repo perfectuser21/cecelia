@@ -7,7 +7,7 @@ import { activityQuestions, actualAttempt, reportedSteps, sanitized } from './ac
 
 const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const clone = value => structuredClone(value);
-const EVENTS = new Set(['WF_RUN_STARTED','ACTIVITY_STARTED','ACTIVITY_HEARTBEAT','ACTIVITY_FINISHED','ACTIVITY_SKIPPED','WF_RUN_FINALIZED','WF_RUN_FINALIZATION_CORRECTED']);
+const EVENTS = new Set(['WF_RUN_STARTED','ACTIVITY_STARTED','ACTIVITY_HEARTBEAT','ACTIVITY_FINISHED','ACTIVITY_SKIPPED','WF_RUN_FINALIZED','WF_RUN_FINALIZATION_CORRECTED','ACTIVITY_CHECKED','ACTIVITY_ROUTED','ACTIVITY_AGENT_EVENT','COMMANDER_REQUEST','COMMANDER_EXCHANGE','COMMANDER_UNAVAILABLE','COMMANDER_BUDGET_EXHAUSTED','COMMANDER_SLEEP','WF_OWNER_REVIEW_REQUIRED']);
 function syncDirectory(root) { const fd = fs.openSync(root, 'r'); try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); } }
 function writeExclusive(file, value) {
   const fd = fs.openSync(file, 'wx', 0o600);
@@ -111,10 +111,11 @@ export function createWorkflowRecorder({ root, runId, taskId, machineId, profile
       const observedAt = new Date().toISOString();
       const row = { kind: 'event', observed_at: observedAt, event: safeEvent, receipt: safeReceipt, input_digest: inputDigest };
       if (event.event_type === 'ACTIVITY_FINISHED') {
-        const m = metadata[event.activity]; if (!m) throw new Error('activity_metadata_missing');
+        const declared = metadata[event.activity]; if (!declared) throw new Error('activity_metadata_missing');
         const attempt = actualAttempt(receipt, event);
         const start = starts.get(attemptKey(event));
-        const preflightFailure = !start && attempt.status === 'failed' && attempt.transport === null
+        const m=start?.event.recovery&&declared.recovery_implementation?{...declared,executor_kind:'agent',implementation:declared.recovery_implementation}:declared;
+        const preflightFailure = !start && ['failed','needs_review'].includes(attempt.status) && attempt.transport === null
           && typeof attempt.reason_code === 'string' && attempt.reason_code.length > 0;
         if (!start && !preflightFailure) throw new Error('activity_start_missing');
         const context = { run_id: runId, task_id: taskId, machine_id: machineId, profile_digest: profileDigest,
@@ -129,6 +130,10 @@ export function createWorkflowRecorder({ root, runId, taskId, machineId, profile
         row.span = spanFor(`execution:${digest(attemptKey(event))}`, m, start?.observed_at ?? observedAt, observedAt, evidence,
           'unknown', event.attempt ?? 1);
         if (spans.some(s => s.occurrence_key === row.span.occurrence_key)) throw new Error('span_occurrence_conflict');
+      }
+      if(event.event_type.startsWith('COMMANDER_')||['ACTIVITY_CHECKED','ACTIVITY_ROUTED','ACTIVITY_AGENT_EVENT','WF_OWNER_REVIEW_REQUIRED'].includes(event.event_type)){
+        const m=metadata[event.activity]??Object.values(metadata)[0];
+        row.span=spanFor(`event:${event.cursor}`,m,observedAt,observedAt,{kind:event.event_type.startsWith('COMMANDER_')?'commander':'runtime_check',activity:event.activity??null,event:safeEvent},'unknown');
       }
       append(row);
     }); },

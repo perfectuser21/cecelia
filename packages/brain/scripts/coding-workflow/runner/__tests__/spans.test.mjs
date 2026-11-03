@@ -22,6 +22,14 @@ describe('ACTIVITY_IDS', () => {
 });
 
 describe('chainSpans', () => {
+  it('真实回执监督事件完整归入原Activity/run，不能替失败执行改判',()=>{
+    const events=[{cursor:2,event_type:'COMMANDER_REQUEST',phase:'wake',activity:null,request:{run_id:'same'}},
+      {cursor:5,event_type:'COMMANDER_EXCHANGE',activity:'spec',action:{action:'none'},reply:{status:'completed'}},
+      {cursor:9,event_type:'COMMANDER_SLEEP',phase:'sleep'}];
+    const spans=chainSpans({commander_events:events,activities:[{key:'spec',status:'failed',attempts:[{attempt:1,status:'failed',reason_code:'spec_invalid',metrics:{},transport:{duration_s:1}}]}]},{taskId:TASK,startedAt:T0});
+    expect(spans).toHaveLength(1);expect(spans[0].run_id).toBe(`coding-workflow:${TASK}`);expect(spans[0].outcome).toBe('fail');
+    expect(spans[0].evidence.commander_observation).toEqual({authority:'observation_only',events});
+  });
   const receipt = {
     status: 'completed',
     activities: [

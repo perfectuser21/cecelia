@@ -13,7 +13,7 @@ const token = 'contract-test-control-key-32-characters';
 const servers = [];
 afterEach(async () => { await Promise.all(servers.splice(0).map(server => new Promise(resolve => server.close(resolve)))); });
 
-async function setup({ badSignature = false, wrongNonce = false, failStart = false, failStartOn, workerResponses = [], workerReceipt = {}, receiptForRequest, centralSpans = [], definition, profilesFile, reconciliation, tickEnabled, useDefaultStartGate = false, directoryEndpoint } = {}) {
+async function setup({ badSignature = false, wrongNonce = false, failStart = false, failStartOn, workerResponses = [], workerReceipt = {}, receiptForRequest, centralSpans = [], definition, profilesFile, reconciliation, tickEnabled, useDefaultStartGate = false, directoryEndpoint, savedCentralRun, finishAlready = false } = {}) {
   const requests = [];
   const server = http.createServer(async (req, res) => {
     let text = ''; for await (const chunk of req) text += chunk;
@@ -36,6 +36,7 @@ async function setup({ badSignature = false, wrongNonce = false, failStart = fal
       return { rows: [structuredClone(task)], rowCount: 1 };
     }
     if (sql.includes('FROM spans')) return { rows: centralSpans, rowCount: centralSpans.length };
+    if (savedCentralRun && sql.includes('SELECT status,task_id,ended_at,result FROM task_runs')) return {rows:[savedCentralRun],rowCount:1};
     if (definition && sql.includes('FROM task_runs')) return { rows: [{ task_id: taskId, status: 'running', ended_at: null }], rowCount: 1 };
     if (sql.includes('UPDATE tasks')) {
       if (sql.includes('SET claimed_by')) task.claimed_by = 'common-runner';
@@ -48,7 +49,7 @@ async function setup({ badSignature = false, wrongNonce = false, failStart = fal
   const authority = vi.fn(async (_db, input, operation) => operation({ executionVersionId: 'version-a', grantId: 'grant-a',
     node: { canonical_id: 'node-a', endpoints: { worker: directoryEndpoint ?? `http://127.0.0.1:${server.address().port}` } } }, pool));
   const start = vi.fn(async () => ({ id: 'ledger-row', run_id: runId }));
-  const finish = vi.fn(async () => ({ updated: true }));
+  const finish = vi.fn(async () => ({ updated: !finishAlready }));
   const reconcile = vi.fn(async () => reconciliation ?? { business_outcome: 'unknown', evidence_status: 'incomplete' });
   const dispatcher = createCommonRunnerDispatcher({ pool, token,
     allowLoopbackForTests: true,
@@ -338,5 +339,35 @@ describe('common runner HTTP dispatch', () => {
     const result = await x.dispatcher.dispatch('start', runId, { task_id: taskId, profile: 'demo', input: {}, mode: 'formal' });
     expect(x.reconcile).toHaveBeenCalledWith(x.pool, runId);
     expect(result.central_run.status).toBe(verified ? 'success' : 'running'); expect(x.finish).toHaveBeenCalledTimes(verified ? 1 : 0);
+  });
+});
+
+describe('needs_review中央闭环',()=>{
+  function reviewEvidence({cleanupPass=true,executionUnknown=false,pending=0}={}){
+    const cleanup={verdict:cleanupPass?'pass':'unknown',acceptance_ref:'cleanup@1',evidence:cleanupPass?['independent-lock-release-readback']:[]};
+    const validation={workflow:{verdict:'unknown'},activities:{demo:{verdict:'fail',acceptance_ref:'demo@1',evidence:['failed-check']}},cleanup};
+    const centralSpans=[{occurrence_key:'validation:review',payload_sha256:'e'.repeat(64),evidence:{task_id:taskId,machine_id:'node-a',profile_digest:'a'.repeat(64),mode:'exploration',kind:'validation',activity:'demo',workflow_validation:validation.workflow,validation:validation.activities.demo,cleanup_validation:cleanup}}];
+    const manifest=centralSpans.map(({occurrence_key,payload_sha256})=>({occurrence_key,payload_sha256}));
+    const writeback={pending,blocked:0,total:1,acked:pending?0:1,manifest_sha256:createHash('sha256').update(JSON.stringify(manifest)).digest('hex')};
+    return {centralSpans,workerReceipt:{status:'needs_review',execution_unknown:executionUnknown,validation,writeback}};
+  }
+  it('完整记录和清场独立读回后用failed生命周期保存needs_review业务状态',async()=>{
+    const x=await setup(reviewEvidence());const r=await x.dispatcher.dispatch('start',runId,{task_id:taskId,profile:'demo',input:{},mode:'exploration'});
+    expect(r.central_run).toMatchObject({status:'needs_review',recording_status:'confirmed'});
+    expect(x.finish).toHaveBeenCalledWith(expect.objectContaining({runId,status:'failed',result:expect.objectContaining({common_runner:expect.objectContaining({business_status:'needs_review'})})}),expect.objectContaining({strict:true}));
+  });
+  it.each([undefined,false,true])('免清场声明只有同时明确原执行已停止才允许审查归位 %s',async executionUnknown=>{
+    const evidence=reviewEvidence({cleanupPass:false});evidence.workerReceipt.cleanup_required=false;evidence.workerReceipt.execution_unknown=executionUnknown;
+    const x=await setup(evidence);const r=await x.dispatcher.dispatch('start',runId,{task_id:taskId,profile:'demo',input:{},mode:'exploration'});
+    expect(r.central_run.status).toBe(executionUnknown===false?'needs_review':'running');expect(x.finish).toHaveBeenCalledTimes(executionUnknown===false?1:0);
+  });
+  it.each([false,true])('finish ACK丢失仅凭同task且业务状态相同的中央记录确认needs_review %s',async matching=>{
+    const x=await setup({...reviewEvidence(),finishAlready:true,savedCentralRun:{status:'failed',task_id:taskId,ended_at:'2026-11-03T00:00:00Z',result:{common_runner:{business_status:matching?'needs_review':'failed'}}}});
+    const r=await x.dispatcher.dispatch('start',runId,{task_id:taskId,profile:'demo',input:{},mode:'exploration'});
+    expect(r.central_run.status).toBe(matching?'needs_review':'running');expect(r.central_run.recording_status).toBe(matching?'confirmed':'pending');
+  });
+  it.each([{cleanupPass:false},{executionUnknown:true},{pending:1}])('未独立确认资源清理或记录不得关闭run %j',async overrides=>{
+    const x=await setup(reviewEvidence(overrides));const r=await x.dispatcher.dispatch('start',runId,{task_id:taskId,profile:'demo',input:{},mode:'exploration'});
+    expect(r.central_run).toMatchObject({status:'running',recording_status:'pending'});expect(x.finish).not.toHaveBeenCalled();
   });
 });

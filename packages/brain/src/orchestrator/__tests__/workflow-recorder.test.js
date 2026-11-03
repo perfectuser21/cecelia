@@ -21,6 +21,24 @@ const receipt = (attempts = [{ attempt: 1, status: 'completed', outputs: { count
 afterEach(() => dirs.splice(0).forEach(d => fs.rmSync(d, { recursive: true, force: true })));
 
 describe('公共工作流持久证据Recorder', () => {
+  test('Commander交流和逐活动判定落盘并可中央补发，重启不丢失也不伪造业务通过', async () => {
+    const o=options();let r=createWorkflowRecorder(o);
+    await r.onEvent(event(1,'COMMANDER_EXCHANGE',{action:{action:'steer',text:'补采集原生身份'}}),receipt([]));
+    await r.onEvent(event(2,'ACTIVITY_CHECKED',{verdict:{verdict:'fail',evidence:['缺少读回']}}),receipt([]));
+    const first=r.inspect();
+    expect(first.spans).toHaveLength(2);expect(first.pending).toBe(2);
+    expect(first.spans.every(s=>s.outcome==='unknown')).toBe(true);
+    r=createWorkflowRecorder(o);expect(r.inspect()).toEqual(first);
+    expect(r.inspect().spans[0].evidence.event.action.text).toBe('补采集原生身份');
+  });
+  test('代码失败后的固定Skill救援按真实执行者与固定Skill来源记账', async () => {
+    const o=options();o.metadata.collect.recovery_implementation={kind:'agent',entry:'rescue.mjs',sha256:'b'.repeat(64),skill:{entry:'repair.md',version:'1.0.0',sha256:'c'.repeat(64)}};
+    const r=createWorkflowRecorder(o);
+    await r.onEvent(event(1,'ACTIVITY_STARTED',{recovery:true}),receipt([]));
+    await r.onEvent(event(2,'ACTIVITY_FINISHED'),receipt());
+    const span=r.inspect().spans[0];expect(span.executor_kind).toBe('agent');
+    expect(span.evidence.questions.B1.actual.entry).toBe('rescue.mjs');expect(span.evidence.questions.B1.actual.skill.version).toBe('1.0.0');
+  });
   test('正式身份必须齐全；探索只能unknown；声明不是观察、一次成功不是成熟度', async () => {
     const o = options(); delete o.metadata.collect.identity;
     expect(() => createWorkflowRecorder(o)).toThrow();
