@@ -96,19 +96,21 @@ describe('F1 step1 · 调度器机器不许自己接活干', () => {
     const d = deps({ CECELIA_LOCAL_EXECUTION_ENABLED: 'false' });
     const r = await spawnSkillRelaySession(TASK, d);
     expect(r.ok).toBe(false);
-    expect(r.error).toBe('local_execution_disabled_on_scheduler');
+    expect(r.error).toBe('kernel_runtime_retired');
     expect(d.spawnFn).not.toHaveBeenCalled();
   });
 
-  it('缺省不拦（行为零变化）—— 闸只在显式 false 时生效，防误杀执行机', async () => {
+  it('缺省同样拒绝退役relay，不能回到旧启动路径', async () => {
     const d = deps({});
     const r = await spawnSkillRelaySession(TASK, d);
-    expect(r?.error).not.toBe('local_execution_disabled_on_scheduler');
+    expect(r?.error).toBe('kernel_runtime_retired');
+    expect(d.spawnFn).not.toHaveBeenCalled();
   });
 
-  it("='true' 不拦（显式开启也放行）", async () => {
+  it("='true' 也不能重新启用退役relay", async () => {
     const d = deps({ CECELIA_LOCAL_EXECUTION_ENABLED: 'true' });
     const r = await spawnSkillRelaySession(TASK, d);
-    expect(r?.error).not.toBe('local_execution_disabled_on_scheduler');
+    expect(r?.error).toBe('kernel_runtime_retired');
+    expect(d.spawnFn).not.toHaveBeenCalled();
   });
 });

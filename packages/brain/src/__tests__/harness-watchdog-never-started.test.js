@@ -327,14 +327,14 @@ describe('resumeStalledHarnessDrivers — never-started branch (fabf6bd6)', () =
       // scope tightly to the 区段 C "never started" SELECT — section A also has
       // NOT EXISTS + initiative_runs in its subquery, but only 区段 C also filters
       // on t.claimed_at, so require that too to avoid cross-matching section A.
-      if (/SELECT/i.test(sql) && /NOT\s+EXISTS/i.test(sql) && /initiative_runs/.test(sql) && /claimed_at/i.test(sql)) {
+      if (/^\s*SELECT/i.test(sql) && /NOT\s+EXISTS/i.test(sql) && /initiative_runs/.test(sql) && /claimed_at/i.test(sql)) {
         return { rows: [{ id: TASK_ID }] };
       }
       if (isTaskLockSql(sql)) {
         return { rows: [{ id: TASK_ID, status: 'in_progress', claimed_at: new Date(0) }] };
       }
       if (isExactRunSql(sql)) return { rows: [] };
-      if (/SELECT/i.test(sql)) return { rows: [] };
+      if (/^\s*SELECT/i.test(sql)) return { rows: [] };
       if (/UPDATE\s+tasks/i.test(sql)) {
         updateSql = sql;
         updateParams = params;
