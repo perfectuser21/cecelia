@@ -6,19 +6,14 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import pg from 'pg';
-import { DB_DEFAULTS } from '../db-config.js';
-
-const { Pool } = pg;
-let pool;
-
+import { pool, beginScratch, finishScratch, baseSchema, applyMigration } from './helpers/debt-03-scratch.js';
 beforeAll(async () => {
-  pool = new Pool(DB_DEFAULTS);
+  await beginScratch(); await baseSchema();
+  await applyMigration('013_cortex_analyses.sql');
+  await applyMigration('015_cortex_quality_system.sql');
+  await applyMigration('016_immune_system_connections.sql');
 });
-
-afterAll(async () => {
-  await pool.end();
-});
+afterAll(finishScratch);
 
 describe('Migration 016 - Immune System Connections', () => {
   it('should have strategy_effectiveness table', async () => {
@@ -149,5 +144,17 @@ describe('Migration 016 - Immune System Connections', () => {
     `);
 
     expect(result.rows.length).toBe(1);
+  });
+});
+
+describe('Migration 016 actual constraints', () => {
+  it('rejects duplicate adoptions and cascades effectiveness on deletion', async () => {
+    const {rows:[adoption]}=await pool.query("INSERT INTO strategy_adoptions(strategy_key,new_value) VALUES ('guard','enabled') RETURNING id");
+    await pool.query("INSERT INTO strategy_effectiveness(adoption_id,strategy_key) VALUES ($1,'guard')",[adoption.id]);
+    await pool.query('SAVEPOINT duplicate_check');
+    await expect(pool.query("INSERT INTO strategy_effectiveness(adoption_id,strategy_key) VALUES ($1,'guard')",[adoption.id])).rejects.toMatchObject({code:'23505'});
+    await pool.query('ROLLBACK TO SAVEPOINT duplicate_check');
+    await pool.query('DELETE FROM strategy_adoptions WHERE id=$1',[adoption.id]);
+    expect((await pool.query('SELECT * FROM strategy_effectiveness WHERE adoption_id=$1',[adoption.id])).rows).toEqual([]);
   });
 });
