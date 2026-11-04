@@ -22,6 +22,7 @@ vi.mock('../receipt-collector.js', () => ({
   resolveActionReceipt: outbound.receipt,
 }));
 vi.mock('../db.js', () => ({ default: { query: outbound.query } }));
+vi.mock('../notifier.js', () => ({ sendFeishu: vi.fn().mockResolvedValue(true) }));
 
 // ============================================================
 // D2: 感知层测试
@@ -507,9 +508,11 @@ describe('Layer 6: 表达层（Expression）', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.unstubAllEnvs();
-    expect(outbound.fetch).not.toHaveBeenCalled();
-    expect(outbound.receipt).not.toHaveBeenCalled();
-    expect(outbound.query).not.toHaveBeenCalled();
+    expect({
+      fetch: outbound.fetch.mock.calls.length,
+      receipt: outbound.receipt.mock.calls.length,
+      sharedDb: outbound.query.mock.calls.length,
+    }).toEqual({ fetch: 0, receipt: 0, sharedDb: 0 });
   });
 
   it('D7: runExpression 更新 last_expression_at 和 desire 状态', async () => {
@@ -546,6 +549,12 @@ describe('Layer 6: 表达层（Expression）', () => {
     };
 
     const result = await runExpression(mockPool, desire);
+    const { sendFeishu } = await import('../notifier.js');
+    expect(vi.isMockFunction(sendFeishu)).toBe(true);
+    expect(sendFeishu).toHaveBeenCalledTimes(1);
+    expect(sendFeishu).toHaveBeenCalledWith('**⚠️ 预警**\n\n**观察**：任务失败率上升\n\n**判断**：需要关注\n\n**建议**：检查 executor 日志');
+    expect(result.message).toBe('**⚠️ 预警**\n\n**观察**：任务失败率上升\n\n**判断**：需要关注\n\n**建议**：检查 executor 日志');
+    expect(result.sent).toBe(true);
 
     // last_expression_at 应该被更新（从 last_feishu_at 改名）
     const exprUpdate = upsertedKeys.find(k => k.key === 'last_expression_at');
@@ -553,7 +562,21 @@ describe('Layer 6: 表达层（Expression）', () => {
     expect(typeof exprUpdate.val).toBe('string'); // ISO 时间字符串
 
     // desire 状态应该更新为 expressed
-    expect(updatedStatuses.length).toBeGreaterThan(0);
+    expect(updatedStatuses).toEqual([[desire.id]]);
+  });
+
+  it('D7: 非紧急表达仍更新状态但不调用通知', async () => {
+    const { callLLM } = await import('../llm-caller.js');
+    callLLM.mockResolvedValue({ text: 'owned routine message' });
+    const { sendFeishu } = await import('../notifier.js');
+    const pool = { query: vi.fn().mockResolvedValue({ rows: [] }) };
+    const { runExpression } = await import('../desire/expression.js');
+    const desire = { id: 'owned-routine', type: 'inform', content: 'routine', urgency: 5 };
+    const result = await runExpression(pool, desire);
+    expect(vi.isMockFunction(sendFeishu)).toBe(true);
+    expect(sendFeishu).not.toHaveBeenCalled();
+    expect(result.message).toBe('owned routine message');
+    expect(pool.query).toHaveBeenCalledWith("UPDATE desires SET status = 'expressed' WHERE id = $1", [desire.id]);
   });
 });
 
