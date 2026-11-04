@@ -217,7 +217,6 @@ export default defineConfig({
       'src/__tests__/actions-initiative-orchestration.test.js',
       'src/__tests__/alertness-actions.test.js',
       'src/__tests__/blocks.test.js',
-      'src/__tests__/code-review-trigger.test.js',
       // consolidation.test.js: 纯 mock 单元测试（vi.mock llm-caller/self-model + 局部 mock pool），已移回 include
       'src/__tests__/cortex-dedup-persist.test.js',
       'src/__tests__/cortex-memory.test.js',
@@ -225,10 +224,7 @@ export default defineConfig({
       'src/__tests__/cortex-quality.test.js',
       'src/__tests__/cortex-rca.test.js',
       'src/__tests__/cortex.test.js',
-      'src/__tests__/daily-review-scheduler.test.js',
-      'src/__tests__/dept-heartbeat.test.js',
       'src/__tests__/execution-strategy-session-kr-link.test.js',
-      'src/__tests__/executor-retry-strategy.test.js',
       'src/__tests__/harness-sprint-loop.test.js',
       'src/__tests__/initiative-orchestration-migration.test.js',
       'src/__tests__/migration-289.test.js',
@@ -242,7 +238,6 @@ export default defineConfig({
       'src/__tests__/migration-030.test.js',
       'src/__tests__/migration-041.test.js',
       'src/__tests__/migrations-087-suggestions.test.js',
-      'src/__tests__/model-registry.test.js',
       'src/__tests__/planner-domain-routing.test.js',
       'src/__tests__/planner-initiative-plan.test.js',
       'src/__tests__/planner-learning-penalty.test.js',
@@ -253,23 +248,17 @@ export default defineConfig({
       'src/__tests__/resolve-repo-path.test.js',
       'src/__tests__/routes/memory.test.js',
       'src/__tests__/rumination-dedup.test.js',
-      'src/__tests__/services/memory-service.test.js',
       'src/__tests__/suggestion-integration.test.js',
       'src/__tests__/suggestion-triage.test.js',
-      'src/__tests__/task-generator-scheduler.test.js',
       'src/__tests__/task-websocket.test.js',
-      'src/__tests__/tasks-feedback.test.js',
       'src/__tests__/tasks-status.test.js',
-      'src/__tests__/tick-codex-immune.test.js',
       'src/__tests__/tick-drain.test.js',
       'src/__tests__/tick-watchdog-quarantine.test.js',
       'src/__tests__/watchdog-quarantine-race.test.js',
       // Mock 不完整或代码逻辑变更导致失败（pre-existing issue）
       // content-pipeline-{executors,llm,error-message,etc}.test.js 全部已删除
       // （in-Brain content-pipeline 编排搬到 ZJ pipeline-worker，PR zenithjoy#216）
-      'src/__tests__/startup-sync.test.js',
       // content_type 注册表加载缺少 content_type 字段 — 预先存在（main 上已失败）
-      'src/__tests__/content-type-registry.test.js',
       // 需要真实 PostgreSQL 连接的集成测试
       'src/__tests__/integration/pipeline-rescue.integration.test.js',
       // capacity-gate/preview-destroyer: 真连 cecelia_test Postgres（禁 mock db.js），走 brain-integration
@@ -281,7 +270,6 @@ export default defineConfig({
       // dev-registry: 直连 pool.query 验 7 张新表，需真实 DB — 走 brain-integration
       'src/workflows/__tests__/dev-registry.test.js',
       // Pre-existing failure: path.resolve('packages/brain/...') resolves incorrectly from packages/brain/ cwd
-      '../../tests/capability-probe-rumination.test.js',
       // Pre-existing failure: process.cwd() relative paths broken in brain-unit (cwd=packages/brain)
       'src/routes/__tests__/harness-feature-propagation.test.js',
       // relay-85806b9a: 集成测试需真实 Postgres + 硬编码 /workspace/ 路径，不兼容 brain-unit GitHub Actions 环境
