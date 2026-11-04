@@ -11,9 +11,8 @@ ERRORS=""
 check_service() {
     local name=$1
     local url=$2
-    local result=$(curl -s --max-time 10 "$url" 2>/dev/null | grep -c "ok" || echo "0")
-
-    if [[ "$result" == "0" ]]; then
+    local result
+    if ! result=$(curl --fail --silent --max-time 10 "$url" 2>/dev/null) || ! grep -q "ok" <<< "$result"; then
         ERRORS="$ERRORS\n❌ $name 不可用"
         return 1
     fi
