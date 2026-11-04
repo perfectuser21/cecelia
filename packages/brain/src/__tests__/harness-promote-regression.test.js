@@ -3,8 +3,20 @@
  * 纯函数：parseBehaviorEntries / parseGoldenPathSteps / buildGoldenPathEntries / mergeGoldenPaths
  * 主函数：promoteToRegression（mock pool + execFile + fs 注入，见 Task 2 追加的 describe）
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
+const boundary = vi.hoisted(() => ({ notify: vi.fn(async () => true), db: vi.fn(), network: vi.fn(), process: vi.fn() }));
+vi.mock('../notifier.js', () => ({ sendFeishu: boundary.notify }));
+vi.mock('../db.js', () => ({ default: { query: (...args) => { boundary.db(...args); throw Error('禁止默认DB'); } } }));
+vi.mock('node:child_process', () => Object.fromEntries(['exec', 'execSync', 'execFile', 'execFileSync', 'spawn', 'spawnSync'].map(name => [name, (...args) => { boundary.process(name, ...args); throw Error('禁止宿主进程'); }])));
+beforeEach(() => { vi.clearAllMocks(); vi.stubGlobal('fetch', (...args) => { boundary.network(...args); throw Error('禁止外联'); }); });
+afterEach(() => {
+  expect(boundary.notify).not.toHaveBeenCalled();
+  expect(boundary.db).not.toHaveBeenCalled();
+  expect(boundary.network).not.toHaveBeenCalled();
+  expect(boundary.process).not.toHaveBeenCalled();
+  vi.unstubAllGlobals();
+});
 import {
   parseBehaviorEntries,
   parseGoldenPathSteps,

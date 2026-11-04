@@ -12,6 +12,16 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
+const boundary = vi.hoisted(() => ({ db: vi.fn(), process: vi.fn() }));
+vi.mock('../db.js', () => ({ default: { query: (...args) => {
+  boundary.db(...args); return Promise.resolve({ rows: [{ id: 'owned-receipt' }], rowCount: 1 });
+} } }));
+vi.mock('../muted-guard.js', () => ({ isMuted: () => false }));
+vi.mock('node:child_process', () => Object.fromEntries(['exec', 'execSync', 'execFile', 'execFileSync', 'spawn', 'spawnSync'].map(name => [name, (...args) => { boundary.process(name, ...args); throw Error('禁止宿主进程'); }])));
+afterEach(() => {
+  expect(boundary.db).not.toHaveBeenCalled();
+  expect(boundary.process).not.toHaveBeenCalled();
+});
 const mockFetch = vi.fn();
 global.fetch = mockFetch;
 
