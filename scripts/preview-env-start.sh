@@ -37,6 +37,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LEDGER_DB="${PREVIEW_LEDGER_DB:-${DB_NAME:-cecelia}}"
 
 DB_NAME="${4:?DB_NAME 必须提供}"
+EXPECTED_SHA="${5:-}"
+if [[ -n "$EXPECTED_SHA" && ! "$EXPECTED_SHA" =~ ^[a-f0-9]{40}$ ]]; then
+  echo "expected SHA must be a full commit SHA" >&2
+  exit 2
+fi
 
 # 瘦克隆：历史表名单（只排除数据，DDL 完整导出，不使用 --exclude-table）
 # 这些表体积大且 preview 环境不需要历史数据，排除后单环境从 3.65GB 降至 <1GB
@@ -156,18 +161,18 @@ fi
 rm -rf "$WORK_DIR"
 
 git -C "$REPO_ROOT" worktree prune 2>/dev/null || true
-git -C "$REPO_ROOT" fetch origin "${BRANCH_NAME}" 2>>"$LOG_FILE" || {
-  log "ERROR: git fetch origin ${BRANCH_NAME} 失败"
-  exit 1
-}
-git -C "$REPO_ROOT" worktree add "$WORK_DIR" "origin/${BRANCH_NAME}" 2>>"$LOG_FILE" || {
-  log "ERROR: git worktree add 失败"
+bash "${SCRIPT_DIR}/preview-checkout.sh" "$REPO_ROOT" "$WORK_DIR" "$BRANCH_NAME" "$EXPECTED_SHA" 2>>"$LOG_FILE" || {
+  log "ERROR: 无法检出预览候选"
   exit 1
 }
 PREVIEW_GIT_SHA=$(git -C "$WORK_DIR" rev-parse HEAD 2>>"$LOG_FILE") || {
   log "ERROR: 无法读取预览 worktree SHA"
   exit 1
 }
+if [[ -n "$EXPECTED_SHA" && "$PREVIEW_GIT_SHA" != "$EXPECTED_SHA" ]]; then
+  log "ERROR: preview HEAD ${PREVIEW_GIT_SHA} differs from expected ${EXPECTED_SHA}"
+  exit 1
+fi
 log "  ✓ worktree 创建完成: ${WORK_DIR}"
 if [[ -f "$WORK_DIR/.skills-source.json" ]]; then
   bash "$WORK_DIR/scripts/ensure-skills-source.sh" "$WORK_DIR"
@@ -338,6 +343,7 @@ nohup env \
   ${PREVIEW_STATIC_DIR_ENV} \
   SKIP_MIGRATIONS=false \
   CECELIA_TICK_ENABLED=false \
+  CECELIA_TICK_HARD_OFF=1 \
   GITHUB_TOKEN="${GITHUB_TOKEN:-}" \
   GIT_SHA="$PREVIEW_GIT_SHA" \
   node "${BRAIN_SERVER}" \

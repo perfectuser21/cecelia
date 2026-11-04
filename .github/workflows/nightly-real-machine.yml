@@ -1,7 +1,7 @@
 name: Staging Health Diagnostics
 
-# 每夜在真实机器（Tailscale 内网 staging，端口 5222）跑 smoke，
-# 提供常驻 Staging 的真机健康证据。
+# 手动检查当前 staging（5222）的 HTTP 健康、tick 隔离及任务端点。
+# 不创建候选，不证明某次发布的 SHA/镜像/数据库身份；发布回执由独立 staging 验证提供。
 
 # 历史/环境诊断按需运行；通用源码保障归 ci.yml，深度回归归 nightly-regression.yml。
 on:
@@ -13,7 +13,7 @@ concurrency:
 
 jobs:
   nightly-smoke:
-    name: Nightly Staging Smoke (Real Machine)
+    name: Diagnose current staging health
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -34,8 +34,8 @@ jobs:
         run: |
           set -uo pipefail
           HOST=$(echo "$BRAIN_URL" | sed -E 's#^https?://##; s#:[0-9]+$##')
-          echo "对真实 staging ${HOST}:5222 跑 nightly smoke..."
-          STAGING_HOST="$HOST" STAGING_PORT=5222 bash scripts/auto-staging-smoke.sh
+          echo "对真实 staging ${HOST}:5222 跑按需健康诊断..."
+          STAGING_HOST="$HOST" STAGING_PORT="${STAGING_PORT:-5222}" bash scripts/auto-staging-smoke.sh
 
       - name: Staging 不可用时的诊断信息
         if: failure()
@@ -43,11 +43,10 @@ jobs:
           BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.79.41.61:5221' }}
         run: |
           HOST=$(echo "$BRAIN_URL" | sed -E 's#^https?://##; s#:[0-9]+$##')
-          echo "::error::nightly smoke 失败 — staging ${HOST}:5222 不健康"
+          echo "::error::staging 健康诊断失败 — staging ${HOST}:5222 不健康"
           echo "排查步骤："
           echo "  1. 检查 staging 容器：docker logs cecelia-node-brain-staging --tail 50"
           echo "  2. 检查机器磁盘/内存：df -h && free -h"
-          echo "  3. 本地重启 staging：bash scripts/staging-deploy.sh"
           echo "  4. 结合本工作流失败记录和 Staging 部署日志排查"
           curl -sf "http://${HOST}:5222/api/brain/health" 2>/dev/null \
             && echo "staging /health 实际可达（smoke 脚本逻辑问题）" \
