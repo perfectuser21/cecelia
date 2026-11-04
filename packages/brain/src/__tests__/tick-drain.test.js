@@ -5,12 +5,11 @@
  * in_progress tasks complete naturally.
  */
 
-import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
-import pg from 'pg';
-import { DB_DEFAULTS } from '../db-config.js';
+import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
+import { pool } from './helpers/debt-05-pg.js';
+vi.mock('../db.js', async () => ({ default: (await import('./helpers/debt-05-pg.js')).pool }));
 
-const { Pool } = pg;
-const pool = new Pool(DB_DEFAULTS);
+
 
 let testGoalIds = [];
 let testProjectIds = [];
@@ -21,11 +20,12 @@ let drainTick, getDrainStatus, cancelDrain, _getDrainState, _resetDrainState;
 
 describe('Tick Drain Mode', () => {
   beforeAll(async () => {
+    await pool.start();
     const result = await pool.query('SELECT 1');
     expect(result.rows[0]['?column?']).toBe(1);
 
     // Dynamic import to get drain functions
-    const tickModule = await import('../tick.js');
+    const tickModule = await import('../drain.js');
     drainTick = tickModule.drainTick;
     getDrainStatus = tickModule.getDrainStatus;
     cancelDrain = tickModule.cancelDrain;

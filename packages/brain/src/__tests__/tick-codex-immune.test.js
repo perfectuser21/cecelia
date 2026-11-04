@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { ensureCodexImmune } from '../tick.js';
+import { ensureCodexImmune } from '../codex-immune.js';
 
 /**
  * ensureCodexImmune 单元测试

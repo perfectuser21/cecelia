@@ -2,15 +2,17 @@
  * Cortex Quality Assessment Tests
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi, beforeAll } from 'vitest';
-let pool;
+import { describe, it, expect, beforeEach, afterEach, vi, beforeAll, afterAll } from 'vitest';
+import { pool } from './helpers/debt-05-pg.js';
+vi.mock('../db.js', async () => ({ default: (await import('./helpers/debt-05-pg.js')).pool }));
 let evaluateQualityInitial, generateSimilarityHash, checkShouldCreateRCA, getQualityStats;
 
 beforeAll(async () => {
-  vi.resetModules();
-  pool = (await import('../db.js')).default;
+  await pool.start();
   ({ evaluateQualityInitial, generateSimilarityHash, checkShouldCreateRCA, getQualityStats } = await import('../cortex-quality.js'));
 });
+
+afterAll(async () => { await pool.end(); });
 
 describe('Cortex Quality Assessment', () => {
   const testAnalysisIds = [];

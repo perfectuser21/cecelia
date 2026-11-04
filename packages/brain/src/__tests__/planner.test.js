@@ -2,13 +2,11 @@
  * Planner Agent Tests
  */
 
-import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
-import pg from 'pg';
-import { DB_DEFAULTS } from '../db-config.js';
+import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
+import { pool } from './helpers/debt-05-pg.js';
+vi.mock('../db.js', async () => ({ default: (await import('./helpers/debt-05-pg.js')).pool }));
 
-const { Pool } = pg;
 
-const pool = new Pool(DB_DEFAULTS);
 
 let testObjectiveIds = [];
 let testKRIds = [];
@@ -18,6 +16,7 @@ let testLinks = [];
 
 describe('Planner Agent', () => {
   beforeAll(async () => {
+    await pool.start();
     const result = await pool.query('SELECT 1');
     expect(result.rows[0]['?column?']).toBe(1);
 
