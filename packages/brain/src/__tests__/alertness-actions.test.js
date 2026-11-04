@@ -14,12 +14,14 @@ vi.mock('../task-updater.js', () => ({ broadcastTaskState: vi.fn() }));
 vi.mock('../llm-caller.js', () => ({ callLLM: vi.fn(() => { throw Error('external model forbidden'); }) }));
 vi.mock('../openai-client.js', () => ({ generateEmbedding: vi.fn(() => { throw Error('external model forbidden'); }) }));
 let pool;
-afterAll(async () => { await pool?.end(); });
+afterAll(async () => { vi.unstubAllGlobals(); await pool?.end(); });
 let executeResponseActions, notifyAlert, escalateToAnalysis, applyMitigation, activateShutdownSafety, recoverFromLevel, getMitigationState, _resetMitigationState;
 
 beforeAll(async () => {
   vi.resetModules();
-  pool = new pg.Pool(privatePgConfig());
+  vi.stubGlobal('fetch', vi.fn(async () => { throw Error('external network forbidden'); }));
+  pool = new pg.Client(privatePgConfig());
+  await pool.connect();
   await verifyPrivatePg(pool);
   ({ executeResponseActions, notifyAlert, escalateToAnalysis, applyMitigation, activateShutdownSafety, recoverFromLevel, getMitigationState, _resetMitigationState } = await import('../alertness-actions.js'));
 });
@@ -33,17 +35,12 @@ const PANIC = 4;
 describe('alertness-actions', () => {
   beforeEach(async () => {
     vi.restoreAllMocks();
-    // Clean up test events
-    await pool.query(`DELETE FROM cecelia_events WHERE source = 'alertness'`);
-    // Clean up test tasks
-    await pool.query(`DELETE FROM tasks WHERE title LIKE 'Alertness RCA%'`);
-    // Reset mitigation state
+    await pool.query('BEGIN');
     _resetMitigationState();
   });
 
   afterEach(async () => {
-    await pool.query(`DELETE FROM cecelia_events WHERE source = 'alertness'`);
-    await pool.query(`DELETE FROM tasks WHERE title LIKE 'Alertness RCA%'`);
+    await pool.query('ROLLBACK');
     _resetMitigationState();
   });
 
@@ -154,6 +151,8 @@ describe('alertness-actions', () => {
       expect(task.status).toBe('queued');
       expect(task.payload.requires_cortex).toBe(true);
       expect(task.payload.signals).toEqual(signals);
+      const receipt = await pool.query('SELECT source, work_kind, canonical_task_type FROM work_routing_receipts WHERE task_id=$1', [task.id]);
+      expect(receipt.rows).toEqual([{ source: 'discovery', work_kind: 'research', canonical_task_type: 'research' }]);
     });
 
     it('should handle escalation failure gracefully', async () => {
@@ -163,6 +162,7 @@ describe('alertness-actions', () => {
       const result = await escalateToAnalysis({});
 
       expect(result.error).toBe('DB error');
+      expect((await pool.query("SELECT id FROM tasks WHERE title LIKE 'Alertness RCA%'")).rows).toHaveLength(0);
       // Should not throw
     });
   });

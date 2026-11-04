@@ -1,127 +1,86 @@
 import { describe, it, expect, afterAll, beforeAll } from 'vitest';
 import pg from 'pg';
-
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { privatePgConfig, verifyPrivatePg } from '../../../../../scripts/ci/private-pg-contract.mjs';
+
 const pool = new pg.Pool(privatePgConfig());
-beforeAll(() => verifyPrivatePg(pool));
+const root = fileURLToPath(new URL('../../../../../', import.meta.url));
+let fixture;
+const repo = 'manual-backend-fixture';
+const run = (cmd, args, opts = {}) => execFileSync(cmd, args, { encoding: 'utf8', timeout: 60000, ...opts });
+const scan = name => run(process.execPath, [resolve(root, `scripts/scan/scan-${name}.js`)], {
+  cwd: fixture,
+  env: { ...process.env, SCAN_REPO_ROOT: fixture, SCAN_REPO_NAME: repo, SCAN_API_DIRS: 'src', SOURCE_DATABASE_URL: process.env.TEST_DATABASE_URL },
+});
+beforeAll(async () => {
+  await verifyPrivatePg(pool);
+  fixture = mkdtempSync(join(tmpdir(), 'dev-registry-fixture-'));
+  mkdirSync(join(fixture, 'src'));
+  writeFileSync(join(fixture, 'src/api.js'), "router.get('/owned-fixture', handler);\n");
+  writeFileSync(join(fixture, 'src/api.test.js'), "it('fixture behavior', () => {});\n");
+  run('git', ['init', '-b', 'cp-fixture'], { cwd: fixture });
+  run('git', ['add', '.'], { cwd: fixture });
+  run('git', ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', '-c', 'core.hooksPath=/dev/null', 'commit', '-m', 'test: fixture'], { cwd: fixture });
+});
+afterAll(async () => {
+  for (const table of ['api_registry', 'db_schema_registry', 'test_registry', 'fact_snapshot_headers']) {
+    await pool.query(`DELETE FROM ${table} WHERE repo=$1`, [repo]);
+  }
+  await pool.end();
+  if (fixture) rmSync(fixture, { recursive: true, force: true });
+});
 
-afterAll(() => pool.end());
+describe('dev-registry 当前真表及兼容视图', () => {
+  it.each(['value_streams', 'capabilities', 'activities', 'workflow_activity_refs', 'journey_features', 'api_registry', 'db_schema_registry', 'test_registry', 'issues'])('%s 是现役基表', async table => {
+    expect((await pool.query("SELECT table_type FROM information_schema.tables WHERE table_schema='public' AND table_name=$1", [table])).rows).toEqual([{ table_type: 'BASE TABLE' }]);
+  });
+  it('journeys 只作兼容视图，Activity位置由流程引用承载', async () => {
+    expect((await pool.query("SELECT table_type FROM information_schema.tables WHERE table_schema='public' AND table_name='journeys'")).rows).toEqual([{ table_type: 'VIEW' }]);
+    expect((await pool.query("SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='activities' AND column_name IN ('journey_id','step_number')")).rows).toHaveLength(0);
+    const { rows } = await pool.query("SELECT indexdef FROM pg_indexes WHERE tablename='workflow_activity_refs' AND indexname='workflow_activity_refs_active_sequence'");
+    expect(rows[0].indexdef).toContain('(workflow_id, sequence_no) WHERE active');
+  });
+  it.each([
+    ["INSERT INTO value_streams(name,journey_type) VALUES ('invalid','invalid_type')", '23514'],
+    ["INSERT INTO journey_features(name,thickness) VALUES ('invalid','super_thick')", '23514'],
+    ["INSERT INTO issues(title,priority) VALUES ('invalid','P9')", '23514'],
+  ])('真实CHECK拒绝非法值而非缺表/缺列：%s', async (sql, code) => {
+    await expect(pool.query(sql)).rejects.toMatchObject({ code });
+  });
+});
 
-describe('dev-registry migration — 7 张表存在', () => {
-  const TABLES = [
-    'journeys', 'activities', 'journey_features',
-    'api_registry', 'db_schema_registry', 'test_registry', 'issues',
-  ];
-
-  it.each(TABLES)('表 %s 存在', async (tableName) => {
-    const { rows } = await pool.query(
-      `SELECT table_name FROM information_schema.tables
-       WHERE table_schema='public' AND table_name=$1`,
-      [tableName],
-    );
+describe('dev-registry 实际扫描器与本地Git源', () => {
+  it('API扫描写入来源版本并移除同仓陈旧路径', async () => {
+    scan('api-registry');
+    const revision = run('git', ['rev-parse', 'HEAD'], { cwd: fixture }).trim();
+    const rows = (await pool.query('SELECT method,path,file_path,source_revision,scanner_version FROM api_registry WHERE repo=$1', [repo])).rows;
+    expect(rows).toEqual([{ method: 'GET', path: '/owned-fixture', file_path: 'src/api.js', source_revision: revision, scanner_version: 'api-registry-v2' }]);
+    writeFileSync(join(fixture, 'src/api.js'), "router.post('/replacement', handler);\n");
+    run('git', ['add', '.'], { cwd: fixture });
+    run('git', ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', '-c', 'core.hooksPath=/dev/null', 'commit', '-m', 'test: replace fixture route'], { cwd: fixture });
+    scan('api-registry');
+    expect((await pool.query('SELECT method,path FROM api_registry WHERE repo=$1', [repo])).rows).toEqual([{ method: 'POST', path: '/replacement' }]);
+  });
+  it('DB扫描读真实tasks字段、主键及索引；重复扫描不重复建账', async () => {
+    scan('db-schema');
+    scan('db-schema');
+    const { rows } = await pool.query("SELECT columns,indexes,source_revision FROM db_schema_registry WHERE repo=$1 AND table_name='tasks'", [repo]);
     expect(rows).toHaveLength(1);
+    expect(rows[0].columns).toEqual(expect.arrayContaining([expect.objectContaining({ name: 'id', primary_key: true }), expect.objectContaining({ name: 'status' })]));
+    expect(rows[0].indexes.length).toBeGreaterThan(0);
+    expect(rows[0].source_revision).toBe(run('git', ['rev-parse', 'HEAD'], { cwd: fixture }).trim());
   });
-
-  it('journeys.journey_type 有 CHECK 约束', async () => {
-    const { rows } = await pool.query(
-      `SELECT constraint_name FROM information_schema.table_constraints
-       WHERE table_name='journeys' AND constraint_type='CHECK'`,
-    );
-    expect(rows.length).toBeGreaterThan(0);
-  });
-
-  it('activities 有 UNIQUE(journey_id, step_number)', async () => {
-    const { rows } = await pool.query(
-      `SELECT indexname FROM pg_indexes
-       WHERE tablename IN ('journey_steps','activities') AND indexdef LIKE '%journey_id%step_number%'`,
-    );
-    expect(rows.length).toBeGreaterThan(0);
-  });
-
-  it('api_registry 有 UNIQUE(method, path)', async () => {
-    const { rows } = await pool.query(
-      `SELECT indexname FROM pg_indexes
-       WHERE tablename='api_registry' AND indexdef LIKE '%method%path%'`,
-    );
-    expect(rows.length).toBeGreaterThan(0);
-  });
-});
-
-describe('dev-registry CHECK 约束实际拒绝非法值', () => {
-  it('journeys.journey_type 拒绝非法值', async () => {
-    await expect(
-      pool.query(
-        `INSERT INTO journeys (name, journey_type)
-         VALUES ('test-invalid-type', 'invalid_type')`,
-      ),
-    ).rejects.toThrow();
-  });
-
-  it('journey_features.thickness 拒绝非法值', async () => {
-    await expect(
-      pool.query(
-        `INSERT INTO journey_features (name, thickness)
-         VALUES ('test-invalid-thickness', 'super_thick')`,
-      ),
-    ).rejects.toThrow();
-  });
-
-  it('issues.priority 拒绝非法值', async () => {
-    await expect(
-      pool.query(
-        `INSERT INTO issues (title, priority)
-         VALUES ('test-invalid-priority', 'P9')`,
-      ),
-    ).rejects.toThrow();
-  });
-});
-
-describe('dev-registry 扫描脚本填充', () => {
-  it('api_registry 行数 > 0（扫描后）', async () => {
-    const { rows } = await pool.query('SELECT COUNT(*)::int AS cnt FROM api_registry');
-    expect(rows[0].cnt).toBeGreaterThan(0);
-  });
-
-  it('db_schema_registry 包含 tasks 表', async () => {
-    const { rows } = await pool.query(
-      "SELECT table_name FROM db_schema_registry WHERE table_name='tasks'",
-    );
-    expect(rows).toHaveLength(1);
-  });
-
-  it('test_registry 行数 > 0（扫描后）', async () => {
-    const { rows } = await pool.query('SELECT COUNT(*)::int AS cnt FROM test_registry');
-    expect(rows[0].cnt).toBeGreaterThan(0);
-  });
-
-  it('system_registry 包含 skill 类型记录（扫描后）', async () => {
-    const { rows } = await pool.query(
-      "SELECT COUNT(*)::int AS cnt FROM system_registry WHERE type='skill'",
-    );
-    expect(rows[0].cnt).toBeGreaterThan(0);
-  });
-});
-
-describe('dev-registry Notion 反向拉取', () => {
-  it('journeys 行数 > 0（Notion 拉取后）', async () => {
-    const { rows } = await pool.query('SELECT COUNT(*)::int AS cnt FROM journeys');
-    expect(rows[0].cnt).toBeGreaterThan(0);
-  });
-
-  it('journey_steps 行数 > 0（Notion 拉取后）', async () => {
-    const { rows } = await pool.query('SELECT COUNT(*)::int AS cnt FROM journey_steps');
-    expect(rows[0].cnt).toBeGreaterThan(0);
-  });
-
-  it('issues 行数 > 0（Notion 拉取后）', async () => {
-    const { rows } = await pool.query('SELECT COUNT(*)::int AS cnt FROM issues');
-    expect(rows[0].cnt).toBeGreaterThan(0);
-  });
-
-  it('journey notion_id 不为空', async () => {
-    const { rows } = await pool.query(
-      'SELECT COUNT(*)::int AS cnt FROM journeys WHERE notion_id IS NOT NULL',
-    );
-    expect(rows[0].cnt).toBeGreaterThan(0);
+  it('测试扫描真实fixture行为名，不要求机器已装skill或Notion存量', async () => {
+    scan('test-registry');
+    expect((await pool.query('SELECT file_path,test_count,covered_behaviors,test_type FROM test_registry WHERE repo=$1', [repo])).rows).toEqual([
+      { file_path: 'src/api.test.js', test_count: 1, covered_behaviors: ['fixture behavior'], test_type: 'unit' },
+    ]);
+    const snapshots = (await pool.query('SELECT kind,row_count FROM fact_snapshot_headers WHERE repo=$1 ORDER BY kind', [repo])).rows;
+    expect(snapshots.map(row => row.kind)).toEqual(['api', 'db_schema', 'test']);
+    expect(snapshots.every(row => row.row_count > 0)).toBe(true);
   });
 });
