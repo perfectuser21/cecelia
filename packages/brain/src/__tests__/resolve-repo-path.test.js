@@ -1,4 +1,4 @@
-/** 调用真实 requeueTask；只隔离数据库、文件和外部执行边界。 */
+/** 调用真实 resolveRepoPath；只隔离数据库、文件和外部执行边界。 */
 import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vitest';
 const { query } = vi.hoisted(() => ({ query: vi.fn() }));
 vi.mock('../db.js', () => ({ default: { query } }));

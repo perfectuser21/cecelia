@@ -7,7 +7,7 @@ import {selectVitestVerificationInput} from './implementation-verification-selec
 const REPO='perfectuser21/cecelia',BASE='68b996a5641b69e6f21705a114a4524e407fe097';
 const CATALOG='config/verification-retirements/alertness-v1.json';
 const CATALOG_SHA256='f9c3f170764dc41dbd4f710e5082551880c47f008bc7a9ca3cbc91eba2e5c73c';
-const CATALOGS=[{path:'config/verification-retirements/brain-debt-retired-layers-v1.json',sha256:'32476a75c53fe86b8e1c0679077a470962be4ecb720479c5934e3831787a0a7f',records:6,inputs:8,base_revision:'fadbf32852cdb30f71e34dda9ab81b521bda484b',onlyPaths:["packages/brain/src/__tests__/planner-initiative-plan.test.js", "packages/brain/src/__tests__/actions-initiative-orchestration.test.js", "packages/brain/src/__tests__/tasks-status.test.js", "tests/regression/relay-1b1f1ffa/capacity-gate.test.js", "tests/regression/relay-57e25e92/headed-smoke-contract.test.ts", "tests/regression/relay-07b2fd3b/captures-api.test.ts"]},
+const CATALOGS=[{path:'config/verification-retirements/brain-debt-retired-layers-v1.json',sha256:'d8a997969b20e609a434b2ac1555d9997dd6700986ceeb525bd065b5eed53db7',records:6,inputs:8,support_inputs:5,base_revision:'fadbf32852cdb30f71e34dda9ab81b521bda484b',onlyPaths:["packages/brain/src/__tests__/planner-initiative-plan.test.js", "packages/brain/src/__tests__/actions-initiative-orchestration.test.js", "packages/brain/src/__tests__/tasks-status.test.js", "tests/regression/relay-1b1f1ffa/capacity-gate.test.js", "tests/regression/relay-57e25e92/headed-smoke-contract.test.ts", "tests/regression/relay-07b2fd3b/captures-api.test.ts"]},
  {path:CATALOG,sha256:CATALOG_SHA256,records:5,inputs:11},
  {path:'config/verification-retirements/legacy-five-v1.json',sha256:'1392c3febd9131416ec8c960a7a5a0ff6553b496084efeee1db6e1c236f25717',records:5,inputs:4},
  {path:'config/verification-retirements/tick-copied-sql-v1.json',sha256:'fb6b9292ee5205f1daa0d295761243a905e8f7d0454c207cb6487cf6354a27d9',records:2,inputs:2,
@@ -59,6 +59,7 @@ function readCatalog(toolingRoot,toolingRevision,spec){
  let catalog;try{catalog=JSON.parse(bytes);}catch{fail('CATALOG_INVALID');}
  need(catalog.schema_version===1&&catalog.kind==='explicit_verification_retirement_catalog'&&catalog.purpose==='admission_only'
   &&catalog.repo===REPO&&catalog.base_revision===(spec.base_revision||BASE)&&catalog.records.length===spec.records&&catalog.replacement_inputs.length===spec.inputs&&catalog.limitations.length===3,'CATALOG_INVALID');
+ need(!spec.support_inputs||catalog.entry_support?.length===spec.support_inputs,'CATALOG_INVALID');
  return catalog;
 }
 function literalExcludes(text){
@@ -88,7 +89,7 @@ function dashboardCandidate(text,config,path){
 /** 仅固定PG跑道的人工审核候选；不授予自动选择或执行资格。 */
 function fixedPgCandidate(config,path){
  const allowed={
-  'scripts/ci/deep-integration.config.mjs':['packages/brain/src/routes/__tests__/captures-api.test.ts',
+  'scripts/ci/deep-integration.config.mjs':[
    'packages/brain/src/__tests__/integration/capacity-gate.test.js',
    'packages/brain/src/__tests__/integration/retired-harness-dispatch.pg.integration.test.js',
    'packages/brain/src/__tests__/integration/task-status-transitions.integration.test.js'],
@@ -180,7 +181,7 @@ export function collectVerificationRetirementCandidates(repoRoot,{source,tooling
    need(excludes.includes(record.exclude_literal)&&record.exclude_literal===posix.relative(posix.dirname(baseConfig.fact.path),record.path),'BASE_LITERAL_EXCLUDE_REQUIRED');
    let absent;try{absent=readFixedLocalGitBlob(repoRoot,{revision:source.head_revision,path:record.path},{allowMissing:true});}catch{fail('HEAD_ABSENCE_UNPROVEN');}
    need(absent===null,'HEAD_ABSENCE_REQUIRED');
-   const policies=(record.policy_sources||[]).map(expected=>reviewedBlob(repoRoot,source.head_revision,expected,'POLICY').fact);
+   const policies=[...(record.policy_sources||[]),...(catalog.entry_support||[])].map(expected=>reviewedBlob(repoRoot,source.head_revision,expected,'POLICY').fact);
    for(const path of record.required_absent_paths||[])need(readFixedLocalGitBlob(repoRoot,{revision:source.head_revision,path},{allowMissing:true})===null,'POLICY_ABSENCE_REQUIRED');
    let duplicate;
    if(record.duplicate_of){duplicate=reviewedBlob(repoRoot,source.base_revision,record.duplicate_of,'DUPLICATE').fact;need(['mode','git_blob_sha1','sha256','byte_length'].every(k=>duplicate[k]===old.fact[k]),'DUPLICATE_BYTES_MISMATCH');}

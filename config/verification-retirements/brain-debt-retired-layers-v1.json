@@ -4,7 +4,7 @@
   "purpose": "admission_only",
   "repo": "perfectuser21/cecelia",
   "base_revision": "fadbf32852cdb30f71e34dda9ab81b521bda484b",
-  "reviewed_replacement_revision": "00614aff50",
+  "reviewed_replacement_revision": "b0d9e96840a58c918799051b259e9a381b2c8342",
   "base_config": {
     "path": "packages/brain/vitest.config.js",
     "mode": "100644",
@@ -99,7 +99,7 @@
         "sha256": "2416ccd68fd10e80df1839beeaa6acef06f64789e0faf669af202580b05b6e73",
         "byte_length": 10041
       },
-      "config_path": "scripts/ci/deep-integration.config.mjs"
+      "config_path": "scripts/ci/debt-pg.config.mjs"
     }
   ],
   "records": [
@@ -337,12 +337,60 @@
       "blob": {
         "path": "scripts/ci/deep-integration.config.mjs",
         "mode": "100644",
-        "git_blob_sha1": "e844020249a2c0205382e67d0b2f75868707740f",
-        "sha256": "ce5df18b0016ce03ed08bf20def00a10ef68652ba7566f665021d8773467e75e",
-        "byte_length": 714
+        "git_blob_sha1": "f82a9f211d3164f2f1b02e34fad6ed23061ffd53",
+        "sha256": "f5b94e5075d47fa2ad47788340d17d6705456c4272cd08cd81ee5b3e1ca5e560",
+        "byte_length": 834
       },
       "component": "brain",
       "selector_kind": "fixed_pg_literal_candidate"
+    },
+    {
+      "blob": {
+        "path": "scripts/ci/debt-pg.config.mjs",
+        "mode": "100644",
+        "git_blob_sha1": "e2712e10efabc7cb233e82e063c59d442d0c3fe7",
+        "sha256": "bc74d6b561c8e44e3146f24a2a22389853ab2c2636a9c3452ece1d5642c9f894",
+        "byte_length": 596
+      },
+      "component": "brain",
+      "selector_kind": "fixed_pg_literal_candidate"
+    }
+  ],
+  "entry_support": [
+    {
+      "path": "scripts/ci/debt-pg-tests.json",
+      "mode": "100644",
+      "git_blob_sha1": "d68894cbc18e1cbcd54d52b66aa7fec1fc03a841",
+      "sha256": "b6be561ada34c4184524852ba77eadd2437fc4ef6c131db000ac365cc6d5f25c",
+      "byte_length": 4974
+    },
+    {
+      "path": "scripts/ci/run-debt-pg.mjs",
+      "mode": "100644",
+      "git_blob_sha1": "eade282139c32e3bbb4e6eaebae1f3cae16df5c1",
+      "sha256": "f1dea30c8644be087ee6b16dfd3c0179faab7875af14cc82969bdb9f99b13cf3",
+      "byte_length": 6848
+    },
+    {
+      "path": "scripts/ci/private-pg-backend.mjs",
+      "mode": "100644",
+      "git_blob_sha1": "bfd3c275c31e7a17916d715a56be8e8bd2bd9417",
+      "sha256": "6379049d3775f52a1821795a2d00eaa7b565397b382ef0f162a8d6836d7e880a",
+      "byte_length": 5026
+    },
+    {
+      "path": "scripts/ci/private-pg-contract.mjs",
+      "mode": "100644",
+      "git_blob_sha1": "12b0a423ae6ebb97b11bc289ca3e733e79809c25",
+      "sha256": "a0e4a78b6862e5ae84450720431d833d515887606591dfd5c510947a2f35c09f",
+      "byte_length": 3546
+    },
+    {
+      "path": ".github/workflows/nightly-regression.yml",
+      "mode": "100644",
+      "git_blob_sha1": "bedbc53f1db496dadb84929ef6326f5719b8ee81",
+      "sha256": "433e32d0459a124fe9329d54736916eb4f5908291976f073fd1044356ff0cc44",
+      "byte_length": 17518
     }
   ]
 }
