@@ -243,13 +243,11 @@ export default defineConfig({
       'src/__tests__/quarantine-auto-release.test.js',
       'src/__tests__/quarantine-classification.test.js',
       'src/__tests__/quarantine-systemic.test.js',
-      'src/__tests__/resolve-repo-path.test.js',
       'src/__tests__/routes/memory.test.js',
       'src/__tests__/rumination-dedup.test.js',
       'src/__tests__/suggestion-integration.test.js',
       'src/__tests__/suggestion-triage.test.js',
       'src/__tests__/task-websocket.test.js',
-      'src/__tests__/tasks-status.test.js',
       'src/__tests__/tick-drain.test.js',
       'src/__tests__/tick-watchdog-quarantine.test.js',
       'src/__tests__/watchdog-quarantine-race.test.js',
@@ -263,7 +261,6 @@ export default defineConfig({
       'src/__tests__/integration/capacity-gate.test.js',
       'src/__tests__/integration/preview-destroyer.test.js',
       // 同上，毕业池 tests/regression/ 下的永久回归副本，同样需要真实 Postgres
-      '../../tests/regression/relay-1b1f1ffa/capacity-gate.test.js',
       '../../tests/regression/relay-1b1f1ffa/preview-destroyer.test.js',
       // dev-registry: 直连 pool.query 验 7 张新表，需真实 DB — 走 brain-integration
       'src/workflows/__tests__/dev-registry.test.js',
@@ -276,10 +273,8 @@ export default defineConfig({
       '../../tests/regression/relay-85806b9a/scan-graph-multi-repo.test.mjs',
       // relay-57e25e92: 读取 sprints/07191312-relay-57e25e92/e2e-verify.sh，但 sprint 目录不在 git 仓库，
       // PR #4131 引入的 pre-existing failure，与本 PR 无关
-      '../../tests/regression/relay-57e25e92/headed-smoke-contract.test.ts',
       // brain-integration 测试：需要真实 Brain HTTP server（localhost:5221），brain-unit 无 server
       'src/routes/__tests__/captures-api.test.ts',
-      '../../tests/regression/relay-07b2fd3b/captures-api.test.ts',
       // 真 Brain HTTP + 真 PostgreSQL 的行为回归；同一合同由
       // scripts/smoke/task-delete-postdeploy-filter-smoke.sh 在 real-env-smoke 中执行。
       '../../tests/regression/relay-137fea96/contract-task-delete.test.ts',
@@ -295,7 +290,6 @@ export default defineConfig({
       '../../tests/regression/capture-destination-link/capture-destination-link.spec.ts',
       // Pre-existing failure (PR #4109): 读取 sprints/07191312-relay-57e25e92/e2e-verify.sh，
       // 该文件已 rename 到 scripts/smoke/e2e/relay-57e25e92.sh，sprint 目录未提交 repo
-      '../../tests/regression/relay-57e25e92/headed-smoke-contract.test.ts',
       // 真 PostgreSQL 回归：brain-unit 无 DB；brain-integration 通过专用 config 显式运行
       ...POSTGRES_INTEGRATION_TESTS,
     ],

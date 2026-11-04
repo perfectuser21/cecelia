@@ -177,12 +177,6 @@
       "manualRoot": false
     },
     {
-      "file": "packages/brain/src/__tests__/resolve-repo-path.test.js",
-      "category": "external_resource",
-      "reason": "resolveRepoPath/getTaskKR兼容导出仍在；旧OKR查询断言不符合现役projects读取，需真实projects direct-column/metadata fallback/null回归，替代未执行。",
-      "manualRoot": false
-    },
-    {
       "file": "packages/brain/src/__tests__/routes/memory.test.js",
       "category": "external_resource",
       "reason": "真实PostgreSQL依赖（文件第17行及后续pool查询），尚未纳入自动Deep清单；须先确认测试库身份、数据清理和现行SQL。",
@@ -210,12 +204,6 @@
       "file": "packages/brain/src/__tests__/task-websocket.test.js",
       "category": "external_resource",
       "reason": "真实PostgreSQL依赖（文件第22行及后续pool查询），尚未纳入自动Deep清单；须先确认测试库身份、数据清理和现行SQL。",
-      "manualRoot": false
-    },
-    {
-      "file": "packages/brain/src/__tests__/tasks-status.test.js",
-      "category": "external_resource",
-      "reason": "旧文件复制SQL/状态字典；真实状态机与PATCH默认回归已通过，完整PG PATCH与history合同正在核对，未凭复制断言宣称业务通过。",
       "manualRoot": false
     },
     {
@@ -267,12 +255,6 @@
       "manualRoot": true
     },
     {
-      "file": "tests/regression/relay-07b2fd3b/captures-api.test.ts",
-      "category": "external_resource",
-      "reason": "真实HTTP请求固定Brain localhost:5221；需自有服务/隔离PG夹具，当前不是mock单测。",
-      "manualRoot": true
-    },
-    {
       "file": "tests/regression/relay-07b2fd3b/inbox-e2e.spec.ts",
       "category": "external_resource",
       "reason": "Playwright浏览器测试依赖真实页面与Brain/Workspace API，尚无自动浏览器跑道；数据不足分支可skip，不能计作通过。",
@@ -285,21 +267,9 @@
       "manualRoot": true
     },
     {
-      "file": "tests/regression/relay-1b1f1ffa/capacity-gate.test.js",
-      "category": "external_resource",
-      "reason": "真实PostgreSQL依赖（文件第21行及后续pool查询），尚未纳入自动Deep清单；须先确认测试库身份、数据清理和现行SQL。",
-      "manualRoot": true
-    },
-    {
       "file": "tests/regression/relay-1b1f1ffa/preview-destroyer.test.js",
       "category": "external_resource",
       "reason": "真实PostgreSQL依赖（文件第40行及后续pool查询），尚未纳入自动Deep清单；须先确认测试库身份、数据清理和现行SQL。",
-      "manualRoot": true
-    },
-    {
-      "file": "tests/regression/relay-57e25e92/headed-smoke-contract.test.ts",
-      "category": "legacy_spec",
-      "reason": "读取未入仓旧sprint/e2e-verify.sh；脚本已移至scripts/smoke/e2e/relay-57e25e92.sh，须重绑现行合同。",
       "manualRoot": true
     },
     {

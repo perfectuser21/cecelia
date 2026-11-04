@@ -26,6 +26,8 @@ function fixture(fn) {
     for(const path of old)rmSync(join(source,path));
     writeFileSync(join(source,config),readFileSync(join(root,config)));
     for (const path of ['packages/brain/src/__tests__/debt-04-planner-score.test.js', 'packages/brain/src/__tests__/actions.test.js','packages/brain/src/routes/__tests__/captures-api.test.ts']) writeFileSync(join(source,path),readFileSync(join(root,path)));
+    for (const input of JSON.parse(readFileSync(join(root,'config/verification-retirements/brain-debt-retired-layers-v1.json'))).replacement_inputs) {const path=(input.blob||input).path;mkdirSync(dirname(join(source,path)),{recursive:true});writeFileSync(join(source,path),readFileSync(join(root,path)));}
+    writeFileSync(join(source,'scripts/ci/deep-integration.config.mjs'),readFileSync(join(root,'scripts/ci/deep-integration.config.mjs')));
     const head=commit(source);
     mkdirSync(control);git(control,'init','-q');git(control,'remote','add','origin','https://github.com/perfectuser21/cecelia.git');
     cpSync(join(root,'config/verification-retirements'),join(control,'config/verification-retirements'),{recursive:true});

@@ -7,7 +7,7 @@ import {selectVitestVerificationInput} from './implementation-verification-selec
 const REPO='perfectuser21/cecelia',BASE='68b996a5641b69e6f21705a114a4524e407fe097';
 const CATALOG='config/verification-retirements/alertness-v1.json';
 const CATALOG_SHA256='f9c3f170764dc41dbd4f710e5082551880c47f008bc7a9ca3cbc91eba2e5c73c';
-const CATALOGS=[{path:'config/verification-retirements/brain-debt-retired-layers-v1.json',sha256:'799dc74dad1f30f44352124da8427b34bee05168d7c0135b00b2dd4ef34e4691',records:2,inputs:2,base_revision:'fadbf32852cdb30f71e34dda9ab81b521bda484b',onlyPaths:["packages/brain/src/__tests__/planner-initiative-plan.test.js", "packages/brain/src/__tests__/actions-initiative-orchestration.test.js"]},
+const CATALOGS=[{path:'config/verification-retirements/brain-debt-retired-layers-v1.json',sha256:'32476a75c53fe86b8e1c0679077a470962be4ecb720479c5934e3831787a0a7f',records:6,inputs:8,base_revision:'fadbf32852cdb30f71e34dda9ab81b521bda484b',onlyPaths:["packages/brain/src/__tests__/planner-initiative-plan.test.js", "packages/brain/src/__tests__/actions-initiative-orchestration.test.js", "packages/brain/src/__tests__/tasks-status.test.js", "tests/regression/relay-1b1f1ffa/capacity-gate.test.js", "tests/regression/relay-57e25e92/headed-smoke-contract.test.ts", "tests/regression/relay-07b2fd3b/captures-api.test.ts"]},
  {path:CATALOG,sha256:CATALOG_SHA256,records:5,inputs:11},
  {path:'config/verification-retirements/legacy-five-v1.json',sha256:'1392c3febd9131416ec8c960a7a5a0ff6553b496084efeee1db6e1c236f25717',records:5,inputs:4},
  {path:'config/verification-retirements/tick-copied-sql-v1.json',sha256:'fb6b9292ee5205f1daa0d295761243a905e8f7d0454c207cb6487cf6354a27d9',records:2,inputs:2,
@@ -85,6 +85,19 @@ function dashboardCandidate(text,config,path){
  return {selected:false,witness:{kind:'fixed_dashboard_literal_candidate',config_path:config.path,config_sha256:config.sha256,
   file_path:path,include_literals:include.elements.map(n=>n.value),requires_selector_reverification:true}};
 }
+/** 仅固定PG跑道的人工审核候选；不授予自动选择或执行资格。 */
+function fixedPgCandidate(config,path){
+ const allowed={
+  'scripts/ci/deep-integration.config.mjs':['packages/brain/src/routes/__tests__/captures-api.test.ts',
+   'packages/brain/src/__tests__/integration/capacity-gate.test.js',
+   'packages/brain/src/__tests__/integration/retired-harness-dispatch.pg.integration.test.js',
+   'packages/brain/src/__tests__/integration/task-status-transitions.integration.test.js'],
+  'scripts/ci/debt-pg.config.mjs':['packages/brain/src/routes/__tests__/captures-api.test.ts'],
+ };
+ need(allowed[config.path]?.includes(path),'REPLACEMENT_CONFIG_INVALID');
+ return {selected:false,witness:{kind:'fixed_pg_literal_candidate',config_path:config.path,config_sha256:config.sha256,
+  file_path:path,requires_selector_reverification:true,execution_status:'not_evaluated',coverage:'unknown'}};
+}
 function componentTree(root,revision){
  return new Map(fixedLocalGit(root,['ls-tree','-rz','--full-tree',revision],{encoding:'utf8'}).split('\0').filter(Boolean).map(line=>{
   const [meta,path]=line.split('\t'),[mode,type,id]=meta.split(' ');return [path,{mode,type,id}];
@@ -153,8 +166,9 @@ export function collectVerificationRetirementCandidates(repoRoot,{source,tooling
   const replacements=catalog.replacement_inputs.filter(input=>requiredPaths.has((input.blob||input).path)).map(input=>{
    const expected=input.blob||input,config=configs.get(input.config_path||catalog.replacement_config.path);need(config,'REPLACEMENT_CONFIG_INVALID');
    const actualInput=reviewedBlob(repoRoot,source.head_revision,expected,'REPLACEMENT');
-   const limited=config.selector_kind==='fixed_dashboard_literal_candidate';
-   const selected=limited?dashboardCandidate(config.bytes.toString(),config.fact,expected.path):selectVitestVerificationInput({filePath:expected.path,
+   const pgLimited=config.selector_kind==='fixed_pg_literal_candidate';
+   const limited=config.selector_kind==='fixed_dashboard_literal_candidate'||pgLimited;
+   const selected=pgLimited?fixedPgCandidate(config.fact,expected.path):limited?dashboardCandidate(config.bytes.toString(),config.fact,expected.path):selectVitestVerificationInput({filePath:expected.path,
     configPath:config.fact.path,configText:config.bytes.toString(),skillText:skill.bytes.toString(),component:config.component});
    need(selected.witness&&(limited||selected.selected),'REPLACEMENT_SELECTOR_UNPROVEN');
    return {...actualInput.fact,revision:source.head_revision,config:{...config.fact,revision:source.head_revision},

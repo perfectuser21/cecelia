@@ -68,7 +68,6 @@ features:
         - packages/brain/src/__tests__/task-websocket.test.js
         - packages/brain/src/__tests__/task-weight-rpe.test.js
         - packages/brain/src/__tests__/task-weight.test.js
-        - packages/brain/src/__tests__/tasks-status.test.js
       integration:
         - packages/brain/src/__tests__/integration/agent-lifecycle.integration.test.js
         - packages/brain/src/__tests__/integration/dev-task-lifecycle.e2e.test.js
@@ -100,7 +99,6 @@ features:
             - packages/brain/src/__tests__/task-websocket.test.js
             - packages/brain/src/__tests__/task-weight-rpe.test.js
             - packages/brain/src/__tests__/task-weight.test.js
-            - packages/brain/src/__tests__/tasks-status.test.js
           integration:
             - packages/brain/src/__tests__/integration/agent-lifecycle.integration.test.js
             - packages/brain/src/__tests__/integration/dev-task-lifecycle.e2e.test.js

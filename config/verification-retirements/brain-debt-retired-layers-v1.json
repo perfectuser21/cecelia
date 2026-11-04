@@ -15,9 +15,9 @@
   "replacement_config": {
     "path": "packages/brain/vitest.config.js",
     "mode": "100644",
-    "git_blob_sha1": "c892d4d10e9733c72dc7bf9949507ca1daefa70f",
-    "sha256": "611273b433118d1fcbb2e555bbded112a93e36f0b5a4c6536403522611a88e6f",
-    "byte_length": 22006
+    "git_blob_sha1": "706a265379695e12fd50a97df1a9057eabf25cd2",
+    "sha256": "d132a389c7eb59b5dad434d371302f7c8e5d140d60609f76be01c60ef31a0841",
+    "byte_length": 21622
   },
   "skill_selector": {
     "path": "scripts/ci/skill-source-tests.mjs",
@@ -40,6 +40,66 @@
       "git_blob_sha1": "cc7a28cee27ac165462db1767c364c46e3ce7049",
       "sha256": "8d49a0cf6a8cef6286aacf5cd5ff2f555970f17aa5c6833906cba462e17d5ef1",
       "byte_length": 39849
+    },
+    {
+      "blob": {
+        "path": "packages/brain/src/__tests__/integration/task-status-transitions.integration.test.js",
+        "mode": "100644",
+        "git_blob_sha1": "28ce43b470f4dbd05eef712e8fb538ac61490a6a",
+        "sha256": "8ea0738d04b6879cec97d2793ac023f2b09d598ae4982752810ea1dc014fcaba",
+        "byte_length": 11155
+      },
+      "config_path": "scripts/ci/deep-integration.config.mjs"
+    },
+    {
+      "blob": {
+        "path": "packages/brain/src/lib/__tests__/task-status-transitions.test.js",
+        "mode": "100644",
+        "git_blob_sha1": "6d534f7dbdc59c447553a29c4939f2df23176ed5",
+        "sha256": "4d69de3d9568720e9afe321d3066d6aaa454f6809c8da077e25748b0a3c39662",
+        "byte_length": 6610
+      },
+      "config_path": "packages/brain/vitest.config.js"
+    },
+    {
+      "blob": {
+        "path": "packages/brain/src/routes/__tests__/tasks-result-backfill.test.js",
+        "mode": "100644",
+        "git_blob_sha1": "592d802fea4efe422c59418f0ad9e79193d152a8",
+        "sha256": "80cdedabca3acacf04dc9cdaccddb4344ca2b226168429a6521235effad247ba",
+        "byte_length": 5226
+      },
+      "config_path": "packages/brain/vitest.config.js"
+    },
+    {
+      "blob": {
+        "path": "packages/brain/src/__tests__/integration/capacity-gate.test.js",
+        "mode": "100644",
+        "git_blob_sha1": "bd420fcdfd96abd320db5b4b1f95ae3e4ed452a1",
+        "sha256": "16cb91a4c2578439fcb928f3d982535afa1101b9bbc7e7326627756d6f443d09",
+        "byte_length": 9344
+      },
+      "config_path": "scripts/ci/deep-integration.config.mjs"
+    },
+    {
+      "blob": {
+        "path": "packages/brain/src/__tests__/integration/retired-harness-dispatch.pg.integration.test.js",
+        "mode": "100644",
+        "git_blob_sha1": "050cf9bbca6db4859ac27bab5f885ca11c957334",
+        "sha256": "0aec43811b65057874dff90fb0a9f455c417109d3314b4b5e3432ad7695a389d",
+        "byte_length": 12172
+      },
+      "config_path": "scripts/ci/deep-integration.config.mjs"
+    },
+    {
+      "blob": {
+        "path": "packages/brain/src/routes/__tests__/captures-api.test.ts",
+        "mode": "100644",
+        "git_blob_sha1": "135c68b86c7b22eac8d7f2b6187c47c7e685023f",
+        "sha256": "2416ccd68fd10e80df1839beeaa6acef06f64789e0faf669af202580b05b6e73",
+        "byte_length": 10041
+      },
+      "config_path": "scripts/ci/deep-integration.config.mjs"
     }
   ],
   "records": [
@@ -90,11 +150,199 @@
         ],
         "reviewed_source_base": "fadbf32852cdb30f71e34dda9ab81b521bda484b"
       }
+    },
+    {
+      "path": "packages/brain/src/__tests__/tasks-status.test.js",
+      "old": {
+        "path": "packages/brain/src/__tests__/tasks-status.test.js",
+        "mode": "100644",
+        "git_blob_sha1": "04450b6cf622935e2e2f635645b1d854abab859f",
+        "sha256": "9a74bef6490d477705fce58a45c45f4e4336f2770b29c6543eee07701b1b5b97",
+        "byte_length": 6868
+      },
+      "exclude_literal": "src/__tests__/tasks-status.test.js",
+      "replacement_paths": [
+        "packages/brain/src/__tests__/integration/task-status-transitions.integration.test.js",
+        "packages/brain/src/lib/__tests__/task-status-transitions.test.js",
+        "packages/brain/src/routes/__tests__/tasks-result-backfill.test.js"
+      ],
+      "policy_sources": [
+        {
+          "path": "packages/brain/src/routes/task-tasks.js",
+          "mode": "100644",
+          "git_blob_sha1": "506055675af598171f29b2c0c9bf715a2813e9ad",
+          "sha256": "dec4802191ac05a0e225d6e9103139431bd46788cce4d289d4ab05e683bc518f",
+          "byte_length": 27257
+        },
+        {
+          "path": "packages/brain/src/routes/task-task-patch.js",
+          "mode": "100644",
+          "git_blob_sha1": "9d7c69c82ecb822ce6efc53992b47aedc8b674a6",
+          "sha256": "e4cad2c075317558071464f9b9f3cb51ad3ce43ffba57f9498f5c476115aa1e9",
+          "byte_length": 7431
+        },
+        {
+          "path": "packages/brain/src/routes/tasks.js",
+          "mode": "100644",
+          "git_blob_sha1": "c8179b37a1c4a51a7541714ebc9bc4e354d6c0c5",
+          "sha256": "26f0b5b12c4d50252c71ba1d5e890dfe89b98eb4f7805493ea8e63e2a0e1f133",
+          "byte_length": 61376
+        },
+        {
+          "path": "packages/brain/src/lib/task-status-transitions.js",
+          "mode": "100644",
+          "git_blob_sha1": "252a3ad7d8273eaef2417c0a3feb93e1e90c3bf8",
+          "sha256": "367f37a973f1ac183d77dab24530f7049ec0b53b72fd247bd574613d992632c9",
+          "byte_length": 5016
+        }
+      ],
+      "audit": {
+        "retired": [
+          "旧9例复制UPDATE/状态字典，不调用真实PATCH；真实HTTP→PG7例、真实状态真身与PATCH history默认回归保留。"
+        ],
+        "retained": [
+          "现役真实入口、历史读取、写拒绝与回滚合同保留。"
+        ],
+        "reviewed_source_base": "fadbf32852cdb30f71e34dda9ab81b521bda484b"
+      }
+    },
+    {
+      "path": "tests/regression/relay-1b1f1ffa/capacity-gate.test.js",
+      "old": {
+        "path": "tests/regression/relay-1b1f1ffa/capacity-gate.test.js",
+        "mode": "100644",
+        "git_blob_sha1": "b940762871ed6dad09fc83b65d4ce5288785e988",
+        "sha256": "3bc08dba2620d368deb46b7e84b26d26bf89fe99987320659508f30cfbbf3c11",
+        "byte_length": 6942
+      },
+      "exclude_literal": "../../tests/regression/relay-1b1f1ffa/capacity-gate.test.js",
+      "replacement_paths": [
+        "packages/brain/src/__tests__/integration/capacity-gate.test.js"
+      ],
+      "policy_sources": [
+        {
+          "path": "packages/brain/src/capacity-gate.js",
+          "mode": "100644",
+          "git_blob_sha1": "74d99125be5c583f7b60641c3a42f28ba166ff1f",
+          "sha256": "893bb9f20844aaa1939bb787586d7234374995045ff5c8ceb0ed673e0623735d",
+          "byte_length": 9526
+        }
+      ],
+      "audit": {
+        "retired": [
+          "毕业副本8例与现役integration同合同；现役11例额外验证TCP占用，官方Deep真实通过。"
+        ],
+        "retained": [
+          "现役真实入口、历史读取、写拒绝与回滚合同保留。"
+        ],
+        "reviewed_source_base": "fadbf32852cdb30f71e34dda9ab81b521bda484b"
+      }
+    },
+    {
+      "path": "tests/regression/relay-57e25e92/headed-smoke-contract.test.ts",
+      "old": {
+        "path": "tests/regression/relay-57e25e92/headed-smoke-contract.test.ts",
+        "mode": "100644",
+        "git_blob_sha1": "27e12d7daa410953adc39f0f1bc6376be7bf6885",
+        "sha256": "46ccc3cb12ef380e01bf74b3d7cbf6303f3174e3a0548b55dbfa8a4ae01e2a50",
+        "byte_length": 3526
+      },
+      "exclude_literal": "../../tests/regression/relay-57e25e92/headed-smoke-contract.test.ts",
+      "replacement_paths": [
+        "packages/brain/src/__tests__/integration/retired-harness-dispatch.pg.integration.test.js"
+      ],
+      "policy_sources": [
+        {
+          "path": "packages/brain/src/executor.js",
+          "mode": "100644",
+          "git_blob_sha1": "19f9f0eb5da75bb48ceed84a920f14b7a1e8e8ac",
+          "sha256": "494e16c536469fdcbc19bc198bbace43dd406fb2aec2e925dd84d48ef414dcf1",
+          "byte_length": 194525
+        },
+        {
+          "path": "packages/brain/src/lib/task-type-registry.js",
+          "mode": "100644",
+          "git_blob_sha1": "2e5528dff905af8b6a2a1a145bd2ec5216045047",
+          "sha256": "c33d8b9d4f9bbc6e9e08d7f88893fbde865be9ac11f4b1b0304c9b04a1dd70d5",
+          "byte_length": 57340
+        }
+      ],
+      "audit": {
+        "retired": [
+          "旧测试只读已毕业wrapper字符串并断言退役无头协议；现役9例真实API/PG退役拒绝、历史有头豁免与回滚保留；不宣称外部有头smoke已跑。"
+        ],
+        "retained": [
+          "现役真实入口、历史读取、写拒绝与回滚合同保留。"
+        ],
+        "reviewed_source_base": "fadbf32852cdb30f71e34dda9ab81b521bda484b"
+      }
+    },
+    {
+      "path": "tests/regression/relay-07b2fd3b/captures-api.test.ts",
+      "old": {
+        "path": "tests/regression/relay-07b2fd3b/captures-api.test.ts",
+        "mode": "100644",
+        "git_blob_sha1": "2eb03f3adcf223fae3c900c85df2f08ba5589d16",
+        "sha256": "7d1fd8ee61bdad0234424056b8b5cf8ef070bc78611237b2b2cdb9ef0b8bdcef",
+        "byte_length": 6357
+      },
+      "exclude_literal": "../../tests/regression/relay-07b2fd3b/captures-api.test.ts",
+      "replacement_paths": [
+        "packages/brain/src/routes/__tests__/captures-api.test.ts"
+      ],
+      "policy_sources": [
+        {
+          "path": "packages/brain/src/routes/captures.js",
+          "mode": "100644",
+          "git_blob_sha1": "96c541425b28c15535c35123e19b89303c07bf7c",
+          "sha256": "c1e9c4eac99d93c05931c5ee0da4a328b1d2441ad4b76f57adb26579c5cc0ae1",
+          "byte_length": 9644
+        },
+        {
+          "path": "packages/brain/src/routes/capture-atoms.js",
+          "mode": "100644",
+          "git_blob_sha1": "26680eadfcc0e28bac8a97f4484a7749f94d7a27",
+          "sha256": "f9f4df158908e6b10706f847e4c954bf1c3ac08ff8bf7547ee2227f1165d4f1b",
+          "byte_length": 12078
+        }
+      ],
+      "audit": {
+        "retired": [
+          "毕业副本是旧源码同内容副本；源码真router+私有PG新版补齐原空case，保持独立来源唯一owner。"
+        ],
+        "retained": [
+          "现役真实入口、历史读取、写拒绝与回滚合同保留。"
+        ],
+        "reviewed_source_base": "fadbf32852cdb30f71e34dda9ab81b521bda484b"
+      }
     }
   ],
   "limitations": [
-    "仅精确审核两份旧层成功创建测试，不授予目录或未知删除豁免。",
-    "仅准入证据；替代均实际默认单测通过，不证明生产部署或真实PG成功写入。",
+    "仅精确审核六份旧测试，不授予目录或未知删除豁免。",
+    "仅准入证据；PG输入必须重新核验最终原生跑道选择及执行，候选绝不等于PASS。",
     "公共导出、历史只读、迁移499写拒绝与真实回滚保障保留。"
+  ],
+  "replacement_configs": [
+    {
+      "blob": {
+        "path": "packages/brain/vitest.config.js",
+        "mode": "100644",
+        "git_blob_sha1": "706a265379695e12fd50a97df1a9057eabf25cd2",
+        "sha256": "d132a389c7eb59b5dad434d371302f7c8e5d140d60609f76be01c60ef31a0841",
+        "byte_length": 21622
+      },
+      "component": "brain"
+    },
+    {
+      "blob": {
+        "path": "scripts/ci/deep-integration.config.mjs",
+        "mode": "100644",
+        "git_blob_sha1": "e844020249a2c0205382e67d0b2f75868707740f",
+        "sha256": "ce5df18b0016ce03ed08bf20def00a10ef68652ba7566f665021d8773467e75e",
+        "byte_length": 714
+      },
+      "component": "brain",
+      "selector_kind": "fixed_pg_literal_candidate"
+    }
   ]
 }
