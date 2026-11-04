@@ -80,6 +80,10 @@ packages/brain/coverage/
 coverage/
 *.lcov
 
+# 单次质量统计生成物；历史快照保留在旧 Git 对象中。
+/quality-summary.json
+/packages/brain/quality-summary.json
+
 # Images (screenshots, temp assets)
 *.png
 !scripts/evals/goldset/goldset/*.png
