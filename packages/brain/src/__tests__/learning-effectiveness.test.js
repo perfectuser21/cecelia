@@ -3,21 +3,14 @@
  * Tests strategy adjustment effectiveness evaluation
  */
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
-import pg from 'pg';
-import { DB_DEFAULTS } from '../db-config.js';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
+import { pool, prepare, close } from './debt-06-pg.js';
+vi.mock('../db.js', async () => ({ default: (await import('./debt-06-pg.js')).pool }));
 import { evaluateStrategyEffectiveness } from '../learning.js';
-
-const { Pool } = pg;
-let pool;
-
 beforeAll(async () => {
-  pool = new Pool(DB_DEFAULTS);
+  await prepare(['000_base_schema.sql', '014_cortex_analyses.sql', '015_cortex_quality_system.sql', '016_immune_system_connections.sql']);
 });
-
-afterAll(async () => {
-  await pool.end();
-});
+afterAll(close);
 
 describe('evaluateStrategyEffectiveness', () => {
   let testAdoptionId;

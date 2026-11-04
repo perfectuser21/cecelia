@@ -9,6 +9,9 @@ import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
 const mockPool = vi.hoisted(() => ({ query: vi.fn() }));
 vi.mock('../db.js', () => ({ default: mockPool }));
 
+// 异步学习会触发模型/写入，测试仅验证孤儿结算，关闭该外部边界。
+vi.mock('../auto-learning.js', () => ({ processExecutionAutoLearning: vi.fn() }));
+
 // Mock child_process
 vi.mock('child_process', () => ({
   spawn: vi.fn(),
