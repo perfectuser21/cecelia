@@ -1,6 +1,11 @@
 import { describe, it, expect, vi } from 'vitest';
 import express from 'express';
 import request from 'supertest';
+import { readFileSync } from 'node:fs';
+vi.mock('node:fs', async importOriginal => {
+  const actual = await importOriginal();
+  return { ...actual, readFileSync: vi.fn(actual.readFileSync) };
+});
 
 vi.mock('../../db.js', () => ({ default: { query: vi.fn().mockResolvedValue({ rows: [] }) } }));
 
@@ -28,7 +33,9 @@ describe('GET /api/brain/quality/ratchet 棘轮台账', () => {
     }
   });
 
-  it('响应永不 500（异常路径同一 catch 降级 available:false，面板灰态约定）', async () => {
+  it.each(['读取失败', '非法JSON'])('%s时catch降级available:false且不返回500', async kind => {
+    if (kind === '读取失败') readFileSync.mockImplementationOnce(() => { throw new Error('registry unavailable'); });
+    else readFileSync.mockReturnValueOnce('{invalid-json');
     const res = await request(makeApp()).get('/api/brain/quality/ratchet');
     expect(res.status).toBe(200);
     expect(res.body.available).toBe(false);
