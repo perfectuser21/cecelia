@@ -15,7 +15,6 @@
  */
 
 import { readFileSync, existsSync } from 'fs';
-import { readFile } from 'node:fs/promises';
 import path from 'path';
 import { z } from 'zod';
 import { loadRepositorySkillContent } from './orchestrator/skill-bundle.js';
@@ -134,78 +133,6 @@ export function extractField(text, fieldName) {
   }
 
   return null;
-}
-
-// ─── Protocol v2：Brain 直接读 git 状态 + 约定路径文件 ────────────────────────
-// 彻底消除依赖 LLM stdout 提取确定性值（分支名、verdict、pr_url）。
-// 约定文件路径（容器内写入，Brain 容器退出后读取）：
-//   ${worktreePath}/.cecelia/output.json  → { pr_url, pr_branch }  (generator)
-//   ${worktreePath}/.cecelia/verdict.json → { verdict, feedback }  (evaluator)
-
-/**
- * 从 worktree git 状态读取 pr_url + pr_branch，不依赖 LLM stdout 解析。
- *
- * 步骤：
- *   1. git rev-parse --abbrev-ref HEAD → 当前分支名
- *   2. gh pr list --head <branch> --json url → PR URL
- *
- * @param {string} worktreePath
- * @param {object} [opts]
- * @param {Function} [opts.execFile]  测试注入（默认 promisify(execFileCb)）
- * @returns {Promise<{pr_url:string, pr_branch:string}|null>}
- */
-export async function readPrFromGitState(worktreePath, opts = {}) {
-  if (!worktreePath) return null;
-  // 懒加载 execFile：harness-shared.js 被 docker-executor.js import，
-  // 测试普遍 mock 了 child_process 但只导出 spawn，静态 import execFile 会触发 mock 报错。
-  // 只在真实调用时才 import，避免 module 级别污染。
-  let execFn = opts.execFile;
-  if (!execFn) {
-    const { execFile: ef } = await import('node:child_process');
-    const { promisify: p } = await import('node:util');
-    execFn = p(ef);
-  }
-  try {
-    const { stdout: branchOut } = await execFn('git', ['-C', worktreePath, 'rev-parse', '--abbrev-ref', 'HEAD'], { timeout: 10_000 });
-    const branch = String(branchOut || '').trim();
-    if (!branch || branch === 'HEAD') return null;
-
-    // cwd 必须显式指向 worktree（git 仓库目录）：Brain 容器进程 cwd=/app（非 git 仓库），
-    // gh 无 cwd / 无 --repo 时按 cwd 推断 repo，会报 "not a git repository" 并被下方 catch
-    // 静默吞掉 → 兜底返回 null → run 误判 no_pr 终败（run badaf654 实证）。
-    // git rev-parse 已用 -C worktreePath 显式指定，无需 cwd；gh 不支持 -C，故用 cwd。
-    const { stdout: prOut } = await execFn('gh', ['pr', 'list', '--head', branch, '--json', 'url', '-q', '.[0].url'], { cwd: worktreePath, timeout: 15_000 });
-    const pr_url = String(prOut || '').trim();
-    if (!pr_url || INVALID_LITERALS.has(pr_url.toLowerCase())) return null;
-
-    return { pr_url, pr_branch: branch };
-  } catch (err) {
-    // 静默 catch 吞错是这次排障最贵的部分（run badaf654 排查耗时全在此）：
-    // 至少 warn 出 err.message，保持返回 null 的语义不变（兜底失败不应 throw 打断 pipeline）。
-    console.warn(`[readPrFromGitState] git/gh 读取 PR 失败（worktree=${worktreePath}），兜底返回 null: ${err.message}`);
-    return null;
-  }
-}
-
-/**
- * 读取 evaluator 写入的 verdict 文件（Protocol v2）。
- * 容器写 ${worktreePath}/.cecelia/verdict.json → { verdict: "PASS"|"FAIL", feedback?: string }
- *
- * @param {string} worktreePath
- * @returns {Promise<{verdict:'PASS'|'FAIL', feedback:string|null}|null>}
- */
-export async function readVerdictFile(worktreePath) {
-  if (!worktreePath) return null;
-  try {
-    const filePath = path.join(worktreePath, '.cecelia', 'verdict.json');
-    const content = await readFile(filePath, 'utf8');
-    const parsed = JSON.parse(content);
-    const verdict = String(parsed.verdict || '').toUpperCase().trim();
-    if (verdict !== 'PASS' && verdict !== 'FAIL') return null;
-    return { verdict, feedback: parsed.feedback || null };
-  } catch {
-    return null;
-  }
 }
 
 /**
