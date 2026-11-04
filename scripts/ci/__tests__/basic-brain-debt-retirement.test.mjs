@@ -1,11 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, cpSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, cpSync, chmodSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { collectVerificationRetirementCandidates } from '../implementation-verification-retirements.mjs';
+import { createHash } from 'node:crypto';
+import { deflateSync } from 'node:zlib';
 import { planChecks } from '../basic-scope.mjs';
 const root=fileURLToPath(new URL('../../../', import.meta.url));
 const baseline='fadbf32852';
@@ -104,4 +106,26 @@ test('PG输入只给固定路径候选，保持需重新选择/无执行覆盖�
     assert.equal(input.entry_verified,false);assert.equal(input.owner_verified,false);
     assert.equal(input.selector_witness.execution_status,'not_evaluated');
   }
+}));
+
+test('夹具即使仓内gc.auto=1也不能触发自动维护或留下后台写入',()=>fixture(({source,git})=>{
+  git(source,'config','gc.auto','1');
+  git(source,'config','gc.autoDetach','false');
+  const hooks=join(source,'.git/hooks');mkdirSync(hooks,{recursive:true});
+  git(source,'config','core.hooksPath',hooks);
+  const hook=join(hooks,'pre-auto-gc');
+  writeFileSync(hook,'#!/bin/sh\nprintf fired > auto-gc-fired\n');chmodSync(hook,0o755);
+  // Git的loose-object采样使用17号扇出；有效对象使gc.auto=1必定越阈值。
+  const directory=join(source,'.git/objects/17');mkdirSync(directory,{recursive:true});
+  let written=0;
+  for(let index=0;written<3;index++){
+    const body=Buffer.from(`owned fixture GC probe ${index}`);
+    const object=Buffer.concat([Buffer.from(`blob ${body.length}\0`),body]);
+    const id=createHash('sha1').update(object).digest('hex');
+    if(id.startsWith('17')){writeFileSync(join(directory,id.slice(2)),deflateSync(object));written++;}
+  }
+  git(source,'gc','--auto');
+  assert.equal(existsSync(join(source,'auto-gc-fired')),false,'夹具Git启动了自动GC；清理目录时可能仍有写入者');
+  assert.equal(git(source,'config','--get','gc.auto'),'0');
+  assert.equal(git(source,'config','--get','maintenance.auto'),'false');
 }));
