@@ -117,14 +117,17 @@ describe('project-locate-routes', () => {
       expect(res.body.candidates[0].reason).toBe('keyword_bigram_coverage');
     });
 
-    it('kr_id 过滤透传进 SQL；limit 截断候选数量', async () => {
-      mockPool.query.mockResolvedValueOnce({ rows: [] });
+    it('kr_id 过滤透传进 SQL；limit=1 截断真实候选响应', async () => {
+      const projects = [{ id: 'p1', name: '项目一', score: 0.9 }, { id: 'p2', name: '项目二', score: 0.8 }];
+      mockPool.query.mockResolvedValueOnce({ rows: projects });
       mockResolveProjectLocateThreshold.mockReturnValueOnce(0.55);
-
-      await request(app).post('/projects/locate').send({ text: 'x', kr_id: 'kr-9', limit: 1 });
+      mockScoreProjectCandidates.mockResolvedValueOnce({ method: 'keyword', scored: projects });
+      const res = await request(app).post('/projects/locate').send({ text: 'x', kr_id: 'kr-9', limit: 1 });
       const [sql, params] = mockPool.query.mock.calls[0];
-      expect(sql).toContain('kr_id');
-      expect(params).toContain('kr-9');
+      expect(sql).toContain('kr_id'); expect(params).toContain('kr-9');
+      expect(res.status).toBe(200);
+      expect(res.body.candidates).toHaveLength(1);
+      expect(res.body.candidates[0].project_id).toBe('p1');
     });
   });
 
