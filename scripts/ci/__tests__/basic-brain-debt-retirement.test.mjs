@@ -21,7 +21,8 @@ const reviewedSnapshot='ce20b5a29123c9ade1a0bc4aa2753e3ea3fe310d',reviewedCache=
 execFileSync('git',['-C',root,'merge-base','--is-ancestor',reviewedSnapshot,'HEAD']);
 function reviewedBytes(path) {
   const fact=[reviewedCatalog.replacement_config,...reviewedCatalog.replacement_configs.map(x=>x.blob),
-    ...reviewedCatalog.entry_support].find(row=>row.path===path);
+    ...reviewedCatalog.entry_support,...reviewedCatalog.replacement_inputs.map(x=>x.blob||x),
+    ...reviewedCatalog.records.flatMap(row=>row.policy_sources||[])].find(row=>row.path===path);
   if(!fact)return readFileSync(join(root,path));
   if(reviewedCache.has(path))return reviewedCache.get(path);
   const tree=execFileSync('git',['-C',root,'ls-tree',reviewedSnapshot,'--',path],{encoding:'utf8'}).trim();
