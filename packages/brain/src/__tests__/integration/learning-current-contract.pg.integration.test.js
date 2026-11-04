@@ -64,3 +64,32 @@ it.each([
   expect((await client.query('SELECT applied,metadata FROM learnings WHERE id=$1', [result.id])).rows[0]).toMatchObject({ applied: false, metadata: { insight_task_status: 'blocked', insight_task_reason: reason } });
   expect((await client.query("SELECT id FROM tasks WHERE payload->>'insight_learning_id'=$1", [result.id])).rows).toHaveLength(0);
 });
+
+it.each([
+  ['cecelia', ['F1'], null],
+  ['missing-repository', ['F1'], 'repo_unknown'],
+  ['cecelia', ['missing-scope'], 'routing_map_scope_unresolved'],
+])('同标题的不同Learning不能复用任务或绕过来源路由 %s %j', async (repo, mapScope, reason) => {
+  await seedActiveF1(client);
+  const cause = `shared-title-${randomUUID()}`;
+  const sourceA = (await client.query('INSERT INTO tasks(title,payload) VALUES ($1,$2) RETURNING id', [`source A ${randomUUID()}`, { repo: 'cecelia', map_scope: ['F1'] }])).rows[0].id;
+  const first = await learning.recordLearning({ task_id: sourceA, analysis: { root_cause: cause }, confidence: .9, learnings: ['first'], recommended_actions: [] });
+  const sourceB = (await client.query('INSERT INTO tasks(title,payload) VALUES ($1,$2) RETURNING id', [`source B ${randomUUID()}`, { repo, map_scope: mapScope }])).rows[0].id;
+  const analysis = { task_id: sourceB, analysis: { root_cause: cause }, confidence: .9, learnings: ['second'], recommended_actions: [] };
+  const second = await learning.recordLearning(analysis);
+  expect(second.id).not.toBe(first.id);
+  const secondRow = (await client.query('SELECT applied,metadata FROM learnings WHERE id=$1', [second.id])).rows[0];
+  const tasks = (await client.query("SELECT id,payload FROM tasks WHERE payload->>'insight_learning_id'=$1", [second.id])).rows;
+  if (reason) {
+    expect(secondRow).toMatchObject({ applied: false, metadata: { insight_task_status: 'blocked', insight_task_reason: reason } });
+    expect(tasks).toHaveLength(0);
+  } else {
+    expect(secondRow.applied).toBe(true);
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0].payload).toMatchObject({ insight_learning_id: second.id, repo, map_scope: mapScope });
+    expect((await client.query('SELECT repo,map_scope FROM work_routing_receipts WHERE task_id=$1', [tasks[0].id])).rows).toEqual([{ repo, map_scope: mapScope }]);
+    // 同一分析重放仍只对应一条修复任务。
+    expect((await learning.recordLearning(analysis)).id).toBe(second.id);
+    expect((await client.query("SELECT id FROM tasks WHERE payload->>'insight_learning_id'=$1", [second.id])).rows).toHaveLength(1);
+  }
+});
