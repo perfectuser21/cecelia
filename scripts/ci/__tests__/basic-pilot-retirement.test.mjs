@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {existsSync,readFileSync} from 'node:fs';
+import {existsSync} from 'node:fs';
 import {commandsFor} from '../run-basic-check.mjs';
 const root=new URL('../../../',import.meta.url);
 test('Pilot HEAD工作流已退役，发布CLI与报告验证仍保留',()=>{
