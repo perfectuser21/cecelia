@@ -72,13 +72,22 @@ describe('kv routes — working_memory 存取', () => {
     );
   });
 
-  it('POST 空 body → 400', async () => {
+  it('POST JSON null 由严格解析器拒绝 → 400', async () => {
     const res = await request(makeApp())
       .post('/api/brain/kv/my-key')
       .set('Content-Type', 'application/json')
       .send('null');
     expect(res.status).toBe(400);
-    expect(res.body.error).toBe('body required');
+    expect(pool.query).not.toHaveBeenCalled();
+  });
+
+  it.each([undefined,null])('POST handler 缺体=%s → 精确 body required，零写入', async body => {
+    const handler=kvRouter.stack.find(l=>l.route?.path==='/:key'&&l.route.methods.post).route.stack.at(-1).handle;
+    const res={status:vi.fn().mockReturnThis(),json:vi.fn().mockReturnThis()};
+    await handler({params:{key:'missing-body'},body},res);
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith({error:'body required'});
+    expect(pool.query).not.toHaveBeenCalled();
   });
 
   it('GET DB 异常 → 500', async () => {
