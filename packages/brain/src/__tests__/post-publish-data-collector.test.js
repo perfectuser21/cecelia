@@ -7,7 +7,7 @@
  *   - COALESCE 防御修复：writeBackToPublishTask 使用 COALESCE(payload, '{}'::jsonb) 写法
  *   - COALESCE 防御修复：completeScraperTask 使用 COALESCE(payload, '{}'::jsonb) 写法
  *   - schedulePostPublishCollection 主流程：无任务、有任务、异常
- *   - processPendingScraperTasks：placeholder 写入、真实数据回填、缺失字段跳过
+ *   - processPendingScraperTasks：缺数据保持待采集、真实数据回填、缺失字段不伪报完成
  *   - writePipelinePublishStats：正常写入、metrics 缺省
  *
  * Sprint: 07220725-fix-markdispatched-null-payload
@@ -156,8 +156,6 @@ describe('processPendingScraperTasks', () => {
 
     // fetchQueuedScraperTasks
     mockQuery.mockResolvedValueOnce({ rows: [scraperTask] });
-    // completeScraperTask（跳过时仍标记完成）
-    mockQuery.mockResolvedValueOnce({ rows: [] });
 
     const result = await processPendingScraperTasks(mockPool);
 
