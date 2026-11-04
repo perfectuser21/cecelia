@@ -193,7 +193,7 @@ describe('resumeStalledHarnessDrivers — never-started branch (fabf6bd6)', () =
       connect: vi.fn(async () => client),
     };
 
-    const result = await resumeStalledHarnessDrivers({ 
+    const result = await resumeStalledHarnessDrivers({
       pool: dbPool,
       execFn: () => '',
       maxFreshStarts: 3,
@@ -250,7 +250,7 @@ describe('resumeStalledHarnessDrivers — never-started branch (fabf6bd6)', () =
       connect: vi.fn(async () => client),
     };
 
-    const result = await resumeStalledHarnessDrivers({ 
+    const result = await resumeStalledHarnessDrivers({
       pool: dbPool,
       execFn: () => '',
       maxFreshStarts: 3,
@@ -274,7 +274,7 @@ describe('resumeStalledHarnessDrivers — never-started branch (fabf6bd6)', () =
         : { rows: [] }
     ));
 
-    const result = await resumeStalledHarnessDrivers({ 
+    const result = await resumeStalledHarnessDrivers({
       pool: { query },
       execFn: () => '',
       maxFreshStarts: 3,
@@ -308,7 +308,7 @@ describe('resumeStalledHarnessDrivers — never-started branch (fabf6bd6)', () =
       connect: vi.fn(async () => client),
     };
 
-    const result = await resumeStalledHarnessDrivers({ 
+    const result = await resumeStalledHarnessDrivers({
       pool: dbPool,
       execFn: () => '',
       maxFreshStarts: 3,

@@ -1,5 +1,5 @@
 /**
- * harness-watchdog-never-started.test.js
+ * harness-watchdog-headed-compat.test.js
  *
  * Regression test for Notion issue fabf6bd6 — harness dispatcher deadlock.
  *
