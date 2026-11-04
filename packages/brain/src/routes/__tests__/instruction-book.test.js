@@ -95,3 +95,13 @@ it.each(['fs','node:fs'])('真实%s别名对越界读必须先由安全边界拒
  const filesystem=await import(name);const outside=resolve(boundary.owned,'../instruction-reader-outside-no-file-'+boundary.owned.split('/').pop(), 'unknown');
  expect(()=>filesystem.readFileSync(outside,'utf8')).toThrow('host read forbidden');expect(()=>filesystem.readdirSync(outside)).toThrow('host read forbidden');
 });
+
+it('全部15个已跟踪条目的非标题正文逐行进入前端既有sections，不以数量冒称正文完整',async()=>{
+ const response=await get();expect(response.status).toBe(200);
+ for(const category of ['skills','features'])for(const name of fs.readdirSync(join(docs,category)).filter(x=>x.endsWith('.md'))){
+  const lines=fs.readFileSync(join(docs,category,name),'utf8').split('\n');const titleAt=lines.findIndex(line=>line.startsWith('# '));expect(titleAt).toBeGreaterThanOrEqual(0);
+  const title=lines[titleAt].slice(2).trim();const entry=response.body[category].find(e=>e.title===title);expect(entry,name).toBeDefined();const body=flatten(entry);
+  for(const line of lines.slice(titleAt+1).map(l=>l.trim()).filter(l=>l&&!l.startsWith('#')))expect.soft(body,name+': '+line).toContain(line);
+ }
+ expect(boundary.forbidden).not.toHaveBeenCalled();expect(boundary.unboundQuery).not.toHaveBeenCalled();
+});
