@@ -99,49 +99,17 @@ describe('processPendingScraperTasks', () => {
     expect(mockQuery).toHaveBeenCalledTimes(1);
   });
 
-  it('有排队任务且无真实数据时，写入 placeholder 并完成（COALESCE 防御）', async () => {
-    const scraperTask = {
-      id: 'scraper-1',
-      payload: {
-        platform: 'douyin',
-        pipeline_id: 'pipe-1',
-        source_publish_task_id: 'publish-1',
-        triggered_by: 'post-publish-data-collector',
-      },
-      created_at: new Date().toISOString(),
-    };
-
-    // fetchQueuedScraperTasks
-    mockQuery.mockResolvedValueOnce({ rows: [scraperTask] });
-    // SELECT pipeline_publish_stats → 无真实数据
-    mockQuery.mockResolvedValueOnce({ rows: [] });
-    // INSERT pipeline_publish_stats (placeholder)
-    mockQuery.mockResolvedValueOnce({ rows: [] });
-    // writeBackToPublishTask UPDATE（COALESCE 修复验证）
-    mockQuery.mockResolvedValueOnce({ rows: [] });
-    // completeScraperTask UPDATE（COALESCE 修复验证）
-    mockQuery.mockResolvedValueOnce({ rows: [] });
+  it('无真实数据时保持待采集，不写占位统计、不回填零值、不标完成', async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [{ id: 'scraper-1', payload: {
+      platform: 'douyin', pipeline_id: 'pipe-1', source_publish_task_id: 'publish-1',
+    } }] }).mockResolvedValue({ rows: [] });
 
     const result = await processPendingScraperTasks(mockPool);
 
-    expect(result.processed).toBe(1);
-    expect(mockQuery).toHaveBeenCalledTimes(5);
-
-    // 验证 writeBackToPublishTask 的 UPDATE 使用 COALESCE 防御写法
-    const writeBackCall = mockQuery.mock.calls[3];
-    expect(writeBackCall[0]).toContain('UPDATE tasks');
-    expect(writeBackCall[0]).toContain('COALESCE(payload');
-    const payloadStr = writeBackCall[1][0];
-    const payload = JSON.parse(payloadStr);
-    expect(payload.views).toBe(0);
-    expect(payload.likes).toBe(0);
-    expect(payload.comments).toBe(0);
-    expect(payload).toHaveProperty('stats_collected_at');
-
-    // 验证 completeScraperTask 的 UPDATE 使用 COALESCE 防御写法
-    const completeCall = mockQuery.mock.calls[4];
-    expect(completeCall[0]).toContain('UPDATE tasks');
-    expect(completeCall[0]).toContain('COALESCE(payload');
+    expect(result.processed).toBe(0);
+    expect(result.deferred).toBe(1);
+    expect(mockQuery.mock.calls.filter(([sql]) => /(?:INSERT|UPDATE)\s/i.test(sql))).toEqual([]);
+    expect(mockQuery).toHaveBeenCalledTimes(2);
   });
 
   it('有排队任务且 N8N 已采集真实数据时，回填真实数据', async () => {
@@ -179,7 +147,7 @@ describe('processPendingScraperTasks', () => {
     expect(payload.comments).toBe(42);
   });
 
-  it('缺少 source_publish_task_id 时跳过并标记完成', async () => {
+  it('缺少 source_publish_task_id 时保持未完成', async () => {
     const scraperTask = {
       id: 'scraper-3',
       payload: { platform: 'weibo', triggered_by: 'post-publish-data-collector' },
@@ -194,7 +162,8 @@ describe('processPendingScraperTasks', () => {
     const result = await processPendingScraperTasks(mockPool);
 
     expect(result.processed).toBe(0);
-    expect(mockQuery).toHaveBeenCalledTimes(2);
+    expect(mockQuery).toHaveBeenCalledTimes(1);
+    expect(mockQuery.mock.calls.some(([sql]) => /UPDATE\s+tasks/i.test(sql))).toBe(false);
   });
 
   it('DB 异常时不抛出，返回 processed=0', async () => {
