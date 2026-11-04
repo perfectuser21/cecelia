@@ -275,6 +275,8 @@ const REVIEWED_RUNTIME_SCOPE_CLOSURE = {
   "scripts/ci/basic-scope.mjs": "2914d8e8672b4b17a1037e1ccaa25c02b13d5e3cc34dcfcdf8da1a603faae042",
 };
 const BASIC_PROTOCOLS = {
+  // Dependabot排队只追加当前完整runtime scope闭包，旧workflow组合保持。
+  '020165ab3d73d487d973c6d98c849958240dc56149d5b6083b8288673a3dd091': REVIEWED_RUNTIME_SCOPE_CLOSURE,
   '5b0f190209eec9c1370b9a96c6aef43b9aa0bc99bdd0f765ccb261c2cfe95080': [REVIEWED_VERSION_CLOSURE, {
     ...REVIEWED_VERSION_CLOSURE,
     // 仅追加本轮两份无消费者旧PG测试退休后的完整配置组合，旧组合保持原样。
