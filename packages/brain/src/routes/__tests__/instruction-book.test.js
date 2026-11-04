@@ -51,13 +51,13 @@ vi.mock('fs', async original=>{
 });
 import {resolve,join} from 'node:path';
 import {tmpdir} from 'node:os';
-let app,fs;
+let app,server,fs;
 const docs=resolve(process.cwd(),'../../docs/instruction-book');
-beforeAll(async()=>{fs=await vi.importActual('node:fs');boundary.owned=fs.mkdtempSync(join(tmpdir(),'book-http-'));vi.stubGlobal('fetch',boundary.forbidden);const m=await import('../ops.js');app=express().use('/api/brain',m.default);});
+beforeAll(async()=>{fs=await vi.importActual('node:fs');boundary.owned=fs.mkdtempSync(join(tmpdir(),'book-http-'));vi.stubGlobal('fetch',boundary.forbidden);const m=await import('../ops.js');app=express().use('/api/brain',m.default);server=await new Promise(resolve=>{const ownedServer=app.listen(0,'127.0.0.1',()=>resolve(ownedServer));});});
 beforeEach(()=>{vi.clearAllMocks();boundary.redirectRoot=null;vi.unstubAllEnvs();});
 afterEach(()=>vi.unstubAllEnvs());
-afterAll(()=>{fs.rmSync(boundary.owned,{recursive:true,force:true});vi.unstubAllGlobals();});
-const get=()=>request(app).get('/api/brain/docs/instruction-book');
+afterAll(async()=>{await new Promise(resolve=>server.close(resolve));fs.rmSync(boundary.owned,{recursive:true,force:true});vi.unstubAllGlobals();});
+const get=()=>request(server).get('/api/brain/docs/instruction-book');
 function book(name){const p=join(boundary.owned,name);for(const k of ['skills','features'])fs.mkdirSync(join(p,k),{recursive:true});return p;}
 const flatten=e=>Object.values(e.sections).map(s=>s.content+'\n'+s.subsections.map(x=>x.title+'\n'+x.content).join('\n')).join('\n');
 it('真实ops注册GET读取所有仓内条目且ID非空唯一，零DB/外部动作',async()=>{
