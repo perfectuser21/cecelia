@@ -45,6 +45,7 @@ describe('SimilarityService - Vector Search', () => {
 
       expect(result).toHaveProperty('matches');
       expect(Array.isArray(result.matches)).toBe(true);
+      expect(mockDb.query.mock.calls.some(([sql])=>sql.includes('<=>'))).toBe(true);
     });
 
     it('should fallback to Jaccard on OpenAI failure', async () => {
