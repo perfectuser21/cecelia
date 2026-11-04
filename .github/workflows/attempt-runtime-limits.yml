@@ -3,6 +3,10 @@ on:
   pull_request:
     paths:
       - 'packages/brain/scripts/fleet-worker/attempt-*'
+      - 'packages/brain/scripts/fleet-worker/local-resource-admission.cjs'
+      - 'packages/brain/scripts/fleet-worker/fleet-node-profiles.json'
+      - 'packages/brain/config/fleet-node-profiles.json'
+      - 'scripts/ci/__tests__/basic-resource-canary.test.mjs'
       - 'packages/brain/src/fleet-resource-cache.js'
       - 'packages/brain/src/orchestrator/fleet-node/node-profile.js'
       - '.github/workflows/attempt-runtime-limits.yml'

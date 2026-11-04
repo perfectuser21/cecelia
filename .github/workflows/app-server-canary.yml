@@ -2,8 +2,16 @@ name: App-server bounded container canary
 on:
   pull_request:
     paths:
-      - 'packages/brain/scripts/fleet-worker/app-server-*'
+      - 'packages/brain/scripts/fleet-worker/**'
       - 'packages/brain/src/app-server/**'
+      - 'packages/brain/src/execution-directory/**'
+      - 'packages/brain/src/phone-dispatch/identity.js'
+      - 'packages/brain/src/orchestrator/fleet-node/node-profile.js'
+      - 'packages/brain/src/orchestrator/attempt-machine-capacity.js'
+      - 'packages/brain/src/orchestrator/attempt-resource-budget.js'
+      - 'packages/brain/config/fleet-node-profiles.json'
+      - '.github/actions/dockerhub-mirror/**'
+      - 'scripts/ci/__tests__/basic-resource-canary.test.mjs'
       - 'packages/brain/migrations/506_app_server_streams.sql'
       - '.github/workflows/app-server-canary.yml'
   workflow_dispatch:

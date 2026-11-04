@@ -80,3 +80,33 @@ for (const [field, value] of [[null, null], ['status', 'unknown'], ['cpu_cores',
     assert.equal(childProcess.exitCode, field ? 1 : 0);
   });
 }
+
+const attemptSource = readFileSync(join(root, worker, 'attempt-limits-canary.cjs'), 'utf8');
+const limitFunction = attemptSource.match(/function checkLimits\(container, limits\) \{([\s\S]*?)\n\}/)[1];
+const checkLimits = runInNewContext(`(container, limits) => {${limitFunction}}`, { assert });
+const limits = { cpus: 0.25, memoryBytes: 805306368, pidsLimit: 96 };
+const config = { NanoCpus: 250000000, Memory: 805306368, MemorySwap: 805306368, PidsLimit: 96 };
+for (const field of [null, 'NanoCpus', 'Memory', 'MemorySwap', 'PidsLimit']) {
+  test(`Attempt真实Docker限额断言拒绝变异 ${field ?? '正常基线'}`, () => {
+    const container = { HostConfig: { ...config, ...(field ? { [field]: 1 } : {}) } };
+    if (field) assert.throws(() => checkLimits(container, limits), { code: 'ERR_ASSERTION' });
+    else checkLimits(container, limits);
+  });
+}
+const appSource = readFileSync(join(root, worker, 'app-server-canary.cjs'), 'utf8');
+const appChecks = appSource.slice(appSource.indexOf('    assert.equal(inspected.HostConfig.Memory,'),
+  appSource.indexOf('    const connection = await initialize(identity);'));
+const profile = { memoryBytes: 536870912 };
+const inspectedBase = { HostConfig: { Memory: 536870912, MemorySwap: 536870912, NanoCpus: 1e9,
+  PidsLimit: 64, LogConfig: { Type: 'none' }, ReadonlyRootfs: true, NetworkMode: 'none', CapDrop: ['ALL'] },
+  Config: { Tty: false, User: '1000:1000' }, Mounts: [{ Type: 'volume', Name: 'canary-volume' }] };
+for (const field of [null, 'Memory', 'MemorySwap', 'NanoCpus', 'PidsLimit', 'NetworkMode', 'ReadonlyRootfs']) {
+  test(`App-server真实Docker隔离断言拒绝变异 ${field ?? '正常基线'}`, () => {
+    const inspected = structuredClone(inspectedBase);
+    if (field) inspected.HostConfig[field] = 'wrong';
+    const evaluate = () => runInNewContext('const inspected = JSON.parse(serialized);\n' + appChecks,
+      { assert, serialized: JSON.stringify(inspected), profile, volumes: ['canary-volume'] });
+    if (field) assert.throws(evaluate, { code: 'ERR_ASSERTION' });
+    else evaluate();
+  });
+}

@@ -3,6 +3,12 @@ on:
   pull_request:
     paths:
       - 'packages/brain/scripts/fleet-worker/linux-*'
+      - 'packages/brain/scripts/fleet-worker/node-probe.cjs'
+      - 'packages/brain/scripts/fleet-worker/fleet-worker.cjs'
+      - 'packages/brain/scripts/fleet-worker/local-resource-admission.cjs'
+      - 'packages/brain/scripts/fleet-worker/fleet-node-profiles.json'
+      - 'packages/brain/config/fleet-node-profiles.json'
+      - 'scripts/ci/__tests__/basic-resource-canary.test.mjs'
       - '.github/workflows/linux-resource-canary.yml'
   workflow_dispatch:
 permissions:
