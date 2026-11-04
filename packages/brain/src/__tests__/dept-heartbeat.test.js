@@ -12,6 +12,11 @@ import {
   triggerDeptHeartbeats,
 } from '../dept-heartbeat.js';
 
+// 隔离共享建单器及事件出站边界；本文件只验证 heartbeat 编排。
+vi.mock('../actions.js', () => ({ createTask: vi.fn(async () => { throw new Error('必须注入任务创建边界'); }) }));
+vi.mock('../incident-reporter.js', () => ({ reportIncident: vi.fn().mockResolvedValue(undefined) }));
+import { reportIncident } from '../incident-reporter.js';
+
 // ============================================================
 // Mock pool（顺序响应模式：按调用顺序依次返回）
 // ============================================================
