@@ -26,15 +26,21 @@ import { startProbeLoop, getProbeStatus } from '../capability-probe.js';
 
 afterEach(() => {
   vi.unstubAllEnvs();
+  vi.restoreAllMocks();
 });
 
 describe('capability-probe CI 门', () => {
   it('CI=true 时 startProbeLoop() 不启动定时器，getProbeStatus().running 为 false', () => {
     vi.stubEnv('CI', 'true');
+    vi.stubEnv('NODE_ENV', 'production');
+    const interval = vi.spyOn(globalThis, 'setInterval');
+    const timeout = vi.spyOn(globalThis, 'setTimeout');
 
     startProbeLoop();
 
     expect(getProbeStatus().running).toBe(false);
+    expect(interval).not.toHaveBeenCalled();
+    expect(timeout).not.toHaveBeenCalled();
   });
 
   // real-env-smoke 的 brain 跑在 docker 容器里（ci.yml `docker run -e NODE_ENV=test`），
@@ -43,9 +49,14 @@ describe('capability-probe CI 门', () => {
   // 但仍显式 stub 以固化契约，防止将来 vitest 配置变化导致门失效而无感知。
   it('NODE_ENV=test 时 startProbeLoop() 不启动定时器，getProbeStatus().running 为 false', () => {
     vi.stubEnv('NODE_ENV', 'test');
+    vi.stubEnv('CI', 'false');
+    const interval = vi.spyOn(globalThis, 'setInterval');
+    const timeout = vi.spyOn(globalThis, 'setTimeout');
 
     startProbeLoop();
 
     expect(getProbeStatus().running).toBe(false);
+    expect(interval).not.toHaveBeenCalled();
+    expect(timeout).not.toHaveBeenCalled();
   });
 });
