@@ -111,4 +111,3 @@ describe('Layer 6: 表达层（Expression）', () => {
     expect(pool.query).toHaveBeenCalledWith("UPDATE desires SET status = 'expressed' WHERE id = $1", [desire.id]);
   });
 });
-
