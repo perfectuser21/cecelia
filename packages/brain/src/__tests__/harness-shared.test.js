@@ -1,7 +1,10 @@
 /**
- * 验证：harness-shared.js export 共享函数（含 Protocol v2 新增工具）。
+ * 验证：harness-shared.js export 共享函数（不重新维护无消费者的Protocol-v2桥）。
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+
+beforeEach(() => { vi.stubEnv('CECELIA_SKILLS_ROOT', new URL('./owned-missing-skills', import.meta.url).pathname); });
+afterEach(() => vi.unstubAllEnvs());
 
 describe('harness-shared module', () => {
   it('exports parseDockerOutput / extractField / loadSkillContent', async () => {
@@ -27,7 +30,7 @@ describe('harness-shared module', () => {
   });
 
   it('loadSkillContent 缺文件时 throw（B56 fail-fast，不再返回空串）', async () => {
-    // B56: CI 环境无 ~/.claude-account*/skills/，loadSkillContent 应 throw 而非静默返回空串。
+    // 当前入口只读仓库bundle；本例显式owned不存在路径，不读取个人Skill。
     // 旧行为返回空串会导致 generator 拿空 SKILL prompt 跑出无 PR 的假成功，故 fail-fast。
     const { loadSkillContent } = await import('../harness-shared.js');
     expect(() => loadSkillContent('nonexistent-skill-name-xyz-b56')).toThrow(/SKILL\.md not found/);
