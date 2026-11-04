@@ -18,14 +18,7 @@ import { reconcileDelegatedDeviceJobs } from '../device-delegation.js';
 const PARENT = '11111111-2222-3333-4444-555555555555';
 const CHILD = '99999999-8888-7777-6666-555555555555';
 
-/**
- * 中文表推送读回执的方式（notion-gtd-sync.js 的 resultTextOf 逐字搬来）：
- * 父任务 result.receipt 不长成这个形状，主理人在「OpenClaw结果」列只会看到空白。
- */
-const resultTextOf = (result) => {
-  const r = result?.receipt ?? result ?? {};
-  return String(r.finalAssistantVisibleText ?? r.text ?? r.summary ?? '').slice(0, 1900);
-};
+import { resultTextOf } from '../../notion-gtd-sync.js';
 
 /** 假 pool：按 SQL 特征分流。scan → 父任务候选；child → 子任务行；其余当写回记下来。 */
 function makePool({ parents = [{ id: PARENT, device_task_id: CHILD }], child = null } = {}) {
