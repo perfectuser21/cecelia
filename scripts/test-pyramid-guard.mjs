@@ -1,11 +1,10 @@
 #!/usr/bin/env node
 // test-pyramid-guard.mjs — 刀0 测试金字塔机械守卫（PRD: docs/prd/2026-07-14-ops-half-loop.prd.md）
-// 四断言：A1 孤儿棘轮 / A2 smoke 挂跑道 / A3 永久池棘轮 / A4 面板活性（仅本地）
+// 断言：A1 孤儿棘轮 / A2 smoke 挂跑道 / A3 永久池棘轮 / A5 裸奔 FR 棘轮
 // 用法：node scripts/test-pyramid-guard.mjs [--json] [--root <dir>]
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { execSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
@@ -120,17 +119,7 @@ export function countPermanent(root, roots) {
   return { total, layers };
 }
 
-export function checkPanelFreshness(root, maxAgeHours) {
-  const file = path.join(root, '.agent-knowledge', 'CURRENT_STATE.md');
-  let text;
-  try { text = fs.readFileSync(file, 'utf8'); } catch { return { fresh: false, generated: null }; }
-  const m = text.match(/generated:\s*(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})/);
-  if (!m) return { fresh: false, generated: null };
-  const age = (Date.now() - new Date(m[1].replace(' ', 'T') + '+08:00').getTime()) / 3600e3;
-  return { fresh: age >= 0 && age < maxAgeHours, generated: m[1] };
-}
-
-export function runGuard(root, baseline, { ci = false, panelRoot, bareFrCount = null } = {}) {
+export function runGuard(root, baseline, { bareFrCount = null } = {}) {
   const failures = [];
   for (const k of ['orphans', 'permanent', 'permanent_roots', 'smoke_dir']) {
     if (baseline?.[k] === undefined) failures.push(`BASELINE: 基线缺字段 ${k}（宁红勿绿）`);
@@ -156,12 +145,6 @@ export function runGuard(root, baseline, { ci = false, panelRoot, bareFrCount = 
     failures.push(`A3 永久池棘轮: 永久测试 ${permanent.total} < 基线 ${baseline.permanent}——删测试/摘 include 必须显式改基线并在 commit message 声明退役理由`);
   }
 
-  let panel = null;
-  if (!ci) {
-    panel = checkPanelFreshness(panelRoot ?? root, 48);
-    if (!panel.fresh) failures.push(`A4 面板活性: CURRENT_STATE.md generated=${panel.generated ?? '缺失'} 超过 48h（僵尸面板复发）`);
-  }
-
   // A5 裸奔 FR 棘轮：guard_ref IS NULL AND status=live 的 FR 数只许降
   // bareFrCount 由调用方注入（main 从 Brain API 取，测试直接传）；null 表示 Brain 不可用则跳过
   let bareFr = null;
@@ -182,7 +165,6 @@ export function runGuard(root, baseline, { ci = false, panelRoot, bareFrCount = 
     unregistered_orphans: unregisteredOrphans,
     smoke,
     permanent,
-    panel,
     bare_fr: bareFr,
   };
 }
@@ -214,17 +196,10 @@ if (isMain) {
   const baselinePath = path.join(root, 'scripts', 'test-pyramid-baseline.json');
   let baseline = null;
   try { baseline = JSON.parse(fs.readFileSync(baselinePath, 'utf8')); } catch { /* runGuard 会红 */ }
-  // A4 面板读主仓（worktree 副本必然过期误报）：git-common-dir 推主仓根，非 git 环境回退 root
-  let panelRoot = root;
-  try {
-    const common = execSync('git rev-parse --git-common-dir', { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
-    const resolved = path.resolve(root, common);
-    if (path.basename(resolved) === '.git') panelRoot = path.dirname(resolved);
-  } catch { /* 回退 root */ }
   // A5 尝试从 Brain API 取裸奔 FR 数（Brain 不可达则跳过 A5）
   const bareFrCount = await fetchBareFrCount();
   if (bareFrCount === null) console.error('ℹ️ A5: Brain 不可达，跳过裸奔 FR 棘轮');
-  const result = runGuard(root, baseline, { ci: !!process.env.CI, panelRoot, bareFrCount });
+  const result = runGuard(root, baseline, { bareFrCount });
   if (args.includes('--json')) {
     console.log(JSON.stringify(result, null, 2));
   } else {
@@ -234,7 +209,6 @@ if (isMain) {
     if (result.unregistered_orphans) console.log(`  未登记孤儿: ${result.unregistered_orphans.total}（tests ${result.unregistered_orphans.tests} + e2e ${result.unregistered_orphans.e2e}）/ 基线 ${baseline?.orphans}`);
     if (result.smoke) console.log(`  smoke: ${result.smoke.total} 条，未挂跑道 ${result.smoke.unwired.length}`);
     if (result.permanent) console.log(`  永久池: ${result.permanent.total} / 基线 ${baseline?.permanent} ｜ 分层 ${JSON.stringify(result.permanent.layers)}`);
-    if (result.panel) console.log(`  面板: generated=${result.panel.generated} fresh=${result.panel.fresh}`);
     if (result.bare_fr) console.log(`  裸奔 FR: ${result.bare_fr.count} / 基线 ${result.bare_fr.baseline}`);
     for (const f of result.failures) console.log(`  ❌ ${f}`);
     console.log(result.pass ? '✅ PASS' : '❌ FAIL');

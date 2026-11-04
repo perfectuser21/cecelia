@@ -795,7 +795,7 @@ router.get('/goals/:id/okr-context', async (req, res) => {
  */
 router.get('/briefing', async (req, res) => {
   try {
-    const { getBriefing } = await import('./briefing.js');
+    const { getBriefing } = await import('../briefing.js');
     const briefing = await getBriefing({ since: req.query.since });
     res.json(briefing);
   } catch (err) {
@@ -814,7 +814,7 @@ router.get('/briefing', async (req, res) => {
  */
 router.post('/greet', async (req, res) => {
   try {
-    const { generateGreeting, isInCooldown } = await import('./greet.js');
+    const { generateGreeting, isInCooldown } = await import('../greet.js');
 
     // 冷却检查（提前返回，不需要生成）
     if (await isInCooldown()) {
