@@ -8,7 +8,10 @@ for ((poll=0;poll<570;poll++)); do
     [[ $(date +%s) -lt $deadline ]] || break
     remaining=$((deadline - $(date +%s)))
     request_budget=15; ((remaining >= 15)) || request_budget=$remaining
-    response=$(curl -fsS --connect-timeout 10 --max-time "$request_budget" "$BRAIN_URL/api/brain/deploy/staging/status")
+    response=$(curl -sS --connect-timeout 10 --max-time "$request_budget" -w '\n%{http_code}' "$BRAIN_URL/api/brain/deploy/staging/status")
+    http_code="${response##*$'\n'}"
+    [[ "$http_code" =~ ^2[0-9][0-9]$ ]] || { echo "staging status HTTP $http_code" >&2; exit 1; }
+    response="${response%$'\n'*}"
     [[ $(date +%s) -lt $deadline ]] || break
     status=$(printf '%s' "$response" | jq -r '.status')
     if [[ "$status" == success ]]; then

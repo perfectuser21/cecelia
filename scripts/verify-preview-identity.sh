@@ -5,7 +5,10 @@ set -euo pipefail
 [[ "$EXPECTED_SHA" =~ ^[a-f0-9]{40}$ ]] || exit 2
 [[ "$EXPECTED_DB_NAME" == "cecelia_preview_${PR_NUMBER}" ]] || { echo 'unsafe preview database identity' >&2; exit 2; }
 PREVIEW_URL="${PREVIEW_URL:-http://${PREVIEW_HOST:?}:${EXPECTED_PORT:?}}"
-identity=$(curl -fsS --connect-timeout 5 --max-time 15 "${PREVIEW_URL}/api/brain/preview/identity")
+response=$(curl -sS --connect-timeout 5 --max-time 15 -w '\n%{http_code}' "${PREVIEW_URL}/api/brain/preview/identity")
+http_code="${response##*$'\n'}"
+[[ "$http_code" =~ ^2[0-9][0-9]$ ]] || { echo "preview identity HTTP $http_code" >&2; exit 1; }
+identity="${response%$'\n'*}"
 printf '%s' "$identity" | python3 -c 'import json,os,sys
 v=json.load(sys.stdin)
 expected={"git_sha":os.environ["EXPECTED_SHA"],"db_name":os.environ["EXPECTED_DB_NAME"],"pr_number":int(os.environ["PR_NUMBER"]),"tick_enabled":False}

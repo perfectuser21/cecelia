@@ -28,7 +28,7 @@ printf '%s\n' "=== auto-staging-smoke (target ${STAGING_URL}) ==="
 # ── 1. staging 健康端点（部署真起来了）────────────────────────────────────────
 HTTP_CODE=$(curl -s -o /tmp/auto_staging_health.txt -w "%{http_code}" \
   "${STAGING_URL}/api/brain/health" \
-  --connect-timeout 10 --max-time 20 2>/dev/null)
+  --connect-timeout 10 --max-time 20 2>/dev/null) || HTTP_CODE=000
 HTTP_CODE="${HTTP_CODE:-000}"
 
 if [ "$HTTP_CODE" -ge 200 ] 2>/dev/null && [ "$HTTP_CODE" -lt 300 ] 2>/dev/null; then
@@ -38,16 +38,20 @@ else
 fi
 
 # ── 2. tick 状态端点可访问 + staging tick 必须禁用（不抢 production 任务）────
-TICK_JSON=$(curl -s "${STAGING_URL}/api/brain/tick/status" \
-  --connect-timeout 10 --max-time 20 2>/dev/null || echo "{}")
+TICK_RESPONSE=$(curl -sS "${STAGING_URL}/api/brain/tick/status" -w '\n%{http_code}' \
+  --connect-timeout 10 --max-time 20 2>/dev/null) || TICK_RESPONSE=$'{}\n000'
+TICK_CODE="${TICK_RESPONSE##*$'\n'}"
+TICK_JSON="${TICK_RESPONSE%$'\n'*}"
 
 TICK_ENABLED=$(printf '%s' "$TICK_JSON" | node -e "
   try { const d = JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
-        console.log(d.hasOwnProperty('enabled') ? String(d.enabled) : 'missing'); }
+        console.log(typeof d?.enabled === 'boolean' ? String(d.enabled) : 'invalid-type'); }
   catch (e) { console.log('error'); }
 " 2>/dev/null || echo "error")
 
-if [ "$TICK_ENABLED" = "false" ]; then
+if [[ ! "$TICK_CODE" =~ ^2[0-9][0-9]$ ]]; then
+  fail "/api/brain/tick/status → HTTP ${TICK_CODE}（拒绝非2xx响应）"
+elif [ "$TICK_ENABLED" = "false" ]; then
   pass "/api/brain/tick/status 可访问且 tick 已禁用（staging 不抢任务）"
 elif [ "$TICK_ENABLED" = "true" ]; then
   fail "staging tick 未禁用（enabled=true，会抢 production 任务）"
@@ -58,7 +62,7 @@ fi
 # ── 3. DB 连接（经 tasks 端点间接验证 staging DB 可读）────────────────────────
 TASKS_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
   "${STAGING_URL}/api/brain/tasks?limit=1" \
-  --connect-timeout 10 --max-time 20 2>/dev/null)
+  --connect-timeout 10 --max-time 20 2>/dev/null) || TASKS_CODE=000
 TASKS_CODE="${TASKS_CODE:-000}"
 
 if [ "$TASKS_CODE" -ge 200 ] 2>/dev/null && [ "$TASKS_CODE" -lt 300 ] 2>/dev/null; then
