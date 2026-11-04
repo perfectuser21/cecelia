@@ -19,9 +19,6 @@ const routedTaskMock = vi.hoisted(() => vi.fn());
 vi.mock('../work-routing-store.js', () => ({ createRoutedTask: routedTaskMock }));
 
 // TC-B 需要的额外 mock（selectNextDispatchableTask 依赖）
-vi.mock('../alertness-actions.js', () => ({
-  getMitigationState: vi.fn().mockReturnValue({ p2_paused: false, drain_mode_requested: false }),
-}));
 vi.mock('../task-weight.js', () => ({
   sortTasksByWeight: vi.fn((rows) => rows),
 }));

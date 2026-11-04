@@ -58,9 +58,6 @@ vi.mock('../circuit-breaker.js', () => ({
   getAllStates: vi.fn().mockReturnValue({})
 }));
 
-vi.mock('../alertness-actions.js', () => ({
-  getMitigationState: vi.fn().mockReturnValue({ p2_paused: false, drain_mode_requested: false })
-}));
 
 vi.mock('../actions.js', () => ({
   updateTask: vi.fn().mockResolvedValue({ success: true }),

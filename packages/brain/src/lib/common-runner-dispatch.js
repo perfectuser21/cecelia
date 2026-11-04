@@ -23,8 +23,8 @@ const inputKeys = new Set(['task_id', 'profile', 'input', 'mode']);
 async function assertCommonRunnerStartAllowed(env, pool) {
   if (isIsolatedRuntime(env)) fail('common_runner_runtime_isolated', 503);
   if (!await readTickDispatchEnabled(pool, env)) fail('common_runner_dispatch_paused', 503);
-  const [{ isDraining }, { getMitigationState }] = await Promise.all([import('../drain.js'), import('../alertness-actions.js')]);
-  if (isDraining() || getMitigationState().drain_mode_requested) fail('common_runner_dispatch_paused', 503);
+  const { isDraining } = await import('../drain.js');
+  if (isDraining()) fail('common_runner_dispatch_paused', 503);
 }
 
 /** Operator-owned routing; callers cannot supply endpoints, commands or credentials. */

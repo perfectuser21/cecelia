@@ -540,16 +540,12 @@ export async function dispatchNextTask(goalIds, options = {}) {
   let llmCapacitySnapshot = null;
 
   // 0. Drain check — skip dispatch if draining (let in_progress tasks finish)
-  // Also check alertness-requested drain mode
-  const { getMitigationState } = await import('./alertness-actions.js');
-  const mitigationState = getMitigationState();
-
-  if (isDraining() || mitigationState.drain_mode_requested) {
+  if (isDraining()) {
     await recordDispatchResult(pool, false, 'draining');
     return {
       dispatched: false,
       reason: 'draining',
-      detail: isDraining() ? `Drain mode active since ${getDrainStartedAt()}` : 'Alertness COMA drain mode',
+      detail: `Drain mode active since ${getDrainStartedAt()}`,
       actions
     };
   }

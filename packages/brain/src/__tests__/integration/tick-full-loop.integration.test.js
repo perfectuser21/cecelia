@@ -9,7 +9,7 @@
  *
  * 与 tick-dispatch.integration.test.js 的区别：
  *   - 本文件不 mock db.js，使用真实 PostgreSQL 连接
- *   - 只 mock 外部服务（alertness-actions、focus.js、llm-caller）
+ *   - 只 mock 外部服务（focus.js、llm-caller）
  *   - 验证真实 SQL 查询行为
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
@@ -17,9 +17,6 @@ import pg from 'pg';
 import { DB_DEFAULTS } from '../../db-config.js';
 
 // Mock 外部服务（不测试 AI 响应和告警）
-vi.mock('../../alertness-actions.js', () => ({
-  getMitigationState: () => ({ p2_paused: false }),
-}));
 
 vi.mock('../../focus.js', () => ({
   getDailyFocus: vi.fn().mockResolvedValue({ kr_ids: [], manual: false }),

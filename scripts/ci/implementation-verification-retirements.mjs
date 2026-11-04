@@ -8,6 +8,8 @@ const REPO='perfectuser21/cecelia',BASE='68b996a5641b69e6f21705a114a4524e407fe09
 const CATALOG='config/verification-retirements/alertness-v1.json';
 const CATALOG_SHA256='f9c3f170764dc41dbd4f710e5082551880c47f008bc7a9ca3cbc91eba2e5c73c';
 const CATALOGS=[{path:'config/verification-retirements/brain-debt-retired-layers-v1.json',sha256:'0019e5aaabb1dce7c39c3cced54fade5521c40e5e29f01b15a47578d8ace83b5',records:8,inputs:10,support_inputs:5,base_revision:'fadbf32852cdb30f71e34dda9ab81b521bda484b',nativePaths:["packages/brain/src/__tests__/coding-passway.test.js"],onlyPaths:["packages/brain/src/__tests__/coding-passway.test.js", "tests/regression/relay-1b1f1ffa/preview-destroyer.test.js", "packages/brain/src/__tests__/planner-initiative-plan.test.js", "packages/brain/src/__tests__/actions-initiative-orchestration.test.js", "packages/brain/src/__tests__/tasks-status.test.js", "tests/regression/relay-1b1f1ffa/capacity-gate.test.js", "tests/regression/relay-57e25e92/headed-smoke-contract.test.ts", "tests/regression/relay-07b2fd3b/captures-api.test.ts"]},
+ {path:'config/verification-retirements/observer-response-retired-v1.json',sha256:'c227b21210c1f1c01e0bb1a0f531b99a64795b862f4e4a10a66ad6446845ea86',records:1,inputs:3,support_inputs:5,base_revision:'ce20b5a29123c9ade1a0bc4aa2753e3ea3fe310d',onlyPaths:['packages/brain/src/__tests__/alertness-actions.test.js']},
+ {path:'config/verification-retirements/systemic-unused-export-v1.json',sha256:'9b47ee1651ecf540919f588ebaad6117d0b872be910b9ad7c6dfba35309acb3f',records:1,inputs:1,support_inputs:5,base_revision:'ce20b5a29123c9ade1a0bc4aa2753e3ea3fe310d',onlyPaths:['packages/brain/src/__tests__/quarantine-systemic.test.js']},
  {path:CATALOG,sha256:CATALOG_SHA256,records:5,inputs:11},
  {path:'config/verification-retirements/legacy-five-v1.json',sha256:'1392c3febd9131416ec8c960a7a5a0ff6553b496084efeee1db6e1c236f25717',records:5,inputs:4},
  {path:'config/verification-retirements/tick-copied-sql-v1.json',sha256:'b6971fcfb043bdb849708e964c7e6eae31f989b1134358187ab7ecdc45350204',records:2,inputs:2,
@@ -158,6 +160,11 @@ function closedComponentBundle(root,source,changes){
 export function collectVerificationRetirementCandidates(repoRoot,{source,toolingRoot,toolingRevision,purpose}={}){
  need(purpose==='admission_only','ADMISSION_ONLY');
  const changes=sourceProof(repoRoot,source),catalogs=CATALOGS.filter(spec=>!spec.onlyPaths||spec.onlyPaths.some(path=>changes.has(path))).map(spec=>({spec,catalog:readCatalog(toolingRoot,toolingRevision,spec)})),rows=[];
+ for(const {spec,catalog} of catalogs){
+  if(spec.base_revision&&catalog.records.some(record=>changes.has(record.path))){
+   try{git(repoRoot,'merge-base','--is-ancestor',spec.base_revision,source.base_revision);}catch{fail('CATALOG_BASE_ANCESTRY_MISMATCH');}
+  }
+ }
  for(const{spec,catalog}of catalogs){
   const records=catalog.records.filter(record=>changes.has(record.path));if(!records.length)continue;
   const baseConfig=reviewedBlob(repoRoot,source.base_revision,catalog.base_config,'BASE_CONFIG'),excludes=literalExcludes(baseConfig.bytes.toString());

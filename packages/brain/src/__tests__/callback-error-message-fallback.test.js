@@ -111,9 +111,6 @@ vi.mock('../desire-feedback.js', () => ({
 vi.mock('../auto-learning.js', () => ({
   processExecutionAutoLearning: vi.fn(),
 }));
-vi.mock('../alertness-actions.js', () => ({
-  getMitigationState: vi.fn(() => ({ p2_paused: false })),
-}));
 vi.mock('../dispatch-stats.js', () => ({
   recordDispatchResult: vi.fn(),
   getDispatchStats: vi.fn(),

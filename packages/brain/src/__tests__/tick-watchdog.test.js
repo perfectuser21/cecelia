@@ -209,9 +209,6 @@ vi.mock('../pipeline-patrol.js', () => ({
   runPipelinePatrol: vi.fn().mockResolvedValue(null),
 }));
 
-vi.mock('../alertness-actions.js', () => ({
-  getMitigationState: vi.fn().mockReturnValue({ p2_paused: false, drain_mode_requested: false }),
-}));
 
 vi.mock('../pre-flight-check.js', () => ({
   preFlightCheck: vi.fn().mockResolvedValue({ passed: true, issues: [], suggestions: [] }),

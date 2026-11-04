@@ -888,64 +888,6 @@ function classifyFailure(error, task = null, evidence = null) {
 }
 
 /**
- * 检查最近失败是否呈系统性模式
- *
- * P0 FIX: 检测同类失败（NETWORK/RATE_LIMIT/等）达到阈值，而不是检测永远不会出现的 SYSTEMIC 类别
- *
- * @returns {Promise<{ isSystemic: boolean, pattern?: string, count: number, failureClass?: string }>}
- */
-async function checkSystemicFailurePattern() {
-  try {
-    // 获取最近 5 个失败任务的错误信息
-    const result = await pool.query(`
-      SELECT payload->>'error_details' as error_details
-      FROM tasks
-      WHERE status = 'failed'
-        AND updated_at > NOW() - INTERVAL '30 minutes'
-      ORDER BY updated_at DESC
-      LIMIT 5
-    `);
-
-    if (result.rows.length < 3) {
-      return { isSystemic: false, count: result.rows.length };
-    }
-
-    // 检查是否有相同的系统性错误模式
-    const errors = result.rows.map(r => r.error_details || '');
-    const classifications = errors.map(e => classifyFailure(e));
-
-    // P0 FIX: 统计同类失败（NETWORK/RATE_LIMIT/BILLING_CAP/RESOURCE），而不是统计永远为 0 的 SYSTEMIC
-    const classCounts = {};
-    for (const c of classifications) {
-      // 只统计系统性失败类型（不包括 TASK_ERROR/AUTH/UNKNOWN）
-      if ([FAILURE_CLASS.NETWORK, FAILURE_CLASS.TIMEOUT, FAILURE_CLASS.SERVER_ERROR, FAILURE_CLASS.RATE_LIMIT, FAILURE_CLASS.BILLING_CAP, FAILURE_CLASS.RESOURCE].includes(c.class)) {
-        classCounts[c.class] = (classCounts[c.class] || 0) + 1;
-      }
-    }
-
-    // 找出出现最多的失败类型
-    const topClass = Object.entries(classCounts)
-      .sort((a, b) => b[1] - a[1])[0];
-
-    if (topClass && topClass[1] >= 3) {
-      // 同类失败达到 3 次，判定为系统性故障
-      return {
-        isSystemic: true,
-        failureClass: topClass[0],
-        count: topClass[1],
-        pattern: `${topClass[0]} (${topClass[1]} occurrences in 30min)`
-      };
-    }
-
-    return { isSystemic: false, count: Object.values(classCounts).reduce((a, b) => Math.max(a, b), 0) };
-
-  } catch (err) {
-    console.error('[quarantine] Failed to check systemic pattern:', err.message);
-    return { isSystemic: false, count: 0 };
-  }
-}
-
-/**
  * 综合检查任务是否应该被隔离
  * @param {Object} task - 任务对象
  * @param {string} context - 检查上下文 ('on_failure', 'on_create', 'on_dispatch')
@@ -1370,7 +1312,6 @@ export {
 
   // 失败分类
   classifyFailure,
-  checkSystemicFailurePattern,
   parseResetTime,
   getRetryStrategy,
 

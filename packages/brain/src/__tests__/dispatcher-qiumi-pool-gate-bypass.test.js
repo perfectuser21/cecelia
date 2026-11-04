@@ -63,7 +63,6 @@ vi.mock('../dispatch-helpers.js', () => ({
   processCortexTask: vi.fn(async () => ({ dispatched: false })),
 }));
 
-vi.mock('../alertness-actions.js', () => ({ getMitigationState: () => ({ drain_mode_requested: false }) }));
 vi.mock('../quota-cooling.js', () => ({ isGlobalQuotaCooling: () => false, getQuotaCoolingState: () => ({ until: null }) }));
 vi.mock('../drain.js', () => ({ isDraining: () => false, getDrainStartedAt: () => null }));
 

@@ -14,9 +14,6 @@ vi.mock('../db.js', () => ({
   default: { query: (...args) => mockQuery(...args) },
 }));
 
-vi.mock('../alertness-actions.js', () => ({
-  getMitigationState: vi.fn(() => ({ p2_paused: true })),
-}));
 
 vi.mock('../actions.js', () => ({
   updateTask: vi.fn(),
@@ -94,7 +91,7 @@ describe('正规代码候选隔离',()=>{
  expect(sql).toContain("COALESCE(t.payload->>'headed_manual', 'false') <> 'true'");
  expect(sql).not.toContain('t2.project_id = t.project_id');
  });
- it('明确代码的 P2 不受 AI P2 降级影响，仍查 payload.depends_on',async()=>{
+ it('明确代码的 P2 仍查 payload.depends_on',async()=>{
  const code={id:'code1',priority:'P2',task_type:'script_run',payload:{runtime_requires_llm:false,workflow_id:'wf',depends_on:['dep1']}};
  mockQuery.mockImplementation(async sql=>sql.includes('SELECT COUNT(*)')?{rows:[{count:1}]}:{rows:[code]});
  const {selectNextDispatchableTask}=await import('../dispatch-helpers.js');

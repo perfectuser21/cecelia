@@ -62,11 +62,7 @@ vi.mock('../circuit-breaker.js', () => ({
 }));
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Mock: alertness-actions
 // ─────────────────────────────────────────────────────────────────────────────
-vi.mock('../alertness-actions.js', () => ({
-  getMitigationState: vi.fn().mockReturnValue({ p2_paused: false, drain_mode_requested: false }),
-}));
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Mock: drain（未 draining）

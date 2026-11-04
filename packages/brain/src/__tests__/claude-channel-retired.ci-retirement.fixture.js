@@ -10,7 +10,9 @@ export function ciVersionGuardCohorts(previous) {
   'existing-ops-source.js':'d34318e7523501f651d846268d956d6f745349e4cf8a10b1adefdd92ebe9a727',
   'existing-ops-stage-source.js':'14ebb11805679dd6f559ea42d88ba6f8a1bc96604f474230a2c486af5866e514',
  };
- return [current,{...current,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'}];
+ const retired={...current,'existing-ops-stage-source.js':'59ac5f256ca1c99b5edae88ef89ea5c79648fe6d63c134afec42800dca2b04d0'};
+ return [current,{...current,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
+  retired,{...retired,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'}];
 }
 
 export function registerCiRetirementGuardTests({root,base,memoBase,scan}) {
@@ -26,6 +28,12 @@ export function registerCiRetirementGuardTests({root,base,memoBase,scan}) {
      'EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = '+marker));
     for(const kind of ['build','stage','native-evidence'])expect(scan(sources,path.join(root,`existing-ops-${kind}-envelopes.js`))).toEqual([]);
    }
+  });
+  it('ce20完整旧reader组合仍可重放，追加退休组合不覆盖旧证明',()=>{
+   const sources=new Map([...base().keys()].map(file=>[file,execFileSync('git',[
+    '--no-replace-objects','show','ce20b5a29123c9ade1a0bc4aa2753e3ea3fe310d:'+path.relative(path.resolve(root,'../../../..'),file),
+   ],{cwd:root,encoding:'utf8',maxBuffer:1024*1024})]));
+   for(const kind of ['build','stage','native-evidence'])expect(scan(sources,path.join(root,`existing-ops-${kind}-envelopes.js`))).toEqual([]);
   });
   it.each([source,members[0]])('当前版本门reader不能混配旧AutoVersion成员：%s',file=>{
    const current=base(),old=historical();

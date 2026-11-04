@@ -17,7 +17,6 @@ vi.mock('../../drain.js',()=>({isDraining:()=>fixture.mode==='drain',getDrainSta
 vi.mock('../../quota-cooling.js',()=>({isGlobalQuotaCooling:()=>false,getQuotaCoolingState:()=>({active:false})}));
 vi.mock('../../quota-guard.js',()=>({checkQuotaGuard:async()=>({allow:true})}));
 vi.mock('../../account-usage.js',()=>({proactiveTokenCheck:async()=>{}}));
-vi.mock('../../alertness-actions.js',()=>({getMitigationState:()=>({drain_mode_requested:false,p2_paused:false})}));
 // 明示test-only policy输入，绝不代表已验证的生产物理容量。
 vi.mock('../../slot-allocator.js',()=>({
  calculateSlotBudget:async()=>({dispatchAllowed:fixture.mode!=='full'&&fixture.mode!=='unknown',resourceAdmissionBlocked:fixture.mode==='unknown',taskPool:{budget:4,used:fixture.mode==='full'?4:0,available:fixture.mode==='full'?0:4},user:{mode:'absent'},codex:{available:false}}),

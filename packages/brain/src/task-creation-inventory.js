@@ -15,7 +15,6 @@ export const TASK_CREATION_INVENTORY = Object.freeze([
   // 第 51 批（决策 bc242b62）：V4 attempt-run 薄端点的惰性 task 锚（status 直建 in_progress，非可执行任务）
   { module: 'routes/harness-attempt-run.js', source: 'child', creates_executable_task: false, migration_status: 'routed' },
   { module: 'active-goals-zero-trigger.js', source: 'api', creates_executable_task: true, migration_status: 'routed' },
-  { module: 'alertness-actions.js', source: 'api', creates_executable_task: true, migration_status: 'routed' },
   { module: 'auto-fix.js', source: 'discovery', creates_executable_task: true, migration_status: 'routed' },
   { module: 'capture-triage.js', source: 'discovery', creates_executable_task: true, migration_status: 'routed' },
   { module: 'chat-action-dispatcher.js', source: 'conversation', creates_executable_task: true, migration_status: 'routed' },

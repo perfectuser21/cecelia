@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { maybeTriggerStrategySession } from '../active-goals-zero-trigger.js';
-import { escalateToAnalysis } from '../alertness-actions.js';
 import { checkAndCreateCodeReviewTrigger } from '../code-review-trigger.js';
 import { ensureCodexImmune } from '../codex-immune.js';
 
@@ -31,20 +30,6 @@ describe('automatic task routing boundaries', () => {
       source: 'scheduler',
       task_type: 'strategy_session',
       trigger_source: 'active_goals_zero',
-      allow_unscoped: true,
-    }));
-  });
-
-  it('routes alertness RCA research through createTask', async () => {
-    const create = taskCreator('rca-task');
-
-    const result = await escalateToAnalysis({ consecutive_failures: 5 }, create);
-
-    expect(result).toEqual({ task_id: 'rca-task' });
-    expect(create).toHaveBeenCalledWith(expect.objectContaining({
-      source: 'discovery',
-      task_type: 'research',
-      trigger_source: 'alertness_system',
       allow_unscoped: true,
     }));
   });

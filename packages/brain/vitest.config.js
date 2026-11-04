@@ -214,7 +214,6 @@ export default defineConfig({
       // 剩余真实资源依赖与旧夹具债务见 scripts/ci/brain-test-debt.json。
       'src/__tests__/actions-dedup.test.js',
       'src/__tests__/actions-goal-validation.test.js',
-      'src/__tests__/alertness-actions.test.js',
       'src/__tests__/blocks.test.js',
       // consolidation.test.js: 纯 mock 单元测试（vi.mock llm-caller/self-model + 局部 mock pool），已移回 include
       'src/__tests__/cortex-dedup-persist.test.js',
@@ -241,7 +240,6 @@ export default defineConfig({
       'src/__tests__/planner.test.js',
       'src/__tests__/quarantine-auto-release.test.js',
       'src/__tests__/quarantine-classification.test.js',
-      'src/__tests__/quarantine-systemic.test.js',
       'src/__tests__/routes/memory.test.js',
       'src/__tests__/rumination-dedup.test.js',
       'src/__tests__/suggestion-integration.test.js',
