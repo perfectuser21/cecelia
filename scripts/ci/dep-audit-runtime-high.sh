@@ -1,60 +1,22 @@
 #!/usr/bin/env bash
-# dep-audit-runtime-high.sh — runtime(--omit=dev) high+ 检查，带文档化包级白名单
-#
-# 背景：npm audit 查实时 advisory 库，新 CVE 随时公布会让同一份 lockfile 从 pass 翻 fail。
-# 对"无 non-breaking 修复 + 在本项目用法下不可利用"的 runtime high+ advisory，加文档化豁免，
-# 但仍拦截所有其它 runtime high+（防供应链攻击）。配套 dep-audit-critical.sh（critical 全量）。
-#
-# 白名单纪律：每条必须注明 (1) 为什么不可利用/可接受 (2) 为什么不能 non-breaking 修 (3) 移除条件+TODO。
-# 严禁为图省事把可 non-breaking 修的 advisory 加进来。
-#
-# 用法：bash dep-audit-runtime-high.sh   退出码：0=无未豁免 high+，1=有未豁免 high+
-
+# runtime(--omit=dev) high+门：仅允许已审核的“包名+具体GHSA”，不自动豁免同包新公告。
+# critical仍由dep-audit-critical.sh全量逐公告检查；audit工具/证据异常一律拒绝。
 set -uo pipefail
 
-# ── 白名单（按包名）──────────────────────────────────────────────────────────
-ALLOW_PKGS=(
-  # uuid — GHSA-w5hq-g745-h8pq：v3/v5/v6 在传入 buf 参数时缺 buffer 边界检查。
-  #   不可利用：全仓只用 uuid v4（random，无 buf 参数）——grep 确认无任何 v3/v5/v6 调用。
-  #   不能 non-breaking 修：直接依赖钉 ^9/^10，修复需 v11+（major，API 变更需改代码）。
-  #   移除条件：uuid 升到 ≥11.1.1 后删本行。TODO(deps): 跟踪 uuid major 升级。
-  "uuid"
-  # protobufjs — opentelemetry 链下的深层传递依赖（非直接依赖、非处理不可信输入路径）。
-  #   不能 non-breaking 修：修复需 protobufjs 8.x（major），且受 @opentelemetry 链版本约束。
-  #   移除条件：opentelemetry 链升级带出 protobufjs ≥安全版本后删本行。TODO(deps): 同 opentelemetry P2 track。
-  "protobufjs"
-  # dompurify — 多条 IN_PLACE 模式 XSS。
-  #   可接受：non-breaking 修复在 3.4.10，但为传递依赖、需 override 验证；本仓 dompurify 仅渲染自有可信内容。
-  #   移除条件：override dompurify ≥3.4.10 验证 dashboard 构建通过后删本行（推荐尽快做）。TODO(deps): 升 dompurify。
-  "dompurify"
-  # @opentelemetry/propagator-jaeger — Denial of service in JaegerPropagator。
-  #   不可利用：packages/brain/src/otel.js 是本仓唯一的 OTel 初始化点，只配置了
-  #   OTLPTraceExporter（走 Honeycomb），从未 import/配置 JaegerPropagator——
-  #   grep 全仓 "propagator-jaeger|JaegerPropagator|jaeger" 零命中，是传递依赖
-  #   （随 @opentelemetry/sdk-node 或 auto-instrumentations-node 带入），漏洞代码
-  #   路径从未被调用。
-  #   不能 non-breaking 修：受 @opentelemetry/sdk-node 版本链约束，修复需 sdk-node
-  #   升级到 0.221.0（major，breaking）。
-  #   移除条件：opentelemetry 链升级带出安全版本后删本行。TODO(deps): 同 opentelemetry P2 track
-  #   （见 protobufjs 同批 track，@opentelemetry/sdk-node 本身的 high 漏洞暂不在本白名单——
-  #   该包是直接依赖且真在用，是否可豁免需要单独评估，见另一条 track，不跟这条一起处理）。
-  "@opentelemetry/propagator-jaeger"
-  # react-router — GHSA-qwww-vcr4-c8h2：RSC Mode 在返回 400 前可能执行 action。
-  #   不可利用：本仓 apps/api 仅使用客户端 Router（Link/useNavigate/MemoryRouter 等）；
-  #   全仓无 react-server、ServerRouter、RSC 或 server action 路径，漏洞前提不存在。
-  #   不能 non-breaking 修：react-router 修复版为 8.3.0，但 react-router-dom 截至
-  #   2026-07-25 最新仅 7.18.1，尚无可安装的兼容修复版本。
-  #   移除条件：react-router-dom 发布依赖 react-router >=8.3.0 的兼容版本后升级并删本行。
-  #   TODO(deps): 跟踪 react-router-dom 的 8.3+ 发布。
-  "react-router"
-  # braces — GHSA-vfj7-8cjw-p6xm（2026-09-18）：深度嵌套的 brace 模式导致栈耗尽 DoS。
-  #   不可利用：运行时唯一引入链 apps/api → http-proxy-middleware → micromatch → braces；
-  #   apps/api/src/dashboard/server.ts 全部以 app.use(固定路径, createProxyMiddleware(...)) 挂载，
-  #   不传 pathFilter，glob 模式只来自本仓代码常量，攻击者无法控制被解析的模式字符串。
-  #   不能 non-breaking 修：braces 最新版即 3.0.3（受影响），公告无 first_patched_version。
-  #   移除条件：braces 发布修复版后经 micromatch 带入并删本行。TODO(deps): 跟踪 braces 修复版。
-  "braces"
+# 仅收窄原包级豁免，不增加包或风险情形；条件变化时应修依赖并移除对应项。
+ALLOW_ADVISORIES=(
+  # 原uuid buf边界公告：现有调用仅v4，无v3/v5/v6的buf输入；升级安全版本后移除。
+  "uuid|GHSA-w5hq-g745-h8pq"
+  # 原OTel JaegerPropagator DoS：src/otel.js配置OTLP，不注册JaegerPropagator。
+  # 当前npm回执标题对应此既有风险；OTel依赖链升级后移除。
+  "@opentelemetry/propagator-jaeger|GHSA-45rx-2jwx-cxfr"
+  # 原react-router RSC action公告：现有客户端Router不启用RSC/server action。
+  "react-router|GHSA-qwww-vcr4-c8h2"
+  # 原braces嵌套模式DoS：代理路由只用固定路径，不接收用户glob模式。
+  "braces|GHSA-vfj7-8cjw-p6xm"
 )
+# 旧protobufjs/dompurify包级条目没有明确公告ID，不再授予全包豁免。
+# 未知公告保持红灯；后续不得从实时audit结果自动扩充此表。
 
 JSON=$(npm audit --audit-level=high --omit=dev --json 2>/dev/null)
 AUDIT_EXIT=$?
@@ -64,14 +26,13 @@ if [ "$AUDIT_EXIT" -gt 1 ]; then
 fi
 printf '%s' "$JSON" | NPM_AUDIT_STATUS="$AUDIT_EXIT" node "$(dirname "${BASH_SOURCE[0]}")/validate-npm-audit.mjs" || exit 1
 
-UNWAIVED=$(echo "$JSON" | ALLOW="${ALLOW_PKGS[*]:-}" python3 -c "
-import sys, json, os
-allow = set(os.environ.get('ALLOW','').split())
+UNWAIVED=$(echo "$JSON" | ALLOW="${ALLOW_ADVISORIES[*]:-}" python3 -c "
+import sys, json, os, re
+from urllib.parse import urlsplit
+allow = {tuple(value.split('|', 1)) for value in os.environ.get('ALLOW','').split()}
 d = json.load(sys.stdin)
 bad = {}
 for name, v in d.get('vulnerabilities', {}).items():
-    if name in allow:
-        continue
     # 只信这个包自己直接挂着的 advisory（via 里的 dict 项，带它自己的 severity/cvss）。
     # 不用顶层 v['severity']——那是 npm 沿整条依赖链滚算出来的聚合值，会被链上别的
     # 包的高危漏洞拉高，哪怕这个包跟那条 CVE 的关系只是'依赖了持有它的包'，不是
@@ -81,7 +42,18 @@ for name, v in d.get('vulnerabilities', {}).items():
     advisories = [via for via in v.get('via', []) if isinstance(via, dict)]
     if not advisories:
         continue  # 纯继承（via 全是包名字符串），没有自己的 advisory，交给真正持有 CVE 的那个包条目处理
-    own_high = [a for a in advisories if a.get('severity') in ('high', 'critical')]
+    own_high = []
+    for advisory in advisories:
+        if advisory.get('severity') not in ('high', 'critical'):
+            continue
+        url = urlsplit(advisory['url'])
+        ghsa = url.path.rsplit('/', 1)[-1]
+        canonical = (url.scheme == 'https' and url.netloc == 'github.com'
+                     and url.path == '/advisories/' + ghsa and not url.query and not url.fragment
+                     and re.fullmatch(r'GHSA-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}', ghsa))
+        if canonical and (name, ghsa) in allow:
+            continue
+        own_high.append(advisory)
     if not own_high:
         continue
     titles = [a.get('title','') for a in own_high]
@@ -93,8 +65,8 @@ for n, (sev, t) in sorted(bad.items()):
 if [ -n "$UNWAIVED" ]; then
   echo "::error::dep-audit-runtime-high 发现未豁免的 runtime high+ 漏洞："
   echo "$UNWAIVED" | while IFS=$'\t' read -r pkg sev title; do echo "  ❌ $pkg [$sev] — $title"; done
-  echo "  处理：npm audit fix 升级；确属无 non-breaking 修复+不可利用才加入本脚本白名单（须注明原因+TODO）"
+  echo "  处理：npm audit fix 升级；确属无 non-breaking 修复+不可利用才按包名与GHSA精确登记（须有原风险依据，禁止全包通行）"
   exit 1
 fi
-echo "✅ dep-audit-runtime-high 通过（包级白名单豁免 ${#ALLOW_PKGS[@]} 条已文档化）"
+echo "✅ dep-audit-runtime-high 通过（精确公告豁免 ${#ALLOW_ADVISORIES[@]} 条已文档化）"
 exit 0
