@@ -100,3 +100,48 @@ test('两个staging诊断入口保持手动且不把诊断描述为自动部署�
   const text = readFileSync(join(root, '.github/workflows/nightly-real-machine.yml'), 'utf8');
   assert.doesNotMatch(text, /每夜在|常驻 Staging|Nightly Staging/);
 });
+
+test('预览实际checkout固定commit，即使远程分支已前进；非法SHA不触碰worktree', async () => {
+  const temp = mkdtempSync(join(tmpdir(), 'preview-checkout-'));
+  try {
+    const result = await shell(`
+      git init -q "$FIXTURE/origin"
+      git -C "$FIXTURE/origin" -c user.name=Fixture -c user.email=fixture@example.invalid commit --allow-empty -qm first
+      first=$(git -C "$FIXTURE/origin" rev-parse HEAD)
+      git clone -q "$FIXTURE/origin" "$FIXTURE/repo"
+      branch=$(git -C "$FIXTURE/origin" branch --show-current)
+      git -C "$FIXTURE/origin" -c user.name=Fixture -c user.email=fixture@example.invalid commit --allow-empty -qm second
+      bash scripts/preview-checkout.sh "$FIXTURE/repo" "$FIXTURE/worktree" "$branch" "$first"
+      test "$(git -C "$FIXTURE/worktree" rev-parse HEAD)" = "$first"
+      ! git -C "$FIXTURE/worktree" symbolic-ref -q HEAD
+      if bash scripts/preview-checkout.sh "$FIXTURE/repo" "$FIXTURE/unsafe" "$branch" bad; then exit 91; fi
+      test ! -e "$FIXTURE/unsafe"
+    `, { FIXTURE: temp });
+    assert.equal(result.code, 0, result.output);
+    assert.match(readFileSync(join(root, 'scripts/preview-env-start.sh'), 'utf8'), /bash "\$\{SCRIPT_DIR\}\/preview-checkout\.sh"/);
+  } finally { rmSync(temp, { recursive: true, force: true }); }
+});
+
+test('Standalone staging拒绝无有效request id的接受响应', async () => {
+  const step = doc('auto-staging-deploy.yml').jobs.staging_deploy_and_smoke.steps.find(step => step.name === '请求固定 SHA 的隔离候选');
+  for (const request_id of [42, '', 'id\nEVIL=fixture']) {
+    await fixture(() => ({ request_id }), async url => {
+      const temp = mkdtempSync(join(tmpdir(), 'staging-request-'));
+      try {
+        const result = await shell(step.run, { BRAIN_URL: url, DEPLOY_TOKEN: 'fixture-token', GITHUB_SHA: sha, GITHUB_ENV: join(temp, 'env'), RUNNER_TEMP: temp });
+        assert.notEqual(result.code, 0, result.output);
+      } finally { rmSync(temp, { recursive: true, force: true }); }
+    });
+  }
+});
+
+for (const enabled of [false, true]) test(`手动staging健康诊断真实HTTP执行，tick enabled=${enabled}`, async () => {
+  const step = doc('nightly-real-machine.yml').jobs['nightly-smoke'].steps.find(step => step.name === 'Staging Smoke（真实机器 5222）');
+  // 使用相同YAML命令，覆盖可参数化端口，不访问真实5222。
+  await fixture(req => req.url.includes('/tick/status') ? { enabled } : { status: 'healthy' }, async (url, requests) => {
+    const result = await shell(step.run, { BRAIN_URL: url, STAGING_PORT: new URL(url).port });
+    assert.equal(result.code === 0, !enabled, result.output);
+    assert.equal(requests.length, 3);
+    assert.ok(requests.every(req => req.url.startsWith('/api/brain/')));
+  });
+});
