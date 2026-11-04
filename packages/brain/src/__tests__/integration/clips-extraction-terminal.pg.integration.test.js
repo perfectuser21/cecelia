@@ -7,8 +7,8 @@ import express from 'express';
 import request from 'supertest';
 import { DB_DEFAULTS } from '../../db-config.js';
 // Only the connection boundary is replaced: production SQL runs on owned PostgreSQL.
-const boundary = vi.hoisted(() => ({ db: null }));
-vi.mock('../../db.js', () => ({ default: { query: (...args) => boundary.db.query(...args) } }));
+const boundary = vi.hoisted(() => ({ db: null, completed: [] }));
+vi.mock('../../db.js', () => ({ default: { query: async (...args) => { const result = await boundary.db.query(...args); boundary.completed.push(args); return result; } } }));
 const nativeFetch = globalThis.fetch;
 let db, schema, upstream, app, nextId = 0;
 const waiting = [];
@@ -16,12 +16,12 @@ const flush = async () => { await new Promise(resolve => setTimeout(resolve, 30)
 const row = async id => (await db.query('SELECT * FROM clips WHERE id=$1', [id])).rows[0];
 const submit = async () => request(app).post('/clips').send({ url: `https://douyin.com/owned-${nextId++}` });
 beforeAll(async () => {
-  if (process.env.POSTGRES_INTEGRATION !== '1' || DB_DEFAULTS.database !== 'cecelia_scratch'
+  if (process.env.POSTGRES_INTEGRATION !== '1' || !(DB_DEFAULTS.database === 'cecelia_scratch' || (process.env.CI === 'true' && DB_DEFAULTS.database === 'cecelia_test'))
     || !['127.0.0.1', 'localhost'].includes(DB_DEFAULTS.host)
     || (DB_DEFAULTS.port === 5432 && process.env.CI !== 'true')) throw Error('clips requires explicit owned scratch PG');
   db = new pg.Client(DB_DEFAULTS); await db.connect();
   expect((await db.query('SELECT current_database() AS db,current_user AS actor,inet_server_port() AS port')).rows[0])
-    .toEqual({ db: 'cecelia_scratch', actor: DB_DEFAULTS.user, port: DB_DEFAULTS.port });
+    .toEqual({ db: DB_DEFAULTS.database, actor: DB_DEFAULTS.user, port: DB_DEFAULTS.port });
   schema = `clips_${randomUUID().replaceAll('-', '')}`;
   await db.query(`CREATE SCHEMA ${schema}`); await db.query(`SET search_path TO ${schema},pg_catalog`);
   await db.query(await readFile(new URL('../../../../../database/migrations/010-content-clips.sql', import.meta.url), 'utf8'));
@@ -34,7 +34,7 @@ beforeAll(async () => {
   const { default: router } = await import('../../routes/clips.js');
   app = express().use(express.json()).use('/clips', router);
 });
-beforeEach(() => { waiting.length = 0; });
+beforeEach(() => { waiting.length = 0; boundary.completed.length = 0; });
 afterEach(async () => {
   for (const res of waiting) if (!res.writableEnded) res.end();
   vi.unstubAllGlobals(); await flush();
@@ -44,6 +44,11 @@ afterAll(async () => {
   try { if (schema) await db.query(`DROP SCHEMA ${schema} CASCADE`); }
   finally { await db?.end(); vi.unstubAllEnvs(); }
 });
+const failures = () => boundary.completed.filter(([sql]) => /status='failed'/.test(sql)).length;
+const rejected = async index => {
+  const before = failures(); await respond(index, 500);
+  await vi.waitFor(() => expect(failures()).toBe(before + 1));
+};
 const respond = async (index, status) => {
   await vi.waitFor(() => expect(waiting.length).toBeGreaterThan(index));
   waiting[index].writeHead(status).end('owned upstream unavailable');
@@ -58,6 +63,9 @@ it.each(['submit', 'retry'])('%s HTTP500 persists a failed row and error', async
   await vi.waitFor(async () => expect((await row(id)).status).toBe('failed'));
   expect((await row(id)).retry_count).toBe(entry === 'retry' ? 1 : 0);
   expect((await row(id)).error_msg).toContain('content-service error 500');
+  const detail = await request(app).get(`/clips/${id}`);
+  expect(detail.status).toBe(200);
+  expect(detail.body.data).toMatchObject({ status: 'failed', error_msg: 'content-service error 500: owned upstream unavailable' });
 });
 it('actual aborted HTTP request persists timeout failure without adding a timeout policy', async () => {
   const controller = new AbortController();
@@ -70,13 +78,13 @@ it('actual aborted HTTP request persists timeout failure without adding a timeou
 it('successful callback wins over older request failure', async () => {
   const accepted = await submit(); const id = accepted.body.id;
   expect((await request(app).post(`/clips/${id}/callback`).send({ success: true, title: 'owned success' })).status).toBe(200);
-  await respond(0, 500); await flush();
+  await rejected(0);
   expect(await row(id)).toMatchObject({ status: 'done', title: 'owned success', error_msg: null });
 });
 it('new retry owns the row; only its own failure may fail it', async () => {
   const accepted = await submit(); const id = accepted.body.id;
   expect((await request(app).post(`/clips/${id}/retry`).send({})).status).toBe(200);
-  await respond(0, 500); await flush();
+  await rejected(0);
   expect(await row(id)).toMatchObject({ status: 'pending', retry_count: 1, error_msg: null });
   await respond(1, 500);
   await vi.waitFor(async () => expect((await row(id)).status).toBe('failed'));
@@ -89,4 +97,15 @@ it('NULL legacy retry count advances; successful acceptance stays pending for ca
   expect((await request(app).post(`/clips/${id}/retry`).send({})).status).toBe(200);
   await respond(1, 200); await flush();
   expect(await row(id)).toMatchObject({ status: 'pending', retry_count: 1, error_msg: null });
+});
+
+it('overlapping retry requests capture separate generations rather than sharing the latest one', async () => {
+  const accepted = await submit(); const id = accepted.body.id;
+  const replies = await Promise.all([request(app).post(`/clips/${id}/retry`).send({}),
+    request(app).post(`/clips/${id}/retry`).send({})]);
+  expect(replies.map(response => response.status)).toEqual([200, 200]);
+  await rejected(0); await rejected(1);
+  expect(await row(id)).toMatchObject({ status: 'pending', retry_count: 2, error_msg: null });
+  await rejected(2);
+  expect(await row(id)).toMatchObject({ status: 'failed', retry_count: 2 });
 });

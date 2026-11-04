@@ -43,15 +43,13 @@ router.post('/webhook', async (req, res) => {
 router.post('/:id/retry', async (req, res) => {
   try {
     const { rows } = await pool.query(
-      `UPDATE clips SET status='pending', retry_count=retry_count+1, error_msg=NULL, updated_at=NOW()
-       WHERE id=$1 AND status IN ('failed', 'pending') RETURNING id, status, url`,
+      `UPDATE clips SET status='pending', retry_count=COALESCE(retry_count,0)+1, error_msg=NULL, updated_at=NOW()
+       WHERE id=$1 AND status IN ('failed', 'pending') RETURNING id, status, url, retry_count`,
       [req.params.id]
     );
     if (rows.length === 0) return res.status(409).json({ error: 'clip is not in a retryable state' });
     // Re-trigger extraction (non-blocking)
-    extractClip(rows[0].id, rows[0].url).catch(e =>
-      console.error('[clips] retry extractClip error:', e.message)
-    );
+    startClipExtraction(rows[0], rows[0].url);
     res.json({ id: rows[0].id, status: rows[0].status });
   } catch (err) {
     console.error('[clips] POST /:id/retry error:', err.message);
@@ -123,14 +121,12 @@ router.post('/', async (req, res) => {
     const { rows } = await pool.query(
       `INSERT INTO clips (url, platform, requested_by, metadata)
        VALUES ($1, $2, $3, $4)
-       RETURNING id, status, created_at`,
+       RETURNING id, status, created_at, retry_count`,
       [url.trim(), platform, requested_by || null, JSON.stringify(metadata || {})]
     );
 
     // Trigger extraction non-blocking
-    extractClip(rows[0].id, url).catch(e =>
-      console.error('[clips] extractClip error for', rows[0].id, e.message)
-    );
+    startClipExtraction(rows[0], url);
 
     res.status(201).json({ id: rows[0].id, status: rows[0].status, created_at: rows[0].created_at });
   } catch (err) {
@@ -206,6 +202,24 @@ router.get('/:id', async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+// A late request rejection only owns the attempt that dispatched it. Callbacks and
+// newer retries may have already advanced the row while the HTTP request was in flight.
+function startClipExtraction(clip, url) {
+  const attempt = clip.retry_count ?? 0;
+  extractClip(clip.id, url).catch(async error => {
+    try {
+      await pool.query(
+        `UPDATE clips SET status='failed', error_msg=$2, updated_at=NOW()
+         WHERE id=$1 AND status IN ('pending', 'processing')
+           AND COALESCE(retry_count,0)=$3`,
+        [clip.id, error.message, attempt]
+      );
+    } catch (persistError) {
+      console.error('[clips] failed to persist extraction error for', clip.id, persistError.message);
+    }
+  });
+}
 
 function detectPlatform(url) {
   if (url.includes('douyin.com') || url.includes('v.douyin.com')) return 'douyin';
