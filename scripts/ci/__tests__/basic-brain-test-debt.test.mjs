@@ -330,6 +330,21 @@ for (const [lane, workflowName, jobName, marker] of [
   }
 }
 
+for (const mutation of ['--list', 'if false', 'heredoc', '错误cwd', 'job-if-false', 'step-if-false', '仅手动']) {
+  test(`private-pg自动接入拒绝${mutation}`, () => {
+    const workflows = loadWorkflows(), workflow = workflows.nightly, job = workflow.jobs['brain-integration'];
+    const step = job.steps.find(value => value.run === 'node scripts/ci/run-debt-pg.mjs');
+    if (mutation === '--list') step.run += ' --list';
+    if (mutation === 'if false') step.run = `if false; then\n${step.run}\nfi`;
+    if (mutation === 'heredoc') step.run = `cat <<'PRINTED'\n${step.run}\nPRINTED`;
+    if (mutation === '错误cwd') step['working-directory'] = '/tmp';
+    if (mutation === 'job-if-false') job.if = false;
+    if (mutation === 'step-if-false') step.if = false;
+    if (mutation === '仅手动') workflow.on = {workflow_dispatch: {}};
+    assert.ok(!automaticLanes(workflows).includes('private-pg'));
+  });
+}
+
 test('当前无人自动接收的Brain测试与精确债务清单一致', () => {
   const configurations = {default: [brain, brainRoot], deep: [deep, brainRoot], 'private-pg': [privatePg, brainRoot], 'real-env': [realEnv, brainRoot],
     'pinned-brain': [skillSourceConfig('brain'), brainRoot], 'pinned-root': [skillSourceConfig('root'), root]};
