@@ -47,7 +47,7 @@ for (const name of ['dep-audit-critical.sh', 'dep-audit-runtime-high.sh']) {
 }
 
 // 生产回归：包级豁免不能自动批准同一包后来出现的其它高危公告。
-function runRuntimeAdvisories(advisories, packageName = 'uuid') {
+function runRuntimeAdvisories(advisories, packageName = '@opentelemetry/propagator-jaeger') {
   const directory = mkdtempSync(join(tmpdir(), 'ci-audit-advisory-scope-'));
   try {
     const report = { auditReportVersion: 2, metadata: { vulnerabilities: { total: 1 } },
@@ -60,29 +60,37 @@ function runRuntimeAdvisories(advisories, packageName = 'uuid') {
     });
   } finally { rmSync(directory, { recursive: true, force: true }); }
 }
-const approvedUuid = { severity: 'high', title: '原批准uuid公告', url: 'https://github.com/advisories/GHSA-w5hq-g745-h8pq' };
-const unknownUuid = { severity: 'high', title: '隔离合成未知公告', url: 'https://github.com/advisories/GHSA-xxxx-xxxx-xxxx' };
+const approvedJaeger = { severity: 'high', title: '现有Jaeger传播器DoS公告', url: 'https://github.com/advisories/GHSA-45rx-2jwx-cxfr' };
+const unknownJaeger = { severity: 'high', title: '隔离合成未知公告', url: 'https://github.com/advisories/GHSA-xxxx-xxxx-xxxx' };
 for (const [packageName, ghsa] of [
-  ['uuid', 'GHSA-w5hq-g745-h8pq'],
   ['@opentelemetry/propagator-jaeger', 'GHSA-45rx-2jwx-cxfr'],
-  ['react-router', 'GHSA-qwww-vcr4-c8h2'],
-  ['braces', 'GHSA-vfj7-8cjw-p6xm'],
 ]) {
   test(`runtime原批准精确公告仍通过：${packageName}`, () => {
-    const result = runRuntimeAdvisories([{ ...approvedUuid, url: `https://github.com/advisories/${ghsa}` }], packageName);
+    const result = runRuntimeAdvisories([{ ...approvedJaeger, url: `https://github.com/advisories/${ghsa}` }], packageName);
     assert.equal(result.status, 0, result.stdout + result.stderr);
   });
 }
 for (const [name, advisories, packageName] of [
-  ['同包未知high', [unknownUuid], 'uuid'],
-  ['已批与未知混合high', [approvedUuid, unknownUuid], 'uuid'],
-  ['其它已批包借用uuid公告', [approvedUuid], 'braces'],
-  ['公告来源主机不符', [{ ...approvedUuid, url: 'https://example.invalid/advisories/GHSA-w5hq-g745-h8pq' }], 'uuid'],
-  ['公告ID缺失', [{ ...approvedUuid, url: 'https://github.com/advisories/' }], 'uuid'],
-  ['公告ID畸形', [{ ...approvedUuid, url: 'https://github.com/advisories/GHSA-invalid' }], 'uuid'],
+  ['同包未知high', [unknownJaeger], '@opentelemetry/propagator-jaeger'],
+  ['已批与未知混合high', [approvedJaeger, unknownJaeger], '@opentelemetry/propagator-jaeger'],
+  ['其它包借用Jaeger公告', [approvedJaeger], 'uuid'],
+  ['公告来源主机不符', [{ ...approvedJaeger, url: 'https://example.invalid/advisories/GHSA-45rx-2jwx-cxfr' }], '@opentelemetry/propagator-jaeger'],
+  ['公告ID缺失', [{ ...approvedJaeger, url: 'https://github.com/advisories/' }], '@opentelemetry/propagator-jaeger'],
+  ['公告ID畸形', [{ ...approvedJaeger, url: 'https://github.com/advisories/GHSA-invalid' }], '@opentelemetry/propagator-jaeger'],
 ]) {
   test(`runtime拒绝${name}`, () => {
     const result = runRuntimeAdvisories(advisories, packageName);
+    assert.notEqual(result.status, 0, result.stdout + result.stderr);
+  });
+}
+
+for (const [packageName, ghsa] of [
+  ['uuid', 'GHSA-w5hq-g745-h8pq'],
+  ['react-router', 'GHSA-qwww-vcr4-c8h2'],
+  ['braces', 'GHSA-vfj7-8cjw-p6xm'],
+]) {
+  test(`runtime不预留已退休历史豁免：${packageName}`, () => {
+    const result = runRuntimeAdvisories([{ ...approvedJaeger, url: `https://github.com/advisories/${ghsa}` }], packageName);
     assert.notEqual(result.status, 0, result.stdout + result.stderr);
   });
 }
