@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, existsSync, cpSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, cpSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -37,7 +37,7 @@ test('仅冻结过的两份复制SQL测试取得精确退役候选，替代必�
   for(const row of proof.rows){assert.equal(row.retirement_authorized,false);assert.ok(row.replacement_inputs.every(x=>x.selected_candidate));assert.ok(row.audit.retired.length);}
 }));
 test('旧测试字节漂移与任意未列删除不能借退役合同放行',()=>fixture(({source,git,commit,options,head})=>{
-  const other='packages/brain/src/__tests__/tick-suggestion-integration.test.js';
+  const other='packages/brain/src/__tests__/tick-loop.test.js';
   rmSync(join(source,other));commit(source);
   const proof=collectVerificationRetirementCandidates(source,options());
   assert.equal(proof.rows.some(x=>x.path===other),false);
@@ -56,3 +56,35 @@ test('现役整组件selector覆盖运行时读源码变更，不需要旧fs gre
     assert.ok(jobs.some(x=>x.component==='brain-integration'));
   }
 });
+test('退役fs补选器对默认或任意目录均明确拒绝，不能返回空成功掩盖漏跑',()=>{
+  for(const args of [[],['packages/brain/src/__tests__'],['/does/not/exist']]){
+    try{execFileSync('bash',[join(root,'.github/workflows/scripts/list-fs-guard-tests.sh'),...args],{encoding:'utf8',stdio:['ignore','pipe','pipe']});assert.fail('旧入口不应成功');}
+    catch(error){assert.equal(error.status,64);assert.equal(error.stdout,'');assert.match(error.stderr,/已退役/);}
+  }
+});
+test('现役固定Skill helper仅接受审核字节，追加可执行语句也不能取得选择资格',async()=>{
+  const { selectVitestVerificationInput } = await import('../implementation-verification-selectors.mjs');
+  const input={filePath:'packages/brain/src/__tests__/tick-scheduler.test.js',configPath:config,
+    configText:readFileSync(join(root,config),'utf8'),skillText:readFileSync(join(root,'scripts/ci/skill-source-tests.mjs'),'utf8'),component:'brain'};
+  assert.equal(selectVitestVerificationInput(input).selected,true);
+  assert.throws(()=>selectVitestVerificationInput({...input,skillText:input.skillText+'\nthrow Error("drift");\n'}),/UNPROVEN/);
+});
+test('冻结base旧测试字节漂移不能以相同文件名套用退役审核',()=>fixture(({source,git,commit,options})=>{
+  const original=options().source.base_revision;
+  git(source,'reset','--hard',original);
+  writeFileSync(join(source,old[0]),readFileSync(join(source,old[0]),'utf8')+'\n// baseline drift\n');
+  const base=commit(source);
+  for(const path of old)rmSync(join(source,path));
+  writeFileSync(join(source,config),readFileSync(join(root,config)));
+  commit(source);
+  const opt=options();opt.source.base_revision=base;
+  opt.source.changed_files=git(source,'diff','--name-only',base,'HEAD').split('\n').filter(Boolean).map(path=>({path}));
+  assert.throws(()=>collectVerificationRetirementCandidates(source,opt),/OLD_TEST_BYTES_MISMATCH/);
+}));
+test('控制catalog增加任意未审核删除或字节漂移均拒绝',()=>fixture(({source,control,commit,options})=>{
+  const path=join(control,'config/verification-retirements/tick-copied-sql-v1.json');
+  const catalog=JSON.parse(readFileSync(path,'utf8'));
+  catalog.records.push({...catalog.records[0],path:'packages/brain/src/__tests__/tick-loop.test.js'});
+  writeFileSync(path,JSON.stringify(catalog));commit(control);
+  assert.throws(()=>collectVerificationRetirementCandidates(source,options()),/CATALOG_DIGEST_MISMATCH/);
+}));

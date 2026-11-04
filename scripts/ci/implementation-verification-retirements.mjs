@@ -8,7 +8,9 @@ const REPO='perfectuser21/cecelia',BASE='68b996a5641b69e6f21705a114a4524e407fe09
 const CATALOG='config/verification-retirements/alertness-v1.json';
 const CATALOG_SHA256='f9c3f170764dc41dbd4f710e5082551880c47f008bc7a9ca3cbc91eba2e5c73c';
 const CATALOGS=[{path:CATALOG,sha256:CATALOG_SHA256,records:5,inputs:11},
- {path:'config/verification-retirements/legacy-five-v1.json',sha256:'1392c3febd9131416ec8c960a7a5a0ff6553b496084efeee1db6e1c236f25717',records:5,inputs:4}];
+ {path:'config/verification-retirements/legacy-five-v1.json',sha256:'1392c3febd9131416ec8c960a7a5a0ff6553b496084efeee1db6e1c236f25717',records:5,inputs:4},
+ {path:'config/verification-retirements/tick-copied-sql-v1.json',sha256:'fb6b9292ee5205f1daa0d295761243a905e8f7d0454c207cb6487cf6354a27d9',records:2,inputs:2,
+  onlyPaths:['packages/brain/src/__tests__/tick-dispatch-scope-decomposing.test.js','packages/brain/src/__tests__/tick-kr-decomp.test.js']}];
 export const CLOSED_COMPONENT_CATALOG=Object.freeze({path:'config/verification-retirements/closed-components-v1.json',
  sha256:'5b43e42d84aa1b03580b030924cf5b46e0b833f55a8735b86bd185a0bffedc99'});
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
@@ -139,7 +141,7 @@ function closedComponentBundle(root,source,changes){
 /** 信任目录只从control固定Git读取。候选仓内同名JSON不参与授权。 */
 export function collectVerificationRetirementCandidates(repoRoot,{source,toolingRoot,toolingRevision,purpose}={}){
  need(purpose==='admission_only','ADMISSION_ONLY');
- const changes=sourceProof(repoRoot,source),catalogs=CATALOGS.map(spec=>({spec,catalog:readCatalog(toolingRoot,toolingRevision,spec)})),rows=[];
+ const changes=sourceProof(repoRoot,source),catalogs=CATALOGS.filter(spec=>!spec.onlyPaths||spec.onlyPaths.some(path=>changes.has(path))).map(spec=>({spec,catalog:readCatalog(toolingRoot,toolingRevision,spec)})),rows=[];
  for(const{spec,catalog}of catalogs){
   const records=catalog.records.filter(record=>changes.has(record.path));if(!records.length)continue;
   const baseConfig=reviewedBlob(repoRoot,source.base_revision,catalog.base_config,'BASE_CONFIG'),excludes=literalExcludes(baseConfig.bytes.toString());

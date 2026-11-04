@@ -261,9 +261,7 @@ export default defineConfig({
       'src/__tests__/tasks-feedback.test.js',
       'src/__tests__/tasks-status.test.js',
       'src/__tests__/tick-codex-immune.test.js',
-      'src/__tests__/tick-dispatch-scope-decomposing.test.js',
       'src/__tests__/tick-drain.test.js',
-      'src/__tests__/tick-kr-decomp.test.js',
       'src/__tests__/tick-watchdog-quarantine.test.js',
       'src/__tests__/watchdog-quarantine-race.test.js',
       // Mock 不完整或代码逻辑变更导致失败（pre-existing issue）

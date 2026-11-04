@@ -1,0 +1,134 @@
+{
+  "schema_version": 1,
+  "kind": "explicit_verification_retirement_catalog",
+  "purpose": "admission_only",
+  "repo": "perfectuser21/cecelia",
+  "base_revision": "68b996a5641b69e6f21705a114a4524e407fe097",
+  "reviewed_replacement_revision": "fadbf32852cdb30f71e34dda9ab81b521bda484b",
+  "base_config": {
+    "path": "packages/brain/vitest.config.js",
+    "mode": "100644",
+    "git_blob_sha1": "36a629860e732736ace1adea1faca1ba3de4aeaf",
+    "sha256": "663e68449bfcbc45cdad00c85058cb56ac89ee5ec1148f36d1c47ffeb8abbe54",
+    "byte_length": 22846
+  },
+  "replacement_config": {
+    "path": "packages/brain/vitest.config.js",
+    "mode": "100644",
+    "git_blob_sha1": "2e02ba7d4d264d8c0b9c77a0f89f98352834c9df",
+    "sha256": "98d849609f66e1361c48180956742780ded8bac623dd89e39209abac5b98dd47",
+    "byte_length": 22737
+  },
+  "skill_selector": {
+    "path": "scripts/ci/skill-source-tests.mjs",
+    "mode": "100644",
+    "git_blob_sha1": "1041ba71200c6051a1ec97fffd745e18a45b9571",
+    "sha256": "6f8d97d2346e8b1bd00f4b532d76c8fa9bb871cb807adf7a13d5ce0ffb0f18e3",
+    "byte_length": 1691
+  },
+  "replacement_inputs": [
+    {
+      "path": "packages/brain/src/__tests__/tick-scheduler.test.js",
+      "mode": "100644",
+      "git_blob_sha1": "9e0dc47845a72979131c7075eaf1554b9a08bddb",
+      "sha256": "4be3fc8a19aefcd2167301944a4c6e97a4c071ad5f6b58cfdf164a831d11fcbc",
+      "byte_length": 5497
+    },
+    {
+      "path": "packages/brain/src/__tests__/tick-suggestion-integration.test.js",
+      "mode": "100644",
+      "git_blob_sha1": "e14145415e8c6c2d514eb98da7776148b80bf2bc",
+      "sha256": "7776c526f44460b12d82f7e72980ef120e4e6bee0f94dd5e1725450f73332399",
+      "byte_length": 9979
+    }
+  ],
+  "records": [
+    {
+      "path": "packages/brain/src/__tests__/tick-dispatch-scope-decomposing.test.js",
+      "old": {
+        "path": "packages/brain/src/__tests__/tick-dispatch-scope-decomposing.test.js",
+        "mode": "100644",
+        "git_blob_sha1": "8dde279455cb37ae2810285a0e7538d61ffcd6f2",
+        "sha256": "0c569909aa96f54cb5d7c325dc19b0d5a22ff6d853e80fe41501bca3808c47aa",
+        "byte_length": 4669
+      },
+      "exclude_literal": "src/__tests__/tick-dispatch-scope-decomposing.test.js",
+      "replacement_paths": [
+        "packages/brain/src/__tests__/tick-scheduler.test.js",
+        "packages/brain/src/__tests__/tick-suggestion-integration.test.js"
+      ],
+      "policy_sources": [
+        {
+          "path": "packages/brain/src/tick-loop.js",
+          "mode": "100644",
+          "git_blob_sha1": "4df5cb4b7fbaf220ada4111e6cd9b2996f364f8d",
+          "sha256": "3f59f7c9fc612d8ebeb529f803c316c697e2cbe80ee665844407dea79a3510f2",
+          "byte_length": 9411
+        },
+        {
+          "path": "packages/brain/src/tick-runner.js",
+          "mode": "100644",
+          "git_blob_sha1": "dc1a8d126f2770ebf43fd61cbd4005506f746047",
+          "sha256": "4f3d23a0948666160587cca4f07e00733b61155569e1009ea71eb98bcc179d96",
+          "byte_length": 84251
+        }
+      ],
+      "audit": {
+        "retired": [
+          "只执行测试自身手写SQL；未调用executeTick、runScheduler或被测生产查询。"
+        ],
+        "retained": [
+          "现役runScheduler行为测试",
+          "真实executeTick回滚suggestion边界测试"
+        ],
+        "reviewed_source_base": "fadbf32852cdb30f71e34dda9ab81b521bda484b"
+      }
+    },
+    {
+      "path": "packages/brain/src/__tests__/tick-kr-decomp.test.js",
+      "old": {
+        "path": "packages/brain/src/__tests__/tick-kr-decomp.test.js",
+        "mode": "100644",
+        "git_blob_sha1": "e3d81516559d2896fb8c280e21d03da9c17d2d8d",
+        "sha256": "5fff9bf7da894c77a0a775ac9beb5f4a359de804c5b1a1e29753a4f5849fb64d",
+        "byte_length": 8461
+      },
+      "exclude_literal": "src/__tests__/tick-kr-decomp.test.js",
+      "replacement_paths": [
+        "packages/brain/src/__tests__/tick-scheduler.test.js",
+        "packages/brain/src/__tests__/tick-suggestion-integration.test.js"
+      ],
+      "policy_sources": [
+        {
+          "path": "packages/brain/src/tick-loop.js",
+          "mode": "100644",
+          "git_blob_sha1": "4df5cb4b7fbaf220ada4111e6cd9b2996f364f8d",
+          "sha256": "3f59f7c9fc612d8ebeb529f803c316c697e2cbe80ee665844407dea79a3510f2",
+          "byte_length": 9411
+        },
+        {
+          "path": "packages/brain/src/tick-runner.js",
+          "mode": "100644",
+          "git_blob_sha1": "dc1a8d126f2770ebf43fd61cbd4005506f746047",
+          "sha256": "4f3d23a0948666160587cca4f07e00733b61155569e1009ea71eb98bcc179d96",
+          "byte_length": 84251
+        }
+      ],
+      "audit": {
+        "retired": [
+          "只执行测试自身手写SQL；未调用executeTick、runScheduler或被测生产查询。"
+        ],
+        "retained": [
+          "现役runScheduler行为测试",
+          "真实executeTick回滚suggestion边界测试"
+        ],
+        "reviewed_source_base": "fadbf32852cdb30f71e34dda9ab81b521bda484b"
+      }
+    }
+  ],
+  "limitations": [
+    "仅精确审核的两个排除测试，不给目录或未知删除豁免。",
+    "仅准入证据，不授予执行或覆盖资格。",
+    "现役及回滚生产实现保持不变；替代只证明隔离行为合同，不证明生产部署。"
+  ]
+}
