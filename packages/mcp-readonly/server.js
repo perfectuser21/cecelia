@@ -109,13 +109,8 @@ async function dockerReadLogFn(containerName, tailLines) {
     ]);
     stdout = result.stdout;
     stderr = result.stderr;
-  } catch (err) {
-    // docker logs 把容器自身的 stderr 输出也算作"失败但有输出"，execFile 在这种
-    // 情况下会把 stdout/stderr 挂在 error 对象上而不是 resolve —— 这不代表命令语义
-    // 失败（很多服务把普通日志写 stderr），照样取出内容返回，而不是把日志读取
-    // 失败伪装成异常抛给上层。
-    stdout = err.stdout || '';
-    stderr = err.stderr || '';
+  } catch {
+    throw Object.assign(new Error('服务日志当前不可读取'), { code: 'service_logs_unavailable' });
   }
   const combined = `${stdout}${stderr}`;
   return combined.split('\n').filter((line) => line.length > 0);

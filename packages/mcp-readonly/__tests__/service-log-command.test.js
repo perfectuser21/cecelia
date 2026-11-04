@@ -21,7 +21,7 @@ async function callLogs() {
   expect(command).toHaveBeenCalledWith('docker', ['logs', '--tail', '5', 'cecelia-node-brain']);
   return rpc(response.text).result;
 }
-beforeEach(() => command.mockReset());
+beforeEach(() => { command.mockReset(); });
 describe('Docker日志命令退出状态', () => {
   it('非零退出携带stderr时MCP返回错误，不包装成功lines', async () => {
     command.mockRejectedValue(Object.assign(new Error('docker log command failed'), { code: 1, stdout: '', stderr: 'No such container\n' }));
