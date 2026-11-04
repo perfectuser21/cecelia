@@ -3,7 +3,7 @@ id: current-system-map
 version: 1.3.1
 created: 2026-03-10
 updated: 2026-08-06
-authority: CURRENT_STATE
+authority: HISTORICAL_SNAPSHOT
 changelog:
   - 1.0.0: 初始版本，基于 main 分支代码实际审计
   - 1.1.0: Wave1 双层架构 — LLM fire-and-forget、circuit_breaker_states 持久化、brain_guidance 表
@@ -12,7 +12,9 @@ changelog:
   - 1.3.1: 术语按决策 a340f100 词汇对照表切换（价值流/能力/主干活动/成果/增量），表名字段名不动
 ---
 
-# Cecelia 系统架构图（当前事实版）
+# Cecelia 系统架构历史快照
+
+> 本文主体记录 2026 年 3–8 月的实现，旧流程、路径及数量不代表当前启用状态。现役 CI 查 [CI_PIPELINE.md](CI_PIPELINE.md) 和本分支 YAML；运行版本与状态查 Brain API。不得按此历史图恢复旧执行器。
 
 > **Authority: CURRENT_STATE**
 > 本文档只记录当前 main 分支真实存在并生效的内容。
@@ -182,7 +184,7 @@ packages/engine/
 
 ---
 
-## 7. CI/CD Workflow 列表（当前实际存在）
+## 7. 历史 CI/CD Workflow 列表（非现役清单）
 
 | 文件 | 触发条件 | Runner |
 |------|---------|--------|

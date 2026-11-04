@@ -58,7 +58,6 @@ features:
         - packages/brain/src/__tests__/memory-selection-log.test.js
         - packages/brain/src/__tests__/memory-sync.test.js
         - packages/brain/src/__tests__/memory-utils.test.js
-        - packages/brain/src/__tests__/memory-wiring.test.js
         - packages/brain/src/__tests__/mmr-observability.test.js
         - packages/brain/src/__tests__/routes/memory.test.js
         - packages/brain/src/__tests__/services/memory-service.test.js
@@ -89,7 +88,6 @@ features:
             - packages/brain/src/__tests__/memory-selection-log.test.js
             - packages/brain/src/__tests__/memory-sync.test.js
             - packages/brain/src/__tests__/memory-utils.test.js
-            - packages/brain/src/__tests__/memory-wiring.test.js
             - packages/brain/src/__tests__/mmr-observability.test.js
             - packages/brain/src/__tests__/routes/memory.test.js
             - packages/brain/src/__tests__/services/memory-service.test.js

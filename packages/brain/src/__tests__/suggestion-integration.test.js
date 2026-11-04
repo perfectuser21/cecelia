@@ -3,28 +3,20 @@
  */
 
 import { beforeAll, vi } from 'vitest';
+import { openFixture, closeFixture } from './helpers/debt-11-pg.js';
+vi.mock('../db.js', async () => ({ default: (await import('./helpers/debt-11-pg.js')).pool }));
 let createSuggestion, executeTriage;
 let pool;
 
 beforeAll(async () => {
-  vi.resetModules();
+  await openFixture('suggestions', ['000_base_schema.sql', '087_suggestions_table.sql']);
   pool = (await import('../db.js')).default;
   ({ createSuggestion, executeTriage } = await import('../suggestion-triage.js'));
 });
 
-describe('Suggestion System Integration', () => {
-  beforeAll(async () => {
-    // 确保测试环境有 suggestions 表
-    // 在实际环境中，这应该通过数据库迁移来处理
-    try {
-      await pool.query('SELECT 1 FROM suggestions LIMIT 1');
-    } catch (error) {
-      console.warn('Suggestions table may not exist - this is expected in isolated test environments');
-      // 在隔离的测试环境中，我们可能需要跳过集成测试
-      return;
-    }
-  });
+afterAll(closeFixture);
 
+describe('Suggestion System Integration', () => {
   beforeEach(async () => {
     // 清理测试数据
     await pool.query('DELETE FROM suggestions WHERE source LIKE $1', ['integration-test%']);
@@ -40,13 +32,6 @@ describe('Suggestion System Integration', () => {
 
   describe('Complete workflow integration', () => {
     test('full suggestion lifecycle: create → triage → update status', async () => {
-      // 跳过测试如果表不存在
-      try {
-        await pool.query('SELECT 1 FROM suggestions LIMIT 1');
-      } catch {
-        console.warn('Skipping integration test - suggestions table not available');
-        return;
-      }
 
       // 1. 创建多个不同优先级的建议
       const suggestions = await Promise.all([
@@ -139,12 +124,6 @@ describe('Suggestion System Integration', () => {
     });
 
     test('handles duplicate suggestion detection and rejection', async () => {
-      try {
-        await pool.query('SELECT 1 FROM suggestions LIMIT 1');
-      } catch {
-        console.warn('Skipping integration test - suggestions table not available');
-        return;
-      }
 
       // 创建两个相似的建议
       const suggestion1 = await createSuggestion({
@@ -180,12 +159,6 @@ describe('Suggestion System Integration', () => {
     });
 
     test('cleanup expired suggestions works correctly', async () => {
-      try {
-        await pool.query('SELECT 1 FROM suggestions LIMIT 1');
-      } catch {
-        console.warn('Skipping integration test - suggestions table not available');
-        return;
-      }
 
       // 创建一个过期的建议
       await pool.query(`
@@ -224,12 +197,6 @@ describe('Suggestion System Integration', () => {
     });
 
     test('statistics reflect system state accurately', async () => {
-      try {
-        await pool.query('SELECT 1 FROM suggestions LIMIT 1');
-      } catch {
-        console.warn('Skipping integration test - suggestions table not available');
-        return;
-      }
 
       // 创建不同状态的建议
       const suggestions = await Promise.all([
@@ -264,12 +231,6 @@ describe('Suggestion System Integration', () => {
 
   describe('Performance and scalability', () => {
     test('handles large batch of suggestions efficiently', async () => {
-      try {
-        await pool.query('SELECT 1 FROM suggestions LIMIT 1');
-      } catch {
-        console.warn('Skipping integration test - suggestions table not available');
-        return;
-      }
 
       // 创建100个建议
       const batchSize = 100;
@@ -287,14 +248,12 @@ describe('Suggestion System Integration', () => {
       await Promise.all(createPromises);
       const createTime = Date.now() - startTime;
 
-      console.log(`创建 ${batchSize} 个建议耗时: ${createTime}ms`);
 
       // 执行 triage
       const triageStartTime = Date.now();
       const processedSuggestions = await executeTriage(batchSize);
       const triageTime = Date.now() - triageStartTime;
 
-      console.log(`Triage 处理 ${processedSuggestions.length} 个建议耗时: ${triageTime}ms`);
 
       expect(processedSuggestions.length).toBe(batchSize);
       expect(createTime).toBeLessThan(10000); // 创建应该在10秒内完成
@@ -308,12 +267,6 @@ describe('Suggestion System Integration', () => {
     });
 
     test('triage with limit parameter works correctly', async () => {
-      try {
-        await pool.query('SELECT 1 FROM suggestions LIMIT 1');
-      } catch {
-        console.warn('Skipping integration test - suggestions table not available');
-        return;
-      }
 
       // 创建20个建议
       for (let i = 0; i < 20; i++) {
@@ -331,28 +284,15 @@ describe('Suggestion System Integration', () => {
   });
 
   describe('Error resilience', () => {
-    test('system recovers gracefully from database errors during triage', async () => {
-      try {
-        await pool.query('SELECT 1 FROM suggestions LIMIT 1');
-      } catch {
-        console.warn('Skipping integration test - suggestions table not available');
-        return;
-      }
-
-      // 创建一个正常的建议
-      await createSuggestion({
-        content: '错误恢复测试建议',
-        source: 'integration-test-recovery'
-      });
-
-      // 模拟数据库连接问题（通过创建一个无效的查询来测试错误处理）
-      // 注意：这只是测试错误处理逻辑，实际的数据库错误很难在测试中完全模拟
-
-      // 执行 triage 应该能处理错误并继续
-      const processedSuggestions = await executeTriage(10);
-
-      // 系统应该仍能处理正常的建议
-      expect(Array.isArray(processedSuggestions)).toBe(true);
+    test('triage 数据库失败会显式报错，连接恢复后可继续处理', async () => {
+      const created = await createSuggestion({ content: '错误恢复测试建议', source: 'integration-test-recovery' });
+      const original = pool.query;
+      const fail = vi.spyOn(pool, 'query').mockRejectedValueOnce(new Error('isolated query failure'));
+      await expect(executeTriage(10)).rejects.toThrow('isolated query failure');
+      fail.mockRestore();
+      expect(pool.query).toBe(original);
+      const processed = await executeTriage(10);
+      expect(processed.map(row => row.id)).toContain(created.id);
     });
   });
 });

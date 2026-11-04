@@ -3,21 +3,14 @@
  * Tests strategy adjustment effectiveness evaluation
  */
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
-import pg from 'pg';
-import { DB_DEFAULTS } from '../db-config.js';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
+import { pool, prepare, close } from './debt-06-pg.js';
+vi.mock('../db.js', async () => ({ default: (await import('./debt-06-pg.js')).pool }));
 import { evaluateStrategyEffectiveness } from '../learning.js';
-
-const { Pool } = pg;
-let pool;
-
 beforeAll(async () => {
-  pool = new Pool(DB_DEFAULTS);
+  await prepare(['000_base_schema.sql', '001_cecelia_architecture_upgrade.sql', '005_schema_version_and_config.sql', '013_cortex_analyses.sql', '015_cortex_quality_system.sql', '016_immune_system_connections.sql']);
 });
-
-afterAll(async () => {
-  await pool.end();
-});
+afterAll(close);
 
 describe('evaluateStrategyEffectiveness', () => {
   let testAdoptionId;
@@ -25,8 +18,6 @@ describe('evaluateStrategyEffectiveness', () => {
 
   beforeEach(async () => {
     // Clean up all test data from previous tests (respect foreign key constraints)
-    await pool.query('DELETE FROM run_events');  // Delete first (references tasks)
-    await pool.query('DELETE FROM scan_results');  // FK: scan_results_task_id_fkey
     await pool.query('DELETE FROM strategy_effectiveness');
     await pool.query('DELETE FROM strategy_adoptions');
     await pool.query('DELETE FROM tasks');

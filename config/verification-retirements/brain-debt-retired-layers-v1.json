@@ -1,0 +1,477 @@
+{
+  "schema_version": 1,
+  "kind": "explicit_verification_retirement_catalog",
+  "purpose": "admission_only",
+  "repo": "perfectuser21/cecelia",
+  "base_revision": "fadbf32852cdb30f71e34dda9ab81b521bda484b",
+  "reviewed_replacement_revision": "c0afaa0f87cc68ccca472f791582f65795ea3818",
+  "base_config": {
+    "path": "packages/brain/vitest.config.js",
+    "mode": "100644",
+    "git_blob_sha1": "36a629860e732736ace1adea1faca1ba3de4aeaf",
+    "sha256": "663e68449bfcbc45cdad00c85058cb56ac89ee5ec1148f36d1c47ffeb8abbe54",
+    "byte_length": 22846
+  },
+  "replacement_config": {
+    "path": "packages/brain/vitest.config.js",
+    "mode": "100644",
+    "git_blob_sha1": "bafa7e7e6b2a457e316c5c6e68a1bf44e782a543",
+    "sha256": "ee12d4b8185b78f49f95aef478f9de1d00f6bc83a17e50c7b252aa1acc0636f7",
+    "byte_length": 21495
+  },
+  "skill_selector": {
+    "path": "scripts/ci/skill-source-tests.mjs",
+    "mode": "100644",
+    "git_blob_sha1": "1041ba71200c6051a1ec97fffd745e18a45b9571",
+    "sha256": "6f8d97d2346e8b1bd00f4b532d76c8fa9bb871cb807adf7a13d5ce0ffb0f18e3",
+    "byte_length": 1691
+  },
+  "replacement_inputs": [
+    {
+      "path": "packages/brain/src/__tests__/debt-04-planner-score.test.js",
+      "mode": "100644",
+      "git_blob_sha1": "40d8fa58713e56442e77c1869a8bdb525da68cd4",
+      "sha256": "0384d6a9553fd432ac7150ec2880c4ee9ba72e50e2333a669824a781214b5b8e",
+      "byte_length": 5508
+    },
+    {
+      "path": "packages/brain/src/__tests__/actions.test.js",
+      "mode": "100644",
+      "git_blob_sha1": "cc7a28cee27ac165462db1767c364c46e3ce7049",
+      "sha256": "8d49a0cf6a8cef6286aacf5cd5ff2f555970f17aa5c6833906cba462e17d5ef1",
+      "byte_length": 39849
+    },
+    {
+      "blob": {
+        "path": "packages/brain/src/__tests__/integration/task-status-transitions.integration.test.js",
+        "mode": "100644",
+        "git_blob_sha1": "28ce43b470f4dbd05eef712e8fb538ac61490a6a",
+        "sha256": "8ea0738d04b6879cec97d2793ac023f2b09d598ae4982752810ea1dc014fcaba",
+        "byte_length": 11155
+      },
+      "config_path": "scripts/ci/deep-integration.config.mjs"
+    },
+    {
+      "blob": {
+        "path": "packages/brain/src/lib/__tests__/task-status-transitions.test.js",
+        "mode": "100644",
+        "git_blob_sha1": "6d534f7dbdc59c447553a29c4939f2df23176ed5",
+        "sha256": "4d69de3d9568720e9afe321d3066d6aaa454f6809c8da077e25748b0a3c39662",
+        "byte_length": 6610
+      },
+      "config_path": "packages/brain/vitest.config.js"
+    },
+    {
+      "blob": {
+        "path": "packages/brain/src/routes/__tests__/tasks-result-backfill.test.js",
+        "mode": "100644",
+        "git_blob_sha1": "592d802fea4efe422c59418f0ad9e79193d152a8",
+        "sha256": "80cdedabca3acacf04dc9cdaccddb4344ca2b226168429a6521235effad247ba",
+        "byte_length": 5226
+      },
+      "config_path": "packages/brain/vitest.config.js"
+    },
+    {
+      "blob": {
+        "path": "packages/brain/src/__tests__/integration/capacity-gate.test.js",
+        "mode": "100644",
+        "git_blob_sha1": "bd420fcdfd96abd320db5b4b1f95ae3e4ed452a1",
+        "sha256": "16cb91a4c2578439fcb928f3d982535afa1101b9bbc7e7326627756d6f443d09",
+        "byte_length": 9344
+      },
+      "config_path": "scripts/ci/deep-integration.config.mjs"
+    },
+    {
+      "blob": {
+        "path": "packages/brain/src/__tests__/integration/retired-harness-dispatch.pg.integration.test.js",
+        "mode": "100644",
+        "git_blob_sha1": "050cf9bbca6db4859ac27bab5f885ca11c957334",
+        "sha256": "0aec43811b65057874dff90fb0a9f455c417109d3314b4b5e3432ad7695a389d",
+        "byte_length": 12172
+      },
+      "config_path": "scripts/ci/deep-integration.config.mjs"
+    },
+    {
+      "blob": {
+        "path": "packages/brain/src/routes/__tests__/captures-api.test.ts",
+        "mode": "100644",
+        "git_blob_sha1": "135c68b86c7b22eac8d7f2b6187c47c7e685023f",
+        "sha256": "2416ccd68fd10e80df1839beeaa6acef06f64789e0faf669af202580b05b6e73",
+        "byte_length": 10041
+      },
+      "config_path": "scripts/ci/debt-pg.config.mjs"
+    },
+    {
+      "blob": {
+        "path": "packages/brain/src/__tests__/integration/preview-destroyer.test.js",
+        "mode": "100644",
+        "git_blob_sha1": "aac051589e4653dc49e9d100bda56c3b9248e22e",
+        "sha256": "9c219ce8c0e3022b527914ee43257b7ad2164a98a052bd3bbf55c7d33d9e218e",
+        "byte_length": 8749
+      },
+      "config_path": "scripts/ci/deep-integration.config.mjs"
+    },
+    {
+      "path": "packages/brain/src/__tests__/planner-retired-entry.test.js",
+      "mode": "100644",
+      "git_blob_sha1": "1683e6bd6b451b3321520328984299d891d131c8",
+      "sha256": "04bb5a3847fcbfc92fb92e1859dd850dde8f997f23138570b28de4743e8adecc",
+      "byte_length": 1030
+    }
+  ],
+  "records": [
+    {
+      "path": "packages/brain/src/__tests__/planner-initiative-plan.test.js",
+      "old": {
+        "path": "packages/brain/src/__tests__/planner-initiative-plan.test.js",
+        "mode": "100644",
+        "git_blob_sha1": "3bc2b7f46db9aba19e0e8d09037a514078c4d508",
+        "sha256": "e50ea3122d735ab52273e631419e3d43fdf7b79fa565842bf643d1aa6d4b024a",
+        "byte_length": 17781
+      },
+      "exclude_literal": "src/__tests__/planner-initiative-plan.test.js",
+      "replacement_paths": [
+        "packages/brain/src/__tests__/debt-04-planner-score.test.js"
+      ],
+      "policy_sources": [],
+      "audit": {
+        "retired": [
+          "旧正例要求写入迁移499已冻结的OKR层，不能继续作为现役成功创建合同。"
+        ],
+        "retained": [
+          "真实scoreKRs六项评分行为；旧层createInitiative拒绝及参数校验。"
+        ],
+        "reviewed_source_base": "fadbf32852cdb30f71e34dda9ab81b521bda484b"
+      }
+    },
+    {
+      "path": "packages/brain/src/__tests__/actions-initiative-orchestration.test.js",
+      "old": {
+        "path": "packages/brain/src/__tests__/actions-initiative-orchestration.test.js",
+        "mode": "100644",
+        "git_blob_sha1": "d5a76edb20801c0ef25256388e239368b3cf75a1",
+        "sha256": "976616dc8d9a90f757bb67e621610a3f504bb3e0c239dc0ef344bd35183c1582",
+        "byte_length": 5717
+      },
+      "exclude_literal": "src/__tests__/actions-initiative-orchestration.test.js",
+      "replacement_paths": [
+        "packages/brain/src/__tests__/actions.test.js"
+      ],
+      "policy_sources": [],
+      "audit": {
+        "retired": [
+          "旧正例要求写入迁移499已冻结的OKR层，不能继续作为现役成功创建合同。"
+        ],
+        "retained": [
+          "真实scoreKRs六项评分行为；旧层createInitiative拒绝及参数校验。"
+        ],
+        "reviewed_source_base": "fadbf32852cdb30f71e34dda9ab81b521bda484b"
+      }
+    },
+    {
+      "path": "packages/brain/src/__tests__/tasks-status.test.js",
+      "old": {
+        "path": "packages/brain/src/__tests__/tasks-status.test.js",
+        "mode": "100644",
+        "git_blob_sha1": "04450b6cf622935e2e2f635645b1d854abab859f",
+        "sha256": "9a74bef6490d477705fce58a45c45f4e4336f2770b29c6543eee07701b1b5b97",
+        "byte_length": 6868
+      },
+      "exclude_literal": "src/__tests__/tasks-status.test.js",
+      "replacement_paths": [
+        "packages/brain/src/__tests__/integration/task-status-transitions.integration.test.js",
+        "packages/brain/src/lib/__tests__/task-status-transitions.test.js",
+        "packages/brain/src/routes/__tests__/tasks-result-backfill.test.js"
+      ],
+      "policy_sources": [
+        {
+          "path": "packages/brain/src/routes/task-tasks.js",
+          "mode": "100644",
+          "git_blob_sha1": "506055675af598171f29b2c0c9bf715a2813e9ad",
+          "sha256": "dec4802191ac05a0e225d6e9103139431bd46788cce4d289d4ab05e683bc518f",
+          "byte_length": 27257
+        },
+        {
+          "path": "packages/brain/src/routes/task-task-patch.js",
+          "mode": "100644",
+          "git_blob_sha1": "9d7c69c82ecb822ce6efc53992b47aedc8b674a6",
+          "sha256": "e4cad2c075317558071464f9b9f3cb51ad3ce43ffba57f9498f5c476115aa1e9",
+          "byte_length": 7431
+        },
+        {
+          "path": "packages/brain/src/routes/tasks.js",
+          "mode": "100644",
+          "git_blob_sha1": "c8179b37a1c4a51a7541714ebc9bc4e354d6c0c5",
+          "sha256": "26f0b5b12c4d50252c71ba1d5e890dfe89b98eb4f7805493ea8e63e2a0e1f133",
+          "byte_length": 61376
+        },
+        {
+          "path": "packages/brain/src/lib/task-status-transitions.js",
+          "mode": "100644",
+          "git_blob_sha1": "252a3ad7d8273eaef2417c0a3feb93e1e90c3bf8",
+          "sha256": "367f37a973f1ac183d77dab24530f7049ec0b53b72fd247bd574613d992632c9",
+          "byte_length": 5016
+        }
+      ],
+      "audit": {
+        "retired": [
+          "旧9例复制UPDATE/状态字典，不调用真实PATCH；真实HTTP→PG7例、真实状态真身与PATCH history默认回归保留。"
+        ],
+        "retained": [
+          "现役真实入口、历史读取、写拒绝与回滚合同保留。"
+        ],
+        "reviewed_source_base": "fadbf32852cdb30f71e34dda9ab81b521bda484b"
+      }
+    },
+    {
+      "path": "tests/regression/relay-1b1f1ffa/capacity-gate.test.js",
+      "old": {
+        "path": "tests/regression/relay-1b1f1ffa/capacity-gate.test.js",
+        "mode": "100644",
+        "git_blob_sha1": "b940762871ed6dad09fc83b65d4ce5288785e988",
+        "sha256": "3bc08dba2620d368deb46b7e84b26d26bf89fe99987320659508f30cfbbf3c11",
+        "byte_length": 6942
+      },
+      "exclude_literal": "../../tests/regression/relay-1b1f1ffa/capacity-gate.test.js",
+      "replacement_paths": [
+        "packages/brain/src/__tests__/integration/capacity-gate.test.js"
+      ],
+      "policy_sources": [
+        {
+          "path": "packages/brain/src/capacity-gate.js",
+          "mode": "100644",
+          "git_blob_sha1": "74d99125be5c583f7b60641c3a42f28ba166ff1f",
+          "sha256": "893bb9f20844aaa1939bb787586d7234374995045ff5c8ceb0ed673e0623735d",
+          "byte_length": 9526
+        }
+      ],
+      "audit": {
+        "retired": [
+          "毕业副本8例与现役integration同合同；现役11例额外验证TCP占用，官方Deep真实通过。"
+        ],
+        "retained": [
+          "现役真实入口、历史读取、写拒绝与回滚合同保留。"
+        ],
+        "reviewed_source_base": "fadbf32852cdb30f71e34dda9ab81b521bda484b"
+      }
+    },
+    {
+      "path": "tests/regression/relay-57e25e92/headed-smoke-contract.test.ts",
+      "old": {
+        "path": "tests/regression/relay-57e25e92/headed-smoke-contract.test.ts",
+        "mode": "100644",
+        "git_blob_sha1": "27e12d7daa410953adc39f0f1bc6376be7bf6885",
+        "sha256": "46ccc3cb12ef380e01bf74b3d7cbf6303f3174e3a0548b55dbfa8a4ae01e2a50",
+        "byte_length": 3526
+      },
+      "exclude_literal": "../../tests/regression/relay-57e25e92/headed-smoke-contract.test.ts",
+      "replacement_paths": [
+        "packages/brain/src/__tests__/integration/retired-harness-dispatch.pg.integration.test.js"
+      ],
+      "policy_sources": [
+        {
+          "path": "packages/brain/src/executor.js",
+          "mode": "100644",
+          "git_blob_sha1": "19f9f0eb5da75bb48ceed84a920f14b7a1e8e8ac",
+          "sha256": "494e16c536469fdcbc19bc198bbace43dd406fb2aec2e925dd84d48ef414dcf1",
+          "byte_length": 194525
+        },
+        {
+          "path": "packages/brain/src/lib/task-type-registry.js",
+          "mode": "100644",
+          "git_blob_sha1": "2e5528dff905af8b6a2a1a145bd2ec5216045047",
+          "sha256": "c33d8b9d4f9bbc6e9e08d7f88893fbde865be9ac11f4b1b0304c9b04a1dd70d5",
+          "byte_length": 57340
+        }
+      ],
+      "audit": {
+        "retired": [
+          "旧测试只读已毕业wrapper字符串并断言退役无头协议；现役9例真实API/PG退役拒绝、历史有头豁免与回滚保留；不宣称外部有头smoke已跑。"
+        ],
+        "retained": [
+          "现役真实入口、历史读取、写拒绝与回滚合同保留。"
+        ],
+        "reviewed_source_base": "fadbf32852cdb30f71e34dda9ab81b521bda484b"
+      }
+    },
+    {
+      "path": "tests/regression/relay-07b2fd3b/captures-api.test.ts",
+      "old": {
+        "path": "tests/regression/relay-07b2fd3b/captures-api.test.ts",
+        "mode": "100644",
+        "git_blob_sha1": "2eb03f3adcf223fae3c900c85df2f08ba5589d16",
+        "sha256": "7d1fd8ee61bdad0234424056b8b5cf8ef070bc78611237b2b2cdb9ef0b8bdcef",
+        "byte_length": 6357
+      },
+      "exclude_literal": "../../tests/regression/relay-07b2fd3b/captures-api.test.ts",
+      "replacement_paths": [
+        "packages/brain/src/routes/__tests__/captures-api.test.ts"
+      ],
+      "policy_sources": [
+        {
+          "path": "packages/brain/src/routes/captures.js",
+          "mode": "100644",
+          "git_blob_sha1": "96c541425b28c15535c35123e19b89303c07bf7c",
+          "sha256": "c1e9c4eac99d93c05931c5ee0da4a328b1d2441ad4b76f57adb26579c5cc0ae1",
+          "byte_length": 9644
+        },
+        {
+          "path": "packages/brain/src/routes/capture-atoms.js",
+          "mode": "100644",
+          "git_blob_sha1": "26680eadfcc0e28bac8a97f4484a7749f94d7a27",
+          "sha256": "f9f4df158908e6b10706f847e4c954bf1c3ac08ff8bf7547ee2227f1165d4f1b",
+          "byte_length": 12078
+        }
+      ],
+      "audit": {
+        "retired": [
+          "毕业副本是旧源码同内容副本；源码真router+私有PG新版补齐原空case，保持独立来源唯一owner。"
+        ],
+        "retained": [
+          "现役真实入口、历史读取、写拒绝与回滚合同保留。"
+        ],
+        "reviewed_source_base": "fadbf32852cdb30f71e34dda9ab81b521bda484b"
+      }
+    },
+    {
+      "path": "tests/regression/relay-1b1f1ffa/preview-destroyer.test.js",
+      "old": {
+        "path": "tests/regression/relay-1b1f1ffa/preview-destroyer.test.js",
+        "mode": "100644",
+        "git_blob_sha1": "346bd467df046b06132f85a96d57688098e8125e",
+        "sha256": "1fe75cc1f16c35d8756e68fdf62c56c9313bf064c8d5b6f445b1efd0b37c88f4",
+        "byte_length": 7120
+      },
+      "exclude_literal": "../../tests/regression/relay-1b1f1ffa/preview-destroyer.test.js",
+      "replacement_paths": [
+        "packages/brain/src/__tests__/integration/preview-destroyer.test.js"
+      ],
+      "policy_sources": [
+        {
+          "path": "packages/brain/src/preview-destroyer.js",
+          "mode": "100644",
+          "git_blob_sha1": "df146b78927ec3ad98191421db11347ea6a3a95c",
+          "sha256": "51bc249fcb48dd688a4de6d2c1317b44134bc539a0bd6cf8ca52a572aa3aafe1",
+          "byte_length": 9127
+        }
+      ],
+      "audit": {
+        "retired": [
+          "毕业副本五项合同均由正式integration保留，并额外覆盖inactive历史行；官方Deep41742520265六项真实通过，现役实现与替代相对f8bf064无变化。"
+        ],
+        "retained": [
+          "真实preview销毁、DB名称拒绝、符号链接逃逸拒绝、幂等、并发锁与历史终态合同保留。"
+        ],
+        "reviewed_source_base": "fadbf32852cdb30f71e34dda9ab81b521bda484b"
+      }
+    },
+    {
+      "path": "packages/brain/src/__tests__/coding-passway.test.js",
+      "old": {
+        "path": "packages/brain/src/__tests__/coding-passway.test.js",
+        "mode": "100644",
+        "git_blob_sha1": "a2686ffbac2adcbbc4b9280dd00cacd2c87954b6",
+        "sha256": "3308083954a6079d466fad030ab631ae8a49d1b811e07f73e79cd337ab704559",
+        "byte_length": 3986
+      },
+      "base_selector_kind": "default_brain_selected",
+      "replacement_paths": [
+        "packages/brain/src/__tests__/planner-retired-entry.test.js"
+      ],
+      "policy_sources": [
+        {
+          "path": "packages/brain/src/planner.js",
+          "mode": "100644",
+          "git_blob_sha1": "3181c77a7f0a3bffac21639d57cf8a8d3276243a",
+          "sha256": "d6b5b55ead33d47b3fad95d755e3670a4381aa383f77b08dd0d356012e3a2c59",
+          "byte_length": 42049
+        }
+      ],
+      "audit": {
+        "retired": [
+          "旧三项假设Initiative无任务时自动创建architecture_design，现役入口已明确layer_retired；旧完整文件三例真实失败，不复活冻结层。"
+        ],
+        "retained": [
+          "planner-retired-entry真实调用四域拒绝及两条旧写入口拒绝，要求SQL零触碰；默认unit实际执行。"
+        ],
+        "reviewed_source_base": "fadbf32852cdb30f71e34dda9ab81b521bda484b"
+      }
+    }
+  ],
+  "limitations": [
+    "仅精确审核八份旧测试，不授予目录或未知删除豁免；原67债务七项退休之外仅追加coding-passway默认空壳。",
+    "仅准入证据；PG输入必须重新核验最终原生跑道选择及执行，候选绝不等于PASS。",
+    "公共导出、历史只读、迁移499写拒绝与真实回滚保障保留。"
+  ],
+  "replacement_configs": [
+    {
+      "blob": {
+        "path": "packages/brain/vitest.config.js",
+        "mode": "100644",
+        "git_blob_sha1": "bafa7e7e6b2a457e316c5c6e68a1bf44e782a543",
+        "sha256": "ee12d4b8185b78f49f95aef478f9de1d00f6bc83a17e50c7b252aa1acc0636f7",
+        "byte_length": 21495
+      },
+      "component": "brain"
+    },
+    {
+      "blob": {
+        "path": "scripts/ci/deep-integration.config.mjs",
+        "mode": "100644",
+        "git_blob_sha1": "f82a9f211d3164f2f1b02e34fad6ed23061ffd53",
+        "sha256": "f5b94e5075d47fa2ad47788340d17d6705456c4272cd08cd81ee5b3e1ca5e560",
+        "byte_length": 834
+      },
+      "component": "brain",
+      "selector_kind": "fixed_pg_literal_candidate"
+    },
+    {
+      "blob": {
+        "path": "scripts/ci/debt-pg.config.mjs",
+        "mode": "100644",
+        "git_blob_sha1": "e2712e10efabc7cb233e82e063c59d442d0c3fe7",
+        "sha256": "bc74d6b561c8e44e3146f24a2a22389853ab2c2636a9c3452ece1d5642c9f894",
+        "byte_length": 596
+      },
+      "component": "brain",
+      "selector_kind": "fixed_pg_literal_candidate"
+    }
+  ],
+  "entry_support": [
+    {
+      "path": "scripts/ci/debt-pg-tests.json",
+      "mode": "100644",
+      "git_blob_sha1": "7f4d1e799821873aae17aeb54eb0fce10fb8ed96",
+      "sha256": "559f2d4d80a1880865c6b743e6593b9aec299a3f8d4f1eea9e6439314f9052b9",
+      "byte_length": 5911
+    },
+    {
+      "path": "scripts/ci/run-debt-pg.mjs",
+      "mode": "100644",
+      "git_blob_sha1": "5e82d79151036839bce919cd4f87fca0f792ce91",
+      "sha256": "6bebce7f6e6afb9d724162ec3f05727be9e26f9685a1c25e1654fbaed2c7e548",
+      "byte_length": 7781
+    },
+    {
+      "path": "scripts/ci/private-pg-backend.mjs",
+      "mode": "100644",
+      "git_blob_sha1": "2b7f6339213c68191ab697fdb46efa5da2a3430f",
+      "sha256": "7bf13e1d368a132a06cfa70e4b11b8268cc48d5731c113583e016df93e1f92a3",
+      "byte_length": 5464
+    },
+    {
+      "path": "scripts/ci/private-pg-contract.mjs",
+      "mode": "100644",
+      "git_blob_sha1": "12b0a423ae6ebb97b11bc289ca3e733e79809c25",
+      "sha256": "a0e4a78b6862e5ae84450720431d833d515887606591dfd5c510947a2f35c09f",
+      "byte_length": 3546
+    },
+    {
+      "path": ".github/workflows/nightly-regression.yml",
+      "mode": "100644",
+      "git_blob_sha1": "bedbc53f1db496dadb84929ef6326f5719b8ee81",
+      "sha256": "433e32d0459a124fe9329d54736916eb4f5908291976f073fd1044356ff0cc44",
+      "byte_length": 17518
+    }
+  ]
+}

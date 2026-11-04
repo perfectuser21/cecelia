@@ -37,6 +37,8 @@ describe('build 活动（子进程 + 假 claude + 真实 git 提交）', () => {
     fs.writeFileSync(path.join(smokeConfig, 'smoke-debt.txt'), '# 无待归类项\n');
     git(worktree, 'add', 'packages/brain');
     git(worktree, 'commit', '-qm', 'test: seed private smoke registration');
+    // 真实版本门需要固定基线；本fixture的构建只改根src，不改Brain源码。
+    git(worktree, 'update-ref', 'refs/remotes/origin/main', 'HEAD');
     sprintAbs = path.join(worktree, 'sprints/s1');
     fs.mkdirSync(sprintAbs, { recursive: true });
     fs.writeFileSync(path.join(sprintAbs, '01-intent.md'), '# intent\n');
@@ -74,7 +76,7 @@ describe('build 活动（子进程 + 假 claude + 真实 git 提交）', () => {
     expect(r.stdout.trim().split('\n')).toHaveLength(1);
     const sha = head();
     expect(sha).not.toBe(before);
-    // 私有 Smoke 资源通过真实登记检查；其它 CI 脚本与 origin/main 未配置。
+    // 私有Smoke资源通过真实登记检查；版本门基于真实origin/main判定无Brain源码变更。
     expect(r.result.outputs).toEqual({ build_file: '03-build.md', build_commits: [sha], ci_precheck: { passed: true, rounds: 0, failures: [] } });
 
     const fm = parseFrontmatter(fs.readFileSync(buildFile(), 'utf8'));

@@ -1,5 +1,6 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { ensureCodexImmune } from '../tick.js';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+vi.mock('../db.js', () => ({ default: { query: () => { throw new Error('真实数据库禁止用于本单测'); } } }));
+import { ensureCodexImmune } from '../codex-immune.js';
 
 /**
  * ensureCodexImmune 单元测试
@@ -10,15 +11,16 @@ import { ensureCodexImmune } from '../tick.js';
  */
 
 function makePool(lastCreatedAt = null) {
-  const insertSpy = vi.fn().mockResolvedValue({ rows: [] });
+  const insertSpy = vi.fn(async (sql, params) => ({ rows: [{ id: 'immune-task', title: params[0], task_type: params[3], priority: params[2] }] }));
   const pool = {
-    query: vi.fn(async (sql) => {
+    query: vi.fn(async (sql, params) => {
       if (sql.trim().startsWith('SELECT created_at')) {
         return { rows: lastCreatedAt ? [{ created_at: lastCreatedAt }] : [] };
       }
       if (sql.trim().startsWith('INSERT INTO tasks')) {
-        return insertSpy(sql);
+        return insertSpy(sql, params);
       }
+      if (sql.includes('INSERT INTO work_routing_receipts')) return { rows: [{ id: 'immune-receipt' }] };
       return { rows: [] };
     }),
     _insertSpy: insertSpy
@@ -27,6 +29,17 @@ function makePool(lastCreatedAt = null) {
 }
 
 describe('ensureCodexImmune', () => {
+  afterEach(() => vi.useRealTimers());
+
+  it('恰好20小时允许创建，查询失败则拒绝创建', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-11-04T00:00:00Z'));
+    const pool = makePool(new Date(Date.now() - 20 * 60 * 60 * 1000));
+    expect((await ensureCodexImmune(pool)).created).toBe(true);
+    const failingPool = { query: vi.fn().mockRejectedValue(new Error('读取失败')) };
+    await expect(ensureCodexImmune(failingPool)).rejects.toThrow('读取失败');
+    expect(failingPool.query).toHaveBeenCalledTimes(1);
+  });
   it('D3: 函数导出存在', () => {
     expect(typeof ensureCodexImmune).toBe('function');
   });
@@ -69,9 +82,8 @@ describe('ensureCodexImmune', () => {
       c => c[0].includes('INSERT INTO tasks')
     );
     expect(insertCall).toBeDefined();
-    // SQL 包含 codex_qa 和 P1
-    expect(insertCall[0]).toContain('codex_qa');
-    expect(insertCall[0]).toContain('P1');
+    expect(insertCall[1][3]).toBe('codex_qa');
+    expect(insertCall[1][2]).toBe('P1');
     // 参数包含正确 title 和 description
     expect(insertCall[1][0]).toBe('Codex 免疫检查 - cecelia-core');
     expect(insertCall[1][1]).toContain('run-codex-immune.sh');

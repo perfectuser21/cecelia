@@ -25,10 +25,16 @@ jobs:
           DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
         run: |
           set -euo pipefail
+          : "${DEPLOY_TOKEN:?DEPLOY_TOKEN 未配置}"
+          [[ "$GITHUB_SHA" =~ ^[a-f0-9]{40}$ ]]
+          response_file=$(mktemp "${RUNNER_TEMP:-/tmp}/staging-request.XXXXXX")
+          trap 'rm -f "$response_file"' EXIT
           payload=$(jq -nc --arg sha "$GITHUB_SHA" '{staging:true,sha:$sha}')
-          curl -fsS --connect-timeout 30 --max-time 60 -X POST "$BRAIN_URL/api/brain/deploy" \
-            -H "Authorization: Bearer $DEPLOY_TOKEN" -H 'Content-Type: application/json' -d "$payload" -o /tmp/staging-request.json
-          echo "STAGING_REQUEST_ID=$(jq -er .request_id /tmp/staging-request.json)" >> "$GITHUB_ENV"
+          http_code=$(curl -sS --connect-timeout 30 --max-time 60 -w '%{http_code}' -X POST "$BRAIN_URL/api/brain/deploy" \
+            -H "Authorization: Bearer $DEPLOY_TOKEN" -H 'Content-Type: application/json' -d "$payload" -o "$response_file")
+          [[ "$http_code" =~ ^2[0-9][0-9]$ ]] || { echo "staging request HTTP $http_code" >&2; exit 1; }
+          request_id=$(jq -er '.request_id | select(type == "string" and test("^[A-Za-z0-9_-]+$"))' "$response_file")
+          echo "STAGING_REQUEST_ID=$request_id" >> "$GITHUB_ENV"
       - name: 等待同 SHA、同镜像的隔离验证回执
         env:
           BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.79.41.61:5221' }}

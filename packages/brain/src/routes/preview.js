@@ -12,7 +12,7 @@
  */
 
 import { Router } from 'express';
-import { spawn } from 'child_process';
+import { spawn, execFileSync } from 'child_process';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import pool from '../db.js';
@@ -23,12 +23,36 @@ import {
 } from '../preview-manager.js';
 import { admitPreview } from '../capacity-gate.js';
 import { destroyPreview } from '../preview-destroyer.js';
+import { readTickDispatchEnabled } from '../tick-dispatch-gate.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = process.env.REPO_ROOT || join(__dirname, '../../../../');
 const SCRIPTS_DIR = join(REPO_ROOT, 'scripts');
 
+// 启动时读取模块实际所在 worktree；不信任 GIT_SHA 或请求里声称的版本。
+const CODE_ROOT = join(__dirname, '../../../../');
+let runtimeSha = null;
+try {
+  const value = execFileSync('git', ['-C', CODE_ROOT, 'rev-parse', 'HEAD'], {
+    encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 5000,
+  }).trim();
+  if (/^[a-f0-9]{40}$/.test(value)) runtimeSha = value;
+} catch { /* 无源码身份时 /identity 拒绝成功。 */ }
+
 const router = Router();
+router.get('/identity', async (_req, res) => {
+  if (process.env.BRAIN_PREVIEW !== '1') return res.status(404).json({ error: 'not a preview instance' });
+  try {
+    if (!runtimeSha) throw new Error('preview code revision unavailable');
+    const { rows } = await pool.query('SELECT current_database() AS db_name');
+    if (!rows[0]?.db_name) throw new Error('preview database identity unavailable');
+    const tick_enabled = await readTickDispatchEnabled(pool);
+    res.json({ pr_number: Number(process.env.BRAIN_PREVIEW_PR), git_sha: runtimeSha,
+      db_name: rows[0].db_name, tick_enabled });
+  } catch (err) {
+    res.status(503).json({ error: err.message });
+  }
+});
 
 function checkDeployToken(req, res) {
   const token = (req.headers.authorization || '').replace('Bearer ', '');
@@ -46,7 +70,11 @@ function checkDeployToken(req, res) {
 // 启动过程异步进行，可用 GET /status/:pr 轮询
 router.post('/start', async (req, res) => {
   if (checkDeployToken(req, res) === false) return;
-  const { pr_number, branch_name, base_repo = 'cecelia' } = req.body;
+  const { pr_number, branch_name, base_repo = 'cecelia', expected_sha } = req.body;
+  // coding-workflow 旧调用只传分支，保留兼容；CI 新调用必须传固定 SHA。
+  if (expected_sha !== undefined && (typeof expected_sha !== 'string' || !/^[a-f0-9]{40}$/.test(expected_sha))) {
+    return res.status(400).json({ error: 'expected_sha must be a 40-character lowercase commit SHA' });
+  }
   if (!pr_number || !branch_name) {
     return res.status(400).json({ error: 'pr_number and branch_name are required' });
   }
@@ -69,7 +97,7 @@ router.post('/start', async (req, res) => {
 
     // 异步触发 preview-env-start.sh（不等待完成）
     const startScript = join(SCRIPTS_DIR, 'preview-env-start.sh');
-    const child = spawn('bash', [startScript, String(prNum), branch_name, String(port), db_name], {
+    const child = spawn('bash', [startScript, String(prNum), branch_name, String(port), db_name, ...(expected_sha ? [expected_sha] : [])], {
       detached: true,
       stdio: 'ignore',
       env: { ...process.env, REPO_ROOT },

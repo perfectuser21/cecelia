@@ -1,16 +1,21 @@
+import { createDebt02MigrationFixture } from './helpers/debt-02-scratch.js';
 /**
  * Migration 015 Tests
  *
  * Tests schema changes for Cortex quality assessment system
  */
 
-import { describe, it, expect, beforeAll, vi } from 'vitest';
-let pool;
-
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+let pool, fixture;
 beforeAll(async () => {
-  vi.resetModules();
-  pool = (await import('../db.js')).default;
+  fixture = await createDebt02MigrationFixture(`
+    CREATE TABLE schema_version(version text PRIMARY KEY, description text, applied_at timestamptz DEFAULT now());
+    CREATE TABLE tasks(id uuid PRIMARY KEY, task_type text);
+    CREATE TABLE cecelia_events(id integer PRIMARY KEY);
+  `, ['013_cortex_analyses.sql', '015_cortex_quality_system.sql', '034_cleanup_orphan_tables_and_constraints.sql']);
+  pool = fixture.pool;
 });
+afterAll(async () => { await fixture?.close(); });
 
 describe('Migration 015 - Cortex Quality System', () => {
   beforeAll(async () => {
@@ -27,7 +32,7 @@ describe('Migration 015 - Cortex Quality System', () => {
     const result = await pool.query(`
       SELECT column_name, data_type
       FROM information_schema.columns
-      WHERE table_name = 'cortex_analyses'
+      WHERE table_schema = current_schema() AND table_name = 'cortex_analyses'
         AND column_name = 'quality_score'
     `);
 
@@ -39,7 +44,7 @@ describe('Migration 015 - Cortex Quality System', () => {
     const result = await pool.query(`
       SELECT column_name, data_type
       FROM information_schema.columns
-      WHERE table_name = 'cortex_analyses'
+      WHERE table_schema = current_schema() AND table_name = 'cortex_analyses'
         AND column_name = 'quality_dimensions'
     `);
 
@@ -51,7 +56,7 @@ describe('Migration 015 - Cortex Quality System', () => {
     const result = await pool.query(`
       SELECT column_name, data_type
       FROM information_schema.columns
-      WHERE table_name = 'cortex_analyses'
+      WHERE table_schema = current_schema() AND table_name = 'cortex_analyses'
         AND column_name = 'similarity_hash'
     `);
 
@@ -63,7 +68,7 @@ describe('Migration 015 - Cortex Quality System', () => {
     const result = await pool.query(`
       SELECT column_name, data_type
       FROM information_schema.columns
-      WHERE table_name = 'cortex_analyses'
+      WHERE table_schema = current_schema() AND table_name = 'cortex_analyses'
         AND column_name = 'duplicate_of'
     `);
 
@@ -76,7 +81,7 @@ describe('Migration 015 - Cortex Quality System', () => {
     const result = await pool.query(`
       SELECT table_name
       FROM information_schema.tables
-      WHERE table_name = 'cortex_quality_reports'
+      WHERE table_schema = current_schema() AND table_name = 'cortex_quality_reports'
     `);
 
     expect(result.rows.length).toBe(0);
@@ -86,17 +91,24 @@ describe('Migration 015 - Cortex Quality System', () => {
     const result = await pool.query(`
       SELECT table_name
       FROM information_schema.tables
-      WHERE table_name = 'strategy_adoptions'
+      WHERE table_schema = current_schema() AND table_name = 'strategy_adoptions'
     `);
 
     expect(result.rows.length).toBe(1);
+  });
+
+  it('stores quality JSON and enforces duplicate-analysis foreign keys', async () => {
+    const original = (await pool.query("INSERT INTO cortex_analyses(root_cause,quality_score,quality_dimensions,similarity_hash) VALUES('debt02',75,'{\"uniqueness\":15}','debt02-hash') RETURNING *")).rows[0];
+    expect(original).toMatchObject({ quality_score: 75, quality_dimensions: { uniqueness: 15 }, similarity_hash: 'debt02-hash' });
+    await pool.query("INSERT INTO cortex_analyses(root_cause,duplicate_of) VALUES('duplicate',$1)", [original.id]);
+    await expect(pool.query("INSERT INTO cortex_analyses(root_cause,duplicate_of) VALUES('invalid','00000000-0000-0000-0000-000000000001')")).rejects.toMatchObject({ code: '23503' });
   });
 
   it('similarity_hash index exists', async () => {
     const result = await pool.query(`
       SELECT indexname
       FROM pg_indexes
-      WHERE tablename = 'cortex_analyses'
+      WHERE schemaname = current_schema() AND tablename = 'cortex_analyses'
         AND indexname = 'idx_cortex_analyses_similarity_hash'
     `);
 

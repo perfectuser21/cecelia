@@ -1,6 +1,7 @@
 // publish 活动：把 sprint 目录的 md 链提交、推送，并开草稿 PR（该分支已有 PR 则复用）。
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import { runActivity, validateBase, fail, childEnv, log } from '../lib/protocol.mjs';
 import { intentHeading, prKindOf } from '../lib/pr-kind.mjs';
@@ -22,14 +23,14 @@ const BUILD_FILE = '03-build.md';
 const BASE_REF = process.env.CODING_WF_BASE_REF || 'origin/main';
 
 /** 运行子进程（不经 shell），输出转写到本进程 stderr；返回 { code, stdout, stderr, output }。 */
-function runCmd(bin, args, cwd) {
+function runCmd(bin, args, cwd, env = {}) {
   return new Promise((resolve) => {
     let stdout = '';
     let stderr = '';
     let output = '';
     let child;
     try {
-      child = spawn(bin, args, { cwd, env: CHILD_ENV, stdio: ['ignore', 'pipe', 'pipe'] });
+      child = spawn(bin, args, { cwd, env: { ...CHILD_ENV, ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
     } catch (error) {
       const message = String(error?.message || error);
       resolve({ code: null, stdout: '', stderr: message, output: message });
@@ -69,30 +70,8 @@ function prTitle(chainFiles, dir, taskId) {
   return `${prKindOf(heading)}(workflow): ${heading}`;
 }
 
-const escapeRe = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
-/**
- * 版本碎片（cecelia changes/README.md：PR 不碰版本五件套，改 packages/brain/src 的 PR 带 changes/<分支>.md，
- * 合并后 auto-version 统一 bump）：改了碎片规则覆盖的源码且分支上还没有碎片 → 写一份；返回相对路径或 null。
- * 规则按仓库（repos.json version_fragment { src_re, dir }，C6）；为 null（zenithjoy：auto-version 按提交标题 bump）不写。
- */
-async function ensureVersionFragment({ worktree, branch, dir, taskId, sprintRel, rule }) {
-  if (!rule) return null;
-  const srcRe = new RegExp(rule.src_re);
-  const fragmentRe = new RegExp(`^${escapeRe(rule.dir)}/(?!README\\.md$).+\\.md$`, 'i');
-  const diff = await runCmd('git', ['-C', worktree, 'diff', '--name-only', `${BASE_REF}...HEAD`]);
-  if (diff.code !== 0) {
-    log(`[publish] 取相对 ${BASE_REF} 的改动失败，不写版本碎片`);
-    return null;
-  }
-  const files = diff.stdout.split('\n').filter(Boolean);
-  if (!files.some((f) => srcRe.test(f)) || files.some((f) => fragmentRe.test(f))) return null;
-  const rel = `${rule.dir}/${branch}.md`;
-  const heading = intentHeading(dir) || `coding workflow ${taskId.slice(0, 8)}`;
-  fs.mkdirSync(path.join(worktree, rule.dir), { recursive: true });
-  fs.writeFileSync(path.join(worktree, rel), `## Brain {VERSION} — ${heading}\n\n- coding workflow 任务 ${taskId.slice(0, 8)}：需求、合同与验收记录见 ${sprintRel}/。\n`);
-  return rel;
-}
+// 使用受控活动源码旁的只读门禁，不从候选中执行可被改成exit 0的检查器。
+const VERSION_GUARD = fileURLToPath(new URL('../../../../../scripts/ci/check-brain-version-bump.sh', import.meta.url));
 
 /**
  * PR 正文的验收摘要：verify 通过后上下文里有 evidence_file 与 verified_ids（全部 PASS 才会走到 publish），
@@ -167,13 +146,20 @@ await runActivity(async (input) => {
   const title = prTitle(chainFiles, dir, taskId);
   const sprintRel = sprintDir.replace(/[\\/]+$/, '');
 
-  const fragment = await ensureVersionFragment({ worktree, branch, dir, taskId, sprintRel, rule: profileOf(input.repo_profile).version_fragment ?? null });
+  if (profileOf(input.repo_profile).key === 'cecelia') {
+    const head = await runCmd('git', ['rev-parse', '--verify', 'HEAD'], worktree);
+    if (head.code !== 0) return fail('fatal', 'git_head_failed');
+    const version = await runCmd('bash', [VERSION_GUARD], worktree, { BASE_REF, HEAD_REF: head.stdout.trim() });
+    if (version.code !== 0) return fail('retryable', 'brain_version_increment_required', {
+      evidence: ['请在实现阶段同步修复真实Brain版本并重新验收；发布器不修改已验候选。', version.output.slice(-3000)],
+    });
+  }
   const records = fs.readdirSync(dir).map(name => `${sprintRel}/${name}`);
   const registration = provenanceRequired(worktree) ? beginRecordRegistration({ worktree, taskId,
     sprintDir: sprintRel, stage: 'publish', controller: controllerIdentity(import.meta.url) }, records) : null;
   const sourceFiles = registerRecordSources(worktree, { taskId, sprintDir: sprintRel, stage: 'publish' }, records);
   if (registration) observeRecordRegistration(registration, sourceFiles);
-  const paths = [sprintRel, ...(fragment ? [fragment] : []), ...sourceFiles];
+  const paths = [sprintRel, ...sourceFiles];
   const add = await runCmd('git', [...GIT_PATHSPEC, '-C', worktree, 'add', '--', ...paths]);
   if (add.code !== 0) return fail('fatal', 'git_add_failed');
 

@@ -9,15 +9,20 @@
  * 超限时做 fallback quarantine。
  */
 
-import { describe, it, expect, beforeEach, afterEach, beforeAll, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, beforeAll, afterAll, vi } from 'vitest';
 
+import { assertScratchEnvironment, verifyScratchPool } from './helpers/debt-12-scratch.js';
+assertScratchEnvironment();
 let pool, requeueTask;
 
 beforeAll(async () => {
   vi.resetModules();
   pool = (await import('../db.js')).default;
+  await verifyScratchPool(pool);
   requeueTask = (await import('../executor.js')).requeueTask;
 });
+
+afterAll(async () => { if (pool) await pool.end(); });
 
 describe('watchdog-quarantine-race (竞态条件修复)', () => {
   let testTaskId;
@@ -32,7 +37,10 @@ describe('watchdog-quarantine-race (竞态条件修复)', () => {
   });
 
   afterEach(async () => {
-    await pool.query('DELETE FROM tasks WHERE title LIKE $1', ['test-watchdog-race%']);
+    if (testTaskId) {
+      await pool.query('DELETE FROM task_events WHERE task_id = $1', [testTaskId]);
+      await pool.query('DELETE FROM tasks WHERE id = $1', [testTaskId]);
+    }
   });
 
   it('should increment watchdog_retry_count even when task is failed (not in_progress)', async () => {
@@ -70,11 +78,15 @@ describe('watchdog-quarantine-race (竞态条件修复)', () => {
     expect(task.rows[0].payload.quarantine_info.reason).toBe('resource_hog_race_condition');
     expect(task.rows[0].payload.quarantine_info.details.previous_status).toBe('failed');
     expect(task.rows[0].error_message).toContain('watchdog-fallback');
+    const events = await pool.query('SELECT event_type, payload FROM task_events WHERE task_id = $1', [testTaskId]);
+    expect(events.rows).toEqual([{ event_type: 'watchdog_quarantine', payload: {
+      reason: 'Crisis: pressure=1.3', disposition: 'fallback_quarantine', retry_count: 2, previous_status: 'failed',
+    } }]);
   });
 
-  it('should NOT touch completed/cancelled tasks', async () => {
-    // 把任务改为 completed
-    await pool.query(`UPDATE tasks SET status = 'completed' WHERE id = $1`, [testTaskId]);
+  it.each(['completed', 'cancelled', 'canceled'])('should NOT touch %s tasks', async (status) => {
+    // 三种终态都不得被 watchdog 改写
+    await pool.query('UPDATE tasks SET status = $2 WHERE id = $1', [testTaskId, status]);
 
     const result = await requeueTask(testTaskId, 'Crisis', {});
 
@@ -83,9 +95,11 @@ describe('watchdog-quarantine-race (竞态条件修复)', () => {
     // 不应该 quarantine（completed 任务不应被动）
     expect(result.quarantined).toBeUndefined();
 
-    // 状态应保持 completed
-    const task = await pool.query('SELECT status FROM tasks WHERE id = $1', [testTaskId]);
-    expect(task.rows[0].status).toBe('completed');
+    // 状态、payload 和事件均应保持不变
+    const task = await pool.query('SELECT status, payload FROM tasks WHERE id = $1', [testTaskId]);
+    expect(task.rows[0]).toEqual({ status, payload: {} });
+    const events = await pool.query('SELECT * FROM task_events WHERE task_id = $1', [testTaskId]);
+    expect(events.rows).toEqual([]);
   });
 
   it('should handle queued tasks (dispatch → immediate kill race)', async () => {

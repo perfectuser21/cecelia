@@ -201,8 +201,61 @@ for(const [name,mutate]of[
  ['不固定scope来源',job=>job.env.MAP_SCOPE='cecelia-device-patrol'],
  ['预读shell字节变动',job=>job.steps.find(s=>s.if==="env.MAP_SCOPE == 'cecelia-device-patrol'").run+='\nexit 0'],
  ['外部caller强开infra',job=>job.env.INFRA_ADMISSION='${{ true }}'],
- ['来源恢复BASE分支漂移',job=>job.env.BASE=job.env.BASE.replace('cp-10301020-source-pr-link','cp-any-other-branch')],
+ ['BASE注入未经审查的历史回退',job=>job.env.BASE="${{ inputs.base_revision || (github.event.pull_request.head.ref == 'cp-any-other-branch' && 'e3a01021ee7100b83d8ed5a0be219d0b543b5dff') || github.event.before }}"],
 ])test(`scope预读不得放宽核心合同：${name}`,async t=>{
  const f=fixture(t);addActualPatrolPrelude(f,mutate);const r=await extractWorkspaceCiSourceBundle(f.options);
  assert.equal(r.status,'unknown');
+});
+
+// 当前显式mode gate只增加外仓固定来源证明，不授予原生准入或执行资格。
+test('固定workspace caller下infra provider与所有infra输入恒不适用，显式PR gate仍运行',()=>{
+ const document=load(git(fileURLToPath(new URL('../../../',import.meta.url)),'show','HEAD:.github/workflows/implementation-impact.yml'));
+ const evaluate=(expression,github,inputs,vars,needs={})=>Function('github','inputs','vars','needs','always',`return (${expression.replace(/^\$\{\{\s*|\s*\}\}$/g,'').replaceAll('needs.snapshot-main','needs["snapshot-main"]')});`)(github,inputs,vars,needs,()=>true);
+ for(const event_name of ['pull_request','push','workflow_dispatch'])for(const enabled of ['true','false']){
+  const github={repository:WR,event_name,ref:'refs/heads/main',sha:'b'.repeat(40)};
+  const inputs={source_repo:WR,scope:'zenithjoy',mode:event_name==='pull_request'?'pr':'main',head_revision:github.sha,tooling_revision:'c'.repeat(40)};
+  const vars={IMPLEMENTATION_INFRA_ADMISSION:enabled};
+  assert.equal(evaluate(document.jobs['snapshot-infra'].if,github,inputs,vars),false);
+  assert.equal(evaluate(document.jobs.gate.env.INFRA_ADMISSION,github,inputs,vars),'false');
+  assert.equal(evaluate(document.jobs.gate.env.IMPLEMENTATION_MAIN_SCOPES,github,inputs,vars),'');
+  assert.equal(evaluate(document.jobs.gate.if,github,inputs,vars,{'snapshot-main':{result:event_name==='pull_request'?'skipped':'success'}}),true);
+ }
+});
+for(const [name,mutate]of[
+ ['provider整个替换',doc=>doc.jobs['snapshot-infra']={if:'true',steps:[]}],
+ ['provider条件错配',doc=>doc.jobs['snapshot-infra'].if='always()'],
+ ['provider命令增加',doc=>doc.jobs['snapshot-infra'].steps.push({run:'echo extra'})],
+ ['gate整个替换',doc=>doc.jobs.gate={if:'always()',steps:[]}],
+ ['gate条件错配',doc=>doc.jobs.gate.if='always()'],
+ ['gate依赖缺失',doc=>doc.jobs.gate.needs=['snapshot-main']],
+ ['gate依赖额外增加',doc=>doc.jobs.gate.needs.push('foreign-provider')],
+ ['gate增加命令',doc=>doc.jobs.gate.steps.push({run:'echo extra'})],
+ ['gate环境infra强开',doc=>doc.jobs.gate.env.INFRA_ADMISSION='true'],
+ ['gate环境源仓更换',doc=>doc.jobs.gate.env.SOURCE_REPO='perfectuser21/cecelia'],
+ ['gate环境mode更换',doc=>doc.jobs.gate.env.MODE='pr'],
+ ['runner字节变异',doc=>doc.jobs.gate.steps.find(s=>s.name==='实际变更影响与固定回归').run+='\necho extra'],
+ ['initializer字节变异',doc=>doc.jobs.gate.steps.find(s=>s.id==='skill-cache').run+='\necho extra'],
+ ['initializer凭据额外扩散',doc=>doc.jobs.gate.steps.find(s=>s.id==='skill-cache').env.FOREIGN_TOKEN='${{ secrets.FOREIGN_TOKEN }}'],
+ ['下载源变异',doc=>doc.jobs.gate.steps.find(s=>s.name==='下载固定SHA中央bundle（PR无中央写凭据）').run+='\necho extra'],
+ ['根执行默认目录变异',doc=>doc.defaults={run:{'working-directory':'candidate'}}],
+ ['根环境隐式覆盖',doc=>doc.env={INFRA_ADMISSION:'true'}],
+])test(`当前显式mode封套拒绝未经审查变异：${name}`,async t=>{
+ const f=fixture(t);addActualPatrolPrelude(f,()=>{},mutate);
+ const r=await extractWorkspaceCiSourceBundle(f.options);assert.equal(r.status,'unknown',name);assert.equal(r.executable,false);assert.equal(r.admission.status,'unknown');
+});
+for(const [name,replace]of[
+ ['caller scope',['scope: zenithjoy','scope: cecelia-kr']],
+ ['caller repo',['source_repo: '+WR,'source_repo: '+BR]],
+ ['caller额外恢复开关',['      mode: main','      mode: main\n      source_baseline_recovery: true']],
+])test(`当前显式mode封套拒绝外仓caller扩大授权：${name}`,async t=>{
+ const f=fixture(t);addActualPatrolPrelude(f);const path='.github/workflows/implementation-impact.yml';
+ f.wf[path]=f.wf[path].replace(...replace);f.options.workspace={repo:WR,revision:tree(f.workspaceRoot,f.wf)};
+ const r=await extractWorkspaceCiSourceBundle(f.options);assert.equal(r.status,'unknown');assert.equal(r.executable,false);
+});
+
+test('当前精确YAML不能掩盖Skill初始化器实现字节漂移',async t=>{
+ const f=fixture(t);addActualPatrolPrelude(f);const read=f.options.readSource;
+ f.options.readSource=async q=>{const bytes=await read(q);return q.repo===BR&&q.path==='scripts/ci/implementation-skill-source.mjs'?Buffer.concat([bytes,Buffer.from('\n// unreviewed implementation change\n')]):bytes;};
+ const r=await extractWorkspaceCiSourceBundle(f.options);assert.equal(r.status,'unknown');
+ assert.ok(r.gaps.some(g=>g.code==='CALLEE_SKILL_CACHE_SOURCE_UNPROVEN'));assert.equal(r.executable,false);
 });

@@ -23,52 +23,7 @@ jobs:
 
       - name: Find and remove prd/task artifacts
         id: cleanup
-        run: |
-          set -euo pipefail
-          # 找出所有合并后的残留 md：
-          #   旧命名：.prd-*.md / .task-*.md / .dod-*.md（带前导点、小写，保留向后兼容）
-          #   新命名：DoD.cp-*.md / PRD.cp-*.md / TASK_CARD.cp-*.md（大写、无前导点）
-          # 不匹配 DoD.md / PRD.md（活跃 PR 使用，无 .cp- 后缀）
-          # Phase 7.5: 补齐 .dod-* 前缀，之前漏抓导致 3 个 .dod-cp-* 残留积累
-          # 2026-07-06 补齐 .dev-mode./.dev-seal./.enriched-prd-（审计发现 main 积了 13 个此类残留）
-          FILES=$(git ls-files | grep -E '^(\.prd-|\.task-|\.dod-|\.dev-mode\.|\.dev-seal\.|\.enriched-prd-|DoD\.cp-|PRD\.cp-|TASK_CARD\.cp-)' || true)
-
-          if [ -z "$FILES" ]; then
-            echo "✅ 无 prd/task 残留文件，跳过"
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          COUNT=$(echo "$FILES" | wc -l | tr -d ' ')
-          echo "🗑️  发现 $COUNT 个残留文件，开始清理..."
-          echo "$FILES"
-
-          # 删除文件
-          echo "$FILES" | xargs git rm -q
-
-          # 从实际Git删除索引核验清单；文件删除与声明退役进入同一提交。
-          CLEANUP_DELETE_LIST="$FILES" node --input-type=module <<'NODE'
-          import { existsSync, lstatSync, readFileSync, writeFileSync } from 'node:fs';
-          import { execFileSync } from 'node:child_process';
-          import { SOURCE_RELATIONS_PATH, removeDeletedArtifactRelations } from './scripts/ci/implementation-auxiliary-evidence.mjs';
-          const deleted = process.env.CLEANUP_DELETE_LIST.split('\n').filter(Boolean);
-          const staged = new Set(execFileSync('git', ['diff', '--cached', '--name-only', '--diff-filter=D', '-z'], { encoding: 'utf8' }).split('\0').filter(Boolean));
-          if (deleted.some(path => !staged.has(path) || existsSync(path))) throw new Error('Cleanup deletion is not staged');
-          let stat;
-          try { stat = lstatSync(SOURCE_RELATIONS_PATH); } catch (error) { if (error.code !== 'ENOENT') throw error; }
-          if (stat) {
-            if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('Source relations must be a regular file');
-            const before = readFileSync(SOURCE_RELATIONS_PATH, 'utf8');
-            const after = removeDeletedArtifactRelations(before, deleted);
-            if (after !== before) {
-              writeFileSync(SOURCE_RELATIONS_PATH, after);
-              execFileSync('git', ['add', '--', SOURCE_RELATIONS_PATH]);
-            }
-          }
-          NODE
-
-          echo "changed=true" >> "$GITHUB_OUTPUT"
-          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
+        run: node scripts/ci/cleanup-merged-artifacts.mjs
 
       # 2026-07-06 根治：原「git push 直推 main + continue-on-error」在分支保护下永远被
       # GH013 拒，continue-on-error 把红糊成绿 → 19 次"成功"实际一个文件没删过（积到 50 个）。

@@ -416,42 +416,51 @@ describe('publish 活动（临时裸仓 + 假 gh）', () => {
     expect(tail[0]).toBe('hook line 11');
   });
 
-  // 改了 packages/brain/src 的 PR 必须带 changes/<分支>.md 版本碎片（scripts/ci/check-brain-version-bump.sh，
-  // 约定见 changes/README.md：PR 不碰版本五件套），否则 brain-version-bump-gate 必红（4ac5fa39 首跑实证）
+  // 版本是已验候选的一部分；publish只能拒绝，不能在验收后补改版本或碎片。
   const BUILD_CHAIN = { chain_files: ['01-intent.md', '02-spec.md', '03-build.md'] };
   const FRAG = 'changes/cp-1007000000-test.md';
   const branchFiles = () => git(origin, 'ls-tree', '-r', '--name-only', 'cp-1007000000-test').trim().split('\n');
   const commitSrc = () => {
     fs.mkdirSync(path.join(worktree, 'packages/brain/src/routes'), { recursive: true });
     fs.writeFileSync(path.join(worktree, 'packages/brain/src/routes/x.js'), 'export const x = 1;\n');
-    git(worktree, 'add', '--', 'packages');
-    git(worktree, 'commit', '-m', 'fix(brain): x');
-    fs.writeFileSync(path.join(worktree, 'sprints/s1/01-intent.md'), '# 修复 Brain 非法 id 返回 500\n\n### I-1\n非法 id 返回 400\n');
+    git(worktree, 'add', '--', 'packages'); git(worktree, 'commit', '-m', 'fix(brain): x');
     fs.writeFileSync(path.join(worktree, 'sprints/s1/03-build.md'), '# build\n');
   };
-
-  it('改了 packages/brain/src 且没有碎片 → 自动写 changes/<分支>.md（{VERSION} 占位 + 需求标题），随 sprint 一起提交', async () => {
-    commitSrc();
+  const versions = version => {
+    fs.mkdirSync(path.join(worktree, 'packages/brain'), { recursive: true });
+    fs.writeFileSync(path.join(worktree, 'packages/brain/package.json'), JSON.stringify({ version }));
+  };
+  const baseVersion = () => {
+    versions('1.0.0'); git(worktree, 'add', '--', 'packages'); git(worktree, 'commit', '-m', 'chore: base version');
+    git(worktree, 'update-ref', 'refs/remotes/origin/main', 'HEAD');
+  };
+  it.each([false, true])('源码未升版（已有fragment=%s）在登记/commit/push/PR前拒绝且不改候选', async fragment => {
+    baseVersion(); commitSrc();
+    if (fragment) {
+      fs.mkdirSync(path.join(worktree, 'changes'), { recursive: true });
+      fs.writeFileSync(path.join(worktree, 'changes/own.md'), '## Brain {VERSION} — own\n');
+      git(worktree, 'add', '--', 'changes'); git(worktree, 'commit', '-m', 'docs: fragment');
+    }
+    const before = git(worktree, 'rev-parse', 'HEAD');
     const r = await run('new', BUILD_CHAIN);
-    expect(r.exitCode, r.stderr).toBe(0);
-    expect(branchFiles()).toContain(FRAG);
-    const frag = git(origin, 'show', `cp-1007000000-test:${FRAG}`);
-    expect(frag).toMatch(/^## Brain \{VERSION\} — 修复 Brain 非法 id 返回 500\n/);
-    expect(frag).toContain(TASK_ID.slice(0, 8));
-    expect(frag).toContain('sprints/s1');
-    expect(git(origin, 'show', '--name-only', '--format=', 'cp-1007000000-test').trim().split('\n')).toContain(FRAG);
+    expect(r.result.reason_code, r.stderr).toBe('brain_version_increment_required');
+    expect(r.result.failure_class).toBe('retryable');
+    expect(r.stderr).toContain('版本');
+    expect(git(worktree, 'rev-parse', 'HEAD')).toBe(before);
+    expect(fs.existsSync(path.join(worktree, FRAG))).toBe(false);
+    expect(ghCalls()).toEqual([]);
+    expect(() => git(origin, 'rev-parse', '--verify', 'refs/heads/cp-1007000000-test')).toThrow();
+    expect(JSON.parse(fs.readFileSync(path.join(worktree, 'packages/brain/package.json'))).version).toBe('1.0.0');
   });
-
-  it('分支上已带碎片 → 不再写', async () => {
-    commitSrc();
-    fs.mkdirSync(path.join(worktree, 'changes'), { recursive: true });
-    fs.writeFileSync(path.join(worktree, 'changes/own.md'), '## Brain {VERSION} — own\n');
-    git(worktree, 'add', '--', 'changes');
-    git(worktree, 'commit', '-m', 'docs: frag');
+  it('已正确升版的候选通过；publish不改业务或版本且不再生成碎片', async () => {
+    baseVersion(); commitSrc(); versions('1.0.1');
+    git(worktree, 'add', '--', 'packages'); git(worktree, 'commit', '-m', 'chore: candidate version');
     const r = await run('new', BUILD_CHAIN);
     expect(r.exitCode, r.stderr).toBe(0);
     expect(branchFiles()).not.toContain(FRAG);
-    expect(branchFiles()).toContain('changes/own.md');
+    expect(git(origin, 'show', 'cp-1007000000-test:packages/brain/package.json')).toBe('{"version":"1.0.1"}');
+    const published = git(origin, 'show', '--name-only', '--format=', 'cp-1007000000-test').trim().split('\n');
+    expect(published.every(file => file.startsWith('sprints/'))).toBe(true);
   });
 
   // C6：版本碎片规则按仓库（repos.json version_fragment）。zenithjoy 没有 changes/，auto-version 按提交标题 bump，规则为 null
@@ -464,7 +473,7 @@ describe('publish 活动（临时裸仓 + 假 gh）', () => {
     expect(fs.existsSync(path.join(worktree, 'changes'))).toBe(false);
   });
 
-  it('repo_profile 带别的碎片规则（src_re / dir）→ 按它写', async () => {
+  it('publish不执行profile中的碎片生成规则，保持已验候选', async () => {
     fs.mkdirSync(path.join(worktree, 'apps/api/src'), { recursive: true });
     fs.writeFileSync(path.join(worktree, 'apps/api/src/y.ts'), 'export const y = 1;\n');
     git(worktree, 'add', '--', 'apps');
@@ -473,7 +482,7 @@ describe('publish 活动（临时裸仓 + 假 gh）', () => {
     const profile = { key: 'x', version_fragment: { src_re: '^apps/api/src/', dir: 'frags' } };
     const r = await run('new', { ...BUILD_CHAIN, repo_profile: profile });
     expect(r.exitCode, r.stderr).toBe(0);
-    expect(branchFiles()).toContain('frags/cp-1007000000-test.md');
+    expect(branchFiles()).not.toContain('frags/cp-1007000000-test.md');
     expect(branchFiles()).not.toContain(FRAG);
   });
 

@@ -9,8 +9,6 @@ import pool from './db.js';
 import { createTask } from './actions.js';
 import { buildMutationRoute } from './system-coding-route.js';
 import { getDailyFocus } from './focus.js';
-import { getDomainRole, ROLES } from './role-registry.js';
-import { detectDomain as _detectDomain } from './domain-detector.js';
 
 // Learning penalty configuration
 const LEARNING_PENALTY_SCORE = -20;       // 惩罚分数（可配置）
@@ -204,9 +202,10 @@ async function getGlobalState() {
       ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END
     `),
     pool.query(`
-      SELECT id, title AS name, status, 'project' AS type, NULL::uuid AS parent_id,
-             NULL AS repo_path, created_at, updated_at, NULL AS domain, NULL AS execution_mode
-      FROM okr_projects
+      SELECT id, name, status, 'project' AS type, NULL::uuid AS parent_id,
+             COALESCE(repo_path, metadata->>'repo_path') AS repo_path, created_at, updated_at,
+             metadata->>'domain' AS domain, NULL AS execution_mode
+      FROM projects
       WHERE status IN ('active', 'in_progress', 'planning')
       UNION ALL
       SELECT id, title AS name, status, 'scope' AS type, project_id AS parent_id,
@@ -384,7 +383,7 @@ async function selectTargetProject(kr, state) {
   const { projects, activeTasks } = state;
 
   const linksResult = await pool.query(
-    'SELECT id AS project_id FROM okr_projects WHERE kr_id = $1',
+    'SELECT id AS project_id FROM projects WHERE kr_id = $1',
     [kr.id]
   );
   const linkedProjectIds = new Set(linksResult.rows.map(r => r.project_id));
@@ -476,15 +475,7 @@ async function generateNextTask(kr, project, state, options = {}) {
   `, [projectIds, kr.id]);
 
   if (result.rows.length === 0) {
-    // No existing task — check if project has active initiatives that need architecture design.
-    // If so, auto-generate an architecture_design task to unblock the KR.
-    if (!options.dryRun) {
-      const initiativePlanTask = await generateArchitectureDesignTask(kr, project);
-      if (initiativePlanTask) {
-        return initiativePlanTask;
-      }
-    }
-    // No initiatives to plan — return null. Task creation is 秋米's responsibility via /okr.
+    // 迁移499：历史scope/initiative只读，不再以其为来源生成规划任务。
     return null;
   }
 
@@ -554,114 +545,11 @@ async function generateNextTask(kr, project, state, options = {}) {
 }
 
 /**
- * Generate an architecture_design task for a project that has active initiatives but no queued tasks.
- * This task will be picked up by the dispatcher and sent to /architect (Mode 2) to produce
- * architecture.md and register dev Tasks into Brain.
- *
- * @param {Object} kr - Target Key Result
- * @param {Object} project - Target Project (must have active initiatives)
- * @returns {Object|null} - Newly created task, or null if no suitable initiative found
+ * 迁移499后保留显式拒绝边界，供旧调用者识别退役入口。
+ * 历史 Initiative 只读，不再据其创建 architecture_design / initiative_plan。
  */
 async function generateArchitectureDesignTask(kr, project) {
-  try {
-    // Find the oldest active initiative under this project without queued tasks
-    const initiativeResult = await pool.query(`
-      SELECT i.id, i.title AS name, i.status, i.created_at, i.updated_at,
-             i.metadata->>'domain' AS domain, i.description, os.project_id AS parent_project_id
-      FROM okr_initiatives i
-      JOIN okr_scopes os ON i.scope_id = os.id
-      WHERE os.project_id = $1
-        AND i.status IN ('running', 'planned')
-        AND NOT EXISTS (
-          SELECT 1 FROM tasks t
-          WHERE t.okr_initiative_id = i.id
-            AND t.status IN ('queued', 'in_progress')
-        )
-      ORDER BY i.created_at ASC
-      LIMIT 1
-    `, [project.id]);
-
-    if (initiativeResult.rows.length === 0) {
-      return null;
-    }
-
-    const initiative = initiativeResult.rows[0];
-
-    // Determine domain: Initiative.domain → Project.domain → KR.domain → default 'coding'
-    // Per DoD-4: use explicit domain fields only, no text detection fallback
-    const domain = initiative.domain || project.domain || kr.domain || 'coding';
-    const isCodingDomain = domain === 'coding';
-
-    // Determine task_type and payload based on domain
-    let taskType, taskTitle, taskDescription, extraPayload;
-    if (isCodingDomain) {
-      // coding domain: existing behavior → architecture_design → /architect Mode 2
-      taskType = 'architecture_design';
-      taskTitle = `架构设计 Initiative: ${initiative.name}`;
-      taskDescription = `该 Initiative「${initiative.name}」下无任务，需要架构设计 (Mode 2): 读取 system_modules → 产出 architecture.md → 注册 /dev Tasks 到 Brain。Initiative ID: ${initiative.id}，所属 KR ID: ${kr.id}`;
-      extraPayload = { mode: 'design' };
-    } else {
-      // non-coding domain: initiative_plan with skill_override from role-registry
-      const role = getDomainRole(domain);
-      const skillOverride = ROLES[role]?.skills?.[0] ?? '/dev';
-      taskType = 'initiative_plan';
-      taskTitle = `Initiative 规划 [${domain}]: ${initiative.name}`;
-      taskDescription = `该 Initiative「${initiative.name}」下无任务，需要按 ${domain} 领域规划。Initiative ID: ${initiative.id}，所属 KR ID: ${kr.id}`;
-      extraPayload = { skill_override: skillOverride, domain };
-    }
-
-    // Check if a planning task already exists for this initiative (any active status).
-    // 'quarantined' is explicitly excluded to prevent zombie loops: a quarantined task
-    // must not trigger creation of a new task (which would also quarantine, repeat infinitely).
-    // 'quota_exhausted' is excluded for the same reason: it is a terminal state waiting
-    // for quota recovery, not a blocker for new planning.
-    const existingResult = await pool.query(`
-      SELECT id FROM tasks
-      WHERE okr_initiative_id = $1 AND task_type = $2
-        AND status NOT IN ('completed', 'failed', 'cancelled', 'quarantined', 'quota_exhausted')
-      LIMIT 1
-    `, [initiative.id, taskType]);
-
-    if (existingResult.rows.length > 0) {
-      // Already has a planning task pending/in_progress, skip
-      return null;
-    }
-
-    const payload = {
-      initiative_id: initiative.id,
-      parent_project_id: project.id,
-      kr_id: kr.id,
-      ...extraPayload
-    };
-
-    // Create planning task with domain/owner_role propagation
-    const created = await createTask({
-      source: 'child',
-      source_id: `initiative-planning:${initiative.id}:${taskType}`,
-      title: taskTitle,
-      description: taskDescription,
-      task_type: taskType,
-      priority: kr.priority || 'P1',
-      okr_initiative_id: initiative.id,
-      goal_id: kr.id,
-      trigger_source: 'brain_auto',
-      payload,
-      domain,
-      owner_role: getDomainRole(domain),
-      ...(isCodingDomain ? buildMutationRoute({
-        change_kind: 'new_capability',
-        map_scope: [initiative.id],
-        repo_hint: project.repo_path,
-        repo_root: project.repo_path,
-      }) : {}),
-    });
-    const newTask = created.task;
-    console.log(`[planner] 自动生成 ${taskType} 任务: ${newTask.title} (${newTask.id}) for initiative ${initiative.id} (domain=${domain})`);
-    return newTask;
-  } catch (err) {
-    console.error(`[planner] generateArchitectureDesignTask failed: ${err.message}`);
-    return null;
-  }
+  throw new Error('layer_retired: Initiative 规划入口已退役，请通过 projects/tasks 当前入口创建任务');
 }
 
 // autoGenerateTask, KR_STRATEGIES, getFallbackTasks, generateTaskFromKR, generateTaskPRD
@@ -1165,40 +1053,20 @@ async function handlePlanInput(input, dryRun = false) {
       result.linked_to.kr = krResult.rows[0];
     }
   } else if (input.project) {
-    result.level = 'project';
     if (!input.project.repo_path) {
       throw new Error('Hard constraint: Project must have repo_path');
     }
-    if (!dryRun) {
-      const pResult = await pool.query(`
-        INSERT INTO okr_projects (title, description, status, metadata)
-        VALUES ($1, $2, 'active', $3) RETURNING *, title AS name
-      `, [input.project.title, input.project.description || '',
-          JSON.stringify({ repo_path: input.project.repo_path })]);
-      const pRow = pResult.rows[0];
-      const pMeta = typeof pRow.metadata === 'string' ? JSON.parse(pRow.metadata) : (pRow.metadata || {});
-      const projWithRepo = { ...pRow, repo_path: pMeta.repo_path || null };
-      result.created.projects.push(projWithRepo);
-      result.linked_to.project = projWithRepo;
-
-      if (Array.isArray(input.project.kr_ids) && input.project.kr_ids.length > 0) {
-        await pool.query(
-          'UPDATE okr_projects SET kr_id = $1 WHERE id = $2',
-          [input.project.kr_ids[0], pRow.id]
-        );
-      }
-    }
+    throw new Error('layer_retired: 旧 Planner Project 创建入口已退役，请通过 projects 当前入口创建项目');
   } else if (input.task) {
     result.level = 'task';
     if (!input.task.project_id) {
       throw new Error('Hard constraint: Task must have project_id');
     }
     if (!dryRun) {
-      // 查新表（okr_projects/okr_scopes/okr_initiatives），repo_path 存于 metadata JSONB
+      // 迁移497/499：只认 Project 真身；历史scope/initiative不能作为新任务的父项目。
       const projCheck = await pool.query(
-        `SELECT id, metadata->>'repo_path' AS repo_path FROM okr_projects WHERE id = $1
-         UNION ALL SELECT id, metadata->>'repo_path' AS repo_path FROM okr_scopes WHERE id = $1
-         UNION ALL SELECT id, metadata->>'repo_path' AS repo_path FROM okr_initiatives WHERE id = $1`,
+        `SELECT id, COALESCE(repo_path, metadata->>'repo_path') AS repo_path
+         FROM projects WHERE id = $1`,
         [input.task.project_id]
       );
       if (projCheck.rows.length === 0) throw new Error('Project not found');

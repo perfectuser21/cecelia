@@ -2,25 +2,28 @@
  * Memory API Integration Tests
  */
 
-// Set required env vars before importing server
-process.env.ENV_REGION = 'us';
-
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import request from 'supertest';
-
-// Mock process.exit to prevent server.js from exiting during import
-// Must use dynamic import because server.js runs selfcheck at module level
-const mockExit = vi.spyOn(process, 'exit').mockImplementation(() => {});
-
-// Dynamic imports to ensure mocks are in place
-const { default: app } = await import('../../../server.js');
-const { default: pool } = await import('../../db.js');
+import express from 'express';
+import { pool, beginScratch, finishScratch, baseSchema } from '../helpers/debt-03-scratch.js';
+vi.mock('../../db.js', async () => ({ default: (await import('../helpers/debt-03-scratch.js')).pool }));
+vi.mock('../../openai-client.js', () => ({ generateEmbedding: vi.fn(async () => { throw new Error('isolated embedding outage'); }) }));
+import { generateEmbedding } from '../../openai-client.js';
+import memoryRoutes from '../../routes/memory.js';
+const app = express();
+app.use(express.json());
+app.use('/api/brain/memory', memoryRoutes);
 
 describe('Memory API Routes', () => {
   let testTaskId;
 
   beforeAll(async () => {
-    // Create a test task for testing
+    await beginScratch(); await baseSchema();
+    await pool.query(`CREATE TABLE key_results(id uuid PRIMARY KEY, title text, description text, status text, metadata jsonb, created_at timestamptz);
+      CREATE TABLE objectives(LIKE key_results INCLUDING ALL);
+      CREATE TABLE visions(LIKE key_results INCLUDING ALL);
+      CREATE TABLE projects(id uuid PRIMARY KEY, name text, description text, status text, metadata jsonb, kr_id uuid, created_at timestamptz, updated_at timestamptz);`);
+    // 真实 SQL 和真实 Jaccard；仅外部 embedding API 强制失败。
     const result = await pool.query(
       `INSERT INTO tasks (title, description, status)
        VALUES ($1, $2, $3)
@@ -32,16 +35,11 @@ describe('Memory API Routes', () => {
       ]
     );
     testTaskId = result.rows[0].id;
+    await pool.query("INSERT INTO tasks(title,description,status) VALUES ('Test Memory API Task related','test memory API integration','completed')");
   });
 
   afterAll(async () => {
-    // Clean up test task
-    if (testTaskId) {
-      await pool.query('DELETE FROM tasks WHERE id = $1', [testTaskId]);
-    }
-
-    // Restore process.exit mock
-    mockExit.mockRestore();
+    await finishScratch();
   });
 
   describe('POST /api/brain/memory/search', () => {
@@ -60,6 +58,7 @@ describe('Memory API Routes', () => {
       expect(response.body).toHaveProperty('matches');
       expect(Array.isArray(response.body.matches)).toBe(true);
 
+      expect(response.body.matches.some(m => m.id === testTaskId)).toBe(true);
       if (response.body.matches.length > 0) {
         const match = response.body.matches[0];
         expect(match).toHaveProperty('id');
@@ -139,6 +138,7 @@ describe('Memory API Routes', () => {
       expect(response.body).toHaveProperty('matches');
       expect(Array.isArray(response.body.matches)).toBe(true);
 
+      expect(response.body.matches.length).toBeGreaterThan(0);
       // 确保返回的结果中不包含自身
       const selfIncluded = response.body.matches.some(m => m.id === testTaskId);
       expect(selfIncluded).toBe(false);
@@ -183,14 +183,14 @@ describe('Memory API Routes', () => {
 
   describe('Error handling', () => {
     it('OpenAI API 失败时降级到 Jaccard（已在 similarity.js 实现）', async () => {
-      // This is tested in similarity.js tests
-      // Here we just verify the API still works even if OpenAI fails
+      generateEmbedding.mockClear();
       const response = await request(app)
         .post('/api/brain/memory/search')
-        .send({ query: 'test', mode: 'summary' });
+        .send({ query: 'test memory', mode: 'summary' });
 
       expect(response.status).toBe(200);
-      // Should not throw error even if OpenAI fails (fallback to Jaccard)
+      expect(generateEmbedding).toHaveBeenCalledWith('test memory');
+      expect(response.body.matches.some(m => m.id === testTaskId)).toBe(true);
     });
   });
 });

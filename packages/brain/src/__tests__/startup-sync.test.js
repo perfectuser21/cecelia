@@ -3,11 +3,15 @@
  * Tests for Brain startup state reconciliation with actual processes
  */
 
+import { execSync } from 'child_process';
 import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
 
 // Mock pool — hoisted so executor.js always gets this mockPool regardless of module cache order
 const mockPool = vi.hoisted(() => ({ query: vi.fn() }));
 vi.mock('../db.js', () => ({ default: mockPool }));
+
+// 异步学习会触发模型/写入，测试仅验证孤儿结算，关闭该外部边界。
+vi.mock('../auto-learning.js', () => ({ processExecutionAutoLearning: vi.fn() }));
 
 // Mock child_process
 vi.mock('child_process', () => ({
@@ -23,16 +27,19 @@ vi.mock('../task-router.js', () => ({
 
 // isolate:false 修复：不在顶层 await import，改为 beforeAll + vi.resetModules()
 let syncOrphanTasksOnStartup;
+let executor;
 
 beforeAll(async () => {
   vi.resetModules();
-  const executor = await import('../executor.js');
+  executor = await import('../executor.js');
   syncOrphanTasksOnStartup = executor.syncOrphanTasksOnStartup;
 });
 
 describe('syncOrphanTasksOnStartup', () => {
   beforeEach(() => {
-    vi.restoreAllMocks();
+    mockPool.query.mockReset();
+    for (const { taskId } of executor.getActiveProcesses()) executor.removeActiveProcess(taskId);
+    vi.mocked(execSync).mockReset().mockReturnValue('0\n');
   });
 
   it('should do nothing when no in_progress tasks exist', async () => {
@@ -67,7 +74,9 @@ describe('syncOrphanTasksOnStartup', () => {
     // Verify the UPDATE was called with orphan_detected error
     const updateCall = mockPool.query.mock.calls[1];
     expect(updateCall[0]).toContain("status = 'failed'");
-    const payload = JSON.parse(updateCall[1][1]);
+    expect(updateCall[1][0]).toBe('orphan-1');
+    expect(updateCall[1][1]).toContain('[orphan_detected]');
+    const payload = JSON.parse(updateCall[1][2]);
     expect(payload.error_details.type).toBe('orphan_detected');
   });
 
@@ -89,7 +98,7 @@ describe('syncOrphanTasksOnStartup', () => {
     expect(result.rebuilt).toBe(1);
   });
 
-  it('should handle tasks without run_id as orphans', async () => {
+  it('should requeue inline tasks without run_id rather than mark failed', async () => {
     mockPool.query
       .mockResolvedValueOnce({
         rows: [{
@@ -104,7 +113,12 @@ describe('syncOrphanTasksOnStartup', () => {
 
     const result = await syncOrphanTasksOnStartup();
     expect(result.orphans_found).toBe(1);
-    expect(result.orphans_fixed).toBe(1);
+    expect(result.orphans_fixed).toBe(0);
+    expect(result.requeued).toBe(1);
+    const [sql, params] = mockPool.query.mock.calls[1];
+    expect(sql).toContain("status = 'queued'");
+    expect(params[0]).toBe('no-runid-1');
+    expect(JSON.parse(params[1])).toEqual({ watchdog_retry_count: 0 });
   });
 
   it('should handle mixed alive and orphan tasks', async () => {
@@ -139,4 +153,13 @@ describe('syncOrphanTasksOnStartup', () => {
     expect(result.orphans_fixed).toBe(1);
     expect(result.rebuilt).toBe(1);
   });
+  it('should preserve a headed owner without querying host processes or updating task', async () => {
+    mockPool.query.mockResolvedValueOnce({ rows: [{ id: 'headed-1', executor_kind: 'headed-session', claimed_by: 'remote-owner', payload: {} }] });
+    const result = await syncOrphanTasksOnStartup();
+    expect(result.external_skipped).toBe(1);
+    expect(result.orphans_found).toBe(0);
+    expect(mockPool.query).toHaveBeenCalledTimes(1);
+    expect(execSync).not.toHaveBeenCalled();
+  });
+
 });

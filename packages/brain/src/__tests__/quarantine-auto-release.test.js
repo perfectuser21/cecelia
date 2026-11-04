@@ -1,3 +1,4 @@
+import { assertDebt10Scratch, closeDebt10Transaction } from './helpers/debt-10-scratch.js';
 /**
  * Tests for P1 FIX #3: Quarantine auto-release with TTL
  *
@@ -5,13 +6,20 @@
  * After fix: Tasks have TTL and are auto-released when expired
  */
 
-import { describe, it, expect, beforeEach, afterEach, beforeAll, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, beforeAll, afterAll, vi } from 'vitest';
+vi.mock('../openai-client.js', () => ({ generateEmbedding: vi.fn(() => { throw new Error('external embedding forbidden'); }) }));
+vi.mock('../embedding-service.js', () => ({ generateLearningEmbeddingAsync: vi.fn() }));
+vi.mock('../llm-caller.js', () => ({ callLLM: vi.fn(() => { throw new Error('external LLM forbidden'); }) }));
+vi.mock('../event-bus.js', () => ({ emit: vi.fn() }));
+vi.mock('../alertness/index.js', () => ({ getCurrentAlertness: () => ({ level: 0 }), ALERTNESS_LEVELS: { ALERT: 3 } }));
+vi.mock('../db.js', async () => ({ default: await (await import('./helpers/debt-10-scratch.js')).openDebt10Transaction() }));
 let pool;
 let quarantineTask, checkExpiredQuarantineTasks;
 
 beforeAll(async () => {
   vi.resetModules();
   pool = (await import('../db.js')).default;
+  await assertDebt10Scratch(pool);
   ({ quarantineTask, checkExpiredQuarantineTasks } = await import('../quarantine.js'));
 });
 
@@ -101,6 +109,8 @@ describe('quarantine-auto-release (P1 Fix #3)', () => {
   });
 
   it('should handle multiple expired tasks', async () => {
+    // NOW()属于当前事务，过期夹具也使用同一数据库时钟，避免依赖机器运行速度。
+    const databaseNow = new Date((await pool.query('SELECT NOW() AS now')).rows[0].now).getTime();
     // Create 3 expired quarantined tasks
     for (let i = 0; i < 3; i++) {
       const task = await pool.query(`
@@ -111,10 +121,10 @@ describe('quarantine-auto-release (P1 Fix #3)', () => {
         `test-auto-release-multi-${i}`,
         JSON.stringify({
           quarantine_info: {
-            quarantined_at: new Date(Date.now() - 1000).toISOString(),
+            quarantined_at: new Date(databaseNow - 1000).toISOString(),
             reason: 'timeout_pattern',
             ttl_ms: 500,  // 0.5 sec
-            release_at: new Date(Date.now() - 100).toISOString(),  // expired
+            release_at: new Date(databaseNow - 100).toISOString(),  // expired
           }
         })
       ]);
@@ -127,3 +137,5 @@ describe('quarantine-auto-release (P1 Fix #3)', () => {
     await pool.query('DELETE FROM tasks WHERE title LIKE $1', ['test-auto-release-multi%']);
   });
 });
+
+afterAll(async () => { await closeDebt10Transaction(pool); });

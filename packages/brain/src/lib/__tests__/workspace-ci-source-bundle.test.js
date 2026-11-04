@@ -1,3 +1,4 @@
+import {readPublishedPilotWorkflow} from '../../../../../scripts/ci/__tests__/fixtures/pilot-published-git.mjs';
 import {it,expect,afterAll} from 'vitest';
 import {extractWorkspaceCiSourceBundle,F3_IDENTITY} from '../workspace-ci-source-bundle.js';
 
@@ -25,7 +26,7 @@ import {readFixedLocalGitBlob} from '../../../../../scripts/ci/fixed-local-git.m
 import {createPublishedGit} from './helpers/published-workspace-ci-git.js';
 const root=new URL('../../../../../',import.meta.url);
 // 未来协议只读已审原始数据；旧Core CI阶段的实际路由保持固定main原件。
-const currentFile=path=>path==='.github/workflows/implementation-impact.yml'?Buffer.from(futureCiAdmissionImpactWorkflow):readFileSync(new URL(path,root));
+const currentFile=path=>path==='.github/workflows/pilot-release-verification.yml'?readPublishedPilotWorkflow():path==='.github/workflows/implementation-impact.yml'?Buffer.from(futureCiAdmissionImpactWorkflow):readFileSync(new URL(path,root));
 const PUBLISHED='b217cd52336767b9637410ef921397a0e9297f2b';
 const published=createPublishedGit();afterAll(()=>published.close());
 const publishedFile=(path,gitRoot=published.directory)=>readFixedLocalGitBlob(gitRoot,{revision:PUBLISHED,path});

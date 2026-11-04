@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {validatePatrolSecretIgnore,runDevicePatrolGate} from '../implementation-device-patrol-gate.mjs';
+import {validatePatrolSecretIgnore,runDevicePatrolGate,validatePatrolReviewWorkflow} from '../implementation-device-patrol-gate.mjs';
 import {PATROL_SCOPE,PATROL_REPO,PATROL_PATH,PATROL_ASSERTION,patrolSourceProof,sha,canonical} from '../../../packages/brain/src/lib/device-patrol-admission.js';
 import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
@@ -19,6 +19,7 @@ function documentFixture(path){
  const git=(...args)=>execFileSync('git',args,{cwd:repo,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
  const write=(path,value)=>{mkdirSync(dirname(join(repo,path)),{recursive:true});writeFileSync(join(repo,path),value);};
  git('init','--quiet');git('config','core.hooksPath',join(root,'isolated-fixture-hooks'));git('config','user.name','Governance fixture');git('config','user.email','fixture@example.invalid');git('remote','add','origin',`https://github.com/${PATROL_REPO}.git`);
+ if(path==='.github/workflows/pr-review.yml') for(const file of ['scripts/ci/__tests__/basic-pr-review-shell.test.mjs','scripts/devgate/detect-review-issues.js']) write(file,readFileSync(new URL('../../../'+file,import.meta.url)));
  write('README.md','isolated source fixture\n');git('add','.');git('commit','--quiet','-m','actual empty scope');const base=git('rev-parse','HEAD'),baseTree=git('rev-parse',`${base}^{tree}`);
  const assertionPath=PATROL_ASSERTION.replace('node --test ',''),contract={schema_version:1,scope:PATROL_SCOPE,capability_id:'2173a385-a743-41f3-bb7d-d0e4b1d51d4e',workflows:[
   {id:'66fe22f5-1a60-4e23-bcfb-7b4df2f0fbff',key:'single-phone-account-patrol',activities:[{id:'d51eefa1-0ffd-43d7-94ba-16ff6b4d3800',key:'device-readiness',bindings:['scripts/phone-account-patrol/preflight.py'],assertion_ref:PATROL_ASSERTION}]},
@@ -28,7 +29,7 @@ function documentFixture(path){
  git('add','.');git('commit','--quiet','-m','actual introduced source');const introduced=git('rev-parse','HEAD');
  const source=patrolSourceProof(contract,introduced,path=>execFileSync('git',['show',`${introduced}:${path}`],{cwd:repo}));
  const registration={provenance:{base_revision:base,introduced_revision:introduced,base_tree_sha:baseTree,base_paths:['README.md'],introduced_paths:git('ls-tree','-r','--name-only',introduced).split('\n'),compare_status:'ahead',actor:'isolated regression fixture'},source};
- write(path,'## 真实交付说明\n');git('add','.');git('commit','--quiet','-m','delivery documentation');const head=git('rev-parse','HEAD');
+ write(path,path==='.github/workflows/pr-review.yml'?readFileSync(new URL('../../../'+path,import.meta.url)):'## 真实交付说明\n');git('add','.');git('commit','--quiet','-m','delivery documentation');const head=git('rev-parse','HEAD');
  const snapshot=(revision,file)=>{const body={schema_version:1,scope:PATROL_SCOPE,repo:PATROL_REPO,purpose:'scope_identity_bootstrap_only',revision_basis:'requested_ci_input_not_source_attestation',status:'verified',gaps:[],revision,registration,registration_sha256:sha(JSON.stringify(canonical(registration)))};writeFileSync(file,JSON.stringify({...body,snapshot_sha256:sha(JSON.stringify(canonical(body)))}));};
  const snapshotBase=join(root,'base.json'),snapshotHead=join(root,'head.json');snapshot(base,snapshotBase);snapshot(head,snapshotHead);
  return {root,repo,options:{repoRoot:repo,scope:PATROL_SCOPE,mode:'pr',base,head,snapshotBase,snapshotHead,outputDir:join(root,'evidence')}};
@@ -74,4 +75,27 @@ test('trusted gate retains central read capability while candidate regression re
   if(previous===undefined)delete process.env.SKILLS_SOURCE_SSH_KEY;else process.env.SKILLS_SOURCE_SSH_KEY=previous;
   rmSync(fixture.root,{recursive:true,force:true});
  }
+});
+
+
+test('巡查治理只接纳完整冻结的现役手动审查合同，拒绝schema及失败策略漂移',()=>{
+ const current=readFileSync(new URL('../../../.github/workflows/pr-review.yml',import.meta.url));
+ assert.doesNotThrow(()=>validatePatrolReviewWorkflow(current));
+ for(const text of [current.toString().replace('max_tokens:2000','max_tokens:4096'),
+   current.toString().replace('deepseek/deepseek-chat','arbitrary/model'),
+   current.toString().replace('本次辅助审查失败','skip review'),current.toString()+'\n# drift\n'])
+   assert.throws(()=>validatePatrolReviewWorkflow(Buffer.from(text)),/PATROL_REVIEW_CONTRACT_CHANGED/);
+});
+
+
+test('真实Git巡查来源读取现役手动review字节并执行隔离shell回归，未扩大业务身份',async()=>{
+ const fixture=documentFixture('.github/workflows/pr-review.yml');
+ try{
+  const {report,receipt}=await runDevicePatrolGate(fixture.options);
+  assert.equal(receipt.verdict,'PASS');
+  assert.equal(report.governance_evidence[0].kind,'verification_governance');
+  assert.equal(receipt.assertions.length,2);
+  assert.equal(receipt.assertions[1].assertion_ref,'node --test scripts/ci/__tests__/basic-pr-review-shell.test.mjs');
+  assert.equal(receipt.assertions[1].exit_code,0);
+ }finally{rmSync(fixture.root,{recursive:true,force:true});}
 });

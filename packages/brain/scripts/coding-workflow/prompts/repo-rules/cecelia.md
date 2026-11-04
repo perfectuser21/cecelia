@@ -6,7 +6,7 @@
 - lint-tdd-commit-order：按提交顺序，改 src 的提交之前必须已有带真实测试的提交（同一个提交里同时有测试和实现也算）。顺序不对时不要改写历史，改为在新提交里补齐测试使后续提交满足规则。
 - lint-test-quality / lint-no-fake-test / lint-no-mock-only-test：新增测试要有真实断言（不能全是 toBeDefined 之类的弱断言）、不能全是 skip、不能靠大量 mock 撑着。
 - branch-naming / pr-size-check：改动规模相对 main 新增不超过 3000 行；分支名和改动规模问题无法靠改代码解决时，在最终回复里说明原因即可，不要做无关改动。
-- 版本：不碰版本五件套；改 packages/brain/src 的 PR 由 publish 自动带 changes/<分支>.md 版本碎片，不要自己写。
+- 版本：改 packages/brain/src 必须在实现与验收阶段同步升高Brain package、嵌套lock、根workspace lock、.brain-versions和DEFINITION版本。相对目标main必须有真实版本增量；changes/碎片不能替代升版。publish只读校验，失败后修真实候选并重新验收。
 - 数据库迁移：main 新增的迁移和本 PR 的迁移用了同一个编号（packages/brain/migrations/NNN_*.sql）时，把本 PR 的迁移用 `git mv` 顺延到 main 之后第一个空闲编号，并同步改引用它的测试、回滚文件和 selfcheck 期望版本。
 - runner 生成的 QA 回归 smoke：packages/brain/scripts/smoke/cw-*-qa-smoke.sh 由 runner 按 QA 报告固化，勿手改、勿删除。
 - CI 跑在 Linux，本机是 macOS：shell、sed、date、bash 版本差异要按 Linux 行为修。

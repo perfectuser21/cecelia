@@ -1,12 +1,14 @@
+import { verifyDebt02Scratch } from './helpers/debt-02-scratch.js';
 /**
  * Intent Recognition Module Tests (KR1)
  * Tests for natural language → structured intent parsing
  */
 
-import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import pg from 'pg';
+import { createIntakeTestDatabase } from './fixtures/task-intake-db.js';
 import { DB_DEFAULTS } from '../db-config.js';
-import {
+let {
   INTENT_TYPES,
   INTENT_ACTION_MAP,
   DOMAIN_KEYWORDS,
@@ -23,41 +25,52 @@ import {
   detectDomain,
   parseIntent,
   parseAndCreate
-} from '../intent.js';
+} = {};
 
 const { Pool } = pg;
 
 // Use test database configuration
-const pool = new Pool(DB_DEFAULTS);
+let pool;
+let testDatabase;
+const codingOptions = () => ({ mapScope: ['F1'], repoHint: 'cecelia', repoRoot: testDatabase.repositoryPath });
 
-// Track created resources for cleanup
-let createdProjectIds = [];
-let createdTaskIds = [];
+// The fixture owns an isolated schema; close() removes tasks and immutable receipts together.
 
 describe('Intent Recognition Module', () => {
   beforeAll(async () => {
-    // Verify database connection
-    const result = await pool.query('SELECT 1');
-    expect(result.rows[0]['?column?']).toBe(1);
+    const guardPool = new Pool(DB_DEFAULTS);
+    try { await verifyDebt02Scratch(guardPool); } finally { await guardPool.end(); }
+    testDatabase = await createIntakeTestDatabase();
+    pool = testDatabase.pool;
+    const config = (await pool.query("SELECT adapter_config FROM map_scope_repositories WHERE repo='cecelia'")).rows[0].adapter_config;
+    testDatabase.repositoryPath = config.path;
+    for (const table of ['projects', 'key_results']) {
+      await pool.query(`CREATE TABLE ${testDatabase.schema}.${table} (LIKE public.${table} INCLUDING ALL)`);
+    }
+    vi.resetModules();
+    vi.doMock('../db.js', () => ({ default: pool }));
+    ({
+      INTENT_TYPES,
+      INTENT_ACTION_MAP,
+      DOMAIN_KEYWORDS,
+      DOMAIN_OWNER_MAP,
+      classifyIntent,
+      extractEntities,
+      extractProjectName,
+      generateTasks,
+      generatePrdDraft,
+      generateStandardPrd,
+      generateTrdDraft,
+      buildActionParams,
+      getSuggestedAction,
+      detectDomain,
+      parseIntent,
+      parseAndCreate
+    } = await import('../intent.js'));
   });
 
   afterAll(async () => {
-    await pool.end();
-  });
-
-  afterEach(async () => {
-    // Cleanup test data
-    for (const taskId of createdTaskIds) {
-      await pool.query('DELETE FROM tasks WHERE id = $1', [taskId]).catch(() => {});
-    }
-    for (const projectId of createdProjectIds) {
-      await pool.query('DELETE FROM tasks WHERE project_id = $1', [projectId]).catch(() => {});
-      await pool.query('DELETE FROM tasks WHERE okr_initiative_id = $1', [projectId]).catch(() => {});
-      await pool.query('DELETE FROM okr_initiatives WHERE id = $1', [projectId]).catch(() => {});
-      await pool.query('DELETE FROM okr_projects WHERE id = $1', [projectId]).catch(() => {});
-    }
-    createdTaskIds = [];
-    createdProjectIds = [];
+    await testDatabase?.close();
   });
 
   describe('classifyIntent', () => {
@@ -215,7 +228,7 @@ describe('Intent Recognition Module', () => {
     it('generates valid PRD markdown', () => {
       const parsedIntent = {
         projectName: 'test-project',
-        intentType: INTENT_TYPES.CREATE_PROJECT,
+        get intentType() { return INTENT_TYPES.CREATE_PROJECT; },
         tasks: [
           { title: 'Task 1', description: 'Desc 1', priority: 'P0' },
           { title: 'Task 2', description: 'Desc 2', priority: 'P1' }
@@ -235,7 +248,7 @@ describe('Intent Recognition Module', () => {
     it('does not include frontmatter (backward compatibility)', () => {
       const parsedIntent = {
         projectName: 'test-project',
-        intentType: INTENT_TYPES.CREATE_PROJECT,
+        get intentType() { return INTENT_TYPES.CREATE_PROJECT; },
         tasks: [],
         originalInput: 'Test',
         entities: {}
@@ -251,7 +264,7 @@ describe('Intent Recognition Module', () => {
   describe('generateStandardPrd', () => {
     const baseParsedIntent = {
       projectName: 'standard-project',
-      intentType: INTENT_TYPES.CREATE_PROJECT,
+      get intentType() { return INTENT_TYPES.CREATE_PROJECT; },
       tasks: [
         { title: 'Design', description: 'Design the system', priority: 'P0' },
         { title: 'Implement', description: 'Build the system', priority: 'P0' }
@@ -303,7 +316,7 @@ describe('Intent Recognition Module', () => {
   describe('generateTrdDraft', () => {
     const baseParsedIntent = {
       projectName: 'api-service',
-      intentType: INTENT_TYPES.CREATE_PROJECT,
+      get intentType() { return INTENT_TYPES.CREATE_PROJECT; },
       tasks: [
         { title: 'Design API', description: 'Define API spec', priority: 'P0' },
         { title: 'Implement', description: 'Build endpoints', priority: 'P0' }
@@ -407,28 +420,15 @@ describe('Intent Recognition Module', () => {
 
   describe('parseAndCreate', () => {
     it('creates project and tasks in database', async () => {
-      const result = await parseAndCreate('我想做一个测试项目 Test Project');
+      const result = await parseAndCreate('我想做一个测试项目 Test Project', codingOptions());
 
       expect(result.parsed).toBeDefined();
       expect(result.created.project).toBeDefined();
       expect(result.created.tasks.length).toBeGreaterThan(0);
 
-      // Track for cleanup
-      if (result.created.project?.id && result.created.project.created) {
-        createdProjectIds.push(result.created.project.id);
-      }
-      for (const task of result.created.tasks) {
-        createdTaskIds.push(task.id);
-      }
 
-      // Verify project exists in new OKR tables (okr_initiatives/okr_projects/okr_scopes)
-      const projectQuery = await pool.query(`
-        SELECT id FROM okr_initiatives WHERE id = $1
-        UNION ALL
-        SELECT id FROM okr_projects WHERE id = $1
-        UNION ALL
-        SELECT id FROM okr_scopes WHERE id = $1
-      `, [result.created.project.id]);
+      // GTD projects is the current authority (migration 497); retired OKR layers are read-only.
+      const projectQuery = await pool.query('SELECT id FROM projects WHERE id = $1', [result.created.project.id]);
       expect(projectQuery.rows.length).toBe(1);
 
       // Verify tasks were created
@@ -438,28 +438,21 @@ describe('Intent Recognition Module', () => {
           [task.id]
         );
         expect(taskQuery.rows.length).toBe(1);
-        expect(taskQuery.rows[0].status).toBe('queued');
+        expect(taskQuery.rows[0]).toMatchObject({ status: 'queued', project_id: result.created.project.id });
+        expect(taskQuery.rows[0].payload.routing_receipt_id).toBeTruthy();
       }
     });
 
     it('reuses existing project with similar name', async () => {
       // First create a project
-      const firstResult = await parseAndCreate('做一个 Widget Dashboard');
-      if (firstResult.created.project?.id && firstResult.created.project.created) {
-        createdProjectIds.push(firstResult.created.project.id);
-      }
-      for (const task of firstResult.created.tasks) {
-        createdTaskIds.push(task.id);
-      }
+      const firstResult = await parseAndCreate('做一个 Widget Dashboard', codingOptions());
 
       // Then try to create with the same name (LIKE '%widget-dashboard%' matches)
       const secondResult = await parseAndCreate('做一个 Widget Dashboard', {
+        ...codingOptions(),
         createProject: true,
         createTasks: true
       });
-      for (const task of secondResult.created.tasks) {
-        createdTaskIds.push(task.id);
-      }
 
       // Should reuse existing project
       expect(secondResult.created.project.created).toBe(false);
@@ -476,6 +469,10 @@ describe('Intent Recognition Module', () => {
       expect(result.created.tasks.length).toBe(0);
     });
 
+    it('rejects coding creation without map scope before creating tasks', async () => {
+      await expect(parseAndCreate('修复测试 bug', { createProject: false })).rejects.toThrow('system_coding_map_scope_required');
+    });
+
     it('links tasks to specified goal', async () => {
       // Create a test goal first
       const goalResult = await pool.query(
@@ -484,23 +481,17 @@ describe('Intent Recognition Module', () => {
       );
       const goalId = goalResult.rows[0].id;
 
-      try {
-        const result = await parseAndCreate('做一个关联目标的任务', {
-          goalId,
-          createProject: false
-        });
+      const result = await parseAndCreate('做一个关联目标的任务', {
+        ...codingOptions(),
+        goalId,
+        createProject: false
+      });
 
-        for (const task of result.created.tasks) {
-          createdTaskIds.push(task.id);
-          expect(task.goal_id).toBe(goalId);
-        }
-      } finally {
-        // Delete tasks first (FK constraint: tasks.goal_id no longer has FK after migration 185)
-        await pool.query('DELETE FROM tasks WHERE goal_id = $1', [goalId]).catch(() => {});
-        createdTaskIds = [];
-        await pool.query('DELETE FROM key_results WHERE id = $1', [goalId]);
+      for (const task of result.created.tasks) {
+        expect(task.goal_id).toBe(goalId);
       }
     });
+
   });
 
   describe('classifyIntent - new phrase patterns', () => {

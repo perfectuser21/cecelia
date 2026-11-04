@@ -5,13 +5,24 @@
  * Uses unified alertness levels: SLEEPING=0, CALM=1, AWARE=2, ALERT=3, PANIC=4
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi, beforeAll } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi, beforeAll, afterAll } from 'vitest';
+import pg from 'pg';
+import { privatePgConfig, verifyPrivatePg } from '../../../../scripts/ci/private-pg-contract.mjs';
+vi.mock('../db.js', () => ({ default: pool }));
+vi.mock('../executor.js', () => ({ cleanupOrphanProcesses: vi.fn(async () => 2) }));
+vi.mock('../task-updater.js', () => ({ broadcastTaskState: vi.fn() }));
+vi.mock('../llm-caller.js', () => ({ callLLM: vi.fn(() => { throw Error('external model forbidden'); }) }));
+vi.mock('../openai-client.js', () => ({ generateEmbedding: vi.fn(() => { throw Error('external model forbidden'); }) }));
 let pool;
+afterAll(async () => { vi.unstubAllGlobals(); await pool?.end(); });
 let executeResponseActions, notifyAlert, escalateToAnalysis, applyMitigation, activateShutdownSafety, recoverFromLevel, getMitigationState, _resetMitigationState;
 
 beforeAll(async () => {
   vi.resetModules();
-  pool = (await import('../db.js')).default;
+  vi.stubGlobal('fetch', vi.fn(async () => { throw Error('external network forbidden'); }));
+  pool = new pg.Client(privatePgConfig());
+  await pool.connect();
+  await verifyPrivatePg(pool);
   ({ executeResponseActions, notifyAlert, escalateToAnalysis, applyMitigation, activateShutdownSafety, recoverFromLevel, getMitigationState, _resetMitigationState } = await import('../alertness-actions.js'));
 });
 
@@ -23,17 +34,13 @@ const PANIC = 4;
 
 describe('alertness-actions', () => {
   beforeEach(async () => {
-    // Clean up test events
-    await pool.query(`DELETE FROM cecelia_events WHERE source = 'alertness'`);
-    // Clean up test tasks
-    await pool.query(`DELETE FROM tasks WHERE title LIKE 'Alertness RCA%'`);
-    // Reset mitigation state
+    vi.restoreAllMocks();
+    await pool.query('BEGIN');
     _resetMitigationState();
   });
 
   afterEach(async () => {
-    await pool.query(`DELETE FROM cecelia_events WHERE source = 'alertness'`);
-    await pool.query(`DELETE FROM tasks WHERE title LIKE 'Alertness RCA%'`);
+    await pool.query('ROLLBACK');
     _resetMitigationState();
   });
 
@@ -144,6 +151,8 @@ describe('alertness-actions', () => {
       expect(task.status).toBe('queued');
       expect(task.payload.requires_cortex).toBe(true);
       expect(task.payload.signals).toEqual(signals);
+      const receipt = await pool.query('SELECT source, work_kind, canonical_task_type FROM work_routing_receipts WHERE task_id=$1', [task.id]);
+      expect(receipt.rows).toEqual([{ source: 'discovery', work_kind: 'research', canonical_task_type: 'research' }]);
     });
 
     it('should handle escalation failure gracefully', async () => {
@@ -153,6 +162,7 @@ describe('alertness-actions', () => {
       const result = await escalateToAnalysis({});
 
       expect(result.error).toBe('DB error');
+      expect((await pool.query("SELECT id FROM tasks WHERE title LIKE 'Alertness RCA%'")).rows).toHaveLength(0);
       // Should not throw
     });
   });
@@ -168,12 +178,11 @@ describe('alertness-actions', () => {
     });
 
     it('should cleanup orphan processes', async () => {
-      // This will call executor.cleanupOrphanProcesses()
-      // In test environment, this might be 0, but we verify it doesn't crash
+      const { cleanupOrphanProcesses } = await import('../executor.js');
       const result = await applyMitigation({});
 
-      expect(result.actions).toBeDefined();
-      // May or may not contain cleaned_X_orphans depending on actual orphans
+      expect(cleanupOrphanProcesses).toHaveBeenCalled();
+      expect(result.actions).toContain('cleaned_2_orphans');
     });
   });
 

@@ -52,6 +52,8 @@ setup() {
   # 旧发布目录 + 旧 plist（含明文令牌键，复刻 MMV 现场）+ 旧 crontab
   OLD="$PREVIEW_RELEASES_DIR/fleet-old"
   mkdir -p "$OLD/scripts"
+  export TEST_ORPHAN_ROOT="$OLD"
+  printf '%040d\n' 1 > "$OLD/.release-sha"
   cat > "$PREVIEW_AGENT_PLIST" <<PL
 <?xml version="1.0" encoding="UTF-8"?>
 <plist version="1.0">
@@ -134,7 +136,7 @@ import http from 'node:http';
 import { readFileSync, existsSync } from 'node:fs';
 const plist = process.env.PREVIEW_AGENT_PLIST;
 const token = readFileSync(process.env.DEPLOY_TOKEN_FILE, 'utf8').match(/DEPLOY_TOKEN=(.*)/)[1].trim();
-const wd = () => (readFileSync(plist, 'utf8').match(/<key>WorkingDirectory<\/key>\s*<string>([^<]*)<\/string>/) || [])[1];
+const wd = () => { try { return (readFileSync(plist, 'utf8').match(/<key>WorkingDirectory<\/key>\s*<string>([^<]*)<\/string>/) || [])[1]; } catch { return process.env.TEST_ORPHAN_ROOT; } };
 const srv = http.createServer((req, res) => {
   if (req.url === '/api/brain/health') {
     let sha = null;
@@ -249,6 +251,26 @@ grep -q "launchctl print" "$TMP/calls.log" && pass "bootout 后轮询 print 等�
 [ "$(cat "$PREVIEW_RELEASES_DIR/.current" 2>/dev/null)" = "$NEW" ] && pass "记录为当前发布" || fail "记录为当前发布" "$OUT"
 grep -qF "<string>${NEW}</string>" "$PREVIEW_AGENT_PLIST" && pass "plist 指向新目录（未被回滚）" || fail "plist 指向新目录" "$(cat "$PREVIEW_AGENT_PLIST")"
 export LC_GHOST_PRINTS=0
+teardown
+
+# 活着的 HTTP owner 不属于 launchd 时，不能用只会恢复 plist 的发布事务接管。
+echo "── T7 孤儿 owner 缺 plist：切换前拒绝 ──"
+setup
+rm "$PREVIEW_AGENT_PLIST"
+set +e; OUT=$(bash "$RELEASE" --apply 2>&1); RC=$?; set -e
+[ "$RC" != 0 ] && pass "孤儿 owner 拒绝发布" || fail "孤儿 owner 拒绝发布" "$OUT"
+[ ! -e "$PREVIEW_AGENT_PLIST" ] && pass "未创建新 plist" || fail "未创建新 plist" "$OUT"
+cmp -s "$TMP/crontab.txt" "$TMP/crontab.orig" && pass "孤儿 owner crontab 不变" || fail "孤儿 owner crontab 不变" "$OUT"
+[ ! -e "$TMP/calls.log" ] && pass "无 fetch 后安装或 launchd 变更" || fail "无 fetch 后安装或 launchd 变更" "$(cat "$TMP/calls.log")"
+teardown
+
+echo "── T8 活 endpoint 的 plist 无 loaded owner：切换前拒绝 ──"
+setup
+rm "$LC_STATE/loaded"
+set +e; OUT=$(bash "$RELEASE" --apply 2>&1); RC=$?; set -e
+[ "$RC" != 0 ] && pass "未托管 owner 拒绝发布" || fail "未托管 owner 拒绝发布" "$OUT"
+cmp -s "$PREVIEW_AGENT_PLIST" "$TMP/plist.orig" && cmp -s "$TMP/crontab.txt" "$TMP/crontab.orig" && pass "未托管 owner 原配置不变" || fail "未托管 owner 原配置不变" "$OUT"
+if grep -E 'launchctl (bootout|bootstrap|kickstart)|npm |crontab-write' "$TMP/calls.log" >/dev/null 2>&1; then fail "只读 owner 检测" "$(cat "$TMP/calls.log")"; else pass "只读 owner 检测"; fi
 teardown
 
 echo ""

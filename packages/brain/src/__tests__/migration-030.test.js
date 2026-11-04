@@ -1,10 +1,18 @@
-import { describe, it, expect, beforeAll, vi } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
+import { openFixture, closeFixture } from './helpers/debt-11-pg.js';
+vi.mock('../db.js', async () => ({ default: (await import('./helpers/debt-11-pg.js')).pool }));
 let pool;
 
 beforeAll(async () => {
-  vi.resetModules();
+  await openFixture('migration030', ['000_base_schema.sql', '030_capability_driven_development.sql', '493_vs_model_areas_kind.sql'], `
+    CREATE TABLE pr_plans(id uuid PRIMARY KEY);
+    CREATE TABLE journeys(id uuid PRIMARY KEY, parent_journey_id uuid);
+    CREATE TABLE notion_projection_map(notion_db_id text, title text, face text, brain_table text, direction text, vessel text, status text, space text, notes text);
+  `);
   pool = (await import('../db.js')).default;
 });
+
+afterAll(closeFixture);
 
 describe('Migration 030: Capability-Driven Development', () => {
   beforeAll(async () => {
@@ -16,7 +24,7 @@ describe('Migration 030: Capability-Driven Development', () => {
       const result = await pool.query(`
         SELECT table_name
         FROM information_schema.tables
-        WHERE table_schema = 'public' AND table_name = 'capabilities_legacy'
+        WHERE table_schema = current_schema() AND table_name = 'capabilities_legacy'
       `);
 
       expect(result.rows.length).toBe(1);
@@ -26,7 +34,7 @@ describe('Migration 030: Capability-Driven Development', () => {
       const result = await pool.query(`
         SELECT column_name, data_type, column_default
         FROM information_schema.columns
-        WHERE table_name = 'capabilities_legacy'
+        WHERE table_schema = current_schema() AND table_name = 'capabilities_legacy'
         ORDER BY ordinal_position
       `);
 
@@ -49,7 +57,7 @@ describe('Migration 030: Capability-Driven Development', () => {
       const result = await pool.query(`
         SELECT column_name, data_type, character_maximum_length
         FROM information_schema.columns
-        WHERE table_name = 'capabilities_legacy' AND column_name = 'id'
+        WHERE table_schema = current_schema() AND table_name = 'capabilities_legacy' AND column_name = 'id'
       `);
 
       expect(result.rows.length).toBe(1);
@@ -61,7 +69,7 @@ describe('Migration 030: Capability-Driven Development', () => {
       const result = await pool.query(`
         SELECT constraint_name
         FROM information_schema.table_constraints
-        WHERE table_name = 'capabilities_legacy'
+        WHERE table_schema = current_schema() AND table_name = 'capabilities_legacy'
           AND constraint_type = 'CHECK'
           AND constraint_name LIKE '%current_stage%'
       `);
@@ -104,7 +112,13 @@ describe('Migration 030: Capability-Driven Development', () => {
     });
   });
 
-  // pr_plans tests removed — table dropped in migration 058
+  it('真实 CHECK 拒绝超出范围的成熟度，历史能力重命名后仍保留', async () => {
+    await expect(pool.query("UPDATE capabilities_legacy SET current_stage = 5 WHERE id = 'autonomous-task-scheduling'")).rejects.toMatchObject({ code: '23514' });
+    const { rows } = await pool.query("SELECT current_stage FROM capabilities_legacy WHERE id = 'autonomous-task-scheduling'");
+    expect(rows[0].current_stage).toBe(3);
+  });
+
+  // 仅覆盖030能力注册表及493重命名兼容；不声称覆盖全量迁移链。
 
   describe('schema_version', () => {
     it('should have schema_version 030', async () => {

@@ -17,9 +17,27 @@ import { updateAgentModel, batchUpdateAgentModels, _resetProfileCache, getActive
 // Mock Pool Helper
 // ============================================================
 
-function makeMockPool(queryHandler) {
+function makeMockPool(queryHandler, { failReceipt = false } = {}) {
+  let written;
+  const client = {
+    query: vi.fn(async (sql, params) => {
+      if (sql.startsWith('UPDATE model_profiles')) {
+        const { rows: [profile] } = await queryHandler('SELECT');
+        written = { ...profile, config: JSON.parse(params[0]), is_active: true };
+        return { rows: [written] };
+      }
+      if (sql.startsWith('SELECT')) return { rows: written ? [written] : [] };
+      if (sql.startsWith('INSERT INTO cecelia_events') && failReceipt) {
+        throw new Error('receipt write failed');
+      }
+      return { rows: [] };
+    }),
+    release: vi.fn(),
+  };
   return {
     query: vi.fn(queryHandler || (async () => ({ rows: [] }))),
+    connect: vi.fn(async () => client),
+    client,
   };
 }
 
@@ -219,6 +237,10 @@ describe('updateAgentModel', () => {
     expect(result.current.provider).toBe('anthropic');
     expect(result.current.model).toBe('claude-haiku-4-5-20251001');
     expect(result.previous.model).toBe('MiniMax-M2.1');
+    expect(result.receipt.verified).toBe(true);
+    expect(pool.connect).toHaveBeenCalledTimes(1);
+    expect(pool.client.query.mock.calls.map(c => c[0])).toEqual(expect.arrayContaining(['BEGIN', 'COMMIT']));
+    expect(pool.client.release).toHaveBeenCalledWith(undefined);
     // 缓存也更新了
     expect(getActiveProfile().config.thalamus.model).toBe('claude-haiku-4-5-20251001');
   });
@@ -239,6 +261,18 @@ describe('updateAgentModel', () => {
     const devMap = getActiveProfile().config.executor.model_map.dev;
     expect(devMap.anthropic).toBe('claude-sonnet-4-6');
     expect(devMap.minimax).toBeNull();
+  });
+
+  it('事务事件写入失败时回滚、释放连接，缓存保持原配置', async () => {
+    const profile = makeActiveProfile();
+    const pool = makeMockPool(async () => ({ rows: [profile] }), { failReceipt: true });
+    const before = getActiveProfile();
+    await expect(updateAgentModel(pool, 'thalamus', 'claude-haiku-4-5-20251001'))
+      .rejects.toThrow('receipt write failed');
+    expect(pool.client.query.mock.calls.map(c => c[0])).toContain('ROLLBACK');
+    expect(pool.client.query.mock.calls.map(c => c[0])).not.toContain('COMMIT');
+    expect(pool.client.release).toHaveBeenCalledWith(expect.any(Error));
+    expect(getActiveProfile()).toBe(before);
   });
 
   it('U3: 无效 agent 抛出错误', async () => {

@@ -21,10 +21,10 @@ n=$(cat "$FIXTURE/polls"); echo $((n+1)) > "$FIXTURE/polls"
 clock=$(cat "$FIXTURE/clock"); echo $((clock + \${HTTP_SECONDS:-0})) > "$FIXTURE/clock"
 body="$PENDING"; (( n >= READY_AT )) && body="$VALID"
 for arg in "$@"; do [[ "$arg" == */health ]] && body="$HEALTH"; [[ "$arg" == POST ]] && echo POST >> "$FIXTURE/posts"; done
-out=''; http=0
-while (($#)); do case "$1" in -o) out="$2"; shift;; -w) http=1; shift;; esac; shift; done
+out=''; format=''
+while (($#)); do case "$1" in -o) out="$2"; shift;; -w) format="$2"; shift;; esac; shift; done
 if [[ -n "$out" ]]; then printf '%s' "$body" > "$out"; else printf '%s' "$body"; fi
-((http)) && printf '200'
+case "$format" in '') :;; '%{http_code}') printf '200';; '\\n%{http_code}') printf '\\n200';; *) exit 64;; esac
 exit 0`);
  bin('status','exec curl fixture');bin('trigger','echo 202');
  mkdirSync(join(dir,'packages/brain'),{recursive:true});

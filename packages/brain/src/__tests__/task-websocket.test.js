@@ -1,3 +1,6 @@
+import { assertScratchConfig, assertScratchIdentity } from './helpers/debt-04-scratch.js';
+assertScratchConfig();
+process.env.HANDOFF_DOCS_DIR = mkdtempSync(join(tmpdir(), 'debt-04-handoff-'));
 /**
  * Task WebSocket Integration Tests
  *
@@ -11,6 +14,9 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, beforeAll, afterAll, vi } from 'vitest';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { WebSocket as WS } from 'ws';
 import { createServer } from 'http';
 let pool;
@@ -20,6 +26,7 @@ let updateTaskStatus, updateTaskProgress;
 beforeAll(async () => {
   vi.resetModules();
   pool = (await import('../db.js')).default;
+  await assertScratchIdentity(pool);
   websocketService = (await import('../websocket.js')).default;
   ({ updateTaskStatus, updateTaskProgress } = await import('../task-updater.js'));
 });
@@ -44,7 +51,7 @@ function closeWs(ws) {
  *   const msg = await nextMessage(); // gets next non-welcome message
  */
 async function createClient(port) {
-  const ws = new WS(`ws://localhost:${port}/ws`);
+  const ws = new WS(`ws://127.0.0.1:${port}/ws`);
   const messages = [];
   let waiters = [];
 
@@ -112,7 +119,7 @@ describe('Task WebSocket Integration', () => {
 
   beforeEach(async () => {
     httpServer = createServer();
-    await new Promise((resolve) => httpServer.listen(0, resolve));
+    await new Promise((resolve) => httpServer.listen(0, '127.0.0.1', resolve));
     serverPort = httpServer.address().port;
     websocketService.initWebSocketServer(httpServer);
     clients = [];
@@ -228,3 +235,5 @@ describe('Task WebSocket Integration', () => {
     expect(result.task.status).toBe('in_progress');
   });
 });
+
+afterAll(async () => { await pool?.end(); });

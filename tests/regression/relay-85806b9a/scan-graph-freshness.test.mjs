@@ -6,47 +6,51 @@
  * - 账龄查询基于真实 postgres scanned_at 字段，不 mock DB
  * - computeFreshness 本身无 IO，允许单元测试
  *
- * 这些测试在实现前应全部 FAIL（RED阶段）。
+ * 使用私有 scratch schema 执行正式迁移与真实扫描器。
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import pg from 'pg';
+import { createDebt09Scratch } from '../../../packages/brain/src/__tests__/helpers/debt-09-scratch.js';
 import { computeFreshness } from '../../../packages/brain/src/lib/registry-freshness.js';
 import { replaceRepoEdges } from '../../../packages/brain/src/lib/graph-store.js';
 
-const DB_URL = process.env.TEST_DATABASE_URL || 'postgresql://localhost/cecelia_test';
-const DB_NAME = decodeURIComponent(new URL(DB_URL).pathname.slice(1));
-if (!/(_test|_scratch)$/.test(DB_NAME)) throw new Error(`拒绝连接非测试库: ${DB_NAME}`);
 const REVISION_A = 'a'.repeat(40);
 const REVISION_B = 'b'.repeat(40);
 
 function makeTempRepo(name) {
-  const dir = path.join('/tmp', `${name}-${Date.now()}`);
-  fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(path.join(dir, 'stub.js'), 'export const x = 1;\n');
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join('/tmp', `debt-09-${name}-`)));
+  fs.writeFileSync(path.join(dir, 'stub.js'), "import { x } from './dep.js'; export const y = x;\n");
+  fs.writeFileSync(path.join(dir, 'dep.js'), 'export const x = 1;\n');
   execFileSync('git', ['init', dir], { stdio: 'ignore' });
   execFileSync('git', ['-C', dir, 'config', 'user.name', 'Scan Graph Test']);
   execFileSync('git', ['-C', dir, 'config', 'user.email', 'scan-graph-test@example.invalid']);
-  execFileSync('git', ['-C', dir, 'add', 'stub.js']);
+  execFileSync('git', ['-C', dir, 'add', 'stub.js', 'dep.js']);
   execFileSync('git', ['-C', dir, 'commit', '-m', 'test fixture'], { stdio: 'ignore' });
   return dir;
 }
 
 describe('[B-3 + I-3] per-repo freshness 独立性', () => {
   let pool;
+  let scratch;
 
   beforeAll(async () => {
-    pool = new pg.Pool({ connectionString: DB_URL });
+    scratch = await createDebt09Scratch();
+    pool = scratch.pool;
+    // 400 的其它 registry 仅为迁移前置形状，图表均执行正式迁移。
+    await pool.query(`
+      CREATE TABLE schema_version(version text PRIMARY KEY, description text, applied_at timestamptz);
+      CREATE TABLE api_registry(method text, path text, scanned_at timestamptz);
+      CREATE TABLE db_schema_registry(table_name text, scanned_at timestamptz);
+      CREATE TABLE test_registry(file_path text, scanned_at timestamptz);
+    `);
+    await scratch.migrate('351_graph_edges.sql');
+    await scratch.migrate('400_fact_snapshot_metadata.sql');
+    await scratch.migrate('410_versioned_graph_snapshots.sql');
   });
 
-  afterAll(async () => {
-    // 清理测试数据
-    await pool.query("DELETE FROM graph_edges WHERE repo LIKE 'freshness-test-%'");
-    await pool.query("DELETE FROM fact_snapshot_headers WHERE kind = 'graph' AND repo LIKE 'freshness-test-%'");
-    await pool.end();
-  });
+  afterAll(async () => { if (scratch) await scratch.close(); });
 
   it('computeFreshness 接受 null → stale: true（无数据场景）', () => {
     const f = computeFreshness(null);
@@ -84,6 +88,7 @@ describe('[B-3 + I-3] per-repo freshness 独立性', () => {
       { src_path: 'b1.js', dst_path: 'b2.js', edge_type: 'import', detail: {} },
     ], { sourceRevision: REVISION_B, scannerVersion: 'graph-v3' });
 
+    await pool.query("UPDATE fact_snapshot_headers SET scanned_at = NOW() - INTERVAL '25 hours' WHERE kind='graph' AND repo='freshness-test-A'");
     // 各自独立查询 max(scanned_at)
     const { rows: rowA } = await pool.query(
       "SELECT scanned_at, source_revision, scanner_version FROM fact_snapshot_headers WHERE kind = 'graph' AND repo = 'freshness-test-A'"
@@ -96,46 +101,29 @@ describe('[B-3 + I-3] per-repo freshness 独立性', () => {
     const fA = computeFreshness(rowA[0] ?? null);
     const fB = computeFreshness(rowB[0] ?? null);
 
-    // 两个 repo 各自 stale=false
-    expect(fA.stale).toBe(false);
+    // A 的旧账龄不得被 B 的新快照遮蔽
+    expect(fA.stale).toBe(true);
+    expect(fA).toMatchObject({ status: 'unknown', reason_code: 'snapshot_stale' });
     expect(fB.stale).toBe(false);
 
-    // 各自 freshness 独立（都刚插入，时间应接近）
+    // 各自 freshness 独立，A 已人工置为过期
     expect(fA.latest_scan).not.toBeNull();
     expect(fB.latest_scan).not.toBeNull();
 
-    // 验证没有用合并查询：per-repo 的 max 值应等于合并查询的 max 值（因为都刚写，时间接近）
-    // 关键验证：合并查询得到的是两者中较大的，但单仓查询各自独立
-    // 如果 B 的 scanned_at > A 的 scanned_at，那么跨仓合并得到的 freshness 会掩盖 A 的实际状态
-    // 这个测试验证各自独立查询比合并更安全
     expect(fA.latest_scan).toBeTruthy();
     expect(fB.latest_scan).toBeTruthy();
   });
 
   it('scan-graph.mjs 的 scanRepo 或 scanRepoList 必须返回 per-repo freshness 信息', async () => {
-    // RED: 当前 scan-graph.mjs 无导出
-    let scanGraphModule;
-    try {
-      scanGraphModule = await import('../../../scripts/scan/scan-graph.mjs');
-    } catch {
-      expect.fail('scan-graph.mjs 必须可被 import（需导出，不能只是 top-level script）');
-    }
-
+    const scanGraphModule = await import('../../../scripts/scan/scan-graph.mjs');
     const scanRepo = scanGraphModule?.scanRepo;
     const scanRepoList = scanGraphModule?.scanRepoList;
     expect(scanRepo || scanRepoList, '必须导出 scanRepo 或 scanRepoList').toBeTruthy();
   });
 
   it('scanRepoList 结果中每个成功仓库有 freshness 字段（stale, latest_scan, age_hours）', async () => {
-    let scanGraphModule;
-    try {
-      scanGraphModule = await import('../../../scripts/scan/scan-graph.mjs');
-    } catch {
-      return; // 依赖导出，上一个测试覆盖
-    }
-
-    const scanRepoList = scanGraphModule?.scanRepoList;
-    if (!scanRepoList) return;
+    const { scanRepoList } = await import('../../../scripts/scan/scan-graph.mjs');
+    expect(scanRepoList).toBeTypeOf('function');
 
     // 用带真实 revision 的极小 Git repo 验证完整扫描生命周期。
     const tmpDir = makeTempRepo('freshness-test-repo');
@@ -145,6 +133,10 @@ describe('[B-3 + I-3] per-repo freshness 独立性', () => {
       ], pool);
 
       const result = results.find((r) => r.name === 'freshness-test-tmp');
+      expect(result?.error).toBeUndefined();
+      expect(result.inserted).toBeGreaterThan(0);
+      const stored = await pool.query("SELECT src_path, dst_path, edge_type FROM graph_edges WHERE repo = 'freshness-test-tmp'");
+      expect(stored.rows).toContainEqual({ src_path: 'stub.js', dst_path: 'dep.js', edge_type: 'import' });
       expect(result?.freshness).toBeDefined();
       expect(typeof result.freshness.stale).toBe('boolean');
       expect(result.freshness.stale).toBe(false); // 刚扫完

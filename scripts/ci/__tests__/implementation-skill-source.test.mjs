@@ -1,3 +1,4 @@
+import {readPublishedPilotWorkflow} from './fixtures/pilot-published-git.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtempSync,mkdirSync,writeFileSync,rmSync,symlinkSync} from 'node:fs';
@@ -102,7 +103,7 @@ test('fresh私有cache容纳base/head两份锁：不运行候选loader，不信s
 });
 test('Pilot与Impact使用trusted tooling准备隔离缓存，secret只进准备step且下载后校验前',()=>{
  for(const [name,jobName,consume] of [['pilot-release-verification','verify','固定完整计划及白名单环境运行全部登记回归'],['implementation-impact','gate','实际变更影响与固定回归']]){
-  const w=yaml.load(readFileSync(new URL('../../../.github/workflows/'+name+'.yml',import.meta.url),'utf8'));
+  const w=yaml.load((name==='pilot-release-verification'?readPublishedPilotWorkflow().toString('utf8'):readFileSync(new URL('../../../.github/workflows/'+name+'.yml',import.meta.url),'utf8')));
   assert.deepEqual(w.on.workflow_call.secrets.SKILLS_SOURCE_SSH_KEY,{required:false});
   assert.equal(w.jobs[jobName].env.SOURCE_REPO,'${{ inputs.source_repo || github.repository }}','prepare读取的SOURCE_REPO必须由实际job显式绑定');
   const steps=w.jobs[jobName].steps,index=steps.findIndex(s=>s.name==='准备固定中央Skill对象缓存');assert.ok(index>0);
@@ -196,7 +197,7 @@ os.execv(${JSON.stringify(realGit)},[${JSON.stringify(realGit)}]+args)
   const head=commit(f.business);git(f.business,'update-ref','refs/remotes/origin/main',head);
   const workspace=dirname(f.business);symlinkSync(f.business,join(workspace,'source'));symlinkSync(new URL('../../../',import.meta.url).pathname,join(workspace,'tooling'));mkdirSync(join(workspace,'snapshot'));
   writeFileSync(join(workspace,'snapshot/head.json'),JSON.stringify({snapshot:historicalSnapshot(f,head,head,JSON.parse(git(f.business,'show',`${head}:.skills-source.json`)).revision)}));
-  const pilotWorkflow=yaml.load(readFileSync(new URL('../../../.github/workflows/pilot-release-verification.yml',import.meta.url),'utf8')),step=pilotWorkflow.jobs.verify.steps.find(s=>s.name==='准备固定中央Skill对象缓存');
+  const pilotWorkflow=yaml.load(readPublishedPilotWorkflow().toString('utf8')),step=pilotWorkflow.jobs.verify.steps.find(s=>s.name==='准备固定中央Skill对象缓存');
   const prepared=spawnSync('bash',['-c',step.run],{cwd:workspace,encoding:'utf8',env:{...process.env,PATH:bin+':'+process.env.PATH,SKILLS_SOURCE_SSH_KEY:'fixture-secret',RUNNER_TEMP:workspace,GITHUB_WORKSPACE:workspace,GITHUB_ENV:join(workspace,'env'),SOURCE_REPO:'perfectuser21/zenithjoy-workspace',HEAD:head}});
   assert.equal(prepared.status,0,prepared.stderr);cache=readFileSync(join(workspace,'env'),'utf8').trim().replace(/^IMPLEMENTATION_SKILLS_SOURCE_DIR=/,'');assert.ok(cache.startsWith(workspace+'/implementation-skills-ci-'));
   assert.deepEqual(readFileSync(join(f.business,f.path)),f.payload);
@@ -252,7 +253,7 @@ test('历史snapshot拒绝摘要漂移、伪中央身份、缺业务对象、过
 });
 test('两入口先下载canonical快照再prepare历史对象，现代校验无key',()=>{
  for(const [file,job]of [['pilot-release-verification','verify'],['implementation-impact','gate']]){
-  const w=yaml.load(readFileSync(new URL('../../../.github/workflows/'+file+'.yml',import.meta.url),'utf8')),steps=w.jobs[job].steps;
+  const w=yaml.load((file==='pilot-release-verification'?readPublishedPilotWorkflow().toString('utf8'):readFileSync(new URL('../../../.github/workflows/'+file+'.yml',import.meta.url),'utf8'))),steps=w.jobs[job].steps;
   const index=steps.findIndex(s=>s.name==='准备固定中央Skill对象缓存'),download=steps.findIndex(s=>s.uses?.startsWith('actions/download-artifact')||s.name==='下载固定SHA中央bundle（PR无中央写凭据）');
   assert.ok(index>download,'历史绑定必须先取得snapshot');assert.match(steps[index].run,/--snapshot/);
   assert.match(steps[index].run,/jq -e '\.snapshot \| select\(type=="object"\)'/,'官方API包装需先提取canonical');

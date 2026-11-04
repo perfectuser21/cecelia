@@ -333,7 +333,7 @@ export function collectVerificationRetirementEntryEvidence(root,{source,proof,pu
  if(purpose!=='admission_only'||proof?.purpose!==purpose||JSON.stringify(canonical(proof.source))!==JSON.stringify(canonical(source)))fail('RETIREMENT_SOURCE_INVALID');
  const {retirement_candidates_sha256,...body}=proof;
  const component=proof.closed_component_bundle;
- if(sha(JSON.stringify(canonical(body)))!==retirement_candidates_sha256||!Array.isArray(proof.rows)||proof.rows.length>(component?415:10)
+ if(sha(JSON.stringify(canonical(body)))!==retirement_candidates_sha256||!Array.isArray(proof.rows)||proof.rows.length>(component?417:12)
   ||component&&proof.rows.filter(r=>r.retirement_kind==='closed_component').length!==405)fail('RETIREMENT_CANDIDATES_INVALID');
  const git=checkedSource(root,source),read=supportReader(root,source,git),entryHead=unitEntry(read,'head'),cache=new Map();
  const replacements=inputs=>inputs.map(input=>{

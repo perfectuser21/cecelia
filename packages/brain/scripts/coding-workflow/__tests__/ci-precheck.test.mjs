@@ -16,7 +16,7 @@ describe('defaultChecks', () => {
     expect(checks.map((c) => c.name)).toEqual([
       'lint-test-pairing', 'lint-feature-has-smoke', 'lint-tdd-commit-order', 'lint-test-quality', 'lint-no-mock-only-test',
       'lint-no-fake-test', 'lint-gp-anchor-artifact', 'branch-naming', 'registry-lint', 'lint-migration-unique-version', 'pr-size-check',
-      'smoke-registration', 'smoke-write-guard',
+      'smoke-registration', 'smoke-write-guard', 'brain-version-increment',
     ]);
     // 金丝雀 4（PR #6232）：写入型 smoke 没登记 write-targets、curl 没带 -q，到 CI 才红 → 左移到本地预检
     expect(checks.find((c) => c.name === 'smoke-write-guard').cmd).toEqual(['node', '--test', 'packages/brain/scripts/smoke/__tests__/smoke-production-guard.node-test.mjs']);
@@ -64,6 +64,27 @@ describe('runPrechecks', () => {
     });
     expect(r.map((c) => [c.name, c.ok, c.skipped ?? false])).toEqual([['ok', true, false], ['bad', false, false], ['absent', true, true]]);
     expect(r[1].output_tail).toContain('缺 smoke 脚本: feature');
+  });
+
+  it('真实版本校验左移到build预检：无增量必须交修复环，已升版只读通过', async () => {
+    const checks = defaultChecks({ branch: 'b', feature: false }).filter(row => row.name === 'brain-version-increment');
+    expect(checks).toHaveLength(1); expect(checks[0].required).toBe(true);
+    fs.mkdirSync(path.join(worktree, 'packages/brain/src'), { recursive: true });
+    const pkg = path.join(worktree, 'packages/brain/package.json');
+    fs.writeFileSync(pkg, '{"version":"1.0.0"}');
+    git(worktree, 'add', '.'); git(worktree, 'commit', '-qm', 'base version');
+    git(worktree, 'update-ref', 'refs/remotes/origin/main', 'HEAD');
+    fs.writeFileSync(path.join(worktree, 'packages/brain/src/x.js'), 'export const x = 1;');
+    git(worktree, 'add', '.'); git(worktree, 'commit', '-qm', 'source change');
+    const first = await runPrechecks(worktree, { checks });
+    expect(first[0].ok).toBe(false); expect(first[0].skipped ?? false).toBe(false);
+    expect(first[0].output_tail).toContain('版本未 bump');
+    fs.writeFileSync(pkg, '{"version":"1.0.1"}');
+    git(worktree, 'add', '.'); git(worktree, 'commit', '-qm', 'candidate version');
+    const before = git(worktree, 'rev-parse', 'HEAD');
+    const second = await runPrechecks(worktree, { checks });
+    expect(second[0].ok).toBe(true); expect(second[0].skipped ?? false).toBe(false);
+    expect(git(worktree, 'rev-parse', 'HEAD')).toBe(before);
   });
 
   // 金丝雀 3e8414f6（PR #6160）实证：CI 修复补的 smoke 脚本没登记，被 Smoke Ratchet Gate 判「未登记脚本」打红

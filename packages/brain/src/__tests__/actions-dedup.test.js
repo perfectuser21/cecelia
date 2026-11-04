@@ -1,343 +1,69 @@
-/**
- * createTask() Dedup Tests
- *
- * Tests that createTask() prevents duplicate tasks with the same
- * title + goal_id + project_id combination.
- */
-
-import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
-import pg from 'pg';
-import { DB_DEFAULTS } from '../db-config.js';
-
-const { Pool } = pg;
-const pool = new Pool(DB_DEFAULTS);
-
-let testGoalIds = [];
-let testProjectIds = [];
-let testTaskIds = [];
-
-describe('createTask() Dedup', () => {
-  beforeAll(async () => {
-    const result = await pool.query('SELECT 1');
-    expect(result.rows[0]['?column?']).toBe(1);
+/** 真 createTask + 真 PG 去重；只截断下游 routed writer，禁止创建执行任务。 */
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
+import { createDebt07Fixture } from './helpers/debt-07-pg.js';
+vi.mock('../db.js', () => ({ default: { query() { throw new Error('禁止访问默认池'); } } }));
+const writer = vi.hoisted(() => vi.fn());
+vi.mock('../work-routing-store.js', () => ({ createRoutedTask: writer }));
+vi.mock('../task-updater.js', () => ({ broadcastTaskState: vi.fn(() => { throw new Error('禁止广播'); }) }));
+vi.mock('../lib/task-terminal.js', () => ({ afterTerminalTransition: vi.fn(), isTerminalStatus: vi.fn() }));
+vi.mock('../workflow-authoring/task-guard.js', () => ({ assertAuthoringCompletion: vi.fn() }));
+let fixture, db, createTask, goalId, projectId;
+const continuation = new Error('第07路已到达下游 writer 边界');
+beforeAll(async () => {
+  fixture = await createDebt07Fixture();
+  db = fixture.pool;
+  ({ createTask } = await import('../actions.js'));
+  goalId = (await db.query("INSERT INTO goals (title) VALUES ('第07路') RETURNING id")).rows[0].id;
+  projectId = (await db.query("INSERT INTO projects (name) VALUES ('第07路') RETURNING id")).rows[0].id;
+});
+afterAll(async () => { if (fixture) await fixture.close(); });
+beforeEach(async () => {
+  if (!db) return;
+  await db.query('DELETE FROM tasks');
+  writer.mockReset().mockRejectedValue(continuation);
+});
+async function seed({ status = 'queued', age = 0, title = '待测任务', goal = null, project = null } = {}) {
+  return (await db.query(`INSERT INTO tasks (title, status, goal_id, project_id, completed_at, updated_at)
+    VALUES ($1, $2, $3, $4, NOW() - $5 * INTERVAL '1 hour', NOW() - $5 * INTERVAL '1 hour') RETURNING *`,
+  [title, status, goal, project, age])).rows[0];
+}
+function call(overrides = {}) {
+  return createTask({ title: '待测任务', task_type: 'research', trigger_source: 'test', db, ...overrides });
+}
+async function deduplicates(overrides, row) {
+  const result = await call(overrides);
+  expect(result.success).toBe(true);
+  expect(result.deduplicated).toBe(true);
+  expect(result.task.id).toBe(row.id);
+  expect(writer).not.toHaveBeenCalled();
+  expect((await db.query('SELECT id FROM tasks')).rows).toHaveLength(1);
+}
+async function continues(overrides) {
+  await expect(call(overrides)).rejects.toBe(continuation);
+  expect(writer).toHaveBeenCalledOnce();
+}
+describe('createTask 真实 PG 去重', () => {
+  it.each(['queued', 'in_progress'])('%s 相同 title/goal/project 阻止重复', async status => {
+    const row = await seed({ status, goal: goalId, project: projectId });
+    await deduplicates({ goal_id: goalId, project_id: projectId }, row);
   });
-
-  afterAll(async () => {
-    await pool.end();
+  it('NULL goal/project 使用空值相等语义去重', async () => { await deduplicates({}, await seed()); });
+  it('24h 内 completed 阻止重复', async () => { await deduplicates({}, await seed({ status: 'completed', age: 2 })); });
+  it('25h 前 completed 允许后续创建', async () => { await seed({ status: 'completed', age: 25 }); await continues({}); });
+  it.each(['canceled', 'cancelled'])('%s 不阻止后续创建并保留原拼写', async status => {
+    const row = await seed({ status });
+    await continues({});
+    expect((await db.query('SELECT status FROM tasks WHERE id=$1', [row.id])).rows[0].status).toBe(status);
   });
-
-  afterEach(async () => {
-    if (testTaskIds.length > 0) {
-      await pool.query('DELETE FROM tasks WHERE id = ANY($1)', [testTaskIds]);
-      testTaskIds = [];
-    }
-    if (testProjectIds.length > 0) {
-      await pool.query('DELETE FROM tasks WHERE project_id = ANY($1)', [testProjectIds]).catch(() => {});
-      await pool.query('DELETE FROM okr_projects WHERE id = ANY($1)', [testProjectIds]);
-      testProjectIds = [];
-    }
-    if (testGoalIds.length > 0) {
-      await pool.query('DELETE FROM tasks WHERE goal_id = ANY($1)', [testGoalIds]).catch(() => {});
-      await pool.query('DELETE FROM key_results WHERE id = ANY($1)', [testGoalIds]);
-      testGoalIds = [];
-    }
+  it('25h 前 canceled 允许后续创建', async () => { await seed({ status: 'canceled', age: 25 }); await continues({}); });
+  it('不同 title 允许后续创建', async () => { await seed(); await continues({ title: '其他任务' }); });
+  it('不同 goal 允许后续创建', async () => { await seed(); await continues({ goal_id: goalId }); });
+  it('不同 project 允许后续创建', async () => { await seed(); await continues({ project_id: projectId }); });
+  it.each(['rumination', 'cortex', 'auto_fix'])('%s 来源 72h 内 failed 阻止重复', async trigger_source => {
+    await deduplicates({ trigger_source }, await seed({ status: 'failed', age: 48 }));
   });
-
-  it('should dedup when queued task with same title+goal+project exists', async () => {
-    // Setup: create KR + project (goals/projects tables dropped in migration 185)
-    const goalResult = await pool.query(
-      "INSERT INTO key_results (title, priority, status, progress) VALUES ('Dedup test goal', 'P0', 'pending', 0) RETURNING id"
-    );
-    testGoalIds.push(goalResult.rows[0].id);
-    const goalId = goalResult.rows[0].id;
-
-    const projResult = await pool.query(
-      "INSERT INTO okr_projects (title, status, metadata) VALUES ('dedup-test-proj', 'active', '{\"repo_path\":\"/tmp/dedup-test\"}') RETURNING id"
-    );
-    testProjectIds.push(projResult.rows[0].id);
-    const projectId = projResult.rows[0].id;
-
-    // Create first task directly in DB
-    const firstTask = await pool.query(
-      "INSERT INTO tasks (title, status, goal_id, project_id, priority) VALUES ('Build login page', 'queued', $1, $2, 'P1') RETURNING *",
-      [goalId, projectId]
-    );
-    testTaskIds.push(firstTask.rows[0].id);
-
-    // Now run the dedup query (same logic as createTask)
-    const dedupResult = await pool.query(`
-      SELECT * FROM tasks
-      WHERE title = $1
-        AND (goal_id IS NOT DISTINCT FROM $2)
-        AND (project_id IS NOT DISTINCT FROM $3)
-        AND (status IN ('queued', 'in_progress') OR (status = 'completed' AND completed_at > NOW() - INTERVAL '24 hours'))
-      LIMIT 1
-    `, ['Build login page', goalId, projectId]);
-
-    expect(dedupResult.rows.length).toBe(1);
-    expect(dedupResult.rows[0].id).toBe(firstTask.rows[0].id);
-  });
-
-  it('should dedup when in_progress task with same title+goal+project exists', async () => {
-    const goalResult = await pool.query(
-      "INSERT INTO key_results (title, priority, status, progress) VALUES ('Dedup inprog goal', 'P0', 'pending', 0) RETURNING id"
-    );
-    testGoalIds.push(goalResult.rows[0].id);
-    const goalId = goalResult.rows[0].id;
-
-    // Create in_progress task
-    const firstTask = await pool.query(
-      "INSERT INTO tasks (title, status, goal_id, priority, started_at) VALUES ('Build login page', 'in_progress', $1, 'P1', NOW()) RETURNING *",
-      [goalId]
-    );
-    testTaskIds.push(firstTask.rows[0].id);
-
-    // Dedup query should find it
-    const dedupResult = await pool.query(`
-      SELECT * FROM tasks
-      WHERE title = $1
-        AND (goal_id IS NOT DISTINCT FROM $2)
-        AND (project_id IS NOT DISTINCT FROM $3)
-        AND (status IN ('queued', 'in_progress') OR (status = 'completed' AND completed_at > NOW() - INTERVAL '24 hours'))
-      LIMIT 1
-    `, ['Build login page', goalId, null]);
-
-    expect(dedupResult.rows.length).toBe(1);
-    expect(dedupResult.rows[0].id).toBe(firstTask.rows[0].id);
-  });
-
-  it('should allow different titles even with same goal+project', async () => {
-    const goalResult = await pool.query(
-      "INSERT INTO key_results (title, priority, status, progress) VALUES ('Dedup diff title goal', 'P0', 'pending', 0) RETURNING id"
-    );
-    testGoalIds.push(goalResult.rows[0].id);
-    const goalId = goalResult.rows[0].id;
-
-    // Create first task
-    const firstTask = await pool.query(
-      "INSERT INTO tasks (title, status, goal_id, priority) VALUES ('Build login page', 'queued', $1, 'P1') RETURNING *",
-      [goalId]
-    );
-    testTaskIds.push(firstTask.rows[0].id);
-
-    // Dedup query for DIFFERENT title should NOT match
-    const dedupResult = await pool.query(`
-      SELECT * FROM tasks
-      WHERE title = $1
-        AND (goal_id IS NOT DISTINCT FROM $2)
-        AND (project_id IS NOT DISTINCT FROM $3)
-        AND (status IN ('queued', 'in_progress') OR (status = 'completed' AND completed_at > NOW() - INTERVAL '24 hours'))
-      LIMIT 1
-    `, ['Build signup page', goalId, null]);
-
-    expect(dedupResult.rows.length).toBe(0);
-  });
-
-  it('should allow re-creation after 24h completed window', async () => {
-    const goalResult = await pool.query(
-      "INSERT INTO key_results (title, priority, status, progress) VALUES ('Dedup 24h goal', 'P0', 'pending', 0) RETURNING id"
-    );
-    testGoalIds.push(goalResult.rows[0].id);
-    const goalId = goalResult.rows[0].id;
-
-    // Create a completed task with completed_at > 24h ago
-    const oldTask = await pool.query(
-      "INSERT INTO tasks (title, status, goal_id, priority, completed_at) VALUES ('Build login page', 'completed', $1, 'P1', NOW() - INTERVAL '25 hours') RETURNING *",
-      [goalId]
-    );
-    testTaskIds.push(oldTask.rows[0].id);
-
-    // Dedup query should NOT match (outside 24h window)
-    const dedupResult = await pool.query(`
-      SELECT * FROM tasks
-      WHERE title = $1
-        AND (goal_id IS NOT DISTINCT FROM $2)
-        AND (project_id IS NOT DISTINCT FROM $3)
-        AND (status IN ('queued', 'in_progress') OR (status = 'completed' AND completed_at > NOW() - INTERVAL '24 hours'))
-      LIMIT 1
-    `, ['Build login page', goalId, null]);
-
-    expect(dedupResult.rows.length).toBe(0);
-  });
-
-  it('should dedup completed task within 24h window', async () => {
-    const goalResult = await pool.query(
-      "INSERT INTO key_results (title, priority, status, progress) VALUES ('Dedup recent goal', 'P0', 'pending', 0) RETURNING id"
-    );
-    testGoalIds.push(goalResult.rows[0].id);
-    const goalId = goalResult.rows[0].id;
-
-    // Create a recently completed task (within 24h)
-    const recentTask = await pool.query(
-      "INSERT INTO tasks (title, status, goal_id, priority, completed_at) VALUES ('Build login page', 'completed', $1, 'P1', NOW() - INTERVAL '2 hours') RETURNING *",
-      [goalId]
-    );
-    testTaskIds.push(recentTask.rows[0].id);
-
-    // Dedup query should match (within 24h window)
-    const dedupResult = await pool.query(`
-      SELECT * FROM tasks
-      WHERE title = $1
-        AND (goal_id IS NOT DISTINCT FROM $2)
-        AND (project_id IS NOT DISTINCT FROM $3)
-        AND (status IN ('queued', 'in_progress') OR (status = 'completed' AND completed_at > NOW() - INTERVAL '24 hours'))
-      LIMIT 1
-    `, ['Build login page', goalId, null]);
-
-    expect(dedupResult.rows.length).toBe(1);
-    expect(dedupResult.rows[0].id).toBe(recentTask.rows[0].id);
-  });
-
-  it('should handle NULL goal_id and project_id correctly', async () => {
-    // Create task with NULL goal_id + NULL project_id
-    const firstTask = await pool.query(
-      "INSERT INTO tasks (title, status, priority) VALUES ('Orphan task', 'queued', 'P1') RETURNING *"
-    );
-    testTaskIds.push(firstTask.rows[0].id);
-
-    // Dedup query with NULL values should match using IS NOT DISTINCT FROM
-    const dedupResult = await pool.query(`
-      SELECT * FROM tasks
-      WHERE title = $1
-        AND (goal_id IS NOT DISTINCT FROM $2)
-        AND (project_id IS NOT DISTINCT FROM $3)
-        AND (status IN ('queued', 'in_progress') OR (status = 'completed' AND completed_at > NOW() - INTERVAL '24 hours'))
-      LIMIT 1
-    `, ['Orphan task', null, null]);
-
-    expect(dedupResult.rows.length).toBe(1);
-    expect(dedupResult.rows[0].id).toBe(firstTask.rows[0].id);
-  });
-
-  // ================================
-  // Canceled Status Dedup Tests
-  // ================================
-
-  it('should dedup when canceled task exists', async () => {
-    const goalResult = await pool.query(
-      "INSERT INTO key_results (title, priority, status, progress) VALUES ('Dedup canceled goal', 'P0', 'pending', 0) RETURNING id"
-    );
-    testGoalIds.push(goalResult.rows[0].id);
-    const goalId = goalResult.rows[0].id;
-
-    const projResult = await pool.query(
-      "INSERT INTO okr_projects (title, status, metadata) VALUES ('dedup-canceled-proj', 'active', '{\"repo_path\":\"/tmp/dedup-canceled\"}') RETURNING id"
-    );
-    testProjectIds.push(projResult.rows[0].id);
-    const projectId = projResult.rows[0].id;
-
-    // Create canceled task
-    const canceledTask = await pool.query(
-      "INSERT INTO tasks (title, status, goal_id, project_id, priority, completed_at) VALUES ('Build login page', 'canceled', $1, $2, 'P1', NOW()) RETURNING *",
-      [goalId, projectId]
-    );
-    testTaskIds.push(canceledTask.rows[0].id);
-
-    // Current dedup query should NOT find canceled task (this tests the current behavior)
-    // Note: This test documents that canceled tasks are currently NOT preventing duplicates
-    const dedupResult = await pool.query(`
-      SELECT * FROM tasks
-      WHERE title = $1
-        AND (goal_id IS NOT DISTINCT FROM $2)
-        AND (project_id IS NOT DISTINCT FROM $3)
-        AND (status IN ('queued', 'in_progress') OR (status = 'completed' AND completed_at > NOW() - INTERVAL '24 hours'))
-      LIMIT 1
-    `, ['Build login page', goalId, projectId]);
-
-    // Current expected behavior: canceled tasks don't block duplicates
-    expect(dedupResult.rows.length).toBe(0);
-  });
-
-  it('should dedup cancelled task within time window', async () => {
-    const goalResult = await pool.query(
-      "INSERT INTO key_results (title, priority, status, progress) VALUES ('Dedup cancelled goal', 'P0', 'pending', 0) RETURNING id"
-    );
-    testGoalIds.push(goalResult.rows[0].id);
-    const goalId = goalResult.rows[0].id;
-
-    // Create recently cancelled task (within 24h)
-    const cancelledTask = await pool.query(
-      "INSERT INTO tasks (title, status, goal_id, priority, completed_at) VALUES ('Build settings page', 'cancelled', $1, 'P1', NOW() - INTERVAL '2 hours') RETURNING *",
-      [goalId]
-    );
-    testTaskIds.push(cancelledTask.rows[0].id);
-
-    // Current dedup query should NOT find cancelled task (this tests the current behavior)
-    // Note: This test documents that cancelled tasks are currently NOT preventing duplicates
-    const dedupResult = await pool.query(`
-      SELECT * FROM tasks
-      WHERE title = $1
-        AND (goal_id IS NOT DISTINCT FROM $2)
-        AND (project_id IS NOT DISTINCT FROM $3)
-        AND (status IN ('queued', 'in_progress') OR (status = 'completed' AND completed_at > NOW() - INTERVAL '24 hours'))
-      LIMIT 1
-    `, ['Build settings page', goalId, null]);
-
-    // Current expected behavior: cancelled tasks don't block duplicates
-    expect(dedupResult.rows.length).toBe(0);
-  });
-
-  it('should allow re-creation after canceled task expires', async () => {
-    const goalResult = await pool.query(
-      "INSERT INTO key_results (title, priority, status, progress) VALUES ('Dedup expired canceled goal', 'P0', 'pending', 0) RETURNING id"
-    );
-    testGoalIds.push(goalResult.rows[0].id);
-    const goalId = goalResult.rows[0].id;
-
-    // Create an old canceled task (> 24h ago)
-    const oldCanceledTask = await pool.query(
-      "INSERT INTO tasks (title, status, goal_id, priority, completed_at) VALUES ('Build profile page', 'canceled', $1, 'P1', NOW() - INTERVAL '25 hours') RETURNING *",
-      [goalId]
-    );
-    testTaskIds.push(oldCanceledTask.rows[0].id);
-
-    // Even if canceled tasks were included in dedup, this should NOT match (outside 24h window)
-    const dedupResult = await pool.query(`
-      SELECT * FROM tasks
-      WHERE title = $1
-        AND (goal_id IS NOT DISTINCT FROM $2)
-        AND (project_id IS NOT DISTINCT FROM $3)
-        AND (status IN ('queued', 'in_progress') OR (status = 'completed' AND completed_at > NOW() - INTERVAL '24 hours'))
-      LIMIT 1
-    `, ['Build profile page', goalId, null]);
-
-    expect(dedupResult.rows.length).toBe(0);
-  });
-
-  it('should handle both canceled and cancelled spellings', async () => {
-    const goalResult = await pool.query(
-      "INSERT INTO key_results (title, priority, status, progress) VALUES ('Dedup spelling goal', 'P0', 'pending', 0) RETURNING id"
-    );
-    testGoalIds.push(goalResult.rows[0].id);
-    const goalId = goalResult.rows[0].id;
-
-    // Create task with 'canceled' (US spelling)
-    const canceledTask = await pool.query(
-      "INSERT INTO tasks (title, status, goal_id, priority, completed_at) VALUES ('Build dashboard page', 'canceled', $1, 'P1', NOW()) RETURNING *",
-      [goalId]
-    );
-    testTaskIds.push(canceledTask.rows[0].id);
-
-    // Create task with 'cancelled' (UK spelling)
-    const cancelledTask = await pool.query(
-      "INSERT INTO tasks (title, status, goal_id, priority, completed_at) VALUES ('Build reports page', 'cancelled', $1, 'P1', NOW()) RETURNING *",
-      [goalId]
-    );
-    testTaskIds.push(cancelledTask.rows[0].id);
-
-    // Both should be queryable with current logic (they both exist but don't block duplicates)
-    const canceledQuery = await pool.query(
-      'SELECT * FROM tasks WHERE id = $1 AND status = $2',
-      [canceledTask.rows[0].id, 'canceled']
-    );
-    const cancelledQuery = await pool.query(
-      'SELECT * FROM tasks WHERE id = $1 AND status = $2',
-      [cancelledTask.rows[0].id, 'cancelled']
-    );
-
-    expect(canceledQuery.rows.length).toBe(1);
-    expect(cancelledQuery.rows.length).toBe(1);
-    expect(canceledQuery.rows[0].status).toBe('canceled');
-    expect(cancelledQuery.rows[0].status).toBe('cancelled');
+  it('普通来源 failed 不阻止后续创建', async () => { await seed({ status: 'failed', age: 2 }); await continues({}); });
+  it('系统来源 73h 前 failed 不阻止后续创建', async () => {
+    await seed({ status: 'failed', age: 73 }); await continues({ trigger_source: 'cortex' });
   });
 });

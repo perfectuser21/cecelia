@@ -2,32 +2,47 @@
  * Blocks API Tests
  * Tests for Notion-like Page Content functionality
  *
- * 集成测试：需要 Brain 服务器运行在 localhost:5221
- * CI 单元测试中跳过，设置 BRAIN_INTEGRATION=1 可启用
+ * 私有已验证PG + 本进程随机loopback端口；不读取API_BASE或生产服务。
  */
 
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import pg from 'pg';
-import { DB_DEFAULTS } from '../db-config.js';
+import express from 'express';
+import { privatePgConfig, verifyPrivatePg } from '../../../../scripts/ci/private-pg-contract.mjs';
+vi.mock('../db.js', () => ({ default: pool }));
+vi.mock('../tick.js', () => ({ getTickStatus: vi.fn() }));
+vi.mock('../executor.js', () => ({ cleanupOrphanProcesses: vi.fn() }));
+vi.mock('../llm-caller.js', () => ({ callLLM: vi.fn(() => { throw Error('external model forbidden'); }) }));
 
 const { Pool } = pg;
 
-const API_BASE = process.env.API_BASE || 'http://localhost:5221/api/brain';
+let API_BASE, server;
+const nativeFetch = globalThis.fetch;
 
 // Test database connection
-const pool = new Pool(DB_DEFAULTS);
+const pool = new Pool(privatePgConfig());
 
 // Test data
 const TEST_PARENT_ID = '99999999-9999-9999-9999-999999999999';
 const TEST_PARENT_TYPE = 'goal';
 let createdBlockId = null;
 
-// 集成测试：只在 BRAIN_INTEGRATION=1 时运行（需要真实 Brain 服务）
-const canRunBlocks = !!process.env.BRAIN_INTEGRATION;
-const describeBlocks = canRunBlocks ? describe : describe.skip;
+// 只接受本轮已验证的私有PG；HTTP router与夹具共用该池。
+const describeBlocks = describe;
 
 describeBlocks('Blocks API', () => {
   beforeAll(async () => {
+    await verifyPrivatePg(pool);
+    const app = express();
+    app.use(express.json());
+    app.use('/api/brain', (await import('../routes/goals.js')).default);
+    server = app.listen(0, '127.0.0.1');
+    await new Promise(resolve => server.once('listening', resolve));
+    API_BASE = `http://127.0.0.1:${server.address().port}/api/brain`;
+    vi.stubGlobal('fetch', (url, options) => {
+      if (new URL(url).origin !== new URL(API_BASE).origin) throw Error('external HTTP forbidden');
+      return nativeFetch(url, options);
+    });
     // Clean up any existing test data
     await pool.query('DELETE FROM blocks WHERE parent_id = $1', [TEST_PARENT_ID]);
   });
@@ -35,6 +50,8 @@ describeBlocks('Blocks API', () => {
   afterAll(async () => {
     // Clean up test data
     await pool.query('DELETE FROM blocks WHERE parent_id = $1', [TEST_PARENT_ID]);
+    vi.unstubAllGlobals();
+    if (server) await new Promise(resolve => server.close(resolve));
     await pool.end();
   });
 
@@ -60,6 +77,9 @@ describeBlocks('Blocks API', () => {
       expect(data.block.order_index).toBe(0);
 
       createdBlockId = data.block.id;
+      expect((await pool.query('SELECT type,content,order_index FROM blocks WHERE id=$1', [createdBlockId])).rows).toEqual([
+        { type: 'heading_1', content: { text: 'Test Heading' }, order_index: 0 },
+      ]);
     });
 
     it('should auto-increment order_index', async () => {
@@ -93,6 +113,11 @@ describeBlocks('Blocks API', () => {
       expect(res.status).toBe(400);
       expect(data.success).toBe(false);
       expect(data.error).toContain('Missing required fields');
+    });
+
+    it('其他parent不能读到本轮blocks', async () => {
+      const res = await fetch(`${API_BASE}/blocks/${TEST_PARENT_TYPE}/00000000-0000-0000-0000-000000000000`);
+      expect((await res.json()).blocks).toEqual([]);
     });
 
     it('should return 400 for invalid parent_type', async () => {
@@ -174,6 +199,7 @@ describeBlocks('Blocks API', () => {
       expect(res.status).toBe(200);
       expect(data.success).toBe(true);
       expect(data.block.content.text).toBe('Updated Heading');
+      expect((await pool.query('SELECT content FROM blocks WHERE id=$1', [createdBlockId])).rows[0].content).toEqual({ text: 'Updated Heading' });
     });
 
     it('should update block type', async () => {
@@ -239,6 +265,8 @@ describeBlocks('Blocks API', () => {
       expect(res.status).toBe(200);
       expect(data.success).toBe(true);
       expect(data.updated).toBe(blocks.length);
+      const persisted = (await pool.query('SELECT id,order_index FROM blocks WHERE parent_id=$1 ORDER BY order_index', [TEST_PARENT_ID])).rows;
+      expect(persisted.map(row => row.id)).toEqual(blocks.map(row => row.id).reverse());
     });
 
     it('should return 400 for empty blocks array', async () => {
@@ -291,6 +319,7 @@ describeBlocks('Blocks API', () => {
       expect(res.status).toBe(200);
       expect(data.success).toBe(true);
       expect(data.deleted.id).toBe(blockToDelete);
+      expect((await pool.query('SELECT id FROM blocks WHERE id=$1', [blockToDelete])).rows).toHaveLength(0);
     });
 
     it('should return 404 for non-existent block', async () => {

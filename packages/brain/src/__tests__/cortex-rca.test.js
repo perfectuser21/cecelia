@@ -5,13 +5,22 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
+import { openDebt08Scratch } from './debt-08-scratch.js';
+const rca = vi.hoisted(() => vi.fn());
+vi.mock('../cortex.js', () => ({ performRCA: rca }));
+// 独立保障边界：这里只验 RCA 分发持久化；隔离判定和接棒另有专属回归。
+vi.mock('../quarantine.js', () => ({ handleTaskFailure: vi.fn(async () => ({ quarantined: false, failure_count: 1 })) }));
+vi.mock('../lib/relay-baton.js', () => ({ relayOnComplete: vi.fn(async () => ({ created: [] })) }));
+let scratch;
 let pool;
 let processCortexTask;
 
 beforeAll(async () => {
   vi.resetModules();
-  pool = (await import('../db.js')).default;
-  ({ processCortexTask } = await import('../tick.js'));
+  scratch = await openDebt08Scratch(['001_cecelia_architecture_upgrade.sql', '234_add_tasks_claim_columns.sql', '220_tasks_result_column.sql', '059_task_runs.sql']);
+  pool = scratch.pool;
+  vi.doMock('../db.js', () => ({ default: pool }));
+  ({ processCortexTask } = await import('../dispatch-helpers.js'));
 });
 
 describe('Cortex RCA Task Processing', () => {
@@ -29,7 +38,7 @@ describe('Cortex RCA Task Processing', () => {
 
   beforeEach(() => {
     // Reset mocks before each test
-    vi.restoreAllMocks();
+    rca.mockReset();
   });
 
   it('should process Cortex task with requires_cortex=true', async () => {
@@ -59,7 +68,7 @@ describe('Cortex RCA Task Processing', () => {
     const actions = [];
 
     // Mock performRCA to avoid actual API call
-    const mockPerformRCA = vi.fn(async () => ({
+    rca.mockImplementation(async () => ({
       task_id: task.id,
       analysis: {
         root_cause: 'High concurrent task load causing resource exhaustion',
@@ -74,9 +83,7 @@ describe('Cortex RCA Task Processing', () => {
       confidence: 0.85
     }));
 
-    vi.doMock('../cortex.js', () => ({
-      performRCA: mockPerformRCA
-    }));
+
 
     // Execute processCortexTask
     const result = await processCortexTask(task, actions);
@@ -138,13 +145,11 @@ describe('Cortex RCA Task Processing', () => {
     const actions = [];
 
     // Mock performRCA to throw error
-    const mockPerformRCA = vi.fn(async () => {
+    rca.mockImplementation(async () => {
       throw new Error('Opus API error: 429 rate limit');
     });
 
-    vi.doMock('../cortex.js', () => ({
-      performRCA: mockPerformRCA
-    }));
+
 
     // Execute processCortexTask
     const result = await processCortexTask(task, actions);
@@ -191,7 +196,7 @@ describe('Cortex RCA Task Processing', () => {
     const actions = [];
 
     // Mock complete RCA result
-    const mockPerformRCA = vi.fn(async () => ({
+    rca.mockImplementation(async () => ({
       task_id: task.id,
       analysis: {
         root_cause: 'Test root cause',
@@ -205,11 +210,10 @@ describe('Cortex RCA Task Processing', () => {
       confidence: 0.9
     }));
 
-    vi.doMock('../cortex.js', () => ({
-      performRCA: mockPerformRCA
-    }));
 
-    await processCortexTask(task, actions);
+
+    const result = await processCortexTask(task, actions);
+    expect(result.dispatched).toBe(true);
 
     // Verify cecelia_events has complete structure
     const events = await pool.query(`
@@ -230,3 +234,5 @@ describe('Cortex RCA Task Processing', () => {
     expect(payload.completed_at).toBeDefined();
   });
 });
+
+afterAll(async () => { if (scratch) await scratch.close(); });

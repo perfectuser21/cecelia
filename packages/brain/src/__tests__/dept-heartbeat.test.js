@@ -12,6 +12,11 @@ import {
   triggerDeptHeartbeats,
 } from '../dept-heartbeat.js';
 
+// 隔离共享建单器及事件出站边界；本文件只验证 heartbeat 编排。
+vi.mock('../actions.js', () => ({ createTask: vi.fn(async () => { throw new Error('必须注入任务创建边界'); }) }));
+vi.mock('../incident-reporter.js', () => ({ reportIncident: vi.fn().mockResolvedValue(undefined) }));
+import { reportIncident } from '../incident-reporter.js';
+
 // ============================================================
 // Mock pool（顺序响应模式：按调用顺序依次返回）
 // ============================================================
@@ -25,10 +30,17 @@ function makePool(queryResponses) {
       return resp || { rows: [] };
     }),
   };
+  pool.taskCreator = vi.fn(async () => {
+    const resp = responses.shift();
+    if (resp instanceof Error) throw resp;
+    if (!resp?.rows?.[0]?.id) throw new Error('缺少建单夹具响应');
+    return { task: resp.rows[0] };
+  });
   return pool;
 }
 
 beforeEach(() => {
+  vi.clearAllMocks();
   vi.spyOn(console, 'log').mockImplementation(() => {});
   vi.spyOn(console, 'error').mockImplementation(() => {});
 });
@@ -131,43 +143,48 @@ describe('createDeptHeartbeatTask', () => {
     const pool = makePool([
       { rows: [] },                          // 无活跃 heartbeat
       { rows: [] },                          // lookupDeptPrimaryGoal -> null
-      { rows: [{ id: 'task-uuid-001' }] },   // INSERT 返回 id
+      { rows: [{ id: 'task-uuid-001' }] },   // 共享建单器 返回 id
     ]);
-    const result = await createDeptHeartbeatTask(pool, dept);
+    const result = await createDeptHeartbeatTask(pool, dept, pool.taskCreator);
     expect(result.created).toBe(true);
     expect(result.task_id).toBe('task-uuid-001');
+    expect(pool.taskCreator).toHaveBeenCalledWith(expect.objectContaining({
+      db: pool, task_type: 'dept_heartbeat', dept: 'zenithjoy',
+      source: 'scheduler', allow_unscoped: true, trigger_source: 'brain_auto',
+    }));
   });
 
   it('D11: 已有活跃 heartbeat 时跳过（幂等/防重复）', async () => {
     const pool = makePool([
       { rows: [{ id: 'existing-task' }] },   // 已存在 queued heartbeat
     ]);
-    const result = await createDeptHeartbeatTask(pool, dept);
+    const result = await createDeptHeartbeatTask(pool, dept, pool.taskCreator);
     expect(result.created).toBe(false);
     expect(result.reason).toBe('already_active');
     expect(result.task_id).toBe('existing-task');
   });
 
-  it('D12: 已有活跃 heartbeat 时不执行 INSERT', async () => {
+  it('D12: 已有活跃 heartbeat 时不调用共享建单器', async () => {
     const pool = makePool([
       { rows: [{ id: 'existing-task' }] },
     ]);
-    await createDeptHeartbeatTask(pool, dept);
-    // 只应调用 1 次查询（检查活跃 heartbeat），不调用 INSERT
+    await createDeptHeartbeatTask(pool, dept, pool.taskCreator);
+    // 只应调用 1 次查询（检查活跃 heartbeat），不调用共享建单器
     expect(pool.query).toHaveBeenCalledTimes(1);
+    expect(pool.taskCreator).not.toHaveBeenCalled();
   });
 
   it('D13: goal_id 为 null 时仍成功创建任务', async () => {
     const pool = makePool([
       { rows: [] },                          // 无活跃 heartbeat
       { rows: [] },                          // lookupDeptPrimaryGoal -> null
-      { rows: [{ id: 'task-no-goal' }] },    // INSERT
+      { rows: [{ id: 'task-no-goal' }] },    // 共享建单器
     ]);
-    const result = await createDeptHeartbeatTask(pool, dept);
+    const result = await createDeptHeartbeatTask(pool, dept, pool.taskCreator);
     expect(result.created).toBe(true);
-    // 验证 INSERT 的 goal_id 参数为 null（第 4 个参数，索引 3）
-    const insertCall = pool.query.mock.calls[2];
-    expect(insertCall[1][3]).toBeNull();
+    // 验证 共享建单器 的 goal_id 参数为 null
+    const createInput = pool.taskCreator.mock.calls[0][0];
+    expect(createInput.goal_id).toBeNull();
   });
 
   it('D14: 有匹配 goal 时绑定 goal_id', async () => {
@@ -175,25 +192,25 @@ describe('createDeptHeartbeatTask', () => {
     const pool = makePool([
       { rows: [] },                          // 无活跃 heartbeat
       { rows: [{ id: goalId }] },            // lookupDeptPrimaryGoal -> 有 goal
-      { rows: [{ id: 'task-with-goal' }] },  // INSERT
+      { rows: [{ id: 'task-with-goal' }] },  // 共享建单器
     ]);
-    const result = await createDeptHeartbeatTask(pool, dept);
+    const result = await createDeptHeartbeatTask(pool, dept, pool.taskCreator);
     expect(result.created).toBe(true);
-    // 验证 INSERT 的 goal_id 参数
-    const insertCall = pool.query.mock.calls[2];
-    expect(insertCall[1][3]).toBe(goalId);
+    // 验证 共享建单器 的 goal_id 参数
+    const createInput = pool.taskCreator.mock.calls[0][0];
+    expect(createInput.goal_id).toBe(goalId);
   });
 
-  it('D15: INSERT 包含正确的 payload JSON', async () => {
+  it('D15: 共享建单器 包含正确的 payload JSON', async () => {
     const pool = makePool([
       { rows: [] },
       { rows: [] },
       { rows: [{ id: 'task-payload' }] },
     ]);
-    await createDeptHeartbeatTask(pool, dept);
-    // 获取 INSERT 调用的参数
-    const insertCall = pool.query.mock.calls[2];
-    const payload = JSON.parse(insertCall[1][4]);
+    await createDeptHeartbeatTask(pool, dept, pool.taskCreator);
+    // 获取 共享建单器 调用的参数
+    const createInput = pool.taskCreator.mock.calls[0][0];
+    const payload = createInput.payload;
     expect(payload).toEqual({
       dept_name: 'zenithjoy',
       repo_path: '/home/xx/perfect21/zenithjoy/workspace',
@@ -207,19 +224,19 @@ describe('createDeptHeartbeatTask', () => {
       { rows: [] },
       { rows: [{ id: 'task-log-check' }] },
     ]);
-    await createDeptHeartbeatTask(pool, dept);
+    await createDeptHeartbeatTask(pool, dept, pool.taskCreator);
     expect(console.log).toHaveBeenCalledWith(
       expect.stringContaining('Created heartbeat task task-log-check')
     );
   });
 
-  it('D17: INSERT 失败时抛出异常', async () => {
+  it('D17: 共享建单器 失败时抛出异常', async () => {
     const pool = makePool([
       { rows: [] },                          // 无活跃 heartbeat
       { rows: [] },                          // lookupDeptPrimaryGoal
-      new Error('unique constraint'),        // INSERT 失败
+      new Error('unique constraint'),        // 共享建单器 失败
     ]);
-    await expect(createDeptHeartbeatTask(pool, dept)).rejects.toThrow('unique constraint');
+    await expect(createDeptHeartbeatTask(pool, dept, pool.taskCreator)).rejects.toThrow('unique constraint');
   });
 
   it('D18: title 包含部门名称', async () => {
@@ -228,9 +245,9 @@ describe('createDeptHeartbeatTask', () => {
       { rows: [] },
       { rows: [{ id: 'task-title' }] },
     ]);
-    await createDeptHeartbeatTask(pool, dept);
-    const insertCall = pool.query.mock.calls[2];
-    const title = insertCall[1][0];
+    await createDeptHeartbeatTask(pool, dept, pool.taskCreator);
+    const createInput = pool.taskCreator.mock.calls[0][0];
+    const title = createInput.title;
     expect(title).toContain('zenithjoy');
     expect(title).toContain('heartbeat');
   });
@@ -252,17 +269,17 @@ describe('triggerDeptHeartbeats', () => {
       { rows: [] },
       // zenithjoy: lookupDeptPrimaryGoal
       { rows: [] },
-      // zenithjoy: INSERT
+      // zenithjoy: 共享建单器
       { rows: [{ id: 'task-1' }] },
       // creator: 无活跃
       { rows: [] },
       // creator: lookupDeptPrimaryGoal
       { rows: [] },
-      // creator: INSERT
+      // creator: 共享建单器
       { rows: [{ id: 'task-2' }] },
     ]);
 
-    const result = await triggerDeptHeartbeats(pool);
+    const result = await triggerDeptHeartbeats(pool, pool.taskCreator);
     expect(result.triggered).toBe(2);
     expect(result.skipped).toBe(0);
     expect(result.results).toHaveLength(2);
@@ -278,7 +295,7 @@ describe('triggerDeptHeartbeats', () => {
       { rows: [{ id: 'task-1' }] },
     ]);
 
-    const result = await triggerDeptHeartbeats(pool);
+    const result = await triggerDeptHeartbeats(pool, pool.taskCreator);
     expect(result.results[0].dept).toBe('zenithjoy');
     expect(result.results[0].created).toBe(true);
     expect(result.results[0].task_id).toBe('task-1');
@@ -293,7 +310,7 @@ describe('triggerDeptHeartbeats', () => {
       { rows: [{ id: 'old-task' }] },
     ]);
 
-    const result = await triggerDeptHeartbeats(pool);
+    const result = await triggerDeptHeartbeats(pool, pool.taskCreator);
     expect(result.triggered).toBe(0);
     expect(result.skipped).toBe(1);
     expect(result.results[0].created).toBe(false);
@@ -312,11 +329,11 @@ describe('triggerDeptHeartbeats', () => {
       { rows: [] },
       // engine: lookupDeptPrimaryGoal
       { rows: [] },
-      // engine: INSERT
+      // engine: 共享建单器
       { rows: [{ id: 'new-engine' }] },
     ]);
 
-    const result = await triggerDeptHeartbeats(pool);
+    const result = await triggerDeptHeartbeats(pool, pool.taskCreator);
     expect(result.triggered).toBe(1);
     expect(result.skipped).toBe(1);
     expect(result.results).toHaveLength(2);
@@ -329,7 +346,7 @@ describe('triggerDeptHeartbeats', () => {
   it('D23: 无活跃部门时返回全零结果', async () => {
     const pool = makePool([{ rows: [] }]);
 
-    const result = await triggerDeptHeartbeats(pool);
+    const result = await triggerDeptHeartbeats(pool, pool.taskCreator);
     expect(result.triggered).toBe(0);
     expect(result.skipped).toBe(0);
     expect(result.results).toEqual([]);
@@ -340,7 +357,7 @@ describe('triggerDeptHeartbeats', () => {
       new Error('DB connection lost'),
     ]);
 
-    const result = await triggerDeptHeartbeats(pool);
+    const result = await triggerDeptHeartbeats(pool, pool.taskCreator);
     expect(result.triggered).toBe(0);
     expect(result.skipped).toBe(0);
     expect(result.results).toEqual([]);
@@ -350,7 +367,7 @@ describe('triggerDeptHeartbeats', () => {
     );
   });
 
-  it('D25: createDeptHeartbeatTask 内部抛异常时被外层 catch 捕获', async () => {
+  it('D25: 单部门建单异常上报 incident 并记录跳过', async () => {
     const pool = makePool([
       { rows: [
         { dept_name: 'brain', max_llm_slots: 2, repo_path: '/brain' },
@@ -359,18 +376,17 @@ describe('triggerDeptHeartbeats', () => {
       { rows: [] },
       // brain: lookupDeptPrimaryGoal
       { rows: [] },
-      // brain: INSERT 失败
+      // brain: 共享建单器 失败
       new Error('disk full'),
     ]);
 
-    const result = await triggerDeptHeartbeats(pool);
-    // try-catch 捕获了错误，不抛出
-    expect(result.triggered).toBe(0);
-    expect(result.skipped).toBe(0);
+    const result = await triggerDeptHeartbeats(pool, pool.taskCreator);
+    expect(result).toEqual({ triggered: 0, skipped: 1,
+      results: [{ dept: 'brain', created: false, reason: 'error' }] });
     expect(console.error).toHaveBeenCalledWith(
-      expect.stringContaining('triggerDeptHeartbeats error'),
-      'disk full'
-    );
+      expect.stringContaining('createDeptHeartbeatTask error for brain'), 'disk full');
+    expect(reportIncident).toHaveBeenCalledWith('dept-heartbeat', 'heartbeat-silent:brain',
+      'p2', { dept_name: 'brain', error: 'disk full' });
   });
 
   it('D26: triggered > 0 时输出日志', async () => {
@@ -383,7 +399,7 @@ describe('triggerDeptHeartbeats', () => {
       { rows: [{ id: 'task-log' }] },
     ]);
 
-    await triggerDeptHeartbeats(pool);
+    await triggerDeptHeartbeats(pool, pool.taskCreator);
     expect(console.log).toHaveBeenCalledWith(
       expect.stringContaining('Triggered 1 heartbeats')
     );
@@ -398,7 +414,7 @@ describe('triggerDeptHeartbeats', () => {
       { rows: [{ id: 'existing' }] },
     ]);
 
-    await triggerDeptHeartbeats(pool);
+    await triggerDeptHeartbeats(pool, pool.taskCreator);
     const triggerLogs = console.log.mock.calls.filter(
       ([msg]) => typeof msg === 'string' && msg.includes('Triggered')
     );

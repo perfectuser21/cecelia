@@ -5,12 +5,11 @@
  * in_progress tasks complete naturally.
  */
 
-import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
-import pg from 'pg';
-import { DB_DEFAULTS } from '../db-config.js';
+import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
+import { pool } from './helpers/debt-05-pg.js';
+vi.mock('../db.js', async () => ({ default: (await import('./helpers/debt-05-pg.js')).pool }));
 
-const { Pool } = pg;
-const pool = new Pool(DB_DEFAULTS);
+
 
 let testGoalIds = [];
 let testProjectIds = [];
@@ -21,11 +20,12 @@ let drainTick, getDrainStatus, cancelDrain, _getDrainState, _resetDrainState;
 
 describe('Tick Drain Mode', () => {
   beforeAll(async () => {
+    await pool.start();
     const result = await pool.query('SELECT 1');
     expect(result.rows[0]['?column?']).toBe(1);
 
     // Dynamic import to get drain functions
-    const tickModule = await import('../tick.js');
+    const tickModule = await import('../drain.js');
     drainTick = tickModule.drainTick;
     getDrainStatus = tickModule.getDrainStatus;
     cancelDrain = tickModule.cancelDrain;
@@ -95,13 +95,13 @@ describe('Tick Drain Mode', () => {
     // Activate drain
     const drainResult = await drainTick();
     expect(drainResult.draining).toBe(true);
-    expect(drainResult.remaining).toBeGreaterThanOrEqual(1);
+    expect(drainResult.remaining).toBe(1);
 
     // Check drain status
     const status = await getDrainStatus();
     expect(status.draining).toBe(true);
-    expect(status.remaining).toBeGreaterThanOrEqual(1);
-    expect(status.in_progress_tasks.length).toBeGreaterThanOrEqual(1);
+    expect(status.remaining).toBe(1);
+    expect(status.in_progress_tasks.length).toBe(1);
 
     const found = status.in_progress_tasks.find(t => t.id === task.rows[0].id);
     expect(found).toBeTruthy();
@@ -112,21 +112,21 @@ describe('Tick Drain Mode', () => {
     await drainTick();
     expect(_getDrainState().draining).toBe(true);
 
-    const result = cancelDrain();
+    const result = await cancelDrain();
     expect(result.success).toBe(true);
     expect(result.was_draining).toBe(true);
     expect(_getDrainState().draining).toBe(false);
   });
 
-  it('should return was_draining=false if cancel when not draining', () => {
-    const result = cancelDrain();
+  it('should return was_draining=false if cancel when not draining', async () => {
+    const result = await cancelDrain();
     expect(result.success).toBe(true);
     expect(result.was_draining).toBe(false);
   });
 
   it('should auto-complete drain when no in_progress tasks remain', async () => {
-    // Clean up any lingering in_progress tasks from other tests
-    await pool.query("UPDATE tasks SET status = 'completed' WHERE status = 'in_progress'");
+    const existing = await pool.query("SELECT id FROM tasks WHERE status = 'in_progress'");
+    expect(existing.rows).toEqual([]);
 
     // Activate drain (no in_progress tasks exist)
     const drainResult = await drainTick();

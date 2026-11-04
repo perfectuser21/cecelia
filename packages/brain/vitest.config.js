@@ -214,10 +214,8 @@ export default defineConfig({
       // 剩余真实资源依赖与旧夹具债务见 scripts/ci/brain-test-debt.json。
       'src/__tests__/actions-dedup.test.js',
       'src/__tests__/actions-goal-validation.test.js',
-      'src/__tests__/actions-initiative-orchestration.test.js',
       'src/__tests__/alertness-actions.test.js',
       'src/__tests__/blocks.test.js',
-      'src/__tests__/code-review-trigger.test.js',
       // consolidation.test.js: 纯 mock 单元测试（vi.mock llm-caller/self-model + 局部 mock pool），已移回 include
       'src/__tests__/cortex-dedup-persist.test.js',
       'src/__tests__/cortex-memory.test.js',
@@ -225,10 +223,7 @@ export default defineConfig({
       'src/__tests__/cortex-quality.test.js',
       'src/__tests__/cortex-rca.test.js',
       'src/__tests__/cortex.test.js',
-      'src/__tests__/daily-review-scheduler.test.js',
-      'src/__tests__/dept-heartbeat.test.js',
       'src/__tests__/execution-strategy-session-kr-link.test.js',
-      'src/__tests__/executor-retry-strategy.test.js',
       'src/__tests__/harness-sprint-loop.test.js',
       'src/__tests__/initiative-orchestration-migration.test.js',
       'src/__tests__/migration-289.test.js',
@@ -242,48 +237,32 @@ export default defineConfig({
       'src/__tests__/migration-030.test.js',
       'src/__tests__/migration-041.test.js',
       'src/__tests__/migrations-087-suggestions.test.js',
-      'src/__tests__/model-registry.test.js',
-      'src/__tests__/planner-domain-routing.test.js',
-      'src/__tests__/planner-initiative-plan.test.js',
       'src/__tests__/planner-learning-penalty.test.js',
       'src/__tests__/planner.test.js',
       'src/__tests__/quarantine-auto-release.test.js',
       'src/__tests__/quarantine-classification.test.js',
       'src/__tests__/quarantine-systemic.test.js',
-      'src/__tests__/resolve-repo-path.test.js',
       'src/__tests__/routes/memory.test.js',
       'src/__tests__/rumination-dedup.test.js',
-      'src/__tests__/services/memory-service.test.js',
       'src/__tests__/suggestion-integration.test.js',
       'src/__tests__/suggestion-triage.test.js',
-      'src/__tests__/task-generator-scheduler.test.js',
       'src/__tests__/task-websocket.test.js',
-      'src/__tests__/tasks-feedback.test.js',
-      'src/__tests__/tasks-status.test.js',
-      'src/__tests__/tick-codex-immune.test.js',
-      'src/__tests__/tick-dispatch-scope-decomposing.test.js',
       'src/__tests__/tick-drain.test.js',
-      'src/__tests__/tick-kr-decomp.test.js',
       'src/__tests__/tick-watchdog-quarantine.test.js',
       'src/__tests__/watchdog-quarantine-race.test.js',
       // Mock 不完整或代码逻辑变更导致失败（pre-existing issue）
       // content-pipeline-{executors,llm,error-message,etc}.test.js 全部已删除
       // （in-Brain content-pipeline 编排搬到 ZJ pipeline-worker，PR zenithjoy#216）
-      'src/__tests__/startup-sync.test.js',
       // content_type 注册表加载缺少 content_type 字段 — 预先存在（main 上已失败）
-      'src/__tests__/content-type-registry.test.js',
       // 需要真实 PostgreSQL 连接的集成测试
       'src/__tests__/integration/pipeline-rescue.integration.test.js',
       // capacity-gate/preview-destroyer: 真连 cecelia_test Postgres（禁 mock db.js），走 brain-integration
       'src/__tests__/integration/capacity-gate.test.js',
       'src/__tests__/integration/preview-destroyer.test.js',
       // 同上，毕业池 tests/regression/ 下的永久回归副本，同样需要真实 Postgres
-      '../../tests/regression/relay-1b1f1ffa/capacity-gate.test.js',
-      '../../tests/regression/relay-1b1f1ffa/preview-destroyer.test.js',
       // dev-registry: 直连 pool.query 验 7 张新表，需真实 DB — 走 brain-integration
       'src/workflows/__tests__/dev-registry.test.js',
       // Pre-existing failure: path.resolve('packages/brain/...') resolves incorrectly from packages/brain/ cwd
-      '../../tests/capability-probe-rumination.test.js',
       // Pre-existing failure: process.cwd() relative paths broken in brain-unit (cwd=packages/brain)
       'src/routes/__tests__/harness-feature-propagation.test.js',
       // relay-85806b9a: 集成测试需真实 Postgres + 硬编码 /workspace/ 路径，不兼容 brain-unit GitHub Actions 环境
@@ -292,10 +271,8 @@ export default defineConfig({
       '../../tests/regression/relay-85806b9a/scan-graph-multi-repo.test.mjs',
       // relay-57e25e92: 读取 sprints/07191312-relay-57e25e92/e2e-verify.sh，但 sprint 目录不在 git 仓库，
       // PR #4131 引入的 pre-existing failure，与本 PR 无关
-      '../../tests/regression/relay-57e25e92/headed-smoke-contract.test.ts',
       // brain-integration 测试：需要真实 Brain HTTP server（localhost:5221），brain-unit 无 server
       'src/routes/__tests__/captures-api.test.ts',
-      '../../tests/regression/relay-07b2fd3b/captures-api.test.ts',
       // 真 Brain HTTP + 真 PostgreSQL 的行为回归；同一合同由
       // scripts/smoke/task-delete-postdeploy-filter-smoke.sh 在 real-env-smoke 中执行。
       '../../tests/regression/relay-137fea96/contract-task-delete.test.ts',
@@ -311,7 +288,6 @@ export default defineConfig({
       '../../tests/regression/capture-destination-link/capture-destination-link.spec.ts',
       // Pre-existing failure (PR #4109): 读取 sprints/07191312-relay-57e25e92/e2e-verify.sh，
       // 该文件已 rename 到 scripts/smoke/e2e/relay-57e25e92.sh，sprint 目录未提交 repo
-      '../../tests/regression/relay-57e25e92/headed-smoke-contract.test.ts',
       // 真 PostgreSQL 回归：brain-unit 无 DB；brain-integration 通过专用 config 显式运行
       ...POSTGRES_INTEGRATION_TESTS,
     ],

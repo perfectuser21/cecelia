@@ -28,7 +28,7 @@ test(versionEntry, t => {
   assert.ok([base, head].every(sha => typeof sha === 'string' && /^[0-9a-f]{40}$/.test(sha)), 'PR_VERSION_EVENT');
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_')));
   Object.assign(env, { GIT_NO_REPLACE_OBJECTS: '1', GIT_GRAFT_FILE: '/dev/null',
-    GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', BASE_REF: base });
+    GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', BASE_REF: base, HEAD_REF: head });
   const git = (...args) => {
     const result = spawnSync('git', ['--no-replace-objects', '-c', 'core.hooksPath=/dev/null', ...args],
       { cwd: root, env, encoding: 'utf8', timeout: 10000 });
@@ -93,7 +93,7 @@ function versionFixture(t, { version = '1.0.0', fragment = false } = {}) {
 }
 
 for (const [version, fragment, accepted] of [['1.0.0', false, false], ['0.9.9', false, false],
-  ['1.0.1', false, true], ['1.0.0', true, true]]) {
+  ['1.0.1', false, true], ['1.0.0', true, false]]) {
   test(`真实自动入口检查实际PR：version=${version},fragment=${fragment}`, t => {
     const result = versionFixture(t, { version, fragment }).run();
     assert.equal(result.error, undefined); assert.equal(result.signal, null);
@@ -185,4 +185,84 @@ test('正式scripts入口自动选择新的实际PR版本策略文件且不使�
   assert.equal(steps[0].args.filter(path => path === versionTestPath).length, 1);
   assert.ok(!steps[0].args.some(arg => arg.startsWith('--test-name-pattern')));
   assert.ok(planChecks([versionTestPath]).some(row => row.component === 'scripts'));
+});
+
+
+test('必需主CI的plan在真实固定BASE/HEAD上执行同一版本增量门禁', t => {
+  const yaml = require('js-yaml');
+  const workflow = yaml.load(readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8'));
+  const step = workflow.jobs.plan.steps.find(step => step.name === 'Require actual Brain version increment');
+  assert.ok(step?.run, '版本门必须在plan执行，不能仅作为可筛选测试存在');
+  assert.equal(step.env.BASE_REF, '${{ github.event.pull_request.base.sha || github.event.before }}');
+  assert.equal(step.env.HEAD_REF, '${{ github.event.pull_request.head.sha || github.sha }}');
+  assert.ok(workflow.jobs['ci-passed'].needs.includes('plan'));
+  for (const [version, fragment, accepted] of [['1.0.0', false, false], ['1.0.0', true, false], ['1.0.1', false, true]]) {
+    const f = versionFixture(t, { version, fragment });
+    const result = spawnSync('bash', ['-e', '-o', 'pipefail', '-c', step.run], {
+      cwd: f.directory, env: { ...f.env, BASE_REF: f.event.pull_request.base.sha, HEAD_REF: f.event.pull_request.head.sha }, encoding: 'utf8',
+    });
+    assert.equal(result.status === 0, accepted, result.stdout + result.stderr);
+  }
+});
+
+test('版本门读取固定HEAD对象，拒绝坏base/head且不能被工作区伪造版本骗过', t => {
+  const f = versionFixture(t, { fragment: true });
+  writeFileSync(join(f.directory, 'packages/brain/package.json'), '{"version":"99.0.0"}');
+  for (const [base, head] of [[f.event.pull_request.base.sha, f.event.pull_request.head.sha],
+    ['missing-base', f.event.pull_request.head.sha], [f.event.pull_request.base.sha, 'missing-head']]) {
+    const result = spawnSync('bash', ['scripts/ci/check-brain-version-bump.sh'], {
+      cwd: f.directory, env: { ...f.env, BASE_REF: base, HEAD_REF: head }, encoding: 'utf8',
+    });
+    assert.notEqual(result.status, 0, result.stdout + result.stderr);
+  }
+});
+
+for (const filename of ['中文.js', 'tab\tfile.js', 'line\nfile.js']) {
+  for (const operation of ['add', 'delete', 'rename-in', 'rename-out', 'outside-only']) {
+    test(`实际Git路径判定：${operation} ${JSON.stringify(filename)}`, t => {
+      const f = versionFixture(t);
+      f.git('reset', '--hard', f.event.pull_request.base.sha);
+      const inside = `packages/brain/src/${filename}`, outside = `fixtures/${filename}`;
+      const put = path => { mkdirSync(dirname(join(f.directory, path)), { recursive: true }); writeFileSync(join(f.directory, path), 'export const changed = true;\n'); };
+      if (operation === 'delete' || operation === 'rename-out') put(inside);
+      if (operation === 'rename-in') put(outside);
+      f.git('add', '.'); f.git('commit', '--allow-empty', '-qm', 'path baseline');
+      const base = f.git('rev-parse', 'HEAD');
+      if (operation === 'add') put(inside);
+      else if (operation === 'outside-only') put(outside);
+      else if (operation === 'delete') f.git('rm', '--', inside);
+      else {
+        const from = operation === 'rename-in' ? outside : inside;
+        const to = operation === 'rename-in' ? inside : outside;
+        mkdirSync(dirname(join(f.directory, to)), { recursive: true });
+        f.git('mv', '--', from, to);
+      }
+      f.git('add', '.'); f.git('commit', '-qm', 'path change');
+      const head = f.git('rev-parse', 'HEAD');
+      const execute = () => spawnSync('bash', ['scripts/ci/check-brain-version-bump.sh'], {
+        cwd: f.directory, env: { ...f.env, BASE_REF: base, HEAD_REF: head }, encoding: 'utf8',
+      });
+      const unchangedVersion = execute();
+      assert.equal(unchangedVersion.status === 0, operation === 'outside-only', unchangedVersion.stdout + unchangedVersion.stderr);
+      if (operation !== 'outside-only') assert.match(unchangedVersion.stdout + unchangedVersion.stderr, /版本未 bump/);
+      writeFileSync(join(f.directory, 'packages/brain/package.json'), '{"version":"1.0.1"}');
+      f.git('add', '.'); f.git('commit', '-qm', 'real version increment');
+      const bumped = spawnSync('bash', ['scripts/ci/check-brain-version-bump.sh'], {
+        cwd: f.directory, env: { ...f.env, BASE_REF: base, HEAD_REF: f.git('rev-parse', 'HEAD') }, encoding: 'utf8',
+      });
+      assert.equal(bumped.status, 0, bumped.stdout + bumped.stderr);
+    });
+  }
+}
+
+test('有效base/head的实际diff执行错误不能当成无源码变更', t => {
+  const f = versionFixture(t, { version: '1.0.1' });
+  const bin = join(f.directory, 'git-error-bin'); mkdirSync(bin);
+  writeFileSync(join(bin, 'git'), '#!/bin/bash\nif [[ "$1" == diff ]]; then echo "fixture diff failure" >&2; exit 128; fi\nexec /usr/bin/git "$@"\n', { mode: 0o755 });
+  const result = spawnSync('bash', ['scripts/ci/check-brain-version-bump.sh'], {
+    cwd: f.directory, env: { ...f.env, PATH: `${bin}:${process.env.PATH}`, BASE_REF: f.event.pull_request.base.sha, HEAD_REF: f.event.pull_request.head.sha }, encoding: 'utf8',
+  });
+  assert.notEqual(result.status, 0, result.stdout + result.stderr);
+  assert.match(result.stderr, /fixture diff failure/);
+  assert.doesNotMatch(result.stdout, /skip/);
 });

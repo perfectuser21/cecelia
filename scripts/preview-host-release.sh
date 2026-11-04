@@ -89,6 +89,14 @@ node "$SCRIPT_DIR/preview-agent/deploy-token.mjs" check >/dev/null 2>&1 \
   || die "凭据文件 ${DEPLOY_TOKEN_FILE} 缺失或没有 DEPLOY_TOKEN= 行（代理会拒绝启动）。先从 1Password 同步再发布"
 [[ "$KEEP" =~ ^[0-9]+$ && "$KEEP" -ge 2 ]] || die "PREVIEW_RELEASE_KEEP 至少为 2（当前版 + 上一版）"
 
+# 活 endpoint 必须有可恢复的 launchd owner。孤儿进程无法由 plist 事务恢复，
+# 不能先安装再靠 health 超时回滚，更不能按旧 plist 名称盲目接管。
+if [[ "$APPLY" = 1 ]] && curl -fsS --max-time 5 "${AGENT_URL}/api/brain/health" >/dev/null 2>&1; then
+  [[ -f "$PLIST" ]] || die "代理 endpoint 已运行，但没有可恢复 plist；拒绝接管孤儿 owner，先完成独立归属迁移"
+  launchctl print "gui/$(id -u)/${LABEL}" >/dev/null 2>&1 \
+    || die "代理 endpoint 已运行，但 launchd owner 未装载；拒绝接管，先完成独立归属迁移"
+fi
+
 if [[ "$APPLY" = 1 ]]; then
   git -C "$SOURCE_REPO" fetch -q origin || die "源仓库 fetch 失败"
 fi

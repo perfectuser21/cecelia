@@ -45,7 +45,8 @@ function glob(pattern,prefix){
 }
 /** 独立信任域只解码已审helper的两张字面量表，不调用业务reader或执行helper。 */
 function skillExcludes(text,component){
- if(!['brain','engine','quality','root'].includes(component)||sha(text)!=='1daf4f27f6fa97b3c8f3d9a9e1a9e86e44fbe92b84c962d1c2ce3b90db32b147')fail();
+ if(!['brain','engine','quality','root'].includes(component)||!['1daf4f27f6fa97b3c8f3d9a9e1a9e86e44fbe92b84c962d1c2ce3b90db32b147',
+  '6f8d97d2346e8b1bd00f4b532d76c8fa9bb871cb807adf7a13d5ce0ffb0f18e3'].includes(sha(text)))fail();
  const objects=new Map(parse(text,{ecmaVersion:'latest',sourceType:'module'}).body.filter(n=>n.type==='ExportNamedDeclaration'&&n.declaration?.type==='VariableDeclaration')
   .flatMap(n=>n.declaration.declarations.map(d=>[d.id.name,d.init])));
  const strings=(name,key)=>{const value=field(objects.get(name),key);if(!value)return[];

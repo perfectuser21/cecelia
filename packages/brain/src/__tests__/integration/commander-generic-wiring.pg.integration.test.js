@@ -9,7 +9,8 @@ import express from 'express';
 import request from 'supertest';
 import yaml from 'js-yaml';
 import serverSource from '../../../server.js?raw';
-import releaseWorkflowSource from '../../../../../.github/workflows/pilot-release-verification.yml?raw';
+import {readPublishedPilotWorkflow} from '../../../../../scripts/ci/__tests__/fixtures/pilot-published-git.mjs';
+const releaseWorkflowSource=readPublishedPilotWorkflow().toString('utf8');
 import { createReleasesRouter } from '../../routes/releases.js';
 import { createWorkflowCommanderRouter } from '../../routes/workflow-commander.js';
 import { TASK_CREATION_INVENTORY } from '../../task-creation-inventory.js';
@@ -69,7 +70,7 @@ it('正式server挂载的HTTP回调鉴权后写真实运行事件，重放不重
     { module: 'lib/commander-v2-control.js', source: 'scheduler', creates_executable_task: true, migration_status: 'routed' },
   ]);
 });
-it('实际发布workflow前置脚本接受登记scope，拒绝跨仓、未知scope和非当前main', () => {
+it('历史固定发布workflow前置脚本接受登记scope，拒绝跨仓、未知scope和非当前main', () => {
   const workflow = yaml.load(releaseWorkflowSource), job = workflow.jobs.snapshot;
   expect(job.if).toBe("github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')");
   expect(workflow.jobs.verify.needs).toBe('snapshot');

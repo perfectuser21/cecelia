@@ -1,12 +1,46 @@
 /**
- * captures API 单元测试骨架
+ * captures API 真实路由 + 私有 PG 集成回归
  * task_id: 07b2fd3b-724b-4da3-bdf3-827821b66ba5
  * 覆盖: FR-3, FR-8
  */
 
-import request from 'supertest';
+import { beforeAll, afterAll, beforeEach, vi } from 'vitest';
+import express from 'express';
+import { pool, openFixture, closeFixture } from '../../__tests__/helpers/debt-11-pg.js';
+vi.mock('../../db.js', async () => ({ default: (await import('../../__tests__/helpers/debt-11-pg.js')).pool }));
+let server;
+let BRAIN_URL;
+let captureId, atomId;
+beforeAll(async () => {
+  await openFixture('captures', ['000_base_schema.sql', '198_captures_table.sql', '199_capture_atoms_events.sql', '354_captures_envelope_fields.sql', '355_capture_atoms_envelope_fields.sql', '385_capture_destination_link.sql'], `
+    CREATE TABLE objectives(id uuid PRIMARY KEY);
+    CREATE TABLE key_results(id uuid PRIMARY KEY);
+    CREATE TABLE okr_projects(id uuid PRIMARY KEY);
+    CREATE TABLE journeys(id uuid PRIMARY KEY);
+  `);
+  const app = express();
+  app.use(express.json());
+  app.use('/api/brain/captures', (await import('../captures.js')).default);
+  app.use('/api/brain/capture-atoms', (await import('../capture-atoms.js')).default);
+  server = await new Promise(resolve => { const s = app.listen(0, '127.0.0.1', () => resolve(s)); });
+  BRAIN_URL = `http://127.0.0.1:${server.address().port}`;
+});
+afterAll(async () => {
+  if (server) await new Promise(resolve => server.close(resolve));
+  await closeFixture();
+});
 
-const BRAIN_URL = process.env.BRAIN_URL || 'http://localhost:5221';
+
+
+beforeEach(async () => {
+  await pool.query('TRUNCATE captures CASCADE');
+  const { rows } = await pool.query(`INSERT INTO captures(content,source,status,nature) VALUES
+    ('seed captured','harness','captured',NULL), ('seed learning','harness','clarified','learning') RETURNING id`);
+  captureId = rows[0].id;
+  const { rows: atoms } = await pool.query(`INSERT INTO capture_atoms(capture_id,content,target_type,status,ai_reason,retry_count)
+    VALUES ($1,'seed atom','task','parked','previous AI reason',2) RETURNING id`, [captureId]);
+  atomId = atoms[0].id;
+});
 
 describe('POST /api/brain/captures', () => {
   const BASE_BODY = { content: 'unit test content', source: 'harness' };
@@ -123,6 +157,7 @@ describe('GET /api/brain/captures', () => {
     const resp = await fetch(`${BRAIN_URL}/api/brain/captures?stage=captured&limit=10`);
     expect(resp.ok).toBe(true);
     const data = await resp.json();
+    expect(data.items.length).toBeGreaterThan(0);
     for (const item of data.items) {
       expect(item.status).toBe('captured');
     }
@@ -132,6 +167,7 @@ describe('GET /api/brain/captures', () => {
     const resp = await fetch(`${BRAIN_URL}/api/brain/captures?nature=learning&limit=10`);
     expect(resp.ok).toBe(true);
     const data = await resp.json();
+    expect(data.items.length).toBeGreaterThan(0);
     for (const item of data.items) {
       expect(item.nature).toBe('learning');
     }
@@ -140,35 +176,60 @@ describe('GET /api/brain/captures', () => {
 
 describe('GET /api/brain/captures/:id', () => {
   it('返回详情 + atoms 数组 + backlinks', async () => {
-    // 先获取一个 id
-    const listResp = await fetch(`${BRAIN_URL}/api/brain/captures?limit=1`);
-    const listData = await listResp.json();
-    if (!listData.items?.length) return; // 无数据跳过
-
-    const id = listData.items[0].id;
+    const id = captureId;
     const resp = await fetch(`${BRAIN_URL}/api/brain/captures/${id}`);
     expect(resp.ok).toBe(true);
     const data = await resp.json();
     expect(data.id).toBe(id);
-    expect(Array.isArray(data.atoms)).toBe(true);
+    expect(data.atoms.map(atom => atom.id)).toContain(atomId);
     expect(Array.isArray(data.backlinks)).toBe(true);
   });
 });
 
 describe('PATCH /api/brain/capture-atoms/:id/confirm', () => {
   it('action:reroute 清空 ai_reason', async () => {
-    // 需要有 parked atom 的 id，否则跳过
-    // 实际测试在 CI 中需要 seed 数据
-    console.log('[SKIP] 需要 seed parked atom 才能验证 reroute');
+    const resp = await fetch(`${BRAIN_URL}/api/brain/capture-atoms/${atomId}/confirm`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'reroute', target_type: 'knowledge' }),
+    });
+    expect(resp.status).toBe(200);
+    expect(await resp.json()).toMatchObject({ id: atomId, status: 'pending_review', ai_reason: null, target_type: 'knowledge' });
+    const { rows } = await pool.query('SELECT status, ai_reason, target_type FROM capture_atoms WHERE id=$1', [atomId]);
+    expect(rows[0]).toEqual({ status: 'pending_review', ai_reason: null, target_type: 'knowledge' });
   });
 
   it('action:drop → status=dropped', async () => {
-    console.log('[SKIP] 需要 seed parked atom 才能验证 drop');
+    const resp = await fetch(`${BRAIN_URL}/api/brain/capture-atoms/${atomId}/confirm`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'drop' }),
+    });
+    expect(resp.status).toBe(200);
+    expect(await resp.json()).toEqual({ id: atomId, status: 'dropped' });
+    const { rows } = await pool.query('SELECT status FROM capture_atoms WHERE id=$1', [atomId]);
+    expect(rows[0].status).toBe('dropped');
   });
 });
 
 describe('POST /api/brain/capture-atoms/:id/retry', () => {
   it('retry_count + 1, status=pending_review', async () => {
-    console.log('[SKIP] 需要 seed parked atom 才能验证 retry');
+    const resp = await fetch(`${BRAIN_URL}/api/brain/capture-atoms/${atomId}/retry`, { method: 'POST' });
+    expect(resp.status).toBe(200);
+    expect(await resp.json()).toEqual({ id: atomId, status: 'pending_review', retry_count: 3 });
+    const { rows } = await pool.query('SELECT status, ai_reason, retry_count FROM capture_atoms WHERE id=$1', [atomId]);
+    expect(rows[0]).toEqual({ status: 'pending_review', ai_reason: null, retry_count: 3 });
+  });
+});
+
+describe('隔离数据上的拒绝边界', () => {
+  it('非法 atom action 返回400且不改原行', async () => {
+    const resp = await fetch(`${BRAIN_URL}/api/brain/capture-atoms/${atomId}/confirm`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'invalid' }),
+    });
+    expect(resp.status).toBe(400);
+    const { rows } = await pool.query('SELECT status, ai_reason FROM capture_atoms WHERE id=$1', [atomId]);
+    expect(rows[0]).toEqual({ status: 'parked', ai_reason: 'previous AI reason' });
+  });
+  it('不存在的 capture 返回404', async () => {
+    const resp = await fetch(`${BRAIN_URL}/api/brain/captures/00000000-0000-0000-0000-000000000000`);
+    expect(resp.status).toBe(404);
   });
 });

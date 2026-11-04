@@ -19,7 +19,15 @@ if [[ ! "$RETRY_DELAY_SECONDS" =~ ^[0-9]+$ ]]; then
   exit 2
 fi
 
-payload="{\"pr_number\":${PR_NUMBER},\"branch_name\":\"${BRANCH_NAME}\"}"
+payload=$(python3 -c 'import json,os,re
+pr=os.environ["PR_NUMBER"]
+if not re.fullmatch(r"[1-9][0-9]*",pr): raise SystemExit("invalid PR_NUMBER")
+payload={"pr_number":int(pr),"branch_name":os.environ["BRANCH_NAME"]}
+sha=os.environ.get("EXPECTED_SHA", "")
+if sha:
+ if not re.fullmatch(r"[a-f0-9]{40}",sha): raise SystemExit("invalid EXPECTED_SHA")
+ payload["expected_sha"]=sha
+print(json.dumps(payload))')
 BODY_FILE="$(mktemp)"
 ERR_FILE="${BODY_FILE}.err"
 trap 'rm -f "$BODY_FILE" "$ERR_FILE"' EXIT

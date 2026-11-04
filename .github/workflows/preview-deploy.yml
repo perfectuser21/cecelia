@@ -13,7 +13,7 @@ name: Preview Deploy
 # 流程：
 #   1. Connect Tailscale
 #   2. 调 Brain API /preview/start → 分配端口 + 触发 preview-env-start.sh（异步）
-#      preview-env-start.sh 在 US VPS 上执行：git worktree + clone DB + build frontend + start Brain
+#      preview-env-start.sh 在 MMV 执行机上执行：git worktree + clone DB + build frontend + start Brain
 #   3. 轮询 /preview/status/:pr 直到 active 或超时
 #   4. 健康检查 Brain URL
 #   5. PR 评论写入预览 URL（失败贴失败原因，绝不贴无效 URL）
@@ -46,18 +46,21 @@ jobs:
     steps:
       - name: Checkout 代码
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
 
       - name: 检查 Tailscale secret 是否配置
         id: check_ts
         run: |
-          if [ -n "$SECRET_TS" ]; then
-            echo "configured=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "configured=false" >> "$GITHUB_OUTPUT"
-            echo "TS_AUTHKEY secret 未配置，跳过预览部署"
+          set -euo pipefail
+          if [ -z "$SECRET_TS" ] || [ -z "$DEPLOY_TOKEN" ]; then
+            echo "::error::TS_AUTHKEY 或 DEPLOY_TOKEN 未配置，预览未部署"
+            exit 1
           fi
+          echo "configured=true" >> "$GITHUB_OUTPUT"
         env:
           SECRET_TS: ${{ secrets.TS_AUTHKEY }}
+          DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
 
       - name: Connect to Tailscale
         if: steps.check_ts.outputs.configured == 'true'
@@ -73,6 +76,7 @@ jobs:
           DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
           PR_NUMBER: ${{ github.event.number }}
           BRANCH_NAME: ${{ github.head_ref }}
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
           echo "调用 Brain API /preview/start..."
@@ -99,6 +103,7 @@ jobs:
           DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
           PR_NUMBER: ${{ github.event.number }}
           BRANCH_NAME: ${{ github.head_ref }}
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
           EXPECTED_PORT: ${{ steps.start_preview.outputs.port }}
           PREVIEW_INITIAL_BRAIN_UPTIME: ${{ steps.start_preview.outputs.brain_uptime }}
           # 冷启动（lock 变动导致 node_modules 无法复用时）光 npm ci 就要十几分钟，
@@ -119,24 +124,14 @@ jobs:
       - name: 健康检查预览 Brain
         id: healthcheck
         if: steps.check_ts.outputs.configured == 'true'
+        env:
+          PREVIEW_HOST: ${{ steps.get_host.outputs.host }}
+          EXPECTED_PORT: ${{ steps.start_preview.outputs.port }}
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+          EXPECTED_DB_NAME: cecelia_preview_${{ github.event.number }}
+          PR_NUMBER: ${{ github.event.number }}
         run: |
-          PORT=${{ steps.start_preview.outputs.port }}
-          HOST=${{ steps.get_host.outputs.host }}
-          PREVIEW_URL="http://${HOST}:${PORT}"
-          echo "health_check: $PREVIEW_URL"
-          for i in $(seq 1 12); do
-            STATUS=$(curl -sf --connect-timeout 5 --max-time 10 "$PREVIEW_URL" 2>/dev/null \
-              | python3 -c "import sys,json; print(json.load(sys.stdin).get('status',''))" 2>/dev/null || echo "")
-            if [ "$STATUS" = "running" ]; then
-              echo "健康检查通过"
-              echo "preview_url=$PREVIEW_URL" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-            echo "  尝试 $i/12: status=${STATUS}，等待..."
-            sleep 10
-          done
-          echo "健康检查失败"
-          exit 1
+          bash scripts/verify-preview-identity.sh
 
       - name: PR 评论写入预览 URL（成功）
         if: steps.check_ts.outputs.configured == 'true' && success()
@@ -162,20 +157,6 @@ jobs:
                 '',
                 '> 此预览环境在 PR 关闭时自动销毁。数据隔离：写入不会污染生产库。',
               ].join('\n'),
-            });
-
-      - name: PR 评论写入（Tailscale 未配置）
-        if: steps.check_ts.outputs.configured == 'false'
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const branch = context.payload.pull_request.head.ref;
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-              body: `## ⚠️ 预览环境未部署\n\n**Branch**: \`${branch}\`\n\n预览功能需在 repo secrets 中配置 \`TS_AUTHKEY\` 和 \`DEPLOY_TOKEN\`。`,
             });
 
       - name: PR 评论写入失败原因

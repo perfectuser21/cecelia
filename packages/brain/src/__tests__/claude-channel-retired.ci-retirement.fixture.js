@@ -1,11 +1,38 @@
 // 只读资格只供固定完整cohort；突变正文只交给守卫，不执行候选源码。
 import {describe,it,expect} from 'vitest';
 import path from 'node:path';
+import {execFileSync} from 'node:child_process';
+
+// 仅追加本批已审的完整组合：AutoVersion marker退役与严格版本门reader必须同时更新。
+// 所有未列成员继承固定旧cohort；不读取候选摘要，不按成员任选历史版本。
+export function ciVersionGuardCohorts(previous) {
+ const current={...previous,
+  'existing-ops-source.js':'d34318e7523501f651d846268d956d6f745349e4cf8a10b1adefdd92ebe9a727',
+  'existing-ops-stage-source.js':'14ebb11805679dd6f559ea42d88ba6f8a1bc96604f474230a2c486af5866e514',
+ };
+ return [current,{...current,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'}];
+}
 
 export function registerCiRetirementGuardTests({root,base,memoBase,scan}) {
  const source=path.join(root,'existing-ops-source.js');
  const members=['stage-source','workspace-source'].map(name=>path.join(root,`existing-ops-${name}.js`));
  describe('CI退役来源只读完整cohort防复活',()=>{
+  const historical=()=>new Map([...base().keys()].map(file=>[file,execFileSync('git',[
+   '--no-replace-objects','show','fadbf32852cdb30f71e34dda9ab81b521bda484b:'+path.relative(path.resolve(root,'../../../..'),file),
+  ],{cwd:root,encoding:'utf8',maxBuffer:1024*1024})]));
+  it('真实版本增量门当前完整reader可读，发布前旧AutoVersion reader仍独立可重放',()=>{
+   for(const sources of [historical(),base()])for(const marker of [0,1]){
+    sources.set(source,sources.get(source).replace(/EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = [01]/,
+     'EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = '+marker));
+    for(const kind of ['build','stage','native-evidence'])expect(scan(sources,path.join(root,`existing-ops-${kind}-envelopes.js`))).toEqual([]);
+   }
+  });
+  it.each([source,members[0]])('当前版本门reader不能混配旧AutoVersion成员：%s',file=>{
+   const current=base(),old=historical();
+   expect(current.get(file)).not.toBe(old.get(file));
+   current.set(file,old.get(file));expect(scan(current).some(hit=>hit.rule==='E1')).toBe(true);
+   old.set(file,base().get(file));expect(scan(old).some(hit=>hit.rule==='E1')).toBe(true);
+  });
   it.each([0,1])('完整marker%s配对保留三类只读封套，旧memo组合独立保留',marker=>{
    const current=base();current.set(source,current.get(source).replace(/EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = [01]/,'EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = '+marker));
    for(const kind of ['build','stage','native-evidence'])expect(scan(current,path.join(root,`existing-ops-${kind}-envelopes.js`))).toEqual([]);

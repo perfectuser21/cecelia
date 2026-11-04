@@ -29,7 +29,7 @@ export function commandsFor(component, shard) {
     case 'brain-unit':
       if (!/^[1-6]$/.test(String(shard))) throw new Error('Brain 分片必须为 1–6');
       return [
-        ...(String(shard) === '1' ? [step('packages/brain', 'npm', 'run', 'lint'), ...shellTests('packages/brain/scripts/fleet-worker'), smokeSafetyTests()] : []),
+        ...(String(shard) === '3' ? [step('packages/brain', 'npm', 'run', 'lint'), ...shellTests('packages/brain/scripts/fleet-worker'), smokeSafetyTests()] : []),
         step('packages/brain', 'npx', '--no-install', 'vitest', 'run', `--shard=${shard}/6`, '--reporter=dot', '--silent'),
       ];
     case 'brain-integration':

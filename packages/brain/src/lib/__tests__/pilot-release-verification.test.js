@@ -1,3 +1,4 @@
+import {readPublishedPilotWorkflow} from '../../../../../scripts/ci/__tests__/fixtures/pilot-published-git.mjs';
 import {afterEach,expect,it,vi} from 'vitest';
 import {existsSync,mkdtempSync,mkdirSync,writeFileSync,readFileSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
@@ -161,8 +162,8 @@ it('PR、漏Step与本机测试脏字节拒绝且无PASS收据',async()=>{
   await expect(runPilotReleaseVerification({...f,repoRoot:f.root})).rejects.toThrow();expect(existsSync(join(f.outputDir,'receipt.json'))).toBe(false);expect(existsSync(join(f.outputDir,'gap.json'))).toBe(true);expect(existsSync(join(f.root,'actual-output'))).toBe(false);
  }
 });
-it('实际主线工作流与凭据隔离存在，不依赖影响workflow整体成功',()=>{
- const url=new URL('../../../../../.github/workflows/pilot-release-verification.yml',import.meta.url);expect(existsSync(url)).toBe(true);const w=yaml.load(readFileSync(url,'utf8'));
+it('历史固定主线工作流与凭据隔离合同保留，不依赖影响workflow整体成功',()=>{
+ const w=yaml.load(readPublishedPilotWorkflow().toString('utf8'));
  expect(w.name).toBe('Pilot release verification');expect(w.on.pull_request).toBeUndefined();expect(w.on.push.branches).toEqual(['main']);
  expect(w.jobs.snapshot.steps[0].run).toContain('perfectuser21/zenithjoy-workspace:commander-generic');
  expect(JSON.stringify(w.jobs.verify)).not.toContain('CECELIA_INTERNAL_TOKEN');expect(JSON.stringify(w.jobs.verify)).toContain('pilot-release-verification.mjs');
@@ -170,7 +171,7 @@ it('实际主线工作流与凭据隔离存在，不依赖影响workflow整体�
 });
 
 it('同main的多个scope上传和下载使用各自artifact，证据不得碰撞',()=>{
- const w=yaml.load(readFileSync(new URL('../../../../../.github/workflows/pilot-release-verification.yml',import.meta.url),'utf8'));
+ const w=yaml.load(readPublishedPilotWorkflow().toString('utf8'));
  const upload=w.jobs.snapshot.steps.find(s=>s.uses?.startsWith('actions/upload-artifact'));
  const download=w.jobs.verify.steps.find(s=>s.uses?.startsWith('actions/download-artifact'));
  const result=w.jobs.verify.steps.find(s=>s.uses?.startsWith('actions/upload-artifact'));
@@ -180,7 +181,7 @@ it('同main的多个scope上传和下载使用各自artifact，证据不得碰�
 });
 
 it('并发main同步同SHA时仅409回读固定快照，unknown不得变PASS',()=>{
- const w=yaml.load(readFileSync(new URL('../../../../../.github/workflows/pilot-release-verification.yml',import.meta.url),'utf8'));
+ const w=yaml.load(readPublishedPilotWorkflow().toString('utf8'));
  const step=w.jobs.snapshot.steps.find(s=>s.name?.includes('刷新并导出'));
  for(const status of ['verified','unknown']){const root=mkdtempSync(join(tmpdir(),'pilot-refresh-race-'));roots.push(root);mkdirSync(join(root,'bin'));writeFileSync(join(root,'bin/curl'),`#!/bin/bash\nif [[ " $* " == *" --get "* ]]; then printf '{"snapshot":{"status":"%s","gaps":[]}}\\n' "$FIXTURE_STATUS"; else printf 409; fi\n`,{mode:0o755});
   const r=spawnSync('/bin/bash',['-c',step.run],{cwd:root,encoding:'utf8',env:{PATH:`${root}/bin:${process.env.PATH}`,FIXTURE_STATUS:status,BRAIN_URL:'http://fixture.invalid',CECELIA_INTERNAL_TOKEN:'fixture',SOURCE_REPO:'perfectuser21/zenithjoy-workspace',MAP_SCOPE:'zenithjoy',HEAD:'a'.repeat(40)}});
@@ -189,7 +190,7 @@ it('并发main同步同SHA时仅409回读固定快照，unknown不得变PASS',()
 });
 
 it('正式caller仅接纳固定repo的新设备巡检scope并拒绝其它身份漂移',()=>{
- const w=yaml.load(readFileSync(new URL('../../../../../.github/workflows/pilot-release-verification.yml',import.meta.url),'utf8'));
+ const w=yaml.load(readPublishedPilotWorkflow().toString('utf8'));
  const root=mkdtempSync(join(tmpdir(),'pilot-caller-scope-'));roots.push(root);mkdirSync(join(root,'bin'));
  writeFileSync(join(root,'bin/gh'),'#!/bin/bash\nprintf "%s\\n" "$FIXTURE_REMOTE_HEAD"\n',{mode:0o755});
  const head='a'.repeat(40),repo='perfectuser21/zenithjoy-workspace';
@@ -200,7 +201,7 @@ it('正式caller仅接纳固定repo的新设备巡检scope并拒绝其它身份�
 });
 
 it('正式Git对象校源token仅接入CLI，登记回归子进程不可继承',async()=>{
- const w=yaml.load(readFileSync(new URL('../../../../../.github/workflows/pilot-release-verification.yml',import.meta.url),'utf8'));
+ const w=yaml.load(readPublishedPilotWorkflow().toString('utf8'));
  const step=w.jobs.verify.steps.find(s=>s.run?.includes('pilot-release-verification.mjs'));
  expect(step.env.GITHUB_TOKEN).toBe('${{ github.token }}');
  expect(w.permissions.contents).toBe('read');

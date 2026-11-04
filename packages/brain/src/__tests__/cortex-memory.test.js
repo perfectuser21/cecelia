@@ -4,15 +4,22 @@
  * Tests persistent storage and semantic search for Cortex RCA analyses.
  */
 
-import { describe, it, expect, beforeEach, afterEach, beforeAll, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, beforeAll, afterAll, vi } from 'vitest';
+import { openDebt08Scratch } from './debt-08-scratch.js';
+vi.mock('../llm-caller.js', () => ({ callLLM: vi.fn(() => { throw new Error('本测试禁止模型调用'); }) }));
+let scratch;
 let pool;
 let saveCortexAnalysis, searchRelevantAnalyses;
 
 beforeAll(async () => {
   vi.resetModules();
-  pool = (await import('../db.js')).default;
+  scratch = await openDebt08Scratch(['013_cortex_analyses.sql', '015_cortex_quality_system.sql']);
+  pool = scratch.pool;
+  vi.doMock('../db.js', () => ({ default: pool }));
   ({ saveCortexAnalysis, searchRelevantAnalyses } = await import('../cortex.js'));
 });
+
+afterAll(async () => { if (scratch) await scratch.close(); });
 
 describe('Cortex Memory - Persistent Storage', () => {
   const testAnalysisIds = [];
@@ -199,7 +206,8 @@ describe('Cortex Memory - Persistent Storage', () => {
 
       const networkAnalysis = results.find(r => r.root_cause.includes('Network failure in dev tasks'));
 
-      if (networkAnalysis) {
+      expect(networkAnalysis).toBeDefined();
+      {
         // Should get at least 10 points for failure_class match
         expect(networkAnalysis.relevance_score).toBeGreaterThanOrEqual(10);
       }
@@ -212,7 +220,8 @@ describe('Cortex Memory - Persistent Storage', () => {
 
       const devAnalysis = results.find(r => r.root_cause.includes('Network failure in dev tasks'));
 
-      if (devAnalysis) {
+      expect(devAnalysis).toBeDefined();
+      {
         // Should get points for task_type match
         expect(devAnalysis.relevance_score).toBeGreaterThanOrEqual(8);
       }
@@ -225,7 +234,8 @@ describe('Cortex Memory - Persistent Storage', () => {
 
       const rcaAnalysis = results.find(r => r.root_cause.includes('QA task resource'));
 
-      if (rcaAnalysis) {
+      expect(rcaAnalysis).toBeDefined();
+      {
         // Should get points for trigger_event match
         expect(rcaAnalysis.relevance_score).toBeGreaterThanOrEqual(6);
       }
@@ -237,7 +247,9 @@ describe('Cortex Memory - Persistent Storage', () => {
       const recentAnalysis = results.find(r => r.root_cause.includes('Recent dev task'));
       const oldAnalysis = results.find(r => r.root_cause.includes('Old network issue'));
 
-      if (recentAnalysis && oldAnalysis) {
+      expect(recentAnalysis).toBeDefined();
+      expect(oldAnalysis).toBeDefined();
+      {
         // Recent analysis (1 day old) should score higher than old analysis (40 days old)
         expect(recentAnalysis.relevance_score).toBeGreaterThan(oldAnalysis.relevance_score);
       }
@@ -252,7 +264,9 @@ describe('Cortex Memory - Persistent Storage', () => {
 
       const exactMatch = results.find(r => r.root_cause.includes('Network failure in dev tasks'));
 
-      if (exactMatch && results.length > 1) {
+      expect(exactMatch).toBeDefined();
+      expect(results.length).toBeGreaterThan(1);
+      {
         // Exact match should be at the top
         expect(results[0].root_cause).toBe(exactMatch.root_cause);
       }
@@ -269,7 +283,7 @@ describe('Cortex Memory - Persistent Storage', () => {
     it('respects limit parameter', async () => {
       const results = await searchRelevantAnalyses({}, 3);
 
-      expect(results.length).toBeLessThanOrEqual(3);
+      expect(results).toHaveLength(3);
     });
 
     it('returns empty array if no analyses exist', async () => {
@@ -280,7 +294,7 @@ describe('Cortex Memory - Persistent Storage', () => {
         task_type: 'nonexistent'
       }, 10);
 
-      expect(Array.isArray(results)).toBe(true);
+      expect(results).toEqual([]);
     });
   });
 });

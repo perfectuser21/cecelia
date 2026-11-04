@@ -3,11 +3,13 @@
  */
 
 import { beforeAll, vi } from 'vitest';
+import { prepare, close } from './debt-06-pg.js';
+vi.mock('../db.js', async () => ({ default: (await import('./debt-06-pg.js')).pool }));
 let createSuggestion, executeTriage, getTopPrioritySuggestions, updateSuggestionStatus, cleanupExpiredSuggestions, getTriageStats;
 let pool;
 
 beforeAll(async () => {
-  vi.resetModules();
+  await prepare(['000_base_schema.sql', '087_suggestions_table.sql']);
   pool = (await import('../db.js')).default;
   ({ createSuggestion, executeTriage, getTopPrioritySuggestions, updateSuggestionStatus, cleanupExpiredSuggestions, getTriageStats } = await import('../suggestion-triage.js'));
 });
@@ -23,6 +25,7 @@ describe('Suggestion Triage System', () => {
     // 最终清理
     await pool.query("DELETE FROM suggestions WHERE source NOT IN ('system', 'user')");
     await pool.query("DELETE FROM cecelia_events WHERE source IN ('suggestion_triage', 'test')");
+    await close();
   });
 
   describe('createSuggestion', () => {

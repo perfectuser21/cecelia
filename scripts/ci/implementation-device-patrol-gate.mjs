@@ -9,7 +9,12 @@ const git=(root,...args)=>execFileSync('git',args,{cwd:root,maxBuffer:32*1024*10
 const read=readImplementationSource;
 const exists=(root,revision,path)=>{try{return !!git(root,'ls-tree','-z',revision,'--',path).length;}catch{return false;}};
 const save=(root,name,value)=>writeFileSync(join(root,name),JSON.stringify(value,null,2)+'\n');
-const REVIEW_TEST='scripts/ci/__tests__/pr-review-thinking.test.mjs';
+const REVIEW_TEST='scripts/ci/__tests__/basic-pr-review-shell.test.mjs';
+// 请求schema由真实成功run41312483613证明；最终工作流失败策略及元数据完整冻结。
+const REVIEW_WORKFLOW_SHA256='254d22ad7fb3f2102bc083ffbc5b37bdad7ce9632dab500cc8b01ed13a04b1dd';
+export function validatePatrolReviewWorkflow(bytes){
+ if(sha(bytes)!==REVIEW_WORKFLOW_SHA256)fail('PATROL_REVIEW_CONTRACT_CHANGED');
+}
 const governancePaths=new Set(['.gitleaksignore','.github/workflows/pr-review.yml',REVIEW_TEST,'.github/workflows/phone-account-patrol.yml','.github/workflows/scripts/smoke/phone-account-patrol-smoke.sh','.github/workflows/scripts/smoke-baseline.txt','.github/workflows/implementation-impact.yml','scripts/ci/__tests__/implementation-impact-workflow.test.mjs','scripts/ci/__tests__/pilot-release-workflow.test.mjs']);
 const projectDoc=path=>/^\.(?:prd|dod)-cp-10101635-phone-account-patrol\.md$/.test(path)||path==='docs/learnings/cp-10101635-phone-account-patrol.md'||path==='.prd-cp-10121630-phone-patrol-openclaw.md'||path==='.dod-cp-10121630-phone-patrol-openclaw.md';
 function contractProof(root,revision,registration,{emptyAllowed=false}={}){
@@ -45,7 +50,7 @@ function governanceProof(root,base,head,path){
   const before=read(root,base,path).toString().trim().split('\n'),after=text.trim().split('\n');
   if(after.length!==before.length+1||before.some(line=>!after.includes(line))||!after.includes('phone-account-patrol-smoke.sh'))fail('PATROL_SMOKE_BASELINE_CHANGED');
  }
- if(path==='.github/workflows/pr-review.yml'&&(!text.includes('thinking')||!text.includes('disabled')||!text.includes('4096')||!text.includes('exit 1')))fail('PATROL_REVIEW_CONTRACT_CHANGED');
+ if(path==='.github/workflows/pr-review.yml')validatePatrolReviewWorkflow(bytes);
  if(path==='.github/workflows/phone-account-patrol.yml'&&(!text.includes('unittest')||!text.includes('compileall')))fail('PATROL_CI_REGRESSION_MISSING');
  if(path==='.github/workflows/scripts/smoke/phone-account-patrol-smoke.sh'&&(!text.includes('unittest')||!text.includes('compileall')||!text.includes('set -e')))fail('PATROL_SMOKE_CHECK_MISSING');
  return {...extra,path,kind:projectDoc(path)?'project_document':'verification_governance',owner:'开发交付治理',capability_id:'ec4eb591-e064-4886-a7b6-4452cdf333d2',head_sha256:sha(bytes),base_sha256:exists(root,base,path)?sha(read(root,base,path)):null};

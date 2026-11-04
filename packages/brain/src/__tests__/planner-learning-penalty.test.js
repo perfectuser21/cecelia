@@ -1,3 +1,4 @@
+import { assertDebt10Scratch } from './helpers/debt-10-scratch.js';
 /**
  * Planner Learning Penalty Tests
  *
@@ -24,6 +25,7 @@ let testLinks = [];
 
 describe('Planner Learning Penalty', () => {
   beforeAll(async () => {
+    await assertDebt10Scratch(pool);
     const result = await pool.query('SELECT 1');
     expect(result.rows[0]['?column?']).toBe(1);
 
@@ -43,25 +45,25 @@ describe('Planner Learning Penalty', () => {
   afterEach(async () => {
     // Cleanup in dependency order
     if (testLearningIds.length > 0) {
-      await pool.query('DELETE FROM learnings WHERE id = ANY($1)', [testLearningIds]).catch(() => {});
+      await pool.query('DELETE FROM learnings WHERE id = ANY($1)', [testLearningIds]);
       testLearningIds = [];
     }
     testLinks = [];
     if (testTaskIds.length > 0) {
-      await pool.query('DELETE FROM tasks WHERE id = ANY($1)', [testTaskIds]).catch(() => {});
+      await pool.query('DELETE FROM tasks WHERE id = ANY($1)', [testTaskIds]);
       testTaskIds = [];
     }
     if (testProjectIds.length > 0) {
-      await pool.query('DELETE FROM tasks WHERE project_id = ANY($1)', [testProjectIds]).catch(() => {});
-      await pool.query('DELETE FROM okr_projects WHERE id = ANY($1)', [testProjectIds]).catch(() => {});
+      await pool.query('DELETE FROM tasks WHERE project_id = ANY($1)', [testProjectIds]);
+      await pool.query('DELETE FROM projects WHERE id = ANY($1)', [testProjectIds]);
       testProjectIds = [];
     }
     if (testKRIds.length > 0) {
-      await pool.query('DELETE FROM key_results WHERE id = ANY($1)', [testKRIds]).catch(() => {});
+      await pool.query('DELETE FROM key_results WHERE id = ANY($1)', [testKRIds]);
       testKRIds = [];
     }
     if (testObjectiveIds.length > 0) {
-      await pool.query('DELETE FROM key_results WHERE id = ANY($1)', [testObjectiveIds]).catch(() => {});
+      await pool.query('DELETE FROM key_results WHERE id = ANY($1)', [testObjectiveIds]);
       testObjectiveIds = [];
     }
   });
@@ -69,7 +71,7 @@ describe('Planner Learning Penalty', () => {
   // Helper: create a test project
   async function createTestProject(name) {
     const result = await pool.query(
-      "INSERT INTO okr_projects (title, status, metadata) VALUES ($1, 'active', '{\"repo_path\":\"/tmp/penalty-test\"}') RETURNING id",
+      "INSERT INTO projects (name, status, metadata) VALUES ($1, 'active', '{\"repo_path\":\"/tmp/penalty-test\"}') RETURNING id",
       [name]
     );
     testProjectIds.push(result.rows[0].id);
@@ -223,7 +225,7 @@ describe('Planner Learning Penalty', () => {
 
       // Create project and KR
       const projResult = await pool.query(
-        "INSERT INTO okr_projects (title, status, metadata) VALUES ('learning-penalty-dispatch-test', 'active', '{\"repo_path\":\"/tmp/lp-test\"}') RETURNING id"
+        "INSERT INTO projects (name, status, metadata) VALUES ('learning-penalty-dispatch-test', 'active', '{\"repo_path\":\"/tmp/lp-test\"}') RETURNING id"
       );
       const projectId = projResult.rows[0].id;
       testProjectIds.push(projectId);
@@ -263,7 +265,7 @@ describe('Planner Learning Penalty', () => {
       const { generateNextTask } = await import('../planner.js');
 
       const projResult = await pool.query(
-        "INSERT INTO okr_projects (title, status, metadata) VALUES ('only-penalized-test', 'active', '{\"repo_path\":\"/tmp/op-test\"}') RETURNING id"
+        "INSERT INTO projects (name, status, metadata) VALUES ('only-penalized-test', 'active', '{\"repo_path\":\"/tmp/op-test\"}') RETURNING id"
       );
       const projectId = projResult.rows[0].id;
       testProjectIds.push(projectId);
@@ -296,7 +298,7 @@ describe('Planner Learning Penalty', () => {
       const { generateNextTask } = await import('../planner.js');
 
       const projResult = await pool.query(
-        "INSERT INTO okr_projects (title, status, metadata) VALUES ('no-penalty-order-test', 'active', '{\"repo_path\":\"/tmp/npo-test\"}') RETURNING id"
+        "INSERT INTO projects (name, status, metadata) VALUES ('no-penalty-order-test', 'active', '{\"repo_path\":\"/tmp/npo-test\"}') RETURNING id"
       );
       const projectId = projResult.rows[0].id;
       testProjectIds.push(projectId);

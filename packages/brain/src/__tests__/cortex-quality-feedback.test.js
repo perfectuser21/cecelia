@@ -3,20 +3,19 @@
  * Tests user feedback recording and effectiveness score updates
  */
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
-import pg from 'pg';
-import { DB_DEFAULTS } from '../db-config.js';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
+import { pool } from './helpers/debt-05-pg.js';
+vi.mock('../db.js', async () => ({ default: (await import('./helpers/debt-05-pg.js')).pool }));
 import {
   recordQualityFeedback,
   updateEffectivenessScore,
   incrementReoccurrence,
 } from '../cortex-quality.js';
 
-const { Pool } = pg;
-let pool;
+
 
 beforeAll(async () => {
-  pool = new Pool(DB_DEFAULTS);
+  await pool.start();
 });
 
 afterAll(async () => {

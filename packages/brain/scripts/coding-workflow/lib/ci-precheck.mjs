@@ -1,8 +1,9 @@
 // CI 门禁本地预检（审计 P1 #4，对应旧 harness「CI 门禁三件套前置进 generator 验收」）：推上 GitHub 之前，
 // 在 worktree 里跑 ci-passed 依赖的、能本地离线复现的规矩类门禁，免得推上去再被 CI 打红、多烧一轮修复。
-// 不在这里跑：版本碎片（publish 保证）、落后 main（runner update-branch）、要数据库/联网的（dod-behavior-dynamic、brain-diff-coverage）。
+// 不在这里跑：真实版本增量（publish 只读校验）、落后 main（runner update-branch）、要数据库/联网的（dod-behavior-dynamic、brain-diff-coverage）。
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import { childEnv } from './protocol.mjs';
 import { profileOf } from './repo-profile.mjs';
@@ -11,6 +12,7 @@ export { prKindOf } from './pr-kind.mjs';
 
 export const PR_SIZE_LIMIT = 3000;
 const BASE = 'origin/main';
+const VERSION_GUARD = fileURLToPath(new URL('../../../../../scripts/ci/check-brain-version-bump.sh', import.meta.url));
 const OUTPUT_TAIL = 3000;
 const CHECK_TIMEOUT_MS = 5 * 60 * 1000;
 
@@ -33,6 +35,7 @@ export function defaultChecks({ branch, feature }) {
     { name: 'smoke-registration', builtin: 'smoke-registration' },
     // 写入型 smoke 要登记 write-targets、curl 先带 -q 等（Smoke Glob Runner 同一条守卫，离线可跑；金丝雀 4 到 CI 才红）
     { name: 'smoke-write-guard', cmd: ['node', '--test', 'packages/brain/scripts/smoke/__tests__/smoke-production-guard.node-test.mjs'] },
+    { name: 'brain-version-increment', cmd: ['bash', VERSION_GUARD], env: { BASE_REF: BASE, HEAD_REF: 'HEAD' }, required: true },
   ];
 }
 
@@ -186,7 +189,7 @@ export async function runPrechecks(worktree, { checks, env = {} }) {
     const [cmd, ...args] = check.cmd;
     // 被跑的脚本 = 参数里第一个脚本文件（`node --test <文件>` 也算；`bash -c` 内联命令不算）；仓库里没有就跳过
     const script = ['bash', 'node', 'python3', 'python'].includes(cmd) ? (args.find((a) => /\.(?:sh|js|mjs|cjs|py)$/.test(a)) ?? null) : null;
-    if (script && !fs.existsSync(path.join(worktree, script))) {
+    if (script && !fs.existsSync(path.resolve(worktree, script))) {
       results.push({ name: check.name, ok: check.required !== true, skipped: check.required !== true, output_tail: `${script} 不存在${check.required ? '，必需检查失败' : '，跳过'}` });
       continue;
     }

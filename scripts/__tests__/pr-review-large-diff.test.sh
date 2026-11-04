@@ -26,7 +26,7 @@ data=json.loads(pathlib.Path(body[1:]).read_text())
 print(json.dumps({'choices':[{'message':{'content':'未发现严重问题'}}]}))
 ''')
  for executable in bin.iterdir():executable.chmod(0o755)
- env={**os.environ,'PATH':str(bin)+':'+os.environ['PATH'],'RUNNER_TEMP':tmp,'GITHUB_ENV':str(envfile),'GITHUB_TOKEN':'fixture','OPENROUTER_API_KEY':'fixture'}
+ env={**os.environ,'PATH':str(bin)+':'+os.environ['PATH'],'RUNNER_TEMP':tmp,'GITHUB_ENV':str(envfile),'GITHUB_TOKEN':'fixture','PR_NUMBER':'42','OPENROUTER_API_KEY':'fixture'}
  subprocess.run(['bash','-eu','-o','pipefail','-c',block('获取 PR diff')],env=env,cwd=root,check=True,stdout=subprocess.DEVNULL)
  assert not envfile.read_text(), 'large diff must not poison subsequent process environments'
  subprocess.run(['bash','-eu','-o','pipefail','-c',block('调用 OpenRouter API 进行代码审查（含重试，fail-closed）')],env=env,cwd=root,check=True,stdout=subprocess.DEVNULL)

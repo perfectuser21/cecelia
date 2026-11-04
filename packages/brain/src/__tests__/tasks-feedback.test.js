@@ -1,182 +1,136 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
-let pool;
+import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest';
+// ── Mocks ──────────────────────────────────────────────────────────────────
 
+const { mockPool } = vi.hoisted(() => ({ mockPool: { query: vi.fn(), connect: vi.fn() } }));
+vi.mock('../db.js', () => ({ default: mockPool }));
+
+// Mock所有 routes.js 依赖的外部模块，防止副作用
+vi.mock('../event-bus.js', () => ({ emit: vi.fn(), on: vi.fn() }));
+vi.mock('../alertness/index.js', () => ({
+  initAlertness: vi.fn(), evaluateAlertness: vi.fn(),
+  getCurrentAlertness: vi.fn().mockReturnValue({ level: 'GREEN', score: 0 }),
+  canDispatch: vi.fn().mockReturnValue(true), canPlan: vi.fn().mockReturnValue(true),
+  getDispatchRate: vi.fn().mockReturnValue(1),
+  ALERTNESS_LEVELS: { GREEN: 'GREEN' }, LEVEL_NAMES: {},
+}));
+vi.mock('../alertness/metrics.js', () => ({ recordTickTime: vi.fn(), recordOperation: vi.fn() }));
+vi.mock('../executor.js', () => ({
+  triggerCeceliaRun: vi.fn(), checkCeceliaRunAvailable: vi.fn().mockResolvedValue(true),
+  getActiveProcessCount: vi.fn().mockReturnValue(0), killProcess: vi.fn(),
+  cleanupOrphanProcesses: vi.fn().mockResolvedValue([]),
+  checkServerResources: vi.fn().mockResolvedValue({ ok: true }),
+  probeTaskLiveness: vi.fn().mockResolvedValue(null),
+  syncOrphanTasksOnStartup: vi.fn().mockResolvedValue(0),
+  killProcessTwoStage: vi.fn(), requeueTask: vi.fn(),
+  MAX_SEATS: 4, INTERACTIVE_RESERVE: 1, getBillingPause: vi.fn().mockResolvedValue(false),
+}));
+vi.mock('../planner.js', () => ({ planNextTask: vi.fn().mockResolvedValue({ reason: 'no_tasks' }) }));
+vi.mock('../thalamus.js', () => ({
+  processEvent: vi.fn().mockResolvedValue(null),
+  EVENT_TYPES: {},
+  ACTION_WHITELIST: {},
+}));
+vi.mock('../circuit-breaker.js', () => ({
+  isAllowed: vi.fn().mockReturnValue(true), recordSuccess: vi.fn(), recordFailure: vi.fn(),
+  getAllStates: vi.fn().mockReturnValue({}),
+}));
+vi.mock('../embedding-service.js', () => ({
+  generateTaskEmbeddingAsync: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock('../events/taskEvents.js', () => ({
+  publishTaskStarted: vi.fn(), publishExecutorStatus: vi.fn(),
+  publishCognitiveState: vi.fn(), publishTaskCompleted: vi.fn(),
+  publishTaskFailed: vi.fn(),
+}));
+vi.mock('../slot-allocator.js', () => ({
+  harnessSlotCheck: vi.fn().mockResolvedValue({ allow: true, reason: 'ok', containers: 0, inflight: 0, cap: { effective: 4, mem_cap: 8, acct_cap: 4, hard_cap: 8 }, stale: false }),
+  calculateSlotBudget: vi.fn().mockReturnValue({ available: 4 }),
+}));
+
+
+let handler;
 beforeAll(async () => {
-  vi.resetModules();
-  pool = (await import('../db.js')).default;
+  const { default: router } = await import('../routes/tasks.js');
+  handler = router.stack.find(layer => layer.route?.path === '/tasks/:task_id/feedback').route.stack[0].handle;
 });
-
-describe('POST /api/brain/tasks/:task_id/feedback', () => {
-  let testTaskId;
-
-  beforeAll(async () => {
-    // Create a test task
-    const result = await pool.query(`
-      INSERT INTO tasks (title, description, status)
-      VALUES ('Test Feedback Task', 'Test feedback functionality', 'in_progress')
-      RETURNING id
-    `);
-    testTaskId = result.rows[0].id;
+beforeEach(() => {
+  mockPool.query.mockReset();
+  mockPool.query.mockImplementation(async sql => {
+    if (sql.includes('SELECT id, status, goal_id')) return { rows: [{ id: 'task-1', status: 'in_progress', goal_id: null }] };
+    if (sql.includes('UPDATE tasks')) return { rows: [] };
+    throw new Error(`本测试禁止未声明查询: ${sql}`);
   });
+});
+async function invoke(body) {
+  const res = { statusCode: 200, body: null, status(code) { this.statusCode = code; return this; }, json(data) { this.body = data; return this; } };
+  await handler({ params: { task_id: 'task-1' }, body }, res);
+  return res;
+}
+function writes() { return mockPool.query.mock.calls.filter(([sql]) => sql.includes('UPDATE tasks')); }
 
-  afterAll(async () => {
-    // Cleanup
-    if (testTaskId) {
-      await pool.query('DELETE FROM tasks WHERE id = $1', [testTaskId]);
+describe('真实任务反馈路由合同（无网络/数据库）', () => {
+  it('接受合法反馈并生成反馈ID和时间戳', async () => {
+    const res = await invoke({ status: 'completed', summary: '完成' });
+    expect(res.statusCode).toBe(200);
+    expect(res.body.success).toBe(true);
+    const [[sql, params]] = writes();
+    expect(sql).toContain('feedback_count = feedback_count + 1');
+    expect(params[1]).toBe('task-1');
+    expect(JSON.parse(params[0])).toEqual([{ id: res.body.feedback_id, received_at: res.body.received_at, status: 'completed', summary: '完成' }]);
+    expect(res.body.feedback_id).toMatch(/^[0-9a-f-]{36}$/);
+    expect(Number.isFinite(Date.parse(res.body.received_at))).toBe(true);
+  });
+  it('缺少summary拒绝且不写库', async () => {
+    const res = await invoke({ status: 'completed' });
+    expect(res.statusCode).toBe(400);
+    expect(res.body.code).toBe('MISSING_FIELD');
+    expect(mockPool.query).not.toHaveBeenCalled();
+  });
+  it.each(['pending', 'in_progress', 'invalid'])('非法反馈状态%s拒绝且不写库', async status => {
+    const res = await invoke({ status, summary: '反馈' });
+    expect(res.statusCode).toBe(400);
+    expect(res.body.code).toBe('INVALID_STATUS');
+    expect(mockPool.query).not.toHaveBeenCalled();
+  });
+  it('不存在的任务返回404且不写库', async () => {
+    mockPool.query.mockResolvedValue({ rows: [] });
+    const res = await invoke({ summary: '反馈' });
+    expect(res.statusCode).toBe(404);
+    expect(res.body.code).toBe('TASK_NOT_FOUND');
+    expect(writes()).toHaveLength(0);
+  });
+  it('多次反馈都追加，使用不同反馈ID', async () => {
+    const first = await invoke({ summary: '第一条' });
+    const second = await invoke({ status: 'failed', summary: '第二条' });
+    expect(first.body.feedback_id).not.toBe(second.body.feedback_id);
+    expect(writes()).toHaveLength(2);
+    expect(JSON.parse(writes()[1][1][0])[0]).toMatchObject({ status: 'failed', summary: '第二条' });
+  });
+  it('每次提交使用原子追加和自增SQL', async () => {
+    for (let i = 0; i < 3; i++) await invoke({ summary: `反馈${i}` });
+    expect(writes()).toHaveLength(3);
+    for (const [sql] of writes()) {
+      expect(sql).toContain('feedback = feedback || $1::jsonb');
+      expect(sql).toContain('feedback_count = feedback_count + 1');
     }
   });
-
-  beforeEach(async () => {
-    // Reset feedback for each test
-    await pool.query(`
-      UPDATE tasks
-      SET feedback = '[]'::jsonb, feedback_count = 0
-      WHERE id = $1
-    `, [testTaskId]);
+  it('保留可选metrics/artifacts/issues/learnings', async () => {
+    const optional = { metrics: { duration_seconds: 100 }, artifacts: { pr_url: 'https://example.invalid/pr/123' }, issues: ['问题'], learnings: ['经验'] };
+    expect((await invoke({ summary: '完成', ...optional })).statusCode).toBe(200);
+    expect(JSON.parse(writes()[0][1][0])[0]).toMatchObject(optional);
   });
-
-  it('should accept valid feedback request', async () => {
-    const feedbackData = {
-      status: 'completed',
-      summary: 'Task completed successfully',
-      metrics: {
-        duration_seconds: 4800,
-        commits: 3,
-        files_changed: 8
-      }
-    };
-
-    const result = await pool.query(`
-      UPDATE tasks
-      SET
-        feedback = feedback || $1::jsonb,
-        feedback_count = feedback_count + 1,
-        updated_at = NOW()
-      WHERE id = $2
-      RETURNING feedback, feedback_count
-    `, [JSON.stringify([{ ...feedbackData, id: 'test-uuid', received_at: new Date().toISOString() }]), testTaskId]);
-
-    expect(result.rows[0].feedback).toHaveLength(1);
-    expect(result.rows[0].feedback[0].status).toBe('completed');
-    expect(result.rows[0].feedback[0].summary).toBe('Task completed successfully');
-    expect(result.rows[0].feedback_count).toBe(1);
+  it('queued任务拒绝反馈且不写库', async () => {
+    mockPool.query.mockResolvedValue({ rows: [{ id: 'task-1', status: 'queued' }] });
+    const res = await invoke({ summary: '反馈' });
+    expect(res.statusCode).toBe(400);
+    expect(res.body.code).toBe('INVALID_TASK_STATUS');
+    expect(writes()).toHaveLength(0);
   });
-
-  it('should reject feedback with missing required fields', async () => {
-    // Missing summary
-    const invalidData = {
-      status: 'completed'
-    };
-
-    // Simulate validation
-    const isValid = !!(invalidData.status && invalidData.summary);
-    expect(isValid).toBe(false);
-  });
-
-  it('should reject invalid status values', async () => {
-    const invalidStatuses = ['pending', 'in_progress', 'invalid'];
-
-    for (const status of invalidStatuses) {
-      const isValid = ['completed', 'failed'].includes(status);
-      expect(isValid).toBe(false);
-    }
-  });
-
-  it('should handle non-existent task_id', async () => {
-    // Use a valid UUID format
-    const nonExistentId = '00000000-0000-0000-0000-000000000000';
-    const result = await pool.query('SELECT id FROM tasks WHERE id = $1', [nonExistentId]);
-    expect(result.rows.length).toBe(0);
-  });
-
-  it('should support multiple feedback submissions', async () => {
-    // First feedback
-    await pool.query(`
-      UPDATE tasks
-      SET
-        feedback = feedback || $1::jsonb,
-        feedback_count = feedback_count + 1
-      WHERE id = $2
-    `, [JSON.stringify([{ id: 'feedback-1', status: 'completed', summary: 'First feedback', received_at: new Date().toISOString() }]), testTaskId]);
-
-    // Second feedback
-    await pool.query(`
-      UPDATE tasks
-      SET
-        feedback = feedback || $1::jsonb,
-        feedback_count = feedback_count + 1
-      WHERE id = $2
-    `, [JSON.stringify([{ id: 'feedback-2', status: 'failed', summary: 'Second feedback', received_at: new Date().toISOString() }]), testTaskId]);
-
-    const result = await pool.query('SELECT feedback, feedback_count FROM tasks WHERE id = $1', [testTaskId]);
-
-    expect(result.rows[0].feedback).toHaveLength(2);
-    expect(result.rows[0].feedback_count).toBe(2);
-    expect(result.rows[0].feedback[0].id).toBe('feedback-1');
-    expect(result.rows[0].feedback[1].id).toBe('feedback-2');
-  });
-
-  it('should increment feedback_count correctly', async () => {
-    // Submit 3 feedbacks
-    for (let i = 1; i <= 3; i++) {
-      await pool.query(`
-        UPDATE tasks
-        SET
-          feedback = feedback || $1::jsonb,
-          feedback_count = feedback_count + 1
-        WHERE id = $2
-      `, [JSON.stringify([{ id: `feedback-${i}`, status: 'completed', summary: `Feedback ${i}`, received_at: new Date().toISOString() }]), testTaskId]);
-    }
-
-    const result = await pool.query('SELECT feedback_count FROM tasks WHERE id = $1', [testTaskId]);
-    expect(result.rows[0].feedback_count).toBe(3);
-  });
-
-  it('should store optional fields (metrics, artifacts, issues, learnings)', async () => {
-    const completeData = {
-      id: 'test-uuid',
-      status: 'completed',
-      summary: 'Complete feedback',
-      metrics: { duration_seconds: 100 },
-      artifacts: { pr_url: 'https://github.com/user/repo/pull/123' },
-      issues: ['Issue 1', 'Issue 2'],
-      learnings: ['Learning 1'],
-      received_at: new Date().toISOString()
-    };
-
-    await pool.query(`
-      UPDATE tasks
-      SET
-        feedback = feedback || $1::jsonb,
-        feedback_count = feedback_count + 1
-      WHERE id = $2
-    `, [JSON.stringify([completeData]), testTaskId]);
-
-    const result = await pool.query('SELECT feedback FROM tasks WHERE id = $1', [testTaskId]);
-    const feedback = result.rows[0].feedback[0];
-
-    expect(feedback.metrics).toEqual({ duration_seconds: 100 });
-    expect(feedback.artifacts).toEqual({ pr_url: 'https://github.com/user/repo/pull/123' });
-    expect(feedback.issues).toEqual(['Issue 1', 'Issue 2']);
-    expect(feedback.learnings).toEqual(['Learning 1']);
-  });
-
-  it('should validate task must be in allowed status', async () => {
-    // Create a pending task
-    const pendingResult = await pool.query(`
-      INSERT INTO tasks (title, description, status)
-      VALUES ('Pending Task', 'Test', 'pending')
-      RETURNING id
-    `);
-    const pendingTaskId = pendingResult.rows[0].id;
-
-    // Check if status is allowed
-    const task = await pool.query('SELECT status FROM tasks WHERE id = $1', [pendingTaskId]);
-    const isAllowed = ['in_progress', 'completed', 'failed'].includes(task.rows[0].status);
-
-    expect(isAllowed).toBe(false);
-
-    // Cleanup
-    await pool.query('DELETE FROM tasks WHERE id = $1', [pendingTaskId]);
+  it('数据库写失败返回500，不能伪报成功', async () => {
+    mockPool.query.mockImplementation(async sql => {
+      if (sql.includes('SELECT id, status, goal_id')) return { rows: [{ id: 'task-1', status: 'in_progress' }] };
+      throw new Error('写入失败');
+    });
+    expect((await invoke({ summary: '反馈' })).statusCode).toBe(500);
   });
 });

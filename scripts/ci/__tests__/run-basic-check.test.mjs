@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, existsSync, rmSync, mkdirSync, copyFileSync, writeFileSync, realpathSync, readFileSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, existsSync, rmSync, mkdirSync, copyFileSync, writeFileSync, realpathSync, readFileSync, symlinkSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -139,7 +139,7 @@ function isolatedBrainSafety(t) {
   writeFileSync(join(f.directory, 'packages/brain/scripts/fleet-worker/private.test.sh'), 'exit 0\n');
   const suite = join(f.directory, smokeSafetyDirectory);
   mkdirSync(suite, { recursive: true });
-  const list = (shard = '1') => spawnSync(process.execPath,
+  const list = (shard = '3') => spawnSync(process.execPath,
     [join(f.ci, 'run-basic-check.mjs'), '--list', 'brain-unit', shard], { encoding: 'utf8' });
   const run = steps => {
     const env = { ...process.env };
@@ -153,7 +153,7 @@ function isolatedBrainSafety(t) {
   return { ...f, suite, list, run };
 }
 
-test('Brain六分片只在第一片显式执行全部顶层Smoke安全测试各一次，不递归fixtures', t => {
+test('Brain六分片只在第三片显式执行全部顶层Smoke安全测试各一次，不递归fixtures', t => {
   const f = isolatedBrainSafety(t);
   const marker = join(f.directory, 'executed');
   for (const name of ['z.node-test.mjs', 'a.node-test.mjs']) writeFileSync(join(f.suite, name),
@@ -165,7 +165,10 @@ test('Brain六分片只在第一片显式执行全部顶层Smoke安全测试各�
   for (let shard = 1; shard <= 6; shard++) {
     const result = f.list(String(shard));
     assert.equal(result.status, 0, result.stderr);
-    suites.push(...JSON.parse(result.stdout).filter(step => step.command === 'node' && step.args[0] === '--test'));
+    const steps = JSON.parse(result.stdout);
+    assert.equal(steps.length, shard === 3 ? 4 : 1);
+    assert.ok(steps.at(-1).args.includes(`--shard=${shard}/6`));
+    suites.push(...steps.filter(step => step.command === 'node' && step.args[0] === '--test'));
   }
   assert.equal(suites.length, 1, 'Safety suite must run once across the six Brain shards');
   assert.deepEqual(suites[0].args, ['--test', `${smokeSafetyDirectory}/a.node-test.mjs`, `${smokeSafetyDirectory}/z.node-test.mjs`]);
@@ -206,4 +209,45 @@ test('Brain实际发现的Smoke安全测试失败时传播失败并停止后续�
   assert.equal(result.status, 1);
   assert.match(result.stdout, /private safety assertion failed/);
   assert.equal(existsSync(marker), false);
+});
+
+
+function executable(path, source) {
+  writeFileSync(path, '#!/bin/sh\n' + source);
+  chmodSync(path, 0o755);
+}
+
+for (const failure of [null, 'lint', 'fleet', 'smoke']) test(`第三片真实守卫链执行及失败传播：${failure ?? '全部成功'}`, t => {
+  const f = isolatedBrainSafety(t);
+  const marker = join(f.directory, 'guard-events');
+  const bin = join(f.directory, 'bin');
+  mkdirSync(bin);
+  executable(join(bin, 'npm'), 'printf "lint\\n" >> "$CI_GUARD_EVENTS"\nexit ' + (failure === 'lint' ? 23 : 0) + '\n');
+  executable(join(bin, 'npx'), 'printf "vitest:%s\\n" "$*" >> "$CI_GUARD_EVENTS"\n');
+  writeFileSync(join(f.directory, 'packages/brain/scripts/fleet-worker/private.test.sh'),
+    'printf "fleet\\n" >> "$CI_GUARD_EVENTS"\nexit ' + (failure === 'fleet' ? 29 : 0) + '\n');
+  writeFileSync(join(f.suite, 'real.node-test.mjs'),
+    `import {appendFileSync} from 'node:fs'; appendFileSync(process.env.CI_GUARD_EVENTS, 'smoke\\n'); ${failure === 'smoke' ? "throw Error('safety chain failed');" : ''}`);
+  const env = {...process.env, PATH: bin + ':' + process.env.PATH, CI_GUARD_EVENTS: marker};
+  delete env.NODE_TEST_CONTEXT;
+  const run = shard => spawnSync(process.execPath, [join(f.ci, 'run-basic-check.mjs'), 'brain-unit', String(shard)],
+    {cwd: f.directory, encoding: 'utf8', env});
+  if (failure) {
+    const result = run(3);
+    assert.equal(result.status, failure === 'lint' ? 23 : failure === 'fleet' ? 29 : 1, result.stdout + result.stderr);
+    const events = readFileSync(marker, 'utf8').trim().split('\n');
+    assert.deepEqual(events, failure === 'lint' ? ['lint'] : failure === 'fleet' ? ['lint','fleet'] : ['lint','fleet','smoke']);
+  } else {
+    for (let shard = 1; shard <= 6; shard++) {
+      const result = run(shard);
+      assert.equal(result.status, 0, result.stdout + result.stderr);
+      const events = readFileSync(marker, 'utf8').trim().split('\n');
+      assert.equal(events.filter(x => x === 'lint').length, shard < 3 ? 0 : 1);
+      assert.equal(events.filter(x => x === 'fleet').length, shard < 3 ? 0 : 1);
+      assert.equal(events.filter(x => x === 'smoke').length, shard < 3 ? 0 : 1);
+    }
+    const vitest = readFileSync(marker, 'utf8').trim().split('\n').filter(x => x.startsWith('vitest:'));
+    assert.equal(vitest.length, 6);
+    for (let shard = 1; shard <= 6; shard++) assert.ok(vitest[shard - 1].includes(`--shard=${shard}/6`));
+  }
 });

@@ -1,9 +1,9 @@
-name: PR Auto Review (DeepSeek)
+name: PR Review (DeepSeek, manual)
 
-# AI 代码审查 — 每个 PR 创建/更新时自动触发
+# 按需 AI 代码审查 — workflow_dispatch 显式指定 PR
 # 使用 DeepSeek V3 通过 OpenRouter API 对代码变更进行 AI review
 # 结果以评论形式发布到 PR
-# 若发现🔴严重问题 → job 失败，阻塞合并
+# API、评论或严重问题检测失败均使本次辅助审查失败；不属于合并必需门
 
 # 在线 AI 审查为按需辅助；结果不属于源码 CI 的强制成功结论。
 on:
@@ -35,7 +35,7 @@ jobs:
       - name: 设置 Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
 
       - name: 验证超长diff请求构造
         run: bash scripts/__tests__/pr-review-large-diff.test.sh
@@ -54,6 +54,7 @@ jobs:
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         run: |
+          : "${OPENROUTER_API_KEY:?缺少 OPENROUTER_API_KEY，不能执行审查}"
           # 构造审查 prompt
           SYSTEM_PROMPT="你是 Cecelia 项目的代码审查员，请用中文对以下代码变更进行审查。
 
@@ -112,15 +113,9 @@ jobs:
             fi
           done
 
-          # 所有重试耗尽，仍无有效内容 → 区分 rate limit（429）和真实错误
+          # API失败或限流均未完成审查，不能声明成功。
           if [[ -z "$REVIEW_CONTENT" ]]; then
-            # 检查最后一次响应是否为 rate limit（429）
-            LAST_STATUS_CODE=$(echo "$RESPONSE" | jq -r '.error.code // 0' 2>/dev/null || echo 0)
-            if [[ "$LAST_STATUS_CODE" == "429" ]] || echo "$RESPONSE" | grep -q '"code":429'; then
-              echo "::warning::OpenRouter API rate limit（429），跳过审查，不阻止 PR 合并"
-              exit 0
-            fi
-            echo "❌ OpenRouter API 调用全部失败（已重试 ${MAX_RETRY} 次），阻止 PR 合并" >&2
+            echo "❌ OpenRouter API 调用全部失败（已重试 ${MAX_RETRY} 次），本次辅助审查失败" >&2
             exit 1
           fi
 
@@ -142,7 +137,7 @@ jobs:
 
           gh pr comment "$PR_NUMBER" \
             --body "$COMMENT_BODY" 2>/dev/null || \
-          echo "评论发布失败（可能权限不足），继续执行严重问题检测"
+          { echo "::error::评论发布失败，本次辅助审查未完成"; exit 1; }
 
       - name: 检测严重问题（🔴 则 job 失败）
         run: |

@@ -1,7 +1,7 @@
 ---
 id: current-ci-pipeline
-version: 2.1.0
-updated: 2026-11-01
+version: 2.2.0
+updated: 2026-11-04
 authority: CURRENT_STATE
 ---
 
@@ -11,8 +11,8 @@ authority: CURRENT_STATE
 
 | CI 类型 | 触发与目的 | 执行范围 |
 |---|---|---|
-| PR CI | 合并前验证候选及其累计变更 | 受影响组件的完整测试、安全与四项合并门禁 |
-| Main CI | 验证真正合入主干的版本，供下一批 PR 使用 | 全部现役源码组件；成功后单独生成 CI 专用来源基线 |
+| PR CI | 合并前验证候选及其累计变更 | 受影响组件的完整测试、安全与三项合并必需检查 |
+| Main CI | 验证真正合入主干的版本，供下一批 PR 使用 | 全部现役源码组件；成功不等于来源基线已生成 |
 | Nightly CI | 集中运行较慢的数据库和容器回归 | 完整 PG 集合、Walking 与 Map Manifest |
 
 PR 和 Main 共用 `ci.yml`，Nightly 使用 `nightly-regression.yml`；下方的来源、Skill 和基线工作流承担独立合同，不能按工作流文件数理解为重复执行同一组测试。通用 CI 不占手机或社媒账号，真实账号验收另走受控队列。
@@ -23,7 +23,7 @@ PR 和 Main 共用 `ci.yml`，Nightly 使用 `nightly-regression.yml`；下方�
 
 | 顶层任务 | 实际责任 | 失败含义 |
 |---|---|---|
-| plan | 真实 Git 差分选择完整组件；main/按需调用运行现役服务全量 | 无有效差分、未知 revision、计划异常都不能继续 |
+| plan | PR/main push 先检查固定 BASE/HEAD 的实际版本增量，再按真实差分选测；按需运行全量 | 无有效差分、未知 revision、计划异常都不能继续 |
 | security | Gitleaks 凭据扫描、运行依赖 high+ 与全依赖 critical 审计 | 缺失/错误报告、工具异常或未豁免漏洞均失败 |
 | checks | 按组件执行真实单测、类型检查、构建、Shell 回归、镜像和隔离运行验收 | 任一实际进程非零或信号退出均失败 |
 | ci-passed | 等待 plan/security/checks，三者都必须 success | skipped/cancelled/空值/未知值均不能通过 |
@@ -32,20 +32,19 @@ PR 和 Main 共用 `ci.yml`，Nightly 使用 `nightly-regression.yml`；下方�
 
 | 组件 | 保障内容 |
 |---|---|
-| Brain | 完整原生单测六分片；第一片还跑 lint 与全部 Fleet Shell 回归 |
+| Brain | 完整原生单测六分片；第三片另跑一次 lint、Fleet Shell 和 smoke 安全回归 |
 | Brain runtime | 新建专用 PG 后执行正式迁移；启动当前源码；HTTP 任务生命周期与KV读写、独立SQL读回；交接文件仅进本人临时目录；真实SIGINT/SIGTERM回归确认本人进程关闭并清理目录 |
 | Brain image | 使用正式 Dockerfile 构建真实镜像 |
-| Engine | 现役脚本语法检查、完整原生单测、unit/integration/integrity Shell 回归 |
 | API | 类型检查、完整单测和编译 |
 | API PG | 临时HTTP服务与每文件私有scratch schema，memory/planning/dev-session共45项真实合同；缺DB或未知外连失败，收尾关闭HTTP与pool并删除本人schema |
 | Dashboard | 完整单测和生产构建 |
-| Quality / MCP | 各组件单测；Quality 历史共享服务探测已改为隔离 HTTP 测试 |
+| MCP | 只读接口组件单测；真实数据库只读与拒写合同归深度 PG 跑道 |
 | Ops | 部署、预览、镜像保留与回退、Runner、进程清理等既有 Node/Shell 夹具；自动发现同类新增测试，关键类别为空即失败 |
 | scripts | CI 自身行为回归、事实/版本一致性、迁移同号与 Skill 所有权检查 |
 | Android | 仅相关客户端改动选择 Gradle/JVM 测试，纳入同一个 ci-passed |
 | 已退役组件 | 根 frontend 与独立 L5 工作流、旧 Quality API／Worker／Gateway 及其专属测试已删除；现役前端为 apps/dashboard，Quality 保留共享 DevGate、Smoke 与 Goldset |
 
-Brain/Engine/API 的共享依赖变更会选择共享运行组及 Ops 回归；全局脚本、依赖和配置变更保守选择现役服务全量。未知可执行路径不会被当成纯文档略过。只有明确的文档路径/文件名走轻量检查，仍运行 CI 自身回归和安全扫描；运行时 Markdown 提示词按所属组件检查，MDX 不按普通文档免检。
+Brain/API 的共享依赖变更会选择共享运行组及 Ops 回归；全局脚本、依赖和配置变更保守选择现役服务全量。未知可执行路径不会被当成纯文档略过。只有明确的文档路径/文件名走轻量检查，仍运行 CI 自身回归和安全扫描；运行时 Markdown 提示词按所属组件检查，MDX 不按普通文档免检。
 
 配置文件名按分段判断，包含大量点号的合法路径不能拖垮范围选择。历史 Sprint 的文档记录仍走轻量检查，目录中的代码、JSON 和 MDX 保守验证。Engine 测试的固定 Shell 正文写入本人临时脚本再执行，路径通过位置参数传递，避免通用 `bash -c` 封装混淆命令正文与数据；保留恶意路径、退出码和清理的真实回归。
 
@@ -81,14 +80,15 @@ Brain/Engine/API 的共享依赖变更会选择共享运行组及 Ops 回归；�
 | implementation-impact.yml | 按需及跨仓显式调用的来源准入；执行发布快照、跨仓、技能与巡查机制回归，再进行差分准入；未接入日常 PR/main 源码 CI，来源资格保护仍由实际发布消费者核验 |
 | CI admission builder / worker | 保留封套、来源与数据库重建机制及隔离测试；ci-admission-baseline.yml 已移除，当前不自动发布 main 基线，也未接入日常 PR 验收 |
 | skill-source-ownership.yml | 所有权专项的单元测试及真实校验；最低 scripts 跑道也运行同一校验器，专项继续作为独立必需检查 |
-| skills-source-check.yml | 固定 Skill 来源的三系统恢复校验及 Brain/Engine/Quality/root 正文合同；所有目标main的PR与main push执行，固定Skill合同通过严格汇总全部结果 |
+| skills-source-check.yml | 固定 Skill 来源的三系统恢复校验及 Brain/root 两组固定正文合同；所有目标main的PR与main push执行，固定Skill合同通过严格汇总全部结果 |
 | ci-dashboard-pwa-e2e.yml | 当前 Dashboard 的 PWA/任务台浏览器专项 |
 | skill-distillation-eval.yml | 按需运行固定截图的真实在线模型评测；沿用原阈值和凭据引用，服务或报告失败真实报红，不作为所有源码 PR 的前置条件 |
-| app-server-canary / attempt-runtime-limits / linux-resource-canary / node-onboarding / us-price-lease | 各组件按路径触发的专项回归 |
+| Phone lease Node/Python/迁移回归 | 已并入必需 scripts 跑道的 basic-phone-lease 包装；原 us-price-lease.yml 独立工作流移除 |
+| app-server-canary / attempt-runtime-limits / linux-resource-canary / node-onboarding | 各组件按路径触发的专项回归 |
 | preview-deploy / preview-cleanup | 当前 Apps 的预览环境创建与回收；依赖更新 bot 不占预览环境 |
-| auto-staging-deploy / deploy / brain-ci-deploy / pilot-release-verification | 发布与来源资格；以 GitHub 启用状态、宿主发布脚本和实际回执为准 |
+| auto-staging-deploy / deploy / brain-ci-deploy | 按需候选或历史发布兼容入口；以 GitHub 启用状态、宿主发布脚本和实际回执为准，不能由文件存在推导已上线 |
 | heartbeat-sentinel / ci-red-alert / verify-tailscale-brain | 运维监控、告警与连接诊断 |
-| archive-learnings / cleanup-merged-artifacts / auto-version | 仓库维护；归档只创建普通 PR，不依赖 harness 标签或已移除的 ci.yml 自动合并 |
+| archive-learnings / cleanup-merged-artifacts | 仓库维护；归档合并已有同月内容，冲突或损坏先失败，验证后才移除原文档；只创建普通 PR |
 
 `cecelia_source_only` 及生产拒绝逻辑保留。来源准入失败应报告未就绪，不能通过删除来源保护来获得“全绿”。
 
@@ -132,7 +132,7 @@ node scripts/ci/run-basic-check.mjs brain-unit 1
 ## 外部切换验收
 
 1. 固定候选 SHA 的源码 CI 真正通过。
-2. 读回 GitHub required checks；以 `源码保底通过` 和 `固定Skill合同通过` 替换旧 Harness/Smoke/ci-passed，继续要求 `Skill source ownership` 的专项单测与校验，以及 `Implementation impact gate` 的真实来源准入。四个必需检查均对所有目标main的PR产生结果。
+2. 读回 GitHub required checks；本轮实际三项为 `源码保底通过`、`固定Skill合同通过`、`Skill source ownership`。Implementation impact 不在当前合并必需列表，按需来源准入与执行资格由其真实消费者独立判定。
 3. 保留 strict、管理员受限、禁止强推及 PR 要求；规则变更不能被描述为测试证据。
 4. 合并后读回 main 对应 SHA 的真实 CI；生产就绪仍由独立发布/来源保护判断。
 
@@ -146,4 +146,6 @@ Node测试入口仅接受匹配名称的普通文件；同名目录、符号链�
 
 排除项不再作为一整块“数据库测试”隐藏：27份隔离测试恢复默认执行，连同额度耗尽保护和真实executor孤儿恢复，共29文件418项通过默认配置。两份逐字相同的额度测试归并；两份已退役initiative推进规格由现役不查数据库、返回零变更的守卫承接。
 
-`scripts/ci/brain-test-debt.json` 精确登记剩余69份未被自动配置接收的测试：7份隔离夹具、59份真实资源依赖、3份旧规格。CI按实际维护glob与源码/Deep/Pinned/real-env入口计算差集；新增遗漏或清单漂移报错。root手动配置不计自动保障，配置接收也不等于文件内全部用例实际通过，59份资源测试本轮未执行。
+`scripts/ci/brain-test-debt.json` 精确登记尚未被自动配置接收的测试及原因；数量以该清单为准。CI按实际维护glob与源码/Deep/Pinned/real-env入口计算差集；新增遗漏或清单漂移报错。手动配置不计自动保障，配置接收也不等于文件内全部用例实际通过，未执行的资源测试不得写成已验收。
+
+AutoVersion 与 Pilot 的当前工作流入口已退役；历史固定 Git 合同仍保留。Brain 源码变更必须在固定候选中完成实际升版，版本碎片不能代替增量。build 预检可以进入修复环，publish 只读复核，不能在验收后偷偷改写候选。

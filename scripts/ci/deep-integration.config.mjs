@@ -1,4 +1,5 @@
 import brainConfig, { POSTGRES_INTEGRATION_TESTS } from '../../packages/brain/vitest.config.js';
+import { privatePgTests, brainRelativePgPath } from './debt-pg.config.mjs';
 
 // 与单测配置共享数据库测试清单，新增集成测试由目录约定自动发现。
 export default {
@@ -11,6 +12,6 @@ export default {
       'src/__tests__/migration-370-gp-governance-decisions.test.js',
       'src/__tests__/nightly-orchestrator.integration.test.js',
       'src/**/integration/**/*.{test,spec}.?(c|m)[jt]s?(x)'],
-    exclude: ['**/node_modules/**'],
+    exclude: ['**/node_modules/**', ...privatePgTests.map(brainRelativePgPath)],
   },
 };

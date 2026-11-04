@@ -133,6 +133,7 @@ test('哨兵 Bark HTTP 故障不能被警告吞成成功', async t => {
   const f = fixture(t);
   const result = await run(sentinel.jobs.alert.steps[1].run, { ...f.env, BARK_URL: url, HEALTH_OK: '', KV_OK: '', KV_AGE: '', PROBE_URL: 'fixture' });
   assert.notEqual(result.status, 0, result.out);
+  assert.match(result.out, /curl_exit=22 http=500/);
 });
 
 for (const [name, gh, want] of [
@@ -157,20 +158,57 @@ for (const [status, body, ok] of [
   const output = readFileSync(f.env.GITHUB_OUTPUT, 'utf8');
   assert.equal(result.status === 0 && output.includes('ok=true'), ok, result.out + output);
 });
-for (const [name, status, finished, ok] of [
-  ['跳转', 302, () => new Date(Date.now() - 1000).toISOString(), false],
-  ['未来', 200, () => new Date(Date.now() + 3600000).toISOString(), false],
-  ['无效', 200, () => 'invalid', false],
-  ['无时区', 200, () => new Date(Date.now() - 1000).toISOString().slice(0, -1), false],
-  ['缺失', 200, () => null, false],
-  ['过期', 200, () => new Date(Date.now() - 27 * 3600000).toISOString(), false],
-  ['近期', 200, () => new Date(Date.now() - 3600000).toISOString(), true],
-]) test(`哨兵真实 KV ${name}时间与HTTP证据`, async t => {
-  const url = await server(t, (_req, res) => { res.statusCode = status; res.end(JSON.stringify({ value: { finished_at: finished() } })); });
-  const f = fixture(t); writeFileSync(f.env.GITHUB_OUTPUT, '');
-  const result = await run(sentinel.jobs.probe.steps.find(s => s.id === 'kv').run, { ...f.env, PROBE_URL: url });
-  const output = readFileSync(f.env.GITHUB_OUTPUT, 'utf8');
-  assert.equal(result.status === 0 && output.includes('ok=true'), ok, result.out + output);
+const deepRun = changes => ({id:41742520265,path:'.github/workflows/nightly-regression.yml',head_branch:'main',
+  head_sha:'a'.repeat(40),status:'completed',conclusion:'success',updated_at:new Date(Date.now()-3600000).toISOString(),
+  html_url:'https://github.com/fixture/repo/actions/runs/41742520265',...changes});
+const deepBody = run => ({total_count:1,workflow_runs:[run]});
+const deepCases = [
+  ['近期成功',200,()=>deepBody(deepRun()),true],
+  ['302绿色JSON',302,()=>deepBody(deepRun()),false],['500绿色JSON',500,()=>deepBody(deepRun()),false],
+  ['空列表',200,()=>({total_count:0,workflow_runs:[]}),false],['缺列表',200,()=>({total_count:1}),false],
+  ['false JSON',200,()=>false,false],['无效JSON',200,()=>'{bad',false],
+  ['未来',200,()=>deepBody(deepRun({updated_at:new Date(Date.now()+3600000).toISOString()})),false],
+  ['过期',200,()=>deepBody(deepRun({updated_at:new Date(Date.now()-27*3600000).toISOString()})),false],
+  ['无时区',200,()=>deepBody(deepRun({updated_at:new Date(Date.now()-1000).toISOString().slice(0,-1)})),false],
+  ['无效时间',200,()=>deepBody(deepRun({updated_at:'invalid'})),false],
+  ['错误workflow',200,()=>deepBody(deepRun({path:'.github/workflows/smoke-e2e-nightly.yml'})),false],
+  ['非main',200,()=>deepBody(deepRun({head_branch:'feature/other'})),false],
+  ['未完成',200,()=>deepBody(deepRun({status:'in_progress'})),false],
+  ['失败后旧green',200,()=>({total_count:2,workflow_runs:[deepRun({conclusion:'failure'}),deepRun({id:2,updated_at:new Date().toISOString()})]}),false],
+  ['最近完成失败',200,()=>deepBody(deepRun({conclusion:'failure'})),false],
+  ['合法字段却跳过',200,()=>deepBody(deepRun({conclusion:'skipped'})),false],
+  ...['id','path','head_branch','head_sha','status','conclusion','updated_at','html_url'].map(field=>
+    ['缺'+field,200,()=>{const run=deepRun();delete run[field];return deepBody(run);},false]),
+  ...[0,-1,true,'41742520265'].map(id=>['非法runId '+id,200,()=>deepBody(deepRun({id})),false]),
+  ['非法SHA',200,()=>deepBody(deepRun({head_sha:'fixture-sha'})),false],
+  ['伪造receipt地址',200,()=>deepBody(deepRun({html_url:'https://fixture.invalid/green'})),false],
+];
+for(const [name,status,body,ok] of deepCases) test(`哨兵真实Deep回归源 ${name}`,async t=>{
+ let calls=0;
+ const url=await server(t,(req,res)=>{calls++;assert.equal(req.headers.authorization,'Bearer isolated-deep-token');
+   res.statusCode=status;const value=body();res.end(typeof value==='string'?value:JSON.stringify(value));});
+ const f=fixture(t,{curl:'args=(); for arg in "$@"; do case "$arg" in https://api.github.com/*) printf "%s" "$arg" > "$FIXTURE_REQUEST_URL"; arg="$FIXTURE_URL";; esac; args+=("$arg"); done; exec /usr/bin/curl "${args[@]}"'});
+ const request=join(f.dir,'request-url');
+ const result=await run(sentinel.jobs.probe.steps.find(s=>s.id==='kv').run,{...f.env,FIXTURE_URL:url,FIXTURE_REQUEST_URL:request,GH_TOKEN:'isolated-deep-token',GITHUB_REPOSITORY:'fixture/repo'});
+ const output=readFileSync(f.env.GITHUB_OUTPUT,'utf8');
+ assert.equal(calls,1);
+ assert.equal(result.status===0,ok,result.out+output);
+ assert.equal(output.includes('ok=true'),ok,result.out+output);
+ assert.equal(readFileSync(request,'utf8'),'https://api.github.com/repos/fixture/repo/actions/workflows/nightly-regression.yml/runs?branch=main&status=completed&per_page=1');
+ assert.ok(!result.out.includes('isolated-deep-token'));
+});
+test('哨兵Deep回归HTTP传输截断不能通过',async t=>{
+ const url=await server(t,(_req,res)=>{res.writeHead(200,{'Content-Length':'999'});res.write('{');res.destroy();});
+ const f=fixture(t,{curl:'args=(); for arg in "$@"; do case "$arg" in https://api.github.com/*) arg="$FIXTURE_URL";; esac; args+=("$arg"); done; exec /usr/bin/curl "${args[@]}"'});
+ const result=await run(sentinel.jobs.probe.steps.find(s=>s.id==='kv').run,{...f.env,FIXTURE_URL:url,GH_TOKEN:'isolated-deep-token',GITHUB_REPOSITORY:'fixture/repo'});
+ assert.notEqual(result.status,0,result.out);
+ assert.doesNotMatch(readFileSync(f.env.GITHUB_OUTPUT,'utf8'),/ok=true/);
+});
+test('哨兵Deep回归缺token在任何HTTP前失败，权限仅actions读取',async t=>{
+ const f=fixture(t,{curl:'exit 99'});
+ const result=await run(sentinel.jobs.probe.steps.find(s=>s.id==='kv').run,{...f.env,GH_TOKEN:'',GITHUB_REPOSITORY:'fixture/repo'});
+ assert.notEqual(result.status,0,result.out);
+ assert.deepEqual(sentinel.jobs.probe.permissions,{actions:'read'});
 });
 test('哨兵 Bark 302 不能声明推送成功', async t => {
   const url = await server(t, (_req, res) => { res.statusCode = 302; res.end('{}'); });
@@ -191,4 +229,19 @@ for (const status of [200, 302, 500]) test(`nightly真实HTTP ${status}绿色JSO
   assert.equal(calls, 1);
   assert.equal(result.status === 0, status === 200, result.out);
   if (status !== 200) assert.doesNotMatch(result.out, /Release Gate 通过/);
+});
+
+test('哨兵缺少Bark配置必须明确失败，不能缺key跳过却显示告警成功', async t => {
+  const f=fixture(t);
+  const result=await run(sentinel.jobs.alert.steps[1].run,{...f.env,BARK_URL:'',BARK_TOKEN:'',HEALTH_OK:'true',KV_OK:'false',KV_AGE:'2000',PROBE_URL:'fixture'});
+  assert.notEqual(result.status,0,result.out);
+});
+
+
+test('哨兵Bark运输失败保留curl与HTTP诊断且不泄露通知地址', async t => {
+ const f=fixture(t,{curl:"printf '000'; exit 7"});
+ const result=await run(sentinel.jobs.alert.steps[1].run,{...f.env,BARK_URL:'https://fixture.invalid/private-token',BARK_TOKEN:'',HEALTH_OK:'true',KV_OK:'false',KV_AGE:'2000',PROBE_URL:'fixture'});
+ assert.notEqual(result.status,0,result.out);
+ assert.match(result.out,/curl_exit=7 http=000/);
+ assert.doesNotMatch(result.out,/private-token|fixture\.invalid/);
 });

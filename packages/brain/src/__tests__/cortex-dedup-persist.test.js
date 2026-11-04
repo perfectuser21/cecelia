@@ -5,25 +5,42 @@
  * 进程重启后能恢复去重状态。
  */
 
-import { describe, it, expect, beforeEach, afterEach, beforeAll, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, beforeAll, afterAll, vi } from 'vitest';
+// 禁止加载模型、任务发送与记忆检索的外部依赖；被测熔断器和 DB 保持真实。
+vi.mock('../llm-caller.js', () => ({ callLLM: vi.fn(() => { throw new Error('禁止模型调用'); }) }));
+vi.mock('../thalamus.js', () => ({ ACTION_WHITELIST: {}, validateDecision: vi.fn(), recordLLMError: vi.fn(), recordTokenUsage: vi.fn() }));
+vi.mock('../learning.js', () => ({ searchRelevantLearnings: vi.fn() }));
+vi.mock('../self-model.js', () => ({ getSelfModel: vi.fn() }));
+vi.mock('../memory-utils.js', () => ({ generateL0Summary: vi.fn() }));
+vi.mock('../actions.js', () => ({ createTask: vi.fn(() => { throw new Error('禁止建单'); }) }));
+vi.mock('../insight-to-constraint.js', () => ({ autoExtractAndPersist: vi.fn() }));
+vi.mock('../circuit-breaker.js', () => ({ recordFailure: vi.fn() }));
+vi.mock('../capture-inbox.js', () => ({ pushCaptureAtom: vi.fn() }));
+import { createDebt07Fixture } from './helpers/debt-07-pg.js';
+vi.mock('../db.js', async () => ({ default: (await import('./helpers/debt-07-pg.js')).getDebt07Pool() }));
+let fixture;
 let pool;
 let _resetReflectionState, _checkReflectionBreaker, _computeEventHash;
 
 beforeAll(async () => {
-  vi.resetModules();
+  fixture = await createDebt07Fixture();
   pool = (await import('../db.js')).default;
   ({ _resetReflectionState, _checkReflectionBreaker, _computeEventHash } = await import('../cortex.js'));
 });
+
+afterAll(async () => { if (fixture) await fixture.close(); });
 
 const DB_KEY_PREFIX = 'cortex_reflection:';
 
 describe('Cortex Dedup Persistence', () => {
   beforeEach(async () => {
+    if (!pool) return;
     _resetReflectionState();
     await pool.query("DELETE FROM working_memory WHERE key LIKE 'cortex_reflection:%'");
   });
 
   afterEach(async () => {
+    if (!pool) return;
     _resetReflectionState();
     await pool.query("DELETE FROM working_memory WHERE key LIKE 'cortex_reflection:%'");
   });
@@ -105,24 +122,21 @@ describe('Cortex Dedup Persistence', () => {
       expect(freshResult.count).toBe(3); // 2 + 1
 
       // 验证过期条目已从 DB 删除
-      const expiredInDB = await pool.query(
-        'SELECT key FROM working_memory WHERE key = $1',
-        [`${DB_KEY_PREFIX}${expiredHash}`]
-      );
-      expect(expiredInDB.rows.length).toBe(0);
+      await vi.waitFor(async () => {
+        const expiredInDB = await pool.query('SELECT key FROM working_memory WHERE key = $1', [`${DB_KEY_PREFIX}${expiredHash}`]);
+        expect(expiredInDB.rows).toHaveLength(0);
+      });
     });
 
-    it('DoD-4: DB failure degrades to memory-only mode', async () => {
-      // 写入无效结构到 DB（缺少 count 字段）
-      await pool.query(`
-        INSERT INTO working_memory (key, value_json, updated_at)
-        VALUES ($1, $2::jsonb, NOW())
-      `, [`${DB_KEY_PREFIX}bad_data`, JSON.stringify({ bad_format: true })]);
-
-      // 即使 DB 数据格式异常，也不应抛出异常
-      const result = await _checkReflectionBreaker('test_fallback');
-      expect(result.open).toBe(false);
-      expect(result.count).toBe(1);
+    it('DoD-4: DB load/write failure degrades to memory-only mode', async () => {
+      const original = pool.query.bind(pool);
+      const fault = vi.spyOn(pool, 'query').mockRejectedValue(new Error('第07路注入数据库不可用'));
+      try {
+        expect(await _checkReflectionBreaker('test_fallback')).toEqual({ open: false, count: 1 });
+        expect(await _checkReflectionBreaker('test_fallback')).toEqual({ open: true, count: 2 });
+        expect(fault).toHaveBeenCalledTimes(3); // 一次加载、两次持久化均真实失败
+      } finally { fault.mockRestore(); }
+      expect((await original('SELECT key FROM working_memory WHERE key = $1', [`${DB_KEY_PREFIX}test_fallback`])).rows).toHaveLength(0);
     });
 
     it('accumulates count correctly across multiple calls', async () => {
