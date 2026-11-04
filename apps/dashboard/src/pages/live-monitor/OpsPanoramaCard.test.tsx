@@ -132,6 +132,7 @@ describe('OpsPanoramaCard 真实组件', () => {
     mockFetch.mockRejectedValueOnce(new Error('离线'));
     await act(async () => { await vi.advanceTimersByTimeAsync(30000); });
     expect(screen.getByTestId('ops-panorama-tasks-count')).toHaveTextContent(/^3$/);
+    expect(screen.getByTestId('ops-panorama-source-errors')).toHaveTextContent('刷新失败');
     respond({ ...PANORAMA, tasks: { ...PANORAMA.tasks, in_progress_count: 9 } });
     await act(async () => { await vi.advanceTimersByTimeAsync(30000); });
     expect(screen.getByTestId('ops-panorama-tasks-count')).toHaveTextContent(/^9$/);
@@ -149,4 +150,19 @@ describe('OpsPanoramaCard 真实组件', () => {
     expect(screen.getByTestId('ops-panorama-loading')).toHaveTextContent('加载中');
     expect(screen.queryByTestId('ops-panorama-card')).not.toBeInTheDocument();
   });
+  it('任务与进程来源未知显示破折号，正常零仍显示0',async()=>{
+    respond({...PANORAMA,tasks:{in_progress_count:null,vendor_dist:null,available:false,error:'任务来源不可用',sampled_at:null},processes:{claude_total:null,codex_total:null,available:false,error:'进程来源不可用',sampled_at:null}} as unknown as OpsPanoramaData);
+    await showCard();
+    expect(screen.getByTestId('ops-panorama-tasks-count')).toHaveTextContent(/^—$/);
+    expect(screen.getByTestId('ops-panorama-claude-procs')).toHaveTextContent(/^—$/);
+    expect(screen.getByTestId('ops-panorama-codex-procs')).toHaveTextContent(/^—$/);
+    expect(screen.getByTestId('ops-panorama-source-errors')).toHaveTextContent('任务来源不可用');
+    expect(screen.getByTestId('ops-panorama-source-errors')).toHaveTextContent('进程来源不可用');
+    respond({...PANORAMA,tasks:{in_progress_count:0,vendor_dist:{}},processes:{claude_total:0,codex_total:0}});
+    await act(async()=>{await vi.advanceTimersByTimeAsync(30000);});
+    expect(screen.getByTestId('ops-panorama-tasks-count')).toHaveTextContent(/^0$/);
+    expect(screen.getByTestId('ops-panorama-claude-procs')).toHaveTextContent(/^0$/);
+    expect(screen.queryByTestId('ops-panorama-source-errors')).not.toBeInTheDocument();
+  });
+
 });

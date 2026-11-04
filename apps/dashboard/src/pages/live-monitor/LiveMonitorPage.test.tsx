@@ -230,4 +230,18 @@ describe('LiveMonitorPage v19', () => {
     // 非 dev 任务过滤后，面板显示空状态
     expect(screen.getByText('无运行中的 /dev 任务')).toBeInTheDocument();
   });
+  it('单源请求失败标明不可用，恢复后清除陈旧提示',async()=>{
+    let failed=true;
+    (global.fetch as ReturnType<typeof vi.fn>).mockImplementation(async(url:string)=>{
+      if(url.includes('status=in_progress')&&failed)throw Error('owned source offline');
+      return {ok:true,json:async()=>url.includes('/tasks?')?[]:{}};
+    });
+    await act(async()=>{renderWithRouter();});
+    expect(screen.getByTestId('live-monitor-source-errors')).toHaveTextContent('运行任务不可用');
+    expect(screen.getByTestId('live-monitor-source-errors')).toHaveTextContent('暂无有效采样');
+    failed=false;
+    await act(async()=>{await vi.advanceTimersByTimeAsync(5000);});
+    expect(screen.queryByTestId('live-monitor-source-errors')).not.toBeInTheDocument();
+  });
+
 });
