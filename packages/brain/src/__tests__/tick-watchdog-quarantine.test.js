@@ -63,6 +63,10 @@ describe('tick-watchdog-quarantine (P0 Fix #3)', () => {
 
     expect(payload.watchdog_retry_count).toBe(1);
     expect(payload.failure_count).toBe(1); // P0 FIX: failure_count should also increment
+    const events = await pool.query('SELECT event_type FROM task_events WHERE task_id = $1', [testTaskId]);
+    expect(events.rows.map(r => r.event_type)).toContain('watchdog_requeue');
+    const learnings = await pool.query('SELECT task_id FROM learnings WHERE task_id = $1', [testTaskId]);
+    expect(learnings.rows).toHaveLength(1);
   });
 
   it('should quarantine task after 2 watchdog kills', async () => {
@@ -109,9 +113,9 @@ describe('tick-watchdog-quarantine (P0 Fix #3)', () => {
 
   it('should include total_failures in quarantine details', async () => {
     // Kill twice to quarantine
-    await requeueTask(testTaskId, 'RSS exceeded', {});
+    await requeueTask(testTaskId, 'RSS exceeded', { rss_mb: 3000 });
     await pool.query(`UPDATE tasks SET status = 'in_progress' WHERE id = $1`, [testTaskId]);
-    await requeueTask(testTaskId, 'RSS exceeded', {});
+    await requeueTask(testTaskId, 'RSS exceeded', { rss_mb: 3000 });
 
     const task = await pool.query('SELECT payload FROM tasks WHERE id = $1', [testTaskId]);
     const details = task.rows[0].payload.quarantine_info?.details;
@@ -119,6 +123,18 @@ describe('tick-watchdog-quarantine (P0 Fix #3)', () => {
     expect(details).toBeDefined();
     expect(details.watchdog_retries).toBe(2);
     expect(details.total_failures).toBe(2); // P0 FIX: total_failures tracked
+  });
+
+  it('没有资源实证时达到重试阈值仍不误隔离', async () => {
+    await requeueTask(testTaskId, 'RSS exceeded', {});
+    await pool.query("UPDATE tasks SET status = 'in_progress' WHERE id = $1", [testTaskId]);
+    const result = await requeueTask(testTaskId, 'RSS exceeded', {});
+    expect(result.requeued).toBe(true);
+    expect(result.quarantined).toBeUndefined();
+    const { rows: [task] } = await pool.query('SELECT status, payload FROM tasks WHERE id = $1', [testTaskId]);
+    expect(task.status).toBe('queued');
+    expect(task.payload.failure_count).toBe(2);
+    expect(task.payload.quarantine_info).toBeUndefined();
   });
 
   it('should NOT requeue if task is no longer in_progress', async () => {

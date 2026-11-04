@@ -17,7 +17,7 @@ let processCortexTask;
 
 beforeAll(async () => {
   vi.resetModules();
-  scratch = await openDebt08Scratch(['001_cecelia_architecture_upgrade.sql', '234_add_tasks_claim_columns.sql']);
+  scratch = await openDebt08Scratch(['001_cecelia_architecture_upgrade.sql', '234_add_tasks_claim_columns.sql', '220_tasks_result_column.sql', '059_task_runs.sql']);
   pool = scratch.pool;
   vi.doMock('../db.js', () => ({ default: pool }));
   ({ processCortexTask } = await import('../dispatch-helpers.js'));
@@ -212,7 +212,8 @@ describe('Cortex RCA Task Processing', () => {
 
 
 
-    await processCortexTask(task, actions);
+    const result = await processCortexTask(task, actions);
+    expect(result.dispatched).toBe(true);
 
     // Verify cecelia_events has complete structure
     const events = await pool.query(`

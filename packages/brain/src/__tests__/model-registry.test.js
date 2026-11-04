@@ -17,9 +17,27 @@ import { updateAgentModel, batchUpdateAgentModels, _resetProfileCache, getActive
 // Mock Pool Helper
 // ============================================================
 
-function makeMockPool(queryHandler) {
+function makeMockPool(queryHandler, { failReceipt = false } = {}) {
+  let written;
+  const client = {
+    query: vi.fn(async (sql, params) => {
+      if (sql.startsWith('UPDATE model_profiles')) {
+        const { rows: [profile] } = await queryHandler('SELECT');
+        written = { ...profile, config: JSON.parse(params[0]), is_active: true };
+        return { rows: [written] };
+      }
+      if (sql.startsWith('SELECT')) return { rows: written ? [written] : [] };
+      if (sql.startsWith('INSERT INTO cecelia_events') && failReceipt) {
+        throw new Error('receipt write failed');
+      }
+      return { rows: [] };
+    }),
+    release: vi.fn(),
+  };
   return {
     query: vi.fn(queryHandler || (async () => ({ rows: [] }))),
+    connect: vi.fn(async () => client),
+    client,
   };
 }
 
