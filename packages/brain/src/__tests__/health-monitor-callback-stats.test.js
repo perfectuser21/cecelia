@@ -56,12 +56,12 @@ describe('runLayer2HealthCheck — callback_queue_stats', () => {
     expect(result.callback_queue_stats.failed_retries).toBe(0);
   });
 
-  it('callback_queue 查询失败时降级为默认值 {unprocessed:0, failed_retries:0}', async () => {
+  it('callback_queue 查询失败时保留unknown而非伪报空队列', async () => {
     const pool = makeMockPool({ cbError: new Error('relation "callback_queue" does not exist') });
     const result = await runLayer2HealthCheck(pool);
 
     // 不抛异常，使用默认值
-    expect(result.callback_queue_stats).toEqual({ unprocessed: 0, failed_retries: 0 });
+    expect(result.callback_queue_stats).toEqual({ unprocessed: null, failed_retries: null, available: false, error: 'relation "callback_queue" does not exist' });
   });
 
   it('结果顶层包含 level / checks / failing / callback_queue_stats / summary', async () => {

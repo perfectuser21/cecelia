@@ -54,7 +54,7 @@ async function runLayer2HealthCheck(pool) {
 
     checks.dispatched_1h = { value: dispatched_1h, uptime_h: Math.round(uptime_h * 10) / 10, ok: !warn };
   } catch (err) {
-    checks.dispatched_1h = { error: err.message, ok: true }; // non-blocking
+    checks.dispatched_1h = { error: err.message, ok: null, available: false }; // non-blocking
   }
 
   // Check 2: stuck_tasks — in_progress > 2 hours
@@ -70,7 +70,7 @@ async function runLayer2HealthCheck(pool) {
 
     checks.stuck_tasks = { value: stuck_tasks, ok };
   } catch (err) {
-    checks.stuck_tasks = { error: err.message, ok: true };
+    checks.stuck_tasks = { error: err.message, ok: null, available: false };
   }
 
   // Check 3: last_success_ago_min — minutes since last completed task
@@ -87,7 +87,7 @@ async function runLayer2HealthCheck(pool) {
 
     checks.last_success_ago_min = { value: ago_min, ok };
   } catch (err) {
-    checks.last_success_ago_min = { error: err.message, ok: true };
+    checks.last_success_ago_min = { error: err.message, ok: null, available: false };
   }
 
   // Check 4: queue_depth — current queued tasks
@@ -102,12 +102,12 @@ async function runLayer2HealthCheck(pool) {
 
     checks.queue_depth = { value: queue_depth, ok };
   } catch (err) {
-    checks.queue_depth = { error: err.message, ok: true };
+    checks.queue_depth = { error: err.message, ok: null, available: false };
   }
 
   const level = calculateHealthLevel(checks);
   const failing = Object.entries(checks)
-    .filter(([, v]) => !v.ok)
+    .filter(([, v]) => v.ok === false)
     .map(([k]) => k);
 
   // Check 5: callback_queue_stats — unprocessed + failed_retries counts
@@ -129,6 +129,7 @@ async function runLayer2HealthCheck(pool) {
       failed_retries: parseInt(cqFailed.rows[0]?.cnt ?? 0, 10),
     };
   } catch (err) {
+    callback_queue_stats = { unprocessed: null, failed_retries: null, available: false, error: err.message };
     console.error('[health-monitor] callback_queue_stats query failed (non-fatal):', err.message);
   }
 
@@ -156,7 +157,7 @@ async function runLayer2HealthCheck(pool) {
  */
 function calculateHealthLevel(checks) {
   const stuck = checks.stuck_tasks?.value ?? 0;
-  const failCount = Object.values(checks).filter(v => !v.ok).length;
+  const failCount = Object.values(checks).filter(v => v.ok === false).length;
 
   if (stuck > THRESHOLDS.stuck_tasks.critical_above || failCount >= 3) {
     return 'critical';
@@ -164,6 +165,7 @@ function calculateHealthLevel(checks) {
   if (failCount >= 1) {
     return 'warning';
   }
+  if (Object.values(checks).some(v => v.error || v.available === false)) return 'unknown';
   return 'healthy';
 }
 

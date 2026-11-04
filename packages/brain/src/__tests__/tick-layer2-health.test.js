@@ -212,7 +212,7 @@ describe('D6: error handling — non-fatal', () => {
     await expect(runLayer2HealthCheck(errorPool)).resolves.toBeDefined();
   });
 
-  it('should mark check as ok=true (non-blocking) on SQL error', async () => {
+  it('SQL failure reports unknown while remaining non-throwing', async () => {
     const { runLayer2HealthCheck } = await import('../health-monitor.js');
     // First query (dispatched_1h) succeeds, rest fail
     let call = 0;
@@ -223,7 +223,8 @@ describe('D6: error handling — non-fatal', () => {
         throw new Error('timeout');
       }),
     };
-    // All checks fail with error → should use ok:true fallback and not throw
-    await expect(runLayer2HealthCheck(partialPool)).resolves.toBeDefined();
+    const result = await runLayer2HealthCheck(partialPool);
+    expect(result.level).toBe('unknown');
+    expect(result.checks.queue_depth).toMatchObject({ ok: null, available: false, error: 'timeout' });
   });
 });
