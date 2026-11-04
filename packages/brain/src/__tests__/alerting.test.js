@@ -157,8 +157,8 @@ describe('Alerting', () => {
         expect(await fresh.flushAlertsIfNeeded()).toEqual({ p1: true, p2: true });
         expect(fresh.getStatus().p1_pending).toBe(0);
         expect(fresh.getStatus().p2_pending).toBe(0);
-        expect(fresh.getStatus().last_p1_flush).toBe(Date.now());
-        expect(fresh.getStatus().last_p2_flush).toBe(Date.now());
+        expect(fresh.getStatus().last_p1_flush).toBe(new Date().toISOString());
+        expect(fresh.getStatus().last_p2_flush).toBe(new Date().toISOString());
         expect(await fresh.flushAlertsIfNeeded()).toEqual({ p1: false, p2: false });
       } finally { vi.useRealTimers(); }
     });;
