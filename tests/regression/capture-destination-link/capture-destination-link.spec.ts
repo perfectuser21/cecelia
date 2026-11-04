@@ -2,7 +2,6 @@ import { test, expect, captureId, initiativeId, initiative, content } from '../m
 
 // 现行真实入口为交办台历史记录与 /gtd/initiatives/:id；无旧 /planning/initiatives 路由。
 test('历史capture归位选立项、去向跳转、反向记录和返回交办台', async ({ page, origin, api }, info) => {
-  page.on('pageerror', error => console.error('真实页面异常', error.message));
   await page.goto(`${origin}/workbench/inbox?view=history`);
   await expect(page.getByText(content, { exact: true })).toBeVisible();
   await page.getByTestId(`capture-done-btn-${captureId}`).click();
@@ -19,6 +18,7 @@ test('历史capture归位选立项、去向跳转、反向记录和返回交办�
   await expect(section).toBeVisible();
   await expect(section.getByTestId(`initiative-capture-${captureId}`)).toContainText(content);
   await expect(section).toContainText('(1)');
+  await expect(section).not.toContainText('其他立项记录不得混入');
   await page.screenshot({ path: info.outputPath('capture-destination-backlink.png'), fullPage: true });
   await page.getByTestId('back-to-inbox-link').click();
   await expect(page).toHaveURL(`${origin}/workbench/inbox`);

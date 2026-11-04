@@ -28,10 +28,12 @@ export const test = base.extend<{ api: { patches: unknown[]; failStats: boolean 
     await use(`http://127.0.0.1:${address.port}`);
     await new Promise<void>((resolve, reject) => server.close(e => e ? reject(e) : resolve()));
   }, { scope: 'worker' }],
-  api: [async ({ context, origin }, use) => {
+  api: [async ({ context, origin }, use, info) => {
     const api = { patches: [] as unknown[], failStats: false };
     let capture = { id: captureId, content, source: 'dashboard', status: 'captured', destination_type: null as string | null, destination_id: null as string | null, created_at: '2026-10-01T00:00:00Z' };
     const escaped: string[] = [];
+    const pageErrors: string[] = [];
+    context.on('page', page => page.on('pageerror', error => pageErrors.push(error.stack ?? error.message)));
     await context.routeWebSocket('**', socket => socket.close());
     await context.route('**/*', async route => {
       const request = route.request(); const url = new URL(request.url()); const path = url.pathname;
@@ -49,7 +51,8 @@ export const test = base.extend<{ api: { patches: unknown[]; failStats: boolean 
       if (path === `/api/brain/captures/${captureId}` && request.method() === 'PATCH') {
         const patch = request.postDataJSON(); api.patches.push(patch); capture = { ...capture, ...patch }; return reply(capture);
       }
-      if (path === '/api/brain/captures' || path === '/api/captures') return reply({ items: [capture], total: 1 });
+      if (path === '/api/brain/captures') return reply({ items: [capture], total: 1 });
+      if (path === '/api/captures') return reply({ items: [capture, { ...capture, id: 'unrelated-capture', content: '其他立项记录不得混入', destination_id: 'other-initiative' }], total: 2 });
       if (path === '/api/brain/initiatives') return reply({ initiatives: [initiative] });
       if (path === `/api/brain/initiatives/${initiativeId}`) return reply({ initiative });
       if (path === '/api/brain/pr-plans') return reply({ pr_plans: [] });
@@ -57,6 +60,8 @@ export const test = base.extend<{ api: { patches: unknown[]; failStats: boolean 
       return reply({ error: '未启用的隔离边界' }, 503);
     });
     await use(api);
+    await info.attach('browser-page-errors', { body: JSON.stringify(pageErrors), contentType: 'application/json' });
+    expect(pageErrors, '真实页面不能发生未捕获异常').toEqual([]);
     expect(escaped, '浏览器不得请求外部或生产后端').toEqual([]);
   }, { auto: true }],
 });

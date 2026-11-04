@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { ArrowLeft, Target, RefreshCw, AlertCircle, List, Network, Inbox, Clock } from 'lucide-react';
-import { useCeceliaPage } from '@/contexts/CeceliaContext';
 import PRPlansList from '../components/PRPlansList';
 import PRPlanDependencyGraph from '../components/PRPlanDependencyGraph';
 import StatusIcon from '../../shared/components/StatusIcon';
@@ -10,7 +9,6 @@ import type { Initiative, PRPlan, CaptureLink } from '../api/pr-plans.api';
 
 export default function InitiativeDetail() {
   const { id } = useParams<{ id: string }>();
-  const { setCurrentPage } = useCeceliaPage();
 
   const [initiative, setInitiative] = useState<Initiative | null>(null);
   const [prPlans, setPRPlans] = useState<PRPlan[]>([]);
@@ -18,10 +16,6 @@ export default function InitiativeDetail() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'list' | 'graph'>('list');
-
-  useEffect(() => {
-    setCurrentPage('Initiative Detail');
-  }, [setCurrentPage]);
 
   useEffect(() => {
     if (!id) return;
