@@ -123,6 +123,9 @@ describe('decision engine', () => {
 
       const result = await generateDecision({ trigger: 'tick' });
 
+      const [sql, params] = pool.query.mock.calls.find(([sql]) => sql.includes("WHERE status = 'failed'"));
+      expect(sql).toContain('(retry_count IS NULL OR retry_count < $1)');
+      expect(params).toEqual([3]);
       expect(result.actions).toHaveLength(0);
       expect(result.confidence).toBe(0.9);
     });
