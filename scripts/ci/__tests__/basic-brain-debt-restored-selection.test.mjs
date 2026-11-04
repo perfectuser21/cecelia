@@ -8,6 +8,7 @@ import config from '../../../packages/brain/vitest.config.js';
 const require = createRequire(import.meta.url), glob = require('fast-glob');
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 const restored = [
+  "packages/brain/src/__tests__/resolve-repo-path.test.js",
   "packages/brain/src/__tests__/task-generator-scheduler.test.js",
   "packages/brain/src/__tests__/daily-review-scheduler.test.js",
   "tests/capability-probe-rumination.test.js",
@@ -23,7 +24,7 @@ const restored = [
   "packages/brain/src/__tests__/debt-04-planner-score.test.js",
   "packages/brain/src/__tests__/debt-04-scratch-guard.test.js"
 ];
-test('十二项恢复单测与两项新评分/隔离守卫必须进入默认Brain集合且解除债务', () => {
+test('修复后的默认单测与新评分/隔离守卫必须进入默认Brain集合且解除债务', () => {
   const selected = glob.sync(config.test.include, {cwd: join(root, 'packages/brain'), absolute: true,
     ignore: ['**/node_modules/**', ...config.test.exclude]}).map(file => relative(root, file));
   const debt = JSON.parse(readFileSync(join(root, 'scripts/ci/brain-test-debt.json'))).tests;
