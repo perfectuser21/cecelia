@@ -78,17 +78,18 @@ describe('deploy-dev routes', () => {
 
       expect(res.status).toBe(200);
       expect(res.body).toHaveProperty('status');
-      expect(typeof res.body.status).toBe('string');
+      expect(res.body.status).toBe('idle');
     });
 
     it('触发部署后 status 变为 pending 或 running', async () => {
       const app = makeApp();
 
       // 先 POST 触发
-      await request(app)
+      const accepted = await request(app)
         .post('/api/brain/deploy')
         .send({ dev: true });
 
+      expect(accepted.status).toBe(202);
       // 再 GET 查状态
       const res = await request(app).get('/api/brain/deploy/dev/status');
       expect(res.status).toBe(200);
@@ -114,10 +115,11 @@ describe('deploy-dev routes', () => {
       const app = makeApp();
 
       // 第一次触发
-      await request(app)
+      const accepted = await request(app)
         .post('/api/brain/deploy')
         .send({ dev: true });
 
+      expect(accepted.status).toBe(202);
       // 第二次应被拒绝（状态仍 pending/running）
       const res2 = await request(app)
         .post('/api/brain/deploy')
