@@ -4,7 +4,7 @@
  * 验证 GET /api/brain/briefing 返回正确的简报格式
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { afterEach, describe, it, expect, vi, beforeEach } from 'vitest';
 
 // vi.hoisted() 解决 vi.mock factory 提升问题
 const { mockQuery, mockRelease, mockConnect } = vi.hoisted(() => {
@@ -23,6 +23,7 @@ vi.mock('../db.js', () => ({
 
 import { getBriefing } from '../briefing.js';
 
+afterEach(() => vi.useRealTimers());
 describe('Briefing API', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -96,13 +97,13 @@ describe('Briefing API', () => {
     expect(briefing.token_cost_usd).toBe(1.24);
   });
 
-  it('greeting 根据时段变化', async () => {
-    // Mock 空数据（6 个查询）
-    mockQuery.mockResolvedValue({ rows: [{ completed: '0', failed: '0', queued: '0', in_progress: '0', total_cost_usd: '0', api_calls: '0' }] });
-
+  it.each([[2, '夜深了'], [9, '早上好'], [12, '中午好'], [16, '下午好'], [20, '晚上好']])('本地时刻%s点问候为%s', async (hour, expected) => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 10, 4, hour));
+    mockQuery.mockResolvedValue({ rows: [{ completed: 0, failed: 0, queued: 0, in_progress: 0, total_cost_usd: 0 }] });
     const briefing = await getBriefing();
-    expect(typeof briefing.greeting).toBe('string');
-    expect(briefing.greeting.length).toBeGreaterThan(0);
+    expect(briefing.greeting).toBe(expected);
+    expect(mockRelease).toHaveBeenCalledTimes(1);
   });
 
   it('没有焦点时 today_focus 为 null', async () => {
