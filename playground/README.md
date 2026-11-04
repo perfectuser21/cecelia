@@ -1,3 +1,9 @@
+<!-- W19_HISTORICAL_FROZEN -->
+
+> 本目录是已退休W19 Harness的历史冻结样机，不是现役业务或常规回归目标。
+> 当前编码与工作流执行使用公共 Runner；没有核定本目录的现役验收消费者。保留下面的历史正文与已合并Git来源，不按示例恢复旧Harness、启服务或宣称已部署。未知外部手工使用未证。
+> 非Markdown的已跟踪依赖、代码和测试固定于已合并祖先 `289ddd8d0690f154006c5586926277c48e10f716`；CI只运行真实冻结检查，新增、删除或修改这些输入均拒绝。资料可维护，但保留历史身份。解冻或退休这些来源须另走明确的开发与来源审查。
+
 # cecelia-playground
 
 W19 Walking Skeleton 测试床。本子项目刻意保持极薄，给 Cecelia harness pipeline 提供一个"外部代码改动对象"——后续 W19+ task 由 generator container push PR 给这里加 endpoint，evaluator container 自起 server 真验证。

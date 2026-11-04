@@ -16,11 +16,14 @@ export function ciVersionGuardCohorts(previous) {
  // 运行时消费选路reader：完整16成员与marker0/1分别成组，旧身份组不变。
  const runtimeScope={...identity,'existing-ops-stage-source.js':'a56f43da6e5d3989057ce075cb4cb9b14de4631c65cf2783dfd998a946980e43'};
  const concurrency={...runtimeScope,'existing-ops-stage-source.js':'8172bbfe9377f6672911ff1be4afb6f652932ce7fefe506764e08412e34508a1'};
+ // W19冻结仅追加完整caller/runtime/reader组合，marker0/1分别封印，旧全部保留。
+ const w19Freeze={...concurrency,'existing-ops-stage-source.js':'8027e13f13edf710b95a78bf036b52c72b48e97f4d01fbd3143144ed3f1f0018'};
  return [current,{...current,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
   retired,{...retired,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
   identity,{...identity,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
   runtimeScope,{...runtimeScope,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
-  concurrency,{...concurrency,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'}];
+  concurrency,{...concurrency,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
+  w19Freeze,{...w19Freeze,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'}];
 }
 
 export function registerCiRetirementGuardTests({root,base,memoBase,scan}) {

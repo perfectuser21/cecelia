@@ -71,7 +71,7 @@ test('feature smoke真实执行且统一源码CI唯一发现全部基础与退�
  const {relations}=createRequire(import.meta.url)('../../../.implementation-source-relations.json');
  const removed=['packages/brain/src/__tests__/ci-admission-baseline-contracts.test.js','packages/brain/src/__tests__/ci-verification-retirement-contracts.test.js','scripts/ci/__tests__/ci-admission-mechanisms.test.mjs'];
  for(const path of removed){assert.equal(existsSync(join(root,path)),false,path);assert.deepEqual(relations.filter(row=>row.path===path),[],path);}
- const selected=commandsFor('scripts')[0];assert.equal(selected.command,'node');assert.equal(selected.args[0],'--test');
+ const nodeTestEntries=commandsFor('scripts').filter(step=>step.command==='node'&&step.args[0]==='--test');assert.equal(nodeTestEntries.length,1,'必须唯一发现正式Node测试入口');const selected=nodeTestEntries[0];
  const maintained=['archive','artifact','authority','builder','envelope','feature-smoke','infra','inputs','legacy','native-entry','resolver','scratch-import','scratch','seed','skill-cache','worker'].map(name=>'scripts/ci/__tests__/basic-ci-admission-'+name+'.test.mjs');
  for(const path of [...maintained,'scripts/ci/__tests__/basic-verification-retirements.test.mjs'])assert.equal(selected.args.filter(arg=>arg===path).length,1,path);
  const registry=readFileSync(join(root,'test-registry.yaml'),'utf8');

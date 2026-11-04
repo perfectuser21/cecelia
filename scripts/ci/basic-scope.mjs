@@ -55,6 +55,8 @@ export function planChecks(paths, {full = false} = {}) {
     // Markdown 也可能是实际运行时提示词；只有明确的文档位置/文件名才走轻量路径。
     if (DOCUMENT_NAME.test(path) || ROOT_DOCUMENT.test(path) ||
       ((path.startsWith('docs/') || path.startsWith('sprints/')) && DOCUMENT.test(path))) continue;
+    // 退役W19样机不再扩散到现役组件；scripts仍逐字验证固定历史输入，变更不能空绿。
+    if (path.startsWith('playground/')) continue;
     if (path.startsWith('apps/android-agent/')) selected.add('android');
     if (isConfiguration(path) || /^(?:\.github|scripts|config)\//.test(path) ||
       /^(?:package(?:-lock)?\.json|npm-shrinkwrap\.json|\.npmrc|\.skills-source\.json)$/.test(path)) {

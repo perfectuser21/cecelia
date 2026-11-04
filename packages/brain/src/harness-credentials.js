@@ -14,12 +14,7 @@ async function tryGhAuthToken() {
 }
 
 async function tryReadCredsFile(filePath = DEFAULT_CREDS_FILE) {
-  const content = await readFile(filePath, 'utf8');
-  for (const line of content.split(/\r?\n/)) {
-    const m = line.match(/^\s*GITHUB_TOKEN\s*=\s*(\S+)\s*$/);
-    if (m && m[1]) return m[1];
-  }
-  return '';
+  return readFile(filePath, 'utf8');
 }
 
 /**
