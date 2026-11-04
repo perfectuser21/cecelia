@@ -258,7 +258,7 @@ const REVIEWED_VERSION_CLOSURE = {
   "apps/api/vitest.integration.config.ts": "6c2a55ccba874bf8fcae7858f0b9f21295f6728f430860a4ee60c1612cc59dec",
   "scripts/ci/__tests__/basic-skill-source-coverage.test.mjs": "98fd35089efe6214bc2c45b5a6cd78dae056dfe58f51c39985f2cf6c82434d43",
   ".github/workflows/skills-source-check.yml": "76d156086b08bec21b69ccd1cba051f481261a2b70cad448203f655492e179ff",
-  "scripts/ci/check-brain-version-bump.sh": "c0f1d0e324e51632c904891716707fd85abe7ee1900a1ce1af07c70549f96106"
+  "scripts/ci/check-brain-version-bump.sh": "361c35c33c2d0d404d9365c51478212e50ebe84df6a65eacca473ea57bffa0eb"
 };
 const BASIC_PROTOCOLS = {
   '5b0f190209eec9c1370b9a96c6aef43b9aa0bc99bdd0f765ccb261c2cfe95080': REVIEWED_VERSION_CLOSURE,

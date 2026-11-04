@@ -6,11 +6,16 @@ BASE_REF="${BASE_REF:-origin/main}"
 HEAD_REF="${HEAD_REF:-HEAD}"
 BASE_SHA=$(git rev-parse --verify --end-of-options "${BASE_REF}^{commit}") || { echo '::error::无法读取版本基线commit' >&2; exit 1; }
 HEAD_SHA=$(git rev-parse --verify --end-of-options "${HEAD_REF}^{commit}") || { echo '::error::无法读取版本候选commit' >&2; exit 1; }
-CHANGED=$(git diff --name-only "${BASE_SHA}...${HEAD_SHA}") || { echo '::error::无法比较版本候选' >&2; exit 1; }
-SRC_CHANGED=$(printf '%s\n' "$CHANGED" | grep -E '^packages/brain/src/' || true)
-if [[ -z "$SRC_CHANGED" ]]; then
+# 让Git按路径范围直接判定；不解析会被quotePath转义的文件名，跨边界rename也算变更。
+if git diff --quiet --no-ext-diff --no-textconv "${BASE_SHA}...${HEAD_SHA}" -- packages/brain/src/; then
   echo '跳过版本检查：本次diff不含packages/brain/src/**变更（skip）'
   exit 0
+else
+  diff_status=$?
+  if [[ "$diff_status" != 1 ]]; then
+    echo "::error::无法比较版本候选（git diff exit=${diff_status}）" >&2
+    exit 1
+  fi
 fi
 BRAIN_PKG='packages/brain/package.json'
 BASE_PKG=$(git show "${BASE_SHA}:${BRAIN_PKG}") || { echo '::error::版本基线缺少Brain package' >&2; exit 1; }
