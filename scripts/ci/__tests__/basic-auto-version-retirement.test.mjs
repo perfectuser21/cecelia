@@ -14,6 +14,7 @@ import { ciEntrySelectorEnabled } from '../../../packages/brain/src/lib/existing
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 const schemaPath = 'packages/brain/src/lib/existing-ops-source.js';
 const workflow = '.github/workflows/auto-version.yml';
+const historicalRevision = 'ee851a5546bce56b00455e3efccf1a09fe526f0b';
 const reader = 'packages/brain/src/__tests__/auto-version-decision.test.js';
 const ast = text => parse(text, { ecmaVersion: 'latest', sourceType: 'module' });
 const git = (...args) => execFileSync('git', ['--no-replace-objects', ...args], { cwd: root, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
@@ -52,7 +53,7 @@ test('实际生产来源采集器不认领已删AutoVersion，也不改写固定
   for (const consumer of result.consumers) {
     assert.ok(consumer.bindings.every(binding => binding.path !== workflow && binding.path !== reader));
   }
-  const legacy = git('show', 'ee851a5546bce56b00455e3efccf1a09fe526f0b:.github/workflows/auto-version.yml');
+  const legacy = git('show', `${historicalRevision}:${workflow}`);
   const digest = createHash('sha256').update(legacy).digest('hex');
   const collector = readFileSync(new URL('packages/brain/src/lib/existing-ops-stage-source.js', new URL('../../../', import.meta.url)), 'utf8');
   assert.ok(collector.includes(digest), '历史冻结workflow hash不能随当前删除漂移');
@@ -75,4 +76,8 @@ test('新版主CI版本门具备固定整组来源闭包；历史组合保留且
   const altered = yaml.load(ci);
   altered.jobs.plan.steps.find(step => step.name === 'Require actual Brain version increment').run = 'true';
   assert.equal(basicCiWorkflowProven(yaml.dump(altered)), false);
+});
+
+test('历史协议回归锚点必须属于候选祖先，干净CI不依赖本机未合并对象', () => {
+  assert.doesNotThrow(() => git('merge-base', '--is-ancestor', historicalRevision, 'HEAD'));
 });
