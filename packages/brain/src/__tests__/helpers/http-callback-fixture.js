@@ -1,4 +1,4 @@
-import { vi } from 'vitest';
+import { vi, expect } from 'vitest';
 
 // ── Mocks must be declared before imports (Vitest hoisting) ──
 
@@ -182,6 +182,8 @@ vi.mock('../../lib/headed-task-owner.js', () => ({assertAutomaticTaskOwner: vi.f
 import express from 'express';
 import request from 'supertest';
 export const pool = callbackPool;
+const forbiddenFetch=vi.fn(async()=>{throw Error('external fetch prohibited in callback fixture');});
+vi.stubGlobal('fetch',forbiddenFetch);
 export async function callbackFixture(overrides = {}) {
   const task = {id:'11111111-1111-4111-8111-111111111111',task_type:'research',status:'in_progress',payload:{},retry_count:0, ...overrides};
   const client = {query:vi.fn(async sql => ({rows:sql.includes('UPDATE tasks')?[{...task}]:[],rowCount:1})),release:vi.fn()};
@@ -193,6 +195,14 @@ export async function callbackFixture(overrides = {}) {
   });
   const router = (await import('../../routes/execution.js')).default;
   const app=express().use(express.json()).use('/api/brain',router);
-  const invoke=body=>request(app).post('/api/brain/execution-callback').send({task_id:task.id,status:'AI Done',result:{summary:'fixture'},...body});
+  const invoke=async body=>{
+    const response=await request(app).post('/api/brain/execution-callback').send({task_id:task.id,status:'AI Done',result:{summary:'fixture'},...body});
+    expect(forbiddenFetch).not.toHaveBeenCalled();
+    return response;
+  };
   return {task,client,invoke};
 }
+
+// Only shorten the callback's fixed 5s refill cooldown; execute its real branch.
+const nativeTimeout=globalThis.setTimeout;
+vi.spyOn(globalThis,'setTimeout').mockImplementation((callback,delay,...args)=>nativeTimeout(callback,delay===5000?0:delay,...args));
