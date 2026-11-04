@@ -34,4 +34,3 @@ describe('makeCpBranchName', () => {
     expect(() => makeCpBranchName('abc', { now: new Date() })).toThrow(/taskId/);
   });
 });
-

@@ -50,4 +50,3 @@ export function makeCpBranchName(taskId, opts = {}) {
   const ts = shanghaiMMDDHHMM(when);
   return `cp-${ts}-ws-${sid}`;
 }
-
