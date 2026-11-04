@@ -17,10 +17,11 @@ const old=['tests/regression/relay-1b1f1ffa/preview-destroyer.test.js','packages
 const config='packages/brain/vitest.config.js';
 function fixture(fn) {
   const temp=mkdtempSync(join(tmpdir(),'legacy-test-retirement-')), source=join(temp,'source'), control=join(temp,'control');
-  const git=(dir,...args)=>execFileSync('git',['-C',dir,...args],{encoding:'utf8',env:{...process.env,GIT_CONFIG_NOSYSTEM:'1'}}).trim();
+  const git=(dir,...args)=>execFileSync('git',['-c','gc.auto=0','-c','maintenance.auto=false','-c','gc.autoDetach=false','-C',dir,...args],{encoding:'utf8',env:{...process.env,GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:'/dev/null'}}).trim();
   const commit=dir=>{git(dir,'add','--sparse','-A');git(dir,'-c','user.name=Fixture','-c','user.email=fixture@example.invalid','-c','core.hooksPath=/dev/null','commit','-qm','test: reviewed fixture');return git(dir,'rev-parse','HEAD');};
   try {
-    execFileSync('git',['clone','--shared','--no-checkout','-q',root,source]);
+    git(root,'clone','--shared','--no-checkout','-q',root,source);
+    for(const [key,value]of [['gc.auto','0'],['maintenance.auto','false'],['gc.autoDetach','false']])git(source,'config',key,value);
     git(source,'sparse-checkout','init','--no-cone');
     git(source,'sparse-checkout','set','/packages/brain/vitest.config.js','/packages/brain/src/__tests__/*','/scripts/ci/','/.github/workflows/nightly-regression.yml','/packages/brain/src/routes/__tests__/','/packages/brain/src/lib/__tests__/','/packages/brain/src/__tests__/integration/','/tests/regression/relay-1b1f1ffa/','/tests/regression/relay-57e25e92/','/tests/regression/relay-07b2fd3b/');
     git(source,'checkout','-q',baseline);git(source,'remote','set-url','origin','https://github.com/perfectuser21/cecelia.git');
@@ -35,7 +36,9 @@ function fixture(fn) {
       const path=input.path;mkdirSync(dirname(join(source,path)),{recursive:true});writeFileSync(join(source,path),readFileSync(join(root,path)));
     }
     const head=commit(source);
-    mkdirSync(control);git(control,'init','-q');git(control,'remote','add','origin','https://github.com/perfectuser21/cecelia.git');
+    mkdirSync(control);git(control,'init','-q');
+    for(const [key,value]of [['gc.auto','0'],['maintenance.auto','false'],['gc.autoDetach','false']])git(control,'config',key,value);
+    git(control,'remote','add','origin','https://github.com/perfectuser21/cecelia.git');
     cpSync(join(root,'config/verification-retirements'),join(control,'config/verification-retirements'),{recursive:true});
     const tooling=commit(control);
     const options=()=>({purpose:'admission_only',toolingRoot:control,toolingRevision:git(control,'rev-parse','HEAD'),source:{repo:'perfectuser21/cecelia',base_revision:base,head_revision:git(source,'rev-parse','HEAD'),changed_files:git(source,'diff','--name-only',base,'HEAD').split('\n').filter(Boolean).map(path=>({path}))}});
