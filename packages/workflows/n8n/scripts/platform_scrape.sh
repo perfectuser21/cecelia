@@ -29,13 +29,26 @@ BRAIN_API_URL="${BRAIN_API_URL:-}"
 PUBLISH_TASK_ID="${PUBLISH_TASK_ID:-}"
 PIPELINE_ID="${PIPELINE_ID:-}"
 
-# 输出 JSON 错误并退出（含 duration_ms，exit 0 让 N8N 通过 JSON 判断成功）
+# 仅用 Bash 编码，保证 Node 缺失时错误分支也能输出合法 JSON。
+json_escape() {
+    local value="$1" code char escaped
+    value=${value//\\/\\\\}
+    value=${value//\"/\\\"}
+    for ((code = 1; code < 32; code++)); do
+        printf -v char '%b' "\\$(printf '%03o' "$code")"
+        printf -v escaped '\\u%04x' "$code"
+        value=${value//"$char"/"$escaped"}
+    done
+    printf '%s' "$value"
+}
+
+# 错误也只输出一个 JSON，并以非零退出让调用方拒绝。
 error_json() {
     local msg="$1"
     local dur="${2:-0}"
     printf '{"success":false,"error":"%s","platform":"%s","count":0,"duration_ms":%d}\n' \
-        "$msg" "$PLATFORM" "$dur" >&1
-    exit 0
+        "$(json_escape "$msg")" "$(json_escape "$PLATFORM")" "$dur" >&1
+    exit 1
 }
 
 # 参数校验
@@ -101,7 +114,7 @@ DURATION_MS=$((END_MS - START_MS))
 if [[ "$SCRAPER_EXIT" -ne 0 ]] || [[ -z "$SCRAPER_OUTPUT" ]]; then
     ERR_MSG="scraper failed (exit ${SCRAPER_EXIT})"
     if [[ -n "$SCRAPER_OUTPUT" ]]; then
-        FIRST_LINE=$(echo "$SCRAPER_OUTPUT" | head -c 200 | tr '"' "'")
+        FIRST_LINE=$(printf '%s' "$SCRAPER_OUTPUT" | head -c 200)
         ERR_MSG="${ERR_MSG}: ${FIRST_LINE}"
     fi
     error_json "$ERR_MSG" "$DURATION_MS"
