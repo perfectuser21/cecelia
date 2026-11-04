@@ -209,5 +209,6 @@ export async function runNotionInletIngest(pool, { now = Date.now, notionReq = d
     try { results[r.brain_table] = await handler(pool, token, { dbId: r.notion_db_id, notionReq }); }
     catch (err) { results[r.brain_table] = { error: err.message }; }
   }
-  return { ok: true, results };
+  const failed = Object.values(results).some(result => result.error || result.failed > 0);
+  return { ok: !failed, results };
 }
