@@ -109,10 +109,12 @@ describe('ops-model-accounts-collector 纯函数', () => {
     expect(a.seven_day_pct).toBe(71);
 
     const c = parseChatgptWhamUsage({ five_hour: { usage_percent: 12 }, seven_day: { usage_percent: 88 } });
+    expect(Object.keys(c).sort()).toEqual([...SNAPSHOT_KEYS].sort());
     expect(c.five_hour_pct).toBe(12);
     expect(c.seven_day_pct).toBe(88);
 
     const g = parseGrokUsage({ five_hour_pct: 5, seven_day_pct: 9, reset_at: null });
+    expect(Object.keys(g).sort()).toEqual([...SNAPSHOT_KEYS].sort());
     expect(g.five_hour_pct).toBe(5);
   });
 
@@ -200,7 +202,9 @@ describe('toPct — 列是 INTEGER，浮点必须在进 SQL 前收敛', () => {
     const pool = makePool();
     await runModelAccountsCollector(pool, {
       force: true,
-      fetchUsage: async () => ({ five_hour: { utilization: 89.6 }, seven_day: { utilization: 12.3 } }),
+      fetchUsage: async acct => /codex/i.test(acct.provider)
+        ? { five_hour: { usage_percent: 89.6 }, seven_day: { usage_percent: 12.3 } }
+        : { five_hour: { utilization: 89.6 }, seven_day: { utilization: 12.3 } },
       grokProbe: async () => ({ five_hour_pct: 1.5, seven_day_pct: 2.5 }),
     });
     // upsertModelAccount 的参数数组（源文件 :274-279）：
