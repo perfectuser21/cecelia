@@ -483,3 +483,13 @@ describe('runLayer2HealthCheck', () => {
     expect(new Date(result.checked_at).toISOString()).toBe(result.checked_at);
   });
 });
+
+
+describe('健康来源失联不能冒充healthy', () => {
+  it('所有查询失败时检查unknown，汇总unknown且仍返回非异常响应', async () => {
+    const result = await runLayer2HealthCheck({ query: vi.fn().mockRejectedValue(new Error('DB unavailable')) });
+    expect(result.level).toBe('unknown');
+    for (const check of Object.values(result.checks)) expect(check).toMatchObject({ ok: null, available: false });
+    expect(result.callback_queue_stats).toMatchObject({ unprocessed: null, failed_retries: null, available: false });
+  });
+});
