@@ -9,7 +9,7 @@ import { collectVerificationRetirementCandidates } from '../implementation-verif
 import { planChecks } from '../basic-scope.mjs';
 const root=fileURLToPath(new URL('../../../', import.meta.url));
 const baseline='fadbf32852';
-const old=['packages/brain/src/__tests__/planner-initiative-plan.test.js','packages/brain/src/__tests__/actions-initiative-orchestration.test.js',
+const old=['tests/regression/relay-1b1f1ffa/preview-destroyer.test.js','packages/brain/src/__tests__/planner-initiative-plan.test.js','packages/brain/src/__tests__/actions-initiative-orchestration.test.js',
   'packages/brain/src/__tests__/tasks-status.test.js','tests/regression/relay-1b1f1ffa/capacity-gate.test.js',
   'tests/regression/relay-57e25e92/headed-smoke-contract.test.ts','tests/regression/relay-07b2fd3b/captures-api.test.ts'];
 const config='packages/brain/vitest.config.js';
@@ -40,7 +40,7 @@ function fixture(fn) {
     fn({source,control,git,commit,options,head,tooling});
   }finally{rmSync(temp,{recursive:true,force:true});}
 }
-test('仅冻结过的六份逐项审核旧测试取得精确退役候选，替代必须为现役评分及拒绝入口测试',()=>fixture(({source,options})=>{
+test('仅冻结过的七份逐项审核旧测试取得精确退役候选，替代必须为现役评分及拒绝入口测试',()=>fixture(({source,options})=>{
   const proof=collectVerificationRetirementCandidates(source,options());
   assert.deepEqual(proof.rows.map(x=>x.path).sort(),old.toSorted());
   for(const row of proof.rows){assert.equal(row.retirement_authorized,false);assert.ok(row.replacement_inputs.every(x=>x.selected_candidate || x.requires_selector_reverification && x.selector_witness.kind==='fixed_pg_literal_candidate'));assert.ok(row.audit.retired.length);}
@@ -98,7 +98,7 @@ for(const path of ['scripts/ci/deep-integration.config.mjs','scripts/ci/debt-pg.
 test('PG输入只给固定路径候选，保持需重新选择/无执行覆盖资格',()=>fixture(({source,options})=>{
   const rows=collectVerificationRetirementCandidates(source,options()).rows;
   const candidates=rows.flatMap(row=>row.replacement_inputs).filter(input=>input.selector_witness.kind==='fixed_pg_literal_candidate');
-  assert.equal(candidates.length,4);
+  assert.equal(candidates.length,5);
   for(const input of candidates){
     assert.equal(input.selected_candidate,false);assert.equal(input.requires_selector_reverification,true);
     assert.equal(input.entry_verified,false);assert.equal(input.owner_verified,false);

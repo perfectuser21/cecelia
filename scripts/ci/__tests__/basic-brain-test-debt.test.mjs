@@ -356,3 +356,7 @@ test('当前无人自动接收的Brain测试与精确债务清单一致', () => 
   assertDebtMatches({canonicalRoot: root, maintained: configurationInventory(brain).maintained, selected,
     manualRoot: select(rootConfig, root), entries: manifest.tests});
 });
+
+test('已接既有PWA job的三份真实浏览器合同必须计入自动跑道',()=>{
+  assert.ok(automaticLanes(loadWorkflows()).includes('browser'));
+});
