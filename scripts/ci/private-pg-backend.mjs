@@ -51,13 +51,15 @@ export async function startPrivatePg({ nativeBin, image = 'mirror.gcr.io/pgvecto
   };
   const close = () => {
     if (started) {
-      inspectOwner();
+      // run 可能在拉镜像/创建容器前失败；先区分不存在和未知归属。
+      const exists = nativeBin || checked('docker', ['container', 'ls', '--all', '--quiet', '--filter', `name=^/${name}$`], { env }).toString().trim();
+      if (exists) inspectOwner();
       if (nativeBin) {
         const status = spawnSync(join(nativeBin, 'pg_ctl'), ['-D', join(directory, 'data'), 'status'], { env, timeout: 10000 });
         if (status.status === 0) checked(join(nativeBin, 'pg_ctl'), ['-D', join(directory, 'data'), '-m', 'immediate', '-w', 'stop'], { env });
         else if (status.status !== 3) throw Error('cannot verify native postgres stopped; preserving owned data directory');
       }
-      else checked('docker', ['rm', '-f', name], { env });
+      else if (exists) checked('docker', ['rm', '-f', '-v', name], { env });
       started = false;
     }
     rmSync(directory, { recursive: true, force: true });
@@ -82,5 +84,10 @@ export async function startPrivatePg({ nativeBin, image = 'mirror.gcr.io/pgvecto
     if (!ready) throw Error('private postgres did not become ready');
     return { directory, owner, password, port, tool, close, inspectOwner,
       config: { host: '127.0.0.1', port, user: 'ci_debt', password, database: 'postgres', connectionTimeoutMillis: 3000 } };
-  } catch (error) { close(); throw error; }
+  } catch (error) {
+    try { close(); } catch (cleanupError) {
+      throw new AggregateError([error, cleanupError], `${error.message}; cleanup failed: ${cleanupError.message}`);
+    }
+    throw error;
+  }
 }

@@ -38,7 +38,7 @@ export async function runPrivatePg({ nativeBin, files = [], includePending = fal
   const admin = new Pool(backend.config);
   const baseEnv = testEnvironment(backend, backend.directory);
   const results = [], report = { schema_version: 1, owner: backend.owner, results, status: 'failed' };
-  let databaseExists = false, dump;
+  let databaseExists = false, dump, executionError;
   const verify = async () => {
     const pool = new Pool({ ...backend.config, database: 'cecelia_scratch' });
     try { await verifyPrivatePg(pool, baseEnv); } finally { await pool.end(); }
@@ -95,14 +95,25 @@ export async function runPrivatePg({ nativeBin, files = [], includePending = fal
       if (databaseExists) throw Error('refusing next test after database cleanup failure');
     }
     report.status = results.every(result => result.status === 'passed') ? 'passed' : 'failed';
+  } catch (error) {
+    executionError = error;
   } finally {
-    try { await drop(); } finally {
-      await admin.end();
+    const cleanupErrors = [];
+    // 每项都必须尝试；报告落盘失败不能阻断本人后端回收。
+    for (const cleanup of [drop, () => admin.end(), () => backend.close()]) {
+      try { await cleanup(); } catch (error) { cleanupErrors.push(error); }
+    }
+    if (executionError || cleanupErrors.length) report.status = 'failed';
+    try {
       mkdirSync(resolve(output, '..'), { recursive: true });
       writeFileSync(output, JSON.stringify(report, null, 2) + '\n');
-      backend.close();
+    } catch (error) { cleanupErrors.push(error); }
+    if (cleanupErrors.length) {
+      const errors = [...(executionError ? [executionError] : []), ...cleanupErrors];
+      throw new AggregateError(errors, errors.map(error => error.message).join('; '));
     }
   }
+  if (executionError) throw executionError;
   if (report.status !== 'passed') throw Error('private postgres regression failed; see ' + output);
   return report;
 }
