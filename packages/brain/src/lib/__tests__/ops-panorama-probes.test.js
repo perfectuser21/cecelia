@@ -27,7 +27,7 @@ describe('ops-panorama-probes 真异步有界进程探测', () => {
   });
   it('进程读取失败/损坏行返回0与合法形状', async () => {
     const failing = vi.fn((_file, _args, _options, callback) => callback(new Error('unavailable')));
-    expect(await probeProcesses({ execFileFn: failing })).toEqual({ claude_total: 0, codex_total: 0, sessions: { headed: 0, headless: 0 } });
+    expect(await probeProcesses({ execFileFn: failing })).toBeNull();
     expect(await probeProcesses({ execFileFn: request('bad line\n'), platform: 'linux' })).toEqual({ claude_total: 0, codex_total: 0, sessions: { headed: 0, headless: 0 } });
   });
   it('docker有界读取正常计数，失败降级null', async () => {
