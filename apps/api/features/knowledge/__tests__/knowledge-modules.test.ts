@@ -1,66 +1,66 @@
-import { describe, it, expect } from 'vitest';
+import { createElement, type ComponentType } from 'react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import manifest from '../index';
 
-describe('KnowledgeModules 数据逻辑', () => {
-  it('按 brain/engine/workflows/system 分组模块', () => {
-    const groups = ['brain', 'engine', 'workflows', 'system'];
-    const mockData = {
-      meta: { total: 86, done: 76 },
-      groups: groups.map(id => ({
-        id,
-        label: id,
-        items: [
-          { id: `${id}-1`, title: `${id} module`, desc: 'test', priority: 'P1', status: 'done', output_url: null, source_files: [], completed: null },
-        ],
-      })),
-    };
+const notionUrl = 'https://app.notion.com/p/770c40c2ba6383ea86d001eba832c218';
+const selectedComponents = new Set(['KnowledgeHome', 'KnowledgeModules', 'KnowledgeModuleDetail']);
+const legacyData = {
+  meta: { total: 86, done: 76, last_updated: '2026-03-17' },
+  groups: [{ id: 'brain', label: 'Brain 后端', items: [{
+    id: 'brain-tick-loop', title: '旧Tick知识页', desc: '旧生成清单', priority: 'P0',
+    status: 'done', completed: '2026-03-17', source_files: ['packages/brain/src/tick.js'],
+    output_url: 'knowledge/brain/tick-loop.html',
+  }] }],
+};
 
-    expect(mockData.groups).toHaveLength(4);
-    expect(mockData.groups.map(g => g.id)).toEqual(groups);
+async function renderRegisteredPage(url: string) {
+  // 路由及组件loader均来自生产manifest，不复制导航数组或组件实现。
+  const routes = await Promise.all(manifest.routes.filter(route =>
+    route.component && selectedComponents.has(route.component)
+  ).map(async route => {
+    const loader = manifest.components![route.component!];
+    const Page = (await loader()).default as ComponentType;
+    return createElement(Route, { key: route.path, path: route.path, element: createElement(Page) });
+  }));
+  const view = render(createElement(MemoryRouter, { initialEntries: [url] },
+    createElement(Routes, null, routes)));
+  // 真实mount与effect均执行；不能用SSR不运行effect来冒充零fetch。
+  await act(async () => { await Promise.resolve(); });
+  return view;
+}
+
+beforeEach(() => {
+  vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => legacyData })));
+  vi.spyOn(window, 'open').mockImplementation(() => null);
+});
+afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+
+function expectRetiredNotice(container: HTMLElement) {
+  expect(screen.getByRole('heading', { name: '旧知识生成进度已退役' })).toBeInTheDocument();
+  expect(screen.getByRole('link', { name: '前往 Notion 知识库' })).toHaveAttribute('href', notionUrl);
+  expect(container.textContent).not.toMatch(/86|76|已完成|待生成|已生成|Codex/);
+  expect(container.innerHTML).not.toContain('38.23.47.81');
+  expect(fetch).not.toHaveBeenCalled();
+  expect(window.open).not.toHaveBeenCalled();
+}
+
+describe('旧知识生成面退役，真实页面与导航保留诚实入口', () => {
+  it.each(['/knowledge/modules', '/knowledge/modules/brain/brain-tick-loop', '/knowledge/modules/unknown/unknown'])
+  ('真实注册路由%s只显示退役说明，不读取旧生成清单', async url => {
+    const { container } = await renderRegisteredPage(url);
+    expectRetiredNotice(container);
   });
 
-  it('暗色主题优先级标签使用 rgba 背景而非 Tailwind class', () => {
-    const PRIORITY_STYLE: Record<string, { background: string; color: string }> = {
-      P0: { background: 'rgba(239,68,68,0.15)', color: '#f87171' },
-      P1: { background: 'rgba(234,179,8,0.15)', color: '#fbbf24' },
-      P2: { background: 'rgba(107,114,128,0.15)', color: '#6b7280' },
-    };
-
-    expect(PRIORITY_STYLE['P0'].background).toContain('rgba');
-    expect(PRIORITY_STYLE['P0'].color).toBe('#f87171');
-    expect(PRIORITY_STYLE['P1'].color).toBe('#fbbf24');
-    expect(PRIORITY_STYLE['P2'].color).toBe('#6b7280');
-  });
-
-  it('已完成模块查看链接应构造绝对 URL', () => {
-    const HOST = 'http://38.23.47.81:9998';
-    const output_url = 'knowledge/brain/tick-loop.html';
-    const absoluteUrl = `${HOST}/${output_url}`;
-    expect(absoluteUrl).toBe('http://38.23.47.81:9998/knowledge/brain/tick-loop.html');
-    expect(absoluteUrl.startsWith('http')).toBe(true);
-  });
-
-  it('待生成模块 output_url 为 null', () => {
-    const item = { status: 'todo', output_url: null };
-    const isDone = item.status === 'done';
-    expect(isDone).toBe(false);
-  });
-
-  it('source_files 列表不为空时应展示', () => {
-    const module = {
-      source_files: ['packages/brain/src/tick.js', 'packages/brain/src/monitor-loop.js'],
-    };
-    expect(module.source_files.length).toBeGreaterThan(0);
-  });
-
-  it('KnowledgeHome 应有 5 张卡片（含深度知识页）', () => {
-    const cards = [
-      { id: 'content', path: '/knowledge/content' },
-      { id: 'brain', path: '/knowledge/brain' },
-      { id: 'digestion', path: '/knowledge/digestion' },
-      { id: 'instruction-book', path: '/knowledge/instruction-book' },
-      { id: 'modules', path: '/knowledge/modules' },
-    ];
-    expect(cards).toHaveLength(5);
-    expect(cards.some(c => c.path === '/knowledge/modules')).toBe(true);
+  it('首页现有卡片仍导航到退役说明，不再宣称86个当前模块', async () => {
+    const { container } = await renderRegisteredPage('/knowledge');
+    expect(container.textContent).not.toContain('86');
+    fireEvent.click(screen.getByRole('button', { name: /深度知识页/ }));
+    await act(async () => { await Promise.resolve(); });
+    expectRetiredNotice(container);
+    expect(manifest.routes.find(route => route.path === '/knowledge/modules')?.navItem).toMatchObject({
+      group: 'knowledge-docs',
+    });
   });
 });
