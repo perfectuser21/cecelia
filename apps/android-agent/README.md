@@ -9,7 +9,9 @@
 - **WS 客户端**：连接 `wss://...?token=<licenseKey>`，open 发 `hello`，每 15s WS 心跳，断线指数退避重连
 - **HTTP 心跳**：`POST /api/agent/heartbeat` 每 30s，上报 `{ license, version, hostname, os_type:"android", agent_uuid, machine_id }`，轮询 `queued_tasks`
 
-不含无障碍服务采集逻辑（下一个 task）。
+- **无障碍采集**：Manifest 已注册 `capture/CaptureAccessibilityService.kt`，用于读取抖音视频分享链接；安装后仍需在系统设置开启权限。
+
+双通道已具备注册、心跳和任务接收协议；`AgentService` 的队列回调当前记录日志，不代表已完成具体平台任务执行或结果回执。
 
 ## 目录结构
 
