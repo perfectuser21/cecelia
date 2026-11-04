@@ -1,3 +1,5 @@
+import { assertScratchConfig, assertScratchIdentity } from './helpers/debt-04-scratch.js';
+assertScratchConfig();
 /**
  * Tests for P0 FIX #1: Systemic failure pattern detection
  *
@@ -12,6 +14,7 @@ let checkSystemicFailurePattern, FAILURE_CLASS;
 beforeAll(async () => {
   vi.resetModules();
   pool = (await import('../db.js')).default;
+  await assertScratchIdentity(pool);
   ({ checkSystemicFailurePattern, FAILURE_CLASS } = await import('../quarantine.js'));
 });
 
@@ -119,3 +122,5 @@ describe('quarantine-systemic (P0 Fix #1)', () => {
     expect(result.count).toBeLessThan(3);
   });
 });
+
+afterAll(async () => { await pool?.end(); });

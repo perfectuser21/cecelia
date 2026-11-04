@@ -1,3 +1,5 @@
+import { assertScratchConfig, assertScratchIdentity } from './helpers/debt-04-scratch.js';
+assertScratchConfig();
 /**
  * Planner Initiative Plan Tests
  * Tests for the enhanced Planner that detects "KR with active Initiative but no Task"
@@ -23,7 +25,7 @@ let testOkrInitiativeIds = [];
 let testKeyResultIds = [];
 
 beforeAll(async () => {
-  await pool.query('SELECT 1');
+  await assertScratchIdentity(pool);
 });
 
 afterAll(async () => {

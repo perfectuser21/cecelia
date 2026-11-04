@@ -1,3 +1,5 @@
+import { assertScratchConfig, assertScratchIdentity } from './helpers/debt-04-scratch.js';
+assertScratchConfig();
 /**
  * Tests for migration 087: suggestions table
  */
@@ -8,6 +10,7 @@ let pool;
 beforeAll(async () => {
   vi.resetModules();
   pool = (await import('../db.js')).default;
+  await assertScratchIdentity(pool);
 });
 
 describe('Migration 087: Suggestions Table', () => {
@@ -78,6 +81,10 @@ describe('Migration 087: Suggestions Table', () => {
   });
 
   describe('Data Operations', () => {
+    test('rejects missing content at the real database boundary', async () => {
+      await expect(pool.query('INSERT INTO suggestions (content, source) VALUES (NULL, $1)', ['test']))
+        .rejects.toMatchObject({ code: '23502', column: 'content' });
+    });
     test('can insert suggestion with required fields', async () => {
       const testSuggestion = {
         content: 'Test suggestion content',
@@ -161,3 +168,4 @@ describe('Migration 087: Suggestions Table', () => {
     });
   });
 });
+afterAll(async () => { await pool?.end(); });

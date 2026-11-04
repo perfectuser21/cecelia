@@ -1,3 +1,5 @@
+import { assertScratchConfig, assertScratchIdentity } from './helpers/debt-04-scratch.js';
+assertScratchConfig();
 /**
  * Actions - goal_id Validation Tests
  * Tests for goal_id requirement enforcement in createTask()
@@ -18,12 +20,14 @@ const CODING_ROUTE = {
 beforeAll(async () => {
   vi.resetModules();
   pool = (await import('../db.js')).default;
+  await assertScratchIdentity(pool);
   createTask = (await import('../actions.js')).createTask;
   client = await pool.connect();
 });
 
 afterAll(async () => {
-  client.release();
+  client?.release();
+  await pool?.end();
 });
 
 async function createTestTask(params) {
@@ -40,6 +44,21 @@ describe('createTask - goal_id validation', () => {
 
   beforeEach(async () => {
     await client.query('BEGIN');
+    // 正式路由要求现役scope；夹具与任务共享事务，ROLLBACK完整清理。
+    const scope = `debt-04-${crypto.randomUUID()}`;
+    const decision = crypto.randomUUID();
+    const manifest = crypto.randomUUID();
+    const run = crypto.randomUUID();
+    const digest = 'a'.repeat(64);
+    await client.query("INSERT INTO decisions(id,category,topic,decision) VALUES($1,'testing','debt-04','fixture')", [decision]);
+    await client.query(`INSERT INTO map_scope_repositories(scope_key,repo,adapter_key)
+      VALUES($1,'cecelia','test-v1') ON CONFLICT (repo) DO UPDATE SET scope_key=EXCLUDED.scope_key`, [scope]);
+    await client.query(`INSERT INTO map_manifest_versions(id,scope_key,version,source_decision_id,manifest,digest,status,activated_at)
+      VALUES($1,$2,1,$3,$4,$5,'active',NOW())`, [manifest,scope,decision,{scope_key:scope,schema_version:1,source_decision_id:decision},digest]);
+    await client.query(`INSERT INTO map_projection_runs(id,scope_key,manifest_version_id,manifest_digest,fact_revisions,projector_version,projection_digest,status,activated_at)
+      VALUES($1,$2,$3,$4,'{}','test-v1',$4,'active',NOW())`, [run,scope,manifest,digest]);
+    await client.query(`INSERT INTO map_projection_nodes(run_id,node_id,node_type,node_key,name)
+      VALUES($1,$2,'capability','F0','debt-04 fixture')`, [run,digest]);
     // Create a test goal for valid tasks
     const goalResult = await client.query(`
       INSERT INTO key_results (title, status, priority)
@@ -252,7 +271,11 @@ describe('createTask - goal_id validation', () => {
 
       expect(result.success).toBe(true);
       expect(result.task.goal_id).toBeNull();
-      expect(result.task.task_type).toBe('harness_initiative');
+      // 现役路由把旧harness输入归入coding_workflow，保留无goal豁免。
+      expect(result.task.task_type).toBe('coding_workflow');
+      expect(result.task.trigger_source).toBe('execution_callback_harness');
+      const receipt = await client.query('SELECT canonical_task_type FROM work_routing_receipts WHERE task_id=$1', [result.task.id]);
+      expect(receipt.rows).toEqual([{ canonical_task_type: 'coding_workflow' }]);
     });
 
     it('should allow harness_fix without goal_id when triggered by execution_callback_harness (duplicate check)', async () => {
@@ -267,7 +290,11 @@ describe('createTask - goal_id validation', () => {
 
       expect(result.success).toBe(true);
       expect(result.task.goal_id).toBeNull();
-      expect(result.task.task_type).toBe('harness_initiative');
+      // 现役路由把旧harness输入归入coding_workflow，保留无goal豁免。
+      expect(result.task.task_type).toBe('coding_workflow');
+      expect(result.task.trigger_source).toBe('execution_callback_harness');
+      const receipt = await client.query('SELECT canonical_task_type FROM work_routing_receipts WHERE task_id=$1', [result.task.id]);
+      expect(receipt.rows).toEqual([{ canonical_task_type: 'coding_workflow' }]);
     });
   });
 });
