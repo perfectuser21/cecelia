@@ -105,15 +105,18 @@ describe('notes routes', () => {
       expect(res.status).toBe(201);
     });
 
-    it('returns 502 if notion API throws', async () => {
-      // 第一次调用（schema GET）抛出 → getDbSchemaProperties 捕获，返回 {}
-      // 第二次调用（page POST）返回 undefined（无 mock）→ page.id 抛出 → 502
-      notionReq.mockRejectedValueOnce(new Error('timeout'));
-      const res = await request(makeApp())
-        .post('/api/brain/notes')
-        .send({ title: 't', content: 'c', type: 'Note' });
+    it('schema读取失败降级后仍成功创建页面', async () => {
+      notionReq.mockRejectedValueOnce(new Error('schema timeout'));
+      notionReq.mockResolvedValueOnce({ id: 'fallback-page', url: 'https://notion.so/fallback-page' });
+      const res = await request(makeApp()).post('/api/brain/notes').send({ title: 't', content: 'c', type: 'Note' });
+      expect(res.status).toBe(201);
+    });
+    it('page创建API明确抛错映射502', async () => {
+      notionReq.mockResolvedValueOnce({ properties: {} });
+      notionReq.mockRejectedValueOnce(new Error('page creation timeout'));
+      const res = await request(makeApp()).post('/api/brain/notes').send({ title: 't', content: 'c', type: 'Note' });
       expect(res.status).toBe(502);
-      expect(typeof res.body.error).toBe('string');
+      expect(res.body.error).toContain('page creation timeout');
     });
   });
 
