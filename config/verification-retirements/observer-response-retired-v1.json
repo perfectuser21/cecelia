@@ -14,9 +14,9 @@
   "replacement_config": {
     "path": "packages/brain/vitest.config.js",
     "mode": "100644",
-    "git_blob_sha1": "dbfbc26ce93eea8b7e20b9c184381f095051d2e3",
-    "sha256": "229b9079c0d99fbf242ceaae8cfc4e73872031443bd2e5cd9f2e2364936dc4ba",
-    "byte_length": 21446
+    "git_blob_sha1": "acbf51c0232ebb193653a77d471ac1754796602c",
+    "sha256": "fe6de3054f559116886d6d3286542896f510bbb887893ef0727a16df72c39f9e",
+    "byte_length": 21395
   },
   "skill_selector": {
     "path": "scripts/ci/skill-source-tests.mjs",
@@ -119,5 +119,42 @@
     "仅精确ce20旧PG文件的退休候选，不授予任意删除豁免，旧8项fad目录与摘要不变。",
     "只保留派发getter活接口，不宣称当前Observer响应效果由旧17例覆盖或替代；准入候选不是已运行证明。",
     "基线为已合main祖先ce20；替代按最终head精确blob与默认unit选择器重新核验，不引用未合并提交作为固定source。"
+  ],
+  "entry_support": [
+    {
+      "path": "scripts/ci/debt-pg-tests.json",
+      "mode": "100644",
+      "git_blob_sha1": "37b23be8d92682afcca77dea8f2828ba4d40cb57",
+      "sha256": "c2d1aab8b831b2b106264b5b15e48bf049c2319acc77c8011e98590b31eac923",
+      "byte_length": 5647
+    },
+    {
+      "path": "scripts/ci/run-debt-pg.mjs",
+      "mode": "100644",
+      "git_blob_sha1": "5e82d79151036839bce919cd4f87fca0f792ce91",
+      "sha256": "6bebce7f6e6afb9d724162ec3f05727be9e26f9685a1c25e1654fbaed2c7e548",
+      "byte_length": 7781
+    },
+    {
+      "path": "scripts/ci/private-pg-backend.mjs",
+      "mode": "100644",
+      "git_blob_sha1": "2b7f6339213c68191ab697fdb46efa5da2a3430f",
+      "sha256": "7bf13e1d368a132a06cfa70e4b11b8268cc48d5731c113583e016df93e1f92a3",
+      "byte_length": 5464
+    },
+    {
+      "path": "scripts/ci/private-pg-contract.mjs",
+      "mode": "100644",
+      "git_blob_sha1": "12b0a423ae6ebb97b11bc289ca3e733e79809c25",
+      "sha256": "a0e4a78b6862e5ae84450720431d833d515887606591dfd5c510947a2f35c09f",
+      "byte_length": 3546
+    },
+    {
+      "path": ".github/workflows/nightly-regression.yml",
+      "mode": "100644",
+      "git_blob_sha1": "bedbc53f1db496dadb84929ef6326f5719b8ee81",
+      "sha256": "433e32d0459a124fe9329d54736916eb4f5908291976f073fd1044356ff0cc44",
+      "byte_length": 17518
+    }
   ]
 }

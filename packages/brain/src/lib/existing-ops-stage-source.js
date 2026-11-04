@@ -261,7 +261,11 @@ const REVIEWED_VERSION_CLOSURE = {
   "scripts/ci/check-brain-version-bump.sh": "361c35c33c2d0d404d9365c51478212e50ebe84df6a65eacca473ea57bffa0eb"
 };
 const BASIC_PROTOCOLS = {
-  '5b0f190209eec9c1370b9a96c6aef43b9aa0bc99bdd0f765ccb261c2cfe95080': REVIEWED_VERSION_CLOSURE,
+  '5b0f190209eec9c1370b9a96c6aef43b9aa0bc99bdd0f765ccb261c2cfe95080': [REVIEWED_VERSION_CLOSURE, {
+    ...REVIEWED_VERSION_CLOSURE,
+    // 仅追加本轮两份无消费者旧PG测试退休后的完整配置组合，旧组合保持原样。
+    'packages/brain/vitest.config.js': 'fe6de3054f559116886d6d3286542896f510bbb887893ef0727a16df72c39f9e',
+  }],
   '04474b3e5c646767cdf49a4d03e32b3a2f4042027594dd87ef4d6975390f6298': REVIEWED,
   '7fee2a6d842c7c2595fa882fa61f75750ec6b2787186fdaf8747e1084a64fcee': [REVIEWED_API, {
     ...REVIEWED_API,
