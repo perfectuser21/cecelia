@@ -88,6 +88,7 @@ describe('RelayProgressPage — 空态渲染', () => {
     });
 
     expect(screen.getByTestId('relay-progress-empty')).toHaveTextContent('暂无进行中的 relay');
+    expect(global.fetch).toHaveBeenCalledTimes(1); // 初载断言不得推进15秒轮询时钟
   });
 
   it('空态：不渲染进度条行', async () => {
