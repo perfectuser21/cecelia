@@ -89,6 +89,9 @@ health_sha() {
 }
 
 # ── 0. 前置检查 ──────────────────────────────────────────────────────────────
+if [[ "$APPLY" = 1 ]]; then
+  preview_agent_require_no_system_owner "$LABEL" || exit 1
+fi
 [[ -d "$SOURCE_REPO/.git" ]] || die "源仓库 ${SOURCE_REPO} 不存在"
 node "$SCRIPT_DIR/preview-agent/deploy-token.mjs" check >/dev/null 2>&1 \
   || die "凭据文件 ${DEPLOY_TOKEN_FILE} 缺失或没有 DEPLOY_TOKEN= 行（代理会拒绝启动）。先从 1Password 同步再发布"

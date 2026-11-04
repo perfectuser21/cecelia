@@ -110,6 +110,12 @@ echo "launchctl \$*" >> "$TMP/calls.log"
 S="$LC_STATE"
 ghost=\$(cat "\$S/ghost" 2>/dev/null || echo 0)
 wd=\$(awk '/<key>WorkingDirectory<\/key>/{f=1} f&&/<string>/{gsub(/.*<string>|<\/string>.*/,"");print;exit}' "$PREVIEW_AGENT_PLIST")
+if [[ "\$1" = print && "\$2" = system/com.cecelia.preview-agent ]]; then
+  if [ -e "$TMP/system-loaded" ]; then echo 'system/com.cecelia.preview-agent = { pid = 4343; }'; exit 0; fi
+  if [ -e "$TMP/system-denied" ]; then echo 'Operation not permitted' >&2; exit 1; fi
+  if [ -e "$TMP/system-io" ]; then echo 'Input/output error' >&2; exit 5; fi
+  printf 'Bad request.\\nCould not find service "com.cecelia.preview-agent" in domain for system\\n' >&2; exit 113
+fi
 case "\$1" in
   bootout)
     if [ -e "\$S/loaded" ]; then rm -f "\$S/loaded"; echo "\${LC_GHOST_PRINTS:-0}" > "\$S/ghost"; exit 0; fi
@@ -282,7 +288,7 @@ set +e; OUT=$(bash "$RELEASE" --apply 2>&1); RC=$?; set -e
 [ "$RC" != 0 ] && pass "孤儿 owner 拒绝发布" || fail "孤儿 owner 拒绝发布" "$OUT"
 [ ! -e "$PREVIEW_AGENT_PLIST" ] && pass "未创建新 plist" || fail "未创建新 plist" "$OUT"
 cmp -s "$TMP/crontab.txt" "$TMP/crontab.orig" && pass "孤儿 owner crontab 不变" || fail "孤儿 owner crontab 不变" "$OUT"
-[ ! -e "$TMP/calls.log" ] && pass "无 fetch 后安装或 launchd 变更" || fail "无 fetch 后安装或 launchd 变更" "$(cat "$TMP/calls.log")"
+if grep -vFx 'launchctl print system/com.cecelia.preview-agent' "$TMP/calls.log" >/dev/null 2>&1; then fail "孤儿拒绝前仅system只读核对" "$(cat "$TMP/calls.log")"; else pass "孤儿拒绝前仅system只读核对"; fi
 teardown
 
 echo "── T8 活 endpoint 的 plist 无 loaded owner：切换前拒绝 ──"
@@ -402,5 +408,25 @@ JS
 then pass "真实唯一Node入口通过且foreign尾参数拒绝"; else fail "真实唯一Node入口通过且foreign尾参数拒绝" "kernel argv/executable contract"; fi
 
 echo ""
+# system/label 是独立 owner，不能在 gui/label 缺失或同时存在时继续发布。
+for domain_case in loaded both denied io; do
+  echo "── system域门禁 $domain_case ──"
+  setup
+  case "$domain_case" in
+    loaded) touch "$TMP/system-loaded"; rm -f "$LC_STATE/loaded" ;;
+    both) touch "$TMP/system-loaded" ;;
+    denied) touch "$TMP/system-denied" ;;
+    io) touch "$TMP/system-io" ;;
+  esac
+  set +e; OUT=$(bash "$RELEASE" --apply --component agent 2>&1); RC=$?; set -e
+  [ "$RC" != 0 ] && pass "$domain_case 拒绝发布" || fail "$domain_case 拒绝发布" "$OUT"
+  echo "$OUT" | grep -q 'system/com.cecelia.preview-agent' && pass "$domain_case 报告系统域来源" || fail "$domain_case 报告系统域来源" "$OUT"
+  cmp -s "$PREVIEW_AGENT_PLIST" "$TMP/plist.orig" && pass "$domain_case 保留plist字节" || fail "$domain_case 保留plist字节" "$OUT"
+  cmp -s "$TMP/crontab.txt" "$TMP/crontab.orig" && pass "$domain_case 保留cron字节" || fail "$domain_case 保留cron字节" "$OUT"
+  [ ! -d "$PREVIEW_RELEASES_DIR/rel-${TARGET_SHA:0:12}" ] && pass "$domain_case 不建发布快照" || fail "$domain_case 不建发布快照" "$OUT"
+  if grep -Eq 'launchctl (bootout|bootstrap|kickstart)|npm |crontab-write' "$TMP/calls.log" 2>/dev/null; then fail "$domain_case 零发布写入" "$OUT"; else pass "$domain_case 零发布写入"; fi
+  teardown
+done
+
 echo "preview-host-release.test.sh: PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" = 0 ]

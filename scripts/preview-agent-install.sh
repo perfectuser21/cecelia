@@ -71,6 +71,12 @@ if [[ -f "$TOKEN_FILE" ]]; then
   [[ "$TOKEN_MODE" == "600" || "$TOKEN_MODE" == "400" ]] || echo "⚠️  凭据文件权限是 ${TOKEN_MODE}，建议 chmod 600 ${TOKEN_FILE}" >&2
 fi
 
+# --no-load 也会写正式 plist，必须在写入前排除 system 域 owner。
+if [[ "$MODE" != "dry-run" ]]; then
+  source "$SCRIPT_DIR/lib/preview-agent-owner.sh"
+  preview_agent_require_no_system_owner "$LABEL" || exit 1
+fi
+
 render_plist() {
   cat <<PLISTEOF
 <?xml version="1.0" encoding="UTF-8"?>

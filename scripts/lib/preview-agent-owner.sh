@@ -1,5 +1,18 @@
 #!/usr/bin/env bash
 # launchd 已装载不代表实际持有服务；同时核对 PID、业务监听、目录和入口。
+# 用户域安装不能接管独立的 system LaunchDaemon；只有官方明确不存在才放行。
+preview_agent_require_no_system_owner() { # label
+  local label="$1" state rc
+  if state=$(LC_ALL=C launchctl print "system/${label}" 2>&1); then
+    echo "[preview-owner] system/${label} 已装载；拒绝用户域安装，须先完成精确归属迁移" >&2
+    return 1
+  else rc=$?; fi
+  if [[ "$rc" = 113 && "$state" = "Bad request.
+Could not find service \"${label}\" in domain for system" ]]; then return 0; fi
+  echo "[preview-owner] 无法确认 system/${label} 不存在（launchctl rc=${rc}）；拒绝写入或重载" >&2
+  return 1
+}
+
 preview_agent_owner() { # label root health-url expected-plist
   local label="$1" root="${2%/}" url="$3" plist="${4:-}" state pid port listeners cwd
   state=$(launchctl print "gui/$(id -u)/${label}" 2>/dev/null) || return 1
