@@ -68,11 +68,17 @@ test('新版主CI版本门具备固定整组来源闭包；历史组合保留且
   assert.equal(basicCiWorkflowProven(ci), true);
   const collect = (readSource = source.readSource) => collectBasicCiSources({ ...source, read: readSource, ci, relations, parse: ast });
   await collect();
-  // 已合并ce20的完整旧组合继续有效；追加新组合不能覆盖历史来源证明。
-  await collect(async path => path === 'packages/brain/vitest.config.js'
-    ? git('show', 'ce20b5a29123c9ade1a0bc4aa2753e3ea3fe310d:packages/brain/vitest.config.js') : source.readSource(path));
+  // 从已合并main读取完整历史组，不能拿旧Brain配置与新身份门工作流拼成旧证明。
+  const historical = '53714060cd53adb9b1247c05bde23e7667cd8fb4';
+  await collectBasicCiSources({ revision: historical,
+    paths: git('ls-tree', '-rz', '--name-only', historical).split('\0').filter(Boolean),
+    read: async path => git('show', `${historical}:${path}`),
+    ci: git('show', `${historical}:.github/workflows/ci.yml`), relations: [], parse: ast });
+  assert.ok(relations.some(edge => edge.consumer_path === '.github/actions/skills-source/action.yml'
+    && edge.input_path === 'scripts/ci/check-skill-source-identity.py'));
   assert.ok(relations.some(edge => edge.consumer_path === '.github/workflows/ci.yml' && edge.input_path === 'scripts/ci/check-brain-version-bump.sh'));
-  for (const path of ['scripts/ci/check-brain-version-bump.sh', 'scripts/ci/basic-scope.mjs', 'scripts/ci/run-basic-check.mjs', 'packages/brain/vitest.config.js']) {
+  for (const path of ['scripts/ci/check-brain-version-bump.sh', 'scripts/ci/basic-scope.mjs', 'scripts/ci/run-basic-check.mjs', 'packages/brain/vitest.config.js',
+    '.github/actions/skills-source/action.yml', 'scripts/ci/check-skill-source-identity.py']) {
     await assert.rejects(collect(async input => (await source.readSource(input)) + (input === path ? '\n// unreviewed drift\n' : '')), /basic_ci_source_unproven/);
   }
   await assert.rejects(collect(async path => path === 'scripts/ci/check-brain-version-bump.sh'
