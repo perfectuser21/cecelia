@@ -1,6 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
+import {execSync} from 'child_process';
+const cache=vi.hoisted(()=>({raw:null,reads:[]}));
+vi.mock('fs',async importOriginal=>{const real=await importOriginal();return {...real,existsSync:path=>String(path).endsWith('tailscale-cache.json')?cache.raw!==null:real.existsSync(path),readFileSync:(path,...args)=>{if(String(path).endsWith('tailscale-cache.json')){cache.reads.push(String(path));return cache.raw;}return real.readFileSync(path,...args);}};});
 
 vi.mock('child_process', () => ({
   execSync: vi.fn(() => JSON.stringify({
@@ -49,7 +52,7 @@ const MACHINE_ROW = {
 };
 
 describe('machines routes', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {vi.clearAllMocks();cache.raw=null;cache.reads=[];});
 
   describe('GET /api/brain/machines', () => {
     it('returns list of machines with tailscale_online and conflicts', async () => {
@@ -269,7 +272,9 @@ describe('machines routes', () => {
       const res = await request(makeApp()).get('/api/brain/machines');
       expect(res.status).toBe(200);
       // tailscale_online is determined by getTailscaleStatus() which uses cache or execSync
-      expect(typeof res.body[0].tailscale_online).toBe('boolean');
+      expect(res.body[0].tailscale_online).toBe(true);
+      expect(execSync).not.toHaveBeenCalled();
+      expect(cache.reads).toHaveLength(1);
     });
   });
 });
