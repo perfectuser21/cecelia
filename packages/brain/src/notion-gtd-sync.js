@@ -202,7 +202,7 @@ const readableReason = (value) => typeof value === 'string' ? value.trim()
     : '';
 const reasonTextOf = (t) => readableReason(t.error_message) || readableReason(t.blocked_detail) || readableReason(t.blocked_reason);
 
-const resultTextOf = (result) => {
+export const resultTextOf = (result) => {
   const r = result?.receipt ?? result ?? {};
   return String(r.finalAssistantVisibleText ?? r.text ?? r.summary ?? '').slice(0, 1900);
 };
