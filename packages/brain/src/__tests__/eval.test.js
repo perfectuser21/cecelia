@@ -4,9 +4,12 @@
  * [BEHAVIOR] 测试：对应 contract-dod.md 中所有 [BEHAVIOR] 条目
  * [UNIT] 测试：对应 contract-dod.md 中所有 [UNIT] 条目
  *
- * TDD Red 阶段：所有测试先建立（不写实现，断言必失败）
+ * 真实validator与HTTP路由；数据库/任务创建/文件落盘为隔离边界
  */
 
+import express from 'express';
+import request from 'supertest';
+import { execFileSync } from 'node:child_process';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // ─── Mock 外部依赖 ───────────────────────────────────────────────────────────
@@ -26,52 +29,30 @@ const { mockPool, mockFetch, mockCreateReadStream, mockFsPromises } = vi.hoisted
 });
 
 vi.mock('../db.js', () => ({ default: mockPool }));
+vi.mock('../actions.js', () => ({ createTask: vi.fn(async () => ({ task: { id: 'created-eval-task' } })) }));
 vi.stubGlobal('fetch', mockFetch);
 
 vi.mock('fs', () => ({
+  default: { promises: mockFsPromises },
   createReadStream: mockCreateReadStream,
   promises: mockFsPromises,
 }));
 
 vi.mock('fs/promises', () => mockFsPromises);
 
-// ─── 导入被测模块（测试 Red 阶段：模块尚不存在，import 将失败）─────────────
-// 注意：Red 阶段这些 import 会失败，这是预期行为
-let validateZipBuffer, checkZipDuplication, checkSlotAvailable, checkQuotaSufficient, releaseSlot;
-let getEvalQueuePosition;
+import { validateZipBuffer, checkZipDuplication, checkSlotAvailable,
+  checkQuotaSufficient, releaseSlot, getEvalQueuePosition } from '../skill-eval-validator.js';
+import evalRouter from '../routes/eval.js';
 
-try {
-  const evalValidator = await import('../skill-eval-validator.js');
-  validateZipBuffer = evalValidator.validateZipBuffer;
-  checkZipDuplication = evalValidator.checkZipDuplication;
-  checkSlotAvailable = evalValidator.checkSlotAvailable;
-  checkQuotaSufficient = evalValidator.checkQuotaSufficient;
-  releaseSlot = evalValidator.releaseSlot;
-  getEvalQueuePosition = evalValidator.getEvalQueuePosition;
-} catch (_e) {
-  // Red 阶段：模块不存在，用 stub
-  validateZipBuffer = null;
-  checkZipDuplication = null;
-  checkSlotAvailable = null;
-  checkQuotaSufficient = null;
-  releaseSlot = null;
-  getEvalQueuePosition = null;
+function realZip(entries) {
+  return execFileSync('python3', ['-c', `import io,json,sys,zipfile
+b=io.BytesIO()
+with zipfile.ZipFile(b,'w',zipfile.ZIP_DEFLATED) as z:
+ for name,size in json.loads(sys.stdin.read()): z.writestr(name, b'x'*size)
+sys.stdout.buffer.write(b.getvalue())`], { input: JSON.stringify(entries) });
 }
 
 // ─── 测试辅助：构造假 zip Buffer ────────────────────────────────────────────
-
-/**
- * 构造最小合法 zip 的魔数头（PK\x03\x04）
- * 实际 zip 内容校验由 unzipper 做，这里只模拟魔数部分
- */
-function makeFakeZipMagic() {
-  const buf = Buffer.alloc(100);
-  buf[0] = 0x50; // P
-  buf[1] = 0x4b; // K
-  buf[2] = 0x03;
-  buf[3] = 0x04;
-  return buf;
-}
 
 function makeNonZipBuffer() {
   return Buffer.from('not a zip file content');
@@ -81,11 +62,6 @@ function makeNonZipBuffer() {
 
 describe('[UNIT-1] zip 硬校验（5 种非法输入）', () => {
   it('非 zip 魔数文件 → 返回错误含 magic', async () => {
-    if (!validateZipBuffer) {
-      // Red 阶段：断言函数不存在
-      expect(validateZipBuffer).not.toBeNull();
-      return;
-    }
     const buf = makeNonZipBuffer();
     const result = await validateZipBuffer(buf);
     expect(result.valid).toBe(false);
@@ -93,54 +69,26 @@ describe('[UNIT-1] zip 硬校验（5 种非法输入）', () => {
   });
 
   it('解压超 50MB zip → 返回错误含解压或 size', async () => {
-    if (!validateZipBuffer) {
-      expect(validateZipBuffer).not.toBeNull();
-      return;
-    }
     // 模拟 unzipper 报告超大解压
-    const buf = makeFakeZipMagic();
-    // 这个测试需要 validateZipBuffer 内部检查解压大小
-    // 用 mock 模拟超大解压场景
-    const result = await validateZipBuffer(buf, { mockUnzipTotalSize: 51 * 1024 * 1024 });
+    const result = await validateZipBuffer(realZip([['SKILL.md', 51 * 1024 * 1024]]));
     expect(result.valid).toBe(false);
     expect(result.error.toLowerCase()).toMatch(/解压|size|unzip/);
   });
 
   it('缺 SKILL.md → 返回错误含 SKILL.md', async () => {
-    if (!validateZipBuffer) {
-      expect(validateZipBuffer).not.toBeNull();
-      return;
-    }
-    const buf = makeFakeZipMagic();
-    const result = await validateZipBuffer(buf, { mockEntries: ['README.txt'] });
+    const result = await validateZipBuffer(realZip([['README.txt', 10]]));
     expect(result.valid).toBe(false);
     expect(result.error).toMatch(/SKILL\.md/);
   });
 
   it('含路径穿越（../）→ 返回错误含 traversal 或路径', async () => {
-    if (!validateZipBuffer) {
-      expect(validateZipBuffer).not.toBeNull();
-      return;
-    }
-    const buf = makeFakeZipMagic();
-    const result = await validateZipBuffer(buf, { mockEntries: ['../evil.sh', 'SKILL.md'] });
+    const result = await validateZipBuffer(realZip([['../evil.sh', 10], ['SKILL.md', 10]]));
     expect(result.valid).toBe(false);
     expect(result.error.toLowerCase()).toMatch(/traversal|路径穿越|path/);
   });
 
   it('压缩比超 100:1（文件数超 2000）→ 返回错误', async () => {
-    if (!validateZipBuffer) {
-      expect(validateZipBuffer).not.toBeNull();
-      return;
-    }
-    const buf = makeFakeZipMagic();
-    const mockEntries = Array.from({ length: 2001 }, (_, i) => `file${i}.txt`);
-    mockEntries.push('SKILL.md');
-    const result = await validateZipBuffer(buf, {
-      mockEntries,
-      mockUnzipTotalSize: 100 * 1024 * 1024, // 100MB unzipped vs small zip
-      mockZipSize: 512 * 1024, // 512KB zip
-    });
+    const result = await validateZipBuffer(realZip([['SKILL.md', 10], ...Array.from({ length: 2001 }, (_, i) => [`file${i}.txt`, 1])]));
     expect(result.valid).toBe(false);
     expect(result.error).toBeTruthy();
   });
@@ -154,10 +102,6 @@ describe('[UNIT-2] hash 去重（2 种路径）', () => {
   });
 
   it('命中 completed → 返回历史 report_url', async () => {
-    if (!checkZipDuplication) {
-      expect(checkZipDuplication).not.toBeNull();
-      return;
-    }
 
     const existingReportUrl = 'https://docs.example.com/skill-evals/abc123-test/index.html';
     mockPool.query.mockResolvedValueOnce({
@@ -175,10 +119,6 @@ describe('[UNIT-2] hash 去重（2 种路径）', () => {
   });
 
   it('命中 running/pending → 返回既有 task_id', async () => {
-    if (!checkZipDuplication) {
-      expect(checkZipDuplication).not.toBeNull();
-      return;
-    }
 
     mockPool.query.mockResolvedValueOnce({
       rows: [{
@@ -195,10 +135,6 @@ describe('[UNIT-2] hash 去重（2 种路径）', () => {
   });
 
   it('无命中 → isDuplicate=false', async () => {
-    if (!checkZipDuplication) {
-      expect(checkZipDuplication).not.toBeNull();
-      return;
-    }
 
     mockPool.query.mockResolvedValueOnce({ rows: [] });
 
@@ -221,10 +157,6 @@ describe('[UNIT-3] 单 slot 并发控制', () => {
   });
 
   it('MAX_CONCURRENT_SKILL_EVAL 从环境变量读取（默认 1）', async () => {
-    if (!checkSlotAvailable) {
-      expect(checkSlotAvailable).not.toBeNull();
-      return;
-    }
 
     // 无 in_progress 任务 → slot 可用
     mockPool.query.mockResolvedValueOnce({ rows: [{ count: '0' }] });
@@ -233,10 +165,6 @@ describe('[UNIT-3] 单 slot 并发控制', () => {
   });
 
   it('已有 1 个 in_progress 时 slot 不可用（单 slot 铁律）', async () => {
-    if (!checkSlotAvailable) {
-      expect(checkSlotAvailable).not.toBeNull();
-      return;
-    }
 
     process.env.MAX_CONCURRENT_SKILL_EVAL = '1';
     mockPool.query.mockResolvedValueOnce({ rows: [{ count: '1' }] });
@@ -245,10 +173,6 @@ describe('[UNIT-3] 单 slot 并发控制', () => {
   });
 
   it('pending ≥ 20 时 checkSlotAvailable 返回 queueFull=true', async () => {
-    if (!checkSlotAvailable) {
-      expect(checkSlotAvailable).not.toBeNull();
-      return;
-    }
 
     // 第一个 query: in_progress count
     mockPool.query.mockResolvedValueOnce({ rows: [{ count: '0' }] });
@@ -268,10 +192,6 @@ describe('[UNIT-4] 额度预检', () => {
   });
 
   it('5h 池 <85% → 不派发，返回 canDispatch=false', async () => {
-    if (!checkQuotaSufficient) {
-      expect(checkQuotaSufficient).not.toBeNull();
-      return;
-    }
 
     // 模拟 5h 使用 20%（剩余 80% < 85%）
     mockPool.query.mockResolvedValueOnce({
@@ -284,10 +204,6 @@ describe('[UNIT-4] 额度预检', () => {
   });
 
   it('7d 池 <90% → 不派发，返回 canDispatch=false', async () => {
-    if (!checkQuotaSufficient) {
-      expect(checkQuotaSufficient).not.toBeNull();
-      return;
-    }
 
     // 模拟 5h 充足但 7d 不足（剩余 85% < 90%）
     mockPool.query.mockResolvedValueOnce({
@@ -300,10 +216,6 @@ describe('[UNIT-4] 额度预检', () => {
   });
 
   it('两项都满足 → canDispatch=true', async () => {
-    if (!checkQuotaSufficient) {
-      expect(checkQuotaSufficient).not.toBeNull();
-      return;
-    }
 
     mockPool.query.mockResolvedValueOnce({
       rows: [{ pool_5h_remaining_pct: 90, pool_7d_remaining_pct: 95 }],
@@ -349,84 +261,32 @@ describe('[UNIT-5] 失败路径 slot 释放', () => {
   }
 });
 
-// ─── [BEHAVIOR-1] 上传合法 zip → 建 task 返回 task_id ───────────────────────
-
-describe('[BEHAVIOR-1] 上传合法 zip → 建 task 返回 task_id', () => {
-  it('POST /api/skill-eval/upload 合法请求 → HTTP 200 + task_id 非空 + queue_position ≥ 0', async () => {
-    // 这是 BEHAVIOR 测试，在单元层级用 supertest 测试路由
-    // 路由不存在时测试失败（Red 状态）
-    let evalRouter;
-    try {
-      evalRouter = await import('../routes/eval.js');
-    } catch (_e) {
-      // Red 阶段：路由不存在
-      throw new Error('[BEHAVIOR-1] eval.js 路由未实现 — Red 阶段预期失败');
-    }
-    expect(evalRouter).toBeDefined();
-    expect(mockPool.query.mock.calls.some(([sql]) => sql.includes('INSERT INTO skill_evals'))).toBe(true);
+describe('上传HTTP合同：真实zip解析与路由，隔离文件写入和任务账本', () => {
+  function app() { const app = express(); app.use('/api/skill-eval', evalRouter); return app; }
+  beforeEach(() => {
+    mockPool.query.mockReset();
+    mockPool.query.mockImplementation(async sql => ({ rows: sql.includes('as position') ? [{ position: 1 }] : sql.includes('COUNT(*)') ? [{ count: 0 }] : [] }));
+    vi.stubEnv('EVAL_PROXY_TOKEN', 'eval-test-token');
   });
-});
-
-// ─── [BEHAVIOR-2] 非法 zip 上传 → 422 + 具体原因 ─────────────────────────────
-
-describe('[BEHAVIOR-2] 非法 zip 上传 → 422 + 具体原因', () => {
-  it('非 zip 魔数文件 → HTTP 422 + error 含 magic', async () => {
-    let evalRouter;
-    try {
-      evalRouter = await import('../routes/eval.js');
-    } catch (_e) {
-      throw new Error('[BEHAVIOR-2] eval.js 路由未实现 — Red 阶段预期失败');
-    }
-    // 路由存在后，这里进一步验证 supertest 行为
-    expect(evalRouter).toBeDefined();
+  afterEach(() => vi.unstubAllEnvs());
+  it('合法zip真实POST建eval并返回task_id与队列位置', async () => {
+    const res = await request(app()).post('/api/skill-eval/upload').set('X-Eval-Proxy-Token', 'eval-test-token')
+      .field('skill_name', 'actual-upload').attach('file', realZip([['SKILL.md', 12]]), 'skill.zip');
+    expect(res.status).toBe(200);
+    expect(res.body.task_id).toBe('created-eval-task');
+    expect(res.body.queue_position).toBeGreaterThanOrEqual(0);
+    const insert = mockPool.query.mock.calls.find(([sql]) => sql.includes('INSERT INTO skill_evals'));
+    expect(insert[1][0]).toBe(res.body.task_id);
   });
-
-  it('缺 SKILL.md → HTTP 422 + error 含 SKILL.md', async () => {
-    let evalRouter;
-    try {
-      evalRouter = await import('../routes/eval.js');
-    } catch (_e) {
-      throw new Error('[BEHAVIOR-2] eval.js 路由未实现 — Red 阶段预期失败');
-    }
-    expect(evalRouter).toBeDefined();
+  it.each([['magic', Buffer.from('not a zip')], ['SKILL.md', realZip([['README.txt', 10]])]])('非法zip %s返回422且不写eval', async (reason, bytes) => {
+    const res = await request(app()).post('/api/skill-eval/upload').set('X-Eval-Proxy-Token', 'eval-test-token')
+      .field('skill_name', 'bad-upload').attach('file', bytes, 'bad.zip');
+    expect(res.status).toBe(422); expect(res.body.error).toContain(reason);
+    expect(mockPool.query).not.toHaveBeenCalled();
   });
-});
-
-// ─── [BEHAVIOR-3] hash 去重 completed → 返回历史 report_url ─────────────────
-
-describe('[BEHAVIOR-3] hash 去重 completed → 返回历史 report_url', () => {
-  it('相同 zip 二次上传（首次已 completed）→ HTTP 200 + report_url == 首次 + deduped=true', async () => {
-    if (!checkZipDuplication) {
-      expect(checkZipDuplication).not.toBeNull();
-      return;
-    }
-
-    const existingUrl = 'https://docs.example.com/skill-evals/old-report/index.html';
-    mockPool.query.mockResolvedValueOnce({
-      rows: [{ task_id: 'old-task', status: 'completed', report_url: existingUrl }],
-    });
-
-    const result = await checkZipDuplication(mockPool, 'same-hash');
-    expect(result.isDuplicate).toBe(true);
-    expect(result.status).toBe('completed');
-    expect(result.report_url).toBe(existingUrl);
-    // deduped 标记（路由层通过此判断返回 deduped: true）
-    expect(result.isDuplicate).toBe(true);
-  });
-});
-
-// ─── [BEHAVIOR-4] 不带 X-Eval-Proxy-Token 直打 Brain → 403 ──────────────────
-
-describe('[BEHAVIOR-4] 不带 X-Eval-Proxy-Token 直打 Brain → 403', () => {
-  it('无 X-Eval-Proxy-Token header → 403', async () => {
-    // 验证中间件存在
-    let evalRouter;
-    try {
-      evalRouter = await import('../routes/eval.js');
-    } catch (_e) {
-      throw new Error('[BEHAVIOR-4] eval.js 路由未实现 — Red 阶段预期失败');
-    }
-    expect(evalRouter).toBeDefined();
+  it('缺token真实POST返回403且零查库', async () => {
+    const res = await request(app()).post('/api/skill-eval/upload');
+    expect(res.status).toBe(403); expect(mockPool.query).not.toHaveBeenCalled();
   });
 });
 
@@ -434,10 +294,6 @@ describe('[BEHAVIOR-4] 不带 X-Eval-Proxy-Token 直打 Brain → 403', () => {
 
 describe('[BEHAVIOR-7] pending ≥ 20 → 新上传 429', () => {
   it('queue 已满（pending ≥ 20）→ HTTP 429 + error 含排队已满或 queue full', async () => {
-    if (!checkSlotAvailable) {
-      expect(checkSlotAvailable).not.toBeNull();
-      return;
-    }
 
     mockPool.query
       .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // in_progress
@@ -452,20 +308,20 @@ describe('[BEHAVIOR-7] pending ≥ 20 → 新上传 429', () => {
 
 describe('[BEHAVIOR-8] 失败后 slot 释放（可单元级验证）', () => {
   it('模拟 failed(timeout) 路径后 → in_progress_count == 0 → 下一个 pending task 可被拾起', async () => {
-    if (!releaseSlot) {
-      expect(releaseSlot).not.toBeNull();
-      return;
-    }
 
-    mockPool.query.mockResolvedValue({ rows: [] });
-
+    let running = true;
+    mockPool.query.mockReset();
+    mockPool.query.mockImplementation(async (sql, params) => {
+      if (sql.includes('UPDATE skill_evals')) {
+        expect(params).toEqual(['failed(timeout)', 'task-timeout-uuid']);
+        running = false;
+      }
+      if (sql.includes("WHERE status = 'running'")) return { rows: [{ count: running ? 1 : 0 }] };
+      if (sql.includes("WHERE status = 'pending'")) return { rows: [{ count: 5 }] };
+      return { rows: [] };
+    });
+    expect((await checkSlotAvailable(mockPool)).available).toBe(false);
     await releaseSlot(mockPool, 'task-timeout-uuid', 'timeout');
-
-    // 释放后 checkSlotAvailable 应返回 available=true
-    mockPool.query
-      .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // in_progress = 0
-      .mockResolvedValueOnce({ rows: [{ count: '5' }] }); // pending < 20
-
     const slotResult = await checkSlotAvailable(mockPool);
     expect(slotResult.available).toBe(true);
     expect(slotResult.queueFull).toBe(false);
@@ -475,11 +331,7 @@ describe('[BEHAVIOR-8] 失败后 slot 释放（可单元级验证）', () => {
 // ─── [BEHAVIOR-9] 状态查询返回 queue_position ────────────────────────────────
 
 describe('[BEHAVIOR-9] 状态查询返回 queue_position', () => {
-  it('GET /api/skill-eval/status/:task_id pending 中 → queue_position ≥ 1 + status ∈ 合法集', async () => {
-    if (!getEvalQueuePosition) {
-      expect(getEvalQueuePosition).not.toBeNull();
-      return;
-    }
+  it('队列位次helper读取pending位置为3', async () => {
 
     mockPool.query.mockResolvedValueOnce({
       rows: [{ queue_position: 3 }],
