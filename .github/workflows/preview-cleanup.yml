@@ -8,11 +8,11 @@ name: Preview Cleanup
 #    对端 = scripts/preview-agent.mjs（launchd 常驻，复用 routes/preview.js）
 
 # PR merge or close: 清理对应的完整预览环境
-# 调 Brain API /preview/stop/:pr -> 触发 preview-env-stop.sh（异步）
-# stop 脚本执行：kill Brain 进程 + DROP DATABASE + 删除 git worktree + 释放端口
+# 调预览代理 /preview/stop/:pr，同步等待统一销毁器的终态回执。
+# 仅 HTTP 2xx + 明确业务成功才确认清理；无记录响应作为合法幂等结果。
 #
 # 修复 2026-07-15：curl 失败旧版吞错仍 exit 0 → 评论谎报"已清理"导致孤儿堆积。
-# 现在：curl 失败 → step 红 + 评论如实写"Brain 不可达，reaper 兜底回收"。
+# HTTP、JSON 或业务终态失败均令 step 红；评论只报告未确认，不推断实际残留。
 
 on:
   pull_request:
@@ -59,12 +59,33 @@ jobs:
         run: |
           set -euo pipefail
           echo "调用 Brain API /preview/stop/${PR_NUMBER}..."
-          RESP=$(curl -sf --connect-timeout 15 --max-time 30 \
+          RESPONSE_FILE=$(mktemp)
+          trap 'rm -f "$RESPONSE_FILE"' EXIT
+          HTTP_STATUS=$(curl -sS --connect-timeout 15 --max-time 30 \
+            -o "$RESPONSE_FILE" -w '%{http_code}' \
             -X POST "${BRAIN_URL}/api/brain/preview/stop/${PR_NUMBER}" \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer ${DEPLOY_TOKEN}")
-          echo "Brain 响应: $RESP"
-          echo "success=true" >> $GITHUB_OUTPUT
+          case "$HTTP_STATUS" in
+            2??) ;;
+            *) echo "清理未确认：HTTP $HTTP_STATUS" >&2; exit 1 ;;
+          esac
+          node - "$RESPONSE_FILE" <<'NODE'
+          const fs = require('node:fs');
+          try {
+            const receipt = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+            const inactive = receipt?.status === 'inactive';
+            const absent = receipt?.status === undefined && receipt?.note === 'no active preview found';
+            if (!receipt || Array.isArray(receipt) || receipt.stopped !== true || (!inactive && !absent)) {
+              throw new Error('缺少有效清理终态');
+            }
+            console.log(absent ? '已确认无需清理（无预览记录）' : '已确认预览终态 inactive');
+          } catch {
+            console.error('清理未确认：响应不是有效的成功回执');
+            process.exitCode = 1;
+          }
+          NODE
+          echo "success=true" >> "$GITHUB_OUTPUT"
 
       - name: PR 评论写入清理结果（成功）
         if: steps.check_ts.outputs.configured == 'true' && steps.brain_stop.outputs.success == 'true'
@@ -77,10 +98,10 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
-              body: `## 🧹 预览环境已清理\n\n**Branch**: \`${branch}\`\n\n预览 Brain 已停止，预览数据库已删除，端口已释放。`,
+              body: `## 🧹 预览环境已清理\n\n**Branch**: \`${branch}\`\n\n预览代理已确认清理完成，或当前无需清理（无预览记录）。`,
             });
 
-      - name: PR 评论写入清理结果（Brain 不可达）
+      - name: PR 评论写入清理结果（未确认）
         if: >-
           always() &&
           steps.check_ts.outputs.configured == 'true' &&
@@ -94,5 +115,5 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
-              body: `## ⚠️ 预览环境清理失败（Brain 不可达）\n\n**Branch**: \`${branch}\`\n\nBrain API 调用失败（Tailscale 抖动/宕机）。**预览资源尚未回收**，将由宿主 preview-reaper 每小时自动对账清理。\n\n如需立即清理：\`bash scripts/preview-reaper.sh\``,
+              body: `## ⚠️ 预览环境清理未确认\n\n**Branch**: \`${branch}\`\n\n未取得有效的清理成功回执，可能是网络、HTTP 或业务清理失败。实际资源是否残留需核对执行机状态；此评论不代表已经回收。\n\n如需立即清理：\`bash scripts/preview-reaper.sh\``,
             });
