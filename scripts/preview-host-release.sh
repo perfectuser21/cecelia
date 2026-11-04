@@ -130,13 +130,27 @@ fi
 mkdir -p "$RELEASES_DIR"
 LOCK="$RELEASES_DIR/.release.lock"
 mkdir "$LOCK" 2>/dev/null || die "另一次发布正在进行（${LOCK}），确认无人在跑后删掉该目录重试"
-trap 'rm -f "$LOCK/crontab.before" "$LOCK/crontab.after"; rmdir "$LOCK" 2>/dev/null || true' EXIT
+chmod 700 "$LOCK"
+trap 'rm -f "$LOCK"/crontab.*; rmdir "$LOCK" 2>/dev/null || true' EXIT
 [[ "$(cd "$SOURCE_REPO" && pwd -P)" != "$NEW" ]] || die "SOURCE_REPO 不能与目标快照相同"
+# 返回 0=可读存在，3=官方明确无表，1=无法确认；错误不能降级为空表。
+read_cron() {
+  local output="$1" error="$2" rc user message
+  if LC_ALL=C crontab -l > "$output" 2> "$error"; then return 0; else rc=$?; fi
+  user=$(id -un) || return 1
+  message=$(cat "$error")
+  # Darwin 的程序名前缀与 Vixie/Cronie 的无前缀均逐字匹配当前用户。
+  if [[ "$rc" = 1 && ! -s "$output" ]] &&
+      [[ "$message" = "crontab: no crontab for $user" || "$message" = "no crontab for $user" ]]; then return 3; fi
+  return 1
+}
 HAD_CRON=0
-if crontab -l > "$LOCK/crontab.before" 2>/dev/null; then HAD_CRON=1; else : > "$LOCK/crontab.before"; fi
+if read_cron "$LOCK/crontab.before" "$LOCK/crontab.before.err"; then HAD_CRON=1;
+else cron_rc=$?; [[ "$cron_rc" = 3 ]] || die "cron 读取失败，无法确认原表；未安装且未调用写接口"; fi
 verify_cron() {
-  local present=0
-  if crontab -l > "$LOCK/crontab.after" 2>/dev/null; then present=1; fi
+  local present=0 rc
+  if read_cron "$LOCK/crontab.after" "$LOCK/crontab.after.err"; then present=1;
+  else rc=$?; [[ "$rc" = 3 ]] || return 1; fi
   [[ "$present" = "$HAD_CRON" ]] && cmp -s "$LOCK/crontab.before" "$LOCK/crontab.after"
 }
 # 全组件必须先证明官方写接口可用；agent 模式不调用任何 cron 写/恢复接口。
@@ -210,7 +224,7 @@ if [[ "$COMPONENT" = all ]]; then
   NEW_CRON="$BACKUP/crontab.new"
   render_crontab "$NEW" < "$BACKUP/crontab.txt" > "$NEW_CRON"
   crontab - < "$NEW_CRON" || rollback "写 crontab 失败"
-  crontab -l > "$LOCK/crontab.after" && cmp -s "$NEW_CRON" "$LOCK/crontab.after" || rollback "新 cron 字节读回失败"
+  read_cron "$LOCK/crontab.after" "$LOCK/crontab.after.err" && cmp -s "$NEW_CRON" "$LOCK/crontab.after" || rollback "新 cron 字节读回失败"
 else
   verify_cron || rollback "agent 发布期间旧 cron 字节发生变化"
 fi

@@ -83,7 +83,12 @@ CR
   # mock：crontab（文件后端）
   cat > "$BIN/crontab" <<SH
 #!/bin/bash
-if [ "\$1" = "-l" ]; then [ -f "$TMP/crontab.txt" ] && cat "$TMP/crontab.txt" && exit 0; echo "no crontab" >&2; exit 1; fi
+if [ "\$1" = "-l" ]; then
+  if [ -e "$TMP/cron-read-denied" ]; then echo "Operation not permitted" >&2; exit 1; fi
+  if [ -e "$TMP/cron-read-io" ]; then echo "Input/output error" >&2; exit 1; fi
+  if [ -f "$TMP/crontab.txt" ]; then cat "$TMP/crontab.txt"; exit 0; fi
+  echo "crontab: no crontab for \$(id -un)" >&2; exit 1
+fi
 if [ -e "$TMP/cron-reject-writes" ]; then echo "crontab-denied" >> "$TMP/calls.log"; echo "Operation not permitted" >&2; exit 1; fi
 if [ "\$1" = "-" ]; then cat > "$TMP/crontab.txt"; else cp "\$1" "$TMP/crontab.txt"; fi
 echo "crontab-write" >> "$TMP/calls.log"
@@ -339,6 +344,27 @@ touch "$TMP/bad-cwd"
 set +e; OUT=$(bash "$RELEASE" --apply --component agent 2>&1); RC=$?; set -e
 [ "$RC" != 0 ] && cmp -s "$PREVIEW_AGENT_PLIST" "$TMP/plist.orig" && pass "目录错配拒绝且保持原plist" || fail "目录错配拒绝且保持原plist" "$OUT"
 if grep -E 'launchctl (bootout|bootstrap|kickstart)|npm |crontab-write' "$TMP/calls.log" >/dev/null 2>&1; then fail "目录错配无切换副作用" "$OUT"; else pass "目录错配无切换副作用"; fi
+teardown
+
+echo "── T15 cron读取不可确定：不得用空表探测writer ──"
+for component in all agent; do
+  for reason in denied io; do
+    setup
+    touch "$TMP/cron-read-$reason"
+    set +e; OUT=$(bash "$RELEASE" --apply --component "$component" 2>&1); RC=$?; set -e
+    [ "$RC" != 0 ] && pass "$component/$reason 读取失败拒绝" || fail "$component/$reason 读取失败拒绝" "$OUT"
+    cmp -s "$TMP/crontab.txt" "$TMP/crontab.orig" && cmp -s "$PREVIEW_AGENT_PLIST" "$TMP/plist.orig" && pass "$component/$reason 原表与代理原样" || fail "$component/$reason 原表与代理原样" "$OUT"
+    if grep -E 'launchctl (bootout|bootstrap|kickstart)|npm |crontab-write' "$TMP/calls.log" >/dev/null 2>&1; then fail "$component/$reason 零写入零安装" "$OUT"; else pass "$component/$reason 零写入零安装"; fi
+    teardown
+  done
+done
+
+echo "── T16 官方明确no-crontab：agent模式保全真正的不存在状态 ──"
+setup
+rm "$TMP/crontab.txt"
+set +e; OUT=$(bash "$RELEASE" --apply --component agent 2>&1); RC=$?; set -e
+[ "$RC" = 0 ] && [ ! -e "$TMP/crontab.txt" ] && pass "官方明确不存在可发布agent且不创建cron" || fail "官方明确不存在可发布agent且不创建cron" "$OUT"
+if grep -E 'crontab-write|crontab-denied' "$TMP/calls.log" >/dev/null 2>&1; then fail "原无cron的agent模式不写cron" "$OUT"; else pass "原无cron的agent模式不写cron"; fi
 teardown
 
 echo ""
