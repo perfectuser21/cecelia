@@ -1,37 +1,60 @@
-/**
- * codex-bridge 负载均衡 - 环境变量解析测试
- */
-import { describe, it, expect } from 'vitest';
-
-describe('selectBestBridge', () => {
-  it('应当从 CODEX_BRIDGES 环境变量解析多个 URL', () => {
-    const bridges = 'http://10.0.0.1:3458,http://10.0.0.2:3458';
-    const parsed = bridges.split(',').map(s => s.trim()).filter(Boolean);
-    expect(parsed).toHaveLength(2);
-    expect(parsed[0]).toBe('http://10.0.0.1:3458');
-    expect(parsed[1]).toBe('http://10.0.0.2:3458');
-  });
-
-  it('单个 URL 也应正常工作', () => {
-    const bridges = 'http://10.0.0.1:3458';
-    const parsed = bridges.split(',').map(s => s.trim()).filter(Boolean);
-    expect(parsed).toHaveLength(1);
-  });
-
-  it('空字符串返回空数组', () => {
-    const parsed = ''.split(',').map(s => s.trim()).filter(Boolean);
-    expect(parsed).toHaveLength(0);
-  });
+import {beforeAll, beforeEach, afterEach, describe, it, expect, vi} from 'vitest';
+const boundary = vi.hoisted(() => ({query:vi.fn(() => {throw Error('DB forbidden');}), execute:vi.fn(() => {throw Error('process forbidden');})}));
+vi.mock('../db.js', () => ({default:{query:boundary.query}}));
+vi.mock('child_process', () => ({spawn:boundary.execute,exec:boundary.execute,execSync:boundary.execute,execFile:boundary.execute,execFileSync:boundary.execute}));
+vi.mock('node:child_process', () => ({spawn:boundary.execute,exec:boundary.execute,execSync:boundary.execute,execFile:boundary.execute,execFileSync:boundary.execute}));
+vi.mock('fs', async original => {
+  const fs = await original();
+  return {...fs, existsSync:() => false, readdirSync:() => [], readFileSync:(filename,...args) => {
+    if (String(filename).includes('/cecelia-ci-retained-seven-3/')) return fs.readFileSync(filename,...args);
+    throw Error('host configuration read forbidden');
+  }};
 });
+let selectBestBridge, directory;
+beforeAll(async () => {
+  vi.stubGlobal('fetch', vi.fn(() => {throw Error('network forbidden');}));
+  ({selectBestBridge} = await import('../executor.js'));
+  ({directory} = await import('../execution-directory/directory.js'));
+});
+beforeEach(() => { vi.clearAllMocks(); vi.spyOn(console,'log').mockImplementation(()=>{});vi.spyOn(console,'warn').mockImplementation(()=>{}); });
+afterEach(() => { expect(boundary.query).not.toHaveBeenCalled();expect(boundary.execute).not.toHaveBeenCalled();vi.restoreAllMocks(); });
 
-describe('BRIDGE_ACCOUNTS 环境变量', () => {
-  it('逗号分隔解析为数组', () => {
-    const accounts = 'team3,team4'.split(',').map(s => s.trim()).filter(Boolean);
-    expect(accounts).toEqual(['team3', 'team4']);
+function snapshot(urls) {
+  return {expiresAt:Date.now()+60000,nodes:urls.map((url,i) => ({
+    canonical_id:`fixture-${i}`,state:'active',machine_status:'active',
+    endpoints:{worker:'http://fixture.worker',legacy_executor:{codex:{executor:'codex',url}}},
+    grants:[{surface:'legacy_executor',provider:'codex',state:'active',account_id:'',profile_id:''}],
+  }))};
+}
+const healthy = accounts => ({ok:true,status:'healthy',accounts});
+function choose(urls, health) {
+  vi.mocked(fetch).mockImplementation(async url => {
+    const value = health[url.replace('/health','')];
+    if (value instanceof Error) throw value;
+    return {ok:value?.httpOk !== false,status:503,json:async () => value};
   });
+  return directory.withSnapshot(snapshot(urls), () => selectBestBridge());
+}
 
-  it('单账号也正常', () => {
-    const accounts = 'team5'.split(',').map(s => s.trim()).filter(Boolean);
-    expect(accounts).toEqual(['team5']);
+describe('真实selectBestBridge：当前授权目录→健康探针→额度选择', () => {
+  it('忽略过期账号，按可用账号平均额度选择真实目录中的URL', async () => {
+    expect(selectBestBridge).toBeTypeOf('function');
+    const result = await choose(['http://a.fixture','http://b.fixture'], {
+      'http://a.fixture':healthy([{primaryUsedPct:70},{primaryUsedPct:0,tokenExpired:true}]),
+      'http://b.fixture':healthy([{primaryUsedPct:40},{primaryUsedPct:50}]),
+    });
+    expect(result).toBe('http://b.fixture');
+    expect(fetch).toHaveBeenCalledTimes(2);
+    for (const [,options] of vi.mocked(fetch).mock.calls) expect(options.signal).toBeInstanceOf(AbortSignal);
+  });
+  it.each([{httpOk:false}, {ok:false}, {ok:true,status:'degraded'}, healthy([]), healthy([{tokenExpired:true}]), new Error('probe unavailable')])('坏/无账号探针不能进入候选 %j', async bad => {
+    expect(await choose(['http://bad.fixture','http://good.fixture'], {'http://bad.fixture':bad,'http://good.fixture':healthy([{primaryUsedPct:80}])})).toBe('http://good.fixture');
+  });
+  it('空授权目录不探测、不退回硬编码宿主', async () => {
+    await expect(choose([],{})).rejects.toThrow('execution_legacy_grant_unavailable:codex');
+    expect(fetch).not.toHaveBeenCalled();
+  });
+  it('全部探针失败时拒绝，不能返回无授权默认URL', async () => {
+    await expect(choose(['http://bad.fixture'],{'http://bad.fixture':new Error('offline')})).rejects.toThrow('execution_legacy_grant_unavailable:codex');
   });
 });
