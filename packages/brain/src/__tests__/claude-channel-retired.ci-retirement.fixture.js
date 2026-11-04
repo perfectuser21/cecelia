@@ -1,11 +1,28 @@
 // 只读资格只供固定完整cohort；突变正文只交给守卫，不执行候选源码。
 import {describe,it,expect} from 'vitest';
 import path from 'node:path';
+import {execFileSync} from 'node:child_process';
 
 export function registerCiRetirementGuardTests({root,base,memoBase,scan}) {
  const source=path.join(root,'existing-ops-source.js');
  const members=['stage-source','workspace-source'].map(name=>path.join(root,`existing-ops-${name}.js`));
  describe('CI退役来源只读完整cohort防复活',()=>{
+  const historical=()=>new Map([...base().keys()].map(file=>[file,execFileSync('git',[
+   '--no-replace-objects','show','fadbf32852cdb30f71e34dda9ab81b521bda484b:'+path.relative(path.resolve(root,'../../../..'),file),
+  ],{cwd:root,encoding:'utf8',maxBuffer:1024*1024})]));
+  it('真实版本增量门当前完整reader可读，发布前旧AutoVersion reader仍独立可重放',()=>{
+   for(const sources of [historical(),base()])for(const marker of [0,1]){
+    sources.set(source,sources.get(source).replace(/EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = [01]/,
+     'EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = '+marker));
+    for(const kind of ['build','stage','native-evidence'])expect(scan(sources,path.join(root,`existing-ops-${kind}-envelopes.js`))).toEqual([]);
+   }
+  });
+  it.each([source,members[0]])('当前版本门reader不能混配旧AutoVersion成员：%s',file=>{
+   const current=base(),old=historical();
+   expect(current.get(file)).not.toBe(old.get(file));
+   current.set(file,old.get(file));expect(scan(current).some(hit=>hit.rule==='E1')).toBe(true);
+   old.set(file,base().get(file));expect(scan(old).some(hit=>hit.rule==='E1')).toBe(true);
+  });
   it.each([0,1])('完整marker%s配对保留三类只读封套，旧memo组合独立保留',marker=>{
    const current=base();current.set(source,current.get(source).replace(/EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = [01]/,'EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = '+marker));
    for(const kind of ['build','stage','native-evidence'])expect(scan(current,path.join(root,`existing-ops-${kind}-envelopes.js`))).toEqual([]);
