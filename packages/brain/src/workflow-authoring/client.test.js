@@ -3,7 +3,7 @@ import { createAuthoringClient } from '../../../workflows/skills/workflow-author
 
 const ID = '11111111-1111-4111-8111-111111111111';
 describe('OpenClaw 工作流管理调用器', () => {
-  it('已有任务重用身份，认领后才初始化', async () => {
+  it.each([false,true])('已有任务=%s，认领后才初始化且保留创建/重用边界', async existing => {
     const calls = [];
     const fetch = async (url, options) => {
       const path = new URL(url).pathname, body = options.body && JSON.parse(options.body);
@@ -15,10 +15,14 @@ describe('OpenClaw 工作流管理调用器', () => {
       return { ok:true,json:async()=>result };
     };
     const c = createAuthoringClient({ fetch, base:'http://localhost:5221/api/brain' });
-    const result = await c.start({ request_key:'session-one',operation:'create',goal:'创建分析流程',actor:'openclaw' });
+    const result = await c.start({ request_key:'session-one',operation:'create',goal:'创建分析流程',actor:'openclaw' }, existing ? ID : undefined);
     expect(result.task_id).toBe(ID);
-    expect(calls.map(x=>x[0])).toEqual(['/api/brain/tasks',`/api/brain/tasks/${ID}`,`/api/brain/tasks/${ID}/claim`,`/api/brain/tasks/${ID}`,`/api/brain/workflow-authoring/runs/${ID}/init`]);
-    expect(calls[0][2].source_id).toBe('workflow-authoring:session-one');
+    expect(calls.some(([path,method])=>path==='/api/brain/tasks'&&method==='POST')).toBe(!existing);
+    expect(calls.map(x=>x[0])).toEqual([...(existing?[]:['/api/brain/tasks']),`/api/brain/tasks/${ID}`,`/api/brain/tasks/${ID}/claim`,`/api/brain/tasks/${ID}`,`/api/brain/workflow-authoring/runs/${ID}/init`]);
+    if(!existing)expect(calls[0][2].source_id).toBe('workflow-authoring:session-one');
+    const claim=calls.find(([path])=>path.endsWith('/claim'));
+    expect(claim[1]).toBe('POST');
+    expect(claim[2].claimer).toMatch(/^workflow-authoring:/);
   });
   it('未注册完成不能收尾任务', async () => {
     const fetch = vi.fn(async () => ({ok:true,json:async()=>({stage:'verify'})}));

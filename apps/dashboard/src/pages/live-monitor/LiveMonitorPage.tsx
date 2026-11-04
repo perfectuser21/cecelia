@@ -1225,6 +1225,7 @@ export default function LiveMonitorPage() {
   const [hkVps, setHkVps] = useState<VpsStats | null>(null);
   const [services, setServices] = useState<Service[]>([]);
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
+  const [sourceSamples,setSourceSamples]=useState<{name:string;available:boolean;sampledAt:Date|null}[]>([]);
   const [cd, setCd] = useState(5);
   const [fullscreen, setFullscreen] = useState(false);
   const [killedPids, setKilledPids] = useState<Set<number>>(new Set());
@@ -1263,19 +1264,22 @@ export default function LiveMonitorPage() {
   };
 
   const load = useCallback(async () => {
+    const readSourceJson=async(response:Response)=>{if(!response.ok)throw Error('来源请求失败');return response.json();};
     const r = await Promise.allSettled([
-      fetch('/api/brain/status').then(x => x.json()),
-      fetch('/api/brain/tick/status').then(x => x.json()),
-      fetch('/api/brain/tasks?status=in_progress').then(x => x.json()),
-      fetch('/api/brain/tasks?status=queued').then(x => x.json()),
-      fetch('/api/brain/projects?limit=200').then(x => x.json()),
-      fetch('/api/brain/cluster/status').then(x => x.json()),
-      fetch('/api/v1/vps-monitor/stats').then(x => x.json()),
-      fetch('/api/v1/vps-monitor/services').then(x => x.json()),
-      fetch('/api/cluster/scan-sessions').then(x => x.json()),
-      fetch('/api/brain/goals').then(x => x.json()),
-      fetch('/api/v1/vps-monitor/hk-stats').then(x => x.json()),
+      fetch('/api/brain/status').then(readSourceJson),
+      fetch('/api/brain/tick/status').then(readSourceJson),
+      fetch('/api/brain/tasks?status=in_progress').then(readSourceJson),
+      fetch('/api/brain/tasks?status=queued').then(readSourceJson),
+      fetch('/api/brain/projects?limit=200').then(readSourceJson),
+      fetch('/api/brain/cluster/status').then(readSourceJson),
+      fetch('/api/v1/vps-monitor/stats').then(readSourceJson),
+      fetch('/api/v1/vps-monitor/services').then(readSourceJson),
+      fetch('/api/cluster/scan-sessions').then(readSourceJson),
+      fetch('/api/brain/goals').then(readSourceJson),
+      fetch('/api/v1/vps-monitor/hk-stats').then(readSourceJson),
     ]);
+    const names=['Brain状态','Tick状态','运行任务','排队任务','Projects','集群状态','美国宿主','服务列表','会话扫描','目标','香港宿主'];
+    setSourceSamples(previous=>r.map((result,index)=>({name:names[index],available:result.status==='fulfilled',sampledAt:result.status==='fulfilled'?new Date():previous[index]?.sampledAt??null})));
     if (r[0].status === 'fulfilled') setBrainStatus(r[0].value);
     if (r[1].status === 'fulfilled') setTick(r[1].value);
     if (r[2].status === 'fulfilled') setActiveTasks(Array.isArray(r[2].value) ? r[2].value : []);
@@ -1426,6 +1430,7 @@ export default function LiveMonitorPage() {
           </button>
         </div>
 
+        {sourceSamples.some(source=>!source.available)&&<div role="status" data-testid="live-monitor-source-errors" style={{padding:'6px 20px',fontSize:11,color:'#f59e0b'}}>{sourceSamples.filter(source=>!source.available).map(source=>`${source.name}不可用；${source.sampledAt?'保留 '+source.sampledAt.toLocaleTimeString('zh-CN')+' 采样':'暂无有效采样'}`).join(' · ')}</div>}
         {/* ══ STATS STRIP ══ */}
         <div style={{ background: '#161b22', borderBottom: '1px solid #21262d', padding: '6px 20px', display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
           {stats && [

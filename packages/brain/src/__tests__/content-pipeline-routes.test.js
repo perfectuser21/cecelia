@@ -306,7 +306,7 @@ describe('POST /api/brain/pipelines/:id/run — 编排已搬走，只负责重�
   it('completed pipeline → 重置为 queued + 返回 202', async () => {
     pool.query
       .mockResolvedValueOnce({ rows: [{ id: 'pipe-1', status: 'completed', payload: {} }] })  // SELECT
-      .mockResolvedValueOnce({ rows: [] });  // UPDATE 重置
+      .mockResolvedValueOnce({ rows: [{ id: 'pipe-1' }], rowCount: 1 });  // UPDATE CAS重置
 
     const res = await request(makeApp()).post('/api/brain/pipelines/pipe-1/run');
     expect(res.status).toBe(202);

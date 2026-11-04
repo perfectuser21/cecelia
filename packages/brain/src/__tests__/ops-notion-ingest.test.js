@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { planEnableAction, buildManualUpdateSql } from '../ops-notion-ingest.js';
+import { describe, it, expect,vi } from 'vitest';
+import { planEnableAction, buildManualUpdateSql, runOpsNotionIngest } from '../ops-notion-ingest.js';
 
 // 主理人拍板：Notion 上标停用 → 直接生效，真去停 n8n（判定点已登记，误触风险已知悉）。
 // 因为是不可逆动作，实现上必须保证三件事：幂等（不重复调）、留痕（改前状态）、
@@ -82,4 +82,21 @@ describe('buildManualUpdateSql — 只更新人工列', () => {
   it('表名白名单——非 ops_* 表一律拒绝', () => {
     expect(() => buildManualUpdateSql('tasks', 'x', { owner_manual: 'a' })).toThrow();
   });
+});
+
+describe('真实回读只记录人工列实际变化',()=>{
+ it.each([['张三',false],['李四',true],[null,true]])('人工Owner=%s，实际变更=%s',async(owner,changed)=>{
+  const query=vi.fn(async sql=>{
+   if(sql.includes('ops_notion_dbs'))return {rows:[{value_json:{graph_db:'owned-agents'}}]};
+   if(sql.startsWith('SELECT * FROM ops_agents'))return {rows:[{id:'agent-1',owner_manual:'张三'}]};
+   return {rows:[]};
+  });
+  const notionReqFn=vi.fn(async()=>({results:[{id:'page-1',last_edited_time:'2026-11-04T00:00:00Z',properties:{Owner:{rich_text:owner?[{plain_text:owner}]:[]}}}]}));
+  const result=await runOpsNotionIngest({query},{tokenFn:()=> 'owned-fixture',notionReqFn});
+  expect(result).toMatchObject({ok:true,read:1,updated:changed?1:0,toggled:0,failed:0});
+  const writes=query.mock.calls.filter(([sql])=>sql.startsWith('UPDATE ops_agents SET'));
+  expect(writes).toHaveLength(changed?1:0);
+  if(changed)expect(writes[0][1]).toEqual([owner,'agent-1']);
+  expect(query.mock.calls.some(([sql])=>sql.includes('INSERT INTO ops_notion_ingest_cursor'))).toBe(true);
+ });
 });

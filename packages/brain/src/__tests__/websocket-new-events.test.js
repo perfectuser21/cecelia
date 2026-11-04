@@ -11,27 +11,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Mock websocket broadcast
-vi.mock('../websocket.js', () => ({
+vi.mock('../websocket.js', async () => ({
+  ...(await vi.importActual('../websocket.js')),
   broadcast: vi.fn(),
-  WS_EVENTS: {
-    TASK_CREATED: 'task:created',
-    TASK_STARTED: 'task:started',
-    TASK_PROGRESS: 'task:progress',
-    TASK_COMPLETED: 'task:completed',
-    TASK_FAILED: 'task:failed',
-    EXECUTOR_STATUS: 'executor:status',
-    PING: 'ping',
-    PONG: 'pong',
-    PROPOSAL_CREATED: 'proposal:created',
-    PROPOSAL_COMMENT: 'proposal:comment',
-    PROPOSAL_RESOLVED: 'proposal:resolved',
-    PROFILE_CHANGED: 'profile:changed',
-    ALERTNESS_CHANGED: 'alertness:changed',
-    DESIRE_CREATED: 'desire:created',
-    DESIRE_UPDATED: 'desire:updated',
-    TICK_EXECUTED: 'tick:executed',
-    COGNITIVE_STATE: 'cognitive:state',
-  }
 }));
 
 import { broadcast, WS_EVENTS } from '../websocket.js';
@@ -69,8 +51,8 @@ describe('WebSocket 新事件类型', () => {
       expect(WS_EVENTS.COGNITIVE_STATE).toBe('cognitive:state');
     });
 
-    it('总共有 17 个事件类型', () => {
-      expect(Object.keys(WS_EVENTS).length).toBe(17);
+    it('当前完整事件集合包含19项', () => {
+      expect(Object.keys(WS_EVENTS).length).toBe(19);
     });
   });
 

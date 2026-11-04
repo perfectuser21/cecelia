@@ -37,21 +37,15 @@ describe('getDeploymentStatus', () => {
 });
 
 describe('getMapSummary', () => {
-  it('返回 active manifest + 四类对象数量', async () => {
+  it('指定scope后只读取匹配当前manifest的run数量', async () => {
     const fakePool = {};
     const fakeQuery = vi.fn()
-      .mockResolvedValueOnce({ rows: [{ id: 'm1', scope_key: 'default', digest: 'd1' }] }) // active manifest
-      .mockResolvedValueOnce({ rows: [{ status: 'active', id: 'run1' }] }) // active run
-      .mockResolvedValueOnce({ rows: [{ node_type: 'value_stream', count: '3' }, { node_type: 'capability', count: '10' }] }); // node counts
-
-    const result = await getMapSummary(fakePool, fakeQuery);
-    expect(result.active_manifest_id).toBe('m1');
-    expect(result.projection_status).toBe('active');
-    expect(result.node_counts).toEqual({ value_stream: 3, capability: 10 });
-    const [pool, sql, params] = fakeQuery.mock.calls[2];
-    expect(pool).toBe(fakePool);
-    expect(sql).toMatch(/FROM\s+map_projection_nodes\s+WHERE\s+run_id\s*=\s*\$1\s+GROUP BY\s+node_type/);
-    expect(params).toEqual(['run1']);
+      .mockResolvedValueOnce({ rows: [{ active_manifest_id: 'm1', active_run_id: 'run1', projection_status: 'active' }] })
+      .mockResolvedValueOnce({ rows: [{ node_type: 'capability', count: '10' }] });
+    const result = await getMapSummary(fakePool, fakeQuery, { scope: 'default' });
+    expect(result).toMatchObject({ active_manifest_id: 'm1', active_run_id: 'run1', node_counts: { capability: 10 } });
+    expect(fakeQuery.mock.calls[0][2]).toEqual(['default']);
+    expect(fakeQuery.mock.calls[1][2]).toEqual(['run1']);
   });
 });
 

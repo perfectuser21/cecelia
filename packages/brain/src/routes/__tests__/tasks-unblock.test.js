@@ -2,7 +2,7 @@
  * routes/tasks.js — unblock/block 端点 import 路径修复 [BEHAVIOR]
  *
  * Bug: tasks.js 第 600、1119、1147 行使用 './task-updater.js'（错误路径），
- * 导致 POST /tasks/:taskId/unblock、/tasks/:id/block、/tasks/:id/unblock 均返回 500。
+ * 历史影响含三个注册点；本文件只验证HTTP可达的首个unblock与block入口。
  * task-updater.js 实际位于 src/task-updater.js，正确路径为 '../task-updater.js'。
  *
  * 修复：将三处 './task-updater.js' 改为 '../task-updater.js'。
@@ -161,29 +161,5 @@ describe('unblock/block 端点 import 路径修复 [BEHAVIOR]', () => {
     });
   });
 
-  describe('POST /:id/unblock (line 1147) — 成功时返回 200 + status queued [BEHAVIOR-01b]', () => {
-    it('unblockTask 成功 → 200 + { success: true, task_id, status: "queued" }', async () => {
-      mockUnblockTask.mockResolvedValueOnce({ success: true, task: { id: 'task-def', status: 'queued' } });
-
-      const res = await request(app)
-        .post('/api/brain/tasks/task-def/unblock')
-        .send({});
-
-      // 注意：/:taskId/unblock（第 600 行）和 /:id/unblock（第 1147 行）
-      // 在路由注册上都是 /tasks/:xxx/unblock，Express 会匹配先注册的那个（第 600 行）
-      // 因此这两个路由实际上是同一条路由，都返回 { success, task }
-      expect(res.status).toBe(200);
-      expect(res.body.success).toBe(true);
-    });
-
-    it('unblockTask 失败 → 非 200', async () => {
-      mockUnblockTask.mockResolvedValueOnce({ success: false, error: 'not found' });
-
-      const res = await request(app)
-        .post('/api/brain/tasks/task-nope/unblock')
-        .send({});
-
-      expect(res.status).not.toBe(200);
-    });
-  });
+  // 后注册的 /:id/unblock 被首个同形路由遮蔽；不以重复HTTP请求冒称覆盖其动态import。
 });

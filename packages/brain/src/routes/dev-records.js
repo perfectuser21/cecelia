@@ -50,7 +50,7 @@ router.get('/', async (req, res) => {
     );
 
     const { rows: countRows } = await pool.query(
-      `SELECT count(*) FROM dev_records ${whereClause}`,
+      `SELECT count(*) FROM dev_records ${whereClause.replace(/\$(\d+)/g, (_, index) => `$${Number(index) - 2}`)}`,
       params.slice(2)
     );
 

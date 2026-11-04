@@ -23,7 +23,7 @@ function build(input = manifest, factRevisions = {}) {
   });
 }
 
-const anchorProjection = {
+const globalAnchorProjection = {
   nodes: [
     {
       node_id: stableMapNodeId('cecelia', 'feature', '11111111-1111-4111-8111-111111111111'),
@@ -51,6 +51,8 @@ const anchorProjection = {
     },
   ],
 };
+
+const anchorProjection = globalAnchorProjection;
 
 function reverseObjectKeys(value) {
   if (Array.isArray(value)) return value.map(reverseObjectKeys);
@@ -178,6 +180,14 @@ describe('Universal Map deterministic structure projector', () => {
   });
 
   it('锚点投影参与 canonical nodes/edges 与 digest，输入顺序不影响结果', () => {
+    const anchorProjection = structuredClone(globalAnchorProjection);
+    const key = '22222222-2222-4222-8222-222222222222';
+    const node = {...anchorProjection.nodes[0], node_id:stableMapNodeId('cecelia','feature',key), node_key:key, name:'Second anchor'};
+    const edge = {...anchorProjection.edges[0], edge_id:stableMapEdgeId('cecelia','implements',`${key}:F1`), edge_key:`${key}:F1`, from_node_id:node.node_id};
+    anchorProjection.nodes.push(node);
+    anchorProjection.edges.push(edge);
+    expect([...anchorProjection.nodes].reverse()).not.toEqual(anchorProjection.nodes);
+    expect([...anchorProjection.edges].reverse()).not.toEqual(anchorProjection.edges);
     const first = buildMapProjection({
       manifest,
       manifestDigest: digestMapManifest(manifest),

@@ -7,7 +7,7 @@ function setup(){
  const save=async s=>{state=structuredClone(s);};
  const ssh=async(_id,_request,p)=>{calls.push(p.action);if(p.action==='probe')return {machine_registry_id:id,nonce:p.nonce,image:p.image,image_id:'sha256:'+'c'.repeat(64),os:'linux',observed_at:new Date().toISOString(),resources:{cpu_cores:4,memory_total_bytes:8*2**30}};
   if(p.action==='bootstrap'){const receipt={schema_version:'linux-onboarding-install/v1',nonce:p.nonce,machine_registry_id:id,host_boot_id:randomUUID(),daemon_id:'daemon',image_id:'sha256:'+'c'.repeat(64),image:p.pool.canary_image,observed_at:new Date().toISOString(),intent_id:p.intent_id,revision:p.revision,worker_boot_id:randomUUID(),pool:p.pool,installed:true,execution:false,os:'linux',resources:{cpu_cores:4,memory_total_bytes:8*2**30}};return {receipt,signature:createHmac('sha256','f'.repeat(64)).update(JSON.stringify(receipt)).digest('hex')};}
-  if(p.action==='runtime')return {written:true,execution:false,nonce:p.nonce};return {receipt:{cleanup_confirmed:true},signature:'f'.repeat(64)};};
+  if(p.action==='runtime')return {written:true,execution:false,nonce:p.nonce};return {receipt:{cleanup_confirmed:true},signature:'0'.repeat(64)};};
  const deps={recover:async()=>false,pool:{query:async()=>({rows:[]})},ssh,credentials:async(_id,prior,persist)=>{creates++;await persist({phase:'creating'});return {item_id:'a'.repeat(26),worker_credential_file:'/etc/worker',execution_credential_file:'/etc/key'};},
   readSecret:p=>p==='/etc/worker'?'e'.repeat(64):'f'.repeat(64),artifacts:{capture:()=>({revision:state.revision,digest:'6'.repeat(64),files:{'module.cjs':'trusted'},program:'fixed program'}),read:()=>({files:{'module.cjs':'trusted'},program:'fixed program'})},
   writer:{pool:()=>({policy_digest:'1'.repeat(64)}),runtime:()=>({policy_digest:'2'.repeat(64)})},
@@ -20,7 +20,7 @@ it('从观测自动推进到真实授权服务；仅最后active可完成，内�
  for(let i=0;i<15&&x.state.phase!=='active';i++){phases.push(x.state.phase);await step(x.task,x.machine,x.state,x.save);}
  expect(x.state.phase).toBe('active');expect(x.state.active.execution).toBe(true);expect(x.creates).toBe(1);
  expect(x.calls).toEqual(['probe','bootstrap','pool_canary','runtime','script_canary']);expect(phases).toContain('pool_ready');expect(phases).toContain('script_activate');
- expect(JSON.stringify(x.state)).not.toContain('e'.repeat(64));expect(JSON.stringify(x.state)).not.toContain('f'.repeat(64)+'f');
+ expect(JSON.stringify(x.state)).not.toContain('e'.repeat(64));expect(JSON.stringify(x.state)).not.toContain('f'.repeat(64));
 });
 it('首次SSH之前绑定当前镜像工件，旧队列revision不能搭配新源码冒充旧安装',async()=>{
  const x=setup(),revision='9'.repeat(40),artifact={revision,digest:'8'.repeat(64),files:{'module.cjs':'fixed source'},program:'fixed remote program'};

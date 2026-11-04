@@ -74,7 +74,7 @@ describe('ops-panorama 真实router同步阻塞回归', () => {
     state.sleep = false; state.error = true;
     const { promise, res } = run(); await promise;
     expect(res.json.mock.calls[0][0]).toMatchObject({ relay: { container_count: null },
-      processes: { claude_total: 0, codex_total: 0 }, sessions: { headed: 0, headless: 0 } });
+      processes: { claude_total: null, codex_total: null, available: false }, sessions: { headed: null, headless: null } });
   });
   it('实际任务查询把缺失和未知执行器各计一次，不增添未知厂商键', async () => {
     state.sleep = false;
@@ -102,4 +102,11 @@ describe('ops-panorama 真实router同步阻塞回归', () => {
     expect(res.json.mock.calls[0][0].llm_capacity).toBeNull();
     expect(vi.getTimerCount()).toBe(0);
   });
+});
+
+it('任务查询失败返回unknown而非空闲零', async () => {
+  state.sleep = false;
+  const res = { json: vi.fn() };
+  await handler({ app: { locals: { pool: { query: vi.fn().mockRejectedValue(new Error('database unavailable')) } } } }, res);
+  expect(res.json.mock.calls[0][0].tasks).toMatchObject({ in_progress_count: null, vendor_dist: null, available: false, sampled_at: null });
 });

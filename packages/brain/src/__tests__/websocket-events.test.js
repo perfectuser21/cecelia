@@ -16,16 +16,9 @@ import {
 } from '../events/taskEvents.js';
 
 // Mock the broadcast function
-vi.mock('../websocket.js', () => ({
+vi.mock('../websocket.js', async () => ({
+  ...(await vi.importActual('../websocket.js')),
   broadcast: vi.fn(),
-  WS_EVENTS: {
-    TASK_CREATED: 'task:created',
-    TASK_STARTED: 'task:started',
-    TASK_PROGRESS: 'task:progress',
-    TASK_COMPLETED: 'task:completed',
-    TASK_FAILED: 'task:failed',
-    EXECUTOR_STATUS: 'executor:status'
-  }
 }));
 
 describe('Task Event Publishers', () => {

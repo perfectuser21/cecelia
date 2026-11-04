@@ -12,15 +12,11 @@
  */
 
 import pg from 'pg';
+import { pathToFileURL } from 'node:url';
 
-const { Pool } = pg;
-const DRY_RUN = process.argv.includes('--dry-run');
-
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL || 'postgresql://localhost/cecelia',
-});
-
-async function run() {
+export async function run(pool, { dryRun = false } = {}) {
+  const DRY_RUN = dryRun;
+  try {
   console.log(`[backfill-pending-review] 开始积压清零（dry_run=${DRY_RUN}）`);
 
   // 记录初始数量
@@ -86,10 +82,14 @@ async function run() {
     console.log(`[backfill-pending-review] ⚠ 仍有 ${afterCount} 条待下次 triage 处理`);
   }
 
-  await pool.end();
+  return { parked: parkedCount, remaining: afterCount };
+  } finally { await pool.end(); }
 }
 
-run().catch(err => {
-  console.error(`[backfill-pending-review] 失败: ${err.message}`);
-  process.exit(1);
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL || 'postgresql://localhost/cecelia' });
+  run(pool, { dryRun: process.argv.includes('--dry-run') }).catch(err => {
+    console.error(`[backfill-pending-review] 失败: ${err.message}`);
+    process.exitCode = 1;
+  });
+}

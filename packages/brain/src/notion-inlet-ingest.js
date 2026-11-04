@@ -71,71 +71,79 @@ export async function ingestDecisionsInlet(pool, token, { dbId, notionReq = defa
     sorts: [{ timestamp: 'last_edited_time', direction: 'descending' }],
   });
   for (const page of pages) {
+    const client = typeof pool.connect === 'function' ? await pool.connect() : pool;
     try {
-      const row = mapDecisionPage(page);
-      if (!row) { stat.skipped++; continue; }
-      const edited = new Date(page.last_edited_time);
-      const rc = await getReceipt(pool, page.id);
-      if (rc && new Date(rc.last_edited_time).getTime() >= edited.getTime()) { stat.skipped++; continue; }
-      // 接力棒：这页是 Brain 推出去的待拍板（decisions.notion_id 命中且仍 pending）
-      // → 更新同一行为 active（人赢），并自动登记「执行拍板」子任务挂链根，链自己往下走
-      const pend = await pool.query(
-        `SELECT id, context, priority FROM decisions WHERE notion_id = $1 AND status = 'pending' AND trigger = 'handoff'`,
-        [page.id]);
-      if (!rc && pend.rows[0]) {
-        const d = pend.rows[0];
-        await pool.query(
-          `UPDATE decisions SET status = 'active', topic = $2, decision = $3, reason = COALESCE($4, reason), category = $5,
-                  made_by = 'user', decided_at = COALESCE($6, NOW()), updated_at = NOW() WHERE id = $1`,
-          [d.id, row.topic, row.decision, row.reason, row.category, row.decided_at]);
-        await putReceipt(pool, { key: page.id, dbId, table: 'decisions', brainId: d.id, lastEdited: edited });
-        const ctx = d.context && typeof d.context === 'object' ? d.context : {};
-        if (ctx.root_task_id) {
-          try {
-            const { createRoutedTask } = await import('./work-routing-store.js');
-            await createRoutedTask(pool, {
-              source: 'child', source_id: `decision:${d.id}`,
-              title: `执行拍板：${row.topic}`.slice(0, 200),
-              description: `主理人结论：${row.decision}\n（决策 ${d.id}，来自任务 ${ctx.task_id || '-'}）`,
-              requested_task_type: 'data', declared_domain: 'operations', mutation_intent: 'none',
-              parent_task_id: ctx.root_task_id,
-              metadata: { lane: 'AI', from_decision: d.id, relay_pending_resolved: true },
-              task: { status: 'queued', priority: d.priority || 'P2', trigger_source: 'child' },
-            });
-          } catch (err) {
-            log.warn(`[notion-inlet] 拍板 ${d.id} 已收，执行子任务登记失败: ${err.message}`);
-          }
-        }
-        stat.resolved = (stat.resolved || 0) + 1;
-        continue;
-      }
-      if (!rc) {
-        const { rows } = await pool.query(
-          `INSERT INTO decisions (category, topic, decision, reason, made_by, author, status, decided_at, source_ref)
-           VALUES ($1, $2, $3, $4, $5, $6, 'active', $7, $8) RETURNING id`,
-          [row.category, row.topic, row.decision, row.reason, row.made_by, row.author, row.decided_at, row.source_ref]);
-        await putReceipt(pool, { key: page.id, dbId, table: 'decisions', brainId: rows[0].id, lastEdited: edited });
-        stat.inserted++;
-      } else {
-        // 人改了 → 人赢；被覆盖前的值留痕进收据 history
-        const prev = (await pool.query(`SELECT topic, decision, reason, category FROM decisions WHERE id = $1`, [rc.brain_id])).rows[0] ?? null;
-        await pool.query(
-          `UPDATE decisions SET topic = $2, decision = $3, reason = $4, category = $5, decided_at = COALESCE($6, decided_at), updated_at = NOW() WHERE id = $1`,
-          [rc.brain_id, row.topic, row.decision, row.reason, row.category, row.decided_at]);
-        await pool.query(
-          `UPDATE notion_ingest_receipts
-              SET last_edited_time = $2, ingested_at = NOW(),
-                  history = COALESCE(history, '[]'::jsonb) || jsonb_build_array(jsonb_build_object('at', NOW(), 'overwritten', $3::jsonb))
-            WHERE notion_page_id = $1`,
-          [page.id, edited, JSON.stringify(prev)]);
-        stat.updated++;
-      }
+      await client.query('BEGIN');
+      // 同一页的决策、续棒及收据共享事务；并发重放必须在读收据之前串行。
+      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`notion-inlet:${page.id}`]);
+      const outcome = await ingestDecisionPage(client, page, dbId);
+      await client.query('COMMIT');
+      stat[outcome]++;
     } catch (err) {
+      await client.query('ROLLBACK');
       stat.failed++;
       log.warn(`[notion-inlet] 决策 ${page.id} 收账失败: ${err.message}`);
+    } finally {
+      if (client !== pool) client.release();
     }
   }
   return stat;
+}
+
+async function ingestDecisionPage(pool, page, dbId) {
+  const row = mapDecisionPage(page);
+  if (!row) return 'skipped';
+  const edited = new Date(page.last_edited_time);
+  const rc = await getReceipt(pool, page.id);
+  if (rc && new Date(rc.last_edited_time).getTime() >= edited.getTime()) return 'skipped';
+  // 接力棒：这页是 Brain 推出去的待拍板（decisions.notion_id 命中且仍 pending）
+  // → 更新同一行为 active（人赢），并自动登记「执行拍板」子任务挂链根，链自己往下走
+  const pend = await pool.query(
+    `SELECT id, context, priority FROM decisions WHERE notion_id = $1 AND status = 'pending' AND trigger = 'handoff' FOR UPDATE`,
+    [page.id]);
+  if (!rc && pend.rows[0]) {
+    const d = pend.rows[0];
+    await pool.query(
+      `UPDATE decisions SET status = 'active', topic = $2, decision = $3, reason = COALESCE($4, reason), category = $5,
+              made_by = 'user', decided_at = COALESCE($6, NOW()), updated_at = NOW() WHERE id = $1`,
+      [d.id, row.topic, row.decision, row.reason, row.category, row.decided_at]);
+    const ctx = d.context && typeof d.context === 'object' ? d.context : {};
+    if (ctx.root_task_id) {
+      const { createRoutedTask } = await import('./work-routing-store.js');
+      await createRoutedTask(pool, {
+        source: 'child', source_id: `decision:${d.id}`,
+        title: `执行拍板：${row.topic}`.slice(0, 200),
+        description: `主理人结论：${row.decision}\n（决策 ${d.id}，来自任务 ${ctx.task_id || '-'}）`,
+        requested_task_type: 'data', declared_domain: 'operations', mutation_intent: 'none',
+        parent_task_id: ctx.root_task_id,
+        metadata: { lane: 'AI', from_decision: d.id, relay_pending_resolved: true },
+        task: { status: 'queued', priority: d.priority || 'P2', trigger_source: 'child' },
+      }, null, { transaction: 'existing' });
+    }
+    await putReceipt(pool, { key: page.id, dbId, table: 'decisions', brainId: d.id, lastEdited: edited });
+    return 'resolved';
+  }
+  if (!rc) {
+    const { rows } = await pool.query(
+      `INSERT INTO decisions (category, topic, decision, reason, made_by, author, status, decided_at, source_ref)
+       VALUES ($1, $2, $3, $4, $5, $6, 'active', $7, $8) RETURNING id`,
+      [row.category, row.topic, row.decision, row.reason, row.made_by, row.author, row.decided_at, row.source_ref]);
+    await putReceipt(pool, { key: page.id, dbId, table: 'decisions', brainId: rows[0].id, lastEdited: edited });
+    return 'inserted';
+  } else {
+    // 人改了 → 人赢；被覆盖前的值留痕进收据 history
+    const prev = (await pool.query(`SELECT topic, decision, reason, category FROM decisions WHERE id = $1`, [rc.brain_id])).rows[0] ?? null;
+    await pool.query(
+      `UPDATE decisions SET topic = $2, decision = $3, reason = $4, category = $5, decided_at = COALESCE($6, decided_at), updated_at = NOW() WHERE id = $1`,
+      [rc.brain_id, row.topic, row.decision, row.reason, row.category, row.decided_at]);
+    await pool.query(
+      `UPDATE notion_ingest_receipts
+          SET last_edited_time = $2, ingested_at = NOW(),
+              history = COALESCE(history, '[]'::jsonb) || jsonb_build_array(jsonb_build_object('at', NOW(), 'overwritten', $3::jsonb))
+        WHERE notion_page_id = $1`,
+      [page.id, edited, JSON.stringify(prev)]);
+    return 'updated';
+  }
 }
 
 /** 员工 Skill 库(zip) → /api/skill-eval/upload → skill_evals */
@@ -194,12 +202,16 @@ export async function runNotionInletIngest(pool, { now = Date.now, notionReq = d
   let map;
   try { map = await loadProjectionMap(pool); } catch { return { ok: false, reason: 'registry_unavailable' }; }
   const results = {};
+  const sources = [];
   for (const r of map.byFace.inlet) {
     if (r.status !== 'active' || !['ingest', 'both'].includes(r.direction)) continue;
     const handler = HANDLERS[r.brain_table];
     if (!handler) continue;
     try { results[r.brain_table] = await handler(pool, token, { dbId: r.notion_db_id, notionReq }); }
     catch (err) { results[r.brain_table] = { error: err.message }; }
+    sources.push({ brain_table: r.brain_table, notion_db_id: r.notion_db_id, result: results[r.brain_table] });
   }
-  return { ok: true, results };
+  // 一表可挂多个入口库；逐库事实不能被后来的同表结果覆盖。
+  const failed = sources.some(({ result }) => result.error || result.failed > 0);
+  return { ok: !failed, results, sources };
 }

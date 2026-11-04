@@ -412,11 +412,13 @@ describe('FR-5 Gap Ledger', () => {
     })).rejects.toMatchObject({ code: 'invalid_resolution_evidence' });
   });
 
-  test('不能用另一条 Journey Step Link 的 PASS 回执关闭 gap', async () => {
-    const assertionId = 'assertion-1';
+  test.each([true,false])('同一可信PASS仅link匹配=%s时可关闭gap', async sameLink => {
+    const assertionId = 'packages/brain/src/example.test.js';
+    const revision='a'.repeat(40),completedAt='2026-08-11T04:00:00.000Z';
+    const contractId='33333333-3333-4333-8333-333333333333',contractHash='c'.repeat(64);
     const assertionDigest = createHash('sha256').update(assertionId).digest('hex');
     const contractLinkId = '11111111-1111-4111-8111-111111111111';
-    const receiptLinkId = '22222222-2222-4222-8222-222222222222';
+    const receiptLinkId = sameLink ? contractLinkId : '22222222-2222-4222-8222-222222222222';
     const db = {
       query: vi.fn(async (sql) => {
         const s = String(sql);
@@ -427,15 +429,15 @@ describe('FR-5 Gap Ledger', () => {
             repair_task_id: 'repair-task',
             impact_node_id: 'billing',
             status: 'verifying',
-            current_revision: 'abc123',
+            current_revision: revision,
           }] };
         }
         if (s.startsWith('SELECT id FROM tasks')) return { rows: [{ id: 'source-task' }] };
         if (s.startsWith('SELECT status, completed_at FROM tasks')) {
-          return { rows: [{ status: 'completed', completed_at: new Date().toISOString() }] };
+          return { rows: [{ status: 'completed', completed_at: completedAt }] };
         }
         if (s.includes('FROM harness_impact_contracts')) {
-          return { rows: [{ contract_body: { required_assertions: [{
+          return { rows: [{id:contractId,contract_hash:contractHash,repo:'perfectuser21/cecelia', contract_body: { required_assertions: [{
             assertion_id: assertionId,
             covers_capability_ids: ['billing'],
             journey_step_link_id: contractLinkId,
@@ -444,7 +446,7 @@ describe('FR-5 Gap Ledger', () => {
           }] } }] };
         }
         if (s.includes('MAX(created_at) AS verification_started_at')) {
-          return { rows: [{ verification_started_at: new Date().toISOString() }] };
+          return { rows: [{ verification_started_at: completedAt }] };
         }
         if (s.includes('FROM journey_assertion_receipts')) {
           return { rows: [{
@@ -454,7 +456,10 @@ describe('FR-5 Gap Ledger', () => {
             exit_code: 0,
             synthetic: false,
             executor_kind: 'brain_assertion_runner',
-            source_sha: 'abc123',
+            machine_id:'runner-1',source_repo:'perfectuser21/cecelia',
+            impact_contract_id:contractId,impact_contract_hash:contractHash,verification_task_id:'repair-task',
+            command_argv:['npx','vitest','run',assertionId],completed_at:completedAt,
+            source_sha: revision,
             assertion_ref_snapshot: assertionId,
             current_assertion_ref: assertionId,
             assertion_revision: 1,
@@ -465,17 +470,20 @@ describe('FR-5 Gap Ledger', () => {
             scenario_evidence: { passed: 1 },
           }] };
         }
+        if(s.includes('UPDATE harness_gaps'))return {rows:[{id:'gap',status:'resolved'}]};
         return { rows: [] };
       }),
     };
 
-    await expect(transitionGapStatus(db, 'gap', 'resolved', {
+    const result=transitionGapStatus(db, 'gap', 'resolved', {
       resolutionEvidence: {
         assertion_id: assertionId,
         receipt_id: 'receipt-other-link',
-        revision: 'abc123',
+        revision: revision,
       },
-    })).rejects.toMatchObject({ code: 'invalid_resolution_evidence' });
+    });
+    if(sameLink)await expect(result).resolves.toBeDefined();
+    else await expect(result).rejects.toMatchObject({code:'invalid_resolution_evidence'});
   });
 
   test('断言不覆盖当前 impact node 时不能关闭 gap', async () => {

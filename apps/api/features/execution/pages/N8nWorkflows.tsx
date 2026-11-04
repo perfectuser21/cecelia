@@ -69,7 +69,7 @@ export default function N8nWorkflows() {
       .then(setInstancesStatus)
       .catch(() => {
         setInstancesStatus({
-          cloud: { available: true, name: 'Cloud' },
+          cloud: { available: false, name: 'Cloud (disabled)' },
           local: { available: false, name: 'Local' },
         });
       });
@@ -146,9 +146,9 @@ export default function N8nWorkflows() {
       const running = workflows.reduce((sum, w) => sum + (w.runStats?.runningCount || 0), 0);
 
       // 计算平均成功率
-      const workflowsWithStats = workflows.filter(w => w.runStats?.recentStats.total > 0);
+      const workflowsWithStats = workflows.filter(w => (w.runStats?.recentStats.total ?? 0) > 0);
       const avgSuccessRate = workflowsWithStats.length > 0
-        ? Math.round(workflowsWithStats.reduce((sum, w) => sum + w.runStats.recentStats.successRate, 0) / workflowsWithStats.length)
+        ? Math.round(workflowsWithStats.reduce((sum, w) => sum + w.runStats!.recentStats.successRate, 0) / workflowsWithStats.length)
         : 0;
 
       stats[cat.key] = {
@@ -314,7 +314,8 @@ export default function N8nWorkflows() {
   const workflowStats = overview?.workflows;
   const executionStats = overview?.recentExecutions;
 
-  // 当前正在运行的工作流总数
+  const runningAvailable = overview?.workflows.workflows.every(workflow => workflow.runStats !== null);
+  // 只有统计来源存在时才能显示正在运行的工作流总数
   const totalRunning = overview?.workflows.workflows.reduce(
     (sum, w) => sum + (w.runStats?.runningCount || 0),
     0
@@ -430,7 +431,7 @@ export default function N8nWorkflows() {
               <div className={`text-xl font-bold ${
                 totalRunning > 0 ? 'text-blue-600 dark:text-blue-400' : 'text-gray-500 dark:text-gray-400'
               }`}>
-                {totalRunning}
+                <span data-testid="workflow-running-count">{runningAvailable ? totalRunning : '—'}</span>
               </div>
             </div>
           </div>
@@ -759,13 +760,14 @@ function WorkflowCard({
   onClick,
 }: WorkflowCardProps) {
   const { runStats } = workflow;
-  const isRunning = runStats?.runningCount > 0;
+  const isRunning = (runStats?.runningCount ?? 0) > 0;
   const lastExec = runStats?.lastExecution;
   const recentStats = runStats?.recentStats;
 
   return (
     <div
       onClick={onClick}
+      data-testid={`workflow-${workflow.id}`}
       className={`border rounded-xl p-4 transition-all cursor-pointer ${
         isRunning
           ? 'border-blue-300 dark:border-blue-600 bg-blue-50/50 dark:bg-blue-900/20 shadow-md shadow-blue-500/10'
@@ -781,7 +783,7 @@ function WorkflowCard({
           {isRunning && (
             <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 dark:bg-blue-900/50 text-blue-600 dark:text-blue-400 flex items-center gap-1">
               <Activity className="w-3 h-3 animate-pulse" />
-              {runStats.runningCount}
+              {runStats?.runningCount}
             </span>
           )}
           <span
@@ -841,7 +843,7 @@ function WorkflowCard({
       {/* No executions yet */}
       {(!recentStats || recentStats.total === 0) && !lastExec && (
         <div className="text-xs text-gray-400 dark:text-gray-500">
-          暂无执行记录
+          {runStats === null ? '运行统计未采集' : '暂无执行记录'}
         </div>
       )}
     </div>

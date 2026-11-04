@@ -39,7 +39,8 @@ describe('POST /strategic-decisions source_ref 写入口（刀B judgments 对账
     const call = mockQuery.mock.calls.find(([sql]) => /INSERT INTO decisions/.test(sql));
     expect(call).toBeTruthy();
     expect(call[0]).toMatch(/source_ref/);
-    expect(call[1]).toContain('task-abc');
+    expect(call[1][11]).toBe('task-abc');
+    expect(res.statusCode).toBe(201);
   });
 
   it('body 不带 source_ref → 参数为 null，不报错', async () => {
@@ -48,6 +49,7 @@ describe('POST /strategic-decisions source_ref 写入口（刀B judgments 对账
     await handler({ body: { topic: 't', decision: 'd' } }, res);
     const call = mockQuery.mock.calls.find(([sql]) => /INSERT INTO decisions/.test(sql));
     expect(call[0]).toMatch(/source_ref/);
-    expect(call[1]).toContain(null);
+    expect(call[1][11]).toBeNull();
+    expect(res.statusCode).toBe(201);
   });
 });

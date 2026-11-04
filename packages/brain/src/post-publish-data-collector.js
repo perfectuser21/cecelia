@@ -159,16 +159,15 @@ async function completeScraperTask(pool, scraperTaskId, result) {
  * 设计原因：platform_scraper 路由到 'cn' 机器（原设计）在 MACHINE_REGISTRY
  * 中不存在，executor 无法派发。改为 Brain tick 内直接处理：
  *   1. 优先读 pipeline_publish_stats（N8N 若已采集到真实数据则回填）
- *   2. 无真实数据时写 placeholder（views/likes/comments=0）保持链路畅通
- *   3. 写回 content_publish.payload → 日报立即可读
- *   4. 写入 pipeline_publish_stats 占位（避免重复触发）
- *   5. 标记 scraper 任务 completed
+ *   2. 无真实数据时保持待采集，返回 deferred，不捏造零值
+ *   3. 仅在真实数据存在时回填 content_publish.payload 并完成采集任务
  *
  * @param {import('pg').Pool} pool
  * @returns {Promise<{processed: number}>}
  */
 export async function processPendingScraperTasks(pool) {
   let processed = 0;
+  let deferred = 0;
 
   try {
     const scraperTasks = await fetchQueuedScraperTasks(pool);
@@ -176,11 +175,10 @@ export async function processPendingScraperTasks(pool) {
     for (const task of scraperTasks) {
       const publishTaskId = task.payload?.source_publish_task_id;
       const platform = task.payload?.platform;
-      const pipelineId = task.payload?.pipeline_id;
 
       if (!publishTaskId) {
         console.warn(`[post-publish-collector] scraper task ${task.id} 缺少 source_publish_task_id，跳过`);
-        await completeScraperTask(pool, task.id, { skipped: true, reason: 'missing_publish_task_id' });
+        deferred++;
         continue;
       }
 
@@ -205,22 +203,9 @@ export async function processPendingScraperTasks(pool) {
           };
           console.log(`[post-publish-collector] 回填真实数据 publish=${publishTaskId} platform=${platform} views=${metrics.views}`);
         } else {
-          // 无真实数据：写 placeholder，保证日报链路不中断
-          metrics = { views: 0, likes: 0, comments: 0, shares: 0 };
-          console.log(`[post-publish-collector] 写入 placeholder 数据 publish=${publishTaskId} platform=${platform}`);
-
-          // 写入 pipeline_publish_stats 占位行，防重复采集
-          if (pipelineId) {
-            try {
-              await writePipelinePublishStats(pool, { pipelineId, publishTaskId, platform, metrics });
-            } catch (statsErr) {
-              // 唯一约束冲突时忽略（已有记录）
-              const isDup = statsErr.message?.includes('duplicate') || statsErr.message?.includes('unique');
-              if (!isDup) {
-                console.warn(`[post-publish-collector] writePipelinePublishStats 失败: ${statsErr.message}`);
-              }
-            }
-          }
+          // 尚无采集能力或采集结果：任务继续排队，不能把缺数据当作零互动。
+          deferred++;
+          continue;
         }
 
         // 写回 content_publish.payload，让日报能读到 views/likes/comments
@@ -237,7 +222,7 @@ export async function processPendingScraperTasks(pool) {
     console.error(`[post-publish-collector] processPendingScraperTasks 异常: ${err.message}`);
   }
 
-  return { processed };
+  return { processed, deferred };
 }
 
 /**

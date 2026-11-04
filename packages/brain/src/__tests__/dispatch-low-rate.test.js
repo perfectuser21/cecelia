@@ -1,26 +1,12 @@
-/**
- * dispatch-low-rate.test.js
- * 低成功率熔断保护单元测试
- *
- * DoD 覆盖：
- * - 成功率 < 30% 且样本 >= 10 时，dispatch 返回 low_success_rate
- * - 成功率正常时不阻断
- * - 样本不足时不阻断（即使 rate 很低）
- * - 无数据时不阻断（rate === null）
- *
- * 测试策略：
- * 直接测试 dispatch-stats 的阈值判断逻辑（纯函数），
- * 以及 tick.js 中的 0b 检查路径（通过 mock getDispatchStats）
- */
-
+/** 真实派发统计窗口回归；不宣称旧低成功率调度闸已启用。 */
 import { describe, it, expect } from 'vitest';
-import { computeWindow1h, DISPATCH_RATE_THRESHOLD, DISPATCH_MIN_SAMPLE, WINDOW_MS } from '../dispatch-stats.js';
+import { computeWindow1h, WINDOW_MS } from '../dispatch-stats.js';
 
 // ─────────────────────────────────────────
 // 低成功率条件判断（纯逻辑测试）
 // ─────────────────────────────────────────
 
-describe('dispatch 低成功率熔断 - 阈值判断', () => {
+describe('dispatch 最近一小时统计窗口', () => {
   const NOW = 1_700_000_000_000;
 
   /**
@@ -34,59 +20,49 @@ describe('dispatch 低成功率熔断 - 阈值判断', () => {
     }));
   }
 
-  it('成功率 20%（< 30%）且样本 15 个 → 应触发熔断', () => {
+  it('15样本3成功的窗口比例为20%', () => {
     const events = makeEvents(15, 3); // 3/15 = 20%
     const { rate, total } = computeWindow1h(events, NOW);
-    const shouldBlock = rate !== null && total >= DISPATCH_MIN_SAMPLE && rate < DISPATCH_RATE_THRESHOLD;
-    expect(shouldBlock).toBe(true);
     expect(rate).toBeCloseTo(0.2);
     expect(total).toBe(15);
   });
 
-  it('成功率 29%（< 30%）且样本恰好 10 个 → 应触发熔断', () => {
-    // 2.9/10 ≈ 29%，用整数：2/10 = 20%，修正为接近 29%
-    // 10 个事件，3 个成功 = 30%（边界不触发），用 2 成功 = 20%
+  it('10样本2成功的窗口比例为20%', () => {
     const events = makeEvents(10, 2); // 2/10 = 20%
     const { rate, total } = computeWindow1h(events, NOW);
-    const shouldBlock = rate !== null && total >= DISPATCH_MIN_SAMPLE && rate < DISPATCH_RATE_THRESHOLD;
-    expect(shouldBlock).toBe(true);
     expect(total).toBe(10);
+    expect(rate).toBe(0.2);
   });
 
-  it('成功率 30%（= 阈值）且样本 10 个 → 不触发熔断（等于不阻断）', () => {
+  it('10样本3成功的窗口比例为30%', () => {
     const events = makeEvents(10, 3); // 3/10 = 30%
     const { rate, total } = computeWindow1h(events, NOW);
-    const shouldBlock = rate !== null && total >= DISPATCH_MIN_SAMPLE && rate < DISPATCH_RATE_THRESHOLD;
-    expect(shouldBlock).toBe(false);
     expect(rate).toBeCloseTo(0.3);
   });
 
-  it('成功率 50%（> 30%）→ 不触发熔断', () => {
+  it('20样本10成功的窗口比例为50%', () => {
     const events = makeEvents(20, 10); // 10/20 = 50%
     const { rate, total } = computeWindow1h(events, NOW);
-    const shouldBlock = rate !== null && total >= DISPATCH_MIN_SAMPLE && rate < DISPATCH_RATE_THRESHOLD;
-    expect(shouldBlock).toBe(false);
+    expect(total).toBe(events.length);
+    expect(rate).toBe(events.filter(e => e.success).length / events.length);
   });
 
-  it('成功率 100% → 不触发熔断', () => {
+  it('全成功窗口比例为100%', () => {
     const events = makeEvents(15, 15); // 15/15 = 100%
     const { rate, total } = computeWindow1h(events, NOW);
-    const shouldBlock = rate !== null && total >= DISPATCH_MIN_SAMPLE && rate < DISPATCH_RATE_THRESHOLD;
-    expect(shouldBlock).toBe(false);
+    expect(total).toBe(events.length);
+    expect(rate).toBe(events.filter(e => e.success).length / events.length);
   });
 
-  it('成功率低但样本不足（9 个 < 10）→ 不触发熔断', () => {
+  it('9样本全失败的窗口比例为0%', () => {
     const events = makeEvents(9, 0); // 0/9 = 0%，但样本不足
     const { rate, total } = computeWindow1h(events, NOW);
-    const shouldBlock = rate !== null && total >= DISPATCH_MIN_SAMPLE && rate < DISPATCH_RATE_THRESHOLD;
-    expect(shouldBlock).toBe(false);
     expect(total).toBe(9);
+    expect(rate).toBe(0);
   });
 
-  it('无数据（rate === null）→ 不触发熔断', () => {
+  it('无数据的比例为null', () => {
     const { rate, total } = computeWindow1h([], NOW);
-    const shouldBlock = rate !== null && total >= DISPATCH_MIN_SAMPLE && rate < DISPATCH_RATE_THRESHOLD;
-    expect(shouldBlock).toBe(false);
     expect(rate).toBeNull();
   });
 
@@ -102,16 +78,9 @@ describe('dispatch 低成功率熔断 - 阈值判断', () => {
       { ts: new Date(NOW - 2000).toISOString(), success: true }
     ];
     const { rate, total } = computeWindow1h([...expiredEvents, ...validEvents], NOW);
-    const shouldBlock = rate !== null && total >= DISPATCH_MIN_SAMPLE && rate < DISPATCH_RATE_THRESHOLD;
     // 只有 2 条有效事件，样本不足 10，不应阻断
-    expect(shouldBlock).toBe(false);
     expect(total).toBe(2);
     expect(rate).toBe(1); // 2 条全成功
   });
 
-  it('低成功率熔断后：recordDispatchResult 应记录 low_success_rate reason', () => {
-    // 验证 reason 字符串，确保与 tick.js 中的字符串一致
-    const reason = 'low_success_rate';
-    expect(reason).toBe('low_success_rate');
-  });
 });

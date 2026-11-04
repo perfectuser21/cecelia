@@ -8,7 +8,7 @@
     "cecilia": "./bin/cecilia"
   },
   "scripts": {
-    "build": "tsc && npm run copy-js",
+    "build": "tsc && npm run copy-js && node scripts/stage-workers-config.mjs",
     "copy-js": "cp -r src/task-system dist/ && cp -r src/okr dist/",
     "dev": "tsx watch src/dashboard/server.ts",
     "start": "node dist/dashboard/server.js",

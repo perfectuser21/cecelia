@@ -8,40 +8,23 @@ import request from 'supertest';
 const mockQuery = vi.hoisted(() => vi.fn());
 vi.mock('../../db.js', () => ({ default: { query: mockQuery } }));
 
-describe('dev-records route', () => {
-  describe('GET /api/brain/dev-records', () => {
-    it('canary 任务不出现在 dev-records 列表（IS DISTINCT FROM 过滤）', async () => {
-      // 验证路由模块可以被导入（实现已存在）
-      const mod = await import('../dev-records.js');
-      expect(mod).toBeDefined();
-      // router 是 default export 或命名 export
-      const router = mod.default ?? mod.router;
-      expect(router).toBeDefined();
-    });
-
-    it('canary 过滤条件使用 IS DISTINCT FROM 处理 NULL', async () => {
-      // 读取 dev-records.js 源码验证过滤条件存在
-      const { readFileSync } = await import('node:fs');
-      const { fileURLToPath } = await import('node:url');
-      const { dirname, join } = await import('node:path');
-      const __dirname = dirname(fileURLToPath(import.meta.url));
-      const src = readFileSync(join(__dirname, '../dev-records.js'), 'utf8');
-      // 必须含 IS DISTINCT FROM 或 canary 过滤相关代码
-      const hasDistinctFrom = src.includes('IS DISTINCT FROM');
-      const hasCanaryFilter = src.includes("canary");
-      expect(hasCanaryFilter).toBe(true);
-      expect(hasDistinctFrom).toBe(true);
-    });
-
-    it('列表端点存在 limit/offset 分页参数处理', async () => {
-      const { readFileSync } = await import('node:fs');
-      const { fileURLToPath } = await import('node:url');
-      const { dirname, join } = await import('node:path');
-      const __dirname = dirname(fileURLToPath(import.meta.url));
-      const src = readFileSync(join(__dirname, '../dev-records.js'), 'utf8');
-      expect(src).toMatch(/limit/);
-      expect(src).toMatch(/offset/);
-    });
+describe('dev-records canary 查询合同', () => {
+  it('真实列表与计数查询均排除TRUE且保留NULL；since两查询参数一致', async () => {
+    mockQuery.mockReset();
+    mockQuery.mockImplementation(async sql => ({ rows: sql.includes('count(*)') ? [{ count: '1' }] : [{ id: 'human-record' }] }));
+    const { default: router } = await import('../dev-records.js');
+    const app = express();
+    app.use('/dev-records', router);
+    const res = await request(app).get('/dev-records?limit=10&offset=2&since=2026-11-01');
+    expect(res.status).toBe(200);
+    expect(res.body.total).toBe(1);
+    expect(res.body.data).toEqual([{ id: 'human-record' }]);
+    expect(mockQuery).toHaveBeenCalledTimes(2);
+    expect(mockQuery.mock.calls[0][0]).toMatch(/WHERE is_canary IS DISTINCT FROM TRUE AND merged_at >= \$3/);
+    expect(mockQuery.mock.calls[1][0]).toMatch(/WHERE is_canary IS DISTINCT FROM TRUE AND merged_at >= \$1/);
+    expect(mockQuery.mock.calls[0][1]).toEqual([10, 2, '2026-11-01']);
+    // 计数没有分页参数，since占位符必须从$1开始。
+    expect(mockQuery.mock.calls[1][1]).toEqual(['2026-11-01']);
   });
 });
 

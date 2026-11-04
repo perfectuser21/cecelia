@@ -10,6 +10,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import * as pyramidImplementation from '../../../../scripts/test-pyramid-guard.mjs';
 
 // ── Mock pool ──────────────────────────────────────────────────────────────
 const _kvStore = {};
@@ -157,8 +158,26 @@ describe('drillTestPyramidGuard', () => {
 
     const result = await pyramidGuard.drillFn();
     expect(result.fired).toBe(true);
-    expect(result.detail).toMatch(/exit/);
+    expect(result.detail).toMatch(/A1.*孤儿棘轮/);
   }, 15_000);
+  it.each(['异常', '非孤儿失败', '不完整结果', '无孤儿的A1结果'])('真实守卫%s不能误认验火或续 last_verified_at', async mode => {
+    const spy = vi.spyOn(pyramidImplementation, 'runGuard');
+    if (mode === '异常') spy.mockImplementation(() => { throw new Error('guard unavailable'); });
+    else if (mode === '非孤儿失败') spy.mockReturnValue({pass:false, failures:['BASELINE: 无效基线']});
+    else if (mode === '不完整结果') spy.mockReturnValue({});
+    else spy.mockReturnValue({pass:false, failures:['A1 孤儿棘轮: 不匹配'],unregistered_orphans:{total:0}});
+    const heartbeat = GUARD_REGISTRY.find(g => g.id === 'heartbeat-sentinel');
+    const previous = '2020-01-01T00:00:00.000Z';
+    _kvStore['guard-drill-status'] = {[heartbeat.id]: {last_verified_at:new Date().toISOString()},'test-pyramid-guard':{last_verified_at:previous}};
+    try {
+      const result = await runGuardDrill({force:true});
+      expect(spy).toHaveBeenCalledOnce();
+      expect(result.fired).toBe(false);
+      expect(result.verified_at).toBeNull();
+      expect(JSON.parse(_kvStore['guard-drill-status'])['test-pyramid-guard'].last_verified_at).toBe(previous);
+    } finally { spy.mockRestore(); }
+  });
+
 });
 
 // ── 5. GUARD_REGISTRY 台账结构 ─────────────────────────────────────────────

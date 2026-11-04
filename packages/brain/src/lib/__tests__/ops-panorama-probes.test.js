@@ -25,10 +25,11 @@ describe('ops-panorama-probes 真异步有界进程探测', () => {
     expect(execFileFn.mock.calls[0][0]).toBe('ps');
     expect(execFileFn.mock.calls[0][2]).toMatchObject({ timeout: 3000, killSignal: 'SIGKILL' });
   });
-  it('进程读取失败/损坏行返回0与合法形状', async () => {
+  it('进程读取失败或全部损坏返回unknown，成功空输出仍为0', async () => {
     const failing = vi.fn((_file, _args, _options, callback) => callback(new Error('unavailable')));
-    expect(await probeProcesses({ execFileFn: failing })).toEqual({ claude_total: 0, codex_total: 0, sessions: { headed: 0, headless: 0 } });
-    expect(await probeProcesses({ execFileFn: request('bad line\n'), platform: 'linux' })).toEqual({ claude_total: 0, codex_total: 0, sessions: { headed: 0, headless: 0 } });
+    expect(await probeProcesses({ execFileFn: failing })).toBeNull();
+    expect(await probeProcesses({ execFileFn: request('bad line\n'), platform: 'linux' })).toBeNull();
+    expect(await probeProcesses({ execFileFn: request(''), platform: 'linux' })).toEqual({ claude_total: 0, codex_total: 0, sessions: { headed: 0, headless: 0 } });
   });
   it('docker有界读取正常计数，失败降级null', async () => {
     expect(await probeRelayContainers({ execFileFn: request('cecelia-relay-a\ncecelia-relay-b\n') })).toBe(2);

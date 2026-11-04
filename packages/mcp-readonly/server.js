@@ -9,8 +9,8 @@ import { z } from 'zod';
 import { bearerAuth } from './src/auth.js';
 import { createRateLimiter } from './src/rate-limit.js';
 import { createReadonlyPool, query } from './src/db.js';
-import { getSchemaVersion, getDeploymentStatus } from './src/tools/schema-and-deployment.js';
-import { getMapSummary } from './src/tools/map-summary.js';
+import { getSchemaVersion, getDeploymentStatus, readBrainHealth } from './src/tools/schema-and-deployment.js';
+import { getMapSummary, getActiveMapIdentity } from './src/tools/map-summary.js';
 import { getMapNodes, getMapEdges, NODE_TYPES, EDGE_TYPES } from './src/tools/map-nodes-edges.js';
 import { getServiceLogs, SERVICE_LOG_WHITELIST } from './src/tools/service-logs.js';
 import { assertReadonly } from './src/self-check.js';
@@ -56,39 +56,12 @@ export function makeTrackedQuery(rawQuery, tracker) {
   };
 }
 
-// map_projection_runs 同一 scope_key 同一时刻最多一条 active（唯一部分索引，
-// 见 map-summary.js 顶部注释），取最新 activated_at 即为"当前生效"的 run。
-// 查不到时返回 null（不是 undefined）——但注意这个 null 只代表"系统当前没有
-// active run"这一件事，不代表调用方想跨全部历史查询，两者不能混为一谈，见
-// withActiveRun() 的处理。
-async function getActiveRunId(pool, queryFn) {
-  const result = await queryFn(
-    pool,
-    `SELECT id FROM map_projection_runs WHERE status = 'active' ORDER BY activated_at DESC LIMIT 1`,
-    []
-  );
-  return result.rows[0]?.id ?? null;
-}
-
-// map-nodes-edges.js 里 activeRunId 的语义是三态的：undefined=拒绝（调用方没想清楚）、
-// null=调用方有意跨全部历史查询、具体 id=限定某次 run。但 get_map_nodes/get_map_edges
-// 的 inputSchema 根本没有暴露参数让 Notion AI 表达"我要查全部历史"这个意图——所以
-// 唯一会走到 getActiveRunId() 返回 null 的场景，就是"系统当前没有 active projection
-// run"这个退化态，不是有意选择。如果这里直接把 null 转发给 getMapNodes/getMapEdges，
-// 会安静触发它们的"跨全部历史查询"分支，把历史上所有（含已废弃 run 的）节点/边当
-// 正常结果返回给 Notion AI，且没有任何标记说明"这不是当前状态快照"——跟
-// get_map_summary 遇到同样情况时显式返回 projection_status:'none' 的做法不一致。
-// 所以在这一层就把"没有 active run"和"调用方明确要查全部历史"分开处理：前者直接
-// 短路返回空结果 + no_active_run 标记，不真的去查历史数据；后置的 computeFn 参数
-// 只在确实存在 active run 时才会被调用，因此永远不会把 null 传给 getMapNodes/
-// getMapEdges——它们的 undefined fail-closed 分支目前也不会被这里触发到。
-async function withActiveRun(pool, queryFn, computeFn) {
-  const activeRunId = await getActiveRunId(pool, queryFn);
-  if (activeRunId === null) {
-    return { rows: [], no_active_run: true };
-  }
-  const result = await computeFn(activeRunId);
-  return { rows: result.rows };
+// 当前run必须属于调用方scope的active manifest；无匹配身份时不读取历史行。
+async function withActiveRun(pool, queryFn, scope, computeFn) {
+  const identity = await getActiveMapIdentity(pool, queryFn, { scope });
+  if (!identity.active_run_id) return { ...identity, rows: [], no_active_run: true };
+  const result = await computeFn(identity.active_run_id);
+  return { ...identity, rows: result.rows };
 }
 
 // 真实 get_service_logs readLogFn：跑 `docker logs <container> --tail <N> 2>&1`。
@@ -109,41 +82,20 @@ async function dockerReadLogFn(containerName, tailLines) {
     ]);
     stdout = result.stdout;
     stderr = result.stderr;
-  } catch (err) {
-    // docker logs 把容器自身的 stderr 输出也算作"失败但有输出"，execFile 在这种
-    // 情况下会把 stdout/stderr 挂在 error 对象上而不是 resolve —— 这不代表命令语义
-    // 失败（很多服务把普通日志写 stderr），照样取出内容返回，而不是把日志读取
-    // 失败伪装成异常抛给上层。
-    stdout = err.stdout || '';
-    stderr = err.stderr || '';
+  } catch {
+    throw Object.assign(new Error('服务日志当前不可读取'), { code: 'service_logs_unavailable' });
   }
   const combined = `${stdout}${stderr}`;
   return combined.split('\n').filter((line) => line.length > 0);
 }
 
-// get_deployment_status 的 execFn：读宿主机仓库目录的 git 状态。
-//
-// 已知风险（Task 11 调查结论，未在本任务修复，见 handoff/commit message）：生产
-// Cecelia Brain 现在跑在 docker-compose.yml 的 cecelia-node-brain 容器里，容器镜像
-// 构建期把 GIT_SHA 烙进 Brain 自己的 /api/brain/health 响应（见
-// packages/brain/scripts/smoke/git-sha-health-smoke.sh + docs/superpowers/specs/
-// 2026-07-18-deploy-sha-reconcile-design.md 的 SHA 对账设计），这才是"容器里实际在
-// 跑什么"的真相来源。而这里读的是宿主机磁盘 checkout 到的 commit——deploy-local.sh
-// 自己的判变逻辑也不信任这个假设，专门做了 origin/main vs 生产 git_sha 的对账
-// （PROD_SHA 来自 curl brain /health，不是读本地 git）。宿主机 checkout 与容器实际
-// 运行版本在部署链路的中间态下可能不一致（构建了镜像但没更新 checkout，或反过来）。
-// getDeploymentStatus() 本身在 Task 7 已实现并测试通过，签名是 execFn 型（git 命令），
-// 本次组装不改它的实现，只如实记录这个风险。不修的原因不是"怕破坏测试"——
-// getDeploymentStatus 是依赖注入设计，换一个 execFn/新增查询源不需要碰现成测试；
-// 真正的原因是更可靠的实现（改查 Brain 自己的 /api/brain/health 拿 git_sha）需要
-// 新建一个前置任务（Task 1-10）未交付的 HTTP 查询模块，超出 Task 11"组装现成模块"
-// 的范围，留给后续任务处理。
+// checkout身份只描述宿主磁盘；Brain运行身份独立读取固定只读health端点。
 async function gitExecFn(cmd) {
   const [command, ...args] = cmd.split(' ');
   return execFileAsync(command, args);
 }
 
-function buildMcpServer({ pool, startedAt, queryFn }) {
+function buildMcpServer({ pool, startedAt, queryFn, brainHealth, gitExec }) {
   const server = new McpServer({ name: 'cecelia-readonly', version: '1.0.0' });
 
   server.registerTool(
@@ -160,11 +112,11 @@ function buildMcpServer({ pool, startedAt, queryFn }) {
   server.registerTool(
     'get_map_summary',
     {
-      description: '返回 active manifest、projection 状态和四类对象数量',
-      inputSchema: {},
+      description: '读取指定scope的当前manifest及匹配run的节点数量',
+      inputSchema: { scope: z.string().min(1) },
     },
-    async () => ({
-      content: [{ type: 'text', text: JSON.stringify(await getMapSummary(pool, queryFn)) }],
+    async ({ scope }) => ({
+      content: [{ type: 'text', text: JSON.stringify(await getMapSummary(pool, queryFn, { scope })) }],
     })
   );
 
@@ -172,10 +124,10 @@ function buildMcpServer({ pool, startedAt, queryFn }) {
     'get_map_nodes',
     {
       description: `按 node_type 查询 map_projection_nodes（仅当前 active run），node_type 合法值：${NODE_TYPES.join('/')}`,
-      inputSchema: { node_type: z.string(), limit: z.number().optional() },
+      inputSchema: { scope: z.string().min(1), node_type: z.string(), limit: z.number().optional() },
     },
-    async ({ node_type, limit }) => {
-      const payload = await withActiveRun(pool, queryFn, (activeRunId) =>
+    async ({ scope, node_type, limit }) => {
+      const payload = await withActiveRun(pool, queryFn, scope, (activeRunId) =>
         getMapNodes(pool, queryFn, { node_type, limit }, NODE_TYPES, activeRunId)
       );
       return { content: [{ type: 'text', text: JSON.stringify(payload) }] };
@@ -186,10 +138,10 @@ function buildMcpServer({ pool, startedAt, queryFn }) {
     'get_map_edges',
     {
       description: `按 edge_type 查询 map_projection_edges（仅当前 active run），edge_type 合法值：${EDGE_TYPES.join('/')}`,
-      inputSchema: { edge_type: z.string(), limit: z.number().optional() },
+      inputSchema: { scope: z.string().min(1), edge_type: z.string(), limit: z.number().optional() },
     },
-    async ({ edge_type, limit }) => {
-      const payload = await withActiveRun(pool, queryFn, (activeRunId) =>
+    async ({ scope, edge_type, limit }) => {
+      const payload = await withActiveRun(pool, queryFn, scope, (activeRunId) =>
         getMapEdges(pool, queryFn, { edge_type, limit }, EDGE_TYPES, activeRunId)
       );
       return { content: [{ type: 'text', text: JSON.stringify(payload) }] };
@@ -199,11 +151,11 @@ function buildMcpServer({ pool, startedAt, queryFn }) {
   server.registerTool(
     'get_deployment_status',
     {
-      description: '返回当前 commit SHA/branch/启动时间',
+      description: '分别返回宿主checkout身份与Brain health运行身份；运行不可达时明确unknown',
       inputSchema: {},
     },
     async () => ({
-      content: [{ type: 'text', text: JSON.stringify(await getDeploymentStatus(gitExecFn, { startedAt })) }],
+      content: [{ type: 'text', text: JSON.stringify(await getDeploymentStatus(gitExec, { startedAt, brainHealth })) }],
     })
   );
 
@@ -221,7 +173,7 @@ function buildMcpServer({ pool, startedAt, queryFn }) {
   return server;
 }
 
-export function createApp({ skipDbInit = false, databasePool, bearerToken = process.env.MCP_BEARER_TOKEN } = {}) {
+export function createApp({ skipDbInit = false, databasePool, bearerToken = process.env.MCP_BEARER_TOKEN, brainHealth = readBrainHealth, gitExec = gitExecFn } = {}) {
   const app = express();
   app.use(express.json());
 
@@ -259,7 +211,7 @@ export function createApp({ skipDbInit = false, databasePool, bearerToken = proc
   // 直接挂死不返回任何 HTTP 响应——这正是 Cloudflare 报 502（源站无响应）而
   // 不是一个干净的 4xx/5xx 的根本原因。
   app.post('/mcp', async (req, res) => {
-    const mcpServer = buildMcpServer({ pool, startedAt, queryFn: trackedQuery });
+    const mcpServer = buildMcpServer({ pool, startedAt, queryFn: trackedQuery, brainHealth, gitExec });
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     res.on('close', () => {
       transport.close();

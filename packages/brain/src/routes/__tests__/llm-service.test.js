@@ -61,6 +61,8 @@ describe('llm-service router', () => {
       .post('/llm-service/generate')
       .send({ tier: 'thalamus', prompt: 'give me json', format: 'json' });
     expect(res.status).toBe(200);
-    expect(callLLM).toHaveBeenCalledWith('thalamus', expect.stringContaining('give me json'), expect.any(Object));
+    expect(callLLM).toHaveBeenCalledWith('thalamus',
+      'give me json\n\n请严格输出单个合法的 JSON 对象，不要附加任何解释文字或 Markdown 代码块标记。',
+      { timeout: 180000, maxTokens: 2048 });
   });
 });

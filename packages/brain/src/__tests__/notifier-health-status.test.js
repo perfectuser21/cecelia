@@ -1,47 +1,22 @@
-// packages/brain/src/__tests__/notifier-health-status.test.js
-import { describe, it, expect } from 'vitest';
-
-/**
- * 提取 health endpoint 中 notifier status 判断逻辑为可测单元
- * 直接 inline 逻辑，测三种 env 组合
- */
-function getNotifierStatus(env) {
-  const status = env.FEISHU_BOT_WEBHOOK
-    ? 'configured'
-    : (env.FEISHU_APP_ID && env.FEISHU_APP_SECRET && env.FEISHU_OWNER_OPEN_IDS)
-      ? 'configured'
-      : 'unconfigured';
-  const channel = env.FEISHU_BOT_WEBHOOK
-    ? 'webhook'
-    : (env.FEISHU_APP_ID ? 'open_api' : 'none');
-  return { status, channel };
-}
-
-describe('notifier health status — 双通道检查', () => {
-  it('只有 FEISHU_BOT_WEBHOOK → configured + webhook', () => {
-    const result = getNotifierStatus({ FEISHU_BOT_WEBHOOK: 'https://example.com/hook' });
-    expect(result).toEqual({ status: 'configured', channel: 'webhook' });
-  });
-
-  it('只有 Open API 三件套 → configured + open_api', () => {
-    const result = getNotifierStatus({
-      FEISHU_APP_ID: 'app_id_xxx',
-      FEISHU_APP_SECRET: 'secret_xxx',
-      FEISHU_OWNER_OPEN_IDS: 'ou_xxx'
-    });
-    expect(result).toEqual({ status: 'configured', channel: 'open_api' });
-  });
-
-  it('三者都没有 → unconfigured + none', () => {
-    const result = getNotifierStatus({});
-    expect(result).toEqual({ status: 'unconfigured', channel: 'none' });
-  });
-
-  it('Open API 三件套不齐（缺 APP_SECRET）→ unconfigured + open_api channel', () => {
-    const result = getNotifierStatus({
-      FEISHU_APP_ID: 'app_id_xxx'
-      // 缺 FEISHU_APP_SECRET 和 FEISHU_OWNER_OPEN_IDS
-    });
-    expect(result).toEqual({ status: 'unconfigured', channel: 'open_api' });
+import express from 'express';
+import request from 'supertest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+vi.mock('../db.js', () => ({ default: { query: vi.fn().mockResolvedValue({ rows: [{ cnt: 0, passed: 0, failed: 0 }] }) } }));
+vi.mock('../tick.js', () => ({ getTickStatus: () => ({ enabled: false, loop_running: false }) }));
+vi.mock('../runtime-safety.js', async () => ({ ...(await vi.importActual('../runtime-safety.js')), isIsolatedRuntime: () => true }));
+import router from '../routes/goals.js';
+const app = express(); app.use(router);
+afterEach(() => vi.unstubAllEnvs());
+describe('真实health路由通知配置状态', () => {
+  it.each([
+    [{ FEISHU_BOT_WEBHOOK: 'https://example.invalid/hook' }, 'configured', 'webhook'],
+    [{ FEISHU_APP_ID: 'app', FEISHU_APP_SECRET: 'secret', FEISHU_OWNER_OPEN_IDS: 'owner' }, 'configured', 'open_api'],
+    [{}, 'unconfigured', 'none'],
+    [{ FEISHU_APP_ID: 'app' }, 'unconfigured', 'open_api'],
+  ])('配置%j对应%s/%s', async (env, status, channel) => {
+    for (const key of ['FEISHU_BOT_WEBHOOK', 'FEISHU_APP_ID', 'FEISHU_APP_SECRET', 'FEISHU_OWNER_OPEN_IDS']) vi.stubEnv(key, env[key] || '');
+    const response = await request(app).get('/health');
+    expect(response.status).toBe(200);
+    expect(response.body.organs.notifier).toEqual({ status, channel });
   });
 });

@@ -30,6 +30,7 @@ jobs:
         uses: ./.github/actions/skills-source
         with:
           ssh-key: ${{ secrets.SKILLS_SOURCE_SSH_KEY }}
+          expected-public-sha256: ${{ vars.SKILLS_SOURCE_PUBLIC_KEY_SHA256 }}
       - name: Run actual source contracts
         env:
           COMPONENT: ${{ matrix.component }}
@@ -49,6 +50,7 @@ jobs:
         uses: ./.github/actions/skills-source
         with:
           ssh-key: ${{ secrets.SKILLS_SOURCE_SSH_KEY }}
+          expected-public-sha256: ${{ vars.SKILLS_SOURCE_PUBLIC_KEY_SHA256 }}
 
   passed:
     name: 固定Skill合同通过

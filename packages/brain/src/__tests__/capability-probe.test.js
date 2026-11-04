@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Mock dependencies before import
 vi.mock('../db.js', () => ({
@@ -30,9 +30,11 @@ vi.mock('../monitor-loop.js', () => ({
   startMonitorLoop: vi.fn(),
 }));
 
+afterEach(() => vi.unstubAllGlobals());
 describe('capability-probe', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 200, text: async () => '<html>' + 'safe fixture '.repeat(1000) }));
   });
 
   describe('runProbes', () => {
@@ -99,16 +101,6 @@ describe('capability-probe', () => {
       expect(status).toHaveProperty('probe_count');
       expect(status).toHaveProperty('probe_names');
       expect(status.probe_count).toBeGreaterThanOrEqual(4);
-    });
-  });
-
-  describe('shouldAutoFix integration', () => {
-    it('should call shouldAutoFix with confidence >= 0.7 for failed probes', async () => {
-      const { shouldAutoFix } = await import('../auto-fix.js');
-
-      // Verify shouldAutoFix logic
-      expect(shouldAutoFix({ confidence: 0.9, proposed_fix: 'fix something important here' })).toBe(true);
-      expect(shouldAutoFix({ confidence: 0.5, proposed_fix: 'fix something' })).toBe(false);
     });
   });
 

@@ -1,41 +1,30 @@
-/**
- * content-pipeline test-step provider 解析逻辑单元测试
- * 覆盖：provider 优先级（reqProvider > gpt模型→openai > 默认anthropic）
- */
-import { describe, it, expect } from 'vitest';
-
-/**
- * 从 content-pipeline.js 提取的 provider 解析逻辑（纯函数）
- * 用于单元测试，与路由实现保持一致
- */
-function resolveProvider(reqProvider, resolvedModel) {
-  if (reqProvider) return reqProvider;
-  if (resolvedModel.startsWith('gpt')) return 'openai';
-  return 'anthropic';
-}
-
-describe('test-step provider 解析', () => {
-  it('不传 provider 时默认使用 anthropic（无头 bridge）', () => {
-    expect(resolveProvider(undefined, 'claude-sonnet-4-20250514')).toBe('anthropic');
+import express from 'express';
+import request from 'supertest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+const call = vi.hoisted(() => vi.fn());
+vi.mock('../db.js', () => ({ default: { query: vi.fn() } }));
+vi.mock('../actions.js', () => ({ createTask: vi.fn() }));
+vi.mock('../llm-caller.js', () => ({ callLLM: call }));
+import router from '../routes/content-pipeline.js';
+const app = express(); app.use(express.json()); app.use(router);
+beforeEach(() => call.mockReset().mockResolvedValue({ text: 'controlled output', elapsed_ms: 2 }));
+describe('真实test-step路由provider选择', () => {
+  it.each([
+    [undefined, 'claude-sonnet-4-20250514', 'anthropic'],
+    [undefined, 'claude-opus-4-20250514', 'anthropic'],
+    [undefined, 'gpt-4o', 'openai'],
+    ['anthropic-api', 'claude-sonnet-4-20250514', 'anthropic-api'],
+    ['anthropic', 'gpt-4o', 'anthropic'],
+    ['openai', 'claude-opus-4-20250514', 'openai'],
+    ['', 'gpt-4o', 'openai'],
+  ])('provider=%s model=%s选择%s', async (provider, model, expected) => {
+    const response = await request(app).post('/content-types/test-step').send({ step: 'content-research', prompt: 'controlled prompt', model, provider });
+    expect(response.status).toBe(200);
+    expect(call).toHaveBeenCalledWith('content-test-step', expect.stringContaining('controlled prompt'), expect.objectContaining({ provider: expected, model }));
+    expect(response.body.output).toBe('controlled output');
   });
-
-  it('不传 provider 时默认使用 anthropic（其他 claude 模型）', () => {
-    expect(resolveProvider(undefined, 'claude-opus-4-20250514')).toBe('anthropic');
-  });
-
-  it('GPT 模型不传 provider 时自动使用 openai', () => {
-    expect(resolveProvider(undefined, 'gpt-4o')).toBe('openai');
-    expect(resolveProvider(undefined, 'gpt-3.5-turbo')).toBe('openai');
-  });
-
-  it('reqProvider 优先级最高（覆盖默认逻辑）', () => {
-    expect(resolveProvider('anthropic-api', 'claude-sonnet-4-20250514')).toBe('anthropic-api');
-    expect(resolveProvider('anthropic', 'gpt-4o')).toBe('anthropic');
-    expect(resolveProvider('openai', 'claude-opus-4-20250514')).toBe('openai');
-  });
-
-  it('空字符串 reqProvider 不触发优先级（走默认）', () => {
-    expect(resolveProvider('', 'claude-sonnet-4-20250514')).toBe('anthropic');
-    expect(resolveProvider('', 'gpt-4o')).toBe('openai');
+  it('非法step不会触及模型边界', async () => {
+    const response = await request(app).post('/content-types/test-step').send({ step: 'unknown', prompt: 'x' });
+    expect(response.status).toBe(400); expect(call).not.toHaveBeenCalled();
   });
 });

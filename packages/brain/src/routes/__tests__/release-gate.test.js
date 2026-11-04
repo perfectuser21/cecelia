@@ -1,46 +1,18 @@
-/**
- * release-gate.test.js — Brain API 路由单元测试（Vitest）
- *
- * task_id: f284c0a2-f2ed-4dfc-bd61-ce5416d93c8c
- * 覆盖 BEHAVIOR-05: GET 端点存在 / POST 返回 405
- */
-
-import { describe, it, expect, beforeAll } from 'vitest';
-
-describe('release-gate route', () => {
-  let routeModule;
-
-  beforeAll(async () => {
-    routeModule = await import('../release-gate.js');
+import express from 'express';
+import request from 'supertest';
+import { describe, expect, it } from 'vitest';
+import router from '../release-gate.js';
+const app = express();
+app.use('/release-gate', router);
+describe('发布准入只读路由', () => {
+  it.each(['post', 'put', 'patch', 'delete'])('%s拒绝写入并声明GET', async method => {
+    const response = await request(app)[method]('/release-gate/nonexistent-frontier3');
+    expect(response.status).toBe(405);
+    expect(response.headers.allow).toBe('GET');
   });
-
-  it('模块导出 router（Express Router）', () => {
-    const router = routeModule.default ?? routeModule.router;
-    expect(router).toBeTruthy();
-    expect(typeof router === 'function' || (router && router.stack !== undefined)).toBe(true);
-  });
-
-  it('router.stack 中包含 GET 处理器', () => {
-    const router = routeModule.default ?? routeModule.router;
-    if (router && router.stack) {
-      const methods = router.stack
-        .filter(l => l.route)
-        .flatMap(l => Object.keys(l.route.methods));
-      expect(methods).toContain('get');
-    } else {
-      expect(router).toBeTruthy();
-    }
-  });
-
-  it('router.stack 中包含 POST 405 处理器', () => {
-    const router = routeModule.default ?? routeModule.router;
-    if (router && router.stack) {
-      const methods = router.stack
-        .filter(l => l.route)
-        .flatMap(l => Object.keys(l.route.methods));
-      expect(methods).toContain('post');
-    } else {
-      expect(router).toBeTruthy();
-    }
+  it('不存在RTM返回明确未知，不假称PASS', async () => {
+    const response = await request(app).get('/release-gate/nonexistent-frontier3');
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({ path_id: 'nonexistent-frontier3', verdict: 'NO_RTM', gaps: [] });
   });
 });

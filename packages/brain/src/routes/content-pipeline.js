@@ -529,19 +529,25 @@ router.post('/:id/run', async (req, res) => {
     }
 
     const pipeline = pipelineResult.rows[0];
-    // 允许重新生成：completed 状态重置为 queued
+    // 仅已排队或已完成的显式重跑可受理，不为其他状态承诺入队。
+    if (!['completed', 'queued'].includes(pipeline.status)) {
+      return res.status(409).json({ error: 'pipeline_not_queueable', pipeline_id: id, status: pipeline.status });
+    }
     if (pipeline.status === 'completed') {
-      await pool.query(
-        `UPDATE tasks SET status = 'queued', claimed_by = NULL, claimed_at = NULL, completed_at = NULL, started_at = NULL, updated_at = NOW() WHERE id = $1`,
+      const reset = await pool.query(
+        `UPDATE tasks SET status = 'queued', claimed_by = NULL, claimed_at = NULL, completed_at = NULL, started_at = NULL, updated_at = NOW() WHERE id = $1 AND status = 'completed' RETURNING id`,
         [id]
       );
+      if (reset.rowCount !== 1) {
+        return res.status(409).json({ error: 'pipeline_state_changed', pipeline_id: id });
+      }
     }
 
     return res.status(202).json({
       ok: true,
       pipeline_id: id,
       status: 'queued',
-      message: 'task 已 queued，将由 ZJ pipeline-worker 60s 内拉到执行',
+      message: 'task 已 queued，等待外部 pipeline-worker 领取',
     });
   } catch (err) {
     console.error('[routes/content-pipeline] POST /:id/run error:', err.message);

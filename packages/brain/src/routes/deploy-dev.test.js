@@ -20,7 +20,8 @@ vi.mock('child_process', () => {
   };
 });
 
-import deployDevRouter from './deploy-dev.js';
+import { execFile } from 'child_process';
+let deployDevRouter;
 
 function makeApp() {
   const app = express();
@@ -30,8 +31,10 @@ function makeApp() {
 }
 
 describe('deploy-dev routes', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    vi.resetModules();
     vi.clearAllMocks();
+    deployDevRouter = (await import('./deploy-dev.js')).default;
   });
 
   describe('POST /api/brain/deploy', () => {
@@ -71,24 +74,23 @@ describe('deploy-dev routes', () => {
 
   describe('GET /api/brain/deploy/dev/status', () => {
     it('初始状态返回 idle', async () => {
-      // 使用新的 app 实例（router 模块已缓存，状态从模块加载起算）
-      // 直接获取状态
       const app = makeApp();
       const res = await request(app).get('/api/brain/deploy/dev/status');
 
       expect(res.status).toBe(200);
       expect(res.body).toHaveProperty('status');
-      expect(typeof res.body.status).toBe('string');
+      expect(res.body.status).toBe('idle');
     });
 
     it('触发部署后 status 变为 pending 或 running', async () => {
       const app = makeApp();
 
       // 先 POST 触发
-      await request(app)
+      const accepted = await request(app)
         .post('/api/brain/deploy')
         .send({ dev: true });
 
+      expect(accepted.status).toBe(202);
       // 再 GET 查状态
       const res = await request(app).get('/api/brain/deploy/dev/status');
       expect(res.status).toBe(200);
@@ -114,10 +116,11 @@ describe('deploy-dev routes', () => {
       const app = makeApp();
 
       // 第一次触发
-      await request(app)
+      const accepted = await request(app)
         .post('/api/brain/deploy')
         .send({ dev: true });
 
+      expect(accepted.status).toBe(202);
       // 第二次应被拒绝（状态仍 pending/running）
       const res2 = await request(app)
         .post('/api/brain/deploy')
@@ -127,6 +130,19 @@ describe('deploy-dev routes', () => {
       expect(res2.body).toHaveProperty('error');
       expect(res2.body.error).toMatch(/in progress/i);
     });
+  });
+
+  it.each([null, new Error('script failed')])('受控部署回调反映真实成功/失败终态', async error => {
+    let callback;
+    execFile.mockImplementationOnce((_cmd, _args, _opts, cb) => { callback = cb; return { on() {} }; });
+    const app = makeApp();
+    expect((await request(app).post('/api/brain/deploy').send({ dev: true })).status).toBe(202);
+    expect(execFile).toHaveBeenCalledWith('bash', [expect.stringMatching(/scripts\/dev-deploy\.sh$/)], { timeout: 300000 }, expect.any(Function));
+    callback(error, '', '');
+    const res = await request(app).get('/api/brain/deploy/dev/status');
+    expect(res.body.status).toBe(error ? 'failed' : 'success');
+    expect(res.body.finished_at).toBeTruthy();
+    expect(res.body.error).toBe(error ? error.message : null);
   });
 
   describe('模块加载', () => {

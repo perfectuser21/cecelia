@@ -1,5 +1,6 @@
-import {it,expect} from 'vitest';
+import {it,expect,vi} from 'vitest';
 import {validateTargetRequest,probeInvocationRuntime,resolveInvocation} from './resolve.js';
+import {directory} from '../execution-directory/directory.js';
 import {definitionDigest} from '../workflow-authoring/contracts.js';
 const id='11111111-1111-4111-8111-111111111111';
 it('正式调用必须提供固定版本，候选必须有管理任务与摘要',()=>{
@@ -10,7 +11,15 @@ it('正式调用必须提供固定版本，候选必须有管理任务与摘要'
  expect(()=>validateTargetRequest({...base,mode:'candidate',authoring_task_id:id,compose_sha256:'a'.repeat(64)})).not.toThrow();
 });
 it('所有真实目录执行体探活失败时不返回可用资源',async()=>{
- const result=await probeInvocationRuntime({fetchFn:async()=>{throw Error('offline');}});
+ const fetchFn=vi.fn(async()=>{throw Error('offline');});
+ const snapshot={version:'probe-test',expiresAt:Date.now()+30000,nodes:[{
+  canonical_id:'probe-worker',state:'active',machine_status:'active',
+  endpoints:{worker:'http://probe-worker:4000',legacy_executor:{codex:{executor:'codex',url:'http://probe-worker:4000'}}},
+  grants:[{surface:'legacy_executor',provider:'codex',account_id:'',profile_id:'',state:'active',repo_scope:[]}],
+ }]};
+ const result=await directory.withSnapshot(snapshot,()=>probeInvocationRuntime({fetchFn}));
+ expect(fetchFn).toHaveBeenCalledOnce();
+ expect(fetchFn).toHaveBeenCalledWith('http://probe-worker:4000/health',expect.objectContaining({signal:expect.any(AbortSignal)}));
  expect(result).toEqual({ready:false,code:'transport_resource_unavailable'});
 });
 it('仅有slot key的新建活动可解析确定性候选身份，两slot不合并且不能伪选正式UUID',async()=>{

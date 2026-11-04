@@ -2,7 +2,7 @@
  * Workers 配置加载 (后端版本)
  */
 
-import { readFileSync } from 'fs';
+import { readFileSync, existsSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -21,7 +21,7 @@ export interface Worker {
   icon: string;
   role: string;
   description: string;
-  abilities: WorkerAbility[];
+  abilities?: WorkerAbility[];
   gradient: {
     from: string;
     to: string;
@@ -47,21 +47,41 @@ export interface WorkersConfig {
 // 加载配置文件
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const configPath = join(__dirname, '../../data/workers/workers.config.json');
+const configPaths = [
+  join(__dirname, '../../../../packages/workflows/staff/workers.config.json'),
+  join(__dirname, '../data/workers/workers.config.json'),
+];
 
-let workersConfig: WorkersConfig;
+export class WorkersConfigUnavailableError extends Error {
+  readonly code = 'WORKERS_CONFIG_UNAVAILABLE';
+  constructor() { super('员工目录配置不可用'); }
+}
 
+let workersConfig: WorkersConfig | null = null;
 try {
-  const configContent = readFileSync(configPath, 'utf-8');
-  workersConfig = JSON.parse(configContent) as WorkersConfig;
-} catch (error) {
-  console.error('Failed to load workers config:', error);
-  workersConfig = { version: '0.0.0', departments: [] };
+  const configPath = configPaths.find(path => existsSync(path));
+  if (!configPath) throw new WorkersConfigUnavailableError();
+  const value = JSON.parse(readFileSync(configPath, 'utf-8')) as WorkersConfig;
+  const departments = value?.teams ?? value?.departments;
+  if (typeof value?.version !== 'string' || !Array.isArray(departments)
+      || departments.some(dept => !dept || typeof dept.id !== 'string' || !Array.isArray(dept.workers)
+        || dept.workers.some(worker => !worker || typeof worker.id !== 'string' || (worker.abilities !== undefined && !Array.isArray(worker.abilities))))) {
+    throw new WorkersConfigUnavailableError();
+  }
+  workersConfig = value;
+} catch {
+  console.error('员工目录配置缺失或损坏，目录接口将返回不可用');
+}
+
+function requireWorkersConfig(): WorkersConfig {
+  if (!workersConfig) throw new WorkersConfigUnavailableError();
+  return workersConfig;
 }
 
 // 获取所有部门 (supports both v2 "departments" and v3 "teams" format)
 export function getDepartments(): Department[] {
-  return workersConfig.teams || workersConfig.departments || [];
+  const config = requireWorkersConfig();
+  return config.teams || config.departments || [];
 }
 
 // 获取所有员工（扁平化）
@@ -137,7 +157,7 @@ export function matchWorkerByWorkflowName(
 
 // 获取配置版本
 export function getConfigVersion(): string {
-  return workersConfig.version;
+  return requireWorkersConfig().version;
 }
 
 // 统计信息

@@ -7,6 +7,8 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { unlinkSync } from 'fs';
+import {resolve} from 'node:path';
+import {fileURLToPath} from 'node:url';
 import express from 'express';
 import request from 'supertest';
 
@@ -91,12 +93,15 @@ describe('ops — deploy REPO_ROOT path', () => {
     expect(opts.cwd).toBe('/custom/repo/root');
   });
 
-  it('REPO_ROOT 未设置时 path 不崩溃（含 deploy-local.sh 后缀）', () => {
-    const repoRootFallback = new URL('../../../../../..', import.meta.url).pathname;
-    const scriptFallback = `${repoRootFallback}/scripts/deploy-local.sh`;
-    expect(scriptFallback).toMatch(/scripts\/deploy-local\.sh$/);
-    const scriptWithEnv = `${process.env.REPO_ROOT}/scripts/deploy-local.sh`;
-    expect(scriptWithEnv).toBe('/custom/repo/root/scripts/deploy-local.sh');
+  it('REPO_ROOT 未设置时真实 handler 使用仓库脚本与 cwd', async () => {
+    delete process.env.REPO_ROOT;
+    const mod=await import('../ops.js');
+    const app=express();app.use(express.json());app.use('/api/brain',mod.default);
+    const res=await request(app).post('/api/brain/deploy').set('Authorization','Bearer test-token').send({});
+    expect(res.status).toBe(202);
+    expect(capturedSpawnArgs).not.toBeNull();
+    expect(resolve(capturedSpawnArgs[1][0])).toBe(fileURLToPath(new URL('../../../../../scripts/deploy-local.sh',import.meta.url)));
+    expect(resolve(capturedSpawnArgs[2].cwd)).toBe(resolve(fileURLToPath(new URL('../../../../..',import.meta.url))));
   });
 });
 

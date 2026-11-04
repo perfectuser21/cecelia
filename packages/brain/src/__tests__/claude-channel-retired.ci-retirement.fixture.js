@@ -11,8 +11,11 @@ export function ciVersionGuardCohorts(previous) {
   'existing-ops-stage-source.js':'14ebb11805679dd6f559ea42d88ba6f8a1bc96604f474230a2c486af5866e514',
  };
  const retired={...current,'existing-ops-stage-source.js':'59ac5f256ca1c99b5edae88ef89ea5c79648fe6d63c134afec42800dca2b04d0'};
+ // e434身份来源reader：只追加完整caller/runtime/reader组合；旧退休reader仍独立保留。
+ const identity={...retired,'existing-ops-stage-source.js':'ffb6ecb81faa63068fb7f02e3ed170d5c7199589b39dcfb6f1430131313ddbf4'};
  return [current,{...current,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
-  retired,{...retired,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'}];
+  retired,{...retired,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
+  identity,{...identity,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'}];
 }
 
 export function registerCiRetirementGuardTests({root,base,memoBase,scan}) {
@@ -28,6 +31,27 @@ export function registerCiRetirementGuardTests({root,base,memoBase,scan}) {
      'EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = '+marker));
     for(const kind of ['build','stage','native-evidence'])expect(scan(sources,path.join(root,`existing-ops-${kind}-envelopes.js`))).toEqual([]);
    }
+  });
+  it('已合main537完整caller/runtime/reader固定Git回放保留marker0/1资格',()=>{
+   const sources=new Map([...base().keys()].map(file=>[file,execFileSync('git',[
+    '--no-replace-objects','show','53714060cd53adb9b1247c05bde23e7667cd8fb4:'+path.relative(path.resolve(root,'../../../..'),file),
+   ],{cwd:root,encoding:'utf8',maxBuffer:1024*1024})]));
+   expect(sources.size).toBe(16);
+   for(const marker of [0,1]){
+    sources.set(source,sources.get(source).replace(/EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = [01]/,'EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = '+marker));
+    for(const kind of ['build','stage','native-evidence'])expect(scan(sources,path.join(root,`existing-ops-${kind}-envelopes.js`))).toEqual([]);
+   }
+  });
+  it.each(['source','runtime-source'])('身份reader不能与固定旧Git的%s单成员混搭',name=>{
+   const file=path.join(root,`existing-ops-${name}.js`),current=base();
+   const old=execFileSync('git',['--no-replace-objects','show','88be2549bed2a8d8a3b5a6324bf5ea6267dda0da:'+path.relative(path.resolve(root,'../../../..'),file)],{cwd:root,encoding:'utf8',maxBuffer:1024*1024});
+   expect(current.get(file)).not.toBe(old);
+   current.set(file,old);expect(scan(current).some(hit=>hit.rule==='E1')).toBe(true);
+  });
+  it('完整身份reader也不能给予未知外部caller只读资格',()=>{
+   const current=base();current.set(path.join(root,'unknown-identity-reader.js'),
+    "import { ENVELOPES } from './existing-ops-build-envelopes.js';eval(ENVELOPES.spawnParameters);");
+   expect(scan(current).some(hit=>hit.rule==='E1')).toBe(true);
   });
   it('ce20完整旧reader组合仍可重放，追加退休组合不覆盖旧证明',()=>{
    const sources=new Map([...base().keys()].map(file=>[file,execFileSync('git',[

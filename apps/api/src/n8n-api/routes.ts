@@ -67,10 +67,7 @@ router.get('/n8n-workflows/instances/:instance/overview', async (req: Request, r
       createdAt: w.createdAt,
       updatedAt: w.updatedAt,
       tags: w.tags || [],
-      runStats: {
-        runningCount: 0,
-        recentStats: { total: 0, success: 0, error: 0, successRate: 0 },
-      },
+      runStats: null,
     }));
 
     const executions = (exData.data || []).map(mapExecution);
@@ -120,10 +117,7 @@ router.get('/n8n-workflows/instances/:instance/workflows', async (req: Request, 
       createdAt: w.createdAt,
       updatedAt: w.updatedAt,
       tags: w.tags || [],
-      runStats: {
-        runningCount: 0,
-        recentStats: { total: 0, success: 0, error: 0, successRate: 0 },
-      },
+      runStats: null,
     }));
 
     res.json({

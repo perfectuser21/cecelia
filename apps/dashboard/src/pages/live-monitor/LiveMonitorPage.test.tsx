@@ -230,4 +230,22 @@ describe('LiveMonitorPage v19', () => {
     // 非 dev 任务过滤后，面板显示空状态
     expect(screen.getByText('无运行中的 /dev 任务')).toBeInTheDocument();
   });
+  it.each(['network','http'])('单源%s失败标明不可用，恢复后再失败保留采样时间',async mode=>{
+    let failed=true;
+    (global.fetch as ReturnType<typeof vi.fn>).mockImplementation(async(url:string)=>{
+      if(url.includes('status=in_progress')&&failed){if(mode==='network')throw Error('owned source offline');return {ok:false,json:async()=>({error:'offline'})};}
+      return {ok:true,json:async()=>url.includes('/tasks?')?[]:{}};
+    });
+    await act(async()=>{renderWithRouter();});
+    expect(screen.getByTestId('live-monitor-source-errors')).toHaveTextContent('运行任务不可用');
+    expect(screen.getByTestId('live-monitor-source-errors')).toHaveTextContent('暂无有效采样');
+    failed=false;
+    await act(async()=>{await vi.advanceTimersByTimeAsync(5000);});
+    expect(screen.queryByTestId('live-monitor-source-errors')).not.toBeInTheDocument();
+    const sampledAt=new Date().toLocaleTimeString('zh-CN');
+    failed=true;
+    await act(async()=>{await vi.advanceTimersByTimeAsync(5000);});
+    expect(screen.getByTestId('live-monitor-source-errors')).toHaveTextContent('保留 '+sampledAt+' 采样');
+  });
+
 });

@@ -1,36 +1,29 @@
-/**
- * backfill-pending-review.js 配对测试
- * 覆盖 FR-10: 积压清零脚本基础行为
- */
 import { describe, it, expect, vi } from 'vitest';
-
-// 模拟 pg（避免真实 DB 连接）
-vi.mock('pg', () => {
-  const Pool = vi.fn(() => ({
-    query: vi.fn().mockResolvedValue({ rows: [{ count: '0' }] }),
-    end: vi.fn().mockResolvedValue(undefined),
-  }));
-  return { default: { Pool } };
-});
-
-describe('backfill-pending-review', () => {
-  it('脚本文件可以加载（不抛语法错误）', async () => {
-    // 加载脚本时自动连接 Pool（已 mock），不应抛错
-    let threw = false;
-    try {
-      // 动态导入避免 top-level 执行副作用
-      await import('../backfill-pending-review.js?v=test');
-    } catch (e) {
-      // 允许因 pg mock 导致的运行时错误，只要不是语法错误
-      if (e instanceof SyntaxError) threw = true;
-    }
-    expect(threw).toBe(false);
+import * as script from '../backfill-pending-review.js';
+vi.mock('pg', () => ({ default: { Pool: vi.fn(() => ({ query: vi.fn().mockResolvedValue({ rows: [{ count: '0' }] }), end: vi.fn() })) } }));
+function pool() {
+  return { query: vi.fn(async sql => /UPDATE/.test(sql) ? { rows: [{ id: 'parked' }] } : { rows: [{ count: '2' }] }), end: vi.fn() };
+}
+describe('积压修复脚本真实入口', () => {
+  it('执行两类真实UPDATE并返回统计，最终关闭连接', async () => {
+    expect(script.run).toBeTypeOf('function');
+    const db = pool();
+    expect(await script.run(db, { dryRun: false })).toEqual({ parked: 2, remaining: 2 });
+    const updates = db.query.mock.calls.filter(([sql]) => /UPDATE/.test(sql)).map(([sql]) => sql);
+    expect(updates).toHaveLength(2);
+    expect(updates[0]).toContain("ai_reason LIKE '[triage:%'");
+    expect(updates[1]).toContain("target_type IN ('handoff','learning','issue')");
+    expect(updates[1]).toContain('routed_to_table IS NULL OR routed_to_id IS NULL');
+    expect(db.end).toHaveBeenCalledOnce();
   });
-
-  it('pg Pool 被正确 mock（验证 mock 隔离有效）', async () => {
-    const pg = await import('pg');
-    const instance = new pg.default.Pool();
-    const result = await instance.query('SELECT 1');
-    expect(result.rows[0].count).toBe('0');
+  it('dry-run只读计数，零UPDATE；错误时finally仍关闭', async () => {
+    expect(script.run).toBeTypeOf('function');
+    const db = pool();
+    await script.run(db, { dryRun: true });
+    expect(db.query.mock.calls.some(([sql]) => /UPDATE/.test(sql))).toBe(false);
+    expect(db.end).toHaveBeenCalledOnce();
+    db.end.mockClear(); db.query.mockRejectedValueOnce(new Error('query failed'));
+    await expect(script.run(db, { dryRun: false })).rejects.toThrow('query failed');
+    expect(db.end).toHaveBeenCalledOnce();
   });
 });

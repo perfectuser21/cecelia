@@ -30,7 +30,7 @@ export interface WorkflowRunStats {
 
 // 带运行统计的工作流
 export interface N8nWorkflowWithStats extends N8nWorkflow {
-  runStats: WorkflowRunStats;
+  runStats: WorkflowRunStats | null;
 }
 
 export interface N8nExecution {

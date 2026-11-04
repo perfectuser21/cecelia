@@ -1,4 +1,6 @@
 /** 发布线接口（迁移 541）：库函数全 mock；锁参数校验、状态码透传、写接口挂内部鉴权。 */
+import express from 'express';
+import request from 'supertest';
 import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
@@ -43,14 +45,26 @@ describe('读接口', () => {
 });
 
 describe('写接口', () => {
-  it('晋级/成组/退回/补账都挂了内部鉴权中间件', () => {
-    for (const [m, p] of [['post', '/activities/:id/promotions'], ['post', '/release-line/group-promotions'], ['post', '/activities/:id/rollbacks'], ['post', '/release-line/reconcile']])
-      expect(layer(m, p).stack.length).toBe(2);
+  it('写接口缺少或错误token返回401且不触发任何写服务', async () => {
+    vi.stubEnv('CECELIA_INTERNAL_TOKEN', 'release-test-token');
+    try {
+      const app = express(); app.use(express.json()); app.use(routes);
+      const paths = [`/activities/${ID}/promotions`, '/release-line/group-promotions', `/activities/${ID}/rollbacks`, '/release-line/reconcile'];
+      for (const path of paths) for (const token of ['', 'wrong-token']) {
+        const req = request(app).post(path).send({ actor: 'test' });
+        if (token) req.set('Authorization', `Bearer ${token}`);
+        expect((await req).status).toBe(401);
+      }
+      for (const key of ['promoteActivity','groupPromote','rollbackActivity','reconcileReleaseLine']) expect(mocks[key]).not.toHaveBeenCalled();
+    } finally { vi.unstubAllEnvs(); }
   });
   it('晋级：库函数给的状态码原样返回（201 / 409 GATE_FAILED），抛错带 code/details', async () => {
-    mocks.promoteActivity.mockResolvedValueOnce({ status: 409, code: 'GATE_FAILED' })
+    mocks.promoteActivity.mockResolvedValueOnce({ status: 201, event: { id: 1 } }).mockResolvedValueOnce({ status: 409, code: 'GATE_FAILED' })
       .mockRejectedValueOnce(Object.assign(new Error('接口变了'), { status: 409, code: 'INTERFACE_CHANGED', details: { affected: [1] } }));
     let r = reqRes({ id: ID }, {}, { candidate_version_id: ID, actor: 't' });
+    await handler('post', '/activities/:id/promotions')(r.req, r.res);
+    expect(r.res._status).toBe(201);
+    r = reqRes({ id: ID }, {}, { candidate_version_id: ID, actor: 't' });
     await handler('post', '/activities/:id/promotions')(r.req, r.res);
     expect(r.res._status).toBe(409); expect(r.res._data.code).toBe('GATE_FAILED');
     r = reqRes({ id: ID }, {}, {}); await handler('post', '/activities/:id/promotions')(r.req, r.res);

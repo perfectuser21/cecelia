@@ -120,7 +120,7 @@ describe('GP assertion pinned toolchain attestation', () => {
       ...value,
       files: value.files.map(file => ({ ...file, content: 'binary-secret' })),
     }),
-  ])('rejects non-minimal attestation schema without leaking it', async forge => {
+  ])('rejects untrusted object copies before inspecting added secret fields', async forge => {
     const fs = fakeFileSystem(new Map());
     const attestation = await createToolchainAttestation(validInput(), fs);
     const error = await verifyToolchainAttestation(forge(attestation), fs)

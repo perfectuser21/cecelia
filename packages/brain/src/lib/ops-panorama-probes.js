@@ -22,13 +22,14 @@ export async function probeProcesses({ platform = process.platform, ...options }
     : ['-eo', 'pid=,ppid=,etimes=,comm=,args='];
   const output = await runBoundedProbe('ps', args, { timeoutMs: 3000, ...options });
   const result = { claude_total: 0, codex_total: 0, sessions: { headed: 0, headless: 0 } };
-  if (output === null) return result;
+  if (output === null) return null;
   const processes = output.split('\n').map((line) => {
     const fields = line.trim().split(/\s+/);
     if (fields.length < 5 || !/^\d+$/.test(fields[0]) || !/^\d+$/.test(fields[1])) return null;
     return { pid: Number(fields[0]), ppid: Number(fields[1]), elapsedSec: platform === 'darwin' ? parseEtime(fields[2]) : Number(fields[2]),
       comm: fields[3], args: fields.slice(4).join(' '), line };
   }).filter(Boolean);
+  if (output.trim() && processes.length === 0) return null;
   const parents = new Map(processes.map((p) => [p.pid, p.args]));
   for (const proc of processes) {
     // 原全景计数：claude精确comm；codex命令行包含codex且排除grep行。

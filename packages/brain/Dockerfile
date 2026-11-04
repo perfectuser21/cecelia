@@ -89,6 +89,7 @@ COPY packages/brain/scripts/coding-workflow/runner/lib/repos.mjs ./scripts/codin
 # 库 SSOT 在 repo 根 scripts/lib（engine devgate / pyramid-guard 同用），容器内镜像到
 # /app/scripts/ 供 src 内相对 require（缺失时 Brain 启动即死 fail-closed，smoke 把关）。
 COPY scripts/brain-image-retention/ ./scripts/brain-image-retention/
+COPY scripts/test-pyramid-guard.mjs ./scripts/
 COPY scripts/lib/test-contract-paths.cjs ./scripts/lib/
 COPY scripts/extract-contract-e2e.cjs ./scripts/
 # skill 分发漂移 job（skill-dist-drift.js）经 ssh 把这份清单脚本送到目标机执行；SSOT 在 repo 根 scripts/。

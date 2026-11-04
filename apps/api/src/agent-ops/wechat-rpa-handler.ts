@@ -33,6 +33,8 @@ export interface RpaReceipt {
 const PYTHON_PATH = process.env.WECHAT_RPA_PY_PATH ?? 'scripts/agents/wechat_rpa.py';
 const SPAWN_TIMEOUT_MS = 30_000;
 
+export class UnsupportedRpaActionError extends Error {}
+
 export async function spawnRpaHandler(req: RpaRequest): Promise<RpaReceipt> {
   const session_id = randomUUID();
 
@@ -83,22 +85,32 @@ export async function spawnRpaHandler(req: RpaRequest): Promise<RpaReceipt> {
 
     child.on('close', (code) => {
       clearTimeout(timer);
-      if (code !== 0) {
-        reject(new Error(`wechat-rpa exited with code ${code}: ${stderr.trim()}`));
+      let result: unknown;
+      try {
+        result = JSON.parse(stdout.trim());
+      } catch {
+        reject(new Error(`wechat-rpa invalid JSON output (exit ${code}): ${stdout.slice(0, 200)}`));
         return;
       }
-      try {
-        const result = JSON.parse(stdout.trim()) as unknown;
-        resolve({
-          session_id,
-          action_type: req.action_type,
-          dryrun: false,
-          status: 'ok',
-          payload: result,
-        });
-      } catch {
-        reject(new Error(`wechat-rpa invalid JSON output: ${stdout.slice(0, 200)}`));
+      const body = result !== null && typeof result === 'object'
+        ? result as { ok?: unknown; error?: unknown; data?: { dryrun?: unknown } }
+        : undefined;
+      if (body?.ok === false && body.error === 'unsupported_action') {
+        reject(new UnsupportedRpaActionError(`wechat-rpa action is not implemented: ${req.action_type}`));
+        return;
       }
+      if (code !== 0 || body?.ok !== true) {
+        reject(new Error(`wechat-rpa failed (exit ${code}): ${typeof body?.error === 'string' ? body.error : stderr.trim()}`));
+        return;
+      }
+      const dryrun = body.data?.dryrun === true;
+      resolve({
+        session_id,
+        action_type: req.action_type,
+        dryrun,
+        status: dryrun ? 'dryrun_receipt' : 'ok',
+        payload: result,
+      });
     });
 
     child.on('error', (err) => {

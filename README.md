@@ -6,8 +6,9 @@ AI Virtual Butler System - 24/7 自主运行的管家系统。
 
 ```
 packages/brain      → Brain 后端（调度/决策/保护，端口 5221）
-packages/engine     → 开发工作流引擎（hooks/skills/DevGate）
-packages/quality    → QA 基础设施
+scripts/dev         → 开发写入守卫与工作树工具
+scripts/devgate     → 开发门禁
+packages/brain/src/orchestrator → 执行内核与公共 Runner
 packages/workflows  → Agent 协议 + N8N 配置
 apps/api            → 前端 API 层
 apps/dashboard      → React UI（端口 5211）

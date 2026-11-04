@@ -11,9 +11,16 @@ ERRORS=""
 check_service() {
     local name=$1
     local url=$2
-    local result=$(curl -s --max-time 10 "$url" 2>/dev/null | grep -c "ok" || echo "0")
-
-    if [[ "$result" == "0" ]]; then
+    local host=${3:-}
+    local result probe_status
+    if [[ -n "$host" ]]; then
+        result=$(ssh -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 "$host" "curl --fail --silent --max-time 10 '$url'" 2>/dev/null)
+        probe_status=$?
+    else
+        result=$(curl --fail --silent --max-time 10 "$url" 2>/dev/null)
+        probe_status=$?
+    fi
+    if [[ "$probe_status" -ne 0 ]] || ! node -e 'try { process.exit(JSON.parse(process.argv[1])?.status === "ok" ? 0 : 1); } catch { process.exit(1); }' "$result"; then
         ERRORS="$ERRORS\n❌ $name 不可用"
         return 1
     fi
@@ -30,8 +37,8 @@ check_service "AI Gateway" "http://localhost:9876/health"
 
 echo ""
 echo "🇭🇰 香港:"
-ssh hk "curl -s http://localhost:5679/healthz" 2>/dev/null | grep -q "ok" && echo "✅ N8N" || { echo "❌ N8N"; ERRORS="$ERRORS\n❌ 香港 N8N 不可用"; }
-ssh hk "curl -s http://localhost:9876/health" 2>/dev/null | grep -q "ok" && echo "✅ AI Gateway" || { echo "❌ AI Gateway"; ERRORS="$ERRORS\n❌ 香港 AI Gateway 不可用"; }
+check_service "香港 N8N" "http://localhost:5679/healthz" "hk"
+check_service "香港 AI Gateway" "http://localhost:9876/health" "hk"
 
 # 如果有错误且配置了飞书，发送通知
 if [[ -n "$ERRORS" ]] && [[ -n "$FEISHU_WEBHOOK" ]]; then

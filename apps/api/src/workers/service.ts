@@ -33,24 +33,13 @@ const N8N_API_KEY = process.env.N8N_API_KEY || '';
 
 // 获取 N8N 工作流列表
 async function fetchN8nWorkflows(): Promise<N8nWorkflow[]> {
-  try {
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-    };
-    if (N8N_API_KEY) {
-      headers['X-N8N-API-KEY'] = N8N_API_KEY;
-    }
-
-    const response = await fetch(`${N8N_API_URL}/api/v1/workflows`, { headers });
-    if (!response.ok) {
-      return [];
-    }
-
-    const data = (await response.json()) as { data?: N8nWorkflow[] };
-    return data.data || [];
-  } catch {
-    return [];
-  }
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (N8N_API_KEY) headers['X-N8N-API-KEY'] = N8N_API_KEY;
+  const response = await fetch(`${N8N_API_URL}/api/v1/workflows`, { headers });
+  if (!response.ok) throw new Error('N8N 工作流来源不可用');
+  const data = (await response.json()) as {data?:N8nWorkflow[]};
+  if (!Array.isArray(data.data)) throw new Error('N8N 工作流来源不可用');
+  return data.data;
 }
 
 // 匹配工作流到员工能力
@@ -60,7 +49,7 @@ function matchWorkflowsToWorker(
 ): MatchedWorkflow[] {
   const matched: MatchedWorkflow[] = [];
 
-  for (const ability of worker.abilities) {
+  for (const ability of (worker.abilities || [])) {
     for (const workflow of workflows) {
       const workflowNameLower = workflow.name.toLowerCase();
       for (const keyword of ability.n8nKeywords) {
@@ -109,6 +98,7 @@ export async function getWorkersData(): Promise<{
 // 获取员工详情（含匹配的工作流）
 export async function getWorkerDetail(workerId: string): Promise<{
   success: boolean;
+  error?: string;
   data: WorkerWithWorkflows | null;
 }> {
   const worker = getWorkerById(workerId);
@@ -127,18 +117,19 @@ export async function getWorkerDetail(workerId: string): Promise<{
 
     return { success: true, data: result };
   } catch {
-    // N8N 不可用时返回空工作流列表
+    // 保留员工身份，但明确工作流来源不可用，不能冒充成功空集。
     const result: WorkerWithWorkflows = {
       ...worker,
       matchedWorkflows: [],
     };
-    return { success: true, data: result };
+    return { success: false, error: 'N8N 工作流来源不可用', data: result };
   }
 }
 
 // 获取员工匹配的工作流
 export async function getWorkerWorkflows(workerId: string): Promise<{
   success: boolean;
+  error?: string;
   data: {
     worker: Worker;
     workflows: MatchedWorkflow[];
@@ -162,7 +153,8 @@ export async function getWorkerWorkflows(workerId: string): Promise<{
     };
   } catch {
     return {
-      success: true,
+      success: false,
+      error: 'N8N 工作流来源不可用',
       data: {
         worker,
         workflows: [],
@@ -179,7 +171,7 @@ export function findWorkerByWorkflowName(
   const lowerName = workflowName.toLowerCase();
 
   for (const worker of workers) {
-    for (const ability of worker.abilities) {
+    for (const ability of (worker.abilities || [])) {
       for (const keyword of ability.n8nKeywords) {
         if (lowerName.includes(keyword.toLowerCase())) {
           return {

@@ -174,6 +174,9 @@ async function executeOkrTick() {
 
       // Trigger planner
       const result = await triggerPlannerForGoal(goal);
+      if (!result.triggered && !result.deferred) {
+        await updateGoalStatus(goal.id, OKR_STATUS.READY);
+      }
 
       actionsTaken.push({
         action: 'decompose_goal',

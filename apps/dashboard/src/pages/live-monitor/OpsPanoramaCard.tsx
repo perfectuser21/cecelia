@@ -32,13 +32,16 @@ interface LlmCapacity {
 export interface OpsPanoramaData {
   sampled_at: string;
   tasks: {
-    in_progress_count: number;
-    vendor_dist: Record<string, number>;
+    in_progress_count: number | null;
+    vendor_dist: Record<string, number> | null;
+    available?: boolean;
+    error?: string;
+    sampled_at?: string | null;
   };
   relay: { container_count: number | null };
-  sessions: { headed: number; headless: number };
+  sessions: { headed: number | null; headless: number | null };
   host: { cpu_usage_pct: number; mem_used_pct: number };
-  processes: { claude_total: number; codex_total: number };
+  processes: { claude_total: number | null; codex_total: number | null; available?: boolean; error?: string; sampled_at?: string | null };
   llm_capacity: LlmCapacity | null;
 }
 
@@ -118,7 +121,7 @@ function MetricRow({
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
         <span style={{ fontSize: 10, color: '#8b949e' }}>{label}</span>
         <span data-testid={valueTestId} style={{ fontSize: 10, fontFamily: 'monospace', color }}>
-          {value}
+          {value ?? '—'}
         </span>
       </div>
       <ProgressBar value={pct} color={color} label={label} />
@@ -130,17 +133,19 @@ function MetricRow({
 
 export function OpsPanoramaCard() {
   const [data, setData] = React.useState<OpsPanoramaData | null>(null);
+  const [loadError, setLoadError] = React.useState(false);
 
   const load = React.useCallback(async () => {
     try {
       const res = await fetch('/api/brain/ops-panorama');
-      if (!res.ok) return;
+      if (!res.ok) throw new Error('来源请求失败');
       const json = await res.json();
       // 仅接受合法对象（防止 mock 或异常返回数组/null 导致渲染崩溃）
-      if (!json || typeof json !== 'object' || Array.isArray(json)) return;
+      if (!json || typeof json !== 'object' || Array.isArray(json)) throw new Error('来源响应无效');
       setData(json as OpsPanoramaData);
+      setLoadError(false);
     } catch {
-      /* 静默降级 */
+      setLoadError(true);
     }
   }, []);
 
@@ -168,6 +173,9 @@ export function OpsPanoramaCard() {
     );
   }
 
+  const sourceErrors = [loadError ? '刷新失败，显示上次采样' : null,
+    data.tasks?.available === false ? data.tasks.error || '任务来源不可用' : null,
+    data.processes?.available === false ? data.processes.error || '进程来源不可用' : null].filter(Boolean);
   const relayCount = data.relay?.container_count ?? null;
   const claudeAccounts = data.llm_capacity?.vendors?.claude?.accounts ?? [];
   const sentinelColor =
@@ -214,6 +222,7 @@ export function OpsPanoramaCard() {
         )}
       </div>
 
+      {sourceErrors.length > 0 && <div role="status" data-testid="ops-panorama-source-errors" style={{fontSize:10,color:'#f59e0b',marginBottom:8}}>{sourceErrors.join('；')}</div>}
       {/* HOST 指标 */}
       <MetricRow
         label="CPU"
@@ -235,9 +244,9 @@ export function OpsPanoramaCard() {
 
       {/* 统计行 */}
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 8 }}>
-        <StatChip label="任务" value={data.tasks?.in_progress_count ?? 0} testId="ops-panorama-tasks-count" />
-        <StatChip label="Claude" value={data.processes?.claude_total ?? 0} testId="ops-panorama-claude-procs" />
-        <StatChip label="Codex" value={data.processes?.codex_total ?? 0} testId="ops-panorama-codex-procs" />
+        <StatChip label="任务" value={data.tasks?.available === false ? null : data.tasks?.in_progress_count ?? null} testId="ops-panorama-tasks-count" />
+        <StatChip label="Claude" value={data.processes?.available === false ? null : data.processes?.claude_total ?? null} testId="ops-panorama-claude-procs" />
+        <StatChip label="Codex" value={data.processes?.available === false ? null : data.processes?.codex_total ?? null} testId="ops-panorama-codex-procs" />
         <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
           <span style={{ fontSize: 9, color: '#484f58' }}>Relay</span>
           <span
@@ -313,7 +322,7 @@ function StatChip({
   testId,
 }: {
   label: string;
-  value: number;
+  value: number | null;
   testId: string;
 }) {
   return (
@@ -323,7 +332,7 @@ function StatChip({
         data-testid={testId}
         style={{ fontSize: 11, fontFamily: 'monospace', color: '#e6edf3' }}
       >
-        {value}
+        {value ?? '—'}
       </span>
     </div>
   );

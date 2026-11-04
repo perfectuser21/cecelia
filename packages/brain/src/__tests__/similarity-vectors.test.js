@@ -4,6 +4,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import SimilarityService from '../similarity.js';
+import {generateEmbedding} from '../openai-client.js';
 
 // Mock OpenAI client
 vi.mock('../openai-client.js', () => ({
@@ -15,6 +16,7 @@ describe('SimilarityService - Vector Search', () => {
   let mockDb;
 
   beforeEach(() => {
+    generateEmbedding.mockReset().mockResolvedValue(new Array(1536).fill(0.1));
     mockDb = {
       query: vi.fn()
     };
@@ -37,21 +39,28 @@ describe('SimilarityService - Vector Search', () => {
       });
 
       // Mock Jaccard search (getAllActiveEntities calls)
-      mockDb.query.mockResolvedValueOnce({ rows: [] });  // tasks
-      mockDb.query.mockResolvedValueOnce({ rows: [] });  // initiatives
-      mockDb.query.mockResolvedValueOnce({ rows: [] });  // KRs
+      mockDb.query.mockResolvedValueOnce({ rows: [] });  // capability vectors
+      mockDb.query.mockResolvedValueOnce({ rows: [{id:'task-1',title:'用户登录',description:'用户登录',status:'in_progress',metadata:{}}] }); // Jaccard tasks
+      mockDb.query.mockResolvedValueOnce({ rows: [] }); // projects
 
+      const vector=vi.spyOn(service,'vectorSearch'),jaccard=vi.spyOn(service,'searchSimilar');
       const result = await service.searchWithVectors('用户登录', { topK: 5 });
+      expect(generateEmbedding).toHaveBeenCalledWith('用户登录');
+      expect(vector).toHaveBeenCalledOnce();expect(jaccard).toHaveBeenCalledOnce();
+      expect(result.matches).toHaveLength(1);
+      expect(result.matches[0]).toMatchObject({id:'task-1'});
+      const jaccardResult=await jaccard.mock.results[0].value;
+      expect(jaccardResult.matches[0].score).toBeGreaterThan(0);
+      expect(result.matches[0].score).toBeCloseTo(0.85*0.7+jaccardResult.matches[0].score*0.3,8);
 
       expect(result).toHaveProperty('matches');
       expect(Array.isArray(result.matches)).toBe(true);
+      expect(mockDb.query.mock.calls.some(([sql])=>sql.includes('<=>'))).toBe(true);
     });
 
     it('should fallback to Jaccard on OpenAI failure', async () => {
       // Mock OpenAI failure
-      vi.mock('../openai-client.js', () => ({
-        generateEmbedding: vi.fn().mockRejectedValue(new Error('API failed'))
-      }));
+      generateEmbedding.mockRejectedValueOnce(new Error('API failed'));
 
       // Mock Jaccard search
       mockDb.query.mockResolvedValue({ rows: [] });
@@ -62,6 +71,9 @@ describe('SimilarityService - Vector Search', () => {
       });
 
       expect(result).toHaveProperty('matches');
+      expect(mockDb.query.mock.calls.some(([sql])=>sql.includes('<=>'))).toBe(false);
+      generateEmbedding.mockRejectedValueOnce(new Error('API failed'));
+      await expect(service.searchWithVectors('test',{fallbackToJaccard:false})).rejects.toThrow('API failed');
     });
 
     it('should filter by repo', async () => {
@@ -73,7 +85,9 @@ describe('SimilarityService - Vector Search', () => {
       });
 
       // Verify query was called with repo filter
-      expect(mockDb.query).toHaveBeenCalled();
+      const [sql,params]=mockDb.query.mock.calls[0];
+      expect(sql).toMatch(/metadata->>'repo' = \$2/);
+      expect(params[1]).toBe('cecelia/core');
     });
 
     it('should filter by multiple repos', async () => {
@@ -84,7 +98,9 @@ describe('SimilarityService - Vector Search', () => {
         repos: ['cecelia/core', 'cecelia/workspace']
       });
 
-      expect(mockDb.query).toHaveBeenCalled();
+      const [sql,params]=mockDb.query.mock.calls[0];
+      expect(sql).toMatch(/metadata->>'repo' = ANY\(\$2\)/);
+      expect(params[1]).toEqual(['cecelia/core','cecelia/workspace']);
     });
 
     it('should filter by status', async () => {
@@ -95,7 +111,9 @@ describe('SimilarityService - Vector Search', () => {
         status: 'completed'
       });
 
-      expect(mockDb.query).toHaveBeenCalled();
+      const [sql,params]=mockDb.query.mock.calls[0];
+      expect(sql).toMatch(/t.status = \$2/);
+      expect(params[1]).toBe('completed');
     });
   });
 
@@ -120,6 +138,8 @@ describe('SimilarityService - Vector Search', () => {
       expect(result).toHaveProperty('matches');
       expect(result.matches.length).toBeGreaterThan(0);
       expect(result.matches[0]).toHaveProperty('score');
+      expect(mockDb.query.mock.calls[0][0]).toMatch(/1 - \(t.embedding <=> \$1::vector\)/);
+      expect(mockDb.query.mock.calls[0][1][0]).toBe('['+queryEmbedding.join(',')+']');
     });
   });
 

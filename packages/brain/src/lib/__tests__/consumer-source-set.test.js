@@ -1,4 +1,4 @@
-import {it,expect} from 'vitest';
+import {it,expect,vi} from 'vitest';
 import {stepSha256} from '../../../scripts/sync-steps-from-workspace.mjs';
 import * as sourceProtocol from '../consumer-source-set.js';
 
@@ -26,10 +26,15 @@ it('认证collector入口拒绝任意repo/非法SHA且未取得实际证据时ty
   calls=0;expect(await sourceProtocol.readConsumerSourceMainWitness(input,options)).toMatchObject({status:'unknown'});expect(calls).toBe(0);
  }
 });
-it('生产Workspace核心尚未在受信树可用时，真实动态消费者保持UNKNOWN且不会伪造源集准入',async()=>{
+it('核心动态加载失败时真实消费者保持UNKNOWN，不授予源集准入',async()=>{
  expect(sourceProtocol.collectWorkspaceConsumerSourceSet).toBeTypeOf('function');
- const result=await sourceProtocol.collectWorkspaceConsumerSourceSet({});
+ vi.doMock('../workspace-ci-source-bundle.js',()=>{throw Error('core unavailable');});
+ const revision='a'.repeat(40);
+ const input={workspace:{repo:'perfectuser21/zenithjoy-workspace',revision},brain:{repo:'perfectuser21/cecelia',revisions:[revision]},anchor:{repo:'perfectuser21/cecelia',revision}};
+ let result;
+ try {result=await sourceProtocol.collectWorkspaceConsumerSourceSet(input);} finally {vi.doUnmock('../workspace-ci-source-bundle.js');}
  expect(result).toMatchObject({status:'unknown',admission:{status:'unknown'}});
+ expect(result.gaps).toContainEqual({code:'CONSUMER_CORE_UNAVAILABLE'});
  expect(result.gaps).toEqual(expect.arrayContaining([expect.objectContaining({code:expect.stringMatching(/^CONSUMER_/ )})]));
 });
 it('历史append冻结入口拒绝未认证、复制或static verified证明，不授予生产source_set',()=>{

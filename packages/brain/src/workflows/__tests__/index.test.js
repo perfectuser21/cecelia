@@ -46,5 +46,6 @@ describe('initializeWorkflows()', () => {
     await initializeWorkflows();
     _resetInitializedForTests();
     await expect(initializeWorkflows()).resolves.not.toThrow();
+    expect(mocks.getCompiledConsciousnessGraph).toHaveBeenCalledTimes(2);
   });
 });

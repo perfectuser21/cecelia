@@ -293,7 +293,7 @@ describe('PATCH /api/brain/tasks/:task_id — completed 状态硬闸 [BEHAVIOR]'
       .mockResolvedValueOnce({
         rows: [{
           id: 'task-hi-3', status: 'queued',
-          task_type: 'harness_initiative', review_required_raw: null, review_status: null,
+          task_type: 'harness_initiative', orchestrator: 'skill-relay', review_required_raw: null, review_status: null,
           pr_url: null, pr_merged_at: null,
         }],
       })

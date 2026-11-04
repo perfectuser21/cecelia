@@ -446,8 +446,7 @@ async function executeAction(action) {
       return await restartStuckExecutors();
 
     case 'reset_process_pool':
-      // TODO: 实现进程池重置
-      return { poolReset: false, stub: true };
+      throw new Error('healing_action_unavailable: reset_process_pool');
 
     // 队列疏通动作
     case 'redistribute_tasks': {
@@ -473,8 +472,7 @@ async function executeAction(action) {
       return await retryWithBackoff();
 
     case 'switch_fallback_endpoints':
-      // TODO: 实现降级端点
-      return { fallbackEnabled: false, stub: true };
+      throw new Error('healing_action_unavailable: switch_fallback_endpoints');
 
     case 'quarantine_problematic_tasks': {
       const quarantined = await quarantineProblematicTasks();

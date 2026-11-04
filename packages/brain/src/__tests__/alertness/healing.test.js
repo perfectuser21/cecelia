@@ -438,7 +438,7 @@ describe('alertness/healing', () => {
       ['switch_fallback_endpoints', { fallbackEnabled: false, stub: true }],
     ])('%s 未实现时不得伪报恢复成功', async (action, expected) => {
       const { executeAction } = await import('../../alertness/healing.js');
-      expect(await executeAction(action)).toEqual(expected);
+      await expect(executeAction(action)).rejects.toThrow('healing_action_unavailable');
     });
   });
 

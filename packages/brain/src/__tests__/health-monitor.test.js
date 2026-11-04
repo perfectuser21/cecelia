@@ -260,13 +260,13 @@ describe('runLayer2HealthCheck', () => {
     expect(result.checks.dispatched_1h.uptime_h).toBe(5.7);
   });
 
-  it('dispatched_1h 查询出错时 ok 应为 true（non-blocking）', async () => {
+  it('dispatched_1h 查询出错时 ok 应为 null（来源未知）', async () => {
     const pool = makeMockPool({
       dispatched_1h_cnt: new Error('query timeout'),
     });
     const result = await runLayer2HealthCheck(pool);
 
-    expect(result.checks.dispatched_1h.ok).toBe(true);
+    expect(result.checks.dispatched_1h.ok).toBeNull();
     expect(result.checks.dispatched_1h.error).toBe('query timeout');
   });
 
@@ -292,13 +292,13 @@ describe('runLayer2HealthCheck', () => {
     expect(result.checks.stuck_tasks.ok).toBe(true);
   });
 
-  it('stuck_tasks 查询出错时 ok 应为 true（non-blocking）', async () => {
+  it('stuck_tasks 查询出错时 ok 应为 null（来源未知）', async () => {
     const pool = makeMockPool({
       stuck_tasks_cnt: new Error('connection lost'),
     });
     const result = await runLayer2HealthCheck(pool);
 
-    expect(result.checks.stuck_tasks.ok).toBe(true);
+    expect(result.checks.stuck_tasks.ok).toBeNull();
     expect(result.checks.stuck_tasks.error).toBe('connection lost');
   });
 
@@ -334,13 +334,13 @@ describe('runLayer2HealthCheck', () => {
     expect(result.checks.last_success_ago_min.value).toBe(null);
   });
 
-  it('last_success_ago_min 查询出错时 ok 应为 true（non-blocking）', async () => {
+  it('last_success_ago_min 查询出错时 ok 应为 null（来源未知）', async () => {
     const pool = makeMockPool({
       last_success_ago: new Error('relation does not exist'),
     });
     const result = await runLayer2HealthCheck(pool);
 
-    expect(result.checks.last_success_ago_min.ok).toBe(true);
+    expect(result.checks.last_success_ago_min.ok).toBeNull();
     expect(result.checks.last_success_ago_min.error).toBe('relation does not exist');
   });
 
@@ -366,13 +366,13 @@ describe('runLayer2HealthCheck', () => {
     expect(result.checks.queue_depth.ok).toBe(true);
   });
 
-  it('queue_depth 查询出错时 ok 应为 true（non-blocking）', async () => {
+  it('queue_depth 查询出错时 ok 应为 null（来源未知）', async () => {
     const pool = makeMockPool({
       queue_depth_cnt: new Error('too many connections'),
     });
     const result = await runLayer2HealthCheck(pool);
 
-    expect(result.checks.queue_depth.ok).toBe(true);
+    expect(result.checks.queue_depth.ok).toBeNull();
     expect(result.checks.queue_depth.error).toBe('too many connections');
   });
 
@@ -481,5 +481,15 @@ describe('runLayer2HealthCheck', () => {
 
     expect(() => new Date(result.checked_at)).not.toThrow();
     expect(new Date(result.checked_at).toISOString()).toBe(result.checked_at);
+  });
+});
+
+
+describe('健康来源失联不能冒充healthy', () => {
+  it('所有查询失败时检查unknown，汇总unknown且仍返回非异常响应', async () => {
+    const result = await runLayer2HealthCheck({ query: vi.fn().mockRejectedValue(new Error('DB unavailable')) });
+    expect(result.level).toBe('unknown');
+    for (const check of Object.values(result.checks)) expect(check).toMatchObject({ ok: null, available: false });
+    expect(result.callback_queue_stats).toMatchObject({ unprocessed: null, failed_retries: null, available: false });
   });
 });

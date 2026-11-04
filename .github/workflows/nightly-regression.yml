@@ -370,6 +370,7 @@ jobs:
         uses: ./.github/actions/skills-source
         with:
           ssh-key: ${{ secrets.SKILLS_SOURCE_SSH_KEY }}
+          expected-public-sha256: ${{ vars.SKILLS_SOURCE_PUBLIC_KEY_SHA256 }}
       - uses: ./.github/actions/dockerhub-mirror
       - uses: actions/setup-node@v4
         with:

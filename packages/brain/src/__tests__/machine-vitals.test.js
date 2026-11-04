@@ -192,17 +192,19 @@ describe('machine-vitals', () => {
     });
 
     it('跨日重置：新一天首次采样 peak=当日值（不沿用前一日峰值）', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date('2026-11-04T15:59:00Z'));
       const pool = poolMock();
       stubDocker({ psNames: Array.from({length:5},(_,i)=>`cecelia-relay-x${i}-1`).join('\n') + '\n' });
       await sampleMachineVitals(pool);
       expect(lastPeakValue(pool).peak).toBe(5);
 
-      // 模拟跨日：直接重置峰值内存态（等价于新一天首次采样前的状态）
-      _resetVitalsCacheForTest();
+      vi.setSystemTime(new Date('2026-11-04T16:01:00Z'));
+      pool.query.mockResolvedValue({ rows: [{ value_json: { date: '2026-11-04', peak: 9 } }] });
       pool.query.mockClear();
       stubDocker({ psNames: 'cecelia-relay-a-1\ncecelia-relay-b-2\n' });
       await sampleMachineVitals(pool);
-      expect(lastPeakValue(pool).peak).toBe(2);
+      expect(lastPeakValue(pool)).toEqual({ date: '2026-11-05', peak: 2 });
     });
   });
 });

@@ -116,9 +116,22 @@ describe('GET /runs/:run_id/definition 体积上限', () => {
     expect(res.body.error.code).toBe('RUN_DEFINITION_UNKNOWN');
   });
 
-  it('紧凑化遇到异常形状不抛错（fail-safe 回退完整定义）', () => {
+  it('紧凑化容忍缺省字段，仍返回compact视图', () => {
     const weird = { binding: { id: 'b' }, release: null, workflow: { id: 'w', payload: null }, activities: [null, { id: 'a', payload: { steps: 'oops' } }] };
     expect(() => compactRunDefinition(weird)).not.toThrow();
     expect(compactRunDefinition(weird).binding).toEqual({ id: 'b' });
+    expect(compactRunDefinition(weird).definition_view).toBe('compact');
   });
+  it('紧凑化读取异常时真实catch回退保留完整定义',()=>{
+    const full=productionShapedDefinition(),workflow=full.workflow;let reads=0;
+    Object.defineProperty(full,'workflow',{enumerable:true,get(){if(++reads===1)throw Error('read interrupted');return workflow;}});
+    const result=compactRunDefinition(full);
+    expect(reads).toBe(2);
+    expect(result.definition_view).toBe('full');
+    expect(result.workflow).toBe(workflow);
+    expect(result.release).toBe(full.release);
+    expect(result.activities).toBe(full.activities);
+    expect(result.binding).toBe(full.binding);
+  });
+
 });

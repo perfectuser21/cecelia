@@ -145,20 +145,22 @@ describe('Alerting', () => {
   });
 
   describe('flushAlertsIfNeeded()', () => {
-    it('首次调用会触发刷新（因为 _lastFlushAt = 0）', async () => {
-      // 先往两个缓冲区加内容
-      await raise('P1', 'needed_test_p1', 'P1 需要刷新');
-      await raise('P2', 'needed_test_p2', 'P2 需要刷新');
-
-      vi.clearAllMocks();
-
-      // 首次调用，距 _lastFlushAt 超过阈值（因为 _lastFlushAt=0）
-      await flushAlertsIfNeeded();
-
-      // P1 或 P2 有内容时应该推送
-      // 由于 flushP1/flushP2 内部实现，只有有内容才推送
-      // 这里主要验证不抛错
-      expect(typeof getStatus().p1_pending).toBe('number');
-    });
+    it('首次到期刷新清空缓冲并记录时刻，未到间隔不再刷新', async () => {
+      vi.resetModules();
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-11-04T00:00:00Z'));
+      try {
+        const fresh = await import('../alerting.js');
+        await fresh.raise('P1', 'needed_test_p1', 'P1需要汇总');
+        await fresh.raise('P2', 'needed_test_p2', 'P2需要汇总');
+        expect(fresh.getStatus().p1_pending).toBe(1);
+        expect(await fresh.flushAlertsIfNeeded()).toEqual({ p1: true, p2: true });
+        expect(fresh.getStatus().p1_pending).toBe(0);
+        expect(fresh.getStatus().p2_pending).toBe(0);
+        expect(fresh.getStatus().last_p1_flush).toBe(new Date().toISOString());
+        expect(fresh.getStatus().last_p2_flush).toBe(new Date().toISOString());
+        expect(await fresh.flushAlertsIfNeeded()).toEqual({ p1: false, p2: false });
+      } finally { vi.useRealTimers(); }
+    });;
   });
 });

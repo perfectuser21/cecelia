@@ -25,7 +25,7 @@ vi.mock('child_process', () => ({
 }));
 
 // Dynamically import the router (after mocking)
-const { default: deployDevRouter } = await import('../routes/deploy-dev.js');
+let deployDevRouter;
 
 function createApp() {
   const app = express();
@@ -37,7 +37,9 @@ function createApp() {
 describe('deploy-dev 端点', () => {
   let app;
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    vi.resetModules();
+    deployDevRouter = (await import('../routes/deploy-dev.js')).default;
     app = createApp();
     vi.clearAllMocks();
   });
@@ -58,7 +60,7 @@ describe('deploy-dev 端点', () => {
       const res = await request(app).get('/api/brain/deploy/dev/status');
       expect(res.status).toBe(200);
       // status 可能是 idle 或 success（取决于模块级状态），但必须是有效值
-      expect(['idle', 'success', 'failed', 'running', 'pending']).toContain(res.body.status);
+      expect(res.body.status).toBe('idle');
     });
   });
 

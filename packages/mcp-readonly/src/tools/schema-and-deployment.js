@@ -16,10 +16,31 @@ export async function getSchemaVersion(pool, queryFn) {
   return { current_version: result.rows[0].version };
 }
 
-export async function getDeploymentStatus(execFn, { startedAt }) {
+export async function readBrainHealth(fetchFn = globalThis.fetch) {
+  const response = await fetchFn('http://127.0.0.1:5221/api/brain/health', {
+    method: 'GET', signal: AbortSignal.timeout(3000),
+  });
+  if (!response.ok) throw new Error('brain_health_unavailable');
+  return response.json();
+}
+
+export async function getDeploymentStatus(execFn, { startedAt, brainHealth }) {
   const shaResult = await execFn('git rev-parse --short HEAD');
   const branchResult = await execFn('git branch --show-current');
+  let runtime = { status: 'unknown', git_sha: null, version: null, uptime_seconds: null };
+  if (brainHealth) {
+    try {
+      const health = await brainHealth();
+      runtime.git_sha = typeof health?.git_sha === 'string' && health.git_sha !== 'unknown' ? health.git_sha : null;
+      runtime.version = typeof health?.version === 'string' ? health.version : null;
+      runtime.uptime_seconds = typeof health?.uptime_seconds === 'number' && Number.isFinite(health.uptime_seconds) && health.uptime_seconds >= 0 ? health.uptime_seconds : null;
+      if (runtime.git_sha && runtime.version && runtime.uptime_seconds !== null) runtime.status = 'known';
+    } catch { /* 运行身份未知，不用宿主checkout或MCP进程年龄代替。 */ }
+  }
   return {
+    identity_source: 'checkout',
+    runtime,
+    uptime_source: 'mcp_process',
     commit_sha: shaResult.stdout.trim(),
     branch: branchResult.stdout.trim(),
     uptime_seconds: Math.floor((Date.now() - startedAt) / 1000),

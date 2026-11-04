@@ -12,6 +12,10 @@ vi.mock('../../db.js', () => ({
   },
 }));
 
+const finalizers = vi.hoisted(() => ({ terminal: vi.fn() }));
+vi.mock('../../lib/task-terminal.js', async () => ({ ...(await vi.importActual('../../lib/task-terminal.js')), finalizeTask: finalizers.terminal }));
+vi.mock('../../lib/harness-finalize.js', () => ({ finalizeHarnessTask: async () => ({ applies: false, allow: true }) }));
+
 describe('routes/harness module (pairing stub)', () => {
   it('routes/harness.js 已删 harness_planner SQL（仅注释残留）', () => {
     const src = fs.readFileSync(new URL('../harness.js', import.meta.url), 'utf8');
@@ -373,21 +377,16 @@ describe('GET /runs/:id/progress — B52 pipeline progress', () => {
   });
 });
 
-describe('POST /harness/complete rowCount 警告', () => {
-  it('rowCount=0 时仍返回 ok:true 但包含 rowsAffected 字段', async () => {
-    // 覆盖 harness/complete 修改：添加 updateResult.rowCount 检查
-    // 确保 rowsAffected 出现在响应中
-    const mockUpdateResult = { rowCount: 0 };
-    expect(mockUpdateResult.rowCount).toBe(0);
-    // 逻辑覆盖：rowCount=0 时应发出 warn 但不改变 ok:true 响应
-    const response = { ok: true, initiative_id: 'test-id', rowsAffected: mockUpdateResult.rowCount };
-    expect(response.ok).toBe(true);
-    expect(response.rowsAffected).toBe(0);
-  });
-
-  it('rowCount=1 时 rowsAffected=1', async () => {
-    const mockUpdateResult = { rowCount: 1 };
-    const response = { ok: true, initiative_id: 'test-id', rowsAffected: mockUpdateResult.rowCount };
-    expect(response.rowsAffected).toBe(1);
+describe('历史complete收账路由的rowsAffected', () => {
+  it.each([0, 1])('真实终态边界返回%s时响应保留影响行数', async rowsAffected => {
+    const pool = (await import('../../db.js')).default;
+    pool.query.mockReset().mockResolvedValue({ rows: [] });
+    finalizers.terminal.mockReset().mockResolvedValue({ rowCount: rowsAffected });
+    const app = express(); app.use(express.json());
+    app.use((await import('../harness.js')).default);
+    const response = await request(app).post('/complete').send({ initiative_id: 'historical-id' });
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({ ok: true, initiative_id: 'historical-id', rowsAffected });
+    expect(finalizers.terminal).toHaveBeenCalledWith(pool, 'historical-id', 'completed', expect.any(Object));
   });
 });

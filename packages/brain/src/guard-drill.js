@@ -17,7 +17,7 @@
  */
 
 import { execSync } from 'child_process';
-import { mkdirSync, writeFileSync, rmSync } from 'fs';
+import { mkdirSync, writeFileSync, rmSync, existsSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import pool from './db.js';
@@ -108,27 +108,24 @@ async function drillTestPyramidGuard() {
       'test("drill orphan — guard must catch this", () => {});',
     );
 
-    // 运行守卫：预期 exit 1（孤儿超棘轮）
-    try {
-      exec(`node scripts/test-pyramid-guard.mjs --root "${drillDir}" 2>&1 || true`);
-    } catch {
-      // exit 1 = 守卫叫了
-    }
+    // 复用同一守卫的实际判定器；隔离基线只验 A1，不读取线上 FR 或宿主面板。
+    const guardUrl = [
+      new URL('../scripts/test-pyramid-guard.mjs', import.meta.url),
+      new URL('../../../scripts/test-pyramid-guard.mjs', import.meta.url),
+    ].find(url => existsSync(url));
+    if (!guardUrl) throw new Error('pyramid_guard_program_unavailable');
+    const { runGuard } = await import(guardUrl.href);
+    const result = runGuard(drillDir, {
+      orphans: 0,
+      permanent: 0,
+      permanent_roots: [],
+      smoke_dir: 'scripts/smoke',
+    }, { ci: true, bareFrCount: null });
+    fired = result.pass === false
+      && result.unregistered_orphans?.total === 1
+      && result.failures?.length === 1
+      && result.failures[0].startsWith('A1 孤儿棘轮:');
 
-    // 重新检测退出码
-    try {
-      execSync(`node scripts/test-pyramid-guard.mjs --root "${drillDir}"`, {
-        encoding: 'utf8',
-        timeout: EXEC_TIMEOUT_MS,
-        stdio: ['ignore', 'pipe', 'pipe'],
-        cwd: process.cwd(),
-      });
-      // 若 exit 0 = 守卫没叫
-      fired = false;
-    } catch (e) {
-      // exit 非 0 = 守卫叫了（正确）
-      fired = e.status !== 0;
-    }
   } finally {
     try {
       rmSync(drillDir, { recursive: true, force: true });
@@ -140,8 +137,8 @@ async function drillTestPyramidGuard() {
   return {
     fired,
     detail: fired
-      ? '孤儿测试文件注入 → guard exit 1 ✓'
-      : '孤儿测试文件注入后 guard 仍 exit 0，守卫未叫',
+      ? '孤儿测试文件注入 → A1 孤儿棘轮明确拒绝 ✓'
+      : '孤儿测试文件注入后未取得唯一 A1 拒绝结果，守卫未验火',
   };
 }
 

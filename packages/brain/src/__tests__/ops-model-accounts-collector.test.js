@@ -109,10 +109,12 @@ describe('ops-model-accounts-collector 纯函数', () => {
     expect(a.seven_day_pct).toBe(71);
 
     const c = parseChatgptWhamUsage({ five_hour: { usage_percent: 12 }, seven_day: { usage_percent: 88 } });
+    expect(Object.keys(c).sort()).toEqual([...SNAPSHOT_KEYS].sort());
     expect(c.five_hour_pct).toBe(12);
     expect(c.seven_day_pct).toBe(88);
 
     const g = parseGrokUsage({ five_hour_pct: 5, seven_day_pct: 9, reset_at: null });
+    expect(Object.keys(g).sort()).toEqual([...SNAPSHOT_KEYS].sort());
     expect(g.five_hour_pct).toBe(5);
   });
 
@@ -200,13 +202,18 @@ describe('toPct — 列是 INTEGER，浮点必须在进 SQL 前收敛', () => {
     const pool = makePool();
     await runModelAccountsCollector(pool, {
       force: true,
-      fetchUsage: async () => ({ five_hour: { utilization: 89.6 }, seven_day: { utilization: 12.3 } }),
+      fetchUsage: async acct => /codex/i.test(acct.provider)
+        ? { five_hour: { usage_percent: 89.6 }, seven_day: { usage_percent: 12.3 } }
+        : { five_hour: { utilization: 89.6 }, seven_day: { utilization: 12.3 } },
       grokProbe: async () => ({ five_hour_pct: 1.5, seven_day_pct: 2.5 }),
     });
     // upsertModelAccount 的参数数组（源文件 :274-279）：
     //   [account_id, provider, plan, five_hour_pct, seven_day_pct, reset_at,
     //    host_alias, forwardable, forward_targets, status, last_error]
     // pct 两列在下标 3、4（0-based）——核对过 SQL 的 $4/$5 与数组字面量顺序一致。
+    for (const { params } of pool.upserts()) {
+      expect(params.slice(3, 5)).toEqual(/grok/i.test(params[1]) ? [2, 3] : [90, 12]);
+    }
     const pctParams = pool.upserts().flatMap((c) => (c.params ?? []).slice(3, 5));
     expect(pctParams.length).toBeGreaterThan(0);
     for (const p of pctParams) {

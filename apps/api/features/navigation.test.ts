@@ -103,3 +103,12 @@ describe('Cecelia 主导航', () => {
     expect(config.allRoutes.find(route => route.path === path)?.redirect).toBe('/system');
   });
 });
+
+it('最终配置中系统兼容路径只有一个所有者且匹配现行跳转', async () => {
+  const config = await buildCoreConfig();
+  for (const path of ['/ops/live', '/vps-monitor', '/ops/system/vps', '/claude-monitor', '/claude-stats', '/ops/claude', '/ops/claude/stats', '/devgate', '/ops/devgate', '/performance']) {
+    expect(config.allRoutes?.filter(route => route.path === path)).toHaveLength(1);
+  }
+  expect(config.allRoutes?.find(route => route.path === '/vps-monitor')?.redirect).toBe('/system/infra');
+  expect(config.allRoutes?.find(route => route.path === '/devgate')?.redirect).toBe('/system/engine');
+});

@@ -1,7 +1,7 @@
 /**
  * 告警升级跨模块链路测试
  *
- * 验证完整链路：
+ * 验证通知边界、升级计划与事件记录（响应动作执行由独立执行器测试承担）：
  * - alerting.js: P0→立即推送，P1→缓冲，P0 rate-limit 同 eventType 5min 内不重复
  * - alertness/escalation.js: alertnessLevel→determineResponseLevel→executeEscalation→emit
  * - escalation 级别映射：PANIC(4)→L3, ALERT(3)→L1, AWARE(2)→L0, CALM(1)→null
@@ -114,25 +114,27 @@ describe('alertness/escalation.js — 升级决策链路（独立调用验证）
   });
 
   it('ALERT(3) → 返回 level=graceful_degrade，含 reduce_concurrency 动作', async () => {
+    vi.resetModules();
+    const { escalateResponse } = await import('../alertness/escalation.js');
     const response = await escalateResponse(3, {
       summary: 'alert early',
       patterns: ['high_cpu'],
     });
     expect(response).not.toBeNull();
-    // ALERT 在无持续时间时返回 L1 graceful_degrade
-    expect(['graceful_degrade', 'emergency_brake']).toContain(response.level);
-    expect(response.actions.length).toBeGreaterThan(0);
+    expect(response.level).toBe('graceful_degrade');
+    expect(response.actions.map(action => action.type)).toContain('reduce_concurrency');
   });
 
   it('AWARE(2) → 返回 level=auto_recovery，含 monitor 动作', async () => {
+    vi.resetModules();
+    const { escalateResponse } = await import('../alertness/escalation.js');
     const response = await escalateResponse(2, {
       summary: 'aware state',
       patterns: ['memory_warning'],
     });
     expect(response).not.toBeNull();
-    // AWARE 在无持续时间时返回 L0 auto_recovery
-    expect(['auto_recovery', 'graceful_degrade']).toContain(response.level);
-    expect(response.actions.length).toBeGreaterThan(0);
+    expect(response.level).toBe('auto_recovery');
+    expect(response.actions.map(action => action.type)).toContain('monitor');
   });
 
   it('CALM(1) → 返回 level=null（无需响应）', async () => {
