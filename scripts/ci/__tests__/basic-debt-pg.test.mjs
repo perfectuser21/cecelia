@@ -99,3 +99,14 @@ test('四份已验证backend与真实strategy callback必须进入私有PG完整
   assert.deepEqual(readManifest().tests.find(row=>row.path===path),{path,mode:'full',status:'ready'});
  }
 });
+
+test('strategy与历史harness两个真实回调文件均由自动私有PG选中，清债不能靠空集合',()=>{
+  const paths=['packages/brain/src/__tests__/execution-strategy-session-kr-link.test.js',
+    'packages/brain/src/routes/__tests__/harness-feature-propagation.test.js'];
+  const selected=glob.sync(privatePg.test.include,{cwd:resolve(root,'packages/brain'),absolute:true,
+    ignore:privatePg.test.exclude}).map(path=>relative(root,path));
+  for(const path of paths){
+    assert.deepEqual(readManifest().tests.find(row=>row.path===path),{path,mode:'full',status:'ready'});
+    assert.equal(selected.filter(file=>file===path).length,1);
+  }
+});
