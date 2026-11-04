@@ -9,7 +9,7 @@ import { z } from 'zod';
 import { bearerAuth } from './src/auth.js';
 import { createRateLimiter } from './src/rate-limit.js';
 import { createReadonlyPool, query } from './src/db.js';
-import { getSchemaVersion, getDeploymentStatus } from './src/tools/schema-and-deployment.js';
+import { getSchemaVersion, getDeploymentStatus, readBrainHealth } from './src/tools/schema-and-deployment.js';
 import { getMapSummary } from './src/tools/map-summary.js';
 import { getMapNodes, getMapEdges, NODE_TYPES, EDGE_TYPES } from './src/tools/map-nodes-edges.js';
 import { getServiceLogs, SERVICE_LOG_WHITELIST } from './src/tools/service-logs.js';
@@ -116,29 +116,13 @@ async function dockerReadLogFn(containerName, tailLines) {
   return combined.split('\n').filter((line) => line.length > 0);
 }
 
-// get_deployment_status 的 execFn：读宿主机仓库目录的 git 状态。
-//
-// 已知风险（Task 11 调查结论，未在本任务修复，见 handoff/commit message）：生产
-// Cecelia Brain 现在跑在 docker-compose.yml 的 cecelia-node-brain 容器里，容器镜像
-// 构建期把 GIT_SHA 烙进 Brain 自己的 /api/brain/health 响应（见
-// packages/brain/scripts/smoke/git-sha-health-smoke.sh + docs/superpowers/specs/
-// 2026-07-18-deploy-sha-reconcile-design.md 的 SHA 对账设计），这才是"容器里实际在
-// 跑什么"的真相来源。而这里读的是宿主机磁盘 checkout 到的 commit——deploy-local.sh
-// 自己的判变逻辑也不信任这个假设，专门做了 origin/main vs 生产 git_sha 的对账
-// （PROD_SHA 来自 curl brain /health，不是读本地 git）。宿主机 checkout 与容器实际
-// 运行版本在部署链路的中间态下可能不一致（构建了镜像但没更新 checkout，或反过来）。
-// getDeploymentStatus() 本身在 Task 7 已实现并测试通过，签名是 execFn 型（git 命令），
-// 本次组装不改它的实现，只如实记录这个风险。不修的原因不是"怕破坏测试"——
-// getDeploymentStatus 是依赖注入设计，换一个 execFn/新增查询源不需要碰现成测试；
-// 真正的原因是更可靠的实现（改查 Brain 自己的 /api/brain/health 拿 git_sha）需要
-// 新建一个前置任务（Task 1-10）未交付的 HTTP 查询模块，超出 Task 11"组装现成模块"
-// 的范围，留给后续任务处理。
+// checkout身份只描述宿主磁盘；Brain运行身份独立读取固定只读health端点。
 async function gitExecFn(cmd) {
   const [command, ...args] = cmd.split(' ');
   return execFileAsync(command, args);
 }
 
-function buildMcpServer({ pool, startedAt, queryFn }) {
+function buildMcpServer({ pool, startedAt, queryFn, brainHealth, gitExec }) {
   const server = new McpServer({ name: 'cecelia-readonly', version: '1.0.0' });
 
   server.registerTool(
@@ -194,11 +178,11 @@ function buildMcpServer({ pool, startedAt, queryFn }) {
   server.registerTool(
     'get_deployment_status',
     {
-      description: '返回当前 commit SHA/branch/启动时间',
+      description: '分别返回宿主checkout身份与Brain health运行身份；运行不可达时明确unknown',
       inputSchema: {},
     },
     async () => ({
-      content: [{ type: 'text', text: JSON.stringify(await getDeploymentStatus(gitExecFn, { startedAt })) }],
+      content: [{ type: 'text', text: JSON.stringify(await getDeploymentStatus(gitExec, { startedAt, brainHealth })) }],
     })
   );
 
@@ -216,7 +200,7 @@ function buildMcpServer({ pool, startedAt, queryFn }) {
   return server;
 }
 
-export function createApp({ skipDbInit = false, databasePool, bearerToken = process.env.MCP_BEARER_TOKEN } = {}) {
+export function createApp({ skipDbInit = false, databasePool, bearerToken = process.env.MCP_BEARER_TOKEN, brainHealth = readBrainHealth, gitExec = gitExecFn } = {}) {
   const app = express();
   app.use(express.json());
 
@@ -254,7 +238,7 @@ export function createApp({ skipDbInit = false, databasePool, bearerToken = proc
   // 直接挂死不返回任何 HTTP 响应——这正是 Cloudflare 报 502（源站无响应）而
   // 不是一个干净的 4xx/5xx 的根本原因。
   app.post('/mcp', async (req, res) => {
-    const mcpServer = buildMcpServer({ pool, startedAt, queryFn: trackedQuery });
+    const mcpServer = buildMcpServer({ pool, startedAt, queryFn: trackedQuery, brainHealth, gitExec });
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     res.on('close', () => {
       transport.close();
