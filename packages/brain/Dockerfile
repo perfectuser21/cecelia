@@ -80,6 +80,9 @@ COPY --from=deps /repo/package-lock.json /repo/package-lock.json
 # 源代码
 COPY packages/brain/server.js ./
 COPY packages/brain/src/ ./src/
+# 与同一冻结Git构建源绑定的说明书；不从宿主可变工作区补读。
+COPY docs/instruction-book/ ./docs/instruction-book/
+ENV INSTRUCTION_BOOK_DOCS_ROOT=/app/docs/instruction-book
 COPY packages/brain/scripts/fleet-worker/ ./scripts/fleet-worker/
 # work-router 判定无头编码单能否交给 coding-workflow-runner，与 runner 同读仓库配置表 repos.json
 # （经 runner 的读表模块 runner/lib/repos.mjs，只依赖 node 内置模块；A2）。
@@ -105,6 +108,7 @@ COPY packages/brain/package.json ./
 
 # 构建期启动导入守卫：新增 workspace-local runtime 依赖时，镜像必须当场失败而非部署后秒死。
 RUN node --input-type=module -e "await import('./src/lib/map-manifest-schema.js')"
+RUN node --input-type=module -e "import {readInstructionBook} from './src/routes/instruction-book.js'; const book=readInstructionBook(); if(!Array.isArray(book.skills)||!Array.isArray(book.features)) throw new Error('invalid instruction book artifact')"
 RUN node --input-type=module -e "await import('./src/work-router.js')"
 RUN node --input-type=module -e "const {legacyRecords}=await import('./src/execution-directory/legacy-policy.js'); legacyRecords({env:{}})"
 

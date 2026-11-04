@@ -71,6 +71,7 @@ sprint-prd.md
 # Build artifacts
 frontend/dist/
 apps/dashboard/dist/
+apps/api/dist/
 # 部署回档留存区（旧 dist/ 产物，不进 git）
 apps/dashboard/.dist-releases/
 

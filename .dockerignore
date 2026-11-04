@@ -56,3 +56,15 @@ README.md
 # Node modules (for node-brain, not needed in Python image)
 node_modules/
 brain/
+
+# 仅说明书reader所需的同源条目进入Brain构建上下文。
+!docs/
+docs/*
+!docs/instruction-book/
+docs/instruction-book/*
+!docs/instruction-book/skills/
+docs/instruction-book/skills/*
+!docs/instruction-book/skills/*.md
+!docs/instruction-book/features/
+docs/instruction-book/features/*
+!docs/instruction-book/features/*.md

@@ -29,13 +29,26 @@ BRAIN_API_URL="${BRAIN_API_URL:-}"
 PUBLISH_TASK_ID="${PUBLISH_TASK_ID:-}"
 PIPELINE_ID="${PIPELINE_ID:-}"
 
-# 输出 JSON 错误并退出（含 duration_ms，exit 0 让 N8N 通过 JSON 判断成功）
+# 仅用 Bash 编码，保证 Node 缺失时错误分支也能输出合法 JSON。
+json_escape() {
+    local value="$1" code char escaped
+    value=${value//\\/\\\\}
+    value=${value//\"/\\\"}
+    for ((code = 1; code < 32; code++)); do
+        printf -v char '%b' "\\$(printf '%03o' "$code")"
+        printf -v escaped '\\u%04x' "$code"
+        value=${value//"$char"/"$escaped"}
+    done
+    printf '%s' "$value"
+}
+
+# 错误也只输出一个 JSON，并以非零退出让调用方拒绝。
 error_json() {
     local msg="$1"
     local dur="${2:-0}"
     printf '{"success":false,"error":"%s","platform":"%s","count":0,"duration_ms":%d}\n' \
-        "$msg" "$PLATFORM" "$dur" >&1
-    exit 0
+        "$(json_escape "$msg")" "$(json_escape "$PLATFORM")" "$dur" >&1
+    exit 1
 }
 
 # 参数校验
@@ -101,7 +114,7 @@ DURATION_MS=$((END_MS - START_MS))
 if [[ "$SCRAPER_EXIT" -ne 0 ]] || [[ -z "$SCRAPER_OUTPUT" ]]; then
     ERR_MSG="scraper failed (exit ${SCRAPER_EXIT})"
     if [[ -n "$SCRAPER_OUTPUT" ]]; then
-        FIRST_LINE=$(echo "$SCRAPER_OUTPUT" | head -c 200 | tr '"' "'")
+        FIRST_LINE=$(printf '%s' "$SCRAPER_OUTPUT" | head -c 200)
         ERR_MSG="${ERR_MSG}: ${FIRST_LINE}"
     fi
     error_json "$ERR_MSG" "$DURATION_MS"
@@ -130,11 +143,9 @@ process.stdin.on('end', () => {
 });
 " "$DURATION_MS")
 
-# 输出最终 JSON（N8N 读取）
-echo "$FINAL_OUTPUT"
-
 # 若设置了 BRAIN_API_URL，将采集结果 POST 到 Brain analytics 端点
-if [[ -n "$BRAIN_API_URL" ]] && command -v curl >/dev/null 2>&1; then
+WRITE_BACK_EXIT=0
+if [[ -n "$BRAIN_API_URL" ]]; then
     # 构造写回 payload：从输出中提取 items（若有），否则发空 items（触发平台有数据的信号）
     WRITE_BACK_PAYLOAD=$(echo "$FINAL_OUTPUT" | node -e "
 const chunks = [];
@@ -143,26 +154,52 @@ process.stdin.on('end', () => {
     try {
         const d = JSON.parse(chunks.join('').trim());
         const payload = {
-            platform: process.env.PLATFORM,
-            publishTaskId: process.env.PUBLISH_TASK_ID || undefined,
-            pipelineId: process.env.PIPELINE_ID || undefined,
+            platform: process.argv[1],
+            publishTaskId: process.argv[2] || undefined,
+            pipelineId: process.argv[3] || undefined,
             items: Array.isArray(d.items) ? d.items : [],
         };
         if (!payload.publishTaskId) delete payload.publishTaskId;
         if (!payload.pipelineId) delete payload.pipelineId;
         process.stdout.write(JSON.stringify(payload));
     } catch (e) {
-        process.stdout.write(JSON.stringify({ platform: process.env.PLATFORM, items: [] }));
+        process.stdout.write(JSON.stringify({ platform: process.argv[1], items: [] }));
     }
 });
-" 2>/dev/null)
+" "$PLATFORM" "$PUBLISH_TASK_ID" "$PIPELINE_ID" 2>/dev/null)
 
     BRAIN_ENDPOINT="${BRAIN_API_URL}/api/brain/analytics/scrape-result"
-    curl -s -o /dev/null -w "%{http_code}" \
+    # 状态码不是业务stdout；curl退出失败和非2xx均是写回失败。
+    if HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
         -X POST \
         -H "Content-Type: application/json" \
         -d "$WRITE_BACK_PAYLOAD" \
         "$BRAIN_ENDPOINT" \
         --max-time 10 \
-        2>/dev/null || true
+        2>/dev/null); then
+        CURL_EXIT=0
+    else
+        CURL_EXIT=$?
+    fi
+    case "$CURL_EXIT:$HTTP_STATUS" in
+        0:2[0-9][0-9]) ;;
+        *) WRITE_BACK_EXIT=1; echo 'analytics writeback failed' >&2 ;;
+    esac
+    FINAL_OUTPUT=$(printf '%s' "$FINAL_OUTPUT" | node -e "
+const chunks = [];
+process.stdin.on('data', c => chunks.push(c));
+process.stdin.on('end', () => {
+    const output = JSON.parse(chunks.join(''));
+    output.writeback = {
+        ok: process.argv[1] === '0',
+        http_status: /^[0-9]{3}$/.test(process.argv[2]) ? Number(process.argv[2]) : null,
+        curl_exit: Number(process.argv[3]),
+    };
+    process.stdout.write(JSON.stringify(output));
+});
+" "$WRITE_BACK_EXIT" "$HTTP_STATUS" "$CURL_EXIT")
 fi
+
+# 采集结果与写回状态分开记录；N8N只读取这一个JSON。
+echo "$FINAL_OUTPUT"
+exit "$WRITE_BACK_EXIT"
