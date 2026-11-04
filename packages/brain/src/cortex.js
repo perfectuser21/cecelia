@@ -1471,8 +1471,8 @@ async function generateSystemReport({ timeRangeHours = 48 } = {}) {
 
   let reportData;
   try {
-    const response = await callCortexLLM(prompt);
-    const jsonMatch = response.match(/\{[\s\S]*\}/);
+    const { text } = await callCortexLLM(prompt);
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
       throw new Error('LLM response missing JSON');
     }
