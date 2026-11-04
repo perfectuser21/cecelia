@@ -2,17 +2,12 @@
  * Planner Agent Tests
  */
 
-import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
+import { fileURLToPath } from 'node:url';
 import { pool } from './helpers/debt-05-pg.js';
 vi.mock('../db.js', async () => ({ default: (await import('./helpers/debt-05-pg.js')).pool }));
 
 
-
-let testObjectiveIds = [];
-let testKRIds = [];
-let testProjectIds = [];
-let testTaskIds = [];
-let testLinks = [];
 
 describe('Planner Agent', () => {
   beforeAll(async () => {
@@ -20,47 +15,28 @@ describe('Planner Agent', () => {
     const result = await pool.query('SELECT 1');
     expect(result.rows[0]['?column?']).toBe(1);
 
-    // Ensure okr_projects table exists（project_kr_links 已在 migration 185 DROP）
-    const tableCheck = await pool.query(`
-      SELECT EXISTS (
-        SELECT FROM information_schema.tables WHERE table_name = 'okr_projects'
-      )
-    `);
-    expect(tableCheck.rows[0].exists).toBe(true);
+    // 真实路由需要当前仓库和已激活能力投影；夹具只在文件事务内存在。
+    const repoPath = fileURLToPath(new URL('../../../..', import.meta.url));
+    await pool.query(`UPDATE map_scope_repositories SET adapter_config =
+      COALESCE(adapter_config, '{}'::jsonb) || jsonb_build_object('path', $1::text)
+      WHERE scope_key = 'cecelia' AND repo = 'cecelia'`, [repoPath]);
+    const decision = await pool.query("INSERT INTO decisions (category, topic, decision) VALUES ('testing','planner fixture','current F1') RETURNING id");
+    const manifest = await pool.query(`INSERT INTO map_manifest_versions
+      (scope_key,version,source_decision_id,manifest,digest,status,activated_at)
+      VALUES ('cecelia',900001,$1,'{}',repeat('a',64),'active',NOW()) RETURNING id`, [decision.rows[0].id]);
+    const run = await pool.query(`INSERT INTO map_projection_runs
+      (scope_key,manifest_version_id,manifest_digest,fact_revisions,projector_version,projection_digest,status,activated_at)
+      VALUES ('cecelia',$1,repeat('a',64),'{}','planner-test',repeat('b',64),'active',NOW()) RETURNING id`,
+      [manifest.rows[0].id]);
+    await pool.query(`INSERT INTO map_projection_nodes
+      (run_id,node_id,node_type,node_key,name) VALUES ($1,repeat('c',64),'capability','F1','测试当前能力')`, [run.rows[0].id]);
   });
 
   afterAll(async () => {
     await pool.end();
   });
 
-  afterEach(async () => {
-    // Cleanup test data
-    testLinks = [];
-    if (testTaskIds.length > 0) {
-      await pool.query('DELETE FROM tasks WHERE id = ANY($1)', [testTaskIds]);
-      testTaskIds = [];
-    }
-    if (testProjectIds.length > 0) {
-      await pool.query('DELETE FROM tasks WHERE project_id = ANY($1)', [testProjectIds]).catch(() => {});
-      // 新表 okr_projects（新代码写这里）
-      await pool.query('DELETE FROM okr_projects WHERE id = ANY($1)', [testProjectIds]).catch(() => {});
-      await pool.query('DELETE FROM projects WHERE id = ANY($1)', [testProjectIds]).catch(() => {});
-      testProjectIds = [];
-    }
-    if (testKRIds.length > 0) {
-      // 新代码写 key_results，旧测试写 goals，两边都清理
-      await pool.query('DELETE FROM key_results WHERE id = ANY($1)', [testKRIds]).catch(() => {});
-      await pool.query('DELETE FROM goals WHERE id = ANY($1)', [testKRIds]).catch(() => {});
-      testKRIds = [];
-    }
-    if (testObjectiveIds.length > 0) {
-      // 新代码写 visions/objectives，旧测试写 goals，两边都清理
-      await pool.query('DELETE FROM objectives WHERE id = ANY($1)', [testObjectiveIds]).catch(() => {});
-      await pool.query('DELETE FROM visions WHERE id = ANY($1)', [testObjectiveIds]).catch(() => {});
-      await pool.query('DELETE FROM goals WHERE id = ANY($1)', [testObjectiveIds]).catch(() => {});
-      testObjectiveIds = [];
-    }
-  });
+  // 文件内数据统一由 pool.end() 回滚，包含不可删除的路由收据。
 
   describe('selectTargetKR', () => {
     it('should return null when no KRs exist', async () => {
@@ -137,12 +113,11 @@ describe('Planner Agent', () => {
     });
 
     it('should reject task whose project has no repo_path', async () => {
-      // 插入一个没有 repo_path 的 okr_projects 记录（metadata 中不含 repo_path）
+      // 当前 projects 缺少仓库时必须拒绝创建编码任务。
       const noRepoProjResult = await pool.query(
         "INSERT INTO projects (name, status) VALUES ('no-repo-project', 'active') RETURNING id"
       );
       const noRepoProjectId = noRepoProjResult.rows[0].id;
-      testProjectIds.push(noRepoProjectId);
 
       const { handlePlanInput } = await import('../planner.js');
       await expect(handlePlanInput({
@@ -174,10 +149,6 @@ describe('Planner Agent', () => {
       expect(result.created.goals[0].title).toBeTruthy();
       expect(result.created.goals[1].title).toBeTruthy();
 
-      // Cleanup: created goals are in visions/objectives tables
-      for (const g of result.created.goals) {
-        testObjectiveIds.push(g.id);
-      }
     });
 
     it('should reject retired project creation and preserve projects truth', async () => {
@@ -190,18 +161,20 @@ describe('Planner Agent', () => {
     });
 
     it('should create task linked to project with repo_path', async () => {
-      // 插入新 OKR projects 表，metadata 中包含 repo_path（migration 185 已移除 FK 约束）
+      // 使用迁移497建立的 projects 真身，完整经过当前编码路由。
       const projResult = await pool.query(
-        "INSERT INTO projects (name, status, repo_path) VALUES ('test-proj', 'active', '/tmp/test-task-proj') RETURNING id"
+        "INSERT INTO projects (name, status, repo_path) VALUES ('test-proj', 'active', $1) RETURNING id",
+        [fileURLToPath(new URL('../../../..', import.meta.url))]
       );
       const projectId = projResult.rows[0].id;
-      testProjectIds.push(projectId);
       const { handlePlanInput } = await import('../planner.js');
       const result = await handlePlanInput({
         task: {
           title: 'Test Task',
           project_id: projectId,
-          priority: 'P0'
+          priority: 'P0',
+          change_kind: 'bugfix',
+          map_scope: ['F1']
         }
       });
 
@@ -209,7 +182,25 @@ describe('Planner Agent', () => {
       expect(result.created.tasks).toHaveLength(1);
       expect(result.created.tasks[0].status).toBe('queued');
       expect(result.created.tasks[0].priority).toBe('P0');
-      testTaskIds.push(result.created.tasks[0].id);
+      const persisted = await pool.query('SELECT project_id, status FROM tasks WHERE id = $1', [result.created.tasks[0].id]);
+      expect(persisted.rows).toEqual([{ project_id: projectId, status: 'queued' }]);
+    });
+
+    it('rejects scope-shaped input without creating a task', async () => {
+      const { handlePlanInput } = await import('../planner.js');
+      const before = (await pool.query('SELECT COUNT(*) AS count FROM tasks')).rows;
+      await expect(handlePlanInput({ task: {
+        title: '旧 Scope 任务', scope_id: '00000000-0000-4000-8000-000000000001'
+      } })).rejects.toThrow('Task must have project_id');
+      await expect(handlePlanInput({ task: {
+        title: '不存在的旧层父项目', project_id: '00000000-0000-4000-8000-000000000001'
+      } })).rejects.toThrow('Project not found');
+      expect((await pool.query('SELECT COUNT(*) AS count FROM tasks')).rows).toEqual(before);
+    });
+
+    it.each(['okr_projects', 'okr_scopes', 'okr_initiatives'])('keeps migration499 protection on %s', async table => {
+      await expect(pool.query(`INSERT INTO ${table} (title) VALUES ('禁止恢复旧层')`))
+        .rejects.toThrow('layer_retired');
     });
 
     it('should support dry_run mode', async () => {
@@ -244,12 +235,10 @@ describe('Planner Agent', () => {
       const projResult = await pool.query(
         "INSERT INTO projects (name, status) VALUES ('empty-test', 'planning') RETURNING id"
       );
-      testProjectIds.push(projResult.rows[0].id);
 
       const krResult = await pool.query(
         "INSERT INTO key_results (title, priority, status, progress) VALUES ('Empty KR', 'P0', 'pending', 0) RETURNING *"
       );
-      testKRIds.push(krResult.rows[0].id);
 
       const result = await generateNextTask(
         krResult.rows[0],
@@ -265,18 +254,15 @@ describe('Planner Agent', () => {
       const projResult = await pool.query(
         "INSERT INTO projects (name, status) VALUES ('queued-test', 'planning') RETURNING id"
       );
-      testProjectIds.push(projResult.rows[0].id);
 
       const krResult = await pool.query(
         "INSERT INTO key_results (title, priority, status, progress) VALUES ('Queued KR', 'P0', 'pending', 0) RETURNING *"
       );
-      testKRIds.push(krResult.rows[0].id);
 
       const tResult = await pool.query(
         "INSERT INTO tasks (title, priority, project_id, goal_id, status) VALUES ('Existing Task', 'P0', $1, $2, 'queued') RETURNING id",
         [projResult.rows[0].id, krResult.rows[0].id]
       );
-      testTaskIds.push(tResult.rows[0].id);
 
       const result = await generateNextTask(
         krResult.rows[0],
@@ -314,33 +300,28 @@ describe('Planner Agent', () => {
       const kr1Result = await pool.query(
         "INSERT INTO key_results (title, priority, status, progress) VALUES ('Empty KR', 'P0', 'pending', 0) RETURNING id"
       );
-      testKRIds.push(kr1Result.rows[0].id);
 
       // KR2: has a queued task
       const kr2Result = await pool.query(
         "INSERT INTO key_results (title, priority, status, progress) VALUES ('Active KR', 'P1', 'pending', 0) RETURNING id"
       );
-      testKRIds.push(kr2Result.rows[0].id);
 
-      // okr_projects: 每个 KR 对应一个 project（kr_id 一对一）
+      // 当前项目通过 projects.kr_id 归属 KR。
       const proj1Result = await pool.query(
         "INSERT INTO projects (name, status, kr_id) VALUES ('rotation-test-1', 'active', $1) RETURNING id",
         [kr1Result.rows[0].id]
       );
-      testProjectIds.push(proj1Result.rows[0].id);
 
       const proj2Result = await pool.query(
         "INSERT INTO projects (name, status, kr_id) VALUES ('rotation-test-2', 'active', $1) RETURNING id",
         [kr2Result.rows[0].id]
       );
-      testProjectIds.push(proj2Result.rows[0].id);
 
       // Add a queued task only for KR2's project
       const tResult = await pool.query(
         "INSERT INTO tasks (title, priority, project_id, goal_id, status) VALUES ('KR2 Task', 'P0', $1, $2, 'queued') RETURNING id",
         [proj2Result.rows[0].id, kr2Result.rows[0].id]
       );
-      testTaskIds.push(tResult.rows[0].id);
 
       const result = await planNextTask([kr1Result.rows[0].id, kr2Result.rows[0].id]);
 
@@ -352,17 +333,15 @@ describe('Planner Agent', () => {
     it('returns needs_planning when no KRs have queued tasks', async () => {
       const { planNextTask } = await import('../planner.js');
 
-      // 使用新 OKR 表（okr_projects.kr_id 直接关联 key_results）
+      // 当前 projects.kr_id 直接关联 key_results。
       const krResult = await pool.query(
         "INSERT INTO key_results (title, status) VALUES ('Solo Empty KR', 'pending') RETURNING id"
       );
-      testKRIds.push(krResult.rows[0].id);
 
       const projResult = await pool.query(
         "INSERT INTO projects (name, status, kr_id) VALUES ('empty-plan-test', 'active', $1) RETURNING id",
         [krResult.rows[0].id]
       );
-      testProjectIds.push(projResult.rows[0].id);
 
       const result = await planNextTask([krResult.rows[0].id]);
 
