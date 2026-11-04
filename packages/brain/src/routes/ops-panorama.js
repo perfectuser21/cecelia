@@ -120,9 +120,9 @@ router.get('/', async (req, res) => {
     withTimeout(getLlmCapacitySnapshot().catch(() => null)),
   ]);
 
-  const tasks = tasksResult ?? { in_progress_count: 0, vendor_dist: { claude: 0, codex: 0, grok: 0, unknown: 0 } };
+  const tasks = tasksResult ?? { in_progress_count: null, vendor_dist: null, available: false, error: '任务来源不可用', sampled_at: null };
 
-  const processes = processResult ?? { claude_total: 0, codex_total: 0, sessions: { headed: 0, headless: 0 } };
+  const processes = processResult ?? { claude_total: null, codex_total: null, sessions: { headed: null, headless: null }, available: false, error: '进程来源不可用', sampled_at: null };
   const sessions = processes.sessions;
 
   const llm_capacity = sanitizeLlmCapacity(llmCapacityRaw);
@@ -138,6 +138,7 @@ router.get('/', async (req, res) => {
     processes: {
       claude_total: processes.claude_total,
       codex_total: processes.codex_total,
+      ...(processResult === null ? { available: false, error: processes.error, sampled_at: null } : {}),
     },
     llm_capacity,
   });
