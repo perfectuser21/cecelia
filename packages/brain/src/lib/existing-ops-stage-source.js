@@ -260,12 +260,21 @@ const REVIEWED_VERSION_CLOSURE = {
   ".github/workflows/skills-source-check.yml": "76d156086b08bec21b69ccd1cba051f481261a2b70cad448203f655492e179ff",
   "scripts/ci/check-brain-version-bump.sh": "361c35c33c2d0d404d9365c51478212e50ebe84df6a65eacca473ea57bffa0eb"
 };
+// 新身份门的完整已审组合；只追加本轮精确字节，所有历史组合保持原样。
+const REVIEWED_IDENTITY_CLOSURE = {
+  ...REVIEWED_VERSION_CLOSURE,
+  "packages/brain/vitest.config.js": "fe6de3054f559116886d6d3286542896f510bbb887893ef0727a16df72c39f9e",
+  ".github/workflows/skills-source-check.yml": "d2f15365d688cbc3af34ac6c8a1100df46bc05e8aad5d4b43e00cf3acf264b4e",
+  ".github/actions/skills-source/action.yml": "283a44569b4b037d11ebbac624f91ed013ab91be4916182a87a2bf95078ec105",
+  "scripts/ci/check-skill-source-identity.py": "ebc6b90fbe187b49c31101a5dba997d133fd45825cfcaa3549aad30581d747c1",
+  "scripts/ci/__tests__/basic-skill-identity.test.mjs": "f473e5353e93f1e30bfb673d1a2bafd8475685a45a6ca10ab252468e2d747865",
+};
 const BASIC_PROTOCOLS = {
   '5b0f190209eec9c1370b9a96c6aef43b9aa0bc99bdd0f765ccb261c2cfe95080': [REVIEWED_VERSION_CLOSURE, {
     ...REVIEWED_VERSION_CLOSURE,
     // 仅追加本轮两份无消费者旧PG测试退休后的完整配置组合，旧组合保持原样。
     'packages/brain/vitest.config.js': 'fe6de3054f559116886d6d3286542896f510bbb887893ef0727a16df72c39f9e',
-  }],
+  }, REVIEWED_IDENTITY_CLOSURE],
   '04474b3e5c646767cdf49a4d03e32b3a2f4042027594dd87ef4d6975390f6298': REVIEWED,
   '7fee2a6d842c7c2595fa882fa61f75750ec6b2787186fdaf8747e1084a64fcee': [REVIEWED_API, {
     ...REVIEWED_API,
@@ -352,6 +361,11 @@ export async function collectBasicCiSources({ read, ci, revision, relations, par
     // 完整已审reader证明真实URL读取；这条边只声明验证输入，绝不宣称私有源workflow已运行。
     relation(PINNED_READER, PINNED_WORKFLOW, 'literal_url_workflow_verification_input');
   }
+  const identity = 'scripts/ci/check-skill-source-identity.py';
+  if (Object.hasOwn(protocol, identity)) {
+    relation(PINNED_WORKFLOW, '.github/actions/skills-source/action.yml', 'registered_skill_identity_composite');
+    relation('.github/actions/skills-source/action.yml', identity, 'pre_fetch_registered_ssh_identity_guard');
+  }
   for (const [path, kind] of [['scripts/ci/basic-scope.mjs', 'required_basic_ci_plan'], [BASIC_RUNNER, 'required_basic_ci_matrix_runner'],
     ['scripts/ci/check-basic-results.mjs', 'required_basic_ci_success_aggregate']]) relation(BASIC_CI, path, kind);
   if (Object.hasOwn(protocol, 'scripts/ci/check-brain-version-bump.sh')) {
@@ -388,7 +402,7 @@ export async function collectBasicCiSources({ read, ci, revision, relations, par
 /** Deep 的全 PG 清单独立绑定，不把它声明为普通 PR 中执行过。 */
 export async function collectDeepCiSources({ read, revision, relations }) {
   const workflow = '.github/workflows/nightly-regression.yml', config = 'scripts/ci/deep-integration.config.mjs';
-  if (workflowHash(await read(workflow)) !== '6be8812458c47df1bb10a841aaa8278b716adb17c3268387a8435f0127ba0724'
+  if (!['6be8812458c47df1bb10a841aaa8278b716adb17c3268387a8435f0127ba0724', 'e6a9759aacd095ae4602ee7a67acacddfb13a4832ee2a2d09e26e9f3bfe8782c'].includes(workflowHash(await read(workflow)))
     || hash(await read(config)) !== 'ce5df18b0016ce03ed08bf20def00a10ef68652ba7566f665021d8773467e75e') reject();
   relations.push({ consumer_path: workflow, input_path: config, kind: 'scheduled_or_manual_full_postgres_entry', revision },
     { consumer_path: config, input_path: 'packages/brain/vitest.config.js', kind: 'shared_postgres_literal_config', revision });

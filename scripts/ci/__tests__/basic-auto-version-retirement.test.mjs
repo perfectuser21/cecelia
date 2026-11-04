@@ -76,6 +76,8 @@ test('新版主CI版本门具备固定整组来源闭包；历史组合保留且
     ci: git('show', `${historical}:.github/workflows/ci.yml`), relations: [], parse: ast });
   assert.ok(relations.some(edge => edge.consumer_path === '.github/actions/skills-source/action.yml'
     && edge.input_path === 'scripts/ci/check-skill-source-identity.py'));
+  await assert.rejects(collect(async path => path === 'packages/brain/vitest.config.js'
+    ? git('show', 'ce20b5a29123c9ade1a0bc4aa2753e3ea3fe310d:packages/brain/vitest.config.js') : source.readSource(path)), /basic_ci_source_unproven/);
   assert.ok(relations.some(edge => edge.consumer_path === '.github/workflows/ci.yml' && edge.input_path === 'scripts/ci/check-brain-version-bump.sh'));
   for (const path of ['scripts/ci/check-brain-version-bump.sh', 'scripts/ci/basic-scope.mjs', 'scripts/ci/run-basic-check.mjs', 'packages/brain/vitest.config.js',
     '.github/actions/skills-source/action.yml', 'scripts/ci/check-skill-source-identity.py']) {
