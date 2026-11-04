@@ -189,12 +189,13 @@ describe('Cortex Quality Assessment', () => {
     });
 
     it('should allow creation when similarity is below threshold', async () => {
-      // Create existing analysis
-      const hash = generateSimilarityHash({
+      // 同一 hash 下放置低相似候选，实际走相似度分支而非空查询捷径。
+      const context = {
         task_type: 'dev',
         reason: 'NETWORK',
-        root_cause: 'cortex-qual-test: Connection timeout'
-      });
+        root_cause: 'cortex-qual-test: Completely different issue with DNS resolution failure and database latency'
+      };
+      const hash = generateSimilarityHash(context);
 
       const existingResult = await pool.query(`
         INSERT INTO cortex_analyses (
@@ -206,11 +207,8 @@ describe('Cortex Quality Assessment', () => {
       testAnalysisIds.push(existingResult.rows[0].id);
 
       // Check with different root cause (low similarity)
-      const result = await checkShouldCreateRCA({
-        task_type: 'dev',
-        reason: 'NETWORK',
-        root_cause: 'cortex-qual-test: Completely different issue with DNS resolution failure and database latency'
-      });
+      const result = await checkShouldCreateRCA(context);
+      expect(result.similarity).toBeGreaterThan(0);
 
       expect(result.should_create).toBe(true);
       expect(result.similarity).toBeLessThan(80);
@@ -245,10 +243,10 @@ describe('Cortex Quality Assessment', () => {
       const stats = await getQualityStats(7);
 
       expect(stats.period_days).toBe(7);
-      expect(stats.total_rcas).toBeGreaterThanOrEqual(3);
-      expect(stats.avg_quality_score).toBeGreaterThan(0);
-      expect(stats.min_quality_score).toBeLessThanOrEqual(75);
-      expect(stats.max_quality_score).toBeGreaterThanOrEqual(90);
+      expect(stats.total_rcas).toBe(3);
+      expect(stats.avg_quality_score).toBeCloseTo(250 / 3);
+      expect(stats.min_quality_score).toBe(75);
+      expect(stats.max_quality_score).toBe(90);
     });
 
     it('should return zero stats when no analyses exist', async () => {

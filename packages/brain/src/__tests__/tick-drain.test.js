@@ -95,13 +95,13 @@ describe('Tick Drain Mode', () => {
     // Activate drain
     const drainResult = await drainTick();
     expect(drainResult.draining).toBe(true);
-    expect(drainResult.remaining).toBeGreaterThanOrEqual(1);
+    expect(drainResult.remaining).toBe(1);
 
     // Check drain status
     const status = await getDrainStatus();
     expect(status.draining).toBe(true);
-    expect(status.remaining).toBeGreaterThanOrEqual(1);
-    expect(status.in_progress_tasks.length).toBeGreaterThanOrEqual(1);
+    expect(status.remaining).toBe(1);
+    expect(status.in_progress_tasks.length).toBe(1);
 
     const found = status.in_progress_tasks.find(t => t.id === task.rows[0].id);
     expect(found).toBeTruthy();
