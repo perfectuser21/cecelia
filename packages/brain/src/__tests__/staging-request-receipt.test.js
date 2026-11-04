@@ -8,7 +8,7 @@ const sha='a'.repeat(40),request='11111111-1111-4111-8111-111111111111';
 const valid={status:'success',sha,request_id:request,isolated:true,image_id:`sha256:${'b'.repeat(64)}`};
 function wait(receipt,{httpCode=200}={}){
  dir=mkdtempSync(join(tmpdir(),'stage-receipt-'));
- writeFileSync(join(dir,'curl'),'#!/bin/sh\nprintf "%s" "$RECEIPT"\n',{mode:0o755});
+ writeFileSync(join(dir,'curl'),'#!/bin/sh\nformat=""\nwhile [ "$#" -gt 0 ]; do case "$1" in -w) format="$2"; shift;; esac; shift; done\n[ "$format" = \'\\n%{http_code}\' ] || exit 64\nprintf "%s\\n%s" "$RECEIPT" "$HTTP_CODE"\n',{mode:0o755});
  return spawnSync('bash',[resolve(import.meta.dirname,'../../../../scripts/wait-for-staging.sh')],{
   encoding:'utf8',timeout:5000,env:{...process.env,PATH:`${dir}:${process.env.PATH}`,BRAIN_URL:'http://fixture.invalid',EXPECTED_SHA:sha,STAGING_REQUEST_ID:request,RECEIPT:JSON.stringify(receipt),HTTP_CODE:String(httpCode)},
  });
