@@ -192,7 +192,7 @@ describe('POST /acceptance/results（通过内网路由验证 submitAcceptanceRe
   });
 });
 
-describe('验收驳回自动开任务（主理人条件二：转变沿）', () => {
+describe('格级提交不得复活旧驳回转变沿', () => {
   function rejectionClient({ oldStatus, existingTask = false }) {
     const taskInserts = [];
     const client = makeClient((sql, params) => {
@@ -223,7 +223,7 @@ describe('验收驳回自动开任务（主理人条件二：转变沿）', () =
   }
 
   // migration 392 起 computeRunStatus 永不产生 failed，isLegacyRejectionTransition 恒不成立，
-  // 「判不通过就自动开驳回任务」这条转变沿对新 run 已不可达（只剩存量 failed 行走它）。
+  // 「判不通过就自动开驳回任务」这条转变沿对新 run 已不可达（历史 failed 前态同样不触发）。
   // 分流建任务由 D4 的聚合式分流接管，届时 routes/acceptance.js 里整段删除。
   it('判不通过不再走转变沿自动开驳回任务（D4 聚合式分流接管前的空窗）', async () => {
     const { client, taskInserts } = rejectionClient({ oldStatus: 'in_review' });
@@ -239,11 +239,12 @@ describe('验收驳回自动开任务（主理人条件二：转变沿）', () =
     expect(taskInserts).toHaveLength(0);
   });
 
-  it('转变沿但已有未终态驳回任务 → 查重跳过', async () => {
+  it('已有未终态任务时，格级提交同样不进入旧驳回查重', async () => {
     const { client, taskInserts } = rejectionClient({ oldStatus: 'in_review', existingTask: true });
     const res = await postFail(client);
     expect(res.status).toBe(200);
     expect(taskInserts).toHaveLength(0);
+    expect(client.query.mock.calls.some(([sql])=>sql.includes('FROM tasks'))).toBe(false);
   });
 });
 
@@ -271,10 +272,10 @@ describe('GET /acceptance/catalog（Worker 拉目录）', () => {
   });
 });
 
-describe('submitAcceptanceResults 驳回任务并发去重', () => {
-  it('INSERT tasks 撞 23505 时静默忽略，整体仍返回成功', async () => {
+describe('submitAcceptanceResults 退役驳回边界与提交者记录', () => {
+  it('普通格级拒绝不会执行旧驳回任务INSERT或SAVEPOINT', async () => {
     const client = {
-      query: vi.fn(async (sql) => {
+      query: vi.fn(async (sql,params) => {
         if (/^SELECT id.*FROM acceptance_runs WHERE run_key/.test(sql)) {
           return { rows: [{ id: 'run-1', status: 'pending', detail: null }] };
         }
@@ -289,14 +290,12 @@ describe('submitAcceptanceResults 驳回任务并发去重', () => {
           return { rows: [{ status: 'pending', title: 'T', gp_id: 'gp1', run_key: 'r1' }] };
         }
         if (sql.includes('UPDATE acceptance_runs SET pass_rate')) {
-          return { rows: [{ run_key: 'r1', pass_rate: 0, status: 'failed' }] };
+          return { rows: [{ run_key: 'r1', pass_rate: params[0], status: params[1] }] };
         }
         if (sql.includes("SELECT 1 FROM tasks")) return { rows: [] };
         if (sql.includes('SELECT check_key, name, note FROM acceptance_checks')) return { rows: [] };
         if (sql.includes('INSERT INTO tasks')) {
-          const err = new Error('duplicate key');
-          err.code = '23505';
-          throw err;
+          throw new Error('旧格级驳回任务INSERT不得执行');
         }
         return { rows: [] };
       }),
@@ -305,7 +304,8 @@ describe('submitAcceptanceResults 驳回任务并发去重', () => {
     const pool = { connect: vi.fn(async () => client) };
     const result = await submitAcceptanceResults(pool, [{ check_key: 'r1:001', result: '不通过' }], { run_key: 'r1' });
     expect(result.updated).toBe(1);
-    expect(result.runs[0].status).toBe('failed');
+    expect(result.runs[0].status).toBe('human_complete');
+    expect(client.query.mock.calls.some(([sql])=>/INSERT INTO tasks|SAVEPOINT|SELECT 1 FROM tasks/.test(sql))).toBe(false);
   });
 
   it('submitted_by 会被透传进 UPDATE acceptance_checks 参数', async () => {
