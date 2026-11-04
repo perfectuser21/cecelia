@@ -20,7 +20,7 @@ it('从观测自动推进到真实授权服务；仅最后active可完成，内�
  for(let i=0;i<15&&x.state.phase!=='active';i++){phases.push(x.state.phase);await step(x.task,x.machine,x.state,x.save);}
  expect(x.state.phase).toBe('active');expect(x.state.active.execution).toBe(true);expect(x.creates).toBe(1);
  expect(x.calls).toEqual(['probe','bootstrap','pool_canary','runtime','script_canary']);expect(phases).toContain('pool_ready');expect(phases).toContain('script_activate');
- expect(JSON.stringify(x.state)).not.toContain('e'.repeat(64));expect(JSON.stringify(x.state)).not.toContain('f'.repeat(64)+'f');
+ expect(JSON.stringify(x.state)).not.toContain('e'.repeat(64));expect(JSON.stringify(x.state)).not.toContain('f'.repeat(64));
 });
 it('首次SSH之前绑定当前镜像工件，旧队列revision不能搭配新源码冒充旧安装',async()=>{
  const x=setup(),revision='9'.repeat(40),artifact={revision,digest:'8'.repeat(64),files:{'module.cjs':'fixed source'},program:'fixed remote program'};
