@@ -6,7 +6,7 @@
 ### 下次预防
 - [x] 租约确认作为每个新业务边界前置，409永久拒绝并丢弃迟到结果。
 - [x] owner停止标记在固定worker动作入口校验，finally保留恢复网络、桌面与释放锁。
-- [x] 清理异步失败必须被close显式返回；Node/Python回归在Phone lease guard CI持续运行。
+- [x] 清理异步失败必须被close显式返回；Node/Python回归现由必需 scripts 跑道的 basic-phone-lease 包装持续执行，原独立工作流已合并。
 
 GP-Anchor: f1/step1（接单进车间：真实领单租约跨 watchdog 边界）
 

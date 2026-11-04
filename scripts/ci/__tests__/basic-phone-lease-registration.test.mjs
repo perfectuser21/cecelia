@@ -6,12 +6,14 @@ import {join} from 'node:path';
 import {spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 const root = fileURLToPath(new URL('../../../', import.meta.url));
+const {planChecks} = await import('../basic-scope.mjs');
 const wrapper = 'scripts/ci/__tests__/basic-phone-lease.test.mjs';
 const suites = ['us-price-lease.test.mjs', 'test_us_price_lease.py', 'test_lease_migration.py'];
 
 test('Phone lease十项真实回归进入必需scripts集合，独立可选workflow已移除', () => {
   const result = spawnSync(process.execPath, ['scripts/ci/run-basic-check.mjs', '--list', 'scripts'], {cwd:root, encoding:'utf8'});
   assert.equal(result.status,0,result.stderr);
+  assert.ok(planChecks(['docs/current/README.md']).some(row=>row.component==='scripts'), 'scripts为每次源码保底的必需跑道');
   assert.ok(JSON.parse(result.stdout).some(step=>step.args.includes(wrapper)));
   assert.equal(existsSync(join(root,'.github/workflows/us-price-lease.yml')),false);
 });

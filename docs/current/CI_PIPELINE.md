@@ -84,7 +84,8 @@ Brain/Engine/API 的共享依赖变更会选择共享运行组及 Ops 回归；�
 | skills-source-check.yml | 固定 Skill 来源的三系统恢复校验及 Brain/Engine/Quality/root 正文合同；所有目标main的PR与main push执行，固定Skill合同通过严格汇总全部结果 |
 | ci-dashboard-pwa-e2e.yml | 当前 Dashboard 的 PWA/任务台浏览器专项 |
 | skill-distillation-eval.yml | 按需运行固定截图的真实在线模型评测；沿用原阈值和凭据引用，服务或报告失败真实报红，不作为所有源码 PR 的前置条件 |
-| app-server-canary / attempt-runtime-limits / linux-resource-canary / node-onboarding / us-price-lease | 各组件按路径触发的专项回归 |
+| Phone lease Node/Python/迁移回归 | 已并入必需 scripts 跑道的 basic-phone-lease 包装；原 us-price-lease.yml 独立工作流移除 |
+| app-server-canary / attempt-runtime-limits / linux-resource-canary / node-onboarding | 各组件按路径触发的专项回归 |
 | preview-deploy / preview-cleanup | 当前 Apps 的预览环境创建与回收；依赖更新 bot 不占预览环境 |
 | auto-staging-deploy / deploy / brain-ci-deploy / pilot-release-verification | 发布与来源资格；以 GitHub 启用状态、宿主发布脚本和实际回执为准 |
 | heartbeat-sentinel / ci-red-alert / verify-tailscale-brain | 运维监控、告警与连接诊断 |
