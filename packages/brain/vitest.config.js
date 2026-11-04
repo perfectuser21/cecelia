@@ -240,7 +240,6 @@ export default defineConfig({
       'src/__tests__/planner.test.js',
       'src/__tests__/quarantine-auto-release.test.js',
       'src/__tests__/quarantine-classification.test.js',
-      'src/__tests__/quarantine-systemic.test.js',
       'src/__tests__/routes/memory.test.js',
       'src/__tests__/rumination-dedup.test.js',
       'src/__tests__/suggestion-integration.test.js',

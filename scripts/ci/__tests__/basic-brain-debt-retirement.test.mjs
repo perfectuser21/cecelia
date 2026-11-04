@@ -15,6 +15,22 @@ const old=['packages/brain/src/__tests__/coding-passway.test.js','tests/regressi
   'packages/brain/src/__tests__/tasks-status.test.js','tests/regression/relay-1b1f1ffa/capacity-gate.test.js',
   'tests/regression/relay-57e25e92/headed-smoke-contract.test.ts','tests/regression/relay-07b2fd3b/captures-api.test.ts'];
 const config='packages/brain/vitest.config.js';
+// 这组夹具重现已冻结的八项历史清退，不借后来当前配置改写历史来源。
+const reviewedCatalog=JSON.parse(readFileSync(join(root,'config/verification-retirements/brain-debt-retired-layers-v1.json')));
+const reviewedSnapshot='ce20b5a29123c9ade1a0bc4aa2753e3ea3fe310d',reviewedCache=new Map();
+execFileSync('git',['-C',root,'merge-base','--is-ancestor',reviewedSnapshot,'HEAD']);
+function reviewedBytes(path) {
+  const fact=[reviewedCatalog.replacement_config,...reviewedCatalog.replacement_configs.map(x=>x.blob),
+    ...reviewedCatalog.entry_support].find(row=>row.path===path);
+  if(!fact)return readFileSync(join(root,path));
+  if(reviewedCache.has(path))return reviewedCache.get(path);
+  const tree=execFileSync('git',['-C',root,'ls-tree',reviewedSnapshot,'--',path],{encoding:'utf8'}).trim();
+  assert.equal(tree,`${fact.mode} blob ${fact.git_blob_sha1}\t${path}`);
+  const bytes=execFileSync('git',['-C',root,'show',`${reviewedSnapshot}:${path}`]);
+  assert.equal(createHash('sha256').update(bytes).digest('hex'),fact.sha256);
+  reviewedCache.set(path,bytes);
+  return bytes;
+}
 function fixture(fn) {
   const temp=mkdtempSync(join(tmpdir(),'legacy-test-retirement-')), source=join(temp,'source'), control=join(temp,'control');
   const git=(dir,...args)=>execFileSync('git',['-c','gc.auto=0','-c','maintenance.auto=false','-c','gc.autoDetach=false','-C',dir,...args],{encoding:'utf8',env:{...process.env,GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:'/dev/null'}}).trim();
@@ -27,13 +43,13 @@ function fixture(fn) {
     git(source,'checkout','-q',baseline);git(source,'remote','set-url','origin','https://github.com/perfectuser21/cecelia.git');
     const base=git(source,'rev-parse','HEAD');
     for(const path of old)rmSync(join(source,path));
-    writeFileSync(join(source,config),readFileSync(join(root,config)));
-    for (const path of ['packages/brain/src/__tests__/debt-04-planner-score.test.js', 'packages/brain/src/__tests__/actions.test.js','packages/brain/src/routes/__tests__/captures-api.test.ts']) writeFileSync(join(source,path),readFileSync(join(root,path)));
-    for (const input of JSON.parse(readFileSync(join(root,'config/verification-retirements/brain-debt-retired-layers-v1.json'))).replacement_inputs) {const path=(input.blob||input).path;mkdirSync(dirname(join(source,path)),{recursive:true});writeFileSync(join(source,path),readFileSync(join(root,path)));}
+    writeFileSync(join(source,config),reviewedBytes(config));
+    for (const path of ['packages/brain/src/__tests__/debt-04-planner-score.test.js', 'packages/brain/src/__tests__/actions.test.js','packages/brain/src/routes/__tests__/captures-api.test.ts']) writeFileSync(join(source,path),reviewedBytes(path));
+    for (const input of JSON.parse(readFileSync(join(root,'config/verification-retirements/brain-debt-retired-layers-v1.json'))).replacement_inputs) {const path=(input.blob||input).path;mkdirSync(dirname(join(source,path)),{recursive:true});writeFileSync(join(source,path),reviewedBytes(path));}
     writeFileSync(join(source,'scripts/ci/deep-integration.config.mjs'),readFileSync(join(root,'scripts/ci/deep-integration.config.mjs')));
     const reviewed=JSON.parse(readFileSync(join(root,'config/verification-retirements/brain-debt-retired-layers-v1.json')));
     for (const input of [...reviewed.replacement_configs.map(x=>x.blob),...reviewed.entry_support,...reviewed.records.flatMap(row=>row.policy_sources||[])]) {
-      const path=input.path;mkdirSync(dirname(join(source,path)),{recursive:true});writeFileSync(join(source,path),readFileSync(join(root,path)));
+      const path=input.path;mkdirSync(dirname(join(source,path)),{recursive:true});writeFileSync(join(source,path),reviewedBytes(path));
     }
     const head=commit(source);
     mkdirSync(control);git(control,'init','-q');
@@ -77,11 +93,11 @@ test('PR基线配置与两项旧文件均按fadbf精确字节核对',()=>fixture
   writeFileSync(join(source,old[0]),readFileSync(join(source,old[0]),'utf8')+'\n// baseline drift\n');
   const base=commit(source);
   for(const path of old)rmSync(join(source,path));
-  writeFileSync(join(source,config),readFileSync(join(root,config)));
-  for (const path of ['packages/brain/src/__tests__/debt-04-planner-score.test.js','packages/brain/src/__tests__/actions.test.js']) writeFileSync(join(source,path),readFileSync(join(root,path)));
+  writeFileSync(join(source,config),reviewedBytes(config));
+  for (const path of ['packages/brain/src/__tests__/debt-04-planner-score.test.js','packages/brain/src/__tests__/actions.test.js']) writeFileSync(join(source,path),reviewedBytes(path));
   const reviewed=JSON.parse(readFileSync(join(root,'config/verification-retirements/brain-debt-retired-layers-v1.json')));
   for (const input of [...reviewed.replacement_inputs.map(x=>x.blob||x),...reviewed.replacement_configs.map(x=>x.blob),...reviewed.entry_support,...reviewed.records.flatMap(row=>row.policy_sources||[])]) {
-    const path=input.path;mkdirSync(dirname(join(source,path)),{recursive:true});writeFileSync(join(source,path),readFileSync(join(root,path)));
+    const path=input.path;mkdirSync(dirname(join(source,path)),{recursive:true});writeFileSync(join(source,path),reviewedBytes(path));
   }
   commit(source);
   const opt=options();opt.source.base_revision=base;

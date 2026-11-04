@@ -86,11 +86,14 @@ test('manifest只接收实际普通文件，软链/同名目录/缺失文件必�
   assert.throws(() => readManifest(directory), /regular file/);
 });
 
-test('已验证Planner及systemic兼容保护必须由私有PG完整schema真实跑道接收', () => {
+test('现役Planner保留私有PG跑道，无消费者systemic旧合同不再选择', () => {
   const rows = readManifest().tests;
-  for (const path of ['packages/brain/src/__tests__/planner.test.js','packages/brain/src/__tests__/quarantine-systemic.test.js']) {
-    assert.deepEqual(rows.find(row => row.path === path), {path, mode:'full', status:'ready'});
-  }
+  const path = 'packages/brain/src/__tests__/planner.test.js';
+  assert.deepEqual(rows.find(row => row.path === path), {path, mode:'full', status:'ready'});
+  const retired = 'packages/brain/src/__tests__/quarantine-systemic.test.js';
+  assert.equal(rows.some(row => row.path === retired), false);
+  assert.equal(glob.sync(privatePg.test.include, {cwd: resolve(root, 'packages/brain'),
+    absolute: true, ignore: privatePg.test.exclude}).map(file => relative(root, file)).includes(retired), false);
 });
 
 test('现役backend与真实strategy callback必须进入私有PG完整迁移跑道',()=>{

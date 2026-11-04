@@ -1,0 +1,120 @@
+{
+  "schema_version": 1,
+  "kind": "explicit_verification_retirement_catalog",
+  "purpose": "admission_only",
+  "repo": "perfectuser21/cecelia",
+  "base_revision": "ce20b5a29123c9ade1a0bc4aa2753e3ea3fe310d",
+  "retirement_kind": "unconsumed_internal_export",
+  "records": [
+    {
+      "path": "packages/brain/src/__tests__/quarantine-systemic.test.js",
+      "base_blob": {
+        "path": "packages/brain/src/__tests__/quarantine-systemic.test.js",
+        "mode": "100644",
+        "git_blob_sha1": "72e86b7a895b73026c08bfc218fe57ce01d19233",
+        "sha256": "40a7616e5142025941605c27d140c7bd7428f86ab8e5a14fc20d24623e9d3068",
+        "byte_length": 4762
+      },
+      "retired_symbol": {
+        "path": "packages/brain/src/quarantine.js",
+        "name": "checkSystemicFailurePattern",
+        "base_blob": {
+          "path": "packages/brain/src/quarantine.js",
+          "mode": "100644",
+          "git_blob_sha1": "28a4366825111e10ff66aff283bcfa8266eaa0ef",
+          "sha256": "06886d6b464cfc24b9a9e19895dba46e01efdc77c921cd92b94308f504c9ee3c",
+          "byte_length": 49425
+        },
+        "function_source_sha256": "01b8fb8951b0990b67953dacd99bfbd0db23a7085214e5178446fae3e6cf7ca5",
+        "base_lines": [
+          890,
+          947
+        ],
+        "export_line": 1373
+      },
+      "reason": "近5次失败聚合导出仅由旧测试直接调用；现役具名/动态quarantine消费者及handleTaskFailure/checkShouldQuarantine调用链均不消费，未注册HTTP/任务/调度入口。",
+      "historical_execution": {
+        "workflow_run": 41781888854,
+        "source_revision": "630d63503eb9c12b1afd3a0e2d96b3a21c5b3f2b",
+        "lane": "private_pg",
+        "tests": 5,
+        "status": "passed",
+        "meaning": "真实数据库旧合同；通过不等于当前生产功能被调用"
+      },
+      "consumer_audit": {
+        "source_revision": "ce20b5a29123c9ade1a0bc4aa2753e3ea3fe310d",
+        "repo_scope": "当前Cecelia tracked源码、配置、任务/路由入口，已知ZenithJoy workspace/skills本地源",
+        "production_module_imports": "全部具名及动态导入已逐项排除该符号，无namespace或重导出；quarantine其他现役消费者保留",
+        "related_output": "旧函数isSystemic也未连接learning.shouldTriggerLearning的is_systemic输入",
+        "report_sha256": "8c2d2dded762c52c5b648d63ef5192e156a33f15b783060952682615d8c2ae4c"
+      },
+      "retained": [
+        "classifyFailure及所有现役quarantine操作/任务失败隔离逻辑",
+        "Planner私有PG真实合同、五类现役quarantine保护测试"
+      ],
+      "not_a_replacement_claim": true,
+      "retained_inputs": [
+        {
+          "blob": {
+            "path": "packages/brain/src/__tests__/quarantine-classification.test.js",
+            "mode": "100644",
+            "git_blob_sha1": "af66b56a357455292e01c58ea2d54b4fd818a63a",
+            "sha256": "9e07132de72151bc67feaadb697c32294a6f3c5094771eb492824a68aef5e0d7",
+            "byte_length": 5144
+          },
+          "meaning": "现役handleTaskFailure按单任务失败分类及策略",
+          "replacement_for_retired_aggregation": false
+        },
+        {
+          "blob": {
+            "path": "packages/brain/src/__tests__/quarantine-billing-pause.test.js",
+            "mode": "100644",
+            "git_blob_sha1": "5772b0a7f7fba0d0361627a57acfb8c5626f6150",
+            "sha256": "4d09aec09d5e129b61e297b799bb65e5103990fef3fba5be900d097e6214b8ab",
+            "byte_length": 5480
+          },
+          "meaning": "现役billing失败暂停派发",
+          "replacement_for_retired_aggregation": false
+        },
+        {
+          "blob": {
+            "path": "packages/brain/src/__tests__/quarantine-skip-active-checkpoint.test.js",
+            "mode": "100644",
+            "git_blob_sha1": "6f1fdd2c459cc8efd87b4a253792ebdf28780493",
+            "sha256": "f859c65e298b67b1fd35cc7e56eca1e167bfb5675eb9022e3d556f9d492cd10a",
+            "byte_length": 4303
+          },
+          "meaning": "现役活动checkpoint避免误隔离",
+          "replacement_for_retired_aggregation": false
+        },
+        {
+          "blob": {
+            "path": "packages/brain/src/callback-processor.js",
+            "mode": "100644",
+            "git_blob_sha1": "d8d82e94a6073ddfb75f1fc73af9484e90ae2a83",
+            "sha256": "17d8b6cc6ea7f1088e9279d45bb422161a1cc94443daca7d1f5095c709b0c2ce",
+            "byte_length": 20918
+          },
+          "meaning": "真实回调具名调用handleTaskFailure",
+          "replacement_for_retired_aggregation": false
+        },
+        {
+          "blob": {
+            "path": "packages/brain/src/tick-runner.js",
+            "mode": "100644",
+            "git_blob_sha1": "dc1a8d126f2770ebf43fd61cbd4005506f746047",
+            "sha256": "4f3d23a0948666160587cca4f07e00733b61155569e1009ea71eb98bcc179d96",
+            "byte_length": 84251
+          },
+          "meaning": "现役tick调用checkExpiredQuarantineTasks",
+          "replacement_for_retired_aggregation": false
+        }
+      ]
+    }
+  ],
+  "limitations": [
+    "仅精确退休单个无现役仓内消费者导出及其测试；不授予其他删除豁免。",
+    "已检查本地已知外仓，不穷尽未拉取私仓或生产任意脚本；未伪称运行跟踪证明零调用。",
+    "历史5passed收据保留；此目录不授执行资格、不伪造现役替代覆盖或生产发布证据。"
+  ]
+}
