@@ -1,3 +1,4 @@
+import { assertDebt10Scratch } from './helpers/debt-10-scratch.js';
 /**
  * Learning Loop Tests
  *
@@ -5,12 +6,16 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
+vi.mock('../openai-client.js', () => ({ generateEmbedding: vi.fn(() => { throw new Error('external embedding forbidden'); }) }));
+vi.mock('../embedding-service.js', () => ({ generateLearningEmbeddingAsync: vi.fn() }));
+vi.mock('../llm-caller.js', () => ({ callLLM: vi.fn(() => { throw new Error('external LLM forbidden'); }) }));
 let pool;
 let recordLearning, applyStrategyAdjustments, getRecentLearnings, shouldTriggerLearning, createLearningTask, ADJUSTABLE_PARAMS, upsertLearning, NOISE_LEARNING_CATEGORIES, isNoiseLearningCategory;
 
 beforeAll(async () => {
   vi.resetModules();
   pool = (await import('../db.js')).default;
+  await assertDebt10Scratch(pool);
   ({ recordLearning, applyStrategyAdjustments, getRecentLearnings, shouldTriggerLearning, createLearningTask, ADJUSTABLE_PARAMS, upsertLearning, NOISE_LEARNING_CATEGORIES, isNoiseLearningCategory } = await import('../learning.js'));
 });
 

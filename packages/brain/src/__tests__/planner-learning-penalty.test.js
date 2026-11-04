@@ -1,3 +1,4 @@
+import { assertDebt10Scratch } from './helpers/debt-10-scratch.js';
 /**
  * Planner Learning Penalty Tests
  *
@@ -24,6 +25,7 @@ let testLinks = [];
 
 describe('Planner Learning Penalty', () => {
   beforeAll(async () => {
+    await assertDebt10Scratch(pool);
     const result = await pool.query('SELECT 1');
     expect(result.rows[0]['?column?']).toBe(1);
 

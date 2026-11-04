@@ -1,3 +1,4 @@
+import { assertDebt10Scratch } from './helpers/debt-10-scratch.js';
 /**
  * Tests for P1 FIX #3: Quarantine auto-release with TTL
  *
@@ -6,12 +7,18 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, beforeAll, vi } from 'vitest';
+vi.mock('../openai-client.js', () => ({ generateEmbedding: vi.fn(() => { throw new Error('external embedding forbidden'); }) }));
+vi.mock('../embedding-service.js', () => ({ generateLearningEmbeddingAsync: vi.fn() }));
+vi.mock('../llm-caller.js', () => ({ callLLM: vi.fn(() => { throw new Error('external LLM forbidden'); }) }));
+vi.mock('../event-bus.js', () => ({ emit: vi.fn() }));
+vi.mock('../alertness/index.js', () => ({ getCurrentAlertness: () => ({ level: 0 }), ALERTNESS_LEVELS: { ALERT: 3 } }));
 let pool;
 let quarantineTask, checkExpiredQuarantineTasks;
 
 beforeAll(async () => {
   vi.resetModules();
   pool = (await import('../db.js')).default;
+  await assertDebt10Scratch(pool);
   ({ quarantineTask, checkExpiredQuarantineTasks } = await import('../quarantine.js'));
 });
 
