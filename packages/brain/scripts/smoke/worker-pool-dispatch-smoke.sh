@@ -10,12 +10,12 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/../../../.." && pwd)"
 cd "$ROOT_DIR"
 
-echo "[worker-pool-smoke] 1. scheduler-jobs 挂载"
+echo "[worker-pool-smoke] 1. scheduler-jobs 不得重新注册退役空 job"
 node -e "
 const fs = require('fs');
 const sched = fs.readFileSync('packages/brain/src/scheduler-jobs.js', 'utf8');
-if (!sched.includes(\"name: 'worker-pool-dispatch'\")) { console.error('FAIL: scheduler-jobs 缺 worker-pool-dispatch 挂载'); process.exit(1); }
-console.log('挂载 ✓');
+if (sched.includes(\"name: 'worker-pool-dispatch'\")) { console.error('FAIL: scheduler-jobs 重新注册了退役 worker-pool-dispatch'); process.exit(1); }
+console.log('退役 job 未注册 ✓');
 "
 
 echo "[worker-pool-smoke] 2. 退役收口"
