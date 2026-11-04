@@ -120,5 +120,6 @@ describe('GET /runs/:run_id/definition 体积上限', () => {
     const weird = { binding: { id: 'b' }, release: null, workflow: { id: 'w', payload: null }, activities: [null, { id: 'a', payload: { steps: 'oops' } }] };
     expect(() => compactRunDefinition(weird)).not.toThrow();
     expect(compactRunDefinition(weird).binding).toEqual({ id: 'b' });
+    expect(compactRunDefinition(weird).definition_view).toBe('full');
   });
 });
