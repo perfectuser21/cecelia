@@ -7,10 +7,18 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { collectVerificationRetirementCandidates } from '../implementation-verification-retirements.mjs';
 import { planChecks } from '../basic-scope.mjs';
+import { createHash } from 'node:crypto';
 const root=fileURLToPath(new URL('../../../', import.meta.url));
 const baseline='fadbf32852';
 const old=['tick-dispatch-scope-decomposing','tick-kr-decomp'].map(x=>`packages/brain/src/__tests__/${x}.test.js`);
 const config='packages/brain/vitest.config.js';
+const reviewedSnapshot='ce20b5a29123c9ade1a0bc4aa2753e3ea3fe310d';
+const configFact=JSON.parse(readFileSync(join(root,'config/verification-retirements/tick-copied-sql-v1.json'))).replacement_config;
+execFileSync('git',['-C',root,'merge-base','--is-ancestor',reviewedSnapshot,'HEAD']);
+const reviewedConfig=execFileSync('git',['-C',root,'show',`${reviewedSnapshot}:${config}`]);
+assert.equal(execFileSync('git',['-C',root,'ls-tree',reviewedSnapshot,'--',config],{encoding:'utf8'}).trim(),`${configFact.mode} blob ${configFact.git_blob_sha1}\t${config}`);
+assert.equal(createHash('sha256').update(reviewedConfig).digest('hex'),configFact.sha256);
+assert.equal(reviewedConfig.length,configFact.byte_length);
 function fixture(fn) {
   const temp=mkdtempSync(join(tmpdir(),'legacy-test-retirement-')), source=join(temp,'source'), control=join(temp,'control');
   const git=(dir,...args)=>execFileSync('git',['-C',dir,...args],{encoding:'utf8',env:{...process.env,GIT_CONFIG_NOSYSTEM:'1'}}).trim();
@@ -22,7 +30,7 @@ function fixture(fn) {
     git(source,'checkout','-q',baseline);git(source,'remote','set-url','origin','https://github.com/perfectuser21/cecelia.git');
     const base=git(source,'rev-parse','HEAD');
     for(const path of old)rmSync(join(source,path));
-    writeFileSync(join(source,config),readFileSync(join(root,config)));
+    writeFileSync(join(source,config),reviewedConfig);
     const head=commit(source);
     mkdirSync(control);git(control,'init','-q');git(control,'remote','add','origin','https://github.com/perfectuser21/cecelia.git');
     cpSync(join(root,'config/verification-retirements'),join(control,'config/verification-retirements'),{recursive:true});
@@ -75,7 +83,7 @@ test('冻结base旧测试字节漂移不能以相同文件名套用退役审核'
   writeFileSync(join(source,old[0]),readFileSync(join(source,old[0]),'utf8')+'\n// baseline drift\n');
   const base=commit(source);
   for(const path of old)rmSync(join(source,path));
-  writeFileSync(join(source,config),readFileSync(join(root,config)));
+  writeFileSync(join(source,config),reviewedConfig);
   commit(source);
   const opt=options();opt.source.base_revision=base;
   opt.source.changed_files=git(source,'diff','--name-only',base,'HEAD').split('\n').filter(Boolean).map(path=>({path}));
