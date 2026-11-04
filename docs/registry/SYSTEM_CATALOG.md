@@ -1,20 +1,20 @@
 # Cecelia System Catalog
 
-> 这是 Cecelia 的完整系统地图。每次新增功能，必须更新对应的 Registry 文件。
+> 这是仓库静态资料索引，不代表生产全量、实时成熟度或技能真身。当前运行状态与台账通过 Brain API 读回；架构入口见 [DEFINITION.md](../../DEFINITION.md)。
 
 ## 5 张表索引
 
 | 表 | 文件 | 记录什么 | 粒度 |
 |---|---|---|---|
-| Feature Registry | [feature-registry.yml](feature-registry.yml) | 系统能做什么 | 一个可交付的能力 |
-| Skill Registry | [skill-registry.yml](skill-registry.yml) | Agent 能执行哪些指令 | 一个 /skill 命令 |
+| Feature Registry | [features/](features/) | 静态功能资料 | 一个可交付的能力 |
+| Skill Registry | Brain `skill_registry`／`GET /api/brain/registry?type=skill` | 当前技能登记；[旧清单](skill-registry.yml)仅历史参考 | 一个技能条目 |
 | Test Registry | [test-registry.yml](test-registry.yml) | 有哪些测试、覆盖什么 | 一个测试文件 |
 | API Registry | [api-registry.yml](api-registry.yml) | 有哪些接口 | 一个 endpoint |
 | Decision Registry | Brain DB `decisions` 表 | 做了哪些架构决策 | 一个技术决策 |
 
 ---
 
-## 系统全景（按子系统）
+## 历史静态盘点（不代表当前覆盖率）
 
 | 子系统 | 功能数 | 测试覆盖 | 文档状态 |
 |---|---|---|---|
@@ -44,7 +44,6 @@ Level 5  + Runbook + Regression Test（生产级）
 
 ## 维护规则
 
-- 新功能合并前：Feature Registry 必须有对应条目
-- 新 Skill 合并前：Skill Registry 必须更新
-- 新 API 合并前：API Registry 必须更新
-- CI L2 会检查 Feature Registry 与代码一致性（TODO: 待实现）
+- 静态功能资料索引位于 `features/`，不能据此推断已经部署或被真实消费者调用。
+- 技能登记以 Brain `skill_registry` 为准，通过 `POST /api/brain/skills` 写入；旧 Skill 清单不再作为新增规则。
+- API 与测试静态索引用于检索，实际入口、测试选集及 CI 阻挡关系以当前源码和工作流为准。
