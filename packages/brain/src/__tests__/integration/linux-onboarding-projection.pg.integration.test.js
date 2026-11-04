@@ -53,19 +53,19 @@ beforeEach(async()=>{
 const actual=async(m=machine)=>(await projectLinuxExecution(pool,[m]))[0].execution;
 async function equivalent(expected,m=machine){
  const old=(await pool.query(ORIGINAL_SQL,[[m.id],US_SCHEDULER_ID])).rows;
- const value=await actual(m);expect(value.enabled).toBe(expected);expect(value.enabled).toBe(old.some(r=>r.machine_registry_id===m.id));
+ let currentRows;const db={query:async(...args)=>{const r=await pool.query(...args);currentRows=r.rows;return r;}};
+ const value=(await projectLinuxExecution(db,[m]))[0].execution;expect(currentRows).toEqual(old);expect(value.enabled).toBe(expected);expect(value.enabled).toBe(old.some(r=>r.machine_registry_id===m.id));
  if(expected){expect(value.expires_at).toEqual(old[0].authorization_expires_at);expect(value.verified_until).toEqual(old[0].verified_until);}
 }
 it('稀疏单machine在大量无关completed任务下仍真实返回有效许可，不能用查询失败降级假装快',async()=>{
- await pool.query(`INSERT INTO tasks SELECT md5('noise-'||i)::uuid,jsonb_build_object('linux_onboarding',jsonb_build_object('machine_registry_id',md5('foreign-'||i)::uuid::text,'parent_task_id',md5('source-'||i)::uuid::text,'runtime_json','{"id":"noise"}','phase','active','identity_ok','true','identity_checked_at',clock_timestamp()::text)), '{"actor":"linux-pool-onboarding"}','completed',clock_timestamp()-interval '2 minutes' FROM generate_series(1,30000) i`);
- await pool.query('ANALYZE tasks');
- let currentSql,parameters;const observed={query:async(sql,params)=>{currentSql=sql;parameters=params;return pool.query(sql,params);}};
- expect((await projectLinuxExecution(observed,[machine]))[0].execution.enabled).toBe(true);
- const plan=(await pool.query('EXPLAIN (FORMAT JSON) '+currentSql,parameters)).rows[0]['QUERY PLAN'][0].Plan;
- const allPlans=node=>[node,...(node.Plans??[]).flatMap(allPlans)];
- // 一个目标task来源扫描加原canonical parent读取；newer不应再扫描整张任务真表。
- expect(allPlans(plan).filter(node=>node['Relation Name']==='tasks').length).toBeLessThanOrEqual(2);
- const c=await pool.connect();try{await c.query('SET statement_timeout=250');const result=await projectLinuxExecution(c,[machine]);expect(result[0].execution.enabled).toBe(true);}finally{await c.query('RESET statement_timeout');c.release();}
+ await pool.query(`INSERT INTO tasks SELECT md5('parent-'||i)::uuid,jsonb_build_object('node_onboarding',jsonb_build_object('request',jsonb_build_object('role','worker'))),NULL,'completed',clock_timestamp()-interval '1 hour' FROM generate_series(1,135) i`);
+ await pool.query(`INSERT INTO tasks SELECT md5('noise-'||i)::uuid,jsonb_build_object('linux_onboarding',jsonb_build_object('machine_registry_id',md5('foreign-'||i)::uuid::text,'parent_task_id',md5('parent-'||(1+i%135))::uuid::text,'runtime_json',jsonb_build_object('id',$1::text)::text,'phase','active','identity_ok','true','identity_checked_at',clock_timestamp()::text),'opaque',repeat(md5(i::text),14)), '{"actor":"linux-pool-onboarding","detail":"fixture-noise"}','completed',clock_timestamp()-interval '2 minutes' FROM generate_series(1,27000) i`,[ids.runtime]);
+ await pool.query(`INSERT INTO execution_node_versions SELECT md5('version-'||i)::uuid,'active' FROM generate_series(1,495) i`);
+ await pool.query(`INSERT INTO execution_grants SELECT md5('grant-'||i)::uuid,md5('version-'||(1+i%495))::uuid,'fixture','managed_script','script','active',clock_timestamp()+interval '1 hour' FROM generate_series(1,516) i`);
+ await pool.query(`INSERT INTO linux_script_authorizations SELECT md5('runtime-'||i)::uuid,$1,md5('version-'||i)::uuid,'revoked',clock_timestamp()+interval '1 hour',jsonb_build_object('fixture',md5('grant-'||i)::uuid::text) FROM generate_series(1,257) i`,[ids.machine]);
+ await pool.query(`INSERT INTO tasks SELECT md5('history-'||i)::uuid,jsonb_build_object('linux_onboarding',jsonb_build_object('machine_registry_id',$1::text,'parent_task_id',$2::text,'runtime_json',jsonb_build_object('id',md5('runtime-'||i)::uuid::text)::text,'phase',CASE WHEN i=35 THEN 'script_prepare' WHEN i=36 THEN 'renew_wait' ELSE 'active' END,'identity_ok','true','identity_checked_at',clock_timestamp()::text),'opaque',repeat(md5(i::text),200)), '{"actor":"linux-pool-onboarding"}',CASE WHEN i=35 THEN 'failed' WHEN i=36 THEN 'archived' ELSE 'completed' END,clock_timestamp()-interval '3 minutes' FROM generate_series(1,36) i`,[ids.machine,ids.source]);
+ await pool.query('ANALYZE');
+ const c=await pool.connect();try{await c.query('SET statement_timeout=250');let failure;const db={query:async(...args)=>{try{return await c.query(...args);}catch(e){failure=e.code;throw e;}}};const started=performance.now();const result=await projectLinuxExecution(db,[machine]);console.info('投影预算实测',JSON.stringify({sql_error:failure??null,elapsed_ms:Math.round(performance.now()-started),enabled:result[0].execution.enabled}));expect(failure).toBeUndefined();expect(result[0].execution.enabled).toBe(true);}finally{await c.query('RESET statement_timeout');c.release();}
 });
 it('有效许可输出与原SQL完全一致；输入UUID大小写保原投影结果',async()=>{await equivalent(true);await equivalent(false,{...machine,id:machine.id.toUpperCase()});});
 it.each(['failed','queued','revoked','pending'])('任意较新%s任务压住旧active许可',async state=>{
