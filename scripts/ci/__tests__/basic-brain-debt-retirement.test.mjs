@@ -23,7 +23,7 @@ function fixture(fn) {
     git(root,'clone','--shared','--no-checkout','-q',root,source);
     for(const [key,value]of [['gc.auto','0'],['maintenance.auto','false'],['gc.autoDetach','false']])git(source,'config',key,value);
     git(source,'sparse-checkout','init','--no-cone');
-    git(source,'sparse-checkout','set','/packages/brain/vitest.config.js','/packages/brain/src/__tests__/*','/scripts/ci/','/.github/workflows/nightly-regression.yml','/packages/brain/src/routes/__tests__/','/packages/brain/src/lib/__tests__/','/packages/brain/src/__tests__/integration/','/tests/regression/relay-1b1f1ffa/','/tests/regression/relay-57e25e92/','/tests/regression/relay-07b2fd3b/');
+    git(source,'sparse-checkout','set','/packages/brain/vitest.config.js','/packages/brain/src/planner.js','/packages/brain/src/__tests__/*','/scripts/ci/','/.github/workflows/nightly-regression.yml','/packages/brain/src/routes/__tests__/','/packages/brain/src/lib/__tests__/','/packages/brain/src/__tests__/integration/','/tests/regression/relay-1b1f1ffa/','/tests/regression/relay-57e25e92/','/tests/regression/relay-07b2fd3b/');
     git(source,'checkout','-q',baseline);git(source,'remote','set-url','origin','https://github.com/perfectuser21/cecelia.git');
     const base=git(source,'rev-parse','HEAD');
     for(const path of old)rmSync(join(source,path));
@@ -32,7 +32,7 @@ function fixture(fn) {
     for (const input of JSON.parse(readFileSync(join(root,'config/verification-retirements/brain-debt-retired-layers-v1.json'))).replacement_inputs) {const path=(input.blob||input).path;mkdirSync(dirname(join(source,path)),{recursive:true});writeFileSync(join(source,path),readFileSync(join(root,path)));}
     writeFileSync(join(source,'scripts/ci/deep-integration.config.mjs'),readFileSync(join(root,'scripts/ci/deep-integration.config.mjs')));
     const reviewed=JSON.parse(readFileSync(join(root,'config/verification-retirements/brain-debt-retired-layers-v1.json')));
-    for (const input of [...reviewed.replacement_configs.map(x=>x.blob),...reviewed.entry_support]) {
+    for (const input of [...reviewed.replacement_configs.map(x=>x.blob),...reviewed.entry_support,...reviewed.records.flatMap(row=>row.policy_sources||[])]) {
       const path=input.path;mkdirSync(dirname(join(source,path)),{recursive:true});writeFileSync(join(source,path),readFileSync(join(root,path)));
     }
     const head=commit(source);
@@ -80,7 +80,7 @@ test('PR基线配置与两项旧文件均按fadbf精确字节核对',()=>fixture
   writeFileSync(join(source,config),readFileSync(join(root,config)));
   for (const path of ['packages/brain/src/__tests__/debt-04-planner-score.test.js','packages/brain/src/__tests__/actions.test.js']) writeFileSync(join(source,path),readFileSync(join(root,path)));
   const reviewed=JSON.parse(readFileSync(join(root,'config/verification-retirements/brain-debt-retired-layers-v1.json')));
-  for (const input of [...reviewed.replacement_inputs.map(x=>x.blob||x),...reviewed.replacement_configs.map(x=>x.blob),...reviewed.entry_support]) {
+  for (const input of [...reviewed.replacement_inputs.map(x=>x.blob||x),...reviewed.replacement_configs.map(x=>x.blob),...reviewed.entry_support,...reviewed.records.flatMap(row=>row.policy_sources||[])]) {
     const path=input.path;mkdirSync(dirname(join(source,path)),{recursive:true});writeFileSync(join(source,path),readFileSync(join(root,path)));
   }
   commit(source);
@@ -88,7 +88,7 @@ test('PR基线配置与两项旧文件均按fadbf精确字节核对',()=>fixture
   opt.source.changed_files=git(source,'diff','--name-only',base,'HEAD').split('\n').filter(Boolean).map(path=>({path}));
   assert.throws(()=>collectVerificationRetirementCandidates(source,opt),/OLD_TEST_BYTES_MISMATCH/);
 }));
-for(const path of ['scripts/ci/deep-integration.config.mjs','scripts/ci/debt-pg.config.mjs',
+for(const path of ['packages/brain/src/__tests__/planner-retired-entry.test.js','scripts/ci/deep-integration.config.mjs','scripts/ci/debt-pg.config.mjs',
   'scripts/ci/debt-pg-tests.json','scripts/ci/run-debt-pg.mjs','scripts/ci/private-pg-backend.mjs',
   'scripts/ci/private-pg-contract.mjs','.github/workflows/nightly-regression.yml',
   'packages/brain/src/routes/__tests__/captures-api.test.ts',

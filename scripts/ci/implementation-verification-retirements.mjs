@@ -1,4 +1,4 @@
-/** 显式已排除旧测试的退休候选；不授予执行、覆盖或原生owner资格。 */
+/** 显式旧测试退休候选；默认选中例外只准coding-passway，不授予执行、覆盖或原生owner资格。 */
 import {createHash} from 'node:crypto';
 import {parse} from 'acorn';
 import {posix} from 'node:path';
@@ -7,7 +7,7 @@ import {selectVitestVerificationInput} from './implementation-verification-selec
 const REPO='perfectuser21/cecelia',BASE='68b996a5641b69e6f21705a114a4524e407fe097';
 const CATALOG='config/verification-retirements/alertness-v1.json';
 const CATALOG_SHA256='f9c3f170764dc41dbd4f710e5082551880c47f008bc7a9ca3cbc91eba2e5c73c';
-const CATALOGS=[{path:'config/verification-retirements/brain-debt-retired-layers-v1.json',sha256:'2bccc1d892d1f36f5f2fb045ad23b18c8fbadb302dc456875bd135b954a61dbf',records:7,inputs:9,support_inputs:5,base_revision:'fadbf32852cdb30f71e34dda9ab81b521bda484b',onlyPaths:["tests/regression/relay-1b1f1ffa/preview-destroyer.test.js", "packages/brain/src/__tests__/planner-initiative-plan.test.js", "packages/brain/src/__tests__/actions-initiative-orchestration.test.js", "packages/brain/src/__tests__/tasks-status.test.js", "tests/regression/relay-1b1f1ffa/capacity-gate.test.js", "tests/regression/relay-57e25e92/headed-smoke-contract.test.ts", "tests/regression/relay-07b2fd3b/captures-api.test.ts"]},
+const CATALOGS=[{path:'config/verification-retirements/brain-debt-retired-layers-v1.json',sha256:'0019e5aaabb1dce7c39c3cced54fade5521c40e5e29f01b15a47578d8ace83b5',records:8,inputs:10,support_inputs:5,base_revision:'fadbf32852cdb30f71e34dda9ab81b521bda484b',nativePaths:["packages/brain/src/__tests__/coding-passway.test.js"],onlyPaths:["packages/brain/src/__tests__/coding-passway.test.js", "tests/regression/relay-1b1f1ffa/preview-destroyer.test.js", "packages/brain/src/__tests__/planner-initiative-plan.test.js", "packages/brain/src/__tests__/actions-initiative-orchestration.test.js", "packages/brain/src/__tests__/tasks-status.test.js", "tests/regression/relay-1b1f1ffa/capacity-gate.test.js", "tests/regression/relay-57e25e92/headed-smoke-contract.test.ts", "tests/regression/relay-07b2fd3b/captures-api.test.ts"]},
  {path:CATALOG,sha256:CATALOG_SHA256,records:5,inputs:11},
  {path:'config/verification-retirements/legacy-five-v1.json',sha256:'1392c3febd9131416ec8c960a7a5a0ff6553b496084efeee1db6e1c236f25717',records:5,inputs:4},
  {path:'config/verification-retirements/tick-copied-sql-v1.json',sha256:'b6971fcfb043bdb849708e964c7e6eae31f989b1134358187ab7ecdc45350204',records:2,inputs:2,
@@ -179,7 +179,17 @@ export function collectVerificationRetirementCandidates(repoRoot,{source,tooling
   for(const record of records){
    need(changes.get(record.path)==='D','DELETION_REQUIRED');
    const old=reviewedBlob(repoRoot,source.base_revision,record.old,'OLD_TEST');
-   need(excludes.includes(record.exclude_literal)&&record.exclude_literal===posix.relative(posix.dirname(baseConfig.fact.path),record.path),'BASE_LITERAL_EXCLUDE_REQUIRED');
+   let baseSelector;
+   if(record.base_selector_kind==='default_brain_selected'){
+    need(spec.nativePaths?.length===1&&spec.nativePaths[0]==='packages/brain/src/__tests__/coding-passway.test.js'
+     &&record.path===spec.nativePaths[0]&&record.exclude_literal===undefined,'BASE_SELECTION_PERMISSION_REQUIRED');
+    const baseSkill=reviewedBlob(repoRoot,source.base_revision,catalog.skill_selector,'BASE_SELECTOR');
+    const selected=selectVitestVerificationInput({filePath:record.path,configPath:baseConfig.fact.path,
+     configText:baseConfig.bytes.toString(),skillText:baseSkill.bytes.toString(),component:'brain'});
+    need(selected.selected&&selected.witness,'BASE_SELECTED_REQUIRED');baseSelector=selected.witness;
+   }else{
+    need(excludes.includes(record.exclude_literal)&&record.exclude_literal===posix.relative(posix.dirname(baseConfig.fact.path),record.path),'BASE_LITERAL_EXCLUDE_REQUIRED');
+   }
    let absent;try{absent=readFixedLocalGitBlob(repoRoot,{revision:source.head_revision,path:record.path},{allowMissing:true});}catch{fail('HEAD_ABSENCE_UNPROVEN');}
    need(absent===null,'HEAD_ABSENCE_REQUIRED');
    const policies=[...(record.policy_sources||[]),...(catalog.entry_support||[])].map(expected=>reviewedBlob(repoRoot,source.head_revision,expected,'POLICY').fact);
@@ -188,7 +198,7 @@ export function collectVerificationRetirementCandidates(repoRoot,{source,tooling
    if(record.duplicate_of){duplicate=reviewedBlob(repoRoot,source.base_revision,record.duplicate_of,'DUPLICATE').fact;need(['mode','git_blob_sha1','sha256','byte_length'].every(k=>duplicate[k]===old.fact[k]),'DUPLICATE_BYTES_MISMATCH');}
    const selectedInputs=replacements.filter(input=>!record.replacement_paths||record.replacement_paths.includes(input.path));need(selectedInputs.length,'REPLACEMENT_MISSING');
    rows.push({path:record.path,change:'D',side:'base',catalog_anchor_revision:catalog.base_revision,catalog:{path:spec.path,sha256:spec.sha256},base:{...old.fact,revision:source.base_revision,
-    config:{...baseConfig.fact,revision:source.base_revision,exclude_literal:record.exclude_literal},...(duplicate?{duplicate_of:duplicate}:{})},
+    config:{...baseConfig.fact,revision:source.base_revision,exclude_literal:record.exclude_literal,...(baseSelector?{selector_witness:baseSelector}:{})},...(duplicate?{duplicate_of:duplicate}:{})},
     head:{revision:source.head_revision,absent:true},replacement_inputs:selectedInputs,policy_sources:policies,required_absent_paths:record.required_absent_paths||[],
     owner_candidates:[...new Map(selectedInputs.map(input=>[input.config.path,{side:'head',revision:source.head_revision,path:input.config.path,sha256:input.config.sha256}])).values()],
     audit:record.audit,catalog_limitations:catalog.limitations,requires_native_base_no_business_consumer:true,entry_verified:false,owner_verified:false,retirement_authorized:false});

@@ -110,6 +110,13 @@
         "byte_length": 8749
       },
       "config_path": "scripts/ci/deep-integration.config.mjs"
+    },
+    {
+      "path": "packages/brain/src/__tests__/planner-retired-entry.test.js",
+      "mode": "100644",
+      "git_blob_sha1": "1683e6bd6b451b3321520328984299d891d131c8",
+      "sha256": "04bb5a3847fcbfc92fb92e1859dd850dde8f997f23138570b28de4743e8adecc",
+      "byte_length": 1030
     }
   ],
   "records": [
@@ -357,10 +364,42 @@
         ],
         "reviewed_source_base": "fadbf32852cdb30f71e34dda9ab81b521bda484b"
       }
+    },
+    {
+      "path": "packages/brain/src/__tests__/coding-passway.test.js",
+      "old": {
+        "path": "packages/brain/src/__tests__/coding-passway.test.js",
+        "mode": "100644",
+        "git_blob_sha1": "a2686ffbac2adcbbc4b9280dd00cacd2c87954b6",
+        "sha256": "3308083954a6079d466fad030ab631ae8a49d1b811e07f73e79cd337ab704559",
+        "byte_length": 3986
+      },
+      "base_selector_kind": "default_brain_selected",
+      "replacement_paths": [
+        "packages/brain/src/__tests__/planner-retired-entry.test.js"
+      ],
+      "policy_sources": [
+        {
+          "path": "packages/brain/src/planner.js",
+          "mode": "100644",
+          "git_blob_sha1": "3181c77a7f0a3bffac21639d57cf8a8d3276243a",
+          "sha256": "d6b5b55ead33d47b3fad95d755e3670a4381aa383f77b08dd0d356012e3a2c59",
+          "byte_length": 42049
+        }
+      ],
+      "audit": {
+        "retired": [
+          "旧三项假设Initiative无任务时自动创建architecture_design，现役入口已明确layer_retired；旧完整文件三例真实失败，不复活冻结层。"
+        ],
+        "retained": [
+          "planner-retired-entry真实调用四域拒绝及两条旧写入口拒绝，要求SQL零触碰；默认unit实际执行。"
+        ],
+        "reviewed_source_base": "fadbf32852cdb30f71e34dda9ab81b521bda484b"
+      }
     }
   ],
   "limitations": [
-    "仅精确审核七份旧测试，不授予目录或未知删除豁免。",
+    "仅精确审核八份旧测试，不授予目录或未知删除豁免；原67债务七项退休之外仅追加coding-passway默认空壳。",
     "仅准入证据；PG输入必须重新核验最终原生跑道选择及执行，候选绝不等于PASS。",
     "公共导出、历史只读、迁移499写拒绝与真实回滚保障保留。"
   ],
