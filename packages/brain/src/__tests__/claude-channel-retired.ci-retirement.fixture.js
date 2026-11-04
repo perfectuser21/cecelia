@@ -11,8 +11,11 @@ export function ciVersionGuardCohorts(previous) {
   'existing-ops-stage-source.js':'14ebb11805679dd6f559ea42d88ba6f8a1bc96604f474230a2c486af5866e514',
  };
  const retired={...current,'existing-ops-stage-source.js':'59ac5f256ca1c99b5edae88ef89ea5c79648fe6d63c134afec42800dca2b04d0'};
+ // e434身份来源reader：只追加完整caller/runtime/reader组合；旧退休reader仍独立保留。
+ const identity={...retired,'existing-ops-stage-source.js':'ffb6ecb81faa63068fb7f02e3ed170d5c7199589b39dcfb6f1430131313ddbf4'};
  return [current,{...current,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
-  retired,{...retired,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'}];
+  retired,{...retired,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
+  identity,{...identity,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'}];
 }
 
 export function registerCiRetirementGuardTests({root,base,memoBase,scan}) {
