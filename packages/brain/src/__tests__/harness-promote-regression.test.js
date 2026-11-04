@@ -10,7 +10,10 @@ let expectedNotices = [];
 const boundary = vi.hoisted(() => ({ db: vi.fn(), network: vi.fn(), process: vi.fn() }));
 vi.mock('../notifier.js', () => ({ sendFeishu: notices.send }));
 vi.mock('../db.js', () => ({ default: { query: (...args) => { boundary.db(...args); throw Error('禁止默认DB'); } } }));
-vi.mock('node:child_process', () => Object.fromEntries(['exec', 'execSync', 'execFile', 'execFileSync', 'spawn', 'spawnSync'].map(name => [name, (...args) => { boundary.process(name, ...args); throw Error('禁止宿主进程'); }])));
+vi.mock('node:child_process', async () => {
+  const { recordOnlyProcesses } = await import('./helpers/record-only-processes.js');
+  return recordOnlyProcesses(boundary.process);
+});
 beforeEach(() => { expectedNotices = []; vi.clearAllMocks(); vi.stubGlobal('fetch', (...args) => { boundary.network(...args); throw Error('禁止外联'); }); });
 afterEach(() => {
   expect(notices.send.mock.calls).toEqual(expectedNotices);

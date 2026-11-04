@@ -4,7 +4,10 @@ const state = vi.hoisted(() => ({ db: vi.fn(), process: vi.fn(), network: vi.fn(
 export const store = { patch: state.patch };
 vi.mock('../../db.js', () => ({ default: { query: (...args) => { state.db(...args); throw Error('禁止默认DB'); } } }));
 vi.mock('../../notifier.js', () => ({ sendBark: vi.fn(async () => true) }));
-vi.mock('node:child_process', () => Object.fromEntries(['exec', 'execSync', 'execFile', 'execFileSync', 'spawn', 'spawnSync'].map(name => [name, (...args) => { state.process(name, ...args); throw Error('禁止宿主进程'); }])));
+vi.mock('node:child_process', async () => {
+  const { recordOnlyProcesses } = await import('./record-only-processes.js');
+  return recordOnlyProcesses(state.process);
+});
 vi.mock('../../orchestrator/kernel-run-store.js', () => ({ patchKernelRunById: state.patch }));
 beforeEach(() => { vi.clearAllMocks(); vi.stubGlobal('fetch', (...args) => { state.network(...args); throw Error('禁止外联'); }); });
 afterEach(() => {

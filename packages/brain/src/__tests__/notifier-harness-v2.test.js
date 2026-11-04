@@ -18,7 +18,10 @@ vi.mock('../db.js', () => ({ default: { query: (...args) => {
   boundary.db(...args); return Promise.resolve({ rows: [{ id: 'owned-receipt' }], rowCount: 1 });
 } } }));
 vi.mock('../muted-guard.js', () => ({ isMuted: () => false }));
-vi.mock('node:child_process', () => Object.fromEntries(['exec', 'execSync', 'execFile', 'execFileSync', 'spawn', 'spawnSync'].map(name => [name, (...args) => { boundary.process(name, ...args); throw Error('禁止宿主进程'); }])));
+vi.mock('node:child_process', async () => {
+  const { recordOnlyProcesses } = await import('./helpers/record-only-processes.js');
+  return recordOnlyProcesses(boundary.process);
+});
 afterEach(() => {
   expect(boundary.db).not.toHaveBeenCalled();
   expect(boundary.process).not.toHaveBeenCalled();
