@@ -68,7 +68,7 @@ function parseEntry(filePath, category) {
     'Added in': 'addedIn',
   };
 
-  // 仅兼容仓内五份实际格式；英文键及现有前端结构保持不变。
+  // 仅兼容仓内实际15条目使用的章节名；英文键及现有前端结构保持不变。
   const chineseSectionMap = {
     '功能概述': 'what', '功能': 'what', '触发机制': 'trigger',
     '各阶段行为': 'howToUse', 'Rerun 行为': 'howToUse',
@@ -78,6 +78,11 @@ function parseEntry(filePath, category) {
     '数据表': 'output', '数据源': 'output',
     '端点': 'howToUse', '响应': 'output', '数据字段': 'output', '关联': 'howToUse',
     'API 端点': 'howToUse', '数据表结构': 'output', '使用场景': 'howToUse', 'Migration': 'output',
+    '功能说明': 'what', '使用方式': 'howToUse', 'YAML 默认配置': 'howToUse',
+    'Notebook 复用模式（清空后复用）': 'howToUse', 'API': 'howToUse',
+    '日报内容': 'output', '存储与推送': 'output', '相关文件': 'howToUse',
+    '四 Tab 结构': 'howToUse', '生成记录 Tab — 执行阶段详情（v1.1.0）': 'howToUse',
+    'Design': 'howToUse', '核心模块': 'howToUse',
   };
 
   function flushSubSection() {
@@ -89,10 +94,26 @@ function parseEntry(filePath, category) {
     subSectionLines = [];
   }
 
+  function flushSection() {
+    flushSubSection();
+    if (currentSection) {
+      // 同类章节保留早先英文正文，后续中文子章不能用空content覆盖它。
+      const content = sectionLines.join('\n').trim();
+      sections[currentSection] = [sections[currentSection], content].filter(Boolean).join('\n\n');
+    }
+  }
+
+  let inCodeFence = false;
   for (const line of lines) {
+    // 真实说明书含Markdown模板；围栏中的##只是示例文字，不是新章节。
+    const fence = line.trimStart().startsWith('```');
+    if (fence || inCodeFence) {
+      if (currentSection) (currentSubSection !== null ? subSectionLines : sectionLines).push(line);
+      if (fence) inCodeFence = !inCodeFence;
+      continue;
+    }
     if (line.startsWith('## ')) {
-      flushSubSection();
-      if (currentSection) sections[currentSection] = sectionLines.join('\n').trim();
+      flushSection();
       const header = line.replace(/^## /, '').trim();
       currentSection = sectionMap[header] || chineseSectionMap[header] || null;
       sectionLines = [];
@@ -108,8 +129,7 @@ function parseEntry(filePath, category) {
       else sectionLines.push(line);
     }
   }
-  flushSubSection();
-  if (currentSection) sections[currentSection] = sectionLines.join('\n').trim();
+  flushSection();
 
   // 将子章节合并到 sections
   const sectionsWithSub = {};

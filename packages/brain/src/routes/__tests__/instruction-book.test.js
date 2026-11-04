@@ -105,3 +105,11 @@ it('全部15个已跟踪条目的非标题正文逐行进入前端既有sections
  }
  expect(boundary.forbidden).not.toHaveBeenCalled();expect(boundary.unboundQuery).not.toHaveBeenCalled();
 });
+
+it('真实门禁说明里的Markdown模板留在使用方式代码块，不能污染英文章节',async()=>{
+ const r=await get();expect(r.status).toBe(200);const entry=r.body.features.find(e=>e.id==='instruction-dev-registration-gate');expect(entry).toBeDefined();
+ expect(entry.sections.what.content).toContain('CI 自动检查机制');expect(entry.sections.what.content).not.toContain('（一句话描述）');
+ expect(entry.sections.trigger.content).not.toContain('（什么时候触发）');
+ const usage=entry.sections.howToUse.subsections.find(s=>s.title==='满足门禁要求');expect(usage).toBeDefined();expect(usage.content).toContain('```markdown\n# My New Feature — 功能名\n\n## What it is\n（一句话描述）');
+ expect(entry.sections.addedIn.content).toBe('PR #1644（封堵孤岛 Day3-4）');expect(boundary.forbidden).not.toHaveBeenCalled();
+});
