@@ -1,5 +1,3 @@
-# 兼容分发合同：仓内消费者以 lease-migration 固定哈希 patch 发布到仓外。
-# 本工作流只核验守卫与迁移器；成功不证明真机业务或现场安装版本。
 name: Phone lease guard
 on:
   pull_request:
