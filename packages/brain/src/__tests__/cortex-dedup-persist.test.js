@@ -6,6 +6,15 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, beforeAll, vi } from 'vitest';
+// 禁止加载模型、任务发送与记忆检索的外部依赖；被测熔断器和 DB 保持真实。
+vi.mock('../llm-caller.js', () => ({ callLLM: vi.fn(() => { throw new Error('禁止模型调用'); }) }));
+vi.mock('../thalamus.js', () => ({ ACTION_WHITELIST: {}, validateDecision: vi.fn(), recordLLMError: vi.fn(), recordTokenUsage: vi.fn() }));
+vi.mock('../learning.js', () => ({ searchRelevantLearnings: vi.fn() }));
+vi.mock('../self-model.js', () => ({ getSelfModel: vi.fn() }));
+vi.mock('../memory-utils.js', () => ({ generateL0Summary: vi.fn() }));
+vi.mock('../actions.js', () => ({ createTask: vi.fn(() => { throw new Error('禁止建单'); }) }));
+vi.mock('../insight-to-constraint.js', () => ({ autoExtractAndPersist: vi.fn() }));
+vi.mock('../capture-inbox.js', () => ({ pushCaptureAtom: vi.fn() }));
 let pool;
 let _resetReflectionState, _checkReflectionBreaker, _computeEventHash;
 
