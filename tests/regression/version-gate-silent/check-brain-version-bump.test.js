@@ -151,9 +151,9 @@ describe('check-brain-version-bump.sh', () => {
       const { exitCode, stdout } = runScript({ dir, baseRef });
       expect(exitCode, `脚本输出：\n${stdout}`).toBe(1);
       // 必须含可操作 fix 提示
-      expect(stdout).toContain('changes/<分支名>.md');
-      expect(stdout).toContain('{VERSION}');
-      expect(stdout).toContain('不要手改 packages/brain/package.json');
+      expect(stdout).toContain('同步更新Brain package');
+      expect(stdout).toContain('并重新验收');
+      expect(stdout).toContain('碎片不能替代真实版本增量');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
