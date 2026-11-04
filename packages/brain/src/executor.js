@@ -218,7 +218,7 @@ const XIAN_M1_BRIDGE_URL = process.env.XIAN_M1_BRIDGE_URL || 'http://100.88.166.
 /**
  * 从多个 Codex Bridge 中选择最空闲的
  */
-async function selectBestBridge() {
+export async function selectBestBridge() {
   const results = await Promise.allSettled(
     legacyExecutorEntries().filter(e=>e.executor==='codex').map(e=>e.url).map(async (url) => {
       const res = await fetch(`${url}/health`, { signal: AbortSignal.timeout(5000) });

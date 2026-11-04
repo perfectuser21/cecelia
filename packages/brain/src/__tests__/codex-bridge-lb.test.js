@@ -5,8 +5,10 @@ vi.mock('child_process', () => ({spawn:boundary.execute,exec:boundary.execute,ex
 vi.mock('node:child_process', () => ({spawn:boundary.execute,exec:boundary.execute,execSync:boundary.execute,execFile:boundary.execute,execFileSync:boundary.execute}));
 vi.mock('fs', async original => {
   const fs = await original();
+  const {fileURLToPath} = await import('node:url');
+  const repository = fileURLToPath(new URL('../../../../', import.meta.url));
   return {...fs, existsSync:() => false, readdirSync:() => [], readFileSync:(filename,...args) => {
-    if (String(filename).includes('/cecelia-ci-retained-seven-3/')) return fs.readFileSync(filename,...args);
+    if (String(filename).startsWith(repository)) return fs.readFileSync(filename,...args);
     throw Error('host configuration read forbidden');
   }};
 });
