@@ -10,7 +10,7 @@
 
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
-import { spawnRpaHandler } from './wechat-rpa-handler.js';
+import { spawnRpaHandler, UnsupportedRpaActionError } from './wechat-rpa-handler.js';
 import { callOpenRouter, OpenRouterError } from './openrouter.js';
 
 const router = Router();
@@ -63,6 +63,10 @@ router.post('/action', async (req: Request, res: Response) => {
     res.status(200).json({ status: 'ok', result });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
+    if (err instanceof UnsupportedRpaActionError) {
+      res.status(501).json({ error: 'rpa_action_unsupported', message: msg });
+      return;
+    }
     res.status(500).json({ error: 'rpa_failed', message: msg });
   }
 });

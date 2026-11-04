@@ -26,25 +26,21 @@ def handle(req: dict) -> dict:
 
     if action == "send_message":
         target = req.get("target") or ""
-        content = req.get("content") or ""
         if not target:
             return {"ok": False, "error": "target is required for send_message"}
         if dryrun:
             return {"ok": True, "data": {"sent": False, "dryrun": True, "target": target}}
-        # TODO: 接入真实 WeChat RPA 库（pyautogui / uiautomation）
-        return {"ok": True, "data": {"sent": True, "target": target, "length": len(content)}}
+        return {"ok": False, "error": "unsupported_action", "action_type": action}
 
     if action == "screenshot":
         if dryrun:
             return {"ok": True, "data": {"path": None, "dryrun": True}}
-        # TODO: 接入截图逻辑
-        return {"ok": True, "data": {"path": "/tmp/wechat_screenshot.png"}}
+        return {"ok": False, "error": "unsupported_action", "action_type": action}
 
     if action == "read_inbox":
         if dryrun:
             return {"ok": True, "data": {"messages": [], "dryrun": True}}
-        # TODO: 接入读取收件箱逻辑
-        return {"ok": True, "data": {"messages": []}}
+        return {"ok": False, "error": "unsupported_action", "action_type": action}
 
     if action == "click":
         target = req.get("target") or ""
@@ -52,8 +48,7 @@ def handle(req: dict) -> dict:
             return {"ok": False, "error": "target is required for click"}
         if dryrun:
             return {"ok": True, "data": {"clicked": False, "dryrun": True}}
-        # TODO: 接入 click 逻辑
-        return {"ok": True, "data": {"clicked": True, "target": target}}
+        return {"ok": False, "error": "unsupported_action", "action_type": action}
 
     return {"ok": False, "error": f"unsupported action_type: {action}"}
 
