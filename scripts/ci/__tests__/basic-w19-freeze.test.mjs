@@ -11,19 +11,24 @@ import { commandsFor } from '../run-basic-check.mjs';
 const BASE = '289ddd8d0690f154006c5586926277c48e10f716';
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 let home, fixture;
-const git = (...args) => execFileSync('git', args, { cwd: fixture || root, encoding: 'utf8' }).trim();
+// Git定位、索引及全局配置不能从调用prepush的仓库继承。
+const gitEnv = { ...process.env };
+for (const name of Object.keys(gitEnv)) if (name.startsWith('GIT_')) delete gitEnv[name];
+gitEnv.GIT_CONFIG_GLOBAL = '/dev/null'; gitEnv.GIT_CONFIG_SYSTEM = '/dev/null';
+const git = (...args) => execFileSync('git', ['-c', 'core.hooksPath=/dev/null', ...args],
+  { cwd: fixture || root, env: gitEnv, encoding: 'utf8' }).trim();
 before(() => {
   home = mkdtempSync(join(tmpdir(), 'w19-frozen-'));
   fixture = join(home, 'source');
   execFileSync('git', ['-c', 'core.hooksPath=/dev/null', 'worktree', 'add', '--detach', fixture, BASE],
-    { cwd: root, stdio: 'pipe' });
+    { cwd: root, env: gitEnv, stdio: 'pipe' });
 });
 beforeEach(() => {
   git('reset', '--hard', BASE);
   writeFileSync(join(fixture, 'playground/README.md'), readFileSync(join(root, 'playground/README.md')));
 });
 after(() => {
-  if (fixture) execFileSync('git', ['worktree', 'remove', '--force', fixture], { cwd: root });
+  if (fixture) execFileSync('git', ['-c', 'core.hooksPath=/dev/null', 'worktree', 'remove', '--force', fixture], { cwd: root, env: gitEnv });
   if (home) rmSync(home, { recursive: true, force: true });
 });
 
@@ -32,7 +37,7 @@ function check() {
     && step.args[0] === 'scripts/ci/check-w19-frozen.mjs');
   assert.ok(step, '实际scripts跑道必须调用冻结检查，不能以无应用矩阵冒充通过');
   return spawnSync(process.execPath, [join(root, step.args[0]), '--root', fixture],
-    { encoding: 'utf8', timeout: 10000 });
+    { encoding: 'utf8', timeout: 10000, env: gitEnv });
 }
 
 test('旧样机的代码/依赖/配置/新增路径只选scripts，普通全量矩阵保持14项', () => {
@@ -86,8 +91,8 @@ test('不能移除历史角色声明后将样机冒称现役', () => {
 });
 
 test('冻结基准必须是当前候选真实祖先，不接受无关历史', () => {
-  const tree = execFileSync('git', ['hash-object', '-t', 'tree', '--stdin'],
-    { cwd: fixture, input: '', encoding: 'utf8' }).trim();
+  const tree = execFileSync('git', ['-c', 'core.hooksPath=/dev/null', 'hash-object', '-t', 'tree', '--stdin'],
+    { cwd: fixture, env: gitEnv, input: '', encoding: 'utf8' }).trim();
   const unrelated = git('-c', 'user.name=Owned Fixture', '-c', 'user.email=fixture@example.invalid',
     'commit-tree', tree, '-m', 'test: unrelated history');
   git('checkout', '--detach', '--force', unrelated);

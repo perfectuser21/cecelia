@@ -17,7 +17,7 @@ export function ciVersionGuardCohorts(previous) {
  const runtimeScope={...identity,'existing-ops-stage-source.js':'a56f43da6e5d3989057ce075cb4cb9b14de4631c65cf2783dfd998a946980e43'};
  const concurrency={...runtimeScope,'existing-ops-stage-source.js':'8172bbfe9377f6672911ff1be4afb6f652932ce7fefe506764e08412e34508a1'};
  // W19冻结仅追加完整caller/runtime/reader组合，marker0/1分别封印，旧全部保留。
- const w19Freeze={...concurrency,'existing-ops-stage-source.js':'8e7d42c0315366f8c37a01bec46ae8bc93e30b6b73d67a19c428fa720efc521d'};
+ const w19Freeze={...concurrency,'existing-ops-stage-source.js':'d761c5b480a903367ea142b3301ca60466dd18f4298e5cf3879450c58e51c565'};
  return [current,{...current,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
   retired,{...retired,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
   identity,{...identity,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},

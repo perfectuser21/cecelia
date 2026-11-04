@@ -280,7 +280,7 @@ const REVIEWED_W19_FREEZE_CLOSURE = {
   "scripts/ci/basic-scope.mjs": "c97f3d3300ce74237086b819def622636dc6776f663753d6ec3e68ea2d21a14b",
   "scripts/ci/run-basic-check.mjs": "aed179661ff08ef743cb8feb0c9e88bb59342d3c0ab690bf17e812f8c868c0ae",
   "scripts/ci/check-w19-frozen.mjs": "8386f606e3b370826a6dab76ac36cb7c1d6dfde4e94859fca9e4fd2642739f21",
-  "scripts/ci/__tests__/basic-w19-freeze.test.mjs": "7e3317c43589a8d25f61556c339f6f588b118829dd54cfaf8f95057d6ef5fa52",
+  "scripts/ci/__tests__/basic-w19-freeze.test.mjs": "29ef27cdb93eade5b6e6efae72f2c2098a2347390798f5de2c178ce8223adcca",
   "playground/package-lock.json": "e2fa656e54b0d2d4f8c7398c24651589ff1556ffabbcec368465ff19d12bb6e9",
   "playground/package.json": "9c340ea6eae6af3ad2cf7e41b003141193dbe6369451529e40deb41dd786e85d",
   "playground/server.js": "c77d87096634b48a699c3951a07e0a74609535454f38078b97a0b35f87cfd38e",
