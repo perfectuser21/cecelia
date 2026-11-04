@@ -14,7 +14,7 @@ export async function createDebt09Scratch() {
   const schema = `debt_09_${randomUUID().replaceAll('-', '')}`;
   let pool;
   try {
-    const { rows: [identity] } = await admin.query('SELECT current_database() AS db, inet_server_addr()::text AS host, inet_server_port() AS port');
+    const { rows: [identity] } = await admin.query('SELECT current_database() AS db, host(inet_server_addr()) AS host, inet_server_port() AS port');
     if (identity.db !== 'cecelia_scratch' || identity.host !== '127.0.0.1' || identity.port !== Number(url.port)) {
       throw new Error('scratch 服务端身份不符');
     }

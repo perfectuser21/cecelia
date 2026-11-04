@@ -6,14 +6,11 @@ beforeAll(async () => {
   scratch = await createDebt09Scratch();
   pool = scratch.pool;
   await pool.query(`CREATE TABLE tasks (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), title text, description text, status text)`);
+  await scratch.migrate('018_add_feedback_and_status_history.sql');
 });
 afterAll(async () => { if (scratch) await scratch.close(); });
 
 describe('Migration 018: Feedback and Status History', () => {
-  beforeAll(async () => {
-    // Migration should have been applied during server startup
-  });
-
   it('should have feedback column in tasks table', async () => {
     const result = await pool.query(`
       SELECT column_name, data_type, column_default
@@ -80,6 +77,14 @@ describe('Migration 018: Feedback and Status History', () => {
     `);
 
     expect(result.rows.length).toBe(1);
+  });
+
+  it('重复执行正式迁移保留已有反馈和状态历史', async () => {
+    const { rows: [task] } = await pool.query(`INSERT INTO tasks(title, feedback, status_history, feedback_count)
+      VALUES ('已有记录', '[{"summary":"保留"}]', '[{"from":"pending","to":"in_progress"}]', 1) RETURNING id`);
+    await scratch.migrate('018_add_feedback_and_status_history.sql');
+    const { rows: [saved] } = await pool.query('SELECT feedback, status_history, feedback_count FROM tasks WHERE id=$1', [task.id]);
+    expect(saved).toEqual({ feedback: [{ summary: '保留' }], status_history: [{ from: 'pending', to: 'in_progress' }], feedback_count: 1 });
   });
 
   it('should initialize new tasks with empty arrays', async () => {

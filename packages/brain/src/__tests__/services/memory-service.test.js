@@ -8,11 +8,11 @@ let MemoryService;
 let SimilarityService;
 
 // Mock SimilarityService
-vi.mock('../../similarity.js');
+vi.mock('../../similarity.js', () => ({ default: vi.fn() }));
 
 beforeAll(async () => {
   vi.resetModules();
-  pool = (await import('../../db.js')).default;
+  pool = { query: vi.fn() };
   MemoryService = (await import('../../services/memory-service.js')).default;
   SimilarityService = (await import('../../similarity.js')).default;
 });
@@ -24,6 +24,7 @@ describe('MemoryService', () => {
   beforeEach(() => {
     // Reset mocks before each test
     vi.clearAllMocks();
+    pool.query.mockReset().mockResolvedValue({ rows: [] });
 
     // Create mock similarity instance
     mockSimilarity = {
@@ -104,9 +105,12 @@ describe('MemoryService', () => {
 
   describe('getDetail', () => {
     it('从 tasks 表查询并返回完整信息', async () => {
-      // Note: This is an integration test with real DB
-      // We'll test this in routes/memory.test.js with a real task
-      expect(service.getDetail).toBeDefined();
+      const row = { id: 'task-1', level: 'task', title: '真实详情', description: '详情',
+        status: 'completed', metadata: null, created_at: '2026-01-01' };
+      pool.query.mockResolvedValueOnce({ rows: [row] });
+      expect(await service.getDetail('task-1')).toEqual({ ...row, metadata: {} });
+      expect(pool.query).toHaveBeenCalledTimes(1);
+      expect(pool.query.mock.calls[0][1]).toEqual(['task-1']);
     });
 
     it('Entity not found 时抛出错误', async () => {
@@ -118,8 +122,16 @@ describe('MemoryService', () => {
 
   describe('searchRelated', () => {
     it('正确排除 base_id 自身', async () => {
-      // This is complex to mock, test in integration tests
-      expect(service.searchRelated).toBeDefined();
+      pool.query.mockResolvedValueOnce({ rows: [{ id: 'base', level: 'task', title: '基准' }] });
+      mockSimilarity.searchWithVectors.mockResolvedValue({ matches: [
+        { id: 'base', title: '基准', score: 1 },
+        { id: 'other', title: '相关', score: 0.8, description: '**内容**' },
+        { id: 'extra', title: '额外', score: 0.5 },
+      ] });
+      const result = await service.searchRelated('base', { topK: 1 });
+      expect(result.matches).toEqual([{ id: 'other', title: '相关', level: undefined,
+        similarity: 0.8, preview: '内容' }]);
+      expect(mockSimilarity.searchWithVectors).toHaveBeenCalledWith('基准', { topK: 2 });
     });
   });
 
@@ -143,7 +155,7 @@ describe('MemoryService', () => {
     it('截取超过 100 字符的文本', () => {
       const longText = 'a'.repeat(150);
       const preview = service._generatePreview(longText);
-      expect(preview.length).toBeLessThanOrEqual(104); // 100 + '...'
+      expect(preview).toBe('a'.repeat(100) + '...');
     });
   });
 });
