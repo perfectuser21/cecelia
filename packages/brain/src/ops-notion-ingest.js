@@ -124,13 +124,14 @@ export async function runOpsNotionIngest(pool, opts = {}) {
     let newest = since;
     for (const page of pages) {
       stats.read += 1;
-      const patch = buildOpsManualReadback(page);
+      let patch = buildOpsManualReadback(page);
       if (page.last_edited_time) newest = page.last_edited_time;
       if (Object.keys(patch).length === 0) continue;
 
       const row = await pool.query(`SELECT * FROM ${t.table} WHERE notion_id = $1`, [page.id]);
       const target = row.rows[0];
       if (!target) continue;
+      patch = Object.fromEntries(Object.entries(patch).filter(([key,value]) => value !== (target[key] ?? null)));
 
       // 意图变化时打时间戳，供 planEnableAction 判断"人是否改了新意图"
       if ('enable_intent' in patch && patch.enable_intent !== target.enable_intent) {
