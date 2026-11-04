@@ -1,6 +1,6 @@
 import { beforeAll, afterAll, describe, it, expect } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { startCallbackFixture, stopCallbackFixture, sourceTask, callback, readTask, createTaskHttp } from '../../__tests__/helpers/callback-closure-pg.js';
+import { startCallbackFixture, stopCallbackFixture, sourceTask, callback, readTask, createTaskHttp, forwardedFeaturePatches } from '../../__tests__/helpers/callback-closure-pg.js';
 
 // Planner/合同前段无当前合法成功链；generate/fix/evaluate 历史回执仍有消费者。
 // 使用正式schema及真实createTask/路由验证兼容边，不复活冻结OKR或伪造长task_type。
@@ -125,14 +125,17 @@ describe('未取消历史链的真实消费者边界', () => {
       const target = await feature(); const neighbor = await feature();
       const task = await sourceTask('harness_evaluate', { payload: { planner_task_id: planner.id, feature_id: target.id, harness_mode: true } });
       const before = await taskCount();
+      const patchBefore = forwardedFeaturePatches.length;
       const response = await callback(task, { verdict, summary: '无PR历史评价回执' });
       expect(response.status, JSON.stringify(response.body)).toBe(200);
       expect((await processed(task)).result.verdict).toBe(verdict);
       const stored = (await pool.query('SELECT * FROM journey_features WHERE id=$1', [target.id])).rows[0];
       expect(stored.thickness).toBe(verdict === 'PASS' ? 'medium' : 'thin');
       expect(stored.status).toBe('building'); expect(stored.guard_ref).toBe('compat-guard');
-      if (verdict === 'PASS') expect(stored.notion_synced_at).toBeNull();
-      else expect(stored).toEqual(target);
+      if (verdict === 'PASS') {
+        expect(stored.notion_synced_at).toBeNull();
+        expect(forwardedFeaturePatches.slice(patchBefore)).toEqual([{ path: `/api/brain/journey_features/${target.id}`, body: { thickness: 'medium' }, status: 200 }]);
+      } else { expect(stored).toEqual(target); expect(forwardedFeaturePatches).toHaveLength(patchBefore); }
       expect((await pool.query('SELECT * FROM journey_features WHERE id=$1', [neighbor.id])).rows[0]).toEqual(neighbor);
       expect(await taskCount()).toBe(before); // 后继report无执行者，FAIL的fix缺现行编码合同，均不复活旧链。
       expect(await readTask(planner.id)).toEqual(plannerBefore);
@@ -141,9 +144,23 @@ describe('未取消历史链的真实消费者边界', () => {
   it('evaluate PASS缺feature_id不误写邻居', async () => {
     const planner = await sourceTask('harness_planner'); const neighbor = await feature();
     const task = await sourceTask('harness_evaluate', { payload: { planner_task_id: planner.id, harness_mode: true } });
+    const patchBefore = forwardedFeaturePatches.length;
     const response = await callback(task, { verdict: 'PASS', summary: '无Feature历史评价' });
     expect(response.status, JSON.stringify(response.body)).toBe(200);
     expect((await processed(task)).result.verdict).toBe('PASS');
+    expect(forwardedFeaturePatches).toHaveLength(patchBefore);
     expect((await pool.query('SELECT * FROM journey_features WHERE id=$1', [neighbor.id])).rows[0]).toEqual(neighbor);
   });
+  it('evaluate PASS指向不存在Feature时真实PATCH404，回执仍完成且邻居不变', async () => {
+    const planner = await sourceTask('harness_planner'); const neighbor = await feature();
+    const missingId = randomUUID();
+    const task = await sourceTask('harness_evaluate', { payload: { planner_task_id: planner.id, feature_id: missingId, harness_mode: true } });
+    const patchBefore = forwardedFeaturePatches.length;
+    const response = await callback(task, { verdict: 'PASS', summary: '历史Feature不存在，回写非致命' });
+    expect(response.status, JSON.stringify(response.body)).toBe(200);
+    expect((await processed(task)).result.verdict).toBe('PASS');
+    expect(forwardedFeaturePatches.slice(patchBefore)).toEqual([{ path: `/api/brain/journey_features/${missingId}`, body: { thickness: 'medium' }, status: 404 }]);
+    expect((await pool.query('SELECT * FROM journey_features WHERE id=$1', [neighbor.id])).rows[0]).toEqual(neighbor);
+  });
+
 });

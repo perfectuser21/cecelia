@@ -46,17 +46,32 @@ vi.mock('child_process', async (original) => {
 });
 
 let pool, app, fetchSpy;
+export const forwardedFeaturePatches = [];
 export async function startCallbackFixture() {
   ({ default: pool } = await import('../../db.js'));
   await verifyPrivatePg(pool, env);
   if (!(await pool.query("SELECT 1 FROM schema_version WHERE version='557'")).rowCount) throw new Error('callback fixture requires full migrations through 557');
-  // fetch 绝不允许访问 5221、外网或其它服务。supertest 使用 loopback HTTP，不经过 fetch。
-  fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => { throw new Error('callback fixture forbids fetch'); });
+  // 只桥接旧厚度回写的精确传输意图；不访问5221。下游仍走真实journeys router及同一私有PG。
+  // 其它fetch（包括模型、通知与外网）一律拒绝，不伪造服务成功响应。
+  forwardedFeaturePatches.length = 0;
+  fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, options = {}) => {
+    const url = new URL(String(input));
+    if (url.origin !== 'http://localhost:5221' || options.method !== 'PATCH' ||
+        !/^\/api\/brain\/journey_features\/[0-9a-f-]{36}$/i.test(url.pathname)) {
+      throw new Error('callback fixture forbids fetch');
+    }
+    const response = await request(app).patch(url.pathname)
+      .set(options.headers || {}).send(JSON.parse(options.body));
+    forwardedFeaturePatches.push({ path: url.pathname, body: JSON.parse(options.body), status: response.status });
+    return new Response(JSON.stringify(response.body), { status: response.status, headers: { 'Content-Type': 'application/json' } });
+  });
   env.CECELIA_INTERNAL_TOKEN = 'callback-closure-local-only';
   const { default: router } = await import('../../routes/execution.js');
   app = express(); app.use(express.json()); app.use(router);
   const { default: tasksRouter } = await import('../../routes/task-tasks.js');
   app.use('/tasks', tasksRouter);
+  const { default: journeysRouter } = await import('../../routes/journeys.js');
+  app.use('/api/brain', journeysRouter);
   return pool;
 }
 export async function stopCallbackFixture() {
@@ -73,7 +88,7 @@ export async function sourceTask(taskType, { goalId = null, payload = {}, ...fie
   return { ...row, runId, ...fields };
 }
 export function callback(task, result, overrides = {}) {
-  return request(app).post('/execution-callback').set('Authorization', 'Bearer callback-closure-local-only')
+  return request(app).post('/execution-callback').timeout({ response: 12000, deadline: 14000 }).set('Authorization', 'Bearer callback-closure-local-only')
     .send({ task_id: task.id, run_id: task.runId, status: 'AI Done', result, ...overrides });
 }
 export async function readTask(id) { return (await pool.query('SELECT * FROM tasks WHERE id=$1', [id])).rows[0]; }
