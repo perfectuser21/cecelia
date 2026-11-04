@@ -14,7 +14,8 @@ import { ciEntrySelectorEnabled } from '../../../packages/brain/src/lib/existing
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 const schemaPath = 'packages/brain/src/lib/existing-ops-source.js';
 const workflow = '.github/workflows/auto-version.yml';
-const historicalRevision = 'ee851a5546bce56b00455e3efccf1a09fe526f0b';
+// main基线保留完全相同的4743字节与冻结SHA；不依赖本机未合并分支对象。
+const historicalRevision = 'fadbf32852cdb30f71e34dda9ab81b521bda484b';
 const reader = 'packages/brain/src/__tests__/auto-version-decision.test.js';
 const ast = text => parse(text, { ecmaVersion: 'latest', sourceType: 'module' });
 const git = (...args) => execFileSync('git', ['--no-replace-objects', ...args], { cwd: root, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
