@@ -176,32 +176,34 @@ describe('Manifest 语义校验', () => {
     ]));
   });
 
+  const productionManifest = JSON.parse(readFileSync(new URL('../../../config/map-manifests/cecelia.v1.json', import.meta.url), 'utf8'));
+
   it('精确验证 2 条 Value Stream、11 个 Capability', () => {
-    expect(CECELIA_MANIFEST.value_streams).toHaveLength(2);
-    expect(CECELIA_MANIFEST.capabilities).toHaveLength(11);
+    expect(productionManifest.value_streams).toHaveLength(2);
+    expect(productionManifest.capabilities).toHaveLength(11);
   });
 
   it('精确验证 2 条 Boundary', () => {
-    expect(CECELIA_MANIFEST.boundaries).toHaveLength(2);
+    expect(productionManifest.boundaries).toHaveLength(2);
   });
 
   it('精确验证 7 项 Cross-cut', () => {
-    expect(CECELIA_MANIFEST.crosscut_pool).toHaveLength(7);
+    expect(productionManifest.crosscut_pool).toHaveLength(7);
   });
 
   it('F5/F6/F7 只作为别名，不是独立 capability', () => {
-    const capKeys = new Set(CECELIA_MANIFEST.capabilities.map((c) => c.key));
+    const capKeys = new Set(productionManifest.capabilities.map((c) => c.key));
     expect(capKeys.has('F5')).toBe(false);
     expect(capKeys.has('F6')).toBe(false);
     expect(capKeys.has('F7')).toBe(false);
-    const g1 = CECELIA_MANIFEST.capabilities.find((c) => c.key === 'G1');
+    const g1 = productionManifest.capabilities.find((c) => c.key === 'G1');
     expect(g1?.aliases).toContain('F5');
   });
 
   it('F8 不是 Capability，只作为 execution_pool 别名', () => {
-    const capKeys = new Set(CECELIA_MANIFEST.capabilities.map((c) => c.key));
+    const capKeys = new Set(productionManifest.capabilities.map((c) => c.key));
     expect(capKeys.has('F8')).toBe(false);
-    const execPool = CECELIA_MANIFEST.crosscut_pool.find((c) => c.key === 'execution_pool');
+    const execPool = productionManifest.crosscut_pool.find((c) => c.key === 'execution_pool');
     expect(execPool?.aliases).toContain('F8');
   });
 });
