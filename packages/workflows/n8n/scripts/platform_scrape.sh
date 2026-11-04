@@ -130,11 +130,9 @@ process.stdin.on('end', () => {
 });
 " "$DURATION_MS")
 
-# 输出最终 JSON（N8N 读取）
-echo "$FINAL_OUTPUT"
-
 # 若设置了 BRAIN_API_URL，将采集结果 POST 到 Brain analytics 端点
-if [[ -n "$BRAIN_API_URL" ]] && command -v curl >/dev/null 2>&1; then
+WRITE_BACK_EXIT=0
+if [[ -n "$BRAIN_API_URL" ]]; then
     # 构造写回 payload：从输出中提取 items（若有），否则发空 items（触发平台有数据的信号）
     WRITE_BACK_PAYLOAD=$(echo "$FINAL_OUTPUT" | node -e "
 const chunks = [];
@@ -143,26 +141,52 @@ process.stdin.on('end', () => {
     try {
         const d = JSON.parse(chunks.join('').trim());
         const payload = {
-            platform: process.env.PLATFORM,
-            publishTaskId: process.env.PUBLISH_TASK_ID || undefined,
-            pipelineId: process.env.PIPELINE_ID || undefined,
+            platform: process.argv[1],
+            publishTaskId: process.argv[2] || undefined,
+            pipelineId: process.argv[3] || undefined,
             items: Array.isArray(d.items) ? d.items : [],
         };
         if (!payload.publishTaskId) delete payload.publishTaskId;
         if (!payload.pipelineId) delete payload.pipelineId;
         process.stdout.write(JSON.stringify(payload));
     } catch (e) {
-        process.stdout.write(JSON.stringify({ platform: process.env.PLATFORM, items: [] }));
+        process.stdout.write(JSON.stringify({ platform: process.argv[1], items: [] }));
     }
 });
-" 2>/dev/null)
+" "$PLATFORM" "$PUBLISH_TASK_ID" "$PIPELINE_ID" 2>/dev/null)
 
     BRAIN_ENDPOINT="${BRAIN_API_URL}/api/brain/analytics/scrape-result"
-    curl -s -o /dev/null -w "%{http_code}" \
+    # 状态码不是业务stdout；curl退出失败和非2xx均是写回失败。
+    if HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
         -X POST \
         -H "Content-Type: application/json" \
         -d "$WRITE_BACK_PAYLOAD" \
         "$BRAIN_ENDPOINT" \
         --max-time 10 \
-        2>/dev/null || true
+        2>/dev/null); then
+        CURL_EXIT=0
+    else
+        CURL_EXIT=$?
+    fi
+    case "$CURL_EXIT:$HTTP_STATUS" in
+        0:2[0-9][0-9]) ;;
+        *) WRITE_BACK_EXIT=1; echo 'analytics writeback failed' >&2 ;;
+    esac
+    FINAL_OUTPUT=$(printf '%s' "$FINAL_OUTPUT" | node -e "
+const chunks = [];
+process.stdin.on('data', c => chunks.push(c));
+process.stdin.on('end', () => {
+    const output = JSON.parse(chunks.join(''));
+    output.writeback = {
+        ok: process.argv[1] === '0',
+        http_status: /^[0-9]{3}$/.test(process.argv[2]) ? Number(process.argv[2]) : null,
+        curl_exit: Number(process.argv[3]),
+    };
+    process.stdout.write(JSON.stringify(output));
+});
+" "$WRITE_BACK_EXIT" "$HTTP_STATUS" "$CURL_EXIT")
 fi
+
+# 采集结果与写回状态分开记录；N8N只读取这一个JSON。
+echo "$FINAL_OUTPUT"
+exit "$WRITE_BACK_EXIT"

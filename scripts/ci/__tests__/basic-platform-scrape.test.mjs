@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import {mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join, resolve} from 'node:path';
-import {spawnSync} from 'node:child_process';
+import {spawn, spawnSync} from 'node:child_process';
+import {createServer} from 'node:http';
 import {commandsFor} from '../run-basic-check.mjs';
 
 const script = resolve('packages/workflows/n8n/scripts/platform_scrape.sh');
@@ -118,5 +119,55 @@ for (const unit of units) {
       {code:0, stdout:JSON.stringify({...business, writeback:{ok:false, http_status:400}})},
       {code:0, stdout:JSON.stringify({...business, writeback:{}})},
     ]) assert.throws(() => invoke(json));
+  });
+}
+
+for (const responseStatus of [200, 400]) {
+  test(`真实curl到本人临时HTTP ${responseStatus}：平台入参、退出和stdout合同`, async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'platform-scrape-http-'));
+    const bin = join(directory, 'bin');
+    mkdirSync(bin);
+    writeFileSync(join(bin, 'date'), '#!/bin/sh\nprintf "1700000000000\\n"\n', {mode:0o755});
+    writeFileSync(join(directory, 'scraper-douyin-v3.js'),
+      'console.log(JSON.stringify({success:true, count:1, items:[{contentId:"owned-http"}]}));');
+    const requests = [];
+    const server = createServer((req, res) => {
+      let body = '';
+      req.on('data', chunk => { body += chunk; });
+      req.on('end', () => {
+        requests.push({url:req.url, method:req.method, body:JSON.parse(body)});
+        res.writeHead(responseStatus, {'Content-Type':'application/json'});
+        res.end(JSON.stringify({written:responseStatus === 200 ? 1 : 0}));
+      });
+    });
+    try {
+      await new Promise(resolveListen => server.listen(0, '127.0.0.1', resolveListen));
+      const env = {...process.env, PATH:`${bin}:${process.env.PATH}`, SCRAPER_DIR:directory,
+        BRAIN_API_URL:`http://127.0.0.1:${server.address().port}`, NO_PROXY:'127.0.0.1', no_proxy:'127.0.0.1'};
+      delete env.PLATFORM;
+      const child = spawn('bash', [script, 'douyin'], {env, timeout:10000});
+      let stdout = '', stderr = '';
+      child.stdout.on('data', chunk => { stdout += chunk; });
+      child.stderr.on('data', chunk => { stderr += chunk; });
+      const exit = await new Promise((resolveExit, reject) => {
+        child.on('error', reject);
+        child.on('close', (code, signal) => resolveExit({code, signal}));
+      });
+      assert.equal(exit.signal, null, stderr);
+      assert.equal(exit.code, responseStatus === 200 ? 0 : 1);
+      assert.deepEqual(requests.map(r => [r.method, r.url, r.body.platform]),
+        [['POST', '/api/brain/analytics/scrape-result', 'douyin']]);
+      const output = JSON.parse(stdout.trim());
+      assert.equal(output.success, true);
+      assert.deepEqual(output.writeback, {ok:responseStatus === 200, http_status:responseStatus, curl_exit:0});
+      const workflow = JSON.parse(readFileSync(join(media, 'unit-抖音数据爬取.json'), 'utf8'));
+      const consume = new Function('$input', workflow.nodes.find(n => n.type === 'n8n-nodes-base.code').parameters.jsCode);
+      const input = {first:() => ({json:{code:exit.code, stdout}})};
+      if (responseStatus === 200) assert.equal(consume(input)[0].json.success, true);
+      else assert.throws(() => consume(input));
+    } finally {
+      await new Promise(resolveClose => server.close(resolveClose));
+      rmSync(directory, {recursive:true, force:true});
+    }
   });
 }
