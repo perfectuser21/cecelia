@@ -1,12 +1,5 @@
 {
   "version": 1,
   "meaning": "仅记录维护集合中未被真实自动配置接收的文件；配置选中不代表用例未skip或实际通过；root手动配置不计自动覆盖。",
-  "tests": [
-    {
-      "file": "packages/brain/src/routes/__tests__/harness-feature-propagation.test.js",
-      "category": "external_resource",
-      "reason": "真实callback历史合同已替代旧源码断言；尚未注册本轮私有PG完整迁移跑道，合法evaluate历史消费者验证由独立组补齐后晋级。",
-      "manualRoot": false
-    }
-  ]
+  "tests": []
 }

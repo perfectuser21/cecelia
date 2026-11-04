@@ -402,9 +402,9 @@
     {
       "path": "scripts/ci/debt-pg-tests.json",
       "mode": "100644",
-      "git_blob_sha1": "bb051d77cf8b3695cb7773fb08ff08ae503c759c",
-      "sha256": "fb5f6e8536bc49c28c7782f7756490b1262fbe6ae1adb104f268157e794042b9",
-      "byte_length": 5763
+      "git_blob_sha1": "7f4d1e799821873aae17aeb54eb0fce10fb8ed96",
+      "sha256": "559f2d4d80a1880865c6b743e6593b9aec299a3f8d4f1eea9e6439314f9052b9",
+      "byte_length": 5911
     },
     {
       "path": "scripts/ci/run-debt-pg.mjs",
