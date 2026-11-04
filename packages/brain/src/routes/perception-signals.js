@@ -37,7 +37,9 @@ router.get('/', async (_req, res) => {
     const observations = await runPerception(pool);
 
     const signals = SIGNAL_META.map(meta => {
-      const obs = observations.find(o => o.signal === meta.id);
+      // 公共ID兼容既有Dashboard；内部采集器已扩展为任意渠道的Alex联系。
+      const sourceSignal = meta.id === 'hours_since_feishu' ? 'hours_since_alex_contact' : meta.id;
+      const obs = observations.find(o => o.signal === sourceSignal);
       return {
         ...meta,
         value: obs?.value ?? null,
