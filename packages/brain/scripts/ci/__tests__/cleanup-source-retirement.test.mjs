@@ -70,7 +70,8 @@ it('执行真实cleanup工作流删除步骤，文档与声明同一Git提交且
   const workflow = yaml.load(readFileSync(new URL('../../../../../.github/workflows/cleanup-merged-artifacts.yml', import.meta.url), 'utf8'));
   const step = workflow.jobs.cleanup.steps.find(item => item.id === 'cleanup');
   const helper = new URL('../../../../../scripts/ci/implementation-auxiliary-evidence.mjs', import.meta.url).href;
-  const run = step.run.replaceAll("'./scripts/ci/implementation-auxiliary-evidence.mjs'", JSON.stringify(helper));
+  const run = step.run.replace('node scripts/ci/cleanup-merged-artifacts.mjs',
+    'node '+JSON.stringify(new URL('../../../../../scripts/ci/cleanup-merged-artifacts.mjs',import.meta.url).pathname)).replaceAll("'./scripts/ci/implementation-auxiliary-evidence.mjs'", JSON.stringify(helper));
   execFileSync('bash', ['-e', '-c', run], { cwd: f.root, env: { ...process.env, GITHUB_OUTPUT: join(f.root, 'github-output') }, encoding: 'utf8' });
   for (const path of transient) expect(existsSync(join(f.root, path))).toBe(false);
   expect(existsSync(join(f.root, 'docs/persistent.md'))).toBe(true);
