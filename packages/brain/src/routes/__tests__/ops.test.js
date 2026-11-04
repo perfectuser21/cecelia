@@ -95,6 +95,7 @@ describe('ops — deploy REPO_ROOT path', () => {
     const repoRootFallback = new URL('../../../../../..', import.meta.url).pathname;
     const scriptFallback = `${repoRootFallback}/scripts/deploy-local.sh`;
     expect(scriptFallback).toMatch(/scripts\/deploy-local\.sh$/);
+    expect(capturedSpawnArgs).not.toBeNull();
     const scriptWithEnv = `${process.env.REPO_ROOT}/scripts/deploy-local.sh`;
     expect(scriptWithEnv).toBe('/custom/repo/root/scripts/deploy-local.sh');
   });
