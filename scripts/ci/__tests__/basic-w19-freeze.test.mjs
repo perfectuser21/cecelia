@@ -1,6 +1,6 @@
 import test, { before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, writeFileSync, rmSync, symlinkSync, chmodSync, cpSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync, rmSync, symlinkSync, chmodSync, cpSync, mkdirSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -94,4 +94,49 @@ test('冻结基准必须是当前候选真实祖先，不接受无关历史', ()
   const result = check();
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /W19_FROZEN_BASELINE/);
+});
+
+
+// 运行真实源测试，故意从另一个完全owned仓库/索引继承Git定位与hook配置。
+test('真实源fixture隔离继承Git环境，foreign脏文件和索引不变且hook零执行', () => {
+  const owned = mkdtempSync(join(tmpdir(), 'w19-foreign-'));
+  const foreign = join(owned, 'foreign'), hooks = join(owned, 'hooks');
+  const marker = join(owned, 'hook-ran'), sentinel = join(foreign, 'sentinel.txt');
+  const foreignIndex = join(owned, 'foreign.index'), config = join(owned, 'gitconfig');
+  const env = { ...process.env };
+  for (const name of Object.keys(env)) if (name.startsWith('GIT_')) delete env[name];
+  env.GIT_CONFIG_GLOBAL = '/dev/null'; env.GIT_CONFIG_SYSTEM = '/dev/null';
+  delete env.NODE_TEST_CONTEXT;
+  const run = (cwd, args, input) => execFileSync('git', ['-c', 'core.hooksPath=/dev/null', ...args],
+    { cwd, env, encoding: 'utf8', input }).trim();
+  try {
+    mkdirSync(foreign); mkdirSync(hooks);
+    run(foreign, ['init', '-q']);
+    const common = run(root, ['rev-parse', '--path-format=absolute', '--git-common-dir']);
+    writeFileSync(join(foreign, '.git', 'objects', 'info', 'alternates'), join(common, 'objects') + '\n');
+    const blob = run(foreign, ['hash-object', '-w', '--stdin'], 'owned committed sentinel\n');
+    run(foreign, ['update-index', '--add', '--cacheinfo', '100644', blob, 'sentinel.txt']);
+    const tree = run(foreign, ['write-tree']);
+    const commit = run(foreign, ['-c', 'user.name=Owned Fixture', '-c', 'user.email=fixture@example.invalid',
+      'commit-tree', tree, '-p', BASE, '-m', 'test: owned foreign sentinel']);
+    run(foreign, ['update-ref', 'HEAD', commit]);
+    writeFileSync(sentinel, 'owned dirty sentinel must survive\n');
+    cpSync(join(foreign, '.git', 'index'), foreignIndex);
+    const originalIndex = readFileSync(foreignIndex);
+    writeFileSync(config, '[core]\n hooksPath = ' + hooks + '\n');
+    writeFileSync(join(hooks, 'post-checkout'), '#!/bin/sh\nprintf hook > "' + marker + '"\n', { mode: 0o700 });
+    const child = spawnSync(process.execPath, ['--test',
+      '--test-name-pattern=实际冻结字节及|冻结基准必须', fileURLToPath(import.meta.url)], {
+      cwd: root, timeout: 30000, encoding: 'utf8',
+      env: { ...env, GIT_DIR: join(foreign, '.git'), GIT_WORK_TREE: foreign,
+        GIT_INDEX_FILE: foreignIndex, GIT_CONFIG_GLOBAL: config, GIT_CONFIG_SYSTEM: config },
+    });
+    assert.ifError(child.error);
+    assert.deepEqual({ exit: child.status,
+      dirtySentinel: existsSync(sentinel) ? readFileSync(sentinel, 'utf8') : null,
+      indexUnchanged: readFileSync(foreignIndex).equals(originalIndex), hookRan: existsSync(marker),
+      positivePassed: /# pass 2(?:\n|\r)/.test(child.stdout),
+    }, { exit: 0, dirtySentinel: 'owned dirty sentinel must survive\n', indexUnchanged: true,
+      hookRan: false, positivePassed: true });
+  } finally { rmSync(owned, { recursive: true, force: true }); }
 });
