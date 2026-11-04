@@ -6,6 +6,7 @@
  * If disabled_at < threshold → stay disabled.
  */
 
+import pool from '../db.js';
 import { describe, it, expect, vi } from 'vitest';
 
 vi.mock('../../src/db.js', () => ({ default: { query: vi.fn() } }));
@@ -20,6 +21,7 @@ describe('tick-health-monitor: disableTick stores disabled_at', () => {
     // disableTick must store disabled_at with the false value
     expect(src).toContain('disabled_at');
     expect(src).toContain('new Date().toISOString()');
+    expect(pool.query).toHaveBeenCalled();
   });
 
   it('TICK_AUTO_RECOVER_MINUTES constant is defined', async () => {
