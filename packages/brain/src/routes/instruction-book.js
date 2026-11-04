@@ -68,7 +68,7 @@ function parseEntry(filePath, category) {
     'Added in': 'addedIn',
   };
 
-  // 仅兼容仓内三份实际格式；英文键及现有前端结构保持不变。
+  // 仅兼容仓内五份实际格式；英文键及现有前端结构保持不变。
   const chineseSectionMap = {
     '功能概述': 'what', '功能': 'what', '触发机制': 'trigger',
     '各阶段行为': 'howToUse', 'Rerun 行为': 'howToUse',
@@ -76,6 +76,8 @@ function parseEntry(filePath, category) {
     'API 接口': 'howToUse', '核心文件': 'howToUse',
     '用途': 'howToUse', '参数': 'howToUse', '降级行为': 'howToUse',
     '数据表': 'output', '数据源': 'output',
+    '端点': 'howToUse', '响应': 'output', '数据字段': 'output', '关联': 'howToUse',
+    'API 端点': 'howToUse', '数据表结构': 'output', '使用场景': 'howToUse', 'Migration': 'output',
   };
 
   function flushSubSection() {

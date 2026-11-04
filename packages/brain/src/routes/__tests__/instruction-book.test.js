@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
+import { it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 
@@ -7,24 +7,23 @@ vi.mock('dotenv/config',()=>({}));
 vi.mock('dotenv',()=>({default:{config:()=>({parsed:{}})},config:()=>({parsed:{}})}));
 vi.mock('pg',()=>({default:{Pool:class {query=boundary.unboundQuery;},types:{setTypeParser:vi.fn()}}}));
 // Mock ops.js 的所有重依赖，确保测试轻量
-vi.mock('../db.js', () => ({ default: { query: boundary.forbidden } }));
-vi.mock('../actions.js', () => ({ createTask: vi.fn(), updateTask: vi.fn() }));
-vi.mock('../llm-caller.js', () => ({ callLLM: vi.fn(), callLLMStream: vi.fn() }));
-vi.mock('../orchestrator-chat.js', () => ({ handleChat: vi.fn() }));
-vi.mock('../tick.js', () => ({ check48hReport: vi.fn() }));
-vi.mock('../task-weight.js', () => ({ getTaskWeights: vi.fn() }));
-vi.mock('../task-cleanup.js', () => ({
+vi.mock('../../db.js', () => ({ default: { query: boundary.forbidden } }));
+vi.mock('../../llm-caller.js', () => ({ callLLM: boundary.forbidden, callLLMStream: boundary.forbidden }));
+vi.mock('../../orchestrator-chat.js', () => ({ handleChat: vi.fn() }));
+vi.mock('../../tick.js', () => ({ check48hReport: vi.fn() }));
+vi.mock('../../task-weight.js', () => ({ getTaskWeights: vi.fn() }));
+vi.mock('../../task-cleanup.js', () => ({
   getCleanupStats: vi.fn(),
   runTaskCleanup: vi.fn(),
   getCleanupAuditLog: vi.fn(),
 }));
-vi.mock('../dispatch-stats.js', () => ({ getDispatchStats: vi.fn() }));
-vi.mock('../thalamus.js', () => ({
+vi.mock('../../dispatch-stats.js', () => ({ getDispatchStats: vi.fn() }));
+vi.mock('../../thalamus.js', () => ({
   processEvent: vi.fn(),
   EVENT_TYPES: {},
 }));
-vi.mock('../decision-executor.js', () => ({ executeDecision: vi.fn() }));
-vi.mock('../suggestion-triage.js', () => ({
+vi.mock('../../decision-executor.js', () => ({ executeDecision: vi.fn() }));
+vi.mock('../../suggestion-triage.js', () => ({
   createSuggestion: vi.fn(),
   executeTriage: vi.fn(),
   getTopPrioritySuggestions: vi.fn(),
@@ -32,13 +31,13 @@ vi.mock('../suggestion-triage.js', () => ({
   cleanupExpiredSuggestions: vi.fn(),
   getTriageStats: vi.fn(),
 }));
-vi.mock('../decomposition-checker.js', () => ({ runDecompositionChecks: vi.fn() }));
-vi.mock('../pr-callback-handler.js', () => ({
+vi.mock('../../decomposition-checker.js', () => ({ runDecompositionChecks: vi.fn() }));
+vi.mock('../../pr-callback-handler.js', () => ({
   verifyWebhookSignature: vi.fn(),
   extractPrInfo: vi.fn(),
   handlePrMerged: vi.fn(),
 }));
-vi.mock('./shared.js', () => ({
+vi.mock('../shared.js', () => ({
   resolveRelatedFailureMemories: vi.fn(),
   getActiveExecutionPaths: vi.fn(),
   INVENTORY_CONFIG: {},
@@ -46,7 +45,7 @@ vi.mock('./shared.js', () => ({
 const boundary = vi.hoisted(() => ({unboundQuery:vi.fn(()=>{throw Error('unbound database query forbidden');}),owned:null,redirectRoot:null,spawn:vi.fn(), write:vi.fn(), receipt:vi.fn(async()=> 'fixture-receipt'), forbidden:vi.fn(() => {throw Error('external action forbidden');})}));
 vi.mock('child_process', () => ({spawn:boundary.spawn,exec:boundary.forbidden,execSync:boundary.forbidden,execFile:boundary.forbidden,execFileSync:boundary.forbidden}));
 vi.mock('node:child_process', () => ({spawn:boundary.spawn,exec:boundary.forbidden,execSync:boundary.forbidden,execFile:boundary.forbidden,execFileSync:boundary.forbidden}));
-vi.mock('../receipt-collector.js', () => ({recordActionReceipt:boundary.receipt,resolveActionReceipt:boundary.forbidden}));
+vi.mock('../../receipt-collector.js', () => ({recordActionReceipt:boundary.receipt,resolveActionReceipt:boundary.forbidden}));
 vi.mock('fs', async original=>{
  const fs=await original();const {resolve}=await import('node:path');const {fileURLToPath}=await import('node:url');
  const root=resolve(process.cwd(),'../..');
@@ -57,7 +56,7 @@ import {resolve,join} from 'node:path';
 import {tmpdir} from 'node:os';
 let app,server,fs;
 const docs=resolve(process.cwd(),'../../docs/instruction-book');
-beforeAll(async()=>{fs=await vi.importActual('node:fs');boundary.owned=fs.mkdtempSync(join(tmpdir(),'book-http-'));vi.stubGlobal('fetch',boundary.forbidden);const m=await import('../ops.js');app=express().use('/api/brain',m.default);server=await new Promise(resolve=>{const ownedServer=app.listen(0,'127.0.0.1',()=>resolve(ownedServer));});});
+beforeAll(async()=>{fs=await vi.importActual('node:fs');boundary.owned=fs.mkdtempSync(join(tmpdir(),'book-http-'));vi.stubGlobal('fetch',boundary.forbidden);const m=await import('../ops.js');expect(boundary.forbidden).not.toHaveBeenCalled();expect(boundary.unboundQuery).not.toHaveBeenCalled();app=express().use('/api/brain',m.default);server=await new Promise(resolve=>{const ownedServer=app.listen(0,'127.0.0.1',()=>resolve(ownedServer));});});
 beforeEach(()=>{vi.clearAllMocks();boundary.redirectRoot=null;vi.unstubAllEnvs();});
 afterEach(()=>vi.unstubAllEnvs());
 afterAll(async()=>{await new Promise(resolve=>server.close(resolve));fs.rmSync(boundary.owned,{recursive:true,force:true});vi.unstubAllGlobals();});
@@ -77,7 +76,7 @@ it.each([
  ['system-registry','System Registry (`/api/brain/registry`)','GET `/api/brain/registry/exists`','metadata | JSONB','创建新 skill 前','197_system_registry.sql'],
 ])('真实无frontmatter中文文档%s正文进入UI现用sections',async(name,title,...markers)=>{
  // 仅在格式回归中把旧错误根映射到真实文档，独立于路径修复证明原parser缺口。
- boundary.redirectRoot=docs;const r=await get();expect(r.status).toBe(200);const e=r.body.features.find(x=>x.title===title);expect(e,'真实文档必达').toBeDefined();expect.soft(e.id).toBe('feature:'+name);for(const marker of markers)expect(flatten(e)).toContain(marker);expect(boundary.forbidden).not.toHaveBeenCalled();
+ boundary.redirectRoot=docs;const r=await get();expect(r.status).toBe(200);const e=r.body.features.find(x=>x.title===title);expect(e,'真实文档必达').toBeDefined();expect.soft(e.id).toBe('feature:'+name);if(name!=='topics-api')expect(e.sections.what).toBeDefined();for(const marker of markers)expect(flatten(e)).toContain(marker);expect(boundary.forbidden).not.toHaveBeenCalled();
 });
 it('显式合法两空目录是200空，不回落源码其它根',async()=>{vi.stubEnv('INSTRUCTION_BOOK_DOCS_ROOT',book('empty'));const r=await get();expect(r.status).toBe(200);expect(r.body).toEqual({skills:[],features:[]});expect(boundary.forbidden).not.toHaveBeenCalled();});
 it.each(['missing','bad-entry','empty-entry'])('%s不能200空或部分成功',async mode=>{
