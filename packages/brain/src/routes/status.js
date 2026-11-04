@@ -814,7 +814,7 @@ router.get('/briefing', async (req, res) => {
  */
 router.post('/greet', async (req, res) => {
   try {
-    const { generateGreeting, isInCooldown } = await import('./greet.js');
+    const { generateGreeting, isInCooldown } = await import('../greet.js');
 
     // 冷却检查（提前返回，不需要生成）
     if (await isInCooldown()) {
