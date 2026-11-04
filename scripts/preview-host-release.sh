@@ -98,7 +98,7 @@ node "$SCRIPT_DIR/preview-agent/deploy-token.mjs" check >/dev/null 2>&1 \
 # 不能先安装再靠 health 超时回滚，更不能按旧 plist 名称盲目接管。
 if [[ "$APPLY" = 1 ]] && curl -fsS --max-time 5 "${AGENT_URL}/api/brain/health" >/dev/null 2>&1; then
   [[ -f "$PLIST" ]] || die "代理 endpoint 已运行，但没有可恢复 plist；拒绝接管孤儿 owner，先完成独立归属迁移"
-  preview_agent_owner "$LABEL" "$(plist_string "$PLIST" WorkingDirectory)" "$AGENT_URL" >/dev/null \
+  preview_agent_owner "$LABEL" "$(plist_string "$PLIST" WorkingDirectory)" "$AGENT_URL" "$PLIST" >/dev/null \
     || die "代理 endpoint 已运行，但 PID/监听/目录不属于 launchd owner；拒绝接管，先完成独立归属迁移"
 fi
 
@@ -188,7 +188,7 @@ reload_agent() {
   local expected="$1" deadline=$(( $(date +%s) + VERIFY_TIMEOUT ))
   launchd_reload "$LABEL" "$PLIST" || return 1
   while [[ $(date +%s) -lt "$deadline" ]]; do
-    preview_agent_owner "$LABEL" "$expected" "$AGENT_URL" >/dev/null && return 0
+    preview_agent_owner "$LABEL" "$expected" "$AGENT_URL" "$PLIST" >/dev/null && return 0
     sleep "$POLL_INTERVAL"
   done
   log "PID/监听/目录归属验收失败：${expected}"
@@ -244,7 +244,7 @@ done
 [[ "$sample_ok" = 1 ]] || rollback "新快照磁盘样本 ${NEW}/.runtime/host-disk.json 未在 ${SAMPLE_MAX_AGE}s 内刷新（准入会 sample_stale）"
 probe=$(node "$NEW/scripts/preview-agent/deploy-token.mjs" probe "${AGENT_URL}/api/brain/preview/stop/0" 2>&1) \
   || rollback "凭据文件令牌鉴权失败（${probe}）——CI 的 DEPLOY_TOKEN 会 401"
-preview_agent_owner "$LABEL" "$NEW" "$AGENT_URL" >/dev/null || rollback "最终 PID/监听/目录归属失败"
+preview_agent_owner "$LABEL" "$NEW" "$AGENT_URL" "$PLIST" >/dev/null || rollback "最终 PID/监听/目录归属失败"
 if [[ "$COMPONENT" = agent ]]; then verify_cron || rollback "最终旧 cron 字节未保全"; fi
 log "✅ 验活通过：git_sha=${SHA:0:12}，磁盘样本新鲜，鉴权 ${probe}"
 

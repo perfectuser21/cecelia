@@ -67,6 +67,7 @@ setup() {
 	</dict>
 	<key>Label</key>
 	<string>com.cecelia.preview-agent</string>
+	<key>ProgramArguments</key><array><string>$(node -p 'process.execPath')</string><string>${OLD}/scripts/preview-agent.mjs</string></array>
 	<key>WorkingDirectory</key>
 	<string>${OLD}</string>
 </dict>
@@ -140,6 +141,7 @@ SH
 wd=\$(awk '/<key>WorkingDirectory<\/key>/{f=1} f&&/<string>/{gsub(/.*<string>|<\/string>.*/,"");print;exit}' "$PREVIEW_AGENT_PLIST")
 echo "node \$wd/scripts/preview-agent.mjs"
 SH
+  printf '#!/bin/bash\ncat >/dev/null\nexit 0\n' > "$BIN/python3"
   # mock：npm（只建目录、记账）
   cat > "$BIN/npm" <<SH
 #!/bin/bash
@@ -366,6 +368,17 @@ set +e; OUT=$(bash "$RELEASE" --apply --component agent 2>&1); RC=$?; set -e
 [ "$RC" = 0 ] && [ ! -e "$TMP/crontab.txt" ] && pass "官方明确不存在可发布agent且不创建cron" || fail "官方明确不存在可发布agent且不创建cron" "$OUT"
 if grep -E 'crontab-write|crontab-denied' "$TMP/calls.log" >/dev/null 2>&1; then fail "原无cron的agent模式不写cron" "$OUT"; else pass "原无cron的agent模式不写cron"; fi
 teardown
+
+echo "── T17 真实Node入口：目标只作foreign普通参数必须拒绝 ──"
+if OWNER_HELPER="$SRC_SCRIPTS/lib/preview-agent-owner.sh" node --input-type=module <<'JS'
+import{mkdtempSync,mkdirSync,writeFileSync,readFileSync,chmodSync,rmSync,realpathSync}from'node:fs';import{tmpdir}from'node:os';import{join}from'node:path';import{spawn,spawnSync}from'node:child_process';
+const dir=realpathSync(mkdtempSync(join(tmpdir(),'preview-argv-contract-'))),root=join(dir,'release'),bin=join(dir,'bin'),entry=join(root,'scripts/preview-agent.mjs'),foreign=join(dir,'foreign.mjs'),plist=join(dir,'agent.plist');mkdirSync(join(root,'scripts'),{recursive:true});mkdirSync(bin);
+const body=`import http from 'node:http';import fs from 'node:fs';const s=http.createServer((q,r)=>r.end('ok'));s.listen(0,'127.0.0.1',()=>fs.writeFileSync(process.env.OWNER_REPORT,JSON.stringify({pid:process.pid,port:s.address().port})));`;writeFileSync(entry,body);writeFileSync(foreign,body);let child;
+const check=(pid,port)=>{writeFileSync(join(bin,'launchctl'),'#!/bin/sh\necho "pid = '+pid+'"\n');chmodSync(join(bin,'launchctl'),0o755);return spawnSync('bash',['-c','source "$1"; preview_agent_owner fixture "$2" "$3" "$4"','contract',process.env.OWNER_HELPER,root,'http://127.0.0.1:'+port,plist],{encoding:'utf8',env:{...process.env,PATH:bin+':'+process.env.PATH}});};
+try{for(const bad of [false,true]){const report=join(dir,bad?'foreign.json':'valid.json');child=spawn(process.execPath,bad?[foreign,entry]:[entry],{cwd:root,env:{...process.env,OWNER_REPORT:report},stdio:'ignore'});let identity;for(let n=0;n<100;n++){try{identity=JSON.parse(readFileSync(report));break;}catch{}await new Promise(r=>setTimeout(r,20));}if(!identity)throw Error('fixture startup');writeFileSync(plist,'<?xml version="1.0"?><plist version="1.0"><dict><key>Label</key><string>fixture</string><key>WorkingDirectory</key><string>'+root+'</string><key>ProgramArguments</key><array><string>'+process.execPath+'</string><string>'+entry+'</string></array></dict></plist>');const result=check(identity.pid,identity.port);console.log(JSON.stringify({case:bad?'foreign-entry-argument':'unique-node-entry',pid:identity.pid,port:identity.port,helper_rc:result.status,node:process.execPath}));if(bad?result.status===0:result.status!==0)throw Error((bad?'foreign entry accepted':'valid entry rejected')+': '+result.stderr);child.kill('SIGTERM');await new Promise(r=>child.once('exit',r));child=null;}}
+finally{if(child){child.kill('SIGTERM');await new Promise(r=>child.once('exit',r));}rmSync(dir,{recursive:true,force:true});}
+JS
+then pass "真实唯一Node入口通过且foreign尾参数拒绝"; else fail "真实唯一Node入口通过且foreign尾参数拒绝" "kernel argv/executable contract"; fi
 
 echo ""
 echo "preview-host-release.test.sh: PASS=$PASS FAIL=$FAIL"
