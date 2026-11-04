@@ -37,6 +37,7 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { walk, relPath } from './helpers/task-type-registry.guard.lib.js';
 import { scanFile } from './helpers/task-type-registry.lexical.lib.js';
+import { scanGuardFile, EXECUTOR_HANDLER_SITE } from './helpers/task-type-registry.sites.lib.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SRC = join(HERE, '..');
@@ -82,8 +83,9 @@ const REGISTRY = join(SRC, 'lib', 'task-type-registry.js');
 //   这 11 条即为 PR1 终态允许保留的清单（`packages/brain/scripts/audit/registry-vs-base.mjs`
 //   另行对全部已替换站点做"注册表派生值 vs 基线源码原文"机械审计，见该脚本头注释）。
 export const REMAINING_LEGACY_SITES = {
-  // kind: map（long-lived）— Invocation导入只使原站点移至:2229；同一函数路由表，豁免范围不变。
-  'executor.js': ['2229:_TASK_ROUTES'],
+  // kind: map（long-lived）— 仅唯一程序级const handler表按AST结构身份许可，行号仍用于错误定位。
+  // 空白/注释移动不改变身份；第二份表、字符串枚举或非法handler结构仍由守卫拒绝。
+  'executor.js': [EXECUTOR_HANDLER_SITE],
   // kind: map（long-lived）— Task 4 评估：:62 model_map 是 task_type→{provider,model,cascade}
   // 的模型路由调优配置（嵌套对象，非简单字符串），逐 type 独立调参（如 harness_planner 用 opus、
   // harness_generate 用 sonnet），无匹配注册表单一字段，且属运营调参数据非"哪类"分类标签
@@ -135,7 +137,7 @@ describe('task-type-registry 守卫', () => {
     const offenders = [];
     for (const f of files) {
       const rel = relPath(SRC, f);
-      const hits = scanFile(f);
+      const hits = scanGuardFile(f, rel);
       if (!hits.length) continue;
       const allowed = REMAINING_LEGACY_SITES[rel];
       const extra = allowed ? hits.filter((h) => !allowed.includes(h)) : hits;
@@ -156,7 +158,7 @@ describe('task-type-registry 守卫', () => {
     const staleHits = [];
     for (const [rel, allowed] of entries) {
       if (missing.includes(rel)) continue;
-      const hits = scanFile(join(SRC, rel));
+      const hits = scanGuardFile(join(SRC, rel), rel);
       if (hits.length === 0) { staleFiles.push(rel); continue; }
       for (const h of allowed) {
         if (!hits.includes(h)) staleHits.push(`${rel}:${h}`);

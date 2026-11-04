@@ -351,40 +351,12 @@ router.get('/watchdog/trends', async (req, res) => {
   }
 });
 
-// ==================== Session Tracking API ====================
+// ==================== Retired Session Tracking API ====================
 
-/**
- * GET /api/brain/session/stats
- * 返回当前 session 开始时间、已运行分钟数、历史 session 记录（最近 10 条）
- * 用于分析 Anthropic spending cap 周期
- */
-router.get('/session/stats', async (req, res) => {
-  try {
-    const { getSessionInfo } = await import('../executor.js');
-    const current = getSessionInfo();
-
-    // 查询最近 10 条历史 session 记录
-    const historyResult = await pool.query(`
-      SELECT payload, created_at
-      FROM cecelia_events
-      WHERE event_type = 'session_end'
-      ORDER BY created_at DESC
-      LIMIT 10
-    `);
-
-    const history = historyResult.rows.map(row => ({
-      ...row.payload,
-      recorded_at: row.created_at,
-    }));
-
-    res.json({
-      success: true,
-      current,
-      history,
-    });
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to get session stats', details: err.message });
-  }
+// #6202已移除旧Claude会话的最后启动producer，不能把恒空统计当成功。
+// 保留URL明确返回退休；历史session_end事件数据不做任何读写。
+router.get('/session/stats', (_req, res) => {
+  res.status(410).json({ success: false, error: 'session_tracking_retired' });
 });
 
 // ==================== Token Usage API ====================

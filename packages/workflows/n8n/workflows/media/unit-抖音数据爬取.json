@@ -65,7 +65,7 @@
         300
       ],
       "parameters": {
-        "jsCode": "const stdout = $input.first().json.stdout || '';\ntry {\n  const data = JSON.parse(stdout.trim());\n  return [{ json: data }];\n} catch (e) {\n  return [{ json: { success: false, error: e.message } }];\n}"
+        "jsCode": "const ssh = $input.first().json;\nif (ssh.error || ssh.code !== 0) {\n  throw new Error('scraper SSH command failed');\n}\nlet data;\ntry {\n  data = JSON.parse((ssh.stdout || '').trim());\n} catch {\n  throw new Error('scraper output is not a single JSON result');\n}\nif (!data || data.success !== true) {\n  throw new Error('scraper did not report success');\n}\nif (Object.hasOwn(data, 'writeback') && data.writeback?.ok !== true) {\n  throw new Error('analytics writeback failed');\n}\nreturn [{ json: data }];"
       }
     }
   ],

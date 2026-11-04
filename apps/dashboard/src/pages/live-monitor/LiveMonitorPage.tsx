@@ -10,6 +10,7 @@ import { useNavigate } from 'react-router-dom';
 import { AutonomousPRCounter } from '../../components/AutonomousPRCounter';
 import { PRProgressDashboard } from '../../components/PRProgressDashboard';
 import { OpsPanoramaCard } from './OpsPanoramaCard';
+import { normalizeLiveGoals } from './goal-normalization';
 
 // ── Types ────────────────────────────────────────────────────────
 
@@ -1296,21 +1297,7 @@ export default function LiveMonitorPage() {
     if (r[9].status === 'fulfilled') {
       const goals = Array.isArray(r[9].value) ? r[9].value : [];
       setAllGoals(
-        goals
-          .filter((g: any) => ['area_okr', 'global_okr', 'kr', 'area_kr'].includes(g.type))
-          .map((g: any) => {
-            // 优先使用 API 返回的 progress_pct（含手动设置值），退化到 current_value/target_value 计算
-            const progressPct = g.progress_pct != null ? Number(g.progress_pct) : null;
-            const cv = g.current_value != null ? Number(g.current_value) : null;
-            const tv = g.target_value != null ? Number(g.target_value) : null;
-            const progress = progressPct != null
-              ? progressPct
-              : cv != null
-              ? (tv != null && tv > 0 ? Math.round(cv / tv * 100) : Math.round(cv))
-              : (g.progress ?? null);
-            const remapped = g.type === 'area_kr' ? { ...g, type: 'kr' } : g;
-            return { ...remapped, progress };
-          })
+        normalizeLiveGoals(goals)
       );
     }
     if (r[10].status === 'fulfilled' && !r[10].value?.error) setHkVps(r[10].value);

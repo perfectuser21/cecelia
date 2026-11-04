@@ -1,97 +1,60 @@
-/**
- * FT-1: canary-drill-inject-form — 注入形态验证
- * Red 阶段 — 验证 queued 注入形态的 watchdog 过滤 bug，以及修复后 in_progress 形态能命中处置流程
- *
- * FT-1A: queued + 无 initiative_runs 行 → watchdog resumeStalledRelayRuns 不调用 spawnFn（复现旧行为）
- * FT-1B: in_progress + initiative_runs 行（orchestrator_version=v2, phase=running）→ watchdog 调用 spawnFn（修复后 Green）
- */
+import {beforeEach, describe, it, expect, vi} from 'vitest';
+const forbidden = vi.hoisted(() => vi.fn(() => {throw Error('external action forbidden');}));
+vi.mock('../db.js', () => ({default:{query:forbidden}}));
+vi.mock('node:child_process', () => ({execFile:forbidden,execSync:forbidden,execFileSync:forbidden,spawn:forbidden,exec:forbidden}));
+vi.mock('child_process', () => ({execFile:forbidden,execSync:forbidden,execFileSync:forbidden,spawn:forbidden,exec:forbidden}));
+import {resumeStalledRelayRuns} from '../harness-relay-watchdog.js';
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { resumeStalledRelayRuns } from '../harness-relay-watchdog.js';
-
-// Mock docker/gh 最外层命令（不影响纯 JS 逻辑）
-vi.mock('node:child_process', async (importOriginal) => {
-  const actual = await importOriginal();
-  return {
-    ...actual,
-    execSync: vi.fn((cmd) => {
-      if (typeof cmd === 'string' && (cmd.includes('docker') || cmd.includes('gh'))) {
-        return '';
-      }
-      return '';
-    }),
-  };
-});
-
-function makeDbStub({ taskStatus = 'queued', hasInitiativeRun = false } = {}) {
-  return {
-    query: vi.fn(async (sql) => {
-      // initiative_runs 查询
-      if (sql.includes('initiative_runs') && sql.includes('SELECT')) {
-        if (!hasInitiativeRun) return { rows: [] };
-        return {
-          rows: [{
-            initiative_id: 'canary-task-001',
-            orchestrator_version: 'v2',
-            orchestrator_host: 'skill-relay-canary-drill',
-            phase: 'running',
-            attempts: 0,
-            started_at: new Date(Date.now() - 60_000).toISOString(),
-            deadline_at: new Date(Date.now() + 30 * 60_000).toISOString(),
-            pr_url: null,
-          }],
-        };
-      }
-      // tasks 查询
-      if (sql.includes('tasks') && sql.includes('SELECT')) {
-        return {
-          rows: [{
-            id: 'canary-task-001',
-            status: taskStatus,
-            payload: {
-              orchestrator: 'skill-relay',
-              canary: 'true',
-              last_container_exit_code: 137,
-            },
-            result: {},
-            pr_url: null,
-            created_at: new Date().toISOString(),
-          }],
-        };
-      }
-      // UPDATE/INSERT 返回空
-      return { rows: [] };
-    }),
-  };
+beforeEach(() => {vi.clearAllMocks();vi.stubGlobal('fetch',forbidden);});
+function world(status, payload = {}) {
+  const task = {id:'11111111-1111-4111-8111-111111111111',status,payload:{orchestrator:'skill-relay',...payload}};
+  const run = {id:'22222222-2222-4222-8222-222222222222',current_task_id:task.id,
+    initiative_id:'33333333-3333-4333-8333-333333333333',phase:'running',attempts:0,
+    orchestrator_version:'v2',orchestrator_host:'skill-relay-canary-drill',
+    started_at:new Date().toISOString(),deadline_at:new Date(Date.now()+60000).toISOString(),
+    pr_url:'https://github.com/owned/fixture/pull/1'};
+  const query = vi.fn(async (sql, params) => {
+    if (sql.trim().startsWith('WITH candidate_runs')) return {rows:[run]};
+    if (sql.startsWith('SELECT id, status, title, description, payload, pr_url FROM tasks')) {
+      expect(params).toEqual([task.id]);
+      return {rows:[task]};
+    }
+    throw Error('unexpected database operation');
+  });
+  const spawnFn = vi.fn(async () => ({ok:true}));
+  const execFn = vi.fn(command => {
+    if (command.startsWith('docker ps ')) return '';
+    if (command.startsWith('gh pr view ')) return JSON.stringify({state:'CLOSED'});
+    throw Error(`unexpected command ${command}`);
+  });
+  return {task,query,spawnFn,execFn,deps:{dbPool:{query},spawnFn,execFn}};
 }
 
-describe('FT-1: 注入形态验证', () => {
-  it('A: queued + 无 initiative_runs 行 → watchdog resumeStalledRelayRuns 不调用 spawnFn（复现旧行为 Red）', async () => {
-    const spawnFn = vi.fn(async () => ({ ok: true }));
-    const dbPool = makeDbStub({ taskStatus: 'queued', hasInitiativeRun: false });
-    const execFn = vi.fn(() => '');
-
-    await resumeStalledRelayRuns({ dbPool, execFn, spawnFn });
-
-    // queued 任务被 L275 过滤（task.status !== 'in_progress'）→ spawnFn 永不被调用
-    // 这是 Bug-1 复现：watchdog 永远不处置 queued 任务
-    expect(spawnFn).not.toHaveBeenCalled();
+describe('watchdog当前真实run身份下的任务状态分支', () => {
+  it('queued有同一有效run且确实读到task后拒绝重启', async () => {
+    const w = world('queued');
+    const result = await resumeStalledRelayRuns(w.deps);
+    expect(w.query).toHaveBeenCalledTimes(2);
+    expect(result).toMatchObject({scanned:1,resumed:0});
+    expect(w.spawnFn).not.toHaveBeenCalled();
+    expect(w.execFn).not.toHaveBeenCalled();
+    expect(forbidden).not.toHaveBeenCalled();
   });
-
-  it('B: in_progress + initiative_runs 行（orchestrator_version=v2, phase=running）→ watchdog 调用 spawnFn 或触发处置（修复后 Green）', async () => {
-    const spawnFn = vi.fn(async () => ({ ok: true }));
-    const dbPool = makeDbStub({ taskStatus: 'in_progress', hasInitiativeRun: true });
-    // docker ps 返回空字符串（容器不在跑）→ 触发重点火
-    const execFn = vi.fn((cmd) => {
-      if (typeof cmd === 'string' && cmd.includes('docker ps')) return '';
-      if (typeof cmd === 'string' && cmd.includes('gh pr')) return JSON.stringify({ state: 'CLOSED' });
-      return '';
-    });
-
-    await resumeStalledRelayRuns({ dbPool, execFn, spawnFn });
-
-    // 修复后：in_progress + initiative_runs 行 → watchdog 进入处置分支 → spawnFn 被调用
-    // Red 阶段：此断言预期失败，因为当前 registerCanaryTask 不会设置 status=in_progress
-    expect(spawnFn).toHaveBeenCalledTimes(1);
+  it('仅状态改为in_progress会实际到达探活和注入spawn分支', async () => {
+    const w = world('in_progress');
+    const result = await resumeStalledRelayRuns(w.deps);
+    expect(w.query).toHaveBeenCalledTimes(2);
+    expect(w.execFn).toHaveBeenCalledTimes(2);
+    expect(w.spawnFn).toHaveBeenCalledWith(w.task,{pool:w.deps.dbPool});
+    expect(result).toMatchObject({scanned:1,resumed:1});
+    expect(forbidden).not.toHaveBeenCalled();
+  });
+  it('退役kernel-v1运行时即使in_progress也不恢复', async () => {
+    const w = world('in_progress',{harness_runtime:'kernel-v1'});
+    expect(await resumeStalledRelayRuns(w.deps)).toMatchObject({scanned:1,resumed:0});
+    expect(w.query).toHaveBeenCalledTimes(2);
+    expect(w.spawnFn).not.toHaveBeenCalled();
+    expect(w.execFn).not.toHaveBeenCalled();
+    expect(forbidden).not.toHaveBeenCalled();
   });
 });

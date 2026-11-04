@@ -269,12 +269,19 @@ const REVIEWED_IDENTITY_CLOSURE = {
   "scripts/ci/check-skill-source-identity.py": "ebc6b90fbe187b49c31101a5dba997d133fd45825cfcaa3549aad30581d747c1",
   "scripts/ci/__tests__/basic-skill-identity.test.mjs": "f473e5353e93f1e30bfb673d1a2bafd8475685a45a6ca10ab252468e2d747865",
 };
+// 运行时说明书与Dashboard共享UI选路：只追加这一完整精确组合。
+const REVIEWED_RUNTIME_SCOPE_CLOSURE = {
+  ...REVIEWED_IDENTITY_CLOSURE,
+  "scripts/ci/basic-scope.mjs": "2914d8e8672b4b17a1037e1ccaa25c02b13d5e3cc34dcfcdf8da1a603faae042",
+};
 const BASIC_PROTOCOLS = {
+  // Dependabot排队只追加当前完整runtime scope闭包，旧workflow组合保持。
+  '020165ab3d73d487d973c6d98c849958240dc56149d5b6083b8288673a3dd091': REVIEWED_RUNTIME_SCOPE_CLOSURE,
   '5b0f190209eec9c1370b9a96c6aef43b9aa0bc99bdd0f765ccb261c2cfe95080': [REVIEWED_VERSION_CLOSURE, {
     ...REVIEWED_VERSION_CLOSURE,
     // 仅追加本轮两份无消费者旧PG测试退休后的完整配置组合，旧组合保持原样。
     'packages/brain/vitest.config.js': 'fe6de3054f559116886d6d3286542896f510bbb887893ef0727a16df72c39f9e',
-  }, REVIEWED_IDENTITY_CLOSURE],
+  }, REVIEWED_IDENTITY_CLOSURE, REVIEWED_RUNTIME_SCOPE_CLOSURE],
   '04474b3e5c646767cdf49a4d03e32b3a2f4042027594dd87ef4d6975390f6298': REVIEWED,
   '7fee2a6d842c7c2595fa882fa61f75750ec6b2787186fdaf8747e1084a64fcee': [REVIEWED_API, {
     ...REVIEWED_API,

@@ -248,4 +248,15 @@ describe('LiveMonitorPage v19', () => {
     expect(screen.getByTestId('live-monitor-source-errors')).toHaveTextContent('保留 '+sampledAt+' 采样');
   });
 
+  it('真实goals响应经normalize进入UI，area_kr计入活跃KR且其他类型不计', async () => {
+    const goals = [
+      {id:'area',type:'area_okr',title:'Fixture Area',status:'active',parent_id:null},
+      {id:'kr',type:'area_kr',title:'Fixture KR',status:'active',parent_id:'area',current_value:'76'},
+      {id:'other',type:'other',title:'Ignored',status:'active'},
+    ];
+    vi.mocked(fetch).mockImplementation(async input => ({ok:true,json:async()=>String(input)==='/api/brain/goals'?goals:{}}) as Response);
+    await act(async()=>{renderWithRouter();});
+    expect(screen.getByText('1 Area · 1 活跃 KR')).toBeInTheDocument();
+  });
+
 });
