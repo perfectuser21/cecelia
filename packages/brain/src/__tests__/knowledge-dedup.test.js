@@ -79,29 +79,27 @@ describe('Knowledge Dedup', () => {
         .mockResolvedValueOnce({ rows: [{ id: 'dup-1', version: 2 }] }) // hash 查询
         .mockResolvedValueOnce({ rows: [] }); // UPDATE
 
-      const { detectAction, executeAction } = await import('../chat-action-dispatcher.js');
-      // 不测试具体的 action detection，只测试概念
-      expect(detectAction).toBeDefined();
-      expect(executeAction).toBeDefined();
-      expect(mockQuery).toHaveBeenCalled();
+      const { executeAction } = await import('../chat-action-dispatcher.js');
+      const result=await executeAction({type:'CREATE_LEARNING',params:{title:'Owned lesson'}});
+      expect(result).toContain('第 3 版');
+      expect(mockQuery.mock.calls[0][0]).toMatch(/SELECT.*content_hash/);
+      expect(mockQuery.mock.calls[1]).toEqual(['UPDATE learnings SET version = $1 WHERE id = $2',[3,'dup-1']]);
+      expect(mockQuery.mock.calls.some(([sql])=>/INSERT INTO learnings/.test(sql))).toBe(false);
     });
   });
 
-  describe('content_hash consistency', () => {
-    it('same title+content should produce same hash', async () => {
-      const crypto = await import('crypto');
-      const input1 = 'Test Title\nTest Content';
-      const input2 = 'Test Title\nTest Content';
-      const hash1 = crypto.createHash('sha256').update(input1).digest('hex').slice(0, 16);
-      const hash2 = crypto.createHash('sha256').update(input2).digest('hex').slice(0, 16);
-      expect(hash1).toBe(hash2);
-    });
-
-    it('different title+content should produce different hash', async () => {
-      const crypto = await import('crypto');
-      const hash1 = crypto.createHash('sha256').update('Title A\nContent A').digest('hex').slice(0, 16);
-      const hash2 = crypto.createHash('sha256').update('Title B\nContent B').digest('hex').slice(0, 16);
-      expect(hash1).not.toBe(hash2);
+  describe('chat content_hash consistency through real actions',()=>{
+    it('相同内容查询相同hash，不同内容查询不同hash',async()=>{
+      const {executeAction}=await import('../chat-action-dispatcher.js');
+      for(const title of ['Lesson A','Lesson A','Lesson B']) {
+        const result=await executeAction({type:'CREATE_LEARNING',params:{title}});
+        expect(result).toContain('已记录学习');
+      }
+      const hashes=mockQuery.mock.calls.filter(([sql])=>/SELECT.*content_hash/.test(sql)).map(([,params])=>params[0]);
+      expect(hashes).toHaveLength(3);
+      expect(hashes[0]).toBe(hashes[1]);
+      expect(hashes[0]).not.toBe(hashes[2]);
+      expect(hashes[0]).toMatch(/^[0-9a-f]{16}$/);
     });
   });
 });
