@@ -13,37 +13,7 @@ const manifest: FeatureManifest = {
 
   routes: [
     { path: '/website-functions', component: 'WebsiteFunctionsPage' },
-    // Ops Center
-    {
-      path: '/ops/live',
-      component: 'LiveDashboard',
-      navItem: { label: 'Live', icon: 'Activity', group: 'system', order: 1 },
-    },
-    // VPS Monitor
-    {
-      path: '/vps-monitor',
-      component: 'VpsMonitor',
-      navItem: { label: 'VPS', icon: 'Server', group: 'system', order: 2 },
-    },
-    { path: '/ops/system/vps', redirect: '/vps-monitor' },
-    // Claude Monitor
-    {
-      path: '/claude-monitor',
-      component: 'ClaudeMonitor',
-      navItem: { label: 'Claude', icon: 'Bot', group: 'system', order: 3 },
-    },
-    { path: '/claude-stats', component: 'ClaudeStats' },
-    { path: '/ops/claude', redirect: '/claude-monitor' },
-    { path: '/ops/claude/stats', redirect: '/claude-stats' },
-    // DevGate
-    {
-      path: '/devgate',
-      component: 'DevGateMetrics',
-      navItem: { label: 'DevGate', icon: 'GitBranch', group: 'system', order: 5 },
-    },
-    { path: '/ops/devgate', redirect: '/devgate' },
-    // Performance
-    { path: '/performance', component: 'PerformanceMonitoring' },
+    // 旧系统路径统一由system-hub持有并跳转到当前系统页。
     // Langfuse Traces
     {
       path: '/traces',
@@ -67,12 +37,6 @@ const manifest: FeatureManifest = {
 
   components: {
     WebsiteFunctionsPage: () => import('./pages/website-functions/WebsiteFunctionsPage'),
-    LiveDashboard: () => import('./pages/LiveDashboard'),
-    VpsMonitor: () => import('./pages/VpsMonitor'),
-    ClaudeMonitor: () => import('./pages/ClaudeMonitor'),
-    ClaudeStats: () => import('./pages/ClaudeStats'),
-    DevGateMetrics: () => import('./pages/DevGateMetrics'),
-    PerformanceMonitoring: () => import('./pages/PerformanceMonitoring'),
     FeatureMap: () => import('./pages/FeatureMap'),
     TracesPage: () => import('./pages/TracesPage'),
     MachinesPage: () => import('./pages/MachinesPage'),
