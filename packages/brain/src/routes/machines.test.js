@@ -266,13 +266,12 @@ describe('machines routes', () => {
   });
 
   describe('tailscale cache file fallback', () => {
-    it('returns tailscale_online true when IP matches cache file', async () => {
+    it.each([true,false])('cache Online=%s is used without CLI fallback', async online => {
+      cache.raw=JSON.stringify({Peer:{owned:{TailscaleIPs:[MACHINE_ROW.metadata.tailscale_ip+'/32'],Online:online}}});
       mockQuery.mockResolvedValueOnce({ rows: [MACHINE_ROW] });
-      // The mock for child_process execSync returns valid tailscale JSON
       const res = await request(makeApp()).get('/api/brain/machines');
       expect(res.status).toBe(200);
-      // tailscale_online is determined by getTailscaleStatus() which uses cache or execSync
-      expect(res.body[0].tailscale_online).toBe(true);
+      expect(res.body[0].tailscale_online).toBe(online);
       expect(execSync).not.toHaveBeenCalled();
       expect(cache.reads).toHaveLength(1);
     });
