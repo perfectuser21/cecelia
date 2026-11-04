@@ -16,6 +16,7 @@ case "$*" in
  *health*) echo '{"status":"healthy","git_sha":"${sha}","version":"fixture","runtime":{"isolated":true,"background_automation":false}}';;
  *tick/status*) echo '{"enabled":false}';;
  *tasks*) echo '[]';;
+ *machines*) echo '[{"id":"ed3555dc-4777-446c-bdf0-d928d6a08ef1","name":"mac-mini-m4-us","status":"active","metadata":{}}]';;
  *) exit 97;;
 esac
 `,{mode:0o755});
@@ -23,6 +24,7 @@ esac
   expect(result.status,result.stderr).toBe(0);
   const calls=readFileSync(join(dir,'calls'),'utf8');
   expect(calls).toContain('exec cecelia-admission-brain curl -fsS --max-time 15 http://localhost:5222/api/brain/health');
+  expect(calls).toContain('exec cecelia-admission-brain curl -fsS --max-time 15 http://localhost:5222/api/brain/machines');
   expect(calls).toContain('current_database()');expect(calls).not.toContain('host.docker.internal');
  }finally{rmSync(dir,{recursive:true,force:true});}
 });
