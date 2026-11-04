@@ -216,3 +216,53 @@ test('版本门读取固定HEAD对象，拒绝坏base/head且不能被工作区�
     assert.notEqual(result.status, 0, result.stdout + result.stderr);
   }
 });
+
+for (const filename of ['中文.js', 'tab\tfile.js', 'line\nfile.js']) {
+  for (const operation of ['add', 'delete', 'rename-in', 'rename-out', 'outside-only']) {
+    test(`实际Git路径判定：${operation} ${JSON.stringify(filename)}`, t => {
+      const f = versionFixture(t);
+      f.git('reset', '--hard', f.event.pull_request.base.sha);
+      const inside = `packages/brain/src/${filename}`, outside = `fixtures/${filename}`;
+      const put = path => { mkdirSync(dirname(join(f.directory, path)), { recursive: true }); writeFileSync(join(f.directory, path), 'export const changed = true;\n'); };
+      if (operation === 'delete' || operation === 'rename-out') put(inside);
+      if (operation === 'rename-in') put(outside);
+      f.git('add', '.'); f.git('commit', '--allow-empty', '-qm', 'path baseline');
+      const base = f.git('rev-parse', 'HEAD');
+      if (operation === 'add') put(inside);
+      else if (operation === 'outside-only') put(outside);
+      else if (operation === 'delete') f.git('rm', '--', inside);
+      else {
+        const from = operation === 'rename-in' ? outside : inside;
+        const to = operation === 'rename-in' ? inside : outside;
+        mkdirSync(dirname(join(f.directory, to)), { recursive: true });
+        f.git('mv', '--', from, to);
+      }
+      f.git('add', '.'); f.git('commit', '-qm', 'path change');
+      const head = f.git('rev-parse', 'HEAD');
+      const execute = () => spawnSync('bash', ['scripts/ci/check-brain-version-bump.sh'], {
+        cwd: f.directory, env: { ...f.env, BASE_REF: base, HEAD_REF: head }, encoding: 'utf8',
+      });
+      const unchangedVersion = execute();
+      assert.equal(unchangedVersion.status === 0, operation === 'outside-only', unchangedVersion.stdout + unchangedVersion.stderr);
+      if (operation !== 'outside-only') assert.match(unchangedVersion.stdout + unchangedVersion.stderr, /版本未 bump/);
+      writeFileSync(join(f.directory, 'packages/brain/package.json'), '{"version":"1.0.1"}');
+      f.git('add', '.'); f.git('commit', '-qm', 'real version increment');
+      const bumped = spawnSync('bash', ['scripts/ci/check-brain-version-bump.sh'], {
+        cwd: f.directory, env: { ...f.env, BASE_REF: base, HEAD_REF: f.git('rev-parse', 'HEAD') }, encoding: 'utf8',
+      });
+      assert.equal(bumped.status, 0, bumped.stdout + bumped.stderr);
+    });
+  }
+}
+
+test('有效base/head的实际diff执行错误不能当成无源码变更', t => {
+  const f = versionFixture(t, { version: '1.0.1' });
+  const bin = join(f.directory, 'git-error-bin'); mkdirSync(bin);
+  writeFileSync(join(bin, 'git'), '#!/bin/bash\nif [[ "$1" == diff ]]; then echo "fixture diff failure" >&2; exit 128; fi\nexec /usr/bin/git "$@"\n', { mode: 0o755 });
+  const result = spawnSync('bash', ['scripts/ci/check-brain-version-bump.sh'], {
+    cwd: f.directory, env: { ...f.env, PATH: `${bin}:${process.env.PATH}`, BASE_REF: f.event.pull_request.base.sha, HEAD_REF: f.event.pull_request.head.sha }, encoding: 'utf8',
+  });
+  assert.notEqual(result.status, 0, result.stdout + result.stderr);
+  assert.match(result.stderr, /fixture diff failure/);
+  assert.doesNotMatch(result.stdout, /skip/);
+});
