@@ -1,132 +1,71 @@
-/**
- * execution-strategy-session-kr-link.test.js
- *
- * 验证 strategy_session 回调创建 key_results 时正确关联 objective_id。
- * 修复背景：execution.js:1013 原先 INSERT key_results 无 objective_id，导致 KR 孤岛。
- *
- * 测试场景：
- * 1. goal_id 对应有效 objective → KR.objective_id = goal_id
- * 2. goal_id 不对应任何 objective → KR.objective_id = null
- * 3. goal_id = null → KR.objective_id = null
- */
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { randomUUID } from 'node:crypto';
+import { startCallbackFixture, stopCallbackFixture, sourceTask, callback, readTask } from './helpers/callback-closure-pg.js';
 
-import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
-import pg from 'pg';
-import { DB_DEFAULTS } from '../db-config.js';
-
-const { Pool } = pg;
-const pool = new Pool(DB_DEFAULTS);
-
-let createdObjectiveIds = [];
-let createdGoalIds = [];
-let createdTaskIds = [];
-let createdKrIds = [];
-
-beforeAll(async () => {
-  const r = await pool.query('SELECT 1');
-  expect(r.rows[0]['?column?']).toBe(1);
-});
-
-afterAll(async () => {
-  await pool.end();
-});
-
-afterEach(async () => {
-  // Clean up in dependency order
-  for (const id of createdKrIds) {
-    await pool.query('DELETE FROM key_results WHERE id = $1', [id]).catch(() => {});
-  }
-  for (const id of createdTaskIds) {
-    await pool.query('DELETE FROM tasks WHERE id = $1', [id]).catch(() => {});
-  }
-  for (const id of createdGoalIds) {
-    await pool.query('DELETE FROM goals WHERE id = $1', [id]).catch(() => {});
-  }
-  for (const id of createdObjectiveIds) {
-    await pool.query('DELETE FROM objectives WHERE id = $1', [id]).catch(() => {});
-  }
-  createdKrIds = [];
-  createdTaskIds = [];
-  createdGoalIds = [];
-  createdObjectiveIds = [];
-});
-
-/**
- * 模拟 execution.js strategy_session 回调中的 KR 创建逻辑。
- * 与 packages/brain/src/routes/execution.js 中实现一致。
- */
-async function createStrategySessionKR({ taskGoalId, krTitle = 'Test KR', ownerRole = null }) {
-  // 1. 查找关联 objective（migration 181：goals(area_okr).id = objectives.id）
-  let krObjectiveId = null;
-  if (taskGoalId) {
-    const objCheck = await pool.query('SELECT id FROM objectives WHERE id = $1', [taskGoalId]);
-    if (objCheck.rows.length > 0) {
-      krObjectiveId = taskGoalId;
-    }
-  }
-
-  // 2. INSERT key_results（与 execution.js 实现一致）
-  const result = await pool.query(
-    `INSERT INTO key_results (title, status, owner_role, objective_id, metadata)
-     VALUES ($1, 'pending', $2, $3, $4) RETURNING id, objective_id`,
-    [krTitle, ownerRole, krObjectiveId, JSON.stringify({ priority: 'P1' })]
-  );
-  return result.rows[0];
+let pool;
+beforeAll(async () => { pool = await startCallbackFixture(); });
+afterAll(stopCallbackFixture);
+const output = (title) => JSON.stringify({ meeting_summary: '季度资源决议', krs: [
+  { title, owner_role: 'CTO', priority: 'P0', domain: 'engineering' },
+  { title: `${title}-default`, priority: 'invalid' },
+] });
+async function readKrs(title) {
+  return (await pool.query('SELECT title, objective_id, status, owner_role, metadata FROM key_results WHERE title=$1 OR title=$2 ORDER BY title', [title, `${title}-default`])).rows;
 }
-
-describe('strategy_session KR → objective_id 关联', () => {
-  it('场景1: goal_id 对应有效 objective → KR.objective_id = goal_id', async () => {
-    // 创建一个 objective
-    const objResult = await pool.query(
-      `INSERT INTO objectives (title, status) VALUES ('Test Objective', 'active') RETURNING id`
-    );
-    const objectiveId = objResult.rows[0].id;
-    createdObjectiveIds.push(objectiveId);
-
-    // 创建 KR，使用该 objective 的 id 作为 goal_id
-    const kr = await createStrategySessionKR({
-      taskGoalId: objectiveId,
-      krTitle: 'KR with valid objective',
+describe('真实 strategy_session HTTP callback → PostgreSQL KR', () => {
+  for (const goalKind of ['objective', 'unknown', 'null']) {
+    it(`${goalKind} goal_id：真实任务终态、KR关联、默认值和重放幂等`, async () => {
+      let goalId = goalKind === 'unknown' ? randomUUID() : null;
+      if (goalKind === 'objective') goalId = (await pool.query("INSERT INTO objectives(title,status) VALUES($1,'active') RETURNING id", [`callback-objective-${randomUUID()}`])).rows[0].id;
+      const task = await sourceTask('strategy_session', { goalId });
+      const title = `callback-kr-${randomUUID()}`;
+      const response = await callback(task, { output: `会议记录\n${output(title)}\n结束` });
+      expect(response.status, JSON.stringify(response.body)).toBe(200);
+      expect(response.body.new_status).toBe('completed');
+      const stored = await readTask(task.id);
+      expect(stored.status).toBe('completed');
+      expect(stored.completed_at).toBeInstanceOf(Date);
+      expect(stored.claimed_by).toBeNull();
+      expect(stored.payload.meeting_summary).toBe('季度资源决议');
+      expect(await readKrs(title)).toEqual([
+        { title, objective_id: goalKind === 'objective' ? goalId : null, status: 'pending', owner_role: 'cto', metadata: { priority: 'P0', domain: 'engineering' } },
+        { title: `${title}-default`, objective_id: goalKind === 'objective' ? goalId : null, status: 'pending', owner_role: null, metadata: { priority: 'P1', domain: null } },
+      ]);
+      const repeat = await callback(task, output(title));
+      expect(repeat.status).toBe(200); expect(repeat.body.duplicate).toBe(true);
+      expect(await readKrs(title)).toHaveLength(2);
+      const queue = await pool.query('SELECT processed_at FROM callback_queue WHERE task_id=$1', [task.id]);
+      expect(queue.rowCount).toBe(2); expect(queue.rows.every(r => r.processed_at)).toBe(true);
     });
-    createdKrIds.push(kr.id);
-
-    expect(kr.objective_id).toBe(objectiveId);
-  });
-
-  it('场景2: goal_id 不对应任何 objective → KR.objective_id = null', async () => {
-    const fakeGoalId = '00000000-0000-0000-0000-000000000099';
-
-    const kr = await createStrategySessionKR({
-      taskGoalId: fakeGoalId,
-      krTitle: 'KR with invalid goal_id',
+  }
+  for (const invalid of ['invalid JSON {"krs":[}', '{"krs":[]}', '会议未产生决议']) {
+    it(`非法/空输出不写KR并保留诊断：${invalid}`, async () => {
+      const task = await sourceTask('strategy_session');
+      const before = (await pool.query('SELECT count(*)::int AS n FROM key_results')).rows[0].n;
+      const response = await callback(task, invalid);
+      expect(response.status).toBe(200);
+      const stored = await readTask(task.id);
+      expect(stored.status).toBe('completed');
+      expect(stored.payload.strategy_raw_output).toBe(invalid);
+      expect((await pool.query('SELECT count(*)::int AS n FROM key_results')).rows[0].n).toBe(before);
     });
-    createdKrIds.push(kr.id);
-
-    expect(kr.objective_id).toBeNull();
+  }
+  it('不存在task_id不能把KR写给邻居任务', async () => {
+    const neighbor = await sourceTask('strategy_session');
+    const snapshot = await readTask(neighbor.id), title = `callback-absent-${randomUUID()}`;
+    const missing = { id: randomUUID(), runId: randomUUID() };
+    const response = await callback(missing, output(title));
+    expect(response.status, JSON.stringify(response.body)).toBe(503);
+    expect(response.body.error).toBe('callback_queue unavailable, retry later');
+    expect((await pool.query('SELECT id FROM callback_queue WHERE task_id=$1', [missing.id])).rows).toEqual([]);
+    expect(await readTask(neighbor.id)).toEqual(snapshot);
+    expect(await readKrs(title)).toEqual([]);
   });
-
-  it('场景3: goal_id = null → KR.objective_id = null', async () => {
-    const kr = await createStrategySessionKR({
-      taskGoalId: null,
-      krTitle: 'KR without goal_id',
-    });
-    createdKrIds.push(kr.id);
-
-    expect(kr.objective_id).toBeNull();
-  });
-
-  it('objective_id 外键约束：有效 objective 时 INSERT 成功，DB 中可查到 objective_id', async () => {
-    const objResult = await pool.query(
-      `INSERT INTO objectives (title, status) VALUES ('FK Test Objective', 'active') RETURNING id`
-    );
-    const objectiveId = objResult.rows[0].id;
-    createdObjectiveIds.push(objectiveId);
-
-    const kr = await createStrategySessionKR({ taskGoalId: objectiveId, krTitle: 'FK test KR' });
-    createdKrIds.push(kr.id);
-
-    // 从 DB 直接验证 objective_id 已写入
-    const dbCheck = await pool.query('SELECT objective_id FROM key_results WHERE id = $1', [kr.id]);
-    expect(dbCheck.rows[0].objective_id).toBe(objectiveId);
+  it('旧run_id不能完成现役任务或写KR', async () => {
+    const task = await sourceTask('strategy_session'), title = `callback-stale-${randomUUID()}`;
+    const before = await readTask(task.id);
+    const response = await callback(task, output(title), { run_id: randomUUID() });
+    expect(response.status).toBe(200); expect(response.body.reason).toBe('callback_compare_and_set_rejected');
+    expect(await readTask(task.id)).toEqual(before); expect(await readKrs(title)).toEqual([]);
   });
 });
