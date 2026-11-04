@@ -10,7 +10,7 @@ import { bearerAuth } from './src/auth.js';
 import { createRateLimiter } from './src/rate-limit.js';
 import { createReadonlyPool, query } from './src/db.js';
 import { getSchemaVersion, getDeploymentStatus, readBrainHealth } from './src/tools/schema-and-deployment.js';
-import { getMapSummary } from './src/tools/map-summary.js';
+import { getMapSummary, getActiveMapIdentity } from './src/tools/map-summary.js';
 import { getMapNodes, getMapEdges, NODE_TYPES, EDGE_TYPES } from './src/tools/map-nodes-edges.js';
 import { getServiceLogs, SERVICE_LOG_WHITELIST } from './src/tools/service-logs.js';
 import { assertReadonly } from './src/self-check.js';
@@ -61,34 +61,11 @@ export function makeTrackedQuery(rawQuery, tracker) {
 // 查不到时返回 null（不是 undefined）——但注意这个 null 只代表"系统当前没有
 // active run"这一件事，不代表调用方想跨全部历史查询，两者不能混为一谈，见
 // withActiveRun() 的处理。
-async function getActiveRunId(pool, queryFn) {
-  const result = await queryFn(
-    pool,
-    `SELECT id FROM map_projection_runs WHERE status = 'active' ORDER BY activated_at DESC LIMIT 1`,
-    []
-  );
-  return result.rows[0]?.id ?? null;
-}
-
-// map-nodes-edges.js 里 activeRunId 的语义是三态的：undefined=拒绝（调用方没想清楚）、
-// null=调用方有意跨全部历史查询、具体 id=限定某次 run。但 get_map_nodes/get_map_edges
-// 的 inputSchema 根本没有暴露参数让 Notion AI 表达"我要查全部历史"这个意图——所以
-// 唯一会走到 getActiveRunId() 返回 null 的场景，就是"系统当前没有 active projection
-// run"这个退化态，不是有意选择。如果这里直接把 null 转发给 getMapNodes/getMapEdges，
-// 会安静触发它们的"跨全部历史查询"分支，把历史上所有（含已废弃 run 的）节点/边当
-// 正常结果返回给 Notion AI，且没有任何标记说明"这不是当前状态快照"——跟
-// get_map_summary 遇到同样情况时显式返回 projection_status:'none' 的做法不一致。
-// 所以在这一层就把"没有 active run"和"调用方明确要查全部历史"分开处理：前者直接
-// 短路返回空结果 + no_active_run 标记，不真的去查历史数据；后置的 computeFn 参数
-// 只在确实存在 active run 时才会被调用，因此永远不会把 null 传给 getMapNodes/
-// getMapEdges——它们的 undefined fail-closed 分支目前也不会被这里触发到。
-async function withActiveRun(pool, queryFn, computeFn) {
-  const activeRunId = await getActiveRunId(pool, queryFn);
-  if (activeRunId === null) {
-    return { rows: [], no_active_run: true };
-  }
-  const result = await computeFn(activeRunId);
-  return { rows: result.rows };
+async function withActiveRun(pool, queryFn, scope, computeFn) {
+  const identity = await getActiveMapIdentity(pool, queryFn, { scope });
+  if (!identity.active_run_id) return { ...identity, rows: [], no_active_run: true };
+  const result = await computeFn(identity.active_run_id);
+  return { ...identity, rows: result.rows };
 }
 
 // 真实 get_service_logs readLogFn：跑 `docker logs <container> --tail <N> 2>&1`。
@@ -139,11 +116,11 @@ function buildMcpServer({ pool, startedAt, queryFn, brainHealth, gitExec }) {
   server.registerTool(
     'get_map_summary',
     {
-      description: '返回 active manifest、projection 状态和四类对象数量',
-      inputSchema: {},
+      description: '读取指定scope的当前manifest及匹配run的节点数量',
+      inputSchema: { scope: z.string().min(1) },
     },
-    async () => ({
-      content: [{ type: 'text', text: JSON.stringify(await getMapSummary(pool, queryFn)) }],
+    async ({ scope }) => ({
+      content: [{ type: 'text', text: JSON.stringify(await getMapSummary(pool, queryFn, { scope })) }],
     })
   );
 
@@ -151,10 +128,10 @@ function buildMcpServer({ pool, startedAt, queryFn, brainHealth, gitExec }) {
     'get_map_nodes',
     {
       description: `按 node_type 查询 map_projection_nodes（仅当前 active run），node_type 合法值：${NODE_TYPES.join('/')}`,
-      inputSchema: { node_type: z.string(), limit: z.number().optional() },
+      inputSchema: { scope: z.string().min(1), node_type: z.string(), limit: z.number().optional() },
     },
-    async ({ node_type, limit }) => {
-      const payload = await withActiveRun(pool, queryFn, (activeRunId) =>
+    async ({ scope, node_type, limit }) => {
+      const payload = await withActiveRun(pool, queryFn, scope, (activeRunId) =>
         getMapNodes(pool, queryFn, { node_type, limit }, NODE_TYPES, activeRunId)
       );
       return { content: [{ type: 'text', text: JSON.stringify(payload) }] };
@@ -165,10 +142,10 @@ function buildMcpServer({ pool, startedAt, queryFn, brainHealth, gitExec }) {
     'get_map_edges',
     {
       description: `按 edge_type 查询 map_projection_edges（仅当前 active run），edge_type 合法值：${EDGE_TYPES.join('/')}`,
-      inputSchema: { edge_type: z.string(), limit: z.number().optional() },
+      inputSchema: { scope: z.string().min(1), edge_type: z.string(), limit: z.number().optional() },
     },
-    async ({ edge_type, limit }) => {
-      const payload = await withActiveRun(pool, queryFn, (activeRunId) =>
+    async ({ scope, edge_type, limit }) => {
+      const payload = await withActiveRun(pool, queryFn, scope, (activeRunId) =>
         getMapEdges(pool, queryFn, { edge_type, limit }, EDGE_TYPES, activeRunId)
       );
       return { content: [{ type: 'text', text: JSON.stringify(payload) }] };
