@@ -50,7 +50,7 @@ for (const [path, getter, other, value, error] of [
     const response = await request(app).get('/api/brain' + path);
     expect(response.status).toBe(200);
     expect(response.body).toEqual({success: true, ...value});
-    expect(getter).toHaveBeenCalledExactlyOnceWith();
+    expect(getter).toHaveBeenCalledTimes(1); expect(getter).toHaveBeenCalledWith();
     expect(other).not.toHaveBeenCalled();
   });
   it('getter故障诚实500，不假成功或调用监控恢复', async () => {
@@ -58,7 +58,7 @@ for (const [path, getter, other, value, error] of [
     const response = await request(app).get('/api/brain' + path);
     expect(response.status).toBe(500);
     expect(response.body).toEqual({error, details: 'owned-read-failure'});
-    expect(getter).toHaveBeenCalledExactlyOnceWith();
+    expect(getter).toHaveBeenCalledTimes(1); expect(getter).toHaveBeenCalledWith();
     expect(other).not.toHaveBeenCalled();
   });
 });

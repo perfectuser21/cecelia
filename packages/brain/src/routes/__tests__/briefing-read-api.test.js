@@ -35,13 +35,13 @@ describe('现役CeceliaPage简报真实注册HTTP入口', () => {
   it.each([['', undefined], ['?since=2026-11-04T00%3A00%3A00Z', '2026-11-04T00:00:00Z']])('规范getter收到原参数并返回原简报封套%s', async (suffix, since) => {
     const response = await request(app).get('/api/brain/briefing' + suffix);
     expect(response.status).toBe(200);expect(response.body).toEqual(value);
-    expect(boundary.briefing).toHaveBeenCalledExactlyOnceWith({since});
+    expect(boundary.briefing).toHaveBeenCalledTimes(1); expect(boundary.briefing).toHaveBeenCalledWith({since});
   });
   it('getter失败仍诚实500，不能吞错/返回默认成功简报', async () => {
     boundary.briefing.mockRejectedValueOnce(Error('owned-briefing-failure'));
     const response = await request(app).get('/api/brain/briefing');
     expect(response.status).toBe(500);expect(response.body).toEqual({error: 'owned-briefing-failure'});
-    expect(boundary.briefing).toHaveBeenCalledExactlyOnceWith({since: undefined});
+    expect(boundary.briefing).toHaveBeenCalledTimes(1); expect(boundary.briefing).toHaveBeenCalledWith({since: undefined});
   });
 });
 
@@ -50,7 +50,7 @@ describe('现役CeceliaPage主动问候入口的模块身份', () => {
     expectedQueries = 1; boundary.query.mockResolvedValue({rows: []}); boundary.cooldown.mockResolvedValue(true);
     const response = await request(app).post('/api/brain/greet');
     expect(response.status).toBe(200); expect(response.body.status).toBe('cooldown');
-    expect(boundary.cooldown).toHaveBeenCalledExactlyOnceWith();
+    expect(boundary.cooldown).toHaveBeenCalledTimes(1); expect(boundary.cooldown).toHaveBeenCalledWith();
     expect(boundary.query.mock.calls[0][0]).toContain("'user_last_seen'");
     expect(boundary.generate).not.toHaveBeenCalled(); expect(boundary.broadcast).not.toHaveBeenCalled();
   });
@@ -58,7 +58,7 @@ describe('现役CeceliaPage主动问候入口的模块身份', () => {
     const response = await request(app).post('/api/brain/greet');
     expect(response.status).toBe(200); expect(response.body).toEqual({status: 'generating'});
     await vi.waitFor(() => expect(boundary.broadcast).toHaveBeenCalledTimes(1));
-    expect(boundary.generate).toHaveBeenCalledExactlyOnceWith();
+    expect(boundary.generate).toHaveBeenCalledTimes(1); expect(boundary.generate).toHaveBeenCalledWith();
     expect(boundary.broadcast).toHaveBeenCalledWith('owned-event', expect.objectContaining({
       type: 'inform', urgency: 3, content: 'owned-greeting', message: 'owned-greeting', source: 'greet',
     }));
@@ -73,6 +73,6 @@ describe('现役CeceliaPage主动问候入口的模块身份', () => {
     boundary.generate.mockResolvedValueOnce(null);
     const response = await request(app).post('/api/brain/greet');
     expect(response.status).toBe(200); expect(response.body).toEqual({status: 'generating'});
-    expect(boundary.generate).toHaveBeenCalledExactlyOnceWith(); expect(boundary.broadcast).not.toHaveBeenCalled();
+    expect(boundary.generate).toHaveBeenCalledTimes(1); expect(boundary.generate).toHaveBeenCalledWith(); expect(boundary.broadcast).not.toHaveBeenCalled();
   });
 });
