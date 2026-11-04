@@ -4,12 +4,24 @@
  * DoD 覆盖: D1-D10
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Mock 统一 LLM 调用层 — 所有 desire 子模块现在通过 callLLM 调用
 vi.mock('../llm-caller.js', () => ({
   callLLM: vi.fn().mockResolvedValue({ text: '5', model: 'test', provider: 'test', elapsed_ms: 10 }),
 }));
+
+// Fail before any real network or shared database boundary can escape this suite.
+const outbound = vi.hoisted(() => ({
+  fetch: vi.fn(() => { throw new Error('owned fixture forbids network'); }),
+  receipt: vi.fn(() => { throw new Error('owned fixture forbids receipts'); }),
+  query: vi.fn(() => { throw new Error('owned fixture forbids shared DB'); }),
+}));
+vi.mock('../receipt-collector.js', () => ({
+  recordActionReceipt: outbound.receipt,
+  resolveActionReceipt: outbound.receipt,
+}));
+vi.mock('../db.js', () => ({ default: { query: outbound.query } }));
 
 // ============================================================
 // D2: 感知层测试
@@ -486,6 +498,18 @@ describe('Layer 5: 表达决策层（Expression Decision）', () => {
 describe('Layer 6: 表达层（Expression）', () => {
   beforeEach(() => {
     vi.resetModules();
+    vi.clearAllMocks();
+    vi.stubEnv('FEISHU_BOT_WEBHOOK', 'https://owned-notification.invalid/webhook');
+    vi.stubEnv('BRAIN_MUTED', 'false');
+    vi.stubGlobal('fetch', outbound.fetch);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+    expect(outbound.fetch).not.toHaveBeenCalled();
+    expect(outbound.receipt).not.toHaveBeenCalled();
+    expect(outbound.query).not.toHaveBeenCalled();
   });
 
   it('D7: runExpression 更新 last_expression_at 和 desire 状态', async () => {
