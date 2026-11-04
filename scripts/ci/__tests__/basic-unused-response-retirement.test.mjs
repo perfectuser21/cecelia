@@ -8,6 +8,8 @@ import {fileURLToPath} from 'node:url';
 import {collectVerificationRetirementCandidates,verifyVerificationRetirementCandidates} from '../implementation-verification-retirements.mjs';
 const root=fileURLToPath(new URL('../../../',import.meta.url));
 const BASE='ce20b5a29123c9ade1a0bc4aa2753e3ea3fe310d';
+// 已合并退休候选的固定事实；后续现役代码变更不重写历史候选。
+const CANDIDATE='53714060cd53adb9b1247c05bde23e7667cd8fb4';
 const names=['observer-response-retired-v1.json','systemic-unused-export-v1.json'];
 const catalogs=names.map(name=>JSON.parse(readFileSync(join(root,'config/verification-retirements',name))));
 const retired=catalogs.flatMap(c=>c.records.map(r=>r.path));
@@ -25,7 +27,7 @@ function fixture(fn){
   git(source,'sparse-checkout','init','--no-cone');git(source,'sparse-checkout','set',...[...inputs,...absent].map(p=>'/'+p));
   git(source,'checkout','-q',BASE);git(source,'remote','set-url','origin','https://github.com/perfectuser21/cecelia.git');
   for(const path of absent)rmSync(join(source,path),{force:true});
-  for(const path of inputs){mkdirSync(dirname(join(source,path)),{recursive:true});writeFileSync(join(source,path),readFileSync(join(root,path)));}
+  for(const path of inputs){mkdirSync(dirname(join(source,path)),{recursive:true});writeFileSync(join(source,path),execFileSync('git',['-C',root,'show',CANDIDATE+':'+path]));}
   commit(source);mkdirSync(control);git(control,'init','-q');git(control,'remote','add','origin','https://github.com/perfectuser21/cecelia.git');
   cpSync(join(root,'config/verification-retirements'),join(control,'config/verification-retirements'),{recursive:true});commit(control);
   const options=(base=BASE)=>({purpose:'admission_only',toolingRoot:control,toolingRevision:git(control,'rev-parse','HEAD'),
