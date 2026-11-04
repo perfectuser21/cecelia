@@ -8,6 +8,7 @@ import config from '../../../packages/brain/vitest.config.js';
 const require = createRequire(import.meta.url), glob = require('fast-glob');
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 const restored = [
+  "packages/brain/src/__tests__/planner-domain-routing.test.js",
   "packages/brain/src/__tests__/resolve-repo-path.test.js",
   "packages/brain/src/__tests__/task-generator-scheduler.test.js",
   "packages/brain/src/__tests__/daily-review-scheduler.test.js",

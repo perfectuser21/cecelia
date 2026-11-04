@@ -85,3 +85,10 @@ test('manifest只接收实际普通文件，软链/同名目录/缺失文件必�
   symlinkSync(outside, target);
   assert.throws(() => readManifest(directory), /regular file/);
 });
+
+test('已验证Planner及systemic兼容保护必须由私有PG完整schema真实跑道接收', () => {
+  const rows = readManifest().tests;
+  for (const path of ['packages/brain/src/__tests__/planner.test.js','packages/brain/src/__tests__/quarantine-systemic.test.js']) {
+    assert.deepEqual(rows.find(row => row.path === path), {path, mode:'full', status:'ready'});
+  }
+});
