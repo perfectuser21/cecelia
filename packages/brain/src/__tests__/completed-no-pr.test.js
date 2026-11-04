@@ -1,172 +1,42 @@
-/**
- * Completed No PR 测试
- * DoD: D5
- */
-
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-
-describe('D5: Dev task completed without PR → completed_no_pr', () => {
-  let pool;
-  let mockPool;
-
-  beforeEach(() => {
-    // 创建 mock pool 和 client
-    mockPool = {
-      query: vi.fn(),
-      connect: vi.fn(),
-    };
-
-    const mockClient = {
-      query: vi.fn().mockResolvedValue({ rows: [] }),
-      release: vi.fn(),
-    };
-
-    mockPool.connect.mockResolvedValue(mockClient);
-  });
-
-  it('dev task completed without PR → status becomes completed_no_pr', () => {
-    // 模拟 execution-callback 逻辑（不需要真正调用 route）
-    const status = 'AI Done';
-    const pr_url = null;
-    const taskType = 'dev';
-    const isDecomposition = undefined;
-
-    let newStatus = status === 'AI Done' ? 'completed' : 'failed';
-
-    // P1-1 逻辑
-    if (newStatus === 'completed' && !pr_url) {
-      if (taskType === 'dev' && !isDecomposition) {
-        newStatus = 'completed_no_pr';
-      }
+import {describe,it,expect,vi,beforeEach} from 'vitest';
+import {callbackFixture,pool} from './helpers/http-callback-fixture.js';
+const PR='https://github.com/perfectuser21/cecelia/pull/1';
+beforeEach(()=>vi.clearAllMocks());
+describe('真实HTTP callback的无PR判定和有界重排',()=>{
+  it.each([
+    ['dev',{},null,'completed_no_pr',true],
+    ['dev',{},PR,'completed',false],
+    ['research',{},null,'completed',false],
+    ['dev',{decomposition:'true'},null,'completed',false],
+    ['dev',{harness_mode:true},null,'completed',false],
+  ])('%s payload=%j pr=%s → %s',async(task_type,payload,pr_url,status,reschedule)=>{
+    const f=await callbackFixture({task_type,payload});
+    const response=await f.invoke({pr_url});
+    expect(response.status).toBe(200);
+    expect(response.body.success).toBe(true);
+    const updates=f.client.query.mock.calls.filter(([sql])=>sql.includes('UPDATE tasks'));
+    expect(updates).toHaveLength(1);
+    expect(updates[0][1][1]).toBe(status);
+    const queued=pool.query.mock.calls.filter(([sql])=>sql.includes("SET status = 'queued'"));
+    expect(queued).toHaveLength(reschedule?1:0);
+    if(reschedule){
+      expect(queued[0][0]).toContain('retry_count = retry_count + 1');
+      expect(queued[0][0]).toContain('completed_at = NULL');
+      expect(queued[0][1][0]).toBe(f.task.id);
+      expect(new Date(queued[0][1][1]).getTime()-Date.now()).toBeGreaterThan(290000);
+      expect(new Date(queued[0][1][1]).getTime()-Date.now()).toBeLessThanOrEqual(300000);
     }
-
-    expect(newStatus).toBe('completed_no_pr');
   });
-
-  it('dev task completed with PR → status stays completed', () => {
-    const status = 'AI Done';
-    const pr_url = 'https://github.com/org/repo/pull/123';
-    const taskType = 'dev';
-    const isDecomposition = undefined;
-
-    let newStatus = status === 'AI Done' ? 'completed' : 'failed';
-
-    if (newStatus === 'completed' && !pr_url) {
-      if (taskType === 'dev' && !isDecomposition) {
-        newStatus = 'completed_no_pr';
-      }
-    }
-
-    expect(newStatus).toBe('completed');
+  it.each([2,3,4])('retry_count=%i在真实callback以3为界',async(retry_count)=>{
+    const f=await callbackFixture({task_type:'dev',retry_count});
+    expect((await f.invoke({})).status).toBe(200);
+    expect(pool.query.mock.calls.some(([sql])=>sql.includes('SELECT retry_count'))).toBe(true);
+    expect(pool.query.mock.calls.filter(([sql])=>sql.includes("SET status = 'queued'"))).toHaveLength(retry_count<3?1:0);
   });
-
-  it('exploratory task completed without PR → status stays completed (allowed)', () => {
-    const status = 'AI Done';
-    const pr_url = null;
-    const taskType = 'exploratory';
-    const isDecomposition = undefined;
-
-    let newStatus = status === 'AI Done' ? 'completed' : 'failed';
-
-    if (newStatus === 'completed' && !pr_url) {
-      if (taskType === 'dev' && !isDecomposition) {
-        newStatus = 'completed_no_pr';
-      }
-    }
-
-    expect(newStatus).toBe('completed');
-  });
-
-  it('decomposition dev task completed without PR → status stays completed (exempt)', () => {
-    const status = 'AI Done';
-    const pr_url = null;
-    const taskType = 'dev';
-    const isDecomposition = 'true';  // decomposition 任务免检
-
-    let newStatus = status === 'AI Done' ? 'completed' : 'failed';
-
-    if (newStatus === 'completed' && !pr_url) {
-      if (taskType === 'dev' && !isDecomposition) {
-        newStatus = 'completed_no_pr';
-      }
-    }
-
-    expect(newStatus).toBe('completed');
-  });
-
-  it('failed task stays failed regardless of PR', () => {
-    const status = 'AI Failed';
-    const pr_url = null;
-    const taskType = 'dev';
-
-    let newStatus = status === 'AI Done' ? 'completed' : 'failed';
-
-    if (newStatus === 'completed' && !pr_url) {
-      if (taskType === 'dev') {
-        newStatus = 'completed_no_pr';
-      }
-    }
-
-    expect(newStatus).toBe('failed');
-  });
-});
-
-// ===== D1/D2/D3: 自动重排逻辑 =====
-
-/**
- * 模拟 execution-callback 中的重排逻辑（routes.js P1-2）
- */
-function simulateReschedule({ newStatus, retryCount, maxRetry = 3 }) {
-  let rescheduled = false;
-  let updatedStatus = newStatus;
-  let updatedRetryCount = retryCount;
-  let nextRunAt = null;
-
-  if (newStatus === 'completed_no_pr') {
-    if (retryCount < maxRetry) {
-      nextRunAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
-      updatedStatus = 'queued';
-      updatedRetryCount = retryCount + 1;
-      rescheduled = true;
-    }
-  }
-
-  return { rescheduled, updatedStatus, updatedRetryCount, nextRunAt };
-}
-
-describe('D1/D2/D3: completed_no_pr 自动重排逻辑', () => {
-  it('D1: retry_count < max_retries → 重排到 queued 并递增 retry_count', () => {
-    const result = simulateReschedule({ newStatus: 'completed_no_pr', retryCount: 0 });
-
-    expect(result.rescheduled).toBe(true);
-    expect(result.updatedStatus).toBe('queued');
-    expect(result.updatedRetryCount).toBe(1);
-    expect(result.nextRunAt).not.toBeNull();
-    // next_run_at 应在 5min 后（允许 ±1s 误差）
-    const diffMs = new Date(result.nextRunAt).getTime() - Date.now();
-    expect(diffMs).toBeGreaterThan(4 * 60 * 1000);
-    expect(diffMs).toBeLessThan(6 * 60 * 1000);
-  });
-
-  it('D2: retry_count >= max_retries → 不重排，rescheduled=false', () => {
-    const result = simulateReschedule({ newStatus: 'completed_no_pr', retryCount: 3 });
-
-    expect(result.rescheduled).toBe(false);
-    expect(result.updatedStatus).toBe('completed_no_pr');
-    expect(result.nextRunAt).toBeNull();
-  });
-
-  it('D3: rescheduled=true 时 initiative_plan 应跳过触发', () => {
-    // 模拟 initiative_plan 触发条件
-    function shouldTriggerInitiativePlan({ newStatus, rescheduled }) {
-      return newStatus === 'completed' || (newStatus === 'completed_no_pr' && !rescheduled);
-    }
-
-    // 重排时不触发
-    expect(shouldTriggerInitiativePlan({ newStatus: 'completed_no_pr', rescheduled: true })).toBe(false);
-    // 未重排（已达 max_retries）时触发
-    expect(shouldTriggerInitiativePlan({ newStatus: 'completed_no_pr', rescheduled: false })).toBe(true);
-    // 正常完成始终触发
-    expect(shouldTriggerInitiativePlan({ newStatus: 'completed', rescheduled: false })).toBe(true);
+  it('失败回执不会被无PR逻辑转成成功或重排',async()=>{
+    const f=await callbackFixture({task_type:'dev'});
+    expect((await f.invoke({status:'AI Failed',result:{error:'fixture'}})).status).toBe(200);
+    expect(f.client.query.mock.calls.find(([sql])=>sql.includes('UPDATE tasks'))[1][1]).toBe('failed');
+    expect(pool.query.mock.calls.some(([sql])=>sql.includes('SELECT retry_count'))).toBe(false);
   });
 });

@@ -7,7 +7,7 @@ const cards: HomeCard[] = [
   { id: 'brain', label: 'Super Brain', icon: Brain, path: '/knowledge/brain', desc: 'Knowledge base & notes' },
   { id: 'digestion', label: '知识消化', icon: Sparkles, path: '/knowledge/digestion', desc: '反刍洞察与知识归档' },
   { id: 'instruction-book', label: '说明书', icon: BookMarked, path: '/knowledge/instruction-book', desc: 'Skills & Features 使用手册' },
-  { id: 'modules', label: '深度知识页', icon: Library, path: '/knowledge/modules', desc: '86 个系统模块知识页' },
+  { id: 'modules', label: '深度知识页', icon: Library, path: '/knowledge/modules', desc: '旧知识生成进度已退役，查看 Notion 知识库入口' },
 ];
 
 export default function KnowledgeHome() {

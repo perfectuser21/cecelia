@@ -46,6 +46,12 @@ export function planChecks(paths, {full = false} = {}) {
   const selected = new Set(['scripts']);
   let all = full;
   for (const path of paths) {
+    // 说明书读取器只消费这两层的直接 Markdown，镜像也打包同一输入。
+    if (/^docs\/instruction-book\/(?:skills|features)\/[^/]+\.md$/.test(path)) {
+      selected.add('brain-unit');
+      selected.add('image');
+      continue;
+    }
     // Markdown 也可能是实际运行时提示词；只有明确的文档位置/文件名才走轻量路径。
     if (DOCUMENT_NAME.test(path) || ROOT_DOCUMENT.test(path) ||
       ((path.startsWith('docs/') || path.startsWith('sprints/')) && DOCUMENT.test(path))) continue;
@@ -56,6 +62,8 @@ export function planChecks(paths, {full = false} = {}) {
     } else if (path.startsWith('apps/android-agent/')) selected.add('android');
     else if (/^(?:packages\/brain|apps\/api)\//.test(path)) {
       for (const component of SHARED_RUNTIME) selected.add(component);
+      // Dashboard 的 @features/core 别名直接消费 apps/api/features。
+      if (path.startsWith('apps/api/features/')) selected.add('dashboard');
     }
     else if (path.startsWith('packages/mcp-readonly/')) selected.add('mcp');
     else if (path.startsWith('apps/dashboard/')) selected.add('dashboard');

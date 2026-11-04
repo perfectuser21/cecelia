@@ -1,157 +1,57 @@
-/**
- * session-tracking.test.js
- *
- * 测试 Session 时长追踪功能：
- * - D4-1: 首次成功派发任务时记录 _sessionStart（仅首次，不覆盖）
- * - D4-2: setBillingPause 调用时记录 session 结束，写入 cecelia_events
- * - D4-3: GET /api/brain/session/stats 返回正确结构
- *
- * DoD 映射：
- * - D4-1 → '首次派发记录 sessionStart'
- * - D4-2 → 'setBillingPause 写入 session_end 事件'
- * - D4-3 → 'session/stats API 返回正确结构'
- */
+import {beforeEach,afterEach,describe,it,expect,vi} from 'vitest';
+import express from 'express';
+import request from 'supertest';
+const boundary=vi.hoisted(()=>({query:vi.fn(async()=>{throw Error('database forbidden');}),external:vi.fn(()=>{throw Error('external action forbidden');})}));
+vi.mock('../db.js',()=>({default:{query:boundary.query}}));
+vi.mock('../tick.js',()=>({getTickStatus:vi.fn(),enableTick:vi.fn(),disableTick:vi.fn(),executeTick:vi.fn(),runTickSafe:vi.fn(),drainTick:vi.fn(),getDrainStatus:vi.fn(),cancelDrain:vi.fn(),getStartupErrors:vi.fn(),check48hReport:vi.fn()}));
+vi.mock('child_process',()=>({spawn:boundary.external,exec:boundary.external,execSync:boundary.external,execFile:boundary.external,execFileSync:boundary.external}));
+vi.mock('node:child_process',()=>({spawn:boundary.external,exec:boundary.external,execSync:boundary.external,execFile:boundary.external,execFileSync:boundary.external}));
+vi.mock('fs',async original=>{
+ const fs=await original();const {resolve}=await import('node:path');const {fileURLToPath}=await import('node:url');const root=resolve(process.cwd(),'../..');
+ return {...fs,existsSync:()=>false,readdirSync:()=>[],readFileSync:(file,...args)=>{
+  const target=file instanceof URL?fileURLToPath(file):resolve(String(file));
+  if(!target.startsWith(root+'/')||target.includes('/.env')||/credential|auth\.json/.test(target))throw Error('host config forbidden');
+  return fs.readFileSync(file,...args);
+ }};
+});
+import router from '../routes/tick.js';
+import * as executor from '../executor.js';
+const app=express().use(express.json()).use('/api/brain',router);
+beforeEach(()=>{vi.clearAllMocks();vi.stubGlobal('fetch',boundary.external);executor.clearBillingPause();});
+afterEach(()=>{executor.clearBillingPause();vi.unstubAllGlobals();});
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+describe('已无producer的旧session统计明确退休',()=>{
+ it.each(['/session/stats','/session/stats?clear=true'])('%s真实HTTP410，零DB/模型/恢复分支',async path=>{
+  const r=await request(app).get('/api/brain'+path);
+  expect(r.status).toBe(410);
+  expect(r.body).toEqual({success:false,error:'session_tracking_retired'});
+  expect(r.body).not.toHaveProperty('current');expect(r.body).not.toHaveProperty('history');
+  expect(boundary.query).not.toHaveBeenCalled();expect(boundary.external).not.toHaveBeenCalled();
+ });
+ it('不再导出无生产者的start/end/get/reset，不保留测试点火入口',()=>{
+  for(const name of ['recordSessionStart','recordSessionEnd','getSessionInfo','_resetSessionStart'])expect(executor[name]).toBeUndefined();
+ });
+});
 
-// 模拟 session 追踪状态（与 executor.js 实现一致）
-let _sessionStart = null;
-
-function recordSessionStart() {
-  if (!_sessionStart) {
-    _sessionStart = new Date().toISOString();
-  }
-}
-
-async function recordSessionEnd(reason, poolRef = null) {
-  if (!_sessionStart) return null;
-  const endTime = new Date().toISOString();
-  const durationMs = Date.now() - new Date(_sessionStart).getTime();
-  const durationMin = Math.round(durationMs / 60000);
-  const record = { start: _sessionStart, end: endTime, duration_min: durationMin, reason };
-  if (poolRef) {
-    try {
-      await poolRef.query(
-        `INSERT INTO cecelia_events (event_type, payload, created_at) VALUES ('session_end', $1, NOW())`,
-        [JSON.stringify(record)]
-      );
-    } catch (e) {
-      // 忽略写入失败
-    }
-  }
-  _sessionStart = null;
-  return record;
-}
-
-function getSessionInfo() {
-  if (!_sessionStart) return { active: false };
-  const durationMin = Math.round((Date.now() - new Date(_sessionStart).getTime()) / 60000);
-  return { active: true, start: _sessionStart, duration_min: durationMin };
-}
-
-function _resetSessionStart() {
-  _sessionStart = null;
-}
-
-describe('Session 时长追踪 - D4', () => {
-  beforeEach(() => {
-    _resetSessionStart();
-  });
-
-  describe('D4-1: recordSessionStart 仅首次生效', () => {
-    it('首次调用设置 _sessionStart', () => {
-      const before = Date.now();
-      recordSessionStart();
-      const after = Date.now();
-
-      const info = getSessionInfo();
-      expect(info.active).toBe(true);
-      expect(new Date(info.start).getTime()).toBeGreaterThanOrEqual(before);
-      expect(new Date(info.start).getTime()).toBeLessThanOrEqual(after);
-    });
-
-    it('多次调用不覆盖首次设置的时间', async () => {
-      recordSessionStart();
-      const firstStart = getSessionInfo().start;
-
-      await new Promise(resolve => setTimeout(resolve, 5));
-      recordSessionStart(); // 第二次不应覆盖
-
-      expect(getSessionInfo().start).toBe(firstStart);
-    });
-
-    it('无 session 时 getSessionInfo 返回 active: false', () => {
-      const info = getSessionInfo();
-      expect(info.active).toBe(false);
-      expect(info.start).toBeUndefined();
-    });
-  });
-
-  describe('D4-2: recordSessionEnd 写入 session_end 事件', () => {
-    it('setBillingPause 后 recordSessionEnd 返回正确的 record', async () => {
-      recordSessionStart();
-      const record = await recordSessionEnd('billing_cap', null);
-
-      expect(record).toBeDefined();
-      expect(record.reason).toBe('billing_cap');
-      expect(record.start).toBeDefined();
-      expect(record.end).toBeDefined();
-      expect(record.duration_min).toBeGreaterThanOrEqual(0);
-    });
-
-    it('无 session 时 recordSessionEnd 返回 null', async () => {
-      const result = await recordSessionEnd('billing_cap', null);
-      expect(result).toBeNull();
-    });
-
-    it('有 pool 时写入 cecelia_events', async () => {
-      const mockQuery = vi.fn().mockResolvedValue({ rows: [] });
-      const mockPool = { query: mockQuery };
-
-      recordSessionStart();
-      await recordSessionEnd('billing_cap', mockPool);
-
-      expect(mockQuery).toHaveBeenCalledWith(
-        expect.stringContaining('session_end'),
-        expect.any(Array)
-      );
-
-      const payload = JSON.parse(mockQuery.mock.calls[0][1][0]);
-      expect(payload.reason).toBe('billing_cap');
-      expect(payload.duration_min).toBeGreaterThanOrEqual(0);
-    });
-
-    it('session 结束后 _sessionStart 重置为 null', async () => {
-      recordSessionStart();
-      await recordSessionEnd('billing_cap', null);
-
-      const info = getSessionInfo();
-      expect(info.active).toBe(false);
-    });
-
-    it('pool 写入失败时 recordSessionEnd 不抛出', async () => {
-      const mockPool = { query: vi.fn().mockRejectedValue(new Error('DB error')) };
-      recordSessionStart();
-
-      await expect(recordSessionEnd('billing_cap', mockPool)).resolves.toBeDefined();
-    });
-  });
-
-  describe('D4-3: getSessionInfo 返回正确结构', () => {
-    it('有 session 时返回 active: true, start, duration_min', () => {
-      recordSessionStart();
-      const info = getSessionInfo();
-
-      expect(info.active).toBe(true);
-      expect(typeof info.start).toBe('string');
-      expect(typeof info.duration_min).toBe('number');
-      expect(info.duration_min).toBeGreaterThanOrEqual(0);
-    });
-
-    it('duration_min 格式为整数', () => {
-      recordSessionStart();
-      const info = getSessionInfo();
-      expect(Number.isInteger(info.duration_min)).toBe(true);
-    });
-  });
+describe('活billingPause仍由真实函数和HTTP读取/清理',()=>{
+ it('设置标志及唯一独立billing_pause_set事件，不需要session前置',async()=>{
+  const query=vi.fn(async()=>({rows:[]}));const reset=new Date(Date.now()+60000).toISOString();
+  executor.setBillingPause(reset,'quota_exhausted',{query});
+  expect(executor.getBillingPause()).toMatchObject({active:true,resetTime:reset,reason:'quota_exhausted'});
+  expect(query).toHaveBeenCalledTimes(1);
+  expect(query.mock.calls[0][0]).toContain("VALUES ('billing_pause_set'");
+  expect(JSON.parse(query.mock.calls[0][1][0])).toMatchObject({reset_at:reset,reason:'quota_exhausted'});
+  const read=await request(app).get('/api/brain/billing-pause');
+  expect(read.body).toMatchObject({success:true,active:true,resetTime:reset});
+  const cleared=await request(app).get('/api/brain/billing-pause?clear=true');
+  expect(cleared.body).toMatchObject({success:true,cleared:true,previous:{resetTime:reset}});
+  expect((await request(app).get('/api/brain/billing-pause')).body).toEqual({success:true,active:false});
+  expect(boundary.query).not.toHaveBeenCalled();expect(boundary.external).not.toHaveBeenCalled();
+ });
+ it('过期自动清除，无pool时零DB，无旧session恢复',()=>{
+  executor.setBillingPause('2000-01-01T00:00:00Z','billing_cap');
+  expect(executor.getBillingPause()).toEqual({active:false});
+  expect(executor.clearBillingPause()).toEqual({cleared:false,previous:null});
+  expect(boundary.query).not.toHaveBeenCalled();expect(boundary.external).not.toHaveBeenCalled();
+ });
 });

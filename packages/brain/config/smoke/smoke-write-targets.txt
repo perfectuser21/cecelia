@@ -74,7 +74,6 @@ warroom-line-command-smoke.sh
 alertness-schema-smoke.sh
 account-quota-gate-smoke.sh
 action-receipts-schema-smoke.sh
-autoblock-sql-param-fix-smoke.sh
 b13-dbupsert-idempotent-smoke.sh
 c8a-harness-checkpoint-resume.sh
 conversation-capture-multitool-smoke.sh
