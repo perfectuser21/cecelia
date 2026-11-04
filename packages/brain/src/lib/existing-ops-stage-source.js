@@ -244,7 +244,24 @@ const REVIEWED_API = {
     [PINNED_READER]: '3cf300333012557b0191ca6eba5a1bc112c99cbff1daf4ea85da8e2d33f96f66',
     [PINNED_WORKFLOW]: 'aaf1a1cdc30961114927231193c071d53d27976eb09971e0c72e63a8176eb129',
 };
+// 当前完整闭包：真实版本门、现役组件集合与测试选择器共同封印，禁止新旧逐文件混配。
+const REVIEWED_VERSION_CLOSURE = {
+  "packages/brain/vitest.config.js": "98d849609f66e1361c48180956742780ded8bac623dd89e39209abac5b98dd47",
+  "scripts/ci/basic-scope.mjs": "b7ef8265ea1a713e17a9e3c6291c52f5a345d5c676878026b39f3d30f825e33f",
+  "scripts/ci/run-basic-check.mjs": "8fd40691a48106b30363e553acb0f4f949c8801fbba268c599c33e059bdc3636",
+  "scripts/ci/check-basic-results.mjs": "b6c0b93e15320deff680e765f4558fcdb2a8d98c65d7a926d94f2158af6641e2",
+  "scripts/ci/basic-runtime-smoke.mjs": "b386b8c0c8631de5b6a0eec19494835f48c6ca3822a4533ee154ce8767a21eec",
+  "scripts/ci/ops-checks.mjs": "e65d0f59a1f4af9950e5e6a601c3841b3ee7ed54d50106f587eef041642910a7",
+  "scripts/ci/run-isolated-staging-smoke.mjs": "fa19da1eaf14621a75d95763229fa8d6de40ce3e55940401458346da37f8fbaf",
+  "scripts/ci/skill-source-tests.mjs": "6f8d97d2346e8b1bd00f4b532d76c8fa9bb871cb807adf7a13d5ce0ffb0f18e3",
+  "apps/api/vitest.config.ts": "c16a9be96bc4e1810400965043b41300d075da45ddf449ed5bf187b791e1ac7a",
+  "apps/api/vitest.integration.config.ts": "6c2a55ccba874bf8fcae7858f0b9f21295f6728f430860a4ee60c1612cc59dec",
+  "scripts/ci/__tests__/basic-skill-source-coverage.test.mjs": "98fd35089efe6214bc2c45b5a6cd78dae056dfe58f51c39985f2cf6c82434d43",
+  ".github/workflows/skills-source-check.yml": "76d156086b08bec21b69ccd1cba051f481261a2b70cad448203f655492e179ff",
+  "scripts/ci/check-brain-version-bump.sh": "c0f1d0e324e51632c904891716707fd85abe7ee1900a1ce1af07c70549f96106"
+};
 const BASIC_PROTOCOLS = {
+  '5b0f190209eec9c1370b9a96c6aef43b9aa0bc99bdd0f765ccb261c2cfe95080': REVIEWED_VERSION_CLOSURE,
   '04474b3e5c646767cdf49a4d03e32b3a2f4042027594dd87ef4d6975390f6298': REVIEWED,
   '7fee2a6d842c7c2595fa882fa61f75750ec6b2787186fdaf8747e1084a64fcee': [REVIEWED_API, {
     ...REVIEWED_API,
@@ -274,7 +291,7 @@ export function basicCiWorkflowProven(text) {
 }
 /** 返回明确的排除字面量；不调用外置helper，也不将动态JS猜为选择器。 */
 export function skillSourceLiteralExcludes(text, component, parse) {
-  if (hash(text) !== REVIEWED[SKILL_SELECTOR]) reject();
+  if (![REVIEWED[SKILL_SELECTOR], REVIEWED_VERSION_CLOSURE[SKILL_SELECTOR]].includes(hash(text))) reject();
   const program = parse(text), object = name => program.body.find(n => n.type === 'ExportNamedDeclaration' && n.declaration?.type === 'VariableDeclaration'
     && n.declaration.declarations.some(d => d.id.name === name))?.declaration.declarations.find(d => d.id.name === name)?.init;
   const literals = (node, name) => {
@@ -333,6 +350,9 @@ export async function collectBasicCiSources({ read, ci, revision, relations, par
   }
   for (const [path, kind] of [['scripts/ci/basic-scope.mjs', 'required_basic_ci_plan'], [BASIC_RUNNER, 'required_basic_ci_matrix_runner'],
     ['scripts/ci/check-basic-results.mjs', 'required_basic_ci_success_aggregate']]) relation(BASIC_CI, path, kind);
+  if (Object.hasOwn(protocol, 'scripts/ci/check-brain-version-bump.sh')) {
+    relation(BASIC_CI, 'scripts/ci/check-brain-version-bump.sh', 'required_brain_version_increment_guard');
+  }
   for (const path of ['scripts/ci/basic-runtime-smoke.mjs', 'packages/brain/src/migrate.js', 'scripts/ci/__tests__/runtime-signal.integration.test.mjs']) {
     await read(path); relation(BASIC_RUNNER, path, 'isolated_scratch_runtime_check');
   }

@@ -28,7 +28,7 @@ test(versionEntry, t => {
   assert.ok([base, head].every(sha => typeof sha === 'string' && /^[0-9a-f]{40}$/.test(sha)), 'PR_VERSION_EVENT');
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_')));
   Object.assign(env, { GIT_NO_REPLACE_OBJECTS: '1', GIT_GRAFT_FILE: '/dev/null',
-    GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', BASE_REF: base });
+    GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', BASE_REF: base, HEAD_REF: head });
   const git = (...args) => {
     const result = spawnSync('git', ['--no-replace-objects', '-c', 'core.hooksPath=/dev/null', ...args],
       { cwd: root, env, encoding: 'utf8', timeout: 10000 });

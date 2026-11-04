@@ -19,7 +19,7 @@
         "allowlist": "packages/brain/config/smoke/smoke-allowlist.txt",
         "write_targets": "packages/brain/config/smoke/smoke-write-targets.txt"
       },
-      "version_fragment": { "src_re": "^packages/brain/src/", "dir": "changes" },
+      "version_fragment": null,
       "preview": { "type": "brain_preview", "base_repo": "cecelia" },
       "production_re": [":5221\\b", "\\b(?:localhost|127\\.0\\.0\\.1)\\s+5221\\b", "100\\.79\\.41\\.61", "\\bus-vps\\b"],
       "automerge": true,

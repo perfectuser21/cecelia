@@ -1,98 +1,33 @@
 #!/usr/bin/env bash
-# check-brain-version-bump.sh
-#
-# 门禁：PR diff 含 packages/brain/src/** 时，要求 PR 的 brain version 严格大于 main。
-# 仅改 tests/__tests__/sprints/docs/*.md 时跳过（exit 0）。
-#
-# 用法：
-#   BASE_REF=origin/main bash scripts/ci/check-brain-version-bump.sh
-#
-# 环境变量：
-#   BASE_REF  基准分支引用（默认 origin/main）
-#
-# 退出码：
-#   0  版本已 bump（或无 src 变更，跳过）
-#   1  src 有变更但未 bump 版本
-#
-# Task ID: d8189a83-3bd3-4da3-ac70-f0ed2ba4ece4
-
+# 固定Git候选的版本门：源码变更必须已升版。碎片没有现役消费者，不能代替升版。
+# BASE_REF默认origin/main，HEAD_REF默认HEAD；CI必须传实际事件的BASE/HEAD。
 set -euo pipefail
-
 BASE_REF="${BASE_REF:-origin/main}"
-
-# ─── 1. 检测 PR diff 是否包含 packages/brain/src/** ───────────────────────
-CHANGED=$(git diff --name-only "${BASE_REF}...HEAD" 2>/dev/null \
-  || git diff --name-only "${BASE_REF}" HEAD 2>/dev/null \
-  || echo "")
-
-SRC_CHANGED=$(echo "$CHANGED" | grep -E '^packages/brain/src/' || true)
-
-if [ -z "$SRC_CHANGED" ]; then
-  echo "跳过版本检查：本次 diff 不含 packages/brain/src/** 变更（skip）"
+HEAD_REF="${HEAD_REF:-HEAD}"
+BASE_SHA=$(git rev-parse --verify --end-of-options "${BASE_REF}^{commit}") || { echo '::error::无法读取版本基线commit' >&2; exit 1; }
+HEAD_SHA=$(git rev-parse --verify --end-of-options "${HEAD_REF}^{commit}") || { echo '::error::无法读取版本候选commit' >&2; exit 1; }
+CHANGED=$(git diff --name-only "${BASE_SHA}...${HEAD_SHA}") || { echo '::error::无法比较版本候选' >&2; exit 1; }
+SRC_CHANGED=$(printf '%s\n' "$CHANGED" | grep -E '^packages/brain/src/' || true)
+if [[ -z "$SRC_CHANGED" ]]; then
+  echo '跳过版本检查：本次diff不含packages/brain/src/**变更（skip）'
   exit 0
 fi
-
-echo "检测到 packages/brain/src/ 变更："
-echo "$SRC_CHANGED" | head -10
-
-# ─── 1.5 新规:携带 changes/ 碎片的 PR 免 bump(bump 全权归 auto-version bot)──
-# 并行零冲突发版(09-06 四舰队五连撞案):PR 写 changes/<分支>.md 条目碎片,
-# 合并后 auto-version.yml 统一 bump 五件套并消费碎片。约定见 changes/README.md。
-FRAGMENT_ADDED=$(echo "$CHANGED" | grep -E '^changes/.+\.md$' | grep -vi '^changes/README\.md$' || true)
-if [ -n "$FRAGMENT_ADDED" ]; then
-  echo "✅ 检测到 changes/ 条目碎片,免 PR 内 bump(合并后由 auto-version bot 统一处理)："
-  echo "$FRAGMENT_ADDED" | head -5
+BRAIN_PKG='packages/brain/package.json'
+BASE_PKG=$(git show "${BASE_SHA}:${BRAIN_PKG}") || { echo '::error::版本基线缺少Brain package' >&2; exit 1; }
+HEAD_PKG=$(git show "${HEAD_SHA}:${BRAIN_PKG}") || { echo '::error::版本候选缺少Brain package' >&2; exit 1; }
+BASE_VERSION=$(printf '%s' "$BASE_PKG" | node -e 'console.log(JSON.parse(require("fs").readFileSync(0,"utf8")).version)')
+HEAD_VERSION=$(printf '%s' "$HEAD_PKG" | node -e 'console.log(JSON.parse(require("fs").readFileSync(0,"utf8")).version)')
+if node -e '
+  const [head,base]=process.argv.slice(1), pattern=/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/;
+  if(!pattern.test(head)||!pattern.test(base))process.exit(1);
+  const a=head.split(".").map(BigInt),b=base.split(".").map(BigInt);
+  for(let i=0;i<3;i++){if(a[i]>b[i])process.exit(0);if(a[i]<b[i])process.exit(1);}
+  process.exit(1);
+' "$HEAD_VERSION" "$BASE_VERSION"; then
+  echo "✅ 版本已 bump：${BASE_VERSION} → ${HEAD_VERSION}（${HEAD_SHA}）"
   exit 0
 fi
-
-# ─── 2. 读取 PR 分支的 version ────────────────────────────────────────────
-BRAIN_PKG="packages/brain/package.json"
-
-if [ ! -f "$BRAIN_PKG" ]; then
-  echo "::error::找不到 $BRAIN_PKG"
-  exit 1
-fi
-
-PR_VERSION=$(node -e "console.log(JSON.parse(require('fs').readFileSync('${BRAIN_PKG}','utf8')).version)" 2>/dev/null || true)
-
-# ─── 3. 读取 BASE 分支的 version ──────────────────────────────────────────
-BASE_PKG_CONTENT=$(git show "${BASE_REF}:${BRAIN_PKG}" 2>/dev/null || true)
-
-if [ -z "$BASE_PKG_CONTENT" ]; then
-  echo "::warning::无法读取 ${BASE_REF}:${BRAIN_PKG}，跳过版本比对"
-  exit 0
-fi
-
-BASE_VERSION=$(echo "$BASE_PKG_CONTENT" | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>console.log(JSON.parse(d).version))" 2>/dev/null || true)
-
-echo "Base version (${BASE_REF}): ${BASE_VERSION}"
-echo "PR version:                 ${PR_VERSION}"
-
-# ─── 4. semver 严格大于比对 ───────────────────────────────────────────────
-# 将 semver 分解为三段整数，依次比较 major > minor > patch
-semver_gt() {
-  local a="$1" b="$2"
-  local a_major a_minor a_patch b_major b_minor b_patch
-  IFS='.' read -r a_major a_minor a_patch <<< "$a"
-  IFS='.' read -r b_major b_minor b_patch <<< "$b"
-  if [ "$a_major" -gt "$b_major" ]; then return 0; fi
-  if [ "$a_major" -lt "$b_major" ]; then return 1; fi
-  if [ "$a_minor" -gt "$b_minor" ]; then return 0; fi
-  if [ "$a_minor" -lt "$b_minor" ]; then return 1; fi
-  if [ "$a_patch" -gt "$b_patch" ]; then return 0; fi
-  return 1
-}
-
-if semver_gt "$PR_VERSION" "$BASE_VERSION"; then
-  echo "✅ 版本已 bump：${BASE_VERSION} → ${PR_VERSION}"
-  exit 0
-else
-  echo "::error::❌ brain src 有变更但版本未 bump（base=${BASE_VERSION}，PR=${PR_VERSION}）"
-  echo ""
-  echo "正确做法（changes/README.md，PR 不碰版本五件套）：在本 PR 加一个条目碎片 changes/<分支名>.md，"
-  echo "内容为一段 DEFINITION 条目，版本号写 {VERSION} 占位，例如："
-  echo "  ## Brain {VERSION} — <一句话标题>"
-  echo "  - <条目内容>"
-  echo "合并后由 auto-version bot 统一 bump 并消费碎片。不要手改 packages/brain/package.json。"
-  exit 1
-fi
+echo "::error::brain src 有变更但版本未 bump或格式非法（base=${BASE_VERSION}，PR=${HEAD_VERSION}）" >&2
+echo '请由实现阶段修复候选：同步更新Brain package、嵌套lock、根workspace lock、.brain-versions及DEFINITION版本，并重新验收。' >&2
+echo 'changes/碎片不能替代真实版本增量；publish不会在验收后改写候选。' >&2
+exit 1

@@ -28,6 +28,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - name: Require actual Brain version increment
+        if: github.event_name == 'pull_request' || github.event_name == 'push'
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_REF: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: bash scripts/ci/check-brain-version-bump.sh
       - name: Select complete component checks
         id: scope
         env:
