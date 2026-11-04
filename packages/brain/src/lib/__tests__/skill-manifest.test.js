@@ -229,9 +229,10 @@ describe('compareManifests', () => {
     expect(compareManifests(mk({ a: H('1'), b: H('2') }), mk({})).missing).toEqual(['a', 'b']);
   });
 
-  it('真身自己的悬空链接不算对方 missing，单独报 truth_broken 且不算 in_sync', () => {
+  it('真身自己的悬空链接独立报 truth_broken，不算消费者漂移', () => {
     const d = compareManifests(mk({ a: H('1') }, ['z']), mk({ a: H('1') }));
     expect(d.missing).toEqual([]);
     expect(d.truth_broken).toEqual(['z']);
+    expect(d.in_sync).toBe(true);
   });
 });
