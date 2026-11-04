@@ -5,13 +5,15 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-const boundary = vi.hoisted(() => ({ notify: vi.fn(async () => true), db: vi.fn(), network: vi.fn(), process: vi.fn() }));
-vi.mock('../notifier.js', () => ({ sendFeishu: boundary.notify }));
+const notices = vi.hoisted(() => ({ send: vi.fn(async () => true) }));
+let expectedNotices = [];
+const boundary = vi.hoisted(() => ({ db: vi.fn(), network: vi.fn(), process: vi.fn() }));
+vi.mock('../notifier.js', () => ({ sendFeishu: notices.send }));
 vi.mock('../db.js', () => ({ default: { query: (...args) => { boundary.db(...args); throw Error('禁止默认DB'); } } }));
 vi.mock('node:child_process', () => Object.fromEntries(['exec', 'execSync', 'execFile', 'execFileSync', 'spawn', 'spawnSync'].map(name => [name, (...args) => { boundary.process(name, ...args); throw Error('禁止宿主进程'); }])));
-beforeEach(() => { vi.clearAllMocks(); vi.stubGlobal('fetch', (...args) => { boundary.network(...args); throw Error('禁止外联'); }); });
+beforeEach(() => { expectedNotices = []; vi.clearAllMocks(); vi.stubGlobal('fetch', (...args) => { boundary.network(...args); throw Error('禁止外联'); }); });
 afterEach(() => {
-  expect(boundary.notify).not.toHaveBeenCalled();
+  expect(notices.send.mock.calls).toEqual(expectedNotices);
   expect(boundary.db).not.toHaveBeenCalled();
   expect(boundary.network).not.toHaveBeenCalled();
   expect(boundary.process).not.toHaveBeenCalled();
@@ -214,6 +216,7 @@ describe('promoteToRegression', () => {
   });
 
   it('commit 校验失败（contract-dod.md 未被 git 跟踪）→ yaml 跳过，reason=dod_not_committed', async () => {
+    expectedNotices = [['⚠️ [A3 promote-regression] A3 冻结拒绝（假卡防护）：task=bd7e251c-0000-0000-0000-000000000001 contract-dod.md 未入库']];
     const d = makeDeps({ files: GOOD_FILES, lsFilesFails: true });
     const r = await promoteToRegression(
       { pool: d.poolMock, execFile: d.execFileMock, fsImpl: d.fsMock },
@@ -226,6 +229,7 @@ describe('promoteToRegression', () => {
   });
 
   it('worktreePath/sprintDir 为空 → 整体 skipped，不碰 DB', async () => {
+    expectedNotices = [['⚠️ [A3 promote-regression] A3 冻结跳过：task=bd7e251c-0000-0000-0000-000000000001 缺 sprintDir/worktreePath']];
     const d = makeDeps({ files: GOOD_FILES });
     const r = await promoteToRegression(
       { pool: d.poolMock, execFile: d.execFileMock, fsImpl: d.fsMock },
