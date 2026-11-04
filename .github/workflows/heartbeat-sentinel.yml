@@ -218,7 +218,7 @@ jobs:
             ENCODED_BODY=$(python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.argv[1]))" "$BODY")
             HTTP_CODE=$(curl -sf --max-time 10 -o /dev/null -w '%{http_code}' \
               "${BARK_URL}/${ENCODED_TITLE}/${ENCODED_BODY}?group=heartbeat-sentinel&level=critical" \
-              2>/dev/null) || { echo "::error::Bark 推送失败"; exit 1; }
+              2>/dev/null) || { CURL_EXIT=$?; echo "::error::Bark 推送失败 curl_exit=$CURL_EXIT http=${HTTP_CODE:-000}"; exit 1; }
             [[ "$HTTP_CODE" =~ ^2[0-9][0-9]$ ]] || { echo "::error::Bark HTTP $HTTP_CODE"; exit 1; }
             echo "Bark ok"
           elif [[ -n "${BARK_TOKEN:-}" ]]; then
@@ -226,11 +226,12 @@ jobs:
             ENCODED_BODY=$(python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.argv[1]))" "$BODY")
             HTTP_CODE=$(curl -sf --max-time 10 -o /dev/null -w '%{http_code}' \
               "https://api.day.app/${BARK_TOKEN}/${ENCODED_TITLE}/${ENCODED_BODY}?group=heartbeat-sentinel&level=critical" \
-              2>/dev/null) || { echo "::error::Bark 推送失败"; exit 1; }
+              2>/dev/null) || { CURL_EXIT=$?; echo "::error::Bark 推送失败 curl_exit=$CURL_EXIT http=${HTTP_CODE:-000}"; exit 1; }
             [[ "$HTTP_CODE" =~ ^2[0-9][0-9]$ ]] || { echo "::error::Bark HTTP $HTTP_CODE"; exit 1; }
             echo "Bark ok"
           else
-            echo "::warning::未配 BARK_URL / BARK_TOKEN，跳过 Bark 推送"
+            echo "::error::未配 BARK_URL / BARK_TOKEN，Bark 告警未完成"
+            exit 1
           fi
 
   close-on-success:

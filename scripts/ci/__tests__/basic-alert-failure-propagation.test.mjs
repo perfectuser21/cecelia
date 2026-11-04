@@ -133,6 +133,7 @@ test('哨兵 Bark HTTP 故障不能被警告吞成成功', async t => {
   const f = fixture(t);
   const result = await run(sentinel.jobs.alert.steps[1].run, { ...f.env, BARK_URL: url, HEALTH_OK: '', KV_OK: '', KV_AGE: '', PROBE_URL: 'fixture' });
   assert.notEqual(result.status, 0, result.out);
+  assert.match(result.out, /curl_exit=22 http=500/);
 });
 
 for (const [name, gh, want] of [
@@ -197,4 +198,13 @@ test('哨兵缺少Bark配置必须明确失败，不能缺key跳过却显示告�
   const f=fixture(t);
   const result=await run(sentinel.jobs.alert.steps[1].run,{...f.env,BARK_URL:'',BARK_TOKEN:'',HEALTH_OK:'true',KV_OK:'false',KV_AGE:'2000',PROBE_URL:'fixture'});
   assert.notEqual(result.status,0,result.out);
+});
+
+
+test('哨兵Bark运输失败保留curl与HTTP诊断且不泄露通知地址', async t => {
+ const f=fixture(t,{curl:"printf '000'; exit 7"});
+ const result=await run(sentinel.jobs.alert.steps[1].run,{...f.env,BARK_URL:'https://fixture.invalid/private-token',BARK_TOKEN:'',HEALTH_OK:'true',KV_OK:'false',KV_AGE:'2000',PROBE_URL:'fixture'});
+ assert.notEqual(result.status,0,result.out);
+ assert.match(result.out,/curl_exit=7 http=000/);
+ assert.doesNotMatch(result.out,/private-token|fixture\.invalid/);
 });
