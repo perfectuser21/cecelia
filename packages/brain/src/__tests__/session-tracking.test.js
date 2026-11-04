@@ -1,13 +1,13 @@
 /**
  * session-tracking.test.js
  *
- * 测试 Session 时长追踪功能：
- * - D4-1: 首次成功派发任务时记录 _sessionStart（仅首次，不覆盖）
+ * 测试当前 Session helper 合同（不宣称实际派发链会自动开始 Session）：
+ * - D4-1: 显式调用真实 recordSessionStart 仅首次记录，不覆盖
  * - D4-2: setBillingPause 调用时记录 session 结束，写入 cecelia_events
  * - D4-3: executor.getSessionInfo 返回正确结构（不宣称HTTP stats已覆盖）
  *
  * DoD 映射：
- * - D4-1 → '首次派发记录 sessionStart'
+ * - D4-1 → '显式 Session helper 首次记录'
  * - D4-2 → 'setBillingPause 写入 session_end 事件'
  * - D4-3 → 'executor.getSessionInfo 返回正确结构'
  */
