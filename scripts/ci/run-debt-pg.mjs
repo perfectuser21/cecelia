@@ -1,21 +1,24 @@
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { resolve, join } from 'node:path';
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, lstatSync, realpathSync } from 'node:fs';
 import { startPrivatePg, checked, cleanProcessEnv } from './private-pg-backend.mjs';
 import { verifyPrivatePg, assertVitestReport, dropOwnedScratch, restoreDump } from './private-pg-contract.mjs';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const require = createRequire(new URL('../../packages/brain/package.json', import.meta.url));
 const { Pool } = require('pg');
-export const readManifest = () => {
-  const manifest = JSON.parse(readFileSync(new URL('./debt-pg-tests.json', import.meta.url), 'utf8'));
+export const readManifest = (repositoryRoot = root) => {
+  const realRoot = realpathSync(repositoryRoot);
+  const manifest = JSON.parse(readFileSync(join(realRoot, 'scripts/ci/debt-pg-tests.json'), 'utf8'));
   if (manifest.schema_version !== 1 || !Array.isArray(manifest.tests) || !manifest.tests.length) throw Error('private PG manifest empty/invalid');
   const seen = new Set();
   for (const row of manifest.tests) {
     if (!/^(packages\/brain\/src\/|tests\/regression\/)[-A-Za-z0-9_./]+\.(test|spec)\.[cm]?[jt]s$/.test(row.path)
         || row.path.split('/').includes('..') || seen.has(row.path) || !['full', 'empty'].includes(row.mode) || !['ready', 'pending'].includes(row.status)) throw Error('private PG manifest invalid row');
     seen.add(row.path);
+    const file = resolve(realRoot, row.path);
+    if (!lstatSync(file).isFile() || realpathSync(file) !== file) throw Error('private PG test must be a regular file within the repository: ' + row.path);
   }
   return manifest;
 };
