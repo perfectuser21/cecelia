@@ -61,7 +61,7 @@ describe('真实runPerception → 注册HTTP的公共联系信号兼容', () => 
     expect(actual.value).toBe(expected);
     const response = await request(app).get('/api/brain/perception-signals');
     expect(signal(response, 'hours_since_feishu')).toEqual({
-      id: 'hours_since_feishu', label: '距上次飞书交互', importance: 6, hasConsumer: true,
+      id: 'hours_since_feishu', label: '距上次联系', importance: 6, hasConsumer: true,
       value: actual.value, context: actual.context, observed: true,
     });
     expect(response.body.signals).toHaveLength(16);
