@@ -1,4 +1,4 @@
-import { assertDebt10Scratch } from './helpers/debt-10-scratch.js';
+import { assertDebt10Scratch, closeDebt10Transaction } from './helpers/debt-10-scratch.js';
 /**
  * Learning Semantic Search Tests
  *
@@ -9,6 +9,7 @@ import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 vi.mock('../openai-client.js', () => ({ generateEmbedding: vi.fn(() => { throw new Error('external embedding forbidden'); }) }));
 vi.mock('../embedding-service.js', () => ({ generateLearningEmbeddingAsync: vi.fn() }));
 vi.mock('../llm-caller.js', () => ({ callLLM: vi.fn(() => { throw new Error('external LLM forbidden'); }) }));
+vi.mock('../db.js', async () => ({ default: await (await import('./helpers/debt-10-scratch.js')).openDebt10Transaction() }));
 let pool;
 let searchRelevantLearnings, getRecentLearnings;
 
@@ -80,8 +81,11 @@ describe('Learning Semantic Search', () => {
     const devLearning = results.find(l => l.title.includes('Network failure in dev tasks'));
     const qaLearning = results.find(l => l.title.includes('QA task resource'));
 
-    if (devLearning && qaLearning) {
+    expect(devLearning).toBeDefined();
+    expect(qaLearning).toBeDefined();
+    {
       // Dev learning should score higher due to task_type match
+      expect(devLearning.relevance_score).toBe(17);
       expect(devLearning.relevance_score).toBeGreaterThan(qaLearning.relevance_score);
     }
   });
@@ -93,7 +97,8 @@ describe('Learning Semantic Search', () => {
 
     const networkLearning = results.find(l => l.title.includes('Network failure'));
 
-    if (networkLearning) {
+    expect(networkLearning).toBeDefined();
+    {
       // Should get points for failure_class match
       expect(networkLearning.relevance_score).toBeGreaterThanOrEqual(8);
     }
@@ -106,7 +111,8 @@ describe('Learning Semantic Search', () => {
 
     const rcaLearning = results.find(l => l.title.includes('QA task resource'));
 
-    if (rcaLearning) {
+    expect(rcaLearning).toBeDefined();
+    {
       // Should get points for event_type match
       expect(rcaLearning.relevance_score).toBeGreaterThanOrEqual(6);
     }
@@ -118,7 +124,9 @@ describe('Learning Semantic Search', () => {
     const recentLearning = results.find(l => l.title.includes('Recent dev task'));
     const oldLearning = results.find(l => l.title.includes('Old learning'));
 
-    if (recentLearning && oldLearning) {
+    expect(recentLearning).toBeDefined();
+    expect(oldLearning).toBeDefined();
+    {
       // Recent learning (1 day old) should score higher than old learning (40 days old)
       expect(recentLearning.relevance_score).toBeGreaterThan(oldLearning.relevance_score);
     }
@@ -133,7 +141,8 @@ describe('Learning Semantic Search', () => {
 
     const exactMatch = results.find(l => l.title.includes('Network failure in dev tasks'));
 
-    if (exactMatch && results.length > 1) {
+    expect(exactMatch).toBeDefined();
+    {
       // Exact match should be at the top
       expect(results[0].title).toBe(exactMatch.title);
     }
@@ -161,7 +170,7 @@ describe('Learning Semantic Search', () => {
       task_type: 'nonexistent'
     }, 10);
 
-    expect(Array.isArray(results)).toBe(true);
+    expect(results).toEqual([]);
 
     // Restore test data
     await pool.query(`
@@ -187,3 +196,5 @@ describe('Learning Semantic Search', () => {
     }
   });
 });
+
+afterAll(async () => { await closeDebt10Transaction(pool); });

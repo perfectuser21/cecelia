@@ -1,4 +1,4 @@
-import { assertDebt10Scratch } from './helpers/debt-10-scratch.js';
+import { assertDebt10Scratch, closeDebt10Transaction } from './helpers/debt-10-scratch.js';
 /**
  * Tests for P1 FIX #3: Quarantine auto-release with TTL
  *
@@ -6,12 +6,13 @@ import { assertDebt10Scratch } from './helpers/debt-10-scratch.js';
  * After fix: Tasks have TTL and are auto-released when expired
  */
 
-import { describe, it, expect, beforeEach, afterEach, beforeAll, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, beforeAll, afterAll, vi } from 'vitest';
 vi.mock('../openai-client.js', () => ({ generateEmbedding: vi.fn(() => { throw new Error('external embedding forbidden'); }) }));
 vi.mock('../embedding-service.js', () => ({ generateLearningEmbeddingAsync: vi.fn() }));
 vi.mock('../llm-caller.js', () => ({ callLLM: vi.fn(() => { throw new Error('external LLM forbidden'); }) }));
 vi.mock('../event-bus.js', () => ({ emit: vi.fn() }));
 vi.mock('../alertness/index.js', () => ({ getCurrentAlertness: () => ({ level: 0 }), ALERTNESS_LEVELS: { ALERT: 3 } }));
+vi.mock('../db.js', async () => ({ default: await (await import('./helpers/debt-10-scratch.js')).openDebt10Transaction() }));
 let pool;
 let quarantineTask, checkExpiredQuarantineTasks;
 
@@ -134,3 +135,5 @@ describe('quarantine-auto-release (P1 Fix #3)', () => {
     await pool.query('DELETE FROM tasks WHERE title LIKE $1', ['test-auto-release-multi%']);
   });
 });
+
+afterAll(async () => { await closeDebt10Transaction(pool); });

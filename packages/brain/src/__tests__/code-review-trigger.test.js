@@ -5,7 +5,7 @@
  * 当 project 下 dev 任务完成数 >= 阈值且无 pending code_review 时，自动创建任务。
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { checkAndCreateCodeReviewTrigger } from '../code-review-trigger.js';
 
 // ─── Mock Pool 工厂 ───────────────────────────────────────
@@ -14,13 +14,17 @@ import { checkAndCreateCodeReviewTrigger } from '../code-review-trigger.js';
  * @param {object} opts
  * @param {number} opts.devCount - 窗口内完成的 dev 任务数
  * @param {boolean} opts.hasPendingReview - 是否已有 pending code_review
- * @param {object|null} opts.insertedRow - INSERT 返回的行（null 模拟 INSERT 不执行）
+ * @param {object|null} opts.insertedRow - 建单边界返回的任务行
  * @param {string} opts.projectType - project 类型（'project' 或 'initiative'）
  */
 function makeMockPool({ devCount = 0, hasPendingReview = false, insertedRow = null, projectType = 'project' } = {}) {
   const calls = [];
   return {
     calls,
+    createTask: vi.fn(async (input) => ({ task: insertedRow ?? {
+      id: 'new-review-task-id', title: input.title, task_type: input.task_type,
+      priority: input.priority, status: 'queued', trigger_source: input.trigger_source,
+    } })),
     query: vi.fn(async (sql, params) => {
       calls.push({ sql, params });
 
@@ -42,19 +46,6 @@ function makeMockPool({ devCount = 0, hasPendingReview = false, insertedRow = nu
         return { rows: hasPendingReview ? [{ id: 'existing-review-id' }] : [] };
       }
 
-      // INSERT
-      if (sql.includes('INSERT INTO tasks')) {
-        const row = insertedRow ?? {
-          id: 'new-review-task-id',
-          title: `代码审查：${devCount} 个 dev 任务已完成`,
-          task_type: 'code_review',
-          priority: 'P2',
-          status: 'queued',
-          trigger_source: 'accumulation_trigger',
-        };
-        return { rows: [row] };
-      }
-
       return { rows: [] };
     }),
   };
@@ -71,6 +62,8 @@ describe('code-review-trigger', () => {
     consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
   });
 
+  afterEach(() => vi.restoreAllMocks());
+
   // ─── 正常触发路径 ───
 
   describe('触发条件满足', () => {
@@ -78,7 +71,7 @@ describe('code-review-trigger', () => {
       const pool = makeMockPool({ devCount: 5, hasPendingReview: false });
       const projectId = 'proj-001';
 
-      const result = await checkAndCreateCodeReviewTrigger(pool, projectId);
+      const result = await checkAndCreateCodeReviewTrigger(pool, projectId, pool.createTask);
 
       // 必须返回新创建的任务行
       expect(result).not.toBeNull();
@@ -91,9 +84,8 @@ describe('code-review-trigger', () => {
       expect(countCall.params).toContain(projectId);
 
       // 验证 INSERT 执行了
-      const insertCall = pool.calls.find(c => c.sql.includes('INSERT INTO tasks'));
-      expect(insertCall).toBeDefined();
-      expect(insertCall.params).toContain(projectId);
+      expect(pool.createTask).toHaveBeenCalledOnce();
+      expect(pool.createTask).toHaveBeenCalledWith(expect.objectContaining({ db: pool, source: 'discovery', source_id: `code-review:${projectId}:5`, project_id: projectId, task_type: 'code_review', priority: 'P2', allow_unscoped: true }));
 
       // 验证打了日志
       expect(consoleLogSpy).toHaveBeenCalledWith(
@@ -104,11 +96,10 @@ describe('code-review-trigger', () => {
     it('超过阈值（8 个）也应触发', async () => {
       const pool = makeMockPool({ devCount: 8, hasPendingReview: false });
 
-      const result = await checkAndCreateCodeReviewTrigger(pool, 'proj-002');
+      const result = await checkAndCreateCodeReviewTrigger(pool, 'proj-002', pool.createTask);
 
       expect(result).not.toBeNull();
-      const insertCall = pool.calls.find(c => c.sql.includes('INSERT INTO tasks'));
-      expect(insertCall).toBeDefined();
+      expect(pool.createTask).toHaveBeenCalledOnce();
     });
   });
 
@@ -118,7 +109,7 @@ describe('code-review-trigger', () => {
     it('initiative 类型 project → 不触发积累（有自己的 pipeline）', async () => {
       const pool = makeMockPool({ devCount: 10, hasPendingReview: false, projectType: 'initiative' });
 
-      const result = await checkAndCreateCodeReviewTrigger(pool, 'init-001');
+      const result = await checkAndCreateCodeReviewTrigger(pool, 'init-001', pool.createTask);
 
       expect(result).toBeNull();
 
@@ -139,7 +130,7 @@ describe('code-review-trigger', () => {
     it('project 类型 project → 正常走积累触发', async () => {
       const pool = makeMockPool({ devCount: 5, hasPendingReview: false, projectType: 'project' });
 
-      const result = await checkAndCreateCodeReviewTrigger(pool, 'proj-normal');
+      const result = await checkAndCreateCodeReviewTrigger(pool, 'proj-normal', pool.createTask);
 
       expect(result).not.toBeNull();
       expect(result.task_type).toBe('code_review');
@@ -148,9 +139,10 @@ describe('code-review-trigger', () => {
     it('< 5 dev 任务完成 → 不创建（返回 null）', async () => {
       const pool = makeMockPool({ devCount: 3 });
 
-      const result = await checkAndCreateCodeReviewTrigger(pool, 'proj-003');
+      const result = await checkAndCreateCodeReviewTrigger(pool, 'proj-003', pool.createTask);
 
       expect(result).toBeNull();
+      expect(pool.createTask).not.toHaveBeenCalled();
 
       // 验证未执行 INSERT
       const insertCall = pool.calls.find(c => c.sql.includes('INSERT INTO tasks'));
@@ -160,9 +152,10 @@ describe('code-review-trigger', () => {
     it('已有 pending code_review → 不重复创建（返回 null）', async () => {
       const pool = makeMockPool({ devCount: 6, hasPendingReview: true });
 
-      const result = await checkAndCreateCodeReviewTrigger(pool, 'proj-004');
+      const result = await checkAndCreateCodeReviewTrigger(pool, 'proj-004', pool.createTask);
 
       expect(result).toBeNull();
+      expect(pool.createTask).not.toHaveBeenCalled();
 
       // 验证未执行 INSERT
       const insertCall = pool.calls.find(c => c.sql.includes('INSERT INTO tasks'));
@@ -172,13 +165,20 @@ describe('code-review-trigger', () => {
     it('project_id 为 null → 直接返回 null，不查 DB', async () => {
       const pool = makeMockPool({ devCount: 10 });
 
-      const result = await checkAndCreateCodeReviewTrigger(pool, null);
+      const result = await checkAndCreateCodeReviewTrigger(pool, null, pool.createTask);
 
       expect(result).toBeNull();
 
       // 验证未查 DB
       expect(pool.query).not.toHaveBeenCalled();
     });
+  });
+
+  it('建单准入拒绝时返回 null 并记录错误', async () => {
+    const pool = makeMockPool({ devCount: 5 });
+    pool.createTask.mockRejectedValue(new Error('admission denied'));
+    expect(await checkAndCreateCodeReviewTrigger(pool, 'proj-denied', pool.createTask)).toBeNull();
+    expect(consoleErrorSpy).toHaveBeenCalledWith('[code-review-trigger] 触发失败:', 'admission denied');
   });
 
   // ─── 错误处理 ───
@@ -189,7 +189,7 @@ describe('code-review-trigger', () => {
         query: vi.fn().mockRejectedValue(new Error('DB connection failed')),
       };
 
-      const result = await checkAndCreateCodeReviewTrigger(pool, 'proj-005');
+      const result = await checkAndCreateCodeReviewTrigger(pool, 'proj-005', pool.createTask);
 
       expect(result).toBeNull();
       expect(consoleErrorSpy).toHaveBeenCalledWith(

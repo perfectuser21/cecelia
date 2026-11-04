@@ -1,14 +1,15 @@
-import { assertDebt10Scratch } from './helpers/debt-10-scratch.js';
+import { assertDebt10Scratch, closeDebt10Transaction } from './helpers/debt-10-scratch.js';
 /**
  * Learning Loop Tests
  *
  * Tests the Brain self-learning closed loop system.
  */
 
-import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
 vi.mock('../openai-client.js', () => ({ generateEmbedding: vi.fn(() => { throw new Error('external embedding forbidden'); }) }));
 vi.mock('../embedding-service.js', () => ({ generateLearningEmbeddingAsync: vi.fn() }));
 vi.mock('../llm-caller.js', () => ({ callLLM: vi.fn(() => { throw new Error('external LLM forbidden'); }) }));
+vi.mock('../db.js', async () => ({ default: await (await import('./helpers/debt-10-scratch.js')).openDebt10Transaction() }));
 let pool;
 let recordLearning, applyStrategyAdjustments, getRecentLearnings, shouldTriggerLearning, createLearningTask, ADJUSTABLE_PARAMS, upsertLearning, NOISE_LEARNING_CATEGORIES, isNoiseLearningCategory;
 
@@ -20,50 +21,10 @@ beforeAll(async () => {
 });
 
 describe('Learning Loop', () => {
-  beforeAll(async () => {
-    // Ensure learnings table exists
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS learnings (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        title VARCHAR(255) NOT NULL,
-        category VARCHAR(50),
-        trigger_event VARCHAR(100),
-        content TEXT,
-        strategy_adjustments JSONB,
-        applied BOOLEAN DEFAULT false,
-        applied_at TIMESTAMP,
-        created_at TIMESTAMP DEFAULT NOW(),
-        metadata JSONB
-      )
-    `);
-
-    // Ensure brain_config has metadata column
-    await pool.query(`
-      ALTER TABLE brain_config ADD COLUMN IF NOT EXISTS metadata JSONB
-    `);
-
-    // Clean up test data (use file-specific prefix to avoid parallel test conflicts)
-    await pool.query("DELETE FROM learnings WHERE title LIKE 'lu-test:%' OR title LIKE 'RCA Learning:%'");
-    await pool.query("DELETE FROM tasks WHERE title LIKE 'Learning -%'");
-    await pool.query("DELETE FROM tasks WHERE title LIKE '[Insight修复] RCA Learning: lu-test%'");
-    await pool.query("DELETE FROM tasks WHERE title LIKE 'lu-test src task%'");
-    await pool.query("DELETE FROM brain_config WHERE key LIKE 'test.%'");
-    await pool.query("DELETE FROM brain_config WHERE key = 'alertness.emergency_threshold'");
-  });
-
-  afterAll(async () => {
-    // Clean up test data
-    await pool.query("DELETE FROM learnings WHERE title LIKE 'lu-test:%' OR title LIKE 'RCA Learning:%'");
-    await pool.query("DELETE FROM tasks WHERE title LIKE 'Learning -%'");
-    await pool.query("DELETE FROM tasks WHERE title LIKE '[Insight修复] RCA Learning: lu-test%'");
-    await pool.query("DELETE FROM tasks WHERE title LIKE 'lu-test src task%'");
-    await pool.query("DELETE FROM brain_config WHERE key LIKE 'test.%'");
-  });
-
   describe('recordLearning', () => {
     it('should record learning from Cortex RCA analysis', async () => {
       const analysis = {
-        task_id: 'test-task-123',
+        task_id: (await pool.query("INSERT INTO tasks (title, status) VALUES ('lu-test src task record', 'queued') RETURNING id")).rows[0].id,
         analysis: {
           root_cause: 'High concurrent task load causing resource exhaustion',
           contributing_factors: ['Failed task retries', 'CPU pressure'],
@@ -294,7 +255,7 @@ describe('Learning Loop', () => {
 
 describe('upsertLearning — task_id 原子绑定', () => {
   it('upsertLearning 写入 learnings 时必须包含 task_id 列', async () => {
-    const testTaskId = 'test-task-id-atomic-' + Date.now();
+    const testTaskId = (await pool.query("INSERT INTO tasks (title, status) VALUES ('lu-test src task atomic', 'queued') RETURNING id")).rows[0].id;
     const title = 'lu-test: upsert-task-id-' + Date.now();
     const result = await upsertLearning(
       { title, content: 'test content', task_id: testTaskId },
@@ -306,3 +267,8 @@ describe('upsertLearning — task_id 原子绑定', () => {
     expect(row.rows[0].task_id).toBe(testTaskId);
   });
 });
+
+afterAll(async () => { await closeDebt10Transaction(pool); });
+
+beforeEach(async () => { await pool.query('SAVEPOINT debt10_case'); });
+afterEach(async () => { await pool.query('ROLLBACK TO SAVEPOINT debt10_case'); await pool.query('RELEASE SAVEPOINT debt10_case'); });

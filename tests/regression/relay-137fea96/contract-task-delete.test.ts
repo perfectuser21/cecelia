@@ -1,5 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import pg from 'pg';
+import express from 'express';
+import { assertDebt10Scratch } from '../../../packages/brain/src/__tests__/helpers/debt-10-scratch.js';
+import type { Server } from 'node:http';
 
 /**
  * Golden Path Step 1-3 — DELETE /api/brain/tasks/:id [BEHAVIOR]
@@ -8,21 +11,32 @@ import pg from 'pg';
  * （返回 HTML "Cannot DELETE ..."，不是 JSON）。本测试对已存在任务断言 200 +
  * status=cancelled，在路由未注册时必然 FAIL（真红）。
  *
- * 运行环境要求：Brain 在 localhost:5221 运行，DB 在 $DB 或 postgresql://localhost/cecelia 可访问
+ * 运行环境：显式私有 cecelia_scratch，真实 router 挂载独占 loopback 随机端口
  * 真实调用方式：真实 HTTP DELETE + 真实 Postgres 校验（不 mock db.js pool，命中「禁 mock 边清单」
  * 第一条：packages/brain/src/routes/task-tasks.js ↔ tasks 表）
  */
 
-const BRAIN_URL = process.env.BRAIN_URL || 'http://localhost:5221';
-const DB_URL = process.env.DB || 'postgresql://localhost/cecelia';
+let BRAIN_URL: string;
+let server: Server;
+let pool: pg.Pool;
 
 let client: pg.Client;
 let pendingTaskId: string;
 let completedTaskId: string;
 
 beforeAll(async () => {
-  client = new pg.Client(DB_URL);
+  if (process.env.DB_NAME !== 'cecelia_scratch' || process.env.DB_HOST !== '127.0.0.1' || !process.env.DB_PORT || process.env.DB_PORT === '5432') throw new Error('explicit private scratch required');
+  const { DB_DEFAULTS } = await import('../../../packages/brain/src/db-config.js');
+  client = new pg.Client(DB_DEFAULTS);
   await client.connect();
+  await assertDebt10Scratch(client);
+  pool = (await import('../../../packages/brain/src/db.js')).default;
+  const router = (await import('../../../packages/brain/src/routes/task-tasks.js')).default;
+  const app = express();
+  app.use('/api/brain/tasks', router);
+  server = await new Promise<Server>((resolve) => { const local = app.listen(0, '127.0.0.1', () => resolve(local)); });
+  const address = server.address() as { port: number };
+  BRAIN_URL = `http://127.0.0.1:${address.port}`;
 
   const r1 = await client.query<{ id: string }>(
     `INSERT INTO tasks (task_type, status, title, payload)
@@ -40,6 +54,8 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  if (server) await new Promise<void>((resolve, reject) => server.close(err => err ? reject(err) : resolve()));
+  if (pool) await pool.end();
   if (client) {
     await client.query('DELETE FROM tasks WHERE id = ANY($1::uuid[])', [
       [pendingTaskId, completedTaskId].filter(Boolean),
