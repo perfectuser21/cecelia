@@ -1,5 +1,6 @@
 // 真实watchdog隔离合同；只验证委托，不宣称旧relay已恢复或DB持久化。
 import { describe, it, expect, vi } from 'vitest';
+import { store } from './helpers/relay-watchdog-boundary.js';
 import { makeDeps, TASK_ID, RUN_ID, SHORT, PR_URL } from './helpers/relay-watchdog-fixture.js';
 import { resumeStalledRelayRuns, MAX_RELAY_ATTEMPTS, scanStuckHarness } from '../harness-relay-watchdog.js';
 import { sendBark } from '../notifier.js';
@@ -54,9 +55,7 @@ describe('scanStuckHarness — 逾期收尸 host 覆盖', () => {
     await scanStuckHarness({ pool, resolvePrHead });
 
     expect(resolvePrHead).toHaveBeenCalledWith(PR_URL);
-    expect(pool.query.mock.calls.some(
-      ([sql]) => /UPDATE initiative_runs/.test(sql) && /phase\s*=\s*'failed'/.test(sql),
-    )).toBe(false);
+    expect(store.patch).not.toHaveBeenCalled();
   });
 
   it('abandoned review whose request SHA no longer matches GitHub is collected', async () => {
@@ -66,9 +65,7 @@ describe('scanStuckHarness — 逾期收尸 host 覆盖', () => {
     await scanStuckHarness({ pool, resolvePrHead });
 
     expect(resolvePrHead).toHaveBeenCalledWith(PR_URL);
-    expect(pool.query.mock.calls.some(
-      ([sql]) => /UPDATE initiative_runs/.test(sql) && /phase\s*=\s*'failed'/.test(sql),
-    )).toBe(true);
+    expect(store.patch).toHaveBeenCalledWith(pool, expect.objectContaining({ runId: RUN_ID, phase: 'failed' }));
   });
 
   it('review request without a PR URL cannot pause deadline cleanup', async () => {
@@ -78,9 +75,7 @@ describe('scanStuckHarness — 逾期收尸 host 覆盖', () => {
     await scanStuckHarness({ pool, resolvePrHead });
 
     expect(resolvePrHead).not.toHaveBeenCalled();
-    expect(pool.query.mock.calls.some(
-      ([sql]) => /UPDATE initiative_runs/.test(sql) && /phase\s*=\s*'failed'/.test(sql),
-    )).toBe(true);
+    expect(store.patch).toHaveBeenCalledWith(pool, expect.objectContaining({ runId: RUN_ID, phase: 'failed' }));
   });
 
   it('GitHub resolver failure defers cleanup until a later watchdog pass', async () => {
@@ -92,9 +87,7 @@ describe('scanStuckHarness — 逾期收尸 host 覆盖', () => {
     await scanStuckHarness({ pool, resolvePrHead });
 
     expect(resolvePrHead).toHaveBeenCalledWith(PR_URL);
-    expect(pool.query.mock.calls.some(
-      ([sql]) => /UPDATE initiative_runs/.test(sql) && /phase\s*=\s*'failed'/.test(sql),
-    )).toBe(false);
+    expect(store.patch).not.toHaveBeenCalled();
   });
 });
 
@@ -159,29 +152,23 @@ describe('resumeStalledRelayRuns', () => {
     const r = await resumeStalledRelayRuns(deps);
     expect(deps.spawnFn).not.toHaveBeenCalled();
     expect(r.capped).toBe(1);
-    const updates = deps.pool.query.mock.calls.map(c => c[0]).filter(s => /UPDATE/.test(s));
-    expect(updates.some(s => /initiative_runs/.test(s) && /'failed'/.test(s))).toBe(true);
-    expect(updates.some(s => /UPDATE tasks/.test(s))).toBe(true);
+    expect(store.patch).toHaveBeenCalledWith(deps.pool, expect.objectContaining({ runId: RUN_ID, phase: 'failed' }));
   });
 
   it('task 已 completed → run 行收敛为 done（house-keeping），不重点火', async () => {
     const deps = makeDeps({ taskStatus: 'completed' });
     const r = await resumeStalledRelayRuns(deps);
     expect(deps.spawnFn).not.toHaveBeenCalled();
-    const updates = deps.pool.query.mock.calls.map(c => c[0]).filter(s => /UPDATE initiative_runs/.test(s));
-    expect(updates.some(s => /'done'/.test(s))).toBe(true);
+    expect(store.patch).toHaveBeenCalledWith(deps.pool, { runId: RUN_ID, phase: 'done', failureReason: null, prUrl: null });
     expect(r.housekept).toBe(1);
   });
 
   it.each(['cancelled', 'canceled'])(
-    'task %s → run 原子收敛 failed/task_cancelled 且保留任务取消态',
+    'task %s → 向store委托failed/task_cancelled（不宣称持久化）',
     async (taskStatus) => {
       const deps = makeDeps({ taskStatus });
       const r = await resumeStalledRelayRuns(deps);
-      const runUpdate = deps.pool.query.mock.calls.find(([sql]) => (
-        /UPDATE initiative_runs/.test(sql) && /task_cancelled/.test(sql)
-      ));
-      expect(runUpdate).toBeTruthy();
+      expect(store.patch).toHaveBeenCalledWith(deps.pool, { runId: RUN_ID, phase: 'failed', failureReason: 'task_cancelled', prUrl: null });
       expect(r.housekept).toBe(1);
       expect(deps.spawnFn).not.toHaveBeenCalled();
     },
@@ -200,7 +187,7 @@ describe('resumeStalledRelayRuns', () => {
     expect(deps.spawnFn).not.toHaveBeenCalled();
   });
 
-  it('容器消失 + pr_url 存在 + PR MERGED → 标 completed/done，不重点火', async () => {
+  it('容器消失 + pr_url 存在 + PR MERGED → 委托 done，不重点火', async () => {
     const deps = makeDeps({ prUrl: PR_URL, prState: 'MERGED' });
     const r = await resumeStalledRelayRuns(deps);
     expect(deps.spawnFn).not.toHaveBeenCalled();
@@ -209,11 +196,7 @@ describe('resumeStalledRelayRuns', () => {
     const ghCall = deps.execFn.mock.calls.find(c => /gh pr view/.test(c[0]));
     expect(ghCall).toBeTruthy();
     expect(ghCall[0]).toContain(PR_URL);
-    // task → completed
-    const updates = deps.pool.query.mock.calls.map(c => c[0]);
-    expect(updates.some(s => /UPDATE tasks/.test(s) && /'completed'/.test(s))).toBe(true);
-    // run → done
-    expect(updates.some(s => /UPDATE initiative_runs/.test(s) && /'done'/.test(s))).toBe(true);
+    expect(store.patch).toHaveBeenCalledWith(deps.pool, { runId: RUN_ID, phase: 'done', failureReason: null, prUrl: PR_URL });
     expect(r.mergedPr).toBe(1);
   });
 
@@ -293,8 +276,7 @@ describe('resumeStalledRelayRuns', () => {
     const r = await resumeStalledRelayRuns(deps);
     expect(deps.spawnFn).not.toHaveBeenCalled();
     const updates = deps.pool.query.mock.calls.map(c => c[0]);
-    expect(updates.some(s => /UPDATE initiative_runs/.test(s) && /'done'/.test(s) && /failure_reason/.test(s) && /merged_without_evaluator_gate/.test(s))).toBe(true);
-    expect(updates.some(s => /UPDATE tasks/.test(s) && /'completed'/.test(s))).toBe(true);
+    expect(store.patch).toHaveBeenCalledWith(deps.pool, { runId: RUN_ID, phase: 'done', failureReason: 'merged_without_evaluator_gate', prUrl: PR_URL });
     expect(r.mergedWithoutGate).toBe(1);
     expect(updates.some(s => /INSERT INTO issues/.test(s))).toBe(true);
     expect(sendBark).toHaveBeenCalled();

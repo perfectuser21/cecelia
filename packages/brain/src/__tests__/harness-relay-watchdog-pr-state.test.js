@@ -1,6 +1,7 @@
 // 真实watchdog隔离合同；只验证委托，不宣称旧relay已恢复或DB持久化。
 import { describe, it, expect, vi } from 'vitest';
-import { TASK_ID, RUN_ID, store } from './helpers/relay-watchdog-fixture.js';
+import { store } from './helpers/relay-watchdog-boundary.js';
+import { TASK_ID, RUN_ID } from './helpers/relay-watchdog-fixture.js';
 import { resumeStalledRelayRuns, _hasEvaluatorGate, _raiseUngatedMergeAlert, _finalizeMergedRun } from '../harness-relay-watchdog.js';
 import { sendBark } from '../notifier.js';
 
@@ -29,9 +30,8 @@ describe('resumeStalledRelayRuns — pr_url fallback 链（#3560 跟进）', () 
     expect(taskSqls[0]).toMatch(/\bpr_url\b/);
   });
 
-  it('run.pr_url=null，tasks.pr_url 有值 → MERGED → 标 completed，不重点火', async () => {
+  it('run.pr_url=null，tasks.pr_url 有值 → MERGED → 委托 done，不重点火', async () => {
     const TASK_PR = 'https://github.com/owner/repo/pull/42';
-    const updates = [];
     const pool = {
       query: vi.fn(async (sql, _params) => {
         if (/FROM initiative_runs r/.test(sql)) {
@@ -40,7 +40,7 @@ describe('resumeStalledRelayRuns — pr_url fallback 链（#3560 跟进）', () 
         if (/FROM tasks/.test(sql)) {
           return { rows: [{ id: TASK_ID, status: 'in_progress', title: 't', pr_url: TASK_PR, payload: { orchestrator: 'skill-relay' } }] };
         }
-        if (/UPDATE/.test(sql)) { updates.push(sql); return { rows: [{ id: TASK_ID }] }; }
+        if (/UPDATE/.test(sql)) return { rows: [{ id: TASK_ID }] };
         return { rows: [] };
       }),
     };
@@ -58,13 +58,11 @@ describe('resumeStalledRelayRuns — pr_url fallback 链（#3560 跟进）', () 
     expect(ghCalls[0]).toContain(TASK_PR);
     expect(spawnFn).not.toHaveBeenCalled();
     expect(out.mergedPr).toBe(1);
-    expect(updates.some((s) => /initiative_runs/.test(s) && /'done'/.test(s))).toBe(true);
-    expect(updates.some((s) => /UPDATE tasks/.test(s) && /'completed'/.test(s))).toBe(true);
+    expect(store.patch).toHaveBeenCalledWith(pool, { runId: RUN_ID, phase: 'done', failureReason: 'merged_without_evaluator_gate', prUrl: TASK_PR });
   });
 
-  it('run.pr_url=null, tasks.pr_url=null, payload.pr_url 有值 → MERGED → 标 completed', async () => {
+  it('run.pr_url=null, tasks.pr_url=null, payload.pr_url 有值 → MERGED → 委托 done', async () => {
     const PAYLOAD_PR = 'https://github.com/owner/repo/pull/99';
-    const updates = [];
     const pool = {
       query: vi.fn(async (sql, _params) => {
         if (/FROM initiative_runs r/.test(sql)) {
@@ -73,7 +71,7 @@ describe('resumeStalledRelayRuns — pr_url fallback 链（#3560 跟进）', () 
         if (/FROM tasks/.test(sql)) {
           return { rows: [{ id: TASK_ID, status: 'in_progress', title: 't', pr_url: null, payload: { orchestrator: 'skill-relay', pr_url: PAYLOAD_PR } }] };
         }
-        if (/UPDATE/.test(sql)) { updates.push(sql); return { rows: [{ id: TASK_ID }] }; }
+        if (/UPDATE/.test(sql)) return { rows: [{ id: TASK_ID }] };
         return { rows: [] };
       }),
     };
@@ -91,6 +89,7 @@ describe('resumeStalledRelayRuns — pr_url fallback 链（#3560 跟进）', () 
     expect(ghCalls[0]).toContain(PAYLOAD_PR);
     expect(spawnFn).not.toHaveBeenCalled();
     expect(out.mergedPr).toBe(1);
+    expect(store.patch).toHaveBeenCalledWith(pool, { runId: RUN_ID, phase: 'done', failureReason: 'merged_without_evaluator_gate', prUrl: PAYLOAD_PR });
   });
 });
 
@@ -163,7 +162,7 @@ describe('_raiseUngatedMergeAlert', () => {
 });
 
 describe('_finalizeMergedRun', () => {
-  it('gated=true → UPDATE 不含 failure_reason，调 promoteRegression', async () => {
+  it('gated=true → 委托exact run、done和空原因（不宣称promote实际产物）', async () => {
     const pool = { query: vi.fn().mockResolvedValue({ rows: [] }) };
     // evaluatorGate=true: initiative_run_events 有记录
     pool.query.mockImplementation(async (sql) => {
@@ -173,15 +172,11 @@ describe('_finalizeMergedRun', () => {
     const out = { mergedPr: 0, mergedWithoutGate: 0 };
     await _finalizeMergedRun(pool, { id: RUN_ID, initiative_id: 'init-1', current_task_id: 'task-1' }, 'https://github.com/x/y/pull/3', out);
     expect(out.mergedPr).toBe(1);
-    const updates = pool.query.mock.calls.map(c => c[0]).filter(s => /UPDATE initiative_runs/.test(s));
-    expect(updates.length).toBeGreaterThan(0);
-    expect(updates.every(s => !/failure_reason/.test(s))).toBe(true);
-    const exactUpdate = pool.query.mock.calls.find(([sql]) => /UPDATE initiative_runs/.test(sql));
-    expect(exactUpdate[0]).toMatch(/WHERE\s+id\s*=\s*\$1/);
-    expect(exactUpdate[1][0]).toBe(RUN_ID);
+    expect(store.patch).toHaveBeenCalledTimes(1);
+    expect(store.patch).toHaveBeenCalledWith(pool, { runId: RUN_ID, phase: 'done', failureReason: null, prUrl: 'https://github.com/x/y/pull/3' });
   });
 
-  it('gated=false → UPDATE 含 failure_reason=merged_without_evaluator_gate，mergedWithoutGate++', async () => {
+  it('gated=false → 委托未验收原因，mergedWithoutGate++', async () => {
     vi.clearAllMocks();
     const pool = { query: vi.fn().mockImplementation(async (sql) => {
       if (/initiative_run_events/.test(sql)) return { rows: [] }; // no evaluator gate
@@ -191,12 +186,11 @@ describe('_finalizeMergedRun', () => {
     await _finalizeMergedRun(pool, { id: RUN_ID, initiative_id: 'init-2', current_task_id: 'task-2' }, 'https://github.com/x/y/pull/4', out);
     expect(out.mergedPr).toBe(1);
     expect(out.mergedWithoutGate).toBe(1);
-    const updates = pool.query.mock.calls.map(c => c[0]).filter(s => /UPDATE initiative_runs/.test(s));
-    expect(updates.some(s => /failure_reason/.test(s) && /merged_without_evaluator_gate/.test(s))).toBe(true);
+    expect(store.patch).toHaveBeenCalledWith(pool, { runId: RUN_ID, phase: 'done', failureReason: 'merged_without_evaluator_gate', prUrl: 'https://github.com/x/y/pull/4' });
     expect(sendBark).toHaveBeenCalled();
   });
 
-  it('setPrUrl=true → pr_url 写进 UPDATE', async () => {
+  it('setPrUrl=true → pr_url交给store委托', async () => {
     vi.clearAllMocks();
     const pool = { query: vi.fn().mockImplementation(async (sql) => {
       if (/initiative_run_events/.test(sql)) return { rows: [{ x: 1 }] };
@@ -205,7 +199,6 @@ describe('_finalizeMergedRun', () => {
     const out = { mergedPr: 0, mergedWithoutGate: 0 };
     const PR = 'https://github.com/x/y/pull/5';
     await _finalizeMergedRun(pool, { id: RUN_ID, initiative_id: 'init-3', current_task_id: 'task-3' }, PR, out, { setPrUrl: true });
-    const runUpdates = pool.query.mock.calls.filter(c => /UPDATE initiative_runs/.test(c[0]));
-    expect(runUpdates.some(([, params]) => Array.isArray(params) && params.includes(PR))).toBe(true);
+    expect(store.patch).toHaveBeenCalledWith(pool, { runId: RUN_ID, phase: 'done', failureReason: null, prUrl: PR });
   });
 });

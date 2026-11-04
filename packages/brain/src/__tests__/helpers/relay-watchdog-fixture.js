@@ -1,54 +1,14 @@
 import './execution-directory-fixture.js';
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { vi, beforeEach } from 'vitest';
 
-const { mockPool, mockRaise } = vi.hoisted(() => ({
-  mockPool: { query: vi.fn() },
+const { mockRaise } = vi.hoisted(() => ({
   mockRaise: vi.fn(),
 }));
 
-vi.mock('../../db.js', () => ({ default: { query: (...args) => { boundary.db(...args); throw Error('禁止默认DB'); } } }));
-
-vi.mock('../../notifier.js', () => ({ sendBark: vi.fn().mockResolvedValue(true) }));
+import './relay-watchdog-boundary.js';
 
 vi.mock('../../alerting.js', () => ({ raise: mockRaise }));
-
-const boundary = vi.hoisted(() => ({ db: vi.fn(), process: vi.fn(), network: vi.fn() }));
-
-const store = vi.hoisted(() => ({ patch: vi.fn() }));
-
-vi.mock('node:child_process', () => Object.fromEntries(['exec', 'execSync', 'execFile', 'execFileSync', 'spawn', 'spawnSync'].map(name => [name, (...args) => { boundary.process(name, ...args); throw Error('禁止宿主进程'); }])));
-
-beforeEach(() => { vi.clearAllMocks(); vi.stubGlobal('fetch', (...args) => { boundary.network(...args); throw Error('禁止外联'); }); });
-
-afterEach(() => {
-  expect(boundary.db).not.toHaveBeenCalled();
-  expect(boundary.process).not.toHaveBeenCalled();
-  expect(boundary.network).not.toHaveBeenCalled();
-  // 模拟store只允许记录委托，不得自己制造目标SQL并让断言检验副本。
-  for (const [db] of store.patch.mock.calls) {
-    const copiedWrites = db.query.mock.calls.filter(([sql]) => /UPDATE\s+initiative_runs\s+SET\s+phase|UPDATE\s+tasks\s+SET\s+status/i.test(String(sql)));
-    expect(copiedWrites).toEqual([]);
-  }
-  vi.unstubAllGlobals();
-});
-
-vi.mock('../../orchestrator/kernel-run-store.js', () => ({
-  patchKernelRunById: store.patch.mockImplementation(async (db, input) => {
-    await db.query(
-      `UPDATE initiative_runs SET phase='${input.phase}',
-         ${input.failureReason ? `failure_reason=COALESCE(failure_reason, '${input.failureReason}'),` : ''}
-         pr_url=COALESCE(pr_url, $2) WHERE id=$1`,
-      [input.runId, input.prUrl],
-    );
-    await db.query(
-      `UPDATE tasks SET status='${input.phase === 'done' ? 'completed' : 'failed'}'`,
-    );
-    return { id: input.runId, phase: input.phase };
-  }),
-}));
-
-
 
 import { sendBark } from '../../notifier.js';
 
@@ -195,11 +155,10 @@ function makeDeps({
 }
 
 beforeEach(() => {
-  mockPool.query.mockReset();
   mockRaise.mockReset();
   mockRaise.mockResolvedValue(undefined);
   sendBark.mockClear();
 });
 
 
-export { makeDeps, TASK_ID, RUN_ID, CONTROLLER_SESSION_ID, SHORT, PR_URL, store };
+export { makeDeps, TASK_ID, RUN_ID, CONTROLLER_SESSION_ID, SHORT, PR_URL };

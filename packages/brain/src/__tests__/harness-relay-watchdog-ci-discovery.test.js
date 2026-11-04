@@ -1,5 +1,6 @@
 // 真实watchdog隔离合同；只验证委托，不宣称旧relay已恢复或DB持久化。
 import { describe, it, expect, vi } from 'vitest';
+import { store } from './helpers/relay-watchdog-boundary.js';
 import { makeDeps, TASK_ID, RUN_ID, SHORT, PR_URL } from './helpers/relay-watchdog-fixture.js';
 import { resumeStalledRelayRuns, _finalizeMergedRun, _parseBaseRepo } from '../harness-relay-watchdog.js';
 
@@ -189,11 +190,8 @@ describe('刀A2 — generator_done + pr_url 空 反查修复', () => {
         expect(spawnFn).not.toHaveBeenCalled();
         // mergedPr 计数
         expect(out.mergedPr).toBe(1);
-        // pool.query 含 UPDATE initiative_runs ... 'done'
-        const sqls = pool.query.mock.calls.map(c => c[0]);
-        expect(sqls.some(s => /UPDATE initiative_runs/.test(s) && /'done'/.test(s))).toBe(true);
-        // pool.query 含 UPDATE tasks ... 'completed'
-        expect(sqls.some(s => /UPDATE tasks/.test(s) && /'completed'/.test(s))).toBe(true);
+        // 真实watchdog向store传exact run与PR；不执行store SQL
+        expect(store.patch).toHaveBeenCalledWith(pool, { runId: RUN_ID, phase: 'done', failureReason: null, prUrl: DISCOVERED_PR });
         // console.log 含 discovered_merged_via_fallback
         const logMessages = consoleSpy.mock.calls.map(c => c.join(' '));
         expect(logMessages.some(m => m.includes('discovered_merged_via_fallback'))).toBe(true);
@@ -324,9 +322,8 @@ describe('刀A2 — generator_done + pr_url 空 反查修复', () => {
       expect(spawnFn).not.toHaveBeenCalled();
       // capped=1
       expect(out.capped).toBe(1);
-      // SQL 含 phase='failed' + failure_reason='generator_done_timeout'
-      const sqls = pool.query.mock.calls.map(c => c[0]);
-      expect(sqls.some(s => /UPDATE initiative_runs SET phase='failed'/.test(s) && /generator_done_timeout/.test(s))).toBe(true);
+      // 真实watchdog终态委托包含超时原因
+      expect(store.patch).toHaveBeenCalledWith(pool, { runId: RUN_ID, phase: 'failed', failureReason: 'generator_done_timeout', prUrl: null });
     });
   });
 });
