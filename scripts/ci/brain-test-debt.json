@@ -21,24 +21,6 @@
       "manualRoot": false
     },
     {
-      "file": "packages/brain/src/__tests__/planner-domain-routing.test.js",
-      "category": "external_resource",
-      "reason": "真实PostgreSQL依赖（文件第12行及后续pool查询），尚未纳入自动Deep清单；须先确认测试库身份、数据清理和现行SQL。",
-      "manualRoot": false
-    },
-    {
-      "file": "packages/brain/src/__tests__/planner.test.js",
-      "category": "external_resource",
-      "reason": "真实PostgreSQL依赖（文件第7行及后续pool查询），尚未纳入自动Deep清单；须先确认测试库身份、数据清理和现行SQL。",
-      "manualRoot": false
-    },
-    {
-      "file": "packages/brain/src/__tests__/quarantine-systemic.test.js",
-      "category": "external_resource",
-      "reason": "真实quarantineSystemic公共兼容保护合同，调用真函数但无当前内部调用；保留显式scratch身份保护，需独占PG执行证据再晋级历史Deep合同，不强删真保护。",
-      "manualRoot": false
-    },
-    {
       "file": "packages/brain/src/routes/__tests__/harness-feature-propagation.test.js",
       "category": "legacy_spec",
       "reason": "按cwd重复拼packages/brain，并断言旧harness源码布局；需迁移为真实回调/来源契约。",

@@ -237,7 +237,6 @@ export default defineConfig({
       'src/__tests__/migration-030.test.js',
       'src/__tests__/migration-041.test.js',
       'src/__tests__/migrations-087-suggestions.test.js',
-      'src/__tests__/planner-domain-routing.test.js',
       'src/__tests__/planner-learning-penalty.test.js',
       'src/__tests__/planner.test.js',
       'src/__tests__/quarantine-auto-release.test.js',

@@ -4,7 +4,7 @@
   "purpose": "admission_only",
   "repo": "perfectuser21/cecelia",
   "base_revision": "fadbf32852cdb30f71e34dda9ab81b521bda484b",
-  "reviewed_replacement_revision": "b0d9e96840a58c918799051b259e9a381b2c8342",
+  "reviewed_replacement_revision": "0655f259e9b72eb86b638f82970fffb608a14937",
   "base_config": {
     "path": "packages/brain/vitest.config.js",
     "mode": "100644",
@@ -15,9 +15,9 @@
   "replacement_config": {
     "path": "packages/brain/vitest.config.js",
     "mode": "100644",
-    "git_blob_sha1": "706a265379695e12fd50a97df1a9057eabf25cd2",
-    "sha256": "d132a389c7eb59b5dad434d371302f7c8e5d140d60609f76be01c60ef31a0841",
-    "byte_length": 21622
+    "git_blob_sha1": "5a43f27e8de27d6adcfd81a8f5a038d7b6aeab82",
+    "sha256": "8c60cdc40b934d93b846d03c2b5fc08d9a7d4b86f3d33f26ea25ea6a8183d271",
+    "byte_length": 21568
   },
   "skill_selector": {
     "path": "scripts/ci/skill-source-tests.mjs",
@@ -327,9 +327,9 @@
       "blob": {
         "path": "packages/brain/vitest.config.js",
         "mode": "100644",
-        "git_blob_sha1": "706a265379695e12fd50a97df1a9057eabf25cd2",
-        "sha256": "d132a389c7eb59b5dad434d371302f7c8e5d140d60609f76be01c60ef31a0841",
-        "byte_length": 21622
+        "git_blob_sha1": "5a43f27e8de27d6adcfd81a8f5a038d7b6aeab82",
+        "sha256": "8c60cdc40b934d93b846d03c2b5fc08d9a7d4b86f3d33f26ea25ea6a8183d271",
+        "byte_length": 21568
       },
       "component": "brain"
     },
@@ -360,16 +360,16 @@
     {
       "path": "scripts/ci/debt-pg-tests.json",
       "mode": "100644",
-      "git_blob_sha1": "d68894cbc18e1cbcd54d52b66aa7fec1fc03a841",
-      "sha256": "b6be561ada34c4184524852ba77eadd2437fc4ef6c131db000ac365cc6d5f25c",
-      "byte_length": 4974
+      "git_blob_sha1": "8f17f1bad3a152807a11fc7305ff9a26145ede6f",
+      "sha256": "f071d1b94f4391cf8fd1cbab1820c9d67e9f12b6181a28e3ebbebd4de5edf7af",
+      "byte_length": 5228
     },
     {
       "path": "scripts/ci/run-debt-pg.mjs",
       "mode": "100644",
-      "git_blob_sha1": "eade282139c32e3bbb4e6eaebae1f3cae16df5c1",
-      "sha256": "f1dea30c8644be087ee6b16dfd3c0179faab7875af14cc82969bdb9f99b13cf3",
-      "byte_length": 6848
+      "git_blob_sha1": "d355f9b6e73c18ca6b9241df847c85a00964693c",
+      "sha256": "86a4997069b9dd3fbc62efcdde36d103f18a1ef074c2189da5d46f9aea0c5cc5",
+      "byte_length": 7144
     },
     {
       "path": "scripts/ci/private-pg-backend.mjs",

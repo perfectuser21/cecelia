@@ -7,10 +7,10 @@ import {selectVitestVerificationInput} from './implementation-verification-selec
 const REPO='perfectuser21/cecelia',BASE='68b996a5641b69e6f21705a114a4524e407fe097';
 const CATALOG='config/verification-retirements/alertness-v1.json';
 const CATALOG_SHA256='f9c3f170764dc41dbd4f710e5082551880c47f008bc7a9ca3cbc91eba2e5c73c';
-const CATALOGS=[{path:'config/verification-retirements/brain-debt-retired-layers-v1.json',sha256:'d8a997969b20e609a434b2ac1555d9997dd6700986ceeb525bd065b5eed53db7',records:6,inputs:8,support_inputs:5,base_revision:'fadbf32852cdb30f71e34dda9ab81b521bda484b',onlyPaths:["packages/brain/src/__tests__/planner-initiative-plan.test.js", "packages/brain/src/__tests__/actions-initiative-orchestration.test.js", "packages/brain/src/__tests__/tasks-status.test.js", "tests/regression/relay-1b1f1ffa/capacity-gate.test.js", "tests/regression/relay-57e25e92/headed-smoke-contract.test.ts", "tests/regression/relay-07b2fd3b/captures-api.test.ts"]},
+const CATALOGS=[{path:'config/verification-retirements/brain-debt-retired-layers-v1.json',sha256:'f22732bef92d6e1bdc019ecec20986a8e6dcfe320c9f0f9c516cafc7665cd8fc',records:6,inputs:8,support_inputs:5,base_revision:'fadbf32852cdb30f71e34dda9ab81b521bda484b',onlyPaths:["packages/brain/src/__tests__/planner-initiative-plan.test.js", "packages/brain/src/__tests__/actions-initiative-orchestration.test.js", "packages/brain/src/__tests__/tasks-status.test.js", "tests/regression/relay-1b1f1ffa/capacity-gate.test.js", "tests/regression/relay-57e25e92/headed-smoke-contract.test.ts", "tests/regression/relay-07b2fd3b/captures-api.test.ts"]},
  {path:CATALOG,sha256:CATALOG_SHA256,records:5,inputs:11},
  {path:'config/verification-retirements/legacy-five-v1.json',sha256:'1392c3febd9131416ec8c960a7a5a0ff6553b496084efeee1db6e1c236f25717',records:5,inputs:4},
- {path:'config/verification-retirements/tick-copied-sql-v1.json',sha256:'fb6b9292ee5205f1daa0d295761243a905e8f7d0454c207cb6487cf6354a27d9',records:2,inputs:2,
+ {path:'config/verification-retirements/tick-copied-sql-v1.json',sha256:'d581d5f8812f6a864de480364f670b83e2a64c37b9106ac30e425e14085491d6',records:2,inputs:2,
   onlyPaths:['packages/brain/src/__tests__/tick-dispatch-scope-decomposing.test.js','packages/brain/src/__tests__/tick-kr-decomp.test.js']}];
 export const CLOSED_COMPONENT_CATALOG=Object.freeze({path:'config/verification-retirements/closed-components-v1.json',
  sha256:'5b43e42d84aa1b03580b030924cf5b46e0b833f55a8735b86bd185a0bffedc99'});

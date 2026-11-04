@@ -4,7 +4,7 @@
   "purpose": "admission_only",
   "repo": "perfectuser21/cecelia",
   "base_revision": "68b996a5641b69e6f21705a114a4524e407fe097",
-  "reviewed_replacement_revision": "fadbf32852cdb30f71e34dda9ab81b521bda484b",
+  "reviewed_replacement_revision": "0655f259e9b72eb86b638f82970fffb608a14937",
   "base_config": {
     "path": "packages/brain/vitest.config.js",
     "mode": "100644",
@@ -15,9 +15,9 @@
   "replacement_config": {
     "path": "packages/brain/vitest.config.js",
     "mode": "100644",
-    "git_blob_sha1": "2e02ba7d4d264d8c0b9c77a0f89f98352834c9df",
-    "sha256": "98d849609f66e1361c48180956742780ded8bac623dd89e39209abac5b98dd47",
-    "byte_length": 22737
+    "git_blob_sha1": "5a43f27e8de27d6adcfd81a8f5a038d7b6aeab82",
+    "sha256": "8c60cdc40b934d93b846d03c2b5fc08d9a7d4b86f3d33f26ea25ea6a8183d271",
+    "byte_length": 21568
   },
   "skill_selector": {
     "path": "scripts/ci/skill-source-tests.mjs",
