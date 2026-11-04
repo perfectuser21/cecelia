@@ -20,7 +20,7 @@ const reviewer = read('packages/workflows/skills/harness-contract-reviewer/SKILL
 const generator = read('packages/workflows/skills/harness-generator/SKILL.md');
 const proposer = read('packages/workflows/skills/harness-contract-proposer/SKILL.md');
 
-describe('skill-contract — 5 类不变量守现网快照', () => {
+describe('skill-contract — 固定Skill来源正文合同（不代表业务执行）', () => {
   it('不变量1: evaluator 正文含 env_missing / B-1.6 / B-1.8 段（B-1.7 已下沉 Contract Gate 代码层，v1.16.0）', () => {
     const r = checkEvaluator(evaluator);
     // 仅看「段缺失」类不变量（排除 ws_id 残留项，由不变量2 单独守）
