@@ -34,11 +34,23 @@ vi.mock('node:fs', async (original) => ({
   writeFileSync: (...args) => escaped.file('write', ...args),
 }));
 afterEach(() => {
+  expect(localBoundaries.collect).toHaveBeenCalledTimes(1);
+  expect(localBoundaries.orphan).toHaveBeenCalledTimes(1);
+  expect(localBoundaries.orphan.mock.calls[0][0].containerId)
+    .toBe(localBoundaries.collect.mock.calls[0][0].containerId);
   expect(escaped.process).not.toHaveBeenCalled();
   expect(escaped.file).not.toHaveBeenCalled();
   expect(escaped.network).not.toHaveBeenCalled();
   vi.unstubAllGlobals();
 });
+
+
+const localBoundaries = vi.hoisted(() => ({
+  collect: vi.fn(async () => ({ ok: true })),
+  orphan: vi.fn(async () => ({ action: 'noop' })),
+}));
+vi.mock('../../lib/relay-forensics.js', () => ({ captureRelayContainerLogs: localBoundaries.collect }));
+vi.mock('../../lib/harness-orphan-guard.js', () => ({ handleRelayExitConsistency: localBoundaries.orphan }));
 
 vi.mock('@langchain/langgraph', () => ({
   Command: vi.fn().mockImplementation((args) => ({ __command: true, args })),
@@ -88,6 +100,10 @@ describe('routes/harness-callback — relay 容器认证失败 Bark 告警', () 
     expect(res.status).toBe(200);
     expect(res.body.relayAck).toBe(true);
     expect(sendBark).toHaveBeenCalledTimes(1);
+    expect(localBoundaries.collect).toHaveBeenCalledWith({ containerId: cid });
+    expect(localBoundaries.orphan).toHaveBeenCalledWith(expect.objectContaining({
+      containerId: cid, exitCode: 1, resultText: 'Not logged in · Please run /login',
+    }));
     const [title, alertBody] = sendBark.mock.calls[0];
     expect(title).toContain('登录');
     expect(alertBody).toContain(cid);
