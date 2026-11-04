@@ -137,24 +137,41 @@ export async function recordLearning(analysis) {
           [learning.id]
         );
         if (taskDedup.rows.length === 0) {
-          await createTask({
-            title: `[Insight修复] ${title.slice(0, 120)}`,
-            description: `由 RCA Learning 自动生成的修复任务。\n\nlearning_id: ${learning.id}\n\n${content}`,
-            priority: 'P2',
-            task_type: 'dev',
-            trigger_source: 'cortex',
-            payload: {
-              insight_learning_id: learning.id,
-              event_type: triggerEvent,
-            },
-          });
-          await pool.query(
-            `UPDATE learnings SET applied = true, applied_at = NOW() WHERE id = $1`,
-            [learning.id]
-          );
-          console.log(`[learning] Auto-created dev task for RCA learning ${learning.id}`);
+          // 仓库与范围只继承触发任务的持久化路由，不能从 RCA 文案猜测目标仓库。
+          const source = task_id ? await pool.query('SELECT payload FROM tasks WHERE id = $1', [task_id]) : { rows: [] };
+          const { repo, map_scope: mapScope } = source.rows[0]?.payload || {};
+          if (typeof repo !== 'string' || !repo.trim() || !Array.isArray(mapScope)
+              || mapScope.length === 0 || mapScope.some(scope => typeof scope !== 'string' || !scope.trim())) {
+            await pool.query(`UPDATE learnings SET metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb WHERE id = $1`,
+              [learning.id, JSON.stringify({ insight_task_status: 'blocked', insight_task_reason: 'source_route_context_missing' })]);
+          } else {
+            const created = await createTask({
+              repo_hint: repo,
+              map_scope_hint: mapScope,
+              mutation_intent: 'write',
+              declared_change_kind: 'bugfix',
+              title: `[Insight修复] ${title.slice(0, 120)}`,
+              description: `由 RCA Learning 自动生成的修复任务。\n\nlearning_id: ${learning.id}\n\n${content}`,
+              priority: 'P2',
+              task_type: 'dev',
+              trigger_source: 'cortex',
+              payload: {
+                insight_learning_id: learning.id,
+                event_type: triggerEvent,
+              },
+            });
+            if (!created?.success || !created.task?.id) throw new Error('insight_task_creation_not_confirmed');
+            await pool.query(
+              `UPDATE learnings SET applied = true, applied_at = NOW() WHERE id = $1`,
+              [learning.id]
+            );
+            console.log(`[learning] Auto-created repair task for RCA learning ${learning.id}`);
+          }
         }
       } catch (taskErr) {
+        await pool.query(`UPDATE learnings SET metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb WHERE id = $1`,
+          [learning.id, JSON.stringify({ insight_task_status: 'blocked', insight_task_reason: taskErr.message })])
+          .catch(auditErr => console.warn(`[learning] Failed to record blocked task reason: ${auditErr.message}`));
         console.warn(`[learning] Failed to create task for learning ${learning.id} (non-fatal):`, taskErr.message);
       }
     } else {
@@ -497,6 +514,8 @@ Required analysis:
 3. Strategy adjustments (specific parameter changes)
 4. Recommended mitigations`,
       task_type: 'research',
+      mutation_intent: 'none',
+      declared_domain: 'research',
       priority: 'P1',
       trigger_source: 'learning_system',
       payload: {
