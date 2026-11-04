@@ -155,10 +155,8 @@ describe('Alerting', () => {
       // 首次调用，距 _lastFlushAt 超过阈值（因为 _lastFlushAt=0）
       await flushAlertsIfNeeded();
 
-      // P1 或 P2 有内容时应该推送
-      // 由于 flushP1/flushP2 内部实现，只有有内容才推送
-      // 这里主要验证不抛错
-      expect(typeof getStatus().p1_pending).toBe('number');
+      expect(getStatus().p1_pending).toBe(0);
+      expect(getStatus().p2_pending).toBe(0);
     });
   });
 });
