@@ -207,6 +207,9 @@ describe('toPct — 列是 INTEGER，浮点必须在进 SQL 前收敛', () => {
     //   [account_id, provider, plan, five_hour_pct, seven_day_pct, reset_at,
     //    host_alias, forwardable, forward_targets, status, last_error]
     // pct 两列在下标 3、4（0-based）——核对过 SQL 的 $4/$5 与数组字面量顺序一致。
+    for (const { params } of pool.upserts()) {
+      expect(params.slice(3, 5)).toEqual(/grok/i.test(params[1]) ? [2, 3] : [90, 12]);
+    }
     const pctParams = pool.upserts().flatMap((c) => (c.params ?? []).slice(3, 5));
     expect(pctParams.length).toBeGreaterThan(0);
     for (const p of pctParams) {
