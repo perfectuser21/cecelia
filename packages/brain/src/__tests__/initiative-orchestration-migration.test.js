@@ -1,12 +1,6 @@
-/**
- * Migration 057 - Initiative 4-Phase 编排基础设施 测试
- *
- * DoD 覆盖: D1
- * 验证 tasks.task_type CHECK 扩展（projects 表已在 migration 185 中 DROP）
- *
- * 注意：migration 057 在旧 projects 表上添加的列（execution_mode/current_phase/dod_content）
- * 随着 migration 185 DROP TABLE projects CASCADE 已不存在。
- * 本测试仅验证 tasks 表相关的功能，以及 projects 表已 DROP 的事实。
+/** 历史迁移 057 的真实 PG 合同：在该迁移版本的前置 schema 上执行正式 SQL。
+ * 当前 projects 已由 497 重建；185 只删除外键，186 才删除旧表。
+ * 此处保障历史升级路径，不声称是当前全量 schema 的快照。
  */
 
 import { describe, it, expect, afterAll, beforeAll, vi } from 'vitest';
@@ -25,33 +19,20 @@ beforeAll(async () => {
 describe('Migration 057 - initiative_orchestration', () => {
   afterAll(async () => {
     await pool.query("DELETE FROM tasks WHERE title LIKE 'mig057_test_%'");
-    await pool.query("DELETE FROM key_results WHERE title LIKE 'mig057_test_%'");
+    await pool.query("DELETE FROM goals WHERE title LIKE 'mig057_test_%'");
   });
 
-  // migration 185 验证：projects 表已 DROP
-  it('D1: projects 表已在 migration 185 中 DROP', async () => {
-    await expect(
-      pool.query("SELECT 1 FROM projects LIMIT 1")
-    ).rejects.toThrow();
+  it('D1: 057 新增项目编排列及默认值', async () => {
+    const { rows: [row] } = await pool.query("INSERT INTO projects(name) VALUES ('fixture') RETURNING execution_mode, current_phase, dod_content");
+    expect(row).toEqual({ execution_mode: 'simple', current_phase: null, dod_content: null });
   });
-
-  // migration 185 验证：projects 表索引已不存在
-  it('D1: idx_projects_execution_mode 索引已随 projects 表一并删除', async () => {
-    const result = await pool.query(`
-      SELECT indexname FROM pg_indexes
-      WHERE tablename = 'projects'
-        AND indexname = 'idx_projects_execution_mode'
-    `);
-    expect(result.rows.length).toBe(0);
+  it.each(['idx_projects_execution_mode', 'idx_projects_current_phase'])('D1: 创建部分索引 %s', async (name) => {
+    const result = await pool.query('SELECT indexdef FROM pg_indexes WHERE schemaname = current_schema() AND tablename = $1 AND indexname = $2', ['projects', name]);
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0].indexdef).toContain('WHERE');
   });
-
-  it('D1: idx_projects_current_phase 索引已随 projects 表一并删除', async () => {
-    const result = await pool.query(`
-      SELECT indexname FROM pg_indexes
-      WHERE tablename = 'projects'
-        AND indexname = 'idx_projects_current_phase'
-    `);
-    expect(result.rows.length).toBe(0);
+  it('D1: 拒绝未知 task_type', async () => {
+    await expect(pool.query("INSERT INTO tasks(title,task_type) VALUES ('bad-type','debt_invalid_type')")).rejects.toMatchObject({ code: '23514', constraint: 'tasks_task_type_check' });
   });
 
   // D1: schema_version 057
@@ -66,7 +47,7 @@ describe('Migration 057 - initiative_orchestration', () => {
   it('D1: tasks.task_type accepts initiative_plan', async () => {
     // Need a KR for non-system task type
     const krResult = await pool.query(`
-      INSERT INTO key_results (title, priority, status, progress)
+      INSERT INTO goals (title, priority, status, progress)
       VALUES ('mig057_test_goal', 'P1', 'pending', 0)
       RETURNING id
     `);
@@ -81,13 +62,13 @@ describe('Migration 057 - initiative_orchestration', () => {
 
     // Cleanup
     await pool.query("DELETE FROM tasks WHERE title = 'mig057_test_plan_task'");
-    await pool.query("DELETE FROM key_results WHERE title = 'mig057_test_goal'");
+    await pool.query("DELETE FROM goals WHERE title = 'mig057_test_goal'");
   });
 
   // D1: tasks.task_type CHECK 扩展 - initiative_verify
   it('D1: tasks.task_type accepts initiative_verify', async () => {
     const krResult = await pool.query(`
-      INSERT INTO key_results (title, priority, status, progress)
+      INSERT INTO goals (title, priority, status, progress)
       VALUES ('mig057_test_goal_v', 'P1', 'pending', 0)
       RETURNING id
     `);
@@ -102,13 +83,13 @@ describe('Migration 057 - initiative_orchestration', () => {
 
     // Cleanup
     await pool.query("DELETE FROM tasks WHERE title = 'mig057_test_verify_task'");
-    await pool.query("DELETE FROM key_results WHERE title = 'mig057_test_goal_v'");
+    await pool.query("DELETE FROM goals WHERE title = 'mig057_test_goal_v'");
   });
 
   // D1: existing task types still work
   it('D1: existing task types still accepted', async () => {
     const krResult = await pool.query(`
-      INSERT INTO key_results (title, priority, status, progress)
+      INSERT INTO goals (title, priority, status, progress)
       VALUES ('mig057_test_goal_existing', 'P1', 'pending', 0)
       RETURNING id
     `);
@@ -126,7 +107,7 @@ describe('Migration 057 - initiative_orchestration', () => {
 
     // Cleanup
     await pool.query("DELETE FROM tasks WHERE title LIKE 'mig057_test_existing_%'");
-    await pool.query("DELETE FROM key_results WHERE title = 'mig057_test_goal_existing'");
+    await pool.query("DELETE FROM goals WHERE title = 'mig057_test_goal_existing'");
   });
 });
 
