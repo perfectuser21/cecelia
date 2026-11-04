@@ -1,6 +1,8 @@
 // 真实watchdog隔离合同；只验证委托，不宣称旧relay已恢复或DB持久化。
 import { describe, it, expect, vi } from 'vitest';
-import { makeDeps, TASK_ID, RUN_ID, SHORT, PR_URL, resumeStalledRelayRuns, MAX_RELAY_ATTEMPTS, scanStuckHarness, sendBark } from './helpers/relay-watchdog-fixture.js';
+import { makeDeps, TASK_ID, RUN_ID, SHORT, PR_URL } from './helpers/relay-watchdog-fixture.js';
+import { resumeStalledRelayRuns, MAX_RELAY_ATTEMPTS, scanStuckHarness } from '../harness-relay-watchdog.js';
+import { sendBark } from '../notifier.js';
 
 describe('scanStuckHarness — 逾期收尸 host 覆盖', () => {
   it('SQL host 过滤覆盖所有 skill-relay host(含 claude-headed/session)，非写死 skill-relay-codex = RED', async () => {

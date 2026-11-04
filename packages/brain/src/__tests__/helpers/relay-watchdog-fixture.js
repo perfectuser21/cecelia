@@ -48,7 +48,7 @@ vi.mock('../../orchestrator/kernel-run-store.js', () => ({
   }),
 }));
 
-import { resumeStalledRelayRuns, MAX_RELAY_ATTEMPTS, scanStuckHarness } from '../../harness-relay-watchdog.js';
+
 
 import { sendBark } from '../../notifier.js';
 
@@ -201,7 +201,5 @@ beforeEach(() => {
   sendBark.mockClear();
 });
 
-import { _hasEvaluatorGate, _raiseUngatedMergeAlert, _finalizeMergedRun } from '../../harness-relay-watchdog.js';
 
-import { _parseBaseRepo } from '../../harness-relay-watchdog.js';
-export { makeDeps, TASK_ID, RUN_ID, CONTROLLER_SESSION_ID, SHORT, PR_URL, store, resumeStalledRelayRuns, MAX_RELAY_ATTEMPTS, scanStuckHarness, sendBark, _hasEvaluatorGate, _raiseUngatedMergeAlert, _finalizeMergedRun, _parseBaseRepo };
+export { makeDeps, TASK_ID, RUN_ID, CONTROLLER_SESSION_ID, SHORT, PR_URL, store };

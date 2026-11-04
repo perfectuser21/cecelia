@@ -1,6 +1,7 @@
 // 真实watchdog隔离合同；只验证委托，不宣称旧relay已恢复或DB持久化。
 import { describe, it, expect, vi } from 'vitest';
-import { makeDeps, TASK_ID, RUN_ID, SHORT, PR_URL, resumeStalledRelayRuns, _finalizeMergedRun, _parseBaseRepo } from './helpers/relay-watchdog-fixture.js';
+import { makeDeps, TASK_ID, RUN_ID, SHORT, PR_URL } from './helpers/relay-watchdog-fixture.js';
+import { resumeStalledRelayRuns, _finalizeMergedRun, _parseBaseRepo } from '../harness-relay-watchdog.js';
 
 describe('刀A5 — execTolerant 兜底路径（GP-A：resume_ci_red）', () => {
   it('GP-A: gh pr checks 非零退出 + err.stdout 含 FAILURE JSON → execTolerant 兜底 → ciStatus=fail → spawnFn 调用一次', async () => {

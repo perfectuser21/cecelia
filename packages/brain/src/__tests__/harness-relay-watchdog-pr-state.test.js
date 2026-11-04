@@ -1,6 +1,8 @@
 // 真实watchdog隔离合同；只验证委托，不宣称旧relay已恢复或DB持久化。
 import { describe, it, expect, vi } from 'vitest';
-import { TASK_ID, RUN_ID, store, resumeStalledRelayRuns, sendBark, _hasEvaluatorGate, _raiseUngatedMergeAlert, _finalizeMergedRun } from './helpers/relay-watchdog-fixture.js';
+import { TASK_ID, RUN_ID, store } from './helpers/relay-watchdog-fixture.js';
+import { resumeStalledRelayRuns, _hasEvaluatorGate, _raiseUngatedMergeAlert, _finalizeMergedRun } from '../harness-relay-watchdog.js';
+import { sendBark } from '../notifier.js';
 
 describe('resumeStalledRelayRuns — pr_url fallback 链（#3560 跟进）', () => {
   it('taskQ SELECT 含 pr_url 列', async () => {
