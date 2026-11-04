@@ -192,3 +192,9 @@ for (const status of [200, 302, 500]) test(`nightly真实HTTP ${status}绿色JSO
   assert.equal(result.status === 0, status === 200, result.out);
   if (status !== 200) assert.doesNotMatch(result.out, /Release Gate 通过/);
 });
+
+test('哨兵缺少Bark配置必须明确失败，不能缺key跳过却显示告警成功', async t => {
+  const f=fixture(t);
+  const result=await run(sentinel.jobs.alert.steps[1].run,{...f.env,BARK_URL:'',BARK_TOKEN:'',HEALTH_OK:'true',KV_OK:'false',KV_AGE:'2000',PROBE_URL:'fixture'});
+  assert.notEqual(result.status,0,result.out);
+});
