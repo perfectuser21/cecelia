@@ -23,3 +23,8 @@ describe('POST /phase-event 路由 [BEHAVIOR]', () => {
     expect(postBlock).not.toMatch(/['"]created_at['"]\s*:/);
   });
 });
+
+import {afterAll,vi} from 'vitest';
+const actualPhasePool=vi.hoisted(()=>({query:vi.fn()}));
+vi.mock('../db.js',()=>({default:actualPhasePool}));
+afterAll(()=>expect(actualPhasePool.query.mock.calls.some(([sql])=>sql.includes('INSERT INTO initiative_run_events'))).toBe(true));

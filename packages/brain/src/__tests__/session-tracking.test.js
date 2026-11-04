@@ -155,3 +155,9 @@ describe('Session 时长追踪 - D4', () => {
     });
   });
 });
+
+import {afterAll} from 'vitest';
+vi.mock('../db.js',()=>({default:{query:vi.fn()}}));
+import * as actualExecutor from '../executor.js';
+const realStart=vi.spyOn(actualExecutor,'recordSessionStart');
+afterAll(()=>expect(realStart).toHaveBeenCalled());

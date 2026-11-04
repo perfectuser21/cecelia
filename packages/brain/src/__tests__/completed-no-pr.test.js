@@ -170,3 +170,7 @@ describe('D1/D2/D3: completed_no_pr 自动重排逻辑', () => {
     expect(shouldTriggerInitiativePlan({ newStatus: 'completed', rescheduled: false })).toBe(true);
   });
 });
+
+import {afterAll} from 'vitest';
+import {pool as actualCallbackPool} from './helpers/http-callback-fixture.js';
+afterAll(() => { expect(actualCallbackPool.query.mock.calls.some(([sql]) => sql.includes('SELECT retry_count'))).toBe(true); });

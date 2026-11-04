@@ -169,3 +169,7 @@ describe('task_run_metrics LLM metrics 解析（DoD-2）', () => {
     expect(m.cacheHitRate).toBe(0.6667);
   });
 });
+
+import {afterAll} from 'vitest';
+import {pool as actualCallbackPool} from './helpers/http-callback-fixture.js';
+afterAll(() => { expect(actualCallbackPool.query.mock.calls.some(([sql]) => sql.includes('INSERT INTO task_run_metrics'))).toBe(true); });
