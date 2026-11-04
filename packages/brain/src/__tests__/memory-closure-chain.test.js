@@ -7,6 +7,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { createTask } from '../actions.js';
 
 // ─── Mock pool ───────────────────────────────────────────────────────────────
 
@@ -18,6 +19,8 @@ const mockPool = { query: mockQuery };
 vi.mock('../db.js', () => ({ default: mockPool }));
 vi.mock('../memory-utils.js', () => ({ generateL0Summary: (s) => s.slice(0, 50) }));
 vi.mock('../embedding-service.js', () => ({ generateLearningEmbeddingAsync: vi.fn() }));
+// 本文件只验 memory 闭环；收件箱推送由 learning-capture-push 单独覆盖。
+vi.mock('../capture-inbox.js', () => ({ pushCaptureAtom: vi.fn() }));
 vi.mock('../actions.js', () => ({ createTask: vi.fn().mockResolvedValue({ success: true, task: { id: 'mock-insight-task' }, deduplicated: false }) }));
 
 // ─── Test: resolveRelatedFailureMemories ────────────────────────────────────
@@ -94,6 +97,7 @@ describe('recordLearning closure chain (MC-3)', () => {
   it('MC-3-1: 新 learning 写入后，同步写 memory_stream 并更新 source_memory_id', async () => {
     vi.resetAllMocks();
 
+    createTask.mockResolvedValue({ success: true, task: { id: 'mock-insight-task' } });
     const learningId = 'learn-abc';
     const memId = 'mem-xyz';
 
@@ -102,6 +106,7 @@ describe('recordLearning closure chain (MC-3)', () => {
       .mockResolvedValueOnce({ rows: [] })           // 去重检查：无重复
       .mockResolvedValueOnce({ rows: [{ id: learningId, version: 1 }] }) // INSERT learnings
       .mockResolvedValueOnce({ rows: [] })           // 强制绑定：task dedup（无已存在 task）
+      .mockResolvedValueOnce({ rows: [{ payload: { repo: 'cecelia', map_scope: ['F1'] } }] }) // 来源任务路由
       .mockResolvedValueOnce({ rowCount: 1 })        // 强制绑定：UPDATE learnings SET applied=true
       .mockResolvedValueOnce({ rows: [{ id: memId }] }) // INSERT memory_stream
       .mockResolvedValueOnce({ rowCount: 1 });        // UPDATE learnings SET source_memory_id
@@ -143,8 +148,6 @@ describe('recordLearning closure chain (MC-3)', () => {
     mockQuery
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [{ id: learningId, version: 1 }] }) // INSERT learnings OK
-      .mockResolvedValueOnce({ rows: [] })                               // 强制绑定：task dedup
-      .mockResolvedValueOnce({ rowCount: 1 })                           // 强制绑定：UPDATE applied
       .mockRejectedValueOnce(new Error('DB connection lost')); // INSERT memory_stream FAILS
 
     const { recordLearning } = await import('../learning.js');

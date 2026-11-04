@@ -39,12 +39,15 @@ describe('recordLearning — Insight 任务 confidence 门槛（CI mock 守卫�
       if (typeof sql === 'string' && sql.includes('INSERT INTO learnings')) {
         return { rows: [{ id: 'learning-gate-1', title: 'RCA Learning: gate-test' }] };
       }
+      if (typeof sql === 'string' && sql.includes('SELECT payload FROM tasks WHERE id')) {
+        return { rows: [{ payload: { repo: 'cecelia', map_scope: ['F1'] } }] };
+      }
       if (typeof sql === 'string' && sql.includes('INSERT INTO memory_stream')) {
         return { rows: [{ id: 'memory-gate-1' }] };
       }
       return { rows: [] };
     });
-    mockCreateTask.mockResolvedValue({ id: 'task-gate-1' });
+    mockCreateTask.mockResolvedValue({ success: true, task: { id: 'task-gate-1' } });
   });
 
   it('confidence < 0.7：落 learning（INSERT learnings 发生）但不建 [Insight修复] 任务', async () => {
@@ -63,6 +66,8 @@ describe('recordLearning — Insight 任务 confidence 门槛（CI mock 守卫�
 
     expect(learning).toBeDefined();
     expect(mockCreateTask).toHaveBeenCalledTimes(1);
+    expect(mockCreateTask.mock.calls[0][0]).toMatchObject({ repo_hint: 'cecelia', map_scope_hint: ['F1'], declared_change_kind: 'bugfix', mutation_intent: 'write' });
+    expect(mockPool.query.mock.calls.some(([sql]) => sql.includes('applied = true'))).toBe(true);
     expect(mockCreateTask.mock.calls[0][0].title).toContain('[Insight修复]');
     expect(mockCreateTask.mock.calls[0][0].payload.insight_learning_id).toBe('learning-gate-1');
   });

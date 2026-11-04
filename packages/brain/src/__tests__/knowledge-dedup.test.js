@@ -20,6 +20,8 @@ vi.mock('../openai-client.js', () => ({
 describe('Knowledge Dedup', () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    // 真实 pool.query 始终返回 Promise；未提供来源路由时明确返回空行。
+    mockQuery.mockImplementation(async sql => ({ rows: sql.includes('INSERT INTO memory_stream') ? [{ id: 'dedup-memory' }] : [] }));
   });
 
   describe('recordLearning dedup', () => {
