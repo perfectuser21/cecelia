@@ -1,123 +1,63 @@
-/**
- * Rumination content_hash Dedup Tests
- *
- * 验证 rumination.js 在写入 suggestions 表前正确检查 content_hash，
- * 24h DEDUP_WINDOW 内同一洞察不重复写入（P0 死循环修复）
- */
-
-import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
-import crypto from 'node:crypto';
-import pg from 'pg';
-import { DB_DEFAULTS } from '../db-config.js';
-
-const { Pool } = pg;
-const pool = new Pool(DB_DEFAULTS);
-
-/** 模拟 rumination 写入逻辑（与 rumination.js 中的代码保持一致） */
-async function writeInsightWithDedup(db, insight) {
-  const content_hash = crypto.createHash('sha256').update(insight).digest('hex');
-  const { rows: dedupRows } = await db.query(
-    `SELECT id FROM suggestions WHERE content_hash = $1 AND created_at > NOW() - INTERVAL '24 hours' LIMIT 1`,
-    [content_hash]
-  );
-  if (dedupRows.length > 0) {
-    return { skipped: true, content_hash };
+/** 真 runManualRumination + 真 PG suggestions/events；模型与非目标副作用为显式边界。 */
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { createDebt07Fixture } from './helpers/debt-07-pg.js';
+vi.mock('../db.js', () => ({ default: { query() { throw new Error('禁止默认池'); } } }));
+const insight = '第07路真实反刍去重合同：相同洞察在一天内只能进入一次建议队列，过期以后允许再次记录，避免重复任务循环。';
+vi.mock('../notebook-adapter.js', () => ({ queryNotebook: vi.fn(async () => ({ ok: true, text: insight })), addTextSource: vi.fn(async () => {}) }));
+vi.mock('../llm-caller.js', () => ({ callLLM: vi.fn(async () => ({ text: '' })) }));
+vi.mock('../memory-retriever.js', () => ({ buildMemoryContext: vi.fn(async () => ({ block: '' })) }));
+vi.mock('../self-model.js', () => ({ updateSelfModel: vi.fn() }));
+vi.mock('../thalamus.js', () => ({ processEvent: vi.fn(async () => {}), EVENT_TYPES: { RUMINATION_RESULT: 'rumination_result' } }));
+vi.mock('../actions.js', () => ({ createTask: vi.fn(() => { throw new Error('禁止建单'); }) }));
+let fixture, db, runManualRumination, reset;
+const hash = createHash('sha256').update(insight).digest('hex');
+beforeAll(async () => {
+  fixture = await createDebt07Fixture();
+  db = fixture.pool;
+  await db.query('CREATE TABLE schema_version (version varchar(10) PRIMARY KEY, description text)');
+  for (const migration of ['087_suggestions_table.sql', '191_add_suggestions_content_hash.sql']) {
+    await db.query(readFileSync(new URL('../../migrations/' + migration, import.meta.url), 'utf8'));
   }
-  await db.query(`
-    INSERT INTO suggestions (content, source, priority_score, status, suggestion_type, metadata, content_hash)
-    VALUES ($1, 'rumination', $2, 'pending', 'desire_formation', $3, $4)
-  `, [
-    insight,
-    0.7,
-    JSON.stringify({ origin: 'rumination_p0c', insight }),
-    content_hash
-  ]);
-  return { skipped: false, content_hash };
-}
-
-let insertedIds = [];
-
-describe('Rumination content_hash Dedup', () => {
-  beforeAll(async () => {
-    const result = await pool.query('SELECT 1');
-    expect(result.rows[0]['?column?']).toBe(1);
-  });
-
-  afterAll(async () => {
-    await pool.end();
-  });
-
-  afterEach(async () => {
-    if (insertedIds.length > 0) {
-      await pool.query('DELETE FROM suggestions WHERE id = ANY($1)', [insertedIds]);
-      insertedIds = [];
-    }
-  });
-
-  it('首次写入：新洞察正常插入 suggestions 表', async () => {
-    const insight = `test-insight-unique-${Date.now()}`;
-    const result = await writeInsightWithDedup(pool, insight);
-
-    expect(result.skipped).toBe(false);
-    expect(result.content_hash).toHaveLength(64);
-
-    // 验证已插入
-    const { rows } = await pool.query(
-      'SELECT id, content_hash FROM suggestions WHERE content_hash = $1',
-      [result.content_hash]
-    );
+  ({ runManualRumination, _resetState: reset } = await import('../rumination.js'));
+});
+afterAll(async () => { if (fixture) await fixture.close(); });
+beforeEach(async () => { if (db) await db.query('TRUNCATE suggestions, cecelia_events'); });
+// 非目标表使用显式端口夹具；目标去重查询、INSERT 和时间窗口均交给真实 PG。
+const adapter = { async query(sql, params) {
+  if (/\b(suggestions|cecelia_events|working_memory)\b/i.test(sql)) return db.query(sql, params);
+  if (/SELECT id, title, content, category FROM learnings/.test(sql)) return { rows: [{ id: 'learning-fixture', title: '第07路', content: '确定性输入', category: 'test' }] };
+  if (/INSERT INTO memory_stream|UPDATE learnings SET digested|(?:FROM|INTO) synthesis_archive/.test(sql)) return { rows: [] };
+  throw new Error('未声明的反刍数据库端口：' + sql);
+} };
+async function run() { reset(); return runManualRumination(adapter, { force: true }); }
+async function suggestions() { return (await db.query('SELECT * FROM suggestions ORDER BY created_at')).rows; }
+describe('反刍真实入口建议去重', () => {
+  it('首次写入生成真实建议及 64 位 hash', async () => {
+    expect((await run()).insights).toEqual([insight]);
+    const rows = await suggestions();
     expect(rows).toHaveLength(1);
-    expect(rows[0].content_hash).toBe(result.content_hash);
-    insertedIds.push(rows[0].id);
+    expect(rows[0]).toMatchObject({ content: insight, content_hash: hash, source: 'rumination', status: 'pending', suggestion_type: 'desire_formation' });
   });
-
-  it('重复写入：24h 内同一洞察被跳过，不重复插入', async () => {
-    const insight = `test-dedup-insight-${Date.now()}`;
-
-    // 第一次写入
-    const first = await writeInsightWithDedup(pool, insight);
-    expect(first.skipped).toBe(false);
-    const { rows: firstRows } = await pool.query(
-      'SELECT id FROM suggestions WHERE content_hash = $1',
-      [first.content_hash]
-    );
-    insertedIds.push(firstRows[0].id);
-
-    // 第二次写入同一洞察 → 应被跳过
-    const second = await writeInsightWithDedup(pool, insight);
-    expect(second.skipped).toBe(true);
-    expect(second.content_hash).toBe(first.content_hash);
-
-    // 数据库中仍只有 1 条记录
-    const { rows } = await pool.query(
-      'SELECT id FROM suggestions WHERE content_hash = $1',
-      [first.content_hash]
-    );
-    expect(rows).toHaveLength(1);
+  it('24h 内重复入口调用不重复写入', async () => {
+    await run();
+    expect((await run()).insights).toEqual([]);
+    expect(await suggestions()).toHaveLength(1);
   });
-
-  it('24h 外旧记录：不触发去重，允许重新写入', async () => {
-    const insight = `test-old-insight-${Date.now()}`;
-    const content_hash = crypto.createHash('sha256').update(insight).digest('hex');
-
-    // 手动插入一条 25h 前的记录
-    const { rows: oldRows } = await pool.query(`
-      INSERT INTO suggestions (content, source, priority_score, status, suggestion_type, metadata, content_hash, created_at)
-      VALUES ($1, 'rumination', 0.7, 'pending', 'desire_formation', '{}', $2, NOW() - INTERVAL '25 hours')
-      RETURNING id
-    `, [insight, content_hash]);
-    insertedIds.push(oldRows[0].id);
-
-    // 现在写入同一洞察 → 不应被跳过（旧记录超出 24h）
-    const result = await writeInsightWithDedup(pool, insight);
-    expect(result.skipped).toBe(false);
-
-    const { rows } = await pool.query(
-      'SELECT id FROM suggestions WHERE content_hash = $1',
-      [content_hash]
-    );
-    expect(rows.length).toBeGreaterThanOrEqual(2); // 旧记录 + 新记录
-    insertedIds.push(...rows.filter(r => r.id !== oldRows[0].id).map(r => r.id));
+  it('建议表独立去重：没有 rumination_output 事件时仍阻止重复建议', async () => {
+    await run();
+    await db.query("DELETE FROM cecelia_events WHERE event_type='rumination_output'");
+    expect((await run()).insights).toEqual([insight]);
+    expect(await suggestions()).toHaveLength(1);
+  });
+  it('25h 前建议与输出事件过期后允许再次写入', async () => {
+    await run();
+    await db.query("UPDATE suggestions SET created_at=NOW()-INTERVAL '25 hours'");
+    await db.query("UPDATE cecelia_events SET created_at=NOW()-INTERVAL '25 hours'");
+    expect((await run()).insights).toEqual([insight]);
+    const rows = await suggestions();
+    expect(rows).toHaveLength(2);
+    expect(rows.map(row => row.content_hash)).toEqual([hash, hash]);
   });
 });
-
