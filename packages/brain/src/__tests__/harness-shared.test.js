@@ -190,3 +190,10 @@ describe('EvaluatorOutputSchema — null 字段接受', () => {
     expect(result.success).toBe(true);
   });
 });
+
+it('无消费者的Protocol-v2旧桥不再导出，真实brain-result读取保留', async () => {
+  const mod = await import('../harness-shared.js');
+  expect(mod.readPrFromGitState).toBeUndefined();
+  expect(mod.readVerdictFile).toBeUndefined();
+  expect(typeof mod.readBrainResult).toBe('function');
+});
