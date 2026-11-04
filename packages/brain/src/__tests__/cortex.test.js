@@ -1,3 +1,4 @@
+import { verifyDebt02Scratch } from './helpers/debt-02-scratch.js';
 /**
  * Cortex Tests - Strategy Adjustments Generation
  *
@@ -5,12 +6,14 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, beforeAll, vi } from 'vitest';
+vi.mock('../llm-caller.js', () => ({ callLLM: vi.fn().mockRejectedValue(new Error('debt-02 isolated model failure')) }));
 let performRCA, validateCortexDecision;
 let pool;
 
 beforeAll(async () => {
   vi.resetModules();
   pool = (await import('../db.js')).default;
+  await verifyDebt02Scratch(pool);
   ({ performRCA, validateCortexDecision } = await import('../cortex.js'));
 });
 
@@ -161,6 +164,8 @@ describe('Cortex Strategy Adjustments', () => {
       ORDER BY created_at DESC
       LIMIT 1
     `, [failedTask.id]);
+
+    expect(saved.rows).toHaveLength(1);
 
     // Clean up after test
     if (saved.rows.length > 0) {

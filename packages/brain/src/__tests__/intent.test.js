@@ -1,3 +1,4 @@
+import { verifyDebt02Scratch } from './helpers/debt-02-scratch.js';
 /**
  * Intent Recognition Module Tests (KR1)
  * Tests for natural language → structured intent parsing
@@ -36,6 +37,7 @@ let createdTaskIds = [];
 
 describe('Intent Recognition Module', () => {
   beforeAll(async () => {
+    await verifyDebt02Scratch(pool);
     // Verify database connection
     const result = await pool.query('SELECT 1');
     expect(result.rows[0]['?column?']).toBe(1);

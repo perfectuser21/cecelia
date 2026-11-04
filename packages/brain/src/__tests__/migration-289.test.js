@@ -1,3 +1,4 @@
+import { verifyDebt02Scratch } from './helpers/debt-02-scratch.js';
 /**
  * [FAILING] Migration 289 — decisions/initiative_contracts notion_id 列
  *
@@ -19,6 +20,7 @@ let pool;
 
 beforeAll(async () => {
   pool = new Pool(DB_DEFAULTS);
+  await verifyDebt02Scratch(pool);
 });
 
 afterAll(async () => {

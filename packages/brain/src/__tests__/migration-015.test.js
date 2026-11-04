@@ -1,3 +1,4 @@
+import { verifyDebt02Scratch } from './helpers/debt-02-scratch.js';
 /**
  * Migration 015 Tests
  *
@@ -10,6 +11,7 @@ let pool;
 beforeAll(async () => {
   vi.resetModules();
   pool = (await import('../db.js')).default;
+  await verifyDebt02Scratch(pool);
 });
 
 describe('Migration 015 - Cortex Quality System', () => {
