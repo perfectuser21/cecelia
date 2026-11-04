@@ -274,9 +274,25 @@ const REVIEWED_RUNTIME_SCOPE_CLOSURE = {
   ...REVIEWED_IDENTITY_CLOSURE,
   "scripts/ci/basic-scope.mjs": "2914d8e8672b4b17a1037e1ccaa25c02b13d5e3cc34dcfcdf8da1a603faae042",
 };
+// W19只作冻结来源：完整现役协议与全部八份历史输入共同封印，保留旧组。
+const REVIEWED_W19_FREEZE_CLOSURE = {
+  ...REVIEWED_RUNTIME_SCOPE_CLOSURE,
+  "scripts/ci/basic-scope.mjs": "c97f3d3300ce74237086b819def622636dc6776f663753d6ec3e68ea2d21a14b",
+  "scripts/ci/run-basic-check.mjs": "aed179661ff08ef743cb8feb0c9e88bb59342d3c0ab690bf17e812f8c868c0ae",
+  "scripts/ci/check-w19-frozen.mjs": "8386f606e3b370826a6dab76ac36cb7c1d6dfde4e94859fca9e4fd2642739f21",
+  "scripts/ci/__tests__/basic-w19-freeze.test.mjs": "7e3317c43589a8d25f61556c339f6f588b118829dd54cfaf8f95057d6ef5fa52",
+  "playground/package-lock.json": "e2fa656e54b0d2d4f8c7398c24651589ff1556ffabbcec368465ff19d12bb6e9",
+  "playground/package.json": "9c340ea6eae6af3ad2cf7e41b003141193dbe6369451529e40deb41dd786e85d",
+  "playground/server.js": "c77d87096634b48a699c3951a07e0a74609535454f38078b97a0b35f87cfd38e",
+  "playground/tests/echo.test.js": "1fb291fdb3de19aca4cbfe5c61ef1571867b720dd4ec2378b169236ab652d7be",
+  "playground/tests/kernel-e.test.js": "53c24290c95377b88ab497c5c50f2246fc9accedb6f298c0b484dfb630211ecf",
+  "playground/tests/ping.test.js": "d364c15e08f487c70a312c1299a1b02758d935fb4f395a64992456c8fb09eb62",
+  "playground/tests/server.test.js": "b6b0628c4435d5a69de002207a35a34c713bda7897505586f501c7048c4adbf8",
+  "playground/vitest.config.js": "e6b279b6d857f890dfa2b3a84deb4f52d2d9e9300bdfaf392ebf94f258f6e204",
+};
 const BASIC_PROTOCOLS = {
   // Dependabot排队只追加当前完整runtime scope闭包，旧workflow组合保持。
-  '020165ab3d73d487d973c6d98c849958240dc56149d5b6083b8288673a3dd091': REVIEWED_RUNTIME_SCOPE_CLOSURE,
+  '020165ab3d73d487d973c6d98c849958240dc56149d5b6083b8288673a3dd091': [REVIEWED_RUNTIME_SCOPE_CLOSURE, REVIEWED_W19_FREEZE_CLOSURE],
   '5b0f190209eec9c1370b9a96c6aef43b9aa0bc99bdd0f765ccb261c2cfe95080': [REVIEWED_VERSION_CLOSURE, {
     ...REVIEWED_VERSION_CLOSURE,
     // 仅追加本轮两份无消费者旧PG测试退休后的完整配置组合，旧组合保持原样。
@@ -367,6 +383,16 @@ export async function collectBasicCiSources({ read, ci, revision, relations, par
     }
     // 完整已审reader证明真实URL读取；这条边只声明验证输入，绝不宣称私有源workflow已运行。
     relation(PINNED_READER, PINNED_WORKFLOW, 'literal_url_workflow_verification_input');
+  }
+  const frozenW19 = 'scripts/ci/check-w19-frozen.mjs';
+  if (Object.hasOwn(protocol, frozenW19)) {
+    const regression = 'scripts/ci/__tests__/basic-w19-freeze.test.mjs';
+    if (!Array.isArray(paths) || !paths.includes(frozenW19) || !paths.includes(regression)) reject();
+    const historical = path => path.startsWith('playground/') && !/\.md$/i.test(path);
+    const expected = Object.keys(protocol).filter(historical), selected = paths.filter(historical);
+    if (selected.length !== expected.length || selected.some(path => !expected.includes(path))) reject();
+    relation(BASIC_RUNNER, frozenW19, 'historical_w19_freeze_guard');
+    for (const path of selected) relation(frozenW19, path, 'frozen_historical_w19_input');
   }
   const identity = 'scripts/ci/check-skill-source-identity.py';
   if (Object.hasOwn(protocol, identity)) {

@@ -16,7 +16,10 @@ const members = ['packages/brain/vitest.config.js', 'scripts/ci/basic-scope.mjs'
   'apps/api/vitest.config.ts', 'apps/api/vitest.integration.config.ts',
   'scripts/ci/__tests__/basic-skill-source-coverage.test.mjs', '.github/workflows/skills-source-check.yml',
   'scripts/ci/check-brain-version-bump.sh', '.github/actions/skills-source/action.yml',
-  'scripts/ci/check-skill-source-identity.py', 'scripts/ci/__tests__/basic-skill-identity.test.mjs', checker, regression];
+  'scripts/ci/check-skill-source-identity.py', 'scripts/ci/__tests__/basic-skill-identity.test.mjs', checker, regression,
+  'playground/package.json', 'playground/package-lock.json', 'playground/server.js', 'playground/vitest.config.js',
+  'playground/tests/echo.test.js', 'playground/tests/kernel-e.test.js', 'playground/tests/ping.test.js',
+  'playground/tests/server.test.js'];
 const paths = [...new Set([...execFileSync('git', ['ls-files', '-z'], { cwd: root, encoding: 'utf8' })
   .split('\0').filter(Boolean), checker, regression])];
 const collect = async (overrides = {}, selected = paths) => {

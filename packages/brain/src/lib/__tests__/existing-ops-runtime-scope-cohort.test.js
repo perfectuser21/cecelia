@@ -7,7 +7,7 @@ import {readFixedExistingOpsGitFixture} from './helpers/fixed-existing-ops-git-f
 // 旧完整输入来自已经合并的main；本轮只替换真实scope正文，不执行候选配置。
 const baseline = readFixedExistingOpsGitFixture('2f4c9cbb9fbed1d36e4f3407bdf0ab1b72ece968');
 const scope = 'scripts/ci/basic-scope.mjs';
-const current = readFileSync(new URL('../../../../../' + scope, import.meta.url), 'utf8');
+const current = readFixedExistingOpsGitFixture('289ddd8d0690f154006c5586926277c48e10f716').read(scope);
 const regression = 'scripts/ci/__tests__/basic-runtime-consumer-scope.test.mjs';
 const collect = async (overrides = {}) => {
   const read = async path => Object.hasOwn(overrides, path) ? overrides[path]

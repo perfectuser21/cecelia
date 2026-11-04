@@ -10,7 +10,7 @@ const scope = 'scripts/ci/basic-scope.mjs';
 const regression = 'scripts/ci/__tests__/basic-concurrency.test.mjs';
 const actual = path => readFileSync(new URL('../../../../../' + path, import.meta.url), 'utf8');
 const currentCi = actual(ciPath);
-const currentScope = actual(scope);
+const currentScope = readFixedExistingOpsGitFixture('289ddd8d0690f154006c5586926277c48e10f716').read(scope);
 const collect = async (overrides = {}) => {
   const read = async path => Object.hasOwn(overrides, path) ? overrides[path]
     : path === ciPath ? currentCi : path === scope ? currentScope
