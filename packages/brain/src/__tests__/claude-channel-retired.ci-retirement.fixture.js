@@ -13,9 +13,14 @@ export function ciVersionGuardCohorts(previous) {
  const retired={...current,'existing-ops-stage-source.js':'59ac5f256ca1c99b5edae88ef89ea5c79648fe6d63c134afec42800dca2b04d0'};
  // e434身份来源reader：只追加完整caller/runtime/reader组合；旧退休reader仍独立保留。
  const identity={...retired,'existing-ops-stage-source.js':'ffb6ecb81faa63068fb7f02e3ed170d5c7199589b39dcfb6f1430131313ddbf4'};
+ // 运行时消费选路reader：完整16成员与marker0/1分别成组，旧身份组不变。
+ const runtimeScope={...identity,'existing-ops-stage-source.js':'a56f43da6e5d3989057ce075cb4cb9b14de4631c65cf2783dfd998a946980e43'};
+ const concurrency={...runtimeScope,'existing-ops-stage-source.js':'8172bbfe9377f6672911ff1be4afb6f652932ce7fefe506764e08412e34508a1'};
  return [current,{...current,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
   retired,{...retired,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
-  identity,{...identity,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'}];
+  identity,{...identity,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
+  runtimeScope,{...runtimeScope,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
+  concurrency,{...concurrency,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'}];
 }
 
 export function registerCiRetirementGuardTests({root,base,memoBase,scan}) {
@@ -41,6 +46,22 @@ export function registerCiRetirementGuardTests({root,base,memoBase,scan}) {
     sources.set(source,sources.get(source).replace(/EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = [01]/,'EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = '+marker));
     for(const kind of ['build','stage','native-evidence'])expect(scan(sources,path.join(root,`existing-ops-${kind}-envelopes.js`))).toEqual([]);
    }
+  });
+  it('已合main2f完整身份cohort仍保留marker0/1资格',()=>{
+   const sources=new Map([...base().keys()].map(file=>[file,execFileSync('git',[
+    '--no-replace-objects','show','2f4c9cbb9fbed1d36e4f3407bdf0ab1b72ece968:'+path.relative(path.resolve(root,'../../../..'),file),
+   ],{cwd:root,encoding:'utf8',maxBuffer:1024*1024})]));
+   expect(sources.size).toBe(16);
+   for(const marker of [0,1]){
+    sources.set(source,sources.get(source).replace(/EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = [01]/,'EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = '+marker));
+    for(const kind of ['build','stage','native-evidence'])expect(scan(sources,path.join(root,`existing-ops-${kind}-envelopes.js`))).toEqual([]);
+   }
+  });
+  it.each([...Array(16).keys()].flatMap(index=>['missing','drift'].map(kind=>[index,kind])))('当前16成员第%s项%s拒绝',(index,kind)=>{
+   const current=base();expect(current.size).toBe(16);const file=[...current.keys()][index];
+   if(kind==='missing')current.delete(file);else current.set(file,current.get(file)+'\nexport const ciUnknownMember=true;\n');
+   const target=path.join(root,'existing-ops-'+(file.endsWith('stage-envelopes.js')?'build':'stage')+'-envelopes.js');
+   expect(scan(current,target).some(hit=>hit.rule==='E1')).toBe(true);
   });
   it.each(['source','runtime-source'])('身份reader不能与固定旧Git的%s单成员混搭',name=>{
    const file=path.join(root,`existing-ops-${name}.js`),current=base();

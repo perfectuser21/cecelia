@@ -194,7 +194,6 @@ for (const [name, classification] of Object.entries(entries)) {
   });
 }
 for (const [name, overrides] of [
-  ['autoblock-sql-param-fix-smoke.sh', { BRAIN_DB_URL: unsafe }],
   ['model-accounts-smoke.sh', { DATABASE_URL: '', DB_URL: unsafe, DB: safe }],
   ['script-executor-dispatch-smoke.sh', { SCRIPT_SMOKE_DB_URL: unsafe }],
   ['task-governance-guards-smoke.sh', { GOV_GUARD_SMOKE_DB_URL: unsafe }],

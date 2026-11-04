@@ -2,26 +2,6 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
-const pg = require('pg');
-
-const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL || 'postgresql://localhost/cecelia' });
-
-// 动态查找最新 superpowers 版本目录（避免版本升级后静默失效）
-const superpowersBase = path.join(process.env.HOME, '.claude', 'plugins', 'cache',
-  'superpowers-marketplace', 'superpowers');
-
-const SKILL_DIRS = [
-  path.join(process.env.HOME, '.claude', 'skills'),
-];
-
-if (fs.existsSync(superpowersBase)) {
-  const versions = fs.readdirSync(superpowersBase)
-    .filter(v => fs.statSync(path.join(superpowersBase, v)).isDirectory())
-    .sort();
-  const latestVersion = versions.pop();
-  if (latestVersion) SKILL_DIRS.push(path.join(superpowersBase, latestVersion, 'skills'));
-}
-
 function scanSkillDir(dir) {
   const results = [];
   if (!fs.existsSync(dir)) return results;
@@ -42,6 +22,24 @@ function scanSkillDir(dir) {
 }
 
 async function main() {
+  const pg = require('pg');
+  const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL || 'postgresql://localhost/cecelia' });
+  // 动态查找最新 superpowers 版本目录（避免版本升级后静默失效）
+  const superpowersBase = path.join(process.env.HOME, '.claude', 'plugins', 'cache',
+    'superpowers-marketplace', 'superpowers');
+
+  const SKILL_DIRS = [
+    path.join(process.env.HOME, '.claude', 'skills'),
+  ];
+
+  if (fs.existsSync(superpowersBase)) {
+    const versions = fs.readdirSync(superpowersBase)
+      .filter(v => fs.statSync(path.join(superpowersBase, v)).isDirectory())
+      .sort();
+    const latestVersion = versions.pop();
+    if (latestVersion) SKILL_DIRS.push(path.join(superpowersBase, latestVersion, 'skills'));
+  }
+
   try {
     const skills = [];
     for (const dir of SKILL_DIRS) skills.push(...scanSkillDir(dir));
@@ -62,4 +60,5 @@ async function main() {
   }
 }
 
-main().catch(e => { console.error(e); process.exit(1); });
+module.exports = { scanSkillDir };
+if (require.main === module) main().catch(e => { console.error(e); process.exit(1); });

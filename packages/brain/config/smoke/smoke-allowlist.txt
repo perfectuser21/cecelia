@@ -21,7 +21,6 @@ anchor-backfill-smoke.sh
 anchor-check-smoke.sh
 app-server-controller-smoke.sh
 app-server-rpc-smoke.sh
-autoblock-sql-param-fix-smoke.sh
 battle-report-smoke.sh
 battle-report-v2-smoke.sh
 blade-bc-harness-gates-smoke.sh
