@@ -14,7 +14,7 @@
 # 环境里即便有 DEPLOY_TOKEN 也不会写进 plist。
 #
 # 用法：
-#   bash scripts/preview-agent-install.sh             写 plist 并 bootout/bootstrap/kickstart
+#   bash scripts/preview-agent-install.sh             写 plist 并 bootout/bootstrap，由 RunAtLoad 启动
 #   bash scripts/preview-agent-install.sh --no-load   只写 plist，不动 launchd（发布脚本自己管）
 #   bash scripts/preview-agent-install.sh --dry-run   只把 plist 打到 stdout，不写文件、不动 launchd
 # 环境：
@@ -42,6 +42,11 @@ RELEASES_DIR="${RELEASES_DIR%/}"
 LABEL="com.cecelia.preview-agent"
 PLIST="${PREVIEW_AGENT_PLIST:-$HOME/Library/LaunchAgents/${LABEL}.plist}"
 TOKEN_FILE="${DEPLOY_TOKEN_FILE:-$HOME/.credentials/cecelia-deploy-token.env}"
+# 固定实际校验过的可执行文件，不额外插入 env 解析层。
+# 保留同机前驱已实证的唯一 nohup→gnohup 链接；不改系统 Node/nohup。
+RUNTIME_PATH="$HOME/.cecelia/preview-runtime/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+NODE_BIN=$(node -p 'process.execPath')
+[[ "$NODE_BIN" = /* && -x "$NODE_BIN" ]] || { echo "无法解析实际 Node 可执行文件" >&2; exit 1; }
 
 # 代理必须跑在部署根（主 checkout）或预览发布目录（preview-host-release.sh 建的快照），
 # 并与 capacity-gate 同一个 repo——否则 capacity-gate 按自己的位置算 REPO_ROOT，会去另一个
@@ -75,8 +80,7 @@ render_plist() {
   <key>Label</key><string>${LABEL}</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/usr/bin/env</string>
-    <string>node</string>
+    <string>${NODE_BIN}</string>
     <string>${REPO_ROOT}/scripts/preview-agent.mjs</string>
   </array>
   <key>WorkingDirectory</key><string>${REPO_ROOT}</string>
@@ -98,7 +102,7 @@ render_plist() {
     <key>DB_NAME</key><string>cecelia_staging</string>
     <!-- 克隆源：执行机上没有生产库 cecelia，用 staging（schema 443 > 最低要求 430） -->
     <key>PREVIEW_SOURCE_DB</key><string>cecelia_staging</string>
-    <key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>PATH</key><string>${RUNTIME_PATH}</string>
   </dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>

@@ -7,7 +7,7 @@
 #
 # 做法：bootout → 轮询 launchctl print 直到服务消失（最多 PREVIEW_LAUNCHD_WAIT_SECS 秒）
 #       → bootstrap，失败则 sleep、再 bootout+等卸载后重试（共 PREVIEW_LAUNCHD_BOOTSTRAP_TRIES 次）
-#       → kickstart -k。
+#       → 由 plist 的 RunAtLoad 启动；调用方读回真实 PID/监听归属。
 # 环境（测试可调小）：
 #   PREVIEW_LAUNCHD_WAIT_SECS        等卸载的上限秒数（默认 15）
 #   PREVIEW_LAUNCHD_POLL_INTERVAL    轮询间隔秒（默认 0.5）
@@ -28,7 +28,7 @@ launchd_wait_gone() {
   return 1
 }
 
-# launchd_reload <label> <plist>：bootout → 等卸载 → bootstrap（带重试）→ kickstart -k
+# launchd_reload <label> <plist>：bootout → 等卸载 → bootstrap（带重试）→ RunAtLoad 启动
 launchd_reload() {
   local label="$1" plist="$2"
   local domain target
@@ -48,5 +48,6 @@ launchd_reload() {
     launchd_wait_gone "$target" || true
     attempt=$((attempt + 1))
   done
-  launchctl kickstart -k "$target"
+  # bootstrap 已按 RunAtLoad 启动；不强制再杀启一次，避免多余生命周期窗口。
+  return 0
 }

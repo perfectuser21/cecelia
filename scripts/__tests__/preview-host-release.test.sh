@@ -36,7 +36,7 @@ setup() {
   git init -q --bare "$TMP/origin.git"
   git init -q -b main "$TMP/seed"
   mkdir -p "$TMP/seed/scripts/preview-agent" "$TMP/seed/scripts/lib" "$TMP/seed/packages/brain"
-  for f in preview-agent-install.sh preview-agent.mjs preview-reaper.sh preview-agent/deploy-token.mjs lib/launchd-reload.sh; do
+  for f in preview-agent-install.sh preview-agent.mjs preview-reaper.sh preview-agent/deploy-token.mjs lib/launchd-reload.sh lib/preview-agent-owner.sh; do
     [ -f "$SRC_SCRIPTS/$f" ] && cp "$SRC_SCRIPTS/$f" "$TMP/seed/scripts/$f"
   done
   echo '{"name":"seed","private":true}' > "$TMP/seed/package.json"
@@ -67,6 +67,7 @@ setup() {
 	</dict>
 	<key>Label</key>
 	<string>com.cecelia.preview-agent</string>
+	<key>ProgramArguments</key><array><string>$(node -p 'process.execPath')</string><string>${OLD}/scripts/preview-agent.mjs</string></array>
 	<key>WorkingDirectory</key>
 	<string>${OLD}</string>
 </dict>
@@ -83,7 +84,13 @@ CR
   # mock：crontab（文件后端）
   cat > "$BIN/crontab" <<SH
 #!/bin/bash
-if [ "\$1" = "-l" ]; then [ -f "$TMP/crontab.txt" ] && cat "$TMP/crontab.txt" && exit 0; echo "no crontab" >&2; exit 1; fi
+if [ "\$1" = "-l" ]; then
+  if [ -e "$TMP/cron-read-denied" ]; then echo "Operation not permitted" >&2; exit 1; fi
+  if [ -e "$TMP/cron-read-io" ]; then echo "Input/output error" >&2; exit 1; fi
+  if [ -f "$TMP/crontab.txt" ]; then cat "$TMP/crontab.txt"; exit 0; fi
+  echo "crontab: no crontab for \$(id -un)" >&2; exit 1
+fi
+if [ -e "$TMP/cron-reject-writes" ]; then echo "crontab-denied" >> "$TMP/calls.log"; echo "Operation not permitted" >&2; exit 1; fi
 if [ "\$1" = "-" ]; then cat > "$TMP/crontab.txt"; else cp "\$1" "$TMP/crontab.txt"; fi
 echo "crontab-write" >> "$TMP/calls.log"
 SH
@@ -108,7 +115,7 @@ case "\$1" in
     if [ -e "\$S/loaded" ]; then rm -f "\$S/loaded"; echo "\${LC_GHOST_PRINTS:-0}" > "\$S/ghost"; exit 0; fi
     echo "Boot-out failed: 3: No such process" >&2; exit 3 ;;
   print)
-    [ -e "\$S/loaded" ] && exit 0
+    [ -e "\$S/loaded" ] && { if [ -e "$TMP/bad-owner" ] || { [ -e "$TMP/bad-owner-after" ] && [[ "\$wd" == */rel-* ]]; }; then echo "pid = 9999"; else echo "pid = 4242"; fi; exit 0; }
     if [ "\$ghost" -gt 0 ]; then echo \$((ghost - 1)) > "\$S/ghost"; exit 0; fi
     echo "Could not find service" >&2; exit 113 ;;
   bootstrap)
@@ -121,6 +128,20 @@ case "\$1" in
 esac
 exit 0
 SH
+  # 原生归属探针替身：PID/端口/目录/命令分别可反例注入。
+  cat > "$BIN/lsof" <<SH
+#!/bin/bash
+wd=\$(awk '/<key>WorkingDirectory<\/key>/{f=1} f&&/<string>/{gsub(/.*<string>|<\/string>.*/,"");print;exit}' "$PREVIEW_AGENT_PLIST")
+if [[ " \$* " == *" -d cwd "* ]]; then
+  if [ -e "$TMP/bad-cwd" ]; then echo n/other/release; else echo "n\$wd"; fi
+else echo 4242; fi
+SH
+  cat > "$BIN/ps" <<SH
+#!/bin/bash
+wd=\$(awk '/<key>WorkingDirectory<\/key>/{f=1} f&&/<string>/{gsub(/.*<string>|<\/string>.*/,"");print;exit}' "$PREVIEW_AGENT_PLIST")
+echo "node \$wd/scripts/preview-agent.mjs"
+SH
+  printf '#!/bin/bash\ncat >/dev/null\nexit 0\n' > "$BIN/python3"
   # mock：npm（只建目录、记账）
   cat > "$BIN/npm" <<SH
 #!/bin/bash
@@ -272,6 +293,113 @@ set +e; OUT=$(bash "$RELEASE" --apply 2>&1); RC=$?; set -e
 cmp -s "$PREVIEW_AGENT_PLIST" "$TMP/plist.orig" && cmp -s "$TMP/crontab.txt" "$TMP/crontab.orig" && pass "未托管 owner 原配置不变" || fail "未托管 owner 原配置不变" "$OUT"
 if grep -E 'launchctl (bootout|bootstrap|kickstart)|npm |crontab-write' "$TMP/calls.log" >/dev/null 2>&1; then fail "只读 owner 检测" "$(cat "$TMP/calls.log")"; else pass "只读 owner 检测"; fi
 teardown
+
+echo "── T9 loaded 但PID不属于端口：发布前拒绝 ──"
+setup
+touch "$TMP/bad-owner"
+set +e; OUT=$(bash "$RELEASE" --apply 2>&1); RC=$?; set -e
+[ "$RC" != 0 ] && pass "loaded不是owner" || fail "loaded不是owner" "$OUT"
+cmp -s "$PREVIEW_AGENT_PLIST" "$TMP/plist.orig" && cmp -s "$TMP/crontab.txt" "$TMP/crontab.orig" && pass "坏owner原配置保持" || fail "坏owner原配置保持" "$OUT"
+teardown
+
+echo "── T10 cron无写权限：全组件必须在安装前拒绝 ──"
+setup
+touch "$TMP/cron-reject-writes"
+set +e; OUT=$(bash "$RELEASE" --apply 2>&1); RC=$?; set -e
+[ "$RC" != 0 ] && pass "cron拒写全组件发布失败" || fail "cron拒写全组件发布失败" "$OUT"
+cmp -s "$PREVIEW_AGENT_PLIST" "$TMP/plist.orig" && cmp -s "$TMP/crontab.txt" "$TMP/crontab.orig" && pass "cron失败前未切代理" || fail "cron失败前未切代理" "$OUT"
+if grep -E 'launchctl (bootout|bootstrap|kickstart)|npm ' "$TMP/calls.log" >/dev/null 2>&1; then fail "权限探针先于安装" "$OUT"; else pass "权限探针先于安装"; fi
+teardown
+
+echo "── T11 显式agent组件：cron拒写仍可发布且旧reaper保留 ──"
+setup
+mkdir -p "$PREVIEW_RELEASES_DIR/fleet-preserve"
+touch "$TMP/cron-reject-writes"
+set +e; OUT=$(PREVIEW_RELEASE_KEEP=2 bash "$RELEASE" --apply --component agent 2>&1); RC=$?; set -e
+[ "$RC" = 0 ] && pass "agent组件可独立发布" || fail "agent组件可独立发布" "$OUT"
+cmp -s "$TMP/crontab.txt" "$TMP/crontab.orig" && pass "agent模式cron字节保全" || fail "agent模式cron字节保全" "$OUT"
+if grep -E 'crontab-write|crontab-denied' "$TMP/calls.log" >/dev/null 2>&1; then fail "agent模式不调用cron写接口" "$OUT"; else pass "agent模式不调用cron写接口"; fi
+[ "$(cat "$PREVIEW_RELEASES_DIR/.current" 2>/dev/null)" = "$PREVIEW_RELEASES_DIR/rel-${TARGET_SHA:0:12}" ] && pass "agent模式记录实际发布" || fail "agent模式记录实际发布" "$OUT"
+[ -d "$OLD" ] && pass "旧reaper依赖锚保留" || fail "旧reaper依赖锚保留" "$OUT"
+[ -d "$PREVIEW_RELEASES_DIR/fleet-preserve" ] && pass "agent发布不执行快照清理" || fail "agent发布不执行快照清理" "$OUT"
+teardown
+
+echo "── T12 agent模式失败恢复且不碰cron ──"
+setup
+touch "$TMP/cron-reject-writes" "$FORCE_BAD_SHA_FILE"
+set +e; OUT=$(bash "$RELEASE" --apply --component agent 2>&1); RC=$?; set -e
+[ "$RC" != 0 ] && echo "$OUT" | grep -q "回滚" && cmp -s "$PREVIEW_AGENT_PLIST" "$TMP/plist.orig" && pass "agent验活失败恢复旧plist" || fail "agent验活失败恢复旧plist" "$OUT"
+if grep -E 'crontab-write|crontab-denied' "$TMP/calls.log" >/dev/null 2>&1; then fail "agent回退不调用cron写接口" "$OUT"; else pass "agent回退不调用cron写接口"; fi
+teardown
+
+echo "── T13 新实例PID归属错配：不得记录已发布 ──"
+setup
+touch "$TMP/bad-owner-after"
+set +e; OUT=$(bash "$RELEASE" --apply --component agent 2>&1); RC=$?; set -e
+[ "$RC" != 0 ] && echo "$OUT" | grep -q "归属失败" && cmp -s "$PREVIEW_AGENT_PLIST" "$TMP/plist.orig" && pass "新owner错误恢复前驱" || fail "新owner错误恢复前驱" "$OUT"
+[ ! -e "$PREVIEW_RELEASES_DIR/.current" ] && pass "owner错误不记录已发布" || fail "owner错误不记录已发布" "$OUT"
+teardown
+
+echo "── T14 PID匹配但目录错误：发布前保持旧实例 ──"
+setup
+touch "$TMP/bad-cwd"
+set +e; OUT=$(bash "$RELEASE" --apply --component agent 2>&1); RC=$?; set -e
+[ "$RC" != 0 ] && cmp -s "$PREVIEW_AGENT_PLIST" "$TMP/plist.orig" && pass "目录错配拒绝且保持原plist" || fail "目录错配拒绝且保持原plist" "$OUT"
+if grep -E 'launchctl (bootout|bootstrap|kickstart)|npm |crontab-write' "$TMP/calls.log" >/dev/null 2>&1; then fail "目录错配无切换副作用" "$OUT"; else pass "目录错配无切换副作用"; fi
+teardown
+
+echo "── T15 cron读取不可确定：不得用空表探测writer ──"
+for component in all agent; do
+  for reason in denied io; do
+    setup
+    touch "$TMP/cron-read-$reason"
+    set +e; OUT=$(bash "$RELEASE" --apply --component "$component" 2>&1); RC=$?; set -e
+    [ "$RC" != 0 ] && pass "$component/$reason 读取失败拒绝" || fail "$component/$reason 读取失败拒绝" "$OUT"
+    cmp -s "$TMP/crontab.txt" "$TMP/crontab.orig" && cmp -s "$PREVIEW_AGENT_PLIST" "$TMP/plist.orig" && pass "$component/$reason 原表与代理原样" || fail "$component/$reason 原表与代理原样" "$OUT"
+    if grep -E 'launchctl (bootout|bootstrap|kickstart)|npm |crontab-write' "$TMP/calls.log" >/dev/null 2>&1; then fail "$component/$reason 零写入零安装" "$OUT"; else pass "$component/$reason 零写入零安装"; fi
+    teardown
+  done
+done
+
+echo "── T16 官方明确no-crontab：agent模式保全真正的不存在状态 ──"
+setup
+rm "$TMP/crontab.txt"
+set +e; OUT=$(bash "$RELEASE" --apply --component agent 2>&1); RC=$?; set -e
+[ "$RC" = 0 ] && [ ! -e "$TMP/crontab.txt" ] && pass "官方明确不存在可发布agent且不创建cron" || fail "官方明确不存在可发布agent且不创建cron" "$OUT"
+if grep -E 'crontab-write|crontab-denied' "$TMP/calls.log" >/dev/null 2>&1; then fail "原无cron的agent模式不写cron" "$OUT"; else pass "原无cron的agent模式不写cron"; fi
+teardown
+
+echo "── T17 真实Node入口：目标只作foreign普通参数必须拒绝 ──"
+if OWNER_HELPER="$SRC_SCRIPTS/lib/preview-agent-owner.sh" node --input-type=module <<'JS'
+import{mkdtempSync,mkdirSync,writeFileSync,readFileSync,chmodSync,rmSync,realpathSync}from'node:fs';
+import{tmpdir}from'node:os';import{join}from'node:path';import{spawn,spawnSync}from'node:child_process';
+const dir=realpathSync(mkdtempSync(join(tmpdir(),'preview-argv-contract-'))),root=join(dir,'release'),bin=join(dir,'bin'),entry=join(root,'scripts/preview-agent.mjs'),foreign=join(dir,'foreign.mjs'),plist=join(dir,'agent.plist'),poison=join(dir,'poison');
+mkdirSync(join(root,'scripts'),{recursive:true});mkdirSync(bin);mkdirSync(poison);
+for(const path of [root,poison])writeFileSync(join(path,'plistlib.py'),"raise RuntimeError('stdlib hijack')\n");
+const code=readFileSync(process.env.OWNER_HELPER,'utf8').match(/<<'PYOWNER' \|\| return 1\n([\s\S]*?)\nPYOWNER/)[1];
+const body=`import http from 'node:http';import fs from 'node:fs';const s=http.createServer((q,r)=>r.end('ok'));s.listen(0,'127.0.0.1',()=>fs.writeFileSync(process.env.OWNER_REPORT,JSON.stringify({pid:process.pid,port:s.address().port})));`;
+writeFileSync(entry,body);writeFileSync(foreign,body);let child;
+const check=(pid,port,optimized)=>{
+ writeFileSync(join(bin,'launchctl'),'#!/bin/sh\necho "pid = '+pid+'"\n');chmodSync(join(bin,'launchctl'),0o755);
+ const env={...process.env,PATH:bin+':'+process.env.PATH};if(optimized){env.PYTHONOPTIMIZE='1';env.PYTHONPATH=poison;}
+ return spawnSync('bash',['-c','source "$1"; preview_agent_owner fixture "$2" "$3" "$4"','contract',process.env.OWNER_HELPER,root,'http://127.0.0.1:'+port,plist],{cwd:optimized?root:dir,encoding:'utf8',env});
+};
+try{for(const optimized of [false,true])for(const kind of ['valid','foreign','extra']){
+ const report=join(dir,kind+optimized+'.json'),args=kind==='foreign'?[foreign,entry]:kind==='extra'?[entry,'unexpected-argument']:[entry];
+ child=spawn(process.execPath,args,{cwd:root,env:{...process.env,OWNER_REPORT:report},stdio:'ignore'});
+ let identity;for(let n=0;n<100;n++){try{identity=JSON.parse(readFileSync(report));break;}catch{}await new Promise(r=>setTimeout(r,20));}
+ if(!identity)throw Error('fixture startup');
+ writeFileSync(plist,'<?xml version="1.0"?><plist version="1.0"><dict><key>Label</key><string>fixture</string><key>WorkingDirectory</key><string>'+root+'</string><key>ProgramArguments</key><array><string>'+process.execPath+'</string><string>'+entry+'</string></array></dict></plist>');
+ const result=check(identity.pid,identity.port,optimized);
+ const bytecode=spawnSync('python3',['-I','-O','-',String(identity.pid),plist,root,'fixture'],{input:code,cwd:root,encoding:'utf8',env:{...process.env,PYTHONOPTIMIZE:'1',PYTHONPATH:poison}});
+ console.log(JSON.stringify({case:kind,optimized_environment:optimized,pid:identity.pid,port:identity.port,helper_rc:result.status,optimized_bytecode_rc:bytecode.status,node:process.execPath}));
+ const shouldPass=kind==='valid';if(shouldPass?result.status!==0:result.status===0)throw Error(kind+' helper contract: '+result.stderr);
+ if(shouldPass?bytecode.status!==0:bytecode.status===0)throw Error(kind+' optimized bytecode contract: '+bytecode.stderr);
+ child.kill('SIGTERM');await new Promise(r=>child.once('exit',r));child=null;
+}}
+finally{if(child){child.kill('SIGTERM');await new Promise(r=>child.once('exit',r));}rmSync(dir,{recursive:true,force:true});}
+JS
+then pass "真实唯一Node入口通过且foreign尾参数拒绝"; else fail "真实唯一Node入口通过且foreign尾参数拒绝" "kernel argv/executable contract"; fi
 
 echo ""
 echo "preview-host-release.test.sh: PASS=$PASS FAIL=$FAIL"
