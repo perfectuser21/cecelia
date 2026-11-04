@@ -9,7 +9,9 @@ import { collectVerificationRetirementCandidates } from '../implementation-verif
 import { planChecks } from '../basic-scope.mjs';
 const root=fileURLToPath(new URL('../../../', import.meta.url));
 const baseline='fadbf32852';
-const old=['planner-initiative-plan','actions-initiative-orchestration'].map(x=>`packages/brain/src/__tests__/${x}.test.js`);
+const old=['packages/brain/src/__tests__/planner-initiative-plan.test.js','packages/brain/src/__tests__/actions-initiative-orchestration.test.js',
+  'packages/brain/src/__tests__/tasks-status.test.js','tests/regression/relay-1b1f1ffa/capacity-gate.test.js',
+  'tests/regression/relay-57e25e92/headed-smoke-contract.test.ts','tests/regression/relay-07b2fd3b/captures-api.test.ts'];
 const config='packages/brain/vitest.config.js';
 function fixture(fn) {
   const temp=mkdtempSync(join(tmpdir(),'legacy-test-retirement-')), source=join(temp,'source'), control=join(temp,'control');
@@ -18,12 +20,12 @@ function fixture(fn) {
   try {
     execFileSync('git',['clone','--shared','--no-checkout','-q',root,source]);
     git(source,'sparse-checkout','init','--no-cone');
-    git(source,'sparse-checkout','set','/packages/brain/vitest.config.js','/packages/brain/src/__tests__/*','/scripts/ci/skill-source-tests.mjs');
+    git(source,'sparse-checkout','set','/packages/brain/vitest.config.js','/packages/brain/src/__tests__/*','/scripts/ci/skill-source-tests.mjs','/scripts/ci/deep-integration.config.mjs','/packages/brain/src/routes/__tests__/','/packages/brain/src/lib/__tests__/','/packages/brain/src/__tests__/integration/','/tests/regression/relay-1b1f1ffa/','/tests/regression/relay-57e25e92/','/tests/regression/relay-07b2fd3b/');
     git(source,'checkout','-q',baseline);git(source,'remote','set-url','origin','https://github.com/perfectuser21/cecelia.git');
     const base=git(source,'rev-parse','HEAD');
     for(const path of old)rmSync(join(source,path));
     writeFileSync(join(source,config),readFileSync(join(root,config)));
-    for (const path of ['packages/brain/src/__tests__/debt-04-planner-score.test.js', 'packages/brain/src/__tests__/actions.test.js']) writeFileSync(join(source,path),readFileSync(join(root,path)));
+    for (const path of ['packages/brain/src/__tests__/debt-04-planner-score.test.js', 'packages/brain/src/__tests__/actions.test.js','packages/brain/src/routes/__tests__/captures-api.test.ts']) writeFileSync(join(source,path),readFileSync(join(root,path)));
     const head=commit(source);
     mkdirSync(control);git(control,'init','-q');git(control,'remote','add','origin','https://github.com/perfectuser21/cecelia.git');
     cpSync(join(root,'config/verification-retirements'),join(control,'config/verification-retirements'),{recursive:true});
@@ -32,10 +34,10 @@ function fixture(fn) {
     fn({source,control,git,commit,options,head,tooling});
   }finally{rmSync(temp,{recursive:true,force:true});}
 }
-test('仅冻结过的两份退役层成功创建测试取得精确退役候选，替代必须为现役评分及拒绝入口测试',()=>fixture(({source,options})=>{
+test('仅冻结过的六份逐项审核旧测试测试取得精确退役候选，替代必须为现役评分及拒绝入口测试',()=>fixture(({source,options})=>{
   const proof=collectVerificationRetirementCandidates(source,options());
   assert.deepEqual(proof.rows.map(x=>x.path).sort(),old.toSorted());
-  for(const row of proof.rows){assert.equal(row.retirement_authorized,false);assert.ok(row.replacement_inputs.every(x=>x.selected_candidate));assert.ok(row.audit.retired.length);}
+  for(const row of proof.rows){assert.equal(row.retirement_authorized,false);assert.ok(row.replacement_inputs.every(x=>x.selected_candidate || x.requires_selector_reverification && x.selector_witness.kind==='fixed_pg_literal_candidate'));assert.ok(row.audit.retired.length);}
 }));
 test('旧测试字节漂移与任意未列删除不能借退役合同放行',()=>fixture(({source,git,commit,options,head})=>{
   const other='packages/brain/src/__tests__/tick-loop.test.js';
