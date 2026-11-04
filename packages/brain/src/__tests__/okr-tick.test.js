@@ -42,7 +42,7 @@ vi.mock('../slot-allocator.js', () => ({
 import pool from '../db.js';
 import { createTask } from '../actions.js';
 import { calculateSlotBudget } from '../slot-allocator.js';
-import { areAllQuestionsAnswered, OKR_STATUS } from '../okr-tick.js';
+import { areAllQuestionsAnswered, OKR_STATUS, executeOkrTick } from '../okr-tick.js';
 
 // triggerPlannerForGoal is not exported directly; test via executeOkrTick
 // Instead we test the deferred logic by re-importing with pool mocked for goal state revert
@@ -179,5 +179,29 @@ describe('triggerPlannerForGoal - pool capacity check', () => {
 
     expect(result.triggered).toBe(true);
     expect(result.deferred).toBeUndefined();
+  });
+});
+
+
+describe('executeOkrTick 建单失败恢复', () => {
+  it('建单失败后回到ready，下一轮真实状态机可再次建单', async () => {
+    vi.resetAllMocks();
+    let status = 'ready';
+    const goal = { id: 'retry-kr', title: '需拆解的KR', metadata: {} };
+    pool.query.mockImplementation(async (sql, params = []) => {
+      if (sql.includes('SELECT id, title')) return { rows: params.includes(status) ? [goal] : [] };
+      if (sql.includes('UPDATE key_results')) { status = params[1]; return { rows: [] }; }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    calculateSlotBudget.mockResolvedValue({ dispatchAllowed: true });
+    createTask.mockRejectedValueOnce(new Error('task create unavailable'))
+      .mockResolvedValueOnce({ task: { id: 'retry-created' } });
+    const first = await executeOkrTick();
+    expect(first.actions_taken[0].result.triggered).toBe(false);
+    expect(status).toBe('ready');
+    const second = await executeOkrTick();
+    expect(createTask).toHaveBeenCalledTimes(2);
+    expect(second.actions_taken[0].result.task_id).toBe('retry-created');
+    expect(status).toBe('decomposing');
   });
 });
