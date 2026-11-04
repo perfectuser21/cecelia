@@ -8,7 +8,7 @@
  * B2: 响应体含 ok:true
  * B3: 响应体含 controller:"2.2.0"
  * B4: 响应 Content-Type 含 application/json
- * B5: 不影响现有端点（/api/brain/context 仍可访问）
+ * B5: 未匹配context路径能继续到后续哨兵
  */
 
 import { describe, it, expect, vi } from 'vitest';
@@ -43,13 +43,11 @@ function makeApp() {
   const app = express();
   app.use(express.json());
 
-  // B5：模拟现有 /api/brain/context 端点（独立 stub，不依赖真实 brain 路由）
+  // 被测router在前，后续哨兵用于核未匹配路由能继续next。
+  app.use('/api/brain', (_req, _res, next) => { enteredRouter(); next(); }, walkingSkeletonRouter);
   app.get('/api/brain/context', (_req, res) => {
     res.json({ ok: true, stub: 'existing-route' });
   });
-
-  // 被测路由：walking-skeleton router 挂载到 /api/brain
-  app.use('/api/brain', (_req, _res, next) => { enteredRouter(); next(); }, walkingSkeletonRouter);
 
   return app;
 }
@@ -82,7 +80,7 @@ describe('Contract: relay-smoke-v2.2.0', () => {
   });
 
   describe('现有路由回归', () => {
-    it('should not break existing routes — /api/brain/context 仍可访问', async () => {
+    it('未匹配context路径穿过router到达后续哨兵', async () => {
       enteredRouter.mockClear();
       // B5：确认请求经过被测router后仍能抵达后续哨兵
       const res = await request(makeApp()).get('/api/brain/context');
