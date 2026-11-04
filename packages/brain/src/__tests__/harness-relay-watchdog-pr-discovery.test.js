@@ -7,21 +7,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const { mockPool } = vi.hoisted(() => ({ mockPool: { query: vi.fn() } }));
-vi.mock('../db.js', () => ({ default: mockPool }));
-vi.mock('../notifier.js', () => ({ sendBark: vi.fn().mockResolvedValue(true) }));
-vi.mock('../orchestrator/kernel-run-store.js', () => ({
-  patchKernelRunById: async (db, input) => {
-    await db.query(
-      `UPDATE initiative_runs SET phase='${input.phase}',
-         failure_reason=COALESCE(failure_reason, '${input.failureReason ?? ''}'),
-         pr_url=COALESCE(pr_url, $2) WHERE id=$1`,
-      [input.runId, input.prUrl],
-    );
-    await db.query(`UPDATE tasks SET status='${input.phase === 'done' ? 'completed' : 'failed'}'`);
-    return { id: input.runId, phase: input.phase };
-  },
-}));
+import { store } from './helpers/relay-watchdog-boundary.js';
 
 import {
   resumeStalledRelayRuns,
@@ -70,7 +56,6 @@ function makeDeps({
 }
 
 beforeEach(() => {
-  mockPool.query.mockReset();
   sendBark.mockClear();
 });
 
@@ -85,14 +70,13 @@ describe('watchdog PR 发现护栏', () => {
     expect(updates.some((c) => /UPDATE tasks/.test(c[0]) && /pr_url/.test(c[0]) && c[1][1] === OPEN_PR.url)).toBe(true);
   });
 
-  it('gh 发现含 short 的 MERGED PR → 收敛：run 标 done + task 标 completed，不重点火', async () => {
+  it('gh 发现含 short 的 MERGED PR → 收敛：向store委托done，不重点火', async () => {
     const deps = makeDeps({ ghList: [MERGED_PR] });
     const r = await resumeStalledRelayRuns(deps);
     expect(deps.spawnFn).not.toHaveBeenCalled();
     expect(r.mergedPr).toBe(1);
-    const updates = deps.pool.query.mock.calls.filter((c) => /UPDATE/.test(c[0]));
-    expect(updates.some((c) => /initiative_runs/.test(c[0]) && /'done'/.test(c[0]))).toBe(true);
-    expect(updates.some((c) => /UPDATE tasks/.test(c[0]) && /'completed'/.test(c[0]))).toBe(true);
+    expect(store.patch).toHaveBeenCalledTimes(1);
+    expect(store.patch).toHaveBeenCalledWith(deps.pool, { runId: '11111111-1111-4111-8111-111111111111', phase: 'done', failureReason: null, prUrl: MERGED_PR.url });
   });
 
   it('gh 发现含 short 的 MERGED PR 但 evaluator 从未执行 → 标 done 打 failure_reason，不重点火', async () => {
@@ -100,9 +84,8 @@ describe('watchdog PR 发现护栏', () => {
     const r = await resumeStalledRelayRuns(deps);
     expect(deps.spawnFn).not.toHaveBeenCalled();
     const allCalls = deps.pool.query.mock.calls;
-    const updates = allCalls.filter((c) => /UPDATE/.test(c[0]));
-    expect(updates.some((c) => /initiative_runs/.test(c[0]) && /'done'/.test(c[0]) && /merged_without_evaluator_gate/.test(c[0]))).toBe(true);
-    expect(updates.some((c) => /UPDATE tasks/.test(c[0]) && /'completed'/.test(c[0]))).toBe(true);
+    expect(store.patch).toHaveBeenCalledTimes(1);
+    expect(store.patch).toHaveBeenCalledWith(deps.pool, { runId: '11111111-1111-4111-8111-111111111111', phase: 'done', failureReason: 'merged_without_evaluator_gate', prUrl: MERGED_PR.url });
     expect(r.mergedWithoutGate).toBe(1);
     expect(allCalls.some((c) => /INSERT INTO issues/.test(c[0]))).toBe(true);
     expect(sendBark).toHaveBeenCalled();
@@ -142,8 +125,7 @@ describe('watchdog PR 发现护栏', () => {
     expect(deps.spawnFn).not.toHaveBeenCalled();
     expect(r.resumed).toBe(0);
     expect(r.capped).toBe(0);
-    const updates = deps.pool.query.mock.calls.filter((c) => /UPDATE/.test(c[0]));
-    expect(updates.some((c) => /'failed'/.test(c[0]))).toBe(false);
+    expect(store.patch).not.toHaveBeenCalled();
   });
 });
 
