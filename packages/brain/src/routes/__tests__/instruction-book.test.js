@@ -2,6 +2,10 @@ import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } 
 import express from 'express';
 import request from 'supertest';
 
+// 红测也在底层拒绝真实DB/环境文件；它不代替实际db模块的身份断言。
+vi.mock('dotenv/config',()=>({}));
+vi.mock('dotenv',()=>({default:{config:()=>({parsed:{}})},config:()=>({parsed:{}})}));
+vi.mock('pg',()=>({default:{Pool:class {query=boundary.unboundQuery;},types:{setTypeParser:vi.fn()}}}));
 // Mock ops.js 的所有重依赖，确保测试轻量
 vi.mock('../db.js', () => ({ default: { query: boundary.forbidden } }));
 vi.mock('../actions.js', () => ({ createTask: vi.fn(), updateTask: vi.fn() }));
@@ -39,7 +43,7 @@ vi.mock('./shared.js', () => ({
   getActiveExecutionPaths: vi.fn(),
   INVENTORY_CONFIG: {},
 }));
-const boundary = vi.hoisted(() => ({owned:null,redirectRoot:null,spawn:vi.fn(), write:vi.fn(), receipt:vi.fn(async()=> 'fixture-receipt'), forbidden:vi.fn(() => {throw Error('external action forbidden');})}));
+const boundary = vi.hoisted(() => ({unboundQuery:vi.fn(()=>{throw Error('unbound database query forbidden');}),owned:null,redirectRoot:null,spawn:vi.fn(), write:vi.fn(), receipt:vi.fn(async()=> 'fixture-receipt'), forbidden:vi.fn(() => {throw Error('external action forbidden');})}));
 vi.mock('child_process', () => ({spawn:boundary.spawn,exec:boundary.forbidden,execSync:boundary.forbidden,execFile:boundary.forbidden,execFileSync:boundary.forbidden}));
 vi.mock('node:child_process', () => ({spawn:boundary.spawn,exec:boundary.forbidden,execSync:boundary.forbidden,execFile:boundary.forbidden,execFileSync:boundary.forbidden}));
 vi.mock('../receipt-collector.js', () => ({recordActionReceipt:boundary.receipt,resolveActionReceipt:boundary.forbidden}));
@@ -69,9 +73,11 @@ it.each([
  ['content-pipeline-llm-calling','Content Pipeline LLM 调用','executeCopywriting','previous_feedback','llm_generated','无需重启服务'],
  ['post-publish-data-collection','功能说明：发布后数据回收（内容飞轮 I3）','content_publish','source_publish_task_id','/api/brain/pipelines/:id/stats','migration 207','post-publish-data-collector.js'],
  ['social-trending-api','Social Trending API','GET /api/brain/social/trending','内容选题','platform | string','v_all_platforms','HTTP 200'],
+ ['topics-api','GET /api/brain/topics — 内容选题候选库 API','GET /api/brain/topics?date=YYYY-MM-DD','"total": 10','priority_score','POST /api/brain/pipelines/trigger-topics'],
+ ['system-registry','System Registry (`/api/brain/registry`)','GET `/api/brain/registry/exists`','metadata | JSONB','创建新 skill 前','197_system_registry.sql'],
 ])('真实无frontmatter中文文档%s正文进入UI现用sections',async(name,title,...markers)=>{
  // 仅在格式回归中把旧错误根映射到真实文档，独立于路径修复证明原parser缺口。
- boundary.redirectRoot=docs;const r=await get();expect(r.status).toBe(200);const e=r.body.features.find(x=>x.title===title);expect(e,'真实文档必达').toBeDefined();expect.soft(e.id).toBe('feature:'+name);expect.soft(e.sections.what).toBeDefined();for(const marker of markers)expect(flatten(e)).toContain(marker);expect(boundary.forbidden).not.toHaveBeenCalled();
+ boundary.redirectRoot=docs;const r=await get();expect(r.status).toBe(200);const e=r.body.features.find(x=>x.title===title);expect(e,'真实文档必达').toBeDefined();expect.soft(e.id).toBe('feature:'+name);for(const marker of markers)expect(flatten(e)).toContain(marker);expect(boundary.forbidden).not.toHaveBeenCalled();
 });
 it('显式合法两空目录是200空，不回落源码其它根',async()=>{vi.stubEnv('INSTRUCTION_BOOK_DOCS_ROOT',book('empty'));const r=await get();expect(r.status).toBe(200);expect(r.body).toEqual({skills:[],features:[]});expect(boundary.forbidden).not.toHaveBeenCalled();});
 it.each(['missing','bad-entry','empty-entry'])('%s不能200空或部分成功',async mode=>{
@@ -79,4 +85,14 @@ it.each(['missing','bad-entry','empty-entry'])('%s不能200空或部分成功',a
 });
 it('既有英文章节、子章节、显式ID及changelog保持',async()=>{
  const p=book('english');fs.writeFileSync(join(p,'skills/fixture.md'),'---\nid: explicit-id\nversion: 1.2.3\nchangelog:\n  - 1.2.3: owned change\n---\n# Owned English\n## What it is\nowned body\n## Trigger\nowned trigger\n## How to use\nowned usage\n### Child\nowned child\n## Output\nowned output\n## Added in\nowned version');vi.stubEnv('INSTRUCTION_BOOK_DOCS_ROOT',p);boundary.redirectRoot=p;const r=await get();expect(r.status).toBe(200);expect(r.body.skills).toEqual([{id:'explicit-id',version:'1.2.3',changelog:[{version:'1.2.3',description:'owned change'}],title:'Owned English',category:'skill',sections:{what:{content:'owned body',subsections:[]},trigger:{content:'owned trigger',subsections:[]},howToUse:{content:'owned usage',subsections:[{title:'Child',content:'owned child'}]},output:{content:'owned output',subsections:[]},addedIn:{content:'owned version',subsections:[]}}}]);expect(boundary.forbidden).not.toHaveBeenCalled();
+});
+
+it('Ops实际导入的DB与模型函数必须绑定本测试拒绝spy，真实pool零query',async()=>{
+ const {default:pool}=await import('../../db.js');const model=await import('../../llm-caller.js');
+ expect(pool.query).toBe(boundary.forbidden);expect(model.callLLM).toBe(boundary.forbidden);expect(model.callLLMStream).toBe(boundary.forbidden);
+ expect((await get()).status).toBe(200);expect(pool.query).not.toHaveBeenCalled();expect(model.callLLM).not.toHaveBeenCalled();expect(model.callLLMStream).not.toHaveBeenCalled();expect(boundary.unboundQuery).not.toHaveBeenCalled();
+});
+it.each(['fs','node:fs'])('真实%s别名对越界读必须先由安全边界拒绝',async name=>{
+ const filesystem=await import(name);const outside=resolve(boundary.owned,'../instruction-reader-outside-no-file-'+boundary.owned.split('/').pop(), 'unknown');
+ expect(()=>filesystem.readFileSync(outside,'utf8')).toThrow('host read forbidden');expect(()=>filesystem.readdirSync(outside)).toThrow('host read forbidden');
 });
