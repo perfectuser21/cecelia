@@ -5,17 +5,13 @@ set -uo pipefail
 
 # 仅收窄原包级豁免，不增加包或风险情形；条件变化时应修依赖并移除对应项。
 ALLOW_ADVISORIES=(
-  # 原uuid buf边界公告：现有调用仅v4，无v3/v5/v6的buf输入；升级安全版本后移除。
-  "uuid|GHSA-w5hq-g745-h8pq"
-  # 原OTel JaegerPropagator DoS：src/otel.js配置OTLP，不注册JaegerPropagator。
-  # 当前npm回执标题对应此既有风险；OTel依赖链升级后移除。
+  # 原Jaeger传播器DoS：src/otel.js使用OTLP；仓库配置未注册Jaeger或设置OTEL_PROPAGATORS=jaeger。
+  # 只适用于该未启用Jaeger的配置；不能把静态配置证据说成已核实任意生产环境变量。
+  # 2026-11-04 npm audit的fixAvailable为sdk-node 0.300.0/isSemVerMajor=true；
+  # 当前不自动跨上游major或使用未经验证的override。依赖链修复后移除此项；启用Jaeger前也必须移除。
   "@opentelemetry/propagator-jaeger|GHSA-45rx-2jwx-cxfr"
-  # 原react-router RSC action公告：现有客户端Router不启用RSC/server action。
-  "react-router|GHSA-qwww-vcr4-c8h2"
-  # 原braces嵌套模式DoS：代理路由只用固定路径，不接收用户glob模式。
-  "braces|GHSA-vfj7-8cjw-p6xm"
 )
-# 旧protobufjs/dompurify包级条目没有明确公告ID，不再授予全包豁免。
+# 原uuid/react-router/braces例外当前无直接high；protobufjs/dompurify没有精确公告依据，全部退休。
 # 未知公告保持红灯；后续不得从实时audit结果自动扩充此表。
 
 JSON=$(npm audit --audit-level=high --omit=dev --json 2>/dev/null)
