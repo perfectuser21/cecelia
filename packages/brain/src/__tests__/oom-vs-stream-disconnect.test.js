@@ -82,7 +82,7 @@ describe('callback-processor — exit=137 OOM 不累计失败次数', () => {
     vi.doMock('../event-bus.js', () => ({ emit: vi.fn().mockResolvedValue(undefined) }));
     vi.doMock('../alerting.js', () => ({ raise: vi.fn().mockResolvedValue(undefined) }));
     vi.doMock('../notifier.js', () => ({ notifyTaskCompleted: vi.fn() }));
-    vi.doMock('../desire-feedback.js', () => ({ updateDesireFromTask: vi.fn() }));
+    vi.doMock('../desire-feedback.js', () => ({ updateDesireFromTask: vi.fn().mockResolvedValue(undefined) }));
     vi.doMock('../routes/shared.js', () => ({ resolveRelatedFailureMemories: vi.fn().mockResolvedValue([]) }));
 
     const mockTaskRow = { rows: [{ task_type: 'dev', payload: {} }] };
@@ -94,7 +94,7 @@ describe('callback-processor — exit=137 OOM 不累计失败次数', () => {
         return Promise.resolve(mockUpdateRow);
       }),
       connect: vi.fn().mockResolvedValue({
-        query: vi.fn().mockResolvedValue({ rows: [{ id: 'task-oom-001', status: 'failed', payload: {} }] }),
+        query: vi.fn().mockResolvedValue({ rowCount: 1, rows: [{ id: 'task-oom-001', status: 'failed', payload: {} }] }),
         release: vi.fn(),
       }),
     };
@@ -109,13 +109,10 @@ describe('callback-processor — exit=137 OOM 不累计失败次数', () => {
       result: null,
       exit_code: 137,
       duration_ms: 5000,
-    }, mockPool).catch(() => {}); // 忽略其他错误，只关注 handleTaskFailure 调用
+    }, mockPool);
 
     expect(mockHandleTaskFailure).toHaveBeenCalledOnce();
-    const calls = mockHandleTaskFailure.mock.calls;
-    if (calls.length > 0) {
-      expect(calls[0][1]?.skipCount).toBe(true);
-    }
+    expect(mockHandleTaskFailure).toHaveBeenCalledWith('task-oom-001', { skipCount: true });
     // 熔断器不应被触发
     expect(mockCbFailure).not.toHaveBeenCalled();
   });
@@ -127,13 +124,11 @@ describe('callback-processor — exit=137 OOM 不累计失败次数', () => {
       result: null,
       exit_code: 1,
       duration_ms: 5000,
-    }, mockPool).catch(() => {});
+    }, mockPool);
 
     expect(mockHandleTaskFailure).toHaveBeenCalledOnce();
-    const calls = mockHandleTaskFailure.mock.calls;
-    if (calls.length > 0) {
-      expect(calls[0][1]?.skipCount).toBe(false);
-    }
+    expect(mockHandleTaskFailure).toHaveBeenCalledWith('task-oom-001', { skipCount: false });
+    expect(mockCbFailure).toHaveBeenCalled();
   });
 });
 
