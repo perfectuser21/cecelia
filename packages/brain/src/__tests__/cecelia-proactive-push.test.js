@@ -10,28 +10,9 @@ import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest';
 
 // Mock broadcast
 const mockBroadcast = vi.hoisted(() => vi.fn());
-vi.mock('../websocket.js', () => ({
+vi.mock('../websocket.js', async () => ({
+  ...(await vi.importActual('../websocket.js')),
   broadcast: mockBroadcast,
-  WS_EVENTS: {
-    TASK_CREATED: 'task:created',
-    TASK_STARTED: 'task:started',
-    TASK_COMPLETED: 'task:completed',
-    TASK_FAILED: 'task:failed',
-    TASK_PROGRESS: 'task:progress',
-    EXECUTOR_STATUS: 'executor:status',
-    PING: 'ping',
-    PONG: 'pong',
-    PROPOSAL_CREATED: 'proposal:created',
-    PROPOSAL_RESOLVED: 'proposal:resolved',
-    PROFILE_CHANGED: 'profile:changed',
-    ALERTNESS_CHANGED: 'alertness:changed',
-    DESIRE_CREATED: 'desire:created',
-    DESIRE_UPDATED: 'desire:updated',
-    DESIRE_EXPRESSED: 'desire:expressed',
-    TICK_EXECUTED: 'tick:executed',
-    COGNITIVE_STATE: 'cognitive:state',
-    CECELIA_MESSAGE: 'cecelia:message',
-  },
 }));
 
 import { WS_EVENTS } from '../websocket.js';
