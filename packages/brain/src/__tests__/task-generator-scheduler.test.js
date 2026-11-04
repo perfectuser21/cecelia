@@ -21,6 +21,13 @@ const mockExecCb = vi.hoisted(() => vi.fn((cmd, opts, cb) => {
   callback(null, { stdout: '', stderr: '' });
 }));
 
+// 隔离任务写入口；调度器自身与 mutation route 保持真实实现。
+const mockCreateTask = vi.hoisted(() => vi.fn());
+vi.mock('../actions.js', () => ({ createTask: mockCreateTask }));
+vi.mock('../lib/git-revision.js', () => ({
+  readGitRevision: () => 'a'.repeat(40),
+}));
+
 // Mock task-generators/index.js 中的 getScheduler
 vi.mock('../task-generators/index.js', () => ({
   getScheduler: vi.fn(() => ({
@@ -66,6 +73,7 @@ const makePool = (returnedId = 'db-task-id-1') => ({
 
 describe('task-generator-scheduler', () => {
   beforeEach(async () => {
+    mockCreateTask.mockReset().mockResolvedValue({ task: { id: 'db-task-id-1' } });
     // 重置所有 mock
     mockRunScan.mockReset();
     mockGenerateTasks.mockReset();
