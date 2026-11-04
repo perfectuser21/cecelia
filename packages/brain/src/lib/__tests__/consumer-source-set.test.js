@@ -1,4 +1,4 @@
-import {it,expect} from 'vitest';
+import {it,expect,vi} from 'vitest';
 import {stepSha256} from '../../../scripts/sync-steps-from-workspace.mjs';
 import * as sourceProtocol from '../consumer-source-set.js';
 
@@ -30,6 +30,7 @@ it('生产Workspace核心尚未在受信树可用时，真实动态消费者保�
  expect(sourceProtocol.collectWorkspaceConsumerSourceSet).toBeTypeOf('function');
  const result=await sourceProtocol.collectWorkspaceConsumerSourceSet({});
  expect(result).toMatchObject({status:'unknown',admission:{status:'unknown'}});
+ expect(result.gaps).toContainEqual({code:'CONSUMER_CORE_UNAVAILABLE'});
  expect(result.gaps).toEqual(expect.arrayContaining([expect.objectContaining({code:expect.stringMatching(/^CONSUMER_/ )})]));
 });
 it('历史append冻结入口拒绝未认证、复制或static verified证明，不授予生产source_set',()=>{
