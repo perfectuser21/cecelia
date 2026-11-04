@@ -1,57 +1,37 @@
-import { verifyDebt02Scratch } from './helpers/debt-02-scratch.js';
-/**
- * [FAILING] Migration 289 — decisions/initiative_contracts notion_id 列
- *
- * Migration 284（PR #3140）只加了 notion_synced_at，漏掉 notion_id，
- * 导致 notion-push-sync 每次推送后回写失败，5 分钟定时任务无限重复推送。
- *
- * 本测试验证：
- * 1. decisions 表有 notion_id 列（VARCHAR UNIQUE）
- * 2. initiative_contracts 表有 notion_id 列（VARCHAR UNIQUE）
- * 3. EXPECTED_SCHEMA_VERSION 已更新到 291（migration 早到 291，本测试断言对齐当前期望值）
- */
-
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import pg from 'pg';
-import { DB_DEFAULTS } from '../db-config.js';
+import { createDebt02MigrationFixture } from './helpers/debt-02-scratch.js';
 
-const { Pool } = pg;
-let pool;
-
+let pool, fixture;
+const migration = '289_decisions_notion_id.sql';
 beforeAll(async () => {
-  pool = new Pool(DB_DEFAULTS);
-  await verifyDebt02Scratch(pool);
+  fixture = await createDebt02MigrationFixture(`
+    CREATE TABLE decisions(id uuid PRIMARY KEY DEFAULT gen_random_uuid());
+    CREATE TABLE initiative_contracts(id uuid PRIMARY KEY DEFAULT gen_random_uuid());
+  `, [migration]);
+  pool = fixture.pool;
 });
+afterAll(async () => { await fixture?.close(); });
 
-afterAll(async () => {
-  await pool.end();
-});
-
-describe('Migration 289 - decisions/initiative_contracts notion_id', () => {
-  it('decisions 表应有 notion_id 列', async () => {
-    const result = await pool.query(`
-      SELECT column_name, data_type
-      FROM information_schema.columns
-      WHERE table_schema = 'public'
-        AND table_name = 'decisions'
-        AND column_name = 'notion_id'
-    `);
-    expect(result.rows.length).toBe(1);
+describe('Migration 289 — actual SQL upgrade and sync identity constraints', () => {
+  it.each(['decisions', 'initiative_contracts'])('%s gains a bounded notion_id column', async (table) => {
+    const { rows } = await pool.query(`SELECT data_type, character_maximum_length
+      FROM information_schema.columns WHERE table_schema=current_schema()
+      AND table_name=$1 AND column_name='notion_id'`, [table]);
+    expect(rows).toEqual([{ data_type: 'character varying', character_maximum_length: 100 }]);
   });
 
-  it('initiative_contracts 表应有 notion_id 列', async () => {
-    const result = await pool.query(`
-      SELECT column_name, data_type
-      FROM information_schema.columns
-      WHERE table_schema = 'public'
-        AND table_name = 'initiative_contracts'
-        AND column_name = 'notion_id'
-    `);
-    expect(result.rows.length).toBe(1);
+  it.each(['decisions', 'initiative_contracts'])('%s rejects duplicate remote identities and accepts multiple unsynced rows', async (table) => {
+    await pool.query(`INSERT INTO ${table}(notion_id) VALUES(NULL),(NULL),('debt02-notion-page')`);
+    await expect(pool.query(`INSERT INTO ${table}(notion_id) VALUES('debt02-notion-page')`)).rejects.toMatchObject({ code: '23505' });
+    const { rows } = await pool.query(`SELECT notion_id FROM ${table} WHERE notion_id IS NOT NULL`);
+    expect(rows).toEqual([{ notion_id: 'debt02-notion-page' }]);
   });
 
-  it('EXPECTED_SCHEMA_VERSION 应为 292', async () => {
-    const { EXPECTED_SCHEMA_VERSION } = await import('../selfcheck.js');
-    expect(EXPECTED_SCHEMA_VERSION).toBe('292');
+  it('replays the formal migration without losing existing sync identities', async () => {
+    await fixture.apply(migration);
+    for (const table of ['decisions', 'initiative_contracts']) {
+      expect((await pool.query(`SELECT notion_id FROM ${table} WHERE notion_id IS NOT NULL`)).rows)
+        .toEqual([{ notion_id: 'debt02-notion-page' }]);
+    }
   });
 });
