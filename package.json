@@ -17,6 +17,8 @@
     "ci:implementation-impact": "node scripts/ci/implementation-gate.mjs"
   },
   "devDependencies": {
+    "@actions/expressions": "0.3.61",
+    "@actions/workflow-parser": "0.3.61",
     "dependency-cruiser": "^17.4.3",
     "undici": "6.29.1",
     "js-yaml": "^4.1.1",
