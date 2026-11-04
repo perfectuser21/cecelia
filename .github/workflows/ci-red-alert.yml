@@ -9,6 +9,7 @@ name: CI Red Alert
 #   GH_PAT_BOT — GitHub PAT（repo + actions:read scope）。跨仓读 Actions runs 必须 PAT
 #                （GITHUB_TOKEN 只能读本仓）。缺失时本 job 直接红 + 明确指引，不许糊绿。
 #   TS_AUTHKEY — Tailscale（连 Brain，已有）。
+#   CECELIA_INTERNAL_TOKEN — Brain 内部鉴权（仅发现红灯需访问 Brain 时必需）。
 # 告警器自身也在扫描范围内：它连续红会被下一轮的自己抓到（若它还能跑）；
 # schedule 静默失效的兜底 = Brain issue 里的告警长期不更新会被人察觉。
 
@@ -99,12 +100,18 @@ jobs:
       - name: 开 Brain issue（去重）+ 飞书通知
         if: steps.scan.outputs.count != '0'
         shell: bash
+        env:
+          CECELIA_INTERNAL_TOKEN: ${{ secrets.CECELIA_INTERNAL_TOKEN }}
         run: |
           set -euo pipefail
+          if [ -z "${CECELIA_INTERNAL_TOKEN:-}" ]; then
+            echo "::error::CECELIA_INTERNAL_TOKEN secret 未配置，无法完成 Brain 告警。"
+            exit 1
+          fi
           # curl --fail 不拒绝 3xx；只有 2xx 才能成为有效业务回执。
           http_json() {
             local response status
-            response=$(curl -fsS -m 15 -w $'\n%{http_code}' "$@") || return 1
+            response=$(curl -fsS -m 15 -H "X-Internal-Token: $CECELIA_INTERNAL_TOKEN" -w $'\n%{http_code}' "$@") || return 1
             status=${response##*$'\n'}
             case "$status" in
               2??) printf '%s' "${response%$'\n'*}" ;;

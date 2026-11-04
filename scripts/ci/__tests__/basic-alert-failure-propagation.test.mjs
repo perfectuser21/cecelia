@@ -11,6 +11,8 @@ const root = new URL('../../../', import.meta.url).pathname;
 const load = name => yaml.load(readFileSync(join(root, '.github/workflows', name), 'utf8'));
 const red = load('ci-red-alert.yml');
 const sentinel = load('heartbeat-sentinel.yml');
+const internalToken = 'isolated-red-alert-token';
+const brainAlertStep = red.jobs.scan.steps.find(s => s.name.startsWith('开 Brain issue'));
 function fixture(t, commands = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'ci-alert-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
@@ -41,6 +43,10 @@ for (const scenario of ['list-500', 'list-302', 'create-500', 'create-302', 'cre
   let creates = 0; let notifications = 0;
   const url = await server(t, (req, res) => {
     res.setHeader('Content-Type', 'application/json');
+    if (req.headers['x-internal-token'] !== internalToken) {
+      res.statusCode = 401;
+      return res.end(JSON.stringify({ error: 'UNAUTHORIZED' }));
+    }
     if (req.method === 'GET') {
       res.statusCode = scenario === 'list-500' ? 500 : scenario === 'list-302' ? 302 : 200;
       return res.end(JSON.stringify({ issues: scenario === 'duplicate' ? [{ id: 'existing', title: '[CI红灯] fixture/repo｜Broken 连续3次失败' }] : [] }));
@@ -55,8 +61,7 @@ for (const scenario of ['list-500', 'list-302', 'create-500', 'create-302', 'cre
   const f = fixture(t); const alerts = join(f.dir, 'alerts.txt');
   writeFileSync(alerts, 'fixture/repo\tBroken\tbroken.yml\n');
   // 执行真实 workflow step，仅将跨步骤中间文件定向到本例隔离目录。
-  const step = red.jobs.scan.steps.find(s => s.name.startsWith('开 Brain issue'));
-  const result = await run(step.run.replaceAll('/tmp/alerts.txt', alerts), { ...f.env, BRAIN_URL: url });
+  const result = await run(brainAlertStep.run.replaceAll('/tmp/alerts.txt', alerts), { ...f.env, BRAIN_URL: url, CECELIA_INTERNAL_TOKEN: internalToken });
   assert.equal(result.status === 0, ['success', 'duplicate'].includes(scenario), result.out);
   if (scenario.startsWith('create-')) assert.equal(creates, 1, result.out);
   if (scenario.startsWith('notify-')) { assert.equal(creates, 1, result.out); assert.equal(notifications, 1, result.out); }
@@ -65,6 +70,32 @@ for (const scenario of ['list-500', 'list-302', 'create-500', 'create-302', 'cre
   }
   if (scenario.startsWith('list-') || scenario === 'duplicate') assert.equal(creates, 0);
   if (scenario === 'success') { assert.equal(creates, 1); assert.equal(notifications, 1); assert.match(result.out, /新开 issue：1/); }
+});
+test('红灯 Brain 调用必须从 Actions secret 注入内部令牌', () => {
+  const effectiveEnv = { ...red.jobs.scan.env, ...brainAlertStep.env };
+  assert.equal(effectiveEnv.CECELIA_INTERNAL_TOKEN, '${{ secrets.CECELIA_INTERNAL_TOKEN }}');
+});
+for (const token of [undefined, '']) test(`红灯缺内部令牌 ${String(token)} 在任何网络请求前失败`, async t => {
+  let requests = 0;
+  const url = await server(t, (_req, res) => { requests++; res.end('{"issues":[]}'); });
+  const f = fixture(t); const alerts = join(f.dir, 'alerts.txt');
+  writeFileSync(alerts, 'fixture/repo\tBroken\tbroken.yml\n');
+  const env = { ...f.env, BRAIN_URL: url, CECELIA_INTERNAL_TOKEN: token };
+  if (token === undefined) delete env.CECELIA_INTERNAL_TOKEN;
+  const result = await run(brainAlertStep.run.replaceAll('/tmp/alerts.txt', alerts), env);
+  assert.notEqual(result.status, 0, result.out);
+  assert.equal(requests, 0, '缺少令牌时不能尝试匿名访问 Brain');
+  assert.match(result.out, /CECELIA_INTERNAL_TOKEN/);
+});
+test('红灯错误内部令牌收到401，不创建issue或发送通知，也不输出令牌', async t => {
+  let requests = 0;
+  const url = await server(t, (_req, res) => { requests++; res.statusCode = 401; res.end('{"error":"UNAUTHORIZED"}'); });
+  const f = fixture(t); const alerts = join(f.dir, 'alerts.txt');
+  writeFileSync(alerts, 'fixture/repo\tBroken\tbroken.yml\n');
+  const result = await run(brainAlertStep.run.replaceAll('/tmp/alerts.txt', alerts), { ...f.env, BRAIN_URL: url, CECELIA_INTERNAL_TOKEN: internalToken });
+  assert.notEqual(result.status, 0, result.out);
+  assert.equal(requests, 1);
+  assert.ok(!result.out.includes(internalToken), '令牌不能进入输出日志');
 });
 function condition(expression, probe) {
   return Function('needs', 'always', `return (${expression})`)({ probe }, () => true);
