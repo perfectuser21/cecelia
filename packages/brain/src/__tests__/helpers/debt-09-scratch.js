@@ -1,26 +1,19 @@
+import { privatePgConfig, verifyPrivatePg } from '../../../../../scripts/ci/private-pg-contract.mjs';
 import pg from 'pg';
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 
 // 显式 scratch URL + 服务端身份读回。绝不回退到 db.js 或默认端口。
 export async function createDebt09Scratch() {
-  const raw = process.env.TEST_DATABASE_URL;
-  if (!raw) throw new Error('必须显式提供私有 TEST_DATABASE_URL');
-  const url = new URL(raw);
-  if (url.hostname !== '127.0.0.1' || url.pathname !== '/cecelia_scratch' || !url.port || url.port === '5432') {
-    throw new Error('仅允许 127.0.0.1 非默认端口的 cecelia_scratch');
-  }
-  const admin = new pg.Pool({ connectionString: raw });
+  const config = privatePgConfig();
+  const admin = new pg.Pool(config);
   const schema = `debt_09_${randomUUID().replaceAll('-', '')}`;
   let pool;
   try {
-    const { rows: [identity] } = await admin.query('SELECT current_database() AS db, host(inet_server_addr()) AS host, inet_server_port() AS port');
-    if (identity.db !== 'cecelia_scratch' || identity.host !== '127.0.0.1' || identity.port !== Number(url.port)) {
-      throw new Error('scratch 服务端身份不符');
-    }
+    const identity = await verifyPrivatePg(admin);
     console.log('debt-09 scratch identity', identity);
     await admin.query(`CREATE SCHEMA ${schema}`);
-    pool = new pg.Pool({ connectionString: raw, options: `-c search_path=${schema}` });
+    pool = new pg.Pool({ ...config, options: `-c search_path=${schema}` });
     return {
       pool,
       async migrate(name) {

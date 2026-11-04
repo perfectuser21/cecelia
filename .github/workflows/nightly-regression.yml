@@ -89,6 +89,15 @@ jobs:
         run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Migrate dedicated database
         run: cd packages/brain && node src/migrate.js
+      - name: Run each restored PostgreSQL contract in its own owned database
+        run: node scripts/ci/run-debt-pg.mjs
+      - name: Preserve per-file private PostgreSQL results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: debt-pg-results-${{ github.sha }}
+          path: artifacts/debt-pg-results.json
+          if-no-files-found: error
       - name: Resolve owned PostgreSQL service identity
         id: pg_identity
         env:

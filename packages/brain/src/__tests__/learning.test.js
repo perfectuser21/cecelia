@@ -6,10 +6,15 @@ import { assertDebt10Scratch, closeDebt10Transaction } from './helpers/debt-10-s
  */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
+import { seedActiveF1 } from './fixtures/work-routing-fixture.js';
 vi.mock('../openai-client.js', () => ({ generateEmbedding: vi.fn(() => { throw new Error('external embedding forbidden'); }) }));
 vi.mock('../embedding-service.js', () => ({ generateLearningEmbeddingAsync: vi.fn() }));
 vi.mock('../llm-caller.js', () => ({ callLLM: vi.fn(() => { throw new Error('external LLM forbidden'); }) }));
-vi.mock('../db.js', async () => ({ default: await (await import('./helpers/debt-10-scratch.js')).openDebt10Transaction() }));
+vi.mock('../db.js', async () => {
+  const client = await (await import('./helpers/debt-10-scratch.js')).openDebt10Transaction();
+  // 真实业务SQL仍交PG；仅把业务事务嵌套在本人fixture事务内。
+  return { default: { query: (sql, ...args) => client.query(({ BEGIN: 'SAVEPOINT learning_business', COMMIT: 'RELEASE SAVEPOINT learning_business', ROLLBACK: 'ROLLBACK TO SAVEPOINT learning_business' })[sql] || sql, ...args), fixtureClient: client } };
+});
 let pool;
 let recordLearning, applyStrategyAdjustments, getRecentLearnings, shouldTriggerLearning, createLearningTask, ADJUSTABLE_PARAMS, upsertLearning, NOISE_LEARNING_CATEGORIES, isNoiseLearningCategory;
 
@@ -17,6 +22,7 @@ beforeAll(async () => {
   vi.resetModules();
   pool = (await import('../db.js')).default;
   await assertDebt10Scratch(pool);
+  await seedActiveF1(pool);
   ({ recordLearning, applyStrategyAdjustments, getRecentLearnings, shouldTriggerLearning, createLearningTask, ADJUSTABLE_PARAMS, upsertLearning, NOISE_LEARNING_CATEGORIES, isNoiseLearningCategory } = await import('../learning.js'));
 });
 
@@ -81,7 +87,7 @@ describe('Learning Loop', () => {
 
     it('should create [Insight修复] task when confidence >= 0.7', async () => {
       const srcTask = await pool.query(
-        `INSERT INTO tasks (title, task_type, priority, status) VALUES ('lu-test src task B', 'dev', 'P2', 'completed') RETURNING id`
+        `INSERT INTO tasks (title, task_type, priority, status, payload) VALUES ('lu-test src task B', 'dev', 'P2', 'completed', '{"repo":"cecelia","map_scope":["F1"]}') RETURNING id`
       );
       const analysis = {
         task_id: srcTask.rows[0].id,
@@ -96,12 +102,13 @@ describe('Learning Loop', () => {
         [learning.id]
       );
       expect(tasks.rows).toHaveLength(1);
+      expect((await pool.query('SELECT task_type FROM tasks WHERE id=$1', [tasks.rows[0].id])).rows[0].task_type).toBe('coding_workflow');
     });
   });
 
   describe('applyStrategyAdjustments', () => {
     it('should apply valid strategy adjustments to brain_config', async () => {
-      const learningId = 'test-learning-id';
+      const learningId = (await pool.query("INSERT INTO learnings(title,content) VALUES ('strategy fixture','fixture') RETURNING id")).rows[0].id;
       const adjustments = [
         {
           type: 'adjust_strategy',
@@ -129,6 +136,7 @@ describe('Learning Loop', () => {
       expect(configResult.rows.length).toBeGreaterThan(0);
       expect(JSON.parse(configResult.rows[0].value)).toBe(0.8);
       expect(configResult.rows[0].metadata.learning_id).toBe(learningId);
+      expect((await pool.query('SELECT applied FROM learnings WHERE id=$1', [learningId])).rows[0].applied).toBe(true);
     });
 
     it('should skip adjustments not in whitelist', async () => {
@@ -268,7 +276,7 @@ describe('upsertLearning — task_id 原子绑定', () => {
   });
 });
 
-afterAll(async () => { await closeDebt10Transaction(pool); });
+afterAll(async () => { await closeDebt10Transaction(pool?.fixtureClient); });
 
 beforeEach(async () => { await pool.query('SAVEPOINT debt10_case'); });
 afterEach(async () => { await pool.query('ROLLBACK TO SAVEPOINT debt10_case'); await pool.query('RELEASE SAVEPOINT debt10_case'); });

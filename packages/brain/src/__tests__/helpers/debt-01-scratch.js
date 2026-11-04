@@ -1,28 +1,14 @@
+import { privatePgConfig, verifyPrivatePg } from '../../../../../scripts/ci/private-pg-contract.mjs';
 import pg from 'pg';
 import { randomUUID } from 'node:crypto';
-import { userInfo } from 'node:os';
 import { readFile } from 'node:fs/promises';
 
-// 显式指定私有端口；拒绝默认服务，绝不加载 dotenv 或生产 db-config。
-const port = Number(process.env.DEBT_01_PG_PORT);
-if (!Number.isInteger(port) || port < 1024 || port === 5432) {
-  throw new Error('DEBT_01_PG_PORT 必须指向自建 scratch PostgreSQL 非默认端口');
-}
+const config = privatePgConfig();
 const schema = `debt_01_${randomUUID().replaceAll('-', '')}`;
-export const pool = new pg.Pool({
-  host: '127.0.0.1', port, database: 'cecelia_scratch',
-  user: process.env.DEBT_01_PG_USER || userInfo().username,
-  password: '', max: 2, connectionTimeoutMillis: 2000,
-  options: `-c search_path=${schema},public`,
-});
+export const pool = new pg.Pool({ ...config, max: 2, options: `-c search_path=${schema},public` });
 let verified = false;
 export async function setupScratch() {
-  const { rows: [identity] } = await pool.query(
-    'SELECT current_database() AS db, host(inet_server_addr()) AS host, inet_server_port() AS port',
-  );
-  if (identity.db !== 'cecelia_scratch' || identity.host !== '127.0.0.1' || identity.port !== port) {
-    throw new Error(`scratch identity mismatch: ${JSON.stringify(identity)}`);
-  }
+  await verifyPrivatePg(pool);
   verified = true;
   await pool.query(`CREATE SCHEMA ${schema}`);
   // 合同所需正式迁移子集；不声称覆盖整库迁移兼容性。

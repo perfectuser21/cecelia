@@ -1,3 +1,4 @@
+import { privatePgConfig, verifyPrivatePg } from '../../../../../scripts/ci/private-pg-contract.mjs';
 import { readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import pg from 'pg';
@@ -10,11 +11,9 @@ vi.mock('../../db.js', () => ({ default: { query: (sql, ...args) => client.query
 let client;
 let learning;
 beforeAll(async () => {
-  if (process.env.DB_NAME !== 'cecelia_scratch' || process.env.DB_HOST !== '127.0.0.1' || !process.env.DB_PORT || process.env.DB_PORT === '5432') throw new Error('explicit private scratch required');
-  client = new pg.Client({ host: process.env.DB_HOST, port: +process.env.DB_PORT, user: process.env.DB_USER, database: process.env.DB_NAME });
+  client = new pg.Client(privatePgConfig());
   await client.connect();
-  const { rows: [identity] } = await client.query('SELECT current_database() AS db, host(inet_server_addr()) AS host, inet_server_port() AS port');
-  expect(identity).toEqual({ db: 'cecelia_scratch', host: '127.0.0.1', port: +process.env.DB_PORT });
+  await verifyPrivatePg(client);
   await client.query('BEGIN');
   learning = await import('../../learning.js');
 });

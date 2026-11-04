@@ -109,6 +109,8 @@ describe('quarantine-auto-release (P1 Fix #3)', () => {
   });
 
   it('should handle multiple expired tasks', async () => {
+    // NOW()属于当前事务，过期夹具也使用同一数据库时钟，避免依赖机器运行速度。
+    const databaseNow = new Date((await pool.query('SELECT NOW() AS now')).rows[0].now).getTime();
     // Create 3 expired quarantined tasks
     for (let i = 0; i < 3; i++) {
       const task = await pool.query(`
@@ -119,10 +121,10 @@ describe('quarantine-auto-release (P1 Fix #3)', () => {
         `test-auto-release-multi-${i}`,
         JSON.stringify({
           quarantine_info: {
-            quarantined_at: new Date(Date.now() - 1000).toISOString(),
+            quarantined_at: new Date(databaseNow - 1000).toISOString(),
             reason: 'timeout_pattern',
             ttl_ms: 500,  // 0.5 sec
-            release_at: new Date(Date.now() - 100).toISOString(),  // expired
+            release_at: new Date(databaseNow - 100).toISOString(),  // expired
           }
         })
       ]);

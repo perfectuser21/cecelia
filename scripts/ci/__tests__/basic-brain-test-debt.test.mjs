@@ -8,6 +8,7 @@ import {createRequire} from 'node:module';
 import test from 'node:test';
 import brain from '../../../packages/brain/vitest.config.js';
 import deep from '../deep-integration.config.mjs';
+import privatePg from '../debt-pg.config.mjs';
 import realEnv from '../../../packages/brain/vitest.real-env-smoke.config.js';
 import rootConfig from '../../../vitest.config.js';
 import {skillSourceConfig} from '../skill-source-tests.mjs';
@@ -248,6 +249,7 @@ function automaticLanes({basic, nightly, pinned}) {
     run: 'cd packages/brain && npx --no-install vitest run --config ../../scripts/ci/deep-integration.config.mjs --reporter=dot',
     env: pgEnv,
   })) lanes.push('deep');
+  if (scheduled && knownStep(nightly, 'brain-integration', { run: 'node scripts/ci/run-debt-pg.mjs' })) lanes.push('private-pg');
   if (scheduled && knownStep(nightly, 'real-env-smoke', {
     run: 'cd packages/brain\nnpx vitest run --config vitest.real-env-smoke.config.js',
     env: {...pgEnv, SMOKE_ALLOW_WRITE: '1', BRAIN_URL: 'http://localhost:5221', BRAIN_CONTAINER: 'cecelia-brain-smoke'},
@@ -329,10 +331,10 @@ for (const [lane, workflowName, jobName, marker] of [
 }
 
 test('当前无人自动接收的Brain测试与精确债务清单一致', () => {
-  const configurations = {default: [brain, brainRoot], deep: [deep, brainRoot], 'real-env': [realEnv, brainRoot],
+  const configurations = {default: [brain, brainRoot], deep: [deep, brainRoot], 'private-pg': [privatePg, brainRoot], 'real-env': [realEnv, brainRoot],
     'pinned-brain': [skillSourceConfig('brain'), brainRoot], 'pinned-root': [skillSourceConfig('root'), root]};
   const lanes = automaticLanes(loadWorkflows());
-  assert.deepEqual(lanes, ['default', 'deep', 'real-env', 'pinned-brain', 'pinned-root']);
+  assert.deepEqual(lanes, ['default', 'deep', 'private-pg', 'real-env', 'pinned-brain', 'pinned-root']);
   const selected = lanes.flatMap(lane => select(...configurations[lane]));
   const manifest = require('../brain-test-debt.json');
   assert.equal(manifest.version, 1);
