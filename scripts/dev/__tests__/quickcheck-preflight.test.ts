@@ -34,6 +34,7 @@ function fixture(changes: string[], options: { missingScript?: boolean; failure?
       put(`${path}/forbidden.cjs`, 'throw new Error("local full unit suite must not run");');
     }
     // 真正执行 production runner 的 scripts 分支；边界命令只写隔离目录里的标记。
+    put('scripts/ci/check-w19-frozen.mjs', `import {appendFileSync} from 'node:fs'; appendFileSync(${JSON.stringify(join(root, 'marker.log'))}, 'scripts:w19-frozen\\n'); process.exit(${options.frozenFailure ? 17 : 0});`);
     put('scripts/ci/__tests__/basic-fixture.test.mjs', `import {appendFileSync} from 'node:fs'; appendFileSync(${JSON.stringify(join(root, 'marker.log'))}, 'scripts:node-test\\n');`);
     put('scripts/dev/check.mjs', `import {appendFileSync} from 'node:fs'; appendFileSync(${JSON.stringify(join(root, 'marker.log'))}, 'scripts:dev-tools\\n');`);
     put('scripts/facts-check.mjs', ''); put('scripts/check-version-sync.sh', '#!/bin/bash\nexit 0\n');
@@ -68,7 +69,7 @@ describe('quickcheck 快速准备检查，完整单测由GitHub必需检查负�
   it.each(['scripts/ci/change.mjs', '.github/workflows/change.yml', 'package-lock.json', 'package.json'])('共享入口 %s 实际执行 scripts CI runner', path => {
     const result = fixture([path]);
     expect(result.status, result.stdout + result.stderr).toBe(0);
-    expect(result.markers).toEqual(['scripts:node-test', 'scripts:dev-tools']);
+    expect(result.markers).toEqual(['scripts:w19-frozen', 'scripts:node-test', 'scripts:dev-tools']);
   });
   it('冻结检查失败必须阻止后续测试和push', () => {
     const result = fixture(['scripts/ci/change.mjs'], { frozenFailure: true });
