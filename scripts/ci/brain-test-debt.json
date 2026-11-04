@@ -3,58 +3,10 @@
   "meaning": "仅记录维护集合中未被真实自动配置接收的文件；配置选中不代表用例未skip或实际通过；root手动配置不计自动覆盖。",
   "tests": [
     {
-      "file": "packages/brain/src/__tests__/alertness-actions.test.js",
-      "category": "external_resource",
-      "reason": "独立外部合同，未自动接收：无自动跑道；需独立隔离PG和进程边界后才可晋级",
-      "manualRoot": false
-    },
-    {
-      "file": "packages/brain/src/__tests__/blocks.test.js",
-      "category": "external_resource",
-      "reason": "独立外部合同，未自动接收：专用隔离服务集成跑道；当前不加入自动unit/Deep，需先让HTTP服务与fixture池共享已验证scratch身份。",
-      "manualRoot": false
-    },
-    {
-      "file": "packages/brain/src/__tests__/execution-strategy-session-kr-link.test.js",
-      "category": "external_resource",
-      "reason": "现役callback的KR objective_id持久化保障尚缺：旧测试复制实现，需真实execution-callback+私有PG，覆盖有效/无效/null Objective及独立读回。",
-      "manualRoot": false
-    },
-    {
       "file": "packages/brain/src/routes/__tests__/harness-feature-propagation.test.js",
-      "category": "legacy_spec",
-      "reason": "按cwd重复拼packages/brain，并断言旧harness源码布局；需迁移为真实回调/来源契约。",
+      "category": "external_resource",
+      "reason": "真实callback历史合同已替代旧源码断言；尚未注册本轮私有PG完整迁移跑道，合法evaluate历史消费者验证由独立组补齐后晋级。",
       "manualRoot": false
-    },
-    {
-      "file": "packages/brain/src/workflows/__tests__/dev-registry.test.js",
-      "category": "external_resource",
-      "reason": "独立外部合同，未自动接收：无自动跑道；先拆schema真约束与扫描/Notion外部合同",
-      "manualRoot": false
-    },
-    {
-      "file": "tests/regression/capture-destination-link/capture-destination-link.spec.ts",
-      "category": "external_resource",
-      "reason": "独立外部合同，未自动接收：保留 Playwright 专用隔离 E2E 合同，不接 vitest/default/Deep-PG；自动化前需专用 Brain+Workspace+Dashboard 同库、固定 initiative/capture、登录态及严格关联断言。",
-      "manualRoot": true
-    },
-    {
-      "file": "tests/regression/cockpit-route-wire/e2e-verify.spec.ts",
-      "category": "external_resource",
-      "reason": "独立外部合同，未自动接收：保持排除Brain Vitest；专用隔离Playwright跑道/按需人工验收，真实浏览器+隔离前端+隔离API数据+授权登录态；不能连5211生产代理。",
-      "manualRoot": true
-    },
-    {
-      "file": "tests/regression/relay-07b2fd3b/inbox-e2e.spec.ts",
-      "category": "external_resource",
-      "reason": "独立外部合同，未自动接收：独立浏览器E2E，禁止加入默认Vitest或仅因localhost可达就运行",
-      "manualRoot": true
-    },
-    {
-      "file": "tests/regression/relay-1b1f1ffa/preview-destroyer.test.js",
-      "category": "external_resource",
-      "reason": "独立外部合同，未自动接收：专属破坏性资源集成跑道；隔离PG集群+独立临时git仓，保留真实dropdb/fs/进程边。",
-      "manualRoot": true
     }
   ]
 }

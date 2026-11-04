@@ -6,6 +6,7 @@ import {spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {createRequire} from 'node:module';
 import test from 'node:test';
+import {createHash} from 'node:crypto';
 import brain from '../../../packages/brain/vitest.config.js';
 import deep from '../deep-integration.config.mjs';
 import privatePg from '../debt-pg.config.mjs';
@@ -193,7 +194,7 @@ for (const [name, include] of [
 }
 
 function loadWorkflows() {
-  return Object.fromEntries([['basic', 'ci.yml'], ['nightly', 'nightly-regression.yml'], ['pinned', 'skills-source-check.yml']]
+  return Object.fromEntries([['basic', 'ci.yml'], ['nightly', 'nightly-regression.yml'], ['pinned', 'skills-source-check.yml'], ['browser', 'ci-dashboard-pwa-e2e.yml']]
     .map(([name, file]) => [name, yaml.load(readFileSync(join(root, '.github/workflows', file), 'utf8'))]));
 }
 
@@ -211,7 +212,7 @@ function knownStep(workflow, jobId, expected) {
     const cwd = step['working-directory'] ?? job.defaults?.run?.['working-directory'] ?? workflow.defaults?.run?.['working-directory'] ?? '.';
     const shell = step.shell ?? job.defaults?.run?.shell ?? workflow.defaults?.run?.shell;
     const env = {...workflow.env, ...job.env, ...step.env};
-    return cwd === '.' && (shell === undefined || shell === 'bash') && step.run.trim() === expected.run
+    return cwd === (expected.cwd || '.') && (shell === undefined || shell === 'bash') && step.run.trim() === expected.run
       && (expected.id === undefined || step.id === expected.id)
       && Object.entries(expected.env || {}).every(([key, value]) => env[key] === value);
   });
@@ -227,7 +228,26 @@ const scopeRun = [
   'fi',
 ].join('\n');
 
-function automaticLanes({basic, nightly, pinned}) {
+const browserFiles = ['tests/regression/cockpit-route-wire/e2e-verify.spec.ts',
+  'tests/regression/relay-07b2fd3b/inbox-e2e.spec.ts',
+  'tests/regression/capture-destination-link/capture-destination-link.spec.ts'];
+const browserConfigPath = 'tests/regression/manual-ui/playwright.config.ts';
+const browserConfig = () => readFileSync(join(root, browserConfigPath), 'utf8');
+function browserLane(workflow, text = browserConfig()) {
+  if (createHash('sha256').update(text).digest('hex') !== 'b65cbe46102070f1c4542c081c87bf6c0e85e7f0b34daf23b509532a74567cf3') return false;
+  const paths = ['tests/regression/manual-ui/**', 'tests/regression/cockpit-route-wire/**',
+    'tests/regression/relay-07b2fd3b/**', 'tests/regression/capture-destination-link/**'];
+  if (!isDeepStrictEqual(workflow?.on?.push?.branches, ['main']) ||
+    !['pull_request','push'].every(event=>paths.every(path=>workflow?.on?.[event]?.paths?.includes(path)))) return false;
+  return knownStep(workflow, 'pwa-upgrade', {run:'npm ci'}) &&
+    knownStep(workflow, 'pwa-upgrade', {cwd:'apps/dashboard', run:'node e2e/playwright-cli.mjs install chromium --with-deps'}) &&
+    knownStep(workflow, 'pwa-upgrade', {cwd:'apps/dashboard', run:[
+      'GIT_SHA="$GITHUB_SHA" npx --no-install vite build --outDir .dist-pwa-e2e',
+      'node e2e/playwright-cli.mjs test --config ../../tests/regression/manual-ui/playwright.config.ts',
+    ].join('\n')});
+}
+
+function automaticLanes({basic, nightly, pinned, browser}) {
   const lanes = [], checks = basic.jobs?.checks;
   const shards = planChecks(['packages/brain/src/server.js']).filter(row => row.component === 'brain-unit').map(row => row.shard);
   const unitCommands = isDeepStrictEqual(shards, [1, 2, 3, 4, 5, 6]) && shards.every(shard => commandsFor('brain-unit', String(shard)).some(command =>
@@ -259,6 +279,7 @@ function automaticLanes({basic, nightly, pinned}) {
   if (mainEvents(pinned) && isDeepStrictEqual(contracts?.strategy?.matrix, {component: ['brain', 'root']})
     && knownStep(pinned, 'contracts', {run: 'node scripts/ci/run-skill-source-check.mjs "$COMPONENT"',
       env: {COMPONENT: '${{ matrix.component }}', CI: 'true', POSTGRES_INTEGRATION: '0'}})) lanes.push('pinned-brain', 'pinned-root');
+  if (browserLane(browser)) lanes.push('browser');
   return lanes;
 }
 
@@ -349,8 +370,8 @@ test('当前无人自动接收的Brain测试与精确债务清单一致', () => 
   const configurations = {default: [brain, brainRoot], deep: [deep, brainRoot], 'private-pg': [privatePg, brainRoot], 'real-env': [realEnv, brainRoot],
     'pinned-brain': [skillSourceConfig('brain'), brainRoot], 'pinned-root': [skillSourceConfig('root'), root]};
   const lanes = automaticLanes(loadWorkflows());
-  assert.deepEqual(lanes, ['default', 'deep', 'private-pg', 'real-env', 'pinned-brain', 'pinned-root']);
-  const selected = lanes.flatMap(lane => select(...configurations[lane]));
+  assert.deepEqual(lanes, ['default', 'deep', 'private-pg', 'real-env', 'pinned-brain', 'pinned-root', 'browser']);
+  const selected = lanes.flatMap(lane => lane === 'browser' ? browserFiles : select(...configurations[lane]));
   const manifest = require('../brain-test-debt.json');
   assert.equal(manifest.version, 1);
   assertDebtMatches({canonicalRoot: root, maintained: configurationInventory(brain).maintained, selected,
@@ -359,4 +380,24 @@ test('当前无人自动接收的Brain测试与精确债务清单一致', () => 
 
 test('已接既有PWA job的三份真实浏览器合同必须计入自动跑道',()=>{
   assert.ok(automaticLanes(loadWorkflows()).includes('browser'));
+});
+
+for(const mutation of ['--list','if false','heredoc','错误cwd','job-if-false','step-if-false','仅手动','漏路径','任意config']) {
+ test(`browser自动接入拒绝${mutation}`,()=>{
+  const workflow=loadWorkflows().browser,job=workflow.jobs['pwa-upgrade'];
+  const step=job.steps.find(row=>row.name==='Verify current cockpit inbox and destination routes');
+  if(mutation==='--list')step.run+=' --list';
+  if(mutation==='if false')step.run=`if false; then\n${step.run}\nfi`;
+  if(mutation==='heredoc')step.run=`cat <<'PRINTED'\n${step.run}\nPRINTED`;
+  if(mutation==='错误cwd')step['working-directory']='.';
+  if(mutation==='job-if-false')job.if=false;
+  if(mutation==='step-if-false')step.if=false;
+  if(mutation==='仅手动')workflow.on={workflow_dispatch:{}};
+  if(mutation==='漏路径')workflow.on.pull_request.paths=[];
+  if(mutation==='任意config')step.run=step.run.replace('manual-ui/playwright.config.ts','other/playwright.config.ts');
+  assert.equal(browserLane(workflow),false);
+ });
+}
+test('browser自动接入拒绝固定配置字节漂移，不能借同名任意config取得资格',()=>{
+ assert.equal(browserLane(loadWorkflows().browser,browserConfig()+'\n// drift\n'),false);
 });

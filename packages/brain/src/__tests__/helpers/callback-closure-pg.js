@@ -2,13 +2,26 @@ import { vi } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 import { randomUUID } from 'node:crypto';
+import { mkdtempSync, rmSync, realpathSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve, relative, isAbsolute } from 'node:path';
+import { privatePgConfig, verifyPrivatePg } from '../../../../../scripts/ci/private-pg-contract.mjs';
 
-// 导入生产 db.js 之前拒绝默认库；缺 PG 必须失败，不能 skip 冒充通过。
+// 导入生产db之前校验本人owner，handoff只能落在runner本例TMPDIR。
 const env = process.env;
-if (env.POSTGRES_INTEGRATION !== '1' || env.DB_HOST !== '127.0.0.1' ||
-    env.DB_NAME !== 'cecelia_scratch' || !/^\d+$/.test(env.DB_PORT || '') ||
-    ['5432', '5221'].includes(env.DB_PORT) || !env.DB_USER || !env.HANDOFF_DOCS_DIR?.startsWith('/tmp/')) {
-  throw new Error('callback-closure requires explicit private loopback scratch PG and /tmp handoffs');
+privatePgConfig(env);
+if (env.POSTGRES_INTEGRATION !== '1') throw new Error('callback-closure requires private PG integration lane');
+const previousHandoffs = env.HANDOFF_DOCS_DIR;
+const temporary = realpathSync(tmpdir());
+let ownedHandoffs;
+if (previousHandoffs) {
+  const target = resolve(previousHandoffs), child = relative(temporary, target);
+  if (!child || child.startsWith('..') || isAbsolute(child)) throw new Error('callback handoffs must stay inside owned TMPDIR');
+  const realChild = relative(temporary, realpathSync(target));
+  if (!realChild || realChild.startsWith('..') || isAbsolute(realChild)) throw new Error('callback handoff symlink escapes owned TMPDIR');
+} else {
+  ownedHandoffs = mkdtempSync(join(temporary, 'callback-handoffs-'));
+  env.HANDOFF_DOCS_DIR = ownedHandoffs;
 }
 
 // 只隔离模型、通知、事件和进程/调度边界；router、SQL、CAS、任务创建与后处理均用真身。
@@ -35,8 +48,7 @@ vi.mock('child_process', async (original) => {
 let pool, app, fetchSpy;
 export async function startCallbackFixture() {
   ({ default: pool } = await import('../../db.js'));
-  const identity = (await pool.query('SELECT current_database() AS db, host(inet_server_addr()) AS host, inet_server_port() AS port')).rows[0];
-  if (identity.db !== 'cecelia_scratch' || identity.host !== '127.0.0.1' || identity.port !== Number(env.DB_PORT)) throw new Error('callback PG identity mismatch');
+  await verifyPrivatePg(pool, env);
   if (!(await pool.query("SELECT 1 FROM schema_version WHERE version='557'")).rowCount) throw new Error('callback fixture requires full migrations through 557');
   // fetch 绝不允许访问 5221、外网或其它服务。supertest 使用 loopback HTTP，不经过 fetch。
   fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => { throw new Error('callback fixture forbids fetch'); });
@@ -48,8 +60,10 @@ export async function startCallbackFixture() {
   return pool;
 }
 export async function stopCallbackFixture() {
-  fetchSpy?.mockRestore();
-  if (pool) await pool.end();
+  try { if (pool) await pool.end(); } finally {
+    fetchSpy?.mockRestore();
+    if (ownedHandoffs) { rmSync(ownedHandoffs, { recursive: true, force: true }); delete env.HANDOFF_DOCS_DIR; }
+  }
 }
 export async function sourceTask(taskType, { goalId = null, payload = {}, ...fields } = {}) {
   const id = randomUUID(), runId = randomUUID();

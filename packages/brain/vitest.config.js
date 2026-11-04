@@ -260,7 +260,6 @@ export default defineConfig({
       'src/__tests__/integration/capacity-gate.test.js',
       'src/__tests__/integration/preview-destroyer.test.js',
       // 同上，毕业池 tests/regression/ 下的永久回归副本，同样需要真实 Postgres
-      '../../tests/regression/relay-1b1f1ffa/preview-destroyer.test.js',
       // dev-registry: 直连 pool.query 验 7 张新表，需真实 DB — 走 brain-integration
       'src/workflows/__tests__/dev-registry.test.js',
       // Pre-existing failure: path.resolve('packages/brain/...') resolves incorrectly from packages/brain/ cwd

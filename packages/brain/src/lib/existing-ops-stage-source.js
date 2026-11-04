@@ -246,7 +246,7 @@ const REVIEWED_API = {
 };
 // 当前完整闭包：真实版本门、现役组件集合与测试选择器共同封印，禁止新旧逐文件混配。
 const REVIEWED_VERSION_CLOSURE = {
-  "packages/brain/vitest.config.js": "8c60cdc40b934d93b846d03c2b5fc08d9a7d4b86f3d33f26ea25ea6a8183d271",
+  "packages/brain/vitest.config.js": "ee12d4b8185b78f49f95aef478f9de1d00f6bc83a17e50c7b252aa1acc0636f7",
   "scripts/ci/basic-scope.mjs": "b7ef8265ea1a713e17a9e3c6291c52f5a345d5c676878026b39f3d30f825e33f",
   "scripts/ci/run-basic-check.mjs": "8fd40691a48106b30363e553acb0f4f949c8801fbba268c599c33e059bdc3636",
   "scripts/ci/check-basic-results.mjs": "b6c0b93e15320deff680e765f4558fcdb2a8d98c65d7a926d94f2158af6641e2",

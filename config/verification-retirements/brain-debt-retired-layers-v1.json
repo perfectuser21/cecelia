@@ -4,7 +4,7 @@
   "purpose": "admission_only",
   "repo": "perfectuser21/cecelia",
   "base_revision": "fadbf32852cdb30f71e34dda9ab81b521bda484b",
-  "reviewed_replacement_revision": "0655f259e9b72eb86b638f82970fffb608a14937",
+  "reviewed_replacement_revision": "c0afaa0f87cc68ccca472f791582f65795ea3818",
   "base_config": {
     "path": "packages/brain/vitest.config.js",
     "mode": "100644",
@@ -15,9 +15,9 @@
   "replacement_config": {
     "path": "packages/brain/vitest.config.js",
     "mode": "100644",
-    "git_blob_sha1": "5a43f27e8de27d6adcfd81a8f5a038d7b6aeab82",
-    "sha256": "8c60cdc40b934d93b846d03c2b5fc08d9a7d4b86f3d33f26ea25ea6a8183d271",
-    "byte_length": 21568
+    "git_blob_sha1": "bafa7e7e6b2a457e316c5c6e68a1bf44e782a543",
+    "sha256": "ee12d4b8185b78f49f95aef478f9de1d00f6bc83a17e50c7b252aa1acc0636f7",
+    "byte_length": 21495
   },
   "skill_selector": {
     "path": "scripts/ci/skill-source-tests.mjs",
@@ -100,6 +100,16 @@
         "byte_length": 10041
       },
       "config_path": "scripts/ci/debt-pg.config.mjs"
+    },
+    {
+      "blob": {
+        "path": "packages/brain/src/__tests__/integration/preview-destroyer.test.js",
+        "mode": "100644",
+        "git_blob_sha1": "aac051589e4653dc49e9d100bda56c3b9248e22e",
+        "sha256": "9c219ce8c0e3022b527914ee43257b7ad2164a98a052bd3bbf55c7d33d9e218e",
+        "byte_length": 8749
+      },
+      "config_path": "scripts/ci/deep-integration.config.mjs"
     }
   ],
   "records": [
@@ -315,10 +325,42 @@
         ],
         "reviewed_source_base": "fadbf32852cdb30f71e34dda9ab81b521bda484b"
       }
+    },
+    {
+      "path": "tests/regression/relay-1b1f1ffa/preview-destroyer.test.js",
+      "old": {
+        "path": "tests/regression/relay-1b1f1ffa/preview-destroyer.test.js",
+        "mode": "100644",
+        "git_blob_sha1": "346bd467df046b06132f85a96d57688098e8125e",
+        "sha256": "1fe75cc1f16c35d8756e68fdf62c56c9313bf064c8d5b6f445b1efd0b37c88f4",
+        "byte_length": 7120
+      },
+      "exclude_literal": "../../tests/regression/relay-1b1f1ffa/preview-destroyer.test.js",
+      "replacement_paths": [
+        "packages/brain/src/__tests__/integration/preview-destroyer.test.js"
+      ],
+      "policy_sources": [
+        {
+          "path": "packages/brain/src/preview-destroyer.js",
+          "mode": "100644",
+          "git_blob_sha1": "df146b78927ec3ad98191421db11347ea6a3a95c",
+          "sha256": "51bc249fcb48dd688a4de6d2c1317b44134bc539a0bd6cf8ca52a572aa3aafe1",
+          "byte_length": 9127
+        }
+      ],
+      "audit": {
+        "retired": [
+          "毕业副本五项合同均由正式integration保留，并额外覆盖inactive历史行；官方Deep41742520265六项真实通过，现役实现与替代相对f8bf064无变化。"
+        ],
+        "retained": [
+          "真实preview销毁、DB名称拒绝、符号链接逃逸拒绝、幂等、并发锁与历史终态合同保留。"
+        ],
+        "reviewed_source_base": "fadbf32852cdb30f71e34dda9ab81b521bda484b"
+      }
     }
   ],
   "limitations": [
-    "仅精确审核六份旧测试，不授予目录或未知删除豁免。",
+    "仅精确审核七份旧测试，不授予目录或未知删除豁免。",
     "仅准入证据；PG输入必须重新核验最终原生跑道选择及执行，候选绝不等于PASS。",
     "公共导出、历史只读、迁移499写拒绝与真实回滚保障保留。"
   ],
@@ -327,9 +369,9 @@
       "blob": {
         "path": "packages/brain/vitest.config.js",
         "mode": "100644",
-        "git_blob_sha1": "5a43f27e8de27d6adcfd81a8f5a038d7b6aeab82",
-        "sha256": "8c60cdc40b934d93b846d03c2b5fc08d9a7d4b86f3d33f26ea25ea6a8183d271",
-        "byte_length": 21568
+        "git_blob_sha1": "bafa7e7e6b2a457e316c5c6e68a1bf44e782a543",
+        "sha256": "ee12d4b8185b78f49f95aef478f9de1d00f6bc83a17e50c7b252aa1acc0636f7",
+        "byte_length": 21495
       },
       "component": "brain"
     },
@@ -360,9 +402,9 @@
     {
       "path": "scripts/ci/debt-pg-tests.json",
       "mode": "100644",
-      "git_blob_sha1": "8f17f1bad3a152807a11fc7305ff9a26145ede6f",
-      "sha256": "f071d1b94f4391cf8fd1cbab1820c9d67e9f12b6181a28e3ebbebd4de5edf7af",
-      "byte_length": 5228
+      "git_blob_sha1": "bb051d77cf8b3695cb7773fb08ff08ae503c759c",
+      "sha256": "fb5f6e8536bc49c28c7782f7756490b1262fbe6ae1adb104f268157e794042b9",
+      "byte_length": 5763
     },
     {
       "path": "scripts/ci/run-debt-pg.mjs",
