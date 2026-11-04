@@ -1,6 +1,6 @@
 import test, { before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, writeFileSync, rmSync, symlinkSync, chmodSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync, rmSync, symlinkSync, chmodSync, cpSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -53,7 +53,7 @@ test('实际冻结字节及带历史身份的资料更新可通过，检查必�
   assert.match(result.stdout, /W19_FROZEN_OK/);
 });
 
-for (const kind of ['dependency', 'old-code', 'delete', 'new-file', 'symlink', 'executable']) {
+for (const kind of ['dependency', 'old-code', 'delete', 'new-file', 'symlink', 'parent-symlink', 'executable']) {
   test(`真实tracked非文档${kind}变化必须拒绝`, () => {
     const server = join(fixture, 'playground/server.js');
     if (kind === 'dependency') writeFileSync(join(fixture, 'playground/package.json'), '{"name":"changed"}\n');
@@ -64,6 +64,12 @@ for (const kind of ['dependency', 'old-code', 'delete', 'new-file', 'symlink', '
       git('add', 'playground/new-code.js');
     }
     if (kind === 'symlink') { rmSync(server); symlinkSync('/tmp/not-owned-playground', server); }
+    if (kind === 'parent-symlink') {
+      const source = join(fixture, 'playground/tests'), foreign = join(home, 'foreign-tests');
+      cpSync(source, foreign, { recursive: true });
+      rmSync(source, { recursive: true });
+      symlinkSync(foreign, source);
+    }
     if (kind === 'executable') chmodSync(server, 0o755);
     const result = check();
     assert.ifError(result.error);
