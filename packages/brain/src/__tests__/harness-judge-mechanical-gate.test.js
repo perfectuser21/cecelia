@@ -290,9 +290,6 @@ describe('runJudgeGate 接线：机械闸 FAIL → 不调 DeepSeek', () => {
     expect(r.judged).toBe(true);
     expect(judgeFn).not.toHaveBeenCalled();
   });
-  it('agentVerdict=FAIL 也由独立 Judge 形成受信终判', async () => {
-    const r = await runJudgeGate({ agentVerdict: 'FAIL', agentFeedback: 'x' }, {});
-    expect(r.verdict).toBe('FAIL');
-    expect(r.judged).toBe(true);
-  });
+  // agent FAIL 的独立 Judge 必达由 harness-judge.test.js 真 judgeFn 一次回归保护；
+  // 此处仅验证机械闸拒绝在先，不能把缺证提前返回当作 AI 已复核。
 });
