@@ -62,10 +62,17 @@ function runRuntimeAdvisories(advisories, packageName = 'uuid') {
 }
 const approvedUuid = { severity: 'high', title: '原批准uuid公告', url: 'https://github.com/advisories/GHSA-w5hq-g745-h8pq' };
 const unknownUuid = { severity: 'high', title: '隔离合成未知公告', url: 'https://github.com/advisories/GHSA-xxxx-xxxx-xxxx' };
-test('runtime仅原批准包与精确公告组合通过', () => {
-  const result = runRuntimeAdvisories([approvedUuid]);
-  assert.equal(result.status, 0, result.stdout + result.stderr);
-});
+for (const [packageName, ghsa] of [
+  ['uuid', 'GHSA-w5hq-g745-h8pq'],
+  ['@opentelemetry/propagator-jaeger', 'GHSA-45rx-2jwx-cxfr'],
+  ['react-router', 'GHSA-qwww-vcr4-c8h2'],
+  ['braces', 'GHSA-vfj7-8cjw-p6xm'],
+]) {
+  test(`runtime原批准精确公告仍通过：${packageName}`, () => {
+    const result = runRuntimeAdvisories([{ ...approvedUuid, url: `https://github.com/advisories/${ghsa}` }], packageName);
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+  });
+}
 for (const [name, advisories, packageName] of [
   ['同包未知high', [unknownUuid], 'uuid'],
   ['已批与未知混合high', [approvedUuid, unknownUuid], 'uuid'],
