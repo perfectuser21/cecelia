@@ -17,7 +17,7 @@
  */
 
 import { execSync } from 'child_process';
-import { mkdirSync, writeFileSync, rmSync } from 'fs';
+import { mkdirSync, writeFileSync, rmSync, existsSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import pool from './db.js';
@@ -109,7 +109,12 @@ async function drillTestPyramidGuard() {
     );
 
     // 复用同一守卫的实际判定器；隔离基线只验 A1，不读取线上 FR 或宿主面板。
-    const { runGuard } = await import('../../../scripts/test-pyramid-guard.mjs');
+    const guardUrl = [
+      new URL('../scripts/test-pyramid-guard.mjs', import.meta.url),
+      new URL('../../../scripts/test-pyramid-guard.mjs', import.meta.url),
+    ].find(url => existsSync(url));
+    if (!guardUrl) throw new Error('pyramid_guard_program_unavailable');
+    const { runGuard } = await import(guardUrl.href);
     const result = runGuard(drillDir, {
       orphans: 0,
       permanent: 0,
