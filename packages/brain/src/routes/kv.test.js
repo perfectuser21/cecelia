@@ -78,6 +78,7 @@ describe('kv routes — working_memory 存取', () => {
       .set('Content-Type', 'application/json')
       .send('null');
     expect(res.status).toBe(400);
+    expect(res.body.error).toBe('body required');
   });
 
   it('GET DB 异常 → 500', async () => {
