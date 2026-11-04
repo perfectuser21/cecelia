@@ -27,11 +27,25 @@
   },
   "replacement_inputs": [
     {
-      "path": "packages/brain/src/__tests__/mitigation-state.test.js",
+      "path": "packages/brain/src/__tests__/drain.test.js",
       "mode": "100644",
-      "git_blob_sha1": "ba46b6f0daa962d00671ff9316b77be5ca44bab0",
-      "sha256": "fed08df418ef86816bbc4431908762e8c736452d7ba7e567d318b3754c81ce23",
-      "byte_length": 823
+      "git_blob_sha1": "590d55c4b872f99c0b48877c51cad99b84c1f98b",
+      "sha256": "1d1db356a99f5121820fbb5f2e83d03c5aea9e5832dd9ae33fe51f5294ce6b71",
+      "byte_length": 7250
+    },
+    {
+      "path": "packages/brain/src/__tests__/dispatcher.test.js",
+      "mode": "100644",
+      "git_blob_sha1": "0836b4a9076b48abce20223ff0f6f0a5250f957a",
+      "sha256": "a120c37e96fbdaa003a3eb2277e5abe3bf8f84acbbf7eba73633f42a5fed776c",
+      "byte_length": 1969
+    },
+    {
+      "path": "packages/brain/src/lib/__tests__/common-runner-dispatch.test.js",
+      "mode": "100644",
+      "git_blob_sha1": "f7b69de7e487910e5b2cfe0af28a77fbf32c3445",
+      "sha256": "05adf750be8f66ad6f4114fdb6dd73231396511866f19fc180f6c3ff69e5fdfc",
+      "byte_length": 33795
     }
   ],
   "records": [
@@ -46,36 +60,38 @@
       },
       "exclude_literal": "src/__tests__/alertness-actions.test.js",
       "replacement_paths": [
-        "packages/brain/src/__tests__/mitigation-state.test.js"
+        "packages/brain/src/__tests__/drain.test.js",
+        "packages/brain/src/__tests__/dispatcher.test.js",
+        "packages/brain/src/lib/__tests__/common-runner-dispatch.test.js"
       ],
       "policy_sources": [
         {
-          "path": "packages/brain/src/alertness-actions.js",
-          "mode": "100644",
-          "git_blob_sha1": "33e31218a45b131c724884d564dde3df9de2db5f",
-          "sha256": "0b0c4d25fab651f610476fc8cc5c8dba874022cb496a3293f631e33445ec8064",
-          "byte_length": 417
-        },
-        {
           "path": "packages/brain/src/dispatch-helpers.js",
           "mode": "100644",
-          "git_blob_sha1": "db34ae964ffc3fc79de55f1ebacc9b912015c2d7",
-          "sha256": "ef64db635ba7006cff4454c8d9c06f26b8d3def722d8eee0bb5a98784539385f",
-          "byte_length": 16230
+          "git_blob_sha1": "6c2477612a0a79967497e853e08081405408cf1d",
+          "sha256": "0f4c03d3de6b468b1183ac50a0ab3ba53397ca76ff523e16a4823063fbc05ed8",
+          "byte_length": 15799
         },
         {
           "path": "packages/brain/src/dispatcher.js",
           "mode": "100644",
-          "git_blob_sha1": "942ffba2a8e58cdf1f3e0b7c407950107d10beeb",
-          "sha256": "308f287a8f745e504df55cc71142e91e803aa8ee1b4d2e5f048e88882a2aa4ce",
-          "byte_length": 92900
+          "git_blob_sha1": "39e773a70682aa076573786aa02b351622d1d73d",
+          "sha256": "1a1e73b58f815ccfcc5eab86f452adf585bc05a347ace7ae371cc89058667d07",
+          "byte_length": 92646
         },
         {
           "path": "packages/brain/src/lib/common-runner-dispatch.js",
           "mode": "100644",
-          "git_blob_sha1": "b958f1c67828e8f226baece2ca42780cf0c0b4bd",
-          "sha256": "c9f0cf285369c88b323377355c51d39e447f3c35e22dd6493adc8f100b936c1e",
-          "byte_length": 22094
+          "git_blob_sha1": "e234b02f6f9b0b2a53362bc8e71bef9490df46b4",
+          "sha256": "9a1efcd5ec432080d5068bbe1852c4d0e71bf99efd778e2ba35639a876d028e0",
+          "byte_length": 21973
+        },
+        {
+          "path": "packages/brain/src/drain.js",
+          "mode": "100644",
+          "git_blob_sha1": "59ad14cc7e9af24c54f89c8f0234ca5f892a093a",
+          "sha256": "e4a75dc59028bce3683d7ff61222dbd44e6ac077fd1c7a1235a3774ea59f1165",
+          "byte_length": 9617
         },
         {
           "path": "packages/brain/src/alertness/index.js",
@@ -94,10 +110,10 @@
       ],
       "audit": {
         "retired": [
-          "16例覆盖当前生产未调用的旧transition/notify/RCA/mitigation/shutdown/recovery入口，随入口及私有PG文件清退，不为旧测试复活旧业务。"
+          "旧响应入口及16旧PG例无现役消费者；后续深核getter两flag亦无现役producer，3处读取是不可达形式分支，连同getter模块/2例常量兼容测试和27个无效mock一并清退。"
         ],
         "retained": [
-          "原1例getMitigationState返回拷贝合同迁入默认unit；另1例防旧动作导出复活回归先红后绿；3个现役派发getter消费者与真正Observer响应链保留。"
+          "真实isDraining producer、canDispatch/getDispatchRate等级门、common-runner持久tick硬门与隔离门均保留；替代只证明现役门仍被选择和执行，不宣称旧P2暂停被实现。"
         ],
         "reviewed_source_base": "ce20b5a29123c9ade1a0bc4aa2753e3ea3fe310d",
         "historical_execution": {
@@ -111,14 +127,25 @@
           },
           "source_file_same_as_review_base": true,
           "interpretation": "17例确实通过真实PG，但不代表16旧入口有当前生产消费者。"
+        },
+        "dead_state_evidence": {
+          "reviewed_source_revision": "ce20b5a29123c9ade1a0bc4aa2753e3ea3fe310d",
+          "p2_true_write": "唯一true赋值在没有生产消费者的旧applyMitigation",
+          "drain_true_write": "旧模块从未将drain_mode_requested设true，COMA已明确禁自动drain",
+          "getter_write_boundary": "返回状态副本且无外部setter/restore/事件或数据库producer",
+          "live_drain": "独立drain.js有真实drainTick/restore/cancel调用，与旧flag无关"
         }
-      }
+      },
+      "required_absent_paths": [
+        "packages/brain/src/alertness-actions.js",
+        "packages/brain/src/__tests__/mitigation-state.test.js"
+      ]
     }
   ],
   "limitations": [
-    "仅精确ce20旧PG文件的退休候选，不授予任意删除豁免，旧8项fad目录与摘要不变。",
-    "只保留派发getter活接口，不宣称当前Observer响应效果由旧17例覆盖或替代；准入候选不是已运行证明。",
-    "基线为已合main祖先ce20；替代按最终head精确blob与默认unit选择器重新核验，不引用未合并提交作为固定source。"
+    "仅精确ce20旧PG文件及无producer兼容模块的退休候选，不授予任意删除豁免，旧8项fad目录与摘要不变。",
+    "保留现役drain/等级与持久tick门，不宣称旧P2暂停被替代或执行；准入候选不是执行通过或生产发布。",
+    "基线为已合main祖先ce20；最终head精确核替代blob、默认unit选择和required_absent_paths，旧模块哪怕只恢复常量getter亦不能冒领退休资格。"
   ],
   "entry_support": [
     {

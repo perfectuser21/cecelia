@@ -13,9 +13,6 @@ const mockPool = {
 vi.mock('../../db.js', () => ({ default: mockPool }));
 
 // Mock external dependencies that require network/system access
-vi.mock('../../alertness-actions.js', () => ({
-  getMitigationState: () => ({ p2_paused: false }),
-}));
 
 // Mock LLM calls (not testing AI responses)
 vi.mock('../../llm-caller.js', () => ({

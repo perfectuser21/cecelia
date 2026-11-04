@@ -48,10 +48,6 @@ function tickLog(...args) {
 export async function selectNextDispatchableTask(goalIds, excludeIds = [], options = {}) {
   const { priorityFilter = null, onlyTaskTypes = null, codeOnly = false } = options;
 
-  // Check if P2 tasks should be paused (alertness mitigation)
-  const { getMitigationState } = await import('./alertness-actions.js');
-  const mitigationState = getMitigationState();
-
   // Query queued tasks with payload for dependency checking
   // Watchdog backoff: skip tasks with next_run_at in the future
   // next_run_at is always written as UTC ISO-8601 by requeueTask().
@@ -155,12 +151,6 @@ export async function selectNextDispatchableTask(goalIds, excludeIds = [], optio
     // Skip tasks not matching quota guard priority filter
     if (priorityFilter && !priorityFilter.includes(task.priority)) {
       tickLog(`[tick] Skipping ${task.priority} task ${task.id} (quota guard: only ${priorityFilter.join('/')} allowed)`);
-      continue;
-    }
-
-    // Skip P2 tasks if mitigation is active (EMERGENCY+ state)
-    if (!codeOnly && mitigationState.p2_paused && task.priority === 'P2') {
-      tickLog(`[tick] Skipping P2 task ${task.id} (alertness mitigation active)`);
       continue;
     }
 

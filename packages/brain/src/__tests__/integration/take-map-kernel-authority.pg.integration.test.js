@@ -68,9 +68,6 @@ vi.mock('../../drain.js', () => ({
   isDraining: vi.fn(() => false),
   getDrainStartedAt: vi.fn(() => null),
 }));
-vi.mock('../../alertness-actions.js', () => ({
-  getMitigationState: vi.fn(() => ({ p2_paused: false, drain_mode_requested: false })),
-}));
 vi.mock('../../event-bus.js', () => ({ emit: (...args) => state.emit(...args) }));
 vi.mock('../../circuit-breaker.js', () => ({
   isAllowed: vi.fn(() => true),

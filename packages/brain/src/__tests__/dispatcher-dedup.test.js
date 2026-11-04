@@ -14,9 +14,6 @@ vi.mock('../dispatch-stats.js', () => ({
 //    第一个 describe（_internals_findDuplicateTaskSibling 单元测试）不会触碰到这些依赖，
 //    但 dispatcher.js 顶部 import 是模块级的，任何一个 test 文件里跑 dispatchNextTask
 //    都必须把整条依赖链喂饱，否则会打真实 DB / 真实进程。
-vi.mock('../alertness-actions.js', () => ({
-  getMitigationState: () => ({ drain_mode_requested: false }),
-}));
 vi.mock('../quota-cooling.js', () => ({
   isGlobalQuotaCooling: () => false,
   getQuotaCoolingState: () => ({ until: null }),

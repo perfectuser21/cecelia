@@ -80,9 +80,6 @@ vi.mock('../tick-stats.js', () => ({
   incrementActionsToday: vi.fn().mockResolvedValue(1),
   recordTickExecution: vi.fn().mockResolvedValue(undefined),
 }));
-vi.mock('../alertness-actions.js', () => ({
-  getMitigationState: vi.fn(() => ({ p2_paused: false, drain_mode_requested: false })),
-}));
 vi.mock('../actions.js', () => ({
   updateTask: vi.fn().mockResolvedValue({ success: true }),
 }));

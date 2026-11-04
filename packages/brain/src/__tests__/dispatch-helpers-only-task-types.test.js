@@ -20,7 +20,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const mockQuery = vi.fn();
 vi.mock('../db.js', () => ({ default: { query: (...args) => mockQuery(...args) } }));
-vi.mock('../alertness-actions.js', () => ({ getMitigationState: () => ({ p2_paused: false }) }));
 
 import { selectNextDispatchableTask } from '../dispatch-helpers.js';
 

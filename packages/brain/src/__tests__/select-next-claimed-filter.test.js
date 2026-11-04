@@ -19,9 +19,6 @@ vi.mock('../db.js', () => ({
 }));
 
 // 避免 selectNextDispatchableTask 内部 dynamic import 被真实加载
-vi.mock('../alertness-actions.js', () => ({
-  getMitigationState: vi.fn().mockReturnValue({ p2_paused: false, drain_mode_requested: false })
-}));
 
 // task-weight 需 stub（sortTasksByWeight 默认按原顺序返回）
 vi.mock('../task-weight.js', () => ({

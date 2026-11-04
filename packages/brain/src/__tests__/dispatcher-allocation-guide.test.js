@@ -103,9 +103,6 @@ vi.mock('../anchor-check.js', () => ({ checkAnchor: vi.fn(() => ({ blocked: fals
 vi.mock('../token-budget-planner.js', () => ({
   shouldDowngrade: vi.fn((taskType, budgetState) => ['dev', 'harness_initiative'].includes(taskType) && (budgetState === 'tight' || budgetState === 'critical')),
 }));
-vi.mock('../alertness-actions.js', () => ({
-  getMitigationState: vi.fn().mockReturnValue({ p2_paused: false, drain_mode_requested: false }),
-}));
 
 describe('dispatcher allocation guide', () => {
   beforeEach(() => {
