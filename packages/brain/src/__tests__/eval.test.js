@@ -363,6 +363,7 @@ describe('[BEHAVIOR-1] 上传合法 zip → 建 task 返回 task_id', () => {
       throw new Error('[BEHAVIOR-1] eval.js 路由未实现 — Red 阶段预期失败');
     }
     expect(evalRouter).toBeDefined();
+    expect(mockPool.query.mock.calls.some(([sql]) => sql.includes('INSERT INTO skill_evals'))).toBe(true);
   });
 });
 
