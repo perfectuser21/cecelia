@@ -128,7 +128,7 @@ describe('task-generator-scheduler', () => {
       expect(mockGenerateTasks).toHaveBeenCalledOnce();
     });
 
-    it('generateTasks 回调写入数据库：pool.query 被调用，参数包含正确字段', async () => {
+    it('generateTasks 回调经 createTask 写入，参数包含正确字段', async () => {
       const pool = makePool('db-id-99');
       const issue = makeIssue(1, 'high');
       const taskData = {
@@ -148,16 +148,14 @@ describe('task-generator-scheduler', () => {
 
       await triggerCodeQualityScan(pool);
 
-      const insertCall = pool.query.mock.calls.find(([sql]) => sql.includes('INSERT INTO tasks'));
-      expect(insertCall).toBeDefined();
-      const [sql, params] = insertCall;
-      expect(sql).toContain('INSERT INTO tasks');
-      expect(params[0]).toBe('Fix coverage');
-      expect(params[1]).toBe('Increase test coverage');
-      expect(params[2]).toBe('P0');
-      expect(params[3]).toBe('queued');
-      expect(params[4]).toEqual(['coverage']);
-      expect(params[5]).toEqual({ module: 'src/foo.js' });
+      expect(mockCreateTask).toHaveBeenCalledOnce();
+      const params = mockCreateTask.mock.calls[0][0];
+      expect(params.title).toBe('Fix coverage');
+      expect(params.description).toBe('Increase test coverage');
+      expect(params.priority).toBe('P0');
+      expect(params.status).toBe('queued');
+      expect(params.tags).toEqual(['coverage']);
+      expect(params.payload).toEqual({ module: 'src/foo.js' });
     });
 
     it('createTaskFn 中 priority 缺省时使用 P1', async () => {
@@ -173,9 +171,8 @@ describe('task-generator-scheduler', () => {
 
       await triggerCodeQualityScan(pool);
 
-      const insertCall = pool.query.mock.calls.find(([sql]) => sql.includes('INSERT INTO tasks'));
-      const params = insertCall[1];
-      expect(params[2]).toBe('P1');
+      const params = mockCreateTask.mock.calls[0][0];
+      expect(params.priority).toBe('P1');
     });
 
     it('createTaskFn 中 tags/metadata 缺省时使用空值', async () => {
@@ -191,14 +188,14 @@ describe('task-generator-scheduler', () => {
 
       await triggerCodeQualityScan(pool);
 
-      const insertCall = pool.query.mock.calls.find(([sql]) => sql.includes('INSERT INTO tasks'));
-      const params = insertCall[1];
-      expect(params[4]).toEqual([]);
-      expect(params[5]).toEqual({});
+      const params = mockCreateTask.mock.calls[0][0];
+      expect(params.tags).toEqual([]);
+      expect(params.payload).toEqual({});
     });
 
     it('createTaskFn 回调返回数据库生成的 id', async () => {
-      const pool = makePool('returned-id-42');
+      const pool = makePool();
+      mockCreateTask.mockResolvedValue({ task: { id: 'returned-id-42' } });
       const issue = makeIssue(1);
       let capturedId;
 
@@ -284,9 +281,10 @@ describe('task-generator-scheduler', () => {
       expect(result.error).toBe('generate failed');
     });
 
-    it('pool.query 失败时 error 被捕获，返回 triggered:false', async () => {
+    it('createTask 失败时 error 被捕获，返回 triggered:false', async () => {
       vi.setSystemTime(new Date('2026-03-09T10:00:00Z'));
-      const pool = { query: vi.fn().mockRejectedValue(new Error('db write error')) };
+      const pool = makePool();
+      mockCreateTask.mockRejectedValue(new Error('db write error'));
       const issue = makeIssue(1);
 
       mockRunScan.mockResolvedValue([issue]);
@@ -529,7 +527,7 @@ describe('task-generator-scheduler', () => {
       delete process.env.TASK_GENERATOR_GOAL_ID;
     });
 
-    it('INSERT SQL 包含 project_id、goal_id、task_type 列', async () => {
+    it('createTask 接收关联字段和 coding mutation 路由', async () => {
       const pool = makePool();
       mockRunScan.mockResolvedValue([makeIssue(1)]);
       mockGenerateTasks.mockImplementation(async (_issues, createTaskFn) => {
@@ -539,13 +537,17 @@ describe('task-generator-scheduler', () => {
 
       await triggerScanWithEnv(pool);
 
-      const [sql] = pool.query.mock.calls.find(([s]) => s.includes('INSERT INTO tasks'));
-      expect(sql).toContain('project_id');
-      expect(sql).toContain('goal_id');
-      expect(sql).toContain('task_type');
+      expect(mockCreateTask).toHaveBeenCalledWith(expect.objectContaining({
+        project_id: process.env.TASK_GENERATOR_PROJECT_ID,
+        goal_id: process.env.TASK_GENERATOR_GOAL_ID, task_type: 'dev', db: pool,
+        mutation_intent: 'write', declared_domain: 'coding',
+        declared_change_kind: 'bugfix', repo_hint: 'cecelia',
+        base_sha: 'a'.repeat(40), map_scope_hint: ['packages/brain'],
+        source: 'scheduler', trigger_source: 'scheduler',
+      }));
     });
 
-    it('INSERT 参数 project_id 来自 TASK_GENERATOR_PROJECT_ID 环境变量', async () => {
+    it('createTask 参数 project_id 来自 TASK_GENERATOR_PROJECT_ID 环境变量', async () => {
       const pool = makePool();
       mockRunScan.mockResolvedValue([makeIssue(1)]);
       mockGenerateTasks.mockImplementation(async (_issues, createTaskFn) => {
@@ -555,11 +557,11 @@ describe('task-generator-scheduler', () => {
 
       await triggerScanWithEnv(pool);
 
-      const params = pool.query.mock.calls.find(([s]) => s.includes('INSERT INTO tasks'))[1];
-      expect(params[6]).toBe('690c2874-d6e9-4ecc-8e55-37d349790afb');
+      const params = mockCreateTask.mock.calls[0][0];
+      expect(params.project_id).toBe('690c2874-d6e9-4ecc-8e55-37d349790afb');
     });
 
-    it('INSERT 参数 goal_id 来自 TASK_GENERATOR_GOAL_ID 环境变量', async () => {
+    it('createTask 参数 goal_id 来自 TASK_GENERATOR_GOAL_ID 环境变量', async () => {
       const pool = makePool();
       mockRunScan.mockResolvedValue([makeIssue(1)]);
       mockGenerateTasks.mockImplementation(async (_issues, createTaskFn) => {
@@ -569,11 +571,11 @@ describe('task-generator-scheduler', () => {
 
       await triggerScanWithEnv(pool);
 
-      const params = pool.query.mock.calls.find(([s]) => s.includes('INSERT INTO tasks'))[1];
-      expect(params[7]).toBe('e5ec0510-d7b2-4ee7-99f6-314aac55b3f6');
+      const params = mockCreateTask.mock.calls[0][0];
+      expect(params.goal_id).toBe('e5ec0510-d7b2-4ee7-99f6-314aac55b3f6');
     });
 
-    it('INSERT 参数 task_type 始终为 dev', async () => {
+    it('createTask 参数 task_type 始终为 dev', async () => {
       const pool = makePool();
       mockRunScan.mockResolvedValue([makeIssue(1)]);
       mockGenerateTasks.mockImplementation(async (_issues, createTaskFn) => {
@@ -583,8 +585,8 @@ describe('task-generator-scheduler', () => {
 
       await triggerScanWithEnv(pool);
 
-      const params = pool.query.mock.calls.find(([s]) => s.includes('INSERT INTO tasks'))[1];
-      expect(params[8]).toBe('dev');
+      const params = mockCreateTask.mock.calls[0][0];
+      expect(params.task_type).toBe('dev');
     });
 
     it('env 未配置时 project_id/goal_id 为 null，task_type 仍为 dev', async () => {
@@ -606,13 +608,13 @@ describe('task-generator-scheduler', () => {
 
       await triggerNoEnv(pool);
 
-      const params = pool.query.mock.calls.find(([s]) => s.includes('INSERT INTO tasks'))[1];
-      expect(params[6]).toBeNull();
-      expect(params[7]).toBeNull();
-      expect(params[8]).toBe('dev');
+      const params = mockCreateTask.mock.calls[0][0];
+      expect(params.project_id).toBeNull();
+      expect(params.goal_id).toBeNull();
+      expect(params.task_type).toBe('dev');
     });
 
-    it('原有字段位置不变（title/description/priority/status/tags/metadata）', async () => {
+    it('业务字段完整传递（title/description/priority/status/tags/metadata）', async () => {
       const pool = makePool();
       const taskData = {
         title: 'My Title',
@@ -630,13 +632,13 @@ describe('task-generator-scheduler', () => {
 
       await triggerScanWithEnv(pool);
 
-      const params = pool.query.mock.calls.find(([s]) => s.includes('INSERT INTO tasks'))[1];
-      expect(params[0]).toBe('My Title');
-      expect(params[1]).toBe('My Description');
-      expect(params[2]).toBe('P0');
-      expect(params[3]).toBe('queued');
-      expect(params[4]).toEqual(['tag1']);
-      expect(params[5]).toEqual({ key: 'val' });
+      const params = mockCreateTask.mock.calls[0][0];
+      expect(params.title).toBe('My Title');
+      expect(params.description).toBe('My Description');
+      expect(params.priority).toBe('P0');
+      expect(params.status).toBe('queued');
+      expect(params.tags).toEqual(['tag1']);
+      expect(params.payload).toEqual({ key: 'val' });
     });
   });
 
@@ -781,7 +783,7 @@ describe('task-generator-scheduler', () => {
       vi.useRealTimers();
     });
 
-    it('已有 queued 任务时：dedup SELECT 被调用，INSERT INTO tasks 不被调用', async () => {
+    it('已有 queued 任务时：dedup SELECT 被调用，createTask 不被调用', async () => {
       const taskData = makeScannerTaskData();
       const existingId = 'existing-task-uuid';
 
@@ -805,8 +807,7 @@ describe('task-generator-scheduler', () => {
       expect(selectCall).toBeDefined();
       expect(selectCall[1]).toEqual(['src/tick.js', 'low_coverage']);
 
-      const insertTaskCall = pool.query.mock.calls.find(([sql]) => sql.includes('INSERT INTO tasks'));
-      expect(insertTaskCall).toBeUndefined();
+      expect(mockCreateTask).not.toHaveBeenCalled();
     });
 
     it('已有 queued 任务时：返回现有 task id', async () => {
@@ -833,16 +834,16 @@ describe('task-generator-scheduler', () => {
       expect(capturedId).toBe(existingId);
     });
 
-    it('dedup SELECT 返回空（无活跃任务）时：正常 INSERT INTO tasks', async () => {
+    it('dedup SELECT 返回空（无活跃任务）时：正常调用 createTask', async () => {
       const taskData = makeScannerTaskData();
       const newId = 'new-task-uuid';
+      mockCreateTask.mockResolvedValue({ task: { id: newId } });
 
       const pool = {
         query: vi.fn()
           .mockResolvedValueOnce({ rows: [] }) // pre-filter: existingTasks
           .mockResolvedValueOnce({ rows: [] }) // pre-filter: history
           .mockResolvedValueOnce({ rows: [] }) // dedup SELECT → 无重复
-          .mockResolvedValueOnce({ rows: [{ id: newId }] }) // INSERT INTO tasks
           .mockResolvedValue({ rows: [] }), // scan_results INSERT
       };
 
@@ -855,8 +856,7 @@ describe('task-generator-scheduler', () => {
 
       await triggerScanFn(pool);
 
-      const insertTaskCall = pool.query.mock.calls.find(([sql]) => sql.includes('INSERT INTO tasks'));
-      expect(insertTaskCall).toBeDefined();
+      expect(mockCreateTask).toHaveBeenCalledOnce();
       expect(capturedId).toBe(newId);
     });
 
@@ -868,7 +868,6 @@ describe('task-generator-scheduler', () => {
           .mockResolvedValueOnce({ rows: [] }) // pre-filter: existingTasks
           .mockResolvedValueOnce({ rows: [] }) // pre-filter: history
           .mockResolvedValueOnce({ rows: [] }) // dedup SELECT → 无重复
-          .mockResolvedValueOnce({ rows: [{ id: 'new-id' }] }) // INSERT INTO tasks
           .mockResolvedValue({ rows: [] }),
       };
 
@@ -885,7 +884,8 @@ describe('task-generator-scheduler', () => {
       expect(selectCall[0]).not.toContain('completed');
     });
 
-    it('dedup 查询失败时降级：INSERT INTO tasks 仍然执行', async () => {
+    it('dedup 查询失败时降级：createTask 仍然执行', async () => {
+      mockCreateTask.mockResolvedValue({ task: { id: 'fallback-id' } });
       const taskData = makeScannerTaskData();
 
       const pool = {
@@ -893,7 +893,6 @@ describe('task-generator-scheduler', () => {
           .mockResolvedValueOnce({ rows: [] }) // pre-filter: existingTasks
           .mockResolvedValueOnce({ rows: [] }) // pre-filter: history
           .mockRejectedValueOnce(new Error('DB connection lost')) // dedup SELECT 失败
-          .mockResolvedValueOnce({ rows: [{ id: 'fallback-id' }] }) // INSERT INTO tasks
           .mockResolvedValue({ rows: [] }),
       };
 
@@ -906,12 +905,11 @@ describe('task-generator-scheduler', () => {
 
       await triggerScanFn(pool);
 
-      const insertCall = pool.query.mock.calls.find(([sql]) => sql.includes('INSERT INTO tasks'));
-      expect(insertCall).toBeDefined();
+      expect(mockCreateTask).toHaveBeenCalledOnce();
       expect(capturedId).toBe('fallback-id');
     });
 
-    it('metadata 无 module_path/issue_type 时：不做 dedup SELECT，直接 INSERT', async () => {
+    it('metadata 无 module_path/issue_type 时：不做 dedup SELECT，直接 createTask', async () => {
       const taskData = { title: 'No dedup task', description: 'desc', metadata: {} };
 
       const pool = makePool('simple-id');
@@ -924,10 +922,9 @@ describe('task-generator-scheduler', () => {
 
       await triggerScanFn(pool);
 
-      // pool.query 被调用 3 次：2 次 pre-filter + 1 次 INSERT INTO tasks，无 dedup SELECT，无 scan_results
-      expect(pool.query).toHaveBeenCalledTimes(3);
-      const insertCall = pool.query.mock.calls.find(([sql]) => sql.includes('INSERT INTO tasks'));
-      expect(insertCall).toBeDefined();
+      // 仅两次预筛选 SQL；任务写入交给 action，无逐项去重或扫描记录写入。
+      expect(pool.query).toHaveBeenCalledTimes(2);
+      expect(mockCreateTask).toHaveBeenCalledOnce();
     });
   });
 
@@ -978,13 +975,13 @@ describe('task-generator-scheduler', () => {
     it('新任务创建后：INSERT INTO scan_results 被调用，关联新 task id', async () => {
       const taskData = makeScannerTaskData();
       const newTaskId = 'new-task-for-scan-result';
+      mockCreateTask.mockResolvedValue({ task: { id: newTaskId } });
 
       const pool = {
         query: vi.fn()
           .mockResolvedValueOnce({ rows: [] }) // pre-filter: existingTasks
           .mockResolvedValueOnce({ rows: [] }) // pre-filter: history
           .mockResolvedValueOnce({ rows: [] }) // dedup SELECT
-          .mockResolvedValueOnce({ rows: [{ id: newTaskId }] }) // INSERT INTO tasks
           .mockResolvedValue({ rows: [] }), // scan_results INSERT
       };
 
@@ -1044,7 +1041,6 @@ describe('task-generator-scheduler', () => {
           .mockResolvedValueOnce({ rows: [] }) // pre-filter: existingTasks
           .mockResolvedValueOnce({ rows: [] }) // pre-filter: history
           .mockResolvedValueOnce({ rows: [] }) // dedup SELECT
-          .mockResolvedValueOnce({ rows: [{ id: 'task-xyz' }] }) // INSERT INTO tasks
           .mockRejectedValue(new Error('scan_results write failed')), // scan_results 失败
       };
 
