@@ -5,16 +5,31 @@
  * After fix: Watchdog kill increments both watchdog_retry_count AND failure_count
  */
 
-import { describe, it, expect, beforeEach, afterEach, beforeAll, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, beforeAll, afterAll, vi } from 'vitest';
 
 // isolate:false 修复：延迟导入，确保获取真实 pool 而非其他文件残留的 mock
+import { openDebt08Scratch } from './debt-08-scratch.js';
+vi.mock('../llm-caller.js', () => ({ callLLM: vi.fn(() => { throw new Error('禁止模型调用'); }) }));
+vi.mock('child_process', () => ({
+  execFile: vi.fn(() => { throw new Error('禁止子进程'); }),
+  exec: vi.fn(() => { throw new Error('禁止子进程'); }),
+  execSync: vi.fn(() => { throw new Error('禁止子进程'); }),
+  spawn: vi.fn(() => { throw new Error('禁止子进程'); }),
+}));
+// 本组只测 watchdog 状态/计数/事件/learning；统一收件箱在其专属回归验收。
+vi.mock('../capture-inbox.js', () => ({ pushCaptureAtom: vi.fn(async () => null) }));
+let scratch;
 let pool, requeueTask;
 
 beforeAll(async () => {
   vi.resetModules();
-  pool = (await import('../db.js')).default;
+  scratch = await openDebt08Scratch(['001_cecelia_architecture_upgrade.sql', '142_tasks_error_message.sql', '234_add_tasks_claim_columns.sql', '268_task_events.sql', '012_learnings_table.sql', '063_learnings_dedup.sql', '073_desire_system.sql', '079_rumination.sql', '083_layered_memory_summary.sql', '271_learnings_task_id_binding.sql']);
+  pool = scratch.pool;
+  vi.doMock('../db.js', () => ({ default: pool }));
   requeueTask = (await import('../executor.js')).requeueTask;
 });
+
+afterAll(async () => { if (scratch) await scratch.close(); });
 
 describe('tick-watchdog-quarantine (P0 Fix #3)', () => {
   let testTaskId;
