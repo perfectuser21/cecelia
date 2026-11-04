@@ -104,3 +104,16 @@ describe('新增内容类型 — 5 个模板', () => {
     }
   });
 });
+
+// DB 专有类型必须经真实读取器返回；由测试边界提供固定记录。
+describe('DB 优先读取合同', () => {
+  it('返回仅在数据库中注册的完整配置', async () => {
+    const config = await getContentType('debt-12-db-only');
+    expect(config).toEqual({
+      content_type: 'debt-12-db-only', images: { count: 2 },
+      template: { generate_prompt: 'database template' },
+      review_rules: ['database review'], copy_rules: ['database copy'],
+      notebook_id: 'debt-12-notebook',
+    });
+  });
+});
