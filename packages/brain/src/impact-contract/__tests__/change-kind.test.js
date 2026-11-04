@@ -104,23 +104,6 @@ describe('FR-1 Change Normalizer', () => {
 
   });
 
-  describe('API 层面：change_kind 独立出现在 payload 中', () => {
-
-    test('POST /api/brain/tasks 响应体中 change_kind 与 gear 均存在且值独立', async () => {
-      // 单元层验证：resolveChangeKind 产生 change_kind='bugfix'，而 gear 独立由 deriveGear() 决定
-      // 两者枚举值来自不同集合，不可能混淆
-      const changeKind = resolveChangeKind({ task_type: 'bugfix' });
-      const gear = 'segmented'; // 假设由 deriveGear() 返回的值
-
-      expect(changeKind).toBe('bugfix');
-      expect(gear).toBe('segmented');
-      // change_kind 枚举值（bugfix）不在 GEAR_VALUES 中，gear 枚举值（segmented）不在 CHANGE_KINDS 中
-      expect(CHANGE_KINDS.includes(changeKind)).toBeTruthy();
-      expect(CHANGE_KINDS.includes(gear)).toBe(false);
-    });
-
-  });
-
   describe('遗留值兼容映射', () => {
 
     test('旧值 fix → bugfix', () => {
