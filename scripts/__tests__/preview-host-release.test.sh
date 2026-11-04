@@ -371,11 +371,32 @@ teardown
 
 echo "── T17 真实Node入口：目标只作foreign普通参数必须拒绝 ──"
 if OWNER_HELPER="$SRC_SCRIPTS/lib/preview-agent-owner.sh" node --input-type=module <<'JS'
-import{mkdtempSync,mkdirSync,writeFileSync,readFileSync,chmodSync,rmSync,realpathSync}from'node:fs';import{tmpdir}from'node:os';import{join}from'node:path';import{spawn,spawnSync}from'node:child_process';
-const dir=realpathSync(mkdtempSync(join(tmpdir(),'preview-argv-contract-'))),root=join(dir,'release'),bin=join(dir,'bin'),entry=join(root,'scripts/preview-agent.mjs'),foreign=join(dir,'foreign.mjs'),plist=join(dir,'agent.plist');mkdirSync(join(root,'scripts'),{recursive:true});mkdirSync(bin);
-const body=`import http from 'node:http';import fs from 'node:fs';const s=http.createServer((q,r)=>r.end('ok'));s.listen(0,'127.0.0.1',()=>fs.writeFileSync(process.env.OWNER_REPORT,JSON.stringify({pid:process.pid,port:s.address().port})));`;writeFileSync(entry,body);writeFileSync(foreign,body);let child;
-const check=(pid,port)=>{writeFileSync(join(bin,'launchctl'),'#!/bin/sh\necho "pid = '+pid+'"\n');chmodSync(join(bin,'launchctl'),0o755);return spawnSync('bash',['-c','source "$1"; preview_agent_owner fixture "$2" "$3" "$4"','contract',process.env.OWNER_HELPER,root,'http://127.0.0.1:'+port,plist],{encoding:'utf8',env:{...process.env,PATH:bin+':'+process.env.PATH}});};
-try{for(const bad of [false,true]){const report=join(dir,bad?'foreign.json':'valid.json');child=spawn(process.execPath,bad?[foreign,entry]:[entry],{cwd:root,env:{...process.env,OWNER_REPORT:report},stdio:'ignore'});let identity;for(let n=0;n<100;n++){try{identity=JSON.parse(readFileSync(report));break;}catch{}await new Promise(r=>setTimeout(r,20));}if(!identity)throw Error('fixture startup');writeFileSync(plist,'<?xml version="1.0"?><plist version="1.0"><dict><key>Label</key><string>fixture</string><key>WorkingDirectory</key><string>'+root+'</string><key>ProgramArguments</key><array><string>'+process.execPath+'</string><string>'+entry+'</string></array></dict></plist>');const result=check(identity.pid,identity.port);console.log(JSON.stringify({case:bad?'foreign-entry-argument':'unique-node-entry',pid:identity.pid,port:identity.port,helper_rc:result.status,node:process.execPath}));if(bad?result.status===0:result.status!==0)throw Error((bad?'foreign entry accepted':'valid entry rejected')+': '+result.stderr);child.kill('SIGTERM');await new Promise(r=>child.once('exit',r));child=null;}}
+import{mkdtempSync,mkdirSync,writeFileSync,readFileSync,chmodSync,rmSync,realpathSync}from'node:fs';
+import{tmpdir}from'node:os';import{join}from'node:path';import{spawn,spawnSync}from'node:child_process';
+const dir=realpathSync(mkdtempSync(join(tmpdir(),'preview-argv-contract-'))),root=join(dir,'release'),bin=join(dir,'bin'),entry=join(root,'scripts/preview-agent.mjs'),foreign=join(dir,'foreign.mjs'),plist=join(dir,'agent.plist'),poison=join(dir,'poison');
+mkdirSync(join(root,'scripts'),{recursive:true});mkdirSync(bin);mkdirSync(poison);
+for(const path of [root,poison])writeFileSync(join(path,'plistlib.py'),"raise RuntimeError('stdlib hijack')\n");
+const code=readFileSync(process.env.OWNER_HELPER,'utf8').match(/<<'PYOWNER' \|\| return 1\n([\s\S]*?)\nPYOWNER/)[1];
+const body=`import http from 'node:http';import fs from 'node:fs';const s=http.createServer((q,r)=>r.end('ok'));s.listen(0,'127.0.0.1',()=>fs.writeFileSync(process.env.OWNER_REPORT,JSON.stringify({pid:process.pid,port:s.address().port})));`;
+writeFileSync(entry,body);writeFileSync(foreign,body);let child;
+const check=(pid,port,optimized)=>{
+ writeFileSync(join(bin,'launchctl'),'#!/bin/sh\necho "pid = '+pid+'"\n');chmodSync(join(bin,'launchctl'),0o755);
+ const env={...process.env,PATH:bin+':'+process.env.PATH};if(optimized){env.PYTHONOPTIMIZE='1';env.PYTHONPATH=poison;}
+ return spawnSync('bash',['-c','source "$1"; preview_agent_owner fixture "$2" "$3" "$4"','contract',process.env.OWNER_HELPER,root,'http://127.0.0.1:'+port,plist],{cwd:optimized?root:dir,encoding:'utf8',env});
+};
+try{for(const optimized of [false,true])for(const kind of ['valid','foreign','extra']){
+ const report=join(dir,kind+optimized+'.json'),args=kind==='foreign'?[foreign,entry]:kind==='extra'?[entry,'unexpected-argument']:[entry];
+ child=spawn(process.execPath,args,{cwd:root,env:{...process.env,OWNER_REPORT:report},stdio:'ignore'});
+ let identity;for(let n=0;n<100;n++){try{identity=JSON.parse(readFileSync(report));break;}catch{}await new Promise(r=>setTimeout(r,20));}
+ if(!identity)throw Error('fixture startup');
+ writeFileSync(plist,'<?xml version="1.0"?><plist version="1.0"><dict><key>Label</key><string>fixture</string><key>WorkingDirectory</key><string>'+root+'</string><key>ProgramArguments</key><array><string>'+process.execPath+'</string><string>'+entry+'</string></array></dict></plist>');
+ const result=check(identity.pid,identity.port,optimized);
+ const bytecode=spawnSync('python3',['-I','-O','-',String(identity.pid),plist,root,'fixture'],{input:code,cwd:root,encoding:'utf8',env:{...process.env,PYTHONOPTIMIZE:'1',PYTHONPATH:poison}});
+ console.log(JSON.stringify({case:kind,optimized_environment:optimized,pid:identity.pid,port:identity.port,helper_rc:result.status,optimized_bytecode_rc:bytecode.status,node:process.execPath}));
+ const shouldPass=kind==='valid';if(shouldPass?result.status!==0:result.status===0)throw Error(kind+' helper contract: '+result.stderr);
+ if(shouldPass?bytecode.status!==0:bytecode.status===0)throw Error(kind+' optimized bytecode contract: '+bytecode.stderr);
+ child.kill('SIGTERM');await new Promise(r=>child.once('exit',r));child=null;
+}}
 finally{if(child){child.kill('SIGTERM');await new Promise(r=>child.once('exit',r));}rmSync(dir,{recursive:true,force:true});}
 JS
 then pass "真实唯一Node入口通过且foreign尾参数拒绝"; else fail "真实唯一Node入口通过且foreign尾参数拒绝" "kernel argv/executable contract"; fi
