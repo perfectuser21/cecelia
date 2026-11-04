@@ -4,14 +4,21 @@ inputs:
   ssh-key:
     description: Read-only deploy key for zenithjoy-skills
     required: true
+  expected-public-sha256:
+    description: SHA256 of the registered SSH public key algorithm and body
+    required: true
 runs:
   using: composite
   steps:
     - shell: bash
       env:
         SKILLS_SOURCE_SSH_KEY: ${{ inputs.ssh-key }}
+        SKILLS_SOURCE_PUBLIC_KEY_SHA256: ${{ inputs.expected-public-sha256 }}
         GIT_TERMINAL_PROMPT: "0"
       run: |
+        python_bin=python3
+        command -v python3 >/dev/null 2>&1 || python_bin=python
+        "$python_bin" scripts/ci/check-skill-source-identity.py
         bash scripts/ensure-skills-source.sh "$GITHUB_WORKSPACE"
         if [ -n "$(git ls-files '**/SKILL.md' 'SKILL.md')" ]; then
           echo "Skill bodies must be maintained in zenithjoy-skills" >&2

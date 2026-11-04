@@ -96,6 +96,7 @@ jobs:
         uses: ./.github/actions/skills-source
         with:
           ssh-key: ${{ secrets.SKILLS_SOURCE_SSH_KEY }}
+          expected-public-sha256: ${{ vars.SKILLS_SOURCE_PUBLIC_KEY_SHA256 }}
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -156,6 +157,7 @@ jobs:
         uses: ./.github/actions/skills-source
         with:
           ssh-key: ${{ secrets.SKILLS_SOURCE_SSH_KEY }}
+          expected-public-sha256: ${{ vars.SKILLS_SOURCE_PUBLIC_KEY_SHA256 }}
       - name: SHA 对账（PROD_SHA vs HEAD_SHA）
         # FR-03: 替换旧 gate3-changed-paths.sh 判变逻辑，改用 SHA 对账决定是否部署。
         # squash merge 后 changed_paths 为空 → 旧路径假跳过 → 此修复从根本解决（C-01）。
@@ -296,6 +298,7 @@ jobs:
         uses: ./.github/actions/skills-source
         with:
           ssh-key: ${{ secrets.SKILLS_SOURCE_SSH_KEY }}
+          expected-public-sha256: ${{ vars.SKILLS_SOURCE_PUBLIC_KEY_SHA256 }}
       - name: 运行 SHA 对账串链测试（BEHAVIOR-01..07）
         run: |
           bash tests/regression/gate3-sha-truth/sha-account.test.sh
