@@ -202,13 +202,16 @@ export async function runNotionInletIngest(pool, { now = Date.now, notionReq = d
   let map;
   try { map = await loadProjectionMap(pool); } catch { return { ok: false, reason: 'registry_unavailable' }; }
   const results = {};
+  const sources = [];
   for (const r of map.byFace.inlet) {
     if (r.status !== 'active' || !['ingest', 'both'].includes(r.direction)) continue;
     const handler = HANDLERS[r.brain_table];
     if (!handler) continue;
     try { results[r.brain_table] = await handler(pool, token, { dbId: r.notion_db_id, notionReq }); }
     catch (err) { results[r.brain_table] = { error: err.message }; }
+    sources.push({ brain_table: r.brain_table, notion_db_id: r.notion_db_id, result: results[r.brain_table] });
   }
-  const failed = Object.values(results).some(result => result.error || result.failed > 0);
-  return { ok: !failed, results };
+  // 一表可挂多个入口库；逐库事实不能被后来的同表结果覆盖。
+  const failed = sources.some(({ result }) => result.error || result.failed > 0);
+  return { ok: !failed, results, sources };
 }
