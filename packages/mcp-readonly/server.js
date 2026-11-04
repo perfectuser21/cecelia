@@ -56,11 +56,7 @@ export function makeTrackedQuery(rawQuery, tracker) {
   };
 }
 
-// map_projection_runs 同一 scope_key 同一时刻最多一条 active（唯一部分索引，
-// 见 map-summary.js 顶部注释），取最新 activated_at 即为"当前生效"的 run。
-// 查不到时返回 null（不是 undefined）——但注意这个 null 只代表"系统当前没有
-// active run"这一件事，不代表调用方想跨全部历史查询，两者不能混为一谈，见
-// withActiveRun() 的处理。
+// 当前run必须属于调用方scope的active manifest；无匹配身份时不读取历史行。
 async function withActiveRun(pool, queryFn, scope, computeFn) {
   const identity = await getActiveMapIdentity(pool, queryFn, { scope });
   if (!identity.active_run_id) return { ...identity, rows: [], no_active_run: true };
