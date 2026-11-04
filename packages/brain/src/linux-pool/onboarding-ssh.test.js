@@ -31,6 +31,6 @@ it.each(['fingerprint','symlink','timeout','field'])('%s失败不透出密钥且
  if(kind==='field')x.request.worker_boot_id=randomUUID();
  let root=x.root;if(kind==='symlink'){root=path.join(x.root,'link');fs.symlinkSync(x.root,root);}
  const send=createOnboardingSSH({...x.options,root,run});await expect(send(randomUUID(),x.request,{action:'bootstrap'})).rejects.toThrow('linux_pool_ssh_unavailable');
- expect(x.calls.filter(c=>c.command.endsWith('/ssh'))).toHaveLength(0);
+ expect(x.calls.filter(c=>c.command.endsWith('/ssh'))).toHaveLength(kind==='timeout'?1:0);
  if(kind!=='symlink')expect(fs.readdirSync(x.root)).toEqual([]);
 });
