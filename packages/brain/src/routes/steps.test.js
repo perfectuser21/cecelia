@@ -3,6 +3,9 @@
  * sync-step-probes 靠它们把 YAML 里的 target:{type,key} 解析成 target_id。
  */
 import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest';
+import express from 'express';
+import request from 'supertest';
+let internalAuthOrLoopback;
 
 const mockPool = vi.hoisted(() => ({ query: vi.fn() }));
 vi.mock('../db.js', () => ({ default: mockPool }));
@@ -25,6 +28,7 @@ function handler(method, path) {
 
 beforeAll(async () => {
   vi.resetModules();
+  ({internalAuthOrLoopback}=await import('../middleware/internal-auth.js'));
   routes = (await import('./steps.js')).default;
 });
 beforeEach(() => mockPool.query.mockReset());
@@ -164,7 +168,7 @@ describe('PATCH /api/brain/enablers/:key — 写故障处置', () => {
 
   it('写接口挂了内部鉴权中间件', () => {
     const layer = routes.stack.find((l) => l.route && l.route.path === '/enablers/:key' && l.route.methods.patch);
-    expect(layer.route.stack.length).toBeGreaterThanOrEqual(2);
+    expect(layer.route.stack[0].handle).toBe(internalAuthOrLoopback);
   });
 });
 
@@ -225,7 +229,7 @@ describe('POST /api/brain/enablers — 新建仓库物件', () => {
 
   it('写接口挂了内部鉴权中间件', () => {
     const layer = routes.stack.find((l) => l.route && l.route.path === '/enablers' && l.route.methods.post);
-    expect(layer.route.stack.length).toBeGreaterThanOrEqual(2);
+    expect(layer.route.stack[0].handle).toBe(internalAuthOrLoopback);
   });
 });
 
@@ -253,4 +257,20 @@ describe('GET /api/brain/activity_uses', () => {
     }
     expect(mockPool.query).not.toHaveBeenCalled();
   });
+});
+
+describe('仓库物件写入的真实HTTP鉴权',()=>{
+ it.each([['post','/enablers'],['patch','/enablers/key']])('%s %s 拒绝缺失/错误token，正确token才进入校验',async(method,path)=>{
+  vi.stubEnv('CECELIA_INTERNAL_TOKEN','owned-test-token');
+  try {
+   const app=express();app.use(express.json());app.use(routes);
+   for(const token of [null,'wrong']){
+    const req=request(app)[method](path);if(token)req.set('Authorization',`Bearer ${token}`);
+    const res=await req.send({});expect(res.status).toBe(401);expect(res.body.error.code).toBe('UNAUTHORIZED');
+   }
+   const accepted=await request(app)[method](path).set('Authorization','Bearer owned-test-token').send({});
+   expect(accepted.status).toBe(400);
+   expect(mockPool.query).not.toHaveBeenCalled();
+  } finally {vi.unstubAllEnvs();}
+ });
 });
