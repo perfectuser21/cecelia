@@ -3,6 +3,16 @@ import {describe,it,expect} from 'vitest';
 import path from 'node:path';
 import {execFileSync} from 'node:child_process';
 
+// 仅追加本批已审的完整组合：AutoVersion marker退役与严格版本门reader必须同时更新。
+// 所有未列成员继承固定旧cohort；不读取候选摘要，不按成员任选历史版本。
+export function ciVersionGuardCohorts(previous) {
+ const current={...previous,
+  'existing-ops-source.js':'d34318e7523501f651d846268d956d6f745349e4cf8a10b1adefdd92ebe9a727',
+  'existing-ops-stage-source.js':'14ebb11805679dd6f559ea42d88ba6f8a1bc96604f474230a2c486af5866e514',
+ };
+ return [current,{...current,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'}];
+}
+
 export function registerCiRetirementGuardTests({root,base,memoBase,scan}) {
  const source=path.join(root,'existing-ops-source.js');
  const members=['stage-source','workspace-source'].map(name=>path.join(root,`existing-ops-${name}.js`));
