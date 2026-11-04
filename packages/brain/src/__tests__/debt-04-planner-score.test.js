@@ -140,4 +140,3 @@ describe('scoreKRs - initiative bonus', () => {
     expect(scoreInitOnly).toBe(scoreQueueOnly); // initiative bonus equals queued bonus
   });
 });
-
