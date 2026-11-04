@@ -146,11 +146,13 @@ export async function recordLearning(analysis) {
               [learning.id, JSON.stringify({ insight_task_status: 'blocked', insight_task_reason: 'source_route_context_missing' })]);
           } else {
             const created = await createTask({
+              source: 'discovery',
+              source_id: `learning-repair:${learning.id}`,
               repo_hint: repo,
               map_scope_hint: mapScope,
               mutation_intent: 'write',
               declared_change_kind: 'bugfix',
-              title: `[Insight修复] ${title.slice(0, 120)}`,
+              title: `[Insight修复] ${title.slice(0, 120)} [${learning.id}]`,
               description: `由 RCA Learning 自动生成的修复任务。\n\nlearning_id: ${learning.id}\n\n${content}`,
               priority: 'P2',
               task_type: 'dev',
@@ -161,6 +163,13 @@ export async function recordLearning(analysis) {
               },
             });
             if (!created?.success || !created.task?.id) throw new Error('insight_task_creation_not_confirmed');
+            // success 也可能是去重结果；只有本 learning、同源仓库与范围才能闭环。
+            const repairPayload = created.task.payload;
+            const expectedScope = [...new Set(mapScope.map(scope => scope.trim()))].sort();
+            if (repairPayload?.insight_learning_id !== learning.id || repairPayload.repo !== repo.trim()
+                || JSON.stringify(repairPayload.map_scope) !== JSON.stringify(expectedScope)) {
+              throw new Error('insight_task_context_mismatch');
+            }
             await pool.query(
               `UPDATE learnings SET applied = true, applied_at = NOW() WHERE id = $1`,
               [learning.id]

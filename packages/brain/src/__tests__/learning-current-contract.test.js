@@ -10,7 +10,7 @@ vi.mock('../db.js', () => ({ default: { query: vi.fn(async (sql, values) => {
 }) } }));
 vi.mock('../actions.js', () => ({ createTask: vi.fn(async request => {
   state.created = request;
-  return state.outcome ?? { success: true, task: { id: 'task-id' } };
+  return state.outcome ?? { success: true, task: { id: 'task-id', payload: { ...request.payload, repo: request.repo_hint, map_scope: request.map_scope_hint } } };
 }) }));
 vi.mock('../capture-inbox.js', () => ({ pushCaptureAtom: vi.fn() }));
 vi.mock('../embedding-service.js', () => ({ generateLearningEmbeddingAsync: vi.fn() }));
@@ -38,6 +38,17 @@ describe('RCA 当前路由合同', () => {
     state.outcome = { success: false, error: 'rejected' };
     await recordLearning(analysis);
     expect(state.updates.some(({sql}) => sql.includes('applied = true'))).toBe(false);
+  });
+  it.each([
+    { insight_learning_id: 'other-learning' },
+    { repo: 'other-repo' },
+    { map_scope: ['other-scope'] },
+  ])('建单返回其他关联或路由不能虚标 applied：%j', async wrong => {
+    state.source = { payload: { repo: 'cecelia', map_scope: ['F2'] } };
+    state.outcome = { success: true, task: { id: 'foreign-task', payload: { insight_learning_id: 'learning-id', repo: 'cecelia', map_scope: ['F2'], ...wrong } } };
+    await recordLearning(analysis);
+    expect(state.updates.some(({sql}) => sql.includes('applied = true'))).toBe(false);
+    expect(state.updates.some(({values}) => JSON.stringify(values).includes('insight_task_context_mismatch'))).toBe(true);
   });
   it('学习分析显式声明只研究合同', async () => {
     await createLearningTask({ trigger: 'failure', failures: [] });

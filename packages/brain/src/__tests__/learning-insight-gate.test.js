@@ -47,7 +47,7 @@ describe('recordLearning — Insight 任务 confidence 门槛（CI mock 守卫�
       }
       return { rows: [] };
     });
-    mockCreateTask.mockResolvedValue({ success: true, task: { id: 'task-gate-1' } });
+    mockCreateTask.mockResolvedValue({ success: true, task: { id: 'task-gate-1', payload: { insight_learning_id: 'learning-gate-1', repo: 'cecelia', map_scope: ['F1'] } } });
   });
 
   it('confidence < 0.7：落 learning（INSERT learnings 发生）但不建 [Insight修复] 任务', async () => {

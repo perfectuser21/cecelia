@@ -67,10 +67,15 @@ it.each([
 
 it.each([
   ['cecelia', ['F1'], null],
+  ['zenithjoy-workspace', ['F1'], null],
   ['missing-repository', ['F1'], 'repo_unknown'],
   ['cecelia', ['missing-scope'], 'routing_map_scope_unresolved'],
 ])('同标题的不同Learning不能复用任务或绕过来源路由 %s %j', async (repo, mapScope, reason) => {
   await seedActiveF1(client);
+  if (repo === 'zenithjoy-workspace') {
+    await client.query("INSERT INTO map_scope_repositories(scope_key,repo,adapter_key) VALUES ('zenithjoy-workspace','zenithjoy-workspace','legacy-ledger-v1') ON CONFLICT DO NOTHING");
+    await seedActiveF1(client, 'zenithjoy-workspace');
+  }
   const cause = `shared-title-${randomUUID()}`;
   const sourceA = (await client.query('INSERT INTO tasks(title,payload) VALUES ($1,$2) RETURNING id', [`source A ${randomUUID()}`, { repo: 'cecelia', map_scope: ['F1'] }])).rows[0].id;
   const first = await learning.recordLearning({ task_id: sourceA, analysis: { root_cause: cause }, confidence: .9, learnings: ['first'], recommended_actions: [] });
@@ -84,10 +89,11 @@ it.each([
     expect(secondRow).toMatchObject({ applied: false, metadata: { insight_task_status: 'blocked', insight_task_reason: reason } });
     expect(tasks).toHaveLength(0);
   } else {
+    expect(secondRow.metadata.insight_task_reason).toBeUndefined();
     expect(secondRow.applied).toBe(true);
     expect(tasks).toHaveLength(1);
     expect(tasks[0].payload).toMatchObject({ insight_learning_id: second.id, repo, map_scope: mapScope });
-    expect((await client.query('SELECT repo,map_scope FROM work_routing_receipts WHERE task_id=$1', [tasks[0].id])).rows).toEqual([{ repo, map_scope: mapScope }]);
+    expect((await client.query('SELECT source,source_id,repo,map_scope FROM work_routing_receipts WHERE task_id=$1', [tasks[0].id])).rows).toEqual([{ source: 'discovery', source_id: `learning-repair:${second.id}`, repo, map_scope: mapScope }]);
     // 同一分析重放仍只对应一条修复任务。
     expect((await learning.recordLearning(analysis)).id).toBe(second.id);
     expect((await client.query("SELECT id FROM tasks WHERE payload->>'insight_learning_id'=$1", [second.id])).rows).toHaveLength(1);
