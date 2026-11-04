@@ -17,6 +17,7 @@ describe('OpenClaw 工作流管理调用器', () => {
     const c = createAuthoringClient({ fetch, base:'http://localhost:5221/api/brain' });
     const result = await c.start({ request_key:'session-one',operation:'create',goal:'创建分析流程',actor:'openclaw' });
     expect(result.task_id).toBe(ID);
+    expect(calls.some(([path,method])=>path==='/api/brain/tasks'&&method==='POST')).toBe(false);
     expect(calls.map(x=>x[0])).toEqual(['/api/brain/tasks',`/api/brain/tasks/${ID}`,`/api/brain/tasks/${ID}/claim`,`/api/brain/tasks/${ID}`,`/api/brain/workflow-authoring/runs/${ID}/init`]);
     expect(calls[0][2].source_id).toBe('workflow-authoring:session-one');
   });
