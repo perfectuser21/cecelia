@@ -56,7 +56,7 @@ describe('cortex.generateSystemReport - 系统简报生成', () => {
 
     // 默认 mock 返回
     mockPool.query.mockImplementation((sql) => {
-      if (sql.includes('goals')) {
+      if (sql.includes('objectives')) {
         return Promise.resolve({ rows: [{ id: 'kr-1', title: 'Task Management', status: 'in_progress', progress: 30, completed_tasks: 5, failed_tasks: 1, queued_tasks: 10 }] });
       }
       if (sql.includes('tasks') && sql.includes('COUNT')) {
@@ -108,12 +108,12 @@ describe('cortex.generateSystemReport - 系统简报生成', () => {
     );
   });
 
-  it('LLM 返回内容包含 title, summary, system_health', async () => {
+  it('正常模型回包精确保留内容，不退化为基础简报', async () => {
     const result = await generateSystemReport({ timeRangeHours: 48 });
 
-    expect(result.title).toBeDefined();
-    expect(result.summary).toBeDefined();
-    expect(result.system_health).toBeDefined();
+    expect(result).toMatchObject(JSON.parse(mockLLMResponse));
+    const insert = mockPool.query.mock.calls.find(([sql]) => sql.includes('INSERT INTO system_reports'));
+    expect(JSON.parse(insert[1][1])).toEqual(JSON.parse(mockLLMResponse));
   });
 
   it('LLM 失败时降级生成基础简报（不抛异常）', async () => {
@@ -143,7 +143,7 @@ describe('cortex.generateSystemReport - 系统简报生成', () => {
       if (sql.includes('INSERT INTO system_reports')) {
         return Promise.reject(new Error('DB 连接失败'));
       }
-      if (sql.includes('goals')) {
+      if (sql.includes('objectives')) {
         return Promise.resolve({ rows: [] });
       }
       return Promise.resolve({ rows: [] });
