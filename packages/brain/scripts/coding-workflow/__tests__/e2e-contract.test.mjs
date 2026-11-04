@@ -91,6 +91,8 @@ describe('coding_spec 八活动契约端到端（通用执行器 + 假外部依�
     fs.writeFileSync(path.join(smokeConfig, 'smoke-debt.txt'), '# 无待归类项\n');
     git(worktree, 'add', 'packages/brain');
     git(worktree, 'commit', '-q', '-m', 'test: seed private smoke registration');
+    // 真实版本门必须能对比固定基线；假 build 只改根 src，不涉及 Brain 源码。
+    git(worktree, 'update-ref', 'refs/remotes/origin/main', 'HEAD');
 
     patches = [];
     server = http.createServer((req, res) => {
@@ -185,6 +187,7 @@ describe('coding_spec 八活动契约端到端（通用执行器 + 假外部依�
     expect(build.build_file).toBe('03-build.md');
     expect(build.build_commits).toHaveLength(1);
     expect(build.ci_precheck).toEqual({ passed: true, rounds: 0, failures: [] });
+    expect(r.result.activities.find((a) => a.key === 'build').attempts.at(-1).transport.stderr).not.toContain('FAKE_ROLE: ci_precheck_fix');
     expect(r.result.outputs.verified_ids).toEqual(['I-1', 'I-2']);
     // md 链指纹贯穿全程，build/verify 的防篡改检查都实际比对过
     expect(r.result.outputs.intent_sha256).toMatch(/^[0-9a-f]{64}$/);
@@ -219,6 +222,7 @@ describe('coding_spec 八活动契约端到端（通用执行器 + 假外部依�
 
     const build = r.result.activities.find((a) => a.key === 'build').attempts.at(-1).outputs;
     expect(build.ci_precheck).toEqual({ passed: true, rounds: 0, failures: [] });
+    expect(r.result.activities.find((a) => a.key === 'build').attempts.at(-1).transport.stderr).not.toContain('FAKE_ROLE: ci_precheck_fix');
     const verify = r.result.activities.find((a) => a.key === 'verify');
     expect(verify.status).toBe('failed');
     expect(verify.attempts).toHaveLength(1);
