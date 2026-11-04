@@ -412,11 +412,11 @@ describe('FR-5 Gap Ledger', () => {
     })).rejects.toMatchObject({ code: 'invalid_resolution_evidence' });
   });
 
-  test('不能用另一条 Journey Step Link 的 PASS 回执关闭 gap', async () => {
+  test.each([true,false])('同一可信PASS仅link匹配=%s时可关闭gap', async sameLink => {
     const assertionId = 'assertion-1';
     const assertionDigest = createHash('sha256').update(assertionId).digest('hex');
     const contractLinkId = '11111111-1111-4111-8111-111111111111';
-    const receiptLinkId = '22222222-2222-4222-8222-222222222222';
+    const receiptLinkId = sameLink ? contractLinkId : '22222222-2222-4222-8222-222222222222';
     const db = {
       query: vi.fn(async (sql) => {
         const s = String(sql);
@@ -469,13 +469,15 @@ describe('FR-5 Gap Ledger', () => {
       }),
     };
 
-    await expect(transitionGapStatus(db, 'gap', 'resolved', {
+    const result=transitionGapStatus(db, 'gap', 'resolved', {
       resolutionEvidence: {
         assertion_id: assertionId,
         receipt_id: 'receipt-other-link',
         revision: 'abc123',
       },
-    })).rejects.toMatchObject({ code: 'invalid_resolution_evidence' });
+    });
+    if(sameLink)await expect(result).resolves.toBeDefined();
+    else await expect(result).rejects.toMatchObject({code:'invalid_resolution_evidence'});
   });
 
   test('断言不覆盖当前 impact node 时不能关闭 gap', async () => {
