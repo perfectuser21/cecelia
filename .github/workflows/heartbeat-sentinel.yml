@@ -5,7 +5,8 @@ name: Heartbeat Sentinel
 #
 # 探测两项：
 #   1. /api/brain/health 可达且 healthy
-#   2. KV smoke-nightly-last-run 时效 <26h（证明 nightly 作业确实在跑）
+#   2. GitHub 官方 main Deep Regression 最近 completed run 成功且在26h内
+#      这是源码深回归回执，不代表生产业务或旧 smoke nightly 已运行。
 #
 # 任一失败 -> 开 GitHub Issue（标题含 [heartbeat-sentinel]，已有 open 同款不重复开）
 #           + Bark 推送（BARK_URL secret）
@@ -36,8 +37,11 @@ jobs:
     name: 反向探测生产 Brain
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      actions: read
     outputs:
       health_ok: ${{ steps.health.outputs.ok }}
+      # kv_* 仅为历史输出兼容名；实际证据为官方 Deep Regression run。
       kv_ok: ${{ steps.kv.outputs.ok }}
       probe_url: ${{ steps.resolve.outputs.url }}
       kv_age_minutes: ${{ steps.kv.outputs.age_minutes }}
@@ -82,65 +86,58 @@ jobs:
             echo "detail=响应异常 status=$STATUS" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: 探测 KV smoke-nightly-last-run 时效
+      - name: 探测 main Deep Regression 官方回执时效
         id: kv
         env:
-          PROBE_URL: ${{ steps.resolve.outputs.url }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          MAX_AGE_HOURS=26
-          MAX_AGE_SECONDS=$(( MAX_AGE_HOURS * 3600 ))
-
-          RESPONSE=$(curl -sf --max-time 15 -w $'\n%{http_code}' "$PROBE_URL/api/brain/kv/smoke-nightly-last-run" 2>/dev/null || echo "CURL_FAIL")
-
-          if [[ ! "${RESPONSE##*$'\n'}" =~ ^2[0-9][0-9]$ ]]; then
+          fail_probe() {
             echo "ok=false" >> "$GITHUB_OUTPUT"
             echo "age_minutes=-1" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          RESPONSE=${RESPONSE%$'\n'*}
-          FINISHED_AT=$(echo "$RESPONSE" | python3 -c "
-          import json, sys
-          d = json.load(sys.stdin)
-          v = d.get('value', d)
-          if isinstance(v, str):
-              import json as j2
-              v = j2.loads(v)
-          print(v.get('finished_at', ''))
-          " 2>/dev/null || echo "")
-
-          if [[ -z "$FINISHED_AT" ]]; then
-            echo "ok=false" >> "$GITHUB_OUTPUT"
-            echo "age_minutes=-1" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          NOW_EPOCH=$(date -u +%s)
-          FINISHED_EPOCH=$(python3 - "$FINISHED_AT" <<'PYTIME'
-          import datetime, sys
-          try:
-              dt = datetime.datetime.fromisoformat(sys.argv[1].replace('Z', '+00:00'))
-              if dt.tzinfo is None:
-                  raise ValueError('missing timezone')
-              print(int(dt.timestamp()))
-          except (ValueError, OverflowError):
-              sys.exit(1)
-          PYTIME
-          ) || {
-            echo "ok=false" >> "$GITHUB_OUTPUT"
-            echo "age_minutes=-1" >> "$GITHUB_OUTPUT"
-            exit 0
+            echo "detail=Deep Regression 官方回执缺失、失败或无效" >> "$GITHUB_OUTPUT"
+            exit 1
           }
-          AGE_S=$(( NOW_EPOCH - FINISHED_EPOCH ))
-          AGE_MINUTES=$(( AGE_S / 60 ))
-          echo "age_minutes=$AGE_MINUTES" >> "$GITHUB_OUTPUT"
-
-          if (( AGE_S < 0 || AGE_S > MAX_AGE_SECONDS )); then
-            echo "ok=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "ok=true" >> "$GITHUB_OUTPUT"
-          fi
+          [[ -n "${GH_TOKEN:-}" && "${GITHUB_REPOSITORY:-}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || fail_probe
+          API_URL="https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/nightly-regression.yml/runs?branch=main&status=completed&per_page=1"
+          RESPONSE=$(curl -sf --max-time 15 -w $'\n%{http_code}' \
+            -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+            "$API_URL" 2>/dev/null) || fail_probe
+          [[ "${RESPONSE##*$'\n'}" == '200' ]] || fail_probe
+          RESPONSE=${RESPONSE%$'\n'*}
+          RECEIPT=$(printf '%s' "$RESPONSE" | python3 -c '
+          import datetime, json, os, re, sys
+          try:
+              body = json.load(sys.stdin)
+              assert isinstance(body, dict)
+              assert type(body.get("total_count")) is int and body["total_count"] > 0
+              runs = body.get("workflow_runs")
+              assert isinstance(runs, list) and len(runs) == 1
+              run = runs[0]
+              assert isinstance(run, dict)
+              assert run.get("path") == ".github/workflows/nightly-regression.yml"
+              assert run.get("head_branch") == "main"
+              assert run.get("status") == "completed" and run.get("conclusion") == "success"
+              run_id, sha = run.get("id"), run.get("head_sha")
+              assert type(run_id) is int and run_id > 0
+              assert isinstance(sha, str) and re.fullmatch("[a-f0-9]{40}", sha)
+              stamp = run.get("updated_at")
+              assert isinstance(stamp, str) and re.search(r"(?:Z|[+-]\d{2}:\d{2})$", stamp)
+              finished = datetime.datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+              assert finished.tzinfo is not None
+              age = (datetime.datetime.now(datetime.timezone.utc) - finished).total_seconds()
+              assert 0 <= age <= 26 * 3600
+              url = "https://github.com/" + os.environ["GITHUB_REPOSITORY"] + "/actions/runs/" + str(run_id)
+              assert run.get("html_url") == url
+          except (AssertionError, ValueError, TypeError, KeyError, OverflowError):
+              sys.exit(1)
+          print("ok=true")
+          print("age_minutes=" + str(int(age // 60)))
+          print("run_id=" + str(run_id))
+          print("run_sha=" + sha)
+          print("run_url=" + url)
+          ' 2>/dev/null) || fail_probe
+          printf '%s\n' "$RECEIPT" >> "$GITHUB_OUTPUT"
 
   alert:
     name: 告警（Issue + Bark）
@@ -178,7 +175,7 @@ jobs:
               BODY="$BODY"$'\n'"- ❌ \`/api/brain/health\` 不可达或 unhealthy"
             fi
             if [ "$KV_OK" != "true" ]; then
-              BODY="$BODY"$'\n'"- ❌ KV \`smoke-nightly-last-run\` 超期或不可达（${KV_AGE}min）"
+              BODY="$BODY"$'\n'"- ❌ main Deep Regression 无26h内有效成功回执（${KV_AGE}min）"
             fi
 
             gh issue create \
@@ -207,7 +204,7 @@ jobs:
             FAILURES="${FAILURES}Brain /health 不可达; "
           fi
           if [ "$KV_OK" != "true" ]; then
-            FAILURES="${FAILURES}nightly KV 超期 ${KV_AGE}min; "
+            FAILURES="${FAILURES}Deep Regression 失败或回执超期 ${KV_AGE}min; "
           fi
 
           TITLE="心跳哨兵告警"

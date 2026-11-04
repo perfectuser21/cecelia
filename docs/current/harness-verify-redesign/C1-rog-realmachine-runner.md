@@ -17,7 +17,7 @@
 结果就是过去反复掉的坑（skill §4.5 记的"病根"）：修好的东西只记进台账（文档），没做成机器强制守卫 → 下次改动把它改坏没人拦。典型是 **#998 把删掉的"回复循环滚动/开群"回归进 repo**，守卫被放松、无人阻挡就合并了。
 
 **已验证事实：**
-- 现在**无真机 runner**——`.github/workflows/` 里只有 `e2e-windows.yml`（windows-latest **云** runner，无真微信），没有 self-hosted 真机 runner。
+- 原 Harness evaluator 的 `windows_cloud` 专用入口 `e2e-windows.yml` 已退役：调用 Skill 已归档，新 coding-workflow 不生产该入口要求的 sprint `e2e-verify.ps1`。此次仅移除该旧云端入口，不表示 Windows 节点、真机或其他验收能力退役。
 - dev SKILL 的 `target_environment` 枚举里**已有 `windows_wechat`（xian-rog self-hosted 真机微信）这个概念**（`~/.claude-account2/skills/dev/SKILL.md:540`），全链 planner/proposer/evaluator 一致，**但没建成 required gate**。
 - 现成零件（skill `wechat-cs-troubleshooting` §3）齐了：session-1 通道 `schtasks /it`、GBK 日志 base64 回读、`.txt→base64→rog 解码成 .py 跑 anaconda python`、"回得了"判据 `reply_in_chat: ...DELIVERED`、真送达 gate 识别真发 vs 没发。
 - `tests/rog/` **目前不存在**；Cecelia vitest include 是**显式白名单**（`packages/brain/vitest.config.js` 只 include `tests/`、`tests/integration`、`tests/brain`、`tests/alertness`、部分 `sprints/`），**不 include `tests/rog/`**，所以放这里的文件天然不进 vitest。
