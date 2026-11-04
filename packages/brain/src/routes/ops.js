@@ -1111,7 +1111,7 @@ async function transcribeFeishuAudio(messageId, fileKey, accessToken) {
  * @param {number} rounds - 轮数（每轮含 user+assistant 两条）
  * @param {string|null} groupId - 群聊 chat_id（P2P 传 null）
  */
-async function getUnifiedHistory(participantId, rounds = 10, groupId = null) {
+export async function getUnifiedHistory(participantId, rounds = 10, groupId = null) {
   let res;
   if (groupId) {
     // 群聊：加载该群的所有对话（多人上下文）
@@ -1149,7 +1149,7 @@ async function getUnifiedHistory(participantId, rounds = 10, groupId = null) {
  * @param {string} assistantReply - Cecelia 回复
  * @param {string|null} imageDescription - 图片描述摘要（仅图片消息时传入）
  */
-async function saveUnifiedConversation(participantId, channel, groupId, userText, assistantReply, imageDescription = null) {
+export async function saveUnifiedConversation(participantId, channel, groupId, userText, assistantReply, imageDescription = null) {
   await pool.query(
     `INSERT INTO unified_conversations (participant_id, channel, group_id, role, content, image_description)
      VALUES ($1, $2, $3, 'user', $4, $5), ($1, $2, $3, 'assistant', $6, NULL)`,
@@ -1166,7 +1166,7 @@ async function saveUnifiedConversation(participantId, channel, groupId, userText
  * @param {string} content - 消息内容
  * @param {string|null} imageDescription - 图片描述（仅图片时传入）
  */
-async function saveUnifiedMessage(participantId, channel, groupId, role, content, imageDescription = null) {
+export async function saveUnifiedMessage(participantId, channel, groupId, role, content, imageDescription = null) {
   await pool.query(
     `INSERT INTO unified_conversations (participant_id, channel, group_id, role, content, image_description)
      VALUES ($1, $2, $3, $4, $5, $6)`,
