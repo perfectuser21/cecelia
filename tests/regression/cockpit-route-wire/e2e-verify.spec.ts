@@ -1,20 +1,24 @@
-import { test, expect } from '@playwright/test'
+import { test, expect } from '../manual-ui/fixture';
 
-// 仅面向专用隔离前端；不默认连接本机生产代理。
-const origin = process.env.DEBT_01_COCKPIT_ORIGIN
-if (!origin) throw new Error('请显式设置隔离前端 DEBT_01_COCKPIT_ORIGIN')
-const target = new URL(origin)
-if (target.protocol !== 'http:' || !['127.0.0.1', 'localhost'].includes(target.hostname)
-  || !target.port || Number(target.port) < 1024 || ['5211', '5221', '5222'].includes(target.port)) {
-  throw new Error('指挥舱验收仅允许专用本机非生产端口')
-}
+test('指挥舱真实路由、带值指标、作战任务与晨报展开', async ({ page, origin }, info) => {
+  await page.goto(`${origin}/workbench/overview`);
+  await expect(page.getByTestId('owner-cockpit')).toBeVisible();
+  await expect(page.locator('[data-testid^="metric-card-"]')).toHaveCount(6);
+  await expect(page.getByTestId('metric-card-completion-rate')).toContainText('75%');
+  await expect(page.getByTestId('metric-card-completion-rate')).toContainText('12');
+  await expect(page.getByTestId('battle-card')).toHaveCount(3);
+  await expect(page.getByTestId('task-link-fixture-in_progress')).toHaveText('隔离任务-in_progress');
+  await expect(page.getByTestId('task-link-fixture-blocked')).toHaveText('隔离任务-blocked');
+  await page.getByTestId('diary-item-fixture-diary').getByRole('button').click();
+  await expect(page.getByTestId('diary-item-fixture-diary-content')).toHaveText('浏览器点开后的晨报正文');
+  await page.screenshot({ path: info.outputPath('cockpit.png'), fullPage: true });
+});
 
-test('指挥舱概览 — 真实页面渲染验收', async ({ page }, testInfo) => {
-  await page.goto(new URL('/workbench/overview', target).href)
-
-  await expect(page.locator('[data-testid="owner-cockpit"]')).toBeVisible({ timeout: 10000 })
-  const metricCards = page.locator('[data-testid^="metric-card-"]')
-  await expect.poll(() => metricCards.count()).toBeGreaterThan(5)
-  await expect(page.locator('[data-testid="battle-card"]')).toBeVisible()
-  await page.screenshot({ path: testInfo.outputPath('cockpit-e2e.png'), fullPage: true })
-})
+test('指标接口断线显示缺值，其他任务仍真实显示', async ({ page, origin, api }, info) => {
+  api.failStats = true;
+  await page.goto(`${origin}/workbench/overview`);
+  await expect(page.getByTestId('metric-card-completion-rate')).toContainText('--');
+  await expect(page.getByTestId('metric-card-completion-rate')).not.toContainText('75%');
+  await expect(page.getByTestId('task-link-fixture-in_progress')).toBeVisible();
+  await page.screenshot({ path: info.outputPath('cockpit-stats-failure.png'), fullPage: true });
+});
