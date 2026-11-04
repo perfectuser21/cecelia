@@ -197,11 +197,6 @@
       "status": "ready"
     },
     {
-      "path": "packages/brain/src/__tests__/alertness-actions.test.js",
-      "mode": "full",
-      "status": "ready"
-    },
-    {
       "path": "packages/brain/src/__tests__/blocks.test.js",
       "mode": "full",
       "status": "ready"

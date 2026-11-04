@@ -93,8 +93,8 @@ test('已验证Planner及systemic兼容保护必须由私有PG完整schema真实
   }
 });
 
-test('四份已验证backend与真实strategy callback必须进入私有PG完整迁移跑道',()=>{
- for(const path of ['packages/brain/src/__tests__/alertness-actions.test.js','packages/brain/src/__tests__/blocks.test.js',
+test('现役backend与真实strategy callback必须进入私有PG完整迁移跑道',()=>{
+ for(const path of ['packages/brain/src/__tests__/blocks.test.js',
  'packages/brain/src/workflows/__tests__/dev-registry.test.js','packages/brain/src/__tests__/execution-strategy-session-kr-link.test.js']) {
   assert.deepEqual(readManifest().tests.find(row=>row.path===path),{path,mode:'full',status:'ready'});
  }
