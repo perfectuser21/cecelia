@@ -34,12 +34,13 @@ beforeEach(() => {
   boundary.external.mockImplementation(() => {throw Error('external process forbidden');});
   boundary.monitor.mockImplementation(() => {throw Error('monitoring forbidden');});
   vi.stubGlobal('fetch', boundary.external);
+  vi.spyOn(process, 'kill').mockImplementation(boundary.external);
 });
 afterEach(() => {
   expect(boundary.query).not.toHaveBeenCalled();
   expect(boundary.monitor).not.toHaveBeenCalled();
   expect(boundary.external).not.toHaveBeenCalled();
-  vi.unstubAllGlobals();
+  vi.restoreAllMocks(); vi.unstubAllGlobals();
 });
 for (const [path, getter, other, value, error] of [
   ['/watchdog', boundary.status, boundary.trends, status, 'Failed to get watchdog status'],

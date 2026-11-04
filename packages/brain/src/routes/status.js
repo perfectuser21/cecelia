@@ -795,7 +795,7 @@ router.get('/goals/:id/okr-context', async (req, res) => {
  */
 router.get('/briefing', async (req, res) => {
   try {
-    const { getBriefing } = await import('./briefing.js');
+    const { getBriefing } = await import('../briefing.js');
     const briefing = await getBriefing({ since: req.query.since });
     res.json(briefing);
   } catch (err) {
