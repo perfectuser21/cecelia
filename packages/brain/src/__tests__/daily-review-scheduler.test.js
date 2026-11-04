@@ -4,6 +4,8 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+vi.mock('../actions.js', () => ({ createTask: vi.fn() }));
+vi.mock('child_process', () => ({ spawn: vi.fn(() => ({ unref: vi.fn() })) }));
 import {
   isInDailyWindow,
   isInContractScanWindow,
