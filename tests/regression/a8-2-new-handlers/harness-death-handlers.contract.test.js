@@ -376,4 +376,3 @@ describe('[BEHAVIOR-6] interactive_stuck kill+重点火', () => {
     expect(spawn.fn).toHaveBeenCalledOnce();
   });
 });
-

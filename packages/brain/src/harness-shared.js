@@ -138,4 +138,3 @@ export function assertSprintDir(sprintDir, context = '') {
   }
   return sprintDir;
 }
-
