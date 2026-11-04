@@ -89,7 +89,8 @@ describe('setBillingPause — cecelia_events 持久化', () => {
     // fire-and-forget：等待微任务队列
     await new Promise(resolve => setTimeout(resolve, 10));
 
-    // recordSessionEnd 和 billing_pause_set 都会调用 pool.query
+    // 该写入口独立于已退休session生命周期。
+    expect(mockPool.query).toHaveBeenCalledTimes(1);
     const calls = mockPool.query.mock.calls;
     const billingCall = calls.find(
       ([sql]) => typeof sql === 'string' && sql.includes('billing_pause_set')

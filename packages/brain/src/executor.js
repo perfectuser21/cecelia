@@ -4379,7 +4379,7 @@ export {
   clearBillingPause,
   // v9: Task type matching validation
   checkTaskTypeMatch,
-  // v10: Session tracking + provider
+  // v10: Provider routing
   getProviderForTask,
   // v11: Unified model routing
   getModelForTask,
