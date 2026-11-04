@@ -10,6 +10,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import * as pyramidImplementation from '../../../../scripts/test-pyramid-guard.mjs';
 
 // ── Mock pool ──────────────────────────────────────────────────────────────
 const _kvStore = {};
@@ -157,8 +158,23 @@ describe('drillTestPyramidGuard', () => {
 
     const result = await pyramidGuard.drillFn();
     expect(result.fired).toBe(true);
-    expect(result.detail).toMatch(/exit/);
+    expect(result.detail).toMatch(/A1.*孤儿棘轮/);
   }, 15_000);
+  it.each(['异常', '非孤儿失败'])('真实守卫%s不能误认验火或续 last_verified_at', async mode => {
+    const spy = vi.spyOn(pyramidImplementation, 'runGuard');
+    if (mode === '异常') spy.mockImplementation(() => { throw new Error('guard unavailable'); });
+    else spy.mockReturnValue({pass:false, failures:['BASELINE: 无效基线']});
+    const heartbeat = GUARD_REGISTRY.find(g => g.id === 'heartbeat-sentinel');
+    _kvStore['guard-drill-status'] = {[heartbeat.id]: {last_verified_at:new Date().toISOString()}};
+    try {
+      const result = await runGuardDrill({force:true});
+      expect(spy).toHaveBeenCalledOnce();
+      expect(result.fired).toBe(false);
+      expect(result.verified_at).toBeNull();
+      expect(_kvStore['guard-drill-status']['test-pyramid-guard'].last_verified_at).toBeNull();
+    } finally { spy.mockRestore(); }
+  });
+
 });
 
 // ── 5. GUARD_REGISTRY 台账结构 ─────────────────────────────────────────────
