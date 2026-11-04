@@ -18,8 +18,13 @@ TOKEN_FILE="$TMP/cred/cecelia-deploy-token.env"
 mkdir -p "$TMP/cred" "$TMP/bin" "$TMP/home"
 printf 'DEPLOY_TOKEN=%s\n' "$SECRET" > "$TOKEN_FILE"
 chmod 600 "$TOKEN_FILE"
-# launchctl 若被调用就记账（dry-run / --no-load 都不得调用）
-printf '#!/bin/bash\necho "$*" >> "%s/launchctl.log"\n' "$TMP" > "$TMP/bin/launchctl"
+# launchctl 调用记账：dry-run 不调用；--no-load 只允许核对system域。
+cat > "$TMP/bin/launchctl" <<SH
+#!/bin/bash
+echo "\$*" >> "$TMP/launchctl.log"
+printf 'Bad request.\\nCould not find service "com.cecelia.preview-agent" in domain for system\\n' >&2
+exit 113
+SH
 chmod +x "$TMP/bin/launchctl"
 PLIST="$TMP/home/Library/LaunchAgents/com.cecelia.preview-agent.plist"
 REL="$TMP/rel/rel-abc"
@@ -49,7 +54,7 @@ RC2=$?
 set -e
 [ "$RC2" != 0 ] && pass "缺凭据文件拒绝安装" || fail "缺凭据文件拒绝安装" "rc=0 out=$OUT2"
 
-echo "── T3 --no-load 写 plist（600）但不调用 launchctl；文件内无令牌 ──"
+echo "── T3 --no-load 核对system后写plist（600），不重载；文件内无令牌 ──"
 set +e
 OUT3=$(PATH="$TMP/bin:$PATH" HOME="$TMP/home" DEPLOY_TOKEN="$SECRET" DEPLOY_TOKEN_FILE="$TOKEN_FILE" \
   PREVIEW_RELEASES_DIR="$TMP/rel" PREVIEW_AGENT_ROOT="$REL" bash "$INSTALL" --no-load 2>&1)
@@ -64,7 +69,7 @@ if [ -f "$PLIST" ]; then
 else
   fail "plist 已写入" "$OUT3"
 fi
-[ ! -e "$TMP/launchctl.log" ] && pass "--no-load 不调用 launchctl" || fail "--no-load 不调用 launchctl" "$(cat "$TMP/launchctl.log")"
+if grep -Eq '^(bootout|bootstrap|kickstart) ' "$TMP/launchctl.log" 2>/dev/null; then fail "--no-load只读launchctl核对" "$(cat "$TMP/launchctl.log")"; else pass "--no-load只读launchctl核对"; fi
 
 echo "── T4 既不是部署根也不在发布目录下 → 真实安装仍被拒（防在 worktree 里装）──"
 set +e
@@ -82,6 +87,9 @@ cat > "$LC/bin/launchctl" <<SH
 echo "\$*" >> "$LC/calls.log"
 S="$LC/state"
 ghost=\$(cat "\$S/ghost" 2>/dev/null || echo 0)
+if [[ "\$1" = print && "\$2" = system/com.cecelia.preview-agent ]]; then
+  printf 'Bad request.\\nCould not find service "com.cecelia.preview-agent" in domain for system\\n' >&2; exit 113
+fi
 case "\$1" in
   bootout) if [ -e "\$S/loaded" ]; then rm -f "\$S/loaded"; echo 4 > "\$S/ghost"; exit 0; fi; exit 3 ;;
   print) [ -e "\$S/loaded" ] && exit 0; if [ "\$ghost" -gt 0 ]; then echo \$((ghost - 1)) > "\$S/ghost"; exit 0; fi; exit 113 ;;
@@ -112,6 +120,36 @@ echo "$OUT" | grep -q '<string>/usr/bin/env</string>' && fail "不增加env启�
 if grep -q '^kickstart ' "$LC/calls.log"; then fail "bootstrap后不强制二次杀启" "$(cat "$LC/calls.log")"; else pass "bootstrap后不强制二次杀启"; fi
 
 echo "$OUT" | grep -qF "<string>${TMP}/home/.cecelia/preview-runtime/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>" && pass "保留现役nohup运行目录白名单PATH" || fail "保留现役nohup运行目录白名单PATH" "$OUT"
+
+# system 域同名服务不是孤儿：即使用户域为空，no-load 也不能先写 plist。
+for system_case in loaded both denied io malformed_absent; do
+  D="$TMP/system-$system_case"; mkdir -p "$D/bin" "$D/home/Library/LaunchAgents"
+  P="$D/home/Library/LaunchAgents/com.cecelia.preview-agent.plist"
+  printf 'original plist bytes\n' > "$P"; cp "$P" "$D/original"
+  cat > "$D/bin/launchctl" <<SH
+#!/bin/bash
+echo "\$*" >> "$D/calls"
+if [[ "\$1" = print && "\$2" = system/com.cecelia.preview-agent ]]; then
+  case "$system_case" in
+    loaded|both) echo 'system/com.cecelia.preview-agent = { pid = 4242; }'; exit 0 ;;
+    denied) echo 'Operation not permitted' >&2; exit 1 ;;
+    io) echo 'Input/output error' >&2; exit 5 ;;
+    malformed_absent) echo 'Could not find service' >&2; exit 113 ;;
+  esac
+fi
+[[ "$system_case" = both ]] && exit 0
+exit 113
+SH
+  chmod +x "$D/bin/launchctl"
+  set +e
+  R=$(PATH="$D/bin:$PATH" HOME="$D/home" DEPLOY_TOKEN_FILE="$TOKEN_FILE" \
+    PREVIEW_RELEASES_DIR="$TMP/rel" PREVIEW_AGENT_ROOT="$REL" bash "$INSTALL" --no-load 2>&1)
+  C=$?; set -e
+  [ "$C" != 0 ] && pass "$system_case 系统域冲突或未知拒绝no-load" || fail "$system_case 系统域冲突或未知拒绝no-load" "$R"
+  cmp -s "$P" "$D/original" && pass "$system_case 未覆盖已有plist" || fail "$system_case 未覆盖已有plist" "$R"
+  if grep -Eq '^(bootout|bootstrap|kickstart) ' "$D/calls" 2>/dev/null; then fail "$system_case 未改变launchd" "$R"; else pass "$system_case 未改变launchd"; fi
+  echo "$R" | grep -q 'system/com.cecelia.preview-agent' && pass "$system_case 明确系统域原因" || fail "$system_case 明确系统域原因" "$R"
+done
 
 echo ""
 echo "preview-agent-install.test.sh: PASS=$PASS FAIL=$FAIL"
