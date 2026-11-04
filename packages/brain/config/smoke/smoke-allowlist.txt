@@ -138,12 +138,10 @@ harness-gear-smoke.sh
 harness-lifecycle-gates-smoke.sh
 harness-ping-smoke.sh
 harness-planner-v8-smoke.sh
-harness-protocol-smoke.sh
 harness-report-mjs-smoke.sh
 harness-reporter-smoke.sh
 harness-runs-api-smoke.sh
 harness-runs-by-id-smoke.sh
-harness-schema-validation-smoke.sh
 harness-stats-by-journey-smoke.sh
 harness-xian-relay-smoke.sh
 healthz-smoke.sh

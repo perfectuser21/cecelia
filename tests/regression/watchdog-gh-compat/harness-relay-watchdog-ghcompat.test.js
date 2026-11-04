@@ -11,10 +11,23 @@
  * 3. 禁 mock 掉版本差异（execFn 必须真实模拟老版 gh 报错原文）
  * 4. 既有 A1/A5/A2 测试回归保护（本文件内回归断言）
  *
- * 状态：FAILING（修复前）— 修复后转为 PASSING（B1-fallback 和 B2 两条核心 failing）
+ * 当前回归只使用owned命令/DB边界，不声称现场gh版本或真实重派已验证。
  */
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { _parseBaseRepo, resumeStalledRelayRuns } from '../../../packages/brain/src/harness-relay-watchdog.js';
+
+const escaped = vi.hoisted(() => ({ process: vi.fn(), network: vi.fn(), db: vi.fn() }));
+vi.mock('node:child_process', () => Object.fromEntries(['execSync', 'execFile', 'execFileSync', 'exec', 'spawn'].map(name => [name, (...args) => { escaped.process(...args); throw Error('禁止真实进程'); }])));
+vi.mock('../../../packages/brain/src/db.js', () => ({ default: { query: (...args) => { escaped.db(...args); throw Error('禁止默认数据库'); } } }));
+vi.mock('../../../packages/brain/src/notifier.js', () => ({ sendBark: vi.fn(async () => true) }));
+vi.mock('../../../packages/brain/src/orchestrator/kernel-run-store.js', () => ({ patchKernelRunById: vi.fn(async (_db, input) => ({ id: input.runId, phase: input.phase })) }));
+beforeEach(() => { vi.clearAllMocks(); vi.stubGlobal('fetch', (...args) => { escaped.network(...args); throw Error('禁止外联'); }); });
+afterEach(() => {
+  expect(escaped.process).not.toHaveBeenCalled();
+  expect(escaped.network).not.toHaveBeenCalled();
+  expect(escaped.db).not.toHaveBeenCalled();
+  vi.unstubAllGlobals();
+});
 
 // ── 辅助：构建最小可用的 fake DB pool ──────────────────────────────────────────
 function buildFakePool({ runs = [], task = null } = {}) {
@@ -109,27 +122,22 @@ describe('[BEHAVIOR] B1 — 老版 gh `--json` 报错走 pr view statusCheckRoll
     // 修复前：resumed=0（保守跳过）→ 此断言 FAIL
     // 修复后：resumed=1（CI 红 → 重点火）→ 此断言 PASS
     expect(out.resumed).toBe(1);
+    expect(spawnFn).toHaveBeenCalledTimes(1);
+    expect(execFn.mock.calls.some(([cmd]) => cmd.includes('statusCheckRollup'))).toBe(true);
   });
 
-  it('[B1-execTolerant-rethrow] execTolerant：err.stdout 为空时必须 re-throw', () => {
-    // 这是 execTolerant 的固定行为（不受修复影响）
-    // 目的：记录 re-throw 行为，确保修复不破坏 execTolerant 语义
-    function execTolerant(execFn, cmd) {
-      try { return execFn(cmd); }
-      catch (err) {
-        if (typeof err.stdout === 'string' && err.stdout.length > 0) return err.stdout;
-        throw err;
-      }
-    }
-    const oldGhExecFn = (cmd) => {
-      if (cmd.includes('--json')) {
-        const err = new Error('unknown flag: --json');
-        err.stdout = '';
-        throw err;
-      }
-      return '';
-    };
-    expect(() => execTolerant(oldGhExecFn, 'gh pr checks --json state')).toThrow('unknown flag: --json');
+  it.each(['authentication failed', 'network unavailable'])('真实resume对%s且无stdout保守拒绝，不调用spawn', async message => {
+    const execFn = vi.fn(cmd => {
+      if (cmd.includes('docker ps')) return '';
+      if (cmd.includes('--json state') && !cmd.includes('gh pr checks')) return JSON.stringify({ state: 'OPEN' });
+      const error = new Error(message); error.stdout = ''; throw error;
+    });
+    const spawnFn = vi.fn();
+    const out = await resumeStalledRelayRuns({ pool: buildFakePool({ runs: [buildOpenPrRun()], task: buildInProgressTask() }), execFn, spawnFn });
+    expect(execFn.mock.calls.some(([cmd]) => cmd.includes('gh pr checks'))).toBe(true);
+    expect(out.resumed).toBe(0);
+    expect(spawnFn).not.toHaveBeenCalled();
+    expect(execFn.mock.calls.some(([cmd]) => cmd.includes('--json mergeStateStatus'))).toBe(false);
   });
 
   it('[B3-empty-statusCheckRollup] 空数组 statusCheckRollup → pending → resumed=0', async () => {
