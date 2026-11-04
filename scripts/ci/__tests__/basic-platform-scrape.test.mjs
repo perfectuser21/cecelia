@@ -9,14 +9,15 @@ import {commandsFor} from '../run-basic-check.mjs';
 
 const script = resolve('packages/workflows/n8n/scripts/platform_scrape.sh');
 
-function run({status = '200', curlExit = 0, writeback = true, platformEnv, scraperExit = 0} = {}) {
+function run({status = '200', curlExit = 0, writeback = true, platformEnv, scraperExit = 0,
+  scraperStderr, platform = 'douyin', missingScraper = false, missingNode = false} = {}) {
   const directory = mkdtempSync(join(tmpdir(), 'platform-scrape-contract-'));
   const bin = join(directory, 'bin');
   mkdirSync(bin);
   const capture = join(directory, 'request.json');
   // Only the scraper and curl boundary are fixtures; execute the real shell and Node parsers.
   writeFileSync(join(directory, 'scraper-douyin-v3.js'),
-    `console.log(JSON.stringify({success:true, platform:'douyin', count:1, items:[{contentId:'fixture-1', views:7}]})); process.exit(${scraperExit});\n`);
+    `${scraperStderr === undefined ? "console.log(JSON.stringify({success:true, platform:'douyin', count:1, items:[{contentId:'fixture-1', views:7}]}));" : `process.stderr.write(${JSON.stringify(scraperStderr)});`} process.exit(${scraperExit});\n`);
   writeFileSync(join(bin, 'curl'), `#!${process.execPath}
 const fs = require('node:fs');
 const args = process.argv.slice(2);
@@ -32,8 +33,10 @@ process.exit(Number(process.env.FIXTURE_CURL_EXIT));
     PUBLISH_TASK_ID:'fixture-task', PIPELINE_ID:'fixture-pipeline'};
   delete env.PLATFORM;
   if (platformEnv !== undefined) env.PLATFORM = platformEnv;
+  if (missingScraper) env.SCRAPER_DIR = join(directory, 'missing "path\\\n');
+  if (missingNode) env.PATH = bin;
   try {
-    const result = spawnSync('bash', [script, 'douyin'], {env, encoding:'utf8', timeout:10000});
+    const result = spawnSync('/bin/bash', [script, platform], {env, encoding:'utf8', timeout:10000});
     assert.ifError(result.error);
     // This is the workflow consumer's exact whole-stdout parsing contract.
     const output = JSON.parse(result.stdout.trim());
@@ -90,8 +93,43 @@ test('未配置写回保持采集JSON，不调用curl', () => {
 });
 
 test('采集器退出失败不写回，不因curl成功转绿', () => {
-  const {output, request} = run({scraperExit:9});
+  const {output, request, status} = run({scraperExit:9});
+  assert.equal(status, 1);
   assert.equal(output.success, false);
+  assert.equal(request, null);
+});
+
+test('失败采集器多行和反斜线错误保留为合法单JSON且非零退出', () => {
+  const message = 'first failure\\path\nsecond "failure"\t\r\b\f';
+  const {output, request, status, stderr} = run({scraperExit:9, scraperStderr:message});
+  assert.equal(status, 1);
+  assert.equal(output.success, false);
+  assert.ok(output.error.includes(message));
+  assert.equal(request, null);
+  assert.equal(stderr, '');
+});
+
+test('未知平台的引号、反斜线及全部JSON控制字符安全编码', () => {
+  const platform = 'unknown"\\' + Array.from({length:31}, (_, i) => String.fromCharCode(i + 1)).join('');
+  const {output, status, request} = run({platform});
+  assert.equal(status, 1);
+  assert.equal(output.platform, platform);
+  assert.equal(output.error, `unknown platform: ${platform}`);
+  assert.equal(request, null);
+});
+
+test('找不到采集器的含引号换行路径安全编码', () => {
+  const {output, status, request} = run({missingScraper:true});
+  assert.equal(status, 1);
+  assert.match(output.error, /missing "path\\\n/);
+  assert.equal(request, null);
+});
+
+test('Node缺失也能输出合法错误JSON，无需Node编码器', () => {
+  const {output, status, request} = run({missingNode:true, platform:'douyin"\\\n'});
+  assert.equal(status, 1);
+  assert.equal(output.platform, 'douyin"\\\n');
+  assert.equal(output.error, 'node is not installed or not in PATH');
   assert.equal(request, null);
 });
 
