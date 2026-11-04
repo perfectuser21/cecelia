@@ -20,7 +20,7 @@ function fixture(t){
   stub('gh','if [ "$GH_FAIL" = 1 ]; then exit 23; fi; printf "https://fixture.invalid/comment/1\\n"');
   stub('curl',`printf 'request\\n' >> "$RUNNER_TEMP/requests"
 while [ "$#" -gt 0 ]; do
-  if [ "$1" = '--data-binary' ]; then shift; cp "${1#@}" "$RUNNER_TEMP/captured.json"; fi
+  if [ "$1" = '--data-binary' ]; then shift; cp "$(printf '%s' "$1" | cut -c2-)" "$RUNNER_TEMP/captured.json"; fi
   shift
 done
 case "$CURL_MODE" in
