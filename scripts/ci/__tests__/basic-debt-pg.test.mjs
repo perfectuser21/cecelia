@@ -7,6 +7,10 @@ import privatePg from '../debt-pg.config.mjs';
 import { createRequire } from 'node:module';
 import { relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, symlinkSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, dirname } from 'node:path';
+import { readManifest } from '../run-debt-pg.mjs';
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 const glob = createRequire(import.meta.url)('fast-glob');
 
@@ -56,4 +60,28 @@ test('私有PG自动集合非空，正常Deep不得重复执行私有连接文�
   assert.ok(selected.length >= 35);
   assert.ok(selected.includes('packages/brain/src/__tests__/integration/learning-current-contract.pg.integration.test.js'));
   assert.deepEqual(selected.filter(p => ordinary.includes(p)), []);
+});
+test('manifest只接收实际普通文件，软链/同名目录/缺失文件必须失败', t => {
+  const directory = mkdtempSync(join(tmpdir(), 'debt-pg-manifest-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const source = readFileSync(join(root, 'scripts/ci/debt-pg-tests.json'));
+  const manifest = JSON.parse(source);
+  mkdirSync(join(directory, 'scripts/ci'), { recursive: true });
+  writeFileSync(join(directory, 'scripts/ci/debt-pg-tests.json'), source);
+  for (const row of manifest.tests) {
+    const path = join(directory, row.path);
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, '// isolated ordinary fixture\n');
+  }
+  assert.deepEqual(readManifest(directory), manifest);
+  const target = join(directory, manifest.tests[0].path);
+  rmSync(target);
+  assert.throws(() => readManifest(directory), /regular file|ENOENT/);
+  mkdirSync(target);
+  assert.throws(() => readManifest(directory), /regular file/);
+  rmSync(target, { recursive: true });
+  const outside = join(directory, 'outside.js');
+  writeFileSync(outside, '// symlink target\n');
+  symlinkSync(outside, target);
+  assert.throws(() => readManifest(directory), /regular file/);
 });
