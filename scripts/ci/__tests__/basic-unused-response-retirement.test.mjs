@@ -11,6 +11,7 @@ const BASE='ce20b5a29123c9ade1a0bc4aa2753e3ea3fe310d';
 const names=['observer-response-retired-v1.json','systemic-unused-export-v1.json'];
 const catalogs=names.map(name=>JSON.parse(readFileSync(join(root,'config/verification-retirements',name))));
 const retired=catalogs.flatMap(c=>c.records.map(r=>r.path));
+const absent=[...new Set([...retired,...catalogs.flatMap(c=>c.records.flatMap(r=>r.required_absent_paths||[]))])];
 function fixture(fn){
  const temp=mkdtempSync(join(tmpdir(),'unused-response-retirement-')),source=join(temp,'source'),control=join(temp,'control');
  const git=(dir,...args)=>execFileSync('git',['-c','gc.auto=0','-c','maintenance.auto=false','-c','gc.autoDetach=false','-C',dir,...args],
@@ -21,9 +22,9 @@ function fixture(fn){
   for(const key of ['gc.auto','maintenance.auto','gc.autoDetach'])git(source,'config',key,key.endsWith('Detach')?'false':'0');
   const inputs=[...new Set(catalogs.flatMap(c=>[c.base_config.path,c.replacement_config.path,c.skill_selector.path,
    ...c.replacement_inputs.map(x=>(x.blob||x).path),...c.records.flatMap(r=>(r.policy_sources||[]).map(x=>x.path)),...c.entry_support.map(x=>x.path)]))];
-  git(source,'sparse-checkout','init','--no-cone');git(source,'sparse-checkout','set',...[...inputs,...retired].map(p=>'/'+p));
+  git(source,'sparse-checkout','init','--no-cone');git(source,'sparse-checkout','set',...[...inputs,...absent].map(p=>'/'+p));
   git(source,'checkout','-q',BASE);git(source,'remote','set-url','origin','https://github.com/perfectuser21/cecelia.git');
-  for(const path of retired)rmSync(join(source,path));
+  for(const path of absent)rmSync(join(source,path),{force:true});
   for(const path of inputs){mkdirSync(dirname(join(source,path)),{recursive:true});writeFileSync(join(source,path),readFileSync(join(root,path)));}
   commit(source);mkdirSync(control);git(control,'init','-q');git(control,'remote','add','origin','https://github.com/perfectuser21/cecelia.git');
   cpSync(join(root,'config/verification-retirements'),join(control,'config/verification-retirements'),{recursive:true});commit(control);
@@ -42,7 +43,7 @@ test('两份旧PG测试仅取得各自精确退休候选，保留合同不能伪
  assert.deepEqual(verifyVerificationRetirementCandidates(source,{...options(),proof}),proof);
 }));
 for(const path of ['packages/brain/vitest.config.js','scripts/ci/debt-pg-tests.json',
- 'packages/brain/src/__tests__/mitigation-state.test.js','packages/brain/src/alertness-actions.js','packages/brain/src/quarantine.js']){
+ 'packages/brain/src/__tests__/drain.test.js','packages/brain/src/dispatcher.js','packages/brain/src/quarantine.js']){
  test('配置、实际PG入口或保留合同漂移拒绝：'+path,()=>fixture(({source,commit,options})=>{
   const file=join(source,path);writeFileSync(file,readFileSync(file,'utf8')+'\n');commit(source);
   assert.throws(()=>collectVerificationRetirementCandidates(source,options()),/CONFIG|POLICY|REPLACEMENT/);
@@ -55,6 +56,11 @@ test('候选自己重算目录不能扩展删除许可',()=>fixture(({source,con
 test('旧入口重现且改变字节不能冒充删除',()=>fixture(({source,git,commit,options})=>{
  const p=retired[0];mkdirSync(dirname(join(source,p)),{recursive:true});writeFileSync(join(source,p),git(source,'show',BASE+':'+p)+'\n// resurrected\n');commit(source);
  assert.throws(()=>collectVerificationRetirementCandidates(source,options()),/DELETION_REQUIRED/);
+}));
+test('旧动作模块即使仅恢复恒false兼容getter也拒绝退休认领',()=>fixture(({source,commit,options})=>{
+ const path=join(source,'packages/brain/src/alertness-actions.js');mkdirSync(dirname(path),{recursive:true});
+ writeFileSync(path,'export const getMitigationState=()=>({p2_paused:false,drain_mode_requested:false});\n');commit(source);
+ assert.throws(()=>collectVerificationRetirementCandidates(source,options()),/POLICY_ABSENCE_REQUIRED/);
 }));
 test('目录ce20锚必须真实位于候选基线祖先，不能只信JSON声明',()=>fixture(({source,options})=>{
  assert.throws(()=>collectVerificationRetirementCandidates(source,options('fadbf32852cdb30f71e34dda9ab81b521bda484b')),/CATALOG_BASE_ANCESTRY_MISMATCH/);

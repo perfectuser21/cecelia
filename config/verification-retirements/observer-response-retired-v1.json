@@ -110,10 +110,10 @@
       ],
       "audit": {
         "retired": [
-          "旧响应入口及16旧PG例无现役消费者；后续深核getter两flag亦无现役producer，3处读取是不可达形式分支，连同getter模块/2例常量兼容测试和27个无效mock一并清退。"
+          "旧17个PG用例覆盖16个无现役消费者的旧入口合同和1个无现役生产者的getter拷贝合同；getter两flag无producer，三处读取分支不可达，模块、常量兼容测试与27个旧mock一并清退。防复活回归迁入真实退休认领负例。"
         ],
         "retained": [
-          "真实isDraining producer、canDispatch/getDispatchRate等级门、common-runner持久tick硬门与隔离门均保留；替代只证明现役门仍被选择和执行，不宣称旧P2暂停被实现。"
+          "真实isDraining producer、canDispatch/getDispatchRate等级门、common-runner持久tick硬门与隔离门均保留；这些输入仅给选择候选，实际执行另看同候选CI收据，不宣称旧P2暂停功能已实现。"
         ],
         "reviewed_source_base": "ce20b5a29123c9ade1a0bc4aa2753e3ea3fe310d",
         "historical_execution": {
@@ -126,7 +126,7 @@
             "status": "passed"
           },
           "source_file_same_as_review_base": true,
-          "interpretation": "17例确实通过真实PG，但不代表16旧入口有当前生产消费者。"
+          "interpretation": "17例确实通过真实PG；没有现役入口/状态生产者，不代表当前派发保护效果已锁住。"
         },
         "dead_state_evidence": {
           "reviewed_source_revision": "ce20b5a29123c9ade1a0bc4aa2753e3ea3fe310d",
