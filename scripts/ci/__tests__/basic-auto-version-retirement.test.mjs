@@ -68,6 +68,12 @@ test('新版主CI版本门具备固定整组来源闭包；历史组合保留且
   assert.equal(basicCiWorkflowProven(ci), true);
   const collect = (readSource = source.readSource) => collectBasicCiSources({ ...source, read: readSource, ci, relations, parse: ast });
   await collect();
+  // 同工作流的上一整组仍可读，新增必需PG入口不追改历史来源。
+  const previous = '289ddd8d0690f154006c5586926277c48e10f716';
+  await collectBasicCiSources({ revision: previous,
+    paths: git('ls-tree', '-rz', '--name-only', previous).split('\0').filter(Boolean),
+    read: async path => git('show', `${previous}:${path}`),
+    ci: git('show', `${previous}:.github/workflows/ci.yml`), relations: [], parse: ast });
   // 从已合并main读取完整历史组，不能拿旧Brain配置与新身份门工作流拼成旧证明。
   const historical = '53714060cd53adb9b1247c05bde23e7667cd8fb4';
   await collectBasicCiSources({ revision: historical,

@@ -14,6 +14,9 @@ docker exec "$STAGING_CONTAINER" curl -fsS --max-time 15 http://localhost:5222/a
 docker exec "$STAGING_CONTAINER" curl -fsS --max-time 15 'http://localhost:5222/api/brain/tasks?limit=1' | node -e '
  const d=JSON.parse(require("fs").readFileSync(0,"utf8"));if(!Array.isArray(d)||d.some(t=>!t||typeof t!=="object"||!/^([a-f0-9]{8}-){1}[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(t.id)||typeof t.title!=="string"||typeof t.status!=="string"))throw Error("候选任务读回无效");
 '
+docker exec "$STAGING_CONTAINER" curl -fsS --max-time 15 http://localhost:5222/api/brain/machines | node -e '
+ const d=JSON.parse(require("fs").readFileSync(0,"utf8"));if(!Array.isArray(d))throw Error("候选机器投影读回无效");
+'
 database=$(docker exec "$STAGING_CONTAINER" node --input-type=module -e '
  const {default:pg}=await import("pg"),{DB_DEFAULTS}=await import("./src/db-config.js");
  if(DB_DEFAULTS.host!=="stage-db"||DB_DEFAULTS.database!=="cecelia_staging")throw Error("候选连接配置不隔离");
@@ -25,4 +28,4 @@ printf '%s' "$database" | node -e '
  if(d.database!=="cecelia_staging"||d.host!=="stage-db"||d.tasks_table!==true)throw Error("候选数据库身份读回不符");
  if(process.env.STAGING_VERIFY_OUTPUT)fs.writeFileSync(process.env.STAGING_VERIFY_OUTPUT,JSON.stringify(d));
 '
-echo 'STAGING_OK：候选同 SHA、隔离运行、关闭 tick 且任务 API 读回成功'
+echo 'STAGING_OK：候选同 SHA、隔离运行、关闭 tick 且任务/机器 API 读回成功'

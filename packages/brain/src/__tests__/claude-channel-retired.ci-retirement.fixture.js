@@ -16,11 +16,14 @@ export function ciVersionGuardCohorts(previous) {
  // 运行时消费选路reader：完整16成员与marker0/1分别成组，旧身份组不变。
  const runtimeScope={...identity,'existing-ops-stage-source.js':'a56f43da6e5d3989057ce075cb4cb9b14de4631c65cf2783dfd998a946980e43'};
  const concurrency={...runtimeScope,'existing-ops-stage-source.js':'8172bbfe9377f6672911ff1be4afb6f652932ce7fefe506764e08412e34508a1'};
+ // 已独审机器投影只追加完整16成员组；旧concurrency及所有历史组保持原样。
+ const machineProjection={...concurrency,'existing-ops-stage-source.js':'4f06cabe9fb447c34d8e24c290cb1a137d956a6cb67ca1ef487344485997c69b'};
  return [current,{...current,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
   retired,{...retired,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
   identity,{...identity,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
   runtimeScope,{...runtimeScope,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
-  concurrency,{...concurrency,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'}];
+  concurrency,{...concurrency,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
+  machineProjection,{...machineProjection,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'}];
 }
 
 export function registerCiRetirementGuardTests({root,base,memoBase,scan}) {
@@ -30,6 +33,16 @@ export function registerCiRetirementGuardTests({root,base,memoBase,scan}) {
   const historical=()=>new Map([...base().keys()].map(file=>[file,execFileSync('git',[
    '--no-replace-objects','show','fadbf32852cdb30f71e34dda9ab81b521bda484b:'+path.relative(path.resolve(root,'../../../..'),file),
   ],{cwd:root,encoding:'utf8',maxBuffer:1024*1024})]));
+  it('机器投影reader仅追加完整新组合，原concurrency整组marker0/1仍可回放',()=>{
+   const prior=new Map([...base().keys()].map(file=>[file,execFileSync('git',[
+    '--no-replace-objects','show','289ddd8d0690f154006c5586926277c48e10f716:'+path.relative(path.resolve(root,'../../../..'),file),
+   ],{cwd:root,encoding:'utf8',maxBuffer:1024*1024})]));
+   for(const sources of [prior,base()])for(const marker of [0,1]){
+    expect(sources.size).toBe(16);
+    sources.set(source,sources.get(source).replace(/EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = [01]/,'EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = '+marker));
+    for(const kind of ['build','stage','native-evidence'])expect(scan(sources,path.join(root,`existing-ops-${kind}-envelopes.js`))).toEqual([]);
+   }
+  });
   it('真实版本增量门当前完整reader可读，发布前旧AutoVersion reader仍独立可重放',()=>{
    for(const sources of [historical(),base()])for(const marker of [0,1]){
     sources.set(source,sources.get(source).replace(/EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = [01]/,
