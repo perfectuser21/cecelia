@@ -6,12 +6,20 @@ on:
       - 'apps/dashboard/**'
       - 'apps/api/features/**'
       - '.github/workflows/ci-dashboard-pwa-e2e.yml'
+      - 'tests/regression/manual-ui/**'
+      - 'tests/regression/cockpit-route-wire/**'
+      - 'tests/regression/relay-07b2fd3b/**'
+      - 'tests/regression/capture-destination-link/**'
   push:
     branches: [main]
     paths:
       - 'apps/dashboard/**'
       - 'apps/api/features/**'
       - '.github/workflows/ci-dashboard-pwa-e2e.yml'
+      - 'tests/regression/manual-ui/**'
+      - 'tests/regression/cockpit-route-wire/**'
+      - 'tests/regression/relay-07b2fd3b/**'
+      - 'tests/regression/capture-destination-link/**'
 
 jobs:
   pwa-upgrade:
@@ -43,3 +51,8 @@ jobs:
 
       - name: Verify task desk receipts
         run: npm run test:task-desk
+
+      - name: Verify current cockpit inbox and destination routes
+        run: |
+          GIT_SHA="$GITHUB_SHA" npx --no-install vite build --outDir .dist-pwa-e2e
+          node e2e/playwright-cli.mjs test --config ../../tests/regression/manual-ui/playwright.config.ts
