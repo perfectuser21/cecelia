@@ -104,7 +104,14 @@ set -e
 grep -q '^print ' "$LC/calls.log" 2>/dev/null && pass "bootout 后轮询 print" || fail "bootout 后轮询 print" "$(cat "$LC/calls.log" 2>/dev/null)"
 [ "$(grep -c '^bootstrap ' "$LC/calls.log" 2>/dev/null)" -ge 2 ] && pass "bootstrap 失败后重试" || fail "bootstrap 失败后重试" "$(cat "$LC/calls.log" 2>/dev/null)"
 [ -e "$LC/state/loaded" ] && pass "最终服务已装载" || fail "最终服务已装载" "$(cat "$LC/calls.log" 2>/dev/null)"
-grep -q '^kickstart ' "$LC/calls.log" 2>/dev/null && pass "装载后 kickstart" || fail "装载后 kickstart" "$(cat "$LC/calls.log" 2>/dev/null)"
+[ -e "$LC/state/loaded" ] && pass "RunAtLoad接管启动" || fail "RunAtLoad接管启动" "$(cat "$LC/calls.log" 2>/dev/null)"
+
+# ProgramArguments 必须直接使用验过的真实 Node；RunAtLoad 已启动，无需强制再杀一次。
+echo "$OUT" | grep -qF "<string>$(node -p 'process.execPath')</string>" && pass "直接固定已验Node绝对路径" || fail "直接固定已验Node绝对路径" "$OUT"
+echo "$OUT" | grep -q '<string>/usr/bin/env</string>' && fail "不增加env启动层" "$OUT" || pass "不增加env启动层"
+if grep -q '^kickstart ' "$LC/calls.log"; then fail "bootstrap后不强制二次杀启" "$(cat "$LC/calls.log")"; else pass "bootstrap后不强制二次杀启"; fi
+
+echo "$OUT" | grep -qF "<string>${TMP}/home/.cecelia/preview-runtime/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>" && pass "保留现役nohup运行目录白名单PATH" || fail "保留现役nohup运行目录白名单PATH" "$OUT"
 
 echo ""
 echo "preview-agent-install.test.sh: PASS=$PASS FAIL=$FAIL"

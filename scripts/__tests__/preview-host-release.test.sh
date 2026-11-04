@@ -36,7 +36,7 @@ setup() {
   git init -q --bare "$TMP/origin.git"
   git init -q -b main "$TMP/seed"
   mkdir -p "$TMP/seed/scripts/preview-agent" "$TMP/seed/scripts/lib" "$TMP/seed/packages/brain"
-  for f in preview-agent-install.sh preview-agent.mjs preview-reaper.sh preview-agent/deploy-token.mjs lib/launchd-reload.sh; do
+  for f in preview-agent-install.sh preview-agent.mjs preview-reaper.sh preview-agent/deploy-token.mjs lib/launchd-reload.sh lib/preview-agent-owner.sh; do
     [ -f "$SRC_SCRIPTS/$f" ] && cp "$SRC_SCRIPTS/$f" "$TMP/seed/scripts/$f"
   done
   echo '{"name":"seed","private":true}' > "$TMP/seed/package.json"
@@ -84,6 +84,7 @@ CR
   cat > "$BIN/crontab" <<SH
 #!/bin/bash
 if [ "\$1" = "-l" ]; then [ -f "$TMP/crontab.txt" ] && cat "$TMP/crontab.txt" && exit 0; echo "no crontab" >&2; exit 1; fi
+if [ -e "$TMP/cron-reject-writes" ]; then echo "crontab-denied" >> "$TMP/calls.log"; echo "Operation not permitted" >&2; exit 1; fi
 if [ "\$1" = "-" ]; then cat > "$TMP/crontab.txt"; else cp "\$1" "$TMP/crontab.txt"; fi
 echo "crontab-write" >> "$TMP/calls.log"
 SH
@@ -108,7 +109,7 @@ case "\$1" in
     if [ -e "\$S/loaded" ]; then rm -f "\$S/loaded"; echo "\${LC_GHOST_PRINTS:-0}" > "\$S/ghost"; exit 0; fi
     echo "Boot-out failed: 3: No such process" >&2; exit 3 ;;
   print)
-    [ -e "\$S/loaded" ] && exit 0
+    [ -e "\$S/loaded" ] && { if [ -e "$TMP/bad-owner" ] || { [ -e "$TMP/bad-owner-after" ] && [[ "\$wd" == */rel-* ]]; }; then echo "pid = 9999"; else echo "pid = 4242"; fi; exit 0; }
     if [ "\$ghost" -gt 0 ]; then echo \$((ghost - 1)) > "\$S/ghost"; exit 0; fi
     echo "Could not find service" >&2; exit 113 ;;
   bootstrap)
@@ -120,6 +121,19 @@ case "\$1" in
     mkdir -p "\$wd/.runtime" && touch "\$wd/.runtime/host-disk.json"; exit 0 ;;
 esac
 exit 0
+SH
+  # 原生归属探针替身：PID/端口/目录/命令分别可反例注入。
+  cat > "$BIN/lsof" <<SH
+#!/bin/bash
+wd=\$(awk '/<key>WorkingDirectory<\/key>/{f=1} f&&/<string>/{gsub(/.*<string>|<\/string>.*/,"");print;exit}' "$PREVIEW_AGENT_PLIST")
+if [[ " \$* " == *" -d cwd "* ]]; then
+  if [ -e "$TMP/bad-cwd" ]; then echo n/other/release; else echo "n\$wd"; fi
+else echo 4242; fi
+SH
+  cat > "$BIN/ps" <<SH
+#!/bin/bash
+wd=\$(awk '/<key>WorkingDirectory<\/key>/{f=1} f&&/<string>/{gsub(/.*<string>|<\/string>.*/,"");print;exit}' "$PREVIEW_AGENT_PLIST")
+echo "node \$wd/scripts/preview-agent.mjs"
 SH
   # mock：npm（只建目录、记账）
   cat > "$BIN/npm" <<SH
@@ -271,6 +285,60 @@ set +e; OUT=$(bash "$RELEASE" --apply 2>&1); RC=$?; set -e
 [ "$RC" != 0 ] && pass "未托管 owner 拒绝发布" || fail "未托管 owner 拒绝发布" "$OUT"
 cmp -s "$PREVIEW_AGENT_PLIST" "$TMP/plist.orig" && cmp -s "$TMP/crontab.txt" "$TMP/crontab.orig" && pass "未托管 owner 原配置不变" || fail "未托管 owner 原配置不变" "$OUT"
 if grep -E 'launchctl (bootout|bootstrap|kickstart)|npm |crontab-write' "$TMP/calls.log" >/dev/null 2>&1; then fail "只读 owner 检测" "$(cat "$TMP/calls.log")"; else pass "只读 owner 检测"; fi
+teardown
+
+echo "── T9 loaded 但PID不属于端口：发布前拒绝 ──"
+setup
+touch "$TMP/bad-owner"
+set +e; OUT=$(bash "$RELEASE" --apply 2>&1); RC=$?; set -e
+[ "$RC" != 0 ] && pass "loaded不是owner" || fail "loaded不是owner" "$OUT"
+cmp -s "$PREVIEW_AGENT_PLIST" "$TMP/plist.orig" && cmp -s "$TMP/crontab.txt" "$TMP/crontab.orig" && pass "坏owner原配置保持" || fail "坏owner原配置保持" "$OUT"
+teardown
+
+echo "── T10 cron无写权限：全组件必须在安装前拒绝 ──"
+setup
+touch "$TMP/cron-reject-writes"
+set +e; OUT=$(bash "$RELEASE" --apply 2>&1); RC=$?; set -e
+[ "$RC" != 0 ] && pass "cron拒写全组件发布失败" || fail "cron拒写全组件发布失败" "$OUT"
+cmp -s "$PREVIEW_AGENT_PLIST" "$TMP/plist.orig" && cmp -s "$TMP/crontab.txt" "$TMP/crontab.orig" && pass "cron失败前未切代理" || fail "cron失败前未切代理" "$OUT"
+if grep -E 'launchctl (bootout|bootstrap|kickstart)|npm ' "$TMP/calls.log" >/dev/null 2>&1; then fail "权限探针先于安装" "$OUT"; else pass "权限探针先于安装"; fi
+teardown
+
+echo "── T11 显式agent组件：cron拒写仍可发布且旧reaper保留 ──"
+setup
+mkdir -p "$PREVIEW_RELEASES_DIR/fleet-preserve"
+touch "$TMP/cron-reject-writes"
+set +e; OUT=$(PREVIEW_RELEASE_KEEP=2 bash "$RELEASE" --apply --component agent 2>&1); RC=$?; set -e
+[ "$RC" = 0 ] && pass "agent组件可独立发布" || fail "agent组件可独立发布" "$OUT"
+cmp -s "$TMP/crontab.txt" "$TMP/crontab.orig" && pass "agent模式cron字节保全" || fail "agent模式cron字节保全" "$OUT"
+if grep -E 'crontab-write|crontab-denied' "$TMP/calls.log" >/dev/null 2>&1; then fail "agent模式不调用cron写接口" "$OUT"; else pass "agent模式不调用cron写接口"; fi
+[ "$(cat "$PREVIEW_RELEASES_DIR/.current" 2>/dev/null)" = "$PREVIEW_RELEASES_DIR/rel-${TARGET_SHA:0:12}" ] && pass "agent模式记录实际发布" || fail "agent模式记录实际发布" "$OUT"
+[ -d "$OLD" ] && pass "旧reaper依赖锚保留" || fail "旧reaper依赖锚保留" "$OUT"
+[ -d "$PREVIEW_RELEASES_DIR/fleet-preserve" ] && pass "agent发布不执行快照清理" || fail "agent发布不执行快照清理" "$OUT"
+teardown
+
+echo "── T12 agent模式失败恢复且不碰cron ──"
+setup
+touch "$TMP/cron-reject-writes" "$FORCE_BAD_SHA_FILE"
+set +e; OUT=$(bash "$RELEASE" --apply --component agent 2>&1); RC=$?; set -e
+[ "$RC" != 0 ] && echo "$OUT" | grep -q "回滚" && cmp -s "$PREVIEW_AGENT_PLIST" "$TMP/plist.orig" && pass "agent验活失败恢复旧plist" || fail "agent验活失败恢复旧plist" "$OUT"
+if grep -E 'crontab-write|crontab-denied' "$TMP/calls.log" >/dev/null 2>&1; then fail "agent回退不调用cron写接口" "$OUT"; else pass "agent回退不调用cron写接口"; fi
+teardown
+
+echo "── T13 新实例PID归属错配：不得记录已发布 ──"
+setup
+touch "$TMP/bad-owner-after"
+set +e; OUT=$(bash "$RELEASE" --apply --component agent 2>&1); RC=$?; set -e
+[ "$RC" != 0 ] && echo "$OUT" | grep -q "归属失败" && cmp -s "$PREVIEW_AGENT_PLIST" "$TMP/plist.orig" && pass "新owner错误恢复前驱" || fail "新owner错误恢复前驱" "$OUT"
+[ ! -e "$PREVIEW_RELEASES_DIR/.current" ] && pass "owner错误不记录已发布" || fail "owner错误不记录已发布" "$OUT"
+teardown
+
+echo "── T14 PID匹配但目录错误：发布前保持旧实例 ──"
+setup
+touch "$TMP/bad-cwd"
+set +e; OUT=$(bash "$RELEASE" --apply --component agent 2>&1); RC=$?; set -e
+[ "$RC" != 0 ] && cmp -s "$PREVIEW_AGENT_PLIST" "$TMP/plist.orig" && pass "目录错配拒绝且保持原plist" || fail "目录错配拒绝且保持原plist" "$OUT"
+if grep -E 'launchctl (bootout|bootstrap|kickstart)|npm |crontab-write' "$TMP/calls.log" >/dev/null 2>&1; then fail "目录错配无切换副作用" "$OUT"; else pass "目录错配无切换副作用"; fi
 teardown
 
 echo ""
