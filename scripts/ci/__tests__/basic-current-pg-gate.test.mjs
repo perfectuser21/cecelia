@@ -10,6 +10,7 @@ const required = [
   'src/__tests__/integration/task-lease-device-pool.pg.integration.test.js',
   'src/__tests__/integration/executor-startup-headed-owner.pg.integration.test.js',
   'src/__tests__/integration/workflow-common-terminal.pg.integration.test.js',
+  'src/__tests__/integration/linux-onboarding-projection.pg.integration.test.js',
 ];
 function selected() {
   const steps = commandsFor('brain-integration');

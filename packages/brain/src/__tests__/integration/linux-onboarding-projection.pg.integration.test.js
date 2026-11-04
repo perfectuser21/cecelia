@@ -102,3 +102,23 @@ it.each(['version-current','version-state','auth-revoked','auth-expired','grant-
  'scheduler-only':`UPDATE system_registry SET metadata='{"role":"worker","scheduler_only":true}'`};
  await pool.query(statements[kind]);await equivalent(false);
 });
+
+it('scope内非法runtime JSON真实22P02并保持failclosed；metadata不能授予执行',async()=>{
+ await pool.query(`UPDATE tasks SET payload=jsonb_set(payload,'{linux_onboarding,runtime_json}','"invalid-json"') WHERE id=$1`,[ids.task]);
+ let failure;const db={query:async(...args)=>{try{return await pool.query(...args);}catch(e){failure=e.code;throw e;}}};
+ const value=(await projectLinuxExecution(db,[{...machine,metadata:{onboarding:{},execution:true}}]))[0];
+ expect(failure).toBe('22P02');expect(value.execution).toEqual({enabled:false,expires_at:null,verified_until:null});
+});
+it('scope外非法runtime JSON不毒化已验证目标；仅裁剪错误面而不放宽本scope身份',async()=>{
+ await pool.query(`INSERT INTO tasks VALUES($1,$2,'{"actor":"linux-pool-onboarding"}','completed',clock_timestamp())`,[randomUUID(),JSON.stringify({linux_onboarding:{machine_registry_id:randomUUID(),parent_task_id:ids.source,runtime_json:'invalid-json',phase:'active',identity_ok:'true',identity_checked_at:new Date().toISOString()}})]);
+ expect((await actual()).enabled).toBe(true);
+});
+it('多个scope及无scope机器不互相污染，foreign newer不能压目标',async()=>{
+ const foreign={id:randomUUID(),metadata:{onboarding:{}}},plain={id:randomUUID(),metadata:{}};
+ await pool.query(`INSERT INTO tasks VALUES($1,$2,NULL,'failed',clock_timestamp())`,[randomUUID(),JSON.stringify({linux_onboarding:{machine_registry_id:foreign.id}})]);
+ const rows=await projectLinuxExecution(pool,[machine,foreign,plain]);expect(rows[0].execution.enabled).toBe(true);expect(rows[1].execution.enabled).toBe(false);expect(rows[2]).toBe(plain);
+});
+it('NULL timestamp候选保原tuple比较，而非擅自取唯一最新有效任务',async()=>{
+ await pool.query(`UPDATE tasks SET created_at=NULL WHERE id=$1`,[ids.task]);
+ await pool.query(`INSERT INTO tasks VALUES($1,$2,NULL,'failed',clock_timestamp())`,[randomUUID(),JSON.stringify({linux_onboarding:{machine_registry_id:ids.machine}})]);await equivalent(true);
+});
