@@ -31,6 +31,7 @@ describe('GET /api/brain/quality/ratchet 棘轮台账', () => {
   it('响应永不 500（异常路径同一 catch 降级 available:false，面板灰态约定）', async () => {
     const res = await request(makeApp()).get('/api/brain/quality/ratchet');
     expect(res.status).toBe(200);
-    expect(typeof res.body.available).toBe('boolean');
+    expect(res.body.available).toBe(false);
+    expect(typeof res.body.error).toBe('string');
   });
 });
