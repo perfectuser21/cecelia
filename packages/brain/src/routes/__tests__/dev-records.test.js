@@ -17,6 +17,7 @@ describe('dev-records route', () => {
       // router 是 default export 或命名 export
       const router = mod.default ?? mod.router;
       expect(router).toBeDefined();
+      expect(mockQuery).toHaveBeenCalledTimes(2);
     });
 
     it('canary 过滤条件使用 IS DISTINCT FROM 处理 NULL', async () => {
