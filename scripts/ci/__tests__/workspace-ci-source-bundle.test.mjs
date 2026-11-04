@@ -201,7 +201,7 @@ for(const [name,mutate]of[
  ['不固定scope来源',job=>job.env.MAP_SCOPE='cecelia-device-patrol'],
  ['预读shell字节变动',job=>job.steps.find(s=>s.if==="env.MAP_SCOPE == 'cecelia-device-patrol'").run+='\nexit 0'],
  ['外部caller强开infra',job=>job.env.INFRA_ADMISSION='${{ true }}'],
- ['来源恢复BASE分支漂移',job=>job.env.BASE=job.env.BASE.replace('cp-10301020-source-pr-link','cp-any-other-branch')],
+ ['BASE注入未经审查的历史回退',job=>job.env.BASE="${{ inputs.base_revision || (github.event.pull_request.head.ref == 'cp-any-other-branch' && 'e3a01021ee7100b83d8ed5a0be219d0b543b5dff') || github.event.before }}"],
 ])test(`scope预读不得放宽核心合同：${name}`,async t=>{
  const f=fixture(t);addActualPatrolPrelude(f,mutate);const r=await extractWorkspaceCiSourceBundle(f.options);
  assert.equal(r.status,'unknown');
@@ -225,6 +225,7 @@ for(const [name,mutate]of[
  ['provider整个替换',doc=>doc.jobs['snapshot-infra']={if:'true',steps:[]}],
  ['provider条件错配',doc=>doc.jobs['snapshot-infra'].if='always()'],
  ['provider命令增加',doc=>doc.jobs['snapshot-infra'].steps.push({run:'echo extra'})],
+ ['gate整个替换',doc=>doc.jobs.gate={if:'always()',steps:[]}],
  ['gate条件错配',doc=>doc.jobs.gate.if='always()'],
  ['gate依赖缺失',doc=>doc.jobs.gate.needs=['snapshot-main']],
  ['gate依赖额外增加',doc=>doc.jobs.gate.needs.push('foreign-provider')],
@@ -250,4 +251,11 @@ for(const [name,replace]of[
  const f=fixture(t);addActualPatrolPrelude(f);const path='.github/workflows/implementation-impact.yml';
  f.wf[path]=f.wf[path].replace(...replace);f.options.workspace={repo:WR,revision:tree(f.workspaceRoot,f.wf)};
  const r=await extractWorkspaceCiSourceBundle(f.options);assert.equal(r.status,'unknown');assert.equal(r.executable,false);
+});
+
+test('当前精确YAML不能掩盖Skill初始化器实现字节漂移',async t=>{
+ const f=fixture(t);addActualPatrolPrelude(f);const read=f.options.readSource;
+ f.options.readSource=async q=>{const bytes=await read(q);return q.repo===BR&&q.path==='scripts/ci/implementation-skill-source.mjs'?Buffer.concat([bytes,Buffer.from('\n// unreviewed implementation change\n')]):bytes;};
+ const r=await extractWorkspaceCiSourceBundle(f.options);assert.equal(r.status,'unknown');
+ assert.ok(r.gaps.some(g=>g.code==='CALLEE_SKILL_CACHE_SOURCE_UNPROVEN'));assert.equal(r.executable,false);
 });
