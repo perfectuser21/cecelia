@@ -9,7 +9,13 @@
  * never invoked — matches the issue's `initiative_runs=0` symptom) is invisible to
  * both existing sections (A and B). This test covers the new "never started" branch.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+
+
+// 未显式注入的宿主进程调用只记录、返回空，永远不运行真实 docker。
+const hostProcess = vi.hoisted(() => vi.fn(() => ''));
+vi.mock('child_process', async (original) => ({ ...await original(), execSync: hostProcess }));
+afterEach(() => { expect(hostProcess).not.toHaveBeenCalled(); });
 
 const mockPoolQuery = vi.hoisted(() => vi.fn());
 const mockPoolConnect = vi.hoisted(() => vi.fn());
@@ -38,6 +44,7 @@ function isExactRunSql(sql) {
 beforeEach(async () => {
   vi.resetModules();
   mockPoolQuery.mockReset();
+  hostProcess.mockClear();
   mockPoolConnect.mockReset();
   mockPoolConnect.mockImplementation(async () => ({
     query: mockPoolQuery,

@@ -11,9 +11,34 @@
  * 修复：exit_code 非 0 且 result/error 匹配认证失败特征时，sendBark 主动通知（不用 raise/飞书，
  * 账号登录失效只有人能处理，属于需要用户立即处理的告警）。
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
+
+
+// 所有宿主边界仅记录；原测试漏隔离时必须红，绝不真的执行 Docker 或写默认日志目录。
+const escaped = vi.hoisted(() => ({ process: vi.fn(), file: vi.fn(), network: vi.fn() }));
+vi.mock('node:child_process', async (original) => ({
+  ...await original(),
+  execFile: (...args) => {
+    escaped.process(...args.slice(0, -1));
+    args.at(-1)(null, { stdout: 'owned fixture logs', stderr: '' });
+  },
+  execFileSync: (...args) => { escaped.process(...args); return ''; },
+  execSync: (...args) => { escaped.process(...args); return ''; },
+  spawn: (...args) => { escaped.process(...args); return {}; },
+}));
+vi.mock('node:fs', async (original) => ({
+  ...await original(),
+  mkdirSync: (...args) => escaped.file('mkdir', ...args),
+  writeFileSync: (...args) => escaped.file('write', ...args),
+}));
+afterEach(() => {
+  expect(escaped.process).not.toHaveBeenCalled();
+  expect(escaped.file).not.toHaveBeenCalled();
+  expect(escaped.network).not.toHaveBeenCalled();
+  vi.unstubAllGlobals();
+});
 
 vi.mock('@langchain/langgraph', () => ({
   Command: vi.fn().mockImplementation((args) => ({ __command: true, args })),
@@ -38,6 +63,7 @@ describe('routes/harness-callback — relay 容器认证失败 Bark 告警', () 
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    vi.stubGlobal('fetch', (...args) => { escaped.network(...args); throw new Error('测试禁止外联'); });
     const notifierMod = await import('../../notifier.js');
     sendBark = notifierMod.sendBark;
 
