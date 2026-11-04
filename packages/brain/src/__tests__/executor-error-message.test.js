@@ -145,6 +145,7 @@ describe('executor.js error_message 写入验证', () => {
         call => typeof call[0] === 'string' && call[0].includes("status = 'failed'")
       );
 
+      expect(failedCall, '宣称孤儿失败路径必须真实写入failed').toBeDefined();
       if (failedCall) {
         const sql = failedCall[0];
         const params = failedCall[1];
