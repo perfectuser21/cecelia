@@ -1,0 +1,100 @@
+{
+  "schema_version": 1,
+  "kind": "explicit_verification_retirement_catalog",
+  "purpose": "admission_only",
+  "repo": "perfectuser21/cecelia",
+  "base_revision": "fadbf32852cdb30f71e34dda9ab81b521bda484b",
+  "reviewed_replacement_revision": "00614aff50",
+  "base_config": {
+    "path": "packages/brain/vitest.config.js",
+    "mode": "100644",
+    "git_blob_sha1": "36a629860e732736ace1adea1faca1ba3de4aeaf",
+    "sha256": "663e68449bfcbc45cdad00c85058cb56ac89ee5ec1148f36d1c47ffeb8abbe54",
+    "byte_length": 22846
+  },
+  "replacement_config": {
+    "path": "packages/brain/vitest.config.js",
+    "mode": "100644",
+    "git_blob_sha1": "c892d4d10e9733c72dc7bf9949507ca1daefa70f",
+    "sha256": "611273b433118d1fcbb2e555bbded112a93e36f0b5a4c6536403522611a88e6f",
+    "byte_length": 22006
+  },
+  "skill_selector": {
+    "path": "scripts/ci/skill-source-tests.mjs",
+    "mode": "100644",
+    "git_blob_sha1": "1041ba71200c6051a1ec97fffd745e18a45b9571",
+    "sha256": "6f8d97d2346e8b1bd00f4b532d76c8fa9bb871cb807adf7a13d5ce0ffb0f18e3",
+    "byte_length": 1691
+  },
+  "replacement_inputs": [
+    {
+      "path": "packages/brain/src/__tests__/debt-04-planner-score.test.js",
+      "mode": "100644",
+      "git_blob_sha1": "9906c4214a967f4898547a708d46d1b7ed7f0af6",
+      "sha256": "11216f060e033f73ece5f46a68fc5cea8ec73e55f27e5e7621991bfad9eaec07",
+      "byte_length": 5509
+    },
+    {
+      "path": "packages/brain/src/__tests__/actions.test.js",
+      "mode": "100644",
+      "git_blob_sha1": "cc7a28cee27ac165462db1767c364c46e3ce7049",
+      "sha256": "8d49a0cf6a8cef6286aacf5cd5ff2f555970f17aa5c6833906cba462e17d5ef1",
+      "byte_length": 39849
+    }
+  ],
+  "records": [
+    {
+      "path": "packages/brain/src/__tests__/planner-initiative-plan.test.js",
+      "old": {
+        "path": "packages/brain/src/__tests__/planner-initiative-plan.test.js",
+        "mode": "100644",
+        "git_blob_sha1": "3bc2b7f46db9aba19e0e8d09037a514078c4d508",
+        "sha256": "e50ea3122d735ab52273e631419e3d43fdf7b79fa565842bf643d1aa6d4b024a",
+        "byte_length": 17781
+      },
+      "exclude_literal": "src/__tests__/planner-initiative-plan.test.js",
+      "replacement_paths": [
+        "packages/brain/src/__tests__/debt-04-planner-score.test.js"
+      ],
+      "policy_sources": [],
+      "audit": {
+        "retired": [
+          "旧正例要求写入迁移499已冻结的OKR层，不能继续作为现役成功创建合同。"
+        ],
+        "retained": [
+          "真实scoreKRs六项评分行为；旧层createInitiative拒绝及参数校验。"
+        ],
+        "reviewed_source_base": "fadbf32852cdb30f71e34dda9ab81b521bda484b"
+      }
+    },
+    {
+      "path": "packages/brain/src/__tests__/actions-initiative-orchestration.test.js",
+      "old": {
+        "path": "packages/brain/src/__tests__/actions-initiative-orchestration.test.js",
+        "mode": "100644",
+        "git_blob_sha1": "d5a76edb20801c0ef25256388e239368b3cf75a1",
+        "sha256": "976616dc8d9a90f757bb67e621610a3f504bb3e0c239dc0ef344bd35183c1582",
+        "byte_length": 5717
+      },
+      "exclude_literal": "src/__tests__/actions-initiative-orchestration.test.js",
+      "replacement_paths": [
+        "packages/brain/src/__tests__/actions.test.js"
+      ],
+      "policy_sources": [],
+      "audit": {
+        "retired": [
+          "旧正例要求写入迁移499已冻结的OKR层，不能继续作为现役成功创建合同。"
+        ],
+        "retained": [
+          "真实scoreKRs六项评分行为；旧层createInitiative拒绝及参数校验。"
+        ],
+        "reviewed_source_base": "fadbf32852cdb30f71e34dda9ab81b521bda484b"
+      }
+    }
+  ],
+  "limitations": [
+    "仅精确审核两份旧层成功创建测试，不授予目录或未知删除豁免。",
+    "仅准入证据；替代均实际默认单测通过，不证明生产部署或真实PG成功写入。",
+    "公共导出、历史只读、迁移499写拒绝与真实回滚保障保留。"
+  ]
+}

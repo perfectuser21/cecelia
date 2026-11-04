@@ -15,12 +15,6 @@
       "manualRoot": false
     },
     {
-      "file": "packages/brain/src/__tests__/actions-initiative-orchestration.test.js",
-      "category": "external_resource",
-      "reason": "真实PostgreSQL依赖（文件第14行及后续pool查询），尚未纳入自动Deep清单；须先确认测试库身份、数据清理和现行SQL。",
-      "manualRoot": false
-    },
-    {
       "file": "packages/brain/src/__tests__/alertness-actions.test.js",
       "category": "external_resource",
       "reason": "真实PostgreSQL依赖（文件第14行及后续pool查询），尚未纳入自动Deep清单；须先确认测试库身份、数据清理和现行SQL。",
@@ -153,12 +147,6 @@
       "manualRoot": false
     },
     {
-      "file": "packages/brain/src/__tests__/planner-initiative-plan.test.js",
-      "category": "external_resource",
-      "reason": "真实PostgreSQL依赖（文件第9行及后续pool查询），尚未纳入自动Deep清单；须先确认测试库身份、数据清理和现行SQL。",
-      "manualRoot": false
-    },
-    {
       "file": "packages/brain/src/__tests__/planner-learning-penalty.test.js",
       "category": "external_resource",
       "reason": "真实PostgreSQL依赖（文件第13行及后续pool查询），尚未纳入自动Deep清单；须先确认测试库身份、数据清理和现行SQL。",
@@ -185,13 +173,13 @@
     {
       "file": "packages/brain/src/__tests__/quarantine-systemic.test.js",
       "category": "external_resource",
-      "reason": "真实PostgreSQL依赖（文件第14行及后续pool查询），尚未纳入自动Deep清单；须先确认测试库身份、数据清理和现行SQL。",
+      "reason": "保留公共导出的systemic历史保护合同；仓外动态消费者未排除，需独占scratch真实PG验证后纳入Deep，不授权删除。",
       "manualRoot": false
     },
     {
       "file": "packages/brain/src/__tests__/resolve-repo-path.test.js",
       "category": "external_resource",
-      "reason": "真实PostgreSQL依赖（文件第8行及后续pool查询），尚未纳入自动Deep清单；须先确认测试库身份、数据清理和现行SQL。",
+      "reason": "resolveRepoPath/getTaskKR兼容导出仍在；旧OKR查询断言不符合现役projects读取，需真实projects direct-column/metadata fallback/null回归，替代未执行。",
       "manualRoot": false
     },
     {
@@ -227,7 +215,7 @@
     {
       "file": "packages/brain/src/__tests__/tasks-status.test.js",
       "category": "external_resource",
-      "reason": "真实PostgreSQL依赖（文件第6行及后续pool查询），尚未纳入自动Deep清单；须先确认测试库身份、数据清理和现行SQL。",
+      "reason": "旧文件复制SQL/状态字典；真实状态机与PATCH默认回归已通过，完整PG PATCH与history合同正在核对，未凭复制断言宣称业务通过。",
       "manualRoot": false
     },
     {

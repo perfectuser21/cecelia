@@ -7,7 +7,8 @@ import {selectVitestVerificationInput} from './implementation-verification-selec
 const REPO='perfectuser21/cecelia',BASE='68b996a5641b69e6f21705a114a4524e407fe097';
 const CATALOG='config/verification-retirements/alertness-v1.json';
 const CATALOG_SHA256='f9c3f170764dc41dbd4f710e5082551880c47f008bc7a9ca3cbc91eba2e5c73c';
-const CATALOGS=[{path:CATALOG,sha256:CATALOG_SHA256,records:5,inputs:11},
+const CATALOGS=[{path:'config/verification-retirements/brain-debt-retired-layers-v1.json',sha256:'799dc74dad1f30f44352124da8427b34bee05168d7c0135b00b2dd4ef34e4691',records:2,inputs:2,base_revision:'fadbf32852cdb30f71e34dda9ab81b521bda484b',onlyPaths:["packages/brain/src/__tests__/planner-initiative-plan.test.js", "packages/brain/src/__tests__/actions-initiative-orchestration.test.js"]},
+ {path:CATALOG,sha256:CATALOG_SHA256,records:5,inputs:11},
  {path:'config/verification-retirements/legacy-five-v1.json',sha256:'1392c3febd9131416ec8c960a7a5a0ff6553b496084efeee1db6e1c236f25717',records:5,inputs:4},
  {path:'config/verification-retirements/tick-copied-sql-v1.json',sha256:'fb6b9292ee5205f1daa0d295761243a905e8f7d0454c207cb6487cf6354a27d9',records:2,inputs:2,
   onlyPaths:['packages/brain/src/__tests__/tick-dispatch-scope-decomposing.test.js','packages/brain/src/__tests__/tick-kr-decomp.test.js']}];
@@ -57,7 +58,7 @@ function readCatalog(toolingRoot,toolingRevision,spec){
  const {bytes}=blob(toolingRoot,toolingRevision,spec.path,'CATALOG');need(sha(bytes)===spec.sha256,'CATALOG_DIGEST_MISMATCH');
  let catalog;try{catalog=JSON.parse(bytes);}catch{fail('CATALOG_INVALID');}
  need(catalog.schema_version===1&&catalog.kind==='explicit_verification_retirement_catalog'&&catalog.purpose==='admission_only'
-  &&catalog.repo===REPO&&catalog.base_revision===BASE&&catalog.records.length===spec.records&&catalog.replacement_inputs.length===spec.inputs&&catalog.limitations.length===3,'CATALOG_INVALID');
+  &&catalog.repo===REPO&&catalog.base_revision===(spec.base_revision||BASE)&&catalog.records.length===spec.records&&catalog.replacement_inputs.length===spec.inputs&&catalog.limitations.length===3,'CATALOG_INVALID');
  return catalog;
 }
 function literalExcludes(text){
@@ -170,7 +171,7 @@ export function collectVerificationRetirementCandidates(repoRoot,{source,tooling
    let duplicate;
    if(record.duplicate_of){duplicate=reviewedBlob(repoRoot,source.base_revision,record.duplicate_of,'DUPLICATE').fact;need(['mode','git_blob_sha1','sha256','byte_length'].every(k=>duplicate[k]===old.fact[k]),'DUPLICATE_BYTES_MISMATCH');}
    const selectedInputs=replacements.filter(input=>!record.replacement_paths||record.replacement_paths.includes(input.path));need(selectedInputs.length,'REPLACEMENT_MISSING');
-   rows.push({path:record.path,change:'D',side:'base',catalog_anchor_revision:BASE,catalog:{path:spec.path,sha256:spec.sha256},base:{...old.fact,revision:source.base_revision,
+   rows.push({path:record.path,change:'D',side:'base',catalog_anchor_revision:catalog.base_revision,catalog:{path:spec.path,sha256:spec.sha256},base:{...old.fact,revision:source.base_revision,
     config:{...baseConfig.fact,revision:source.base_revision,exclude_literal:record.exclude_literal},...(duplicate?{duplicate_of:duplicate}:{})},
     head:{revision:source.head_revision,absent:true},replacement_inputs:selectedInputs,policy_sources:policies,required_absent_paths:record.required_absent_paths||[],
     owner_candidates:[...new Map(selectedInputs.map(input=>[input.config.path,{side:'head',revision:source.head_revision,path:input.config.path,sha256:input.config.sha256}])).values()],

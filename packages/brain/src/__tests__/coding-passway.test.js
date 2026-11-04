@@ -3,7 +3,7 @@
  * 验证：Initiative 无 task → planner 自动生成 architecture_design 任务
  *
  * 使用 vi.fn() mock db.js，避免依赖真实数据库。
- * 补充 planner-initiative-plan.test.js（后者使用真实 DB 做集成测试）。
+ * 与 debt-04-planner-score.test.js 共同验证现役 Planner 纯计算合同。
  */
 import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
 

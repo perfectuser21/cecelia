@@ -51,3 +51,23 @@ test('替代行为字节漂移必须拒绝，不能靠catalog声明替代',()=>f
   const path='packages/brain/src/__tests__/debt-04-planner-score.test.js';writeFileSync(join(source,path),readFileSync(join(source,path),'utf8')+'\n// drift\n');commit(source);
   assert.throws(()=>collectVerificationRetirementCandidates(source,options()),/REPLACEMENT/);
 }));
+test('新目录不能扩展未知删除或以重算摘要自行授权',()=>fixture(({source,control,commit,options})=>{
+  const path=join(control,'config/verification-retirements/brain-debt-retired-layers-v1.json');
+  const catalog=JSON.parse(readFileSync(path,'utf8'));
+  catalog.records.push({...catalog.records[0],path:'packages/brain/src/__tests__/tick-loop.test.js'});
+  writeFileSync(path,JSON.stringify(catalog));commit(control);
+  assert.throws(()=>collectVerificationRetirementCandidates(source,options()),/CATALOG_DIGEST_MISMATCH/);
+}));
+test('PR基线配置与两项旧文件均按fadbf精确字节核对',()=>fixture(({source,git,commit,options})=>{
+  const original=options().source.base_revision;
+  git(source,'reset','--hard',original);
+  writeFileSync(join(source,old[0]),readFileSync(join(source,old[0]),'utf8')+'\n// baseline drift\n');
+  const base=commit(source);
+  for(const path of old)rmSync(join(source,path));
+  writeFileSync(join(source,config),readFileSync(join(root,config)));
+  for (const path of ['packages/brain/src/__tests__/debt-04-planner-score.test.js','packages/brain/src/__tests__/actions.test.js']) writeFileSync(join(source,path),readFileSync(join(root,path)));
+  commit(source);
+  const opt=options();opt.source.base_revision=base;
+  opt.source.changed_files=git(source,'diff','--name-only',base,'HEAD').split('\n').filter(Boolean).map(path=>({path}));
+  assert.throws(()=>collectVerificationRetirementCandidates(source,opt),/OLD_TEST_BYTES_MISMATCH/);
+}));

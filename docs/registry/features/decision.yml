@@ -50,7 +50,6 @@ features:
         - packages/brain/src/__tests__/actions-dedup.test.js
         - packages/brain/src/__tests__/actions-domain-role.test.js
         - packages/brain/src/__tests__/actions-goal-validation.test.js
-        - packages/brain/src/__tests__/actions-initiative-orchestration.test.js
         - packages/brain/src/__tests__/actions.test.js
         - packages/brain/src/__tests__/attach-decision-routes.test.js
         - packages/brain/src/__tests__/bare-modules/proactive-mouth.test.js
@@ -90,7 +89,6 @@ features:
             - packages/brain/src/__tests__/actions-dedup.test.js
             - packages/brain/src/__tests__/actions-domain-role.test.js
             - packages/brain/src/__tests__/actions-goal-validation.test.js
-            - packages/brain/src/__tests__/actions-initiative-orchestration.test.js
             - packages/brain/src/__tests__/actions.test.js
             - packages/brain/src/__tests__/attach-decision-routes.test.js
             - packages/brain/src/__tests__/bare-modules/proactive-mouth.test.js

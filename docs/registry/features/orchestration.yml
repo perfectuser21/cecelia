@@ -121,7 +121,6 @@ features:
         - packages/brain/src/__tests__/nightly-tick.test.js
         - packages/brain/src/__tests__/planner-area-stream.test.js
         - packages/brain/src/__tests__/planner-domain-routing.test.js
-        - packages/brain/src/__tests__/planner-initiative-plan.test.js
         - packages/brain/src/__tests__/planner-insight.test.js
         - packages/brain/src/__tests__/planner-learning-penalty.test.js
         - packages/brain/src/__tests__/planner-scope.test.js
@@ -224,7 +223,6 @@ features:
             - packages/brain/src/__tests__/nightly-tick.test.js
             - packages/brain/src/__tests__/planner-area-stream.test.js
             - packages/brain/src/__tests__/planner-domain-routing.test.js
-            - packages/brain/src/__tests__/planner-initiative-plan.test.js
             - packages/brain/src/__tests__/planner-insight.test.js
             - packages/brain/src/__tests__/planner-learning-penalty.test.js
             - packages/brain/src/__tests__/planner-scope.test.js
