@@ -148,7 +148,7 @@ export async function fetchYesterdayContentOutput(dbPool, yesterday) {
 export async function fetchYesterdayPublishStats(dbPool, yesterday) {
   const { rows } = await dbPool.query(
     `SELECT platform,
-            COUNT(CASE WHEN status = 'completed' THEN 1 END)::int AS success,
+            COUNT(CASE WHEN status = 'success' THEN 1 END)::int AS success,
             COUNT(CASE WHEN status = 'failed' THEN 1 END)::int AS failed
      FROM content_publish_jobs
      WHERE DATE(created_at) = $1
