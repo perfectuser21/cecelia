@@ -16,7 +16,7 @@ async function fixture(handler, callback) {
     let body = ''; for await (const chunk of req) body += chunk;
     requests.push({ url: req.url, body, authorization: req.headers.authorization });
     res.setHeader('Content-Type', 'application/json');
-    res.end(JSON.stringify(handler(req, body)));
+    res.end(JSON.stringify(handler(req, body, res)));
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   try { await callback(`http://127.0.0.1:${server.address().port}`, requests); }
@@ -144,4 +144,90 @@ for (const enabled of [false, true]) test(`手动staging健康诊断真实HTTP�
     assert.equal(requests.length, 3);
     assert.ok(requests.every(req => req.url.startsWith('/api/brain/')));
   });
+});
+
+// 合法业务正文不能覆盖HTTP失败；302也不能跟随到另一个看似成功的实例。
+for (const code of [302, 401, 500]) {
+  for (const target of ['preview-identity', 'staging-request', 'staging-wait', 'smoke-health', 'smoke-tick', 'smoke-tasks']) {
+    test(`${target} 拒绝HTTP ${code}的合法业务正文且不跟随重定向`, async () => {
+      const endpoint = {
+        'preview-identity': '/api/brain/preview/identity',
+        'staging-request': '/api/brain/deploy',
+        'staging-wait': '/api/brain/deploy/staging/status',
+        'smoke-health': '/api/brain/health',
+        'smoke-tick': '/api/brain/tick/status',
+        'smoke-tasks': '/api/brain/tasks?limit=1',
+      }[target];
+      await fixture((req, _body, res) => {
+        if (req.url === endpoint) {
+          res.statusCode = code;
+          if (code === 302) res.setHeader('Location', '/redirected-success');
+        }
+        if (target === 'preview-identity') return { git_sha: sha, db_name: 'cecelia_preview_42', pr_number: 42, tick_enabled: false };
+        if (target === 'staging-request') return { request_id: 'fixture-request' };
+        if (target === 'staging-wait') return { status: 'success', request_id: 'fixture-request', sha, image_id: `sha256:${'b'.repeat(64)}`, isolated: true };
+        return req.url.includes('/tick/status') ? { enabled: false } : { status: 'healthy' };
+      }, async (url, requests) => {
+        const temp = mkdtempSync(join(tmpdir(), 'http-status-contract-'));
+        try {
+          const env = {
+            BRAIN_URL: url, PREVIEW_URL: url, EXPECTED_SHA: sha, EXPECTED_DB_NAME: 'cecelia_preview_42', PR_NUMBER: '42',
+            DEPLOY_TOKEN: 'fixture-token', GITHUB_SHA: sha, GITHUB_ENV: join(temp, 'env'), GITHUB_OUTPUT: join(temp, 'output'),
+            RUNNER_TEMP: temp, STAGING_REQUEST_ID: 'fixture-request', STAGING_PORT: new URL(url).port,
+          };
+          let command;
+          if (target === 'preview-identity') command = 'bash scripts/verify-preview-identity.sh';
+          else if (target === 'staging-request') command = doc('auto-staging-deploy.yml').jobs.staging_deploy_and_smoke.steps.find(step => step.name === '请求固定 SHA 的隔离候选').run;
+          else if (target === 'staging-wait') command = 'bash scripts/wait-for-staging.sh';
+          else command = doc('nightly-real-machine.yml').jobs['nightly-smoke'].steps.find(step => step.name === 'Staging Smoke（真实机器 5222）').run;
+          const result = await shell(command, env);
+          assert.notEqual(result.code, 0, result.output);
+          assert.ok(requests.some(req => req.url === endpoint), '没有执行目标HTTP请求');
+          assert.ok(requests.every(req => req.url !== '/redirected-success'), '禁止跟随重定向');
+          assert.equal(requests.length, target.startsWith('smoke-') ? 3 : 1);
+        } finally { rmSync(temp, { recursive: true, force: true }); }
+      });
+    });
+  }
+}
+
+for (const enabled of ['false', 'true', 'unknown', 0, 1, null, undefined, {}, []]) {
+  test(`staging tick拒绝非布尔enabled：${JSON.stringify(enabled)}`, async () => {
+    await fixture(req => req.url.includes('/tick/status') ? { enabled } : { status: 'healthy' }, async (url, requests) => {
+      const result = await shell('bash scripts/auto-staging-smoke.sh', { STAGING_HOST: '127.0.0.1', STAGING_PORT: new URL(url).port });
+      assert.notEqual(result.code, 0, result.output);
+      assert.equal(requests.length, 3);
+    });
+  });
+}
+
+test('所有身份/回执消费者拒绝HTTP200但传输截断的合法JSON正文', async () => {
+  for (const target of ['preview-identity', 'staging-request', 'staging-wait', 'smoke-health', 'smoke-tick', 'smoke-tasks']) {
+    const suffix = target.split('-')[1];
+    await fixture((req, _body, res) => {
+      const isTarget = target.startsWith('smoke-') ? req.url.includes(`/${suffix === 'tick' ? 'tick/status' : suffix}`) : true;
+      if (isTarget) {
+        res.setHeader('Content-Length', '4096');
+        res.setHeader('Connection', 'close');
+      }
+      if (target === 'preview-identity') return { git_sha: sha, db_name: 'cecelia_preview_42', pr_number: 42, tick_enabled: false };
+      if (target === 'staging-request') return { request_id: 'fixture-request' };
+      if (target === 'staging-wait') return { status: 'success', request_id: 'fixture-request', sha, image_id: `sha256:${'b'.repeat(64)}`, isolated: true };
+      return req.url.includes('/tick/status') ? { enabled: false } : { status: 'healthy' };
+    }, async url => {
+      const temp = mkdtempSync(join(tmpdir(), 'http-transport-contract-'));
+      try {
+        const command = target === 'preview-identity' ? 'bash scripts/verify-preview-identity.sh'
+          : target === 'staging-request' ? doc('auto-staging-deploy.yml').jobs.staging_deploy_and_smoke.steps.find(step => step.name === '请求固定 SHA 的隔离候选').run
+          : target === 'staging-wait' ? 'bash scripts/wait-for-staging.sh' : 'bash scripts/auto-staging-smoke.sh';
+        const result = await shell(command, {
+          BRAIN_URL: url, PREVIEW_URL: url, EXPECTED_SHA: sha, EXPECTED_DB_NAME: 'cecelia_preview_42', PR_NUMBER: '42',
+          DEPLOY_TOKEN: 'fixture-token', GITHUB_SHA: sha, GITHUB_ENV: join(temp, 'env'), GITHUB_OUTPUT: join(temp, 'output'),
+          RUNNER_TEMP: temp, STAGING_REQUEST_ID: 'fixture-request', STAGING_HOST: '127.0.0.1', STAGING_PORT: new URL(url).port,
+        });
+        assert.notEqual(result.code, 0, `${target}: ${result.output}`);
+        assert.match(result.output, /HTTP 000|HTTP 0|curl: \(18\)/, `${target}: 未证实传输失败，而可能被其他错误拒绝：${result.output}`);
+      } finally { rmSync(temp, { recursive: true, force: true }); }
+    });
+  }
 });
