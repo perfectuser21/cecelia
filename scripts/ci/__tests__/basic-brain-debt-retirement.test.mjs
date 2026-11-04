@@ -11,7 +11,7 @@ import { deflateSync } from 'node:zlib';
 import { planChecks } from '../basic-scope.mjs';
 const root=fileURLToPath(new URL('../../../', import.meta.url));
 const baseline='fadbf32852';
-const old=['tests/regression/relay-1b1f1ffa/preview-destroyer.test.js','packages/brain/src/__tests__/planner-initiative-plan.test.js','packages/brain/src/__tests__/actions-initiative-orchestration.test.js',
+const old=['packages/brain/src/__tests__/coding-passway.test.js','tests/regression/relay-1b1f1ffa/preview-destroyer.test.js','packages/brain/src/__tests__/planner-initiative-plan.test.js','packages/brain/src/__tests__/actions-initiative-orchestration.test.js',
   'packages/brain/src/__tests__/tasks-status.test.js','tests/regression/relay-1b1f1ffa/capacity-gate.test.js',
   'tests/regression/relay-57e25e92/headed-smoke-contract.test.ts','tests/regression/relay-07b2fd3b/captures-api.test.ts'];
 const config='packages/brain/vitest.config.js';
@@ -45,7 +45,7 @@ function fixture(fn) {
     fn({source,control,git,commit,options,head,tooling});
   }finally{rmSync(temp,{recursive:true,force:true});}
 }
-test('仅冻结过的七份逐项审核旧测试取得精确退役候选，替代必须为现役评分及拒绝入口测试',()=>fixture(({source,options})=>{
+test('仅冻结过的八份逐项审核旧测试取得精确退役候选，替代必须为现役评分及拒绝入口测试',()=>fixture(({source,options})=>{
   const proof=collectVerificationRetirementCandidates(source,options());
   assert.deepEqual(proof.rows.map(x=>x.path).sort(),old.toSorted());
   for(const row of proof.rows){assert.equal(row.retirement_authorized,false);assert.ok(row.replacement_inputs.every(x=>x.selected_candidate || x.requires_selector_reverification && x.selector_witness.kind==='fixed_pg_literal_candidate'));assert.ok(row.audit.retired.length);}
@@ -131,4 +131,14 @@ test('夹具即使仓内gc.auto=1也不能触发自动维护或留下后台写�
   assert.equal(existsSync(join(source,'auto-gc-fired')),false,'夹具Git启动了自动GC；清理目录时可能仍有写入者');
   assert.equal(git(source,'config','--get','gc.auto'),'0');
   assert.equal(git(source,'config','--get','maintenance.auto'),'false');
+}));
+
+test('coding-passway唯一默认选中退休候选必须保留基线选择实证和真实拒绝替代',()=>fixture(({source,options})=>{
+ const rows=collectVerificationRetirementCandidates(source,options()).rows;
+ const row=rows.find(row=>row.path==='packages/brain/src/__tests__/coding-passway.test.js');
+ assert.ok(row,'新默认unit旧空壳必须精确列入候选');
+ assert.equal(row.base.config.selector_witness.kind,'finite_vitest_selector');
+ assert.deepEqual(row.replacement_inputs.map(input=>input.path),['packages/brain/src/__tests__/planner-retired-entry.test.js']);
+ assert.equal(row.replacement_inputs[0].selected_candidate,true);
+ assert.equal(row.retirement_authorized,false);assert.equal(row.entry_verified,false);
 }));
