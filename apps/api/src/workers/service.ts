@@ -49,7 +49,7 @@ function matchWorkflowsToWorker(
 ): MatchedWorkflow[] {
   const matched: MatchedWorkflow[] = [];
 
-  for (const ability of worker.abilities) {
+  for (const ability of (worker.abilities || [])) {
     for (const workflow of workflows) {
       const workflowNameLower = workflow.name.toLowerCase();
       for (const keyword of ability.n8nKeywords) {
@@ -171,7 +171,7 @@ export function findWorkerByWorkflowName(
   const lowerName = workflowName.toLowerCase();
 
   for (const worker of workers) {
-    for (const ability of worker.abilities) {
+    for (const ability of (worker.abilities || [])) {
       for (const keyword of ability.n8nKeywords) {
         if (lowerName.includes(keyword.toLowerCase())) {
           return {

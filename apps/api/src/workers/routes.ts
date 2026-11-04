@@ -28,7 +28,7 @@ router.get('/', async (_req: Request, res: Response) => {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
-    return res.status(500).json({
+    return res.status(error instanceof workersConfig.WorkersConfigUnavailableError ? 503 : 500).json({
       success: false,
       error: message,
     });
@@ -54,7 +54,7 @@ router.get('/:workerId', async (req: Request, res: Response) => {
     return res.status(result.success ? 200 : 503).json(result);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
-    return res.status(500).json({
+    return res.status(error instanceof workersConfig.WorkersConfigUnavailableError ? 503 : 500).json({
       success: false,
       error: message,
     });
@@ -80,7 +80,7 @@ router.get('/:workerId/workflows', async (req: Request, res: Response) => {
     return res.status(result.success ? 200 : 503).json(result);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
-    return res.status(500).json({
+    return res.status(error instanceof workersConfig.WorkersConfigUnavailableError ? 503 : 500).json({
       success: false,
       error: message,
     });
@@ -110,7 +110,7 @@ router.get('/match/:workflowName', (req: Request, res: Response) => {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
-    return res.status(500).json({
+    return res.status(error instanceof workersConfig.WorkersConfigUnavailableError ? 503 : 500).json({
       success: false,
       error: message,
     });
