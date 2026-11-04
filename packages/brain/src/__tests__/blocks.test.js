@@ -2,20 +2,24 @@
  * Blocks API Tests
  * Tests for Notion-like Page Content functionality
  *
- * 集成测试：需要 Brain 服务器运行在 localhost:5221
- * CI 单元测试中跳过，设置 BRAIN_INTEGRATION=1 可启用
+ * 私有已验证PG + 本进程随机loopback端口；不读取API_BASE或生产服务。
  */
 
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import pg from 'pg';
-import { DB_DEFAULTS } from '../db-config.js';
+import express from 'express';
+import { privatePgConfig, verifyPrivatePg } from '../../../../scripts/ci/private-pg-contract.mjs';
+vi.mock('../db.js', () => ({ default: pool }));
+vi.mock('../tick.js', () => ({ getTickStatus: vi.fn() }));
+vi.mock('../executor.js', () => ({ cleanupOrphanProcesses: vi.fn() }));
+vi.mock('../llm-caller.js', () => ({ callLLM: vi.fn(() => { throw Error('external model forbidden'); }) }));
 
 const { Pool } = pg;
 
-const API_BASE = process.env.API_BASE || 'http://localhost:5221/api/brain';
+let API_BASE, server;
 
 // Test database connection
-const pool = new Pool(DB_DEFAULTS);
+const pool = new Pool(privatePgConfig());
 
 // Test data
 const TEST_PARENT_ID = '99999999-9999-9999-9999-999999999999';
@@ -23,11 +27,17 @@ const TEST_PARENT_TYPE = 'goal';
 let createdBlockId = null;
 
 // 集成测试：只在 BRAIN_INTEGRATION=1 时运行（需要真实 Brain 服务）
-const canRunBlocks = !!process.env.BRAIN_INTEGRATION;
-const describeBlocks = canRunBlocks ? describe : describe.skip;
+const describeBlocks = describe;
 
 describeBlocks('Blocks API', () => {
   beforeAll(async () => {
+    await verifyPrivatePg(pool);
+    const app = express();
+    app.use(express.json());
+    app.use('/api/brain', (await import('../routes/goals.js')).default);
+    server = app.listen(0, '127.0.0.1');
+    await new Promise(resolve => server.once('listening', resolve));
+    API_BASE = `http://127.0.0.1:${server.address().port}/api/brain`;
     // Clean up any existing test data
     await pool.query('DELETE FROM blocks WHERE parent_id = $1', [TEST_PARENT_ID]);
   });
@@ -35,6 +45,7 @@ describeBlocks('Blocks API', () => {
   afterAll(async () => {
     // Clean up test data
     await pool.query('DELETE FROM blocks WHERE parent_id = $1', [TEST_PARENT_ID]);
+    if (server) await new Promise(resolve => server.close(resolve));
     await pool.end();
   });
 

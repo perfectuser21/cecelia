@@ -1,7 +1,9 @@
-import { describe, it, expect, afterAll } from 'vitest';
+import { describe, it, expect, afterAll, beforeAll } from 'vitest';
 import pg from 'pg';
 
-const pool = new pg.Pool({ connectionString: 'postgresql://localhost/cecelia' });
+import { privatePgConfig, verifyPrivatePg } from '../../../../../scripts/ci/private-pg-contract.mjs';
+const pool = new pg.Pool(privatePgConfig());
+beforeAll(() => verifyPrivatePg(pool));
 
 afterAll(() => pool.end());
 

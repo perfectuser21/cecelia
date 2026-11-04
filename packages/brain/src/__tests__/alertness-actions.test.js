@@ -5,13 +5,22 @@
  * Uses unified alertness levels: SLEEPING=0, CALM=1, AWARE=2, ALERT=3, PANIC=4
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi, beforeAll } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi, beforeAll, afterAll } from 'vitest';
+import pg from 'pg';
+import { privatePgConfig, verifyPrivatePg } from '../../../../scripts/ci/private-pg-contract.mjs';
+vi.mock('../db.js', () => ({ default: pool }));
+vi.mock('../executor.js', () => ({ cleanupOrphanProcesses: vi.fn(async () => 2) }));
+vi.mock('../task-updater.js', () => ({ broadcastTaskState: vi.fn() }));
+vi.mock('../llm-caller.js', () => ({ callLLM: vi.fn(() => { throw Error('external model forbidden'); }) }));
+vi.mock('../openai-client.js', () => ({ generateEmbedding: vi.fn(() => { throw Error('external model forbidden'); }) }));
 let pool;
+afterAll(async () => { await pool?.end(); });
 let executeResponseActions, notifyAlert, escalateToAnalysis, applyMitigation, activateShutdownSafety, recoverFromLevel, getMitigationState, _resetMitigationState;
 
 beforeAll(async () => {
   vi.resetModules();
-  pool = (await import('../db.js')).default;
+  pool = new pg.Pool(privatePgConfig());
+  await verifyPrivatePg(pool);
   ({ executeResponseActions, notifyAlert, escalateToAnalysis, applyMitigation, activateShutdownSafety, recoverFromLevel, getMitigationState, _resetMitigationState } = await import('../alertness-actions.js'));
 });
 
@@ -23,6 +32,7 @@ const PANIC = 4;
 
 describe('alertness-actions', () => {
   beforeEach(async () => {
+    vi.restoreAllMocks();
     // Clean up test events
     await pool.query(`DELETE FROM cecelia_events WHERE source = 'alertness'`);
     // Clean up test tasks
@@ -168,12 +178,11 @@ describe('alertness-actions', () => {
     });
 
     it('should cleanup orphan processes', async () => {
-      // This will call executor.cleanupOrphanProcesses()
-      // In test environment, this might be 0, but we verify it doesn't crash
+      const { cleanupOrphanProcesses } = await import('../executor.js');
       const result = await applyMitigation({});
 
-      expect(result.actions).toBeDefined();
-      // May or may not contain cleaned_X_orphans depending on actual orphans
+      expect(cleanupOrphanProcesses).toHaveBeenCalled();
+      expect(result.actions).toContain('cleaned_2_orphans');
     });
   });
 
