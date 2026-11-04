@@ -178,7 +178,7 @@ export async function processPendingScraperTasks(pool) {
 
       if (!publishTaskId) {
         console.warn(`[post-publish-collector] scraper task ${task.id} 缺少 source_publish_task_id，跳过`);
-        deferred++; 
+        deferred++;
         continue;
       }
 

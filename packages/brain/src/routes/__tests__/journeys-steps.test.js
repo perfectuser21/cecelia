@@ -358,4 +358,3 @@ describe('POST /activity_uses（用料登记，取代底座格子）', () => {
     expect((await post({ activity_id: ACT, item_id: ITEM })).status).toBe(404);
   });
 });
-
