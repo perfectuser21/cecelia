@@ -83,6 +83,7 @@ describe('Knowledge Dedup', () => {
       // 不测试具体的 action detection，只测试概念
       expect(detectAction).toBeDefined();
       expect(executeAction).toBeDefined();
+      expect(mockQuery).toHaveBeenCalled();
     });
   });
 
