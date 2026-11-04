@@ -18,7 +18,7 @@ const SIGNAL_META = [
   { id: 'queue_buildup',        label: '队列积压',        importance: 6, hasConsumer: true  },
   { id: 'kr_stalled',           label: 'KR进度停滞',      importance: 8, hasConsumer: true  },
   { id: 'kr_status_snapshot',   label: '活跃目标快照',    importance: 5, hasConsumer: true  },
-  { id: 'hours_since_feishu',   label: '距上次飞书交互',  importance: 6, hasConsumer: true  },
+  { id: 'hours_since_feishu',   label: '距上次联系',  importance: 6, hasConsumer: true  },
   { id: 'system_idle',          label: '系统空闲',        importance: 4, hasConsumer: true  },
   { id: 'user_online',          label: '用户在线',        importance: 7, hasConsumer: true  },
   { id: 'undigested_knowledge', label: '未消化知识',      importance: 6, hasConsumer: true  },
