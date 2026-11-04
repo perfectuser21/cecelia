@@ -10,7 +10,7 @@ const packages = [
   ['apps/api', 'typecheck'], ['apps/dashboard', 'build'],
 ] as const;
 
-function fixture(changes: string[], options: { missingScript?: boolean; failure?: number; missingTool?: boolean; missingRunner?: boolean; noBase?: boolean } = {}) {
+function fixture(changes: string[], options: { missingScript?: boolean; failure?: number; missingTool?: boolean; missingRunner?: boolean; noBase?: boolean; frozenFailure?: boolean } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'qc-preflight-'));
   const env = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' };
   for (const key of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_INDEX_FILE']) delete env[key];
@@ -69,6 +69,13 @@ describe('quickcheck 快速准备检查，完整单测由GitHub必需检查负�
     const result = fixture([path]);
     expect(result.status, result.stdout + result.stderr).toBe(0);
     expect(result.markers).toEqual(['scripts:node-test', 'scripts:dev-tools']);
+  });
+  it('冻结检查失败必须阻止后续测试和push', () => {
+    const result = fixture(['scripts/ci/change.mjs'], { frozenFailure: true });
+    expect(result.status).not.toBe(0);
+    expect(result.markers).toEqual(['scripts:w19-frozen']);
+    expect(result.stdout).toContain('exit=17');
+    expect(result.stdout).not.toContain('本地准备检查通过');
   });
   it.each([{ missingScript: true }, { missingTool: true }, { failure: 17 }])('缺入口/工具或真实命令非零时阻止push：%j', options => {
     const result = fixture(['packages/brain/changed.txt'], options);
