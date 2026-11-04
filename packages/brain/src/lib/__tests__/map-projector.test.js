@@ -178,6 +178,8 @@ describe('Universal Map deterministic structure projector', () => {
   });
 
   it('锚点投影参与 canonical nodes/edges 与 digest，输入顺序不影响结果', () => {
+    expect([...anchorProjection.nodes].reverse()).not.toEqual(anchorProjection.nodes);
+    expect([...anchorProjection.edges].reverse()).not.toEqual(anchorProjection.edges);
     const first = buildMapProjection({
       manifest,
       manifestDigest: digestMapManifest(manifest),
