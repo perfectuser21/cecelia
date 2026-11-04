@@ -47,7 +47,7 @@ export interface WorkersConfig {
 // 加载配置文件
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const configPath = join(__dirname, '../../data/workers/workers.config.json');
+const configPath = join(__dirname, '../../../../packages/workflows/staff/workers.config.json');
 
 let workersConfig: WorkersConfig;
 

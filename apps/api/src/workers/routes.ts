@@ -51,7 +51,7 @@ router.get('/:workerId', async (req: Request, res: Response) => {
       });
     }
 
-    return res.json(result);
+    return res.status(result.success ? 200 : 503).json(result);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
     return res.status(500).json({
@@ -77,7 +77,7 @@ router.get('/:workerId/workflows', async (req: Request, res: Response) => {
       });
     }
 
-    return res.json(result);
+    return res.status(result.success ? 200 : 503).json(result);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
     return res.status(500).json({
