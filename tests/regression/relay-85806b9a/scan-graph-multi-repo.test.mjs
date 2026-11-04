@@ -13,12 +13,17 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import pg from 'pg';
 import { replaceRepoEdges } from '../../../packages/brain/src/lib/graph-store.js';
 
-const DB_URL = process.env.TEST_DATABASE_URL || 'postgresql://localhost/cecelia_test';
-const DB_NAME = decodeURIComponent(new URL(DB_URL).pathname.slice(1));
-if (!/(_test|_scratch)$/.test(DB_NAME)) throw new Error(`拒绝连接非测试库: ${DB_NAME}`);
+import { pool as fixturePool, openFixture, closeFixture } from '../../../packages/brain/src/__tests__/helpers/debt-11-pg.js';
+beforeAll(async () => {
+  await openFixture('graph', ['351_graph_edges.sql', '400_fact_snapshot_metadata.sql'], `
+    CREATE TABLE api_registry(method text, path text, scanned_at timestamptz);
+    CREATE TABLE db_schema_registry(table_name text, scanned_at timestamptz);
+    CREATE TABLE test_registry(file_path text, scanned_at timestamptz);
+  `);
+});
+afterAll(closeFixture);
 
 // ─── 辅助：创建临时 repo 目录（包含一个 JS 文件，避免 walk 报错）
 function makeTempRepo(name) {
@@ -120,7 +125,7 @@ describe('[B-2 + I-5] 路径不存在时 WARN 跳过，不炸整轮', () => {
     const scanRepo = scanGraphModule?.scanRepo;
     if (!scanRepo) return; // 依赖上一个测试先通过
 
-    const pool = new pg.Pool({ connectionString: DB_URL });
+    const pool = fixturePool;
     try {
       const result = await scanRepo({ name: 'nonexistent-test', root: '/nonexistent_path_xyz_404' }, pool);
       expect(result.skipped).toBe(true);
@@ -136,7 +141,7 @@ describe('[B-2 + I-5] 路径不存在时 WARN 跳过，不炸整轮', () => {
     if (!scanRepoList) return;
 
     // 用真实 PG 连接
-    const pool = new pg.Pool({ connectionString: DB_URL });
+    const pool = fixturePool;
     let tmpDir;
     try {
       // 先插入已知数据到 test-repo-A
@@ -173,7 +178,7 @@ describe('[I-1] 全量替换语义验证（真实 PG）', () => {
   let pool;
 
   beforeAll(async () => {
-    pool = new pg.Pool({ connectionString: DB_URL });
+    pool = fixturePool;
     // 预插入旧数据，验证全量替换会清掉
     await replaceRepoEdges(pool, 'test-replace-repo', [
       { src_path: 'old.js', dst_path: 'stale.js', edge_type: 'import', detail: {} },

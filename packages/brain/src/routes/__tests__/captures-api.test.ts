@@ -4,9 +4,32 @@
  * 覆盖: FR-3, FR-8
  */
 
-import request from 'supertest';
+import { beforeAll, afterAll, vi } from 'vitest';
+import express from 'express';
+import { openFixture, closeFixture } from '../../__tests__/helpers/debt-11-pg.js';
+vi.mock('../../db.js', async () => ({ default: (await import('../../__tests__/helpers/debt-11-pg.js')).pool }));
+let server;
+let BRAIN_URL;
+beforeAll(async () => {
+  await openFixture('captures', ['000_base_schema.sql', '198_captures_table.sql', '199_capture_atoms_events.sql', '354_captures_envelope_fields.sql', '355_capture_atoms_envelope_fields.sql', '385_capture_destination_link.sql'], `
+    CREATE TABLE objectives(id uuid PRIMARY KEY);
+    CREATE TABLE key_results(id uuid PRIMARY KEY);
+    CREATE TABLE okr_projects(id uuid PRIMARY KEY);
+    CREATE TABLE journeys(id uuid PRIMARY KEY);
+  `);
+  const app = express();
+  app.use(express.json());
+  app.use('/api/brain/captures', (await import('../captures.js')).default);
+  app.use('/api/brain/capture-atoms', (await import('../capture-atoms.js')).default);
+  server = await new Promise(resolve => { const s = app.listen(0, '127.0.0.1', () => resolve(s)); });
+  BRAIN_URL = `http://127.0.0.1:${server.address().port}`;
+});
+afterAll(async () => {
+  if (server) await new Promise(resolve => server.close(resolve));
+  await closeFixture();
+});
 
-const BRAIN_URL = process.env.BRAIN_URL || 'http://localhost:5221';
+
 
 describe('POST /api/brain/captures', () => {
   const BASE_BODY = { content: 'unit test content', source: 'harness' };

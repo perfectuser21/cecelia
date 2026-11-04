@@ -1,10 +1,18 @@
-import { describe, it, expect, beforeAll, vi } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
+import { openFixture, closeFixture } from './helpers/debt-11-pg.js';
+vi.mock('../db.js', async () => ({ default: (await import('./helpers/debt-11-pg.js')).pool }));
 let pool;
 
 beforeAll(async () => {
-  vi.resetModules();
+  await openFixture('migration030', ['000_base_schema.sql', '030_capability_driven_development.sql', '493_vs_model_areas_kind.sql'], `
+    CREATE TABLE pr_plans(id uuid PRIMARY KEY);
+    CREATE TABLE journeys(id uuid PRIMARY KEY, parent_journey_id uuid);
+    CREATE TABLE notion_projection_map(notion_db_id text, title text, face text, brain_table text, direction text, vessel text, status text, space text, notes text);
+  `);
   pool = (await import('../db.js')).default;
 });
+
+afterAll(closeFixture);
 
 describe('Migration 030: Capability-Driven Development', () => {
   beforeAll(async () => {

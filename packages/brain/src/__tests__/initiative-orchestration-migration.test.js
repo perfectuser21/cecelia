@@ -10,10 +10,15 @@
  */
 
 import { describe, it, expect, afterAll, beforeAll, vi } from 'vitest';
+import { openFixture, closeFixture } from './helpers/debt-11-pg.js';
+vi.mock('../db.js', async () => ({ default: (await import('./helpers/debt-11-pg.js')).pool }));
 let pool;
 
 beforeAll(async () => {
-  vi.resetModules();
+  await openFixture('migration057', ['000_base_schema.sql']);
+  const { pool: fixture, migrate } = await import('./helpers/debt-11-pg.js');
+  await fixture.query('ALTER TABLE tasks ADD COLUMN task_type text');
+  await migrate('057_initiative_orchestration.sql');
   pool = (await import('../db.js')).default;
 });
 
@@ -124,3 +129,5 @@ describe('Migration 057 - initiative_orchestration', () => {
     await pool.query("DELETE FROM key_results WHERE title = 'mig057_test_goal_existing'");
   });
 });
+
+afterAll(closeFixture);

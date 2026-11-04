@@ -3,14 +3,18 @@
  */
 
 import { beforeAll, vi } from 'vitest';
+import { openFixture, closeFixture } from './helpers/debt-11-pg.js';
+vi.mock('../db.js', async () => ({ default: (await import('./helpers/debt-11-pg.js')).pool }));
 let createSuggestion, executeTriage;
 let pool;
 
 beforeAll(async () => {
-  vi.resetModules();
+  await openFixture('suggestions', ['000_base_schema.sql', '087_suggestions_table.sql']);
   pool = (await import('../db.js')).default;
   ({ createSuggestion, executeTriage } = await import('../suggestion-triage.js'));
 });
+
+afterAll(closeFixture);
 
 describe('Suggestion System Integration', () => {
   beforeAll(async () => {
