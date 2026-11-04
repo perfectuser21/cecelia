@@ -43,16 +43,12 @@ describe('generateOvernightReport — daily_logs type field', () => {
 
     const result = await generateOvernightReport();
 
-    // 若模块缓存了今日，返回 skipped；否则跑 UPDATE 路径
-    if (result && result.skipped) {
-      // 幂等保护触发：验证 SQL 模板本身正确
-      const fakeSql = `UPDATE daily_logs SET summary = $2, agent = 'nightly-orchestrator' WHERE id = $1`;
-      expect(fakeSql).toContain('UPDATE daily_logs');
-    } else {
-      const updateCall = mockQuery.mock.calls.find(c =>
-        typeof c[0] === 'string' && c[0].includes('UPDATE daily_logs')
-      );
-      expect(updateCall).toBeDefined();
-    }
+    expect(result.generated).toBe(true);
+    const updateCall = mockQuery.mock.calls.find(([sql]) => sql.includes('UPDATE daily_logs'));
+    expect(updateCall).toBeDefined();
+    expect(updateCall[1][0]).toBe('existing-uuid');
+    expect(JSON.parse(updateCall[1][1]).orchestrator.tasks).toEqual({
+      dispatched: 2, completed: 1, failed: 0, in_progress: 1,
+    });
   });
 });
