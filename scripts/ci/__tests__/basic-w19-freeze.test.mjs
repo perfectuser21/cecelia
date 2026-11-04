@@ -141,7 +141,8 @@ test('真实源fixture隔离继承Git环境，foreign脏文件和索引不变且
       dirtySentinel: existsSync(sentinel) ? readFileSync(sentinel, 'utf8') : null,
       indexUnchanged: readFileSync(foreignIndex).equals(originalIndex), hookRan: existsSync(marker),
       positivePassed: /# pass 2(?:\n|\r)/.test(child.stdout),
+      machineReadableTap: /^TAP version 13$/m.test(child.stdout),
     }, { exit: 0, dirtySentinel: 'owned dirty sentinel must survive\n', indexUnchanged: true,
-      hookRan: false, positivePassed: true });
+      hookRan: false, positivePassed: true, machineReadableTap: true });
   } finally { rmSync(owned, { recursive: true, force: true }); }
 });
