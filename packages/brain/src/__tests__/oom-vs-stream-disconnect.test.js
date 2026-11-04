@@ -111,6 +111,7 @@ describe('callback-processor — exit=137 OOM 不累计失败次数', () => {
       duration_ms: 5000,
     }, mockPool).catch(() => {}); // 忽略其他错误，只关注 handleTaskFailure 调用
 
+    expect(mockHandleTaskFailure).toHaveBeenCalledOnce();
     const calls = mockHandleTaskFailure.mock.calls;
     if (calls.length > 0) {
       expect(calls[0][1]?.skipCount).toBe(true);
@@ -128,6 +129,7 @@ describe('callback-processor — exit=137 OOM 不累计失败次数', () => {
       duration_ms: 5000,
     }, mockPool).catch(() => {});
 
+    expect(mockHandleTaskFailure).toHaveBeenCalledOnce();
     const calls = mockHandleTaskFailure.mock.calls;
     if (calls.length > 0) {
       expect(calls[0][1]?.skipCount).toBe(false);
