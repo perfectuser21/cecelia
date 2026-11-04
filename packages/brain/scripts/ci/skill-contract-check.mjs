@@ -30,8 +30,7 @@ export function checkEvaluator(content) {
   return { ok: missing.length === 0, missing };
 }
 
-// 不变量 3：reviewer 7 维名（须与 packages/brain/src/harness-shared.js 的
-// ReviewerOutputSchema.rubric_scores keys 逐字一致 —— harness::rubric-dimensions 接口约定）。
+// 不变量 3：固定reviewer正文的七维合同；不再绑定无消费者的旧Schema桥。
 export const REVIEWER_DIMENSIONS = [
   'dod_machineability',
   'scope_match_prd',

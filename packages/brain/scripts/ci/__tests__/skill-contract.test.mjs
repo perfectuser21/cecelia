@@ -7,7 +7,6 @@ import {
   checkReviewer,
   checkGenerator,
   checkProposer,
-  REVIEWER_DIMENSIONS,
 } from '../skill-contract-check.mjs';
 
 const __dir = dirname(fileURLToPath(import.meta.url));
@@ -20,7 +19,6 @@ const evaluatorBody = evaluator.slice(evaluator.indexOf('# /harness-evaluator'))
 const reviewer = read('packages/workflows/skills/harness-contract-reviewer/SKILL.md');
 const generator = read('packages/workflows/skills/harness-generator/SKILL.md');
 const proposer = read('packages/workflows/skills/harness-contract-proposer/SKILL.md');
-const sharedJs = read('packages/brain/src/harness-shared.js');
 
 describe('skill-contract — 5 类不变量守现网快照', () => {
   it('不变量1: evaluator 正文含 env_missing / B-1.6 / B-1.8 段（B-1.7 已下沉 Contract Gate 代码层，v1.16.0）', () => {
@@ -35,10 +33,8 @@ describe('skill-contract — 5 类不变量守现网快照', () => {
     expect(r.ok).toBe(true);
   });
 
-  it('不变量3: reviewer 7 维名与 harness-shared.js ReviewerOutputSchema 逐字一致', () => {
+  it('不变量3: 固定reviewer正文保留七维合同', () => {
     expect(checkReviewer(reviewer).ok).toBe(true);
-    // 7 维名同时必须出现在 schema 来源（逐字一致的比对锚点）
-    for (const d of REVIEWER_DIMENSIONS) expect(sharedJs).toContain(d);
   });
 
   it('不变量4: generator 无可执行 gh pr merge', () => {
@@ -83,5 +79,12 @@ describe('skill-contract — 5 类不变量守现网快照', () => {
 
   it('不变量10: proposer 保留 Android 真机 target 枚举', () => {
     expect(proposer).toContain('playground|android_realmachine');
+  });
+
+  // 原propose-branch shell Case3迁移到已有固定Skill来源跑道；只证明正文合同。
+  it('不变量11: 固定proposer正文仍写注入分支与结果文件（不宣称旧图执行）', () => {
+    expect(proposer).toContain('"propose_branch"');
+    expect(proposer).toContain('$PROPOSE_BRANCH');
+    expect(proposer).toContain('.brain-result.json');
   });
 });

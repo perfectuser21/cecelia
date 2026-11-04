@@ -1,22 +1,9 @@
 /**
- * harness-shared.js — 跨模块共享的 docker output parsing 工具与 Zod 输出 Schema。
- *
- * 这 3 个函数原定义在 harness-graph.js（6 节点 GAN pipeline 主文件）。
- * 该 pipeline 已退役（PR retire-harness-planner），但 docker-executor /
- * harness-initiative.graph / harness-task.graph 仍依赖这 3 个纯函数解析
- * Claude `--output-format json` 容器输出，故抽到本模块独立保留。
- *
- * 函数语义与 harness-graph.js 原版完全一致，仅 module 路径切换。
- *
- * 额外导出：
- * - ReviewerOutputSchema — Zod schema，校验 harness-contract-reviewer 输出结构
- * - EvaluatorOutputSchema — Zod schema，校验 harness-evaluator 输出结构（verdict: PASS|FIXED|FAIL）
- * - readAndValidateBrainResult — 读取 .brain-result.json 并用给定 schema 校验，校验失败抛 schema_mismatch
+ * 现役共享工具：docker-executor的stdout解析、仓库Skill加载及executor的sprint目录校验。
+ * 旧图专用的文件/Schema桥已随无消费者依赖闭包清退；.brain-result真协议仍由
+ * ground-truth、loop、harness-judge及HTTP路由独立读取，本模块不代表那些入口。
  */
 
-import { readFileSync, existsSync } from 'fs';
-import path from 'path';
-import { z } from 'zod';
 import { loadRepositorySkillContent } from './orchestrator/skill-bundle.js';
 
 // ─── Skill 内联加载 ──────────────────────────────────────────────────────────
@@ -136,74 +123,6 @@ export function extractField(text, fieldName) {
 }
 
 /**
- * 容器退出后从 worktree 读 .brain-result.json，验证 requiredFields 存在。
- * 文件不存在 → 抛 ContractViolation: missing_result_file
- * 字段缺失或为 null → 抛 ContractViolation: invalid_result_file: missing field {field}
- *
- * @param {string} worktreePath    worktree 根目录路径
- * @param {string[]} requiredFields  必须存在且非 null 的字段名列表
- * @returns {Promise<object>}      parsed .brain-result.json 对象
- */
-export async function readBrainResult(worktreePath, requiredFields = []) {
-  const filePath = path.join(worktreePath, '.brain-result.json');
-  if (!existsSync(filePath)) {
-    const err = new Error(`ContractViolation: missing_result_file — ${filePath}`);
-    err.code = 'missing_result_file';
-    throw err;
-  }
-  let data;
-  try {
-    data = JSON.parse(readFileSync(filePath, 'utf8'));
-  } catch (e) {
-    const err = new Error(`ContractViolation: invalid_result_file — JSON parse failed: ${e.message}`);
-    err.code = 'invalid_result_file';
-    throw err;
-  }
-  for (const field of requiredFields) {
-    if (data[field] === null || data[field] === undefined) {
-      const err = new Error(`ContractViolation: invalid_result_file: missing field ${field}`);
-      err.code = 'invalid_result_file';
-      throw err;
-    }
-  }
-  return data;
-}
-
-// ─── Zod Output Schemas（自研 Structured Output 验证层）───────────────────────
-
-export const ReviewerOutputSchema = z.object({
-  verdict: z.enum(['APPROVED', 'REVISION']),
-  rubric_scores: z.object({
-    dod_machineability:               z.number().min(1).max(10),
-    scope_match_prd:                  z.number().min(1).max(10),
-    test_is_red:                      z.number().min(1).max(10),
-    internal_consistency:             z.number().min(1).max(10),
-    risk_registered:                  z.number().min(1).max(10),
-    // ⚠️ harness::rubric-dimensions 接口约定：reviewer SKILL v6.4.0+ 新增 2 维度
-    verification_oracle_completeness: z.number().min(1).max(10),
-    ci_workflow_alignment:            z.number().min(1).max(10).optional().default(10),
-  }),
-  feedback: z.string(),
-});
-
-export const EvaluatorOutputSchema = z.object({
-  verdict:     z.enum(['PASS', 'FAIL', 'FIXED']),
-  task_id:     z.string().nullable().optional(),
-  feedback:    z.string().nullable().optional(),    // evaluator v2 format
-  failed_step: z.string().nullable().optional(),    // evaluator v1 format（FAIL 详情）
-  log_excerpt: z.string().nullable().optional(),    // evaluator v1 format（FAIL 日志）
-  fixes:       z.array(z.string()).nullable().optional(),  // generator FIXED format（B21）
-  coverage:    z.array(z.object({               // evaluator R4 职责分离 — coverage 对照表
-    step:           z.string(),
-    record_segment: z.string().nullable().optional(),
-    passed:         z.boolean(),
-  })).nullable().optional(),
-}).refine(
-  d => d.verdict === 'PASS' || d.feedback || d.failed_step || d.log_excerpt || (d.fixes && d.fixes.length > 0),
-  { message: 'FAIL/FIXED verdict requires at least one of: feedback, failed_step, log_excerpt, fixes' }
-);
-
-/**
  * 校验 sprint_dir 合法性（输入层防御）。
  * 裸 'sprints'（root fallback）或缺值 → throw，防止 LLM 读到 root-level 陈旧文件。
  * 合法路径示例：'sprints/06291104-feature-slug'（含子路径分隔符即合法）。
@@ -220,20 +139,3 @@ export function assertSprintDir(sprintDir, context = '') {
   return sprintDir;
 }
 
-/**
- * readBrainResult + Zod schema 深度验证。
- * 失败时 throw Error with code='schema_mismatch'。
- */
-export async function readAndValidateBrainResult(worktreePath, schema) {
-  const data = await readBrainResult(worktreePath);
-  const result = schema.safeParse(data);
-  if (!result.success) {
-    const issues = result.error.issues
-      .map(i => `${i.path.join('.')}: ${i.message}`)
-      .join('; ');
-    const err = new Error(`ContractViolation: schema_mismatch — ${issues}`);
-    err.code = 'schema_mismatch';
-    throw err;
-  }
-  return result.data;
-}
