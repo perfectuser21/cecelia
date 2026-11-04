@@ -9,7 +9,7 @@ function setup(){
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'linux-ssh-'));roots.push(root);const calls=[];
  const request={name:'new-linux',address:'100.64.1.2',ssh_user:'root',ssh_port:22,credential_ref:'op://CS/example/private key',host_key_fingerprint:'SHA256:'+'a'.repeat(43),role:'worker',region:'HK'};
  const run=async(command,args,options)=>{calls.push({command,args,options});if(command.endsWith('ssh-keyscan'))return '100.64.1.2 ssh-ed25519 ABC\n';
-  if(command.endsWith('ssh-keygen'))return '256 '+request.host_key_fingerprint+' (ED25519)';if(command.endsWith('/ssh'))return '{"signed":true}';throw Error('unexpected');};
+  if(command.endsWith('ssh-keygen'))return '256 '+request.host_key_fingerprint+' (ED25519)';if(command.endsWith('/ssh')){for(const name of fs.readdirSync(path.dirname(args[args.indexOf('-i')+1])))expect(fs.statSync(path.join(path.dirname(args[args.indexOf('-i')+1]),name)).mode&0o777).toBe(0o600);return '{"signed":true}';}throw Error('unexpected');};
  const options={root,pathRoot:root,run,readKey:async()=> 'PRIVATE-SSH-KEY',source:'def dispatch(p): return p'};
  return {root,calls,request,options,send:createOnboardingSSH(options)};
 }
@@ -27,7 +27,7 @@ it('接入恢复通过stdin使用原工件远端程序，不混入新镜像控�
 it.each(['fingerprint','symlink','timeout','field'])('%s失败不透出密钥且清理本地工作目录',async kind=>{
  const x=setup();let run=x.options.run;
  if(kind==='fingerprint')run=async(c,a,o)=>c.endsWith('ssh-keygen')?'256 SHA256:wrong':x.options.run(c,a,o);
- if(kind==='timeout')run=async(c,a,o)=>c.endsWith('/ssh')?Promise.reject(Error('secret-output')):x.options.run(c,a,o);
+ if(kind==='timeout')run=async(c,a,o)=>{if(c.endsWith('/ssh')){x.calls.push({command:c,args:a,options:o});throw Error('secret-output');}return x.options.run(c,a,o);};
  if(kind==='field')x.request.worker_boot_id=randomUUID();
  let root=x.root;if(kind==='symlink'){root=path.join(x.root,'link');fs.symlinkSync(x.root,root);}
  const send=createOnboardingSSH({...x.options,root,run});await expect(send(randomUUID(),x.request,{action:'bootstrap'})).rejects.toThrow('linux_pool_ssh_unavailable');
