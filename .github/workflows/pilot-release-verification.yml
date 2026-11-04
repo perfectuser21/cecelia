@@ -1,3 +1,5 @@
+# 兼容保留：远端已 disabled_manually（2026-11-04 核验）；本次不恢复调度。
+# 保留固定快照/收据接口供 release-index 校验历史证据；不能声明当前自动发布验证已运行。
 name: Pilot release verification
 on:
   push:

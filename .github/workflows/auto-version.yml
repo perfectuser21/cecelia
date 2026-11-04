@@ -1,3 +1,5 @@
+# 兼容保留：远端已 disabled_manually（2026-11-04 核验）；本次不恢复调度。
+# 版本策略的现役 PR 检查见 basic-brain-version-policy；该检查不替代碎片消费/生成版本 PR。
 name: Auto Version
 
 on:

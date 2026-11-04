@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, copyFileSync} from 'node:fs';
-import {join, dirname} from 'node:path';
+import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {spawnSync} from 'node:child_process';
 import yaml from 'js-yaml';
@@ -45,4 +45,20 @@ test('同名不同内容或损坏已有tar时失败且保留原始learning和归
   assert.equal(readFileSync(join(f.dir,'docs/learnings/repeat.md'),'utf8'),'new evidence');
   assert.deepEqual(readFileSync(join(f.dir,'docs/learnings/archive/2020-01.tar.gz')),before);
  }
+});
+
+test('第二月桶损坏时第一月桶也不替换，所有原文档保留',t=>{
+ const f=fixture(t);f.put('january.md','january evidence');f.commit();
+ f.put('february.md','february evidence');f.run('git',['add','.']);
+ f.run('git',['-c','core.hooksPath=/dev/null','commit','-qm','february'],{GIT_AUTHOR_DATE:'2020-02-02T00:00:00Z',GIT_COMMITTER_DATE:'2020-02-02T00:00:00Z'});
+ writeFileSync(join(f.dir,'docs/learnings/archive/2020-02.tar.gz'),'broken');
+ const r=f.archive();assert.notEqual(r.status,0);
+ for(const name of ['january.md','february.md'])assert.ok(readFileSync(join(f.dir,'docs/learnings',name)).length>0);
+ assert.equal(f.run('git',['status','--porcelain']).includes('D '),false);
+ assert.throws(()=>readFileSync(join(f.dir,'docs/learnings/archive/2020-01.tar.gz')),/ENOENT/);
+});
+test('普通源码保底scripts入口自动执行归档真实fixture测试',async()=>{
+ const {commandsFor}=await import('../run-basic-check.mjs');
+ const paths=commandsFor('scripts').flatMap(step=>step.args);
+ assert.ok(paths.includes('scripts/ci/__tests__/basic-archive-learnings.test.mjs'));
 });
