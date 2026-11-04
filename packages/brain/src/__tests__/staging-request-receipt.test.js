@@ -6,11 +6,11 @@ import {spawnSync} from 'node:child_process';
 let dir;afterEach(()=>{if(dir)rmSync(dir,{recursive:true,force:true});});
 const sha='a'.repeat(40),request='11111111-1111-4111-8111-111111111111';
 const valid={status:'success',sha,request_id:request,isolated:true,image_id:`sha256:${'b'.repeat(64)}`};
-function wait(receipt){
+function wait(receipt,{httpCode=200}={}){
  dir=mkdtempSync(join(tmpdir(),'stage-receipt-'));
  writeFileSync(join(dir,'curl'),'#!/bin/sh\nprintf "%s" "$RECEIPT"\n',{mode:0o755});
  return spawnSync('bash',[resolve(import.meta.dirname,'../../../../scripts/wait-for-staging.sh')],{
-  encoding:'utf8',timeout:5000,env:{...process.env,PATH:`${dir}:${process.env.PATH}`,BRAIN_URL:'http://fixture.invalid',EXPECTED_SHA:sha,STAGING_REQUEST_ID:request,RECEIPT:JSON.stringify(receipt)},
+  encoding:'utf8',timeout:5000,env:{...process.env,PATH:`${dir}:${process.env.PATH}`,BRAIN_URL:'http://fixture.invalid',EXPECTED_SHA:sha,STAGING_REQUEST_ID:request,RECEIPT:JSON.stringify(receipt),HTTP_CODE:String(httpCode)},
  });
 }
 it.each([{...valid,request_id:'22222222-2222-4222-8222-222222222222'},{...valid,sha:'c'.repeat(40)},
@@ -18,3 +18,6 @@ it.each([{...valid,request_id:'22222222-2222-4222-8222-222222222222'},{...valid,
  expect(wait(receipt).status).not.toBe(0);
 });
 it('本次请求、同SHA、不可变镜像且隔离验收均匹配才通过',()=>{expect(wait(valid).status).toBe(0);});
+it.each([302,500])('真实HTTP %s即使携带有效业务回执也拒绝',httpCode=>{
+ expect(wait(valid,{httpCode}).status).not.toBe(0);
+});
