@@ -130,7 +130,7 @@ test('真实源fixture隔离继承Git环境，foreign脏文件和索引不变且
     const originalIndex = readFileSync(foreignIndex);
     writeFileSync(config, '[core]\n hooksPath = ' + hooks + '\n');
     writeFileSync(join(hooks, 'post-checkout'), '#!/bin/sh\nprintf hook > "' + marker + '"\n', { mode: 0o700 });
-    const child = spawnSync(process.execPath, ['--test',
+    const child = spawnSync(process.execPath, ['--test', '--test-reporter=tap',
       '--test-name-pattern=实际冻结字节及|冻结基准必须', fileURLToPath(import.meta.url)], {
       cwd: root, timeout: 30000, encoding: 'utf8',
       env: { ...env, GIT_DIR: join(foreign, '.git'), GIT_WORK_TREE: foreign,
