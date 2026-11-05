@@ -56,4 +56,16 @@ describe('projection command processor', () => {
     const failureSql = query.mock.calls.map(([sql]) => String(sql)).find(sql => sql.includes('attempts+1'));
     expect(failureSql).toContain("THEN 'dead' ELSE 'failed'");
   });
+
+  it('cancel loses authority after its read: reject a zero-row write without an applied event', async () => {
+    query
+      .mockResolvedValueOnce({ rows: [{ id: 'cancel-race', command_type: 'cancel_requested', entity_id: 'task-race', payload: {} }] })
+      .mockResolvedValueOnce({ rows: [{ id: 'task-race', status: 'queued' }] })
+      .mockResolvedValueOnce({ rows: [], rowCount: 0 })
+      .mockResolvedValue({ rows: [] });
+    expect(await applyProjectionCommands({ query })).toEqual({ applied: 0, rejected: 1, failed: 0 });
+    expect(query.mock.calls.some(([sql]) => String(sql).includes('INSERT INTO cecelia_events'))).toBe(false);
+    expect(query.mock.calls.at(-1)[1]).toEqual(['cancel-race', 'rejected', 'task_changed_before_cancel']);
+  });
+
 });

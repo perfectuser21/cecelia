@@ -78,10 +78,16 @@ async function applyOne(pool, command) {
       await finish(pool, command.id, 'rejected', `active_or_terminal:${task.status}`);
       return 'rejected';
     }
-    await pool.query(
-      `UPDATE tasks SET status='cancelled', updated_at=NOW() WHERE id=$1`,
-      [task.id]
+    // The earlier SELECT may have autocommitted; authority belongs to this write.
+    const { rowCount } = await pool.query(
+      `UPDATE tasks SET status='cancelled', updated_at=NOW()
+       WHERE id=$1 AND status = ANY($2::text[]) RETURNING id`,
+      [task.id, ['queued', 'pending', 'blocked', 'paused']]
     );
+    if (rowCount !== 1) {
+      await finish(pool, command.id, 'rejected', 'task_changed_before_cancel');
+      return 'rejected';
+    }
   } else if (command.command_type === 'annotate_requested') {
     const annotation = String(command.payload?.annotation ?? '').trim();
     if (!annotation) {
