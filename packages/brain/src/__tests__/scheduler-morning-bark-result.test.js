@@ -1,3 +1,4 @@
+import './helpers/scheduler-jobs-fixture.js';
 import { it, expect, vi } from "vitest";
 
 import { runMorningCockpitBark } from '../morning-cockpit-bark.js';
