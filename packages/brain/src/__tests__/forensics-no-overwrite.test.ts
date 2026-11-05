@@ -1,3 +1,4 @@
+import './helpers/forensics-effects';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
