@@ -7,16 +7,19 @@
  *   - timeout 重试：recovery-loop autoFailTimedOutTasks 已接回独立 loop
  *   - orphan 回收：probeTaskLiveness 仍挂废弃 executeTick → 本次补接 recovery-loop
  *
- * 验收：三条场景各一测试，全部绿。
+ * 验收范围：真实loop到record-only依赖的委托/计数；不证明实际数据库任务已修复。
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 // 默认恢复函数不使用opts.pool；即使遗漏注入，也必须在record-only边界拒绝。
 const boundary = vi.hoisted(() => ({
   db: vi.fn(async () => { throw Error('recovery_regression_canonical_db_forbidden'); }),
   process: vi.fn(), network: vi.fn(),
+  unblock: vi.fn(async () => []), sweep: vi.fn(async () => 0),
   relay: vi.fn(async () => ({ scanned: 0, resumed: 0 })),
 }));
 vi.mock('../db.js', () => ({ default: { query: boundary.db } }));
+vi.mock('../task-updater.js', () => ({ unblockExpiredTasks: boundary.unblock }));
+vi.mock('../device-lock-helpers.js', () => ({ sweepStaleDeviceLocks: boundary.sweep }));
 vi.mock('../harness-relay-watchdog.js', () => ({ resumeStalledRelayRuns: boundary.relay }));
 vi.mock('node:child_process', () => Object.fromEntries(
   ['exec', 'execSync', 'execFile', 'execFileSync', 'spawn', 'spawnSync', 'fork'].map(name => [name, (...args) => {
@@ -39,9 +42,16 @@ afterEach(() => {
   }
 });
 import { runRecoveryOnce } from '../recovery-loop.js';
-import { runHarnessWatchdogOnce } from '../harness-watchdog-loop.js';
 
 const fakePool = { query: async () => ({ rows: [] }) };
+
+function expectRecoveryDelegates() {
+  expect(boundary.unblock).toHaveBeenCalledTimes(1);
+  expect(boundary.unblock).toHaveBeenCalledWith({ limit: 5 });
+  expect(boundary.sweep).toHaveBeenCalledTimes(1);
+  expect(boundary.sweep).toHaveBeenCalledWith();
+  expect(boundary.relay).not.toHaveBeenCalled();
+}
 
 // ── 安全网 1：stalled 检测（harness-watchdog-loop 接管） ────────────────────
 describe('stalled 检测：harness 驱动器静默 → resumeStalledHarnessDrivers 重排队', () => {
@@ -51,25 +61,27 @@ describe('stalled 检测：harness 驱动器静默 → resumeStalledHarnessDrive
     // Mock：scanStuckHarness 无逾期，resumeStalledHarnessDrivers 发现 1 个驱动器已死 → resumed
     const mockScanStuck = vi.fn(async () => ({ scanned: 1, flagged: [] }));
     const mockResume = vi.fn(async () => ({ scanned: 2, resumed: [STALLED_TASK_ID] }));
-    const mockRelayResume = vi.fn(async () => ({ scanned: 0, resumed: 0 }));
+    const mockRelayResume = boundary.relay;
 
     vi.doMock('../harness-watchdog.js', () => ({
       scanStuckHarness: mockScanStuck,
       resumeStalledHarnessDrivers: mockResume,
     }));
-    vi.doMock('../harness-relay-watchdog.js', () => ({
-      resumeStalledRelayRuns: mockRelayResume,
-    }));
 
     const { runHarnessWatchdogOnce: freshFn } = await import('../harness-watchdog-loop.js');
     const r = await freshFn({ pool: fakePool });
 
-    // 安全网实际触发并修复任务状态
+    // 真实loop委托恢复依赖并消费其返回值（不写真实任务状态）
     expect(mockResume).toHaveBeenCalledTimes(1);
     expect(r.resumed).toBe(1);
+    expect(mockScanStuck).toHaveBeenCalledWith({ pool: fakePool, notifier: undefined });
+    expect(mockResume).toHaveBeenCalledWith({ pool: fakePool });
+    expect(mockRelayResume).toHaveBeenCalledTimes(1);
+    expect(mockRelayResume).toHaveBeenCalledWith({ pool: fakePool });
+    expect(boundary.unblock).not.toHaveBeenCalled();
+    expect(boundary.sweep).not.toHaveBeenCalled();
 
     vi.doUnmock('../harness-watchdog.js');
-    vi.doUnmock('../harness-relay-watchdog.js');
   });
 });
 
@@ -102,9 +114,10 @@ describe('timeout 重试：普通任务超时 → autoFailTimedOutTasks 标记�
       probeTaskLiveness: async () => [],
     });
 
-    // 安全网实际触发并修复任务状态
+    // 真实loop委托恢复依赖并消费其返回值（不写真实任务状态）
     expect(autoFailTimedOutTasks).toHaveBeenCalledTimes(1);
     expect(r.tasksTimedOut).toBe(1);
+    expectRecoveryDelegates();
   });
 });
 
@@ -131,9 +144,10 @@ describe('orphan 回收：进程已死 → probeTaskLiveness 检测并重排队'
       probeTaskLiveness,
     });
 
-    // 安全网实际触发并修复任务状态
+    // 真实loop委托恢复依赖并消费其返回值（不写真实任务状态）
     expect(probeTaskLiveness).toHaveBeenCalledTimes(1);
     expect(r.orphansRequeued).toBe(1);
+    expectRecoveryDelegates();
   });
 
   it('probeTaskLiveness 抛错不影响其余三条网（独立 try-catch）', async () => {
@@ -153,5 +167,6 @@ describe('orphan 回收：进程已死 → probeTaskLiveness 检测并重排队'
     expect(autoFailTimedOutTasks).toHaveBeenCalledTimes(1);
     expect(checkStuckPipelines).toHaveBeenCalledTimes(1);
     expect(r.orphansRequeued).toBe(0);
+    expectRecoveryDelegates();
   });
 });
