@@ -24,3 +24,6 @@ afterEach(() => {
     vi.unstubAllGlobals();
   }
 });
+
+// pool与emit必须一起显式注入；默认event-bus不可成为测试的旁路写库入口。
+export const runDeps = pool => ({ pool, emit: pool.emit });
