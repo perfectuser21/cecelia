@@ -1,4 +1,4 @@
-import './helpers/notifier-receipt-boundary.js';
+import { receiptBoundary } from './helpers/notifier-receipt-boundary.js';
 /**
  * notifier-muted-gate.test.js
  *
@@ -45,6 +45,8 @@ describe('BRAIN_MUTED gate — notifier.js 单一出口', () => {
     });
     const result = await sendFeishu('test message');
     expect(result).toBe(false);
+    expect(receiptBoundary.record).not.toHaveBeenCalled();
+    expect(receiptBoundary.resolve).not.toHaveBeenCalled();
     expect(mockFetch).not.toHaveBeenCalled();
   });
 
@@ -57,6 +59,8 @@ describe('BRAIN_MUTED gate — notifier.js 单一出口', () => {
     });
     const result = await mod.sendFeishu('test');
     expect(result).toBe(false);
+    expect(receiptBoundary.record).not.toHaveBeenCalled();
+    expect(receiptBoundary.resolve).not.toHaveBeenCalled();
     expect(mockFetch).not.toHaveBeenCalled();
   });
 

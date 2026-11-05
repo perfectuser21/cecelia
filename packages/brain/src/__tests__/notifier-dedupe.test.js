@@ -1,4 +1,4 @@
-import './helpers/notifier-receipt-boundary.js';
+import { receiptBoundary } from './helpers/notifier-receipt-boundary.js';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const mockClaim = vi.fn();
@@ -8,7 +8,7 @@ vi.mock('../lib/dedupe.js', () => ({
 }));
 vi.mock('../muted-guard.js', () => ({ isMuted: () => false }));
 
-const mockFetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ code: 200 }) });
+const mockFetch = vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ code: 200 }) });
 global.fetch = mockFetch;
 process.env.FEISHU_BOT_WEBHOOK = 'https://example.com/hook';
 
@@ -29,6 +29,8 @@ describe('notifier dedupeKey（opt-in）', () => {
     expect(mockClaim).toHaveBeenCalledWith('notify', 'evt-1', 600);
     expect(mockFetch).toHaveBeenCalledTimes(1);
     expect(ok).toBe(true);
+    expect(receiptBoundary.record).toHaveBeenCalledWith({ kind: 'feishu', target: 'webhook', evidence: {} });
+    expect(receiptBoundary.resolve).toHaveBeenCalledWith('owned-notifier-receipt', 'confirmed', { http_status: 200 });
   });
 
   it('传 dedupeKey 且已被占 → 跳过发送，返回 false', async () => {
@@ -36,6 +38,8 @@ describe('notifier dedupeKey（opt-in）', () => {
     const ok = await sendFeishu('hello', { dedupeKey: 'evt-2' });
     expect(mockFetch).not.toHaveBeenCalled();
     expect(ok).toBe(false);
+    expect(receiptBoundary.record).not.toHaveBeenCalled();
+    expect(receiptBoundary.resolve).not.toHaveBeenCalled();
   });
 
   it('claim 抛错（never breaks main flow）→ 照发', async () => {
@@ -43,5 +47,7 @@ describe('notifier dedupeKey（opt-in）', () => {
     const ok = await sendFeishu('hello', { dedupeKey: 'evt-3' });
     expect(mockFetch).toHaveBeenCalledTimes(1);
     expect(ok).toBe(true);
+    expect(receiptBoundary.record).toHaveBeenCalledWith({ kind: 'feishu', target: 'webhook', evidence: {} });
+    expect(receiptBoundary.resolve).toHaveBeenCalledWith('owned-notifier-receipt', 'confirmed', { http_status: 200 });
   });
 });
