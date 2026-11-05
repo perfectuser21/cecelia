@@ -1,3 +1,4 @@
+import './helpers/quarantine-process-boundary.js';
 /**
  * Tests for ACTIVE-CHECKPOINT guard in handleTaskFailure.
  *

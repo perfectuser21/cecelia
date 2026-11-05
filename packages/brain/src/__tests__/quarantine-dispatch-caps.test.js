@@ -1,3 +1,4 @@
+import './helpers/quarantine-process-boundary.js';
 /**
  * Issue cc28d1af 根因B/C — 派发死循环的两个"无限"必须变"有限"：
  *   C1 handleTaskFailure skipCount(transient) requeue 必须计数，≥5 转 quarantine
