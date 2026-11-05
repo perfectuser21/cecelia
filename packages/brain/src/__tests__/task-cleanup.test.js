@@ -5,7 +5,28 @@
  * 使用 mock DB 避免真实数据库依赖
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+// 只允许每个case显式传入的record-only db；其它数据库/进程/网络均禁止。
+const external = vi.hoisted(() => ({ db: vi.fn(), process: vi.fn(), network: vi.fn() }));
+vi.mock('../db.js', () => ({ default: { query: (...args) => {
+  external.db(...args); return Promise.reject(Error('task_cleanup_test_forbids_canonical_db'));
+} } }));
+vi.mock('node:child_process', () => Object.fromEntries(
+  ['exec','execSync','execFile','execFileSync','spawn','spawnSync','fork'].map(name => [name, (...args) => {
+    external.process(name, ...args); throw Error('task_cleanup_test_forbids_process');
+  }]),
+));
+beforeEach(() => {
+  vi.clearAllMocks();
+  vi.stubGlobal('fetch', (...args) => { external.network(...args); throw Error('task_cleanup_test_forbids_network'); });
+});
+afterEach(() => {
+  try {
+    expect(external.db).not.toHaveBeenCalled();
+    expect(external.process).not.toHaveBeenCalled();
+    expect(external.network).not.toHaveBeenCalled();
+  } finally { vi.unstubAllGlobals(); }
+});
 import {
   runTaskCleanup,
   isRecurringTask,
