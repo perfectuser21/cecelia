@@ -7,7 +7,7 @@ import { verifyPrivatePg, assertVitestReport, dropOwnedScratch, restoreDump } fr
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const require = createRequire(new URL('../../packages/brain/package.json', import.meta.url));
-const { Pool } = require('pg');
+const { Client } = require('pg');
 export const readManifest = (repositoryRoot = root) => {
   const realRoot = realpathSync(repositoryRoot);
   const manifest = JSON.parse(readFileSync(join(realRoot, 'scripts/ci/debt-pg-tests.json'), 'utf8'));
@@ -35,13 +35,19 @@ export async function runPrivatePg({ nativeBin, files = [], includePending = fal
   const rows = manifest.tests.filter(row => (row.status === 'ready' || includePending) && (!files.length || files.includes(row.path)));
   if (!rows.length || files.some(path => !rows.some(row => row.path === path))) throw Error('no eligible private PG tests or unknown requested file');
   const backend = await startPrivatePg({ nativeBin });
-  const admin = new Pool(backend.config);
+  const admin = new Client(backend.config);
   const baseEnv = testEnvironment(backend, backend.directory);
   const results = [], report = { schema_version: 1, owner: backend.owner, results, status: 'failed' };
   let databaseExists = false, dump, executionError;
   const verify = async () => {
-    const pool = new Pool({ ...backend.config, database: 'cecelia_scratch' });
-    try { await verifyPrivatePg(pool, baseEnv); } finally { await pool.end(); }
+    const client = new Client({ ...backend.config, database: 'cecelia_scratch' });
+    try {
+      await client.connect();
+      await verifyPrivatePg(client, baseEnv);
+    } finally {
+      // Pool.end can resolve before idle sockets close; DROP must wait for wire end.
+      await client.end();
+    }
   };
   const drop = async () => {
     if (!databaseExists) return;
@@ -57,6 +63,7 @@ export async function runPrivatePg({ nativeBin, files = [], includePending = fal
     await verify();
   };
   try {
+    await admin.connect();
     if (rows.some(row => row.mode === 'full')) {
       await create();
       checked(process.execPath, ['packages/brain/src/migrate.js'], { cwd: root, env: baseEnv, timeout: 600000 });

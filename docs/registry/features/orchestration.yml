@@ -82,9 +82,7 @@ features:
         - packages/brain/src/__tests__/activation-scorer.test.js
         - packages/brain/src/__tests__/backfill-l1.test.js
         - packages/brain/src/__tests__/bare-modules/brain-manifest.test.js
-        - packages/brain/src/__tests__/bare-modules/focus.test.js
         - packages/brain/src/__tests__/bare-modules/migrate.test.js
-        - packages/brain/src/__tests__/bare-modules/nightly-tick.test.js
         - packages/brain/src/__tests__/blocks.test.js
         - packages/brain/src/__tests__/briefing-core.test.js
         - packages/brain/src/__tests__/briefing.test.js
@@ -184,9 +182,7 @@ features:
             - packages/brain/src/__tests__/activation-scorer.test.js
             - packages/brain/src/__tests__/backfill-l1.test.js
             - packages/brain/src/__tests__/bare-modules/brain-manifest.test.js
-            - packages/brain/src/__tests__/bare-modules/focus.test.js
             - packages/brain/src/__tests__/bare-modules/migrate.test.js
-            - packages/brain/src/__tests__/bare-modules/nightly-tick.test.js
             - packages/brain/src/__tests__/blocks.test.js
             - packages/brain/src/__tests__/briefing-core.test.js
             - packages/brain/src/__tests__/briefing.test.js
