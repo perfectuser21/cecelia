@@ -10,20 +10,6 @@ const mockQuery = vi.hoisted(() => vi.fn());
 vi.mock('../db.js', () => ({ default: { query: mockQuery } }));
 
 const mockCreateRoutedTask = vi.hoisted(() => vi.fn());
-async function routedTaskDouble(db, request) {
-  const task = request.task;
-  const params = [
-    request.title, request.description, task.priority, task.project_id, task.goal_id,
-    task.tags, request.requested_task_type, task.prd_content, task.execution_profile,
-    Object.keys(request.metadata).length > 0 ? JSON.stringify(request.metadata) : null,
-    task.trigger_source, task.domain, task.owner_role, task.delivery_type,
-  ];
-  const result = await db.query(
-    `/* createRoutedTask test double: domain owner_role delivery_type */`,
-    params,
-  );
-  return { task: result.rows[0] };
-}
 vi.mock('../work-routing-store.js', () => ({ createRoutedTask: mockCreateRoutedTask }));
 
 const mockBroadcast = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
@@ -44,7 +30,7 @@ describe('actions.js - domain 自动填充', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockQuery.mockReset();
-    mockCreateRoutedTask.mockReset().mockImplementation(routedTaskDouble);
+    mockCreateRoutedTask.mockReset();
   });
 
   // ===== createTask =====
@@ -69,10 +55,10 @@ describe('actions.js - domain 自动填充', () => {
       });
     });
 
-    it('传入 domain=coding 时 INSERT 包含该 domain', async () => {
+    it('传入domain=coding时原样委托writer', async () => {
       const fakeTask = { id: 'task-1', title: '测试', status: 'queued' };
       mockQuery.mockResolvedValueOnce({ rows: [] }); // dedup
-      mockQuery.mockResolvedValueOnce({ rows: [fakeTask] }); // INSERT
+      mockCreateRoutedTask.mockResolvedValueOnce({ task: fakeTask }); // record-only writer result
 
       await createTask({
         title: '测试任务',
@@ -81,18 +67,14 @@ describe('actions.js - domain 自动填充', () => {
         domain: 'coding',
       });
 
-      const insertCall = mockQuery.mock.calls[1];
-      const sql = insertCall[0];
-      const params = insertCall[1];
-
-      expect(sql).toContain('domain');
-      expect(params).toContain('coding');
+      const request = mockCreateRoutedTask.mock.calls[0][1];
+      expect(request.task.domain).toBe('coding');
     });
 
-    it('不传 domain 时标题无匹配关键词则 domain 写 NULL', async () => {
+    it('无匹配关键词时domain委托null', async () => {
       const fakeTask = { id: 'task-2', title: '随机任务', status: 'queued' };
       mockQuery.mockResolvedValueOnce({ rows: [] });
-      mockQuery.mockResolvedValueOnce({ rows: [fakeTask] });
+      mockCreateRoutedTask.mockResolvedValueOnce({ task: fakeTask });
 
       await createTask({
         title: '随机任务名称无关键词',
@@ -100,18 +82,15 @@ describe('actions.js - domain 自动填充', () => {
         task_type: 'dev',
       });
 
-      const params = mockQuery.mock.calls[1][1];
-      // 标题无 domain 关键词时 detectDomain confidence=0，domain 写 null
-      // params 结构：[...commonParams(11), domain($12), delivery_type($13)]
-      const domainParam = params[params.length - 2];
-      expect(domainParam).toBeNull();
-      expect(params[params.length - 1]).toBe('code-only'); // delivery_type 默认值
+      const request = mockCreateRoutedTask.mock.calls[0][1];
+      expect(request.task.domain).toBeNull();
+      expect(request.task.delivery_type).toBe('code-only'); // delivery_type 默认值
     });
 
-    it('传入 domain=product 时 INSERT 包含 product', async () => {
+    it('传入domain=product时原样委托writer', async () => {
       const fakeTask = { id: 'task-3', title: '产品', status: 'queued' };
       mockQuery.mockResolvedValueOnce({ rows: [] });
-      mockQuery.mockResolvedValueOnce({ rows: [fakeTask] });
+      mockCreateRoutedTask.mockResolvedValueOnce({ task: fakeTask });
 
       await createTask({
         title: '产品功能',
@@ -120,8 +99,8 @@ describe('actions.js - domain 自动填充', () => {
         domain: 'product',
       });
 
-      const params = mockQuery.mock.calls[1][1];
-      expect(params).toContain('product');
+      const request = mockCreateRoutedTask.mock.calls[0][1];
+      expect(request.task.domain).toBe('product');
     });
   });
 

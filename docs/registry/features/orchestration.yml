@@ -109,7 +109,6 @@ features:
         - packages/brain/src/__tests__/heartbeat-whitelist.test.js
         - packages/brain/src/__tests__/heartbeat.test.js
         - packages/brain/src/__tests__/hello.test.js
-        - packages/brain/src/__tests__/init-tick-retry.test.js
         - packages/brain/src/__tests__/migration-015.test.js
         - packages/brain/src/__tests__/migration-016.test.js
         - packages/brain/src/__tests__/migration-018.test.js
@@ -209,7 +208,6 @@ features:
             - packages/brain/src/__tests__/heartbeat-whitelist.test.js
             - packages/brain/src/__tests__/heartbeat.test.js
             - packages/brain/src/__tests__/hello.test.js
-            - packages/brain/src/__tests__/init-tick-retry.test.js
             - packages/brain/src/__tests__/migration-015.test.js
             - packages/brain/src/__tests__/migration-016.test.js
             - packages/brain/src/__tests__/migration-018.test.js
