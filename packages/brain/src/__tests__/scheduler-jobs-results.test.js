@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { makePool, schedulerBoundary } from './helpers/scheduler-jobs-fixture.js';
+import { describe, it, expect, vi } from "vitest";
+import { makePool } from "./helpers/scheduler-jobs-fixture.js";
 import { runNativeReconcile } from '../lib/workflow-assembly-native.js';
 import { runImageRetentionJanitor } from '../image-retention-scheduler.js';
 import { runPreviewCacheJanitor } from '../preview-cache-scheduler.js';

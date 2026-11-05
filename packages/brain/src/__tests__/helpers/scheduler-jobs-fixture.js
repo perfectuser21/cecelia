@@ -9,7 +9,7 @@ vi.mock('../../preview-cache-scheduler.js', () => ({ runPreviewCacheJanitor: vi.
 vi.mock('../../projection/company-key-results.js', () => ({ runCompanyKrProjection: vi.fn(async () => ({ skipped: true })) }));
 // 目录真实handler会开独立连接并访问Notion；此文件仅验证调度，行为由directory单元与真实PG测试覆盖。
 vi.mock('../../projection/directory-job.js', () => ({ runDirectoryJob: vi.fn().mockResolvedValue({ skipped: true, reason: 'not_configured' }) }));
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { expect, vi, beforeEach, afterEach } from "vitest";
 
 
 vi.mock('../../node-onboarding/service.js', () => ({
@@ -209,6 +209,9 @@ vi.mock('../../recurring.js', () => ({
 // 这里只验注册与接线。部分 mock：保留 raise 等导出。
 vi.mock('../../alerting.js', async (importOriginal) => ({
   ...(await importOriginal()),
+  // 调度只验委托：保留真实raise会动态恢复alerting_buffers并访问canonical pool。
+  // 报警缓冲持久化与发送合同由alerting-persist等独立测试负责。
+  raise: vi.fn().mockResolvedValue(undefined),
   flushAlertsIfNeeded: vi.fn().mockResolvedValue({ p1: false, p2: false }),
 }));
 

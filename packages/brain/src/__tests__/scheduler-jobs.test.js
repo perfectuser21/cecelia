@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { makePool, schedulerBoundary } from './helpers/scheduler-jobs-fixture.js';
 import { runNodeOnboardingJob } from '../node-onboarding/service.js';
 import { runSchedulerJobsOnce, JOBS, SENTINEL_KEY_PREFIX } from '../scheduler-jobs.js';

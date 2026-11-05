@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { makePool, schedulerBoundary } from './helpers/scheduler-jobs-fixture.js';
+import { it, expect, vi } from "vitest";
+
 import { runMorningCockpitBark } from '../morning-cockpit-bark.js';
 import { runSchedulerJobsOnce, JOBS } from '../scheduler-jobs.js';
 // 默认注册表必须消费真实发送结果，不能把返回false的通知记为成功。

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { makePool, schedulerBoundary } from './helpers/scheduler-jobs-fixture.js';
+import { makePool } from "./helpers/scheduler-jobs-fixture.js";
 import { startSchedulerJobsLoop, stopSchedulerJobsLoop, JOBS } from '../scheduler-jobs.js';
 import * as schedulerJobsModule from '../scheduler-jobs.js';
 import { triggerArchReview } from '../daily-review-scheduler.js';
