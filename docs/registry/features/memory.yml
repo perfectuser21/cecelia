@@ -430,7 +430,6 @@ features:
     apis: []
     tests:
       unit:
-        - packages/brain/src/__tests__/bare-modules/pending-conversations.test.js
         - packages/brain/src/__tests__/consolidation.test.js
         - packages/brain/src/__tests__/conversation-consolidator.test.js
         - packages/brain/src/__tests__/pending-conversations.test.js
@@ -445,7 +444,6 @@ features:
         maturity: 2
         tests:
           unit:
-            - packages/brain/src/__tests__/bare-modules/pending-conversations.test.js
             - packages/brain/src/__tests__/consolidation.test.js
             - packages/brain/src/__tests__/conversation-consolidator.test.js
             - packages/brain/src/__tests__/pending-conversations.test.js
@@ -588,8 +586,6 @@ features:
         - packages/brain/src/__tests__/bare-modules/desire-feedback.test.js
         - packages/brain/src/__tests__/desire-feedback.test.js
         - packages/brain/src/__tests__/desire-respond-api.test.js
-        - packages/brain/src/__tests__/desire-suggestion-cycle.test.js
-        - packages/brain/src/__tests__/desire-suggestions.test.js
         - packages/brain/src/__tests__/desire-system.test.js
         - packages/brain/src/__tests__/desires-api.test.js
       integration: []
@@ -605,8 +601,6 @@ features:
             - packages/brain/src/__tests__/bare-modules/desire-feedback.test.js
             - packages/brain/src/__tests__/desire-feedback.test.js
             - packages/brain/src/__tests__/desire-respond-api.test.js
-            - packages/brain/src/__tests__/desire-suggestion-cycle.test.js
-            - packages/brain/src/__tests__/desire-suggestions.test.js
             - packages/brain/src/__tests__/desire-system.test.js
             - packages/brain/src/__tests__/desires-api.test.js
           integration: []

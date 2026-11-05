@@ -331,7 +331,6 @@ features:
         - packages/brain/src/__tests__/auto-learning.test.js
         - packages/brain/src/__tests__/auto-rca.test.js
         - packages/brain/src/__tests__/bare-modules/auto-fix.test.js
-        - packages/brain/src/__tests__/bare-modules/health-monitor.test.js
         - packages/brain/src/__tests__/bare-modules/rca-deduplication.test.js
         - packages/brain/src/__tests__/bare-modules/trace-routes.test.js
         - packages/brain/src/__tests__/chaos-hardening.test.js
@@ -373,7 +372,6 @@ features:
             - packages/brain/src/__tests__/auto-learning.test.js
             - packages/brain/src/__tests__/auto-rca.test.js
             - packages/brain/src/__tests__/bare-modules/auto-fix.test.js
-            - packages/brain/src/__tests__/bare-modules/health-monitor.test.js
             - packages/brain/src/__tests__/bare-modules/rca-deduplication.test.js
             - packages/brain/src/__tests__/bare-modules/trace-routes.test.js
             - packages/brain/src/__tests__/chaos-hardening.test.js

@@ -527,7 +527,6 @@ features:
         auth: none
     tests:
       unit:
-        - packages/brain/src/__tests__/bare-modules/initiative-closer.test.js
         - packages/brain/src/__tests__/check-okr-structure.test.js
         - packages/brain/src/__tests__/contracts/initiative-closer-contract.test.js
         - packages/brain/src/__tests__/goal-evaluator.test.js
@@ -563,7 +562,6 @@ features:
         maturity: 3
         tests:
           unit:
-            - packages/brain/src/__tests__/bare-modules/initiative-closer.test.js
             - packages/brain/src/__tests__/check-okr-structure.test.js
             - packages/brain/src/__tests__/contracts/initiative-closer-contract.test.js
             - packages/brain/src/__tests__/goal-evaluator.test.js
@@ -679,7 +677,6 @@ features:
     apis: []
     tests:
       unit:
-        - packages/brain/src/__tests__/decomp-capacity-gate.test.js
         - packages/brain/src/__tests__/decomp-checker-dedup-fix.test.js
         - packages/brain/src/__tests__/decomp-checker-direct-kr.test.js
         - packages/brain/src/__tests__/decomp-checker-domain.test.js
@@ -696,7 +693,6 @@ features:
         maturity: 2
         tests:
           unit:
-            - packages/brain/src/__tests__/decomp-capacity-gate.test.js
             - packages/brain/src/__tests__/decomp-checker-dedup-fix.test.js
             - packages/brain/src/__tests__/decomp-checker-direct-kr.test.js
             - packages/brain/src/__tests__/decomp-checker-domain.test.js

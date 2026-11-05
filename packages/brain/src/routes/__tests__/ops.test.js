@@ -1,3 +1,4 @@
+import { deployFixture } from '../../__tests__/helpers/deploy-owned-fs.js';
 /**
  * ops.test.js
  * 验证 deploy webhook 使用 REPO_ROOT 环境变量而非 import.meta.url 推算路径。
@@ -60,8 +61,8 @@ describe('ops — deploy REPO_ROOT path', () => {
 
   beforeEach(async () => {
     capturedSpawnArgs = null;
-    process.env.DEPLOY_TOKEN = 'test-token';
-    process.env.REPO_ROOT = '/custom/repo/root';
+    vi.stubEnv('DEPLOY_TOKEN', 'test-token');
+    process.env.REPO_ROOT = deployFixture.root;
     vi.resetModules();
   });
 
@@ -71,7 +72,7 @@ describe('ops — deploy REPO_ROOT path', () => {
     } else {
       process.env.REPO_ROOT = ORIG_REPO_ROOT;
     }
-    try { unlinkSync('/tmp/cecelia-deploy-status.json'); } catch {}
+    try { unlinkSync(deployFixture.statusFile); } catch {}
   });
 
   it('POST /deploy 使用 REPO_ROOT 拼接 deploy-local.sh 路径', async () => {
@@ -88,9 +89,9 @@ describe('ops — deploy REPO_ROOT path', () => {
     expect(res.status).toBe(202);
     expect(capturedSpawnArgs).not.toBeNull();
     const scriptPath = capturedSpawnArgs[1][0];
-    expect(scriptPath).toBe('/custom/repo/root/scripts/deploy-local.sh');
+    expect(scriptPath).toBe(`${deployFixture.root}/scripts/deploy-local.sh`);
     const opts = capturedSpawnArgs[2];
-    expect(opts.cwd).toBe('/custom/repo/root');
+    expect(opts.cwd).toBe(deployFixture.root);
   });
 
   it('REPO_ROOT 未设置时真实 handler 使用仓库脚本与 cwd', async () => {
@@ -126,3 +127,6 @@ describe('feishu/impression mouth timeout — bridge OAuth 真实响应需 10-30
     expect(src).not.toMatch(badPattern);
   });
 });
+
+vi.mock('../../receipt-collector.js', () => ({ recordActionReceipt: vi.fn(async () => 'owned-receipt'), resolveActionReceipt: vi.fn(async () => true) }));
+vi.mock('../../../../../scripts/brain-image-retention/runtime.mjs', () => ({ createRuntime: vi.fn(async () => null) }));
