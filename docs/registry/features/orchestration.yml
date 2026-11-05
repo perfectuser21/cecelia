@@ -677,7 +677,6 @@ features:
     apis: []
     tests:
       unit:
-        - packages/brain/src/__tests__/decomp-capacity-gate.test.js
         - packages/brain/src/__tests__/decomp-checker-dedup-fix.test.js
         - packages/brain/src/__tests__/decomp-checker-direct-kr.test.js
         - packages/brain/src/__tests__/decomp-checker-domain.test.js
@@ -694,7 +693,6 @@ features:
         maturity: 2
         tests:
           unit:
-            - packages/brain/src/__tests__/decomp-capacity-gate.test.js
             - packages/brain/src/__tests__/decomp-checker-dedup-fix.test.js
             - packages/brain/src/__tests__/decomp-checker-direct-kr.test.js
             - packages/brain/src/__tests__/decomp-checker-domain.test.js
