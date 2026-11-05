@@ -10,7 +10,32 @@
  * 注意：所有 vi.mock() 必须在文件顶层，vitest 会提升 mock 调用
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+
+const boundary = vi.hoisted(() => ({ unexpectedFetch: vi.fn(), process: vi.fn() }));
+const SYNTHETIC_DIGEST_URL = 'https://digest.invalid/synthetic-system-channel';
+beforeEach(() => {
+  vi.clearAllMocks();
+  vi.stubEnv('ALERT_DIGEST_WEBHOOK', SYNTHETIC_DIGEST_URL);
+  vi.stubEnv('FEISHU_BOT_WEBHOOK', 'https://dm.invalid/never-use-synthetic');
+  vi.stubGlobal('fetch', async (...args) => {
+    boundary.unexpectedFetch(...args); throw Error('alert_chain_unarranged_fetch');
+  });
+});
+afterEach(() => {
+  try {
+    expect(boundary.unexpectedFetch).not.toHaveBeenCalled();
+    expect(boundary.process).not.toHaveBeenCalled();
+  } finally {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  }
+});
+vi.mock('node:child_process', () => Object.fromEntries(
+  ['exec', 'execSync', 'execFile', 'execFileSync', 'spawn', 'spawnSync', 'fork'].map(name => [name, (...args) => {
+    boundary.process(name, ...args); throw Error('alert_chain_process_forbidden');
+  }]),
+));
 
 // ─── 基础设施 mock（全文件生效） ────────────────────────────────────────────────
 
