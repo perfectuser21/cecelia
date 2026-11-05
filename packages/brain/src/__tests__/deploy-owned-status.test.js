@@ -1,3 +1,4 @@
+import { deployFixture } from './helpers/deploy-owned-fs.js';
 /**
  * deploy-receipt.test.js — 九要素 T4：deploy webhook 回执接线
  *
@@ -8,9 +9,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, existsSync, readFileSync, rmSync } from 'fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { existsSync, readFileSync, rmSync } from 'fs';
 import express from 'express';
 import request from 'supertest';
 
@@ -55,7 +54,7 @@ vi.mock('../pr-callback-handler.js', () => ({
   extractPrInfo: vi.fn(),
   handlePrMerged: vi.fn(),
 }));
-vi.mock('./shared.js', () => ({
+vi.mock('../routes/shared.js', () => ({
   resolveRelatedFailureMemories: vi.fn(),
   getActiveExecutionPaths: vi.fn(),
   INVENTORY_CONFIG: {},
@@ -74,8 +73,8 @@ vi.mock('child_process', () => ({
 
 let ownedRoot, statusFile;
 beforeEach(() => {
-  ownedRoot = mkdtempSync(join(tmpdir(), 'deploy-owned-status-'));
-  statusFile = join(ownedRoot, 'status.json');
+  ownedRoot = deployFixture.root;
+  statusFile = deployFixture.statusFile;
   vi.stubEnv('REPO_ROOT', ownedRoot); vi.stubEnv('DEPLOY_TOKEN', 'tok');
   capturedSpawnArgs = null; vi.resetModules();
 });
@@ -87,6 +86,8 @@ it('实际POST持久化本人状态，fresh模块GET恢复running并拒绝重复
   expect(accepted.status).toBe(202); expect(capturedSpawnArgs).not.toBeNull();
   expect(existsSync(statusFile)).toBe(true);
   expect(JSON.parse(readFileSync(statusFile, 'utf8'))).toMatchObject({ status: 'running' });
+  expect(deployFixture.statusOperations.length).toBeGreaterThan(0);
+  expect(deployFixture.statusOperations.every(path => path === statusFile)).toBe(true);
   vi.resetModules();
   const { default: restored } = await import('../routes/ops.js');
   const restarted = express(); restarted.use(express.json()); restarted.use('/api/brain', restored);
