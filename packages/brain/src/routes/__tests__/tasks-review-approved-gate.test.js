@@ -37,6 +37,16 @@ describe('真实PATCH完成审查门只允许明确approved', () => {
     expect(updates).toEqual([]); expect(task.status).toBe('in_progress');
     expect(effects.emit).not.toHaveBeenCalled(); expect(effects.terminal).not.toHaveBeenCalled(); expect(effects.promote).not.toHaveBeenCalled();
   });
+  it('请求自称approved不能覆盖数据库的rejected',async () => {
+    task.review_status='rejected';const res=await patch({status:'completed',review_status:'approved'});
+    expect(res.status).toBe(422);expect(res.body.current_review_status).toBe('rejected');expect(updates).toEqual([]);
+  });
+  it('blocked委托失败返回500且仍不得写completed',async () => {
+    task.review_status='rejected';effects.block.mockRejectedValueOnce(Error('synthetic_block_failure'));
+    const res=await patch({status:'completed'});
+    expect(res.status).toBe(500);expect(updates).toEqual([]);
+    expect(effects.emit).not.toHaveBeenCalled();expect(effects.terminal).not.toHaveBeenCalled();
+  });
   it('approved从in_progress完成，保真实写入/事件/终态钩子',async () => {
     const res=await patch({status:'completed'});
     expect(res.status).toBe(200); expect(res.body.success).toBe(true); expect(res.body.status).toBe('completed');
