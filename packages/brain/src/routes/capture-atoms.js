@@ -1,7 +1,7 @@
 /**
  * /api/brain/capture-atoms — Capture Atoms CRUD + 路由确认
  *
- * GET  /api/brain/capture-atoms          — 列表（支持 ?status=pending_review&capture_id=）
+ * GET  /api/brain/capture-atoms          — 列表（支持 ?status=pending_review&target_type=&capture_id=）
  * GET  /api/brain/capture-atoms/:id      — 单条
  * PATCH /api/brain/capture-atoms/:id     — 更新（confirm/dismiss/edit）
  */
@@ -26,13 +26,17 @@ const AUTO_TRIAGE_SOURCE_TYPES = ['handoff', 'learning', 'issue'];
 
 router.get('/', async (req, res) => {
   try {
-    const { status, capture_id, limit = 50, offset = 0 } = req.query;
+    const { status, target_type, capture_id, limit = 50, offset = 0 } = req.query;
     const conditions = [];
     const values = [];
 
     if (status) {
       values.push(status);
       conditions.push(`ca.status = $${values.length}`);
+    }
+    if (target_type) {
+      values.push(target_type);
+      conditions.push(`ca.target_type = $${values.length}`);
     }
     if (capture_id) {
       values.push(capture_id);

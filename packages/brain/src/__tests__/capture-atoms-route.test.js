@@ -152,8 +152,9 @@ describe('capture-atoms route', () => {
       expect(res.body.id).toBe(MOCK_ATOM.id);
       const writes = mockClient.query.mock.calls;
       expect(writes.map(([sql]) => sql).at(-1)).toBe('COMMIT');
-      expect(writes[2][0]).toMatch(/SET status = 'dismissed'/);
-      expect(writes[2][1]).toEqual([MOCK_ATOM.id]);
+      const atomWrite = writes.find(([sql]) => /UPDATE capture_atoms/.test(sql));
+      expect(atomWrite[0]).toMatch(/SET status = 'dismissed'/);
+      expect(atomWrite[1]).toEqual([MOCK_ATOM.id]);
       expect(mockClient.release).toHaveBeenCalledTimes(1);
     });
 
