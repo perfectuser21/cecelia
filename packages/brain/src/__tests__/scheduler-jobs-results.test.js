@@ -69,4 +69,3 @@ it('装配持续对账只注册一个有界原scheduler入口且handler真实接
  const pool={query:vi.fn().mockResolvedValue({rows:[]})};await runSchedulerJobsOnce(pool,[job]);
  expect(runNativeReconcile).toHaveBeenCalledWith(pool);
 });
-
