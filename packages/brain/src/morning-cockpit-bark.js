@@ -46,40 +46,44 @@ export function isInMorningCockpitWindow(now = new Date()) {
 }
 
 /**
- * 当日去重检查（working_memory sentinel）。
+ * 当日尝试去重检查（兼容旧 sent_at 成功记录）。
  * @param {import('pg').Pool} pool
- * @returns {Promise<boolean>} true = 今日已推送，跳过
+ * @returns {Promise<string|null>} 已尝试/已发送的跳过原因，否则 null
  */
-async function alreadySentToday(pool) {
+async function recentAttemptReason(pool) {
   try {
     const { rows } = await pool.query(
       `SELECT value_json FROM working_memory WHERE key = $1 LIMIT 1`,
       [SENTINEL_KEY],
     );
-    if (!rows.length) return false;
+    if (!rows.length) return null;
     const record = rows[0].value_json;
-    const sentAt = record?.sent_at;
-    if (!sentAt) return false;
-    const diff = Date.now() - new Date(sentAt).getTime();
-    // 20 小时内视为当日已推送
-    return diff < 20 * 60 * 60 * 1000;
+    const attemptedAt = record?.attempted_at ?? record?.sent_at;
+    if (!attemptedAt) return null;
+    const diff = Date.now() - new Date(attemptedAt).getTime();
+    // 失败也保留防重发窗口，但不能把失败尝试称为已发送。
+    return diff < 20 * 60 * 60 * 1000
+      ? (record.sent === false ? 'already_attempted_today' : 'already_sent_today')
+      : null;
   } catch (e) {
     console.warn('[morning-cockpit-bark] sentinel read failed:', e.message);
-    return false;
+    return null;
   }
 }
 
 /**
- * 写入 sentinel（已推送记录）。
+ * 写入尝试结果；仅成功时保留 sent_at，兼容原成功记录读者。
  * @param {import('pg').Pool} pool
  */
-async function writeSentinel(pool) {
+async function writeSentinel(pool, sent) {
+  const attemptedAt = new Date().toISOString();
+  const record = { attempted_at: attemptedAt, sent, ...(sent ? { sent_at: attemptedAt } : {}) };
   try {
     await pool.query(
       `INSERT INTO working_memory (key, value_json, updated_at)
        VALUES ($1, $2, NOW())
        ON CONFLICT (key) DO UPDATE SET value_json = $2, updated_at = NOW()`,
-      [SENTINEL_KEY, JSON.stringify({ sent_at: new Date().toISOString() })],
+      [SENTINEL_KEY, JSON.stringify(record)],
     );
   } catch (e) {
     console.warn('[morning-cockpit-bark] sentinel write failed:', e.message);
@@ -275,10 +279,10 @@ export async function runMorningCockpitBark(pool) {
   }
 
   // 2. 当日去重 gate
-  const alreadySent = await alreadySentToday(pool);
-  if (alreadySent) {
-    console.log('[morning-cockpit-bark] 今日已推送，跳过');
-    return { skipped: true, reason: 'already_sent_today' };
+  const skipReason = await recentAttemptReason(pool);
+  if (skipReason) {
+    console.log(`[morning-cockpit-bark] 今日已尝试，跳过 reason=${skipReason}`);
+    return { skipped: true, reason: skipReason };
   }
 
   // 3. 采集简报数据 + 榜单（并行，榜单 best-effort）
@@ -325,14 +329,14 @@ export async function runMorningCockpitBark(pool) {
 
   // 5. 发送 Bark（复用 notifier.js sendBark，dedupeKey 二重去重）
   const dedupeKey = `morning-cockpit-bark:${new Date().toISOString().slice(0, 10)}`;
-  const sent = await sendBark(title, body, {
+  const sent = (await sendBark(title, body, {
     dedupeKey,
     dedupeTtlSec: 20 * 60 * 60,
-  });
+  })) === true;
 
-  // 6. 写入 sentinel（无论 Bark 是否 token 可用，避免重复调 API）
-  await writeSentinel(pool);
+  // 6. 保留失败也去重的既有合同，记录真实发送结果，不自动重试通知。
+  await writeSentinel(pool, sent);
 
-  console.log(`[morning-cockpit-bark] 推送完成 sent=${sent} board_items=${triageBoard?.leaderboard?.length ?? 0}`);
-  return { sent: true, completionRate, inProgressCount, triage_items: triageBoard?.leaderboard?.length ?? 0 };
+  console.log(`[morning-cockpit-bark] 推送尝试结束 sent=${sent} board_items=${triageBoard?.leaderboard?.length ?? 0}`);
+  return { sent, ...(!sent ? { error: 'bark_send_failed' } : {}), completionRate, inProgressCount, triage_items: triageBoard?.leaderboard?.length ?? 0 };
 }

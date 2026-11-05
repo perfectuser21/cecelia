@@ -124,7 +124,11 @@ export const JOBS = [
   { name: 'postdeploy-verifier', cadence: { everySec: 300 }, needsPool: true, timeoutMs: 2 * 60 * 1000, handler: runPostdeployVerifier, description: '第5环部署验证（自带5min节流gate，扫 pending_postdeploy 任务执行 postdeploy_check.command，通过→completed，失败3次→P1）' },
   { name: 'seven-ring-audit', cadence: { everySec: 86400 }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runSevenRingAuditJob, description: '七环对账日巡检（自带24h冷却，逐环核对测试入册/调度在跑/指纹新鲜/账本写对/产出消费/告警活着/面板新鲜，棘轮只许降，刀3-T6）' },
   { name: 'guard-drill', cadence: { everySec: 2592000 }, needsPool: true, timeoutMs: 10 * 60 * 1000, handler: runGuardDrill, description: '月度守卫演习（自带30天gate，轮选 auto 守卫全流程弄死→验红→恢复，未叫→P1+Bark，刀4-T4）' },
-  { name: 'morning-cockpit-bark', cadence: { cron: '30 8 * * *', tz: BJ_TZ }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runMorningCockpitBark, description: '主理人指挥舱晨报 Bark（北京08:30窗口+当日去重，推送指挥舱链接+完成率/任务数简报，task:80a5be84）' },
+  { name: 'morning-cockpit-bark', cadence: { cron: '30 8 * * *', tz: BJ_TZ }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: async (pool) => {
+    const result = await runMorningCockpitBark(pool);
+    if (result?.sent === false) throw new Error(result.error || 'bark_send_failed');
+    return result;
+  }, description: '主理人指挥舱晨报 Bark（北京08:30窗口+当日去重，推送指挥舱链接+完成率/任务数简报，task:80a5be84）' },
   { name: 'drift-sentinel', cadence: { everySec: 1800 }, needsPool: false, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runDriftSentinel, description: 'G2 部署漂移哨兵（自带30min自gate，SHA对账+自动补部署，G2 S0）' },
   { name: 'disk-guard', cadence: { everySec: 900 }, needsPool: false, timeoutMs: 120_000, handler: runDiskGuard, description: '磁盘哨兵（15min自gate，宿主SSH逃逸df检测，80/85/90%三级响应，[disk_check]日志）' },
   { name: 'promise-map-nightly', cadence: { cron: '0 2 * * *', tz: 'UTC' }, needsPool: false, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runPromiseMapNightly, description: 'MJ5 S4 承诺地图保鲜对账（每日 UTC 02:00，4 条断言，失败 Bark，刀4）' },

@@ -111,6 +111,51 @@ describe('runMorningCockpitBark', () => {
     expect(pool.query).toHaveBeenCalled();
   });
 
+  it('Bark 返回 false：诚实返回失败，哨兵只记尝试而非发送成功', async () => {
+    sendBark.mockResolvedValueOnce(false);
+    const pool = makePool();
+    const result = await runMorningCockpitBark(pool);
+    expect(sendBark).toHaveBeenCalledOnce();
+    expect(result).toMatchObject({ sent: false, error: 'bark_send_failed' });
+    const writes = pool.query.mock.calls.filter(([sql, params]) =>
+      /INSERT INTO working_memory/.test(String(sql)) && params?.[0] === 'morning-cockpit-bark');
+    expect(writes).toHaveLength(1);
+    const record = JSON.parse(writes[0][1][1]);
+    expect(record).toEqual({ attempted_at: new Date().toISOString(), sent: false });
+  });
+
+  it('失败尝试仍防重发，20h 内不会再次调用 Bark', async () => {
+    sendBark.mockResolvedValueOnce(false);
+    let record = null;
+    const pool = { query: vi.fn(async (sql, params) => {
+      if (/FROM working_memory/.test(String(sql)) && params?.[0] === 'morning-cockpit-bark') {
+        return { rows: record ? [{ value_json: record }] : [] };
+      }
+      if (/INSERT INTO working_memory/.test(String(sql)) && params?.[0] === 'morning-cockpit-bark') {
+        record = JSON.parse(params[1]);
+      }
+      return { rows: [] };
+    }) };
+    await runMorningCockpitBark(pool);
+    expect(await runMorningCockpitBark(pool)).toEqual({ skipped: true, reason: 'already_attempted_today' });
+    expect(sendBark).toHaveBeenCalledOnce();
+    expect(record.sent).toBe(false);
+  });
+
+  it('失败尝试超20h可再次尝试，成功哨兵保留旧sent_at兼容字段', async () => {
+    const pool = { query: vi.fn(async (sql, params) => {
+      if (/FROM working_memory/.test(String(sql)) && params?.[0] === 'morning-cockpit-bark') {
+        return { rows: [{ value_json: { attempted_at: new Date(Date.now() - 20 * 3600_000).toISOString(), sent: false } }] };
+      }
+      return { rows: [] };
+    }) };
+    expect(await runMorningCockpitBark(pool)).toMatchObject({ sent: true });
+    expect(sendBark).toHaveBeenCalledOnce();
+    const write = pool.query.mock.calls.find(([sql, params]) => /INSERT INTO working_memory/.test(String(sql)) && params?.[0] === 'morning-cockpit-bark');
+    expect(write).toBeDefined();
+    expect(JSON.parse(write[1][1])).toEqual({ attempted_at: new Date().toISOString(), sent_at: new Date().toISOString(), sent: true });
+  });
+
   it('sentinel 读取失败时仍继续推送（降级安全）', async () => {
     const pool = { query: vi.fn().mockRejectedValue(new Error('db down')) };
     const result = await runMorningCockpitBark(pool);
