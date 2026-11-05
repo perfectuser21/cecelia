@@ -105,11 +105,62 @@ describe('refreshWorldState', () => {
 
   // T7: refreshWorldState 数据库异常时返回 { refreshed: false }
   it('T7: 数据库异常时返回 { refreshed: false }（非致命）', async () => {
-    mockPool.query.mockRejectedValueOnce(new Error('table not found'));
+    mockPool.query
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockRejectedValueOnce(new Error('snapshot write failed'));
 
     const result = await refreshWorldState(mockPool);
     expect(result.refreshed).toBe(false);
     expect(result.error).toBeTruthy();
+  });
+});
+
+// 失败必须保留最后一次成功快照；直接调用真实reader与upsert接缝，不复制组装逻辑。
+describe('WORLD_STATE 读取失败不得覆盖已有快照', () => {
+  it.each(['objectives', 'okr_projects', 'okr_initiatives', 'all'])(
+    '%s 读取失败：非致命拒绝刷新，原content/version/time保持', async failedSource => {
+      const previous = { content: 'last verified world snapshot', version: 7, updated_at: '2026-10-31T00:00:00Z' };
+      let stored = { ...previous };
+      const writes = [];
+      const reads = [];
+      const ownedPool = { query: vi.fn(async (sql, params) => {
+        if (sql.startsWith('SELECT content')) return { rows: [{ ...stored }] };
+        const source = /FROM\s+(objectives|okr_projects|okr_initiatives)\b/.exec(sql)?.[1];
+        if (source) {
+          reads.push(source);
+          if (failedSource === 'all' || source === failedSource) throw new Error(`owned_read_failure:${source}`);
+          return { rows: [{ title: `owned ${source}`, status: 'active' }] };
+        }
+        if (sql.startsWith('INSERT INTO distilled_docs')) {
+          writes.push(params);
+          stored = { content: params[1], version: stored.version + 1, updated_at: 'changed' };
+          return { rows: [] };
+        }
+        throw new Error('unexpected owned fixture query');
+      }) };
+
+      const result = await refreshWorldState(ownedPool);
+
+      expect(reads).toEqual(['objectives', 'okr_projects', 'okr_initiatives']);
+      expect(result).toMatchObject({ refreshed: false, error: expect.stringContaining('owned_read_failure:') });
+      expect(writes).toEqual([]);
+      expect(await getDoc('WORLD_STATE', ownedPool)).toEqual(previous);
+      expect(pool.query).not.toHaveBeenCalled();
+    },
+  );
+
+  it('三路成功且合法空集仍写真实空快照，不能把空集当读取错误', async () => {
+    const ownedPool = { query: vi.fn(async () => ({ rows: [] })) };
+
+    expect(await refreshWorldState(ownedPool)).toEqual({ refreshed: true, total: 0 });
+
+    expect(ownedPool.query).toHaveBeenCalledTimes(4);
+    const [sql, params] = ownedPool.query.mock.calls[3];
+    expect(sql).toContain('INSERT INTO distilled_docs');
+    expect(params).toEqual(['WORLD_STATE', expect.stringContaining('_暂无活跃目标或项目_'), 'auto']);
+    expect(pool.query).not.toHaveBeenCalled();
   });
 });
 

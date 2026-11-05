@@ -223,21 +223,21 @@ export async function refreshWorldState(dbPool) {
         WHERE status IN ('in_progress', 'pending', 'active')
         ORDER BY updated_at DESC
         LIMIT 5
-      `).catch(() => ({ rows: [] })),
+      `),
       p.query(`
         SELECT title, status
         FROM okr_projects
         WHERE status IN ('active', 'planning', 'in_progress')
         ORDER BY updated_at DESC
         LIMIT 5
-      `).catch(() => ({ rows: [] })),
+      `),
       p.query(`
         SELECT title, status
         FROM okr_initiatives
         WHERE status IN ('running', 'planned')
         ORDER BY updated_at DESC
         LIMIT 8
-      `).catch(() => ({ rows: [] })),
+      `),
     ]);
 
     let content = '## 世界状态快照（WORLD_STATE）\n\n';

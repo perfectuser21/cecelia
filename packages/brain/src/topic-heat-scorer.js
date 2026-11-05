@@ -164,7 +164,12 @@ export async function computeTopicHeatScores(pool, start, end) {
   const topics = await fetchTopicEngagementData(pool, start, end);
 
   return topics.map(t => {
-    const raw = calcRawHeatScore(t);
+    const raw = calcRawHeatScore({
+      views: t.total_views,
+      likes: t.total_likes,
+      comments: t.total_comments,
+      shares: t.total_shares,
+    });
     const heat_score = normalizeHeatScore(raw);
     return { ...t, heat_score };
   }).sort((a, b) => b.heat_score - a.heat_score);
