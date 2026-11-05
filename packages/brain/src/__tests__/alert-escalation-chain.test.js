@@ -10,7 +10,32 @@
  * 注意：所有 vi.mock() 必须在文件顶层，vitest 会提升 mock 调用
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+
+const boundary = vi.hoisted(() => ({ unexpectedFetch: vi.fn(), process: vi.fn() }));
+const SYNTHETIC_DIGEST_URL = 'https://digest.invalid/synthetic-system-channel';
+beforeEach(() => {
+  vi.clearAllMocks();
+  vi.stubEnv('ALERT_DIGEST_WEBHOOK', SYNTHETIC_DIGEST_URL);
+  vi.stubEnv('FEISHU_BOT_WEBHOOK', 'https://dm.invalid/never-use-synthetic');
+  vi.stubGlobal('fetch', async (...args) => {
+    boundary.unexpectedFetch(...args); throw Error('alert_chain_unarranged_fetch');
+  });
+});
+afterEach(() => {
+  try {
+    expect(boundary.unexpectedFetch).not.toHaveBeenCalled();
+    expect(boundary.process).not.toHaveBeenCalled();
+  } finally {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  }
+});
+vi.mock('node:child_process', () => Object.fromEntries(
+  ['exec', 'execSync', 'execFile', 'execFileSync', 'spawn', 'spawnSync', 'fork'].map(name => [name, (...args) => {
+    boundary.process(name, ...args); throw Error('alert_chain_process_forbidden');
+  }]),
+));
 
 // ─── 基础设施 mock（全文件生效） ────────────────────────────────────────────────
 
@@ -41,6 +66,21 @@ import {
   escalateResponse,
   getEscalationStatus,
 } from '../alertness/escalation.js';
+
+// 只在显式验证flush的测试接管HTTP；其它路径继续默认拒绝fetch。
+function recordDigestWrite() {
+  const fetch = vi.fn(async () => ({ ok: true }));
+  vi.stubGlobal('fetch', fetch);
+  return fetch;
+}
+function expectDigestWrite(fetch, text) {
+  expect(fetch).toHaveBeenCalledTimes(1);
+  const [url, options] = fetch.mock.calls[0];
+  expect(url).toBe(SYNTHETIC_DIGEST_URL);
+  expect(options).toMatchObject({ method: 'POST', headers: { 'Content-Type': 'application/json' } });
+  expect(options.signal).toBeInstanceOf(AbortSignal);
+  expect(JSON.parse(options.body)).toEqual({ msg_type: 'text', content: { text } });
+}
 
 // ─── Tests ──────────────────────────────────────────────────────────────────
 
@@ -78,9 +118,12 @@ describe('alerting.js — P0/P1 通知链路', () => {
     const afterPending = getStatus().p1_pending;
     expect(afterPending).toBeGreaterThan(beforePending);
 
+    const digestFetch = recordDigestWrite();
     await flushP1();
     expect(sendFeishu).not.toHaveBeenCalled();
     expect(getStatus().p1_pending).toBe(0);
+    expectDigestWrite(digestFetch, '⚠️ [P1 每小时汇总] 1 条警告\n• P1 告警积压');
+    expect(getStatus().last_p1_digest).toMatchObject({ count: 1, channel: 'webhook' });
   });
 
   it('P2 不立即推送，加入缓冲区；flushP2 汇总不私信（不调 sendFeishu）', async () => {
@@ -91,9 +134,12 @@ describe('alerting.js — P0/P1 通知链路', () => {
     const afterPending = getStatus().p2_pending;
     expect(afterPending).toBeGreaterThan(beforePending);
 
+    const digestFetch = recordDigestWrite();
     await flushP2();
     expect(sendFeishu).not.toHaveBeenCalled();
     expect(getStatus().p2_pending).toBe(0);
+    expectDigestWrite(digestFetch, '📋 [P2 每日记录] 1 条\n• P2 低优先级告警');
+    expect(getStatus().last_p2_digest).toMatchObject({ count: 1, channel: 'webhook' });
   });
 });
 

@@ -244,7 +244,6 @@ features:
         - packages/brain/src/__tests__/callback-quota-exhausted.test.js
         - packages/brain/src/__tests__/effectiveresult-db-fallback.test.js
         - packages/brain/src/__tests__/execution-callback-no-diagnostic.test.js
-        - packages/brain/src/__tests__/execution-logs-routes.test.js
         - packages/brain/src/__tests__/execution-status.test.js
         - packages/brain/src/__tests__/execution-strategy-session-kr-link.test.js
         - packages/brain/src/__tests__/failure-classification.test.js
@@ -276,7 +275,6 @@ features:
             - packages/brain/src/__tests__/callback-quota-exhausted.test.js
             - packages/brain/src/__tests__/effectiveresult-db-fallback.test.js
             - packages/brain/src/__tests__/execution-callback-no-diagnostic.test.js
-            - packages/brain/src/__tests__/execution-logs-routes.test.js
             - packages/brain/src/__tests__/execution-status.test.js
             - packages/brain/src/__tests__/execution-strategy-session-kr-link.test.js
             - packages/brain/src/__tests__/failure-classification.test.js
@@ -502,7 +500,6 @@ features:
         - packages/brain/src/__tests__/executor-input-validation.test.js
         - packages/brain/src/__tests__/executor-local-account-select.test.js
         - packages/brain/src/__tests__/executor-local-codex-exec.test.js
-        - packages/brain/src/__tests__/executor-max-seats-override.test.js
         - packages/brain/src/__tests__/executor-model-select.test.js
         - packages/brain/src/__tests__/executor-okr-project-layer.test.js
         - packages/brain/src/__tests__/executor-payload-routing.test.js
@@ -579,7 +576,6 @@ features:
             - packages/brain/src/__tests__/executor-input-validation.test.js
             - packages/brain/src/__tests__/executor-local-account-select.test.js
             - packages/brain/src/__tests__/executor-local-codex-exec.test.js
-            - packages/brain/src/__tests__/executor-max-seats-override.test.js
             - packages/brain/src/__tests__/executor-model-select.test.js
             - packages/brain/src/__tests__/executor-okr-project-layer.test.js
             - packages/brain/src/__tests__/executor-payload-routing.test.js
