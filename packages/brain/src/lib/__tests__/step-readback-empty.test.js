@@ -2,14 +2,14 @@ import { expect, it } from 'vitest';
 import { evaluateReadback } from '../step-readback-eval.js';
 import { reconcileSteps } from '../step-reconcile.js';
 
-const rb = (op = '==', value = 0) => ({ type: 'metric', ref: 'metrics.count', expect: { op, value } });
+const rb = (op, value) => ({ type: 'metric', ref: 'metrics.count', expect: { op, value } });
 const invalid = [null, undefined, '', ' \t\n', false, [], [0], {}].map(observed => ({ observed }));
 const ops = ['==', '!=', '>=', '<=', '>', '<'];
 
 it.each(invalid)('空/非标量观测%j在所有比较运算中一律unknown', ({ observed }) => {
   for (const op of ops) {
-    expect(evaluateReadback(rb(op), observed).verdict).toBe('unknown');
-    expect(evaluateReadback(rb(op), { value: observed }).verdict).toBe('unknown');
+    expect(evaluateReadback(rb(op, 0), observed).verdict).toBe('unknown');
+    expect(evaluateReadback(rb(op, 0), { value: observed }).verdict).toBe('unknown');
   }
 });
 it.each(invalid)('无效期望%j不能参与隐式零比较', ({ observed: value }) => {
@@ -17,7 +17,7 @@ it.each(invalid)('无效期望%j不能参与隐式零比较', ({ observed: value
 });
 it.each(invalid)('真实对账consumer拒绝将%j收敛为绿', ({ observed }) => {
   const report = reconcileSteps({
-    steps: [{ id: 'step-1', key: 'required-zero', readback: rb() }],
+    steps: [{ id: 'step-1', key: 'required-zero', readback: rb('==', 0) }],
     spans: [{ run_id: 'run-1', step_id: 'step-1', outcome: 'pass', evidence: { observed }, started_at: '2026-11-05T00:00:00Z' }],
     runsWanted: 1, requiredGreen: 1,
   });
@@ -26,8 +26,8 @@ it.each(invalid)('真实对账consumer拒绝将%j收敛为绿', ({ observed }) =
   expect(report.issues).toContainEqual({ code: 'step_unobserved', step_key: 'required-zero', run_id: 'run-1' });
 });
 it.each([0, '0', ' 0 ', { value: 0 }, { value: '0' }])('合法零%j仍被真函数/对账验证通过', observed => {
-  expect(evaluateReadback(rb(), observed)).toEqual({ verdict: 'pass' });
-  const report = reconcileSteps({ steps: [{ id: 's', key: 'zero', readback: rb() }], spans: [{ run_id: 'r', step_id: 's', outcome: 'pass', evidence: { observed }, started_at: '2026-11-05T00:00:00Z' }], requiredGreen: 1 });
+  expect(evaluateReadback(rb('==', 0), observed)).toEqual({ verdict: 'pass' });
+  const report = reconcileSteps({ steps: [{ id: 's', key: 'zero', readback: rb('==', 0) }], spans: [{ run_id: 'r', step_id: 's', outcome: 'pass', evidence: { observed }, started_at: '2026-11-05T00:00:00Z' }], requiredGreen: 1 });
   expect(report).toMatchObject({ converged: true, consecutive_green: 1 });
 });
 it.each([['==', 0], ['!=', 1], ['>=', 0], ['<=', 0], ['>', -1], ['<', 1]])('%s仍兼容数字字符串与零', (op, expected) => {
