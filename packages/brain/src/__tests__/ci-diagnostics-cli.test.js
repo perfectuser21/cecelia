@@ -29,7 +29,7 @@ if(same(['pr','view','605','--repo','owned/repo','--json','headRefOid'])){
  process.stdout.write(JSON.stringify({headRefOid:mode==='invalid-head'?'not-a-sha':sha}));
 }else if(same(['run','list','--repo','owned/repo','--commit',sha,'--status','failure','--limit','1','--json','databaseId,conclusion,headSha'])){
  if(mode==='list-error')process.exit(2);
- process.stdout.write(mode==='bad-json'?'broken':JSON.stringify(mode==='empty'?[]:[{databaseId:99,
+ process.stdout.write(mode==='bad-json'?'broken':JSON.stringify(mode==='empty'?[]:[{databaseId:mode==='invalid-id'?'not-an-id':99,
  conclusion:mode==='success-run'?'success':'failure',headSha:mode==='foreign-head'?'b'.repeat(40):sha}]));
 }else if(same(['run','view','99','--repo','owned/repo','--log-failed'])){
  if(mode==='log-error')process.exit(2);
@@ -58,11 +58,12 @@ it('真实defaultExec经过gh合法参数边界，以当前PR精确head诊断失
   expect(calls).toHaveLength(3);
   expect(calls[1]).toContain('--commit'); expect(calls[1]).toContain(sha);
 });
-it.each(['empty', 'invalid-head', 'foreign-head', 'success-run', 'bad-json', 'pr-error', 'list-error'])(
+it.each(['empty', 'invalid-head', 'foreign-head', 'invalid-id', 'success-run', 'bad-json', 'pr-error', 'list-error'])(
   '%s 不读取不明或其他commit的日志', mode => {
     const { result, calls } = runFixture(mode);
     expect(result).toBeNull(); expect(calls.some(args => args[0] === 'run' && args[1] === 'view')).toBe(false);
     if (mode === 'invalid-head' || mode === 'pr-error') expect(calls).toHaveLength(1);
+    else expect(calls).toHaveLength(2);
   },
 );
 it('读取日志失败保持非致命null，不把命令错误包装成诊断结果', () => {
