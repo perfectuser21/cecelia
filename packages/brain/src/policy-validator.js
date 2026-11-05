@@ -94,6 +94,16 @@ export function validatePolicyJson(policyJson, options = {}) {
     };
   }
 
+  // JSON.parse也可返回null、标量或数组；字段检查前先保住对象合同。
+  if (typeof policy !== 'object' || policy === null || Array.isArray(policy)) {
+    return {
+      valid: false,
+      errors: [{ field: 'input', message: 'Policy must be an object' }],
+      warnings: [],
+      normalized: null
+    };
+  }
+
   // Check required fields
   const requiredFields = ['action', 'params', 'expected_outcome', 'confidence', 'reasoning'];
   for (const field of requiredFields) {
@@ -137,7 +147,7 @@ export function validatePolicyJson(policyJson, options = {}) {
     // Type validation for specific params
     if (policy.action === 'requeue') {
       if ('delay_minutes' in policy.params) {
-        if (typeof policy.params.delay_minutes !== 'number' || policy.params.delay_minutes <= 0) {
+        if (!Number.isFinite(policy.params.delay_minutes) || policy.params.delay_minutes <= 0) {
           errors.push({
             field: 'params.delay_minutes',
             message: 'delay_minutes must be a positive number'
@@ -165,7 +175,7 @@ export function validatePolicyJson(policyJson, options = {}) {
   }
 
   // Validate confidence
-  if (typeof policy.confidence !== 'number') {
+  if (!Number.isFinite(policy.confidence)) {
     errors.push({
       field: 'confidence',
       message: 'confidence must be a number'
