@@ -405,4 +405,3 @@ describe('goldenPathMode 取数（GP6/T6）', () => {
     expect(data.journeyRuns).toEqual([]);
   });
 });
-
