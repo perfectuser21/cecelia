@@ -9,7 +9,35 @@
  *
  * 验收：三条场景各一测试，全部绿。
  */
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+// 默认恢复函数不使用opts.pool；即使遗漏注入，也必须在record-only边界拒绝。
+const boundary = vi.hoisted(() => ({
+  db: vi.fn(async () => { throw Error('recovery_regression_canonical_db_forbidden'); }),
+  process: vi.fn(), network: vi.fn(),
+  relay: vi.fn(async () => ({ scanned: 0, resumed: 0 })),
+}));
+vi.mock('../db.js', () => ({ default: { query: boundary.db } }));
+vi.mock('../harness-relay-watchdog.js', () => ({ resumeStalledRelayRuns: boundary.relay }));
+vi.mock('node:child_process', () => Object.fromEntries(
+  ['exec', 'execSync', 'execFile', 'execFileSync', 'spawn', 'spawnSync', 'fork'].map(name => [name, (...args) => {
+    boundary.process(name, ...args); throw Error('recovery_regression_process_forbidden');
+  }]),
+));
+beforeEach(() => {
+  vi.clearAllMocks();
+  vi.stubGlobal('fetch', (...args) => {
+    boundary.network(...args); throw Error('recovery_regression_network_forbidden');
+  });
+});
+afterEach(() => {
+  try {
+    expect(boundary.db).not.toHaveBeenCalled();
+    expect(boundary.process).not.toHaveBeenCalled();
+    expect(boundary.network).not.toHaveBeenCalled();
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});
 import { runRecoveryOnce } from '../recovery-loop.js';
 import { runHarnessWatchdogOnce } from '../harness-watchdog-loop.js';
 
