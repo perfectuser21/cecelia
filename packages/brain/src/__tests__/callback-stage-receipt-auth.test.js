@@ -1,3 +1,4 @@
+import './helpers/task-run-effects.js';
 /**
  * [BEHAVIOR] 棒1 回执线（链 bf5088a3，任务 15346e6c，决策 702949b6/280bd091）：
  *  - 终态回执 result 里的 stage / stage_status / metrics / evidence / probes 经 finishRun 合进 task_runs.result

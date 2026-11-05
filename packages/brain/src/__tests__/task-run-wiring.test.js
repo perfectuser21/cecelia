@@ -1,3 +1,4 @@
+import './helpers/task-run-effects.js';
 /**
  * [BEHAVIOR] run 原语接线（链 bf5088a3 棒1，任务 66db3dfb）：
  *  - recordRunFromCallback / startRunForExecResult 的分支语义（内存 pool 替身，只验 SQL 走向）
