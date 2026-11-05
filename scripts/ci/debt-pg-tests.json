@@ -220,6 +220,11 @@
       "path": "packages/brain/src/__tests__/integration/stale-claim-snapshot.pg.integration.test.js",
       "mode": "full",
       "status": "ready"
+    },
+    {
+      "path": "packages/brain/src/__tests__/integration/active-lease-cleanup.pg.integration.test.js",
+      "mode": "full",
+      "status": "ready"
     }
   ]
 }
