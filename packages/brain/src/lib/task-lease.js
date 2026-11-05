@@ -104,17 +104,22 @@ export async function claimTaskWithLease(pool, { taskId, claimer, executorKind, 
   return { status: 200, body };
 }
 
-/** 心跳续约：只有同一领单方、租约未关、任务仍活跃且认领仍是它时才续。 */
+/** 心跳续约：先锁同owner活跃任务再更新lease，和清理器同序；不改变认领时间。 */
 export async function heartbeatTaskLease(pool, { taskId, claimer, leaseSeconds } = {}) {
   const seconds = clampLeaseSeconds(leaseSeconds);
   const { rows } = await pool.query(
-    `UPDATE task_leases l
+    `WITH owned_task AS MATERIALIZED (
+       SELECT id FROM tasks
+        WHERE id = $1 AND claimed_by = $2 AND status IN ('queued', 'in_progress')
+          AND payload->>'commander_protocol' IS DISTINCT FROM 'commander-v2'
+        FOR UPDATE
+     )
+     UPDATE task_leases l
         SET lease_seconds = COALESCE($3::int, l.lease_seconds),
             lease_until = NOW() + (COALESCE($3::int, l.lease_seconds) * INTERVAL '1 second'),
             heartbeat_at = NOW(), heartbeat_count = l.heartbeat_count + 1
-       FROM tasks t
+       FROM owned_task t
       WHERE l.task_id = $1 AND t.id = l.task_id AND l.claimer = $2 AND l.released_at IS NULL
-        AND t.claimed_by = $2 AND t.status IN ('queued', 'in_progress') AND t.payload->>'commander_protocol' IS DISTINCT FROM 'commander-v2'
       RETURNING l.task_id, l.lease_until, l.heartbeat_count, l.lease_seconds`,
     [taskId, claimer, seconds],
   );

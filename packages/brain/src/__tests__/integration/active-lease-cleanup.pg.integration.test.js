@@ -1,6 +1,6 @@
 /** 真实claim/heartbeat/cleanup，私有全迁移PG；不调用dispatcher/设备/通知。 */
 import { beforeAll, afterAll, it, expect } from 'vitest';
-import { clients, open, close, seed, read, remove, cleanup, heartbeat, snapshotGate, waitForLock } from '../helpers/active-lease-cleanup-pg.js';
+import { clients, cleaner, open, close, seed, read, remove, cleanup, heartbeat, snapshotGate, waitForLock } from '../helpers/active-lease-cleanup-pg.js';
 beforeAll(open);
 afterAll(close);
 
@@ -26,10 +26,11 @@ it.each(['none', 'expired', 'released', 'mismatched'])('%s租约不能阻挡真�
     expect(await read(id)).toMatchObject({ claimed_by: null, claimed_at: null });
   } finally { await remove(id); }
 });
-it.each(['wrong-owner', 'terminal'])('heartbeat对%s仍返回lease_lost，不续租/同步设备', async kind => {
+it.each(['wrong-owner', 'terminal', 'commander'])('heartbeat对%s仍返回lease_lost，不续租/同步设备', async kind => {
   const { id, owner } = await seed();
   try {
     if (kind === 'terminal') await clients.observer.query("UPDATE tasks SET status='failed' WHERE id=$1", [id]);
+    if (kind === 'commander') await clients.observer.query(`UPDATE tasks SET payload='${JSON.stringify({ commander_protocol: 'commander-v2' })}'::jsonb WHERE id=$1`, [id]);
     const before = await read(id);
     const result = await heartbeat(clients.heartbeat, { taskId: id, claimer: kind === 'wrong-owner' ? 'different-owned' : owner });
     expect(result).toMatchObject({ ok: false, reason: 'lease_lost' });
@@ -98,3 +99,21 @@ it('两个清理器竞争同一过期批次，单批成功计数且无反序死�
     await remove(one.id); await remove(two.id);
   }
 }, 15000);
+
+it.each(['valid', 'expired'])('paused的%s同owner租约：有效时保守保留，过期恢复', async kind => {
+  const { id, owner } = await seed(kind);
+  try {
+    await clients.observer.query("UPDATE tasks SET status='paused' WHERE id=$1", [id]);
+    expect(await cleanup(clients.cleaner)).toEqual({ cleaned: kind === 'valid' ? 0 : 1, errors: [] });
+    expect((await read(id)).claimed_by).toBe(kind === 'valid' ? owner : null);
+  } finally { await remove(id); }
+});
+it('原self-PID恢复例外保持：同进程旧认领即使lease仍future也清，不能冒称被新保护', async () => {
+  const { id } = await seed('valid', cleaner);
+  try {
+    const before = await read(id);
+    expect(before.lease_until.getTime()).toBeGreaterThan(Date.now());
+    expect(await cleanup(clients.cleaner)).toEqual({ cleaned: 1, errors: [] });
+    expect((await read(id)).claimed_by).toBeNull();
+  } finally { await remove(id); }
+});

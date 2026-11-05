@@ -47,8 +47,8 @@ export async function close() {
     else process.env.BRAIN_RUNNER_ID = previous;
   }
 }
-export async function seed(kind = 'valid') {
-  const id = randomUUID(), owner = `owned-lease-${id}`;
+export async function seed(kind = 'valid', ownerOverride) {
+  const id = randomUUID(), owner = ownerOverride || `owned-lease-${id}`;
   ids.push(id);
   await clients.observer.query(`INSERT INTO tasks(id,title,status,task_type,priority,payload,result)
     VALUES($1,$2,'queued','research','P2','{}','{}')`, [id, `active-lease-${id}`]);
