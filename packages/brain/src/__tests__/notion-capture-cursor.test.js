@@ -114,3 +114,36 @@ it('treats a real dedupeHit as successful ingestion so it does not pin the check
   expect(await nextRun(FIVE_MINUTES)).toMatchObject({ pages: 0, errors: 0 });
   expect(firstPageFilters()).toEqual([iso(START - DAY), iso(START)]);
 });
+
+it('atom写失败保留游标，恢复只补atom且复用既有capture', async () => {
+  pages = [page('atom-fail')];
+  const originalQuery = pool.query.getMockImplementation();
+  let failAtom = true;
+  pool.query.mockImplementation(async (sql, params) => {
+    if (String(sql).includes('INSERT INTO capture_atoms') && failAtom) {
+      failAtom = false; throw Error('owned atom write unavailable');
+    }
+    return originalQuery(sql, params);
+  });
+  const first = await runNotionCaptureIngest(pool);
+  expect(first).toMatchObject({ pushed: 0, errors: 1, pages: 1 });
+  expect(captures.size).toBe(1); expect(atoms.size).toBe(0);
+  const captureId = captures.get('notion:inbox:atom-fail').id;
+
+  expect(await nextRun(FIVE_MINUTES)).toMatchObject({ pushed: 0, skipped: 1, errors: 0, pages: 1 });
+  expect(captures.size).toBe(1); expect(captures.get('notion:inbox:atom-fail').id).toBe(captureId);
+  expect(atoms).toEqual(new Set([`${captureId}:notes`]));
+  expect(firstPageFilters()).toEqual([iso(START - DAY), iso(START - DAY)]);
+  expect(await nextRun(2 * FIVE_MINUTES)).toMatchObject({ pages: 0, errors: 0 });
+  expect(firstPageFilters().at(-1)).toBe(iso(START + FIVE_MINUTES));
+});
+it('真实atom去重返回空RETURNING仍成功，不能误认成写失败', async () => {
+  pages = [page('known-atom')];
+  captures.set('notion:inbox:known-atom', { id: 'existing', content: 'known-atom' });
+  atoms.add('existing:notes');
+  expect(await runNotionCaptureIngest(pool)).toMatchObject({ pushed: 0, skipped: 1, errors: 0 });
+  expect(pushCapture.mock.results).toHaveLength(1);
+  expect(await pushCapture.mock.results[0].value).toEqual({ captureId: 'existing', atomId: null, dedupeHit: true });
+  expect(await nextRun(FIVE_MINUTES)).toMatchObject({ pages: 0, errors: 0 });
+  expect(captures.size).toBe(1); expect(atoms.size).toBe(1);
+});
