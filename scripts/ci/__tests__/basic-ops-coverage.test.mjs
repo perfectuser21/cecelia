@@ -23,6 +23,7 @@ const representative = [
   'scripts/__tests__/brain-deploy-build-isolation.test.sh',
   'scripts/preview-agent/__tests__/deploy-token.test.mjs',
   'scripts/__tests__/bluegreen-env-file.test.sh',
+  'scripts/__tests__/bluegreen-bark-encode.test.sh',
   'scripts/__tests__/brain-deploy-build-same-version.test.sh',
   'scripts/__tests__/preview-env-start.test.sh',
   'scripts/__tests__/preview-reaper.test.sh',
@@ -37,7 +38,7 @@ const representative = [
   'docker/cecelia-runner/__tests__/assertion-exec-package-root.test.cjs',
 ];
 const safeSmokes = [
-  'bluegreen-bark-nojq', 'brain-compose-envfile-authority', 'brain-deploy-service-isolation',
+  'brain-compose-envfile-authority', 'brain-deploy-service-isolation',
   'dashboard-sha-reconcile', 'deploy-chain-wounds', 'deploy-local-npm-cache', 'gate3-brain-deploy',
   'runner-credential-single-chain',
 ].map(name => `scripts/smoke/${name}-smoke.sh`);

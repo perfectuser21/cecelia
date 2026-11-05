@@ -57,3 +57,14 @@ for (const path of ['scripts/ci/basic-scope.mjs', 'scripts/ci/run-basic-check.mj
 it('缺真实冻结门路径不能只凭内存read获得当前资格', async () => {
   await expect(collect({}, paths.filter(path => path !== checker))).rejects.toThrow('basic_ci_source_unproven');
 });
+
+// 真实已合 main 的 Bark 旧组保留；新 Ops 来源只能按完整组认领。
+it('Bark 清退前的已合 main 完整来源组仍独立可回放', async () => {
+  const old = readFixedExistingOpsGitFixture('3240b4150ab729b5b6b21d295e893f0a336a4271');
+  const edges = [];
+  await collectBasicCiSources({ read: async path => old.read(path), ci: old.read('.github/workflows/ci.yml'),
+    revision: old.revision, relations: edges,
+    parse: text => parse(text, { ecmaVersion: 'latest', sourceType: 'module' }), paths: old.paths });
+  expect(edges).toContainEqual(expect.objectContaining({ input_path: 'scripts/ci/ops-checks.mjs',
+    kind: 'reviewed_basic_ci_named_call' }));
+});

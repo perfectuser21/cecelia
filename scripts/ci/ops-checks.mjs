@@ -20,7 +20,7 @@ const ROOT_SHELL = [
 ];
 // 仅纳入经核对的隔离 fixture 或只读部署守卫；不恢复整个历史 smoke glob。
 const SAFE_SMOKES = [
-  'bluegreen-bark-nojq', 'brain-compose-envfile-authority', 'brain-deploy-service-isolation',
+  'brain-compose-envfile-authority', 'brain-deploy-service-isolation',
   'dashboard-sha-reconcile', 'deploy-chain-wounds', 'deploy-local-npm-cache', 'gate3-brain-deploy',
   'runner-credential-single-chain',
 ].map(name => `scripts/smoke/${name}-smoke.sh`);
