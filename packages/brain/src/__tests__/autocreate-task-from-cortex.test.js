@@ -141,7 +141,7 @@ describe('Cortex 自动建单的来源字段', () => {
 
 describe('真实 Cortex 建单上下文与故障隔离', () => {
   it('建议参数优先于父级上下文，缺省项继承父级', async () => {
-    mockCreateTask.mockResolvedValue({ deduplicated: false });
+    mockCreateTask.mockResolvedValue({ success: true, deduplicated: false });
     const result = await autoCreateTasksFromCortex({ recommended_actions: [
       { type: 'create_task', params: { title: '覆盖', description: '真实描述', priority: 'P0', task_type: 'research', goal_id: 'own-goal', project_id: 'own-project' } },
       { type: 'create_task', params: { title: '继承' } },
@@ -152,7 +152,7 @@ describe('真实 Cortex 建单上下文与故障隔离', () => {
   });
 
   it('第一项失败后继续建第二项，返回值只包含成功项', async () => {
-    mockCreateTask.mockRejectedValueOnce(new Error('fixture_write_failed')).mockResolvedValueOnce({ deduplicated: true });
+    mockCreateTask.mockRejectedValueOnce(new Error('fixture_write_failed')).mockResolvedValueOnce({ success: true, deduplicated: true });
     const result = await autoCreateTasksFromCortex({ recommended_actions: [
       { type: 'create_task', params: { title: '失败' } },
       { type: 'create_task', params: { title: '成功' } },

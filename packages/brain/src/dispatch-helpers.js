@@ -184,7 +184,7 @@ export async function selectNextDispatchableTask(goalIds, excludeIds = [], optio
  * 从皮层 RCA 结果中自动创建建议任务
  * @param {Object} rcaResult - performRCA 返回的分析结果
  * @param {Object} [context] - { goal_id, project_id } 继承自失败任务（可选）
- * @returns {Promise<Array>} - 创建的任务列表（含 deduplicated 字段）
+ * @returns {Promise<Array>} - 成功接受的任务列表（含 deduplicated；不是新增数据库行数）
  */
 export async function autoCreateTasksFromCortex(rcaResult, context = {}) {
   const createTaskActions = (rcaResult.recommended_actions || [])
@@ -204,6 +204,10 @@ export async function autoCreateTasksFromCortex(rcaResult, context = {}) {
         goal_id: action.params.goal_id || context.goal_id || null,
         project_id: action.params.project_id || context.project_id || null,
       });
+      if (result?.success !== true) {
+        console.error(`[tick] autoCreateTasksFromCortex: rejected "${action.params.title}"`);
+        continue;
+      }
       created.push({ title: action.params.title, deduplicated: result.deduplicated || false });
       tickLog(`[tick] autoCreateTasksFromCortex: "${action.params.title}" created (dedup=${result.deduplicated || false})`);
     } catch (err) {
