@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const cp = require('node:child_process');
 const Module = require('node:module');
-const state = { identity: [], commands: [], drops: 0, backendStopped: false };
+const state = { identity: [], admin: [], commands: [], drops: 0, backendStopped: false };
 const fakeBin = process.env.PG_LIFECYCLE_FAKE_BIN;
 const trace = process.env.PG_LIFECYCLE_TRACE;
 assert.ok(fakeBin && trace);
@@ -23,7 +23,10 @@ cp.spawnSync = function (command, args) {
   assert.equal(path.dirname(command), fakeBin, 'no real command fallback');
   assert.ok(['initdb', 'pg_ctl', 'pg_isready'].includes(program));
   if (program === 'initdb') state.data = args[args.indexOf('-D') + 1];
-  if (program === 'pg_ctl' && args.includes('stop')) state.backendStopped = true;
+  if (program === 'pg_ctl' && args.includes('stop')) {
+    assert.ok(state.admin.length > 0 && state.admin.every(client => client.closed), 'admin wire end must complete before backend stop');
+    state.backendStopped = true;
+  }
   return result();
 };
 require('node:module').syncBuiltinESMExports();
@@ -42,6 +45,7 @@ class Pool {
   constructor(config) {
     this.config = config;
     if (config.database === 'cecelia_scratch') state.identity.push(this);
+    else state.admin.push(this);
   }
   async query(sql) { return query(this.config, sql); }
   end() {
@@ -51,9 +55,9 @@ class Pool {
   }
 }
 class Client {
-  constructor(config) { this.config = config; state.identity.push(this); }
+  constructor(config) { this.config = config; (config.database === 'postgres' ? state.admin : state.identity).push(this); }
   async connect() {
-    if (process.env.PG_LIFECYCLE_CONNECT_FAIL === '1') throw Error('synthetic identity connect failed');
+    if (this.config.database === 'cecelia_scratch' && process.env.PG_LIFECYCLE_CONNECT_FAIL === '1') throw Error('synthetic identity connect failed');
   }
   async query(sql) { return query(this.config, sql); }
   async end() { await new Promise(resolve => setImmediate(resolve)); this.closed = true; }
