@@ -8,6 +8,7 @@ import {spawn} from 'node:child_process';
 import {createHash} from 'node:crypto';
 const dockerfile = new URL('../../../packages/brain/Dockerfile', import.meta.url);
 const originalHashes = ['79e89a14af6fc69163aee00e764e86d5809d0c6c77e6f229aebe7a4ed115ee67','bb62c95ecc17a8557a847483ce671bff9909f107ad1961b4efafcd521721c213'];
+function assertFixtureDownload(script,port) { assert.ok(!script.includes('https://github.com/')); }
 function execute(command,args,options) {
   return new Promise((resolve,reject)=>{
     const child=spawn(command,args,options);let stdout='',stderr='';
@@ -38,7 +39,7 @@ async function fixture(t,{arch='x86_64',failures=0,badChecksum=false,version='2.
     .replace(/\/usr\/local\/bin|\/tmp/g,token=>join(root,token==='/tmp'?'tmp':'out'));
   for(const pin of originalHashes)shell=shell.replaceAll(pin,hash);
   // Only paths and the artifact bytes/hash are rebound; the actual RUN control flow executes.
-  assert.ok(!shell.includes('https://github.com/'));assert.ok(!shell.includes('/usr/local/bin'));
+  assertFixtureDownload(shell,server.address().port);assert.ok(!shell.includes('/usr/local/bin'));
   const script=join(root,'install.sh');await writeFile(script,'set -e\n'+shell+'\n');
   const result=await execute('/bin/sh',[script],{cwd:root,env:{PATH:join(root,'bin')+':/usr/bin:/bin',HOME:join(root,'home')}});
   return {...result,requests,urls,installed:await readFile(join(root,'out/gh'),'utf8').catch(()=>null)};
@@ -51,3 +52,9 @@ test('actual RUN rejects unsupported architecture before HTTP',async t=>{const x
 test('actual RUN verifies the installed version',async t=>{const x=await fixture(t,{version:'0.0.0'});assert.notEqual(x.code,0);assert.ok(x.installed?.includes('0.0.0'),'wrong-version archive must reach version gate');});
 
 test('owned path containing /tmp is rebound once, as on Linux runners',async t=>{const x=await fixture(t,{tmpLayout:true});assert.equal(x.code,0,x.stderr);assert.match(x.installed,/2\.45\.0/);});
+
+test('fixture download guard rejects external authorities and path tricks before shell execution',()=>{
+ for(const url of ['http://evil.invalid/package.tgz','http://127.0.0.1.evil.invalid:12345/package.tgz','http://evil.invalid/?next=https://github.com/','http://127.0.0.1:5432/package.tgz','http://127.0.0.1:12345/other.tgz']){
+   assert.throws(()=>assertFixtureDownload('curl "'+url+'"',12345),{name:'AssertionError'});
+ }
+});
