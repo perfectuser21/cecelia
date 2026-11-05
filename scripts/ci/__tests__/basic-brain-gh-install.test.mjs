@@ -31,6 +31,7 @@ async function fixture(t,{arch='x86_64',failures=0,badChecksum=false,version='2.
   // The old wget boundary makes one real HTTP request to this owned listener.
   await writeFile(join(root,'bin/wget'),'#!/bin/sh\nexec /usr/bin/curl --fail --silent --show-error --location "$2"\n');
   for(const p of ['apk','wget'])await chmod(join(root,'bin',p),0o755);
+  if(process.platform==='darwin'){await writeFile(join(root,'bin/sha256sum'),'#!/bin/sh\nexec /usr/bin/shasum -a 256 \"$@\"\n');await chmod(join(root,'bin/sha256sum'),0o755);}
   const text=await readFile(dockerfile,'utf8');const match=text.match(/RUN GH_VERSION=2\.45\.0[\s\S]*?(?=\n\n)/);assert.ok(match,'fixed-version installer RUN must exist');
   let shell=match[0].slice(4).replaceAll('\\\n',' ').replaceAll('https://github.com/cli/cli/releases/download',`http://127.0.0.1:${server.address().port}`)
     .replaceAll('/usr/local/bin',join(root,'out')).replaceAll('/tmp',join(root,'tmp'));
@@ -44,6 +45,6 @@ async function fixture(t,{arch='x86_64',failures=0,badChecksum=false,version='2.
 for(const arch of ['x86_64','aarch64'])test(`actual Docker RUN retries HTTP504 and installs fixed version for ${arch}`,async t=>{
  const x=await fixture(t,{arch,failures:1});assert.equal(x.code,0,x.stderr);assert.equal(x.requests,2);assert.match(x.installed,/2\.45\.0/);assert.ok(x.urls.every(u=>u.endsWith(arch==='aarch64'?'linux_arm64.tar.gz':'linux_amd64.tar.gz')));
 });
-test('actual RUN refuses corrupt checksum before installing',async t=>{const x=await fixture(t,{badChecksum:true});assert.notEqual(x.code,0);assert.equal(x.installed,null);});
+test('actual RUN refuses corrupt checksum before installing',async t=>{const x=await fixture(t,{badChecksum:true});assert.notEqual(x.code,0);assert.match(x.stdout+x.stderr,/checksum|FAILED/i);assert.equal(x.installed,null);});
 test('actual RUN rejects unsupported architecture before HTTP',async t=>{const x=await fixture(t,{arch:'unsupported'});assert.notEqual(x.code,0);assert.equal(x.requests,0);assert.equal(x.installed,null);});
-test('actual RUN verifies the installed version',async t=>{const x=await fixture(t,{version:'0.0.0'});assert.notEqual(x.code,0);});
+test('actual RUN verifies the installed version',async t=>{const x=await fixture(t,{version:'0.0.0'});assert.notEqual(x.code,0);assert.ok(x.installed?.includes('0.0.0'),'wrong-version archive must reach version gate');});
