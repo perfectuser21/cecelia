@@ -61,7 +61,14 @@ describe.skipIf(!DB_AVAILABLE)('commander-watchdog — pg 集成（真实 SQL，
     const id = await insertRun({ payload: { serial, source: 'cron', wf_id: 'device-boundary', leads: 1 }, status: 'completed' });
     await client.query(`UPDATE tasks SET completed_at = $2::timestamptz AT TIME ZONE 'UTC' WHERE id = $1`, [id, new Date(completedAt).toISOString()]);
   }
-  const ssh = () => vi.fn((c, a, o, cb) => cb(null, '{"id": "esc-it-0001"}', ''));
+  const ssh = () => vi.fn((command, args, options, callback) => {
+    expect(command).toBe('ssh');
+    const remote = args.at(-1);
+    if (remote === 'openclaw cron list --json') return callback(null, '{"jobs":[]}', '');
+    if (remote.startsWith('openclaw cron rm ')) return callback(null, '{}', '');
+    if (remote.startsWith('openclaw cron add ')) return callback(null, '{"id":"esc-it-0001"}', '');
+    throw new Error('unexpected record-only SSH command');
+  });
 
   it('心跳：tag 命中写 payload；账本 run_id LIKE %-<TAG>__% 命中；serial 唯一命中；起跑登记落 working_memory 后被心跳合并', async () => {
     const byTag = await insertRun({ payload: { serial: 'S-TAG', source: 'cron', tag: 'cmd09300201' } });
