@@ -85,3 +85,47 @@ it('读取失败向上报告，不能生成成功关系',async()=>{
  await expect(proveReviewedUsCompose({text:compositions.final,read:()=>{throw Error('missing');},relations,revision})).rejects.toThrow('missing');
  expect(relations).toEqual([]);
 });
+
+import { readFileSync } from 'node:fs';
+// 读取当前完整 remote 组合，不执行 guard/host 模块；历史样本保持原字节。
+const outreachInputs = {
+  'packages/brain/src/openclaw-guards.js': readFileSync(new URL('../../openclaw-guards.js', import.meta.url), 'utf8'),
+  'packages/brain/src/host-exec.js': readFileSync(new URL('../../host-exec.js', import.meta.url), 'utf8'),
+};
+const outreachCompose = readFileSync(new URL('../../../../../docker-compose.us-vps.yml', import.meta.url), 'utf8');
+const currentProof = async (patch = {}, text = outreachCompose) => {
+  const relations = [];
+  const passed = await proveReviewedUsCompose({text, read: path => Object.hasOwn(patch, path) ? patch[path] : outreachInputs[path], relations, revision});
+  return {passed, relations};
+};
+it('当前outreach去抖完整remote组合受审，真实字节摘要与完整两条来源关系匹配', async () => {
+  expect(hash(outreachCompose)).toBe(composeHashes.remote);
+  expect(hash(outreachInputs['packages/brain/src/openclaw-guards.js'])).toBe('05c28b3d6957c9bc364743fde291a4648389385eb62151032f8faf93a2c617e4');
+  expect(hash(outreachInputs['packages/brain/src/host-exec.js'])).toBe(hashes['packages/brain/src/host-exec.js']);
+  const result = await currentProof();
+  expect(result.passed).toBe(true);
+  expect(result.relations).toEqual([
+    {consumer_path: 'docker-compose.us-vps.yml', input_path: 'packages/brain/src/openclaw-guards.js', kind: 'reviewed_us_openclaw_prerequisite', revision},
+    {consumer_path: 'packages/brain/src/openclaw-guards.js', input_path: 'packages/brain/src/host-exec.js', kind: 'reviewed_us_openclaw_static_import', revision},
+  ]);
+});
+for (const path of Object.keys(outreachInputs)) it('outreach完整组成员漂移不得借另一成员通过：' + path, async () => {
+  expect(await currentProof({[path]: outreachInputs[path] + '\n// unreviewed\n'})).toEqual({passed: false, relations: []});
+});
+it('outreach组合不能配未知compose', async () => {
+  expect(await currentProof({}, outreachCompose + '\n# unknown\n')).toEqual({passed: false, relations: []});
+});
+for (const stage of ['combined', 'final']) it('outreach guard不能借历史' + stage + '组跨阶段放行', async () => {
+  const relations = [];
+  const passed = await proveReviewedUsCompose({text: compositions[stage],
+    read: path => path === 'packages/brain/src/openclaw-guards.js' ? outreachInputs[path] : samples[path], relations, revision});
+  expect(passed).toBe(false); expect(relations).toEqual([]);
+});
+it('outreach host读取异常不能留下部分来源关系', async () => {
+  const relations = [];
+  await expect(proveReviewedUsCompose({text: outreachCompose, read: path => {
+    if (path === 'packages/brain/src/host-exec.js') throw Error('owned host unavailable');
+    return outreachInputs[path];
+  }, relations, revision})).rejects.toThrow('owned host unavailable');
+  expect(relations).toEqual([]);
+});
