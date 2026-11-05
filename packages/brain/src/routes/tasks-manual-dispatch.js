@@ -1,3 +1,5 @@
+import { rateLimit } from 'express-rate-limit';
+import { TASK_MUTATION_RATE_LIMIT_OPTIONS } from './task-mutation-rate-limit.js';
 import pool from '../db.js';
 import { createTask } from '../actions.js';
 import { triggerCeceliaRun, checkCeceliaRunAvailable } from '../executor.js';
@@ -14,7 +16,7 @@ export function registerTaskManualDispatchRoutes(router) {
  * 手动派发单个任务（用户从前端点击"派发"按钮）
  * 跳过自动调度的 drain/billing/slot 检查，但保留执行器可用性检查
  */
-router.post('/tasks/:id/dispatch', async (req, res) => {
+router.post('/tasks/:id/dispatch', rateLimit(TASK_MUTATION_RATE_LIMIT_OPTIONS), async (req, res) => {
   let deviceLockTaskId = null; // 已抢设备锁的任务 id（失败路径需释放）
   try {
     const { id } = req.params;
@@ -119,7 +121,7 @@ router.post('/tasks/:id/dispatch', async (req, res) => {
  * 沿 task.project_id → projects.kr_id → goals(KR).parent_id → goals(OKR).parent_id → goals(Vision)
  * 链路查询战略上下文，作为 intent_expand 子任务的 prompt 一部分
  */
-router.post('/tasks/:id/request-intent-expand', async (req, res) => {
+router.post('/tasks/:id/request-intent-expand', rateLimit(TASK_MUTATION_RATE_LIMIT_OPTIONS), async (req, res) => {
   try {
     const { id: parentId } = req.params;
 

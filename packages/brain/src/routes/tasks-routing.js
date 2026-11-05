@@ -1,3 +1,5 @@
+import { rateLimit } from 'express-rate-limit';
+import { TASK_MUTATION_RATE_LIMIT_OPTIONS } from './task-mutation-rate-limit.js';
 import pool from '../db.js';
 import { routeTask } from '../tick-helpers.js';
 import { identifyWorkType, routeTaskCreate, getValidTaskTypes, LOCATION_MAP, diagnoseKR } from '../task-router.js';
@@ -9,7 +11,7 @@ export function registerTaskRoutingRoutes(router) {
  * POST /api/brain/route-task
  * Get agent routing for a task
  */
-router.post('/route-task', async (req, res) => {
+router.post('/route-task', rateLimit(TASK_MUTATION_RATE_LIMIT_OPTIONS), async (req, res) => {
   try {
     const { task_id, task_type } = req.body;
 
@@ -137,7 +139,7 @@ router.get('/task-router/diagnose/:kr_id', async (req, res) => {
  * GET /api/brain/reflections
  * Get reflections (issues, learnings, improvements)
  */
-router.get('/reflections', async (req, res) => {
+router.get('/reflections', rateLimit(TASK_MUTATION_RATE_LIMIT_OPTIONS), async (req, res) => {
   try {
     const { type, project_id, limit = 50 } = req.query;
 
@@ -174,7 +176,7 @@ router.get('/reflections', async (req, res) => {
  * POST /api/brain/reflections
  * Create a new reflection
  */
-router.post('/reflections', async (req, res) => {
+router.post('/reflections', rateLimit(TASK_MUTATION_RATE_LIMIT_OPTIONS), async (req, res) => {
   try {
     const { type, title, content, project_id, source_task_id, source_goal_id, tags } = req.body;
 

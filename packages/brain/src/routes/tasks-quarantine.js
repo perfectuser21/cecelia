@@ -1,3 +1,5 @@
+import { rateLimit } from 'express-rate-limit';
+import { TASK_MUTATION_RATE_LIMIT_OPTIONS } from './task-mutation-rate-limit.js';
 import pool from '../db.js';
 import { getQuarantinedTasks, getQuarantineStats, releaseTask, quarantineTask, QUARANTINE_REASONS, REVIEW_ACTIONS } from '../quarantine.js';
 
@@ -11,7 +13,7 @@ export function registerTaskQuarantineRoutes(router) {
  * GET /api/brain/tasks/blocked
  * 查询当前所有 blocked 任务
  */
-router.get('/tasks/blocked', async (req, res) => {
+router.get('/tasks/blocked', rateLimit(TASK_MUTATION_RATE_LIMIT_OPTIONS), async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT id, title, status, task_type, priority,

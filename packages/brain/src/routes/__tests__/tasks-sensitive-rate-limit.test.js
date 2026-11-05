@@ -7,22 +7,22 @@ import taskRouter from '../tasks.js';
 const effects=getReviewEffects();
 const id='21a4435b-0b50-4d68-a20f-512a0344f744';
 const cases=[
- ['get',`/tasks/${id}/logs`,{},404],
- ['get',`/tasks/${id}/checkpoints`,{},404],
- ['get',`/tasks/${id}/ci-diagnosis`,{},404],
+ ['get',`/tasks/${id}/logs`,{},200,[{id,title:'owned',metadata:{}}]],
+ ['get',`/tasks/${id}/checkpoints`,{},200,[{id,title:'owned',status:'queued',metadata:{}}]],
+ ['get',`/tasks/${id}/ci-diagnosis`,{},200,[{ci_diagnosis:'{"category":"synthetic"}'}]],
  ['post',`/tasks/${id}/dispatch`,{},404],
  ['post',`/tasks/${id}/request-intent-expand`,{},404],
  ['get','/tasks/blocked',{},200],
  ['post','/route-task',{task_id:id},404],
  ['get','/reflections',{},200],
- ['post','/reflections',{type:'issue',title:'synthetic quota test',content:'owned'},200],
+ ['post','/reflections',{type:'issue',title:'synthetic quota test',content:'owned'},200,[{id,type:'issue',title:'synthetic quota test'}]],
 ];
 function limited(response){
  expect(response.status).toBe(429);expect(response.headers['ratelimit-policy']).toBe('300;w=60');
  expect(response.headers.ratelimit).toMatch(/limit=300/);expect(Number(response.headers['retry-after'])).toBeGreaterThan(0);
 }
-it.each(cases)('%s %s limits before downstream effects, separates real peer IPs and ignores forged forwarding',async(method,path,body,status)=>{
- effects.query.mockResolvedValue({rows:method==='post'&&path==='/reflections'?[{id,type:'issue',title:'synthetic quota test'}]:[]});
+it.each(cases)('%s %s limits before downstream effects, separates real peer IPs and ignores forged forwarding',async(method,path,body,status,rows=[])=>{
+ effects.query.mockResolvedValue({rows});
  const app=express(),seen=new Set();app.set('trust proxy',false);app.use(express.json());
  app.use((req,_res,next)=>{seen.add(req.socket.remoteAddress);next();});app.use('/api/brain',taskRouter);
  const servers=[createServer(app),createServer(app)];

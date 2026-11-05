@@ -1,3 +1,5 @@
+import { rateLimit } from 'express-rate-limit';
+import { TASK_MUTATION_RATE_LIMIT_OPTIONS } from './task-mutation-rate-limit.js';
 import pool from '../db.js';
 import { blockTask } from '../task-updater.js';
 
@@ -10,7 +12,7 @@ export function registerTaskInspectionRoutes(router) {
  * GET /tasks/:taskId/logs
  * 获取任务执行日志
  */
-router.get('/tasks/:taskId/logs', async (req, res) => {
+router.get('/tasks/:taskId/logs', rateLimit(TASK_MUTATION_RATE_LIMIT_OPTIONS), async (req, res) => {
   try {
     const { taskId } = req.params;
     const { offset = 0, limit = 1000 } = req.query;
@@ -82,7 +84,7 @@ router.get('/tasks/:taskId/logs', async (req, res) => {
  * GET /tasks/:taskId/checkpoints
  * 获取任务的 checkpoint 信息
  */
-router.get('/tasks/:taskId/checkpoints', async (req, res) => {
+router.get('/tasks/:taskId/checkpoints', rateLimit(TASK_MUTATION_RATE_LIMIT_OPTIONS), async (req, res) => {
   try {
     const { taskId } = req.params;
 
@@ -152,7 +154,7 @@ router.get('/tasks/:taskId/checkpoints', async (req, res) => {
  * GET /api/brain/tasks/:id/ci-diagnosis
  * 返回任务最近一次 CI 失败的自动诊断结果
  */
-router.get('/tasks/:id/ci-diagnosis', async (req, res) => {
+router.get('/tasks/:id/ci-diagnosis', rateLimit(TASK_MUTATION_RATE_LIMIT_OPTIONS), async (req, res) => {
   try {
     const { id } = req.params;
     const result = await pool.query(
