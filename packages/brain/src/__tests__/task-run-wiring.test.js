@@ -1,3 +1,4 @@
+import { runDeps } from './helpers/task-run-effects.js';
 /**
  * [BEHAVIOR] run 原语接线（链 bf5088a3 棒1，任务 66db3dfb）：
  *  - recordRunFromCallback / startRunForExecResult 的分支语义（内存 pool 替身，只验 SQL 走向）
@@ -23,13 +24,15 @@ const read = (rel) => readFileSync(path.join(BRAIN_ROOT, rel), 'utf8');
 /** 记录每条 SQL 的内存 pool；INSERT 视为新建（返回一行），可配置为已存在。 */
 function fakePool({ insertRows = [{ id: 'row-1', run_id: 'r' }], existing = [{ id: 'row-0' }], failWith } = {}) {
   const calls = [];
+  let taskId = 'owned-task';
   return {
     calls,
+    emit: vi.fn(async () => {}),
     query: vi.fn(async (sql, params) => {
       calls.push({ sql: String(sql), params });
       if (failWith) throw failWith;
-      if (/INSERT INTO task_runs/i.test(sql)) return { rows: insertRows };
-      if (/UPDATE task_runs/i.test(sql)) return { rows: [{ id: 'row-1' }] };
+      if (/INSERT INTO task_runs/i.test(sql)) { taskId = params[0]; return { rows: insertRows }; }
+      if (/UPDATE task_runs/i.test(sql)) return { rows: [{ id: 'row-1', task_id: taskId, status: params[1], result: JSON.parse(params[2]) }] };
       return { rows: existing };
     }),
   };
@@ -39,14 +42,14 @@ const kinds = (pool) => pool.calls.map((c) => (/INSERT/i.test(c.sql) ? 'insert' 
 describe('recordRunFromCallback — 回执通道 → run 原语', () => {
   it('无 run_id 的回执无从关联，直接跳过（不碰库）', async () => {
     const pool = fakePool();
-    const out = await recordRunFromCallback({ taskId: 't1', status: 'completed' }, { pool });
+    const out = await recordRunFromCallback({ taskId: 't1', status: 'completed' }, runDeps(pool));
     expect(out.skipped).toBe(true);
     expect(pool.query).not.toHaveBeenCalled();
   });
 
   it('running 回执只补行（幂等 upsert），不结束', async () => {
     const pool = fakePool();
-    await recordRunFromCallback({ taskId: 't1', runId: 'r1', status: 'running' }, { pool });
+    await recordRunFromCallback({ taskId: 't1', runId: 'r1', status: 'running' }, runDeps(pool));
     expect(kinds(pool)).toEqual(['insert']);
     expect(pool.calls[0].params[2]).toContain('"source":"execution-callback"');
   });
@@ -55,28 +58,33 @@ describe('recordRunFromCallback — 回执通道 → run 原语', () => {
     const pool = fakePool();
     await recordRunFromCallback(
       { taskId: 't1', runId: 'r1', status: 'completed', exitCode: 0, result: { artifacts: ['pr:1'] }, prUrl: 'https://github.com/o/r/pull/9' },
-      { pool },
+      runDeps(pool),
     );
     expect(kinds(pool)).toEqual(['insert', 'update']);
     const upd = pool.calls[1];
     expect(upd.params[1]).toBe('success');
     expect(JSON.parse(upd.params[2])).toEqual({ exit_code: 0, artifacts: ['pr:1', 'https://github.com/o/r/pull/9'] });
     expect(upd.params[3]).toBeNull();
+    expect(pool.emit).toHaveBeenCalledTimes(1);
+    expect(pool.emit).toHaveBeenCalledWith('run.finished', 'task-run', {
+      runId: 'r1', taskId: 't1', status: 'success',
+      result: { exit_code: 0, artifacts: ['pr:1', 'https://github.com/o/r/pull/9'] },
+    });
   });
 
   it("cecelia-run 的 'AI Done' / 'AI Failed' 别名各自归到 success / failed，失败带 error", async () => {
     const done = fakePool();
-    await recordRunFromCallback({ taskId: 't', runId: 'r', status: 'AI Done', exitCode: 0 }, { pool: done });
+    await recordRunFromCallback({ taskId: 't', runId: 'r', status: 'AI Done', exitCode: 0 }, runDeps(done));
     expect(done.calls[1].params[1]).toBe('success');
     const failed = fakePool();
-    await recordRunFromCallback({ taskId: 't', runId: 'r', status: 'AI Failed', exitCode: 2, error: 'boom' }, { pool: failed });
+    await recordRunFromCallback({ taskId: 't', runId: 'r', status: 'AI Failed', exitCode: 2, error: 'boom' }, runDeps(failed));
     expect(failed.calls[1].params[1]).toBe('failed');
     expect(failed.calls[1].params[3]).toBe('boom');
   });
 
   it('未知/中间态回执（in_progress 等）只保证行存在，不伪造终态', async () => {
     const pool = fakePool();
-    await recordRunFromCallback({ taskId: 't', runId: 'r', status: 'in_progress' }, { pool });
+    await recordRunFromCallback({ taskId: 't', runId: 'r', status: 'in_progress' }, runDeps(pool));
     expect(kinds(pool)).toEqual(['insert']);
   });
 });
@@ -206,7 +214,7 @@ describe('startRunForExecResult — 触发返回值 → run 行', () => {
 
   it('触发失败（success !== true）不留 run', async () => {
     const pool = fakePool();
-    const id = await startRunForExecResult({ task, execResult: { success: false }, source: 'executor' }, { pool });
+    const id = await startRunForExecResult({ task, execResult: { success: false }, source: 'executor' }, runDeps(pool));
     expect(id).toBeNull();
     expect(pool.query).not.toHaveBeenCalled();
   });
@@ -215,7 +223,7 @@ describe('startRunForExecResult — 触发返回值 → run 行', () => {
     const pool = fakePool();
     const id = await startRunForExecResult(
       { task, execResult: { success: true, runId: 'run-9', executor: 'codex-bridge' }, source: 'executor' },
-      { pool },
+      runDeps(pool),
     );
     expect(id).toBe('run-9');
     const ctx = JSON.parse(pool.calls[0].params[2]);
@@ -226,7 +234,7 @@ describe('startRunForExecResult — 触发返回值 → run 行', () => {
     const pool = fakePool();
     const id = await startRunForExecResult(
       { task, execResult: { success: true, internal: true, action: 'diagnose' }, source: 'executor' },
-      { pool },
+      runDeps(pool),
     );
     expect(id).toMatch(/^internal-task-1-/);
     expect(kinds(pool)).toEqual(['insert', 'update']);
@@ -236,14 +244,14 @@ describe('startRunForExecResult — 触发返回值 → run 行', () => {
 
   it('异常形状（success 却无 runId 且非 internal）：合成 runId 只落 running，不猜终态', async () => {
     const pool = fakePool();
-    const id = await startRunForExecResult({ task, execResult: { success: true }, source: 'dispatcher' }, { pool });
+    const id = await startRunForExecResult({ task, execResult: { success: true }, source: 'dispatcher' }, runDeps(pool));
     expect(id).toMatch(/^dispatch-task-1-/);
     expect(kinds(pool)).toEqual(['insert']);
   });
 
   it('dispatcher 兜底与 executor 漏斗对同一 runId 幂等：已存在行不重复 finish', async () => {
     const pool = fakePool({ insertRows: [] });
-    await startRunForExecResult({ task, execResult: { success: true, runId: 'run-9' }, source: 'dispatcher' }, { pool });
+    await startRunForExecResult({ task, execResult: { success: true, runId: 'run-9' }, source: 'dispatcher' }, runDeps(pool));
     expect(kinds(pool)).toEqual(['insert', 'select']);
   });
 });
@@ -253,11 +261,11 @@ describe('fail-open — 留痕失败绝不拖垮执行主链', () => {
   it('startRun / finishRun / recordRunFromCallback / startRunForExecResult 遇 DB 错误都不抛', async () => {
     const pool = fakePool({ failWith: boom });
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    await expect(startRun({ taskId: 't', runId: 'r', source: 'x' }, { pool })).resolves.toBeNull();
-    await expect(finishRun({ runId: 'r', status: 'completed' }, { pool })).resolves.toEqual({ updated: false });
-    await expect(recordRunFromCallback({ taskId: 't', runId: 'r', status: 'completed' }, { pool })).resolves.toBeDefined();
+    await expect(startRun({ taskId: 't', runId: 'r', source: 'x' }, runDeps(pool))).resolves.toBeNull();
+    await expect(finishRun({ runId: 'r', status: 'completed' }, runDeps(pool))).resolves.toEqual({ updated: false });
+    await expect(recordRunFromCallback({ taskId: 't', runId: 'r', status: 'completed' }, runDeps(pool))).resolves.toBeDefined();
     await expect(
-      startRunForExecResult({ task: { id: 't' }, execResult: { success: true, runId: 'r' }, source: 'x' }, { pool }),
+      startRunForExecResult({ task: { id: 't' }, execResult: { success: true, runId: 'r' }, source: 'x' }, runDeps(pool)),
     ).resolves.toBe('r');
     warn.mockRestore();
   });
@@ -265,8 +273,8 @@ describe('fail-open — 留痕失败绝不拖垮执行主链', () => {
   it('缺 source / 缺 taskId 也只 warn 返回 null（留痕缺参不炸执行）', async () => {
     const pool = fakePool();
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    await expect(startRun({ taskId: 't', runId: 'r' }, { pool })).resolves.toBeNull();
-    await expect(startRun({ runId: 'r', source: 'x' }, { pool })).resolves.toBeNull();
+    await expect(startRun({ taskId: 't', runId: 'r' }, runDeps(pool))).resolves.toBeNull();
+    await expect(startRun({ runId: 'r', source: 'x' }, runDeps(pool))).resolves.toBeNull();
     expect(pool.query).not.toHaveBeenCalled();
     warn.mockRestore();
   });
@@ -274,8 +282,8 @@ describe('fail-open — 留痕失败绝不拖垮执行主链', () => {
   it('finishRun 对 running / 未知状态不动库（只认真实终态，不伪造）', async () => {
     const pool = fakePool();
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    await expect(finishRun({ runId: 'r', status: 'running' }, { pool })).resolves.toEqual({ updated: false });
-    await expect(finishRun({ runId: 'r', status: 'weird' }, { pool })).resolves.toEqual({ updated: false });
+    await expect(finishRun({ runId: 'r', status: 'running' }, runDeps(pool))).resolves.toEqual({ updated: false });
+    await expect(finishRun({ runId: 'r', status: 'weird' }, runDeps(pool))).resolves.toEqual({ updated: false });
     expect(pool.query).not.toHaveBeenCalled();
     warn.mockRestore();
   });
