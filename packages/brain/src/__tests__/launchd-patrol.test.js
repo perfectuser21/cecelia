@@ -1,4 +1,9 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+
+const safety = vi.hoisted(() => ({
+  query: vi.fn(async () => { throw new Error('launchd_test_canonical_db_forbidden'); }),
+}));
+vi.mock('../db.js', () => ({ default: { query: safety.query } }));
 
 vi.mock('../notifier.js', () => ({ sendBark: vi.fn().mockResolvedValue(true) }));
 vi.mock('../alerting.js', () => ({ raise: vi.fn().mockResolvedValue(undefined) }));
@@ -11,6 +16,8 @@ import {
 } from '../launchd-patrol.js';
 import { sendBark } from '../notifier.js';
 import { raise } from '../alerting.js';
+import canonicalPool from '../db.js';
+import incidentPool from '../db/pool.js';
 
 // 健康宿主的 fake launchctl/nc 输出；overrides 注入各类坏状态
 const HEALTHY_DISABLED_OUT = [
@@ -46,6 +53,12 @@ function makeExec(overrides = {}) {
 beforeEach(() => {
   vi.clearAllMocks();
   __resetLaunchdPatrolForTest();
+});
+
+afterEach(() => {
+  expect(incidentPool).toBe(canonicalPool);
+  expect(canonicalPool.query).toBe(safety.query);
+  expect(safety.query).not.toHaveBeenCalled();
 });
 
 describe('launchd-patrol manifest 核对', () => {
