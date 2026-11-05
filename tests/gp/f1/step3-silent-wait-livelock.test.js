@@ -1,3 +1,4 @@
+import './helpers/silent-wait-effects.js';
 // F1「工厂 · 开发闭环」步骤 3「造完真验」—— 边：静默等待活锁（r80 run 5100560e 案卷）
 //
 // 真相（08-30 复盘，推翻"控制循环半死"的初判）：hop 206 Commander 提案（dispatch_role
