@@ -66,14 +66,16 @@ const KV_KEY = 'drift_sentinel_state';
 async function loadState(db = pool) {
   try {
     const res = await db.query(
-      'SELECT value FROM working_memory WHERE key = $1',
+      'SELECT value_json FROM working_memory WHERE key = $1',
       [KV_KEY]
     );
-    if (res.rows.length > 0 && res.rows[0].value) {
-      return JSON.parse(res.rows[0].value);
+    const value = res.rows[0]?.value_json;
+    const state = typeof value === 'string' ? JSON.parse(value) : value;
+    if (state && typeof state === 'object' && !Array.isArray(state)) {
+      return state;
     }
   } catch {
-    // 静默降级：首次运行或 working_memory 不含 value 列时
+    // 保留既有读取/解析失败时的首次运行降级。
   }
   return {
     driftFirstSeenAt: null,
