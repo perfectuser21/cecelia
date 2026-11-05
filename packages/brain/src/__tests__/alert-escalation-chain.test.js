@@ -67,6 +67,21 @@ import {
   getEscalationStatus,
 } from '../alertness/escalation.js';
 
+// 只在显式验证flush的测试接管HTTP；其它路径继续默认拒绝fetch。
+function recordDigestWrite() {
+  const fetch = vi.fn(async () => ({ ok: true }));
+  vi.stubGlobal('fetch', fetch);
+  return fetch;
+}
+function expectDigestWrite(fetch, text) {
+  expect(fetch).toHaveBeenCalledTimes(1);
+  const [url, options] = fetch.mock.calls[0];
+  expect(url).toBe(SYNTHETIC_DIGEST_URL);
+  expect(options).toMatchObject({ method: 'POST', headers: { 'Content-Type': 'application/json' } });
+  expect(options.signal).toBeInstanceOf(AbortSignal);
+  expect(JSON.parse(options.body)).toEqual({ msg_type: 'text', content: { text } });
+}
+
 // ─── Tests ──────────────────────────────────────────────────────────────────
 
 describe('alerting.js — P0/P1 通知链路', () => {
@@ -103,9 +118,12 @@ describe('alerting.js — P0/P1 通知链路', () => {
     const afterPending = getStatus().p1_pending;
     expect(afterPending).toBeGreaterThan(beforePending);
 
+    const digestFetch = recordDigestWrite();
     await flushP1();
     expect(sendFeishu).not.toHaveBeenCalled();
     expect(getStatus().p1_pending).toBe(0);
+    expectDigestWrite(digestFetch, '⚠️ [P1 每小时汇总] 1 条警告\n• P1 告警积压');
+    expect(getStatus().last_p1_digest).toMatchObject({ count: 1, channel: 'webhook' });
   });
 
   it('P2 不立即推送，加入缓冲区；flushP2 汇总不私信（不调 sendFeishu）', async () => {
@@ -116,9 +134,12 @@ describe('alerting.js — P0/P1 通知链路', () => {
     const afterPending = getStatus().p2_pending;
     expect(afterPending).toBeGreaterThan(beforePending);
 
+    const digestFetch = recordDigestWrite();
     await flushP2();
     expect(sendFeishu).not.toHaveBeenCalled();
     expect(getStatus().p2_pending).toBe(0);
+    expectDigestWrite(digestFetch, '📋 [P2 每日记录] 1 条\n• P2 低优先级告警');
+    expect(getStatus().last_p2_digest).toMatchObject({ count: 1, channel: 'webhook' });
   });
 });
 
