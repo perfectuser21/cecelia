@@ -20,13 +20,16 @@ export function ciVersionGuardCohorts(previous) {
  const w19Freeze={...concurrency,'existing-ops-stage-source.js':'8027e13f13edf710b95a78bf036b52c72b48e97f4d01fbd3143144ed3f1f0018'};
  // 触达去抖只读reader已审变更：继承完整16成员，只新增独立marker0/1组。
  const outreach={...w19Freeze,'existing-ops-us-compose-source.js':'e1d026e543ef79614fbebbe5037866b2446535cacdd48698b97e3948f0fcf6fa'};
+ // Deep max队列只追加完整16成员与marker0/1配对，旧组保持。
+ const deepQueue={...outreach,'existing-ops-stage-source.js':'142de92540dde7a10b81fb765460643da89ca075f34aa093ff1ce840e5b115bd'};
  return [current,{...current,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
   retired,{...retired,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
   identity,{...identity,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
   runtimeScope,{...runtimeScope,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
   concurrency,{...concurrency,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
   w19Freeze,{...w19Freeze,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
-  outreach,{...outreach,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'}];
+  outreach,{...outreach,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
+  deepQueue,{...deepQueue,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'}];
 }
 
 export function registerCiRetirementGuardTests({root,base,memoBase,scan}) {

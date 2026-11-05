@@ -37,3 +37,9 @@ it.each(['single', 'per-ref', 'cancel-running', 'empty-command'])('未知Deep wo
 it('新workflow不能与未知Deep配置混配', async () => {
   await expect(collect({[config]: current(config) + '\n// unreviewed\n'})).rejects.toThrow('basic_ci_source_unproven');
 });
+
+it('新max来源不能与已合历史的旧Deep配置单成员混配', async () => {
+  const old = readFixedExistingOpsGitFixture('75e6eb290659054e5cab8587e56003a58bc22e3a');
+  expect(old.read(config)).not.toBe(current(config));
+  await expect(collect({[config]: old.read(config)})).rejects.toThrow('basic_ci_source_unproven');
+});
