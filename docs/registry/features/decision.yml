@@ -52,7 +52,6 @@ features:
         - packages/brain/src/__tests__/actions-goal-validation.test.js
         - packages/brain/src/__tests__/actions.test.js
         - packages/brain/src/__tests__/attach-decision-routes.test.js
-        - packages/brain/src/__tests__/bare-modules/proactive-mouth.test.js
         - packages/brain/src/__tests__/cecelia-proactive-push.test.js
         - packages/brain/src/__tests__/cecelia-routes.test.js
         - packages/brain/src/__tests__/cecelia-voice-retrieval.test.js
@@ -91,7 +90,6 @@ features:
             - packages/brain/src/__tests__/actions-goal-validation.test.js
             - packages/brain/src/__tests__/actions.test.js
             - packages/brain/src/__tests__/attach-decision-routes.test.js
-            - packages/brain/src/__tests__/bare-modules/proactive-mouth.test.js
             - packages/brain/src/__tests__/cecelia-proactive-push.test.js
             - packages/brain/src/__tests__/cecelia-routes.test.js
             - packages/brain/src/__tests__/cecelia-voice-retrieval.test.js
@@ -330,9 +328,6 @@ features:
         - packages/brain/src/__tests__/auto-fix.test.js
         - packages/brain/src/__tests__/auto-learning.test.js
         - packages/brain/src/__tests__/auto-rca.test.js
-        - packages/brain/src/__tests__/bare-modules/auto-fix.test.js
-        - packages/brain/src/__tests__/bare-modules/rca-deduplication.test.js
-        - packages/brain/src/__tests__/bare-modules/trace-routes.test.js
         - packages/brain/src/__tests__/chaos-hardening.test.js
         - packages/brain/src/__tests__/cpu-sampler.test.js
         - packages/brain/src/__tests__/emergency-cleanup-retry.test.js
@@ -371,9 +366,6 @@ features:
             - packages/brain/src/__tests__/auto-fix.test.js
             - packages/brain/src/__tests__/auto-learning.test.js
             - packages/brain/src/__tests__/auto-rca.test.js
-            - packages/brain/src/__tests__/bare-modules/auto-fix.test.js
-            - packages/brain/src/__tests__/bare-modules/rca-deduplication.test.js
-            - packages/brain/src/__tests__/bare-modules/trace-routes.test.js
             - packages/brain/src/__tests__/chaos-hardening.test.js
             - packages/brain/src/__tests__/cpu-sampler.test.js
             - packages/brain/src/__tests__/emergency-cleanup-retry.test.js
