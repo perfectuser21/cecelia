@@ -13,10 +13,12 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 // 即使默认恢复函数绕过opts.pool，也只能进入记录型canonical DB。
 const boundary = vi.hoisted(() => ({
   db: vi.fn(async () => ({ rows: [], rowCount: 0 })), process: vi.fn(), network: vi.fn(),
-  probe: vi.fn(async () => []),
+  probe: vi.fn(async () => []), unblock: vi.fn(async () => []), sweep: vi.fn(async () => 0),
 }));
 vi.mock('../db.js', () => ({ default: { query: boundary.db } }));
 // 旧场景遗漏probe注入；封闭executor模块，不能为基线导入真实进程控制。
+vi.mock('../task-updater.js', () => ({ unblockExpiredTasks: boundary.unblock }));
+vi.mock('../device-lock-helpers.js', () => ({ sweepStaleDeviceLocks: boundary.sweep }));
 vi.mock('../executor.js', () => ({ probeTaskLiveness: boundary.probe }));
 vi.mock('node:child_process', () => Object.fromEntries(
   ['exec', 'execSync', 'execFile', 'execFileSync', 'spawn', 'spawnSync', 'fork'].map(name => [name, (...args) => {
@@ -46,12 +48,15 @@ import { runRecoveryOnce, startRecoveryLoop, stopRecoveryLoop } from '../recover
 const fakePool = { query: async () => ({ rows: [] }) };
 
 describe('recovery-loop', () => {
-  it('一次执行调用全部四条恢复网（含 probeTaskLiveness）', async () => {
+  it('一次执行调用全部六条恢复网（含probe、解封和设备锁清理）', async () => {
     const cleanupStaleClaims = vi.fn(async () => ({ cleaned: 2 }));
     const checkStuckPipelines = vi.fn(async () => ({ canceled: [{ id: 'p1' }] }));
     const autoFailTimedOutTasks = vi.fn(async () => [{ action: 'auto-requeue-timeout' }]);
     const fetchInProgress = vi.fn(async () => []);
     const probeTaskLiveness = vi.fn(async () => []);
+
+    boundary.unblock.mockResolvedValueOnce([{ task_id: 'owned-recovered-1' }, { task_id: 'owned-recovered-2' }]);
+    boundary.sweep.mockResolvedValueOnce(3);
 
     const r = await runRecoveryOnce({
       pool: fakePool, cleanupStaleClaims, checkStuckPipelines, autoFailTimedOutTasks, fetchInProgress, probeTaskLiveness,
@@ -61,6 +66,11 @@ describe('recovery-loop', () => {
     expect(checkStuckPipelines).toHaveBeenCalledTimes(1);
     expect(autoFailTimedOutTasks).toHaveBeenCalledTimes(1);
     expect(probeTaskLiveness).toHaveBeenCalledTimes(1);
+    expect(boundary.unblock).toHaveBeenCalledTimes(1);
+    expect(boundary.unblock).toHaveBeenCalledWith({ limit: 5 });
+    expect(boundary.sweep).toHaveBeenCalledTimes(1);
+    expect(boundary.sweep).toHaveBeenCalledWith();
+    expect(r.blockedRecovered).toBe(2);
     expect(r).toMatchObject({ staleReleased: 2, orphansRequeued: 0 });
   });
 
