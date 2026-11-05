@@ -118,3 +118,22 @@ describe('未知到期不能被当作凭据恢复', () => {
     expect(boundary.raise).not.toHaveBeenCalled();
   });
 });
+
+describe('到期元数据形态与已过期边界', () => {
+  it.each(['[]', '{}', 'true', 'null', '"unknown"', '1e400'])('非法到期%s不凭空新增熔断', async value => {
+    writeCredentials('account1', `{"claudeAiOauth":{"expiresAt":${value}}}`);
+    await proactiveTokenCheck();
+    expect(isAuthFailed('account1')).toBe(false);
+    expect(boundary.query).not.toHaveBeenCalled();
+    expect(boundary.raise).not.toHaveBeenCalled();
+  });
+
+  it.each([0, NOW.getTime() - 1])('有限且已过期时间%s仍触发原熔断与告警', async expiresAt => {
+    writeCredentials('account1', valid(expiresAt));
+    await proactiveTokenCheck();
+    expect(isAuthFailed('account1')).toBe(true);
+    expect(boundary.raise).toHaveBeenCalledWith('P1', 'token_expired_account1', expect.stringContaining('account1'));
+    expect(boundary.query).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO account_usage_cache'),
+      ['account1', new Date(NOW.getTime() + 24 * 60 * 60 * 1000).toISOString(), 1]);
+  });
+});
