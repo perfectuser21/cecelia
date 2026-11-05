@@ -13,11 +13,15 @@ for(const failure of ['report','admin','drop'])test(`真实runner控制流遇到
  const runner=write(dir,'scripts/ci/run-debt-pg.mjs',readFileSync(join(root,'scripts/ci/run-debt-pg.mjs')));
  write(dir,'packages/brain/package.json','{"type":"module"}');
  write(dir,'node_modules/pg/index.js',`exports.Pool=class{async query(){} async end(){require('node:fs').appendFileSync(${JSON.stringify(events)},'admin-end\\n');${failure==='admin'?"throw Error('ADMIN_END_FAILURE');":''}}};`);
- write(dir,'node_modules/pg/client.js',`module.exports=class{async connect(){} async query(){} async end(){}};`);
- const pg=join(dir,'node_modules/pg/index.js');writeFileSync(pg,readFileSync(pg,'utf8')+`exports.Client=require('./client.js');`);
+ const pg=join(dir,'node_modules/pg/index.js');
+ writeFileSync(pg,readFileSync(pg,'utf8')+`exports.Client=class {
+ constructor(config){this.admin=config.database==='postgres';}
+ async connect(){} async query(){}
+ async end(){if(this.admin){require('node:fs').appendFileSync(${JSON.stringify(events)},${JSON.stringify('admin-end\n')});${failure==='admin'?"throw Error('ADMIN_END_FAILURE');":''}}}
+ };`);
  write(dir,'scripts/ci/private-pg-backend.mjs',`import{writeFileSync,appendFileSync}from'node:fs';
  export const cleanProcessEnv=()=>({});
- export const startPrivatePg=async()=>({directory:${JSON.stringify(dir)},config:{},owner:'ci-debt-0123456789abcdef',password:'fixture',port:6543,inspectOwner(){},close(){appendFileSync(${JSON.stringify(events)},'backend-close\\n');}});
+ export const startPrivatePg=async()=>({directory:${JSON.stringify(dir)},config:{database:'postgres'},owner:'ci-debt-0123456789abcdef',password:'fixture',port:6543,inspectOwner(){},close(){appendFileSync(${JSON.stringify(events)},'backend-close\\n');}});
  export function checked(command,args){writeFileSync(args[args.indexOf('--outputFile')+1],JSON.stringify({success:true}));}
  `);
  write(dir,'scripts/ci/private-pg-contract.mjs',`export const verifyPrivatePg=async()=>({});export const assertVitestReport=()=>1;export const dropOwnedScratch=async()=>{${failure==='drop'?"throw Error('DROP_FAILURE');":''}};export const restoreDump=()=>{};`);
@@ -25,7 +29,7 @@ for(const failure of ['report','admin','drop'])test(`真实runner控制流遇到
  write(dir,'packages/brain/src/review.test.js','// no external execution; checked() is the subprocess boundary');
  const obstruction=write(dir,'not-directory','x'),output=failure==='report'?join(obstruction,'report.json'):join(dir,'report.json');
  const run=spawnSync(process.execPath,[runner,'--output',output],{encoding:'utf8'});
- assert.doesNotMatch(run.stderr,/not a constructor|connect is not a function/,'fixture must reach the claimed cleanup branch');
+ assert.doesNotMatch(run.stderr,/SyntaxError|not a constructor|connect is not a function/,'fixture must reach the claimed cleanup branch');
  assert.equal(run.status,1,run.stderr);assert.match(run.stderr,failure==='admin'?/ADMIN_END_FAILURE/:failure==='drop'?/DROP_FAILURE/:/ENOTDIR|EEXIST/);
  assert.match(readFileSync(events,'utf8'),/backend-close/,`backend未清理：${run.stderr}`);
 });
