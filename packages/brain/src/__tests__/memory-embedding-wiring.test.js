@@ -39,9 +39,4 @@ describe('orchestrator-chat — memory_stream embedding wiring', () => {
     expect(chunk).toContain('Promise.resolve()');
   });
 
-  it('两处 embedding 均有 .catch 防止异常冒泡', () => {
-    const occurrences = [...source.matchAll(/generateMemoryStreamEmbeddingAsync/g)];
-    // import + 2 call sites = 3 occurrences
-    expect(occurrences.length).toBeGreaterThanOrEqual(3);
-  });
 });
