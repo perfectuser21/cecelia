@@ -11,7 +11,7 @@ const relay = fs.readFileSync('packages/brain/src/harness-skill-relay.js','utf8'
 if (/INSERT INTO initiative_runs/.test(relay) || !relay.includes('error:KERNEL_RUNTIME_RETIRED_CODE')) { console.error('FAIL: retired relay can start new run'); process.exit(1); }
 const fin = fs.readFileSync('packages/brain/src/lib/harness-finalize.js','utf8');
 if (!/finalizeHarnessTask/.test(fin)) { console.error('FAIL: finalize 缺失'); process.exit(1); }
-for (const f of ['packages/brain/src/callback-processor.js','packages/brain/src/routes/tasks.js','packages/brain/src/routes/harness.js']) {
+for (const f of ['packages/brain/src/callback-processor.js','packages/brain/src/routes/tasks-status.js','packages/brain/src/routes/harness.js']) {
   if (!/finalizeHarnessTask|harness-finalize/.test(fs.readFileSync(f,'utf8'))) { console.error('FAIL: ' + f + ' 未接 finalize'); process.exit(1); }
 }
 const taskTasks = fs.readFileSync('packages/brain/src/routes/task-tasks.js','utf8');

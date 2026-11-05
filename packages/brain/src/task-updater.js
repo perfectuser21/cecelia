@@ -344,7 +344,7 @@ export async function unblockTask(taskId, { db = pool } = {}) {
     console.log(`[task-updater] Task ${taskId} unblocked, status → queued`);
     return { success: true, task };
   } catch (err) {
-    console.error(`[task-updater] Failed to unblock task ${taskId}:`, err.message);
+    console.error('[task-updater] Failed to unblock task %s: %s', taskId, err.message);
     return { success: false, error: err.message };
   }
 }

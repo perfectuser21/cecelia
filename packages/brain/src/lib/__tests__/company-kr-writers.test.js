@@ -19,7 +19,7 @@ describe('company-kr-writers 公司经营KR不接受项目任务比例覆盖', (
     }
   });
   it('三条legacy Current writer必须在实际UPDATE处守住双身份字段', () => {
-    for (const file of ['callback-processor.js', 'routes/execution.js', 'routes/tasks.js']) {
+    for (const file of ['callback-processor.js', 'routes/execution.js', 'routes/tasks-status.js']) {
       const source = readFileSync(new URL(`../../${file}`, import.meta.url), 'utf8');
       const writes = source.match(/(?:'|`)(UPDATE key_results SET current_value[^'`]*)(?:'|`)/g) || [];
       expect(writes.length).toBeGreaterThan(0);

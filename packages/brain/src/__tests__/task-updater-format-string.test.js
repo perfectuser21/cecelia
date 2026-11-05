@@ -1,0 +1,21 @@
+import { afterEach, expect, it, vi } from 'vitest';
+import { format } from 'node:util';
+const effects=vi.hoisted(()=>({forbidden:[],deny(kind){effects.forbidden.push(kind);throw Error('forbidden_'+kind);}}));
+vi.mock('../db.js',()=>({default:{query:()=>effects.deny('global_db'),connect:()=>effects.deny('global_connect')}}));
+vi.mock('../events/taskEvents.js',()=>({publishTaskStarted:()=>effects.deny('event'),publishTaskCompleted:()=>effects.deny('event'),publishTaskFailed:()=>effects.deny('event'),publishTaskProgress:()=>effects.deny('event')}));
+vi.mock('../event-bus.js',()=>({emit:()=>effects.deny('emit')}));
+vi.mock('../lib/owner-decision.js',()=>({assertOwnerDecisionProtocol:()=>effects.deny('owner'),OwnerDecisionProtocolError:class extends Error{},OWNER_DECISION_REASON:'synthetic',openOwnerDecisionPendingAction:()=>effects.deny('owner'),closeOwnerDecisionPendingAction:()=>effects.deny('owner')}));
+vi.mock('../lib/task-terminal.js',()=>({finalizeTask:()=>effects.deny('terminal'),isTerminalStatus:()=>false}));
+import { unblockTask } from '../task-updater.js';
+afterEach(()=>{vi.restoreAllMocks();expect(effects.forbidden).toEqual([]);});
+it('unblock failure logs a constant format and preserves external percent directives as data',async()=>{
+ const id='synthetic-%s-%d',message='synthetic DB failure %s';
+ const db={query:vi.fn(async()=>{throw Error(message);})};
+ const log=vi.spyOn(console,'error').mockImplementation(()=>{});
+ const result=await unblockTask(id,{db});
+ expect(result).toEqual({success:false,error:message});expect(db.query).toHaveBeenCalledTimes(1);
+ expect(db.query.mock.calls[0][1]).toEqual([id]);
+ expect(log).toHaveBeenCalledTimes(1);
+ expect(log.mock.calls[0]).toEqual(['[task-updater] Failed to unblock task %s: %s',id,message]);
+ expect(format(...log.mock.calls[0])).toBe(`[task-updater] Failed to unblock task ${id}: ${message}`);
+});

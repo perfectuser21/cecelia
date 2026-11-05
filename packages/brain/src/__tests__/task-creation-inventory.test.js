@@ -47,6 +47,12 @@ describe('task creation inventory', () => {
     });
   });
 
+  it('意图扩展子任务的迁移模块仍登记为API原子创建边界', () => {
+    expect(TASK_CREATION_INVENTORY.find(row => row.module === 'routes/tasks-manual-dispatch.js')).toEqual({
+      module: 'routes/tasks-manual-dispatch.js', source: 'api', creates_executable_task: true, migration_status: 'routed',
+    });
+  });
+
   it('Commander 独立核验经 scheduler 原子建单边界登记', () => {
     expect(TASK_CREATION_INVENTORY.find(row => row.module === 'lib/commander-v2-control.js')).toEqual({
       module: 'lib/commander-v2-control.js', source: 'scheduler', creates_executable_task: true, migration_status: 'routed',
