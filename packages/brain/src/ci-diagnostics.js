@@ -186,18 +186,28 @@ export async function diagnoseCiFailure({ prUrl, taskId } = {}, { execFn } = {})
   }
 
   const { owner, repo, prNumber } = prInfo;
+  // Only literal repository identifiers may enter the shell command executor.
+  if (![owner, repo].every(value => /^[A-Za-z0-9_.-]+$/.test(value))) return null;
 
   try {
-    // 1. 获取最新失败的 run_id
+    // gh run list has no --pr option. Bind diagnostics to the PR's observed head.
+    const pr = JSON.parse(await exec(
+      `gh pr view ${prNumber} --repo ${owner}/${repo} --json headRefOid`
+    ));
+    const headSha = pr?.headRefOid;
+    if (typeof headSha !== 'string' || !/^[a-f0-9]{40}$/.test(headSha)) return null;
     const runListOutput = await exec(
-      `gh run list --repo ${owner}/${repo} --pr ${prNumber} --status failure --limit 1 --json databaseId,conclusion`
+      `gh run list --repo ${owner}/${repo} --commit ${headSha} --status failure --limit 1 --json databaseId,conclusion,headSha`
     );
     const runs = JSON.parse(runListOutput || '[]');
-    if (!runs.length) {
+    if (!Array.isArray(runs) || !runs.length) {
       console.log(`[ci-diagnostics] no failed runs for PR #${prNumber}`);
       return null;
     }
-    const runId = String(runs[0].databaseId);
+    const run = runs[0];
+    if (run?.headSha !== headSha || run.conclusion !== 'failure'
+        || !Number.isSafeInteger(run.databaseId) || run.databaseId <= 0) return null;
+    const runId = String(run.databaseId);
 
     // 2. 获取失败日志
     const logOutput = await exec(

@@ -10,6 +10,7 @@ const MAX_CONTENT_LEN = 2000;
 /**
  * 新主干进箱入口：先写 captures（信封），再生成 capture_atom
  * 写入失败绝不抛——进箱失败不允许阻塞主流程。
+ * atomWriteFailed 仅标记 atom 写异常，合法去重空 RETURNING 不带此标记。
  */
 export async function pushCapture(pool, {
   content,
@@ -74,7 +75,7 @@ export async function pushCapture(pool, {
         return { captureId, atomId: rows[0]?.id ?? null, dedupeHit };
       } catch (atomErr) {
         console.warn(`[capture-inbox] atom write failed (non-fatal): ${atomErr.message}`);
-        return { captureId, atomId: null, dedupeHit };
+        return { captureId, atomId: null, dedupeHit, atomWriteFailed: true };
       }
     }
 

@@ -206,7 +206,10 @@ export async function getCachedScore(dbPool) {
       `SELECT value_json, updated_at FROM working_memory WHERE key = 'curiosity_score' LIMIT 1`
     );
     if (rows.length === 0) return null;
-    const parsed = JSON.parse(rows[0].value_json);
+    const value = rows[0].value_json;
+    // pg 默认将 JSONB 解码为对象；旧字符串缓存仍兼容读取。
+    const parsed = typeof value === 'string' ? JSON.parse(value) : value;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
     return { ...parsed, cached_at: rows[0].updated_at };
   } catch (err) {
     console.warn('[curiosity-scorer] cache read failed:', err.message);

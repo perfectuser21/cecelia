@@ -28,25 +28,10 @@ const LOCK_DIR = process.env.LOCK_DIR || '/tmp/cecelia-locks';
 const ACTIVE_LOCK_WINDOW_MS = 24 * 3600 * 1000;
 
 /**
- * W7.3 升级 (2026-05-07): 探测当前所有活跃 docker container 的 mount source 路径。
- *
- * 背景：W8 task-39d535f3 跑到 reviewer 阶段时 Brain 重启 → git worktree list
- * 拿不到 harness-v2/task-39d535f3（race）→ .dev-lock 保护未命中（harness
- * 容器不写 .dev-lock）→ 整个 worktree 目录被 rm -rf。
- *
- * docker 是这一类活跃 worktree 唯一可靠的真实信号源。
- *
- * 流程：
- *   1. `docker ps --format '{{.ID}}'` 拿全部活跃 container ID
- *   2. 对每个 container 调 `docker inspect --format '{{json .Mounts}}'`
- *   3. 收集所有 mount 的 Source 字段
- *
- * docker ps 抛错 → 整个函数抛错（让 caller 决定降级策略：
- * 保守跳过删除 vs 继续按既有逻辑删）。单个 container inspect 失败容忍
- * （可能 container 在我们 ps 后立即退出）。
- *
+ * 探测全部活跃 Docker container 的 mount source，供清理前保护使用。
+ * ps/任一 inspect 失败或 mount JSON 非数组时抛错：未知不等于无挂载，
+ * caller 必须保守跳过删除。ps 成功零容器、inspect 成功 [] 均为合法空集。
  * @returns {Set<string>} 全部活跃 container 的 mount source 路径集合
- * @throws {Error} docker ps 失败时
  */
 export function getActiveContainerMountPaths() {
   const psOut = execSync("docker ps --format '{{.ID}}'", {
@@ -56,21 +41,11 @@ export function getActiveContainerMountPaths() {
 
   const paths = new Set();
   for (const id of ids) {
-    let inspectOut;
-    try {
-      inspectOut = execSync(`docker inspect --format '{{json .Mounts}}' ${id}`, {
-        timeout: 5000, encoding: 'utf-8', stdio: 'pipe',
-      });
-    } catch {
-      continue;
-    }
-    let mounts;
-    try {
-      mounts = JSON.parse(String(inspectOut || '').trim() || '[]');
-    } catch {
-      continue;
-    }
-    if (!Array.isArray(mounts)) continue;
+    const inspectOut = execSync(`docker inspect --format '{{json .Mounts}}' ${id}`, {
+      timeout: 5000, encoding: 'utf-8', stdio: 'pipe',
+    });
+    const mounts = JSON.parse(String(inspectOut || '').trim());
+    if (!Array.isArray(mounts)) throw new Error('docker inspect mounts must be an array');
     for (const m of mounts) {
       if (m && typeof m.Source === 'string' && m.Source) {
         paths.add(m.Source);

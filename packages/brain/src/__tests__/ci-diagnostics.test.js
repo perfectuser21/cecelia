@@ -213,25 +213,28 @@ describe('extractPrInfo', () => {
 // ============================================================
 
 describe('diagnoseCiFailure', () => {
+  const headSha = 'a'.repeat(40);
   const prUrl = 'https://github.com/perfectuser21/cecelia/pull/605';
 
-  it('调用 execFn 两次（run list + run view）', async () => {
+  it('先取得PR head再调用run list和run view', async () => {
     const execFn = vi.fn()
-      .mockResolvedValueOnce(JSON.stringify([{ databaseId: 12345 }]))
+      .mockResolvedValueOnce(JSON.stringify({ headRefOid: headSha }))
+      .mockResolvedValueOnce(JSON.stringify([{ databaseId: 12345, conclusion: 'failure', headSha }]))
       .mockResolvedValueOnce('FAIL packages/brain/src/__tests__/tick.test.js\n2 tests failed');
 
     await diagnoseCiFailure({ prUrl }, { execFn });
 
-    expect(execFn).toHaveBeenCalledTimes(2);
-    expect(execFn.mock.calls[0][0]).toContain('gh run list');
-    expect(execFn.mock.calls[0][0]).toContain('--pr 605');
-    expect(execFn.mock.calls[1][0]).toContain('gh run view 12345');
-    expect(execFn.mock.calls[1][0]).toContain('--log-failed');
+    expect(execFn).toHaveBeenCalledTimes(3);
+    expect(execFn.mock.calls[0][0]).toContain('gh pr view 605');
+    expect(execFn.mock.calls[1][0]).toContain('--commit ' + headSha);
+    expect(execFn.mock.calls[2][0]).toContain('gh run view 12345');
+    expect(execFn.mock.calls[2][0]).toContain('--log-failed');
   });
 
   it('正确识别 test_failure', async () => {
     const execFn = vi.fn()
-      .mockResolvedValueOnce(JSON.stringify([{ databaseId: 99 }]))
+      .mockResolvedValueOnce(JSON.stringify({ headRefOid: headSha }))
+      .mockResolvedValueOnce(JSON.stringify([{ databaseId: 99, conclusion: 'failure', headSha }]))
       .mockResolvedValueOnce('FAIL packages/brain/src/__tests__/routes.test.js\nassert expected 200 got 500');
 
     const result = await diagnoseCiFailure({ prUrl }, { execFn });
@@ -251,7 +254,7 @@ describe('diagnoseCiFailure', () => {
   });
 
   it('无 failed runs 时返回 null', async () => {
-    const execFn = vi.fn().mockResolvedValueOnce('[]');
+    const execFn = vi.fn().mockResolvedValueOnce(JSON.stringify({ headRefOid: headSha })).mockResolvedValueOnce('[]');
     const result = await diagnoseCiFailure({ prUrl }, { execFn });
     expect(result).toBeNull();
   });
@@ -264,7 +267,8 @@ describe('diagnoseCiFailure', () => {
 
   it('结果包含 summary 和 suggested_fix', async () => {
     const execFn = vi.fn()
-      .mockResolvedValueOnce(JSON.stringify([{ databaseId: 777 }]))
+      .mockResolvedValueOnce(JSON.stringify({ headRefOid: headSha }))
+      .mockResolvedValueOnce(JSON.stringify([{ databaseId: 777, conclusion: 'failure', headSha }]))
       .mockResolvedValueOnce('check-version-sync: FAIL - versions differ');
 
     const result = await diagnoseCiFailure({ prUrl }, { execFn });
@@ -276,7 +280,8 @@ describe('diagnoseCiFailure', () => {
 
   it('execFn 使用正确的 repo（owner/repo）', async () => {
     const execFn = vi.fn()
-      .mockResolvedValueOnce(JSON.stringify([{ databaseId: 1 }]))
+      .mockResolvedValueOnce(JSON.stringify({ headRefOid: headSha }))
+      .mockResolvedValueOnce(JSON.stringify([{ databaseId: 1, conclusion: 'failure', headSha }]))
       .mockResolvedValueOnce('ECONNRESET');
 
     await diagnoseCiFailure(
@@ -287,4 +292,10 @@ describe('diagnoseCiFailure', () => {
     expect(execFn.mock.calls[0][0]).toContain('myorg/myrepo');
     expect(execFn.mock.calls[1][0]).toContain('myorg/myrepo');
   });
+});
+
+it('不把非法仓库标识送入shell命令执行器', async () => {
+  const execFn = vi.fn();
+  expect(await diagnoseCiFailure({ prUrl: 'https://github.com/owned bad/repo/pull/605' }, { execFn })).toBeNull();
+  expect(execFn).not.toHaveBeenCalled();
 });
