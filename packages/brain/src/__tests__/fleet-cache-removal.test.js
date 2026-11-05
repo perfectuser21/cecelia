@@ -166,3 +166,20 @@ describe('实际目录发布进入Fleet缓存成员关系', () => {
     expect(cache.getTotalEffectiveSlots()).toBe(8);
   });
 });
+
+it('同一轮快worker采样仍及时发布，不被慢worker阻塞（原逐节点更新合同）', async () => {
+  await seed(['owned-a','owned-b']);
+  const slow = pending();
+  const busy = response('owned-a');
+  const health = await busy.json(); health.resources.cpu_pressure_percent = 100;
+  io.fetch.mockImplementationOnce(async () => ({ ...busy, json: async () => health }));
+  io.fetch.mockImplementationOnce(() => slow.promise);
+  const round = io.refresh();
+  try {
+    await vi.advanceTimersByTimeAsync(0);
+    expect(cache.getRemoteCapacity('owned-a')).toMatchObject({ online: true, effectiveSlots: 0 });
+    expect(cache.getRemoteCapacity('owned-b')).toMatchObject({ online: true, effectiveSlots: 8 });
+  } finally {
+    slow.resolve(response('owned-b')); await round;
+  }
+});
