@@ -112,5 +112,22 @@ export function registerCiRetirementGuardTests({root,base,memoBase,scan}) {
    expect(scan(current).some(hit=>hit.rule==='E1')).toBe(true);
    if(kind==='spawn')expect(scan(current,file).some(hit=>hit.rule==='R1')).toBe(true);
   });
+  it.each([0,1])('触达去抖新reader与已合旧reader完整marker%s均保留三封套资格',marker=>{
+   const old=new Map([...base().keys()].map(file=>[file,execFileSync('git',[
+    '--no-replace-objects','show','72681c2ab20c1509feae6d5ee28d2bf0b54566c4:'+path.relative(path.resolve(root,'../../../..'),file),
+   ],{cwd:root,encoding:'utf8',maxBuffer:1024*1024})]));
+   for(const sources of [old,base()]){
+    expect(sources.size).toBe(16);
+    sources.set(source,sources.get(source).replace(/EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = [01]/,'EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = '+marker));
+    for(const kind of ['build','stage','native-evidence'])expect(scan(sources,path.join(root,`existing-ops-${kind}-envelopes.js`))).toEqual([]);
+   }
+  });
+  it.each(['missing','drift','process'])('触达reader %s不继承完整只读资格',kind=>{
+   const current=base(),file=path.join(root,'existing-ops-us-compose-source.js');
+   if(kind==='missing')current.delete(file);
+   else current.set(file,current.get(file)+(kind==='drift'?'\nexport const unknownOutreachReader=true;':"\nimport {spawn as launch} from 'node:child_process';launch('claude',['-p']);"));
+   expect(scan(current).some(hit=>hit.rule==='E1')).toBe(true);
+   if(kind==='process')expect(scan(current,file).some(hit=>hit.rule==='R1')).toBe(true);
+  });
  });
 }
