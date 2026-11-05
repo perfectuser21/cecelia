@@ -144,7 +144,7 @@ describe('proactiveTokenCheck', () => {
     expect(clearCalls.length).toBe(0);
   });
 
-  it('token 无 expiresAt → 视为有效，不熔断', async () => {
+  it('token 无 expiresAt → 状态未知，不新增熔断或告警', async () => {
     mockReadFileSync.mockImplementation(() =>
       JSON.stringify({ claudeAiOauth: { accessToken: 'tok' } })
     );
