@@ -2,9 +2,18 @@
  * routes/__tests__/clips.test.js
  * Unit tests for clips route — POST/GET/retry/callback/webhook
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
+
+const boundary = vi.hoisted(() => ({
+  unexpectedDb: vi.fn(), unexpectedFetch: vi.fn(), process: vi.fn(),
+}));
+vi.mock('node:child_process', () => Object.fromEntries(
+  ['exec', 'execSync', 'execFile', 'execFileSync', 'spawn', 'spawnSync', 'fork'].map(name => [name, (...args) => {
+    boundary.process(name, ...args); throw Error('clips_test_process_forbidden');
+  }]),
+));
 
 vi.mock('../../db.js', () => ({
   default: { query: vi.fn() },
@@ -15,6 +24,31 @@ vi.mock('../../clips-extractor.js', () => ({
 
 import pool from '../../db.js';
 import { extractClip } from '../../clips-extractor.js';
+
+const SYNTHETIC_NOTION_KEY = 'synthetic-clips-notion-key-not-a-real-credential';
+const SYNTHETIC_DB = '00000000-0000-4000-8000-000000000001';
+beforeEach(() => {
+  vi.clearAllMocks();
+  pool.query.mockReset().mockImplementation((...args) => {
+    boundary.unexpectedDb(...args); throw Error('clips_test_unarranged_db');
+  });
+  vi.stubEnv('NOTION_API_KEY', SYNTHETIC_NOTION_KEY);
+  vi.stubEnv('NOTION_KNOWLEDGE_REF_DB_ID', SYNTHETIC_DB);
+  vi.stubEnv('CLIPS_WEBHOOK_SECRET', undefined);
+  vi.stubGlobal('fetch', async (...args) => {
+    boundary.unexpectedFetch(...args); throw Error('clips_test_unarranged_fetch');
+  });
+});
+afterEach(() => {
+  try {
+    expect(boundary.unexpectedDb).not.toHaveBeenCalled();
+    expect(boundary.unexpectedFetch).not.toHaveBeenCalled();
+    expect(boundary.process).not.toHaveBeenCalled();
+  } finally {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  }
+});
 
 function makeApp() {
   const app = express();
