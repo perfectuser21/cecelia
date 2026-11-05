@@ -40,16 +40,18 @@ it.each(['wrong-owner', 'terminal', 'commander'])('heartbeat对%s仍返回lease_
   } finally { await remove(id); }
 });
 
-it('heartbeat先持task/lease行锁续过期租约，cleanup真实等待后必须重读并保护', async () => {
-  const { id, owner } = await seed('expired');
+it.each([undefined, cleaner])('heartbeat先持task/lease行锁，owner=%s，cleanup等待后保护续租', async ownerOverride => {
+  const { id, owner } = await seed('expired', ownerOverride);
   const gate = snapshotGate(clients.cleaner);
   let pending, settled = false;
   try {
-    pending = cleanup(gate.pool).then(value => { settled = true; return value; });
-    const selected = await gate.ready;
-    expect(selected.map(row => row.id)).toContain(id);
+    if (!ownerOverride) {
+      pending = cleanup(gate.pool).then(value => { settled = true; return value; });
+      expect((await gate.ready).map(row => row.id)).toContain(id);
+    }
     await clients.heartbeat.query('BEGIN');
     expect((await heartbeat(clients.heartbeat, { taskId: id, claimer: owner, leaseSeconds: 7200 })).ok).toBe(true);
+    if (ownerOverride) pending = cleanup(clients.cleaner).then(value => { settled = true; return value; });
     gate.resume();
     await waitForLock(clients.cleaner, () => settled);
     await clients.heartbeat.query('COMMIT');
@@ -61,8 +63,8 @@ it('heartbeat先持task/lease行锁续过期租约，cleanup真实等待后必�
     await remove(id);
   }
 }, 15000);
-it('cleanup先持task锁清失效owner，heartbeat真实等待后不能用旧owner假续租', async () => {
-  const { id, owner } = await seed('expired');
+it.each([undefined, cleaner])('cleanup先持task锁，owner=%s，heartbeat等待后不能假续租', async ownerOverride => {
+  const { id, owner } = await seed('expired', ownerOverride);
   let pending, settled = false;
   try {
     await clients.cleaner.query('BEGIN');
@@ -108,11 +110,19 @@ it.each(['valid', 'expired'])('paused的%s同owner租约：有效时保守保留
     expect((await read(id)).claimed_by).toBe(kind === 'valid' ? owner : null);
   } finally { await remove(id); }
 });
-it('原self-PID恢复例外保持：同进程旧认领即使lease仍future也清，不能冒称被新保护', async () => {
-  const { id } = await seed('valid', cleaner);
+it.each(['queued', 'paused'])('self owner新鲜%s有效lease受保护；queued仍能续租', async status => {
+  const { id, owner } = await seed('valid', cleaner);
   try {
-    const before = await read(id);
-    expect(before.lease_until.getTime()).toBeGreaterThan(Date.now());
+    await clients.observer.query('UPDATE tasks SET status=$2,claimed_at=NOW() WHERE id=$1', [id, status]);
+    expect(await cleanup(clients.cleaner)).toEqual({ cleaned: 0, errors: [] });
+    expect((await read(id)).claimed_by).toBe(owner);
+    if (status === 'queued') expect((await heartbeat(clients.heartbeat, { taskId: id, claimer: owner })).ok).toBe(true);
+  } finally { await remove(id); }
+});
+it.each(['none', 'expired', 'released', 'mismatched'])('self owner新鲜%s租约仍恢复崩溃残留', async kind => {
+  const { id } = await seed(kind, cleaner);
+  try {
+    await clients.observer.query('UPDATE tasks SET claimed_at=NOW() WHERE id=$1', [id]);
     expect(await cleanup(clients.cleaner)).toEqual({ cleaned: 1, errors: [] });
     expect((await read(id)).claimed_by).toBeNull();
   } finally { await remove(id); }
