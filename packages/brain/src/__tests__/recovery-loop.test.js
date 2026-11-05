@@ -9,7 +9,38 @@
  * 关键不变量：autoFailTimedOutTasks 是 wall-clock 超时，会误杀长跑的活跃 harness 任务
  * （harness 由 harness-watchdog 用心跳判据专管）→ 必须排除 harness_* 任务类型。
  */
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+// 即使默认恢复函数绕过opts.pool，也只能进入记录型canonical DB。
+const boundary = vi.hoisted(() => ({
+  db: vi.fn(async () => ({ rows: [], rowCount: 0 })), process: vi.fn(), network: vi.fn(),
+  probe: vi.fn(async () => []),
+}));
+vi.mock('../db.js', () => ({ default: { query: boundary.db } }));
+// 旧场景遗漏probe注入；封闭executor模块，不能为基线导入真实进程控制。
+vi.mock('../executor.js', () => ({ probeTaskLiveness: boundary.probe }));
+vi.mock('node:child_process', () => Object.fromEntries(
+  ['exec', 'execSync', 'execFile', 'execFileSync', 'spawn', 'spawnSync', 'fork'].map(name => [name, (...args) => {
+    boundary.process(name, ...args); throw Error('recovery_test_forbids_process');
+  }]),
+));
+beforeEach(() => {
+  vi.clearAllMocks();
+  vi.useFakeTimers();
+  vi.stubGlobal('fetch', (...args) => {
+    boundary.network(...args); throw Error('recovery_test_forbids_network');
+  });
+});
+afterEach(() => {
+  try {
+    expect(boundary.db).not.toHaveBeenCalled();
+    expect(boundary.process).not.toHaveBeenCalled();
+    expect(boundary.network).not.toHaveBeenCalled();
+  } finally {
+    stopRecoveryLoop();
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  }
+});
 import { runRecoveryOnce, startRecoveryLoop, stopRecoveryLoop } from '../recovery-loop.js';
 
 const fakePool = { query: async () => ({ rows: [] }) };
