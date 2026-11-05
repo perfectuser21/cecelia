@@ -215,8 +215,10 @@ async function relaunchEscort(pool, task, ctx, { execFileFn, now, bark }) {
     try {
       listed = findEscortByName(await sshRun(execFileFn, [...SSH_BASE_ARGS, gateway, 'openclaw cron list --json'], sshOpts), name);
     } catch (err) {
-      console.warn(`[cmdr-watchdog] cron list 读取失败（按不存在处理）: ${err.message}`);
+      console.warn(`[cmdr-watchdog] cron list 读取失败，保留旧 escort: ${err.message}`);
+      return { ok: false, error: 'cron_list_unavailable' };
     }
+    if (!listed) return { ok: false, error: 'cron_list_invalid' };
     if (listed?.found) {
       const nowIso = new Date(now).toISOString();
       await mergeTaskPayload(pool, task.id, {
