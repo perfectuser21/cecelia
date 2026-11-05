@@ -281,7 +281,7 @@ async function runRemoteOutreach(opts) {
   if (out.outreach.verdict === 'stalled' && opts.raiseFn) {
     await opts.raiseFn('P1', 'outreach_stalled',
       `触达线空转 ${out.outreach.stalledTicks} 轮：${out.outreach.reason}。检查飞书话术表「启用状态」。`,
-      { debounce: { windowMin: 180, threshold: 1 } });
+      { debounce: { n: 1, cooldownMs: 180 * 60 * 1000 } });
   }
   return out;
 }
@@ -390,7 +390,7 @@ export async function runOpenclawGuards(_pool, opts = {}) {
       if (opts.raiseFn) {
         await opts.raiseFn('P1', 'outreach_stalled',
           `触达线空转 ${health.stalledTicks} 轮：${health.reason}。检查飞书话术表「启用状态」。`,
-          { debounce: { windowMin: 180, threshold: 1 } });
+          { debounce: { n: 1, cooldownMs: 180 * 60 * 1000 } });
       }
     }
   } catch (e) { out.outreach = { error: e.message }; }
