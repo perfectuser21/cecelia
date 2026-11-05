@@ -42,9 +42,7 @@ async function fetchSignals(dbPool) {
     `),
   ]);
 
-  const taskStats = desiresResult.rows.length > 0
-    ? tasksResult.rows.reduce((acc, r) => { acc[r.status] = r.cnt; return acc; }, {})
-    : {};
+  const taskStats = tasksResult.rows.reduce((acc, r) => { acc[r.status] = r.cnt; return acc; }, {});
   const suggestionStats = suggestionsResult.rows[0] || { cnt: 0, max_score: 0 };
 
   return {
