@@ -129,3 +129,11 @@ it('outreach host读取异常不能留下部分来源关系', async () => {
   }, relations, revision})).rejects.toThrow('owned host unavailable');
   expect(relations).toEqual([]);
 });
+it('outreach完整新组通过真实采集器并产生remote来源关系', async () => {
+  const f2 = await build('remote', outreachInputs);
+  expect(f2.status).not.toBe('unknown');
+  expect(f2.input_relations).toContainEqual(expect.objectContaining({
+    consumer_path: 'packages/brain/src/openclaw-guards.js', input_path: 'packages/brain/src/host-exec.js',
+    kind: 'reviewed_us_openclaw_static_import',
+  }));
+});
