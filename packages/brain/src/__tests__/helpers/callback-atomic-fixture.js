@@ -38,12 +38,7 @@ vi.mock('../../actions.js', () => ({
   setMemory: vi.fn(),
   batchUpdateTasks: vi.fn(),
 }));
-vi.mock('../../focus.js', () => ({
-  getDailyFocus: vi.fn(),
-  setDailyFocus: vi.fn(),
-  clearDailyFocus: vi.fn(),
-  getFocusSummary: vi.fn(),
-}));
+
 vi.mock('../../tick.js', () => ({
   getTickStatus: vi.fn(),
   enableTick: vi.fn(),
@@ -61,34 +56,9 @@ vi.mock('../../task-router.js', () => ({
   getValidTaskTypes: vi.fn(),
   LOCATION_MAP: {},
 }));
-vi.mock('../../okr-tick.js', () => ({
-  executeOkrTick: vi.fn(),
-  runOkrTickSafe: vi.fn(),
-  startOkrTickLoop: vi.fn(),
-  stopOkrTickLoop: vi.fn(),
-  getOkrTickStatus: vi.fn(),
-  addQuestionToGoal: vi.fn(),
-  answerQuestionForGoal: vi.fn(),
-  getPendingQuestions: vi.fn(),
-  OKR_STATUS: {},
-}));
-vi.mock('../../nightly-tick.js', () => ({
-  executeNightlyAlignment: vi.fn(),
-  runNightlyAlignmentSafe: vi.fn(),
-  startNightlyScheduler: vi.fn(),
-  stopNightlyScheduler: vi.fn(),
-  getNightlyTickStatus: vi.fn(),
-  getDailyReports: vi.fn(),
-}));
-vi.mock('../../intent.js', () => ({
-  parseIntent: vi.fn(),
-  parseAndCreate: vi.fn(),
-  INTENT_TYPES: {},
-  INTENT_ACTION_MAP: {},
-  extractEntities: vi.fn(),
-  classifyIntent: vi.fn(),
-  getSuggestedAction: vi.fn(),
-}));
+
+
+
 vi.mock('../../templates.js', () => ({
   generatePrdFromTask: vi.fn(),
   generatePrdFromGoalKR: vi.fn(),
@@ -144,12 +114,15 @@ vi.mock('../../thalamus.js', () => ({
   EVENT_TYPES: { TASK_COMPLETED: 'task_completed' },
   processEvent: vi.fn(async () => ({ level: 0, actions: [{ type: 'fallback_to_tick' }] })),
 }));
-vi.mock('../../decision-executor.js', () => ({ executeDecision: () => boundary.deny('decision execution') }));
+vi.mock('../../decision-executor.js', () => ({ executeDecision: vi.fn(async () => ({ success: true })) }));
 vi.mock('../../embedding-service.js', () => ({ generateTaskEmbeddingAsync: vi.fn(async () => {}) }));
 vi.mock('../../events/taskEvents.js', () => ({ publishTaskCompleted: vi.fn(), publishTaskFailed: vi.fn() }));
 vi.mock('../../platform-utils.js', () => ({ getAvailableMemoryMB: vi.fn(() => 1024) }));
 vi.mock('../../alerting.js', () => ({ raise: vi.fn(async () => {}) }));
-vi.mock('../../quarantine.js', () => ({ handleTaskFailure: vi.fn(async () => ({ quarantined: false })) }));
+vi.mock('../../quarantine.js', () => ({
+  handleTaskFailure: vi.fn(async () => ({ quarantined: false })),
+  classifyFailure: vi.fn(() => ({ class: 'task_error', pattern: null })),
+}));
 vi.mock('../../lib/callback-postprocess.js', () => ({
   serialUnlockNext: vi.fn(async () => {}), writeReviewResult: vi.fn(async () => {}), promoteRegressionOnHarnessMerged: vi.fn(async () => {}),
 }));
@@ -163,8 +136,16 @@ vi.mock('../../zenithjoy-db.js', () => ({ getZenithjoyPool: () => ({ query: () =
 vi.mock('../../execution.js', () => ({ readVerdictWithRetry: vi.fn(), persistVerdictTimeout: vi.fn(),
   isBridgeSessionCrash: () => false, handleEvaluateSessionCrash: vi.fn() }));
 vi.mock('../../watchdog.js', () => ({ cleanupMetrics: vi.fn(async () => {}) }));
+vi.mock('../../auto-learning.js', () => ({ processExecutionAutoLearning: vi.fn(async () => null) }));
+vi.mock('../../dep-cascade.js', () => ({
+  propagateDependencyFailure: vi.fn(async () => ({ affected: [] })), recoverDependencyChain: vi.fn(async () => ({ recovered: [] })),
+}));
+vi.mock('../../proactive-mouth.js', () => ({ notifyTaskCompletion: () => boundary.deny('proactive message') }));
 vi.mock('../../lib/safe-sync-command.js', () => ({ runSyncCommand: () => boundary.deny('sync command') }));
 vi.mock('../../anchor-check.js', () => ({ checkAnchor: vi.fn() }));
+vi.mock('../../lib/manual-dispatch-device-gate.js', () => ({
+  checkDeviceLockForManualDispatch: vi.fn(), releaseDeviceLockNonFatal: vi.fn(async () => {}),
+}));
 vi.mock('child_process', () => ({
   exec: () => boundary.deny('exec'), execSync: () => boundary.deny('execSync'),
   spawn: () => boundary.deny('spawn'), execFileSync: () => boundary.deny('execFileSync'),
@@ -175,6 +156,15 @@ beforeEach(() => {
   boundary.forbidden.length = 0;
   vi.stubEnv('CECELIA_INTERNAL_TOKEN', 'owned-callback-token');
   vi.stubGlobal('fetch', () => boundary.deny('fetch'));
+  // 此组只验事务；仅将当前callback的5s冷却计时改为微任务，不启动真实scheduler。
+  const realTimeout = globalThis.setTimeout;
+  vi.spyOn(globalThis, 'setTimeout').mockImplementation((fn, ms, ...args) => {
+    if (ms === 5000 && new Error().stack.includes('/routes/execution.js')) {
+      queueMicrotask(() => fn(...args));
+      return undefined;
+    }
+    return realTimeout(fn, ms, ...args);
+  });
 });
 afterEach(() => {
   vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.restoreAllMocks();
@@ -202,3 +192,13 @@ export function transactionPhases() {
   });
 }
 export { mockClient, mockPool };
+
+export async function callbackPoolResponse(sql) {
+  const text = String(sql).trim().replace(/^\/\*[\s\S]*?\*\/\s*/, '');
+  if (text.startsWith('SELECT')) return { rows: [], rowCount: 0 };
+  if (text.startsWith('INSERT INTO callback_queue')) return { rows: [{ id: 'owned-queue' }], rowCount: 1 };
+  if (text.startsWith('UPDATE callback_queue') || text.startsWith('UPDATE tasks') || /^INSERT INTO (task_run_metrics|task_execution_metrics)/.test(text)) {
+    return { rows: [], rowCount: 1 };
+  }
+  return boundary.deny('unexpected pool SQL');
+}
