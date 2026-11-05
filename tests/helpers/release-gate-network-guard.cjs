@@ -25,4 +25,9 @@ net.Socket.prototype.connect = function(...args) {
       || Number(options.port) !== Number(allowed.port)) deny('tcp');
   return nativeConnect.apply(this, args);
 };
-dns.lookup = function() { return deny('dns'); };
+dns.lookup = function(hostname, options, callback) {
+  // 本人HTTP服务bind也会经lookup；数字loopback无需系统DNS。
+  if (hostname !== '127.0.0.1') return deny('dns');
+  const cb = typeof options === 'function' ? options : callback;
+  process.nextTick(() => options?.all ? cb(null, [{ address: hostname, family: 4 }]) : cb(null, hostname, 4));
+};

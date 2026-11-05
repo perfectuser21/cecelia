@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const root = fileURLToPath(new URL('../../', import.meta.url));
+const root = fileURLToPath(new URL('../../../', import.meta.url));
 const guard = resolve(root, 'tests/helpers/release-gate-network-guard.cjs');
 
 for (const inherited of [undefined, 'http://127.0.0.1:5221']) {
