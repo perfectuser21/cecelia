@@ -4,7 +4,7 @@ vi.mock('child_process', () => ({ execSync: io.exec }));
 vi.mock('node:child_process', () => ({ execSync: io.exec }));
 vi.mock('fs', () => ({ existsSync: io.exists, readdirSync: io.readDir, rmSync: io.remove, readFileSync: io.forbidden, unlinkSync: io.forbidden, statSync: io.forbidden }));
 vi.mock('node:fs', () => ({ existsSync: io.exists, readdirSync: io.readDir, rmSync: io.remove, readFileSync: io.forbidden, unlinkSync: io.forbidden, statSync: io.forbidden }));
-vi.mock('../utils/cleanup-lock.js', () => ({ withLock: vi.fn(async (_opts, fn) => fn()) }));
+vi.mock('../utils/cleanup-lock.js', () => ({ withLock: async (_opts, fn) => fn() }));
 import { cleanupStaleWorktrees, getActiveContainerMountPaths } from '../startup-recovery.js';
 
 const repoRoot = '/owned/virtual/startup/repo';
