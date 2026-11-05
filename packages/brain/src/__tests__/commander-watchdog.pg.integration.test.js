@@ -108,6 +108,35 @@ describe.skipIf(!DB_AVAILABLE)('commander-watchdog — pg 集成（真实 SQL，
     expect(again.relaunched).toBe(0);
   });
 
+  it.each([
+    ['transport', '', 'cron_list_unavailable'],
+    ['malformed', '{bad-json', 'cron_list_invalid'],
+    ['missing-jobs', '{}', 'cron_list_invalid'],
+    ['add-receipt-is-not-list', '{"id":"esc-it-0001"}', 'cron_list_invalid'],
+  ])('未知列表 %s：真实PG保留旧escort且仅落失败事件', async (kind, reply, error) => {
+    const id = await insertRun({ payload: { serial: 'S-UNKNOWN', source: 'cron', tag: 'cmdUnknown',
+      host: 'xian-m4', profile: 'p', escort_id: 'esc-old-known' } });
+    const commands = [];
+    const execFileFn = vi.fn((command, args, options, callback) => {
+      expect(command).toBe('ssh');
+      const remote = args.at(-1); commands.push(remote);
+      if (remote === 'openclaw cron list --json') return callback(kind === 'transport' ? new Error('owned transport failure') : null, reply, '');
+      if (remote.startsWith('openclaw cron rm ')) return callback(null, '{}', '');
+      if (remote.startsWith('openclaw cron add ')) return callback(null, '{"id":"esc-it-0001"}', '');
+      throw new Error('unexpected record-only SSH command');
+    });
+    const bark = vi.fn().mockResolvedValue(true);
+    expect(await runCommanderWatchdog(client, { execFileFn, bark, gateMs: 0 })).toMatchObject({ failed: 1, relaunched: 0, adopted: 0 });
+    expect(commands).toEqual(['openclaw cron list --json']);
+    const { rows: [stored] } = await client.query('SELECT payload FROM tasks WHERE id=$1', [id]);
+    expect(stored.payload.escort_id).toBe('esc-old-known');
+    expect(stored.payload.commander_relaunch_count).toBeUndefined();
+    expect(stored.payload.commander_relaunched_at).toBeTruthy();
+    const { rows: events } = await client.query('SELECT event_type, payload FROM task_events WHERE task_id=$1', [id]);
+    expect(events).toEqual([{ event_type: 'commander_relaunch_failed', payload: expect.objectContaining({ error, tag: 'cmdUnknown' }) }]);
+    expect(bark).not.toHaveBeenCalled();
+  });
+
   it.each(['actual-clock', 'beijing-midnight'])('趋势 SQL（%s）：按北京自然日分组，连续两天零线索的 wf 叫、有线索的不叫；phone_registry 24h 无 completed 叫', async (scenario) => {
     // 当日去重状态在事务内隔离；ROLLBACK 恢复已有测试库记录。
     await client.query(`DELETE FROM working_memory WHERE key = 'workflow_trend_bark:last_day'`);
