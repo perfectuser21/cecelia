@@ -130,7 +130,7 @@ features:
         - packages/brain/src/__tests__/role-registry.test.js
         - packages/brain/src/__tests__/routes-stats.test.js
         - packages/brain/src/__tests__/routes.test.js
-        - packages/brain/src/__tests__/routes/tick-startup-errors.test.js
+        - packages/brain/src/__tests__/tick-status.test.js
         - packages/brain/src/__tests__/shepherd.test.js
         - packages/brain/src/__tests__/smoke.test.js
         - packages/brain/src/__tests__/startup-recovery-enhanced.test.js
@@ -232,7 +232,7 @@ features:
             - packages/brain/src/__tests__/role-registry.test.js
             - packages/brain/src/__tests__/routes-stats.test.js
             - packages/brain/src/__tests__/routes.test.js
-            - packages/brain/src/__tests__/routes/tick-startup-errors.test.js
+            - packages/brain/src/__tests__/tick-status.test.js
             - packages/brain/src/__tests__/shepherd.test.js
             - packages/brain/src/__tests__/smoke.test.js
             - packages/brain/src/__tests__/startup-recovery-enhanced.test.js
