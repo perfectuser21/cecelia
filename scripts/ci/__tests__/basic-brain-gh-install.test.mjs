@@ -35,7 +35,7 @@ async function fixture(t,{arch='x86_64',failures=0,badChecksum=false,version='2.
   if(process.platform==='darwin'){await writeFile(join(root,'bin/sha256sum'),'#!/bin/sh\nexec /usr/bin/shasum -a 256 \"$@\"\n');await chmod(join(root,'bin/sha256sum'),0o755);}
   const text=await readFile(dockerfile,'utf8');const match=text.match(/RUN GH_VERSION=2\.45\.0[\s\S]*?(?=\n\n)/);assert.ok(match,'fixed-version installer RUN must exist');
   let shell=match[0].slice(4).replaceAll('\\\n',' ').replaceAll('https://github.com/cli/cli/releases/download',`http://127.0.0.1:${server.address().port}`)
-    .replaceAll('/usr/local/bin',join(root,'out')).replaceAll('/tmp',join(root,'tmp'));
+    .replace(/\/usr\/local\/bin|\/tmp/g,token=>join(root,token==='/tmp'?'tmp':'out'));
   for(const pin of originalHashes)shell=shell.replaceAll(pin,hash);
   // Only paths and the artifact bytes/hash are rebound; the actual RUN control flow executes.
   assert.ok(!shell.includes('https://github.com/'));assert.ok(!shell.includes('/usr/local/bin'));
