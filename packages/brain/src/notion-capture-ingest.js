@@ -176,7 +176,7 @@ export async function runNotionCaptureIngest(poolOverride) {
           targetSubtype: 'notion_inbox',
         });
 
-        if (!result) errors++;
+        if (!result || result.atomWriteFailed === true) errors++;
         else if (result.dedupeHit) skipped++;
         else pushed++;
       } catch (pageErr) {
