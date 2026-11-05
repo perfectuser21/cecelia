@@ -1,3 +1,4 @@
+import './helpers/notifier-receipt-boundary.js';
 /**
  * notifier-muted-gate.test.js
  *

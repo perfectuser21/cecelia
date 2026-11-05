@@ -1,3 +1,4 @@
+import './helpers/notifier-receipt-boundary.js';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const mockClaim = vi.fn();
