@@ -16,8 +16,9 @@ function execute(command,args,options) {
     child.once('error',reject);child.once('close',code=>{clearTimeout(timeout);resolve({code,stdout,stderr});});
   });
 }
-async function fixture(t,{arch='x86_64',failures=0,badChecksum=false,version='2.45.0'}={}) {
-  const root=await mkdtemp(join(tmpdir(),'brain-gh-install-'));t.after(()=>rm(root,{recursive:true,force:true}));
+async function fixture(t,{arch='x86_64',failures=0,badChecksum=false,version='2.45.0',tmpLayout=false}={}) {
+  const parent=await mkdtemp(join(tmpdir(),'brain-gh-install-'));t.after(()=>rm(parent,{recursive:true,force:true}));
+  const root=tmpLayout?join(parent,'tmp','fixture'):parent;await mkdir(root,{recursive:true});
   for(const p of ['bin','tmp','out','home','payload'])await mkdir(join(root,p));
   const targetArch=arch==='aarch64'?'arm64':'amd64',folder='gh_2.45.0_linux_'+targetArch;
   await mkdir(join(root,'payload',folder,'bin'),{recursive:true});
@@ -48,3 +49,5 @@ for(const arch of ['x86_64','aarch64'])test(`actual Docker RUN retries HTTP504 a
 test('actual RUN refuses corrupt checksum before installing',async t=>{const x=await fixture(t,{badChecksum:true});assert.notEqual(x.code,0);assert.match(x.stdout+x.stderr,/checksum|FAILED/i);assert.equal(x.installed,null);});
 test('actual RUN rejects unsupported architecture before HTTP',async t=>{const x=await fixture(t,{arch:'unsupported'});assert.notEqual(x.code,0);assert.equal(x.requests,0);assert.equal(x.installed,null);});
 test('actual RUN verifies the installed version',async t=>{const x=await fixture(t,{version:'0.0.0'});assert.notEqual(x.code,0);assert.ok(x.installed?.includes('0.0.0'),'wrong-version archive must reach version gate');});
+
+test('owned path containing /tmp is rebound once, as on Linux runners',async t=>{const x=await fixture(t,{tmpLayout:true});assert.equal(x.code,0,x.stderr);assert.match(x.installed,/2\.45\.0/);});
