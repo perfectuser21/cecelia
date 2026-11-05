@@ -25,7 +25,9 @@ beforeEach(() => {
 });
 afterEach(() => {
   try {
-    expect(effects.exec).not.toHaveBeenCalled();
+    for (const call of effects.exec.mock.calls) {
+      expect(call).toEqual(['docker', ['ps', '--format', '{{.Names}}'], { timeout: 3000 }]);
+    }
     expect(effects.unexpected).not.toHaveBeenCalled();
     expect(effects.db).not.toHaveBeenCalled();
     expect(effects.network).not.toHaveBeenCalled();

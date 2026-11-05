@@ -1,4 +1,4 @@
-import './helpers/quarantine-process-boundary.js';
+import { effects } from './helpers/quarantine-process-boundary.js';
 /**
  * Issue cc28d1af 根因B/C — 派发死循环的两个"无限"必须变"有限"：
  *   C1 handleTaskFailure skipCount(transient) requeue 必须计数，≥5 转 quarantine
@@ -32,6 +32,7 @@ describe('C1: skipCount transient requeue 上限', () => {
     pool.query.mockResolvedValue({ rows: [], rowCount: 1 }); // 后续 UPDATE
     const r = await handleTaskFailure('t1', { skipCount: true });
     expect(r.skipped_count).toBe(true);
+    expect(effects.exec).toHaveBeenCalledTimes(1);
     // 断言某次 UPDATE 写入了 transient_requeue_count 递增
     const updates = pool.query.mock.calls.filter(c => /UPDATE tasks/.test(c[0]));
     const touched = updates.some(c =>
@@ -49,6 +50,7 @@ describe('C1: skipCount transient requeue 上限', () => {
     pool.query.mockResolvedValue({ rows: [], rowCount: 1 });
     const r = await handleTaskFailure('t1', { skipCount: true });
     expect(r.skipped_count).not.toBe(true);
+    expect(effects.exec).toHaveBeenCalledTimes(1);
   });
 });
 
