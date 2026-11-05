@@ -49,19 +49,34 @@ const STAGES = {
     "ingest"
   ]
 };
+// 当前 outreach 去抖修复只审 remote 阶段完整组合；不能逐文件 OR 到其它历史阶段。
+const REVIEWED_REMOTE_COHORT = {
+ compose: '7d152cec3fea0f50cab0a707bd7830a01c620953ffcc99851be27e384aca405b',
+ sources: {
+  guard: '05c28b3d6957c9bc364743fde291a4648389385eb62151032f8faf93a2c617e4',
+  host: '11d58722a08d8b4c4d0fb9afa107c5840c3845302dcead62d4653a501c182daf',
+ },
+};
 const EDGES = [
  ['guard','host'], ['notion','template'], ['template','defaults'],
  ['ledger','host'], ['ledger','ingest'], ['ingest','host'],
 ];
 export async function proveReviewedUsCompose({ text, read, relations, revision }) {
  if (typeof text !== 'string') return false;
- const selected = STAGES[hash(text)];
+ const composeHash = hash(text);
+ const selected = STAGES[composeHash];
  if (!selected) return false;
  // read()记录同一次返回的真实字节；必须全体通过才追加关系。
+ const actual = {};
  for (const name of selected) {
   const bytes = await read(PATHS[name]);
-  if (typeof bytes !== 'string' || hash(bytes) !== HASHES[name]) return false;
+  if (typeof bytes !== 'string') return false;
+  actual[name] = hash(bytes);
  }
+ const cohorts = [Object.fromEntries(selected.map(name => [name, HASHES[name]]))];
+ if (composeHash === REVIEWED_REMOTE_COHORT.compose) cohorts.push(REVIEWED_REMOTE_COHORT.sources);
+ if (!cohorts.some(group => Object.keys(group).length === selected.length
+   && selected.every(name => actual[name] === group[name]))) return false;
  for (const name of ['guard','notion','ledger'].filter(n=>selected.includes(n)))
   relations.push({consumer_path:COMPOSE,input_path:PATHS[name],kind:'reviewed_us_openclaw_prerequisite',revision});
  for (const [from,to] of EDGES) if (selected.includes(from) && selected.includes(to))
