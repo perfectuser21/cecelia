@@ -1,12 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-vi.mock('../notifier.js', () => ({
-  sendFeishu: vi.fn().mockResolvedValue(true),
-}));
-
-vi.mock('../receipt-collector.js', () => ({
-  getUnconfirmedReceipts: vi.fn().mockResolvedValue([]),
-}));
+import { battleEffects, resetBattleEffects } from './helpers/battle-report-effects.js';
+import { execFileSync } from 'child_process';
+import { writeFileSync } from 'fs';
 
 import {
   isInBattleReportWindow,
@@ -36,7 +32,11 @@ function makePool({ insertedId = 'doc-1' } = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  resetBattleEffects();
+  expect(execFileSync).toBe(battleEffects.execFileSync);
+  expect(writeFileSync).toBe(battleEffects.writeFileSync);
 });
+afterEach(() => { expect(battleEffects.unexpected).not.toHaveBeenCalled(); });
 
 describe('isInBattleReportWindow — UTC 22:00-22:05 = 北京 06:00-06:05', () => {
   it('UTC 21:59 → false', () => {
