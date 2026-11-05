@@ -1,4 +1,30 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+// 即使canonical db.js被意外加载，也不能创建真实PG连接；fail-open不可吞掉越界。
+const boundary = vi.hoisted(() => ({ pg: vi.fn(), fetch: vi.fn() }));
+vi.mock('pg', () => ({ default: {
+  Pool: class {
+    query(...args) {
+      boundary.pg(...args);
+      return Promise.reject(Error('account_count_test_forbids_real_pg'));
+    }
+  },
+  types: { setTypeParser: vi.fn() },
+} }));
+beforeEach(() => {
+  vi.clearAllMocks();
+  vi.stubGlobal('fetch', (...args) => {
+    boundary.fetch(...args);
+    throw Error('account_count_test_forbids_network');
+  });
+});
+afterEach(() => {
+  try {
+    expect(boundary.pg).not.toHaveBeenCalled();
+    expect(boundary.fetch).not.toHaveBeenCalled();
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});
 import {
   getAvailableAccountCount, markSpendingCap, markAuthFailure,
   _resetAuthFailures, isSpendingCapped,
