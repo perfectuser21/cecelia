@@ -26,16 +26,20 @@ it('两个实际updateTask事务争抢同一queued行：真实锁等待后仅一
   const observer = new pg.Client(config), first = new pg.Client(config), second = new pg.Client(config);
   const id = randomUUID();
   let inserted = false, contender;
+  let observerConnected = false, firstConnected = false, secondConnected = false;
   boundary.current = new AsyncLocalStorage();
   boundary.broadcasts = [];
   try {
     await observer.connect();
+    observerConnected = true;
     await verifyPrivatePg(observer);
     await observer.query(`INSERT INTO tasks(id,title,status,task_type,priority,payload,result)
       VALUES($1,$2,'queued','research','P2','{}','{}')`, [id, `dispatch-cas-${id}`]);
     inserted = true;
     await first.connect();
+    firstConnected = true;
     await second.connect();
+    secondConnected = true;
     for (const client of [first, second]) {
       await client.query('BEGIN');
       await client.query("SET LOCAL statement_timeout = '5s'");
@@ -71,16 +75,16 @@ it('两个实际updateTask事务争抢同一queued行：真实锁等待后仅一
     expect(rows[0].started_at).toBeInstanceOf(Date);
   } finally {
     // 先释放胜者锁再等竞争者，所有失败路径亦有界回收；不吞测试主体断言。
-    await first.query('ROLLBACK').catch(() => {});
+    if (firstConnected) await first.query('ROLLBACK').catch(() => {});
     if (contender) await contender;
-    await second.query('ROLLBACK').catch(() => {});
-    await first.end();
-    await second.end();
+    if (secondConnected) await second.query('ROLLBACK').catch(() => {});
+    if (firstConnected) await first.end();
+    if (secondConnected) await second.end();
     if (inserted) {
       await observer.query('DELETE FROM tasks WHERE id=$1', [id]);
       expect((await observer.query('SELECT id FROM tasks WHERE id=$1', [id])).rows).toEqual([]);
     }
-    await observer.end();
+    if (observerConnected) await observer.end();
     boundary.current.disable();
   }
 }, 15000);
