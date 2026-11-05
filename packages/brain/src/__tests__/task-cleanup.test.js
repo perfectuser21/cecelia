@@ -172,9 +172,14 @@ describe('runTaskCleanup', () => {
 
       expect(stats.dry_run).toBe(true);
       // Should report counts but not execute
-      expect(stats.canceled).toBeGreaterThanOrEqual(0);
-      expect(stats.archived).toBeGreaterThanOrEqual(0);
-      // Verify no UPDATE was called (mock would throw if it was)
+      expect(stats.canceled).toBe(1);
+      expect(stats.archived).toBe(1);
+      // runTaskCleanup会catch mock抛错；必须在函数外断言尝试次数、错误和精确预览。
+      expect(stats.errors).toEqual([]);
+      expect(stats.canceled_task_ids).toEqual(['task-1']);
+      expect(stats.archived_task_ids).toEqual(['task-2']);
+      expect(mockDb.query).toHaveBeenCalledTimes(2);
+      expect(mockDb.query.mock.calls.filter(([sql]) => !/^\s*SELECT\b/i.test(sql))).toEqual([]);
     });
   });
 
@@ -333,13 +338,12 @@ describe('runTaskCleanup', () => {
       // The query should use a cutoff ~48h ago
       // We can verify via the captured params (cutoff timestamp)
       const queuedAtQuery = capturedParams.find(p => p.params?.[0]);
-      if (queuedAtQuery) {
-        const cutoff = new Date(queuedAtQuery.params[0]);
-        const hoursAgo = (Date.now() - cutoff.getTime()) / (1000 * 60 * 60);
-        // Should be approximately 48 hours, not 24
-        expect(hoursAgo).toBeGreaterThan(47);
-        expect(hoursAgo).toBeLessThan(49);
-      }
+      expect(queuedAtQuery).toBeDefined();
+      const cutoff = new Date(queuedAtQuery.params[0]);
+      const hoursAgo = (Date.now() - cutoff.getTime()) / (1000 * 60 * 60);
+      // Should be approximately 48 hours, not 24
+      expect(hoursAgo).toBeGreaterThan(47);
+      expect(hoursAgo).toBeLessThan(49);
     });
   });
 });
