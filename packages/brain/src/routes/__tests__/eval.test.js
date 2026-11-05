@@ -15,7 +15,7 @@ import express from 'express';
 
 const { mockPool, mockValidateZipBuffer, mockComputeZipHash, mockCheckZipDuplication,
   mockCheckSlotAvailable, mockGetEvalQueuePosition, mockFsPromises, mockRandomUUID, mockCreateTask } = vi.hoisted(() => {
-  const mockPool = { query: vi.fn() };
+  const mockPool = { query: vi.fn(), connect: vi.fn() };
   const mockValidateZipBuffer = vi.fn().mockResolvedValue({ valid: true, entries: ['SKILL.md'] });
   const mockComputeZipHash = vi.fn().mockReturnValue('abc123def456');
   const mockCheckZipDuplication = vi.fn().mockResolvedValue({ isDuplicate: false });
@@ -37,6 +37,7 @@ const { mockPool, mockValidateZipBuffer, mockComputeZipHash, mockCheckZipDuplica
 
 vi.mock('../../db.js', () => ({ default: mockPool }));
 vi.mock('../../actions.js', () => ({ createTask: mockCreateTask }));
+vi.mock('../../lib/relay-baton.js', () => ({ relayOnComplete: vi.fn(async () => null) }));
 vi.mock('../../skill-eval-validator.js', () => ({
   validateZipBuffer: mockValidateZipBuffer,
   computeZipHash: mockComputeZipHash,
@@ -346,7 +347,8 @@ describe('routes/eval.js — POST /api/skill-eval/complete', () => {
     vi.clearAllMocks();
     delete process.env.EVAL_PROXY_TOKEN;
     app = buildApp();
-    mockPool.query.mockResolvedValue({ rows: [] });
+    mockPool.query.mockResolvedValue({ rowCount: 1, rows: [] });
+    mockPool.connect.mockResolvedValue({ query: mockPool.query, release: vi.fn() });
   });
 
   it('有效 task_id + report_url → 200 ok', async () => {

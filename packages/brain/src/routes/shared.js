@@ -163,7 +163,7 @@ export async function resolveRelatedFailureMemories(task_id, db) {
   if (keywords.length === 0) return;
 
   // 3. 在 failure_pattern learnings 中匹配关键词（有 source_memory_id 的才处理）
-  const likeConditions = keywords.map((kw, i) => `(l.title ILIKE $${i + 2} OR l.content ILIKE $${i + 2})`);
+  const likeConditions = keywords.map((kw, i) => `(l.title ILIKE $${i + 1} OR l.content ILIKE $${i + 1})`);
   const likeParams = keywords.map(kw => `%${kw}%`);
 
   const learnings = await db.query(
@@ -174,7 +174,7 @@ export async function resolveRelatedFailureMemories(task_id, db) {
        AND l.archived = false
        AND (${likeConditions.join(' OR ')})
      LIMIT 10`,
-    [task_id, ...likeParams]
+    likeParams
   );
 
   if (learnings.rows.length === 0) {
@@ -186,7 +186,7 @@ export async function resolveRelatedFailureMemories(task_id, db) {
   const memIds = learnings.rows.map(r => r.source_memory_id).filter(Boolean);
   if (memIds.length === 0) return;
 
-  const placeholders = memIds.map((_, i) => `$${i + 3}`).join(', ');
+  const placeholders = memIds.map((_, i) => `$${i + 2}`).join(', ');
   await db.query(
     `UPDATE memory_stream
      SET status = 'resolved',
@@ -194,7 +194,7 @@ export async function resolveRelatedFailureMemories(task_id, db) {
          resolved_at = NOW()
      WHERE id IN (${placeholders})
        AND status = 'active'`,
-    [task_id, task_id, ...memIds]
+    [task_id, ...memIds]
   );
 
   console.log(`[closure] Resolved ${memIds.length} failure memories for task=${task_id} (keywords: ${keywords.join(',')})`);
