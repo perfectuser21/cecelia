@@ -316,7 +316,7 @@ function getTokenExpiryInfo(accountId) {
     const path = `${homedir()}/.claude-${accountId}/.credentials.json`;
     const creds = JSON.parse(readFileSync(path, 'utf8'));
     const expiresAt = creds.claudeAiOauth?.expiresAt;
-    if (!expiresAt) return { isExpired: false, expiresAt: null, minsRemaining: null };
+    if (!Number.isFinite(expiresAt)) return { isExpired: false, expiresAt: null, minsRemaining: null };
     const minsRemaining = (expiresAt - Date.now()) / 60000;
     return { isExpired: minsRemaining <= 0, expiresAt, minsRemaining };
   } catch {
@@ -355,7 +355,8 @@ export async function proactiveTokenCheck() {
           { debounce: { n: 2, cooldownMs: 2 * 60 * 60 * 1000 } } // 连续2个检查周期确认才响，响后2h冷却
         ).catch(() => {});
       } catch { /* 告警失败不阻断主流程 */ }
-    } else {
+    } else if (minsRemaining !== null) {
+      // 未知到期不能作为凭据已恢复的证据；仅已知有效才走恢复路径。
       // token 恢复有效：清零 debounce 计数（防恢复后残留计数导致下次误放行）
       // 只清除 source=token_expired 的熔断（token 文件已更新，说明凭据已刷新）
       // source=api_error 的熔断（Anthropic API 返回 401）不受 token 文件影响，等 resetTime 自然过期
