@@ -1,6 +1,6 @@
 /** 真实claim/heartbeat/cleanup，私有全迁移PG；不调用dispatcher/设备/通知。 */
 import { beforeAll, afterAll, it, expect } from 'vitest';
-import { clients, cleaner, open, close, seed, read, remove, cleanup, heartbeat, snapshotGate, waitForLock } from '../helpers/active-lease-cleanup-pg.js';
+import { clients, cleaner, open, close, seed, read, remove, cleanup, heartbeat, snapshotGate, waitForLock, cycle } from '../helpers/active-lease-cleanup-pg.js';
 beforeAll(open);
 afterAll(close);
 
@@ -114,7 +114,7 @@ it.each(['queued', 'paused'])('self owner新鲜%s有效lease受保护；queued�
   const { id, owner } = await seed('valid', cleaner);
   try {
     await clients.observer.query('UPDATE tasks SET status=$2,claimed_at=NOW() WHERE id=$1', [id, status]);
-    expect(await cleanup(clients.cleaner)).toEqual({ cleaned: 0, errors: [] });
+    expect(await cycle()).toMatchObject({ staleReleased: 0 });
     expect((await read(id)).claimed_by).toBe(owner);
     if (status === 'queued') expect((await heartbeat(clients.heartbeat, { taskId: id, claimer: owner })).ok).toBe(true);
   } finally { await remove(id); }
@@ -123,7 +123,7 @@ it.each(['none', 'expired', 'released', 'mismatched'])('self owner新鲜%s租约
   const { id } = await seed(kind, cleaner);
   try {
     await clients.observer.query('UPDATE tasks SET claimed_at=NOW() WHERE id=$1', [id]);
-    expect(await cleanup(clients.cleaner)).toEqual({ cleaned: 1, errors: [] });
+    expect(await cycle()).toMatchObject({ staleReleased: 1 });
     expect((await read(id)).claimed_by).toBeNull();
   } finally { await remove(id); }
 });

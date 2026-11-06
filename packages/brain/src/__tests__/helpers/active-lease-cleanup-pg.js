@@ -9,6 +9,7 @@ vi.mock('fs', () => ({ existsSync: boundary.forbidden, readdirSync: boundary.for
   readFileSync: boundary.forbidden, unlinkSync: boundary.forbidden, statSync: boundary.forbidden }));
 vi.mock('node:fs', () => ({ existsSync: boundary.forbidden, readdirSync: boundary.forbidden, rmSync: boundary.forbidden,
   readFileSync: boundary.forbidden, unlinkSync: boundary.forbidden, statSync: boundary.forbidden }));
+vi.mock('../../db.js', () => ({ default: { query: boundary.forbidden } }));
 vi.mock('../../utils/cleanup-lock.js', () => ({ withLock: boundary.forbidden }));
 vi.mock('../../executor-contracts.js', () => ({ EXECUTOR_CONTRACTS: {}, resolveLivenessKind: boundary.forbidden }));
 vi.mock('../../device-lock-helpers.js', () => ({ releaseDeviceLocksHeldBy: boundary.forbidden }));
@@ -17,6 +18,7 @@ vi.mock('../../lib/task-event-log.js', () => ({ recordTaskEventSafe: boundary.fo
 export const clients = {};
 export const cleaner = 'owned-active-lease-cleaner';
 export let cleanup, claim, heartbeat, release;
+let recover;
 const connected = new Set(), ids = [];
 let previous;
 export async function open() {
@@ -29,6 +31,7 @@ export async function open() {
     await verifyPrivatePg(client);
     await client.query("SET statement_timeout='5s'");
   }
+  ({ runRecoveryOnce: recover } = await import('../../recovery-loop.js'));
   ({ cleanupStaleClaims: cleanup } = await import('../../startup-recovery.js'));
   ({ claimTaskWithLease: claim, heartbeatTaskLease: heartbeat, releaseTaskLease: release } = await import('../../lib/task-lease.js'));
 }
@@ -93,4 +96,16 @@ export async function waitForLock(client, settled) {
     await new Promise(resolve => setTimeout(resolve, 10));
   }
   throw new Error('未观察到真实PG事务锁等待');
+}
+
+/** 真实周期默认cleanup动态入口；其它五恢复网显式record-only，不启动定时器。 */
+export async function cycle() {
+  const calls = [];
+  const record = name => async () => { calls.push(name); return []; };
+  const result = await recover({ pool: clients.cleaner,
+    checkStuckPipelines: record('pipelines'), fetchInProgress: async () => [],
+    autoFailTimedOutTasks: record('timeouts'), probeTaskLiveness: record('liveness'),
+    unblockExpiredTasks: record('unblock'), sweepStaleDeviceLocks: record('devices') });
+  expect(calls).toEqual(['pipelines', 'timeouts', 'liveness', 'unblock', 'devices']);
+  return result;
 }

@@ -7,22 +7,30 @@ export async function cleanupStaleClaims(pool, opts = {}) {
   }
 
   const staleMinutes = Number.isFinite(opts.staleMinutes) ? opts.staleMinutes : 60;
-  // Any queued task still claimed by THIS process's ID must be a leftover from a
-  // previous crashed run (Docker Brain always starts as PID 7, so claimerId recurs).
-  // Clear them unconditionally — we haven't made any claims yet at startup.
+  // 相同进程标识也可能来自当前公开claim/周期恢复，并不等于崩溃残留。
+  // self仍免旧时间阈值，但必须与其它owner一样重读并保护有效同owner租约。
   const selfClaimerId = process.env.BRAIN_RUNNER_ID || `brain-tick-${process.pid}`;
 
   try {
-    // Step 1: Clear all claims by this process's claimerId (previous-crash leftovers).
-    // 同时覆盖 status='queued' 与 'paused' — 后者诞生于 Brain 派发后任务进 in_progress
-    // 又被 quarantine/eviction/fail 转入 paused 但 claimed_by 没释放的死锁场景
-    // （5/3 实测 28 个 paused 任务被 brain-tick-7 锁 19 天）。
+    // 先锁task，再锁lease，与heartbeat/claim保持同一锁序；不touch业务字段。
     const selfResult = await pool.query(
-      `UPDATE tasks
-          SET claimed_by = NULL, claimed_at = NULL
-        WHERE status IN ('queued', 'paused')
-          AND claimed_by = $1
-      RETURNING id, status`,
+      `WITH self_tasks AS MATERIALIZED (
+         SELECT id, claimed_by FROM tasks
+          WHERE status IN ('queued', 'paused') AND claimed_by = $1
+          ORDER BY id FOR UPDATE
+       ), self_leases AS MATERIALIZED (
+         SELECT lease.task_id, lease.claimer, lease.lease_until, lease.released_at
+           FROM task_leases lease JOIN self_tasks candidate ON lease.task_id = candidate.id
+          ORDER BY lease.task_id FOR UPDATE OF lease
+       )
+       UPDATE tasks AS target SET claimed_by = NULL, claimed_at = NULL
+         FROM self_tasks candidate WHERE target.id = candidate.id
+          AND NOT EXISTS (
+            SELECT 1 FROM self_leases lease
+             WHERE lease.task_id = target.id AND lease.claimer = candidate.claimed_by
+               AND lease.released_at IS NULL AND lease.lease_until > NOW()
+          )
+      RETURNING target.id, target.status`,
       [selfClaimerId]
     );
     if (selfResult.rowCount > 0) {
