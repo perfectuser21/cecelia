@@ -49,13 +49,10 @@ coding-source-compat-smoke.sh
 company-key-results-smoke.sh
 compute-ssh-reachability-smoke.sh
 contract-seal-smoke.sh
-conversation-agent-smoke.sh
 conversation-capture-human-gate-smoke.sh
 session-provenance-smoke.sh
 conversation-capture-multitool-smoke.sh
 conversation-capture-smoke.sh
-conversation-ttl-archiver-smoke.sh
-conversations-smoke.sh
 crm-canonical-smoke.sh
 crm-contact-resolve-smoke.sh
 crm-friend-onboard-smoke.sh

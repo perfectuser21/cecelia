@@ -49,18 +49,16 @@ describe('scheduler-jobs 注册表', () => {
     vi.clearAllMocks();
   });
 
-  it('JOBS 注册了正确数量的 job（含 triage-officer-rank + triage-officer-15min + conversation-ttl-archiver）', () => {
+  it('JOBS 保留会话采集，不再运行退役的旧议题对话归档', () => {
     const names = JOBS.map((j) => j.name);
     expect(names).toContain('triage-officer-rank');
     expect(names).toContain('triage-officer-15min');
-    expect(names).toContain('conversation-ttl-archiver');
+    expect(names).not.toContain('conversation-ttl-archiver');
     expect(names).toContain('conversation-capture');
     // G1 刀2：模型账号配额采集必须挂在调度表里（PR #5411 只导出未注册，生产表恒空——2026-09-19 实证）
     expect(names).toContain('ops-model-accounts-collector');
     expect(names).toContain('backbone-contract-sync');
     expect(names.indexOf('ops-model-accounts-collector')).toBeGreaterThan(names.indexOf('ops-collector'));
-    // conversation-ttl-archiver 排在 conversation-capture 之后
-    expect(names.indexOf('conversation-ttl-archiver')).toBeGreaterThan(names.indexOf('conversation-capture'));
   });
 
   // 闹钟总账（任务 fe10d1a0，决策 9e9d90b6）：新增定时只能经本表注册，且必须结构化声明"多久响一次"。

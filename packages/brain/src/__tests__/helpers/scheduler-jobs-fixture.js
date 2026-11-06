@@ -107,10 +107,6 @@ vi.mock('../../triage-officer-15min.js', () => ({
   runTriageOfficer15min: vi.fn().mockResolvedValue({ skipped: true, merged: 0, autoApproved: 0 }),
 }));
 
-vi.mock('../../conversation-ttl-archiver.js', () => ({
-  runConversationTtlArchiver: vi.fn().mockResolvedValue({ skipped: true, archived: 0 }),
-}));
-
 vi.mock('../../notion-capture-ingest.js', () => ({
   runNotionCaptureIngest: vi.fn().mockResolvedValue({ skipped: true, reason: 'interval_gate' }),
 }));

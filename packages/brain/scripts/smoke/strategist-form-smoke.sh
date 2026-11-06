@@ -30,9 +30,10 @@ echo "[4/5] 检查 smoke 过滤源码..."
 grep -q "smoke" "${REPO_ROOT}/apps/dashboard/src/pages/strategist/StrategistPage.tsx" \
   || { echo "FAIL: StrategistPage.tsx 缺少 smoke 过滤"; exit 1; }
 
-# 5. AbortController 超时保护（Fix-3）
-echo "[5/5] 检查 AbortController 源码..."
-grep -q "AbortController" "${REPO_ROOT}/apps/dashboard/src/pages/warroom/ConversationsPanel.tsx" \
-  || { echo "FAIL: ConversationsPanel.tsx 缺少 AbortController"; exit 1; }
+# 5. 退役的议题对话入口不得重新接入
+ echo "[5/5] 检查旧议题对话入口已退役..."
+if grep -q 'ConversationsPanel' "${REPO_ROOT}/apps/dashboard/src/pages/strategist/StrategistLinePage.tsx"; then
+  echo "FAIL: 旧议题对话入口仍在"; exit 1
+fi
 
 echo "=== strategist-form-smoke: 全通过 ==="

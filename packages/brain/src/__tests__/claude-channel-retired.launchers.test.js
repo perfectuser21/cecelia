@@ -49,14 +49,6 @@ describe('spawn 层：claude 一律拒绝，不发起 SSH', () => {
   });
 });
 
-describe('conversation-agent：主理人对话不再 spawn claude', () => {
-  it('invokeAgent 抛 claude_channel_retired，不 spawnSync', async () => {
-    const { invokeAgent } = await import('../lib/conversation-agent.js');
-    expect(() => invokeAgent({ content: '你好', sessionId: null, journeyId: 'j-1' })).toThrow(RETIRED);
-    expect(nodeChild.spawnSync).not.toHaveBeenCalled();
-  });
-});
-
 describe('orchestrator：Brain 永不选择 claude 作为 attempt provider', () => {
   it('provider registry：auto 选 codex；显式 claude 抛 claude_channel_retired；names 不含 claude', async () => {
     const { createProviderRegistry } = await import('../orchestrator/provider-registry.js');

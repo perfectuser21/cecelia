@@ -140,15 +140,6 @@ describe('line-dreaming job 注册', () => {
   });
 });
 
-describe('conversation-ttl-archiver job 注册', () => {
-  it('conversation-ttl-archiver 已注册（needsPool=true）', () => {
-    const job = JOBS.find((j) => j.name === 'conversation-ttl-archiver');
-    expect(job).toBeTruthy();
-    expect(job.needsPool).toBe(true);
-    expect(typeof job.handler).toBe('function');
-  });
-});
-
 // [BEHAVIOR] B-1~B-4: Preview Brain 隔离守卫
 // 防并发重复派发：BRAIN_PREVIEW=1 时 scheduler-jobs loop 不启动
 describe('scheduler-jobs Preview Brain 隔离（BRAIN_PREVIEW=1 幂等保护）', () => {

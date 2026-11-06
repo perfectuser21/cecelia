@@ -2,13 +2,12 @@
  * WarRoomGoldenPathPage — GP 二级页
  *
  * 路由：/warroom/gp/:gpId
- * 标签页：概览（GP信息 + 议题对话） | 要素账本（11要素覆盖，journey 过滤）
+ * 标签页：概览（GP信息） | 要素账本（11要素覆盖，journey 过滤）
  */
 
 import { useEffect, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, AlertCircle, Zap, RefreshCw, LayoutGrid, BookOpen } from 'lucide-react';
-import ConversationsPanel from './ConversationsPanel';
 import { LedgerPanel } from '@features/core/system/pages/LedgerPage';
 
 // ── 类型 ─────────────────────────────────────────────────────────────────────
@@ -150,7 +149,7 @@ export default function WarRoomGoldenPathPage() {
       {/* Body */}
       <div className="flex-1 min-h-0 overflow-hidden">
         {activeTab === 'overview' && (
-          <div className="grid grid-cols-1 lg:grid-cols-2 h-full">
+          <div className="grid grid-cols-1 h-full">
             {/* 左栏：GP 信息 */}
             <div className="border-r border-slate-800/40 p-4 overflow-y-auto">
               <div className="bg-slate-800/40 border border-slate-700/50 rounded-lg p-4 space-y-3">
@@ -191,16 +190,6 @@ export default function WarRoomGoldenPathPage() {
               </div>
             </div>
 
-            {/* 右栏：议题对话 */}
-            <div className="p-4 flex flex-col overflow-hidden">
-              {journeyId ? (
-                <ConversationsPanel journeyId={journeyId} gpId={gpId} />
-              ) : (
-                <div className="flex flex-col items-center justify-center flex-1 gap-3 py-8">
-                  <div className="text-[12px] text-slate-600 text-center">该能力未关联价值流，无法加载对话</div>
-                </div>
-              )}
-            </div>
           </div>
         )}
 
