@@ -69,10 +69,8 @@ const REGISTRY = join(SRC, 'lib', 'task-type-registry.js');
 //   `IN (...)`）、lib/review-task-types.js、recurring.js:221 全部清零退出清单；
 //   task-router.js/executor.js 里能一对一映射到注册表字段的站点（SKILL_WHITELIST/
 //   LOCATION_MAP/TASK_REQUIREMENTS/ASYNC_CALLBACK_TYPES、executor.js 的 skillMap/modeMap）
-//   也已改注册表派生（对象型用 deep-equal fixture 校验零行为变化）。两个文件里各剩 1 处
-//   真正的 long-lived: map（task-router.js:135 的 2 项业务降级链 FALLBACK_STRATEGIES.skill、
-//   executor.js:2227 的 task_type→handler 函数路由表 _TASK_ROUTES，函数值无法进纯数据注册表）
-//   ——kind: enum 在这两个文件里已清零，只剩 kind: map。
+//   也已改注册表派生（对象型用 deep-equal fixture 校验零行为变化）。
+//   executor.js 的 task_type→handler 函数路由表仍是独立映射，函数值无法进纯数据注册表。
 // - Task 6（补充五+补充六收尾）：`executor-contracts.js` 的 `EXECUTOR_KIND_FOR` 改从注册表
 //   `EXECUTOR_KIND_FOR_TASK_TYPE` 派生（+ 两个路径 sentinel），退出清单——清单变量从
 //   kind: map 12 条降到 11 条。补充五点名的 5 处未分配站点（agent-ops.js/content-pipeline.js/
@@ -113,8 +111,6 @@ export const REMAINING_LEGACY_SITES = {
   // 的人类可读展示文案（仅5个类型有文案，不是"哪类"的分类标签），要对应注册表字段需给全部
   // ~80 个 task_type 逐个写产品文案，属独立的文档撰写工作，非 PR1 零行为变化范围
   'routes/tasks.js': ['367:description'],
-  // kind: map（long-lived）— 唯一残留 :55 FALLBACK_STRATEGIES.skill（仅2项业务专用降级链 review→code_review→dev，非"哪类"的分类标签，无匹配注册表字段）
-  'task-router.js': ['55:skill'],
   // kind: map（long-lived）— Task 6 评估：:25 TASK_TYPE_ADJUSTMENTS 是派发权重的数值
   // 调优表（+20/-10 这类优先级加减分），与现有 9 个字段（分类/流程标签）正交的第三个独立运营
   // 调参轴（另两个已知独立轴：model-profile.js 的模型路由、role-registry.js 的角色归属）
