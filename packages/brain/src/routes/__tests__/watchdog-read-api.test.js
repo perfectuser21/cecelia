@@ -17,7 +17,7 @@ vi.mock('../../alertness/index.js', () => ({
 // 真实规范模块身份。禁止导入真实watchdog：顶层getconf和getter的slot/proc探测均无需执行。
 vi.mock('../../watchdog.js', () => ({
   getWatchdogStatus: boundary.status, getWatchdogTrends: boundary.trends,
-  checkRunaways: boundary.monitor, checkIdleSessions: boundary.monitor,
+  checkRunaways: boundary.monitor,
   sampleProcess: boundary.monitor, checkAndTriggerHealing: boundary.monitor,
 }));
 vi.mock('child_process', () => ({execSync: boundary.external, execFile: boundary.external, spawn: boundary.external}));

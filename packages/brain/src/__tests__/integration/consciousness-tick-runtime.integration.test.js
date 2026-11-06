@@ -44,7 +44,6 @@ const cleanupMocks = vi.hoisted(() => ({
 const hostMutationMocks = vi.hoisted(() => ({
   checkRunaways: vi.fn().mockReturnValue({ actions: [] }),
   cleanupMetrics: vi.fn(),
-  checkIdleSessions: vi.fn().mockReturnValue({ actions: [] }),
   emergencyCleanup: vi.fn().mockReturnValue({
     worktree: false,
     lock: false,
@@ -180,7 +179,6 @@ vi.mock('../../harness-worktree.js', () => ({
 vi.mock('../../watchdog.js', () => ({
   checkRunaways: hostMutationMocks.checkRunaways,
   cleanupMetrics: hostMutationMocks.cleanupMetrics,
-  checkIdleSessions: hostMutationMocks.checkIdleSessions,
 }));
 vi.mock('../../emergency-cleanup.js', () => ({
   emergencyCleanup: hostMutationMocks.emergencyCleanup,
@@ -422,7 +420,6 @@ describe('consciousness tick runtime (real executeTick + mocked deps)', () => {
       await cleanupMocks.cleanupStaleHarnessWorktrees.mock.results[0].value,
     ).toEqual({ cleaned: 0, errors: 0 });
     expect(hostMutationMocks.checkRunaways).toHaveBeenCalledTimes(1);
-    expect(hostMutationMocks.checkIdleSessions).toHaveBeenCalledTimes(1);
     expect(hostMutationMocks.scanOrphanPrs).toHaveBeenCalledTimes(1);
     expect(hostMutationMocks.shepherdOpenPRs).toHaveBeenCalledTimes(1);
     expect(hostMutationMocks.pipelinePatrolTick).toHaveBeenCalledTimes(1);
@@ -432,7 +429,6 @@ describe('consciousness tick runtime (real executeTick + mocked deps)', () => {
     expect(hostMutationMocks.cleanupMetrics).not.toHaveBeenCalled();
     expect(hostMutationMocks.emergencyCleanup).not.toHaveBeenCalled();
     expect(hostMutationMocks.checkRunaways.mock.results[0].value).toEqual({ actions: [] });
-    expect(hostMutationMocks.checkIdleSessions.mock.results[0].value).toEqual({ actions: [] });
     expect(await hostMutationMocks.scanOrphanPrs.mock.results[0].value).toEqual({
       scanned: 0,
       merged: 0,
@@ -468,7 +464,7 @@ describe('consciousness tick runtime (real executeTick + mocked deps)', () => {
 
   test('host mutation modules stay behind explicit test doubles', async () => {
     const [
-      { checkRunaways, checkIdleSessions },
+      { checkRunaways },
       { emergencyCleanup },
       { scanOrphanPrs },
       { shepherdOpenPRs },
@@ -488,7 +484,6 @@ describe('consciousness tick runtime (real executeTick + mocked deps)', () => {
     ]);
 
     expect(vi.isMockFunction(checkRunaways)).toBe(true);
-    expect(vi.isMockFunction(checkIdleSessions)).toBe(true);
     expect(vi.isMockFunction(emergencyCleanup)).toBe(true);
     expect(vi.isMockFunction(scanOrphanPrs)).toBe(true);
     expect(vi.isMockFunction(shepherdOpenPRs)).toBe(true);
@@ -497,7 +492,6 @@ describe('consciousness tick runtime (real executeTick + mocked deps)', () => {
     expect(vi.isMockFunction(getRecoveryStatus)).toBe(true);
     expect(vi.isMockFunction(runDriftSentinel)).toBe(true);
     expect(checkRunaways()).toEqual({ actions: [] });
-    expect(checkIdleSessions()).toEqual({ actions: [] });
     expect(emergencyCleanup('test-task', 'test-slot')).toEqual({
       worktree: false,
       lock: false,

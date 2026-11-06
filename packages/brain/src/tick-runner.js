@@ -1183,32 +1183,6 @@ async function executeTick() {
     console.error('[tick] Watchdog error:', watchdogErr.message);
   }
 
-  // 5d. Idle session cleanup — kill interactive Claude sessions idle > 2h
-  try {
-    const { checkIdleSessions } = await import('./watchdog.js');
-    const idleResult = checkIdleSessions();
-
-    for (const action of idleResult.actions) {
-      if (action.action === 'kill') {
-        tickLog(`[tick] idle-session kill: pid=${action.pid} reason=${action.reason}`);
-        try {
-          process.kill(action.pid, 'SIGTERM');
-          // Schedule SIGKILL after 60 seconds if still alive
-          setTimeout(() => {
-            try {
-              process.kill(action.pid, 'SIGKILL');
-            } catch { /* already dead */ }
-          }, 60000);
-          actionsTaken.push({ action: 'idle_session_kill', pid: action.pid, reason: action.reason });
-        } catch (killErr) {
-          console.error(`[tick] idle-session kill failed: pid=${action.pid} err=${killErr.message}`);
-        }
-      }
-    }
-  } catch (idleErr) {
-    console.error('[tick] Idle session check error:', idleErr.message);
-  }
-
   // P1 FIX #3: Check for expired quarantine tasks and auto-release (limit=2/tick)
   try {
     const released = await checkExpiredQuarantineTasks({ limit: QUARANTINE_RELEASE_LIMIT });
