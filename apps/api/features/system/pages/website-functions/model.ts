@@ -34,8 +34,7 @@ const inputIds = new Set([
   'ConsciousnessChat:04', 'ConsciousnessChat:05', 'ContentClipsPage:02', 'ContentFactory:03',
   'DailyDiary:02', 'DecisionRegistry:02', 'DecisionRegistry:04', 'DesignVault:02', 'DesignVault:04',
   'DevLog:03', 'DocChatPage:04', 'ProfileFacts:02', 'ProfileFacts:03', 'ProjectDetail:01',
-  'StrategistLinePage:01', 'TaskDesk:01', 'Tasks:01', 'TodayTabbed:01',
-  'WarRoomGoldenPathPage:01', 'WarRoomLineCommandPage:01', 'Whiteboard:01', 'WorkbenchInbox:01',
+  'TaskDesk:01', 'Tasks:01', 'TodayTabbed:01', 'Whiteboard:01', 'WorkbenchInbox:01',
 ]);
 const combinedIds = new Set(['ProfileFacts:02', 'TaskDesk:01', 'ProjectPanorama:02', 'ConsciousnessChat:05']);
 
