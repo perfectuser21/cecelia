@@ -445,7 +445,7 @@ export async function cleanupStaleClaims(pool, opts = {}) {
     // Step 2: Clear stale claims from other claimerIds (time-window based).
     // 同覆盖 paused —— 防 brain-tick-N 离线后 paused+claimed_by 永久死锁。
     const { rows } = await pool.query(
-      `SELECT id, claimed_by, claimed_at, status
+      `SELECT id, claimed_by, claimed_at, status, xmin::text AS claim_version
          FROM tasks
         WHERE status IN ('queued', 'paused')
           AND claimed_by IS NOT NULL
@@ -461,14 +461,16 @@ export async function cleanupStaleClaims(pool, opts = {}) {
       return stats;
     }
 
+    // 比对原MVCC行版本：SELECT后owner/时间/状态有任何提交变化，均不得按旧快照清理。
     const taskIds = rows.map(r => r.id);
     const result = await pool.query(
-      `UPDATE tasks
+      `UPDATE tasks AS target
           SET claimed_by = NULL,
               claimed_at = NULL
-        WHERE id = ANY($1::uuid[])
-      RETURNING id`,
-      [taskIds]
+         FROM unnest($1::uuid[], $2::text[]) AS snapshot(id, claim_version)
+        WHERE target.id = snapshot.id AND target.xmin::text = snapshot.claim_version
+      RETURNING target.id`,
+      [taskIds, rows.map(r => r.claim_version)]
     );
 
     const otherCleaned = result.rowCount || 0;
