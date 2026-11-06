@@ -220,7 +220,6 @@ features:
     tests:
       unit:
         - packages/brain/src/__tests__/alerting.test.js
-        - packages/brain/src/__tests__/alertness-actions.test.js
         - packages/brain/src/__tests__/alertness-recovery.test.js
         - packages/brain/src/__tests__/alertness/diagnosis.test.js
         - packages/brain/src/__tests__/alertness/escalation.test.js
@@ -237,7 +236,6 @@ features:
         tests:
           unit:
             - packages/brain/src/__tests__/alerting.test.js
-            - packages/brain/src/__tests__/alertness-actions.test.js
             - packages/brain/src/__tests__/alertness-recovery.test.js
             - packages/brain/src/__tests__/alertness/diagnosis.test.js
             - packages/brain/src/__tests__/alertness/escalation.test.js

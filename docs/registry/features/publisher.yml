@@ -346,7 +346,7 @@ features:
     tests:
       unit:
         - packages/brain/src/__tests__/platform-utils.test.js
-        - packages/brain/src/__tests__/post-publish-data-collector.test.ts
+        - packages/brain/src/__tests__/post-publish-data-collector.test.js
       integration: []
       e2e: []
       regression: []
@@ -358,7 +358,7 @@ features:
         tests:
           unit:
             - packages/brain/src/__tests__/platform-utils.test.js
-            - packages/brain/src/__tests__/post-publish-data-collector.test.ts
+            - packages/brain/src/__tests__/post-publish-data-collector.test.js
           integration: []
           e2e: []
         status: active

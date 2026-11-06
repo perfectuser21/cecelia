@@ -674,8 +674,6 @@ features:
         - packages/brain/src/__tests__/decomp-checker-dedup-fix.test.js
         - packages/brain/src/__tests__/decomp-checker-direct-kr.test.js
         - packages/brain/src/__tests__/decomp-checker-domain.test.js
-        - packages/brain/src/__tests__/decomp-checker-null-krid.test.js
-        - packages/brain/src/__tests__/decomp-finder-findings.test.js
         - packages/brain/src/__tests__/decomposition-checker.test.js
       integration: []
       e2e: []
@@ -690,8 +688,6 @@ features:
             - packages/brain/src/__tests__/decomp-checker-dedup-fix.test.js
             - packages/brain/src/__tests__/decomp-checker-direct-kr.test.js
             - packages/brain/src/__tests__/decomp-checker-domain.test.js
-            - packages/brain/src/__tests__/decomp-checker-null-krid.test.js
-            - packages/brain/src/__tests__/decomp-finder-findings.test.js
             - packages/brain/src/__tests__/decomposition-checker.test.js
           integration: []
           e2e: []
