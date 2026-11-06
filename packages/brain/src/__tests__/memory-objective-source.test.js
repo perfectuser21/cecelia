@@ -48,11 +48,14 @@ beforeEach(() => {
   vi.spyOn(console, 'log').mockImplementation(() => {});
 });
 afterEach(() => {
-  expect(boundaries.db).not.toHaveBeenCalled();
-  expect(boundaries.embedding).not.toHaveBeenCalled();
-  expect(boundaries.fetch).not.toHaveBeenCalled();
-  vi.unstubAllGlobals();
-  vi.restoreAllMocks();
+  try {
+    expect(boundaries.db).not.toHaveBeenCalled();
+    expect(boundaries.embedding).not.toHaveBeenCalled();
+    expect(boundaries.fetch).not.toHaveBeenCalled();
+  } finally {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  }
 });
 
 describe('real memory entry preserves Objective and KR contracts', () => {
