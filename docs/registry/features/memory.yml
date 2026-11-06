@@ -42,7 +42,6 @@ features:
         auth: none
     tests:
       unit:
-        - packages/brain/src/__tests__/bare-modules/memory-utils.test.js
         - packages/brain/src/__tests__/contracts/memory-retriever-contract.test.js
         - packages/brain/src/__tests__/eviction.test.js
         - packages/brain/src/__tests__/memory-capabilities-search.test.js
@@ -72,7 +71,6 @@ features:
         maturity: 3
         tests:
           unit:
-            - packages/brain/src/__tests__/bare-modules/memory-utils.test.js
             - packages/brain/src/__tests__/contracts/memory-retriever-contract.test.js
             - packages/brain/src/__tests__/eviction.test.js
             - packages/brain/src/__tests__/memory-capabilities-search.test.js
@@ -583,7 +581,6 @@ features:
     apis: []
     tests:
       unit:
-        - packages/brain/src/__tests__/bare-modules/desire-feedback.test.js
         - packages/brain/src/__tests__/desire-feedback.test.js
         - packages/brain/src/__tests__/desire-respond-api.test.js
         - packages/brain/src/__tests__/desire-system.test.js
@@ -598,7 +595,6 @@ features:
         maturity: 2
         tests:
           unit:
-            - packages/brain/src/__tests__/bare-modules/desire-feedback.test.js
             - packages/brain/src/__tests__/desire-feedback.test.js
             - packages/brain/src/__tests__/desire-respond-api.test.js
             - packages/brain/src/__tests__/desire-system.test.js
