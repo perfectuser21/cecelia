@@ -314,7 +314,6 @@ features:
         - packages/brain/src/__tests__/quarantine-classification.test.js
         - packages/brain/src/__tests__/quarantine-learning-integration.test.js
         - packages/brain/src/__tests__/quarantine-release.test.js
-        - packages/brain/src/__tests__/quarantine-systemic.test.js
         - packages/brain/src/__tests__/quarantine.test.js
         - packages/brain/src/__tests__/quota-exhausted.test.js
       integration: []
@@ -333,7 +332,6 @@ features:
             - packages/brain/src/__tests__/quarantine-classification.test.js
             - packages/brain/src/__tests__/quarantine-learning-integration.test.js
             - packages/brain/src/__tests__/quarantine-release.test.js
-            - packages/brain/src/__tests__/quarantine-systemic.test.js
             - packages/brain/src/__tests__/quarantine.test.js
             - packages/brain/src/__tests__/quota-exhausted.test.js
           integration: []
@@ -509,12 +507,9 @@ features:
         - packages/brain/src/__tests__/executor-startup-sync.test.js
         - packages/brain/src/__tests__/executor-strategy-session.test.js
         - packages/brain/src/__tests__/executor-system-context.test.js
-        - packages/brain/src/__tests__/executor-task-type-match.test.js
         - packages/brain/src/__tests__/executor-task-type-null-fix.test.js
-        - packages/brain/src/__tests__/exploratory-prompt.test.js
         - packages/brain/src/__tests__/fleet-dynamic-routing.test.js
         - packages/brain/src/__tests__/fleet-resource-cache.test.js
-        - packages/brain/src/__tests__/llm-account-deficit.test.js
         - packages/brain/src/__tests__/llm-caller-account-selection.test.js
         - packages/brain/src/__tests__/llm-caller-stream.test.js
         - packages/brain/src/__tests__/llm-caller.test.js
@@ -585,12 +580,9 @@ features:
                 - packages/brain/src/__tests__/executor-startup-sync.test.js
             - packages/brain/src/__tests__/executor-strategy-session.test.js
             - packages/brain/src/__tests__/executor-system-context.test.js
-            - packages/brain/src/__tests__/executor-task-type-match.test.js
             - packages/brain/src/__tests__/executor-task-type-null-fix.test.js
-            - packages/brain/src/__tests__/exploratory-prompt.test.js
             - packages/brain/src/__tests__/fleet-dynamic-routing.test.js
             - packages/brain/src/__tests__/fleet-resource-cache.test.js
-                - packages/brain/src/__tests__/llm-account-deficit.test.js
             - packages/brain/src/__tests__/llm-caller-account-selection.test.js
             - packages/brain/src/__tests__/llm-caller-stream.test.js
             - packages/brain/src/__tests__/llm-caller.test.js
