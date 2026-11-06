@@ -41,7 +41,6 @@ interface ChatMessage {
   role: 'user' | 'autumnrice';
   text: string;
   ts: string;
-  redecomp?: boolean;
 }
 
 function formatTime(ts: string): string {
@@ -50,7 +49,7 @@ function formatTime(ts: string): string {
 
 function statusLabel(status: string): string {
   const map: Record<string, string> = {
-    reviewing: '待确认', ready: '待拆解', in_progress: '进行中',
+    reviewing: '待确认', ready: '已就绪', in_progress: '进行中',
     completed: '已完成', pending: '待开始',
   };
   return map[status] || status;
@@ -155,7 +154,6 @@ export default function OkrReviewPage(): React.ReactElement {
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [approving, setApproving] = useState(false);
-  const [redecompNotice, setRedecompNotice] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -216,9 +214,7 @@ export default function OkrReviewPage(): React.ReactElement {
         role: 'autumnrice',
         text: data.reply || '（秋米无回复）',
         ts: data.comment?.ts || new Date().toISOString(),
-        redecomp: !!data.redecomp_triggered,
       }]);
-      if (data.redecomp_triggered) setRedecompNotice(true);
     } catch {
       setMessages(prev => [...prev, {
         role: 'autumnrice',
@@ -442,7 +438,7 @@ export default function OkrReviewPage(): React.ReactElement {
                 </button>
               ) : isApproved ? (
                 <p className="text-sm text-emerald-600 dark:text-emerald-400 flex items-center gap-2">
-                  <Check className="w-4 h-4" /> 已放行，系统将自动开始拆解
+                  <Check className="w-4 h-4" /> 已放行
                 </p>
               ) : (
                 <p className="text-xs text-slate-400">无法识别 KR ID，请刷新重试</p>
@@ -495,12 +491,7 @@ export default function OkrReviewPage(): React.ReactElement {
                     ? <p className="text-sm whitespace-pre-wrap">{m.text}</p>
                     : renderMarkdown(m.text)
                   }
-                  {m.redecomp && (
-                    <p className="mt-1.5 text-[10px] text-violet-400 flex items-center gap-1">
-                      <Loader2 className="w-3 h-3 animate-spin" />
-                      重拆任务已发起
-                    </p>
-                  )}
+
                   <p className={`text-[10px] mt-1 ${m.role === 'user' ? 'text-violet-200 text-right' : 'text-slate-400'}`}>
                     {m.role === 'autumnrice' ? '秋米 · ' : ''}{formatTime(m.ts)}
                   </p>
@@ -523,12 +514,7 @@ export default function OkrReviewPage(): React.ReactElement {
               </div>
             )}
 
-            {redecompNotice && (
-              <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-violet-50 dark:bg-violet-900/20 text-violet-600 dark:text-violet-400">
-                <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
-                <p className="text-xs">系统正在重新拆解此 KR，请稍后刷新查看</p>
-              </div>
-            )}
+
           </div>
 
           {/* 输入区 */}

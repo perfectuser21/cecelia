@@ -22,7 +22,7 @@ vi.mock('../actions.js', () => ({
   createTask: vi.fn(() => Promise.resolve({ task: { id: 'task-123' }, deduplicated: false })),
 }));
 
-// Mock slot-allocator.js (used via dynamic import in triggerPlannerForGoal)
+// 断言旧拆解退役后不再调用容量和任务创建。
 vi.mock('../slot-allocator.js', () => ({
   harnessSlotCheck: vi.fn().mockResolvedValue({ allow: true, reason: 'ok', containers: 0, inflight: 0, cap: { effective: 4, mem_cap: 8, acct_cap: 4, hard_cap: 8 }, stale: false }),
   calculateSlotBudget: vi.fn(() => Promise.resolve({ dispatchAllowed: true })),
@@ -44,8 +44,6 @@ import { createTask } from '../actions.js';
 import { calculateSlotBudget } from '../slot-allocator.js';
 import { areAllQuestionsAnswered, OKR_STATUS, executeOkrTick } from '../okr-tick.js';
 
-// triggerPlannerForGoal is not exported directly; test via executeOkrTick
-// Instead we test the deferred logic by re-importing with pool mocked for goal state revert
 import { triggerPlannerForGoal } from '../okr-tick.js';
 
 describe('areAllQuestionsAnswered', () => {
@@ -122,86 +120,43 @@ describe('OKR_STATUS', () => {
   });
 });
 
-// ============================================================
-// triggerPlannerForGoal — pool_c_full 容量预检
-// ============================================================
-
-describe('triggerPlannerForGoal - pool capacity check', () => {
-  const mockGoal = {
-    id: 'goal-abc',
-    title: 'Test Goal',
-    description: 'Test description',
-    priority: 'P0',
-    project_id: null,
-  };
-
-  beforeEach(() => {
+describe('triggerPlannerForGoal — 旧拆解退役合同', () => {
+  it('直接调用旧入口仍拒绝创建任务或修改状态', async () => {
     vi.resetAllMocks();
-    // Default: pool has capacity
-    calculateSlotBudget.mockResolvedValue({ dispatchAllowed: true });
-    pool.query.mockResolvedValue({ rows: [] });
-    createTask.mockResolvedValue({ task: { id: 'task-123' }, deduplicated: false });
-  });
-
-  it('should create decomposition task when pool has capacity', async () => {
-    calculateSlotBudget.mockResolvedValue({ dispatchAllowed: true });
-
-    const result = await triggerPlannerForGoal(mockGoal);
-
-    expect(result.triggered).toBe(true);
-    expect(result.goal_id).toBe('goal-abc');
-    expect(createTask).toHaveBeenCalledOnce();
-  });
-
-  it('should defer goal when pool is full (dispatchAllowed=false)', async () => {
-    calculateSlotBudget.mockResolvedValue({ dispatchAllowed: false });
-
-    const result = await triggerPlannerForGoal(mockGoal);
-
-    expect(result.triggered).toBe(false);
-    expect(result.deferred).toBe(true);
-    expect(result.reason).toBe('pool_c_full');
-    expect(result.goal_id).toBe('goal-abc');
-    expect(result.title).toBe('Test Goal');
-    // Goal status should be reverted to 'ready'
-    expect(pool.query).toHaveBeenCalledWith(
-      expect.stringContaining("status='ready'"),
-      ['goal-abc']
-    );
-    // createTask should NOT be called
+    const result = await triggerPlannerForGoal({ id: 'goal-abc', title: 'Test Goal' });
+    expect(result).toMatchObject({ triggered: false, reason: 'decomposition_retired', goal_id: 'goal-abc' });
     expect(createTask).not.toHaveBeenCalled();
-  });
-
-  it('should NOT defer when pool has exactly 1 available slot', async () => {
-    calculateSlotBudget.mockResolvedValue({ dispatchAllowed: true });
-
-    const result = await triggerPlannerForGoal(mockGoal);
-
-    expect(result.triggered).toBe(true);
-    expect(result.deferred).toBeUndefined();
+    expect(pool.query).not.toHaveBeenCalled();
   });
 });
 
-
-describe('executeOkrTick 建单失败恢复', () => {
-  it('建单失败后回到ready，下一轮真实状态机可再次建单', async () => {
+describe('executeOkrTick 建单失败恢复合同变更', () => {
+  it('旧建单链退役后不再调用建单，ready 状态保持不变', async () => {
     vi.resetAllMocks();
-    let status = 'ready';
-    const goal = { id: 'retry-kr', title: '需拆解的KR', metadata: {} };
+    pool.query.mockResolvedValue({ rows: [] });
+    createTask.mockRejectedValue(new Error('task create unavailable'));
+    const result = await executeOkrTick();
+    expect(createTask).not.toHaveBeenCalled();
+    expect(result.ready_goals_processed).toBe(0);
+  });
+});
+
+describe('退役 OKR 旧自动拆解', () => {
+  it('ready 的 KR 不创建旧拆解任务、不更改状态，已答问题仍可晋升', async () => {
+    vi.resetAllMocks();
+    const ready = { id: 'old-ready', title: 'ready', metadata: {} };
+    const answered = { id: 'answered', title: 'answered', metadata: { pending_questions: [{ answered: true }] } };
     pool.query.mockImplementation(async (sql, params = []) => {
-      if (sql.includes('SELECT id, title')) return { rows: params.includes(status) ? [goal] : [] };
-      if (sql.includes('UPDATE key_results')) { status = params[1]; return { rows: [] }; }
+      if (sql.includes('SELECT id, title')) return { rows: params.includes('ready') ? [ready] : [answered] };
+      if (sql.includes('UPDATE key_results')) return { rows: [] };
       throw new Error(`unexpected query: ${sql}`);
     });
     calculateSlotBudget.mockResolvedValue({ dispatchAllowed: true });
-    createTask.mockRejectedValueOnce(new Error('task create unavailable'))
-      .mockResolvedValueOnce({ task: { id: 'retry-created' } });
-    const first = await executeOkrTick();
-    expect(first.actions_taken[0].result.triggered).toBe(false);
-    expect(status).toBe('ready');
-    const second = await executeOkrTick();
-    expect(createTask).toHaveBeenCalledTimes(2);
-    expect(second.actions_taken[0].result.task_id).toBe('retry-created');
-    expect(status).toBe('decomposing');
+    createTask.mockResolvedValue({ task: { id: 'legacy-task' } });
+    const result = await executeOkrTick();
+    expect(createTask).not.toHaveBeenCalled();
+    expect(pool.query.mock.calls.filter(([sql, params]) => sql.includes('UPDATE key_results') && params[0] === 'old-ready')).toHaveLength(0);
+    expect(pool.query).toHaveBeenCalledWith(expect.stringContaining('UPDATE key_results'), ['answered', 'ready']);
+    expect(result.needs_info_promoted).toBe(1);
   });
 });

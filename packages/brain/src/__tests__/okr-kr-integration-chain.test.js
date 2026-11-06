@@ -1,12 +1,5 @@
 /**
- * OKR/KR Integration Chain Tests
- *
- * 验证跨模块完整链路：
- * - KR needs_info → all questions answered → promotes to ready
- * - KR ready → executeOkrTick → decomposing + task created
- * - Pool 满时 → goal 回退到 ready，下个 tick 重试
- * - 拆解失败 → 自动回退 ready（不丢失目标）
- * - 全链路：needs_info → ready → decomposing → task created
+ * OKR/KR 问答状态保留及旧自动拆解退役合同。
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -42,15 +35,12 @@ vi.mock('../slot-allocator.js', () => ({
 import pool from '../db.js';
 import { emit } from '../event-bus.js';
 import { createTask } from '../actions.js';
-import { calculateSlotBudget } from '../slot-allocator.js';
 import {
   areAllQuestionsAnswered,
   OKR_STATUS,
   triggerPlannerForGoal,
 } from '../okr-tick.js';
 
-// executeOkrTick 未直接导出，通过 startOkrLoop 间接触发；测试核心链路函数
-// 直接测试 triggerPlannerForGoal + areAllQuestionsAnswered 的组合行为
 
 const makeKR = (overrides = {}) => ({
   id: 'kr-001',
@@ -97,84 +87,15 @@ describe('areAllQuestionsAnswered — 问题状态判断', () => {
   });
 });
 
-describe('triggerPlannerForGoal — KR 拆解触发链路', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
-  it('正常路径：pool 未满 → 发事件 → 创建拆解任务 → 返回 triggered=true', async () => {
-    calculateSlotBudget.mockResolvedValueOnce({ dispatchAllowed: true });
-    createTask.mockResolvedValueOnce({
-      task: { id: 'task-decomp-001' },
-      deduplicated: false,
-    });
-
+describe('triggerPlannerForGoal — 旧拆解退役', () => {
+  beforeEach(() => vi.clearAllMocks());
+  it('直接调用不发拆解事件、不创建任务、不更改 KR', async () => {
     const kr = makeKR();
     const result = await triggerPlannerForGoal(kr);
-
-    expect(emit).toHaveBeenCalledWith('goal_ready_for_decomposition', 'okr-tick', {
-      goal_id: kr.id,
-      title: kr.title,
-      priority: kr.priority,
-      description: kr.description,
-    });
-
-    expect(createTask).toHaveBeenCalledWith(expect.objectContaining({
-      title: expect.stringContaining('OKR 拆解'),
-      goal_id: kr.id,
-      task_type: 'dev',
-      trigger_source: 'okr_tick',
-      payload: expect.objectContaining({
-        decomposition: 'true',
-        kr_id: kr.id,
-      }),
-    }));
-
-    expect(result.triggered).toBe(true);
-    expect(result.goal_id).toBe(kr.id);
-    expect(result.task_id).toBe('task-decomp-001');
-  });
-
-  it('Pool 满时：回退 KR 状态为 ready，返回 triggered=false deferred=true', async () => {
-    calculateSlotBudget.mockResolvedValueOnce({ dispatchAllowed: false });
-    pool.query.mockResolvedValueOnce({ rows: [] }); // UPDATE key_results SET status='ready'
-
-    const kr = makeKR();
-    const result = await triggerPlannerForGoal(kr);
-
-    expect(pool.query).toHaveBeenCalledWith(
-      expect.stringContaining("SET status='ready'"),
-      [kr.id]
-    );
+    expect(result).toMatchObject({ triggered: false, reason: 'decomposition_retired', goal_id: kr.id });
+    expect(emit).not.toHaveBeenCalled();
     expect(createTask).not.toHaveBeenCalled();
-    expect(result.triggered).toBe(false);
-    expect(result.deferred).toBe(true);
-    expect(result.reason).toBe('pool_c_full');
-  });
-
-  it('重复任务（deduplicated=true）时正常返回，不重复创建', async () => {
-    calculateSlotBudget.mockResolvedValueOnce({ dispatchAllowed: true });
-    createTask.mockResolvedValueOnce({
-      task: { id: 'task-existing-001' },
-      deduplicated: true,
-    });
-
-    const kr = makeKR();
-    const result = await triggerPlannerForGoal(kr);
-
-    expect(result.triggered).toBe(true);
-    expect(result.deduplicated).toBe(true);
-  });
-
-  it('createTask 失败时 → 捕获错误，返回 triggered=false 并携带 error', async () => {
-    calculateSlotBudget.mockResolvedValueOnce({ dispatchAllowed: true });
-    createTask.mockRejectedValueOnce(new Error('DB connection failed'));
-
-    const kr = makeKR();
-    const result = await triggerPlannerForGoal(kr);
-
-    expect(result.triggered).toBe(false);
-    expect(result.error).toBe('DB connection failed');
+    expect(pool.query).not.toHaveBeenCalled();
   });
 });
 
@@ -190,40 +111,17 @@ describe('OKR_STATUS 常量完整性', () => {
   });
 });
 
-describe('KR 全链路行为 — needs_info → ready → 拆解', () => {
+describe('KR 问答与退役拆解边界', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it('全链路：questions 全回答 → areAllQuestionsAnswered=true → 可触发 triggerPlannerForGoal', async () => {
-    // Step 1: KR 从 needs_info 转态判断
-    const kr = makeKR({
-      status: 'needs_info',
-      metadata: {
-        pending_questions: [
-          { id: 'q1', answered: true, answer: '每天' },
-          { id: 'q2', answered: true, answer: '2小时' },
-        ],
-      },
-    });
-
-    // areAllQuestionsAnswered = true → 应晋升 ready
+  it('问题全部回答后可判为 ready，但不触发退役拆解', async () => {
+    const kr = makeKR({ metadata: { pending_questions: [{ answered: true }] } });
     expect(areAllQuestionsAnswered(kr)).toBe(true);
-
-    // Step 2: 晋升为 ready 后触发拆解
-    calculateSlotBudget.mockResolvedValueOnce({ dispatchAllowed: true });
-    createTask.mockResolvedValueOnce({
-      task: { id: 'task-full-chain-001' },
-      deduplicated: false,
-    });
-
-    const readyKR = { ...kr, status: 'ready' };
-    const result = await triggerPlannerForGoal(readyKR);
-
-    // 全链路验证：事件 emit + 任务创建
-    expect(emit).toHaveBeenCalledTimes(1); // goal_ready_for_decomposition
-    expect(createTask).toHaveBeenCalledTimes(1);
-    expect(result.triggered).toBe(true);
+    const result = await triggerPlannerForGoal(kr);
+    expect(result.reason).toBe('decomposition_retired');
+    expect(createTask).not.toHaveBeenCalled();
   });
 
   it('questions 有未回答 → areAllQuestionsAnswered=false → 不触发拆解', async () => {
