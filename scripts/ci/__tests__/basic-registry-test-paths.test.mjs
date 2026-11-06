@@ -68,6 +68,20 @@ test('现行目录登记的测试路径均被实际目录检查识别为存在',
   assert.deepEqual(result.testFailures, []);
 }));
 
+for (const missingSkill of [false, true]) test(`检查报告写入延迟时仍完整输出汇总后退出: ${missingSkill ? '失败' : '成功'}`, () => owned(root => {
+  fixture(root, {missingSkill});
+  const preload = join(root, 'delayed-output.cjs');
+  writeFileSync(preload, `const write = process.stdout.write.bind(process.stdout);
+process.stdout.write = (...args) => { setTimeout(() => write(...args), 0); return true; };
+`);
+  const result = spawnSync(process.execPath, ['--require', preload, join(root, 'scripts/registry-lint.mjs')], {
+    cwd: root, encoding: 'utf8', timeout: 15000,
+    env: {PATH: `${dirname(process.execPath)}:/usr/bin:/bin`, HOME: root, TMPDIR: root, LANG: 'C', TZ: 'UTC'},
+  });
+  assert.equal(result.status, missingSkill ? 1 : 0);
+  assert.match(result.stdout, /检查完成: \d+ PASS, \d+ FAIL, \d+ WARN/);
+}));
+
 test('实际检查器接受存在的 feature/capability 测试路径', () => owned(root => {
   fixture(root);
   const result = run(root, root);

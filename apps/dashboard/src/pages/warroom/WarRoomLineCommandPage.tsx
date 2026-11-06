@@ -17,7 +17,6 @@ import {
   CheckCircle2, XCircle, Clock, GitPullRequest, AlertCircle,
   Zap, FileText, ChevronRight, TrendingUp,
 } from 'lucide-react';
-import ConversationsPanel from './ConversationsPanel';
 
 // ── 类型 ────────────────────────────────────────────────────────────────────
 
@@ -373,23 +372,6 @@ function HealthPanel({ health }: { health: Health }) {
   );
 }
 
-export function turnMarkerLabel(marker: string | null): string | null {
-  if (!marker) return null;
-  if (marker === 'chat') return null;
-  if (marker === 'pending_user') return '等待拍板';
-  if (marker.startsWith('decision_saved=')) return '已落决策';
-  return null;
-}
-
-export function convTitle(conv: { title: string | null; id: string }): string {
-  return conv.title || `对话 #${conv.id.slice(0, 6)}`;
-}
-
-export function truncateMsg(text: string, maxLen = 60): string {
-  if (text.length <= maxLen) return text;
-  return text.slice(0, maxLen) + '…';
-}
-
 // ── 主页面 ────────────────────────────────────────────────────────────────────
 
 export default function WarRoomLineCommandPage() {
@@ -486,9 +468,9 @@ export default function WarRoomLineCommandPage() {
         </div>
       </div>
 
-      {/* Body — 四栏 */}
+      {/* Body — 三栏 */}
       <div className="flex-1 min-h-0 overflow-y-auto">
-        <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-4 gap-0 h-full">
+        <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-0 h-full">
           {/* 栏 1：军师决策流水 */}
           <div className="border-r border-slate-800/40 p-4 space-y-3 lg:overflow-y-auto lg:max-h-[calc(100vh-60px)]">
             <SectionHeader
@@ -547,10 +529,6 @@ export default function WarRoomLineCommandPage() {
             </div>
           </div>
 
-          {/* 栏 4：议题对话 */}
-          <div className="p-4 flex flex-col lg:max-h-[calc(100vh-60px)]">
-            <ConversationsPanel journeyId={line.id} />
-          </div>
         </div>
       </div>
     </div>

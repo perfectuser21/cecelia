@@ -17,7 +17,6 @@ clips-smoke.sh
 codex-headed-dispatch-smoke.sh
 commander-watchdog-smoke.sh
 contract-seal-smoke.sh
-conversations-smoke.sh
 crystal-evidence-feed-smoke.sh
 crystal-judge-smoke.sh
 d-tick-runner-full.sh

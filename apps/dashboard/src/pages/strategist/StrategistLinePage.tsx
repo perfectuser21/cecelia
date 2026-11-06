@@ -1,20 +1,19 @@
 /**
- * StrategistLinePage — 军师台线空间（七页签）
+ * StrategistLinePage — 军师台线空间
  *
  * 路由：/strategist/:lineId
- * 页签：全貌 | 规划 | 晨报 | 拍板 | 对话 | 要素 | 投入
- * 已落地：全貌/规划/晨报/拍板/对话/投入；要素待建
+ * 页签：全貌 | 规划 | 晨报 | 拍板 | 要素 | 投入
+ * 已落地：全貌/规划/晨报/拍板/投入；要素待建
  */
 
 import { useEffect, useState, useCallback, useRef, useMemo, type ComponentType } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   ArrowLeft, RefreshCw, MapPin, FileText,
-  CheckSquare, MessageSquare, Layout, DollarSign,
+  CheckSquare, Layout, DollarSign,
   ChevronRight, Activity, CheckCircle2, Zap,
   X, LayoutGrid, BookOpen, AlertCircle, Clock,
 } from 'lucide-react';
-import ConversationsPanel from '../warroom/ConversationsPanel';
 import {
   roadmapRows,
   type LineDetail, type LineSummary,
@@ -89,7 +88,6 @@ const TABS = [
   { key: 'roadmap', label: '规划', icon: MapPin },
   { key: 'morning', label: '晨报', icon: FileText },
   { key: 'decision', label: '拍板', icon: CheckSquare },
-  { key: 'conversation', label: '对话', icon: MessageSquare },
   { key: 'elements', label: 'DoD', icon: Activity },
   { key: 'investment', label: '投入', icon: DollarSign },
 ] as const;
@@ -1239,18 +1237,13 @@ export default function StrategistLinePage() {
             <OverviewTab detail={detail} lineId={lineId} />
           </div>
         )}
-        {activeTab !== 'overview' && activeTab !== 'conversation' && (
+        {activeTab !== 'overview' && (
           <div className="flex-1 overflow-y-auto">
             {activeTab === 'roadmap' && <RoadmapTab detail={detail} />}
             {activeTab === 'morning' && <MorningTab />}
             {activeTab === 'decision' && lineId && <DecisionTab lineId={lineId} />}
             {activeTab === 'elements' && lineId && <ElementsTab lineId={lineId} />}
             {activeTab === 'investment' && <InvestmentTab detail={detail} />}
-          </div>
-        )}
-        {activeTab === 'conversation' && lineId && (
-          <div className="flex-1 overflow-hidden p-4">
-            <ConversationsPanel journeyId={lineId} />
           </div>
         )}
       </div>

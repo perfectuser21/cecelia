@@ -46,7 +46,6 @@ import { runAcceptanceAging } from './acceptance-aging.js';
 import { runConversationCapture } from './conversation-capture.js';
 import { maybeRunTriageOfficerRank } from './triage-officer-rank.js';
 import { runTriageOfficer15min } from './triage-officer-15min.js';
-import { runConversationTtlArchiver } from './conversation-ttl-archiver.js';
 import { runNotionCaptureIngest } from './notion-capture-ingest.js';
 import { runNotionProductPush } from './notion-inbox-push.js';
 import { runNotionVerdictIngest } from './notion-verdict-ingest.js';
@@ -148,7 +147,6 @@ export const JOBS = [
     if (r?.errors > 0) throw new Error(`conversation-capture: ${r.errors} 条写入失败（已推送 ${r.pushed ?? 0} 条）`);
     return r;
   }, description: '对话原始捕获：容器内 ssh mmv 只读拉 Claude/Codex/Grok 会话真人文本写入captures(source=conversation-*)+摘要，结束的有头会话摘要并入关联任务handoff/无关联补建completed账本任务，自带10min间隔gate（decision f64adaaf/0c9e1652，任务 c8b27bc5）' },
-  { name: 'conversation-ttl-archiver', cadence: { everySec: 600 }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runConversationTtlArchiver, description: '主理人对话 TTL 归档：ttl_expires_at 到期的 active/suspended 对话软归档（10min 自gate，PR4/4 64b8c8d）' },
   { name: 'notion-capture-ingest', cadence: { everySec: 300 }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runNotionCaptureIngest, description: 'Notion 个人 Inbox 增量采集：5min自gate，last_edited_time增量+notion_page_id幂等，写入captures+capture_atoms（F6加厚，CCAPI2026）' },
   { name: 'notion-product-push', cadence: { everySec: 60 }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: async (pool) => runNotionProductPush(pool), description: '成品呈报到 Notion Inbox；稳定 dedupe_key 幂等并回写 tasks.notion_id' },
   { name: 'notion-verdict-ingest', cadence: { everySec: 60 }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: async (pool) => runNotionVerdictIngest(pool), description: 'Notion 裁决窄口：只登记结构化 projection command，不直接改任务执行态' },
