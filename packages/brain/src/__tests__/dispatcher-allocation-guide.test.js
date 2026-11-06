@@ -5,6 +5,10 @@ const mockQuery = vi.fn();
 vi.mock('../db.js', () => ({
   default: { query: (...args) => mockQuery(...args) },
 }));
+vi.mock('../device-lock-helpers.js', () => ({
+  acquireDeviceLock: vi.fn(async () => ({ result: 'acquired' })),
+  releaseDeviceLocksHeldBy: vi.fn(async () => {}),
+}));
 
 const mockUpdateTask = vi.fn().mockResolvedValue({ success: true });
 vi.mock('../actions.js', () => ({
@@ -107,6 +111,42 @@ vi.mock('../token-budget-planner.js', () => ({
 describe('dispatcher allocation guide', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it.each(['write_error', 'claim_changed'])('Codex 路由标记未持久化（%s）时不启动执行', async (failure) => {
+    const task = {
+      id: 'task-guided-persist-error', title: 'guided task', description: 'dev task',
+      task_type: 'harness_initiative', status: 'queued', priority: 'P1',
+      payload: { ...routedCodingPayload('task-guided-persist-error'), device_serial: 'device-1' },
+      created_at: '2026-07-16T00:00:00Z',
+    };
+    const { selectNextDispatchableTask } = await import('../dispatch-helpers.js');
+    selectNextDispatchableTask.mockResolvedValue(task);
+    mockTriggerCeceliaRun.mockResolvedValueOnce({ success: true, taskId: task.id, runId: 'run-1' });
+    mockQuery.mockImplementation(async (sql, params) => {
+      if (String(sql).includes('UPDATE tasks SET claimed_by = $1')) return { rows: [{ id: task.id, claim_stamp: '2026-11-07 06:00:00.123456+00' }], rowCount: 1 };
+      if (String(sql).includes('SELECT * FROM tasks WHERE id = $1')) return { rows: [task], rowCount: 1 };
+      if (String(sql).includes("payload = COALESCE(payload, '{}'::jsonb)") && params?.[0] === task.id) {
+        if (failure === 'write_error') throw new Error('write failed');
+        return { rows: [], rowCount: 0 };
+      }
+      if (String(sql).includes("SET status = 'queued'") && params?.[0] === task.id) {
+        return { rows: [], rowCount: failure === 'claim_changed' ? 0 : 1 };
+      }
+      if (String(sql).includes('FROM work_routing_receipts receipt')) return { rows: [canonicalRoutingReceipt(task)] };
+      return { rows: [], rowCount: 1 };
+    });
+    const { dispatchNextTask } = await import('../dispatcher.js');
+    const result = await dispatchNextTask([]);
+    expect(result.dispatched).toBe(false);
+    expect(result.reason).toBe('allocation_persist_failed');
+    expect(mockTriggerCeceliaRun).not.toHaveBeenCalled();
+    const rollback = mockQuery.mock.calls.find(([sql, params]) => /status\s*=\s*'queued'/.test(String(sql)) && params?.[0] === task.id);
+    expect(rollback).toBeDefined();
+    expect(rollback[0]).toContain('claimed_at = $3::timestamptz');
+    expect(rollback[1][2]).toBe('2026-11-07 06:00:00.123456+00');
+    const { releaseDeviceLocksHeldBy } = await import('../device-lock-helpers.js');
+    expect(releaseDeviceLocksHeldBy).not.toHaveBeenCalled();
   });
 
   it('tight 预算下的 routed coding 任务 → triggerCeceliaRun 收到 payload.executor=codex', async () => {

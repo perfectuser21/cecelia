@@ -742,6 +742,7 @@ export async function dispatchNextTask(goalIds, options = {}) {
   const duplicateSkipIds = []; // IDs skipped due to duplicate-title sibling already queued/in_progress
   const resourceSkipIds = [];  // IDs skipped because a referenced resource is offline/restricted（不计入 HOL 上限）
   let nextTask = null;
+  let claimStamp = null;
 
   const resourceSkipCapped = async () => {
     if (resourceSkipIds.length < MAX_RESOURCE_SKIPS) return null;
@@ -981,7 +982,7 @@ export async function dispatchNextTask(goalIds, options = {}) {
     const claimResult = await pool.query(
       `UPDATE tasks SET claimed_by = $1, claimed_at = NOW()
        WHERE id = $2 AND claimed_by IS NULL
-       RETURNING id`,
+       RETURNING id, claimed_at::text AS claim_stamp`,
       [claimerId, candidate.id]
     );
     if (claimResult.rows.length === 0) {
@@ -989,6 +990,7 @@ export async function dispatchNextTask(goalIds, options = {}) {
       await recordDispatchResult(pool, false, 'already_claimed');
       return { dispatched: false, reason: 'already_claimed', task_id: candidate.id, actions };
     }
+    claimStamp = claimResult.rows[0].claim_stamp ?? null;
 
     // 3c''. S2 锚点执法闸（MJ5 刀2）：新任务点火前校验 payload.anchor
     // 缺锚 → terminal failed（reason=missing_anchor），与 invalid_gear 同级处理形态。
@@ -1305,14 +1307,37 @@ export async function dispatchNextTask(goalIds, options = {}) {
         tickLog(`[dispatch] allocation_guide task=${taskToDispatch.id} type=${taskToDispatch.task_type} budget_state=${budgetState} → executor=grok`);
       }
       try {
-        await pool.query(
+        const persisted = await pool.query(
           `UPDATE tasks
              SET payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb,
                  updated_at = NOW()
-           WHERE id = $1`,
-          [taskToDispatch.id, JSON.stringify(guided.payloadPatch)]
+           WHERE id = $1 AND status = 'in_progress' AND claimed_by = $3 AND claimed_at = $4::timestamptz`,
+          [taskToDispatch.id, JSON.stringify(guided.payloadPatch), claimerId, claimStamp]
         );
+        if (guided.payloadPatch.executor === 'codex' && persisted.rowCount === 0) {
+          throw new Error('Codex executor route was not persisted');
+        }
       } catch (persistErr) {
+        if (guided.payloadPatch.executor === 'codex') {
+          console.error(`[dispatch] Codex route persist failed; refusing dispatch: ${persistErr.message}`);
+          try {
+            await pool.query(
+              `UPDATE tasks SET status = 'queued', claimed_by = NULL, claimed_at = NULL, updated_at = NOW()
+               WHERE id = $1 AND status = 'in_progress' AND claimed_by = $2 AND claimed_at = $3::timestamptz`,
+              [taskToDispatch.id, claimerId, claimStamp],
+            );
+            // 锁只按 task id 标识，queued 后可能立即被同任务的新 claim 继承。
+            // 不在这里按 task id 释放；同任务重试可重入，其他任务按 TTL 等待。
+          } catch (cleanupErr) {
+            console.error(`[dispatch] Codex route cleanup failed: ${cleanupErr.message}`);
+          }
+          try {
+            await recordDispatchResult(pool, false, 'allocation_persist_failed', undefined, taskToDispatch.id);
+          } catch (recordErr) {
+            console.error(`[dispatch] Codex route failure recording failed: ${recordErr.message}`);
+          }
+          return { dispatched: false, reason: 'allocation_persist_failed', task_id: taskToDispatch.id, actions };
+        }
         console.warn(`[dispatch] allocation guide payload persist failed (non-fatal): ${persistErr.message}`);
       }
     }

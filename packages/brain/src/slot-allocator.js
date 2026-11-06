@@ -328,15 +328,14 @@ function getBackpressureState({
 }
 
 /**
- * Count Codex-native tasks currently in_progress.
- * Includes codex_* task types and crystallize pipeline — tasks always routed to Xian Codex CLI.
- * Budget-downgraded tasks (provider=codex override) are not counted here since provider
- * is a runtime in-memory override, not persisted to DB.
+ * Count in-progress Codex-native tasks and tasks routed to Codex by the dispatcher.
+ * The selected executor is persisted in payload.executor before execution.
  */
 async function countCodexInProgress() {
   try {
     const result = await pool.query(
-      `SELECT COUNT(*) FROM tasks WHERE status = 'in_progress' AND task_type = ANY($1::text[])`,
+      `SELECT COUNT(*) FROM tasks WHERE status = 'in_progress'
+       AND (task_type = ANY($1::text[]) OR payload->>'executor' = 'codex')`,
       [[...CODEX_SLOT_TASK_TYPES]],
     );
     return parseInt(result.rows[0].count, 10);
