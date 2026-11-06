@@ -415,9 +415,9 @@ echo "$r" | jq -e '.success == true' >/dev/null 2>&1 \
   || fail "capability-scan: /capabilities 缺少 success"
 
 r=$(curl -q -sf "$BRAIN/api/brain/capacity-budget") || { fail "capacity-budget: /capacity-budget 不可达"; r="{}"; }
-echo "$r" | jq -e '.confidence != null' >/dev/null 2>&1 \
-  && ok "capacity-budget: /capacity-budget 含 confidence" \
-  || fail "capacity-budget: /capacity-budget 缺少 confidence"
+echo "$r" | jq -e '.fleet | type == "array"' >/dev/null 2>&1 \
+  && ok "capacity-budget: /capacity-budget 含 fleet 数组" \
+  || fail "capacity-budget: /capacity-budget 缺少 fleet 数组"
 
 r=$(curl -q -sf "$BRAIN/api/brain/content-types") || { fail "content-type-config: /content-types 不可达"; r="[]"; }
 echo "$r" | jq -e 'type == "array"' >/dev/null 2>&1 \
