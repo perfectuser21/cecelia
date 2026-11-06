@@ -143,15 +143,15 @@ describe('calculateSlotBudget token 集成', () => {
     expect(budget.tokenPressure.token_pressure).toBe(0);
   });
 
-  it('token_pressure=1.0 + available_accounts=0 → dispatchAllowed=false（全部耗尽）', async () => {
+  it('旧 Claude 指标显示全部耗尽时，只作展示，不拦其他执行器', async () => {
     getTokenPressure.mockResolvedValue({
       token_pressure: 1.0, available_accounts: 0, details: 'all exhausted',
     });
 
     const budget = await calculateSlotBudget();
-    // Token exhausted safety valve: all accounts at quota → block dispatch
+    // 账号级准入由执行器自身的额度与容量合同负责。
     expect(budget.taskPool.budget).toBe(12);
-    expect(budget.dispatchAllowed).toBe(false);
+    expect(budget.dispatchAllowed).toBe(true);
     expect(budget.tokenPressure.token_pressure).toBe(1.0);
     expect(budget.tokenPressure.available_accounts).toBe(0);
   });

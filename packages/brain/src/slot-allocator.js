@@ -422,20 +422,12 @@ async function calculateSlotBudget() {
   const userReserve = userMode !== 'absent' ? USER_PRIORITY_HEADROOM : 0;
 
   // Available = effective slots - actual running - user headroom
-  let availableRaw = Math.max(0, effectiveSlots - totalRunning - userReserve);
+  const availableRaw = Math.max(0, effectiveSlots - totalRunning - userReserve);
 
-  // Budget state: 7-day token budget planning (scale down if overspending)
+  // 保留旧预算状态用于兼容展示；Claude 额度不再缩减全局机器容量。
   let budgetState = null;
   try {
     budgetState = await calculateBudgetState();
-    const scale = budgetState.pool_c_scale;
-    if (scale < 1.0) {
-      const scaled = Math.round(availableRaw * scale);
-      if (scaled < availableRaw) {
-        console.log(`[slot-allocator] budget_state=${budgetState.state} scale=${scale} available: ${availableRaw}→${scaled}`);
-        availableRaw = scaled;
-      }
-    }
   } catch (err) {
     console.warn(`[slot-allocator] calculateBudgetState failed: ${err.message}, skipping`);
   }
@@ -482,19 +474,12 @@ async function calculateSlotBudget() {
   const codexMax = getCodexMaxConcurrent();
   const codexAvailable = codexRunning < codexMax;
 
-  // Token pressure: monitoring only (no longer throttles dispatch)
-  // Exception: block dispatch when ALL accounts exhausted (safety valve)
+  // 旧 Claude token 指标仅供兼容展示，不决定其他执行器的准入。
   let tokenInfo = { token_pressure: 0, available_accounts: 3, details: 'not queried' };
   try {
     tokenInfo = await getTokenPressure();
   } catch {
     // Token pressure fetch failed — continue without it
-  }
-
-  // Token safety: block dispatch only when ALL accounts exhausted
-  const tokenExhausted = tokenInfo.token_pressure >= 1.0 && tokenInfo.available_accounts === 0;
-  if (tokenExhausted) {
-    console.log('[slot-allocator] Token exhausted: all accounts at quota limit, blocking dispatch');
   }
 
   // Capacity info from dual-layer model
@@ -537,7 +522,7 @@ async function calculateSlotBudget() {
       avg_remaining_pct: budgetState.avg_remaining_pct,
       pool_c_scale: budgetState.pool_c_scale,
     } : null,
-    dispatchAllowed: availableBuffered > 0 && !tokenExhausted,
+    dispatchAllowed: availableBuffered > 0,
     resourceAdmissionBlocked: effectiveSlots === 0 && codexMax === 0,
     backpressure,
   };

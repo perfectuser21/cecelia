@@ -38,7 +38,6 @@ import { recordTaskEventSafe } from './lib/task-event-log.js';
 import { startRunForExecResult } from './lib/task-run.js';
 import { classifyDispatchReasonCode } from './lib/dispatch-reason-code.js';
 import { incrementActionsToday } from './tick-stats.js';
-import { checkQuotaGuard } from './quota-guard.js';
 import { updateTask } from './actions.js';
 import { selectNextDispatchableTask, processCortexTask } from './dispatch-helpers.js';
 import { findDuplicateSibling } from './dispatch-dedup.js';
@@ -533,7 +532,6 @@ async function routeAndPersistQiumi(task, deps = {}) {
  */
 export async function dispatchNextTask(goalIds, options = {}) {
   const codeOnly = options.codeOnly === true;
-  let _quotaPriorityFilter = null;
   let qiumiOnlyBypass = false;
   const actions = [];
   let llmCapacitySnapshot = null;
@@ -574,30 +572,6 @@ export async function dispatchNextTask(goalIds, options = {}) {
       detail: `Billing pause active until ${billingPause.resetTime}`,
       actions
     };
-  }
-
-  // 0b. Quota guard check — 根据账号 5h 余量限制调度范围（MINIMAL_MODE 下跳过）
-  _quotaPriorityFilter = null;
-  if (!MINIMAL_MODE) {
-    try {
-      const qg = await checkQuotaGuard();
-      if (!qg.allow) {
-        tickLog(`[tick] quota guard: ${qg.reason} bestPct=${qg.bestPct.toFixed(1)}%，暂停全部调度`);
-        await recordDispatchResult(pool, false, 'quota_critical');
-        return {
-          dispatched: false,
-          reason: 'quota_critical',
-          detail: `所有账号 quota > 98%（最优=${qg.bestPct.toFixed(1)}%），请等待 quota 重置`,
-          actions,
-        };
-      }
-      if (qg.priorityFilter) {
-        _quotaPriorityFilter = qg.priorityFilter;
-        tickLog(`[tick] quota guard: ${qg.reason} bestPct=${qg.bestPct.toFixed(1)}%，仅派 ${qg.priorityFilter.join('/')}`);
-      }
-    } catch (qgErr) {
-      console.error('[tick] quota guard check failed (non-fatal):', qgErr.message);
-    }
   }
 
   } // AI quota / billing only; registered deterministic scripts use host capacity.
@@ -674,7 +648,7 @@ export async function dispatchNextTask(goalIds, options = {}) {
       if (!xianBypass) {
         try {
           const qiumiProbe = await selectNextDispatchableTask(goalIds, [], {
-            priorityFilter: _quotaPriorityFilter,
+            priorityFilter: null,
             onlyTaskTypes: [...OPENCLAW_PASSTHROUGH_TASK_TYPES], includeCommanderVerification: true,
           });
           if (qiumiProbe) {
@@ -814,7 +788,7 @@ export async function dispatchNextTask(goalIds, options = {}) {
   for (let attempt = 0; attempt <= MAX_PRE_FLIGHT_RETRIES; attempt++) {
     const skipIds = [...preFlightFailedIds, ...holSkipIds, ...noExecutorSkipIds, ...breakerSkipIds, ...duplicateSkipIds, ...resourceSkipIds];
     const candidate = await selectNextDispatchableTask(goalIds, skipIds, {
-      priorityFilter: _quotaPriorityFilter,
+      priorityFilter: null,
       ...(codeOnly ? {codeOnly:true} : {}),
       ...(qiumiOnlyBypass ? { onlyTaskTypes: [...OPENCLAW_PASSTHROUGH_TASK_TYPES], includeCommanderVerification: true } : {}),
     });
