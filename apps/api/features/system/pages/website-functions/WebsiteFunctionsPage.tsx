@@ -13,8 +13,13 @@ const retiredOperationIds = new Set([
   'WarRoomGoldenPathPage:01', 'WarRoomGoldenPathPage:02',
   'WarRoomLineCommandPage:01', 'WarRoomLineCommandPage:02',
 ]);
+const currentPageNames: Record<string, string> = {
+  'WarRoomGoldenPathPage:03': 'Golden Path 详情',
+  'WarRoomLineCommandPage:03': '价值流指挥',
+};
 const activeRows = snapshot.rows.filter(row =>
-  !row['审计编号'].startsWith('QualityMonitorPage:') && !retiredOperationIds.has(row['审计编号']));
+  !row['审计编号'].startsWith('QualityMonitorPage:') && !retiredOperationIds.has(row['审计编号']))
+  .map(row => currentPageNames[row['审计编号']] ? { ...row, 页面名称: currentPageNames[row['审计编号']] } : row);
 const operations = buildInventory(activeRows, verifications, navigation);
 const totals = summarize(operations);
 const statusStyles: Record<Status, string> = {

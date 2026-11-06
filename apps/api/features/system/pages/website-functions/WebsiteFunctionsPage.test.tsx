@@ -13,6 +13,16 @@ describe('网站功能清单', () => {
     expect(screen.queryAllByRole('article')).toHaveLength(0);
     expect(screen.getByText(/12 条历史操作已退役/)).toBeVisible();
   });
+
+  it('保留现有指挥页的读取功能，但不再用旧对话名称描述页面', () => {
+    render(<WebsiteFunctionsPage />);
+    fireEvent.change(screen.getByLabelText('搜索功能'), { target: { value: '/api/brain/warroom/line/:id/command' } });
+    const article = screen.getByRole('article');
+    expect(within(article).getByText('价值流指挥')).toBeVisible();
+    expect(within(article).queryByText('价值流指挥与军师对话')).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('搜索功能'), { target: { value: '/api/brain/golden-path/:id' } });
+    expect(within(screen.getByRole('article')).getByText('Golden Path 详情')).toBeVisible();
+  });
   it('呈现四类说明和独立状态数量，注明盘点日期及可用数下限', () => {
     render(<WebsiteFunctionsPage />);
     expect(screen.getByRole('heading', { name: '网站功能清单' })).toBeVisible();
