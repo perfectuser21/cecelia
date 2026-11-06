@@ -25,6 +25,19 @@ describe('capacity-budget route', () => {
     router = mod.default;
   });
 
+  it('returns machine preflight data without retired PR throughput forecasts', async () => {
+    const { getFleetStatus } = await import('../../fleet-resource-cache.js');
+    getFleetStatus.mockReturnValueOnce([{ id: 'mac', online: true, effectiveSlots: 2, physicalCapacity: 4, pressure: 0.5 }]);
+    const handler = router.stack.find((layer) => layer.route?.path === '/capacity-budget').route.stack[0].handle;
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() };
+    await handler({}, res);
+    const result = res.json.mock.calls[0][0];
+    expect(result.fleet).toEqual([{ id: 'mac', online: true, effective_slots: 2, physical_capacity: 4, pressure: 0.5 }]);
+    expect(result).not.toHaveProperty('daily_capacity');
+    expect(result).not.toHaveProperty('layer_budgets');
+    expect(result).not.toHaveProperty('pr_per_slot_per_day');
+  });
+
   it('should export a router with GET /capacity-budget', () => {
     expect(router).toBeDefined();
     expect(router.stack).toBeDefined();
@@ -34,71 +47,15 @@ describe('capacity-budget route', () => {
     expect(getRoute).toBeDefined();
   });
 
-  it('should return theoretical confidence when no historical data', async () => {
+  it('retains area slots, machine vitals and PR threshold without querying history', async () => {
     const { default: pool } = await import('../../db.js');
-    pool.query.mockResolvedValueOnce({
-      rows: [{ completed_prs: '0', avg_duration_min: '0', earliest: null, latest: null }],
-    });
-
-    // Find handler and call it
-    const getRoute = router.stack.find(
-      (layer) => layer.route?.path === '/capacity-budget'
-    );
-    const handler = getRoute.route.stack[0].handle;
-
-    const res = {
-      json: vi.fn(),
-      status: vi.fn().mockReturnThis(),
-    };
-
+    const handler = router.stack.find((layer) => layer.route?.path === '/capacity-budget').route.stack[0].handle;
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() };
     await handler({}, res);
-
-    expect(res.json).toHaveBeenCalledTimes(1);
     const result = res.json.mock.calls[0][0];
-    expect(result.pr_per_slot_per_day).toBe(25);
-    expect(result.confidence).toBe('theoretical');
-    expect(result.sample_size).toBe(0);
-    expect(result.areas).toBeDefined();
-    expect(result.areas.cecelia).toBeDefined();
-    expect(result.areas.zenithjoy).toBeDefined();
-    expect(result.layer_budgets).toBeDefined();
-    expect(result.layer_budgets.task.pr_count).toBe(1);
-    // Phase 8.3: pr_loc_threshold 必须存在
-    expect(result.pr_loc_threshold).toBeDefined();
-    expect(result.pr_loc_threshold.soft).toBe(200);
-    expect(result.pr_loc_threshold.hard).toBe(400);
-    expect(result.pr_loc_threshold.source).toMatch(/smartbear|microsoft/i);
-    // machine_vitals 段：冷态未采样时必须含 stale 键（never_sampled 语义）
-    expect(result.machine_vitals).toBeDefined();
+    expect(result.areas.cecelia).toEqual({ weight: 0.5, slots: 4 });
+    expect(result.pr_loc_threshold).toMatchObject({ soft: 200, hard: 400 });
     expect(result.machine_vitals).toHaveProperty('stale');
-  });
-
-  it('should use empirical data when sample_size >= 10', async () => {
-    const { default: pool } = await import('../../db.js');
-    pool.query.mockResolvedValueOnce({
-      rows: [{ completed_prs: '80', avg_duration_min: '35', earliest: new Date(), latest: new Date() }],
-    });
-
-    const { getMaxStreams } = await import('../../capacity.js');
-    getMaxStreams.mockReturnValue(8);
-
-    const getRoute = router.stack.find(
-      (layer) => layer.route?.path === '/capacity-budget'
-    );
-    const handler = getRoute.route.stack[0].handle;
-
-    const res = {
-      json: vi.fn(),
-      status: vi.fn().mockReturnThis(),
-    };
-
-    await handler({}, res);
-
-    const result = res.json.mock.calls[0][0];
-    // 80 samples >= 50 → medium confidence
-    expect(result.confidence).toBe('medium');
-    expect(result.pr_per_slot_per_day).toBeGreaterThan(0);
-    expect(result.pr_per_slot_per_day).not.toBe(25); // Should NOT be theoretical
-    expect(result.avg_pr_duration_min).toBe(35);
+    expect(pool.query).not.toHaveBeenCalled();
   });
 });
