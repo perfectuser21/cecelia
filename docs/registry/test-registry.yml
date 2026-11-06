@@ -152,13 +152,6 @@ tests:
   # Unit 测试 - Task Router
   # ============================================================
 
-  - test_id: task_router_failover
-    file: packages/brain/src/__tests__/task-router-failover.test.js
-    type: unit
-    covers_feature: task_route
-    ci_layer: L3
-    status: active
-
   - test_id: task_router_intent_cto
     file: packages/brain/src/__tests__/task-router-intent-cto.test.js
     type: unit
