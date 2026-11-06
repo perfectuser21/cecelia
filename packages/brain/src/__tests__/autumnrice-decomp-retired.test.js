@@ -66,4 +66,22 @@ describe('秋米旧重拆入口退役', () => {
     expect(mocks.callLLM).toHaveBeenCalledOnce();
   });
 
+  it('重拆请求超出每分钟上限后在数据库查询前拒绝', async () => {
+    mocks.query.mockImplementation(async sql => /SELECT.*pending_actions/s.test(sql)
+      ? { rows: [{ id: 'action-1', status: 'pending_approval', context: {}, comments: [] }] }
+      : { rows: [{ id: 'action-1' }], rowCount: 1 });
+    let limited = false;
+    for (let i = 0; i < 70; i++) {
+      const countBefore = mocks.query.mock.calls.length;
+      const res = await request(app).post('/autumnrice/chat').send({ pending_action_id: 'action-1', message: '请重拆' });
+      if (res.status === 429) {
+        expect(mocks.query).toHaveBeenCalledTimes(countBefore);
+        limited = true;
+        break;
+      }
+      expect(res.status).toBe(200);
+    }
+    expect(limited).toBe(true);
+  });
+
 });

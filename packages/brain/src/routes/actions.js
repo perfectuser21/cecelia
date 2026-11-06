@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { rateLimit } from 'express-rate-limit';
 import pool from '../db.js';
 import { createTask, updateTask, createGoal, updateGoal, triggerN8n, setMemory, batchUpdateTasks } from '../actions.js';
 import { parseIntent, parseAndCreate, INTENT_TYPES, INTENT_ACTION_MAP, extractEntities as _extractEntities, classifyIntent as _classifyIntent, getSuggestedAction as _getSuggestedAction } from '../intent.js';
@@ -233,7 +234,7 @@ router.post('/pending-actions/:id/select', async (req, res) => {
  * Body: { pending_action_id: string, message: string }
  * 秋米加载 KR + 拆解上下文，回复用户，并将对话存入 pending_actions.comments
  */
-router.post('/autumnrice/chat', async (req, res) => {
+router.post('/autumnrice/chat', rateLimit({ windowMs: 60_000, limit: 60, standardHeaders: 'draft-7', legacyHeaders: false }), async (req, res) => {
   try {
     const { pending_action_id, message } = req.body || {};
 
