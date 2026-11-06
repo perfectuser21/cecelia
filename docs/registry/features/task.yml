@@ -147,7 +147,6 @@ features:
         - packages/brain/src/__tests__/task-router-decomp-review.test.js
         - packages/brain/src/__tests__/task-router-diagnose.test.js
         - packages/brain/src/__tests__/task-router-domain.test.js
-        - packages/brain/src/__tests__/task-router-failover.test.js
         - packages/brain/src/__tests__/task-router-initiative.test.js
         - packages/brain/src/__tests__/task-router-intent-cto.test.js
         - packages/brain/src/__tests__/task-router-strategy-session.test.js
@@ -177,7 +176,6 @@ features:
             - packages/brain/src/__tests__/task-router-decomp-review.test.js
             - packages/brain/src/__tests__/task-router-diagnose.test.js
             - packages/brain/src/__tests__/task-router-domain.test.js
-            - packages/brain/src/__tests__/task-router-failover.test.js
             - packages/brain/src/__tests__/task-router-initiative.test.js
             - packages/brain/src/__tests__/task-router-intent-cto.test.js
             - packages/brain/src/__tests__/task-router-strategy-session.test.js

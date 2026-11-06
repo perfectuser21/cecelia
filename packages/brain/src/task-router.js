@@ -48,21 +48,6 @@ function getInternalTaskHandler(taskType) {
   return INTERNAL_TASK_HANDLERS[taskType.toLowerCase()] || null;
 }
 
-// Fallback strategies when primary routing fails
-const FALLBACK_STRATEGIES = {
-  // skill fallback: when skill not available, try alternative
-  // NOTE: dev→talk removed (silent failure: coding task degraded to chat)
-  'skill': {
-    'review': 'code_review',
-    'code_review': 'dev'
-  },
-  // location fallback: when location not reachable, try alternative
-  'location': {
-    'us': 'xian',
-    'xian': 'us'
-  }
-};
-
 // Task type patterns for identifying single tasks
 const SINGLE_TASK_PATTERNS = [
   /修复/i,
@@ -332,132 +317,6 @@ function getLocationsForTaskTypes(taskTypes) {
   return result;
 }
 
-/**
- * Detect routing failure reasons
- * @param {Object} routing - Current routing decision
- * @returns {Object} - Failure detection result { failed: boolean, reason: string|null }
- */
-function detectRoutingFailure(routing) {
-  const { task_type, location, skill } = routing;
-
-  // Check if task_type is valid
-  if (task_type && !VALID_TASK_TYPES.includes(task_type.toLowerCase())) {
-    return { failed: true, reason: `invalid_task_type:${task_type}` };
-  }
-
-  // Check if location is valid
-  if (location && !['us', 'hk', 'xian', 'xian_m1'].includes(location.toLowerCase())) {
-    return { failed: true, reason: `invalid_location:${location}` };
-  }
-
-  // Check if skill exists in whitelist
-  if (skill && !Object.values(SKILL_WHITELIST).includes(skill)) {
-    return { failed: true, reason: `invalid_skill:${skill}` };
-  }
-
-  return { failed: false, reason: null };
-}
-
-/**
- * Get fallback strategy for a given failure type
- * @param {string} failureType - Type of failure (skill|location|task_type)
- * @param {string} currentValue - Current value that failed
- * @returns {Object|null} - Fallback strategy { strategy: string, fallbackValue: string }
- */
-function getFallbackStrategy(failureType, currentValue) {
-  if (failureType === 'skill') {
-    const fallback = FALLBACK_STRATEGIES.skill[currentValue];
-    if (fallback) {
-      return { strategy: 'skill_fallback', fallbackValue: fallback };
-    }
-  }
-
-  if (failureType === 'location') {
-    const fallback = FALLBACK_STRATEGIES.location[currentValue];
-    if (fallback) {
-      return { strategy: 'location_fallback', fallbackValue: fallback };
-    }
-  }
-
-  return null;
-}
-
-/**
- * Route task with fallback strategies
- * @param {Object} taskData - Task data
- * @returns {Object} - Routing decision with fallback info
- */
-function routeTaskWithFallback(taskData) {
-  const {
-    title,
-    task_type = 'dev',
-    feature_id,
-    is_recurring
-  } = taskData;
-
-  // Initial routing
-  let location = getTaskLocation(task_type);
-  let executionMode = determineExecutionMode({
-    input: title,
-    feature_id,
-    is_recurring
-  });
-  let skill = SKILL_WHITELIST[task_type?.toLowerCase()] || '/dev';
-
-  // Build initial routing result
-  let routing = {
-    location,
-    execution_mode: executionMode,
-    task_type,
-    skill,
-    routing_status: 'success',
-    failure_reason: null,
-    fallback_strategy: null
-  };
-
-  // Check for routing failure
-  const failure = detectRoutingFailure(routing);
-
-  if (failure.failed) {
-    // Try fallback strategies
-    const [failureType, failedValue] = failure.reason.split(':');
-
-    const fallback = getFallbackStrategy(failureType, failedValue);
-
-    if (fallback) {
-      // Apply fallback
-      if (failureType === 'skill') {
-        routing.skill = SKILL_WHITELIST[fallback.fallbackValue] || '/dev';
-        routing.task_type = fallback.fallbackValue;
-      } else if (failureType === 'location') {
-        routing.location = fallback.fallbackValue;
-      }
-
-      routing.routing_status = 'fallback';
-      routing.failure_reason = failure.reason;
-      routing.fallback_strategy = fallback.strategy;
-    } else {
-      // No fallback available, use defaults
-      routing.routing_status = 'failed';
-      routing.failure_reason = failure.reason;
-      routing.location = DEFAULT_LOCATION;
-      routing.skill = '/dev';
-    }
-  }
-
-  routing.routing_reason = `task_type=${routing.task_type} → location=${routing.location}, skill=${routing.skill}, status=${routing.routing_status}`;
-
-  if (routing.routing_status === 'success') {
-    console.log(`[task-router] routeTaskWithFallback: task_type=${routing.task_type}, location=${routing.location}, skill=${routing.skill}`);
-  } else if (routing.routing_status === 'fallback') {
-    console.warn(`[task-router] routeTaskWithFallback: FALLBACK triggered, reason=${routing.failure_reason}, strategy=${routing.fallback_strategy}, final_location=${routing.location}, final_skill=${routing.skill}`);
-  } else {
-    console.error(`[task-router] routeTaskWithFallback: FAILED, reason=${routing.failure_reason}, using defaults location=${routing.location}, skill=${routing.skill}`);
-  }
-
-  return routing;
-}
-
 /** 诊断 KR 下 Project 的直接任务，不再读取退役层。 */
 async function diagnoseKR(krId, pool) {
   const krResult = await pool.query(
@@ -532,9 +391,6 @@ export {
   determineExecutionMode,
   getDomainSkillOverride,
   routeTaskCreate,
-  routeTaskWithFallback,
-  detectRoutingFailure,
-  getFallbackStrategy,
   isValidTaskType,
   isValidLocation,
   getValidTaskTypes,
@@ -547,7 +403,6 @@ export {
   DEFAULT_LOCATION,
   VALID_TASK_TYPES,
   SKILL_WHITELIST,
-  FALLBACK_STRATEGIES,
   ASYNC_CALLBACK_TYPES,
   INTERNAL_TASK_HANDLERS,
   getInternalTaskHandler
