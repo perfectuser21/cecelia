@@ -38,7 +38,6 @@ import { recordTaskEventSafe } from './lib/task-event-log.js';
 import { startRunForExecResult } from './lib/task-run.js';
 import { classifyDispatchReasonCode } from './lib/dispatch-reason-code.js';
 import { incrementActionsToday } from './tick-stats.js';
-import { proactiveTokenCheck } from './account-usage.js';
 import { checkQuotaGuard } from './quota-guard.js';
 import { updateTask } from './actions.js';
 import { selectNextDispatchableTask, processCortexTask } from './dispatch-helpers.js';
@@ -562,17 +561,6 @@ export async function dispatchNextTask(goalIds, options = {}) {
     const qcState = getQuotaCoolingState();
     tickLog(`[tick] quota cooling until: ${qcState.until}`);
     return { skipped: true, reason: 'quota_cooling' };
-  }
-
-  // 0a-token. Proactive token expiry check — 派发前主动检测各账号 token 状态
-  // token 过期 → 立即 markAuthFailure 熔断，阻止派发级联 401
-  // MINIMAL_MODE 下跳过（不创建 research 告警任务）
-  if (!MINIMAL_MODE) {
-  try {
-    await proactiveTokenCheck();
-  } catch (tokenCheckErr) {
-    console.error('[tick] proactiveTokenCheck failed (non-fatal):', tokenCheckErr.message);
-  }
   }
 
   // 0a. Billing pause check — quota_exhausted 全局熔断
