@@ -99,7 +99,6 @@ import * as pausedRequeuPlugin from './paused-requeuer-plugin.js';
 import * as pipelineWatchdogPlugin from './pipeline-watchdog-plugin.js';
 import * as krHealthDailyPlugin from './kr-health-daily-plugin.js';
 import * as cleanupWorkerPlugin from './cleanup-worker-plugin.js';
-import { memorySyncIfNeeded } from './memory-sync.js';
 import { scheduleDailyScrape } from './daily-scrape-scheduler.js';
 import { scheduleKR3ProgressReport } from './kr3-progress-scheduler.js';
 import { calculateAndWrite as calculateKR3Progress } from './kr3-progress-calculator.js';
@@ -1684,10 +1683,6 @@ async function executeTick() {
     Promise.resolve().then(() => runConversationConsolidator())
       .catch(e => console.warn('[tick] 对话压缩失败:', e.message));
   }
-
-  // 10.20 auto-memory 同步（每 30 分钟，将 memory/*.md 同步到 design_docs/decisions，fire-and-forget）
-  Promise.resolve().then(() => memorySyncIfNeeded(pool))
-    .catch(e => console.warn("[tick] memory-sync 失败:", e.message));
 
   // 10.21 凭据健康巡检（每天北京时间 03:00 = UTC 19:00，检查 NotebookLM/Claude OAuth/Codex/发布器，fire-and-forget）
   Promise.resolve().then(() => runCredentialsHealthCheck(pool))

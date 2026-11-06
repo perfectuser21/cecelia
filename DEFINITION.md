@@ -1,8 +1,8 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.445.151
+**Brain 版本**: 1.445.152
 
-退役 Claude worker 池不再注册周期空派发；薄退役拒绝边界保留。前端移除固定 Harness 贯通声明，旧 Brain 知识页显式标记历史快照；源码清退不代表生产已发布。
+旧 Claude auto-memory 同步器已退役，现役记忆与历史数据保留。退役 Claude worker 池不再注册周期空派发；薄退役拒绝边界保留。前端移除固定 Harness 贯通声明，旧 Brain 知识页显式标记历史快照；源码清退不代表生产已发布。
 
 开发工具归位：Engine 独立包退役，实际写入守卫与工作树工具迁 scripts/dev；仍可达 Codex adapter 归 Brain。默认 CI 不再生成 Engine/Quality 组件，现役工具真实行为在 scripts 组件验证。候选保留 `cecelia_source_only=true`，尚不构成生产发布证明。
 
