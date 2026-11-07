@@ -228,6 +228,17 @@ describe('metrics routes', () => {
   describe('PATCH /tasks/:id/pr-merged', () => {
     const handler = getHandler('patch', '/tasks/:id/pr-merged');
 
+    it.each(['completed_no_pr', 'blocked', 'completed'])('dev 的 %s 不接受未经验证的合并声明，保留真实 webhook 恢复通道', async (status) => {
+      pool.query.mockImplementation(async (sql) => {
+        if (/^\s*SELECT/.test(sql)) return { rowCount: 1, rows: [{ task_type: 'dev', status }] };
+        if (sql.includes("task_type IS DISTINCT FROM 'dev'")) return { rowCount: 0, rows: [] };
+        return { rowCount: 1, rows: [{ id: 'task-1', status: 'completed' }] };
+      });
+      const { req, res } = mockReqRes({ id: 'task-1' }, { pr_url: 'https://github.com/org/repo/pull/1' });
+      await handler(req, res);
+      expect(res._status).toBe(409);
+    });
+
     it('正常调用后返回更新后的 task', async () => {
       const prUrl = 'https://github.com/perfectuser21/cecelia/pull/123';
       pool.query.mockResolvedValueOnce({
@@ -265,7 +276,7 @@ describe('metrics routes', () => {
     });
 
     it('task 不存在时返回 404', async () => {
-      pool.query.mockResolvedValueOnce({ rowCount: 0, rows: [] });
+      pool.query.mockResolvedValue({ rowCount: 0, rows: [] });
 
       const { req, res } = mockReqRes(
         { id: 'non-existent' },
