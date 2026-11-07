@@ -2238,8 +2238,8 @@ async function updateTaskRunInfo(taskId, runId, status = 'triggered') {
  * @returns {Object} - { success, taskId, runId, error? }
  */
 async function triggerCodexReview(task) {
-  if (isRetiredDecomposition(task)) return { success: false, taskId: task?.id, reason: RETIRED_DECOMPOSITION };
   assertExternalExecutionAllowed();
+  if (isRetiredDecomposition(task)) return { success: false, taskId: task?.id, reason: RETIRED_DECOMPOSITION };
   const runId = generateRunId(task.id);
 
   try {
@@ -2539,8 +2539,8 @@ async function selectCodexAccounts() {
  * @returns {Object} - { success, taskId, runId, error? }
  */
 async function triggerCodexBridge(task, forceBridgeUrl = null) {
-  if (isRetiredDecomposition(task)) return { success: false, taskId: task?.id, reason: RETIRED_DECOMPOSITION };
   assertExternalExecutionAllowed();
+  if (isRetiredDecomposition(task)) return { success: false, taskId: task?.id, reason: RETIRED_DECOMPOSITION };
   if(task.payload?.invocation_activity)return {success:true,taskId:task.id,runId:task.payload.invocation_activity.child_run_id,executor:'shared-activity-runner',dispatchUncertain:true};
   const runId = generateRunId(task.id);
   try {
@@ -2625,8 +2625,8 @@ async function triggerCodexBridge(task, forceBridgeUrl = null) {
  * @returns {Object} - { success, taskId, result?, error? }
  */
 async function triggerMiniMaxExecutor(task) {
-  if (isRetiredDecomposition(task)) return { success: false, taskId: task?.id, reason: RETIRED_DECOMPOSITION };
   assertExternalExecutionAllowed();
+  if (isRetiredDecomposition(task)) return { success: false, taskId: task?.id, reason: RETIRED_DECOMPOSITION };
   const runId = generateRunId(task.id);
 
   try {
