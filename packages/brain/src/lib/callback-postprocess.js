@@ -89,10 +89,39 @@ export async function writeReviewResult(task_id, result, pool) {
   const parentTaskId = reviewPayload.parent_task_id;
 
   const resultObj = typeof result === 'object' && result !== null ? result : {};
-  const decision = resultObj.decision || (typeof result === 'string' ? result : 'PASS');
+  // 没有明确、相互一致的结论时不覆盖已有结果，也不自行判通过。
+  const has = (obj, key) => obj && typeof obj === 'object' && Object.hasOwn(obj, key);
+  const fields = [[resultObj, 'verdict'], [resultObj.result, 'verdict'], [resultObj, 'decision']];
+  if (fields.some(([obj, key]) => has(obj, key) && (typeof obj[key] !== 'string' || !obj[key].trim()))) {
+    return { written: false, reason: 'review_decision_invalid' };
+  }
+  const values = [resultObj.verdict, resultObj.result?.verdict, resultObj.decision,
+    typeof result === 'string' ? result : null]
+    .filter(value => typeof value === 'string' && value.trim())
+    .map(value => value.trim());
+  const groups = {
+    PASS: 'PASS', APPROVED: 'PASS', FAIL: 'FAIL', FAILED: 'FAIL',
+    REJECT: 'REJECTED', REJECTED: 'REJECTED', NEEDS_FIX: 'NEEDS_FIX',
+    NEEDS_REVISION: 'NEEDS_REVISION', CRITICAL_BLOCK: 'CRITICAL_BLOCK',
+    TEST_BLOCK: 'TEST_BLOCK', CHANGES_REQUESTED: 'CHANGES_REQUESTED',
+  };
+  const meanings = values.map(value => groups[value.toUpperCase()]);
+  if (!values.length || meanings.some(value => !value) || new Set(meanings).size !== 1) {
+    return { written: false, reason: 'review_decision_missing_or_conflicting' };
+  }
+  const decision = values[0];
   const summary = resultObj.summary || (typeof result === 'string' ? result : '');
-  const l1Count = resultObj.l1_count ?? 0;
-  const l2Count = resultObj.l2_count ?? 0;
+  const count = value => Number.isSafeInteger(value) && value >= 0 ? String(value)
+    : (typeof value === 'string' && /^\d+$/.test(value) ? value : '未提供');
+  const l1Count = count(resultObj.l1_count);
+  const l2Count = count(resultObj.l2_count);
+  if ((has(resultObj, 'l1_count') && l1Count === '未提供') ||
+      (has(resultObj, 'l2_count') && l2Count === '未提供')) {
+    return { written: false, reason: 'review_findings_count_invalid' };
+  }
+  if (meanings[0] === 'PASS' && [l1Count, l2Count].some(value => value !== '未提供' && Number(value) > 0)) {
+    return { written: false, reason: 'review_decision_conflicts_with_findings' };
+  }
 
   const reviewResultText = [
     `决定: ${decision}`,
