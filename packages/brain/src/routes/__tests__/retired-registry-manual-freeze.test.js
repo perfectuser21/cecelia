@@ -69,4 +69,15 @@ describe('手动审查预检后的账本并发变化', () => {
       expect(io.release).not.toHaveBeenCalled();
     });
   }
+  it('dispatch-now 对连续请求限流，在查询数据库之前拒绝超额请求',async()=>{
+    io.query.mockClear();
+    let limited=false;
+    for(let i=0;i<305;i++) {
+      const result=await request(app).post('/api/brain/dispatch-now').send({});
+      if(result.status===429) {limited=true;break;}
+      expect(result.status).toBe(400);
+    }
+    expect(limited).toBe(true);
+    expect(io.query).not.toHaveBeenCalled();
+  });
 });
