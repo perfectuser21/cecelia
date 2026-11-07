@@ -579,6 +579,14 @@ it.each([
   expect(mockTriggerCeceliaRun).not.toHaveBeenCalled(); expect(mockRecordFailure).not.toHaveBeenCalled();
 });
 
+it('退役规划即使携带 Cortex 标记也在认领前停放，普通 Cortex 仍有专用回归', async () => {
+  _candidatePool=[{...candidate,task_type:'initiative_plan',payload:{requires_cortex:true}}]; wireQueries();
+  const prior=mockQuery.getMockImplementation();
+  mockQuery.mockImplementation(async(sql,args)=>sql.includes('blocked_reason = $3') ? {rows:[{id:'q1'}],rowCount:1} : prior(sql,args));
+  expect(await dispatchNextTask(null)).toMatchObject({dispatched:false,reason:'retired_decomposition',parked:true});
+  expect(processCortexTask).not.toHaveBeenCalled(); expect(mockTriggerCeceliaRun).not.toHaveBeenCalled();
+});
+
 describe('退役拆解任务自动派发', () => {
   it.each([{decomposition:true},{decomposition:'true'},{decomposition:'continue'},{decomposition:'okr'},{next_action:'decompose'}])('旧标记 %j 在 claim 和启动前停放', async (payload) => {
     _candidatePool = [{...candidate, task_type:'dev', payload}];

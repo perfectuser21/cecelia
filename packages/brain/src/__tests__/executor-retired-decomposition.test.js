@@ -36,14 +36,21 @@ describe('退役规划和旧拆解技能覆盖禁止启动', () => {
     expect(await executor.triggerCeceliaRun(task)).toMatchObject({success:false,reason:'retired_decomposition'});
     expect(io.spawn).not.toHaveBeenCalled(); expect(global.fetch).not.toHaveBeenCalled();
   });
-  it.each(['architecture_scan','arch_review'])('%s 的旧 skill_override 在启动前拒绝', async task_type => {
-    const task={id:'old-override',task_type,payload:{skill_override:'/decomp'}};
+  it.each([
+    ['architecture_scan','/decomp'],['arch_review','/decomp'],
+    ['architecture_scan','/decomp-check'],['arch_review','/decomp-check --review'],
+  ])('%s 的旧 skill_override %s 在启动前拒绝', async (task_type,skill_override) => {
+    const task={id:'old-override',task_type,payload:{skill_override}};
     expect(await executor.triggerCeceliaRun(task)).toMatchObject({success:false,reason:'retired_decomposition'});
     expect(io.spawn).not.toHaveBeenCalled(); expect(global.fetch).not.toHaveBeenCalled();
   });
   it('正常架构技能覆盖保持可用',async()=>{
     const {isRetiredDecomposition}=await import('../lib/retired-decomposition.js');
     expect(isRetiredDecomposition({task_type:'architecture_scan',payload:{skill_override:'/architect'}})).toBe(false);
+    expect(isRetiredDecomposition({task_type:'arch_review',payload:{}})).toBe(false);
+    expect(isRetiredDecomposition({task_type:'qiumi_task',payload:{skill_override:'/decomp'}})).toBe(false);
+    expect(isRetiredDecomposition({task_type:'research',payload:{invocation:{},skill_override:'/decomp'}})).toBe(false);
+    expect(isRetiredDecomposition({task_type:'architecture_scan',payload:{skill_override:'/decomp-other'}})).toBe(false);
   });
 });
 
