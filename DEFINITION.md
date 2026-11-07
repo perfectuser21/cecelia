@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.445.157
+**Brain 版本**: 1.445.158
 
 旧 Claude auto-memory 同步器已退役，现役记忆与历史数据保留。退役 Claude worker 池不再注册周期空派发；薄退役拒绝边界保留。前端移除固定 Harness 贯通声明，旧 Brain 知识页显式标记历史快照；源码清退不代表生产已发布。
 
@@ -6296,9 +6296,9 @@ executeTick() 流程：
                └─ level=2 → 升级到皮层
 ```
 
-**45 个白名单 action**（棒4起 okr_initiative_plan/okr_scope_plan/okr_project_plan 随 scope/initiative 层退役移除，决策 ee4842a6）：
+**44 个白名单 action**（棒4起 okr_initiative_plan/okr_scope_plan/okr_project_plan 随 scope/initiative 层退役移除，决策 ee4842a6；旧秋米 OKR 拆解决策已退役）：
 - 任务：dispatch_task, create_task, cancel_task, retry_task, reprioritize_task, pause_task, resume_task, mark_task_blocked, quarantine_task
-- OKR：create_okr, update_okr_progress, assign_to_autumnrice
+- OKR：create_okr, update_okr_progress
 - 系统：notify_user, log_event, escalate_to_brain, request_human_review
 - 分析：analyze_failure, predict_progress
 - 规划：create_proposal

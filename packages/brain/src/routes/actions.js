@@ -120,6 +120,9 @@ router.post('/pending-actions', async (req, res) => {
     if (!action_type || !requester) {
       return res.status(400).json({ error: 'action_type and requester are required' });
     }
+    if (action_type === 'assign_to_autumnrice') {
+      return res.status(410).json({ success: false, error: 'decomposition_retired', code: 'decomposition_retired' });
+    }
     const result = await pool.query(`
       INSERT INTO pending_actions
         (action_type, params, context, status, source, comments)
