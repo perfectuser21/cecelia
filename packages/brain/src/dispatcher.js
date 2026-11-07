@@ -30,7 +30,7 @@ import {
   getBillingPause,
 } from './executor.js';
 import { calculateSlotBudget, harnessSlotCheck } from './slot-allocator.js';
-import { INITIATIVE_LOCK_TASK_TYPES, RETIRED_HARNESS_TYPES_DISPATCH, HEADLESS_KERNEL_RETIRED_TASK_TYPES, HARNESS_INFLIGHT_TASK_TYPES, OPENCLAW_PASSTHROUGH_TASK_TYPES, getTaskType } from './lib/task-type-registry.js';
+import { INITIATIVE_LOCK_TASK_TYPES, RETIRED_HARNESS_TYPES_DISPATCH, HEADLESS_KERNEL_RETIRED_TASK_TYPES, HARNESS_INFLIGHT_TASK_TYPES, OPENCLAW_PASSTHROUGH_TASK_TYPES, LAYER_RETIRED_TASK_TYPES, getTaskType } from './lib/task-type-registry.js';
 import { emit } from './event-bus.js';
 import { isAllowed, recordFailure, recordSuccess } from './circuit-breaker.js';
 import { publishTaskStarted } from './events/taskEvents.js';
@@ -807,8 +807,8 @@ export async function dispatchNextTask(goalIds, options = {}) {
       return { dispatched: false, reason: 'no_dispatchable_task', actions };
     }
 
-    // Cortex 根因分析是独立的 Brain 内联路径，不解释旧拆解技能标记。
-    if (candidate.payload && candidate.payload.requires_cortex === true) {
+    // 普通 Cortex 根因分析保持优先；已退役规划类型仍须停放。
+    if (candidate.payload && candidate.payload.requires_cortex === true && !LAYER_RETIRED_TASK_TYPES.includes(candidate.task_type)) {
       return await processCortexTask(candidate, actions);
     }
 
