@@ -18,13 +18,51 @@ test('slow system packages leave sufficient time for the browser acceptance suit
     'PWA job timeout must accommodate the observed slow installation and the full test suite');
 });
 
-test('system dependency installation stays bounded and does not skip browser checks', () => {
-  const install = job.steps.find(step => step.name === 'Install Chromium');
-  assert.match(install.run, /\binstall chromium --with-deps\b/);
+function assertMandatoryChecks(candidate) {
+  const install = candidate.steps.find(step => step.name === 'Install Chromium');
+  assert.ok(install && !install.if && !install['continue-on-error']);
+  assert.equal(install.run.trim(), 'node e2e/playwright-cli.mjs install chromium --with-deps');
   assert.ok(install['timeout-minutes'] >= 7 && install['timeout-minutes'] <= 10,
     'slow dependency installation needs a bounded 7–10 minute step budget');
-  for (const name of ['Verify stale PWA upgrade', 'Verify task desk receipts', 'Verify current cockpit inbox and destination routes']) {
-    const step = job.steps.find(candidate => candidate.name === name);
+  const expectedCommands = {
+    'Verify stale PWA upgrade': ['npm run test:pwa-upgrade'],
+    'Verify task desk receipts': ['npm run test:task-desk'],
+    'Verify current cockpit inbox and destination routes': [
+      'GIT_SHA="$GITHUB_SHA" npx --no-install vite build --outDir .dist-pwa-e2e',
+      'node e2e/playwright-cli.mjs test --config ../../tests/regression/manual-ui/playwright.config.ts',
+    ],
+  };
+  for (const [name, commands] of Object.entries(expectedCommands)) {
+    const step = candidate.steps.find(step => step.name === name);
     assert.ok(step && step.run && !step.if && !step['continue-on-error'], `${name} must remain mandatory`);
+    const lines = step.run.split('\n').map(line => line.trim());
+    for (const command of commands) assert.ok(lines.includes(command), `${name} must execute ${command}`);
   }
+}
+
+test('system dependency installation stays bounded and does not skip browser checks', () => {
+  assertMandatoryChecks(job);
 });
+
+for (const name of ['Install Chromium', 'Verify stale PWA upgrade', 'Verify task desk receipts', 'Verify current cockpit inbox and destination routes']) {
+  test(`a no-op cannot stand in for ${name}`, () => {
+    const mutated = structuredClone(job);
+    const step = mutated.steps.find(candidate => candidate.name === name);
+    step.run = `echo ${JSON.stringify(step.run)}`;
+    assert.throws(() => assertMandatoryChecks(mutated));
+  });
+  test(`an empty command cannot stand in for ${name}`, () => {
+    const mutated = structuredClone(job);
+    mutated.steps.find(candidate => candidate.name === name).run = '';
+    assert.throws(() => assertMandatoryChecks(mutated));
+  });
+}
+
+for (const fragment of ['vite build', 'playwright-cli.mjs test']) {
+  test(`cockpit check cannot omit ${fragment}`, () => {
+    const mutated = structuredClone(job);
+    const step = mutated.steps.find(candidate => candidate.name === 'Verify current cockpit inbox and destination routes');
+    step.run = step.run.split('\n').filter(line => !line.includes(fragment)).join('\n');
+    assert.throws(() => assertMandatoryChecks(mutated));
+  });
+}
