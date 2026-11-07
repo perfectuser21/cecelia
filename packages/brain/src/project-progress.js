@@ -7,7 +7,7 @@
  *
  * 口径：
  *   - project 进度 = 该 project 下未取消任务（task_type<>'project' 排除子项目根任务，
- *     status<>'cancelled' 排除已取消）里 completed/completed_no_pr 的占比；
+ *     status<>'cancelled' 排除已取消）里已完成任务的占比；dev 的 completed_no_pr 不算完成；
  *     project 名下没有任务时按 project.status 映射（completed→100，其它→0）。
  *   - KR 进度 = 名下 projects（WHERE kr_id=$1 AND status NOT IN ('cancelled','archived')）
  *     的 project 进度算术平均（等权）；KR 名下无 project 时由调用方决定是否覆盖
@@ -20,7 +20,7 @@ const COMPLETED_TASK_STATUSES = ['completed', 'completed_no_pr'];
  * 由任务完成计数算单个 project 的进度（无任务时按 project.status 映射）。
  * @param {string} status - project.status
  * @param {number} total - 未取消/非子项目根任务数
- * @param {number} done - 其中 completed/completed_no_pr 数
+ * @param {number} done - 完成数（不含 dev 的 completed_no_pr）
  * @returns {number} 0~100，保留两位小数
  */
 function projectProgressFromCounts(status, total, done) {
@@ -53,7 +53,8 @@ export async function getProjectsForKrBatch(pool, krIds) {
   const { rows: taskStats } = await pool.query(
     `SELECT project_id,
             COUNT(*)::int AS total,
-            COUNT(*) FILTER (WHERE status = ANY($2))::int AS done
+            COUNT(*) FILTER (WHERE status = ANY($2)
+              AND NOT (status = 'completed_no_pr' AND task_type = 'dev'))::int AS done
        FROM tasks
       WHERE project_id = ANY($1) AND task_type <> 'project' AND status <> 'cancelled'
       GROUP BY project_id`,

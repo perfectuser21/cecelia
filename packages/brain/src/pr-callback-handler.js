@@ -232,7 +232,23 @@ export async function handlePrMerged(pool, prInfo) {
 
     // 终态钩子（lib/task-terminal.js）：completed_no_pr → completed 提升 / 已 completed 补 PR 真相后接棒
     await afterTerminalTransition(pool, taskId, 'completed');
-    return { matched: true, taskId, taskTitle, krProgressUpdated: false };
+    let krProgressUpdated = false;
+    if (task.status === 'completed_no_pr') {
+      try {
+        let krId = task.goal_id;
+        if (!krId && task.project_id) {
+          const project = await pool.query('SELECT kr_id FROM projects WHERE id = $1 AND kr_id IS NOT NULL', [task.project_id]);
+          krId = project.rows[0]?.kr_id;
+        }
+        if (krId) {
+          await updateKrProgress(pool, krId);
+          krProgressUpdated = true;
+        }
+      } catch (err) {
+        console.warn(`[pr-callback] 合并后 KR 进度更新失败: ${err.message}`);
+      }
+    }
+    return { matched: true, taskId, taskTitle, krProgressUpdated };
   }
 
   // 3. in_progress 任务：原有完整路径（更新 status + pr_url + pr_merged_at + KR 进度）

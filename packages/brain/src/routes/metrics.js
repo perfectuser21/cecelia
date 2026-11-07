@@ -178,12 +178,16 @@ router.patch('/tasks/:id/pr-merged', async (req, res) => {
          status = CASE WHEN status != 'completed' THEN 'completed' ELSE status END,
          completed_at = CASE WHEN completed_at IS NULL THEN NOW() ELSE completed_at END,
          updated_at = NOW()
-       WHERE id = $1
+       WHERE id = $1 AND task_type IS DISTINCT FROM 'dev'
        RETURNING id, title, status, pr_url, pr_merged_at, success_metrics, execution_attempts`,
       [id, pr_url, merged_at || null, metrics ? JSON.stringify(metrics) : null]
     );
 
     if (result.rowCount === 0) {
+      const existing = await pool.query('SELECT task_type FROM tasks WHERE id = $1', [id]);
+      if (existing.rows[0]?.task_type === 'dev') {
+        return res.status(409).json({ error: 'dev PR merge requires verified GitHub evidence' });
+      }
       return res.status(404).json({ error: 'Task not found' });
     }
 
