@@ -81,6 +81,8 @@ const REGISTRY = join(SRC, 'lib', 'task-type-registry.js');
 //   这 11 条即为 PR1 终态允许保留的清单（`packages/brain/scripts/audit/registry-vs-base.mjs`
 //   另行对全部已替换站点做"注册表派生值 vs 基线源码原文"机械审计，见该脚本头注释）。
 export const REMAINING_LEGACY_SITES = {
+  // 旧拆解退役边界：四种专用执行面不读取旧技能，保留精确站点供退役清理。
+  'lib/retired-decomposition.js': ['9:if(...)'],
   // kind: map（long-lived）— 仅唯一程序级const handler表按AST结构身份许可，行号仍用于错误定位。
   // 空白/注释移动不改变身份；第二份表、字符串枚举或非法handler结构仍由守卫拒绝。
   'executor.js': [EXECUTOR_HANDLER_SITE],

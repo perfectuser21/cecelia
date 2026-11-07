@@ -130,4 +130,41 @@ describe('qiumi-manual-dispatch：手机单任务派发与 coding Bridge 分离'
     expect(mocks.available).toHaveBeenCalledOnce();
     expect(mocks.route).not.toHaveBeenCalled();
   });
+  for (const endpoint of ['task', 'dispatch-now']) {
+    it.each([{decomposition:true}, {decomposition:'true'}, {decomposition:'continue'}, {decomposition:'okr'}, {next_action:'decompose'}])('%s 拒绝旧拆解 %j 且不改任务', async (payload) => {
+      task.task_type = 'dev'; task.payload = payload;
+      const r = endpoint === 'task'
+        ? await request(app).post('/api/brain/tasks/phone-task/dispatch').send({})
+        : await request(app).post('/api/brain/dispatch-now').send({task_id:'phone-task'});
+      expect(r.status).toBe(410);
+      expect(r.body.error).toBe('retired_decomposition');
+      expect(task.status).toBe('queued');
+      expect(mocks.trigger).not.toHaveBeenCalled();
+      expect(mocks.query.mock.calls.some(([sql])=>/UPDATE tasks/.test(sql))).toBe(false);
+    });
+  }
+  it('known 仍走普通开发可用性门', async () => {
+    task.task_type='dev'; task.payload={decomposition:'known'};
+    const r=await request(app).post('/api/brain/tasks/phone-task/dispatch').send({});
+    expect(r.status).toBe(503); expect(mocks.available).toHaveBeenCalledOnce();
+  });
+  it('已在途的旧拆解请求被拒绝但不覆盖任务状态', async () => {
+    task.task_type='dev'; task.status='in_progress'; task.payload={decomposition:'true'};
+    const r=await request(app).post('/api/brain/dispatch-now').send({task_id:'phone-task'});
+    expect(r.status).toBe(410); expect(task.status).toBe('in_progress');
+    expect(mocks.trigger).not.toHaveBeenCalled();
+    expect(mocks.query.mock.calls.some(([sql])=>/UPDATE tasks/.test(sql))).toBe(false);
+  });
+  it('秋米专用执行面的同名标记不应触发旧拆解拒绝', async () => {
+    task.payload={decomposition:'true'};
+    const r=await request(app).post('/api/brain/tasks/phone-task/dispatch').send({});
+    expect(r.status).toBe(202); expect(mocks.route).toHaveBeenCalledOnce();
+  });
+  it('脚本专用执行面的同名标记不应触发旧拆解拒绝', async () => {
+    task.task_type='script_run'; task.payload={next_action:'decompose'};
+    mocks.available.mockResolvedValue({available:true});
+    mocks.trigger.mockResolvedValue({success:true,runId:'script-run'});
+    const r=await request(app).post('/api/brain/tasks/phone-task/dispatch').send({});
+    expect(r.status).toBe(202); expect(mocks.trigger).toHaveBeenCalledOnce();
+  });
 });
