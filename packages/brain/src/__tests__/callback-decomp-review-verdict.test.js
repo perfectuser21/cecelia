@@ -110,6 +110,17 @@ describe('拆解审核回执必须有明确 verdict', () => {
     expect(recordRunFromCallback).toHaveBeenCalledWith(expect.any(Object), { pool: mockPool, requireTaskOwner: true });
   }, 10000);
 
+  it.each(['decomposition_quality','initiative_plan'])('已在途旧审核 %s 的明确回执仍可完成', async review_scope => {
+    const previous=mockPool.query.getMockImplementation();
+    mockPool.query.mockImplementation(async (sql,params)=>String(sql).includes('SELECT task_type, payload FROM tasks')
+      ? {rows:[{task_type:'decomp_review',payload:{review_scope}}]} : previous(sql,params));
+    const response=await mockReqRes('POST','/execution-callback',{
+      task_id:'decomp-task',run_id:'owned-run',status:'AI Done',result:{verdict:'approved'},
+    });
+    expect(response.statusCode).toBe(200);
+    expect(state.review).toBe('approved');
+  },10000);
+
   it('嵌套显式大写结论按真实结论处理，不被当作默认批准', async () => {
     const response = await mockReqRes('POST', '/execution-callback', {
       task_id: 'decomp-task', run_id: 'owned-run', status: 'AI Done', result: { result: { verdict: 'REJECTED' } },

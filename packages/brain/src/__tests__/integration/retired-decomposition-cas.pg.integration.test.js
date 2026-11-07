@@ -46,6 +46,14 @@ it('仅停放未领取且类型与 payload 未变化的 queued 任务', async ()
     expect(observed.find(row=>row.id===id(6))).toMatchObject({status:'blocked',claimed_by:null});
     expect(observed.find(row=>row.id===id(7))).toMatchObject({status:'in_progress',claimed_by:'new'});
     expect(observed.find(row=>row.id===id(9)).status).toBe('completed');
+    // 两类旧审核复用同一真实 CAS；内容变为计划调整或已被认领时不得停放。
+    await client.query(`INSERT INTO tasks (id,status,task_type,claimed_by,payload) VALUES
+      ($1,'queued','decomp_review',NULL,'{"review_scope":"decomposition_quality"}'),
+      ($2,'queued','decomp_review',NULL,'{"review_scope":"plan_adjustment"}'),
+      ($3,'queued','decomp_review','other','{"review_scope":"initiative_plan"}')`, [id(11),id(12),id(13)]);
+    expect(await parkRetiredDecomposition(client,{id:id(11),task_type:'decomp_review',payload:{review_scope:'decomposition_quality'}})).toBe(true);
+    expect(await parkRetiredDecomposition(client,{id:id(12),task_type:'decomp_review',payload:{review_scope:'decomposition_quality'}})).toBe(false);
+    expect(await parkRetiredDecomposition(client,{id:id(13),task_type:'decomp_review',payload:{review_scope:'initiative_plan'}})).toBe(false);
   } finally {
     if (transaction) await client.query('ROLLBACK');
     await client.end();

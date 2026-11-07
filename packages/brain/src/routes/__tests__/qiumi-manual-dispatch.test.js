@@ -144,6 +144,12 @@ describe('qiumi-manual-dispatch：手机单任务派发与 coding Bridge 分离'
     });
   }
   for (const endpoint of ['task','dispatch-now']) {
+    it.each(['decomposition_quality','initiative_plan'])('%s 拒绝已退役拆解审核 %s 且不写状态',async review_scope=>{
+      task.task_type='decomp_review'; task.payload={review_scope};
+      const r=endpoint==='task' ? await request(app).post('/api/brain/tasks/phone-task/dispatch').send({}) : await request(app).post('/api/brain/dispatch-now').send({task_id:'phone-task'});
+      expect(r.status).toBe(410); expect(task.status).toBe('queued'); expect(mocks.trigger).not.toHaveBeenCalled();
+      expect(mocks.query.mock.calls.some(([sql])=>/UPDATE tasks/.test(sql))).toBe(false);
+    });
     it.each([{task_type:'initiative_plan',payload:{}},{task_type:'architecture_scan',payload:{skill_override:'/decomp'}}])('%s 拒绝历史规划或旧技能覆盖 %j',async (oldTask)=>{
       Object.assign(task,oldTask);
       const r=endpoint==='task' ? await request(app).post('/api/brain/tasks/phone-task/dispatch').send({}) : await request(app).post('/api/brain/dispatch-now').send({task_id:'phone-task'});
