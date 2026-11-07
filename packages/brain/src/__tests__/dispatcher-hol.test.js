@@ -15,6 +15,10 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
+vi.mock('child_process', async (importOriginal) => ({
+  ...(await importOriginal()), execSync: vi.fn(() => ''), execFileSync: vi.fn(() => ''),
+}));
+
 const mockQuery = vi.fn();
 vi.mock('../db.js', () => ({
   default: { query: (...args) => mockQuery(...args) }
@@ -37,10 +41,19 @@ vi.mock('../executor.js', () => ({
   getBillingPause: vi.fn(() => ({ active: false })),
   getActiveProcessCount: vi.fn(() => 0),
   MAX_SEATS: 12,
+  PHYSICAL_CAPACITY: 12,
   INTERACTIVE_RESERVE: 2,
+  getEffectiveMaxSeats: vi.fn(() => 12),
+  getBudgetCap: vi.fn(() => ({ physical: 12, effective: 12 })),
+  checkServerResources: vi.fn(() => ({ effectiveSlots: 12, metrics: { max_pressure: 0.1 } })),
+  getTokenPressure: vi.fn(async () => ({ token_pressure: 0, available_accounts: 3 })),
 }));
 
-vi.mock('../token-budget-planner.js', () => ({ shouldDowngrade: vi.fn(() => false) }));
+vi.mock('../token-budget-planner.js', async (importOriginal) => ({ ...(await importOriginal()), shouldDowngrade: vi.fn(() => false) }));
+vi.mock('../fleet-resource-cache.js', () => ({
+  getFleetStatus: vi.fn(() => []), getRemoteCapacity: vi.fn(() => ({ online: true, effectiveSlots: 2 })),
+  getTotalEffectiveSlots: vi.fn(() => 12),
+}));
 vi.mock('../event-bus.js', () => ({ emit: vi.fn().mockResolvedValue(undefined) }));
 vi.mock('../circuit-breaker.js', () => ({
   isAllowed: vi.fn(() => true),
@@ -61,13 +74,15 @@ vi.mock('../dispatch-stats.js', () => ({
 // 引导员 L3 跨厂商把 dev 任务路由到 codex，撞上本测试的 codex 满池 fixture → C1 假红。
 // 测试必须与宿主机凭据状态隔离。
 vi.mock('../llm-capacity.js', () => ({
+  CODEX_ACCOUNTS: [],
   getLlmCapacitySnapshot: vi.fn().mockResolvedValue(null),
   chooseGuidedExecutor: vi.fn(() => null),
   summarizeLlmCapacity: vi.fn(() => null),
 }));
 
 vi.mock('../account-usage.js', () => ({
-  proactiveTokenCheck: vi.fn().mockResolvedValue({ ok: true })
+  proactiveTokenCheck: vi.fn().mockResolvedValue({ ok: true }),
+  getAccountUsage: vi.fn().mockResolvedValue({ account1: { account_id: 'account1', seven_day_pct: 0 } }),
 }));
 vi.mock('../quota-guard.js', () => ({
   checkQuotaGuard: vi.fn().mockResolvedValue({ allow: true, priorityFilter: null, reason: 'quota_ok', bestPct: 0 }),
@@ -89,7 +104,8 @@ vi.mock('../dispatch-helpers.js', () => ({
   processCortexTask: vi.fn(),
 }));
 
-vi.mock('../slot-allocator.js', () => ({
+vi.mock('../slot-allocator.js', async (importOriginal) => ({
+  ...(await importOriginal()),
   harnessSlotCheck: vi.fn().mockResolvedValue({ allow: true, reason: 'ok', containers: 0, inflight: 0, cap: { effective: 4, mem_cap: 8, acct_cap: 4, hard_cap: 8 }, stale: false }),
   calculateSlotBudget: vi.fn(),
   shouldBypassBackpressure: vi.fn(() => false),
@@ -118,7 +134,7 @@ function makeClaudeTask(id = 'claude-1', priority = 'P1') {
   return { id, task_type: 'research', priority, title: `Claude task ${id}`, payload: {}, project_id: null, created_at: '2026-07-16T00:00:00Z' };
 }
 
-function setupQueryMocks(dispatchedTaskId) {
+function setupQueryMocks(dispatchedTaskId, taskType = 'research') {
   mockQuery.mockImplementation((sql) => {
     if (/UPDATE tasks.*pipeline_terminal_failure/.test(sql)) {
       return Promise.resolve({ rows: [], rowCount: 0 });
@@ -130,16 +146,68 @@ function setupQueryMocks(dispatchedTaskId) {
       return Promise.resolve({ rows: [] });
     }
     if (/SELECT \* FROM tasks WHERE id/.test(sql)) {
-      return Promise.resolve({ rows: [{ id: dispatchedTaskId, task_type: 'research', payload: {}, priority: 'P1', title: 'Claude task' }] });
+      return Promise.resolve({ rows: [{ id: dispatchedTaskId, task_type: taskType, payload: {}, priority: 'P1', title: 'dispatch task' }] });
     }
     return Promise.resolve({ rows: [], rowCount: 0 });
   });
 }
 
 describe('dispatcher HOL blocking fix', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
     mockQuery.mockReset();
+    const { checkQuotaGuard } = await import('../quota-guard.js');
+    const { getTokenPressure, checkServerResources } = await import('../executor.js');
+    const { getRemoteCapacity } = await import('../fleet-resource-cache.js');
+    const { getAccountUsage } = await import('../account-usage.js');
+    checkQuotaGuard.mockResolvedValue({ allow: true, priorityFilter: null, reason: 'quota_ok', bestPct: 0 });
+    getTokenPressure.mockResolvedValue({ token_pressure: 0, available_accounts: 3 });
+    checkServerResources.mockReturnValue({ effectiveSlots: 12, metrics: { max_pressure: 0.1 } });
+    getRemoteCapacity.mockReturnValue({ online: true, effectiveSlots: 2 });
+    getAccountUsage.mockResolvedValue({ account1: { account_id: 'account1', seven_day_pct: 0 } });
+  });
+
+  it('旧 Claude 额度满时仍可派发有空位的 Codex 任务', async () => {
+    const { calculateSlotBudget } = await import('../slot-allocator.js');
+    const { checkQuotaGuard } = await import('../quota-guard.js');
+    calculateSlotBudget.mockResolvedValue(makeSlotBudget({ codexAvailable: true }));
+    checkQuotaGuard.mockResolvedValueOnce({ allow: false, reason: 'quota_critical', bestPct: 100 });
+    mockSelectNextDispatchableTask.mockResolvedValueOnce(makeCodexTask('codex-available', 'P1'));
+    setupQueryMocks('codex-available', 'codex_dev');
+
+    const { dispatchNextTask } = await import('../dispatcher.js');
+    const result = await dispatchNextTask([]);
+    expect(result.dispatched).toBe(true);
+    expect(result.task_id).toBe('codex-available');
+    const { triggerCeceliaRun } = await import('../executor.js');
+    expect(triggerCeceliaRun).toHaveBeenCalledWith(expect.objectContaining({ id: 'codex-available', task_type: 'codex_dev' }));
+  });
+
+  it('真实槽位预算链路：旧 Claude 满额不挡 Codex，机器无槽时仍拒绝', async () => {
+    const actual = await vi.importActual('../slot-allocator.js');
+    const { calculateSlotBudget } = await import('../slot-allocator.js');
+    const { getTokenPressure, checkServerResources, triggerCeceliaRun } = await import('../executor.js');
+    const { checkQuotaGuard } = await import('../quota-guard.js');
+    const { getRemoteCapacity } = await import('../fleet-resource-cache.js');
+    const { getAccountUsage } = await import('../account-usage.js');
+    actual._resetSlotBuffer();
+    calculateSlotBudget.mockImplementation(actual.calculateSlotBudget);
+    getTokenPressure.mockResolvedValue({ token_pressure: 0, available_accounts: 3 });
+    getAccountUsage.mockResolvedValue({ account1: { account_id: 'account1', seven_day_pct: 100, seven_day_sonnet_pct: 100 } });
+    checkQuotaGuard.mockResolvedValue({ allow: false, reason: 'quota_critical', bestPct: 100 });
+    mockSelectNextDispatchableTask.mockImplementation(async (_goalIds, _skip, options) =>
+      options?.onlyTaskTypes ? null : makeCodexTask('codex-real-budget', 'P1'));
+    setupQueryMocks('codex-real-budget', 'codex_dev');
+    const { dispatchNextTask } = await import('../dispatcher.js');
+    const result = await dispatchNextTask([]);
+    expect(result.dispatched).toBe(true);
+    expect(triggerCeceliaRun).toHaveBeenCalledWith(expect.objectContaining({ id: 'codex-real-budget', task_type: 'codex_dev' }));
+
+    actual._resetSlotBuffer();
+    checkServerResources.mockReturnValue({ effectiveSlots: 0, metrics: { max_pressure: 1 } });
+    getRemoteCapacity.mockReturnValue(null);
+    const stopped = await actual.calculateSlotBudget();
+    expect(stopped.dispatchAllowed).toBe(false);
   });
 
   it('C1: 队首 codex task (P1) + codex pool 满 + 第二位 Claude task → 跳过队首并派发', async () => {
@@ -172,6 +240,9 @@ describe('dispatcher HOL blocking fix', () => {
   it('C2: 队首 P0 codex task + codex pool 满 → 全停，不绕过 P0', async () => {
     const { calculateSlotBudget } = await import('../slot-allocator.js');
     calculateSlotBudget.mockResolvedValue(makeSlotBudget({ codexAvailable: false }));
+    // 已退役的 Claude 满额不得抢先阻塞 Codex；Codex 池自身的上限仍生效。
+    const { checkQuotaGuard } = await import('../quota-guard.js');
+    checkQuotaGuard.mockResolvedValueOnce({ allow: false, reason: 'quota_critical', bestPct: 100 });
 
     const p0CodexTask = makeCodexTask('codex-p0-1', 'P0');
 
