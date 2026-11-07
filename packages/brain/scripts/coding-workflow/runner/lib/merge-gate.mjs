@@ -3,8 +3,8 @@ import { sumCostUsd, costText } from '../../lib/transcript.mjs';
 // 合并门（决策 a1fdbc51，对应旧 harness「merge 前 head == 锚定 SHA」硬检查）：runner 亲自合并，且只合并被批准的那个 head。
 // 批准 = QA 与独立裁判在该 head 上通过（qa-gate.mjs 记 s.approved.head）。合并条件：当前 head 就是批准的 head、
 // 该 head 上规定的必需检查全部登记且全绿 → gh pr merge --squash --match-head-commit <head>（GitHub 侧再校验一次 head）。
-// 批准后分支上又出现提交：只碰记录（版本碎片、本 sprint 的 QA 报告/裁决/截图，见 isRecordFile）或只是从 main 合进来
-// → 改绑到新 head；动了别的文件（含 01 需求、02 合同）→ 撤销批准，新 head 重新 QA + 裁判。
+// 批准后分支上又出现提交：仅最终树只变更验收记录时才能改绑；无论变更来自分支还是 main，
+// 只要最终树改变了其他文件（含 01 需求、02 合同），都撤销批准，新 head 重新 QA + 裁判。
 // 不自动合并的仓库（repos.json automerge=false，如 zenithjoy：合入 main 会自动部署生产手机控制器）：走到合并这一步不调 merge，
 // 记 s.awaiting_human 并 Bark 主理人（同一个批准的 head 只通知一次），Brain runner.phase=awaiting_human；人合并后
 // settleHumanMerges 收账（merge.merged=true、by=human、phase=merged、终态合并 span、learnings）。
@@ -22,13 +22,31 @@ const GH_TIMEOUT_MS = 60 * 1000;
 const MAX_MERGE_FAILURES = 3;
 const FETCH_TIMEOUT_MS = 5 * 60 * 1000;
 
-/** 批准之后 PR 自身新增改动的文件（不含 main 合进来的提交与 merge 提交）；取不到返回 null。 */
-async function changedSinceApproval(cfg, branch, approvedHead) {
+/** 批准之后最终树的全部变化，包括从 main 合入的代码；取不到返回 null。 */
+async function changedSinceApproval(cfg, branch, approvedHead, expectedHead) {
   const fetch = await git(cfg.repo, ['fetch', 'origin', 'main', `+refs/heads/${branch}:refs/remotes/origin/${branch}`], { timeoutMs: FETCH_TIMEOUT_MS });
   if (fetch.code !== 0) return null;
-  const log = await git(cfg.repo, ['log', '--no-merges', '--format=', '--name-only', `origin/${branch}`, `^${approvedHead}`, '^origin/main']);
-  if (log.code !== 0) return null;
-  return [...new Set(log.stdout.split('\n').filter(Boolean))];
+  // 列表中的 PR HEAD 与随后 fetch 的分支必须相同；否则本轮不允许用另一个版本的树改绑批准。
+  const fetched = await git(cfg.repo, ['rev-parse', '--verify', `refs/remotes/origin/${branch}^{commit}`]);
+  if (fetched.code !== 0 || fetched.stdout.trim() !== expectedHead) return null;
+  // 禁止 rename 折叠：源代码改名到「记录」目录时，旧路径也必须参与门禁判定。
+  const diff = await git(cfg.repo, ['diff', '--raw', '--no-renames', '-z', approvedHead, expectedHead, '--']);
+  if (diff.code !== 0) return null;
+  const fields = diff.stdout.split('\0');
+  if (fields.pop() !== '' || fields.length % 2 !== 0) return null;
+  const changes = [];
+  for (let i = 0; i < fields.length; i += 2) {
+    const match = /^:[0-7]{6} ([0-7]{6}) [0-9a-f]+ [0-9a-f]+ ([A-Z])$/.exec(fields[i]);
+    if (!match || !fields[i + 1]) return null;
+    changes.push({ mode: match[1], status: match[2], path: fields[i + 1] });
+  }
+  return changes;
+}
+
+/** 只能追加普通文件；截图目录仅允许图片，不允许覆盖验收证据或混入可执行代码。 */
+function isSafeRecordAddition(change, branch) {
+  if (change.status !== 'A' || change.mode !== '100644' || !isRecordFile(change.path, branch)) return false;
+  return !/(?:^|\/)qa-r\d+\//.test(change.path) || /\.(?:png|jpe?g|webp)$/i.test(change.path);
 }
 
 /** 草稿只在批准/检查/来源均通过后解除；ready 无 head CAS，前后读回并保留 merge 的 GitHub CAS。 */
@@ -65,12 +83,12 @@ async function readyApprovedDraft(ctx, pr, s) {
 async function gate(ctx, pr, s) {
   const { cfg } = ctx;
   if (pr.headRefOid !== s.approved.head) {
-    const files = await changedSinceApproval(cfg, pr.headRefName, s.approved.head);
-    if (!files) {
+    const changes = await changedSinceApproval(cfg, pr.headRefName, s.approved.head, pr.headRefOid);
+    if (!changes) {
       ctx.log(`合并门 PR #${pr.number}：取批准后的改动失败，本轮不合并`);
       return false;
     }
-    const code = files.filter((f) => !isRecordFile(f, pr.headRefName));
+    const code = changes.filter((change) => !isSafeRecordAddition(change, pr.headRefName)).map((change) => change.path);
     if (code.length > 0) {
       s.passed = false;
       s.revoked = [...(s.revoked ?? []), { at: new Date().toISOString(), reason: 'head_changed_after_approval', from: s.approved.head, to: pr.headRefOid, files: code }];
@@ -83,7 +101,7 @@ async function gate(ctx, pr, s) {
     }
     s.approved = { ...s.approved, head: pr.headRefOid, rebound_from: s.approved.head };
     writeState(cfg, pr.number, s);
-    ctx.log(`合并门 PR #${pr.number}：批准后只有记录/主干合入，改绑到 ${pr.headRefOid.slice(0, 9)}`);
+    ctx.log(`合并门 PR #${pr.number}：批准后最终树只有记录变更，改绑到 ${pr.headRefOid.slice(0, 9)}`);
   }
   if ((await requiredState(cfg, pr.number)).state !== 'pass') return false;
   // task_id 在 sprint 的 01-intent.md 里，只能从远端分支读：必须在合并（--delete-branch 删分支）之前取
