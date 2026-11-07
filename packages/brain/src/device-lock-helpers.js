@@ -91,15 +91,22 @@ export async function releaseDeviceLocksHeldBy(taskId, pool = defaultPool) {
  */
 export async function sweepStaleDeviceLocks(pool = defaultPool) {
   const { rowCount } = await pool.query(
-    `UPDATE device_locks
-        SET locked_by = NULL, locked_at = NULL, expires_at = NULL
-      WHERE locked_by IS NOT NULL
-        AND locked_by ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
-        AND NOT EXISTS (
-          SELECT 1 FROM tasks t
-           WHERE t.id::text = device_locks.locked_by
-             AND t.status IN ('queued','in_progress')
-        )`,
+    `WITH stale AS MATERIALIZED (
+       SELECT l.device_name, l.locked_by, l.xmin::text AS lock_version
+         FROM tasks t JOIN device_locks l ON t.id::text = l.locked_by
+        WHERE t.status IS DISTINCT FROM 'queued' AND t.status IS DISTINCT FROM 'in_progress'
+        FOR UPDATE OF t, l SKIP LOCKED
+     ), orphan AS MATERIALIZED (
+       SELECT l.device_name, l.locked_by, l.xmin::text AS lock_version
+         FROM device_locks l
+        WHERE l.locked_by ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+          AND NOT EXISTS (SELECT 1 FROM tasks t WHERE t.id::text=l.locked_by)
+        FOR UPDATE OF l SKIP LOCKED
+     ), candidates AS (SELECT * FROM stale UNION ALL SELECT * FROM orphan)
+     UPDATE device_locks d SET locked_by=NULL, locked_at=NULL, expires_at=NULL
+       FROM candidates c
+      WHERE d.device_name=c.device_name AND d.locked_by=c.locked_by
+        AND d.xmin::text=c.lock_version`,
   );
   return rowCount;
 }

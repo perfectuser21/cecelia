@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 import { checkDeviceLockForManualDispatch, releaseDeviceLockNonFatal } from './manual-dispatch-device-gate.js';
 
 /** 定向请求只释放自己的 claim；tick 未传 owner 时保持原协议。 */
@@ -58,7 +59,7 @@ export async function dispatchManualQiumi(task, pool, deps = {}) {
       return response(422, { error: 'qiumi_route_incomplete' });
     }
     runId = current.payload.run_id;
-    const deviceGate = await checkDeviceLockForManualDispatch(current, 'manual-qiumi-dispatch');
+    const deviceGate = await (deps.deviceGate ?? checkDeviceLockForManualDispatch)(current, 'manual-qiumi-dispatch');
     if (!deviceGate.pass) {
       await releaseClaim();
       return response(deviceGate.status, deviceGate.body);
@@ -87,6 +88,48 @@ export async function dispatchManualQiumi(task, pool, deps = {}) {
     starting = true;
     const result = await trigger(started.rows[0]);
     if (!result.success) {
+      if (result.retiredBeforeStart && result.reason === 'retired_decomposition') {
+        if (!isDeepStrictEqual(current.payload ?? {}, started.rows[0].payload ?? {})) {
+          return response(409, { error: result.reason, execution_state:'not_started', parked:false,
+            detail:'旧拆解未启动；拿锁后任务参数已变化，需核实认领与设备锁' });
+        }
+        // 任务和设备按相同顺序加锁；旧执行者不得释放同任务更新后的设备锁。
+        let parked = null;
+        try {
+          const stopped = await pool.query(`WITH owned_task AS MATERIALIZED (
+              SELECT id FROM tasks WHERE id=$1 AND status='in_progress' AND claimed_by=$2
+                AND task_type IS NOT DISTINCT FROM $3 AND COALESCE(payload,'{}'::jsonb)=$4::jsonb
+              FOR UPDATE SKIP LOCKED
+            ), owned_device AS MATERIALIZED (
+              SELECT device_name FROM device_locks WHERE device_name=$5 AND locked_by=$1::text
+                AND xmin::text=$6 AND EXISTS (SELECT 1 FROM owned_task)
+              FOR UPDATE SKIP LOCKED
+            ), stopped AS (
+              UPDATE tasks SET status='blocked', blocked_at=NOW(), blocked_reason='retired_decomposition',
+                claimed_by=NULL, claimed_at=NULL, updated_at=NOW(),
+                result=(CASE WHEN result IS NULL THEN '{}'::jsonb WHEN jsonb_typeof(result)='object' THEN result
+                  ELSE jsonb_build_object('previous_result',result) END) || jsonb_build_object('retired_dispatch',
+                  jsonb_build_object('execution_state','not_started','reason','retired_decomposition','recorded_at',NOW()))
+              WHERE id=$1 AND EXISTS (SELECT 1 FROM owned_task)
+                AND (NOT $7::boolean OR EXISTS (SELECT 1 FROM owned_device)) RETURNING id
+            ), released AS (
+              UPDATE device_locks SET locked_by=NULL, locked_at=NULL, expires_at=NULL
+              WHERE device_name=$5 AND locked_by=$1::text AND xmin::text=$6 AND EXISTS (SELECT 1 FROM owned_device)
+                AND EXISTS (SELECT 1 FROM stopped) RETURNING device_name
+            ) SELECT EXISTS (SELECT 1 FROM stopped) AS parked,
+                EXISTS (SELECT 1 FROM released) AS released`,
+          [task.id, owner, started.rows[0].task_type ?? null, JSON.stringify(started.rows[0].payload ?? {}),
+            current.payload?.device_serial ?? null, deviceGate.acquisitionVersion ?? null, deviceAcquired]);
+          parked = stopped.rows?.[0]?.parked === true;
+        } catch (error) {
+          // 响应丢失可能发生于提交之后，不能声称事务未提交或盲目重试。
+          console.error(`[manual-qiumi] retired parking outcome unknown task=${task.id}: ${error.message}`);
+        }
+        return response(409, { error: result.reason, execution_state: 'not_started', parked,
+          state_unknown: parked === null,
+          detail: parked === null ? '旧拆解未启动；停放结果未知，需读回任务及设备锁' :
+            parked ? '旧拆解已退役；本次未启动，任务已停放' : '旧拆解已退役；本次未启动，任务或设备锁已变化，待核实' });
+      }
       if (result.dispatchUncertain) return uncertain();
       if (!result.taskTerminal) {
         // 保留原 run_id。SSH 回应不确定时，下次仍由远端 ALREADY 探针防重。

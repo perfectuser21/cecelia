@@ -123,6 +123,21 @@ describe('qiumi-manual-dispatch：手机单任务派发与 coding Bridge 分离'
     expect(task.payload.run_id).toBe('qiumi-fixed-run');
   });
 
+  it('退役命令确定未启动时不假报远端接收，也不覆盖新认领', async () => {
+    mocks.trigger.mockImplementation(async () => {
+      task.claimed_by = 'new-owner';
+      task.status = 'in_progress';
+      return {success:false, reason:'retired_decomposition', retiredBeforeStart:true};
+    });
+    const r = await request(app).post('/api/brain/tasks/phone-task/dispatch').send({});
+    expect(r.status).toBe(409);
+    expect(r.body).toMatchObject({error:'retired_decomposition', execution_state:'not_started'});
+    expect(task.claimed_by).toBe('new-owner');
+    expect(task.result?.dispatch_uncertain).toBeUndefined();
+    const gate = await import('../../lib/manual-dispatch-device-gate.js');
+    expect(gate.releaseDeviceLockNonFatal).not.toHaveBeenCalled();
+  });
+
   it('coding 任务仍受 Bridge 可用性检查', async () => {
     task.task_type = 'dev';
     const r = await request(app).post('/api/brain/tasks/phone-task/dispatch').send({});

@@ -3,6 +3,8 @@ import {it,expect,afterEach} from 'vitest';
 import './project-progress-no-pr.pg.integration.test.js';
 import './metrics-pr-merged-no-pr.pg.integration.test.js';
 import './postdeploy-snapshot.pg.integration.test.js';
+import './retired-auto-qiumi-lock.pg.integration.test.js';
+import './retired-auto-sweeper-race.pg.integration.test.js';
 import pg from 'pg';
 import {DB_DEFAULTS} from '../../db-config.js';
 import {buildTerminalUpdate} from '../../lib/task-terminal.js';
