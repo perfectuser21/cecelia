@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { decompReviewInputError, applyDecompReview, recordVerifiedDecompRun } from '../lib/decomp-review-callback.js';
 import { guardInvocationCallback } from '../invocations/runtime.js';
+import { isRetiredDecomposition, RETIRED_DECOMPOSITION } from '../lib/retired-decomposition.js';
 import {assertAutomaticTaskOwner} from '../lib/headed-task-owner.js';
 import { COMPANY_KR_SQL_GUARD } from '../lib/company-kr-metrics.js';
 import { Router } from 'express';
@@ -4020,6 +4021,10 @@ router.post('/dispatch-now', async (req, res) => {
     }
 
     const task = result.rows[0];
+
+    if (isRetiredDecomposition(task)) {
+      return res.status(410).json({ error: RETIRED_DECOMPOSITION, detail: '旧任务拆解已退役，未派发' });
+    }
 
     // 检查 task 状态（不重复执行已完成的任务）
     if (task.status === 'completed' || task.status === 'cancelled') {

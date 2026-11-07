@@ -2,6 +2,7 @@ import { prepareInvocationDispatch, invocationTaskPrompt, invocationBridgeRequir
 import {createInvocationActivityExecutor} from './invocations/activity-worker.js';
 import {finishRun as finishInvocationRun} from './lib/task-run.js';
 import { isPhoneDispatchTask } from './phone-dispatch/task-ownership.js';
+import { isRetiredDecomposition, RETIRED_DECOMPOSITION } from './lib/retired-decomposition.js';
 import { withLegacyRelayExecution } from './execution-directory/legacy-relay.js';
 import { withLegacyExecution,legacyExecutorEntries } from './execution-directory/legacy-executor.js';
 /**
@@ -2237,6 +2238,7 @@ async function updateTaskRunInfo(taskId, runId, status = 'triggered') {
  * @returns {Object} - { success, taskId, runId, error? }
  */
 async function triggerCodexReview(task) {
+  if (isRetiredDecomposition(task)) return { success: false, taskId: task?.id, reason: RETIRED_DECOMPOSITION };
   assertExternalExecutionAllowed();
   const runId = generateRunId(task.id);
 
@@ -2537,6 +2539,7 @@ async function selectCodexAccounts() {
  * @returns {Object} - { success, taskId, runId, error? }
  */
 async function triggerCodexBridge(task, forceBridgeUrl = null) {
+  if (isRetiredDecomposition(task)) return { success: false, taskId: task?.id, reason: RETIRED_DECOMPOSITION };
   assertExternalExecutionAllowed();
   if(task.payload?.invocation_activity)return {success:true,taskId:task.id,runId:task.payload.invocation_activity.child_run_id,executor:'shared-activity-runner',dispatchUncertain:true};
   const runId = generateRunId(task.id);
@@ -2622,6 +2625,7 @@ async function triggerCodexBridge(task, forceBridgeUrl = null) {
  * @returns {Object} - { success, taskId, result?, error? }
  */
 async function triggerMiniMaxExecutor(task) {
+  if (isRetiredDecomposition(task)) return { success: false, taskId: task?.id, reason: RETIRED_DECOMPOSITION };
   assertExternalExecutionAllowed();
   const runId = generateRunId(task.id);
 
@@ -3264,6 +3268,10 @@ const _RETIRED_HARNESS_TYPES = new Set(RETIRED_HARNESS_TYPES_DISPATCH);
  * openclaw-agent 等自己已 startRun 的分支先落（source 更精确），这里只是幂等兜底。
  */
 async function triggerCeceliaRun(task) {
+  // 必须早于所有桥接、技能覆盖与运行账写入；旧任务不会产生假 run。
+  if (isRetiredDecomposition(task)) {
+    return { success: false, taskId: task?.id, reason: RETIRED_DECOMPOSITION, error: '旧任务拆解已退役' };
+  }
   assertExternalExecutionAllowed();
   const execResult = await _triggerCeceliaRunInner(task);
   const source = task?.payload?.harness_runtime === 'kernel-v1' ? 'kernel' : 'executor';
