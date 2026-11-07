@@ -454,7 +454,7 @@ export async function collectIsolatedStagingSources({read,requireProof,relations
  const smokes=['healthz-smoke.sh','version-endpoint-smoke.sh','harness-ping-smoke.sh','harness-echo-smoke.sh'].map(name=>`packages/brain/scripts/smoke/${name}`);
  const currentTuple=await matchesReviewedStagingTuple({read,budget,stagingFiles:BUDGET_STAGING_FILES,settlementFiles:BUDGET_FILES,smokeList,smokes});
  // 路由引用同文件 helper；单封端点 AST 不足以验证这些 helper。
- requireProof(route&&(currentTuple?['4f47056f920e942897fc79627fe588202789a73d743d8fe0064dadd1ce1d288a']:['5e9107f6bb6191049486a71d79b7bdede4b6d0c76ba27b5e03cfc2453606506e','e57162cab0938d8455accbf5246d44446a86e3c04f5e01c66b4334521d62059c']).includes(stagingHash(route)),'isolated_staging_source_unproven');
+ requireProof(route&&(currentTuple?['4f47056f920e942897fc79627fe588202789a73d743d8fe0064dadd1ce1d288a']:['5e9107f6bb6191049486a71d79b7bdede4b6d0c76ba27b5e03cfc2453606506e','e57162cab0938d8455accbf5246d44446a86e3c04f5e01c66b4334521d62059c','4d3a088cf21596873f9d5f1505ec33d9d8514912c534b485c93c722070c68b22']).includes(stagingHash(route)),'isolated_staging_source_unproven');
  const build=await read('scripts/brain-build.sh');
  // b3edd15 / 0d3e363 两个历史已审修订的构建脚本字节相同；其他版本缺证据不放行。
  requireProof(build&&(currentTuple||stagingHash(build)==='53a80e3d1c2f40b9a7446759081aae3342c521b9e8646f2108724fc5f7d2126a'),'isolated_staging_source_unproven');

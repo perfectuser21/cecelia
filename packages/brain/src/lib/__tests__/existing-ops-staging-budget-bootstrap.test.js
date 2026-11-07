@@ -69,10 +69,12 @@ const candidate={
 const root=fileURLToPath(new URL('../../../../../',import.meta.url));
 const git=(...args)=>execFileSync('git',['--no-replace-objects',...args],{cwd:root,encoding:'utf8',maxBuffer:32*1024*1024});
 const revision=git('rev-parse','HEAD').trim();
-const paths=[...new Set([...git('ls-tree','-rz','--name-only',revision).replace(/\0$/,'').split('\0'),...Object.keys(candidate.blobs),'packages/brain/src/lib/deploy-retention-runtime.js'])];
+const paths=[...new Set([...git('ls-tree','-rz','--name-only',revision).replace(/\0$/,'').split('\0'),...Object.keys(candidate.blobs),'packages/brain/src/lib/deploy-retention-runtime.js','packages/quality/smoke-core.txt','packages/brain/scripts/smoke/harness-schema-validation-smoke.sh'])];
 const sourcePath='packages/brain/src/lib/existing-ops-source.js';
 const cache=new Map();
-const read=path=>{if(!cache.has(path))cache.set(path,candidate.blobs[path]??git('show',`${revision}:${path}`));return cache.get(path);};
+// 这些历史输入在 6faa 与主干可达的 a68 修订字节一致，避免依赖其他分支的 Git 对象。
+const legacyOnly=new Set(['.skills-source.json','packages/quality/smoke-core.txt','packages/brain/scripts/smoke/harness-schema-validation-smoke.sh']);
+const read=path=>{if(!cache.has(path))cache.set(path,candidate.blobs[path]??git('show',`${legacyOnly.has(path)?'a68df7e48781bc38875d8581249049f57c4fe5de':revision}:${path}`));return cache.get(path);};
 async function build({patch={},missing}={}){
  const result=await buildExistingOpsSources({scope:'cecelia-factory',repo:'perfectuser21/cecelia',revision,paths,readSource:async path=>{
   if(path===missing)throw Error('missing frozen blob');let text=patch[path]??read(path);
@@ -147,12 +149,31 @@ const layoutRoutePath='packages/brain/src/routes/ops.js';
 const layoutLoaderPath='packages/brain/src/lib/deploy-retention-runtime.js';
 const reviewedLayoutLoader="/** Load the same approved retention runtime in repository and flattened image layouts. */\nexport async function loadDeploymentRetentionRuntime() {\n  const repositoryRuntime = new URL('../../../../scripts/brain-image-retention/runtime.mjs', import.meta.url);\n  try {\n    return await import(repositoryRuntime.href);\n  } catch (error) {\n    // A broken dependency inside an existing module must remain a failure.\n    if (error.code !== 'ERR_MODULE_NOT_FOUND' || error.url !== repositoryRuntime.href) throw error;\n    return import(new URL('../../scripts/brain-image-retention/runtime.mjs', import.meta.url).href);\n  }\n}\n";
 const layoutPatch=()=>({[layoutRoutePath]:"import { loadDeploymentRetentionRuntime } from '../lib/deploy-retention-runtime.js';\n"+read(layoutRoutePath).replace("await import('../../../../scripts/brain-image-retention/runtime.mjs')",'await loadDeploymentRetentionRuntime()'),[layoutLoaderPath]:reviewedLayoutLoader});
-it('精确布局加载器变体证明真实依赖并保留结算核验',async()=>{
- const result=await build({patch:layoutPatch()});
- expect(result.status,JSON.stringify(result.gaps)).toBe('verified');
- expect(result.input_relations).toContainEqual({consumer_path:layoutRoutePath,input_path:layoutLoaderPath,kind:'reviewed_runtime_layout_loader',revision});
- expect(result.input_relations).toContainEqual({consumer_path:layoutLoaderPath,input_path:'scripts/brain-image-retention/runtime.mjs',kind:'reviewed_runtime_layout_import',revision});
+it('合成布局加载器虽有独立校验但不属于已核验完整 route，整体拒绝',async()=>{
+ const patch=layoutPatch();
+ expect(patch[layoutRoutePath]).not.toBe(read(layoutRoutePath));
+ const result=await build({patch});
+ expect(result.status,JSON.stringify(result.gaps)).toBe('unknown');
+ expect(result.bindings).toEqual([]);
 });
+it('真实历史修订保留布局加载器依赖，缺失或篡改均拒绝',async()=>{
+ const historical='e3a01021ee7100b83d8ed5a0be219d0b543b5dff';
+ const historicalPaths=git('ls-tree','-rz','--name-only',historical).replace(/\0$/,'').split('\0');
+ const blobs=new Map();
+ const historicalRead=path=>{if(!blobs.has(path))blobs.set(path,git('show',`${historical}:${path}`));return blobs.get(path);};
+ const buildHistorical=async ({missing=false,mutate=false}={})=>{
+  const proof=await buildExistingOpsSources({scope:'cecelia-factory',repo:'perfectuser21/cecelia',revision:historical,paths:historicalPaths,
+   readSource:async path=>{if(path===layoutLoaderPath&&missing)throw Error('missing historical loader');
+    const text=historicalRead(path);return path===layoutLoaderPath&&mutate?text+'\n// unreviewed mutation\n':text;}});
+  return proof.consumers.find(c=>c.workflow_key==='factory_f2_ops');
+ };
+ const actual=await buildHistorical();expect(actual.status,JSON.stringify(actual.gaps)).toBe('verified');
+ expect(actual.input_relations).toContainEqual({consumer_path:layoutRoutePath,input_path:layoutLoaderPath,kind:'reviewed_runtime_layout_loader',revision:historical});
+ expect(actual.input_relations).toContainEqual({consumer_path:layoutLoaderPath,input_path:'scripts/brain-image-retention/runtime.mjs',kind:'reviewed_runtime_layout_import',revision:historical});
+ for(const opts of [{missing:true},{mutate:true}]){
+  const invalid=await buildHistorical(opts);expect(invalid.status).toBe('unknown');expect(invalid.bindings).toEqual([]);
+ }
+},120000);
 it.each(['missing','mutated','import','route'])('布局加载器%s无法证明时整体拒绝',async mode=>{
  const patch=layoutPatch();
  if(mode==='mutated')patch[layoutLoaderPath]+='\n// unreviewed\n';
