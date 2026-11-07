@@ -31,6 +31,14 @@ afterAll(() => vi.unstubAllGlobals());
 beforeEach(() => { vi.clearAllMocks(); io.query.mockResolvedValue({ rows: [] }); resetBindings(); });
 
 describe('退役规划和旧拆解技能覆盖禁止启动', () => {
+  it.each(['decomposition_quality','initiative_plan'])('已退役拆解审核 %s 不得启动', async review_scope => {
+    expect(await executor.triggerCeceliaRun({id:'old-review',task_type:'decomp_review',payload:{review_scope}})).toMatchObject({success:false,reason:'retired_decomposition'});
+    expect(io.spawn).not.toHaveBeenCalled(); expect(global.fetch).not.toHaveBeenCalled();
+  });
+  it.each(['plan_adjustment','unknown',null])('非旧拆解审核 %s 不受新规则影响', async review_scope => {
+    const {isRetiredDecomposition}=await import('../lib/retired-decomposition.js');
+    expect(isRetiredDecomposition({task_type:'decomp_review',payload:{review_scope}})).toBe(false);
+  });
   it.each(['scope_plan','initiative_plan','project_plan','okr_scope_plan','okr_initiative_plan','okr_project_plan'])('历史 %s 不带旧标记仍拒绝', async task_type => {
     const task={id:'old-plan',task_type,payload:{}};
     expect(await executor.triggerCeceliaRun(task)).toMatchObject({success:false,reason:'retired_decomposition'});

@@ -14,7 +14,7 @@
  */
 
 import { isCommanderVerification } from './lib/commander-verification-transport.js';
-import { isRetiredDecomposition, parkRetiredDecomposition, parkClaimedRetiredDecomposition, RETIRED_DECOMPOSITION } from './lib/retired-decomposition.js';
+import { isRetiredDecomposition, isRetiredDecompositionReview, parkRetiredDecomposition, parkClaimedRetiredDecomposition, RETIRED_DECOMPOSITION } from './lib/retired-decomposition.js';
 import pool from './db.js';
 import { getFleetStatus } from './fleet-resource-cache.js';
 import { codeTaskIdentitySql, compareCodeTaskIdentity } from './lib/code-task-identity.js';
@@ -808,7 +808,7 @@ export async function dispatchNextTask(goalIds, options = {}) {
     }
 
     // 普通 Cortex 根因分析保持优先；已退役规划类型仍须停放。
-    if (candidate.payload && candidate.payload.requires_cortex === true && !LAYER_RETIRED_TASK_TYPES.includes(candidate.task_type)) {
+    if (candidate.payload && candidate.payload.requires_cortex === true && !LAYER_RETIRED_TASK_TYPES.includes(candidate.task_type) && !isRetiredDecompositionReview(candidate)) {
       return await processCortexTask(candidate, actions);
     }
 

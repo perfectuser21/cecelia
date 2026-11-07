@@ -579,6 +579,22 @@ it.each([
   expect(mockTriggerCeceliaRun).not.toHaveBeenCalled(); expect(mockRecordFailure).not.toHaveBeenCalled();
 });
 
+it.each(['decomposition_quality','initiative_plan'])('旧拆解审核 %s 即使携带 Cortex 标记也停放', async review_scope => {
+  _candidatePool=[{...candidate,task_type:'decomp_review',payload:{review_scope,requires_cortex:true}}]; wireQueries();
+  const prior=mockQuery.getMockImplementation();
+  mockQuery.mockImplementation(async(sql,args)=>sql.includes('blocked_reason = $3') ? {rows:[{id:'q1'}],rowCount:1} : prior(sql,args));
+  expect(await dispatchNextTask(null)).toMatchObject({dispatched:false,reason:'retired_decomposition',parked:true});
+  expect(processCortexTask).not.toHaveBeenCalled(); expect(mockTriggerCeceliaRun).not.toHaveBeenCalled();
+});
+
+it('计划调整审核的 Cortex 分支保持现役语义', async () => {
+  const row={...candidate,task_type:'decomp_review',payload:{review_scope:'plan_adjustment',requires_cortex:true}};
+  _candidatePool=[row]; wireQueries({row});
+  await dispatchNextTask(null);
+  expect(processCortexTask).toHaveBeenCalledOnce();
+  expect(mockQuery.mock.calls.some(([sql])=>sql.includes('blocked_reason = $3'))).toBe(false);
+});
+
 it('退役规划即使携带 Cortex 标记也在认领前停放，普通 Cortex 仍有专用回归', async () => {
   _candidatePool=[{...candidate,task_type:'initiative_plan',payload:{requires_cortex:true}}]; wireQueries();
   const prior=mockQuery.getMockImplementation();
