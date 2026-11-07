@@ -31,7 +31,7 @@ test('无 PR 交付 PG 回归从实际 PR 集成入口静态引入，删除或�
   selected();
   const dir = resolve(dirname(fileURLToPath(import.meta.url)), '../../../packages/brain/src/__tests__/integration');
   const entry = readFileSync(join(dir, 'workflow-common-terminal.pg.integration.test.js'), 'utf8');
-  const requiredImports = ['./project-progress-no-pr.pg.integration.test.js', './metrics-pr-merged-no-pr.pg.integration.test.js'];
+  const requiredImports = ['./project-progress-no-pr.pg.integration.test.js', './metrics-pr-merged-no-pr.pg.integration.test.js', './postdeploy-snapshot.pg.integration.test.js'];
   const check = (text, exists) => {
     const imports = parse(text, { ecmaVersion: 'latest', sourceType: 'module' }).body
       .filter(node => node.type === 'ImportDeclaration').map(node => node.source.value);
