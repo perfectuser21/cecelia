@@ -18,7 +18,14 @@ beforeAll(async () => {
   )`);
   await client.query("INSERT INTO tasks (id,title,task_type,status) VALUES ('dev','dev','dev','completed_no_pr'), ('data','data','data','completed_no_pr')");
   const { default: router } = await import('../../routes/metrics.js');
-  app = express(); app.use(express.json()); app.use(router);
+  app = express(); app.use(express.json());
+  // 测试现场模拟不同的 TCP 对端；不启用 trust proxy，也不把转发头当成来源身份。
+  app.use((req, _res, next) => {
+    const peer = req.get('x-test-peer-address');
+    if (peer) Object.defineProperty(req.socket, 'remoteAddress', { value: peer, configurable: true });
+    next();
+  });
+  app.use(router);
 });
 afterAll(async () => { await client.end(); });
 
@@ -31,10 +38,11 @@ it('真实 HTTP 和 PG：拒绝伪造 dev 合并，非 dev 保持原行为', asy
   const data = await client.query("SELECT status, pr_url, pr_merged_at FROM tasks WHERE id='data'");
   expect(data.rows[0]).toMatchObject({ status: 'completed', pr_url: body.pr_url });
   expect(data.rows[0].pr_merged_at).not.toBeNull();
-});
-
-it('合并声明入口对请求速率设置上限', async () => {
-  let response;
-  for (let i = 0; i < 61; i++) response = await request(app).patch('/tasks/dev/pr-merged').send({ pr_url: 'https://github.com/org/repo/pull/1' });
-  expect(response.status).toBe(429);
+  // 前两次请求已消耗 2 次额度；第 60 次允许，第 61 次拒绝。
+  for (let i = 2; i < 60; i++) {
+    expect((await request(app).patch('/tasks/dev/pr-merged').send(body)).status).toBe(409);
+  }
+  expect((await request(app).patch('/tasks/dev/pr-merged').send(body)).status).toBe(429);
+  expect((await request(app).patch('/tasks/dev/pr-merged').set('X-Forwarded-For', '192.0.2.2').send(body)).status).toBe(429);
+  expect((await request(app).patch('/tasks/dev/pr-merged').set('x-test-peer-address', '127.0.0.2').send(body)).status).toBe(409);
 });
