@@ -295,11 +295,37 @@ async function callbackBrain(taskId, checkpointId, status, output, durationMs, r
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...brainAuthHeaders() },
         body: JSON.stringify(payload),
+        // Never forward an internal bearer token to a redirect target.
+        redirect: 'manual',
         signal: AbortSignal.timeout(10000),
       });
+      if (res.status >= 300 && res.status < 400) {
+        console.warn(`[codex-bridge] callback redirect rejected: task=${taskId} HTTP ${res.status}`);
+        return { outcome: 'unconfirmed', reason: 'redirect' };
+      }
       if (res.ok) {
-        console.log(`[codex-bridge] callback 成功: task=${taskId} status=${status}`);
-        return;
+        let acknowledgement;
+        try {
+          acknowledgement = await res.json();
+        } catch {
+          // A malformed 2xx may follow a committed callback. Do not blindly
+          // resend it: legacy callers may not have an idempotent run_id.
+          console.warn(`[codex-bridge] callback acknowledgement invalid: task=${taskId}`);
+          return { outcome: 'unconfirmed', reason: 'invalid_ack' };
+        }
+        if (!acknowledgement || acknowledgement.success !== true
+            || (acknowledgement.task_id != null && acknowledgement.task_id !== taskId)) {
+          console.warn(`[codex-bridge] callback acknowledgement invalid: task=${taskId}`);
+          return { outcome: 'unconfirmed', reason: 'invalid_ack' };
+        }
+        const skipped = acknowledgement.skipped === true;
+        const duplicate = acknowledgement.duplicate === true;
+        const pending = res.status === 202 || acknowledgement.queued === true;
+        console.log(`[codex-bridge] callback acknowledged: task=${taskId} skipped=${skipped} duplicate=${duplicate} pending=${pending}`);
+        return {
+          outcome: 'acknowledged', skipped, duplicate, pending,
+          ...(typeof acknowledgement.reason === 'string' ? { reason: acknowledgement.reason } : {}),
+        };
       }
       console.warn(`[codex-bridge] callback HTTP ${res.status}, 重试 ${attempt + 1}/3`);
     } catch (err) {
@@ -308,6 +334,7 @@ async function callbackBrain(taskId, checkpointId, status, output, durationMs, r
     if (attempt < 2) await new Promise(r => setTimeout(r, 5000));
   }
   console.error(`[codex-bridge] callback 最终失败: task=${taskId}`);
+  return { outcome: 'unconfirmed', reason: 'delivery_failed' };
 }
 
 /**
