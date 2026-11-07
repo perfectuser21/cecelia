@@ -51,6 +51,7 @@ import { dispatchManualQiumi } from '../lib/manual-qiumi-dispatch.js';
 import { afterTerminalTransition } from '../lib/task-terminal.js';
 import { internalAuthOrLoopback } from '../middleware/internal-auth.js';
 import { rateLimit } from 'express-rate-limit';
+import { TASK_MUTATION_RATE_LIMIT_OPTIONS } from './task-mutation-rate-limit.js';
 import { authoringMutationError, assertAuthoringCompletion } from '../workflow-authoring/task-guard.js';
 
 const router = Router();
@@ -3976,7 +3977,7 @@ router.get('/work/streams', async (_req, res) => {
 // ============================================================
 // 用途：/dev 工作流注册 Codex 审查任务后立即触发，不依赖调度器状态
 // 调用 executor.triggerCeceliaRun() 直接执行（完全独立于 tick loop）
-router.post('/dispatch-now', async (req, res) => {
+router.post('/dispatch-now', rateLimit(TASK_MUTATION_RATE_LIMIT_OPTIONS), async (req, res) => {
   let deviceLockTaskId = null; // 已抢设备锁的任务 id（失败路径需释放）
   try {
     const { task_id } = req.body;
