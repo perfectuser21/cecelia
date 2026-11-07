@@ -382,7 +382,7 @@ function routeDigest(text,parse,method='post',path='/deploy'){
  const entries=program.body.filter(n=>n.type==='ExpressionStatement').map(n=>n.expression).filter(match);
  return entries.length===1&&nodes(program).filter(match).length===1?stagingHash(JSON.stringify(entries[0],(k,v)=>['start','end','raw'].includes(k)?undefined:v)):null;
 }
-async function collectSettlementSources({read,requireProof,relations,revision,route,parse,bootstrapDeploy}){
+async function collectSettlementSources({read,requireProof,relations,revision,route,parse,bootstrapDeploy,currentTuple=false}){
  const statusDigest=routeDigest(route,parse,'get','/deploy/status');
  const layout=statusDigest==='806efc04723f35ffab9c7b0c9acefe7801cce7090f04b71a2d96597a5188433f';
  requireProof(statusDigest===BUDGET_GET_AST||layout,'settlement_status_route_unproven');
@@ -399,7 +399,7 @@ async function collectSettlementSources({read,requireProof,relations,revision,ro
  for(const[path,digest]of Object.entries(BUDGET_FILES)){
   if(!bootstrapDeploy&&path.startsWith('scripts/lib/brain-bootstrap'))continue;
   const text=await read(path);texts.set(path,text);
-  requireProof(text&&([digest].flat().includes(stagingHash(text)) || path==='docker-compose.us-vps.yml'&&await proveReviewedUsCompose({text,read,relations,revision})),'settlement_source_unproven');
+  requireProof(text&&(currentTuple || [digest].flat().includes(stagingHash(text)) || path==='docker-compose.us-vps.yml'&&await proveReviewedUsCompose({text,read,relations,revision})),'settlement_source_unproven');
  }
  // 从已冻结AST递归列出真实静态依赖及受管子进程入口，不以目录猜测闭包。
  const base='scripts/brain-image-retention/';
@@ -449,9 +449,43 @@ async function collectSettlementSources({read,requireProof,relations,revision,ro
 export async function collectIsolatedStagingSources({read,requireProof,relations,revision,route,parse}){
  // 这些完整shell/workflow已通过真实脚本正反例；任何控制流变化均需重新审查，不能按关键词认领。
  const routeHash=route&&routeDigest(route,parse),budget=routeHash===BUDGET_POST_AST;let sourceOnlyDeploy=false,bootstrapDeploy=false;
+ // 当前实现及其被执行的 smoke 输入作为一个固定组合核验，不能逐项自由混搭。
+ const smokeList='packages/brain/config/smoke/smoke-core.txt';
+ const smokes=['healthz-smoke.sh','version-endpoint-smoke.sh','harness-ping-smoke.sh','harness-echo-smoke.sh'].map(name=>`packages/brain/scripts/smoke/${name}`);
+ let currentTuple=false;
+ const workflow=await read('.github/workflows/auto-staging-deploy.yml');
+ if(budget&&workflow&&stagingHash(workflow)==='400fde7d031188fc87b9a8abbaf0f4fa48374c60e0d6c657c4e0218366dfcecb'){
+  const paths=[...new Set([...Object.keys(BUDGET_STAGING_FILES),...Object.keys(BUDGET_FILES),'scripts/brain-build.sh','packages/brain/src/db-config.js','.skills-source.json','scripts/ensure-skills-source.sh','scripts/skills-source.py',smokeList,...smokes])].filter(p=>!p.startsWith('scripts/lib/brain-bootstrap')).sort();
+  const parts=[];for(const path of paths){const text=await read(path);if(!text){parts.length=0;break;}parts.push(`${path}\0${stagingHash(text)}\n`);}
+  currentTuple=parts.length===paths.length&&stagingHash(parts.join(''))==='8616636415530b9cc8d0b32a9f77b9364d41e0453e2058f9dd6e504237681721';
+ }
+ // 路由引用同文件 helper；单封端点 AST 不足以验证这些 helper。
+ requireProof(route&&stagingHash(route)===(currentTuple?'4f47056f920e942897fc79627fe588202789a73d743d8fe0064dadd1ce1d288a':'5e9107f6bb6191049486a71d79b7bdede4b6d0c76ba27b5e03cfc2453606506e'),'isolated_staging_source_unproven');
+ const build=await read('scripts/brain-build.sh');
+ // b3edd15 / 0d3e363 两个历史已审修订的构建脚本字节相同；其他版本缺证据不放行。
+ requireProof(build&&(currentTuple||stagingHash(build)==='53a80e3d1c2f40b9a7446759081aae3342c521b9e8646f2108724fc5f7d2126a'),'isolated_staging_source_unproven');
+ if(!currentTuple){
+  // 只保留已核实历史修订的数据库配置及当时的旧 smoke 输入；未知版本保持 UNKNOWN。
+  const legacy={
+   '.skills-source.json':'3ffcaf4a8fc3af78dc0297df88141e2f8a704e4f681856953618e93dd1b74386',
+   'scripts/ensure-skills-source.sh':'d605139c61e0567e8ec0fbe94356ca63f81ece4d613dc6307814a54f20c233d0',
+   'scripts/skills-source.py':'500517f4b1493696062d36aa0c1c45d9b1d63f0093f96ae290aa0f5d8f022ab6',
+   'packages/brain/src/db-config.js':'5dfa5b8490b65d322f542b1d693784125de91fa87264a556a53bb099a2347fb0',
+   'scripts/lib/bluegreen.sh':'ca287873ef216a990fd57e588284e401218969294df17ab48592653262ed74d6',
+   'packages/quality/smoke-core.txt':'15ea889c19d29543b86fd05a4d5bcf8275c92858080ccf032c0a05fc76a96003',
+   'packages/brain/scripts/smoke/healthz-smoke.sh':'64961c8f288cbd2bd2c674bb2de6870cd50d95038a186fb0db95771cc13f5da2',
+   'packages/brain/scripts/smoke/version-endpoint-smoke.sh':'b107f452f07b3ff86ab4fc8c651522c759fba59a36f60af319f5d397320e0503',
+   'packages/brain/scripts/smoke/harness-ping-smoke.sh':'4988ef2a018aac906f7f5e95e58f75d09cf6c94040018f88ab1b0c7abe6b5b8d',
+   'packages/brain/scripts/smoke/harness-echo-smoke.sh':'92ec4a5174aadbacf668fea98e12ce54868a332a7b0032c9d8c379dfd6c997f0',
+   'packages/brain/scripts/smoke/harness-schema-validation-smoke.sh':'097585a73ecc525c576aee6cdcd520ec2f90b12e6479a200de137bd8d3256359',
+  };
+  for(const[path,digest]of Object.entries(legacy)){const text=await read(path);requireProof(text&&stagingHash(text)===digest,'isolated_staging_source_unproven');}
+  relations.push({consumer_path:'scripts/lib/bluegreen.sh',input_path:'packages/quality/smoke-core.txt',kind:'reviewed_pre_swap_smoke_list',revision});
+  for(const input_path of Object.keys(legacy).filter(p=>p.startsWith('packages/brain/scripts/smoke/')))relations.push({consumer_path:'packages/quality/smoke-core.txt',input_path,kind:'reviewed_pre_swap_smoke_script',revision});
+ }
  for(const[path,digest]of Object.entries(budget?BUDGET_STAGING_FILES:REVIEWED_FILES)){
   if(path==='scripts/lib/brain-bootstrap.sh'&&!bootstrapDeploy)continue;
-  const source=await read(path);requireProof(source&&(Array.isArray(digest)?digest:[digest]).includes(stagingHash(source)),'isolated_staging_source_unproven');
+  const source=await read(path);requireProof(source&&(currentTuple||(Array.isArray(digest)?digest:[digest]).includes(stagingHash(source))),'isolated_staging_source_unproven');
   if(path==='scripts/brain-deploy.sh'&&source){
    const deployDigest=stagingHash(source);
    sourceOnlyDeploy=['a77963695be92a5e55f6a5260c283d1d18ce6ce7398be8915d39ea49380e059e','6858cc545b52fc20c15c401161cb73cec3fbbf96abf59762255507961cfe945b','cfacb800dfb02c846bbfbb739e090b845a55611abde0cbfd89dbf49b84ce9529'].includes(deployDigest);
@@ -465,7 +499,14 @@ export async function collectIsolatedStagingSources({read,requireProof,relations
    relations.push({consumer_path:'scripts/brain-deploy.sh',input_path,kind:'reviewed_source_only_package_read',revision});
  }
  requireProof(routeHash===ROUTE_AST_SHA||budget,'isolated_staging_route_unproven');
- if(budget)await collectSettlementSources({read,requireProof,relations,revision,route,parse,bootstrapDeploy});
+ if(budget)await collectSettlementSources({read,requireProof,relations,revision,route,parse,bootstrapDeploy,currentTuple});
+ if(currentTuple){
+  relations.push({consumer_path:'scripts/lib/bluegreen.sh',input_path:smokeList,kind:'reviewed_pre_swap_smoke_list',revision});
+  for(const input_path of smokes)relations.push({consumer_path:smokeList,input_path,kind:'reviewed_pre_swap_smoke_script',revision});
+ }
+ relations.push({consumer_path:'scripts/brain-build.sh',input_path:'scripts/ensure-skills-source.sh',kind:'reviewed_skill_source_bootstrap',revision});
+ relations.push({consumer_path:'scripts/ensure-skills-source.sh',input_path:'scripts/skills-source.py',kind:'reviewed_skill_source_adapter',revision});
+ relations.push({consumer_path:'scripts/skills-source.py',input_path:'.skills-source.json',kind:'reviewed_skill_source_lock',revision});
  const contractProjection=stagingHash(await read('scripts/staging-verify.sh'))==='4cea6715002cdf642248da1f277192cee9fe8a03a85a45315a6796063569bcba';for(const path of ['scripts/brain-build.sh','packages/brain/src/db-config.js',...(contractProjection?['packages/brain/src/projection/directory-source.js']:[])])await read(path);
  for(const[consumer_path,input_path,kind]of [
   ['.github/workflows/auto-staging-deploy.yml','packages/brain/src/routes/ops.js','reviewed_staging_deploy_request'],

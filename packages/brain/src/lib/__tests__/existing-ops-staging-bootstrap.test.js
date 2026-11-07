@@ -36,7 +36,8 @@ import { buildExistingOpsSources } from './helpers/existing-ops-proof-builder.js
 const root = fileURLToPath(new URL('../../../../../', import.meta.url));
 const git = (...args) => execFileSync('git', ['--no-replace-objects', ...args], { cwd: root, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
 const revision = git('rev-parse', 'HEAD').trim();
-const paths = [...new Set([...git('ls-tree', '-rz', '--name-only', revision).replace(/\0$/, '').split('\0'),...Object.keys(candidate.blobs)])];
+const currentPaths=git('ls-tree', '-rz', '--name-only', revision).replace(/\0$/, '').split('\0');
+const paths = [...new Set([...currentPaths,...Object.keys(candidate.blobs),'packages/quality/smoke-core.txt','packages/brain/scripts/smoke/harness-schema-validation-smoke.sh'])];
 const sourcePath = 'packages/brain/src/lib/existing-ops-source.js';
 const workflow = '.github/workflows/auto-staging-deploy.yml';
 const route = 'packages/brain/src/routes/ops.js';
@@ -48,8 +49,12 @@ const deploy = 'scripts/brain-deploy.sh';
 const buildScript = 'scripts/brain-build.sh';
 const dbConfig = 'packages/brain/src/db-config.js';
 const cache = new Map();
+const currentCache = new Map();
+const historicalCache = new Map();
+const readCurrent=path=>{if(!currentCache.has(path))currentCache.set(path,git('show',`${revision}:${path}`));return currentCache.get(path);};
+const legacyOnly=new Set(['.skills-source.json','scripts/lib/bluegreen.sh','packages/quality/smoke-core.txt','packages/brain/scripts/smoke/harness-schema-validation-smoke.sh']);
 const read = path => {
-  if (!cache.has(path)) cache.set(path, candidate.blobs[path]??git('show', `${revision}:${path}`));
+  if (!cache.has(path)) cache.set(path, candidate.blobs[path]??git('show', `${legacyOnly.has(path)?candidate.source_revision:revision}:${path}`));
   return cache.get(path);
 };
 function wrapRoute(text, wrap) {
@@ -58,11 +63,11 @@ function wrapRoute(text, wrap) {
   if (!entry) throw Error('actual route fixture missing');
   return text.slice(0, entry.start) + wrap(text.slice(entry.start, entry.end)) + text.slice(entry.end);
 }
-async function build({ patch = {}, marker = 2, missing } = {}) {
-  const result = await buildExistingOpsSources({ scope: 'cecelia-factory', repo: 'perfectuser21/cecelia', revision, paths,
+async function build({ patch = {}, marker = 2, missing, current = false } = {}) {
+  const result = await buildExistingOpsSources({ scope: 'cecelia-factory', repo: 'perfectuser21/cecelia', revision, paths:current?currentPaths:paths,
     readSource: async path => {
       if (path === missing) throw Error('missing fixed blob');
-      let text = patch[path] ?? read(path);
+      let text = patch[path] ?? (current ? readCurrent(path) : read(path));
       if (path === sourcePath) {
         text = text.replace(/^export const EXISTING_OPS_STAGING_SELECTOR_SCHEMA = .*;\n/m, '');
         if (marker !== null) text += `\nexport const EXISTING_OPS_STAGING_SELECTOR_SCHEMA = ${marker};\n`;
@@ -71,8 +76,61 @@ async function build({ patch = {}, marker = 2, missing } = {}) {
     } });
   return result.consumers.find(c => c.workflow_key === 'factory_f2_ops');
 }
+async function buildHistorical(rev,patch={}){
+  if(!historicalCache.has(rev))historicalCache.set(rev,{paths:git('ls-tree','-rz','--name-only',rev).replace(/\0$/,'').split('\0'),blobs:new Map()});
+  const {paths:historicalPaths,blobs}=historicalCache.get(rev);
+  const result=await buildExistingOpsSources({scope:'cecelia-factory',repo:'perfectuser21/cecelia',revision:rev,paths:historicalPaths,
+    readSource:async path=>{if(Object.hasOwn(patch,path))return patch[path];if(!blobs.has(path))blobs.set(path,git('show',`${rev}:${path}`));return blobs.get(path);}});
+  return result.consumers.find(c=>c.workflow_key==='factory_f2_ops');
+}
 
 describe('staging 正式调用链的固定来源，不声明部署成功', () => {
+  it('当前主线固定来源可识别，构建器或验收输入改变必须未知',async()=>{
+    const result=await build({current:true});expect(result.status,JSON.stringify(result.gaps)).toBe('verified');
+    expect(result.definition_scope).toBe('consumer_evidence');
+    expect(result.bindings.every(binding=>binding.validation_scope==='consumer_source')).toBe(true);
+    const smokeList='packages/brain/config/smoke/smoke-core.txt';
+    const smokes=['healthz-smoke.sh','version-endpoint-smoke.sh','harness-ping-smoke.sh','harness-echo-smoke.sh'].map(n=>`packages/brain/scripts/smoke/${n}`);
+    expect(result.input_relations).toContainEqual({consumer_path:'scripts/lib/bluegreen.sh',input_path:smokeList,kind:'reviewed_pre_swap_smoke_list',revision});
+    for(const path of smokes)expect(result.input_relations).toContainEqual({consumer_path:smokeList,input_path:path,kind:'reviewed_pre_swap_smoke_script',revision});
+    for(const path of [buildScript,dbConfig,'.skills-source.json','scripts/ensure-skills-source.sh','scripts/skills-source.py',smokeList,...smokes]){
+      const altered=await build({current:true,patch:{[path]:readCurrent(path)+'\n# altered\n'}});
+      expect(altered.status,path).toBe('unknown');expect(altered.bindings).toEqual([]);
+      const missing=await build({current:true,missing:path});expect(missing.status,path).toBe('unknown');expect(missing.bindings).toEqual([]);
+    }
+  });
+  it('历史来源不能把任意空构建脚本误标为已验证',async()=>{
+    const result=await build({patch:{[buildScript]:'#!/bin/sh\nexit 0\n'}});
+    expect(result.status).toBe('unknown');expect(result.bindings).toEqual([]);
+  });
+  it('当前组合不能混入旧版部署状态路由',async()=>{
+    const current=readCurrent(route),old=git('show','706f2e834:packages/brain/src/routes/ops.js');
+    const locate=text=>parse(text,{ecmaVersion:'latest',sourceType:'module'}).body.find(n=>n.type==='ExpressionStatement'&&n.expression?.callee?.object?.name==='router'&&n.expression.callee.property?.name==='get'&&n.expression.arguments[0]?.value==='/deploy/status');
+    const a=locate(current),b=locate(old);expect(a).toBeTruthy();expect(b).toBeTruthy();
+    const mixed=current.slice(0,a.start)+old.slice(b.start,b.end)+current.slice(a.end);
+    const result=await build({current:true,patch:{[route]:mixed}});expect(result.status).toBe('unknown');expect(result.bindings).toEqual([]);
+  });
+  it('当前组合不可篡改部署状态路由调用的 helper',async()=>{
+    const original=readCurrent(route),altered=original.replace('function readDeployStatusFile() {','function readDeployStatusFile() { return {status:"success"};');
+    expect(altered).not.toBe(original);const result=await build({current:true,patch:{[route]:altered}});
+    expect(result.status).toBe('unknown');expect(result.bindings).toEqual([]);
+  });
+  it('历史来源不能接受改写数据库配置和旧 smoke 输入',async()=>{
+    const list='packages/quality/smoke-core.txt';
+    const smokes=['healthz-smoke.sh','version-endpoint-smoke.sh','harness-ping-smoke.sh','harness-echo-smoke.sh','harness-schema-validation-smoke.sh'].map(n=>`packages/brain/scripts/smoke/${n}`);
+    for(const path of [dbConfig,'.skills-source.json','scripts/ensure-skills-source.sh','scripts/skills-source.py',list,...smokes]){
+      const result=await build({patch:{[path]:read(path)+'\n# altered\n'}});
+      expect(result.status,path).toBe('unknown');expect(result.bindings).toEqual([]);
+    }
+  });
+  it('完整读取两个真实历史修订，旧输入篡改不得通过',async()=>{
+    for(const rev of ['b3edd15d195fc563d3f6ec85d6e721149e04f599','0d3e363ce669df4a7086cc0656f61892790d38d4']){
+      const result=await buildHistorical(rev);expect(result.status,JSON.stringify(result.gaps)).toBe('verified');
+      for(const path of [dbConfig,'packages/quality/smoke-core.txt']){
+        const changed=await buildHistorical(rev,{[path]:'\n# altered\n'});expect(changed.status,path).toBe('unknown');expect(changed.bindings).toEqual([]);
+      }
+    }
+  },120000);
   it('完整来源proof返回前让原生事件循环处理已排队回调', async () => {
     const warmed = await build();
     expect(warmed.status, JSON.stringify(warmed.gaps)).toBe('verified');
@@ -166,10 +224,9 @@ describe('staging 正式调用链的固定来源，不声明部署成功', () =>
     expect(result.status).toBe('unknown');
     expect(result.bindings).toEqual([]);
   });
-  it('route 仅空白变化仍按固定AST与新源码摘要绑定，不声称业务PASS', async () => {
+  it('route 全文件字节变化需重新审核，不能只凭端点 AST 放行', async () => {
     const result = await build({ patch: { [route]: read(route).replace('const output=await', 'const output = await') } });
-    expect(result.status, JSON.stringify(result.gaps)).toBe('verified');
-    expect(result.bindings.find(b => b.path === route)?.digest).toMatch(/^sha256:[a-f0-9]{64}$/);
+    expect(result.status).toBe('unknown');expect(result.bindings).toEqual([]);
   });
   it('未知协议版本不能降级为旧证据', async () => {
     const result = await build({ marker: 3 });
