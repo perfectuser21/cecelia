@@ -81,9 +81,9 @@ export async function pollAndProcess() {
         console.error(`[callback-worker] Failed to process row id=${row.id} task=${row.task_id}: ${rowErr.message}`);
         await client.query(
           `UPDATE callback_queue
-           SET claimed_at = NULL, claimed_by = NULL, retry_count = COALESCE(retry_count, 0) + 1
+           SET claimed_at = CASE WHEN $2 THEN NOW() ELSE NULL END, claimed_by = NULL, retry_count = COALESCE(retry_count, 0) + 1
            WHERE id = $1`,
-          [row.id]
+          [row.id, String(rowErr.code || '').startsWith('DECOMP_REVIEW_')]
         ).catch(releaseErr => {
           console.error(`[callback-worker] Failed to release lease id=${row.id}: ${releaseErr.message}`);
         });
