@@ -39,6 +39,7 @@ describe('退役规划和旧拆解技能覆盖禁止启动', () => {
   it.each([
     ['architecture_scan','/decomp'],['arch_review','/decomp'],
     ['architecture_scan','/decomp-check'],['arch_review','/decomp-check --review'],
+    ['architecture_scan',['/decomp']],
   ])('%s 的旧 skill_override %s 在启动前拒绝', async (task_type,skill_override) => {
     const task={id:'old-override',task_type,payload:{skill_override}};
     expect(await executor.triggerCeceliaRun(task)).toMatchObject({success:false,reason:'retired_decomposition'});
