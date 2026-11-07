@@ -22,7 +22,7 @@ export async function taskLeaseFixture() {
     await pool.query(`CREATE TABLE tasks(
         id UUID PRIMARY KEY, title TEXT, status TEXT DEFAULT 'queued', task_type TEXT DEFAULT 'data',
         executor_kind TEXT, claimed_by TEXT, claimed_at TIMESTAMPTZ, started_at TIMESTAMPTZ, completed_at TIMESTAMPTZ,
-        updated_at TIMESTAMPTZ DEFAULT now(), retry_count INT DEFAULT 0, max_retries INT DEFAULT 3,
+        status_history JSONB DEFAULT '[]', updated_at TIMESTAMPTZ DEFAULT now(), retry_count INT DEFAULT 0, max_retries INT DEFAULT 3,
         error_message TEXT, payload JSONB DEFAULT '{}', result JSONB, metadata JSONB, custom_props JSONB,
         summary TEXT, assigned_to TEXT, priority TEXT, pr_url TEXT, pr_status TEXT, pr_merged_at TIMESTAMPTZ, blocked_detail JSONB);
       CREATE TABLE schema_version(version TEXT PRIMARY KEY, description TEXT, applied_at TIMESTAMPTZ DEFAULT now());
