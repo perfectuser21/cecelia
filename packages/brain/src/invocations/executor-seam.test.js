@@ -32,7 +32,7 @@ it.each(['wrong-task','wrong-run','wrong-status','wrong-digest','not-queued'])('
    if(kind==='wrong-status')receipt.callback_status='AI Failed'; if(kind==='wrong-digest')receipt.receipt_sha256='bad'; if(kind==='not-queued')receipt.queued=false;
    return {ok:false,status:503,json:async()=>receipt};
  });
- const fn=vm.runInNewContext(`(${expression})`,{assertExternalExecutionAllowed(){},generateRunId:()=>runId,console:{log(){},error(){}},process:{env:{}},AbortSignal,JSON,activeProcesses,crypto:{createHash},internalServiceHeaders:x=>x,
+ const fn=vm.runInNewContext(`(${expression})`,{isRetiredDecomposition,RETIRED_DECOMPOSITION,assertExternalExecutionAllowed(){},generateRunId:()=>runId,console:{log(){},error(){}},process:{env:{}},AbortSignal,JSON,activeProcesses,crypto:{createHash},internalServiceHeaders:x=>x,
   prepareInvocationDispatch:async()=>({already:false,envelope:{}}),updateTaskRunInfo:async()=>({success:true}),selectBestBridge:async()=> 'http://fixed-bridge',selectCodexAccounts:async()=>[],createInvocationActivityExecutor:()=> 'worker',
   runInvocationActivities:async()=>({receipt:{ok:true}}),withLegacyExecution:async(_i,op)=>op(),fetch,pool:db,finishInvocationRun:finish});
  await fn({id:taskId,task_type:'research',payload:{invocation:{}}}); await activeProcesses.get(taskId).invocationController;
