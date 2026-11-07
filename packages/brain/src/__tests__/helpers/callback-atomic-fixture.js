@@ -152,6 +152,8 @@ vi.mock('child_process', () => ({
 }));
 
 import router from '../../routes/execution.js';
+export { default as callbackRouter } from '../../routes/execution.js';
+export const nativeFetch = globalThis.fetch;
 beforeEach(() => {
   boundary.forbidden.length = 0;
   vi.stubEnv('CECELIA_INTERNAL_TOKEN', 'owned-callback-token');

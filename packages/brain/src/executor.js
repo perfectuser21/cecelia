@@ -2560,9 +2560,19 @@ async function triggerCodexBridge(task, forceBridgeUrl = null) {
       // 独立异步Runner持有原run；Agent子callback仅能结束子task。崩溃后预留守卫禁止整包重发。
       const invocationController=runInvocationActivities(pool,task,runId,{executeSkill}).then(async outcome=>{
         if(!outcome.receipt)throw Error(outcome.runtime.reason_code??'invocation_needs_review');
+        const callbackBody={task_id:task.id,run_id:runId,status:'AI Done',result:{result:JSON.stringify(outcome.receipt)}};
+        const receiptSha256=crypto.createHash('sha256').update(JSON.stringify(callbackBody)).digest('hex');
         const response=await fetch(`${process.env.BRAIN_URL||'http://localhost:5221'}/api/brain/execution-callback`,{
-          method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({task_id:task.id,run_id:runId,status:'AI Done',result:{result:JSON.stringify(outcome.receipt)}}),signal:AbortSignal.timeout(15000)});
-        if(!response.ok)throw Error('invocation_completion_callback_unconfirmed');
+          method:'POST',headers:internalServiceHeaders({'Content-Type':'application/json'}),body:JSON.stringify(callbackBody),signal:AbortSignal.timeout(15000)});
+        if(!response.ok){
+          let receipt;
+          try { receipt=await response.json(); } catch { /* not a confirmed queue receipt */ }
+          if(response.status===503 && receipt?.success===false && receipt?.queued===true
+            && receipt?.code==='TASK_COMPLETION_GUARD_UNAVAILABLE' && receipt?.task_id===task.id
+            && typeof runId==='string' && runId.length>0 && receipt?.run_id===runId
+            && receipt?.callback_status===callbackBody.status && receipt?.receipt_sha256===receiptSha256) return {pending:true};
+          throw Error('invocation_completion_callback_unconfirmed');
+        }
       }).catch(async error=>{
         await pool.query("UPDATE tasks SET status='blocked',blocked_at=NOW(),blocked_reason='needs_review',blocked_detail=$3::jsonb,updated_at=NOW() WHERE id=$1 AND payload->>'current_run_id'=$2 AND status IN ('in_progress','dispatched')",[task.id,runId,JSON.stringify({reason:error.message,actor:'shared-runner'})]);
         await finishInvocationRun({taskId:task.id,runId,status:'failed',result:{stage:'needs_review'}},{pool});

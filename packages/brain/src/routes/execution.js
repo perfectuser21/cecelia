@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { decompReviewInputError, applyDecompReview, recordVerifiedDecompRun } from '../lib/decomp-review-callback.js';
 import { guardInvocationCallback } from '../invocations/runtime.js';
 import {assertAutomaticTaskOwner} from '../lib/headed-task-owner.js';
@@ -183,8 +184,8 @@ router.post('/execution-callback', executionCallbackRateLimit, internalAuthOrLoo
         completionTask = task.rows[0] || null;
       } catch (err) {
         console.error(`[execution-callback] completion guard unavailable: ${err.message}`);
-        return res.status(503).json({ success: false, code: 'TASK_COMPLETION_GUARD_UNAVAILABLE',
-          error: '任务完成门禁暂不可读，请重试回执' });
+        return res.status(503).json({ success: false, task_id, run_id: run_id || null, callback_status: status, receipt_sha256: createHash('sha256').update(JSON.stringify(req.body)).digest('hex'), queued: Boolean(callbackQueueId), code: 'TASK_COMPLETION_GUARD_UNAVAILABLE',
+          error: callbackQueueId ? '回执已持久入队，任务完成门禁不可读，等待队列重试' : '回执入队状态未知，任务完成门禁不可读' });
       }
       if (completionTask?.task_type === 'decomp_review') {
         const inputError = decompReviewInputError(completionTask, run_id, result);
@@ -192,7 +193,7 @@ router.post('/execution-callback', executionCallbackRateLimit, internalAuthOrLoo
           const code = !run_id ? 'DECOMP_REVIEW_RUN_ID_MISSING'
             : inputError.includes('postdeploy') ? 'DECOMP_REVIEW_POSTDEPLOY_UNSUPPORTED'
               : 'DECOMP_REVIEW_VERDICT_INVALID';
-          return res.status(422).json({ success: false, code, error: inputError });
+          return res.status(422).json({ success: false, task_id, run_id: run_id || null, callback_status: status, receipt_sha256: createHash('sha256').update(JSON.stringify(req.body)).digest('hex'), queued: Boolean(callbackQueueId), code, error: inputError });
         }
       }
     }

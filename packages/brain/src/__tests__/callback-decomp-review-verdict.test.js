@@ -1,10 +1,13 @@
 /** 真实 callback 和 review-gate；数据库为有状态替身，禁止其它外部副作用。 */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { callbackPoolResponse, mockClient, mockPool, mockReqRes } from './helpers/callback-atomic-fixture.js';
+import { callbackPoolResponse, mockClient, mockPool, mockReqRes, callbackRouter, nativeFetch } from './helpers/callback-atomic-fixture.js';
 import { recordRunFromCallback } from '../lib/task-run.js';
 import { recordProgressStep } from '../progress-ledger.js';
 import { publishTaskCompleted } from '../events/taskEvents.js';
 import { emit as emitEvent } from '../event-bus.js';
+import express from 'express';
+import { createRequire } from 'node:module';
+const bridge = createRequire(import.meta.url)('../../scripts/codex-bridge/codex-bridge.cjs');
 
 const planAdjustment = vi.hoisted(() => vi.fn(async () => {}));
 vi.mock('../progress-reviewer.js', () => ({ executePlanAdjustment: planAdjustment }));
@@ -48,6 +51,17 @@ describe('拆解审核回执必须有明确 verdict', () => {
       expect(planAdjustment).not.toHaveBeenCalled();
     }, 10000,
   );
+
+  it('队列未返回记录身份时不声称已持久入队', async () => {
+    const previous = mockPool.query.getMockImplementation();
+    mockPool.query.mockImplementation(async (sql, params) => String(sql).includes('INSERT INTO callback_queue')
+      ? { rows: [], rowCount: 1 } : previous(sql, params));
+    const response = await mockReqRes('POST', '/execution-callback', {
+      task_id: 'decomp-task', run_id: 'run-no-queue-id', status: 'AI Done', result: {},
+    });
+    expect(response.statusCode).toBe(422);
+    expect(response.body).toMatchObject({ success: false, queued: false });
+  });
 
   it('没有 run_id 的旧审核回执必须保留待核', async () => {
     const response = await mockReqRes('POST', '/execution-callback', {
@@ -588,4 +602,95 @@ describe('run 留痕隔离池', () => {
       await pg.end();
     }
   }, 10000);
+});
+
+
+describe('Bridge 到 HTTP 到真实队列的待核回执', () => {
+  it.runIf(process.env.DECOMP_REVIEW_PG_TEST === '1').each([false, true])('无效审核或门禁故障只入队一次（读取故障=%s）', async readFault => {
+    const { Client } = await import('pg');
+    const { userInfo } = await import('node:os');
+    const pg = new Client({ host: '127.0.0.1', port: 5432, database: 'cecelia_scratch', user: userInfo().username });
+    await pg.connect();
+    let server;
+    try {
+      await pg.query('CREATE TEMP TABLE tasks (id uuid PRIMARY KEY, task_type text, status text, payload jsonb)');
+      await pg.query('CREATE TEMP TABLE callback_queue (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), task_id uuid, checkpoint_id text, run_id text, status text, result_json jsonb, stderr_tail text, duration_ms int, attempt int, exit_code int, failure_class text, claimed_at timestamptz, claimed_by text, processed_at timestamptz)');
+      const taskId = '00000000-0000-4000-8000-000000000001';
+      const runId = '00000000-0000-4000-8000-000000000002';
+      await pg.query("INSERT INTO tasks VALUES ($1,'decomp_review','in_progress','{}')", [taskId]);
+      mockPool.query.mockImplementation(async (sql, params) => {
+        if (String(sql).includes('SELECT task_type, payload FROM tasks') && readFault) throw new Error('injected type read outage');
+        if (String(sql).includes('INSERT INTO callback_queue') || String(sql).includes('SELECT task_type, payload FROM tasks')) return pg.query(sql, params);
+        return callbackPoolResponse(sql, params);
+      });
+      const app = express(); app.use(express.json()); app.use('/api/brain', callbackRouter);
+      server = app.listen(0, '127.0.0.1');
+      await new Promise(resolve => server.once('listening', resolve));
+      let requests = 0;
+      vi.stubGlobal('fetch', (url, options) => {
+        requests++;
+        return nativeFetch(`http://127.0.0.1:${server.address().port}${new URL(url).pathname}`, options);
+      });
+      const result = await bridge.callbackBrain(taskId, null, 'completed', 'no-verdict', 10, runId);
+      expect(result).toMatchObject({ outcome: 'unconfirmed', reason: 'queued_pending', pending: true });
+      expect(requests).toBe(1);
+      expect((await pg.query('SELECT count(*)::int AS n FROM callback_queue WHERE processed_at IS NULL')).rows[0].n).toBe(1);
+      expect((await pg.query('SELECT status FROM tasks')).rows[0].status).toBe('in_progress');
+      expect(recordRunFromCallback).not.toHaveBeenCalled();
+    } finally {
+      if (server) await new Promise(resolve => server.close(resolve));
+      await pg.end();
+    }
+  }, 30000);
+});
+
+describe('shared invocation 已入队回执恢复', () => {
+  it.runIf(process.env.DECOMP_REVIEW_PG_TEST === '1')('真实 sender 遇已入队 503 不阻断任务，worker 最终完成', async () => {
+    const vm = await import('node:vm');
+    const crypto = await import('node:crypto');
+    const { readFileSync } = await import('node:fs');
+    const { Client } = await import('pg');
+    const { userInfo } = await import('node:os');
+    const { pollAndProcess } = await import('../callback-worker.js');
+    const pg = new Client({ host: '127.0.0.1', port: 5432, database: 'cecelia_scratch', user: userInfo().username });
+    await pg.connect();
+    let server;
+    try {
+      await pg.query('CREATE TEMP TABLE tasks (id uuid PRIMARY KEY, task_type text, status text, payload jsonb, result jsonb, completed_at timestamptz, quota_exhausted_at timestamptz, pr_url text, pr_status text, error_message text, blocked_detail jsonb, blocked_at timestamptz, blocked_reason text, updated_at timestamptz, claimed_by text, claimed_at timestamptz)');
+      await pg.query('CREATE TEMP TABLE decision_log (trigger text, input_summary text, llm_output_json jsonb, action_result_json jsonb, status text)');
+      await pg.query('CREATE TEMP TABLE callback_queue (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), task_id uuid, run_id text, status text, result_json jsonb, checkpoint_id text, duration_ms int, attempt int, exit_code int, stderr_tail text, failure_class text, claimed_at timestamptz, claimed_by text, created_at timestamptz DEFAULT now(), retry_count int, processed_at timestamptz)');
+      const taskId = '00000000-0000-4000-8000-000000000011';
+      const runId = '00000000-0000-4000-8000-000000000012';
+      await pg.query("INSERT INTO tasks (id,task_type,status,payload) VALUES ($1,'research','in_progress',jsonb_build_object('current_run_id',$2::text))", [taskId, runId]);
+      let failTypeRead = true;
+      mockClient.query.mockImplementation((sql, params) => pg.query(sql, params));
+      mockPool.query.mockImplementation(async (sql, params) => {
+        const text = String(sql);
+        if (text.includes('SELECT task_type, payload FROM tasks') && failTypeRead) { failTypeRead = false; throw new Error('type read outage'); }
+        if (text.includes('INSERT INTO callback_queue') || text.includes("payload->>'failure_class' AS failure_class") || text.includes("UPDATE tasks SET status='blocked'")) return pg.query(sql, params);
+        return callbackPoolResponse(sql, params);
+      });
+      const app = express(); app.use(express.json()); app.use('/api/brain', callbackRouter);
+      server = app.listen(0, '127.0.0.1'); await new Promise(resolve => server.once('listening', resolve));
+      const expression = readFileSync(new URL('../executor.js', import.meta.url), 'utf8').match(/async function triggerCodexBridge\([^]*?^\}/m)[0];
+      const activeProcesses = new Map(); const finish = vi.fn(async () => {});
+      const fn = vm.runInNewContext(`(${expression})`, {
+        assertExternalExecutionAllowed(){}, generateRunId:()=>runId, console, process:{env:{}}, AbortSignal, JSON, activeProcesses, crypto,
+        internalServiceHeaders:headers=>({...headers,'X-Internal-Token':'owned-callback-token'}),
+        prepareInvocationDispatch:async()=>({already:false,envelope:{}}), updateTaskRunInfo:async()=>({success:true}), selectBestBridge:async()=> 'http://fixed-bridge', selectCodexAccounts:async()=>[],
+        createInvocationActivityExecutor:()=> 'worker', runInvocationActivities:async()=>({receipt:{ok:true}}),
+        withLegacyExecution:async(_identity,operation)=>operation(), pool:mockPool, finishInvocationRun:finish,
+        fetch:(url,options)=>nativeFetch(`http://127.0.0.1:${server.address().port}${new URL(url).pathname}`,options),
+      });
+      await fn({id:taskId,task_type:'research',payload:{invocation:{}}});
+      await activeProcesses.get(taskId).invocationController;
+      expect((await pg.query('SELECT status, blocked_detail FROM tasks WHERE id=$1',[taskId])).rows[0]).toEqual({status:'in_progress',blocked_detail:null});
+      expect(finish).not.toHaveBeenCalled();
+      expect((await pg.query('SELECT count(*)::int n FROM callback_queue WHERE processed_at IS NULL')).rows[0].n).toBe(1);
+      await pg.query("UPDATE callback_queue SET claimed_at=now()-interval '6 minutes'");
+      await pollAndProcess();
+      expect((await pg.query('SELECT status FROM tasks WHERE id=$1',[taskId])).rows[0].status).toBe('completed');
+      expect((await pg.query('SELECT processed_at IS NOT NULL done FROM callback_queue')).rows[0].done).toBe(true);
+    } finally { if (server) await new Promise(resolve=>server.close(resolve)); await pg.end(); }
+  }, 15000);
 });
