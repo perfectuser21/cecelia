@@ -114,9 +114,16 @@ export async function maybeMarkCompletedNoPr(newStatus, pr_url, task_id, pool, p
     const row = taskRow.rows[0];
     if (!row) return newStatus;
     const taskType = row.task_type;
-    const isDecomposition = row.payload?.decomposition;
+    // Keep the no-PR exemption only for the legacy values that actually
+    // route a dev task to /decomp. Preserve the old next_action precedence
+    // for in-flight tasks without granting an exemption to next_action alone.
+    // Other truthy values (e.g. "known" or "false") cannot bypass the check.
+    const decomposition = row.payload?.decomposition;
+    const isDecomposition = decomposition === true || decomposition === 'true' || decomposition === 'okr'
+      || (Boolean(decomposition) && row.payload?.next_action === 'decompose');
     if (taskType === 'dev' && !isDecomposition) {
-      const isHarness = row.payload?.harness_mode;
+      const harnessMode = row.payload?.harness_mode;
+      const isHarness = harnessMode === true || harnessMode === 'true' || harnessMode === 't';
       if (!isHarness) {
         // Fix C: 逐项独立校验（invalid tasks.pr_url 不遮蔽合法 payload.existing_pr_url）
         // 场景：Agent stdout 只写 "PR #4827"，tasks.pr_url="PR #4827"（非法），
