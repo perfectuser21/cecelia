@@ -1091,39 +1091,7 @@ router.post('/execution-callback', executionCallbackRateLimit, internalAuthOrLoo
     // 5b. 探索型任务闭环已移除
     if (newStatus === 'completed') {
 
-      // 5c0. initiative_plan 完成 → 自动创建 decomp_review task 触发 Vivian 质检
-      try {
-        const ipRow = await pool.query(
-          'SELECT task_type, project_id, goal_id, title FROM tasks WHERE id = $1',
-          [task_id]
-        );
-        const ipTask = ipRow.rows[0];
-        if (ipTask?.task_type === 'initiative_plan') {
-          console.log(`[execution-callback] initiative_plan ${task_id} completed → auto-creating decomp_review task`);
-          const { createTask } = await import('../actions.js');
-          await createTask({
-            title: `[Vivian质检] ${ipTask.title}`,
-            description: `initiative_plan 任务「${ipTask.title}」已完成，Vivian 审查拆解质量。\n原始 initiative_plan task_id: ${task_id}`,
-            priority: 'P0',
-            project_id: ipTask.project_id,
-            goal_id: ipTask.goal_id,
-            task_type: 'decomp_review',
-            trigger_source: 'execution_callback_auto',
-            payload: { parent_task_id: task_id, review_scope: 'initiative_plan' }
-          });
-          console.log(`[execution-callback] decomp_review task created for initiative_plan ${task_id}`);
-        }
-      } catch (decompAutoErr) {
-        console.error(`[execution-callback] auto decomp_review creation failed (non-fatal): ${decompAutoErr.message}`);
-      }
-
-      // 5c2. 拆解完成：只读取 Project 真身及直接 Tasks。
-      try {
-        const { triggerCompletedDecompositionReview } = await import('../decomposition-review-trigger.js');
-        await triggerCompletedDecompositionReview(pool, task_id);
-      } catch (decompTriggerErr) {
-        console.error(`[execution-callback] Decomp → review trigger error: ${decompTriggerErr.message}`);
-      }
+      // 旧拆解已退役：在途回执仍正常收尾，不再自动创建旧审查或改写审核状态。
 
       // 5c-strategy. strategy_session 闭环：解析 KR JSON → 写入 goals 表
       try {
