@@ -83,3 +83,37 @@ export async function proveReviewedUsCompose({ text, read, relations, revision }
   relations.push({consumer_path:PATHS[from],input_path:PATHS[to],kind:'reviewed_us_openclaw_static_import',revision});
  return true;
 }
+
+// 已审历史部署消费源：生产 compose 与 staging 共用的固定输入。
+const REVIEWED_LEGACY_STAGING_INPUTS=Object.freeze({
+   '.skills-source.json':'3ffcaf4a8fc3af78dc0297df88141e2f8a704e4f681856953618e93dd1b74386',
+   'scripts/ensure-skills-source.sh':'d605139c61e0567e8ec0fbe94356ca63f81ece4d613dc6307814a54f20c233d0',
+   'scripts/skills-source.py':'500517f4b1493696062d36aa0c1c45d9b1d63f0093f96ae290aa0f5d8f022ab6',
+   'packages/brain/src/db-config.js':'5dfa5b8490b65d322f542b1d693784125de91fa87264a556a53bb099a2347fb0',
+   'scripts/lib/bluegreen.sh':'ca287873ef216a990fd57e588284e401218969294df17ab48592653262ed74d6',
+   'packages/quality/smoke-core.txt':'15ea889c19d29543b86fd05a4d5bcf8275c92858080ccf032c0a05fc76a96003',
+   'packages/brain/scripts/smoke/healthz-smoke.sh':'64961c8f288cbd2bd2c674bb2de6870cd50d95038a186fb0db95771cc13f5da2',
+   'packages/brain/scripts/smoke/version-endpoint-smoke.sh':'b107f452f07b3ff86ab4fc8c651522c759fba59a36f60af319f5d397320e0503',
+   'packages/brain/scripts/smoke/harness-ping-smoke.sh':'4988ef2a018aac906f7f5e95e58f75d09cf6c94040018f88ab1b0c7abe6b5b8d',
+   'packages/brain/scripts/smoke/harness-echo-smoke.sh':'92ec4a5174aadbacf668fea98e12ce54868a332a7b0032c9d8c379dfd6c997f0',
+   'packages/brain/scripts/smoke/harness-schema-validation-smoke.sh':'097585a73ecc525c576aee6cdcd520ec2f90b12e6479a200de137bd8d3256359',
+  });
+
+// 只认审核过的完整 staging 消费组合，不能按文件单独拼配。
+export async function matchesReviewedStagingTuple({read,budget,stagingFiles,settlementFiles,smokeList,smokes}) {
+ const workflow=await read('.github/workflows/auto-staging-deploy.yml');
+ if(!budget||!workflow||hash(workflow)!=='400fde7d031188fc87b9a8abbaf0f4fa48374c60e0d6c657c4e0218366dfcecb')return false;
+ const paths=[...new Set([...Object.keys(stagingFiles),...Object.keys(settlementFiles),'scripts/brain-build.sh','packages/brain/src/db-config.js','.skills-source.json','scripts/ensure-skills-source.sh','scripts/skills-source.py',smokeList,...smokes])].filter(p=>!p.startsWith('scripts/lib/brain-bootstrap')).sort();
+ const parts=[];
+ for(const path of paths){const text=await read(path);if(!text)return false;parts.push(`${path}\0${hash(text)}\n`);}
+ return hash(parts.join(''))==='8616636415530b9cc8d0b32a9f77b9364d41e0453e2058f9dd6e504237681721';
+}
+
+export async function verifyLegacyStagingInputs({read,requireProof,relations,revision}) {
+ for(const[path,digest]of Object.entries(REVIEWED_LEGACY_STAGING_INPUTS)){
+  const text=await read(path);requireProof(text&&hash(text)===digest,'isolated_staging_source_unproven');
+ }
+ relations.push({consumer_path:'scripts/lib/bluegreen.sh',input_path:'packages/quality/smoke-core.txt',kind:'reviewed_pre_swap_smoke_list',revision});
+ for(const input_path of Object.keys(REVIEWED_LEGACY_STAGING_INPUTS).filter(p=>p.startsWith('packages/brain/scripts/smoke/')))
+  relations.push({consumer_path:'packages/quality/smoke-core.txt',input_path,kind:'reviewed_pre_swap_smoke_script',revision});
+}

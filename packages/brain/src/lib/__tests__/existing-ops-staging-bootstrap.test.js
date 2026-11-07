@@ -54,7 +54,8 @@ const historicalCache = new Map();
 const readCurrent=path=>{if(!currentCache.has(path))currentCache.set(path,git('show',`${revision}:${path}`));return currentCache.get(path);};
 const legacyOnly=new Set(['.skills-source.json','scripts/lib/bluegreen.sh','packages/quality/smoke-core.txt','packages/brain/scripts/smoke/harness-schema-validation-smoke.sh']);
 const read = path => {
-  if (!cache.has(path)) cache.set(path, candidate.blobs[path]??git('show', `${legacyOnly.has(path)?candidate.source_revision:revision}:${path}`));
+  // 这些历史文件在 a68 与 candidate 源修订字节相同，a68 是主干可达的固定 Git 对象。
+  if (!cache.has(path)) cache.set(path, candidate.blobs[path]??git('show', `${legacyOnly.has(path)?'a68df7e48781bc38875d8581249049f57c4fe5de':revision}:${path}`));
   return cache.get(path);
 };
 function wrapRoute(text, wrap) {
@@ -124,7 +125,8 @@ describe('staging 正式调用链的固定来源，不声明部署成功', () =>
     }
   });
   it('完整读取两个真实历史修订，旧输入篡改不得通过',async()=>{
-    for(const rev of ['b3edd15d195fc563d3f6ec85d6e721149e04f599','0d3e363ce669df4a7086cc0656f61892790d38d4']){
+    // 两个真实提交均在主干历史中，不能依赖 CI 未获取的其他分支 Git 对象。
+    for(const rev of ['a68df7e48781bc38875d8581249049f57c4fe5de','e3a01021ee7100b83d8ed5a0be219d0b543b5dff']){
       const result=await buildHistorical(rev);expect(result.status,JSON.stringify(result.gaps)).toBe('verified');
       for(const path of [dbConfig,'packages/quality/smoke-core.txt']){
         const changed=await buildHistorical(rev,{[path]:'\n# altered\n'});expect(changed.status,path).toBe('unknown');expect(changed.bindings).toEqual([]);
