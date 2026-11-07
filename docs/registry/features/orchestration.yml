@@ -632,8 +632,8 @@ features:
         - L3
     runtime: {}
   - feature_id: decomposition_engine
-    name: OKR 拆解引擎
-    purpose: 将 KR 自动拆解为具体 Project/Scope/Initiative/Task
+    name: 目标缺少 KR 检查
+    purpose: 为缺少活跃 KR 的目标创建战略会议
     maturity: 2
     code:
       root: packages/brain/src
@@ -647,32 +647,10 @@ features:
       adr: null
       api_doc: null
       runbook: null
-    skills:
-      - skill_id: plan
-        command: /plan
-        entry_file: packages/workflows/skills/plan/SKILL.md
-        version: "1.8.0"
-        status: active
-      - skill_id: decomp
-        command: /decomp
-        entry_file: packages/workflows/skills/decomp/SKILL.md
-        version: "2.1.0"
-        status: active
-      - skill_id: decomp_check
-        command: /decomp-check
-        entry_file: packages/workflows/skills/decomp-check/SKILL.md
-        version: "2.1.0"
-        status: active
-      - skill_id: autumnrice
-        command: /autumnrice
-        entry_file: packages/workflows/skills/autumnrice/SKILL.md
-        version: "7.0.0"
-        status: active
+    skills: []
     apis: []
     tests:
       unit:
-        - packages/brain/src/__tests__/decomp-checker-dedup-fix.test.js
-        - packages/brain/src/__tests__/decomp-checker-direct-kr.test.js
         - packages/brain/src/__tests__/decomp-checker-domain.test.js
         - packages/brain/src/__tests__/decomposition-checker.test.js
       integration: []
@@ -680,13 +658,11 @@ features:
       regression: []
     capabilities:
       - id: decomposition_engine_decompose
-        name: KR 拆解
+        name: 目标缺少 KR 检查
         entry_file: packages/brain/src/decomposition-checker.js
         maturity: 2
         tests:
           unit:
-            - packages/brain/src/__tests__/decomp-checker-dedup-fix.test.js
-            - packages/brain/src/__tests__/decomp-checker-direct-kr.test.js
             - packages/brain/src/__tests__/decomp-checker-domain.test.js
             - packages/brain/src/__tests__/decomposition-checker.test.js
           integration: []
