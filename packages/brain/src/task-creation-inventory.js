@@ -45,7 +45,6 @@ export const TASK_CREATION_INVENTORY = Object.freeze([
   { module: 'nightly-tick.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
   // 棒4（决策 ee4842a6/3feeae3e）：scope/initiative/project 完成检测清空为 no-op，不再建任务
   { module: 'okr-closer.js', source: 'child', creates_executable_task: false, migration_status: 'routed' },
-  { module: 'okr-tick.js', source: 'scheduler', creates_executable_task: true, migration_status: 'routed' },
   { module: 'orchestrator-chat.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
   { module: 'orchestrator/run.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
   { module: 'pipeline-patrol.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },

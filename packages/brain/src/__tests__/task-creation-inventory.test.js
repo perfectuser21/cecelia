@@ -65,6 +65,10 @@ describe('task creation inventory', () => {
     });
   });
 
+  it('不再将退役拆解的 OKR tick 列为任务写入入口', () => {
+    expect(TASK_CREATION_INVENTORY.some(row => row.module === 'okr-tick.js')).toBe(false);
+  });
+
   it('records each executable creation boundary', () => {
     expect(TASK_CREATION_INVENTORY_VERSION).toBe(ROUTER_VERSION);
     expect(TASK_CREATION_INVENTORY.length).toBeGreaterThanOrEqual(33);

@@ -1,6 +1,6 @@
 import { Router } from 'express';
+import { rateLimit } from 'express-rate-limit';
 import pool from '../db.js';
-import { readFileSync } from 'fs';
 import { createTask, updateTask, createGoal, updateGoal, triggerN8n, setMemory, batchUpdateTasks } from '../actions.js';
 import { parseIntent, parseAndCreate, INTENT_TYPES, INTENT_ACTION_MAP, extractEntities as _extractEntities, classifyIntent as _classifyIntent, getSuggestedAction as _getSuggestedAction } from '../intent.js';
 import { getPendingActions, approvePendingAction, rejectPendingAction, addProposalComment, selectProposalOption, expireStaleProposals as _expireStaleProposals } from '../decision-executor.js';
@@ -10,17 +10,6 @@ import { callLLM, callLLMStream as _callLLMStream } from '../llm-caller.js';
 import { ALLOWED_ACTIONS, checkIdempotency, saveIdempotency, internalLogDecision } from './shared.js';
 
 const router = Router();
-
-// 秋米 /decomp skill 内容
-let _decompSkillContent = '';
-try {
-  _decompSkillContent = readFileSync(
-    '/Users/administrator/perfect21/cecelia/packages/workflows/skills/decomp/SKILL.md', 'utf-8'
-  );
-  console.log('[autumnrice] decomp SKILL.md loaded:', _decompSkillContent.length, 'chars');
-} catch (e) {
-  console.warn('[autumnrice] decomp SKILL.md not found, using basic persona:', e.message);
-}
 
 // ==================== Pending Actions API（危险动作审批） ====================
 
@@ -245,7 +234,7 @@ router.post('/pending-actions/:id/select', async (req, res) => {
  * Body: { pending_action_id: string, message: string }
  * 秋米加载 KR + 拆解上下文，回复用户，并将对话存入 pending_actions.comments
  */
-router.post('/autumnrice/chat', async (req, res) => {
+router.post('/autumnrice/chat', rateLimit({ windowMs: 60_000, limit: 60, standardHeaders: 'draft-7', legacyHeaders: false }), async (req, res) => {
   try {
     const { pending_action_id, message } = req.body || {};
 
@@ -269,6 +258,24 @@ router.post('/autumnrice/chat', async (req, res) => {
 
     const ctx = action.context || {};
     const existingComments = Array.isArray(action.comments) ? action.comments : [];
+
+    // 旧自动拆解已退役；保留历史讨论，但不让请求触发过时的 KR 状态变更。
+    const redecompTriggers = ['重新拆', '重拆', '再拆一次'];
+    const actionableMessage = message.replace(/(?:不要|不必|不用|不想|无需|别|不再)[^，。！？,!?]{0,8}?(?:重新拆|重拆|再拆一次)/g, '');
+    if (redecompTriggers.some(keyword => actionableMessage.includes(keyword))) {
+      const now = new Date().toISOString();
+      const reply = '旧自动拆解功能已退役，未触发重新拆解。';
+      const userComment = { role: 'user', text: message.trim(), ts: now };
+      const autumnriceComment = { role: 'autumnrice', text: reply, ts: now };
+      const saved = await pool.query(
+        `UPDATE pending_actions SET comments = comments || $1::jsonb WHERE id = $2 AND status = 'pending_approval' RETURNING id`,
+        [JSON.stringify([userComment, autumnriceComment]), pending_action_id]
+      );
+      if (saved.rowCount !== 1) {
+        return res.status(409).json({ success: false, error: 'Pending action already processed' });
+      }
+      return res.json({ success: true, reply, comment: autumnriceComment, redecomp_triggered: false });
+    }
 
     // 加载 KR OKR 上下文（注入秋米 prompt，提供历史参考）
     const krId = ctx.kr_id || null;
@@ -320,11 +327,7 @@ router.post('/autumnrice/chat', async (req, res) => {
     }
 
     // 构建秋米的 system prompt（聚焦 KR 定义质量讨论）
-    const decompSkillBlock = _decompSkillContent
-      ? `# 你的核心技能（/decomp Skill 完整版）\n\n${_decompSkillContent}\n\n---\n\n`
-      : '';
-
-    const systemPrompt = `${decompSkillBlock}你是秋米（autumnrice），Cecelia 系统中的 OKR 拆解专家。
+    const systemPrompt = `你是秋米（autumnrice），协助讨论 KR 的定义质量。
 
 当前正在讨论以下 KR（关键结果）的定义质量：
 
@@ -337,13 +340,7 @@ ${okrCtxBlock}
 3. **范围清晰度**：这个 KR 的边界是否清晰？和其他 KR 是否有重叠？
 4. **可行性**：是否有支撑条件（技术可行、资源够用）？
 
-如果用户对 KR 定义满意，引导他们点击左侧"确认放行 KR"按钮，之后系统将自动开始拆解。
-
-## 重要能力：你可以触发重新拆解
-
-**如果用户要求重新拆解**（说"重新拆"、"重拆"、"重做"、"再拆一次"等），你有能力触发重拆：
-- 系统会自动检测这些关键词，重置 KR 状态，下一个 Tick 会启动新一轮完整拆解
-- 你的回复应告诉用户："已为你触发重拆，系统正在重新分析，请稍等片刻"
+旧自动拆解功能已退役。不要承诺启动、重新触发或执行自动拆解。
 
 注意：你是秋米，不是 Cecelia。直接以秋米的身份回应，保持专业、简洁、务实的风格。`;
 
@@ -379,41 +376,7 @@ ${okrCtxBlock}
       [JSON.stringify([userComment, autumnriceComment]), pending_action_id]
     );
 
-    // 重拆意图检测
-    const REDECOMP_TRIGGERS = ['重新拆', '重拆', '重做', '重新分析', '重新规划', '再拆一次'];
-    const isRedecomp = REDECOMP_TRIGGERS.some(kw => message.includes(kw));
-
-    let redecompTriggered = false;
-    if (isRedecomp) {
-      // 优先用 context.kr_id，没有则用 kr_title 反查
-      let resolvedKrId = ctx.kr_id || null;
-      if (!resolvedKrId && ctx.kr_title) {
-        // 先查 key_results，再查 objectives（向后兼容）
-        let krResult = await pool.query(
-          `SELECT id FROM key_results WHERE title = $1 LIMIT 1`,
-          [ctx.kr_title]
-        );
-        if (krResult.rows.length === 0) {
-          krResult = await pool.query(
-            `SELECT id FROM objectives WHERE title = $1 LIMIT 1`,
-            [ctx.kr_title]
-          );
-        }
-        if (krResult.rows.length > 0) resolvedKrId = krResult.rows[0].id;
-      }
-      if (resolvedKrId) {
-        await pool.query(
-          `UPDATE key_results SET status='ready', updated_at=NOW() WHERE id=$1`,
-          [resolvedKrId]
-        );
-        redecompTriggered = true;
-        console.log(`[autumnrice/chat] redecomp triggered for KR: ${resolvedKrId}`);
-      } else {
-        console.warn(`[autumnrice/chat] redecomp: could not find KR for action ${pending_action_id}`);
-      }
-    }
-
-    res.json({ success: true, reply, comment: autumnriceComment, redecomp_triggered: redecompTriggered });
+    res.json({ success: true, reply, comment: autumnriceComment, redecomp_triggered: false });
   } catch (err) {
     console.error('[autumnrice/chat] Error:', err.message);
     res.status(500).json({ error: 'Failed to chat with autumnrice', details: err.message });
