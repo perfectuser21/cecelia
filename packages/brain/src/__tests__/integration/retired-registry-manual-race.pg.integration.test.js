@@ -57,6 +57,20 @@ describe('动态技能手动派发与并发数据库变更',()=>{
     await rival?.end();await owner?.end();
   });
   for(const endpoint of ['task','dispatch-now']){
+    it(`${endpoint} 账本不可用时明确拒绝且不取得认领或设备锁`,async()=>{
+      const original=io.query.getMockImplementation();
+      io.query.mockImplementation(async(sql,args)=>{
+        if(String(sql).includes('FROM skill_registry')) throw Error('registry unavailable');
+        return original(sql,args);
+      });
+      const route=endpoint==='task' ? request(app).post(`/api/brain/tasks/${id}/dispatch`).send({})
+        : request(app).post('/api/brain/dispatch-now').send({task_id:id});
+      const r=await route;
+      expect(r.status).toBe(503);expect(r.body.error).toBe('skill_registry_unavailable');
+      expect(io.trigger).not.toHaveBeenCalled();
+      expect((await rival.query('SELECT status,claimed_by FROM tasks WHERE id=$1',[id])).rows[0]).toEqual({status:'queued',claimed_by:null});
+      expect((await rival.query("SELECT locked_by FROM device_locks WHERE device_name='device-a'")).rows[0].locked_by).toBeNull();
+    });
     it(`${endpoint} 动态旧拆解绑定在取锁和启动前拒绝`,async()=>{
       await owner.query("UPDATE skill_registry SET name='decomp',status='deprecated',dispatch_command=NULL");
       release.resolve();

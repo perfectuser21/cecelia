@@ -235,6 +235,11 @@
       "path": "packages/brain/src/__tests__/integration/retired-decomposition-cas.pg.integration.test.js",
       "mode": "full",
       "status": "ready"
+    },
+    {
+      "path": "packages/brain/src/__tests__/integration/retired-registry-manual-race.pg.integration.test.js",
+      "mode": "full",
+      "status": "ready"
     }
   ]
 }

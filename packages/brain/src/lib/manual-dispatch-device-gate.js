@@ -45,13 +45,15 @@ export async function checkDeviceLockForManualDispatch(task, tag) {
     lockRes = await acquireDeviceLock(task.id, serial, task.payload?.device_ttl_minutes);
   } catch (err) {
     console.error(`[${tag}] acquireDeviceLock 异常（fail-closed 按 locked 处理）: ${err.message}`);
-    lockRes = { result: 'locked', holder: null };
+    // 写入结果可能在数据库已提交后丢失，不能证明设备锁未被取得。
+    lockRes = { result: 'locked', holder: null, uncertain: true };
   }
 
   if (lockRes.result === 'locked') {
     return {
       pass: false,
       status: 409,
+      uncertain: lockRes.uncertain === true,
       body: {
         success: false,
         error: 'device_locked',
@@ -72,7 +74,7 @@ export async function checkDeviceLockForManualDispatch(task, tag) {
       },
     };
   }
-  return { pass: true, acquired: true };
+  return { pass: true, acquired: true, ...(lockRes.lock?.acquisition_version ? {acquisitionVersion:lockRes.lock.acquisition_version} : {}) };
 }
 
 /** 派发失败回滚点的锁释放（non-fatal：失败留痕，sweeper 对账兜底）。 */

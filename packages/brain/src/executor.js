@@ -58,6 +58,7 @@ import { recordTaskEventSafe } from './lib/task-event-log.js';
 import { startRunForExecResult } from './lib/task-run.js';
 import { internalServiceHeaders } from './lib/internal-service-auth.js';
 import { resolveTaskTypeSkill, resolveSkillWithLedger } from './lib/skill-binding-registry.js';
+import { consumeReviewSkill } from './lib/review-skill-plan.js';
 
 // 外部执行体（工作机领单器等）认领后的活性宽限期。
 // 真机实测单个关键词采收 17~25 分钟（逐个点进评论者主页核验身份），45 分钟留足余量；
@@ -2195,7 +2196,7 @@ const _TASK_ROUTES = {
 async function preparePrompt(task) {
   const taskType = task.task_type || 'dev';
   // skill_override 最优先（不碰库）；否则先刷新 skill_registry 快照（TTL 内零查库、失败开放）再解析。
-  const skill = await resolveSkillWithLedger(pool, { ...task, task_type: taskType }, getSkillForTaskType);
+  const skill = arguments.length > 1 ? arguments[1] : await resolveSkillWithLedger(pool, { ...task, task_type: taskType }, getSkillForTaskType);
 
   if (_DECOMP_TYPES.has(task.payload?.decomposition)) return _prepareDecompositionPrompt(task);
   if (_HARNESS_GENERATE_TYPES.has(taskType)) return _prepareHarnessGeneratePrompt(task);
@@ -2240,6 +2241,8 @@ async function updateTaskRunInfo(taskId, runId, status = 'triggered') {
 async function triggerCodexReview(task) {
   assertExternalExecutionAllowed();
   if (isRetiredDecomposition(task)) return { success: false, taskId: task?.id, reason: RETIRED_DECOMPOSITION };
+  // 仅手动入口可提供已绑定任务行的计划；无计划的既有自动调用保留原解析。
+  const manualSkillPlan=consumeReviewSkill(task);
   const runId = generateRunId(task.id);
 
   try {
@@ -2257,7 +2260,7 @@ async function triggerCodexReview(task) {
     }
 
     // 获取 prompt 内容
-    const promptContent = await preparePrompt(task);
+    const promptContent = manualSkillPlan.found ? await preparePrompt(task,manualSkillPlan.skill) : await preparePrompt(task);
 
     // 写 prompt 文件
     await mkdir(PROMPT_DIR, { recursive: true });

@@ -58,7 +58,7 @@ export async function acquireDeviceLock(taskId, deviceName, ttlMinutes = TTL_DEF
 
           )
         )
-      RETURNING *`,
+      RETURNING *, xmin::text AS acquisition_version`,
     [String(taskId), String(ttl), deviceName],
   );
   if (rows.length > 0) return { result: 'acquired', lock: rows[0] };

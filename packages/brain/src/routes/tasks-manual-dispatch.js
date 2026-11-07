@@ -8,6 +8,8 @@ import { checkDeviceLockForManualDispatch, releaseDeviceLockNonFatal } from '../
 import { dispatchManualQiumi } from '../lib/manual-qiumi-dispatch.js';
 import { CLAUDE_CHANNEL_RETIRED_CODE } from '../lib/claude-channel.js';
 import { isRetiredDecomposition, RETIRED_DECOMPOSITION } from '../lib/retired-decomposition.js';
+import { dispatchManualRegistryReview } from '../lib/manual-review-dispatch.js';
+import { prepareReviewSkillDispatch } from '../lib/review-skill-plan.js';
 
 export function registerTaskManualDispatchRoutes(router) {
 
@@ -23,12 +25,12 @@ router.post('/tasks/:id/dispatch', rateLimit(TASK_MUTATION_RATE_LIMIT_OPTIONS), 
     const { id } = req.params;
 
     // 1. 查找任务
-    const taskResult = await pool.query('SELECT * FROM tasks WHERE id = $1', [id]);
+    const taskResult = await pool.query('SELECT *, xmin::text AS dispatch_row_version FROM tasks WHERE id = $1', [id]);
     if (taskResult.rows.length === 0) {
       return res.status(404).json({ error: 'task not found' });
     }
 
-    const task = taskResult.rows[0];
+    let task = taskResult.rows[0];
 
     if (isRetiredDecomposition(task)) {
       return res.status(410).json({ error: RETIRED_DECOMPOSITION, detail: '旧任务拆解已退役，未派发' });
@@ -50,6 +52,25 @@ router.post('/tasks/:id/dispatch', rateLimit(TASK_MUTATION_RATE_LIMIT_OPTIONS), 
         error: 'missing_anchor',
         detail: anchorResult.detail,
       });
+    }
+
+    // 冻结本次实际使用的 review skill；旧绑定在获取设备锁及改状态前拒绝。
+    let reviewPlan;
+    try { reviewPlan = await prepareReviewSkillDispatch(task); }
+    catch (error) {
+      console.error(`[tasks/:id/dispatch] skill registry unavailable: ${error.message}`);
+      return res.status(503).json({error:'skill_registry_unavailable'});
+    }
+    if (reviewPlan.blocked) {
+      return res.status(410).json({ error: RETIRED_DECOMPOSITION, detail: '旧任务拆解已退役，未派发' });
+    }
+    task = reviewPlan.task;
+    if (reviewPlan.guarded) {
+      const dispatched = await dispatchManualRegistryReview(task, pool, {
+        tag:'tasks/:id/dispatch', deviceGate:checkDeviceLockForManualDispatch,
+        checkAvailable:checkCeceliaRunAvailable, trigger:triggerCeceliaRun,
+      });
+      return res.status(dispatched.status).json(dispatched.body);
     }
 
     if (task.task_type === 'qiumi_task') {
