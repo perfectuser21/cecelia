@@ -12,7 +12,7 @@ vi.mock('child_process', () => ({ spawn: io.spawn,
 vi.mock('fs', async (original) => {
   const actual = await original(); const { resolve } = await import('node:path');
   const { fileURLToPath } = await import('node:url'); const root = resolve(process.cwd(), '../..');
-  return { ...actual, existsSync: vi.fn(() => false),
+  return { ...actual, existsSync: vi.fn(() => false), readdirSync: vi.fn(() => []), unlinkSync: vi.fn(),
     readFileSync: vi.fn((file, ...args) => {
       const target = file instanceof URL ? fileURLToPath(file) : resolve(String(file));
       if (!target.startsWith(`${root}/`) || target.includes('/.env') || /credential|auth\.json/.test(target)) throw new Error('禁止仓外文件/凭据读取');
