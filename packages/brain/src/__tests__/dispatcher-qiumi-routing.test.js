@@ -567,6 +567,18 @@ it.each([false,true])('限定Commander核验不查旧Bridge、不进qiumi；终�
 });
 
 
+it.each([
+  {task_type:'initiative_plan',payload:{}},
+  {task_type:'scope_plan',payload:{}},
+  {task_type:'architecture_scan',payload:{skill_override:'/decomp'}},
+])('退役规划和覆盖任务在认领前原子停放 %j', async task => {
+  _candidatePool=[{...candidate,...task}]; wireQueries();
+  const prior=mockQuery.getMockImplementation();
+  mockQuery.mockImplementation(async(sql,args)=>sql.includes('blocked_reason = $3') ? {rows:[{id:'q1'}],rowCount:1} : prior(sql,args));
+  expect(await dispatchNextTask(null)).toMatchObject({dispatched:false,reason:'retired_decomposition',parked:true});
+  expect(mockTriggerCeceliaRun).not.toHaveBeenCalled(); expect(mockRecordFailure).not.toHaveBeenCalled();
+});
+
 describe('退役拆解任务自动派发', () => {
   it.each([{decomposition:true},{decomposition:'true'},{decomposition:'continue'},{decomposition:'okr'},{next_action:'decompose'}])('旧标记 %j 在 claim 和启动前停放', async (payload) => {
     _candidatePool = [{...candidate, task_type:'dev', payload}];

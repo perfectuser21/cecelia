@@ -30,6 +30,23 @@ beforeAll(async () => {
 afterAll(() => vi.unstubAllGlobals());
 beforeEach(() => { vi.clearAllMocks(); io.query.mockResolvedValue({ rows: [] }); resetBindings(); });
 
+describe('退役规划和旧拆解技能覆盖禁止启动', () => {
+  it.each(['scope_plan','initiative_plan','project_plan','okr_scope_plan','okr_initiative_plan','okr_project_plan'])('历史 %s 不带旧标记仍拒绝', async task_type => {
+    const task={id:'old-plan',task_type,payload:{}};
+    expect(await executor.triggerCeceliaRun(task)).toMatchObject({success:false,reason:'retired_decomposition'});
+    expect(io.spawn).not.toHaveBeenCalled(); expect(global.fetch).not.toHaveBeenCalled();
+  });
+  it.each(['architecture_scan','arch_review'])('%s 的旧 skill_override 在启动前拒绝', async task_type => {
+    const task={id:'old-override',task_type,payload:{skill_override:'/decomp'}};
+    expect(await executor.triggerCeceliaRun(task)).toMatchObject({success:false,reason:'retired_decomposition'});
+    expect(io.spawn).not.toHaveBeenCalled(); expect(global.fetch).not.toHaveBeenCalled();
+  });
+  it('正常架构技能覆盖保持可用',async()=>{
+    const {isRetiredDecomposition}=await import('../lib/retired-decomposition.js');
+    expect(isRetiredDecomposition({task_type:'architecture_scan',payload:{skill_override:'/architect'}})).toBe(false);
+  });
+});
+
 describe('旧拆解标记禁止启动', () => {
   const cases = [
     {decomposition:true}, {decomposition:'true'}, {decomposition:'continue'},
