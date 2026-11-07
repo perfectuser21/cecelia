@@ -56,7 +56,7 @@ import { serialUnlockNext, promoteRegressionOnHarnessMerged } from '../lib/callb
 import { processExecutionCallback } from '../callback-processor.js';
 
 // ── 工厂函数：构造模拟 pool，使 resolveCanonicalPrUrl 能返回 CANONICAL_URL ──
-function makePool() {
+function makePool(taskPayload = { existing_pr_url: CANONICAL_URL }) {
   const updateParams = [];
   const client = {
     query: vi.fn(async (sql, params) => {
@@ -78,7 +78,7 @@ function makePool() {
         return {
           rows: [{
             pr_url: null,
-            payload: { existing_pr_url: CANONICAL_URL },
+            payload: taskPayload,
           }],
         };
       }
@@ -88,7 +88,7 @@ function makePool() {
           rows: [{
             task_type: 'dev',
             pr_url: null,
-            payload: { existing_pr_url: CANONICAL_URL },
+            payload: taskPayload,
           }],
         };
       }
@@ -210,4 +210,36 @@ describe('callback-authority-propagation — resolvedPrUrl 贯通全路径', () 
     );
     expect(retryUpdate).toBeUndefined();
   });
+});
+
+describe('普通 dev 完成回调的无 PR 门禁', () => {
+  it.each(['known', 'false', 'continue', { unexpected: true }, 1])(
+    'decomposition=%s 不应绕过无 PR 状态',
+    async (decomposition) => {
+      const pool = makePool({ decomposition });
+      const result = await processExecutionCallback({
+        task_id: TASK_ID,
+        status: 'AI Done',
+        pr_url: null,
+        result: { result: 'done' },
+      }, pool);
+      expect(result.newStatus).toBe('completed_no_pr');
+      expect(pool.updateParams[0][1]).toBe('completed_no_pr');
+    }
+  );
+
+  it.each([true, 'true', 'okr'])(
+    '历史拆解标记 decomposition=%s 保持原有回调兼容',
+    async (decomposition) => {
+      const pool = makePool({ decomposition });
+      const result = await processExecutionCallback({
+        task_id: TASK_ID,
+        status: 'AI Done',
+        pr_url: null,
+        result: { result: 'done' },
+      }, pool);
+      expect(result.newStatus).toBe('completed');
+      expect(pool.updateParams[0][1]).toBe('completed');
+    }
+  );
 });
