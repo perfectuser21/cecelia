@@ -2,6 +2,7 @@ import { prepareInvocationDispatch, invocationTaskPrompt, invocationBridgeRequir
 import {createInvocationActivityExecutor} from './invocations/activity-worker.js';
 import {finishRun as finishInvocationRun} from './lib/task-run.js';
 import { isPhoneDispatchTask } from './phone-dispatch/task-ownership.js';
+import { isRetiredDecomposition, RETIRED_DECOMPOSITION } from './lib/retired-decomposition.js';
 import { withLegacyRelayExecution } from './execution-directory/legacy-relay.js';
 import { withLegacyExecution,legacyExecutorEntries } from './execution-directory/legacy-executor.js';
 /**
@@ -2238,6 +2239,7 @@ async function updateTaskRunInfo(taskId, runId, status = 'triggered') {
  */
 async function triggerCodexReview(task) {
   assertExternalExecutionAllowed();
+  if (isRetiredDecomposition(task)) return { success: false, taskId: task?.id, reason: RETIRED_DECOMPOSITION };
   const runId = generateRunId(task.id);
 
   try {
@@ -2538,6 +2540,7 @@ async function selectCodexAccounts() {
  */
 async function triggerCodexBridge(task, forceBridgeUrl = null) {
   assertExternalExecutionAllowed();
+  if (isRetiredDecomposition(task)) return { success: false, taskId: task?.id, reason: RETIRED_DECOMPOSITION };
   if(task.payload?.invocation_activity)return {success:true,taskId:task.id,runId:task.payload.invocation_activity.child_run_id,executor:'shared-activity-runner',dispatchUncertain:true};
   const runId = generateRunId(task.id);
   try {
@@ -2623,6 +2626,7 @@ async function triggerCodexBridge(task, forceBridgeUrl = null) {
  */
 async function triggerMiniMaxExecutor(task) {
   assertExternalExecutionAllowed();
+  if (isRetiredDecomposition(task)) return { success: false, taskId: task?.id, reason: RETIRED_DECOMPOSITION };
   const runId = generateRunId(task.id);
 
   try {
@@ -3265,6 +3269,10 @@ const _RETIRED_HARNESS_TYPES = new Set(RETIRED_HARNESS_TYPES_DISPATCH);
  */
 async function triggerCeceliaRun(task) {
   assertExternalExecutionAllowed();
+  // 必须早于所有桥接、技能覆盖与运行账写入；旧任务不会产生假 run。
+  if (isRetiredDecomposition(task)) {
+    return { success: false, taskId: task?.id, reason: RETIRED_DECOMPOSITION, error: '旧任务拆解已退役' };
+  }
   const execResult = await _triggerCeceliaRunInner(task);
   const source = task?.payload?.harness_runtime === 'kernel-v1' ? 'kernel' : 'executor';
   const runId = await startRunForExecResult({ task, execResult, source });

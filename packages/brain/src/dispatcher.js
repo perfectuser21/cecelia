@@ -14,6 +14,7 @@
  */
 
 import { isCommanderVerification } from './lib/commander-verification-transport.js';
+import { isRetiredDecomposition, parkRetiredDecomposition, parkClaimedRetiredDecomposition, RETIRED_DECOMPOSITION } from './lib/retired-decomposition.js';
 import pool from './db.js';
 import { getFleetStatus } from './fleet-resource-cache.js';
 import { codeTaskIdentitySql, compareCodeTaskIdentity } from './lib/code-task-identity.js';
@@ -806,9 +807,27 @@ export async function dispatchNextTask(goalIds, options = {}) {
       return { dispatched: false, reason: 'no_dispatchable_task', actions };
     }
 
-    // 3a. Check if task requires Cortex processing (Brain-internal RCA)
+    // Cortex 根因分析是独立的 Brain 内联路径，不解释旧拆解技能标记。
     if (candidate.payload && candidate.payload.requires_cortex === true) {
       return await processCortexTask(candidate, actions);
+    }
+
+    // 对仍未认领且 payload 未变化的旧任务做 CAS 停放；不碰在途任务与设备锁。
+    if (isRetiredDecomposition(candidate)) {
+      const didPark = await parkRetiredDecomposition(pool, candidate);
+      if (didPark) {
+        try {
+          await emit('task:blocked', 'dispatcher', {
+            task_id: candidate.id, task_title: candidate.title,
+            reason: RETIRED_DECOMPOSITION,
+            detail: { message: '旧任务拆解已退役，不会启动执行体' }, blocked_until: null,
+          });
+        } catch (error) {
+          console.error(`[dispatch] retired decomposition event failed: ${error.message}`);
+        }
+      }
+      await recordDispatchResult(pool, false, RETIRED_DECOMPOSITION, undefined, candidate.id);
+      return { dispatched: false, reason: RETIRED_DECOMPOSITION, task_id: candidate.id, parked: didPark, actions };
     }
 
     // Target machine admission remains fail closed, independent of unrelated AI fleet slots.
@@ -1348,6 +1367,42 @@ export async function dispatchNextTask(goalIds, options = {}) {
   await enforceDispatchRoutingReceipt(taskToDispatch);
 
   execResult = await triggerCeceliaRun(taskToDispatch);
+
+  // 选中后 payload 可能并发变为旧拆解；不能当普通故障回队、三振或覆盖新认领。
+  if (!execResult.success && execResult.reason === RETIRED_DECOMPOSITION) {
+    let parked = false;
+    try {
+      parked = await parkClaimedRetiredDecomposition(pool, taskToDispatch, claimerId, claimStamp);
+    } catch (error) {
+      // 不能进入通用 post-claim 清理：后者按 id 释放，可能破坏新认领。
+      console.error(`[dispatch] retired decomposition parking failed: ${error.message}`);
+      return { dispatched: false, reason: RETIRED_DECOMPOSITION, task_id: nextTask.id, parked: false, stateUnknown: true, actions };
+    }
+    if (parked) {
+      try {
+        await emit('task:blocked', 'dispatcher', {
+          task_id: nextTask.id, task_title: nextTask.title,
+          reason: RETIRED_DECOMPOSITION,
+          detail: { message: '旧任务拆解已退役，不会启动执行体' }, blocked_until: null,
+        });
+      } catch (error) {
+        console.error(`[dispatch] retired decomposition event failed: ${error.message}`);
+      }
+    } else {
+      // 仅释放仍属于本次的精确认领；不按 task id 放设备锁，避免误放新认领的锁。
+      try {
+        await pool.query(`UPDATE tasks SET status='queued', claimed_by=NULL, claimed_at=NULL, updated_at=NOW()
+          WHERE id=$1 AND status='in_progress' AND claimed_by=$2 AND claimed_at=$3::timestamptz`,
+        [nextTask.id, claimerId, claimStamp]);
+      } catch (error) {
+        console.error(`[dispatch] retired decomposition claim cleanup failed: ${error.message}`);
+        return { dispatched: false, reason: RETIRED_DECOMPOSITION, task_id: nextTask.id, parked: false, stateUnknown: true, actions };
+      }
+    }
+    try { await recordDispatchResult(pool, false, RETIRED_DECOMPOSITION, undefined, nextTask.id); }
+    catch (error) { console.error(`[dispatch] retired decomposition stats failed: ${error.message}`); }
+    return { dispatched: false, reason: RETIRED_DECOMPOSITION, task_id: nextTask.id, parked, actions };
+  }
 
   if (
     taskToDispatch.payload?.harness_runtime === 'kernel-v1'

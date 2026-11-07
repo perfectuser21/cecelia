@@ -7,6 +7,7 @@ import { checkAnchor } from '../anchor-check.js';
 import { checkDeviceLockForManualDispatch, releaseDeviceLockNonFatal } from '../lib/manual-dispatch-device-gate.js';
 import { dispatchManualQiumi } from '../lib/manual-qiumi-dispatch.js';
 import { CLAUDE_CHANNEL_RETIRED_CODE } from '../lib/claude-channel.js';
+import { isRetiredDecomposition, RETIRED_DECOMPOSITION } from '../lib/retired-decomposition.js';
 
 export function registerTaskManualDispatchRoutes(router) {
 
@@ -28,6 +29,10 @@ router.post('/tasks/:id/dispatch', rateLimit(TASK_MUTATION_RATE_LIMIT_OPTIONS), 
     }
 
     const task = taskResult.rows[0];
+
+    if (isRetiredDecomposition(task)) {
+      return res.status(410).json({ error: RETIRED_DECOMPOSITION, detail: '旧任务拆解已退役，未派发' });
+    }
 
     // 2. 只允许 queued 状态的任务被派发
     if (task.status !== 'queued') {

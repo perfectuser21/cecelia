@@ -42,9 +42,33 @@ describe('旧拆解标记禁止启动', () => {
     expect(result).toMatchObject({success:false,reason:'retired_decomposition'});
     expect(io.spawn).not.toHaveBeenCalled(); expect(global.fetch).not.toHaveBeenCalled();
   });
-  it.each(cases)('旧标记不生成 prompt %j', async payload => {
-    await expect(executor.preparePrompt({id:'owned-decomp',task_type:'dev',payload})).rejects.toMatchObject({code:'retired_decomposition'});
+  it.each([
+    {task_type:'talk',payload:{next_action:'decompose'}},
+    {task_type:'project_plan',payload:{decomposition:'true'}},
+    {task_type:'harness_initiative',payload:{requested_task_type:'dev',decomposition:true}},
+  ])('非 dev 或归一 dev 的旧路由也拒绝启动 %j',async task=>{
+    const result=await executor.triggerCeceliaRun({id:'owned-other',...task});
+    expect(result).toMatchObject({success:false,reason:'retired_decomposition'});
+    expect(io.spawn).not.toHaveBeenCalled(); expect(global.fetch).not.toHaveBeenCalled();
   });
+  it.each([
+    {task_type:'qiumi_task',payload:{decomposition:'true'}},
+    {task_type:'script_run',payload:{next_action:'decompose'}},
+    {task_type:'staging_e2e',payload:{decomposition:'continue'}},
+    {task_type:'harness_intervention',payload:{decomposition:'true'}},
+    {task_type:'research',payload:{invocation:{id:'owned'},decomposition:'true'}},
+    {task_type:'harness_initiative',payload:{decomposition:'true'}},
+  ])('不把专用执行面同名字段当旧拆解 %j',async task=>{
+    const {isRetiredDecomposition}=await import('../lib/retired-decomposition.js');
+    expect(isRetiredDecomposition(task)).toBe(false);
+  });
+  for (const name of ['triggerCodexBridge','triggerCodexReview','triggerMiniMaxExecutor']) {
+    it.each(cases)(`${name} 不可绕过退役标记 %j`, async payload => {
+      const result=await executor[name]({id:'owned-decomp',task_type:'dev',payload});
+      expect(result).toMatchObject({success:false,reason:'retired_decomposition'});
+      expect(io.spawn).not.toHaveBeenCalled(); expect(global.fetch).not.toHaveBeenCalled();
+    });
+  }
   it('known 保持普通 dev prompt',async () => {
     const prompt=await executor.preparePrompt({id:'owned-dev',task_type:'dev',payload:{decomposition:'known'},prd_content:'test'});
     expect(prompt).toMatch(/^\/dev\n/);
