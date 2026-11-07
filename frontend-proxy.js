@@ -37,20 +37,81 @@ function shouldGzip(ext, acceptEncodingHeader) {
   return COMPRESSIBLE_EXT.has(ext) && /\bgzip\b/.test(acceptEncodingHeader || '');
 }
 
-function serveFile(req, res, filePath, extraHeaders) {
-  const ext = path.extname(filePath);
+function fileFailure(res, err) {
+  if (res.headersSent) { res.destroy(err); return; }
+  const status = err.code === 'ENOENT' || err.code === 'ENOTDIR' ? 404
+    : err.code === 'EACCES' || err.code === 'EPERM' ? 403 : 500;
+  res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+  res.end(JSON.stringify({ error: status === 404 ? 'Not found' : status === 403 ? 'Forbidden' : 'File unavailable' }));
+}
+
+function serveFile(req, res, filePath, extraHeaders, resourcePath = filePath) {
+  const ext = path.extname(resourcePath);
   const contentType = MIME_TYPES[ext] || 'application/octet-stream';
   const headers = { 'Content-Type': contentType, ...extraHeaders };
+  const input = fs.createReadStream(filePath);
+  input.on('error', err => fileFailure(res, err));
+  res.on('close', () => input.destroy());
+  // 文件确实打开后才发送200，缺失/权限错误能返回明确错误且不会崩溃进程。
+  input.once('open', () => {
+    if (shouldGzip(ext, req.headers['accept-encoding'])) {
+      headers['Content-Encoding'] = 'gzip';
+      headers['Vary'] = 'Accept-Encoding';
+      const gzip = zlib.createGzip();
+      gzip.on('error', err => res.destroy(err));
+      res.on('close', () => gzip.destroy());
+      res.writeHead(200, headers);
+      input.pipe(gzip).pipe(res);
+    } else {
+      res.writeHead(200, headers);
+      input.pipe(res);
+    }
+  });
+}
 
-  if (shouldGzip(ext, req.headers['accept-encoding'])) {
-    headers['Content-Encoding'] = 'gzip';
-    headers['Vary'] = 'Accept-Encoding';
-    res.writeHead(200, headers);
-    fs.createReadStream(filePath).pipe(zlib.createGzip()).pipe(res);
-  } else {
-    res.writeHead(200, headers);
-    fs.createReadStream(filePath).pipe(res);
-  }
+function isWithin(root, candidate) {
+  const relative = path.relative(root, candidate);
+  return relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+}
+
+function serveStatic(req, res) {
+  let pathname;
+  try { pathname = decodeURIComponent(req.url.split('?')[0]); }
+  catch { res.writeHead(400); res.end('Bad request'); return; }
+  if (pathname.includes('\0')) { res.writeHead(400); res.end('Bad request'); return; }
+  fs.realpath(STATIC_DIR, (rootError, root) => {
+    if (rootError) { fileFailure(res, rootError); return; }
+    const candidate = path.resolve(root, `.${pathname}`);
+    if (!isWithin(root, candidate)) { fileFailure(res, { code: 'EACCES' }); return; }
+    const serveChecked = (filename, fallback = false) => {
+      fs.realpath(filename, (realError, realFile) => {
+        if (realError) {
+          if (!fallback && ['ENOENT', 'ENOTDIR'].includes(realError.code)) {
+            serveChecked(path.join(root, 'index.html'), true);
+          } else fileFailure(res, realError);
+          return;
+        }
+        if (!isWithin(root, realFile)) { fileFailure(res, { code: 'EACCES' }); return; }
+        fs.stat(realFile, (statError, stats) => {
+          if (statError) { fileFailure(res, statError); return; }
+          if (!stats.isFile()) {
+            if (!fallback) serveChecked(path.join(root, 'index.html'), true);
+            else fileFailure(res, { code: 'ENOENT' });
+            return;
+          }
+          const ext = path.extname(filename);
+          const basename = path.basename(filename);
+          const extraHeaders = {};
+          if (fallback || ext === '.html' || basename === 'sw.js' || basename === 'registerSW.js') {
+            extraHeaders['Cache-Control'] = 'no-cache, no-store, must-revalidate';
+            if (!fallback) { extraHeaders['Pragma'] = 'no-cache'; extraHeaders['Expires'] = '0'; }
+          }
+          serveFile(req, res, realFile, extraHeaders, filename);
+        });
+      });
+    };
+    serveChecked(candidate);
+  });
 }
 
 const server = http.createServer((req, res) => {
@@ -138,29 +199,7 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // Serve static files
-  let filePath = path.join(STATIC_DIR, req.url === '/' ? 'index.html' : req.url);
-  filePath = filePath.split('?')[0];
-
-  fs.stat(filePath, (err, stats) => {
-    if (!err && stats.isFile()) {
-      const ext = path.extname(filePath);
-      const basename = path.basename(filePath);
-      const extraHeaders = {};
-      if (ext === '.html' || basename === 'sw.js' || basename === 'registerSW.js') {
-        extraHeaders['Cache-Control'] = 'no-cache, no-store, must-revalidate';
-        extraHeaders['Pragma'] = 'no-cache';
-        extraHeaders['Expires'] = '0';
-      }
-      serveFile(req, res, filePath, extraHeaders);
-    } else {
-      // SPA fallback
-      const indexPath = path.join(STATIC_DIR, 'index.html');
-      serveFile(req, res, indexPath, {
-        'Cache-Control': 'no-cache, no-store, must-revalidate',
-      });
-    }
-  });
+  serveStatic(req, res);
 });
 
 // WebSocket upgrade — proxy directly to Brain

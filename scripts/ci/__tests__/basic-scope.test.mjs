@@ -116,6 +116,21 @@ test('CLI 使用真实 Git 差分及 NUL 路径，输出单行 Actions matrix', 
   assert.equal(readFileSync(output, 'utf8'), `matrix=${JSON.stringify(matrix)}\n`);
 });
 
+test('现役 Frontend 代理及其测试的真实 Git 差分都选择 Ops，不复活退役前端组件', t => {
+  for (const path of ['frontend-proxy.js', 'scripts/frontend-proxy.test.mjs']) {
+    const f = fixture(t);
+    const base = f.commit('README.md', 'base');
+    const head = f.commit(path, '// isolated routing fixture\n');
+    const result = spawnSync(process.execPath, [cli, '--base', base, '--head', head], {
+      cwd: f.root, encoding: 'utf8', env: {...process.env, GITHUB_OUTPUT: ''},
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const selected = components(JSON.parse(result.stdout).include);
+    assert.ok(selected.includes('ops'), `${path}必须进入现役 Ops job`);
+    assert.ok(!selected.includes('frontend'), '不得恢复已退役 frontend 组件');
+  }
+});
+
 test('主分支全量仍读取真实差分并补上本次修改的客户端', t => {
   const f = fixture(t);
   const base = f.commit('README.md', 'base');
