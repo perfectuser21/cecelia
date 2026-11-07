@@ -32,3 +32,9 @@ it('真实 HTTP 和 PG：拒绝伪造 dev 合并，非 dev 保持原行为', asy
   expect(data.rows[0]).toMatchObject({ status: 'completed', pr_url: body.pr_url });
   expect(data.rows[0].pr_merged_at).not.toBeNull();
 });
+
+it('合并声明入口对请求速率设置上限', async () => {
+  let response;
+  for (let i = 0; i < 61; i++) response = await request(app).patch('/tasks/dev/pr-merged').send({ pr_url: 'https://github.com/org/repo/pull/1' });
+  expect(response.status).toBe(429);
+});

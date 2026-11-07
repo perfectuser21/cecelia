@@ -26,7 +26,7 @@ function getHandler(method, path) {
     l => l.route && l.route.methods[method] && l.route.path === path
   );
   if (layers.length === 0) throw new Error(`No handler for ${method} ${path}`);
-  return layers[0].route.stack[0].handle;
+  return layers[0].route.stack.at(-1).handle;
 }
 
 // Helper: 创建 mock req/res（支持状态码）
