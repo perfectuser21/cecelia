@@ -242,4 +242,45 @@ describe('普通 dev 完成回调的无 PR 门禁', () => {
       expect(pool.updateParams[0][1]).toBe('completed');
     }
   );
+
+  it('历史 next_action=decompose 优先于 known 标记，保持已有回调兼容', async () => {
+    const pool = makePool({ decomposition: 'known', next_action: 'decompose' });
+    const result = await processExecutionCallback({
+      task_id: TASK_ID,
+      status: 'AI Done',
+      pr_url: null,
+      result: { result: 'done' },
+    }, pool);
+    expect(result.newStatus).toBe('completed');
+    expect(pool.updateParams[0][1]).toBe('completed');
+  });
+
+  it.each(['false', '0', { unexpected: true }, 1])(
+    'harness_mode=%s 不应绕过无 PR 状态',
+    async (harness_mode) => {
+      const pool = makePool({ harness_mode });
+      const result = await processExecutionCallback({
+        task_id: TASK_ID,
+        status: 'AI Done',
+        pr_url: null,
+        result: { result: 'done' },
+      }, pool);
+      expect(result.newStatus).toBe('completed_no_pr');
+      expect(pool.updateParams[0][1]).toBe('completed_no_pr');
+    }
+  );
+
+  it.each([true, 'true', 't'])(
+    '明确启用 harness_mode=%s 时保留现有回调兼容',
+    async (harness_mode) => {
+      const pool = makePool({ harness_mode });
+      const result = await processExecutionCallback({
+        task_id: TASK_ID,
+        status: 'AI Done',
+        pr_url: null,
+        result: { result: 'done' },
+      }, pool);
+      expect(result.newStatus).toBe('completed');
+    }
+  );
 });
