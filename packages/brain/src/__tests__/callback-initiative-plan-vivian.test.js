@@ -51,6 +51,8 @@ vi.mock('../auto-learning.js', () => ({ triggerLearningCapture: vi.fn(async () =
 vi.mock('../desire-feedback.js', () => ({ updateDesireFromTask: vi.fn(async () => {}) }));
 vi.mock('../proactive-mouth.js', () => ({ notifyTaskCompletion: vi.fn(async () => {}) }));
 vi.mock('../review-gate.js', () => ({ processReviewResult: vi.fn(async () => {}) }));
+const mockRetiredReviewTrigger = vi.hoisted(() => vi.fn(async () => ({})));
+vi.mock('../decomposition-review-trigger.js', () => ({ triggerCompletedDecompositionReview: mockRetiredReviewTrigger }));
 vi.mock('../progress-ledger.js', () => ({ recordProgressStep: vi.fn(async () => {}) }));
 vi.mock('../llm-caller.js', () => ({ callLLM: vi.fn(async () => ({})) }));
 vi.mock('../working-memory.js', () => ({ getMemory: vi.fn(async () => null), setMemory: vi.fn(async () => {}) }));
@@ -123,6 +125,24 @@ describe('execution-callback: initiative_plan → auto decomp_review', () => {
         })
       })
     );
+  });
+
+  it.each([
+    ['initiative_plan', null],
+    ['dev', { decomposition: 'true' }],
+  ])('退役旧拆解后 %s 完成回执不能自动派审或改审核状态', async (taskType, payload) => {
+    const taskId = 'old-decomposition-finished';
+    mockPool.query.mockImplementation((sql, params) => {
+      if (typeof sql === 'string' && sql.includes('SELECT') && params?.[0] === taskId) {
+        return Promise.resolve({ rows: [{ task_type: taskType, project_id: 'proj-x', goal_id: 'goal-x', title: '旧任务', payload }] });
+      }
+      return Promise.resolve({ rows: [] });
+    });
+    const res = await request(app).post('/api/brain/execution-callback')
+      .send({ task_id: taskId, run_id: 'old-run', status: 'AI Done', result: { result: '完成' } });
+    expect(res.status).toBe(200);
+    expect(mockCreateTask.mock.calls.filter(([task]) => task?.task_type === 'decomp_review')).toHaveLength(0);
+    expect(mockRetiredReviewTrigger).not.toHaveBeenCalled();
   });
 
   it('DoD-3: dev task 完成不触发 decomp_review', async () => {
