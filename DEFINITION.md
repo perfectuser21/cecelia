@@ -1,11 +1,10 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.445.163
+**Brain 版本**: 1.445.164
 
 开发任务无 PR 的终态不触发接棒或计入项目完成数；非开发任务无 PR 完成仍保持原语义。
 未经 GitHub 验真的 metrics 合并声明不得改变 dev 任务；可信合并回调提升无 PR 任务时刷新对应 KR 进度。
 
-投影限流仅作用于本 router 的九个已注册路径，共用原300次/分钟IP预算；Task、run、设备锁及目录等后续Brain请求不再误耗该预算。坏token仍先限流，GET自动HEAD与原headers不变；保留source-only标记，测试候选不等于生产发布。
 
 历史拆解审核回执必须携带明确结论；HTTP 与队列路径在同一事务记录审核和任务状态，无效或故障回执保持待处理。需要修订的旧审核只留痕，不再创建已退役的拆解任务。
 
@@ -7308,3 +7307,5 @@ EventBus启动先只读核对固定名称索引的valid、ready及目标表；�
 - 仅原pending.previous完整镜像ID与完整SHA匹配时，恢复接受官方 `prev-<健康版本>-<SHA前12位>` 标签及历史canonical标签；reconcile与pending rollback复用同一严格规则。
 - recovered只清原pending，不添加成功史；新鲜pending、未知镜像、健康身份变化、非精确标签继续拒绝。无pending的新rollback与正式success仍要求canonical标签。
 - 固定来源只新增独审过的ledger精确摘要并保留旧摘要；未知字节仍不准入。永久回归已纳入既有image-retention CI测试入口。
+
+投影限流仅作用于本 router 的九个已注册路径，共用原300次/分钟IP预算；Task、run、设备锁及目录等后续Brain请求不再误耗该预算。坏token仍先限流，GET自动HEAD与原headers不变；保留source-only标记，测试候选不等于生产发布。
