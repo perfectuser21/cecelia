@@ -8,6 +8,7 @@
  */
 
 const http = require('http');
+const { createHash } = require('node:crypto');
 const fs = require('fs');
 const { spawn } = require('child_process');
 const path = require('path');
@@ -288,6 +289,7 @@ function sendJSON(res, statusCode, data) {
 async function callbackBrain(taskId, checkpointId, status, output, durationMs, runId = null) {
   const url = `${BRAIN_URL}/api/brain/execution-callback`;
   const payload = buildCallbackPayload({ taskId, runId, checkpointId, status, output, durationMs });
+  const receiptSha256 = createHash('sha256').update(JSON.stringify(payload)).digest('hex');
 
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
@@ -326,6 +328,20 @@ async function callbackBrain(taskId, checkpointId, status, output, durationMs, r
           outcome: 'acknowledged', skipped, duplicate, pending,
           ...(typeof acknowledgement.reason === 'string' ? { reason: acknowledgement.reason } : {}),
         };
+      }
+      // Only an identified, already durable pending receipt is safe to stop resending.
+      // Non-2xx remains unconfirmed: queue acceptance is not task completion.
+      if (res.status === 422 || res.status === 503) {
+        let pending;
+        try { pending = await res.json(); } catch { /* ordinary retry */ }
+        const reviewCodes = new Set(['DECOMP_REVIEW_RUN_ID_MISSING', 'DECOMP_REVIEW_POSTDEPLOY_UNSUPPORTED',
+          'DECOMP_REVIEW_VERDICT_INVALID']);
+        const knownPending = (res.status === 503 && pending?.code === 'TASK_COMPLETION_GUARD_UNAVAILABLE')
+          || (res.status === 422 && reviewCodes.has(pending?.code));
+        if (pending?.success === false && pending.queued === true && pending.task_id === taskId && typeof runId === 'string' && runId.length > 0 && pending.run_id === runId && pending.callback_status === payload.status
+            && pending.receipt_sha256 === receiptSha256 && knownPending) {
+          return { outcome: 'unconfirmed', reason: 'queued_pending', pending: true };
+        }
       }
       console.warn(`[codex-bridge] callback HTTP ${res.status}, 重试 ${attempt + 1}/3`);
     } catch (err) {

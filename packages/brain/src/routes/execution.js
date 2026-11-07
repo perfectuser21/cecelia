@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+import { decompReviewInputError, applyDecompReview, recordVerifiedDecompRun } from '../lib/decomp-review-callback.js';
 import { guardInvocationCallback } from '../invocations/runtime.js';
 import {assertAutomaticTaskOwner} from '../lib/headed-task-owner.js';
 import { COMPANY_KR_SQL_GUARD } from '../lib/company-kr-metrics.js';
@@ -174,10 +176,32 @@ router.post('/execution-callback', executionCallbackRateLimit, internalAuthOrLoo
       }
     }
 
+    // 回执先持久化，再确定审核结论；读取故障时队列可在租约过期后重试。
+    let completionTask = null;
+    if (normalizeCallbackStatus(status) === 'completed') {
+      try {
+        const task = await pool.query('SELECT task_type, payload FROM tasks WHERE id = $1', [task_id]);
+        completionTask = task.rows[0] || null;
+      } catch (err) {
+        console.error(`[execution-callback] completion guard unavailable: ${err.message}`);
+        return res.status(503).json({ success: false, task_id, run_id: run_id || null, callback_status: status, receipt_sha256: createHash('sha256').update(JSON.stringify(req.body)).digest('hex'), queued: Boolean(callbackQueueId), code: 'TASK_COMPLETION_GUARD_UNAVAILABLE',
+          error: callbackQueueId ? '回执已持久入队，任务完成门禁不可读，等待队列重试' : '回执入队状态未知，任务完成门禁不可读' });
+      }
+      if (completionTask?.task_type === 'decomp_review') {
+        const inputError = decompReviewInputError(completionTask, run_id, result);
+        if (inputError) {
+          const code = !run_id ? 'DECOMP_REVIEW_RUN_ID_MISSING'
+            : inputError.includes('postdeploy') ? 'DECOMP_REVIEW_POSTDEPLOY_UNSUPPORTED'
+              : 'DECOMP_REVIEW_VERDICT_INVALID';
+          return res.status(422).json({ success: false, task_id, run_id: run_id || null, callback_status: status, receipt_sha256: createHash('sha256').update(JSON.stringify(req.body)).digest('hex'), queued: Boolean(callbackQueueId), code, error: inputError });
+        }
+      }
+    }
+
     // ── run 原语留痕：一次执行 = 一行 task_runs ──
     // 回执是脚本步 / 设备 / cecelia-run 的统一出口：补齐 run 行（幂等 upsert）并在终态回执时 finishRun
     // （exit code / 产物 / 终态）。fail-open——留痕失败绝不影响下面的回执主链；DB 才是真相源。
-    await recordRunFromCallback({
+    const runCallback = {
       taskId: task_id,
       runId: run_id,
       status,
@@ -185,28 +209,50 @@ router.post('/execution-callback', executionCallbackRateLimit, internalAuthOrLoo
       result,
       prUrl: pr_url,
       error: stderr ? String(stderr).slice(-300) : undefined,
-    });
+    };
+    // 审核任务必须先确认审核事务提交，才允许留下成功的 run 终态。
+    const deferReviewRun = completionTask?.task_type === 'decomp_review' && normalizeCallbackStatus(status) === 'completed';
+    if (!deferReviewRun) await recordRunFromCallback(runCallback);
 
     // ── 幂等性保护：run_id + status 组合去重 ──
     // 网络重试或外部系统重复调用时，同一 run_id + status 不应重复处理
     if (run_id && status) {
+      let duplicate = false;
       try {
         const dupCheck = await pool.query(
-          `SELECT id FROM decision_log
+          `SELECT id, llm_output_json->>'task_id' AS callback_task_id FROM decision_log
            WHERE trigger = 'execution-callback'
              AND llm_output_json->>'run_id' = $1
              AND llm_output_json->>'status' = $2
            LIMIT 1`,
           [String(run_id), String(status)]
         );
-        if (dupCheck.rows.length > 0) {
-          console.log(`[execution-callback] 幂等保护: run_id=${run_id} status=${status} 已处理过，跳过`);
-          await finalizeCallbackQueue(true);
-          return res.json({ success: true, duplicate: true });
+        duplicate = dupCheck.rows.length > 0;
+        if (duplicate && deferReviewRun && String(dupCheck.rows[0].callback_task_id || '') !== String(task_id)) {
+          await finalizeCallbackQueue(false);
+          return res.status(409).json({ success: false, code: 'DECOMP_REVIEW_RUN_OWNERSHIP_CONFLICT' });
         }
       } catch (idempotencyErr) {
+        if (deferReviewRun) throw new Error('decomp_review idempotency check unavailable', { cause: idempotencyErr });
         // 幂等检查失败不阻塞主流程，降级为无保护模式
         console.warn(`[execution-callback] 幂等检查失败（降级继续）: ${idempotencyErr.message}`);
+      }
+      if (duplicate) {
+        if (deferReviewRun) {
+          // 事务已提交但进程可能在 run 留痕前退出；仅同任务同 run 的终态允许补记。
+          const taskState = await pool.query('SELECT status FROM tasks WHERE id = $1', [task_id]);
+          const runOwner = await pool.query('SELECT task_id FROM task_runs WHERE run_id = $1', [String(run_id)]);
+          if (taskState.rows[0]?.status !== 'completed' ||
+              (runOwner.rows[0] && String(runOwner.rows[0].task_id) !== String(task_id))) {
+            await finalizeCallbackQueue(false);
+            return res.status(409).json({ success: false, code: 'DECOMP_REVIEW_RUN_OWNERSHIP_CONFLICT',
+              error: '审核任务状态或运行归属不匹配，不能补写运行记录' });
+          }
+          await recordVerifiedDecompRun(pool, runCallback);
+        }
+        console.log(`[execution-callback] 幂等保护: run_id=${run_id} status=${status} 已处理过，跳过`);
+        await finalizeCallbackQueue(true);
+        return res.json({ success: true, duplicate: true });
       }
     }
 
@@ -263,11 +309,7 @@ router.post('/execution-callback', executionCallbackRateLimit, internalAuthOrLoo
     // 同一收口点实现 219a9efc: dev 任务 result 为空时写软守卫标记（audit trail）。
     if (newStatus === 'completed') {
       try {
-        const pdRow = await pool.query(
-          `SELECT task_type, payload FROM tasks WHERE id = $1`,
-          [task_id]
-        );
-        const pdTask = pdRow.rows[0];
+        const pdTask = completionTask;
         const postdeployCheck = pdTask?.payload?.postdeploy_check;
 
         if (postdeployCheck && postdeployCheck.exempt !== true && postdeployCheck.command) {
@@ -335,6 +377,7 @@ router.post('/execution-callback', executionCallbackRateLimit, internalAuthOrLoo
           AND status IN ('in_progress', 'queued', 'dispatched')
           AND NOT (COALESCE(payload,'{}'::jsonb) ? 'headed_takeover')
           AND ($14::text IS NULL OR payload->>'current_run_id' = $14::text)
+        RETURNING task_type, payload
       `, [task_id, newStatus, JSON.stringify(lastRunResult), status, resolvedPrUrl || null, isCompleted, findingsValue, prNumber, errorMessage, blockedDetail, isQuotaExhausted, execMetaJson, isTerminal, run_id || null]);
 
       if (updateResult.rowCount === 0) {
@@ -363,8 +406,17 @@ router.post('/execution-callback', executionCallbackRateLimit, internalAuthOrLoo
         String(status || '')
       ]);
 
+      // 审核、项目状态和任务完成共用事务；审核失败时回滚任务完成及幂等日志。
+      const updatedTask = updateResult.rows?.[0] || completionTask;
+      if (newStatus === 'completed' && updatedTask?.task_type === 'decomp_review') {
+        const inputError = decompReviewInputError(updatedTask, run_id, result);
+        if (inputError) throw new Error(inputError);
+        await applyDecompReview(client, task_id, result, updatedTask);
+      }
+
       // Record progress step for completed execution
       const isSuccessfulExecution = newStatus === 'completed' || newStatus === 'completed_no_pr';
+      if (deferReviewRun) await client.query('SAVEPOINT decomp_review_progress');
       try {
         const { recordProgressStep } = await import('../progress-ledger.js');
         await recordProgressStep(task_id, run_id, {
@@ -387,12 +439,14 @@ router.post('/execution-callback', executionCallbackRateLimit, internalAuthOrLoo
             original_status: status
           },
           confidenceScore: isSuccessfulExecution ? 1.0 : 0.2
-        });
+        }, deferReviewRun ? client : undefined);
         console.log(`[execution-callback] Progress step recorded for task ${task_id}`);
       } catch (progressErr) {
+        if (deferReviewRun) await client.query('ROLLBACK TO SAVEPOINT decomp_review_progress');
         // Progress ledger errors should not break the main flow
         console.error(`[execution-callback] Progress step recording failed: ${progressErr.message}`);
       }
+      if (deferReviewRun) await client.query('RELEASE SAVEPOINT decomp_review_progress');
 
       await client.query('COMMIT');
     } catch (txErr) {
@@ -1060,46 +1114,6 @@ router.post('/execution-callback', executionCallbackRateLimit, internalAuthOrLoo
         }
       } catch (decompAutoErr) {
         console.error(`[execution-callback] auto decomp_review creation failed (non-fatal): ${decompAutoErr.message}`);
-      }
-
-      // 5c1. Decomp Review 闭环：Vivian 审查完成 → 激活/修正/拒绝
-      try {
-        const decompReviewResult = await pool.query('SELECT task_type, payload FROM tasks WHERE id = $1', [task_id]);
-        const decompReviewRow = decompReviewResult.rows[0];
-
-        if (decompReviewRow?.task_type === 'decomp_review') {
-          console.log(`[execution-callback] Decomp review task completed, processing verdict...`);
-
-          // 从 result 中提取 verdict 和 findings
-          const verdictRaw = (result !== null && typeof result === 'object')
-            ? (result.verdict || result.result?.verdict)
-            : null;
-          const findingsRaw = (result !== null && typeof result === 'object')
-            ? (result.findings || result.result?.findings || result)
-            : {};
-
-          // verdict 归一化
-          const validVerdicts = ['approved', 'needs_revision', 'rejected'];
-          const verdict = validVerdicts.includes(verdictRaw) ? verdictRaw : 'approved';
-
-          const { processReviewResult } = await import('../review-gate.js');
-          await processReviewResult(pool, task_id, verdict, findingsRaw);
-
-          // 计划调整：如果 findings 包含 plan_adjustment，执行调整
-          if (findingsRaw?.plan_adjustment && decompReviewRow?.payload?.review_scope === 'plan_adjustment') {
-            try {
-              const { executePlanAdjustment } = await import('../progress-reviewer.js');
-              await executePlanAdjustment(pool, findingsRaw, decompReviewRow.payload?.plan_context);
-              console.log(`[execution-callback] Plan adjustment executed for project ${decompReviewRow.payload?.entity_id}`);
-            } catch (adjErr) {
-              console.error(`[execution-callback] Plan adjustment error: ${adjErr.message}`);
-            }
-          }
-
-          console.log(`[execution-callback] Decomp review processed: verdict=${verdict}`);
-        }
-      } catch (decompReviewErr) {
-        console.error(`[execution-callback] Decomp review handling error: ${decompReviewErr.message}`);
       }
 
       // 5c2. 拆解完成：只读取 Project 真身及直接 Tasks。
@@ -2778,6 +2792,7 @@ ${resultStr.substring(0, 2000)}
       }
     }
 
+    if (deferReviewRun) await recordVerifiedDecompRun(pool, runCallback);
     await finalizeCallbackQueue(true);
     res.json({
       success: true,

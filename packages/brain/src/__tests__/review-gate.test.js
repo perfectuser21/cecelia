@@ -217,6 +217,26 @@ describe('processReviewResult', () => {
     mockCreateTask.mockClear();
   });
 
+  it.each([null, '', 'unknown'])('无效 verdict %j 在写库之前拒绝', async verdict => {
+    await expect(processReviewResult(pool, 'task-1', verdict, {})).rejects.toThrow('verdict missing or invalid');
+    expect(pool.query).not.toHaveBeenCalled();
+  });
+
+  it('真实任务创建器已拒绝 project_plan 时，needs_revision 仍可留痕并保持待处理', async () => {
+    const { createTask: realCreateTask } = await vi.importActual('../actions.js');
+    expect(await realCreateTask({ title: 'historical revision', task_type: 'project_plan' })).toMatchObject({ success: false, error: 'layer_retired' });
+    const creator = vi.fn(realCreateTask);
+    pool.query = vi.fn(async sql => {
+      if (sql.includes('FROM decomp_reviews')) return { rows: [{ id: 'review-1', entity_type: 'project', entity_id: 'proj-1' }] };
+      if (sql.includes('FROM projects')) return { rows: [{ name: 'Project', kr_id: 'kr-1' }] };
+      return { rows: [] };
+    });
+    await expect(processReviewResult(pool, 'task-1', 'needs_revision', { issue: 'needs review' }, creator)).resolves.toBe(true);
+    expect(pool.query.mock.calls.some(([sql, args]) => sql.includes('UPDATE decomp_reviews SET verdict') && args[0] === 'needs_revision')).toBe(true);
+    expect(pool.query.mock.calls.some(([sql]) => sql.includes('UPDATE projects'))).toBe(false);
+    expect(creator).not.toHaveBeenCalled();
+  });
+
   it('D5: verdict=approved → 激活实体', async () => {
     let activatedEntity = false;
     pool.query = vi.fn(async (sql, params) => {
@@ -240,7 +260,7 @@ describe('processReviewResult', () => {
     expect(activatedEntity).toBe(true);
   });
 
-  it('D6: verdict=needs_revision → 创建修正 decomp task', async () => {
+  it('D6: verdict=needs_revision → 保留结论，不创建已退役的修正任务', async () => {
     pool.query = vi.fn(async (sql, params) => {
       if (sql.includes('SELECT') && sql.includes('decomp_reviews') && sql.includes('task_id')) {
         return { rows: [{ id: 'review-1', entity_type: 'project', entity_id: 'proj-1' }] };
@@ -260,10 +280,9 @@ describe('processReviewResult', () => {
     });
 
     await processReviewResult(pool, 'task-1', 'needs_revision', { issue: 'too coarse' });
-    expect(mockCreateTask).toHaveBeenCalledWith(expect.objectContaining({
-      title: '修正拆解: Test Project',
-      task_type: 'project_plan',
-    }));
+    expect(pool.query.mock.calls.some(([sql, args]) => sql.includes('UPDATE decomp_reviews SET verdict') && args[0] === 'needs_revision')).toBe(true);
+    expect(mockCreateTask).not.toHaveBeenCalled();
+    expect(pool.query.mock.calls.some(([sql]) => sql.includes('UPDATE projects'))).toBe(false);
   });
 
   it('D7: verdict=rejected → 标记实体 blocked', async () => {
