@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto';
 import { decompReviewInputError, applyDecompReview, recordVerifiedDecompRun } from '../lib/decomp-review-callback.js';
 import { guardInvocationCallback } from '../invocations/runtime.js';
 import { isRetiredDecomposition, RETIRED_DECOMPOSITION } from '../lib/retired-decomposition.js';
+import { dispatchManualRegistryReview } from '../lib/manual-review-dispatch.js';
+import { prepareReviewSkillDispatch } from '../lib/review-skill-plan.js';
 import {assertAutomaticTaskOwner} from '../lib/headed-task-owner.js';
 import { COMPANY_KR_SQL_GUARD } from '../lib/company-kr-metrics.js';
 import { Router } from 'express';
@@ -49,6 +51,7 @@ import { dispatchManualQiumi } from '../lib/manual-qiumi-dispatch.js';
 import { afterTerminalTransition } from '../lib/task-terminal.js';
 import { internalAuthOrLoopback } from '../middleware/internal-auth.js';
 import { rateLimit } from 'express-rate-limit';
+import { TASK_MUTATION_RATE_LIMIT_OPTIONS } from './task-mutation-rate-limit.js';
 import { authoringMutationError, assertAuthoringCompletion } from '../workflow-authoring/task-guard.js';
 
 const router = Router();
@@ -3974,7 +3977,7 @@ router.get('/work/streams', async (_req, res) => {
 // ============================================================
 // 用途：/dev 工作流注册 Codex 审查任务后立即触发，不依赖调度器状态
 // 调用 executor.triggerCeceliaRun() 直接执行（完全独立于 tick loop）
-router.post('/dispatch-now', async (req, res) => {
+router.post('/dispatch-now', rateLimit(TASK_MUTATION_RATE_LIMIT_OPTIONS), async (req, res) => {
   let deviceLockTaskId = null; // 已抢设备锁的任务 id（失败路径需释放）
   try {
     const { task_id } = req.body;
@@ -3983,12 +3986,12 @@ router.post('/dispatch-now', async (req, res) => {
     }
 
     // 从 DB 加载 task
-    const result = await pool.query('SELECT * FROM tasks WHERE id = $1', [task_id]);
+    const result = await pool.query('SELECT *, xmin::text AS dispatch_row_version FROM tasks WHERE id = $1', [task_id]);
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Task not found', id: task_id });
     }
 
-    const task = result.rows[0];
+    let task = result.rows[0];
 
     if (isRetiredDecomposition(task)) {
       return res.status(410).json({ error: RETIRED_DECOMPOSITION, detail: '旧任务拆解已退役，未派发' });
@@ -4011,6 +4014,24 @@ router.post('/dispatch-now', async (req, res) => {
         error: 'missing_anchor',
         detail: anchorResult.detail,
       });
+    }
+
+    // 冻结本次实际使用的 review skill；旧绑定在获取设备锁及改状态前拒绝。
+    let reviewPlan;
+    try { reviewPlan = await prepareReviewSkillDispatch(task); }
+    catch (error) {
+      console.error(`[dispatch-now] skill registry unavailable: ${error.message}`);
+      return res.status(503).json({error:'skill_registry_unavailable'});
+    }
+    if (reviewPlan.blocked) {
+      return res.status(410).json({ error: RETIRED_DECOMPOSITION, detail: '旧任务拆解已退役，未派发' });
+    }
+    task = reviewPlan.task;
+    if (reviewPlan.guarded) {
+      const dispatched = await dispatchManualRegistryReview(task, pool, {
+        tag:'dispatch-now', deviceGate:checkDeviceLockForManualDispatch, trigger:triggerCeceliaRun,
+      });
+      return res.status(dispatched.status).json(dispatched.body);
     }
 
     if (task.task_type === 'qiumi_task') {

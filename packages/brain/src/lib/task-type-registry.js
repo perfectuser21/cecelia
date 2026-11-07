@@ -83,6 +83,8 @@ const ASYNCCB = 'async_callback';    // task-router.js ASYNC_CALLBACK_TYPES
 // 少 review/qa/audit/codex_qa/codex_test_gen/pr_review/ci_patrol/staging_e2e/harness_evaluate/
 // harness_final_e2e 共 9 项。哪个该改（或该合并成一份）待主理人裁决，PR1 只做零行为变化搬家。
 const REVIEWISO = 'review_isolation';
+// 默认 Codex 审查提示实际使用 skill_registry 的任务类型。
+const REVIEW_SKILL = 'review_skill_binding';
 // recurring.js:221 的编码变更判定与 actions.js/routes/task-tasks.js 的 CODING_MUTATION_TASK_TYPES
 // 语义不同：本 tag 只搬家不合并——差集是本 tag 缺 harness_initiative（是否该补待主理人裁决）。
 const RECMUT = 'recurring_coding_mutation';
@@ -114,8 +116,8 @@ export const TASK_TYPE_REGISTRY = Object.freeze({
   suggestion_plan:     T('codex-bridge', false, false, null, 'none', true, true, 'none', true, [V, FR, CX]),
   notion_synced:       T('none', false, false, null, 'none', true, true, 'none', true, []),
   architecture_design: T('codex-review', false, false, null, 'kernel', true, true, 'none', true, [V, FV, REVIEWISO]),
-  architecture_scan:   T('codex-review', false, false, null, 'kernel', true, true, 'none', true, [V, FV, REVIEWISO]),
-  arch_review:         T('codex-review', false, false, null, 'kernel', true, true, 'protected', true, [V, ANC, ESC, MON, FV, PROT, CX, REVIEWISO]),
+  architecture_scan:   T('codex-review', false, false, null, 'kernel', true, true, 'none', true, [V, FV, REVIEWISO, REVIEW_SKILL]),
+  arch_review:         T('codex-review', false, false, null, 'kernel', true, true, 'protected', true, [V, ANC, ESC, MON, FV, PROT, CX, REVIEWISO, REVIEW_SKILL]),
   strategy_session:    T('codex-bridge', false, false, null, 'none', true, true, 'none', true, [V, FR]),
   intent_expand:       T('none', false, false, null, 'none', true, true, 'none', true, [V, FR, NOGOAL]),
   cto_review:          T('none', false, false, null, 'kernel', true, true, 'none', true, []),
@@ -287,6 +289,7 @@ export const LAYER_RETIRED_TASK_TYPES = Object.freeze([
 export const CONTENT_TASK_TYPES = tagged(FC);
 export const RESEARCH_TASK_TYPES = tagged(FR);
 export const REVIEW_TASK_TYPES = tagged(FV);
+export const REVIEW_SKILL_BINDING_TASK_TYPES = tagged(REVIEW_SKILL);
 export const CODING_TASK_TYPES = tagged(FK);
 export const CODING_MUTATION_TASK_TYPES = tagged(CM);
 export const PUSH_EXCLUDED_TASK_TYPES = Object.freeze(

@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeAll, beforeEach, afterAll } from 'vites
 const io = vi.hoisted(() => ({ query: vi.fn(), spawn: vi.fn(() => { throw new Error('禁止真实spawn'); }) }));
 vi.mock('../db.js', () => ({ default: { query: io.query } }));
 vi.mock('../runtime-safety.js', async (original) => ({ ...await original(), assertExternalExecutionAllowed: vi.fn() }));
+vi.mock('../execution-directory/legacy-relay.js', () => ({withLegacyRelayExecution:async (_identity,run)=>run()}));
 vi.mock('child_process', () => ({ spawn: io.spawn,
   exec: vi.fn(() => { throw new Error('禁止真实exec'); }),
   execSync: vi.fn(() => { throw new Error('禁止真实shell'); }),
@@ -11,7 +12,7 @@ vi.mock('child_process', () => ({ spawn: io.spawn,
 vi.mock('fs', async (original) => {
   const actual = await original(); const { resolve } = await import('node:path');
   const { fileURLToPath } = await import('node:url'); const root = resolve(process.cwd(), '../..');
-  return { ...actual, existsSync: vi.fn(() => false),
+  return { ...actual, existsSync: vi.fn(() => false), readdirSync: vi.fn(() => []), unlinkSync: vi.fn(),
     readFileSync: vi.fn((file, ...args) => {
       const target = file instanceof URL ? fileURLToPath(file) : resolve(String(file));
       if (!target.startsWith(`${root}/`) || target.includes('/.env') || /credential|auth\.json/.test(target)) throw new Error('禁止仓外文件/凭据读取');
@@ -31,6 +32,26 @@ afterAll(() => vi.unstubAllGlobals());
 beforeEach(() => { vi.clearAllMocks(); io.query.mockResolvedValue({ rows: [] }); resetBindings(); });
 
 describe('退役规划和旧拆解技能覆盖禁止启动', () => {
+  it('没有手动签名计划的直接审查保留原账本解析，自动入口问题仍未覆盖',async()=>{
+    io.query.mockImplementation(async sql=>String(sql).includes('FROM skill_registry')
+      ? {rows:[{name:'decomp',status:'deprecated',task_types:['architecture_scan'],dispatch_command:null}]} : {rows:[]});
+    await executor.triggerCodexReview({id:'unsigned-auto',task_type:'architecture_scan',payload:{}});
+    expect(io.spawn).toHaveBeenCalledOnce();
+    expect(io.spawn.mock.calls[0][1].at(-1)).toMatch(/^\/decomp(?:\s|$)/);
+    io.spawn.mockClear();
+    await executor.triggerCeceliaRun({id:'unsigned-dispatch',task_type:'architecture_scan',payload:{}});
+    expect(io.spawn).toHaveBeenCalledOnce();
+    expect(io.spawn.mock.calls[0][1].at(-1)).toMatch(/^\/decomp(?:\s|$)/);
+  });
+  it('没有手动签名计划时账本不可用仍按原有硬编码回退',async()=>{
+    io.query.mockImplementation(async sql=>{
+      if(String(sql).includes('FROM skill_registry')) throw Error('registry unavailable');
+      return {rows:[]};
+    });
+    await executor.triggerCodexReview({id:'unsigned-offline',task_type:'architecture_scan',payload:{}});
+    expect(io.spawn).toHaveBeenCalledOnce();
+    expect(io.spawn.mock.calls[0][1].at(-1)).toMatch(/^\/dev\b/);
+  });
   it.each(['decomposition_quality','initiative_plan'])('已退役拆解审核 %s 不得启动', async review_scope => {
     expect(await executor.triggerCeceliaRun({id:'old-review',task_type:'decomp_review',payload:{review_scope}})).toMatchObject({success:false,reason:'retired_decomposition'});
     expect(io.spawn).not.toHaveBeenCalled(); expect(global.fetch).not.toHaveBeenCalled();

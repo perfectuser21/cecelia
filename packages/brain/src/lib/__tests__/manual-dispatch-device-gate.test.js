@@ -188,7 +188,7 @@ beforeEach(() => {
   currentTask = null;
   mockQuery.mockImplementation((sql, params) => {
     allQueries.push({ sql, params });
-    if (/SELECT \* FROM tasks WHERE id/.test(sql)) {
+    if (/SELECT \*, xmin::text AS dispatch_row_version FROM tasks WHERE id/.test(sql)) {
       return Promise.resolve({ rows: currentTask ? [currentTask] : [] });
     }
     return Promise.resolve({ rows: [], rowCount: 0 });

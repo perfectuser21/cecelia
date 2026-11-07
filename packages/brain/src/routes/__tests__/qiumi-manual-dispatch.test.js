@@ -21,7 +21,7 @@ describe('qiumi-manual-dispatch：手机单任务派发与 coding Bridge 分离'
     vi.clearAllMocks();
     task = { id: 'phone-task', title: '只读巡检', task_type: 'qiumi_task', status: 'queued', payload: {}, claimed_by: null };
     mocks.query.mockImplementation(async (sql, args = []) => {
-      if (sql.includes('SELECT * FROM tasks')) return { rows: [structuredClone(task)] };
+      if (sql.includes('FROM tasks WHERE id = $1')) return { rows: [structuredClone(task)] };
       if (sql.includes('UPDATE tasks')) {
         if (sql.includes("AND claimed_by IS NULL") && (task.status !== 'queued' || task.claimed_by)) return { rows: [] };
         if (sql.includes('AND claimed_by = $2') && task.claimed_by !== args[1]) return { rows: [] };
