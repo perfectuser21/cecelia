@@ -305,6 +305,8 @@ export async function relayOnComplete(pool, taskId, { sessionId = null } = {}) {
     );
     const task = rows[0];
     if (!task || !RELAY_TERMINAL_STATUSES.includes(task.status)) return null;
+    // dev 无 PR 没有交付代码，不得合成交接或根据交接创建下一棒。
+    if (task.task_type === 'dev' && task.status === 'completed_no_pr') return null;
     const { handoff, synthesized } = await ensureHandoffOnComplete(pool, task, { sessionId });
     const spawned = await materializeNextSteps(pool, task, handoff);
     if (spawned.tasks.length || spawned.decisions.length || spawned.resume.length) {

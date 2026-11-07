@@ -204,6 +204,29 @@ describe('callback-processor 集成测试', () => {
   // ─── Path 2: Dev 任务无 PR → completed_no_pr ──────────────────────────────
 
   describe('Path 2: dev 任务无 PR 状态转换', () => {
+    it.each(['retries exhausted', 'reschedule query fails'])('无 PR %s 时 worker 不创建交接', async (scenario) => {
+      const { processExecutionCallback } = await import('../../callback-processor.js');
+      let relayRead = false;
+      mockClient.query.mockResolvedValue({ rows: [], rowCount: 1 });
+      mockPool.query.mockImplementation(async (sql) => {
+        if (sql.includes("payload->'headed_takeover' AS headed_takeover")) return { rows: [{ headed_takeover: null }] };
+        if (/^SELECT (pr_url, payload|task_type, pr_url, payload)/.test(sql)) return { rows: [{ task_type: 'dev', pr_url: null, payload: {} }] };
+        if (sql.includes('SELECT retry_count FROM tasks')) {
+          if (scenario === 'reschedule query fails') throw new Error('数据库故障');
+          return { rows: [{ retry_count: 3 }] };
+        }
+        if (sql.includes('SELECT id, title, status, priority, task_type')) {
+          relayRead = true;
+          return { rows: [{ id: 'task-005', title: 'dev', status: 'completed_no_pr', task_type: 'dev', result: {} }] };
+        }
+        return { rows: [] };
+      });
+      const result = await processExecutionCallback({ task_id: 'task-005', run_id: 'run-005', status: 'AI Done', result: {} }, mockPool);
+      expect(result.newStatus).toBe('completed_no_pr');
+      expect(relayRead).toBe(true);
+      expect(mockPool.query.mock.calls.some(([sql]) => sql.includes('handoff_log'))).toBe(false);
+    });
+
     it('dev 任务 AI Done 且无 pr_url → completed_no_pr', async () => {
       const { processExecutionCallback } = await import('../../callback-processor.js');
 
