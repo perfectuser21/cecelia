@@ -148,10 +148,11 @@ def worker(root,role):
         except Exception:terminal(p,root,2,False,'preflight_rejected');return
         # 清除上一次执行遗留的控制变量；正常HOME/PATH/BRAIN_*与正式凭据加载仍保留。
         env={k:v for k,v in os.environ.items() if not k.startswith(('LEADGEN_','WF_','WFR_','QUEUED_'))}
-        for k in ['ADB_SERVER_SOCKET','ADB_SERVER_PORT','ANDROID_ADB_SERVER_PORT','ANDROID_ADB_SERVER_ADDRESS','DOUYIN_ADB_BIN','DOUYIN_ADB_PORT','DOUYIN_PHONE_REGISTRY']:env.pop(k,None)
+        for k in ['ADB_SERVER_SOCKET','ADB_SERVER_PORT','ANDROID_ADB_SERVER_PORT','ANDROID_ADB_SERVER_ADDRESS','DOUYIN_ADB_BIN','DOUYIN_ADB_PORT','DOUYIN_PHONE_REGISTRY','BRAIN_TASK_ID']:env.pop(k,None)
         if p['machine']=='mmv' and p['workflow_key']!='douyin_comment_scoring':
             env['DOUYIN_ADB_BIN']='/opt/homebrew/bin/adb';env['DOUYIN_PHONE_REGISTRY']=str(H/'.config/openclaw'/p['registry'])
         env.update({k:str(v) for k,v in p['env'].items()});env['WF_RELEASE_ID']=p['release_id'];env['WF_RUN_MAX_SECONDS']=str(p['timeout_sec'])
+        if p['workflow_key'] in ('douyin_video_discovery','douyin_video_processing'):env['WF_BRAIN_TASK_ID']=p['task_id']
         if p['workflow_key']=='douyin_lead_outreach' and p.get('send_authorized') is True:env['LEADGEN_SEND']='1'
         # 可执行入口由部署合同固定，不接受调用者提供路径/任意命令。
         try:code=subprocess.call([str(H/'bin-harvest/leadgen-run.sh'),p['workflow_key'],p['profile'],p['serial'],p['line'],p['business_tag']],env=env)
