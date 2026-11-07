@@ -8,8 +8,9 @@
 
 import { Router } from 'express';
 import { rateLimit } from 'express-rate-limit';
-import pool from '../db.js';
+import defaultPool from '../db.js';
 
+export function createMetricsRouter(pool = defaultPool) {
 const router = Router();
 
 // GET /success-rate — 返回任务执行成功率统计
@@ -199,4 +200,7 @@ router.patch('/tasks/:id/pr-merged', rateLimit({ windowMs: 60_000, limit: 60, st
   }
 });
 
-export default router;
+return router;
+}
+
+export default createMetricsRouter();

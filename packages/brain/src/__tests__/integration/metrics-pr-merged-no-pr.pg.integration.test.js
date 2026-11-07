@@ -1,23 +1,21 @@
-import { afterAll, beforeAll, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, expect, it } from 'vitest';
 import pg from 'pg';
 import express from 'express';
 import request from 'supertest';
 import { DB_DEFAULTS } from '../../db-config.js';
 
-const db = vi.hoisted(() => ({ query: null }));
-vi.mock('../../db.js', () => ({ default: db }));
 const client = new pg.Client(DB_DEFAULTS);
 let app;
 beforeAll(async () => {
   await client.connect();
-  db.query = (...args) => client.query(...args);
   await client.query(`CREATE TEMP TABLE tasks (
     id text PRIMARY KEY, title text, task_type text, status text, pr_url text,
     pr_merged_at timestamp, success_metrics jsonb, completed_at timestamp,
     updated_at timestamp, execution_attempts integer
   )`);
   await client.query("INSERT INTO tasks (id,title,task_type,status) VALUES ('dev','dev','dev','completed_no_pr'), ('data','data','data','completed_no_pr')");
-  const { default: router } = await import('../../routes/metrics.js');
+  const { createMetricsRouter } = await import('../../routes/metrics.js');
+  const router = createMetricsRouter(client);
   app = express(); app.use(express.json());
   // 测试现场模拟不同的 TCP 对端；不启用 trust proxy，也不把转发头当成来源身份。
   app.use((req, _res, next) => {
