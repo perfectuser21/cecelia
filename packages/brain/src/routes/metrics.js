@@ -7,6 +7,7 @@
  */
 
 import { Router } from 'express';
+import { rateLimit } from 'express-rate-limit';
 import pool from '../db.js';
 
 const router = Router();
@@ -160,7 +161,7 @@ router.post('/tasks/:id/execution-attempt', async (req, res) => {
 });
 
 // PATCH /tasks/:id/pr-merged — 标记 PR 已合并
-router.patch('/tasks/:id/pr-merged', async (req, res) => {
+router.patch('/tasks/:id/pr-merged', rateLimit({ windowMs: 60_000, limit: 60, standardHeaders: 'draft-7', legacyHeaders: false }), async (req, res) => {
   const { id } = req.params;
   const { pr_url, merged_at, metrics } = req.body;
 
