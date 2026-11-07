@@ -147,10 +147,12 @@ describe('已知历史Git fixture 的 staging 来源，不声明当前候选或�
     expect(result.status).toBe('unknown');
     expect(result.bindings).toEqual([]);
   });
-  it('route 仅空白变化仍按固定AST与新源码摘要绑定，不声称业务PASS', async () => {
-    const result = await build({ patch: { [route]: read(route).replace('const output=await', 'const output = await') } });
-    expect(result.status, JSON.stringify(result.gaps)).toBe('verified');
-    expect(result.bindings.find(b => b.path === route)?.digest).toMatch(/^sha256:[a-f0-9]{64}$/);
+  it('route 即使仅空白变化也必须重新审查完整源码', async () => {
+    const original = read(route), changed = original.replace('const output=await', 'const output = await');
+    expect(changed).not.toBe(original);
+    const result = await build({ patch: { [route]: changed } });
+    expect(result.status, JSON.stringify(result.gaps)).toBe('unknown');
+    expect(result.bindings).toEqual([]);
   });
   it('未知协议版本不能降级为旧证据', async () => {
     const result = await build({ marker: 3 });
