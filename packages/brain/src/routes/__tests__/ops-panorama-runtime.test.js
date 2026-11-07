@@ -34,6 +34,18 @@ const run = (rows = [{ executor: 'codex' }]) => {
 beforeEach(() => { state.sleep = true; state.error = false; state.neverLlm = false; state.syncCalls = 0; vi.clearAllMocks(); });
 afterEach(() => { state.children.forEach((child) => child.kill('SIGKILL')); state.children = []; vi.useRealTimers(); });
 describe('ops-panorama 真实router同步阻塞回归', () => {
+  it('现役账号的采集状态经真实接口返回且敏感字段继续移除', async () => {
+    state.sleep = false;
+    vi.mocked(getLlmCapacitySnapshot).mockResolvedValueOnce({ sentinel: 'ok', vendors: {
+      codex: { poller: 'error', error: 'private detail', accounts: [{ name: 'team1', source: 'ledger:unknown:no_data', available: true, token: 'private token' }] },
+      grok: { poller: 'ok', accounts: [{ name: 'grok', source: 'ledger:unusable:exhausted', available: false }] },
+    } });
+    const { promise, res } = run(); await promise;
+    const capacity = res.json.mock.calls[0][0].llm_capacity;
+    expect(capacity.vendors.codex.poller).toBe('error');
+    expect(capacity.vendors.grok.poller).toBe('ok');
+    expect(JSON.stringify(capacity)).not.toContain('private');
+  });
   it('本机sleep子进程探测不能在构造Promise.all时同步堵住handler和timer', async () => {
     let heartbeatAt;
     const start = performance.now();
