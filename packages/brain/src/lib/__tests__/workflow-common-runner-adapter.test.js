@@ -69,3 +69,23 @@ describe('source revocation and bound readback',()=>{
 });
 
 it('a reserved source cannot acquire the phone after task ownership changes',async()=>{const x=executionFixture();await x.adapter.dispatch(x.task.id);x.lockGate.mockClear();x.task.claimed_by='session:manual';await expect(x.adapter.dispatch(x.task.id)).rejects.toThrow('task_owned');expect(x.lockGate).not.toHaveBeenCalled();});
+
+it('workflow自动派发保持授权与原身份，并走独立可信DBOS scope',async()=>{
+ const x=executionFixture(),durableStart=vi.fn(async()=>({workflow_id:'fixed'}));
+ const adapter=createWorkflowCommonAdapter(x.pool,{routes:x.routes,frozenContract:async()=>x.frozen,startRun:x.start,dispatcher:{dispatch:x.dispatch},lockGate:x.lockGate,setLease:x.setLease,env:{DBOS_DURABLE_ENABLED:'true'},durableStart});
+ const result=await adapter.dispatch(x.task.id);
+ expect(x.lockGate).toHaveBeenCalledOnce();expect(x.dispatch).not.toHaveBeenCalled();
+ expect(durableStart.mock.calls[0][0]).toMatchObject({dispatch_scope:'workflow',run_id:x.task.result.workflow_common_runner.run_id,body:{task_id:x.task.id,mode:'formal'}});
+ expect(result.durable_workflow_id).toBe('fixed');
+});
+
+it('无Worker绑定的已终结DBOS拒绝必须落账，不反复waiting续租',async()=>{
+ const x=executionFixture(),outcome={status:'needs_review',reason:'common_runner_durable_deadline_exceeded',observation:null};
+ const handle={getStatus:vi.fn(async()=>({status:'SUCCESS'})),getResult:vi.fn(async()=>outcome)};
+ const finalizeTask=vi.fn(async()=>({rowCount:1})),releaseLock=vi.fn();
+ const adapter=createWorkflowCommonAdapter(x.pool,{routes:x.routes,frozenContract:async()=>x.frozen,startRun:x.start,dispatcher:{dispatch:x.dispatch},lockGate:x.lockGate,setLease:x.setLease,env:{DBOS_DURABLE_ENABLED:'true'},durableStart:async()=>({workflow_id:'fixed',handle}),finalizeTask,releaseLock});
+ const result=await adapter.dispatch(x.task.id);
+ expect(handle.getResult).toHaveBeenCalledOnce();expect(result.waiting).toBe(false);expect(result.status).toBe('needs_review');
+ expect(finalizeTask).toHaveBeenCalledWith(x.pool,x.task.id,'failed',expect.objectContaining({where:expect.objectContaining({sql:expect.stringContaining("result->'common_runner' IS NULL")})}));
+ expect(releaseLock).toHaveBeenCalledWith(x.task.id);expect(x.dispatch).not.toHaveBeenCalled();
+});

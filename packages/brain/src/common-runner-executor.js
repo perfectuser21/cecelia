@@ -1,3 +1,4 @@
+import {startDurableCommonRunner} from './durable/common-runner-durable-client.js';
 import { createCommonRunnerDispatcher } from './lib/common-runner-dispatch.js';
 import { finalizeTask as finalizeCentralTask } from './lib/task-terminal.js';
 import { blockCommonRunnerForReview } from './lib/common-runner-review.js';
@@ -38,7 +39,18 @@ export async function runCommonRunnerTasks(pool, deps = {}) {
     const plan = fixed ? { runId: fixed.run_id, body: { task_id: task.id,
       ...(retryNotStarted ? { profile: fixed.profile, mode: fixed.mode, input: fixed.input } : {}) } } : commonRunnerTaskInput(task);
     const action = fixed?.cancel_requested ? 'cancel' : fixed && !retryNotStarted ? 'inspect' : 'start';
-    let result = await dispatcher.dispatch(action, plan.runId, plan.body);
+    let result;
+    if(action==='start'&&(deps.env??process.env).DBOS_DURABLE_ENABLED==='true'){
+      const durable=await(deps.durableStart??startDurableCommonRunner)({run_id:plan.runId,body:plan.body,deadline_ms:Date.now()+3600000,poll_interval_ms:1000});
+      const state=await durable.handle.getStatus();
+      if(['ERROR','CANCELLED'].includes(state?.status))throw Error('common_runner_durable_workflow_error');
+      if(state?.status!=='SUCCESS'){out.unknown++;return;}
+      const outcome=await durable.handle.getResult();
+      result=outcome.observation;
+      if(result?.status==='rejected')throw Error(result.reason);
+      if(outcome.status==='needs_review'&&!result?.authenticated)throw Error(outcome.reason??'common_runner_durable_worker_review_required');
+      if(!result){out.unknown++;return;}
+    }else result=await dispatcher.dispatch(action,plan.runId,plan.body);
     if (!result.authenticated) { out.unknown++; return; }
     if (initial && !fixed) out.dispatched++;
     if (result.central_run?.recording_status !== 'confirmed' && Number(result.receipt?.writeback?.pending) > 0) {
@@ -86,12 +98,12 @@ export async function runCommonRunnerTasks(pool, deps = {}) {
       try { await observe(claimed, true); }
       catch (error) {
         const reason = /^common_runner_[a-z_]+$/.test(error.message) ? error.message : null;
-        if (reason && !['common_runner_runtime_isolated', 'common_runner_dispatch_paused'].includes(reason) && !claimed.result?.common_runner) {
+        if (reason && !['common_runner_runtime_isolated', 'common_runner_dispatch_paused', 'common_runner_durable_unavailable'].includes(reason) && !claimed.result?.common_runner) {
           const summary = `公共Runner启动前拒绝：${reason}`;
-          await finalizeTask(pool, claimed.id, 'failed', { onlyIfStatus: 'queued',
+          const finished=await finalizeTask(pool, claimed.id, 'failed', { onlyIfStatus: 'queued',
             where: { sql: "claimed_by='common-runner' AND result->'common_runner' IS NULL", params: [] },
             set: { error_message: reason }, mergeResult: { actor: 'common-runner', summary, evidence: [{ reason, phase: 'preflight' }], handoff: { summary, next_steps: [] } } });
-          out.failed_preflight++;
+          if(finished.rowCount)out.failed_preflight++;
         } else { out.errors++; }
         await recordEvent(pool, claimed.id, 'common_runner_preflight', { reason: reason ?? 'execution_authority_unavailable', action: 'no_legacy_fallback' });
       }

@@ -170,3 +170,34 @@ describe('migrated v2 common Runner terminal proof',()=>{
   expect(buildTerminalUpdate(ID,'failed').sql).toContain("cr.status IN ('failed','cancelled')");
  });
 });
+
+describe('DBOS公共Runner明确未启动的失败收口', () => {
+  const runId = 'b116399d-0ac4-4ef5-b7e8-e9a8b6cdcd6d';
+  const proof = () => ({runId, workflowId: `common-runner:${runId}`, workflowStatus: 'SUCCESS'});
+  it.each(['SUCCESS', 'ERROR', 'CANCELLED'])('只在DBOS终态%s下为同源未启动任务构造失败CAS', workflowStatus => {
+    const {sql, params} = buildTerminalUpdate(ID, 'failed', {
+      onlyIfStatus: ['in_progress'],
+      commonRunnerNoLaunchReconciliation: {...proof(), workflowStatus},
+    });
+    expect(sql).toContain("status = 'failed'");
+    expect(sql).toContain("claimed_by='common-runner'");
+    expect(sql).toContain("result->'workflow_common_runner'->>'task_id'=id::text");
+    expect(sql).toContain("result->'workflow_common_runner'->>'run_id'=$2");
+    expect(sql).toContain("result->'common_runner' IS NULL");
+    // 此显式出口不能借原中央确认分支对已有binding或其它run写终态。
+    expect(sql).not.toContain('EXISTS (SELECT 1 FROM task_runs');
+    expect(params).toEqual([ID, runId]);
+  });
+  it.each(['completed', 'completed_no_pr', 'archived'])('未启动证明不能授权%s', status => {
+    expect(() => buildTerminalUpdate(ID, status, {commonRunnerNoLaunchReconciliation: proof()})).toThrow(/commonRunnerNoLaunchReconciliation/);
+  });
+  it.each([
+    {runId: 'invalid'}, {workflowId: 'common-runner:other'}, {workflowStatus: 'PENDING'},
+    {workflowStatus: 'RUNNING'}, {workflowStatus: null}, {workflowId: null},
+  ])('无效DBOS证明在发SQL前拒绝：%s', changes => {
+    expect(() => buildTerminalUpdate(ID, 'failed', {commonRunnerNoLaunchReconciliation: {...proof(), ...changes}})).toThrow(/commonRunnerNoLaunchReconciliation/);
+  });
+  it('明确未启动出口必须有唯一taskId，不能用于批量收口', () => {
+    expect(() => buildTerminalUpdate(null, 'failed', {where: {sql: 'TRUE'}, commonRunnerNoLaunchReconciliation: proof()})).toThrow(/commonRunnerNoLaunchReconciliation/);
+  });
+});

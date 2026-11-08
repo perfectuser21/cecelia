@@ -22,6 +22,9 @@ import pg from 'pg';
 // configureDurableDeps 在 launch 前注入业务 pool（业务查询用 brain 默认 pool）。
 import { configureDurableDeps } from './daily-report-durable.js';
 import brainPool from '../db.js';
+import {configureCommonRunnerDurableDeps} from './common-runner-durable.js';
+import {createCommonRunnerDispatcher} from '../lib/common-runner-dispatch.js';
+import {createWorkflowCommonAdapter} from '../lib/workflow-common-runner-adapter.js';
 
 /**
  * 是否启用 durable 底座。默认关（行为零变化）。
@@ -67,6 +70,7 @@ export async function initDurable(seams = {}) {
   const sysPool = makePool(url);
   // C1：launch 前注入 durable workflow 的业务查询 pool
   configureDurableDeps({ pool: brainPool });
+  configureCommonRunnerDurableDeps({dispatcher:createCommonRunnerDispatcher({pool:brainPool}),workflowDispatcher:createWorkflowCommonAdapter(brainPool).runnerDispatcher});
   setConfig({
     name: 'cecelia-brain',
     systemDatabaseUrl: url,

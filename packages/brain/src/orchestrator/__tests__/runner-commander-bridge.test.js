@@ -70,3 +70,25 @@ test('恢复预算超过一次、或费用没有调用上限时拒绝配置',()=
 test('同run不可达后后续观察不再重复调用未知Commander回合',async()=>{
  let calls=0;const c=createCommanderBridge({run_id:'review',transport:async()=>{calls++;throw Error('offline');}});await c.wake();await c.notify('work',{type:'check_result'},{executor_kind:'code'});await c.sleep();expect(calls).toBe(1);expect(c.status).toBe('unavailable');
 });
+
+test('已证明旧Commander终止后允许接回，原调用预算不重置',async()=>{
+ let calls=0;
+ const c=createCommanderBridge({run_id:'reconnect',budget:{max_calls:2},transport:async()=>{
+  calls++;if(calls===1)throw Object.assign(Error('commander_exited'),{commanderExecutionStopped:true});
+  return {action:'answer',text:'继续原任务'};
+ }});
+ await c.wake();
+ expect(await c.notify('work',{}, {executor_kind:'agent'})).toEqual({action:'answer',text:'继续原任务'});
+ await c.notify('work',{}, {executor_kind:'agent'});
+ expect(calls).toBe(2);expect(c.status).toBe('available');
+});
+test('未知旧回合只读核验终态后才接回',async()=>{
+ let calls=0,stopped=false,reads=0;
+ const transport=async()=>{calls++;if(calls===1)throw Error('connection_lost');return {action:'answer',text:'new-context'};};
+ transport.reconcile=async()=>{reads++;return {execution_stopped:stopped};};
+ const c=createCommanderBridge({run_id:'reconnect',transport});await c.wake();
+ expect(await c.notify('work',{}, {executor_kind:'agent'})).toEqual({action:'none'});
+ expect(calls).toBe(1);stopped=true;
+ expect(await c.notify('work',{}, {executor_kind:'agent'})).toEqual({action:'answer',text:'new-context'});
+ expect(calls).toBe(2);expect(reads).toBe(2);
+});

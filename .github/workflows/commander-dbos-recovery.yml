@@ -1,0 +1,43 @@
+name: Commander DBOS Recovery
+on:
+  pull_request:
+    paths:
+      - 'packages/brain/src/orchestrator/**'
+      - 'packages/brain/src/durable/**'
+      - 'packages/brain/src/routes/common-runner.js'
+      - 'packages/brain/src/common-runner-executor.js'
+      - 'packages/brain/src/lib/common-runner-dispatch.js'
+      - 'packages/brain/src/lib/workflow-common-runner-adapter.js'
+      - 'packages/brain/src/lib/task-terminal.js'
+      - 'packages/brain/package*.json'
+      - 'package-lock.json'
+      - 'packages/brain/scripts/fleet-worker/**'
+      - 'packages/brain/scripts/smoke/commander-dbos-recovery-smoke.mjs'
+      - '.github/workflows/commander-dbos-recovery.yml'
+  workflow_dispatch:
+jobs:
+  process-recovery:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: cecelia_scratch
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432/tcp
+        options: >-
+          --health-cmd "pg_isready -U postgres -d cecelia_scratch"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Verify real process recovery without replay
+        env:
+          TEST_DB_URL: postgresql://postgres@127.0.0.1:${{ job.services.postgres.ports[5432] }}/cecelia_scratch
+        run: node packages/brain/scripts/smoke/commander-dbos-recovery-smoke.mjs

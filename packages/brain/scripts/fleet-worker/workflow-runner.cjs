@@ -48,6 +48,7 @@ function createWorkflowRunner({stateRoot,machineId,profiles={},assertCanLaunch,a
    const baseTransport=(cp?.kind==='openclaw'?createOpenClawCommanderTransport:createCommanderTransport)({profile:cp,cwd:s.profile.cwd,files:s.profile.files});
    const transport=request=>baseTransport({...request,workflow:s.profile.contract.workflow,profile_sha256:s.identity.profile_sha256,
     activity_contract:request.activity?{...s.profile.contract.activities.find(a=>a.key===request.activity),questions:s.profile.metadata[request.activity]?.questions}:null});
+   if(baseTransport.reconcile)transport.reconcile=request=>baseTransport.reconcile(request);
    commander=createCommanderBridge({transport,onEvent:observe,run_id:s.identity.run_id,brief:s.profile.brief??{purpose:s.profile.contract.workflow},rules:s.profile.rules??[],budget:cp?.budget??{}});
    await commander.wake();
    s.status='running';save(s);
