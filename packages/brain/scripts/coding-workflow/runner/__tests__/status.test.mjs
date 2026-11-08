@@ -80,6 +80,25 @@ describe('collectStatus / formatStatus', () => {
     expect(JSON.parse(res.stdout).map((r) => r.task_id)).toEqual([PARTIAL_ID, COMPLETED_ID]);
   });
 
+  it('非任务文件即使含 completed 也不能展示成任务完成', () => {
+    const dir = makeLogDir();
+    fs.writeFileSync(path.join(dir, 'unrelated.json'), JSON.stringify({ status: 'completed', outputs: { pr_url: 'https://example.invalid/pull/77' } }));
+    expect(collectStatus(dir).some((r) => r.task_id === 'unrelated' && r.status === 'completed')).toBe(false);
+  });
+
+  it('非 GitHub 链接不能关联同编号的 CI 修复记录', () => {
+    const dir = makeLogDir();
+    fs.writeFileSync(path.join(dir, `${CIFIX_ID}.json`), JSON.stringify({ status: 'completed', outputs: { pr_url: 'https://example.invalid/pull/77' } }));
+    fs.writeFileSync(path.join(dir, 'cifix-77.json'), JSON.stringify({ attempts: [{ result: 'pushed' }] }));
+    expect(collectStatus(dir).find((r) => r.task_id === CIFIX_ID).ci_fix).toBeNull();
+  });
+
+  it('--log-dir 后缺参数时拒绝而不是吞掉 --json', () => {
+    const res = spawnSync(process.execPath, [STATUS_PATH, '--log-dir', '--json'], { encoding: 'utf8' });
+    expect(res.status).not.toBe(0);
+    expect(res.stderr).toContain('--log-dir');
+  });
+
   it('忽略非 json 文件', () => {
     const rows = collectStatus(makeLogDir());
     expect(rows).toHaveLength(2);
