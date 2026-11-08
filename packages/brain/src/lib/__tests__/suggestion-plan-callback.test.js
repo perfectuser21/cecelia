@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { suggestionPlanFailure, recordSuggestionPlanFailure } from '../lib/suggestion-plan-callback.js';
+import { suggestionPlanFailure, recordSuggestionPlanFailure } from '../suggestion-plan-callback.js';
 
 const task = { task_type: 'suggestion_plan', payload: { suggestion_id: 'sg-1' } };
 const failure = { suggestion_id: 'sg-1', identified_layer: 'unknown', status: 'failed' };
