@@ -142,3 +142,9 @@ it('自动派发显式启用DBOS时复用原run进入持久协调器，不裸启
  expect(dispatch).not.toHaveBeenCalled();expect(durableStart).toHaveBeenCalledOnce();
  expect(durableStart.mock.calls[0][0]).toMatchObject({run_id:uuid(2),body:{task_id:t.id}});
 });
+it('自动派发DBOS在绑定前截止时写失败证据，不永久queued等待',async()=>{
+ const t=task(),finalizeTask=vi.fn(async()=>({rowCount:1}));
+ const durableStart=async()=>({handle:{getStatus:async()=>({status:'SUCCESS'}),getResult:async()=>({status:'needs_review',reason:'common_runner_durable_deadline_exceeded',observation:null})}});
+ const result=await runCommonRunnerTasks(poolFor([t]),{env:{DBOS_DURABLE_ENABLED:'true'},dispatcher:{dispatch:vi.fn()},durableStart,finalizeTask,recordEvent:vi.fn()});
+ expect(finalizeTask).toHaveBeenCalledOnce();expect(result.failed_preflight).toBe(1);
+});
