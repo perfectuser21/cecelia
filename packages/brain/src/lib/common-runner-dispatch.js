@@ -281,8 +281,26 @@ export function createCommonRunnerDispatcher({ pool, env = process.env, profiles
         const evidence = [{ kind: 'central_spans', run_id: binding.run_id, count: wb.total, manifest_sha256: manifestHash },
           { kind: 'worker_receipt', machine_id: binding.machine_id, profile_sha256: binding.profile_sha256, status: receipt.status }];
         const summary = `公共Runner运行${receipt.status}；${wb.total}条执行记录已在Brain独立读回`;
+        // 单独业务终态不证明资源已归位。此server-only原件只在认证回执、完整中央manifest
+        // 及匹配的独立cleanup核验后形成；普通callback的extractStageReceipt不能写此键。
+        const cleanupMatched = cleanup?.verdict === 'pass' && typeof cleanup.acceptance_ref === 'string'
+          && Array.isArray(cleanup.evidence) && cleanup.evidence.length > 0
+          && validations.some(row => digest(row.evidence.cleanup_validation) === digest(cleanup));
+        const neverStarted = resourceFreeReview(receipt) && receipt.execution_state === 'not_started';
+        const resourceRun = (await pool.query('SELECT id,task_id FROM task_runs WHERE run_id=$1', [binding.run_id])).rows[0];
+        const resourceDevices = (await pool.query('SELECT device_name,xmin::text AS acquisition_version FROM device_locks WHERE locked_by=$1 ORDER BY device_name', [binding.task_id])).rows;
+        const resourceSettlement = resourceRun?.task_id === binding.task_id && UUID.test(resourceRun.id ?? '')
+          && receipt.execution_unknown === false && (cleanupMatched || neverStarted) ? {
+          protocol: 'common-runner-resource-settlement/v1', devices: resourceDevices, task_run_id: resourceRun.id, task_id: binding.task_id, run_id: binding.run_id,
+          machine_id: binding.machine_id, profile_sha256: binding.profile_sha256, mode: binding.mode,
+          worker_route: binding.worker_route ?? null, execution_unknown: false,
+          basis: cleanupMatched ? 'central-cleanup-validation' : 'not-started-resource-free',
+          execution_state: receipt.execution_state ?? null, cleanup_required: receipt.cleanup_required ?? null,
+          cleanup_validation_sha256: cleanupMatched ? digest(cleanup) : null, manifest_sha256: manifestHash,
+        } : null;
         const result = { actor: 'common-runner', summary, evidence,
-          handoff: { summary, next_steps: [] }, common_runner: { mode: binding.mode, business_status: receipt.status, validation: receipt.validation, writeback: wb } };
+          handoff: { summary, next_steps: [] }, common_runner: { mode: binding.mode, business_status: receipt.status,
+            validation: receipt.validation, writeback: wb, resource_settlement: resourceSettlement } };
         const finished = await finishRun({ runId: binding.run_id, status: review ? 'failed' : receipt.status, result,
           artifacts: [`brain:spans:${binding.run_id}`] }, { pool, strict: true });
         const saved = finished?.updated ? null : (await pool.query('SELECT status,task_id,ended_at,result FROM task_runs WHERE run_id=$1', [binding.run_id])).rows[0];

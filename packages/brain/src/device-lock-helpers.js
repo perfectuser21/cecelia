@@ -14,6 +14,58 @@ const TTL_MIN = 1;
 const TTL_MAX = 240;
 const TTL_DEFAULT = 30;
 
+/**
+ * TaskRun 的 source 由服务端 startRun 写入，普通 callback 的幂等 start 不覆盖它。
+ * CommonRunner 的 resource_settlement 由认证回执、中央 manifest 与资源清场证明独立核验后写入；
+ * callback 的 extractStageReceipt 不接收这两个键，Task PATCH 也不写 TaskRun。
+ * Task 状态、租约、TTL、自报 stopped 或单独 TaskRun 终态都不能解除该隔离。
+ * 对每个原运行分别检查，不能用一次已结算运行覆盖另一次未结算运行。
+ */
+function settledCommonRunner(alias) {
+  return `COALESCE((
+         cr.ended_at IS NOT NULL
+         AND cr.result->>'actor' = 'common-runner'
+         AND cr.result->'common_runner'->'resource_settlement' @> jsonb_build_object(
+           'protocol','common-runner-resource-settlement/v1','task_run_id',cr.id::text,'task_id',cr.task_id::text,
+           'run_id',cr.run_id,'execution_unknown',false,
+           'manifest_sha256',cr.result->'common_runner'->'writeback'->>'manifest_sha256')
+         AND cr.result->'common_runner'->'resource_settlement'->'worker_route'
+           = COALESCE(cr.context->'common_runner_worker_route','null'::jsonb)
+         AND ((cr.result->'common_runner'->'resource_settlement'->>'basis'='central-cleanup-validation'
+               AND cr.result->'common_runner'->'resource_settlement'->>'cleanup_validation_sha256' ~ '^[a-f0-9]{64}$')
+           OR (cr.result->'common_runner'->'resource_settlement'->>'basis'='not-started-resource-free'
+               AND cr.result->'common_runner'->'resource_settlement'->>'execution_state'='not_started'
+               AND cr.result->'common_runner'->'resource_settlement'->'cleanup_required'='false'::jsonb))
+         AND ((cr.status='success' AND cr.result->'common_runner'->>'business_status'='completed')
+           OR (cr.status='failed' AND cr.result->'common_runner'->>'business_status' IN ('failed','needs_review'))
+           OR (cr.status='cancelled' AND cr.result->'common_runner'->>'business_status'='cancelled'))
+         AND cr.result->'common_runner'->'writeback'->'pending' = '0'::jsonb
+         AND cr.result->'common_runner'->'writeback'->'blocked' = '0'::jsonb
+         AND cr.result->'common_runner'->'writeback'->'acked' = cr.result->'common_runner'->'writeback'->'total'
+         AND cr.result->'common_runner'->'writeback'->>'manifest_sha256' ~ '^[a-f0-9]{64}$'
+         AND cr.result->'evidence' @> jsonb_build_array(jsonb_build_object(
+           'kind','central_spans','run_id',cr.run_id,
+           'count',cr.result->'common_runner'->'writeback'->'total',
+           'manifest_sha256',cr.result->'common_runner'->'writeback'->>'manifest_sha256'))
+         AND cr.result->'evidence' @> jsonb_build_array(jsonb_build_object(
+           'kind','worker_receipt','status',cr.result->'common_runner'->>'business_status',
+           'machine_id',cr.result->'common_runner'->'resource_settlement'->>'machine_id',
+           'profile_sha256',cr.result->'common_runner'->'resource_settlement'->>'profile_sha256'))
+         AND cr.result->'common_runner'->'resource_settlement'->>'profile_sha256' ~ '^[a-f0-9]{64}$'
+         AND cr.result->'common_runner'->'resource_settlement'->>'mode'=cr.result->'common_runner'->>'mode'
+  ), false)`.replaceAll('cr.', alias+'.');
+}
+function unresolvedCommonRunner(holder, lock = 'device_locks') {
+  const source = alias => `${alias}.context->>'source' IN ('common-runner','workflow-common-runner')`;
+  return `EXISTS (SELECT 1 FROM task_runs cr WHERE cr.task_id::text=${holder} AND ${source('cr')}
+    AND (NOT ${settledCommonRunner('cr')} OR NOT EXISTS (
+      SELECT 1 FROM task_runs settled WHERE settled.task_id=cr.task_id AND ${source('settled')}
+       AND ${settledCommonRunner('settled')}
+       AND settled.result->'common_runner'->'resource_settlement'->'devices' @> jsonb_build_array(
+         jsonb_build_object('device_name',${lock}.device_name,'acquisition_version',${lock}.xmin::text))
+    )))`;
+}
+
 function clampTtl(ttlMinutes) {
   const n = Number(ttlMinutes);
   if (!Number.isFinite(n)) return TTL_DEFAULT;
@@ -43,6 +95,7 @@ export async function acquireDeviceLock(taskId, deviceName, ttlMinutes = TTL_DEF
           OR locked_by = $1
           OR (
             expires_at IS NOT NULL AND expires_at < NOW()
+            AND NOT ${unresolvedCommonRunner('device_locks.locked_by')}
             AND NOT EXISTS (
               SELECT 1 FROM tasks t
                WHERE t.id::text = device_locks.locked_by AND t.status = 'in_progress'
@@ -73,7 +126,8 @@ export async function acquireDeviceLock(taskId, deviceName, ttlMinutes = TTL_DEF
 /** 释放某任务持有的全部设备锁（无锁时 no-op）。 */
 export async function releaseDeviceLocksHeldBy(taskId, pool = defaultPool) {
   const { rowCount } = await pool.query(
-    'UPDATE device_locks SET locked_by = NULL, locked_at = NULL, expires_at = NULL WHERE locked_by = $1',
+    `UPDATE device_locks SET locked_by = NULL, locked_at = NULL, expires_at = NULL WHERE locked_by = $1
+      AND NOT ${unresolvedCommonRunner('device_locks.locked_by')}`,
     [String(taskId)],
   );
   return rowCount;
@@ -95,6 +149,7 @@ export async function sweepStaleDeviceLocks(pool = defaultPool) {
        SELECT l.device_name, l.locked_by, l.xmin::text AS lock_version
          FROM tasks t JOIN device_locks l ON t.id::text = l.locked_by
         WHERE t.status IS DISTINCT FROM 'queued' AND t.status IS DISTINCT FROM 'in_progress'
+          AND NOT ${unresolvedCommonRunner('l.locked_by','l')}
         FOR UPDATE OF t, l SKIP LOCKED
      ), orphan AS MATERIALIZED (
        SELECT l.device_name, l.locked_by, l.xmin::text AS lock_version
