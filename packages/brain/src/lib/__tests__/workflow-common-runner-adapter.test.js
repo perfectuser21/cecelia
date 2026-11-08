@@ -37,6 +37,7 @@ describe('workflow common lifecycle',()=>{
  it('registers one original-task run and reuses that identity on restart',async()=>{
   const x=executionFixture();await x.adapter.dispatch(x.task.id);await x.adapter.dispatch(x.task.id);
   expect(x.start).toHaveBeenCalledOnce();expect(x.start.mock.calls[0][0]).toMatchObject({taskId:x.task.id,source:'workflow-common-runner'});
+  expect(x.start.mock.calls[0][0].context.common_runner_worker_reservation).toEqual({schema_version:'common-runner-worker-reservation/v1',state:'unlaunched',task_id:x.task.id,run_id:x.task.result.workflow_common_runner.run_id});
   const [action,run,body]=x.dispatch.mock.calls[0];expect(action).toBe('start');expect(body.mode).toBe('formal');expect(run).toMatch(/^[a-f0-9-]{36}$/);expect(x.dispatch.mock.calls[1][1]).toBe(run);
   expect(x.start.mock.calls[0][1].transactionClient).toBe(x.db);
   expect(x.db.query.mock.calls.some(([sql])=>sql.includes("claimed_by='common-runner'")&&sql.includes("status='in_progress'"))).toBe(true);

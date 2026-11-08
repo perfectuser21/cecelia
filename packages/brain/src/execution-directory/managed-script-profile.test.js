@@ -80,8 +80,14 @@ it('受保护API只转发profile路径与CAS请求，认证错误不触及store'
 });
 it('Worker收到启动或旧run检查时必须在调用Runner前CAS本轮boot/config，封住catalog到start换代竞态',async()=>{
  const require=createRequire(import.meta.url),{createFleetWorkerServer}=require('../../scripts/fleet-worker/fleet-worker.cjs');let called=0;
- const server=createFleetWorkerServer({machineId:'us-mac-m4',attemptToken:token,launchAdmission:{snapshot:()=>({boot_id:boot})},runtimeConfigDigest:hash,workflowRunner:{start:async()=>{called++;return {};},inspect:async()=>{called++;return {};}}});await new Promise(r=>server.listen(0,'127.0.0.1',r));
- try{for(const action of ['start','inspect']){const body={run_id:randomUUID(),task_id:randomUUID(),request_nonce:randomUUID(),expected_worker_boot_id:randomUUID(),expected_worker_config_digest:hash};
+ const methods=Object.fromEntries(['start','inspect','cancel','flush'].map(action=>[action,async()=>{called++;return {};}]))
+ const server=createFleetWorkerServer({machineId:'us-mac-m4',attemptToken:token,launchAdmission:{snapshot:()=>({boot_id:boot})},runtimeConfigDigest:hash,workflowRunner:methods});await new Promise(r=>server.listen(0,'127.0.0.1',r));
+ try{for(const action of ['start','inspect','cancel','flush']){const body={run_id:randomUUID(),task_id:randomUUID(),request_nonce:randomUUID(),expected_worker_boot_id:randomUUID(),expected_worker_config_digest:hash};
   const r=await fetch(`http://127.0.0.1:${server.address().port}/workflows/${body.run_id}/${action}`,{method:'POST',headers:{authorization:`Bearer ${token}`,'content-type':'application/json'},body:JSON.stringify(body)});expect(r.status).toBe(409);
  }expect(called).toBe(0);}finally{server.closeAllConnections();await new Promise(r=>server.close(r));}
+});
+it('Worker已验transport pins不进入公共Runner严格业务identity，正确pins能走原start并回相同签名pins',async()=>{
+ const require=createRequire(import.meta.url),{createFleetWorkerServer}=require('../../scripts/fleet-worker/fleet-worker.cjs');
+ const server=createFleetWorkerServer({machineId:'us-mac-m4',attemptToken:token,launchAdmission:{snapshot:()=>({boot_id:boot})},runtimeConfigDigest:hash,workflowRunner:{start:async body=>{if(Object.keys(body).some(k=>k.startsWith('expected_worker_')))throw Error('workflow_request_invalid');return {status:'running'};}}});await new Promise(r=>server.listen(0,'127.0.0.1',r));
+ try{const run=randomUUID(),r=await fetch(`http://127.0.0.1:${server.address().port}/workflows/${run}/start`,{method:'POST',headers:{authorization:`Bearer ${token}`,'content-type':'application/json'},body:JSON.stringify({run_id:run,request_nonce:randomUUID(),expected_worker_boot_id:boot,expected_worker_config_digest:hash})});expect(r.status).toBe(200);expect((await r.json()).receipt).toMatchObject({worker_boot_id:boot,worker_config_digest:hash});}finally{server.closeAllConnections();await new Promise(r=>server.close(r));}
 });
