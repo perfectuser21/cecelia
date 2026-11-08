@@ -1,4 +1,4 @@
-import {startDurableCommonRunner} from './durable/common-runner-durable.js';
+import {startDurableCommonRunner} from './durable/common-runner-durable-client.js';
 import { createCommonRunnerDispatcher } from './lib/common-runner-dispatch.js';
 import { finalizeTask as finalizeCentralTask } from './lib/task-terminal.js';
 import { blockCommonRunnerForReview } from './lib/common-runner-review.js';

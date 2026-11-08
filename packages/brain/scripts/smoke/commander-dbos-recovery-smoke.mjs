@@ -31,7 +31,8 @@ if(mode==='worker'){
  process.on('SIGTERM',()=>{runner.close();server.close(()=>process.exit(0));});
 }else if(mode==='coordinator'){
  const {DBOS}=await import('@dbos-inc/dbos-sdk');
- const {configureCommonRunnerDurableDeps,startDurableCommonRunner}=await import('../../src/durable/common-runner-durable.js');
+ const {configureCommonRunnerDurableDeps}=await import('../../src/durable/common-runner-durable.js');
+ const {startDurableCommonRunner}=await import('../../src/durable/common-runner-durable-client.js');
  const manifest=read('manifest.json'),endpoint=read('worker.json').url;
  configureCommonRunnerDurableDeps({dispatcher:{dispatch:async(action,id,body)=>{
   const response=await fetch(endpoint+'/'+action,{method:'POST',body:JSON.stringify({...body,run_id:id})});if(!response.ok)throw Error('fixture_transport_unknown');

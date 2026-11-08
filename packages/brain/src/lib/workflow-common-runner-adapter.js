@@ -1,4 +1,4 @@
-import {startDurableCommonRunner} from '../durable/common-runner-durable.js';
+import {startDurableCommonRunner} from '../durable/common-runner-durable-client.js';
 /** 旧workflow只保留调度身份；新执行由固定公共Runner活动链负责。 */
 import fs from 'node:fs';
 import path from 'node:path';

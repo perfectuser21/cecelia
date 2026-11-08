@@ -1,4 +1,4 @@
-import {startDurableCommonRunner} from '../durable/common-runner-durable.js';
+import {startDurableCommonRunner} from '../durable/common-runner-durable-client.js';
 import { Router } from 'express';
 import { internalAuthOrLoopback } from '../middleware/internal-auth.js';
 import { createCommonRunnerDispatcher } from '../lib/common-runner-dispatch.js';
