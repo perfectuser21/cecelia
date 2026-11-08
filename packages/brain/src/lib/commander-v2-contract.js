@@ -1,5 +1,6 @@
 /** Commander v2：只接受固定合同，业务数据不参与shell构造。 */
 import Ajv from 'ajv';
+import {isIPv4} from 'node:net';
 import { createHash, randomUUID } from 'node:crypto';
 export const PROTOCOL = 'commander-v2';
 export const isCommanderV2 = task => task?.payload?.commander_protocol === PROTOCOL;
@@ -53,7 +54,9 @@ export function validateContract(task, contract) {
   requireCommander(object(contract.resources), '合同缺resources');
   const r = contract.resources;
   if (r.device_serial) for (const k of ['device_serial', 'machine', 'profile', 'account_ref']) {
-    requireCommander(typeof r[k] === 'string' && /^[\p{L}\p{N}._-]{1,200}$/u.test(r[k]), `资源${k}缺失或非法`);
+    const value=r[k], tcp=k==='device_serial'&&typeof value==='string'&&value.split(':');
+    const canonicalTcp=Array.isArray(tcp)&&tcp.length===2&&isIPv4(tcp[0])&&/^[1-9][0-9]{0,4}$/.test(tcp[1])&&Number(tcp[1])<=65535;
+    requireCommander(typeof value === 'string' && (/^[\p{L}\p{N}._-]{1,200}$/u.test(value)||canonicalTcp), `资源${k}缺失或非法`);
   }
   const p = contract.recovery ?? {};
   const policy = { ...p, max_attempts: p.max_attempts ?? 1, total_timeout_sec: p.total_timeout_sec ?? 2400, cleanup_timeout_sec: p.cleanup_timeout_sec ?? 300 };

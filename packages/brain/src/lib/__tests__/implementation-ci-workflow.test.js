@@ -80,6 +80,7 @@ it('主CI集成入口安装根扫描器与Brain锁依赖，不能被子workspace
    'src/__tests__/integration/task-lease-device-pool.pg.integration.test.js',
    'src/__tests__/integration/executor-startup-headed-owner.pg.integration.test.js',
    'src/__tests__/integration/suggestion-plan-callback.pg.integration.test.js',
+   'src/__tests__/integration/managed-script-profile.pg.integration.test.js',
    'src/__tests__/integration/workflow-common-terminal.pg.integration.test.js','--reporter=dot',
   ],ciScratchDatabase:true},
   {cwd:root,command:'node',args:['--test','scripts/ci/__tests__/runtime-signal.integration.test.mjs']},

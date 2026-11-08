@@ -18,7 +18,7 @@ const pairedValidation=(span,spans)=>span.evidence?.kind==='execution'&&typeof s
     &&Array.isArray(v.evidence.validation.evidence)&&v.evidence.validation.evidence.length>0);
 const observationOnly=span=>['commander','runtime_check'].includes(span.evidence?.kind)
   && typeof span.evidence?.event?.event_type==='string'
-  && /^(?:COMMANDER_(?:REQUEST|EXCHANGE|UNAVAILABLE|BUDGET_EXHAUSTED|SLEEP)|ACTIVITY_(?:CHECKED|ROUTED|AGENT_EVENT)|WF_OWNER_REVIEW_REQUIRED)$/.test(span.evidence.event.event_type);
+  && /^(?:COMMANDER_(?:REQUEST|EXCHANGE|UNAVAILABLE|BUDGET_EXHAUSTED|RECONNECTED|SLEEP)|ACTIVITY_(?:CHECKED|ROUTED|AGENT_EVENT)|WF_OWNER_REVIEW_REQUIRED)$/.test(span.evidence.event.event_type);
 const skipEvidence=span=>typeof span.evidence?.skip_reason==='string'&&span.evidence.skip_reason.trim()
   &&span.evidence.branch_evidence!=null&&typeof span.evidence.branch_evidence==='object'&&Object.keys(span.evidence.branch_evidence).length>0;
 function durations(spans){

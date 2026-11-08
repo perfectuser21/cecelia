@@ -98,7 +98,6 @@ async function readStageInputs(readSource,revision){
  for(const stage of STAGES){entries[stage]=await readSource(path('activities',stage),revision);tests[stage]=await readSource(PREFIX+`__tests__/${stage}.test.mjs`,revision);}
  return {entries,tests};
 }
-
 /** 已审完整 evaluate 之外，明确 SOURCE_PROVENANCE 从同任务/HEAD 自读并送入实际模板。 */
 function mergeConsumer(tree,parse){
  if(!named(tree,'../runner/lib/source-provenance.mjs','sourceFacts'))return false;
@@ -116,7 +115,6 @@ function mergeReadEdges(edges,entry){
  for(const name of ['provenance-path','record-provenance-records','record-provenance-store'])edges.push([proof,PREFIX+'lib/'+name+'.mjs','provenance_static_import_dependency']);
  for(const name of ['source-merge','source-provenance','cifix','pr-branch','proc','qa-gate','repos'])edges.push([proof,PREFIX+'runner/lib/'+name+'.mjs','controller_identity_byte_input']);
 }
-
 /** supportProven/supportVersion来自唯一可信collector实际调用proveBuildSources，绝非候选声明。 */
 export async function collectStageSources({parse,paths,selectors,read,readSource,revision,relations,requireProof,supportProven,supportVersion,supportHistory=false}){
  const selected=STAGES.filter(s=>{const p=PREFIX+`__tests__/${s}.test.mjs`;return paths.includes(p)&&selectors.include.some(r=>r.test(p))&&!selectors.exclude.some(r=>r.test(p));});
@@ -197,7 +195,6 @@ export async function collectStageSources({parse,paths,selectors,read,readSource
  }
  for(const [consumer_path,input_path,kind] of edges){await read(consumer_path);await read(input_path);if(!relations.some(r=>r.consumer_path===consumer_path&&r.input_path===input_path&&r.kind===kind&&r.revision===revision))relations.push({consumer_path,input_path,kind,revision});}
 }
-
 const fail = () => { throw Error('workspace_selector_unproven'); };
 const key = property => property.key?.name ?? property.key?.value;
 function property(object, name, required = true) {
@@ -300,9 +297,14 @@ const REVIEWED_SUGGESTION_CALLBACK_CLOSURE = {
   'scripts/ci/run-basic-check.mjs': 'ae2edd2add44d004cb5b6a3ab43fd00ef882ea0bc012efeac48cd990bf8b53eb',
   'packages/brain/vitest.config.js': '5e1504bbed8d83d7758bc2513eb8894418dccdd63938a98f6aa40433355ff5cc',
 };
+// 受管候选profile的真实PG回归：runner与配置只作为这一完整新组追加。
+const REVIEWED_MANAGED_SCRIPT_PG_CLOSURE = {...REVIEWED_SUGGESTION_CALLBACK_CLOSURE,
+  'scripts/ci/run-basic-check.mjs': 'b346e6f8f06d42422c0289ae38693cdcd73e2e93d9415babb852214c0b9072ef',
+  'packages/brain/vitest.config.js': '85c3d4fbc92f593ee94544f1ebdfe5f5b76bdf14c78377ab70541bbf50fd15a0',
+};
 const BASIC_PROTOCOLS = {
   // Dependabot排队只追加当前完整runtime scope闭包，旧workflow组合保持。
-  '020165ab3d73d487d973c6d98c849958240dc56149d5b6083b8288673a3dd091': [REVIEWED_RUNTIME_SCOPE_CLOSURE, REVIEWED_W19_FREEZE_CLOSURE, REVIEWED_BARK_RETIREMENT_CLOSURE, REVIEWED_SUGGESTION_CALLBACK_CLOSURE],
+  '020165ab3d73d487d973c6d98c849958240dc56149d5b6083b8288673a3dd091': [REVIEWED_RUNTIME_SCOPE_CLOSURE, REVIEWED_W19_FREEZE_CLOSURE, REVIEWED_BARK_RETIREMENT_CLOSURE, REVIEWED_SUGGESTION_CALLBACK_CLOSURE, REVIEWED_MANAGED_SCRIPT_PG_CLOSURE],
   '5b0f190209eec9c1370b9a96c6aef43b9aa0bc99bdd0f765ccb261c2cfe95080': [REVIEWED_VERSION_CLOSURE, {
     ...REVIEWED_VERSION_CLOSURE,
     // 仅追加本轮两份无消费者旧PG测试退休后的完整配置组合，旧组合保持原样。
@@ -457,7 +459,6 @@ export async function collectDeepCiSources({ read, revision, relations }) {
   relations.push({ consumer_path: workflow, input_path: config, kind: 'scheduled_or_manual_full_postgres_entry', revision },
     { consumer_path: config, input_path: 'packages/brain/vitest.config.js', kind: 'shared_postgres_literal_config', revision });
 }
-
 const AUTO_VERSION_TEST='packages/brain/src/__tests__/auto-version-decision.test.js';
 const AUTO_VERSION_WORKFLOW='.github/workflows/auto-version.yml';
 const AUTO_VERSION_FILES={
@@ -496,5 +497,4 @@ export async function collectAutoVersionTestSources({read,requireProof,relations
     }
   }
 }
-
 export { property, literals, fail };

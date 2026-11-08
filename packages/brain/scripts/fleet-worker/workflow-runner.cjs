@@ -16,7 +16,7 @@ function createWorkflowRunner({stateRoot,machineId,profiles={},assertCanLaunch,a
  let flushQueue=Promise.resolve();
  const file=id=>path.join(stateRoot,id+'.json');
  const read=id=>fs.existsSync(file(id))?JSON.parse(fs.readFileSync(file(id),'utf8')):null;
- const save=s=>persist(file(s.identity.run_id),s);
+ const save=s=>{if(read(s.identity.run_id)?.cancel_requested===true)s.cancel_requested=true;persist(file(s.identity.run_id),s);};
  // 重启不能判定外部动作是否已发生；保留占用，禁止自动重放。
  for(const name of fs.readdirSync(stateRoot).filter(n=>UUID.test(n.replace(/\.json$/,'')))){
   const s=read(name.replace(/\.json$/,''));if(s&&ACTIVE.has(s.status)){s.status='unknown';s.reason='worker_restarted_execution_unknown';save(s);}
@@ -32,10 +32,11 @@ function createWorkflowRunner({stateRoot,machineId,profiles={},assertCanLaunch,a
  };
  const project=async s=>({run_id:s.identity.run_id,task_id:s.identity.task_id,machine_id:machineId,status:s.status,mode:s.identity.mode,profile_sha256:s.identity.profile_sha256,progress:s.progress??null,validation:s.validation??null,writeback:s.writeback??{pending:null},reason:s.reason??null,cancel_requested:s.cancel_requested===true,execution_state:s.execution_state??null,commander_status:s.commander_status??'unavailable',cleanup_required:s.profile?.cleanup_required!==false,execution_unknown:s.execution_unknown??null});
  async function execute(s,recorder,controller){
-  let commander,eventCursor=0,currentReceipt={activities:[]};
+  let commander,domain,domainClosed=false,domainTimer,eventCursor=0,currentReceipt={activities:[]};
+  const closeDomain=async()=>{if(!domain||domainClosed)return;domainClosed=true;try{await domain.close();}catch(error){s.execution_unknown=true;currentReceipt.execution_unknown=true;delete s.pending_terminal_status;throw error;}};
   const observe=async(event,receipt=currentReceipt)=>{
    currentReceipt=receipt;const numbered={...event,cursor:++eventCursor};
-   await recorder.onEvent(numbered,receipt);s.commander_status=commander?.status??'unavailable';
+   await recorder.onEvent(numbered,receipt);await domain?.onEvent?.(structuredClone(numbered),structuredClone(receipt));s.commander_status=commander?.status??'unavailable';
    s.progress={observed_at:new Date().toISOString(),cursor:numbered.cursor,event_type:numbered.event_type,activity:numbered.activity??null,item:numbered.item??null,attempt:numbered.attempt??null};save(s);
   };
   try{
@@ -44,6 +45,12 @@ function createWorkflowRunner({stateRoot,machineId,profiles={},assertCanLaunch,a
    const {validateWorkflow,validateActivity}=await import('../../src/orchestrator/workflow-validator.js');
    const {createCommanderBridge}=await import('../../src/orchestrator/runner-commander-bridge.js');
    const {createCommanderTransport,createOpenClawCommanderTransport}=await import('../../src/orchestrator/runner-commander-transport.js');
+   if(s.profile.domain_adapter){
+    const {loadWorkflowDomain}=require('./workflow-domain.cjs');
+    const deadline=s.domain_started_at_ms+s.profile.domain_adapter.budget.max_duration_s*1000;
+    domainTimer=setTimeout(()=>controller.abort(),Math.max(0,deadline-Date.now()));
+    domain=await loadWorkflowDomain({profile:s.profile,originalProfile:profiles[s.identity.profile],identity:{...s.identity,machine_id:machineId},runDirectory:path.join(stateRoot,s.identity.run_id),controller,startedAt:s.domain_started_at_ms,recordEvidence:event=>observe(event)});
+   }
    const cp=s.profile.commander;
    const baseTransport=(cp?.kind==='openclaw'?createOpenClawCommanderTransport:createCommanderTransport)({profile:cp,cwd:s.profile.cwd,files:s.profile.files});
    const transport=request=>baseTransport({...request,workflow:s.profile.contract.workflow,profile_sha256:s.identity.profile_sha256,
@@ -52,9 +59,10 @@ function createWorkflowRunner({stateRoot,machineId,profiles={},assertCanLaunch,a
    commander=createCommanderBridge({transport,onEvent:observe,run_id:s.identity.run_id,brief:s.profile.brief??{purpose:s.profile.contract.workflow},rules:s.profile.rules??[],budget:cp?.budget??{}});
    await commander.wake();
    s.status='running';save(s);
-   const receipt=await runActivityContract(s.profile.contract,{...s.identity.input,run_tag:s.identity.input.run_tag??s.identity.run_id},{cwd:s.profile.cwd,signal:controller.signal,commander,onEvent:observe,
+   const receipt=await runActivityContract(s.profile.contract,{...s.identity.input,run_tag:s.identity.input.run_tag??s.identity.run_id},{cwd:s.profile.cwd,signal:controller.signal,commander,onEvent:observe,...(domain?{executeActivity:domain.executeActivity,canFinalize:domain.canFinalize}:{}),
      recoverActivity:async(a,input,options)=>{
       assertProfile(s.profile,s.identity.mode);
+      if(domain){if(!domain.recoverActivity)throw Error('workflow_recovery_adapter_required');return domain.recoverActivity(a,input,options);}
       const recovery=s.profile.recoveries?.[a.key],m=s.profile.metadata[a.key];
       if(!recovery&&m.executor_kind!=='agent')throw Error('workflow_recovery_adapter_required');
       if(options.failure?.external_effect==='unknown'&&recovery?.readback_only!==true)throw Error('workflow_recovery_readback_required');
@@ -67,15 +75,16 @@ function createWorkflowRunner({stateRoot,machineId,profiles={},assertCanLaunch,a
       const definitions=options.phase==='start'?s.profile.preconditions:s.profile.validators;
       if(!definitions?.[a.key])return {verdict:'pass',unchecked:true};
       const projected=result?{...options.receipt,outputs:{...options.receipt.outputs,...result.outputs}}:options.receipt;
-      return validateActivity(s.profile,a,result,{...options,receipt:projected,signal:a.runtime.phase==='finalize'?options.signal:(options.signal??controller.signal)});
+      return validateActivity(s.profile,a,result,{...options,receipt:projected,signal:a.runtime.phase==='finalize'?options.signal:(options.signal??controller.signal),...(domain?{evaluateScope:domain.checkActivity(a,result,options)}:{})});
      },
-     prepareInput:async(a,value)=>{assertProfile(s.profile,s.identity.mode);const m=s.profile.metadata[a.key];const recording_contract={schema_version:'activity-observations/v1',questions:['A1','A2','A3','A4','A5','A6','B1','C1','C2','C3'],steps_fields:['action','evidence','on_failure','executor','side_effect'],instructions:'在outputs.observations按题记录实际观察及evidence；未知明确未知，不得复制声明冒充事实。steps仅记录真正执行步骤；验收与样本确认由独立判定。'};
+     prepareInput:async(a,value)=>{assertProfile(s.profile,s.identity.mode);if(domain?.prepareInput)value=await domain.prepareInput(a,value);const m=s.profile.metadata[a.key];const recording_contract={schema_version:'activity-observations/v1',questions:['A1','A2','A3','A4','A5','A6','B1','C1','C2','C3'],steps_fields:['action','evidence','on_failure','executor','side_effect'],instructions:'在outputs.observations按题记录实际观察及evidence；未知明确未知，不得复制声明冒充事实。steps仅记录真正执行步骤；验收与样本确认由独立判定。'};
       if(m.executor_kind!=='agent')return {...value,recording_contract};
       const content=fs.readFileSync(path.join(s.profile.cwd,m.skill.entry),'utf8');
       return {...value,recording_contract,skill:{version:m.skill.version,sha256:s.profile.files[m.skill.entry],content}};}});
    s.status='validating';s.receipt=receipt;s.execution_unknown=receipt.execution_unknown===true;save(s);
    assertProfile(s.profile,s.identity.mode);
-   const validation=await validateWorkflow(s.profile,receipt,{signal:controller.signal,cancelled:controller.signal.aborted,skipActivities:true});
+   const validation=await validateWorkflow(s.profile,receipt,{signal:controller.signal,cancelled:controller.signal.aborted,skipActivities:true,...(domain?{evaluateScope:domain.evaluateScope}:{})});
+   await closeDomain();
    s.validation=validation;
    await recorder.recordValidation(validation);await recorder.finalize(receipt,validation);
    // 本地终态与中央ACK分开；断网只补记录，绝不重跑业务。
@@ -87,8 +96,8 @@ function createWorkflowRunner({stateRoot,machineId,profiles={},assertCanLaunch,a
     await observe({event_type:'WF_OWNER_REVIEW_REQUIRED',status:s.pending_terminal_status,sample_candidates:s.sample_candidates},receipt);
    }
    s.status='validating';save(s);
-  }catch{ s.status='unknown';s.reason='workflow_execution_unconfirmed';save(s); }
-  finally{try{await commander?.sleep();s.commander_status=commander?.status??'unavailable';s.writeback=await recorder.flush();s.status=s.pending_terminal_status??s.status;delete s.pending_terminal_status;save(s);}catch{s.status='unknown';s.reason='workflow_recording_unconfirmed';save(s);}active.delete(s.identity.run_id);if(!ACTIVE.has(s.status)&&s.writeback?.pending===0&&s.writeback?.blocked===0)recorders.delete(s.identity.run_id);}
+  }catch(error){ s.status='unknown';s.reason=/^workflow_(?:domain_[a-z_]+|source_mismatch|profile_invalid)$/.test(error.message??'')?error.message:'workflow_execution_unconfirmed';save(s); }
+  finally{try{await closeDomain();}catch{s.status='unknown';s.reason='workflow_domain_close_unconfirmed';delete s.pending_terminal_status;}clearTimeout(domainTimer);try{await commander?.sleep();s.commander_status=commander?.status??'unavailable';s.writeback=await recorder.flush();s.status=s.pending_terminal_status??s.status;delete s.pending_terminal_status;save(s);}catch{s.status='unknown';s.reason='workflow_recording_unconfirmed';save(s);}active.delete(s.identity.run_id);if(!ACTIVE.has(s.status)&&s.writeback?.pending===0&&s.writeback?.blocked===0)recorders.delete(s.identity.run_id);}
  }
  const flushSaved=()=>{const job=flushQueue.then(async()=>{for(const name of fs.readdirSync(stateRoot).filter(n=>n.endsWith('.json'))){
    const s=read(name.slice(0,-5));if(!s)continue;
@@ -133,7 +142,7 @@ function createWorkflowRunner({stateRoot,machineId,profiles={},assertCanLaunch,a
     const accepted=read(body.run_id);if(accepted){if(accepted.cancel_tombstone&&accepted.identity.task_id===body.task_id)return project(accepted);if(profileDigest(accepted.identity)!==profileDigest(identity))throw Error('workflow_identity_conflict');return project(accepted);}
     return waiting();
    }
-   const s={identity,profile,status:'starting',machine_id:machineId};let recorder;
+   const s={identity,profile,status:'starting',machine_id:machineId,...(profile.domain_adapter?{domain_started_at_ms:Date.now()}: {})};let recorder;
    const underLock=read(body.run_id);if(underLock){fs.rmdirSync(lock);if(underLock.cancel_tombstone&&underLock.identity.task_id===body.task_id)return project(underLock);if(profileDigest(underLock.identity)!==profileDigest(identity))throw Error('workflow_identity_conflict');return project(underLock);}
    try{save(s);recorder=await makeRecorder(s);}
    catch(error){s.status='unknown';s.reason='workflow_recording_unconfirmed';save(s);throw error;}
