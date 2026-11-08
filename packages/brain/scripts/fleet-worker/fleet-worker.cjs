@@ -681,8 +681,17 @@ function createFleetWorkerServer(options = {}) {
         const body=await readJson(request,maximumRequestBytes);
         const match=request.url.match(/^\/workflows\/([a-f0-9-]{36})\/(start|inspect|cancel|flush)$/);
         if(!match||match[1]!==body.run_id||!/^[a-f0-9-]{36}$/.test(body.request_nonce??'')){writeJson(response,400,{error:'workflow_identity_invalid'});return;}
-        const result=await options.workflowRunner[match[2]](body);
-        const receipt={...result,request_nonce:body.request_nonce};
+        let pins;
+        if(body.expected_worker_boot_id!==undefined||body.expected_worker_config_digest!==undefined){
+          const boot=options.launchAdmission?.snapshot().boot_id,config=options.getRuntimeConfigDigest?.()??options.runtimeConfigDigest;
+          if(!/^[a-f0-9-]{36}$/.test(body.expected_worker_boot_id??'')||!/^[a-f0-9]{64}$/.test(body.expected_worker_config_digest??'')
+            ||boot!==body.expected_worker_boot_id||config!==body.expected_worker_config_digest)throw Error('workflow_worker_identity_changed');
+          pins={worker_boot_id:boot,worker_config_digest:config};
+        }
+        const {expected_worker_boot_id:_boot,expected_worker_config_digest:_config,...runnerBody}=body;
+        const result=await options.workflowRunner[match[2]](runnerBody);
+        if(pins&&(options.launchAdmission?.snapshot().boot_id!==pins.worker_boot_id||(options.getRuntimeConfigDigest?.()??options.runtimeConfigDigest)!==pins.worker_config_digest))throw Error('workflow_worker_identity_changed');
+        const receipt={...result,request_nonce:body.request_nonce,...pins};
         writeJson(response,200,{receipt,signature:createHmac('sha256',attemptToken).update(JSON.stringify(receipt)).digest('hex')});
       }catch(error){writeJson(response,error.statusCode===429?429:409,{error:/^workflow_[a-z_]+$/.test(error.message)?error.message:'workflow_operation_unconfirmed'});}
       return;

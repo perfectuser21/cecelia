@@ -61,7 +61,8 @@ export function createWorkflowCommonAdapter(pool,deps={}){
    const route=matchWorkflowSource(task,frozen,routes());
    const runId=randomUUID(), policy=validateContract({...task,payload:{...task.payload,commander_protocol:'commander-v2'}},frozen.contract);
    const source={run_id:runId,task_id:task.id,definition:{...definition,attempt_key:`${task.id}:1`,actor:'common-runner'},profile:route.profile,profile_sha256:route.profile_sha256,input:{...task.payload.workflow_input,task_id:task.id,publication_input:task.payload.workflow_input},input_sha256:digest({...task.payload.workflow_input,task_id:task.id,publication_input:task.payload.workflow_input}),resources:frozen.contract.resources,timeout_s:policy.total_timeout_sec+policy.cleanup_timeout_sec};
-   await (deps.startRun??startRun)({taskId:task.id,runId,source:'workflow-common-runner',definition:source.definition,context:{workflow_key:task.payload.workflow_key}}, {pool,transactionClient:db});
+   await (deps.startRun??startRun)({taskId:task.id,runId,source:'workflow-common-runner',definition:source.definition,context:{workflow_key:task.payload.workflow_key,
+    common_runner_worker_reservation:{schema_version:'common-runner-worker-reservation/v1',state:'unlaunched',task_id:task.id,run_id:runId}}}, {pool,transactionClient:db});
    await db.query("UPDATE tasks SET result=COALESCE(result,'{}'::jsonb)||jsonb_build_object('workflow_common_runner',$2::jsonb),status='in_progress',claimed_by='common-runner',claimed_at=NOW(),executor_kind='script',started_at=COALESCE(started_at,NOW()),updated_at=NOW() WHERE id=$1",[task.id,JSON.stringify(source)]);
    return source;
   });

@@ -63,7 +63,7 @@ async function setup({ candidateRouting=false,badSignature = false, wrongNonce =
     return { rows: [], rowCount: 1 };
   }) };
   const authority = vi.fn(async (_db, input, operation) => operation({ executionVersionId: 'version-a', grantId: 'grant-a', grant,
-    node: { canonical_id: machineId, endpoints: { worker: directoryEndpoint ?? `http://127.0.0.1:${server.address().port}` } } }, pool));
+    node: {id:'version-a', canonical_id: machineId, endpoints: { worker: directoryEndpoint ?? `http://127.0.0.1:${server.address().port}` } } }, pool));
   const start = vi.fn(async input => {runContext=structuredClone(input.context);if(input.definition){if(registrationError)throw registrationError;registered=true;}return { id: 'ledger-row', run_id: runId };});
   const readDefinition=vi.fn(async()=>definition??(registered?definitionAfterStart:null));
   const finish = vi.fn(async () => ({ updated: !finishAlready }));
@@ -73,7 +73,7 @@ async function setup({ candidateRouting=false,badSignature = false, wrongNonce =
     allowLoopbackForTests: true,
     env: { NODE_ENV: 'production', ...(profilesFile ? { COMMON_RUNNER_PROFILES_FILE: profilesFile } : {}), ...(policyFile ? { EXECUTION_MANAGED_SCRIPT_CANDIDATES_FILE: policyFile } : {}) },
     ...(!profilesFile ? { profiles: { demo: { machine_id: machineId, profile_sha256: profileSha } } } : {}),
-    authorizeExecution: authority, resolveBoundNode: async () => ({ canonical_id: machineId, endpoints: { worker: directoryEndpoint ?? `http://127.0.0.1:${server.address().port}` } }),
+    authorizeExecution: authority, resolveBoundNode: async () => ({id:'version-a', canonical_id: machineId, endpoints: { worker: directoryEndpoint ?? `http://127.0.0.1:${server.address().port}` } }),
     executionDirectory: { current: () => ({ version: 'snapshot-a' }) }, startRun: start, finishRun: finish,
     ...(!useDefaultStartGate ? { assertCanStart: async () => {} } : {}),
     readReconciliation: reconcile, taskPolicy,

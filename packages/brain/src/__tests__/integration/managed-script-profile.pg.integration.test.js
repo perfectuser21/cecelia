@@ -5,6 +5,9 @@ import {readFileSync,mkdtempSync,writeFileSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {assertManagedScriptProfileGrant} from '../../execution-directory/managed-script-profile-evidence.js';
+import {freezeManagedScriptWorkerRoute,resolveFrozenManagedScriptWorkerRoute,createProfileCatalogClient} from '../../execution-directory/managed-script-profile-evidence.js';
+import {reserveCommonRunnerWorkerRoute} from '../../lib/task-run.js';
+import {createRequire} from 'node:module';
 import {createManagedScriptProfileStore} from '../../execution-directory/managed-script-profile.js';
 import {directory} from '../../execution-directory/directory.js';
 import {DB_DEFAULTS} from '../../db-config.js';
@@ -25,6 +28,8 @@ beforeAll(async()=>{await admin.connect();await admin.query(`CREATE SCHEMA ${sch
  CREATE TABLE schema_version(version text PRIMARY KEY,description text,applied_at timestamptz);
  CREATE TABLE release_versions(id uuid PRIMARY KEY,environment text,target text,payload jsonb,manifest_sha256 text);
  CREATE TABLE release_observations(id uuid PRIMARY KEY,release_id uuid,payload jsonb,collector text,evidence_ref text,observed_at timestamptz,created_at timestamptz DEFAULT now());`);
+ await pool.query(`CREATE TABLE task_runs(id uuid PRIMARY KEY,task_id uuid,run_id uuid UNIQUE,status text,ended_at timestamptz,workflow_id uuid,context jsonb);
+ CREATE TABLE run_definition_bindings(task_run_id uuid,run_id uuid,source_kind text,workflow_id uuid);`);
  await pool.query(readFileSync(new URL('../../../migrations/503_execution_directory.sql',import.meta.url),'utf8'));
  await pool.query("INSERT INTO system_registry(id,type,name,status) VALUES($1,'machine','mac-mini-m4-us','active')",[registry]);
  await pool.query("INSERT INTO execution_nodes(machine_registry_id,canonical_id) VALUES($1,'us-mac-m4')",[registry]);
@@ -88,4 +93,41 @@ it('激活在等待证据Task行锁时不先持有机器capacity锁，避免Task
   const free=(await probe.query("SELECT pg_try_advisory_xact_lock(hashtextextended('harness_attempt_machine:us-mac-m4',0)) AS free")).rows[0].free;
   expect(free).toBe(true);
  }finally{await probe.query('ROLLBACK');probe.release();await blocker.query('ROLLBACK');blocker.release();await activation?.catch(()=>{});}
+});
+it('真实PG与HTTP候选catalog只访问15231，保原node/全局capacity身份并保存真实HMAC原件',async()=>{
+ const require=createRequire(import.meta.url),{createFleetWorkerServer}=require('../../../scripts/fleet-worker/fleet-worker.cjs'),token='private-pg-candidate-worker-token-'.repeat(2),endpoints=[];
+ Object.assign(c,{worker_endpoint:'http://100.71.151.105:15231',worker_boot_id:boot,worker_config_digest:hash});
+ const server=createFleetWorkerServer({machineId:'us-mac-m4',attemptToken:token,launchAdmission:{snapshot:()=>({boot_id:boot,activity_revision:0})},runtimeConfigDigest:hash,workflowProfileCatalog:()=>hash});
+ await new Promise(r=>server.listen(0,'127.0.0.1',r));
+ try{
+  const liveClient=createProfileCatalogClient({token,fetchFn:(url,options)=>{endpoints.push(new URL(url).origin);return fetch(`http://127.0.0.1:${server.address().port}${new URL(url).pathname}`,options);}});
+  const publisher=createManagedScriptProfileStore({pool,client:liveClient,readCandidates:()=>({'isolated-candidate':c})});
+  await expect(publisher.activate('isolated-candidate',{...input(),expected_worker_boot_id:randomUUID()})).rejects.toThrow('execution_script_worker_changed');expect(endpoints).toEqual([]);
+  const result=await publisher.activate('isolated-candidate',input());expect(result.committed).toBe(true);expect(endpoints).toEqual([c.worker_endpoint,c.worker_endpoint]);
+  expect(directory.current().nodes[0].endpoints.worker).toBe('http://100.71.151.105:5231');
+  const audit=(await pool.query('SELECT result FROM tasks WHERE id=$1',[taskId])).rows[0].result.execution_script_profile_operations.at(-1);
+  for(const envelope of audit.worker_catalog)expect(createHmac('sha256',token).update(envelope.signed_payload).digest('hex')).toBe(envelope.signature);
+ }finally{server.closeAllConnections();await new Promise(r=>server.close(r));}
+});
+it('真实TaskRun首次marker同事务CAS消费，JSONB冻结路由不受Task.result删除影响且旧无marker不可补授权',async()=>{
+ const token='private-pg-frozen-route-key-'.repeat(2),run=randomUUID(),row=randomUUID(),workflow=randomUUID(),db=await pool.connect();
+ Object.assign(c,{worker_endpoint:'http://100.71.151.105:15231',worker_boot_id:boot,worker_config_digest:hash});
+ const node=directory.current().nodes[0],grant=(await pool.query("SELECT * FROM execution_grants WHERE profile_id='isolated-candidate'")).rows[0];
+ // Use the actual policy pinned by this grant, including its original expiry.
+ const originalAudit=(await pool.query('SELECT result FROM tasks WHERE id=$1',[taskId])).rows[0].result.execution_script_profile_operations.at(-1);c.expires_at=originalAudit.expires_at;
+ const route=freezeManagedScriptWorkerRoute({policy:c,node,grant,executionVersionId:version,runId:run,taskId,profileId:'isolated-candidate'},token);
+ const marker={schema_version:'common-runner-worker-reservation/v1',state:'unlaunched',task_id:taskId,run_id:run};
+ await pool.query("INSERT INTO task_runs VALUES($1,$2,$3,'running',NULL,$4,$5)",[row,taskId,run,workflow,{source:'workflow-common-runner',common_runner_worker_reservation:marker}]);
+ await db.query('BEGIN');
+ try{
+  await expect(reserveCommonRunnerWorkerRoute({taskId,runId:run,route},{transactionClient:db})).rejects.toThrow('common_runner_worker_route_unproven');
+  await db.query('INSERT INTO run_definition_bindings VALUES($1,$2,\'internal\',$3)',[row,run,workflow]);
+  await reserveCommonRunnerWorkerRoute({taskId,runId:run,route},{transactionClient:db});
+  await expect(reserveCommonRunnerWorkerRoute({taskId,runId:run,route},{transactionClient:db})).rejects.toThrow('common_runner_worker_route_unproven');
+  const context=(await db.query('SELECT context FROM task_runs WHERE run_id=$1',[run])).rows[0].context;
+  expect(context.common_runner_worker_reservation).toBeUndefined();
+  const binding={run_id:run,task_id:taskId,machine_id:node.canonical_id,execution_version_id:version,execution_grant_id:grant.id,profile:'isolated-candidate',profile_sha256:hash,worker_route:context.common_runner_worker_route};
+  expect(resolveFrozenManagedScriptWorkerRoute(binding,node,token).endpoint).toBe(c.worker_endpoint);
+  binding.worker_route.payload.endpoint='http://100.71.151.105:5231';expect(()=>resolveFrozenManagedScriptWorkerRoute(binding,node,token)).toThrow('execution_script_worker_route_invalid');
+ }finally{await db.query('ROLLBACK');db.release();}
 });
