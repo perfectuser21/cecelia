@@ -81,3 +81,27 @@ test('domain scope验收ref漂移不得被已通过Activity判词掩盖',()=>wit
  changeSource(f,s=>s.replace("validateWorkflow:async(p,receipt,options)=>({verdict:receipt.outputs.answer===42?'pass':'fail',acceptance_ref:options.acceptance.ref", "validateWorkflow:async(p,receipt,options)=>({verdict:receipt.outputs.answer===42?'pass':'fail',acceptance_ref:'wrong'"));
  await f.r.start(f.id);const s=await terminal(f);expect(s.status).toBe('unverified');expect(s.validation.workflow.verdict).toBe('unknown');expect(s.validation.activities.work.verdict).toBe('pass');
 }));
+test('domain只读观察公共Commander真实exchange，close后不再回调domain',()=>withFixture({},async f=>{
+ changeSource(f,s=>s.replace('return {\n   prepareInput','let closed=false;return {\n   onEvent:async event=>{if(closed)throw Error(\'closed_domain\');if(event.event_type===\'COMMANDER_EXCHANGE\')fs.appendFileSync(path.join(profile.cwd,\'exchanges\'),JSON.stringify(event)+\'\\n\');},\n   prepareInput').replace("close:async()=>{", "close:async()=>{closed=true;"));
+ const commander="console.log('{\"action\":\"none\"}')",skill='只读监督';
+ fs.writeFileSync(path.join(f.root,'commander.mjs'),commander);fs.writeFileSync(path.join(f.root,'skill.md'),skill);
+ Object.assign(f.profile.files,{'commander.mjs':hash(commander),'skill.md':hash(skill)});f.profile.commander={entry:'commander.mjs',skill:{entry:'skill.md',version:'1'},timeout_s:1};f.id.profile_sha256=profileDigest(f.profile);
+ await f.r.start(f.id);expect((await terminal(f)).status).toBe('completed');
+ const exchanges=fs.readFileSync(path.join(f.root,'exchanges'),'utf8').trim().split('\n').map(JSON.parse);
+ expect(exchanges.length).toBeGreaterThan(0);expect(exchanges.every(e=>e.run_id===f.id.run_id&&e.event_type==='COMMANDER_EXCHANGE')).toBe(true);
+ expect(exchanges.every(e=>f.events.some(actual=>actual.cursor===e.cursor&&actual.event_type===e.event_type))).toBe(true);
+}));
+test('domain取消仍执行原finalize及独立cleanup检查，清场不依赖已取消业务signal',()=>withFixture({},async f=>{
+ changeSource(f,s=>s.replace("if(options.signal!==signal||!input.prepared)", "if((a.runtime.phase!=='finalize'&&options.signal!==signal)||!input.prepared)").replace("fs.appendFileSync(path.join(profile.cwd,'effects'),'x');", "if(a.runtime.phase!=='finalize'){fs.appendFileSync(path.join(profile.cwd,'effects'),'x');await new Promise(r=>signal.addEventListener('abort',r,{once:true}));}else{if(options.signal?.aborted)throw Error('cleanup_aborted');fs.writeFileSync(path.join(profile.cwd,'cleaned'),'yes');}").replace("checkActivity:async(a,result,options)=>({verdict:", "checkActivity:async(a,result,options)=>({verdict:a.runtime.phase==='finalize'&&options.signal?.aborted?'unknown':"));
+ const clean={...structuredClone(f.profile.contract.activities[0]),key:'release',order:2,runtime:{protocol:'json-stdio-v1',phase:'finalize',entry:'domain.mjs'}};f.profile.contract.activities.push(clean);
+ const m=structuredClone(f.profile.metadata.work);m.activity_id=randomUUID();m.identity.reference_id=randomUUID();m.identity.activity_definition_version_id=randomUUID();f.profile.metadata.release=m;
+ f.profile.preconditions.release=structuredClone(f.profile.preconditions.work);f.profile.validators.release=structuredClone(f.profile.validators.work);f.profile.validators.cleanup={entry:'domain.mjs',acceptance:{ref:'end@1'}};
+ f.id.run_binding.activities.release={activity_id:m.activity_id,reference_id:m.identity.reference_id,activity_definition_version_id:m.identity.activity_definition_version_id};f.id.profile_sha256=profileDigest(f.profile);
+ await f.r.start(f.id);for(let i=0;!fs.existsSync(path.join(f.root,'effects'))&&i<100;i++)await new Promise(r=>setTimeout(r,10));await f.r.cancel(f.id);
+ const s=await terminal(f);expect(fs.readFileSync(path.join(f.root,'cleaned'),'utf8')).toBe('yes');expect(s.validation.activities.release.verdict).toBe('pass');expect(s.validation.cleanup.verdict).toBe('pass');expect(s.status).toBe('cancelled');
+}));
+test('domain已接受运行重启仍隔离原identity，不新建工厂或延长budget',()=>withFixture({},async f=>{
+ const stateRoot=path.join(f.root,'state');fs.writeFileSync(path.join(stateRoot,f.id.run_id+'.json'),JSON.stringify({identity:f.id,profile:f.profile,status:'running',domain_started_at_ms:123}));fs.mkdirSync(path.join(stateRoot,'execution.lock'));
+ const restarted=createWorkflowRunner({stateRoot,machineId:'fixture',profiles:{fixed:f.profile},assertCanLaunch:()=>{},assertLocalResources:async()=>{}});
+ try{expect((await restarted.start(f.id)).status).toBe('unknown');expect(fs.existsSync(path.join(f.root,'factories'))).toBe(false);expect(JSON.parse(fs.readFileSync(path.join(stateRoot,f.id.run_id+'.json'),'utf8')).domain_started_at_ms).toBe(123);expect((await restarted.maintenance()).pending).toBe(1);}finally{restarted.close();}
+}));
