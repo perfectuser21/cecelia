@@ -29,6 +29,10 @@ function settledCommonRunner(alias) {
            'protocol','common-runner-resource-settlement/v1','task_run_id',cr.id::text,'task_id',cr.task_id::text,
            'run_id',cr.run_id,'execution_unknown',false,
            'manifest_sha256',cr.result->'common_runner'->'writeback'->>'manifest_sha256')
+         AND cr.result->'common_runner'->'resource_settlement'->'run_identity'
+           = COALESCE(cr.context->'common_runner_identity','null'::jsonb)
+         AND (jsonb_typeof(cr.context->'common_runner_identity')='object'
+           OR jsonb_typeof(cr.context->'common_runner_worker_route')='object')
          AND cr.result->'common_runner'->'resource_settlement'->'worker_route'
            = COALESCE(cr.context->'common_runner_worker_route','null'::jsonb)
          AND ((cr.result->'common_runner'->'resource_settlement'->>'basis'='central-cleanup-validation'
