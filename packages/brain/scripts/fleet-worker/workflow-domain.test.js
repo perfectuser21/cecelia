@@ -38,7 +38,7 @@ test('公共Runner同进程domain工厂只建一次，正式identity及独立判
  expect(s.status).toBe('completed');expect(s.validation.activities.work.verdict).toBe('pass');
  expect(fs.readFileSync(path.join(f.root,'factories'),'utf8')).toBe('x');expect(fs.readFileSync(path.join(f.root,'effects'),'utf8')).toBe('x');expect(fs.readFileSync(path.join(f.root,'closes'),'utf8')).toBe('x');
  const context=JSON.parse(fs.readFileSync(path.join(f.root,'identity.json'),'utf8'));
- expect(context.cleanup_deadline_ms-context.deadline_ms).toBe(1000);expect(context.deadline_ms).toBeGreaterThan(Date.now()-5000);expect(profileDigest(context.profile)).toBe(f.id.profile_sha256);expect(context.identity).toEqual(f.id);expect(context.signal).toBe(true);expect(context.runDirectory).toBe(path.join(f.root,'state',f.id.run_id));
+ expect(context.cleanup_deadline_ms-context.deadline_ms).toBe(1000);expect(context.deadline_ms).toBeGreaterThan(Date.now()-5000);expect(profileDigest(context.profile)).toBe(f.id.profile_sha256);expect(context.identity).toEqual({...f.id,machine_id:'fixture'});expect(context.signal).toBe(true);expect(context.runDirectory).toBe(path.join(f.root,'state',f.id.run_id));
  expect(f.events.some(e=>e.event_type==='ACTIVITY_AGENT_EVENT'&&e.event?.protocol==='workflow-domain-evidence/v1')).toBe(true);expect(f.events.filter(e=>e.event_type==='ACTIVITY_STARTED')).toHaveLength(1);
 }));
 test('domain close未知保留unknown与execution.lock，不允许下一run进入',()=>withFixture({closeUnknown:true},async f=>{
@@ -140,4 +140,13 @@ test('真实公共Recorder允许现役Commander重新接回事件并保存原run
  const recorder=createWorkflowRecorder({root:path.join(f.root,'reconnect-journal'),runId:f.id.run_id,taskId:f.id.task_id,machineId:'fixture',profileDigest:f.id.profile_sha256,mode:'exploration',metadata:f.profile.metadata});
  await expect(recorder.onEvent({cursor:1,event_type:'COMMANDER_RECONNECTED',run_id:f.id.run_id,activity:'work',phase:'event'},{activities:[]})).resolves.toBeUndefined();
  expect(recorder.inspect().spans[0].run_id).toBe(f.id.run_id);expect(recorder.inspect().spans[0].evidence.event.event_type).toBe('COMMANDER_RECONNECTED');
+}));
+test('factory machine_id仅来自Worker可信配置，不接请求输入伪装',()=>withFixture({},async f=>{
+ f.id.input.machine_id='untrusted-input';await f.r.start(f.id);await terminal(f);
+ const context=JSON.parse(fs.readFileSync(path.join(f.root,'identity.json'),'utf8'));expect(context.identity.machine_id).toBe('fixture');expect(context.identity.input.machine_id).toBe('untrusted-input');
+}));
+test('受保护domain活动可保留7200秒原预算，process仍限3600且domain整体不超14400',()=>withFixture({},async f=>{
+ const {assertProfile}=createRequire(import.meta.url)('./workflow-profile.cjs');f.profile.contract.activities[0].budget.max_duration_s=7200;f.profile.domain_adapter.budget={max_duration_s:7200,cleanup_grace_s:300};
+ expect(()=>assertProfile(f.profile,'formal')).not.toThrow();f.profile.domain_adapter.budget.max_duration_s=7199;expect(()=>assertProfile(f.profile,'formal')).toThrow('budget_invalid');
+ delete f.profile.domain_adapter;expect(()=>assertProfile(f.profile,'formal')).toThrow('budget_invalid');
 }));
