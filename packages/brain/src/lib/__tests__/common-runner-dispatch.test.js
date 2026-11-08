@@ -6,6 +6,7 @@ import path from 'node:path';
 import { createHash, createHmac } from 'node:crypto';
 import { createCommonRunnerDispatcher, commonRunnerFormalBinding, loadCommonRunnerProfiles, httpTransport } from '../common-runner-dispatch.js';
 import { runCommonRunnerTasks } from '../../common-runner-executor.js';
+import {createProfileCatalogClient} from '../../execution-directory/managed-script-profile-evidence.js';
 
 const taskId = '10000000-0000-4000-8000-000000000001';
 const runId = '20000000-0000-4000-8000-000000000001';
@@ -13,8 +14,8 @@ const token = 'contract-test-control-key-32-characters';
 const servers = [];
 afterEach(async () => { await Promise.all(servers.splice(0).map(server => new Promise(resolve => server.close(resolve)))); });
 
-async function setup({ badSignature = false, wrongNonce = false, failStart = false, failStartOn, workerResponses = [], workerReceipt = {}, receiptForRequest, centralSpans = [], definition, profilesFile, reconciliation, tickEnabled, useDefaultStartGate = false, directoryEndpoint, savedCentralRun, finishAlready = false, taskPolicy, definitionAfterStart, registrationError, priorRun, grant, policyFile, machineId = 'node-a', profileSha = 'a'.repeat(64) } = {}) {
-  const requests = [];let registered=false;
+async function setup({ candidateRouting=false,badSignature = false, wrongNonce = false, failStart = false, failStartOn, workerResponses = [], workerReceipt = {}, receiptForRequest, centralSpans = [], definition, profilesFile, reconciliation, tickEnabled, useDefaultStartGate = false, directoryEndpoint, savedCentralRun, finishAlready = false, taskPolicy, definitionAfterStart, registrationError, priorRun, grant, policyFile, machineId = 'node-a', profileSha = 'a'.repeat(64) } = {}) {
+  const requests = [],routes=[];let registered=false,runContext=null;
   const candidate=policyFile?JSON.parse(fs.readFileSync(policyFile,'utf8')).profiles.demo:null;
   const policyState=candidate?{
     task:{id:candidate.evidence_task_id,status:'in_progress',result:{ship_candidate:{schema_version:1,stage:'candidate',task_id:candidate.evidence_task_id,repo:candidate.source_repo,head_sha:candidate.source_commit,actor:'unit-candidate',facts:['fixed source'],evidence:['unit:source-readback']}}},
@@ -24,11 +25,15 @@ async function setup({ badSignature = false, wrongNonce = false, failStart = fal
   const server = http.createServer(async (req, res) => {
     let text = ''; for await (const chunk of req) text += chunk;
     const input = JSON.parse(text); requests.push({ path: req.url, input });
+    if(candidateRouting&&req.url==='/workflows/profile-catalog'){
+      const receipt={schema_version:'fleet-workflow-profile/v1',machine_id:machineId,request_nonce:input.request_nonce,profile_id:input.profile_id,profile_sha256:profileSha,boot_id:candidate.worker_boot_id,config_digest:candidate.worker_config_digest,observed_at:new Date().toISOString()};
+      res.end(JSON.stringify({receipt,signature:createHmac('sha256',token).update(JSON.stringify(receipt)).digest('hex')}));return;
+    }
     const starts = requests.filter(r => r.path.endsWith('/start')).length;
     if ((failStart || starts === failStartOn) && req.url.endsWith('/start')) { req.socket.destroy(); return; }
     const receipt = { run_id: input.run_id, task_id: input.task_id, machine_id: machineId,
       request_nonce: wrongNonce ? 'stale' : input.request_nonce, status: 'running', profile_sha256: profileSha, mode: input.mode ?? task.result?.common_runner?.mode ?? 'exploration', ...workerReceipt, ...(workerResponses.shift() ?? {}),
-      ...(await receiptForRequest?.({ path: req.url, input }) ?? {}) };
+      ...(candidateRouting?{worker_boot_id:candidate.worker_boot_id,worker_config_digest:candidate.worker_config_digest}:{}),...(await receiptForRequest?.({ path: req.url, input }) ?? {}) };
     res.setHeader('content-type', 'application/json');
     res.end(JSON.stringify({ receipt, signature: badSignature ? '0'.repeat(64)
       : createHmac('sha256', token).update(JSON.stringify(receipt)).digest('hex') }));
@@ -36,6 +41,7 @@ async function setup({ badSignature = false, wrongNonce = false, failStart = fal
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve)); servers.push(server);
   const task = { id: taskId, status: 'in_progress', kind: 'agent', result: {}, payload: {} };
   const pool = { query: vi.fn(async (sql, params) => {
+    if(sql.includes('SELECT task_id,context FROM task_runs'))return {rows:runContext?[{task_id:taskId,context:structuredClone(runContext)}]:[]};
     if (policyState && sql.includes('FROM release_versions')) return {rows:[policyState.release]};
     if (policyState && sql.includes('FROM release_observations')) return {rows:[policyState.observation]};
     if (policyState && sql.includes('SELECT id,status,result FROM tasks')) return {rows:[policyState.task]};
@@ -58,11 +64,12 @@ async function setup({ badSignature = false, wrongNonce = false, failStart = fal
   }) };
   const authority = vi.fn(async (_db, input, operation) => operation({ executionVersionId: 'version-a', grantId: 'grant-a', grant,
     node: { canonical_id: machineId, endpoints: { worker: directoryEndpoint ?? `http://127.0.0.1:${server.address().port}` } } }, pool));
-  const start = vi.fn(async input => {if(input.definition){if(registrationError)throw registrationError;registered=true;}return { id: 'ledger-row', run_id: runId };});
+  const start = vi.fn(async input => {runContext=structuredClone(input.context);if(input.definition){if(registrationError)throw registrationError;registered=true;}return { id: 'ledger-row', run_id: runId };});
   const readDefinition=vi.fn(async()=>definition??(registered?definitionAfterStart:null));
   const finish = vi.fn(async () => ({ updated: !finishAlready }));
   const reconcile = vi.fn(async () => reconciliation ?? { business_outcome: 'unknown', evidence_status: 'incomplete' });
   const dispatcher = createCommonRunnerDispatcher({ pool, token,
+    ...(candidateRouting?{profileCatalogClient:createProfileCatalogClient({token,fetchFn:(url,options)=>{routes.push(new URL(url).origin);return fetch(`http://127.0.0.1:${server.address().port}${new URL(url).pathname}`,options);}}),transport:args=>httpTransport({...args,fetchFn:(url,options)=>{routes.push(new URL(url).origin);return fetch(`http://127.0.0.1:${server.address().port}${new URL(url).pathname}`,options);}})}:{}),
     allowLoopbackForTests: true,
     env: { NODE_ENV: 'production', ...(profilesFile ? { COMMON_RUNNER_PROFILES_FILE: profilesFile } : {}), ...(policyFile ? { EXECUTION_MANAGED_SCRIPT_CANDIDATES_FILE: policyFile } : {}) },
     ...(!profilesFile ? { profiles: { demo: { machine_id: machineId, profile_sha256: profileSha } } } : {}),
@@ -71,7 +78,7 @@ async function setup({ badSignature = false, wrongNonce = false, failStart = fal
     ...(!useDefaultStartGate ? { assertCanStart: async () => {} } : {}),
     readReconciliation: reconcile, taskPolicy,
     ...(definition || definitionAfterStart ? { readDefinition } : {}) });
-  return { dispatcher, task, requests, authority, start, finish, pool, reconcile, readDefinition, policyState };
+  return { dispatcher, task, requests,routes, authority, start, finish, pool, reconcile, readDefinition, policyState };
 }
 
 describe('common runner HTTP dispatch', () => {
@@ -448,9 +455,9 @@ describe('普通agent正式入口原事务内部绑定',()=>{
   await expect(x.dispatcher.dispatch('start',runId,f.body)).rejects.toThrow('execution_grant_denied');expect(x.start).not.toHaveBeenCalled();expect(x.requests).toHaveLength(0);
  });
 });
-function policyFixture(){
+function policyFixture(worker={}){
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'common-grant-')),file=path.join(root,'policy.json');
- const c={machine_id:'us-mac-m4',machine_registry_id:'ed3555dc-4777-446c-bdf0-d928d6a08ef1',profile_sha256:'a'.repeat(64),source_repo:'owner/repo',source_commit:'b'.repeat(40),release_id:uuid(21),observation_id:uuid(22),evidence_task_id:uuid(23),expires_at:new Date(Date.now()+3600000).toISOString()};
+ const c={machine_id:'us-mac-m4',machine_registry_id:'ed3555dc-4777-446c-bdf0-d928d6a08ef1',profile_sha256:'a'.repeat(64),source_repo:'owner/repo',source_commit:'b'.repeat(40),release_id:uuid(21),observation_id:uuid(22),evidence_task_id:uuid(23),expires_at:new Date(Date.now()+3600000).toISOString(),...worker};
  const write=()=>fs.writeFileSync(file,JSON.stringify({schema_version:1,profiles:{demo:c}}),{mode:0o600});write();
  const grant={provenance:'mac_managed_profile/v1:'+createHash('sha256').update(JSON.stringify(c)).digest('hex'),profile_id:'demo',node_version_id:'version-a',state:'active',account_id:'',repo_scope:[],evidence_task_id:c.evidence_task_id,expires_at:c.expires_at};return {root,file,c,grant,write};
 }
@@ -472,5 +479,19 @@ it.each(['release-drift','evidence-withdrawn'])('新Mac grant启动重试须异�
   await x.dispatcher.dispatch('start',runId,body);
   if(change==='release-drift')x.policyState.observation.payload.components=[];else x.policyState.task.status='cancelled';
   await expect(x.dispatcher.dispatch('start',runId,body)).rejects.toThrow('execution_script_');expect(x.requests).toHaveLength(1);expect(x.start).toHaveBeenCalledTimes(1);
+ }finally{fs.rmSync(p.root,{recursive:true,force:true});}
+});
+it('候选端口真实HTTP+HMAC每次start核pins，TaskRun冻结路由在当前policy撤销或Task.result路由删除后仍仅送原15231',async()=>{
+ const endpoint='http://100.71.151.105:15231',p=policyFixture({worker_endpoint:endpoint,worker_boot_id:uuid(31),worker_config_digest:'c'.repeat(64)});
+ try{
+  const x=await setup({candidateRouting:true,machineId:'us-mac-m4',directoryEndpoint:'http://100.71.151.105:5231',grant:p.grant,policyFile:p.file}),body={task_id:taskId,profile:'demo',input:{},mode:'exploration'};
+  expect((await x.dispatcher.dispatch('start',runId,body)).authenticated).toBe(true);
+  expect(x.start.mock.calls[0][0].context.common_runner_worker_route).toBeDefined();
+  const startRequest=x.requests.find(r=>r.path.endsWith('/start'));expect(startRequest.input.expected_worker_boot_id).toBe(p.c.worker_boot_id);
+  delete x.task.result.common_runner.worker_route;fs.rmSync(p.file);
+  for(const action of ['inspect','cancel','flush'])expect((await x.dispatcher.dispatch(action,runId,{task_id:taskId})).authenticated).toBe(true);
+  expect(x.routes.every(origin=>origin===endpoint)).toBe(true);expect(x.start).toHaveBeenCalledTimes(1);
+  x.task.result.common_runner.execution_grant_id='unrelated-legacy-grant';const count=x.requests.length;
+  await expect(x.dispatcher.dispatch('inspect',runId,{task_id:taskId})).rejects.toThrow('execution_script_');expect(x.requests).toHaveLength(count);
  }finally{fs.rmSync(p.root,{recursive:true,force:true});}
 });
