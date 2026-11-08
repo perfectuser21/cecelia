@@ -36,10 +36,11 @@ export function commandsFor(component, shard) {
       return [
         step('.', 'node', 'scripts/ci/basic-runtime-smoke.mjs', '--validate-only'),
         step('packages/brain', 'node', 'src/migrate.js'),
-        step('packages/brain', 'npx', '--no-install', 'vitest', 'run', '--config', '../../scripts/ci/deep-integration.config.mjs',
+        { ...step('packages/brain', 'npx', '--no-install', 'vitest', 'run', '--config', '../../scripts/ci/deep-integration.config.mjs',
           'src/__tests__/integration/task-lease-device-pool.pg.integration.test.js',
           'src/__tests__/integration/executor-startup-headed-owner.pg.integration.test.js',
-          'src/__tests__/integration/workflow-common-terminal.pg.integration.test.js', '--reporter=dot'),
+          'src/__tests__/integration/suggestion-plan-callback.pg.integration.test.js',
+          'src/__tests__/integration/workflow-common-terminal.pg.integration.test.js', '--reporter=dot'), ciScratchDatabase: true },
         step('.', 'node', '--test', 'scripts/ci/__tests__/runtime-signal.integration.test.mjs'),
         step('.', 'node', 'scripts/ci/basic-runtime-smoke.mjs'),
       ];
@@ -82,7 +83,10 @@ export function runSteps(steps, { cwd = process.cwd(), stdio = 'inherit', env = 
   if (!Array.isArray(steps) || steps.length === 0) throw new Error('检查集合不能为空');
   for (const step of steps) {
     if (!step?.command || !Array.isArray(step.args)) throw new Error('检查命令无效');
-    const result = spawnSync(step.command, step.args, { cwd: step.cwd || cwd, env, stdio });
+    const stepEnv = step.ciScratchDatabase && env.CI === 'true' && env.POSTGRES_INTEGRATION === '1'
+      ? { ...env, TEST_DATABASE_URL: env.DATABASE_URL }
+      : env;
+    const result = spawnSync(step.command, step.args, { cwd: step.cwd || cwd, env: stepEnv, stdio });
     if (stdio === 'pipe') {
       if (result.stdout) process.stdout.write(result.stdout);
       if (result.stderr) process.stderr.write(result.stderr);

@@ -78,6 +78,13 @@ test('新版主CI版本门具备固定整组来源闭包；历史组合保留且
     && edge.input_path === 'scripts/ci/check-skill-source-identity.py'));
   await assert.rejects(collect(async path => path === 'packages/brain/vitest.config.js'
     ? git('show', 'ce20b5a29123c9ade1a0bc4aa2753e3ea3fe310d:packages/brain/vitest.config.js') : source.readSource(path)), /basic_ci_source_unproven/);
+  const previousPaths = new Set(['packages/brain/vitest.config.js', 'scripts/ci/run-basic-check.mjs']);
+  await collect(async path => previousPaths.has(path)
+    ? git('show', `2dce0c18eded5c37d50fca44708d88cfa80fc575:${path}`) : source.readSource(path));
+  for (const changed of ['packages/brain/vitest.config.js', 'scripts/ci/run-basic-check.mjs']) {
+    await assert.rejects(collect(async path => path === changed
+      ? git('show', `2dce0c18eded5c37d50fca44708d88cfa80fc575:${changed}`) : source.readSource(path)), /basic_ci_source_unproven/);
+  }
   assert.ok(relations.some(edge => edge.consumer_path === '.github/workflows/ci.yml' && edge.input_path === 'scripts/ci/check-brain-version-bump.sh'));
   for (const path of ['scripts/ci/check-brain-version-bump.sh', 'scripts/ci/basic-scope.mjs', 'scripts/ci/run-basic-check.mjs', 'packages/brain/vitest.config.js',
     '.github/actions/skills-source/action.yml', 'scripts/ci/check-skill-source-identity.py']) {
