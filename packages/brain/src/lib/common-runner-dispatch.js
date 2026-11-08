@@ -1,11 +1,11 @@
 import fs from 'node:fs';
-import {assertManagedScriptProfileGrant} from '../execution-directory/managed-script-profile-evidence.js';
+import {assertManagedScriptProfileGrant,createProfileCatalogClient,freezeManagedScriptWorkerRoute,resolveFrozenManagedScriptWorkerRoute,verifyManagedScriptWorkerRoute} from '../execution-directory/managed-script-profile-evidence.js';
 import {resourceFreeReview} from './common-runner-review.js';
 import { isAbsolute } from 'node:path';
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { directory, endpointValid } from '../execution-directory/directory.js';
 import { authorize, resolveCleanup, transaction } from '../execution-directory/store.js';
-import { startRun as startCentralRun, finishRun as finishCentralRun } from './task-run.js';
+import { startRun as startCentralRun, finishRun as finishCentralRun,reserveCommonRunnerWorkerRoute } from './task-run.js';
 import { getRunDefinitionBinding } from './run-definition-binding.js';
 import { resolveMachineId } from '../machine-registry.js';
 import { isIsolatedRuntime } from '../runtime-safety.js';
@@ -47,13 +47,15 @@ export function loadCommonRunnerProfiles(filename) {
   } finally { fs.closeSync(fd); }
 }
 
-export async function httpTransport({ endpoint, action, runId, body, token, fetchFn = fetch, timeoutMs = 20000, allowLoopbackForTests = false }) {
+export async function httpTransport({ endpoint,workerRoute, action, runId, body, token, fetchFn = fetch, timeoutMs = 20000, allowLoopbackForTests = false }) {
   if (!endpointValid(endpoint) || typeof token !== 'string' || token.length < 32) fail('common_runner_transport_unconfigured', 503);
   const url = new URL(endpoint);
+  const route=workerRoute?verifyManagedScriptWorkerRoute(workerRoute,token):null;
+  if(route&&(route.endpoint!==url.origin||route.run_id!==runId||route.task_id!==body.task_id))fail('common_runner_transport_unconfigured',503);
   const octets = url.hostname.split('.');
   // No DNS resolution or arbitrary directory URL can receive the control credential.
   const tailnet = octets.length === 4 && octets.every(part => /^(?:0|[1-9][0-9]{0,2})$/.test(part) && Number(part) <= 255)
-    && Number(octets[0]) === 100 && Number(octets[1]) >= 64 && Number(octets[1]) <= 127 && url.port === '5231';
+    && Number(octets[0]) === 100 && Number(octets[1]) >= 64 && Number(octets[1]) <= 127 && (url.port === '5231'||route);
   const fixture = allowLoopbackForTests === true && process.env.NODE_ENV === 'test'
     && url.hostname === '127.0.0.1' && Number(url.port) > 0 && Number(url.port) <= 65535;
   if ((!tailnet && !fixture) || (endpoint !== url.origin && endpoint !== `${url.origin}/`)) fail('common_runner_transport_unconfigured', 503);
@@ -61,7 +63,7 @@ export async function httpTransport({ endpoint, action, runId, body, token, fetc
   url.pathname = `/workflows/${encodeURIComponent(runId)}/${encodeURIComponent(action)}`;
   const response = await fetchFn(url, {
     method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-    body: JSON.stringify(body), signal: AbortSignal.timeout(timeoutMs), redirect: 'error',
+    body: JSON.stringify({...body,...(route?{expected_worker_boot_id:route.worker_boot_id,expected_worker_config_digest:route.worker_config_digest}:{})}), signal: AbortSignal.timeout(timeoutMs), redirect: 'error',
   });
   let bytes = 0; const chunks = [];
   for await (const chunk of response.body ?? []) {
@@ -76,7 +78,7 @@ function verifyEnvelope(envelope, expected, token) {
   if (!object(receipt) || typeof envelope.signature !== 'string' || !HASH.test(envelope.signature)) fail('common_runner_receipt_unverified');
   const signature = createHmac('sha256', token).update(JSON.stringify(receipt)).digest('hex');
   if (!timingSafeEqual(Buffer.from(signature), Buffer.from(envelope.signature))
-    || ['run_id', 'task_id', 'machine_id', 'request_nonce', 'profile_sha256', 'mode'].some(key => receipt[key] !== expected[key])) fail('common_runner_receipt_unverified');
+    || ['run_id', 'task_id', 'machine_id', 'request_nonce', 'profile_sha256', 'mode',...(expected.worker_boot_id?['worker_boot_id','worker_config_digest']:[])].some(key => receipt[key] !== expected[key])) fail('common_runner_receipt_unverified');
   return receipt;
 }
 
@@ -101,12 +103,29 @@ export function commonRunnerFormalBinding(definition, runId) {
 
 export function createCommonRunnerDispatcher({ pool, env = process.env, profiles,
   token = env.KERNEL_FLEET_BRIDGE_TOKEN, transport = httpTransport, authorizeExecution = authorize,
+  profileCatalogClient=createProfileCatalogClient({token}),
   allowLoopbackForTests = false, taskPolicy,
   resolveBoundNode = resolveCleanup, executionDirectory = directory, startRun = startCentralRun,
   finishRun = finishCentralRun,
   assertCanStart = db => assertCommonRunnerStartAllowed(env, db),
   readReconciliation = readRunReconciliation,
   readDefinition = getRunDefinitionBinding } = {}) {
+  async function candidateRoute(auth,db,profileId,profileSha256,taskId,runId){
+    const identity={db,grant:auth.grant,profileId,profileSha256,machineId:auth.node.canonical_id,executionVersionId:auth.executionVersionId};
+    let policy=await assertManagedScriptProfileGrant(identity,env);
+    if(!policy?.worker_endpoint)return null;
+    await profileCatalogClient.catalog(auth.node,{policy,profileId,profileSha256,bootId:policy.worker_boot_id,configDigest:policy.worker_config_digest});
+    policy=await assertManagedScriptProfileGrant(identity,env);
+    return freezeManagedScriptWorkerRoute({policy,node:auth.node,grant:{...auth.grant,id:auth.grantId},executionVersionId:auth.executionVersionId,runId,taskId,profileId},token);
+  }
+  async function originalBinding(db,binding){
+    const row=(await db.query('SELECT task_id,context FROM task_runs WHERE run_id=$1',[binding.run_id])).rows[0];
+    const route=row?.context?.common_runner_worker_route;
+    if(!route){if(binding.worker_route)fail('common_runner_worker_route_unproven');return binding;}
+    const p=verifyManagedScriptWorkerRoute(route,token);
+    if(row.task_id!==binding.task_id||['run_id','task_id','machine_id','execution_version_id','execution_grant_id','profile_sha256'].some(k=>p[k]!==binding[k])||p.profile_id!==binding.profile)throw Error('execution_script_worker_route_identity_mismatch');
+    return {...binding,worker_route:route};
+  }
   async function persist(db, taskId, binding, { activate = true } = {}) {
     const result = await db.query(`UPDATE tasks SET result=COALESCE(result,'{}'::jsonb)||$2::jsonb,
       ${activate ? `status='in_progress',claimed_by=COALESCE(claimed_by,'common-runner'),claimed_at=COALESCE(claimed_at,NOW()),
@@ -132,6 +151,7 @@ export function createCommonRunnerDispatcher({ pool, env = process.env, profiles
       if (task.kind !== 'agent' && !sourceAuthorized) fail('common_runner_task_owned');
       let existing = task.result?.common_runner;
       if (existing) {
+        existing=await originalBinding(db,existing);
         if (existing.run_id !== runId || existing.task_id !== body.task_id || (planDigest && existing.input_digest !== planDigest)) fail('common_runner_identity_conflict');
         if (action === 'cancel' && !existing.cancel_requested) {
           existing = { ...existing, cancel_requested: true };
@@ -146,14 +166,16 @@ export function createCommonRunnerDispatcher({ pool, env = process.env, profiles
           return authorizeExecution(db, { snapshotVersion: executionDirectory.current()?.version, machineId: existing.machine_id,
             surface: 'managed_script', provider: 'script', profileId: existing.profile,
             executionVersionId: existing.execution_version_id, grantId: existing.execution_grant_id }, async (auth, authorizedDb = db) => {
-            await assertManagedScriptProfileGrant({db:authorizedDb,grant:auth.grant,profileId:existing.profile,profileSha256:existing.profile_sha256,machineId:existing.machine_id,executionVersionId:auth.executionVersionId},env);
+            const route=await candidateRoute(auth,authorizedDb,existing.profile,existing.profile_sha256,body.task_id,runId);
+            if((route?.signed_payload??null)!==(existing.worker_route?.signed_payload??null))fail('common_runner_worker_route_changed');
             const reserved = { ...existing, launch_state: 'reserved', launch_nonce: nonce };
             await persist(authorizedDb, body.task_id, reserved);
-            return { binding: reserved, endpoint: auth.node.endpoints.worker, action: 'start' };
+            return { binding: reserved, endpoint: route?.payload.endpoint??auth.node.endpoints.worker, action: 'start' };
           });
         }
         const node = await resolveBoundNode(db, { executionVersionId: existing.execution_version_id, persistedAttemptIdentity: existing });
-        return { binding: existing, endpoint: node.endpoints.worker, action: action === 'start' ? 'inspect' : action };
+        const route=resolveFrozenManagedScriptWorkerRoute(existing,node,token);
+        return { binding: existing, endpoint: route?.endpoint??node.endpoints.worker, action: action === 'start' ? 'inspect' : action };
       }
       if (action !== 'start') fail('common_runner_run_unknown', 404);
       await assertCanStart(db);
@@ -167,11 +189,15 @@ export function createCommonRunnerDispatcher({ pool, env = process.env, profiles
       if (!executionDirectory.current()) await executionDirectory.refresh({ pool });
       return authorizeExecution(db, { snapshotVersion: executionDirectory.current()?.version, machineId: config.machine_id,
         surface: 'managed_script', provider: 'script', profileId: body.profile }, async (auth, authorizedDb = db) => {
-        await assertManagedScriptProfileGrant({db:authorizedDb,grant:auth.grant,profileId:body.profile,profileSha256:config.profile_sha256,machineId:config.machine_id,executionVersionId:auth.executionVersionId},env);
-        const prior = (await authorizedDb.query('SELECT task_id,status,ended_at FROM task_runs WHERE run_id=$1', [runId])).rows[0];
+        const workerRoute=await candidateRoute(auth,authorizedDb,body.profile,config.profile_sha256,body.task_id,runId);
+        const prior = (await authorizedDb.query('SELECT task_id,status,ended_at,context FROM task_runs WHERE run_id=$1', [runId])).rows[0];
         if (prior && prior.task_id !== body.task_id) fail('common_runner_identity_conflict');
         if (prior && (prior.ended_at || prior.status !== 'running')) fail('common_runner_run_already_terminal');
-        const context = { machine_id: config.machine_id, profile: body.profile, mode: body.mode };
+        const unlaunched=prior?.context?.common_runner_worker_reservation;
+        const adapterReservation=prior&&sourceAuthorized&&task.task_type==='workflow_dispatch'&&prior.context?.source==='workflow-common-runner'
+          &&unlaunched?.state==='unlaunched'&&unlaunched.task_id===body.task_id&&unlaunched.run_id===runId;
+        if(prior&&(workerRoute||prior.context?.common_runner_worker_route)&&!adapterReservation)fail('common_runner_worker_route_unproven');
+        const context = { machine_id: config.machine_id, profile: body.profile, mode: body.mode,...(workerRoute?{common_runner_worker_route:workerRoute}:{}) };
         let runBinding, started;
         if (body.mode === 'formal') {
           let definition = await readDefinition(authorizedDb, runId);
@@ -195,12 +221,14 @@ export function createCommonRunnerDispatcher({ pool, env = process.env, profiles
         }
         started ??= await startRun({ taskId: body.task_id, runId, source: 'common-runner', context }, { pool: authorizedDb });
         if (!started?.id) fail('common_runner_run_registration_failed', 503);
+        if(adapterReservation){if(body.mode!=='formal')fail('common_runner_formal_binding_required');await reserveCommonRunnerWorkerRoute({taskId:body.task_id,runId,route:workerRoute},{transactionClient:authorizedDb});}
         const binding = { run_id: runId, task_id: body.task_id, machine_id: config.machine_id, execution_version_id: auth.executionVersionId,
           execution_grant_id: auth.grantId, profile: body.profile, profile_sha256: config.profile_sha256, mode: body.mode,
           input_digest: planDigest, input: body.input, launch_state: 'reserved', launch_nonce: nonce, created_at: new Date().toISOString() };
+        if(workerRoute)binding.worker_route=workerRoute;
         if (runBinding) binding.run_binding = runBinding;
         await persist(authorizedDb, body.task_id, binding);
-        return { binding, endpoint: auth.node.endpoints.worker, action };
+        return { binding, endpoint: workerRoute?.payload.endpoint??auth.node.endpoints.worker, action };
       });
     });
   }
@@ -277,12 +305,13 @@ export function createCommonRunnerDispatcher({ pool, env = process.env, profiles
     const nonce = randomUUID();
     const prepared = await prepare(action, runId, body, nonce), binding = prepared.binding;
     const request = { run_id: runId, task_id: body.task_id, request_nonce: nonce,
+      ...(binding.worker_route?{expected_worker_boot_id:binding.worker_route.payload.worker_boot_id,expected_worker_config_digest:binding.worker_route.payload.worker_config_digest}:{}),
       ...(prepared.action === 'start' ? { profile: binding.profile, profile_sha256: binding.profile_sha256, input: binding.input, mode: binding.mode,
         ...(binding.run_binding ? { run_binding: binding.run_binding } : {}) } : {}) };
     try {
-      const envelope = await transport({ endpoint: prepared.endpoint, action: prepared.action, runId, body: request, token, allowLoopbackForTests });
+      const envelope = await transport({ endpoint: prepared.endpoint,workerRoute:binding.worker_route, action: prepared.action, runId, body: request, token, allowLoopbackForTests });
       const receipt = verifyEnvelope(envelope, { run_id: runId, task_id: body.task_id, machine_id: binding.machine_id,
-        request_nonce: nonce, profile_sha256: binding.profile_sha256, mode: binding.mode }, token);
+        request_nonce: nonce, profile_sha256: binding.profile_sha256, mode: binding.mode,...(binding.worker_route?{worker_boot_id:binding.worker_route.payload.worker_boot_id,worker_config_digest:binding.worker_route.payload.worker_config_digest}:{}) }, token);
       await recordNotStarted(binding, receipt, nonce, prepared.action);
       // Do not equate process exit with verified workflow/record completion. Preserve the authenticated observation.
       const central_run = await settle(binding, receipt);

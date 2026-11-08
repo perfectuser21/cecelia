@@ -7,6 +7,51 @@ export const HASH=/^[a-f0-9]{64}$/,UUID=/^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{
 export const PROFILE=/^[a-z][a-z0-9-]{0,63}$/;
 export const SCRIPT_MACHINE='us-mac-m4',SCRIPT_REGISTRY='ed3555dc-4777-446c-bdf0-d928d6a08ef1';
 export const need=(ok,code)=>{if(!ok)throw Error('execution_script_'+code);};
+const digest=value=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
+function tailnetOrigin(value){
+ const url=new URL(value),parts=url.hostname.split('.');
+ need(url.protocol==='http:'&&!url.username&&!url.password&&!url.search&&!url.hash&&url.pathname==='/'
+  &&(value===url.origin||value===url.origin+'/')&&parts.length===4&&parts.every(p=>/^(?:0|[1-9][0-9]{0,2})$/.test(p)&&Number(p)<=255)
+  &&Number(parts[0])===100&&Number(parts[1])>=64&&Number(parts[1])<=127,'worker_endpoint_invalid');
+ return url;
+}
+export function resolveManagedScriptWorkerEndpoint(policy,node){
+ if(!policy?.worker_endpoint)return node.endpoints.worker;
+ const base=tailnetOrigin(node.endpoints.worker),candidate=tailnetOrigin(policy.worker_endpoint);
+ need(node.canonical_id===SCRIPT_MACHINE&&policy.machine_id===node.canonical_id&&base.port==='5231'
+  &&candidate.hostname===base.hostname&&Number(candidate.port)>=1024&&Number(candidate.port)<=65535&&candidate.port!==base.port
+  &&UUID.test(policy.worker_boot_id??'')&&HASH.test(policy.worker_config_digest??''),'worker_endpoint_invalid');
+ return candidate.origin;
+}
+export function freezeManagedScriptWorkerRoute({policy,node,grant,executionVersionId,runId,taskId,profileId},token){
+ if(!policy?.worker_endpoint)return null;
+ need(typeof token==='string'&&token.length>=32&&grant.node_version_id===executionVersionId
+  &&grant.provenance==='mac_managed_profile/v1:'+digest(policy),'worker_route_invalid');
+ const payload={schema_version:'managed-workflow-worker-route/v1',run_id:runId,task_id:taskId,machine_id:node.canonical_id,
+  execution_version_id:executionVersionId,execution_grant_id:grant.id,profile_id:profileId,profile_sha256:policy.profile_sha256,
+  source_commit:policy.source_commit,policy_sha256:digest(policy),base_endpoint:new URL(node.endpoints.worker).origin,
+  endpoint:resolveManagedScriptWorkerEndpoint(policy,node),worker_boot_id:policy.worker_boot_id,worker_config_digest:policy.worker_config_digest};
+ return {payload,signature:createHmac('sha256',token).update(JSON.stringify(payload)).digest('hex'),signed_payload:JSON.stringify(payload)};
+}
+export function verifyManagedScriptWorkerRoute(envelope,token){
+ need(envelope&&typeof envelope.signed_payload==='string'&&HASH.test(envelope.signature??''),'worker_route_invalid');
+ const expected=createHmac('sha256',token).update(envelope.signed_payload).digest('hex');
+ need(timingSafeEqual(Buffer.from(expected),Buffer.from(envelope.signature)),'worker_route_invalid');
+ const p=JSON.parse(envelope.signed_payload);
+ need(JSON.stringify(Object.entries(p).sort())===JSON.stringify(Object.entries(envelope.payload??{}).sort())&&p.schema_version==='managed-workflow-worker-route/v1'&&UUID.test(p.run_id??'')&&UUID.test(p.task_id??'')
+  &&HASH.test(p.policy_sha256??'')&&HASH.test(p.profile_sha256??'')&&/^[a-f0-9]{40}$/.test(p.source_commit??''),'worker_route_invalid');
+ resolveManagedScriptWorkerEndpoint({machine_id:p.machine_id,worker_endpoint:p.endpoint,worker_boot_id:p.worker_boot_id,worker_config_digest:p.worker_config_digest},
+  {canonical_id:p.machine_id,endpoints:{worker:p.base_endpoint}});
+ return p;
+}
+export function resolveFrozenManagedScriptWorkerRoute(binding,node,token){
+ if(!binding.worker_route)return null;
+ const p=verifyManagedScriptWorkerRoute(binding.worker_route,token);
+ need(['run_id','task_id','machine_id','execution_version_id','execution_grant_id','profile_sha256'].every(key=>p[key]===binding[key])
+  &&p.profile_id===binding.profile&&node.canonical_id===p.machine_id&&node.id===p.execution_version_id
+  &&new URL(node.endpoints.worker).origin===p.base_endpoint,'worker_route_identity_mismatch');
+ return p;
+}
 function grantCandidate({grant,profileId,profileSha256,machineId,executionVersionId},env){
  const c=readManagedScriptCandidates(env.EXECUTION_MANAGED_SCRIPT_CANDIDATES_FILE)[profileId];
  need(c&&grant.provenance==='mac_managed_profile/v1:'+createHash('sha256').update(JSON.stringify(c)).digest('hex')
@@ -64,7 +109,10 @@ export function readManagedScriptCandidates(file,now=Date.now()){
  need(object(data)&&Object.keys(data).sort().join(',')==='profiles,schema_version'&&data.schema_version===1&&object(data.profiles),'policy_invalid');
  const keys='evidence_task_id,expires_at,machine_id,machine_registry_id,observation_id,profile_sha256,release_id,source_commit,source_repo';
  for(const [id,c]of Object.entries(data.profiles)){
-  need(PROFILE.test(id)&&object(c)&&Object.keys(c).sort().join(',')===keys,'policy_invalid');
+  const extra=['worker_endpoint','worker_boot_id','worker_config_digest'],candidate=extra.some(k=>Object.hasOwn(c,k));
+  need(PROFILE.test(id)&&object(c)&&Object.keys(c).filter(k=>!extra.includes(k)).sort().join(',')===keys
+   &&(!candidate||extra.every(k=>Object.hasOwn(c,k))&&UUID.test(c.worker_boot_id??'')&&HASH.test(c.worker_config_digest??'')),'policy_invalid');
+  if(candidate){const url=tailnetOrigin(c.worker_endpoint);need(Number(url.port)>=1024&&Number(url.port)<=65535&&url.port!=='5231','policy_invalid');}
   need(c.machine_id===SCRIPT_MACHINE&&c.machine_registry_id===SCRIPT_REGISTRY&&HASH.test(c.profile_sha256)
    &&/^[a-f0-9]{40}$/.test(c.source_commit)&&/^[\w.-]+\/[\w.-]+$/.test(c.source_repo)
    &&[c.release_id,c.observation_id,c.evidence_task_id].every(v=>UUID.test(v))
@@ -83,10 +131,10 @@ export function verifyProfileCatalog(envelope,{token,nonce,machineId,profileId,p
  return r;
 }
 export function createProfileCatalogClient({token=process.env.KERNEL_FLEET_BRIDGE_TOKEN,fetchFn=globalThis.fetch}={}){
- return {async catalog(node,{profileId,profileSha256,bootId,configDigest}){
+ return {async catalog(node,{profileId,profileSha256,bootId,configDigest,policy}){
   need(typeof token==='string'&&token.length>=32,'worker_unconfigured');
-  const endpoint=new URL(node.endpoints.worker),octets=endpoint.hostname.split('.');
-  need(endpoint.protocol==='http:'&&!endpoint.username&&!endpoint.password&&!endpoint.search&&!endpoint.hash&&endpoint.pathname==='/'&&endpoint.port==='5231'
+  const endpoint=new URL(resolveManagedScriptWorkerEndpoint(policy,node)),octets=endpoint.hostname.split('.');
+  need(endpoint.protocol==='http:'&&!endpoint.username&&!endpoint.password&&!endpoint.search&&!endpoint.hash&&endpoint.pathname==='/'&&(endpoint.port==='5231'||policy?.worker_endpoint)
    &&octets.length===4&&octets.every(p=>/^(?:0|[1-9][0-9]{0,2})$/.test(p)&&Number(p)<=255)&&Number(octets[0])===100&&Number(octets[1])>=64&&Number(octets[1])<=127,'worker_unconfigured');
   const nonce=randomUUID();endpoint.pathname='/workflows/profile-catalog';
   const response=await fetchFn(endpoint.href,{method:'POST',headers:{'content-type':'application/json',authorization:`Bearer ${token}`},body:JSON.stringify({profile_id:profileId,request_nonce:nonce}),signal:AbortSignal.timeout(5000),redirect:'error'});

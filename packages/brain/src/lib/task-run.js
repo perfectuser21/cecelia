@@ -21,6 +21,20 @@
 
 import {FAILURE_STATUSES,sanitizeWorkflowFailure} from './workflow-failure.js';
 
+/** 原adapter首次创建的未启动标记只消费一次；调用方必须持原授权事务。 */
+export async function reserveCommonRunnerWorkerRoute({taskId,runId,route},{transactionClient:db}={}) {
+  if(!db?.query)throw Error('common_runner_route_transaction_required');
+  const marker={schema_version:'common-runner-worker-reservation/v1',state:'unlaunched',task_id:taskId,run_id:runId};
+  const saved=await db.query(`UPDATE task_runs r SET context=(context-'common_runner_worker_reservation')||jsonb_build_object('common_runner_worker_route',$3::jsonb)
+    WHERE r.task_id=$1 AND r.run_id=$2 AND r.status='running' AND r.ended_at IS NULL
+    AND r.context->>'source'='workflow-common-runner' AND r.context->'common_runner_worker_reservation'=$4::jsonb
+    AND NOT(r.context?'common_runner_worker_route') AND EXISTS(SELECT 1 FROM run_definition_bindings b
+      WHERE b.task_run_id=r.id AND b.run_id=r.run_id AND b.source_kind='internal' AND b.workflow_id=r.workflow_id)
+    RETURNING r.id`,[taskId,runId,JSON.stringify(route??null),JSON.stringify(marker)]);
+  if(saved.rowCount!==1)throw Error('common_runner_worker_route_unproven');
+  return saved.rows[0];
+}
+
 const RUN_STATUS_MAP = Object.freeze({
   running: 'running',
   completed: 'success',

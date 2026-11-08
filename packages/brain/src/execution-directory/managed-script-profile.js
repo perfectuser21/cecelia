@@ -29,7 +29,8 @@ export function createManagedScriptProfileStore({pool,env=process.env,client=cre
    const existing=prior.find(g=>g.node_version_id===node.id),provenance='mac_managed_profile/v1:'+policyDigest;
    if(existing)need(existing.state==='active'&&existing.account_id===''&&existing.repo_scope.length===0&&existing.provenance===provenance
     &&existing.evidence_task_id===policy.evidence_task_id&&new Date(existing.expires_at).toISOString()===policy.expires_at&&Date.parse(existing.expires_at)>Date.now(),'grant_conflict');
-   const expected={profileId,profileSha256:policy.profile_sha256,bootId:input.expected_worker_boot_id,configDigest:input.expected_worker_config_digest};
+   if(policy.worker_endpoint)need(policy.worker_boot_id===input.expected_worker_boot_id&&policy.worker_config_digest===input.expected_worker_config_digest,'worker_changed');
+   const expected={profileId,profileSha256:policy.profile_sha256,bootId:input.expected_worker_boot_id,configDigest:input.expected_worker_config_digest,policy};
    const first=await client.catalog(node,expected),second=await client.catalog(node,expected);
    need(first.boot_id===second.boot_id&&first.config_digest===second.config_digest&&first.profile_sha256===second.profile_sha256,'worker_changed');
    need([first,second].every(catalog=>HASH.test(catalog.signature??'')&&catalog.receipt
