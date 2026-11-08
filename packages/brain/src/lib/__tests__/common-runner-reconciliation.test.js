@@ -42,3 +42,7 @@ describe('common runner observation and independent validation pairing', () => {
     expect(reconcileRunEvidence({ run_id: 'run-1', context: f.context, spans: [f.execution, f.validation] }).business_outcome).toBe('fail');
   });
 });
+it('COMMANDER_RECONNECTED是观察事实，不能阻挡已独立验证的业务正式归位',()=>{
+ const f=fixture(),commander={...f.execution,id:'commander-reconnected',occurrence_key:'commander:1',evidence:{kind:'commander',event:{event_type:'COMMANDER_RECONNECTED'}}};
+ const result=reconcileRunEvidence({run_id:'run-1',context:f.context,spans:[f.execution,f.validation,commander]});expect(result.evidence_status).toBe('verified');expect(result.business_outcome).toBe('pass');expect(commander.outcome).toBe('unknown');
+});

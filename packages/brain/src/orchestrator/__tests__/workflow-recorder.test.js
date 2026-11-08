@@ -2,6 +2,8 @@ import { describe, test, expect, afterEach } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import {createHash} from 'node:crypto';
+import {reconcileRunEvidence} from '../../lib/run-reconciliation.js';
 import { createWorkflowRecorder } from '../workflow-recorder.js';
 
 const dirs = [];
@@ -175,4 +177,43 @@ describe('公共工作流持久证据Recorder', () => {
     expect(s.evidence).toMatchObject({ timing_semantics: 'preflight_failure_observed', execution_invoked: false, start_known: false });
     expect(s.started_at).toBe(s.ended_at); expect(s.evidence.questions.A2.status).toBe('unknown');
   });
+});
+function stepFixture(at='collect'){
+ const o=options(),step={step_id:id(20),locator:{activity_id:id(6),step_key:'read_actual'},registration:{key:'flow.collect.read_actual',source_sha256:'d'.repeat(64)},contract:{key:'read_actual',dod:{at}}};
+ o.metadata.collect.questions=structuredClone(questions);o.metadata.collect.questions.B1.declared.steps=[step];o.metadata.collect.runtime_snapshot_sha256='e'.repeat(64);
+ if(at!=='collect')o.metadata[at]={...structuredClone(o.metadata.collect),activity_id:id(16),identity:{...identity,reference_id:id(13),activity_definition_version_id:id(15)},questions:structuredClone(questions)};
+ const observation={key:'flow.collect.read_actual',activity:'collect',at,mode:'hard',type:'metric',pass:true,observed:1};
+ const file=path.join(o.root,'independent-step-proof.json');fs.writeFileSync(file,JSON.stringify({verified:true,step_dod:[{steps:[observation]}]}));
+ const proof={path:file,sha256:createHash('sha256').update(fs.readFileSync(file)).digest('hex')};
+ const row={step_id:step.step_id,activity_key:'collect',activity_id:id(6),reference_id:id(3),activity_definition_version_id:id(5),verdict:'pass',acceptance_ref:`step:${step.step_id}@${step.registration.source_sha256}`,evidence:[{...proof,observation}]};
+ const v={verdict:'pass',acceptance_ref:'contract:A4',evidence:[proof],executor:{kind:'code',entry:'check.mjs',sha256:'f'.repeat(64)},step_checks:[row]};
+ return {o,row,v,at,step,proof};
+}
+async function recordStepFixture(f,{selfReported=false,omitCheckEvent=false}={}){
+ const r=createWorkflowRecorder(f.o),keys=Object.keys(f.o.metadata),activities=keys.map(key=>({key,item:'video-1',attempts:[{attempt:1,status:'completed',outputs:selfReported?{steps:[f.step]}:{},evidence:[]}]}));let cursor=0;
+ const validations={};
+ for(const key of keys){const v=key===f.at?f.v:{verdict:'pass',acceptance_ref:'contract:A4',evidence:['independent-activity']};validations[key]=v;
+  await r.onEvent(event(++cursor,'ACTIVITY_STARTED',{activity:key}),{activities});
+  if(!omitCheckEvent)await r.onEvent(event(++cursor,'ACTIVITY_CHECKED',{activity:key,phase:'end',verdict:v}),{activities});
+  await r.onEvent(event(++cursor,'ACTIVITY_FINISHED',{activity:key}),{activities});
+ }
+ return {r,validation:{workflow:{verdict:'pass',acceptance_ref:'whole',evidence:['whole-readback']},activities:validations}};
+}
+test('独立Step真实读回经可信recordValidation写原step_id，满足完整expected_path且重启幂等',async()=>{
+ const f=stepFixture('cleanup'),{r,validation}=await recordStepFixture(f);await r.recordValidation(validation);await r.recordValidation(validation);
+ const spans=r.inspect().spans,stepSpans=spans.filter(s=>s.step_id===f.step.step_id);expect(stepSpans).toHaveLength(1);
+ expect(stepSpans[0]).toMatchObject({activity_id:id(6),reference_id:id(3),activity_definition_version_id:id(5),outcome:'pass',evidence:{kind:'validation',execution_activity:'cleanup',runtime_snapshot_sha256:'e'.repeat(64),profile_digest:f.o.profileDigest,task_id:f.o.taskId,machine_id:f.o.machineId}});
+ const expected=Object.values(f.o.metadata).map(m=>({reference_id:m.identity.reference_id,activity_id:m.activity_id,activity_definition_version_id:m.identity.activity_definition_version_id}));expected.push({...expected[0],step_id:f.step.step_id});
+ expect(reconcileRunEvidence({run_id:f.o.runId,context:{binding:{id:identity.run_binding_id,expected_path:expected}},spans}).evidence_status).toBe('verified');expect(createWorkflowRecorder(f.o).inspect().spans).toEqual(spans);
+});
+test('原B1声明和执行器steps自述不能生成Step通过事实',async()=>{
+ const f=stepFixture();delete f.v.step_checks;const {r,validation}=await recordStepFixture(f,{selfReported:true});await r.recordValidation(validation);expect(r.inspect().spans.some(s=>s.step_id)).toBe(false);
+});
+test.each(['foreign-step','foreign-av','foreign-ref','wrong-source-hash','wrong-evidence-hash','self-reported','early-stage','no-observed'])('Step事实拒绝错误固定身份、来源或实际证据：%s',async kind=>{
+ const f=stepFixture();if(kind==='foreign-step')f.row.step_id=id(99);if(kind==='foreign-av')f.row.activity_definition_version_id=id(99);if(kind==='foreign-ref')f.row.reference_id=id(99);if(kind==='wrong-source-hash')f.row.acceptance_ref=`step:${f.step.step_id}@${'0'.repeat(64)}`;
+ if(kind==='wrong-evidence-hash')f.row.evidence[0].sha256='0'.repeat(64);if(kind==='self-reported')f.row.evidence[0].observation.pass=false;if(kind==='early-stage')f.row.evidence[0].observation.at='cleanup';if(kind==='no-observed')delete f.row.evidence[0].observation.observed;
+ const {r,validation}=await recordStepFixture(f);await expect(r.recordValidation(validation)).rejects.toThrow('recorder_step');expect(r.inspect().spans.some(s=>s.step_id)).toBe(false);
+});
+test('无本轮实际独立end检查事件不能用终态对象补造Step事实',async()=>{
+ const f=stepFixture(),{r,validation}=await recordStepFixture(f,{omitCheckEvent:true});await expect(r.recordValidation(validation)).rejects.toThrow('recorder_step');expect(r.inspect().spans.some(s=>s.step_id)).toBe(false);
 });
