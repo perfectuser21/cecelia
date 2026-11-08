@@ -98,6 +98,7 @@ function renumber(sql, offset) {
  *   onlyIfStatus / onlyIfStatusNot   CAS：AND status IN (...) / NOT IN (...)
  *   where          { sql, params }：额外 AND 条件，$1.. 相对编号
  *   idCast         'text' → WHERE id::text = $n
+ *   commonRunnerNoLaunchReconciliation  host读回的DBOS终态；仅为同task/run且无binding的failed提供窄出口
  *   returning      额外 RETURNING 列（id, status 恒有）
  * @returns {{ sql: string, params: any[] }}
  */
@@ -188,7 +189,23 @@ export function buildTerminalUpdate(taskId, status, opts = {}) {
       AND ${commonStatus==='success'?"cr.status='success'":"cr.status IN ('failed','cancelled')"}
       AND cr.status=tasks.result#>>'{common_runner_observation,evidence,central_readback,status}'
       AND cr.ended_at IS NOT NULL AND cr.context->>'source'='workflow-common-runner'))`:'';
-  where.push("((payload->>'commander_protocol' IS DISTINCT FROM 'commander-v2' AND NOT COALESCE(result ? 'workflow_common_runner',false)) OR (NOT COALESCE(result ? 'workflow_common_runner',false) AND result->'workflow_control'->>'phase' = 'final' AND result->'workflow_control'->>'verdict' = 'PASS' AND " + (isRelayTerminalStatus(status) ? 'TRUE' : 'FALSE') + ")" + failedGate + commonGate + ")");
+  const noLaunch = opts.commonRunnerNoLaunchReconciliation;
+  if (noLaunch !== undefined) {
+    // 证明来自host对原DBOS workflow的终态读回；调用者不能借此写成功或收割已启动执行。
+    // 此显式模式不接普通commonGate的OR分支，已有binding即使中央已确认也不能穿过。
+    if (taskId == null || status !== 'failed'
+      || !/^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(noLaunch?.runId ?? '')
+      || noLaunch.workflowId !== `common-runner:${noLaunch.runId}`
+      || !['SUCCESS', 'ERROR', 'CANCELLED'].includes(noLaunch.workflowStatus)) {
+      throw new Error('buildTerminalUpdate: commonRunnerNoLaunchReconciliation 仅接受同run的DBOS终态失败证明');
+    }
+    where.push(`(claimed_by='common-runner'
+      AND result->'workflow_common_runner'->>'task_id'=id::text
+      AND result->'workflow_common_runner'->>'run_id'=$${push(noLaunch.runId)}
+      AND result->'common_runner' IS NULL)`);
+  } else {
+    where.push("((payload->>'commander_protocol' IS DISTINCT FROM 'commander-v2' AND NOT COALESCE(result ? 'workflow_common_runner',false)) OR (NOT COALESCE(result ? 'workflow_common_runner',false) AND result->'workflow_control'->>'phase' = 'final' AND result->'workflow_control'->>'verdict' = 'PASS' AND " + (isRelayTerminalStatus(status) ? 'TRUE' : 'FALSE') + ")" + failedGate + commonGate + ")");
+  }
   const returning = ['id', 'status', ...toList(opts.returning).filter((c) => c !== 'id' && c !== 'status')];
   const sql = `UPDATE tasks SET ${sets.join(', ')} WHERE ${where.join(' AND ')} RETURNING ${returning.join(', ')}`;
   return { sql, params };

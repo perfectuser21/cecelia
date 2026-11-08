@@ -13,9 +13,19 @@ export function createCommanderBridge({transport,onEvent=async()=>{},run_id,brie
  const turn=async(phase,activity,event,executor_kind)=>{
   const key=keyOf(activity)??null;
   if(asleep&&phase!=='sleep')return NONE;
-  if(unreachable){await emit('COMMANDER_UNAVAILABLE',{activity:key,phase,error:'commander_unavailable_for_run'});return NONE;}
   if(calls>=limits.max_calls||(limits.max_cost!==undefined&&reserved+limits.max_call_cost>limits.max_cost+Number.EPSILON)){
    await emit('COMMANDER_BUDGET_EXHAUSTED',{activity:key,phase});return NONE;
+  }
+  if(unreachable){
+   if(typeof transport?.reconcile!=='function'){await emit('COMMANDER_UNAVAILABLE',{activity:key,phase,error:'commander_unavailable_for_run'});return NONE;}
+   calls++;reserved+=limits.max_call_cost??0;
+   let timer,proof;
+   try{proof=await Promise.race([transport.reconcile({run_id}),new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('commander_reconcile_timeout')),limits.timeout_ms);})]);}
+   catch{proof=null;}finally{clearTimeout(timer);}
+   if(proof?.execution_stopped!==true){await emit('COMMANDER_UNAVAILABLE',{activity:key,phase,error:'commander_previous_turn_unknown'});return NONE;}
+   unreachable=false;await emit('COMMANDER_RECONNECTED',{activity:key,phase});
+   // 读回也消耗原预算，不因恢复多领一次新回合。
+   if(calls>=limits.max_calls||(limits.max_cost!==undefined&&reserved+limits.max_call_cost>limits.max_cost+Number.EPSILON)){await emit('COMMANDER_BUDGET_EXHAUSTED',{activity:key,phase});return NONE;}
   }
   const request={protocol:'runner-commander/v1',phase,run_id,activity:key,executor_kind,event,brief,rules,budget:limits,...(skill?{skill}:{})};
   await emit('COMMANDER_REQUEST',{activity:key,phase,request});
@@ -26,7 +36,7 @@ export function createCommanderBridge({transport,onEvent=async()=>{},run_id,brie
    reply=await Promise.race([transport(request),new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('commander_timeout')),limits.timeout_ms);})]);
    status='available';
   }catch(error){
-   status='unavailable';unreachable=true;
+   status='unavailable';unreachable=error?.commanderExecutionStopped!==true;
    const diagnostic=error?.commanderDiagnostic;
    const commander_diagnostic=diagnostic&&typeof diagnostic==='object'?Object.fromEntries(
     ['activity','phase','run_id','gateway_run_id','status','elapsed_ms','timeout_ms']

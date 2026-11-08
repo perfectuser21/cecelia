@@ -1,3 +1,4 @@
+import {startDurableCommonRunner} from '../durable/common-runner-durable.js';
 /** 旧workflow只保留调度身份；新执行由固定公共Runner活动链负责。 */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -66,7 +67,25 @@ export function createWorkflowCommonAdapter(pool,deps={}){
   });
   if(source.resources.device_serial){const gate=await(deps.lockGate??(t=>checkDeviceLockForManualDispatch(t,'common-runner')))({id:taskId,payload:{device_serial:source.resources.device_serial,device_ttl_minutes:Math.min(240,Math.ceil((source.timeout_s??2700)/60))}});if(!gate.pass)return {waiting:true,gate};}
   await(deps.setLease??setBrainLease)(pool,taskId,source.timeout_s??2700);
-  const result=await dispatcher.dispatch('start',source.run_id,{task_id:taskId,profile:source.profile,input:source.input,mode:'formal'});
+  const body={task_id:taskId,profile:source.profile,input:source.input,mode:'formal'};
+  if((deps.env??process.env).DBOS_DURABLE_ENABLED==='true'){
+   const durable=await(deps.durableStart??startDurableCommonRunner)({dispatch_scope:'workflow',run_id:source.run_id,body,deadline_ms:Date.now()+(source.timeout_s??2700)*1000,poll_interval_ms:1000});
+   const state=await durable.handle?.getStatus();
+   if(['SUCCESS','ERROR','CANCELLED'].includes(state?.status)){
+    const outcome=state.status==='SUCCESS'?await durable.handle.getResult():{status:'needs_review',reason:'common_runner_durable_workflow_error'};
+    if(outcome.status!=='completed'){
+     const reason=/^common_runner_[a-z0-9_]+$/.test(outcome.reason??'')?outcome.reason:'common_runner_durable_worker_review_required';
+     // 原dispatcher总在外部动作前写binding；终态且CAS确认无binding，才证明未启动。
+     const finished=await(deps.finalizeTask??finalizeTask)(pool,taskId,'failed',{onlyIfStatus:['in_progress'],
+      commonRunnerNoLaunchReconciliation:{runId:source.run_id,workflowId:durable.workflow_id,workflowStatus:state.status},
+      where:{sql:"claimed_by='common-runner' AND result->'workflow_common_runner'->>'run_id'=$1 AND result->'common_runner' IS NULL",params:[source.run_id]},
+      set:{error_message:reason},mergeResult:{actor:'common-runner-durable',summary:'持久协调器终结，未创建Worker绑定',evidence:[{run_id:source.run_id,durable_workflow_id:durable.workflow_id,outcome}],handoff:{summary:'未启动业务；保留原身份与终结证据',next_steps:[]}}});
+     if(finished.rowCount===1){await(deps.releaseLock??releaseDeviceLocksHeldBy)(taskId);return {dispatched:false,waiting:false,status:'needs_review',reason,durable_workflow_id:durable.workflow_id};}
+    }
+   }
+   return {dispatched:false,waiting:true,durable_workflow_id:durable.workflow_id};
+  }
+  const result=await dispatcher.dispatch('start',source.run_id,body);
   return {...result,dispatched:result.authenticated===true,waiting:result.authenticated!==true};
  },async inspect(task){
   const source=task.result?.workflow_common_runner;if(!source)fail('workflow_common_run_unknown');
@@ -83,5 +102,5 @@ export function createWorkflowCommonAdapter(pool,deps={}){
    if(transitioned&&result.receipt.execution_unknown!==true&&result.receipt.validation?.cleanup?.verdict==='pass')await(deps.releaseLock??releaseDeviceLocksHeldBy)(task.id);
   }
   return result;
- },taskPolicy};
+ },taskPolicy,runnerDispatcher:dispatcher};
 }
