@@ -1,11 +1,16 @@
 import {randomUUID,createHash,createHmac} from 'node:crypto';
-import {afterEach,beforeEach,expect,test} from 'vitest';
+import {afterEach,beforeEach,expect,test,vi} from 'vitest';
+import express from 'express';import request from 'supertest';
+const routeDb=vi.hoisted(()=>({pool:null}));
+vi.mock('../../db.js',()=>({default:{query:(...args)=>routeDb.pool.query(...args)}}));
+vi.mock('../../bypass-audit.js',()=>({noteDeviceLockAcquire:async()=>({bypass:false})}));
+vi.mock('../../websocket.js',()=>({default:{emit:vi.fn()},WS_EVENTS:{}}));
 import {deviceLockFixture} from '../helpers/headed-device-pg-fixture.js';
 import {acquireDeviceLock,releaseDeviceLocksHeldBy,sweepStaleDeviceLocks} from '../../device-lock-helpers.js';
 import {startRun,recordRunFromCallback} from '../../lib/task-run.js';
 import {createCommonRunnerDispatcher} from '../../lib/common-runner-dispatch.js';
 const PHONE='ANGYVB4311010223',token='synthetic-isolated-common-runner-token-123456';let fixture,pool;
-beforeEach(async()=>{fixture=await deviceLockFixture();pool=fixture.pool;await pool.query(`
+beforeEach(async()=>{fixture=await deviceLockFixture();pool=fixture.pool;routeDb.pool=pool;await pool.query(`
  ALTER TABLE tasks ADD COLUMN kind TEXT DEFAULT 'agent';
  ALTER TABLE task_runs ADD COLUMN IF NOT EXISTS context JSONB DEFAULT '{}',ADD COLUMN IF NOT EXISTS result JSONB,ADD COLUMN workflow_id UUID,ADD COLUMN updated_at TIMESTAMPTZ DEFAULT now(),ADD COLUMN error_message TEXT;
  CREATE UNIQUE INDEX fixture_run_id ON task_runs(run_id);
@@ -50,3 +55,11 @@ test('旧资源证明不能重复消费到同Task新设备锁代次',async()=>{c
 
 test('一次有效资源结算不能覆盖同Task另一次真实未结算运行',async()=>{const h=await holder(),newRun=randomUUID();await startRun({taskId:h.id,runId:newRun,source:'common-runner'},{pool});await expire();const settled=await settle({...h,runId:newRun});expect(settled.result.common_runner.resource_settlement).not.toBeNull();expect(await sweepStaleDeviceLocks(pool)).toBe(0);expect(await releaseDeviceLocksHeldBy(h.id,pool)).toBe(0);expect((await acquireDeviceLock(await task('queued'),PHONE,30,pool)).result).toBe('locked');});
 test('Worker自报cleanup pass但中央独立validation不匹配时没有释放证明',async()=>{const h=await holder(),cleanup={verdict:'pass',acceptance_ref:'check@1',evidence:[{actual:'claimed'}]};const settled=await settle(h,{status:'failed',executionState:'stopped',cleanupRequired:true,cleanup,spanCleanup:{...cleanup,evidence:[{actual:'different'}]}});expect(settled.result.common_runner.resource_settlement).toBeNull();expect(await releaseDeviceLocksHeldBy(h.id,pool)).toBe(0);});
+
+async function api(){const app=express();app.use(express.json());app.use('/api/brain',(await import('../../routes/brain-meta.js')).default);return request(app);}
+async function apiLease(){const id=await task();await acquireDeviceLock(id,PHONE,30,pool);const version=(await pool.query('SELECT xmin::text AS v FROM device_locks WHERE device_name=$1',[PHONE])).rows[0].v;return {id,version};}
+test('正式GET/acquire回执暴露同一真实xmin lease_version，不用丢微秒的时间戳',async()=>{const id=await task(),http=await api();const acquired=await http.post('/api/brain/device-locks/acquire').send({device_name:PHONE,locked_by:id});expect(acquired.status).toBe(200);expect(acquired.body.lock.lease_version).toMatch(/^[1-9][0-9]*$/);expect(acquired.body.lock.lease_version).toBe(acquired.body.lock.acquisition_version);const listed=await http.get('/api/brain/device-locks');expect(listed.body.locks.find(x=>x.device_name===PHONE).lease_version).toBe(acquired.body.lock.lease_version);});
+test('正式release旧代次即使owner相同也409，不能释放续租后的新lease',async()=>{const h=await apiLease(),http=await api();await acquireDeviceLock(h.id,PHONE,60,pool);const before=await row();const res=await http.post('/api/brain/device-locks/release').send({device_name:PHONE,locked_by:h.id,expected_lease_version:h.version});expect(res.status).toBe(409);expect(res.body).toMatchObject({success:false,code:'DEVICE_LOCK_LEASE_VERSION_MISMATCH'});expect(await row()).toEqual(before);});
+test('正式release fresh lease_version精确释放并返回free行新版本',async()=>{const h=await apiLease(),http=await api();const res=await http.post('/api/brain/device-locks/release').send({device_name:PHONE,locked_by:h.id,expected_lease_version:h.version});expect(res.status).toBe(200);expect(res.body).toMatchObject({success:true,released:{device_name:PHONE,locked_by:null,locked_at:null,expires_at:null}});expect(res.body.released.lease_version).toMatch(/^[1-9][0-9]*$/);expect(res.body.released.lease_version).not.toBe(h.version);expect((await row()).locked_by).toBeNull();});
+test('旧release caller不带version继续按原owner合同释放',async()=>{const h=await apiLease(),http=await api();const res=await http.post('/api/brain/device-locks/release').send({device_name:PHONE,locked_by:h.id});expect(res.status).toBe(200);expect(res.body.success).toBe(true);expect((await row()).locked_by).toBeNull();});
+test('非法lease_version在SQL变更前400，保留原锁完整行',async()=>{const h=await apiLease(),http=await api(),before=await row();for(const bad of ['',null,0,1,'0','01','-1','4294967296','1.5','1e3','1\n',' 1','999999999999999999999']){const res=await http.post('/api/brain/device-locks/release').send({device_name:PHONE,locked_by:h.id,expected_lease_version:bad});expect(res.status,JSON.stringify(bad)).toBe(400);expect(res.body.code).toBe('INVALID_DEVICE_LOCK_LEASE_VERSION');expect(await row()).toEqual(before);}});
