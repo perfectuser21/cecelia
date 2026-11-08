@@ -2408,6 +2408,11 @@
       "role": "verification"
     },
     {
+      "owner_path": "packages/brain/src/lib/leadgen-controller.js",
+      "path": "packages/brain/src/lib/__tests__/leadgen-controller-task-id.test.js",
+      "role": "verification"
+    },
+    {
       "owner_path": "packages/brain/src/routes/workflows.js",
       "path": "packages/brain/src/routes/workflows.test.js",
       "role": "verification"

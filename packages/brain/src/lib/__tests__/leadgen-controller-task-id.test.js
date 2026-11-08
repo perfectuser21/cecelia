@@ -28,7 +28,7 @@ const basePlan = {
 
 describe('Brain 获客控制器 Task 身份传递', () => {
   for (const workflowKey of ['douyin_video_discovery', 'douyin_video_processing', 'douyin_comment_scoring']) {
-    it(`${workflowKey} 正式子进程得到派发 Task UUID，旧 UUID 不得串入`, async () => {
+    it(`${workflowKey} 子进程任务身份符合各自合同`, async () => {
       const plan = workflowKey === 'douyin_comment_scoring' ? {
         ...basePlan, workflow_key: workflowKey, workflow_id: 'b1000000-0000-4000-8000-000000000103',
         business_run_id: `${workflowKey}-${basePlan.business_tag}__a1`, timeout_sec: 1800,

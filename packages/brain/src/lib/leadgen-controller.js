@@ -152,6 +152,7 @@ def worker(root,role):
         if p['machine']=='mmv' and p['workflow_key']!='douyin_comment_scoring':
             env['DOUYIN_ADB_BIN']='/opt/homebrew/bin/adb';env['DOUYIN_PHONE_REGISTRY']=str(H/'.config/openclaw'/p['registry'])
         env.update({k:str(v) for k,v in p['env'].items()});env['WF_RELEASE_ID']=p['release_id'];env['WF_RUN_MAX_SECONDS']=str(p['timeout_sec'])
+        if p['workflow_key'] in ('douyin_video_discovery','douyin_video_processing'):env.pop('BRAIN_TASK_ID',None);env['WF_BRAIN_TASK_ID']=p['task_id']
         if p['workflow_key']=='douyin_lead_outreach' and p.get('send_authorized') is True:env['LEADGEN_SEND']='1'
         # 可执行入口由部署合同固定，不接受调用者提供路径/任意命令。
         try:code=subprocess.call([str(H/'bin-harvest/leadgen-run.sh'),p['workflow_key'],p['profile'],p['serial'],p['line'],p['business_tag']],env=env)
