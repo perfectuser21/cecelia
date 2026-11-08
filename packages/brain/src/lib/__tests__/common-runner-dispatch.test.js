@@ -15,6 +15,12 @@ afterEach(async () => { await Promise.all(servers.splice(0).map(server => new Pr
 
 async function setup({ badSignature = false, wrongNonce = false, failStart = false, failStartOn, workerResponses = [], workerReceipt = {}, receiptForRequest, centralSpans = [], definition, profilesFile, reconciliation, tickEnabled, useDefaultStartGate = false, directoryEndpoint, savedCentralRun, finishAlready = false, taskPolicy, definitionAfterStart, registrationError, priorRun, grant, policyFile, machineId = 'node-a', profileSha = 'a'.repeat(64) } = {}) {
   const requests = [];let registered=false;
+  const candidate=policyFile?JSON.parse(fs.readFileSync(policyFile,'utf8')).profiles.demo:null;
+  const policyState=candidate?{
+    task:{id:candidate.evidence_task_id,status:'in_progress',result:{ship_candidate:{schema_version:1,stage:'candidate',task_id:candidate.evidence_task_id,repo:candidate.source_repo,head_sha:candidate.source_commit,actor:'unit-candidate',facts:['fixed source'],evidence:['unit:source-readback']}}},
+    release:{id:candidate.release_id,environment:'scratch',target:candidate.machine_id,payload:{components:[{kind:'repo',repo:candidate.source_repo,revision:candidate.source_commit}],verification:{status:'verified',ci_status:'verified'}}},
+  }:null;
+  if(policyState)policyState.observation={id:candidate.observation_id,release_id:candidate.release_id,payload:{environment:'scratch',target:candidate.machine_id,components:structuredClone(policyState.release.payload.components)},collector:'unit-collector',evidence_ref:'unit:current-observation'};
   const server = http.createServer(async (req, res) => {
     let text = ''; for await (const chunk of req) text += chunk;
     const input = JSON.parse(text); requests.push({ path: req.url, input });
@@ -30,6 +36,9 @@ async function setup({ badSignature = false, wrongNonce = false, failStart = fal
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve)); servers.push(server);
   const task = { id: taskId, status: 'in_progress', kind: 'agent', result: {}, payload: {} };
   const pool = { query: vi.fn(async (sql, params) => {
+    if (policyState && sql.includes('FROM release_versions')) return {rows:[policyState.release]};
+    if (policyState && sql.includes('FROM release_observations')) return {rows:[policyState.observation]};
+    if (policyState && sql.includes('SELECT id,status,result FROM tasks')) return {rows:[policyState.task]};
     if (sql.includes('FROM working_memory')) return { rows: [{ value_json: { enabled: tickEnabled } }] };
     if (sql.includes('SELECT') && sql.includes('FROM tasks')) {
       if ((sql.includes("status='in_progress'") && task.status !== 'in_progress') || (sql.includes("status='queued'") && task.status !== 'queued')) return { rows: [], rowCount: 0 };
@@ -62,7 +71,7 @@ async function setup({ badSignature = false, wrongNonce = false, failStart = fal
     ...(!useDefaultStartGate ? { assertCanStart: async () => {} } : {}),
     readReconciliation: reconcile, taskPolicy,
     ...(definition || definitionAfterStart ? { readDefinition } : {}) });
-  return { dispatcher, task, requests, authority, start, finish, pool, reconcile, readDefinition };
+  return { dispatcher, task, requests, authority, start, finish, pool, reconcile, readDefinition, policyState };
 }
 
 describe('common runner HTTP dispatch', () => {
@@ -456,4 +465,12 @@ describe('受保护Mac profile grant不可随同名配置漂移',()=>{
 it.each([{source_kind:'external'},{external_origin:'legacy-ack'},{task_run_id:uuid(99)}])('普通Task正式声明不得夹带运行来源或既有task_run %j',async extra=>{
  const f=ordinaryFormal(),x=await setup({definitionAfterStart:f.fixed});x.task.payload.workflow_definition={...f.approved,...extra};
  await expect(x.dispatcher.dispatch('start',runId,f.body)).rejects.toThrow('common_runner_formal_binding_required');expect(x.start).not.toHaveBeenCalled();expect(x.requests).toHaveLength(0);
+});
+it.each(['release-drift','evidence-withdrawn'])('新Mac grant启动重试须异步读回当前中央政策证据：%s',async change=>{
+ const p=policyFixture();try{
+  const x=await setup({machineId:'us-mac-m4',grant:p.grant,policyFile:p.file,workerResponses:[{status:'waiting_resources',execution_state:'not_started'}]}),body={task_id:taskId,profile:'demo',input:{},mode:'exploration'};
+  await x.dispatcher.dispatch('start',runId,body);
+  if(change==='release-drift')x.policyState.observation.payload.components=[];else x.policyState.task.status='cancelled';
+  await expect(x.dispatcher.dispatch('start',runId,body)).rejects.toThrow('execution_script_');expect(x.requests).toHaveLength(1);expect(x.start).toHaveBeenCalledTimes(1);
+ }finally{fs.rmSync(p.root,{recursive:true,force:true});}
 });
