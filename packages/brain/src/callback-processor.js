@@ -21,6 +21,7 @@ import { handleTaskFailure } from './quarantine.js';
 import { updateDesireFromTask } from './desire-feedback.js';
 import { resolveRelatedFailureMemories } from './routes/shared.js';
 import { normalizeCallbackStatus, extractPrNumber, maybeMarkCompletedNoPr, resolveCanonicalPrUrl, buildExecMetaJson, buildFailureFields, extractFindingsValue, buildLastRunResult } from './lib/callback-utils.js';
+import { suggestionPlanFailure, recordSuggestionPlanFailure, hasCommittedSuggestionPlanFailure, reconcileSuggestionPlanRun } from './lib/suggestion-plan-callback.js';
 import { REVIEW_TASK_TYPES } from './lib/review-task-types.js';
 import { serialUnlockNext, writeReviewResult, promoteRegressionOnHarnessMerged } from './lib/callback-postprocess.js';
 import { afterTerminalTransition } from './lib/task-terminal.js';
@@ -99,6 +100,9 @@ export async function processExecutionCallback(data, pool) {
     }
   }
 
+  const semanticFailure = suggestionPlanFailure(completionTask, result);
+  if (semanticFailure) newStatus = 'failed';
+
   // 2. Build update payload
   const lastRunResult = buildLastRunResult({ run_id, checkpoint_id, status, duration_ms, iterations, pr_url: resolvedPrUrl, result });
 
@@ -124,7 +128,9 @@ export async function processExecutionCallback(data, pool) {
 
     const isQuotaExhausted = newStatus === 'quota_exhausted';
     const isTerminal = TERMINAL_CALLBACK_STATUSES.has(newStatus);
-    const { errorMessage, blockedDetail } = buildFailureFields(newStatus, result, stderr, exit_code, task_id);
+    const { errorMessage, blockedDetail } = semanticFailure
+      ? { errorMessage: '建议所需信息不足', blockedDetail: JSON.stringify({ reason: 'suggestion_plan_insufficient_information', exit_code: exit_code ?? null }) }
+      : buildFailureFields(newStatus, result, stderr, exit_code, task_id);
     const execMetaJson = buildExecMetaJson(result);
 
     const updRes = await client.query(`
@@ -178,8 +184,20 @@ export async function processExecutionCallback(data, pool) {
         await recordVerifiedDecompRun(pool, runCallback);
       } else {
         await client.query('COMMIT');
+        transactionCommitted = true;
+        client.release();
+        clientReleased = true;
+      }
+      if (semanticFailure && await hasCommittedSuggestionPlanFailure(pool, task_id, run_id, status, semanticFailure.suggestionId)) {
+        await reconcileSuggestionPlanRun(pool, runCallback);
       }
       return { success: true, newStatus, applied: false, duplicate: true };
+    }
+
+    if (semanticFailure) {
+      const current = suggestionPlanFailure(updRes.rows?.[0], result);
+      if (current?.suggestionId !== semanticFailure.suggestionId) throw new Error('suggestion_plan_identity_changed');
+      await recordSuggestionPlanFailure(client, task_id, semanticFailure.suggestionId, run_id, status);
     }
 
     reviewTask = newStatus === 'completed' && updRes.rows?.[0]?.task_type === 'decomp_review';
@@ -231,8 +249,8 @@ export async function processExecutionCallback(data, pool) {
         inputSummary: null,
         outputSummary: findingsValue ? findingsValue.substring(0, 500) : null,
         findings: result && typeof result === 'object' ? result : {},
-        errorCode: isSuccessfulExecution ? null : 'execution_failed',
-        errorMessage: isSuccessfulExecution ? null : `Task execution failed with status: ${status}`,
+        errorCode: isSuccessfulExecution ? null : (semanticFailure ? 'suggestion_plan_insufficient_information' : 'execution_failed'),
+        errorMessage: isSuccessfulExecution ? null : (semanticFailure ? '建议所需信息不足' : `Task execution failed with status: ${status}`),
         retryCount: iterations || 0,
         artifacts: { pr_url: resolvedPrUrl || null },
         metadata: { checkpoint_id: checkpoint_id || null, original_status: status },
@@ -260,6 +278,12 @@ export async function processExecutionCallback(data, pool) {
   } catch { /* ignore */ }
 
   console.log(`[callback-processor] Task ${task_id} updated to ${newStatus} (atomic)`);
+
+  if (semanticFailure) {
+    await reconcileSuggestionPlanRun(pool, runCallback);
+    await afterTerminalTransition(pool, task_id, 'failed');
+    return { success: true, newStatus: 'failed', applied: true, reason: 'suggestion_plan_insufficient_information' };
+  }
 
   // quota_exhausted → billing pause
   if (newStatus === 'quota_exhausted') {

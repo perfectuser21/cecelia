@@ -42,6 +42,7 @@ import {
   handleEvaluateSessionCrash,
 } from '../execution.js';
 import { normalizeCallbackStatus, extractPrNumber, maybeMarkCompletedNoPr, resolveCanonicalPrUrl, firstValidGithubPrUrl, buildExecMetaJson, buildFailureFields, extractFindingsValue, buildLastRunResult } from '../lib/callback-utils.js';
+import { suggestionPlanFailure, recordSuggestionPlanFailure, hasCommittedSuggestionPlanFailure, reconcileSuggestionPlanRun } from '../lib/suggestion-plan-callback.js';
 import { runSyncCommand } from '../lib/safe-sync-command.js';
 import { recordRunFromCallback } from '../lib/task-run.js';
 import { isTransientClass } from '../lib/retry-policy.js';
@@ -202,6 +203,8 @@ router.post('/execution-callback', executionCallbackRateLimit, internalAuthOrLoo
       }
     }
 
+    const semanticFailure = suggestionPlanFailure(completionTask, result);
+
     // ── run 原语留痕：一次执行 = 一行 task_runs ──
     // 回执是脚本步 / 设备 / cecelia-run 的统一出口：补齐 run 行（幂等 upsert）并在终态回执时 finishRun
     // （exit code / 产物 / 终态）。fail-open——留痕失败绝不影响下面的回执主链；DB 才是真相源。
@@ -216,7 +219,7 @@ router.post('/execution-callback', executionCallbackRateLimit, internalAuthOrLoo
     };
     // 审核任务必须先确认审核事务提交，才允许留下成功的 run 终态。
     const deferReviewRun = completionTask?.task_type === 'decomp_review' && normalizeCallbackStatus(status) === 'completed';
-    if (!deferReviewRun) await recordRunFromCallback(runCallback);
+    if (!deferReviewRun && !semanticFailure) await recordRunFromCallback(runCallback);
 
     // ── 幂等性保护：run_id + status 组合去重 ──
     // 网络重试或外部系统重复调用时，同一 run_id + status 不应重复处理
@@ -242,6 +245,9 @@ router.post('/execution-callback', executionCallbackRateLimit, internalAuthOrLoo
         console.warn(`[execution-callback] 幂等检查失败（降级继续）: ${idempotencyErr.message}`);
       }
       if (duplicate) {
+        if (semanticFailure && await hasCommittedSuggestionPlanFailure(pool, task_id, run_id, status, semanticFailure.suggestionId)) {
+          await reconcileSuggestionPlanRun(pool, runCallback);
+        }
         if (deferReviewRun) {
           // 事务已提交但进程可能在 run 留痕前退出；仅同任务同 run 的终态允许补记。
           const taskState = await pool.query('SELECT status FROM tasks WHERE id = $1', [task_id]);
@@ -261,7 +267,7 @@ router.post('/execution-callback', executionCallbackRateLimit, internalAuthOrLoo
     }
 
     // 1. Determine new status
-    let newStatus = normalizeCallbackStatus(status);
+    let newStatus = semanticFailure ? 'failed' : normalizeCallbackStatus(status);
 
     // 权威 pr_url：callback/stdout > tasks.pr_url > payload.pr_url > payload.existing_pr_url
     const resolvedPrUrl = await resolveCanonicalPrUrl(pr_url, task_id, pool);
@@ -278,11 +284,15 @@ router.post('/execution-callback', executionCallbackRateLimit, internalAuthOrLoo
           `SELECT status FROM tasks WHERE id = $1 LIMIT 1`, [task_id]
         );
         if (taskRow.rows.length > 0 && TERMINAL_STATUSES.includes(taskRow.rows[0].status)) {
+          if (semanticFailure && await hasCommittedSuggestionPlanFailure(pool, task_id, run_id, status, semanticFailure.suggestionId)) {
+            await reconcileSuggestionPlanRun(pool, runCallback);
+          }
           console.log(`[execution-callback] 迟到回调跳过: task=${task_id} 已是终态 ${taskRow.rows[0].status}`);
           await finalizeCallbackQueue(true);
           return res.json({ success: true, skipped: true, reason: 'late_callback_terminal', current_status: taskRow.rows[0].status });
         }
       } catch (terminalGuardErr) {
+        if (semanticFailure) throw terminalGuardErr;
         console.warn(`[execution-callback] 终态检查失败（降级继续）: ${terminalGuardErr.message}`);
       }
     }
@@ -352,7 +362,9 @@ router.post('/execution-callback', executionCallbackRateLimit, internalAuthOrLoo
       const prNumber = extractPrNumber(resolvedPrUrl);
 
       const isQuotaExhausted = newStatus === 'quota_exhausted';
-      const { errorMessage, blockedDetail } = buildFailureFields(newStatus, result, stderr, exit_code, task_id);
+      const { errorMessage, blockedDetail } = semanticFailure
+        ? { errorMessage: '建议所需信息不足', blockedDetail: JSON.stringify({ reason: 'suggestion_plan_insufficient_information', exit_code: exit_code ?? null }) }
+        : buildFailureFields(newStatus, result, stderr, exit_code, task_id);
       const execMetaJson = buildExecMetaJson(result);
 
       const isTerminal = ['completed', 'completed_no_pr', 'failed', 'cancelled'].includes(newStatus);
@@ -388,6 +400,12 @@ router.post('/execution-callback', executionCallbackRateLimit, internalAuthOrLoo
         await client.query('COMMIT');
         await finalizeCallbackQueue(true);
         return res.json({ success: true, duplicate: true, reason: 'callback_compare_and_set_rejected' });
+      }
+
+      if (semanticFailure) {
+        const current = suggestionPlanFailure(updateResult.rows?.[0], result);
+        if (current?.suggestionId !== semanticFailure.suggestionId) throw new Error('suggestion_plan_identity_changed');
+        await recordSuggestionPlanFailure(client, task_id, semanticFailure.suggestionId, run_id, status);
       }
 
       // Log the execution result（带 WHERE NOT EXISTS 防重复写入）
@@ -434,8 +452,8 @@ router.post('/execution-callback', executionCallbackRateLimit, internalAuthOrLoo
           inputSummary: null,
           outputSummary: findingsValue ? findingsValue.substring(0, 500) : null,
           findings: result && typeof result === 'object' ? result : {},
-          errorCode: isSuccessfulExecution ? null : 'execution_failed',
-          errorMessage: isSuccessfulExecution ? null : `Task execution failed with status: ${status}`,
+          errorCode: isSuccessfulExecution ? null : (semanticFailure ? 'suggestion_plan_insufficient_information' : 'execution_failed'),
+          errorMessage: isSuccessfulExecution ? null : (semanticFailure ? '建议所需信息不足' : `Task execution failed with status: ${status}`),
           retryCount: iterations || 0,
           artifacts: { pr_url: resolvedPrUrl || null },
           metadata: {
@@ -467,6 +485,13 @@ router.post('/execution-callback', executionCallbackRateLimit, internalAuthOrLoo
     } catch { /* ignore if executor not available */ }
 
     console.log(`[execution-callback] Task ${task_id} updated to ${newStatus} (atomic)`);
+
+    if (semanticFailure) {
+      await reconcileSuggestionPlanRun(pool, runCallback);
+      await afterTerminalTransition(pool, task_id, 'failed');
+      await finalizeCallbackQueue(true);
+      return res.json({ success: true, task_id, new_status: 'failed', reason: 'suggestion_plan_insufficient_information' });
+    }
 
     // quota_exhausted → 设置全局 billing pause（阻止后续派发直到配额恢复）
     if (newStatus === 'quota_exhausted') {
