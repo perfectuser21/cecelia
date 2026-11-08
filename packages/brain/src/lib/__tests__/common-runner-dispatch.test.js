@@ -13,15 +13,15 @@ const token = 'contract-test-control-key-32-characters';
 const servers = [];
 afterEach(async () => { await Promise.all(servers.splice(0).map(server => new Promise(resolve => server.close(resolve)))); });
 
-async function setup({ badSignature = false, wrongNonce = false, failStart = false, failStartOn, workerResponses = [], workerReceipt = {}, receiptForRequest, centralSpans = [], definition, profilesFile, reconciliation, tickEnabled, useDefaultStartGate = false, directoryEndpoint, savedCentralRun, finishAlready = false, taskPolicy } = {}) {
-  const requests = [];
+async function setup({ badSignature = false, wrongNonce = false, failStart = false, failStartOn, workerResponses = [], workerReceipt = {}, receiptForRequest, centralSpans = [], definition, profilesFile, reconciliation, tickEnabled, useDefaultStartGate = false, directoryEndpoint, savedCentralRun, finishAlready = false, taskPolicy, definitionAfterStart, registrationError, priorRun, grant, policyFile, machineId = 'node-a', profileSha = 'a'.repeat(64) } = {}) {
+  const requests = [];let registered=false;
   const server = http.createServer(async (req, res) => {
     let text = ''; for await (const chunk of req) text += chunk;
     const input = JSON.parse(text); requests.push({ path: req.url, input });
     const starts = requests.filter(r => r.path.endsWith('/start')).length;
     if ((failStart || starts === failStartOn) && req.url.endsWith('/start')) { req.socket.destroy(); return; }
-    const receipt = { run_id: input.run_id, task_id: input.task_id, machine_id: 'node-a',
-      request_nonce: wrongNonce ? 'stale' : input.request_nonce, status: 'running', profile_sha256: 'a'.repeat(64), mode: input.mode ?? task.result?.common_runner?.mode ?? 'exploration', ...workerReceipt, ...(workerResponses.shift() ?? {}),
+    const receipt = { run_id: input.run_id, task_id: input.task_id, machine_id: machineId,
+      request_nonce: wrongNonce ? 'stale' : input.request_nonce, status: 'running', profile_sha256: profileSha, mode: input.mode ?? task.result?.common_runner?.mode ?? 'exploration', ...workerReceipt, ...(workerResponses.shift() ?? {}),
       ...(await receiptForRequest?.({ path: req.url, input }) ?? {}) };
     res.setHeader('content-type', 'application/json');
     res.end(JSON.stringify({ receipt, signature: badSignature ? '0'.repeat(64)
@@ -37,7 +37,8 @@ async function setup({ badSignature = false, wrongNonce = false, failStart = fal
     }
     if (sql.includes('FROM spans')) return { rows: centralSpans, rowCount: centralSpans.length };
     if (savedCentralRun && sql.includes('SELECT status,task_id,ended_at,result FROM task_runs')) return {rows:[savedCentralRun],rowCount:1};
-    if (definition && sql.includes('FROM task_runs')) return { rows: [{ task_id: taskId, status: 'running', ended_at: null }], rowCount: 1 };
+    if (priorRun && sql.includes('FROM task_runs')) return {rows:[priorRun],rowCount:1};
+    if ((definition || registered) && sql.includes('FROM task_runs')) return { rows: [{ task_id: taskId, status: 'running', ended_at: null }], rowCount: 1 };
     if (sql.includes('UPDATE tasks')) {
       if (sql.includes('SET claimed_by')) task.claimed_by = 'common-runner';
       else task.result = { ...task.result, ...JSON.parse(params[1]) };
@@ -46,21 +47,22 @@ async function setup({ badSignature = false, wrongNonce = false, failStart = fal
     }
     return { rows: [], rowCount: 1 };
   }) };
-  const authority = vi.fn(async (_db, input, operation) => operation({ executionVersionId: 'version-a', grantId: 'grant-a',
-    node: { canonical_id: 'node-a', endpoints: { worker: directoryEndpoint ?? `http://127.0.0.1:${server.address().port}` } } }, pool));
-  const start = vi.fn(async () => ({ id: 'ledger-row', run_id: runId }));
+  const authority = vi.fn(async (_db, input, operation) => operation({ executionVersionId: 'version-a', grantId: 'grant-a', grant,
+    node: { canonical_id: machineId, endpoints: { worker: directoryEndpoint ?? `http://127.0.0.1:${server.address().port}` } } }, pool));
+  const start = vi.fn(async input => {if(input.definition){if(registrationError)throw registrationError;registered=true;}return { id: 'ledger-row', run_id: runId };});
+  const readDefinition=vi.fn(async()=>definition??(registered?definitionAfterStart:null));
   const finish = vi.fn(async () => ({ updated: !finishAlready }));
   const reconcile = vi.fn(async () => reconciliation ?? { business_outcome: 'unknown', evidence_status: 'incomplete' });
   const dispatcher = createCommonRunnerDispatcher({ pool, token,
     allowLoopbackForTests: true,
-    env: { NODE_ENV: 'production', ...(profilesFile ? { COMMON_RUNNER_PROFILES_FILE: profilesFile } : {}) },
-    ...(!profilesFile ? { profiles: { demo: { machine_id: 'node-a', profile_sha256: 'a'.repeat(64) } } } : {}),
-    authorizeExecution: authority, resolveBoundNode: async () => ({ canonical_id: 'node-a', endpoints: { worker: directoryEndpoint ?? `http://127.0.0.1:${server.address().port}` } }),
+    env: { NODE_ENV: 'production', ...(profilesFile ? { COMMON_RUNNER_PROFILES_FILE: profilesFile } : {}), ...(policyFile ? { EXECUTION_MANAGED_SCRIPT_CANDIDATES_FILE: policyFile } : {}) },
+    ...(!profilesFile ? { profiles: { demo: { machine_id: machineId, profile_sha256: profileSha } } } : {}),
+    authorizeExecution: authority, resolveBoundNode: async () => ({ canonical_id: machineId, endpoints: { worker: directoryEndpoint ?? `http://127.0.0.1:${server.address().port}` } }),
     executionDirectory: { current: () => ({ version: 'snapshot-a' }) }, startRun: start, finishRun: finish,
     ...(!useDefaultStartGate ? { assertCanStart: async () => {} } : {}),
     readReconciliation: reconcile, taskPolicy,
-    ...(definition ? { readDefinition: async () => definition } : {}) });
-  return { dispatcher, task, requests, authority, start, finish, pool, reconcile };
+    ...(definition || definitionAfterStart ? { readDefinition } : {}) });
+  return { dispatcher, task, requests, authority, start, finish, pool, reconcile, readDefinition };
 }
 
 describe('common runner HTTP dispatch', () => {
@@ -405,4 +407,53 @@ describe('central unknown execution veto',()=>{
   const result=await x.dispatcher.dispatch('start',runId,{task_id:taskId,profile:'demo',input:{},mode:'exploration'});
   expect(result.central_run).toEqual({status:'running',recording_status:'pending'});expect(x.finish).not.toHaveBeenCalled();expect(x.task.status).toBe('in_progress');
  });
+});
+const uuid=n=>`00000000-0000-4000-8000-${String(n).padStart(12,'0')}`;
+function ordinaryFormal(){
+ const approved={release_id:uuid(11),observation_id:uuid(12),workflow_id:uuid(3),workflow_definition_version_id:uuid(4),snapshot_sha256:'b'.repeat(64),runtime_snapshot_sha256:'c'.repeat(64),expected_path:[{reference_id:uuid(5),activity_id:uuid(6),activity_definition_version_id:uuid(7)}]};
+ const fixed={binding:{id:uuid(1),run_id:runId,task_run_id:uuid(2),workflow_id:uuid(3),workflow_definition_version_id:uuid(4),attempt_key:taskId+':1',source_kind:'internal'},release:{target:'node-a'},workflow:{payload:{activities:[{slot_key:'demo',reference_id:uuid(5),activity_id:uuid(6),activity_version_id:uuid(7)}]}},activities:[{id:uuid(7),activity_id:uuid(6)}]};
+ return {approved,fixed,body:{task_id:taskId,profile:'demo',input:{},mode:'formal'}};
+}
+describe('普通agent正式入口原事务内部绑定',()=>{
+ it('只从Task固定声明建立真实internal binding，再独立读回并幂等发起原run',async()=>{
+  const f=ordinaryFormal(),x=await setup({definitionAfterStart:f.fixed});x.task.payload.workflow_definition=f.approved;
+  expect((await x.dispatcher.dispatch('start',runId,f.body)).authenticated).toBe(true);await x.dispatcher.dispatch('start',runId,f.body);
+  expect(x.start).toHaveBeenCalledTimes(1);expect(x.start).toHaveBeenCalledWith(expect.objectContaining({taskId,runId,source:'common-runner',definition:{...f.approved,actor:'common-runner',attempt_key:taskId+':1'}}),expect.objectContaining({pool:x.pool,transactionClient:x.pool}));
+  expect(x.readDefinition).toHaveBeenCalledTimes(2);expect(x.requests.map(r=>r.path.split('/').at(-1))).toEqual(['start','inspect']);expect(x.requests[0].input.run_binding).toEqual(commonRunnerFormalBinding(f.fixed,runId));
+  expect(x.authority.mock.invocationCallOrder[0]).toBeLessThan(x.start.mock.invocationCallOrder[0]);
+ });
+ it('保留Task原attempt_key，定义校验失败不产生reservation或Worker调用',async()=>{
+  const f=ordinaryFormal(),error=Object.assign(Error('invalid-frozen-definition'),{status:422});f.approved.attempt_key='original-attempt';const x=await setup({definitionAfterStart:f.fixed,registrationError:error});x.task.payload.workflow_definition=f.approved;
+  await expect(x.dispatcher.dispatch('start',runId,f.body)).rejects.toThrow('invalid-frozen-definition');expect(x.start.mock.calls[0][0].definition.attempt_key).toBe('original-attempt');expect(x.requests).toHaveLength(0);expect(x.task.result.common_runner).toBeUndefined();
+ });
+ it('缺既有binding的workflow来源不能借普通agent自动绑定路径起跑',async()=>{
+  const f=ordinaryFormal(),x=await setup({definitionAfterStart:f.fixed,taskPolicy:async()=>true});x.task.kind='workflow';x.task.task_type='workflow_dispatch';x.task.payload.workflow_definition=f.approved;
+  await expect(x.dispatcher.dispatch('start',runId,f.body)).rejects.toThrow('common_runner_formal_binding_required');expect(x.start).not.toHaveBeenCalled();expect(x.requests).toHaveLength(0);
+ });
+ it('旧run归属冲突在任何固定定义写入和Worker调用前拒绝',async()=>{
+  const f=ordinaryFormal(),x=await setup({definitionAfterStart:f.fixed,priorRun:{task_id:uuid(99),status:'running',ended_at:null}});x.task.payload.workflow_definition=f.approved;
+  await expect(x.dispatcher.dispatch('start',runId,f.body)).rejects.toThrow('common_runner_identity_conflict');expect(x.start).not.toHaveBeenCalled();expect(x.requests).toHaveLength(0);
+ });
+ it('grant拒绝优先于任何普通formal定义绑定和Worker调用',async()=>{
+  const f=ordinaryFormal(),x=await setup({definitionAfterStart:f.fixed});x.task.payload.workflow_definition=f.approved;x.authority.mockRejectedValue(Error('execution_grant_denied'));
+  await expect(x.dispatcher.dispatch('start',runId,f.body)).rejects.toThrow('execution_grant_denied');expect(x.start).not.toHaveBeenCalled();expect(x.requests).toHaveLength(0);
+ });
+});
+function policyFixture(){
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'common-grant-')),file=path.join(root,'policy.json');
+ const c={machine_id:'us-mac-m4',machine_registry_id:'ed3555dc-4777-446c-bdf0-d928d6a08ef1',profile_sha256:'a'.repeat(64),source_repo:'owner/repo',source_commit:'b'.repeat(40),release_id:uuid(21),observation_id:uuid(22),evidence_task_id:taskId,expires_at:new Date(Date.now()+3600000).toISOString()};
+ const write=()=>fs.writeFileSync(file,JSON.stringify({schema_version:1,profiles:{demo:c}}),{mode:0o600});write();
+ const grant={provenance:'mac_managed_profile/v1:'+createHash('sha256').update(JSON.stringify(c)).digest('hex'),profile_id:'demo',node_version_id:'version-a',state:'active',account_id:'',repo_scope:[],evidence_task_id:taskId,expires_at:c.expires_at};return {root,file,c,grant,write};
+}
+describe('受保护Mac profile grant不可随同名配置漂移',()=>{
+ it('同名profile SHA更换不能复用旧政策grant触发任何startRun或Worker',async()=>{
+  const p=policyFixture();try{const x=await setup({machineId:'us-mac-m4',profileSha:'c'.repeat(64),grant:p.grant,policyFile:p.file});await expect(x.dispatcher.dispatch('start',runId,{task_id:taskId,profile:'demo',input:{},mode:'exploration'})).rejects.toThrow('execution_script_grant_policy_mismatch');expect(x.start).not.toHaveBeenCalled();expect(x.requests).toHaveLength(0);}finally{fs.rmSync(p.root,{recursive:true,force:true});}
+ });
+ it('已签未启动回执重试必须重新核政策，撤销不能靠旧reservation再次start',async()=>{
+  const p=policyFixture();try{const x=await setup({machineId:'us-mac-m4',grant:p.grant,policyFile:p.file,workerResponses:[{status:'waiting_resources',execution_state:'not_started'}]});const body={task_id:taskId,profile:'demo',input:{},mode:'exploration'};await x.dispatcher.dispatch('start',runId,body);p.c.source_commit='c'.repeat(40);p.write();await expect(x.dispatcher.dispatch('start',runId,body)).rejects.toThrow('execution_script_grant_policy_mismatch');expect(x.requests).toHaveLength(1);expect(x.start).toHaveBeenCalledTimes(1);}finally{fs.rmSync(p.root,{recursive:true,force:true});}
+ });
+});
+it.each([{source_kind:'external'},{external_origin:'legacy-ack'},{task_run_id:uuid(99)}])('普通Task正式声明不得夹带运行来源或既有task_run %j',async extra=>{
+ const f=ordinaryFormal(),x=await setup({definitionAfterStart:f.fixed});x.task.payload.workflow_definition={...f.approved,...extra};
+ await expect(x.dispatcher.dispatch('start',runId,f.body)).rejects.toThrow('common_runner_formal_binding_required');expect(x.start).not.toHaveBeenCalled();expect(x.requests).toHaveLength(0);
 });
