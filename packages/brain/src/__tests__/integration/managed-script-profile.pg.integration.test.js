@@ -1,6 +1,6 @@
 import {beforeAll,afterAll,beforeEach,it,expect} from 'vitest';
 import pg from 'pg';
-import {randomUUID} from 'node:crypto';
+import {randomUUID,createHmac} from 'node:crypto';
 import {readFileSync} from 'node:fs';
 import {createManagedScriptProfileStore} from '../../execution-directory/managed-script-profile.js';
 import {directory} from '../../execution-directory/directory.js';
@@ -12,7 +12,8 @@ const schema='script_profile_'+randomUUID().replaceAll('-',''),admin=new pg.Clie
 const registry='ed3555dc-4777-446c-bdf0-d928d6a08ef1',version=randomUUID(),taskId=randomUUID(),releaseId=randomUUID(),observationId=randomUUID(),boot=randomUUID(),hash='a'.repeat(64),head='b'.repeat(40),profile='leadgen-candidate';
 const input=()=>({expected_current_version_id:version,expected_config_hash:hash,expected_worker_boot_id:boot,expected_worker_config_digest:hash});
 let c,reads;
-const client={catalog:async()=>{reads++;return {boot_id:boot,config_digest:hash,profile_sha256:hash};}};
+const catalogToken='scratch-only-worker-transport-key';
+const client={catalog:async()=>{reads++;const receipt={boot_id:boot,config_digest:hash,profile_sha256:hash};return {...receipt,receipt,signature:createHmac('sha256',catalogToken).update(JSON.stringify(receipt)).digest('hex')};}};
 const store=(extra={})=>createManagedScriptProfileStore({pool,readCandidates:()=>({[profile]:c}),client,...extra});
 beforeAll(async()=>{await admin.connect();await admin.query(`CREATE SCHEMA ${schema}`);
  await pool.query(`CREATE TABLE system_registry(id uuid PRIMARY KEY,type text,name text,status text,metadata jsonb DEFAULT '{}');
@@ -51,6 +52,7 @@ it('真实PG同机锁串行，active精确grant与真实任务审计同事务追
  expect(a.grant_id).toBe(b.grant_id);expect([a.already_active,b.already_active].sort()).toEqual([false,true]);expect(reads).toBe(4);
  const grants=(await pool.query('SELECT * FROM execution_grants')).rows;expect(grants).toHaveLength(1);expect(grants[0]).toMatchObject({state:'active',profile_id:profile,evidence_task_id:taskId,node_version_id:version});
  const task=(await pool.query('SELECT status,result FROM tasks WHERE id=$1',[taskId])).rows[0];expect(task.status).toBe('in_progress');expect(task.result.execution_script_profile_operations).toHaveLength(1);
+ for(const catalog of task.result.execution_script_profile_operations[0].worker_catalog){expect(JSON.parse(catalog.signed_payload)).toEqual(catalog.receipt);expect(createHmac('sha256',catalogToken).update(catalog.signed_payload).digest('hex')).toBe(catalog.signature);}
  expect(directory.matches({machineId:'us-mac-m4',surface:'managed_script',provider:'script',profileId:profile})).not.toBeNull();
  expect((await pool.query('SELECT count(*) FROM execution_node_versions')).rows[0].count).toBe('1');
 });

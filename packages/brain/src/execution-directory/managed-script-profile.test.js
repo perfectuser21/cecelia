@@ -13,18 +13,22 @@ const roots=[];afterEach(()=>roots.splice(0).forEach(r=>fs.rmSync(r,{recursive:t
 const token='private-worker-transport-key-'.repeat(3),hash='a'.repeat(64),boot=randomUUID();
 const candidate=()=>({machine_id:'us-mac-m4',machine_registry_id:'ed3555dc-4777-446c-bdf0-d928d6a08ef1',profile_sha256:hash,source_repo:'perfectuser21/zenithjoy',source_commit:'b'.repeat(40),release_id:randomUUID(),observation_id:randomUUID(),evidence_task_id:randomUUID(),expires_at:new Date(Date.now()+3600000).toISOString()});
 const sign=receipt=>({receipt,signature:createHmac('sha256',token).update(JSON.stringify(receipt)).digest('hex')});
-it('新Mac grant在每次start前必须与原政策和路由digest闭合，旧grant保持既有行为',()=>{
+it('新Mac grant在每次start前必须与原政策和路由digest闭合，旧grant保持既有行为',async()=>{
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'script-grant-'));roots.push(root);const file=path.join(root,'candidates.json'),c=candidate(),version=randomUUID();
  fs.writeFileSync(file,JSON.stringify({schema_version:1,profiles:{'leadgen-candidate':c}}),{mode:0o600});
  const grant={provenance:'mac_managed_profile/v1:'+hashConfig(c),state:'active',profile_id:'leadgen-candidate',account_id:'',repo_scope:[],evidence_task_id:c.evidence_task_id,expires_at:c.expires_at,node_version_id:version};
- const identity={grant,profileId:'leadgen-candidate',profileSha256:hash,machineId:'us-mac-m4',executionVersionId:version},env={EXECUTION_MANAGED_SCRIPT_CANDIDATES_FILE:file};
- expect(assertManagedScriptProfileGrant(identity,env)).toEqual(c);
- expect(assertManagedScriptProfileGrant({...identity,grant:{...grant,expires_at:new Date(c.expires_at)}},env)).toEqual(c);
- for(const change of [{profileSha256:'c'.repeat(64)},{machineId:'mmv'},{executionVersionId:randomUUID()},{grant:{...grant,state:'revoked'}}])expect(()=>assertManagedScriptProfileGrant({...identity,...change},env)).toThrow('execution_script_grant_policy');
- expect(()=>assertManagedScriptProfileGrant(identity,{})).toThrow();
+ const components=[{kind:'repo',repo:c.source_repo,revision:c.source_commit}];
+ const db={query:async(sql)=>({rows:sql.includes('FROM tasks')?[{id:c.evidence_task_id,status:'in_progress',result:{ship_candidate:{schema_version:1,stage:'candidate',task_id:c.evidence_task_id,repo:c.source_repo,head_sha:c.source_commit,actor:'candidate',facts:['source'],evidence:['owned:source']}}}]
+  :sql.includes('FROM release_versions')?[{id:c.release_id,environment:'test',target:c.machine_id,payload:{components,verification:{status:'verified',ci_status:'verified'}}}]
+   :sql.includes('FROM release_observations')?[{id:c.observation_id,release_id:c.release_id,payload:{environment:'test',target:c.machine_id,components},collector:'owned',evidence_ref:'owned:observation'}]:[]})};
+ const identity={db,grant,profileId:'leadgen-candidate',profileSha256:hash,machineId:'us-mac-m4',executionVersionId:version},env={EXECUTION_MANAGED_SCRIPT_CANDIDATES_FILE:file};
+ expect(await assertManagedScriptProfileGrant(identity,env)).toEqual(c);
+ expect(await assertManagedScriptProfileGrant({...identity,grant:{...grant,expires_at:new Date(c.expires_at)}},env)).toEqual(c);
+ for(const change of [{profileSha256:'c'.repeat(64)},{machineId:'mmv'},{executionVersionId:randomUUID()},{grant:{...grant,state:'revoked'}}])await expect(assertManagedScriptProfileGrant({...identity,...change},env)).rejects.toThrow('execution_script_grant_policy');
+ await expect(assertManagedScriptProfileGrant(identity,{})).rejects.toThrow();
  fs.writeFileSync(file,JSON.stringify({schema_version:1,profiles:{'leadgen-candidate':{...c,source_commit:'c'.repeat(40)}}}));
- expect(()=>assertManagedScriptProfileGrant(identity,env)).toThrow('execution_script_grant_policy');
- expect(assertManagedScriptProfileGrant({grant:{provenance:'legacy_policy'}},{})).toBeNull();
+ await expect(assertManagedScriptProfileGrant(identity,env)).rejects.toThrow('execution_script_grant_policy');
+ expect(await assertManagedScriptProfileGrant({grant:{provenance:'legacy_policy'}},{})).toBeNull();
 });
 it('真实PG回归必须进入PR的实际Brain integration命令',async()=>{
  const {commandsFor}=await import('../../../../scripts/ci/run-basic-check.mjs');
