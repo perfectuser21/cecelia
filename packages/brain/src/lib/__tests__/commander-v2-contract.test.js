@@ -40,3 +40,15 @@ it('输入和输出schema在首个错误即拒绝，不收集攻击者扩展的�
  expect(outputError.message).toContain('field_0');expect(outputError.message).not.toContain('field_1');
  expect(outputError.message.length).toBeLessThan(200);
 });
+it.each(['100.79.41.61:5555','192.168.0.1:1','127.0.0.1:65535','ANGYVB4402004137'])('device_serial接受规范USB或IPv4 TCP身份：%s',device_serial=>{
+ const resources={device_serial,machine:'xian-m4',profile:'fixed',account_ref:'原账号'};
+ expect(()=>makeEnvelope(task,{}, {...contract,resources},null)).not.toThrow();
+});
+it.each(['1.2.3.4:0','1.2.3.4:65536','1.2.3.4:05555','01.2.3.4:5555','256.2.3.4:5555','host.example:5555','[::1]:5555','1.2.3.4:5555/path','1.2.3.4:5555;touch x'])('device_serial拒绝非规范TCP身份：%s',device_serial=>{
+ const resources={device_serial,machine:'xian-m4',profile:'fixed',account_ref:'原账号'};
+ expect(()=>makeEnvelope(task,{}, {...contract,resources},null)).toThrow('device_serial');
+});
+it.each(['machine','profile','account_ref'])('TCP serial支持不放宽其他资源字段：%s',field=>{
+ const resources={device_serial:'100.79.41.61:5555',machine:'xian-m4',profile:'fixed',account_ref:'原账号',[field]:'other:5555'};
+ expect(()=>makeEnvelope(task,{}, {...contract,resources},null)).toThrow();
+});
