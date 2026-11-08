@@ -105,3 +105,15 @@ test('domain已接受运行重启仍隔离原identity，不新建工厂或延长
  const restarted=createWorkflowRunner({stateRoot,machineId:'fixture',profiles:{fixed:f.profile},assertCanLaunch:()=>{},assertLocalResources:async()=>{}});
  try{expect((await restarted.start(f.id)).status).toBe('unknown');expect(fs.existsSync(path.join(f.root,'factories'))).toBe(false);expect(JSON.parse(fs.readFileSync(path.join(stateRoot,f.id.run_id+'.json'),'utf8')).domain_started_at_ms).toBe(123);expect((await restarted.maintenance()).pending).toBe(1);}finally{restarted.close();}
 }));
+test('cleanup绝对截止已过时连同步close也不得获得新的执行窗口',()=>withFixture({},async f=>{
+ const {loadWorkflowDomain}=createRequire(import.meta.url)('./workflow-domain.cjs');
+ const startedAt=Date.now()-10000;
+ await expect(loadWorkflowDomain({profile:f.profile,identity:f.id,runDirectory:path.join(f.root,'run'),controller:new AbortController(),startedAt,recordEvidence:async()=>{}})).rejects.toThrow('timeout');
+ expect(fs.existsSync(path.join(f.root,'factories'))).toBe(false);
+}));
+test('domain恢复原执行外部效果未知时仍要求固定readback_only声明',()=>withFixture({},async f=>{
+ changeSource(f,s=>s.replace('return {\n   prepareInput',"return {\n   recoverActivity:async()=>{fs.writeFileSync(path.join(profile.cwd,'recovery-effect'),'bad');return {};},\n   prepareInput"));
+ const {loadWorkflowDomain}=createRequire(import.meta.url)('./workflow-domain.cjs');
+ const domain=await loadWorkflowDomain({profile:f.profile,identity:f.id,runDirectory:path.join(f.root,'run'),controller:new AbortController(),startedAt:Date.now(),recordEvidence:async()=>{}});
+ try{await expect(domain.recoverActivity(f.profile.contract.activities[0],f.id.input,{failure:{external_effect:'unknown'}})).rejects.toThrow('readback_required');expect(fs.existsSync(path.join(f.root,'recovery-effect'))).toBe(false);}finally{await domain.close();}
+}));
