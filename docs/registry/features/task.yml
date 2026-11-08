@@ -147,7 +147,6 @@ features:
         - packages/brain/src/__tests__/task-router-decomp-review.test.js
         - packages/brain/src/__tests__/task-router-diagnose.test.js
         - packages/brain/src/__tests__/task-router-domain.test.js
-        - packages/brain/src/__tests__/task-router-failover.test.js
         - packages/brain/src/__tests__/task-router-initiative.test.js
         - packages/brain/src/__tests__/task-router-intent-cto.test.js
         - packages/brain/src/__tests__/task-router-strategy-session.test.js
@@ -177,7 +176,6 @@ features:
             - packages/brain/src/__tests__/task-router-decomp-review.test.js
             - packages/brain/src/__tests__/task-router-diagnose.test.js
             - packages/brain/src/__tests__/task-router-domain.test.js
-            - packages/brain/src/__tests__/task-router-failover.test.js
             - packages/brain/src/__tests__/task-router-initiative.test.js
             - packages/brain/src/__tests__/task-router-intent-cto.test.js
             - packages/brain/src/__tests__/task-router-strategy-session.test.js
@@ -244,7 +242,6 @@ features:
         - packages/brain/src/__tests__/callback-quota-exhausted.test.js
         - packages/brain/src/__tests__/effectiveresult-db-fallback.test.js
         - packages/brain/src/__tests__/execution-callback-no-diagnostic.test.js
-        - packages/brain/src/__tests__/execution-logs-routes.test.js
         - packages/brain/src/__tests__/execution-status.test.js
         - packages/brain/src/__tests__/execution-strategy-session-kr-link.test.js
         - packages/brain/src/__tests__/failure-classification.test.js
@@ -276,7 +273,6 @@ features:
             - packages/brain/src/__tests__/callback-quota-exhausted.test.js
             - packages/brain/src/__tests__/effectiveresult-db-fallback.test.js
             - packages/brain/src/__tests__/execution-callback-no-diagnostic.test.js
-            - packages/brain/src/__tests__/execution-logs-routes.test.js
             - packages/brain/src/__tests__/execution-status.test.js
             - packages/brain/src/__tests__/execution-strategy-session-kr-link.test.js
             - packages/brain/src/__tests__/failure-classification.test.js
@@ -316,7 +312,6 @@ features:
         - packages/brain/src/__tests__/quarantine-classification.test.js
         - packages/brain/src/__tests__/quarantine-learning-integration.test.js
         - packages/brain/src/__tests__/quarantine-release.test.js
-        - packages/brain/src/__tests__/quarantine-systemic.test.js
         - packages/brain/src/__tests__/quarantine.test.js
         - packages/brain/src/__tests__/quota-exhausted.test.js
       integration: []
@@ -335,7 +330,6 @@ features:
             - packages/brain/src/__tests__/quarantine-classification.test.js
             - packages/brain/src/__tests__/quarantine-learning-integration.test.js
             - packages/brain/src/__tests__/quarantine-release.test.js
-            - packages/brain/src/__tests__/quarantine-systemic.test.js
             - packages/brain/src/__tests__/quarantine.test.js
             - packages/brain/src/__tests__/quota-exhausted.test.js
           integration: []
@@ -502,7 +496,6 @@ features:
         - packages/brain/src/__tests__/executor-input-validation.test.js
         - packages/brain/src/__tests__/executor-local-account-select.test.js
         - packages/brain/src/__tests__/executor-local-codex-exec.test.js
-        - packages/brain/src/__tests__/executor-max-seats-override.test.js
         - packages/brain/src/__tests__/executor-model-select.test.js
         - packages/brain/src/__tests__/executor-okr-project-layer.test.js
         - packages/brain/src/__tests__/executor-payload-routing.test.js
@@ -512,12 +505,9 @@ features:
         - packages/brain/src/__tests__/executor-startup-sync.test.js
         - packages/brain/src/__tests__/executor-strategy-session.test.js
         - packages/brain/src/__tests__/executor-system-context.test.js
-        - packages/brain/src/__tests__/executor-task-type-match.test.js
         - packages/brain/src/__tests__/executor-task-type-null-fix.test.js
-        - packages/brain/src/__tests__/exploratory-prompt.test.js
         - packages/brain/src/__tests__/fleet-dynamic-routing.test.js
         - packages/brain/src/__tests__/fleet-resource-cache.test.js
-        - packages/brain/src/__tests__/llm-account-deficit.test.js
         - packages/brain/src/__tests__/llm-caller-account-selection.test.js
         - packages/brain/src/__tests__/llm-caller-stream.test.js
         - packages/brain/src/__tests__/llm-caller.test.js
@@ -579,7 +569,6 @@ features:
             - packages/brain/src/__tests__/executor-input-validation.test.js
             - packages/brain/src/__tests__/executor-local-account-select.test.js
             - packages/brain/src/__tests__/executor-local-codex-exec.test.js
-            - packages/brain/src/__tests__/executor-max-seats-override.test.js
             - packages/brain/src/__tests__/executor-model-select.test.js
             - packages/brain/src/__tests__/executor-okr-project-layer.test.js
             - packages/brain/src/__tests__/executor-payload-routing.test.js
@@ -589,12 +578,9 @@ features:
                 - packages/brain/src/__tests__/executor-startup-sync.test.js
             - packages/brain/src/__tests__/executor-strategy-session.test.js
             - packages/brain/src/__tests__/executor-system-context.test.js
-            - packages/brain/src/__tests__/executor-task-type-match.test.js
             - packages/brain/src/__tests__/executor-task-type-null-fix.test.js
-            - packages/brain/src/__tests__/exploratory-prompt.test.js
             - packages/brain/src/__tests__/fleet-dynamic-routing.test.js
             - packages/brain/src/__tests__/fleet-resource-cache.test.js
-                - packages/brain/src/__tests__/llm-account-deficit.test.js
             - packages/brain/src/__tests__/llm-caller-account-selection.test.js
             - packages/brain/src/__tests__/llm-caller-stream.test.js
             - packages/brain/src/__tests__/llm-caller.test.js

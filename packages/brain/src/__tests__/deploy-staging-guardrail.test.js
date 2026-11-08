@@ -1,3 +1,4 @@
+import { deployFixture } from './helpers/deploy-owned-fs.js';
 /**
  * deploy-staging-guardrail.test.js
  *
@@ -61,7 +62,7 @@ vi.mock('../pr-callback-handler.js', () => ({
   extractPrInfo: vi.fn(),
   handlePrMerged: vi.fn(),
 }));
-vi.mock('./shared.js', () => ({
+vi.mock('../routes/shared.js', () => ({
   resolveRelatedFailureMemories: vi.fn(),
   getActiveExecutionPaths: vi.fn(),
   INVENTORY_CONFIG: {},
@@ -80,9 +81,9 @@ describe('deploy-staging-guardrail（蓝绿部署 staging 验证护栏）', () =
   let mod;
 
   beforeEach(async () => {
-    process.env.DEPLOY_TOKEN = 'test-token';
+    vi.stubEnv('DEPLOY_TOKEN', 'test-token');
     stagingExecImpl = () => '';
-    try { unlinkSync('/tmp/cecelia-deploy-status.json'); } catch { /* noop */ }
+    try { unlinkSync(deployFixture.statusFile); } catch { /* noop */ }
     vi.resetModules();
     mod = await import('../routes/ops.js');
     app = express();
@@ -151,3 +152,6 @@ describe('deploy-staging-guardrail（蓝绿部署 staging 验证护栏）', () =
     expect(script).toMatch(/staging-verify\.sh/);
   });
 });
+
+vi.mock('../receipt-collector.js', () => ({ recordActionReceipt: vi.fn(async () => 'owned-receipt'), resolveActionReceipt: vi.fn(async () => true) }));
+vi.mock('../../../../scripts/brain-image-retention/runtime.mjs', () => ({ createRuntime: vi.fn(async () => null) }));

@@ -188,11 +188,6 @@
               "dangerous": false
             },
             {
-              "name": "assign_to_autumnrice",
-              "description": "交给秋米拆解",
-              "dangerous": false
-            },
-            {
               "name": "notify_user",
               "description": "通知用户",
               "dangerous": false
@@ -598,10 +593,6 @@
       "dangerous": false,
       "description": "更新 OKR 进度"
     },
-    "assign_to_autumnrice": {
-      "dangerous": false,
-      "description": "交给秋米拆解"
-    },
     "notify_user": {
       "dangerous": false,
       "description": "通知用户"
@@ -756,7 +747,7 @@
   ],
   "allSkills": {},
   "skillWhitelist": {},
-  "generatedAt": "2026-10-04T06:52:19.075Z",
+  "generatedAt": "2026-11-07T01:50:45.192Z",
   "generatedBy": "packages/brain/scripts/generate-manifest.mjs",
   "sourceFiles": [
     "src/brain-manifest.js",

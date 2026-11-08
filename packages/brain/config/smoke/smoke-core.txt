@@ -14,4 +14,3 @@ healthz-smoke.sh
 version-endpoint-smoke.sh
 harness-ping-smoke.sh
 harness-echo-smoke.sh
-harness-schema-validation-smoke.sh

@@ -12,35 +12,53 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
+const boundary = vi.hoisted(() => ({ db: vi.fn(), process: vi.fn(), record: vi.fn(async () => 'owned-receipt'), resolve: vi.fn(async () => true) }));
+vi.mock('../receipt-collector.js', () => ({ recordActionReceipt: boundary.record, resolveActionReceipt: boundary.resolve }));
+vi.mock('../db.js', () => ({ default: { query: (...args) => {
+  boundary.db(...args); return Promise.resolve({ rows: [{ id: 'owned-receipt' }], rowCount: 1 });
+} } }));
+vi.mock('../muted-guard.js', () => ({ isMuted: () => false }));
+vi.mock('node:child_process', async () => {
+  const { recordOnlyProcesses } = await import('./helpers/record-only-processes.js');
+  return recordOnlyProcesses(boundary.process);
+});
+afterEach(() => {
+  expect(boundary.db).not.toHaveBeenCalled();
+  expect(boundary.process).not.toHaveBeenCalled();
+});
 const mockFetch = vi.fn();
-global.fetch = mockFetch;
-
-const originalEnv = { ...process.env };
+const WEBHOOK = 'https://notify.owned.invalid/webhook';
 
 describe('notifier harness v2 hooks', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.resetModules();
     mockFetch.mockReset();
+    for (const key of ['FEISHU_APP_ID', 'FEISHU_APP_SECRET', 'FEISHU_OWNER_OPEN_IDS', 'BARK_TOKEN']) vi.stubEnv(key, '');
+    vi.stubEnv('FEISHU_BOT_WEBHOOK', WEBHOOK);
+    vi.stubGlobal('fetch', mockFetch);
   });
 
   afterEach(() => {
-    process.env = { ...originalEnv };
+    expect(boundary.record).toHaveBeenCalledTimes(mockFetch.mock.calls.length);
+    expect(boundary.resolve).toHaveBeenCalledTimes(mockFetch.mock.calls.length);
+    for (const call of boundary.record.mock.calls) expect(call).toEqual([{ kind: 'feishu', target: 'webhook', evidence: {} }]);
+    for (const call of boundary.resolve.mock.calls) expect(call).toEqual(['owned-receipt', 'confirmed', { http_status: 200 }]);
+    for (const [url, options] of mockFetch.mock.calls) {
+      expect(url).toBe(WEBHOOK); expect(options.method).toBe('POST');
+      expect(JSON.parse(options.body)).toMatchObject({ msg_type: 'text', content: { text: expect.any(String) } });
+    }
+    vi.unstubAllGlobals(); vi.unstubAllEnvs();
   });
 
   async function loadNotifier() {
-    delete process.env.FEISHU_BOT_WEBHOOK;
-    delete process.env.FEISHU_APP_ID;
-    delete process.env.FEISHU_APP_SECRET;
-    delete process.env.FEISHU_OWNER_OPEN_IDS;
-    process.env.FEISHU_BOT_WEBHOOK = 'https://open.feishu.cn/webhook/test';
     return import('../notifier.js');
   }
 
   // ─── notifyHarnessContractApproved ─────────────────────────────────────
   describe('notifyHarnessContractApproved', () => {
     it('合同 APPROVED 含 Task 数量 + 轮次', async () => {
-      mockFetch.mockResolvedValueOnce({ ok: true });
+      mockFetch.mockResolvedValueOnce({ ok: true, status: 200 });
       const mod = await loadNotifier();
       const ok = await mod.notifyHarnessContractApproved({
         initiative_id: 'init-1',
@@ -57,7 +75,7 @@ describe('notifier harness v2 hooks', () => {
     });
 
     it('未传 review_rounds 时不崩', async () => {
-      mockFetch.mockResolvedValueOnce({ ok: true });
+      mockFetch.mockResolvedValueOnce({ ok: true, status: 200 });
       const mod = await loadNotifier();
       const ok = await mod.notifyHarnessContractApproved({
         initiative_id: 'init-2',
@@ -67,7 +85,7 @@ describe('notifier harness v2 hooks', () => {
     });
 
     it('无 title 退回到 initiative_id', async () => {
-      mockFetch.mockResolvedValueOnce({ ok: true });
+      mockFetch.mockResolvedValueOnce({ ok: true, status: 200 });
       const mod = await loadNotifier();
       await mod.notifyHarnessContractApproved({ initiative_id: 'id-only', task_count: 1 });
       const body = JSON.parse(mockFetch.mock.calls[0][1].body);
@@ -78,7 +96,7 @@ describe('notifier harness v2 hooks', () => {
   // ─── notifyHarnessTaskMerged ───────────────────────────────────────────
   describe('notifyHarnessTaskMerged', () => {
     it('有 pr_url 时消息含链接', async () => {
-      mockFetch.mockResolvedValueOnce({ ok: true });
+      mockFetch.mockResolvedValueOnce({ ok: true, status: 200 });
       const mod = await loadNotifier();
       const ok = await mod.notifyHarnessTaskMerged({
         initiative_id: 'init-1',
@@ -93,7 +111,7 @@ describe('notifier harness v2 hooks', () => {
     });
 
     it('无 pr_url 时仍发送', async () => {
-      mockFetch.mockResolvedValueOnce({ ok: true });
+      mockFetch.mockResolvedValueOnce({ ok: true, status: 200 });
       const mod = await loadNotifier();
       const ok = await mod.notifyHarnessTaskMerged({
         initiative_id: 'init-1',
@@ -107,7 +125,7 @@ describe('notifier harness v2 hooks', () => {
   // ─── notifyHarnessFinalE2E ────────────────────────────────────────────
   describe('notifyHarnessFinalE2E', () => {
     it('PASS 简短消息，不含失败场景', async () => {
-      mockFetch.mockResolvedValueOnce({ ok: true });
+      mockFetch.mockResolvedValueOnce({ ok: true, status: 200 });
       const mod = await loadNotifier();
       await mod.notifyHarnessFinalE2E({
         initiative_id: 'init-1',
@@ -121,7 +139,7 @@ describe('notifier harness v2 hooks', () => {
     });
 
     it('FAIL 消息含归因 task + 前 3 个场景', async () => {
-      mockFetch.mockResolvedValueOnce({ ok: true });
+      mockFetch.mockResolvedValueOnce({ ok: true, status: 200 });
       const mod = await loadNotifier();
       await mod.notifyHarnessFinalE2E({
         initiative_id: 'init-1',
@@ -139,7 +157,7 @@ describe('notifier harness v2 hooks', () => {
     });
 
     it('FAIL 无失败场景数组时仍发送', async () => {
-      mockFetch.mockResolvedValueOnce({ ok: true });
+      mockFetch.mockResolvedValueOnce({ ok: true, status: 200 });
       const mod = await loadNotifier();
       const ok = await mod.notifyHarnessFinalE2E({
         initiative_id: 'init-fail',
@@ -152,7 +170,7 @@ describe('notifier harness v2 hooks', () => {
   // ─── notifyHarnessBudgetWarning ───────────────────────────────────────
   describe('notifyHarnessBudgetWarning', () => {
     it('budget 预警消息含 80%', async () => {
-      mockFetch.mockResolvedValueOnce({ ok: true });
+      mockFetch.mockResolvedValueOnce({ ok: true, status: 200 });
       const mod = await loadNotifier();
       await mod.notifyHarnessBudgetWarning({
         initiative_id: 'init-1',
@@ -165,7 +183,7 @@ describe('notifier harness v2 hooks', () => {
     });
 
     it('timeout 预警消息含 30 分钟', async () => {
-      mockFetch.mockResolvedValueOnce({ ok: true });
+      mockFetch.mockResolvedValueOnce({ ok: true, status: 200 });
       const mod = await loadNotifier();
       await mod.notifyHarnessBudgetWarning({
         initiative_id: 'init-2',
@@ -176,7 +194,7 @@ describe('notifier harness v2 hooks', () => {
     });
 
     it('rate-limit：同 initiative 同 kind 60s 内第 2 次返回 false', async () => {
-      mockFetch.mockResolvedValue({ ok: true });
+      mockFetch.mockResolvedValue({ ok: true, status: 200 });
       const mod = await loadNotifier();
       const first = await mod.notifyHarnessBudgetWarning({
         initiative_id: 'init-rl',

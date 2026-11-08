@@ -39,7 +39,7 @@ await pool.end();
 pass "completed 无 handoff → 合成；next_steps task→queued 子任务挂根(seq=2, lane=AI)，decision→pending；重复触发幂等"
 
 # 终态接棒统一经 lib/task-terminal.js 的 afterTerminalTransition（内部转 relayOnComplete），PATCH 路由调它
-grep -q "afterTerminalTransition(pool, task_id" "$BRAIN_DIR/src/routes/tasks.js" || fail "PATCH 路由未接终态接棒钩子 afterTerminalTransition"
+grep -q "afterTerminalTransition(pool, task_id" "$BRAIN_DIR/src/routes/tasks-status.js" || fail "PATCH 路由未接终态接棒钩子 afterTerminalTransition"
 grep -q "relayOnComplete" "$BRAIN_DIR/src/lib/task-terminal.js" || fail "task-terminal 钩子未接 relayOnComplete"
 pass "PATCH /tasks/:id 收口已接接棒"
 

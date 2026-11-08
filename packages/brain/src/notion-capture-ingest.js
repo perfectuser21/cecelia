@@ -150,7 +150,9 @@ export async function runNotionCaptureIngest(poolOverride) {
 
   lastRunAt = now;
   const db = poolOverride ?? pool;
-  const after = lastSyncAt ?? new Date(now - COLD_START_LOOKBACK_MS).toISOString();
+  // Pin the first lookback too: failed pages must not age out between attempts.
+  lastSyncAt ??= new Date(now - COLD_START_LOOKBACK_MS).toISOString();
+  const after = lastSyncAt;
   const syncStart = new Date(now).toISOString();
 
   let pushed = 0, skipped = 0, errors = 0;
@@ -174,7 +176,8 @@ export async function runNotionCaptureIngest(poolOverride) {
           targetSubtype: 'notion_inbox',
         });
 
-        if (!result || result.dedupeHit) skipped++;
+        if (!result || result.atomWriteFailed === true) errors++;
+        else if (result.dedupeHit) skipped++;
         else pushed++;
       } catch (pageErr) {
         console.warn(`[notion-capture-ingest] page ${page.id} error: ${pageErr.message}`);
@@ -182,7 +185,8 @@ export async function runNotionCaptureIngest(poolOverride) {
       }
     }
 
-    lastSyncAt = syncStart;
+    // Successful pages can replay with the same dedupe key until the whole batch succeeds.
+    if (errors === 0) lastSyncAt = syncStart;
     console.log(`[notion-capture-ingest] done pages=${pages.length} pushed=${pushed} skipped=${skipped} errors=${errors}`);
     return { pushed, skipped, errors, pages: pages.length };
   } catch (err) {

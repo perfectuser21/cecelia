@@ -49,7 +49,7 @@
 | 31 | `runDailySmoke(pool)` | :1675 | ⏳ 待迁移 | P2 | 每日真业务 E2E smoke（防生产腐蚀），质量巡检类 |
 | 32 | `runSuggestionCycle(pool)` | :1680 | ⏳ 待迁移 | P3 | 欲望解堵循环（desires→suggestions），意识层 |
 | 33 | `runConversationConsolidator()` | :1686 | 🗑 建议废弃（重复） | — | **与 server.js:782 Conversation Consolidator 活 loop 重复**（同一函数 conversation-consolidator.js，5min 已在跑）；此死调用直接删 |
-| 34 | `memorySyncIfNeeded(pool)` | :1691 | ⏳ 待迁移 | P2 | auto-memory 同步（memory/*.md → design_docs/decisions，30min） |
+| 34 | Claude auto-memory 同步 | — | 已退役 | — | 旧回滚链及同步器已移除；历史数据保留 |
 | 35 | `runCredentialsHealthCheck(pool)` | :1695 | ⏳ 待迁移 | P2 | 凭据健康巡检（每日），运维巡检类 |
 | 36 | `scheduleDailyBackup(pool)` | :1699 | ⏳ 待迁移 | P2 | 每日 DB 备份调度（幂等），运维巡检类 |
 | 37 | `runSkillDriftPatrol(pool)` | :1704 | ⏳ 待迁移 | P2 | skill-drift 巡检（每日），质量巡检类 |

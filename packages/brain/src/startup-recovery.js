@@ -28,25 +28,10 @@ const LOCK_DIR = process.env.LOCK_DIR || '/tmp/cecelia-locks';
 const ACTIVE_LOCK_WINDOW_MS = 24 * 3600 * 1000;
 
 /**
- * W7.3 升级 (2026-05-07): 探测当前所有活跃 docker container 的 mount source 路径。
- *
- * 背景：W8 task-39d535f3 跑到 reviewer 阶段时 Brain 重启 → git worktree list
- * 拿不到 harness-v2/task-39d535f3（race）→ .dev-lock 保护未命中（harness
- * 容器不写 .dev-lock）→ 整个 worktree 目录被 rm -rf。
- *
- * docker 是这一类活跃 worktree 唯一可靠的真实信号源。
- *
- * 流程：
- *   1. `docker ps --format '{{.ID}}'` 拿全部活跃 container ID
- *   2. 对每个 container 调 `docker inspect --format '{{json .Mounts}}'`
- *   3. 收集所有 mount 的 Source 字段
- *
- * docker ps 抛错 → 整个函数抛错（让 caller 决定降级策略：
- * 保守跳过删除 vs 继续按既有逻辑删）。单个 container inspect 失败容忍
- * （可能 container 在我们 ps 后立即退出）。
- *
+ * 探测全部活跃 Docker container 的 mount source，供清理前保护使用。
+ * ps/任一 inspect 失败或 mount JSON 非数组时抛错：未知不等于无挂载，
+ * caller 必须保守跳过删除。ps 成功零容器、inspect 成功 [] 均为合法空集。
  * @returns {Set<string>} 全部活跃 container 的 mount source 路径集合
- * @throws {Error} docker ps 失败时
  */
 export function getActiveContainerMountPaths() {
   const psOut = execSync("docker ps --format '{{.ID}}'", {
@@ -56,21 +41,11 @@ export function getActiveContainerMountPaths() {
 
   const paths = new Set();
   for (const id of ids) {
-    let inspectOut;
-    try {
-      inspectOut = execSync(`docker inspect --format '{{json .Mounts}}' ${id}`, {
-        timeout: 5000, encoding: 'utf-8', stdio: 'pipe',
-      });
-    } catch {
-      continue;
-    }
-    let mounts;
-    try {
-      mounts = JSON.parse(String(inspectOut || '').trim() || '[]');
-    } catch {
-      continue;
-    }
-    if (!Array.isArray(mounts)) continue;
+    const inspectOut = execSync(`docker inspect --format '{{json .Mounts}}' ${id}`, {
+      timeout: 5000, encoding: 'utf-8', stdio: 'pipe',
+    });
+    const mounts = JSON.parse(String(inspectOut || '').trim());
+    if (!Array.isArray(mounts)) throw new Error('docker inspect mounts must be an array');
     for (const m of mounts) {
       if (m && typeof m.Source === 'string' && m.Source) {
         paths.add(m.Source);
@@ -432,81 +407,4 @@ export async function runStartupRecovery() {
  * @param {{ staleMinutes?: number }} [opts]
  * @returns {Promise<{ cleaned: number, errors: string[] }>}
  */
-export async function cleanupStaleClaims(pool, opts = {}) {
-  const stats = { cleaned: 0, errors: [] };
-  if (!pool || typeof pool.query !== 'function') {
-    stats.errors.push('pool not provided');
-    return stats;
-  }
-
-  const staleMinutes = Number.isFinite(opts.staleMinutes) ? opts.staleMinutes : 60;
-  // Any queued task still claimed by THIS process's ID must be a leftover from a
-  // previous crashed run (Docker Brain always starts as PID 7, so claimerId recurs).
-  // Clear them unconditionally — we haven't made any claims yet at startup.
-  const selfClaimerId = process.env.BRAIN_RUNNER_ID || `brain-tick-${process.pid}`;
-
-  try {
-    // Step 1: Clear all claims by this process's claimerId (previous-crash leftovers).
-    // 同时覆盖 status='queued' 与 'paused' — 后者诞生于 Brain 派发后任务进 in_progress
-    // 又被 quarantine/eviction/fail 转入 paused 但 claimed_by 没释放的死锁场景
-    // （5/3 实测 28 个 paused 任务被 brain-tick-7 锁 19 天）。
-    const selfResult = await pool.query(
-      `UPDATE tasks
-          SET claimed_by = NULL, claimed_at = NULL
-        WHERE status IN ('queued', 'paused')
-          AND claimed_by = $1
-      RETURNING id, status`,
-      [selfClaimerId]
-    );
-    if (selfResult.rowCount > 0) {
-      const byStatus = selfResult.rows.reduce((a, r) => { a[r.status] = (a[r.status] || 0) + 1; return a; }, {});
-      console.log(
-        `[StartupRecovery:cleanupStaleClaims] cleared ${selfResult.rowCount} self-PID claims (${selfClaimerId}) by_status=${JSON.stringify(byStatus)}`,
-        JSON.stringify({ cleanup_type: 'self_pid_claim', cleaned: selfResult.rowCount, by_status: byStatus })
-      );
-      stats.cleaned += selfResult.rowCount;
-    }
-
-    // Step 2: Clear stale claims from other claimerIds (time-window based).
-    // 同覆盖 paused —— 防 brain-tick-N 离线后 paused+claimed_by 永久死锁。
-    const { rows } = await pool.query(
-      `SELECT id, claimed_by, claimed_at, status
-         FROM tasks
-        WHERE status IN ('queued', 'paused')
-          AND claimed_by IS NOT NULL
-          AND claimed_by != $1
-          AND (claimed_at IS NULL OR claimed_at < NOW() - ($2::int * INTERVAL '1 minute'))`,
-      [selfClaimerId, staleMinutes]
-    );
-
-    if (rows.length === 0) {
-      if (stats.cleaned === 0) {
-        console.log('[StartupRecovery:cleanupStaleClaims] no stale claims found');
-      }
-      return stats;
-    }
-
-    const taskIds = rows.map(r => r.id);
-    const result = await pool.query(
-      `UPDATE tasks
-          SET claimed_by = NULL,
-              claimed_at = NULL
-        WHERE id = ANY($1::uuid[])
-      RETURNING id`,
-      [taskIds]
-    );
-
-    const otherCleaned = result.rowCount || 0;
-    stats.cleaned += otherCleaned;
-    const sample = rows.slice(0, 5).map(r => `${r.id}@${r.claimed_by}`);
-    console.log(
-      `[StartupRecovery:cleanupStaleClaims] cleared ${otherCleaned} stale claims from other pids (staleMinutes=${staleMinutes})`,
-      JSON.stringify({ cleanup_type: 'stale_claim', cleaned: otherCleaned, sample })
-    );
-  } catch (e) {
-    stats.errors.push(e.message);
-    console.warn('[StartupRecovery:cleanupStaleClaims] failed:', e.message);
-  }
-
-  return stats;
-}
+export { cleanupStaleClaims } from './stale-claim-cleanup.js';

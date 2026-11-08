@@ -42,7 +42,7 @@ const logger = {
  * @returns {Promise<number>} 新创建的记录 ID
  * @throws {Error} 数据库操作失败时抛出异常
  */
-async function recordProgressStep(taskId, runId, step) {
+async function recordProgressStep(taskId, runId, step, db = pool) {
     try {
         const {
             sequence,
@@ -105,7 +105,7 @@ async function recordProgressStep(taskId, runId, step) {
             JSON.stringify(artifacts), JSON.stringify(metadata), confidenceScore
         ];
 
-        const result = await pool.query(query, values);
+        const result = await db.query(query, values);
         const ledgerId = result.rows[0].id;
 
         logger.debug(`Progress step recorded: task=${taskId}, run=${runId}, sequence=${sequence}, status=${status}`);

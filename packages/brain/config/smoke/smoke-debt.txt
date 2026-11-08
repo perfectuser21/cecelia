@@ -92,7 +92,6 @@ monitor-loop-guard-smoke.sh
 okr-initiatives-project-id-smoke.sh
 orchestrator-smoke.sh
 p1pr2-deadman-trigger-backup-smoke.sh
-propose-branch-protocol-smoke.sh
 relay-codex-executor-smoke.sh
 report-postpromote-smoke.sh
 retire-harness-planner-smoke.sh

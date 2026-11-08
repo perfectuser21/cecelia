@@ -421,8 +421,8 @@ console.log(`检查完成: ${passed} PASS, ${errors} FAIL, ${warnings} WARN`);
 
 if (errors > 0) {
   console.log(`\nFAIL: Registry Lint 发现 ${errors} 个错误\n`);
-  process.exit(1);
+  process.exitCode = 1;
 } else {
   console.log('\nPASS: Registry Lint 全部通过\n');
-  process.exit(0);
+  process.exitCode = 0;
 }

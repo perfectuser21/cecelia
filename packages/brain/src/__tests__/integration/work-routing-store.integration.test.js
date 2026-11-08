@@ -1,3 +1,5 @@
+import { prepareActionsWriterSchema } from '../fixtures/actions-writer-pg.js';
+import { createTask } from '../../actions.js';
 import {seedActiveF1,ensureRouteValidationFixtureSchema} from '../fixtures/work-routing-fixture.js';
 import { describe, expect, it } from 'vitest';
 import { vi } from 'vitest';
@@ -209,6 +211,29 @@ describe('routing store transaction contract', () => {
     expect(calls).not.toContain('BEGIN');
     expect(calls).not.toContain('COMMIT');
     expect(calls).not.toContain('ROLLBACK');
+  });
+
+  it('actions real writer fields persist in isolated PostgreSQL schema', async () => {
+    const databaseUrl = process.env.DATABASE_URL ?? 'postgresql://localhost/cecelia_test';
+    expect(new URL(databaseUrl).pathname.slice(1)).toMatch(/(?:_test|_scratch)$/);
+    const ownedPool = new Pool({ connectionString: databaseUrl });
+    const client = await ownedPool.connect();
+    try {
+      await client.query('BEGIN');
+      await prepareActionsWriterSchema(client);
+      const result = await createTask({ title: '普通事项', task_type: 'research', source: 'api',
+        source_id: 'owned-pg-fields', domain: 'quality', owner_role: 'owned-role',
+        delivery_type: 'owned-delivery', db: client });
+      expect(result.success).toBe(true);
+      const persisted = await client.query('SELECT domain,owner_role,delivery_type FROM tasks WHERE id=$1', [result.task.id]);
+      expect(persisted.rows).toEqual([{ domain: 'quality', owner_role: 'owned-role', delivery_type: 'owned-delivery' }]);
+      const receipt = await client.query('SELECT task_id FROM work_routing_receipts WHERE id=$1', [result.task.payload.routing_receipt_id]);
+      expect(receipt.rows).toEqual([{ task_id: result.task.id }]);
+    } finally {
+      await client.query('ROLLBACK');
+      client.release();
+      await ownedPool.end();
+    }
   });
 
   it('persists task and immutable receipt atomically in a real test database', async () => {

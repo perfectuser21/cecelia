@@ -1,16 +1,29 @@
 /**
- * 单元测试：evaluateAlertness 提取子函数逻辑验证
- *
- * 覆盖重构后新提取的6个子函数：
- * - checkAndClearExpiredOverride
- * - applyDualStandardGuard
- * - applyPanicDebounce
- * - handleLevelTransition
- * - executeConditionalResponse
- * - triggerHealingIfNeeded
+ * 通过真实evaluateAlertness验证覆盖过期、双标准、PANIC稳定与健康CALM负向合同。
+ * metrics/diagnosis/响应/自愈/DB为record-only依赖；不宣称全部helper或实际自愈效果。
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+
+const boundary = vi.hoisted(() => ({ network: vi.fn(), process: vi.fn() }));
+vi.mock('node:child_process', () => Object.fromEntries(
+  ['exec', 'execSync', 'execFile', 'execFileSync', 'spawn', 'spawnSync', 'fork'].map(name => [name, (...args) => {
+    boundary.process(name, ...args); throw Error('alertness_test_process_forbidden');
+  }]),
+));
+beforeEach(() => {
+  vi.stubGlobal('fetch', (...args) => {
+    boundary.network(...args); throw Error('alertness_test_network_forbidden');
+  });
+});
+afterEach(() => {
+  try {
+    expect(boundary.network).not.toHaveBeenCalled();
+    expect(boundary.process).not.toHaveBeenCalled();
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});
 
 // 每个 describe 块内通过 resetModules + reimport 隔离模块状态
 // 避免 currentState / _consecutiveCriticalCount 跨测试污染
@@ -255,12 +268,19 @@ describe('executeConditionalResponse — 条件响应执行', () => {
     mockSeverity = 'none';
     mockHealthScore = 100;
 
-    await evaluateAlertness();
+    const result = await evaluateAlertness();
 
-    const { escalateResponse } = await import('../alertness/escalation.js');
+    const { escalateResponse, executeResponse } = await import('../alertness/escalation.js');
+    const { collectMetrics } = await import('../alertness/metrics.js');
+    const { diagnoseProblem } = await import('../alertness/diagnosis.js');
+    const { startRecovery } = await import('../alertness/healing.js');
     const state = getCurrentAlertness();
-    if (state.level < ALERTNESS_LEVELS.AWARE) {
-      expect(escalateResponse).not.toHaveBeenCalled();
-    }
+    expect(result.level).toBe(ALERTNESS_LEVELS.CALM);
+    expect(state.level).toBe(ALERTNESS_LEVELS.CALM);
+    expect(collectMetrics).toHaveBeenCalledTimes(1);
+    expect(diagnoseProblem).toHaveBeenCalledTimes(1);
+    expect(escalateResponse).not.toHaveBeenCalled();
+    expect(executeResponse).not.toHaveBeenCalled();
+    expect(startRecovery).not.toHaveBeenCalled();
   });
 });

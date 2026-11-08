@@ -150,6 +150,12 @@ describe('capture-atoms route', () => {
       expect(res.status).toBe(200);
       expect(res.body.status).toBe('dismissed');
       expect(res.body.id).toBe(MOCK_ATOM.id);
+      const writes = mockClient.query.mock.calls;
+      expect(writes.map(([sql]) => sql).at(-1)).toBe('COMMIT');
+      const atomWrite = writes.find(([sql]) => /UPDATE capture_atoms/.test(sql));
+      expect(atomWrite[0]).toMatch(/SET status = 'dismissed'/);
+      expect(atomWrite[1]).toEqual([MOCK_ATOM.id]);
+      expect(mockClient.release).toHaveBeenCalledTimes(1);
     });
 
     it('atom 不存在时返回 404', async () => {
@@ -212,6 +218,27 @@ describe('capture-atoms route', () => {
       expect(res.body.status).toBe('confirmed');
       expect(res.body.routed_to_table).toBe('tasks');
       expect(res.body.routed_to_id).toBe('task-new-123');
+      expect(mockCreateRoutedTask).toHaveBeenCalledTimes(1);
+      const sqls = mockClient.query.mock.calls.map(([sql]) => sql);
+      expect(sqls[0]).toBe('BEGIN');
+      const atomWrite = mockClient.query.mock.calls.find(([sql]) => /UPDATE capture_atoms/.test(sql));
+      expect(atomWrite[0]).toMatch(/SET status = 'confirmed'/);
+      expect(atomWrite[1]).toEqual([MOCK_ATOM.id, 'task', 'action_item', 'tasks', 'task-new-123']);
+      expect(sqls.at(-1)).toBe('COMMIT');
+      expect(mockClient.release).toHaveBeenCalledTimes(1);
     });
+    it('confirm目标委托失败500，真实handler必须ROLLBACK/release且无确认更新', async () => {
+      const mockClient = { query: vi.fn(async sql => /SELECT \* FROM capture_atoms/.test(sql) ? { rows: [MOCK_ATOM] } : {}), release: vi.fn() };
+      mockPool.connect.mockResolvedValueOnce(mockClient);
+      mockCreateRoutedTask.mockRejectedValueOnce(Error('owned_route_failure'));
+      const res = await request(app).patch('/api/brain/capture-atoms/' + MOCK_ATOM.id).send({ action: 'confirm' });
+      expect(res.status).toBe(500);
+      expect(res.body.details).toBe('owned_route_failure');
+      const sqls = mockClient.query.mock.calls.map(([sql]) => sql);
+      expect(sqls[0]).toBe('BEGIN'); expect(sqls.at(-1)).toBe('ROLLBACK');
+      expect(sqls).not.toContain('COMMIT');expect(sqls.some(sql => /UPDATE capture_atoms/.test(sql))).toBe(false);
+      expect(mockClient.release).toHaveBeenCalledTimes(1);
+    });
+
   });
 });

@@ -1,3 +1,4 @@
+import { deployFixture } from './helpers/deploy-owned-fs.js';
 /**
  * deploy-receipt.test.js — 九要素 T4：deploy webhook 回执接线
  *
@@ -55,7 +56,7 @@ vi.mock('../pr-callback-handler.js', () => ({
   extractPrInfo: vi.fn(),
   handlePrMerged: vi.fn(),
 }));
-vi.mock('./shared.js', () => ({
+vi.mock('../routes/shared.js', () => ({
   resolveRelatedFailureMemories: vi.fn(),
   getActiveExecutionPaths: vi.fn(),
   INVENTORY_CONFIG: {},
@@ -86,14 +87,14 @@ describe('deploy webhook 回执接线（T4）', () => {
     execSyncMock.mockReturnValue(Buffer.from('ok'));
     capturedSpawnArgs = null;
     spawnCloseHandler = null;
-    process.env.DEPLOY_TOKEN = 'tok';
+    vi.stubEnv('DEPLOY_TOKEN', 'tok');
     // 用临时目录做 REPO_ROOT，避免 production 分支在真实仓库里落 log 文件
     tmpRepoRoot = mkdtempSync(join(tmpdir(), 'deploy-receipt-test-'));
     process.env.REPO_ROOT = tmpRepoRoot;
     mkdirSync(join(tmpRepoRoot,'scripts'));writeFileSync(join(tmpRepoRoot,'scripts/staging-deploy.sh'),'fixture');
     execFileMock.mockImplementation((_bin,_args,opts,cb)=>cb(null,`STAGING_VERIFIED sha=${'a'.repeat(40)} image=sha256:${'b'.repeat(64)} request=${opts.env.STAGING_REQUEST_ID}\n`));
     // 清掉残留状态文件，否则模块启动读到 running → 409
-    try { unlinkSync('/tmp/cecelia-deploy-status.json'); } catch { /* noop */ }
+    try { unlinkSync(deployFixture.statusFile); } catch { /* noop */ }
     vi.resetModules();
     const { default: opsRouter } = await import('../routes/ops.js');
     app = express();
@@ -112,7 +113,7 @@ describe('deploy webhook 回执接线（T4）', () => {
     } else {
       process.env.REPO_ROOT = ORIG_REPO_ROOT;
     }
-    try { unlinkSync('/tmp/cecelia-deploy-status.json'); } catch { /* noop */ }
+    try { unlinkSync(deployFixture.statusFile); } catch { /* noop */ }
   });
 
   it('idle只在实际结算证明存在时明确幂等成功',async()=>{

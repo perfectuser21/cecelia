@@ -1,14 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync} from 'node:fs';
+import {mkdtempSync, writeFileSync, readFileSync, existsSync, lstatSync, rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
-import {join} from 'node:path';
+import {dirname, join, resolve} from 'node:path';
 import {spawnSync} from 'node:child_process';
+import {fileURLToPath} from 'node:url';
+import {parse} from 'acorn';
 import {commandsFor} from '../run-basic-check.mjs';
+import {validateTestDatabaseUrl} from '../../../packages/brain/src/__tests__/integration/suggestion-plan-db-url-guard.mjs';
 
 const required = [
   'src/__tests__/integration/task-lease-device-pool.pg.integration.test.js',
   'src/__tests__/integration/executor-startup-headed-owner.pg.integration.test.js',
+  'src/__tests__/integration/suggestion-plan-callback.pg.integration.test.js',
   'src/__tests__/integration/workflow-common-terminal.pg.integration.test.js',
 ];
 function selected() {
@@ -17,6 +21,7 @@ function selected() {
   assert.ok(step, '现役租约、外部owner及公共Runner终态PG合同必须实际进入PR跑道');
   assert.ok(step.cwd.endsWith('/packages/brain'));
   assert.ok(step.args.includes('../../scripts/ci/deep-integration.config.mjs'));
+  assert.equal(step.ciScratchDatabase, true);
   assert.ok(!step.args.includes('--passWithNoTests'));
   const migration = steps.findIndex(row => row.args.includes('src/migrate.js'));
   assert.ok(migration >= 0 && migration < steps.indexOf(step));
@@ -24,6 +29,58 @@ function selected() {
 }
 
 test('现役关键PG合同在真实数据库迁移之后进入现有Brain集成跑道', selected);
+
+test('建议失败回执的独立 PG 回归文件存在且进入 PR 集成入口', () => {
+  const file = 'src/__tests__/integration/suggestion-plan-callback.pg.integration.test.js';
+  assert.ok(selected().args.includes(file));
+  const target = resolve(dirname(fileURLToPath(import.meta.url)), '../../../packages/brain', file);
+  assert.ok(existsSync(target) && lstatSync(target).isFile());
+});
+
+test('测试数据库地址不能使用连接参数覆盖主机或搜索路径', () => {
+  for (const suffix of ['?host=remote', '?options=-c%20search_path%3Dpublic', '#fragment', '?']) {
+    assert.throws(() => validateTestDatabaseUrl(`postgresql://ci@localhost/cecelia_scratch${suffix}`));
+  }
+  assert.throws(() => validateTestDatabaseUrl('postgresql://remote/cecelia_scratch'));
+  assert.equal(validateTestDatabaseUrl('postgresql://ci@127.0.0.1/cecelia_scratch'), 'postgresql://ci@127.0.0.1/cecelia_scratch');
+});
+
+test('只有指定的 CI 集成步骤才显式接收测试数据库地址', async () => {
+  const { runSteps } = await import('../run-basic-check.mjs');
+  const directory = mkdtempSync(join(tmpdir(), 'ci-pg-env-'));
+  try {
+    const output = join(directory, 'env.json');
+    const script = `require('node:fs').writeFileSync(${JSON.stringify(output)},JSON.stringify({url:process.env.TEST_DATABASE_URL||null}))`;
+    const step = {command:process.execPath,args:['-e',script],ciScratchDatabase:true};
+    assert.equal(runSteps([step], {env:{...process.env,CI:'true',POSTGRES_INTEGRATION:'1',DATABASE_URL:'postgresql://127.0.0.1/ci_scratch'},stdio:'pipe'}), 0);
+    assert.equal(JSON.parse(readFileSync(output,'utf8')).url,'postgresql://127.0.0.1/ci_scratch');
+    const localEnv = {...process.env, CI:'false', DATABASE_URL:'postgresql://127.0.0.1/ci_scratch'};
+    delete localEnv.TEST_DATABASE_URL;
+    assert.equal(runSteps([step], {env:localEnv,stdio:'pipe'}), 0);
+    assert.equal(JSON.parse(readFileSync(output,'utf8')).url,null);
+  } finally { rmSync(directory,{recursive:true,force:true}); }
+});
+
+test('无 PR 交付 PG 回归从实际 PR 集成入口静态引入，删除或缺文件必须失败', () => {
+  selected();
+  const dir = resolve(dirname(fileURLToPath(import.meta.url)), '../../../packages/brain/src/__tests__/integration');
+  const entry = readFileSync(join(dir, 'workflow-common-terminal.pg.integration.test.js'), 'utf8');
+  const requiredImports = ['./project-progress-no-pr.pg.integration.test.js', './metrics-pr-merged-no-pr.pg.integration.test.js', './postdeploy-snapshot.pg.integration.test.js', './retired-auto-qiumi-lock.pg.integration.test.js', './retired-auto-sweeper-race.pg.integration.test.js'];
+  const check = (text, exists) => {
+    const imports = parse(text, { ecmaVersion: 'latest', sourceType: 'module' }).body
+      .filter(node => node.type === 'ImportDeclaration').map(node => node.source.value);
+    for (const file of requiredImports) {
+      assert.equal(imports.filter(value => value === file).length, 1, `缺少唯一静态导入 ${file}`);
+      assert.ok(exists(join(dir, file)), `PG 回归文件不存在 ${file}`);
+    }
+  };
+  const isFile = path => existsSync(path) && lstatSync(path).isFile();
+  check(entry, isFile);
+  for (const file of requiredImports) {
+    assert.throws(() => check(entry.replace(`import '${file}';`, ''), isFile));
+    assert.throws(() => check(entry, path => path !== join(dir, file) && isFile(path)));
+  }
+});
 
 test('真实PG命令非零必须传播失败且阻止后续操作', () => {
   const step = selected();

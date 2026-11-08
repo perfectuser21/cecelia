@@ -3,8 +3,25 @@
  * 纯函数：parseBehaviorEntries / parseGoldenPathSteps / buildGoldenPathEntries / mergeGoldenPaths
  * 主函数：promoteToRegression（mock pool + execFile + fs 注入，见 Task 2 追加的 describe）
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
+const notices = vi.hoisted(() => ({ send: vi.fn(async () => true) }));
+let expectedNotices = [];
+const boundary = vi.hoisted(() => ({ db: vi.fn(), network: vi.fn(), process: vi.fn() }));
+vi.mock('../notifier.js', () => ({ sendFeishu: notices.send }));
+vi.mock('../db.js', () => ({ default: { query: (...args) => { boundary.db(...args); throw Error('禁止默认DB'); } } }));
+vi.mock('node:child_process', async () => {
+  const { recordOnlyProcesses } = await import('./helpers/record-only-processes.js');
+  return recordOnlyProcesses(boundary.process);
+});
+beforeEach(() => { expectedNotices = []; vi.clearAllMocks(); vi.stubGlobal('fetch', (...args) => { boundary.network(...args); throw Error('禁止外联'); }); });
+afterEach(() => {
+  expect(notices.send.mock.calls).toEqual(expectedNotices);
+  expect(boundary.db).not.toHaveBeenCalled();
+  expect(boundary.network).not.toHaveBeenCalled();
+  expect(boundary.process).not.toHaveBeenCalled();
+  vi.unstubAllGlobals();
+});
 import {
   parseBehaviorEntries,
   parseGoldenPathSteps,
@@ -202,6 +219,7 @@ describe('promoteToRegression', () => {
   });
 
   it('commit 校验失败（contract-dod.md 未被 git 跟踪）→ yaml 跳过，reason=dod_not_committed', async () => {
+    expectedNotices = [['⚠️ [A3 promote-regression] A3 冻结拒绝（假卡防护）：task=bd7e251c-0000-0000-0000-000000000001 contract-dod.md 未入库']];
     const d = makeDeps({ files: GOOD_FILES, lsFilesFails: true });
     const r = await promoteToRegression(
       { pool: d.poolMock, execFile: d.execFileMock, fsImpl: d.fsMock },
@@ -214,6 +232,7 @@ describe('promoteToRegression', () => {
   });
 
   it('worktreePath/sprintDir 为空 → 整体 skipped，不碰 DB', async () => {
+    expectedNotices = [['⚠️ [A3 promote-regression] A3 冻结跳过：task=bd7e251c-0000-0000-0000-000000000001 缺 sprintDir/worktreePath']];
     const d = makeDeps({ files: GOOD_FILES });
     const r = await promoteToRegression(
       { pool: d.poolMock, execFile: d.execFileMock, fsImpl: d.fsMock },

@@ -82,9 +82,7 @@ features:
         - packages/brain/src/__tests__/activation-scorer.test.js
         - packages/brain/src/__tests__/backfill-l1.test.js
         - packages/brain/src/__tests__/bare-modules/brain-manifest.test.js
-        - packages/brain/src/__tests__/bare-modules/focus.test.js
         - packages/brain/src/__tests__/bare-modules/migrate.test.js
-        - packages/brain/src/__tests__/bare-modules/nightly-tick.test.js
         - packages/brain/src/__tests__/blocks.test.js
         - packages/brain/src/__tests__/briefing-core.test.js
         - packages/brain/src/__tests__/briefing.test.js
@@ -111,7 +109,6 @@ features:
         - packages/brain/src/__tests__/heartbeat-whitelist.test.js
         - packages/brain/src/__tests__/heartbeat.test.js
         - packages/brain/src/__tests__/hello.test.js
-        - packages/brain/src/__tests__/init-tick-retry.test.js
         - packages/brain/src/__tests__/migration-015.test.js
         - packages/brain/src/__tests__/migration-016.test.js
         - packages/brain/src/__tests__/migration-018.test.js
@@ -130,7 +127,7 @@ features:
         - packages/brain/src/__tests__/role-registry.test.js
         - packages/brain/src/__tests__/routes-stats.test.js
         - packages/brain/src/__tests__/routes.test.js
-        - packages/brain/src/__tests__/routes/tick-startup-errors.test.js
+        - packages/brain/src/__tests__/tick-status.test.js
         - packages/brain/src/__tests__/shepherd.test.js
         - packages/brain/src/__tests__/smoke.test.js
         - packages/brain/src/__tests__/startup-recovery-enhanced.test.js
@@ -184,9 +181,7 @@ features:
             - packages/brain/src/__tests__/activation-scorer.test.js
             - packages/brain/src/__tests__/backfill-l1.test.js
             - packages/brain/src/__tests__/bare-modules/brain-manifest.test.js
-            - packages/brain/src/__tests__/bare-modules/focus.test.js
             - packages/brain/src/__tests__/bare-modules/migrate.test.js
-            - packages/brain/src/__tests__/bare-modules/nightly-tick.test.js
             - packages/brain/src/__tests__/blocks.test.js
             - packages/brain/src/__tests__/briefing-core.test.js
             - packages/brain/src/__tests__/briefing.test.js
@@ -213,7 +208,6 @@ features:
             - packages/brain/src/__tests__/heartbeat-whitelist.test.js
             - packages/brain/src/__tests__/heartbeat.test.js
             - packages/brain/src/__tests__/hello.test.js
-            - packages/brain/src/__tests__/init-tick-retry.test.js
             - packages/brain/src/__tests__/migration-015.test.js
             - packages/brain/src/__tests__/migration-016.test.js
             - packages/brain/src/__tests__/migration-018.test.js
@@ -232,7 +226,7 @@ features:
             - packages/brain/src/__tests__/role-registry.test.js
             - packages/brain/src/__tests__/routes-stats.test.js
             - packages/brain/src/__tests__/routes.test.js
-            - packages/brain/src/__tests__/routes/tick-startup-errors.test.js
+            - packages/brain/src/__tests__/tick-status.test.js
             - packages/brain/src/__tests__/shepherd.test.js
             - packages/brain/src/__tests__/smoke.test.js
             - packages/brain/src/__tests__/startup-recovery-enhanced.test.js
@@ -527,7 +521,6 @@ features:
         auth: none
     tests:
       unit:
-        - packages/brain/src/__tests__/bare-modules/initiative-closer.test.js
         - packages/brain/src/__tests__/check-okr-structure.test.js
         - packages/brain/src/__tests__/contracts/initiative-closer-contract.test.js
         - packages/brain/src/__tests__/goal-evaluator.test.js
@@ -563,7 +556,6 @@ features:
         maturity: 3
         tests:
           unit:
-            - packages/brain/src/__tests__/bare-modules/initiative-closer.test.js
             - packages/brain/src/__tests__/check-okr-structure.test.js
             - packages/brain/src/__tests__/contracts/initiative-closer-contract.test.js
             - packages/brain/src/__tests__/goal-evaluator.test.js
@@ -640,8 +632,8 @@ features:
         - L3
     runtime: {}
   - feature_id: decomposition_engine
-    name: OKR 拆解引擎
-    purpose: 将 KR 自动拆解为具体 Project/Scope/Initiative/Task
+    name: 目标缺少 KR 检查
+    purpose: 为缺少活跃 KR 的目标创建战略会议
     maturity: 2
     code:
       root: packages/brain/src
@@ -655,53 +647,23 @@ features:
       adr: null
       api_doc: null
       runbook: null
-    skills:
-      - skill_id: plan
-        command: /plan
-        entry_file: packages/workflows/skills/plan/SKILL.md
-        version: "1.8.0"
-        status: active
-      - skill_id: decomp
-        command: /decomp
-        entry_file: packages/workflows/skills/decomp/SKILL.md
-        version: "2.1.0"
-        status: active
-      - skill_id: decomp_check
-        command: /decomp-check
-        entry_file: packages/workflows/skills/decomp-check/SKILL.md
-        version: "2.1.0"
-        status: active
-      - skill_id: autumnrice
-        command: /autumnrice
-        entry_file: packages/workflows/skills/autumnrice/SKILL.md
-        version: "7.0.0"
-        status: active
+    skills: []
     apis: []
     tests:
       unit:
-        - packages/brain/src/__tests__/decomp-capacity-gate.test.js
-        - packages/brain/src/__tests__/decomp-checker-dedup-fix.test.js
-        - packages/brain/src/__tests__/decomp-checker-direct-kr.test.js
         - packages/brain/src/__tests__/decomp-checker-domain.test.js
-        - packages/brain/src/__tests__/decomp-checker-null-krid.test.js
-        - packages/brain/src/__tests__/decomp-finder-findings.test.js
         - packages/brain/src/__tests__/decomposition-checker.test.js
       integration: []
       e2e: []
       regression: []
     capabilities:
       - id: decomposition_engine_decompose
-        name: KR 拆解
+        name: 目标缺少 KR 检查
         entry_file: packages/brain/src/decomposition-checker.js
         maturity: 2
         tests:
           unit:
-            - packages/brain/src/__tests__/decomp-capacity-gate.test.js
-            - packages/brain/src/__tests__/decomp-checker-dedup-fix.test.js
-            - packages/brain/src/__tests__/decomp-checker-direct-kr.test.js
             - packages/brain/src/__tests__/decomp-checker-domain.test.js
-            - packages/brain/src/__tests__/decomp-checker-null-krid.test.js
-            - packages/brain/src/__tests__/decomp-finder-findings.test.js
             - packages/brain/src/__tests__/decomposition-checker.test.js
           integration: []
           e2e: []

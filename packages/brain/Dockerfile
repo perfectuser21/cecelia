@@ -30,7 +30,7 @@ ENV GIT_SHA=${GIT_SHA}
 # 实测(PR#3801) Step4 直接报 "createdb: command not found" 失败退出。
 # sqlite：feishu-task-ledger 只读查 OpenClaw 执行流水（判断秋米有没有真派 agent 去干活）。
 # 容器是 Node 20，node:sqlite 要 22.5+ 才内置；CLI 只占 ~1.5MB，且 -readonly 能防写穿第三方状态库。
-RUN apk add --no-cache curl bash python3 procps tini docker-cli docker-cli-compose git openssh-client ca-certificates github-cli postgresql-client sqlite flock \
+RUN apk add --no-cache curl bash python3 procps tini docker-cli docker-cli-compose git openssh-client ca-certificates postgresql-client sqlite flock \
  && adduser -D -u 1001 cecelia
 
 # 接入控制面只安装公开CLI；service token运行时从只读凭据挂载读取。
@@ -58,10 +58,18 @@ RUN npm install -g @openai/codex@0.146.0
 # Install gh CLI for shepherd.js (gh pr view/merge) and harness-watcher.js (gh run list).
 # Use release tarball (not apk's github-cli, which lives in community repo and is less stable).
 RUN GH_VERSION=2.45.0 \
- && wget -qO- https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_amd64.tar.gz \
-    | tar -xz -C /tmp \
- && mv /tmp/gh_${GH_VERSION}_linux_amd64/bin/gh /usr/local/bin/gh \
- && rm -rf /tmp/gh_${GH_VERSION}_linux_amd64
+ && case "$(apk --print-arch)" in \
+      x86_64) GH_ARCH=amd64; GH_SHA=79e89a14af6fc69163aee00e764e86d5809d0c6c77e6f229aebe7a4ed115ee67 ;; \
+      aarch64) GH_ARCH=arm64; GH_SHA=bb62c95ecc17a8557a847483ce671bff9909f107ad1961b4efafcd521721c213 ;; \
+      *) exit 1 ;; esac \
+ && curl --fail --silent --show-error --location --max-time 60 \
+      --retry 2 --retry-delay 1 --retry-max-time 180 \
+      "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_${GH_ARCH}.tar.gz" -o /tmp/gh.tar.gz \
+ && echo "${GH_SHA}  /tmp/gh.tar.gz" | sha256sum -c - \
+ && tar -xzf /tmp/gh.tar.gz -C /tmp \
+ && mv /tmp/gh_${GH_VERSION}_linux_${GH_ARCH}/bin/gh /usr/local/bin/gh \
+ && /usr/local/bin/gh --version | head -n 1 | grep -F "gh version ${GH_VERSION} " \
+ && rm -rf /tmp/gh_${GH_VERSION}_linux_${GH_ARCH} /tmp/gh.tar.gz
 
 WORKDIR /app
 

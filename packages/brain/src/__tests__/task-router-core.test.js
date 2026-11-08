@@ -16,11 +16,9 @@
  *   - 输入边界（null / undefined / 空字符串 / 非字符串）
  *
  * 不重复覆盖（已在其他文件中测试）：
- *   - detectRoutingFailure / getFallbackStrategy / routeTaskWithFallback
  *   - diagnoseKR
  *   - code_review / decomp_review / codex_qa / suggestion_plan / initiative_plan/verify
  *     的单独类型断言
- *   - FALLBACK_STRATEGIES 结构
  */
 
 import { describe, it, expect } from 'vitest';

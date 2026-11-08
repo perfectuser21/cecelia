@@ -3,16 +3,16 @@ id: current-dev-pipeline
 version: 1.0.0
 created: 2026-03-10
 updated: 2026-03-10
-authority: CURRENT_STATE
+authority: HISTORICAL_SNAPSHOT
 changelog:
   - 1.0.0: 初始版本，基于 packages/engine/skills/dev/SKILL.md v3.4.1 审计
 ---
 
-# /dev 开发流水线（当前事实版）
+# /dev 开发流水线（2026-03 历史快照）
 
-> **Authority: CURRENT_STATE**
-> 基于 `packages/engine/skills/dev/SKILL.md`（v3.4.1）和 `packages/engine/hooks/` 实际代码。
-> 只记录当前真实生效的流程，不包含计划中的改动。
+> **Authority: HISTORICAL_SNAPSHOT**
+> 下文保留 2026-03 基于 `packages/engine/skills/dev/SKILL.md`（v3.4.1）和 `packages/engine/hooks/` 的历史流程，不代表当前生效规则。
+> 现役开发入口为当前执行环境已安装的 `dev` 技能；维护源在中央 `perfectuser21/zenithjoy-skills`，仓库固定来源见 `.skills-source.json`。不得依据下文恢复旧步骤或覆盖现役规则。
 
 ---
 

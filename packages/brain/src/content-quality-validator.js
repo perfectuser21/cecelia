@@ -164,7 +164,6 @@ export function validateAllVariants(contentMap, typeConfig = {}) {
   let allPassed = true;
 
   for (const [variant, content] of Object.entries(contentMap)) {
-    if (!content) continue;
     const result = validateContentQuality(content, typeConfig, variant);
     results[variant] = result;
     if (!result.passed) allPassed = false;

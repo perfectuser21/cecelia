@@ -2,9 +2,18 @@
  * routes/__tests__/clips.test.js
  * Unit tests for clips route — POST/GET/retry/callback/webhook
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
+
+const boundary = vi.hoisted(() => ({
+  unexpectedDb: vi.fn(), unexpectedFetch: vi.fn(), process: vi.fn(),
+}));
+vi.mock('node:child_process', () => Object.fromEntries(
+  ['exec', 'execSync', 'execFile', 'execFileSync', 'spawn', 'spawnSync', 'fork'].map(name => [name, (...args) => {
+    boundary.process(name, ...args); throw Error('clips_test_process_forbidden');
+  }]),
+));
 
 vi.mock('../../db.js', () => ({
   default: { query: vi.fn() },
@@ -15,6 +24,64 @@ vi.mock('../../clips-extractor.js', () => ({
 
 import pool from '../../db.js';
 import { extractClip } from '../../clips-extractor.js';
+
+const SYNTHETIC_NOTION_KEY = 'synthetic-clips-notion-key-not-a-real-credential';
+const SYNTHETIC_DB = '00000000-0000-4000-8000-000000000001';
+beforeEach(() => {
+  vi.clearAllMocks();
+  pool.query.mockReset().mockImplementation((...args) => {
+    boundary.unexpectedDb(...args); throw Error('clips_test_unarranged_db');
+  });
+  vi.stubEnv('NOTION_API_KEY', SYNTHETIC_NOTION_KEY);
+  vi.stubEnv('NOTION_KNOWLEDGE_REF_DB_ID', SYNTHETIC_DB);
+  vi.stubEnv('CLIPS_WEBHOOK_SECRET', '');
+  delete process.env.CLIPS_WEBHOOK_SECRET;
+  vi.stubGlobal('fetch', async (...args) => {
+    boundary.unexpectedFetch(...args); throw Error('clips_test_unarranged_fetch');
+  });
+});
+afterEach(() => {
+  try {
+    expect(boundary.unexpectedDb).not.toHaveBeenCalled();
+    expect(boundary.unexpectedFetch).not.toHaveBeenCalled();
+    expect(boundary.process).not.toHaveBeenCalled();
+  } finally {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  }
+});
+
+// 仅成功回调显式允许record-only Notion调用；其余测试保留默认fetch拒绝。
+function recordNotionWrite() {
+  const fetch = vi.fn(async () => ({ ok: true, json: async () => ({ id: 'synthetic-notion-page' }) }));
+  vi.stubGlobal('fetch', fetch);
+  return fetch;
+}
+
+function expectNotionWrite(fetch) {
+  expect(fetch).toHaveBeenCalledTimes(1);
+  const [url, options] = fetch.mock.calls[0];
+  expect(url).toBe('https://api.notion.com/v1/pages');
+  expect(options).toMatchObject({ method: 'POST', headers: {
+    Authorization: `Bearer ${SYNTHETIC_NOTION_KEY}`,
+    'Notion-Version': '2022-06-28', 'Content-Type': 'application/json',
+  } });
+  expect(options.signal).toBeInstanceOf(AbortSignal);
+  expect(JSON.parse(options.body)).toEqual({
+    parent: { database_id: SYNTHETIC_DB },
+    properties: {
+      '标题': { title: [{ text: { content: 'Test Video' } }] },
+      '链接': { url: 'https://example.invalid/synthetic-clip' },
+      '日期': { date: { start: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/) } },
+      '状态': { status: { name: '未使用' } },
+      '平台': { select: { name: 'douyin' } },
+    },
+    children: [
+      { object: 'block', type: 'heading_2', heading_2: { rich_text: [{ type: 'text', text: { content: '转写文案' } }] } },
+      { object: 'block', type: 'paragraph', paragraph: { rich_text: [{ type: 'text', text: { content: 'hello world' } }] } },
+    ],
+  });
+}
 
 function makeApp() {
   const app = express();
@@ -105,7 +172,8 @@ describe('POST /api/brain/clips/:id/callback — content-service result', () => 
   });
 
   it('updates clip to done and returns 200', async () => {
-    pool.query.mockResolvedValueOnce({ rows: [{ id: 'uuid-1', status: 'done' }] });
+    const notionFetch = recordNotionWrite();
+    pool.query.mockResolvedValueOnce({ rows: [{ id: 'uuid-1', status: 'done', url: 'https://example.invalid/synthetic-clip', platform: 'douyin' }] });
     const { default: router } = await import('../clips.js');
     const app = makeApp();
     app.use('/api/brain/clips', router);
@@ -115,6 +183,7 @@ describe('POST /api/brain/clips/:id/callback — content-service result', () => 
       .send({ success: true, title: 'Test Video', transcript: 'hello world', platform: 'douyin' });
 
     expect(res.status).toBe(200);
+    expectNotionWrite(notionFetch);
   });
 
   it('returns 401 when CLIPS_WEBHOOK_SECRET set and header missing', async () => {
@@ -147,8 +216,9 @@ describe('POST /api/brain/clips/:id/callback — content-service result', () => 
   });
 
   it('passes auth and updates clip when correct secret provided', async () => {
+    const notionFetch = recordNotionWrite();
     process.env.CLIPS_WEBHOOK_SECRET = 'test-secret';
-    pool.query.mockResolvedValueOnce({ rows: [{ id: 'uuid-1', status: 'done' }] });
+    pool.query.mockResolvedValueOnce({ rows: [{ id: 'uuid-1', status: 'done', url: 'https://example.invalid/synthetic-clip', platform: 'douyin' }] });
     const { default: router } = await import('../clips.js');
     const app = makeApp();
     app.use('/api/brain/clips', router);
@@ -160,5 +230,37 @@ describe('POST /api/brain/clips/:id/callback — content-service result', () => 
 
     expect(res.status).toBe(200);
     expect(res.body.ok).toBe(true);
+    expectNotionWrite(notionFetch);
+  });
+});
+
+// 失败/未配置token分支不能借“成功HTTP”隐式访问Notion。
+describe('clips callback 无Notion写入分支', () => {
+  it('内容服务失败仍记录failed，不调用Notion或重启提取', async () => {
+    pool.query.mockResolvedValueOnce({ rows: [], rowCount: 1 });
+    const { default: router } = await import('../clips.js');
+    const app = makeApp();
+    app.use('/api/brain/clips', router);
+    const res = await request(app).post('/api/brain/clips/uuid-1/callback')
+      .send({ success: false, error: 'synthetic extraction failure' });
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ok: true, status: 'failed' });
+    expect(pool.query).toHaveBeenCalledWith(expect.stringContaining("status='failed'"),
+      ['uuid-1', 'synthetic extraction failure']);
+    expect(extractClip).not.toHaveBeenCalled();
+  });
+
+  it('未配置Notion token仍按原合同完成callback，不请求Notion', async () => {
+    vi.stubEnv('NOTION_API_KEY', '');
+    delete process.env.NOTION_API_KEY;
+    pool.query.mockResolvedValueOnce({ rows: [{ id: 'uuid-1', status: 'done' }] });
+    const { default: router } = await import('../clips.js');
+    const app = makeApp();
+    app.use('/api/brain/clips', router);
+    const res = await request(app).post('/api/brain/clips/uuid-1/callback')
+      .send({ success: true, title: 'Test Video', transcript: 'hello world' });
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ok: true, status: 'done' });
+    expect(extractClip).not.toHaveBeenCalled();
   });
 });

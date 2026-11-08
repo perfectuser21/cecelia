@@ -8,20 +8,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-vi.mock('../db.js', () => ({ default: { query: vi.fn() } }));
-vi.mock('../notifier.js', () => ({ sendBark: vi.fn().mockResolvedValue(true) }));
-vi.mock('../orchestrator/kernel-run-store.js', () => ({
-  patchKernelRunById: async (db, input) => {
-    await db.query(
-      `UPDATE initiative_runs SET phase='${input.phase}',
-         failure_reason=COALESCE(failure_reason, '${input.failureReason ?? ''}'),
-         pr_url=COALESCE(pr_url, $2) WHERE id=$1`,
-      [input.runId, input.prUrl],
-    );
-    await db.query(`UPDATE tasks SET status='${input.phase === 'done' ? 'completed' : 'failed'}'`);
-    return { id: input.runId, phase: input.phase };
-  },
-}));
+import { store } from './helpers/relay-watchdog-boundary.js';
 
 import {
   resumeStalledRelayRuns,
@@ -144,9 +131,7 @@ describe('A/B：generator_done 短路 + 超时兜底', () => {
     const deps = makeDeps({ generatorDone: true, generatorDoneAt: oldAt, prUrl: null });
     const r = await resumeStalledRelayRuns(deps);
     expect(deps.spawnFn).not.toHaveBeenCalled();
-    const updates = deps.pool.query.mock.calls.map((c) => c[0]);
-    expect(updates.some((s) => /UPDATE tasks/.test(s) && /'failed'/.test(s))).toBe(true);
-    expect(updates.some((s) => /UPDATE initiative_runs/.test(s) && /'failed'/.test(s) && /generator_done_timeout/.test(s))).toBe(true);
+    expect(store.patch).toHaveBeenCalledWith(deps.pool, { runId: RUN_ID, phase: 'failed', failureReason: 'generator_done_timeout', prUrl: null });
     expect(spawnEventUpdates(deps.pool).length).toBeGreaterThan(0);
     expect(r.capped).toBe(1);
   });
@@ -155,8 +140,7 @@ describe('A/B：generator_done 短路 + 超时兜底', () => {
     const deps = makeDeps({ generatorDone: true, generatorDoneAt: Date.now(), prUrl: PR_URL, prState: 'OPEN' });
     const r = await resumeStalledRelayRuns(deps);
     expect(deps.spawnFn).not.toHaveBeenCalled();
-    const updates = deps.pool.query.mock.calls.map((c) => c[0]);
-    expect(updates.some((s) => /UPDATE tasks/.test(s) && /'failed'/.test(s))).toBe(false);
+    expect(store.patch).not.toHaveBeenCalled();
     expect(r.capped).toBe(0);
     expect(r.resumed).toBe(0);
   });
@@ -167,9 +151,8 @@ describe('A/B：generator_done 短路 + 超时兜底', () => {
     const r = await resumeStalledRelayRuns(deps);
     expect(deps.spawnFn).not.toHaveBeenCalled();
     expect(r.mergedPr).toBe(1);
-    const updates = deps.pool.query.mock.calls.map((c) => c[0]);
-    expect(updates.some((s) => /generator_done_timeout/.test(s))).toBe(false);
-    expect(updates.some((s) => /UPDATE tasks/.test(s) && /'completed'/.test(s))).toBe(true);
+    expect(store.patch).toHaveBeenCalledTimes(1);
+    expect(store.patch).toHaveBeenCalledWith(deps.pool, { runId: RUN_ID, phase: 'done', failureReason: null, prUrl: PR_URL });
   });
 
   it('8) M1 headed 分支 generator_done=true + evaluator 已完成 + session 消失 → spawnFn 零调用（headed 短路）', async () => {
@@ -249,9 +232,7 @@ describe('A/B：generator_done 短路 + 超时兜底', () => {
     const spawnFn = vi.fn().mockResolvedValue({ ok: true });
     const r = await resumeStalledRelayRuns({ pool, execFn, spawnFn });
     expect(spawnFn).not.toHaveBeenCalled();
-    const updates = pool.query.mock.calls.map((c) => c[0]);
-    expect(updates.some((s) => /UPDATE tasks/.test(s) && /'failed'/.test(s))).toBe(true);
-    expect(updates.some((s) => /generator_done_timeout/.test(s))).toBe(true);
+    expect(store.patch).toHaveBeenCalledWith(pool, { runId: RUN_ID, phase: 'failed', failureReason: 'generator_done_timeout', prUrl: null });
     expect(r.capped).toBe(1);
   });
 

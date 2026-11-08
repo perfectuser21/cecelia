@@ -1,3 +1,4 @@
+import { runDeps } from './helpers/task-run-effects.js';
 /**
  * [BEHAVIOR] 棒1 回执线（链 bf5088a3，任务 15346e6c，决策 702949b6/280bd091）：
  *  - 终态回执 result 里的 stage / stage_status / metrics / evidence / probes 经 finishRun 合进 task_runs.result
@@ -16,12 +17,14 @@ const read = (rel) => readFileSync(path.join(BRAIN_ROOT, rel), 'utf8');
 
 function fakePool() {
   const calls = [];
+  let taskId = 'owned-task';
   return {
     calls,
+    emit: vi.fn(async () => {}),
     query: vi.fn(async (sql, params) => {
       calls.push({ sql: String(sql), params });
-      if (/INSERT INTO task_runs/i.test(sql)) return { rows: [{ id: 'row-1', run_id: 'r' }] };
-      if (/UPDATE task_runs/i.test(sql)) return { rows: [{ id: 'row-1' }] };
+      if (/INSERT INTO task_runs/i.test(sql)) { taskId = params[0]; return { rows: [{ id: 'row-1', run_id: 'r' }] }; }
+      if (/UPDATE task_runs/i.test(sql)) return { rows: [{ id: 'row-1', task_id: taskId, status: params[1], result: JSON.parse(params[2]) }] };
       return { rows: [] };
     }),
   };
@@ -37,7 +40,7 @@ describe('recordRunFromCallback — 终态回执保 stage/metrics', () => {
         result: { stage: 'publish', stage_status: 'ok', metrics: { posts: 3, duration_ms: 1200 }, artifacts: ['a:1'], summary: 'x' },
         prUrl: 'https://github.com/o/r/pull/9',
       },
-      { pool },
+      runDeps(pool),
     );
     const res = updateResult(pool);
     expect(res).toMatchObject({
@@ -48,6 +51,11 @@ describe('recordRunFromCallback — 终态回执保 stage/metrics', () => {
       metrics: { posts: 3, duration_ms: 1200 },
     });
     expect(res).not.toHaveProperty('summary');
+    expect(pool.emit).toHaveBeenCalledTimes(1);
+    expect(pool.emit).toHaveBeenCalledWith('run.finished', 'task-run', {
+      runId: 'r1', taskId: 't1', status: 'success',
+      result: expect.objectContaining({ stage: 'publish', stage_status: 'ok', metrics: { posts: 3, duration_ms: 1200 } }),
+    });
   });
 
   it('evidence / probes 只留引用形态（字符串 / {ref|url|path|name|key|observed|probed_at|error}），大 blob 不落', async () => {
@@ -66,7 +74,7 @@ describe('recordRunFromCallback — 终态回执保 stage/metrics', () => {
           probes: [{ key: 'adb', observed: 'online', probed_at: '2026-09-26T00:00:00Z', dump: 'y'.repeat(3000) }],
         },
       },
-      { pool },
+      runDeps(pool),
     );
     const res = updateResult(pool);
     expect(res.evidence).toEqual([
@@ -80,17 +88,17 @@ describe('recordRunFromCallback — 终态回执保 stage/metrics', () => {
 
   it('result 无这些键时不添无谓字段；非终态回执仍只 startRun', async () => {
     const plain = fakePool();
-    await recordRunFromCallback({ taskId: 't', runId: 'r', status: 'completed', exitCode: 0, result: { summary: 's' } }, { pool: plain });
+    await recordRunFromCallback({ taskId: 't', runId: 'r', status: 'completed', exitCode: 0, result: { summary: 's' } }, runDeps(plain));
     expect(updateResult(plain)).toEqual({ exit_code: 0, artifacts: [] });
 
     const running = fakePool();
-    await recordRunFromCallback({ taskId: 't', runId: 'r', status: 'in_progress', result: { stage: 'x' } }, { pool: running });
+    await recordRunFromCallback({ taskId: 't', runId: 'r', status: 'in_progress', result: { stage: 'x' } }, runDeps(running));
     expect(running.calls.some((c) => /UPDATE task_runs/i.test(c.sql))).toBe(false);
   });
 
   it('finishRun 接 result 入参并与 exit_code/artifacts 合并（exit_code/artifacts 不被覆盖）', async () => {
     const pool = fakePool();
-    await finishRun({ runId: 'r', status: 'completed', exitCode: 0, artifacts: ['a'], result: { stage: 's', exit_code: 99, artifacts: ['bad'] } }, { pool });
+    await finishRun({ runId: 'r', status: 'completed', exitCode: 0, artifacts: ['a'], result: { stage: 's', exit_code: 99, artifacts: ['bad'] } }, runDeps(pool));
     expect(updateResult(pool)).toEqual({ exit_code: 0, artifacts: ['a'], stage: 's' });
   });
 });
@@ -143,11 +151,12 @@ describe('内部调用方接线（Bearer 头只从 env CECELIA_INTERNAL_TOKEN �
 describe('execution-callback supertest：token 配置后缺头 401 / Bearer 200', () => {
   const TOKEN = 'baton1-test-token';
   let app;
+  let server;
   let mockPool;
 
   beforeAll(async () => {
     vi.resetModules();
-    process.env.CECELIA_INTERNAL_TOKEN = TOKEN;
+    vi.stubEnv('CECELIA_INTERNAL_TOKEN', TOKEN);
     mockPool = {
       query: vi.fn(async (sql) => {
         // 幂等短路：让路由在鉴权之后、事务之前返回 200（只验闸门，不验业务）
@@ -165,18 +174,26 @@ describe('execution-callback supertest：token 配置后缺头 401 / Bearer 200'
     app = express();
     app.use(express.json());
     app.use('/api/brain', router);
+    await new Promise((resolve, reject) => {
+      server = app.listen(0, '127.0.0.1', resolve);
+      server.once('error', reject);
+    });
   });
 
   beforeEach(() => { mockPool.query.mockClear(); });
 
-  afterAll(() => {
-    delete process.env.CECELIA_INTERNAL_TOKEN;
-    vi.doUnmock('../db.js');
+  afterAll(async () => {
+    try {
+      if (server) await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    } finally {
+      vi.unstubAllEnvs();
+      vi.doUnmock('../db.js');
+    }
   });
 
   it('缺头 → 401 UNAUTHORIZED，且不碰库', async () => {
     const request = (await import('supertest')).default;
-    const res = await request(app).post('/api/brain/execution-callback').send({ task_id: 't', run_id: 'r', status: 'completed' });
+    const res = await request(server).post('/api/brain/execution-callback').send({ task_id: 't', run_id: 'r', status: 'completed' });
     expect(res.status).toBe(401);
     expect(res.body.error?.code).toBe('UNAUTHORIZED');
     expect(mockPool.query).not.toHaveBeenCalled();
@@ -184,14 +201,14 @@ describe('execution-callback supertest：token 配置后缺头 401 / Bearer 200'
 
   it('错 token → 401', async () => {
     const request = (await import('supertest')).default;
-    const res = await request(app).post('/api/brain/execution-callback')
+    const res = await request(server).post('/api/brain/execution-callback')
       .set('Authorization', 'Bearer nope').send({ task_id: 't', run_id: 'r', status: 'completed' });
     expect(res.status).toBe(401);
   });
 
   it('带 Bearer → 200 进入处理', async () => {
     const request = (await import('supertest')).default;
-    const res = await request(app).post('/api/brain/execution-callback')
+    const res = await request(server).post('/api/brain/execution-callback')
       .set('Authorization', `Bearer ${TOKEN}`).send({ task_id: 't', run_id: 'r', status: 'completed' });
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);

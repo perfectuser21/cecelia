@@ -13,6 +13,10 @@ vi.mock('fs',async original=>{
 });
 vi.mock('../account-usage.js',async original=>({...await original(),proactiveTokenCheck:vi.fn(async()=>{})}));
 vi.mock('../quota-guard.js',()=>({checkQuotaGuard:io.quota}));
+vi.mock('../slot-allocator.js',()=>({
+ calculateSlotBudget:vi.fn(async()=>({resourceAdmissionBlocked:true})),
+ harnessSlotCheck:vi.fn(),
+}));
 vi.mock('../quota-cooling.js',()=>({isGlobalQuotaCooling:()=>false,getQuotaCoolingState:()=>({active:false})}));
 vi.mock('../drain.js',()=>({isDraining:()=>false,getDrainStartedAt:()=>null}));
 vi.mock('../guidance.js',()=>({getGuidance:async()=>null}));
@@ -46,9 +50,11 @@ it('当前默认runScheduler真实调用非代码dispatcher，pause门必达',as
  expect(io.query.mock.calls.some(([sql])=>sql.trim().startsWith('SELECT id FROM key_results'))).toBe(true);
  expect(io.quota).not.toHaveBeenCalled();expect(io.forbidden).not.toHaveBeenCalled();
 });
-it('clear后真实dispatcher继续到受控下游quota门，不再因pause短路',async()=>{
+it('clear后真实dispatcher继续到受控下游资源门，不再因pause短路',async()=>{
  executor.setBillingPause(new Date(Date.now()+60000).toISOString(),'quota_exhausted');
  executor.clearBillingPause();
- expect(await dispatchNextTask(['owned-goal'])).toMatchObject({dispatched:false,reason:'quota_critical'});
- expect(io.quota).toHaveBeenCalledTimes(1);expect(io.forbidden).not.toHaveBeenCalled();
+ expect(await dispatchNextTask(['owned-goal'])).toMatchObject({dispatched:false,reason:'resource_unavailable'});
+ const {calculateSlotBudget}=await import('../slot-allocator.js');
+ expect(calculateSlotBudget).toHaveBeenCalledTimes(1);
+ expect(io.quota).not.toHaveBeenCalled();expect(io.forbidden).not.toHaveBeenCalled();
 });

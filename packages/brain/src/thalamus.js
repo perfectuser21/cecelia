@@ -275,7 +275,6 @@ const ACTION_WHITELIST = {
   // OKR 操作
   'create_okr': { dangerous: false, description: '创建 OKR' },
   'update_okr_progress': { dangerous: false, description: '更新 OKR 进度' },
-  'assign_to_autumnrice': { dangerous: false, description: '交给秋米拆解' },
 
   // 通知操作
   'notify_user': { dangerous: false, description: '通知用户' },

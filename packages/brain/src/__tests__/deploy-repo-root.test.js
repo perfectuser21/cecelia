@@ -1,3 +1,4 @@
+import { deployFixture } from './helpers/deploy-owned-fs.js';
 /**
  * deploy-repo-root.test.js
  * 验证 deploy webhook 使用 REPO_ROOT 环境变量而非 import.meta.url 推算路径。
@@ -41,7 +42,7 @@ vi.mock('../pr-callback-handler.js', () => ({
   extractPrInfo: vi.fn(),
   handlePrMerged: vi.fn(),
 }));
-vi.mock('./shared.js', () => ({
+vi.mock('../routes/shared.js', () => ({
   resolveRelatedFailureMemories: vi.fn(),
   getActiveExecutionPaths: vi.fn(),
   INVENTORY_CONFIG: {},
@@ -59,8 +60,8 @@ describe('deploy-repo-root', () => {
 
   beforeEach(async () => {
     capturedSpawnArgs = null;
-    process.env.DEPLOY_TOKEN = 'test-token';
-    process.env.REPO_ROOT = '/custom/repo/root';
+    vi.stubEnv('DEPLOY_TOKEN', 'test-token');
+    process.env.REPO_ROOT = deployFixture.root;
     vi.resetModules();
   });
 
@@ -71,7 +72,7 @@ describe('deploy-repo-root', () => {
       process.env.REPO_ROOT = ORIG_REPO_ROOT;
     }
     // 清理 deploy 状态文件，防止下一个 test 的 fresh module 加载到 running 状态
-    try { unlinkSync('/tmp/cecelia-deploy-status.json'); } catch {}
+    try { unlinkSync(deployFixture.statusFile); } catch {}
   });
 
   it('POST /deploy 使用 REPO_ROOT 拼接 deploy-local.sh 路径', async () => {
@@ -89,10 +90,10 @@ describe('deploy-repo-root', () => {
     expect(capturedSpawnArgs).not.toBeNull();
     // spawn('bash', [scriptPath, ...], { cwd, detached, stdio })
     const scriptPath = capturedSpawnArgs[1][0];
-    expect(scriptPath).toBe('/custom/repo/root/scripts/deploy-local.sh');
+    expect(scriptPath).toBe(`${deployFixture.root}/scripts/deploy-local.sh`);
     // cwd 也应用 REPO_ROOT
     const opts = capturedSpawnArgs[2];
-    expect(opts.cwd).toBe('/custom/repo/root');
+    expect(opts.cwd).toBe(deployFixture.root);
   });
 
   it('REPO_ROOT 未设置时 path 计算不崩溃（含 deploy-local.sh 后缀）', () => {
@@ -103,6 +104,9 @@ describe('deploy-repo-root', () => {
     expect(scriptFallback).toMatch(/scripts\/deploy-local\.sh$/);
     // 设置 REPO_ROOT 时，路径使用 REPO_ROOT
     const scriptWithEnv = `${process.env.REPO_ROOT}/scripts/deploy-local.sh`;
-    expect(scriptWithEnv).toBe('/custom/repo/root/scripts/deploy-local.sh');
+    expect(scriptWithEnv).toBe(`${deployFixture.root}/scripts/deploy-local.sh`);
   });
 });
+
+vi.mock('../receipt-collector.js', () => ({ recordActionReceipt: vi.fn(async () => 'owned-receipt'), resolveActionReceipt: vi.fn(async () => true) }));
+vi.mock('../../../../scripts/brain-image-retention/runtime.mjs', () => ({ createRuntime: vi.fn(async () => null) }));

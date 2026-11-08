@@ -209,23 +209,12 @@ const actionHandlers = {
     return { success: true, note: 'progress 由 kr-verifier 从数据源计算，不接受直接写入', verifier_result: result };
   },
 
-  /**
-   * 交给秋米拆解
-   */
-  async assign_to_autumnrice(params, _context) {
-    // 创建 decomposition 任务
-    const result = await createTask({
-      title: `OKR 拆解: ${params.okr_title}`,
-      description: params.okr_description,
-      task_type: 'dev',
-      priority: 'P0',
-      goal_id: params.goal_id,
-      payload: {
-        decomposition: 'true',
-        objective_id: params.goal_id
-      }
-    });
-    return { success: result.success, task_id: result.task?.id };
+  /** 已退役：保留旧待审动作的明确失败，防止误记为批准成功。 */
+  async assign_to_autumnrice() {
+    const error = new Error('decomposition_retired');
+    error.code = 'decomposition_retired';
+    error.status = 410;
+    throw error;
   },
 
   /**
@@ -956,6 +945,9 @@ async function selectProposalOption(actionId, optionId, reviewer = 'dashboard-us
   } catch (err) {
     await client.query('ROLLBACK');
     console.error('[executor] Failed to select proposal option:', err.message);
+    if (err.code === 'decomposition_retired') {
+      return { success: false, error: err.message, code: err.code, status: 410 };
+    }
     return { success: false, error: err.message, status: 500 };
   } finally {
     client.release();

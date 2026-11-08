@@ -1,3 +1,4 @@
+import { deployFixture } from './helpers/deploy-owned-fs.js';
 /**
  * deploy-webhook-log.test.js
  * 验证 v1.1.0 deploy webhook 把 deploy-local.sh stdout/stderr 落盘到日志文件，
@@ -43,7 +44,7 @@ vi.mock('../pr-callback-handler.js', () => ({
   extractPrInfo: vi.fn(),
   handlePrMerged: vi.fn(),
 }));
-vi.mock('./shared.js', () => ({
+vi.mock('../routes/shared.js', () => ({
   resolveRelatedFailureMemories: vi.fn(),
   getActiveExecutionPaths: vi.fn(),
   INVENTORY_CONFIG: {},
@@ -62,12 +63,12 @@ describe('deploy-webhook-log (v1.1.0 log 落盘)', () => {
 
   beforeEach(async () => {
     capturedSpawnArgs = null;
-    process.env.DEPLOY_TOKEN = 'test-token';
+    vi.stubEnv('DEPLOY_TOKEN', 'test-token');
     // 用真实可写的临时目录，确保 logs/ 子目录能被创建，logFd 得到真实 fd 而非 'ignore'
     tmpRepoRoot = mkdtempSync(join(tmpdir(), 'deploy-test-'));
     process.env.REPO_ROOT = tmpRepoRoot;
     // 关键：测试前清掉残留 status 文件，否则 module 启动时读到 running 状态 → 409
-    try { unlinkSync('/tmp/cecelia-deploy-status.json'); } catch {}
+    try { unlinkSync(deployFixture.statusFile); } catch {}
     vi.resetModules();
   });
 
@@ -77,7 +78,7 @@ describe('deploy-webhook-log (v1.1.0 log 落盘)', () => {
     } else {
       process.env.REPO_ROOT = ORIG_REPO_ROOT;
     }
-    try { unlinkSync('/tmp/cecelia-deploy-status.json'); } catch {}
+    try { unlinkSync(deployFixture.statusFile); } catch {}
     try { rmSync(tmpRepoRoot, { recursive: true, force: true }); } catch {}
   });
 
@@ -150,3 +151,6 @@ describe('deploy-webhook-log (v1.1.0 log 落盘)', () => {
     // 日志文件在 afterEach 清理 tmpRepoRoot 时一起删除
   });
 });
+
+vi.mock('../receipt-collector.js', () => ({ recordActionReceipt: vi.fn(async () => 'owned-receipt'), resolveActionReceipt: vi.fn(async () => true) }));
+vi.mock('../../../../scripts/brain-image-retention/runtime.mjs', () => ({ createRuntime: vi.fn(async () => null) }));

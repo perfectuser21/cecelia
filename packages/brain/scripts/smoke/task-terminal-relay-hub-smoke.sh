@@ -65,7 +65,7 @@ echo "[task-terminal-relay-hub-smoke] 4. 关键路径接线"
 node -e "
 const fs = require('fs');
 const checks = [
-  ['packages/brain/src/routes/tasks.js', 'afterTerminalTransition(', 'PATCH /api/brain/tasks'],
+  ['packages/brain/src/routes/tasks-status.js', 'afterTerminalTransition(', 'PATCH /api/brain/tasks'],
   ['packages/brain/src/routes/task-task-patch.js', 'afterTerminalTransition(', 'PATCH /:id'],
   ['packages/brain/src/callback-processor.js', 'afterTerminalTransition(', '执行回调（队列）'],
   ['packages/brain/src/routes/execution.js', 'afterTerminalTransition(', '执行回调（HTTP）'],

@@ -42,7 +42,6 @@ features:
         auth: none
     tests:
       unit:
-        - packages/brain/src/__tests__/bare-modules/memory-utils.test.js
         - packages/brain/src/__tests__/contracts/memory-retriever-contract.test.js
         - packages/brain/src/__tests__/eviction.test.js
         - packages/brain/src/__tests__/memory-capabilities-search.test.js
@@ -56,7 +55,6 @@ features:
         - packages/brain/src/__tests__/memory-retriever.test.js
         - packages/brain/src/__tests__/memory-router.test.js
         - packages/brain/src/__tests__/memory-selection-log.test.js
-        - packages/brain/src/__tests__/memory-sync.test.js
         - packages/brain/src/__tests__/memory-utils.test.js
         - packages/brain/src/__tests__/mmr-observability.test.js
         - packages/brain/src/__tests__/routes/memory.test.js
@@ -72,7 +70,6 @@ features:
         maturity: 3
         tests:
           unit:
-            - packages/brain/src/__tests__/bare-modules/memory-utils.test.js
             - packages/brain/src/__tests__/contracts/memory-retriever-contract.test.js
             - packages/brain/src/__tests__/eviction.test.js
             - packages/brain/src/__tests__/memory-capabilities-search.test.js
@@ -86,7 +83,6 @@ features:
             - packages/brain/src/__tests__/memory-retriever.test.js
             - packages/brain/src/__tests__/memory-router.test.js
             - packages/brain/src/__tests__/memory-selection-log.test.js
-            - packages/brain/src/__tests__/memory-sync.test.js
             - packages/brain/src/__tests__/memory-utils.test.js
             - packages/brain/src/__tests__/mmr-observability.test.js
             - packages/brain/src/__tests__/routes/memory.test.js
@@ -430,7 +426,6 @@ features:
     apis: []
     tests:
       unit:
-        - packages/brain/src/__tests__/bare-modules/pending-conversations.test.js
         - packages/brain/src/__tests__/consolidation.test.js
         - packages/brain/src/__tests__/conversation-consolidator.test.js
         - packages/brain/src/__tests__/pending-conversations.test.js
@@ -445,7 +440,6 @@ features:
         maturity: 2
         tests:
           unit:
-            - packages/brain/src/__tests__/bare-modules/pending-conversations.test.js
             - packages/brain/src/__tests__/consolidation.test.js
             - packages/brain/src/__tests__/conversation-consolidator.test.js
             - packages/brain/src/__tests__/pending-conversations.test.js
@@ -585,11 +579,8 @@ features:
     apis: []
     tests:
       unit:
-        - packages/brain/src/__tests__/bare-modules/desire-feedback.test.js
         - packages/brain/src/__tests__/desire-feedback.test.js
         - packages/brain/src/__tests__/desire-respond-api.test.js
-        - packages/brain/src/__tests__/desire-suggestion-cycle.test.js
-        - packages/brain/src/__tests__/desire-suggestions.test.js
         - packages/brain/src/__tests__/desire-system.test.js
         - packages/brain/src/__tests__/desires-api.test.js
       integration: []
@@ -602,11 +593,8 @@ features:
         maturity: 2
         tests:
           unit:
-            - packages/brain/src/__tests__/bare-modules/desire-feedback.test.js
             - packages/brain/src/__tests__/desire-feedback.test.js
             - packages/brain/src/__tests__/desire-respond-api.test.js
-            - packages/brain/src/__tests__/desire-suggestion-cycle.test.js
-            - packages/brain/src/__tests__/desire-suggestions.test.js
             - packages/brain/src/__tests__/desire-system.test.js
             - packages/brain/src/__tests__/desires-api.test.js
           integration: []

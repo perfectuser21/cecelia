@@ -13,7 +13,7 @@ import { assertPrivateFixtureTarget } from '../../../packages/brain/src/__tests_
  * runPostdeployVerifier 扫描后该任务 status 仍为 pending_postdeploy（未被消费）。
  * 过滤未加时该断言 FAIL（任务会被标 completed）→ 真红。
  *
- * 同时插入一个不带 smoke: 前缀的对照任务，断言其正常被消费为 completed —
+ * 同时插入一个不带 smoke: 前缀的无 PR 开发任务，断言其被消费为 completed_no_pr —
  * 证明过滤是选择性排除（只挡 smoke: 前缀），不是把整个批次机制打坏。
  *
  * 真实调用方式：直接调用真实 runPostdeployVerifier(真实 pg.Client)，不 mock db pool
@@ -76,8 +76,8 @@ describe('postdeploy-verifier — fetchPendingBatch 排除 smoke: 前缀 [BEHAVI
     expect(r.rows[0].retry_count).toBeNull();
   });
 
-  it('对照：不带 smoke: 前缀的同批次任务 → 正常被消费，status 变为 completed', async () => {
+  it('对照：不带 smoke: 前缀的无 PR 开发任务被消费，但不能算已交付', async () => {
     const r = await client.query<{ status: string }>('SELECT status FROM tasks WHERE id = $1', [controlTaskId]);
-    expect(r.rows[0].status).toBe('completed');
+    expect(r.rows[0].status).toBe('completed_no_pr');
   });
 });

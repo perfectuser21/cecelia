@@ -142,13 +142,6 @@ tests:
     status: active
     note: "probeRumination使用48h窗口和idle状态判断（合约测试）"
 
-  - id: capture-api
-    path: tests/capture-api.test.js
-    type: unit
-    ci: L3
-    status: pending-ci
-    note: "Captures API mock测试，全mock无真实DB，价值有限"
-
   - id: capture-digestion-api
     path: tests/capture-digestion-api.test.js
     type: unit
@@ -157,13 +150,6 @@ tests:
     note: "Capture Atoms API mock测试，全mock无真实DB，价值有限"
 
   # — 知识模块 ——————————————————————————————————————————————————————————————————
-
-  - id: knowledge-modules
-    path: tests/knowledge-modules.test.ts
-    type: unit
-    ci: L3
-    status: pending-ci
-    note: "KnowledgeModules分组逻辑、优先级标签（mock数据，价值一般）"
 
   # — 数据库集成测试（需要真实 PostgreSQL）———————————————————————————————————————
 

@@ -5,7 +5,7 @@ set -euo pipefail
 cd "$(dirname "$0")/../../../.."
 node -e "
 const fs = require('fs');
-const tasks = fs.readFileSync('packages/brain/src/routes/tasks.js','utf8');
+const tasks = fs.readFileSync('packages/brain/src/routes/tasks-status.js','utf8');
 if (!tasks.includes(\"result = COALESCE(result, '{}'::jsonb)\")) { console.error('FAIL: tasks.js 缺 result COALESCE 写入'); process.exit(1); }
 if (!tasks.includes('isStatusNoop')) { console.error('FAIL: tasks.js 缺幂等 no-op 分支'); process.exit(1); }
 const inits = fs.readFileSync('packages/brain/src/routes/initiatives.js','utf8');

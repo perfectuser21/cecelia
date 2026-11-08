@@ -39,7 +39,8 @@ export async function checkInvariantCandidate(pool, atom, { llm = callLLM } = {}
   );
   const { text } = await llm('cortex', GATE_PROMPT(atom.content, invariants), { maxTokens: 512 });
   const parsed = extractJsonObject(text);
-  if (!parsed || typeof parsed.conflict !== 'boolean') {
+  if (!parsed || !['conflict', 'verifiable', 'scope_ok', 'fr_contradiction']
+    .every(field => typeof parsed[field] === 'boolean')) {
     return { pass: false, checks: null, reason: 'invariant-gate parse_failed' };
   }
   const checks = {

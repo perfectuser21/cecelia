@@ -16,8 +16,15 @@
  *   BEHAVIOR-7  compressBrainResult 命名导出可用
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { buildJudgePrompt, compressBrainResult } from '../harness-judge.js';
+
+const network = vi.fn();
+beforeEach(() => {
+  network.mockClear();
+  vi.stubGlobal('fetch', (...args) => { network(...args); throw Error('证据压缩测试禁止网络'); });
+});
+afterEach(() => { expect(network).not.toHaveBeenCalled(); vi.unstubAllGlobals(); });
 
 // 构造标准的 dod/gp stub（让 buildJudgePrompt 可以调用）
 function makeMeta() {
@@ -165,9 +172,8 @@ describe('[BEHAVIOR-4] 单条超长 log_tail 截断标记', () => {
     expect(compressed).toContain('…（已截断）');
     // 验证截断后 log_tail 的 X 不超过 600 个
     const xMatch = compressed.match(/X+/);
-    if (xMatch) {
-      expect(xMatch[0].length).toBeLessThanOrEqual(600);
-    }
+    expect(xMatch).not.toBeNull();
+    expect(xMatch[0].length).toBeLessThanOrEqual(600);
   });
 });
 

@@ -33,7 +33,7 @@ await pool.end();
 pass "有头 handoff：resume_headed + 未标字符串 → 待续（不派单），dispatch_headless → 1 条 queued 子任务"
 
 grep -q "router.get('/pending-resume'" "$BRAIN_DIR/src/routes/handoffs.js" || fail "缺 GET /handoffs/pending-resume"
-grep -q "prepareHandoffForWrite" "$BRAIN_DIR/src/routes/tasks.js" || fail "PATCH 未接 handoff next_steps 规范化反馈"
+grep -q "prepareHandoffForWrite" "$BRAIN_DIR/src/routes/tasks-status.js" || fail "PATCH 未接 handoff next_steps 规范化反馈"
 pass "待续列表接口与 PATCH 反馈已接"
 
 echo "ALL PASS: handoff-kinds"

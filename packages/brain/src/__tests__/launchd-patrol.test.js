@@ -1,7 +1,13 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+
+const safety = vi.hoisted(() => ({
+  query: vi.fn(async () => { throw new Error('launchd_test_canonical_db_forbidden'); }),
+}));
+vi.mock('../db.js', () => ({ default: { query: safety.query } }));
 
 vi.mock('../notifier.js', () => ({ sendBark: vi.fn().mockResolvedValue(true) }));
 vi.mock('../alerting.js', () => ({ raise: vi.fn().mockResolvedValue(undefined) }));
+vi.mock('../incident-reporter.js', () => ({ reportIncident: vi.fn().mockResolvedValue(undefined) }));
 
 import {
   runLaunchdPatrol,
@@ -11,6 +17,9 @@ import {
 } from '../launchd-patrol.js';
 import { sendBark } from '../notifier.js';
 import { raise } from '../alerting.js';
+import { reportIncident } from '../incident-reporter.js';
+import canonicalPool from '../db.js';
+import incidentPool from '../db/pool.js';
 
 // 健康宿主的 fake launchctl/nc 输出；overrides 注入各类坏状态
 const HEALTHY_DISABLED_OUT = [
@@ -48,6 +57,12 @@ beforeEach(() => {
   __resetLaunchdPatrolForTest();
 });
 
+afterEach(() => {
+  expect(incidentPool).toBe(canonicalPool);
+  expect(canonicalPool.query).toBe(safety.query);
+  expect(safety.query).not.toHaveBeenCalled();
+});
+
 describe('launchd-patrol manifest 核对', () => {
   it('全部健康 → anomalies 空且不告警（含废弃名单 frontend/n8n disabled 属预期）', async () => {
     const r = await runLaunchdPatrol({ exec: makeExec(), inContainer: false });
@@ -56,6 +71,7 @@ describe('launchd-patrol manifest 核对', () => {
     expect(r.checked).toBe(8); // 1 must-run + 6 must-load（含 smoke-nightly + guard-drill + coding-workflow-runner）+ 1 端口（5200/5201 已迁 HK 摘除）
     expect(sendBark).not.toHaveBeenCalled();
     expect(raise).not.toHaveBeenCalled();
+    expect(reportIncident).not.toHaveBeenCalled();
   });
 
   it('必跑 daemon 被 disabled → 检出 + Bark(6h dedupe) + raise P1', async () => {
@@ -65,6 +81,11 @@ describe('launchd-patrol manifest 核对', () => {
     );
     const r = await runLaunchdPatrol({ exec: makeExec({ disabledOut }), inContainer: false });
     expect(r.anomalies).toContain('disabled:com.cecelia.bridge');
+    expect(reportIncident).toHaveBeenCalledTimes(1);
+    expect(reportIncident).toHaveBeenCalledWith(
+      'launchd-patrol', 'launchd-patrol:com.cecelia.bridge', 'p1',
+      { anomaly: 'disabled:com.cecelia.bridge', msg: '宿主 launchd 巡检发现 1 项异常: disabled:com.cecelia.bridge' },
+    );
     expect(sendBark).toHaveBeenCalledWith(
       'launchd 巡检异常',
       expect.stringContaining('disabled:com.cecelia.bridge'),
@@ -86,6 +107,10 @@ describe('launchd-patrol manifest 核对', () => {
       inContainer: false,
     });
     expect(r.anomalies).toEqual(['not_loaded:com.cecelia.token-refresh']);
+    expect(reportIncident).toHaveBeenCalledTimes(1);
+    expect(reportIncident).toHaveBeenCalledWith('launchd-patrol', 'launchd-patrol:com.cecelia.token-refresh', 'p1', {
+      anomaly: 'not_loaded:com.cecelia.token-refresh', msg: '宿主 launchd 巡检发现 1 项异常: not_loaded:com.cecelia.token-refresh',
+    });
   });
 
   it('必跑 daemon state 非 running → not_running 检出', async () => {
@@ -94,6 +119,10 @@ describe('launchd-patrol manifest 核对', () => {
       inContainer: false,
     });
     expect(r.anomalies).toEqual(['not_running:com.cecelia.bridge']);
+    expect(reportIncident).toHaveBeenCalledTimes(1);
+    expect(reportIncident).toHaveBeenCalledWith('launchd-patrol', 'launchd-patrol:com.cecelia.bridge', 'p1', {
+      anomaly: 'not_running:com.cecelia.bridge', msg: '宿主 launchd 巡检发现 1 项异常: not_running:com.cecelia.bridge',
+    });
   });
 
   it('周期型 daemon state 非 running 不算异常（只有必跑名单查 state）', async () => {
@@ -102,6 +131,7 @@ describe('launchd-patrol manifest 核对', () => {
       inContainer: false,
     });
     expect(r.anomalies).toEqual([]);
+    expect(reportIncident).not.toHaveBeenCalled();
   });
 
   it('coding workflow runner 登记为周期型 must-load（未加载即告警）', async () => {
@@ -111,6 +141,10 @@ describe('launchd-patrol manifest 核对', () => {
       inContainer: false,
     });
     expect(r.anomalies).toEqual(['not_loaded:com.cecelia.coding-workflow-runner']);
+    expect(reportIncident).toHaveBeenCalledTimes(1);
+    expect(reportIncident).toHaveBeenCalledWith('launchd-patrol', 'launchd-patrol:com.cecelia.coding-workflow-runner', 'p1', {
+      anomaly: 'not_loaded:com.cecelia.coding-workflow-runner', msg: '宿主 launchd 巡检发现 1 项异常: not_loaded:com.cecelia.coding-workflow-runner',
+    });
   });
 
   it('端口不通 → port_down 检出', async () => {
@@ -119,6 +153,10 @@ describe('launchd-patrol manifest 核对', () => {
       inContainer: false,
     });
     expect(r.anomalies).toEqual(['port_down:3457(cecelia-bridge)']);
+    expect(reportIncident).toHaveBeenCalledTimes(1);
+    expect(reportIncident).toHaveBeenCalledWith('launchd-patrol', 'launchd-patrol:3457(cecelia-bridge)', 'p1', {
+      anomaly: 'port_down:3457(cecelia-bridge)', msg: '宿主 launchd 巡检发现 1 项异常: port_down:3457(cecelia-bridge)',
+    });
   });
 
   it('5200/5201 已随刀3迁 HK，必查端口名单不得再包含（防误告警回归）', async () => {
@@ -136,6 +174,7 @@ describe('launchd-patrol manifest 核对', () => {
     expect(r.reason).toBe('host_unreachable');
     expect(sendBark).not.toHaveBeenCalled();
     expect(raise).not.toHaveBeenCalled();
+    expect(reportIncident).not.toHaveBeenCalled();
   });
 });
 
@@ -171,5 +210,26 @@ describe('launchd-patrol gate 与 ssh 逃逸', () => {
     const exec = makeExec();
     await runLaunchdPatrol({ exec, inContainer: true, keyExistsFn: () => false });
     expect(exec.mock.calls[0][0]).toMatch(/id_ed25519/);
+  });
+});
+
+// 一个结果里每个异常都必须委托事故记录，冷却内不得重复发送。
+describe('launchd-patrol incident 委托隔离', () => {
+  it('多异常各记一次，15min gate 内不重记、不重发告警', async () => {
+    const exec = makeExec({ notLoaded: ['com.cecelia.token-refresh'], portDown: [3457] });
+    const t0 = 1_800_000_000_000;
+    const result = await runLaunchdPatrol({ exec, inContainer: false, now: t0 });
+    expect(result.anomalies).toEqual(['not_loaded:com.cecelia.token-refresh', 'port_down:3457(cecelia-bridge)']);
+    const msg = '宿主 launchd 巡检发现 2 项异常: not_loaded:com.cecelia.token-refresh, port_down:3457(cecelia-bridge)';
+    expect(reportIncident.mock.calls).toEqual([
+      ['launchd-patrol', 'launchd-patrol:com.cecelia.token-refresh', 'p1', { anomaly: 'not_loaded:com.cecelia.token-refresh', msg }],
+      ['launchd-patrol', 'launchd-patrol:3457(cecelia-bridge)', 'p1', { anomaly: 'port_down:3457(cecelia-bridge)', msg }],
+    ]);
+    expect(sendBark).toHaveBeenCalledTimes(1);
+    expect(raise).toHaveBeenCalledTimes(1);
+    expect(await runLaunchdPatrol({ exec, inContainer: false, now: t0 + 60_000 })).toEqual({ skipped: true });
+    expect(reportIncident).toHaveBeenCalledTimes(2);
+    expect(sendBark).toHaveBeenCalledTimes(1);
+    expect(raise).toHaveBeenCalledTimes(1);
   });
 });

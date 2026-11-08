@@ -16,11 +16,29 @@ export function ciVersionGuardCohorts(previous) {
  // 运行时消费选路reader：完整16成员与marker0/1分别成组，旧身份组不变。
  const runtimeScope={...identity,'existing-ops-stage-source.js':'a56f43da6e5d3989057ce075cb4cb9b14de4631c65cf2783dfd998a946980e43'};
  const concurrency={...runtimeScope,'existing-ops-stage-source.js':'8172bbfe9377f6672911ff1be4afb6f652932ce7fefe506764e08412e34508a1'};
+ // W19冻结仅追加完整caller/runtime/reader组合，marker0/1分别封印，旧全部保留。
+ const w19Freeze={...concurrency,'existing-ops-stage-source.js':'8027e13f13edf710b95a78bf036b52c72b48e97f4d01fbd3143144ed3f1f0018'};
+ // 触达去抖只读reader已审变更：继承完整16成员，只新增独立marker0/1组。
+ const outreach={...w19Freeze,'existing-ops-us-compose-source.js':'e1d026e543ef79614fbebbe5037866b2446535cacdd48698b97e3948f0fcf6fa'};
+ // Deep max队列只追加完整16成员与marker0/1配对，旧组保持。
+ const deepQueue={...outreach,'existing-ops-stage-source.js':'142de92540dde7a10b81fb765460643da89ca075f34aa093ff1ce840e5b115bd'};
+ // Bark清退在已合Deep reader基础上追加完整16成员，两个marker封套各自匹配。
+ const barkAfterDeep={...deepQueue,'existing-ops-stage-source.js':'75d26499ff2c61c40c95d9d932ac4a0d8a0bdc3a254fb05aca51980b9eec0f6a'};
+ // staging 核心来源只接受已独立审查的完整 reader 对，禁止新旧混搭。
+ const stagingTuple={...barkAfterDeep,'existing-ops-runtime-source.js':'38cb8d6a6cae835e7813e3d7907b5aaf89876039840c16b2b83b4c77dc872bbf','existing-ops-us-compose-source.js':'0e7594aec56b98f42dd65073050ce68d2a31fcc9add81c8111a47831644be45b'};
+ const suggestionTuple={...stagingTuple,'existing-ops-stage-source.js':'93ea9cbd6eaf25108b46538f77eea980b898720cb0f5299461432277f0d92f02',
+  'existing-ops-workspace-source.js':'c837f68a4813af83625d1fb7640f69df099244df6a8a714cecd0d633ea66496d'};
  return [current,{...current,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
   retired,{...retired,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
   identity,{...identity,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
   runtimeScope,{...runtimeScope,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
-  concurrency,{...concurrency,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'}];
+  concurrency,{...concurrency,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
+  w19Freeze,{...w19Freeze,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
+  outreach,{...outreach,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
+  deepQueue,{...deepQueue,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
+  barkAfterDeep,{...barkAfterDeep,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
+  stagingTuple,{...stagingTuple,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
+  suggestionTuple,{...suggestionTuple,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'}];
 }
 
 export function registerCiRetirementGuardTests({root,base,memoBase,scan}) {
@@ -69,10 +87,34 @@ export function registerCiRetirementGuardTests({root,base,memoBase,scan}) {
    expect(current.get(file)).not.toBe(old);
    current.set(file,old);expect(scan(current).some(hit=>hit.rule==='E1')).toBe(true);
   });
+  it.each(['stage-source','workspace-source'])('建议回执CI组合不得混入旧 %s',name=>{
+   const file=path.join(root,`existing-ops-${name}.js`),current=base();
+   const old=execFileSync('git',['--no-replace-objects','show','a4aadb812ef9664f7a061f9709331776e965214c:'+path.relative(path.resolve(root,'../../../..'),file)],{cwd:root,encoding:'utf8',maxBuffer:1024*1024});
+   expect(current.get(file)).not.toBe(old);
+   current.set(file,old);expect(scan(current).some(hit=>hit.rule==='E1')).toBe(true);
+  });
+  it.each(['stage-source','workspace-source'])('旧CI组合不得混入建议回执新 %s',name=>{
+   const current=base(),file=path.join(root,`existing-ops-${name}.js`),newValue=current.get(file);
+   for(const item of ['stage-source','workspace-source']){
+    const oldFile=path.join(root,`existing-ops-${item}.js`);
+    const old=execFileSync('git',['--no-replace-objects','show','a4aadb812ef9664f7a061f9709331776e965214c:'+path.relative(path.resolve(root,'../../../..'),oldFile)],{cwd:root,encoding:'utf8',maxBuffer:1024*1024});
+    current.set(oldFile,old);
+   }
+   expect(scan(current).some(hit=>hit.rule==='E1')).toBe(false);
+   current.set(file,newValue);expect(scan(current).some(hit=>hit.rule==='E1')).toBe(true);
+  });
   it('完整身份reader也不能给予未知外部caller只读资格',()=>{
    const current=base();current.set(path.join(root,'unknown-identity-reader.js'),
     "import { ENVELOPES } from './existing-ops-build-envelopes.js';eval(ENVELOPES.spawnParameters);");
    expect(scan(current).some(hit=>hit.rule==='E1')).toBe(true);
+  });
+  it.each(['runtime-source','us-compose-source'])('staging reader 不能混入旧 %s',name=>{
+   const file=path.join(root,`existing-ops-${name}.js`),current=base();
+   const old=execFileSync('git',['--no-replace-objects','show','93af657de65bf7e3b49a4dc34f6fbf56da8be655:'+path.relative(path.resolve(root,'../../../..'),file)],{cwd:root,encoding:'utf8',maxBuffer:1024*1024});
+   expect(current.get(file)).not.toBe(old);current.set(file,old);
+   expect(scan(current).some(hit=>hit.rule==='E1')).toBe(true);
+   const prior=new Map([...base().keys()].map(item=>[item,execFileSync('git',['--no-replace-objects','show','93af657de65bf7e3b49a4dc34f6fbf56da8be655:'+path.relative(path.resolve(root,'../../../..'),item)],{cwd:root,encoding:'utf8',maxBuffer:1024*1024})]));
+   prior.set(file,base().get(file));expect(scan(prior).some(hit=>hit.rule==='E1')).toBe(true);
   });
   it('ce20完整旧reader组合仍可重放，追加退休组合不覆盖旧证明',()=>{
    const sources=new Map([...base().keys()].map(file=>[file,execFileSync('git',[
@@ -108,6 +150,23 @@ export function registerCiRetirementGuardTests({root,base,memoBase,scan}) {
    expect(edited).not.toBe(original);current.set(file,edited);
    expect(scan(current).some(hit=>hit.rule==='E1')).toBe(true);
    if(kind==='spawn')expect(scan(current,file).some(hit=>hit.rule==='R1')).toBe(true);
+  });
+  it.each([0,1])('触达去抖新reader与已合旧reader完整marker%s均保留三封套资格',marker=>{
+   const old=new Map([...base().keys()].map(file=>[file,execFileSync('git',[
+    '--no-replace-objects','show','72681c2ab20c1509feae6d5ee28d2bf0b54566c4:'+path.relative(path.resolve(root,'../../../..'),file),
+   ],{cwd:root,encoding:'utf8',maxBuffer:1024*1024})]));
+   for(const sources of [old,base()]){
+    expect(sources.size).toBe(16);
+    sources.set(source,sources.get(source).replace(/EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = [01]/,'EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = '+marker));
+    for(const kind of ['build','stage','native-evidence'])expect(scan(sources,path.join(root,`existing-ops-${kind}-envelopes.js`))).toEqual([]);
+   }
+  });
+  it.each(['missing','drift','process'])('触达reader %s不继承完整只读资格',kind=>{
+   const current=base(),file=path.join(root,'existing-ops-us-compose-source.js');
+   if(kind==='missing')current.delete(file);
+   else current.set(file,current.get(file)+(kind==='drift'?'\nexport const unknownOutreachReader=true;':"\nimport {spawn as launch} from 'node:child_process';launch('claude',['-p']);"));
+   expect(scan(current).some(hit=>hit.rule==='E1')).toBe(true);
+   if(kind==='process')expect(scan(current,file).some(hit=>hit.rule==='R1')).toBe(true);
   });
  });
 }

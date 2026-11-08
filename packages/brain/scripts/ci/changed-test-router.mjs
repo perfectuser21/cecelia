@@ -19,11 +19,6 @@ const FS_DEP_RULES = [
     match: (f) => /(^|\/)packages\/workflows\/skills\/[^/]+\/SKILL\.md$/.test(f),
     tests: [SKILL_CONTRACT_TEST],
   },
-  {
-    // ReviewerOutputSchema 来源改动 → 跑 skill 契约测试（reviewer 7 维一致性比对源）
-    match: (f) => /(^|\/)packages\/brain\/src\/harness-shared\.js$/.test(f),
-    tests: [SKILL_CONTRACT_TEST],
-  },
 ];
 
 export function route(changedFiles) {

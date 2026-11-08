@@ -329,7 +329,7 @@ router.get('/billing-pause', async (req, res) => {
  */
 router.get('/watchdog', async (req, res) => {
   try {
-    const { getWatchdogStatus } = await import('./watchdog.js');
+    const { getWatchdogStatus } = await import('../watchdog.js');
     const status = getWatchdogStatus();
     res.json({ success: true, ...status });
   } catch (err) {
@@ -343,7 +343,7 @@ router.get('/watchdog', async (req, res) => {
  */
 router.get('/watchdog/trends', async (req, res) => {
   try {
-    const { getWatchdogTrends } = await import('./watchdog.js');
+    const { getWatchdogTrends } = await import('../watchdog.js');
     const trends = getWatchdogTrends();
     res.json({ success: true, ...trends });
   } catch (err) {

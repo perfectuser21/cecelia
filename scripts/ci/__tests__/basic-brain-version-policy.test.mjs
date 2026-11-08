@@ -180,10 +180,10 @@ test('真实guard拦截TERM也必须超时失败并收尾本人进程组', async
 
 test('正式scripts入口自动选择新的实际PR版本策略文件且不使用名称过滤', () => {
   const steps = commandsFor('scripts');
-  assert.equal(steps[0].command, 'node');
-  assert.equal(steps[0].args[0], '--test');
-  assert.equal(steps[0].args.filter(path => path === versionTestPath).length, 1);
-  assert.ok(!steps[0].args.some(arg => arg.startsWith('--test-name-pattern')));
+  const selected = steps.filter(step => step.command === 'node' && step.args[0] === '--test');
+  assert.equal(selected.length, 1, '必须唯一发现正式Node测试入口');
+  assert.equal(selected[0].args.filter(path => path === versionTestPath).length, 1);
+  assert.ok(!selected[0].args.some(arg => arg.startsWith('--test-name-pattern')));
   assert.ok(planChecks([versionTestPath]).some(row => row.component === 'scripts'));
 });
 

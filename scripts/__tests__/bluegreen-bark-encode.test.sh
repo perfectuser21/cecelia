@@ -70,4 +70,34 @@ else
   echo "PASS 3: sidecar 告警复用纯 bash 编码器"
 fi
 
+
+# C：未配置 token 时返回成功，且不得尝试发送通知。
+rm -f "$TMP/curl-url.txt"
+mkdir -p "$TMP/no-token-home"
+ENV_BIN="$(command -v env)"
+out=$("$ENV_BIN" -i HOME="$TMP/no-token-home" PATH="$TMP/bin:$ORIG_PATH" "$BASH_BIN" -c '
+  set -uo pipefail
+  source "$1"
+  send_bark "owned-no-token"
+' _ "$REPO_ROOT/scripts/lib/bluegreen.sh" 2>&1)
+rc=$?
+if [[ "$rc" -eq 0 && ! -e "$TMP/curl-url.txt" ]]; then
+  echo "PASS 4: 未配置 Bark 返回零且未调用 curl"
+else
+  echo "FAIL 4: 未配置 Bark 返回 $rc 或尝试调用 curl: $out"; FAIL=1
+fi
+
+# D：真实库在 errexit 下加载成功，且没有通知副作用。
+out=$("$ENV_BIN" -i HOME="$TMP/no-token-home" PATH="$TMP/bin:$ORIG_PATH" "$BASH_BIN" -c '
+  set -euo pipefail
+  source "$1"
+  printf "%s\n" SOURCE_LOADED
+' _ "$REPO_ROOT/scripts/lib/bluegreen.sh" 2>&1)
+rc=$?
+if [[ "$rc" -eq 0 && "$out" == SOURCE_LOADED && ! -e "$TMP/curl-url.txt" ]]; then
+  echo "PASS 5: 真实库在 set -e 下加载成功且未调用 curl"
+else
+  echo "FAIL 5: 严格加载返回 $rc 或出现副作用: $out"; FAIL=1
+fi
+
 exit "$FAIL"

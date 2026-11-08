@@ -1,3 +1,4 @@
+import { decompReviewInputError, applyDecompReview, recordVerifiedDecompRun } from './lib/decomp-review-callback.js';
 import { guardInvocationCallback } from './invocations/runtime.js';
 import {assertAutomaticTaskOwner} from './lib/headed-task-owner.js';
 import { COMPANY_KR_SQL_GUARD } from './lib/company-kr-metrics.js';
@@ -20,6 +21,7 @@ import { handleTaskFailure } from './quarantine.js';
 import { updateDesireFromTask } from './desire-feedback.js';
 import { resolveRelatedFailureMemories } from './routes/shared.js';
 import { normalizeCallbackStatus, extractPrNumber, maybeMarkCompletedNoPr, resolveCanonicalPrUrl, buildExecMetaJson, buildFailureFields, extractFindingsValue, buildLastRunResult } from './lib/callback-utils.js';
+import { suggestionPlanFailure, recordSuggestionPlanFailure, hasCommittedSuggestionPlanFailure, reconcileSuggestionPlanRun } from './lib/suggestion-plan-callback.js';
 import { REVIEW_TASK_TYPES } from './lib/review-task-types.js';
 import { serialUnlockNext, writeReviewResult, promoteRegressionOnHarnessMerged } from './lib/callback-postprocess.js';
 import { afterTerminalTransition } from './lib/task-terminal.js';
@@ -67,14 +69,23 @@ export async function processExecutionCallback(data, pool) {
   newStatus = await maybeMarkCompletedNoPr(newStatus, resolvedPrUrl, task_id, pool, 'callback-processor');
 
   // P1-0: terminal failure guard — DB 查询失败直接抛错，不再降级（防 stale completed 覆盖 failed）。
+  let completionTask = null;
   if (newStatus === 'completed') {
     const terminalCheck = await pool.query(
-      `SELECT payload->>'failure_class' AS failure_class, task_type, payload->>'orchestrator' AS orchestrator FROM tasks WHERE id = $1`,
+      `SELECT payload->>'failure_class' AS failure_class, task_type, payload, payload->>'orchestrator' AS orchestrator FROM tasks WHERE id = $1`,
       [task_id]
     );
+    completionTask = terminalCheck.rows[0];
     if (terminalCheck.rows[0]?.failure_class === 'pipeline_terminal_failure') {
       console.warn(`[callback-processor] 终态守卫命中：task=${task_id} failure_class=pipeline_terminal_failure，拒绝覆盖为 completed`);
       return { skipped: true, reason: 'terminal_failure_guard' };
+    }
+    const reviewInputError = terminalCheck.rows[0]?.task_type === 'decomp_review'
+      ? decompReviewInputError(terminalCheck.rows[0], run_id, result) : null;
+    if (reviewInputError) {
+      const error = new Error(reviewInputError);
+      error.code = 'DECOMP_REVIEW_VERDICT_INVALID';
+      throw error;
     }
     // 收账权收归（决策 dc18d43d）：harness_initiative(skill-relay) 的 completed 一律申请，
     // Brain 核验外部真相（PR MERGED + evaluator gate）不过 → 降级 in_progress，交给 watchdog 收口。
@@ -89,6 +100,9 @@ export async function processExecutionCallback(data, pool) {
     }
   }
 
+  const semanticFailure = suggestionPlanFailure(completionTask, result);
+  if (semanticFailure) newStatus = 'failed';
+
   // 2. Build update payload
   const lastRunResult = buildLastRunResult({ run_id, checkpoint_id, status, duration_ms, iterations, pr_url: resolvedPrUrl, result });
 
@@ -96,6 +110,10 @@ export async function processExecutionCallback(data, pool) {
   const client = await pool.connect();
   let findingsValue = null;
   let applied = false;
+  let reviewTask = false;
+  let clientReleased = false;
+  let transactionCommitted = false;
+  const runCallback = { taskId: task_id, runId: run_id, status, exitCode: exit_code, result, prUrl: resolvedPrUrl, error: stderr };
   try {
     await client.query('BEGIN');
 
@@ -110,7 +128,9 @@ export async function processExecutionCallback(data, pool) {
 
     const isQuotaExhausted = newStatus === 'quota_exhausted';
     const isTerminal = TERMINAL_CALLBACK_STATUSES.has(newStatus);
-    const { errorMessage, blockedDetail } = buildFailureFields(newStatus, result, stderr, exit_code, task_id);
+    const { errorMessage, blockedDetail } = semanticFailure
+      ? { errorMessage: '建议所需信息不足', blockedDetail: JSON.stringify({ reason: 'suggestion_plan_insufficient_information', exit_code: exit_code ?? null }) }
+      : buildFailureFields(newStatus, result, stderr, exit_code, task_id);
     const execMetaJson = buildExecMetaJson(result);
 
     const updRes = await client.query(`
@@ -138,6 +158,7 @@ export async function processExecutionCallback(data, pool) {
         AND status IN ('in_progress', 'queued', 'dispatched')
         AND NOT (COALESCE(payload,'{}'::jsonb) ? 'headed_takeover')
         AND ($14::text IS NULL OR payload->>'current_run_id' = $14::text)
+      RETURNING task_type, payload
     `, [
       task_id, newStatus, JSON.stringify(lastRunResult), status, resolvedPrUrl || null,
       isCompleted, findingsValue, prNumber, errorMessage, blockedDetail,
@@ -146,8 +167,50 @@ export async function processExecutionCallback(data, pool) {
     applied = (updRes.rowCount ?? 0) > 0;
     if (!applied) {
       console.warn(`[callback-processor] 迟到回调被守卫拦下(task=${task_id} 已非 in_progress/queued/dispatched),status=${newStatus} 未落地`);
-      await client.query('COMMIT');
+      if (newStatus === 'completed' && completionTask?.task_type === 'decomp_review') {
+        const evidence = await client.query(`SELECT 1 FROM decision_log WHERE trigger = 'execution-callback'
+          AND llm_output_json->>'task_id' = $1 AND llm_output_json->>'run_id' = $2
+          AND llm_output_json->>'status' = $3 AND status = 'success'`, [String(task_id), String(run_id), String(status)]);
+        const taskState = await client.query('SELECT status FROM tasks WHERE id = $1', [task_id]);
+        if (evidence.rows.length !== 1 || taskState.rows[0]?.status !== 'completed') {
+          const error = new Error('decomp_review duplicate lacks committed evidence');
+          error.code = 'DECOMP_REVIEW_DUPLICATE_UNVERIFIED';
+          throw error;
+        }
+        await client.query('COMMIT');
+        transactionCommitted = true;
+        client.release();
+        clientReleased = true;
+        await recordVerifiedDecompRun(pool, runCallback);
+      } else {
+        await client.query('COMMIT');
+        transactionCommitted = true;
+        client.release();
+        clientReleased = true;
+      }
+      if (semanticFailure && await hasCommittedSuggestionPlanFailure(pool, task_id, run_id, status, semanticFailure.suggestionId)) {
+        await reconcileSuggestionPlanRun(pool, runCallback);
+      }
       return { success: true, newStatus, applied: false, duplicate: true };
+    }
+
+    if (semanticFailure) {
+      const current = suggestionPlanFailure(updRes.rows?.[0], result);
+      if (current?.suggestionId !== semanticFailure.suggestionId) throw new Error('suggestion_plan_identity_changed');
+      await recordSuggestionPlanFailure(client, task_id, semanticFailure.suggestionId, run_id, status);
+    }
+
+    reviewTask = newStatus === 'completed' && updRes.rows?.[0]?.task_type === 'decomp_review';
+    if (reviewTask) {
+      try {
+        const inputError = decompReviewInputError(updRes.rows[0], run_id, result);
+        if (inputError) throw new Error(inputError);
+        await applyDecompReview(client, task_id, result, updRes.rows[0]);
+      } catch (cause) {
+        const error = new Error('decomp_review processing failed', { cause });
+        error.code = 'DECOMP_REVIEW_PROCESSING_FAILED';
+        throw error;
+      }
     }
 
     // decision_log（带 WHERE NOT EXISTS 防重复写入）
@@ -172,6 +235,7 @@ export async function processExecutionCallback(data, pool) {
 
     // Progress step（非阻塞）
     const isSuccessfulExecution = newStatus === 'completed' || newStatus === 'completed_no_pr';
+    if (reviewTask) await client.query('SAVEPOINT decomp_review_progress');
     try {
       const { recordProgressStep } = await import('./progress-ledger.js');
       await recordProgressStep(task_id, run_id, {
@@ -185,24 +249,26 @@ export async function processExecutionCallback(data, pool) {
         inputSummary: null,
         outputSummary: findingsValue ? findingsValue.substring(0, 500) : null,
         findings: result && typeof result === 'object' ? result : {},
-        errorCode: isSuccessfulExecution ? null : 'execution_failed',
-        errorMessage: isSuccessfulExecution ? null : `Task execution failed with status: ${status}`,
+        errorCode: isSuccessfulExecution ? null : (semanticFailure ? 'suggestion_plan_insufficient_information' : 'execution_failed'),
+        errorMessage: isSuccessfulExecution ? null : (semanticFailure ? '建议所需信息不足' : `Task execution failed with status: ${status}`),
         retryCount: iterations || 0,
         artifacts: { pr_url: resolvedPrUrl || null },
         metadata: { checkpoint_id: checkpoint_id || null, original_status: status },
         confidenceScore: isSuccessfulExecution ? 1.0 : 0.2,
-      });
+      }, ...(reviewTask ? [client] : []));
       console.log(`[callback-processor] Progress step recorded for task ${task_id}`);
     } catch (progressErr) {
+      if (reviewTask) await client.query('ROLLBACK TO SAVEPOINT decomp_review_progress');
       console.error(`[callback-processor] Progress step recording failed: ${progressErr.message}`);
     }
 
+    if (reviewTask) await client.query('RELEASE SAVEPOINT decomp_review_progress');
     await client.query('COMMIT');
   } catch (txErr) {
-    await client.query('ROLLBACK');
+    if (!transactionCommitted) await client.query('ROLLBACK');
     throw txErr;
   } finally {
-    client.release();
+    if (!clientReleased) client.release();
   }
 
   // Clean up activeProcesses registry（after commit）
@@ -212,6 +278,12 @@ export async function processExecutionCallback(data, pool) {
   } catch { /* ignore */ }
 
   console.log(`[callback-processor] Task ${task_id} updated to ${newStatus} (atomic)`);
+
+  if (semanticFailure) {
+    await reconcileSuggestionPlanRun(pool, runCallback);
+    await afterTerminalTransition(pool, task_id, 'failed');
+    return { success: true, newStatus: 'failed', applied: true, reason: 'suggestion_plan_insufficient_information' };
+  }
 
   // quota_exhausted → billing pause
   if (newStatus === 'quota_exhausted') {
@@ -428,5 +500,6 @@ export async function processExecutionCallback(data, pool) {
     }
   }
 
+  if (reviewTask) await recordVerifiedDecompRun(pool, runCallback);
   return { success: true, newStatus, applied };
 }

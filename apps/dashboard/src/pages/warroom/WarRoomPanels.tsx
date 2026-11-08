@@ -55,6 +55,12 @@ export interface HandoffRow {
   task_id: string; title: string; verdict: string | null; next_step: string; created_at: string | null;
 }
 
+function nextStepTitle(step: unknown): string {
+  if (typeof step === 'string') return step;
+  if (step && typeof step === 'object' && 'title' in step && typeof step.title === 'string') return step.title;
+  return '';
+}
+
 /** /api/brain/handoffs 响应（{handoffs,total} 包装）→ 卡片行；next_step 取 next_steps[0] */
 export function handoffRows(resp: unknown): HandoffRow[] {
   const hs = (resp as { handoffs?: unknown })?.handoffs;
@@ -63,7 +69,7 @@ export function handoffRows(resp: unknown): HandoffRow[] {
     task_id: String(h?.task_id ?? ''),
     title: String(h?.title ?? ''),
     verdict: h?.verdict ?? null,
-    next_step: Array.isArray(h?.next_steps) && h.next_steps.length ? String(h.next_steps[0]) : '',
+    next_step: Array.isArray(h?.next_steps) && h.next_steps.length ? nextStepTitle(h.next_steps[0]) : '',
     created_at: h?.created_at ?? null,
   }));
 }

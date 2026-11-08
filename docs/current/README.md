@@ -27,7 +27,7 @@ updated: 2026-08-14
 
 | 内容类型 | 位置 | 说明 |
 |----------|------|------|
-| 整体架构、子系统关系 | `docs/current/SYSTEM_MAP.md` | 权威，每10个PR审计一次 |
+| 整体架构、子系统关系 | `docs/current/SYSTEM_MAP.md` | 历史架构来源；现役运行入口查 `AGENTS.md`，版本与状态查 Brain API |
 | **Kernel Harness / 能力（Capability）体系**（完成定义+非功能需求/7项合同/两套派发分流/provider注入链/数据账本） | `docs/current/KERNEL_HARNESS_MAP.md` | 权威指针地图，只放指针不放快照 |
 | **术语对照表**（价值流/能力/主干活动/特性/使能项/验收标准…） | `packages/workflows/KERNEL_CONTEXT.md` | 决策 a340f100 正本，对话/UI/文档统一用词 |
 | CI 最低保障与独立回归 | `docs/current/CI_PIPELINE.md` | 源码 CI、深度回归、发布/运维与历史诊断边界；保护规则另查 GitHub |
@@ -56,4 +56,4 @@ updated: 2026-08-14
 
 - **谁来维护**：Claude 在完成相关任务后主动更新，不靠用户维护
 - **更新时机**：合并 PR 后、巡检状态变化后、发现文档过期后
-- **不需要 /dev**：这个文件是文档，直接改直接 commit
+- **文档改动也遵循 /dev**：先登记任务，在独立分支修改，经正常 PR 与 CI 验证后合并。

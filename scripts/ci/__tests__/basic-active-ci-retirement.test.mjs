@@ -12,7 +12,7 @@ const root=fileURLToPath(new URL('../../../',import.meta.url));
 const baseRevision='69de823cda6d789130898399c3ad770c15b6fb71';
 const runner='scripts/ci/run-basic-check.mjs',scope='scripts/ci/basic-scope.mjs';
 const testPath='scripts/ci/__tests__/basic-results.test.mjs';
-const paths=['.github/workflows/ci.yml',runner,scope,'scripts/ci/check-basic-results.mjs','scripts/ci/ops-checks.mjs',testPath];
+const paths=['.github/workflows/ci.yml',runner,scope,'scripts/ci/check-basic-results.mjs','scripts/ci/ops-checks.mjs','packages/brain/vitest.config.js',testPath];
 const original=Object.fromEntries(paths.map(path=>[path,execFileSync('git',['--no-replace-objects','show',baseRevision+':'+path],{cwd:root,encoding:'utf8'})]));
 // 复用独立collector回归中冻结的完整候选文本，只解码AST字面量，不执行测试或候选代码。
 const tree=parse(readFileSync(join(root,'packages/brain/src/lib/__tests__/existing-ops-active-ci-retirement.test.js'),'utf8'),{ecmaVersion:'latest',sourceType:'module'});
@@ -65,3 +65,17 @@ for(const path of [runner,scope]){
   assert.equal(selected(proof),undefined);assert.ok(proof.unproven.some(row=>row.path===testPath&&row.side==='head'&&row.reason==='entry_unproven'));
  });
 }
+
+test('建议回执 PG 入口只认当前完整组合，逐一混配旧 runner 或旧配置均拒绝',t=>{
+ const current=['.github/workflows/ci.yml',runner,scope,'scripts/ci/ops-checks.mjs','packages/brain/vitest.config.js'];
+ const changes=Object.fromEntries(current.map(path=>[path,readFileSync(join(root,path),'utf8')]));
+ assert.ok(selected(observe(fixture(t,{changes}))));
+ const previous={...changes};
+ for(const path of [runner,'packages/brain/vitest.config.js']) previous[path]=execFileSync('git',
+  ['--no-replace-objects','show',`2dce0c18eded5c37d50fca44708d88cfa80fc575:${path}`],{cwd:root,encoding:'utf8'});
+ assert.ok(selected(observe(fixture(t,{changes:previous}))));
+ for(const path of [runner,'packages/brain/vitest.config.js']){
+  const proof=observe(fixture(t,{changes:{...changes,[path]:previous[path]}}));
+  assert.equal(selected(proof),undefined);assert.ok(proof.unproven.some(row=>row.path===testPath&&row.side==='head'&&row.reason==='entry_unproven'));
+ }
+});

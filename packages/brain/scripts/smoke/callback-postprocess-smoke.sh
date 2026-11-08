@@ -15,7 +15,7 @@ grep -q "export async function writeReviewResult" "$ROOT/src/lib/callback-postpr
 grep -q "export async function promoteRegressionOnHarnessMerged" "$ROOT/src/lib/callback-postprocess.js" && ok "导出 promoteRegressionOnHarnessMerged" || bad "缺 promoteRegressionOnHarnessMerged"
 grep -q "promoteRegressionOnHarnessMerged" "$ROOT/src/callback-processor.js" && ok "DB 直写路径已接 promoteRegression" || bad "callback-processor 未接 promoteRegression"
 grep -q "promoteRegressionOnHarnessMerged" "$ROOT/src/routes/execution.js" && ok "HTTP 路径已接 promoteRegression" || bad "execution.js 未接 promoteRegression"
-grep -q "promoteRegressionOnHarnessMerged" "$ROOT/src/routes/tasks.js" && ok "tasks PATCH 已接 promoteRegression" || bad "routes/tasks.js 未接 promoteRegression"
+grep -q "promoteRegressionOnHarnessMerged" "$ROOT/src/routes/tasks-status.js" && ok "tasks PATCH 已接 promoteRegression" || bad "routes/tasks.js 未接 promoteRegression"
 grep -q "promoteRegressionOnHarnessMerged" "$ROOT/src/harness-relay-watchdog.js" && ok "relay-watchdog 已接 promoteRegression" || bad "harness-relay-watchdog 未接 promoteRegression"
 grep -q "from './lib/callback-postprocess.js'" "$ROOT/src/callback-processor.js" && ok "DB 直写路径已接共享管道" || bad "callback-processor 未引共享管道"
 grep -q "from '../lib/callback-postprocess.js'" "$ROOT/src/routes/execution.js" && ok "HTTP 路径已接共享管道" || bad "execution.js 未引共享管道"
