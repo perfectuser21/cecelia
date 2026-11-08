@@ -78,3 +78,10 @@ it('受保护API只转发profile路径与CAS请求，认证错误不触及store'
  expect((await request(app).post('/execution/script-profiles/leadgen-candidate/activate').send({})).status).toBe(401);expect(calls).toBe(0);
  const r=await request(app).post('/execution/script-profiles/leadgen-candidate/activate').set('x-cecelia-token',token).send({expected_config_hash:hash});expect(r.status).toBe(200);expect(r.body.profile).toBe('leadgen-candidate');expect(calls).toBe(1);
 });
+it('Worker收到启动或旧run检查时必须在调用Runner前CAS本轮boot/config，封住catalog到start换代竞态',async()=>{
+ const require=createRequire(import.meta.url),{createFleetWorkerServer}=require('../../scripts/fleet-worker/fleet-worker.cjs');let called=0;
+ const server=createFleetWorkerServer({machineId:'us-mac-m4',attemptToken:token,launchAdmission:{snapshot:()=>({boot_id:boot})},runtimeConfigDigest:hash,workflowRunner:{start:async()=>{called++;return {};},inspect:async()=>{called++;return {};}}});await new Promise(r=>server.listen(0,'127.0.0.1',r));
+ try{for(const action of ['start','inspect']){const body={run_id:randomUUID(),task_id:randomUUID(),request_nonce:randomUUID(),expected_worker_boot_id:randomUUID(),expected_worker_config_digest:hash};
+  const r=await fetch(`http://127.0.0.1:${server.address().port}/workflows/${body.run_id}/${action}`,{method:'POST',headers:{authorization:`Bearer ${token}`,'content-type':'application/json'},body:JSON.stringify(body)});expect(r.status).toBe(409);
+ }expect(called).toBe(0);}finally{server.closeAllConnections();await new Promise(r=>server.close(r));}
+});
