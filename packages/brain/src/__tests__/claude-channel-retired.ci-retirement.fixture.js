@@ -65,6 +65,17 @@ export function registerCiRetirementGuardTests({root,base,memoBase,scan}) {
     for(const kind of ['build','stage','native-evidence'])expect(scan(sources,path.join(root,`existing-ops-${kind}-envelopes.js`))).toEqual([]);
    }
   });
+  it('受管profile PG来源完整组保留此前建议回执16成员的marker0/1资格，未知reader仍拒绝',()=>{
+   const previous=new Map([...base().keys()].map(file=>[file,execFileSync('git',[
+    '--no-replace-objects','show','79cf5c5b20324d4d5a39eadda3f009d64b98f8b3:'+path.relative(path.resolve(root,'../../../..'),file),
+   ],{cwd:root,encoding:'utf8',maxBuffer:1024*1024})]));
+   for(const sources of [previous,base()])for(const marker of [0,1]){
+    expect(sources.size).toBe(16);sources.set(source,sources.get(source).replace(/EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = [01]/,'EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = '+marker));
+    for(const kind of ['build','stage','native-evidence'])expect(scan(sources,path.join(root,`existing-ops-${kind}-envelopes.js`))).toEqual([]);
+   }
+   const changed=base(),stage=path.join(root,'existing-ops-stage-source.js');changed.set(stage,changed.get(stage)+'\nexport const unreviewedManagedScriptReader=true;');
+   expect(scan(changed).some(hit=>hit.rule==='E1')).toBe(true);
+  });
   it('已合main2f完整身份cohort仍保留marker0/1资格',()=>{
    const sources=new Map([...base().keys()].map(file=>[file,execFileSync('git',[
     '--no-replace-objects','show','2f4c9cbb9fbed1d36e4f3407bdf0ab1b72ece968:'+path.relative(path.resolve(root,'../../../..'),file),
