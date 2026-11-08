@@ -114,8 +114,26 @@ describe('collectStatus / formatStatus', () => {
     expect(collectStatus(dir).find((r) => r.task_id === CIFIX_ID).ci_fix).toBeNull();
   });
 
+  it.each([
+    'https://github.com.example.invalid/perfectuser21/cecelia/pull/77',
+    'http://github.com/perfectuser21/cecelia/pull/77',
+    'https://user@github.com/perfectuser21/cecelia/pull/77',
+    'https://github.com/perfectuser21/cecelia/pull/77/extra',
+  ])('拒绝非标准 GitHub PR 地址 %s', (url) => {
+    const dir = makeLogDir();
+    fs.writeFileSync(path.join(dir, `${CIFIX_ID}.json`), JSON.stringify({ schema_version: 1, workflow: 'coding_spec', run_tag: 'cw-eeeeeeee-10080705', activities: [], status: 'completed', outputs: { pr_url: url } }));
+    fs.writeFileSync(path.join(dir, 'cifix-77.json'), JSON.stringify({ attempts: [{ result: 'pushed' }] }));
+    expect(collectStatus(dir).find((r) => r.task_id === CIFIX_ID).ci_fix).toBeNull();
+  });
+
   it('--log-dir 后缺参数时拒绝而不是吞掉 --json', () => {
     const res = spawnSync(process.execPath, [STATUS_PATH, '--log-dir', '--json'], { encoding: 'utf8' });
+    expect(res.status).not.toBe(0);
+    expect(res.stderr).toContain('--log-dir');
+  });
+
+  it('--log-dir 位于末尾时也返回错误', () => {
+    const res = spawnSync(process.execPath, [STATUS_PATH, '--log-dir'], { encoding: 'utf8' });
     expect(res.status).not.toBe(0);
     expect(res.stderr).toContain('--log-dir');
   });
