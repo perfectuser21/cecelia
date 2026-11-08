@@ -69,3 +69,12 @@ describe('source revocation and bound readback',()=>{
 });
 
 it('a reserved source cannot acquire the phone after task ownership changes',async()=>{const x=executionFixture();await x.adapter.dispatch(x.task.id);x.lockGate.mockClear();x.task.claimed_by='session:manual';await expect(x.adapter.dispatch(x.task.id)).rejects.toThrow('task_owned');expect(x.lockGate).not.toHaveBeenCalled();});
+
+it('workflow自动派发保持授权与原身份，并走独立可信DBOS scope',async()=>{
+ const x=executionFixture(),durableStart=vi.fn(async()=>({workflow_id:'fixed'}));
+ const adapter=createWorkflowCommonAdapter(x.pool,{routes:x.routes,frozenContract:async()=>x.frozen,startRun:x.start,dispatcher:{dispatch:x.dispatch},lockGate:x.lockGate,setLease:x.setLease,env:{DBOS_DURABLE_ENABLED:'true'},durableStart});
+ const result=await adapter.dispatch(x.task.id);
+ expect(x.lockGate).toHaveBeenCalledOnce();expect(x.dispatch).not.toHaveBeenCalled();
+ expect(durableStart.mock.calls[0][0]).toMatchObject({dispatch_scope:'workflow',run_id:x.task.result.workflow_common_runner.run_id,body:{task_id:x.task.id,mode:'formal'}});
+ expect(result.durable_workflow_id).toBe('fixed');
+});

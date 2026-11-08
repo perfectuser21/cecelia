@@ -90,3 +90,32 @@ test.each([
   await expect(startDurableCommonRunner(change(request()))).rejects.toThrow('common_runner_durable_request_invalid');
   expect(mock.start).not.toHaveBeenCalled(); expect(dispatch).not.toHaveBeenCalled();
 });
+
+test('内部workflow scope只调用可信workflow dispatcher，默认public保留原入口', async () => {
+  const workflowDispatch = vi.fn().mockResolvedValue(receipt('completed', 'confirmed'));
+  configureCommonRunnerDurableDeps({dispatcher: {dispatch}, workflowDispatcher: {dispatch: workflowDispatch}});
+  const result = await durableCommonRunnerWorkflow({...request(), dispatch_scope: 'workflow'});
+  expect(result.status).toBe('completed');
+  expect(workflowDispatch).toHaveBeenCalledWith('start', runId, request().body);
+  expect(dispatch).not.toHaveBeenCalled();
+  dispatch.mockResolvedValue(receipt('completed', 'confirmed'));
+  await durableCommonRunnerWorkflow(request());
+  expect(dispatch).toHaveBeenCalledWith('start', runId, request().body);
+  expect(workflowDispatch).toHaveBeenCalledTimes(1);
+});
+
+test('同run不得改变dispatch scope，默认public与显式public视为相同身份', async () => {
+  configureCommonRunnerDurableDeps({dispatcher: {dispatch}, workflowDispatcher: {dispatch: vi.fn()}});
+  let original;
+  mock.start.mockImplementation(() => async value => {original ??= value; return {getWorkflowInputs: async () => [original]};});
+  await startDurableCommonRunner(request());
+  await startDurableCommonRunner({...request(), dispatch_scope: 'public'});
+  await expect(startDurableCommonRunner({...request(), dispatch_scope: 'workflow'})).rejects.toThrow('common_runner_durable_identity_conflict');
+});
+
+test('workflow可信依赖缺失或scope非法时拒绝新启动，不降级public', async () => {
+  await expect(startDurableCommonRunner({...request(), dispatch_scope: 'workflow'})).rejects.toThrow('common_runner_durable_unavailable');
+  await expect(startDurableCommonRunner({...request(), dispatch_scope: 'other'})).rejects.toThrow('common_runner_durable_request_invalid');
+  await expect(startDurableCommonRunner({...request(), body: {...request().body, dispatch_scope: 'workflow'}})).rejects.toThrow('common_runner_durable_request_invalid');
+  expect(mock.start).not.toHaveBeenCalled(); expect(dispatch).not.toHaveBeenCalled();
+});

@@ -135,3 +135,10 @@ describe('公共Runner待审查任务归位',()=>{
     const f=fixture({confirmed:ownerChanged,owner:ownerChanged?'headed-session':'common-runner'});const recordEvent=vi.fn();await runCommonRunnerTasks(f.pool,{dispatcher:{dispatch:f.dispatch},recordEvent});expect(f.t.status).toBe('in_progress');expect(f.pending).toHaveLength(0);expect(recordEvent).not.toHaveBeenCalled();
   });
 });
+
+it('自动派发显式启用DBOS时复用原run进入持久协调器，不裸启动',async()=>{
+ const t=task(),pool=poolFor([t]),dispatch=vi.fn(),durableStart=vi.fn(async()=>({workflow_id:'fixed',handle:{getStatus:async()=>({status:'PENDING'})}}));
+ await runCommonRunnerTasks(pool,{dispatcher:{dispatch},env:{DBOS_DURABLE_ENABLED:'true'},durableStart});
+ expect(dispatch).not.toHaveBeenCalled();expect(durableStart).toHaveBeenCalledOnce();
+ expect(durableStart.mock.calls[0][0]).toMatchObject({run_id:uuid(2),body:{task_id:t.id}});
+});
