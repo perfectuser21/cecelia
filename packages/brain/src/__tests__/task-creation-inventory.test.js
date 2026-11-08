@@ -24,6 +24,20 @@ async function listProductionModules(directory) {
   return modules;
 }
 
+function escapeRegex(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// 动态 import 重命名后仍是相同的任务写入口；必须检测实际调用而不是仅出现导入。
+function callsRoutedWriter(source) {
+  if (/(?:createRoutedTask|createTask)\s*\(/.test(source)) return true;
+  const aliases = source.matchAll(/\{\s*createTask\s*:\s*([A-Za-z_$][\w$]*)\s*\}\s*=\s*await\s+import\(\s*['"][^'"]*actions\.js['"]\s*\)/g);
+  for (const [, alias] of aliases) {
+    if (new RegExp(`(?:^|[^\\w$])${escapeRegex(alias)}\\s*\\(`).test(source)) return true;
+  }
+  return false;
+}
+
 describe('task creation inventory', () => {
   it('colocated permanent tests are excluded while production task writers remain scanned', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'task-inventory-boundary-'));
@@ -69,6 +83,19 @@ describe('task creation inventory', () => {
     expect(TASK_CREATION_INVENTORY.some(row => row.module === 'okr-tick.js')).toBe(false);
   });
 
+  it('动态正则转义所有元字符，包括反斜杠', () => {
+    expect(escapeRegex('a.b$\\c')).toBe('a\\.b\\$\\\\c');
+  });
+
+  it('动态 import 的 createTask 别名调用应被盘点识别', async () => {
+    const source = await readFile(new URL('../routes/execution.js', import.meta.url), 'utf8');
+    expect(TASK_CREATION_INVENTORY.some(row => row.module === 'routes/execution.js')).toBe(true);
+    expect(callsRoutedWriter(source)).toBe(true);
+    expect(callsRoutedWriter("const { createTask: makeTask } = await import('../actions.js'); await makeTask({});")).toBe(true);
+    expect(callsRoutedWriter("const { createTask: makeTask } = await import('../actions.js');")).toBe(false);
+    expect(callsRoutedWriter("const { createTask: $makeTask } = await import('../actions.js'); await $makeTask({});")).toBe(true);
+  });
+
   it('records each executable creation boundary', () => {
     expect(TASK_CREATION_INVENTORY_VERSION).toBe(ROUTER_VERSION);
     expect(TASK_CREATION_INVENTORY.length).toBeGreaterThanOrEqual(33);
@@ -83,7 +110,7 @@ describe('task creation inventory', () => {
     for (const modulePath of modules) {
       if (modulePath === path.join(sourceRoot, 'work-routing-store.js')) continue;
       const source = await readFile(modulePath, 'utf8');
-      if (/\b(?:createTask|createRoutedTask|taskCreator)\s*\(/.test(source)) {
+      if (callsRoutedWriter(source) || /\btaskCreator\s*\(/.test(source)) {
         const relative = path.relative(sourceRoot, modulePath);
         if (!inventoried.has(relative)) missing.push(relative);
       }
@@ -96,7 +123,7 @@ describe('task creation inventory', () => {
       if (!row.creates_executable_task) continue;
       expect(row.migration_status, row.module).toBe('routed');
       const source = await readFile(new URL(`../${row.module}`, import.meta.url), 'utf8');
-      const callsWriterDirectly = /(?:createRoutedTask|createTask)\s*\(/.test(source);
+      const callsWriterDirectly = callsRoutedWriter(source);
       const callsInjectedWriter = /taskCreator\s*\(/.test(source) && /=\s*createTask\b/.test(source);
       expect(callsWriterDirectly || callsInjectedWriter, row.module).toBe(true);
       if ((callsWriterDirectly || callsInjectedWriter) && row.module !== 'actions.js') {

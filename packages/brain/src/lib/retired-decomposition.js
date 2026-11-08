@@ -2,11 +2,18 @@ import { LAYER_RETIRED_TASK_TYPES } from './task-type-registry.js';
 
 export const RETIRED_DECOMPOSITION = 'retired_decomposition';
 
+// 只退役已有生产者能证明属于旧拆解的审核；计划调整和未知审核保留。
+export function isRetiredDecompositionReview(task) {
+  return task?.task_type === 'decomp_review' &&
+    ['decomposition_quality', 'initiative_plan'].includes(task?.payload?.review_scope);
+}
+
 // 只拦截实际进入旧拆解路由或提示的标记；known 和普通任务不属于退役路径。
 export function isRetiredDecomposition(task) {
   const payload = task?.payload;
   const taskType = task?.task_type || 'dev';
   const normalizedDev = taskType === 'harness_initiative' && payload?.requested_task_type === 'dev';
+  if (isRetiredDecompositionReview(task)) return true;
   // 六类规划的目标层已退役，历史 queued 行仍可能绕过建单闸。
   if (LAYER_RETIRED_TASK_TYPES.includes(taskType)) return true;
   // 这两类审查使用默认 prompt；模板字符串会把 JSON 数组等覆盖强转为文本。

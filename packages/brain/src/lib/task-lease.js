@@ -70,18 +70,57 @@ async function upsertLease(pool, { taskId, claimer, source, onExpire, seconds })
   return lease;
 }
 
+/** 显式领取并启动：状态与租约必须同事务提交，旧 claim 不受影响。 */
+async function claimAndStart(pool, { taskId, claimer, kind, forceKind, seconds, expire }) {
+  const db = await pool.connect();
+  try {
+    await db.query('BEGIN');
+    const { rows } = await db.query(
+      `UPDATE tasks SET claimed_by = $1, claimed_at = NOW(),
+              executor_kind = CASE WHEN $4 THEN $3 ELSE COALESCE(executor_kind, $3) END,
+              status = 'in_progress', started_at = COALESCE(started_at, NOW()), updated_at = NOW(),
+              status_history = CASE WHEN status = 'queued' THEN COALESCE(status_history, '[]'::jsonb) ||
+                jsonb_build_array(jsonb_build_object('from', status, 'to', 'in_progress', 'source', 'claim', 'changed_at', NOW()))
+                ELSE status_history END
+        WHERE id = $2 AND claimed_by IS NULL AND status IN ('queued', 'in_progress')
+          AND payload->>'commander_protocol' IS DISTINCT FROM 'commander-v2'
+        RETURNING id, claimed_by, claimed_at, executor_kind, status, started_at`,
+      [claimer, taskId, kind, forceKind],
+    );
+    if (!rows.length) {
+      const existing = await db.query('SELECT status, claimed_by, claimed_at FROM tasks WHERE id = $1', [taskId]);
+      await db.query('ROLLBACK');
+      return existing.rows.length
+        ? { status: 409, body: { error: 'Task cannot be claimed and started', ...existing.rows[0] } }
+        : { status: 404, body: { error: 'Task not found', id: taskId } };
+    }
+    const lease = await upsertLease(db, { taskId, claimer, source: 'claim', onExpire: expire, seconds });
+    if (!lease?.lease_until) throw Error('Task start lease receipt missing');
+    await db.query('COMMIT');
+    return { status: 200, body: { ...rows[0], lease_until: lease.lease_until, lease_seconds: lease.lease_seconds, on_lease_expire: lease.on_expire } };
+  } catch (error) {
+    await db.query('ROLLBACK');
+    throw error;
+  } finally {
+    db.release();
+  }
+}
+
 /**
  * 统一 claim：原子认领（claimed_by IS NULL 才成功），带 leaseSeconds 时落租约。
  * @returns {{status:number, body:object}}
  */
-export async function claimTaskWithLease(pool, { taskId, claimer, executorKind, leaseSeconds, onExpire } = {}) {
+export async function claimTaskWithLease(pool, { taskId, claimer, executorKind, leaseSeconds, onExpire, start } = {}) {
   if (!claimer) return { status: 400, body: { error: 'claimer is required' } };
   const expire = onExpire ?? 'auto';
   if (!ON_EXPIRE.has(expire)) return { status: 400, body: { error: 'on_lease_expire must be auto|requeue|fail' } };
   const seconds = clampLeaseSeconds(leaseSeconds);
+  if (start !== undefined && typeof start !== 'boolean') return { status: 400, body: { error: 'start must be boolean' } };
+  if (start === true && seconds === null) return { status: 400, body: { error: 'start requires valid lease_seconds' } };
   const kind = executorKind || 'headed-session';
   // 执行机 coding workflow runner 认领必须落下自己的 kind（executor-contracts 据此当外部执行体，启动同步不打回）
   const forceKind = kind === 'coding-workflow-runner';
+  if (start === true) return claimAndStart(pool, { taskId, claimer, kind, forceKind, seconds, expire });
   const result = await pool.query(
     `UPDATE tasks SET claimed_by = $1, claimed_at = NOW(),
             executor_kind = CASE WHEN $4 THEN $3 ELSE COALESCE(executor_kind, $3) END

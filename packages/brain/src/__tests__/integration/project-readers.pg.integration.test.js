@@ -110,7 +110,7 @@ describe('真实 PostgreSQL：仅存在 projects 的新项目贯穿按需入口'
     expect(intent.body.matched_projects).toEqual(expect.arrayContaining([expect.objectContaining({ id: projectId })]));
   });
 
-  it('真实拆解完成、修正再审、复用确认门与 KR 放行贯穿同一 Project', async () => {
+  it('历史拆解审核需要修正时保留结论，不再派发已退役的 project_plan', async () => {
     const createRecordedTask = async task => {
       const id = randomUUID();
       await pool.query(`INSERT INTO tasks(id,title,status,task_type,project_id,goal_id,payload)
@@ -141,22 +141,37 @@ describe('真实 PostgreSQL：仅存在 projects 的新项目贯穿按需入口'
     const first = (await pool.query(`SELECT id,task_id FROM decomp_reviews WHERE entity_id=$1 AND verdict IS NULL`, [projectId])).rows[0];
     const confirmation = (await pool.query(`SELECT id FROM pending_actions WHERE params->>'kr_id'=$1 AND status='pending_approval'`, [krId])).rows[0];
     await pool.query("UPDATE tasks SET status='completed' WHERE id=$1", [first.task_id]);
-    await processReviewResult(pool, first.task_id, 'needs_revision', { issue: '补验收边界' }, createRecordedTask);
-    const revision = (await pool.query(`SELECT id,project_id,goal_id FROM tasks WHERE payload->>'review_id'=$1 AND task_type='project_plan'`, [first.id])).rows[0];
-    expect(revision).toMatchObject({ project_id: projectId, goal_id: krId });
-    await pool.query("UPDATE tasks SET status='completed' WHERE id=$1", [revision.id]);
-    expect(await triggerCompletedDecompositionReview(pool, revision.id, { createReview }))
-      .toMatchObject({ reviewed: true, project_id: projectId });
-    const second = (await pool.query(`SELECT task_id FROM decomp_reviews WHERE entity_id=$1 AND verdict IS NULL`, [projectId])).rows[0];
-    expect(second.task_id).not.toBe(first.task_id);
+    expect(await processReviewResult(pool, first.task_id, 'needs_revision', { issue: '补验收边界' })).toBe(true);
+    const persisted = (await pool.query('SELECT verdict, findings, reviewed_at FROM decomp_reviews WHERE id=$1', [first.id])).rows[0];
+    expect(persisted).toMatchObject({ verdict: 'needs_revision', findings: { issue: '补验收边界' } });
+    expect(persisted.reviewed_at).not.toBeNull();
+    const revisions = await pool.query(`SELECT id FROM tasks WHERE payload->>'review_id'=$1 AND task_type='project_plan'`, [first.id]);
+    expect(revisions.rows).toHaveLength(0);
     const refreshed = (await pool.query('SELECT id,params,context FROM pending_actions WHERE id=$1', [confirmation.id])).rows[0];
     expect(refreshed.params.project_id).toBe(projectId);
-    expect(refreshed.context.decomposition_task_id).toBe(revision.id);
+    expect(refreshed.context.decomposition_task_id).toBe(decompId);
     expect(refreshed.context.tasks).not.toContain(`${keyword}旧根投影`);
-    await pool.query("UPDATE tasks SET status='completed' WHERE id=$1", [second.task_id]);
-    await processReviewResult(pool, second.task_id, 'approved', {});
-    expect((await pool.query('SELECT status FROM projects WHERE id=$1', [projectId])).rows[0].status).toBe('active');
-    expect(await actionHandlers.okr_decomp_review({ kr_id: krId }, {})).toMatchObject({ success: true, kr_id: krId });
-    expect((await pool.query('SELECT status FROM key_results WHERE id=$1', [krId])).rows[0].status).toBe('ready');
+    expect((await pool.query('SELECT status FROM projects WHERE id=$1', [projectId])).rows[0].status).toBe('pending_review');
+    expect((await pool.query('SELECT status FROM key_results WHERE id=$1', [krId])).rows[0].status).toBe('reviewing');
+  });
+
+  it('历史审核批准及确认仍能分别激活项目并放行 KR', async () => {
+    const historicalKrId = randomUUID();
+    const historicalProjectId = randomUUID();
+    const historicalTaskId = randomUUID();
+    await pool.query(`INSERT INTO key_results(id,title,status,current_value,target_value)
+      VALUES($1,$2,'reviewing',0,100)`, [historicalKrId, '历史审核 KR']);
+    await pool.query(`INSERT INTO projects(id,name,status,kr_id)
+      VALUES($1,$2,'pending_review',$3)`, [historicalProjectId, '历史审核项目', historicalKrId]);
+    await pool.query(`INSERT INTO tasks(id,title,status,task_type,project_id,goal_id)
+      VALUES($1,'历史审核','completed','decomp_review',$2,$3)`, [historicalTaskId, historicalProjectId, historicalKrId]);
+    await pool.query(`INSERT INTO decomp_reviews(entity_type,entity_id,reviewer,task_id)
+      VALUES('project',$1,'vivian',$2)`, [historicalProjectId, historicalTaskId]);
+
+    expect(await processReviewResult(pool, historicalTaskId, 'approved', {})).toBe(true);
+    expect((await pool.query('SELECT status FROM projects WHERE id=$1', [historicalProjectId])).rows[0].status).toBe('active');
+    expect((await pool.query('SELECT status FROM key_results WHERE id=$1', [historicalKrId])).rows[0].status).toBe('reviewing');
+    expect(await actionHandlers.okr_decomp_review({ kr_id: historicalKrId }, {})).toMatchObject({ success: true, kr_id: historicalKrId });
+    expect((await pool.query('SELECT status FROM key_results WHERE id=$1', [historicalKrId])).rows[0].status).toBe('ready');
   });
 });

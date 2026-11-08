@@ -58,6 +58,7 @@ import { recordTaskEventSafe } from './lib/task-event-log.js';
 import { startRunForExecResult } from './lib/task-run.js';
 import { internalServiceHeaders } from './lib/internal-service-auth.js';
 import { resolveTaskTypeSkill, resolveSkillWithLedger } from './lib/skill-binding-registry.js';
+import { consumeReviewSkill } from './lib/review-skill-plan.js';
 
 // 外部执行体（工作机领单器等）认领后的活性宽限期。
 // 真机实测单个关键词采收 17~25 分钟（逐个点进评论者主页核验身份），45 分钟留足余量；
@@ -2195,7 +2196,7 @@ const _TASK_ROUTES = {
 async function preparePrompt(task) {
   const taskType = task.task_type || 'dev';
   // skill_override 最优先（不碰库）；否则先刷新 skill_registry 快照（TTL 内零查库、失败开放）再解析。
-  const skill = await resolveSkillWithLedger(pool, { ...task, task_type: taskType }, getSkillForTaskType);
+  const skill = arguments.length > 1 ? arguments[1] : await resolveSkillWithLedger(pool, { ...task, task_type: taskType }, getSkillForTaskType);
 
   if (_DECOMP_TYPES.has(task.payload?.decomposition)) return _prepareDecompositionPrompt(task);
   if (_HARNESS_GENERATE_TYPES.has(taskType)) return _prepareHarnessGeneratePrompt(task);
@@ -2239,7 +2240,9 @@ async function updateTaskRunInfo(taskId, runId, status = 'triggered') {
  */
 async function triggerCodexReview(task) {
   assertExternalExecutionAllowed();
-  if (isRetiredDecomposition(task)) return { success: false, taskId: task?.id, reason: RETIRED_DECOMPOSITION };
+  if (isRetiredDecomposition(task)) return { success: false, taskId: task?.id, reason: RETIRED_DECOMPOSITION, retiredBeforeStart: true };
+  // 仅手动入口可提供已绑定任务行的计划；无计划的既有自动调用保留原解析。
+  const manualSkillPlan=consumeReviewSkill(task);
   const runId = generateRunId(task.id);
 
   try {
@@ -2257,7 +2260,14 @@ async function triggerCodexReview(task) {
     }
 
     // 获取 prompt 内容
-    const promptContent = await preparePrompt(task);
+    const promptContent = manualSkillPlan.found ? await preparePrompt(task,manualSkillPlan.skill) : await preparePrompt(task);
+
+    // 动态账本可能仍绑定退役命令；以最终实际提示词判定，避免二次解析出现漂移。
+    // 明确标记尚未启动，让调用方按本次认领和设备锁版本处理。
+    if ((task.task_type === 'architecture_scan' || task.task_type === 'arch_review') &&
+        /^\s*\/decomp(?:-check)?(?=\s|$)/.test(promptContent)) {
+      return { success: false, taskId: task.id, reason: RETIRED_DECOMPOSITION, retiredBeforeStart: true };
+    }
 
     // 写 prompt 文件
     await mkdir(PROMPT_DIR, { recursive: true });
@@ -2540,7 +2550,7 @@ async function selectCodexAccounts() {
  */
 async function triggerCodexBridge(task, forceBridgeUrl = null) {
   assertExternalExecutionAllowed();
-  if (isRetiredDecomposition(task)) return { success: false, taskId: task?.id, reason: RETIRED_DECOMPOSITION };
+  if (isRetiredDecomposition(task)) return { success: false, taskId: task?.id, reason: RETIRED_DECOMPOSITION, retiredBeforeStart: true };
   if(task.payload?.invocation_activity)return {success:true,taskId:task.id,runId:task.payload.invocation_activity.child_run_id,executor:'shared-activity-runner',dispatchUncertain:true};
   const runId = generateRunId(task.id);
   try {
@@ -2626,7 +2636,7 @@ async function triggerCodexBridge(task, forceBridgeUrl = null) {
  */
 async function triggerMiniMaxExecutor(task) {
   assertExternalExecutionAllowed();
-  if (isRetiredDecomposition(task)) return { success: false, taskId: task?.id, reason: RETIRED_DECOMPOSITION };
+  if (isRetiredDecomposition(task)) return { success: false, taskId: task?.id, reason: RETIRED_DECOMPOSITION, retiredBeforeStart: true };
   const runId = generateRunId(task.id);
 
   try {
@@ -3271,7 +3281,7 @@ async function triggerCeceliaRun(task) {
   assertExternalExecutionAllowed();
   // 必须早于所有桥接、技能覆盖与运行账写入；旧任务不会产生假 run。
   if (isRetiredDecomposition(task)) {
-    return { success: false, taskId: task?.id, reason: RETIRED_DECOMPOSITION, error: '旧任务拆解已退役' };
+    return { success: false, taskId: task?.id, reason: RETIRED_DECOMPOSITION, retiredBeforeStart: true, error: '旧任务拆解已退役' };
   }
   const execResult = await _triggerCeceliaRunInner(task);
   const source = task?.payload?.harness_runtime === 'kernel-v1' ? 'kernel' : 'executor';

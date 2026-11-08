@@ -245,3 +245,16 @@ test('哨兵Bark运输失败保留curl与HTTP诊断且不泄露通知地址', as
  assert.match(result.out,/curl_exit=7 http=000/);
  assert.doesNotMatch(result.out,/private-token|fixture\.invalid/);
 });
+
+for (const mode of ['url', 'token']) test(`哨兵 ${mode} 正文中的网址必须编码成一个路径段`, async t => {
+ let received;
+ const url = await server(t, (req, res) => {
+   received = req.url;
+   const path = req.url.split('?')[0].split('/');
+   res.statusCode = path.length === 4 && decodeURIComponent(path[3]).includes('http://127.0.0.1:5221/a?x=中%25#片') ? 200 : 404;
+   res.end();
+ });
+ const f = fixture(t, { curl: 'args=(); for arg in "$@"; do case "$arg" in https://api.day.app/*) arg="$FIXTURE_URL/${arg#https://api.day.app/}";; esac; args+=("$arg"); done; exec /usr/bin/curl "${args[@]}"' });
+ const result = await run(sentinel.jobs.alert.steps[1].run, { ...f.env, FIXTURE_URL: url, BARK_URL: mode === 'url' ? `${url}/device` : '', BARK_TOKEN: mode === 'token' ? 'device' : '', HEALTH_OK: 'true', KV_OK: 'false', KV_AGE: '-1', PROBE_URL: 'http://127.0.0.1:5221/a?x=中%25#片' });
+ assert.equal(result.status, 0, `${result.out}\n${received}`);
+});

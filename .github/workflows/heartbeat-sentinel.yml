@@ -211,16 +211,16 @@ jobs:
           BODY="生产探测失败: ${FAILURES}目标=${PROBE_URL}"
 
           if [[ -n "${BARK_URL:-}" ]]; then
-            ENCODED_TITLE=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$TITLE'))")
-            ENCODED_BODY=$(python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.argv[1]))" "$BODY")
+            ENCODED_TITLE=$(python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.argv[1], safe=''))" "$TITLE")
+            ENCODED_BODY=$(python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.argv[1], safe=''))" "$BODY")
             HTTP_CODE=$(curl -sf --max-time 10 -o /dev/null -w '%{http_code}' \
               "${BARK_URL}/${ENCODED_TITLE}/${ENCODED_BODY}?group=heartbeat-sentinel&level=critical" \
               2>/dev/null) || { CURL_EXIT=$?; echo "::error::Bark 推送失败 curl_exit=$CURL_EXIT http=${HTTP_CODE:-000}"; exit 1; }
             [[ "$HTTP_CODE" =~ ^2[0-9][0-9]$ ]] || { echo "::error::Bark HTTP $HTTP_CODE"; exit 1; }
             echo "Bark ok"
           elif [[ -n "${BARK_TOKEN:-}" ]]; then
-            ENCODED_TITLE=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$TITLE'))")
-            ENCODED_BODY=$(python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.argv[1]))" "$BODY")
+            ENCODED_TITLE=$(python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.argv[1], safe=''))" "$TITLE")
+            ENCODED_BODY=$(python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.argv[1], safe=''))" "$BODY")
             HTTP_CODE=$(curl -sf --max-time 10 -o /dev/null -w '%{http_code}' \
               "https://api.day.app/${BARK_TOKEN}/${ENCODED_TITLE}/${ENCODED_BODY}?group=heartbeat-sentinel&level=critical" \
               2>/dev/null) || { CURL_EXIT=$?; echo "::error::Bark 推送失败 curl_exit=$CURL_EXIT http=${HTTP_CODE:-000}"; exit 1; }
