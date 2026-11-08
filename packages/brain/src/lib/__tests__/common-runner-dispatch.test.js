@@ -3,9 +3,10 @@ import http from 'node:http';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { createHash, createHmac } from 'node:crypto';
+import { createHash, createHmac,randomUUID } from 'node:crypto';
 import { createCommonRunnerDispatcher, commonRunnerFormalBinding, loadCommonRunnerProfiles, httpTransport } from '../common-runner-dispatch.js';
 import { runCommonRunnerTasks } from '../../common-runner-executor.js';
+import {commonRunnerExecutionContext} from '../common-runner-identity.js';
 import {createProfileCatalogClient} from '../../execution-directory/managed-script-profile-evidence.js';
 
 const taskId = '10000000-0000-4000-8000-000000000001';
@@ -41,6 +42,8 @@ async function setup({ candidateRouting=false,badSignature = false, wrongNonce =
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve)); servers.push(server);
   const task = { id: taskId, status: 'in_progress', kind: 'agent', result: {}, payload: {} };
   const pool = { query: vi.fn(async (sql, params) => {
+    if(sql.includes("UPDATE task_runs SET context=jsonb_set(context,'{common_runner_launch}'")){const prior=JSON.parse(params[3]);if(JSON.stringify(runContext?.common_runner_launch)!==JSON.stringify(prior))return {rows:[],rowCount:0};runContext.common_runner_launch=JSON.parse(params[2]);return {rows:[{id:'50000000-0000-4000-8000-000000000001'}],rowCount:1};}
+    if(sql.includes('SELECT id,task_id,context FROM task_runs'))return {rows:runContext?[{id:'50000000-0000-4000-8000-000000000001',task_id:taskId,context:structuredClone(runContext)}]:[]};
     if(sql.includes('SELECT task_id,context FROM task_runs'))return {rows:runContext?[{task_id:taskId,context:structuredClone(runContext)}]:[]};
     if (policyState && sql.includes('FROM release_versions')) return {rows:[policyState.release]};
     if (policyState && sql.includes('FROM release_observations')) return {rows:[policyState.observation]};
@@ -62,9 +65,9 @@ async function setup({ candidateRouting=false,badSignature = false, wrongNonce =
     }
     return { rows: [], rowCount: 1 };
   }) };
-  const authority = vi.fn(async (_db, input, operation) => operation({ executionVersionId: 'version-a', grantId: 'grant-a', grant,
-    node: {id:'version-a', canonical_id: machineId, endpoints: { worker: directoryEndpoint ?? `http://127.0.0.1:${server.address().port}` } } }, pool));
-  const start = vi.fn(async input => {runContext=structuredClone(input.context);if(input.definition){if(registrationError)throw registrationError;registered=true;}return { id: 'ledger-row', run_id: runId };});
+  const authority = vi.fn(async (_db, input, operation) => operation({ executionVersionId: '40000000-0000-4000-8000-000000000001', grantId: '30000000-0000-4000-8000-000000000001', grant,
+    node: {id:'40000000-0000-4000-8000-000000000001', canonical_id: machineId, endpoints: { worker: directoryEndpoint ?? `http://127.0.0.1:${server.address().port}` } } }, pool));
+  const start = vi.fn(async input => {runContext={...structuredClone(input.context),source:input.source};if(input.definition){if(registrationError)throw registrationError;registered=true;}return { id: 'ledger-row', run_id: runId };});
   const readDefinition=vi.fn(async()=>definition??(registered?definitionAfterStart:null));
   const finish = vi.fn(async () => ({ updated: !finishAlready }));
   const reconcile = vi.fn(async () => reconciliation ?? { business_outcome: 'unknown', evidence_status: 'incomplete' });
@@ -73,12 +76,13 @@ async function setup({ candidateRouting=false,badSignature = false, wrongNonce =
     allowLoopbackForTests: true,
     env: { NODE_ENV: 'production', ...(profilesFile ? { COMMON_RUNNER_PROFILES_FILE: profilesFile } : {}), ...(policyFile ? { EXECUTION_MANAGED_SCRIPT_CANDIDATES_FILE: policyFile } : {}) },
     ...(!profilesFile ? { profiles: { demo: { machine_id: machineId, profile_sha256: profileSha } } } : {}),
-    authorizeExecution: authority, resolveBoundNode: async () => ({id:'version-a', canonical_id: machineId, endpoints: { worker: directoryEndpoint ?? `http://127.0.0.1:${server.address().port}` } }),
+    authorizeExecution: authority, resolveBoundNode: async () => ({id:'40000000-0000-4000-8000-000000000001', canonical_id: machineId, endpoints: { worker: directoryEndpoint ?? `http://127.0.0.1:${server.address().port}` } }),
     executionDirectory: { current: () => ({ version: 'snapshot-a' }) }, startRun: start, finishRun: finish,
     ...(!useDefaultStartGate ? { assertCanStart: async () => {} } : {}),
     readReconciliation: reconcile, taskPolicy,
     ...(definition || definitionAfterStart ? { readDefinition } : {}) });
-  return { dispatcher, task, requests,routes, authority, start, finish, pool, reconcile, readDefinition, policyState };
+  const seedBoundRun=binding=>{binding.launch_nonce??=randomUUID();task.result.common_runner=binding;runContext={...commonRunnerExecutionContext(binding,binding.launch_nonce),source:'common-runner'};};
+  return { dispatcher, task, requests,routes, authority, start, finish, pool, reconcile, readDefinition, policyState,seedBoundRun };
 }
 
 describe('common runner HTTP dispatch', () => {
@@ -277,7 +281,7 @@ describe('common runner HTTP dispatch', () => {
     const x = await setup({ tickEnabled: false, useDefaultStartGate: true });
     await expect(x.dispatcher.dispatch('start', runId, { task_id: taskId, profile: 'demo', input: {}, mode: 'exploration' })).rejects.toThrow('common_runner_dispatch_paused');
     expect(x.requests).toHaveLength(0); expect(x.start).not.toHaveBeenCalled();
-    x.task.result.common_runner = { run_id: runId, task_id: taskId, machine_id: 'node-a', profile: 'demo', profile_sha256: 'a'.repeat(64), mode: 'exploration', execution_version_id: 'version-a' };
+    x.task.result.common_runner = { run_id: runId, task_id: taskId, machine_id: 'node-a', profile: 'demo', profile_sha256: 'a'.repeat(64), mode: 'exploration', execution_version_id: '40000000-0000-4000-8000-000000000001',execution_grant_id:'30000000-0000-4000-8000-000000000001',input:{},input_digest:createHash('sha256').update(JSON.stringify({input:{},mode:'exploration',profile:'demo'})).digest('hex') };x.seedBoundRun(x.task.result.common_runner);
     expect((await x.dispatcher.dispatch('inspect', runId, { task_id: taskId })).authenticated).toBe(true);
     expect(x.requests).toHaveLength(1);
   });
@@ -320,7 +324,7 @@ describe('common runner HTTP dispatch', () => {
       workflow_definition_version_id: uuid(4), attempt_key: 'a1', source_kind: 'internal' }, release: { target: 'node-a' },
     workflow: { payload: { activities: [{ slot_key: 'demo', reference_id: uuid(5), activity_id: uuid(6), activity_version_id: uuid(7) }] } },
     activities: [{ id: uuid(7), activity_id: uuid(6) }] };
-    const x = await setup({ definition });
+    const x = await setup({ definitionAfterStart:definition });x.task.payload.workflow_definition=ordinaryFormal().approved;
     await x.dispatcher.dispatch('start', runId, { task_id: taskId, profile: 'demo', input: {}, mode: 'formal' });
     expect(x.requests[0].input.run_binding).toEqual(commonRunnerFormalBinding(definition, runId));
     expect(x.requests[0].input.run_binding.activities.demo.activity_definition_version_id).toBe(uuid(7));
@@ -352,8 +356,8 @@ describe('common runner HTTP dispatch', () => {
       workflow_validation: workflow, validation: verdict, questions: { A4: { status: 'observed' } } } }];
     const manifest = centralSpans.map(({ occurrence_key, payload_sha256 }) => ({ occurrence_key, payload_sha256 }));
     const writeback = { pending: 0, blocked: 0, total: 1, acked: 1, manifest_sha256: createHash('sha256').update(JSON.stringify(manifest)).digest('hex') };
-    const x = await setup({ definition, centralSpans, workerReceipt: { status: 'completed', validation: { workflow, activities: { demo: verdict } }, writeback },
-      reconciliation: { business_outcome: verified ? 'pass' : 'unknown', evidence_status: verified ? 'verified' : 'incomplete' } });
+    const x = await setup({ definitionAfterStart:definition, centralSpans, workerReceipt: { status: 'completed', validation: { workflow, activities: { demo: verdict } }, writeback },
+      reconciliation: { business_outcome: verified ? 'pass' : 'unknown', evidence_status: verified ? 'verified' : 'incomplete' } });x.task.payload.workflow_definition=ordinaryFormal().approved;
     const result = await x.dispatcher.dispatch('start', runId, { task_id: taskId, profile: 'demo', input: {}, mode: 'formal' });
     expect(x.reconcile).toHaveBeenCalledWith(x.pool, runId);
     expect(result.central_run.status).toBe(verified ? 'success' : 'running'); expect(x.finish).toHaveBeenCalledTimes(verified ? 1 : 0);
@@ -459,7 +463,7 @@ function policyFixture(worker={}){
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'common-grant-')),file=path.join(root,'policy.json');
  const c={machine_id:'us-mac-m4',machine_registry_id:'ed3555dc-4777-446c-bdf0-d928d6a08ef1',profile_sha256:'a'.repeat(64),source_repo:'owner/repo',source_commit:'b'.repeat(40),release_id:uuid(21),observation_id:uuid(22),evidence_task_id:uuid(23),expires_at:new Date(Date.now()+3600000).toISOString(),...worker};
  const write=()=>fs.writeFileSync(file,JSON.stringify({schema_version:1,profiles:{demo:c}}),{mode:0o600});write();
- const grant={provenance:'mac_managed_profile/v1:'+createHash('sha256').update(JSON.stringify(c)).digest('hex'),profile_id:'demo',node_version_id:'version-a',state:'active',account_id:'',repo_scope:[],evidence_task_id:c.evidence_task_id,expires_at:c.expires_at};return {root,file,c,grant,write};
+ const grant={provenance:'mac_managed_profile/v1:'+createHash('sha256').update(JSON.stringify(c)).digest('hex'),profile_id:'demo',node_version_id:'40000000-0000-4000-8000-000000000001',state:'active',account_id:'',repo_scope:[],evidence_task_id:c.evidence_task_id,expires_at:c.expires_at};return {root,file,c,grant,write};
 }
 describe('受保护Mac profile grant不可随同名配置漂移',()=>{
  it('同名profile SHA更换不能复用旧政策grant触发任何startRun或Worker',async()=>{

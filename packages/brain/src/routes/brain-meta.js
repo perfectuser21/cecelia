@@ -11,6 +11,7 @@ import { handleChat, handleChatStream } from '../orchestrator-chat.js';
 import { acquireDeviceLock } from '../device-lock-helpers.js';
 import { noteDeviceLockAcquire } from '../bypass-audit.js';
 import { rateLimit } from 'express-rate-limit';
+import {registerDeviceLockRelease} from './device-lock-release.js';
 
 const router = Router();
 
@@ -1684,7 +1685,7 @@ router.patch('/mouth-config', async (req, res) => {
 router.get('/device-locks', async (_req, res) => {
   try {
     const { rows } = await pool.query(
-      `SELECT device_name, locked_by, locked_at, expires_at,
+      `SELECT device_name, locked_by, locked_at, expires_at,xmin::text AS lease_version,
               (expires_at IS NOT NULL AND expires_at < NOW()) AS expired
        FROM device_locks
        ORDER BY device_name`
@@ -1729,46 +1730,15 @@ router.post('/device-locks/acquire', async (req, res) => {
         expires_at: r.holder.expires_at,
       });
     }
-    res.json({ acquired: true, lock: r.lock });
+    res.json({ acquired: true, lock: {...r.lock,lease_version:r.lock.acquisition_version} });
   } catch (err) {
     console.error('[API] device-locks/acquire error:', err.message);
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
-/**
- * POST /api/brain/device-locks/release
- * 释放设备锁（只有持有者可以释放）
- * body: { device_name, locked_by }
- */
-router.post('/device-locks/release', async (req, res) => {
-  try {
-    const { device_name, locked_by } = req.body;
-    if (!device_name || !locked_by) {
-      return res.status(400).json({ success: false, error: 'device_name and locked_by are required' });
-    }
-
-    const { rows } = await pool.query(
-      `UPDATE device_locks
-       SET locked_by = NULL, locked_at = NULL, expires_at = NULL
-       WHERE device_name = $1 AND locked_by = $2
-       RETURNING *`,
-      [device_name, locked_by]
-    );
-
-    if (rows.length === 0) {
-      return res.status(409).json({
-        success: false,
-        error: `Device ${device_name} is not locked by ${locked_by}`,
-      });
-    }
-
-    res.json({ success: true, released: rows[0] });
-  } catch (err) {
-    console.error('[API] device-locks/release error:', err.message);
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
+// 可选expected_lease_version通过单条UPDATE做精确CAS，旧owner-only合同保留。
+registerDeviceLockRelease(router,pool);
 
 // 内网限流：宽松额度防误伤，同时满足 DB 访问限流要求（CodeQL js/missing-rate-limiting）
 const deviceRegisterLimiter = rateLimit({ windowMs: 60_000, limit: 300, standardHeaders: 'draft-7', legacyHeaders: false });

@@ -5,7 +5,8 @@ import { isAbsolute } from 'node:path';
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { directory, endpointValid } from '../execution-directory/directory.js';
 import { authorize, resolveCleanup, transaction } from '../execution-directory/store.js';
-import { startRun as startCentralRun, finishRun as finishCentralRun,reserveCommonRunnerWorkerRoute } from './task-run.js';
+import { startRun as startCentralRun, finishRun as finishCentralRun,reserveCommonRunnerWorkerRoute,transitionCommonRunnerLaunch } from './task-run.js';
+import {commonRunnerExecutionContext,commonRunnerIdentityMatches,commonRunnerLaunch} from './common-runner-identity.js';
 import { getRunDefinitionBinding } from './run-definition-binding.js';
 import { resolveMachineId } from '../machine-registry.js';
 import { isIsolatedRuntime } from '../runtime-safety.js';
@@ -120,11 +121,18 @@ export function createCommonRunnerDispatcher({ pool, env = process.env, profiles
   }
   async function originalBinding(db,binding){
     const row=(await db.query('SELECT task_id,context FROM task_runs WHERE run_id=$1',[binding.run_id])).rows[0];
-    const route=row?.context?.common_runner_worker_route;
-    if(!route){if(binding.worker_route)fail('common_runner_worker_route_unproven');return binding;}
-    const p=verifyManagedScriptWorkerRoute(route,token);
-    if(row.task_id!==binding.task_id||['run_id','task_id','machine_id','execution_version_id','execution_grant_id','profile_sha256'].some(k=>p[k]!==binding[k])||p.profile_id!==binding.profile)throw Error('execution_script_worker_route_identity_mismatch');
-    return {...binding,worker_route:route};
+    if(row?.task_id!==binding.task_id||!['common-runner','workflow-common-runner'].includes(row.context?.source))fail('common_runner_identity_unproven');
+    const frozen=row.context?.common_runner_identity,route=row.context?.common_runner_worker_route;
+    if(!frozen&&!route)fail('common_runner_identity_unproven');
+    if(route){const p=verifyManagedScriptWorkerRoute(route,token);
+      if(['run_id','task_id','machine_id','execution_version_id','execution_grant_id','profile_sha256'].some(k=>p[k]!==binding[k])||p.profile_id!==binding.profile)throw Error('execution_script_worker_route_identity_mismatch');
+    }else if(binding.worker_route)fail('common_runner_worker_route_unproven');
+    const effective={...binding,...(route?{worker_route:route}:{})};
+    if(frozen&&!commonRunnerIdentityMatches(frozen,effective))fail('common_runner_identity_conflict');
+    if(!object(binding.input)||digest({profile:binding.profile,input:binding.input,mode:binding.mode})!==binding.input_digest)fail('common_runner_identity_conflict');
+    // 旧可靠签名route只能观察；只有服务端冻结启动槽允许一次认证未启动后的重试。
+    const launch=frozen?commonRunnerLaunch(row.context):{state:'reserved',nonce:binding.launch_nonce};
+    return {...effective,launch_state:launch.state,launch_nonce:launch.nonce};
   }
   async function persist(db, taskId, binding, { activate = true } = {}) {
     const result = await db.query(`UPDATE tasks SET result=COALESCE(result,'{}'::jsonb)||$2::jsonb,
@@ -168,6 +176,7 @@ export function createCommonRunnerDispatcher({ pool, env = process.env, profiles
             executionVersionId: existing.execution_version_id, grantId: existing.execution_grant_id }, async (auth, authorizedDb = db) => {
             const route=await candidateRoute(auth,authorizedDb,existing.profile,existing.profile_sha256,body.task_id,runId);
             if((route?.signed_payload??null)!==(existing.worker_route?.signed_payload??null))fail('common_runner_worker_route_changed');
+            await transitionCommonRunnerLaunch({taskId:body.task_id,runId,from:'not_started',to:'reserved',oldNonce:existing.launch_nonce,nonce},{transactionClient:authorizedDb});
             const reserved = { ...existing, launch_state: 'reserved', launch_nonce: nonce };
             await persist(authorizedDb, body.task_id, reserved);
             return { binding: reserved, endpoint: route?.payload.endpoint??auth.node.endpoints.worker, action: 'start' };
@@ -197,7 +206,9 @@ export function createCommonRunnerDispatcher({ pool, env = process.env, profiles
         const adapterReservation=prior&&sourceAuthorized&&task.task_type==='workflow_dispatch'&&prior.context?.source==='workflow-common-runner'
           &&unlaunched?.state==='unlaunched'&&unlaunched.task_id===body.task_id&&unlaunched.run_id===runId;
         if(prior&&(workerRoute||prior.context?.common_runner_worker_route)&&!adapterReservation)fail('common_runner_worker_route_unproven');
-        const context = { machine_id: config.machine_id, profile: body.profile, mode: body.mode,...(workerRoute?{common_runner_worker_route:workerRoute}:{}) };
+        if(prior&&!adapterReservation)fail('common_runner_identity_unproven');
+        const executionIdentity={task_id:body.task_id,run_id:runId,machine_id:config.machine_id,profile:body.profile,profile_sha256:config.profile_sha256,mode:body.mode,execution_version_id:auth.executionVersionId,execution_grant_id:auth.grantId,input_digest:planDigest,...(workerRoute?{worker_route:workerRoute}:{})};
+        const context = { machine_id: config.machine_id, profile: body.profile, mode: body.mode,...commonRunnerExecutionContext(executionIdentity,nonce) };
         let runBinding, started;
         if (body.mode === 'formal') {
           let definition = await readDefinition(authorizedDb, runId);
@@ -221,14 +232,15 @@ export function createCommonRunnerDispatcher({ pool, env = process.env, profiles
         }
         started ??= await startRun({ taskId: body.task_id, runId, source: 'common-runner', context }, { pool: authorizedDb });
         if (!started?.id) fail('common_runner_run_registration_failed', 503);
-        if(adapterReservation){if(body.mode!=='formal')fail('common_runner_formal_binding_required');await reserveCommonRunnerWorkerRoute({taskId:body.task_id,runId,route:workerRoute},{transactionClient:authorizedDb});}
+        if(adapterReservation){if(body.mode!=='formal')fail('common_runner_formal_binding_required');await reserveCommonRunnerWorkerRoute({taskId:body.task_id,runId,route:workerRoute,identity:executionIdentity,nonce},{transactionClient:authorizedDb});}
         const binding = { run_id: runId, task_id: body.task_id, machine_id: config.machine_id, execution_version_id: auth.executionVersionId,
           execution_grant_id: auth.grantId, profile: body.profile, profile_sha256: config.profile_sha256, mode: body.mode,
           input_digest: planDigest, input: body.input, launch_state: 'reserved', launch_nonce: nonce, created_at: new Date().toISOString() };
         if(workerRoute)binding.worker_route=workerRoute;
         if (runBinding) binding.run_binding = runBinding;
-        await persist(authorizedDb, body.task_id, binding);
-        return { binding, endpoint: workerRoute?.payload.endpoint??auth.node.endpoints.worker, action };
+        const verifiedBinding=await originalBinding(authorizedDb,binding);
+        await persist(authorizedDb, body.task_id, verifiedBinding);
+        return { binding:verifiedBinding, endpoint: workerRoute?.payload.endpoint??auth.node.endpoints.worker, action };
       });
     });
   }
@@ -239,6 +251,7 @@ export function createCommonRunnerDispatcher({ pool, env = process.env, profiles
       const current = task?.result?.common_runner;
       // A delayed response from an older start must not reopen a newer launch window.
       if (current?.run_id === binding.run_id && current.launch_nonce === nonce && current.launch_state === 'reserved' && !current.cancel_requested) {
+        await transitionCommonRunnerLaunch({taskId:binding.task_id,runId:binding.run_id,from:'reserved',to:'not_started',oldNonce:nonce,nonce},{transactionClient:db});
         await persist(db, binding.task_id, { ...current, launch_state: 'not_started' }, { activate: false });
       }
     });
@@ -281,8 +294,28 @@ export function createCommonRunnerDispatcher({ pool, env = process.env, profiles
         const evidence = [{ kind: 'central_spans', run_id: binding.run_id, count: wb.total, manifest_sha256: manifestHash },
           { kind: 'worker_receipt', machine_id: binding.machine_id, profile_sha256: binding.profile_sha256, status: receipt.status }];
         const summary = `公共Runner运行${receipt.status}；${wb.total}条执行记录已在Brain独立读回`;
+        // 单独业务终态不证明资源已归位。此server-only原件只在认证回执、完整中央manifest
+        // 及匹配的独立cleanup核验后形成；普通callback的extractStageReceipt不能写此键。
+        const cleanupMatched = cleanup?.verdict === 'pass' && typeof cleanup.acceptance_ref === 'string'
+          && Array.isArray(cleanup.evidence) && cleanup.evidence.length > 0
+          && validations.some(row => digest(row.evidence.cleanup_validation) === digest(cleanup));
+        const neverStarted = resourceFreeReview(receipt) && receipt.execution_state === 'not_started';
+        const resourceRun = (await pool.query('SELECT id,task_id,context FROM task_runs WHERE run_id=$1', [binding.run_id])).rows[0];
+        const resourceDevices = (await pool.query('SELECT device_name,xmin::text AS acquisition_version FROM device_locks WHERE locked_by=$1 ORDER BY device_name', [binding.task_id])).rows;
+        const resourceSettlement = resourceRun?.task_id === binding.task_id && UUID.test(resourceRun.id ?? '')
+          && (commonRunnerIdentityMatches(resourceRun.context?.common_runner_identity,binding)
+            || (!resourceRun.context?.common_runner_identity&&binding.worker_route&&digest(resourceRun.context?.common_runner_worker_route)===digest(binding.worker_route)))
+          && receipt.execution_unknown === false && (cleanupMatched || neverStarted) ? {
+          protocol: 'common-runner-resource-settlement/v1', run_identity:resourceRun.context?.common_runner_identity??null, devices: resourceDevices, task_run_id: resourceRun.id, task_id: binding.task_id, run_id: binding.run_id,
+          machine_id: binding.machine_id, profile_sha256: binding.profile_sha256, mode: binding.mode,
+          worker_route: binding.worker_route ?? null, execution_unknown: false,
+          basis: cleanupMatched ? 'central-cleanup-validation' : 'not-started-resource-free',
+          execution_state: receipt.execution_state ?? null, cleanup_required: receipt.cleanup_required ?? null,
+          cleanup_validation_sha256: cleanupMatched ? digest(cleanup) : null, manifest_sha256: manifestHash,
+        } : null;
         const result = { actor: 'common-runner', summary, evidence,
-          handoff: { summary, next_steps: [] }, common_runner: { mode: binding.mode, business_status: receipt.status, validation: receipt.validation, writeback: wb } };
+          handoff: { summary, next_steps: [] }, common_runner: { mode: binding.mode, business_status: receipt.status,
+            validation: receipt.validation, writeback: wb, resource_settlement: resourceSettlement } };
         const finished = await finishRun({ runId: binding.run_id, status: review ? 'failed' : receipt.status, result,
           artifacts: [`brain:spans:${binding.run_id}`] }, { pool, strict: true });
         const saved = finished?.updated ? null : (await pool.query('SELECT status,task_id,ended_at,result FROM task_runs WHERE run_id=$1', [binding.run_id])).rows[0];

@@ -18,23 +18,28 @@
  * 不碰 DB，可直接单测；DB 函数默认走 db.js 的 pool（动态 import，纯逻辑测试不必连库），
  * 也可经 deps.pool 注入（openclaw-agent-executor 等已持有 pool 的调用方）。
  */
-
 import {FAILURE_STATUSES,sanitizeWorkflowFailure} from './workflow-failure.js';
-
+import {commonRunnerExecutionContext,commonRunnerLaunch} from './common-runner-identity.js';
 /** 原adapter首次创建的未启动标记只消费一次；调用方必须持原授权事务。 */
-export async function reserveCommonRunnerWorkerRoute({taskId,runId,route},{transactionClient:db}={}) {
+export async function reserveCommonRunnerWorkerRoute({taskId,runId,route,identity,nonce},{transactionClient:db}={}) {
   if(!db?.query)throw Error('common_runner_route_transaction_required');
+  const scope=identity?commonRunnerExecutionContext({...identity,worker_route:route??null},nonce):{common_runner_worker_route:route??null};
   const marker={schema_version:'common-runner-worker-reservation/v1',state:'unlaunched',task_id:taskId,run_id:runId};
-  const saved=await db.query(`UPDATE task_runs r SET context=(context-'common_runner_worker_reservation')||jsonb_build_object('common_runner_worker_route',$3::jsonb)
+  const saved=await db.query(`UPDATE task_runs r SET context=(context-'common_runner_worker_reservation')||$3::jsonb
     WHERE r.task_id=$1 AND r.run_id=$2 AND r.status='running' AND r.ended_at IS NULL
     AND r.context->>'source'='workflow-common-runner' AND r.context->'common_runner_worker_reservation'=$4::jsonb
     AND NOT(r.context?'common_runner_worker_route') AND EXISTS(SELECT 1 FROM run_definition_bindings b
       WHERE b.task_run_id=r.id AND b.run_id=r.run_id AND b.source_kind='internal' AND b.workflow_id=r.workflow_id)
-    RETURNING r.id`,[taskId,runId,JSON.stringify(route??null),JSON.stringify(marker)]);
+    RETURNING r.id`,[taskId,runId,JSON.stringify(scope),JSON.stringify(marker)]);
   if(saved.rowCount!==1)throw Error('common_runner_worker_route_unproven');
   return saved.rows[0];
 }
-
+/** 只接受认证未启动回执/原授权重试，按原nonce消费服务端启动槽。 */
+export async function transitionCommonRunnerLaunch({taskId,runId,from,to,oldNonce,nonce},{transactionClient:db}={}) {
+  if(!db?.query||!['reserved:not_started','not_started:reserved'].includes(from+':'+to))throw Error('common_runner_launch_transition_unproven');
+  commonRunnerLaunch({common_runner_launch:{protocol:'common-runner-launch/v1',state:from,nonce:oldNonce}});commonRunnerLaunch({common_runner_launch:{protocol:'common-runner-launch/v1',state:to,nonce}});const saved=await db.query(`UPDATE task_runs SET context=jsonb_set(context,'{common_runner_launch}',$3::jsonb) WHERE task_id=$1 AND run_id=$2 AND status='running' AND ended_at IS NULL AND context->'common_runner_launch'=$4::jsonb RETURNING id`,[taskId,runId,JSON.stringify({protocol:'common-runner-launch/v1',state:to,nonce}),JSON.stringify({protocol:'common-runner-launch/v1',state:from,nonce:oldNonce})]);
+  if(saved.rowCount!==1)throw Error('common_runner_launch_transition_unproven');return saved.rows[0];
+}
 const RUN_STATUS_MAP = Object.freeze({
   running: 'running',
   completed: 'success',
@@ -47,7 +52,6 @@ const RUN_STATUS_MAP = Object.freeze({
   cancelled: 'cancelled',
   canceled: 'cancelled',
 });
-
 /** 回执里 status 的松散写法（'AI Done' 等）→ normalizeRunStatus 认识的词。 */
 const CALLBACK_STATUS_ALIASES = Object.freeze({
   'AI Done': 'completed',

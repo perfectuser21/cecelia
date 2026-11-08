@@ -14,7 +14,7 @@ export async function deviceLockFixture({seedBeforeGuard}={}){
  try{
   await pool.query(`CREATE TABLE tasks(id UUID PRIMARY KEY,title TEXT,status TEXT DEFAULT 'queued',task_type TEXT DEFAULT 'data',executor_kind TEXT DEFAULT 'bridge',claimed_by TEXT,claimed_at TIMESTAMPTZ,started_at TIMESTAMPTZ,updated_at TIMESTAMPTZ DEFAULT now(),row_version INT DEFAULT 0,status_history JSONB DEFAULT '[]',payload JSONB DEFAULT '{}',result JSONB);
    CREATE TABLE schema_version(version TEXT PRIMARY KEY,description TEXT,applied_at TIMESTAMPTZ DEFAULT now());
-   CREATE TABLE task_runs(id UUID PRIMARY KEY DEFAULT gen_random_uuid(),task_id UUID REFERENCES tasks(id),run_id TEXT,status TEXT DEFAULT 'running',ended_at TIMESTAMPTZ);
+   CREATE TABLE task_runs(id UUID PRIMARY KEY DEFAULT gen_random_uuid(),task_id UUID REFERENCES tasks(id),run_id TEXT,status TEXT DEFAULT 'running',ended_at TIMESTAMPTZ,context JSONB DEFAULT '{}',result JSONB);
    CREATE TABLE initiative_runs(id UUID PRIMARY KEY DEFAULT gen_random_uuid(),current_task_id UUID REFERENCES tasks(id),phase TEXT DEFAULT 'planning');
    CREATE TABLE harness_attempts(id UUID PRIMARY KEY DEFAULT gen_random_uuid(),run_id UUID REFERENCES initiative_runs(id),status TEXT DEFAULT 'queued');
    CREATE TABLE harness_attempt_cleanup_outbox(id UUID PRIMARY KEY DEFAULT gen_random_uuid(),run_id UUID REFERENCES initiative_runs(id),status TEXT DEFAULT 'pending');
