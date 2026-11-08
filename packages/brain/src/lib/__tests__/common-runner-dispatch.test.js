@@ -450,9 +450,9 @@ describe('普通agent正式入口原事务内部绑定',()=>{
 });
 function policyFixture(){
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'common-grant-')),file=path.join(root,'policy.json');
- const c={machine_id:'us-mac-m4',machine_registry_id:'ed3555dc-4777-446c-bdf0-d928d6a08ef1',profile_sha256:'a'.repeat(64),source_repo:'owner/repo',source_commit:'b'.repeat(40),release_id:uuid(21),observation_id:uuid(22),evidence_task_id:taskId,expires_at:new Date(Date.now()+3600000).toISOString()};
+ const c={machine_id:'us-mac-m4',machine_registry_id:'ed3555dc-4777-446c-bdf0-d928d6a08ef1',profile_sha256:'a'.repeat(64),source_repo:'owner/repo',source_commit:'b'.repeat(40),release_id:uuid(21),observation_id:uuid(22),evidence_task_id:uuid(23),expires_at:new Date(Date.now()+3600000).toISOString()};
  const write=()=>fs.writeFileSync(file,JSON.stringify({schema_version:1,profiles:{demo:c}}),{mode:0o600});write();
- const grant={provenance:'mac_managed_profile/v1:'+createHash('sha256').update(JSON.stringify(c)).digest('hex'),profile_id:'demo',node_version_id:'version-a',state:'active',account_id:'',repo_scope:[],evidence_task_id:taskId,expires_at:c.expires_at};return {root,file,c,grant,write};
+ const grant={provenance:'mac_managed_profile/v1:'+createHash('sha256').update(JSON.stringify(c)).digest('hex'),profile_id:'demo',node_version_id:'version-a',state:'active',account_id:'',repo_scope:[],evidence_task_id:c.evidence_task_id,expires_at:c.expires_at};return {root,file,c,grant,write};
 }
 describe('受保护Mac profile grant不可随同名配置漂移',()=>{
  it('同名profile SHA更换不能复用旧政策grant触发任何startRun或Worker',async()=>{

@@ -62,13 +62,13 @@ test('domain源码漂移在执行前拒绝，formal题目缺失不能因domain�
 }));
 test('domain挂起调用预算到期保留未知，即使close声称停止也不释放未决调用',()=>withFixture({},async f=>{
  changeSource(f,s=>s.replace("if(options.signal!==signal", "await new Promise(()=>{});if(options.signal!==signal"));
- f.profile.domain_adapter.budget={max_duration_s:1,cleanup_grace_s:1};f.id.profile_sha256=profileDigest(f.profile);
+ f.profile.domain_adapter.budget={max_duration_s:1,cleanup_grace_s:1};f.profile.contract.activities[0].budget.max_duration_s=1;f.id.profile_sha256=profileDigest(f.profile);
  await f.r.start(f.id);const s=await terminal(f);expect(s.status).toBe('unknown');expect(s.execution_unknown).toBe(true);expect(fs.existsSync(path.join(f.root,'state','execution.lock'))).toBe(true);
  const persisted=JSON.parse(fs.readFileSync(path.join(f.root,'state',f.id.run_id+'.json'),'utf8'));
  await f.r.start(f.id);expect(JSON.parse(fs.readFileSync(path.join(f.root,'state',f.id.run_id+'.json'),'utf8')).domain_started_at_ms).toBe(persisted.domain_started_at_ms);
 }));
 test('domain close挂起受固定cleanup截止限制，不能占着validating而不投射unknown',()=>withFixture({},async f=>{
- changeSource(f,s=>s.replace("close:async()=>{", "close:async()=>{await new Promise(()=>{});"));f.profile.domain_adapter.budget={max_duration_s:1,cleanup_grace_s:1};f.id.profile_sha256=profileDigest(f.profile);
+ changeSource(f,s=>s.replace("close:async()=>{", "close:async()=>{await new Promise(()=>{});"));f.profile.domain_adapter.budget={max_duration_s:1,cleanup_grace_s:1};f.profile.contract.activities[0].budget.max_duration_s=1;f.id.profile_sha256=profileDigest(f.profile);
  await f.r.start(f.id);const s=await terminal(f);expect(s.status).toBe('unknown');expect(s.execution_unknown).toBe(true);expect(fs.existsSync(path.join(f.root,'state','execution.lock'))).toBe(true);
 }));
 test('domain cancel使用原signal，close只执行一次且不会自动重建工厂',()=>withFixture({},async f=>{

@@ -384,6 +384,7 @@ function createFleetWorkerRuntime({
   runCommand,
   probeCredentialHome: probeCredentialHomeFn = probeCredentialHome,
 } = {}) {
+  if(env.CECELIA_FLEET_WORKER_SURFACE==='workflow')return require('./workflow-only-runtime.cjs').createWorkflowOnlyRuntime({env,runCommand,protectedTokenFromFile,loadWorkflowModules});
   const launchAdmission=createLocalLaunchAdmission({markerPath:env.CECELIA_DRAIN_MARKER??'/var/run/cecelia/fleet-worker.drain'});
   const assertCanLaunch=launchAdmission.assertCanLaunch;
   const workerId = env.CECELIA_MACHINE_ID;
@@ -513,6 +514,11 @@ function createFleetWorkerRuntime({
   return Object.freeze({
     baselineProbe,
     workflowRunner,
+    workflowProfileCatalog:profileId=>{
+      const profile=workflowProfiles[profileId];if(!profile)throw Error('workflow_profile_unavailable');
+      const {assertProfile,profileDigest}=loadWorkflowModules(workflowRoot);
+      assertProfile(profile,'exploration');return profileDigest(profile);
+    },
     get runtimeConfigDigest(){return runtimeConfigDigest(config);},
     getRuntimeConfigDigest:()=>runtimeConfigDigest(config),
     appServerRunner: wrapLaunchRunner(createAppServerRunner({stateRoot:path.join(dataRoot,'app-servers'),machineId:workerId,workerId,bootId:launchAdmission.snapshot().boot_id,
@@ -648,6 +654,25 @@ function createFleetWorkerServer(options = {}) {
 
   const streamHub=options.appServerRunner?createStreamHub({runner:options.appServerRunner}):null;
   const server=http.createServer(async (request, response) => {
+    if(request.url==='/workflows/profile-catalog'){
+      if(!validBearer(request,attemptToken)){writeJson(response,401,{error:'unauthorized'});return;}
+      try{
+        if(request.method!=='POST'){writeJson(response,405,{error:'method_not_allowed'});return;}
+        const body=await readJson(request,4096),gate=options.launchAdmission;
+        if(Object.keys(body).sort().join(',')!=='profile_id,request_nonce'||!/^[a-z][a-z0-9-]{0,63}$/.test(body.profile_id??'')
+          ||!/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(body.request_nonce??'')
+          ||!gate||typeof options.workflowProfileCatalog!=='function'||!attemptReady||reconciliationFailed)throw Error('workflow_catalog_unconfirmed');
+        const before=gate.snapshot(),configBefore=options.getRuntimeConfigDigest?.()??options.runtimeConfigDigest;
+        const profileSha256=await options.workflowProfileCatalog(body.profile_id);
+        const after=gate.snapshot(),configAfter=options.getRuntimeConfigDigest?.()??options.runtimeConfigDigest;
+        if(before.boot_id!==after.boot_id||before.activity_revision!==after.activity_revision||configBefore!==configAfter
+          ||!/^[a-f0-9-]{36}$/.test(after.boot_id??'')||!/^[a-f0-9]{64}$/.test(configAfter??'')||!/^[a-f0-9]{64}$/.test(profileSha256??''))throw Error('workflow_catalog_unconfirmed');
+        const receipt={schema_version:'fleet-workflow-profile/v1',machine_id:machineId,request_nonce:body.request_nonce,
+          profile_id:body.profile_id,profile_sha256:profileSha256,boot_id:after.boot_id,config_digest:configAfter,observed_at:new Date().toISOString()};
+        writeJson(response,200,{receipt,signature:createHmac('sha256',attemptToken).update(JSON.stringify(receipt)).digest('hex')});
+      }catch{writeJson(response,409,{error:'workflow_catalog_unconfirmed'});}
+      return;
+    }
     if(request.url?.startsWith('/workflows/')) {
       if(!validBearer(request,attemptToken)){writeJson(response,401,{error:'unauthorized'});return;}
       if(!options.workflowRunner){writeJson(response,503,{error:'workflow_runner_unconfigured'});return;}
@@ -954,6 +979,7 @@ function main(env = process.env) {
     launchAdmission: runtime.launchAdmission,
     scriptRunner: runtime.scriptRunner,
     workflowRunner: runtime.workflowRunner,
+    workflowProfileCatalog:runtime.workflowProfileCatalog,
     attemptRunner: runtime.attemptRunner,
     orchestratorRunner: runtime.orchestratorRunner,
     attemptToken: runtime.attemptToken,

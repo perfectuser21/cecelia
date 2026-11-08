@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import {assertManagedScriptProfileGrant} from '../execution-directory/managed-script-profile-evidence.js';
 import {resourceFreeReview} from './common-runner-review.js';
 import { isAbsolute } from 'node:path';
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
@@ -145,6 +146,7 @@ export function createCommonRunnerDispatcher({ pool, env = process.env, profiles
           return authorizeExecution(db, { snapshotVersion: executionDirectory.current()?.version, machineId: existing.machine_id,
             surface: 'managed_script', provider: 'script', profileId: existing.profile,
             executionVersionId: existing.execution_version_id, grantId: existing.execution_grant_id }, async (auth, authorizedDb = db) => {
+            await assertManagedScriptProfileGrant({db:authorizedDb,grant:auth.grant,profileId:existing.profile,profileSha256:existing.profile_sha256,machineId:existing.machine_id,executionVersionId:auth.executionVersionId},env);
             const reserved = { ...existing, launch_state: 'reserved', launch_nonce: nonce };
             await persist(authorizedDb, body.task_id, reserved);
             return { binding: reserved, endpoint: auth.node.endpoints.worker, action: 'start' };
@@ -165,19 +167,33 @@ export function createCommonRunnerDispatcher({ pool, env = process.env, profiles
       if (!executionDirectory.current()) await executionDirectory.refresh({ pool });
       return authorizeExecution(db, { snapshotVersion: executionDirectory.current()?.version, machineId: config.machine_id,
         surface: 'managed_script', provider: 'script', profileId: body.profile }, async (auth, authorizedDb = db) => {
-        let runBinding;
+        await assertManagedScriptProfileGrant({db:authorizedDb,grant:auth.grant,profileId:body.profile,profileSha256:config.profile_sha256,machineId:config.machine_id,executionVersionId:auth.executionVersionId},env);
+        const prior = (await authorizedDb.query('SELECT task_id,status,ended_at FROM task_runs WHERE run_id=$1', [runId])).rows[0];
+        if (prior && prior.task_id !== body.task_id) fail('common_runner_identity_conflict');
+        if (prior && (prior.ended_at || prior.status !== 'running')) fail('common_runner_run_already_terminal');
+        const context = { machine_id: config.machine_id, profile: body.profile, mode: body.mode };
+        let runBinding, started;
         if (body.mode === 'formal') {
-          const definition = await readDefinition(authorizedDb, runId);
+          let definition = await readDefinition(authorizedDb, runId);
+          // 仅普通Task的首次正式运行可在同一授权事务内建立内部绑定；不替旧run补身份。
+          if (!definition && !prior && task.kind === 'agent' && !sourceAuthorized
+            && task.task_type !== 'workflow_dispatch' && !task.result?.workflow_common_runner) {
+            const approved = task.payload?.workflow_definition;
+            const keys = ['release_id','observation_id','workflow_id','workflow_definition_version_id',
+              'snapshot_sha256','runtime_snapshot_sha256','expected_path','attempt_key','actor'];
+            if (!object(approved) || Object.keys(approved).some(key => !keys.includes(key))) fail('common_runner_formal_binding_required');
+            started = await startRun({ taskId: body.task_id, runId, source: 'common-runner', context,
+              definition: {...approved, actor: 'common-runner', attempt_key: approved.attempt_key ?? `${task.id}:1`} },
+            { pool: authorizedDb, transactionClient: authorizedDb });
+            if (!started?.id) fail('common_runner_run_registration_failed', 503);
+            definition = await readDefinition(authorizedDb, runId);
+          }
           runBinding = commonRunnerFormalBinding(definition, runId);
           if ((resolveMachineId(definition.release?.target) ?? definition.release?.target) !== config.machine_id) fail('common_runner_formal_machine_mismatch');
           const owner = (await authorizedDb.query('SELECT task_id FROM task_runs WHERE id=$1 AND run_id=$2', [definition.binding.task_run_id, runId])).rows[0];
           if (owner?.task_id !== body.task_id) fail('common_runner_identity_conflict');
         }
-        const prior = (await authorizedDb.query('SELECT task_id,status,ended_at FROM task_runs WHERE run_id=$1', [runId])).rows[0];
-        if (prior && prior.task_id !== body.task_id) fail('common_runner_identity_conflict');
-        if (prior && (prior.ended_at || prior.status !== 'running')) fail('common_runner_run_already_terminal');
-        const started = await startRun({ taskId: body.task_id, runId, source: 'common-runner',
-          context: { machine_id: config.machine_id, profile: body.profile, mode: body.mode } }, { pool: authorizedDb });
+        started ??= await startRun({ taskId: body.task_id, runId, source: 'common-runner', context }, { pool: authorizedDb });
         if (!started?.id) fail('common_runner_run_registration_failed', 503);
         const binding = { run_id: runId, task_id: body.task_id, machine_id: config.machine_id, execution_version_id: auth.executionVersionId,
           execution_grant_id: auth.grantId, profile: body.profile, profile_sha256: config.profile_sha256, mode: body.mode,

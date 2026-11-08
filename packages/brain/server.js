@@ -1,6 +1,7 @@
 import { createWorkflowCommanderRouter } from './src/routes/workflow-commander.js';
 import { createCrmRouter } from './src/crm/router.js';
 import {createExecutionBaselineRouter} from './src/routes/execution-baseline.js';
+import {createExecutionScriptProfilesRouter} from './src/routes/execution-script-profiles.js';
 import {createAppServerRouter} from './src/routes/app-server.js';
 import { startExecutionDirectory } from './src/execution-directory/store.js';
 // OTel 必须在所有其他 import 之前初始化（auto-instrumentation 要求）
@@ -341,6 +342,7 @@ app.use('/api/brain/janitor', janitorRoutes);
 app.use('/api/brain/internal/app-server', createAppServerRouter({pool}));
 app.use('/api/brain/internal/crm', createCrmRouter({ pool }));
 app.use('/api/brain/internal/execution-directory',createExecutionBaselineRouter({pool}));
+app.use('/api/brain/execution',createExecutionScriptProfilesRouter({pool}));
 app.use('/api/brain/profile/facts', profileFactsRoutes);
 
 // Cron 手动触发（E2E 测试用）
