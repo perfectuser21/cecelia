@@ -98,7 +98,6 @@ async function readStageInputs(readSource,revision){
  for(const stage of STAGES){entries[stage]=await readSource(path('activities',stage),revision);tests[stage]=await readSource(PREFIX+`__tests__/${stage}.test.mjs`,revision);}
  return {entries,tests};
 }
-
 /** 已审完整 evaluate 之外，明确 SOURCE_PROVENANCE 从同任务/HEAD 自读并送入实际模板。 */
 function mergeConsumer(tree,parse){
  if(!named(tree,'../runner/lib/source-provenance.mjs','sourceFacts'))return false;
@@ -116,7 +115,6 @@ function mergeReadEdges(edges,entry){
  for(const name of ['provenance-path','record-provenance-records','record-provenance-store'])edges.push([proof,PREFIX+'lib/'+name+'.mjs','provenance_static_import_dependency']);
  for(const name of ['source-merge','source-provenance','cifix','pr-branch','proc','qa-gate','repos'])edges.push([proof,PREFIX+'runner/lib/'+name+'.mjs','controller_identity_byte_input']);
 }
-
 /** supportProven/supportVersion来自唯一可信collector实际调用proveBuildSources，绝非候选声明。 */
 export async function collectStageSources({parse,paths,selectors,read,readSource,revision,relations,requireProof,supportProven,supportVersion,supportHistory=false}){
  const selected=STAGES.filter(s=>{const p=PREFIX+`__tests__/${s}.test.mjs`;return paths.includes(p)&&selectors.include.some(r=>r.test(p))&&!selectors.exclude.some(r=>r.test(p));});
@@ -197,7 +195,6 @@ export async function collectStageSources({parse,paths,selectors,read,readSource
  }
  for(const [consumer_path,input_path,kind] of edges){await read(consumer_path);await read(input_path);if(!relations.some(r=>r.consumer_path===consumer_path&&r.input_path===input_path&&r.kind===kind&&r.revision===revision))relations.push({consumer_path,input_path,kind,revision});}
 }
-
 const fail = () => { throw Error('workspace_selector_unproven'); };
 const key = property => property.key?.name ?? property.key?.value;
 function property(object, name, required = true) {
@@ -462,7 +459,6 @@ export async function collectDeepCiSources({ read, revision, relations }) {
   relations.push({ consumer_path: workflow, input_path: config, kind: 'scheduled_or_manual_full_postgres_entry', revision },
     { consumer_path: config, input_path: 'packages/brain/vitest.config.js', kind: 'shared_postgres_literal_config', revision });
 }
-
 const AUTO_VERSION_TEST='packages/brain/src/__tests__/auto-version-decision.test.js';
 const AUTO_VERSION_WORKFLOW='.github/workflows/auto-version.yml';
 const AUTO_VERSION_FILES={
@@ -501,5 +497,4 @@ export async function collectAutoVersionTestSources({read,requireProof,relations
     }
   }
 }
-
 export { property, literals, fail };
