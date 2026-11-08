@@ -1,7 +1,10 @@
 import {beforeAll,afterAll,beforeEach,it,expect} from 'vitest';
 import pg from 'pg';
 import {randomUUID,createHmac} from 'node:crypto';
-import {readFileSync} from 'node:fs';
+import {readFileSync,mkdtempSync,writeFileSync,rmSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {assertManagedScriptProfileGrant} from '../../execution-directory/managed-script-profile-evidence.js';
 import {createManagedScriptProfileStore} from '../../execution-directory/managed-script-profile.js';
 import {directory} from '../../execution-directory/directory.js';
 import {DB_DEFAULTS} from '../../db-config.js';
@@ -13,7 +16,7 @@ const registry='ed3555dc-4777-446c-bdf0-d928d6a08ef1',version=randomUUID(),taskI
 const input=()=>({expected_current_version_id:version,expected_config_hash:hash,expected_worker_boot_id:boot,expected_worker_config_digest:hash});
 let c,reads;
 const catalogToken='scratch-only-worker-transport-key';
-const client={catalog:async()=>{reads++;const receipt={boot_id:boot,config_digest:hash,profile_sha256:hash};return {...receipt,receipt,signature:createHmac('sha256',catalogToken).update(JSON.stringify(receipt)).digest('hex')};}};
+const client={catalog:async()=>{reads++;const receipt={profile_sha256:hash,config_digest:hash,boot_id:boot};const signed_payload=JSON.stringify(receipt);return {...receipt,receipt,signed_payload,signature:createHmac('sha256',catalogToken).update(signed_payload).digest('hex')};}};
 const store=(extra={})=>createManagedScriptProfileStore({pool,readCandidates:()=>({[profile]:c}),client,...extra});
 beforeAll(async()=>{await admin.connect();await admin.query(`CREATE SCHEMA ${schema}`);
  await pool.query(`CREATE TABLE system_registry(id uuid PRIMARY KEY,type text,name text,status text,metadata jsonb DEFAULT '{}');
@@ -55,6 +58,21 @@ it('真实PG同机锁串行，active精确grant与真实任务审计同事务追
  for(const catalog of task.result.execution_script_profile_operations[0].worker_catalog){expect(JSON.parse(catalog.signed_payload)).toEqual(catalog.receipt);expect(createHmac('sha256',catalogToken).update(catalog.signed_payload).digest('hex')).toBe(catalog.signature);}
  expect(directory.matches({machineId:'us-mac-m4',surface:'managed_script',provider:'script',profileId:profile})).not.toBeNull();
  expect((await pool.query('SELECT count(*) FROM execution_node_versions')).rows[0].count).toBe('1');
+});
+it('真实PG等待release锁期间证据Task撤销后不能用锁前快照准入',async()=>{
+ const grant=(await pool.query('SELECT * FROM execution_grants WHERE profile_id=$1',[profile])).rows[0];c.expires_at=grant.expires_at.toISOString();
+ const root=mkdtempSync(join(tmpdir(),'script-live-evidence-')),file=join(root,'policy.json');writeFileSync(file,JSON.stringify({schema_version:1,profiles:{[profile]:c}}),{mode:0o600});
+ const blocker=await pool.connect(),reader=await pool.connect();let pending;
+ try{
+  await blocker.query('BEGIN');await reader.query('BEGIN');
+  await blocker.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[`release-target:${JSON.stringify(['candidate','us-mac-m4'])}`]);
+  const pid=(await reader.query('SELECT pg_backend_pid() AS pid')).rows[0].pid;
+  pending=assertManagedScriptProfileGrant({db:reader,grant,profileId:profile,profileSha256:hash,machineId:'us-mac-m4',executionVersionId:version},{EXECUTION_MANAGED_SCRIPT_CANDIDATES_FILE:file});pending.catch(()=>{});
+  const deadline=Date.now()+3000;let waiting=false;
+  while(Date.now()<deadline){const state=(await pool.query('SELECT wait_event_type FROM pg_stat_activity WHERE pid=$1',[pid])).rows[0];if(state.wait_event_type==='Lock'){waiting=true;break;}await new Promise(r=>setTimeout(r,10));}
+  expect(waiting).toBe(true);await pool.query("UPDATE tasks SET status='cancelled' WHERE id=$1",[taskId]);await blocker.query('ROLLBACK');
+  await expect(pending).rejects.toThrow('execution_script_candidate_evidence_required');
+ }finally{await blocker.query('ROLLBACK');blocker.release();await reader.query('ROLLBACK');reader.release();await pending?.catch(()=>{});await pool.query("UPDATE tasks SET status='in_progress' WHERE id=$1",[taskId]);rmSync(root,{recursive:true,force:true});}
 });
 it('真实PG已撤销profile重试不能静默复活或造新grant',async()=>{
  await pool.query("UPDATE execution_grants SET state='revoked' WHERE profile_id=$1",[profile]);
