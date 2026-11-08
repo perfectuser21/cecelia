@@ -7,8 +7,19 @@ import { growth, verifications } from './verification';
 
 const navigation = new Set(buildCoreNavigation().flatMap(group => group.items.flatMap(item =>
   (item.children ?? [item]).map(child => child.path))));
-// 历史审计快照保留原始记录，当前视图排除已退役页面。
-const activeRows = snapshot.rows.filter(row => !row['审计编号'].startsWith('QualityMonitorPage:'));
+// 历史审计快照保留原始记录，当前视图排除已退役页面及议题对话操作。
+const retiredOperationIds = new Set([
+  'StrategistLinePage:01', 'StrategistLinePage:02',
+  'WarRoomGoldenPathPage:01', 'WarRoomGoldenPathPage:02',
+  'WarRoomLineCommandPage:01', 'WarRoomLineCommandPage:02',
+]);
+const currentPageNames: Record<string, string> = {
+  'WarRoomGoldenPathPage:03': 'Golden Path 详情',
+  'WarRoomLineCommandPage:03': '价值流指挥',
+};
+const activeRows = snapshot.rows.filter(row =>
+  !row['审计编号'].startsWith('QualityMonitorPage:') && !retiredOperationIds.has(row['审计编号']))
+  .map(row => currentPageNames[row['审计编号']] ? { ...row, 页面名称: currentPageNames[row['审计编号']] } : row);
 const operations = buildInventory(activeRows, verifications, navigation);
 const totals = summarize(operations);
 const statusStyles: Record<Status, string> = {
