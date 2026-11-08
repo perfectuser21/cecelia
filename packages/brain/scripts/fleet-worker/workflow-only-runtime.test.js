@@ -1,4 +1,4 @@
-import {test,expect} from 'vitest';
+import {test,expect,vi} from 'vitest';
 import {createRequire} from 'node:module';
 import fs from 'node:fs';import os from 'node:os';import path from 'node:path';import {createHash,randomUUID} from 'node:crypto';
 const {createFleetWorkerRuntime}=createRequire(import.meta.url)('./fleet-worker.cjs');
@@ -37,4 +37,18 @@ test('workflow catalog rejects more than 16 MiB before parsing its content',()=>
   const file=path.join(root,'profiles.json');fs.writeFileSync(file,'{not-json',{mode:0o600});fs.truncateSync(file,16*1024*1024+1);
   expect(()=>loadWorkflowProfiles(file)).toThrow('workflow_profiles_unprotected');
  }finally{fs.rmSync(root,{recursive:true,force:true});}
+});
+
+
+test('workflow catalog accepts exact bound and rejects growth after stat',()=>{
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'workflow-catalog-race-'));
+ const {loadWorkflowProfiles}=createRequire(import.meta.url)('./workflow-profile.cjs');let stat;
+ try{
+  const file=path.join(root,'profiles.json'),body=JSON.stringify({schema_version:1,profiles:{}});
+  fs.writeFileSync(file,body+' '.repeat(16*1024*1024-Buffer.byteLength(body)),{mode:0o600});
+  expect(loadWorkflowProfiles(file)).toEqual({});
+  fs.writeFileSync(file,body);const actual=fs.fstatSync;
+  stat=vi.spyOn(fs,'fstatSync').mockImplementation(fd=>{const value=actual(fd);value.size-=1;return value;});
+  expect(()=>loadWorkflowProfiles(file)).toThrow('workflow_profiles_unprotected');
+ }finally{stat?.mockRestore();fs.rmSync(root,{recursive:true,force:true});}
 });

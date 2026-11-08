@@ -5,13 +5,19 @@ const {createHash}=require('node:crypto');
 const hash=s=>createHash('sha256').update(s).digest('hex');
 const canonical=value=>Array.isArray(value)?value.map(canonical):value&&typeof value==='object'?Object.fromEntries(Object.keys(value).sort().map(k=>[k,canonical(value[k])])):value;
 const profileDigest=profile=>hash(JSON.stringify(canonical(profile)));
+// Complete frozen release/Activity contracts exceed 1 MiB; keep the protected
+// catalog bounded independently of untrusted Worker HTTP request limits.
+const MAX_WORKFLOW_PROFILES_BYTES=16*1024*1024;
 function loadWorkflowProfiles(file){
  if(!file)return {};
  if(!path.isAbsolute(file))throw Error('workflow_profiles_unprotected');
  const fd=fs.openSync(file,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW);let data;
  try{const s=fs.fstatSync(fd);
- if(!s.isFile()||(s.mode&0o077)!==0||![0,process.getuid?.()].includes(s.uid)||s.size>1048576)throw Error('workflow_profiles_unprotected');
- data=JSON.parse(fs.readFileSync(fd,'utf8'));}finally{fs.closeSync(fd);}
+ if(!s.isFile()||(s.mode&0o077)!==0||![0,process.getuid?.()].includes(s.uid)||s.size>MAX_WORKFLOW_PROFILES_BYTES)throw Error('workflow_profiles_unprotected');
+ const bytes=Buffer.alloc(s.size+1);let size=0;
+ while(size<bytes.length){const read=fs.readSync(fd,bytes,size,bytes.length-size,null);if(!read)break;size+=read;}
+ if(size!==s.size)throw Error('workflow_profiles_unprotected');
+ data=JSON.parse(bytes.subarray(0,size).toString('utf8'));}finally{fs.closeSync(fd);}
  if(data.schema_version!==1||!data.profiles||Array.isArray(data.profiles))throw Error('workflow_profiles_invalid');
  return data.profiles;
 }
