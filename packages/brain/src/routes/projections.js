@@ -8,17 +8,17 @@ import { configureTaskRunsProjection } from '../projection/task-runs-config.js';
 import { internalAuthOrLoopback } from '../middleware/internal-auth.js';
 
 const router = Router();
-router.use(rateLimit({ windowMs: 60_000, limit: 300, standardHeaders: 'draft-7', legacyHeaders: false }));
+const projectionLimiter = rateLimit({ windowMs: 60_000, limit: 300, standardHeaders: 'draft-7', legacyHeaders: false });
 
 // 登记一次真实任务运行的镜子；与历史 n8n Ops Runs 分开保留。
 for (const path of ['/projections/notion/task-runs/configure', '/projections/notion/task-runs/bootstrap']) {
-  router.post(path, internalAuthOrLoopback, async (req, res) => {
+  router.post(path, projectionLimiter, internalAuthOrLoopback, async (req, res) => {
     try { res.json(await configureTaskRunsProjection(pool, req.body)); }
     catch { res.status(400).json({ error: 'Runs 配置失败；请检查显式启用、身份归属和库字段类型' }); }
   });
 }
 
-router.get('/projections/status', async (_req, res) => {
+router.get('/projections/status', projectionLimiter, async (_req, res) => {
   try {
     const [outbox, links, commands, targets] = await Promise.all([
       pool.query(`SELECT target, status, COUNT(*)::int AS count
@@ -47,7 +47,7 @@ router.get('/projections/status', async (_req, res) => {
   }
 });
 
-router.post('/projections/requeue', async (req, res) => {
+router.post('/projections/requeue', projectionLimiter, async (req, res) => {
   try {
     const { target = 'notion' } = req.body ?? {};
     const { rowCount } = await pool.query(
@@ -62,7 +62,7 @@ router.post('/projections/requeue', async (req, res) => {
   }
 });
 
-router.post('/projections/notion/key-results/configure', async (req, res) => {
+router.post('/projections/notion/key-results/configure', projectionLimiter, async (req, res) => {
   try {
     const result = await configureKrProjection(pool, req.body?.database_id);
     res.json(result);
@@ -71,7 +71,7 @@ router.post('/projections/notion/key-results/configure', async (req, res) => {
   }
 });
 
-router.post('/projections/notion/bootstrap', async (req, res) => {
+router.post('/projections/notion/bootstrap', projectionLimiter, async (req, res) => {
   try {
     const result = await bootstrapNotionDatabases(pool, req.body?.parent_page_id);
     res.status(201).json(result);
@@ -80,7 +80,7 @@ router.post('/projections/notion/bootstrap', async (req, res) => {
   }
 });
 
-router.post('/projections/notion/configure', async (req, res) => {
+router.post('/projections/notion/configure', projectionLimiter, async (req, res) => {
   try {
     const result = await configureNotionProjection(pool, {
       taskDbId: req.body?.task_db_id,
@@ -93,7 +93,7 @@ router.post('/projections/notion/configure', async (req, res) => {
   }
 });
 
-router.get('/workbench/activity', async (req, res) => {
+router.get('/workbench/activity', projectionLimiter, async (req, res) => {
   try {
     const limit = Math.min(Number.parseInt(req.query.limit, 10) || 100, 300);
     const [attempts, events] = await Promise.all([
@@ -122,7 +122,7 @@ router.get('/workbench/activity', async (req, res) => {
   }
 });
 
-router.get('/workbench/summary', async (_req, res) => {
+router.get('/workbench/summary', projectionLimiter, async (_req, res) => {
   try {
     const [tasks, captures, projection] = await Promise.all([
       pool.query(
