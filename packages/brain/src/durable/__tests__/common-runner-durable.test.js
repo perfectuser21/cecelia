@@ -119,3 +119,10 @@ test('workflow可信依赖缺失或scope非法时拒绝新启动，不降级publ
   await expect(startDurableCommonRunner({...request(), body: {...request().body, dispatch_scope: 'workflow'}})).rejects.toThrow('common_runner_durable_request_invalid');
   expect(mock.start).not.toHaveBeenCalled(); expect(dispatch).not.toHaveBeenCalled();
 });
+
+test('只有已认证明确未启动的资源等待才可用原身份再次start',async()=>{
+ dispatch.mockResolvedValueOnce(receipt('waiting_resources','pending',{execution_state:'not_started'})).mockResolvedValueOnce(receipt('running')).mockResolvedValueOnce(receipt('completed','confirmed'));
+ expect((await durableCommonRunnerWorkflow(request())).status).toBe('completed');
+ expect(dispatch.mock.calls.map(([action])=>action)).toEqual(['start','start','inspect']);
+ expect(dispatch.mock.calls[0][1]).toBe(dispatch.mock.calls[1][1]);
+});
