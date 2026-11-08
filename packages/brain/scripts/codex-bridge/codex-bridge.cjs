@@ -8,6 +8,7 @@
  */
 
 const http = require('http');
+const { createHash } = require('node:crypto');
 const fs = require('fs');
 const { spawn } = require('child_process');
 const path = require('path');
@@ -288,6 +289,7 @@ function sendJSON(res, statusCode, data) {
 async function callbackBrain(taskId, checkpointId, status, output, durationMs, runId = null) {
   const url = `${BRAIN_URL}/api/brain/execution-callback`;
   const payload = buildCallbackPayload({ taskId, runId, checkpointId, status, output, durationMs });
+  const receiptSha256 = createHash('sha256').update(JSON.stringify(payload)).digest('hex');
 
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
@@ -295,11 +297,51 @@ async function callbackBrain(taskId, checkpointId, status, output, durationMs, r
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...brainAuthHeaders() },
         body: JSON.stringify(payload),
+        // Never forward an internal bearer token to a redirect target.
+        redirect: 'manual',
         signal: AbortSignal.timeout(10000),
       });
+      if (res.status >= 300 && res.status < 400) {
+        console.warn(`[codex-bridge] callback redirect rejected: task=${taskId} HTTP ${res.status}`);
+        return { outcome: 'unconfirmed', reason: 'redirect' };
+      }
       if (res.ok) {
-        console.log(`[codex-bridge] callback 成功: task=${taskId} status=${status}`);
-        return;
+        let acknowledgement;
+        try {
+          acknowledgement = await res.json();
+        } catch {
+          // A malformed 2xx may follow a committed callback. Do not blindly
+          // resend it: legacy callers may not have an idempotent run_id.
+          console.warn(`[codex-bridge] callback acknowledgement invalid: task=${taskId}`);
+          return { outcome: 'unconfirmed', reason: 'invalid_ack' };
+        }
+        if (!acknowledgement || acknowledgement.success !== true
+            || (acknowledgement.task_id != null && acknowledgement.task_id !== taskId)) {
+          console.warn(`[codex-bridge] callback acknowledgement invalid: task=${taskId}`);
+          return { outcome: 'unconfirmed', reason: 'invalid_ack' };
+        }
+        const skipped = acknowledgement.skipped === true;
+        const duplicate = acknowledgement.duplicate === true;
+        const pending = res.status === 202 || acknowledgement.queued === true;
+        console.log(`[codex-bridge] callback acknowledged: task=${taskId} skipped=${skipped} duplicate=${duplicate} pending=${pending}`);
+        return {
+          outcome: 'acknowledged', skipped, duplicate, pending,
+          ...(typeof acknowledgement.reason === 'string' ? { reason: acknowledgement.reason } : {}),
+        };
+      }
+      // Only an identified, already durable pending receipt is safe to stop resending.
+      // Non-2xx remains unconfirmed: queue acceptance is not task completion.
+      if (res.status === 422 || res.status === 503) {
+        let pending;
+        try { pending = await res.json(); } catch { /* ordinary retry */ }
+        const reviewCodes = new Set(['DECOMP_REVIEW_RUN_ID_MISSING', 'DECOMP_REVIEW_POSTDEPLOY_UNSUPPORTED',
+          'DECOMP_REVIEW_VERDICT_INVALID']);
+        const knownPending = (res.status === 503 && pending?.code === 'TASK_COMPLETION_GUARD_UNAVAILABLE')
+          || (res.status === 422 && reviewCodes.has(pending?.code));
+        if (pending?.success === false && pending.queued === true && pending.task_id === taskId && typeof runId === 'string' && runId.length > 0 && pending.run_id === runId && pending.callback_status === payload.status
+            && pending.receipt_sha256 === receiptSha256 && knownPending) {
+          return { outcome: 'unconfirmed', reason: 'queued_pending', pending: true };
+        }
       }
       console.warn(`[codex-bridge] callback HTTP ${res.status}, 重试 ${attempt + 1}/3`);
     } catch (err) {
@@ -308,6 +350,7 @@ async function callbackBrain(taskId, checkpointId, status, output, durationMs, r
     if (attempt < 2) await new Promise(r => setTimeout(r, 5000));
   }
   console.error(`[codex-bridge] callback 最终失败: task=${taskId}`);
+  return { outcome: 'unconfirmed', reason: 'delivery_failed' };
 }
 
 /**

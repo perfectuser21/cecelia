@@ -1,4 +1,9 @@
+import { createHash } from 'node:crypto';
+import { decompReviewInputError, applyDecompReview, recordVerifiedDecompRun } from '../lib/decomp-review-callback.js';
 import { guardInvocationCallback } from '../invocations/runtime.js';
+import { isRetiredDecomposition, RETIRED_DECOMPOSITION } from '../lib/retired-decomposition.js';
+import { dispatchManualRegistryReview } from '../lib/manual-review-dispatch.js';
+import { prepareReviewSkillDispatch } from '../lib/review-skill-plan.js';
 import {assertAutomaticTaskOwner} from '../lib/headed-task-owner.js';
 import { COMPANY_KR_SQL_GUARD } from '../lib/company-kr-metrics.js';
 import { Router } from 'express';
@@ -37,6 +42,7 @@ import {
   handleEvaluateSessionCrash,
 } from '../execution.js';
 import { normalizeCallbackStatus, extractPrNumber, maybeMarkCompletedNoPr, resolveCanonicalPrUrl, firstValidGithubPrUrl, buildExecMetaJson, buildFailureFields, extractFindingsValue, buildLastRunResult } from '../lib/callback-utils.js';
+import { suggestionPlanFailure, recordSuggestionPlanFailure, hasCommittedSuggestionPlanFailure, reconcileSuggestionPlanRun } from '../lib/suggestion-plan-callback.js';
 import { runSyncCommand } from '../lib/safe-sync-command.js';
 import { recordRunFromCallback } from '../lib/task-run.js';
 import { isTransientClass } from '../lib/retry-policy.js';
@@ -46,6 +52,7 @@ import { dispatchManualQiumi } from '../lib/manual-qiumi-dispatch.js';
 import { afterTerminalTransition } from '../lib/task-terminal.js';
 import { internalAuthOrLoopback } from '../middleware/internal-auth.js';
 import { rateLimit } from 'express-rate-limit';
+import { TASK_MUTATION_RATE_LIMIT_OPTIONS } from './task-mutation-rate-limit.js';
 import { authoringMutationError, assertAuthoringCompletion } from '../workflow-authoring/task-guard.js';
 
 const router = Router();
@@ -174,10 +181,34 @@ router.post('/execution-callback', executionCallbackRateLimit, internalAuthOrLoo
       }
     }
 
+    // 回执先持久化，再确定审核结论；读取故障时队列可在租约过期后重试。
+    let completionTask = null;
+    if (normalizeCallbackStatus(status) === 'completed') {
+      try {
+        const task = await pool.query('SELECT task_type, payload FROM tasks WHERE id = $1', [task_id]);
+        completionTask = task.rows[0] || null;
+      } catch (err) {
+        console.error(`[execution-callback] completion guard unavailable: ${err.message}`);
+        return res.status(503).json({ success: false, task_id, run_id: run_id || null, callback_status: status, receipt_sha256: createHash('sha256').update(JSON.stringify(req.body)).digest('hex'), queued: Boolean(callbackQueueId), code: 'TASK_COMPLETION_GUARD_UNAVAILABLE',
+          error: callbackQueueId ? '回执已持久入队，任务完成门禁不可读，等待队列重试' : '回执入队状态未知，任务完成门禁不可读' });
+      }
+      if (completionTask?.task_type === 'decomp_review') {
+        const inputError = decompReviewInputError(completionTask, run_id, result);
+        if (inputError) {
+          const code = !run_id ? 'DECOMP_REVIEW_RUN_ID_MISSING'
+            : inputError.includes('postdeploy') ? 'DECOMP_REVIEW_POSTDEPLOY_UNSUPPORTED'
+              : 'DECOMP_REVIEW_VERDICT_INVALID';
+          return res.status(422).json({ success: false, task_id, run_id: run_id || null, callback_status: status, receipt_sha256: createHash('sha256').update(JSON.stringify(req.body)).digest('hex'), queued: Boolean(callbackQueueId), code, error: inputError });
+        }
+      }
+    }
+
+    const semanticFailure = suggestionPlanFailure(completionTask, result);
+
     // ── run 原语留痕：一次执行 = 一行 task_runs ──
     // 回执是脚本步 / 设备 / cecelia-run 的统一出口：补齐 run 行（幂等 upsert）并在终态回执时 finishRun
     // （exit code / 产物 / 终态）。fail-open——留痕失败绝不影响下面的回执主链；DB 才是真相源。
-    await recordRunFromCallback({
+    const runCallback = {
       taskId: task_id,
       runId: run_id,
       status,
@@ -185,33 +216,58 @@ router.post('/execution-callback', executionCallbackRateLimit, internalAuthOrLoo
       result,
       prUrl: pr_url,
       error: stderr ? String(stderr).slice(-300) : undefined,
-    });
+    };
+    // 审核任务必须先确认审核事务提交，才允许留下成功的 run 终态。
+    const deferReviewRun = completionTask?.task_type === 'decomp_review' && normalizeCallbackStatus(status) === 'completed';
+    if (!deferReviewRun && !semanticFailure) await recordRunFromCallback(runCallback);
 
     // ── 幂等性保护：run_id + status 组合去重 ──
     // 网络重试或外部系统重复调用时，同一 run_id + status 不应重复处理
     if (run_id && status) {
+      let duplicate = false;
       try {
         const dupCheck = await pool.query(
-          `SELECT id FROM decision_log
+          `SELECT id, llm_output_json->>'task_id' AS callback_task_id FROM decision_log
            WHERE trigger = 'execution-callback'
              AND llm_output_json->>'run_id' = $1
              AND llm_output_json->>'status' = $2
            LIMIT 1`,
           [String(run_id), String(status)]
         );
-        if (dupCheck.rows.length > 0) {
-          console.log(`[execution-callback] 幂等保护: run_id=${run_id} status=${status} 已处理过，跳过`);
-          await finalizeCallbackQueue(true);
-          return res.json({ success: true, duplicate: true });
+        duplicate = dupCheck.rows.length > 0;
+        if (duplicate && deferReviewRun && String(dupCheck.rows[0].callback_task_id || '') !== String(task_id)) {
+          await finalizeCallbackQueue(false);
+          return res.status(409).json({ success: false, code: 'DECOMP_REVIEW_RUN_OWNERSHIP_CONFLICT' });
         }
       } catch (idempotencyErr) {
+        if (deferReviewRun) throw new Error('decomp_review idempotency check unavailable', { cause: idempotencyErr });
         // 幂等检查失败不阻塞主流程，降级为无保护模式
         console.warn(`[execution-callback] 幂等检查失败（降级继续）: ${idempotencyErr.message}`);
+      }
+      if (duplicate) {
+        if (semanticFailure && await hasCommittedSuggestionPlanFailure(pool, task_id, run_id, status, semanticFailure.suggestionId)) {
+          await reconcileSuggestionPlanRun(pool, runCallback);
+        }
+        if (deferReviewRun) {
+          // 事务已提交但进程可能在 run 留痕前退出；仅同任务同 run 的终态允许补记。
+          const taskState = await pool.query('SELECT status FROM tasks WHERE id = $1', [task_id]);
+          const runOwner = await pool.query('SELECT task_id FROM task_runs WHERE run_id = $1', [String(run_id)]);
+          if (taskState.rows[0]?.status !== 'completed' ||
+              (runOwner.rows[0] && String(runOwner.rows[0].task_id) !== String(task_id))) {
+            await finalizeCallbackQueue(false);
+            return res.status(409).json({ success: false, code: 'DECOMP_REVIEW_RUN_OWNERSHIP_CONFLICT',
+              error: '审核任务状态或运行归属不匹配，不能补写运行记录' });
+          }
+          await recordVerifiedDecompRun(pool, runCallback);
+        }
+        console.log(`[execution-callback] 幂等保护: run_id=${run_id} status=${status} 已处理过，跳过`);
+        await finalizeCallbackQueue(true);
+        return res.json({ success: true, duplicate: true });
       }
     }
 
     // 1. Determine new status
-    let newStatus = normalizeCallbackStatus(status);
+    let newStatus = semanticFailure ? 'failed' : normalizeCallbackStatus(status);
 
     // 权威 pr_url：callback/stdout > tasks.pr_url > payload.pr_url > payload.existing_pr_url
     const resolvedPrUrl = await resolveCanonicalPrUrl(pr_url, task_id, pool);
@@ -228,11 +284,15 @@ router.post('/execution-callback', executionCallbackRateLimit, internalAuthOrLoo
           `SELECT status FROM tasks WHERE id = $1 LIMIT 1`, [task_id]
         );
         if (taskRow.rows.length > 0 && TERMINAL_STATUSES.includes(taskRow.rows[0].status)) {
+          if (semanticFailure && await hasCommittedSuggestionPlanFailure(pool, task_id, run_id, status, semanticFailure.suggestionId)) {
+            await reconcileSuggestionPlanRun(pool, runCallback);
+          }
           console.log(`[execution-callback] 迟到回调跳过: task=${task_id} 已是终态 ${taskRow.rows[0].status}`);
           await finalizeCallbackQueue(true);
           return res.json({ success: true, skipped: true, reason: 'late_callback_terminal', current_status: taskRow.rows[0].status });
         }
       } catch (terminalGuardErr) {
+        if (semanticFailure) throw terminalGuardErr;
         console.warn(`[execution-callback] 终态检查失败（降级继续）: ${terminalGuardErr.message}`);
       }
     }
@@ -263,11 +323,7 @@ router.post('/execution-callback', executionCallbackRateLimit, internalAuthOrLoo
     // 同一收口点实现 219a9efc: dev 任务 result 为空时写软守卫标记（audit trail）。
     if (newStatus === 'completed') {
       try {
-        const pdRow = await pool.query(
-          `SELECT task_type, payload FROM tasks WHERE id = $1`,
-          [task_id]
-        );
-        const pdTask = pdRow.rows[0];
+        const pdTask = completionTask;
         const postdeployCheck = pdTask?.payload?.postdeploy_check;
 
         if (postdeployCheck && postdeployCheck.exempt !== true && postdeployCheck.command) {
@@ -306,7 +362,9 @@ router.post('/execution-callback', executionCallbackRateLimit, internalAuthOrLoo
       const prNumber = extractPrNumber(resolvedPrUrl);
 
       const isQuotaExhausted = newStatus === 'quota_exhausted';
-      const { errorMessage, blockedDetail } = buildFailureFields(newStatus, result, stderr, exit_code, task_id);
+      const { errorMessage, blockedDetail } = semanticFailure
+        ? { errorMessage: '建议所需信息不足', blockedDetail: JSON.stringify({ reason: 'suggestion_plan_insufficient_information', exit_code: exit_code ?? null }) }
+        : buildFailureFields(newStatus, result, stderr, exit_code, task_id);
       const execMetaJson = buildExecMetaJson(result);
 
       const isTerminal = ['completed', 'completed_no_pr', 'failed', 'cancelled'].includes(newStatus);
@@ -335,12 +393,19 @@ router.post('/execution-callback', executionCallbackRateLimit, internalAuthOrLoo
           AND status IN ('in_progress', 'queued', 'dispatched')
           AND NOT (COALESCE(payload,'{}'::jsonb) ? 'headed_takeover')
           AND ($14::text IS NULL OR payload->>'current_run_id' = $14::text)
+        RETURNING task_type, payload
       `, [task_id, newStatus, JSON.stringify(lastRunResult), status, resolvedPrUrl || null, isCompleted, findingsValue, prNumber, errorMessage, blockedDetail, isQuotaExhausted, execMetaJson, isTerminal, run_id || null]);
 
       if (updateResult.rowCount === 0) {
         await client.query('COMMIT');
         await finalizeCallbackQueue(true);
         return res.json({ success: true, duplicate: true, reason: 'callback_compare_and_set_rejected' });
+      }
+
+      if (semanticFailure) {
+        const current = suggestionPlanFailure(updateResult.rows?.[0], result);
+        if (current?.suggestionId !== semanticFailure.suggestionId) throw new Error('suggestion_plan_identity_changed');
+        await recordSuggestionPlanFailure(client, task_id, semanticFailure.suggestionId, run_id, status);
       }
 
       // Log the execution result（带 WHERE NOT EXISTS 防重复写入）
@@ -363,8 +428,17 @@ router.post('/execution-callback', executionCallbackRateLimit, internalAuthOrLoo
         String(status || '')
       ]);
 
+      // 审核、项目状态和任务完成共用事务；审核失败时回滚任务完成及幂等日志。
+      const updatedTask = updateResult.rows?.[0] || completionTask;
+      if (newStatus === 'completed' && updatedTask?.task_type === 'decomp_review') {
+        const inputError = decompReviewInputError(updatedTask, run_id, result);
+        if (inputError) throw new Error(inputError);
+        await applyDecompReview(client, task_id, result, updatedTask);
+      }
+
       // Record progress step for completed execution
       const isSuccessfulExecution = newStatus === 'completed' || newStatus === 'completed_no_pr';
+      if (deferReviewRun) await client.query('SAVEPOINT decomp_review_progress');
       try {
         const { recordProgressStep } = await import('../progress-ledger.js');
         await recordProgressStep(task_id, run_id, {
@@ -378,8 +452,8 @@ router.post('/execution-callback', executionCallbackRateLimit, internalAuthOrLoo
           inputSummary: null,
           outputSummary: findingsValue ? findingsValue.substring(0, 500) : null,
           findings: result && typeof result === 'object' ? result : {},
-          errorCode: isSuccessfulExecution ? null : 'execution_failed',
-          errorMessage: isSuccessfulExecution ? null : `Task execution failed with status: ${status}`,
+          errorCode: isSuccessfulExecution ? null : (semanticFailure ? 'suggestion_plan_insufficient_information' : 'execution_failed'),
+          errorMessage: isSuccessfulExecution ? null : (semanticFailure ? '建议所需信息不足' : `Task execution failed with status: ${status}`),
           retryCount: iterations || 0,
           artifacts: { pr_url: resolvedPrUrl || null },
           metadata: {
@@ -387,12 +461,14 @@ router.post('/execution-callback', executionCallbackRateLimit, internalAuthOrLoo
             original_status: status
           },
           confidenceScore: isSuccessfulExecution ? 1.0 : 0.2
-        });
+        }, deferReviewRun ? client : undefined);
         console.log(`[execution-callback] Progress step recorded for task ${task_id}`);
       } catch (progressErr) {
+        if (deferReviewRun) await client.query('ROLLBACK TO SAVEPOINT decomp_review_progress');
         // Progress ledger errors should not break the main flow
         console.error(`[execution-callback] Progress step recording failed: ${progressErr.message}`);
       }
+      if (deferReviewRun) await client.query('RELEASE SAVEPOINT decomp_review_progress');
 
       await client.query('COMMIT');
     } catch (txErr) {
@@ -409,6 +485,13 @@ router.post('/execution-callback', executionCallbackRateLimit, internalAuthOrLoo
     } catch { /* ignore if executor not available */ }
 
     console.log(`[execution-callback] Task ${task_id} updated to ${newStatus} (atomic)`);
+
+    if (semanticFailure) {
+      await reconcileSuggestionPlanRun(pool, runCallback);
+      await afterTerminalTransition(pool, task_id, 'failed');
+      await finalizeCallbackQueue(true);
+      return res.json({ success: true, task_id, new_status: 'failed', reason: 'suggestion_plan_insufficient_information' });
+    }
 
     // quota_exhausted → 设置全局 billing pause（阻止后续派发直到配额恢复）
     if (newStatus === 'quota_exhausted') {
@@ -1036,79 +1119,7 @@ router.post('/execution-callback', executionCallbackRateLimit, internalAuthOrLoo
     // 5b. 探索型任务闭环已移除
     if (newStatus === 'completed') {
 
-      // 5c0. initiative_plan 完成 → 自动创建 decomp_review task 触发 Vivian 质检
-      try {
-        const ipRow = await pool.query(
-          'SELECT task_type, project_id, goal_id, title FROM tasks WHERE id = $1',
-          [task_id]
-        );
-        const ipTask = ipRow.rows[0];
-        if (ipTask?.task_type === 'initiative_plan') {
-          console.log(`[execution-callback] initiative_plan ${task_id} completed → auto-creating decomp_review task`);
-          const { createTask } = await import('../actions.js');
-          await createTask({
-            title: `[Vivian质检] ${ipTask.title}`,
-            description: `initiative_plan 任务「${ipTask.title}」已完成，Vivian 审查拆解质量。\n原始 initiative_plan task_id: ${task_id}`,
-            priority: 'P0',
-            project_id: ipTask.project_id,
-            goal_id: ipTask.goal_id,
-            task_type: 'decomp_review',
-            trigger_source: 'execution_callback_auto',
-            payload: { parent_task_id: task_id, review_scope: 'initiative_plan' }
-          });
-          console.log(`[execution-callback] decomp_review task created for initiative_plan ${task_id}`);
-        }
-      } catch (decompAutoErr) {
-        console.error(`[execution-callback] auto decomp_review creation failed (non-fatal): ${decompAutoErr.message}`);
-      }
-
-      // 5c1. Decomp Review 闭环：Vivian 审查完成 → 激活/修正/拒绝
-      try {
-        const decompReviewResult = await pool.query('SELECT task_type, payload FROM tasks WHERE id = $1', [task_id]);
-        const decompReviewRow = decompReviewResult.rows[0];
-
-        if (decompReviewRow?.task_type === 'decomp_review') {
-          console.log(`[execution-callback] Decomp review task completed, processing verdict...`);
-
-          // 从 result 中提取 verdict 和 findings
-          const verdictRaw = (result !== null && typeof result === 'object')
-            ? (result.verdict || result.result?.verdict)
-            : null;
-          const findingsRaw = (result !== null && typeof result === 'object')
-            ? (result.findings || result.result?.findings || result)
-            : {};
-
-          // verdict 归一化
-          const validVerdicts = ['approved', 'needs_revision', 'rejected'];
-          const verdict = validVerdicts.includes(verdictRaw) ? verdictRaw : 'approved';
-
-          const { processReviewResult } = await import('../review-gate.js');
-          await processReviewResult(pool, task_id, verdict, findingsRaw);
-
-          // 计划调整：如果 findings 包含 plan_adjustment，执行调整
-          if (findingsRaw?.plan_adjustment && decompReviewRow?.payload?.review_scope === 'plan_adjustment') {
-            try {
-              const { executePlanAdjustment } = await import('../progress-reviewer.js');
-              await executePlanAdjustment(pool, findingsRaw, decompReviewRow.payload?.plan_context);
-              console.log(`[execution-callback] Plan adjustment executed for project ${decompReviewRow.payload?.entity_id}`);
-            } catch (adjErr) {
-              console.error(`[execution-callback] Plan adjustment error: ${adjErr.message}`);
-            }
-          }
-
-          console.log(`[execution-callback] Decomp review processed: verdict=${verdict}`);
-        }
-      } catch (decompReviewErr) {
-        console.error(`[execution-callback] Decomp review handling error: ${decompReviewErr.message}`);
-      }
-
-      // 5c2. 拆解完成：只读取 Project 真身及直接 Tasks。
-      try {
-        const { triggerCompletedDecompositionReview } = await import('../decomposition-review-trigger.js');
-        await triggerCompletedDecompositionReview(pool, task_id);
-      } catch (decompTriggerErr) {
-        console.error(`[execution-callback] Decomp → review trigger error: ${decompTriggerErr.message}`);
-      }
+      // 旧拆解已退役：在途回执仍正常收尾，不再自动创建旧审查或改写审核状态。
 
       // 5c-strategy. strategy_session 闭环：解析 KR JSON → 写入 goals 表
       try {
@@ -2778,6 +2789,7 @@ ${resultStr.substring(0, 2000)}
       }
     }
 
+    if (deferReviewRun) await recordVerifiedDecompRun(pool, runCallback);
     await finalizeCallbackQueue(true);
     res.json({
       success: true,
@@ -3990,7 +4002,7 @@ router.get('/work/streams', async (_req, res) => {
 // ============================================================
 // 用途：/dev 工作流注册 Codex 审查任务后立即触发，不依赖调度器状态
 // 调用 executor.triggerCeceliaRun() 直接执行（完全独立于 tick loop）
-router.post('/dispatch-now', async (req, res) => {
+router.post('/dispatch-now', rateLimit(TASK_MUTATION_RATE_LIMIT_OPTIONS), async (req, res) => {
   let deviceLockTaskId = null; // 已抢设备锁的任务 id（失败路径需释放）
   try {
     const { task_id } = req.body;
@@ -3999,12 +4011,16 @@ router.post('/dispatch-now', async (req, res) => {
     }
 
     // 从 DB 加载 task
-    const result = await pool.query('SELECT * FROM tasks WHERE id = $1', [task_id]);
+    const result = await pool.query('SELECT *, xmin::text AS dispatch_row_version FROM tasks WHERE id = $1', [task_id]);
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Task not found', id: task_id });
     }
 
-    const task = result.rows[0];
+    let task = result.rows[0];
+
+    if (isRetiredDecomposition(task)) {
+      return res.status(410).json({ error: RETIRED_DECOMPOSITION, detail: '旧任务拆解已退役，未派发' });
+    }
 
     // 检查 task 状态（不重复执行已完成的任务）
     if (task.status === 'completed' || task.status === 'cancelled') {
@@ -4023,6 +4039,24 @@ router.post('/dispatch-now', async (req, res) => {
         error: 'missing_anchor',
         detail: anchorResult.detail,
       });
+    }
+
+    // 冻结本次实际使用的 review skill；旧绑定在获取设备锁及改状态前拒绝。
+    let reviewPlan;
+    try { reviewPlan = await prepareReviewSkillDispatch(task); }
+    catch (error) {
+      console.error(`[dispatch-now] skill registry unavailable: ${error.message}`);
+      return res.status(503).json({error:'skill_registry_unavailable'});
+    }
+    if (reviewPlan.blocked) {
+      return res.status(410).json({ error: RETIRED_DECOMPOSITION, detail: '旧任务拆解已退役，未派发' });
+    }
+    task = reviewPlan.task;
+    if (reviewPlan.guarded) {
+      const dispatched = await dispatchManualRegistryReview(task, pool, {
+        tag:'dispatch-now', deviceGate:checkDeviceLockForManualDispatch, trigger:triggerCeceliaRun,
+      });
+      return res.status(dispatched.status).json(dispatched.body);
     }
 
     if (task.task_type === 'qiumi_task') {

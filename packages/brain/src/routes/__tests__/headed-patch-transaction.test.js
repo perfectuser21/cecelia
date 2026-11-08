@@ -8,7 +8,7 @@ it('真实relay smoke的精确PATCH接线检查仍通过授权afterCommit参数'
  const smoke=readFileSync(new URL('../../../scripts/smoke/relay-baton-smoke.sh',import.meta.url),'utf8');
  const check=smoke.split('\n').find(line=>line.startsWith('grep -q ')&&line.includes('afterTerminalTransition(pool, task_id'));
  expect(check).toBeDefined();
- const result=spawnSync('/bin/bash',['-c',`fail(){ exit 1; }; ${check}`],{env:{...process.env,BRAIN_DIR:brain},encoding:'utf8'});
+ const result=spawnSync('/bin/bash',['-c',`fail(){ exit 1; }; ${check}`],{env:{PATH:'/usr/bin:/bin',BRAIN_DIR:brain},encoding:'utf8'});
  expect(result.status,result.stderr).toBe(0);
 });
 it('headed PATCH提交后才以独立pool运行接棒事务，失败响应不运行接棒',async()=>{

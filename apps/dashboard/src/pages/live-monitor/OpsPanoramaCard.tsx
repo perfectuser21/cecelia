@@ -14,10 +14,12 @@ import React from 'react';
 // ── Types ────────────────────────────────────────────────────────
 
 interface AccountInfo {
-  id: string;
+  id?: string;
   name?: string;
   available: boolean;
   five_hour_pct?: number;
+  used_percent?: number | null;
+  source?: string;
 }
 
 interface LlmCapacity {
@@ -26,6 +28,7 @@ interface LlmCapacity {
     available_count: number;
     total_count: number;
     accounts: AccountInfo[];
+    poller?: string;
   }>;
 }
 
@@ -58,6 +61,13 @@ function usageColor(pct: number): string {
   if (pct > 80) return '#ef4444';
   if (pct > 50) return '#f59e0b';
   return '#10b981';
+}
+
+function accountState(account: AccountInfo, poller?: string): '可用' | '不可用' | '未知' {
+  if (poller !== 'ok' || !account.source) return '未知';
+  if (account.source.startsWith('ledger:usable:') && account.available === true) return '可用';
+  if (account.source.startsWith('ledger:unusable:') && account.available === false) return '不可用';
+  return '未知';
 }
 
 // ── Sub-components ───────────────────────────────────────────────
@@ -177,11 +187,21 @@ export function OpsPanoramaCard() {
     data.tasks?.available === false ? data.tasks.error || '任务来源不可用' : null,
     data.processes?.available === false ? data.processes.error || '进程来源不可用' : null].filter(Boolean);
   const relayCount = data.relay?.container_count ?? null;
-  const claudeAccounts = data.llm_capacity?.vendors?.claude?.accounts ?? [];
+  const activeVendors = ['codex', 'grok'] as const;
+  const hasUnknown = activeVendors.some((key) => {
+    const ledger = data.llm_capacity?.vendors?.[key];
+    return !ledger || ledger.poller !== 'ok' || !ledger.accounts?.length ||
+      ledger.accounts.some((account) => accountState(account, ledger.poller) === '未知');
+  });
+  const hasAvailable = activeVendors.some((key) => {
+    const ledger = data.llm_capacity?.vendors?.[key];
+    return ledger?.accounts?.some((account) => accountState(account, ledger.poller) === '可用');
+  });
+  const capacityStatus = hasUnknown ? '未知' : hasAvailable ? '正常' : '不可用';
   const sentinelColor =
-    data.llm_capacity?.sentinel === 'ok'
+    capacityStatus === '正常'
       ? '#10b981'
-      : data.llm_capacity?.sentinel === 'degraded'
+      : capacityStatus === '未知'
         ? '#f59e0b'
         : '#ef4444';
 
@@ -258,60 +278,35 @@ export function OpsPanoramaCard() {
         </div>
       </div>
 
-      {/* LLM 容量（Claude 账号余量） */}
-      {data.llm_capacity && claudeAccounts.length > 0 && (
-        <>
+      {/* 现役模型容量；未知配额不等于可用 */}
+        <div data-testid="ops-panorama-llm-capacity">
           <div style={{ borderTop: '1px solid #21262d', margin: '8px 0' }} />
           <div style={{ marginBottom: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
             <span style={{ fontSize: 9, color: '#484f58', textTransform: 'uppercase', letterSpacing: 1 }}>LLM 容量</span>
-            <span style={{ fontSize: 9, color: sentinelColor, fontFamily: 'monospace' }}>
-              {data.llm_capacity.sentinel}
+            <span data-testid="ops-panorama-llm-status" style={{ fontSize: 9, color: sentinelColor, fontFamily: 'monospace' }}>
+              {capacityStatus}
             </span>
           </div>
-          {claudeAccounts.map((acc) => {
-            const pct = acc.five_hour_pct ?? 0;
-            const color = usageColor(pct);
-            return (
-              <div
-                key={acc.id}
-                data-testid={`ops-panorama-account-${acc.id}`}
-                style={{ marginBottom: 5 }}
-              >
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 2 }}>
-                  <span style={{ fontSize: 9, color: '#8b949e', fontFamily: 'monospace' }}>
-                    {acc.name ?? acc.id}
-                  </span>
-                  <span style={{ fontSize: 9, color, fontFamily: 'monospace' }}>{pct}%</span>
-                </div>
-                <div
-                  role="progressbar"
-                  aria-label={`${acc.id} usage`}
-                  aria-valuenow={pct}
-                  aria-valuemin={0}
-                  aria-valuemax={100}
-                  style={{
-                    width: '100%',
-                    height: 4,
-                    background: '#21262d',
-                    borderRadius: 2,
-                    overflow: 'hidden',
-                  }}
-                  data-color={color}
-                >
-                  <div
-                    style={{
-                      width: `${Math.min(100, pct)}%`,
-                      height: '100%',
-                      background: color,
-                      borderRadius: 2,
-                    }}
-                  />
-                </div>
-              </div>
-            );
+          {activeVendors.map((vendor) => {
+            const ledger = data.llm_capacity?.vendors?.[vendor];
+            return <div key={vendor} data-testid={`ops-panorama-vendor-${vendor}`} style={{ marginBottom: 5 }}>
+              <span style={{ fontSize: 10 }}>{vendor === 'codex' ? 'Codex' : 'Grok'}</span>
+              {!ledger || ledger.poller !== 'ok' || !ledger.accounts?.length ? <span>：未知</span> :
+                ledger.accounts.map((acc, index) => {
+                  const name = acc.name ?? acc.id ?? String(index + 1);
+                  const state = accountState(acc, ledger.poller);
+                  const pct = acc.used_percent;
+                  return <div key={`${vendor}-${name}`} data-testid={`ops-panorama-account-${vendor}-${name}`} style={{ fontSize: 10, marginTop: 3 }}>
+                    <span>{name}：{state}</span>
+                    {state !== '未知' && typeof pct === 'number' && Number.isFinite(pct) && <>
+                      <span> {pct}%</span>
+                      <ProgressBar value={pct} color={usageColor(pct)} label={`${name} usage`} height={4} />
+                    </>}
+                  </div>;
+                })}
+            </div>;
           })}
-        </>
-      )}
+        </div>
     </div>
   );
 }

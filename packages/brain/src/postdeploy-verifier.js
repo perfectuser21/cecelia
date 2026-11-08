@@ -26,6 +26,7 @@ import pool from './db.js';
 import { raise } from './alerting.js';
 import { pushCaptureAtom } from './capture-inbox.js';
 import { finalizeTask } from './lib/task-terminal.js';
+import { isOrdinaryDevWithoutPr } from './lib/callback-utils.js';
 
 const MAX_RETRIES = 3;
 const DEFAULT_TIMEOUT_S = 30;
@@ -95,7 +96,7 @@ export function runVerifyCommand(command, timeoutS = DEFAULT_TIMEOUT_S) {
  */
 async function fetchPendingBatch(dbPool) {
   const { rows } = await dbPool.query(
-    `SELECT id, task_type, title, payload,
+    `SELECT id, task_type, title, payload, pr_url,
             COALESCE((payload->>'postdeploy_retry_count')::int, 0) AS retry_count
      FROM tasks
      WHERE status = 'pending_postdeploy'
@@ -112,8 +113,23 @@ async function fetchPendingBatch(dbPool) {
 /**
  * 将任务标为 completed（验证通过）。
  */
-async function markCompleted(dbPool, taskId, verifyResult) {
-  await finalizeTask(dbPool, taskId, 'completed', {
+function verificationSnapshot(task) {
+  const payload = task.payload ?? {};
+  const fields = ['postdeploy_check', 'decomposition', 'next_action', 'harness_mode', 'pr_url', 'existing_pr_url'];
+  const captured = Object.fromEntries(fields.map(key => [key, payload[key] ?? null]));
+  return {
+    sql: `task_type IS NOT DISTINCT FROM $1 AND pr_url IS NOT DISTINCT FROM $2
+      AND jsonb_build_object('postdeploy_check',payload->'postdeploy_check', 'decomposition',payload->'decomposition',
+        'next_action',payload->'next_action', 'harness_mode',payload->'harness_mode',
+        'pr_url',payload->'pr_url', 'existing_pr_url',payload->'existing_pr_url')=$3::jsonb
+      AND COALESCE((payload->>'postdeploy_retry_count')::int,0)=$4::int`,
+    params: [task.task_type, task.pr_url ?? null, JSON.stringify(captured), task.retry_count ?? 0],
+  };
+}
+
+async function markCompleted(dbPool, task, verifyResult) {
+  const noPr = isOrdinaryDevWithoutPr(task);
+  const result = await finalizeTask(dbPool, task.id, noPr ? 'completed_no_pr' : 'completed', {
     set: { completed_at: 'now' },
     mergePayload: {
       postdeploy_verified: true,
@@ -121,8 +137,11 @@ async function markCompleted(dbPool, taskId, verifyResult) {
       postdeploy_verify_stdout: verifyResult.stdout,
     },
     onlyIfStatus: 'pending_postdeploy',
+    where: verificationSnapshot(task),
+    ...(noPr ? { relay: false } : {}),
   });
-  console.log(`[postdeploy-verifier] ✅ task=${taskId} 验证通过 → completed`);
+  if (result.rowCount) console.log(`[postdeploy-verifier] ✅ task=${task.id} 验证通过`);
+  return result.rowCount > 0;
 }
 
 /**
@@ -137,21 +156,26 @@ async function recordRetryOrFail(dbPool, task, verifyResult) {
   };
 
   if (exceeded) {
-    await finalizeTask(dbPool, task.id, 'failed', {
+    const result = await finalizeTask(dbPool, task.id, 'failed', {
       set: { error_message: `postdeploy 验证连续 ${MAX_RETRIES} 次失败，task 标 failed` },
       mergePayload: retryPayload,
       onlyIfStatus: 'pending_postdeploy',
+      where: verificationSnapshot(task),
     });
+    if (!result.rowCount) return false;
   } else {
-    await dbPool.query(
+    const snapshot = verificationSnapshot(task);
+    const renumbered = snapshot.sql.replace(/\$(\d+)/g, (_, n) => `$${Number(n) + 2}`);
+    const result = await dbPool.query(
       `UPDATE tasks
        SET status = 'pending_postdeploy',
            updated_at = NOW(),
            error_message = NULL,
            payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb
-       WHERE id = $1 AND status = 'pending_postdeploy'`,
-      [task.id, JSON.stringify(retryPayload)]
+       WHERE id = $1 AND status = 'pending_postdeploy' AND (${renumbered})`,
+      [task.id, JSON.stringify(retryPayload), ...snapshot.params]
     );
+    if (!result.rowCount) return false;
   }
 
   if (exceeded) {
@@ -182,6 +206,7 @@ async function recordRetryOrFail(dbPool, task, verifyResult) {
       `[postdeploy-verifier] task=${task.id} 验证失败 (retry ${nextRetry}/${MAX_RETRIES}): ${verifyResult.stderr?.substring(0, 200)}`
     );
   }
+  return true;
 }
 
 /**
@@ -212,20 +237,23 @@ export async function runPostdeployVerifier(dbPool = pool) {
     const check = task.payload?.postdeploy_check;
     if (!check?.command) {
       // 没有 command 但状态是 pending_postdeploy → 直接放行（兜底）
-      await markCompleted(dbPool, task.id, { stdout: '（无验证命令，自动放行）' });
+      await markCompleted(dbPool, task, { stdout: '（无验证命令，自动放行）' });
       skipped++;
       continue;
     }
 
     const validation = validateCommand(check.command);
     if (!validation.valid) {
-      console.error(
-        `[postdeploy-verifier] task=${task.id} command 校验失败（${validation.reason}），标 failed`
-      );
-      await finalizeTask(dbPool, task.id, 'failed', {
+      const result = await finalizeTask(dbPool, task.id, 'failed', {
         set: { error_message: `postdeploy_check command 非法: ${validation.reason}` },
+        onlyIfStatus: 'pending_postdeploy',
+        where: verificationSnapshot(task),
       });
-      failed++;
+      if (result.rowCount) {
+        console.error(`[postdeploy-verifier] task=${task.id} command 校验失败（${validation.reason}），标 failed`);
+        failed++;
+      }
+      else skipped++;
       continue;
     }
 
@@ -233,11 +261,12 @@ export async function runPostdeployVerifier(dbPool = pool) {
     const verifyResult = runVerifyCommand(check.command, timeoutS);
 
     if (verifyResult.passed) {
-      await markCompleted(dbPool, task.id, verifyResult);
-      verified++;
+      if (await markCompleted(dbPool, task, verifyResult)) verified++;
+      else skipped++;
     } else {
-      await recordRetryOrFail(dbPool, task, verifyResult);
-      if ((task.retry_count ?? 0) + 1 >= MAX_RETRIES) {
+      const updated = await recordRetryOrFail(dbPool, task, verifyResult);
+      if (!updated) skipped++;
+      else if ((task.retry_count ?? 0) + 1 >= MAX_RETRIES) {
         failed++;
       }
     }

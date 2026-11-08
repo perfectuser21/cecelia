@@ -331,6 +331,38 @@ async function setupHarnessTest({
 // I2: 真正 import route + 触发 callback，断言 createTask 收到合法 URL
 // ════════════════════════════════════════════════════════════════
 
+describe('HTTP dev 无 PR 接棒门禁', () => {
+  it.each(['retries exhausted', 'reschedule query fails'])('%s 时不创建交接', async (scenario) => {
+    vi.clearAllMocks();
+    const { pool, harnessTask } = await setupHarnessTest({ taskType: 'dev', existingPrUrl: null });
+    harnessTask.payload = {};
+    const previous = pool.query.getMockImplementation();
+    let relayRead = false;
+    pool.query.mockImplementation(async (sql, args) => {
+      if (/^SELECT task_type, pr_url, payload/i.test(sql)) return { rows: [{ task_type: 'dev', pr_url: null, payload: {} }] };
+      if (/SELECT retry_count FROM tasks/i.test(sql)) {
+        if (scenario === 'reschedule query fails') throw new Error('数据库故障');
+        return { rows: [{ retry_count: 3 }] };
+      }
+      if (sql.includes('SELECT id, title, status, priority, task_type')) {
+        relayRead = true;
+        return { rows: [{ ...harnessTask, status: 'completed_no_pr', result: {} }] };
+      }
+      return previous(sql, args);
+    });
+    const { default: router } = await import('../routes/execution.js');
+    const app = express();
+    app.use(express.json());
+    app.use('/api/brain', router);
+    const response = await request(app).post('/api/brain/execution-callback').send({
+      task_id: TASK_ID, run_id: RUN_ID, status: 'AI Done', result: {},
+    });
+    expect(response.status).toBe(200);
+    expect(relayRead).toBe(true);
+    expect(pool.query.mock.calls.some(([sql]) => sql.includes('handoff_log'))).toBe(false);
+  });
+});
+
 describe('[I2] execution-callback route — harness_generate 使用 resolvedPrUrl，非 raw pr_url', () => {
   let app;
 

@@ -46,7 +46,6 @@ import { runAcceptanceAging } from './acceptance-aging.js';
 import { runConversationCapture } from './conversation-capture.js';
 import { maybeRunTriageOfficerRank } from './triage-officer-rank.js';
 import { runTriageOfficer15min } from './triage-officer-15min.js';
-import { runConversationTtlArchiver } from './conversation-ttl-archiver.js';
 import { runNotionCaptureIngest } from './notion-capture-ingest.js';
 import { runNotionProductPush } from './notion-inbox-push.js';
 import { runNotionVerdictIngest } from './notion-verdict-ingest.js';
@@ -124,7 +123,11 @@ export const JOBS = [
   { name: 'postdeploy-verifier', cadence: { everySec: 300 }, needsPool: true, timeoutMs: 2 * 60 * 1000, handler: runPostdeployVerifier, description: '第5环部署验证（自带5min节流gate，扫 pending_postdeploy 任务执行 postdeploy_check.command，通过→completed，失败3次→P1）' },
   { name: 'seven-ring-audit', cadence: { everySec: 86400 }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runSevenRingAuditJob, description: '七环对账日巡检（自带24h冷却，逐环核对测试入册/调度在跑/指纹新鲜/账本写对/产出消费/告警活着/面板新鲜，棘轮只许降，刀3-T6）' },
   { name: 'guard-drill', cadence: { everySec: 2592000 }, needsPool: true, timeoutMs: 10 * 60 * 1000, handler: runGuardDrill, description: '月度守卫演习（自带30天gate，轮选 auto 守卫全流程弄死→验红→恢复，未叫→P1+Bark，刀4-T4）' },
-  { name: 'morning-cockpit-bark', cadence: { cron: '30 8 * * *', tz: BJ_TZ }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runMorningCockpitBark, description: '主理人指挥舱晨报 Bark（北京08:30窗口+当日去重，推送指挥舱链接+完成率/任务数简报，task:80a5be84）' },
+  { name: 'morning-cockpit-bark', cadence: { cron: '30 8 * * *', tz: BJ_TZ }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: async (pool) => {
+    const result = await runMorningCockpitBark(pool);
+    if (result?.sent === false) throw new Error(result.error || 'bark_send_failed');
+    return result;
+  }, description: '主理人指挥舱晨报 Bark（北京08:30窗口+当日去重，推送指挥舱链接+完成率/任务数简报，task:80a5be84）' },
   { name: 'drift-sentinel', cadence: { everySec: 1800 }, needsPool: false, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runDriftSentinel, description: 'G2 部署漂移哨兵（自带30min自gate，SHA对账+自动补部署，G2 S0）' },
   { name: 'disk-guard', cadence: { everySec: 900 }, needsPool: false, timeoutMs: 120_000, handler: runDiskGuard, description: '磁盘哨兵（15min自gate，宿主SSH逃逸df检测，80/85/90%三级响应，[disk_check]日志）' },
   { name: 'promise-map-nightly', cadence: { cron: '0 2 * * *', tz: 'UTC' }, needsPool: false, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runPromiseMapNightly, description: 'MJ5 S4 承诺地图保鲜对账（每日 UTC 02:00，4 条断言，失败 Bark，刀4）' },
@@ -144,7 +147,6 @@ export const JOBS = [
     if (r?.errors > 0) throw new Error(`conversation-capture: ${r.errors} 条写入失败（已推送 ${r.pushed ?? 0} 条）`);
     return r;
   }, description: '对话原始捕获：容器内 ssh mmv 只读拉 Claude/Codex/Grok 会话真人文本写入captures(source=conversation-*)+摘要，结束的有头会话摘要并入关联任务handoff/无关联补建completed账本任务，自带10min间隔gate（decision f64adaaf/0c9e1652，任务 c8b27bc5）' },
-  { name: 'conversation-ttl-archiver', cadence: { everySec: 600 }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runConversationTtlArchiver, description: '主理人对话 TTL 归档：ttl_expires_at 到期的 active/suspended 对话软归档（10min 自gate，PR4/4 64b8c8d）' },
   { name: 'notion-capture-ingest', cadence: { everySec: 300 }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runNotionCaptureIngest, description: 'Notion 个人 Inbox 增量采集：5min自gate，last_edited_time增量+notion_page_id幂等，写入captures+capture_atoms（F6加厚，CCAPI2026）' },
   { name: 'notion-product-push', cadence: { everySec: 60 }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: async (pool) => runNotionProductPush(pool), description: '成品呈报到 Notion Inbox；稳定 dedupe_key 幂等并回写 tasks.notion_id' },
   { name: 'notion-verdict-ingest', cadence: { everySec: 60 }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: async (pool) => runNotionVerdictIngest(pool), description: 'Notion 裁决窄口：只登记结构化 projection command，不直接改任务执行态' },
@@ -176,7 +178,11 @@ export const JOBS = [
   { name: 'credential-freshness', cadence: { everySec: 86400 }, needsPool: true, timeoutMs: 120_000, handler: (pool) => maybeRunCredentialFreshness(pool), description: '凭据保鲜守卫：每日探活关键凭据(Tailscale/GitHub/飞书)+到期体检+auth key 自动续期。2026-09-16 实证 Tailscale API key 过期 18 天无人知、备用 PAT 元数据没写却已 401 —— 元数据只是声明，活性探测才是真相' },
   // 顺序要紧：先采集再推送，否则推的是上一轮的旧数（尤其 liveness 要用最新 last_run_at 算）
   { name: 'ops-notion-push', cadence: { everySec: 60 }, needsPool: true, timeoutMs: 120_000, handler: (pool) => runOpsNotionPush(pool), description: '运行舱四表推 Notion 驾驶舱（机器列单向覆盖含活性告警）。旧链挂在无人import的legacy-notion-push-scheduler上从不执行，致Notion停更两天，故单独接现代调度层' },
-  { name: 'notion-directory', cadence: { everySec: 60 }, needsPool: true, timeoutMs: 120_000, handler: (pool) => runDirectoryJob(pool), description: '六层目录：先导入人工组织树，再按固定身份分批投影机器关系；锁与游标防重入，未知留缺口，读回后收据' },
+  { name: 'notion-directory', cadence: { everySec: 60 }, needsPool: true, timeoutMs: 120_000, handler: async (pool) => {
+    const result = await runDirectoryJob(pool);
+    if (result?.status === 'failed') throw new Error(`目录投影失败 ${result.failed ?? 0} 项：${result.errors?.[0]?.code || '未知错误'}`);
+    return result;
+  }, description: '六层目录：先导入人工组织树，再按固定身份分批投影机器关系；锁与游标防重入，未知留缺口，读回后收据' },
   { name: 'notion-inlet-ingest', cadence: { everySec: 300 }, needsPool: true, timeoutMs: 120_000, handler: (pool) => runNotionInletIngest(pool), description: '✍️入口血管（三面模型PR②b，决策297ffee5）：遍历注册表 face=inlet&active 的库，「决策」库→decisions、员工Skill库zip→/api/skill-eval/upload；收据表幂等，人改了再收并留痕，机器不写入口库；自gate 5min' },
   { name: 'notion-gtd-sync', cadence: { everySec: 30 }, needsPool: true, timeoutMs: 30_000, livenessIntervalSec: 30, handler: (pool) => gtdSyncJobHandler(pool), description: '秋米中文GTD表↔英文Tasks库双向同步+入账+急停+回写（QIUMI_SYNC_ENABLED 门，handler 只确保 30s 自循环在跑并回报上次结果；活性按 handler 自报 liveness_at 算，09-24 卡死案；决策 b8abd28c，task b7efdbff）' },
   { name: 'crm-notion-sync', cadence: { everySec: 300 }, needsPool: true, timeoutMs: 150_000, handler: runCrmSyncJobs, description: 'CRM登记源回读和Brain结果投影；CRM_SYNC_ENABLED显式启用，默认关闭' },

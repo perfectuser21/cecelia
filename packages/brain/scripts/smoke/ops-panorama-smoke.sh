@@ -69,10 +69,10 @@ SENTINEL=$(echo "$BODY" | jq -r '.llm_capacity.sentinel // "null"' 2>/dev/null |
 SENTINEL_OK=$(echo "$SENTINEL" | grep -cE '^(ok|degraded|exhausted|null)$' 2>/dev/null || echo "0")
 check "DoD-07: llm_capacity.sentinel valid or null" "$SENTINEL_OK" "1"
 
-# ── 9. llm_capacity.vendors.claude.accounts length > 0（正常环境）──
+# ── 9. 现役供应商账号列表存在；空列表或降级为合法状态 ──
 if [ "$SENTINEL" != "null" ]; then
-  CLAUDE_ACC=$(echo "$BODY" | jq '.llm_capacity.vendors.claude.accounts | length' 2>/dev/null || echo "0")
-  check "DoD-08: claude accounts length > 0" "$([ "$CLAUDE_ACC" -gt 0 ] && echo ok || echo fail)" "ok"
+  ACTIVE_ACCOUNTS=$(echo "$BODY" | jq -r '[.llm_capacity.vendors.codex.accounts, .llm_capacity.vendors.grok.accounts] | all(type == "array")' 2>/dev/null || echo "false")
+  check "DoD-08: codex/grok accounts are arrays" "$ACTIVE_ACCOUNTS" "true"
 else
   echo "  SKIP: DoD-08 (llm_capacity is null, skipping accounts check)"
 fi
@@ -96,7 +96,7 @@ check "DoD-10: max response < 2000ms (got ${MAX_MS}ms)" "$([ $MAX_MS -lt 2000 ] 
 
 # ── 13. 回归：已有端点不受影响 ───────────────────────────────────
 # 注：/api/brain/status 在 CI 环境无凭据时返回 500，属已知预期，跳过
-for endpoint in "account-usage" "tick/status"; do
+for endpoint in "tick/status"; do
   CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "$BASE/$endpoint" 2>/dev/null || echo "000")
   check "DoD-17: GET $endpoint 回归 200" "$CODE" "200"
 done

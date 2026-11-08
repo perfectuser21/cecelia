@@ -1,60 +1,109 @@
-/**
- * [RED] dispatcher xianBypass 对 location=xian 的 harness_initiative 任务测试
- * BEHAVIOR-8: dispatcher xianBypass 对 location=xian 的 harness_initiative 生效
- * TASK_ID: 7750cd32-d73b-4a53-91cf-8fd171bf358b
- *
- * 测试逻辑：dispatcher peek task 完整对象时检查 task.location === 'xian'
- * 使 location=xian 的 harness_initiative 任务不受 task_pool 限制拦截
- */
-import { describe, it, expect, vi } from 'vitest';
+// 只验证当前 dispatcher admission：主池满时，西安独立池可用才允许继续选单。
+// 选单返回空集，绝不恢复旧 harness 或启动任何执行器。
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-/**
- * 直接测试 dispatcher 的 xianBypass 逻辑判断（通过 checkXianBypass 辅助函数）
- *
- * 由于 dispatcher.js 体量较大且 DB 依赖较多，这里用最小接线方式：
- * 验证 task.location === 'xian' 的判断可以绕过 dispatchAllowed=false 限制。
- */
-describe('dispatcher xianBypass BEHAVIOR-8', () => {
-  it('task.location=xian + task_type=harness_initiative → xianBypass=true（池满时仍 dispatch）', async () => {
-    // 模拟 dispatcher 中 xianBypass 判断逻辑
-    // 按 BEHAVIOR-8 实现要求：dispatcher 在 peek task 对象时检查 task.location === 'xian'
-    // 不依赖 getTaskLocation(nextType: string)
+const fixture = vi.hoisted(() => ({
+  location: 'xian', codexAvailable: true, peekFails: false,
+  query: vi.fn(), select: vi.fn(), executor: vi.fn(), process: vi.fn(), network: vi.fn(),
+}));
+vi.mock('../db.js', () => ({ default: { query: fixture.query } }));
+vi.mock('../executor.js', () => ({
+  triggerCeceliaRun: fixture.executor,
+  checkCeceliaRunAvailable: vi.fn(async () => ({ available: true })),
+  killProcessTwoStage: fixture.process,
+  getBillingPause: () => ({ active: false }),
+}));
+vi.mock('node:child_process', async original => {
+  const actual = await original();
+  const deny = (...args) => { fixture.process(...args); throw Error('测试禁止宿主进程'); };
+  return { ...actual, exec: deny, execSync: deny, execFile: deny, execFileSync: deny, spawn: deny, spawnSync: deny };
+});
+vi.mock('../slot-allocator.js', () => ({
+  calculateSlotBudget: vi.fn(async () => ({
+    dispatchAllowed: false, resourceAdmissionBlocked: false,
+    taskPool: { budget: 0, used: 0, available: 0 },
+    user: { mode: 'solo' }, codex: { available: fixture.codexAvailable },
+  })),
+  harnessSlotCheck: vi.fn(),
+}));
+vi.mock('../dispatch-helpers.js', () => ({
+  selectNextDispatchableTask: fixture.select,
+  processCortexTask: vi.fn(),
+}));
+// 强制静态类型映射不是西安，正例必须消费队头真实 location 字段。
+vi.mock('../task-router.js', () => ({ getTaskLocation: () => 'us' }));
+vi.mock('../quota-cooling.js', () => ({ isGlobalQuotaCooling: () => false }));
+vi.mock('../drain.js', () => ({ isDraining: () => false }));
+vi.mock('../account-usage.js', () => ({ proactiveTokenCheck: vi.fn() }));
+vi.mock('../quota-guard.js', () => ({ checkQuotaGuard: async () => ({ allow: true, bestPct: 0 }) }));
+vi.mock('../dispatch-stats.js', () => ({ recordDispatchResult: vi.fn() }));
+vi.mock('../event-bus.js', () => ({ emit: vi.fn() }));
+vi.mock('../events/taskEvents.js', () => ({ publishTaskStarted: vi.fn() }));
+vi.mock('../tick-stats.js', () => ({ incrementActionsToday: vi.fn() }));
+vi.mock('../pre-flight-check.js', () => ({ preFlightCheck: vi.fn(), alertOnPreFlightFail: vi.fn() }));
+vi.mock('../actions.js', () => ({ updateTask: vi.fn() }));
+vi.mock('../llm-caller.js', () => ({ callLLM: fixture.network }));
+vi.mock('../notifier.js', () => ({ sendBark: fixture.network, sendFeishu: fixture.network }));
 
-    const nextTask = {
-      id: 'task-xian-001',
-      task_type: 'harness_initiative',
-      location: 'xian',
-      status: 'queued',
-    };
+import { dispatchNextTask } from '../dispatcher.js';
+import { calculateSlotBudget } from '../slot-allocator.js';
 
-    // 当前 dispatcher 只查 getTaskLocation(task_type) → 'us'（非 xian）
-    // 改动后应检查 nextTask.location === 'xian'
-    const xianBypassByLocation = nextTask?.location === 'xian';
+beforeEach(() => {
+  vi.clearAllMocks();
+  fixture.location = 'xian'; fixture.codexAvailable = true; fixture.peekFails = false;
+  fixture.select.mockResolvedValue(null);
+  fixture.query.mockImplementation(async sql => {
+    if (sql.includes('SELECT priority FROM tasks')) return { rows: [{ priority: 'P2' }] };
+    if (sql.includes('SELECT task_type, location FROM tasks')) {
+      if (fixture.peekFails) throw Error('owned queue read failed');
+      return { rows: [{ task_type: 'data', location: fixture.location }] };
+    }
+    return { rows: [], rowCount: 0 };
+  });
+  vi.stubGlobal('fetch', (...args) => { fixture.network(...args); throw Error('测试禁止网络'); });
+});
+afterEach(() => {
+  expect(fixture.executor).not.toHaveBeenCalled();
+  expect(fixture.process).not.toHaveBeenCalled();
+  expect(fixture.network).not.toHaveBeenCalled();
+  vi.unstubAllGlobals();
+});
+const queuePeekCalls = () => fixture.query.mock.calls.filter(([sql]) => sql.includes('SELECT task_type, location FROM tasks'));
 
-    // 当前 failing：改动前此逻辑不存在
-    expect(xianBypassByLocation).toBe(true);
-    // 注：这里验证的是逻辑判断，dispatcher 集成测试在 smoke-F E2E 段验收
+describe('真实 dispatcher 西安 admission', () => {
+  it('主池满但独立池可用：队头 location=xian 进入普通选单，不冒充已派发', async () => {
+    const result = await dispatchNextTask([]);
+    expect(result).toMatchObject({ dispatched: false, reason: 'no_dispatchable_task' });
+    expect(calculateSlotBudget).toHaveBeenCalledTimes(2);
+    expect(queuePeekCalls()).toHaveLength(1);
+    expect(fixture.select).toHaveBeenCalledTimes(1);
+    expect(fixture.select).toHaveBeenCalledWith([], [], { priorityFilter: null });
   });
 
-  it('task.location=us + task_type=harness_initiative → xianBypass=false（池满时不 bypass）', async () => {
-    const nextTask = {
-      id: 'task-us-001',
-      task_type: 'harness_initiative',
-      location: 'us',
-      status: 'queued',
-    };
-    const xianBypassByLocation = nextTask?.location === 'xian';
-    expect(xianBypassByLocation).toBe(false);
+  it.each(['us', null])('队头 location=%s 且静态映射非西安：保持池满拒绝', async location => {
+    fixture.location = location;
+    const result = await dispatchNextTask([]);
+    expect(result).toMatchObject({ dispatched: false, reason: 'pool_exhausted' });
+    expect(queuePeekCalls()).toHaveLength(1);
+    expect(fixture.select).toHaveBeenCalledTimes(1);
+    expect(fixture.select).toHaveBeenCalledWith([], [], expect.objectContaining({ onlyTaskTypes: ['qiumi_task'] }));
   });
 
-  it('task.location=null + task_type=harness_initiative → xianBypass=false（池满时不 bypass）', async () => {
-    const nextTask = {
-      id: 'task-null-001',
-      task_type: 'harness_initiative',
-      location: null,
-      status: 'queued',
-    };
-    const xianBypassByLocation = nextTask?.location === 'xian';
-    expect(xianBypassByLocation).toBe(false);
+  it('独立Codex池不可用：不读西安队头，不进入普通选单', async () => {
+    fixture.codexAvailable = false;
+    const result = await dispatchNextTask([]);
+    expect(result).toMatchObject({ dispatched: false, reason: 'pool_exhausted' });
+    expect(queuePeekCalls()).toHaveLength(0);
+    expect(fixture.select).toHaveBeenCalledTimes(1);
+    expect(fixture.select).toHaveBeenCalledWith([], [], expect.objectContaining({ onlyTaskTypes: ['qiumi_task'] }));
+  });
+
+  it('队头读取失败：保守拒绝，不能据 location 默认放行', async () => {
+    fixture.peekFails = true;
+    const result = await dispatchNextTask([]);
+    expect(result).toMatchObject({ dispatched: false, reason: 'pool_exhausted' });
+    expect(queuePeekCalls()).toHaveLength(1);
+    expect(fixture.select).toHaveBeenCalledTimes(1);
+    expect(fixture.select).toHaveBeenCalledWith([], [], expect.objectContaining({ onlyTaskTypes: ['qiumi_task'] }));
   });
 });

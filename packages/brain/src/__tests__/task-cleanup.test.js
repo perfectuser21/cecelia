@@ -5,7 +5,28 @@
  * 使用 mock DB 避免真实数据库依赖
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+// 只允许每个case显式传入的record-only db；其它数据库/进程/网络均禁止。
+const external = vi.hoisted(() => ({ db: vi.fn(), process: vi.fn(), network: vi.fn() }));
+vi.mock('../db.js', () => ({ default: { query: (...args) => {
+  external.db(...args); return Promise.reject(Error('task_cleanup_test_forbids_canonical_db'));
+} } }));
+vi.mock('node:child_process', () => Object.fromEntries(
+  ['exec','execSync','execFile','execFileSync','spawn','spawnSync','fork'].map(name => [name, (...args) => {
+    external.process(name, ...args); throw Error('task_cleanup_test_forbids_process');
+  }]),
+));
+beforeEach(() => {
+  vi.clearAllMocks();
+  vi.stubGlobal('fetch', (...args) => { external.network(...args); throw Error('task_cleanup_test_forbids_network'); });
+});
+afterEach(() => {
+  try {
+    expect(external.db).not.toHaveBeenCalled();
+    expect(external.process).not.toHaveBeenCalled();
+    expect(external.network).not.toHaveBeenCalled();
+  } finally { vi.unstubAllGlobals(); }
+});
 import {
   runTaskCleanup,
   isRecurringTask,
@@ -151,9 +172,14 @@ describe('runTaskCleanup', () => {
 
       expect(stats.dry_run).toBe(true);
       // Should report counts but not execute
-      expect(stats.canceled).toBeGreaterThanOrEqual(0);
-      expect(stats.archived).toBeGreaterThanOrEqual(0);
-      // Verify no UPDATE was called (mock would throw if it was)
+      expect(stats.canceled).toBe(1);
+      expect(stats.archived).toBe(1);
+      // runTaskCleanup会catch mock抛错；必须在函数外断言尝试次数、错误和精确预览。
+      expect(stats.errors).toEqual([]);
+      expect(stats.canceled_task_ids).toEqual(['task-1']);
+      expect(stats.archived_task_ids).toEqual(['task-2']);
+      expect(mockDb.query).toHaveBeenCalledTimes(2);
+      expect(mockDb.query.mock.calls.filter(([sql]) => !/^\s*SELECT\b/i.test(sql))).toEqual([]);
     });
   });
 
@@ -312,13 +338,12 @@ describe('runTaskCleanup', () => {
       // The query should use a cutoff ~48h ago
       // We can verify via the captured params (cutoff timestamp)
       const queuedAtQuery = capturedParams.find(p => p.params?.[0]);
-      if (queuedAtQuery) {
-        const cutoff = new Date(queuedAtQuery.params[0]);
-        const hoursAgo = (Date.now() - cutoff.getTime()) / (1000 * 60 * 60);
-        // Should be approximately 48 hours, not 24
-        expect(hoursAgo).toBeGreaterThan(47);
-        expect(hoursAgo).toBeLessThan(49);
-      }
+      expect(queuedAtQuery).toBeDefined();
+      const cutoff = new Date(queuedAtQuery.params[0]);
+      const hoursAgo = (Date.now() - cutoff.getTime()) / (1000 * 60 * 60);
+      // Should be approximately 48 hours, not 24
+      expect(hoursAgo).toBeGreaterThan(47);
+      expect(hoursAgo).toBeLessThan(49);
     });
   });
 });

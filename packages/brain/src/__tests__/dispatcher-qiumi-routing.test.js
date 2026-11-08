@@ -93,6 +93,8 @@ vi.mock('../dispatch-dedup.js', () => ({ findDuplicateSibling: vi.fn(async () =>
 import { routeQiumiTask, persistDecision } from '../routing/qiumi-router.js';
 import { buildQiumiSource } from '../lib/qiumi-source.js';
 import { recordDispatchResult } from '../dispatch-stats.js';
+import { processCortexTask } from '../dispatch-helpers.js';
+import { emit } from '../event-bus.js';
 import { checkAnchor } from '../anchor-check.js';
 import { checkCeceliaRunAvailable } from '../executor.js';
 import { dispatchQiumiTask, dispatchNextTask } from '../dispatcher.js';
@@ -562,4 +564,153 @@ it.each([false,true])('限定Commander核验不查旧Bridge、不进qiumi；终�
  expect(mockTriggerCeceliaRun).toHaveBeenCalledTimes(1);expect(checkCeceliaRunAvailable).not.toHaveBeenCalled();expect(routeQiumiTask).not.toHaveBeenCalled();
  expect(mockUpdateTask).not.toHaveBeenCalledWith({task_id:task.id,status:'queued'});
  expect(result).toMatchObject(reject?{dispatched:false,terminal:true}:{dispatched:true,task_id:task.id});
+});
+
+
+it.each([
+  {task_type:'initiative_plan',payload:{}},
+  {task_type:'scope_plan',payload:{}},
+  {task_type:'architecture_scan',payload:{skill_override:'/decomp'}},
+])('退役规划和覆盖任务在认领前原子停放 %j', async task => {
+  _candidatePool=[{...candidate,...task}]; wireQueries();
+  const prior=mockQuery.getMockImplementation();
+  mockQuery.mockImplementation(async(sql,args)=>sql.includes('blocked_reason = $3') ? {rows:[{id:'q1'}],rowCount:1} : prior(sql,args));
+  expect(await dispatchNextTask(null)).toMatchObject({dispatched:false,reason:'retired_decomposition',parked:true});
+  expect(mockTriggerCeceliaRun).not.toHaveBeenCalled(); expect(mockRecordFailure).not.toHaveBeenCalled();
+});
+
+it.each(['decomposition_quality','initiative_plan'])('旧拆解审核 %s 即使携带 Cortex 标记也停放', async review_scope => {
+  _candidatePool=[{...candidate,task_type:'decomp_review',payload:{review_scope,requires_cortex:true}}]; wireQueries();
+  const prior=mockQuery.getMockImplementation();
+  mockQuery.mockImplementation(async(sql,args)=>sql.includes('blocked_reason = $3') ? {rows:[{id:'q1'}],rowCount:1} : prior(sql,args));
+  expect(await dispatchNextTask(null)).toMatchObject({dispatched:false,reason:'retired_decomposition',parked:true});
+  expect(processCortexTask).not.toHaveBeenCalled(); expect(mockTriggerCeceliaRun).not.toHaveBeenCalled();
+});
+
+it('计划调整审核的 Cortex 分支保持现役语义', async () => {
+  const row={...candidate,task_type:'decomp_review',payload:{review_scope:'plan_adjustment',requires_cortex:true}};
+  _candidatePool=[row]; wireQueries({row});
+  await dispatchNextTask(null);
+  expect(processCortexTask).toHaveBeenCalledOnce();
+  expect(mockQuery.mock.calls.some(([sql])=>sql.includes('blocked_reason = $3'))).toBe(false);
+});
+
+it('退役规划即使携带 Cortex 标记也在认领前停放，普通 Cortex 仍有专用回归', async () => {
+  _candidatePool=[{...candidate,task_type:'initiative_plan',payload:{requires_cortex:true}}]; wireQueries();
+  const prior=mockQuery.getMockImplementation();
+  mockQuery.mockImplementation(async(sql,args)=>sql.includes('blocked_reason = $3') ? {rows:[{id:'q1'}],rowCount:1} : prior(sql,args));
+  expect(await dispatchNextTask(null)).toMatchObject({dispatched:false,reason:'retired_decomposition',parked:true});
+  expect(processCortexTask).not.toHaveBeenCalled(); expect(mockTriggerCeceliaRun).not.toHaveBeenCalled();
+});
+
+describe('退役拆解任务自动派发', () => {
+  it.each([{decomposition:true},{decomposition:'true'},{decomposition:'continue'},{decomposition:'okr'},{next_action:'decompose'}])('旧标记 %j 在 claim 和启动前停放', async (payload) => {
+    _candidatePool = [{...candidate, task_type:'dev', payload}];
+    wireQueries();
+    const prior = mockQuery.getMockImplementation();
+    mockQuery.mockImplementation(async (sql,args) => {
+      if (sql.includes("blocked_reason = $3")) return {rows:[{id:'q1'}],rowCount:1};
+      return prior(sql,args);
+    });
+    const result = await dispatchNextTask(null);
+    expect(result).toMatchObject({dispatched:false,reason:'retired_decomposition',parked:true});
+    expect(emit).toHaveBeenCalledWith('task:blocked','dispatcher',expect.objectContaining({task_id:'q1',reason:'retired_decomposition'}));
+    expect(mockTriggerCeceliaRun).not.toHaveBeenCalled();
+    expect(mockQuery.mock.calls.some(([s])=>/UPDATE tasks SET claimed_by = \$1/.test(s))).toBe(false);
+    expect(mockRecordFailure).not.toHaveBeenCalled();
+  });
+  it('CAS 未命中时不假称已停放，不启动', async () => {
+    _candidatePool = [{...candidate, task_type:'dev', payload:{decomposition:'true'}}];
+    wireQueries();
+    const prior = mockQuery.getMockImplementation();
+    mockQuery.mockImplementation(async (sql,args) => {
+      if (sql.includes("blocked_reason = $3")) return {rows:[],rowCount:0};
+      return prior(sql,args);
+    });
+    const result = await dispatchNextTask(null);
+    expect(result).toMatchObject({dispatched:false,reason:'retired_decomposition',parked:false});
+    expect(emit).not.toHaveBeenCalled();
+    expect(mockTriggerCeceliaRun).not.toHaveBeenCalled();
+  });
+});
+
+
+it('秋米专用任务携带同名字段仍走其真实派发分支', async () => {
+  const row={...fullRow,payload:{...fullRow.payload,decomposition:'true'}};
+  _candidatePool=[{...candidate,payload:row.payload}];
+  wireQueries({row});
+  routeQiumiTask.mockResolvedValue({outcome:'device',serial:'S1',payloadPatch:{}});
+  const result=await dispatchNextTask(null);
+  expect(result).toMatchObject({dispatched:false,reason:'qiumi_routed_device',task_id:'q1'});
+  expect(routeQiumiTask).toHaveBeenCalledOnce();
+  expect(mockQuery.mock.calls.some(([sql])=>sql.includes('blocked_reason = $3'))).toBe(false);
+});
+
+
+it('独立 Cortex RCA 即使含同名标记仍走自身处理，不走拆解', async () => {
+  const row={...candidate,task_type:'research',payload:{requires_cortex:true,decomposition:'true'}};
+  _candidatePool=[row]; wireQueries({row});
+  await dispatchNextTask(null);
+  expect(processCortexTask).toHaveBeenCalledOnce();
+  expect(mockTriggerCeceliaRun).not.toHaveBeenCalled();
+  expect(mockQuery.mock.calls.some(([sql])=>sql.includes('blocked_reason = $3'))).toBe(false);
+});
+
+
+it('选中后 payload 变为旧拆解，不启动、不回队三振且仅停放自己的 claim', async () => {
+  const selected={...candidate,task_type:'research',created_at:'2020-01-01T00:00:00.000Z',payload:{decomposition:'known'}};
+  const latest={...selected,status:'in_progress',payload:{decomposition:'true'}};
+  _candidatePool=[selected]; wireQueries({row:latest});
+  const prior=mockQuery.getMockImplementation();
+  mockQuery.mockImplementation(async(sql,args)=>{
+    if (/UPDATE tasks SET claimed_by = \$1/.test(sql)) return {rows:[{id:'q1',claim_stamp:'2026-11-07 00:00:00.123456+00'}]};
+    if (sql.includes('blocked_reason = $3') && sql.includes('claimed_by = $6')) return {rows:[{id:'q1'}],rowCount:1};
+    return prior(sql,args);
+  });
+  mockTriggerCeceliaRun.mockResolvedValue({success:false,reason:'retired_decomposition'});
+  const result=await dispatchNextTask(null);
+  expect(result).toMatchObject({dispatched:false,reason:'retired_decomposition',parked:true});
+  expect(mockUpdateTask).not.toHaveBeenCalledWith({task_id:'q1',status:'queued'});
+  expect(mockRecordFailure).not.toHaveBeenCalled();
+  const park=mockQuery.mock.calls.find(([s])=>s.includes('blocked_reason = $3') && s.includes('claimed_by = $6'));
+  expect(park[0]).toContain('claimed_at = $7::timestamptz');
+  expect(park[1][6]).toBe('2026-11-07 00:00:00.123456+00');
+});
+
+
+it.each(['owner_changed','database_error'])('旧拆解竞态 %s 不得无条件回滚或计熔断', async (mode) => {
+  const selected={...candidate,task_type:'research',created_at:'2020-01-01T00:00:00.000Z',payload:{decomposition:'known'}};
+  const latest={...selected,status:'in_progress',payload:{decomposition:'true'}};
+  _candidatePool=[selected]; wireQueries({row:latest});
+  const prior=mockQuery.getMockImplementation();
+  mockQuery.mockImplementation(async(sql,args)=>{
+    if (/UPDATE tasks SET claimed_by = \$1/.test(sql)) return {rows:[{id:'q1',claim_stamp:'2026-11-07 00:00:00.123456+00'}]};
+    if (sql.includes('blocked_reason = $3') && sql.includes('claimed_by = $6')) {
+      if(mode==='database_error') throw Error('owned PG unavailable');
+      return {rows:[],rowCount:0};
+    }
+    if (sql.includes("status='queued', claimed_by=NULL")) return {rows:[],rowCount:0};
+    return prior(sql,args);
+  });
+  mockTriggerCeceliaRun.mockResolvedValue({success:false,reason:'retired_decomposition'});
+  const result=await dispatchNextTask(null);
+  expect(result).toMatchObject({dispatched:false,reason:'retired_decomposition',parked:false});
+  expect(mockUpdateTask).not.toHaveBeenCalledWith({task_id:'q1',status:'queued'});
+  expect(mockRecordFailure).not.toHaveBeenCalled();
+  expect(emit).not.toHaveBeenCalled();
+  expect(mockQuery.mock.calls.some(([s])=>/UPDATE tasks SET claimed_by = NULL WHERE id = \$1/.test(s))).toBe(false);
+  if(mode==='database_error') expect(result.stateUnknown).toBe(true);
+});
+
+
+it('旧拆解停放后事件失败仍不启动，也不伪造未停放', async () => {
+  _candidatePool=[{...candidate,task_type:'dev',payload:{decomposition:'true'}}];
+  wireQueries(); const prior=mockQuery.getMockImplementation();
+  mockQuery.mockImplementation(async(sql,args)=>sql.includes('blocked_reason = $3')
+    ? {rows:[{id:'q1'}],rowCount:1} : prior(sql,args));
+  emit.mockRejectedValueOnce(new Error('event unavailable'));
+  const result=await dispatchNextTask(null);
+  expect(result).toMatchObject({dispatched:false,reason:'retired_decomposition',parked:true});
+  expect(mockTriggerCeceliaRun).not.toHaveBeenCalled();
+  expect(mockRecordFailure).not.toHaveBeenCalled();
 });

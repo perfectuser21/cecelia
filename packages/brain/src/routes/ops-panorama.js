@@ -96,6 +96,7 @@ function sanitizeLlmCapacity(snapshot) {
     vendors[vendorName] = {
       available_count: ledger.available_count ?? 0,
       total_count: ledger.total_count ?? 0,
+      poller: ['ok', 'error'].includes(ledger.poller) ? ledger.poller : 'unknown',
       accounts,
     };
   }

@@ -20,9 +20,10 @@ beforeAll(async () => {
     id text PRIMARY KEY, title text, task_type text, status text, payload jsonb DEFAULT '{}',
     claimed_by text, claimed_at timestamptz, updated_at timestamptz DEFAULT NOW(), started_at timestamptz,
     executor_kind text, metadata jsonb, result jsonb, notion_props jsonb DEFAULT '{}',
-    error_message text, blocked_reason text, blocked_detail jsonb,
+    error_message text, blocked_reason text, blocked_detail jsonb, blocked_at timestamptz,
     created_at timestamptz DEFAULT NOW())`);
   await a.query(`CREATE TABLE ${schema}.working_memory (key text PRIMARY KEY, value_json jsonb)`);
+  await a.query(`CREATE TABLE ${schema}.device_locks (device_name text PRIMARY KEY,locked_by text,locked_at timestamptz,expires_at timestamptz)`);
   await a.query(`CREATE TABLE ${schema}.phone_registry (serial text, nickname text, enabled boolean)`);
   await a.query(`INSERT INTO ${schema}.phone_registry VALUES ('blue','小蓝',true)`);
   await a.query(`SET search_path TO ${schema}`); await b.query(`SET search_path TO ${schema}`);
@@ -33,6 +34,21 @@ afterAll(async () => {
 });
 
 describe('定向手机派发：真实双连接 PG', () => {
+  it.each([false,true])('退役命令未启动时停放当前认领，不覆盖并发换主 race=%s',async race=>{
+    const id=race?'retired-race':'retired-owned';
+    const task=fixture(id);
+    await a.query("INSERT INTO tasks(id,title,task_type,status) VALUES($1,$2,'qiumi_task','queued')",[id,task.title]);
+    const reply=await dispatchManualQiumi(task,a,{
+      route:async()=>{await a.query("UPDATE tasks SET task_type='architecture_scan',payload=$2 WHERE id=$1",[id,{run_id:'owned-run',qiumi_department:'test'}]);return {outcome:'proceed'};},
+      trigger:async()=>{if(race) await b.query("UPDATE tasks SET claimed_by='new-owner' WHERE id=$1",[id]);return {success:false,reason:'retired_decomposition',retiredBeforeStart:true};},
+    });
+    expect(reply).toMatchObject({status:409,body:{execution_state:'not_started',parked:!race}});
+    const row=(await a.query('SELECT * FROM tasks WHERE id=$1',[id])).rows[0];
+    if(race){expect(row.status).toBe('in_progress');expect(row.claimed_by).toBe('new-owner');}
+    else{expect(row.status).toBe('blocked');expect(row.claimed_by).toBeNull();expect(row.blocked_reason).toBe('retired_decomposition');}
+    if(race) expect(row.result).toBeNull();
+    else expect(row.result.retired_dispatch).toMatchObject({execution_state:'not_started',reason:'retired_decomposition'});
+  });
   it('同时请求只认领启动一次，并把路由保存的 run_id 交给执行器', async () => {
     const task = fixture('race');
     await a.query("INSERT INTO tasks(id,title,task_type,status) VALUES($1,$2,'qiumi_task','queued')", [task.id, task.title]);

@@ -85,6 +85,8 @@ export async function _runConsciousnessOnce({ timeoutMs = DEFAULT_TIMEOUT_MS } =
     return { completed: false, reason: 'already_running', actions: [] };
   }
   _isRunning = true;
+  let releaseOnReturn = true;
+  let timeoutTimer;
 
   try {
     // 并行获取：guidance（用于 crash 恢复）和 compiled graph（缓存后仅 1 native tick）
@@ -123,15 +125,20 @@ export async function _runConsciousnessOnce({ timeoutMs = DEFAULT_TIMEOUT_MS } =
       ? null
       : { completed_steps: [], errors: [], run_ts: new Date().toISOString() };
 
+    const invocation = Promise.resolve(graph.invoke(initialState, { configurable: { thread_id: threadId } }));
     const result = await Promise.race([
-      graph.invoke(initialState, { configurable: { thread_id: threadId } }),
-      new Promise(resolve =>
-        setTimeout(() => resolve({ timedOut: true }), timeoutMs)
-      ),
+      invocation,
+      new Promise(resolve => {
+        timeoutTimer = setTimeout(() => resolve({ timedOut: true }), timeoutMs);
+      }),
     ]);
 
     if (result.timedOut) {
-      console.warn(`[consciousness-loop] 单次运行超时（${timeoutMs / 1000}s），已中断`);
+      // race 超时不会取消 invoke；原调用真正结束前不能在同一 thread 重入。
+      releaseOnReturn = false;
+      const release = () => { _isRunning = false; };
+      invocation.then(release, release);
+      console.warn(`[consciousness-loop] 单次运行超时（${timeoutMs / 1000}s），等待原调用结束后允许续跑`);
       return { completed: false, timedOut: true, actions: [] };
     }
 
@@ -148,7 +155,8 @@ export async function _runConsciousnessOnce({ timeoutMs = DEFAULT_TIMEOUT_MS } =
     _activeThreadId = null; // 异常时清理，避免污染下次 run
     return { completed: false, error: err.message, actions: [] };
   } finally {
-    _isRunning = false;
+    clearTimeout(timeoutTimer);
+    if (releaseOnReturn) _isRunning = false;
   }
 }
 

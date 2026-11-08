@@ -240,6 +240,13 @@ describe('B. task-tasks.js POST /:id/claim: executor_kind 写入', () => {
 });
 
 describe('B2. POST /:id/claim 带 lease_seconds（统一领单租约，任务 c5f6e683）', () => {
+  it('API 不得丢弃显式 start：无租约应在认领前拒绝', async () => {
+    vi.clearAllMocks();
+    const res = await request(makeTaskTasksApp()).post('/tasks/task-2/claim').send({ claimer: 'native-phone', start: true });
+    expect(res.status).toBe(400);
+    expect(mockPool.query).not.toHaveBeenCalled();
+  });
+
   let app;
   beforeEach(() => {
     vi.clearAllMocks();

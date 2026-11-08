@@ -103,7 +103,7 @@ describe('runPostdeployVerifier — DB 状态流转', () => {
     expect(result.failed).toBe(0);
   });
 
-  it('任务 command=sh -c "echo ok" → 验证通过 → UPDATE status=completed', async () => {
+  it('普通 dev 无 PR，命令验证通过后标 completed_no_pr', async () => {
     const updateCalls = [];
     const task = {
       id: 'task-abc123',
@@ -121,14 +121,14 @@ describe('runPostdeployVerifier — DB 状态流转', () => {
           return { rows: [task] };
         }
         updateCalls.push({ sql: s, params });
-        return { rows: [] };
+        return { rows: [], rowCount: 1 };
       },
     };
 
     const result = await runPostdeployVerifier(pool);
 
     expect(result.verified).toBe(1);
-    const completedUpdate = updateCalls.find((q) => q.sql.includes("status = 'completed'"));
+    const completedUpdate = updateCalls.find((q) => q.sql.includes("status = 'completed_no_pr'"));
     expect(completedUpdate).toBeTruthy();
     expect(completedUpdate.params[0]).toBe('task-abc123');
   });
@@ -151,7 +151,7 @@ describe('runPostdeployVerifier — DB 状态流转', () => {
           return { rows: [task] };
         }
         updateCalls.push({ sql: s, params });
-        return { rows: [] };
+        return { rows: [], rowCount: 1 };
       },
     };
 
@@ -163,7 +163,7 @@ describe('runPostdeployVerifier — DB 状态流转', () => {
     expect(failedUpdate.params[1]).toMatch(/非法/);
   });
 
-  it('任务无 command（兜底放行）→ 标 completed, skipped+1', async () => {
+  it('普通 dev 无 PR 和 command 时标 completed_no_pr', async () => {
     const updateCalls = [];
     const task = {
       id: 'task-nocommand',
@@ -186,7 +186,7 @@ describe('runPostdeployVerifier — DB 状态流转', () => {
     const result = await runPostdeployVerifier(pool);
 
     expect(result.skipped).toBe(1);
-    const completedUpdate = updateCalls.find((q) => q.sql.includes("status = 'completed'"));
+    const completedUpdate = updateCalls.find((q) => q.sql.includes("status = 'completed_no_pr'"));
     expect(completedUpdate).toBeTruthy();
   });
 
@@ -208,7 +208,7 @@ describe('runPostdeployVerifier — DB 状态流转', () => {
           return { rows: [task] };
         }
         updateCalls.push({ sql: s, params });
-        return { rows: [] };
+        return { rows: [], rowCount: 1 };
       },
     };
 

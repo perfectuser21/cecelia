@@ -68,6 +68,7 @@ export function verifyVerificationInputFacts(root,{source,row,purpose='admission
 const CI='.github/workflows/ci.yml',BASIC_RUNNER='scripts/ci/run-basic-check.mjs';
 const LEGACY_CI='528a08e84e5dc0ffc1c8ae83e8ee54e9e63366513b1dd119598085d86de96181';
 const BASIC_CI='7fee2a6d842c7c2595fa882fa61f75750ec6b2787186fdaf8747e1084a64fcee';
+const QUEUED_BASIC_CI='020165ab3d73d487d973c6d98c849958240dc56149d5b6083b8288673a3dd091';
 const BASIC_ENTRY_SEALS={
  'scripts/ci/run-basic-check.mjs':'c9c1318dcd6b35981453aa06f656f5a99cb6283d2b7e4ea4a1cf8f6772103f6d',
  'scripts/ci/basic-scope.mjs':'9844bb702db2c1a9507f88f1c6c330f676b786cb784592dc4aaefc096b93d6ef',
@@ -79,6 +80,19 @@ const BASIC_ENTRY_PROTOCOLS=[BASIC_ENTRY_SEALS,{
  ...BASIC_ENTRY_SEALS,
  'scripts/ci/run-basic-check.mjs':'97226ce692a63aad92d9120b378e024d64569bc21c637c9f41266735c1720271',
  'scripts/ci/basic-scope.mjs':'4a6cb08142b42329ab6daf75bfc7a058be9b5657b7d586be0477486cc914c277',
+}];
+const QUEUED_BASIC_ENTRY_PROTOCOLS=[{
+ ...BASIC_ENTRY_SEALS,
+ 'scripts/ci/run-basic-check.mjs':'aed179661ff08ef743cb8feb0c9e88bb59342d3c0ab690bf17e812f8c868c0ae',
+ 'scripts/ci/basic-scope.mjs':'c97f3d3300ce74237086b819def622636dc6776f663753d6ec3e68ea2d21a14b',
+ 'scripts/ci/ops-checks.mjs':'6a6305471c70c7d1d5e4ad836f14636c8ab74a4d6a4bb17dc8d525d3aa52e125',
+ 'packages/brain/vitest.config.js':'fe6de3054f559116886d6d3286542896f510bbb887893ef0727a16df72c39f9e',
+}, {
+ ...BASIC_ENTRY_SEALS,
+ 'scripts/ci/run-basic-check.mjs':'ae2edd2add44d004cb5b6a3ab43fd00ef882ea0bc012efeac48cd990bf8b53eb',
+ 'scripts/ci/basic-scope.mjs':'c97f3d3300ce74237086b819def622636dc6776f663753d6ec3e68ea2d21a14b',
+ 'scripts/ci/ops-checks.mjs':'6a6305471c70c7d1d5e4ad836f14636c8ab74a4d6a4bb17dc8d525d3aa52e125',
+ 'packages/brain/vitest.config.js':'5e1504bbed8d83d7758bc2513eb8894418dccdd63938a98f6aa40433355ff5cc',
 }];
 const UNIT_CONFIGS=[
  {component:'brain',directory:'packages/brain',path:'packages/brain/vitest.config.js'},
@@ -131,11 +145,11 @@ function supportReader(root,source,git){
 function unitEntry(read,side){
  const workflow=read(side,CI);if(!workflow)return null;let doc;
  try{doc=yaml.load(workflow.text);}catch{return null;}
- const signature=sha(JSON.stringify(canonical(doc)));if(![LEGACY_CI,BASIC_CI].includes(signature))return null;
+ const signature=sha(JSON.stringify(canonical(doc)));if(![LEGACY_CI,BASIC_CI,QUEUED_BASIC_CI].includes(signature))return null;
  const support=[workflow.reference];
- if(signature===BASIC_CI){
+ if(signature===BASIC_CI||signature===QUEUED_BASIC_CI){
   let selected;
-  for(const seals of BASIC_ENTRY_PROTOCOLS){
+  for(const seals of signature===BASIC_CI?BASIC_ENTRY_PROTOCOLS:QUEUED_BASIC_ENTRY_PROTOCOLS){
    const files=Object.entries(seals).map(([path,expected])=>({file:read(side,path),expected}));
    if(files.every(({file,expected})=>file?.reference.sha256===expected)){selected=files;break;}
   }

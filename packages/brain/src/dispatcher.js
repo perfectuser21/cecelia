@@ -14,6 +14,7 @@
  */
 
 import { isCommanderVerification } from './lib/commander-verification-transport.js';
+import { isRetiredDecomposition, isRetiredDecompositionReview, parkRetiredDecomposition, parkClaimedRetiredDecomposition, RETIRED_DECOMPOSITION } from './lib/retired-decomposition.js';
 import pool from './db.js';
 import { getFleetStatus } from './fleet-resource-cache.js';
 import { codeTaskIdentitySql, compareCodeTaskIdentity } from './lib/code-task-identity.js';
@@ -29,7 +30,7 @@ import {
   getBillingPause,
 } from './executor.js';
 import { calculateSlotBudget, harnessSlotCheck } from './slot-allocator.js';
-import { INITIATIVE_LOCK_TASK_TYPES, RETIRED_HARNESS_TYPES_DISPATCH, HEADLESS_KERNEL_RETIRED_TASK_TYPES, HARNESS_INFLIGHT_TASK_TYPES, OPENCLAW_PASSTHROUGH_TASK_TYPES, getTaskType } from './lib/task-type-registry.js';
+import { INITIATIVE_LOCK_TASK_TYPES, RETIRED_HARNESS_TYPES_DISPATCH, HEADLESS_KERNEL_RETIRED_TASK_TYPES, HARNESS_INFLIGHT_TASK_TYPES, OPENCLAW_PASSTHROUGH_TASK_TYPES, LAYER_RETIRED_TASK_TYPES, getTaskType } from './lib/task-type-registry.js';
 import { emit } from './event-bus.js';
 import { isAllowed, recordFailure, recordSuccess } from './circuit-breaker.js';
 import { publishTaskStarted } from './events/taskEvents.js';
@@ -38,8 +39,6 @@ import { recordTaskEventSafe } from './lib/task-event-log.js';
 import { startRunForExecResult } from './lib/task-run.js';
 import { classifyDispatchReasonCode } from './lib/dispatch-reason-code.js';
 import { incrementActionsToday } from './tick-stats.js';
-import { proactiveTokenCheck } from './account-usage.js';
-import { checkQuotaGuard } from './quota-guard.js';
 import { updateTask } from './actions.js';
 import { selectNextDispatchableTask, processCortexTask } from './dispatch-helpers.js';
 import { findDuplicateSibling } from './dispatch-dedup.js';
@@ -534,7 +533,6 @@ async function routeAndPersistQiumi(task, deps = {}) {
  */
 export async function dispatchNextTask(goalIds, options = {}) {
   const codeOnly = options.codeOnly === true;
-  let _quotaPriorityFilter = null;
   let qiumiOnlyBypass = false;
   const actions = [];
   let llmCapacitySnapshot = null;
@@ -564,17 +562,6 @@ export async function dispatchNextTask(goalIds, options = {}) {
     return { skipped: true, reason: 'quota_cooling' };
   }
 
-  // 0a-token. Proactive token expiry check — 派发前主动检测各账号 token 状态
-  // token 过期 → 立即 markAuthFailure 熔断，阻止派发级联 401
-  // MINIMAL_MODE 下跳过（不创建 research 告警任务）
-  if (!MINIMAL_MODE) {
-  try {
-    await proactiveTokenCheck();
-  } catch (tokenCheckErr) {
-    console.error('[tick] proactiveTokenCheck failed (non-fatal):', tokenCheckErr.message);
-  }
-  }
-
   // 0a. Billing pause check — quota_exhausted 全局熔断
   const billingPause = getBillingPause();
   if (billingPause.active) {
@@ -586,30 +573,6 @@ export async function dispatchNextTask(goalIds, options = {}) {
       detail: `Billing pause active until ${billingPause.resetTime}`,
       actions
     };
-  }
-
-  // 0b. Quota guard check — 根据账号 5h 余量限制调度范围（MINIMAL_MODE 下跳过）
-  _quotaPriorityFilter = null;
-  if (!MINIMAL_MODE) {
-    try {
-      const qg = await checkQuotaGuard();
-      if (!qg.allow) {
-        tickLog(`[tick] quota guard: ${qg.reason} bestPct=${qg.bestPct.toFixed(1)}%，暂停全部调度`);
-        await recordDispatchResult(pool, false, 'quota_critical');
-        return {
-          dispatched: false,
-          reason: 'quota_critical',
-          detail: `所有账号 quota > 98%（最优=${qg.bestPct.toFixed(1)}%），请等待 quota 重置`,
-          actions,
-        };
-      }
-      if (qg.priorityFilter) {
-        _quotaPriorityFilter = qg.priorityFilter;
-        tickLog(`[tick] quota guard: ${qg.reason} bestPct=${qg.bestPct.toFixed(1)}%，仅派 ${qg.priorityFilter.join('/')}`);
-      }
-    } catch (qgErr) {
-      console.error('[tick] quota guard check failed (non-fatal):', qgErr.message);
-    }
   }
 
   } // AI quota / billing only; registered deterministic scripts use host capacity.
@@ -686,7 +649,7 @@ export async function dispatchNextTask(goalIds, options = {}) {
       if (!xianBypass) {
         try {
           const qiumiProbe = await selectNextDispatchableTask(goalIds, [], {
-            priorityFilter: _quotaPriorityFilter,
+            priorityFilter: null,
             onlyTaskTypes: [...OPENCLAW_PASSTHROUGH_TASK_TYPES], includeCommanderVerification: true,
           });
           if (qiumiProbe) {
@@ -780,6 +743,7 @@ export async function dispatchNextTask(goalIds, options = {}) {
   const duplicateSkipIds = []; // IDs skipped due to duplicate-title sibling already queued/in_progress
   const resourceSkipIds = [];  // IDs skipped because a referenced resource is offline/restricted（不计入 HOL 上限）
   let nextTask = null;
+  let claimStamp = null;
 
   const resourceSkipCapped = async () => {
     if (resourceSkipIds.length < MAX_RESOURCE_SKIPS) return null;
@@ -826,7 +790,7 @@ export async function dispatchNextTask(goalIds, options = {}) {
   for (let attempt = 0; attempt <= MAX_PRE_FLIGHT_RETRIES; attempt++) {
     const skipIds = [...preFlightFailedIds, ...holSkipIds, ...noExecutorSkipIds, ...breakerSkipIds, ...duplicateSkipIds, ...resourceSkipIds];
     const candidate = await selectNextDispatchableTask(goalIds, skipIds, {
-      priorityFilter: _quotaPriorityFilter,
+      priorityFilter: null,
       ...(codeOnly ? {codeOnly:true} : {}),
       ...(qiumiOnlyBypass ? { onlyTaskTypes: [...OPENCLAW_PASSTHROUGH_TASK_TYPES], includeCommanderVerification: true } : {}),
     });
@@ -843,9 +807,27 @@ export async function dispatchNextTask(goalIds, options = {}) {
       return { dispatched: false, reason: 'no_dispatchable_task', actions };
     }
 
-    // 3a. Check if task requires Cortex processing (Brain-internal RCA)
-    if (candidate.payload && candidate.payload.requires_cortex === true) {
+    // 普通 Cortex 根因分析保持优先；已退役规划类型仍须停放。
+    if (candidate.payload && candidate.payload.requires_cortex === true && !LAYER_RETIRED_TASK_TYPES.includes(candidate.task_type) && !isRetiredDecompositionReview(candidate)) {
       return await processCortexTask(candidate, actions);
+    }
+
+    // 对仍未认领且 payload 未变化的旧任务做 CAS 停放；不碰在途任务与设备锁。
+    if (isRetiredDecomposition(candidate)) {
+      const didPark = await parkRetiredDecomposition(pool, candidate);
+      if (didPark) {
+        try {
+          await emit('task:blocked', 'dispatcher', {
+            task_id: candidate.id, task_title: candidate.title,
+            reason: RETIRED_DECOMPOSITION,
+            detail: { message: '旧任务拆解已退役，不会启动执行体' }, blocked_until: null,
+          });
+        } catch (error) {
+          console.error(`[dispatch] retired decomposition event failed: ${error.message}`);
+        }
+      }
+      await recordDispatchResult(pool, false, RETIRED_DECOMPOSITION, undefined, candidate.id);
+      return { dispatched: false, reason: RETIRED_DECOMPOSITION, task_id: candidate.id, parked: didPark, actions };
     }
 
     // Target machine admission remains fail closed, independent of unrelated AI fleet slots.
@@ -1019,7 +1001,7 @@ export async function dispatchNextTask(goalIds, options = {}) {
     const claimResult = await pool.query(
       `UPDATE tasks SET claimed_by = $1, claimed_at = NOW()
        WHERE id = $2 AND claimed_by IS NULL
-       RETURNING id`,
+       RETURNING id, claimed_at::text AS claim_stamp`,
       [claimerId, candidate.id]
     );
     if (claimResult.rows.length === 0) {
@@ -1027,6 +1009,7 @@ export async function dispatchNextTask(goalIds, options = {}) {
       await recordDispatchResult(pool, false, 'already_claimed');
       return { dispatched: false, reason: 'already_claimed', task_id: candidate.id, actions };
     }
+    claimStamp = claimResult.rows[0].claim_stamp ?? null;
 
     // 3c''. S2 锚点执法闸（MJ5 刀2）：新任务点火前校验 payload.anchor
     // 缺锚 → terminal failed（reason=missing_anchor），与 invalid_gear 同级处理形态。
@@ -1343,14 +1326,37 @@ export async function dispatchNextTask(goalIds, options = {}) {
         tickLog(`[dispatch] allocation_guide task=${taskToDispatch.id} type=${taskToDispatch.task_type} budget_state=${budgetState} → executor=grok`);
       }
       try {
-        await pool.query(
+        const persisted = await pool.query(
           `UPDATE tasks
              SET payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb,
                  updated_at = NOW()
-           WHERE id = $1`,
-          [taskToDispatch.id, JSON.stringify(guided.payloadPatch)]
+           WHERE id = $1 AND status = 'in_progress' AND claimed_by = $3 AND claimed_at = $4::timestamptz`,
+          [taskToDispatch.id, JSON.stringify(guided.payloadPatch), claimerId, claimStamp]
         );
+        if (guided.payloadPatch.executor === 'codex' && persisted.rowCount === 0) {
+          throw new Error('Codex executor route was not persisted');
+        }
       } catch (persistErr) {
+        if (guided.payloadPatch.executor === 'codex') {
+          console.error(`[dispatch] Codex route persist failed; refusing dispatch: ${persistErr.message}`);
+          try {
+            await pool.query(
+              `UPDATE tasks SET status = 'queued', claimed_by = NULL, claimed_at = NULL, updated_at = NOW()
+               WHERE id = $1 AND status = 'in_progress' AND claimed_by = $2 AND claimed_at = $3::timestamptz`,
+              [taskToDispatch.id, claimerId, claimStamp],
+            );
+            // 锁只按 task id 标识，queued 后可能立即被同任务的新 claim 继承。
+            // 不在这里按 task id 释放；同任务重试可重入，其他任务按 TTL 等待。
+          } catch (cleanupErr) {
+            console.error(`[dispatch] Codex route cleanup failed: ${cleanupErr.message}`);
+          }
+          try {
+            await recordDispatchResult(pool, false, 'allocation_persist_failed', undefined, taskToDispatch.id);
+          } catch (recordErr) {
+            console.error(`[dispatch] Codex route failure recording failed: ${recordErr.message}`);
+          }
+          return { dispatched: false, reason: 'allocation_persist_failed', task_id: taskToDispatch.id, actions };
+        }
         console.warn(`[dispatch] allocation guide payload persist failed (non-fatal): ${persistErr.message}`);
       }
     }
@@ -1361,6 +1367,42 @@ export async function dispatchNextTask(goalIds, options = {}) {
   await enforceDispatchRoutingReceipt(taskToDispatch);
 
   execResult = await triggerCeceliaRun(taskToDispatch);
+
+  // 选中后 payload 可能并发变为旧拆解；不能当普通故障回队、三振或覆盖新认领。
+  if (!execResult.success && execResult.reason === RETIRED_DECOMPOSITION) {
+    let parked = false;
+    try {
+      parked = await parkClaimedRetiredDecomposition(pool, taskToDispatch, claimerId, claimStamp);
+    } catch (error) {
+      // 不能进入通用 post-claim 清理：后者按 id 释放，可能破坏新认领。
+      console.error(`[dispatch] retired decomposition parking failed: ${error.message}`);
+      return { dispatched: false, reason: RETIRED_DECOMPOSITION, task_id: nextTask.id, parked: false, stateUnknown: true, actions };
+    }
+    if (parked) {
+      try {
+        await emit('task:blocked', 'dispatcher', {
+          task_id: nextTask.id, task_title: nextTask.title,
+          reason: RETIRED_DECOMPOSITION,
+          detail: { message: '旧任务拆解已退役，不会启动执行体' }, blocked_until: null,
+        });
+      } catch (error) {
+        console.error(`[dispatch] retired decomposition event failed: ${error.message}`);
+      }
+    } else {
+      // 仅释放仍属于本次的精确认领；不按 task id 放设备锁，避免误放新认领的锁。
+      try {
+        await pool.query(`UPDATE tasks SET status='queued', claimed_by=NULL, claimed_at=NULL, updated_at=NOW()
+          WHERE id=$1 AND status='in_progress' AND claimed_by=$2 AND claimed_at=$3::timestamptz`,
+        [nextTask.id, claimerId, claimStamp]);
+      } catch (error) {
+        console.error(`[dispatch] retired decomposition claim cleanup failed: ${error.message}`);
+        return { dispatched: false, reason: RETIRED_DECOMPOSITION, task_id: nextTask.id, parked: false, stateUnknown: true, actions };
+      }
+    }
+    try { await recordDispatchResult(pool, false, RETIRED_DECOMPOSITION, undefined, nextTask.id); }
+    catch (error) { console.error(`[dispatch] retired decomposition stats failed: ${error.message}`); }
+    return { dispatched: false, reason: RETIRED_DECOMPOSITION, task_id: nextTask.id, parked, actions };
+  }
 
   if (
     taskToDispatch.payload?.harness_runtime === 'kernel-v1'

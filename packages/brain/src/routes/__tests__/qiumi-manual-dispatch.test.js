@@ -21,7 +21,7 @@ describe('qiumi-manual-dispatch：手机单任务派发与 coding Bridge 分离'
     vi.clearAllMocks();
     task = { id: 'phone-task', title: '只读巡检', task_type: 'qiumi_task', status: 'queued', payload: {}, claimed_by: null };
     mocks.query.mockImplementation(async (sql, args = []) => {
-      if (sql.includes('SELECT * FROM tasks')) return { rows: [structuredClone(task)] };
+      if (sql.includes('FROM tasks WHERE id = $1')) return { rows: [structuredClone(task)] };
       if (sql.includes('UPDATE tasks')) {
         if (sql.includes("AND claimed_by IS NULL") && (task.status !== 'queued' || task.claimed_by)) return { rows: [] };
         if (sql.includes('AND claimed_by = $2') && task.claimed_by !== args[1]) return { rows: [] };
@@ -123,11 +123,76 @@ describe('qiumi-manual-dispatch：手机单任务派发与 coding Bridge 分离'
     expect(task.payload.run_id).toBe('qiumi-fixed-run');
   });
 
+  it('退役命令确定未启动时不假报远端接收，也不覆盖新认领', async () => {
+    mocks.trigger.mockImplementation(async () => {
+      task.claimed_by = 'new-owner';
+      task.status = 'in_progress';
+      return {success:false, reason:'retired_decomposition', retiredBeforeStart:true};
+    });
+    const r = await request(app).post('/api/brain/tasks/phone-task/dispatch').send({});
+    expect(r.status).toBe(409);
+    expect(r.body).toMatchObject({error:'retired_decomposition', execution_state:'not_started'});
+    expect(task.claimed_by).toBe('new-owner');
+    expect(task.result?.dispatch_uncertain).toBeUndefined();
+    const gate = await import('../../lib/manual-dispatch-device-gate.js');
+    expect(gate.releaseDeviceLockNonFatal).not.toHaveBeenCalled();
+  });
+
   it('coding 任务仍受 Bridge 可用性检查', async () => {
     task.task_type = 'dev';
     const r = await request(app).post('/api/brain/tasks/phone-task/dispatch').send({});
     expect(r.status).toBe(503);
     expect(mocks.available).toHaveBeenCalledOnce();
     expect(mocks.route).not.toHaveBeenCalled();
+  });
+  for (const endpoint of ['task', 'dispatch-now']) {
+    it.each([{decomposition:true}, {decomposition:'true'}, {decomposition:'continue'}, {decomposition:'okr'}, {next_action:'decompose'}])('%s 拒绝旧拆解 %j 且不改任务', async (payload) => {
+      task.task_type = 'dev'; task.payload = payload;
+      const r = endpoint === 'task'
+        ? await request(app).post('/api/brain/tasks/phone-task/dispatch').send({})
+        : await request(app).post('/api/brain/dispatch-now').send({task_id:'phone-task'});
+      expect(r.status).toBe(410);
+      expect(r.body.error).toBe('retired_decomposition');
+      expect(task.status).toBe('queued');
+      expect(mocks.trigger).not.toHaveBeenCalled();
+      expect(mocks.query.mock.calls.some(([sql])=>/UPDATE tasks/.test(sql))).toBe(false);
+    });
+  }
+  for (const endpoint of ['task','dispatch-now']) {
+    it.each(['decomposition_quality','initiative_plan'])('%s 拒绝已退役拆解审核 %s 且不写状态',async review_scope=>{
+      task.task_type='decomp_review'; task.payload={review_scope};
+      const r=endpoint==='task' ? await request(app).post('/api/brain/tasks/phone-task/dispatch').send({}) : await request(app).post('/api/brain/dispatch-now').send({task_id:'phone-task'});
+      expect(r.status).toBe(410); expect(task.status).toBe('queued'); expect(mocks.trigger).not.toHaveBeenCalled();
+      expect(mocks.query.mock.calls.some(([sql])=>/UPDATE tasks/.test(sql))).toBe(false);
+    });
+    it.each([{task_type:'initiative_plan',payload:{}},{task_type:'architecture_scan',payload:{skill_override:'/decomp'}}])('%s 拒绝历史规划或旧技能覆盖 %j',async (oldTask)=>{
+      Object.assign(task,oldTask);
+      const r=endpoint==='task' ? await request(app).post('/api/brain/tasks/phone-task/dispatch').send({}) : await request(app).post('/api/brain/dispatch-now').send({task_id:'phone-task'});
+      expect(r.status).toBe(410); expect(task.status).toBe('queued'); expect(mocks.trigger).not.toHaveBeenCalled();
+    });
+  }
+  it('known 仍走普通开发可用性门', async () => {
+    task.task_type='dev'; task.payload={decomposition:'known'};
+    const r=await request(app).post('/api/brain/tasks/phone-task/dispatch').send({});
+    expect(r.status).toBe(503); expect(mocks.available).toHaveBeenCalledOnce();
+  });
+  it('已在途的旧拆解请求被拒绝但不覆盖任务状态', async () => {
+    task.task_type='dev'; task.status='in_progress'; task.payload={decomposition:'true'};
+    const r=await request(app).post('/api/brain/dispatch-now').send({task_id:'phone-task'});
+    expect(r.status).toBe(410); expect(task.status).toBe('in_progress');
+    expect(mocks.trigger).not.toHaveBeenCalled();
+    expect(mocks.query.mock.calls.some(([sql])=>/UPDATE tasks/.test(sql))).toBe(false);
+  });
+  it('秋米专用执行面的同名标记不应触发旧拆解拒绝', async () => {
+    task.payload={decomposition:'true'};
+    const r=await request(app).post('/api/brain/tasks/phone-task/dispatch').send({});
+    expect(r.status).toBe(202); expect(mocks.route).toHaveBeenCalledOnce();
+  });
+  it('脚本专用执行面的同名标记不应触发旧拆解拒绝', async () => {
+    task.task_type='script_run'; task.payload={next_action:'decompose'};
+    mocks.available.mockResolvedValue({available:true});
+    mocks.trigger.mockResolvedValue({success:true,runId:'script-run'});
+    const r=await request(app).post('/api/brain/tasks/phone-task/dispatch').send({});
+    expect(r.status).toBe(202); expect(mocks.trigger).toHaveBeenCalledOnce();
   });
 });

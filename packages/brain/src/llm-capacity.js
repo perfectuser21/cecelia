@@ -206,8 +206,19 @@ export async function getLlmCapacitySnapshot(opts = {}) {
     vendors.grok = buildVendorLedger('grok', [], error.message);
   }
 
-  const anyAvailable = Object.values(vendors).some((ledger) => ledger.available_count > 0);
-  const sentinel = errors.length > 0 ? 'degraded' : (anyAvailable ? 'ok' : 'exhausted');
+  // 退役的 Claude CLI 不可被执行器选择；保留账本和错误供历史诊断，
+  // 但它既不能让现役容量假绿，也不能让现役容量因旧采集器失败而降级。
+  const activeEntries = Object.entries(vendors)
+    .filter(([vendor]) => vendor !== 'claude' || !CLAUDE_CHANNEL_RETIRED);
+  // 账本装载器正常返回 degradedReason 时不会抛异常，依然必须显示降级。
+  for (const [vendor, ledger] of activeEntries) {
+    const detail = `${vendor}:${ledger.error}`;
+    if (ledger.poller === 'error' && ledger.error && !errors.includes(detail)) errors.push(detail);
+  }
+  const activeLedgers = activeEntries.map(([, ledger]) => ledger);
+  const activeErrors = errors.filter((error) => !CLAUDE_CHANNEL_RETIRED || !error.startsWith('claude:'));
+  const anyAvailable = activeLedgers.some((ledger) => ledger.available_count > 0);
+  const sentinel = activeErrors.length > 0 ? 'degraded' : (anyAvailable ? 'ok' : 'exhausted');
   const snapshot = {
     sampled_at: new Date().toISOString(),
     cache_ttl_ms: CACHE_TTL_MS,

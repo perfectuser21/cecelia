@@ -9,6 +9,8 @@
  */
 
 import pool from './db.js';
+import { ALLOWED_CHANGE_TYPES, ALLOWED_TASK_FIELDS, BULK_THRESHOLD, validateChange, validateChanges } from './lib/proposal-validation.js';
+import { rollbackAppliedProposal } from './lib/proposal-rollback.js';
 import { createTask } from './actions.js';
 import { addTaskDependency, removeTaskDependency } from './lib/task-dependencies.js';
 
@@ -16,22 +18,6 @@ import { addTaskDependency, removeTaskDependency } from './lib/task-dependencies
 // Constants
 // ============================================================
 
-const ALLOWED_CHANGE_TYPES = new Set([
-  'create_task',
-  'update_task',
-  'set_focus',
-  'add_dependency',
-  'remove_dependency',
-  'split_task',
-  'merge_tasks',
-]);
-
-const ALLOWED_TASK_FIELDS = new Set([
-  'priority', 'next_run_at', 'scheduled_for', 'title', 'description',
-  'goal_id', 'project_id', 'task_type', 'status',
-]);
-
-const BULK_THRESHOLD = 5;
 const RATE_LIMIT_WINDOW_MS = 60_000;
 const RATE_LIMIT_MAX = 20;
 
@@ -41,74 +27,6 @@ const rateLimitBuckets = new Map();
 // ============================================================
 // Validation Layer
 // ============================================================
-
-/**
- * Validate a single change object.
- * @param {Object} change - { type, ...params }
- * @returns {{ valid: boolean, errors: string[] }}
- */
-function validateChange(change) {
-  const errors = [];
-
-  if (!change || typeof change !== 'object') {
-    return { valid: false, errors: ['change must be an object'] };
-  }
-
-  if (!ALLOWED_CHANGE_TYPES.has(change.type)) {
-    errors.push(`action type "${change.type}" not in whitelist. Allowed: ${[...ALLOWED_CHANGE_TYPES].join(', ')}`);
-  }
-
-  if (change.type === 'update_task' && change.fields) {
-    for (const field of Object.keys(change.fields)) {
-      if (!ALLOWED_TASK_FIELDS.has(field)) {
-        errors.push(`field "${field}" not allowed for update_task`);
-      }
-    }
-  }
-
-  if (change.type === 'create_task') {
-    if (!change.title) errors.push('create_task requires title');
-    if (!change.project_id) errors.push('create_task requires project_id');
-  }
-
-  if (change.type === 'add_dependency' || change.type === 'remove_dependency') {
-    if (!change.task_id) errors.push(`${change.type} requires task_id`);
-    if (!change.depends_on_id) errors.push(`${change.type} requires depends_on_id`);
-  }
-
-  if (change.type === 'set_focus') {
-    if (!change.objective_id) errors.push('set_focus requires objective_id');
-  }
-
-  return { valid: errors.length === 0, errors };
-}
-
-/**
- * Validate all changes in a proposal.
- * @param {Array} changes
- * @returns {{ valid: boolean, errors: string[], requires_review: boolean }}
- */
-function validateChanges(changes) {
-  if (!Array.isArray(changes) || changes.length === 0) {
-    return { valid: false, errors: ['changes must be a non-empty array'], requires_review: false };
-  }
-
-  const allErrors = [];
-  for (let i = 0; i < changes.length; i++) {
-    const result = validateChange(changes[i]);
-    if (!result.valid) {
-      allErrors.push(...result.errors.map(e => `changes[${i}]: ${e}`));
-    }
-  }
-
-  const requires_review = changes.length > BULK_THRESHOLD;
-
-  return {
-    valid: allErrors.length === 0,
-    errors: allErrors,
-    requires_review,
-  };
-}
 
 /**
  * Pure graph cycle detection (no DB dependency — testable).
@@ -483,73 +401,9 @@ async function applyProposal(proposalId) {
   };
 }
 
-/**
- * Rollback an applied proposal using the stored snapshot.
- * @param {string} proposalId
- * @returns {Object} Rollback result
- */
+/** Roll back via the current canonical pool; public exports and callers remain unchanged. */
 async function rollbackProposal(proposalId) {
-  const proposal = await getProposal(proposalId);
-  if (!proposal) throw new Error('Proposal not found');
-  if (proposal.status !== 'applied') {
-    throw new Error(`Cannot rollback proposal in status "${proposal.status}"`);
-  }
-
-  const snapshot = proposal.snapshot || {};
-  const results = [];
-
-  // Restore tasks from snapshot
-  for (const [taskId, taskData] of Object.entries(snapshot.tasks || {})) {
-    try {
-      await pool.query(`
-        UPDATE tasks SET priority = $2, status = $3, payload = $4, updated_at = NOW()
-        WHERE id = $1
-      `, [taskId, taskData.priority, taskData.status, taskData.payload || {}]);
-      results.push({ task_id: taskId, restored: true });
-    } catch (err) {
-      results.push({ task_id: taskId, restored: false, error: err.message });
-    }
-  }
-
-  // Restore focus if snapshotted
-  if (snapshot.focus !== undefined) {
-    if (snapshot.focus === null) {
-      await pool.query("DELETE FROM working_memory WHERE key = 'daily_focus_override'");
-    } else {
-      await pool.query(`
-        INSERT INTO working_memory (key, value_json, updated_at)
-        VALUES ('daily_focus_override', $1, NOW())
-        ON CONFLICT (key) DO UPDATE SET value_json = $1, updated_at = NOW()
-      `, [snapshot.focus]);
-    }
-    results.push({ focus: 'restored' });
-  }
-
-  // Delete tasks created by this proposal
-  const changes = proposal.changes || [];
-  for (const change of changes) {
-    if (change.type === 'create_task') {
-      const created = await pool.query(
-        "SELECT id FROM tasks WHERE payload->>'proposal_id' = $1",
-        [proposalId]
-      );
-      for (const row of created.rows) {
-        await pool.query("DELETE FROM tasks WHERE id = $1 AND status = 'queued'", [row.id]);
-        results.push({ task_id: row.id, deleted: true });
-      }
-    }
-  }
-
-  await pool.query(`
-    UPDATE proposals SET status = 'rolled_back', rolled_back_at = NOW(), updated_at = NOW()
-    WHERE id = $1
-  `, [proposalId]);
-
-  return {
-    proposal_id: proposalId,
-    status: 'rolled_back',
-    results,
-  };
+  return rollbackAppliedProposal(pool, proposalId, getProposal);
 }
 
 /**

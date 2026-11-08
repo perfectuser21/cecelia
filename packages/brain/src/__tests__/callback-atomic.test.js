@@ -1,188 +1,19 @@
-/**
- * Callback Atomic Tests
- * Tests that execution-callback uses DB transactions for atomic updates
- */
-
-import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
-
-// Mock client for transactions — hoisted 确保 routes.js 加载时获得同一实例
-const mockClient = vi.hoisted(() => ({ query: vi.fn(), release: vi.fn() }));
-
-// Mock pool — hoisted 确保 routes.js 加载时获得同一实例
-const mockPool = vi.hoisted(() => ({
-  query: vi.fn(),
-  connect: vi.fn(() => mockClient),
-}));
-vi.mock('../db.js', () => ({ default: mockPool }));
-
-// Mock executor
-vi.mock('../executor.js', () => ({
-  getActiveProcesses: vi.fn(() => []),
-  getActiveProcessCount: vi.fn(() => 0),
-  checkCeceliaRunAvailable: vi.fn(async () => ({ available: true })),
-  removeActiveProcess: vi.fn(),
-  probeTaskLiveness: vi.fn(async () => []),
-  syncOrphanTasksOnStartup: vi.fn(async () => ({ orphans_found: 0, orphans_fixed: 0, rebuilt: 0 })),
-  recordHeartbeat: vi.fn(async () => ({ success: true })),
-}));
-
-// Mock other imports that routes.js needs
-vi.mock('../actions.js', () => ({
-  createTask: vi.fn(),
-  updateTask: vi.fn(),
-  createGoal: vi.fn(),
-  updateGoal: vi.fn(),
-  triggerN8n: vi.fn(),
-  setMemory: vi.fn(),
-  batchUpdateTasks: vi.fn(),
-}));
-vi.mock('../focus.js', () => ({
-  getDailyFocus: vi.fn(),
-  setDailyFocus: vi.fn(),
-  clearDailyFocus: vi.fn(),
-  getFocusSummary: vi.fn(),
-}));
-vi.mock('../tick.js', () => ({
-  getTickStatus: vi.fn(),
-  enableTick: vi.fn(),
-  disableTick: vi.fn(),
-  executeTick: vi.fn(),
-  runTickSafe: vi.fn(async () => ({ actions_taken: [] })),
-  routeTask: vi.fn(),
-  TASK_TYPE_AGENT_MAP: {},
-}));
-vi.mock('../task-router.js', () => ({
-  getInternalTaskHandler: vi.fn(() => null),
-  identifyWorkType: vi.fn(),
-  getTaskLocation: vi.fn(),
-  routeTaskCreate: vi.fn(),
-  getValidTaskTypes: vi.fn(),
-  LOCATION_MAP: {},
-}));
-vi.mock('../okr-tick.js', () => ({
-  executeOkrTick: vi.fn(),
-  runOkrTickSafe: vi.fn(),
-  startOkrTickLoop: vi.fn(),
-  stopOkrTickLoop: vi.fn(),
-  getOkrTickStatus: vi.fn(),
-  addQuestionToGoal: vi.fn(),
-  answerQuestionForGoal: vi.fn(),
-  getPendingQuestions: vi.fn(),
-  OKR_STATUS: {},
-}));
-vi.mock('../nightly-tick.js', () => ({
-  executeNightlyAlignment: vi.fn(),
-  runNightlyAlignmentSafe: vi.fn(),
-  startNightlyScheduler: vi.fn(),
-  stopNightlyScheduler: vi.fn(),
-  getNightlyTickStatus: vi.fn(),
-  getDailyReports: vi.fn(),
-}));
-vi.mock('../intent.js', () => ({
-  parseIntent: vi.fn(),
-  parseAndCreate: vi.fn(),
-  INTENT_TYPES: {},
-  INTENT_ACTION_MAP: {},
-  extractEntities: vi.fn(),
-  classifyIntent: vi.fn(),
-  getSuggestedAction: vi.fn(),
-}));
-vi.mock('../templates.js', () => ({
-  generatePrdFromTask: vi.fn(),
-  generatePrdFromGoalKR: vi.fn(),
-  generateTrdFromGoal: vi.fn(),
-  generateTrdFromGoalKR: vi.fn(),
-  validatePrd: vi.fn(),
-  validateTrd: vi.fn(),
-  prdToJson: vi.fn(),
-  trdToJson: vi.fn(),
-  PRD_TYPE_MAP: {},
-}));
-vi.mock('../decision.js', () => ({
-  compareGoalProgress: vi.fn(),
-  generateDecision: vi.fn(),
-  executeDecision: vi.fn(),
-  getDecisionHistory: vi.fn(),
-  rollbackDecision: vi.fn(),
-}));
-vi.mock('../planner.js', () => ({
-  planNextTask: vi.fn(),
-  getPlanStatus: vi.fn(),
-  handlePlanInput: vi.fn(),
-}));
-vi.mock('../event-bus.js', () => ({
-  ensureEventsTable: vi.fn(),
-  queryEvents: vi.fn(),
-  getEventCounts: vi.fn(),
-  emit: vi.fn(),
-}));
-vi.mock('../circuit-breaker.js', () => ({
-  getState: vi.fn(),
-  reset: vi.fn(),
-  getAllStates: vi.fn(),
-  recordSuccess: vi.fn(),
-  recordFailure: vi.fn(),
-}));
-vi.mock('../notifier.js', () => ({
-  notifyTaskCompleted: vi.fn(async () => {}),
-  notifyTaskFailed: vi.fn(async () => {}),
-}));
-// isolate:false 修复：不在顶层 await import，改为 beforeAll + vi.resetModules()
-let router;
-
-beforeAll(async () => {
-  vi.resetModules();
-  const mod = await import('../routes.js');
-  router = mod.default;
-});
-
-// Helper to simulate express request/response
-function mockReqRes(method, path, body = {}) {
-  return new Promise((resolve) => {
-    const req = { method, path, body, query: {}, params: {} };
-    const resData = { statusCode: 200, body: null };
-    const res = {
-      status: (code) => { resData.statusCode = code; return res; },
-      json: (data) => { resData.body = data; resolve(resData); },
-    };
-
-    const layers = router.stack.filter(layer => {
-      if (!layer.route) return false;
-      const routePath = layer.route.path;
-      const routeMethod = Object.keys(layer.route.methods)[0];
-      return routePath === path && routeMethod === method.toLowerCase();
-    });
-
-    if (layers.length === 0) {
-      resolve({ statusCode: 404, body: { error: 'Not found' } });
-      return;
-    }
-
-    const handler = layers[0].route.stack.at(-1).handle; // 末位 = 业务 handler（前置鉴权中间件另测）
-    handler(req, res).catch(err => {
-      resData.statusCode = 500;
-      resData.body = { error: err.message };
-      resolve(resData);
-    });
-  });
-}
+/** 真实execution HTTP事务/参数合同；数据库及后置依赖均record-only。 */
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { mockClient, mockPool, mockReqRes, transactionPhases, callbackPoolResponse } from './helpers/callback-atomic-fixture.js';
 
 describe('execution-callback atomicity', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockClient.query.mockResolvedValue({ rows: [], rowCount: 0 });
-    mockPool.query.mockResolvedValue({ rows: [], rowCount: 0 });
+    mockClient.query.mockImplementation(async sql => ({ rows: [],
+      rowCount: sql.includes('UPDATE tasks') || sql.includes('INSERT INTO decision_log') ? 1 : null }));
+    mockPool.query.mockImplementation(callbackPoolResponse);
   });
 
   it('should use BEGIN/COMMIT transaction for callback processing', async () => {
     // Mock the pool.query for progress rollup (after transaction)
     // 幂等性检查 (decision_log) 必须返回空 rows，否则会提前 return duplicate
-    mockPool.query.mockImplementation((sql) => {
-      if (typeof sql === 'string' && sql.includes('decision_log')) {
-        return Promise.resolve({ rows: [], rowCount: 0 });
-      }
-      return Promise.resolve({ rows: [{ goal_id: null }], rowCount: 1 });
-    });
+    mockPool.query.mockImplementation(callbackPoolResponse);
 
     const result = await mockReqRes('POST', '/execution-callback', {
       task_id: 'task-tx-1',
@@ -194,15 +25,52 @@ describe('execution-callback atomicity', () => {
     });
 
     expect(result.statusCode).toBe(200);
+    expect(result.body.duplicate).not.toBe(true);
+    expect(transactionPhases()).toEqual(['BEGIN', 'UPDATE', 'INSERT', 'COMMIT']);
+    const params = mockClient.query.mock.calls[2][1];
+    expect(params[0]).toBe('execution-callback');
+    expect(JSON.parse(params[2])).toEqual({ task_id: 'task-tx-1', run_id: 'run-tx-1', status: 'AI Done', iterations: 1 });
+    expect(params.slice(4)).toEqual(['success', 'run-tx-1', 'AI Done']);
 
-    // Verify transaction pattern: BEGIN → UPDATE → INSERT → COMMIT
-    // Note: after the callback's transaction, thalamus/decision-executor may run
-    // additional transactions on the same mockClient, so we check that COMMIT
-    // appears after BEGIN (not necessarily as the very last call).
+    // 真实事务四阶段已在上方精确断言；下列保留原BEGIN/COMMIT兼容检查。
     const clientCalls = mockClient.query.mock.calls;
     expect(clientCalls[0][0]).toBe('BEGIN');
     const commitCalls = clientCalls.filter(c => typeof c[0] === 'string' && c[0] === 'COMMIT');
     expect(commitCalls.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('UPDATE零行提交后返回CAS duplicate，绝不INSERT日志', async () => {
+    mockClient.query.mockResolvedValue({ rows: [], rowCount: 0 });
+    const response = await mockReqRes('POST', '/execution-callback', {
+      task_id: 'task-cas-duplicate', run_id: 'run-cas-duplicate', status: 'AI Done',
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toMatchObject({ success: true, duplicate: true, reason: 'callback_compare_and_set_rejected' });
+    expect(transactionPhases()).toEqual(['BEGIN', 'UPDATE', 'COMMIT']);
+    expect(mockClient.release).toHaveBeenCalledOnce();
+  });
+
+  it('已记同run/status的日志在事务前duplicate，不UPDATE或INSERT', async () => {
+    mockPool.query.mockImplementation(async sql => ({ rows: sql.includes('FROM decision_log') ? [{ id: 'owned-log' }] : [], rowCount: 1 }));
+    const response = await mockReqRes('POST', '/execution-callback', {
+      task_id: 'task-log-duplicate', run_id: 'run-log-duplicate', status: 'AI Done',
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toMatchObject({ success: true, duplicate: true });
+    expect(mockPool.connect).not.toHaveBeenCalled();
+    expect(mockClient.query).not.toHaveBeenCalled();
+  });
+
+  it('UPDATE成功后INSERT日志失败必须ROLLBACK而不能COMMIT', async () => {
+    mockClient.query.mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [], rowCount: 1 })
+      .mockRejectedValueOnce(Error('owned decision log failure'));
+    const response = await mockReqRes('POST', '/execution-callback', {
+      task_id: 'task-insert-failure', run_id: 'run-insert-failure', status: 'AI Done',
+    });
+    expect(response.statusCode).toBe(500);
+    expect(transactionPhases()).toEqual(['BEGIN', 'UPDATE', 'INSERT', 'ROLLBACK']);
+    expect(mockClient.release).toHaveBeenCalledOnce();
   });
 
   it('should ROLLBACK on transaction error', async () => {
@@ -240,10 +108,7 @@ describe('execution-callback atomicity', () => {
   it('UPDATE tasks should use boolean $6 for completed_at, not reuse $2 in CASE WHEN', async () => {
     // Regression test: "inconsistent types deduced for parameter $2 (text vs character varying)"
     // The fix extracts isCompleted as a separate boolean param ($6) to avoid $2 type ambiguity.
-    mockPool.query.mockImplementation((sql) => {
-      if (typeof sql === 'string' && sql.includes('decision_log')) return Promise.resolve({ rows: [], rowCount: 0 });
-      return Promise.resolve({ rows: [{ goal_id: null }], rowCount: 1 });
-    });
+    mockPool.query.mockImplementation(callbackPoolResponse);
 
     await mockReqRes('POST', '/execution-callback', {
       task_id: 'task-sql-type',
@@ -277,10 +142,7 @@ describe('execution-callback atomicity', () => {
   });
 
   it('isCompleted should be false for AI Failed status', async () => {
-    mockPool.query.mockImplementation((sql) => {
-      if (typeof sql === 'string' && sql.includes('decision_log')) return Promise.resolve({ rows: [], rowCount: 0 });
-      return Promise.resolve({ rows: [{ goal_id: null }], rowCount: 1 });
-    });
+    mockPool.query.mockImplementation(callbackPoolResponse);
 
     await mockReqRes('POST', '/execution-callback', {
       task_id: 'task-failed-type',
@@ -305,11 +167,9 @@ describe('execution-callback atomicity', () => {
 describe('execution-callback findings storage (D1/D2/D3)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockClient.query.mockResolvedValue({ rows: [], rowCount: 0 });
-    mockPool.query.mockImplementation((sql) => {
-      if (typeof sql === 'string' && sql.includes('decision_log')) return Promise.resolve({ rows: [], rowCount: 0 });
-      return Promise.resolve({ rows: [{ goal_id: null }], rowCount: 1 });
-    });
+    mockClient.query.mockImplementation(async sql => ({ rows: [],
+      rowCount: sql.includes('UPDATE tasks') || sql.includes('INSERT INTO decision_log') ? 1 : null }));
+    mockPool.query.mockImplementation(callbackPoolResponse);
   });
 
   function getUpdateParams() {
@@ -426,11 +286,9 @@ describe('execution-callback findings storage (D1/D2/D3)', () => {
 describe('execution-callback pr_number 提取 (DoD-4)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockClient.query.mockResolvedValue({ rows: [], rowCount: 0 });
-    mockPool.query.mockImplementation((sql) => {
-      if (typeof sql === 'string' && sql.includes('decision_log')) return Promise.resolve({ rows: [], rowCount: 0 });
-      return Promise.resolve({ rows: [{ goal_id: null }], rowCount: 1 });
-    });
+    mockClient.query.mockImplementation(async sql => ({ rows: [],
+      rowCount: sql.includes('UPDATE tasks') || sql.includes('INSERT INTO decision_log') ? 1 : null }));
+    mockPool.query.mockImplementation(callbackPoolResponse);
   });
 
   it('从 pr_url 提取 pr_number 并作为 $8 参数传给 SQL', async () => {

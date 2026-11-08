@@ -30,7 +30,7 @@ describe('codex-bridge callbackBrain 内部鉴权头', () => {
     }
     // 隔离宿主机 ~/.credentials/cecelia-internal.env，避免测试结果随机器变
     process.env.CECELIA_INTERNAL_ENV_FILE = '/nonexistent/cecelia-internal.env';
-    fetchMock = vi.fn(async () => ({ ok: true, status: 200 }));
+    fetchMock = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ success: true }) }));
     vi.stubGlobal('fetch', fetchMock);
   });
 
@@ -49,7 +49,8 @@ describe('codex-bridge callbackBrain 内部鉴权头', () => {
   it('配置 CECELIA_INTERNAL_TOKEN 时，回调 execution-callback 带 Authorization: Bearer <token>', async () => {
     process.env.CECELIA_INTERNAL_TOKEN = TOKEN;
 
-    await bridge.callbackBrain(TASK_ID, null, 'completed', 'ok', 123, RUN_ID);
+    const acknowledgement = await bridge.callbackBrain(TASK_ID, null, 'completed', 'ok', 123, RUN_ID);
+    expect(acknowledgement.outcome).toBe('acknowledged');
 
     const calls = callbackFetchCalls(fetchMock);
     expect(calls).toHaveLength(1);
@@ -63,7 +64,8 @@ describe('codex-bridge callbackBrain 内部鉴权头', () => {
   it('未配置 token 时不带 Authorization（非 production 本机回环仍可放行）', async () => {
     delete process.env.CECELIA_INTERNAL_TOKEN;
 
-    await bridge.callbackBrain(TASK_ID, null, 'failed', 'boom', 5, RUN_ID);
+    const acknowledgement = await bridge.callbackBrain(TASK_ID, null, 'failed', 'boom', 5, RUN_ID);
+    expect(acknowledgement.outcome).toBe('acknowledged');
 
     const [, init] = callbackFetchCalls(fetchMock)[0];
     expect(init.headers['Content-Type']).toBe('application/json');

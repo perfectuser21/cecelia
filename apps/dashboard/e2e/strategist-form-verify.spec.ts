@@ -157,63 +157,11 @@ test.describe('AC-2: 拍板卡无裸UUID有选项按钮', () => {
   });
 });
 
-// ─── AC-3: 对话超时保护（Fix-3）──────────────────────────────────────────────
-
-test.describe('AC-3: 对话发消息不永久停留加载中', () => {
-  test('对话面板空态显示友好文字，不永久停留加载中', async ({ page }) => {
-    // 进入含对话面板的页面（warroom 或 strategist 子页）
+// 旧议题对话已退役：原加载超时回归保留为入口退役验证。
+test.describe('AC-3: 旧议题对话入口已退役', () => {
+  test('战略页面不再显示失效对话入口', async ({ page }) => {
     await waitForPageReady(page, `${DASHBOARD_URL}/strategist/${LINE_WITH_DATA}`);
-
-    // 切换到「对话」页签
-    const convTab = page.locator('button, [role="tab"]').filter({ hasText: '对话' });
-    if (await convTab.count() > 0) {
-      await convTab.first().click();
-    }
-
-    // 等待最多 30s，确保「加载中…」不永久停留
-    await page.waitForTimeout(2000);
-
-    // 截图存档
-    await page.screenshot({
-      path: 'sprints/08051144-relay-184c6da1/screenshots/ac3-conversation.png',
-      fullPage: true,
-    });
-
-    const bodyText = await page.textContent('body') ?? '';
-
-    // [BEHAVIOR-3] 断言：不永久停留「加载中…」
-    // 如果仍有加载中，等待更长时间再检查
-    if (bodyText.includes('加载中')) {
-      await page.waitForTimeout(5000);
-      const bodyTextAfterWait = await page.textContent('body') ?? '';
-      // 10s 超时后应已完成加载
-      const stillLoading = bodyTextAfterWait.includes('加载中') &&
-        !bodyTextAfterWait.includes('暂无消息') &&
-        !bodyTextAfterWait.includes('发送第一条');
-      expect(stillLoading).toBe(false);
-    }
-
-    // 若消息列表为空，断言显示空态文字
-    const hasEmptyState =
-      bodyText.includes('暂无消息') ||
-      bodyText.includes('发送第一条') ||
-      bodyText.includes('暂无');
-    const hasMessages = bodyText.includes('消息') && !bodyText.includes('加载中');
-
-    // 至少满足一种：有空态文字 或 有消息内容
-    expect(hasEmptyState || hasMessages).toBe(true);
-  });
-
-  test('ConversationsPanel 源码有 AbortController 超时保护', async () => {
-    // 静态代码检查：验证 Fix-3 已实现
-    const { execSync } = await import('child_process');
-    const result = execSync(
-      'grep -c "AbortController\\|abort\\|暂无消息" ' +
-      '/workspace/apps/dashboard/src/pages/warroom/ConversationsPanel.tsx',
-      { encoding: 'utf8' }
-    ).trim();
-    const matchCount = parseInt(result, 10);
-    expect(matchCount).toBeGreaterThanOrEqual(2);
+    await expect(page.getByRole('button', { name: '对话', exact: true })).toHaveCount(0);
   });
 });
 

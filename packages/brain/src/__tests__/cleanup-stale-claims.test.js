@@ -153,7 +153,7 @@ describe('cleanupStaleClaims', () => {
   });
 
   describe('self-PID cleanup（容器重启 PID 复用场景）', () => {
-    it('新鲜 claim（< 60 min）且 claimed_by = selfClaimerId → 被无条件清除', async () => {
+    it('新鲜self claim无有效lease的恢复回执计数', async () => {
       const mockQuery = vi.fn()
         // Call 1: self-PID UPDATE → cleaned 1 row
         .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'task-1' }] })

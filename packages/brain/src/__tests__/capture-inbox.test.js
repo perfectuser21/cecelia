@@ -141,3 +141,12 @@ describe('pushCapture 幂等（F6加厚回归 — Contract ed911a7c）', () => {
     expect(pool.query.mock.calls[0][0]).toMatch(/INSERT INTO captures/);
   });
 });
+
+it('atom写失败以明确标记返回非致命结果，与合法去重空行区分', async () => {
+  const pool = { query: vi.fn()
+    .mockResolvedValueOnce({ rows: [{ id: 'captured', inserted: false }] })
+    .mockRejectedValueOnce(Error('owned atom write failed')) };
+  await expect(pushCapture(pool, { content: 'retry atom', targetType: 'notes', dedupeKey: 'owned-key' }))
+    .resolves.toEqual({ captureId: 'captured', atomId: null, dedupeHit: true, atomWriteFailed: true });
+  expect(pool.query).toHaveBeenCalledTimes(2);
+});

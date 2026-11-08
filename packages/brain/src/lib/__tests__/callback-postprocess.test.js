@@ -54,3 +54,78 @@ describe('writeReviewResult(5c8b)', () => {
     expect(writeCall).toBeUndefined();
   });
 });
+
+describe('writeReviewResult 不伪造审核通过', () => {
+  function reviewPool(taskType = 'decomp_review') {
+    const writes = [];
+    return {
+      writes,
+      query: vi.fn(async (sql, params) => {
+        if (sql.startsWith('SELECT task_type')) return { rows: [{ task_type: taskType, payload: { parent_task_id: 'parent' } }] };
+        writes.push({ sql, text: params[0], taskId: params[1] });
+        return { rows: [], rowCount: 1 };
+      }),
+    };
+  }
+
+  it.each([null, {}, { summary: '没有结论' }, { decision: '' }])('缺失结论 %j 不能伪造通过或覆盖原结果', async result => {
+    const pool = reviewPool('spec_review');
+    await writeReviewResult('child', result, pool);
+    expect(pool.writes).toEqual([]);
+  });
+
+  it.each([
+    [{ verdict: 'rejected' }, 'rejected'],
+    [{ result: { verdict: 'needs_revision' } }, 'needs_revision'],
+  ])('旧审查明确 verdict %j 必须真实反映在自身和父任务', async (result, verdict) => {
+    const pool = reviewPool();
+    await writeReviewResult('child', result, pool);
+    expect(pool.writes.map(w => w.taskId)).toEqual(['child', 'parent']);
+    for (const write of pool.writes) {
+      expect(write.text).toContain(`决定: ${verdict}`);
+      expect(write.text).not.toContain('决定: PASS');
+    }
+  });
+
+  it.each([
+    { decision: 'PASS', verdict: 'rejected' },
+    { decision: 'CHANGES_REQUESTED', verdict: 'approved' },
+    { decision: 'NEEDS_FIX', verdict: 'approved' },
+  ])('结论互相冲突时不猜测或覆盖既有结果 %j', async result => {
+    const pool = reviewPool('code_review');
+    await writeReviewResult('child', result, pool);
+    expect(pool.writes).toEqual([]);
+  });
+
+  it.each([{ decision: 'PASS', l1_count: 1 }, { decision: 'PASS', l2_count: '1' }])('通过与待修问题数冲突时不覆盖既有结果 %j', async result => {
+    const pool = reviewPool('code_review');
+    await writeReviewResult('child', result, pool);
+    expect(pool.writes).toEqual([]);
+  });
+
+  it('未提供 L1/L2 数量不能伪称没有问题', async () => {
+    const pool = reviewPool('code_review');
+    await writeReviewResult('child', { decision: 'PASS' }, pool);
+    expect(pool.writes[0].text).not.toContain('L1问题: 0');
+    expect(pool.writes[0].text).not.toContain('L2问题: 0');
+  });
+
+  it.each([
+    { decision: 'PASS', verdict: false },
+    { decision: 'PASS', verdict: { value: 'rejected' } },
+    { decision: 'PASS', verdict: '' },
+    { decision: 'PASS', l1_count: 'invalid' },
+  ])('显式畸形结论或问题数量不能被忽略为通过 %j', async result => {
+    const pool = reviewPool('code_review');
+    await writeReviewResult('child', result, pool);
+    expect(pool.writes).toEqual([]);
+  });
+
+  it.each(['PASS', 'NEEDS_FIX', 'CRITICAL_BLOCK', 'TEST_BLOCK'])('现役代码审核 decision=%s 保持原意', async decision => {
+    const pool = reviewPool('code_review');
+    await writeReviewResult('child', { decision, summary: '实际审查' }, pool);
+    expect(pool.writes.map(w => w.taskId)).toEqual(['child', 'parent']);
+    expect(pool.writes[0].text).toContain(`决定: ${decision}`);
+    expect(pool.writes[0].text).toContain('摘要: 实际审查');
+  });
+});

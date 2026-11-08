@@ -152,7 +152,7 @@ describe('dispatchNextTask — no_executor HOL skip (issue 0014cd42)', () => {
     // 默认 DB mock：claim 总是成功；释放 claim 记账；full-task fetch 返回对应候选行
     mockQuery.mockImplementation((sql, params) => {
       if (/UPDATE tasks SET claimed_by\s*=\s*\$1/.test(sql)) {
-        return Promise.resolve({ rows: [{ id: params[1] }] });
+        return Promise.resolve({ rows: [{ id: params[1], claim_stamp: '2026-11-07 00:00:00.123456+00' }] });
       }
       if (/UPDATE tasks SET claimed_by\s*=\s*NULL/.test(sql)) {
         releasedClaimIds.push(params[0]);
@@ -167,6 +167,10 @@ describe('dispatchNextTask — no_executor HOL skip (issue 0014cd42)', () => {
       }
       if (/FROM work_routing_receipts receipt/.test(sql)) {
         return Promise.resolve({ rows: [canonicalRoutingReceipt(HARNESS_TASK)] });
+      }
+      if (/SET payload = COALESCE\(payload/.test(sql)) {
+        expect(params[3]).toBe('2026-11-07 00:00:00.123456+00');
+        return Promise.resolve({ rows: [], rowCount: 1 });
       }
       return Promise.resolve({ rows: [], rowCount: 0 });
     });

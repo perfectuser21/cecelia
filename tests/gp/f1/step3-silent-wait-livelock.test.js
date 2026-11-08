@@ -1,3 +1,4 @@
+import { effects } from './helpers/silent-wait-effects.js';
 // F1「工厂 · 开发闭环」步骤 3「造完真验」—— 边：静默等待活锁（r80 run 5100560e 案卷）
 //
 // 真相（08-30 复盘，推翻"控制循环半死"的初判）：hop 206 Commander 提案（dispatch_role
@@ -379,6 +380,7 @@ describe('③ loop：人审去重只认未裁决的请求', () => {
     expect(deps.dispatch).not.toHaveBeenCalled();
     expect(appended).toHaveLength(0);
     expect(sleeps).toHaveLength(1);
+    expect(effects.raise).not.toHaveBeenCalled();
   });
 
   it('纯函数：humanReviewRequestDecided 只认 review_request_hop 指回该请求行的裁决', () => {
@@ -418,6 +420,10 @@ describe('④ loop：静默等待 ≥15 分钟必须落行 + 发事件唤醒 Com
     expect(result.exitReason).toBe('run_done');
     const stallRows = appended.filter((entry) => entry.action === LOG_ACTION.WAIT_STALLED);
     expect(stallRows).toHaveLength(1);
+    expect(effects.raise).toHaveBeenCalledTimes(1);
+    expect(effects.raise).toHaveBeenCalledWith('P1', 'kernel_wait_stalled',
+      `Kernel run 静默等待 20min（human_review_pending）：run=${RUN_ID} task=${TASK_ID} last=${LOG_ACTION.HUMAN_REVIEW_REQUESTED}@2`);
+
     expect(stallRows[0].detail).toMatchObject({
       last_hop: 2,
       last_action: LOG_ACTION.HUMAN_REVIEW_REQUESTED,

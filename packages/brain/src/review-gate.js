@@ -150,16 +150,19 @@ async function createReviewTask(pool, { entityType, entityId, entityName, parent
  * @param {string} verdict - 'approved' | 'needs_revision' | 'rejected'
  * @param {Object} findings - 审查发现（JSON）
  */
-async function processReviewResult(pool, taskId, verdict, findings, taskCreator = createTask) {
+async function processReviewResult(pool, taskId, verdict, findings) {
+  if (!['approved', 'needs_revision', 'rejected'].includes(verdict)) {
+    throw new Error('decomp_review verdict missing or invalid');
+  }
   // 1. 查找关联的 review 记录
   const reviewResult = await pool.query(
-    `SELECT id, entity_type, entity_id FROM decomp_reviews WHERE task_id = $1`,
+    `SELECT id, entity_type, entity_id FROM decomp_reviews WHERE task_id = $1 FOR UPDATE`,
     [taskId]
   );
 
-  if (reviewResult.rows.length === 0) {
-    console.warn(`[review-gate] No review record found for task ${taskId}`);
-    return;
+  if (reviewResult.rows.length !== 1) {
+    console.warn(`[review-gate] Expected one review for task ${taskId}, got ${reviewResult.rows.length}`);
+    return false;
   }
 
   const { id: reviewId, entity_type: entityType, entity_id: entityId } = reviewResult.rows[0];
@@ -172,7 +175,7 @@ async function processReviewResult(pool, taskId, verdict, findings, taskCreator 
 
   console.log(`[review-gate] Review ${reviewId} verdict: ${verdict} for ${entityType} ${entityId}`);
 
-  if (entityType !== 'project') return;
+  if (entityType !== 'project') return true;
 
   // 3. 根据 verdict 执行后续动作
   if (verdict === 'approved') {
@@ -184,41 +187,8 @@ async function processReviewResult(pool, taskId, verdict, findings, taskCreator 
     console.log(`[review-gate] Entity ${entityId} activated (approved)`);
 
   } else if (verdict === 'needs_revision') {
-    // 创建修正 decomp task
-    const entityRow = await pool.query(
-      `SELECT name, kr_id FROM projects WHERE id = $1`, [entityId]
-    );
-    const entityName = entityRow.rows[0]?.name || 'Unknown';
-    const krId = entityRow.rows[0]?.kr_id || null;
-
-    const revisionTask = await taskCreator({
-      db: pool,
-      source: 'child',
-      source_id: `decomposition-revision:${reviewId}`,
-      title: `修正拆解: ${entityName}`,
-      description: [
-          `Vivian 审查发现问题，请修正「${entityName}」的拆解。`,
-          '',
-          `审查发现:`,
-          JSON.stringify(findings || {}, null, 2),
-          '',
-          '请根据审查意见修正拆解结构。',
-        ].join('\n'),
-      project_id: entityId,
-      goal_id: krId,
-      task_type: 'project_plan',
-      priority: 'P0',
-      trigger_source: 'brain_auto',
-      allow_unscoped: true,
-      payload: {
-          decomposition: 'true',
-          revision: true,
-          review_id: reviewId,
-          entity_type: entityType,
-          entity_id: entityId,
-      },
-    });
-    console.log(`[review-gate] Created revision task ${revisionTask.task.id} for ${entityName}`);
+    // project_plan 已退役：保留审核结论与发现，项目状态维持待处理。
+    console.log(`[review-gate] Review ${reviewId} requires revision; legacy project_plan is retired`);
 
   } else if (verdict === 'rejected') {
     // 标记实体 blocked
@@ -228,6 +198,7 @@ async function processReviewResult(pool, taskId, verdict, findings, taskCreator 
     );
     console.log(`[review-gate] Entity ${entityId} blocked (rejected)`);
   }
+  return true;
 }
 
 export {

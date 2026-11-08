@@ -159,7 +159,8 @@ export async function runDailyConsolidation(pool, opts = {}) {
   let summary;
   try {
     const prompt = buildConsolidationPrompt({ memories, learnings, tasks, date: today });
-    const raw = await callLLM('cortex', prompt, { maxTokens: 800 });
+    const response = await callLLM('cortex', prompt, { maxTokens: 800 });
+    const raw = typeof response === 'string' ? response : response?.text;
     const jsonMatch = raw.match(/\{[\s\S]*\}/);
     summary = jsonMatch ? JSON.parse(jsonMatch[0]) : { date: today, note: raw.slice(0, 500) };
   } catch (err) {

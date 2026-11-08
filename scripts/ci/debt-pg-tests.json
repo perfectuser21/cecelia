@@ -210,6 +210,36 @@
       "path": "packages/brain/src/routes/__tests__/harness-feature-propagation.test.js",
       "mode": "full",
       "status": "ready"
+    },
+    {
+      "path": "packages/brain/src/__tests__/integration/actions-dispatch-cas.pg.integration.test.js",
+      "mode": "full",
+      "status": "ready"
+    },
+    {
+      "path": "packages/brain/src/__tests__/integration/stale-claim-snapshot.pg.integration.test.js",
+      "mode": "full",
+      "status": "ready"
+    },
+    {
+      "path": "packages/brain/src/__tests__/integration/active-lease-cleanup.pg.integration.test.js",
+      "mode": "full",
+      "status": "ready"
+    },
+    {
+      "path": "packages/brain/src/__tests__/integration/codex-slot-accounting.pg.integration.test.js",
+      "mode": "full",
+      "status": "ready"
+    },
+    {
+      "path": "packages/brain/src/__tests__/integration/retired-decomposition-cas.pg.integration.test.js",
+      "mode": "full",
+      "status": "ready"
+    },
+    {
+      "path": "packages/brain/src/__tests__/integration/retired-registry-manual-race.pg.integration.test.js",
+      "mode": "full",
+      "status": "ready"
     }
   ]
 }

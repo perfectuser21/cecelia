@@ -57,7 +57,7 @@ const checks = [
   ['src/routes/task-tasks.js', ['assertGoalIsKeyResult(pool, goal_id)', 'assertOwnerDecisionProtocol(', 'normalizeDependsOn(', 'registerTaskDependencyRoutes(']],
   ['src/work-routing-store.js', ['assertGoalIsKeyResult(client', 'assertOwnerDecisionProtocol(', 'openOwnerDecisionPendingAction(', 'addTaskDependencies(client']],
   ['src/task-updater.js', ['assertOwnerDecisionProtocol({ reason, detail })', 'closeOwnerDecisionPendingAction(']],
-  ['src/routes/tasks.js', [\"result.code === 'owner_decision_protocol_violation'\"]],
+  ['src/routes/tasks-inspection.js', [\"result.code === 'owner_decision_protocol_violation'\"]],
   ['src/proposal.js', ['addTaskDependency(pool', 'removeTaskDependency(pool']],
 ];
 let fail = false;

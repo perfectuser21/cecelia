@@ -40,6 +40,7 @@ function getOfflineGraceMs() {
 const _cache = new Map();
 
 let _refreshTimer = null;
+let _refreshGeneration = 0;
 
 /**
  * 采集一台机器的资源状态
@@ -116,16 +117,36 @@ async function collectServerStats(server, prevLastPingAt) {
  * 刷新所有编程机器的缓存
  */
 async function refreshFleetCache() {
-  const computeServers = (current()?.nodes??[]).map(n=>({id:n.canonical_id,name:n.name}));
+  let computeServers;
+  try {
+    const snapshot = current();
+    // 未发布/过期/不可读不代表成功空目录，保留之前的样本直到其自然过期。
+    if (!snapshot || !Array.isArray(snapshot.nodes)) return;
+    computeServers = snapshot.nodes.map(node => {
+      if (!node || typeof node.canonical_id !== 'string' || !node.canonical_id) {
+        throw new Error('fleet_directory_nodes_invalid');
+      }
+      return { id: node.canonical_id, name: node.name };
+    });
+  } catch {
+    console.warn('[fleet-cache] 目录不可用，保留现有缓存');
+    return;
+  }
 
-  const _results = await Promise.allSettled(
-    computeServers.map(async (server) => {
-      const prevEntry = _cache.get(server.id);
-      const prevLastPingAt = prevEntry?.last_ping_at ?? null;
-      const entry = await collectServerStats(server, prevLastPingAt);
+  const generation = ++_refreshGeneration;
+  const currentIds = new Set(computeServers.map(server => server.id));
+  // 成功读取的成员关系立即生效，不能等其它worker采样结束才撤掉旧容量。
+  for (const id of _cache.keys()) if (!currentIds.has(id)) _cache.delete(id);
+  await Promise.allSettled(computeServers.map(async server => {
+    const prevLastPingAt = _cache.get(server.id)?.last_ping_at ?? null;
+    const entry = await collectServerStats(server, prevLastPingAt);
+    // 保持原逐节点发布节奏，但只允许最新有效目录一轮写回。
+    if (generation === _refreshGeneration) {
       _cache.set(server.id, { ...entry, id: server.id, role: server.role });
-    })
-  );
+    }
+  }));
+  // 较旧的并发采样不能复活已删除节点，或覆盖较新离线/健康结果。
+  if (generation !== _refreshGeneration) return;
 
   const online = [..._cache.values()].filter(e => e.online).length;
   const total = computeServers.length;

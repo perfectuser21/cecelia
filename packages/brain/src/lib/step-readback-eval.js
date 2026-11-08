@@ -6,6 +6,9 @@
  */
 const OPS = new Set(['==', '!=', '>=', '<=', '>', '<', 'not_null_all']);
 
+const missingValue = value => value == null || (typeof value === 'string' && value.trim() === '');
+const comparableScalar = value => typeof value === 'number' || typeof value === 'string';
+
 const unwrap = observed => (observed && typeof observed === 'object' && !Array.isArray(observed) && 'value' in observed ? observed.value : observed);
 
 export function evaluateReadback(readback, observed) {
@@ -22,6 +25,9 @@ export function evaluateReadback(readback, observed) {
   }
 
   const value = unwrap(observed);
+  if (missingValue(value)) return { verdict: 'unknown', reason: 'no_observation' };
+  if (missingValue(expect.value)) return { verdict: 'unknown', reason: 'no_expect_value' };
+  if (!comparableScalar(value) || !comparableScalar(expect.value)) return { verdict: 'unknown', reason: 'not_comparable' };
   const left = Number(value), right = Number(expect.value);
   if (expect.op === '==' || expect.op === '!=') {
     const equal = Number.isFinite(left) && Number.isFinite(right) ? left === right : String(value) === String(expect.value);

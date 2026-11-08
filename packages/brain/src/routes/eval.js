@@ -22,7 +22,7 @@ import path from 'path';
 import fs from 'fs';
 import pool from '../db.js';
 import { createTask } from '../actions.js';
-import { finalizeTask } from '../lib/task-terminal.js';
+import { finalizeTask, afterTerminalTransition } from '../lib/task-terminal.js';
 import {
   validateZipBuffer,
   computeZipHash,
@@ -336,6 +336,7 @@ router.get('/staging/:task_id', requireEvalProxyToken, async (req, res) => {
 // ─── POST /api/skill-eval/complete（内部回调，发布脚本调用）──────────────────
 
 router.post('/complete', requireEvalProxyToken, async (req, res) => {
+  let client;
   try {
     const { task_id, report_url, report_data } = req.body;
 
@@ -343,8 +344,11 @@ router.post('/complete', requireEvalProxyToken, async (req, res) => {
       return res.status(400).json({ error: 'task_id and report_url required' });
     }
 
+    client = await pool.connect();
+    await client.query('BEGIN');
+
     // 回写 skill_evals（report_data body 传了才写，未传保留原值）
-    await pool.query(
+    const evaluation = await client.query(
       `UPDATE skill_evals
        SET status = 'completed',
            report_url = $1,
@@ -354,13 +358,33 @@ router.post('/complete', requireEvalProxyToken, async (req, res) => {
       [report_url, report_data ? JSON.stringify(report_data) : null, task_id]
     );
 
-    // 回写 tasks（终态经 task-terminal 收口 → 接棒）
-    await finalizeTask(pool, task_id, 'completed', { set: { result: { report_url } } });
+    if (!(evaluation.rowCount > 0)) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'skill evaluation not found' });
+    }
+
+    // 零行还可能是终态权限门拒绝，不能绕过它或留下单边 completed。
+    const terminal = await finalizeTask(client, task_id, 'completed', {
+      set: { result: { report_url } }, relay: false,
+    });
+    if (!(terminal.rowCount > 0)) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'task completion not applied' });
+    }
+    await client.query('COMMIT');
+    // 先归还事务连接，池只有一个连接时接棒也不能被自己阻塞。
+    client.release();
+    client = null;
+    // 接棒使用池并在提交后执行，保留统一终态钩子与原重发合同。
+    await afterTerminalTransition(pool, task_id, 'completed');
 
     return res.json({ ok: true, task_id, report_url });
   } catch (err) {
+    if (client) await client.query('ROLLBACK').catch(() => {});
     console.error('[skill-eval] complete callback error:', err.message);
     return res.status(500).json({ error: err.message });
+  } finally {
+    client?.release();
   }
 });
 

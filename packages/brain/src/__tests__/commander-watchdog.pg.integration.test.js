@@ -61,7 +61,14 @@ describe.skipIf(!DB_AVAILABLE)('commander-watchdog — pg 集成（真实 SQL，
     const id = await insertRun({ payload: { serial, source: 'cron', wf_id: 'device-boundary', leads: 1 }, status: 'completed' });
     await client.query(`UPDATE tasks SET completed_at = $2::timestamptz AT TIME ZONE 'UTC' WHERE id = $1`, [id, new Date(completedAt).toISOString()]);
   }
-  const ssh = () => vi.fn((c, a, o, cb) => cb(null, '{"id": "esc-it-0001"}', ''));
+  const ssh = () => vi.fn((command, args, options, callback) => {
+    expect(command).toBe('ssh');
+    const remote = args.at(-1);
+    if (remote === 'openclaw cron list --json') return callback(null, '{"jobs":[]}', '');
+    if (remote.startsWith('openclaw cron rm ')) return callback(null, '{}', '');
+    if (remote.startsWith('openclaw cron add ')) return callback(null, '{"id":"esc-it-0001"}', '');
+    throw new Error('unexpected record-only SSH command');
+  });
 
   it('心跳：tag 命中写 payload；账本 run_id LIKE %-<TAG>__% 命中；serial 唯一命中；起跑登记落 working_memory 后被心跳合并', async () => {
     const byTag = await insertRun({ payload: { serial: 'S-TAG', source: 'cron', tag: 'cmd09300201' } });
@@ -106,6 +113,35 @@ describe.skipIf(!DB_AVAILABLE)('commander-watchdog — pg 集成（真实 SQL，
     // 刚接班的（commander_relaunched_at 新）下一轮不再拉
     const again = await runCommanderWatchdog(client, { execFileFn: ssh(), bark, gateMs: 0 });
     expect(again.relaunched).toBe(0);
+  });
+
+  it.each([
+    ['transport', '', 'cron_list_unavailable'],
+    ['malformed', '{bad-json', 'cron_list_invalid'],
+    ['missing-jobs', '{}', 'cron_list_invalid'],
+    ['add-receipt-is-not-list', '{"id":"esc-it-0001"}', 'cron_list_invalid'],
+  ])('未知列表 %s：真实PG保留旧escort且仅落失败事件', async (kind, reply, error) => {
+    const id = await insertRun({ payload: { serial: 'S-UNKNOWN', source: 'cron', tag: 'cmdUnknown',
+      host: 'xian-m4', profile: 'p', escort_id: 'esc-old-known' } });
+    const commands = [];
+    const execFileFn = vi.fn((command, args, options, callback) => {
+      expect(command).toBe('ssh');
+      const remote = args.at(-1); commands.push(remote);
+      if (remote === 'openclaw cron list --json') return callback(kind === 'transport' ? new Error('owned transport failure') : null, reply, '');
+      if (remote.startsWith('openclaw cron rm ')) return callback(null, '{}', '');
+      if (remote.startsWith('openclaw cron add ')) return callback(null, '{"id":"esc-it-0001"}', '');
+      throw new Error('unexpected record-only SSH command');
+    });
+    const bark = vi.fn().mockResolvedValue(true);
+    expect(await runCommanderWatchdog(client, { execFileFn, bark, gateMs: 0 })).toMatchObject({ failed: 1, relaunched: 0, adopted: 0 });
+    expect(commands).toEqual(['openclaw cron list --json']);
+    const { rows: [stored] } = await client.query('SELECT payload FROM tasks WHERE id=$1', [id]);
+    expect(stored.payload.escort_id).toBe('esc-old-known');
+    expect(stored.payload.commander_relaunch_count).toBeUndefined();
+    expect(stored.payload.commander_relaunched_at).toBeTruthy();
+    const { rows: events } = await client.query('SELECT event_type, payload FROM task_events WHERE task_id=$1', [id]);
+    expect(events).toEqual([{ event_type: 'commander_relaunch_failed', payload: expect.objectContaining({ error, tag: 'cmdUnknown' }) }]);
+    expect(bark).not.toHaveBeenCalled();
   });
 
   it.each(['actual-clock', 'beijing-midnight'])('趋势 SQL（%s）：按北京自然日分组，连续两天零线索的 wf 叫、有线索的不叫；phone_registry 24h 无 completed 叫', async (scenario) => {

@@ -95,7 +95,7 @@ if (!/export\s+(async\s+)?function\s+pushHandoffAtom/.test(h)) {
   console.error('FAIL: handoff.js 未导出 pushHandoffAtom');
   process.exit(1);
 }
-const t = fs.readFileSync('packages/brain/src/routes/tasks.js', 'utf8');
+const t = fs.readFileSync('packages/brain/src/routes/tasks-status.js', 'utf8');
 if (!t.includes('pushHandoffAtom')) {
   console.error('FAIL: routes/tasks.js PATCH 未接线 pushHandoffAtom');
   process.exit(1);

@@ -270,6 +270,23 @@ describe('handlePrMerged', () => {
     vi.clearAllMocks();
   });
 
+  it.each(['goal', 'project'])('dev 无 PR 任务收到可信合并后按 %s 刷新 KR', async (source) => {
+    const task = { id: 'task-no-pr', title: 'dev', status: 'completed_no_pr', task_type: 'dev',
+      goal_id: source === 'goal' ? 'kr-1' : null, project_id: source === 'project' ? 'project-1' : null };
+    const client = { query: vi.fn().mockResolvedValue({ rows: [{ id: task.id }], rowCount: 1 }), release: vi.fn() };
+    const pool = { connect: vi.fn().mockResolvedValue(client), query: vi.fn(async (sql) => {
+      if (sql.includes("status = 'in_progress'")) return { rows: [] };
+      if (sql.includes("status IN ('completed', 'completed_no_pr')")) return { rows: [task] };
+      if (sql.includes('FROM projects')) return { rows: [{ kr_id: 'kr-1' }] };
+      if (sql.includes('SELECT id, title, status, priority')) return { rows: [{ ...task, status: 'completed', result: { handoff: { schema_version: 1, next_steps: [] } } }] };
+      return { rows: [] };
+    }) };
+    const result = await handlePrMerged(pool, prInfo);
+    const { updateKrProgress } = await import('../kr-progress.js');
+    expect(result.krProgressUpdated).toBe(true);
+    expect(updateKrProgress).toHaveBeenCalledWith(pool, 'kr-1');
+  });
+
   it('应该成功更新任务状态为 completed 并更新 KR 进度', async () => {
     const mockTask = {
       id: 'task-uuid-1',

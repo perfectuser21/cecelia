@@ -251,11 +251,11 @@ export async function runBypassDailyRollup(pool, deps = {}) {
     const threshold = barkThreshold(kind);
     if (counts[kind] < threshold) continue;
     try {
-      await sendBark('旁路对外动作告警', `${day} ${KIND_LABEL[kind]}未经 Brain 任务 ${counts[kind]} 次（阈值 ${threshold}），明细见运维视图 /api/brain/bypass-actions/summary`, {
+      const sent = await sendBark('旁路对外动作告警', `${day} ${KIND_LABEL[kind]}未经 Brain 任务 ${counts[kind]} 次（阈值 ${threshold}），明细见运维视图 /api/brain/bypass-actions/summary`, {
         dedupeKey: `bypass-alert:${day}:${kind}`,
         dedupeTtlSec: 2 * 86400,
       });
-      barked.push(kind);
+      if (sent === true) barked.push(kind);
     } catch (e) {
       console.warn('[bypass-audit] Bark 失败（不影响汇总）:', String(e?.message).slice(0, 160));
     }

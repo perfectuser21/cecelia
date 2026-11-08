@@ -97,7 +97,7 @@ describe('完成态闸认不认请求里带的 pr_url', () => {
  */
 describe('降级时的回执必须诚实', () => {
   const SRC = readFileSync(
-    new URL('../routes/tasks.js', import.meta.url), 'utf8',
+    new URL('../routes/tasks-status.js', import.meta.url), 'utf8',
   );
 
   it('success 字段不得在降级时恒为 true', () => {

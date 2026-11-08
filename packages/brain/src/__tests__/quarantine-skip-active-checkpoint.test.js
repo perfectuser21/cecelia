@@ -1,3 +1,4 @@
+import { effects } from './helpers/quarantine-process-boundary.js';
 /**
  * Tests for ACTIVE-CHECKPOINT guard in handleTaskFailure.
  *
@@ -19,12 +20,14 @@ vi.mock('../db.js', () => ({
 
 let handleTaskFailure;
 let hasActiveCheckpoint;
+let hasActiveContainer;
 let pool;
 
 beforeAll(async () => {
   const mod = await import('../quarantine.js');
   handleTaskFailure = mod.handleTaskFailure;
   hasActiveCheckpoint = mod.hasActiveCheckpoint;
+  hasActiveContainer = mod.hasActiveContainer;
   pool = (await import('../db.js')).default;
 });
 
@@ -66,6 +69,7 @@ describe('handleTaskFailure — active checkpoint 守卫', () => {
 
     expect(result.quarantined).toBe(false);
     expect(result.skipped_active).toBe(true);
+    expect(effects.exec).not.toHaveBeenCalled();
     expect(result.failure_count).toBe(0);
 
     // 只有 1 次 query（checkpoints 查询），没有后续 SELECT tasks / UPDATE
@@ -95,6 +99,7 @@ describe('handleTaskFailure — active checkpoint 守卫', () => {
     expect(result.quarantined).toBe(false);
     expect(result.skipped_active).toBeUndefined();
     expect(result.failure_count).toBe(1);
+    expect(effects.exec).toHaveBeenCalledTimes(1);
 
     // 至少有 1 次 UPDATE（失败计数）
     const updates = pool.query.mock.calls.filter(c => String(c[0]).includes('UPDATE'));
@@ -109,6 +114,26 @@ describe('handleTaskFailure — active checkpoint 守卫', () => {
     const result = await handleTaskFailure('task-active-003', { skipCount: true });
 
     expect(result.skipped_active).toBe(true);
+    expect(effects.exec).not.toHaveBeenCalled();
     expect(pool.query.mock.calls.length).toBe(1);
+  });
+});
+
+// 合成stdout驱动真实handleTaskFailure，不将Docker桩本身当作活跃判据。
+describe('受控execFile消费真实容器探针', () => {
+  it('匹配当前任务容器stdout → 跳过隔离，且不继续读写任务', async () => {
+    pool.query.mockResolvedValueOnce({ rows: [] });
+    effects.exec.mockResolvedValueOnce({ stdout: 'cecelia-task-123456789abc-owned\n', stderr: '' });
+    const result = await handleTaskFailure('12345678-9abc-def0-1234-56789abcdef0');
+    expect(result).toMatchObject({ quarantined: false, skipped_active: true, reason: 'active_container' });
+    expect(pool.query).toHaveBeenCalledTimes(1);
+    expect(effects.exec).toHaveBeenCalledTimes(1);
+  });
+
+  it('受控命令拒绝保持原探针false结果，不触DB', async () => {
+    effects.exec.mockRejectedValueOnce(Error('synthetic docker unavailable'));
+    expect(await hasActiveContainer('12345678-9abc-def0-1234-56789abcdef0')).toBe(false);
+    expect(pool.query).not.toHaveBeenCalled();
+    expect(effects.exec).toHaveBeenCalledTimes(1);
   });
 });

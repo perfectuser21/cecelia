@@ -21,8 +21,12 @@ const PANORAMA: OpsPanoramaData = {
           { id: 'account3', available: false, five_hour_pct: 85 },
         ],
       },
-      codex: { available_count: 1, total_count: 5, accounts: [] },
-      grok: { available_count: 0, total_count: 2, accounts: [] },
+      codex: { available_count: 1, total_count: 1, poller: 'ok', accounts: [
+        { id: 'team1', name: 'team1', available: true, used_percent: 30, source: 'ledger:usable:fresh' },
+      ] },
+      grok: { available_count: 0, total_count: 1, poller: 'ok', accounts: [
+        { id: 'grok', name: 'grok', available: false, used_percent: 100, source: 'ledger:unusable:exhausted' },
+      ] },
     },
   },
 };
@@ -96,16 +100,16 @@ describe('OpsPanoramaCard 真实组件', () => {
     [80, '#f59e0b'], [81, '#ef4444'], [85, '#ef4444'],
   ])('BEHAVIOR-19: 使用率 %s 的账号显示对应颜色 %s', async (pct, color) => {
     respond({ ...PANORAMA, llm_capacity: {
-      sentinel: 'ok', vendors: { claude: {
-        available_count: 1, total_count: 1,
-        accounts: [{ id: 'boundary', name: '边界账号', available: true, five_hour_pct: pct }],
+      sentinel: 'ok', vendors: { codex: {
+        available_count: 1, total_count: 1, poller: 'ok',
+        accounts: [{ id: 'boundary', name: '边界账号', available: true, used_percent: pct, source: 'ledger:usable:fresh' }],
       } },
     } });
     await showCard();
-    const bar = screen.getByRole('progressbar', { name: 'boundary usage' });
+    const bar = screen.getByRole('progressbar', { name: '边界账号 usage' });
     expect(bar).toHaveAttribute('aria-valuenow', String(pct));
     expect(bar.firstElementChild).toHaveStyle({ background: color, width: `${pct}%` });
-    expect(screen.getByText('边界账号')).toBeInTheDocument();
+    expect(screen.getByTestId('ops-panorama-account-codex-边界账号')).toHaveTextContent('边界账号');
     expect(screen.getByText(`${pct}%`)).toBeInTheDocument();
   });
 
@@ -123,8 +127,67 @@ describe('OpsPanoramaCard 真实组件', () => {
     respond({ ...PANORAMA, relay: { container_count: null }, llm_capacity: null });
     await showCard();
     expect(screen.getByTestId('ops-panorama-relay')).toHaveTextContent('—');
-    expect(screen.queryByText('LLM 容量')).not.toBeInTheDocument();
+    expect(screen.getByTestId('ops-panorama-llm-status')).toHaveTextContent('未知');
     expect(screen.getByRole('progressbar', { name: 'CPU' })).toHaveAttribute('aria-valuenow', '55.2');
+  });
+
+  it('现役容量独立于退役 Claude 展示，未知额度不能当成可用', async () => {
+    respond({ ...PANORAMA, llm_capacity: {
+      sentinel: 'ok', vendors: {
+        codex: { available_count: 2, total_count: 2, poller: 'ok', accounts: [
+          { id: 'team1', name: 'team1', available: true, source: 'ledger:usable:fresh', used_percent: 34 },
+          { id: 'team2', name: 'team2', available: true, source: 'ledger:unknown:no_quota_snapshot', used_percent: null },
+        ] },
+        grok: { available_count: 0, total_count: 1, poller: 'ok', accounts: [
+          { id: 'grok', name: 'grok', available: false, source: 'ledger:unusable:exhausted', used_percent: 100 },
+        ] },
+      },
+    } } as unknown as OpsPanoramaData);
+    await showCard();
+    expect(screen.getByTestId('ops-panorama-llm-capacity')).toHaveTextContent('Codex');
+    expect(screen.getByTestId('ops-panorama-llm-capacity')).toHaveTextContent('Grok');
+    expect(screen.getByTestId('ops-panorama-account-codex-team1')).toHaveTextContent('34%');
+    expect(screen.getByTestId('ops-panorama-account-codex-team2')).toHaveTextContent('未知');
+    expect(screen.getByTestId('ops-panorama-account-grok-grok')).toHaveTextContent('不可用');
+    expect(screen.queryByTestId('ops-panorama-account-claude-account1')).not.toBeInTheDocument();
+  });
+
+  it('现役账本加载失败时显示未知，不展示正常状态', async () => {
+    respond({ ...PANORAMA, llm_capacity: { sentinel: 'ok', vendors: {
+      codex: { available_count: 5, total_count: 5, poller: 'error', accounts: [] },
+      grok: { available_count: 0, total_count: 0, poller: 'error', accounts: [] },
+    } } } as unknown as OpsPanoramaData);
+    await showCard();
+    expect(screen.getByTestId('ops-panorama-llm-status')).toHaveTextContent('未知');
+    expect(screen.getByTestId('ops-panorama-vendor-codex')).toHaveTextContent('未知');
+  });
+
+  it('旧 Claude 假绿不能掩盖 Codex 和 Grok 全部耗尽', async () => {
+    respond({ ...PANORAMA, llm_capacity: { sentinel: 'ok', vendors: {
+      claude: { available_count: 1, total_count: 1, accounts: [{ id: 'old', available: true }] },
+      codex: { available_count: 0, total_count: 1, poller: 'ok', accounts: [
+        { id: 'team1', name: 'team1', available: false, source: 'ledger:unusable:exhausted', used_percent: 100 },
+      ] },
+      grok: { available_count: 0, total_count: 1, poller: 'ok', accounts: [
+        { id: 'grok', name: 'grok', available: false, source: 'ledger:unusable:exhausted', used_percent: 100 },
+      ] },
+    } } });
+    await showCard();
+    expect(screen.getByTestId('ops-panorama-llm-status')).toHaveTextContent('不可用');
+  });
+
+  it('账号认证失效时汇总显示不可用而不是误称额度耗尽', async () => {
+    respond({ ...PANORAMA, llm_capacity: { sentinel: 'exhausted', vendors: {
+      codex: { available_count: 0, total_count: 1, poller: 'ok', accounts: [
+        { id: 'team1', name: 'team1', available: false, source: 'ledger:unusable:credential_invalid', used_percent: null },
+      ] },
+      grok: { available_count: 0, total_count: 1, poller: 'ok', accounts: [
+        { id: 'grok', name: 'grok', available: false, source: 'ledger:unusable:credential_invalid', used_percent: null },
+      ] },
+    } } });
+    await showCard();
+    expect(screen.getByTestId('ops-panorama-llm-status')).toHaveTextContent('不可用');
+    expect(screen.queryByText('已耗尽')).not.toBeInTheDocument();
   });
 
   it('请求失败时保留上次成功数据，下次轮询仍能恢复', async () => {

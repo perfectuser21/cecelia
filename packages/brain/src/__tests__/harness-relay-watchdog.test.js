@@ -1,183 +1,9 @@
-import './helpers/execution-directory-fixture.js';
-/**
- * relay watchdog（重点火循环产品化）+ PATCH phase 白名单扩展（进度条数据源）。
- *
- * 背景（eval-1 实证）：relay session 会在 25-47 turns 后自判完成早退（prompt 拦不住），
- * 根治 = 外部有界重点火——外部真相接续已四次实证，重点火即免费恢复。
- * relay-loop.sh 雏形一轮收敛；本文件将其产品化进 harness watchdog 独立循环。
- */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-
-const { mockPool, mockRaise } = vi.hoisted(() => ({
-  mockPool: { query: vi.fn() },
-  mockRaise: vi.fn(),
-}));
-vi.mock('../db.js', () => ({ default: mockPool }));
-vi.mock('../notifier.js', () => ({ sendBark: vi.fn().mockResolvedValue(true) }));
-vi.mock('../alerting.js', () => ({ raise: mockRaise }));
-vi.mock('../orchestrator/kernel-run-store.js', () => ({
-  patchKernelRunById: async (db, input) => {
-    await db.query(
-      `UPDATE initiative_runs SET phase='${input.phase}',
-         ${input.failureReason ? `failure_reason=COALESCE(failure_reason, '${input.failureReason}'),` : ''}
-         pr_url=COALESCE(pr_url, $2) WHERE id=$1`,
-      [input.runId, input.prUrl],
-    );
-    await db.query(
-      `UPDATE tasks SET status='${input.phase === 'done' ? 'completed' : 'failed'}'`,
-    );
-    return { id: input.runId, phase: input.phase };
-  },
-}));
-
+// 真实watchdog隔离合同；只验证委托，不宣称旧relay已恢复或DB持久化。
+import { describe, it, expect, vi } from 'vitest';
+import { store } from './helpers/relay-watchdog-boundary.js';
+import { makeDeps, TASK_ID, RUN_ID, SHORT, PR_URL } from './helpers/relay-watchdog-fixture.js';
 import { resumeStalledRelayRuns, MAX_RELAY_ATTEMPTS, scanStuckHarness } from '../harness-relay-watchdog.js';
 import { sendBark } from '../notifier.js';
-import { isLaunchDeferredReason } from '../lib/kernel-launch-deferral.js';
-import { createAttemptStore } from '../orchestrator/attempt-store.js';
-
-const TASK_ID = 'aaaabbbb-cccc-dddd-eeee-ffff00001111';
-const RUN_ID = '11111111-1111-4111-8111-111111111111';
-const CONTROLLER_SESSION_ID = '99999999-9999-4999-8999-999999999999';
-const SHORT = 'aaaabbbb';
-
-const PR_URL = 'https://github.com/org/repo/pull/42';
-
-function makeDeps({
-  taskStatus = 'in_progress',
-  attempts = 2,
-  containerRunning = false,
-  orchestrator = 'skill-relay',
-  prUrl = null,
-  prState = null,   // 'MERGED' | 'OPEN' | 'CLOSED' | null（execFn 返回的 gh pr view JSON）
-  orchestratorHost = 'skill-relay-session',
-  evaluatorGate = true, // initiative_run_events 是否存在 node='evaluator' AND status='done'
-  mergeStateStatus = undefined, // 'BEHIND' | 'CLEAN' | undefined（gh pr view mergeStateStatus）
-  ciChecks = undefined,         // CheckRow[] | undefined（gh pr checks --json state）
-  harnessRuntime = null,
-  latestAttempt = null,
-  orchestratorHeartbeatAt = null,
-  startedAt = null,
-} = {}) {
-  latestAttempt = latestAttempt ? {
-    run_id: RUN_ID, hop: 1, phase: 'evaluate', role: 'evaluator', machine_id: 'us-mac-m4',
-    lease_owner: 'dispatcher-parent', lease_generation: 0, ...latestAttempt,
-  } : null;
-  const pool = { query: vi.fn() };
-  pool.connect = async () => ({ query: (...args) => pool.query(...args), release: vi.fn() });
-  pool.query.mockImplementation(async (sql, params = []) => {
-    if (/FROM initiative_runs r(?:\s|$)/.test(sql)) {
-      return { rows: [{ id: RUN_ID, initiative_id: TASK_ID, current_task_id: TASK_ID, phase: 'planning', attempts: String(attempts), deadline_at: new Date(Date.now() + 3600e3).toISOString(), pr_url: prUrl, orchestrator_host: orchestratorHost, orchestrator_heartbeat_at: orchestratorHeartbeatAt, started_at: startedAt, controller_session_id: CONTROLLER_SESSION_ID, controller_generation: '1' }] };
-    }
-    if (/FROM tasks/.test(sql)) {
-      return { rows: [{ id: TASK_ID, status: taskStatus, title: 't', payload: { orchestrator, ...(harnessRuntime ? { harness_runtime: harnessRuntime } : {}) } }] };
-    }
-    if (/SELECT GREATEST\(/.test(sql)) {
-      return { rows: [{ next_hop: Number(latestAttempt?.hop ?? 1) + 1 }] };
-    }
-    if (/INSERT INTO orchestrator_decision_log/.test(sql)) {
-      return { rows: [{ hop: params[1] }] };
-    }
-    if (
-      /guarded_run AS MATERIALIZED \([\s\S]*inserted AS \(\s*INSERT INTO harness_attempts/.test(sql)
-    ) {
-      return {
-        rows: [{
-          attempt: {
-            id: params[0],
-            run_id: params[1],
-            hop: params[2],
-            status: 'queued',
-            local_container_naming: params[9],
-            task_bundle: params[13],
-            callback_secret_hash: params[14],
-            logical_cycle_id: params[15],
-            attempt_kind: params[16],
-            retry_of_attempt_id: params[17],
-          },
-          machine_capacity_contended: false,
-        }],
-      };
-    }
-    if (/UPDATE harness_attempts\s+SET callback_secret_hash/.test(sql)) {
-      return {
-        rows: [{
-          ...latestAttempt,
-          status: 'starting',
-          lease_owner: params[1],
-          lease_generation: params[3],
-          callback_secret_hash: params[2],
-        }],
-      };
-    }
-    if (/UPDATE harness_attempts\s+SET status = 'starting'/.test(sql)) {
-      if (/lease_generation = lease_generation \+ 1/.test(sql)) {
-        return {
-          rows: [{
-            ...latestAttempt,
-            status: 'starting',
-            lease_owner: params[1],
-            lease_generation: Number(latestAttempt?.lease_generation ?? 0) + 1,
-          }],
-        };
-      }
-      return {
-        rows: [{
-          id: params[0],
-          status: 'starting',
-          lease_owner: params[1],
-          lease_generation: 0,
-        }],
-      };
-    }
-    if (/UPDATE harness_attempts\s+SET status = \$2/.test(sql)) {
-      return {
-        rows: [{
-          ...latestAttempt,
-          status: params[1],
-          error_code: params[2],
-        }],
-      };
-    }
-    if (/FROM harness_attempts/.test(sql)) {
-      return { rows: latestAttempt ? [latestAttempt] : [] };
-    }
-    if (/FROM initiative_run_events/.test(sql)) {
-      return { rows: evaluatorGate ? [{ x: 1 }] : [] };
-    }
-    return { rows: [] };
-  });
-  const execFn = vi.fn().mockImplementation((cmd) => {
-    if (/docker ps/.test(cmd)) return containerRunning ? 'abc123\n' : '';
-    if (/gh pr view/.test(cmd) && prState) {
-      // 若命令含 mergeStateStatus 字段请求，则回传 mergeStateStatus（如提供）
-      if (/mergeStateStatus/.test(cmd) && mergeStateStatus !== undefined) {
-        return JSON.stringify({ state: prState, mergeStateStatus });
-      }
-      return JSON.stringify({ state: prState });
-    }
-    if (/gh pr checks/.test(cmd)) {
-      if (ciChecks !== undefined) return JSON.stringify(ciChecks);
-      return JSON.stringify([]);
-    }
-    return '';
-  });
-  return {
-    pool,
-    attemptStore: createAttemptStore(pool, { queryOnlyTestAdapter: true }),
-    collectCapacitySnapshot: async ({ machineId }) => ({ verified: true, machine: machineId, expires_at: Date.now() + 30_000,
-      capacity: { ok: true, physical_base_slots: 7, effective_base_slots: 7 } }),
-    launcher: { cancel: vi.fn(async ({ attempt }) => ({ status: 'cleaned', attempt_id: attempt.id })) },
-    execFn,
-    spawnFn: vi.fn().mockResolvedValue({ ok: true, containerId: 'cecelia-relay-x' }),
-  };
-}
-
-beforeEach(() => {
-  mockPool.query.mockReset();
-  mockRaise.mockReset();
-  mockRaise.mockResolvedValue(undefined);
-  sendBark.mockClear();
-});
 
 describe('scanStuckHarness — 逾期收尸 host 覆盖', () => {
   it('SQL host 过滤覆盖所有 skill-relay host(含 claude-headed/session)，非写死 skill-relay-codex = RED', async () => {
@@ -229,9 +55,7 @@ describe('scanStuckHarness — 逾期收尸 host 覆盖', () => {
     await scanStuckHarness({ pool, resolvePrHead });
 
     expect(resolvePrHead).toHaveBeenCalledWith(PR_URL);
-    expect(pool.query.mock.calls.some(
-      ([sql]) => /UPDATE initiative_runs/.test(sql) && /phase\s*=\s*'failed'/.test(sql),
-    )).toBe(false);
+    expect(store.patch).not.toHaveBeenCalled();
   });
 
   it('abandoned review whose request SHA no longer matches GitHub is collected', async () => {
@@ -241,9 +65,7 @@ describe('scanStuckHarness — 逾期收尸 host 覆盖', () => {
     await scanStuckHarness({ pool, resolvePrHead });
 
     expect(resolvePrHead).toHaveBeenCalledWith(PR_URL);
-    expect(pool.query.mock.calls.some(
-      ([sql]) => /UPDATE initiative_runs/.test(sql) && /phase\s*=\s*'failed'/.test(sql),
-    )).toBe(true);
+    expect(store.patch).toHaveBeenCalledWith(pool, expect.objectContaining({ runId: RUN_ID, phase: 'failed' }));
   });
 
   it('review request without a PR URL cannot pause deadline cleanup', async () => {
@@ -253,9 +75,7 @@ describe('scanStuckHarness — 逾期收尸 host 覆盖', () => {
     await scanStuckHarness({ pool, resolvePrHead });
 
     expect(resolvePrHead).not.toHaveBeenCalled();
-    expect(pool.query.mock.calls.some(
-      ([sql]) => /UPDATE initiative_runs/.test(sql) && /phase\s*=\s*'failed'/.test(sql),
-    )).toBe(true);
+    expect(store.patch).toHaveBeenCalledWith(pool, expect.objectContaining({ runId: RUN_ID, phase: 'failed' }));
   });
 
   it('GitHub resolver failure defers cleanup until a later watchdog pass', async () => {
@@ -267,9 +87,7 @@ describe('scanStuckHarness — 逾期收尸 host 覆盖', () => {
     await scanStuckHarness({ pool, resolvePrHead });
 
     expect(resolvePrHead).toHaveBeenCalledWith(PR_URL);
-    expect(pool.query.mock.calls.some(
-      ([sql]) => /UPDATE initiative_runs/.test(sql) && /phase\s*=\s*'failed'/.test(sql),
-    )).toBe(false);
+    expect(store.patch).not.toHaveBeenCalled();
   });
 });
 
@@ -334,29 +152,23 @@ describe('resumeStalledRelayRuns', () => {
     const r = await resumeStalledRelayRuns(deps);
     expect(deps.spawnFn).not.toHaveBeenCalled();
     expect(r.capped).toBe(1);
-    const updates = deps.pool.query.mock.calls.map(c => c[0]).filter(s => /UPDATE/.test(s));
-    expect(updates.some(s => /initiative_runs/.test(s) && /'failed'/.test(s))).toBe(true);
-    expect(updates.some(s => /UPDATE tasks/.test(s))).toBe(true);
+    expect(store.patch).toHaveBeenCalledWith(deps.pool, expect.objectContaining({ runId: RUN_ID, phase: 'failed' }));
   });
 
   it('task 已 completed → run 行收敛为 done（house-keeping），不重点火', async () => {
     const deps = makeDeps({ taskStatus: 'completed' });
     const r = await resumeStalledRelayRuns(deps);
     expect(deps.spawnFn).not.toHaveBeenCalled();
-    const updates = deps.pool.query.mock.calls.map(c => c[0]).filter(s => /UPDATE initiative_runs/.test(s));
-    expect(updates.some(s => /'done'/.test(s))).toBe(true);
+    expect(store.patch).toHaveBeenCalledWith(deps.pool, { runId: RUN_ID, phase: 'done', failureReason: null, prUrl: null });
     expect(r.housekept).toBe(1);
   });
 
   it.each(['cancelled', 'canceled'])(
-    'task %s → run 原子收敛 failed/task_cancelled 且保留任务取消态',
+    'task %s → 向store委托failed/task_cancelled（不宣称持久化）',
     async (taskStatus) => {
       const deps = makeDeps({ taskStatus });
       const r = await resumeStalledRelayRuns(deps);
-      const runUpdate = deps.pool.query.mock.calls.find(([sql]) => (
-        /UPDATE initiative_runs/.test(sql) && /task_cancelled/.test(sql)
-      ));
-      expect(runUpdate).toBeTruthy();
+      expect(store.patch).toHaveBeenCalledWith(deps.pool, { runId: RUN_ID, phase: 'failed', failureReason: 'task_cancelled', prUrl: null });
       expect(r.housekept).toBe(1);
       expect(deps.spawnFn).not.toHaveBeenCalled();
     },
@@ -375,7 +187,7 @@ describe('resumeStalledRelayRuns', () => {
     expect(deps.spawnFn).not.toHaveBeenCalled();
   });
 
-  it('容器消失 + pr_url 存在 + PR MERGED → 标 completed/done，不重点火', async () => {
+  it('容器消失 + pr_url 存在 + PR MERGED → 委托 done，不重点火', async () => {
     const deps = makeDeps({ prUrl: PR_URL, prState: 'MERGED' });
     const r = await resumeStalledRelayRuns(deps);
     expect(deps.spawnFn).not.toHaveBeenCalled();
@@ -384,11 +196,7 @@ describe('resumeStalledRelayRuns', () => {
     const ghCall = deps.execFn.mock.calls.find(c => /gh pr view/.test(c[0]));
     expect(ghCall).toBeTruthy();
     expect(ghCall[0]).toContain(PR_URL);
-    // task → completed
-    const updates = deps.pool.query.mock.calls.map(c => c[0]);
-    expect(updates.some(s => /UPDATE tasks/.test(s) && /'completed'/.test(s))).toBe(true);
-    // run → done
-    expect(updates.some(s => /UPDATE initiative_runs/.test(s) && /'done'/.test(s))).toBe(true);
+    expect(store.patch).toHaveBeenCalledWith(deps.pool, { runId: RUN_ID, phase: 'done', failureReason: null, prUrl: PR_URL });
     expect(r.mergedPr).toBe(1);
   });
 
@@ -468,8 +276,7 @@ describe('resumeStalledRelayRuns', () => {
     const r = await resumeStalledRelayRuns(deps);
     expect(deps.spawnFn).not.toHaveBeenCalled();
     const updates = deps.pool.query.mock.calls.map(c => c[0]);
-    expect(updates.some(s => /UPDATE initiative_runs/.test(s) && /'done'/.test(s) && /failure_reason/.test(s) && /merged_without_evaluator_gate/.test(s))).toBe(true);
-    expect(updates.some(s => /UPDATE tasks/.test(s) && /'completed'/.test(s))).toBe(true);
+    expect(store.patch).toHaveBeenCalledWith(deps.pool, { runId: RUN_ID, phase: 'done', failureReason: 'merged_without_evaluator_gate', prUrl: PR_URL });
     expect(r.mergedWithoutGate).toBe(1);
     expect(updates.some(s => /INSERT INTO issues/.test(s))).toBe(true);
     expect(sendBark).toHaveBeenCalled();
@@ -516,556 +323,5 @@ describe('PATCH phase 白名单扩展（进度条数据源）', () => {
     for (const ph of ['planning', 'gan', 'generate', 'evaluate', 'done', 'failed']) {
       expect(src, `PATCH 白名单缺 ${ph}`).toMatch(new RegExp(`ALLOWED[^\\]]*'${ph}'`));
     }
-  });
-});
-
-// ── 新增：pr_url fallback 链 + PATCH pr_url 写入 ─────────────────────
-
-describe('resumeStalledRelayRuns — pr_url fallback 链（#3560 跟进）', () => {
-  it('taskQ SELECT 含 pr_url 列', async () => {
-    // run.pr_url=null → 需要从 tasks.pr_url 取，所以 SELECT 必须含该列
-    const taskSqls = [];
-    const pool = {
-      query: vi.fn(async (sql) => {
-        if (/FROM initiative_runs r/.test(sql)) {
-          return { rows: [{ id: RUN_ID, initiative_id: TASK_ID, current_task_id: TASK_ID, phase: 'generate', attempts: '1', deadline_at: null, pr_url: null }] };
-        }
-        if (/FROM tasks/.test(sql)) {
-          taskSqls.push(sql);
-          return { rows: [{ id: TASK_ID, status: 'in_progress', title: 't', pr_url: null, payload: { orchestrator: 'skill-relay' } }] };
-        }
-        return { rows: [] };
-      }),
-    };
-    const execFn = vi.fn((cmd) => {
-      if (/docker ps/.test(cmd)) return '';
-      return '';
-    });
-    await resumeStalledRelayRuns({ pool, execFn, spawnFn: vi.fn().mockResolvedValue({ ok: true }) });
-    expect(taskSqls.length).toBeGreaterThan(0);
-    expect(taskSqls[0]).toMatch(/\bpr_url\b/);
-  });
-
-  it('run.pr_url=null，tasks.pr_url 有值 → MERGED → 标 completed，不重点火', async () => {
-    const TASK_PR = 'https://github.com/owner/repo/pull/42';
-    const updates = [];
-    const pool = {
-      query: vi.fn(async (sql, _params) => {
-        if (/FROM initiative_runs r/.test(sql)) {
-          return { rows: [{ id: RUN_ID, initiative_id: TASK_ID, current_task_id: TASK_ID, phase: 'generate', attempts: '1', deadline_at: null, pr_url: null }] };
-        }
-        if (/FROM tasks/.test(sql)) {
-          return { rows: [{ id: TASK_ID, status: 'in_progress', title: 't', pr_url: TASK_PR, payload: { orchestrator: 'skill-relay' } }] };
-        }
-        if (/UPDATE/.test(sql)) { updates.push(sql); return { rows: [{ id: TASK_ID }] }; }
-        return { rows: [] };
-      }),
-    };
-    const ghCalls = [];
-    const execFn = vi.fn((cmd) => {
-      if (/docker ps/.test(cmd)) return '';
-      if (/gh pr view/.test(cmd)) { ghCalls.push(cmd); return JSON.stringify({ state: 'MERGED' }); }
-      return '';
-    });
-    const spawnFn = vi.fn().mockResolvedValue({ ok: true });
-
-    const out = await resumeStalledRelayRuns({ pool, execFn, spawnFn });
-
-    expect(ghCalls.length).toBeGreaterThan(0);
-    expect(ghCalls[0]).toContain(TASK_PR);
-    expect(spawnFn).not.toHaveBeenCalled();
-    expect(out.mergedPr).toBe(1);
-    expect(updates.some((s) => /initiative_runs/.test(s) && /'done'/.test(s))).toBe(true);
-    expect(updates.some((s) => /UPDATE tasks/.test(s) && /'completed'/.test(s))).toBe(true);
-  });
-
-  it('run.pr_url=null, tasks.pr_url=null, payload.pr_url 有值 → MERGED → 标 completed', async () => {
-    const PAYLOAD_PR = 'https://github.com/owner/repo/pull/99';
-    const updates = [];
-    const pool = {
-      query: vi.fn(async (sql, _params) => {
-        if (/FROM initiative_runs r/.test(sql)) {
-          return { rows: [{ id: RUN_ID, initiative_id: TASK_ID, current_task_id: TASK_ID, phase: 'generate', attempts: '1', deadline_at: null, pr_url: null }] };
-        }
-        if (/FROM tasks/.test(sql)) {
-          return { rows: [{ id: TASK_ID, status: 'in_progress', title: 't', pr_url: null, payload: { orchestrator: 'skill-relay', pr_url: PAYLOAD_PR } }] };
-        }
-        if (/UPDATE/.test(sql)) { updates.push(sql); return { rows: [{ id: TASK_ID }] }; }
-        return { rows: [] };
-      }),
-    };
-    const ghCalls = [];
-    const execFn = vi.fn((cmd) => {
-      if (/docker ps/.test(cmd)) return '';
-      if (/gh pr view/.test(cmd)) { ghCalls.push(cmd); return JSON.stringify({ state: 'MERGED' }); }
-      return '';
-    });
-    const spawnFn = vi.fn().mockResolvedValue({ ok: true });
-
-    const out = await resumeStalledRelayRuns({ pool, execFn, spawnFn });
-
-    expect(ghCalls.length).toBeGreaterThan(0);
-    expect(ghCalls[0]).toContain(PAYLOAD_PR);
-    expect(spawnFn).not.toHaveBeenCalled();
-    expect(out.mergedPr).toBe(1);
-  });
-});
-
-describe('PATCH /orchestrator/relay-runs — pr_url 字段写入（#3560 跟进）', () => {
-  it('PATCH handler 从 req.body 解构 pr_url', async () => {
-    const { readFileSync } = await import('node:fs');
-    const src = readFileSync(new URL('../routes/initiatives.js', import.meta.url), 'utf8');
-    const patchIdx = src.indexOf('function validateRunPatchBody');
-    expect(patchIdx).toBeGreaterThan(-1);
-    const block = src.slice(patchIdx, patchIdx + 1500);
-    expect(block).toMatch(/pr_url/);
-  });
-
-  it('PATCH handler 校验 pr_url 须以 https://github.com/ 开头（非法时 400）', async () => {
-    const { readFileSync } = await import('node:fs');
-    const src = readFileSync(new URL('../routes/initiatives.js', import.meta.url), 'utf8');
-    const patchIdx = src.indexOf('function validateRunPatchBody');
-    const block = src.slice(patchIdx, patchIdx + 1500);
-    expect(block).toMatch(/https:\/\/github\.com\//);
-    expect(block).toMatch(/400/);
-  });
-
-  it('PATCH UPDATE SQL 用 COALESCE 保护 pr_url（只增不清）', async () => {
-    const { readFileSync } = await import('node:fs');
-    const src = readFileSync(new URL('../orchestrator/kernel-run-store.js', import.meta.url), 'utf8');
-    const patchIdx = src.indexOf('export async function patchKernelRunById');
-    const block = src.slice(patchIdx, patchIdx + 3000);
-    expect(block).toMatch(/COALESCE/i);
-    expect(block).toMatch(/pr_url/);
-  });
-});
-
-// ── proven-to-fire: evaluator gate 三函数单元测试 ────────────────────────
-
-import { _hasEvaluatorGate, _raiseUngatedMergeAlert, _finalizeMergedRun } from '../harness-relay-watchdog.js';
-
-describe('_hasEvaluatorGate', () => {
-  it('initiative_run_events 有 evaluator done 记录 → true', async () => {
-    const pool = { query: vi.fn().mockResolvedValue({ rows: [{ '?column?': 1 }] }) };
-    const result = await _hasEvaluatorGate(pool, 'test-id');
-    expect(result).toBe(true);
-    const [sql, params] = pool.query.mock.calls[0];
-    expect(sql).toMatch(/initiative_run_events/);
-    expect(sql).toMatch(/node='evaluator'/);
-    expect(sql).toMatch(/status='done'/);
-    expect(params[0]).toBe('test-id');
-  });
-
-  it('initiative_run_events 无 evaluator done 记录 → false', async () => {
-    const pool = { query: vi.fn().mockResolvedValue({ rows: [] }) };
-    const result = await _hasEvaluatorGate(pool, 'test-id');
-    expect(result).toBe(false);
-  });
-});
-
-describe('_raiseUngatedMergeAlert', () => {
-  it('写入 issues 表 + 调 sendBark（两路 best-effort）', async () => {
-    vi.clearAllMocks();
-    const pool = { query: vi.fn().mockResolvedValue({ rows: [] }) };
-    await _raiseUngatedMergeAlert(pool, 'initiative-abc', 'https://github.com/x/y/pull/1');
-    expect(pool.query).toHaveBeenCalledOnce();
-    const [sql, params] = pool.query.mock.calls[0];
-    expect(sql).toMatch(/INSERT INTO issues/);
-    expect(params[0]).toMatch(/initiative-abc/);
-    expect(sendBark).toHaveBeenCalledOnce();
-  });
-
-  it('issues 写入失败 → 仍调 sendBark（fail-open）', async () => {
-    vi.clearAllMocks();
-    const pool = { query: vi.fn().mockRejectedValue(new Error('DB down')) };
-    await expect(_raiseUngatedMergeAlert(pool, 'x', 'https://github.com/x/y/pull/2')).resolves.toBeUndefined();
-    expect(sendBark).toHaveBeenCalledOnce();
-  });
-});
-
-describe('_finalizeMergedRun', () => {
-  it('gated=true → UPDATE 不含 failure_reason，调 promoteRegression', async () => {
-    const pool = { query: vi.fn().mockResolvedValue({ rows: [] }) };
-    // evaluatorGate=true: initiative_run_events 有记录
-    pool.query.mockImplementation(async (sql) => {
-      if (/initiative_run_events/.test(sql)) return { rows: [{ x: 1 }] };
-      return { rows: [] };
-    });
-    const out = { mergedPr: 0, mergedWithoutGate: 0 };
-    await _finalizeMergedRun(pool, { id: RUN_ID, initiative_id: 'init-1', current_task_id: 'task-1' }, 'https://github.com/x/y/pull/3', out);
-    expect(out.mergedPr).toBe(1);
-    const updates = pool.query.mock.calls.map(c => c[0]).filter(s => /UPDATE initiative_runs/.test(s));
-    expect(updates.length).toBeGreaterThan(0);
-    expect(updates.every(s => !/failure_reason/.test(s))).toBe(true);
-    const exactUpdate = pool.query.mock.calls.find(([sql]) => /UPDATE initiative_runs/.test(sql));
-    expect(exactUpdate[0]).toMatch(/WHERE\s+id\s*=\s*\$1/);
-    expect(exactUpdate[1][0]).toBe(RUN_ID);
-  });
-
-  it('gated=false → UPDATE 含 failure_reason=merged_without_evaluator_gate，mergedWithoutGate++', async () => {
-    vi.clearAllMocks();
-    const pool = { query: vi.fn().mockImplementation(async (sql) => {
-      if (/initiative_run_events/.test(sql)) return { rows: [] }; // no evaluator gate
-      return { rows: [] };
-    })};
-    const out = { mergedPr: 0, mergedWithoutGate: 0 };
-    await _finalizeMergedRun(pool, { id: RUN_ID, initiative_id: 'init-2', current_task_id: 'task-2' }, 'https://github.com/x/y/pull/4', out);
-    expect(out.mergedPr).toBe(1);
-    expect(out.mergedWithoutGate).toBe(1);
-    const updates = pool.query.mock.calls.map(c => c[0]).filter(s => /UPDATE initiative_runs/.test(s));
-    expect(updates.some(s => /failure_reason/.test(s) && /merged_without_evaluator_gate/.test(s))).toBe(true);
-    expect(sendBark).toHaveBeenCalled();
-  });
-
-  it('setPrUrl=true → pr_url 写进 UPDATE', async () => {
-    vi.clearAllMocks();
-    const pool = { query: vi.fn().mockImplementation(async (sql) => {
-      if (/initiative_run_events/.test(sql)) return { rows: [{ x: 1 }] };
-      return { rows: [] };
-    })};
-    const out = { mergedPr: 0, mergedWithoutGate: 0 };
-    const PR = 'https://github.com/x/y/pull/5';
-    await _finalizeMergedRun(pool, { id: RUN_ID, initiative_id: 'init-3', current_task_id: 'task-3' }, PR, out, { setPrUrl: true });
-    const runUpdates = pool.query.mock.calls.filter(c => /UPDATE initiative_runs/.test(c[0]));
-    expect(runUpdates.some(([, params]) => Array.isArray(params) && params.includes(PR))).toBe(true);
-  });
-});
-
-// ── 刀A5 — execTolerant 兜底路径（GP-A/GP-B/GP-C）────────────────────────────
-// 覆盖三条 Golden Path：
-//   GP-A (resume_ci_red)      — gh pr checks 非零退出 + err.stdout 含 FAILURE → 重点火
-//   GP-B (wait_ci_running)    — gh pr checks 非零退出 + err.stdout 全 pending → 等待不重点火
-//   GP-C (skip_query_failure) — gh pr checks 非零退出 + 无 stdout → rethrow → 保守跳过
-// Task: b5162377-4012-424a-ba2f-0b33003eb602
-
-describe('刀A5 — execTolerant 兜底路径（GP-A：resume_ci_red）', () => {
-  it('GP-A: gh pr checks 非零退出 + err.stdout 含 FAILURE JSON → execTolerant 兜底 → ciStatus=fail → spawnFn 调用一次', async () => {
-    const deps = makeDeps({ prUrl: PR_URL, prState: 'OPEN', mergeStateStatus: 'CLEAN' });
-    // 覆盖 execFn：让 gh pr checks 抛 err（携带 FAILURE stdout），其余命令正常
-    deps.execFn = vi.fn().mockImplementation((cmd) => {
-      if (/docker ps/.test(cmd)) return '';
-      if (/gh pr view/.test(cmd) && /mergeStateStatus/.test(cmd)) {
-        return JSON.stringify({ state: 'OPEN', mergeStateStatus: 'CLEAN' });
-      }
-      if (/gh pr view/.test(cmd)) {
-        return JSON.stringify({ state: 'OPEN' });
-      }
-      if (/gh pr checks/.test(cmd)) {
-        const err = new Error('Command failed: gh pr checks exit code 1');
-        err.stdout = JSON.stringify([{ name: 'brain-ci', state: 'FAILURE' }]);
-        err.stderr = '';
-        err.status = 1;
-        throw err;
-      }
-      return '';
-    });
-
-    const r = await resumeStalledRelayRuns(deps);
-
-    expect(deps.spawnFn).toHaveBeenCalledOnce();
-    expect(r.resumed).toBe(1);
-    const checksCalled = deps.execFn.mock.calls.some(([cmd]) => /gh pr checks/.test(cmd));
-    expect(checksCalled).toBe(true);
-  });
-});
-
-describe('刀A5 — execTolerant 兜底路径（GP-B：wait_ci_running）', () => {
-  it('GP-B: gh pr checks 非零退出 + err.stdout 全 pending JSON → execTolerant 兜底 → ciStatus=pending → spawnFn 不调用', async () => {
-    const deps = makeDeps({ prUrl: PR_URL, prState: 'OPEN', mergeStateStatus: 'CLEAN' });
-    deps.execFn = vi.fn().mockImplementation((cmd) => {
-      if (/docker ps/.test(cmd)) return '';
-      if (/gh pr view/.test(cmd) && /mergeStateStatus/.test(cmd)) {
-        return JSON.stringify({ state: 'OPEN', mergeStateStatus: 'CLEAN' });
-      }
-      if (/gh pr view/.test(cmd)) {
-        return JSON.stringify({ state: 'OPEN' });
-      }
-      if (/gh pr checks/.test(cmd)) {
-        const err = new Error('Command failed: gh pr checks exit code 8');
-        err.stdout = JSON.stringify([{ name: 'brain-ci', state: 'IN_PROGRESS' }]);
-        err.stderr = '';
-        err.status = 8;
-        throw err;
-      }
-      return '';
-    });
-
-    const r = await resumeStalledRelayRuns(deps);
-
-    expect(deps.spawnFn).not.toHaveBeenCalled();
-    expect(r.resumed).toBe(0);
-    const checksCalled = deps.execFn.mock.calls.some(([cmd]) => /gh pr checks/.test(cmd));
-    expect(checksCalled).toBe(true);
-  });
-});
-
-describe('刀A5 — execTolerant 兜底路径（GP-C：skip_query_failure）', () => {
-  it('GP-C: gh pr checks 非零退出 + 无 stdout 属性 → execTolerant rethrow → 外层 catch 保守跳过 → spawnFn 不调用', async () => {
-    const deps = makeDeps({ prUrl: PR_URL, prState: 'OPEN', mergeStateStatus: 'CLEAN' });
-    deps.execFn = vi.fn().mockImplementation((cmd) => {
-      if (/docker ps/.test(cmd)) return '';
-      if (/gh pr view/.test(cmd) && /mergeStateStatus/.test(cmd)) {
-        return JSON.stringify({ state: 'OPEN', mergeStateStatus: 'CLEAN' });
-      }
-      if (/gh pr view/.test(cmd)) {
-        return JSON.stringify({ state: 'OPEN' });
-      }
-      if (/gh pr checks/.test(cmd)) {
-        // 无 stdout：模拟真实网络/auth 失败，execTolerant 应 rethrow
-        const err = new Error('gh: authentication token not found');
-        err.stdout = '';
-        throw err;
-      }
-      return '';
-    });
-
-    const r = await resumeStalledRelayRuns(deps);
-
-    expect(deps.spawnFn).not.toHaveBeenCalled();
-    expect(r.resumed).toBe(0);
-  });
-});
-
-// ── 刀A2 — generator_done + pr_url 空 反查修复 ─────────────────────────────
-
-import { _parseBaseRepo } from '../harness-relay-watchdog.js';
-
-describe('刀A2 — generator_done + pr_url 空 反查修复', () => {
-  // ── [BEHAVIOR-2] _parseBaseRepo 路径映射 ────────────────────────────────
-
-  describe('[BEHAVIOR-2] _parseBaseRepo 支持宿主机/容器绝对路径', () => {
-    it('TC-2: /Users/administrator/perfect21/cecelia → perfectuser21/cecelia', () => {
-      expect(_parseBaseRepo('/Users/administrator/perfect21/cecelia')).toBe('perfectuser21/cecelia');
-    });
-
-    it('TC-3: /workspace → perfectuser21/cecelia', () => {
-      expect(_parseBaseRepo('/workspace')).toBe('perfectuser21/cecelia');
-    });
-
-    it('TC-9: URL 格式 base_repo 优先于路径映射（原逻辑不变）', () => {
-      expect(_parseBaseRepo('https://github.com/org/repo')).toBe('org/repo');
-    });
-
-    it('null → null（原行为不变）', () => {
-      expect(_parseBaseRepo(null)).toBeNull();
-    });
-
-    it('TC-4: HARNESS_REPO_MAP env 覆盖', () => {
-      const orig = process.env.HARNESS_REPO_MAP;
-      try {
-        process.env.HARNESS_REPO_MAP = JSON.stringify({ 'custom/path': 'myorg/myrepo' });
-        expect(_parseBaseRepo('custom/path')).toBe('myorg/myrepo');
-      } finally {
-        if (orig === undefined) delete process.env.HARNESS_REPO_MAP;
-        else process.env.HARNESS_REPO_MAP = orig;
-      }
-    });
-
-    it('TC-5: 不识别非映射路径 → null', () => {
-      expect(_parseBaseRepo('random-string')).toBeNull();
-    });
-  });
-
-  // ── [BEHAVIOR-1] generator_done + pr_url 空 + 反查 MERGED ────────────────
-
-  describe('[BEHAVIOR-1] generator_done=true + pr_url=null + 反查 MERGED → _finalizeMergedRun 被调', () => {
-    it('TC-1: discovered MERGED → mergedPr=1，不 spawn，日志含 discovered_merged_via_fallback', async () => {
-      const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-      try {
-        const DISCOVERED_PR = 'https://github.com/perfectuser21/cecelia/pull/1';
-        const pool = { query: vi.fn() };
-        pool.query.mockImplementation(async (sql) => {
-          if (/FROM initiative_runs r/.test(sql)) {
-            return {
-              rows: [{
-                id: RUN_ID,
-                initiative_id: TASK_ID,
-                current_task_id: TASK_ID,
-                phase: 'planning',
-                attempts: '1',
-                deadline_at: new Date(Date.now() + 3600e3).toISOString(),
-                pr_url: null,
-                orchestrator_host: 'skill-relay-session',
-              }],
-            };
-          }
-          if (/FROM tasks/.test(sql)) {
-            return {
-              rows: [{
-                id: TASK_ID,
-                status: 'in_progress',
-                title: 't',
-                pr_url: null,
-                payload: {
-                  orchestrator: 'skill-relay',
-                  generator_done: true,
-                  base_repo: '/Users/administrator/perfect21/cecelia',
-                },
-              }],
-            };
-          }
-          if (/FROM initiative_run_events/.test(sql)) {
-            return { rows: [{ x: 1 }] }; // evaluator gated
-          }
-          return { rows: [] };
-        });
-
-        const spawnFn = vi.fn().mockResolvedValue({ ok: true });
-        const execFn = vi.fn().mockImplementation((cmd) => {
-          if (/docker ps/.test(cmd)) return '';
-          // _discoverPrFromGithub → gh pr list
-          if (/gh pr list/.test(cmd)) {
-            return JSON.stringify([
-              { headRefName: `cp-07150000-ws-${SHORT.slice(0, 8)}`, title: 't', url: DISCOVERED_PR, state: 'MERGED' },
-            ]);
-          }
-          return '';
-        });
-
-        const out = await resumeStalledRelayRuns({ pool, execFn, spawnFn });
-
-        // spawnFn 不得被调用
-        expect(spawnFn).not.toHaveBeenCalled();
-        // mergedPr 计数
-        expect(out.mergedPr).toBe(1);
-        // pool.query 含 UPDATE initiative_runs ... 'done'
-        const sqls = pool.query.mock.calls.map(c => c[0]);
-        expect(sqls.some(s => /UPDATE initiative_runs/.test(s) && /'done'/.test(s))).toBe(true);
-        // pool.query 含 UPDATE tasks ... 'completed'
-        expect(sqls.some(s => /UPDATE tasks/.test(s) && /'completed'/.test(s))).toBe(true);
-        // console.log 含 discovered_merged_via_fallback
-        const logMessages = consoleSpy.mock.calls.map(c => c.join(' '));
-        expect(logMessages.some(m => m.includes('discovered_merged_via_fallback'))).toBe(true);
-      } finally {
-        consoleSpy.mockRestore();
-      }
-    });
-  });
-
-  // ── [BEHAVIOR-3] generator_done + pr_url 空 + 反查 OPEN → 回写 pr_url ─────
-
-  describe('[BEHAVIOR-3] generator_done=true + pr_url=null + 反查 OPEN → 回写 pr_url，不 spawn', () => {
-    it('TC-5: discovered OPEN → UPDATE initiative_runs SET pr_url，spawnFn 不调，resumed=0', async () => {
-      const OPEN_PR = 'https://github.com/x/y/pull/2';
-      const pool = { query: vi.fn() };
-      pool.query.mockImplementation(async (sql) => {
-        if (/FROM initiative_runs r/.test(sql)) {
-          return {
-            rows: [{
-              id: RUN_ID,
-              initiative_id: TASK_ID,
-              current_task_id: TASK_ID,
-              phase: 'planning',
-              attempts: '1',
-              deadline_at: new Date(Date.now() + 3600e3).toISOString(),
-              pr_url: null,
-              orchestrator_host: 'skill-relay-session',
-            }],
-          };
-        }
-        if (/FROM tasks/.test(sql)) {
-          return {
-            rows: [{
-              id: TASK_ID,
-              status: 'in_progress',
-              title: 't',
-              pr_url: null,
-              payload: {
-                orchestrator: 'skill-relay',
-                generator_done: true,
-                base_repo: '/Users/administrator/perfect21/cecelia',
-              },
-            }],
-          };
-        }
-        return { rows: [] };
-      });
-
-      const spawnFn = vi.fn().mockResolvedValue({ ok: true });
-      const execFn = vi.fn().mockImplementation((cmd) => {
-        if (/docker ps/.test(cmd)) return '';
-        if (/gh pr list/.test(cmd)) {
-          return JSON.stringify([
-            { headRefName: `cp-07150000-ws-${SHORT.slice(0, 8)}`, title: 't', url: OPEN_PR, state: 'OPEN' },
-          ]);
-        }
-        return '';
-      });
-
-      const out = await resumeStalledRelayRuns({ pool, execFn, spawnFn });
-
-      // spawnFn 不得被调用
-      expect(spawnFn).not.toHaveBeenCalled();
-      // resumed=0
-      expect(out.resumed).toBe(0);
-      // UPDATE initiative_runs SET pr_url
-      const sqls = pool.query.mock.calls.map(c => c[0]);
-      expect(sqls.some(s => /UPDATE initiative_runs SET pr_url/.test(s))).toBe(true);
-      // 参数含目标 PR URL
-      const prUrlUpdateCall = pool.query.mock.calls.find(c => /UPDATE initiative_runs SET pr_url/.test(c[0]));
-      expect(prUrlUpdateCall).toBeTruthy();
-      expect(prUrlUpdateCall[1]).toContain(OPEN_PR);
-    });
-  });
-
-  // ── [BEHAVIOR-4] generator_done 超时兜底不变 ──────────────────────────────
-
-  describe('[BEHAVIOR-4] generator_done 超时兜底语义不变', () => {
-    it('TC-8: doneAt 超期 + 无 PR → phase=failed, failure_reason=generator_done_timeout，不 spawn', async () => {
-      const pool = { query: vi.fn() };
-      pool.query.mockImplementation(async (sql) => {
-        if (/FROM initiative_runs r/.test(sql)) {
-          return {
-            rows: [{
-              id: RUN_ID,
-              initiative_id: TASK_ID,
-              current_task_id: TASK_ID,
-              phase: 'planning',
-              attempts: '1',
-              // 已过期 deadline（7h 前）
-              deadline_at: new Date(Date.now() + 3600e3).toISOString(),
-              pr_url: null,
-              orchestrator_host: 'skill-relay-session',
-              started_at: new Date(Date.now() - 7 * 3600e3).toISOString(),
-            }],
-          };
-        }
-        if (/FROM tasks/.test(sql)) {
-          return {
-            rows: [{
-              id: TASK_ID,
-              status: 'in_progress',
-              title: 't',
-              pr_url: null,
-              payload: {
-                orchestrator: 'skill-relay',
-                generator_done: true,
-                // generator_done_at 设为 7h 前
-                generator_done_at: new Date(Date.now() - 7 * 3600e3).toISOString(),
-                base_repo: '/workspace',
-              },
-            }],
-          };
-        }
-        return { rows: [] };
-      });
-
-      const spawnFn = vi.fn();
-      const execFn = vi.fn().mockImplementation((cmd) => {
-        if (/docker ps/.test(cmd)) return '';
-        if (/gh pr list/.test(cmd)) return JSON.stringify([]);
-        return '';
-      });
-
-      const out = await resumeStalledRelayRuns({ pool, execFn, spawnFn });
-
-      // 不 spawn
-      expect(spawnFn).not.toHaveBeenCalled();
-      // capped=1
-      expect(out.capped).toBe(1);
-      // SQL 含 phase='failed' + failure_reason='generator_done_timeout'
-      const sqls = pool.query.mock.calls.map(c => c[0]);
-      expect(sqls.some(s => /UPDATE initiative_runs SET phase='failed'/.test(s) && /generator_done_timeout/.test(s))).toBe(true);
-    });
   });
 });

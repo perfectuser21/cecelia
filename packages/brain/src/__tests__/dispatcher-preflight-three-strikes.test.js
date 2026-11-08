@@ -136,6 +136,9 @@ describe('dispatcher: pre-flight 三振持久终结', () => {
     const { dispatchNextTask } = await import('../tick.js');
     const result = await dispatchNextTask(['goal-1']);
 
+    // 现役派发不应扫描已退役的 Claude OAuth 账号。
+    const { proactiveTokenCheck } = await import('../account-usage.js');
+    expect(proactiveTokenCheck).not.toHaveBeenCalled();
     expect(result.dispatched).toBe(false);
 
     // 找到 UPDATE metadata 的那次调用（单行 SQL）

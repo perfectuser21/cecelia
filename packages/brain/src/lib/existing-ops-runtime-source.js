@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { posix } from 'node:path';
 import { builtinModules } from 'node:module';
 import { readProvenanceSources, provenanceSourceVersion } from './existing-ops-provenance-envelope.js';
-import { proveReviewedUsCompose } from './existing-ops-us-compose-source.js';
+import { proveReviewedUsCompose, verifyLegacyStagingInputs, matchesReviewedStagingTuple } from './existing-ops-us-compose-source.js';
 export const EXISTING_OPS_DOC_IMPORT_SCHEMA = 1;
 export const EXISTING_OPS_ROOT_NPM_INPUT_SCHEMA = 1;
 const TEST = 'packages/brain/scripts/coding-workflow/runner/__tests__/run-once.test.mjs';
@@ -382,7 +382,7 @@ function routeDigest(text,parse,method='post',path='/deploy'){
  const entries=program.body.filter(n=>n.type==='ExpressionStatement').map(n=>n.expression).filter(match);
  return entries.length===1&&nodes(program).filter(match).length===1?stagingHash(JSON.stringify(entries[0],(k,v)=>['start','end','raw'].includes(k)?undefined:v)):null;
 }
-async function collectSettlementSources({read,requireProof,relations,revision,route,parse,bootstrapDeploy}){
+async function collectSettlementSources({read,requireProof,relations,revision,route,parse,bootstrapDeploy,currentTuple=false}){
  const statusDigest=routeDigest(route,parse,'get','/deploy/status');
  const layout=statusDigest==='806efc04723f35ffab9c7b0c9acefe7801cce7090f04b71a2d96597a5188433f';
  requireProof(statusDigest===BUDGET_GET_AST||layout,'settlement_status_route_unproven');
@@ -399,7 +399,7 @@ async function collectSettlementSources({read,requireProof,relations,revision,ro
  for(const[path,digest]of Object.entries(BUDGET_FILES)){
   if(!bootstrapDeploy&&path.startsWith('scripts/lib/brain-bootstrap'))continue;
   const text=await read(path);texts.set(path,text);
-  requireProof(text&&([digest].flat().includes(stagingHash(text)) || path==='docker-compose.us-vps.yml'&&await proveReviewedUsCompose({text,read,relations,revision})),'settlement_source_unproven');
+  requireProof(text&&(currentTuple || [digest].flat().includes(stagingHash(text)) || path==='docker-compose.us-vps.yml'&&await proveReviewedUsCompose({text,read,relations,revision})),'settlement_source_unproven');
  }
  // 从已冻结AST递归列出真实静态依赖及受管子进程入口，不以目录猜测闭包。
  const base='scripts/brain-image-retention/';
@@ -449,9 +449,19 @@ async function collectSettlementSources({read,requireProof,relations,revision,ro
 export async function collectIsolatedStagingSources({read,requireProof,relations,revision,route,parse}){
  // 这些完整shell/workflow已通过真实脚本正反例；任何控制流变化均需重新审查，不能按关键词认领。
  const routeHash=route&&routeDigest(route,parse),budget=routeHash===BUDGET_POST_AST;let sourceOnlyDeploy=false,bootstrapDeploy=false;
+ // 当前实现及其被执行的 smoke 输入作为一个固定组合核验，不能逐项自由混搭。
+ const smokeList='packages/brain/config/smoke/smoke-core.txt';
+ const smokes=['healthz-smoke.sh','version-endpoint-smoke.sh','harness-ping-smoke.sh','harness-echo-smoke.sh'].map(name=>`packages/brain/scripts/smoke/${name}`);
+ const currentTuple=await matchesReviewedStagingTuple({read,budget,stagingFiles:BUDGET_STAGING_FILES,settlementFiles:BUDGET_FILES,smokeList,smokes});
+ // 路由引用同文件 helper；单封端点 AST 不足以验证这些 helper。
+ requireProof(route&&(currentTuple?['4f47056f920e942897fc79627fe588202789a73d743d8fe0064dadd1ce1d288a']:['5e9107f6bb6191049486a71d79b7bdede4b6d0c76ba27b5e03cfc2453606506e','e57162cab0938d8455accbf5246d44446a86e3c04f5e01c66b4334521d62059c','4d3a088cf21596873f9d5f1505ec33d9d8514912c534b485c93c722070c68b22']).includes(stagingHash(route)),'isolated_staging_source_unproven');
+ const build=await read('scripts/brain-build.sh');
+ // b3edd15 / 0d3e363 两个历史已审修订的构建脚本字节相同；其他版本缺证据不放行。
+ requireProof(build&&(currentTuple||stagingHash(build)==='53a80e3d1c2f40b9a7446759081aae3342c521b9e8646f2108724fc5f7d2126a'),'isolated_staging_source_unproven');
+ if(!currentTuple)await verifyLegacyStagingInputs({read,requireProof,relations,revision});
  for(const[path,digest]of Object.entries(budget?BUDGET_STAGING_FILES:REVIEWED_FILES)){
   if(path==='scripts/lib/brain-bootstrap.sh'&&!bootstrapDeploy)continue;
-  const source=await read(path);requireProof(source&&(Array.isArray(digest)?digest:[digest]).includes(stagingHash(source)),'isolated_staging_source_unproven');
+  const source=await read(path);requireProof(source&&(currentTuple||(Array.isArray(digest)?digest:[digest]).includes(stagingHash(source))),'isolated_staging_source_unproven');
   if(path==='scripts/brain-deploy.sh'&&source){
    const deployDigest=stagingHash(source);
    sourceOnlyDeploy=['a77963695be92a5e55f6a5260c283d1d18ce6ce7398be8915d39ea49380e059e','6858cc545b52fc20c15c401161cb73cec3fbbf96abf59762255507961cfe945b','cfacb800dfb02c846bbfbb739e090b845a55611abde0cbfd89dbf49b84ce9529'].includes(deployDigest);
@@ -465,7 +475,14 @@ export async function collectIsolatedStagingSources({read,requireProof,relations
    relations.push({consumer_path:'scripts/brain-deploy.sh',input_path,kind:'reviewed_source_only_package_read',revision});
  }
  requireProof(routeHash===ROUTE_AST_SHA||budget,'isolated_staging_route_unproven');
- if(budget)await collectSettlementSources({read,requireProof,relations,revision,route,parse,bootstrapDeploy});
+ if(budget)await collectSettlementSources({read,requireProof,relations,revision,route,parse,bootstrapDeploy,currentTuple});
+ if(currentTuple){
+  relations.push({consumer_path:'scripts/lib/bluegreen.sh',input_path:smokeList,kind:'reviewed_pre_swap_smoke_list',revision});
+  for(const input_path of smokes)relations.push({consumer_path:smokeList,input_path,kind:'reviewed_pre_swap_smoke_script',revision});
+ }
+ relations.push({consumer_path:'scripts/brain-build.sh',input_path:'scripts/ensure-skills-source.sh',kind:'reviewed_skill_source_bootstrap',revision});
+ relations.push({consumer_path:'scripts/ensure-skills-source.sh',input_path:'scripts/skills-source.py',kind:'reviewed_skill_source_adapter',revision});
+ relations.push({consumer_path:'scripts/skills-source.py',input_path:'.skills-source.json',kind:'reviewed_skill_source_lock',revision});
  const contractProjection=stagingHash(await read('scripts/staging-verify.sh'))==='4cea6715002cdf642248da1f277192cee9fe8a03a85a45315a6796063569bcba';for(const path of ['scripts/brain-build.sh','packages/brain/src/db-config.js',...(contractProjection?['packages/brain/src/projection/directory-source.js']:[])])await read(path);
  for(const[consumer_path,input_path,kind]of [
   ['.github/workflows/auto-staging-deploy.yml','packages/brain/src/routes/ops.js','reviewed_staging_deploy_request'],
@@ -479,6 +496,5 @@ export async function collectIsolatedStagingSources({read,requireProof,relations
   ['scripts/staging-verify.sh','packages/brain/src/db-config.js','candidate_database_readback'],...(contractProjection?[['scripts/staging-verify.sh','packages/brain/src/projection/directory-source.js','candidate_contract_projection_readback']]:[]),
  ])relations.push({consumer_path,input_path,kind,revision});
 }
-
 // 仅证明真实nightly回归消费链；不声称生产版本发布已经运行。
 export { collectAutoVersionTestSources } from './existing-ops-workspace-source.js';

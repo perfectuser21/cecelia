@@ -85,7 +85,7 @@ beforeAll(async () => {
 
   // Project B：2 个任务全 completed（一个 completed_no_pr）
   await insertTask({ projectId: projectBId, status: 'completed' });
-  await insertTask({ projectId: projectBId, status: 'completed_no_pr' });
+  await insertTask({ projectId: projectBId, status: 'completed_no_pr', taskType: 'data' });
 }, 30_000);
 
 afterAll(async () => {
@@ -104,12 +104,23 @@ describe('project-progress.js: 真库聚合口径', () => {
     expect(projA.progress).toBeCloseTo(66.67, 1);
   });
 
-  it('completed_no_pr 算作完成', async () => {
+  it('非 dev 的 completed_no_pr 算作完成', async () => {
     const byKr = await getProjectsForKrBatch(pool, [krWithProjectsId]);
     const projB = byKr[krWithProjectsId].find((p) => p.id === projectBId);
     expect(projB.task_total).toBe(2);
     expect(projB.task_done).toBe(2);
     expect(projB.progress).toBe(100);
+  });
+
+  it('dev 的 completed_no_pr 不算完成，仍计入任务总数', async () => {
+    const id = await insertTask({ projectId: projectBId, status: 'completed_no_pr' });
+    try {
+      const byKr = await getProjectsForKrBatch(pool, [krWithProjectsId]);
+      const project = byKr[krWithProjectsId].find((p) => p.id === projectBId);
+      expect(project).toMatchObject({ task_total: 3, task_done: 2, progress: 66.67 });
+    } finally {
+      await pool.query('DELETE FROM tasks WHERE id = $1', [id]);
+    }
   });
 });
 

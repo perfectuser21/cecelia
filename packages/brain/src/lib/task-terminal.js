@@ -23,7 +23,7 @@ export const TERMINAL_WRITE_HUB_MODULE = 'lib/task-terminal.js';
  * may_write_terminal=true 的模块源码必须调用 afterTerminalTransition( 或 finalizeTask(。
  */
 export const TASK_STATUS_WRITER_REGISTRY = Object.freeze([
-  { module: 'routes/tasks.js', may_write_terminal: true, reason: 'PATCH /api/brain/tasks/:id 动态 SET；终态写完调 afterTerminalTransition（含已 completed 补写 handoff）' },
+  { module: 'routes/tasks-status.js', may_write_terminal: true, reason: 'PATCH /api/brain/tasks/:id 动态 SET；终态写完调 afterTerminalTransition（含已 completed 补写 handoff）' },
   { module: 'routes/task-task-patch.js', may_write_terminal: true, reason: 'PATCH /:id 动态 SET；终态写完调 afterTerminalTransition' },
   { module: 'callback-processor.js', may_write_terminal: true, reason: '执行回调事务内 CAS 写 newStatus；COMMIT 后调 afterTerminalTransition' },
   { module: 'routes/execution.js', may_write_terminal: true, reason: '执行回调路由事务内 CAS 写 newStatus；COMMIT 后调 afterTerminalTransition' },
@@ -31,7 +31,7 @@ export const TASK_STATUS_WRITER_REGISTRY = Object.freeze([
   { module: 'actions.js', may_write_terminal: true, reason: 'update_task / bulk 动作可写任意状态；终态后调 afterTerminalTransition' },
   { module: 'orchestrator/kernel-run-store.js', may_write_terminal: true, reason: 'Kernel run 权威终态化事务内写 taskOutcome（completed/failed）；COMMIT 后调 afterTerminalTransition' },
   { module: 'script-managed-executor.js', may_write_terminal: false, reason: '准入结果只写 blocked/queued；终态委托 script-settlement → finalizeTask' },
-  { module: 'proposal.js', may_write_terminal: false, reason: '快照回滚恢复原状态，是撤销不是迁移，不接棒' },
+  { module: 'lib/proposal-rollback.js', may_write_terminal: false, reason: '快照回滚恢复原状态，是撤销不是迁移，不接棒' },
   { module: 'dep-cascade.js', may_write_terminal: false, reason: 'dep_failed 恢复回 queued / 原非终态' },
   { module: 'quarantine.js', may_write_terminal: false, reason: 'release → queued / cancelled（等待态）' },
 ]);

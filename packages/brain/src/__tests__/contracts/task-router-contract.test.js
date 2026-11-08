@@ -10,7 +10,6 @@ import {
   getTaskLocation,
   determineExecutionMode,
   routeTaskCreate,
-  routeTaskWithFallback,
   isValidTaskType,
   SKILL_WHITELIST,
 } from '../../task-router.js';
@@ -126,13 +125,5 @@ describe('task-router contract', () => {
     });
   });
 
-  describe('routeTaskWithFallback', () => {
-    it('returns object with location, execution_mode, routing_status', () => {
-      const result = routeTaskWithFallback({ task_type: 'dev', title: 'test' });
-      expect(result).toHaveProperty('location');
-      expect(result).toHaveProperty('execution_mode');
-      expect(result).toHaveProperty('routing_status');
-      expect(typeof result.routing_status).toBe('string');
-    });
-  });
+
 });

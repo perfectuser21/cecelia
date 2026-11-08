@@ -1,32 +1,71 @@
-/**
- * routes/harness-interrupts.test.js — exact-name pairing stub for lint-test-pairing
- *
- * 此文件做模块结构断言（路由方法 + 路径注册），不接 DB / 真 LangGraph。
- *
- * 注（刀4阶段3 Task 3，2026-07-09）：原"使用 LangGraph Command 类型（Command resume）"
- * 用例已删除——该断言测的是 resume 用 harness-initiative.graph.js 重新 stream 的死代码，
- * interrupt_pending 事件只由该死图写入，orchestrator 硬校验落地后不再产生，resume 分支
- * 物理不可达，已随之物理删除（不再 import @langchain/langgraph 的 Command）。
- */
-import { describe, it, expect, vi } from 'vitest';
-
-vi.mock('../../db.js', () => ({
-  default: {
-    query: vi.fn().mockResolvedValue({ rows: [], rowCount: 0 }),
-    connect: vi.fn(),
-  },
+/** 历史 interrupt 读面保留；已退休 graph 的写面不得伪报恢复成功。 */
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import express from 'express';
+import request from 'supertest';
+const boundary = vi.hoisted(() => ({
+  query: vi.fn(), connect: vi.fn(() => { throw new Error('forbidden DB connect'); }),
+  process: vi.fn(() => { throw new Error('forbidden process'); }),
 }));
-
-describe('routes/harness-interrupts (W5)', () => {
-  it('exports default Router 含 GET / 和 POST /:taskId/resume', async () => {
-    const mod = await import('../harness-interrupts.js');
-    const router = mod.default;
-    expect(typeof router).toBe('function');
-    // express Router 内部 stack 数组
-    const stack = router.stack || [];
-    expect(stack.length).toBeGreaterThan(0);
-    const paths = stack.map((l) => l.route?.path).filter(Boolean);
-    expect(paths).toContain('/');
-    expect(paths.some((p) => p.includes(':taskId') && p.includes('resume'))).toBe(true);
+vi.mock('../../db.js', () => ({ default: boundary }));
+vi.mock('child_process', () => ({ default: {}, exec: boundary.process, execFile: boundary.process, spawn: boundary.process }));
+vi.mock('node:child_process', () => ({ default: {}, exec: boundary.process, execFile: boundary.process, spawn: boundary.process }));
+import router from '../harness-interrupts.js';
+import pool from '../../db.js';
+let server;
+async function ownedApp() {
+  const app = express();
+  app.use(express.json());
+  app.use('/api/brain/harness-interrupts', router);
+  server = await new Promise(resolve => {
+    const listener = app.listen(0, '127.0.0.1', () => resolve(listener));
+  });
+  return request(server);
+}
+beforeEach(() => { vi.clearAllMocks(); boundary.query.mockReset(); });
+afterEach(async () => {
+  if (server) await new Promise((resolve, reject) => server.close(err => err ? reject(err) : resolve()));
+  server = undefined;
+});
+describe('harness interrupt 历史 HTTP 边界', () => {
+  it.each([
+    { decision: { action: 'abort' } },
+    { decision: { action: 'extend_fix_rounds' } },
+    { decision: { action: 'accept_failed' } },
+    { decision: { action: 'unknown' } }, {},
+  ])('退休 resume 明确410且不查任务/不伪写恢复事件：%j', async body => {
+    boundary.query.mockResolvedValue({ rows: [{ id: 'owned-task', payload: {} }], rowCount: 1 });
+    const client = await ownedApp();
+    const res = await client.post('/api/brain/harness-interrupts/owned-task/resume').send(body);
+    expect(res.status).toBe(410);
+    expect(res.body).toMatchObject({ error: 'kernel_runtime_retired' });
+    expect(res.body.ok).not.toBe(true);
+    expect(pool).toBe(boundary);
+    expect(boundary.query).not.toHaveBeenCalled();
+    expect(boundary.connect).not.toHaveBeenCalled();
+    expect(boundary.process).not.toHaveBeenCalled();
+  });
+  it('GET仍读原历史pending事件，不能写入或生成恢复事件', async () => {
+    const rows = [{ task_id: 'history-task', payload: { reason: 'archived interrupt' } }];
+    boundary.query.mockResolvedValue({ rows });
+    const client = await ownedApp();
+    const res = await client.get('/api/brain/harness-interrupts');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ interrupts: rows });
+    expect(boundary.query).toHaveBeenCalledTimes(1);
+    const [sql] = boundary.query.mock.calls[0];
+    expect(sql.trim()).toMatch(/^SELECT /);
+    expect(sql).toContain("pending.event_type = 'interrupt_pending'");
+    expect(sql).toContain("resumed.event_type = 'interrupt_resumed'");
+    expect(sql).not.toMatch(/INSERT|UPDATE|DELETE/);
+    expect(boundary.connect).not.toHaveBeenCalled();
+    expect(boundary.process).not.toHaveBeenCalled();
+  });
+  it('历史读面DB失败仍500，不冒称空列表', async () => {
+    boundary.query.mockRejectedValue(new Error('owned read failure'));
+    const client = await ownedApp();
+    const res = await client.get('/api/brain/harness-interrupts');
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe('owned read failure');
+    expect(boundary.query).toHaveBeenCalledTimes(1);
   });
 });
