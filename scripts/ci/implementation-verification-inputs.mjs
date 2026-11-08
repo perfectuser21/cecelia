@@ -93,6 +93,13 @@ const QUEUED_BASIC_ENTRY_PROTOCOLS=[{
  'scripts/ci/basic-scope.mjs':'c97f3d3300ce74237086b819def622636dc6776f663753d6ec3e68ea2d21a14b',
  'scripts/ci/ops-checks.mjs':'6a6305471c70c7d1d5e4ad836f14636c8ab74a4d6a4bb17dc8d525d3aa52e125',
  'packages/brain/vitest.config.js':'5e1504bbed8d83d7758bc2513eb8894418dccdd63938a98f6aa40433355ff5cc',
+}, {
+ // 本轮真实受管profile PG合同作为完整组追加，不替换或放宽历史组合。
+ ...BASIC_ENTRY_SEALS,
+ 'scripts/ci/run-basic-check.mjs':'b346e6f8f06d42422c0289ae38693cdcd73e2e93d9415babb852214c0b9072ef',
+ 'scripts/ci/basic-scope.mjs':'c97f3d3300ce74237086b819def622636dc6776f663753d6ec3e68ea2d21a14b',
+ 'scripts/ci/ops-checks.mjs':'6a6305471c70c7d1d5e4ad836f14636c8ab74a4d6a4bb17dc8d525d3aa52e125',
+ 'packages/brain/vitest.config.js':'85c3d4fbc92f593ee94544f1ebdfe5f5b76bdf14c78377ab70541bbf50fd15a0',
 }];
 const UNIT_CONFIGS=[
  {component:'brain',directory:'packages/brain',path:'packages/brain/vitest.config.js'},
