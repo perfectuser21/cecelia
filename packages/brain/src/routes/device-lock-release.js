@@ -1,6 +1,8 @@
+import {rateLimit} from 'express-rate-limit';
 /** 显式维护释放：可选原lease xmin CAS；不承担自动回收或停止判定。 */
 export function registerDeviceLockRelease(router,pool){
- router.post('/device-locks/release',async(req,res)=>{
+ const limiter=rateLimit({windowMs:60_000,limit:300,standardHeaders:'draft-7',legacyHeaders:false});
+ router.post('/device-locks/release',limiter,async(req,res)=>{
   try{
    const {device_name,locked_by}=req.body??{};
    if(!device_name||!locked_by)return res.status(400).json({success:false,error:'device_name and locked_by are required'});
