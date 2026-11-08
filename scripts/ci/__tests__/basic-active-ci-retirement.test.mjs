@@ -78,4 +78,12 @@ test('建议回执 PG 入口只认当前完整组合，逐一混配旧 runner �
   const proof=observe(fixture(t,{changes:{...changes,[path]:previous[path]}}));
   assert.equal(selected(proof),undefined);assert.ok(proof.unproven.some(row=>row.path===testPath&&row.side==='head'&&row.reason==='entry_unproven'));
  }
+ const beforeManagedScript={...changes};
+ for(const path of [runner,'packages/brain/vitest.config.js'])beforeManagedScript[path]=execFileSync('git',
+  ['--no-replace-objects','show',`79cf5c5b20324d4d5a39eadda3f009d64b98f8b3:${path}`],{cwd:root,encoding:'utf8'});
+ assert.ok(selected(observe(fixture(t,{changes:beforeManagedScript}))));
+ for(const path of [runner,'packages/brain/vitest.config.js']){
+  const proof=observe(fixture(t,{changes:{...changes,[path]:beforeManagedScript[path]}}));
+  assert.equal(selected(proof),undefined);assert.ok(proof.unproven.some(row=>row.path===testPath&&row.side==='head'&&row.reason==='entry_unproven'));
+ }
 });
