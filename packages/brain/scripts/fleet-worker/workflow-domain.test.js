@@ -6,16 +6,16 @@ import path from 'node:path';
 import {randomUUID,createHash} from 'node:crypto';
 const {createWorkflowRunner,profileDigest}=createRequire(import.meta.url)('./workflow-runner.cjs');
 const hash=s=>createHash('sha256').update(s).digest('hex');
-function fixture({closeUnknown=false,badRef=false}={}){
+function fixture({closeUnknown=false,badRef=false,useRealRecorder=false}={}){
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'workflow-domain-'));
  const code=`import fs from 'node:fs';import path from 'node:path';
  const live=new WeakMap();
  export function createWorkflowDomain({identity,profile,runDirectory,signal,recordEvidence,deadline_ms,cleanup_deadline_ms}){
   const resource={};live.set(resource,41);fs.appendFileSync(path.join(profile.cwd,'factories'),'x');
-  fs.writeFileSync(path.join(profile.cwd,'identity.json'),JSON.stringify({identity,runDirectory,signal:signal instanceof AbortSignal,deadline_ms,cleanup_deadline_ms}));
+  fs.writeFileSync(path.join(profile.cwd,'identity.json'),JSON.stringify({identity,profile,runDirectory,signal:signal instanceof AbortSignal,deadline_ms,cleanup_deadline_ms}));
   return {
    prepareInput:async(a,value)=>({...value,prepared:true}),
-   executeActivity:async(a,input,options)=>{if(options.signal!==signal||!input.prepared)throw Error('context_missing');fs.appendFileSync(path.join(profile.cwd,'effects'),'x');await recordEvidence({event_type:'DOMAIN_OBSERVATION',activity:a.key,evidence:[{actual:true}]});return {schema_version:1,run_tag:input.run_tag,status:'completed',outputs:{answer:live.get(resource)+1},metrics:{},evidence:[{actual:true}]};},
+   executeActivity:async(a,input,options)=>{if(options.signal!==signal||!input.prepared)throw Error('context_missing');fs.appendFileSync(path.join(profile.cwd,'effects'),'x');await recordEvidence({event_type:'ACTIVITY_AGENT_EVENT',activity:a.key,event:{protocol:'workflow-domain-evidence/v1',evidence:[{actual:true}]}});return {schema_version:1,run_tag:input.run_tag,status:'completed',outputs:{answer:live.get(resource)+1},metrics:{},evidence:[{actual:true}]};},
    checkActivity:async(a,result,options)=>({verdict:options.phase==='start'||fs.readFileSync(path.join(profile.cwd,'effects'),'utf8')==='x'?'pass':'fail',acceptance_ref:${badRef?"'wrong'":"options.acceptance.ref"},evidence:[{independent:true}]}),
    validateWorkflow:async(p,receipt,options)=>({verdict:receipt.outputs.answer===42?'pass':'fail',acceptance_ref:options.acceptance.ref,evidence:[{independent:true}]}),
    close:async()=>{fs.appendFileSync(path.join(profile.cwd,'closes'),'x');return {execution_stopped:${!closeUnknown}};}
@@ -28,7 +28,7 @@ function fixture({closeUnknown=false,badRef=false}={}){
  m.identity={identity_protocol:2,workflow_id:uid(),reference_id:uid(),workflow_definition_version_id:uid(),activity_definition_version_id:uid()};
  const binding={run_binding_id:uid(),workflow_id:m.identity.workflow_id,workflow_definition_version_id:m.identity.workflow_definition_version_id,attempt_key:uid(),activities:{work:{activity_id:m.activity_id,reference_id:m.identity.reference_id,activity_definition_version_id:m.identity.activity_definition_version_id}}};
  const id={run_id:uid(),task_id:uid(),profile:'fixed',input:{run_tag:'domain-test',entry:'untrusted.mjs'},mode:'formal',run_binding:binding,profile_sha256:profileDigest(profile)};
- const events=[],r=createWorkflowRunner({stateRoot:path.join(root,'state'),machineId:'fixture',profiles:{fixed:profile},assertCanLaunch:()=>{},assertLocalResources:async()=>{},createRecorder:()=>({onEvent:async e=>events.push(e),recordValidation:async()=>{},finalize:async()=>{},flush:async()=>({pending:0,blocked:0})})});
+ const events=[],r=createWorkflowRunner({stateRoot:path.join(root,'state'),machineId:'fixture',profiles:{fixed:profile},assertCanLaunch:()=>{},assertLocalResources:async()=>{},createRecorder:useRealRecorder?async state=>{const {createWorkflowRecorder}=await import('../../src/orchestrator/workflow-recorder.js');return createWorkflowRecorder({root:path.join(root,'journal'),runId:state.identity.run_id,taskId:state.identity.task_id,machineId:'fixture',profileDigest:state.identity.profile_sha256,mode:state.identity.mode,metadata:state.profile.metadata});}:()=>({onEvent:async e=>events.push(e),recordValidation:async()=>{},finalize:async()=>{},flush:async()=>({pending:0,blocked:0})})});
  return {root,profile,id,r,events};
 }
 async function terminal(f){for(let i=0;i<300;i++){const s=await f.r.inspect(f.id);if(!['running','starting','validating'].includes(s.status))return s;await new Promise(r=>setTimeout(r,10));}throw Error('terminal_not_observed');}
@@ -38,8 +38,8 @@ test('公共Runner同进程domain工厂只建一次，正式identity及独立判
  expect(s.status).toBe('completed');expect(s.validation.activities.work.verdict).toBe('pass');
  expect(fs.readFileSync(path.join(f.root,'factories'),'utf8')).toBe('x');expect(fs.readFileSync(path.join(f.root,'effects'),'utf8')).toBe('x');expect(fs.readFileSync(path.join(f.root,'closes'),'utf8')).toBe('x');
  const context=JSON.parse(fs.readFileSync(path.join(f.root,'identity.json'),'utf8'));
- expect(context.cleanup_deadline_ms-context.deadline_ms).toBe(1000);expect(context.deadline_ms).toBeGreaterThan(Date.now()-5000);expect(context.identity).toEqual(f.id);expect(context.signal).toBe(true);expect(context.runDirectory).toBe(path.join(f.root,'state',f.id.run_id));
- expect(f.events.some(e=>e.event_type==='DOMAIN_OBSERVATION')).toBe(true);expect(f.events.filter(e=>e.event_type==='ACTIVITY_STARTED')).toHaveLength(1);
+ expect(context.cleanup_deadline_ms-context.deadline_ms).toBe(1000);expect(context.deadline_ms).toBeGreaterThan(Date.now()-5000);expect(profileDigest(context.profile)).toBe(f.id.profile_sha256);expect(context.identity).toEqual(f.id);expect(context.signal).toBe(true);expect(context.runDirectory).toBe(path.join(f.root,'state',f.id.run_id));
+ expect(f.events.some(e=>e.event_type==='ACTIVITY_AGENT_EVENT'&&e.event?.protocol==='workflow-domain-evidence/v1')).toBe(true);expect(f.events.filter(e=>e.event_type==='ACTIVITY_STARTED')).toHaveLength(1);
 }));
 test('domain close未知保留unknown与execution.lock，不允许下一run进入',()=>withFixture({closeUnknown:true},async f=>{
  await f.r.start(f.id);const s=await terminal(f);expect(s.status).toBe('unknown');expect(s.execution_unknown).toBe(true);
@@ -116,4 +116,28 @@ test('domain恢复原执行外部效果未知时仍要求固定readback_only声�
  const {loadWorkflowDomain}=createRequire(import.meta.url)('./workflow-domain.cjs');
  const domain=await loadWorkflowDomain({profile:f.profile,identity:f.id,runDirectory:path.join(f.root,'run'),controller:new AbortController(),startedAt:Date.now(),recordEvidence:async()=>{}});
  try{await expect(domain.recoverActivity(f.profile.contract.activities[0],f.id.input,{failure:{external_effect:'unknown'}})).rejects.toThrow('readback_required');expect(fs.existsSync(path.join(f.root,'recovery-effect'))).toBe(false);}finally{await domain.close();}
+}));
+test('同进程已导入路径的依赖字节更换必须拒绝，不静默运行旧ESM缓存',()=>withFixture({},async f=>{
+ const helper=path.join(f.root,'helper.mjs');fs.writeFileSync(helper,'export const answer=42;');f.profile.files['helper.mjs']=hash('export const answer=42;');
+ changeSource(f,s=>"import {answer} from './helper.mjs';\n"+s.replace('live.set(resource,41)','live.set(resource,answer-1)'));
+ const {loadWorkflowDomain}=createRequire(import.meta.url)('./workflow-domain.cjs');
+ const load=()=>loadWorkflowDomain({profile:f.profile,identity:f.id,runDirectory:path.join(f.root,'run'),controller:new AbortController(),startedAt:Date.now(),recordEvidence:async()=>{}});
+ const first=await load();await first.close();
+ fs.writeFileSync(helper,'export const answer=43;');f.profile.files['helper.mjs']=hash('export const answer=43;');f.id.profile_sha256=profileDigest(f.profile);
+ await expect(load()).rejects.toThrow('source_cache_conflict');await f.r.start(f.id);expect((await terminal(f)).reason).toBe('workflow_domain_source_cache_conflict');expect(fs.readFileSync(path.join(f.root,'factories'),'utf8')).toBe('x');
+}));
+test('同进程独立validator不能通过修改result把原执行失败升级成功',()=>withFixture({},async f=>{
+ changeSource(f,s=>s.replace("status:'completed',outputs:","status:'failed',failure_class:'fatal',outputs:").replace("checkActivity:async(a,result,options)=>({", "checkActivity:async(a,result,options)=>{if(result){result.status='completed';delete result.failure_class;}return ({").replace("evidence:[{independent:true}]}),\n   validateWorkflow:","evidence:[{independent:true}]});},\n   validateWorkflow:"));
+ await f.r.start(f.id);expect((await terminal(f)).status).toBe('failed');
+}));
+test('真实公共Recorder接收domain证据并落本地journal/outbox，不伪造中央ACK',()=>withFixture({useRealRecorder:true},async f=>{
+ await f.r.start(f.id);const s=await terminal(f);expect(s.status).toBe('completed');expect(s.writeback.pending).toBeGreaterThan(0);expect(s.writeback.acked).toBe(0);
+ const rows=fs.readFileSync(path.join(f.root,'journal','events.jsonl'),'utf8').trim().split('\n').map(JSON.parse);
+ expect(rows.some(row=>row.event?.event?.protocol==='workflow-domain-evidence/v1')).toBe(true);expect(rows.some(row=>row.span?.evidence?.kind==='execution')).toBe(true);
+}));
+test('真实公共Recorder允许现役Commander重新接回事件并保存原run span',()=>withFixture({},async f=>{
+ const {createWorkflowRecorder}=await import('../../src/orchestrator/workflow-recorder.js');
+ const recorder=createWorkflowRecorder({root:path.join(f.root,'reconnect-journal'),runId:f.id.run_id,taskId:f.id.task_id,machineId:'fixture',profileDigest:f.id.profile_sha256,mode:'exploration',metadata:f.profile.metadata});
+ await expect(recorder.onEvent({cursor:1,event_type:'COMMANDER_RECONNECTED',run_id:f.id.run_id,activity:'work',phase:'event'},{activities:[]})).resolves.toBeUndefined();
+ expect(recorder.inspect().spans[0].run_id).toBe(f.id.run_id);expect(recorder.inspect().spans[0].evidence.event.event_type).toBe('COMMANDER_RECONNECTED');
 }));
