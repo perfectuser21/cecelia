@@ -1,10 +1,21 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.445.149
+**Brain 版本**: 1.445.180
 
-退役 Claude worker 池不再注册周期空派发；薄退役拒绝边界保留。前端移除固定 Harness 贯通声明，旧 Brain 知识页显式标记历史快照；源码清退不代表生产已发布。
+本版从已合并的 1.445.178 源码基线生成 Potato 原生任务租约修复的正式发布候选，移除 package 中的 `cecelia_source_only` 标记；部署入口对带标记版本的拒绝逻辑不变。完整 CI 通过后，仍须以固定 SHA 和同一镜像在隔离数据库完成迁移、启动及真实 API/数据库读回，才允许按已有授权晋级生产；本次升版和合并本身不代表部署或 cloud6 101 业务验收通过。
 
-开发工具归位：Engine 独立包退役，实际写入守卫与工作树工具迁 scripts/dev；仍可达 Codex adapter 归 Brain。默认 CI 不再生成 Engine/Quality 组件，现役工具真实行为在 scripts 组件验证。候选保留 `cecelia_source_only=true`，尚不构成生产发布证明。
+审查动态绑定旧拆解时在启动前拒绝；手机派发仅按本次认领及设备锁版本处理。
+
+旧拆解质量及旧规划审核仅阻止新派发，在途回执仍按原审核合同处理。
+
+开发任务无 PR 的终态不触发接棒或计入项目完成数；非开发任务无 PR 完成仍保持原语义。
+未经 GitHub 验真的 metrics 合并声明不得改变 dev 任务；可信合并回调提升无 PR 任务时刷新对应 KR 进度。
+
+历史拆解审核回执必须携带明确结论；HTTP 与队列路径在同一事务记录审核和任务状态，无效或故障回执保持待处理。需要修订的旧审核只留痕，不再创建已退役的拆解任务。
+
+旧 Claude auto-memory 同步器已退役，现役记忆与历史数据保留。退役 Claude worker 池不再注册周期空派发；薄退役拒绝边界保留。前端移除固定 Harness 贯通声明，旧 Brain 知识页显式标记历史快照；源码清退不代表生产已发布。
+
+开发工具归位：Engine 独立包退役，实际写入守卫与工作树工具迁 scripts/dev；仍可达 Codex adapter 归 Brain。默认 CI 不再生成 Engine/Quality 组件，现役工具真实行为在 scripts 组件验证。此前源码候选保留 `cecelia_source_only=true`，尚不构成生产发布证明。
 
 Quality 独立包退役：开发门禁迁根 scripts/devgate，发布 Smoke 配置和真实调用者归 Brain，Goldset CLI 与原始样本归 scripts/evals，路由回归归 Brain；保留行为与失败阻断，移除旧包专属原型和自维护入口。
 
@@ -6296,9 +6307,9 @@ executeTick() 流程：
                └─ level=2 → 升级到皮层
 ```
 
-**45 个白名单 action**（棒4起 okr_initiative_plan/okr_scope_plan/okr_project_plan 随 scope/initiative 层退役移除，决策 ee4842a6）：
+**44 个白名单 action**（棒4起 okr_initiative_plan/okr_scope_plan/okr_project_plan 随 scope/initiative 层退役移除，决策 ee4842a6；旧秋米 OKR 拆解决策已退役）：
 - 任务：dispatch_task, create_task, cancel_task, retry_task, reprioritize_task, pause_task, resume_task, mark_task_blocked, quarantine_task
-- OKR：create_okr, update_okr_progress, assign_to_autumnrice
+- OKR：create_okr, update_okr_progress
 - 系统：notify_user, log_event, escalate_to_brain, request_human_review
 - 分析：analyze_failure, predict_progress
 - 规划：create_proposal

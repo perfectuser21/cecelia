@@ -231,7 +231,6 @@ vi.mock('../../zombie-sweep.js', () => ({
     lock_slots: { removed: 0 },
   }),
 }));
-vi.mock('../../memory-sync.js', () => ({ memorySyncIfNeeded: vi.fn() }));
 vi.mock('../../daily-scrape-scheduler.js', () => ({ scheduleDailyScrape: vi.fn() }));
 vi.mock('../../kr3-progress-scheduler.js', () => ({ scheduleKR3ProgressReport: vi.fn() }));
 vi.mock('../../credential-expiry-checker.js', () => ({

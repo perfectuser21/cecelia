@@ -1,9 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync} from 'node:fs';
+import {mkdtempSync, writeFileSync, readFileSync, existsSync, lstatSync, rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
-import {join} from 'node:path';
+import {dirname, join, resolve} from 'node:path';
 import {spawnSync} from 'node:child_process';
+import {fileURLToPath} from 'node:url';
+import {parse} from 'acorn';
 import {commandsFor} from '../run-basic-check.mjs';
 
 const required = [
@@ -24,6 +26,27 @@ function selected() {
 }
 
 test('现役关键PG合同在真实数据库迁移之后进入现有Brain集成跑道', selected);
+
+test('无 PR 交付 PG 回归从实际 PR 集成入口静态引入，删除或缺文件必须失败', () => {
+  selected();
+  const dir = resolve(dirname(fileURLToPath(import.meta.url)), '../../../packages/brain/src/__tests__/integration');
+  const entry = readFileSync(join(dir, 'workflow-common-terminal.pg.integration.test.js'), 'utf8');
+  const requiredImports = ['./project-progress-no-pr.pg.integration.test.js', './metrics-pr-merged-no-pr.pg.integration.test.js', './postdeploy-snapshot.pg.integration.test.js', './retired-auto-qiumi-lock.pg.integration.test.js', './retired-auto-sweeper-race.pg.integration.test.js'];
+  const check = (text, exists) => {
+    const imports = parse(text, { ecmaVersion: 'latest', sourceType: 'module' }).body
+      .filter(node => node.type === 'ImportDeclaration').map(node => node.source.value);
+    for (const file of requiredImports) {
+      assert.equal(imports.filter(value => value === file).length, 1, `缺少唯一静态导入 ${file}`);
+      assert.ok(exists(join(dir, file)), `PG 回归文件不存在 ${file}`);
+    }
+  };
+  const isFile = path => existsSync(path) && lstatSync(path).isFile();
+  check(entry, isFile);
+  for (const file of requiredImports) {
+    assert.throws(() => check(entry.replace(`import '${file}';`, ''), isFile));
+    assert.throws(() => check(entry, path => path !== join(dir, file) && isFile(path)));
+  }
+});
 
 test('真实PG命令非零必须传播失败且阻止后续操作', () => {
   const step = selected();

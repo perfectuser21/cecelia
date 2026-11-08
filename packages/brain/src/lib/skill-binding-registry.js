@@ -20,6 +20,13 @@ const BINDING_SQL = `SELECT name, status, task_types, dispatch_command
                       WHERE cardinality(task_types) > 0 AND status <> 'planned'
                       ORDER BY name`;
 
+// 安全派发使用本次成功读取的账本；失败不可静默回退到旧快照。
+export async function readSkillBindingsStrict(pool) {
+  const result = await withTimeout(Promise.resolve(pool.query(BINDING_SQL)), SKILL_BINDING_QUERY_TIMEOUT_MS);
+  if (!result || !Array.isArray(result.rows)) throw new Error('skill_registry query returned invalid result');
+  return buildBindings(result.rows).map;
+}
+
 /** @type {{map: Map<string,string>, conflicts: Array<{task_type:string, skills:string[]}>, loadedAt: number}|null} */
 let snapshot = null;
 let failedAt = 0;

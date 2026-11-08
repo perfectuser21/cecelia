@@ -1,6 +1,6 @@
 // 合并门（决策 a1fdbc51，对应旧 harness「merge 前 head == 锚定 SHA」）：runner 亲自合并，且只合并「被批准的那个 head」——
-// 必需检查全部登记全绿 + QA 与裁判在该 head 上通过。批准后分支上再出现的提交：只是记录（本 PR 的版本碎片、本 sprint 的 QA 报告/
-// 裁决/截图）或从 main 合进来的 merge 提交 → 改绑到新 head；动了别的文件 → 撤销批准，新 head 重新 QA + 裁判。
+// 必需检查全部登记全绿 + QA 与裁判在该 head 上通过。批准后的最终树只允许追加安全记录才可改绑；
+// 包括从 main 合入的其他文件变更都必须撤销批准，新 head 重新 QA + 裁判。
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -195,7 +195,7 @@ describe('合并门（绑定 head SHA）', () => {
     expect(state()).toMatchObject({ passed: true, approved: { head } });
   });
 
-  it('批准后只是把 main 合进分支（merge 提交）→ 不算 PR 自身改动，改绑并合并', async () => {
+  it('批准后合入的 main 改变最终树 → 撤销批准', async () => {
     approve();
     git(sb.seed, 'checkout', '-q', 'main');
     fs.writeFileSync(path.join(sb.seed, 'other.txt'), 'main moved\n');
@@ -208,6 +208,94 @@ describe('合并门（绑定 head SHA）', () => {
     const head = remoteHead();
     const r = await go(green({ prs: [pr({ headRefOid: head })] }));
     expect(r.exitCode, r.stderr).toBe(0);
-    expect(mergeCalls()).toEqual([['pr', 'merge', '77', '--squash', '--delete-branch', '--match-head-commit', head]]);
+    expect(mergeCalls()).toEqual([]);
+    expect(state()).toMatchObject({ passed: false, revoked: [expect.objectContaining({ reason: 'head_changed_after_approval', files: ['other.txt'] })] });
+  });
+
+  it('批准后合入 main 带来新生产代码 → 必须撤销批准并重新验收', async () => {
+    const approved = remoteHead();
+    approve(approved);
+    git(sb.seed, 'checkout', '-q', 'main');
+    fs.writeFileSync(path.join(sb.seed, 'new-runtime.js'), 'export const unsafe = true;\n');
+    git(sb.seed, 'add', '.');
+    git(sb.seed, 'commit', '-q', '-m', 'feat: changed runtime');
+    git(sb.seed, 'push', '-q', 'origin', 'main');
+    git(sb.seed, 'checkout', '-q', BRANCH);
+    git(sb.seed, 'merge', '-q', '--no-edit', 'main');
+    git(sb.seed, 'push', '-q', 'origin', BRANCH);
+    const r = await go(green({ prs: [pr({ headRefOid: remoteHead() })] }));
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(mergeCalls()).toEqual([]);
+    expect(state()).toMatchObject({ passed: false, revoked: [expect.objectContaining({ reason: 'head_changed_after_approval', from: approved, files: ['new-runtime.js'] })] });
+  });
+
+  it('批准后将源码移动到记录目录 → 仍要撤销批准', async () => {
+    approve();
+    fs.mkdirSync(path.join(sb.seed, 'changes'), { recursive: true });
+    git(sb.seed, 'mv', 'src/feature.js', 'changes/frag.md');
+    git(sb.seed, 'commit', '-q', '-m', 'chore: move source');
+    git(sb.seed, 'push', '-q', 'origin', BRANCH);
+    const r = await go(green({ prs: [pr({ headRefOid: remoteHead() })] }));
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(mergeCalls()).toEqual([]);
+    expect(state()).toMatchObject({ passed: false, revoked: [expect.objectContaining({ files: ['src/feature.js'] })] });
+  });
+
+  it('PR 列表与 fetch 得到的 HEAD 不一致 → 不改绑、不合并', async () => {
+    const approved = remoteHead();
+    approve(approved);
+    const staleListHead = 'c'.repeat(40);
+    const r = await go(green({ prs: [pr({ headRefOid: staleListHead })] }));
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(mergeCalls()).toEqual([]);
+    expect(state()).toMatchObject({ approved: { head: approved } });
+  });
+
+  it('批准后覆盖已提交的 QA 报告 → 撤销批准', async () => {
+    const report = `${SPRINT}/05-qa-report-r2.md`;
+    addToBranch(report, '# 原始证据\n');
+    approve();
+    addToBranch(report, '# 修改过的证据\n');
+    const r = await go(green({ prs: [pr({ headRefOid: remoteHead() })] }));
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(mergeCalls()).toEqual([]);
+    expect(state()).toMatchObject({ passed: false, revoked: [expect.objectContaining({ files: [report] })] });
+  });
+
+  it('批准后删除既有 QA 报告 → 撤销批准', async () => {
+    const report = `${SPRINT}/05-qa-report-r2.md`;
+    addToBranch(report, '# 通过证据\n');
+    approve();
+    git(sb.seed, 'rm', '-q', report);
+    git(sb.seed, 'commit', '-q', '-m', 'chore: remove evidence');
+    git(sb.seed, 'push', '-q', 'origin', BRANCH);
+    const r = await go(green({ prs: [pr({ headRefOid: remoteHead() })] }));
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(mergeCalls()).toEqual([]);
+    expect(state()).toMatchObject({ passed: false, revoked: [expect.objectContaining({ files: [report] })] });
+  });
+
+  it('批准后在截图目录增加脚本 → 撤销批准', async () => {
+    approve();
+    const script = `${SPRINT}/qa-r2/injected.js`;
+    addToBranch(script, 'process.exit(0);\n');
+    const r = await go(green({ prs: [pr({ headRefOid: remoteHead() })] }));
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(mergeCalls()).toEqual([]);
+    expect(state()).toMatchObject({ passed: false, revoked: [expect.objectContaining({ files: [script] })] });
+  });
+
+  it('批准后新增可执行的截图文件 → 撤销批准', async () => {
+    approve();
+    const screenshot = `${SPRINT}/qa-r2/evil.png`;
+    fs.mkdirSync(path.dirname(path.join(sb.seed, screenshot)), { recursive: true });
+    fs.writeFileSync(path.join(sb.seed, screenshot), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    git(sb.seed, 'add', screenshot);
+    git(sb.seed, 'commit', '-q', '-m', 'chore: add executable image');
+    git(sb.seed, 'push', '-q', 'origin', BRANCH);
+    const r = await go(green({ prs: [pr({ headRefOid: remoteHead() })] }));
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(mergeCalls()).toEqual([]);
+    expect(state()).toMatchObject({ passed: false, revoked: [expect.objectContaining({ files: [screenshot] })] });
   });
 });

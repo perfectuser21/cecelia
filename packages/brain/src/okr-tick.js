@@ -1,11 +1,10 @@
 /**
  * OKR Tick - OKR State Machine
- * Manages OKR status transitions and triggers planner for decomposition
+ * Manages OKR question status transitions; legacy decomposition is retired
  */
 
 import pool from './db.js';
 import { emit } from './event-bus.js';
-import { createTask } from './actions.js';
 
 // OKR Tick configuration
 const OKR_TICK_INTERVAL_MS = parseInt(process.env.CECELIA_OKR_TICK_INTERVAL_MS || '300000', 10); // 5 minutes
@@ -83,113 +82,18 @@ async function getGoalsWithAnsweredQuestions() {
   return needsInfoGoals.filter(areAllQuestionsAnswered);
 }
 
-/**
- * Trigger planner for goal decomposition
- * Creates a decomposition task that executor will dispatch via normal flow.
- * executor.preparePrompt() handles decomposition='true' → generates /decomp prompt.
- * @param {Object} goal - Goal to decompose
- */
+/** 保留调用合同：旧 OKR 拆解已退役，不创建任务、不修改 KR。 */
 async function triggerPlannerForGoal(goal) {
-  console.log(`[okr-tick] Creating decomposition task for goal: ${goal.title} (${goal.id})`);
-
-  // Emit event for monitoring
-  await emit('goal_ready_for_decomposition', 'okr-tick', {
-    goal_id: goal.id,
-    title: goal.title,
-    priority: goal.priority,
-    description: goal.description
-  });
-
-  try {
-    // 容量预检：pool满时回退 goal 状态，下个 tick 重试
-    const { calculateSlotBudget } = await import('./slot-allocator.js');
-    const budget = await calculateSlotBudget();
-    if (!budget.dispatchAllowed) {
-      await pool.query(
-        `UPDATE key_results SET status='ready', updated_at=NOW() WHERE id=$1`,
-        [goal.id]
-      );
-      console.warn(`[okr-tick] goal ${goal.id} deferred (pool_c_full), will retry next tick`);
-      return {
-        triggered: false,
-        deferred: true,
-        goal_id: goal.id,
-        title: goal.title,
-        reason: 'pool_c_full'
-      };
-    }
-
-    // Create a decomposition task — executor.preparePrompt() will generate the /decomp prompt
-    const result = await createTask({
-      title: `OKR 拆解: ${goal.title}`,
-      description: goal.description || goal.title,
-      priority: goal.priority || 'P0',
-      goal_id: goal.id,
-      project_id: goal.project_id || null,
-      task_type: 'dev',
-      trigger_source: 'okr_tick',
-      payload: {
-        decomposition: 'true',
-        kr_id: goal.id,
-        kr_goal: goal.description || goal.title
-      }
-    });
-
-    console.log(`[okr-tick] Decomposition task created for goal ${goal.id}: ${result.task?.id || 'dedup'}`);
-
-    return {
-      triggered: true,
-      goal_id: goal.id,
-      title: goal.title,
-      task_id: result.task?.id,
-      deduplicated: result.deduplicated || false
-    };
-  } catch (err) {
-    console.error(`[okr-tick] Failed to create decomposition task: ${err.message}`);
-    return {
-      triggered: false,
-      goal_id: goal.id,
-      title: goal.title,
-      error: err.message
-    };
-  }
+  return { triggered: false, reason: 'decomposition_retired', goal_id: goal.id, title: goal.title };
 }
 
 /**
  * Execute OKR Tick - the OKR state machine loop
  *
- * 1. Check for goals with status='ready' and start decomposition
- * 2. Check for goals with status='needs_info' where all questions are answered
+ * Check goals with status='needs_info' where all questions are answered
  */
 async function executeOkrTick() {
   const actionsTaken = [];
-
-  // 1. Process 'ready' goals - trigger decomposition
-  const readyGoals = await getGoalsByStatus(OKR_STATUS.READY);
-
-  for (const goal of readyGoals) {
-    try {
-      // Mark as decomposing
-      await updateGoalStatus(goal.id, OKR_STATUS.DECOMPOSING);
-
-      // Trigger planner
-      const result = await triggerPlannerForGoal(goal);
-      if (!result.triggered && !result.deferred) {
-        await updateGoalStatus(goal.id, OKR_STATUS.READY);
-      }
-
-      actionsTaken.push({
-        action: 'decompose_goal',
-        goal_id: goal.id,
-        title: goal.title,
-        result
-      });
-    } catch (err) {
-      console.error(`[okr-tick] Failed to decompose goal ${goal.id}:`, err.message);
-      // Revert to ready status on failure
-      await updateGoalStatus(goal.id, OKR_STATUS.READY);
-    }
-  }
 
   // 2. Process 'needs_info' goals with all questions answered
   const answeredGoals = await getGoalsWithAnsweredQuestions();
@@ -207,7 +111,7 @@ async function executeOkrTick() {
 
   return {
     success: true,
-    ready_goals_processed: readyGoals.length,
+    ready_goals_processed: 0,
     needs_info_promoted: answeredGoals.length,
     actions_taken: actionsTaken
   };

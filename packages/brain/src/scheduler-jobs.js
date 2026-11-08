@@ -178,7 +178,11 @@ export const JOBS = [
   { name: 'credential-freshness', cadence: { everySec: 86400 }, needsPool: true, timeoutMs: 120_000, handler: (pool) => maybeRunCredentialFreshness(pool), description: '凭据保鲜守卫：每日探活关键凭据(Tailscale/GitHub/飞书)+到期体检+auth key 自动续期。2026-09-16 实证 Tailscale API key 过期 18 天无人知、备用 PAT 元数据没写却已 401 —— 元数据只是声明，活性探测才是真相' },
   // 顺序要紧：先采集再推送，否则推的是上一轮的旧数（尤其 liveness 要用最新 last_run_at 算）
   { name: 'ops-notion-push', cadence: { everySec: 60 }, needsPool: true, timeoutMs: 120_000, handler: (pool) => runOpsNotionPush(pool), description: '运行舱四表推 Notion 驾驶舱（机器列单向覆盖含活性告警）。旧链挂在无人import的legacy-notion-push-scheduler上从不执行，致Notion停更两天，故单独接现代调度层' },
-  { name: 'notion-directory', cadence: { everySec: 60 }, needsPool: true, timeoutMs: 120_000, handler: (pool) => runDirectoryJob(pool), description: '六层目录：先导入人工组织树，再按固定身份分批投影机器关系；锁与游标防重入，未知留缺口，读回后收据' },
+  { name: 'notion-directory', cadence: { everySec: 60 }, needsPool: true, timeoutMs: 120_000, handler: async (pool) => {
+    const result = await runDirectoryJob(pool);
+    if (result?.status === 'failed') throw new Error(`目录投影失败 ${result.failed ?? 0} 项：${result.errors?.[0]?.code || '未知错误'}`);
+    return result;
+  }, description: '六层目录：先导入人工组织树，再按固定身份分批投影机器关系；锁与游标防重入，未知留缺口，读回后收据' },
   { name: 'notion-inlet-ingest', cadence: { everySec: 300 }, needsPool: true, timeoutMs: 120_000, handler: (pool) => runNotionInletIngest(pool), description: '✍️入口血管（三面模型PR②b，决策297ffee5）：遍历注册表 face=inlet&active 的库，「决策」库→decisions、员工Skill库zip→/api/skill-eval/upload；收据表幂等，人改了再收并留痕，机器不写入口库；自gate 5min' },
   { name: 'notion-gtd-sync', cadence: { everySec: 30 }, needsPool: true, timeoutMs: 30_000, livenessIntervalSec: 30, handler: (pool) => gtdSyncJobHandler(pool), description: '秋米中文GTD表↔英文Tasks库双向同步+入账+急停+回写（QIUMI_SYNC_ENABLED 门，handler 只确保 30s 自循环在跑并回报上次结果；活性按 handler 自报 liveness_at 算，09-24 卡死案；决策 b8abd28c，task b7efdbff）' },
   { name: 'crm-notion-sync', cadence: { everySec: 300 }, needsPool: true, timeoutMs: 150_000, handler: runCrmSyncJobs, description: 'CRM登记源回读和Brain结果投影；CRM_SYNC_ENABLED显式启用，默认关闭' },

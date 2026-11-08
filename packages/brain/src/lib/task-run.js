@@ -409,6 +409,11 @@ export async function recordRunFromCallback(
     }
   }
   const started = await startRun({ taskId, runId, source }, deps);
+  if (deps.requireTaskOwner) {
+    const pool = await resolvePool(deps);
+    const owner = await pool.query('SELECT task_id FROM task_runs WHERE run_id = $1', [String(runId)]);
+    if (owner.rows.length !== 1 || String(owner.rows[0].task_id) !== String(taskId)) throw new Error('task run ownership conflict');
+  }
   if (runStatus === 'running') return { started, finished: { updated: false } };
   const artifacts = [];
   if (result && typeof result === 'object' && result.artifacts !== undefined) {

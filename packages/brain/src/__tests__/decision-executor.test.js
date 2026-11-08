@@ -3,7 +3,8 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { executeDecision, actionHandlers, isActionDangerous } from '../decision-executor.js';
+import { executeDecision, actionHandlers, approvePendingAction, selectProposalOption, isActionDangerous } from '../decision-executor.js';
+import { validateDecision } from '../thalamus.js';
 import pool from '../db.js';
 
 // Mock client for transactions
@@ -325,15 +326,52 @@ describe('decision-executor', () => {
     });
 
     describe('assign_to_autumnrice', () => {
-      it('should create decomposition task', async () => {
-        const result = await actionHandlers.assign_to_autumnrice({
+      it('不再接受旧拆解动作，但保留普通创建任务决策', () => {
+        const decision = { level: 1, rationale: 'test', confidence: 0.9, safety: false };
+        expect(validateDecision({ ...decision, actions: [{ type: 'assign_to_autumnrice', params: {} }] }).valid).toBe(false);
+        expect(validateDecision({ ...decision, actions: [{ type: 'create_task', params: {} }] }).valid).toBe(true);
+      });
+
+      it('拒绝已退役的旧拆解决策且不创建任务', async () => {
+        const { createTask } = await import('../actions.js');
+        await expect(actionHandlers.assign_to_autumnrice({
           okr_title: 'Test OKR',
           okr_description: 'Description',
           goal_id: 'goal-id'
-        }, {});
+        }, {})).rejects.toThrow('decomposition_retired');
+        expect(createTask).not.toHaveBeenCalled();
+      });
 
-        expect(result.success).toBe(true);
-        expect(result.task_id).toBeDefined();
+      it('旧待审动作被拒绝并回滚，不标记审批成功', async () => {
+        const { createTask } = await import('../actions.js');
+        const client = { query: vi.fn(async sql => sql.includes('SELECT * FROM pending_actions')
+          ? { rows: [{ status: 'pending_approval', action_type: 'assign_to_autumnrice', params: {}, context: {} }] }
+          : { rows: [] }), release: vi.fn() };
+        vi.mocked(pool.connect).mockResolvedValueOnce(client);
+        const result = await approvePendingAction('old-action', 'owner');
+        expect(result.success).toBe(false);
+        expect(result.error).toContain('decomposition_retired');
+        expect(result.status).toBe(410);
+        expect(result.code).toBe('decomposition_retired');
+        expect(client.query).toHaveBeenCalledWith('ROLLBACK');
+        expect(client.query.mock.calls.some(([sql]) => sql.includes('SET status = \'approved\''))).toBe(false);
+        expect(createTask).not.toHaveBeenCalled();
+      });
+
+      it('旧提案选项被拒绝并回滚，不标记提案成功', async () => {
+        const { createTask } = await import('../actions.js');
+        const client = { query: vi.fn(async sql => sql.includes('SELECT * FROM pending_actions')
+          ? { rows: [{ options: [{ id: 'a', action: { type: 'assign_to_autumnrice', params: {} } }] }] }
+          : { rows: [] }), release: vi.fn() };
+        vi.mocked(pool.connect).mockResolvedValueOnce(client);
+        const result = await selectProposalOption('old-proposal', 'a', 'owner');
+        expect(result.success).toBe(false);
+        expect(result.error).toContain('decomposition_retired');
+        expect(result.status).toBe(410);
+        expect(result.code).toBe('decomposition_retired');
+        expect(client.query).toHaveBeenCalledWith('ROLLBACK');
+        expect(client.query.mock.calls.some(([sql]) => sql.includes('SET status = \'approved\''))).toBe(false);
+        expect(createTask).not.toHaveBeenCalled();
       });
     });
 

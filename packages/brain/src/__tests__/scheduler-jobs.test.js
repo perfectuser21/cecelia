@@ -38,6 +38,26 @@ describe('scheduler-jobs 注册表', () => {
     expect(results).toHaveLength(1);
     expect(results[0]).toMatchObject({ name: 'notion-directory', ok: true });
   });
+  it('目录投影逐项失败时哨兵和运行账真实标记失败', async () => {
+    const pool = makePool();
+    runDirectoryJob.mockResolvedValueOnce({status: 'failed', failed: 13, errors: [{code: '目录单轮预算耗尽'}]});
+    const [result] = await runSchedulerJobsOnce(pool, [JOBS.find(row => row.name === 'notion-directory')]);
+    expect(result).toMatchObject({ok: false});
+    expect(result.error).toContain('目录单轮预算耗尽');
+    const sentinel = pool.query.mock.calls.find(([, args]) => args?.[0] === `${SENTINEL_KEY_PREFIX}notion-directory`);
+    expect(JSON.parse(sentinel[1][1])).toMatchObject({ok: false});
+    const run = pool.query.mock.calls.find(([sql]) => sql.includes('INSERT INTO runs'));
+    expect(run[1][4]).toBe('fail');
+  });
+
+  it.each([{skipped: true, reason: 'interval'}, {status: 'partial', failed: 0}, {status: 'batch_verified', failed: 0}])(
+    '目录投影非失败结果保留成功语义：%o', async value => {
+      const pool = makePool();
+      runDirectoryJob.mockResolvedValueOnce(value);
+      const [result] = await runSchedulerJobsOnce(pool, [JOBS.find(row => row.name === 'notion-directory')]);
+      expect(result.ok).toBe(true);
+    },
+  );
   it('节点接入对账使用数据库连接并保留 handler 结果', async () => {
     const pool = makePool();
     const job = JOBS.find(row => row.name === 'node-onboarding');

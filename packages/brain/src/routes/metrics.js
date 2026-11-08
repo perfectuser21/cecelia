@@ -7,8 +7,10 @@
  */
 
 import { Router } from 'express';
-import pool from '../db.js';
+import { rateLimit } from 'express-rate-limit';
+import defaultPool from '../db.js';
 
+export function createMetricsRouter(pool = defaultPool) {
 const router = Router();
 
 // GET /success-rate — 返回任务执行成功率统计
@@ -160,7 +162,7 @@ router.post('/tasks/:id/execution-attempt', async (req, res) => {
 });
 
 // PATCH /tasks/:id/pr-merged — 标记 PR 已合并
-router.patch('/tasks/:id/pr-merged', async (req, res) => {
+router.patch('/tasks/:id/pr-merged', rateLimit({ windowMs: 60_000, limit: 60, standardHeaders: 'draft-7', legacyHeaders: false }), async (req, res) => {
   const { id } = req.params;
   const { pr_url, merged_at, metrics } = req.body;
 
@@ -178,12 +180,16 @@ router.patch('/tasks/:id/pr-merged', async (req, res) => {
          status = CASE WHEN status != 'completed' THEN 'completed' ELSE status END,
          completed_at = CASE WHEN completed_at IS NULL THEN NOW() ELSE completed_at END,
          updated_at = NOW()
-       WHERE id = $1
+       WHERE id = $1 AND task_type IS DISTINCT FROM 'dev'
        RETURNING id, title, status, pr_url, pr_merged_at, success_metrics, execution_attempts`,
       [id, pr_url, merged_at || null, metrics ? JSON.stringify(metrics) : null]
     );
 
     if (result.rowCount === 0) {
+      const existing = await pool.query('SELECT task_type FROM tasks WHERE id = $1', [id]);
+      if (existing.rows[0]?.task_type === 'dev') {
+        return res.status(409).json({ error: 'dev PR merge requires verified GitHub evidence' });
+      }
       return res.status(404).json({ error: 'Task not found' });
     }
 
@@ -194,4 +200,7 @@ router.patch('/tasks/:id/pr-merged', async (req, res) => {
   }
 });
 
-export default router;
+return router;
+}
+
+export default createMetricsRouter();

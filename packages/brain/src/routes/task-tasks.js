@@ -568,11 +568,12 @@ router.delete('/:id', async (req, res) => {
 // POST /tasks/:id/claim — C1 atomic claim，防止并行 dispatch 重复派发。
 // 统一领单（派发总闸 G，任务 c5f6e683）：外部执行者带 lease_seconds（30~14400）即落租约，
 // 之后 POST /tasks/:id/heartbeat 续约；on_lease_expire=auto|requeue|fail 指定过期处置（默认按任务类型语义）。
-// 返回 200 表示 claim 成功（带租约时含 lease_until）；返回 409 表示已被其他 runner claim。
+// start:true 要求 lease_seconds，同事务领取并进入 in_progress；默认保持旧状态。
+// 返回 200 表示 claim 成功（带租约时含 lease_until）；返回 409 表示无法领取。
 router.post('/:id/claim', async (req, res) => {
   try {
-    const { claimer, executor_kind: executorKind, lease_seconds: leaseSeconds, on_lease_expire: onExpire } = req.body || {};
-    const r = await claimTaskWithLease(pool, { taskId: req.params.id, claimer, executorKind, leaseSeconds, onExpire });
+    const { claimer, executor_kind: executorKind, lease_seconds: leaseSeconds, on_lease_expire: onExpire, start } = req.body || {};
+    const r = await claimTaskWithLease(pool, { taskId: req.params.id, claimer, executorKind, leaseSeconds, onExpire, start });
     res.status(r.status).json(r.body);
   } catch (err) {
     res.status(500).json({ error: 'Failed to claim task', details: err.message });

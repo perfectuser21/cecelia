@@ -25,7 +25,8 @@ jobs:
   pwa-upgrade:
     name: PWA Upgrade (Playwright / Chromium)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # Leave time for the complete browser suite if Ubuntu's package mirror is slow.
+    timeout-minutes: 16
     defaults:
       run:
         working-directory: apps/dashboard
@@ -44,6 +45,7 @@ jobs:
         working-directory: .
 
       - name: Install Chromium
+        timeout-minutes: 9
         run: node e2e/playwright-cli.mjs install chromium --with-deps
 
       - name: Verify stale PWA upgrade

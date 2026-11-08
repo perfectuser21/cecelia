@@ -32,6 +32,64 @@ const lockRow = async (serial) => (await pool.query('SELECT * FROM device_locks 
 const noProbe = async () => { throw new Error('probe must not be called'); };
 
 describe.sequential('统一领单 claim + lease', () => {
+  it('显式 start 原子启动、落租约并可返回完整 heartbeat 合同', async () => {
+    const id = await seedTask(pool);
+    const r = await claimTaskWithLease(pool, { taskId: id, claimer: 'native-phone', leaseSeconds: 120, start: true });
+    expect(r.status).toBe(200);
+    expect(r.body.status).toBe('in_progress');
+    const t = await taskRow(id);
+    expect(t.status).toBe('in_progress');
+    expect(t.started_at).toBeTruthy();
+    expect(t.status_history).toEqual([expect.objectContaining({ from: 'queued', to: 'in_progress', source: 'claim' })]);
+    expect((await leaseRow(id)).lease_seconds).toBe(120);
+    const hb = await heartbeatTaskLease(pool, { taskId: id, claimer: 'native-phone', leaseSeconds: 180 });
+    expect(hb).toMatchObject({ ok: true, lease: { lease_seconds: 180, heartbeat_count: 1 } });
+    expect(new Date(hb.lease.lease_until).getTime()).toBeGreaterThan(Date.now());
+    expect((await claimTaskWithLease(pool, { taskId: id, claimer: 'native-phone', leaseSeconds: 120, start: true })).status).toBe(409);
+    expect((await taskRow(id)).status_history).toHaveLength(1);
+  });
+
+  it('缺省或 false 不启动，缺少有效租约或非布尔 start 不认领', async () => {
+    for (const start of [undefined, false]) {
+      const id = await seedTask(pool);
+      expect((await claimTaskWithLease(pool, { taskId: id, claimer: 'legacy', leaseSeconds: 120, start })).status).toBe(200);
+      expect((await taskRow(id)).status).toBe('queued');
+    }
+    for (const options of [{ start: true }, { start: true, leaseSeconds: 'invalid' }, { start: 'true', leaseSeconds: 120 }]) {
+      const id = await seedTask(pool);
+      expect((await claimTaskWithLease(pool, { taskId: id, claimer: 'native-phone', ...options })).status).toBe(400);
+      expect((await taskRow(id)).claimed_by).toBeNull();
+      expect(await leaseRow(id)).toBeUndefined();
+    }
+  });
+
+  it('start 拒绝 blocked 与终态，并发仅一个 owner 成功', async () => {
+    for (const status of ['blocked', 'completed', 'failed', 'cancelled']) {
+      const id = await seedTask(pool, { status });
+      expect((await claimTaskWithLease(pool, { taskId: id, claimer: 'native-phone', leaseSeconds: 120, start: true })).status).toBe(409);
+      expect((await taskRow(id)).status).toBe(status);
+      expect((await taskRow(id)).claimed_by).toBeNull();
+      expect(await leaseRow(id)).toBeUndefined();
+    }
+    const id = await seedTask(pool);
+    const results = await Promise.all(['one', 'two'].map(claimer => claimTaskWithLease(pool, { taskId: id, claimer, leaseSeconds: 120, start: true })));
+    expect(results.map(r => r.status).sort()).toEqual([200, 409]);
+    expect((await taskRow(id)).claimed_by).toBe((await leaseRow(id)).claimer);
+  });
+
+  it('lease 落盘失败回滚 claim、status、started_at 与 history', async () => {
+    const id = await seedTask(pool);
+    await pool.query(`CREATE FUNCTION reject_lease() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'lease storage failed'; END $$;
+      CREATE TRIGGER reject_lease BEFORE INSERT ON task_leases FOR EACH ROW EXECUTE FUNCTION reject_lease();`);
+    await expect(claimTaskWithLease(pool, { taskId: id, claimer: 'native-phone', leaseSeconds: 120, start: true })).rejects.toThrow('lease storage failed');
+    const t = await taskRow(id);
+    expect(t.status).toBe('queued');
+    expect(t.claimed_by).toBeNull();
+    expect(t.started_at).toBeNull();
+    expect(t.status_history).toEqual([]);
+    expect(await leaseRow(id)).toBeUndefined();
+  });
+
   it('claim 带 lease_seconds：认领成功并落租约行，返回 lease_until', async () => {
     const id = await seedTask(pool);
     const r = await claimTaskWithLease(pool, { taskId: id, claimer: 'factory-dispatcher@mmv', executorKind: 'openclaw-agent', leaseSeconds: 120 });

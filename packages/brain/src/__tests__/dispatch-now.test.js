@@ -125,7 +125,7 @@ describe('POST /api/brain/dispatch-now', () => {
     mockQuery.mockResolvedValueOnce({ rows: [] });
 
     const { default: router } = await import('../routes/execution.js');
-    const handler = router.stack.find(l => l.route?.path === '/dispatch-now').route.stack[0].handle;
+    const handler = router.stack.find(l => l.route?.path === '/dispatch-now').route.stack.at(-1).handle;
 
     const req = { body: { task_id: 'non-existent-id' } };
     const res = {
@@ -161,7 +161,7 @@ describe('POST /api/brain/dispatch-now', () => {
     });
 
     const { default: router } = await import('../routes/execution.js');
-    const handler = router.stack.find(l => l.route?.path === '/dispatch-now').route.stack[0].handle;
+    const handler = router.stack.find(l => l.route?.path === '/dispatch-now').route.stack.at(-1).handle;
 
     const req = { body: { task_id: 'test-task-id' } };
     const res = { json: vi.fn(), status: vi.fn().mockReturnThis() };
@@ -181,7 +181,7 @@ describe('POST /api/brain/dispatch-now', () => {
     });
 
     const { default: router } = await import('../routes/execution.js');
-    const handler = router.stack.find(l => l.route?.path === '/dispatch-now').route.stack[0].handle;
+    const handler = router.stack.find(l => l.route?.path === '/dispatch-now').route.stack.at(-1).handle;
 
     const req = { body: { task_id: 'done-task' } };
     const res = { status: vi.fn().mockReturnThis(), json: vi.fn() };
@@ -205,7 +205,7 @@ describe('POST /api/brain/dispatch-now', () => {
     mockQuery.mockResolvedValueOnce({ rows: [] }); // Rollback to queued
 
     const { default: router } = await import('../routes/execution.js');
-    const handler = router.stack.find(l => l.route?.path === '/dispatch-now').route.stack[0].handle;
+    const handler = router.stack.find(l => l.route?.path === '/dispatch-now').route.stack.at(-1).handle;
 
     const req = { body: { task_id: 'fail-task' } };
     const res = { status: vi.fn().mockReturnThis(), json: vi.fn() };
@@ -238,7 +238,7 @@ describe('POST /dispatch-now — S2 锚点闸', () => {
     mockQuery.mockResolvedValueOnce({ rows: [unanchored] });
 
     const { default: router } = await import('../routes/execution.js');
-    const handler = router.stack.find(l => l.route?.path === '/dispatch-now').route.stack[0].handle;
+    const handler = router.stack.find(l => l.route?.path === '/dispatch-now').route.stack.at(-1).handle;
 
     const req = { body: { task_id: 'anchor-drill-1' } };
     const res = { status: vi.fn().mockReturnThis(), json: vi.fn() };

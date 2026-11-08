@@ -56,8 +56,6 @@ export function firstValidGithubPrUrl(...candidates) {
   return null;
 }
 
-function _isValidGithubPrUrl(url) { return isValidGithubPrUrl(url); }
-
 /**
  * 纯函数：从 explicit URL + task row 解析权威 pr_url（无 DB 查询）。
  * 优先级：explicit > task.pr_url > task.payload.pr_url > task.payload.existing_pr_url
@@ -104,6 +102,17 @@ export async function resolveCanonicalPrUrl(callbackPrUrl, task_id, pool) {
   }
 }
 
+/** 使用现行回调合同判断普通 dev 是否缺少 PR。 */
+export function isOrdinaryDevWithoutPr(row) {
+  if (row?.task_type !== 'dev') return false;
+  const decomposition = row.payload?.decomposition;
+  const isDecomposition = decomposition === true || decomposition === 'true' || decomposition === 'okr'
+    || (Boolean(decomposition) && row.payload?.next_action === 'decompose');
+  const harnessMode = row.payload?.harness_mode;
+  const isHarness = harnessMode === true || harnessMode === 'true' || harnessMode === 't';
+  return !isDecomposition && !isHarness && !resolveCanonicalPrUrlSync(null, row);
+}
+
 export async function maybeMarkCompletedNoPr(newStatus, pr_url, task_id, pool, prefix) {
   if (newStatus !== 'completed' || pr_url) return newStatus;
   try {
@@ -113,25 +122,9 @@ export async function maybeMarkCompletedNoPr(newStatus, pr_url, task_id, pool, p
     );
     const row = taskRow.rows[0];
     if (!row) return newStatus;
-    const taskType = row.task_type;
-    const isDecomposition = row.payload?.decomposition;
-    if (taskType === 'dev' && !isDecomposition) {
-      const isHarness = row.payload?.harness_mode;
-      if (!isHarness) {
-        // Fix C: 逐项独立校验（invalid tasks.pr_url 不遮蔽合法 payload.existing_pr_url）
-        // 场景：Agent stdout 只写 "PR #4827"，tasks.pr_url="PR #4827"（非法），
-        //       tasks.payload.existing_pr_url 有完整合法 URL。
-        const t1 = typeof row.pr_url === 'string' ? row.pr_url.trim() : null;
-        const t2 = typeof row.payload?.pr_url === 'string' ? row.payload.pr_url.trim() : null;
-        const t3 = typeof row.payload?.existing_pr_url === 'string' ? row.payload.existing_pr_url.trim() : null;
-        const hasCanonical = _isValidGithubPrUrl(t1) || _isValidGithubPrUrl(t2) || _isValidGithubPrUrl(t3);
-        if (hasCanonical) {
-          console.log(`[${prefix}] Dev task ${task_id} has canonical pr_url from DB/payload → skip completed_no_pr`);
-          return newStatus;
-        }
-        console.warn(`[${prefix}] Dev task ${task_id} completed without PR → completed_no_pr`);
-        return 'completed_no_pr';
-      }
+    if (isOrdinaryDevWithoutPr(row)) {
+      console.warn(`[${prefix}] Dev task ${task_id} completed without PR → completed_no_pr`);
+      return 'completed_no_pr';
     }
   } catch (prCheckErr) {
     console.error(`[${prefix}] PR check error (non-fatal): ${prCheckErr.message}`);

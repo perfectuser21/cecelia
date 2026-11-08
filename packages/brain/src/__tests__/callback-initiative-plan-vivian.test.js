@@ -1,6 +1,5 @@
 /**
- * initiative_plan 完成自动触发 Vivian 质检测试
- * DoD-1, DoD-2, DoD-3
+ * 历史 initiative_plan 完成回执的兼容与旧拆解退役回归
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -51,6 +50,8 @@ vi.mock('../auto-learning.js', () => ({ triggerLearningCapture: vi.fn(async () =
 vi.mock('../desire-feedback.js', () => ({ updateDesireFromTask: vi.fn(async () => {}) }));
 vi.mock('../proactive-mouth.js', () => ({ notifyTaskCompletion: vi.fn(async () => {}) }));
 vi.mock('../review-gate.js', () => ({ processReviewResult: vi.fn(async () => {}) }));
+const mockRetiredReviewTrigger = vi.hoisted(() => vi.fn(async () => ({})));
+vi.mock('../decomposition-review-trigger.js', () => ({ triggerCompletedDecompositionReview: mockRetiredReviewTrigger }));
 vi.mock('../progress-ledger.js', () => ({ recordProgressStep: vi.fn(async () => {}) }));
 vi.mock('../llm-caller.js', () => ({ callLLM: vi.fn(async () => ({})) }));
 vi.mock('../working-memory.js', () => ({ getMemory: vi.fn(async () => null), setMemory: vi.fn(async () => {}) }));
@@ -63,7 +64,7 @@ vi.mock('../suggestion-dispatcher.js', () => ({ dispatchSuggestion: vi.fn(async 
 import express from 'express';
 import request from 'supertest';
 
-describe('execution-callback: initiative_plan → auto decomp_review', () => {
+describe('execution-callback: 旧拆解退役后仍接收完成回执', () => {
   let app;
 
   beforeEach(async () => {
@@ -79,7 +80,7 @@ describe('execution-callback: initiative_plan → auto decomp_review', () => {
     app.use('/api/brain', router);
   });
 
-  it('DoD-1+2: initiative_plan 完成时自动创建 decomp_review task', async () => {
+  it('历史 initiative_plan 完成回执正常响应且不再自动创建旧审核', async () => {
     const taskId = 'test-initiative-plan-id';
     const projectId = 'proj-123';
     const goalId = 'goal-456';
@@ -104,25 +105,50 @@ describe('execution-callback: initiative_plan → auto decomp_review', () => {
 
     expect(res.status).toBe(200);
 
-    // DoD-1: decomp_review task 被创建
-    expect(mockCreateTask).toHaveBeenCalledWith(
-      expect.objectContaining({
-        task_type: 'decomp_review',
-        priority: 'P0',
-        project_id: projectId,
-        goal_id: goalId,
-      })
-    );
+    expect(mockCreateTask.mock.calls.filter(([task]) => task?.task_type === 'decomp_review')).toHaveLength(0);
+    expect(mockRetiredReviewTrigger).not.toHaveBeenCalled();
+  });
 
-    // DoD-2: parent_task_id 正确
-    expect(mockCreateTask).toHaveBeenCalledWith(
-      expect.objectContaining({
-        payload: expect.objectContaining({
-          parent_task_id: taskId,
-          review_scope: 'initiative_plan'
-        })
-      })
-    );
+  it.each([
+    ['initiative_plan', {}, 'https://github.com/example/repo/pull/1'],
+    ['dev', { decomposition: 'true' }, null],
+    ['dev', {}, 'https://github.com/example/repo/pull/1'],
+  ])('%s 完成回执落终态且不自动创建旧拆解审核', async (taskType, payload, prUrl) => {
+    const taskId = 'old-decomposition-finished';
+    const state = {
+      task: { status: 'in_progress', task_type: taskType, project_id: 'proj-x', goal_id: 'goal-x', title: '任务', payload },
+      projectStatus: 'active', krStatus: 'decomposing', krProgress: 0, reviews: [], pendingActions: [],
+    };
+    mockClient.query.mockImplementation(async (sql, params) => {
+      if (String(sql).includes('UPDATE tasks')) {
+        expect(params[0]).toBe(taskId);
+        expect(state.task.status).toBe('in_progress');
+        state.task.status = params[1];
+        return { rows: [{ task_type: state.task.task_type, payload: state.task.payload }], rowCount: 1 };
+      }
+      return { rows: [], rowCount: 1 };
+    });
+    mockPool.query.mockImplementation(async (sql, params) => {
+      const query = String(sql);
+      if (query.includes('SELECT COUNT(*) as total')) return { rows: [{ total: '4', done: '1' }] };
+      if (query.includes('SELECT target_value FROM key_results')) return { rows: [{ target_value: 100 }] };
+      if (query.includes('UPDATE key_results SET current_value')) { state.krProgress = params[0]; return { rows: [], rowCount: 1 }; }
+      if (query.includes('SELECT') && params?.[0] === taskId) return { rows: [state.task] };
+      return { rows: [] };
+    });
+    const res = await request(app).post('/api/brain/execution-callback')
+      .send({ task_id: taskId, run_id: 'old-run', status: 'AI Done', pr_url: prUrl, result: { result: '完成' } });
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ success: true });
+    expect(res.body.duplicate).not.toBe(true);
+    expect(state.task.status).toBe('completed');
+    expect(mockClient.query.mock.calls.some(([sql]) => sql === 'COMMIT')).toBe(true);
+    expect(mockCreateTask.mock.calls.filter(([task]) => task?.task_type === 'decomp_review')).toHaveLength(0);
+    expect(mockRetiredReviewTrigger).not.toHaveBeenCalled();
+    const writes = [...mockClient.query.mock.calls, ...mockPool.query.mock.calls].map(([sql]) => String(sql));
+    expect(writes.some(sql => /(?:INSERT INTO|UPDATE)\s+(?:decomp_reviews|pending_actions)/i.test(sql))).toBe(false);
+    expect(writes.some(sql => /UPDATE\s+(?:projects|key_results)\s+SET\s+status/i.test(sql))).toBe(false);
+    expect(state).toMatchObject({ projectStatus: 'active', krStatus: 'decomposing', krProgress: 25, reviews: [], pendingActions: [] });
   });
 
   it('DoD-3: dev task 完成不触发 decomp_review', async () => {
