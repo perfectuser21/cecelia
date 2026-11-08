@@ -19,6 +19,8 @@ describe('suggestion plan callback interpretation', () => {
     expect(suggestionPlanFailure(task, `quoted ${JSON.stringify(failure)}`)).toBeNull();
     expect(suggestionPlanFailure(task, `${JSON.stringify(failure)}\n${JSON.stringify(failure)}`)).toBeNull();
     expect(suggestionPlanFailure(task, JSON.stringify(failure).slice(0, -1))).toBeNull();
+    expect(suggestionPlanFailure(task, `\`\`\`\n${'\n\t'.repeat(50000)}`)).toBeNull();
+    expect(suggestionPlanFailure(task, `\`\`\`javascript\n${JSON.stringify(failure)}\n\`\`\``)).toBeNull();
   });
 });
 

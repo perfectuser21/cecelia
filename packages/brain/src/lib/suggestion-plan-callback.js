@@ -4,8 +4,13 @@ export function suggestionPlanFailure(task, result) {
   let value = result && typeof result === 'object' && '_raw' in result ? result._raw : result;
   if (typeof value === 'string') {
     let text = value.trim();
-    const fenced = text.match(/^```(?:json)?\s*\n([\s\S]*?)\n```$/i);
-    if (fenced) text = fenced[1];
+    if (text.startsWith('```')) {
+      const newline = text.indexOf('\n');
+      if (newline < 0 || !text.endsWith('\n```')) return null;
+      const language = text.slice(3, newline).trim().toLowerCase();
+      if (language && language !== 'json') return null;
+      text = text.slice(newline + 1, -4);
+    }
     try { value = JSON.parse(text); } catch { return null; }
   }
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
