@@ -47,19 +47,13 @@ jobs:
       - run: npm ci
       - name: 真实采集与凭据生命周期回归
         run: node --test --test-concurrency=1 scripts/ops/__tests__/node-onboarding*.test.mjs
-      - name: 接入契约、HTTP 和真实数据库回归
+      - name: 接入结算与隔离回归（含真实数据库）
         working-directory: packages/brain
         env:
           NODE_ONBOARDING_TEST_DB: postgresql://onboarding_ci:onboarding_ci@localhost:5432/cecelia_scratch
-        run: npx vitest run src/node-onboarding/__tests__/spec.test.js src/node-onboarding/__tests__/router.test.js src/node-onboarding/__tests__/service.test.js src/node-onboarding/__tests__/settlement.test.js src/node-onboarding/__tests__/service-completion-isolation.test.js src/__tests__/scheduler-jobs.test.js src/__tests__/scheduler-completion-loop.test.js src/__tests__/script-reaper-state.test.js src/__tests__/task-creation-inventory.test.js --maxWorkers=1 --minWorkers=1
-      - name: 设备页操作回归
-        working-directory: apps/api
-        run: npx vitest run features/system/pages/NodeOnboarding.test.tsx --maxWorkers=1
-      - name: Linux可信升级与root安装恢复回归
-        working-directory: packages/brain
-        run: npx vitest run src/linux-pool/onboarding-upgrade.test.js src/linux-pool/onboarding-step.test.js scripts/fleet-worker/linux-pool-installer.test.cjs scripts/fleet-worker/linux-pool-bootstrap.test.js scripts/fleet-worker/linux-onboarding-remote.test.js --maxWorkers=1 --minWorkers=1
+        run: npx vitest run src/node-onboarding/__tests__/service.test.js src/node-onboarding/__tests__/settlement.test.js src/node-onboarding/__tests__/service-completion-isolation.test.js src/node-onboarding/__tests__/registry-adoption.test.js --maxWorkers=1 --minWorkers=1
       - name: Linux自动接入与续验真实数据库回归
         working-directory: packages/brain
         env:
           TEST_DATABASE_URL: postgresql://onboarding_ci:onboarding_ci@localhost:5432/cecelia_scratch
-        run: npx vitest run --config vitest.integration.config.js src/__tests__/integration/linux-controller-contract.pg.integration.test.js src/__tests__/integration/linux-onboarding-flow.pg.integration.test.js src/__tests__/integration/linux-script-authorization.pg.integration.test.js src/linux-pool/onboarding-step.test.js --maxWorkers=1 --minWorkers=1
+        run: npx vitest run --config vitest.integration.config.js src/__tests__/integration/linux-controller-contract.pg.integration.test.js src/__tests__/integration/linux-onboarding-flow.pg.integration.test.js src/__tests__/integration/linux-script-authorization.pg.integration.test.js --maxWorkers=1 --minWorkers=1

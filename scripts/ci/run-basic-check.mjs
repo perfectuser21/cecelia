@@ -72,6 +72,7 @@ export function commandsFor(component, shard) {
         step('.', 'node', 'scripts/facts-check.mjs'),
         step('.', 'bash', 'scripts/check-version-sync.sh'),
         step('.', 'node', '.github/workflows/scripts/lint-migration-unique-version.cjs'),
+        step('.', 'python3', '-m', 'unittest', 'discover', '-s', 'scripts', '-p', 'test_skill_source_ownership.py'),
         step('.', 'python3', 'scripts/skill_source_ownership.py'),
       ];
     }

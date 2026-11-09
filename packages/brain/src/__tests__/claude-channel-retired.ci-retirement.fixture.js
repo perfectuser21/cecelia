@@ -35,6 +35,7 @@ export function ciVersionGuardCohorts(previous) {
  // 部署入口清退只新增本轮完整16成员的只读组；旧CommonRunner组保持。
  const deployRetirementTuple={...commonRunnerTuple,'existing-ops-stage-source.js':'4b5bbfad6714648ff660eb9ec1eaaef19fe817673edc0d8ca93b380862e259bc'};
  const skillContractRetirementTuple={...deployRetirementTuple,'existing-ops-stage-source.js':'3047b3958a3d4ec537257773ba527d6cc88a3f209c6ba90b5d7e8bcbb3d7158e'};
+ const ownershipDedupTuple={...skillContractRetirementTuple,'existing-ops-stage-source.js':'8db81cd5a7b5def4710635ed202f6d38fd6c54b454a5007ab9fdcbeadab3842e'};
  return [current,{...current,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
   retired,{...retired,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
   identity,{...identity,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
@@ -49,7 +50,8 @@ export function ciVersionGuardCohorts(previous) {
   managedScriptTuple,{...managedScriptTuple,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
   commonRunnerTuple,{...commonRunnerTuple,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
   deployRetirementTuple,{...deployRetirementTuple,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
-  skillContractRetirementTuple,{...skillContractRetirementTuple,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'}];
+  skillContractRetirementTuple,{...skillContractRetirementTuple,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
+  ownershipDedupTuple,{...ownershipDedupTuple,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'}];
 }
 
 export function registerCiRetirementGuardTests({root,base,memoBase,scan}) {

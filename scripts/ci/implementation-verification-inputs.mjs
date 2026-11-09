@@ -108,6 +108,15 @@ const QUEUED_BASIC_ENTRY_PROTOCOLS=[{
  'scripts/ci/ops-checks.mjs':'6a6305471c70c7d1d5e4ad836f14636c8ab74a4d6a4bb17dc8d525d3aa52e125',
  'packages/brain/vitest.config.js':'9566bd1cff449dc15ee924aea4c9f46aaa3457392fadf8cbf10d0b6556c2634e',
 }];
+const OWNERSHIP_BASIC_CI='2d5a818975ae8815aa390ea003b57be4445582a03cc3c3316a83471a70ffa275';
+const OWNERSHIP_BASIC_ENTRY_PROTOCOLS=[{
+ // 所有权单测并入scripts后的完整入口组合；既有所有组合保持原样。
+ ...BASIC_ENTRY_SEALS,
+ 'scripts/ci/run-basic-check.mjs':'980d1ac1e847e58d6c0b10c2102247840b3b066302fefcfa0b0c70f0525e6fcc',
+ 'scripts/ci/basic-scope.mjs':'c97f3d3300ce74237086b819def622636dc6776f663753d6ec3e68ea2d21a14b',
+ 'scripts/ci/ops-checks.mjs':'6a6305471c70c7d1d5e4ad836f14636c8ab74a4d6a4bb17dc8d525d3aa52e125',
+ 'packages/brain/vitest.config.js':'9566bd1cff449dc15ee924aea4c9f46aaa3457392fadf8cbf10d0b6556c2634e',
+}];
 const UNIT_CONFIGS=[
  {component:'brain',directory:'packages/brain',path:'packages/brain/vitest.config.js'},
  {component:'engine',directory:'packages/engine',path:'packages/engine/vitest.config.ts'},
@@ -159,11 +168,11 @@ function supportReader(root,source,git){
 function unitEntry(read,side){
  const workflow=read(side,CI);if(!workflow)return null;let doc;
  try{doc=yaml.load(workflow.text);}catch{return null;}
- const signature=sha(JSON.stringify(canonical(doc)));if(![LEGACY_CI,BASIC_CI,QUEUED_BASIC_CI].includes(signature))return null;
+ const signature=sha(JSON.stringify(canonical(doc)));if(![LEGACY_CI,BASIC_CI,QUEUED_BASIC_CI,OWNERSHIP_BASIC_CI].includes(signature))return null;
  const support=[workflow.reference];
- if(signature===BASIC_CI||signature===QUEUED_BASIC_CI){
+ if(signature===BASIC_CI||signature===QUEUED_BASIC_CI||signature===OWNERSHIP_BASIC_CI){
   let selected;
-  for(const seals of signature===BASIC_CI?BASIC_ENTRY_PROTOCOLS:QUEUED_BASIC_ENTRY_PROTOCOLS){
+  for(const seals of signature===BASIC_CI?BASIC_ENTRY_PROTOCOLS:signature===OWNERSHIP_BASIC_CI?OWNERSHIP_BASIC_ENTRY_PROTOCOLS:QUEUED_BASIC_ENTRY_PROTOCOLS){
    const files=Object.entries(seals).map(([path,expected])=>({file:read(side,path),expected}));
    if(files.every(({file,expected})=>file?.reference.sha256===expected)){selected=files;break;}
   }

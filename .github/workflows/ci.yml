@@ -75,7 +75,7 @@ jobs:
 
   checks:
     needs: plan
-    name: Check (${{ matrix.component }} ${{ matrix.shard }})
+    name: ${{ matrix.component == 'scripts' && 'Skill source ownership' || format('Check ({0} {1})', matrix.component, matrix.shard) }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     strategy:

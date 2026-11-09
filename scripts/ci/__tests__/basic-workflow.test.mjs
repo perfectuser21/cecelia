@@ -36,6 +36,17 @@ test('每个声明的源码检查都必须抵达同一个最终结果，没有�
   assert.equal(workflow.jobs['ci-passed'].if, 'always()');
   assert.equal(workflow.jobs['ci-passed'].name, '源码保底通过');
   assert.equal(workflow.jobs.checks.strategy['fail-fast'], false);
+  assert.equal(workflow.jobs.checks.name, "${{ matrix.component == 'scripts' && 'Skill source ownership' || format('Check ({0} {1})', matrix.component, matrix.shard) }}");
+  assert.equal(workflow.jobs.checks.if, undefined);
+  const run = workflow.jobs.checks.steps.find(step => step.name === 'Run actual checks');
+  assert.equal(run.run, 'node scripts/ci/run-basic-check.mjs "$COMPONENT" "$SHARD"');
+  for (const paths of [[], ['docs/current/README.md'], ['packages/brain/src/server.js']]) {
+    assert.equal(planChecks(paths, {full: paths.length === 0}).filter(row => row.component === 'scripts').length, 1);
+  }
+  const scripts = commandsFor('scripts');
+  assert.equal(scripts.filter(step => step.command === 'python3' && step.args.includes('test_skill_source_ownership.py')).length, 1);
+  assert.equal(scripts.filter(step => step.command === 'python3' && step.args[0] === 'scripts/skill_source_ownership.py').length, 1);
+
 });
 
 test('实际workflow的最终命令严格传播失败、跳过和取消', () => {

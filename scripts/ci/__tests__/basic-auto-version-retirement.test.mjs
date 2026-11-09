@@ -84,12 +84,19 @@ test('新版主CI版本门具备固定整组来源闭包；历史组合保留且
   const readPrevious = async (path, revision) => historicalInputs.has(path)
     ? git('show', `aa2172e299585d742192554064b48f533cafd15c:${path}`)
     : previousPaths.has(path) ? git('show', `${revision}:${path}`) : source.readSource(path);
-  await collect(path => readPrevious(path, '2dce0c18eded5c37d50fca44708d88cfa80fc575'));
+  const previousCi = git('show', 'aa2172e299585d742192554064b48f533cafd15c:.github/workflows/ci.yml');
+  const collectPrevious = revision => collectBasicCiSources({ ...source, ci: previousCi, relations: [], parse: ast,
+    read: path => path === '.github/workflows/ci.yml' ? previousCi : readPrevious(path, revision) });
+  await collectPrevious('2dce0c18eded5c37d50fca44708d88cfa80fc575');
+  await assert.rejects(collectBasicCiSources({ ...source, ci: previousCi, read: source.readSource, relations: [], parse: ast }), /basic_ci_source_unproven/);
+  await assert.rejects(collect(path => path === 'scripts/ci/run-basic-check.mjs'
+    ? git('show', `aa2172e299585d742192554064b48f533cafd15c:${path}`) : source.readSource(path)), /basic_ci_source_unproven/);
+
   for (const changed of ['packages/brain/vitest.config.js', 'scripts/ci/run-basic-check.mjs']) {
     await assert.rejects(collect(async path => path === changed
       ? git('show', `2dce0c18eded5c37d50fca44708d88cfa80fc575:${changed}`) : source.readSource(path)), /basic_ci_source_unproven/);
   }
-  await collect(path => readPrevious(path, '79cf5c5b20324d4d5a39eadda3f009d64b98f8b3'));
+  await collectPrevious('79cf5c5b20324d4d5a39eadda3f009d64b98f8b3');
   for (const changed of previousPaths) {
     await assert.rejects(collect(async path => path === changed
       ? git('show', `79cf5c5b20324d4d5a39eadda3f009d64b98f8b3:${changed}`) : source.readSource(path)), /basic_ci_source_unproven/);

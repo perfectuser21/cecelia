@@ -12,3 +12,14 @@
   Test: manual:node scripts/ci/run-skill-source-check.mjs root
   Test: manual:node scripts/ci/run-basic-check.mjs scripts
   Test: manual:node --test scripts/ci/__tests__/basic-legacy-test-retirement.test.mjs
+
+## 第四批：去掉重复入口与接入回归
+
+- [x] [BEHAVIOR] 所有权Python原有单测并入scripts真实job，并沿用Skill source ownership必需名称；扫描继续执行，独立重复workflow删除。
+  Test: manual:node scripts/ci/run-basic-check.mjs scripts
+  Test: manual:node --test scripts/ci/__tests__/basic-workflow.test.mjs scripts/ci/__tests__/basic-auto-version-retirement.test.mjs
+- [x] [BEHAVIOR] 删除NodeOnboarding中普通CI已选中的unit/UI/Linux重复调用，保留独有采集凭据fixture，接入真实PG补足registry-adoption并保留Linux三份真实PG。
+  Test: manual:npm exec --workspace cecelia-brain -- vitest run src/node-onboarding/__tests__/service.test.js src/node-onboarding/__tests__/settlement.test.js src/node-onboarding/__tests__/service-completion-isolation.test.js src/node-onboarding/__tests__/registry-adoption.test.js
+  Test: manual:npm exec --workspace cecelia-brain -- vitest run --config vitest.integration.config.js src/__tests__/integration/linux-controller-contract.pg.integration.test.js src/__tests__/integration/linux-onboarding-flow.pg.integration.test.js src/__tests__/integration/linux-script-authorization.pg.integration.test.js
+- [x] [BEHAVIOR] 新runner仅以完整来源组认领，历史组及未知混配拒绝保留；原生16文件、500行边界与辅助来源无悬空。
+  Test: manual:npm exec --workspace cecelia-brain -- vitest run src/__tests__/claude-channel-retired.guard.test.js src/__tests__/claude-channel-retired.reader-tuples.test.js
