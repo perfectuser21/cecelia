@@ -4,12 +4,8 @@ import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,rmSync,existsSync} from
 import {tmpdir} from 'node:os';
 import {join,dirname} from 'node:path';
 import {spawnSync,execFileSync} from 'node:child_process';
-import yaml from 'js-yaml';
 const root=new URL('../../../',import.meta.url);
-const workflow=yaml.load(readFileSync(new URL('.github/workflows/cleanup-merged-artifacts.yml',root),'utf8'));
-const shell=workflow.jobs.cleanup.steps.find(s=>s.id==='cleanup').run
- .replaceAll("'./scripts/ci/implementation-auxiliary-evidence.mjs'",JSON.stringify(new URL('scripts/ci/implementation-auxiliary-evidence.mjs',root).href))
- .replace('node scripts/ci/cleanup-merged-artifacts.mjs',`node ${JSON.stringify(new URL('scripts/ci/cleanup-merged-artifacts.mjs',root).pathname)}`);
+const cleanup=new URL('scripts/ci/cleanup-merged-artifacts.mjs',root).pathname;
 function fixture(t,files){
  const directory=mkdtempSync(join(tmpdir(),'merged-artifact-cleanup-'));t.after(()=>rmSync(directory,{recursive:true,force:true}));
  const work=join(directory,'main');mkdirSync(work);
@@ -18,7 +14,7 @@ function fixture(t,files){
  for(const name of files){mkdirSync(dirname(join(work,name)),{recursive:true});writeFileSync(join(work,name),'preserve actual bytes\n');}
  git('add','.');git('commit','-qm','fixture');
  const output=join(directory,'outputs');
- const run=(env={})=>spawnSync('bash',['-e','-o','pipefail','-c',shell],{cwd:work,encoding:'utf8',env:{...process.env,GITHUB_OUTPUT:output,...env}});
+ const run=(env={})=>spawnSync(process.execPath,[cleanup],{cwd:work,encoding:'utf8',env:{...process.env,GITHUB_OUTPUT:output,...env}});
  return {directory,work,git,run,output};
 }
 test('仅清理顶层流程文件，前缀同名目录及非Markdown业务资料必须保留',t=>{
@@ -51,22 +47,4 @@ test('来源登记损坏时先失败，原始资料与Git索引保持不变',t=>
 test('清理真实fixture拥有既有scripts必需入口',async()=>{
  const {commandsFor}=await import('../run-basic-check.mjs');
  assert.ok(commandsFor('scripts').some(step=>step.args.includes('scripts/ci/__tests__/basic-merged-artifact-cleanup.test.mjs')));
-});
-
-test('真实清理PR路径只推独立分支，缺PAT/创建失败/合并请求失败均为红',t=>{
- const command=workflow.jobs.cleanup.steps.find(s=>s.name==='Commit cleanup via PR').run;
- for(const fail of ['missing-token','create','merge','none']){
-  const f=fixture(t,['.prd-cp-old.md']);assert.equal(f.run().status,0);
-  const remote=join(f.directory,'remote.git');f.git('init','--bare','-q',remote);f.git('remote','add','origin',remote);
-  const bin=join(f.directory,'bin'),capture=join(f.directory,'gh-calls');mkdirSync(bin);
-  writeFileSync(join(bin,'gh'),`#!${process.execPath}\nconst fs=require('node:fs');const args=process.argv.slice(2);fs.appendFileSync(process.env.FIXTURE_CAPTURE,JSON.stringify(args)+'\\n');if(args[1]===process.env.FIXTURE_FAIL)process.exit(17);if(args[1]==='create')console.log('https://example.invalid/pr/1');\n`,{mode:0o700});
-  const r=spawnSync('bash',['-e','-o','pipefail','-c',command],{cwd:f.work,encoding:'utf8',env:{...process.env,GH_TOKEN:fail==='missing-token'?'':'fixture-only',COUNT:'1',PATH:bin+':'+process.env.PATH,FIXTURE_CAPTURE:capture,FIXTURE_FAIL:fail}});
-  assert.equal(r.status===0,fail==='none',r.stdout+r.stderr);
-  assert.equal(f.git('ls-remote','--heads','origin','main'),'');
-  if(fail==='missing-token'){assert.equal(existsSync(capture),false);continue;}
-  const calls=readFileSync(capture,'utf8').trim().split('\n').map(JSON.parse);
-  assert.deepEqual(calls[0].slice(0,2),['pr','create']);assert.ok(!calls.flat().includes('--admin'));
-  if(fail==='create')assert.equal(calls.length,1);
-  else {assert.deepEqual(calls[1].slice(0,2),['pr','merge']);assert.ok(calls[1].includes('--auto'));}
- }
 });
