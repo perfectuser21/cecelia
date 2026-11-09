@@ -3,14 +3,14 @@
 #
 # 与 staging-verify.sh 的关系：
 #   staging-verify.sh 在部署机本地（localhost:5222）跑，做 4 项深度检查。
-#   本脚本面向 nightly-real-machine.yml 手动诊断（云端 runner 经 Tailscale 远程
+#   本脚本用于按需诊断（调用方可经 Tailscale 远程
 #   访问 staging），只检查当前健康，不证明某次候选的 SHA/镜像/数据库身份。可被
 #   STAGING_HOST/STAGING_PORT 参数化（便于 CI 指向 Tailscale 内网地址、
 #   也便于 negative 测试指向必失败端口）。
 #
 # 退出码：
 #   0 = STAGING_SMOKE_OK（当前 staging 的健康诊断通过）
-#   1 = STAGING_SMOKE_FAIL（staging 没起 / smoke 没过）—— workflow 红
+#   1 = STAGING_SMOKE_FAIL（staging 没起 / smoke 没过）—— 诊断失败
 #
 # 注意：本脚本只验证 staging(5222)，绝不触碰 production(5221)，绝不 promote。
 set -uo pipefail
