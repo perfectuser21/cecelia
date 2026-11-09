@@ -21,12 +21,14 @@ vi.mock('../../db.js', () => ({ default: { query: boundary.query } }));
 import { buildConsciousnessGraph } from '../../workflows/consciousness.graph.js';
 import { buildPgCheckpointer } from '../../orchestrator/pg-checkpointer.js';
 
-function checkedTestUrl(value) {
+function checkedTestUrl(value, ci = process.env.CI) {
   if (!value) throw new Error('显式 TEST_DATABASE_URL 必填');
   const url = new URL(value);
+  const allowedDatabase = url.pathname === '/cecelia_scratch'
+    || (ci === 'true' && /^\/cecelia_(?:scratch|test)(?:_[a-z0-9_]+)?$/.test(url.pathname));
   if (!['postgres:', 'postgresql:'].includes(url.protocol)
     || !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)
-    || !/^\/cecelia_(?:scratch|test)(?:_[a-z0-9_]+)?$/.test(url.pathname)
+    || !allowedDatabase
     || url.search || url.hash) throw new Error('仅允许 loopback 隔离测试库，不接受生产或连接参数');
   return url;
 }
@@ -36,8 +38,14 @@ describe('现役意识图真实 PostgreSQL checkpoint 跨进程恢复', () => {
     for (const value of [undefined, 'postgresql://localhost/cecelia',
       'postgresql://example.invalid/cecelia_scratch',
       'postgresql://localhost/cecelia_scratch?options=-csearch_path=public']) {
-      expect(() => checkedTestUrl(value)).toThrow();
+      for (const ci of ['', 'true']) expect(() => checkedTestUrl(value, ci)).toThrow();
     }
+    for (const value of ['postgresql://localhost/cecelia_test',
+      'postgresql://localhost/cecelia_test_owned', 'postgresql://localhost/cecelia_scratch_owned']) {
+      for (const ci of ['', 'false', '1']) expect(() => checkedTestUrl(value, ci)).toThrow();
+      expect(checkedTestUrl(value, 'true').href).toBe(new URL(value).href);
+    }
+    expect(checkedTestUrl('postgresql://localhost/cecelia_scratch', '').pathname).toBe('/cecelia_scratch');
   });
 
   it('关闭 writer 后独立进程读回 thalamus，fresh graph 以 null 恢复且不重放已完成节点', async () => {
