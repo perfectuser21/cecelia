@@ -45,6 +45,6 @@
 - [x] [BEHAVIOR] 新统一Skill jobs仅凭完整精确来源组合认领，旧完整历史组保留；旧新混配、缺失、篡改拒绝。原生reader仍16文件、单模块500行内，悬空关系清理。
   Test: manual:node --test scripts/ci/__tests__/basic-auto-version-retirement.test.mjs scripts/ci/__tests__/factory-workflow-config-source.test.mjs
   Test: manual:npm exec --workspace cecelia-brain -- vitest run src/__tests__/claude-channel-retired.guard.test.js src/__tests__/claude-channel-retired.reader-tuples.test.js src/lib/__tests__/existing-ops-workspace-source.test.js src/lib/__tests__/existing-ops-w19-freeze-cohort.test.js
-- [x] [BEHAVIOR] 退役walking样机后，真实consciousness消费者验证PG跨进程读取、fresh graph恢复且无重放；独立owned schema精确清理，本地仅cecelia_scratch可执行，坏地址/query/远端拒绝保留。
+- [x] [BEHAVIOR] 退役walking样机后，真实consciousness消费者验证PG跨进程读取、fresh graph恢复且无重放；唯一UUID thread隔离并精确清理三张checkpoint表，本地仅cecelia_scratch可执行，坏地址/query/远端拒绝保留。
   Test: manual:npm exec --workspace cecelia-brain -- vitest run --config vitest.integration.config.js src/__tests__/integration/consciousness-checkpoint.pg.integration.test.js
   Test: manual:npm exec --workspace cecelia-brain -- vitest run src/workflows/__tests__/consciousness.graph.test.js src/orchestrator/__tests__/pg-checkpointer.test.js

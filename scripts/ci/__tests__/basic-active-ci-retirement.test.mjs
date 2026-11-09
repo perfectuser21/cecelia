@@ -66,24 +66,33 @@ for(const path of [runner,scope]){
  });
 }
 
-test('建议回执 PG 入口只认当前完整组合，逐一混配旧 runner 或旧配置均拒绝',t=>{
- const current=['.github/workflows/ci.yml',runner,scope,'scripts/ci/ops-checks.mjs','packages/brain/vitest.config.js'];
- const changes=Object.fromEntries(current.map(path=>[path,readFileSync(join(root,path),'utf8')]));
- assert.ok(selected(observe(fixture(t,{changes}))));
- const previous={...changes};
- for(const path of [runner,'packages/brain/vitest.config.js']) previous[path]=execFileSync('git',
-  ['--no-replace-objects','show',`2dce0c18eded5c37d50fca44708d88cfa80fc575:${path}`],{cwd:root,encoding:'utf8'});
- assert.ok(selected(observe(fixture(t,{changes:previous}))));
- for(const path of [runner,'packages/brain/vitest.config.js']){
-  const proof=observe(fixture(t,{changes:{...changes,[path]:previous[path]}}));
-  assert.equal(selected(proof),undefined);assert.ok(proof.unproven.some(row=>row.path===testPath&&row.side==='head'&&row.reason==='entry_unproven'));
+test('建议回执 PG 历史完整入口与当前统一CI分别认领，单成员混配均拒绝',t=>{
+ const currentPaths=['.github/workflows/ci.yml',runner,scope,'scripts/ci/check-basic-results.mjs',
+  'scripts/ci/ops-checks.mjs','packages/brain/vitest.config.js','scripts/ci/skill-source-tests.mjs',
+  'scripts/ci/run-skill-source-check.mjs','scripts/ci/__tests__/basic-skill-source-coverage.test.mjs',
+  '.github/actions/skills-source/action.yml','scripts/ci/check-skill-source-identity.py'];
+ const current=Object.fromEntries(currentPaths.map(path=>[path,readFileSync(join(root,path),'utf8')]));
+ const assertSelected=changes=>{const proof=observe(fixture(t,{changes}));assert.ok(selected(proof),JSON.stringify(proof.unproven));};
+ const assertRejected=changes=>{const proof=observe(fixture(t,{changes}));assert.equal(selected(proof),undefined);
+  assert.ok(proof.unproven.some(row=>row.path===testPath&&row.side==='head'&&row.reason==='entry_unproven'));};
+ assertSelected(current);
+ const historical=Object.fromEntries(paths.filter(path=>path!==testPath).map(path=>[path,execFileSync('git',
+  ['--no-replace-objects','show',`aa2172e299585d742192554064b48f533cafd15c:${path}`],{cwd:root,encoding:'utf8'})]));
+ assertSelected(historical);
+ const previousGroups=[];
+ for(const revision of ['2dce0c18eded5c37d50fca44708d88cfa80fc575','79cf5c5b20324d4d5a39eadda3f009d64b98f8b3']){
+  const previous={...historical};
+  for(const path of [runner,'packages/brain/vitest.config.js'])previous[path]=execFileSync('git',
+   ['--no-replace-objects','show',`${revision}:${path}`],{cwd:root,encoding:'utf8'});
+  assertSelected(previous);previousGroups.push(previous);
+  for(const path of [runner,'packages/brain/vitest.config.js']){
+   assertRejected({...current,[path]:previous[path]});
+  }
  }
- const beforeManagedScript={...changes};
- for(const path of [runner,'packages/brain/vitest.config.js'])beforeManagedScript[path]=execFileSync('git',
-  ['--no-replace-objects','show',`79cf5c5b20324d4d5a39eadda3f009d64b98f8b3:${path}`],{cwd:root,encoding:'utf8'});
- assert.ok(selected(observe(fixture(t,{changes:beforeManagedScript}))));
  for(const path of [runner,'packages/brain/vitest.config.js']){
-  const proof=observe(fixture(t,{changes:{...changes,[path]:beforeManagedScript[path]}}));
-  assert.equal(selected(proof),undefined);assert.ok(proof.unproven.some(row=>row.path===testPath&&row.side==='head'&&row.reason==='entry_unproven'));
+  assertRejected({...previousGroups[0],[path]:previousGroups[1][path]});
+  assertRejected({...previousGroups[1],[path]:previousGroups[0][path]});
  }
+ for(const path of currentPaths)assertRejected({...current,[path]:path==='.github/workflows/ci.yml'
+  ? current[path].replace('name: CI','name: Unreviewed') : current[path]+'\n# unreviewed source drift\n'});
 });
