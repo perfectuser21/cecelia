@@ -4,9 +4,7 @@ import {mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, copyFileSyn
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {spawnSync} from 'node:child_process';
-import yaml from 'js-yaml';
 const root = new URL('../../../', import.meta.url);
-const workflow = yaml.load(readFileSync(new URL('.github/workflows/archive-learnings.yml', root), 'utf8'));
 function fixture(t) {
   const dir = mkdtempSync(join(tmpdir(), 'archive-learnings-'));
   t.after(() => rmSync(dir, {recursive:true, force:true}));
@@ -20,7 +18,7 @@ function fixture(t) {
   const put=(name,body)=>writeFileSync(join(dir,'docs/learnings',name),body);
   run('git',['init','-q']); run('git',['config','user.name','Fixture']);run('git',['config','user.email','fixture@example.invalid']);
   const commit=()=>{run('git',['add','.']);run('git',['-c','core.hooksPath=/dev/null','commit','-qm','fixture'],{GIT_AUTHOR_DATE:'2020-01-02T00:00:00Z',GIT_COMMITTER_DATE:'2020-01-02T00:00:00Z'});};
-  const archive=()=>spawnSync('bash',['-e','-o','pipefail','-c',workflow.jobs.archive.steps.find(s=>s.id==='archive').run],{cwd:dir,encoding:'utf8',env:{...process.env,GITHUB_OUTPUT:join(dir,'output')}});
+  const archive=()=>spawnSync('python3',['scripts/ci/archive-learnings.py'],{cwd:dir,encoding:'utf8',env:{...process.env,GITHUB_OUTPUT:join(dir,'output')}});
   return {dir,run,put,commit,archive};
 }
 test('同月已有tar与新learning合并，原内容逐字保留，重跑不丢失',t=>{
