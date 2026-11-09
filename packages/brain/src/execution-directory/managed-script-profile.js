@@ -2,7 +2,7 @@ import {randomUUID} from 'node:crypto';
 import {baselineTransaction} from './baseline-transaction.js';
 import {directory,hashConfig} from './directory.js';
 import {MACHINE_CAPACITY_LOCK_SQL} from '../orchestrator/attempt-machine-capacity.js';
-import {readManagedScriptCandidates,readManagedScriptCandidateEvidence,createProfileCatalogClient,need,HASH,UUID,PROFILE,SCRIPT_MACHINE,SCRIPT_REGISTRY} from './managed-script-profile-evidence.js';
+import {readManagedScriptCandidates,readManagedScriptCandidateEvidence,createProfileCatalogClient,need,HASH,UUID,PROFILE,assertManagedScriptMacNode} from './managed-script-profile-evidence.js';
 const INPUT=['expected_current_version_id','expected_config_hash','expected_worker_boot_id','expected_worker_config_digest'];
 export function createManagedScriptProfileStore({pool,env=process.env,client=createProfileCatalogClient({token:env.KERNEL_FLEET_BRIDGE_TOKEN}),readCandidates=()=>readManagedScriptCandidates(env.EXECUTION_MANAGED_SCRIPT_CANDIDATES_FILE)}={}){
  async function activate(profileId,input){
@@ -14,13 +14,12 @@ export function createManagedScriptProfileStore({pool,env=process.env,client=cre
    // Same order as dispatch, including when its business Task is this Task.
    const task=(await db.query('SELECT id,status,result FROM tasks WHERE id=$1 FOR UPDATE',[policy.evidence_task_id])).rows[0];
    need(task,'candidate_evidence_required');
-   await db.query(MACHINE_CAPACITY_LOCK_SQL,[SCRIPT_MACHINE]);
+   await db.query(MACHINE_CAPACITY_LOCK_SQL,[policy.machine_id]);
    need(hashConfig(readCandidates()[profileId])===policyDigest,'policy_changed');
    const node=(await db.query(`SELECT v.*,n.canonical_id,r.status AS machine_status FROM execution_nodes n
     JOIN execution_node_versions v ON v.id=n.current_version_id JOIN system_registry r ON r.id=n.machine_registry_id
-    WHERE n.canonical_id=$1 AND r.type='machine' FOR UPDATE OF n,v FOR SHARE OF r`,[SCRIPT_MACHINE])).rows[0];
-   need(node&&node.machine_registry_id===SCRIPT_REGISTRY&&node.machine_registry_id===policy.machine_registry_id
-    &&node.platform==='darwin'&&node.identity_mode==='legacy-v1'&&node.worker_id===SCRIPT_MACHINE&&node.state==='active'&&node.machine_status==='active','existing_mac_required');
+    WHERE n.canonical_id=$1 AND r.type='machine' FOR UPDATE OF n,v FOR SHARE OF r`,[policy.machine_id])).rows[0];
+   assertManagedScriptMacNode(node,policy);
    need(node.id===input.expected_current_version_id&&node.config_hash===input.expected_config_hash,'version_stale');
    await readManagedScriptCandidateEvidence(db,policy,{task,lockRelease:true});
    const prior=(await db.query(`SELECT g.* FROM execution_grants g JOIN execution_node_versions v ON v.id=g.node_version_id

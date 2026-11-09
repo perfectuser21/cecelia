@@ -45,6 +45,7 @@ async function setup({ candidateRouting=false,badSignature = false, wrongNonce =
     if(sql.includes("UPDATE task_runs SET context=jsonb_set(context,'{common_runner_launch}'")){const prior=JSON.parse(params[3]);if(JSON.stringify(runContext?.common_runner_launch)!==JSON.stringify(prior))return {rows:[],rowCount:0};runContext.common_runner_launch=JSON.parse(params[2]);return {rows:[{id:'50000000-0000-4000-8000-000000000001'}],rowCount:1};}
     if(sql.includes('SELECT id,task_id,context FROM task_runs'))return {rows:runContext?[{id:'50000000-0000-4000-8000-000000000001',task_id:taskId,context:structuredClone(runContext)}]:[]};
     if(sql.includes('SELECT task_id,context FROM task_runs'))return {rows:runContext?[{task_id:taskId,context:structuredClone(runContext)}]:[]};
+    if (policyState && sql.includes('FROM execution_nodes')) return {rows:[{id:'40000000-0000-4000-8000-000000000001',canonical_id:machineId,machine_registry_id:candidate.machine_registry_id,worker_id:machineId,platform:'darwin',identity_mode:'legacy-v1',state:'active',machine_status:'active'}]};
     if (policyState && sql.includes('FROM release_versions')) return {rows:[policyState.release]};
     if (policyState && sql.includes('FROM release_observations')) return {rows:[policyState.observation]};
     if (policyState && sql.includes('SELECT id,status,result FROM tasks')) return {rows:[policyState.task]};

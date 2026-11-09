@@ -19,6 +19,7 @@ it('新Mac grant在每次start前必须与原政策和路由digest闭合，旧gr
  const grant={provenance:'mac_managed_profile/v1:'+hashConfig(c),state:'active',profile_id:'leadgen-candidate',account_id:'',repo_scope:[],evidence_task_id:c.evidence_task_id,expires_at:c.expires_at,node_version_id:version};
  const components=[{kind:'repo',repo:c.source_repo,revision:c.source_commit}];
  const db={query:async(sql)=>({rows:sql.includes('FROM tasks')?[{id:c.evidence_task_id,status:'in_progress',result:{ship_candidate:{schema_version:1,stage:'candidate',task_id:c.evidence_task_id,repo:c.source_repo,head_sha:c.source_commit,actor:'candidate',facts:['source'],evidence:['owned:source']}}}]
+  :sql.includes('FROM execution_nodes')?[{id:version,canonical_id:c.machine_id,machine_registry_id:c.machine_registry_id,worker_id:c.machine_id,platform:'darwin',identity_mode:'legacy-v1',state:'active',machine_status:'active'}]
   :sql.includes('FROM release_versions')?[{id:c.release_id,environment:'test',target:c.machine_id,payload:{components,verification:{status:'verified',ci_status:'verified'}}}]
    :sql.includes('FROM release_observations')?[{id:c.observation_id,release_id:c.release_id,payload:{environment:'test',target:c.machine_id,components},collector:'owned',evidence_ref:'owned:observation'}]:[]})};
  const identity={db,grant,profileId:'leadgen-candidate',profileSha256:hash,machineId:'us-mac-m4',executionVersionId:version},env={EXECUTION_MANAGED_SCRIPT_CANDIDATES_FILE:file};
@@ -90,4 +91,9 @@ it('Worker已验transport pins不进入公共Runner严格业务identity，正确
  const require=createRequire(import.meta.url),{createFleetWorkerServer}=require('../../scripts/fleet-worker/fleet-worker.cjs');
  const server=createFleetWorkerServer({machineId:'us-mac-m4',attemptToken:token,launchAdmission:{snapshot:()=>({boot_id:boot})},runtimeConfigDigest:hash,workflowRunner:{start:async body=>{if(Object.keys(body).some(k=>k.startsWith('expected_worker_')))throw Error('workflow_request_invalid');return {status:'running'};}}});await new Promise(r=>server.listen(0,'127.0.0.1',r));
  try{const run=randomUUID(),r=await fetch(`http://127.0.0.1:${server.address().port}/workflows/${run}/start`,{method:'POST',headers:{authorization:`Bearer ${token}`,'content-type':'application/json'},body:JSON.stringify({run_id:run,request_nonce:randomUUID(),expected_worker_boot_id:boot,expected_worker_config_digest:hash})});expect(r.status).toBe(200);expect((await r.json()).receipt).toMatchObject({worker_boot_id:boot,worker_config_digest:hash});}finally{server.closeAllConnections();await new Promise(r=>server.close(r));}
+});
+
+it('无候选签名路由的非5231默认端口仍拒绝，不以catalog泛化扩大transport权限',async()=>{
+ let calls=0;const client=createProfileCatalogClient({token,fetchFn:async()=>{calls++;throw Error('must_not_send');}});
+ await expect(client.catalog({canonical_id:'xian-mac-m4',endpoints:{worker:'http://100.86.57.69:6231'}},{profileId:'candidate',profileSha256:hash,bootId:boot,configDigest:hash})).rejects.toThrow('execution_script_worker_unconfigured');expect(calls).toBe(0);
 });
