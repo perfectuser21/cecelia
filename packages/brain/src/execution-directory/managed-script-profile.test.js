@@ -92,3 +92,8 @@ it('Worker已验transport pins不进入公共Runner严格业务identity，正确
  const server=createFleetWorkerServer({machineId:'us-mac-m4',attemptToken:token,launchAdmission:{snapshot:()=>({boot_id:boot})},runtimeConfigDigest:hash,workflowRunner:{start:async body=>{if(Object.keys(body).some(k=>k.startsWith('expected_worker_')))throw Error('workflow_request_invalid');return {status:'running'};}}});await new Promise(r=>server.listen(0,'127.0.0.1',r));
  try{const run=randomUUID(),r=await fetch(`http://127.0.0.1:${server.address().port}/workflows/${run}/start`,{method:'POST',headers:{authorization:`Bearer ${token}`,'content-type':'application/json'},body:JSON.stringify({run_id:run,request_nonce:randomUUID(),expected_worker_boot_id:boot,expected_worker_config_digest:hash})});expect(r.status).toBe(200);expect((await r.json()).receipt).toMatchObject({worker_boot_id:boot,worker_config_digest:hash});}finally{server.closeAllConnections();await new Promise(r=>server.close(r));}
 });
+
+it('无候选签名路由的非5231默认端口仍拒绝，不以catalog泛化扩大transport权限',async()=>{
+ let calls=0;const client=createProfileCatalogClient({token,fetchFn:async()=>{calls++;throw Error('must_not_send');}});
+ await expect(client.catalog({canonical_id:'xian-mac-m4',endpoints:{worker:'http://100.86.57.69:6231'}},{profileId:'candidate',profileSha256:hash,bootId:boot,configDigest:hash})).rejects.toThrow('execution_script_worker_unconfigured');expect(calls).toBe(0);
+});
