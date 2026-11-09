@@ -1,7 +1,7 @@
 # DoD：清退旧模型审查与过程资料自动维护入口
 
 - [x] [ARTIFACT] 删除 pr-review、skill-distillation-eval、cleanup-merged-artifacts、archive-learnings 四份工作流，以及旧模型审查专属脚本和测试。
-  Test: manual:git diff --name-status origin/main
+  Test: manual:node -e "const fs=require('node:fs'); for(const name of ['pr-review','skill-distillation-eval','cleanup-merged-artifacts','archive-learnings']) if(fs.existsSync('.github/workflows/'+name+'.yml')) process.exit(1)"
 - [x] [BEHAVIOR] 归档工具直接执行真实 Python 脚本；保留同月合并、损坏与同名冲突拒绝、跨月失败不丢原文的回归。
   Test: manual:node --test scripts/ci/__tests__/basic-archive-learnings.test.mjs
 - [x] [BEHAVIOR] 清理工具直接执行真实 Node 脚本；保留精确 Git 删除、其他 worktree 不受影响、读取失败及畸形来源登记拒绝。
