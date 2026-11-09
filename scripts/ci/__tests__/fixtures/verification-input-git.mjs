@@ -130,3 +130,27 @@ export function assertWorkflowSchemaReaderInputs(t, {basicEntryFixture, derived,
   assert.equal(row.coverage, 'unknown');
  }
 }
+
+/** 当前统一CI来源验证：在owned稀疏Git内迁移真实入口，篡改仍不能认领。 */
+export function assertUnifiedSkillVerificationInputs(t,{basicEntryFixture,derived,root:liveRoot}) {
+  const selectedPath='packages/brain/src/__tests__/ci-defense.skill-source.test.ts';
+  const f=basicEntryFixture(t,selectedPath);
+  for(const path of ['.github/workflows/ci.yml','scripts/ci/run-basic-check.mjs','scripts/ci/basic-scope.mjs',
+    'scripts/ci/check-basic-results.mjs','scripts/ci/ops-checks.mjs','packages/brain/vitest.config.js',
+    'scripts/ci/skill-source-tests.mjs','scripts/ci/run-skill-source-check.mjs','scripts/ci/__tests__/basic-skill-source-coverage.test.mjs',
+    '.github/actions/skills-source/action.yml','scripts/ci/check-skill-source-identity.py','packages/brain/vitest.skill-source.config.mjs',selectedPath]) {
+    mkdirSync(join(f.root,path.slice(0,path.lastIndexOf('/'))),{recursive:true});writeFileSync(join(f.root,path),readFileSync(join(liveRoot,path)));
+  }
+  f.git('rm','--sparse','-f','.github/workflows/skills-source-check.yml');
+  f.source.base_revision=f.commit();writeFileSync(join(f.root,selectedPath),readFileSync(join(f.root,selectedPath),'utf8')+'\n// changed fixed test input\n');
+  f.source.head_revision=f.commit();f.source.changed_files=[{path:selectedPath}];
+  const proof=derived(f),rows=proof.rows.filter(r=>r.input_facts.path===selectedPath);
+  assert.equal(rows.length,2,JSON.stringify(proof.unproven));
+  assert.ok(rows.every(row=>row.witness.workflow.path==='.github/workflows/ci.yml' && row.execution_status==='not_evaluated'));
+  const ciPath='.github/workflows/ci.yml',current=readFileSync(join(f.root,ciPath),'utf8');
+  writeFileSync(join(f.root,ciPath),current.replace('node scripts/ci/run-skill-source-check.mjs','echo node scripts/ci/run-skill-source-check.mjs'));
+  f.source.head_revision=f.commit();f.source.changed_files=[{path:selectedPath},{path:ciPath}];
+  const rejected=derived(f);
+  assert.equal(rejected.rows.some(row=>row.input_facts.path===selectedPath&&row.input_facts.source.side==='head'),false);
+  assert.ok(rejected.unproven.some(row=>row.path===selectedPath));
+}

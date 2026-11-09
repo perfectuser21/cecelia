@@ -35,7 +35,7 @@ function shell(command, env = {}) {
 }
 
 test('Preview workflow 绑定PR真实head并缺少secret时失败', async () => {
-  const job = doc('preview-deploy.yml').jobs.preview_deploy;
+  const job = doc('ci.yml').jobs['preview-deploy'];
   const checkout = job.steps.find(step => step.uses?.startsWith('actions/checkout'));
   assert.equal(checkout.with?.ref, '${{ github.event.pull_request.head.sha }}');
   const call = job.steps.find(step => step.uses === './.github/actions/preview-deploy');

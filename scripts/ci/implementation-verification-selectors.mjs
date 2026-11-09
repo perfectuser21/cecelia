@@ -144,7 +144,7 @@ export function selectVitestVerificationInput({filePath,configPath,configText,sk
 /** 固定Pinned包装器与已审字面量表交集；只证明输入，不声明私有源或合同执行。 */
 export function selectPinnedSkillVerificationInput({filePath,configPath,configText,skillText,component}){
  const wrappers={"packages/brain/vitest.skill-source.config.mjs":"57e6f55962bd5e858f8c166d558220fc6e211574b40b59ce4bfda117a6c8e693","packages/engine/vitest.skill-source.config.mjs":"4a1dbfdb127656f4f17aab3edfb849e50d26d6426c9800b13cf1f70d5cd9af8d","packages/quality/vitest.skill-source.config.mjs":"13111f10d4eb803e41965a949666275f4251ce370b66f1bc049d1f9d6e9d588d","vitest.skill-source.config.mjs":"ee3e0130da6aec437f80eb9ba57d3573882ab1c3b0e03548c540c793283f7b16"};
- if(wrappers[configPath]!==sha(configText)||sha(skillText)!=='1daf4f27f6fa97b3c8f3d9a9e1a9e86e44fbe92b84c962d1c2ce3b90db32b147')fail();
+ if(wrappers[configPath]!==sha(configText)||!['1daf4f27f6fa97b3c8f3d9a9e1a9e86e44fbe92b84c962d1c2ce3b90db32b147','dbb749f30271472fe1f24e1eec2215d7b5999f20c1d4ed74c00fd4b40f6c57c8'].includes(sha(skillText)))fail();
  const expected={brain:'packages/brain/vitest.skill-source.config.mjs',engine:'packages/engine/vitest.skill-source.config.mjs',quality:'packages/quality/vitest.skill-source.config.mjs',root:'vitest.skill-source.config.mjs'};
  if(expected[component]!==configPath||typeof filePath!=='string'||!/^[-A-Za-z0-9_./@+]+$/.test(filePath)||filePath.split('/').some(p=>!p||p==='.'||p==='..'))fail();
  const exported=parse(skillText,{ecmaVersion:'latest',sourceType:'module'}).body.find(n=>n.type==='ExportNamedDeclaration'&&n.declaration?.declarations?.[0]?.id.name==='SKILL_SOURCE_TESTS');

@@ -16,8 +16,9 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
 cd "$ROOT_DIR"
 
 AGENT="scripts/preview-agent.mjs"
-WF="/dev/null"
-[ -f .github/workflows/preview-deploy.yml ] && WF=.github/workflows/preview-deploy.yml
+WF=$(mktemp)
+trap 'rm -f "$WF"' EXIT
+sed -n '/^  preview-deploy:/,/^  preview-cleanup:/p' .github/workflows/ci.yml > "$WF"
 
 echo "[preview-agent-mmv-smoke] 1. 代理复用 routes/preview.js，不另造一套"
 if ! grep -q "routes/preview.js" "$AGENT"; then

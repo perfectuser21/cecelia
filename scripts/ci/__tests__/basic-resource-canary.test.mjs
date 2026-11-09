@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, existsSync, mkdtempSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
+import { readFileSync, mkdtempSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
@@ -9,44 +9,15 @@ import yaml from 'js-yaml';
 import { runInNewContext } from 'node:vm';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const worker = 'packages/brain/scripts/fleet-worker/';
-const suites = [
-  ['app-server-canary.yml', ['app-server-canary.cjs', 'app-server-rpc-canary.cjs', '../../src/app-server/client.js'], [
-    '.github/actions/dockerhub-mirror/action.yml', 'packages/brain/config/fleet-node-profiles.json']],
-  ['linux-resource-canary.yml', ['linux-resource-canary.cjs', 'linux-resource-probe.cjs', 'linux-cgroup.cjs'], [
-    worker + 'node-probe.cjs', worker + 'fleet-worker.cjs', worker + 'local-resource-admission.cjs',
-    'packages/brain/config/fleet-node-profiles.json']],
-  ['attempt-runtime-limits.yml', ['attempt-limits-canary.cjs'], [
-    worker + 'local-resource-admission.cjs', 'packages/brain/config/fleet-node-profiles.json']],
-];
+const suites = ['app-server-canary','linux-resource-canary','attempt-runtime-limits'];
 const workflow = name => yaml.load(readFileSync(join(root, '.github/workflows', name), 'utf8'));
-function dependencies(entries) {
-  const visited = new Set();
-  function visit(file) {
-    if (visited.has(file)) return;
-    visited.add(file);
-    if (!/\.(cjs|mjs|js)$/.test(file)) return;
-    const source = readFileSync(join(root, file), 'utf8');
-    for (const match of source.matchAll(/(?:require\(\s*|from\s*)['"](\.[^'"]+)['"]/g)) {
-      const target = join(dirname(file), match[1]);
-      // 部署时动态拼接的外部插件不属于仓库依赖闭包。
-      if (existsSync(join(root, target))) visit(target);
-    }
-  }
-  entries.forEach(file => visit(join(worker, file)));
-  return visited;
-}
-function matches(pattern, file) {
-  const re = pattern.split('**').map(part => part.split('*').map(x => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('[^/]*')).join('.*');
-  return new RegExp('^' + re + '$').test(file);
-}
-for (const [name, entries, extra] of suites) {
-  test(`${name}: 本地传递依赖、配置、调用方和守卫自身变更都触发专项`, () => {
-    const paths = workflow(name).on.pull_request.paths;
-    const files = [...dependencies(entries), ...extra, 'scripts/ci/__tests__/basic-resource-canary.test.mjs'];
-    const missing = files.filter(file => !paths.some(pattern => matches(pattern, file)));
-    assert.deepEqual(missing, [], '未覆盖的真实依赖/调用方路径');
+for (const id of suites) {
+  const name=id+'.yml';
+  const job = workflow('ci.yml').jobs[id];
+  test(`${name}: 统一质量job不再受paths过滤`, () => {
+    assert.ok(job); assert.equal(workflow('ci.yml').on.pull_request.paths, undefined);
+    assert.equal(job.if, "github.event_name != 'schedule' && github.event.action != 'closed'");
   });
-  const job = Object.values(workflow(name).jobs)[0];
   for (const step of job.steps.filter(s => s.run?.includes('| tee '))) {
     for (const exitCode of [0, 19]) test(`${name}: ${step.name} 真shell保留子进程退出${exitCode}`, () => {
       const temp = mkdtempSync(join(tmpdir(), 'resource-canary-shell-'));

@@ -44,30 +44,31 @@ test('外置正文合同集合明确且非空，原生launcher不被整文件迁
 });
 
 test('专项明确覆盖每个组件，使用固定来源恢复后实际运行，缺文件不能成功', () => {
-  const workflow = yaml.load(readFileSync(new URL('../../../.github/workflows/skills-source-check.yml',import.meta.url),'utf8'));
-  const job = workflow.jobs.contracts;
+  const workflow = yaml.load(readFileSync(new URL('../../../.github/workflows/ci.yml',import.meta.url),'utf8'));
+  const job = workflow.jobs['skill-contracts'];
   assert.deepEqual(job.strategy.matrix.component, Object.keys(directory));
   const restored = job.steps.findIndex(step => step.uses === './.github/actions/skills-source');
   const run = job.steps.findIndex(step => step.run?.includes('run-skill-source-check.mjs'));
   assert.ok(restored >= 0 && run > restored);
   assert.ok(job.steps.some(step => step.run?.includes('npm ci')));
-  assert.deepEqual(workflow.on.pull_request, {branches:['main']});
+  assert.deepEqual(workflow.on.pull_request.branches, ['main']);
+  assert.equal(workflow.on.pull_request.paths, undefined);
   assert.deepEqual(workflow.on.push, {branches:['main']});
 });
 
 test('固定Skill最终结果覆盖所有专项，任一失败/跳过/取消/缺结果都不能通过', () => {
-  const workflow = yaml.load(readFileSync(new URL('../../../.github/workflows/skills-source-check.yml', import.meta.url), 'utf8'));
-  const gate = workflow.jobs.passed;
+  const workflow = yaml.load(readFileSync(new URL('../../../.github/workflows/ci.yml', import.meta.url), 'utf8'));
+  const gate = workflow.jobs['skill-passed'];
   assert.equal(gate?.name, '固定Skill合同通过');
-  assert.equal(gate.if, 'always()');
-  assert.deepEqual([...gate.needs].sort(), ['contracts', 'restore']);
-  assert.deepEqual(Object.keys(workflow.jobs).sort(), ['contracts', 'passed', 'restore']);
+  assert.equal(gate.if, "always() && github.event_name != 'schedule' && github.event.action != 'closed'");
+  assert.deepEqual([...gate.needs].sort(), ['skill-contracts', 'skill-restore']);
+  assert.ok(workflow.jobs['ci-passed'].needs.includes('skill-passed'));
   const step = gate.steps.find(step => step.env?.NEEDS_JSON);
   assert.equal(step.env.NEEDS_JSON, '${{ toJSON(needs) }}');
   for (const contracts of ['success', 'failure', 'cancelled', 'skipped', undefined]) {
     for (const restore of ['success', 'failure', 'cancelled', 'skipped', undefined]) {
       const result = spawnSync('bash', ['-e', '-o', 'pipefail', '-c', step.run], {
-        cwd: root, encoding: 'utf8', env: {...process.env, NEEDS_JSON: JSON.stringify({contracts:{result:contracts}, restore:{result:restore}})},
+        cwd: root, encoding: 'utf8', env: {...process.env, NEEDS_JSON: JSON.stringify({'skill-contracts':{result:contracts}, 'skill-restore':{result:restore}})},
       });
       assert.equal(result.status === 0, contracts === 'success' && restore === 'success', result.stderr);
     }

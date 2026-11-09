@@ -302,7 +302,7 @@ const REVIEWED_MANAGED_SCRIPT_PG_CLOSURE = {...REVIEWED_SUGGESTION_CALLBACK_CLOS
 // 旧部署工作流清退后的完整主CI组合；旧身份测试与旧配置组合仍按原字节保存。
 const REVIEWED_DEPLOY_RETIREMENT_CLOSURE = { ...REVIEWED_MANAGED_SCRIPT_PG_CLOSURE, 'packages/brain/vitest.config.js': '9566bd1cff449dc15ee924aea4c9f46aaa3457392fadf8cbf10d0b6556c2634e', 'scripts/ci/__tests__/basic-skill-identity.test.mjs': '2d78a417e4320e215c125ed3a9ea8c22025659d935c587456fa2549f23e4f067', };
 const REVIEWED_SKILL_CONTRACT_RETIREMENT_CLOSURE = {...REVIEWED_DEPLOY_RETIREMENT_CLOSURE, [SKILL_SELECTOR]: 'dbb749f30271472fe1f24e1eec2215d7b5999f20c1d4ed74c00fd4b40f6c57c8', [PINNED_READER]: '64db6a73574743019a1a06cb6f2d348413a3e356885a52bb5edfb00f781d68ea'}; const REVIEWED_OWNERSHIP_DEDUP_CLOSURE = {...REVIEWED_SKILL_CONTRACT_RETIREMENT_CLOSURE, [BASIC_RUNNER]: '980d1ac1e847e58d6c0b10c2102247840b3b066302fefcfa0b0c70f0525e6fcc'};
-const REVIEWED_W19_EVENT_CLOSURE = {...REVIEWED_OWNERSHIP_DEDUP_CLOSURE, 'scripts/ci/check-w19-frozen.mjs': '9e3a937e951e712934f8268a3af237b8ba3689d68f42fc9de10bf1b6e3b3ca7b', 'scripts/ci/__tests__/basic-w19-freeze.test.mjs': '2d72b4acb5f15667aa4faa9d97e23a99e3ed78e89340bc3df131750120c88bc8'}; const BASIC_PROTOCOLS = {'2d5a818975ae8815aa390ea003b57be4445582a03cc3c3316a83471a70ffa275': [REVIEWED_OWNERSHIP_DEDUP_CLOSURE, REVIEWED_W19_EVENT_CLOSURE],
+const REVIEWED_W19_EVENT_CLOSURE = {...REVIEWED_OWNERSHIP_DEDUP_CLOSURE, 'scripts/ci/check-w19-frozen.mjs': '9e3a937e951e712934f8268a3af237b8ba3689d68f42fc9de10bf1b6e3b3ca7b', 'scripts/ci/__tests__/basic-w19-freeze.test.mjs': '2d72b4acb5f15667aa4faa9d97e23a99e3ed78e89340bc3df131750120c88bc8'}; const REVIEWED_UNIFIED_CI_CLOSURE = {"packages/brain/vitest.config.js":"9566bd1cff449dc15ee924aea4c9f46aaa3457392fadf8cbf10d0b6556c2634e","scripts/ci/basic-scope.mjs":"0b5fdc26f71db94e6ac03358b6034025162d8ba740ed59a6fe127f0e5bfe5062","scripts/ci/run-basic-check.mjs":"980d1ac1e847e58d6c0b10c2102247840b3b066302fefcfa0b0c70f0525e6fcc","scripts/ci/check-basic-results.mjs":"11d51c4c4ce00c2860a099912961c6e020b49c93f5ce548a338f96f8c51896a5","scripts/ci/basic-runtime-smoke.mjs":"b386b8c0c8631de5b6a0eec19494835f48c6ca3822a4533ee154ce8767a21eec","scripts/ci/ops-checks.mjs":"6a6305471c70c7d1d5e4ad836f14636c8ab74a4d6a4bb17dc8d525d3aa52e125","scripts/ci/run-isolated-staging-smoke.mjs":"fa19da1eaf14621a75d95763229fa8d6de40ce3e55940401458346da37f8fbaf","scripts/ci/skill-source-tests.mjs":"dbb749f30271472fe1f24e1eec2215d7b5999f20c1d4ed74c00fd4b40f6c57c8","apps/api/vitest.config.ts":"c16a9be96bc4e1810400965043b41300d075da45ddf449ed5bf187b791e1ac7a","apps/api/vitest.integration.config.ts":"6c2a55ccba874bf8fcae7858f0b9f21295f6728f430860a4ee60c1612cc59dec","scripts/ci/__tests__/basic-skill-source-coverage.test.mjs":"6fa43074248d0e379e36c4c2e58cb6de09cbe65b12a052d5de14a3de33c74804","scripts/ci/check-brain-version-bump.sh":"361c35c33c2d0d404d9365c51478212e50ebe84df6a65eacca473ea57bffa0eb",".github/actions/skills-source/action.yml":"283a44569b4b037d11ebbac624f91ed013ab91be4916182a87a2bf95078ec105","scripts/ci/check-skill-source-identity.py":"ebc6b90fbe187b49c31101a5dba997d133fd45825cfcaa3549aad30581d747c1","scripts/ci/__tests__/basic-skill-identity.test.mjs":"2d78a417e4320e215c125ed3a9ea8c22025659d935c587456fa2549f23e4f067","scripts/ci/check-w19-frozen.mjs":"9e3a937e951e712934f8268a3af237b8ba3689d68f42fc9de10bf1b6e3b3ca7b","scripts/ci/__tests__/basic-w19-freeze.test.mjs":"2d72b4acb5f15667aa4faa9d97e23a99e3ed78e89340bc3df131750120c88bc8","playground/package-lock.json":"e2fa656e54b0d2d4f8c7398c24651589ff1556ffabbcec368465ff19d12bb6e9","playground/package.json":"9c340ea6eae6af3ad2cf7e41b003141193dbe6369451529e40deb41dd786e85d","playground/server.js":"c77d87096634b48a699c3951a07e0a74609535454f38078b97a0b35f87cfd38e","playground/tests/echo.test.js":"1fb291fdb3de19aca4cbfe5c61ef1571867b720dd4ec2378b169236ab652d7be","playground/tests/kernel-e.test.js":"53c24290c95377b88ab497c5c50f2246fc9accedb6f298c0b484dfb630211ecf","playground/tests/ping.test.js":"d364c15e08f487c70a312c1299a1b02758d935fb4f395a64992456c8fb09eb62","playground/tests/server.test.js":"b6b0628c4435d5a69de002207a35a34c713bda7897505586f501c7048c4adbf8","playground/vitest.config.js":"e6b279b6d857f890dfa2b3a84deb4f52d2d9e9300bdfaf392ebf94f258f6e204"}; const BASIC_PROTOCOLS = {'20ae4b9f13055900dca96258c4551cfa81ef686d184c9c3f32bb601c83b1bfb8': REVIEWED_UNIFIED_CI_CLOSURE,'2d5a818975ae8815aa390ea003b57be4445582a03cc3c3316a83471a70ffa275': [REVIEWED_OWNERSHIP_DEDUP_CLOSURE, REVIEWED_W19_EVENT_CLOSURE],
   // Dependabot排队只追加当前完整runtime scope闭包，旧workflow组合保持。
   '020165ab3d73d487d973c6d98c849958240dc56149d5b6083b8288673a3dd091': [REVIEWED_RUNTIME_SCOPE_CLOSURE, REVIEWED_W19_FREEZE_CLOSURE, REVIEWED_BARK_RETIREMENT_CLOSURE, REVIEWED_SUGGESTION_CALLBACK_CLOSURE, REVIEWED_MANAGED_SCRIPT_PG_CLOSURE, {...REVIEWED_MANAGED_SCRIPT_PG_CLOSURE, 'packages/brain/vitest.config.js': '9566bd1cff449dc15ee924aea4c9f46aaa3457392fadf8cbf10d0b6556c2634e'}, REVIEWED_DEPLOY_RETIREMENT_CLOSURE, REVIEWED_SKILL_CONTRACT_RETIREMENT_CLOSURE],
   '5b0f190209eec9c1370b9a96c6aef43b9aa0bc99bdd0f765ccb261c2cfe95080': [REVIEWED_VERSION_CLOSURE, {
@@ -376,7 +376,7 @@ export async function collectBasicCiSources({ read, ci, revision, relations, par
     if (matches) { protocol = candidate; break; }
   }
   if (!protocol) reject();
-  const relation = (consumer_path, input_path, kind) => relations.push({ consumer_path, input_path, kind, revision });
+  const relation = (consumer_path, input_path, kind) => relations.push({ consumer_path, input_path, kind, revision }); const skillWorkflow = Object.hasOwn(protocol, PINNED_WORKFLOW) ? PINNED_WORKFLOW : BASIC_CI;
   if (Object.hasOwn(protocol, PINNED_READER)) {
     if (!Array.isArray(paths)) reject();
     const prefix = 'scripts/ci/__tests__/';
@@ -394,7 +394,7 @@ export async function collectBasicCiSources({ read, ci, revision, relations, par
       relation(BASIC_RUNNER, path, 'reviewed_scripts_node_test_selector');
     }
     // 完整已审reader证明真实URL读取；这条边只声明验证输入，绝不宣称私有源workflow已运行。
-    relation(PINNED_READER, PINNED_WORKFLOW, 'literal_url_workflow_verification_input');
+    relation(PINNED_READER, skillWorkflow, 'literal_url_workflow_verification_input');
   }
   const frozenW19 = 'scripts/ci/check-w19-frozen.mjs';
   if (Object.hasOwn(protocol, frozenW19)) {
@@ -408,7 +408,7 @@ export async function collectBasicCiSources({ read, ci, revision, relations, par
   }
   const identity = 'scripts/ci/check-skill-source-identity.py';
   if (Object.hasOwn(protocol, identity)) {
-    relation(PINNED_WORKFLOW, '.github/actions/skills-source/action.yml', 'registered_skill_identity_composite');
+    relation(skillWorkflow, '.github/actions/skills-source/action.yml', 'registered_skill_identity_composite');
     relation('.github/actions/skills-source/action.yml', identity, 'pre_fetch_registered_ssh_identity_guard');
   }
   for (const [path, kind] of [['scripts/ci/basic-scope.mjs', 'required_basic_ci_plan'], [BASIC_RUNNER, 'required_basic_ci_matrix_runner'],

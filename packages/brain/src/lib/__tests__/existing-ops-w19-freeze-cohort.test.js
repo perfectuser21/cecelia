@@ -14,7 +14,7 @@ const members = ['packages/brain/vitest.config.js', 'scripts/ci/basic-scope.mjs'
   'scripts/ci/run-basic-check.mjs', 'scripts/ci/check-basic-results.mjs', 'scripts/ci/basic-runtime-smoke.mjs',
   'scripts/ci/ops-checks.mjs', 'scripts/ci/run-isolated-staging-smoke.mjs', 'scripts/ci/skill-source-tests.mjs',
   'apps/api/vitest.config.ts', 'apps/api/vitest.integration.config.ts',
-  'scripts/ci/__tests__/basic-skill-source-coverage.test.mjs', '.github/workflows/skills-source-check.yml',
+  'scripts/ci/__tests__/basic-skill-source-coverage.test.mjs', '.github/workflows/ci.yml',
   'scripts/ci/check-brain-version-bump.sh', '.github/actions/skills-source/action.yml',
   'scripts/ci/check-skill-source-identity.py', 'scripts/ci/__tests__/basic-skill-identity.test.mjs', checker, regression,
   'playground/package.json', 'playground/package-lock.json', 'playground/server.js', 'playground/vitest.config.js',
@@ -45,7 +45,7 @@ it('当前完整新组认领真实冻结门与历史输入，不声明旧算术�
 });
 for (const path of members) {
   it('完整新组单成员未知字节拒绝：' + path, async () => {
-    await expect(collect({ [path]: actual(path) + '\n// unreviewed drift\n' }))
+    await expect(collect({ [path]: path === '.github/workflows/ci.yml' ? actual(path).replace('name: CI', 'name: Unreviewed') : actual(path) + '\n// unreviewed drift\n' }))
       .rejects.toThrow('basic_ci_source_unproven');
   });
 }

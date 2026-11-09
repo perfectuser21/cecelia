@@ -10,13 +10,13 @@ import test from 'node:test';
 
 const yaml = createRequire(import.meta.url)('js-yaml');
 const root = fileURLToPath(new URL('../../../', import.meta.url));
-const workflow = yaml.load(readFileSync(join(root, '.github/workflows/preview-cleanup.yml'), 'utf8'));
+const workflow = yaml.load(readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8'));
 const composite = yaml.load(readFileSync(join(root, '.github/actions/preview-cleanup/action.yml'), 'utf8'));
 const steps = composite.runs.steps;
 const command = steps.find(step => step.id === 'brain_stop').run;
 
 test('Cleanup wrapper显式传入既有输入，composite保留缺TS条件且不生成成功回执', () => {
-  const call = workflow.jobs.preview_cleanup.steps.find(step => step.uses === './.github/actions/preview-cleanup');
+  const call = workflow.jobs['preview-cleanup'].steps.find(step => step.uses === './.github/actions/preview-cleanup');
   assert.ok(call);
   assert.equal(call.with['ts-authkey'], '${{ secrets.TS_AUTHKEY }}');
   assert.equal(call.with['deploy-token'], '${{ secrets.DEPLOY_TOKEN }}');

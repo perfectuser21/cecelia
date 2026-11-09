@@ -113,7 +113,7 @@ test('CLI 使用真实 Git 差分及 NUL 路径，输出单行 Actions matrix', 
   assert.equal(result.status, 0, result.stderr);
   const matrix = JSON.parse(result.stdout);
   assert.deepEqual(matrix, {include: [{component: 'dashboard'}, {component: 'scripts'}]});
-  assert.equal(readFileSync(output, 'utf8'), `matrix=${JSON.stringify(matrix)}\n`);
+  assert.equal(readFileSync(output, 'utf8'), `matrix=${JSON.stringify(matrix)}\npreview_ui=true\n`);
 });
 
 test('主分支全量仍读取真实差分并补上本次修改的客户端', t => {
@@ -153,3 +153,15 @@ test('CLI 拒绝把 Git 选项当 revision，且不丢失删除路径', t => {
   const invalid = spawnSync(process.execPath, [cli, '--base', '--all', '--head', head], {cwd: f.root, encoding: 'utf8', env: {...process.env, GITHUB_OUTPUT: ''}});
   assert.notEqual(invalid.status, 0);
 });
+
+for (const [path, wanted] of [['apps/dashboard/src/a.tsx',true],['apps/api/features/a.ts',true],['packages/brain/src/a.js',false],['.github/workflows/ci.yml',false],['docs/current/README.md',false]]) {
+  test(`真实diff preview_ui只认UI/API：${path}`, t => {
+    const f = fixture(t), base = f.commit('README.md','base'), head = f.commit(path,'changed');
+    for (const full of [false,true]) {
+      const output=join(f.root,full?'full-output':'output');
+      const result=spawnSync(process.execPath,[cli,...(full?['--full']:[]),'--base',base,'--head',head],{cwd:f.root,encoding:'utf8',env:{...process.env,GITHUB_OUTPUT:output}});
+      assert.equal(result.status,0,result.stderr);assert.ok(JSON.parse(result.stdout).include.length);
+      assert.ok(readFileSync(output,'utf8').includes(`preview_ui=${wanted}\n`));
+    }
+  });
+}

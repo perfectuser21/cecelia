@@ -4,7 +4,7 @@ import yaml from 'js-yaml';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { planChecks } from '../../../../scripts/ci/basic-scope.mjs';
-import { checkResults } from '../../../../scripts/ci/check-basic-results.mjs';
+import { checkResults, REQUIRED_JOBS } from '../../../../scripts/ci/check-basic-results.mjs';
 
 const workflow = yaml.load(readFileSync(new URL('../../../../.github/workflows/nightly-regression.yml', import.meta.url), 'utf8'));
 describe('Walking actual CI owner and PG acceptance', () => {
@@ -20,7 +20,7 @@ describe('Walking actual CI owner and PG acceptance', () => {
     expect(config).toContain('src/**/integration/**/*.{test,spec}.?(c|m)[jt]s?(x)');
   });
   it.each(['success', 'failure', 'cancelled', 'skipped', 'timed_out', '', 'unknown'])('普通PR汇总严格检查实际checks结果 %j，独立demo不伪装required', result => {
-    const needs = {plan: {result: 'success'}, security: {result: 'success'}, checks: {result}};
+    const needs = Object.fromEntries(REQUIRED_JOBS.map(job => [job, {result:job === 'checks' ? result : 'success'}]));
     if (result === 'success') expect(() => checkResults(needs)).not.toThrow();
     else expect(() => checkResults(needs)).toThrow();
     expect(planChecks([], {full: true}).some(row => row.component === 'walking-ci-e2e')).toBe(false);

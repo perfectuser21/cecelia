@@ -46,17 +46,11 @@ else
 fi
 
 # 反向守卫：预览执行必须留在执行机，不许被"统一指 us-vps"顺手搬回去
-PREVIEW_WFS=$(ls "$WORKFLOWS_DIR"/preview-*.yml 2>/dev/null || true)
-if [ -n "$PREVIEW_WFS" ]; then
-  BAD=$(grep -l "$NEW_IP" $PREVIEW_WFS 2>/dev/null || true)
-  if [ -n "$BAD" ]; then
-    echo "  ❌ 预览 workflow 指向了 us-vps($NEW_IP)，违反零执行铁律 96054a8b："
-    echo "$BAD" | sed 's/^/       /'
-    echo "     起预览=起 Brain 实例+克隆库=执行活，必须在执行机；且 us-vps 根分区 24G 过不了 38.5G 门槛"
-    FAIL=1
-  else
-    echo "  ✅ 预览 workflow 仍指向执行机（执行没有被搬回 us-vps）"
-  fi
+PREVIEW_SECTION=$(sed -n '/^  preview-deploy:/,/^  ci-passed:/p' "$WORKFLOWS_DIR/ci.yml")
+if printf '%s\n' "$PREVIEW_SECTION" | grep -q "$NEW_IP"; then
+  echo "  ❌ 预览job指向了us-vps，违反执行机隔离"; FAIL=1
+else
+  echo "  ✅ 预览job保留执行机地址边界"
 fi
 
 echo ""
