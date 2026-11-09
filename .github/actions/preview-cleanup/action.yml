@@ -1,0 +1,111 @@
+name: preview-cleanup
+description: 保留原预览工作流的部署或清理步骤
+inputs:
+  ts-authkey:
+    description: 既有 Tailscale 登录密钥
+    required: false
+  deploy-token:
+    description: 既有预览代理令牌
+    required: false
+  brain-url:
+    description: 执行机预览代理地址
+    required: false
+    default: http://100.71.151.105:5241
+  github-token:
+    description: 仅供 PR 评论的令牌
+    required: false
+runs:
+  using: composite
+  steps:
+    - name: 检查 Tailscale secret 是否配置
+      id: check_ts
+      shell: bash
+      run: |
+        if [ -n "$SECRET_TS" ]; then
+          echo "configured=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "configured=false" >> "$GITHUB_OUTPUT"
+          echo "TS_AUTHKEY 未配置，跳过清理"
+        fi
+      env:
+        SECRET_TS: ${{ inputs.ts-authkey }}
+
+    - name: Connect to Tailscale
+      if: steps.check_ts.outputs.configured == 'true'
+      uses: tailscale/github-action@v2
+      with:
+        authkey: ${{ inputs.ts-authkey }}
+
+    - name: 调 Brain API 停止预览环境
+      id: brain_stop
+      if: steps.check_ts.outputs.configured == 'true'
+      env:
+        BRAIN_URL: ${{ inputs.brain-url }}
+        DEPLOY_TOKEN: ${{ inputs.deploy-token }}
+        PR_NUMBER: ${{ github.event.number }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        echo "调用 Brain API /preview/stop/${PR_NUMBER}..."
+        RESPONSE_FILE=$(mktemp)
+        trap 'rm -f "$RESPONSE_FILE"' EXIT
+        HTTP_STATUS=$(curl -sS --connect-timeout 15 --max-time 30 \
+          -o "$RESPONSE_FILE" -w '%{http_code}' \
+          -X POST "${BRAIN_URL}/api/brain/preview/stop/${PR_NUMBER}" \
+          -H "Content-Type: application/json" \
+          -H "Authorization: Bearer ${DEPLOY_TOKEN}")
+        case "$HTTP_STATUS" in
+          2??) ;;
+          *) echo "清理未确认：HTTP $HTTP_STATUS" >&2; exit 1 ;;
+        esac
+        node - "$RESPONSE_FILE" <<'NODE'
+        const fs = require('node:fs');
+        try {
+          const receipt = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          const inactive = receipt?.status === 'inactive';
+          const absent = receipt?.status === undefined && receipt?.note === 'no active preview found';
+          if (!receipt || Array.isArray(receipt) || receipt.stopped !== true || (!inactive && !absent)) {
+            throw new Error('缺少有效清理终态');
+          }
+          console.log(absent ? '已确认无需清理（无预览记录）' : '已确认预览终态 inactive');
+        } catch {
+          console.error('清理未确认：响应不是有效的成功回执');
+          process.exitCode = 1;
+        }
+        NODE
+        echo "success=true" >> "$GITHUB_OUTPUT"
+
+    - name: PR 评论写入清理结果（成功）
+      if: steps.check_ts.outputs.configured == 'true' && steps.brain_stop.outputs.success == 'true'
+      uses: actions/github-script@v7
+      env:
+        PREVIEW_BRANCH: ${{ github.head_ref }}
+      with:
+        github-token: ${{ inputs.github-token }}
+        script: |
+          const branch = process.env.PREVIEW_BRANCH;
+          await github.rest.issues.createComment({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: context.issue.number,
+            body: `## 🧹 预览环境已清理\n\n**Branch**: \`${branch}\`\n\n预览代理已确认清理完成，或当前无需清理（无预览记录）。`,
+          });
+
+    - name: PR 评论写入清理结果（未确认）
+      if: >-
+        always() &&
+        steps.check_ts.outputs.configured == 'true' &&
+        steps.brain_stop.outcome == 'failure'
+      uses: actions/github-script@v7
+      env:
+        PREVIEW_BRANCH: ${{ github.head_ref }}
+      with:
+        github-token: ${{ inputs.github-token }}
+        script: |
+          const branch = process.env.PREVIEW_BRANCH;
+          await github.rest.issues.createComment({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: context.issue.number,
+            body: `## ⚠️ 预览环境清理未确认\n\n**Branch**: \`${branch}\`\n\n未取得有效的清理成功回执，可能是网络、HTTP 或业务清理失败。实际资源是否残留需核对执行机状态；此评论不代表已经回收。\n\n如需立即清理：\`bash scripts/preview-reaper.sh\``,
+          });

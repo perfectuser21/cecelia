@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 SCRIPT="$ROOT_DIR/scripts/wait-preview-active.sh"
-WORKFLOW="$ROOT_DIR/.github/workflows/preview-deploy.yml"
+ACTION="$ROOT_DIR/.github/actions/preview-deploy/action.yml"
 TEST_DIR="$(mktemp -d)"
 trap 'rm -rf "$TEST_DIR"' EXIT
 
@@ -70,6 +70,6 @@ EXPECTED_PORT=5300 \
 [[ "$(cat "$TEST_DIR/reissue.count")" == '1' ]]
 grep -q 'production Brain restart detected' "$TEST_DIR/wait.log"
 grep -q 'preview status=active' "$TEST_DIR/wait.log"
-grep -q 'bash scripts/wait-preview-active.sh' "$WORKFLOW"
+grep -q 'bash scripts/wait-preview-active.sh' "$ACTION"
 
 echo 'PASS: preview wait reissues start after production Brain restart'

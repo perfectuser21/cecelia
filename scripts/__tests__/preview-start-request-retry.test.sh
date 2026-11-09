@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 SCRIPT="$ROOT_DIR/scripts/request-preview-start.sh"
-WORKFLOW="$ROOT_DIR/.github/workflows/preview-deploy.yml"
+ACTION="$ROOT_DIR/.github/actions/preview-deploy/action.yml"
 TEST_DIR="$(mktemp -d)"
 trap 'rm -rf "$TEST_DIR"' EXIT
 
@@ -63,7 +63,7 @@ set -e
 [[ "$status" -ne 0 ]]
 [[ "$(cat "$TEST_DIR/failure.count")" == '3' ]]
 grep -q 'preview start failed after 3 attempts' "$TEST_DIR/failure.log"
-grep -q 'bash scripts/request-preview-start.sh' "$WORKFLOW"
+grep -q 'bash scripts/request-preview-start.sh' "$ACTION"
 
 echo 'PASS: preview start retries transient Brain downtime'
 
