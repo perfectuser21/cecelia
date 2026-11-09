@@ -74,28 +74,48 @@ test('新版主CI版本门具备固定整组来源闭包；历史组合保留且
     paths: git('ls-tree', '-rz', '--name-only', historical).split('\0').filter(Boolean),
     read: async path => git('show', `${historical}:${path}`),
     ci: git('show', `${historical}:.github/workflows/ci.yml`), relations: [], parse: ast });
+  assert.ok(relations.some(edge => edge.consumer_path === 'scripts/ci/__tests__/basic-skill-source-coverage.test.mjs' && edge.input_path === '.github/workflows/ci.yml'));
+  assert.ok(!relations.some(edge => edge.input_path === '.github/workflows/skills-source-check.yml'));
   assert.ok(relations.some(edge => edge.consumer_path === '.github/actions/skills-source/action.yml'
     && edge.input_path === 'scripts/ci/check-skill-source-identity.py'));
   await assert.rejects(collect(async path => path === 'packages/brain/vitest.config.js'
     ? git('show', 'ce20b5a29123c9ade1a0bc4aa2753e3ea3fe310d:packages/brain/vitest.config.js') : source.readSource(path)), /basic_ci_source_unproven/);
   const previousPaths = new Set(['packages/brain/vitest.config.js', 'scripts/ci/run-basic-check.mjs']);
   const historicalIdentity = 'scripts/ci/__tests__/basic-skill-identity.test.mjs';
-  const readPrevious = async (path, revision) => path === historicalIdentity
+  const historicalInputs = new Set([historicalIdentity, 'scripts/ci/skill-source-tests.mjs', 'scripts/ci/__tests__/basic-skill-source-coverage.test.mjs',
+    'scripts/ci/check-w19-frozen.mjs', 'scripts/ci/__tests__/basic-w19-freeze.test.mjs',
+    'scripts/ci/basic-scope.mjs', 'scripts/ci/check-basic-results.mjs', '.github/workflows/skills-source-check.yml']);
+  const w19Inputs = ['scripts/ci/check-w19-frozen.mjs', 'scripts/ci/__tests__/basic-w19-freeze.test.mjs'];
+  await assert.rejects(collect(path => w19Inputs.includes(path)
+    ? git('show', `aa2172e299585d742192554064b48f533cafd15c:${path}`) : source.readSource(path)), /basic_ci_source_unproven/);
+  for (const changed of w19Inputs) await assert.rejects(collect(path => path === changed
+    ? git('show', `aa2172e299585d742192554064b48f533cafd15c:${path}`) : source.readSource(path)), /basic_ci_source_unproven/);
+  const readPrevious = async (path, revision) => historicalInputs.has(path)
     ? git('show', `aa2172e299585d742192554064b48f533cafd15c:${path}`)
     : previousPaths.has(path) ? git('show', `${revision}:${path}`) : source.readSource(path);
-  await collect(path => readPrevious(path, '2dce0c18eded5c37d50fca44708d88cfa80fc575'));
+  const previousCi = git('show', 'aa2172e299585d742192554064b48f533cafd15c:.github/workflows/ci.yml');
+  const collectPrevious = revision => collectBasicCiSources({ ...source, ci: previousCi, relations: [], parse: ast,
+    read: path => path === '.github/workflows/ci.yml' ? previousCi : readPrevious(path, revision) });
+  await collectPrevious('2dce0c18eded5c37d50fca44708d88cfa80fc575');
+  await assert.rejects(collectBasicCiSources({ ...source, ci: previousCi, read: source.readSource, relations: [], parse: ast }), /basic_ci_source_unproven/);
+  await assert.rejects(collect(path => path === 'scripts/ci/run-basic-check.mjs'
+    ? git('show', `aa2172e299585d742192554064b48f533cafd15c:${path}`) : source.readSource(path)), /basic_ci_source_unproven/);
+
   for (const changed of ['packages/brain/vitest.config.js', 'scripts/ci/run-basic-check.mjs']) {
     await assert.rejects(collect(async path => path === changed
       ? git('show', `2dce0c18eded5c37d50fca44708d88cfa80fc575:${changed}`) : source.readSource(path)), /basic_ci_source_unproven/);
   }
-  await collect(path => readPrevious(path, '79cf5c5b20324d4d5a39eadda3f009d64b98f8b3'));
+  await collectPrevious('79cf5c5b20324d4d5a39eadda3f009d64b98f8b3');
+  await assert.rejects(collectBasicCiSources({ ...source, ci: previousCi, relations: [], parse: ast,
+    read: async path => path === '.github/workflows/ci.yml' ? previousCi :
+      (await readPrevious(path, '79cf5c5b20324d4d5a39eadda3f009d64b98f8b3')) + (path === '.github/workflows/skills-source-check.yml' ? '\n# unreviewed drift\n' : '') }), /basic_ci_source_unproven/);
   for (const changed of previousPaths) {
     await assert.rejects(collect(async path => path === changed
       ? git('show', `79cf5c5b20324d4d5a39eadda3f009d64b98f8b3:${changed}`) : source.readSource(path)), /basic_ci_source_unproven/);
   }
   assert.ok(relations.some(edge => edge.consumer_path === '.github/workflows/ci.yml' && edge.input_path === 'scripts/ci/check-brain-version-bump.sh'));
-  for (const path of [historicalIdentity, 'scripts/ci/check-brain-version-bump.sh', 'scripts/ci/basic-scope.mjs', 'scripts/ci/run-basic-check.mjs', 'packages/brain/vitest.config.js',
-    '.github/actions/skills-source/action.yml', 'scripts/ci/check-skill-source-identity.py']) {
+  for (const path of [...historicalInputs].filter(path => path !== '.github/workflows/skills-source-check.yml').concat([ 'scripts/ci/check-brain-version-bump.sh', 'scripts/ci/basic-scope.mjs', 'scripts/ci/run-basic-check.mjs', 'packages/brain/vitest.config.js',
+    '.github/actions/skills-source/action.yml', 'scripts/ci/check-skill-source-identity.py'])) {
     await assert.rejects(collect(async input => (await source.readSource(input)) + (input === path ? '\n// unreviewed drift\n' : '')), /basic_ci_source_unproven/);
   }
   await assert.rejects(collect(async path => path === 'scripts/ci/check-brain-version-bump.sh'

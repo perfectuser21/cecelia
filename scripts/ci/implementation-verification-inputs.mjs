@@ -108,6 +108,17 @@ const QUEUED_BASIC_ENTRY_PROTOCOLS=[{
  'scripts/ci/ops-checks.mjs':'6a6305471c70c7d1d5e4ad836f14636c8ab74a4d6a4bb17dc8d525d3aa52e125',
  'packages/brain/vitest.config.js':'9566bd1cff449dc15ee924aea4c9f46aaa3457392fadf8cbf10d0b6556c2634e',
 }];
+const OWNERSHIP_BASIC_CI='2d5a818975ae8815aa390ea003b57be4445582a03cc3c3316a83471a70ffa275';
+const OWNERSHIP_BASIC_ENTRY_PROTOCOLS=[{
+ // 所有权单测并入scripts后的完整入口组合；既有所有组合保持原样。
+ ...BASIC_ENTRY_SEALS,
+ 'scripts/ci/run-basic-check.mjs':'980d1ac1e847e58d6c0b10c2102247840b3b066302fefcfa0b0c70f0525e6fcc',
+ 'scripts/ci/basic-scope.mjs':'c97f3d3300ce74237086b819def622636dc6776f663753d6ec3e68ea2d21a14b',
+ 'scripts/ci/ops-checks.mjs':'6a6305471c70c7d1d5e4ad836f14636c8ab74a4d6a4bb17dc8d525d3aa52e125',
+ 'packages/brain/vitest.config.js':'9566bd1cff449dc15ee924aea4c9f46aaa3457392fadf8cbf10d0b6556c2634e',
+}];
+const UNIFIED_BASIC_CI='20ae4b9f13055900dca96258c4551cfa81ef686d184c9c3f32bb601c83b1bfb8';
+const UNIFIED_BASIC_ENTRY_PROTOCOLS=[{"scripts/ci/run-basic-check.mjs":"980d1ac1e847e58d6c0b10c2102247840b3b066302fefcfa0b0c70f0525e6fcc","scripts/ci/basic-scope.mjs":"0b5fdc26f71db94e6ac03358b6034025162d8ba740ed59a6fe127f0e5bfe5062","scripts/ci/check-basic-results.mjs":"11d51c4c4ce00c2860a099912961c6e020b49c93f5ce548a338f96f8c51896a5","scripts/ci/ops-checks.mjs":"6a6305471c70c7d1d5e4ad836f14636c8ab74a4d6a4bb17dc8d525d3aa52e125","packages/brain/vitest.config.js":"9566bd1cff449dc15ee924aea4c9f46aaa3457392fadf8cbf10d0b6556c2634e","scripts/ci/skill-source-tests.mjs":"dbb749f30271472fe1f24e1eec2215d7b5999f20c1d4ed74c00fd4b40f6c57c8","scripts/ci/run-skill-source-check.mjs":"debcaf26aa7025f47d846052e0c2b43d1a04976003936143d80ddac1582d7204","scripts/ci/__tests__/basic-skill-source-coverage.test.mjs":"6fa43074248d0e379e36c4c2e58cb6de09cbe65b12a052d5de14a3de33c74804",".github/actions/skills-source/action.yml":"283a44569b4b037d11ebbac624f91ed013ab91be4916182a87a2bf95078ec105","scripts/ci/check-skill-source-identity.py":"ebc6b90fbe187b49c31101a5dba997d133fd45825cfcaa3549aad30581d747c1"}];
 const UNIT_CONFIGS=[
  {component:'brain',directory:'packages/brain',path:'packages/brain/vitest.config.js'},
  {component:'engine',directory:'packages/engine',path:'packages/engine/vitest.config.ts'},
@@ -159,11 +170,11 @@ function supportReader(root,source,git){
 function unitEntry(read,side){
  const workflow=read(side,CI);if(!workflow)return null;let doc;
  try{doc=yaml.load(workflow.text);}catch{return null;}
- const signature=sha(JSON.stringify(canonical(doc)));if(![LEGACY_CI,BASIC_CI,QUEUED_BASIC_CI].includes(signature))return null;
+ const signature=sha(JSON.stringify(canonical(doc)));if(![LEGACY_CI,BASIC_CI,QUEUED_BASIC_CI,OWNERSHIP_BASIC_CI,UNIFIED_BASIC_CI].includes(signature))return null;
  const support=[workflow.reference];
- if(signature===BASIC_CI||signature===QUEUED_BASIC_CI){
+ if(signature===BASIC_CI||signature===QUEUED_BASIC_CI||signature===OWNERSHIP_BASIC_CI||signature===UNIFIED_BASIC_CI){
   let selected;
-  for(const seals of signature===BASIC_CI?BASIC_ENTRY_PROTOCOLS:QUEUED_BASIC_ENTRY_PROTOCOLS){
+  for(const seals of signature===UNIFIED_BASIC_CI?UNIFIED_BASIC_ENTRY_PROTOCOLS:signature===BASIC_CI?BASIC_ENTRY_PROTOCOLS:signature===OWNERSHIP_BASIC_CI?OWNERSHIP_BASIC_ENTRY_PROTOCOLS:QUEUED_BASIC_ENTRY_PROTOCOLS){
    const files=Object.entries(seals).map(([path,expected])=>({file:read(side,path),expected}));
    if(files.every(({file,expected})=>file?.reference.sha256===expected)){selected=files;break;}
   }
@@ -184,7 +195,10 @@ function runnerSelector(path,entry,paths){
  return null;
 }
 function pinnedSources(read,side){
- const workflow=read(side,PINNED_CI),runner=read(side,'scripts/ci/run-skill-source-check.mjs'),skill=read(side,'scripts/ci/skill-source-tests.mjs');
+ const runner=read(side,'scripts/ci/run-skill-source-check.mjs'),skill=read(side,'scripts/ci/skill-source-tests.mjs');
+ const entry=unitEntry(read,side);
+ if(entry?.canonical_sha256===UNIFIED_BASIC_CI) return {workflow:read(side,CI),runner,skill};
+ const workflow=read(side,PINNED_CI);
  if(!workflow||!runner||!skill||runner.reference.sha256!=='debcaf26aa7025f47d846052e0c2b43d1a04976003936143d80ddac1582d7204'
   ||skill.reference.sha256!=='1daf4f27f6fa97b3c8f3d9a9e1a9e86e44fbe92b84c962d1c2ce3b90db32b147')return null;
  let doc;try{doc=yaml.load(workflow.text);}catch{return null;}

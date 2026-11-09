@@ -7,15 +7,9 @@ import {fileURLToPath} from 'node:url';
 import {spawnSync,execFileSync} from 'node:child_process';
 import yaml from 'js-yaml';
 const root=fileURLToPath(new URL('../../../',import.meta.url));
-const gate=yaml.load(readFileSync(join(root,'.github/workflows/implementation-impact.yml'),'utf8')).jobs.gate;
+const gate=yaml.load(execFileSync('git',['--no-replace-objects','show','aa2172e299585d742192554064b48f533cafd15c:.github/workflows/implementation-impact.yml'],{cwd:root,encoding:'utf8'})).jobs.gate;
 
-test('显式调用继承PR事件仍执行真实gate，普通PR无显式mode不获准入',()=>{
- const enabled=(mode,result,event='pull_request')=>Function('always','inputs','needs','github',`return (${gate.if.replaceAll("needs.snapshot-main", "needs[\"snapshot-main\"]")})`)(()=>true,{mode},{'snapshot-main':{result}},{event_name:event});
- assert.equal(enabled('pr','skipped'),true);
- assert.equal(enabled(undefined,'skipped'),false);
- assert.equal(enabled('main','success','workflow_dispatch'),true);
- assert.equal(enabled('main','failure','workflow_dispatch'),false);
-});
+
 
 test('显式多scope Shell调用合法CLI参数，固定snapshot路径完整且真实失败码阻断',t=>{
  const directory=mkdtempSync(join(tmpdir(),'impact-explicit-call-'));t.after(()=>rmSync(directory,{recursive:true,force:true}));

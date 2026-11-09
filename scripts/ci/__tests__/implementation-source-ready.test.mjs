@@ -6,9 +6,7 @@ import {join,dirname} from 'node:path';
 import {execFileSync} from 'node:child_process';
 import {createServer} from 'node:http';
 import {createHash} from 'node:crypto';
-import yaml from 'js-yaml';
 import {expectedSourceRuntime,waitForSourceRuntime} from '../implementation-source-ready.mjs';
-import {futureCiAdmissionImpactWorkflow} from './fixtures/ci-admission-impact-workflow.mjs';
 const legacyPaths=['source','runtime-source','build-source','build-envelopes','workspace-source'].map(n=>`packages/brain/src/lib/existing-ops-${n}.js`).sort();
 const provenancePaths=['envelope','core-envelope','entry-envelopes','local-envelopes'].map(n=>`packages/brain/src/lib/existing-ops-provenance-${n}.js`).sort();
 const priorPaths=[...legacyPaths,...provenancePaths].sort();
@@ -127,66 +125,9 @@ test('拒绝超60分钟预算及非固定HEAD',async()=>{
  assert.throws(()=>expectedSourceRuntime({repoRoot:root,revision:'a'.repeat(40)}),/SOURCE_READY_CHECKOUT_MISMATCH/);
 });
 
-test('真实workflow保持原谓词与正常15/40分钟，来源恢复45分钟及只读就绪60分钟',()=>{
- const workflow=yaml.load(readFileSync(new URL('../../../.github/workflows/implementation-impact.yml',import.meta.url),'utf8'));
- const ready=workflow.jobs['source-runtime-ready'],snapshot=workflow.jobs['snapshot-main'];
- const old="inputs.export_device_patrol_source_identity != true && github.event_name != 'pull_request' && github.ref == 'refs/heads/main'";
- assert.equal(ready.if,old);assert.equal(snapshot.if,old);assert.deepEqual(snapshot.needs,['source-runtime-ready']);
- assert.equal(ready['timeout-minutes'],60);assert.equal(snapshot['timeout-minutes'],"${{ inputs.source_baseline_recovery == true && 45 || 15 }}");assert.equal(workflow.jobs.gate['timeout-minutes'],40);
- const scopeStep=ready.steps.find(s=>s.id==='scope');assert.match(scopeStep.run,/echo "applicable=\$REQUIRED"/);
- const evaluate=(expression,context)=>Function('github','inputs','vars',`return (${expression.replace(/^\$\{\{ | \}\}$/g,'')})`)(context.github,context.inputs,context.vars);
- const context={github:{repository:'perfectuser21/cecelia',ref:'refs/heads/main',event_name:'push',sha:revision},inputs:{},vars:{}};
- for(const [name,patch,jobExpected,appExpected] of [
-  ['self push',{},true,true],['self dispatch',{github:{event_name:'workflow_dispatch'}},true,true],
-  ['PR',{github:{event_name:'pull_request'}},false,false],['device',{inputs:{export_device_patrol_source_identity:true}},false,true],
-  ['crossrepo',{github:{repository:'foreign/repo'},inputs:{source_repo:'foreign/repo',tooling_revision:revision}},true,false],
-  ['foreign source',{inputs:{source_repo:'foreign/repo'}},true,false],['other scope',{inputs:{scope:'cecelia-device-patrol'}},true,false],
-  ['other head',{inputs:{head_revision:'a'.repeat(40)}},true,false],['other tooling',{inputs:{tooling_revision:'a'.repeat(40)}},true,false],
-  ['other mode',{inputs:{mode:'release'}},true,false]
- ]){
-  const c={github:{...context.github,...patch.github},inputs:{...patch.inputs},vars:{}};
-  assert.equal(evaluate(ready.if,c),jobExpected,name);assert.equal(evaluate(snapshot.if,c),jobExpected,name);
-  assert.equal(evaluate(scopeStep.env.REQUIRED,c),appExpected,name);
- }
- for(const step of ready.steps.filter(s=>s!==scopeStep))assert.ok(step.if.includes("steps.scope.outputs.applicable == 'true'"));
- assert.equal(ready.steps.find(s=>s.uses==='actions/checkout@v4').with.ref,'${{ github.sha }}');
- assert.ok(ready.steps.some(s=>s.run==='node tooling/scripts/ci/implementation-source-ready.mjs'));
-});
-test('显式来源恢复不进入中央infra刷新，普通main仍保留原准入',()=>{
- const workflow=yaml.load(readFileSync(new URL('../../../.github/workflows/implementation-impact.yml',import.meta.url),'utf8'));
- const infra=workflow.jobs['snapshot-infra'];
- const active=({eventName='workflow_dispatch',recovery=false,infraAdmission='true',exportInfra=false}={})=>Function('github','inputs','vars',`return (${infra.if.replace(/^\$\{\{ | \}\}$/g,'')})`)(
-  {repository:'perfectuser21/cecelia',ref:'refs/heads/main',event_name:eventName,sha:revision},
-  {source_baseline_recovery:recovery,export_infra_baseline:exportInfra},
-  {IMPLEMENTATION_INFRA_ADMISSION:infraAdmission});
- assert.equal(active({recovery:true}),false,'source-only 不能启动普通 infra provider 的生产 refresh');
- assert.equal(active({recovery:true,exportInfra:true}),false,'冲突输入不能重新启动普通 infra provider');
- assert.equal(active({recovery:false}),true,'普通显式 main 准入仍可导出 infra');
- assert.equal(active({eventName:'push'}),true,'普通 main push 行为不变');
- assert.equal(active({recovery:true,infraAdmission:'false'}),false);
- assert.deepEqual(infra.needs,['source-runtime-ready']);
- const provider=infra.steps.find(s=>s.name==='固定main独立infra来源导出');
- assert.match(provider.run,/implementation-main-snapshot\.mjs/);
- assert.equal(workflow.jobs['snapshot-main'].steps.find(s=>s.name==='固定main中央定义导出').env.SOURCE_BASELINE_RECOVERY,
-  "${{ github.event_name == 'workflow_dispatch' && inputs.source_baseline_recovery == true }}");
- assert.doesNotMatch(JSON.stringify(workflow.jobs),/\/api\/brain\/deploy|scripts\/brain-deploy\.sh/);
-});
-test('显式来源恢复的联合门不索取被跳过的infra产物',()=>{
- const workflow=yaml.load(readFileSync(new URL('../../../.github/workflows/implementation-impact.yml',import.meta.url),'utf8'));
- const admission=workflow.jobs.gate.env.INFRA_ADMISSION;
- const active=recovery=>Function('github','inputs','vars',`return (${admission.replace(/^\$\{\{ | \}\}$/g,'')})`)(
-  {repository:'perfectuser21/cecelia'},
-  {source_baseline_recovery:recovery},
-  {IMPLEMENTATION_INFRA_ADMISSION:'true',IMPLEMENTATION_MAP_SCOPE:'cecelia-kr'});
- assert.equal(active(true),'false','source-only 不应下载或要求普通 infra 快照');
- assert.equal(active(false),'true','普通准入仍保留 infra 联合门');
- // 当前旧Core仍核原恢复语义；typed路由只核已审未来数据，不冒当前已激活。
- const condition=yaml.load(futureCiAdmissionImpactWorkflow).jobs.gate.steps.find(s=>s.name==='独立infra固定来源加入联合输入').if;
- const accepts=env=>Function('env',`return (${condition})`)(env);
- assert.equal(accepts({INFRA_ADMISSION:'true',IMPLEMENTATION_CI_ADMISSION_INPUT_DIR:''}),true,'旧独立infra输入仍真实执行');
- assert.equal(accepts({INFRA_ADMISSION:'true',IMPLEMENTATION_CI_ADMISSION_INPUT_DIR:'/verified/ci-admission'}),false,'CI封套已包含三scope，不独立混入另一份infra');
- assert.equal(accepts({INFRA_ADMISSION:'false',IMPLEMENTATION_CI_ADMISSION_INPUT_DIR:''}),false);
-});
+
+
+
 test('固定Git输入可在真实depth1浅克隆运行',()=>{
  const clone=join(root,'shallow');execFileSync('git',['clone','--quiet','--depth','1',`file://${root}`,clone]);
  assert.equal(execFileSync('git',['rev-parse','--is-shallow-repository'],{cwd:clone,encoding:'utf8'}).trim(),'true');

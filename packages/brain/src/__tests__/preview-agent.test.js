@@ -56,7 +56,7 @@ describe('preview-agent — 存在性与形状', () => {
 });
 
 describe('preview-agent — CI 指向执行机', () => {
-  const wf = () => readFileSync(join(ROOT, '.github/workflows/preview-deploy.yml'), 'utf8');
+  const wf = () => readFileSync(join(ROOT, '.github/workflows/ci.yml'), 'utf8').split('  preview-deploy:')[1].split('  preview-cleanup:')[0];
 
   it('workflow 默认地址指向 MMV 的代理端口，不再指 us-vps', () => {
     const s = wf();

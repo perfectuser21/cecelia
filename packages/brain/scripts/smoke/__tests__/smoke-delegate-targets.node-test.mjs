@@ -54,7 +54,7 @@ for (const [name, route] of [
 }
 
 for (const optIn of ['', '1']) {
-  test(`ratchet delegates Walking to its required owner without executing it: opt-in=${optIn || 'default'}`, async () => {
+  test(`ratchet leaves retired Walking demo manual-only without executing it: opt-in=${optIn || 'default'}`, async () => {
     const temp = await mkdtemp(resolve(tmpdir(), 'walking-ratchet-'));
     try {
       const walkingMarker = resolve(temp, 'walking-executed');
@@ -66,7 +66,7 @@ for (const optIn of ['', '1']) {
         assert.equal(result.code, 0, result.output);
         await assert.rejects(readFile(walkingMarker), { code: 'ENOENT' });
         await readFile(ordinaryMarker);
-        assert.match(result.output, /DELEGATED.*walking-skeleton-1node-smoke\.sh.*walking-ci-e2e/);
+        assert.match(result.output, /DELEGATED.*walking-skeleton-1node-smoke\.sh.*manual-only walking demo/);
         assert.match(result.output, /DELEGATED:\s+1/);
         assert.match(result.output, /PASS:\s+1/);
         assert.match(result.output, /SKIP\(deny\):\s+0/);

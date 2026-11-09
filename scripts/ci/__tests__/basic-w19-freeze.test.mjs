@@ -40,6 +40,54 @@ function check() {
     { encoding: 'utf8', timeout: 10000, env: gitEnv });
 }
 
+function ciBase() {
+  git('add', 'playground/README.md');
+  git('-c', 'user.name=Owned CI fixture', '-c', 'user.email=fixture@example.invalid',
+    'commit', '-qm', 'test: fixed historical role at event base');
+  return git('rev-parse', 'HEAD');
+}
+function checkCi(name, event, extra = {}) {
+  const eventPath = join(home, 'github-event.json');
+  writeFileSync(eventPath, typeof event === 'string' ? event : JSON.stringify(event));
+  return spawnSync(process.execPath, [join(root, 'scripts/ci/check-w19-frozen.mjs')], {
+    cwd: fixture, encoding: 'utf8', timeout: 10000,
+    env: {...gitEnv, GITHUB_ACTIONS: 'true', GITHUB_EVENT_NAME: name, GITHUB_EVENT_PATH: eventPath, ...extra},
+  });
+}
+for (const name of ['pull_request', 'push']) test(`GitHub事件${name}普通代码提交未触历史时不逐字遍历`, () => {
+  const base = ciBase();
+  writeFileSync(join(fixture, 'ordinary-ci-fixture.js'), 'export const changed = true;\n');
+  git('add', 'ordinary-ci-fixture.js');
+  git('-c', 'user.name=Owned CI fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'test: ordinary code change');
+  const result = checkCi(name, name === 'push' ? {before: base} : {pull_request: {base: {sha: base}}});
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /^W19_FROZEN_UNCHANGED:/);
+  assert.doesNotMatch(result.stdout, /W19_FROZEN_OK/);
+});
+for (const kind of ['code', 'dependency', 'role']) test(`GitHub事件发现历史${kind}工作区变更仍执行原拒绝`, () => {
+  const base = ciBase();
+  const target = kind === 'code' ? 'server.js' : kind === 'dependency' ? 'package.json' : 'README.md';
+  writeFileSync(join(fixture, 'playground', target), kind === 'role' ? '# 当前生产服务\n' : 'changed historical input\n');
+  const result = checkCi('pull_request', {pull_request: {base: {sha: base}}});
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, kind === 'role' ? /W19_FROZEN_ROLE/ : /W19_FROZEN_DRIFT/);
+});
+for (const kind of ['missing', 'malformed', 'unknown-commit', 'tree', 'invalid-json']) test(`GitHub事件${kind}基线不可判定时拒绝`, () => {
+  ciBase();
+  const base = kind === 'unknown-commit' ? '0'.repeat(40) : kind === 'tree' ? git('rev-parse', 'HEAD^{tree}') : 'not-a-sha';
+  const event = kind === 'invalid-json' ? '{' : kind === 'missing' ? {} : {before: base};
+  const result = checkCi('push', event);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /W19_FROZEN_EVENT/);
+});
+for (const kind of ['dispatch', 'local']) test(`GitHub事件范围外的${kind}直接入口仍完整校验历史身份`, () => {
+  ciBase();
+  writeFileSync(join(fixture, 'playground/README.md'), '# 当前生产服务\n');
+  const result = checkCi('workflow_dispatch', {}, kind === 'local' ? {GITHUB_ACTIONS: '', GITHUB_EVENT_NAME: ''} : {});
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /W19_FROZEN_ROLE/);
+});
+
 test('旧样机的代码/依赖/配置/新增路径只选scripts，普通全量矩阵保持14项', () => {
   for (const path of ['playground/server.js', 'playground/package.json', 'playground/package-lock.json',
     'playground/vitest.config.js', 'playground/new-code.js', 'playground/README.md']) {

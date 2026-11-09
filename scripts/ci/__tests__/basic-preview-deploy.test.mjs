@@ -9,6 +9,7 @@ import yaml from 'js-yaml';
 
 const root = new URL('../../../', import.meta.url).pathname;
 const doc = name => yaml.load(readFileSync(join(root, '.github/workflows', name), 'utf8'));
+const action = () => yaml.load(readFileSync(join(root, '.github/actions/preview-deploy/action.yml'), 'utf8'));
 const sha = 'a'.repeat(40);
 async function fixture(handler, callback) {
   const requests = [];
@@ -34,33 +35,89 @@ function shell(command, env = {}) {
 }
 
 test('Preview workflow 绑定PR真实head并缺少secret时失败', async () => {
-  const job = doc('preview-deploy.yml').jobs.preview_deploy;
+  const job = doc('ci.yml').jobs['preview-deploy'];
   const checkout = job.steps.find(step => step.uses?.startsWith('actions/checkout'));
   assert.equal(checkout.with?.ref, '${{ github.event.pull_request.head.sha }}');
+  const call = job.steps.find(step => step.uses === './.github/actions/preview-deploy');
+  assert.ok(call, 'workflow必须执行本地action');
+  assert.equal(call.with['deploy-token'], '${{ secrets.DEPLOY_TOKEN }}');
+  assert.equal(call.with['ts-authkey'], '${{ secrets.TS_AUTHKEY }}');
+  const steps = action().runs.steps;
   for (const name of ['触发 preview-env-start（Brain API）', '健康检查预览 Brain']) {
-    assert.equal(job.steps.find(step => step.name === name).env.EXPECTED_SHA, '${{ github.event.pull_request.head.sha }}');
+    assert.equal(steps.find(step => step.name === name).env.EXPECTED_SHA, '${{ github.event.pull_request.head.sha }}');
   }
-  const step = job.steps.find(step => step.id === 'check_ts');
-  const result = await shell(step.run, { SECRET_TS: '', DEPLOY_TOKEN: '', GITHUB_OUTPUT: '/dev/null' });
-  assert.notEqual(result.code, 0, result.output);
+  const step = steps.find(step => step.id === 'check_ts');
+  assert.equal(step.env.SECRET_TS, '${{ inputs.ts-authkey }}');
+  assert.equal(step.env.DEPLOY_TOKEN, '${{ inputs.deploy-token }}');
+  for (const [SECRET_TS, DEPLOY_TOKEN] of [['', ''], ['', 'present'], ['present', '']]) {
+    const result = await shell(step.run, { SECRET_TS, DEPLOY_TOKEN, GITHUB_OUTPUT: '/dev/null' });
+    assert.notEqual(result.code, 0, result.output);
+  }
 });
 
 test('Preview start HTTP请求携带固定SHA并安全编码分支', async () => {
+  const start = action().runs.steps.find(step => step.id === 'start_preview');
   await fixture(() => ({ port: 5311, db_name: 'cecelia_preview_42', status: 'starting' }), async (url, requests) => {
     const branch = 'feature/quote"branch';
-    const result = await shell('bash scripts/request-preview-start.sh', {
-      BRAIN_URL: url, DEPLOY_TOKEN: 'fixture-token', PR_NUMBER: '42', BRANCH_NAME: branch, EXPECTED_SHA: sha,
-      PREVIEW_START_MAX_ATTEMPTS: '1',
-    });
-    assert.equal(result.code, 0, result.output);
-    assert.deepEqual(JSON.parse(requests[0].body), { pr_number: 42, branch_name: branch, expected_sha: sha });
-    assert.equal(requests[0].authorization, 'Bearer fixture-token');
+    const temp = mkdtempSync(join(tmpdir(), 'preview-start-action-'));
+    try {
+      const result = await shell(start.run, {
+        BRAIN_URL: url, DEPLOY_TOKEN: 'fixture-token', PR_NUMBER: '42', BRANCH_NAME: branch, EXPECTED_SHA: sha,
+        PREVIEW_START_MAX_ATTEMPTS: '1', GITHUB_OUTPUT: join(temp, 'output'),
+      });
+      assert.equal(result.code, 0, result.output);
+      const request = requests.find(row => row.url === '/api/brain/preview/start');
+      assert.ok(request);
+      assert.deepEqual(JSON.parse(request.body), { pr_number: 42, branch_name: branch, expected_sha: sha });
+      assert.equal(request.authorization, 'Bearer fixture-token');
+      assert.match(readFileSync(join(temp, 'output'), 'utf8'), /port=5311/);
+    } finally { rmSync(temp, {recursive:true, force:true}); }
   });
+});
+
+test('Composite保留明确输入、bash与轮询实际终态拒绝', async () => {
+  const composite = action();
+  assert.equal(composite.runs.using, 'composite');
+  assert.deepEqual(Object.keys(composite.inputs).sort(), ['brain-url', 'deploy-token', 'github-token', 'ts-authkey']);
+  assert.doesNotMatch(JSON.stringify(composite), /secrets\./);
+  for (const step of composite.runs.steps.filter(step => step.run)) assert.equal(step.shell, 'bash');
+  const wait = composite.runs.steps.find(step => step.id === 'wait_active');
+  assert.equal(wait.env.PREVIEW_WAIT_MAX_SECONDS, '1200');
+  for (const status of ['active', 'failed', 'inactive']) {
+    await fixture(() => ({status}), async (url, requests) => {
+      const result = await shell(wait.run, {BRAIN_URL:url, DEPLOY_TOKEN:'fixture-token',
+        PR_NUMBER:'42', BRANCH_NAME:'fixture-branch', EXPECTED_PORT:'5311'});
+      assert.equal(result.code === 0, status === 'active', result.output);
+      assert.equal(requests[0].url, '/api/brain/preview/status/42');
+    });
+  }
+});
+
+test('Composite成功与失败评论执行原Github-script并写入真实PR目标', async () => {
+  const context = {repo:{owner:'fixture-owner',repo:'fixture-repo'},issue:{number:42},
+    payload:{pull_request:{head:{ref:'fixture-branch'}}}};
+  for (const success of [true, false]) {
+    const step = action().runs.steps.find(row => row.uses === 'actions/github-script@v7'
+      && (success ? row.if.includes('success()') : row.if.includes('failure()')));
+    assert.equal(step.with['github-token'], '${{ inputs.github-token }}');
+    const comments = [];
+    const script = step.with.script.replaceAll('${{ steps.healthcheck.outputs.preview_url }}', 'http://preview.invalid:5311')
+      .replaceAll('${{ steps.start_preview.outputs.port }}', '5311')
+      .replaceAll('${{ github.server_url }}', 'https://github.com').replaceAll('${{ github.repository }}', 'fixture-owner/fixture-repo')
+      .replaceAll('${{ github.run_id }}', '123');
+    await new Function('github', 'context', `return (async()=>{${script}})();`)(
+      {rest:{issues:{createComment:async value=>comments.push(value)}}}, context);
+    assert.equal(comments.length, 1);
+    assert.deepEqual({...comments[0],body:undefined}, {owner:'fixture-owner',repo:'fixture-repo',issue_number:42,body:undefined});
+    assert.match(comments[0].body, success ? /完整预览环境已就绪/ : /预览环境部署失败/);
+    assert.match(comments[0].body, /fixture-branch/);
+    if (success) assert.match(comments[0].body, /http:\/\/preview.invalid:5311/);
+  }
 });
 
 for (const mismatch of [null, 'git_sha', 'db_name', 'pr_number', 'tick_enabled']) {
   test(`Preview健康步骤实读实例身份并拒绝错配：${mismatch ?? '匹配'}`, async () => {
-    const step = doc('preview-deploy.yml').jobs.preview_deploy.steps.find(step => step.id === 'healthcheck');
+    const step = action().runs.steps.find(step => step.id === 'healthcheck');
     const identity = { git_sha: sha, db_name: 'cecelia_preview_42', pr_number: 42, tick_enabled: false };
     if (mismatch) identity[mismatch] = mismatch === 'tick_enabled' ? true : 'wrong';
     await fixture(req => req.url.endsWith('/identity') ? identity : { status: 'running' }, async (url, requests) => {

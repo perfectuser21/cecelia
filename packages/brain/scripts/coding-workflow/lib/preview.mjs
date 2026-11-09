@@ -1,4 +1,4 @@
-// PR 预览环境：每个 PR 由 CI（preview-deploy.yml）在 MMV 起一套隔离环境——PR 版本的 Brain（BRAIN_PREVIEW、跑迁移、
+// PR 预览环境：每个 PR 由 CI（ci.yml的preview-deploy job）在 MMV 起一套隔离环境——PR 版本的 Brain（BRAIN_PREVIEW、跑迁移、
 // 无后台自动化）+ 打包好的 Dashboard + 克隆库 cecelia_preview_<pr>。evaluator 在这里像真人一样验收。
 // 状态查询：GET <api>/api/brain/preview/status/<pr> → { status, port }；预览进程与 evaluator 同机（MMV），用 localhost:<port>。
 export const DEFAULT_PREVIEW_API = 'http://100.71.151.105:5241';

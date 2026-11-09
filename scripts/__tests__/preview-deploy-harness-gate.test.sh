@@ -2,11 +2,11 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
-WORKFLOW="$ROOT_DIR/.github/workflows/preview-deploy.yml"
+WORKFLOW="$ROOT_DIR/.github/workflows/ci.yml"
 CAPACITY_GATE="$ROOT_DIR/packages/brain/src/capacity-gate.js"
 
 preview_job="$({
-  sed -n '/^  preview_deploy:/,/^    steps:/p' "$WORKFLOW"
+  sed -n '/^  preview-deploy:/,/^    steps:/p' "$WORKFLOW"
 } || true)"
 
 if ! grep -Eq "if:.*!contains\(github\.event\.pull_request\.labels\.\*\.name, 'harness'\)" \

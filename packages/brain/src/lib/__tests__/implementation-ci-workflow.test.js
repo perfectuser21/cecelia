@@ -14,34 +14,13 @@ function legacyImpactWorkflow(){
  expect(createHash('sha256').update(bytes).digest('hex')).toBe('4e59206bd6dd08b77ea3a59e0feb44a2371ffc0fa9139b81f67e64a0169a9cf9');
  return yaml.load(bytes.toString('utf8'));
 }
-describe('implementation-ci-workflow',()=>{
-it('当前工作流仅显式manual或call进入，成功条件、显式PR模式与只读token保持真实边界',()=>{
- const workflow=yaml.load(readFileSync(new URL('../../../../../.github/workflows/implementation-impact.yml',import.meta.url),'utf8'));
- expect(Object.keys(workflow.on).sort()).toEqual(['workflow_call','workflow_dispatch']);
- expect(workflow.on.pull_request).toBeUndefined();expect(workflow.on.push).toBeUndefined();
- expect(workflow.on.workflow_call.inputs.mode).toEqual({required:true,type:'string'});
- expect(workflow.on.workflow_dispatch.inputs.base_revision.required).toBe(true);
- expect(workflow.permissions).toEqual({contents:'read',actions:'read',checks:'read','pull-requests':'read'});
- const expression=workflow.jobs.gate.if.replaceAll('needs.snapshot-main','needs["snapshot-main"]');
- const evaluate=new Function('github','needs','inputs','always',`return (${expression});`);
- for(const [trigger,event,mode,result,expected]of [
-  ['pull_request','pull_request','pr','skipped',false],
-  ['workflow_call','pull_request','pr','skipped',true],
-  ['workflow_call','pull_request',undefined,'skipped',false],
-  ['workflow_call','pull_request','main','failure',false],
-  ['workflow_call','pull_request','main','success',true],
-  ['workflow_dispatch','workflow_dispatch',undefined,'success',true],
-  ['workflow_dispatch','workflow_dispatch',undefined,'failure',false],
-  ['workflow_dispatch','workflow_dispatch',undefined,'cancelled',false],
-  ['push','push',undefined,'success',false],['release','release',undefined,'success',false],
- ]){
-  const enabled=Object.hasOwn(workflow.on,trigger)&&evaluate({event_name:event},{'snapshot-main':{result}},{mode},()=>true);
-  expect(Boolean(enabled),trigger+':'+event+':'+mode+':'+result).toBe(expected);
- }
- expect(evaluate({event_name:'pull_request'},{'snapshot-main':{result:'skipped'}},{mode:'pr'},()=>false)).toBe(false);
- const gate=JSON.stringify(workflow.jobs.gate);expect(gate).not.toContain('CECELIA_INTERNAL_TOKEN');
- for(const name of ['准备固定中央Skill对象缓存','实际变更影响与固定回归'])expect(workflow.jobs.gate.steps.find(step=>step.name===name).env.GH_TOKEN).toBe('${{ github.token }}');
-});
+// 已退休main壳只作为固定历史Shell接口，不代表当前仍有workflow入口。
+function retiredImpactWorkflow(){
+ const root=fileURLToPath(new URL('../../../../../',import.meta.url));
+ return yaml.load(readFixedLocalGitBlob(root,{revision:'aa2172e299585d742192554064b48f533cafd15c',path:'.github/workflows/implementation-impact.yml'}).toString('utf8'));
+}
+describe('implementation-ci-workflow固定历史接口与真实保护',()=>{
+
 it('固定legacy兼容：main显式来源环境只启用官方self main push和dispatch，冻结主run与PR来源保持',()=>{
  const workflow=legacyImpactWorkflow();
  const env=workflow.jobs.gate.env,run=workflow.jobs.gate.steps.find(s=>s.name==='实际变更影响与固定回归').run;
@@ -57,9 +36,7 @@ it('正常Brain单测执行巡查可信baseline实际ZIP与治理行为回归',(
  const root=new URL('../../../../../',import.meta.url);
  const child=spawnSync(process.execPath,['--test','scripts/ci/__tests__/device-patrol-baseline.test.mjs','scripts/ci/__tests__/device-patrol-governance.test.mjs'],{cwd:root,encoding:'utf8',timeout:30000});
  expect(child.status,child.stdout+child.stderr).toBe(0);expect(Number(child.stdout.match(/pass (\d+)/)?.[1])).toBeGreaterThanOrEqual(5);expect(child.stdout).toMatch(/(?:fail 0)/);expect(child.stdout).toMatch(/(?:skipped 0)/);
- const workflow=yaml.load(readFileSync(new URL('../../../../../.github/workflows/implementation-impact.yml',import.meta.url),'utf8'));
- expect(workflow.on.workflow_dispatch).toBeDefined();expect(JSON.stringify(workflow.jobs)).toContain('refs/heads/main');
- expect(JSON.stringify(workflow.jobs['device-patrol-baseline'])).not.toContain('--data-binary');expect(JSON.stringify(workflow.jobs['device-patrol-baseline'])).not.toContain('pull_request');
+
 });
 it('主CI集成入口安装根扫描器与Brain锁依赖，不能被子workspace安装裁剪',async()=>{
  const workflow=yaml.load(readFileSync(new URL('../../../../../.github/workflows/ci.yml',import.meta.url),'utf8'));
@@ -88,8 +65,6 @@ it('主CI集成入口安装根扫描器与Brain锁依赖，不能被子workspace
  ]);
 });
 it('固定legacy兼容：实际PR/main触发存在，中央凭据只在main快照job，回归job不持Brain token',()=>{
-  const path=new URL('../../../../../.github/workflows/implementation-impact.yml',import.meta.url);
-  expect(existsSync(path),'不能只交CLI测试，必须有实际workflow').toBe(true);
   const workflow=legacyImpactWorkflow();
   expect(workflow.on.pull_request.branches).toContain('main');expect(workflow.on.push.branches).toContain('main');
   expect(workflow.jobs['snapshot-main'].if).toContain("github.event_name != 'pull_request'");
@@ -98,13 +73,7 @@ it('固定legacy兼容：实际PR/main触发存在，中央凭据只在main快�
   expect(JSON.stringify(workflow.jobs.gate)).toContain('implementation-pr-gate.mjs');
 });
 
-it('执行产物与候选源码的job不能保存受信分支npm缓存',()=>{
- const workflow=yaml.load(readFileSync(new URL('../../../../../.github/workflows/implementation-impact.yml',import.meta.url),'utf8'));
- for(const job of Object.values(workflow.jobs))for(const step of job.steps||[]){
-  expect(step.uses||'').not.toMatch(/^actions\/cache/);
-  if((step.uses||'').startsWith('actions/setup-node'))expect(step.with?.cache).toBeUndefined();
- }
-});
+
 
 it('固定legacy兼容：自仓PR仅精确native双scope消费同一官方artifact companion，main exporter字节接口保持单scope',()=>{
  const workflow=legacyImpactWorkflow();
@@ -122,8 +91,8 @@ it('固定legacy兼容：自仓PR仅精确native双scope消费同一官方artifa
  expect(createHash('sha256').update(runner).digest('hex')).toBe('8e54cd03b82a18c8c94eaf0a438744193e093d680aa133f416e33ba4ca3ae21d');
 });
 
-it('真实执行下载步骤：固定base artifact缺失返回非零并留下准确gap，零PASSreceipt',()=>{
- const workflow=yaml.load(readFileSync(new URL('../../../../../.github/workflows/implementation-impact.yml',import.meta.url),'utf8'));
+it('固定历史下载步骤真实执行：固定base artifact缺失返回非零并留下准确gap，零PASSreceipt',()=>{
+ const workflow=retiredImpactWorkflow();
  const step=workflow.jobs.gate.steps.find(s=>s.name?.includes('下载固定SHA'));
  const root=mkdtempSync(join(tmpdir(),'ci-download-gap-'));
  try{
@@ -137,14 +106,9 @@ printf '%s\\n' '{"artifacts":[]}'
   expect(existsSync(join(root,'implementation-output/receipt.json'))).toBe(false);
  }finally{rmSync(root,{recursive:true,force:true});}
 });
-it('可信依赖与scratch初始化先于artifact下载，不消费下载内容',()=>{
- const workflow=yaml.load(readFileSync(new URL('../../../../../.github/workflows/implementation-impact.yml',import.meta.url),'utf8')),steps=workflow.jobs.gate.steps;
- const download=steps.findIndex(s=>s.name?.includes('下载固定SHA'));
- for(const [index,step] of steps.entries())if(step.run==='npm ci --ignore-scripts'||step.name==='scratch正式迁移')expect(index).toBeLessThan(download);
- expect(steps.filter(s=>s.run==='npm ci --ignore-scripts')).toHaveLength(2);
-});
-it('真实zip只读取固定head.json，不解包额外路径或代码文件',()=>{
- const workflow=yaml.load(readFileSync(new URL('../../../../../.github/workflows/implementation-impact.yml',import.meta.url),'utf8'));
+
+it('固定历史Shell真实zip只读取固定head.json，不解包额外路径或代码文件',()=>{
+ const workflow=retiredImpactWorkflow();
  const step=workflow.jobs.gate.steps.find(s=>s.name?.includes('下载固定SHA')),root=mkdtempSync(join(tmpdir(),'ci-archive-boundary-'));
  try{
   const archive=join(root,'input.zip');
@@ -175,8 +139,8 @@ esac
  }finally{rmSync(root,{recursive:true,force:true});}
 });
 
-it('同base正规artifact按真实创建时间选择，拒把API首项或较大ID当更新来源',()=>{
- const workflow=yaml.load(readFileSync(new URL('../../../../../.github/workflows/implementation-impact.yml',import.meta.url),'utf8'));
+it('固定历史Shell同base正规artifact按真实创建时间选择，拒把API首项或较大ID当更新来源',()=>{
+ const workflow=retiredImpactWorkflow();
  const step=workflow.jobs.gate.steps.find(s=>s.name?.includes('下载固定SHA')),root=mkdtempSync(join(tmpdir(),'ci-artifact-time-order-'));
  try{
   const archive=join(root,'input.zip'),capture=join(root,'api-calls.log');

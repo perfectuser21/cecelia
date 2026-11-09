@@ -1,9 +1,14 @@
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+export const REQUIRED_JOBS = ['plan', 'security', 'checks', 'app-server-canary', 'attempt-runtime-limits', 'linux-resource-canary', 'node-onboarding', 'commander-dbos-recovery', 'pwa-upgrade', 'skill-passed', 'codeql'];
+
 export function checkResults(needs) {
   if (!needs || typeof needs !== 'object' || Array.isArray(needs)) throw new Error('CI 结果必须是对象');
-  for (const job of ['plan', 'security', 'checks']) {
+  const missing = REQUIRED_JOBS.filter(job => !Object.hasOwn(needs, job));
+  const unknown = Object.keys(needs).filter(job => !REQUIRED_JOBS.includes(job));
+  if (missing.length || unknown.length) throw new Error(`CI 父任务集合不完整或包含未知任务：${[...missing, ...unknown].join(',')}`);
+  for (const job of REQUIRED_JOBS) {
     if (needs[job]?.result !== 'success') throw new Error(`${job} 未完成：${needs[job]?.result || 'missing'}`);
   }
 }

@@ -194,19 +194,19 @@ for (const [name, include] of [
 }
 
 function loadWorkflows() {
-  return Object.fromEntries([['basic', 'ci.yml'], ['nightly', 'nightly-regression.yml'], ['pinned', 'skills-source-check.yml'], ['browser', 'ci-dashboard-pwa-e2e.yml']]
+  return Object.fromEntries([['basic', 'ci.yml'], ['nightly', 'nightly-regression.yml'], ['pinned', 'ci.yml'], ['browser', 'ci.yml']]
     .map(([name, file]) => [name, yaml.load(readFileSync(join(root, '.github/workflows', file), 'utf8'))]));
 }
 
 function mainEvents(workflow) {
   const main = {branches: ['main']};
-  return isDeepStrictEqual(workflow.on?.pull_request, main) && isDeepStrictEqual(workflow.on?.push, main);
+  return isDeepStrictEqual(workflow.on?.pull_request, {...main,types:['opened','synchronize','reopened','closed']}) && isDeepStrictEqual(workflow.on?.push, main);
 }
 
 // 只接受当前已审核的完整shell形状；不是通用shell解释器，也不扫描注释、heredoc或死分支。
 function knownStep(workflow, jobId, expected) {
   const job = workflow.jobs?.[jobId];
-  if (!job || Object.hasOwn(job, 'if') || job['runs-on'] !== 'ubuntu-latest') return false;
+  if (!job || (Object.hasOwn(job, 'if') && job.if !== "github.event_name != 'schedule' && github.event.action != 'closed'") || job['runs-on'] !== 'ubuntu-latest') return false;
   return job.steps?.some(step => {
     if (Object.hasOwn(step, 'if') || step.uses || typeof step.run !== 'string') return false;
     const cwd = step['working-directory'] ?? job.defaults?.run?.['working-directory'] ?? workflow.defaults?.run?.['working-directory'] ?? '.';
@@ -235,10 +235,7 @@ const browserConfigPath = 'tests/regression/manual-ui/playwright.config.ts';
 const browserConfig = () => readFileSync(join(root, browserConfigPath), 'utf8');
 function browserLane(workflow, text = browserConfig()) {
   if (createHash('sha256').update(text).digest('hex') !== 'b65cbe46102070f1c4542c081c87bf6c0e85e7f0b34daf23b509532a74567cf3') return false;
-  const paths = ['tests/regression/manual-ui/**', 'tests/regression/cockpit-route-wire/**',
-    'tests/regression/relay-07b2fd3b/**', 'tests/regression/capture-destination-link/**'];
-  if (!isDeepStrictEqual(workflow?.on?.push?.branches, ['main']) ||
-    !['pull_request','push'].every(event=>paths.every(path=>workflow?.on?.[event]?.paths?.includes(path)))) return false;
+  if (!mainEvents(workflow)) return false;
   return knownStep(workflow, 'pwa-upgrade', {run:'npm ci'}) &&
     knownStep(workflow, 'pwa-upgrade', {cwd:'apps/dashboard', run:'node e2e/playwright-cli.mjs install chromium --with-deps'}) &&
     knownStep(workflow, 'pwa-upgrade', {cwd:'apps/dashboard', run:[
@@ -275,9 +272,9 @@ function automaticLanes({basic, nightly, pinned, browser}) {
     env: {...pgEnv, SMOKE_ALLOW_WRITE: '1', BRAIN_URL: 'http://localhost:5221', BRAIN_CONTAINER: 'cecelia-brain-smoke'},
   })) lanes.push('real-env');
 
-  const contracts = pinned.jobs?.contracts;
+  const contracts = pinned.jobs?.['skill-contracts'];
   if (mainEvents(pinned) && isDeepStrictEqual(contracts?.strategy?.matrix, {component: ['brain', 'root']})
-    && knownStep(pinned, 'contracts', {run: 'node scripts/ci/run-skill-source-check.mjs "$COMPONENT"',
+    && knownStep(pinned, 'skill-contracts', {run: 'node scripts/ci/run-skill-source-check.mjs "$COMPONENT"',
       env: {COMPONENT: '${{ matrix.component }}', CI: 'true', POSTGRES_INTEGRATION: '0'}})) lanes.push('pinned-brain', 'pinned-root');
   if (browserLane(browser)) lanes.push('browser');
   return lanes;
@@ -328,7 +325,7 @@ for (const [name, change] of [
 for (const [lane, workflowName, jobName, marker] of [
   ['deep', 'nightly', 'brain-integration', 'deep-integration.config.mjs'],
   ['real-env', 'nightly', 'real-env-smoke', 'vitest.real-env-smoke.config.js'],
-  ['pinned', 'pinned', 'contracts', 'run-skill-source-check.mjs'],
+  ['pinned', 'pinned', 'skill-contracts', 'run-skill-source-check.mjs'],
 ]) {
   for (const mutation of ['--list', 'if false', 'heredoc', '错误cwd', '错误env', 'job-if-false', 'step-if-false', '打印shell', '仅手动']) {
     test(`${lane}自动接入拒绝${mutation}`, () => {

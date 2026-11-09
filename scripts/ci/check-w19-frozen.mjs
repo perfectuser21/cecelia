@@ -19,6 +19,21 @@ try {
   try { git('merge-base', '--is-ancestor', BASELINE, 'HEAD'); }
   catch { fail('W19_FROZEN_BASELINE'); }
 
+  const eventName = process.env.GITHUB_EVENT_NAME;
+  if (!args.length && process.env.GITHUB_ACTIONS === 'true' && ['pull_request', 'push'].includes(eventName)) {
+    let event;
+    try { event = JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8')); }
+    catch { fail('W19_FROZEN_EVENT'); }
+    const base = eventName === 'pull_request' ? event?.pull_request?.base?.sha : event?.before;
+    if (typeof base !== 'string' || !/^[a-f0-9]{40}$/.test(base)) fail('W19_FROZEN_EVENT_BASE');
+    try { git('rev-parse', '--verify', '--end-of-options', `${base}^{commit}`); }
+    catch { fail('W19_FROZEN_EVENT_BASE'); }
+    if (!git('diff', '--no-ext-diff', '--no-textconv', base, '--', 'playground/')) {
+      console.log('W19_FROZEN_UNCHANGED: 本次GitHub事件未改变历史样机输入');
+      process.exit(0);
+    }
+  }
+
   const frozen = new Map();
   for (const row of git('ls-tree', '-rz', BASELINE, '--', 'playground/').split('\0').filter(Boolean)) {
     const match = /^(\d+) blob ([a-f0-9]{40})\t(.+)$/.exec(row);

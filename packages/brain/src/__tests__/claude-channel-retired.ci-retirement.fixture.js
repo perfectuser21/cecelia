@@ -34,6 +34,11 @@ export function ciVersionGuardCohorts(previous) {
  const commonRunnerTuple={...managedScriptTuple,'existing-ops-stage-source.js':'3764bdd2ed683661768faa24b5b4268ef3ff9e55aaa2b4c87ff2d8c6fa5f650f'};
  // 部署入口清退只新增本轮完整16成员的只读组；旧CommonRunner组保持。
  const deployRetirementTuple={...commonRunnerTuple,'existing-ops-stage-source.js':'4b5bbfad6714648ff660eb9ec1eaaef19fe817673edc0d8ca93b380862e259bc'};
+ const skillContractRetirementTuple={...deployRetirementTuple,'existing-ops-stage-source.js':'3047b3958a3d4ec537257773ba527d6cc88a3f209c6ba90b5d7e8bcbb3d7158e'};
+ const ownershipDedupTuple={...skillContractRetirementTuple,'existing-ops-stage-source.js':'8db81cd5a7b5def4710635ed202f6d38fd6c54b454a5007ab9fdcbeadab3842e'};
+ const w19EventTuple={...ownershipDedupTuple,'existing-ops-stage-source.js':'9d2e4521526c045ff66db4383a7fb229b489b4544881c059caecc9f8de9d4028'};
+ const unifiedCiTuple={...w19EventTuple,'existing-ops-stage-source.js':'afe2a03526658a0faa19f3dc423836f47227fdec5c17a5a544f97c6d05bfc560'};
+ const nightlyWalkingRetirementTuple={...unifiedCiTuple,'existing-ops-stage-source.js':'d9ad9be0fb9ea5ccd324c16aaac44edfb508aada132b3b29b108a048145d5d09'};
  return [current,{...current,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
   retired,{...retired,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
   identity,{...identity,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
@@ -47,7 +52,12 @@ export function ciVersionGuardCohorts(previous) {
   suggestionTuple,{...suggestionTuple,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
   managedScriptTuple,{...managedScriptTuple,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
   commonRunnerTuple,{...commonRunnerTuple,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
-  deployRetirementTuple,{...deployRetirementTuple,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'}];
+  deployRetirementTuple,{...deployRetirementTuple,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
+  skillContractRetirementTuple,{...skillContractRetirementTuple,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
+  ownershipDedupTuple,{...ownershipDedupTuple,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
+  w19EventTuple,{...w19EventTuple,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
+  unifiedCiTuple,{...unifiedCiTuple,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
+  nightlyWalkingRetirementTuple,{...nightlyWalkingRetirementTuple,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'}];
 }
 
 export function registerCiRetirementGuardTests({root,base,memoBase,scan}) {

@@ -5,7 +5,7 @@ import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
 const yaml = require('js-yaml');
-const config = yaml.load(readFileSync(new URL('../../../.github/workflows/ci-dashboard-pwa-e2e.yml', import.meta.url), 'utf8'));
+const config = yaml.load(readFileSync(new URL('../../../.github/workflows/ci.yml', import.meta.url), 'utf8'));
 const job = config.jobs['pwa-upgrade'];
 
 test('slow system packages leave sufficient time for the browser acceptance suite', () => {

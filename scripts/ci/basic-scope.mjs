@@ -106,7 +106,7 @@ export function main(argv = process.argv.slice(2)) {
   const paths = raw ? raw.slice(0, -1).split('\0') : [];
   const matrix = {include: planChecks(paths, {full})};
   const encoded = JSON.stringify(matrix);
-  if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, `matrix=${encoded}\n`);
+  if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, `matrix=${encoded}\npreview_ui=${paths.some(path => path.startsWith('apps/dashboard/') || path.startsWith('apps/api/'))}\n`);
   process.stdout.write(`${encoded}\n`);
 }
 

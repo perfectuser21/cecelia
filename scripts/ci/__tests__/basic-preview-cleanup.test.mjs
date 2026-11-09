@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -10,9 +10,30 @@ import test from 'node:test';
 
 const yaml = createRequire(import.meta.url)('js-yaml');
 const root = fileURLToPath(new URL('../../../', import.meta.url));
-const workflow = yaml.load(readFileSync(join(root, '.github/workflows/preview-cleanup.yml'), 'utf8'));
-const steps = workflow.jobs.preview_cleanup.steps;
+const workflow = yaml.load(readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8'));
+const composite = yaml.load(readFileSync(join(root, '.github/actions/preview-cleanup/action.yml'), 'utf8'));
+const steps = composite.runs.steps;
 const command = steps.find(step => step.id === 'brain_stop').run;
+
+test('Cleanup wrapper显式传入既有输入，composite保留缺TS条件且不生成成功回执', () => {
+  const call = workflow.jobs['preview-cleanup'].steps.find(step => step.uses === './.github/actions/preview-cleanup');
+  assert.ok(call);
+  assert.equal(call.with['ts-authkey'], '${{ secrets.TS_AUTHKEY }}');
+  assert.equal(call.with['deploy-token'], '${{ secrets.DEPLOY_TOKEN }}');
+  assert.equal(composite.runs.using, 'composite');
+  assert.doesNotMatch(JSON.stringify(composite), /secrets\./);
+  for (const step of steps.filter(step => step.run)) assert.equal(step.shell, 'bash');
+  const check = steps.find(step => step.id === 'check_ts');
+  const dir = mkdtempSync(join(tmpdir(), 'preview cleanup secret-'));
+  try {
+    const output = join(dir, 'output');
+    const result = spawnSync('bash', ['-e', '-o', 'pipefail', '-c', check.run], {
+      env:{...process.env,SECRET_TS:'',GITHUB_OUTPUT:output},encoding:'utf8'});
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(readFileSync(output, 'utf8').trim(), 'configured=false');
+    assert.equal(steps.find(step => step.id === 'brain_stop').if, "steps.check_ts.outputs.configured == 'true'");
+  } finally { rmSync(dir,{recursive:true,force:true}); }
+});
 
 async function fixture(t, status, body) {
   const dir = mkdtempSync(join(tmpdir(), 'preview-cleanup-ci-'));
@@ -76,7 +97,7 @@ test('真实清理步骤：连接失败不得写成功', { timeout: 10000 }, asy
   assert.doesNotMatch(result.output, /success=true/);
 });
 
-test('评论区分确认成功与未确认，不把所有失败归为不可达', () => {
+test('评论区分确认成功与未确认，不把所有失败归为不可达', async () => {
   const success = steps.find(step => step.if?.includes("outputs.success == 'true'"));
   assert.ok(success);
   assert.match(success.with.script, /无需清理|无需回收/);
@@ -84,4 +105,15 @@ test('评论区分确认成功与未确认，不把所有失败归为不可达',
   assert.ok(failure.if.includes('always()'));
   assert.match(failure.with.script, /未确认/);
   assert.doesNotMatch(failure.with.script, /Brain 不可达|预览资源尚未回收|将由宿主/);
+  for (const step of [success, failure]) for (const branch of ['fixture-branch', "feature/quote'branch\nnext-line"]) {
+    const comments = [];
+    assert.equal(step.env.PREVIEW_BRANCH, '${{ github.head_ref }}');
+    await new Function('github', 'context', 'process', `return (async()=>{${step.with.script}})();`)(
+      {rest:{issues:{createComment:async value=>comments.push(value)}}},
+      {repo:{owner:'fixture-owner',repo:'fixture-repo'},issue:{number:42}}, {env:{PREVIEW_BRANCH:branch}});
+    assert.equal(comments.length, 1);
+    assert.equal(comments[0].issue_number, 42);
+    assert.ok(comments[0].body.includes(branch));
+    assert.match(comments[0].body, step === success ? /已清理/ : /清理未确认/);
+  }
 });

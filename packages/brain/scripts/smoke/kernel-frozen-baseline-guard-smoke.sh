@@ -15,7 +15,6 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
     src/orchestrator/workspace-spec.test.js \
     src/orchestrator/commit-lineage-resolver.test.js \
     src/orchestrator/remote-bridge-transport.test.js \
-    src/orchestrator/__tests__/harness-generator-frozen-baseline-skill.test.js \
     scripts/fleet-worker/workspace-manager.test.cjs \
     scripts/fleet-worker/attempt-runner.test.cjs \
     src/routes/__tests__/harness-attempt-callback.test.js
