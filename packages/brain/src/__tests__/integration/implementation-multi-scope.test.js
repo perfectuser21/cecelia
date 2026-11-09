@@ -233,7 +233,7 @@ it('真实Factory scope拒绝泛用执行workflow fixture，不借别scope覆盖
 });
 
 it('真实workflow shell仅显式PR scopes调用联合入口，main仍单scope真实release路径',()=>{
- const workflow=yaml.load(readFileSync(new URL('../../../../../.github/workflows/implementation-impact.yml',import.meta.url),'utf8'));
+ const workflow=yaml.load(execFileSync('git',['--no-replace-objects','show','aa2172e299585d742192554064b48f533cafd15c:.github/workflows/implementation-impact.yml'],{cwd:new URL('../../../../../',import.meta.url),encoding:'utf8'}));
  const script=workflow.jobs.gate.steps.find(s=>s.name==='实际变更影响与固定回归').run;
  const root=mkdtempSync(join(tmpdir(),'multi-workflow-entry-'));
  try{

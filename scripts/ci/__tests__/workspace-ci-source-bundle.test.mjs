@@ -165,7 +165,7 @@ for(const [name,expression,mode,valid] of [
 function addActualPatrolPrelude(f, mutate=()=>{}, mutateDocument=()=>{}) {
  const project=fileURLToPath(new URL('../../../',import.meta.url));
  const path='.github/workflows/implementation-impact.yml';
- const actual=load(git(project,'show',`HEAD:${path}`));
+ const actual=load(git(project,'show',`aa2172e299585d742192554064b48f533cafd15c:${path}`));
  const step=actual.jobs.gate.steps.find(s=>s.if==="env.MAP_SCOPE == 'cecelia-device-patrol'");
  assert.ok(step,'实际Git中巡查身份预读step必须存在');
  fixedNewBrain(f,bf=>{
@@ -174,7 +174,7 @@ function addActualPatrolPrelude(f, mutate=()=>{}, mutateDocument=()=>{}) {
    'scripts/ci/implementation-skill-source.mjs','scripts/ci/fixed-local-git.mjs',
    'packages/brain/src/lib/implementation-ci-snapshot.js','packages/brain/src/lib/device-patrol-admission.js',
    'packages/brain/src/migrate.js'])
-   bf[source]=execFileSync('git',['show',`HEAD:${source}`],{cwd:project,encoding:'utf8'});
+   bf[source]=execFileSync('git',['show',`aa2172e299585d742192554064b48f533cafd15c:${source}`],{cwd:project,encoding:'utf8'});
   mutate(actual.jobs.gate);mutateDocument(actual);bf[path]=dump(actual,{lineWidth:-1});
  });
 }
@@ -207,9 +207,9 @@ for(const [name,mutate]of[
  assert.equal(r.status,'unknown');
 });
 
-// 当前显式mode gate只增加外仓固定来源证明，不授予原生准入或执行资格。
+// 固定历史显式mode gate只增加外仓固定来源证明，不授予原生准入或执行资格。
 test('固定workspace caller下infra provider与所有infra输入恒不适用，显式PR gate仍运行',()=>{
- const document=load(git(fileURLToPath(new URL('../../../',import.meta.url)),'show','HEAD:.github/workflows/implementation-impact.yml'));
+ const document=load(git(fileURLToPath(new URL('../../../',import.meta.url)),'show','aa2172e299585d742192554064b48f533cafd15c:.github/workflows/implementation-impact.yml'));
  const evaluate=(expression,github,inputs,vars,needs={})=>Function('github','inputs','vars','needs','always',`return (${expression.replace(/^\$\{\{\s*|\s*\}\}$/g,'').replaceAll('needs.snapshot-main','needs["snapshot-main"]')});`)(github,inputs,vars,needs,()=>true);
  for(const event_name of ['pull_request','push','workflow_dispatch'])for(const enabled of ['true','false']){
   const github={repository:WR,event_name,ref:'refs/heads/main',sha:'b'.repeat(40)};
@@ -253,7 +253,7 @@ for(const [name,replace]of[
  const r=await extractWorkspaceCiSourceBundle(f.options);assert.equal(r.status,'unknown');assert.equal(r.executable,false);
 });
 
-test('当前精确YAML不能掩盖Skill初始化器实现字节漂移',async t=>{
+test('固定历史精确YAML不能掩盖Skill初始化器实现字节漂移',async t=>{
  const f=fixture(t);addActualPatrolPrelude(f);const read=f.options.readSource;
  f.options.readSource=async q=>{const bytes=await read(q);return q.repo===BR&&q.path==='scripts/ci/implementation-skill-source.mjs'?Buffer.concat([bytes,Buffer.from('\n// unreviewed implementation change\n')]):bytes;};
  const r=await extractWorkspaceCiSourceBundle(f.options);assert.equal(r.status,'unknown');

@@ -83,35 +83,9 @@ test('只给实际PG跑道设置数据库URI，不能意外启用单测文件里
     "${{ matrix.component == 'brain-integration' && 'postgresql://ci:isolated-ci@127.0.0.1:5432/cecelia_scratch' || '' }}");
 });
 
-test('发布来源准入只显式触发，不再占用PR与Main日常CI', () => {
-  const impact = yaml.load(readFileSync(new URL('../../../.github/workflows/implementation-impact.yml', import.meta.url), 'utf8'));
-  assert.equal(impact.on.pull_request, undefined, '旧固定hash来源准入退出PR检查');
-  assert.equal(impact.on.push, undefined, 'main源码CI不得自动等待生产收集器或刷新中央定义');
-  assert.deepEqual(Object.keys(impact.on).sort(), ['workflow_call', 'workflow_dispatch']);
-  assert.ok(impact.on.workflow_dispatch.inputs.source_baseline_recovery);
-  assert.ok(impact.on.workflow_call.inputs.tooling_revision);
-  assert.equal(impact.jobs.gate.name, 'Implementation impact gate');
-  assert.ok(impact.jobs.gate.steps.length > 0, '保留实际来源准入执行');
-  assert.ok(impact.jobs['snapshot-main'], '跨仓发布仍需要固定源码snapshot');
-  assert.equal(readdirSync(new URL('../../../.github/workflows/', import.meta.url)).includes('ci-admission-baseline.yml'), false,
-    '已退休PR来源解析的重复Main publication不得继续自动运行');
-});
 
-test('来源准入先执行发布、跨仓、技能与巡查机制回归，不能仅保留脚本调用', () => {
-  const impact = yaml.load(readFileSync(new URL('../../../.github/workflows/implementation-impact.yml', import.meta.url), 'utf8'));
-  const steps = impact.jobs.gate.steps;
-  const command = 'node --test scripts/ci/__tests__/implementation-main-snapshot.test.mjs scripts/ci/__tests__/workspace-ci-source-bundle.test.mjs scripts/ci/__tests__/implementation-skill-source.test.mjs scripts/ci/__tests__/device-patrol-governance.test.mjs';
-  const checks = steps.filter(step => step.run === command);
-  assert.equal(checks.length, 1, '原有四份来源机制入口必须接入必需来源检查');
-  const [step] = checks;
-  assert.equal(step['working-directory'], 'source');
-  assert.equal(step.if, "github.repository == 'perfectuser21/cecelia' && (!inputs.source_repo || inputs.source_repo == github.repository)");
-  for (const key of ['continue-on-error', 'env', 'shell']) assert.equal(step[key], undefined, `${key}不能掩盖工具单测结果`);
-  const dependencies = steps.findIndex(step => step.run === 'npm ci --ignore-scripts' && step['working-directory'] === 'source');
-  const regression = steps.findIndex(step => step.run === 'node --test scripts/ci/__tests__/implementation-infra-joint.pg.test.mjs');
-  assert.ok(dependencies >= 0 && dependencies < steps.indexOf(step));
-  assert.ok(regression > steps.indexOf(step), '来源工具单测失败必须先阻止后续真实准入');
-});
+
+
 
 
 test('API PG跑道拥有临时Postgres服务和独立开关，普通unit不能启用它', () => {

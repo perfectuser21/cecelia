@@ -95,8 +95,8 @@ for(const moved of [false,true])test(`可信main首次独立infra导出真实HTT
 for(const [name,change] of Object.entries({缺失:{missing:true},过期:{expired:true},分支:{branch:'feature/x'},外部fork:{fork:true},错误工作流:{path:'.github/workflows/other.yml'},非main事件:{event:'pull_request'},错误job:{job:'snapshot-main'},失败job:{failed:true},错误快照SHA:{wrongRevision:true},未知快照:{unknown:true}}))test(`真实CLI拒绝${name}，不落任何正式infra输入`,t=>{
  const f=cliFixture(t,change),r=f.run();assert.notEqual(r.status,0);assert.equal(existsSync(join(f.input,'base/base-cecelia-infra.json')),false);assert.equal(existsSync(join(f.input,'head/head-cecelia-infra.json')),false);
 });
-test('正式YAML实际PR接线把第三输入加入原双来源联合gate',t=>{
- const f=cliFixture(t),w=yaml.load(readFileSync(join(root,'.github/workflows/implementation-impact.yml'),'utf8'));
+test('固定历史YAML真实Shell接线把第三输入加入原双来源联合gate',t=>{
+ const f=cliFixture(t),w=yaml.load(execFileSync('git',['--no-replace-objects','show','aa2172e299585d742192554064b48f533cafd15c:.github/workflows/implementation-impact.yml'],{cwd:root,encoding:'utf8'}));
  const steps=w.jobs.gate.steps,step=steps.find(s=>s.name==='独立infra固定来源加入联合输入');assert.ok(step,'必须有正式调用方');
  symlinkSync(root,join(f.dir,'tooling'),'dir');
  const input=join(f.dir,'implementation-input');mkdirSync(input);const envFile=join(f.dir,'github-env');

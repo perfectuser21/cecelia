@@ -48,3 +48,7 @@
 - [x] [BEHAVIOR] 退役walking样机后，真实consciousness消费者验证PG跨进程读取、fresh graph恢复且无重放；唯一UUID thread隔离并精确清理三张checkpoint表，本地仅cecelia_scratch可执行，坏地址/query/远端拒绝保留。
   Test: manual:npm exec --workspace cecelia-brain -- vitest run --config vitest.integration.config.js src/__tests__/integration/consciousness-checkpoint.pg.integration.test.js
   Test: manual:npm exec --workspace cecelia-brain -- vitest run src/workflows/__tests__/consciousness.graph.test.js src/orchestrator/__tests__/pg-checkpointer.test.js
+
+- [x] [ARTIFACT] 无当前HEAD调用者的implementation-impact入口及专属壳自证清退；ZJ仍使用095d816固定历史接口，真实CLI、HTTP、ZIP与来源拒绝测试继续执行，必要配置回放固定已合并aa217。
+  Test: manual:node --test scripts/ci/__tests__/basic-workflow.test.mjs scripts/ci/__tests__/basic-impact-explicit-call.test.mjs scripts/ci/__tests__/implementation-main-snapshot.test.mjs scripts/ci/__tests__/implementation-infra-artifact.test.mjs scripts/ci/__tests__/workspace-ci-source-bundle.test.mjs
+  Test: manual:npm exec --workspace cecelia-brain -- vitest run src/lib/__tests__/implementation-ci-workflow.test.js
