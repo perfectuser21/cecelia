@@ -155,6 +155,11 @@ it.each([{machine:'xian-mac-m4',reg:'af1834a6-a55d-4021-8490-143d5686c49e',targe
   const grant=(await pool.query('SELECT * FROM execution_grants WHERE id=$1',[result.grant_id])).rows[0],node=directory.current().nodes.find(n=>n.canonical_id===machine);
   expect(node.endpoints.worker).toBe(original);expect(grant.node_version_id).toBe(ver);
   expect(await assertManagedScriptProfileGrant({db:pool,grant,profileId:id,profileSha256:hash,machineId:machine,executionVersionId:ver},env)).toEqual(policy);
+  let enterNode,allowNode,count=0;const entered=new Promise(r=>{enterNode=r;}),allowed=new Promise(r=>{allowNode=r;});
+  const waitingDb={query:async(...args)=>{if(args[0].includes('FROM execution_nodes')&&++count===2){enterNode();await allowed;}return pool.query(...args);}};
+  const pending=assertManagedScriptProfileGrant({db:waitingDb,grant,profileId:id,profileSha256:hash,machineId:machine,executionVersionId:ver},env);pending.catch(()=>{});
+  try{await entered;await pool.query("UPDATE tasks SET status='cancelled' WHERE id=$1",[taskId]);allowNode();await expect(pending).rejects.toThrow('candidate_evidence_required');}
+  finally{allowNode();await pending.catch(()=>{});await pool.query("UPDATE tasks SET status='in_progress' WHERE id=$1",[taskId]);}
   await pool.query("UPDATE system_registry SET status='inactive' WHERE id=$1",[reg]);
   await expect(assertManagedScriptProfileGrant({db:pool,grant,profileId:id,profileSha256:hash,machineId:machine,executionVersionId:ver},env)).rejects.toThrow('existing_mac_required');
   await expect(publisher.activate(id,{...input(),expected_current_version_id:ver})).rejects.toThrow('existing_mac_required');expect(calls).toBe(2);
