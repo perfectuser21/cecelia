@@ -79,7 +79,7 @@ function assertCandidateTask(task,c){
   &&(ship.head_sha===c.source_commit||task.result.merge_sha===c.source_commit)&&typeof ship.actor==='string'&&ship.actor.length>0
   &&Array.isArray(ship.facts)&&ship.facts.length>0&&Array.isArray(ship.evidence)&&ship.evidence.length>0,'candidate_evidence_required');
 }
-export async function readManagedScriptCandidateEvidence(db,c,{task,lockRelease=false}={}){
+export async function readManagedScriptCandidateEvidence(db,c,{task,lockRelease=false,executionVersionId}={}){
  // Activation passes a Task whose row lock it took before the capacity lock.
  // Dispatch must use plain reads for an independent evidence Task, otherwise
  // its capacity -> evidence Task order can deadlock activation.
@@ -93,6 +93,7 @@ export async function readManagedScriptCandidateEvidence(db,c,{task,lockRelease=
   &&gate.verification?.ci_status==='verified'&&gate.verification?.status==='verified'
   &&release.payload.components.some(component=>component.kind==='repo'&&component.repo===c.source_repo&&component.revision===c.source_commit),'release_unverified');
  if(!lockedTask){
+  if(executionVersionId)await currentManagedScriptMacNode(db,c,executionVersionId);
   // Release-lock and gate reads may wait. Recheck the independent Task only
   // after every such await; the pre-lock snapshot cannot authorize a launch.
   task=(await db.query('SELECT id,status,result FROM tasks WHERE id=$1',[c.evidence_task_id])).rows[0];
@@ -105,8 +106,7 @@ export async function assertManagedScriptProfileGrant(identity,env=process.env){
  const c=grantCandidate(identity,env);
  need(typeof identity.db?.query==='function','evidence_database_required');
  await currentManagedScriptMacNode(identity.db,c,identity.executionVersionId);
- await readManagedScriptCandidateEvidence(identity.db,c,{lockRelease:true});
- await currentManagedScriptMacNode(identity.db,c,identity.executionVersionId);
+ await readManagedScriptCandidateEvidence(identity.db,c,{lockRelease:true,executionVersionId:identity.executionVersionId});
  // DB waits are not permission to use a policy which expired or was replaced.
  grantCandidate(identity,env);
  return c;
