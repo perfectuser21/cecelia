@@ -1,37 +1,60 @@
-#!/bin/bash
-# deploy-local-npm-cache-smoke.sh
-# 回归守卫：deploy-local.sh 里所有 npm ci/npm install 调用必须显式指定 --cache
-# 和 --logs-dir，都指向项目本地目录（如 $MAIN_ROOT/.npm-cache），不能用默认路径。
-#
-# 根因（2026-07-20 实锤，分两层）：cecelia-node-brain 容器里 $HOME=/Users/administrator，
-# 但该目录本身是只读挂载点，只有个别子目录（.claude/.codex-team1/.credentials等）
-# 被单独挂成可写。①npm 默认缓存路径 $HOME/.npm 从未被挂载，容器内 mkdir 直接
-# Read-only file system——加 --cache 后表面修好，但②npm 无论 --cache 指哪都会
-# 单独尝试把运行日志写到 $HOME/.npm/_logs（--cache 管的是包缓存，不管日志），
-# 同一个 mkdir 失败又原地复发一次——必须同时加 --logs-dir 才彻底解决。
-# 生产部署连续多次原地失败（PR#4135/#4138 均卡住），根因排查耗时数小时。
-set -e
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-node -e "
-const fs = require('fs');
-const src = fs.readFileSync('${SCRIPT_DIR}/../deploy-local.sh', 'utf8');
-const lines = src.split('\n');
-const bad = [];
-lines.forEach((line, i) => {
-  const trimmed = line.trim();
-  if (trimmed.startsWith('#') || trimmed.startsWith('echo ')) return;
-  const isNpmInstallLike = /\bnpm (ci|install)\b/.test(line);
-  if (isNpmInstallLike && !line.includes('--cache')) {
-    bad.push(\`line \${i + 1} (缺 --cache): \${trimmed}\`);
+#!/usr/bin/env bash
+# 真 deploy-local 入口验证 npm 参数；所有部署/网络边界均限制在 fixture。
+set -euo pipefail
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+node --input-type=module - "$ROOT_DIR" <<'NODE'
+import assert from 'node:assert/strict';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, copyFileSync, rmSync, realpathSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
+const source = process.argv[2];
+const root = realpathSync(mkdtempSync(join(tmpdir(), 'deploy-npm-behavior-')));
+try {
+  for (const dir of ['scripts', 'bin', 'home', 'apps/dashboard']) mkdirSync(join(root, dir), { recursive: true });
+  copyFileSync(join(source, 'scripts/deploy-local.sh'), join(root, 'scripts/deploy-local.sh'));
+  const write = (name, content) => writeFileSync(join(root, 'bin', name), content, { mode: 0o755 });
+  // npm 只记录实际 argv：故障断言放在父进程，避免脚本吞掉 stub 错误后假绿。
+  write('npm', `#!${process.execPath}
+const fs=require('node:fs'); const args=process.argv.slice(2);
+fs.appendFileSync(process.env.NPM_CALLS,JSON.stringify({args,cwd:process.cwd()})+'\\n');
+if(args[0]==='run')process.exit(23);
+if(process.env.NPM_SCENARIO==='retry'&&args.includes('--prefer-offline'))process.exit(19);
+`);
+  // Linux 容器构建也在 docker 边界停止，不启动任何真实容器。
+  for (const name of ['docker', 'curl', 'ssh', 'rsync', 'launchctl', 'psql']) {
+    write(name, '#!/bin/sh\nprintf "%s\\n" "$0 $*" >> "$BOUNDARY_CALLS"\nexit 23\n');
   }
-  if (isNpmInstallLike && !line.includes('--logs-dir')) {
-    bad.push(\`line \${i + 1} (缺 --logs-dir): \${trimmed}\`);
+  write('git', '#!/bin/sh\nexit 1\n');
+  writeFileSync(join(root, 'scripts/brain-deploy.sh'), '#!/bin/sh\nprintf "brain-called\\n" >> "$BRAIN_CALLS"\n');
+  for (const scenario of ['brain', 'dashboard', 'retry']) {
+    const callsFile = join(root, `${scenario}.jsonl`), brainCalls = join(root, `${scenario}.brain`);
+    const env = {
+      PATH: `${join(root, 'bin')}:${process.env.PATH}`, HOME: join(root, 'home'),
+      CECELIA_DEPLOY_ROOT: root, NPM_CALLS: callsFile, NPM_SCENARIO: scenario,
+      BOUNDARY_CALLS: join(root, `${scenario}.boundaries`), BRAIN_CALLS: brainCalls,
+    };
+    const changed = scenario === 'brain' ? 'packages/brain/src/server.js' : 'apps/dashboard/src/App.tsx';
+    const result = spawnSync('bash', [join(root, 'scripts/deploy-local.sh'), `--changed=${changed}`], {
+      cwd: root, env, encoding: 'utf8', timeout: 10000,
+    });
+    assert.equal(result.status, scenario === 'brain' ? 0 : 23, result.stdout + result.stderr);
+    const calls = readFileSync(callsFile, 'utf8').trim().split('\n').map(JSON.parse)
+      .filter(call => ['ci', 'install'].includes(call.args[0]));
+    assert.equal(calls.length, scenario === 'retry' ? 2 : 1, `${scenario}: install/retry branch not exercised`);
+    for (const { args, cwd } of calls) {
+      assert.equal(cwd, root);
+      assert.equal(args[args.indexOf('--cache') + 1], join(root, '.npm-cache'), `${scenario}: cache must use deployment root`);
+      assert.equal(args[args.indexOf('--logs-dir') + 1], join(root, '.npm-logs'), `${scenario}: logs must use deployment root`);
+    }
+    if (scenario === 'brain') {
+      assert.equal(calls[0].args[0], 'ci');
+      assert.equal(readFileSync(brainCalls, 'utf8'), 'brain-called\n');
+    } else {
+      assert.equal(calls[0].args[0], 'install');
+      if (scenario === 'retry') assert.ok(!calls[1].args.includes('--prefer-offline'));
+    }
+    console.log(`PASS: ${scenario} 真入口的 ${calls.length} 次 npm 安装均使用部署根 cache/logs`);
   }
-});
-if (bad.length > 0) {
-  console.log('FAIL: 以下 npm ci/install 调用缺少 --cache 或 --logs-dir（默认路径在容器内是只读的，会导致部署静默失败）:');
-  bad.forEach((l) => console.log('  - ' + l));
-  process.exit(1);
-}
-console.log('PASS: deploy-local.sh 所有 npm ci/install 调用均带 --cache 和 --logs-dir');
-"
+} finally { rmSync(root, { recursive: true, force: true }); }
+NODE

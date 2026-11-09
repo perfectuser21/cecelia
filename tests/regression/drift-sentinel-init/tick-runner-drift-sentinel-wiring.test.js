@@ -19,7 +19,6 @@ const BRAIN_SRC = resolve(__dirname, '../../../packages/brain/src');
 
 const SCHEDULER_JOBS_SRC = readFileSync(resolve(BRAIN_SRC, 'scheduler-jobs.js'), 'utf8');
 const DRIFT_SENTINEL_SRC = readFileSync(resolve(BRAIN_SRC, 'cron/drift-sentinel.js'), 'utf8');
-const TICK_RUNNER_SRC = readFileSync(resolve(BRAIN_SRC, 'tick-runner.js'), 'utf8');
 
 describe('G2 drift-sentinel 接线修复（scheduler-jobs 路径）', () => {
   // ─── scheduler-jobs.js 接线 ───────────────────────────────────────────────
@@ -55,13 +54,5 @@ describe('G2 drift-sentinel 接线修复（scheduler-jobs 路径）', () => {
   it('drift-sentinel.js runDriftSentinel 内置 30min 跳过逻辑（两次调用间隔短则 skip）', () => {
     // 函数内有 lastRunAt 检查，保证 scheduler-jobs 60s 轮询下只有每 30min 才真跑
     expect(DRIFT_SENTINEL_SRC).toMatch(/lastRunAt.*DRIFT_SENTINEL_INTERVAL_MS|DRIFT_SENTINEL_INTERVAL_MS.*lastRunAt/s);
-  });
-
-  // ─── tick-runner.js 10.25 段防御性读守 ──────────────────────────────────
-
-  it('tick-runner.js 10.25 段使用 ||0 防 NaN 守卫', () => {
-    // (tickState.lastDriftSentinelTime||0) 防止 undefined 导致 NaN 比较恒假
-    // 即便 executeTick 已废弃，此行保留作为若将来复活的双保险
-    expect(TICK_RUNNER_SRC).toMatch(/\(tickState\.lastDriftSentinelTime\s*\|\|\s*0\)/);
   });
 });

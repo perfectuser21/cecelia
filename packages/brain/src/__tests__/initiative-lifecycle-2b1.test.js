@@ -4,14 +4,14 @@
  *
  * 原测试锁定 planned/running/done 生命周期词汇在 SQL 里的正确用法。
  * okr_initiatives 层随 GTD 四级模型退役而冻结（migration 499 写保护），
- * activateNextInitiatives / checkInitiativeCompletion / checkOkrInitiativeCompletion
+ * activateNextInitiatives / checkInitiativeCompletion
  * 已清空为 no-op——不再有任何 SQL 发往 okr_initiatives，生命周期词汇语义已无意义。
- * 回归守卫改为：三个函数无论传入什么 pool，都绝不调用 pool.query。
+ * 回归守卫改为：两个函数无论传入什么 pool，都绝不调用 pool.query。
+ * checkOkrInitiativeCompletion 的守卫统一保留在 okr-closer.test.js。
  */
 
 import { describe, it, expect, vi } from 'vitest';
 import { activateNextInitiatives, checkInitiativeCompletion } from '../initiative-closer.js';
-import { checkOkrInitiativeCompletion } from '../okr-closer.js';
 
 function makeSpyPool() {
   return { query: vi.fn().mockResolvedValue({ rows: [], rowCount: 0 }) };
@@ -30,15 +30,6 @@ describe('2b-1（已退役）: checkInitiativeCompletion', () => {
   it('恒返回零变化，且从不查询/更新 okr_initiatives', async () => {
     const pool = makeSpyPool();
     const result = await checkInitiativeCompletion(pool);
-    expect(result.closedCount).toBe(0);
-    expect(pool.query).not.toHaveBeenCalled();
-  });
-});
-
-describe('2b-1（已退役）: checkOkrInitiativeCompletion', () => {
-  it('恒返回零变化，且从不查询/更新 okr_initiatives', async () => {
-    const pool = makeSpyPool();
-    const result = await checkOkrInitiativeCompletion(pool);
     expect(result.closedCount).toBe(0);
     expect(pool.query).not.toHaveBeenCalled();
   });

@@ -95,6 +95,7 @@ test('宿主端口不可达时经固定容器localhost确认健康、恢复drain
   const f = await fixture(t);
   assert.equal(f.code, 0, f.stdout + f.stderr);
   assert.equal(f.ledger.pending, null);
+  assert.ok(f.calls.some(args => args.some(arg => arg.endsWith('/drain-cancel'))), '成功收尾必须实际取消 drain');
   assert.equal(f.ledger.successes.length, 1);
   assert.equal(f.ledger.successes[0].git_sha, sha);
   const execs = f.calls.filter(x => x[0] === 'exec');
@@ -107,6 +108,11 @@ for (const scenario of ['request-sha', 'wrong-image', 'wrong-sha', 'drift', 'unh
     assert.equal(f.code, 1, 'sidecar必须自己非零收口，不能由测试父进程超时冒充');
     assert.equal(f.ledger.pending.deployment_id, deployment);
     assert.deepEqual(f.ledger.successes, []);
+    if (scenario === 'unhealthy') assert.match(f.sidecarLog, /\[cancel-drain-fail\] healthz_poll_timeout_or_identity_mismatch/);
+    if (['drain-fail', 'drain-false'].includes(scenario)) {
+      assert.match(f.sidecarLog, /\[cancel-drain-fail\] drain_cancel_retries_exhausted/);
+      assert.equal(f.calls.filter(args => args.some(arg => arg.endsWith('/drain-cancel'))).length, 5);
+    }
     assert.ok(!f.calls.some(x => ['rm', 'run'].includes(x[0])));
     if (!['drain-fail', 'drain-false', 'finish-fail', 'finish-drift', 'health-redirect', 'drain-oversize'].includes(scenario)) assert.ok(!f.calls.some(x => x.some(a => a.endsWith('/drain-cancel'))));
   });

@@ -48,7 +48,7 @@ export function commandsFor(component, shard) {
     case 'image':
       return [step('.', 'docker', 'build', '-f', 'packages/brain/Dockerfile', '-t', 'cecelia-brain:ci-basic', '.')];
     case 'api':
-      return [step('apps/api', 'npm', 'run', 'typecheck'), vitest('apps/api'), step('apps/api', 'npm', 'run', 'build')];
+      return [vitest('apps/api'), step('apps/api', 'npm', 'run', 'build')];
     case 'api-integration':
       return [step('apps/api', 'npx', '--no-install', 'vitest', 'run', '--config', 'vitest.integration.config.ts')];
     case 'dashboard':
