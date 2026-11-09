@@ -82,7 +82,7 @@ for script in "$SMOKE_DIR"/*.sh; do
 
   if [ "$fname" = 'walking-skeleton-1node-smoke.sh' ]; then
     DELEGATED=$((DELEGATED + 1))
-    echo "── DELEGATED: $fname → required walking-ci-e2e"
+    echo "── DELEGATED: $fname → manual-only walking demo (retired nightly owner)"
     continue
   fi
 
