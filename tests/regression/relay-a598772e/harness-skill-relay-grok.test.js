@@ -1,12 +1,6 @@
-/** 旧Grok/Codex relay新启动均退役，保留历史额度输出识别。 */
-import {describe,it,expect,vi} from 'vitest';
-import {spawnSkillRelaySession,detectQuotaWall} from '../../../packages/brain/src/harness-skill-relay.js';
-describe('旧provider relay不生成凭据卷、容器或tmux',()=>{
- it.each([{executor:'grok'},{executor:'grok',mode:'headed'},{executor:'codex'},{executor:'claude'},{}])('payload %j零执行副作用',async payload=>{
-  const effect=vi.fn();const result=await spawnSkillRelaySession({id:'old',payload:{orchestrator:'skill-relay',...payload}},{env:{GROK_RELAY_HOME:'',CODEX_RELAY_HOME:'/unused'},pool:{query:effect},spawnFn:effect,sshSpawnFn:effect,loadSkill:effect,ensureWt:effect,execFn:effect});
-  expect(result).toMatchObject({ok:false,error:'kernel_runtime_retired'});expect(effect).not.toHaveBeenCalled();
- });
-});
+/** 旧provider relay的拒绝与零副作用矩阵统一保留在 harness-skill-relay-routing.test.js。 */
+import {describe,it,expect} from 'vitest';
+import {detectQuotaWall} from '../../../packages/brain/src/harness-skill-relay.js';
 describe('[BEHAVIOR-5] detectQuotaWall — 全 6 个 pattern 覆盖', () => {
   it('detectQuotaWall 是导出的函数', () => {
     expect(typeof detectQuotaWall).toBe('function');

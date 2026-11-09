@@ -39,6 +39,8 @@ export function ciVersionGuardCohorts(previous) {
  const w19EventTuple={...ownershipDedupTuple,'existing-ops-stage-source.js':'9d2e4521526c045ff66db4383a7fb229b489b4544881c059caecc9f8de9d4028'};
  const unifiedCiTuple={...w19EventTuple,'existing-ops-stage-source.js':'afe2a03526658a0faa19f3dc423836f47227fdec5c17a5a544f97c6d05bfc560'};
  const nightlyWalkingRetirementTuple={...unifiedCiTuple,'existing-ops-stage-source.js':'d9ad9be0fb9ea5ccd324c16aaac44edfb508aada132b3b29b108a048145d5d09'};
+ // API重复typecheck清退只追加已审完整16成员组；旧stage reader与marker配对保持。
+ const innerCiPruneTuple={...nightlyWalkingRetirementTuple,'existing-ops-stage-source.js':'5a57cd1cfed93406adb34d9fdd6c969f51159427d0ff9165582ff328a41dbc19'};
  return [current,{...current,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
   retired,{...retired,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
   identity,{...identity,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
@@ -57,7 +59,8 @@ export function ciVersionGuardCohorts(previous) {
   ownershipDedupTuple,{...ownershipDedupTuple,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
   w19EventTuple,{...w19EventTuple,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
   unifiedCiTuple,{...unifiedCiTuple,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
-  nightlyWalkingRetirementTuple,{...nightlyWalkingRetirementTuple,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'}];
+  nightlyWalkingRetirementTuple,{...nightlyWalkingRetirementTuple,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
+  innerCiPruneTuple,{...innerCiPruneTuple,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'}];
 }
 
 export function registerCiRetirementGuardTests({root,base,memoBase,scan}) {
