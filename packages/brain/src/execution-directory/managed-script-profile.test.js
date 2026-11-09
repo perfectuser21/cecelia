@@ -19,6 +19,7 @@ it('新Mac grant在每次start前必须与原政策和路由digest闭合，旧gr
  const grant={provenance:'mac_managed_profile/v1:'+hashConfig(c),state:'active',profile_id:'leadgen-candidate',account_id:'',repo_scope:[],evidence_task_id:c.evidence_task_id,expires_at:c.expires_at,node_version_id:version};
  const components=[{kind:'repo',repo:c.source_repo,revision:c.source_commit}];
  const db={query:async(sql)=>({rows:sql.includes('FROM tasks')?[{id:c.evidence_task_id,status:'in_progress',result:{ship_candidate:{schema_version:1,stage:'candidate',task_id:c.evidence_task_id,repo:c.source_repo,head_sha:c.source_commit,actor:'candidate',facts:['source'],evidence:['owned:source']}}}]
+  :sql.includes('FROM execution_nodes')?[{id:version,canonical_id:c.machine_id,machine_registry_id:c.machine_registry_id,worker_id:c.machine_id,platform:'darwin',identity_mode:'legacy-v1',state:'active',machine_status:'active'}]
   :sql.includes('FROM release_versions')?[{id:c.release_id,environment:'test',target:c.machine_id,payload:{components,verification:{status:'verified',ci_status:'verified'}}}]
    :sql.includes('FROM release_observations')?[{id:c.observation_id,release_id:c.release_id,payload:{environment:'test',target:c.machine_id,components},collector:'owned',evidence_ref:'owned:observation'}]:[]})};
  const identity={db,grant,profileId:'leadgen-candidate',profileSha256:hash,machineId:'us-mac-m4',executionVersionId:version},env={EXECUTION_MANAGED_SCRIPT_CANDIDATES_FILE:file};

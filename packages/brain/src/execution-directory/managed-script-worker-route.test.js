@@ -20,3 +20,13 @@ it('冻结route签名绑定run/task/profile/source/policy/boot/config，cleanup�
  const seen=[];await httpTransport({endpoint:policy.worker_endpoint,workerRoute:route,action:'inspect',runId,body:{task_id:taskId},token,fetchFn:async(url)=>{seen.push(url.origin);return {ok:true,body:(async function*(){yield Buffer.from('{}');})()};}});expect(seen).toEqual([policy.worker_endpoint]);
  await expect(httpTransport({endpoint:policy.worker_endpoint,action:'start',runId,body:{task_id:taskId},token,fetchFn:()=>{throw Error('must not send');}})).rejects.toThrow('common_runner_transport_unconfigured');
 });
+
+it.each(['xian-mac-m4','trusted-lab-mac'])('泛型已授权Mac %s 只复用同Tailnethost不同高端口，历史验签不依赖当前active',machine=>{
+ const n={...node,canonical_id:machine,endpoints:{worker:'http://100.86.57.69:6231'}},p={...policy,machine_id:machine,worker_endpoint:'http://100.86.57.69:16231'};
+ expect(resolveManagedScriptWorkerEndpoint(p,n)).toBe(p.worker_endpoint);
+ for(const change of [{worker_endpoint:n.endpoints.worker},{worker_endpoint:'http://100.71.151.105:16231'},{worker_endpoint:'http://100.86.57.69:80'},{machine_id:'foreign-mac'}])expect(()=>resolveManagedScriptWorkerEndpoint({...p,...change},n)).toThrow();
+ const g={...grant,provenance:'mac_managed_profile/v1:'+createHash('sha256').update(JSON.stringify(p)).digest('hex')};
+ const route=freezeManagedScriptWorkerRoute({policy:p,node:n,grant:g,executionVersionId:n.id,runId,taskId,profileId:'candidate'},token);
+ const binding={run_id:runId,task_id:taskId,machine_id:machine,execution_version_id:n.id,execution_grant_id:g.id,profile:'candidate',profile_sha256:hash,worker_route:route};
+ expect(resolveFrozenManagedScriptWorkerRoute(binding,{...n,state:'revoked',machine_status:'inactive'},token).endpoint).toBe(p.worker_endpoint);
+});

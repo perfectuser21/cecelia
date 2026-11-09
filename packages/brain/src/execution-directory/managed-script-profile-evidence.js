@@ -5,7 +5,18 @@ import {getRelease,getReleaseGate,lockReleaseTarget} from '../lib/release-index.
 import {resolveMachineId} from '../machine-registry.js';
 export const HASH=/^[a-f0-9]{64}$/,UUID=/^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 export const PROFILE=/^[a-z][a-z0-9-]{0,63}$/;
-export const SCRIPT_MACHINE='us-mac-m4',SCRIPT_REGISTRY='ed3555dc-4777-446c-bdf0-d928d6a08ef1';
+const canonicalMachine=id=>typeof id==='string'&&/^[a-z][a-z0-9-]{0,63}$/.test(id)&&(resolveMachineId(id)??id)===id;
+export function assertManagedScriptMacNode(node,policy,version){
+ need(node&&canonicalMachine(policy.machine_id)&&node.canonical_id===policy.machine_id&&node.machine_registry_id===policy.machine_registry_id
+  &&node.worker_id===node.canonical_id&&node.platform==='darwin'&&node.identity_mode==='legacy-v1'&&node.state==='active'
+  &&node.machine_status==='active'&&(!version||node.id===version),'existing_mac_required');return node;
+}
+async function currentManagedScriptMacNode(db,policy,version){
+ const node=(await db.query(`SELECT v.*,n.canonical_id,r.status AS machine_status FROM execution_nodes n
+  JOIN execution_node_versions v ON v.id=n.current_version_id JOIN system_registry r ON r.id=n.machine_registry_id
+  WHERE n.canonical_id=$1 AND r.type='machine'`,[policy.machine_id])).rows[0];
+ return assertManagedScriptMacNode(node,policy,version);
+}
 export const need=(ok,code)=>{if(!ok)throw Error('execution_script_'+code);};
 const digest=value=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
 function tailnetOrigin(value){
@@ -18,7 +29,7 @@ function tailnetOrigin(value){
 export function resolveManagedScriptWorkerEndpoint(policy,node){
  if(!policy?.worker_endpoint)return node.endpoints.worker;
  const base=tailnetOrigin(node.endpoints.worker),candidate=tailnetOrigin(policy.worker_endpoint);
- need(node.canonical_id===SCRIPT_MACHINE&&policy.machine_id===node.canonical_id&&base.port==='5231'
+ need(canonicalMachine(node.canonical_id)&&policy.machine_id===node.canonical_id&&Number(base.port)>=1024
   &&candidate.hostname===base.hostname&&Number(candidate.port)>=1024&&Number(candidate.port)<=65535&&candidate.port!==base.port
   &&UUID.test(policy.worker_boot_id??'')&&HASH.test(policy.worker_config_digest??''),'worker_endpoint_invalid');
  return candidate.origin;
@@ -78,7 +89,7 @@ export async function readManagedScriptCandidateEvidence(db,c,{task,lockRelease=
  const release=await getRelease(db,c.release_id);
  if(lockRelease)await lockReleaseTarget(db,release.environment,release.target);
  const gate=await getReleaseGate(db,c.release_id);
- need(resolveMachineId(release.target)===c.machine_id&&gate.deployed===true&&gate.current_observation_id===c.observation_id
+ need((resolveMachineId(release.target)??release.target)===c.machine_id&&gate.deployed===true&&gate.current_observation_id===c.observation_id
   &&gate.verification?.ci_status==='verified'&&gate.verification?.status==='verified'
   &&release.payload.components.some(component=>component.kind==='repo'&&component.repo===c.source_repo&&component.revision===c.source_commit),'release_unverified');
  if(!lockedTask){
@@ -93,7 +104,9 @@ export async function assertManagedScriptProfileGrant(identity,env=process.env){
  if(!String(identity.grant?.provenance??'').startsWith('mac_managed_profile/'))return null;
  const c=grantCandidate(identity,env);
  need(typeof identity.db?.query==='function','evidence_database_required');
+ await currentManagedScriptMacNode(identity.db,c,identity.executionVersionId);
  await readManagedScriptCandidateEvidence(identity.db,c,{lockRelease:true});
+ await currentManagedScriptMacNode(identity.db,c,identity.executionVersionId);
  // DB waits are not permission to use a policy which expired or was replaced.
  grantCandidate(identity,env);
  return c;
@@ -112,8 +125,8 @@ export function readManagedScriptCandidates(file,now=Date.now()){
   const extra=['worker_endpoint','worker_boot_id','worker_config_digest'],candidate=extra.some(k=>Object.hasOwn(c,k));
   need(PROFILE.test(id)&&object(c)&&Object.keys(c).filter(k=>!extra.includes(k)).sort().join(',')===keys
    &&(!candidate||extra.every(k=>Object.hasOwn(c,k))&&UUID.test(c.worker_boot_id??'')&&HASH.test(c.worker_config_digest??'')),'policy_invalid');
-  if(candidate){const url=tailnetOrigin(c.worker_endpoint);need(Number(url.port)>=1024&&Number(url.port)<=65535&&url.port!=='5231','policy_invalid');}
-  need(c.machine_id===SCRIPT_MACHINE&&c.machine_registry_id===SCRIPT_REGISTRY&&HASH.test(c.profile_sha256)
+  if(candidate){const url=tailnetOrigin(c.worker_endpoint);need(Number(url.port)>=1024&&Number(url.port)<=65535,'policy_invalid');}
+  need(canonicalMachine(c.machine_id)&&UUID.test(c.machine_registry_id??'')&&HASH.test(c.profile_sha256)
    &&/^[a-f0-9]{40}$/.test(c.source_commit)&&/^[\w.-]+\/[\w.-]+$/.test(c.source_repo)
    &&[c.release_id,c.observation_id,c.evidence_task_id].every(v=>UUID.test(v))
    &&typeof c.expires_at==='string'&&new Date(c.expires_at).toISOString()===c.expires_at&&Date.parse(c.expires_at)>now
@@ -134,7 +147,7 @@ export function createProfileCatalogClient({token=process.env.KERNEL_FLEET_BRIDG
  return {async catalog(node,{profileId,profileSha256,bootId,configDigest,policy}){
   need(typeof token==='string'&&token.length>=32,'worker_unconfigured');
   const endpoint=new URL(resolveManagedScriptWorkerEndpoint(policy,node)),octets=endpoint.hostname.split('.');
-  need(endpoint.protocol==='http:'&&!endpoint.username&&!endpoint.password&&!endpoint.search&&!endpoint.hash&&endpoint.pathname==='/'&&(endpoint.port==='5231'||policy?.worker_endpoint)
+  need(endpoint.protocol==='http:'&&!endpoint.username&&!endpoint.password&&!endpoint.search&&!endpoint.hash&&endpoint.pathname==='/'&&Number(endpoint.port)>=1024&&Number(endpoint.port)<=65535
    &&octets.length===4&&octets.every(p=>/^(?:0|[1-9][0-9]{0,2})$/.test(p)&&Number(p)<=255)&&Number(octets[0])===100&&Number(octets[1])>=64&&Number(octets[1])<=127,'worker_unconfigured');
   const nonce=randomUUID();endpoint.pathname='/workflows/profile-catalog';
   const response=await fetchFn(endpoint.href,{method:'POST',headers:{'content-type':'application/json',authorization:`Bearer ${token}`},body:JSON.stringify({profile_id:profileId,request_nonce:nonce}),signal:AbortSignal.timeout(5000),redirect:'error'});

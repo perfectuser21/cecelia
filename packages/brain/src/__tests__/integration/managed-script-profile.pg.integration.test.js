@@ -132,16 +132,17 @@ it('真实TaskRun首次marker同事务CAS消费，JSONB冻结路由不受Task.re
  }finally{await db.query('ROLLBACK');db.release();}
 });
 
-it('现役西安Mac真实PG与HTTP候选准入绑定实际registry和source target，冻结路由保留原origin',async()=>{
- const machine='xian-mac-m4',reg='af1834a6-a55d-4021-8490-143d5686c49e',ver=randomUUID(),release=randomUUID(),obs=randomUUID();
+it.each([{machine:'xian-mac-m4',reg:'af1834a6-a55d-4021-8490-143d5686c49e',target:'xian-m4'},
+ {machine:'trusted-lab-mac',reg:randomUUID(),target:'trusted-lab-mac'}])('现役Mac $machine 真实PG与HTTP候选准入绑定registry和source target，冻结原origin',async({machine,reg,target})=>{
+ const ver=randomUUID(),release=randomUUID(),obs=randomUUID();
  const original='http://100.86.57.69:6231',endpoint='http://100.86.57.69:16231',id='xian-isolated-candidate',token='scratch-xian-candidate-key-'.repeat(2);
  await pool.query("INSERT INTO system_registry VALUES($1,'machine','mac-mini-m4-xian','active','{}')",[reg]);
  await pool.query('INSERT INTO execution_nodes(machine_registry_id,canonical_id) VALUES($1,$2)',[reg,machine]);
  await pool.query(`INSERT INTO execution_node_versions(id,machine_registry_id,revision,identity_mode,worker_id,platform,endpoints,profile,config_hash,state) VALUES($1,$2,1,'legacy-v1',$3,'darwin',$4,'{}',$5,'active')`,[ver,reg,machine,{worker:original},hash]);
  await pool.query('UPDATE execution_nodes SET current_version_id=$2 WHERE machine_registry_id=$1',[reg,ver]);
  const components=[{kind:'repo',repo:c.source_repo,revision:head}];
- await pool.query("INSERT INTO release_versions VALUES($1,'candidate','xian-m4',$2,$3)",[release,{components,verification:{status:'verified',ci_status:'verified'}},hash]);
- await pool.query("INSERT INTO release_observations(id,release_id,payload,collector,evidence_ref,observed_at) VALUES($1,$2,$3,'trusted-deployer','owned:xian',now())",[obs,release,{environment:'candidate',target:'xian-m4',components}]);
+ await pool.query("INSERT INTO release_versions VALUES($1,'candidate',$4,$2,$3)",[release,{components,verification:{status:'verified',ci_status:'verified'}},hash,target]);
+ await pool.query("INSERT INTO release_observations(id,release_id,payload,collector,evidence_ref,observed_at) VALUES($1,$2,$3,'trusted-deployer','owned:xian',now())",[obs,release,{environment:'candidate',target,components}]);
  const policy={...c,machine_id:machine,machine_registry_id:reg,release_id:release,observation_id:obs,worker_endpoint:endpoint,worker_boot_id:boot,worker_config_digest:hash};
  const root=mkdtempSync(join(tmpdir(),'script-xian-')),file=join(root,'policy.json');writeFileSync(file,JSON.stringify({schema_version:1,profiles:{[id]:policy}}),{mode:0o600});
  const {createFleetWorkerServer}=createRequire(import.meta.url)('../../../scripts/fleet-worker/fleet-worker.cjs');let calls=0;
@@ -154,6 +155,18 @@ it('现役西安Mac真实PG与HTTP候选准入绑定实际registry和source targ
   const grant=(await pool.query('SELECT * FROM execution_grants WHERE id=$1',[result.grant_id])).rows[0],node=directory.current().nodes.find(n=>n.canonical_id===machine);
   expect(node.endpoints.worker).toBe(original);expect(grant.node_version_id).toBe(ver);
   expect(await assertManagedScriptProfileGrant({db:pool,grant,profileId:id,profileSha256:hash,machineId:machine,executionVersionId:ver},env)).toEqual(policy);
+  await pool.query("UPDATE system_registry SET status='inactive' WHERE id=$1",[reg]);
+  await expect(assertManagedScriptProfileGrant({db:pool,grant,profileId:id,profileSha256:hash,machineId:machine,executionVersionId:ver},env)).rejects.toThrow('existing_mac_required');
+  await expect(publisher.activate(id,{...input(),expected_current_version_id:ver})).rejects.toThrow('existing_mac_required');expect(calls).toBe(2);
+  await pool.query("UPDATE system_registry SET status='active' WHERE id=$1",[reg]);
+  for(const patch of [{worker_id:'foreign-worker'},{platform:'linux'}]){
+   const next=randomUUID(),v={worker_id:machine,platform:'darwin',identity_mode:'legacy-v1',...patch};
+   await pool.query(`INSERT INTO execution_node_versions(id,machine_registry_id,revision,identity_mode,worker_id,platform,endpoints,profile,config_hash,state) VALUES($1,$2,(SELECT max(revision)+1 FROM execution_node_versions WHERE machine_registry_id=$2),$3,$4,$5,$6,'{}',$7,'active')`,[next,reg,v.identity_mode,v.worker_id,v.platform,{worker:original},hash]);
+   await pool.query('UPDATE execution_nodes SET current_version_id=$2 WHERE machine_registry_id=$1',[reg,next]);
+   await expect(publisher.activate(id,{...input(),expected_current_version_id:next})).rejects.toThrow('existing_mac_required');
+   await expect(assertManagedScriptProfileGrant({db:pool,grant:{...grant,node_version_id:next},profileId:id,profileSha256:hash,machineId:machine,executionVersionId:next},env)).rejects.toThrow('existing_mac_required');expect(calls).toBe(2);
+  }
+  await pool.query('UPDATE execution_nodes SET current_version_id=$2 WHERE machine_registry_id=$1',[reg,ver]);
   const run=randomUUID(),route=freezeManagedScriptWorkerRoute({policy,node,grant,executionVersionId:ver,runId:run,taskId,profileId:id},token);
   const binding={run_id:run,task_id:taskId,machine_id:machine,execution_version_id:ver,execution_grant_id:grant.id,profile:id,profile_sha256:hash,worker_route:JSON.parse(JSON.stringify(route))};
   expect(resolveFrozenManagedScriptWorkerRoute(binding,node,token).endpoint).toBe(endpoint);
