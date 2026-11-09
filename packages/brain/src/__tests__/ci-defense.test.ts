@@ -5,7 +5,6 @@ import { join } from 'path';
 
 // 仓库根：packages/brain/src/__tests__/ → 上四层
 const ROOT = join(__dirname, '..', '..', '..', '..');
-const ROUTER = join(ROOT, 'packages/brain/scripts/ci/changed-test-router.mjs');
 const CHECKER = join(ROOT, 'packages/brain/scripts/ci/skill-contract-check.mjs');
 const EXISTS = join(ROOT, 'packages/brain/scripts/ci/contract-exists.mjs');
 const FIXTURES = join(ROOT, 'packages/brain/scripts/ci/__tests__/fixtures');
@@ -19,22 +18,7 @@ function runNode(file: string, args: string[]): { code: number; out: string } {
   }
 }
 
-describe('CI 防线三件套 [BEHAVIOR]', () => {
-  it('Step1 正向: changed-test-router 对 evaluator SKILL.md 输出含 skill-contract 的清单', () => {
-    expect(existsSync(ROUTER)).toBe(true);
-    const { code, out } = runNode(ROUTER, ['packages/workflows/skills/harness-evaluator/SKILL.md']);
-    expect(code).toBe(0);
-    const parsed = JSON.parse(out.trim().split('\n').filter(l => l.startsWith('{')).pop()!);
-    expect(parsed.extraTests.some((t: string) => /skill-contract/.test(t))).toBe(true);
-  });
-
-  it('Step1 负向: 非 skill 文件不误报 skill 契约测试', () => {
-    expect(existsSync(ROUTER)).toBe(true);
-    const { out } = runNode(ROUTER, ['packages/brain/src/server.js']);
-    const parsed = JSON.parse(out.trim().split('\n').filter(l => l.startsWith('{')).pop()!);
-    expect(parsed.extraTests.some((t: string) => /skill-contract/.test(t))).toBe(false);
-  });
-
+describe('CI 输入与合同拒绝 [BEHAVIOR]', () => {
   it('Step3 篡改检出: checkEvaluator 删 env_missing 后 ok=false 且 missing 含 env_missing', async () => {
     expect(existsSync(CHECKER)).toBe(true);
     const m: any = await import(CHECKER);

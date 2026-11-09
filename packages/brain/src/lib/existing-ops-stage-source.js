@@ -301,9 +301,10 @@ const REVIEWED_SUGGESTION_CALLBACK_CLOSURE = {
 const REVIEWED_MANAGED_SCRIPT_PG_CLOSURE = {...REVIEWED_SUGGESTION_CALLBACK_CLOSURE, 'scripts/ci/run-basic-check.mjs': 'b346e6f8f06d42422c0289ae38693cdcd73e2e93d9415babb852214c0b9072ef', 'packages/brain/vitest.config.js': '85c3d4fbc92f593ee94544f1ebdfe5f5b76bdf14c78377ab70541bbf50fd15a0', };
 // 旧部署工作流清退后的完整主CI组合；旧身份测试与旧配置组合仍按原字节保存。
 const REVIEWED_DEPLOY_RETIREMENT_CLOSURE = { ...REVIEWED_MANAGED_SCRIPT_PG_CLOSURE, 'packages/brain/vitest.config.js': '9566bd1cff449dc15ee924aea4c9f46aaa3457392fadf8cbf10d0b6556c2634e', 'scripts/ci/__tests__/basic-skill-identity.test.mjs': '2d78a417e4320e215c125ed3a9ea8c22025659d935c587456fa2549f23e4f067', };
+const REVIEWED_SKILL_CONTRACT_RETIREMENT_CLOSURE = {...REVIEWED_DEPLOY_RETIREMENT_CLOSURE, [SKILL_SELECTOR]: 'dbb749f30271472fe1f24e1eec2215d7b5999f20c1d4ed74c00fd4b40f6c57c8', [PINNED_READER]: '64db6a73574743019a1a06cb6f2d348413a3e356885a52bb5edfb00f781d68ea'};
 const BASIC_PROTOCOLS = {
   // Dependabot排队只追加当前完整runtime scope闭包，旧workflow组合保持。
-  '020165ab3d73d487d973c6d98c849958240dc56149d5b6083b8288673a3dd091': [REVIEWED_RUNTIME_SCOPE_CLOSURE, REVIEWED_W19_FREEZE_CLOSURE, REVIEWED_BARK_RETIREMENT_CLOSURE, REVIEWED_SUGGESTION_CALLBACK_CLOSURE, REVIEWED_MANAGED_SCRIPT_PG_CLOSURE, {...REVIEWED_MANAGED_SCRIPT_PG_CLOSURE, 'packages/brain/vitest.config.js': '9566bd1cff449dc15ee924aea4c9f46aaa3457392fadf8cbf10d0b6556c2634e'}, REVIEWED_DEPLOY_RETIREMENT_CLOSURE],
+  '020165ab3d73d487d973c6d98c849958240dc56149d5b6083b8288673a3dd091': [REVIEWED_RUNTIME_SCOPE_CLOSURE, REVIEWED_W19_FREEZE_CLOSURE, REVIEWED_BARK_RETIREMENT_CLOSURE, REVIEWED_SUGGESTION_CALLBACK_CLOSURE, REVIEWED_MANAGED_SCRIPT_PG_CLOSURE, {...REVIEWED_MANAGED_SCRIPT_PG_CLOSURE, 'packages/brain/vitest.config.js': '9566bd1cff449dc15ee924aea4c9f46aaa3457392fadf8cbf10d0b6556c2634e'}, REVIEWED_DEPLOY_RETIREMENT_CLOSURE, REVIEWED_SKILL_CONTRACT_RETIREMENT_CLOSURE],
   '5b0f190209eec9c1370b9a96c6aef43b9aa0bc99bdd0f765ccb261c2cfe95080': [REVIEWED_VERSION_CLOSURE, {
     ...REVIEWED_VERSION_CLOSURE,
     // 仅追加本轮两份无消费者旧PG测试退休后的完整配置组合，旧组合保持原样。
@@ -338,7 +339,7 @@ export function basicCiWorkflowProven(text) {
 }
 /** 返回明确的排除字面量；不调用外置helper，也不将动态JS猜为选择器。 */
 export function skillSourceLiteralExcludes(text, component, parse) {
-  if (![REVIEWED[SKILL_SELECTOR], REVIEWED_VERSION_CLOSURE[SKILL_SELECTOR]].includes(hash(text))) reject();
+  if (![REVIEWED[SKILL_SELECTOR], REVIEWED_VERSION_CLOSURE[SKILL_SELECTOR], REVIEWED_SKILL_CONTRACT_RETIREMENT_CLOSURE[SKILL_SELECTOR]].includes(hash(text))) reject();
   const program = parse(text), object = name => program.body.find(n => n.type === 'ExportNamedDeclaration' && n.declaration?.type === 'VariableDeclaration'
     && n.declaration.declarations.some(d => d.id.name === name))?.declaration.declarations.find(d => d.id.name === name)?.init;
   const literals = (node, name) => {

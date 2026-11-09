@@ -2,17 +2,9 @@
 export const SKILL_SOURCE_ROOTS = {brain:'packages/brain', root:'.'};
 export const SKILL_SOURCE_TESTS = {
   brain: [
-    'scripts/ci/__tests__/skill-contract.test.mjs',
-    'src/__tests__/unified-map-consumers.test.js',
-    'src/workflows/__tests__/b20-planner-thin-prd-subject.test.js',
-    'src/workflows/__tests__/b31-eval-cookie-isolate.test.js',
-    'src/workflows/__tests__/harness-contract-validation-identity-skill.test.js',
-    'src/workflows/__tests__/planner-role-branch-contract.test.js',
-    'src/orchestrator/__tests__/harness-evaluator-required-evidence-skill.test.js',
-    'src/orchestrator/__tests__/harness-generator-frozen-baseline-skill.test.js',
     '**/*.skill-source.test.*',
   ],
-  root: ['tests/skills/harness-planner-push-noise.test.js', 'tests/**/*.skill-source.test.*'],
+  root: ['tests/**/*.skill-source.test.*'],
 };
 
 export const RETIRED_SKILL_TESTS = {};

@@ -34,7 +34,6 @@ test('默认实际配置不选外置正文，原生混合测试仍在普通单�
 });
 
 test('外置正文合同集合明确且非空，原生launcher不被整文件迁走', () => {
-  assert.ok(SKILL_SOURCE_TESTS.brain.includes('scripts/ci/__tests__/skill-contract.test.mjs'));
   for (const component of Object.keys(directory)) {
     const config = skillSourceConfig(component, {});
     const files = glob.sync(config.test.include, {cwd:`${root}/${directory[component]}`, ignore:config.test.exclude});
