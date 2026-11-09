@@ -12,3 +12,6 @@
 - [x] [BEHAVIOR] 完整 scripts 必需检查通过；Nightly 主体与现役所有 skills-source 调用者的身份校验保留。
   Test: manual:node scripts/ci/run-basic-check.mjs scripts
   Test: manual:npm exec --workspace cecelia-brain -- vitest run src/__tests__/nightly-regression-config.test.js
+
+- [x] [BEHAVIOR] SHA串链默认入口清退旧YAML场景，保留真实S6错SHA拒绝、同SHA通过及source-only提前拒绝。
+  Test: manual:npm exec --workspace cecelia-brain -- vitest run tests/gate3-sha-account.test.js
