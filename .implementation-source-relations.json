@@ -828,11 +828,6 @@
       "role": "verification"
     },
     {
-      "owner_path": "scripts/brain-deploy.sh",
-      "path": "packages/brain/scripts/smoke/auto-staging-deploy-smoke.sh",
-      "role": "verification"
-    },
-    {
       "owner_path": "scripts/wait-for-staging.sh",
       "path": "packages/brain/src/__tests__/staging-request-receipt.test.js",
       "role": "verification"

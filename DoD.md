@@ -15,3 +15,6 @@
 
 - [x] [BEHAVIOR] SHA串链默认入口清退旧YAML场景，保留真实S6错SHA拒绝、同SHA通过及source-only提前拒绝。
   Test: manual:npm exec --workspace cecelia-brain -- vitest run tests/gate3-sha-account.test.js
+
+- [x] [BEHAVIOR] 来源防复活只认完整已审16成员组合；旧组合可回放，缺失/篡改/未知混配仍拒绝；辅助登记不存在悬空旧smoke，原生模块保持500行以内。
+  Test: manual:npm exec --workspace cecelia-brain -- vitest run src/__tests__/claude-channel-retired.guard.test.js src/__tests__/claude-channel-retired.reader-tuples.test.js scripts/ci/__tests__/implementation-auxiliary-evidence.test.mjs src/lib/__tests__/existing-ops-workspace-source.test.js

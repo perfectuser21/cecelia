@@ -298,16 +298,9 @@ const REVIEWED_SUGGESTION_CALLBACK_CLOSURE = {
   'packages/brain/vitest.config.js': '5e1504bbed8d83d7758bc2513eb8894418dccdd63938a98f6aa40433355ff5cc',
 };
 // 受管候选profile的真实PG回归：runner与配置只作为这一完整新组追加。
-const REVIEWED_MANAGED_SCRIPT_PG_CLOSURE = {...REVIEWED_SUGGESTION_CALLBACK_CLOSURE,
-  'scripts/ci/run-basic-check.mjs': 'b346e6f8f06d42422c0289ae38693cdcd73e2e93d9415babb852214c0b9072ef',
-  'packages/brain/vitest.config.js': '85c3d4fbc92f593ee94544f1ebdfe5f5b76bdf14c78377ab70541bbf50fd15a0',
-};
+const REVIEWED_MANAGED_SCRIPT_PG_CLOSURE = {...REVIEWED_SUGGESTION_CALLBACK_CLOSURE, 'scripts/ci/run-basic-check.mjs': 'b346e6f8f06d42422c0289ae38693cdcd73e2e93d9415babb852214c0b9072ef', 'packages/brain/vitest.config.js': '85c3d4fbc92f593ee94544f1ebdfe5f5b76bdf14c78377ab70541bbf50fd15a0', };
 // 旧部署工作流清退后的完整主CI组合；旧身份测试与旧配置组合仍按原字节保存。
-const REVIEWED_DEPLOY_RETIREMENT_CLOSURE = {
-  ...REVIEWED_MANAGED_SCRIPT_PG_CLOSURE,
-  'packages/brain/vitest.config.js': '9566bd1cff449dc15ee924aea4c9f46aaa3457392fadf8cbf10d0b6556c2634e',
-  'scripts/ci/__tests__/basic-skill-identity.test.mjs': '2d78a417e4320e215c125ed3a9ea8c22025659d935c587456fa2549f23e4f067',
-};
+const REVIEWED_DEPLOY_RETIREMENT_CLOSURE = { ...REVIEWED_MANAGED_SCRIPT_PG_CLOSURE, 'packages/brain/vitest.config.js': '9566bd1cff449dc15ee924aea4c9f46aaa3457392fadf8cbf10d0b6556c2634e', 'scripts/ci/__tests__/basic-skill-identity.test.mjs': '2d78a417e4320e215c125ed3a9ea8c22025659d935c587456fa2549f23e4f067', };
 const BASIC_PROTOCOLS = {
   // Dependabot排队只追加当前完整runtime scope闭包，旧workflow组合保持。
   '020165ab3d73d487d973c6d98c849958240dc56149d5b6083b8288673a3dd091': [REVIEWED_RUNTIME_SCOPE_CLOSURE, REVIEWED_W19_FREEZE_CLOSURE, REVIEWED_BARK_RETIREMENT_CLOSURE, REVIEWED_SUGGESTION_CALLBACK_CLOSURE, REVIEWED_MANAGED_SCRIPT_PG_CLOSURE, {...REVIEWED_MANAGED_SCRIPT_PG_CLOSURE, 'packages/brain/vitest.config.js': '9566bd1cff449dc15ee924aea4c9f46aaa3457392fadf8cbf10d0b6556c2634e'}, REVIEWED_DEPLOY_RETIREMENT_CLOSURE],
