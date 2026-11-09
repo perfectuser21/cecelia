@@ -51,7 +51,6 @@ executor-pure-functions.sh
 failure-type-deny-payload-smoke.sh
 fleet-heartbeat-smoke.sh
 forensics-no-overwrite-smoke.sh
-gate3-gate2-smoke.sh
 gate5-a1-otel-smoke.sh
 gate5-b1-b2-smoke.sh
 goal-condition-smoke.sh

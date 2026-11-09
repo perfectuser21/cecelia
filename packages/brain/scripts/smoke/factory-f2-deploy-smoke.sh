@@ -59,9 +59,6 @@ curl -q -fsm 5 "$BRAIN_URL/api/brain/tick/drain-status" | grep -q '"draining":fa
 grep -q "DRAIN_RESTORE_MAX_AGE_MS" packages/brain/src/drain.js \
   && ok "[结构] drain.js 导出 DRAIN_RESTORE_MAX_AGE_MS" || fail "drain.js 缺 DRAIN_RESTORE_MAX_AGE_MS"
 
-[ -f scripts/smoke/e2e/deploy-daily-drill.sh ] \
-  && ok "[结构] scripts/smoke/e2e/deploy-daily-drill.sh 存在" || fail "deploy-daily-drill.sh 缺失"
-
 if [ "${FIRE_TEST:-0}" = "1" ]; then
   fail "FIRE_TEST 自炸（proven-to-fire 验证口）"
 fi

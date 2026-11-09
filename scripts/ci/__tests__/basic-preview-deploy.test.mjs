@@ -71,34 +71,18 @@ for (const mismatch of [null, 'git_sha', 'db_name', 'pr_number', 'tick_enabled']
   });
 }
 
-test('Standalone staging workflow真执行请求并按request/SHA/镜像隔离回执验收', async () => {
-  const steps = doc('auto-staging-deploy.yml').jobs.staging_deploy_and_smoke.steps;
-  const request = steps.find(step => step.name === '请求固定 SHA 的隔离候选');
-  const wait = steps.find(step => step.name === '等待同 SHA、同镜像的隔离验证回执');
+test('隔离候选回执按request/SHA/镜像验证，不依赖旧手动workflow', async () => {
   for (const bad of [null, 'request_id', 'sha', 'image_id', 'isolated']) {
     const status = { status: 'success', request_id: 'fixture-request', sha, image_id: `sha256:${'b'.repeat(64)}`, isolated: true };
     if (bad) status[bad] = 'wrong';
-    await fixture(req => req.method === 'POST' ? { request_id: 'fixture-request' } : status, async (url, requests) => {
-      const temp = mkdtempSync(join(tmpdir(), 'staging-contract-'));
-      try {
-        const result = await shell(`${request.run}\nset -a; source "$GITHUB_ENV"; set +a\n${wait.run}`, {
-          BRAIN_URL: url, DEPLOY_TOKEN: 'fixture-token', GITHUB_SHA: sha, EXPECTED_SHA: sha, GITHUB_ENV: join(temp, 'env'), RUNNER_TEMP: temp,
-        });
-        assert.equal(result.code === 0, bad === null, result.output);
-        assert.deepEqual(JSON.parse(requests[0].body), { staging: true, sha });
-        assert.equal(requests[0].authorization, 'Bearer fixture-token');
-        assert.equal(requests[1].url, '/api/brain/deploy/staging/status');
-      } finally { rmSync(temp, { recursive: true, force: true }); }
+    await fixture(() => status, async (url, requests) => {
+      const result = await shell('bash scripts/wait-for-staging.sh', {
+        BRAIN_URL: url, EXPECTED_SHA: sha, STAGING_REQUEST_ID: 'fixture-request',
+      });
+      assert.equal(result.code === 0, bad === null, result.output);
+      assert.equal(requests[0].url, '/api/brain/deploy/staging/status');
     });
   }
-});
-
-test('两个staging诊断入口保持手动且不把诊断描述为自动部署证据', () => {
-  for (const name of ['auto-staging-deploy.yml', 'nightly-real-machine.yml']) {
-    assert.deepEqual(Object.keys(doc(name).on), ['workflow_dispatch']);
-  }
-  const text = readFileSync(join(root, '.github/workflows/nightly-real-machine.yml'), 'utf8');
-  assert.doesNotMatch(text, /每夜在|常驻 Staging|Nightly Staging/);
 });
 
 test('预览实际checkout固定commit，即使远程分支已前进；非法SHA不触碰worktree', async () => {
@@ -122,24 +106,10 @@ test('预览实际checkout固定commit，即使远程分支已前进；非法SHA
   } finally { rmSync(temp, { recursive: true, force: true }); }
 });
 
-test('Standalone staging拒绝无有效request id的接受响应', async () => {
-  const step = doc('auto-staging-deploy.yml').jobs.staging_deploy_and_smoke.steps.find(step => step.name === '请求固定 SHA 的隔离候选');
-  for (const request_id of [42, '', 'id\nEVIL=fixture']) {
-    await fixture(() => ({ request_id }), async url => {
-      const temp = mkdtempSync(join(tmpdir(), 'staging-request-'));
-      try {
-        const result = await shell(step.run, { BRAIN_URL: url, DEPLOY_TOKEN: 'fixture-token', GITHUB_SHA: sha, GITHUB_ENV: join(temp, 'env'), RUNNER_TEMP: temp });
-        assert.notEqual(result.code, 0, result.output);
-      } finally { rmSync(temp, { recursive: true, force: true }); }
-    });
-  }
-});
-
 for (const enabled of [false, true]) test(`手动staging健康诊断真实HTTP执行，tick enabled=${enabled}`, async () => {
-  const step = doc('nightly-real-machine.yml').jobs['nightly-smoke'].steps.find(step => step.name === 'Staging Smoke（真实机器 5222）');
-  // 使用相同YAML命令，覆盖可参数化端口，不访问真实5222。
+  // 直接验证保留的诊断工具，不依赖已退役的手动工作流。
   await fixture(req => req.url.includes('/tick/status') ? { enabled } : { status: 'healthy' }, async (url, requests) => {
-    const result = await shell(step.run, { BRAIN_URL: url, STAGING_PORT: new URL(url).port });
+    const result = await shell('bash scripts/auto-staging-smoke.sh', { STAGING_HOST: '127.0.0.1', STAGING_PORT: new URL(url).port });
     assert.equal(result.code === 0, !enabled, result.output);
     assert.equal(requests.length, 3);
     assert.ok(requests.every(req => req.url.startsWith('/api/brain/')));
@@ -148,11 +118,10 @@ for (const enabled of [false, true]) test(`手动staging健康诊断真实HTTP�
 
 // 合法业务正文不能覆盖HTTP失败；302也不能跟随到另一个看似成功的实例。
 for (const code of [302, 401, 500]) {
-  for (const target of ['preview-identity', 'staging-request', 'staging-wait', 'smoke-health', 'smoke-tick', 'smoke-tasks']) {
+  for (const target of ['preview-identity', 'staging-wait', 'smoke-health', 'smoke-tick', 'smoke-tasks']) {
     test(`${target} 拒绝HTTP ${code}的合法业务正文且不跟随重定向`, async () => {
       const endpoint = {
         'preview-identity': '/api/brain/preview/identity',
-        'staging-request': '/api/brain/deploy',
         'staging-wait': '/api/brain/deploy/staging/status',
         'smoke-health': '/api/brain/health',
         'smoke-tick': '/api/brain/tick/status',
@@ -164,7 +133,6 @@ for (const code of [302, 401, 500]) {
           if (code === 302) res.setHeader('Location', '/redirected-success');
         }
         if (target === 'preview-identity') return { git_sha: sha, db_name: 'cecelia_preview_42', pr_number: 42, tick_enabled: false };
-        if (target === 'staging-request') return { request_id: 'fixture-request' };
         if (target === 'staging-wait') return { status: 'success', request_id: 'fixture-request', sha, image_id: `sha256:${'b'.repeat(64)}`, isolated: true };
         return req.url.includes('/tick/status') ? { enabled: false } : { status: 'healthy' };
       }, async (url, requests) => {
@@ -173,13 +141,12 @@ for (const code of [302, 401, 500]) {
           const env = {
             BRAIN_URL: url, PREVIEW_URL: url, EXPECTED_SHA: sha, EXPECTED_DB_NAME: 'cecelia_preview_42', PR_NUMBER: '42',
             DEPLOY_TOKEN: 'fixture-token', GITHUB_SHA: sha, GITHUB_ENV: join(temp, 'env'), GITHUB_OUTPUT: join(temp, 'output'),
-            RUNNER_TEMP: temp, STAGING_REQUEST_ID: 'fixture-request', STAGING_PORT: new URL(url).port,
+            RUNNER_TEMP: temp, STAGING_REQUEST_ID: 'fixture-request', STAGING_HOST: '127.0.0.1', STAGING_PORT: new URL(url).port,
           };
           let command;
           if (target === 'preview-identity') command = 'bash scripts/verify-preview-identity.sh';
-          else if (target === 'staging-request') command = doc('auto-staging-deploy.yml').jobs.staging_deploy_and_smoke.steps.find(step => step.name === '请求固定 SHA 的隔离候选').run;
           else if (target === 'staging-wait') command = 'bash scripts/wait-for-staging.sh';
-          else command = doc('nightly-real-machine.yml').jobs['nightly-smoke'].steps.find(step => step.name === 'Staging Smoke（真实机器 5222）').run;
+          else command = 'bash scripts/auto-staging-smoke.sh';
           const result = await shell(command, env);
           assert.notEqual(result.code, 0, result.output);
           assert.ok(requests.some(req => req.url === endpoint), '没有执行目标HTTP请求');
@@ -202,7 +169,7 @@ for (const enabled of ['false', 'true', 'unknown', 0, 1, null, undefined, {}, []
 }
 
 test('所有身份/回执消费者拒绝HTTP200但传输截断的合法JSON正文', async () => {
-  for (const target of ['preview-identity', 'staging-request', 'staging-wait', 'smoke-health', 'smoke-tick', 'smoke-tasks']) {
+  for (const target of ['preview-identity', 'staging-wait', 'smoke-health', 'smoke-tick', 'smoke-tasks']) {
     const suffix = target.split('-')[1];
     await fixture((req, _body, res) => {
       const isTarget = target.startsWith('smoke-') ? req.url.includes(`/${suffix === 'tick' ? 'tick/status' : suffix}`) : true;
@@ -211,14 +178,12 @@ test('所有身份/回执消费者拒绝HTTP200但传输截断的合法JSON正�
         res.setHeader('Connection', 'close');
       }
       if (target === 'preview-identity') return { git_sha: sha, db_name: 'cecelia_preview_42', pr_number: 42, tick_enabled: false };
-      if (target === 'staging-request') return { request_id: 'fixture-request' };
       if (target === 'staging-wait') return { status: 'success', request_id: 'fixture-request', sha, image_id: `sha256:${'b'.repeat(64)}`, isolated: true };
       return req.url.includes('/tick/status') ? { enabled: false } : { status: 'healthy' };
     }, async url => {
       const temp = mkdtempSync(join(tmpdir(), 'http-transport-contract-'));
       try {
         const command = target === 'preview-identity' ? 'bash scripts/verify-preview-identity.sh'
-          : target === 'staging-request' ? doc('auto-staging-deploy.yml').jobs.staging_deploy_and_smoke.steps.find(step => step.name === '请求固定 SHA 的隔离候选').run
           : target === 'staging-wait' ? 'bash scripts/wait-for-staging.sh' : 'bash scripts/auto-staging-smoke.sh';
         const result = await shell(command, {
           BRAIN_URL: url, PREVIEW_URL: url, EXPECTED_SHA: sha, EXPECTED_DB_NAME: 'cecelia_preview_42', PR_NUMBER: '42',

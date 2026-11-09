@@ -21,13 +21,11 @@
 #   :5241 = 预览执行代理         → 必须指执行机（scripts/preview-agent.mjs）
 # 只禁带 5221 端口的旧本机地址，既保住原有保护力，也不再逼着执行活搬回 us-vps。
 #
-# DoD：.github/workflows/*.yml 里不能再出现旧 IP，且 brain-ci-deploy.yml 的
-# 两处 BRAIN_URL 默认值必须明确指向 us-vps IP。
+# 现役 workflow 的 Brain API 不得指向旧执行机；不要求退役部署入口继续存在。
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 WORKFLOWS_DIR="$REPO_ROOT/.github/workflows"
-GATE3="$WORKFLOWS_DIR/brain-ci-deploy.yml"
 OLD_IP="100.71.151.105"
 NEW_IP="100.79.41.61"
 BRAIN_PORT="5221"      # Brain HTTP API
@@ -59,14 +57,6 @@ if [ -n "$PREVIEW_WFS" ]; then
   else
     echo "  ✅ 预览 workflow 仍指向执行机（执行没有被搬回 us-vps）"
   fi
-fi
-
-BRAIN_URL_LINES=$(grep -c "BRAIN_URL:.*$NEW_IP" "$GATE3" || true)
-if [ "$BRAIN_URL_LINES" -ge 2 ]; then
-  echo "  ✅ brain-ci-deploy.yml 找到 $BRAIN_URL_LINES 处 BRAIN_URL 默认值指向 us-vps ($NEW_IP)（期望 ≥2：deploy + on_deploy_failure）"
-else
-  echo "  ❌ brain-ci-deploy.yml 只找到 $BRAIN_URL_LINES 处 BRAIN_URL 默认值指向 us-vps（期望 ≥2）"
-  FAIL=1
 fi
 
 echo ""

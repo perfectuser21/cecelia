@@ -33,14 +33,6 @@ describe('现役深度数据库回归', () => {
 });
 
 describe('刀C Release Gate', () => {
-  it('现役 deploy 的两条发布路径都依赖 nightly_gate', async () => {
-    const { load } = await import('js-yaml');
-    const { jobs } = load(read('.github/workflows/deploy.yml'));
-    expect(jobs.nightly_gate.steps.some((step) => step.run?.includes('bash scripts/ci/check-nightly-green.sh'))).toBe(true);
-    expect(jobs.risk_gate.needs).toContain('nightly_gate');
-    expect(jobs.staging_deploy.needs).toContain('nightly_gate');
-    expect(jobs.deploy.needs).toEqual(expect.arrayContaining(['nightly_gate', 'risk_gate', 'staging_deploy']));
-  });
   it('check-nightly-green.sh 指向存活的刀A workflow 文件', () => {
     const SH = read('scripts/ci/check-nightly-green.sh');
     const m = SH.match(/WORKFLOW_FILE="([^"]+)"/);
@@ -53,7 +45,6 @@ describe('刀C Release Gate', () => {
 describe('三把刀 workflow YAML 必须可解析（07-10 实锤：顶格 **markdown** 在 run 块里被当 alias，0-job startup failure，刀A/刀B 完全失效）', () => {
   it.each([
     '.github/workflows/nightly-regression.yml',
-    '.github/workflows/deploy.yml',
   ])('%s 可被 YAML 解析', async (p) => {
     const { load } = await import('js-yaml');
     expect(() => load(read(p))).not.toThrow();

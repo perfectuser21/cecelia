@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {createHash} from 'node:crypto';
 import { execFileSync } from 'node:child_process';
+import { existsSync, readFileSync } from 'node:fs';
 import { setImmediate as nativeSetImmediate } from 'node:timers';
 import {readNativeConsumerRuntime} from '../native-consumer-runtime.js';
 const candidate={
@@ -35,9 +36,10 @@ import { buildExistingOpsSources } from './helpers/existing-ops-proof-builder.js
 
 const root = fileURLToPath(new URL('../../../../../', import.meta.url));
 const git = (...args) => execFileSync('git', ['--no-replace-objects', ...args], { cwd: root, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
-const revision = git('rev-parse', 'HEAD').trim();
-const currentPaths=git('ls-tree', '-rz', '--name-only', revision).replace(/\0$/, '').split('\0');
-const paths = [...new Set([...currentPaths,...Object.keys(candidate.blobs),'packages/quality/smoke-core.txt','packages/brain/scripts/smoke/harness-schema-validation-smoke.sh'])];
+// 清退前已合并main的完整历史组合；不能借此给当前缺入口修订授予verified。
+const revision = 'aa2172e299585d742192554064b48f533cafd15c';
+const historicalPathsAtRevision=git('ls-tree', '-rz', '--name-only', revision).replace(/\0$/, '').split('\0');
+const paths = [...new Set([...historicalPathsAtRevision,...Object.keys(candidate.blobs),'packages/quality/smoke-core.txt','packages/brain/scripts/smoke/harness-schema-validation-smoke.sh'])];
 const sourcePath = 'packages/brain/src/lib/existing-ops-source.js';
 const workflow = '.github/workflows/auto-staging-deploy.yml';
 const route = 'packages/brain/src/routes/ops.js';
@@ -49,9 +51,9 @@ const deploy = 'scripts/brain-deploy.sh';
 const buildScript = 'scripts/brain-build.sh';
 const dbConfig = 'packages/brain/src/db-config.js';
 const cache = new Map();
-const currentCache = new Map();
+const revisionCache = new Map();
 const historicalCache = new Map();
-const readCurrent=path=>{if(!currentCache.has(path))currentCache.set(path,git('show',`${revision}:${path}`));return currentCache.get(path);};
+const readRevision=path=>{if(!revisionCache.has(path))revisionCache.set(path,git('show',`${revision}:${path}`));return revisionCache.get(path);};
 const legacyOnly=new Set(['.skills-source.json','scripts/lib/bluegreen.sh','packages/quality/smoke-core.txt','packages/brain/scripts/smoke/harness-schema-validation-smoke.sh']);
 const read = path => {
   // 这些历史文件在 a68 与 candidate 源修订字节相同，a68 是主干可达的固定 Git 对象。
@@ -64,11 +66,11 @@ function wrapRoute(text, wrap) {
   if (!entry) throw Error('actual route fixture missing');
   return text.slice(0, entry.start) + wrap(text.slice(entry.start, entry.end)) + text.slice(entry.end);
 }
-async function build({ patch = {}, marker = 2, missing, current = false } = {}) {
-  const result = await buildExistingOpsSources({ scope: 'cecelia-factory', repo: 'perfectuser21/cecelia', revision, paths:current?currentPaths:paths,
+async function build({ patch = {}, marker = 2, missing, atRevision = false } = {}) {
+  const result = await buildExistingOpsSources({ scope: 'cecelia-factory', repo: 'perfectuser21/cecelia', revision, paths:atRevision?historicalPathsAtRevision:paths,
     readSource: async path => {
       if (path === missing) throw Error('missing fixed blob');
-      let text = patch[path] ?? (current ? readCurrent(path) : read(path));
+      let text = patch[path] ?? (atRevision ? readRevision(path) : read(path));
       if (path === sourcePath) {
         text = text.replace(/^export const EXISTING_OPS_STAGING_SELECTOR_SCHEMA = .*;\n/m, '');
         if (marker !== null) text += `\nexport const EXISTING_OPS_STAGING_SELECTOR_SCHEMA = ${marker};\n`;
@@ -86,8 +88,17 @@ async function buildHistorical(rev,patch={}){
 }
 
 describe('staging 正式调用链的固定来源，不声明部署成功', () => {
-  it('当前主线固定来源可识别，构建器或验收输入改变必须未知',async()=>{
-    const result=await build({current:true});expect(result.status,JSON.stringify(result.gaps)).toBe('verified');
+  it('当前源码缺旧入口时返回unknown，不复用历史verified', async () => {
+    const currentRevision = git('rev-parse', 'HEAD').trim();
+    const currentPaths = git('ls-files', '-z').replace(/\0$/, '').split('\0').filter(path => existsSync(root + path));
+    const result = await buildExistingOpsSources({ scope: 'cecelia-factory', repo: 'perfectuser21/cecelia', revision: currentRevision,
+      paths: currentPaths, readSource: async path => readFileSync(root + path, 'utf8') });
+    const consumer = result.consumers.find(c => c.workflow_key === 'factory_f2_ops');
+    expect(consumer.status).toBe('unknown');
+    expect(consumer.bindings).toEqual([]);
+  });
+  it('固定历史主线来源可识别，构建器或验收输入改变必须未知',async()=>{
+    const result=await build({atRevision:true});expect(result.status,JSON.stringify(result.gaps)).toBe('verified');
     expect(result.definition_scope).toBe('consumer_evidence');
     expect(result.bindings.every(binding=>binding.validation_scope==='consumer_source')).toBe(true);
     const smokeList='packages/brain/config/smoke/smoke-core.txt';
@@ -95,25 +106,25 @@ describe('staging 正式调用链的固定来源，不声明部署成功', () =>
     expect(result.input_relations).toContainEqual({consumer_path:'scripts/lib/bluegreen.sh',input_path:smokeList,kind:'reviewed_pre_swap_smoke_list',revision});
     for(const path of smokes)expect(result.input_relations).toContainEqual({consumer_path:smokeList,input_path:path,kind:'reviewed_pre_swap_smoke_script',revision});
     for(const path of [buildScript,dbConfig,'.skills-source.json','scripts/ensure-skills-source.sh','scripts/skills-source.py',smokeList,...smokes]){
-      const altered=await build({current:true,patch:{[path]:readCurrent(path)+'\n# altered\n'}});
+      const altered=await build({atRevision:true,patch:{[path]:readRevision(path)+'\n# altered\n'}});
       expect(altered.status,path).toBe('unknown');expect(altered.bindings).toEqual([]);
-      const missing=await build({current:true,missing:path});expect(missing.status,path).toBe('unknown');expect(missing.bindings).toEqual([]);
+      const missing=await build({atRevision:true,missing:path});expect(missing.status,path).toBe('unknown');expect(missing.bindings).toEqual([]);
     }
   });
   it('历史来源不能把任意空构建脚本误标为已验证',async()=>{
     const result=await build({patch:{[buildScript]:'#!/bin/sh\nexit 0\n'}});
     expect(result.status).toBe('unknown');expect(result.bindings).toEqual([]);
   });
-  it('当前组合不能混入旧版部署状态路由',async()=>{
-    const current=readCurrent(route),old=git('show','706f2e834:packages/brain/src/routes/ops.js');
+  it('固定历史组合不能混入旧版部署状态路由',async()=>{
+    const current=readRevision(route),old=git('show','706f2e834:packages/brain/src/routes/ops.js');
     const locate=text=>parse(text,{ecmaVersion:'latest',sourceType:'module'}).body.find(n=>n.type==='ExpressionStatement'&&n.expression?.callee?.object?.name==='router'&&n.expression.callee.property?.name==='get'&&n.expression.arguments[0]?.value==='/deploy/status');
     const a=locate(current),b=locate(old);expect(a).toBeTruthy();expect(b).toBeTruthy();
     const mixed=current.slice(0,a.start)+old.slice(b.start,b.end)+current.slice(a.end);
-    const result=await build({current:true,patch:{[route]:mixed}});expect(result.status).toBe('unknown');expect(result.bindings).toEqual([]);
+    const result=await build({atRevision:true,patch:{[route]:mixed}});expect(result.status).toBe('unknown');expect(result.bindings).toEqual([]);
   });
-  it('当前组合不可篡改部署状态路由调用的 helper',async()=>{
-    const original=readCurrent(route),altered=original.replace('function readDeployStatusFile() {','function readDeployStatusFile() { return {status:"success"};');
-    expect(altered).not.toBe(original);const result=await build({current:true,patch:{[route]:altered}});
+  it('固定历史组合不可篡改部署状态路由调用的 helper',async()=>{
+    const original=readRevision(route),altered=original.replace('function readDeployStatusFile() {','function readDeployStatusFile() { return {status:"success"};');
+    expect(altered).not.toBe(original);const result=await build({atRevision:true,patch:{[route]:altered}});
     expect(result.status).toBe('unknown');expect(result.bindings).toEqual([]);
   });
   it('历史来源不能接受改写数据库配置和旧 smoke 输入',async()=>{
@@ -149,7 +160,7 @@ describe('staging 正式调用链的固定来源，不声明部署成功', () =>
       await callback;
     }
   });
-  it('激活schema2后完整保留当前16文件runtime闭包',()=>{
+  it('激活schema2后完整保留固定历史16文件runtime闭包',()=>{
     for(const [path,text]of Object.entries(candidate.blobs))expect(createHash('sha256').update(text).digest('hex')).toBe(candidate.blob_sha256[path]);
     expect(git('show',`${revision}:${sourcePath}`)).toContain('export const EXISTING_OPS_STAGING_SELECTOR_SCHEMA = 2;');
     expect(readNativeConsumerRuntime().files).toHaveLength(16);
@@ -169,7 +180,7 @@ describe('staging 正式调用链的固定来源，不声明部署成功', () =>
     const text=mutate(tcpCandidate.blob);expect(text).not.toBe(tcpCandidate.blob);
     const result=await build({patch:{[helper]:text}});expect(result.status).toBe('unknown');expect(result.bindings).toEqual([]);
   });
-  it('真实 main workflow 请求、真实 route 执行和顶层 source 都必须成为来源边', async () => {
+  it('固定历史 main workflow 请求、真实 route 执行和顶层 source 都必须成为来源边', async () => {
     const result = await build();
     expect(result.status, JSON.stringify(result.gaps)).toBe('verified');
     for (const path of [workflow, route, script, helper, verify, wait, deploy, buildScript, dbConfig]) expect(result.bindings).toContainEqual(expect.objectContaining({ path, revision, status: 'verified' }));

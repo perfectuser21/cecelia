@@ -1,13 +1,20 @@
-# DoD：清退旧模型审查与过程资料自动维护入口
+# DoD：清退旧部署与手动 staging 工作流
 
-- [x] [ARTIFACT] 删除 pr-review、skill-distillation-eval、cleanup-merged-artifacts、archive-learnings 四份工作流，以及旧模型审查专属脚本和测试。
-  Test: manual:node -e "const fs=require('node:fs'); for(const name of ['pr-review','skill-distillation-eval','cleanup-merged-artifacts','archive-learnings']) if(fs.existsSync('.github/workflows/'+name+'.yml')) process.exit(1)"
-- [x] [BEHAVIOR] 归档工具直接执行真实 Python 脚本；保留同月合并、损坏与同名冲突拒绝、跨月失败不丢原文的回归。
-  Test: manual:node --test scripts/ci/__tests__/basic-archive-learnings.test.mjs
-- [x] [BEHAVIOR] 清理工具直接执行真实 Node 脚本；保留精确 Git 删除、其他 worktree 不受影响、读取失败及畸形来源登记拒绝。
-  Test: manual:node --test scripts/ci/__tests__/basic-merged-artifact-cleanup.test.mjs
-- [x] [BEHAVIOR] 来源声明与文档删除仍在同一 Git 提交中核验；跨仓巡查治理的身份、秘密隔离及原固定协议保持。
-  Test: manual:node --test scripts/ci/__tests__/device-patrol-governance.test.mjs
-  Test: manual:npm exec --workspace cecelia-brain -- vitest run scripts/ci/__tests__/cleanup-source-retirement.test.mjs
-- [ ] [BEHAVIOR] 完整 scripts 必需检查与候选精确 HEAD 官方 CI 通过，受保护合并后读回主干仅剩十九份工作流。
+- [x] [ARTIFACT] 删除已停用的 brain-ci-deploy、deploy 和旧手动 auto-staging-deploy、nightly-real-machine 工作流；清理专属 smoke、旧 daily-drill 及登记。
+  Test: manual:bash -c 'git diff --check'
+- [x] [BEHAVIOR] 保留生产 stage_candidate 的候选镜像、隔离数据库、迁移失败及身份拒绝保障。
+  Test: manual:npm exec --workspace cecelia-brain -- vitest run src/__tests__/brain-staging-admission.test.js src/__tests__/staging-request-receipt.test.js
+- [x] [BEHAVIOR] Preview 实际入口及按需 staging 脚本继续拒绝错身份、非成功HTTP和截断回执；发布预算保留有限截止。
+  Test: manual:node --test scripts/ci/__tests__/basic-preview-deploy.test.mjs scripts/ci/__tests__/basic-release-contract-guard.test.mjs
+  Test: manual:npm exec --workspace cecelia-brain -- vitest run src/__tests__/deployment-time-budget.test.js
+- [x] [BEHAVIOR] 固定历史来源继续回放，当前缺旧入口源码只能 UNKNOWN，不能复用历史 verified。
+  Test: manual:npm exec --workspace cecelia-brain -- vitest run src/lib/__tests__/existing-ops-staging-bootstrap.test.js
+- [x] [BEHAVIOR] 完整 scripts 必需检查通过；Nightly 主体与现役所有 skills-source 调用者的身份校验保留。
   Test: manual:node scripts/ci/run-basic-check.mjs scripts
+  Test: manual:npm exec --workspace cecelia-brain -- vitest run src/__tests__/nightly-regression-config.test.js
+
+- [x] [BEHAVIOR] SHA串链默认入口清退旧YAML场景，保留真实S6错SHA拒绝、同SHA通过及source-only提前拒绝。
+  Test: manual:npm exec --workspace cecelia-brain -- vitest run tests/gate3-sha-account.test.js
+
+- [x] [BEHAVIOR] 来源防复活只认完整已审16成员组合；旧组合可回放，缺失/篡改/未知混配仍拒绝；辅助登记不存在悬空旧smoke，原生模块保持500行以内。
+  Test: manual:npm exec --workspace cecelia-brain -- vitest run src/__tests__/claude-channel-retired.guard.test.js src/__tests__/claude-channel-retired.reader-tuples.test.js scripts/ci/__tests__/implementation-auxiliary-evidence.test.mjs src/lib/__tests__/existing-ops-workspace-source.test.js

@@ -25,7 +25,7 @@
 #   UNREACHABLE      3  /health 不可达 / 无 version / 无 uptime
 #   NO_OP            4  版本对但 uptime>=max（容器未重启，无变更触发时的合法 no-op，明示而非谎报 success）
 #
-# 由 .github/workflows/brain-ci-deploy.yml Gate3 Smoke 步消费；
+# 供按需发布效果诊断调用；
 # 由 scripts/ci/__tests__/assert-deploy-effect.test.sh 守护（单一事实源）。
 set -uo pipefail
 

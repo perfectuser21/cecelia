@@ -21,7 +21,6 @@ langfuse-trace-detail-smoke.sh
 wechat-token-alert-smoke.sh
 
 # === 需要 Staging/Preview 真实部署环境 ===
-auto-staging-deploy-smoke.sh
 dashboard-staging-selfcheck-smoke.sh
 preview-environments-smoke.sh
 review-gate-preview-smoke.sh

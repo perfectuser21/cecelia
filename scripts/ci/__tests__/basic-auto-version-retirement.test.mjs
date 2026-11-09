@@ -79,20 +79,22 @@ test('新版主CI版本门具备固定整组来源闭包；历史组合保留且
   await assert.rejects(collect(async path => path === 'packages/brain/vitest.config.js'
     ? git('show', 'ce20b5a29123c9ade1a0bc4aa2753e3ea3fe310d:packages/brain/vitest.config.js') : source.readSource(path)), /basic_ci_source_unproven/);
   const previousPaths = new Set(['packages/brain/vitest.config.js', 'scripts/ci/run-basic-check.mjs']);
-  await collect(async path => previousPaths.has(path)
-    ? git('show', `2dce0c18eded5c37d50fca44708d88cfa80fc575:${path}`) : source.readSource(path));
+  const historicalIdentity = 'scripts/ci/__tests__/basic-skill-identity.test.mjs';
+  const readPrevious = async (path, revision) => path === historicalIdentity
+    ? git('show', `aa2172e299585d742192554064b48f533cafd15c:${path}`)
+    : previousPaths.has(path) ? git('show', `${revision}:${path}`) : source.readSource(path);
+  await collect(path => readPrevious(path, '2dce0c18eded5c37d50fca44708d88cfa80fc575'));
   for (const changed of ['packages/brain/vitest.config.js', 'scripts/ci/run-basic-check.mjs']) {
     await assert.rejects(collect(async path => path === changed
       ? git('show', `2dce0c18eded5c37d50fca44708d88cfa80fc575:${changed}`) : source.readSource(path)), /basic_ci_source_unproven/);
   }
-  await collect(async path => previousPaths.has(path)
-    ? git('show', `79cf5c5b20324d4d5a39eadda3f009d64b98f8b3:${path}`) : source.readSource(path));
+  await collect(path => readPrevious(path, '79cf5c5b20324d4d5a39eadda3f009d64b98f8b3'));
   for (const changed of previousPaths) {
     await assert.rejects(collect(async path => path === changed
       ? git('show', `79cf5c5b20324d4d5a39eadda3f009d64b98f8b3:${changed}`) : source.readSource(path)), /basic_ci_source_unproven/);
   }
   assert.ok(relations.some(edge => edge.consumer_path === '.github/workflows/ci.yml' && edge.input_path === 'scripts/ci/check-brain-version-bump.sh'));
-  for (const path of ['scripts/ci/check-brain-version-bump.sh', 'scripts/ci/basic-scope.mjs', 'scripts/ci/run-basic-check.mjs', 'packages/brain/vitest.config.js',
+  for (const path of [historicalIdentity, 'scripts/ci/check-brain-version-bump.sh', 'scripts/ci/basic-scope.mjs', 'scripts/ci/run-basic-check.mjs', 'packages/brain/vitest.config.js',
     '.github/actions/skills-source/action.yml', 'scripts/ci/check-skill-source-identity.py']) {
     await assert.rejects(collect(async input => (await source.readSource(input)) + (input === path ? '\n// unreviewed drift\n' : '')), /basic_ci_source_unproven/);
   }
