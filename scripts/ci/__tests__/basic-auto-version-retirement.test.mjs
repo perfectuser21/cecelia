@@ -80,7 +80,13 @@ test('新版主CI版本门具备固定整组来源闭包；历史组合保留且
     ? git('show', 'ce20b5a29123c9ade1a0bc4aa2753e3ea3fe310d:packages/brain/vitest.config.js') : source.readSource(path)), /basic_ci_source_unproven/);
   const previousPaths = new Set(['packages/brain/vitest.config.js', 'scripts/ci/run-basic-check.mjs']);
   const historicalIdentity = 'scripts/ci/__tests__/basic-skill-identity.test.mjs';
-  const historicalInputs = new Set([historicalIdentity, 'scripts/ci/skill-source-tests.mjs', 'scripts/ci/__tests__/basic-skill-source-coverage.test.mjs']);
+  const historicalInputs = new Set([historicalIdentity, 'scripts/ci/skill-source-tests.mjs', 'scripts/ci/__tests__/basic-skill-source-coverage.test.mjs',
+    'scripts/ci/check-w19-frozen.mjs', 'scripts/ci/__tests__/basic-w19-freeze.test.mjs']);
+  const w19Inputs = ['scripts/ci/check-w19-frozen.mjs', 'scripts/ci/__tests__/basic-w19-freeze.test.mjs'];
+  await collect(path => w19Inputs.includes(path)
+    ? git('show', `aa2172e299585d742192554064b48f533cafd15c:${path}`) : source.readSource(path));
+  for (const changed of w19Inputs) await assert.rejects(collect(path => path === changed
+    ? git('show', `aa2172e299585d742192554064b48f533cafd15c:${path}`) : source.readSource(path)), /basic_ci_source_unproven/);
   const readPrevious = async (path, revision) => historicalInputs.has(path)
     ? git('show', `aa2172e299585d742192554064b48f533cafd15c:${path}`)
     : previousPaths.has(path) ? git('show', `${revision}:${path}`) : source.readSource(path);

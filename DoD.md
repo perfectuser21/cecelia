@@ -23,3 +23,11 @@
   Test: manual:npm exec --workspace cecelia-brain -- vitest run --config vitest.integration.config.js src/__tests__/integration/linux-controller-contract.pg.integration.test.js src/__tests__/integration/linux-onboarding-flow.pg.integration.test.js src/__tests__/integration/linux-script-authorization.pg.integration.test.js
 - [x] [BEHAVIOR] 新runner仅以完整来源组认领，历史组及未知混配拒绝保留；原生16文件、500行边界与辅助来源无悬空。
   Test: manual:npm exec --workspace cecelia-brain -- vitest run src/__tests__/claude-channel-retired.guard.test.js src/__tests__/claude-channel-retired.reader-tuples.test.js
+
+## W19：历史输入未变时结束逐字校验
+
+- [x] [BEHAVIOR] 实际GitHub PR/push事件的固定base未触playground时明确结束逐字校验；历史code/依赖/README角色变化仍拒绝，坏事件或非commit基线不得通过；本地与显式root仍执行完整原校验。
+  Test: manual:node --test scripts/ci/__tests__/basic-w19-freeze.test.mjs
+- [x] [BEHAVIOR] 新guard/test只以完整已审组认领，旧完整组回放及未知混配拒绝保持；不增加工作流、矩阵或移除既有scripts实际调用。
+  Test: manual:node --test scripts/ci/__tests__/basic-auto-version-retirement.test.mjs
+  Test: manual:npm exec --workspace cecelia-brain -- vitest run src/__tests__/claude-channel-retired.guard.test.js src/__tests__/claude-channel-retired.reader-tuples.test.js
