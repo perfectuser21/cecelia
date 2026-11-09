@@ -444,15 +444,15 @@ export async function collectBasicCiSources({ read, ci, revision, relations, par
   }
   return skillSourceLiteralExcludes(await read(SKILL_SELECTOR), 'brain', parse);
 }
-/** Deep 的全 PG 清单独立绑定，不把它声明为普通 PR 中执行过。 */
+/** Deep全PG按完整Nightly/config pair绑定；保留历史并追加Walking退役组，不声明普通PR已执行。 */
 export async function collectDeepCiSources({ read, revision, relations }) {
   const workflow = '.github/workflows/nightly-regression.yml', config = 'scripts/ci/deep-integration.config.mjs';
-  // workflow与配置按完整pair认领：保旧组，追加已合main324和max串行队列组，禁止新旧任选。
   const protocols = [
     ['6be8812458c47df1bb10a841aaa8278b716adb17c3268387a8435f0127ba0724', 'ce5df18b0016ce03ed08bf20def00a10ef68652ba7566f665021d8773467e75e'],
     ['e6a9759aacd095ae4602ee7a67acacddfb13a4832ee2a2d09e26e9f3bfe8782c', 'ce5df18b0016ce03ed08bf20def00a10ef68652ba7566f665021d8773467e75e'],
     ['e6a9759aacd095ae4602ee7a67acacddfb13a4832ee2a2d09e26e9f3bfe8782c', 'f5b94e5075d47fa2ad47788340d17d6705456c4272cd08cd81ee5b3e1ca5e560'],
     ['5c2dd37b925ea9719c3d98d5a4d975ea6aa002985081f7ef9af1f11c3a40a75e', 'f5b94e5075d47fa2ad47788340d17d6705456c4272cd08cd81ee5b3e1ca5e560'],
+    ['a2fd079af6bfaeda6d5880280a9972bdab8dafaeeb6b859de37c9bffaaae432e', 'f5b94e5075d47fa2ad47788340d17d6705456c4272cd08cd81ee5b3e1ca5e560'],
   ];
   const pair = [workflowHash(await read(workflow)), hash(await read(config))];
   if (!protocols.some(candidate => candidate.every((digest, index) => digest === pair[index]))) reject();

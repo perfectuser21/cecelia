@@ -38,6 +38,7 @@ export function ciVersionGuardCohorts(previous) {
  const ownershipDedupTuple={...skillContractRetirementTuple,'existing-ops-stage-source.js':'8db81cd5a7b5def4710635ed202f6d38fd6c54b454a5007ab9fdcbeadab3842e'};
  const w19EventTuple={...ownershipDedupTuple,'existing-ops-stage-source.js':'9d2e4521526c045ff66db4383a7fb229b489b4544881c059caecc9f8de9d4028'};
  const unifiedCiTuple={...w19EventTuple,'existing-ops-stage-source.js':'afe2a03526658a0faa19f3dc423836f47227fdec5c17a5a544f97c6d05bfc560'};
+ const nightlyWalkingRetirementTuple={...unifiedCiTuple,'existing-ops-stage-source.js':'d9ad9be0fb9ea5ccd324c16aaac44edfb508aada132b3b29b108a048145d5d09'};
  return [current,{...current,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
   retired,{...retired,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
   identity,{...identity,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
@@ -55,7 +56,8 @@ export function ciVersionGuardCohorts(previous) {
   skillContractRetirementTuple,{...skillContractRetirementTuple,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
   ownershipDedupTuple,{...ownershipDedupTuple,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
   w19EventTuple,{...w19EventTuple,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
-  unifiedCiTuple,{...unifiedCiTuple,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'}];
+  unifiedCiTuple,{...unifiedCiTuple,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
+  nightlyWalkingRetirementTuple,{...nightlyWalkingRetirementTuple,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'}];
 }
 
 export function registerCiRetirementGuardTests({root,base,memoBase,scan}) {
