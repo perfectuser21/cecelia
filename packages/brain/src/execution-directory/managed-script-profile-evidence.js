@@ -147,7 +147,7 @@ export function createProfileCatalogClient({token=process.env.KERNEL_FLEET_BRIDG
  return {async catalog(node,{profileId,profileSha256,bootId,configDigest,policy}){
   need(typeof token==='string'&&token.length>=32,'worker_unconfigured');
   const endpoint=new URL(resolveManagedScriptWorkerEndpoint(policy,node)),octets=endpoint.hostname.split('.');
-  need(endpoint.protocol==='http:'&&!endpoint.username&&!endpoint.password&&!endpoint.search&&!endpoint.hash&&endpoint.pathname==='/'&&Number(endpoint.port)>=1024&&Number(endpoint.port)<=65535
+  need(endpoint.protocol==='http:'&&!endpoint.username&&!endpoint.password&&!endpoint.search&&!endpoint.hash&&endpoint.pathname==='/'&&(endpoint.port==='5231'||policy?.worker_endpoint)
    &&octets.length===4&&octets.every(p=>/^(?:0|[1-9][0-9]{0,2})$/.test(p)&&Number(p)<=255)&&Number(octets[0])===100&&Number(octets[1])>=64&&Number(octets[1])<=127,'worker_unconfigured');
   const nonce=randomUUID();endpoint.pathname='/workflows/profile-catalog';
   const response=await fetchFn(endpoint.href,{method:'POST',headers:{'content-type':'application/json',authorization:`Bearer ${token}`},body:JSON.stringify({profile_id:profileId,request_nonce:nonce}),signal:AbortSignal.timeout(5000),redirect:'error'});
