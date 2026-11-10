@@ -112,7 +112,9 @@ async function writeSchedulesSnapshot(pool, source, host, entries, collectedAt) 
 
 export function classifyError(e) {
   const msg = String(e?.message || '');
-  if (/timed? ?out|connect|unreachable|Connection refused|ETIMEDOUT/i.test(msg)) return ['unreachable', 'ssh_or_exec_failed'];
+  const asyncDeadline = e?.code === null && e?.killed === true && e?.signal === 'SIGTERM'
+    && ['code', 'killed', 'signal'].every(key => Object.hasOwn(e, key));
+  if (asyncDeadline || /timed? ?out|connect|unreachable|Connection refused|ETIMEDOUT/i.test(msg)) return ['unreachable', 'ssh_or_exec_failed'];
   if (/schema_drift/.test(msg)) return ['schema_drift', 'schema_drift'];
   if (/No such file|not found|config_missing/i.test(msg)) return ['config_missing', 'config_missing'];
   return ['parse_error', 'parse_error'];
