@@ -5,7 +5,7 @@ import {
 
 export const NOW = 1794272400000;
 export const values = new Map([
-  ['launchctl list', '-\t0\tcom.cecelia.fixture'],
+  ['launchctl list', 'PID\tStatus\tLabel\n-\t0\tcom.cecelia.fixture'],
   ['readlink /etc/localtime', '/var/db/timezone/zoneinfo/UTC'],
   [PLIST_DUMP_CMD, '== /fixture/a.plist\n{"Label":"com.cecelia.fixture","StartInterval":300}'],
   [OPENCLAW_CONFIG_CMD, JSON.stringify({ agents: { entries: { fixture: { skills: [] } } } })],
