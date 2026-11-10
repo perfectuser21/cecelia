@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.445.194
+**Brain 版本**: 1.445.195
 
 投影路由限流仅覆盖投影及工作台自身入口，避免无关 Brain 请求消耗投影额度。
 
@@ -7316,3 +7316,5 @@ EventBus启动先只读核对固定名称索引的valid、ready及目标表；�
 - 仅原pending.previous完整镜像ID与完整SHA匹配时，恢复接受官方 `prev-<健康版本>-<SHA前12位>` 标签及历史canonical标签；reconcile与pending rollback复用同一严格规则。
 - recovered只清原pending，不添加成功史；新鲜pending、未知镜像、健康身份变化、非精确标签继续拒绝。无pending的新rollback与正式success仍要求canonical标签。
 - 固定来源只新增独审过的ledger精确摘要并保留旧摘要；未知字节仍不准入。永久回归已纳入既有image-retention CI测试入口。
+
+Ops 采集默认使用异步宿主执行，保持原命令和快照语义；实际采集结束前保持在飞保护，观察者超时不释放该保护。
