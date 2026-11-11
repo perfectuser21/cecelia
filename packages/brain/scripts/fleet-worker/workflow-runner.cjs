@@ -59,13 +59,15 @@ function createWorkflowRunner({stateRoot,machineId,profiles={},assertCanLaunch,a
  };
  const project=async s=>({run_id:s.identity.run_id,task_id:s.identity.task_id,machine_id:machineId,status:s.status,mode:s.identity.mode,profile_sha256:s.identity.profile_sha256,progress:s.progress??null,validation:s.validation??null,writeback:s.writeback??{pending:null},reason:s.reason??null,cancel_requested:s.cancel_requested===true,execution_state:s.execution_state??null,commander_status:s.commander_status??'unavailable',cleanup_required:s.profile?.cleanup_required!==false,execution_unknown:s.execution_unknown??null});
  async function execute(s,recorder,controller,resuming=false){
-  let commander,domain,domainClosed=false,domainTimer,eventCursor=resuming?Math.max(s.continuation.runner_cursor,s.progress?.cursor??0):0,currentReceipt={activities:[]};
+  let commander,domain,domainClosed=false,domainTimer,eventCursor=resuming?Math.max(s.event_cursor??0,s.continuation.runner_cursor,s.progress?.cursor??0):0,currentReceipt={activities:[]};
   const closeDomain=async()=>{if(!domain||domainClosed)return;domainClosed=true;try{await domain.close();}catch(error){s.execution_unknown=true;currentReceipt.execution_unknown=true;delete s.pending_terminal_status;throw error;}};
   const observe=async(event,receipt=currentReceipt)=>{
    if(event.event_type==='COMMANDER_REQUEST'){s.commander_pending=true;save(s);}
    if(event.event_type==='COMMANDER_EXCHANGE'){s.commander_pending=false;s.commander_facts??={aborted:[],counts:{},exchanges:0};s.commander_facts.exchanges++;if(event.accepted&&event.activity){s.commander_facts.counts[event.activity]=(s.commander_facts.counts[event.activity]??0)+1;if(event.action?.action==='abort')s.commander_facts.aborted.push(event.activity);}save(s);}
    if(event.event_type==='COMMANDER_UNAVAILABLE'&&s.profile.commander){s.commander_unknown=true;save(s);}
    currentReceipt=receipt;const numbered={...event,cursor:++eventCursor};
+   // 先保留游标；Recorder 已落盘但 progress 未写入时崩溃，也不能复用该事件身份。
+   s.event_cursor=eventCursor;save(s);
    await recorder.onEvent(numbered,receipt);await domain?.onEvent?.(structuredClone(numbered),structuredClone(receipt));s.commander_status=commander?.status??'unavailable';
    s.progress={observed_at:new Date().toISOString(),cursor:numbered.cursor,event_type:numbered.event_type,activity:numbered.activity??null,item:numbered.item??null,attempt:numbered.attempt??null};save(s);
   };
