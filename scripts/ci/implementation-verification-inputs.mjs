@@ -123,7 +123,7 @@ const UNIFIED_BASIC_ENTRY_SEALS={"scripts/ci/run-basic-check.mjs":"980d1ac1e847e
 const UNIFIED_BASIC_ENTRY_PROTOCOLS=[UNIFIED_BASIC_ENTRY_SEALS,{...UNIFIED_BASIC_ENTRY_SEALS,
  'scripts/ci/run-basic-check.mjs':'a5c767b0476a239b7922ba07f615164b8e23da5769dd7aa5da0e279a2d79dde6',
 }];
-const FINAL_JOBS_BASIC_CI='75d98fce8dd088ead2369484de016d8cd51650199f41d588e51a61315eae30fa';
+const FINAL_JOBS_BASIC_CI='a72f8ef77b55047cce97293c798ae88127378b118e50d22d10df29f69cba2891';
 const FINAL_JOBS_BASIC_ENTRY_PROTOCOLS=[{...UNIFIED_BASIC_ENTRY_SEALS,'scripts/ci/basic-scope.mjs':'1f7ec02042ce35b23753c8be78102febe2d9294f81f98d081bf12fa6c568ce91','scripts/ci/run-basic-check.mjs':'ec107cca3e69e498c84b46b9816ebf3c2f46a713e6eb791e0e0e665ecfb7f3a1','scripts/ci/check-basic-results.mjs':'084cc7187734c0dd83dddb528d87aa16d3ed9a49c3ea0eebf2c97cb4c4775da3','scripts/ci/__tests__/basic-skill-source-coverage.test.mjs':'acc2046d6691423b739edc4071c9ea87f00e57a1a8b7a06be91d5487d24ad2c9','scripts/ci/run-skill-source-check.mjs':'debcaf26aa7025f47d846052e0c2b43d1a04976003936143d80ddac1582d7204'}];
 const UNIT_CONFIGS=[
  {component:'brain',directory:'packages/brain',path:'packages/brain/vitest.config.js'},

@@ -53,7 +53,8 @@ test('四个真实canary共享准备但失败不吞后续，镜像和证据保�
   for (const variable of ['APP_SERVER_CANARY_IMAGE','HARNESS_LIMITS_CANARY_IMAGE','HARNESS_LIMITS_CANARY_POSTGRES_IMAGE','LINUX_RESOURCE_CANARY_IMAGE']) {
     assert.match(preparation, new RegExp(variable + '=\\$\\(docker image inspect'));
   }
-  assert.match(preparation, /FROM node:22-bookworm-slim/);
+  assert.match(preparation, /FROM mirror\.gcr\.io\/library\/node:22-bookworm-slim/);
+  assert.equal(job.steps.some(step => step.uses === './.github/actions/dockerhub-mirror'), false, '共享runner不能热加载Docker导致host-gateway失效');
   assert.match(preparation, /@openai\/codex@0\.158\.0/);
   assert.match(preparation, /node:24-bookworm-slim/);
   assert.match(preparation, /pgvector\/pgvector:pg15/);

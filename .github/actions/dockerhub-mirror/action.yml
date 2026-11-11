@@ -18,13 +18,6 @@ runs:
         fi
         CONF=/etc/docker/daemon.json
         if sudo test -f "$CONF"; then CUR=$(sudo cat "$CONF"); else CUR='{}'; fi
-        # SIGHUP replaces the daemon config without re-deriving default host-gateway IPs.
-        # Preserve explicit settings, otherwise pin the actual bridge gateways before reload.
-        if ! printf '%s' "$CUR" | jq -e 'has("host-gateway-ip") or has("host-gateway-ips")' >/dev/null; then
-          GATEWAYS=$(docker network inspect bridge --format '{{json .IPAM.Config}}' | jq -ce \
-            '[.[].Gateway | select(type == "string" and length > 0)] | if length > 0 then . else error("bridge gateway unavailable") end')
-          CUR=$(printf '%s' "$CUR" | jq --argjson gateways "$GATEWAYS" '. + {"host-gateway-ips": $gateways}')
-        fi
         printf '%s' "$CUR" | jq '. + {"registry-mirrors": ["https://mirror.gcr.io"]}' | sudo tee "$CONF" >/dev/null
         sudo kill -HUP "$(pidof dockerd)"
         for i in $(seq 1 30); do
