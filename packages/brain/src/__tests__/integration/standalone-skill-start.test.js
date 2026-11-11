@@ -2,9 +2,9 @@ import {randomUUID} from 'node:crypto';
 import {beforeEach,afterEach,it,expect} from 'vitest';
 import express from 'express';
 import request from 'supertest';
-import {releaseEvidenceDatabase} from '../../../__tests__/fixtures/release-evidence-db.js';
-import {createRelease,recordReleaseObservation} from '../../../lib/release-index.js';
-import {createRunDefinitionsRouter} from '../../run-definitions.js';
+import {releaseEvidenceDatabase} from '../fixtures/release-evidence-db.js';
+import {createRelease,recordReleaseObservation} from '../../lib/release-index.js';
+import {createRunDefinitionsRouter} from '../../routes/run-definitions.js';
 let f,app,body,task;
 beforeEach(async()=>{
  f=await releaseEvidenceDatabase();
