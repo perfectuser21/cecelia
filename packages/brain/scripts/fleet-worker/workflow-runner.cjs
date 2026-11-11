@@ -33,7 +33,8 @@ function createWorkflowRunner({stateRoot,machineId,profiles={},assertCanLaunch,a
    const m=protectedRead(path.join(supervisorDirectory(s),'manifest.json'),3);
    if(m.protocol!=='activity-supervisor/v1'||profileDigest(m.binding)!==profileDigest(c.binding)||m.deadline!==c.checkpoint.deadline||!m.nonce)return false;
    const result=path.join(supervisorDirectory(s),'result.json');
-   if(fs.existsSync(result)){if(!validResult(protectedRead(result,3),m))return false;}else if(!sameProcess(m.pid,m.birth))return false;
+   const running=fs.existsSync(result)||sameProcess(m.pid,m.birth);
+   if(fs.existsSync(result)){if(!validResult(protectedRead(result,3),m))return false;}else if(!running)return false;
    if(fs.existsSync(path.join(supervisorDirectory(s),'cancel.json')))return false;
    return true;
   }catch{return false;}
