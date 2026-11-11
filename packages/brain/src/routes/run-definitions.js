@@ -4,8 +4,12 @@ import { internalAuthOrLoopback } from '../middleware/internal-auth.js';
 import { bindRunDefinition,getRunDefinitionBinding } from '../lib/run-definition-binding.js';
 import { sendReleaseError } from './releases.js';
 import { compactRunDefinition } from '../lib/run-definition-view.js';
+import { startStandaloneSkillRun } from '../lib/standalone-skill-start.js';
 export function createRunDefinitionsRouter({pool=defaultPool}={}){
   const router=Router();router.use(internalAuthOrLoopback);
+  router.post('/:run_id/start-skill',async(req,res)=>{try{
+    const result=await startStandaloneSkillRun(pool,req.params.run_id,req.body);res.status(result.created?201:200).json(result);
+  }catch(error){sendReleaseError(res,error);}});
   router.post('/:run_id/definition',async(req,res)=>{try{
     const result=await bindRunDefinition(pool,req.params.run_id,req.body);res.status(result.created?201:200).json(result);
   }catch(error){sendReleaseError(res,error);}});
