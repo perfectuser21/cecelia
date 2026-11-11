@@ -1,4 +1,5 @@
 'use strict';
+const process=require('node:process');
 const fs=require('node:fs'),path=require('node:path');
 const {spawnSync}=require('node:child_process');
 const {createHash}=require('node:crypto');
