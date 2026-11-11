@@ -101,8 +101,8 @@ it('代际选版正例必须是真实历史Git全资格来源，16collector与�
 });
 it('私有Git篡改实际workflow权限不能继承历史资格，当前登记拒绝且历史current和地图全部零写',async()=>{
  const current=readFixedExistingOpsGitFixture(fixtureGit('rev-parse','HEAD').trim()),before=await history();
- const workflow='.github/workflows/implementation-impact.yml',original=current.read(workflow),doc=yaml.load(original);
- const permission='permissions: {contents: read,';expect(original.split(permission)).toHaveLength(2);
+ const workflow='.github/workflows/ci.yml',original=current.read(workflow),doc=yaml.load(original);
+ const permission='permissions:\n  contents: read';expect(original.split(permission)).toHaveLength(2);
  expect(doc.permissions.contents).toBe('read');doc.permissions.contents='write';
  const changed=original.replace(permission,permission.replace('contents: read','contents: write'));
  expect(yaml.load(changed)).toEqual(doc);
