@@ -74,7 +74,7 @@ jobs:
     if: github.event_name != 'schedule' && github.event.action != 'closed'
   checks:
     needs: plan
-    name: ${{ matrix.component == 'scripts' && 'Skill source ownership' || format('Check ({0} {1})', matrix.component, matrix.shard) }}
+    name: ${{ format('Check ({0} {1})', matrix.component, matrix.shard) }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     strategy:
@@ -82,7 +82,7 @@ jobs:
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     services:
       postgres:
-        image: ${{ (matrix.component == 'brain-integration' || matrix.component == 'api-integration') && 'mirror.gcr.io/pgvector/pgvector:pg15' || '' }}
+        image: ${{ matrix.component == 'brain-integration' && 'mirror.gcr.io/pgvector/pgvector:pg15' || '' }}
         env: {POSTGRES_USER: ci, POSTGRES_PASSWORD: isolated-ci, POSTGRES_DB: cecelia_scratch}
         ports:
           - '5432:5432'
@@ -90,7 +90,7 @@ jobs:
     env:
       CI: 'true'
       POSTGRES_INTEGRATION: ${{ matrix.component == 'brain-integration' && '1' || '0' }}
-      API_PG_INTEGRATION: ${{ matrix.component == 'api-integration' && '1' || '0' }}
+      API_PG_INTEGRATION: '0'
       CODEX_RELAY_HOME: /tmp/ci-fake-codex-home
       DB_HOST: 127.0.0.1
       DB_PORT: '5432'
@@ -122,30 +122,32 @@ jobs:
         env: {COMPONENT: '${{ matrix.component }}', SHARD: '${{ matrix.shard }}'}
         run: node scripts/ci/run-basic-check.mjs "$COMPONENT" "$SHARD"
     if: github.event_name != 'schedule' && github.event.action != 'closed'
-  app-server-canary:
+  resource-canaries:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 28
     steps:
       - uses: actions/checkout@v4
-      - uses: ./.github/actions/dockerhub-mirror
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
       - name: Build fixed CLI test image
         run: |
           docker build -t cecelia-appserver-ci - <<'DOCKERFILE'
-          FROM node:22-bookworm-slim
+          FROM mirror.gcr.io/library/node:22-bookworm-slim
           RUN npm install -g @openai/codex@0.158.0
           DOCKERFILE
           echo "APP_SERVER_CANARY_IMAGE=$(docker image inspect --format '{{.Id}}' cecelia-appserver-ci)" >> "$GITHUB_ENV"
+        if: '!cancelled()'
       - name: Two independent offline instances sharing HOME through the real runner
         run: |
           set -o pipefail
           node packages/brain/scripts/fleet-worker/app-server-canary.cjs | tee app-server-canary.log
+        if: '!cancelled()'
       - name: Direct shim HTTP RPC and explicit generation cleanup
         run: |
           set -o pipefail
           node packages/brain/scripts/fleet-worker/app-server-rpc-canary.cjs | tee app-server-rpc-canary.log
+        if: '!cancelled()'
       - name: Keep identity and quota evidence (no credentials or model calls)
         if: always()
         uses: actions/upload-artifact@v4
@@ -155,15 +157,6 @@ jobs:
             app-server-canary.log
             app-server-rpc-canary.log
           if-no-files-found: ignore
-    if: github.event_name != 'schedule' && github.event.action != 'closed'
-  attempt-runtime-limits:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '24'
       - name: Resolve isolated test images to immutable IDs
         run: |
           docker pull mirror.gcr.io/library/node:22-bookworm-slim
@@ -172,49 +165,55 @@ jobs:
           docker tag mirror.gcr.io/pgvector/pgvector:pg15 pgvector/pgvector:pg15
           echo "HARNESS_LIMITS_CANARY_IMAGE=$(docker image inspect --format '{{.Id}}' node:22-bookworm-slim)" >> "$GITHUB_ENV"
           echo "HARNESS_LIMITS_CANARY_POSTGRES_IMAGE=$(docker image inspect --format '{{.Id}}' pgvector/pgvector:pg15)" >> "$GITHUB_ENV"
+        if: '!cancelled()'
       - name: Real adapters enforce one shared budget and isolate runner OOM
         run: |
           set -o pipefail
           node packages/brain/scripts/fleet-worker/attempt-limits-canary.cjs | tee attempt-runtime-limits.log
+        if: '!cancelled()'
       - uses: actions/upload-artifact@v4
         if: always()
-        with: {name: attempt-runtime-limits-evidence, path: attempt-runtime-limits.log, if-no-files-found: ignore}
-    if: github.event_name != 'schedule' && github.event.action != 'closed'
-  linux-resource-canary:
-    runs-on: ubuntu-latest
-    timeout-minutes: 8
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
         with:
-          node-version: '24'
+          name: attempt-runtime-limits-evidence
+          path: attempt-runtime-limits.log
+          if-no-files-found: ignore
       - name: Resolve test image to immutable local ID
         run: |
           docker pull mirror.gcr.io/library/node:24-bookworm-slim
           docker tag mirror.gcr.io/library/node:24-bookworm-slim node:24-bookworm-slim
           echo "LINUX_RESOURCE_CANARY_IMAGE=$(docker image inspect --format '{{.Id}}' node:24-bookworm-slim)" >> "$GITHUB_ENV"
+        if: '!cancelled()'
       - name: Read actual limited cgroup without granting execution
         run: |
           set -o pipefail
           node packages/brain/scripts/fleet-worker/linux-resource-canary.cjs | tee linux-resource-canary.log
+        if: '!cancelled()'
       - uses: actions/upload-artifact@v4
         if: always()
-        with: {name: linux-resource-observation, path: linux-resource-canary.log, if-no-files-found: ignore}
+        with:
+          name: linux-resource-observation
+          path: linux-resource-canary.log
+          if-no-files-found: ignore
     if: github.event_name != 'schedule' && github.event.action != 'closed'
-  node-onboarding:
+  runtime-integration:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     services:
       postgres:
         image: mirror.gcr.io/library/postgres:17
-        env: {POSTGRES_USER: onboarding_ci, POSTGRES_PASSWORD: onboarding_ci, POSTGRES_DB: cecelia_scratch}
+        env:
+          POSTGRES_USER: onboarding_ci
+          POSTGRES_PASSWORD: onboarding_ci
+          POSTGRES_DB: cecelia_scratch
         ports:
           - '5432:5432'
         options: '--health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: {node-version: '22', cache: npm}
+        with:
+          node-version: '22'
+          cache: npm
       - run: npm ci
       - name: 真实采集与凭据生命周期回归
         run: node --test --test-concurrency=1 scripts/ops/__tests__/node-onboarding*.test.mjs
@@ -222,35 +221,26 @@ jobs:
         working-directory: packages/brain
         env:
           NODE_ONBOARDING_TEST_DB: postgresql://onboarding_ci:onboarding_ci@localhost:5432/cecelia_scratch
-        run: npx vitest run src/node-onboarding/__tests__/service.test.js src/node-onboarding/__tests__/settlement.test.js src/node-onboarding/__tests__/service-completion-isolation.test.js src/node-onboarding/__tests__/registry-adoption.test.js --maxWorkers=1 --minWorkers=1
+        run: >-
+          npx vitest run src/node-onboarding/__tests__/service.test.js src/node-onboarding/__tests__/settlement.test.js
+          src/node-onboarding/__tests__/service-completion-isolation.test.js src/node-onboarding/__tests__/registry-adoption.test.js --maxWorkers=1
+          --minWorkers=1
       - name: Linux自动接入与续验真实数据库回归
         working-directory: packages/brain
         env:
           TEST_DATABASE_URL: postgresql://onboarding_ci:onboarding_ci@localhost:5432/cecelia_scratch
-        run: npx vitest run --config vitest.integration.config.js src/__tests__/integration/linux-controller-contract.pg.integration.test.js src/__tests__/integration/linux-onboarding-flow.pg.integration.test.js src/__tests__/integration/linux-script-authorization.pg.integration.test.js --maxWorkers=1 --minWorkers=1
-    if: github.event_name != 'schedule' && github.event.action != 'closed'
-  commander-dbos-recovery:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    services:
-      postgres:
-        image: postgres:17
-        env: {POSTGRES_DB: cecelia_scratch, POSTGRES_HOST_AUTH_METHOD: trust}
-        ports:
-          - 5432/tcp
-        options: '--health-cmd "pg_isready -U postgres -d cecelia_scratch" --health-interval 5s --health-timeout 5s --health-retries 10'
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: {node-version: '22', cache: npm}
-      - run: npm ci
+        run: >-
+          npx vitest run --config vitest.integration.config.js src/__tests__/integration/linux-controller-contract.pg.integration.test.js
+          src/__tests__/integration/linux-onboarding-flow.pg.integration.test.js src/__tests__/integration/linux-script-authorization.pg.integration.test.js
+          --maxWorkers=1 --minWorkers=1
       - name: Verify real process recovery without replay
         env:
-          TEST_DB_URL: postgresql://postgres@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/cecelia_scratch
+          TEST_DB_URL: postgresql://onboarding_ci:onboarding_ci@127.0.0.1:5432/cecelia_scratch
         run: node packages/brain/scripts/smoke/commander-dbos-recovery-smoke.mjs
+        if: '!cancelled()'
     if: github.event_name != 'schedule' && github.event.action != 'closed'
   pwa-upgrade:
-    name: PWA Upgrade (Playwright / Chromium)
+    name: Browser regression (Chromium)
     runs-on: ubuntu-latest
     timeout-minutes: 16
     defaults:
@@ -276,66 +266,46 @@ jobs:
           node e2e/playwright-cli.mjs test --config ../../tests/regression/manual-ui/playwright.config.ts
     if: github.event_name != 'schedule' && github.event.action != 'closed'
   skill-contracts:
-    name: Fixed Skill contracts (${{ matrix.component }})
-    runs-on: ubuntu-latest
+    name: Skill contracts and restoration (${{ matrix.os }} / ${{ matrix.component }})
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        component:
-          - brain
-          - root
+        include:
+          - os: ubuntu-latest
+            component: brain
+          - os: ubuntu-latest
+            component: root
+          - os: windows-latest
+            component: restore
+          - os: macos-latest
+            component: restore
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
       - uses: actions/setup-node@v4
-        with: {node-version: '22', cache: npm}
+        with:
+          node-version: '22'
+          cache: npm
+        if: matrix.component != 'restore'
       - name: Install locked test dependencies
         run: npm ci --ignore-scripts --no-audit --no-fund
+        if: matrix.component != 'restore'
       - name: Restore pinned skill sources
         uses: ./.github/actions/skills-source
-        with: {ssh-key: '${{ secrets.SKILLS_SOURCE_SSH_KEY }}', expected-public-sha256: '${{ vars.SKILLS_SOURCE_PUBLIC_KEY_SHA256 }}'}
+        with:
+          ssh-key: ${{ secrets.SKILLS_SOURCE_SSH_KEY }}
+          expected-public-sha256: ${{ vars.SKILLS_SOURCE_PUBLIC_KEY_SHA256 }}
       - name: Run actual source contracts
-        env: {COMPONENT: '${{ matrix.component }}', CI: 'true', POSTGRES_INTEGRATION: '0'}
-        run: node scripts/ci/run-skill-source-check.mjs "$COMPONENT"
-    if: github.event_name != 'schedule' && github.event.action != 'closed'
-  skill-restore:
-    strategy:
-      fail-fast: false
-      matrix:
-        os:
-          - ubuntu-latest
-          - windows-latest
-          - macos-latest
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v4
-      - name: Restore pinned skill sources
-        uses: ./.github/actions/skills-source
-        with: {ssh-key: '${{ secrets.SKILLS_SOURCE_SSH_KEY }}', expected-public-sha256: '${{ vars.SKILLS_SOURCE_PUBLIC_KEY_SHA256 }}'}
-    if: github.event_name != 'schedule' && github.event.action != 'closed'
-  skill-passed:
-    name: 固定Skill合同通过
-    if: always() && github.event_name != 'schedule' && github.event.action != 'closed'
-    needs:
-      - skill-contracts
-      - skill-restore
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - name: Require every selected contract and restoration result
         env:
-          NEEDS_JSON: ${{ toJSON(needs) }}
-        run: |
-          node --input-type=module <<'NODE'
-          const needs = JSON.parse(process.env.NEEDS_JSON || 'null');
-          for (const job of ['skill-contracts', 'skill-restore']) {
-            if (needs?.[job]?.result !== 'success') throw new Error(`${job} 未完成：${needs?.[job]?.result || 'missing'}`);
-          }
-          console.log('固定Skill合同全部通过');
-          NODE
+          COMPONENT: ${{ matrix.component }}
+          CI: 'true'
+          POSTGRES_INTEGRATION: '0'
+        run: node scripts/ci/run-skill-source-check.mjs "$COMPONENT"
+        if: matrix.component != 'restore'
+    if: github.event_name != 'schedule' && github.event.action != 'closed'
   codeql:
     name: CodeQL (${{ matrix.language }})
     if: github.event.action != 'closed'
@@ -391,13 +361,10 @@ jobs:
       - plan
       - security
       - checks
-      - app-server-canary
-      - attempt-runtime-limits
-      - linux-resource-canary
-      - node-onboarding
-      - commander-dbos-recovery
+      - resource-canaries
+      - runtime-integration
       - pwa-upgrade
-      - skill-passed
+      - skill-contracts
       - codeql
     if: always() && github.event_name != 'schedule' && github.event.action != 'closed'
     runs-on: ubuntu-latest

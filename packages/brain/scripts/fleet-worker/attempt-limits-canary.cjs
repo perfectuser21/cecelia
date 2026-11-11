@@ -84,5 +84,7 @@ async function cleanup() {
   if(value){assert.equal(value.Labels['cecelia.fleet.attempt_id'],attemptId);await command(['network','rm',value.Id]);}
   fs.rmSync(root,{recursive:true,force:true});
 }
-main().catch(error=>{console.error(`attempt_limits_canary_failed:${error.code||error.name}`);process.exitCode=1;})
+main().catch(error=>{console.error(`attempt_limits_canary_failed:${error.code||error.name}`);
+  // Docker stderr explains daemon failures; error.message may contain command credentials.
+  if (error.stderr) console.error(String(error.stderr).replace(/POSTGRES_PASSWORD=[^\s]+/g, "POSTGRES_PASSWORD=[REDACTED]"));process.exitCode=1;})
   .finally(()=>cleanup().catch(()=>{console.error('attempt_limits_canary_cleanup_failed');process.exitCode=1;}));

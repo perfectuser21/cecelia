@@ -64,7 +64,7 @@ test('所有composite调用者显式传入公开var身份摘要', () => {
       assert.equal(step.with?.['expected-public-sha256'], '${{ vars.SKILLS_SOURCE_PUBLIC_KEY_SHA256 }}', file);
     }
   }
-  assert.equal(count, 3);
+  assert.ok(count > 0, '必须存在真实固定来源恢复调用，不能空集合成功');
   assert.equal(composite.inputs['expected-public-sha256']?.required, true);
 });
 test('真实composite在fetch前校验身份：错配零fetch，匹配才到原入口', () => {

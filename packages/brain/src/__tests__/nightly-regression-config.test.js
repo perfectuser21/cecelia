@@ -22,13 +22,14 @@ describe('刀A nightly-regression workflow', () => {
 });
 
 describe('现役深度数据库回归', () => {
-  it('统一deep入口承担定时数据库回归，诊断池仅显式手动调用', async () => {
+  it('统一deep入口承担定时数据库回归，未消费的分类诊断job退役', async () => {
     const { load } = await import('js-yaml');
     const deep = load(read('.github/workflows/nightly-regression.yml'));
     expect(deep.jobs['brain-integration'].services.postgres.env.POSTGRES_DB).toBe('cecelia_test');
     expect(deep.jobs['brain-integration'].env.POSTGRES_INTEGRATION).toBe('1');
-    expect(deep.on.workflow_dispatch.inputs.classified_smoke.default).toBe(false);
-    expect(deep.jobs['classified-smoke-diagnostics'].if).toBe("github.event_name == 'workflow_dispatch' && inputs.classified_smoke == true");
+    expect(deep.on.workflow_dispatch?.inputs).toBeUndefined();
+    expect(deep.jobs['classified-smoke-diagnostics']).toBeUndefined();
+    expect(deep.jobs['real-env-smoke']).toBeDefined();
   });
 });
 

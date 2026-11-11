@@ -49,8 +49,9 @@ jobs:
     steps:
       - name: 解析探测 URL
         id: resolve
+        env:
+          INPUT_URL: ${{ github.event.inputs.probe_url }}
         run: |
-          INPUT_URL="${{ github.event.inputs.probe_url }}"
           if [[ -n "$INPUT_URL" ]]; then
             echo "url=$INPUT_URL" >> "$GITHUB_OUTPUT"
           else
@@ -139,10 +140,10 @@ jobs:
           ' 2>/dev/null) || fail_probe
           printf '%s\n' "$RECEIPT" >> "$GITHUB_OUTPUT"
 
-  alert:
-    name: 告警（Issue + Bark）
+  reconcile:
+    name: 告警或恢复（Issue + Bark）
     needs: probe
-    if: always() && (needs.probe.result != 'success' || needs.probe.outputs.health_ok != 'true' || needs.probe.outputs.kv_ok != 'true')
+    if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -158,6 +159,8 @@ jobs:
 
     steps:
       - name: 开 GitHub Issue（去重）
+        id: issue
+        if: always() && (needs.probe.result != 'success' || needs.probe.outputs.health_ok != 'true' || needs.probe.outputs.kv_ok != 'true')
         run: |
           set -euo pipefail
 
@@ -192,7 +195,8 @@ jobs:
           fi
 
       - name: Bark 告警推送
-        if: always()
+        id: bark
+        if: always() && (needs.probe.result != 'success' || needs.probe.outputs.health_ok != 'true' || needs.probe.outputs.kv_ok != 'true')
         env:
           BARK_URL: ${{ secrets.BARK_URL }}
           BARK_TOKEN: ${{ secrets.BARK_TOKEN }}
@@ -231,20 +235,9 @@ jobs:
             exit 1
           fi
 
-  close-on-success:
-    name: 恢复时关闭 Issue
-    needs: probe
-    if: always() && needs.probe.result == 'success' && needs.probe.outputs.health_ok == 'true' && needs.probe.outputs.kv_ok == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      issues: write
-    env:
-      GH_TOKEN: ${{ secrets.GH_PAT_BOT || secrets.GITHUB_TOKEN }}
-      REPO: ${{ github.repository }}
-
-    steps:
       - name: 关闭 open 的 heartbeat-sentinel issues
+        id: close
+        if: always() && needs.probe.result == 'success' && needs.probe.outputs.health_ok == 'true' && needs.probe.outputs.kv_ok == 'true'
         run: |
           set -euo pipefail
           OPEN_ISSUES=$(gh api "repos/${REPO}/issues?state=open&labels=${ISSUE_LABEL}&per_page=50" \
@@ -256,7 +249,7 @@ jobs:
           for NUM in $OPEN_ISSUES; do
             gh issue close "$NUM" \
               --repo "${REPO}" \
-              --comment "心跳哨兵恢复正常，自动关闭。Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+              --comment "心跳哨兵恢复正常，自动关闭。Run: ${RUN_URL}" \
               2>/dev/null
             echo "已关闭 Issue #$NUM"
           done

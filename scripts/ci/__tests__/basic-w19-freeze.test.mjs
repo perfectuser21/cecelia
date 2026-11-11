@@ -88,12 +88,13 @@ for (const kind of ['dispatch', 'local']) test(`GitHub事件范围外的${kind}�
   assert.match(result.stderr, /W19_FROZEN_ROLE/);
 });
 
-test('旧样机的代码/依赖/配置/新增路径只选scripts，普通全量矩阵保持14项', () => {
+test('旧样机的代码/依赖/配置/新增路径只选scripts，普通全量矩阵覆盖全部现役组件', () => {
   for (const path of ['playground/server.js', 'playground/package.json', 'playground/package-lock.json',
     'playground/vitest.config.js', 'playground/new-code.js', 'playground/README.md']) {
     assert.deepEqual(planChecks([path]), [{ component: 'scripts' }], path);
   }
-  assert.equal(planChecks([], { full: true }).length, 14);
+  assert.deepEqual([...new Set(planChecks([], { full: true }).map(row => row.component))],
+    ['brain-unit', 'brain-integration', 'image', 'mcp', 'api', 'dashboard', 'ops', 'scripts']);
   assert.equal(planChecks([], { full: true }).some(row => row.component === 'playground'), false);
 });
 

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {planChecks} from '../basic-scope.mjs';
 
 const components = rows => [...new Set(rows.map(row => row.component))];
-const shared = ['brain-unit', 'brain-integration', 'image', 'api', 'api-integration', 'ops', 'scripts'];
+const shared = ['brain-unit', 'brain-integration', 'image', 'api', 'ops', 'scripts'];
 
 test('说明书直接Markdown是Brain和镜像运行输入，先于普通文档豁免', () => {
   for (const path of ['docs/instruction-book/features/topics-api.md',

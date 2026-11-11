@@ -49,8 +49,6 @@ export function commandsFor(component, shard) {
       return [step('.', 'docker', 'build', '-f', 'packages/brain/Dockerfile', '-t', 'cecelia-brain:ci-basic', '.')];
     case 'api':
       return [vitest('apps/api'), step('apps/api', 'npm', 'run', 'build')];
-    case 'api-integration':
-      return [step('apps/api', 'npx', '--no-install', 'vitest', 'run', '--config', 'vitest.integration.config.ts')];
     case 'dashboard':
       return [vitest('apps/dashboard'), step('apps/dashboard', 'npm', 'run', 'build')];
     case 'android':

@@ -46,31 +46,39 @@ test('外置正文合同集合明确且非空，原生launcher不被整文件迁
 test('专项明确覆盖每个组件，使用固定来源恢复后实际运行，缺文件不能成功', () => {
   const workflow = yaml.load(readFileSync(new URL('../../../.github/workflows/ci.yml',import.meta.url),'utf8'));
   const job = workflow.jobs['skill-contracts'];
-  assert.deepEqual(job.strategy.matrix.component, Object.keys(directory));
+  assert.deepEqual(job.strategy.matrix.include, [
+    {os:'ubuntu-latest', component:'brain'}, {os:'ubuntu-latest', component:'root'},
+    {os:'windows-latest', component:'restore'}, {os:'macos-latest', component:'restore'},
+  ]);
+  assert.equal(job['runs-on'], '${{ matrix.os }}');
+  assert.equal(job.strategy['fail-fast'], false);
   const restored = job.steps.findIndex(step => step.uses === './.github/actions/skills-source');
   const run = job.steps.findIndex(step => step.run?.includes('run-skill-source-check.mjs'));
   assert.ok(restored >= 0 && run > restored);
   assert.ok(job.steps.some(step => step.run?.includes('npm ci')));
+  for (const step of job.steps.filter(step => step.run?.includes('npm ci') || step.run?.includes('run-skill-source-check.mjs') || step.uses === 'actions/setup-node@v4')) {
+    assert.equal(step.if, "matrix.component != 'restore'");
+  }
   assert.deepEqual(workflow.on.pull_request.branches, ['main']);
   assert.equal(workflow.on.pull_request.paths, undefined);
   assert.deepEqual(workflow.on.push, {branches:['main']});
 });
 
-test('固定Skill最终结果覆盖所有专项，任一失败/跳过/取消/缺结果都不能通过', () => {
+test('唯一最终门直接覆盖实际Skill矩阵，任一失败/跳过/取消/缺结果都不能通过', () => {
   const workflow = yaml.load(readFileSync(new URL('../../../.github/workflows/ci.yml', import.meta.url), 'utf8'));
-  const gate = workflow.jobs['skill-passed'];
-  assert.equal(gate?.name, '固定Skill合同通过');
+  assert.equal(workflow.jobs['skill-passed'], undefined);
+  assert.equal(workflow.jobs['skill-restore'], undefined);
+  const gate = workflow.jobs['ci-passed'];
   assert.equal(gate.if, "always() && github.event_name != 'schedule' && github.event.action != 'closed'");
-  assert.deepEqual([...gate.needs].sort(), ['skill-contracts', 'skill-restore']);
-  assert.ok(workflow.jobs['ci-passed'].needs.includes('skill-passed'));
+  assert.ok(gate.needs.includes('skill-contracts'));
   const step = gate.steps.find(step => step.env?.NEEDS_JSON);
   assert.equal(step.env.NEEDS_JSON, '${{ toJSON(needs) }}');
   for (const contracts of ['success', 'failure', 'cancelled', 'skipped', undefined]) {
-    for (const restore of ['success', 'failure', 'cancelled', 'skipped', undefined]) {
+      const needs = Object.fromEntries(gate.needs.map(id => [id,{result:'success'}]));
+      if (contracts === undefined) delete needs['skill-contracts']; else needs['skill-contracts'].result = contracts;
       const result = spawnSync('bash', ['-e', '-o', 'pipefail', '-c', step.run], {
-        cwd: root, encoding: 'utf8', env: {...process.env, NEEDS_JSON: JSON.stringify({'skill-contracts':{result:contracts}, 'skill-restore':{result:restore}})},
+        cwd: root, encoding: 'utf8', env: {...process.env, NEEDS_JSON: JSON.stringify(needs)},
       });
-      assert.equal(result.status === 0, contracts === 'success' && restore === 'success', result.stderr);
-    }
+      assert.equal(result.status === 0, contracts === 'success', result.stderr);
   }
 });

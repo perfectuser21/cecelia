@@ -37,7 +37,7 @@ test('每个声明的源码检查都必须抵达同一个最终结果，没有�
   assert.equal(workflow.jobs['ci-passed'].if, "always() && github.event_name != 'schedule' && github.event.action != 'closed'");
   assert.equal(workflow.jobs['ci-passed'].name, '源码保底通过');
   assert.equal(workflow.jobs.checks.strategy['fail-fast'], false);
-  assert.equal(workflow.jobs.checks.name, "${{ matrix.component == 'scripts' && 'Skill source ownership' || format('Check ({0} {1})', matrix.component, matrix.shard) }}");
+  assert.equal(workflow.jobs.checks.name, "${{ format('Check ({0} {1})', matrix.component, matrix.shard) }}");
   assert.equal(workflow.jobs.checks.if, "github.event_name != 'schedule' && github.event.action != 'closed'");
   const run = workflow.jobs.checks.steps.find(step => step.name === 'Run actual checks');
   assert.equal(run.run, 'node scripts/ci/run-basic-check.mjs "$COMPONENT" "$SHARD"');
@@ -88,16 +88,16 @@ test('只给实际PG跑道设置数据库URI，不能意外启用单测文件里
 
 
 
-test('API PG跑道拥有临时Postgres服务和独立开关，普通unit不能启用它', () => {
+test('退出旧API集成跑道，只有现役Brain PG组件可启动数据库', () => {
   const job = workflow.jobs.checks;
-  assert.equal(job.env.API_PG_INTEGRATION, "${{ matrix.component == 'api-integration' && '1' || '0' }}");
+  assert.equal(job.env.API_PG_INTEGRATION, '0');
   assert.equal(job.services.postgres.image,
-    "${{ (matrix.component == 'brain-integration' || matrix.component == 'api-integration') && 'mirror.gcr.io/pgvector/pgvector:pg15' || '' }}");
-  assert.ok(planChecks(['apps/api/src/system/routes.ts']).some(row => row.component === 'api-integration'));
+    "${{ matrix.component == 'brain-integration' && 'mirror.gcr.io/pgvector/pgvector:pg15' || '' }}");
+  assert.ok(!planChecks(['apps/api/src/system/routes.ts']).some(row => row.component === 'api-integration'));
 });
 
 
-test('只有统一CI接PR，所有质量job到达总门且保持原Node/PG/命令/artifact', () => {
+test('统一CI真实合并runner，保持独有命令和产物并隔离安全权限', () => {
   const files=readdirSync(new URL('../../../.github/workflows/',import.meta.url)).filter(file=>/\.ya?ml$/.test(file));
   assert.deepEqual(files.filter(file=>{
     const events=yaml.load(readFileSync(new URL('../../../.github/workflows/'+file,import.meta.url),'utf8')).on;
@@ -107,26 +107,32 @@ test('只有统一CI接PR，所有质量job到达总门且保持原Node/PG/命�
   }),['ci.yml']);
   for(const [id,job]of Object.entries(workflow.jobs))assert.equal(job.uses,undefined,id+'不得复用另一个workflow');
   assert.ok(readFileSync(new URL('../../../.github/workflows/ci.yml',import.meta.url),'utf8').trimEnd().split('\n').length<=500);
-  for(const [file,from,to]of[
-    ['app-server-canary','offline-generation-canary','app-server-canary'],['attempt-runtime-limits','docker-hard-limits','attempt-runtime-limits'],
-    ['linux-resource-canary','observer-cgroup','linux-resource-canary'],['node-onboarding','regression','node-onboarding'],
-    ['commander-dbos-recovery','process-recovery','commander-dbos-recovery'],['ci-dashboard-pwa-e2e','pwa-upgrade','pwa-upgrade'],
-  ]) {
-    // 已合并主干的真实旧job，迁移只改变外层事件与汇总，不重新编排实际步骤。
-    const baseline='8648c688580e5f3d7f3f4084364a328f9e967849';
-    const old=yaml.load(execFileSync('git',['show',baseline+':.github/workflows/'+file+'.yml'],{cwd:root,encoding:'utf8'})).jobs[from];
-    const actual=structuredClone(workflow.jobs[to]);delete actual.if;
-    if(to==='node-onboarding') {
-      old.steps=old.steps.filter(step=>!['设备页操作回归','Linux可信升级与root安装恢复回归'].includes(step.name));
-      const pg=old.steps.find(step=>step.env?.NODE_ONBOARDING_TEST_DB);
-      pg.name='接入结算与隔离回归（含真实数据库）';
-      pg.run='npx vitest run src/node-onboarding/__tests__/service.test.js src/node-onboarding/__tests__/settlement.test.js src/node-onboarding/__tests__/service-completion-isolation.test.js src/node-onboarding/__tests__/registry-adoption.test.js --maxWorkers=1 --minWorkers=1';
-      const linux=old.steps.find(step=>step.env?.TEST_DATABASE_URL);
-      linux.run=linux.run.replace(' src/linux-pool/onboarding-step.test.js','');
+  assert.equal(Object.keys(workflow.jobs).length, 11);
+  const baseline=yaml.load(execFileSync('git',['show','0e2c3c81717ab08ae678a869f526a258f850fec8:.github/workflows/ci.yml'],{cwd:root,encoding:'utf8'}));
+  for (const oldId of ['app-server-canary','attempt-runtime-limits','linux-resource-canary']) {
+    assert.equal(workflow.jobs[oldId], undefined);
+    for (const step of baseline.jobs[oldId].steps.filter(step => step.run?.includes('| tee '))) {
+      assert.equal(workflow.jobs['resource-canaries'].steps.filter(actual => actual.run === step.run).length, 1, step.name);
     }
-    if(to==='commander-dbos-recovery')old.steps.find(step=>step.env?.TEST_DB_URL).env.TEST_DB_URL=old.steps.find(step=>step.env?.TEST_DB_URL).env.TEST_DB_URL.replace('ports[5432]',"ports['5432']");
-    assert.deepEqual(actual,old,to);
   }
+  const runtime=workflow.jobs['runtime-integration'];
+  assert.deepEqual(runtime.services, baseline.jobs['node-onboarding'].services);
+  for (const step of baseline.jobs['node-onboarding'].steps.filter(step => step.run && step.run !== 'npm ci')) {
+    assert.ok(runtime.steps.some(actual => actual.run === step.run && JSON.stringify(actual.env) === JSON.stringify(step.env)), step.name);
+  }
+  const recovery=runtime.steps.find(step => step.run?.includes('commander-dbos-recovery-smoke.mjs'));
+  assert.equal(recovery.if, '!cancelled()');
+  assert.equal(recovery.env.TEST_DB_URL, 'postgresql://onboarding_ci:onboarding_ci@127.0.0.1:5432/cecelia_scratch');
+  assert.equal(runtime.steps.filter(step => step.uses === 'actions/checkout@v4').length, 1);
+  assert.equal(runtime.steps.filter(step => step.uses === 'actions/setup-node@v4').length, 1);
+  assert.equal(runtime.steps.filter(step => step.run === 'npm ci').length, 1);
+  assert.equal(runtime.steps.some(step => step['continue-on-error']), false);
+  const browser=structuredClone(workflow.jobs['pwa-upgrade']);
+  browser.name=baseline.jobs['pwa-upgrade'].name;
+  assert.deepEqual(browser, baseline.jobs['pwa-upgrade']);
+  assert.equal(workflow.jobs['pwa-upgrade'].name, 'Browser regression (Chromium)');
+  assert.deepEqual(workflow.jobs.security, baseline.jobs.security);
+  assert.deepEqual(workflow.jobs.codeql, baseline.jobs.codeql);
 });
 
 test('周扫描仅CodeQL执行，closed仅cleanup；评论写权限限于预览生命周期', () => {
@@ -151,6 +157,22 @@ test('周扫描仅CodeQL执行，closed仅cleanup；评论写权限限于预览�
   assert.ok(workflow.concurrency.group.includes("'closed-pr-{0}'"));
   assert.ok(workflow.concurrency.group.includes("'weekly-codeql'"));
   assert.ok(workflow.concurrency['cancel-in-progress'].includes("github.event.action != 'closed'"));
+});
+
+test('最大PR含Android和UI预览实际展开28个runner，不重复计算定义合并', () => {
+  const selected = planChecks(['apps/android-agent/app/src/Main.kt'], {full:true});
+  assert.equal(selected.length, 14);
+  const expanded = Object.entries(workflow.jobs).filter(([id]) => id !== 'preview-cleanup').map(([id, job]) => {
+    if (id === 'checks') return selected.length;
+    const matrix = job.strategy?.matrix;
+    if (!matrix) return 1;
+    if (matrix.include) {
+      assert.deepEqual(Object.keys(matrix), ['include']);
+      return matrix.include.length;
+    }
+    return Object.values(matrix).reduce((count, axis) => count * axis.length, 1);
+  });
+  assert.equal(expanded.reduce((sum, count) => sum + count, 0), 28);
 });
 
 

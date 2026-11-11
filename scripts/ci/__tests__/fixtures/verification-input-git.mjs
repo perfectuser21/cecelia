@@ -147,6 +147,7 @@ export function assertUnifiedSkillVerificationInputs(t,{basicEntryFixture,derive
   const proof=derived(f),rows=proof.rows.filter(r=>r.input_facts.path===selectedPath);
   assert.equal(rows.length,2,JSON.stringify(proof.unproven));
   assert.ok(rows.every(row=>row.witness.workflow.path==='.github/workflows/ci.yml' && row.execution_status==='not_evaluated'));
+  assert.ok(rows.every(row=>row.eligible_owner_paths.includes('.github/workflows/ci.yml') && !row.eligible_owner_paths.includes('.github/workflows/skills-source-check.yml')));
   const ciPath='.github/workflows/ci.yml',current=readFileSync(join(f.root,ciPath),'utf8');
   writeFileSync(join(f.root,ciPath),current.replace('node scripts/ci/run-skill-source-check.mjs','echo node scripts/ci/run-skill-source-check.mjs'));
   f.source.head_revision=f.commit();f.source.changed_files=[{path:selectedPath},{path:ciPath}];
