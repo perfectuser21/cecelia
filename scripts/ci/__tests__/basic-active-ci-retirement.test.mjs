@@ -70,12 +70,16 @@ test('建议回执 PG 历史完整入口与当前统一CI分别认领，单成�
  const currentPaths=['.github/workflows/ci.yml',runner,scope,'scripts/ci/check-basic-results.mjs',
   'scripts/ci/ops-checks.mjs','packages/brain/vitest.config.js','scripts/ci/skill-source-tests.mjs',
   'scripts/ci/run-skill-source-check.mjs','scripts/ci/__tests__/basic-skill-source-coverage.test.mjs',
-  '.github/actions/skills-source/action.yml','scripts/ci/check-skill-source-identity.py','apps/api/vitest.config.ts','apps/dashboard/vitest.config.ts','scripts/ci/__tests__/basic-w19-freeze.test.mjs'];
+  '.github/actions/skills-source/action.yml','scripts/ci/check-skill-source-identity.py','apps/api/vitest.config.ts','apps/dashboard/vitest.config.ts','scripts/ci/__tests__/basic-w19-freeze.test.mjs',
+  'scripts/ci/prepare-ubuntu-archive.mjs','scripts/ci/__tests__/basic-ubuntu-archive.test.mjs'];
  const current=Object.fromEntries(currentPaths.map(path=>[path,readFileSync(join(root,path),'utf8')]));
  const assertSelected=changes=>{const proof=observe(fixture(t,{changes}));assert.ok(selected(proof),JSON.stringify(proof.unproven));};
  const assertRejected=changes=>{const proof=observe(fixture(t,{changes}));assert.equal(selected(proof),undefined);
   assert.ok(proof.unproven.some(row=>row.path===testPath&&row.side==='head'&&row.reason==='entry_unproven'));};
  assertSelected(current);
+ for(const path of ['scripts/ci/prepare-ubuntu-archive.mjs','scripts/ci/__tests__/basic-ubuntu-archive.test.mjs']){
+  const missing={...current};delete missing[path];assertRejected(missing);
+ }
  const historical=Object.fromEntries(paths.filter(path=>path!==testPath).map(path=>[path,execFileSync('git',
   ['--no-replace-objects','show',`aa2172e299585d742192554064b48f533cafd15c:${path}`],{cwd:root,encoding:'utf8'})]));
  assertSelected(historical);
