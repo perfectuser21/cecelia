@@ -4,12 +4,12 @@ const state=require(path.join(source,'activity-supervisor-state.cjs'));
 const binding={run_id:'local-finish-race',task_id:'local-finish-race',activity:'work'};
 async function owner(root,deadline){
  const {startSupervisedActivity}=await import(path.join(source,'activity-supervisor.js'));
- const pending=startSupervisedActivity(path.join(root,'spool'),binding,{key:'work',budget:{max_duration_s:15,heartbeat_s:1},runtime:{entry:'work.mjs',cleanup_grace_s:1}},{},{cwd:root},deadline);
+ const pending=startSupervisedActivity(path.join(root,'run','spool'),binding,{key:'work',budget:{max_duration_s:15,heartbeat_s:1},runtime:{entry:'work.mjs',cleanup_grace_s:1}},{},{cwd:root},deadline);
  process.send({ready:true});await pending;process.disconnect();
 }
 async function probe(trigger){
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'supervisor-finish-'));
- const spool=path.join(root,'spool'),resultFile=path.join(spool,'result.json'),deadline=Date.now()+15000;
+ const spool=path.join(root,'run','spool'),resultFile=path.join(spool,'result.json'),deadline=Date.now()+15000;
  const trace=[],originalSame=state.sameProcess;let calls=0,child;
  const pause=ms=>Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,ms);
  state.sameProcess=(pid,birth)=>{
