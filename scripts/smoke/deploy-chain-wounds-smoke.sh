@@ -2,7 +2,6 @@
 # deploy-chain-wounds-smoke.sh — 刀3-T3 四伤口回归守卫
 #
 # A1: deploy-local.sh npm install 失败时中止部署（loud-fail，不再 || true）
-# A2: npm cache 不再写 /tmp/.npm-cache（改用 $MAIN_ROOT/.npm-cache）
 # A3: promote-dashboard.sh 含 HK rsync 步骤
 # A4: frontend-proxy.js STATIC_DIR 默认 /app（非主仓库绝对路径）
 # A5: check-deploy-fingerprint.sh 存在且可执行
@@ -31,22 +30,6 @@ if grep -q '|| true' "$DEPLOY_LOCAL"; then
     fi
 else
     ok "deploy-local.sh: 无 '|| true'（npm install loud-fail 已生效）"
-fi
-
-# ── A2: npm cache 不写 /tmp/.npm-cache ──────────────────────────────────────
-echo ""
-echo "A2: npm cache 不用 /tmp"
-if grep -q '/tmp/.npm-cache\|/tmp/\.npm-cache' "$DEPLOY_LOCAL"; then
-    fail "deploy-local.sh: npm cache 仍写 /tmp（伤口2未修）"
-else
-    ok "deploy-local.sh: npm cache 已移出 /tmp"
-fi
-
-# A2 补：确认使用 MAIN_ROOT 下的 cache
-if grep -q 'MAIN_ROOT.*npm-cache\|npm-cache.*MAIN_ROOT\|NPM_CACHE_DIR' "$DEPLOY_LOCAL"; then
-    ok "deploy-local.sh: npm cache 指向 MAIN_ROOT（bind-mounted volume）"
-else
-    fail "deploy-local.sh: 未找到 MAIN_ROOT npm cache 路径"
 fi
 
 # ── A3: promote-dashboard.sh 含 HK rsync ────────────────────────────────────

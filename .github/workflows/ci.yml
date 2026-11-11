@@ -91,6 +91,9 @@ jobs:
       CI: 'true'
       POSTGRES_INTEGRATION: ${{ matrix.component == 'brain-integration' && '1' || '0' }}
       API_PG_INTEGRATION: '0'
+      CI_CHECK_SCOPE: ${{ github.event_name == 'pull_request' && 'changed' || 'full' }}
+      CI_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+      CI_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       CODEX_RELAY_HOME: /tmp/ci-fake-codex-home
       DB_HOST: 127.0.0.1
       DB_PORT: '5432'

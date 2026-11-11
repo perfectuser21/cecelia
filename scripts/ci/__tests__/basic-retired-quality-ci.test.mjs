@@ -8,7 +8,8 @@ test('已退役Quality不再创建CI组件，旧目录差分仍保守验证现�
  assert.ok(!full.some(row=>row.component==='quality'));
  assert.deepEqual(planChecks(['packages/quality/old.js']),full);
  assert.ok(full.some(row=>row.component==='brain-unit'));
- assert.ok(full.some(row=>row.component==='api'));
+ assert.ok(full.some(row=>row.component==='dashboard'));
+ assert.ok(!full.some(row=>row.component==='api'));
 });
 
 test('旧Quality检查命令拒绝执行，不能静默空成功',()=>{

@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import {planChecks} from '../basic-scope.mjs';
 
 const components = rows => [...new Set(rows.map(row => row.component))];
-const shared = ['brain-unit', 'brain-integration', 'image', 'api', 'ops', 'scripts'];
 
 test('说明书直接Markdown是Brain和镜像运行输入，先于普通文档豁免', () => {
   for (const path of ['docs/instruction-book/features/topics-api.md',
@@ -18,9 +17,9 @@ test('说明书直接Markdown是Brain和镜像运行输入，先于普通文档�
 test('Dashboard共享API features触发前端，服务端和独立组件保持范围', () => {
   for (const path of ['apps/api/features/knowledge/pages/KnowledgeModules.tsx',
     'apps/api/features/knowledge/index.ts', 'apps/api/features/shared/Button.tsx']) {
-    assert.deepEqual(components(planChecks([path])), [...shared.slice(0, -2), 'dashboard', 'ops', 'scripts'], path);
+    assert.deepEqual(components(planChecks([path])), ['dashboard', 'scripts'], path);
   }
-  assert.deepEqual(components(planChecks(['apps/api/src/index.ts'])), shared);
+  assert.deepEqual(components(planChecks(['apps/api/src/index.ts'])), ['scripts']);
   assert.deepEqual(components(planChecks(['apps/android-agent/app/Agent.kt'])), ['android', 'scripts']);
   assert.deepEqual(components(planChecks(['packages/mcp-readonly/server.js'])), ['mcp', 'scripts']);
 });

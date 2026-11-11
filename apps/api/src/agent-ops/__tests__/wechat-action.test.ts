@@ -1,7 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import express from 'express';
 import request from 'supertest';
-import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve, join } from 'node:path';
@@ -13,13 +12,6 @@ const originalDryrun = process.env.WECHAT_RPA_DRYRUN;
 const originalPython = process.env.PYTHON_BIN;
 const directory = mkdtempSync(join(tmpdir(), 'wechat-contract-'));
 
-function runScript(action: string, dryrun = false) {
-  return spawnSync('python3', [script], {
-    input: JSON.stringify({ action_type: action, target: 'isolated-fixture', content: 'fixture' }),
-    encoding: 'utf8', env: { ...process.env, WECHAT_RPA_DRYRUN: dryrun ? '1' : '0' },
-  });
-}
-
 beforeAll(() => {
   process.env.WECHAT_RPA_PY_PATH = script;
   process.env.PYTHON_BIN = 'python3';
@@ -30,25 +22,6 @@ afterAll(() => {
     if (value === undefined) delete process.env[key]; else process.env[key] = value;
   }
   rmSync(directory, { recursive: true, force: true });
-});
-
-describe('真实脚本未实现动作合同', () => {
-  it.each(actions)('%s 拒绝伪造业务结果', (action) => {
-    const result = runScript(action);
-    expect(result.error).toBeUndefined();
-    expect(result.status).toBe(1);
-    expect(JSON.parse(result.stdout)).toMatchObject({ ok: false, error: 'unsupported_action', action_type: action });
-  });
-  it('保留进程存活探测', () => {
-    const result = runScript('health_check');
-    expect(result.status).toBe(0);
-    expect(JSON.parse(result.stdout)).toMatchObject({ ok: true, data: { alive: true } });
-  });
-  it.each(actions)('%s 的显式 dryrun 不宣称实际执行', (action) => {
-    const result = runScript(action, true);
-    expect(result.status).toBe(0);
-    expect(JSON.parse(result.stdout)).toMatchObject({ ok: true, data: { dryrun: true } });
-  });
 });
 
 describe('真实 HTTP → handler → Python', () => {

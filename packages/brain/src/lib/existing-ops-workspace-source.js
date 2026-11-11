@@ -251,7 +251,8 @@ export async function collectWorkspaceInputEdges({ revision, paths, readSource, 
     } });
     }
     const basicCi=await basicCiEnabledAt({paths,readSource,revision,parse});
-    await collectEngineInputs({paths,read,parse,revision,relations,basicCi});
+    const basicProof=[];if(basicCi)await collectBasicCiSources({read,ci:await read(BASIC_CI),revision,relations:basicProof,parse,paths});
+    if(!basicProof.some(row=>row.kind==='dashboard_features_unit_config'))await collectEngineInputs({paths,read,parse,revision,relations,basicCi});
     if(basicCi)await collectBasicDiagnosticInputs({paths,read,parse,revision,relations});
   } catch { unknown(); }
   return relations.map(row => ({ src_path: row.consumer_path, dst_path: row.input_path, edge_type: 'import', detail: {
@@ -299,10 +300,11 @@ function diagnosticCall(tree,kind){
 export async function collectBasicDiagnosticInputs({paths,read,parse,revision,relations}){
  const ci=await read(BASIC_CI),proof=[],skillText=await read(SKILL_SELECTOR);
  await collectBasicCiSources({ci,read,parse,paths,revision,relations:proof});
- if(!proof.some(r=>r.kind==='separate_api_unit_config'))return;
+ const featuresOnly=proof.some(r=>r.kind==='dashboard_features_unit_config');
+ if(!featuresOnly&&!proof.some(r=>r.kind==='separate_api_unit_config'))return;
  const relation=(consumer_path,input_path,kind)=>relations.push({consumer_path,input_path,kind,revision});
  const apiConfig='apps/api/vitest.config.ts',selected=selectors(await read(apiConfig),parse),prefix='apps/api/';
- for(const path of paths.filter(p=>p.startsWith(prefix)&&/\.(?:test|spec)\.(?:ts|tsx)$/.test(p))){
+ for(const path of paths.filter(p=>p.startsWith(prefix)&&(!featuresOnly||p.startsWith(prefix+'features/'))&&/\.(?:test|spec)\.(?:ts|tsx)$/.test(p))){
   const relative=path.slice(prefix.length),parts=relative.split('/');
   if(parts.some(p=>p.startsWith('.')||['node_modules','dist','cypress'].includes(p))||
    /(?:^|\/)(?:karma|rollup|webpack|vite|vitest|jest|ava|babel|nyc|cypress|tsup|build|eslint|prettier)\.config\./.test(relative))continue;
@@ -310,6 +312,7 @@ export async function collectBasicDiagnosticInputs({paths,read,parse,revision,re
   if(!selected.include.some(p=>p.test(relative))||selected.exclude.some(p=>p.test(relative)||ancestors.some(a=>p.test(a))))continue;
   await read(path);relation(apiConfig,path,'literal_workspace_vitest_selector');
  }
+ if(featuresOnly){relation(BASIC_RUNNER,apiConfig,'dashboard_features_unit_config');return;}
  const hasDiagnostics=paths.includes(GOLDSET_TEST)||['a9163321496b5f40a73bfdd3efab18478f3d2da16e3906f413b7f7fb119f4001','ceb3d7f9b2e4dd4e5453580ad9ad6f37979d4ba6748a5500b9f4588fbe563360'].includes(digest(await read(QUALITY_CONFIG)));
  if(!hasDiagnostics){if(paths.includes(IMPACT_WORKFLOW))await collectSourceNodeInputs({read,paths,revision,relations});return;}
  // 默认Quality选择器是Vitest默认include，排除集必须是已审配置及封印的Skill字面量。

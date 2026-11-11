@@ -1,6 +1,8 @@
 /** 派生verification输入的固定Git事实；事实层不授予入口、owner或执行资格。 */
 import {createHash} from 'node:crypto';
 import yaml from 'js-yaml';
+import {planChecks} from './basic-scope.mjs';
+import {domainForTest,domainsForChanges} from './ops-checks.mjs';
 import {parse} from 'acorn';
 import {stripTypeScriptTypes} from 'node:module';
 import {posix} from 'node:path';
@@ -125,6 +127,9 @@ const UNIFIED_BASIC_ENTRY_PROTOCOLS=[UNIFIED_BASIC_ENTRY_SEALS,{...UNIFIED_BASIC
 }];
 const FINAL_JOBS_BASIC_CI='a72f8ef77b55047cce97293c798ae88127378b118e50d22d10df29f69cba2891';
 const FINAL_JOBS_BASIC_ENTRY_PROTOCOLS=[{...UNIFIED_BASIC_ENTRY_SEALS,'scripts/ci/basic-scope.mjs':'1f7ec02042ce35b23753c8be78102febe2d9294f81f98d081bf12fa6c568ce91','scripts/ci/run-basic-check.mjs':'ec107cca3e69e498c84b46b9816ebf3c2f46a713e6eb791e0e0e665ecfb7f3a1','scripts/ci/check-basic-results.mjs':'084cc7187734c0dd83dddb528d87aa16d3ed9a49c3ea0eebf2c97cb4c4775da3','scripts/ci/__tests__/basic-skill-source-coverage.test.mjs':'acc2046d6691423b739edc4071c9ea87f00e57a1a8b7a06be91d5487d24ad2c9','scripts/ci/run-skill-source-check.mjs':'debcaf26aa7025f47d846052e0c2b43d1a04976003936143d80ddac1582d7204'}];
+const FUNCTIONAL_BASIC_CI='5e5df48feb544a49b8bc2f2a3def7cefe0a71b6d9e911caed32e5cae6bf2af88';
+const FUNCTIONAL_BASIC_ENTRY_PROTOCOLS=[{...FINAL_JOBS_BASIC_ENTRY_PROTOCOLS[0],'scripts/ci/basic-scope.mjs':'446605f2052c09c44c21bd2c9f8bcee206b3198be4d18858f1c8298ece0be726','scripts/ci/run-basic-check.mjs':'10e030617fb6ca219bd4965afa2566213f8788bc4e3741d3e7b3d7ebf5e45918','scripts/ci/ops-checks.mjs':'a5eb851d2f526e940432563a70e8a82fb0f128d66a8104515fec530974a55f6b','apps/api/vitest.config.ts':'6f4d8288dd391a8212c1bc22d434f8c4053f76099df2beb692693b1c80512b33','apps/dashboard/vitest.config.ts':'a5899ed07ee4aa8ff262f7da361d695ef8eb26005571c5e09988aac53c1cc261','scripts/ci/__tests__/basic-w19-freeze.test.mjs':'127bfd50494259a78e2f3649c399596fc94acc90a3db17c43077a6ea47cf785a'}];
+const functionalEntry=entry=>entry?.canonical_sha256===FUNCTIONAL_BASIC_CI;
 const UNIT_CONFIGS=[
  {component:'brain',directory:'packages/brain',path:'packages/brain/vitest.config.js'},
  {component:'engine',directory:'packages/engine',path:'packages/engine/vitest.config.ts'},
@@ -132,10 +137,13 @@ const UNIT_CONFIGS=[
  {component:'api',directory:'apps/api',path:'apps/api/vitest.config.ts'},
  {component:'dashboard',directory:'apps/dashboard',path:'apps/dashboard/vitest.config.ts'},
 ];
-function unitConfigs(path){
+function unitConfigs(path,entry){
+ if(functionalEntry(entry)&&path.startsWith('apps/api/'))return path.startsWith('apps/api/features/')?[{...UNIT_CONFIGS.find(c=>c.component==='api'),component:'dashboard'}]:[];
  return UNIT_CONFIGS.filter(c=>path.startsWith(c.directory+'/')||c.component==='brain'&&/^(?:tests|sprints)\//.test(path));
 }
-function componentSelected(profile,component,paths){
+function componentSelected(entry,component,paths){
+ if(functionalEntry(entry))return planChecks(paths).some(row=>row.component===(component==='brain'?'brain-unit':component));
+ const profile=typeof entry==='string'?entry:entry?.profile;
  if(profile==='legacy'){
   if(paths.some(p=>p.startsWith('.github/workflows/')))return true;
   if(component==='dashboard')return false;
@@ -176,11 +184,11 @@ function supportReader(root,source,git){
 function unitEntry(read,side){
  const workflow=read(side,CI);if(!workflow)return null;let doc;
  try{doc=yaml.load(workflow.text);}catch{return null;}
- const signature=sha(JSON.stringify(canonical(doc)));if(![LEGACY_CI,BASIC_CI,QUEUED_BASIC_CI,OWNERSHIP_BASIC_CI,UNIFIED_BASIC_CI,FINAL_JOBS_BASIC_CI].includes(signature))return null;
+ const signature=sha(JSON.stringify(canonical(doc)));if(![LEGACY_CI,BASIC_CI,QUEUED_BASIC_CI,OWNERSHIP_BASIC_CI,UNIFIED_BASIC_CI,FINAL_JOBS_BASIC_CI,FUNCTIONAL_BASIC_CI].includes(signature))return null;
  const support=[workflow.reference];
- if(signature===BASIC_CI||signature===QUEUED_BASIC_CI||signature===OWNERSHIP_BASIC_CI||signature===UNIFIED_BASIC_CI||signature===FINAL_JOBS_BASIC_CI){
+ if(signature===BASIC_CI||signature===QUEUED_BASIC_CI||signature===OWNERSHIP_BASIC_CI||signature===UNIFIED_BASIC_CI||signature===FINAL_JOBS_BASIC_CI||signature===FUNCTIONAL_BASIC_CI){
   let selected;
-  for(const seals of signature===FINAL_JOBS_BASIC_CI?FINAL_JOBS_BASIC_ENTRY_PROTOCOLS:signature===UNIFIED_BASIC_CI?UNIFIED_BASIC_ENTRY_PROTOCOLS:signature===BASIC_CI?BASIC_ENTRY_PROTOCOLS:signature===OWNERSHIP_BASIC_CI?OWNERSHIP_BASIC_ENTRY_PROTOCOLS:QUEUED_BASIC_ENTRY_PROTOCOLS){
+  for(const seals of signature===FUNCTIONAL_BASIC_CI?FUNCTIONAL_BASIC_ENTRY_PROTOCOLS:signature===FINAL_JOBS_BASIC_CI?FINAL_JOBS_BASIC_ENTRY_PROTOCOLS:signature===UNIFIED_BASIC_CI?UNIFIED_BASIC_ENTRY_PROTOCOLS:signature===BASIC_CI?BASIC_ENTRY_PROTOCOLS:signature===OWNERSHIP_BASIC_CI?OWNERSHIP_BASIC_ENTRY_PROTOCOLS:QUEUED_BASIC_ENTRY_PROTOCOLS){
    const files=Object.entries(seals).map(([path,expected])=>({file:read(side,path),expected}));
    if(files.every(({file,expected})=>file?.reference.sha256===expected)){selected=files;break;}
   }
@@ -194,16 +202,24 @@ const PINNED_CI='.github/workflows/skills-source-check.yml';
 function runnerSelector(path,entry,paths){
  if(entry?.profile!=='basic')return null;
  const direct=(directory,regex)=>path.startsWith(directory+'/')&&!path.slice(directory.length+1).includes('/')&&regex.test(path.slice(directory.length+1));
+ if(functionalEntry(entry)){
+  const ops=direct('scripts',/^(?:dispatch-worker.*|brain-image-(?:retention|deploy|rollback).*|bluegreen-sidecar.*|preview-cache.*)\.test\.mjs$/)
+   ||direct('scripts/__tests__',/^(?:bluegreen-|brain-deploy-|preview-|codex-remote-launch|codex-request|dashboard-release).*\.test\.sh$/)
+   ||direct('scripts/__tests__',/^dashboard-release-bind.*\.test\.mjs$/)||direct('scripts/preview-agent/__tests__',/\.test\.mjs$/)
+   ||direct('docker/cecelia-runner/__tests__',/\.test\.(?:cjs|sh)$/)||/^scripts\/ops\/__tests__\/.+\.test\.sh$/.test(path)
+   ||['brain-compose-envfile-authority','brain-deploy-service-isolation','dashboard-sha-reconcile','deploy-chain-wounds','deploy-local-npm-cache','gate3-brain-deploy','runner-credential-single-chain','dashboard-staging-gate'].some(n=>path===`scripts/smoke/${n}-smoke.sh`);
+  if(ops){const domain=domainForTest(path),domains=domainsForChanges(paths);return componentSelected(entry,'ops',paths)&&domain&&(!domains||domains.has(domain))?{component:'ops',kind:'basic_ops_regular_test',owner:'scripts/ci/ops-checks.mjs'}:null;}
+ }
  if(direct('scripts/ci/__tests__',/^(basic-.*|run-basic-check|brain-source-only-deploy)\.test\.mjs$/))return {component:'scripts',kind:'basic_regular_node_test',owner:BASIC_RUNNER};
- if(['unit','integration','integrity'].some(kind=>direct('packages/engine/tests/'+kind,/\.test\.sh$/))&&componentSelected('basic','engine',paths))return {component:'engine',kind:'basic_engine_shell_test',owner:BASIC_RUNNER};
- if(!componentSelected('basic','ops',paths))return null;
+ if(['unit','integration','integrity'].some(kind=>direct('packages/engine/tests/'+kind,/\.test\.sh$/))&&componentSelected(entry,'engine',paths))return {component:'engine',kind:'basic_engine_shell_test',owner:BASIC_RUNNER};
+ if(!componentSelected(entry,'ops',paths))return null;
  if(direct('docker/cecelia-runner/__tests__',/\.test\.(?:cjs|sh)$/)||direct('scripts/__tests__',/^(?:bluegreen-|brain-deploy-|preview-|codex-remote-launch|codex-request).*\.test\.sh$/))return {component:'ops',kind:'basic_ops_regular_test',owner:'scripts/ci/ops-checks.mjs'};
  return null;
 }
 function pinnedSources(read,side){
  const runner=read(side,'scripts/ci/run-skill-source-check.mjs'),skill=read(side,'scripts/ci/skill-source-tests.mjs');
  const entry=unitEntry(read,side);
- if([UNIFIED_BASIC_CI,FINAL_JOBS_BASIC_CI].includes(entry?.canonical_sha256)) return {workflow:read(side,CI),runner,skill};
+ if([UNIFIED_BASIC_CI,FINAL_JOBS_BASIC_CI,FUNCTIONAL_BASIC_CI].includes(entry?.canonical_sha256)) return {workflow:read(side,CI),runner,skill,...(functionalEntry(entry)?{components:['brain','root']}: {})};
  const workflow=read(side,PINNED_CI);
  if(!workflow||!runner||!skill||runner.reference.sha256!=='debcaf26aa7025f47d846052e0c2b43d1a04976003936143d80ddac1582d7204'
   ||skill.reference.sha256!=='1daf4f27f6fa97b3c8f3d9a9e1a9e86e44fbe92b84c962d1c2ce3b90db32b147')return null;
@@ -219,7 +235,7 @@ function pinnedBaseConfiguration(read,side,component,path){
 function pinnedSelector(read,side,path){
  const sources=pinnedSources(read,side);if(!sources)return null;const {workflow,runner,skill}=sources;
  const component=path.startsWith('packages/brain/')?'brain':path.startsWith('packages/engine/')?'engine':path.startsWith('packages/quality/')?'quality':path.startsWith('tests/')?'root':null;
- if(!component)return null;const base=pinnedBaseConfiguration(read,side,component,path);if(!base)return null;const config=read(side,(component==='root'?'':`packages/${component}/`)+'vitest.skill-source.config.mjs');if(!config)return null;
+ if(!component||sources.components&&!sources.components.includes(component))return null;const base=pinnedBaseConfiguration(read,side,component,path);if(!base)return null;const config=read(side,(component==='root'?'':`packages/${component}/`)+'vitest.skill-source.config.mjs');if(!config)return null;
  let selected;try{selected=selectPinnedSkillVerificationInput({filePath:path,configPath:config.reference.path,configText:config.text,skillText:skill.text,component});}catch{return null;}
  if(!selected.selected)return null;
  return {witness:{kind:'pinned_skill_config_input',component,...base,workflow:workflow.reference,runner:runner.reference,skill_selector:skill.reference,config:config.reference,selector:selected.witness},
@@ -237,7 +253,7 @@ function configurationInput(read,side,path,entry){
  const pinned=pinnedSources(read,side);if(!pinned)return null;
  if(path==='scripts/ci/run-skill-source-check.mjs')return {witness:{kind:'pinned_contract_runner_input',workflow:pinned.workflow.reference,runner:pinned.runner.reference},eligible_owner_paths:[PINNED_CI]};
  const component={'packages/brain/vitest.skill-source.config.mjs':'brain','packages/engine/vitest.skill-source.config.mjs':'engine','packages/quality/vitest.skill-source.config.mjs':'quality','vitest.skill-source.config.mjs':'root'}[path];
- if(!component)return null;const base=pinnedBaseConfiguration(read,side,component,(component==='root'?'tests/':`packages/${component}/`)+'unselected.test.js');if(!base)return null;const config=read(side,path);
+ if(!component||pinned.components&&!pinned.components.includes(component))return null;const base=pinnedBaseConfiguration(read,side,component,(component==='root'?'tests/':`packages/${component}/`)+'unselected.test.js');if(!base)return null;const config=read(side,path);
  try{selectPinnedSkillVerificationInput({filePath:(component==='root'?'tests/':`packages/${component}/`)+ 'unselected.test.js',configPath:path,configText:config.text,skillText:pinned.skill.text,component});}catch{return null;}
  return {witness:{kind:'pinned_config_reference_input',...base,workflow:pinned.workflow.reference,runner:pinned.runner.reference,skill_selector:pinned.skill.reference,config:config.reference},eligible_owner_paths:['scripts/ci/run-skill-source-check.mjs',PINNED_CI]};
 }
@@ -258,8 +274,8 @@ function selectedReader(read,side,path,entry,paths){
  if(pinned)return {...pinned,reader:body};
  if(direct)return {reader:body,witness:{kind:direct.kind,entry},eligible_owner_paths:[direct.owner,BASIC_RUNNER,CI]};
  if(!entry)return null;
- for(const config of unitConfigs(path)){
-  if(!componentSelected(entry.profile,config.component,paths))continue;
+ for(const config of unitConfigs(path,entry)){
+  if(!componentSelected(entry,config.component,paths))continue;
   const file=read(side,config.path),package_entry=packageUnitEntry(read,side,entry,config);if(!file||!package_entry)continue;
   const skill=file.text.includes('skillSourceExcludes')?read(side,'scripts/ci/skill-source-tests.mjs'):null;
   try{
@@ -329,7 +345,7 @@ export function collectVerificationInputEvidence(root,{source,purpose='admission
   for(const path of paths.filter(p=>verificationInputKind(p))){
    const input_facts=fixedInputFacts(root,{source,side,path,purpose,allowMissing:true},git);
    if(!input_facts){states.push({path,side,selection_state:'absent'});continue;}
-   const configs=unitConfigs(path);let reason=entry?'not_selected':'entry_unproven';
+   const configs=unitConfigs(path,entry);let reason=entry?'not_selected':'entry_unproven';
    const direct=runnerSelector(path,entry,paths),pinned=pinnedSelector(read,side,path)||configurationInput(read,side,path,entry)||securityInput(path,entry)||importedHelper(read,side,path,entry,paths,readerPaths[side])||auditedToolReader(read,side,path,entry,paths);
    if(direct||pinned){
     const evidence=pinned||{witness:{kind:direct.kind,component:direct.component,entry,selector:{path,regular_file:true}},eligible_owner_paths:[direct.owner,BASIC_RUNNER,CI]};
@@ -337,7 +353,7 @@ export function collectVerificationInputEvidence(root,{source,purpose='admission
     rows.push({...row,input_witness_sha256:sha(JSON.stringify(canonical(row)))});reason='selected';
    }
    if(entry)for(const config of configs){
-    if(!componentSelected(entry.profile,config.component,paths)){reason='component_not_selected';continue;}
+    if(!componentSelected(entry,config.component,paths)){reason='component_not_selected';continue;}
     const file=read(side,config.path);if(!file){reason='config_missing';continue;}
     const package_entry=packageUnitEntry(read,side,entry,config);if(!package_entry){reason='package_entry_unproven';continue;}
     const skill=file.text.includes('skillSourceExcludes')?read(side,'scripts/ci/skill-source-tests.mjs'):null;let selected;

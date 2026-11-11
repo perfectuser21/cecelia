@@ -4,9 +4,15 @@ import { planChecks } from '../../../../scripts/ci/basic-scope.mjs';
 import brainConfig from '../../vitest.config.js';
 const detectsBrain = files => planChecks(files).some(row => row.component === 'brain-unit');
 describe('CI Brain 组件选择', () => {
-  it('真实 Brain 源码与跨包 Engine/API 变更均运行 Brain 测试', () => {
-    for (const file of ['packages/brain/src/routes/harness.js', 'packages/engine/src/index.ts', 'apps/api/src/server.ts'])
+  it('真实 Brain 源码与未分类跨包变更运行 Brain 测试', () => {
+    for (const file of ['packages/brain/src/routes/harness.js', 'packages/engine/src/index.ts'])
       expect(detectsBrain([file])).toBe(true);
+  });
+  it('旧API服务不再触发Brain，现役共享features归Dashboard', () => {
+    for (const file of ['apps/api/src/server.ts', 'apps/api/tests/legacy.test.ts'])
+      expect(planChecks([file])).toEqual([{component: 'scripts'}]);
+    expect(planChecks(['apps/api/features/navigation.ts']))
+      .toEqual([{component: 'dashboard'}, {component: 'scripts'}]);
   });
   it('未知 Sprint 可执行文件不能当文档忽略，但不恢复旧 sprint 测试收集', () => {
     expect(detectsBrain(['sprints/x/tests/y.spec.ts'])).toBe(true);
