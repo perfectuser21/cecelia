@@ -45,6 +45,17 @@ test('Azure Ubuntu URIs use the official security archive for security suites', 
     stanza('noble-security', 'https://security.ubuntu.com/ubuntu'));
 });
 
+test('direct Ubuntu archive domains are replaced without changing Ubuntu signing or suites', () => {
+  const primary = stanza('noble noble-updates noble-backports', 'https://archive.ubuntu.com/ubuntu');
+  const security = stanza('noble-security', 'https://security.ubuntu.com/ubuntu');
+  const input = primary + '\n' + security + '\n' + thirdParty;
+  const actual = prepareUbuntuSources(input);
+  assert.equal(actual, primary.replace('https://archive.ubuntu.com/ubuntu', 'https://mirrors.edge.kernel.org/ubuntu')
+    + '\n' + security.replace('https://security.ubuntu.com/ubuntu', 'https://mirrors.edge.kernel.org/ubuntu')
+    + '\n' + thirdParty);
+  assert.equal(prepareUbuntuSources(actual), actual);
+});
+
 test('Windows line endings and comments are retained', () => {
   const input = ('# Ubuntu archive\n' + stanza('noble')).replaceAll('\n', '\r\n');
   assert.equal(prepareUbuntuSources(input), input.replace('mirror+file:/etc/apt/apt-mirrors.txt', 'https://archive.ubuntu.com/ubuntu'));
