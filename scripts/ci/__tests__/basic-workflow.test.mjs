@@ -128,6 +128,11 @@ test('统一CI真实合并runner，保持独有命令和产物并隔离安全权
   assert.equal(runtime.steps.filter(step => step.run === 'npm ci').length, 1);
   assert.equal(runtime.steps.some(step => step['continue-on-error']), false);
   const browser=structuredClone(workflow.jobs['pwa-upgrade']);
+  const preparation=browser.steps.filter(step=>step.name==='Prepare Ubuntu package sources');
+  assert.deepEqual(preparation,[{name:'Prepare Ubuntu package sources',run:'node scripts/ci/prepare-ubuntu-archive.mjs','working-directory':'.'}]);
+  const preparationIndex=browser.steps.indexOf(preparation[0]);
+  assert.equal(browser.steps[preparationIndex+1]?.name,'Install Chromium');
+  browser.steps.splice(preparationIndex,1);
   browser.name=baseline.jobs['pwa-upgrade'].name;
   assert.deepEqual(browser, baseline.jobs['pwa-upgrade']);
   assert.equal(workflow.jobs['pwa-upgrade'].name, 'Browser regression (Chromium)');

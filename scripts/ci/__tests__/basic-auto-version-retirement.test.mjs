@@ -68,6 +68,14 @@ test('新版主CI版本门具备固定整组来源闭包；历史组合保留且
   assert.equal(basicCiWorkflowProven(ci), true);
   const collect = (readSource = source.readSource) => collectBasicCiSources({ ...source, read: readSource, ci, relations, parse: ast });
   await collect();
+  assert.ok(relations.some(edge=>edge.consumer_path==='.github/workflows/ci.yml'&&edge.input_path==='scripts/ci/prepare-ubuntu-archive.mjs'&&edge.kind==='official_ubuntu_archive_preparation'));
+  assert.ok(relations.some(edge=>edge.consumer_path==='scripts/ci/run-basic-check.mjs'&&edge.input_path==='apps/api/vitest.config.ts'&&edge.kind==='dashboard_features_unit_config'));
+  const priorArchive='a93131fc84e983f6586fa220a8e24ced13d9360d';
+  await collectBasicCiSources({revision:priorArchive,paths:git('ls-tree','-rz','--name-only',priorArchive).split('\0').filter(Boolean),
+    read:async path=>git('show',`${priorArchive}:${path}`),ci:git('show',`${priorArchive}:.github/workflows/ci.yml`),relations:[],parse:ast});
+  for(const changed of ['scripts/ci/prepare-ubuntu-archive.mjs','scripts/ci/__tests__/basic-ubuntu-archive.test.mjs']) {
+    await assert.rejects(collect(async path=>(await source.readSource(path))+(path===changed?'\n// unreviewed drift\n':'')),/basic_ci_source_unproven/);
+  }
   // 从已合并main读取完整历史组，不能拿旧Brain配置与新身份门工作流拼成旧证明。
   const historical = '53714060cd53adb9b1247c05bde23e7667cd8fb4';
   await collectBasicCiSources({ revision: historical,

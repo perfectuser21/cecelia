@@ -20,15 +20,20 @@ const failedResult = (input, reason, strict) => ({ schema_version: 1, run_tag: i
 export async function runActivityContract(contract, input, {
   cwd = process.cwd(), signal, onEvent = async () => {}, prepareInput = async (_activity, value) => value,
   executeActivity = callActivityProcess, recoverActivity, checkActivity, commander,
-  canFinalize, isExecutionUnknown = unknownExecution,
+  canFinalize, isExecutionUnknown = unknownExecution, checkpoint, resume,
 } = {}) {
   const plan = parseActivityContract(contract);
+  if (resume && (plan.activities.length !== 1 || plan.activities[0].runtime.phase !== 'source'
+    || plan.activities[0].runtime.interactive === true || resume.attempt !== 1
+    || !object(resume.context) || !object(resume.preparedInput) || !Array.isArray(resume.receipt?.activities)
+    || resume.receipt.activities.length !== 1 || resume.receipt.activities[0].key !== plan.activities[0].key
+    || resume.receipt.activities[0].status !== 'running' || resume.receipt.activities[0].attempts.length !== 0)) throw new Error('activity_resume_invalid');
   if (!object(input) || typeof input.run_tag !== 'string' || !input.run_tag.trim()) throw new Error('run_tag_required');
-  const original = structuredClone(input), context = structuredClone(input);
+  const original = structuredClone(input), context = structuredClone(resume?.context ?? input);
   const strict = Boolean(checkActivity || commander || contract.on_status || contract.activities.some(a => a.runtime.on_status || a.on_status));
-  const receipt = { schema_version: 1, workflow: plan.workflow, run_tag: input.run_tag,
+  const receipt = resume ? structuredClone(resume.receipt) : { schema_version: 1, workflow: plan.workflow, run_tag: input.run_tag,
     status: 'running', outputs: {}, metrics: {}, evidence: [], activities: [] };
-  let cursor = 0, failed = false, productive = false, stopped = false, needsReview = false;
+  let cursor = resume?.cursor ?? 0, failed = false, productive = false, stopped = false, needsReview = false;
   const emit = async (event_type, payload = {}) => {
     const event = { cursor: ++cursor, event_type, run_tag: input.run_tag, ...payload };
     try { await onEvent(event, structuredClone(receipt)); return true; }
@@ -67,14 +72,14 @@ export async function runActivityContract(contract, input, {
 
   async function execute(a, grouping = null, item = null) {
     if (a.runtime.detached) { await emit('ACTIVITY_SKIPPED', {activity: a.key, reason_code: 'detached'}); return; }
-    const record = { key: a.key, order: a.order, item: grouping ? item[grouping.identity] : null, status: 'running', attempts: [],
+    const record = resume ? receipt.activities[0] : { key: a.key, order: a.order, item: grouping ? item[grouping.identity] : null, status: 'running', attempts: [],
       commander_interventions: 0, commander_status: commander?.status ?? 'unavailable', rescued: false, code_failures: 0, skill_rescues: 0, validator_verdict: {verdict: 'unknown', reason: 'check_not_configured'}, checks: [] };
-    receipt.activities.push(record);
+    if (!resume) receipt.activities.push(record);
     const roots = {...snapshot(), item};
     if (grouping?.when && readActivityPath(grouping.when.path, roots) !== grouping.when.equals) {
       record.status = 'skipped'; await emit('ACTIVITY_SKIPPED', {activity: a.key, item: record.item, reason_code: 'condition_unmatched'}); return;
     }
-    let deadline = Date.now() + a.budget.max_duration_s * 1000;
+    let deadline = resume?.deadline ?? Date.now() + a.budget.max_duration_s * 1000;
     const observe = async event => {
       const began = Date.now();
       try {return await notify(a, event, a.runtime.executor_kind ?? 'code');}
@@ -103,10 +108,12 @@ export async function runActivityContract(contract, input, {
       return verdict;
     };
     while (true) {
-      attempt++;
-      let activityInput, result, transport, boundaryResult, check, checked = false;
+      attempt = resume?.attempt ?? attempt + 1;
+      let activityInput, result, transport, boundaryResult, check, checked = false, guidance = [];
       const recovering = nextRecovery; nextRecovery = false;
       try {
+        if (resume) activityInput = structuredClone(resume.preparedInput);
+        else {
         activityInput = a.runtime.input ? Object.fromEntries(Object.entries(a.runtime.input).map(([key, path]) => {
           const value = readActivityPath(path, roots); if (value === undefined) throw new Error('activity_input_path_missing'); return [key, structuredClone(value)];
         })) : structuredClone(context);
@@ -115,22 +122,24 @@ export async function runActivityContract(contract, input, {
         activityInput.remaining_duration_s = Math.max(0.001, (deadline - Date.now()) / 1000);
         activityInput.attempt = attempt;
         activityInput = await prepareInput(a, activityInput);
-        const guidance = commander?.takeGuidance?.(a.key) ?? [];
+        guidance = commander?.takeGuidance?.(a.key) ?? [];
         if (guidance.length) activityInput.commander_guidance = guidance;
         if (recovering) activityInput.recovery_mode = lastResult.external_effect === 'unknown' ? 'readback_only' : 'repair';
-        const start = await runCheck('start', null, activityInput);
+        }
+        const start = resume ? {verdict:'pass'} : await runCheck('start', null, activityInput);
         if (start.verdict !== 'pass' && a.runtime.phase !== 'finalize') {
           result = failedResult(activityInput, 'activity_precondition_unconfirmed', true); check = start;
         } else {
           if (aborted(a) && a.runtime.phase !== 'finalize') throw new Error('commander_aborted');
           if (deadline <= Date.now()) throw new Error('activity_budget_exhausted');
-          const recorded = await emit('ACTIVITY_STARTED', {activity: a.key, item: record.item, attempt, recovery: recovering, budget: a.budget, input: activityInput});
+          const recorded = resume ? true : await emit('ACTIVITY_STARTED', {activity: a.key, item: record.item, attempt, recovery: recovering, budget: a.budget, input: activityInput});
           if (!recorded && a.runtime.phase !== 'finalize') throw new Error('event_sink_failed');
           const kind = recovering ? 'agent' : a.runtime.executor_kind ?? (activityInput.skill ? 'agent' : 'code');
           const opts = {cwd, signal: a.runtime.phase === 'finalize' ? undefined : signal,
             onHeartbeat: async details => { if (!await emit('ACTIVITY_HEARTBEAT', {activity: a.key, item: record.item, attempt, ...details})) throw new Error('event_sink_failed'); },
             onAgentEvent: async event => { await emit('ACTIVITY_AGENT_EVENT', {activity: a.key, item: record.item, attempt, event}); return notify(a, event, kind); }};
           const remaining = {...a, budget: {...a.budget, max_duration_s: Math.max(0.001, (deadline - Date.now()) / 1000)}};
+          if (!resume) await checkpoint?.({preparedInput:activityInput,receipt:structuredClone(receipt),context:structuredClone(context),attempt,deadline,cursor});
           const raw = recovering ? await recoverActivity(remaining, activityInput, {...opts, failure: lastResult, guidance, remaining_ms: deadline - Date.now()})
             : await executeActivity(remaining, activityInput, opts);
           transport = object(raw) && typeof raw.stdout === 'string' ? raw : null;
@@ -172,7 +181,7 @@ export async function runActivityContract(contract, input, {
         result.status = record.status = lastResult.status = 'needs_review'; result.failure_class = lastResult.failure_class = 'needs_human';
         status = record.business_status = 'needs_review';
       }
-      if (checked && check.verdict !== 'pass' && !recoveryUsed && recoverActivity && a.runtime.recovery_safe === true
+      if (!resume && checked && check.verdict !== 'pass' && !recoveryUsed && recoverActivity && a.runtime.recovery_safe === true
         && a.runtime.phase !== 'finalize' && !receipt.execution_unknown && !aborted(a) && !signal?.aborted && !stopped && deadline > Date.now()) {
         recoveryUsed = true;
         let action;
@@ -191,7 +200,7 @@ export async function runActivityContract(contract, input, {
         const declared = result.failure_class === 'needs_human' ? a.failure.needs_human.cases : a.failure[result.failure_class];
         if (!declared?.length) {record.reason_code = 'undeclared_failure_class'; failed = true; stopped = true; break;}
       }
-      if (route === 'retry' && !recovering && !receipt.execution_unknown && result.external_effect !== 'unknown'
+      if (!resume && route === 'retry' && !recovering && !receipt.execution_unknown && result.external_effect !== 'unknown'
         && !aborted(a) && !signal?.aborted && !stopped && attempt < (a.runtime.max_attempts ?? 1)
         && (!strict || a.runtime.retry_safe === true) && deadline > Date.now()) continue;
       if (route === 'pause' || status === 'needs_review' || route === 'retry') {
@@ -206,7 +215,7 @@ export async function runActivityContract(contract, input, {
     if (a.runtime.phase !== 'finalize' && record.attempts.some(row => hasProducts(row.outputs))) productive = true;
   }
 
-  await emit('WF_RUN_STARTED', {workflow: plan.workflow});
+  if (!resume) await emit('WF_RUN_STARTED', {workflow: plan.workflow});
   const main = plan.activities.filter(a => a.runtime.phase !== 'finalize');
   try {
     for (let i = 0; i < main.length && !stopped; i++) {

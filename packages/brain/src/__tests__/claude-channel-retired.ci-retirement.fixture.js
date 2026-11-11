@@ -43,6 +43,7 @@ export function ciVersionGuardCohorts(previous) {
  const innerCiPruneTuple={...nightlyWalkingRetirementTuple,'existing-ops-stage-source.js':'5a57cd1cfed93406adb34d9fdd6c969f51159427d0ff9165582ff328a41dbc19'};
  const finalCiJobsTuple={...innerCiPruneTuple,'existing-ops-stage-source.js':'0f65a1a9aa0ec2e96209453591c644a2fcef97bc6b5b174b91e4213d415a3e3d'};
  const functionalTuple={...finalCiJobsTuple,'existing-ops-stage-source.js':'22058669e41acf92cc5f9bb56a8ecb9f6c36574d4e56841be7f70662e86b5900','existing-ops-workspace-source.js':'c99e64e58761c690961250879f3c5ecdc755d7efba6eb53aa5f8b0e23ae0b332'};
+ const ubuntuMirrorTuple={...functionalTuple,'existing-ops-stage-source.js':'b52acd0b5aeaaa19bcf07194ee2408a6d78db546b80f3f979a267bde5f52770c'};
  return [current,{...current,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
   retired,{...retired,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
   identity,{...identity,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
@@ -64,7 +65,8 @@ export function ciVersionGuardCohorts(previous) {
   nightlyWalkingRetirementTuple,{...nightlyWalkingRetirementTuple,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
   innerCiPruneTuple,{...innerCiPruneTuple,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
   finalCiJobsTuple,{...finalCiJobsTuple,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
-  functionalTuple,{...functionalTuple,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'}];
+  functionalTuple,{...functionalTuple,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
+  ubuntuMirrorTuple,{...ubuntuMirrorTuple,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'}];
 }
 
 export function registerCiRetirementGuardTests({root,base,memoBase,scan}) {
@@ -74,6 +76,29 @@ export function registerCiRetirementGuardTests({root,base,memoBase,scan}) {
   const historical=()=>new Map([...base().keys()].map(file=>[file,execFileSync('git',[
    '--no-replace-objects','show','fadbf32852cdb30f71e34dda9ab81b521bda484b:'+path.relative(path.resolve(root,'../../../..'),file),
   ],{cwd:root,encoding:'utf8',maxBuffer:1024*1024})]));
+  it('Ubuntu签名镜像的完整只读cohort及原functional完整组均保留marker0/1资格',()=>{
+   const previous=base(),stage=path.join(root,'existing-ops-stage-source.js');
+   previous.set(stage,execFileSync('git',['--no-replace-objects','show',
+    'cbb510946d9f83a356f43de9df2888e080346296:packages/brain/src/lib/existing-ops-stage-source.js'],{cwd:root,encoding:'utf8',maxBuffer:1024*1024}));
+   for(const sources of [previous,base()])for(const marker of [0,1]){
+    expect(sources.size).toBe(16);
+    sources.set(source,sources.get(source).replace(/EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = [01]/,'EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = '+marker));
+    for(const kind of ['build','stage','native-evidence'])expect(scan(sources,path.join(root,`existing-ops-${kind}-envelopes.js`))).toEqual([]);
+   }
+  });
+  it('新镜像stage不得混入历史workspace单成员',()=>{
+   const changed=base(),workspace=path.join(root,'existing-ops-workspace-source.js');
+   changed.set(workspace,historical().get(workspace));
+   expect(scan(changed).some(hit=>hit.rule==='E1')).toBe(true);
+  });
+  it.each(['unknown','eval','spawn'])('新镜像stage的%s突变不得继承只读资格',kind=>{
+   const changed=base(),stage=path.join(root,'existing-ops-stage-source.js');
+   const mutation=kind==='unknown'?'\nexport const unknownArchiveReader=true;'
+    :kind==='eval'?'\neval(candidate);':"\nimport {spawn as launchArchiveProbe} from 'node:child_process';launchArchiveProbe('claude',['-p','probe']);";
+   changed.set(stage,changed.get(stage)+mutation);
+   expect(scan(changed).some(hit=>hit.rule==='E1')).toBe(true);
+   if(kind==='spawn')expect(scan(changed,stage).some(hit=>hit.rule==='R1')).toBe(true);
+  });
   it('真实版本增量门当前完整reader可读，发布前旧AutoVersion reader仍独立可重放',()=>{
    for(const sources of [historical(),base()])for(const marker of [0,1]){
     sources.set(source,sources.get(source).replace(/EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = [01]/,

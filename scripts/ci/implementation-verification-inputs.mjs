@@ -129,7 +129,12 @@ const FINAL_JOBS_BASIC_CI='a72f8ef77b55047cce97293c798ae88127378b118e50d22d10df2
 const FINAL_JOBS_BASIC_ENTRY_PROTOCOLS=[{...UNIFIED_BASIC_ENTRY_SEALS,'scripts/ci/basic-scope.mjs':'1f7ec02042ce35b23753c8be78102febe2d9294f81f98d081bf12fa6c568ce91','scripts/ci/run-basic-check.mjs':'ec107cca3e69e498c84b46b9816ebf3c2f46a713e6eb791e0e0e665ecfb7f3a1','scripts/ci/check-basic-results.mjs':'084cc7187734c0dd83dddb528d87aa16d3ed9a49c3ea0eebf2c97cb4c4775da3','scripts/ci/__tests__/basic-skill-source-coverage.test.mjs':'acc2046d6691423b739edc4071c9ea87f00e57a1a8b7a06be91d5487d24ad2c9','scripts/ci/run-skill-source-check.mjs':'debcaf26aa7025f47d846052e0c2b43d1a04976003936143d80ddac1582d7204'}];
 const FUNCTIONAL_BASIC_CI='5e5df48feb544a49b8bc2f2a3def7cefe0a71b6d9e911caed32e5cae6bf2af88';
 const FUNCTIONAL_BASIC_ENTRY_PROTOCOLS=[{...FINAL_JOBS_BASIC_ENTRY_PROTOCOLS[0],'scripts/ci/basic-scope.mjs':'446605f2052c09c44c21bd2c9f8bcee206b3198be4d18858f1c8298ece0be726','scripts/ci/run-basic-check.mjs':'10e030617fb6ca219bd4965afa2566213f8788bc4e3741d3e7b3d7ebf5e45918','scripts/ci/ops-checks.mjs':'a5eb851d2f526e940432563a70e8a82fb0f128d66a8104515fec530974a55f6b','apps/api/vitest.config.ts':'6f4d8288dd391a8212c1bc22d434f8c4053f76099df2beb692693b1c80512b33','apps/dashboard/vitest.config.ts':'a5899ed07ee4aa8ff262f7da361d695ef8eb26005571c5e09988aac53c1cc261','scripts/ci/__tests__/basic-w19-freeze.test.mjs':'127bfd50494259a78e2f3649c399596fc94acc90a3db17c43077a6ea47cf785a'}];
-const functionalEntry=entry=>entry?.canonical_sha256===FUNCTIONAL_BASIC_CI;
+const UBUNTU_ARCHIVE_BASIC_CI='3636a0489fdc4ce2d9a362db0d635774b13f222d8c3d14939751460a2637faa7';
+const UBUNTU_ARCHIVE_BASIC_ENTRY_PROTOCOLS=[{...FUNCTIONAL_BASIC_ENTRY_PROTOCOLS[0],
+ 'scripts/ci/prepare-ubuntu-archive.mjs':'ca83d00df2f865fc1836e0f8841bc5f4ba7ddf57416b6f718855f5840205311b',
+ 'scripts/ci/__tests__/basic-ubuntu-archive.test.mjs':'525456457c116c91aba038f35916352abed5ec38a0aa7c5287fd263ef9ffb175',
+}];
+const functionalEntry=entry=>[FUNCTIONAL_BASIC_CI,UBUNTU_ARCHIVE_BASIC_CI].includes(entry?.canonical_sha256);
 const UNIT_CONFIGS=[
  {component:'brain',directory:'packages/brain',path:'packages/brain/vitest.config.js'},
  {component:'engine',directory:'packages/engine',path:'packages/engine/vitest.config.ts'},
@@ -184,11 +189,11 @@ function supportReader(root,source,git){
 function unitEntry(read,side){
  const workflow=read(side,CI);if(!workflow)return null;let doc;
  try{doc=yaml.load(workflow.text);}catch{return null;}
- const signature=sha(JSON.stringify(canonical(doc)));if(![LEGACY_CI,BASIC_CI,QUEUED_BASIC_CI,OWNERSHIP_BASIC_CI,UNIFIED_BASIC_CI,FINAL_JOBS_BASIC_CI,FUNCTIONAL_BASIC_CI].includes(signature))return null;
+ const signature=sha(JSON.stringify(canonical(doc)));if(![LEGACY_CI,BASIC_CI,QUEUED_BASIC_CI,OWNERSHIP_BASIC_CI,UNIFIED_BASIC_CI,FINAL_JOBS_BASIC_CI,FUNCTIONAL_BASIC_CI,UBUNTU_ARCHIVE_BASIC_CI].includes(signature))return null;
  const support=[workflow.reference];
- if(signature===BASIC_CI||signature===QUEUED_BASIC_CI||signature===OWNERSHIP_BASIC_CI||signature===UNIFIED_BASIC_CI||signature===FINAL_JOBS_BASIC_CI||signature===FUNCTIONAL_BASIC_CI){
+ if(signature===UBUNTU_ARCHIVE_BASIC_CI||signature===BASIC_CI||signature===QUEUED_BASIC_CI||signature===OWNERSHIP_BASIC_CI||signature===UNIFIED_BASIC_CI||signature===FINAL_JOBS_BASIC_CI||signature===FUNCTIONAL_BASIC_CI){
   let selected;
-  for(const seals of signature===FUNCTIONAL_BASIC_CI?FUNCTIONAL_BASIC_ENTRY_PROTOCOLS:signature===FINAL_JOBS_BASIC_CI?FINAL_JOBS_BASIC_ENTRY_PROTOCOLS:signature===UNIFIED_BASIC_CI?UNIFIED_BASIC_ENTRY_PROTOCOLS:signature===BASIC_CI?BASIC_ENTRY_PROTOCOLS:signature===OWNERSHIP_BASIC_CI?OWNERSHIP_BASIC_ENTRY_PROTOCOLS:QUEUED_BASIC_ENTRY_PROTOCOLS){
+  for(const seals of signature===UBUNTU_ARCHIVE_BASIC_CI?UBUNTU_ARCHIVE_BASIC_ENTRY_PROTOCOLS:signature===FUNCTIONAL_BASIC_CI?FUNCTIONAL_BASIC_ENTRY_PROTOCOLS:signature===FINAL_JOBS_BASIC_CI?FINAL_JOBS_BASIC_ENTRY_PROTOCOLS:signature===UNIFIED_BASIC_CI?UNIFIED_BASIC_ENTRY_PROTOCOLS:signature===BASIC_CI?BASIC_ENTRY_PROTOCOLS:signature===OWNERSHIP_BASIC_CI?OWNERSHIP_BASIC_ENTRY_PROTOCOLS:QUEUED_BASIC_ENTRY_PROTOCOLS){
    const files=Object.entries(seals).map(([path,expected])=>({file:read(side,path),expected}));
    if(files.every(({file,expected})=>file?.reference.sha256===expected)){selected=files;break;}
   }
