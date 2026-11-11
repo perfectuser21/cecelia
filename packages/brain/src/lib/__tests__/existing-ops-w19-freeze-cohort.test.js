@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { parse } from 'acorn';
 import { collectBasicCiSources } from '../existing-ops-stage-source.js';
+import { collectWorkspaceInputEdges } from '../existing-ops-workspace-source.js';
 import { readFixedExistingOpsGitFixture } from './helpers/fixed-existing-ops-git-fixture.js';
 
 const baseline = readFixedExistingOpsGitFixture('289ddd8d0690f154006c5586926277c48e10f716');
@@ -13,7 +14,7 @@ const actual = path => readFileSync(new URL(path, root), 'utf8');
 const members = ['packages/brain/vitest.config.js', 'scripts/ci/basic-scope.mjs',
   'scripts/ci/run-basic-check.mjs', 'scripts/ci/check-basic-results.mjs', 'scripts/ci/basic-runtime-smoke.mjs',
   'scripts/ci/ops-checks.mjs', 'scripts/ci/run-isolated-staging-smoke.mjs', 'scripts/ci/skill-source-tests.mjs',
-  'apps/api/vitest.config.ts', 'scripts/ci/run-skill-source-check.mjs',
+  'apps/api/vitest.config.ts', 'apps/dashboard/vitest.config.ts', 'scripts/ci/run-skill-source-check.mjs',
   'scripts/ci/__tests__/basic-skill-source-coverage.test.mjs', '.github/workflows/ci.yml',
   'scripts/ci/check-brain-version-bump.sh', '.github/actions/skills-source/action.yml',
   'scripts/ci/check-skill-source-identity.py', 'scripts/ci/__tests__/basic-skill-identity.test.mjs', checker, regression,
@@ -42,7 +43,7 @@ it('当前完整新组认领真实冻结门与历史输入，不声明旧算术�
   expect(edges).toContainEqual(expect.objectContaining({ input_path: checker, kind: 'historical_w19_freeze_guard' }));
   expect(edges).toContainEqual(expect.objectContaining({ consumer_path: checker,
     input_path: 'playground/server.js', kind: 'frozen_historical_w19_input' }));
-  expect(edges).toContainEqual(expect.objectContaining({ input_path: 'apps/api/vitest.config.ts', kind: 'separate_api_unit_config' }));
+  expect(edges).toContainEqual(expect.objectContaining({ input_path: 'apps/api/vitest.config.ts', kind: 'dashboard_features_unit_config' }));
   expect(edges.some(edge => ['isolated_api_postgres_config', 'literal_api_postgres_selector'].includes(edge.kind))).toBe(false);
 });
 for (const path of members) {
@@ -69,4 +70,13 @@ it('Bark 清退前的已合 main 完整来源组仍独立可回放', async () =>
     parse: text => parse(text, { ecmaVersion: 'latest', sourceType: 'module' }), paths: old.paths });
   expect(edges).toContainEqual(expect.objectContaining({ input_path: 'scripts/ci/ops-checks.mjs',
     kind: 'reviewed_basic_ci_named_call' }));
+});
+
+it('当前来源图只登记Dashboard的实际features，旧API和Engine不继承自动消费者资格', async () => {
+ const edges=await collectWorkspaceInputEdges({revision:'a'.repeat(40),paths,readSource:async path=>actual(path),parse:text=>parse(text,{ecmaVersion:'latest',sourceType:'module'})});
+ const selected=paths.filter(path=>path.startsWith('apps/api/features/')&&/\.(?:test|spec)\.(?:ts|tsx)$/.test(path));
+ expect(selected.length).toBeGreaterThan(0);
+ for(const path of selected)expect(edges).toContainEqual(expect.objectContaining({src_path:'apps/api/vitest.config.ts',dst_path:path}));
+ expect(edges.some(edge=>/^apps\/api\/(?:src|tests)\//.test(edge.dst_path))).toBe(false);
+ expect(edges.some(edge=>edge.src_path==='packages/engine/vitest.config.ts'||edge.dst_path==='packages/engine/vitest.config.ts')).toBe(false);
 });

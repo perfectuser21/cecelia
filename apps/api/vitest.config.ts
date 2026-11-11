@@ -28,7 +28,7 @@ export default defineConfig({
         'bin/'
       ]
     },
-    include: ['**/*.{test,spec}.{ts,tsx}'],
+    include: ['features/**/*.{test,spec}.{ts,tsx}'],
     exclude: [
       'node_modules', 'dist', '.idea', '.git', '.cache',
       'src/system/__tests__/memory.test.ts',

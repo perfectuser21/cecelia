@@ -3,11 +3,11 @@ import {appendFileSync} from 'node:fs';
 import {resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 
-const ORDER = ['brain-unit', 'brain-integration', 'image', 'mcp', 'api', 'dashboard', 'android', 'ops', 'scripts'];
+const ORDER = ['brain-unit', 'brain-integration', 'image', 'mcp', 'dashboard', 'android', 'ops', 'scripts'];
 // 现役前端为 apps/dashboard；已退役根 frontend 不再创建源码任务。
 // Android 客户端自身修改必须运行 Gradle；服务端全量不重复构建未变更的移动客户端。
 const ACTIVE = ORDER.filter(component => component !== 'android');
-const SHARED_RUNTIME = ['brain-unit', 'brain-integration', 'image', 'api', 'ops'];
+const SHARED_RUNTIME = ['brain-unit', 'brain-integration', 'image', 'ops'];
 const DOCUMENT = /\.(?:md|txt|rst|png|jpe?g|gif|svg|webp|pdf)$/i;
 const DOCUMENT_NAME = /(?:^|\/)(?:README|CHANGELOG|CONTRIBUTING|CODE_OF_CONDUCT|SECURITY|LICENSE)\.md$/i;
 const ROOT_DOCUMENT = /^(?:AGENTS|CLAUDE|DEFINITION|PRD|DoD)\.md$/i;
@@ -62,10 +62,12 @@ export function planChecks(paths, {full = false} = {}) {
       /^(?:package(?:-lock)?\.json|npm-shrinkwrap\.json|\.npmrc|\.skills-source\.json)$/.test(path)) {
       all = true;
     } else if (path.startsWith('apps/android-agent/')) selected.add('android');
-    else if (/^(?:packages\/brain|apps\/api)\//.test(path)) {
+    else if (path.startsWith('apps/api/features/')) selected.add('dashboard');
+    // 独立旧Core服务不在现役compose；它的src/tests不冒充Brain运行输入。
+    else if (/^apps\/api\/(?:src|tests)\//.test(path)) continue;
+    else if (path.startsWith('apps/api/')) all = true;
+    else if (path.startsWith('packages/brain/')) {
       for (const component of SHARED_RUNTIME) selected.add(component);
-      // Dashboard 的 @features/core 别名直接消费 apps/api/features。
-      if (path.startsWith('apps/api/features/')) selected.add('dashboard');
     }
     else if (path.startsWith('packages/mcp-readonly/')) selected.add('mcp');
     else if (path.startsWith('apps/dashboard/')) selected.add('dashboard');
@@ -106,7 +108,7 @@ export function main(argv = process.argv.slice(2)) {
   const paths = raw ? raw.slice(0, -1).split('\0') : [];
   const matrix = {include: planChecks(paths, {full})};
   const encoded = JSON.stringify(matrix);
-  if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, `matrix=${encoded}\npreview_ui=${paths.some(path => path.startsWith('apps/dashboard/') || path.startsWith('apps/api/'))}\n`);
+  if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, `matrix=${encoded}\npreview_ui=${paths.some(path => path.startsWith('apps/dashboard/') || path.startsWith('apps/api/features/'))}\n`);
   process.stdout.write(`${encoded}\n`);
 }
 

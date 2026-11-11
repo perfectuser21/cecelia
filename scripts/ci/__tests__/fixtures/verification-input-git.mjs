@@ -138,7 +138,7 @@ export function assertUnifiedSkillVerificationInputs(t,{basicEntryFixture,derive
   for(const path of ['.github/workflows/ci.yml','scripts/ci/run-basic-check.mjs','scripts/ci/basic-scope.mjs',
     'scripts/ci/check-basic-results.mjs','scripts/ci/ops-checks.mjs','packages/brain/vitest.config.js',
     'scripts/ci/skill-source-tests.mjs','scripts/ci/run-skill-source-check.mjs','scripts/ci/__tests__/basic-skill-source-coverage.test.mjs',
-    '.github/actions/skills-source/action.yml','scripts/ci/check-skill-source-identity.py','packages/brain/vitest.skill-source.config.mjs',selectedPath]) {
+    '.github/actions/skills-source/action.yml','scripts/ci/check-skill-source-identity.py','apps/api/vitest.config.ts','apps/dashboard/vitest.config.ts','scripts/ci/__tests__/basic-w19-freeze.test.mjs','packages/brain/vitest.skill-source.config.mjs',selectedPath]) {
     mkdirSync(join(f.root,path.slice(0,path.lastIndexOf('/'))),{recursive:true});writeFileSync(join(f.root,path),readFileSync(join(liveRoot,path)));
   }
   f.git('rm','--sparse','-f','.github/workflows/skills-source-check.yml');
@@ -154,4 +154,32 @@ export function assertUnifiedSkillVerificationInputs(t,{basicEntryFixture,derive
   const rejected=derived(f);
   assert.equal(rejected.rows.some(row=>row.input_facts.path===selectedPath&&row.input_facts.source.side==='head'),false);
   assert.ok(rejected.unproven.some(row=>row.path===selectedPath));
+}
+
+/** 当前功能跑道的真实私有Git：API features归Dashboard，旧src及未选外围reader不能借config取得资格。 */
+export function assertFunctionalConsumerInputs(t,{basicEntryFixture,derived,root:liveRoot}) {
+ const support=['.github/workflows/ci.yml','scripts/ci/run-basic-check.mjs','scripts/ci/basic-scope.mjs',
+  'scripts/ci/check-basic-results.mjs','scripts/ci/ops-checks.mjs','packages/brain/vitest.config.js',
+  'scripts/ci/skill-source-tests.mjs','scripts/ci/run-skill-source-check.mjs','scripts/ci/__tests__/basic-skill-source-coverage.test.mjs',
+  '.github/actions/skills-source/action.yml','scripts/ci/check-skill-source-identity.py','apps/api/vitest.config.ts','apps/dashboard/vitest.config.ts','scripts/ci/__tests__/basic-w19-freeze.test.mjs'];
+ const fixture=path=>{
+  const f=basicEntryFixture(t,path);
+  for(const p of support){mkdirSync(join(f.root,p.slice(0,p.lastIndexOf('/'))),{recursive:true});writeFileSync(join(f.root,p),readFileSync(join(liveRoot,p)));}
+  f.source.base_revision=f.commit();writeFileSync(join(f.root,path),'export const changedFunctionalInput=true;\n');
+  f.source.head_revision=f.commit();f.source.changed_files=[{path}];return f;
+ };
+ for(const path of ['apps/api/features/__tests__/functional.test.ts','apps/api/src/__tests__/retired.test.ts','apps/api/tests/retired.test.ts','packages/engine/tests/functional.skill-source.test.ts','packages/quality/functional.skill-source.test.ts']){
+  const f=fixture(path),proof=derived(f),rows=proof.rows.filter(r=>r.input_facts.path===path);
+  if(path.startsWith('apps/api/features/')){
+   assert.equal(rows.length,2,JSON.stringify(proof.unproven));
+   assert.ok(rows.every(r=>r.witness.component==='dashboard'&&r.witness.config.path==='apps/api/vitest.config.ts'));
+  }else assert.equal(rows.length,0,'旧API不能继承已收窄的Dashboard验证入口');
+ }
+ for(const [reader,selected] of [['scripts/preview-cache-functional.test.mjs',false],['scripts/bluegreen-sidecar-functional.test.mjs',true]]){
+  const path='packages/brain/src/__tests__/helpers/functional.fixture.js',f=fixture(path);
+  writeFileSync(join(f.root,reader),`import '../${path}';\n`);f.source.base_revision=f.commit();
+  writeFileSync(join(f.root,path),'export const changedFunctionalHelper=true;\n');f.source.head_revision=f.commit();f.source.changed_files=[{path}];
+  const proof=derived(f,{readerPaths:{base:[reader],head:[reader]}}),rows=proof.rows.filter(r=>r.input_facts.path===path);
+  assert.equal(rows.length,selected?2:0,JSON.stringify(proof.unproven));
+ }
 }

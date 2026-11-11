@@ -94,7 +94,7 @@ test('旧样机的代码/依赖/配置/新增路径只选scripts，普通全量�
     assert.deepEqual(planChecks([path]), [{ component: 'scripts' }], path);
   }
   assert.deepEqual([...new Set(planChecks([], { full: true }).map(row => row.component))],
-    ['brain-unit', 'brain-integration', 'image', 'mcp', 'api', 'dashboard', 'ops', 'scripts']);
+    ['brain-unit', 'brain-integration', 'image', 'mcp', 'dashboard', 'ops', 'scripts']);
   assert.equal(planChecks([], { full: true }).some(row => row.component === 'playground'), false);
 });
 

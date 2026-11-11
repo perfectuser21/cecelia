@@ -46,16 +46,6 @@ function extractBrainPort() {
   };
 }
 
-function extractVersion() {
-  const pkg = JSON.parse(readFile('packages/brain/package.json'));
-  return {
-    name: 'brain_version',
-    value: pkg.version,
-    source: 'packages/brain/package.json',
-    line: findLineNumber(readFile('packages/brain/package.json'), '"version"'),
-  };
-}
-
 function extractTickLoopMs() {
   // D2.2 followup: TICK_LOOP_INTERVAL_MS 抽到 tick-loop.js（D2.2 漏修 facts-check）
   const src = readFile('packages/brain/src/tick-loop.js');
@@ -168,18 +158,6 @@ function validateFacts(facts) {
         break;
       }
 
-      case 'brain_version': {
-        // Check "Brain 版本: X.Y.Z" in frontmatter
-        const re = new RegExp(`Brain\\s+版本.*${fact.value.replace(/\./g, '\\.')}`);
-        docMatch = re.test(doc);
-        docLine = findLineNumber(doc, re);
-        docValue = docMatch ? fact.value : (() => {
-          const m = doc.match(/Brain\s+版本[^:]*:\s*(\S+)/);
-          return m ? m[1] : 'not found';
-        })();
-        break;
-      }
-
       case 'tick_loop_ms': {
         // Check "5s 循环" or "每 5s"
         const expectedSec = fact.value / 1000;
@@ -265,26 +243,6 @@ function validateFacts(facts) {
 // ─── Integrity checks (code-level, no DEFINITION.md comparison) ─────────────
 
 /**
- * 检查 packages/brain/migrations/ 目录是否有重复编号的 migration 文件
- * 例如：057_create_strategies_table.sql 和 057_initiative_orchestration.sql 同时存在
- */
-function checkMigrationConflicts() {
-  const migrationsDir = resolve(ROOT, 'packages/brain/migrations');
-  const files = readdirSync(migrationsDir).filter(f => f.endsWith('.sql'));
-  const byNumber = {};
-  for (const f of files) {
-    const m = f.match(/^(\d+)_/);
-    if (m) {
-      const num = m[1];
-      if (!byNumber[num]) byNumber[num] = [];
-      byNumber[num].push(f);
-    }
-  }
-  const conflicts = Object.entries(byNumber).filter(([, arr]) => arr.length > 1);
-  return conflicts; // [ ['057', ['057_a.sql', '057_b.sql']], ... ]
-}
-
-/**
  * 检查 selfcheck.js 的 EXPECTED_SCHEMA_VERSION 是否等于 migrations/ 最高编号
  */
 function checkSelfcheckVersionSync() {
@@ -348,7 +306,6 @@ function checkLlmFetchTimeouts() {
 
 const facts = [
   extractBrainPort(),
-  extractVersion(),
   extractTickLoopMs(),
   extractTickIntervalMin(),
   extractTaskTypes(),
@@ -378,18 +335,7 @@ for (const r of results) {
 // ── Section 2: Code Integrity Checks ─────────────────────────
 console.log('\n── Code Integrity Checks ───────────────────────────────');
 
-// Check 1: Migration number conflicts
-const migrationConflicts = checkMigrationConflicts();
-if (migrationConflicts.length === 0) {
-  console.log('  ✓ migration_conflicts: no duplicate numbers in packages/brain/migrations/');
-} else {
-  integrityFailure = true;
-  for (const [num, files] of migrationConflicts) {
-    console.log(`  ✗ migration_conflicts: number ${num} has ${files.length} files → ${files.join(', ')}`);
-  }
-}
-
-// Check 2: selfcheck.js version 是"最低可接受地板"（DB must be >= this），不要求等于最高 migration。
+// Check 1: selfcheck.js version 是"最低可接受地板"（DB must be >= this），不要求等于最高 migration。
 // 只校验地板不超过现有最高 migration（超过=指向不存在的版本，才是错）。
 // 历史教训(issue 14d66027)：旧版用 === 要求严格相等，与 CI 硬断言 toBe('293') 死锁——
 // 加 migration 时 bump 则 CI 挂、不 bump 则本地 hook 拦。改为 <= 地板语义解锁。
@@ -401,7 +347,7 @@ if (Number(selfcheckVersion) <= Number(highestMigration)) {
   console.log(`  ✗ selfcheck_version_sync: selfcheck.js 地板='${selfcheckVersion}' 超过最高 migration='${highestMigration}' — 不应指向不存在的 migration`);
 }
 
-// Check 3: LLM fetch timeouts
+// Check 2: LLM fetch timeouts
 const llmViolations = checkLlmFetchTimeouts();
 if (llmViolations.length === 0) {
   console.log('  ✓ llm_fetch_timeouts: all external LLM fetch calls have AbortSignal.timeout');

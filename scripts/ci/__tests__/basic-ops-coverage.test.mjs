@@ -44,6 +44,62 @@ const safeSmokes = [
 ].map(name => `scripts/smoke/${name}-smoke.sh`);
 const paths = steps => steps.map(step => step.args.at(-1));
 
+test('普通Brain业务PR只执行部署核心，默认仍保留全部Ops', () => {
+  const selected = paths(opsChecks(root, {paths: ['packages/brain/src/planner.js']}));
+  assert.equal(selected.length, 24);
+  assert.ok(selected.includes('scripts/smoke/deploy-local-npm-cache-smoke.sh'));
+  assert.ok(!selected.some(path => /preview|dashboard|cecelia-runner|dispatch-worker|scripts\/ops\//.test(path)));
+  assert.equal(opsChecks(root).length, 83);
+});
+
+test('真实依赖域分别保留自己的测试，公共输入和未知路径全量兜底', () => {
+  const cases = [
+    ['apps/dashboard/src/App.tsx', 'scripts/__tests__/dashboard-release-bind.test.mjs'],
+    ['scripts/preview-env-start.sh', 'scripts/__tests__/preview-env-start.test.sh'],
+    ['packages/brain/src/routes/preview.js', 'scripts/preview-cache.test.mjs'],
+    ['packages/brain/scripts/fleet-worker/attempt-runner.cjs', 'docker/cecelia-runner/__tests__/entrypoint-callback-retry.test.sh'],
+    ['packages/brain/src/orchestrator/executor.js', 'scripts/smoke/runner-credential-single-chain-smoke.sh'],
+    ['scripts/ops/opc-kr-current.py', 'scripts/ops/__tests__/opc_company_kr.test.sh'],
+    ['scripts/codex-request.sh', 'scripts/__tests__/codex-request.test.sh'],
+  ];
+  for (const [source, expected] of cases) {
+    const selected = paths(opsChecks(root, {paths: [source]}));
+    assert.ok(selected.includes(expected), `${source}必须覆盖${expected}`);
+    assert.ok(selected.length < 83, `${source}不应膨胀为全量`);
+  }
+  for (const source of ['package-lock.json', '.github/workflows/ci.yml', 'scripts/ci/ops-checks.mjs',
+    'packages/brain/config/fleet-node-profiles.json', 'scripts/lib/shared-unclassified.sh', 'unknown/product.js']) {
+    assert.deepEqual(opsChecks(root, {paths: [source]}), opsChecks(root), source);
+  }
+});
+
+test('PR路径输入非法或为空不能静默丢测，新未分类Ops测试回退全量', t => {
+  for (const invalid of [[], ['../escape'], ['/absolute'], ['a//b'], ['a\u0000b'], 'brain'])
+    assert.throws(() => opsChecks(root, {paths: invalid}), /路径|paths/i);
+  const directory = fixture(t);
+  const newFile = 'scripts/ops/__tests__/new-category/new-behavior.test.sh';
+  mkdirSync(dirname(join(directory, newFile)), {recursive: true});
+  writeFileSync(join(directory, newFile), 'exit 0\n');
+  const selected = opsChecks(directory, {paths: ['packages/brain/src/planner.js']});
+  assert.deepEqual(selected, opsChecks(directory));
+  assert.ok(paths(selected).includes(newFile));
+});
+
+test('每个当前入口的自身变更都选中它，新增已知域测试自动加入PR子集', t => {
+  for (const file of paths(opsChecks(root)))
+    assert.ok(paths(opsChecks(root, {paths: [file]})).includes(file), `${file}必须拥有实际执行域`);
+  const directory = fixture(t);
+  // fixture里的未知Ops类别会有意全量；换成已知Janitor域以验证动态发现后的裁剪。
+  rmSync(join(directory, 'scripts/ops/__tests__/nested'), {recursive: true});
+  mkdirSync(join(directory, 'scripts/ops/__tests__/janitor'), {recursive: true});
+  writeFileSync(join(directory, 'scripts/ops/__tests__/janitor/new.test.sh'), 'exit 0\n');
+  const extraNode = 'scripts/brain-image-retention-new.test.mjs';
+  writeFileSync(join(directory, extraNode), '');
+  const selected = paths(opsChecks(directory, {paths: ['packages/brain/src/planner.js']}));
+  assert.ok(selected.includes(extraNode));
+  assert.ok(!selected.includes('scripts/ops/__tests__/janitor/new.test.sh'));
+});
+
 test('实际 CI runner 接通完整 Ops 集合，而不是只有发现器测试通过', () => {
   assert.deepEqual(commandsFor('ops'), opsChecks(root));
 });
