@@ -155,9 +155,12 @@ test('expired supervised attempt refuses all new process launch',async()=>{
 
 test.each([1,2])('supervisor result published during process probe %i remains recoverable',trigger=>{
  const {execFileSync}=require('node:child_process');
- const result=JSON.parse(execFileSync(process.execPath,[path.join(import.meta.dirname,'fixtures/supervisor-finish-race.cjs'),String(trigger)],{encoding:'utf8',timeout:22000}));
+ const parent=fs.mkdtempSync(path.join(os.tmpdir(),'supervisor-public-parent-'));fs.chmodSync(parent,0o777);
+ try{
+ const result=JSON.parse(execFileSync(process.execPath,[path.join(import.meta.dirname,'fixtures/supervisor-finish-race.cjs'),String(trigger)],{encoding:'utf8',timeout:22000,env:{...process.env,TMPDIR:parent,TMP:parent,TEMP:parent}}));
  assert.equal(result.error,undefined,JSON.stringify(result));
  assert.equal(result.returned.exit_code,0);assert.equal(JSON.parse(result.returned.stdout).outputs.answer,42);
  assert.equal(result.result_valid,true);assert.equal(result.effects,'x');assert.equal(result.deadline_not_elapsed,true);assert.equal(result.supervisor_exited,true);
  const window=result.trace.find(row=>row.call===trigger);assert.equal(window.result_before,false);assert.equal(window.same_process,false);assert.equal(window.result_after,true);
+ }finally{fs.rmSync(parent,{recursive:true,force:true});}
 });
