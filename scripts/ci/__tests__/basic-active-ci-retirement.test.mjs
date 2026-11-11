@@ -77,6 +77,12 @@ test('建议回执 PG 历史完整入口与当前统一CI分别认领，单成�
  const assertRejected=changes=>{const proof=observe(fixture(t,{changes}));assert.equal(selected(proof),undefined);
   assert.ok(proof.unproven.some(row=>row.path===testPath&&row.side==='head'&&row.reason==='entry_unproven'));};
  assertSelected(current);
+ const feature='apps/api/features/archive-entry.test.ts',legacyApi='apps/api/src/archive-entry.test.ts';
+ const testSource="import {test,expect} from 'vitest';test('actual unit',()=>expect(1).toBe(1));";
+ const functional=observe(fixture(t,{changes:{...current,[feature]:testSource,[legacyApi]:testSource}}));
+ const featureRow=functional.rows.find(row=>row.input_facts.path===feature&&row.input_facts.source.side==='head');
+ assert.equal(featureRow?.witness.component,'dashboard');
+ assert.equal(functional.rows.some(row=>row.input_facts.path===legacyApi&&row.input_facts.source.side==='head'),false);
  for(const path of ['scripts/ci/prepare-ubuntu-archive.mjs','scripts/ci/__tests__/basic-ubuntu-archive.test.mjs']){
   const missing={...current};delete missing[path];assertRejected(missing);
  }
