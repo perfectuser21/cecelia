@@ -27,7 +27,7 @@ function createWorkflowRunner({stateRoot,machineId,profiles={},assertCanLaunch,a
    protectedRead(file(s.identity.run_id));
    const c=s.continuation,p=profiles[s.identity.profile],a=s.profile.contract.activities[0];
    if(!eligible(s.profile)||!eligible(p)||s.machine_id!==machineId||s.cancel_requested||s.commander_pending!==false||s.commander_unknown||!c||c.consumed||!Number.isFinite(c.checkpoint.deadline)||c.checkpoint.deadline<=Date.now()||c.checkpoint.attempt!==1)return false;
-   if(profileDigest(p)!==s.identity.profile_sha256||profileDigest(c.checkpoint)!==c.binding.checkpoint_sha256||c.binding.run_id!==s.identity.run_id||c.binding.task_id!==s.identity.task_id||c.binding.profile_sha256!==s.identity.profile_sha256||c.binding.activity!==a.key||c.binding.source_sha256!==s.profile.files[a.runtime.entry])return false;
+   if(profileDigest(p)!==s.identity.profile_sha256||profileDigest(s.profile)!==c.binding.runtime_profile_sha256||profileDigest(c.checkpoint)!==c.binding.checkpoint_sha256||c.binding.run_id!==s.identity.run_id||c.binding.task_id!==s.identity.task_id||c.binding.profile_sha256!==s.identity.profile_sha256||c.binding.activity!==a.key||c.binding.source_sha256!==s.profile.files[a.runtime.entry])return false;
    assertProfile(s.profile,s.identity.mode);assertProfile(p,s.identity.mode);
    const owner=protectedRead(ownerFile,2);if(owner.run_id!==s.identity.run_id||typeof owner.birth!=='string')return false;
    const m=protectedRead(path.join(supervisorDirectory(s),'manifest.json'),3);
@@ -98,7 +98,7 @@ function createWorkflowRunner({stateRoot,machineId,profiles={},assertCanLaunch,a
      checkpoint:async checkpoint=>{
       if(s.profile.commander&&(s.commander_pending!==false||s.commander_unknown)){s.continuation=null;save(s);return;}
       if(!s.profile.commander)s.commander_pending=false;
-      const a=s.profile.contract.activities[0],binding={run_id:s.identity.run_id,task_id:s.identity.task_id,profile_sha256:s.identity.profile_sha256,activity:a.key,source_sha256:s.profile.files[a.runtime.entry],checkpoint_sha256:profileDigest(checkpoint)};
+      const a=s.profile.contract.activities[0],binding={run_id:s.identity.run_id,task_id:s.identity.task_id,profile_sha256:s.identity.profile_sha256,runtime_profile_sha256:profileDigest(s.profile),activity:a.key,source_sha256:s.profile.files[a.runtime.entry],checkpoint_sha256:profileDigest(checkpoint)};
       s.continuation={checkpoint,binding,runner_cursor:eventCursor,consumed:false};save(s);
      },
      executeActivity:async(a,input,options)=>{
