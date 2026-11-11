@@ -6,40 +6,34 @@ import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import yaml from 'js-yaml';
+import { smokeCiFailures } from '../../../packages/brain/scripts/coding-workflow/lib/qa-smoke.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const workflow = () => yaml.load(readFileSync(join(root, '.github/workflows/nightly-regression.yml'), 'utf8'));
 
-test('分类smoke诊断迁入现有Nightly且必须显式手动启用，独立PG和本地容器', () => {
-  const doc = workflow(), job = doc.jobs['classified-smoke-diagnostics'];
-  assert.ok(job, '缺少原分类smoke的明确诊断owner');
+test('分类smoke工作流入口退役，现役Nightly仅保留两类真实测试与失败告警', () => {
+  const doc = workflow();
+  assert.deepEqual(Object.keys(doc.jobs).sort(), ['brain-integration', 'open-issue-on-failure', 'real-env-smoke']);
   assert.equal(doc.on.pull_request, undefined); assert.equal(doc.on.push, undefined);
-  assert.equal(doc.on.workflow_dispatch.inputs.classified_smoke.type, 'boolean');
-  assert.equal(doc.on.workflow_dispatch.inputs.classified_smoke.default, false);
-  assert.equal(job.if, "github.event_name == 'workflow_dispatch' && inputs.classified_smoke == true");
-  assert.equal(job['runs-on'], 'ubuntu-latest');
-  assert.equal(job.services.postgres.env.POSTGRES_DB, 'cecelia_test');
-  assert.equal(job.env.DB_NAME, 'cecelia_test');
-  assert.equal(job.env.BRAIN_URL, 'http://127.0.0.1:5521');
-  assert.equal(job.env.BRAIN_CONTAINER, 'cecelia-brain-classified-smoke');
-  assert.equal(job.steps.find(s => s.name === 'Cleanup classified smoke fixture').if, 'always()');
+  assert.equal(doc.on.workflow_dispatch?.inputs, undefined);
+  assert.equal(doc.jobs['brain-integration'].env.SMOKE_ALLOW_WRITE, undefined);
+  assert.equal(doc.jobs['real-env-smoke'].services.postgres.env.POSTGRES_DB, 'cecelia_test');
+  assert.deepEqual(doc.jobs['open-issue-on-failure'].needs, ['brain-integration', 'real-env-smoke']);
 });
 
-for (const childExit of [0, 17]) test(`Nightly的真实分类器命令执行私有脚本并保留失败：exit=${childExit}`, () => {
-  const job = workflow().jobs['classified-smoke-diagnostics'];
-  assert.ok(job, '缺少迁后的分类器job');
-  const step = job.steps.find(s => s.name === 'Run classified Brain smoke diagnostics');
-  assert.ok(step?.run);
+for (const childExit of [0, 17]) test(`保留的真实分类器CLI执行私有脚本并保留失败：exit=${childExit}`, () => {
   const temp = mkdtempSync(join(tmpdir(), 'nightly-classified-'));
   try {
     const marker = join(temp, 'executed');
-    writeFileSync(join(temp, 'abilities-api-smoke.sh'), `printf actual > '${marker}'\nexit ${childExit}\n`);
-    const result = spawnSync('bash', ['-e', '-o', 'pipefail', '-c', step.run], {
+    writeFileSync(join(temp, 'abilities-api-smoke.sh'), `printf actual > '${marker}'\nprintf 'FAIL: T-2\\n'\nexit ${childExit}\n`);
+    const result = spawnSync('bash', ['packages/brain/scripts/smoke-tools/run-smoke-ratchet.sh'], {
       cwd: root, encoding: 'utf8', timeout: 10000,
       env: { PATH: process.env.PATH, HOME: temp, SMOKE_DIR: temp, SMOKE_ALLOW_WRITE: '', BRAIN_URL: 'http://127.0.0.1:1' },
     });
     assert.equal(result.status, childExit === 0 ? 0 : 1, result.stdout + result.stderr);
     assert.equal(readFileSync(marker, 'utf8'), 'actual');
+    assert.deepEqual(smokeCiFailures(result.stdout, 'abilities-api-smoke.sh'),
+      childExit === 0 ? { failed: false, ids: [] } : { failed: true, ids: ['T-2'] });
   } finally { rmSync(temp, { recursive: true, force: true }); }
 });
 

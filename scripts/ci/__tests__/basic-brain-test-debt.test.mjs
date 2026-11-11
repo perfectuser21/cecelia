@@ -206,9 +206,9 @@ function mainEvents(workflow) {
 // 只接受当前已审核的完整shell形状；不是通用shell解释器，也不扫描注释、heredoc或死分支。
 function knownStep(workflow, jobId, expected) {
   const job = workflow.jobs?.[jobId];
-  if (!job || (Object.hasOwn(job, 'if') && job.if !== "github.event_name != 'schedule' && github.event.action != 'closed'") || job['runs-on'] !== 'ubuntu-latest') return false;
+  if (!job || (Object.hasOwn(job, 'if') && job.if !== "github.event_name != 'schedule' && github.event.action != 'closed'") || job['runs-on'] !== (expected.runsOn || 'ubuntu-latest')) return false;
   return job.steps?.some(step => {
-    if (Object.hasOwn(step, 'if') || step.uses || typeof step.run !== 'string') return false;
+    if (step.if !== expected.if || step.uses || typeof step.run !== 'string') return false;
     const cwd = step['working-directory'] ?? job.defaults?.run?.['working-directory'] ?? workflow.defaults?.run?.['working-directory'] ?? '.';
     const shell = step.shell ?? job.defaults?.run?.shell ?? workflow.defaults?.run?.shell;
     const env = {...workflow.env, ...job.env, ...step.env};
@@ -273,8 +273,12 @@ function automaticLanes({basic, nightly, pinned, browser}) {
   })) lanes.push('real-env');
 
   const contracts = pinned.jobs?.['skill-contracts'];
-  if (mainEvents(pinned) && isDeepStrictEqual(contracts?.strategy?.matrix, {component: ['brain', 'root']})
+  if (mainEvents(pinned) && isDeepStrictEqual(contracts?.strategy?.matrix, {include: [
+    {os:'ubuntu-latest',component:'brain'}, {os:'ubuntu-latest',component:'root'},
+    {os:'windows-latest',component:'restore'}, {os:'macos-latest',component:'restore'},
+  ]})
     && knownStep(pinned, 'skill-contracts', {run: 'node scripts/ci/run-skill-source-check.mjs "$COMPONENT"',
+      runsOn:'${{ matrix.os }}', if:"matrix.component != 'restore'",
       env: {COMPONENT: '${{ matrix.component }}', CI: 'true', POSTGRES_INTEGRATION: '0'}})) lanes.push('pinned-brain', 'pinned-root');
   if (browserLane(browser)) lanes.push('browser');
   return lanes;

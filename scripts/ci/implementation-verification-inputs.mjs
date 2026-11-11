@@ -123,6 +123,8 @@ const UNIFIED_BASIC_ENTRY_SEALS={"scripts/ci/run-basic-check.mjs":"980d1ac1e847e
 const UNIFIED_BASIC_ENTRY_PROTOCOLS=[UNIFIED_BASIC_ENTRY_SEALS,{...UNIFIED_BASIC_ENTRY_SEALS,
  'scripts/ci/run-basic-check.mjs':'a5c767b0476a239b7922ba07f615164b8e23da5769dd7aa5da0e279a2d79dde6',
 }];
+const FINAL_JOBS_BASIC_CI='75d98fce8dd088ead2369484de016d8cd51650199f41d588e51a61315eae30fa';
+const FINAL_JOBS_BASIC_ENTRY_PROTOCOLS=[{...UNIFIED_BASIC_ENTRY_SEALS,'scripts/ci/basic-scope.mjs':'1f7ec02042ce35b23753c8be78102febe2d9294f81f98d081bf12fa6c568ce91','scripts/ci/run-basic-check.mjs':'ec107cca3e69e498c84b46b9816ebf3c2f46a713e6eb791e0e0e665ecfb7f3a1','scripts/ci/check-basic-results.mjs':'084cc7187734c0dd83dddb528d87aa16d3ed9a49c3ea0eebf2c97cb4c4775da3','scripts/ci/__tests__/basic-skill-source-coverage.test.mjs':'acc2046d6691423b739edc4071c9ea87f00e57a1a8b7a06be91d5487d24ad2c9','scripts/ci/run-skill-source-check.mjs':'debcaf26aa7025f47d846052e0c2b43d1a04976003936143d80ddac1582d7204'}];
 const UNIT_CONFIGS=[
  {component:'brain',directory:'packages/brain',path:'packages/brain/vitest.config.js'},
  {component:'engine',directory:'packages/engine',path:'packages/engine/vitest.config.ts'},
@@ -174,11 +176,11 @@ function supportReader(root,source,git){
 function unitEntry(read,side){
  const workflow=read(side,CI);if(!workflow)return null;let doc;
  try{doc=yaml.load(workflow.text);}catch{return null;}
- const signature=sha(JSON.stringify(canonical(doc)));if(![LEGACY_CI,BASIC_CI,QUEUED_BASIC_CI,OWNERSHIP_BASIC_CI,UNIFIED_BASIC_CI].includes(signature))return null;
+ const signature=sha(JSON.stringify(canonical(doc)));if(![LEGACY_CI,BASIC_CI,QUEUED_BASIC_CI,OWNERSHIP_BASIC_CI,UNIFIED_BASIC_CI,FINAL_JOBS_BASIC_CI].includes(signature))return null;
  const support=[workflow.reference];
- if(signature===BASIC_CI||signature===QUEUED_BASIC_CI||signature===OWNERSHIP_BASIC_CI||signature===UNIFIED_BASIC_CI){
+ if(signature===BASIC_CI||signature===QUEUED_BASIC_CI||signature===OWNERSHIP_BASIC_CI||signature===UNIFIED_BASIC_CI||signature===FINAL_JOBS_BASIC_CI){
   let selected;
-  for(const seals of signature===UNIFIED_BASIC_CI?UNIFIED_BASIC_ENTRY_PROTOCOLS:signature===BASIC_CI?BASIC_ENTRY_PROTOCOLS:signature===OWNERSHIP_BASIC_CI?OWNERSHIP_BASIC_ENTRY_PROTOCOLS:QUEUED_BASIC_ENTRY_PROTOCOLS){
+  for(const seals of signature===FINAL_JOBS_BASIC_CI?FINAL_JOBS_BASIC_ENTRY_PROTOCOLS:signature===UNIFIED_BASIC_CI?UNIFIED_BASIC_ENTRY_PROTOCOLS:signature===BASIC_CI?BASIC_ENTRY_PROTOCOLS:signature===OWNERSHIP_BASIC_CI?OWNERSHIP_BASIC_ENTRY_PROTOCOLS:QUEUED_BASIC_ENTRY_PROTOCOLS){
    const files=Object.entries(seals).map(([path,expected])=>({file:read(side,path),expected}));
    if(files.every(({file,expected})=>file?.reference.sha256===expected)){selected=files;break;}
   }
@@ -201,7 +203,7 @@ function runnerSelector(path,entry,paths){
 function pinnedSources(read,side){
  const runner=read(side,'scripts/ci/run-skill-source-check.mjs'),skill=read(side,'scripts/ci/skill-source-tests.mjs');
  const entry=unitEntry(read,side);
- if(entry?.canonical_sha256===UNIFIED_BASIC_CI) return {workflow:read(side,CI),runner,skill};
+ if([UNIFIED_BASIC_CI,FINAL_JOBS_BASIC_CI].includes(entry?.canonical_sha256)) return {workflow:read(side,CI),runner,skill};
  const workflow=read(side,PINNED_CI);
  if(!workflow||!runner||!skill||runner.reference.sha256!=='debcaf26aa7025f47d846052e0c2b43d1a04976003936143d80ddac1582d7204'
   ||skill.reference.sha256!=='1daf4f27f6fa97b3c8f3d9a9e1a9e86e44fbe92b84c962d1c2ce3b90db32b147')return null;
@@ -221,7 +223,7 @@ function pinnedSelector(read,side,path){
  let selected;try{selected=selectPinnedSkillVerificationInput({filePath:path,configPath:config.reference.path,configText:config.text,skillText:skill.text,component});}catch{return null;}
  if(!selected.selected)return null;
  return {witness:{kind:'pinned_skill_config_input',component,...base,workflow:workflow.reference,runner:runner.reference,skill_selector:skill.reference,config:config.reference,selector:selected.witness},
-  eligible_owner_paths:[config.reference.path,'scripts/ci/run-skill-source-check.mjs',PINNED_CI]};
+  eligible_owner_paths:[config.reference.path,'scripts/ci/run-skill-source-check.mjs',workflow.reference.path]};
 }
 function configurationInput(read,side,path,entry){
  if(entry?.profile==='basic'&&/^\.github\/workflows\/[^/]+\.ya?ml$/.test(path)){

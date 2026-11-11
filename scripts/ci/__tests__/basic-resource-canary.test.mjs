@@ -9,7 +9,7 @@ import yaml from 'js-yaml';
 import { runInNewContext } from 'node:vm';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const worker = 'packages/brain/scripts/fleet-worker/';
-const suites = ['app-server-canary','linux-resource-canary','attempt-runtime-limits'];
+const suites = ['resource-canaries'];
 const workflow = name => yaml.load(readFileSync(join(root, '.github/workflows', name), 'utf8'));
 for (const id of suites) {
   const name=id+'.yml';
@@ -35,6 +35,32 @@ for (const id of suites) {
     });
   }
 }
+
+test('四个真实canary共享准备但失败不吞后续，镜像和证据保持独立', () => {
+  const jobs = workflow('ci.yml').jobs, job = jobs['resource-canaries'];
+  assert.ok(job);
+  for (const old of ['app-server-canary','linux-resource-canary','attempt-runtime-limits']) assert.equal(jobs[old], undefined);
+  assert.equal(job.steps.filter(step => step.uses === 'actions/checkout@v4').length, 1);
+  assert.deepEqual(job.steps.filter(step => step.uses === 'actions/setup-node@v4').map(step => step.with['node-version']), ['24']);
+  const canaries = job.steps.filter(step => step.run?.includes('| tee '));
+  assert.equal(canaries.length, 4);
+  for (const step of canaries) {
+    assert.equal(step.if, '!cancelled()');
+    assert.equal(step['continue-on-error'], undefined);
+    assert.match(step.run, /set -o pipefail/);
+  }
+  const preparation = job.steps.filter(step => step.run && !step.run.includes('| tee ')).map(step => step.run).join('\n');
+  for (const variable of ['APP_SERVER_CANARY_IMAGE','HARNESS_LIMITS_CANARY_IMAGE','HARNESS_LIMITS_CANARY_POSTGRES_IMAGE','LINUX_RESOURCE_CANARY_IMAGE']) {
+    assert.match(preparation, new RegExp(variable + '=\\$\\(docker image inspect'));
+  }
+  assert.match(preparation, /FROM node:22-bookworm-slim/);
+  assert.match(preparation, /@openai\/codex@0\.158\.0/);
+  assert.match(preparation, /node:24-bookworm-slim/);
+  assert.match(preparation, /pgvector\/pgvector:pg15/);
+  const artifacts = job.steps.filter(step => step.uses === 'actions/upload-artifact@v4');
+  assert.deepEqual(artifacts.map(step => step.with.name).sort(), ['app-server-canary-evidence','attempt-runtime-limits-evidence','linux-resource-observation'].sort());
+  for (const artifact of artifacts) assert.equal(artifact.if, 'always()');
+});
 
 // 执行真实 canary 发给容器的采样程序；变异数据必须触发同一组断言。
 const linuxSource = readFileSync(join(root, worker, 'linux-resource-canary.cjs'), 'utf8');

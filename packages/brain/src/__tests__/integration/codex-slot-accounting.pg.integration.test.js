@@ -51,6 +51,8 @@ it('同一 runner 新 claim 接手后，旧 claim 无法回滚任务或改变设
     await first.query(`CREATE TABLE "${schema}".tasks (id text PRIMARY KEY, status text, claimed_by text, claimed_at timestamptz, updated_at timestamptz)`);
     await first.query(`CREATE TABLE "${schema}".device_locks (device_name text PRIMARY KEY, locked_by text, locked_at timestamptz, expires_at timestamptz)`);
     await first.query(`CREATE TABLE "${schema}".task_leases (task_id text, released_at timestamptz, lease_until timestamptz)`);
+    // 抢锁现役隔离查询依赖 TaskRun；仅在本人 schema 补齐真实表，不回落 public。
+    await first.query(`CREATE TABLE "${schema}".task_runs (id uuid PRIMARY KEY, task_id text, run_id text, status text, ended_at timestamptz, context jsonb, result jsonb)`);
     await second.query(`SET search_path TO "${schema}"`);
     await first.query(`INSERT INTO "${schema}".tasks VALUES ('t', 'in_progress', 'runner', '2026-11-07 06:00:00.123456+00', NOW())`);
     await first.query(`INSERT INTO "${schema}".device_locks VALUES ('phone', 't', NOW(), NOW() + interval '30 minutes')`);

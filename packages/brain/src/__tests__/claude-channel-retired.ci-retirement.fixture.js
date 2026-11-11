@@ -41,6 +41,7 @@ export function ciVersionGuardCohorts(previous) {
  const nightlyWalkingRetirementTuple={...unifiedCiTuple,'existing-ops-stage-source.js':'d9ad9be0fb9ea5ccd324c16aaac44edfb508aada132b3b29b108a048145d5d09'};
  // API重复typecheck清退只追加已审完整16成员组；旧stage reader与marker配对保持。
  const innerCiPruneTuple={...nightlyWalkingRetirementTuple,'existing-ops-stage-source.js':'5a57cd1cfed93406adb34d9fdd6c969f51159427d0ff9165582ff328a41dbc19'};
+ const finalCiJobsTuple={...innerCiPruneTuple,'existing-ops-stage-source.js':'82b49554a1469b1244b259bacdb7350f0bd934ce4e337852a5e0abce0f95d9a3'};
  return [current,{...current,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
   retired,{...retired,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
   identity,{...identity,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
@@ -60,7 +61,8 @@ export function ciVersionGuardCohorts(previous) {
   w19EventTuple,{...w19EventTuple,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
   unifiedCiTuple,{...unifiedCiTuple,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
   nightlyWalkingRetirementTuple,{...nightlyWalkingRetirementTuple,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
-  innerCiPruneTuple,{...innerCiPruneTuple,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'}];
+  innerCiPruneTuple,{...innerCiPruneTuple,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
+  finalCiJobsTuple,{...finalCiJobsTuple,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'}];
 }
 
 export function registerCiRetirementGuardTests({root,base,memoBase,scan}) {
