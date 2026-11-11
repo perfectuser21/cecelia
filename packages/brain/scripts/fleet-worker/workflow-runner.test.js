@@ -106,7 +106,7 @@ test('免清场只能由显式无资源且无finalize的固定profile声明',()=
  }finally{fs.rmSync(f.root,{recursive:true,force:true});}
 });
 
-test.each(['resume','startup finish race','recorder heartbeat crash','reserved heartbeat crash','missing receipt','damaged checkpoint','wrong identity','expired deadline','cancel requested','Commander pending','wrong supervisor birth','unprotected checkpoint','symlink manifest'])('OS Worker death: %s preserves one execution',async scenario=>{
+test.each(['resume','startup finish race','recorder heartbeat crash','reserved heartbeat crash','missing receipt','damaged checkpoint','tampered profile','wrong identity','expired deadline','cancel requested','Commander pending','wrong supervisor birth','unprotected checkpoint','symlink manifest'])('OS Worker death: %s preserves one execution',async scenario=>{
  const f=fixture(),{fork}=require('node:child_process');let one,two;
  const ask=(child,action)=>new Promise(resolve=>{child.once('message',resolve);child.send({action,id:f.id});});
  const wait=async predicate=>{for(let i=0;i<300;i++){if(await predicate())return;await new Promise(r=>setTimeout(r,20));}throw Error('cold recovery timeout');};
@@ -127,6 +127,7 @@ test.each(['resume','startup finish race','recorder heartbeat crash','reserved h
  const beforeCalls=fs.readFileSync(path.join(f.root,'commander-calls'),'utf8');
  if(scenario==='missing receipt')delete state.continuation;
  if(scenario==='damaged checkpoint')state.continuation.checkpoint.receipt=null;
+ if(scenario==='tampered profile')state.profile.validators.workflow.acceptance.ref='tampered-dod@1';
  if(scenario==='wrong identity')state.continuation.binding.task_id=randomUUID();
  if(scenario==='expired deadline')state.continuation.checkpoint.deadline=Date.now()-1;
  if(scenario==='cancel requested')state.cancel_requested=true;
