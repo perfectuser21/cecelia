@@ -106,7 +106,7 @@ test('免清场只能由显式无资源且无finalize的固定profile声明',()=
  }finally{fs.rmSync(f.root,{recursive:true,force:true});}
 });
 
-test.each(['resume','recorder heartbeat crash','reserved heartbeat crash','missing receipt','damaged checkpoint','wrong identity','expired deadline','cancel requested','Commander pending','wrong supervisor birth','unprotected checkpoint','symlink manifest'])('OS Worker death: %s preserves one execution',async scenario=>{
+test.each(['resume','startup finish race','recorder heartbeat crash','reserved heartbeat crash','missing receipt','damaged checkpoint','wrong identity','expired deadline','cancel requested','Commander pending','wrong supervisor birth','unprotected checkpoint','symlink manifest'])('OS Worker death: %s preserves one execution',async scenario=>{
  const f=fixture(),{fork}=require('node:child_process');let one,two;
  const ask=(child,action)=>new Promise(resolve=>{child.once('message',resolve);child.send({action,id:f.id});});
  const wait=async predicate=>{for(let i=0;i<300;i++){if(await predicate())return;await new Promise(r=>setTimeout(r,20));}throw Error('cold recovery timeout');};
@@ -117,8 +117,8 @@ test.each(['resume','recorder heartbeat crash','reserved heartbeat crash','missi
  fs.writeFileSync(path.join(f.root,'commander.mjs'),commander);f.profile.files['commander.mjs']=hash(commander);f.profile.commander={entry:'commander.mjs',skill:{entry:'skill.md',version:'v1'}};
  Object.assign(f.profile,{cleanup_required:false,resources:[]});f.profile.files['work.mjs']=hash(code);f.profile.files['skill.md']=hash('Return forty two');Object.assign(f.profile.metadata.work,{executor_kind:'agent',skill:{entry:'skill.md',version:'v1'}});f.profile.contract.activities[0].budget.max_duration_s=15;f.id.profile_sha256=profileDigest(f.profile);
  const config=path.join(f.root,'worker.json'),stateRoot=path.join(f.root,'state');fs.writeFileSync(config,JSON.stringify({stateRoot,machineId:'test',profiles:{demo:f.profile}}));
- const canResume=['resume','recorder heartbeat crash','reserved heartbeat crash'].includes(scenario);
- const start=(crash=false)=>fork(path.join(import.meta.dirname,'fixtures/cold-recovery-worker.cjs'),[config,...(scenario.endsWith('heartbeat crash')?['real-recorder',...(crash?[scenario==='reserved heartbeat crash'?'crash-before-heartbeat':'crash-heartbeat']:[])]:[])],{stdio:['ignore','pipe','pipe','ipc']});
+ const canResume=['resume','startup finish race','recorder heartbeat crash','reserved heartbeat crash'].includes(scenario);
+ const start=(crash=false)=>fork(path.join(import.meta.dirname,scenario==='startup finish race'&&!crash?'fixtures/startup-finish-race.cjs':'fixtures/cold-recovery-worker.cjs'),[config,...(scenario==='startup finish race'&&!crash?[f.id.run_id]:[]),...(scenario.endsWith('heartbeat crash')?['real-recorder',...(crash?[scenario==='reserved heartbeat crash'?'crash-before-heartbeat':'crash-heartbeat']:[])]:[])],{stdio:['ignore','pipe','pipe','ipc']});
  one=start(true);const died=new Promise(resolve=>one.once('exit',(code,signal)=>resolve({code,signal})));await ask(one,'start');await wait(()=>fs.existsSync(path.join(f.root,'effects')));if(scenario==='resume')await wait(()=>fs.readFileSync(path.join(stateRoot,'events'),'utf8').includes('ACTIVITY_HEARTBEAT'));
  if(!scenario.endsWith('heartbeat crash'))one.kill('SIGKILL');assert.equal((await died).signal,'SIGKILL');
  const stateFile=path.join(stateRoot,f.id.run_id+'.json'),state=JSON.parse(fs.readFileSync(stateFile,'utf8'));
@@ -135,7 +135,7 @@ test.each(['resume','recorder heartbeat crash','reserved heartbeat crash','missi
  if(scenario==='wrong supervisor birth'){const m=JSON.parse(fs.readFileSync(manifestFile,'utf8'));m.birth+='-reused';fs.writeFileSync(manifestFile,JSON.stringify(m));}
  if(scenario==='symlink manifest'){fs.renameSync(manifestFile,manifestFile+'.original');fs.symlinkSync(manifestFile+'.original',manifestFile);}
  fs.writeFileSync(stateFile,JSON.stringify(state));if(scenario==='unprotected checkpoint'){fs.chmodSync(stateFile,0o644);assert.throws(()=>require('../../src/orchestrator/activity-supervisor-state.cjs').protectedRead(stateFile),/unprotected/);}
- two=start();const resumed=await ask(two,'inspect');assert.equal(resumed.status,canResume?'recovering':'unknown');
+ two=start();const resumed=await ask(two,'inspect');if(scenario==='startup finish race'){const probe=JSON.parse(fs.readFileSync(path.join(stateRoot,'startup-probe.json')));assert.deepEqual(probe,{result_before:false,same_process:false,result_after:true});assert.ok(['recovering','running','validating','starting','completed'].includes(resumed.status),JSON.stringify(resumed));}else assert.equal(resumed.status,canResume?'recovering':'unknown');
  fs.writeFileSync(path.join(f.root,'release'),'yes');await wait(async()=>!['recovering','running','validating','starting'].includes((await ask(two,'inspect')).status));
  assert.equal((await ask(two,'inspect')).status,canResume?'completed':'unknown',fs.readFileSync(stateFile,'utf8'));assert.equal(fs.readFileSync(path.join(f.root,'effects'),'utf8'),'x');
  assert.equal(fs.readFileSync(path.join(f.root,'commander-calls'),'utf8'),beforeCalls);
