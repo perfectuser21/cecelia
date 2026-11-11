@@ -1,6 +1,8 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.445.197
+**Brain 版本**: 1.445.198
+
+独立 Skill 起跑登记：`POST /api/brain/runs/:run_id/start-skill` 在真实 Task claim 与固定发布来源校验后，原子登记 TaskRun 及 internal binding；入口不启动模型或执行业务，重复请求必须保持原执行者、Skill 和范围。
 
 投影路由限流仅覆盖投影及工作台自身入口，避免无关 Brain 请求消耗投影额度。
 
