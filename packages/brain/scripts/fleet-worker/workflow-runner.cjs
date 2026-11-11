@@ -2,13 +2,14 @@
 const fs=require('node:fs');
 const path=require('node:path');
 const {randomUUID}=require('node:crypto');
+const {protectedRead,processBirth,sameProcess,validResult}=require('../../src/orchestrator/activity-supervisor-state.cjs');
 const {assertProfile,profileDigest,UUID}=require('./workflow-profile.cjs');
 function persist(file,value){
  const tmp=file+'.'+randomUUID()+'.tmp';let fd;
  try{fd=fs.openSync(tmp,'wx',0o600);fs.writeFileSync(fd,JSON.stringify(value));fs.fsyncSync(fd);fs.closeSync(fd);fd=undefined;fs.renameSync(tmp,file);const d=fs.openSync(path.dirname(file),'r');try{fs.fsyncSync(d);}finally{fs.closeSync(d);}}
  finally{if(fd!==undefined)fs.closeSync(fd);if(fs.existsSync(tmp))fs.unlinkSync(tmp);}
 }
-const ACTIVE=new Set(['starting','running','validating','unknown']);
+const ACTIVE=new Set(['starting','running','recovering','validating','unknown']);
 function createWorkflowRunner({stateRoot,machineId,profiles={},assertCanLaunch,assertLocalResources,createRecorder,brainUrl,headers={}}){
  if(!path.isAbsolute(stateRoot)||typeof assertCanLaunch!=='function'||typeof assertLocalResources!=='function')throw Error('workflow_configuration_required');
  fs.mkdirSync(stateRoot,{recursive:true,mode:0o700});
@@ -17,9 +18,35 @@ function createWorkflowRunner({stateRoot,machineId,profiles={},assertCanLaunch,a
  const file=id=>path.join(stateRoot,id+'.json');
  const read=id=>fs.existsSync(file(id))?JSON.parse(fs.readFileSync(file(id),'utf8')):null;
  const save=s=>{if(read(s.identity.run_id)?.cancel_requested===true)s.cancel_requested=true;persist(file(s.identity.run_id),s);};
- // 重启不能判定外部动作是否已发生；保留占用，禁止自动重放。
- for(const name of fs.readdirSync(stateRoot).filter(n=>UUID.test(n.replace(/\.json$/,'')))){
-  const s=read(name.replace(/\.json$/,''));if(s&&ACTIVE.has(s.status)){s.status='unknown';s.reason='worker_restarted_execution_unknown';save(s);}
+ const eligible=p=>p?.cleanup_required===false&&Array.isArray(p.resources)&&p.resources.length===0&&!p.domain_adapter&&p.contract?.activities?.length===1&&p.contract.activities[0].runtime.phase==='source'&&p.contract.activities[0].runtime.interactive!==true&&p.contract.activities[0].runtime.detached!==true&&(p.contract.activities[0].runtime.max_attempts??1)===1&&p.contract.activities[0].runtime.recovery_safe!==true&&p.metadata?.[p.contract.activities[0].key]?.executor_kind==='agent';
+ const supervisorDirectory=s=>path.join(stateRoot,s.identity.run_id,'activity-supervisor');
+ const ownerFile=path.join(stateRoot,'execution.lock','owner.json');
+ function resumable(s){
+  try{
+   if(s.status==='unknown')return false;
+   protectedRead(file(s.identity.run_id));
+   const c=s.continuation,p=profiles[s.identity.profile],a=s.profile.contract.activities[0];
+   if(!eligible(s.profile)||!eligible(p)||s.machine_id!==machineId||s.cancel_requested||s.commander_pending!==false||s.commander_unknown||!c||c.consumed||!Number.isFinite(c.checkpoint.deadline)||c.checkpoint.deadline<=Date.now()||c.checkpoint.attempt!==1)return false;
+   if(profileDigest(p)!==s.identity.profile_sha256||profileDigest(c.checkpoint)!==c.binding.checkpoint_sha256||c.binding.run_id!==s.identity.run_id||c.binding.task_id!==s.identity.task_id||c.binding.profile_sha256!==s.identity.profile_sha256||c.binding.activity!==a.key||c.binding.source_sha256!==s.profile.files[a.runtime.entry])return false;
+   assertProfile(s.profile,s.identity.mode);assertProfile(p,s.identity.mode);
+   const owner=protectedRead(ownerFile,2);if(owner.run_id!==s.identity.run_id||typeof owner.birth!=='string')return false;
+   const m=protectedRead(path.join(supervisorDirectory(s),'manifest.json'),3);
+   if(m.protocol!=='activity-supervisor/v1'||profileDigest(m.binding)!==profileDigest(c.binding)||m.deadline!==c.checkpoint.deadline||!m.nonce)return false;
+   const result=path.join(supervisorDirectory(s),'result.json');
+   if(fs.existsSync(result)){if(!validResult(protectedRead(result,3),m))return false;}else if(!sameProcess(m.pid,m.birth))return false;
+   if(fs.existsSync(path.join(supervisorDirectory(s),'cancel.json')))return false;
+   return true;
+  }catch{return false;}
+ }
+ const recoverable=[];
+ // 仅接回落盘的同一次执行；缺少证明的旧执行继续占用 unknown。
+ for(const name of fs.readdirSync(stateRoot).filter(n=>n.endsWith('.json')&&UUID.test(n.replace(/\.json$/,'')))){
+  const s=read(name.replace(/\.json$/,''));if(!s||!ACTIVE.has(s.status))continue;
+  if(resumable(s)){
+   const owner=protectedRead(ownerFile,2);if(sameProcess(owner.pid,owner.birth))continue;
+   try{fs.mkdirSync(path.join(stateRoot,'execution.lock','resume-'+owner.pid),{mode:0o700});}catch{s.status='unknown';s.reason='worker_restarted_execution_unknown';save(s);continue;}
+   persist(ownerFile,{run_id:s.identity.run_id,pid:process.pid,birth:processBirth(process.pid)});s.status='recovering';save(s);recoverable.push(s);
+  }else{s.status='unknown';s.reason='worker_restarted_execution_unknown';save(s);}
  }
  const assertIdentity=body=>{if(!UUID.test(body?.run_id??'')||!UUID.test(body?.task_id??''))throw Error('workflow_identity_invalid');};
  const existing=body=>{assertIdentity(body);const s=read(body.run_id);if(!s||s.identity.task_id!==body.task_id)throw Error('workflow_identity_not_found');return s;};
@@ -31,10 +58,13 @@ function createWorkflowRunner({stateRoot,machineId,profiles={},assertCanLaunch,a
   recorders.set(s.identity.run_id,r);return r;
  };
  const project=async s=>({run_id:s.identity.run_id,task_id:s.identity.task_id,machine_id:machineId,status:s.status,mode:s.identity.mode,profile_sha256:s.identity.profile_sha256,progress:s.progress??null,validation:s.validation??null,writeback:s.writeback??{pending:null},reason:s.reason??null,cancel_requested:s.cancel_requested===true,execution_state:s.execution_state??null,commander_status:s.commander_status??'unavailable',cleanup_required:s.profile?.cleanup_required!==false,execution_unknown:s.execution_unknown??null});
- async function execute(s,recorder,controller){
-  let commander,domain,domainClosed=false,domainTimer,eventCursor=0,currentReceipt={activities:[]};
+ async function execute(s,recorder,controller,resuming=false){
+  let commander,domain,domainClosed=false,domainTimer,eventCursor=resuming?Math.max(s.continuation.runner_cursor,s.progress?.cursor??0):0,currentReceipt={activities:[]};
   const closeDomain=async()=>{if(!domain||domainClosed)return;domainClosed=true;try{await domain.close();}catch(error){s.execution_unknown=true;currentReceipt.execution_unknown=true;delete s.pending_terminal_status;throw error;}};
   const observe=async(event,receipt=currentReceipt)=>{
+   if(event.event_type==='COMMANDER_REQUEST'){s.commander_pending=true;save(s);}
+   if(event.event_type==='COMMANDER_EXCHANGE'){s.commander_pending=false;s.commander_facts??={aborted:[],counts:{},exchanges:0};s.commander_facts.exchanges++;if(event.accepted&&event.activity){s.commander_facts.counts[event.activity]=(s.commander_facts.counts[event.activity]??0)+1;if(event.action?.action==='abort')s.commander_facts.aborted.push(event.activity);}save(s);}
+   if(event.event_type==='COMMANDER_UNAVAILABLE'&&s.profile.commander){s.commander_unknown=true;save(s);}
    currentReceipt=receipt;const numbered={...event,cursor:++eventCursor};
    await recorder.onEvent(numbered,receipt);await domain?.onEvent?.(structuredClone(numbered),structuredClone(receipt));s.commander_status=commander?.status??'unavailable';
    s.progress={observed_at:new Date().toISOString(),cursor:numbered.cursor,event_type:numbered.event_type,activity:numbered.activity??null,item:numbered.item??null,attempt:numbered.attempt??null};save(s);
@@ -57,9 +87,24 @@ function createWorkflowRunner({stateRoot,machineId,profiles={},assertCanLaunch,a
     activity_contract:request.activity?{...s.profile.contract.activities.find(a=>a.key===request.activity),questions:s.profile.metadata[request.activity]?.questions}:null});
    if(baseTransport.reconcile)transport.reconcile=request=>baseTransport.reconcile(request);
    commander=createCommanderBridge({transport,onEvent:observe,run_id:s.identity.run_id,brief:s.profile.brief??{purpose:s.profile.contract.workflow},rules:s.profile.rules??[],budget:cp?.budget??{}});
-   await commander.wake();
-   s.status='running';save(s);
-   const receipt=await runActivityContract(s.profile.contract,{...s.identity.input,run_tag:s.identity.input.run_tag??s.identity.run_id},{cwd:s.profile.cwd,signal:controller.signal,commander,onEvent:observe,...(domain?{executeActivity:domain.executeActivity,canFinalize:domain.canFinalize}:{}),
+   if(resuming){const facts=s.commander_facts??{aborted:[],counts:{}};commander={status:s.commander_status,notify:async()=>({action:'none'}),sleep:async()=>{},isAborted:key=>facts.aborted.includes(key),interventions:key=>facts.counts[key]??0};}
+   else await commander.wake();
+   if(!resuming)s.status='running';save(s);
+   const receipt=await runActivityContract(s.profile.contract,{...s.identity.input,run_tag:s.identity.input.run_tag??s.identity.run_id},{cwd:s.profile.cwd,signal:controller.signal,commander,onEvent:observe,...(eligible(s.profile)?{
+     ...(resuming?{resume:s.continuation.checkpoint}:{}),
+     checkpoint:async checkpoint=>{
+      if(s.profile.commander&&(s.commander_pending!==false||s.commander_unknown)){s.continuation=null;save(s);return;}
+      if(!s.profile.commander)s.commander_pending=false;
+      const a=s.profile.contract.activities[0],binding={run_id:s.identity.run_id,task_id:s.identity.task_id,profile_sha256:s.identity.profile_sha256,activity:a.key,source_sha256:s.profile.files[a.runtime.entry],checkpoint_sha256:profileDigest(checkpoint)};
+      s.continuation={checkpoint,binding,runner_cursor:eventCursor,consumed:false};save(s);
+     },
+     executeActivity:async(a,input,options)=>{
+      const {startSupervisedActivity,waitSupervisedActivity}=await import('../../src/orchestrator/activity-supervisor.js');
+      const c=s.continuation;
+      if(!c)return callActivityProcess(a,input,options);
+      const value=resuming?await waitSupervisedActivity(supervisorDirectory(s),c.binding,{...options,reconnecting:true}):await startSupervisedActivity(supervisorDirectory(s),c.binding,a,input,options,c.checkpoint.deadline);
+      c.consumed=true;save(s);return value;
+     }}:{}),...(domain?{executeActivity:domain.executeActivity,canFinalize:domain.canFinalize}:{}),
      recoverActivity:async(a,input,options)=>{
       assertProfile(s.profile,s.identity.mode);
       if(domain){if(!domain.recoverActivity)throw Error('workflow_recovery_adapter_required');return domain.recoverActivity(a,input,options);}
@@ -104,6 +149,10 @@ function createWorkflowRunner({stateRoot,machineId,profiles={},assertCanLaunch,a
    if(!ACTIVE.has(s.status)&&s.writeback?.pending===0&&s.writeback?.blocked===0){recorders.delete(s.identity.run_id);continue;}
    try{const r=await makeRecorder(s);const result=await r.flush();const current=read(s.identity.run_id);current.writeback=result;save(current);}catch{/* 保留journal供下次补发，不重启业务。 */}
   }});flushQueue=job.catch(()=>{});return job;};
+ for(const s of recoverable){
+  const controller=new AbortController();active.set(s.identity.run_id,controller);
+  void Promise.resolve().then(async()=>execute(s,await makeRecorder(s),controller,true)).finally(()=>{const current=read(s.identity.run_id);if(current&&!ACTIVE.has(current.status))fs.rmSync(path.join(stateRoot,'execution.lock'),{recursive:true});}).catch(()=>{});
+ }
  const retryTimer=setInterval(()=>{void flushSaved();},15000);retryTimer.unref();
  return {
   close:()=>clearInterval(retryTimer),
@@ -144,18 +193,20 @@ function createWorkflowRunner({stateRoot,machineId,profiles={},assertCanLaunch,a
    }
    const s={identity,profile,status:'starting',machine_id:machineId,...(profile.domain_adapter?{domain_started_at_ms:Date.now()}: {})};let recorder;
    const underLock=read(body.run_id);if(underLock){fs.rmdirSync(lock);if(underLock.cancel_tombstone&&underLock.identity.task_id===body.task_id)return project(underLock);if(profileDigest(underLock.identity)!==profileDigest(identity))throw Error('workflow_identity_conflict');return project(underLock);}
-   try{save(s);recorder=await makeRecorder(s);}
+   try{persist(ownerFile,{run_id:s.identity.run_id,pid:process.pid,birth:processBirth(process.pid)});save(s);recorder=await makeRecorder(s);}
    catch(error){s.status='unknown';s.reason='workflow_recording_unconfirmed';save(s);throw error;}
    const controller=new AbortController();active.set(body.run_id,controller);
    if(read(body.run_id)?.cancel_requested){s.cancel_requested=true;controller.abort();}
-   void execute(s,recorder,controller).finally(()=>{const current=read(body.run_id);if(current&&!ACTIVE.has(current.status))fs.rmdirSync(lock);}).catch(()=>{});
+   void execute(s,recorder,controller).finally(()=>{const current=read(body.run_id);if(current&&!ACTIVE.has(current.status))fs.rmSync(lock,{recursive:true});}).catch(()=>{});
    return project(s);
   },
   inspect:async body=>project(existing(body)),
   cancel:async body=>{assertIdentity(body);let s=read(body.run_id);
    if(!s){s={identity:{run_id:body.run_id,task_id:body.task_id},status:'cancelled_before_start',cancel_tombstone:true,execution_state:'not_started',machine_id:machineId,writeback:{pending:0,blocked:0,total:0,acked:0,manifest_sha256:profileDigest([])}};save(s);}
    if(s.identity.task_id!==body.task_id)throw Error('workflow_identity_not_found');
-   s.cancel_requested=true;save(s);active.get(body.run_id)?.abort();return project(s);},
+   s.cancel_requested=true;save(s);active.get(body.run_id)?.abort();
+   if(s.continuation){try{const manifest=protectedRead(path.join(supervisorDirectory(s),'manifest.json'),3);if(profileDigest(manifest.binding)===profileDigest(s.continuation.binding))persist(path.join(supervisorDirectory(s),'cancel.json'),{nonce:manifest.nonce});}catch{/* 无可靠监督身份时仍保留 unknown。 */}}
+   return project(s);},
   flush:async body=>{const s=existing(body);const r=await makeRecorder(s);const result=await r.flush();const current=existing(body);current.writeback=result;save(current);return project(current);},
   maintenance:async()=>({pending:fs.readdirSync(stateRoot).filter(n=>n.endsWith('.json')).map(n=>JSON.parse(fs.readFileSync(path.join(stateRoot,n),'utf8'))).filter(s=>ACTIVE.has(s.status)).length}),
  };
