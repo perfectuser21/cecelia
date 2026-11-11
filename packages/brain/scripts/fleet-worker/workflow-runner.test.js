@@ -105,3 +105,22 @@ test('免清场只能由显式无资源且无finalize的固定profile声明',()=
  const f=fixture();try{const {assertProfile}=require('./workflow-profile.cjs');f.profile.cleanup_required=false;assert.throws(()=>assertProfile(f.profile,'exploration'),/cleanup_obligation_invalid/);f.profile.resources=[];assert.doesNotThrow(()=>assertProfile(f.profile,'exploration'));f.profile.resources=['phone'];assert.throws(()=>assertProfile(f.profile,'exploration'),/cleanup_obligation_invalid/);f.profile.resources=[];f.profile.contract.activities[0].runtime.phase='finalize';assert.throws(()=>assertProfile(f.profile,'exploration'),/cleanup_obligation_invalid/);
  }finally{fs.rmSync(f.root,{recursive:true,force:true});}
 });
+
+test('OS Worker death reconnects one supervised Activity without repeating effects or starts',async()=>{
+ const f=fixture(),{fork}=require('node:child_process');let one,two;
+ const ask=(child,action)=>new Promise(resolve=>{child.once('message',resolve);child.send({action,id:f.id});});
+ const wait=async predicate=>{for(let i=0;i<300;i++){if(await predicate())return;await new Promise(r=>setTimeout(r,20));}throw Error('cold recovery timeout');};
+ try{
+ const code=`import fs from 'node:fs';let s='';for await(const c of process.stdin)s+=c;const x=JSON.parse(s);fs.appendFileSync('effects','x');while(!fs.existsSync('release'))await new Promise(r=>setTimeout(r,20));console.log(JSON.stringify({schema_version:1,run_tag:x.run_tag,status:'completed',outputs:{answer:42},metrics:{},evidence:[{path:'effects'}]}));`;
+ fs.writeFileSync(path.join(f.root,'work.mjs'),code);fs.writeFileSync(path.join(f.root,'skill.md'),'Return forty two');
+ Object.assign(f.profile,{cleanup_required:false,resources:[]});f.profile.files['work.mjs']=hash(code);f.profile.files['skill.md']=hash('Return forty two');Object.assign(f.profile.metadata.work,{executor_kind:'agent',skill:{entry:'skill.md',version:'v1'}});f.profile.contract.activities[0].budget.max_duration_s=15;f.id.profile_sha256=profileDigest(f.profile);
+ const config=path.join(f.root,'worker.json'),stateRoot=path.join(f.root,'state');fs.writeFileSync(config,JSON.stringify({stateRoot,machineId:'test',profiles:{demo:f.profile}}));
+ const start=()=>fork(path.join(import.meta.dirname,'fixtures/cold-recovery-worker.cjs'),[config],{stdio:['ignore','pipe','pipe','ipc']});
+ one=start();await ask(one,'start');await wait(()=>fs.existsSync(path.join(f.root,'effects')));
+ one.kill('SIGKILL');await new Promise(r=>one.once('exit',r));
+ two=start();const resumed=await ask(two,'inspect');assert.equal(resumed.status,'recovering');
+ fs.writeFileSync(path.join(f.root,'release'),'yes');await wait(async()=>!['recovering','running','validating','starting'].includes((await ask(two,'inspect')).status));
+ assert.equal((await ask(two,'inspect')).status,'completed');assert.equal(fs.readFileSync(path.join(f.root,'effects'),'utf8'),'x');
+ const events=fs.readFileSync(path.join(stateRoot,'events'),'utf8').trim().split('\n').map(JSON.parse);assert.equal(events.filter(e=>e.event_type==='ACTIVITY_STARTED').length,1);assert.equal(events.filter(e=>e.event_type==='WF_RUN_STARTED').length,1);
+ }finally{fs.writeFileSync(path.join(f.root,'release'),'yes');one?.kill('SIGKILL');two?.kill('SIGKILL');await new Promise(r=>setTimeout(r,100));fs.rmSync(f.root,{recursive:true,force:true});}
+});
