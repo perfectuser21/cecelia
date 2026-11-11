@@ -5,6 +5,12 @@
 
 import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
 
+const cleanupStubs = vi.hoisted(() => ({
+  zombie: vi.fn().mockName('runZombieCleanup').mockResolvedValue({ slotsReclaimed: 0, worktreesRemoved: 0 }),
+  harness: vi.fn().mockName('cleanupStaleHarnessWorktrees').mockResolvedValue({ cleaned: 0, errors: 0 }),
+  worker: vi.fn().mockName('runCleanupWorker').mockResolvedValue({ success: true, stdout: '' }),
+}));
+
 // ── mock 区（所有 tick.js 依赖）──────────────────────────
 
 vi.mock('../db.js', () => ({ default: { query: vi.fn().mockResolvedValue({ rows: [] }) } }));
@@ -76,6 +82,16 @@ vi.mock('../focus.js', () => ({ getDailyFocus: vi.fn().mockResolvedValue(null) }
 vi.mock('../actions.js', () => ({ updateTask: vi.fn() }));
 vi.mock('../shepherd.js', () => ({ shepherdOpenPRs: vi.fn().mockResolvedValue({ processed: 0, merged: 0, failed: 0, pending: 0 }) }));
 vi.mock('../zombie-sweep.js', () => ({ zombieSweep: vi.fn().mockResolvedValue({}), getZombieSweepStatus: vi.fn().mockResolvedValue(null) }));
+// 本文件只验 blocked 恢复；这些动态依赖会清理宿主资源，必须独立 stub。
+vi.mock('../zombie-cleaner.js', () => ({
+  runZombieCleanup: cleanupStubs.zombie,
+}));
+vi.mock('../harness-worktree.js', () => ({
+  cleanupStaleHarnessWorktrees: cleanupStubs.harness,
+}));
+vi.mock('../cleanup-worker.js', () => ({
+  runCleanupWorker: cleanupStubs.worker,
+}));
 vi.mock('../progress-ledger.js', () => ({ evaluateProgressInTick: vi.fn().mockResolvedValue({ evaluated: 0, alertCount: 0 }), recordProgressStep: vi.fn(), getProgressSteps: vi.fn().mockResolvedValue([]), updateProgressStep: vi.fn(), getTaskProgressSummary: vi.fn().mockResolvedValue(null), getProgressAnomalies: vi.fn().mockResolvedValue([]) }));
 vi.mock('../llm-caller.js', () => ({ callLLM: vi.fn().mockResolvedValue(''), callLLMStream: vi.fn().mockResolvedValue(''), _resetMinimaxKey: vi.fn(), _resetAnthropicKey: vi.fn(), _resetOpenAIKey: vi.fn() }));
 
@@ -89,9 +105,16 @@ vi.mock('../task-updater.js', () => ({
 
 // ── 导入被测函数 ──────────────────────────────────────────
 // isolate:true 模式下每个文件已有独立模块注册表，无需 vi.resetModules()
-let executeTick;
+let executeTick, tickState, resourceCleaners;
 
 beforeAll(async () => {
+  const [zombie, harness, cleanup] = await Promise.all([
+    import('../zombie-cleaner.js'), import('../harness-worktree.js'), import('../cleanup-worker.js'),
+  ]);
+  resourceCleaners = [zombie.runZombieCleanup, harness.cleanupStaleHarnessWorktrees, cleanup.runCleanupWorker];
+  // 在导入/执行 tick 之前失败，漏 mock 时不能先清理宿主再报断言错误。
+  expect(resourceCleaners).toEqual([cleanupStubs.zombie, cleanupStubs.harness, cleanupStubs.worker]);
+  ({ tickState } = await import('../tick-state.js'));
   const mod = await import('../tick.js');
   executeTick = mod.executeTick;
 });
@@ -99,7 +122,21 @@ beforeAll(async () => {
 // ── 测试 ─────────────────────────────────────────────────
 
 describe('tick — blocked 任务自动恢复', () => {
-  beforeEach(() => { vi.clearAllMocks(); });
+  it('资源清理边界必须隔离，blocked recovery 不得调用真实工作树清理', async () => {
+    await executeTick();
+    for (const cleaner of resourceCleaners) expect(cleaner).toHaveBeenCalledOnce();
+    expect(mockUnblockExpiredTasks).toHaveBeenCalledOnce();
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // 阻止无关周期插件在本用例触发；只主动覆盖已隔离的清理接缝。
+    for (const key of Object.keys(tickState)) {
+      if (key.startsWith('last') && typeof tickState[key] === 'number') tickState[key] = Date.now();
+    }
+    tickState.lastZombieCleanupTime = 0;
+    tickState.lastCleanupWorkerTime = 0;
+  });
 
   it('每次 executeTick 应调用 unblockExpiredTasks', async () => {
     await executeTick();
