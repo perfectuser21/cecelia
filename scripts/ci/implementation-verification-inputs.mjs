@@ -131,8 +131,8 @@ const FUNCTIONAL_BASIC_CI='5e5df48feb544a49b8bc2f2a3def7cefe0a71b6d9e911caed32e5
 const FUNCTIONAL_BASIC_ENTRY_PROTOCOLS=[{...FINAL_JOBS_BASIC_ENTRY_PROTOCOLS[0],'scripts/ci/basic-scope.mjs':'446605f2052c09c44c21bd2c9f8bcee206b3198be4d18858f1c8298ece0be726','scripts/ci/run-basic-check.mjs':'10e030617fb6ca219bd4965afa2566213f8788bc4e3741d3e7b3d7ebf5e45918','scripts/ci/ops-checks.mjs':'a5eb851d2f526e940432563a70e8a82fb0f128d66a8104515fec530974a55f6b','apps/api/vitest.config.ts':'6f4d8288dd391a8212c1bc22d434f8c4053f76099df2beb692693b1c80512b33','apps/dashboard/vitest.config.ts':'a5899ed07ee4aa8ff262f7da361d695ef8eb26005571c5e09988aac53c1cc261','scripts/ci/__tests__/basic-w19-freeze.test.mjs':'127bfd50494259a78e2f3649c399596fc94acc90a3db17c43077a6ea47cf785a'}];
 const UBUNTU_ARCHIVE_BASIC_CI='3636a0489fdc4ce2d9a362db0d635774b13f222d8c3d14939751460a2637faa7';
 const UBUNTU_ARCHIVE_BASIC_ENTRY_PROTOCOLS=[{...FUNCTIONAL_BASIC_ENTRY_PROTOCOLS[0],
- 'scripts/ci/prepare-ubuntu-archive.mjs':'b51a257f8223123be5287bafa64e26df5e109e74777135f1190f53c483007a22',
- 'scripts/ci/__tests__/basic-ubuntu-archive.test.mjs':'524c98e0fb51249b0ccb5a697723afe621004c153f94bddfc80f3280c13b80b4',
+ 'scripts/ci/prepare-ubuntu-archive.mjs':'ca83d00df2f865fc1836e0f8841bc5f4ba7ddf57416b6f718855f5840205311b',
+ 'scripts/ci/__tests__/basic-ubuntu-archive.test.mjs':'525456457c116c91aba038f35916352abed5ec38a0aa7c5287fd263ef9ffb175',
 }];
 const functionalEntry=entry=>[FUNCTIONAL_BASIC_CI,UBUNTU_ARCHIVE_BASIC_CI].includes(entry?.canonical_sha256);
 const UNIT_CONFIGS=[

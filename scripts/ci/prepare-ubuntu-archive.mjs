@@ -4,9 +4,11 @@ import { pathToFileURL } from 'node:url';
 
 const keyring = '/usr/share/keyrings/ubuntu-archive-keyring.gpg';
 const sourceFile = '/etc/apt/sources.list.d/ubuntu.sources';
+const archive = 'https://mirrors.edge.kernel.org/ubuntu';
 const indirect = uri => /^mirror\+file:\/etc\/apt\/apt-mirrors(?:-security)?\.txt$/.test(uri)
   || /^https?:\/\/azure\.archive\.ubuntu\.com\/ubuntu\/?$/.test(uri);
 const official = uri => /^https?:\/\/(?:archive|security)\.ubuntu\.com\/ubuntu\/?$/.test(uri);
+const supported = uri => indirect(uri) || official(uri) || uri === archive || uri === archive + '/';
 
 export function prepareUbuntuSources(text) {
   let ubuntu = 0;
@@ -14,19 +16,18 @@ export function prepareUbuntuSources(text) {
     const entries = [...paragraph.matchAll(/^([A-Za-z][A-Za-z-]*):[ \t]*([^\r\n]*)/gm)];
     const fields = Object.fromEntries(entries.map(match => [match[1], match[2].trim()]));
     const uris = fields.URIs?.split(/\s+/) ?? [];
-    if (fields['Signed-By'] !== keyring && !uris.some(uri => indirect(uri) || official(uri))) return paragraph;
+    if (fields['Signed-By'] !== keyring && !uris.some(supported)) return paragraph;
     ubuntu++;
     if (new Set(entries.map(match => match[1])).size !== entries.length
       || /^[ \t]+\S/m.test(paragraph)
       || ['Types', 'URIs', 'Suites', 'Components'].some(field => !fields[field])
       || fields['Signed-By'] !== keyring) throw Error('ubuntu_source_format_unsupported');
-    if (!uris.every(uri => indirect(uri) || official(uri))) throw Error('ubuntu_source_uri_unsupported');
+    if (!uris.every(supported)) throw Error('ubuntu_source_uri_unsupported');
     const security = fields.Suites.split(/\s+/).map(suite => suite.endsWith('-security'));
     if (security.some(Boolean) && !security.every(Boolean)) throw Error('ubuntu_source_security_suites_mixed');
-    const archive = `https://${security[0] ? 'security' : 'archive'}.ubuntu.com/ubuntu`;
-    if (!uris.some(indirect)) return paragraph;
+    if (uris.length === 1 && uris[0] === archive) return paragraph;
     return paragraph.replace(/^(URIs:[ \t]*)([^\r\n]*)/m,
-      (_, prefix) => prefix + uris.map(uri => indirect(uri) ? archive : uri).join(' '));
+      (_, prefix) => prefix + archive);
   }).join('');
   if (!ubuntu) throw Error('ubuntu_sources_not_found');
   return result;
@@ -48,7 +49,7 @@ function main() {
     if (write.error || write.status !== 0) throw Error('ubuntu_source_write_failed');
     if (fs.readFileSync(sourceFile, 'utf8') !== after) throw Error('ubuntu_source_readback_failed');
   }
-  console.log('Ubuntu official package archives prepared; signatures and suites preserved.');
+  console.log('Ubuntu signed package mirror prepared; signatures and suites preserved.');
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

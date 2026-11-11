@@ -34,15 +34,15 @@ test('Ubuntu mirror selection is removed while suites, signing and third-party s
   const security = stanza('noble-security', 'mirror+file:/etc/apt/apt-mirrors-security.txt');
   const input = primary + '\n' + security + '\n' + thirdParty;
   const actual = prepareUbuntuSources(input);
-  assert.equal(actual, primary.replace('mirror+file:/etc/apt/apt-mirrors.txt', 'https://archive.ubuntu.com/ubuntu')
-    + '\n' + security.replace('mirror+file:/etc/apt/apt-mirrors-security.txt', 'https://security.ubuntu.com/ubuntu')
+  assert.equal(actual, primary.replace('mirror+file:/etc/apt/apt-mirrors.txt', 'https://mirrors.edge.kernel.org/ubuntu')
+    + '\n' + security.replace('mirror+file:/etc/apt/apt-mirrors-security.txt', 'https://mirrors.edge.kernel.org/ubuntu')
     + '\n' + thirdParty);
   assert.equal(prepareUbuntuSources(actual), actual);
 });
 
-test('Azure Ubuntu URIs use the official security archive for security suites', () => {
+test('Azure Ubuntu URIs use the signed mirror while retaining security suites', () => {
   assert.equal(prepareUbuntuSources(stanza('noble-security', 'http://azure.archive.ubuntu.com/ubuntu')),
-    stanza('noble-security', 'https://security.ubuntu.com/ubuntu'));
+    stanza('noble-security', 'https://mirrors.edge.kernel.org/ubuntu'));
 });
 
 test('direct Ubuntu archive domains are replaced without changing Ubuntu signing or suites', () => {
@@ -58,7 +58,7 @@ test('direct Ubuntu archive domains are replaced without changing Ubuntu signing
 
 test('Windows line endings and comments are retained', () => {
   const input = ('# Ubuntu archive\n' + stanza('noble')).replaceAll('\n', '\r\n');
-  assert.equal(prepareUbuntuSources(input), input.replace('mirror+file:/etc/apt/apt-mirrors.txt', 'https://archive.ubuntu.com/ubuntu'));
+  assert.equal(prepareUbuntuSources(input), input.replace('mirror+file:/etc/apt/apt-mirrors.txt', 'https://mirrors.edge.kernel.org/ubuntu'));
 });
 
 test('unsupported Ubuntu sources fail before any source file can be written', () => {
