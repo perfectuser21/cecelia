@@ -1,6 +1,8 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.445.198
+**Brain 版本**: 1.445.199
+
+Blocked 恢复单测隔离宿主资源清理：真实 tick 入口保留，工作树/slot 清理均绑定 stub，并在 tick 导入之前核对隔离。仅测试修复，不改变生产清理策略。
 
 独立 Skill 起跑登记：`POST /api/brain/runs/:run_id/start-skill` 在真实 Task claim 与固定发布来源校验后，原子登记 TaskRun 及 internal binding；入口不启动模型或执行业务，重复请求必须保持原执行者、Skill 和范围。
 
