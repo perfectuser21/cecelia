@@ -151,3 +151,12 @@ test('expired supervised attempt refuses all new process launch',async()=>{
   assert.equal(fs.existsSync(path.join(f.root,'effects')),false);assert.equal(fs.existsSync(path.join(f.root,'spool')),false);
  }finally{fs.rmSync(f.root,{recursive:true,force:true});}
 });
+
+test.each([1,2])('supervisor result published during process probe %i remains recoverable',trigger=>{
+ const {execFileSync}=require('node:child_process');
+ const result=JSON.parse(execFileSync(process.execPath,[path.join(import.meta.dirname,'fixtures/supervisor-finish-race.cjs'),String(trigger)],{encoding:'utf8',timeout:22000}));
+ assert.equal(result.error,undefined,JSON.stringify(result));
+ assert.equal(result.returned.exit_code,0);assert.equal(JSON.parse(result.returned.stdout).outputs.answer,42);
+ assert.equal(result.result_valid,true);assert.equal(result.effects,'x');assert.equal(result.deadline_not_elapsed,true);assert.equal(result.supervisor_exited,true);
+ const window=result.trace.find(row=>row.call===trigger);assert.equal(window.result_before,false);assert.equal(window.same_process,false);assert.equal(window.result_after,true);
+});
