@@ -17,8 +17,9 @@ export function inspectSupervisor(directory,binding){
  const manifest=read(path.join(directory,'manifest.json'));
  if(JSON.stringify(manifest.binding)!==JSON.stringify(binding)||manifest.protocol!=='activity-supervisor/v1'||!manifest.nonce)throw Error('activity_supervisor_identity_invalid');
  const resultFile=path.join(directory,'result.json');
+ const running=fs.existsSync(resultFile)||sameProcess(manifest.pid,manifest.birth);
  if(fs.existsSync(resultFile)){const result=read(resultFile);if(!validResult(result,manifest))throw Error('activity_supervisor_result_invalid');}
- else if(!sameProcess(manifest.pid,manifest.birth))throw Error('activity_supervisor_missing');
+ else if(!running)throw Error('activity_supervisor_missing');
  return manifest;
 }
 export async function waitSupervisedActivity(directory,binding,{signal,onHeartbeat,onAgentEvent,reconnecting=false}={}){
@@ -36,8 +37,9 @@ export async function waitSupervisedActivity(directory,binding,{signal,onHeartbe
    }
   }
   const resultFile=path.join(directory,'result.json');
+  const running=fs.existsSync(resultFile)||sameProcess(manifest.pid,manifest.birth);
   if(fs.existsSync(resultFile)){const value=read(resultFile);if(!validResult(value,manifest))throw Error('activity_supervisor_result_invalid');return value.transport;}
-  if(!sameProcess(manifest.pid,manifest.birth)||Date.now()>manifest.deadline+(manifest.cleanup_grace_s+2)*1000)throw Error('activity_supervisor_unconfirmed');
+  if(!running||Date.now()>manifest.deadline+(manifest.cleanup_grace_s+2)*1000)throw Error('activity_supervisor_unconfirmed');
   await new Promise(resolve=>setTimeout(resolve,25));
  }}catch(error){cancel();throw Object.assign(error,{executionStopped:false});}finally{signal?.removeEventListener('abort',cancel);}
 }
