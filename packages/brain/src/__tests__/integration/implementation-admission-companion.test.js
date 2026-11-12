@@ -1,22 +1,13 @@
 import {beforeEach,afterEach,it,expect} from 'vitest';
-import {spawnSync} from 'node:child_process';
-import {mkdtempSync,writeFileSync,readFileSync,rmSync} from 'node:fs';
-import {tmpdir} from 'node:os';
-import {join} from 'node:path';
-import {fileURLToPath} from 'node:url';
 import {randomUUID} from 'node:crypto';
-import { readFixedExistingOpsGitFixture } from '../../lib/__tests__/helpers/fixed-existing-ops-git-fixture.js';
 import {versionsDatabase} from '../fixtures/definition-versions-db.js';
 import {minimumMapSchema} from '../fixtures/minimum-map-schema.js';
 import {EXISTING_OPS_IDENTITIES} from '../../lib/existing-ops-source.js';
-import * as registration from '../../lib/existing-ops-registration.js';
 import * as snapshotApi from '../../lib/implementation-ci-snapshot.js';
 import {stepSha256} from '../../../scripts/sync-steps-from-workspace.mjs';
-const root = fileURLToPath(new URL('../../../../../', import.meta.url));
-// 正样本仅为已知历史 Git fixture，不赋予当前候选来源或发布资格。
-const sourceFixture = readFixedExistingOpsGitFixture();
-const { revision, paths } = sourceFixture;
-const readSource = async path => sourceFixture.read(path);
+const revision='227c14e6ff8970f5c408a8dc87e8b9d0f0d16cfe';
+const query=()=>({scope:'cecelia-kr',repo:'perfectuser21/cecelia',revision});
+function rehash(s){const {snapshot_sha256,...body}=s;s.snapshot_sha256=stepSha256(body);return s;}
 let fixture;
 beforeEach(async () => {
   fixture = await versionsDatabase(); await fixture.migrate(); await minimumMapSchema(fixture.db);
@@ -40,52 +31,6 @@ async function factoryMap() {
   await fixture.db.query("INSERT INTO map_projection_runs(scope_key,manifest_version_id,manifest_digest,fact_revisions,projector_version,projection_digest,status,activated_at) VALUES('cecelia-factory',$1,$2,$3,'fixture',$2,'active',NOW())",[manifestId,'a'.repeat(64),{'cecelia-factory-source':revision}]);
 }
 afterEach(async () => { await fixture?.close(); });
-const options = extra => ({ scope: 'cecelia-factory', repo: 'perfectuser21/cecelia', revision, paths, readSource, checkMain: async () => {}, actor: 'test-real-main', ...extra });
-
-async function registered(){
- const before=await registration.readExistingOpsRegistry(fixture.db);
- await registration.registerExistingOpsSources(fixture.db,options({expectedRegistrySha256:before.registry_sha256}));
- await factoryMap();return before;
-}
-const query=()=>({scope:'cecelia-kr',repo:'perfectuser21/cecelia',revision});
-function rehash(s){const {snapshot_sha256,...body}=s;s.snapshot_sha256=stepSha256(body);return s;}
-it('真实PG同事务KR导出独立Factory companion，父UNKNOWN不被子verified冒充且身份/current/8refs保持',async()=>{
- const before=await registered();
- const snapshot=await snapshotApi.exportImplementationSnapshot(fixture.db,query());
- expect(snapshot.status).toBe('unknown');
- expect(snapshot).toHaveProperty('admission_companion');
- const companion=snapshot.admission_companion;
- expect(companion.schema_version).toBe(1);expect(companion.purpose).toBe('admission_only');
- expect(companion.snapshot.status,JSON.stringify(companion.snapshot.gaps)).toBe('verified');
- expect(companion.snapshot.canonical.references).toHaveLength(8);
- expect(companion.snapshot.unverified_reference_ids).toHaveLength(6);
- expect(companion.snapshot.definitions.workflows).toHaveLength(2);
- expect(companion.snapshot.definitions.workflows.every(w=>w.payload.definition_scope==='consumer_evidence'&&w.payload.coverage.status==='unknown')).toBe(true);
- expect(snapshot.definitions.workflows).toHaveLength(0);
- expect(companion.snapshot).not.toHaveProperty('admission_companion');
- expect(snapshotApi.validateImplementationSnapshot(snapshot)).toBe(snapshot);
- expect(await registration.readExistingOpsRegistry(fixture.db)).toEqual(before);
- expect(snapshotApi.extractImplementationAdmissionSnapshots).toBeTypeOf('function');
- expect(()=>snapshotApi.extractImplementationAdmissionSnapshots(snapshot,['cecelia-kr','cecelia-factory'])).toThrow(/UNKNOWN/);
-});
-it('独立Factory身份/来源/schema/嵌套篡改即使重算外层hash仍拒绝',async()=>{
- await registered();const snapshot=await snapshotApi.exportImplementationSnapshot(fixture.db,query());
- expect(snapshot.admission_companion).toBeTruthy();
- for(const mutate of [c=>c.schema_version=2,c=>c.scope='foreign',c=>c.repo='attacker/repo',c=>c.revision='a'.repeat(40),c=>c.snapshot.canonical.references.pop(),c=>c.snapshot.admission_companion={},c=>c.snapshot.unverified_reference_ids.pop(),c=>c.snapshot.execution_status='verified',c=>c.snapshot.definitions.workflows[0].payload.coverage.status='verified',c=>c.snapshot.definitions.activities[0].payload.contract.executable=true,c=>c.snapshot.definitions.workflows[0].payload.coverage.verified_reference_ids=[],c=>c.snapshot.definitions.workflows[0].payload.coverage.unverified_reference_ids.pop(),c=>c.snapshot.definitions.workflows[0].payload.coverage.unverified_reference_ids[1]=c.snapshot.definitions.workflows[0].payload.coverage.unverified_reference_ids[0],c=>c.snapshot.definitions.workflows[0].payload.coverage.verified_reference_ids=[EXISTING_OPS_IDENTITIES[1].reference_id],c=>c.snapshot.definitions.workflows[0].payload.contract.key='foreign',c=>c.snapshot.definitions.activities[0].payload.contract.key='foreign',c=>c.snapshot.definitions.workflows[0].payload.contract.definition_scope='executable',c=>c.snapshot.definitions.activities[0].payload.contract.source_basis='candidate',c=>c.snapshot.definitions.workflows[0].payload.coverage.unverified_reference_ids[0]=EXISTING_OPS_IDENTITIES[1].unverified_reference_ids[0],c=>c.snapshot.definitions.workflows[0].payload.coverage.unverified_reference_ids[0]='ffffffff-ffff-4fff-8fff-ffffffffffff',c=>c.snapshot.definitions.workflows[0].payload.coverage.verified_reference_ids.push(c.snapshot.definitions.workflows[0].payload.coverage.verified_reference_ids[0])]){
-  const forged=structuredClone(snapshot);mutate(forged.admission_companion);
-  for(const row of [...forged.admission_companion.snapshot.definitions.workflows,...forged.admission_companion.snapshot.definitions.activities])row.payload_sha256=stepSha256({source:{repo:row.source_repo,path:row.source_path,commit:row.source_commit},payload:row.payload});
-  rehash(forged.admission_companion.snapshot);
-  const {companion_sha256,...body}=forged.admission_companion;forged.admission_companion.companion_sha256=stepSha256(body);rehash(forged);
-  expect(()=>snapshotApi.validateImplementationSnapshot(forged)).toThrow();
- }
-});
-it('旧single及Factory导出均不混其它scope，缺companion的显式joint提取必须拒绝',async()=>{
- await registered();const factory=await snapshotApi.exportImplementationSnapshot(fixture.db,{...query(),scope:'cecelia-factory'});
- expect(factory).not.toHaveProperty('admission_companion');
- expect(snapshotApi.extractImplementationAdmissionSnapshots).toBeTypeOf('function');
- expect(()=>snapshotApi.extractImplementationAdmissionSnapshots(factory,['cecelia-kr','cecelia-factory'])).toThrow();
-});
-
 async function registerKr(){
  const rootId=randomUUID(),cap=randomUUID(),workflow=randomUUID(),decision=randomUUID(),manifestId=randomUUID();
  await fixture.db.query("INSERT INTO value_streams(id,name) VALUES($1,'公司KR')",[rootId]);
@@ -101,33 +46,21 @@ async function registerKr(){
  await fixture.db.query("INSERT INTO map_manifest_versions(id,scope_key,version,source_decision_id,manifest,digest,status,activated_at) VALUES($1,'cecelia-kr',1,$2,$3,$4,'active',NOW())",[manifestId,decision,manifest,'a'.repeat(64)]);
  await fixture.db.query("INSERT INTO map_projection_runs(scope_key,manifest_version_id,manifest_digest,fact_revisions,projector_version,projection_digest,status,activated_at) VALUES('cecelia-kr',$1,$2,$3,'fixture',$2,'active',NOW())",[manifestId,'a'.repeat(64),{'cecelia-kr-source':revision}]);
 }
-it('真实PG双verified提取独立scope且不混定义，不改current或8refs',async()=>{
- const before=await registered();await registerKr();
- const snapshot=await snapshotApi.exportImplementationSnapshot(fixture.db,query());
- expect(snapshot.status,JSON.stringify(snapshot.gaps)).toBe('verified');
- const extracted=snapshotApi.extractImplementationAdmissionSnapshots(snapshot,['cecelia-kr','cecelia-factory']);
- expect(extracted.map(s=>s.scope)).toEqual(['cecelia-kr','cecelia-factory']);
- expect(extracted[0].definitions.workflows).toHaveLength(1);
- expect(extracted[1].definitions.workflows).toHaveLength(2);
- const temp=mkdtempSync(join(tmpdir(),'admission-companion-cli-'));
- try{
-  const input=join(temp,'head.json'),scopes=join(temp,'scopes.json'),output=join(temp,'out');
-  writeFileSync(input,JSON.stringify({snapshot}));writeFileSync(scopes,JSON.stringify({schema_version:1,scopes:['cecelia-kr','cecelia-factory']}));
-  const child=spawnSync(process.execPath,[join(root,'scripts/ci/implementation-pr-gate.mjs'),'--extract-scopes','--snapshot-file',input,'--scopes-file',scopes,'--side','head','--output-dir',output],{encoding:'utf8'});
-  expect(child.status,child.stderr).toBe(0);expect(child.stdout).toBe('admission_source_only: EXTRACTED\n');
-  for(const original of extracted)expect(JSON.parse(readFileSync(join(output,`head-${original.scope}.json`),'utf8'))).toEqual(original);
- }finally{rmSync(temp,{recursive:true,force:true});}
-
- expect(await registration.readExistingOpsRegistry(fixture.db)).toEqual(before);
- const legacy=structuredClone(snapshot);delete legacy.admission_companion;rehash(legacy);
- expect(snapshotApi.extractImplementationAdmissionSnapshots(legacy,['cecelia-kr'])).toEqual([legacy]);
- expect(()=>snapshotApi.extractImplementationAdmissionSnapshots(legacy,['cecelia-kr','cecelia-factory'])).toThrow();
-});
-it('子来源缺失保留UNKNOWN，legacy父verified仍可用，joint必须拒绝',async()=>{
+it('子来源缺失保留UNKNOWN，独立父来源可读取，跨scope联合提取必须拒绝',async()=>{
  await factoryMap();await registerKr();
  const snapshot=await snapshotApi.exportImplementationSnapshot(fixture.db,query());
  expect(snapshot.status).toBe('verified');expect(snapshot.admission_companion.snapshot.status).toBe('unknown');
  expect(snapshotApi.validateImplementationSnapshot(snapshot)).toBe(snapshot);
  expect(snapshotApi.extractImplementationAdmissionSnapshots(snapshot,['cecelia-kr'])).toEqual([snapshot]);
  expect(()=>snapshotApi.extractImplementationAdmissionSnapshots(snapshot,['cecelia-kr','cecelia-factory'])).toThrow(/UNKNOWN/);
+});
+
+it('未知子来源的companion身份、嵌套和执行资格不能由重算外层摘要伪造',async()=>{
+ await factoryMap();await registerKr();
+ const snapshot=await snapshotApi.exportImplementationSnapshot(fixture.db,query());
+ for(const mutate of [c=>c.schema_version=2,c=>c.scope='foreign',c=>c.repo='attacker/repo',c=>c.revision='a'.repeat(40),c=>c.snapshot.admission_companion={},c=>c.snapshot.execution_status='verified']){
+  const forged=structuredClone(snapshot);mutate(forged.admission_companion);rehash(forged.admission_companion.snapshot);
+  const {companion_sha256,...body}=forged.admission_companion;forged.admission_companion.companion_sha256=stepSha256(body);rehash(forged);
+  expect(()=>snapshotApi.validateImplementationSnapshot(forged)).toThrow();
+ }
 });

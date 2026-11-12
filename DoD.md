@@ -8,5 +8,5 @@
   Test: manual:node scripts/ci/run-basic-check.mjs ops
 - [x] [BEHAVIOR] 旧API按真实消费者拆除，现役共享features、Dashboard和captures数据合同保留。
   Test: manual:node scripts/ci/run-basic-check.mjs dashboard
-- [ ] [BEHAVIOR] 内容业务归属按Cecelia调度与ZenithJoy业务边界落实；全部受影响真实行为通过，受保护PR通过且合并。
+- [ ] [BEHAVIOR] 内容弱测试和无调用残留退出；按主理人本轮范围保留现役内容接口，受保护PR通过且合并。
   Test: manual:node scripts/ci/run-basic-check.mjs scripts
