@@ -20,7 +20,6 @@ test('Dashboard共享API features触发前端，服务端和独立组件保持�
     assert.deepEqual(components(planChecks([path])), ['dashboard', 'scripts'], path);
   }
   assert.deepEqual(components(planChecks(['apps/api/src/index.ts'])), ['scripts']);
-  assert.deepEqual(components(planChecks(['apps/android-agent/app/Agent.kt'])), ['android', 'scripts']);
   assert.deepEqual(components(planChecks(['packages/mcp-readonly/server.js'])), ['mcp', 'scripts']);
 });
 

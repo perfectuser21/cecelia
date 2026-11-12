@@ -41,9 +41,10 @@ test('运行时Markdown提示词必须执行完整所属组件，不能因扩展
   }
 });
 
-test('Android改动必须执行真实Android单测，不能用JS测试替代', () => {
-  assert.deepEqual(components(planChecks(['apps/android-agent/app/src/main/java/Agent.kt'])), ['android', 'scripts']);
-  assert.ok(components(planChecks(['apps/android-agent/tsconfig.json'])).includes('android'));
+test('已退役客户端路径作为未知输入保守运行现役组件', () => {
+  for (const path of ['apps/android-agent/app/src/main/java/Agent.kt', 'apps/android-agent/tsconfig.json']) {
+    assert.deepEqual(components(planChecks([path])), all, path);
+  }
 });
 
 test('Brain完整运行现役组件与六分片，旧API源码不冒充现役服务', () => {
@@ -124,7 +125,7 @@ test('CLI 使用真实 Git 差分及 NUL 路径，输出单行 Actions matrix', 
   assert.equal(readFileSync(output, 'utf8'), `matrix=${JSON.stringify(matrix)}\npreview_ui=true\n`);
 });
 
-test('主分支全量仍读取真实差分并补上本次修改的客户端', t => {
+test('主分支全量读取真实差分并输出全部现役组件', t => {
   const f = fixture(t);
   const base = f.commit('README.md', 'base');
   f.commit('frontend/src/legacy.tsx', 'export default 1;');
@@ -132,9 +133,7 @@ test('主分支全量仍读取真实差分并补上本次修改的客户端', t 
   const result = spawnSync(process.execPath, [cli, '--full', '--base', base, '--head', head], { cwd: f.root, encoding: 'utf8', env: {...process.env, GITHUB_OUTPUT: ''} });
   assert.equal(result.status, 0, result.stderr);
   const selected = components(JSON.parse(result.stdout).include);
-  assert.ok(selected.includes('android'));
-  assert.equal(selected.includes('frontend'), false);
-  for (const component of all) assert.ok(selected.includes(component));
+  assert.deepEqual(selected, all);
 });
 
 test('CLI revision 不存在、差分为空、参数缺失均失败，全量模式仍验证明确传入 revision', t => {

@@ -3,10 +3,8 @@ import {appendFileSync} from 'node:fs';
 import {resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 
-const ORDER = ['brain-unit', 'brain-integration', 'image', 'mcp', 'dashboard', 'android', 'ops', 'scripts'];
+const ORDER = ['brain-unit', 'brain-integration', 'image', 'mcp', 'dashboard', 'ops', 'scripts'];
 // 现役前端为 apps/dashboard；已退役根 frontend 不再创建源码任务。
-// Android 客户端自身修改必须运行 Gradle；服务端全量不重复构建未变更的移动客户端。
-const ACTIVE = ORDER.filter(component => component !== 'android');
 const SHARED_RUNTIME = ['brain-unit', 'brain-integration', 'image', 'ops'];
 const DOCUMENT = /\.(?:md|txt|rst|png|jpe?g|gif|svg|webp|pdf)$/i;
 const DOCUMENT_NAME = /(?:^|\/)(?:README|CHANGELOG|CONTRIBUTING|CODE_OF_CONDUCT|SECURITY|LICENSE)\.md$/i;
@@ -57,12 +55,10 @@ export function planChecks(paths, {full = false} = {}) {
       ((path.startsWith('docs/') || path.startsWith('sprints/')) && DOCUMENT.test(path))) continue;
     // 退役W19样机不再扩散到现役组件；scripts仍逐字验证固定历史输入，变更不能空绿。
     if (path.startsWith('playground/')) continue;
-    if (path.startsWith('apps/android-agent/')) selected.add('android');
     if (isConfiguration(path) || /^(?:\.github|scripts|config)\//.test(path) ||
       /^(?:package(?:-lock)?\.json|npm-shrinkwrap\.json|\.npmrc|\.skills-source\.json)$/.test(path)) {
       all = true;
-    } else if (path.startsWith('apps/android-agent/')) selected.add('android');
-    else if (path.startsWith('apps/api/features/')) selected.add('dashboard');
+    } else if (path.startsWith('apps/api/features/')) selected.add('dashboard');
     // 独立旧Core服务不在现役compose；它的src/tests不冒充Brain运行输入。
     else if (/^apps\/api\/(?:src|tests)\//.test(path)) continue;
     else if (path.startsWith('apps/api/')) all = true;
@@ -73,7 +69,7 @@ export function planChecks(paths, {full = false} = {}) {
     else if (path.startsWith('apps/dashboard/')) selected.add('dashboard');
     else all = true;
   }
-  return matrixFor(all ? new Set([...ACTIVE, ...selected]) : selected);
+  return matrixFor(all ? new Set([...ORDER, ...selected]) : selected);
 }
 
 function revision(value) {
