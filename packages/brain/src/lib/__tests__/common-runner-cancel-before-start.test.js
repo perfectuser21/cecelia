@@ -7,6 +7,7 @@ import {commonRunnerExecutionContext} from '../common-runner-identity.js';
 const taskId='10000000-0000-4000-8000-000000000001',runId='20000000-0000-4000-8000-000000000001',nodeId='30000000-0000-4000-8000-000000000001',grantId='40000000-0000-4000-8000-000000000001',rowId='50000000-0000-4000-8000-000000000001';
 const token='isolated-cancel-before-start-test-token',hash=x=>createHash('sha256').update(JSON.stringify(x)).digest('hex');
 function setup({launch='not_started',spans=[],devices=[],receiptPatch={},beforeSettlement,badSignature=false,wrongNonce=false}={}){
+ emit.mockReset();
  const binding={run_id:runId,task_id:taskId,machine_id:'node-a',profile:'demo',profile_sha256:'a'.repeat(64),mode:'formal',input:{},input_digest:hash({input:{},mode:'formal',profile:'demo'}),execution_version_id:nodeId,execution_grant_id:grantId,launch_nonce:randomUUID(),launch_state:launch};
  const task={id:taskId,status:'in_progress',kind:'agent',payload:{},claimed_by:'common-runner',result:{common_runner:binding}};
  const context={...commonRunnerExecutionContext(binding,binding.launch_nonce),source:'common-runner'};context.common_runner_launch.state=launch;

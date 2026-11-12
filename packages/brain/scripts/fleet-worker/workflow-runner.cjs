@@ -58,7 +58,7 @@ function createWorkflowRunner({stateRoot,machineId,profiles={},assertCanLaunch,a
   const r=createWorkflowRecorder({root:path.join(stateRoot,s.identity.run_id),runId:s.identity.run_id,taskId:s.identity.task_id,machineId,profileDigest:s.identity.profile_sha256,mode:s.identity.mode,metadata:s.profile.metadata,brainUrl,headers});
   recorders.set(s.identity.run_id,r);return r;
  };
- const project=async s=>({run_id:s.identity.run_id,task_id:s.identity.task_id,machine_id:machineId,status:s.status,mode:s.identity.mode,profile_sha256:s.identity.profile_sha256,progress:s.progress??null,validation:s.validation??null,writeback:s.writeback??{pending:null},reason:s.reason??null,cancel_requested:s.cancel_requested===true,execution_state:s.execution_state??null,commander_status:s.commander_status??'unavailable',cleanup_required:s.profile?.cleanup_required!==false,execution_unknown:s.execution_unknown??null});
+ const project=async s=>({run_id:s.identity.run_id,task_id:s.identity.task_id,machine_id:machineId,status:s.status,mode:s.identity.mode,profile_sha256:s.identity.profile_sha256,progress:s.progress??null,validation:s.validation??null,writeback:s.writeback??{pending:null},reason:s.reason??null,cancel_requested:s.cancel_requested===true,execution_state:s.execution_state??null,commander_status:s.commander_status??'unavailable',cleanup_required:s.cleanup_required??(s.profile?.cleanup_required!==false),execution_unknown:s.execution_unknown??null,cancel_before_start:s.cancel_tombstone===true&&s.status==='cancelled'});
  async function execute(s,recorder,controller,resuming=false){
   let commander,domain,domainClosed=false,domainTimer,eventCursor=resuming?Math.max(s.event_cursor??0,s.continuation.runner_cursor,s.progress?.cursor??0):0,currentReceipt={activities:[]};
   const closeDomain=async()=>{if(!domain||domainClosed)return;domainClosed=true;try{await domain.close();}catch(error){s.execution_unknown=true;currentReceipt.execution_unknown=true;delete s.pending_terminal_status;throw error;}};
@@ -205,8 +205,20 @@ function createWorkflowRunner({stateRoot,machineId,profiles={},assertCanLaunch,a
   },
   inspect:async body=>project(existing(body)),
   cancel:async body=>{assertIdentity(body);let s=read(body.run_id);
-   if(!s){s={identity:{run_id:body.run_id,task_id:body.task_id},status:'cancelled_before_start',cancel_tombstone:true,execution_state:'not_started',machine_id:machineId,writeback:{pending:0,blocked:0,total:0,acked:0,manifest_sha256:profileDigest([])}};save(s);}
-   if(s.identity.task_id!==body.task_id)throw Error('workflow_identity_not_found');
+   if(s&&s.identity.task_id!==body.task_id)throw Error('workflow_identity_not_found');
+   let identity;
+   if(['profile','profile_sha256','mode'].some(key=>body[key]!==undefined)){
+    if(!/^[a-z][a-z0-9-]{0,63}$/.test(body.profile??'')||!['formal','exploration'].includes(body.mode)||!Object.hasOwn(profiles,body.profile)||profileDigest(profiles[body.profile])!==body.profile_sha256)throw Error('workflow_cancel_identity_invalid');
+    identity=Object.fromEntries(['run_id','task_id','profile','profile_sha256','mode'].map(key=>[key,body[key]]));
+    if(s&&['profile','profile_sha256','mode'].some(key=>s.identity[key]!==undefined&&s.identity[key]!==identity[key]))throw Error('workflow_identity_conflict');
+   }
+   if(!s&&!identity)throw Error('workflow_cancel_identity_invalid');
+   if(!s)s={identity:{run_id:body.run_id,task_id:body.task_id},status:'cancelled_before_start',cancel_tombstone:true,execution_state:'not_started',machine_id:machineId,writeback:{pending:0,blocked:0,total:0,acked:0,manifest_sha256:profileDigest([])}};
+   if(s.cancel_tombstone&&identity){
+    if(s.execution_state!=='not_started'||s.profile||s.progress||s.validation||active.has(body.run_id)||!['cancelled_before_start','cancelled'].includes(s.status)||s.writeback?.pending!==0||s.writeback.blocked!==0||s.writeback.total!==0||s.writeback.acked!==0||s.writeback.manifest_sha256!==profileDigest([]))throw Error('workflow_cancel_tombstone_unconfirmed');
+    s.identity=identity;s.status='cancelled';s.cleanup_required=false;s.execution_unknown=false;
+   }
+
    s.cancel_requested=true;save(s);active.get(body.run_id)?.abort();
    if(s.continuation){try{const manifest=protectedRead(path.join(supervisorDirectory(s),'manifest.json'),3);if(profileDigest(manifest.binding)===profileDigest(s.continuation.binding))persist(path.join(supervisorDirectory(s),'cancel.json'),{nonce:manifest.nonce});}catch{/* 无可靠监督身份时仍保留 unknown。 */}}
    return project(s);},

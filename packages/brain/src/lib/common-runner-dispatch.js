@@ -256,8 +256,48 @@ export function createCommonRunnerDispatcher({ pool, env = process.env, profiles
       }
     });
   }
+  async function settleBeforeStartCancellation(binding,receipt){
+    const wb=receipt.writeback;
+    if(!binding.cancel_requested||binding.launch_state!=='not_started'||receipt.status!=='cancelled'||receipt.cancel_before_start!==true||receipt.cancel_requested!==true||receipt.execution_state!=='not_started'
+      ||receipt.execution_unknown!==false||receipt.cleanup_required!==false||receipt.progress!==null||receipt.validation!==null
+      ||wb?.pending!==0||wb.blocked!==0||wb.total!==0||wb.acked!==0||wb.manifest_sha256!==digest([]))return null;
+    const events=[];
+    const settled=await transaction(pool,async db=>{
+      await db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,515))',[binding.run_id]);
+      const task=(await db.query('SELECT id,status,claimed_by,result FROM tasks WHERE id=$1 FOR UPDATE',[binding.task_id])).rows[0];
+      const row=(await db.query('SELECT id,task_id,status,ended_at,context,result FROM task_runs WHERE run_id=$1 FOR UPDATE',[binding.run_id])).rows[0];
+      const current=task?.result?.common_runner;
+      if(!current?.cancel_requested||current.launch_state!=='not_started'||current.launch_nonce!==binding.launch_nonce||current.run_id!==binding.run_id||row?.task_id!==binding.task_id||!UUID.test(row.id??'')
+        ||!['common-runner','workflow-common-runner'].includes(row.context?.source)
+        ||!commonRunnerIdentityMatches(row.context?.common_runner_identity,binding)||!commonRunnerIdentityMatches(row.context.common_runner_identity,current))return null;
+      const launch=commonRunnerLaunch(row.context);
+      if(launch.state!=='not_started'||launch.nonce!==binding.launch_nonce)return null;
+      const spans=(await db.query('SELECT occurrence_key FROM spans WHERE run_id=$1 LIMIT 1',[binding.run_id])).rows;
+      const devices=(await db.query('SELECT device_name FROM device_locks WHERE locked_by=$1 ORDER BY device_name',[binding.task_id])).rows;
+      if(spans.length||devices.length)return null;
+      const prior=row.result?.common_runner;
+      if(row.ended_at)return row.status==='cancelled'&&prior?.cancellation?.protocol==='common-runner-cancel-before-start/v1'
+        &&commonRunnerIdentityMatches(prior.resource_settlement?.run_identity,binding)?{status:'cancelled',recording_status:'confirmed'}:null;
+      if(row.status!=='running'||task.status!=='in_progress'||task.claimed_by!=='common-runner')return null;
+      const resourceSettlement={protocol:'common-runner-resource-settlement/v1',run_identity:row.context.common_runner_identity,devices:[],task_run_id:row.id,
+        task_id:binding.task_id,run_id:binding.run_id,machine_id:binding.machine_id,profile_sha256:binding.profile_sha256,mode:binding.mode,
+        worker_route:binding.worker_route??null,execution_unknown:false,basis:'not-started-resource-free',execution_state:'not_started',cleanup_required:false,
+        cleanup_validation_sha256:null,manifest_sha256:wb.manifest_sha256};
+      await finishRun({runId:binding.run_id,status:'cancelled',result:{actor:'common-runner',summary:'启动前取消已由原预约、Worker墓碑和中央空资源独立确认',
+        common_runner:{mode:binding.mode,business_status:'cancelled',cancellation:{protocol:'common-runner-cancel-before-start/v1',execution_state:'not_started'},resource_settlement:resourceSettlement}}},{pool:db,strict:true,emit:async(...event)=>{events.push(event);}});
+      const saved=(await db.query('SELECT task_id,status,ended_at,result FROM task_runs WHERE run_id=$1',[binding.run_id])).rows[0];
+      return saved?.task_id===binding.task_id&&saved.status==='cancelled'&&saved.ended_at
+        &&saved.result?.common_runner?.cancellation?.protocol==='common-runner-cancel-before-start/v1'
+        &&commonRunnerIdentityMatches(saved.result.common_runner.resource_settlement?.run_identity,binding)?{status:'cancelled',recording_status:'confirmed'}:null;
+    });
+    for(const event of events){
+      try{await (await import('../event-bus.js')).emit(...event);}
+      catch(error){console.warn(`[common-runner] run.finished emit failed: ${error.message}`);}
+    }
+    return settled;
+  }
   async function settle(binding, receipt) {
-    const central = { status: 'running', recording_status: 'pending' };
+    const central = await settleBeforeStartCancellation(binding,receipt)??{ status: 'running', recording_status: 'pending' };
     const wb = receipt.writeback;
     const review = receipt.status === 'needs_review';
     const finalStatus = { completed: 'success', failed: 'failed', cancelled: 'cancelled', needs_review: 'failed' }[receipt.status];
@@ -339,6 +379,7 @@ export function createCommonRunnerDispatcher({ pool, env = process.env, profiles
     const prepared = await prepare(action, runId, body, nonce), binding = prepared.binding;
     const request = { run_id: runId, task_id: body.task_id, request_nonce: nonce,
       ...(binding.worker_route?{expected_worker_boot_id:binding.worker_route.payload.worker_boot_id,expected_worker_config_digest:binding.worker_route.payload.worker_config_digest}:{}),
+      ...(prepared.action === 'cancel'?{profile:binding.profile,profile_sha256:binding.profile_sha256,mode:binding.mode}:{}),
       ...(prepared.action === 'start' ? { profile: binding.profile, profile_sha256: binding.profile_sha256, input: binding.input, mode: binding.mode,
         ...(binding.run_binding ? { run_binding: binding.run_binding } : {}) } : {}) };
     try {
