@@ -31,6 +31,19 @@ describe('服务端真实认领衔接有限租约',()=>{
  it('事务先BEGIN后等claim锁时，以实时时钟而非事务NOW判定租约',async()=>{
   const f=fixture();await ensure(f);const read=f.statements.find(x=>x.sql.includes('FROM task_leases')).sql;expect(read).toContain('claimed_at <= clock_timestamp()');expect(read).toContain('lease_until > clock_timestamp()');expect(f.statements.find(x=>x.sql.includes('INSERT INTO task_leases')).sql).toContain('clock_timestamp()+');
  });
+ it('租约行锁等待期间到期后拒绝，不能采用LockRows之前投影的active',async()=>{
+  const lease={task_id:taskId,claimer,source:'claim',released_at:null,claim_matches:true,active:true};let expired=false;
+  const f=fixture({lease});const original=f.db.query.getMockImplementation();
+  f.db.query.mockImplementation(async(sql,params)=>{
+   if(sql.includes('FROM task_leases')&&sql.includes('FOR UPDATE')){
+    const projected=lease.active;await Promise.resolve();expired=true;
+    return {rows:[{...lease,active:sql.includes('clock_timestamp()')?projected:undefined}]};
+   }
+   if(sql.includes('FROM task_leases'))return {rows:[{...lease,active:!expired}]};
+   return original(sql,params);
+  });
+  await expect(ensure(f)).rejects.toThrow('task_claim_lease_conflict');
+ });
  it('Task换owner/claimed_at或终态均拒绝，租约不能反向授权',async()=>{const f=fixture({owned:false});await expect(ensure(f)).rejects.toThrow('task_claim_lease_identity_conflict');expect(f.statements).toHaveLength(1);});
  it('并发租约已出现则失败，不通过UPSERT接管',async()=>{const f=fixture({conflict:true});await expect(ensure(f)).rejects.toThrow('task_claim_lease_conflict');});
 });
