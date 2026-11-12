@@ -7,7 +7,7 @@ const token='isolated-cancel-before-start-test-token',hash=x=>createHash('sha256
 function setup({launch='not_started',spans=[],devices=[],receiptPatch={},beforeSettlement,badSignature=false,wrongNonce=false}={}){
  const binding={run_id:runId,task_id:taskId,machine_id:'node-a',profile:'demo',profile_sha256:'a'.repeat(64),mode:'formal',input:{},input_digest:hash({input:{},mode:'formal',profile:'demo'}),execution_version_id:nodeId,execution_grant_id:grantId,launch_nonce:randomUUID(),launch_state:launch};
  const task={id:taskId,status:'in_progress',kind:'agent',payload:{},claimed_by:'common-runner',result:{common_runner:binding}};
- const context=commonRunnerExecutionContext(binding,binding.launch_nonce);context.common_runner_launch.state=launch;
+ const context={...commonRunnerExecutionContext(binding,binding.launch_nonce),source:'common-runner'};context.common_runner_launch.state=launch;
  const run={id:rowId,task_id:taskId,status:'running',ended_at:null,context,result:{}};const statements=[];const requests=[];
  const query=vi.fn(async(sql,params)=>{statements.push(sql);
   if(/FROM tasks/.test(sql))return {rows:[structuredClone(task)],rowCount:1};
