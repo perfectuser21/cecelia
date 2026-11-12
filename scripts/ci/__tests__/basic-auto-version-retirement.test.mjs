@@ -70,7 +70,7 @@ test('新版主CI版本门具备固定整组来源闭包；历史组合保留且
   await collect();
   assert.ok(relations.some(edge=>edge.consumer_path==='.github/workflows/ci.yml'&&edge.input_path==='scripts/ci/prepare-ubuntu-archive.mjs'&&edge.kind==='official_ubuntu_archive_preparation'));
   assert.ok(relations.some(edge=>edge.consumer_path==='scripts/ci/run-basic-check.mjs'&&edge.input_path==='apps/api/vitest.config.ts'&&edge.kind==='dashboard_features_unit_config'));
-  const priorArchive='a93131fc84e983f6586fa220a8e24ced13d9360d';
+  const priorArchive='cbb510946d9f83a356f43de9df2888e080346296';
   assert.doesNotThrow(()=>git('merge-base','--is-ancestor',priorArchive,'HEAD'),'历史来源锚点必须已进入候选main祖先链');
   await collectBasicCiSources({revision:priorArchive,paths:git('ls-tree','-rz','--name-only',priorArchive).split('\0').filter(Boolean),
     read:async path=>git('show',`${priorArchive}:${path}`),ci:git('show',`${priorArchive}:.github/workflows/ci.yml`),relations:[],parse:ast});
