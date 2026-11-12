@@ -152,10 +152,12 @@ export async function ensureClaimedTaskLease({ taskId, claimer, claimedAt, lease
     WHERE id=$1 AND claimed_by=$2 AND claimed_at = $3::timestamptz AND status='in_progress'
       AND payload->>'commander_protocol' IS DISTINCT FROM 'commander-v2' FOR UPDATE`, [taskId, claimer, claimedAt])).rows[0];
   if (!task) throw Error('task_claim_lease_identity_conflict');
-  const existing = (await db.query(`SELECT *, claimed_at >= $2::timestamptz AND claimed_at <= clock_timestamp() AS claim_matches,
-    lease_until > clock_timestamp() AS active FROM task_leases WHERE task_id=$1 FOR UPDATE`, [taskId, claimedAt])).rows[0];
-  if (existing) {
-    if (existing.claimer !== claimer || existing.source !== 'claim' || existing.released_at
+  const locked = (await db.query('SELECT * FROM task_leases WHERE task_id=$1 FOR UPDATE', [taskId])).rows[0];
+  if (locked) {
+    // LockRows可能在取时投影之后等待；拿到锁后独立取时，拒绝等待期间已经到期的租约。
+    const existing = (await db.query(`SELECT *, claimed_at >= $2::timestamptz AND claimed_at <= clock_timestamp() AS claim_matches,
+      lease_until > clock_timestamp() AS active FROM task_leases WHERE task_id=$1`, [taskId, claimedAt])).rows[0];
+    if (!existing || existing.claimer !== claimer || existing.source !== 'claim' || existing.released_at
       || existing.claim_matches !== true || existing.active !== true) throw Error('task_claim_lease_conflict');
     return existing;
   }

@@ -29,7 +29,7 @@ describe('服务端真实认领衔接有限租约',()=>{
   const f=fixture({lease});await expect(ensure(f)).rejects.toThrow('task_claim_lease_conflict');expect(f.statements.some(x=>x.sql.includes('INSERT INTO')||x.sql.includes('UPDATE task_leases'))).toBe(false);
  });
  it('事务先BEGIN后等claim锁时，以实时时钟而非事务NOW判定租约',async()=>{
-  const f=fixture();await ensure(f);const read=f.statements.find(x=>x.sql.includes('FROM task_leases')).sql;expect(read).toContain('claimed_at <= clock_timestamp()');expect(read).toContain('lease_until > clock_timestamp()');expect(f.statements.find(x=>x.sql.includes('INSERT INTO task_leases')).sql).toContain('clock_timestamp()+');
+  const f=fixture({lease:{claimer,source:'claim',claim_matches:true,active:true}});await ensure(f);const reads=f.statements.filter(x=>x.sql.includes('FROM task_leases'));expect(reads[0].sql).not.toContain('clock_timestamp()');expect(reads[0].sql).toContain('FOR UPDATE');expect(reads[1].sql).toContain('claimed_at <= clock_timestamp()');expect(reads[1].sql).toContain('lease_until > clock_timestamp()');const created=fixture();await ensure(created);expect(created.statements.find(x=>x.sql.includes('INSERT INTO task_leases')).sql).toContain('clock_timestamp()+');
  });
  it('租约行锁等待期间到期后拒绝，不能采用LockRows之前投影的active',async()=>{
   const lease={task_id:taskId,claimer,source:'claim',released_at:null,claim_matches:true,active:true};let expired=false;
