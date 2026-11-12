@@ -1,10 +1,12 @@
-# DoD：按现役功能精简PR CI
+# DoD：退役旧CI工具与冗余检查
 
-- [x] [BEHAVIOR] 旧API不再有独立矩阵或src构建，现役features全部在Dashboard任务按原API环境测试；旧服务不获现役测试资格。
-  Test: manual:node --test scripts/ci/__tests__/basic-pr-functional-scope.test.mjs scripts/ci/__tests__/basic-api-features-lane.test.mjs
-- [x] [BEHAVIOR] Ops按真实PR Git差异选域，核心Brain子集保留部署回滚保护，公共或未知输入保守全量；全量入口不丢新测试。
-  Test: manual:node --test scripts/ci/__tests__/basic-ops-coverage.test.mjs scripts/ci/__tests__/basic-pr-functional-scope.test.mjs
-- [x] [BEHAVIOR] 退役预览脚本、自造mock页面测试、旧API workers产物测试和重复facts检查删除；微信脚本真实拒绝/干跑/健康合同迁移保留。
-  Test: manual:node --test scripts/ci/__tests__/basic-facts-authority.test.mjs scripts/ci/__tests__/basic-wechat-script-contract.test.mjs
-- [x] [BEHAVIOR] 新完整来源组精准登记Dashboard features、拒绝旧API资格，Ops按实际选择；所有main历史组、混配/篡改/缺失拒绝与16成员marker0/1边界保持。
+- [x] [BEHAVIOR] 月归档与合并后旧流程文档清理的脚本、专属测试及当前入口退役，预览资源回收保持现役合同。
+  Test: manual:node scripts/ci/run-basic-check.mjs scripts
+- [x] [BEHAVIOR] 旧Implementation工作流壳、Engine/Quality历史接受矩阵、Kernel baseline和旧文档/YAML非空检查退出默认PR；当前来源和权限拒绝回归保留。
+  Test: manual:node --test scripts/ci/__tests__/run-basic-check.test.mjs scripts/ci/__tests__/basic-ci-admission-authority.test.mjs
+- [x] [BEHAVIOR] 重复执行及Ops冗余移除，部署固定SHA、凭据隔离、退出码和回滚实际行为仍受保护。
+  Test: manual:node scripts/ci/run-basic-check.mjs ops
+- [x] [BEHAVIOR] 旧API按真实消费者拆除，现役共享features、Dashboard和captures数据合同保留。
+  Test: manual:node scripts/ci/run-basic-check.mjs dashboard
+- [ ] [BEHAVIOR] 内容业务归属按Cecelia调度与ZenithJoy业务边界落实；全部受影响真实行为通过，受保护PR通过且合并。
   Test: manual:node scripts/ci/run-basic-check.mjs scripts

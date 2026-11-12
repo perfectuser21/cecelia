@@ -87,28 +87,6 @@ test('merge uses authorized external central cache but rejects cache or git-dire
 
 // 真实MainSnapshot原生入口执行数据合同；不执行捕获树中的任何源码。
 import {fileURLToPath} from 'node:url';
-import {readFrozenFutureBytes,decodeFrozenFutureBytes,frozenFutureGit} from '../../../packages/brain/src/lib/__tests__/helpers/future-active-git.js';
-test('固定future数据解码验证真实Git blobs，损坏payload和不存在路径拒绝',async()=>{
- const bytes=readFrozenFutureBytes(),data=decodeFrozenFutureBytes(bytes);
- assert.equal(data.base_revision,'35e2a91d971e8dc432d6f36361c65cded5d64ec8');
- assert.equal(data.captured_revision,'14fce437dcccf1b30daf17423ec48a3ed4337eee');
- assert.equal(data.captured_tree,'f5b015b0a66e798efd666a842364c36579e163f8');
- const repoRoot=fileURLToPath(new URL('../../../',import.meta.url)),frozen=frozenFutureGit(repoRoot);
- assert.equal(frozen.revision,data.captured_revision);
- for(const [path,blob]of[['.github/workflows/implementation-impact.yml','7002260fd7e84006037343416de6123f593afb12'],['scripts/ci/implementation-multi-pr-gate.mjs','043fd77da634c2e9ccb800f66262cca31b158e0a']]){
-  const row=data.delta.find(row=>row.path===path),actual=Buffer.from(await frozen.read(path));
-  assert.equal(row.blob_sha1,blob);assert.deepEqual(actual,Buffer.from(row.content_base64,'base64'));
-  assert.equal(createHash('sha1').update(`blob ${actual.length}\0`).update(actual).digest('hex'),blob);
- }
- const {readFixedLocalGitBlob}=await import('../fixed-local-git.mjs'),fallback='README.md';
- assert.equal(data.delta.some(row=>row.path===fallback),false);
- const ordinary=Buffer.from(await frozen.read(fallback));assert.deepEqual(ordinary,readFixedLocalGitBlob(repoRoot,{revision:data.base_revision,path:fallback}));
- assert.equal(createHash('sha1').update(`blob ${ordinary.length}\0`).update(ordinary).digest('hex'),'ef41b1f5d27bb4db060b171c861c64d7673c9626');
- await assert.rejects(frozen.read('scripts/ci/unknown-fixture-path.mjs'),/FUTURE_FIXTURE_MISSING/);
- const corrupt=Buffer.from(bytes);corrupt[corrupt.length-1]^=1;
- assert.throws(()=>decodeFrozenFutureBytes(corrupt),/FUTURE_FIXTURE_DIGEST/);
-});
-
 import {createPublishedGit,readPublishedGitFixture,PUBLISHED_CI_REVISION} from '../../../packages/brain/src/lib/__tests__/helpers/published-workspace-ci-git.js';
 test('published八对象私有Git冷还原读取canonical两blob，替换、环境外跳和损坏对象拒绝',t=>{
  const f=createPublishedGit();t.after(f.close);
@@ -154,34 +132,4 @@ test('本人Git夹具清理其他错误立即原样抛出不重试',t=>{
   }}),caught=>caught===error);
   assert.equal(calls,1);assert.equal(existsSync(f.root),true);
  }
-});
-
-import {readFrozenTypedOutputBytes,decodeFrozenTypedOutputBytes,frozenTypedOutputFutureGit} from '../../../packages/brain/src/lib/__tests__/helpers/future-active-git.js';
-test('完整future数据叠已审四个普通controller/collector，真实Git blob摘要与未改workflow保持',async()=>{
- const bytes=readFrozenTypedOutputBytes(),data=decodeFrozenTypedOutputBytes(bytes),root=fileURLToPath(new URL('../../../',import.meta.url));
- const original=frozenFutureGit(root),next=frozenTypedOutputFutureGit(root);assert.equal(next.revision,data.captured_revision);
- assert.ok((await next.read('packages/brain/src/lib/existing-ops-workspace-source.js')).includes('4ba0369ba3011622dc3a46e6b155610972d4eb79f6c3fafee73ef14554efda45'),'captured workspace must contain its own current active profile');
- assert.ok((await next.read('packages/brain/src/lib/existing-ops-source.js')).includes('collectNativeFutureImpactSources'),'captured caller must actually invoke the active collector');
- assert.deepEqual(next.paths,original.paths);
- for(const row of data.members){
-  const actual=Buffer.from(await next.read(row.path));assert.deepEqual(actual,Buffer.from(row.content_base64,'base64'));
-  assert.notDeepEqual(actual,Buffer.from(await original.read(row.path)));
-  assert.equal(createHash('sha1').update(`blob ${actual.length}\0`).update(actual).digest('hex'),row.blob_sha1);
- }
- const workflow='.github/workflows/implementation-impact.yml';assert.equal(await next.read(workflow),await original.read(workflow));
- const corrupt=Buffer.from(bytes);corrupt[corrupt.length-1]^=1;assert.throws(()=>decodeFrozenTypedOutputBytes(corrupt),/TYPED_OUTPUT_FIXTURE_DIGEST/);
- await assert.rejects(next.read('../escape'),/FUTURE_FIXTURE_MISSING/);
-});
-
-import {readFrozenContextMemoBytes,decodeFrozenContextMemoBytes,frozenContextMemoFutureGit} from '../../../packages/brain/src/lib/__tests__/helpers/future-active-git.js';
-test('E五blob固定Git数据保存memo实际collector与BC父身份，旧四blob只作历史',async()=>{
- const bytes=readFrozenContextMemoBytes(),data=decodeFrozenContextMemoBytes(bytes),root=fileURLToPath(new URL('../../../',import.meta.url)),next=frozenContextMemoFutureGit(root),prior=frozenTypedOutputFutureGit(root);
- assert.equal(data.parent_revision,'bc597b839142052c33689750a33472f73bbd89d1');assert.equal(data.members.length,5);assert.equal(next.revision,data.captured_revision);assert.deepEqual(next.paths,prior.paths);
- for(const row of data.members){const actual=Buffer.from(await next.read(row.path));assert.deepEqual(actual,Buffer.from(row.content_base64,'base64'));assert.equal(createHash('sha1').update(`blob ${actual.length}\0`).update(actual).digest('hex'),row.blob_sha1);}
- assert.match(await next.read('packages/brain/src/lib/existing-ops-workspace-source.js'),/faeb79e0eeff5e65a34cac57630a8859907b7cd47e61721e0aa57c8acdabba78/);
- assert.notEqual(await next.read('scripts/ci/implementation-verification-context.mjs'),await prior.read('scripts/ci/implementation-verification-context.mjs'));
- const {readFixedLocalGitBlob}=await import('../fixed-local-git.mjs');
- assert.equal(await next.read('scripts/ci/implementation-verification-context.mjs'),readFixedLocalGitBlob(root,{revision:'69de823cda6d789130898399c3ad770c15b6fb71',path:'scripts/ci/implementation-verification-context.mjs'}).toString('utf8'));
- assert.equal(await next.read('.github/workflows/implementation-impact.yml'),await prior.read('.github/workflows/implementation-impact.yml'));
- const corrupt=Buffer.from(bytes);corrupt[corrupt.length-1]^=1;assert.throws(()=>decodeFrozenContextMemoBytes(corrupt),/CONTEXT_MEMO_FIXTURE_DIGEST/);await assert.rejects(next.read('../escape'),/FUTURE_FIXTURE_MISSING/);
 });

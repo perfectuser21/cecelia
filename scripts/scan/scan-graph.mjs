@@ -61,11 +61,11 @@ function walk(dir, out) {
 }
 
 // 获取 cecelia repo 的默认扫描目录
-function getCeceliaScanDirs(root) {
+export function getCeceliaScanDirs(root) {
   return [
     'packages/brain/src', 'packages/brain/server.js',
     'packages/workflows',
-    'apps/api/src', 'apps/dashboard/src', 'scripts',
+    'apps/api/features', 'apps/dashboard/src', 'scripts',
   ].filter((d) => fs.existsSync(path.join(root, d)));
 }
 

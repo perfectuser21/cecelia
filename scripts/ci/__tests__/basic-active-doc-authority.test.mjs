@@ -20,17 +20,3 @@ test('活动路由忠实标注系统地图自身的历史身份', () => {
   assert.match(row, /历史/);
   assert.doesNotMatch(row, /权威|每10个PR/);
 });
-
-test('旧开发流程明确历史身份并路由至已安装中央dev，保留历史流程正文', () => {
-  const doc = read('docs/current/DEV_PIPELINE.md');
-  assert.match(doc, /^authority: HISTORICAL_SNAPSHOT$/m);
-  const introduction = doc.slice(0, doc.indexOf('## 核心原则'));
-  assert.match(introduction, /历史/);
-  assert.doesNotMatch(introduction, /Authority: CURRENT_STATE|当前事实版|只记录当前真实生效/);
-  assert.match(introduction, /已安装的 `dev` 技能/);
-  assert.match(introduction, /perfectuser21\/zenithjoy-skills/);
-  assert.match(introduction, /\.skills-source\.json/);
-  assert.match(doc, /## 12 步流程/);
-  assert.match(doc, /### Step 00 — Worktree 检测/);
-  assert.match(doc, /### Step 06 — 写代码/);
-});

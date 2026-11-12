@@ -5,7 +5,6 @@ import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'acorn';
-import {frozenTypedOutputFutureGit,frozenContextMemoFutureGit} from '../lib/__tests__/helpers/future-active-git.js';
 import { describe, it, expect } from 'vitest';
 import {registerCiRetirementGuardTests,ciVersionGuardCohorts} from './claude-channel-retired.ci-retirement.fixture.js';
 
@@ -208,118 +207,6 @@ describe('完整九模块来源reader组合不能按成员混搭',()=>{
 }
 
 // 仅测试守卫：ee25a25a9 已审只读 Acorn/摘要消费完整组合，禁止动态学习候选摘要。
-// source.js 是 normalize() 投影的真实调用方，也必须固定；所有原进程检测仍执行。
-const HASHES = {
-  "existing-ops-source.js": "48a2f74d85054807992323d41f64097d6b88791a66c5ede39aae5584b20ec2f7",
-  "existing-ops-build-source.js": ["679289bfaa20b407b9c9d87c6bf9632928247e3bd86e664f3f12393c5a1c8206", "f291969a4ce05b9597018188d71415162584266cb84ad392f1c0846dc7d3ced8"],
-  "existing-ops-build-envelopes.js": "9d3165752c1a80a6891f5b1f24d1d8579a94b1d6f37692a8a065202388a7b403",
-  "existing-ops-runtime-source.js": "48f919b399f133feadcfb0678ef67c95550d199e3d97fb213ccb9276d93abbf7",
-  "existing-ops-stage-source.js": "4efb563d9e3a8c7fa08523c81c730ba1efefa82cbd0de4811c6facb2794bf5ea",
-  "existing-ops-stage-envelopes.js": "1fda2fc1f3bf3ef7684930e46ac8dc0364bd1af1f8f27e97c7eb197fe23a6d8f",
-  "existing-ops-stage-modes.js": "8266c7b1f74b11a0161684f83e3deb189ee101e2a0b64578cacffaaff1711752",
-  "existing-ops-provenance-envelope.js": "ade6df8d35b187ce0495ebd163fa0489379f37114fe2111b4677a4b622933a95",
-  "existing-ops-provenance-core-envelope.js": "c3e8769e7f053fc63d52074235b521df5134e65c31d34f151bb6a9400fa4ab93",
-  "existing-ops-provenance-entry-envelopes.js": "126a93b9db9856fe06894a394ecb9e0afd099860b9fb54e8927c56c8b96a15bb",
-  "existing-ops-provenance-local-envelopes.js": "ef359ef987229815f3d258ff78535fb55dc909bb64eae88d67ce63d0ea55c7f4",
-  "existing-ops-native-evidence-source.js": "675be567f871855220a89301f1dbf50dbcc0a900e02c2ed3303ec39d3a647b3c",
-  "existing-ops-native-evidence-envelopes.js": "44abae0d93238048356f5573765320b92ad54e481ba78f5925a3c558a8b86013"
-};
-const US_HASHES = {...HASHES,
- 'existing-ops-runtime-source.js':'c6157fb97abf1131f80a8df747a68b0d0c4a86f8cc0c6fb8d112a111991821ba',
- 'existing-ops-us-compose-source.js':'d8d3371783b3afbd085bd143e41be91a65d4ed865ff4c1ecb12648f4ae542235',
-};
-const B_HASHES = {...US_HASHES,
- "existing-ops-build-source.js":"237a57e9cd4d5d2545c0721effd1a3f67358b5dc8d0153ed26ea3ba18719e08c",
- "existing-ops-build-envelopes.js":"6aaea83ad1d73236fc2393a621cc1e059f55a622c29af0d77e7806f571df2c17"
-};
-const QA_HASHES = {...US_HASHES,
- 'existing-ops-runtime-source.js':'21c3009b1b1ae0e2a114ad8d702487f2b7a3dde80ffc24b8a6d42c143b2c6947',
- 'existing-ops-native-evidence-source.js':'04632ac4b6c0c25e141938d3ff68a7c3eda079056f6e82a35ebfede5f35050de',
-};
-const B_QA_HASHES = {...QA_HASHES,
- 'existing-ops-build-source.js':B_HASHES['existing-ops-build-source.js'],
- 'existing-ops-build-envelopes.js':B_HASHES['existing-ops-build-envelopes.js'],
-};
-const B_RECOVERY_QA_HASHES = {...B_QA_HASHES,
- 'existing-ops-build-source.js':'210f644726dbf3d0049b7c90ced280fc8fcf65d04e1ae30c2775c2234ed0331a',
- 'existing-ops-build-envelopes.js':'e68813c0304ade2b9f11c4c93ec731e1cb77414aca17d488d8f203c93559888f',
-};
-const B_STAGING_HASHES = {...B_QA_HASHES,
- 'existing-ops-runtime-source.js':'8bd4e5157b2233fdf5495f7795f1b8544a6ee766ddc4961676ee1e4175b056fe',
-};
-const B_DRAIN_STAGING_HASHES = {...B_STAGING_HASHES,
- 'existing-ops-runtime-source.js':'8c3b53f61050bcf430da9d286ff5576dcb00478426dabc4ad00909514f1e531e',
-};
-const B_RECOVERY_STAGING_HASHES = {...B_RECOVERY_QA_HASHES,
- 'existing-ops-runtime-source.js':B_STAGING_HASHES['existing-ops-runtime-source.js'],
-};
-const B_RECOVERY_DRAIN_STAGING_HASHES = {...B_RECOVERY_QA_HASHES,
- 'existing-ops-runtime-source.js':B_DRAIN_STAGING_HASHES['existing-ops-runtime-source.js'],
-};
-// 本次只读CI来源闭包：helper移动后必须整组固定，不能按成员混合历史摘要。
-const CI_TOOL_HASHES = {...B_RECOVERY_DRAIN_STAGING_HASHES,
- '../../../../scripts/ci/implementation-snapshot.mjs':'3c9323fee71c1354fe9e6b3dd3ca03d1a87ef0059e31af4763561b049f4cfc9c',
- 'existing-ops-source.js':'58219f05a2884e076ddb07de6b1c24134b93e58a44440260cbeba27fa9c278f0',
- 'existing-ops-runtime-source.js':'ee2356c88e24bf957822d5f4bb84f0b0d42f9c068caa29da52c7ce78b2cde754',
- 'existing-ops-workspace-source.js':'b85ce2ec5c56693054b0b66428df95ae373156d2b40107337540c534db3d8d62',
- 'existing-ops-stage-source.js':'468a0f42ea1cbd2a83f744d9220b917d323b6537d7802bb2749ef4d1591f5afc',
- 'existing-ops-stage-modes.js':'cccab22f5265503733294f12aeb141e8153c39c77d2b4d90fed458b50e601620',
-};
-const CI_ENABLED_HASHES = {...CI_TOOL_HASHES,
- 'existing-ops-source.js':'9eba36f6430c8d68c843298a8da7165c8c240e7f3aafe46e4a2000be3352c4da',
-};
-// 第二棒精确选择/诊断闭包；已发布cb7两组逐字保留，0/1仍是各自完整组合。
-const CI_EDGE_TOOL_HASHES = {...CI_TOOL_HASHES,
- 'existing-ops-source.js':'ee4138680d9157a70820098e6ef3d57e4106d32d5932cc507c6b8e0967543091',
- 'existing-ops-workspace-source.js':'7951553eda56f98dd96ff3b521cd83b94e04dc5a5a641f64406225876e87eb07',
- 'existing-ops-stage-source.js':'cf87a980eb019ec54abe111fb15e4b5b1b3d3e6d499b58ce87e9bcf49fc01c4c',
-};
-const CI_EDGE_ENABLED_HASHES = {...CI_EDGE_TOOL_HASHES,
- 'existing-ops-source.js':'ce86445ef3bdfc826a1c257c44cd8d71f46157b0bfb38c39c40b175af7f5c131',
-};
-// Source3完整只读组合；旧四组保持，已审scratch提取的实际调用方也必须原子固定。
-const CI_ADMISSION_TOOL_HASHES = {...CI_EDGE_TOOL_HASHES,
- '../../../../scripts/ci/implementation-snapshot.mjs':'3bd83218b5db7125a0af7c92bf916bb4bde5cc159905acd8746c263bac3e2511',
- 'existing-ops-workspace-source.js':'41e4a5416b1e35523d6d1ea43658e1355ba8b30b7f2044dd5b0ab5b672ef402d',
-};
-const CI_ADMISSION_ENABLED_HASHES = {...CI_ADMISSION_TOOL_HASHES,
- 'existing-ops-source.js':CI_EDGE_ENABLED_HASHES['existing-ops-source.js'],
-};
-// C独立沿用A的snapshot3c932闭包，仅新增已审source/workspace完整0/1组合。
-const CI_ACTIVE_A_TOOL_HASHES={...CI_EDGE_TOOL_HASHES,
- 'existing-ops-source.js':'bde68680dee202bdbfe94c72b1da215200d60adca56853b224ecc87b820067b2',
- 'existing-ops-workspace-source.js':'debf69ed808e420fcc52507e661e740f66d969f8354cef6bff0093a9cbad859f',
-};
-const CI_ACTIVE_A_ENABLED_HASHES={...CI_ACTIVE_A_TOOL_HASHES,
- 'existing-ops-source.js':'430ec81c636771cd0e1f878b1341e9f4ff3b9712fbaa5f3746926ca9842d0373',
-};
-// B采用已审scratch提取调用方；新两个reader仍须完整配对，不能继承旧workspace摘要。
-const CI_ACTIVE_B_TOOL_HASHES={...CI_ADMISSION_TOOL_HASHES,
- 'existing-ops-source.js':CI_ACTIVE_A_TOOL_HASHES['existing-ops-source.js'],
- 'existing-ops-workspace-source.js':CI_ACTIVE_A_TOOL_HASHES['existing-ops-workspace-source.js'],
-};
-const CI_ACTIVE_B_ENABLED_HASHES={...CI_ACTIVE_B_TOOL_HASHES,
- 'existing-ops-source.js':CI_ACTIVE_A_ENABLED_HASHES['existing-ops-source.js'],
-};
-// D仅扩完整B快照调用方cohort；旧十组与旧A快照的资格不变。
-const CI_OUTPUT_TOOL_HASHES={...CI_ACTIVE_B_TOOL_HASHES,
- 'existing-ops-workspace-source.js':'326812d785fa71bd855bf24ae955b71935c70042ec74b6249f03692555b829eb',
-};
-const CI_OUTPUT_ENABLED_HASHES={...CI_OUTPUT_TOOL_HASHES,
- 'existing-ops-source.js':CI_ACTIVE_B_ENABLED_HASHES['existing-ops-source.js'],
-};
-const CI_MEMO_TOOL_HASHES={...CI_OUTPUT_TOOL_HASHES,
- 'existing-ops-workspace-source.js':'f661ef06ccfca5b3460bbbd749e47d53ed283877cf9d7afee68666e0296b1f61',
-};
-const CI_MEMO_ENABLED_HASHES={...CI_MEMO_TOOL_HASHES,'existing-ops-source.js':CI_OUTPUT_ENABLED_HASHES['existing-ops-source.js']};
-// 仅追加最终X退役来源的完整只读0/1组合；旧memo各成员保持原样。
-const CI_RETIREMENT_TOOL_HASHES={...CI_MEMO_TOOL_HASHES,
- 'existing-ops-stage-source.js':'01fab0e202f588c88c6a78b5f27a4b289ff5fcb939172c6b86e2c348f16fa67a',
- 'existing-ops-workspace-source.js':'1ca6ba441d9aaf46b56aee1de428e589f3f5de8d898ce854d5eca0e2b27fef59',
-};
-const CI_RETIREMENT_ENABLED_HASHES={...CI_RETIREMENT_TOOL_HASHES,'existing-ops-source.js':CI_MEMO_ENABLED_HASHES['existing-ops-source.js']};
-
-
 const cache=new Map(), referenceCache=new Map();
 function hash(text,parse,shape){
  if(!cache.has(text))cache.set(text,createHash('sha256').update(shape(parse(text))).digest('hex'));
@@ -329,21 +216,10 @@ export function reviewedADataRanges(src,{file,sources,root,parse,shape,rows,deco
  const data=['build-envelopes','stage-envelopes','native-evidence-envelopes'].map(n=>path.join(root,`existing-ops-${n}.js`));
  if(!data.includes(file)||src!==sources?.get(file))return null;
  try{
-  const runtime=sources.get(path.join(root,'existing-ops-runtime-source.js'));
-  if(typeof runtime!=='string')return null;
-  const build=sources.get(path.join(root,'existing-ops-build-source.js'));
-  const isB=typeof build==='string'&&hash(build,parse,shape)===B_HASHES['existing-ops-build-source.js'];
-  const runtimeHash=hash(runtime,parse,shape);
-  const isQa=runtimeHash===QA_HASHES['existing-ops-runtime-source.js'];
-  const isRecovery=typeof build==='string'&&hash(build,parse,shape)===B_RECOVERY_QA_HASHES['existing-ops-build-source.js'];
-  const isStaging=runtimeHash===B_STAGING_HASHES['existing-ops-runtime-source.js'];
-  const isDrainStaging=runtimeHash===B_DRAIN_STAGING_HASHES['existing-ops-runtime-source.js'];
-  const ciTuple=[CI_TOOL_HASHES,CI_ENABLED_HASHES,CI_EDGE_TOOL_HASHES,CI_EDGE_ENABLED_HASHES,CI_ADMISSION_TOOL_HASHES,CI_ADMISSION_ENABLED_HASHES,CI_ACTIVE_A_TOOL_HASHES,CI_ACTIVE_A_ENABLED_HASHES,CI_ACTIVE_B_TOOL_HASHES,CI_ACTIVE_B_ENABLED_HASHES,CI_OUTPUT_TOOL_HASHES,CI_OUTPUT_ENABLED_HASHES,CI_MEMO_TOOL_HASHES,CI_MEMO_ENABLED_HASHES,CI_RETIREMENT_TOOL_HASHES,CI_RETIREMENT_ENABLED_HASHES,...ciVersionGuardCohorts(CI_RETIREMENT_TOOL_HASHES)].find(tuple=>Object.entries(tuple).every(([name,digest])=>{
+  const selected=ciVersionGuardCohorts().find(tuple=>Object.entries(tuple).every(([name,digest])=>{
    const text=sources.get(path.join(root,name));return typeof text==='string'&&hash(text,parse,shape)===digest;
   }));
-  if(isRecovery&&!isQa&&!isStaging&&!isDrainStaging&&!ciTuple)return null;
-  const selected=ciTuple??(isRecovery?(isDrainStaging?B_RECOVERY_DRAIN_STAGING_HASHES:isStaging?B_RECOVERY_STAGING_HASHES:B_RECOVERY_QA_HASHES):isB?(isDrainStaging?B_DRAIN_STAGING_HASHES:isStaging?B_STAGING_HASHES:isQa?B_QA_HASHES:B_HASHES):isQa?QA_HASHES
-   :hash(runtime,parse,shape)===US_HASHES['existing-ops-runtime-source.js']?US_HASHES:HASHES);
+  if(!selected)return null;
   const closure=new Set(Object.keys(selected).map(name=>path.join(root,name)));
   for(const [name,digest] of Object.entries(selected)){
    const text=sources.get(path.join(root,name));
@@ -369,10 +245,8 @@ export function registerReviewedAGuardTests({ BRAIN_ROOT, findClaudeInvocations 
  const data=path.join(root,'existing-ops-build-envelopes.js');
  const snapshot=path.join(BRAIN_ROOT,'../../scripts/ci/implementation-snapshot.mjs');
  const base=()=>new Map([...files,snapshot].map(f=>[f,readFileSync(f,'utf8')]));
- const memoBase=()=>new Map([...files,snapshot].map(f=>[f,execFileSync('git',['--no-replace-objects','show','69de823cda6d789130898399c3ad770c15b6fb71:'+path.relative(path.resolve(BRAIN_ROOT,'../..'),f)],{cwd:BRAIN_ROOT,encoding:'utf8',maxBuffer:1024*1024})]));
- const legacyBase=()=>new Map(files.map(f=>[f,execFileSync('git',['show','6e9076aab2002e301304256b4936e2790f9de8e7:packages/brain/src/lib/'+path.basename(f)],{cwd:BRAIN_ROOT,encoding:'utf8'})]));
  const scan=(s,f=data)=>findClaudeInvocations(s.get(f),{file:f,sources:s});
- registerCiRetirementGuardTests({root,base,memoBase,scan});
+ registerCiRetirementGuardTests({root,base,scan});
  describe('A封套精确只读闭包及执行防复活',()=>{
   it('获客预发来源兼容完整只读组合通过，未知 runtime 仍拒绝',()=>{
    const current=base(),runtime=path.join(root,'existing-ops-runtime-source.js');
@@ -387,58 +261,12 @@ export function registerReviewedAGuardTests({ BRAIN_ROOT, findClaudeInvocations 
    const unknown=new Map(s);unknown.set(source,original.replace('EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = 0','EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = 2'));
    expect(scan(unknown).some(h=>h.rule==='E1')).toBe(true);
   });
-  it('C独立A与B提取snapshot的完整0/1保留，新source与workspace缺项或混搭均拒绝',()=>{
-   const current=new Map([...base().keys()].map(f=>[f,execFileSync('git',['--no-replace-objects','show','bc597b839142052c33689750a33472f73bbd89d1:'+path.relative(path.resolve(BRAIN_ROOT,'../..'),f)],{cwd:BRAIN_ROOT,encoding:'utf8',maxBuffer:1024*1024})]));
-   const source=path.join(root,'existing-ops-source.js'),workspace=path.join(root,'existing-ops-workspace-source.js');
-   expect(hashSource(current.get(snapshot))).toBe('3bd83218b5db7125a0af7c92bf916bb4bde5cc159905acd8746c263bac3e2511');
-   expect(hashSource(current.get(workspace))).toBe('debf69ed808e420fcc52507e661e740f66d969f8354cef6bff0093a9cbad859f');
-   const historical=new Map([...current.keys()].map(f=>[f,execFileSync('git',['--no-replace-objects','show','35e2a91d971e8dc432d6f36361c65cded5d64ec8:'+path.relative(path.resolve(BRAIN_ROOT,'../..'),f)],{cwd:BRAIN_ROOT,encoding:'utf8',maxBuffer:1024*1024})]));
-   expect(hashSource(historical.get(snapshot))).toBe('3c9323fee71c1354fe9e6b3dd3ca03d1a87ef0059e31af4763561b049f4cfc9c');
-   const currentA=new Map(current);currentA.set(snapshot,historical.get(snapshot));
-   for(const sources of [historical,currentA,current])for(const marker of [0,1]){
-    const variant=new Map(sources);variant.set(source,variant.get(source).replace(/EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = [01]/,'EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = '+marker));expect(scan(variant)).toEqual([]);
-   }
-   for(const file of [source,workspace]){
-    const mixed=new Map(current);mixed.set(file,historical.get(file));expect(scan(mixed).some(h=>h.rule==='E1')).toBe(true);
-    const missing=new Map(current);missing.delete(file);expect(scan(missing).some(h=>h.rule==='E1')).toBe(true);
-   }
-  });
-  it('D输出guard与旧格式协商的完整0/1 cohort可读，旧snapshot混搭和缺项拒绝',()=>{
-   const current=new Map([...base().keys()].map(f=>[f,execFileSync('git',['--no-replace-objects','show','f67184328cf877d438869606eb828d1d25d92d20:'+path.relative(path.resolve(BRAIN_ROOT,'../..'),f)],{cwd:BRAIN_ROOT,encoding:'utf8',maxBuffer:1024*1024})])),source=path.join(root,'existing-ops-source.js'),workspace=path.join(root,'existing-ops-workspace-source.js');
-   expect(hashSource(current.get(workspace))).toBe('326812d785fa71bd855bf24ae955b71935c70042ec74b6249f03692555b829eb');
-   for(const marker of [0,1]){const variant=new Map(current);variant.set(source,variant.get(source).replace(/EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = [01]/,'EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = '+marker));expect(scan(variant)).toEqual([]);}
-   for(const file of [workspace,snapshot]){const missing=new Map(current);missing.delete(file);expect(scan(missing).some(h=>h.rule==='E1')).toBe(true);}
-   const mixed=new Map(current);mixed.set(snapshot,execFileSync('git',['--no-replace-objects','show','35e2a91d971e8dc432d6f36361c65cded5d64ec8:scripts/ci/implementation-snapshot.mjs'],{cwd:BRAIN_ROOT,encoding:'utf8'}));expect(scan(mixed).some(h=>h.rule==='E1')).toBe(true);
-   const changed=new Map(current);changed.set(workspace,changed.get(workspace)+'\neval(candidate);');expect(scan(changed).some(h=>h.rule==='E1')).toBe(true);
-  });
-  it('D readonly新cohort必须实际匹配四blob捕获的source/workspace/snapshot',async()=>{
-   const repoRoot=path.resolve(BRAIN_ROOT,'../..'),captured=frozenTypedOutputFutureGit(repoRoot),sources=memoBase();
-   const source=path.join(root,'existing-ops-source.js'),workspace=path.join(root,'existing-ops-workspace-source.js');
-   const capturedSource=await captured.read('packages/brain/src/lib/existing-ops-source.js'),capturedWorkspace=await captured.read('packages/brain/src/lib/existing-ops-workspace-source.js');
-   expect(capturedWorkspace).toBe(execFileSync('git',['--no-replace-objects','show','f67184328cf877d438869606eb828d1d25d92d20:packages/brain/src/lib/existing-ops-workspace-source.js'],{cwd:BRAIN_ROOT,encoding:'utf8'}));expect(capturedSource).toBe(execFileSync('git',['--no-replace-objects','show','f67184328cf877d438869606eb828d1d25d92d20:packages/brain/src/lib/existing-ops-source.js'],{cwd:BRAIN_ROOT,encoding:'utf8'}).replace(/EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = [01]/,'EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = 1'));
-   sources.set(workspace,capturedWorkspace);sources.set(snapshot,await captured.read('scripts/ci/implementation-snapshot.mjs'));
-   for(const marker of [0,1]){const variant=new Map(sources);variant.set(source,capturedSource.replace('EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = 1','EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = '+marker));expect(scan(variant)).toEqual([]);}
-  });
-  it('E memo完整0/1 cohort匹配五blob，历史D完整保留且未知成员或缺失拒绝',async()=>{
-   const captured=frozenContextMemoFutureGit(path.resolve(BRAIN_ROOT,'../..')),source=path.join(root,'existing-ops-source.js'),workspace=path.join(root,'existing-ops-workspace-source.js'),current=memoBase();
-   const text=await captured.read('packages/brain/src/lib/existing-ops-workspace-source.js');expect(hashSource(text)).toBe('f661ef06ccfca5b3460bbbd749e47d53ed283877cf9d7afee68666e0296b1f61');expect(text).toBe(current.get(workspace));
-   expect(await captured.read('packages/brain/src/lib/existing-ops-source.js')).toBe(current.get(source).replace(/EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = [01]/,'EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = 1'));
-   for(const marker of [0,1]){const variant=new Map(current);variant.set(source,variant.get(source).replace(/EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = [01]/,'EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = '+marker));expect(scan(variant)).toEqual([]);}
-   for(const file of [workspace,snapshot]){const missing=new Map(current);missing.delete(file);expect(scan(missing).some(h=>h.rule==='E1')).toBe(true);}
-   const mixed=new Map(current);mixed.set(workspace,await frozenTypedOutputFutureGit(path.resolve(BRAIN_ROOT,'../..')).read('packages/brain/src/lib/existing-ops-workspace-source.js'));expect(scan(mixed)).toEqual([]);mixed.set(workspace,mixed.get(workspace)+'\neval(candidate);');expect(scan(mixed).some(h=>h.rule==='E1')).toBe(true);
-  });
-  it('已发布cb7对应main原子marker0/1完整组合保留，新旧移动成员不得混搭',()=>{
-   const published=new Map([...base().keys()].map(f=>[f,execFileSync('git',['show','e8d727e21867aabe1e9246b5a940e08ecd063f33:'+path.relative(path.resolve(BRAIN_ROOT,'../..'),f)],{cwd:BRAIN_ROOT,encoding:'utf8',maxBuffer:1024*1024})]));
-   const source=path.join(root,'existing-ops-source.js');
-   for(const marker of [0,1]){const variant=new Map(published);variant.set(source,variant.get(source).replace('EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = 0','EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = '+marker));expect(scan(variant)).toEqual([]);}
-   for(const name of ['source','workspace-source','stage-source']){const f=path.join(root,`existing-ops-${name}.js`),mixed=base();mixed.set(f,published.get(f));expect(scan(mixed).some(h=>h.rule==='E1')).toBe(true);}
-  });
-  it('公开Source8原子marker0/1组合保留，新profile未知变体不借旧tuple',()=>{
-   const published=new Map([...base().keys()].map(f=>[f,execFileSync('git',['show','b217cd52336767b9637410ef921397a0e9297f2b:'+path.relative(path.resolve(BRAIN_ROOT,'../..'),f)],{cwd:BRAIN_ROOT,encoding:'utf8',maxBuffer:1024*1024})]));
-   const source=path.join(root,'existing-ops-source.js');
-   for(const marker of [0,1]){const variant=new Map(published);variant.set(source,variant.get(source).replace('EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = 0','EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = '+marker));expect(scan(variant)).toEqual([]);}
-   const forged=new Map(published),workspace=path.join(root,'existing-ops-workspace-source.js');forged.set(workspace,base().get(workspace)+'\nexport const unreviewedProfile=true;');expect(scan(forged).some(h=>h.rule==='E1')).toBe(true);
-  });
+
+
+
+
+
+
   it.each(['eval','raw export','process'])('移动至workspace的helper出现%s仍失败关闭',kind=>{
    const s=base(),file=path.join(root,'existing-ops-workspace-source.js');
    const edits={eval:'\neval(candidate);','raw export':"\nimport {STAGE_ENVELOPES} from './existing-ops-stage-envelopes.js';export const raw=STAGE_ENVELOPES;",process:"\nimport {spawn as launch} from 'node:child_process';launch('claude',['-p']);"};
@@ -459,25 +287,10 @@ export function registerReviewedAGuardTests({ BRAIN_ROOT, findClaudeInvocations 
    const s=base();s.set(path.join(root,'unknown-workspace-reader.js'),"import {collectWorkspaceInputEdges} from './existing-ops-workspace-source.js';collectWorkspaceInputEdges({parse:eval});");
    expect(scan(s).some(h=>h.rule==='E1')).toBe(true);
   });
-  it('旧main完整13成员仍可审，新runtime缺新增前置不能借旧闭包',()=>{
-   const s=legacyBase(),runtime=path.join(root,'existing-ops-runtime-source.js'),helper=path.join(root,'existing-ops-us-compose-source.js');
-   s.set(runtime,execFileSync('git',['show','f4bf6aceb7f28e9d39944bf9bd0fb70a340f3439:packages/brain/src/lib/existing-ops-runtime-source.js'],{encoding:'utf8'}));s.delete(helper);
-   expect(scan(s)).toEqual([]);
-   s.set(runtime,base().get(runtime));expect(scan(s).some(h=>h.rule==='E1')).toBe(true);
-  });
-  it('已发布旧collector闭包保留，旧版追加执行仍拒绝',()=>{
-   const s=legacyBase(), file=path.join(root,'existing-ops-build-source.js');
-   const old=execFileSync('git',['show','65e7ffffe65debcd8e32039da5de50d5c99f00fb:packages/brain/src/lib/existing-ops-build-source.js'],{cwd:BRAIN_ROOT,encoding:'utf8'});
-   s.set(file,old);expect(scan(s)).toEqual([]);
-   s.set(file,old+'\neval(A_ENVELOPES.reviewed.any);');expect(scan(s).some(h=>h.rule==='E1')).toBe(true);
-  });
+
+
   it.each(['build-source','build-envelopes'])('B只读闭包禁止A/B混配 %s',name=>{const s=base();s.set(path.join(root,`existing-ops-${name}.js`),execFileSync('git',['show',`5dd82456a80b77dda054f5994d1561e1106317eb:packages/brain/src/lib/existing-ops-${name}.js`],{encoding:'utf8'}));expect(scan(s).some(h=>h.rule==='E1')).toBe(true)});
-  it('旧B完整组合继续接受，新旧两成员混配均拒绝',()=>{
-   const old=new Map(files.map(f=>[f,execFileSync('git',['show','baa3f3424dcffe4908b966bdfba9a38fba733c23:packages/brain/src/lib/'+path.basename(f)],{cwd:BRAIN_ROOT,encoding:'utf8'})])), names=['build-source','build-envelopes'];
-   for(const name of names){const f=path.join(root,`existing-ops-${name}.js`);old.set(f,execFileSync('git',['show',`c58724ba85b932d6d7ca2408d57a5b0c2baef15e:packages/brain/src/lib/existing-ops-${name}.js`],{cwd:BRAIN_ROOT,encoding:'utf8'}));}
-   expect(scan(old)).toEqual([]);
-   for(const name of names){const f=path.join(root,`existing-ops-${name}.js`);const mixed=base();mixed.set(f,old.get(f));expect(scan(mixed).some(h=>h.rule==='E1')).toBe(true);}
-  });
+
   it.each(['build','stage','native-evidence'])('%s完整已审组合无误报',name=>{const f=path.join(root,`existing-ops-${name}-envelopes.js`);expect(scan(base(),f)).toEqual([]);});
   it.each(files)('任何闭包成员突变或缺失必须拒绝：%s',f=>{const s=base();s.set(f,s.get(f)+'\nexport const unknownClosure=true;');expect(scan(s).some(h=>h.rule==='E1')).toBe(true);const missing=base();missing.delete(f);expect(findClaudeInvocations(base().get(data),{file:data,sources:missing}).some(h=>h.rule==='E1')).toBe(true);});
   it.each(['eval','raw','spawn','alias','interpolation','escaped','concat','dynamic','caller'])('%s不能继承只读资格',kind=>{

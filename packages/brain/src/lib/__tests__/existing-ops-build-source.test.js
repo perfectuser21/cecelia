@@ -5,7 +5,6 @@ const parse = text => acorn(text, { ecmaVersion: 'latest', sourceType: 'module' 
 // 固定正式祖先的真实源码；CI checkout fetch-depth: 0，不依赖其它未合并分支对象。
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { buildExistingOpsSources } from './helpers/existing-ops-proof-builder.js';
 const buildBase = '2eb4d0557365befafed1953140c9c47e20bab495';
 const buildRoot = fileURLToPath(new URL('../../../../../', import.meta.url));
 const buildPrefix = 'packages/brain/scripts/coding-workflow/';
@@ -15,25 +14,25 @@ const fixedBuild = path => {
   if (!buildCache.has(path)) buildCache.set(path,execFileSync('git',['show',`${buildBase}:${path}`],{cwd:buildRoot,encoding:'utf8',maxBuffer:16*1024*1024}));
   return buildCache.get(path);
 };
-const buildSchema = 'packages/brain/src/lib/existing-ops-source.js';
 const buildTest = buildPrefix+'__tests__/build.test.mjs';
 const explicitProvider = source => source.replace('CODING_WF_CLAUDE_BIN: FAKE_CLAUDE,', "CODING_WF_PROVIDER: 'claude', CODING_WF_CLAUDE_BIN: FAKE_CLAUDE,");
-const collectBuild = (marker='', overrides={}) => buildExistingOpsSources({scope:'cecelia-factory',repo:'perfectuser21/cecelia',revision:buildBase,paths:buildPaths,
-  readSource:async path=>overrides[path] ?? (path===buildSchema?fixedBuild(path)+marker:path===buildTest?explicitProvider(fixedBuild(path)):fixedBuild(path))});
-const enabledBuild = '\nexport const EXISTING_OPS_BUILD_SELECTOR_SCHEMA = 1;';
+const collectBuild = async ({exclude=[]}={}) => {
+  const bindings=[], relations=[], gaps=[];
+  const readSource=async path=>path===buildTest?explicitProvider(fixedBuild(path)):fixedBuild(path);
+  await collectBuildSources({parse,paths:buildPaths,revision:buildBase,selectors:{include:[/coding-workflow\/__tests__\/(build|publish)\.test\.mjs$/],exclude},relations,
+    readSource,read:async path=>{const text=await readSource(path);bindings.push({path});return text;},
+    requireProof:(ok,code)=>{if(!ok)gaps.push({code});return Boolean(ok);}});
+  return {status:gaps.length?'unknown':'verified',gaps,bindings:gaps.length?[]:bindings,input_relations:gaps.length?[]:relations};
+};
 describe('固定 build 原生执行来源合同',()=>{
-  it('激活后仅沿真实活跃 build 子进程认领活动、模板与假 CLI 输入',async()=>{
-    const f3=(await collectBuild(enabledBuild)).consumers[1];
+  it('build 子collector仅沿真实活跃子进程认领活动、模板与假 CLI 输入',async()=>{
+    const f3=await collectBuild();
     expect(f3.status,JSON.stringify(f3.gaps)).toBe('verified');
     for(const path of ['activities/build.mjs','prompts/build.md','__tests__/fixtures/fake-claude.mjs'])
       expect(f3.bindings.map(b=>b.path)).toContain(buildPrefix+path);
     expect(f3.input_relations).toContainEqual(expect.objectContaining({consumer_path:buildPrefix+'activities/build.mjs',input_path:buildPrefix+'prompts/build.md',kind:'executed_build_prompt_input'}));
   });
-  it('缺省与0标记读取固定旧Git时保留完整输出逐字一致',async()=>{
-    const original=await collectBuild('',{[buildTest]:fixedBuild(buildTest)});
-    const disabled=await collectBuild('\nexport const EXISTING_OPS_BUILD_SELECTOR_SCHEMA = 0;',{[buildTest]:fixedBuild(buildTest)});
-    expect(JSON.stringify(disabled)).toBe(JSON.stringify(original));
-  });
+
 });
 
 import { BUILD_SOURCE_PATHS, proveBuildSources } from '../existing-ops-build-source.js';
@@ -78,9 +77,8 @@ describe('固定 build 执行封套反例（只解析，不执行 payload）',()
     for(const statement of ['return;','if(false) return;','const unused=async()=>{ await run("build-ok"); }; return;','switch(1){case 1:return;}','do {} while(true);'])
       expect(proveBuildSources(mutateBuild('test',prefix,prefix+statement),parse)).toBe(false);
   });
-  it('真实exclude未选择build测试时不凭文件存在认领活动模板与假CLI',async()=>{
-    const config='packages/brain/vitest.config.js';
-    const f3=(await collectBuild(enabledBuild,{[config]:fixedBuild(config).replace('exclude: [',"exclude: ['scripts/coding-workflow/__tests__/build.test.mjs',")})).consumers[1];
+  it('子collector调用方exclude未选择build测试时不凭文件存在认领活动模板与假CLI',async()=>{
+    const f3=await collectBuild({exclude:[/__tests__\/build\.test\.mjs$/]});
     expect(f3.status,JSON.stringify(f3.gaps)).toBe('verified');
     for(const key of ['activity','prompt','fake'])expect(f3.bindings.map(b=>b.path)).not.toContain(BUILD_SOURCE_PATHS[key]);
   });
@@ -91,7 +89,7 @@ const publishTest=buildPrefix+'__tests__/publish.test.mjs';
 describe('固定 publish 原生入口来源',()=>{
   it('现有活跃 publish 子进程在新协议中认领真实入口，不泛化其它活动或假GH',async()=>{
     expect(provePublishSources(fixedBuild(publishTest),fixedBuild(BUILD_SOURCE_PATHS.helper),parse)).toBe(true);
-    const f3=(await collectBuild(enabledBuild)).consumers[1];
+    const f3=await collectBuild();
     expect(f3.status,JSON.stringify(f3.gaps)).toBe('verified');
     expect(f3.bindings.map(b=>b.path)).toContain(buildPrefix+'activities/publish.mjs');
     expect(f3.input_relations).toContainEqual(expect.objectContaining({input_path:buildPrefix+'activities/publish.mjs',kind:'native_publish_activity_spawn'}));

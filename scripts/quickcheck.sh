@@ -115,15 +115,13 @@ run_preflight() {
 }
 
 # 本地按变更包运行快速准备命令，不重复 GitHub 的完整组件测试。
-for PKG in packages/brain apps/api apps/dashboard; do
-  if echo "$CHANGED_FILES" | grep -q "^$PKG/"; then
-    case "$PKG" in
-      packages/brain) run_preflight "$PKG" npm run lint ;;
-      apps/api) run_preflight "$PKG" npm run typecheck ;;
-      apps/dashboard) run_preflight "$PKG" npm run build ;;
-    esac
-  fi
-done
+if echo "$CHANGED_FILES" | grep -q '^packages/brain/'; then
+  run_preflight packages/brain npm run lint
+fi
+# apps/api现在只承载共享前端；准备命令跟随真正消费它的Dashboard。
+if echo "$CHANGED_FILES" | grep -Eq '^apps/(api|dashboard)/'; then
+  run_preflight apps/dashboard npm run build
+fi
 if echo "$CHANGED_FILES" | grep -Eq '(^scripts/ci/|^\.github/|^package[^/]*\.json$|^npm-shrinkwrap\.json$)'; then
   run_preflight . node scripts/ci/run-basic-check.mjs scripts
 fi

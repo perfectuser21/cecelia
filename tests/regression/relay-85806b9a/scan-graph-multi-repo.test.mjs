@@ -258,3 +258,28 @@ describe('[I-1] 全量替换语义验证（真实 PG）', () => {
     await pool.query("DELETE FROM graph_edges WHERE repo IN ('test-repo-X','test-repo-Y')");
   });
 });
+
+
+describe('退役API后的现役Cecelia图谱', () => {
+  it('真实扫描与私库读回包含features依赖，排除旧Core依赖', async () => {
+    const { scanRepo } = await import('../../../scripts/scan/scan-graph.mjs');
+    const root = makeTempRepo('active-cecelia');
+    const name = 'legacy-retire-cecelia';
+    try {
+      for (const dir of ['apps/api/features', 'apps/api/src']) {
+        fs.mkdirSync(path.join(root, dir), { recursive: true });
+        fs.writeFileSync(path.join(root, dir, 'dependency.js'), 'export const x = 1;\n');
+        fs.writeFileSync(path.join(root, dir, 'index.js'), "import { x } from './dependency.js'; export { x };\n");
+      }
+      execFileSync('git', ['-C', root, 'add', '.']);
+      execFileSync('git', ['-C', root, 'commit', '-m', 'fixture active and retired graph roots'], { stdio: 'ignore' });
+      const result = await scanRepo({ name, sourceName: 'cecelia', root }, fixturePool);
+      expect(result.error).toBeUndefined();
+      const { rows } = await fixturePool.query('SELECT src_path, dst_path FROM graph_edges WHERE repo=$1', [name]);
+      expect(rows).toContainEqual({ src_path: 'apps/api/features/index.js', dst_path: expect.stringMatching(/apps\/api\/features\/dependency\.js$/) });
+      expect(rows.some(row => row.src_path.startsWith('apps/api/src/'))).toBe(false);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});

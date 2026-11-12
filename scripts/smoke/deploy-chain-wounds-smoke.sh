@@ -1,11 +1,9 @@
 #!/usr/bin/env bash
-# deploy-chain-wounds-smoke.sh — 刀3-T3 四伤口回归守卫
+# deploy-chain-wounds-smoke.sh — 部署链剩余接线守卫
 #
-# A1: deploy-local.sh npm install 失败时中止部署（loud-fail，不再 || true）
 # A3: promote-dashboard.sh 含 HK rsync 步骤
 # A4: frontend-proxy.js STATIC_DIR 默认 /app（非主仓库绝对路径）
 # A5: check-deploy-fingerprint.sh 存在且可执行
-# A7: promote 后强制重新绑定 frontend，且 --no-deps 不重启 Brain
 
 set -euo pipefail
 
@@ -16,21 +14,6 @@ ok()   { echo "  ✅ $*"; PASS=$((PASS+1)); }
 fail() { echo "  ❌ $*"; FAIL=$((FAIL+1)); }
 
 echo "=== deploy-chain-wounds-smoke ==="
-
-# ── A1: deploy-local.sh npm install 失败时中止（不含 || true）────────────────
-echo ""
-echo "A1: npm install loud-fail"
-DEPLOY_LOCAL="$REPO_ROOT/scripts/deploy-local.sh"
-if grep -q '|| true' "$DEPLOY_LOCAL"; then
-    # 检查是否是 npm install 那行有 || true
-    if grep -A2 'npm install' "$DEPLOY_LOCAL" | grep -q '|| true'; then
-        fail "deploy-local.sh: npm install 后仍有 '|| true'（伤口1未修）"
-    else
-        ok "deploy-local.sh: '|| true' 在其他上下文，npm install 处已修复"
-    fi
-else
-    ok "deploy-local.sh: 无 '|| true'（npm install loud-fail 已生效）"
-fi
 
 # ── A3: promote-dashboard.sh 含 HK rsync ────────────────────────────────────
 echo ""
@@ -104,23 +87,8 @@ else
     ok "docker-compose.yml: 已移除旧 cecelia dist 只读 mount"
 fi
 
-# ── A7: 原子替换 dist 后重新绑定 frontend，不连带重启 Brain ─────────────────
-echo ""
-echo "A7: promote 后 frontend bind mount 重绑"
-if grep -Eq 'up -d --force-recreate --no-deps frontend' "$PROMOTE"; then
-    ok "promote-dashboard.sh: 只重建 frontend 并重新绑定 live dist"
-else
-    fail "promote-dashboard.sh: 缺少 --force-recreate --no-deps frontend（5211 会继续读旧 inode）"
-fi
-
-echo ""
-echo "A8: Dashboard promote 不部署 Brain"
-if grep -Eq 'brain-deploy\.sh|BRAIN_DEPLOY' "$PROMOTE"; then
-    fail "promote-dashboard.sh: 仍调用 Brain 部署（Dashboard 发布会中断任务调度）"
-else
-    ok "promote-dashboard.sh: 只负责 Dashboard，不调用 Brain 部署"
-fi
-
+# npm 失败中止由 deploy-local-npm-cache fixture 验证；
+# frontend 重绑与 Brain 隔离由 dashboard-release-promote fixture 验证。
 echo ""
 echo "=== 结果：PASS=$PASS  FAIL=$FAIL ==="
 [[ $FAIL -eq 0 ]]

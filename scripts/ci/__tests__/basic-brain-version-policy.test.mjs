@@ -13,7 +13,8 @@ const root = fileURLToPath(new URL('../../../', import.meta.url));
 const require = createRequire(import.meta.url);
 const versionEntry = '实际PR必须通过现仓库Brain版本策略';
 const versionTestPath = 'scripts/ci/__tests__/basic-brain-version-policy.test.mjs';
-test(versionEntry, t => {
+// 实际PR版本门由主CI plan执行；此入口只供隔离Git fixture验证拒绝边界。
+if (process.env.BRAIN_VERSION_POLICY_FIXTURE === '1') test(versionEntry, t => {
   const eventName = process.env.GITHUB_EVENT_NAME;
   if (eventName !== 'pull_request') {
     assert.ok(eventName === undefined && process.env.GITHUB_ACTIONS !== 'true' ||
@@ -86,7 +87,7 @@ function versionFixture(t, { version = '1.0.0', fragment = false } = {}) {
     writeFileSync(eventPath, typeof body === 'string' ? body : JSON.stringify(body));
     return spawnSync(process.execPath, ['--test', `--test-name-pattern=^${versionEntry}$`, versionTestPath], {
       cwd: directory, encoding: 'utf8', timeout: 20000,
-      env: { ...env, GITHUB_ACTIONS: 'true', GITHUB_EVENT_NAME: 'pull_request', GITHUB_EVENT_PATH: eventPath, ...overrides },
+      env: { ...env, BRAIN_VERSION_POLICY_FIXTURE: '1', GITHUB_ACTIONS: 'true', GITHUB_EVENT_NAME: 'pull_request', GITHUB_EVENT_PATH: eventPath, ...overrides },
     });
   };
   return { directory, git, event, run, env };
@@ -164,7 +165,7 @@ test('真实guard拦截TERM也必须超时失败并收尾本人进程组', async
   writeFileSync(eventPath, JSON.stringify(f.event));
   const child = spawn(process.execPath, ['--test', `--test-name-pattern=^${versionEntry}$`, versionTestPath], {
     cwd: f.directory, detached: true,
-    env: { ...f.env, GITHUB_ACTIONS: 'true', GITHUB_EVENT_NAME: 'pull_request', GITHUB_EVENT_PATH: eventPath, VERSION_TEST_READY: ready },
+    env: { ...f.env, BRAIN_VERSION_POLICY_FIXTURE: '1', GITHUB_ACTIONS: 'true', GITHUB_EVENT_NAME: 'pull_request', GITHUB_EVENT_PATH: eventPath, VERSION_TEST_READY: ready },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   const kill = () => { if (child.pid) try { process.kill(-child.pid, 'SIGKILL'); } catch (error) { if (error.code !== 'ESRCH') throw error; } };

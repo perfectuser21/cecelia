@@ -68,73 +68,45 @@ export function verifyVerificationInputFacts(root,{source,row,purpose='admission
 }
 
 const CI='.github/workflows/ci.yml',BASIC_RUNNER='scripts/ci/run-basic-check.mjs';
-const LEGACY_CI='528a08e84e5dc0ffc1c8ae83e8ee54e9e63366513b1dd119598085d86de96181';
-const BASIC_CI='7fee2a6d842c7c2595fa882fa61f75750ec6b2787186fdaf8747e1084a64fcee';
-const QUEUED_BASIC_CI='020165ab3d73d487d973c6d98c849958240dc56149d5b6083b8288673a3dd091';
-const BASIC_ENTRY_SEALS={
- 'scripts/ci/run-basic-check.mjs':'c9c1318dcd6b35981453aa06f656f5a99cb6283d2b7e4ea4a1cf8f6772103f6d',
- 'scripts/ci/basic-scope.mjs':'9844bb702db2c1a9507f88f1c6c330f676b786cb784592dc4aaefc096b93d6ef',
- 'scripts/ci/check-basic-results.mjs':'b6c0b93e15320deff680e765f4558fcdb2a8d98c65d7a926d94f2158af6641e2',
- 'scripts/ci/ops-checks.mjs':'96023fd57f11eb1277396b77419bad94a050d0ef64b1c5993db258d87797df82',
-};
-// 完整旧入口或完整退役入口二选一；同一候选不能逐文件混配已审版本。
-const BASIC_ENTRY_PROTOCOLS=[BASIC_ENTRY_SEALS,{
- ...BASIC_ENTRY_SEALS,
- 'scripts/ci/run-basic-check.mjs':'97226ce692a63aad92d9120b378e024d64569bc21c637c9f41266735c1720271',
- 'scripts/ci/basic-scope.mjs':'4a6cb08142b42329ab6daf75bfc7a058be9b5657b7d586be0477486cc914c277',
-}];
-const QUEUED_BASIC_ENTRY_PROTOCOLS=[{
- ...BASIC_ENTRY_SEALS,
- 'scripts/ci/run-basic-check.mjs':'aed179661ff08ef743cb8feb0c9e88bb59342d3c0ab690bf17e812f8c868c0ae',
- 'scripts/ci/basic-scope.mjs':'c97f3d3300ce74237086b819def622636dc6776f663753d6ec3e68ea2d21a14b',
- 'scripts/ci/ops-checks.mjs':'6a6305471c70c7d1d5e4ad836f14636c8ab74a4d6a4bb17dc8d525d3aa52e125',
- 'packages/brain/vitest.config.js':'fe6de3054f559116886d6d3286542896f510bbb887893ef0727a16df72c39f9e',
-}, {
- ...BASIC_ENTRY_SEALS,
- 'scripts/ci/run-basic-check.mjs':'ae2edd2add44d004cb5b6a3ab43fd00ef882ea0bc012efeac48cd990bf8b53eb',
- 'scripts/ci/basic-scope.mjs':'c97f3d3300ce74237086b819def622636dc6776f663753d6ec3e68ea2d21a14b',
- 'scripts/ci/ops-checks.mjs':'6a6305471c70c7d1d5e4ad836f14636c8ab74a4d6a4bb17dc8d525d3aa52e125',
- 'packages/brain/vitest.config.js':'5e1504bbed8d83d7758bc2513eb8894418dccdd63938a98f6aa40433355ff5cc',
-}, {
- // 本轮真实受管profile PG合同作为完整组追加，不替换或放宽历史组合。
- ...BASIC_ENTRY_SEALS,
- 'scripts/ci/run-basic-check.mjs':'b346e6f8f06d42422c0289ae38693cdcd73e2e93d9415babb852214c0b9072ef',
- 'scripts/ci/basic-scope.mjs':'c97f3d3300ce74237086b819def622636dc6776f663753d6ec3e68ea2d21a14b',
- 'scripts/ci/ops-checks.mjs':'6a6305471c70c7d1d5e4ad836f14636c8ab74a4d6a4bb17dc8d525d3aa52e125',
- 'packages/brain/vitest.config.js':'85c3d4fbc92f593ee94544f1ebdfe5f5b76bdf14c78377ab70541bbf50fd15a0',
-}, {
- // CommonRunner隔离真实PG回归注册：仅追加完整精确新组，历史封印保留。
- ...BASIC_ENTRY_SEALS,
- 'scripts/ci/run-basic-check.mjs':'b346e6f8f06d42422c0289ae38693cdcd73e2e93d9415babb852214c0b9072ef',
- 'scripts/ci/basic-scope.mjs':'c97f3d3300ce74237086b819def622636dc6776f663753d6ec3e68ea2d21a14b',
- 'scripts/ci/ops-checks.mjs':'6a6305471c70c7d1d5e4ad836f14636c8ab74a4d6a4bb17dc8d525d3aa52e125',
- 'packages/brain/vitest.config.js':'9566bd1cff449dc15ee924aea4c9f46aaa3457392fadf8cbf10d0b6556c2634e',
-}];
-const OWNERSHIP_BASIC_CI='2d5a818975ae8815aa390ea003b57be4445582a03cc3c3316a83471a70ffa275';
-const OWNERSHIP_BASIC_ENTRY_PROTOCOLS=[{
- // 所有权单测并入scripts后的完整入口组合；既有所有组合保持原样。
- ...BASIC_ENTRY_SEALS,
- 'scripts/ci/run-basic-check.mjs':'980d1ac1e847e58d6c0b10c2102247840b3b066302fefcfa0b0c70f0525e6fcc',
- 'scripts/ci/basic-scope.mjs':'c97f3d3300ce74237086b819def622636dc6776f663753d6ec3e68ea2d21a14b',
- 'scripts/ci/ops-checks.mjs':'6a6305471c70c7d1d5e4ad836f14636c8ab74a4d6a4bb17dc8d525d3aa52e125',
- 'packages/brain/vitest.config.js':'9566bd1cff449dc15ee924aea4c9f46aaa3457392fadf8cbf10d0b6556c2634e',
-}];
-const UNIFIED_BASIC_CI='20ae4b9f13055900dca96258c4551cfa81ef686d184c9c3f32bb601c83b1bfb8';
-const UNIFIED_BASIC_ENTRY_SEALS={"scripts/ci/run-basic-check.mjs":"980d1ac1e847e58d6c0b10c2102247840b3b066302fefcfa0b0c70f0525e6fcc","scripts/ci/basic-scope.mjs":"0b5fdc26f71db94e6ac03358b6034025162d8ba740ed59a6fe127f0e5bfe5062","scripts/ci/check-basic-results.mjs":"11d51c4c4ce00c2860a099912961c6e020b49c93f5ce548a338f96f8c51896a5","scripts/ci/ops-checks.mjs":"6a6305471c70c7d1d5e4ad836f14636c8ab74a4d6a4bb17dc8d525d3aa52e125","packages/brain/vitest.config.js":"9566bd1cff449dc15ee924aea4c9f46aaa3457392fadf8cbf10d0b6556c2634e","scripts/ci/skill-source-tests.mjs":"dbb749f30271472fe1f24e1eec2215d7b5999f20c1d4ed74c00fd4b40f6c57c8","scripts/ci/run-skill-source-check.mjs":"debcaf26aa7025f47d846052e0c2b43d1a04976003936143d80ddac1582d7204","scripts/ci/__tests__/basic-skill-source-coverage.test.mjs":"6fa43074248d0e379e36c4c2e58cb6de09cbe65b12a052d5de14a3de33c74804",".github/actions/skills-source/action.yml":"283a44569b4b037d11ebbac624f91ed013ab91be4916182a87a2bf95078ec105","scripts/ci/check-skill-source-identity.py":"ebc6b90fbe187b49c31101a5dba997d133fd45825cfcaa3549aad30581d747c1"};
-// API重复typecheck清退后的完整入口；历史闭包保留，成员不能跨组混配。
-const UNIFIED_BASIC_ENTRY_PROTOCOLS=[UNIFIED_BASIC_ENTRY_SEALS,{...UNIFIED_BASIC_ENTRY_SEALS,
- 'scripts/ci/run-basic-check.mjs':'a5c767b0476a239b7922ba07f615164b8e23da5769dd7aa5da0e279a2d79dde6',
-}];
-const FINAL_JOBS_BASIC_CI='a72f8ef77b55047cce97293c798ae88127378b118e50d22d10df29f69cba2891';
-const FINAL_JOBS_BASIC_ENTRY_PROTOCOLS=[{...UNIFIED_BASIC_ENTRY_SEALS,'scripts/ci/basic-scope.mjs':'1f7ec02042ce35b23753c8be78102febe2d9294f81f98d081bf12fa6c568ce91','scripts/ci/run-basic-check.mjs':'ec107cca3e69e498c84b46b9816ebf3c2f46a713e6eb791e0e0e665ecfb7f3a1','scripts/ci/check-basic-results.mjs':'084cc7187734c0dd83dddb528d87aa16d3ed9a49c3ea0eebf2c97cb4c4775da3','scripts/ci/__tests__/basic-skill-source-coverage.test.mjs':'acc2046d6691423b739edc4071c9ea87f00e57a1a8b7a06be91d5487d24ad2c9','scripts/ci/run-skill-source-check.mjs':'debcaf26aa7025f47d846052e0c2b43d1a04976003936143d80ddac1582d7204'}];
-const FUNCTIONAL_BASIC_CI='5e5df48feb544a49b8bc2f2a3def7cefe0a71b6d9e911caed32e5cae6bf2af88';
-const FUNCTIONAL_BASIC_ENTRY_PROTOCOLS=[{...FINAL_JOBS_BASIC_ENTRY_PROTOCOLS[0],'scripts/ci/basic-scope.mjs':'446605f2052c09c44c21bd2c9f8bcee206b3198be4d18858f1c8298ece0be726','scripts/ci/run-basic-check.mjs':'10e030617fb6ca219bd4965afa2566213f8788bc4e3741d3e7b3d7ebf5e45918','scripts/ci/ops-checks.mjs':'a5eb851d2f526e940432563a70e8a82fb0f128d66a8104515fec530974a55f6b','apps/api/vitest.config.ts':'6f4d8288dd391a8212c1bc22d434f8c4053f76099df2beb692693b1c80512b33','apps/dashboard/vitest.config.ts':'a5899ed07ee4aa8ff262f7da361d695ef8eb26005571c5e09988aac53c1cc261','scripts/ci/__tests__/basic-w19-freeze.test.mjs':'127bfd50494259a78e2f3649c399596fc94acc90a3db17c43077a6ea47cf785a'}];
-const UBUNTU_ARCHIVE_BASIC_CI='3636a0489fdc4ce2d9a362db0d635774b13f222d8c3d14939751460a2637faa7';
-const UBUNTU_ARCHIVE_BASIC_ENTRY_PROTOCOLS=[{...FUNCTIONAL_BASIC_ENTRY_PROTOCOLS[0],
- 'scripts/ci/prepare-ubuntu-archive.mjs':'ca83d00df2f865fc1836e0f8841bc5f4ba7ddf57416b6f718855f5840205311b',
- 'scripts/ci/__tests__/basic-ubuntu-archive.test.mjs':'525456457c116c91aba038f35916352abed5ec38a0aa7c5287fd263ef9ffb175',
-}];
-const functionalEntry=entry=>[FUNCTIONAL_BASIC_CI,UBUNTU_ARCHIVE_BASIC_CI].includes(entry?.canonical_sha256);
+const CURRENT_BASIC_CI="3636a0489fdc4ce2d9a362db0d635774b13f222d8c3d14939751460a2637faa7";
+const CURRENT_BASIC_ENTRY_PROTOCOLS=[
+  {
+    "scripts/ci/run-basic-check.mjs": "10e030617fb6ca219bd4965afa2566213f8788bc4e3741d3e7b3d7ebf5e45918",
+    "scripts/ci/basic-scope.mjs": "446605f2052c09c44c21bd2c9f8bcee206b3198be4d18858f1c8298ece0be726",
+    "scripts/ci/check-basic-results.mjs": "084cc7187734c0dd83dddb528d87aa16d3ed9a49c3ea0eebf2c97cb4c4775da3",
+    "scripts/ci/ops-checks.mjs": "a5eb851d2f526e940432563a70e8a82fb0f128d66a8104515fec530974a55f6b",
+    "packages/brain/vitest.config.js": "9566bd1cff449dc15ee924aea4c9f46aaa3457392fadf8cbf10d0b6556c2634e",
+    "scripts/ci/skill-source-tests.mjs": "dbb749f30271472fe1f24e1eec2215d7b5999f20c1d4ed74c00fd4b40f6c57c8",
+    "scripts/ci/run-skill-source-check.mjs": "debcaf26aa7025f47d846052e0c2b43d1a04976003936143d80ddac1582d7204",
+    "scripts/ci/__tests__/basic-skill-source-coverage.test.mjs": "acc2046d6691423b739edc4071c9ea87f00e57a1a8b7a06be91d5487d24ad2c9",
+    ".github/actions/skills-source/action.yml": "283a44569b4b037d11ebbac624f91ed013ab91be4916182a87a2bf95078ec105",
+    "scripts/ci/check-skill-source-identity.py": "ebc6b90fbe187b49c31101a5dba997d133fd45825cfcaa3549aad30581d747c1",
+    "apps/api/vitest.config.ts": "6f4d8288dd391a8212c1bc22d434f8c4053f76099df2beb692693b1c80512b33",
+    "apps/dashboard/vitest.config.ts": "a5899ed07ee4aa8ff262f7da361d695ef8eb26005571c5e09988aac53c1cc261",
+    "scripts/ci/__tests__/basic-w19-freeze.test.mjs": "127bfd50494259a78e2f3649c399596fc94acc90a3db17c43077a6ea47cf785a",
+    "scripts/ci/prepare-ubuntu-archive.mjs": "ca83d00df2f865fc1836e0f8841bc5f4ba7ddf57416b6f718855f5840205311b",
+    "scripts/ci/__tests__/basic-ubuntu-archive.test.mjs": "525456457c116c91aba038f35916352abed5ec38a0aa7c5287fd263ef9ffb175"
+  },
+  {
+    "scripts/ci/run-basic-check.mjs": "10e030617fb6ca219bd4965afa2566213f8788bc4e3741d3e7b3d7ebf5e45918",
+    "scripts/ci/basic-scope.mjs": "446605f2052c09c44c21bd2c9f8bcee206b3198be4d18858f1c8298ece0be726",
+    "scripts/ci/check-basic-results.mjs": "084cc7187734c0dd83dddb528d87aa16d3ed9a49c3ea0eebf2c97cb4c4775da3",
+    "scripts/ci/ops-checks.mjs": "a5eb851d2f526e940432563a70e8a82fb0f128d66a8104515fec530974a55f6b",
+    "packages/brain/vitest.config.js": "9566bd1cff449dc15ee924aea4c9f46aaa3457392fadf8cbf10d0b6556c2634e",
+    "scripts/ci/skill-source-tests.mjs": "dbb749f30271472fe1f24e1eec2215d7b5999f20c1d4ed74c00fd4b40f6c57c8",
+    "scripts/ci/run-skill-source-check.mjs": "debcaf26aa7025f47d846052e0c2b43d1a04976003936143d80ddac1582d7204",
+    "scripts/ci/__tests__/basic-skill-source-coverage.test.mjs": "acc2046d6691423b739edc4071c9ea87f00e57a1a8b7a06be91d5487d24ad2c9",
+    ".github/actions/skills-source/action.yml": "f106e23e090e1fd1aca6c035f63478365cf4aae2e6b4f2d379569c0a22f18169",
+    "scripts/ci/check-skill-source-identity.py": "ebc6b90fbe187b49c31101a5dba997d133fd45825cfcaa3549aad30581d747c1",
+    "apps/api/vitest.config.ts": "dbb1e74af497db63cbd2326c5378bb05ca036e1a4590dc2061dce2e5257e776a",
+    "apps/dashboard/vitest.config.ts": "a5899ed07ee4aa8ff262f7da361d695ef8eb26005571c5e09988aac53c1cc261",
+    "scripts/ci/__tests__/basic-w19-freeze.test.mjs": "127bfd50494259a78e2f3649c399596fc94acc90a3db17c43077a6ea47cf785a",
+    "scripts/ci/prepare-ubuntu-archive.mjs": "ca83d00df2f865fc1836e0f8841bc5f4ba7ddf57416b6f718855f5840205311b",
+    "scripts/ci/__tests__/basic-ubuntu-archive.test.mjs": "525456457c116c91aba038f35916352abed5ec38a0aa7c5287fd263ef9ffb175",
+    "scripts/skill_source_ownership.py": "20fca16bcf474588e9e4d0add00a66c5885b3d85a82275fb9082a0787e72b9a7"
+  }
+];
+const functionalEntry=entry=>entry?.canonical_sha256===CURRENT_BASIC_CI;
 const UNIT_CONFIGS=[
  {component:'brain',directory:'packages/brain',path:'packages/brain/vitest.config.js'},
  {component:'engine',directory:'packages/engine',path:'packages/engine/vitest.config.ts'},
@@ -148,27 +120,7 @@ function unitConfigs(path,entry){
 }
 function componentSelected(entry,component,paths){
  if(functionalEntry(entry))return planChecks(paths).some(row=>row.component===(component==='brain'?'brain-unit':component));
- const profile=typeof entry==='string'?entry:entry?.profile;
- if(profile==='legacy'){
-  if(paths.some(p=>p.startsWith('.github/workflows/')))return true;
-  if(component==='dashboard')return false;
-  const prefixes={brain:['packages/brain/','packages/engine/'],engine:['packages/engine/'],quality:['packages/quality/','packages/engine/'],api:['apps/']}[component];
-  return paths.some(p=>prefixes.some(prefix=>p.startsWith(prefix)));
- }
- if(component==='scripts')return true;
- return paths.some(path=>{
-  if(/(?:^|\/)(?:README|CHANGELOG|CONTRIBUTING|CODE_OF_CONDUCT|SECURITY|LICENSE)\.md$/i.test(path)||/^(?:AGENTS|CLAUDE|DEFINITION|PRD|DoD)\.md$/i.test(path)
-   ||/^(?:docs|sprints)\//.test(path)&&/\.(?:md|txt|rst|png|jpe?g|gif|svg|webp|pdf)$/i.test(path))return false;
-  const name=path.slice(path.lastIndexOf('/')+1),parts=name.split('.');
-  if((['vitest','vite','eslint'].includes(parts[0])&&parts.slice(1).includes('config'))||parts[0]==='tsconfig'&&parts.at(-1)==='json'
-   ||name==='.eslintrc'||name.startsWith('.eslintrc.')||/^(?:\.github|scripts|config)\//.test(path)
-   ||/^(?:package(?:-lock)?\.json|npm-shrinkwrap\.json|\.npmrc|\.skills-source\.json)$/.test(path))return true;
-  if(/^(?:packages\/(?:brain|engine)|apps\/api)\//.test(path))return ['brain','engine','api','ops'].includes(component);
-  if(path.startsWith('packages/quality/'))return component==='quality';
-  if(path.startsWith('apps/dashboard/'))return component==='dashboard';
-  if(/^(?:frontend|apps\/android-agent|packages\/mcp-readonly)\//.test(path))return false;
-  return true;
- });
+ return false;
 }
 /** 同一份固定Git内缓存必要入口/config；仅读delta正文及固定数量的支持文件。 */
 function supportReader(root,source,git){
@@ -189,21 +141,17 @@ function supportReader(root,source,git){
 function unitEntry(read,side){
  const workflow=read(side,CI);if(!workflow)return null;let doc;
  try{doc=yaml.load(workflow.text);}catch{return null;}
- const signature=sha(JSON.stringify(canonical(doc)));if(![LEGACY_CI,BASIC_CI,QUEUED_BASIC_CI,OWNERSHIP_BASIC_CI,UNIFIED_BASIC_CI,FINAL_JOBS_BASIC_CI,FUNCTIONAL_BASIC_CI,UBUNTU_ARCHIVE_BASIC_CI].includes(signature))return null;
- const support=[workflow.reference];
- if(signature===UBUNTU_ARCHIVE_BASIC_CI||signature===BASIC_CI||signature===QUEUED_BASIC_CI||signature===OWNERSHIP_BASIC_CI||signature===UNIFIED_BASIC_CI||signature===FINAL_JOBS_BASIC_CI||signature===FUNCTIONAL_BASIC_CI){
-  let selected;
-  for(const seals of signature===UBUNTU_ARCHIVE_BASIC_CI?UBUNTU_ARCHIVE_BASIC_ENTRY_PROTOCOLS:signature===FUNCTIONAL_BASIC_CI?FUNCTIONAL_BASIC_ENTRY_PROTOCOLS:signature===FINAL_JOBS_BASIC_CI?FINAL_JOBS_BASIC_ENTRY_PROTOCOLS:signature===UNIFIED_BASIC_CI?UNIFIED_BASIC_ENTRY_PROTOCOLS:signature===BASIC_CI?BASIC_ENTRY_PROTOCOLS:signature===OWNERSHIP_BASIC_CI?OWNERSHIP_BASIC_ENTRY_PROTOCOLS:QUEUED_BASIC_ENTRY_PROTOCOLS){
-   const files=Object.entries(seals).map(([path,expected])=>({file:read(side,path),expected}));
-   if(files.every(({file,expected})=>file?.reference.sha256===expected)){selected=files;break;}
-  }
-  if(!selected)return null;
-  support.push(...selected.map(({file})=>file.reference));
+ const signature=sha(JSON.stringify(canonical(doc)));if(signature!==CURRENT_BASIC_CI)return null;
+ const support=[workflow.reference];let selected;
+ for(const seals of CURRENT_BASIC_ENTRY_PROTOCOLS){
+  const files=Object.entries(seals).map(([path,expected])=>({file:read(side,path),expected}));
+  if(files.every(({file,expected})=>file?.reference.sha256===expected)){selected=files;break;}
  }
- return {profile:signature===LEGACY_CI?'legacy':'basic',canonical_sha256:signature,workflow:workflow.reference,support,
+ if(!selected)return null;
+ support.push(...selected.map(({file})=>file.reference));
+ return {profile:'basic',canonical_sha256:signature,workflow:workflow.reference,support,
   declaration_only:true,execution_status:'not_evaluated'};
 }
-const PINNED_CI='.github/workflows/skills-source-check.yml';
 function runnerSelector(path,entry,paths){
  if(entry?.profile!=='basic')return null;
  const direct=(directory,regex)=>path.startsWith(directory+'/')&&!path.slice(directory.length+1).includes('/')&&regex.test(path.slice(directory.length+1));
@@ -216,21 +164,14 @@ function runnerSelector(path,entry,paths){
   if(ops){const domain=domainForTest(path),domains=domainsForChanges(paths);return componentSelected(entry,'ops',paths)&&domain&&(!domains||domains.has(domain))?{component:'ops',kind:'basic_ops_regular_test',owner:'scripts/ci/ops-checks.mjs'}:null;}
  }
  if(direct('scripts/ci/__tests__',/^(basic-.*|run-basic-check|brain-source-only-deploy)\.test\.mjs$/))return {component:'scripts',kind:'basic_regular_node_test',owner:BASIC_RUNNER};
- if(['unit','integration','integrity'].some(kind=>direct('packages/engine/tests/'+kind,/\.test\.sh$/))&&componentSelected(entry,'engine',paths))return {component:'engine',kind:'basic_engine_shell_test',owner:BASIC_RUNNER};
- if(!componentSelected(entry,'ops',paths))return null;
- if(direct('docker/cecelia-runner/__tests__',/\.test\.(?:cjs|sh)$/)||direct('scripts/__tests__',/^(?:bluegreen-|brain-deploy-|preview-|codex-remote-launch|codex-request).*\.test\.sh$/))return {component:'ops',kind:'basic_ops_regular_test',owner:'scripts/ci/ops-checks.mjs'};
+
  return null;
 }
 function pinnedSources(read,side){
  const runner=read(side,'scripts/ci/run-skill-source-check.mjs'),skill=read(side,'scripts/ci/skill-source-tests.mjs');
  const entry=unitEntry(read,side);
- if([UNIFIED_BASIC_CI,FINAL_JOBS_BASIC_CI,FUNCTIONAL_BASIC_CI].includes(entry?.canonical_sha256)) return {workflow:read(side,CI),runner,skill,...(functionalEntry(entry)?{components:['brain','root']}: {})};
- const workflow=read(side,PINNED_CI);
- if(!workflow||!runner||!skill||runner.reference.sha256!=='debcaf26aa7025f47d846052e0c2b43d1a04976003936143d80ddac1582d7204'
-  ||skill.reference.sha256!=='1daf4f27f6fa97b3c8f3d9a9e1a9e86e44fbe92b84c962d1c2ce3b90db32b147')return null;
- let doc;try{doc=yaml.load(workflow.text);}catch{return null;}
- if(sha(JSON.stringify(canonical(doc)))!=='47ecfb544ffd07de5773a2b53eb60fe31a59a783896bc27de2bf86c65b6d6ccf')return null;
- return {workflow,runner,skill};
+ if(functionalEntry(entry)) return {workflow:read(side,CI),runner,skill,...(functionalEntry(entry)?{components:['brain','root']}: {})};
+ return null;
 }
 function pinnedBaseConfiguration(read,side,component,path){
  if(component==='root')return {};
@@ -256,22 +197,15 @@ function configurationInput(read,side,path,entry){
   }
  }
  const pinned=pinnedSources(read,side);if(!pinned)return null;
- if(path==='scripts/ci/run-skill-source-check.mjs')return {witness:{kind:'pinned_contract_runner_input',workflow:pinned.workflow.reference,runner:pinned.runner.reference},eligible_owner_paths:[PINNED_CI]};
+ if(path==='scripts/ci/run-skill-source-check.mjs')return {witness:{kind:'pinned_contract_runner_input',workflow:pinned.workflow.reference,runner:pinned.runner.reference},eligible_owner_paths:[pinned.workflow.reference.path]};
  const component={'packages/brain/vitest.skill-source.config.mjs':'brain','packages/engine/vitest.skill-source.config.mjs':'engine','packages/quality/vitest.skill-source.config.mjs':'quality','vitest.skill-source.config.mjs':'root'}[path];
  if(!component||pinned.components&&!pinned.components.includes(component))return null;const base=pinnedBaseConfiguration(read,side,component,(component==='root'?'tests/':`packages/${component}/`)+'unselected.test.js');if(!base)return null;const config=read(side,path);
  try{selectPinnedSkillVerificationInput({filePath:(component==='root'?'tests/':`packages/${component}/`)+ 'unselected.test.js',configPath:path,configText:config.text,skillText:pinned.skill.text,component});}catch{return null;}
- return {witness:{kind:'pinned_config_reference_input',...base,workflow:pinned.workflow.reference,runner:pinned.runner.reference,skill_selector:pinned.skill.reference,config:config.reference},eligible_owner_paths:['scripts/ci/run-skill-source-check.mjs',PINNED_CI]};
+ return {witness:{kind:'pinned_config_reference_input',...base,workflow:pinned.workflow.reference,runner:pinned.runner.reference,skill_selector:pinned.skill.reference,config:config.reference},eligible_owner_paths:['scripts/ci/run-skill-source-check.mjs',pinned.workflow.reference.path]};
 }
 function securityInput(path,entry){
  if(entry?.profile!=='basic'||!['scripts/ci/dep-audit-critical.sh','scripts/ci/dep-audit-runtime-high.sh'].includes(path))return null;
  return {witness:{kind:'security_job_script_input',entry,selector:'security.run exact bash entry',script:path},eligible_owner_paths:[CI]};
-}
-function packageUnitEntry(read,side,entry,config){
- if(entry.profile!=='legacy'||!['quality','api'].includes(config.component))return [];
- const manifest=read(side,config.directory+'/package.json');let pkg;try{pkg=JSON.parse(manifest?.text);}catch{return null;}
- const allowed=config.component==='quality'?['vitest run']:["NODE_OPTIONS='--max-old-space-size=2048' vitest run",'vitest run'];
- if(!allowed.includes(pkg.scripts?.test)||pkg.scripts.pretest||pkg.scripts.posttest||!pkg.devDependencies?.vitest)return null;
- return [manifest.reference];
 }
 function selectedReader(read,side,path,entry,paths){
  const body=read(side,path);if(!body||verificationInputKind(path)!=='test_source')return null;
@@ -281,7 +215,7 @@ function selectedReader(read,side,path,entry,paths){
  if(!entry)return null;
  for(const config of unitConfigs(path,entry)){
   if(!componentSelected(entry,config.component,paths))continue;
-  const file=read(side,config.path),package_entry=packageUnitEntry(read,side,entry,config);if(!file||!package_entry)continue;
+  const file=read(side,config.path),package_entry=[];if(!file)continue;
   const skill=file.text.includes('skillSourceExcludes')?read(side,'scripts/ci/skill-source-tests.mjs'):null;
   try{
    const selected=selectVitestVerificationInput({filePath:path,configPath:config.path,configText:file.text,component:config.component,skillText:skill?.text});
@@ -360,7 +294,7 @@ export function collectVerificationInputEvidence(root,{source,purpose='admission
    if(entry)for(const config of configs){
     if(!componentSelected(entry,config.component,paths)){reason='component_not_selected';continue;}
     const file=read(side,config.path);if(!file){reason='config_missing';continue;}
-    const package_entry=packageUnitEntry(read,side,entry,config);if(!package_entry){reason='package_entry_unproven';continue;}
+    const package_entry=[];
     const skill=file.text.includes('skillSourceExcludes')?read(side,'scripts/ci/skill-source-tests.mjs'):null;let selected;
     try{selected=selectVitestVerificationInput({filePath:path,configPath:config.path,configText:file.text,component:config.component,skillText:skill?.text});}catch{reason='selector_unproven';continue;}
     if(!selected.selected){if(reason!=='selected')reason=selected.witness?.projects.some(p=>p.matched_exclude.length)?'excluded':'not_selected';continue;}

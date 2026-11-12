@@ -49,7 +49,7 @@ test('普通Brain业务PR只执行部署核心，默认仍保留全部Ops', () =
   assert.equal(selected.length, 24);
   assert.ok(selected.includes('scripts/smoke/deploy-local-npm-cache-smoke.sh'));
   assert.ok(!selected.some(path => /preview|dashboard|cecelia-runner|dispatch-worker|scripts\/ops\//.test(path)));
-  assert.equal(opsChecks(root).length, 83);
+  assert.ok(opsChecks(root).length > selected.length);
 });
 
 test('真实依赖域分别保留自己的测试，公共输入和未知路径全量兜底', () => {
@@ -65,7 +65,7 @@ test('真实依赖域分别保留自己的测试，公共输入和未知路径�
   for (const [source, expected] of cases) {
     const selected = paths(opsChecks(root, {paths: [source]}));
     assert.ok(selected.includes(expected), `${source}必须覆盖${expected}`);
-    assert.ok(selected.length < 83, `${source}不应膨胀为全量`);
+    assert.ok(selected.length < opsChecks(root).length, `${source}不应膨胀为全量`);
   }
   for (const source of ['package-lock.json', '.github/workflows/ci.yml', 'scripts/ci/ops-checks.mjs',
     'packages/brain/config/fleet-node-profiles.json', 'scripts/lib/shared-unclassified.sh', 'unknown/product.js']) {

@@ -38,11 +38,13 @@ function scanDir(dir) {
 }
 
 function selectedRoots() {
-  const configured = (process.env.SCAN_API_DIRS || 'apps/api/src packages/brain/src')
+  const isCecelia = (process.env.SCAN_SOURCE_REPO_NAME || SCAN_REPO_NAME) === 'cecelia';
+  const explicit = process.env.SCAN_API_DIRS;
+  const configured = (explicit || (isCecelia ? 'packages/brain/src' : '.'))
     .split(/\s+/).filter(Boolean)
     .map((relativePath) => path.join(SCAN_REPO_ROOT, relativePath))
     .filter((candidate) => fs.existsSync(candidate));
-  return configured.length > 0 ? configured : [SCAN_REPO_ROOT];
+  return configured.length > 0 || (isCecelia && !explicit) ? configured : [SCAN_REPO_ROOT];
 }
 
 async function main() {
@@ -67,4 +69,7 @@ async function main() {
   }
 }
 
-main().catch((error) => { console.error(error); process.exit(1); });
+module.exports = { selectedRoots, scanDir };
+if (require.main === module) {
+  main().catch((error) => { console.error(error); process.exit(1); });
+}

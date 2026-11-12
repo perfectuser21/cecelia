@@ -6,8 +6,10 @@ set -euo pipefail
 
 PASS=0
 FAIL=0
+SKIP=0
 
 ok() { echo "PASS: $1"; PASS=$((PASS + 1)); }
+skip() { echo "SKIP: $1"; SKIP=$((SKIP + 1)); }
 fail() { echo "FAIL: $1"; FAIL=$((FAIL + 1)); }
 
 JANITOR="$(dirname "$0")/../../janitor.sh"
@@ -92,7 +94,7 @@ fi
 
 # 验证 11: 软链接（CI 环境跳过）
 if [ -n "${CI:-}" ]; then
-  ok "~/bin/janitor.sh 软链接（CI 环境跳过，本地部署时验证）"
+  skip "~/bin/janitor.sh 软链接（CI 无宿主安装状态）"
 elif [ -L "$HOME/bin/janitor.sh" ]; then
   ok "~/bin/janitor.sh 是软链接"
 else
@@ -102,7 +104,7 @@ fi
 # 验证 12: 软链接指向 cecelia 仓 scripts/ops（归位决策 c14a3e6f，2026-08-10 从
 # zenithjoy-skills 迁入；旧断言指向 zenithjoy-skills 已作废）。CI 环境无宿主软链，跳过。
 if [ -n "${CI:-}" ]; then
-  ok "软链接指向 cecelia repo scripts/ops（CI 环境跳过）"
+  skip "软链接目标（CI 无宿主安装状态）"
 else
   LINK_TARGET=$(readlink "$HOME/bin/janitor.sh" 2>/dev/null || echo "")
   if echo "$LINK_TARGET" | grep -q "cecelia.*scripts/ops/janitor.sh"; then
@@ -190,5 +192,5 @@ else
 fi
 
 echo ""
-echo "结果: $PASS 通过 / $FAIL 失败"
+echo "结果: $PASS 通过 / $FAIL 失败 / $SKIP 未验证"
 [ "$FAIL" -eq 0 ] && exit 0 || exit 1

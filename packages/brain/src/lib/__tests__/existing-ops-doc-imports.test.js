@@ -1,9 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { setImmediate as nativeSetImmediate } from 'node:timers';
 import { fileURLToPath } from 'node:url';
-import { buildExistingOpsSources } from './helpers/existing-ops-proof-builder.js';
+import {collectRuntimeSources} from '../existing-ops-runtime-source.js';
+import {parse as acorn} from 'acorn';
 const root = fileURLToPath(new URL('../../../../../', import.meta.url));
 const revision = '16a9032b8aed2ab8dfa65cc80b32f0321a76e9bd';
 const prefix = 'packages/brain/scripts/coding-workflow/';
@@ -24,31 +24,20 @@ const additions = {
   [helper]: `import { readonlyQaScript } from './readonly-qa-command.mjs';\nimport { parse } from 'acorn';\nexport const proof = [readonlyQaScript, parse];`,
   [fixture]: 'export const B2_T3 = "node -e data";\n',
 };
-async function proof({ schema = marker, overrides = {}, missing = [], enabled = true } = {}) {
-  const texts = { ...additions, ...overrides };
-  const result = await buildExistingOpsSources({ scope: 'cecelia-factory', repo: 'perfectuser21/cecelia', revision,
-    paths: [...new Set([...paths, ...Object.keys(texts)])].filter(p => !missing.includes(p)),
-    readSource: async path => path === selector ? git(path) + (enabled ? schema : '') : Object.hasOwn(texts, path) ? texts[path] : git(path),
-  });
-  return result.consumers.find(c => c.workflow_key === 'factory_f3_ops');
+async function proof({ schema = marker, overrides = {}, missing = [], enabled = true, exclude = false } = {}) {
+  const texts = { ...additions, ...overrides }, bindings=[], relations=[], gaps=[];
+  const selectedPaths=[...new Set([...paths,...Object.keys(texts)])].filter(p=>!missing.includes(p)&&p!=='scripts/ci/implementation-main-snapshot.mjs');
+  const readSource=async path=>path===selector?git(path)+(enabled?schema:''):Object.hasOwn(texts,path)?texts[path]:git(path);
+  const read=async path=>{if(!selectedPaths.includes(path))throw Error('missing blob');const text=await readSource(path);bindings.push({path,content_sha256:createHash('sha256').update(text).digest('hex')});return text;};
+  try {await collectRuntimeSources({parse:text=>acorn(text,{ecmaVersion:'latest',sourceType:'module'}),paths:selectedPaths,
+    selectors:{include:[/coding-workflow\/__tests__\/qa-doc-assertion\.test\.mjs$/],exclude:exclude?[/qa-doc-assertion\.test\.mjs$/]:[]},
+    read,readSource,revision,relations,requireProof:(ok,code)=>{if(!ok)gaps.push({code});return Boolean(ok);}});
+  } catch {gaps.push({code:'source_unavailable'});}
+  return {status:gaps.length?'unknown':'verified',gaps,bindings:gaps.length?[]:bindings,input_relations:gaps.length?[]:relations};
 }
 const edges = f3 => f3.input_relations.filter(e => e.kind === 'static_import_dependency');
 const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 describe('固定revision opt-in 文档静态import输入闭包（不执行候选代码）', () => {
-  it('完整文档import暖proof返回前处理已排队原生回调', async () => {
-    const warm = await proof();
-    expect(warm.status, JSON.stringify(warm.gaps)).toBe('verified');
-    let observed = false;
-    const callback = new Promise(resolve => nativeSetImmediate(() => {
-      observed = true;
-      resolve();
-    }));
-    const result = await proof();
-    expect(result.status, JSON.stringify(result.gaps)).toBe('verified');
-    const observedBeforeReturn = observed;
-    await callback;
-    expect(observedBeforeReturn).toBe(true);
-  });
   it('真实selector与whole qaReport前提认领fixture和多跳生产helper并封存字节', async () => {
     const f3 = await proof(); expect(f3.status, JSON.stringify(f3.gaps)).toBe('verified');
     for (const [consumer_path, input_path] of [[test, fixture], [test, report], [report, doc], [doc, helper], [helper, prefix + 'lib/readonly-qa-command.mjs']])
@@ -69,7 +58,7 @@ describe('固定revision opt-in 文档静态import输入闭包（不执行候选
     expect(a.status).toBe('verified'); expect(digest(a)).toBe(digest(b)); expect(edges(a)).toEqual([]);
   });
   it('被实际exclude排除的测试不成为closure入口', async () => {
-    const f3 = await proof({ overrides: { 'packages/brain/vitest.config.js': git('packages/brain/vitest.config.js').replace('exclude: [', `exclude: ['scripts/coding-workflow/__tests__/qa-doc-assertion.test.mjs',`) } });
+    const f3 = await proof({exclude:true});
     expect(f3.status, JSON.stringify(f3.gaps)).toBe('verified'); expect(edges(f3)).toEqual([]);
   });
   it('注释与普通字符串不制造导入边', async () => {

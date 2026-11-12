@@ -18,6 +18,13 @@ test('已退役frontend不再进入矩阵，旧路径差分仍保守验证全部
   }
 });
 
+test('未知CI组件命令拒绝执行，不能静默空成功', () => {
+  const runner = fileURLToPath(new URL('../run-basic-check.mjs', import.meta.url));
+  const result = spawnSync(process.execPath, [runner, '--list', 'unknown-component'], {encoding: 'utf8'});
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /未知 CI 组件/);
+});
+
 test('文档改动仍运行基础 CI 回归，且不触发应用测试', () => {
   assert.deepEqual(planChecks(['docs/guide.md', 'README.md', 'docs/diagram.svg', 'DoD.md', 'PRD.md', 'packages/engine/README.md',
     'sprints/x/prep-prd.md', 'sprints/x/contract-dod.md']), [{component: 'scripts'}]);
