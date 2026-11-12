@@ -81,7 +81,7 @@ test('resource refusal confirms no launch, allowing the same run after capacity 
 });
 test('cancel before acceptance leaves a durable tombstone against late start',async()=>{
  const f=fixture();try{const opts={stateRoot:path.join(f.root,'state'),machineId:'test',profiles:{demo:f.profile},assertCanLaunch:()=>{},assertLocalResources:async()=>{},createRecorder:recorder};const r=createWorkflowRunner(opts);
- assert.equal((await r.cancel(f.id)).status,'cancelled_before_start');await r.start(f.id);assert.equal(fs.existsSync(path.join(f.root,'effects')),false);r.close();const restarted=createWorkflowRunner(opts);await restarted.start(f.id);assert.equal(fs.existsSync(path.join(f.root,'effects')),false);restarted.close();
+ assert.equal((await r.cancel(f.id)).status,'cancelled');await r.start(f.id);assert.equal(fs.existsSync(path.join(f.root,'effects')),false);r.close();const restarted=createWorkflowRunner(opts);await restarted.start(f.id);assert.equal(fs.existsSync(path.join(f.root,'effects')),false);restarted.close();
  }finally{fs.rmSync(f.root,{recursive:true,force:true});}
 });
 test('cancel during recorder preparation cannot be lost before controller registration',async()=>{
@@ -163,4 +163,28 @@ test.each([1,2])('supervisor result published during process probe %i remains re
  assert.equal(result.result_valid,true);assert.equal(result.effects,'x');assert.equal(result.deadline_not_elapsed,true);assert.equal(result.supervisor_exited,true);
  const window=result.trace.find(row=>row.call===trigger);assert.equal(window.result_before,false);assert.equal(window.same_process,false);assert.equal(window.result_after,true);
  }finally{fs.rmSync(parent,{recursive:true,force:true});}
+});
+
+test('未开始取消返回完整已核身份及零执行证明，不制造业务记录',async()=>{
+ const f=fixture();let records=0;const opts={stateRoot:path.join(f.root,'state'),machineId:'test',profiles:{demo:f.profile},assertCanLaunch:()=>{},assertLocalResources:async()=>{},createRecorder:()=>{records++;return recorder();}};
+ try{const r=createWorkflowRunner(opts),receipt=await r.cancel(f.id);
+ assert.equal(receipt.status,'cancelled');assert.equal(receipt.mode,f.id.mode);assert.equal(receipt.profile_sha256,f.id.profile_sha256);assert.equal(receipt.cancel_before_start,true);assert.equal(receipt.execution_state,'not_started');assert.equal(receipt.execution_unknown,false);assert.equal(receipt.cleanup_required,false);assert.equal(receipt.writeback.total,0);assert.equal(records,0);assert.equal(fs.existsSync(path.join(f.root,'effects')),false);
+ assert.equal((await r.start(f.id)).status,'cancelled');r.close();
+ }finally{fs.rmSync(f.root,{recursive:true,force:true});}
+});
+test('旧未开始tombstone只能按真实同run/task及loaded profile身份补全',async()=>{
+ const f=fixture(),state=path.join(f.root,'state');fs.mkdirSync(state,{mode:0o700});
+ fs.writeFileSync(path.join(state,f.id.run_id+'.json'),JSON.stringify({identity:{run_id:f.id.run_id,task_id:f.id.task_id},status:'cancelled_before_start',cancel_tombstone:true,execution_state:'not_started',machine_id:'test',writeback:{pending:0,blocked:0,total:0,acked:0,manifest_sha256:profileDigest([])},cancel_requested:true}),{mode:0o600});
+ const r=createWorkflowRunner({stateRoot:state,machineId:'test',profiles:{demo:f.profile},assertCanLaunch:()=>{},assertLocalResources:async()=>{},createRecorder:recorder});
+ try{await assert.rejects(r.cancel({...f.id,task_id:randomUUID()}),/identity/);await assert.rejects(r.cancel({...f.id,profile_sha256:'f'.repeat(64)}),/profile|identity/);
+ const result=await r.cancel(f.id);assert.equal(result.status,'cancelled');assert.equal(result.profile_sha256,f.id.profile_sha256);assert.equal(result.mode,f.id.mode);assert.equal(result.execution_state,'not_started');assert.equal(fs.existsSync(path.join(f.root,'effects')),false);
+ await assert.rejects(r.cancel({...f.id,mode:'formal'}),/identity/);
+ }finally{r.close();fs.rmSync(f.root,{recursive:true,force:true});}
+});
+
+test('未知run取消缺完整profile身份拒绝且不留下新partial墓碑',async()=>{
+ const f=fixture(),stateRoot=path.join(f.root,'state');
+ const r=createWorkflowRunner({stateRoot,machineId:'test',profiles:{demo:f.profile},assertCanLaunch:()=>{},assertLocalResources:async()=>{},createRecorder:recorder});
+ try{await assert.rejects(r.cancel({run_id:f.id.run_id,task_id:f.id.task_id}),/identity/);assert.equal(fs.existsSync(path.join(stateRoot,f.id.run_id+'.json')),false);}
+ finally{r.close();fs.rmSync(f.root,{recursive:true,force:true});}
 });

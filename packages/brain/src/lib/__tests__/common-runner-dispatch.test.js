@@ -8,15 +8,13 @@ import { createCommonRunnerDispatcher, commonRunnerFormalBinding, loadCommonRunn
 import { runCommonRunnerTasks } from '../../common-runner-executor.js';
 import {commonRunnerExecutionContext} from '../common-runner-identity.js';
 import {createProfileCatalogClient} from '../../execution-directory/managed-script-profile-evidence.js';
-
 const taskId = '10000000-0000-4000-8000-000000000001';
 const runId = '20000000-0000-4000-8000-000000000001';
 const token = 'contract-test-control-key-32-characters';
 const servers = [];
 afterEach(async () => { await Promise.all(servers.splice(0).map(server => new Promise(resolve => server.close(resolve)))); });
-
 async function setup({ candidateRouting=false,badSignature = false, wrongNonce = false, failStart = false, failStartOn, workerResponses = [], workerReceipt = {}, receiptForRequest, centralSpans = [], definition, profilesFile, reconciliation, tickEnabled, useDefaultStartGate = false, directoryEndpoint, savedCentralRun, finishAlready = false, taskPolicy, definitionAfterStart, registrationError, priorRun, grant, policyFile, machineId = 'node-a', profileSha = 'a'.repeat(64) } = {}) {
-  const requests = [],routes=[];let registered=false,runContext=null;
+  const requests = [],routes=[];let registered=false,runContext=null,lease=null;
   const candidate=policyFile?JSON.parse(fs.readFileSync(policyFile,'utf8')).profiles.demo:null;
   const policyState=candidate?{
     task:{id:candidate.evidence_task_id,status:'in_progress',result:{ship_candidate:{schema_version:1,stage:'candidate',task_id:candidate.evidence_task_id,repo:candidate.source_repo,head_sha:candidate.source_commit,actor:'unit-candidate',facts:['fixed source'],evidence:['unit:source-readback']}}},
@@ -54,6 +52,8 @@ async function setup({ candidateRouting=false,badSignature = false, wrongNonce =
       if ((sql.includes("status='in_progress'") && task.status !== 'in_progress') || (sql.includes("status='queued'") && task.status !== 'queued')) return { rows: [], rowCount: 0 };
       return { rows: [structuredClone(task)], rowCount: 1 };
     }
+    if(sql.includes('FROM task_leases'))return {rows:lease?[{...lease,active:true,claim_matches:true}]:[]};
+    if(sql.includes('INSERT INTO task_leases')){lease={task_id:params[0],claimer:params[1],claimed_at:params[2],lease_seconds:params[3],source:'claim',lease_until:'2026-11-12T04:00:00Z'};return {rows:[lease],rowCount:1};}
     if (sql.includes('FROM spans')) return { rows: centralSpans, rowCount: centralSpans.length };
     if (savedCentralRun && sql.includes('SELECT status,task_id,ended_at,result FROM task_runs')) return {rows:[savedCentralRun],rowCount:1};
     if (priorRun && sql.includes('FROM task_runs')) return {rows:[priorRun],rowCount:1};
@@ -61,8 +61,9 @@ async function setup({ candidateRouting=false,badSignature = false, wrongNonce =
     if (sql.includes('UPDATE tasks')) {
       if (sql.includes('SET claimed_by')) task.claimed_by = 'common-runner';
       else task.result = { ...task.result, ...JSON.parse(params[1]) };
+      if(sql.includes('claimed_by=COALESCE')){task.claimed_by??='common-runner';task.claimed_at??='2026-11-12 03:23:23.333456+00';}
       if (sql.includes("status='in_progress'")) task.status = 'in_progress';
-      return { rows: [structuredClone(task)], rowCount: 1 };
+      return { rows: [{...structuredClone(task),lease_claimed_at:task.claimed_at}], rowCount: 1 };
     }
     return { rows: [], rowCount: 1 };
   }) };
@@ -85,7 +86,6 @@ async function setup({ candidateRouting=false,badSignature = false, wrongNonce =
   const seedBoundRun=binding=>{binding.launch_nonce??=randomUUID();task.result.common_runner=binding;runContext={...commonRunnerExecutionContext(binding,binding.launch_nonce),source:'common-runner'};};
   return { dispatcher, task, requests,routes, authority, start, finish, pool, reconcile, readDefinition, policyState,seedBoundRun };
 }
-
 describe('common runner HTTP dispatch', () => {
   it.each(['https://example.com', 'http://169.254.169.254:5231', 'http://127.0.0.1:5231',
     'http://100.63.255.255:5231', 'http://100.128.0.1:5231', 'http://100.71.151.105:80',
@@ -364,7 +364,6 @@ describe('common runner HTTP dispatch', () => {
     expect(result.central_run.status).toBe(verified ? 'success' : 'running'); expect(x.finish).toHaveBeenCalledTimes(verified ? 1 : 0);
   });
 });
-
 describe('needs_review中央闭环',()=>{
   function reviewEvidence({cleanupPass=true,executionUnknown=false,pending=0}={}){
     const cleanup={verdict:cleanupPass?'pass':'unknown',acceptance_ref:'cleanup@1',evidence:cleanupPass?['independent-lock-release-readback']:[]};
@@ -394,7 +393,6 @@ describe('needs_review中央闭环',()=>{
     expect(r.central_run).toMatchObject({status:'running',recording_status:'pending'});expect(x.finish).not.toHaveBeenCalled();
   });
 });
-
 describe('internal workflow source policy', () => {
   it('retains the public agent-only guard even when payload claims workflow authority', async () => {
     const x=await setup(); x.task.kind='workflow'; x.task.task_type='workflow_dispatch';

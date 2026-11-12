@@ -143,6 +143,32 @@ export async function claimTaskWithLease(pool, { taskId, claimer, executorKind, 
   return { status: 200, body };
 }
 
+/** 仅供服务端授权事务衔接既有真实claim；不重新认领，不复活任何旧租约。 */
+export async function ensureClaimedTaskLease({ taskId, claimer, claimedAt, leaseSeconds = 3600 } = {}, { transactionClient: db } = {}) {
+  const seconds = clampLeaseSeconds(leaseSeconds);
+  if (!db?.query || !taskId || typeof claimer !== 'string' || !claimer.trim()
+    || typeof claimedAt !== 'string' || !Number.isFinite(Date.parse(claimedAt)) || seconds === null) throw Error('task_claim_lease_identity_conflict');
+  const task = (await db.query(`SELECT id,claimed_by,claimed_at FROM tasks
+    WHERE id=$1 AND claimed_by=$2 AND claimed_at = $3::timestamptz AND status='in_progress'
+      AND payload->>'commander_protocol' IS DISTINCT FROM 'commander-v2' FOR UPDATE`, [taskId, claimer, claimedAt])).rows[0];
+  if (!task) throw Error('task_claim_lease_identity_conflict');
+  const locked = (await db.query('SELECT * FROM task_leases WHERE task_id=$1 FOR UPDATE', [taskId])).rows[0];
+  if (locked) {
+    // LockRows可能在取时投影之后等待；拿到锁后独立取时，拒绝等待期间已经到期的租约。
+    const existing = (await db.query(`SELECT *, claimed_at >= $2::timestamptz AND claimed_at <= clock_timestamp() AS claim_matches,
+      lease_until > clock_timestamp() AS active FROM task_leases WHERE task_id=$1`, [taskId, claimedAt])).rows[0];
+    if (!existing || existing.claimer !== claimer || existing.source !== 'claim' || existing.released_at
+      || existing.claim_matches !== true || existing.active !== true) throw Error('task_claim_lease_conflict');
+    return existing;
+  }
+  const lease = (await db.query(`INSERT INTO task_leases (task_id,claimer,source,on_expire,claimed_at,lease_seconds,lease_until)
+    VALUES ($1,$2,'claim','auto',$3::timestamptz,$4,clock_timestamp()+($4::int * INTERVAL '1 second'))
+    ON CONFLICT (task_id) DO NOTHING RETURNING *`, [taskId, claimer, claimedAt, seconds])).rows[0];
+  if (!lease) throw Error('task_claim_lease_conflict');
+  await syncDeviceLocks(db, taskId, lease.lease_until);
+  return lease;
+}
+
 /** 心跳续约：先锁同owner活跃任务再更新lease，和清理器同序；不改变认领时间。 */
 export async function heartbeatTaskLease(pool, { taskId, claimer, leaseSeconds } = {}) {
   const seconds = clampLeaseSeconds(leaseSeconds);
