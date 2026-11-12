@@ -31,10 +31,16 @@ describe('公共Runner未开始取消独立终结',()=>{
   expect(f.run.status).toBe('cancelled');expect(f.run.result.common_runner.resource_settlement).toMatchObject({basis:'not-started-resource-free',devices:[],execution_unknown:false});expect(f.run.result.common_runner).not.toHaveProperty('validation');
   const write=f.statements.findIndex(sql=>sql.includes('FOR UPDATE')&&sql.includes('task_runs'));expect(write).toBeGreaterThan(-1);expect(f.statements.filter(sql=>sql==='BEGIN')).toHaveLength(2);expect(f.statements.filter(sql=>sql==='COMMIT')).toHaveLength(2);
  });
- it.each(['reserved','spans','devices','unknown','cleanup','journal','cancel_revoked','reservation_changed'])('拒绝%s缺口，不把取消伪装成已核业务清场',async fault=>{
+ it('首次取消丢ACK后inspect与重复cancel都只读回同一中央终态',async()=>{
+  const f=setup();await f.dispatcher.dispatch('cancel',runId,{task_id:taskId});
+  expect(await f.dispatcher.dispatch('inspect',runId,{task_id:taskId})).toMatchObject({authenticated:true,central_run:{status:'cancelled',recording_status:'confirmed'}});
+  expect(await f.dispatcher.dispatch('cancel',runId,{task_id:taskId})).toMatchObject({authenticated:true,central_run:{status:'cancelled',recording_status:'confirmed'}});expect(f.finish).toHaveBeenCalledTimes(1);
+ });
+ it.each(['reserved','spans','devices','unknown','cleanup','journal','cancel_revoked','reservation_changed','binding_reserved','binding_nonce_changed'])('拒绝%s缺口，不把取消伪装成已核业务清场',async fault=>{
   const options={};if(fault==='reserved')options.launch='reserved';if(fault==='spans')options.spans=[{occurrence_key:'already-started'}];if(fault==='devices')options.devices=[{device_name:'physical-phone'}];
   if(fault==='unknown')options.receiptPatch={execution_unknown:true};if(fault==='cleanup')options.receiptPatch={cleanup_required:true};if(fault==='journal')options.receiptPatch={writeback:{pending:0,blocked:0,total:0,acked:0,manifest_sha256:'f'.repeat(64)}};
   if(fault==='cancel_revoked')options.beforeSettlement=({task})=>{task.result.common_runner.cancel_requested=false;};if(fault==='reservation_changed')options.beforeSettlement=({run})=>{run.context.common_runner_launch.state='reserved';};
+  if(fault==='binding_reserved')options.beforeSettlement=({task})=>{task.result.common_runner.launch_state='reserved';};if(fault==='binding_nonce_changed')options.beforeSettlement=({task})=>{task.result.common_runner.launch_nonce=randomUUID();};
   const f=setup(options),result=await f.dispatcher.dispatch('cancel',runId,{task_id:taskId});expect(result.central_run?.recording_status).not.toBe('confirmed');expect(f.finish).not.toHaveBeenCalled();
  });
  it.each([{badSignature:true},{wrongNonce:true},{receiptPatch:{profile_sha256:'f'.repeat(64)}},{receiptPatch:{mode:'exploration'}}])('保留完整验签身份拒绝：%j',async options=>{
