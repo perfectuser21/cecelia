@@ -181,3 +181,10 @@ test('旧未开始tombstone只能按真实同run/task及loaded profile身份补�
  await assert.rejects(r.cancel({...f.id,mode:'formal'}),/identity/);
  }finally{r.close();fs.rmSync(f.root,{recursive:true,force:true});}
 });
+
+test('未知run取消缺完整profile身份拒绝且不留下新partial墓碑',async()=>{
+ const f=fixture(),stateRoot=path.join(f.root,'state');
+ const r=createWorkflowRunner({stateRoot,machineId:'test',profiles:{demo:f.profile},assertCanLaunch:()=>{},assertLocalResources:async()=>{},createRecorder:recorder});
+ try{await assert.rejects(r.cancel({run_id:f.id.run_id,task_id:f.id.task_id}),/identity/);assert.equal(fs.existsSync(path.join(stateRoot,f.id.run_id+'.json')),false);}
+ finally{r.close();fs.rmSync(f.root,{recursive:true,force:true});}
+});
