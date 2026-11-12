@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import {ensureClaimedTaskLease} from './task-lease.js';
 import {assertManagedScriptProfileGrant,createProfileCatalogClient,freezeManagedScriptWorkerRoute,resolveFrozenManagedScriptWorkerRoute,verifyManagedScriptWorkerRoute} from '../execution-directory/managed-script-profile-evidence.js';
 import {resourceFreeReview} from './common-runner-review.js';
 import { isAbsolute } from 'node:path';
@@ -139,8 +140,13 @@ export function createCommonRunnerDispatcher({ pool, env = process.env, profiles
       ${activate ? `status='in_progress',claimed_by=COALESCE(claimed_by,'common-runner'),claimed_at=COALESCE(claimed_at,NOW()),
       executor_kind='script',
       started_at=COALESCE(started_at,NOW()),` : ''}updated_at=NOW()
-      WHERE id=$1 RETURNING id`, [taskId, JSON.stringify({ common_runner: binding })]);
+      WHERE id=$1 RETURNING id,claimed_by,claimed_at::text AS lease_claimed_at`, [taskId, JSON.stringify({ common_runner: binding })]);
     if (result.rowCount !== 1) fail('common_runner_task_missing', 404);
+    if (activate) {
+      const claim=result.rows[0];
+      if(claim?.claimed_by!=='common-runner')fail('common_runner_task_owned');
+      await ensureClaimedTaskLease({taskId,claimer:claim.claimed_by,claimedAt:claim.lease_claimed_at},{transactionClient:db});
+    }
   }
   async function prepare(action, runId, body, nonce) {
     if (!['start', 'inspect', 'cancel', 'flush'].includes(action) || !UUID.test(runId) || !object(body) || !UUID.test(body.task_id)
