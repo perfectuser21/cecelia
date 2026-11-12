@@ -26,9 +26,8 @@ describe('migration 485', () => {
     expect(downSql).toMatch(/DELETE FROM schema_version WHERE version = '485'/);
   });
 
-  it('引用已删：大脑不再挂批注路由、看板服务不再挂人生事件路由、知识页不再请求批注', () => {
+  it('引用已删：大脑不再挂批注路由、知识页不再请求批注', () => {
     expect(read('packages/brain/server.js')).not.toMatch(/user-annotations/);
-    expect(read('apps/api/src/dashboard/server.ts')).not.toMatch(/life-events/);
     for (const page of ['DailyDiary', 'DecisionRegistry', 'DesignVault', 'DevLog']) {
       expect(read(`apps/api/features/knowledge/pages/${page}.tsx`)).not.toMatch(/user-annotations|AnnotationBox/);
     }

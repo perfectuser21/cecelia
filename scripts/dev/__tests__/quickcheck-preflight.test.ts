@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 const source = resolve(__dirname, '../../..');
 const packages = [
   ['packages/brain', 'lint'],
-  ['apps/api', 'typecheck'], ['apps/dashboard', 'build'],
+  ['apps/dashboard', 'build'],
 ] as const;
 
 function fixture(changes: string[], options: { missingScript?: boolean; failure?: number; missingTool?: boolean; missingRunner?: boolean; noBase?: boolean; frozenFailure?: boolean; ownershipUnitFailure?: boolean; ownershipScannerFailure?: boolean; emptyOwnershipSuite?: boolean } = {}) {
@@ -33,6 +33,7 @@ function fixture(changes: string[], options: { missingScript?: boolean; failure?
       put(`${path}/check.cjs`, `require('node:fs').appendFileSync(${JSON.stringify(join(root, 'marker.log'))}, ${JSON.stringify(`${path}:${script}\n`)}); process.exit(${options.failure || 0});`);
       put(`${path}/forbidden.cjs`, 'throw new Error("local full unit suite must not run");');
     }
+    put('apps/api/package.json', JSON.stringify({private:true,scripts:{test:'node forbidden.cjs'}}));
     // 真正执行 production runner 的 scripts 分支；边界命令只写隔离目录里的标记。
     put('scripts/ci/check-w19-frozen.mjs', `import {appendFileSync} from 'node:fs'; appendFileSync(${JSON.stringify(join(root, 'marker.log'))}, 'scripts:w19-frozen\\n'); process.exit(${options.frozenFailure ? 17 : 0});`);
     put('scripts/ci/__tests__/basic-fixture.test.mjs', `import {appendFileSync} from 'node:fs'; appendFileSync(${JSON.stringify(join(root, 'marker.log'))}, 'scripts:node-test\\n');`);
@@ -80,10 +81,15 @@ describe('quickcheck 快速准备检查，完整单测由GitHub必需检查负�
     expect(result.stdout).toContain('本地准备检查通过');
     expect(result.stdout).toContain('源码保底通过');
   });
+  it.each(['apps/api/features/shared.ts', 'apps/api/package.json'])('共享看板输入%s运行Dashboard构建，不调用退役API类型检查', path => {
+    const result = fixture([path]);
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+    expect(result.markers).toEqual(['apps/dashboard:build']);
+  });
   it('多个改动包各跑一次准备命令，不触发test脚本', () => {
     const result = fixture(['packages/brain/a.js', 'packages/brain/b.js', 'apps/api/a.ts']);
     expect(result.status, result.stdout + result.stderr).toBe(0);
-    expect(result.markers.sort()).toEqual(['apps/api:typecheck', 'packages/brain:lint']);
+    expect(result.markers.sort()).toEqual(['apps/dashboard:build', 'packages/brain:lint']);
   });
   it.each(['scripts/ci/change.mjs', '.github/workflows/change.yml', 'package-lock.json', 'package.json'])('共享入口 %s 实际执行 scripts CI runner', path => {
     const result = fixture([path]);

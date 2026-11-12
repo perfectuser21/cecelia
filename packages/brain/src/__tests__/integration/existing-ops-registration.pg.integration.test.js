@@ -1,46 +1,17 @@
-import * as frozenSource from '../../../../../scripts/ci/implementation-snapshot.mjs';
-// 同一来源登记合同同时执行真实版本 gate 行为，避免登记到从未运行的治理测试。
-import '../../../../../tests/regression/version-gate-silent/check-brain-version-bump.test.js';
-import { afterAll, afterEach, beforeEach, expect, it } from 'vitest';
-import { execFileSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
-import { readFixedExistingOpsGitFixture } from '../../lib/__tests__/helpers/fixed-existing-ops-git-fixture.js';
-import {isolatedExistingOpsGitFixture,historicalConsumerRuntimeFixture} from '../../lib/__tests__/helpers/isolated-existing-ops-git-fixture.js';
-import { versionsDatabase } from '../fixtures/definition-versions-db.js';
-import { EXISTING_OPS_IDENTITIES } from '../../lib/existing-ops-source.js';
+import {afterEach,beforeEach,expect,it} from 'vitest';
+import {randomUUID} from 'node:crypto';
+import {versionsDatabase} from '../fixtures/definition-versions-db.js';
+import {minimumMapSchema} from '../fixtures/minimum-map-schema.js';
+import {readFixedExistingOpsGitFixture} from '../../lib/__tests__/helpers/fixed-existing-ops-git-fixture.js';
+import {EXISTING_OPS_IDENTITIES} from '../../lib/existing-ops-source.js';
 import * as registration from '../../lib/existing-ops-registration.js';
-import { minimumMapSchema } from '../fixtures/minimum-map-schema.js';
-import { exportImplementationSnapshot,refreshImplementationSnapshot } from '../../lib/implementation-ci-snapshot.js';
-import { importImplementationSnapshot,buildPrImplementationSnapshot } from '../../../../../scripts/ci/implementation-snapshot.mjs';
-import { randomUUID } from 'node:crypto';
-import {mkdtempSync,mkdirSync,writeFileSync,rmSync} from 'node:fs';
-import {tmpdir} from 'node:os';
-import {join,dirname} from 'node:path';
-import * as consumerSource from '../../lib/consumer-source-set.js';
-
-it('factory source anchor plan preserves fields and rejects foreign or incomplete owner trees', async()=>{
-  await factoryMap();
-  const query={scope:'cecelia-factory',repo:'perfectuser21/cecelia',revision:'d'.repeat(40)};
-  const before=await registration.readExistingOpsRegistry(fixture.db);
-  const plan=await registration.prepareExistingOpsManifestAdvance(fixture.db,query);
-  expect(plan.manifest.capabilities.map(n=>n.brain_binding.source_revision)).toEqual([query.revision,query.revision]);
-  expect(plan.manifest.shared_prerequisites.reason).toBe('两个现存工厂消费者独立验证来源，无共享执行前置');
-  expect(await registration.readExistingOpsRegistry(fixture.db)).toEqual(before);
-  for(const change of [m=>m.capabilities[0].brain_binding.source_repo='foreign/repo',m=>m.capabilities[0].brain_binding.entity_id=randomUUID(),m=>m.capabilities[0].value_stream_key='foreign',m=>m.capabilities.pop(),m=>m.value_streams[0].brain_binding.source_revision='main']){
-    const db={query:async(sql,args)=>{
-      const result=await fixture.db.query(sql,args);
-      if(sql.startsWith('SELECT * FROM map_manifest_versions')){const cloned={...result,rows:structuredClone(result.rows)};change(cloned.rows[0].manifest);return cloned;}
-      return result;
-    }};
-    await expect(registration.prepareExistingOpsManifestAdvance(db,query)).rejects.toThrow('OPS_MANIFEST_IDENTITY_INVALID');
-  }
-});
-const root = fileURLToPath(new URL('../../../../../', import.meta.url));
-// 正样本仅为已知历史 Git fixture，不赋予当前候选来源或发布资格。
-const sourceFixture = isolatedExistingOpsGitFixture({revision:readFixedExistingOpsGitFixture().revision,requireRuntime:false});
-afterAll(()=>sourceFixture.close());
-const { revision, paths, tree: treeSha, entries: treeEntries } = sourceFixture;
-const readSource = async path => sourceFixture.read(path);
+import {refreshImplementationSnapshot} from '../../lib/implementation-ci-snapshot.js';
+import * as frozenSource from '../../../../../scripts/ci/implementation-snapshot.mjs';
+import {appendConsumerEvidence} from '../../lib/consumer-evidence-store.js';
+const sourceFixture=readFixedExistingOpsGitFixture('227c14e6ff8970f5c408a8dc87e8b9d0f0d16cfe');
+const {revision,paths}=sourceFixture;
+const readSource=async path=>sourceFixture.read(path);
+const options=extra=>({scope:'cecelia-factory',repo:'perfectuser21/cecelia',revision,paths,readSource,checkMain:async()=>{},actor:'test-retired-factory-source',...extra});
 let fixture;
 beforeEach(async () => {
   fixture = await versionsDatabase(); await fixture.migrate(); await minimumMapSchema(fixture.db);
@@ -65,131 +36,25 @@ async function factoryMap(sourceRevision=revision) {
 }
 afterEach(async () => { await fixture?.close(); });
 
-function workspaceCandidate() {
-  const repo='perfectuser21/zenithjoy-workspace',dir=mkdtempSync(join(tmpdir(),'factory-workspace-source-'));
-  const git=(...args)=>execFileSync('git',args,{cwd:dir,encoding:'utf8'}).trim();
-  git('init','-q','-b','candidate-fixture');
-  for(const [name,job,readerName] of [['implementation-impact','impact','implementation-impact'],['pilot-release-verification','verify','pilot-release']]){
-    const reader=`scripts/ci/__tests__/${readerName}-workflow.test.mjs`;
-    const files={
-      [reader]:`import {test} from 'node:test';\nimport {readFileSync,existsSync} from 'node:fs';\nimport YAML from 'yaml';\nconst file=new URL('../../../.github/workflows/${name}.yml',import.meta.url);\nfunction config(){if(!existsSync(file))throw Error('missing');return YAML.parse(readFileSync(file,'utf8'));}\ntest('actual-reader',()=>{config();});\n`,
-      [`.github/workflows/${name}.yml`]:`name: ${name}\non:\n  ${name==='implementation-impact'?'pull_request:\n    branches: [main]\n  ':''}push:\n    branches: [main]\n  workflow_dispatch:\npermissions: {contents: read, actions: read}\njobs:\n  caller-contract:\n    steps:\n      - run: node --test ${reader}\n  ${job}:\n    needs: caller-contract\n    uses: perfectuser21/cecelia/.github/workflows/${name}.yml@${revision}\n    with:\n      source_repo: ${repo}\n      scope: zenithjoy\n      head_revision: \${{ github.sha }}\n      tooling_revision: ${revision}\n${name==='implementation-impact'?'      base_revision: \${{ github.event.before }}\n      mode: main\n':''}`,
-    };
-    for(const [path,bytes] of Object.entries(files)){mkdirSync(dirname(join(dir,path)),{recursive:true});writeFileSync(join(dir,path),bytes);}
-  }
-  git('add','.');const head=git('-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit-tree',git('write-tree'),'-m','实际候选来源');
-  return {dir,head,input:{workspace:{repo,revision:head},brain:{repo:'perfectuser21/cecelia',revisions:[revision]},identity:{...EXISTING_OPS_IDENTITIES[1],unverified_reference_ids:undefined},anchor:{repo:'perfectuser21/cecelia',revision}},
-    readSource:async q=>q.repo===repo?execFileSync('git',['show',`${q.revision}:${q.path}`],{cwd:dir}):Buffer.from(await readSource(q.path)),close:()=>rmSync(dir,{recursive:true,force:true})};
-}
 
-it('实际scratch双Git消费者只封存F3来源集合；不改旧current/八引用或伪造完整可执行Workflow',async()=>{
-  expect(consumerSource.collectScratchWorkspaceConsumerSourceSet).toBeTypeOf('function');
-  const candidate=workspaceCandidate();
-  try{
-    delete candidate.input.identity.unverified_reference_ids;
-    const proof=await consumerSource.collectScratchWorkspaceConsumerSourceSet(fixture.db,candidate.input,{readSource:candidate.readSource});
-    expect(proof.status,JSON.stringify(proof.gaps)).toBe('verified');
-    const before=await registration.readExistingOpsRegistry(fixture.db);
-    const receipt=await registration.registerExistingOpsSources(fixture.db,options({mode:'scratch_candidate',workspaceConsumerProof:proof,expectedRegistrySha256:before.registry_sha256}));
-    const f3=receipt.definitions.activities.find(a=>a.activity_id===EXISTING_OPS_IDENTITIES[1].activity_id);
-    expect(f3.source_repo).toBe('perfectuser21/cecelia');expect(f3.source_commit).toBe(revision);
-    expect(f3.payload.source_set).toContainEqual({repo:'perfectuser21/zenithjoy-workspace',revision:candidate.head});
-    expect(f3.payload.source_set_admission).toMatchObject({source_basis:'scratch_candidate',purpose:'admission_only'});
-    expect(f3.payload.implementation_bindings.some(b=>b.repo==='perfectuser21/zenithjoy-workspace'&&b.revision===candidate.head)).toBe(true);
-    expect(receipt.definitions.activities.find(a=>a.activity_id===EXISTING_OPS_IDENTITIES[0].activity_id).payload).not.toHaveProperty('source_set');
-    expect(await registration.readExistingOpsRegistry(fixture.db)).toEqual(before);
-    expect(receipt.executable).toBe(false);expect(receipt.remaining_unknown_reference_ids).toHaveLength(6);
-    await factoryMap();
-    const query={scope:'cecelia-factory',repo:'perfectuser21/zenithjoy-workspace',revision:candidate.head};
-    const snapshot=await exportImplementationSnapshot(fixture.db,query);
-    expect(snapshot.status,JSON.stringify(snapshot.gaps)).toBe('verified');
-    await importImplementationSnapshot(fixture.db,snapshot);
-    await expect(frozenSource.verifySnapshotSource(snapshot,candidate.dir,{db:fixture.db})).resolves.toEqual(snapshot);
-    const rebuilt=await buildPrImplementationSnapshot(fixture.db,snapshot,candidate.head,candidate.dir);
-    expect(rebuilt.status,JSON.stringify(rebuilt.gaps)).toBe('verified');
-    expect(rebuilt.registry_source).toEqual({repo:'perfectuser21/cecelia',revision});
-    execFileSync('git',['update-ref','HEAD',candidate.head],{cwd:candidate.dir});
-    await frozenSource.projectImplementationSnapshot(fixture.db,rebuilt,candidate.dir);
-    const graphs=(await fixture.db.query('SELECT repo,source_revision FROM graph_snapshot_versions WHERE repo=ANY($1::text[])',
-      [['perfectuser21/zenithjoy-workspace','cecelia-factory-source']])).rows;
-    expect(graphs).toContainEqual({repo:'perfectuser21/zenithjoy-workspace',source_revision:candidate.head});
-    expect(graphs).toContainEqual({repo:'cecelia-factory-source',source_revision:revision});
-    expect(graphs).not.toContainEqual({repo:'cecelia-factory-source',source_revision:candidate.head});
-    const foreignEdges=(await fixture.db.query("SELECT * FROM graph_edges WHERE repo=$1 AND dst_path=$2",
-      ['perfectuser21/zenithjoy-workspace','.github/workflows/nightly-regression.yml'])).rows;
-    expect(foreignEdges).toEqual([]);
-    expect(await registration.readExistingOpsRegistry(fixture.db)).toEqual(before);
-  }finally{candidate.close();}
-},180000);
-
-it('生产登记拒scratch或复制proof；拒绝后没有任何历史追加',async()=>{
-  expect(consumerSource.collectScratchWorkspaceConsumerSourceSet).toBeTypeOf('function');
-  const candidate=workspaceCandidate();
-  try{
-    delete candidate.input.identity.unverified_reference_ids;
-    const proof=await consumerSource.collectScratchWorkspaceConsumerSourceSet(fixture.db,candidate.input,{readSource:candidate.readSource});
-    expect(proof.status,JSON.stringify(proof.gaps)).toBe('verified');
-    const before=await registration.readExistingOpsRegistry(fixture.db);
-    await expect(registration.registerExistingOpsSources(fixture.db,options({workspaceConsumerProof:proof,expectedRegistrySha256:before.registry_sha256}))).rejects.toMatchObject({code:'CONSUMER_MAIN_SOURCE_UNKNOWN'});
-    await expect(registration.registerExistingOpsSources(fixture.db,options({mode:'scratch_candidate',workspaceConsumerProof:structuredClone(proof),expectedRegistrySha256:before.registry_sha256}))).rejects.toMatchObject({code:'CONSUMER_SCRATCH_SOURCE_UNKNOWN'});
-    expect((await fixture.db.query('SELECT count(*)::int n FROM workflow_definition_versions')).rows[0].n).toBe(0);
-    expect(await registration.readExistingOpsRegistry(fixture.db)).toEqual(before);
-  }finally{candidate.close();}
-});
-const options = extra => ({ scope: 'cecelia-factory', repo: 'perfectuser21/cecelia', revision, paths, readSource, checkMain: async () => {}, actor: 'test-real-main', ...extra });
-it('真实PG封存毕业池选择与required版本gate来源，未知配置不能追加成功版本', async () => {
-  const before = await registration.readExistingOpsRegistry(fixture.db);
-  const receipt = await registration.registerExistingOpsSources(fixture.db, options({ expectedRegistrySha256: before.registry_sha256 }));
-  const f3 = receipt.definitions.activities.find(a => a.activity_id === EXISTING_OPS_IDENTITIES[1].activity_id);
-  const bindings = f3.payload.implementation_bindings;
-  for (const path of ['tests/regression/version-gate-silent/check-brain-version-bump.test.js', 'scripts/ci/check-brain-version-bump.sh'])
-    expect(bindings).toContainEqual(expect.objectContaining({ path, revision, content_sha256: expect.stringMatching(/^[a-f0-9]{64}$/) }));
-  const persisted = (await fixture.db.query('SELECT payload FROM activity_definition_versions WHERE id=$1', [f3.id])).rows[0].payload;
-  expect(persisted.implementation_bindings).toEqual(bindings);
-  expect(await registration.readExistingOpsRegistry(fixture.db)).toEqual(before);
-  const count = (await fixture.db.query('SELECT count(*)::int n FROM activity_definition_versions')).rows[0].n;
-  await expect(registration.registerExistingOpsSources(fixture.db, options({ expectedRegistrySha256: before.registry_sha256,
-    readSource: async path => path === 'packages/brain/vitest.config.js' ? (await readSource(path)).replace('exclude: [', 'exclude: [...UNKNOWN_TESTS,') : readSource(path) }))).rejects.toThrow();
-  expect((await fixture.db.query('SELECT count(*)::int n FROM activity_definition_versions')).rows[0].n).toBe(count);
-});
-it('已知历史Git fixture的main消费者只append不可执行历史，保留全部旧登记和六个UNKNOWN', async () => {
-  expect(registration.registerExistingOpsSources).toBeTypeOf('function');
-  const before = await registration.readExistingOpsRegistry(fixture.db);
-  const receipt = await registration.registerExistingOpsSources(fixture.db, options({ expectedRegistrySha256: before.registry_sha256 }));
-  expect(receipt.definitions.workflows).toHaveLength(2);
-  expect(receipt.definitions.activities).toHaveLength(2);
-  expect(receipt.definitions.workflows.every(w => w.payload.definition_scope === 'consumer_evidence' && w.payload.coverage.status === 'unknown' && w.payload.coverage.unverified_reference_ids.length === 3)).toBe(true);
-  expect(await registration.readExistingOpsRegistry(fixture.db)).toEqual(before);
-  expect((await fixture.db.query('SELECT count(*)::int n FROM workflow_activity_refs')).rows[0].n).toBe(8);
-  expect((await registration.registerExistingOpsSources(fixture.db, options({ expectedRegistrySha256: before.registry_sha256 }))).definitions).toEqual(receipt.definitions);
-  await expect(fixture.db.query('DELETE FROM workflow_definition_versions WHERE id=$1', [receipt.definitions.workflows[0].id])).rejects.toMatchObject({ code: 'P0001' });
-});
-it('人改slot或层级不被接力覆盖，失败事务没有历史残留', async () => {
-  const before = await registration.readExistingOpsRegistry(fixture.db);
-  await fixture.db.query("UPDATE workflow_activity_refs SET slot_key='human_slot' WHERE id=$1", [EXISTING_OPS_IDENTITIES[0].reference_id]);
-  await expect(registration.registerExistingOpsSources(fixture.db, options({ expectedRegistrySha256: before.registry_sha256 }))).rejects.toMatchObject({ code: 'OPS_REGISTRY_CONFLICT' });
-  expect((await fixture.db.query('SELECT count(*)::int n FROM workflow_definition_versions')).rows[0].n).toBe(0);
-});
-it('main已移动、缺源或缺CAS不能登记，绝不执行candidate源码', async () => {
-  const before = await registration.readExistingOpsRegistry(fixture.db);
-  for (const extra of [{ checkMain: async () => { throw Error('MAIN_MOVED'); } }, { expectedRegistrySha256: undefined }, { readSource: async path => { if (path === 'packages/brain/src/migrate.js') throw Error('missing'); return readSource(path); } }]) {
-    await expect(registration.registerExistingOpsSources(fixture.db, options({ expectedRegistrySha256: before.registry_sha256, ...extra }))).rejects.toThrow();
-  }
-  expect((await fixture.db.query('SELECT count(*)::int n FROM workflow_definition_versions')).rows[0].n).toBe(0);
-});
-it('工厂source导出保留全旧身份而仅含消费者历史，scratch导入不伪current', async()=>{
+it('工厂来源锚点计划保留原字段，外来或不完整owner树拒绝', async()=>{
+  await factoryMap();
+  const query={scope:'cecelia-factory',repo:'perfectuser21/cecelia',revision:'d'.repeat(40)};
   const before=await registration.readExistingOpsRegistry(fixture.db);
-  await registration.registerExistingOpsSources(fixture.db,options({expectedRegistrySha256:before.registry_sha256})); await factoryMap();
-  const snapshot=await exportImplementationSnapshot(fixture.db,{scope:'cecelia-factory',repo:'perfectuser21/cecelia',revision});
-  expect(snapshot.status,JSON.stringify(snapshot.gaps)).toBe('verified');
-  expect(snapshot.canonical.workflows).toHaveLength(2);
-  expect(snapshot.canonical.references).toHaveLength(8);
-  expect(snapshot.canonical.activities).toHaveLength(8);
-  expect(snapshot.definitions.workflows).toHaveLength(2);
-  expect(snapshot.execution_status).toBe('unknown');
-  await importImplementationSnapshot(fixture.db,snapshot);
+  const plan=await registration.prepareExistingOpsManifestAdvance(fixture.db,query);
+  expect(plan.manifest.capabilities.map(n=>n.brain_binding.source_revision)).toEqual([query.revision,query.revision]);
+  expect(plan.manifest.shared_prerequisites.reason).toBe('两个现存工厂消费者独立验证来源，无共享执行前置');
   expect(await registration.readExistingOpsRegistry(fixture.db)).toEqual(before);
+  for(const change of [m=>m.capabilities[0].brain_binding.source_repo='foreign/repo',m=>m.capabilities[0].brain_binding.entity_id=randomUUID(),m=>m.capabilities[0].value_stream_key='foreign',m=>m.capabilities.pop(),m=>m.value_streams[0].brain_binding.source_revision='main']){
+    const db={query:async(sql,args)=>{
+      const result=await fixture.db.query(sql,args);
+      if(sql.startsWith('SELECT * FROM map_manifest_versions')){const cloned={...result,rows:structuredClone(result.rows)};change(cloned.rows[0].manifest);return cloned;}
+      return result;
+    }};
+    await expect(registration.prepareExistingOpsManifestAdvance(db,query)).rejects.toThrow('OPS_MANIFEST_IDENTITY_INVALID');
+  }
 });
+
 it('生产refresh拒绝外部proof、scratch旗标及未认证来源；失败不追加历史',async()=>{
  await factoryMap();let reads=0;
  const q={scope:'cecelia-factory',repo:'perfectuser21/cecelia',revision};
@@ -202,79 +67,13 @@ it('生产refresh拒绝外部proof、scratch旗标及未认证来源；失败不
  expect(reads).toBe(0);
  expect((await fixture.db.query('SELECT count(*)::int n FROM workflow_definition_versions')).rows[0].n).toBe(0);
 });
-it('正式refresh只读固定main commit/tree字节，来源未知和截断树不能写历史',async()=>{
- const consistent=await historicalConsumerRuntimeFixture();
- const {refreshImplementationSnapshot}=consistent.modules.snapshot;
- try{
-  const {revision,tree:treeSha,entries:treeEntries}=consistent,readSource=async path=>consistent.read(path);
-  await factoryMap(revision); const before=await registration.readExistingOpsRegistry(fixture.db);
-  let truncated=true,reads=0;
-  const fetchFn=async(url,options)=>{
-    reads++;expect(options.redirect).toBe('error');
-    if(url.endsWith('/commits/main'))return {ok:true,text:async()=>revision};
-    if(url.endsWith(`/git/commits/${revision}`))return {ok:true,json:async()=>({sha:revision,tree:{sha:treeSha}})};
-    if(url.endsWith(`/git/trees/${treeSha}?recursive=1`))return {ok:true,json:async()=>({sha:treeSha,truncated,tree:treeEntries})};
-    const prefix='https://api.github.com/repos/perfectuser21/cecelia/contents/';
-    expect(url.startsWith(prefix)).toBe(true);expect(new URL(url).searchParams.get('ref')).toBe(revision);
-    const path=decodeURIComponent(new URL(url).pathname.slice('/repos/perfectuser21/cecelia/contents/'.length));
-    return {ok:true,text:()=>readSource(path)};
-  };
-  const q={scope:'cecelia-factory',repo:'perfectuser21/cecelia',revision},options={fetchFn,resolveToken:async()=>''};
-  await expect(refreshImplementationSnapshot(fixture.db,q,options)).rejects.toMatchObject({code:'IMPLEMENTATION_CI_SOURCE_TREE_INCOMPLETE'});
-  expect((await fixture.db.query('SELECT count(*)::int n FROM workflow_definition_versions')).rows[0].n).toBe(0);
-  truncated=false;
-  const snapshot=await refreshImplementationSnapshot(fixture.db,q,options);
-  expect(snapshot.status,JSON.stringify(snapshot.gaps)).toBe('verified');expect(reads).toBeGreaterThan(10);
-  expect(snapshot.consumer_registry.registry_sha256).toBe(before.registry_sha256);
-  expect(snapshot.execution_status).toBe('unknown');expect(await registration.readExistingOpsRegistry(fixture.db)).toEqual(before);
- }finally{consistent.close();}
-});
-it('已知历史Git fixture只在真实scratch冻结消费者与地图，不激活任何旧current',async()=>{
-  const before=await registration.readExistingOpsRegistry(fixture.db);
-  await registration.registerExistingOpsSources(fixture.db,options({expectedRegistrySha256:before.registry_sha256}));await factoryMap();
-  const baseline=await exportImplementationSnapshot(fixture.db,{scope:'cecelia-factory',repo:'perfectuser21/cecelia',revision});
-  const head=revision;
-  const candidate=await buildPrImplementationSnapshot(fixture.db,baseline,head,root);
-  expect(candidate.status,JSON.stringify(candidate.gaps)).toBe('verified');expect(candidate.revision).toBe(head);
-  expect(candidate.definitions.workflows.every(w=>w.source_commit===head&&w.payload.definition_scope==='consumer_evidence')).toBe(true);
-  expect(candidate.execution_status).toBe('unknown');expect(await registration.readExistingOpsRegistry(fixture.db)).toEqual(before);
-});
-
-it('完整Factory候选在不含decisions的真实scratch重放冻结地图，保留决定锚点和全部旧current',async()=>{
-  const before=await registration.readExistingOpsRegistry(fixture.db);
-  await registration.registerExistingOpsSources(fixture.db,options({expectedRegistrySha256:before.registry_sha256}));await factoryMap();
-  const baseline=await exportImplementationSnapshot(fixture.db,{scope:'cecelia-factory',repo:'perfectuser21/cecelia',revision});
-  const temporary=mkdtempSync(join(tmpdir(),'factory-candidate-shallow-'));
-  const candidateRoot=join(temporary,'candidate'),historicalRoot=join(temporary,'historical');
-  try{
-    // 本人临时clone固定历史fixture分支，再生成真实depth-one输入，保留无HEAD^边界。
-    execFileSync('git',['clone','--quiet','--shared','--no-checkout',root,historicalRoot]);
-    execFileSync('git',['update-ref','refs/heads/historical-fixture',revision],{cwd:historicalRoot});
-    execFileSync('git',['clone','--depth','1','--single-branch','--branch','historical-fixture',`file://${historicalRoot}`,candidateRoot],{stdio:'pipe'});
-    const git=(...args)=>execFileSync('git',args,{cwd:candidateRoot,encoding:'utf8'}).trim();
-    expect(git('rev-list','--count','HEAD')).toBe('1');
-    expect(git('rev-parse','HEAD')).toBe(revision);
-    git('-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','--allow-empty','-qm','actual isolated candidate revision');
-    const head=git('rev-parse','HEAD');expect(head).not.toBe(revision);
-    // The official isolated importer intentionally omits central decision rows.
-    await fixture.db.query('ALTER TABLE decisions RENAME TO omitted_central_decisions');
-    const candidate=await buildPrImplementationSnapshot(fixture.db,baseline,head,candidateRoot);
-    expect(candidate.status,JSON.stringify(candidate.gaps)).toBe('verified');
-    expect(candidate.revision).toBe(head);
-    expect(candidate.map.manifest.source_decision_id).toBe(baseline.map.manifest.source_decision_id);
-    expect(candidate.map.manifest.manifest.capabilities.every(n=>n.brain_binding.source_revision===head)).toBe(true);
-    expect(candidate.execution_status).toBe('unknown');
-    expect(await registration.readExistingOpsRegistry(fixture.db)).toEqual(before);
-    expect((await fixture.db.query("SELECT to_regclass('decisions') id")).rows[0].id).toBeNull();
-  }finally{rmSync(temporary,{recursive:true,force:true});}
-});
 
 it('scratch地图推进真实CAS冲突回滚，非scratch与外来scope在写入前拒绝',async()=>{
   await factoryMap();
   const query={scope:'cecelia-factory',repo:'perfectuser21/cecelia',revision:'d'.repeat(40)};
   const before=(await fixture.db.query('SELECT id,digest,status FROM map_manifest_versions')).rows;
   const db={query:fixture.db.query.bind(fixture.db),connect:async()=>{
-    // Actual concurrent registration changes the active frozen pointer.
+    // 真实并发登记改变当前冻结指针。
     const old=(await fixture.db.query("SELECT * FROM map_manifest_versions WHERE status='active'")).rows[0];
     const manifest=structuredClone(old.manifest);
     for(const node of [...manifest.value_streams,...manifest.capabilities])node.brain_binding.source_revision='e'.repeat(40);
@@ -296,38 +95,60 @@ it('scratch地图推进真实CAS冲突回滚，非scratch与外来scope在写入
   expect(reads).toBe(1);
 });
 
-it('工厂冻结来源必须重核实际Git字节，重算外层digest也不能伪绑定或输入关系',async()=>{
-  const before=await registration.readExistingOpsRegistry(fixture.db);
-  await registration.registerExistingOpsSources(fixture.db,options({expectedRegistrySha256:before.registry_sha256})); await factoryMap();
-  const snapshot=await exportImplementationSnapshot(fixture.db,{scope:'cecelia-factory',repo:'perfectuser21/cecelia',revision});
-  expect(frozenSource.verifySnapshotSource).toBeTypeOf('function');
-  await expect(frozenSource.verifySnapshotSource(snapshot,root)).resolves.toEqual(snapshot);
-  for(const mutate of [s=>s.definitions.activities[0].payload.implementation_bindings[0].content_sha256='0'.repeat(64),s=>s.definitions.activities[0].payload.input_relations.pop()]){
-    const changed=structuredClone(snapshot); mutate(changed);
-    // 重新封装真实合法摘要仍不可冒充Git来源。
-    const {stepSha256}=await import('../../../scripts/sync-steps-from-workspace.mjs');
-    const row=changed.definitions.activities[0]; row.payload_sha256=stepSha256({source:{repo:row.source_repo,path:row.source_path,commit:row.source_commit},payload:row.payload});
-    const {snapshot_sha256,...body}=changed; changed.snapshot_sha256=stepSha256(body);
-    await expect(frozenSource.verifySnapshotSource(changed,root)).rejects.toMatchObject({code:'IMPLEMENTATION_CI_CONSUMER_SOURCE_MISMATCH'});
+const historyTables=['workflow_definition_versions','activity_definition_versions','map_manifest_versions','map_projection_runs','map_scope_repositories'];
+async function state(){return {registry:await registration.readExistingOpsRegistry(fixture.db),tables:await Promise.all(historyTables.map(async table=>(await fixture.db.query(`SELECT * FROM ${table} ORDER BY 1`)).rows))};}
+// 直接通过仍由infra来源登记使用的共用写入器建立既存历史；不授予旧F2/F3来源资格。
+async function existingHistory(){
+ const rows=[];
+ for(const identity of EXISTING_OPS_IDENTITIES){
+  const source={repo:'perfectuser21/cecelia',path:'legacy/consumer-evidence.json',commit:'a'.repeat(40)};
+  const common={definition_scope:'consumer_evidence',contract:{executable:false},verification:{runtime_status:'not_evaluated'}};
+  const activity=await appendConsumerEvidence(fixture.db,'activity',identity.activity_id,{...common,activity_id:identity.activity_id},source);
+  const workflow=await appendConsumerEvidence(fixture.db,'workflow',identity.workflow_id,{...common,workflow_id:identity.workflow_id,activities:[{activity_id:identity.activity_id,activity_version_id:activity.id}]},source);
+  await fixture.db.query('UPDATE activities SET current_definition_version_id=$1 WHERE id=$2',[activity.id,identity.activity_id]);
+  await fixture.db.query('UPDATE workflows SET current_definition_version_id=$1 WHERE id=$2',[workflow.id,identity.workflow_id]);
+  await fixture.db.query('UPDATE workflow_activity_refs SET activity_definition_version_id=$1 WHERE id=$2',[activity.id,identity.reference_id]);
+  rows.push({identity,source,activity,workflow});
+ }
+ return rows;
+}
+it('共用历史写入器幂等且不可变，拒绝可执行伪历史并保留全部current',async()=>{
+ const rows=await existingHistory(),before=await state();
+ for(const {identity,source,activity,workflow} of rows){
+  expect((await appendConsumerEvidence(fixture.db,'activity',identity.activity_id,activity.payload,source)).id).toBe(activity.id);
+  expect((await appendConsumerEvidence(fixture.db,'workflow',identity.workflow_id,workflow.payload,source)).id).toBe(workflow.id);
+  await expect(appendConsumerEvidence(fixture.db,'activity',identity.activity_id,{...activity.payload,contract:{executable:true}},source)).rejects.toMatchObject({code:'OPS_HISTORY_INPUT_INVALID'});
+  for(const [table,row] of [['activity_definition_versions',activity],['workflow_definition_versions',workflow]]){
+   await expect(fixture.db.query(`UPDATE ${table} SET source_path='forged' WHERE id=$1`,[row.id])).rejects.toMatchObject({code:'P0001'});
+   await expect(fixture.db.query(`DELETE FROM ${table} WHERE id=$1`,[row.id])).rejects.toMatchObject({code:'P0001'});
   }
+ }
+ expect(await state()).toEqual(before);
 });
-
-it('私有HEAD真实篡改CI selector不能继承历史来源资格，scratch拒绝且历史地图current全部零写',async()=>{
- const before=await registration.readExistingOpsRegistry(fixture.db);
- await registration.registerExistingOpsSources(fixture.db,options({expectedRegistrySha256:before.registry_sha256}));
- await factoryMap();
- const baseline=await exportImplementationSnapshot(fixture.db,{scope:'cecelia-factory',repo:'perfectuser21/cecelia',revision});
- const tables=['workflow_definition_versions','activity_definition_versions','map_manifest_versions','map_projection_runs','map_scope_repositories'];
- const state=async()=>({registry:await registration.readExistingOpsRegistry(fixture.db),
-  tables:await Promise.all(tables.map(async table=>(await fixture.db.query(`SELECT * FROM ${table} ORDER BY 1`)).rows))});
- const unchanged=await state();
- const current=isolatedExistingOpsGitFixture();let candidate;
- try{
-  const path='.github/workflows/ci.yml',bytes=current.read(path).replace('run: node scripts/ci/run-basic-check.mjs "$COMPONENT" "$SHARD"','run: echo unproven fixture selector');
-  expect(bytes).not.toBe(current.read(path));
-  candidate=isolatedExistingOpsGitFixture({revision:current.revision,changes:{[path]:bytes}});
-  expect(candidate.revision).not.toBe(current.revision);
-  await expect(buildPrImplementationSnapshot(fixture.db,baseline,candidate.revision,candidate.dir)).rejects.toMatchObject({code:'OPS_SOURCE_UNKNOWN'});
- }finally{candidate?.close();current.close();}
- expect(await state()).toEqual(unchanged);
+it('当前固定Git缺退休入口时生产登记零写，已有历史与人改slot及current完整保留',async()=>{
+ await existingHistory();await factoryMap();
+ await fixture.db.query("UPDATE workflow_activity_refs SET slot_key='human_slot' WHERE id=$1",[EXISTING_OPS_IDENTITIES[0].reference_id]);
+ const before=await state();
+ await expect(registration.registerExistingOpsSources(fixture.db,options({expectedRegistrySha256:before.registry.registry_sha256}))).rejects.toMatchObject({code:'OPS_SOURCE_UNKNOWN'});
+ expect(await state()).toEqual(before);
+ for(const extra of [{expectedRegistrySha256:undefined},{checkMain:async()=>{throw Error('MAIN_MOVED');}}]){
+  await expect(registration.registerExistingOpsSources(fixture.db,options({expectedRegistrySha256:before.registry.registry_sha256,...extra}))).rejects.toThrow();
+  expect(await state()).toEqual(before);
+ }
+},180000);
+it('真实PG刷新拒绝浮动main、错配commit和截断tree，不访问候选源码且历史地图零写',async()=>{
+ await existingHistory();await factoryMap();const before=await state();
+ const query={scope:'cecelia-factory',repo:'perfectuser21/cecelia',revision};
+ for(const [mode,code] of [['main','IMPLEMENTATION_CI_MAIN_MOVED'],['commit','IMPLEMENTATION_CI_SOURCE_COMMIT_MISMATCH'],['tree','IMPLEMENTATION_CI_SOURCE_TREE_INCOMPLETE']]){
+  let contentReads=0;
+  const fetchFn=async(url,request)=>{
+   expect(request.redirect).toBe('error');
+   if(url.endsWith('/commits/main'))return {ok:true,text:async()=>mode==='main'?'b'.repeat(40):revision};
+   if(url.endsWith('/git/commits/'+revision))return {ok:true,json:async()=>({sha:mode==='commit'?'b'.repeat(40):revision,tree:{sha:sourceFixture.tree}})};
+   if(url.endsWith('/git/trees/'+sourceFixture.tree+'?recursive=1'))return {ok:true,json:async()=>({sha:sourceFixture.tree,truncated:true,tree:sourceFixture.entries})};
+   contentReads++;throw Error('unexpected candidate content read');
+  };
+  await expect(refreshImplementationSnapshot(fixture.db,query,{fetchFn,resolveToken:async()=>''})).rejects.toMatchObject({code});
+  expect(contentReads).toBe(0);expect(await state()).toEqual(before);
+ }
 });

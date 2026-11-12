@@ -1,234 +1,102 @@
-// 只读资格只供固定完整cohort；突变正文只交给守卫，不执行候选源码。
+/** 仅当前main与本候选的完整源码组取得只读数据资格。 */
 import {describe,it,expect} from 'vitest';
 import path from 'node:path';
 import {execFileSync} from 'node:child_process';
-
-// 仅追加本批已审的完整组合：AutoVersion marker退役与严格版本门reader必须同时更新。
-// 所有未列成员继承固定旧cohort；不读取候选摘要，不按成员任选历史版本。
-export function ciVersionGuardCohorts(previous) {
- const current={...previous,
-  'existing-ops-source.js':'d34318e7523501f651d846268d956d6f745349e4cf8a10b1adefdd92ebe9a727',
-  'existing-ops-stage-source.js':'14ebb11805679dd6f559ea42d88ba6f8a1bc96604f474230a2c486af5866e514',
- };
- const retired={...current,'existing-ops-stage-source.js':'59ac5f256ca1c99b5edae88ef89ea5c79648fe6d63c134afec42800dca2b04d0'};
- // e434身份来源reader：只追加完整caller/runtime/reader组合；旧退休reader仍独立保留。
- const identity={...retired,'existing-ops-stage-source.js':'ffb6ecb81faa63068fb7f02e3ed170d5c7199589b39dcfb6f1430131313ddbf4'};
- // 运行时消费选路reader：完整16成员与marker0/1分别成组，旧身份组不变。
- const runtimeScope={...identity,'existing-ops-stage-source.js':'a56f43da6e5d3989057ce075cb4cb9b14de4631c65cf2783dfd998a946980e43'};
- const concurrency={...runtimeScope,'existing-ops-stage-source.js':'8172bbfe9377f6672911ff1be4afb6f652932ce7fefe506764e08412e34508a1'};
- // W19冻结仅追加完整caller/runtime/reader组合，marker0/1分别封印，旧全部保留。
- const w19Freeze={...concurrency,'existing-ops-stage-source.js':'8027e13f13edf710b95a78bf036b52c72b48e97f4d01fbd3143144ed3f1f0018'};
- // 触达去抖只读reader已审变更：继承完整16成员，只新增独立marker0/1组。
- const outreach={...w19Freeze,'existing-ops-us-compose-source.js':'e1d026e543ef79614fbebbe5037866b2446535cacdd48698b97e3948f0fcf6fa'};
- // Deep max队列只追加完整16成员与marker0/1配对，旧组保持。
- const deepQueue={...outreach,'existing-ops-stage-source.js':'142de92540dde7a10b81fb765460643da89ca075f34aa093ff1ce840e5b115bd'};
- // Bark清退在已合Deep reader基础上追加完整16成员，两个marker封套各自匹配。
- const barkAfterDeep={...deepQueue,'existing-ops-stage-source.js':'75d26499ff2c61c40c95d9d932ac4a0d8a0bdc3a254fb05aca51980b9eec0f6a'};
- // staging 核心来源只接受已独立审查的完整 reader 对，禁止新旧混搭。
- const stagingTuple={...barkAfterDeep,'existing-ops-runtime-source.js':'38cb8d6a6cae835e7813e3d7907b5aaf89876039840c16b2b83b4c77dc872bbf','existing-ops-us-compose-source.js':'0e7594aec56b98f42dd65073050ce68d2a31fcc9add81c8111a47831644be45b'};
- const suggestionTuple={...stagingTuple,'existing-ops-stage-source.js':'93ea9cbd6eaf25108b46538f77eea980b898720cb0f5299461432277f0d92f02',
-  'existing-ops-workspace-source.js':'c837f68a4813af83625d1fb7640f69df099244df6a8a714cecd0d633ea66496d'};
- // 受管profile PG固定入口：仅追加已审完整16成员组，旧建议回执组独立保留。
- const managedScriptTuple={...suggestionTuple,'existing-ops-stage-source.js':'f098b6fd915915c240b682578747667e4e3c27bac4831e63251f29e28d38b7a4'};
- // 本轮仅追加CommonRunner隔离PG注册的已审只读完整16成员组。
- const commonRunnerTuple={...managedScriptTuple,'existing-ops-stage-source.js':'3764bdd2ed683661768faa24b5b4268ef3ff9e55aaa2b4c87ff2d8c6fa5f650f'};
- // 部署入口清退只新增本轮完整16成员的只读组；旧CommonRunner组保持。
- const deployRetirementTuple={...commonRunnerTuple,'existing-ops-stage-source.js':'4b5bbfad6714648ff660eb9ec1eaaef19fe817673edc0d8ca93b380862e259bc'};
- const skillContractRetirementTuple={...deployRetirementTuple,'existing-ops-stage-source.js':'3047b3958a3d4ec537257773ba527d6cc88a3f209c6ba90b5d7e8bcbb3d7158e'};
- const ownershipDedupTuple={...skillContractRetirementTuple,'existing-ops-stage-source.js':'8db81cd5a7b5def4710635ed202f6d38fd6c54b454a5007ab9fdcbeadab3842e'};
- const w19EventTuple={...ownershipDedupTuple,'existing-ops-stage-source.js':'9d2e4521526c045ff66db4383a7fb229b489b4544881c059caecc9f8de9d4028'};
- const unifiedCiTuple={...w19EventTuple,'existing-ops-stage-source.js':'afe2a03526658a0faa19f3dc423836f47227fdec5c17a5a544f97c6d05bfc560'};
- const nightlyWalkingRetirementTuple={...unifiedCiTuple,'existing-ops-stage-source.js':'d9ad9be0fb9ea5ccd324c16aaac44edfb508aada132b3b29b108a048145d5d09'};
- // API重复typecheck清退只追加已审完整16成员组；旧stage reader与marker配对保持。
- const innerCiPruneTuple={...nightlyWalkingRetirementTuple,'existing-ops-stage-source.js':'5a57cd1cfed93406adb34d9fdd6c969f51159427d0ff9165582ff328a41dbc19'};
- const finalCiJobsTuple={...innerCiPruneTuple,'existing-ops-stage-source.js':'0f65a1a9aa0ec2e96209453591c644a2fcef97bc6b5b174b91e4213d415a3e3d'};
- const functionalTuple={...finalCiJobsTuple,'existing-ops-stage-source.js':'22058669e41acf92cc5f9bb56a8ecb9f6c36574d4e56841be7f70662e86b5900','existing-ops-workspace-source.js':'c99e64e58761c690961250879f3c5ecdc755d7efba6eb53aa5f8b0e23ae0b332'};
- const ubuntuMirrorTuple={...functionalTuple,'existing-ops-stage-source.js':'b52acd0b5aeaaa19bcf07194ee2408a6d78db546b80f3f979a267bde5f52770c'};
- return [current,{...current,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
-  retired,{...retired,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
-  identity,{...identity,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
-  runtimeScope,{...runtimeScope,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
-  concurrency,{...concurrency,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
-  w19Freeze,{...w19Freeze,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
-  outreach,{...outreach,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
-  deepQueue,{...deepQueue,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
-  barkAfterDeep,{...barkAfterDeep,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
-  stagingTuple,{...stagingTuple,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
-  suggestionTuple,{...suggestionTuple,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
-  managedScriptTuple,{...managedScriptTuple,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
-  commonRunnerTuple,{...commonRunnerTuple,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
-  deployRetirementTuple,{...deployRetirementTuple,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
-  skillContractRetirementTuple,{...skillContractRetirementTuple,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
-  ownershipDedupTuple,{...ownershipDedupTuple,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
-  w19EventTuple,{...w19EventTuple,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
-  unifiedCiTuple,{...unifiedCiTuple,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
-  nightlyWalkingRetirementTuple,{...nightlyWalkingRetirementTuple,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
-  innerCiPruneTuple,{...innerCiPruneTuple,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
-  finalCiJobsTuple,{...finalCiJobsTuple,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
-  functionalTuple,{...functionalTuple,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'},
-  ubuntuMirrorTuple,{...ubuntuMirrorTuple,'existing-ops-source.js':'6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848'}];
-}
-
-export function registerCiRetirementGuardTests({root,base,memoBase,scan}) {
- const source=path.join(root,'existing-ops-source.js');
- const members=['stage-source','workspace-source'].map(name=>path.join(root,`existing-ops-${name}.js`));
- describe('CI退役来源只读完整cohort防复活',()=>{
-  const historical=()=>new Map([...base().keys()].map(file=>[file,execFileSync('git',[
-   '--no-replace-objects','show','fadbf32852cdb30f71e34dda9ab81b521bda484b:'+path.relative(path.resolve(root,'../../../..'),file),
-  ],{cwd:root,encoding:'utf8',maxBuffer:1024*1024})]));
-  it('Ubuntu签名镜像的完整只读cohort及原functional完整组均保留marker0/1资格',()=>{
-   const previous=base(),stage=path.join(root,'existing-ops-stage-source.js');
-   previous.set(stage,execFileSync('git',['--no-replace-objects','show',
-    'cbb510946d9f83a356f43de9df2888e080346296:packages/brain/src/lib/existing-ops-stage-source.js'],{cwd:root,encoding:'utf8',maxBuffer:1024*1024}));
-   for(const sources of [previous,base()])for(const marker of [0,1]){
-    expect(sources.size).toBe(16);
-    sources.set(source,sources.get(source).replace(/EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = [01]/,'EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = '+marker));
-    for(const kind of ['build','stage','native-evidence'])expect(scan(sources,path.join(root,`existing-ops-${kind}-envelopes.js`))).toEqual([]);
-   }
-  });
-  it('新镜像stage不得混入历史workspace单成员',()=>{
-   const changed=base(),workspace=path.join(root,'existing-ops-workspace-source.js');
-   changed.set(workspace,historical().get(workspace));
-   expect(scan(changed).some(hit=>hit.rule==='E1')).toBe(true);
-  });
-  it.each(['unknown','eval','spawn'])('新镜像stage的%s突变不得继承只读资格',kind=>{
-   const changed=base(),stage=path.join(root,'existing-ops-stage-source.js');
-   const mutation=kind==='unknown'?'\nexport const unknownArchiveReader=true;'
-    :kind==='eval'?'\neval(candidate);':"\nimport {spawn as launchArchiveProbe} from 'node:child_process';launchArchiveProbe('claude',['-p','probe']);";
-   changed.set(stage,changed.get(stage)+mutation);
-   expect(scan(changed).some(hit=>hit.rule==='E1')).toBe(true);
-   if(kind==='spawn')expect(scan(changed,stage).some(hit=>hit.rule==='R1')).toBe(true);
-  });
-  it('真实版本增量门当前完整reader可读，发布前旧AutoVersion reader仍独立可重放',()=>{
-   for(const sources of [historical(),base()])for(const marker of [0,1]){
-    sources.set(source,sources.get(source).replace(/EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = [01]/,
-     'EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = '+marker));
-    for(const kind of ['build','stage','native-evidence'])expect(scan(sources,path.join(root,`existing-ops-${kind}-envelopes.js`))).toEqual([]);
-   }
-  });
-  it('已合main537完整caller/runtime/reader固定Git回放保留marker0/1资格',()=>{
-   const sources=new Map([...base().keys()].map(file=>[file,execFileSync('git',[
-    '--no-replace-objects','show','53714060cd53adb9b1247c05bde23e7667cd8fb4:'+path.relative(path.resolve(root,'../../../..'),file),
-   ],{cwd:root,encoding:'utf8',maxBuffer:1024*1024})]));
-   expect(sources.size).toBe(16);
-   for(const marker of [0,1]){
-    sources.set(source,sources.get(source).replace(/EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = [01]/,'EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = '+marker));
-    for(const kind of ['build','stage','native-evidence'])expect(scan(sources,path.join(root,`existing-ops-${kind}-envelopes.js`))).toEqual([]);
-   }
-  });
-  it('受管profile PG来源完整组保留此前建议回执16成员的marker0/1资格，未知reader仍拒绝',()=>{
-   const previous=new Map([...base().keys()].map(file=>[file,execFileSync('git',[
-    '--no-replace-objects','show','79cf5c5b20324d4d5a39eadda3f009d64b98f8b3:'+path.relative(path.resolve(root,'../../../..'),file),
-   ],{cwd:root,encoding:'utf8',maxBuffer:1024*1024})]));
-   for(const sources of [previous,base()])for(const marker of [0,1]){
-    expect(sources.size).toBe(16);sources.set(source,sources.get(source).replace(/EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = [01]/,'EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = '+marker));
-    for(const kind of ['build','stage','native-evidence'])expect(scan(sources,path.join(root,`existing-ops-${kind}-envelopes.js`))).toEqual([]);
-   }
-   const changed=base(),stage=path.join(root,'existing-ops-stage-source.js');changed.set(stage,changed.get(stage)+'\nexport const unreviewedManagedScriptReader=true;');
-   expect(scan(changed).some(hit=>hit.rule==='E1')).toBe(true);
-  });
-  it('已合main2f完整身份cohort仍保留marker0/1资格',()=>{
-   const sources=new Map([...base().keys()].map(file=>[file,execFileSync('git',[
-    '--no-replace-objects','show','2f4c9cbb9fbed1d36e4f3407bdf0ab1b72ece968:'+path.relative(path.resolve(root,'../../../..'),file),
-   ],{cwd:root,encoding:'utf8',maxBuffer:1024*1024})]));
-   expect(sources.size).toBe(16);
-   for(const marker of [0,1]){
-    sources.set(source,sources.get(source).replace(/EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = [01]/,'EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = '+marker));
-    for(const kind of ['build','stage','native-evidence'])expect(scan(sources,path.join(root,`existing-ops-${kind}-envelopes.js`))).toEqual([]);
-   }
+const COHORTS=[
+  {
+    "existing-ops-source.js": "6634f6af4cca8862d91548114283b0861f35c349a5a81647fbd18b540c974848",
+    "existing-ops-workspace-source.js": "c99e64e58761c690961250879f3c5ecdc755d7efba6eb53aa5f8b0e23ae0b332",
+    "existing-ops-build-source.js": "210f644726dbf3d0049b7c90ced280fc8fcf65d04e1ae30c2775c2234ed0331a",
+    "existing-ops-build-envelopes.js": "e68813c0304ade2b9f11c4c93ec731e1cb77414aca17d488d8f203c93559888f",
+    "existing-ops-runtime-source.js": "38cb8d6a6cae835e7813e3d7907b5aaf89876039840c16b2b83b4c77dc872bbf",
+    "existing-ops-us-compose-source.js": "0e7594aec56b98f42dd65073050ce68d2a31fcc9add81c8111a47831644be45b",
+    "existing-ops-stage-source.js": "b52acd0b5aeaaa19bcf07194ee2408a6d78db546b80f3f979a267bde5f52770c",
+    "existing-ops-stage-envelopes.js": "1fda2fc1f3bf3ef7684930e46ac8dc0364bd1af1f8f27e97c7eb197fe23a6d8f",
+    "existing-ops-stage-modes.js": "cccab22f5265503733294f12aeb141e8153c39c77d2b4d90fed458b50e601620",
+    "existing-ops-provenance-envelope.js": "ade6df8d35b187ce0495ebd163fa0489379f37114fe2111b4677a4b622933a95",
+    "existing-ops-provenance-core-envelope.js": "c3e8769e7f053fc63d52074235b521df5134e65c31d34f151bb6a9400fa4ab93",
+    "existing-ops-provenance-entry-envelopes.js": "126a93b9db9856fe06894a394ecb9e0afd099860b9fb54e8927c56c8b96a15bb",
+    "existing-ops-provenance-local-envelopes.js": "ef359ef987229815f3d258ff78535fb55dc909bb64eae88d67ce63d0ea55c7f4",
+    "existing-ops-native-evidence-source.js": "04632ac4b6c0c25e141938d3ff68a7c3eda079056f6e82a35ebfede5f35050de",
+    "existing-ops-native-evidence-envelopes.js": "44abae0d93238048356f5573765320b92ad54e481ba78f5925a3c558a8b86013",
+    "../../../../scripts/ci/implementation-snapshot.mjs": "3bd83218b5db7125a0af7c92bf916bb4bde5cc159905acd8746c263bac3e2511"
+  },
+  {
+    "existing-ops-source.js": "d34318e7523501f651d846268d956d6f745349e4cf8a10b1adefdd92ebe9a727",
+    "existing-ops-workspace-source.js": "c99e64e58761c690961250879f3c5ecdc755d7efba6eb53aa5f8b0e23ae0b332",
+    "existing-ops-build-source.js": "210f644726dbf3d0049b7c90ced280fc8fcf65d04e1ae30c2775c2234ed0331a",
+    "existing-ops-build-envelopes.js": "e68813c0304ade2b9f11c4c93ec731e1cb77414aca17d488d8f203c93559888f",
+    "existing-ops-runtime-source.js": "38cb8d6a6cae835e7813e3d7907b5aaf89876039840c16b2b83b4c77dc872bbf",
+    "existing-ops-us-compose-source.js": "0e7594aec56b98f42dd65073050ce68d2a31fcc9add81c8111a47831644be45b",
+    "existing-ops-stage-source.js": "b52acd0b5aeaaa19bcf07194ee2408a6d78db546b80f3f979a267bde5f52770c",
+    "existing-ops-stage-envelopes.js": "1fda2fc1f3bf3ef7684930e46ac8dc0364bd1af1f8f27e97c7eb197fe23a6d8f",
+    "existing-ops-stage-modes.js": "cccab22f5265503733294f12aeb141e8153c39c77d2b4d90fed458b50e601620",
+    "existing-ops-provenance-envelope.js": "ade6df8d35b187ce0495ebd163fa0489379f37114fe2111b4677a4b622933a95",
+    "existing-ops-provenance-core-envelope.js": "c3e8769e7f053fc63d52074235b521df5134e65c31d34f151bb6a9400fa4ab93",
+    "existing-ops-provenance-entry-envelopes.js": "126a93b9db9856fe06894a394ecb9e0afd099860b9fb54e8927c56c8b96a15bb",
+    "existing-ops-provenance-local-envelopes.js": "ef359ef987229815f3d258ff78535fb55dc909bb64eae88d67ce63d0ea55c7f4",
+    "existing-ops-native-evidence-source.js": "04632ac4b6c0c25e141938d3ff68a7c3eda079056f6e82a35ebfede5f35050de",
+    "existing-ops-native-evidence-envelopes.js": "44abae0d93238048356f5573765320b92ad54e481ba78f5925a3c558a8b86013",
+    "../../../../scripts/ci/implementation-snapshot.mjs": "3bd83218b5db7125a0af7c92bf916bb4bde5cc159905acd8746c263bac3e2511"
+  },
+  {
+    "existing-ops-source.js": "1cf2ae6448fb9ec58c84a679d0b2c9016965c2d0edf4921553044e88f20e9b62",
+    "existing-ops-workspace-source.js": "13572f4ef0c99c0804c579f31b6c29887a36eeb99e5bcf361b6d2c6dc13a7c18",
+    "existing-ops-build-source.js": "210f644726dbf3d0049b7c90ced280fc8fcf65d04e1ae30c2775c2234ed0331a",
+    "existing-ops-build-envelopes.js": "e68813c0304ade2b9f11c4c93ec731e1cb77414aca17d488d8f203c93559888f",
+    "existing-ops-runtime-source.js": "0502b6667a7675c94ae8af8e6c74ffea1cbd464d9f8d20671d0eb770c54958ec",
+    "existing-ops-us-compose-source.js": "0e7594aec56b98f42dd65073050ce68d2a31fcc9add81c8111a47831644be45b",
+    "existing-ops-stage-source.js": "ee99df8215285d03daccd26172b1cf64399886901161e594e24d784e366cacb3",
+    "existing-ops-stage-envelopes.js": "1fda2fc1f3bf3ef7684930e46ac8dc0364bd1af1f8f27e97c7eb197fe23a6d8f",
+    "existing-ops-stage-modes.js": "cccab22f5265503733294f12aeb141e8153c39c77d2b4d90fed458b50e601620",
+    "existing-ops-provenance-envelope.js": "ade6df8d35b187ce0495ebd163fa0489379f37114fe2111b4677a4b622933a95",
+    "existing-ops-provenance-core-envelope.js": "c3e8769e7f053fc63d52074235b521df5134e65c31d34f151bb6a9400fa4ab93",
+    "existing-ops-provenance-entry-envelopes.js": "126a93b9db9856fe06894a394ecb9e0afd099860b9fb54e8927c56c8b96a15bb",
+    "existing-ops-provenance-local-envelopes.js": "ef359ef987229815f3d258ff78535fb55dc909bb64eae88d67ce63d0ea55c7f4",
+    "existing-ops-native-evidence-source.js": "04632ac4b6c0c25e141938d3ff68a7c3eda079056f6e82a35ebfede5f35050de",
+    "existing-ops-native-evidence-envelopes.js": "44abae0d93238048356f5573765320b92ad54e481ba78f5925a3c558a8b86013",
+    "../../../../scripts/ci/implementation-snapshot.mjs": "3bd83218b5db7125a0af7c92bf916bb4bde5cc159905acd8746c263bac3e2511"
+  },
+  {
+    "existing-ops-source.js": "0304bbc0f61b22d4b143475e06a5dd66e1e64fd39aa223da6b00aadc45b7444d",
+    "existing-ops-workspace-source.js": "13572f4ef0c99c0804c579f31b6c29887a36eeb99e5bcf361b6d2c6dc13a7c18",
+    "existing-ops-build-source.js": "210f644726dbf3d0049b7c90ced280fc8fcf65d04e1ae30c2775c2234ed0331a",
+    "existing-ops-build-envelopes.js": "e68813c0304ade2b9f11c4c93ec731e1cb77414aca17d488d8f203c93559888f",
+    "existing-ops-runtime-source.js": "0502b6667a7675c94ae8af8e6c74ffea1cbd464d9f8d20671d0eb770c54958ec",
+    "existing-ops-us-compose-source.js": "0e7594aec56b98f42dd65073050ce68d2a31fcc9add81c8111a47831644be45b",
+    "existing-ops-stage-source.js": "ee99df8215285d03daccd26172b1cf64399886901161e594e24d784e366cacb3",
+    "existing-ops-stage-envelopes.js": "1fda2fc1f3bf3ef7684930e46ac8dc0364bd1af1f8f27e97c7eb197fe23a6d8f",
+    "existing-ops-stage-modes.js": "cccab22f5265503733294f12aeb141e8153c39c77d2b4d90fed458b50e601620",
+    "existing-ops-provenance-envelope.js": "ade6df8d35b187ce0495ebd163fa0489379f37114fe2111b4677a4b622933a95",
+    "existing-ops-provenance-core-envelope.js": "c3e8769e7f053fc63d52074235b521df5134e65c31d34f151bb6a9400fa4ab93",
+    "existing-ops-provenance-entry-envelopes.js": "126a93b9db9856fe06894a394ecb9e0afd099860b9fb54e8927c56c8b96a15bb",
+    "existing-ops-provenance-local-envelopes.js": "ef359ef987229815f3d258ff78535fb55dc909bb64eae88d67ce63d0ea55c7f4",
+    "existing-ops-native-evidence-source.js": "04632ac4b6c0c25e141938d3ff68a7c3eda079056f6e82a35ebfede5f35050de",
+    "existing-ops-native-evidence-envelopes.js": "44abae0d93238048356f5573765320b92ad54e481ba78f5925a3c558a8b86013",
+    "../../../../scripts/ci/implementation-snapshot.mjs": "3bd83218b5db7125a0af7c92bf916bb4bde5cc159905acd8746c263bac3e2511"
+  }
+];
+export const ciVersionGuardCohorts=()=>COHORTS;
+export function registerCiRetirementGuardTests({root,base,scan}){
+ describe('当前来源完整闭包及执行防复活',()=>{
+  it('当前main与候选完整组只取得只读数据资格',()=>{
+   const previous=new Map([...base().keys()].map(file=>[file,execFileSync('git',['--no-replace-objects','show','227c14e6ff8970f5c408a8dc87e8b9d0f0d16cfe:'+path.relative(path.resolve(root,'../../../..'),file)],{cwd:root,encoding:'utf8',maxBuffer:1024*1024})]));
+   for(const sources of [previous,base()])for(const kind of ['build','stage','native-evidence'])expect(scan(sources,path.join(root,'existing-ops-'+kind+'-envelopes.js'))).toEqual([]);
   });
   it.each([...Array(16).keys()].flatMap(index=>['missing','drift'].map(kind=>[index,kind])))('当前16成员第%s项%s拒绝',(index,kind)=>{
    const current=base();expect(current.size).toBe(16);const file=[...current.keys()][index];
-   if(kind==='missing')current.delete(file);else current.set(file,current.get(file)+'\nexport const ciUnknownMember=true;\n');
+   if(kind==='missing')current.delete(file);else current.set(file,current.get(file)+'\nexport const unknownMember=true;\n');
    const target=path.join(root,'existing-ops-'+(file.endsWith('stage-envelopes.js')?'build':'stage')+'-envelopes.js');
    expect(scan(current,target).some(hit=>hit.rule==='E1')).toBe(true);
   });
-  it.each(['source','runtime-source'])('身份reader不能与固定旧Git的%s单成员混搭',name=>{
-   const file=path.join(root,`existing-ops-${name}.js`),current=base();
-   const old=execFileSync('git',['--no-replace-objects','show','88be2549bed2a8d8a3b5a6324bf5ea6267dda0da:'+path.relative(path.resolve(root,'../../../..'),file)],{cwd:root,encoding:'utf8',maxBuffer:1024*1024});
-   expect(current.get(file)).not.toBe(old);
-   current.set(file,old);expect(scan(current).some(hit=>hit.rule==='E1')).toBe(true);
-  });
-  it.each(['stage-source','workspace-source'])('建议回执CI组合不得混入旧 %s',name=>{
-   const file=path.join(root,`existing-ops-${name}.js`),current=base();
-   const old=execFileSync('git',['--no-replace-objects','show','a4aadb812ef9664f7a061f9709331776e965214c:'+path.relative(path.resolve(root,'../../../..'),file)],{cwd:root,encoding:'utf8',maxBuffer:1024*1024});
-   expect(current.get(file)).not.toBe(old);
-   current.set(file,old);expect(scan(current).some(hit=>hit.rule==='E1')).toBe(true);
-  });
-  it.each(['stage-source','workspace-source'])('旧CI组合不得混入建议回执新 %s',name=>{
-   const current=base(),file=path.join(root,`existing-ops-${name}.js`),newValue=current.get(file);
-   for(const item of ['stage-source','workspace-source']){
-    const oldFile=path.join(root,`existing-ops-${item}.js`);
-    const old=execFileSync('git',['--no-replace-objects','show','a4aadb812ef9664f7a061f9709331776e965214c:'+path.relative(path.resolve(root,'../../../..'),oldFile)],{cwd:root,encoding:'utf8',maxBuffer:1024*1024});
-    current.set(oldFile,old);
-   }
-   expect(scan(current).some(hit=>hit.rule==='E1')).toBe(false);
-   current.set(file,newValue);expect(scan(current).some(hit=>hit.rule==='E1')).toBe(true);
-  });
-  it('完整身份reader也不能给予未知外部caller只读资格',()=>{
-   const current=base();current.set(path.join(root,'unknown-identity-reader.js'),
-    "import { ENVELOPES } from './existing-ops-build-envelopes.js';eval(ENVELOPES.spawnParameters);");
+  it.each(['source','runtime-source','stage-source','workspace-source'])('旧历史单成员不能混入当前闭包：%s',name=>{
+   const current=base(),file=path.join(root,'existing-ops-'+name+'.js');
+   current.set(file,execFileSync('git',['--no-replace-objects','show','88be2549bed2a8d8a3b5a6324bf5ea6267dda0da:packages/brain/src/lib/'+path.basename(file)],{cwd:root,encoding:'utf8',maxBuffer:1024*1024}));
    expect(scan(current).some(hit=>hit.rule==='E1')).toBe(true);
   });
-  it.each(['runtime-source','us-compose-source'])('staging reader 不能混入旧 %s',name=>{
-   const file=path.join(root,`existing-ops-${name}.js`),current=base();
-   const old=execFileSync('git',['--no-replace-objects','show','93af657de65bf7e3b49a4dc34f6fbf56da8be655:'+path.relative(path.resolve(root,'../../../..'),file)],{cwd:root,encoding:'utf8',maxBuffer:1024*1024});
-   expect(current.get(file)).not.toBe(old);current.set(file,old);
+  it('未知外部caller不能取得只读资格',()=>{
+   const current=base();current.set(path.join(root,'unknown-reader.js'),"import {ENVELOPES} from './existing-ops-build-envelopes.js';eval(ENVELOPES.spawnParameters);");
    expect(scan(current).some(hit=>hit.rule==='E1')).toBe(true);
-   const prior=new Map([...base().keys()].map(item=>[item,execFileSync('git',['--no-replace-objects','show','93af657de65bf7e3b49a4dc34f6fbf56da8be655:'+path.relative(path.resolve(root,'../../../..'),item)],{cwd:root,encoding:'utf8',maxBuffer:1024*1024})]));
-   prior.set(file,base().get(file));expect(scan(prior).some(hit=>hit.rule==='E1')).toBe(true);
-  });
-  it('ce20完整旧reader组合仍可重放，追加退休组合不覆盖旧证明',()=>{
-   const sources=new Map([...base().keys()].map(file=>[file,execFileSync('git',[
-    '--no-replace-objects','show','ce20b5a29123c9ade1a0bc4aa2753e3ea3fe310d:'+path.relative(path.resolve(root,'../../../..'),file),
-   ],{cwd:root,encoding:'utf8',maxBuffer:1024*1024})]));
-   for(const kind of ['build','stage','native-evidence'])expect(scan(sources,path.join(root,`existing-ops-${kind}-envelopes.js`))).toEqual([]);
-  });
-  it.each([source,members[0]])('当前版本门reader不能混配旧AutoVersion成员：%s',file=>{
-   const current=base(),old=historical();
-   expect(current.get(file)).not.toBe(old.get(file));
-   current.set(file,old.get(file));expect(scan(current).some(hit=>hit.rule==='E1')).toBe(true);
-   old.set(file,base().get(file));expect(scan(old).some(hit=>hit.rule==='E1')).toBe(true);
-  });
-  it.each([0,1])('完整marker%s配对保留三类只读封套，旧memo组合独立保留',marker=>{
-   const current=base();current.set(source,current.get(source).replace(/EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = [01]/,'EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = '+marker));
-   for(const kind of ['build','stage','native-evidence'])expect(scan(current,path.join(root,`existing-ops-${kind}-envelopes.js`))).toEqual([]);
-   expect(scan(memoBase())).toEqual([]);
-  });
-  it.each(members.flatMap(file=>['missing','mixed','drift'].map(kind=>[file,kind])))('%s %s不能取得完整只读资格',(file,kind)=>{
-   const current=base(),original=current.get(file);
-   if(kind==='missing')current.delete(file);
-   else current.set(file,kind==='mixed'?memoBase().get(file):original+'\nexport const unreviewedRetirementReader=true;');
-   expect(current.get(file)).not.toBe(original);
-   expect(scan(current).some(hit=>hit.rule==='E1')).toBe(true);
-  });
-  it.each(members.flatMap(file=>['early return','spawn'].map(kind=>[file,kind])))('%s %s仍被守卫拒绝',(file,kind)=>{
-   const current=base(),original=current.get(file);
-   const anchor=file.endsWith('stage-source.js')
-    ?'export async function collectBasicCiSources({ read, ci, revision, relations, parse, paths }) {'
-    :'export async function collectWorkspaceInputEdges({ revision, paths, readSource, parse }) {';
-   const edited=kind==='early return'?original.replace(anchor,anchor+'\n return [];')
-    :original+"\nimport {spawn as launchRetired} from 'node:child_process';launchRetired('claude',['-p','probe']);";
-   expect(edited).not.toBe(original);current.set(file,edited);
-   expect(scan(current).some(hit=>hit.rule==='E1')).toBe(true);
-   if(kind==='spawn')expect(scan(current,file).some(hit=>hit.rule==='R1')).toBe(true);
-  });
-  it.each([0,1])('触达去抖新reader与已合旧reader完整marker%s均保留三封套资格',marker=>{
-   const old=new Map([...base().keys()].map(file=>[file,execFileSync('git',[
-    '--no-replace-objects','show','72681c2ab20c1509feae6d5ee28d2bf0b54566c4:'+path.relative(path.resolve(root,'../../../..'),file),
-   ],{cwd:root,encoding:'utf8',maxBuffer:1024*1024})]));
-   for(const sources of [old,base()]){
-    expect(sources.size).toBe(16);
-    sources.set(source,sources.get(source).replace(/EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = [01]/,'EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA = '+marker));
-    for(const kind of ['build','stage','native-evidence'])expect(scan(sources,path.join(root,`existing-ops-${kind}-envelopes.js`))).toEqual([]);
-   }
-  });
-  it.each(['missing','drift','process'])('触达reader %s不继承完整只读资格',kind=>{
-   const current=base(),file=path.join(root,'existing-ops-us-compose-source.js');
-   if(kind==='missing')current.delete(file);
-   else current.set(file,current.get(file)+(kind==='drift'?'\nexport const unknownOutreachReader=true;':"\nimport {spawn as launch} from 'node:child_process';launch('claude',['-p']);"));
-   expect(scan(current).some(hit=>hit.rule==='E1')).toBe(true);
-   if(kind==='process')expect(scan(current,file).some(hit=>hit.rule==='R1')).toBe(true);
   });
  });
 }

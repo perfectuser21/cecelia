@@ -64,13 +64,3 @@ it('非法角色和重复JSON键不能被退役helper洗掉', () => {
   expect(() => auxiliary.removeDeletedArtifactRelations(f.text.replace('documentation', 'unknown'), transient)).toThrow();
   expect(() => auxiliary.removeDeletedArtifactRelations(f.text.replace('"schema_version":1', '"schema_version":1,"schema_version":1'), transient)).toThrow();
 });
-it('执行真实cleanup脚本，文档与声明同一Git提交且持久文档保留', () => {
-  const f = fixture();
-  const script = new URL('../../../../../scripts/ci/cleanup-merged-artifacts.mjs', import.meta.url).pathname;
-  execFileSync(process.execPath, [script], { cwd: f.root, env: { ...process.env, GITHUB_OUTPUT: join(f.root, 'github-output') }, encoding: 'utf8' });
-  for (const path of transient) expect(existsSync(join(f.root, path))).toBe(false);
-  expect(existsSync(join(f.root, 'docs/persistent.md'))).toBe(true);
-  expect(f.git('diff', '--cached', '--name-only')).toContain(auxiliary.SOURCE_RELATIONS_PATH);
-  f.git('commit', '-qm', 'actual script atomic commit');
-  expect(assertHead(f).head.relations.map(item => item.path)).toEqual(['docs/persistent.md']);
-});

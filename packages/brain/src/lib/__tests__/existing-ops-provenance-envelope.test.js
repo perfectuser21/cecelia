@@ -7,7 +7,7 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { parse as acorn } from 'acorn';
 import { proveBuildSources, provePublishSources } from '../existing-ops-build-source.js';
-import { buildExistingOpsSources } from './helpers/existing-ops-proof-builder.js';
+import { collectBuildSources } from '../existing-ops-build-source.js';
 // 独立冻结 Git 样本：保留原始字节，不从被测封套常量重建。
 const fixture = {
   "revision": "dd949d881ff0d760934dbcfb309e3949b8155d1e",
@@ -86,21 +86,23 @@ describe('已审 provenance V2 封套的真实闭包转发', () => {
     const value = sources(); value[key] = fixed(fixture.paths[key]);
     expect(proveBuildSources(value, parse)).toBe(false);
   });
-  it('全 collector 读取新增5模块并记录真实闭包调用依赖，原 runner 关系不丢', async () => {
+  it('build 子collector读取新增5模块并保留真实活动调用依赖', async () => {
     const basePaths = execFileSync('git', ['ls-tree', '-rz', '--name-only', base], { cwd: root, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 }).split('\0').filter(Boolean);
     const overrides = {...stageInputs,...Object.fromEntries(Object.entries(fixture.paths).map(([key, path]) => [path, fixture.sources[key]]))};
     const readPaths = new Set();
-    const result = await buildExistingOpsSources({ scope: 'cecelia-factory', repo: 'perfectuser21/cecelia', revision: base,
+    const bindings=[],relations=[],gaps=[];
+    const readSource=async path => { readPaths.add(path); return overrides[path] ?? fixed(path); };
+    await collectBuildSources({ parse,revision:base, selectors:{include:[/coding-workflow\/__tests__\/(build|publish)\.test\.mjs$/],exclude:[]},relations,requireProof:(ok,code)=>{if(!ok)gaps.push({code});return Boolean(ok);},read:async path=>{const text=await readSource(path);bindings.push({path});return text;},
       paths: [...new Set([...basePaths, ...Object.values(fixture.paths)])],
       readSource: async path => { readPaths.add(path); return overrides[path] ?? fixed(path); } });
-    const f3 = result.consumers[1]; expect(f3.status, JSON.stringify(f3.gaps)).toBe('verified');
+    const f3={status:gaps.length?'unknown':'verified',gaps,bindings,input_relations:relations}; expect(f3.status, JSON.stringify(f3.gaps)).toBe('verified');
     expect(new Set(f3.input_relations.map(r => JSON.stringify(r))).size).toBe(f3.input_relations.length);
     for (const key of ['activityProvenance', 'recordProvenance', 'recordStore', 'recordRecords', 'provenancePath']) {
       expect(readPaths.has(fixture.paths[key])).toBe(true);
       expect(f3.bindings.map(b => b.path)).toContain(fixture.paths[key]);
       expect(f3.input_relations.some(r => r.input_path === fixture.paths[key])).toBe(true);
     }
-    expect(f3.input_relations.some(r => r.kind === 'native_node_runner_spawn')).toBe(true);
+    expect(f3.input_relations.some(r => r.kind === 'native_build_activity_spawn')).toBe(true);
   }, 30000);
   it('只选择 publish 时不把未证明消费的 activity helper 记入绑定', async () => {
     const { collectBuildSources } = await import('../existing-ops-build-source.js');
@@ -156,13 +158,7 @@ describe('已审 isolation 完整来源闭包',()=>{
   ['stage不封存','activityProvenance','sealStageEvidence({','fakeSeal({'],
  ];
  for(const [name,key,before,after] of mutations)it(name+' 拒绝',()=>{const s=isolationBuildSources();if(before){expect(s[key]).toContain(before);s[key]=s[key].replace(before,after);}else s[key]+=after;expect(()=>parse(s[key])).not.toThrow();expect(proveBuildSources(s,parse)).toBe(false);});
- it('固定正式1b完整 factory collector 输出逐字不漂移',async()=>{
-  const revision='1b253761280dac9bcbe8e56c6e5b13b23e3d5d1c';
-  const paths=execFileSync('git',['--no-replace-objects','ls-tree','-rz','--name-only',revision],{cwd:root,encoding:'utf8',maxBuffer:32*1024*1024}).split('\0').filter(Boolean),cache=new Map();
-  const result=await buildExistingOpsSources({scope:'cecelia-factory',repo:'perfectuser21/cecelia',revision,paths,readSource:async p=>{if(!cache.has(p))cache.set(p,execFileSync('git',['--no-replace-objects','show',revision+':'+p],{cwd:root,encoding:'utf8',maxBuffer:16*1024*1024}));return cache.get(p);}});
-  expect(result.consumers.every(c=>c.status==='verified'&&c.gaps.length===0)).toBe(true);
-  expect(createHash('sha256').update(JSON.stringify({'cecelia-factory':result},null,2)+'\n').digest('hex')).toBe('19e584627557797d844dfc20318b35310c79b7429e945293947941045a88308d');
- },60000);
+
 });
 
 // 独立冻结 candidate-freeze-v1 原字节（2026-10-16）；仅作 AST 数据，不执行候选。

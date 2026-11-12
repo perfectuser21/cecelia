@@ -1,12 +1,6 @@
 import { defineConfig } from 'vitest/config';
-import path from 'path';
 
 export default defineConfig({
-  resolve: {
-    alias: {
-      '@': path.resolve(__dirname, './src')
-    }
-  },
   esbuild: {
     jsx: 'automatic',
     jsxDev: false
@@ -31,9 +25,6 @@ export default defineConfig({
     include: ['features/**/*.{test,spec}.{ts,tsx}'],
     exclude: [
       'node_modules', 'dist', '.idea', '.git', '.cache',
-      'src/system/__tests__/memory.test.ts',
-      'src/system/__tests__/planning.test.ts',
-      'src/system/__tests__/dev-session.test.ts',
       'tests/capture/db.test.ts',
     ]
   }

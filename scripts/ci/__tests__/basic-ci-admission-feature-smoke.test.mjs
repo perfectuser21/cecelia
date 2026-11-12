@@ -55,7 +55,7 @@ test('feature smoke不能把真实Node全TODO的exit0当作成功',async t=>{
  assert.equal(result.error,null);assert.match(result.stdout,/# pass 0\b/);assert.match(result.stdout,/# todo 60\b/);
  assert.throws(()=>assertSmokeSuccess(result));
 });
-test('feature smoke真实执行且统一源码CI唯一发现全部基础与退休合同',{timeout:90000},async t=>{
+test('feature smoke棘轮真实委派且统一源码CI唯一发现准入合同',{timeout:90000},async t=>{
  const name='ci-admission-bootstrap-smoke.sh';
  assert.equal(entries(readSmokeAllowlist()).filter(line=>line===name).length,1);
  for(const list of ['smoke-denylist.txt','smoke-debt.txt'])assert.equal(entries(readFileSync(join(root,'packages/brain/config/smoke',list),'utf8')).includes(name),false);
@@ -66,7 +66,14 @@ test('feature smoke真实执行且统一源码CI唯一发现全部基础与退�
  const f=fixture(t),smokeDir=join(f.directory,'ratchet-only');mkdirSync(smokeDir);
  // 私有ratchet输入目录仅调用真实脚本，避免本地执行其它线上smoke。
  const actual=join(root,'packages/brain/scripts/smoke',name);writeFileSync(join(smokeDir,name),"#!/bin/bash\nexec bash '"+actual.replaceAll("'","'\\''")+"'\n",{mode:0o700});
- const result=await run({...f.env,SMOKE_DIR:smokeDir});assertSmokeSuccess(result);assert.match(result.stdout,/GATE PASSED/);assert.match(result.stdout,/UNREGISTERED:\s+0/);assert.equal(result.stdout.includes('五个显式退休仅产生候选'),false);assert.equal((result.stdout+result.stderr).includes(f.env.GH_TOKEN),false);
+ // 准入七组测试已由统一Node入口运行；这里仅验证真实棘轮到bootstrap的委派和退出边界。
+ const bin=join(f.directory,'bin');mkdirSync(bin);
+ const node=join(bin,'node');
+ writeFileSync(node, '#!/bin/sh\nif [ "$1" = -p ]; then echo 22; else echo SMOKE_BOOTSTRAP_DELEGATED; fi\n',{mode:0o700});
+ const environment={...f.env,PATH:bin+':'+f.env.PATH,SMOKE_DIR:smokeDir};
+ const result=await run(environment);assert.equal(result.error,null,result.stderr);assert.match(result.stdout,/SMOKE_BOOTSTRAP_DELEGATED/);assert.match(result.stdout,/GATE PASSED/);assert.match(result.stdout,/UNREGISTERED:\s+0/);assert.equal((result.stdout+result.stderr).includes(f.env.GH_TOKEN),false);
+ writeFileSync(node,'#!/bin/sh\nif [ "$1" = -p ]; then echo 22; else exit 17; fi\n',{mode:0o700});
+ const rejected=await run(environment);assert.notEqual(rejected.error,null);assert.match(rejected.stdout,/BASELINE FAIL \(exit 17\)/);
  assert.equal(readFileSync(join(root,'scripts/ci/__tests__/implementation-main-snapshot.test.mjs'),'utf8').includes("import './ci-admission-mechanisms.test.mjs'"),false);
  const {relations}=createRequire(import.meta.url)('../../../.implementation-source-relations.json');
  const removed=['packages/brain/src/__tests__/ci-admission-baseline-contracts.test.js','packages/brain/src/__tests__/ci-verification-retirement-contracts.test.js','scripts/ci/__tests__/ci-admission-mechanisms.test.mjs'];

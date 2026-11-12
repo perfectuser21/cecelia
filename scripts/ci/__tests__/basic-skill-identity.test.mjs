@@ -70,6 +70,7 @@ test('所有composite调用者显式传入公开var身份摘要', () => {
 test('真实composite在fetch前校验身份：错配零fetch，匹配才到原入口', () => {
   const workspace=join(directory, 'workspace');mkdirSync(join(workspace, 'scripts/ci'), {recursive:true});
   if (existsSync(helper)) copyFileSync(helper, join(workspace, 'scripts/ci/check-skill-source-identity.py'));
+  copyFileSync(join(root, 'scripts/skill_source_ownership.py'), join(workspace, 'scripts/skill_source_ownership.py'));
   const marker=join(workspace, 'fetch-reached');
   writeFileSync(join(workspace, 'scripts/ensure-skills-source.sh'), '#!/bin/bash\nprintf reached > "$GITHUB_WORKSPACE/fetch-reached"\n');
   spawnSync('git', ['init', '-q', workspace]);
@@ -77,5 +78,10 @@ test('真实composite在fetch前校验身份：错配零fetch，匹配才到原�
   const run = hash => spawnSync('bash', ['--noprofile', '--norc', '-e', '-o', 'pipefail', '-c', body], {cwd:workspace, env:{...env(privateKey, hash), GITHUB_WORKSPACE:workspace}, encoding:'utf8'});
   const bad=run('0'.repeat(64));assert.notEqual(bad.status, 0);assert.equal(existsSync(marker), false);
   const good=run(expected);assert.equal(good.status, 0, good.stderr);assert.equal(readFileSync(marker,'utf8'), 'reached');
+  mkdirSync(join(workspace, 'folder with spaces'));
+  writeFileSync(join(workspace, 'folder with spaces/sKiLl.Md'), 'misplaced definition');
+  const tracked = spawnSync('git', ['add', 'folder with spaces/sKiLl.Md'], {cwd:workspace});assert.equal(tracked.status, 0);
+  const misplaced=run(expected);assert.notEqual(misplaced.status, 0, '真实composite必须拒绝大小写混合、空格路径中的已跟踪技能正文');
+  assert.match(misplaced.stderr, /folder with spaces\/sKiLl.Md/);
   assert.equal(composite.runs.steps[0].env.SKILLS_SOURCE_PUBLIC_KEY_SHA256, '${{ inputs.expected-public-sha256 }}');
 });

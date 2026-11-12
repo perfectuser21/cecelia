@@ -497,4 +497,3 @@ export async function collectIsolatedStagingSources({read,requireProof,relations
  ])relations.push({consumer_path,input_path,kind,revision});
 }
 // 仅证明真实nightly回归消费链；不声称生产版本发布已经运行。
-export { collectAutoVersionTestSources } from './existing-ops-workspace-source.js';

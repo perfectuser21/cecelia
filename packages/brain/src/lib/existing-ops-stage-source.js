@@ -220,64 +220,24 @@ const sorted = x => Array.isArray(x) ? x.map(sorted) : x && typeof x === 'object
 const workflowHash = text => hash(JSON.stringify(sorted(yaml.load(text))));
 // 完整封印包括plan的组件集合/六分片、真实命令/退出码、scratch隔离和拒绝非success的汇总。
 // 更新封印必须先重跑真实命令正反例；候选自己声明marker并不能修改受信任解析器内的封印。
-const REVIEWED = {
-  'packages/brain/vitest.config.js': '689878adaa1135e5783a0904b6c10918f40cd380a8e8bdd9046e32ec7e382e89',
-  'packages/engine/vitest.config.ts': '87652971ef852d98a08dceb5f2ecbef2cd6eb2336f1fbce6879d3fa6dc77c2f8',
-  'scripts/ci/basic-scope.mjs': '5171c4eed9ab91e2dab79a06a0f7ca775320e35d146d26aa2e0f26a7a656734d',
-  [BASIC_RUNNER]: 'c4e57861903b8ad1d2a6b6d3e3385311b8f5ea97c64736fa66e54c4e329b0530',
-  'scripts/ci/check-basic-results.mjs': 'b6c0b93e15320deff680e765f4558fcdb2a8d98c65d7a926d94f2158af6641e2',
-  'scripts/ci/basic-runtime-smoke.mjs': 'b386b8c0c8631de5b6a0eec19494835f48c6ca3822a4533ee154ce8767a21eec',
-  'scripts/ci/ops-checks.mjs': '96023fd57f11eb1277396b77419bad94a050d0ef64b1c5993db258d87797df82',
-  'scripts/ci/run-isolated-staging-smoke.mjs': 'fa19da1eaf14621a75d95763229fa8d6de40ce3e55940401458346da37f8fbaf',
-  [SKILL_SELECTOR]: '1daf4f27f6fa97b3c8f3d9a9e1a9e86e44fbe92b84c962d1c2ce3b90db32b147',
-};
-const REVIEWED_API = {
-    ...REVIEWED,
-    'packages/brain/vitest.config.js': '906b91dbaaf68ea004b60a252ab0af88bda443cde8418d8a3b812b48ebe4c0f8',
-    'scripts/ci/basic-scope.mjs': '9844bb702db2c1a9507f88f1c6c330f676b786cb784592dc4aaefc096b93d6ef',
-    [BASIC_RUNNER]: 'c9c1318dcd6b35981453aa06f656f5a99cb6283d2b7e4ea4a1cf8f6772103f6d',
-    'apps/api/vitest.config.ts': '06e1a3d6e071c95de35b874e9f2ca3ddd05bd673257f9761340c6d9b29c16409',
-    'apps/api/vitest.integration.config.ts': '6c2a55ccba874bf8fcae7858f0b9f21295f6728f430860a4ee60c1612cc59dec',
-    [PINNED_READER]: '3cf300333012557b0191ca6eba5a1bc112c99cbff1daf4ea85da8e2d33f96f66',
-    [PINNED_WORKFLOW]: 'aaf1a1cdc30961114927231193c071d53d27976eb09971e0c72e63a8176eb129',
-};
-// 当前完整闭包：真实版本门、现役组件集合与测试选择器共同封印，禁止新旧逐文件混配。
-const REVIEWED_VERSION_CLOSURE = {
-  "packages/brain/vitest.config.js": "ee12d4b8185b78f49f95aef478f9de1d00f6bc83a17e50c7b252aa1acc0636f7",
-  "scripts/ci/basic-scope.mjs": "b7ef8265ea1a713e17a9e3c6291c52f5a345d5c676878026b39f3d30f825e33f",
-  "scripts/ci/run-basic-check.mjs": "8fd40691a48106b30363e553acb0f4f949c8801fbba268c599c33e059bdc3636",
-  "scripts/ci/check-basic-results.mjs": "b6c0b93e15320deff680e765f4558fcdb2a8d98c65d7a926d94f2158af6641e2",
+// 仅现行main与经独立审查的新候选完整组可提供来源；历史组合不再授予入口资格。
+const REVIEWED_CURRENT = {
+  "packages/brain/vitest.config.js": "9566bd1cff449dc15ee924aea4c9f46aaa3457392fadf8cbf10d0b6556c2634e",
+  "scripts/ci/basic-scope.mjs": "446605f2052c09c44c21bd2c9f8bcee206b3198be4d18858f1c8298ece0be726",
+  "scripts/ci/run-basic-check.mjs": "10e030617fb6ca219bd4965afa2566213f8788bc4e3741d3e7b3d7ebf5e45918",
+  "scripts/ci/check-basic-results.mjs": "084cc7187734c0dd83dddb528d87aa16d3ed9a49c3ea0eebf2c97cb4c4775da3",
   "scripts/ci/basic-runtime-smoke.mjs": "b386b8c0c8631de5b6a0eec19494835f48c6ca3822a4533ee154ce8767a21eec",
-  "scripts/ci/ops-checks.mjs": "e65d0f59a1f4af9950e5e6a601c3841b3ee7ed54d50106f587eef041642910a7",
+  "scripts/ci/ops-checks.mjs": "a5eb851d2f526e940432563a70e8a82fb0f128d66a8104515fec530974a55f6b",
   "scripts/ci/run-isolated-staging-smoke.mjs": "fa19da1eaf14621a75d95763229fa8d6de40ce3e55940401458346da37f8fbaf",
-  "scripts/ci/skill-source-tests.mjs": "6f8d97d2346e8b1bd00f4b532d76c8fa9bb871cb807adf7a13d5ce0ffb0f18e3",
-  "apps/api/vitest.config.ts": "c16a9be96bc4e1810400965043b41300d075da45ddf449ed5bf187b791e1ac7a",
-  "apps/api/vitest.integration.config.ts": "6c2a55ccba874bf8fcae7858f0b9f21295f6728f430860a4ee60c1612cc59dec",
-  "scripts/ci/__tests__/basic-skill-source-coverage.test.mjs": "98fd35089efe6214bc2c45b5a6cd78dae056dfe58f51c39985f2cf6c82434d43",
-  ".github/workflows/skills-source-check.yml": "76d156086b08bec21b69ccd1cba051f481261a2b70cad448203f655492e179ff",
-  "scripts/ci/check-brain-version-bump.sh": "361c35c33c2d0d404d9365c51478212e50ebe84df6a65eacca473ea57bffa0eb"
-};
-// 新身份门的完整已审组合；只追加本轮精确字节，所有历史组合保持原样。
-const REVIEWED_IDENTITY_CLOSURE = {
-  ...REVIEWED_VERSION_CLOSURE,
-  "packages/brain/vitest.config.js": "fe6de3054f559116886d6d3286542896f510bbb887893ef0727a16df72c39f9e",
-  ".github/workflows/skills-source-check.yml": "d2f15365d688cbc3af34ac6c8a1100df46bc05e8aad5d4b43e00cf3acf264b4e",
+  "scripts/ci/skill-source-tests.mjs": "dbb749f30271472fe1f24e1eec2215d7b5999f20c1d4ed74c00fd4b40f6c57c8",
+  "apps/api/vitest.config.ts": "6f4d8288dd391a8212c1bc22d434f8c4053f76099df2beb692693b1c80512b33",
+  "scripts/ci/__tests__/basic-skill-source-coverage.test.mjs": "acc2046d6691423b739edc4071c9ea87f00e57a1a8b7a06be91d5487d24ad2c9",
+  "scripts/ci/check-brain-version-bump.sh": "361c35c33c2d0d404d9365c51478212e50ebe84df6a65eacca473ea57bffa0eb",
   ".github/actions/skills-source/action.yml": "283a44569b4b037d11ebbac624f91ed013ab91be4916182a87a2bf95078ec105",
   "scripts/ci/check-skill-source-identity.py": "ebc6b90fbe187b49c31101a5dba997d133fd45825cfcaa3549aad30581d747c1",
-  "scripts/ci/__tests__/basic-skill-identity.test.mjs": "f473e5353e93f1e30bfb673d1a2bafd8475685a45a6ca10ab252468e2d747865",
-};
-// 运行时说明书与Dashboard共享UI选路：只追加这一完整精确组合。
-const REVIEWED_RUNTIME_SCOPE_CLOSURE = {
-  ...REVIEWED_IDENTITY_CLOSURE,
-  "scripts/ci/basic-scope.mjs": "2914d8e8672b4b17a1037e1ccaa25c02b13d5e3cc34dcfcdf8da1a603faae042",
-};
-// W19只作冻结来源：完整现役协议与全部八份历史输入共同封印，保留旧组。
-const REVIEWED_W19_FREEZE_CLOSURE = {
-  ...REVIEWED_RUNTIME_SCOPE_CLOSURE,
-  "scripts/ci/basic-scope.mjs": "c97f3d3300ce74237086b819def622636dc6776f663753d6ec3e68ea2d21a14b",
-  "scripts/ci/run-basic-check.mjs": "aed179661ff08ef743cb8feb0c9e88bb59342d3c0ab690bf17e812f8c868c0ae",
-  "scripts/ci/check-w19-frozen.mjs": "8386f606e3b370826a6dab76ac36cb7c1d6dfde4e94859fca9e4fd2642739f21",
-  "scripts/ci/__tests__/basic-w19-freeze.test.mjs": "4f65a9451d0becb1d22a87914d22f8f9ebd82bc4268ea4963f2ade863ddb663f",
+  "scripts/ci/__tests__/basic-skill-identity.test.mjs": "1666a389a01a450bbe2ed14f15abc77dfa00d59ff77cc7aeb08d628cf52d343b",
+  "scripts/ci/check-w19-frozen.mjs": "9e3a937e951e712934f8268a3af237b8ba3689d68f42fc9de10bf1b6e3b3ca7b",
+  "scripts/ci/__tests__/basic-w19-freeze.test.mjs": "127bfd50494259a78e2f3649c399596fc94acc90a3db17c43077a6ea47cf785a",
   "playground/package-lock.json": "e2fa656e54b0d2d4f8c7398c24651589ff1556ffabbcec368465ff19d12bb6e9",
   "playground/package.json": "9c340ea6eae6af3ad2cf7e41b003141193dbe6369451529e40deb41dd786e85d",
   "playground/server.js": "c77d87096634b48a699c3951a07e0a74609535454f38078b97a0b35f87cfd38e",
@@ -286,39 +246,43 @@ const REVIEWED_W19_FREEZE_CLOSURE = {
   "playground/tests/ping.test.js": "d364c15e08f487c70a312c1299a1b02758d935fb4f395a64992456c8fb09eb62",
   "playground/tests/server.test.js": "b6b0628c4435d5a69de002207a35a34c713bda7897505586f501c7048c4adbf8",
   "playground/vitest.config.js": "e6b279b6d857f890dfa2b3a84deb4f52d2d9e9300bdfaf392ebf94f258f6e204",
+  "scripts/ci/run-skill-source-check.mjs": "debcaf26aa7025f47d846052e0c2b43d1a04976003936143d80ddac1582d7204",
+  "apps/dashboard/vitest.config.ts": "a5899ed07ee4aa8ff262f7da361d695ef8eb26005571c5e09988aac53c1cc261",
+  "scripts/ci/prepare-ubuntu-archive.mjs": "ca83d00df2f865fc1836e0f8841bc5f4ba7ddf57416b6f718855f5840205311b",
+  "scripts/ci/__tests__/basic-ubuntu-archive.test.mjs": "525456457c116c91aba038f35916352abed5ec38a0aa7c5287fd263ef9ffb175"
 };
-// Bark 旧 smoke 清退只追加完整 W19 来源组；原组与逐成员拒混规则保留。
-const REVIEWED_BARK_RETIREMENT_CLOSURE = {
-  ...REVIEWED_W19_FREEZE_CLOSURE,
-  "scripts/ci/ops-checks.mjs": "6a6305471c70c7d1d5e4ad836f14636c8ab74a4d6a4bb17dc8d525d3aa52e125",
-}; // 建议回执 PG 入口与配置须作为一组认领。
-const REVIEWED_SUGGESTION_CALLBACK_CLOSURE = {
-  ...REVIEWED_BARK_RETIREMENT_CLOSURE,
-  'scripts/ci/run-basic-check.mjs': 'ae2edd2add44d004cb5b6a3ab43fd00ef882ea0bc012efeac48cd990bf8b53eb',
-  'packages/brain/vitest.config.js': '5e1504bbed8d83d7758bc2513eb8894418dccdd63938a98f6aa40433355ff5cc',
+const REVIEWED_CANDIDATE = {
+  "packages/brain/vitest.config.js": "9566bd1cff449dc15ee924aea4c9f46aaa3457392fadf8cbf10d0b6556c2634e",
+  "scripts/ci/basic-scope.mjs": "446605f2052c09c44c21bd2c9f8bcee206b3198be4d18858f1c8298ece0be726",
+  "scripts/ci/run-basic-check.mjs": "10e030617fb6ca219bd4965afa2566213f8788bc4e3741d3e7b3d7ebf5e45918",
+  "scripts/ci/check-basic-results.mjs": "084cc7187734c0dd83dddb528d87aa16d3ed9a49c3ea0eebf2c97cb4c4775da3",
+  "scripts/ci/basic-runtime-smoke.mjs": "b386b8c0c8631de5b6a0eec19494835f48c6ca3822a4533ee154ce8767a21eec",
+  "scripts/ci/ops-checks.mjs": "a5eb851d2f526e940432563a70e8a82fb0f128d66a8104515fec530974a55f6b",
+  "scripts/ci/run-isolated-staging-smoke.mjs": "fa19da1eaf14621a75d95763229fa8d6de40ce3e55940401458346da37f8fbaf",
+  "scripts/ci/skill-source-tests.mjs": "dbb749f30271472fe1f24e1eec2215d7b5999f20c1d4ed74c00fd4b40f6c57c8",
+  "apps/api/vitest.config.ts": "dbb1e74af497db63cbd2326c5378bb05ca036e1a4590dc2061dce2e5257e776a",
+  "scripts/ci/__tests__/basic-skill-source-coverage.test.mjs": "acc2046d6691423b739edc4071c9ea87f00e57a1a8b7a06be91d5487d24ad2c9",
+  "scripts/ci/check-brain-version-bump.sh": "361c35c33c2d0d404d9365c51478212e50ebe84df6a65eacca473ea57bffa0eb",
+  ".github/actions/skills-source/action.yml": "f106e23e090e1fd1aca6c035f63478365cf4aae2e6b4f2d379569c0a22f18169",
+  "scripts/ci/check-skill-source-identity.py": "ebc6b90fbe187b49c31101a5dba997d133fd45825cfcaa3549aad30581d747c1",
+  "scripts/ci/__tests__/basic-skill-identity.test.mjs": "151af50620164e01f9e112746aa81adc0efe2e2b46857dae09c5c4c8f7fdd423",
+  "scripts/ci/check-w19-frozen.mjs": "9e3a937e951e712934f8268a3af237b8ba3689d68f42fc9de10bf1b6e3b3ca7b",
+  "scripts/ci/__tests__/basic-w19-freeze.test.mjs": "127bfd50494259a78e2f3649c399596fc94acc90a3db17c43077a6ea47cf785a",
+  "playground/package-lock.json": "e2fa656e54b0d2d4f8c7398c24651589ff1556ffabbcec368465ff19d12bb6e9",
+  "playground/package.json": "9c340ea6eae6af3ad2cf7e41b003141193dbe6369451529e40deb41dd786e85d",
+  "playground/server.js": "c77d87096634b48a699c3951a07e0a74609535454f38078b97a0b35f87cfd38e",
+  "playground/tests/echo.test.js": "1fb291fdb3de19aca4cbfe5c61ef1571867b720dd4ec2378b169236ab652d7be",
+  "playground/tests/kernel-e.test.js": "53c24290c95377b88ab497c5c50f2246fc9accedb6f298c0b484dfb630211ecf",
+  "playground/tests/ping.test.js": "d364c15e08f487c70a312c1299a1b02758d935fb4f395a64992456c8fb09eb62",
+  "playground/tests/server.test.js": "b6b0628c4435d5a69de002207a35a34c713bda7897505586f501c7048c4adbf8",
+  "playground/vitest.config.js": "e6b279b6d857f890dfa2b3a84deb4f52d2d9e9300bdfaf392ebf94f258f6e204",
+  "scripts/ci/run-skill-source-check.mjs": "debcaf26aa7025f47d846052e0c2b43d1a04976003936143d80ddac1582d7204",
+  "apps/dashboard/vitest.config.ts": "a5899ed07ee4aa8ff262f7da361d695ef8eb26005571c5e09988aac53c1cc261",
+  "scripts/ci/prepare-ubuntu-archive.mjs": "ca83d00df2f865fc1836e0f8841bc5f4ba7ddf57416b6f718855f5840205311b",
+  "scripts/ci/__tests__/basic-ubuntu-archive.test.mjs": "525456457c116c91aba038f35916352abed5ec38a0aa7c5287fd263ef9ffb175",
+  "scripts/skill_source_ownership.py": "20fca16bcf474588e9e4d0add00a66c5885b3d85a82275fb9082a0787e72b9a7"
 };
-// 受管候选profile的真实PG回归：runner与配置只作为这一完整新组追加。
-const REVIEWED_MANAGED_SCRIPT_PG_CLOSURE = {...REVIEWED_SUGGESTION_CALLBACK_CLOSURE, 'scripts/ci/run-basic-check.mjs': 'b346e6f8f06d42422c0289ae38693cdcd73e2e93d9415babb852214c0b9072ef', 'packages/brain/vitest.config.js': '85c3d4fbc92f593ee94544f1ebdfe5f5b76bdf14c78377ab70541bbf50fd15a0', };
-// 旧部署工作流清退后的完整主CI组合；旧身份测试与旧配置组合仍按原字节保存。
-const REVIEWED_DEPLOY_RETIREMENT_CLOSURE = { ...REVIEWED_MANAGED_SCRIPT_PG_CLOSURE, 'packages/brain/vitest.config.js': '9566bd1cff449dc15ee924aea4c9f46aaa3457392fadf8cbf10d0b6556c2634e', 'scripts/ci/__tests__/basic-skill-identity.test.mjs': '2d78a417e4320e215c125ed3a9ea8c22025659d935c587456fa2549f23e4f067', };
-const REVIEWED_SKILL_CONTRACT_RETIREMENT_CLOSURE = {...REVIEWED_DEPLOY_RETIREMENT_CLOSURE, [SKILL_SELECTOR]: 'dbb749f30271472fe1f24e1eec2215d7b5999f20c1d4ed74c00fd4b40f6c57c8', [PINNED_READER]: '64db6a73574743019a1a06cb6f2d348413a3e356885a52bb5edfb00f781d68ea'}; const REVIEWED_OWNERSHIP_DEDUP_CLOSURE = {...REVIEWED_SKILL_CONTRACT_RETIREMENT_CLOSURE, [BASIC_RUNNER]: '980d1ac1e847e58d6c0b10c2102247840b3b066302fefcfa0b0c70f0525e6fcc'};
-const REVIEWED_W19_EVENT_CLOSURE = {...REVIEWED_OWNERSHIP_DEDUP_CLOSURE, 'scripts/ci/check-w19-frozen.mjs': '9e3a937e951e712934f8268a3af237b8ba3689d68f42fc9de10bf1b6e3b3ca7b', 'scripts/ci/__tests__/basic-w19-freeze.test.mjs': '2d72b4acb5f15667aa4faa9d97e23a99e3ed78e89340bc3df131750120c88bc8'}; const REVIEWED_UNIFIED_CI_CLOSURE = {"packages/brain/vitest.config.js":"9566bd1cff449dc15ee924aea4c9f46aaa3457392fadf8cbf10d0b6556c2634e","scripts/ci/basic-scope.mjs":"0b5fdc26f71db94e6ac03358b6034025162d8ba740ed59a6fe127f0e5bfe5062","scripts/ci/run-basic-check.mjs":"980d1ac1e847e58d6c0b10c2102247840b3b066302fefcfa0b0c70f0525e6fcc","scripts/ci/check-basic-results.mjs":"11d51c4c4ce00c2860a099912961c6e020b49c93f5ce548a338f96f8c51896a5","scripts/ci/basic-runtime-smoke.mjs":"b386b8c0c8631de5b6a0eec19494835f48c6ca3822a4533ee154ce8767a21eec","scripts/ci/ops-checks.mjs":"6a6305471c70c7d1d5e4ad836f14636c8ab74a4d6a4bb17dc8d525d3aa52e125","scripts/ci/run-isolated-staging-smoke.mjs":"fa19da1eaf14621a75d95763229fa8d6de40ce3e55940401458346da37f8fbaf","scripts/ci/skill-source-tests.mjs":"dbb749f30271472fe1f24e1eec2215d7b5999f20c1d4ed74c00fd4b40f6c57c8","apps/api/vitest.config.ts":"c16a9be96bc4e1810400965043b41300d075da45ddf449ed5bf187b791e1ac7a","apps/api/vitest.integration.config.ts":"6c2a55ccba874bf8fcae7858f0b9f21295f6728f430860a4ee60c1612cc59dec","scripts/ci/__tests__/basic-skill-source-coverage.test.mjs":"6fa43074248d0e379e36c4c2e58cb6de09cbe65b12a052d5de14a3de33c74804","scripts/ci/check-brain-version-bump.sh":"361c35c33c2d0d404d9365c51478212e50ebe84df6a65eacca473ea57bffa0eb",".github/actions/skills-source/action.yml":"283a44569b4b037d11ebbac624f91ed013ab91be4916182a87a2bf95078ec105","scripts/ci/check-skill-source-identity.py":"ebc6b90fbe187b49c31101a5dba997d133fd45825cfcaa3549aad30581d747c1","scripts/ci/__tests__/basic-skill-identity.test.mjs":"2d78a417e4320e215c125ed3a9ea8c22025659d935c587456fa2549f23e4f067","scripts/ci/check-w19-frozen.mjs":"9e3a937e951e712934f8268a3af237b8ba3689d68f42fc9de10bf1b6e3b3ca7b","scripts/ci/__tests__/basic-w19-freeze.test.mjs":"2d72b4acb5f15667aa4faa9d97e23a99e3ed78e89340bc3df131750120c88bc8","playground/package-lock.json":"e2fa656e54b0d2d4f8c7398c24651589ff1556ffabbcec368465ff19d12bb6e9","playground/package.json":"9c340ea6eae6af3ad2cf7e41b003141193dbe6369451529e40deb41dd786e85d","playground/server.js":"c77d87096634b48a699c3951a07e0a74609535454f38078b97a0b35f87cfd38e","playground/tests/echo.test.js":"1fb291fdb3de19aca4cbfe5c61ef1571867b720dd4ec2378b169236ab652d7be","playground/tests/kernel-e.test.js":"53c24290c95377b88ab497c5c50f2246fc9accedb6f298c0b484dfb630211ecf","playground/tests/ping.test.js":"d364c15e08f487c70a312c1299a1b02758d935fb4f395a64992456c8fb09eb62","playground/tests/server.test.js":"b6b0628c4435d5a69de002207a35a34c713bda7897505586f501c7048c4adbf8","playground/vitest.config.js":"e6b279b6d857f890dfa2b3a84deb4f52d2d9e9300bdfaf392ebf94f258f6e204"}; const REVIEWED_FINAL_JOBS_CLOSURE = {...Object.fromEntries(Object.entries(REVIEWED_UNIFIED_CI_CLOSURE).filter(([path]) => path !== 'apps/api/vitest.integration.config.ts')),'scripts/ci/__tests__/basic-skill-identity.test.mjs':'1666a389a01a450bbe2ed14f15abc77dfa00d59ff77cc7aeb08d628cf52d343b','scripts/ci/__tests__/basic-w19-freeze.test.mjs':'a4f555d7fb563e528d02707abd767002a35bde203d1e70a4d83e1e7e60121c55','scripts/ci/basic-scope.mjs':'1f7ec02042ce35b23753c8be78102febe2d9294f81f98d081bf12fa6c568ce91','scripts/ci/run-basic-check.mjs':'ec107cca3e69e498c84b46b9816ebf3c2f46a713e6eb791e0e0e665ecfb7f3a1','scripts/ci/check-basic-results.mjs':'084cc7187734c0dd83dddb528d87aa16d3ed9a49c3ea0eebf2c97cb4c4775da3','scripts/ci/__tests__/basic-skill-source-coverage.test.mjs':'acc2046d6691423b739edc4071c9ea87f00e57a1a8b7a06be91d5487d24ad2c9','scripts/ci/run-skill-source-check.mjs':'debcaf26aa7025f47d846052e0c2b43d1a04976003936143d80ddac1582d7204'}; const REVIEWED_FUNCTIONAL_CLOSURE = {...REVIEWED_FINAL_JOBS_CLOSURE,'scripts/ci/basic-scope.mjs':'446605f2052c09c44c21bd2c9f8bcee206b3198be4d18858f1c8298ece0be726','scripts/ci/run-basic-check.mjs':'10e030617fb6ca219bd4965afa2566213f8788bc4e3741d3e7b3d7ebf5e45918','scripts/ci/ops-checks.mjs':'a5eb851d2f526e940432563a70e8a82fb0f128d66a8104515fec530974a55f6b','apps/api/vitest.config.ts':'6f4d8288dd391a8212c1bc22d434f8c4053f76099df2beb692693b1c80512b33','apps/dashboard/vitest.config.ts':'a5899ed07ee4aa8ff262f7da361d695ef8eb26005571c5e09988aac53c1cc261','scripts/ci/__tests__/basic-w19-freeze.test.mjs':'127bfd50494259a78e2f3649c399596fc94acc90a3db17c43077a6ea47cf785a'}; const REVIEWED_UBUNTU_ARCHIVE_CLOSURE = {...REVIEWED_FUNCTIONAL_CLOSURE,'scripts/ci/prepare-ubuntu-archive.mjs':'ca83d00df2f865fc1836e0f8841bc5f4ba7ddf57416b6f718855f5840205311b','scripts/ci/__tests__/basic-ubuntu-archive.test.mjs':'525456457c116c91aba038f35916352abed5ec38a0aa7c5287fd263ef9ffb175'}; const BASIC_PROTOCOLS = {'3636a0489fdc4ce2d9a362db0d635774b13f222d8c3d14939751460a2637faa7': REVIEWED_UBUNTU_ARCHIVE_CLOSURE,'5e5df48feb544a49b8bc2f2a3def7cefe0a71b6d9e911caed32e5cae6bf2af88': REVIEWED_FUNCTIONAL_CLOSURE,'a72f8ef77b55047cce97293c798ae88127378b118e50d22d10df29f69cba2891': REVIEWED_FINAL_JOBS_CLOSURE,'20ae4b9f13055900dca96258c4551cfa81ef686d184c9c3f32bb601c83b1bfb8': [REVIEWED_UNIFIED_CI_CLOSURE, {...REVIEWED_UNIFIED_CI_CLOSURE, [BASIC_RUNNER]: 'a5c767b0476a239b7922ba07f615164b8e23da5769dd7aa5da0e279a2d79dde6'}],'2d5a818975ae8815aa390ea003b57be4445582a03cc3c3316a83471a70ffa275': [REVIEWED_OWNERSHIP_DEDUP_CLOSURE, REVIEWED_W19_EVENT_CLOSURE],
-  // Dependabot排队只追加当前完整runtime scope闭包，旧workflow组合保持。
-  '020165ab3d73d487d973c6d98c849958240dc56149d5b6083b8288673a3dd091': [REVIEWED_RUNTIME_SCOPE_CLOSURE, REVIEWED_W19_FREEZE_CLOSURE, REVIEWED_BARK_RETIREMENT_CLOSURE, REVIEWED_SUGGESTION_CALLBACK_CLOSURE, REVIEWED_MANAGED_SCRIPT_PG_CLOSURE, {...REVIEWED_MANAGED_SCRIPT_PG_CLOSURE, 'packages/brain/vitest.config.js': '9566bd1cff449dc15ee924aea4c9f46aaa3457392fadf8cbf10d0b6556c2634e'}, REVIEWED_DEPLOY_RETIREMENT_CLOSURE, REVIEWED_SKILL_CONTRACT_RETIREMENT_CLOSURE],
-  '5b0f190209eec9c1370b9a96c6aef43b9aa0bc99bdd0f765ccb261c2cfe95080': [REVIEWED_VERSION_CLOSURE, {
-    ...REVIEWED_VERSION_CLOSURE,
-    // 仅追加本轮两份无消费者旧PG测试退休后的完整配置组合，旧组合保持原样。
-    'packages/brain/vitest.config.js': 'fe6de3054f559116886d6d3286542896f510bbb887893ef0727a16df72c39f9e',
-  }, REVIEWED_IDENTITY_CLOSURE, REVIEWED_RUNTIME_SCOPE_CLOSURE],
-  '04474b3e5c646767cdf49a4d03e32b3a2f4042027594dd87ef4d6975390f6298': REVIEWED,
-  '7fee2a6d842c7c2595fa882fa61f75750ec6b2787186fdaf8747e1084a64fcee': [REVIEWED_API, {
-    ...REVIEWED_API,
-    // 同一工作流的现役退役组合：三成员必须同时匹配，禁止新旧逐文件拼接。
-    'packages/engine/vitest.config.ts': 'badec5d95b3a45bf644892f8b5bb9b77be9dd81321309d343584e1da7890bc58',
-    'scripts/ci/basic-scope.mjs': '4a6cb08142b42329ab6daf75bfc7a058be9b5657b7d586be0477486cc914c277',
-    [BASIC_RUNNER]: '97226ce692a63aad92d9120b378e024d64569bc21c637c9f41266735c1720271',
-  }],
-};
+const BASIC_PROTOCOLS = {"3636a0489fdc4ce2d9a362db0d635774b13f222d8c3d14939751460a2637faa7":[REVIEWED_CURRENT,REVIEWED_CANDIDATE]};
 const reject = () => { throw Error('basic_ci_source_unproven'); };
 export function basicCiSelectorEnabled(text, parse) {
   const name = 'EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA';
@@ -339,7 +303,7 @@ export function basicCiWorkflowProven(text) {
 }
 /** 返回明确的排除字面量；不调用外置helper，也不将动态JS猜为选择器。 */
 export function skillSourceLiteralExcludes(text, component, parse) {
-  if (![REVIEWED[SKILL_SELECTOR], REVIEWED_VERSION_CLOSURE[SKILL_SELECTOR], REVIEWED_SKILL_CONTRACT_RETIREMENT_CLOSURE[SKILL_SELECTOR]].includes(hash(text))) reject();
+  if (![REVIEWED_CURRENT[SKILL_SELECTOR],REVIEWED_CANDIDATE[SKILL_SELECTOR]].includes(hash(text))) reject();
   const program = parse(text), object = name => program.body.find(n => n.type === 'ExportNamedDeclaration' && n.declaration?.type === 'VariableDeclaration'
     && n.declaration.declarations.some(d => d.id.name === name))?.declaration.declarations.find(d => d.id.name === name)?.init;
   const literals = (node, name) => {
@@ -410,6 +374,7 @@ export async function collectBasicCiSources({ read, ci, revision, relations, par
   if (Object.hasOwn(protocol, identity)) {
     relation(skillWorkflow, '.github/actions/skills-source/action.yml', 'registered_skill_identity_composite');
     relation('.github/actions/skills-source/action.yml', identity, 'pre_fetch_registered_ssh_identity_guard');
+    if(Object.hasOwn(protocol,'scripts/skill_source_ownership.py')) relation('.github/actions/skills-source/action.yml','scripts/skill_source_ownership.py','registered_skill_ownership_resolver');
   }
   for (const [path, kind] of [['scripts/ci/basic-scope.mjs', 'required_basic_ci_plan'], [BASIC_RUNNER, 'required_basic_ci_matrix_runner'],
     ['scripts/ci/check-basic-results.mjs', 'required_basic_ci_success_aggregate']]) relation(BASIC_CI, path, kind);
@@ -421,80 +386,19 @@ export async function collectBasicCiSources({ read, ci, revision, relations, par
   }
   for (const [consumer, input] of [[BASIC_RUNNER, 'scripts/ci/ops-checks.mjs'], ['scripts/ci/ops-checks.mjs', 'scripts/ci/run-isolated-staging-smoke.mjs']]) relation(consumer, input, 'reviewed_basic_ci_named_call');
   for (const path of ['package.json', 'package-lock.json']) { await read(path); relation(BASIC_CI, path, 'root_npm_ci_manifest_input'); }
-  if (protocol[BASIC_RUNNER] === '97226ce692a63aad92d9120b378e024d64569bc21c637c9f41266735c1720271') {
-    const manifest = 'packages/engine/package.json', entry = 'packages/engine/scripts/check-syntax.mjs';
-    const pkg = JSON.parse(await read(manifest));
-    if (pkg.scripts?.lint !== 'node scripts/check-syntax.mjs' || pkg.scripts?.prelint || pkg.scripts?.postlint || !paths.includes(entry)) reject();
-    await read(entry);
-    relation(BASIC_RUNNER, manifest, 'reviewed_engine_lint_manifest');
-    relation(manifest, entry, 'literal_engine_syntax_check_entry');
-  }
   await read('packages/brain/vitest.config.js');
   relation(BASIC_RUNNER, 'packages/brain/vitest.config.js', 'complete_brain_unit_six_shards');
   relation('packages/brain/vitest.config.js', SKILL_SELECTOR, 'reviewed_skill_source_exclusion');
-  const apiConfig = 'apps/api/vitest.integration.config.ts';
-  if (Object.hasOwn(protocol, apiConfig)) {
-    relation(BASIC_RUNNER, apiConfig, 'isolated_api_postgres_config');
-    const config = parse(await read(apiConfig)).body.find(n => n.type === 'ExportDefaultDeclaration').declaration.arguments[0];
-    for (const selected of property(property(config, 'test'), 'include').elements) {
-      const path = 'apps/api/' + selected.value;
-      await read(path); relation(apiConfig, path, 'literal_api_postgres_selector');
-    }
-  }
-  if (Object.hasOwn(protocol, 'apps/api/vitest.config.ts')) relation(BASIC_RUNNER, 'apps/api/vitest.config.ts', (protocol === REVIEWED_FUNCTIONAL_CLOSURE || protocol === REVIEWED_UBUNTU_ARCHIVE_CLOSURE) ? 'dashboard_features_unit_config' : 'separate_api_unit_config');
+  relation(BASIC_RUNNER, 'apps/api/vitest.config.ts', 'dashboard_features_unit_config');
   return skillSourceLiteralExcludes(await read(SKILL_SELECTOR), 'brain', parse);
 }
-/** Deep全PG按完整Nightly/config pair绑定；保留历史并追加Walking退役组，不声明普通PR已执行。 */
+/** Deep全PG仅接受现行完整Nightly/config pair，不声明普通PR已执行。 */
 export async function collectDeepCiSources({ read, revision, relations }) {
   const workflow = '.github/workflows/nightly-regression.yml', config = 'scripts/ci/deep-integration.config.mjs';
-  const protocols = [
-    ['6be8812458c47df1bb10a841aaa8278b716adb17c3268387a8435f0127ba0724', 'ce5df18b0016ce03ed08bf20def00a10ef68652ba7566f665021d8773467e75e'],
-    ['e6a9759aacd095ae4602ee7a67acacddfb13a4832ee2a2d09e26e9f3bfe8782c', 'ce5df18b0016ce03ed08bf20def00a10ef68652ba7566f665021d8773467e75e'],
-    ['e6a9759aacd095ae4602ee7a67acacddfb13a4832ee2a2d09e26e9f3bfe8782c', 'f5b94e5075d47fa2ad47788340d17d6705456c4272cd08cd81ee5b3e1ca5e560'],
-    ['5c2dd37b925ea9719c3d98d5a4d975ea6aa002985081f7ef9af1f11c3a40a75e', 'f5b94e5075d47fa2ad47788340d17d6705456c4272cd08cd81ee5b3e1ca5e560'],
-    ['a2fd079af6bfaeda6d5880280a9972bdab8dafaeeb6b859de37c9bffaaae432e', 'f5b94e5075d47fa2ad47788340d17d6705456c4272cd08cd81ee5b3e1ca5e560'], ['b04448b7b47a1893c53a0fecf4e0f81c26611377982e7b12c6e60fe096e8348c', 'f5b94e5075d47fa2ad47788340d17d6705456c4272cd08cd81ee5b3e1ca5e560'],
-  ];
+  const protocols = [["b04448b7b47a1893c53a0fecf4e0f81c26611377982e7b12c6e60fe096e8348c","f5b94e5075d47fa2ad47788340d17d6705456c4272cd08cd81ee5b3e1ca5e560"]];
   const pair = [workflowHash(await read(workflow)), hash(await read(config))];
   if (!protocols.some(candidate => candidate.every((digest, index) => digest === pair[index]))) reject();
   relations.push({ consumer_path: workflow, input_path: config, kind: 'scheduled_or_manual_full_postgres_entry', revision },
     { consumer_path: config, input_path: 'packages/brain/vitest.config.js', kind: 'shared_postgres_literal_config', revision });
-}
-const AUTO_VERSION_TEST='packages/brain/src/__tests__/auto-version-decision.test.js';
-const AUTO_VERSION_WORKFLOW='.github/workflows/auto-version.yml';
-const AUTO_VERSION_FILES={
-  "packages/brain/src/__tests__/auto-version-decision.test.js": "2a242093e5c91a35e243bf100e46ddfd26478210478094a7bca8d0186b09c25f",
-  ".github/workflows/auto-version.yml": "c4dd4558b9d3c72583bd2fa8ad2391ca5ecbc11fec7c7ba2271cc66374fc16b0",
-  "packages/brain/scripts/auto-version-decision.mjs": "2264d26f91cb4ab6662abfc1eb6eb487fcb884ddb6f582781484c3df0d20c045",
-  "packages/brain/scripts/auto-version-apply.mjs": "a8560b338a8fa6e20f985e24a7d6dbf673790ecd11b7c67979f8b0cd535f8b8b",
-  "scripts/ci/implementation-auxiliary-evidence.mjs": ["f5d052b9965825c1facb602084f18fa5063c687f8825f6f7711299c419bb09d0", "f96a4c4639f1d8a43acde5e646c5910abc5b0896efadd063939a0cda3f7de3ba"],
-  "packages/brain/src/lib/gp-assertion-command.js": "d47bbd492971ad5ed5ec9d4c6915b85bb318c990bc998f84c808ad24aa3f3fe0",
-  "packages/brain/src/lib/step-probe-spec.js": "c9c3e710368c0e57e7926b8a6c4a352efbb769210c45e00d13cb47729786f025"
-};
-export async function collectAutoVersionTestSources({read,requireProof,relations,revision,parse,selectors}) {
-  requireProof(Boolean(selectors&&selectors.include.some(pattern=>pattern.test(AUTO_VERSION_TEST))&&!selectors.exclude.some(pattern=>pattern.test(AUTO_VERSION_TEST))),'auto_version_test_selector_unproven');
-  const texts=new Map();
-  for(const[path,expected]of Object.entries(AUTO_VERSION_FILES)) {
-    const text=await read(path);texts.set(path,text);
-    requireProof(text&&[expected].flat().includes(createHash('sha256').update(text).digest('hex')),'auto_version_test_source_unproven');
-  }
-  const relation=(consumer_path,input_path,kind)=>relations.push({consumer_path,input_path,kind,revision});
-  relation('packages/brain/vitest.config.js',AUTO_VERSION_TEST,'literal_vitest_verification_selector');
-  relation(AUTO_VERSION_TEST,AUTO_VERSION_WORKFLOW,'verified_test_yaml_read');
-  for(const input of ['packages/brain/scripts/auto-version-decision.mjs','packages/brain/scripts/auto-version-apply.mjs']) {
-    relation(AUTO_VERSION_TEST,input,'verified_test_workflow_bash_script');
-    relation(AUTO_VERSION_WORKFLOW,input,'fixed_node_script_verification_input');
-  }
-  // 从实际冻结语法读取本仓import，不靠出现在traversal里猜直接绑定。
-  for(const[path,text]of texts) {
-    if(!/\.[cm]?js$/.test(path)||!text)continue;
-    for(const node of parse(text).body.filter(node=>node.type==='ImportDeclaration')) {
-      const input=node.source.value;if(!input.startsWith('.'))continue;
-      const segments=path.split('/').slice(0,-1);
-      for(const part of input.split('/')){if(part==='..')segments.pop();else if(part!=='.')segments.push(part);}
-      const resolved=segments.join('/');
-      requireProof(Object.hasOwn(AUTO_VERSION_FILES,resolved),'auto_version_test_dependency_unproven');
-      if(Object.hasOwn(AUTO_VERSION_FILES,resolved))relation(path,resolved,'fixed_relative_verification_import');
-    }
-  }
 }
 export { property, literals, fail };
