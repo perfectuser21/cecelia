@@ -11,13 +11,13 @@ authority: CURRENT_STATE
 
 ## PR 与 main
 
-只有 `ci.yml` 承担 PR 合并前 CI。main push 复用同一入口并跑全部现役服务组件；Android 仍只在其客户端变更时加入。
+只有 `ci.yml` 承担 PR 合并前 CI。main push 复用同一入口并跑全部现役服务组件。
 
 | job | 实际责任 |
 |---|---|
 | plan | 固定BASE/HEAD核对版本增量，并选择受影响组件的整套检查 |
 | security | 凭据扫描、运行依赖high及全部依赖critical漏洞审计 |
-| checks | Brain六分片、5个明确PG合同与源码运行、镜像构建、共享前端、MCP、Ops及scripts；Android按需 |
+| checks | Brain六分片、5个明确PG合同与源码运行、镜像构建、共享前端、MCP、Ops及scripts |
 | resource-canaries | 真实Docker离线实例/RPC、共享预算/OOM与cgroup观测 |
 | runtime-integration | 机器接入、Linux授权的真实PG合同，以及公共Runner/Commander进程故障恢复 |
 | pwa-upgrade | Chromium验证PWA升级、交办回执、指挥舱收件箱和去向路由；业务API为隔离fixture |

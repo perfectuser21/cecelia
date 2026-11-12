@@ -3,7 +3,7 @@ import {parse} from 'acorn';
 import {collectBasicCiSources,collectDeepCiSources} from '../existing-ops-stage-source.js';
 import {collectWorkspaceInputEdges} from '../existing-ops-workspace-source.js';
 import {readFixedExistingOpsGitFixture} from './helpers/fixed-existing-ops-git-fixture.js';
-const fixed=readFixedExistingOpsGitFixture('227c14e6ff8970f5c408a8dc87e8b9d0f0d16cfe');
+const fixed=readFixedExistingOpsGitFixture('dce0866298f5db9a17b472de3a50cfb24efff52e');
 const ast=text=>parse(text,{ecmaVersion:'latest',sourceType:'module'});
 const collect=async(overrides={})=>{
  const relations=[],read=async path=>overrides[path]??fixed.read(path);
@@ -23,8 +23,10 @@ for(const path of ['.github/workflows/ci.yml','scripts/ci/run-basic-check.mjs','
  });
 }
 it('旧Engine和Quality完整历史cohort不再提供入口资格',async()=>{
- const old=readFixedExistingOpsGitFixture('69de823cda6d789130898399c3ad770c15b6fb71');
+ for(const revision of ['69de823cda6d789130898399c3ad770c15b6fb71','227c14e6ff8970f5c408a8dc87e8b9d0f0d16cfe']){
+ const old=readFixedExistingOpsGitFixture(revision);
  await expect(collectBasicCiSources({read:async path=>old.read(path),ci:old.read('.github/workflows/ci.yml'),revision:old.revision,relations:[],parse:ast,paths:old.paths})).rejects.toThrow('basic_ci_source_unproven');
+ }
 });
 it('当前workspace来源不向已退役Engine或Quality测试授予自动消费者资格',async()=>{
  const edges=await collectWorkspaceInputEdges({revision:fixed.revision,paths:fixed.paths,readSource:async path=>fixed.read(path),parse:ast});
@@ -41,5 +43,6 @@ it('候选完整封组真实读取共享身份解析器；单成员混配与篡�
  const relations=await observe({});
  expect(relations).toContainEqual(expect.objectContaining({consumer_path:'.github/actions/skills-source/action.yml',input_path:'scripts/skill_source_ownership.py',kind:'registered_skill_ownership_resolver'}));
  for(const path of ['.github/actions/skills-source/action.yml','scripts/skill_source_ownership.py'])await expect(observe({[path]:(await read(path))+'\n# unknown source\n'})).rejects.toThrow('basic_ci_source_unproven');
- await expect(observe({'.github/actions/skills-source/action.yml':fixed.read('.github/actions/skills-source/action.yml')})).rejects.toThrow('basic_ci_source_unproven');
+ await expect(observe({'scripts/ci/run-basic-check.mjs':fixed.read('scripts/ci/run-basic-check.mjs')})).rejects.toThrow('basic_ci_source_unproven');
+ await expect(observe({'.github/workflows/ci.yml':fixed.read('.github/workflows/ci.yml')})).rejects.toThrow('basic_ci_source_unproven');
 });

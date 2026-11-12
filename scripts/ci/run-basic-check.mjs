@@ -49,8 +49,6 @@ export function commandsFor(component, shard, context = {}) {
       return [step('.', 'docker', 'build', '-f', 'packages/brain/Dockerfile', '-t', 'cecelia-brain:ci-basic', '.')];
     case 'dashboard':
       return [vitest('apps/api'), vitest('apps/dashboard'), step('apps/dashboard', 'npm', 'run', 'build')];
-    case 'android':
-      return [step('apps/android-agent', './gradlew', ':app:testDebugUnitTest', '--no-daemon')];
     case 'mcp': return [vitest('packages/mcp-readonly')];
     case 'ops': return opsChecks(root, {paths: context.paths ?? null});
     case 'scripts': {

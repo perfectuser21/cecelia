@@ -115,8 +115,8 @@ function currentEntryFixture(t,{path='packages/brain/src/__tests__/derived-input
  const root=mkdtempSync(join(tmpdir(),'derived-entry-git-'));t.after(()=>cleanupVerificationFixture(root));
  const git=(...args)=>execFileSync('git',[...VERIFICATION_GIT_OPTIONS,'--no-replace-objects','-c','core.hooksPath=/dev/null','-c','commit.gpgSign=false',...args],{cwd:root,encoding:'utf8',stdio:['ignore','pipe','pipe'],maxBuffer:32*1024*1024}).trim();
  git('clone','--shared','--no-checkout',immutableVerificationSeed(fileURLToPath(new URL('../../../',import.meta.url))),'.');
- git('sparse-checkout','set','--no-cone','/.github/','/scripts/ci/','/packages/brain/vitest.config.js','/packages/brain/vitest.skill-source.config.mjs','/scripts/ci/skill-source-tests.mjs','/packages/engine/vitest.config.ts','/packages/quality/vitest.config.ts','/vitest.skill-source.config.mjs','/apps/api/vitest.config.ts','/apps/dashboard/vitest.config.ts','/'+path);
- git('checkout','--detach','227c14e6ff8970f5c408a8dc87e8b9d0f0d16cfe');git('remote','set-url','origin','https://github.com/perfectuser21/cecelia.git');
+ git('sparse-checkout','set','--no-cone','/.github/','/scripts/ci/','/scripts/skill_source_ownership.py','/packages/brain/vitest.config.js','/packages/brain/vitest.skill-source.config.mjs','/scripts/ci/skill-source-tests.mjs','/packages/engine/vitest.config.ts','/packages/quality/vitest.config.ts','/vitest.skill-source.config.mjs','/apps/api/vitest.config.ts','/apps/dashboard/vitest.config.ts','/'+path);
+ git('checkout','--detach','dce0866298f5db9a17b472de3a50cfb24efff52e');git('remote','set-url','origin','https://github.com/perfectuser21/cecelia.git');
  mkdirSync(join(root,path.slice(0,path.lastIndexOf('/'))),{recursive:true});writeFileSync(join(root,path),'export const baseInput=true;\n');
  const commit=()=>{git('add','--sparse','-A');git('-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','--allow-empty','-qm','test: fixed input source');return git('rev-parse','HEAD');};
  const base=commit();if(deleted)rmSync(join(root,path));else writeFileSync(join(root,path),'export const headInput=true;\n');const head=commit();
@@ -440,14 +440,27 @@ test('当前候选输入入口逐项读取完整封组及共享身份解析器�
  assert.equal(protocols.type,'ArrayExpression');
  const members=protocols.elements.at(-1).properties.map(p=>p.key.value);
  assert.ok(members.includes('scripts/skill_source_ownership.py'));
- for(const member of members){mkdirSync(join(f.root,member,'..'),{recursive:true});writeFileSync(join(f.root,member),readFileSync(join(live,member)));}
+ for(const member of ['.github/workflows/ci.yml',...members]){mkdirSync(join(f.root,member,'..'),{recursive:true});writeFileSync(join(f.root,member),readFileSync(join(live,member)));}
  f.source.base_revision=f.commit();writeFileSync(join(f.root,path),'export const currentCandidateSource=true;\n');f.source.head_revision=f.commit();f.source.changed_files=[{path}];
  const row=derived(f).rows.find(r=>r.input_facts.path===path&&r.input_facts.source.side==='head');
  assert.ok(row);assert.ok(row.eligible_owner_paths.includes('scripts/ci/run-basic-check.mjs'));
  assert.ok(row.witness.entry.support.some(r=>r.path==='scripts/skill_source_ownership.py'));
  assert.equal(row.input_facts.entry_verified,false);assert.equal(row.execution_status,'not_evaluated');
+ for(const member of ['.github/workflows/ci.yml','scripts/ci/run-basic-check.mjs']){
+  const candidate=readFileSync(join(f.root,member));
+  const main=execFileSync('git',[...VERIFICATION_GIT_OPTIONS,'--no-replace-objects','show','dce0866298f5db9a17b472de3a50cfb24efff52e:'+member],{cwd:f.root});
+  writeFileSync(join(f.root,member),main);f.source.head_revision=f.commit();
+  f.source.changed_files=f.git('diff','--name-only',f.source.base_revision,f.source.head_revision).split('\n').filter(Boolean).map(path=>({path}));
+  const mixed=derived(f);assert.equal(mixed.rows.some(r=>r.input_facts.path===path&&r.input_facts.source.side==='head'),false);
+  assert.ok(mixed.unproven.some(r=>r.path===path&&r.reason==='entry_unproven'));
+  writeFileSync(join(f.root,member),candidate);f.source.head_revision=f.commit();
+ }
  writeFileSync(join(f.root,'scripts/skill_source_ownership.py'),readFileSync(join(f.root,'scripts/skill_source_ownership.py'),'utf8')+'\n# unknown source\n');
  f.source.head_revision=f.commit();f.source.changed_files=f.git('diff','--name-only',f.source.base_revision,f.source.head_revision).split('\n').filter(Boolean).map(path=>({path}));
  const rejected=derived(f);assert.equal(rejected.rows.some(r=>r.input_facts.path===path&&r.input_facts.source.side==='head'),false);
  assert.ok(rejected.unproven.some(r=>r.path===path&&r.reason==='entry_unproven'));
+ f.git('rm','--sparse','scripts/skill_source_ownership.py');f.source.head_revision=f.commit();
+ f.source.changed_files=f.git('diff','--name-only',f.source.base_revision,f.source.head_revision).split('\n').filter(Boolean).map(path=>({path}));
+ const missing=derived(f);assert.equal(missing.rows.some(r=>r.input_facts.path===path&&r.input_facts.source.side==='head'),false);
+ assert.ok(missing.unproven.some(r=>r.path===path&&r.reason==='entry_unproven'));
 });

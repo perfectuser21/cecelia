@@ -230,12 +230,12 @@ const REVIEWED_CURRENT = {
   "scripts/ci/ops-checks.mjs": "a5eb851d2f526e940432563a70e8a82fb0f128d66a8104515fec530974a55f6b",
   "scripts/ci/run-isolated-staging-smoke.mjs": "fa19da1eaf14621a75d95763229fa8d6de40ce3e55940401458346da37f8fbaf",
   "scripts/ci/skill-source-tests.mjs": "dbb749f30271472fe1f24e1eec2215d7b5999f20c1d4ed74c00fd4b40f6c57c8",
-  "apps/api/vitest.config.ts": "6f4d8288dd391a8212c1bc22d434f8c4053f76099df2beb692693b1c80512b33",
+  "apps/api/vitest.config.ts": "dbb1e74af497db63cbd2326c5378bb05ca036e1a4590dc2061dce2e5257e776a",
   "scripts/ci/__tests__/basic-skill-source-coverage.test.mjs": "acc2046d6691423b739edc4071c9ea87f00e57a1a8b7a06be91d5487d24ad2c9",
   "scripts/ci/check-brain-version-bump.sh": "361c35c33c2d0d404d9365c51478212e50ebe84df6a65eacca473ea57bffa0eb",
-  ".github/actions/skills-source/action.yml": "283a44569b4b037d11ebbac624f91ed013ab91be4916182a87a2bf95078ec105",
+  ".github/actions/skills-source/action.yml": "f106e23e090e1fd1aca6c035f63478365cf4aae2e6b4f2d379569c0a22f18169",
   "scripts/ci/check-skill-source-identity.py": "ebc6b90fbe187b49c31101a5dba997d133fd45825cfcaa3549aad30581d747c1",
-  "scripts/ci/__tests__/basic-skill-identity.test.mjs": "1666a389a01a450bbe2ed14f15abc77dfa00d59ff77cc7aeb08d628cf52d343b",
+  "scripts/ci/__tests__/basic-skill-identity.test.mjs": "151af50620164e01f9e112746aa81adc0efe2e2b46857dae09c5c4c8f7fdd423",
   "scripts/ci/check-w19-frozen.mjs": "9e3a937e951e712934f8268a3af237b8ba3689d68f42fc9de10bf1b6e3b3ca7b",
   "scripts/ci/__tests__/basic-w19-freeze.test.mjs": "127bfd50494259a78e2f3649c399596fc94acc90a3db17c43077a6ea47cf785a",
   "playground/package-lock.json": "e2fa656e54b0d2d4f8c7398c24651589ff1556ffabbcec368465ff19d12bb6e9",
@@ -249,12 +249,13 @@ const REVIEWED_CURRENT = {
   "scripts/ci/run-skill-source-check.mjs": "debcaf26aa7025f47d846052e0c2b43d1a04976003936143d80ddac1582d7204",
   "apps/dashboard/vitest.config.ts": "a5899ed07ee4aa8ff262f7da361d695ef8eb26005571c5e09988aac53c1cc261",
   "scripts/ci/prepare-ubuntu-archive.mjs": "ca83d00df2f865fc1836e0f8841bc5f4ba7ddf57416b6f718855f5840205311b",
-  "scripts/ci/__tests__/basic-ubuntu-archive.test.mjs": "525456457c116c91aba038f35916352abed5ec38a0aa7c5287fd263ef9ffb175"
+  "scripts/ci/__tests__/basic-ubuntu-archive.test.mjs": "525456457c116c91aba038f35916352abed5ec38a0aa7c5287fd263ef9ffb175",
+  "scripts/skill_source_ownership.py": "20fca16bcf474588e9e4d0add00a66c5885b3d85a82275fb9082a0787e72b9a7"
 };
 const REVIEWED_CANDIDATE = {
   "packages/brain/vitest.config.js": "9566bd1cff449dc15ee924aea4c9f46aaa3457392fadf8cbf10d0b6556c2634e",
-  "scripts/ci/basic-scope.mjs": "446605f2052c09c44c21bd2c9f8bcee206b3198be4d18858f1c8298ece0be726",
-  "scripts/ci/run-basic-check.mjs": "10e030617fb6ca219bd4965afa2566213f8788bc4e3741d3e7b3d7ebf5e45918",
+  "scripts/ci/basic-scope.mjs": "7277d4d2c0bda8fdd4b218e8cc3c2e285c0a176f1a7fa436a0ab00344005c2ef",
+  "scripts/ci/run-basic-check.mjs": "01d52b299cb561a1f5b21bef3d6b29065573cdbebc9669a647fca27295889533",
   "scripts/ci/check-basic-results.mjs": "084cc7187734c0dd83dddb528d87aa16d3ed9a49c3ea0eebf2c97cb4c4775da3",
   "scripts/ci/basic-runtime-smoke.mjs": "b386b8c0c8631de5b6a0eec19494835f48c6ca3822a4533ee154ce8767a21eec",
   "scripts/ci/ops-checks.mjs": "a5eb851d2f526e940432563a70e8a82fb0f128d66a8104515fec530974a55f6b",
@@ -282,7 +283,7 @@ const REVIEWED_CANDIDATE = {
   "scripts/ci/__tests__/basic-ubuntu-archive.test.mjs": "525456457c116c91aba038f35916352abed5ec38a0aa7c5287fd263ef9ffb175",
   "scripts/skill_source_ownership.py": "20fca16bcf474588e9e4d0add00a66c5885b3d85a82275fb9082a0787e72b9a7"
 };
-const BASIC_PROTOCOLS = {"3636a0489fdc4ce2d9a362db0d635774b13f222d8c3d14939751460a2637faa7":[REVIEWED_CURRENT,REVIEWED_CANDIDATE]};
+const BASIC_PROTOCOLS = {"3636a0489fdc4ce2d9a362db0d635774b13f222d8c3d14939751460a2637faa7":[REVIEWED_CURRENT],"1283f9f7b9825a925318b20420d483de5f5daad5a032a476a20f100441c12a3f":[REVIEWED_CANDIDATE]};
 const reject = () => { throw Error('basic_ci_source_unproven'); };
 export function basicCiSelectorEnabled(text, parse) {
   const name = 'EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA';

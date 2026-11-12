@@ -23,7 +23,7 @@ export function immutableVerificationSeed(root){
  if(legacySeed)return legacySeed;legacySeed=realpathSync(mkdtempSync(join(tmpdir(),'derived-immutable-git-')));
  const git=(...args)=>execFileSync('git',[...VERIFICATION_GIT_OPTIONS,...args],{cwd:legacySeed,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
  git('init','--bare','-q');const objects=execFileSync('git',[...VERIFICATION_GIT_OPTIONS,'rev-parse','--path-format=absolute','--git-common-dir'],{cwd:root,encoding:'utf8'}).trim()+'/objects';
- writeFileSync(join(legacySeed,'objects/info/alternates'),objects+'\n');git('update-ref','refs/heads/immutable-current','227c14e6ff8970f5c408a8dc87e8b9d0f0d16cfe');git('symbolic-ref','HEAD','refs/heads/immutable-current');return legacySeed;
+ writeFileSync(join(legacySeed,'objects/info/alternates'),objects+'\n');git('update-ref','refs/heads/immutable-current','dce0866298f5db9a17b472de3a50cfb24efff52e');git('symbolic-ref','HEAD','refs/heads/immutable-current');return legacySeed;
 }
 export function fixedInputFixture(t,{kind='regular'}={}){
  const root=mkdtempSync(join(tmpdir(),'derived-input-git-'));
@@ -95,7 +95,7 @@ export function assertFunctionalConsumerInputs(t,{basicEntryFixture,derived,root
   '.github/actions/skills-source/action.yml','scripts/ci/check-skill-source-identity.py','apps/api/vitest.config.ts','apps/dashboard/vitest.config.ts','scripts/ci/__tests__/basic-w19-freeze.test.mjs'];
  const fixture=path=>{
   const f=basicEntryFixture(t,path);
-  for(const p of support){mkdirSync(join(f.root,p.slice(0,p.lastIndexOf('/'))),{recursive:true});writeFileSync(join(f.root,p),readFixedLocalGitBlob(liveRoot,{revision:'227c14e6ff8970f5c408a8dc87e8b9d0f0d16cfe',path:p}));}
+  for(const p of support){mkdirSync(join(f.root,p.slice(0,p.lastIndexOf('/'))),{recursive:true});writeFileSync(join(f.root,p),readFixedLocalGitBlob(liveRoot,{revision:'dce0866298f5db9a17b472de3a50cfb24efff52e',path:p}));}
   f.source.base_revision=f.commit();writeFileSync(join(f.root,path),'export const changedFunctionalInput=true;\n');
   f.source.head_revision=f.commit();f.source.changed_files=[{path}];return f;
  };

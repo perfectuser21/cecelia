@@ -17,7 +17,6 @@ import registryRouter from './routes/registry.js';
 import machinesRouter from './routes/machines.js';
 import skillsRouter from './routes/skills.js';
 import contentPipelineRouter from './routes/content-pipeline.js';
-import contentLibraryRouter from './routes/content-library.js';
 import socialTrendingRouter from './routes/social-trending.js';
 import topicsRouter from './routes/topics.js';
 // llm-service 在 server.js 里以 /api/brain/llm-service 独立挂载（带 internalAuth 中间件）
@@ -67,9 +66,6 @@ router.use('/machines', machinesRouter);
 
 // 内容 pipeline — GET /pipelines/:id/stats 等路由
 router.use('/pipelines', contentPipelineRouter);
-
-// 内容库 — GET /content-library / PATCH /content-library/:id/review
-router.use('/content-library', contentLibraryRouter);
 
 // 社媒热点 — GET /social/trending
 router.use('/social', socialTrendingRouter);

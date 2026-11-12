@@ -1,12 +1,12 @@
-# DoD：退役旧CI工具与冗余检查
+# DoD：CI外围价值审查与明确残留清理
 
-- [x] [BEHAVIOR] 月归档与合并后旧流程文档清理的脚本、专属测试及当前入口退役，预览资源回收保持现役合同。
+- [x] [BEHAVIOR] 完整审查镜像、MCP、Android、内容、Ops与Scripts，结论具真实入口、消费者和限制证据。
+  Test: manual:curl -sf http://localhost:5221/api/brain/health
+- [x] [BEHAVIOR] Cecelia旧Android骨架及专属Gradle选择退出，ZenithJoy现役客户端不受影响。
+  Test: manual:node --test scripts/ci/__tests__/basic-scope.test.mjs scripts/ci/__tests__/basic-workflow.test.mjs scripts/ci/__tests__/run-basic-check.test.mjs
+- [x] [BEHAVIOR] 内容库无已知消费者的孤立路由和专属测试退出，当前跨仓内容消费者及通用调度能力保留。
   Test: manual:node scripts/ci/run-basic-check.mjs scripts
-- [x] [BEHAVIOR] 旧Implementation工作流壳、Engine/Quality历史接受矩阵、Kernel baseline和旧文档/YAML非空检查退出默认PR；当前来源和权限拒绝回归保留。
-  Test: manual:node --test scripts/ci/__tests__/run-basic-check.test.mjs scripts/ci/__tests__/basic-ci-admission-authority.test.mjs
-- [x] [BEHAVIOR] 重复执行及Ops冗余移除，部署固定SHA、凭据隔离、退出码和回滚实际行为仍受保护。
-  Test: manual:node scripts/ci/run-basic-check.mjs ops
-- [x] [BEHAVIOR] 旧API按真实消费者拆除，现役共享features、Dashboard和captures数据合同保留。
-  Test: manual:node scripts/ci/run-basic-check.mjs dashboard
-- [ ] [BEHAVIOR] 内容弱测试和无调用残留退出；按主理人本轮范围保留现役内容接口，受保护PR通过且合并。
-  Test: manual:node scripts/ci/run-basic-check.mjs scripts
+- [x] [BEHAVIOR] 现役来源封印、固定SHA、篡改拒绝和当前资格限制保留，Brain版本一致。
+  Test: manual:node scripts/facts-check.mjs
+- [ ] [BEHAVIOR] 受保护PR完整通过且真实合并，任务事实证据读回。
+  Test: manual:curl -sf http://localhost:5221/api/brain/tasks/aa88987b-53a9-43ec-8753-c050db9c8c86

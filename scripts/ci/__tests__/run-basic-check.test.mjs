@@ -17,8 +17,11 @@ test('现行scripts检查实际运行防复活守卫的测试注册回归', () =
 });
 
 test('未知组件不能无操作成功', () => {
-  const result = spawnSync(process.execPath, [cli.pathname, 'unknown-component'], { encoding: 'utf8' });
-  assert.notEqual(result.status, 0);
+  for (const component of ['unknown-component', 'android']) {
+    const result = spawnSync(process.execPath, [cli.pathname, component], { encoding: 'utf8' });
+    assert.notEqual(result.status, 0, component);
+    assert.match(result.stderr, /未知 CI 组件/);
+  }
 });
 
 test('可以列出真实组件检查命令，单测直接运行而不解析日志', () => {
