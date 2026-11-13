@@ -14,9 +14,10 @@ const workflow = name => yaml.load(readFileSync(join(root, '.github/workflows', 
 for (const id of suites) {
   const name=id+'.yml';
   const job = workflow('ci.yml').jobs[id];
-  test(`${name}: 统一质量job不再受paths过滤`, () => {
+  test(`${name}: 资源专项按成功计划过滤，workflow不丢弃PR`, () => {
     assert.ok(job); assert.equal(workflow('ci.yml').on.pull_request.paths, undefined);
-    assert.equal(job.if, "github.event_name != 'schedule' && github.event.action != 'closed'");
+    assert.equal(job.if, "github.event_name != 'schedule' && github.event.action != 'closed' && contains(needs.plan.outputs.resource_plan, 'true')");
+    assert.equal(job.needs, 'plan');
   });
   for (const step of job.steps.filter(s => s.run?.includes('| tee '))) {
     for (const exitCode of [0, 19]) test(`${name}: ${step.name} 真shell保留子进程退出${exitCode}`, () => {
@@ -45,7 +46,9 @@ test('四个真实canary共享准备但失败不吞后续，镜像和证据保�
   const canaries = job.steps.filter(step => step.run?.includes('| tee '));
   assert.equal(canaries.length, 4);
   for (const step of canaries) {
-    assert.equal(step.if, '!cancelled()');
+    const flag = step.id === 'app_server_rpc' ? 'app_server' : step.id;
+    assert.equal(step.if, `!cancelled() && fromJSON(needs.plan.outputs.resource_plan).${flag}`);
+    assert.equal(job.outputs[step.id], '${{ steps.' + step.id + '.outcome }}');
     assert.equal(step['continue-on-error'], undefined);
     assert.match(step.run, /set -o pipefail/);
   }
@@ -60,7 +63,7 @@ test('四个真实canary共享准备但失败不吞后续，镜像和证据保�
   assert.match(preparation, /pgvector\/pgvector:pg15/);
   const artifacts = job.steps.filter(step => step.uses === 'actions/upload-artifact@v4');
   assert.deepEqual(artifacts.map(step => step.with.name).sort(), ['app-server-canary-evidence','attempt-runtime-limits-evidence','linux-resource-observation'].sort());
-  for (const artifact of artifacts) assert.equal(artifact.if, 'always()');
+  for (const artifact of artifacts) assert.match(artifact.if, /^always\(\) && fromJSON\(needs.plan.outputs.resource_plan\)\.(app_server|linux|legacy)$/);
 });
 
 // 执行真实 canary 发给容器的采样程序；变异数据必须触发同一组断言。
@@ -108,3 +111,23 @@ for (const field of [null, 'Memory', 'MemorySwap', 'NanoCpus', 'PidsLimit', 'Net
     else evaluate();
   });
 }
+
+test('实际YAML计划控制每个准备/执行/证据step，不允许job绿掩盖step跳过',()=>{
+  const config=workflow('ci.yml'), job=config.jobs['resource-canaries'];
+  assert.equal(config.jobs.plan.outputs.resource_plan,'${{ steps.resources.outputs.resource_plan }}');
+  assert.deepEqual(config.on.workflow_dispatch.inputs.resource_canary.options,['none','linux','app-server','legacy','all']);
+  const scope=config.jobs.plan.steps.find(step=>step.id==='resources');
+  assert.match(scope.run,/--base "\$BASE_SHA" --head "\$HEAD_SHA" --manual "\$RESOURCE_CANARY"/);
+  for(const flags of [{linux:false,app_server:false,legacy:false},{linux:true,app_server:false,legacy:false},
+    {linux:false,app_server:true,legacy:false},{linux:false,app_server:false,legacy:true},{linux:true,app_server:true,legacy:true}]) {
+    const ctx={github:{event_name:'pull_request',event:{action:'opened'}},needs:{plan:{outputs:{resource_plan:JSON.stringify(flags)}}},
+      contains:(value,part)=>value.includes(part),fromJSON:JSON.parse,always:()=>true,cancelled:()=>false};
+    assert.equal(runInNewContext(job.if,ctx),Object.values(flags).some(Boolean));
+    for(const step of job.steps.filter(step=>step.run || step.uses==='actions/upload-artifact@v4')) {
+      assert.ok(step.if,step.name);
+      const flag=step.if.match(/\.(linux|app_server|legacy)$/)?.[1];assert.ok(flag,step.name);
+      assert.equal(runInNewContext(step.if,ctx),flags[flag],step.name);
+      assert.equal(step['continue-on-error'],undefined);
+    }
+  }
+});

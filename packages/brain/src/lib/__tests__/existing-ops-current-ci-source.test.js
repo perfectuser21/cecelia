@@ -32,7 +32,7 @@ it('当前workspace来源不向已退役Engine或Quality测试授予自动消费
  const edges=await collectWorkspaceInputEdges({revision:fixed.revision,paths:fixed.paths,readSource:async path=>fixed.read(path),parse:ast});
  expect(edges.some(edge=>/^(?:packages\/engine|packages\/quality)\//.test(edge.dst_path))).toBe(false);
 });
-it('候选完整封组真实读取共享身份解析器；单成员混配与篡改均无来源资格',async()=>{
+it('候选完整控制封组真实读取身份与资源计划；单成员混配与坏计划均无来源资格',async()=>{
  const {readFileSync,existsSync}=await import('node:fs');
  const {execFileSync}=await import('node:child_process');
  const {fileURLToPath}=await import('node:url');
@@ -41,8 +41,18 @@ it('候选完整封组真实读取共享身份解析器；单成员混配与篡�
  const read=async path=>readFileSync(new URL(path,'file://'+root),'utf8');
  const observe=async overrides=>{const relations=[],source=async path=>overrides[path]??read(path);await collectBasicCiSources({read:source,ci:await source('.github/workflows/ci.yml'),revision:'f'.repeat(40),relations,parse:ast,paths});return relations;};
  const relations=await observe({});
+ expect(relations).toContainEqual(expect.objectContaining({consumer_path:'.github/workflows/ci.yml',input_path:'scripts/ci/resource-canary-scope.mjs',kind:'reviewed_resource_canary_scope_plan'}));
  expect(relations).toContainEqual(expect.objectContaining({consumer_path:'.github/actions/skills-source/action.yml',input_path:'scripts/skill_source_ownership.py',kind:'registered_skill_ownership_resolver'}));
  for(const path of ['.github/actions/skills-source/action.yml','scripts/skill_source_ownership.py'])await expect(observe({[path]:(await read(path))+'\n# unknown source\n'})).rejects.toThrow('basic_ci_source_unproven');
+ for(const member of ['scripts/ci/resource-canary-scope.mjs','scripts/ci/check-basic-results.mjs','scripts/ci/__tests__/basic-resource-canary-scope.test.mjs','scripts/ci/__tests__/basic-resource-canary.test.mjs','scripts/ci/__tests__/basic-results.test.mjs','scripts/ci/__tests__/basic-workflow.test.mjs']){
+  await expect(observe({[member]:''})).rejects.toThrow('basic_ci_source_unproven');
+  await expect(observe({[member]:(await read(member))+'\n// unknown scope member\n'})).rejects.toThrow('basic_ci_source_unproven');
+ }
+ await expect(observe({'scripts/ci/check-basic-results.mjs':fixed.read('scripts/ci/check-basic-results.mjs')})).rejects.toThrow('basic_ci_source_unproven');
+ const scope=await read('scripts/ci/resource-canary-scope.mjs');
+ const badPlan=scope.replace('typeof plan[flag] !== \'boolean\'', 'false');
+ expect(badPlan).not.toBe(scope);
+ await expect(observe({'scripts/ci/resource-canary-scope.mjs':badPlan})).rejects.toThrow('basic_ci_source_unproven');
  await expect(observe({'scripts/ci/run-basic-check.mjs':fixed.read('scripts/ci/run-basic-check.mjs')})).rejects.toThrow('basic_ci_source_unproven');
  const previous=readFixedExistingOpsGitFixture('4d8bed7c7504f8e3e2d84b283bde735927642f8b');
  for(const path of ['scripts/ci/prepare-ubuntu-archive.mjs','scripts/ci/__tests__/basic-ubuntu-archive.test.mjs','scripts/ci/__tests__/basic-skill-source-coverage.test.mjs'])await expect(observe({[path]:previous.read(path)})).rejects.toThrow('basic_ci_source_unproven');

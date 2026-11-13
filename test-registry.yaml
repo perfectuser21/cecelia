@@ -177,7 +177,7 @@ tests:
     note: "Migration 197存在、registry路由存在（文件存在性检查，价值一般）"
 
   - id: packages-brain-social-trending
-    path: tests/packages/brain/src/__tests__/social-trending.test.ts
+    path: packages/brain/src/__tests__/social-trending.test.ts
     type: unit
     ci: L3
     status: active

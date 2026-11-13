@@ -8,6 +8,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
+import { readFileSync } from 'node:fs';
 
 // --- mock pg Pool ---
 const mockQuery = vi.fn();
@@ -49,6 +50,12 @@ function makeFakeRow(platform: string, overrides: Record<string, unknown> = {}) 
 }
 
 describe('GET /api/brain/social/trending', () => {
+  it('路由已注册到 routes.js', () => {
+    const content = readFileSync(new URL('../routes.js', import.meta.url), 'utf8');
+    expect(content).toContain('social-trending');
+    expect(content).toContain('/social');
+  });
+
   it('TimescaleDB 可达时：返回 200 + JSON 数组，每条记录含 platform 字段', async () => {
     const fakeRows = [makeFakeRow('douyin'), makeFakeRow('xiaohongshu')];
     mockQuery.mockResolvedValueOnce({ rows: fakeRows });
@@ -59,6 +66,7 @@ describe('GET /api/brain/social/trending', () => {
     expect(Array.isArray(res.body)).toBe(true);
     expect(res.body.length).toBe(2);
     expect(res.body[0]).toHaveProperty('platform');
+    expect(mockQuery.mock.calls[0][0]).toContain('v_all_platforms');
   });
 
   it('platform 参数过滤：?platform=douyin 只返回 douyin 数据', async () => {

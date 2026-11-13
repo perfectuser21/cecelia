@@ -56,7 +56,7 @@ test('实际workflow的最终命令严格传播失败、跳过和取消', () => 
   for (const status of ['success', 'failure', 'cancelled', 'skipped', '']) {
     const result = spawnSync('bash', ['-e', '-o', 'pipefail', '-c', step.run], {
       cwd: root, encoding: 'utf8',
-      env: { ...process.env, NEEDS_JSON: JSON.stringify(Object.fromEntries(workflow.jobs['ci-passed'].needs.map(job => [job,{result:job === 'checks' ? status : 'success'}]))) },
+      env: { ...process.env, NEEDS_JSON: JSON.stringify(Object.fromEntries(workflow.jobs['ci-passed'].needs.map(job => [job,{result:job === 'checks' ? status : 'success', outputs:job === 'plan' ? {resource_plan:JSON.stringify({linux:true,app_server:true,legacy:true})} : {linux:'success',app_server:'success',app_server_rpc:'success',legacy:'success'}}]))) },
     });
     assert.equal(result.status === 0, status === 'success', result.stderr);
   }
@@ -143,7 +143,7 @@ test('统一CI真实合并runner，保持独有命令和产物并隔离安全权
 test('周扫描仅CodeQL执行，closed仅cleanup；评论写权限限于预览生命周期', () => {
   const normal="github.event_name != 'schedule' && github.event.action != 'closed'";
   for(const [id,job]of Object.entries(workflow.jobs)) {
-    if(!['codeql','preview-deploy','preview-cleanup'].includes(id)) assert.equal(job.if,(['ci-passed','skill-passed'].includes(id)?'always() && ':'')+normal,id);
+    if(!['codeql','preview-deploy','preview-cleanup'].includes(id)) assert.equal(job.if,(['ci-passed','skill-passed'].includes(id)?'always() && ':'')+normal+(id==='resource-canaries' ? " && contains(needs.plan.outputs.resource_plan, 'true')" : ''),id);
     if(!['preview-deploy','preview-cleanup'].includes(id))assert.notEqual(job.permissions?.['pull-requests'],'write',id);
     if(id!=='codeql')assert.notEqual(job.permissions?.['security-events'],'write',id);
   }
@@ -184,7 +184,7 @@ test('现役全量PR含UI预览实际展开25个runner，不重复计算定义�
 test('真实YAML事件表达式隔离closed/weekly，普通PR push manual严格汇总', () => {
   function context(name, action='', ui='true') {
     return {github:{event_name:name,actor:'owner',repository:'example/repo',head_ref:'feature/ui',ref:'refs/heads/main',event:{action,pull_request:{number:42,user:{login:'owner'},head:{repo:{full_name:'example/repo'}},labels:[]}}},
-      needs:{plan:{outputs:{preview_ui:ui}}},always:()=>true,contains:(xs,x)=>xs.includes(x),startsWith:(s,p)=>s.startsWith(p),format:(s,...values)=>s.replace(/\{(\d+)\}/g,(_,i)=>values[Number(i)])};
+      needs:{plan:{outputs:{preview_ui:ui,resource_plan:'{"linux":true,"app_server":true,"legacy":true}'}}},always:()=>true,contains:(xs,x)=>xs.includes(x),startsWith:(s,p)=>s.startsWith(p),format:(s,...values)=>s.replace(/\{(\d+)\}/g,(_,i)=>values[Number(i)])};
   }
   const evaluate=(expression,ctx)=>runInNewContext(expression.replace(/github\.event\.pull_request\.labels\.\*\.name/g,'github.event.pull_request.labels.map(label => label.name)'),ctx);
   for(const event of ['pull_request','push','workflow_dispatch']) {

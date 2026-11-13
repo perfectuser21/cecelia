@@ -11,7 +11,13 @@ name: CI
   push:
     branches:
       - main
-  workflow_dispatch: null
+  workflow_dispatch:
+    inputs:
+      resource_canary:
+        description: 资源专项（legacy 含历史 attempt/OOM）
+        type: choice
+        default: none
+        options: [none, linux, app-server, legacy, all]
   schedule:
     - cron: 0 3 * * 1
 permissions:
@@ -27,6 +33,7 @@ jobs:
     outputs:
       matrix: ${{ steps.scope.outputs.matrix }}
       preview_ui: ${{ steps.scope.outputs.preview_ui }}
+      resource_plan: ${{ steps.resources.outputs.resource_plan }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -49,6 +56,18 @@ jobs:
             node scripts/ci/basic-scope.mjs --full --base "$BASE_SHA" --head "$HEAD_SHA"
           else
             node scripts/ci/basic-scope.mjs --full --head "$HEAD_SHA"
+          fi
+      - name: Select actual resource canary inputs
+        id: resources
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
+          RESOURCE_CANARY: ${{ inputs.resource_canary || 'none' }}
+        run: |
+          if [ -n "$BASE_SHA" ]; then
+            node scripts/ci/resource-canary-scope.mjs --base "$BASE_SHA" --head "$HEAD_SHA" --manual "$RESOURCE_CANARY"
+          else
+            node scripts/ci/resource-canary-scope.mjs --head "$HEAD_SHA" --manual "$RESOURCE_CANARY"
           fi
     if: github.event_name != 'schedule' && github.event.action != 'closed'
   security:
@@ -121,6 +140,12 @@ jobs:
         run: node scripts/ci/run-basic-check.mjs "$COMPONENT" "$SHARD"
     if: github.event_name != 'schedule' && github.event.action != 'closed'
   resource-canaries:
+    needs: plan
+    outputs:
+      app_server: ${{ steps.app_server.outcome }}
+      app_server_rpc: ${{ steps.app_server_rpc.outcome }}
+      legacy: ${{ steps.legacy.outcome }}
+      linux: ${{ steps.linux.outcome }}
     runs-on: ubuntu-latest
     timeout-minutes: 28
     steps:
@@ -135,19 +160,21 @@ jobs:
           RUN npm install -g @openai/codex@0.158.0
           DOCKERFILE
           echo "APP_SERVER_CANARY_IMAGE=$(docker image inspect --format '{{.Id}}' cecelia-appserver-ci)" >> "$GITHUB_ENV"
-        if: '!cancelled()'
-      - name: Two independent offline instances sharing HOME through the real runner
+        if: '!cancelled() && fromJSON(needs.plan.outputs.resource_plan).app_server'
+      - id: app_server
+        name: Two independent offline instances sharing HOME through the real runner
         run: |
           set -o pipefail
           node packages/brain/scripts/fleet-worker/app-server-canary.cjs | tee app-server-canary.log
-        if: '!cancelled()'
-      - name: Direct shim HTTP RPC and explicit generation cleanup
+        if: '!cancelled() && fromJSON(needs.plan.outputs.resource_plan).app_server'
+      - id: app_server_rpc
+        name: Direct shim HTTP RPC and explicit generation cleanup
         run: |
           set -o pipefail
           node packages/brain/scripts/fleet-worker/app-server-rpc-canary.cjs | tee app-server-rpc-canary.log
-        if: '!cancelled()'
+        if: '!cancelled() && fromJSON(needs.plan.outputs.resource_plan).app_server'
       - name: Keep identity and quota evidence (no credentials or model calls)
-        if: always()
+        if: always() && fromJSON(needs.plan.outputs.resource_plan).app_server
         uses: actions/upload-artifact@v4
         with:
           name: app-server-canary-evidence
@@ -163,14 +190,15 @@ jobs:
           docker tag mirror.gcr.io/pgvector/pgvector:pg15 pgvector/pgvector:pg15
           echo "HARNESS_LIMITS_CANARY_IMAGE=$(docker image inspect --format '{{.Id}}' node:22-bookworm-slim)" >> "$GITHUB_ENV"
           echo "HARNESS_LIMITS_CANARY_POSTGRES_IMAGE=$(docker image inspect --format '{{.Id}}' pgvector/pgvector:pg15)" >> "$GITHUB_ENV"
-        if: '!cancelled()'
-      - name: Real adapters enforce one shared budget and isolate runner OOM
+        if: '!cancelled() && fromJSON(needs.plan.outputs.resource_plan).legacy'
+      - id: legacy
+        name: Real adapters enforce one shared budget and isolate runner OOM
         run: |
           set -o pipefail
           node packages/brain/scripts/fleet-worker/attempt-limits-canary.cjs | tee attempt-runtime-limits.log
-        if: '!cancelled()'
+        if: '!cancelled() && fromJSON(needs.plan.outputs.resource_plan).legacy'
       - uses: actions/upload-artifact@v4
-        if: always()
+        if: always() && fromJSON(needs.plan.outputs.resource_plan).legacy
         with:
           name: attempt-runtime-limits-evidence
           path: attempt-runtime-limits.log
@@ -180,19 +208,20 @@ jobs:
           docker pull mirror.gcr.io/library/node:24-bookworm-slim
           docker tag mirror.gcr.io/library/node:24-bookworm-slim node:24-bookworm-slim
           echo "LINUX_RESOURCE_CANARY_IMAGE=$(docker image inspect --format '{{.Id}}' node:24-bookworm-slim)" >> "$GITHUB_ENV"
-        if: '!cancelled()'
-      - name: Read actual limited cgroup without granting execution
+        if: '!cancelled() && fromJSON(needs.plan.outputs.resource_plan).linux'
+      - id: linux
+        name: Read actual limited cgroup without granting execution
         run: |
           set -o pipefail
           node packages/brain/scripts/fleet-worker/linux-resource-canary.cjs | tee linux-resource-canary.log
-        if: '!cancelled()'
+        if: '!cancelled() && fromJSON(needs.plan.outputs.resource_plan).linux'
       - uses: actions/upload-artifact@v4
-        if: always()
+        if: always() && fromJSON(needs.plan.outputs.resource_plan).linux
         with:
           name: linux-resource-observation
           path: linux-resource-canary.log
           if-no-files-found: ignore
-    if: github.event_name != 'schedule' && github.event.action != 'closed'
+    if: github.event_name != 'schedule' && github.event.action != 'closed' && contains(needs.plan.outputs.resource_plan, 'true')
   runtime-integration:
     runs-on: ubuntu-latest
     timeout-minutes: 25
