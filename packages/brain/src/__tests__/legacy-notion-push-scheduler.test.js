@@ -37,6 +37,7 @@ describe('legacy Notion push scheduler', () => {
     const src = readFileSync(new URL('../../server.js', import.meta.url), 'utf8');
     expect(src).toContain("import('./src/legacy-notion-push-scheduler.js')");
     expect(src).toMatch(/scheduleLegacyNotionPush\(pool\)/);
+    expect(src).not.toMatch(/setInterval\(async \(\) => \{\s*try \{ await runNotionPushSync\(pool\)/);
   });
 
   it('默认 run 并联 push 与 pull——pull 被摘出默认链即红（2026-09-14 并联拍板）', async () => {

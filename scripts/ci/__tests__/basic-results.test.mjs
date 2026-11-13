@@ -7,7 +7,12 @@ import test from 'node:test';
 
 const gate = new URL('../check-basic-results.mjs', import.meta.url).pathname;
 const parents = yaml.load(readFileSync(new URL('../../../.github/workflows/ci.yml', import.meta.url), 'utf8')).jobs['ci-passed'].needs;
-const good = () => Object.fromEntries(parents.map(job => [job, {result:'success'}]));
+const good = () => {
+  const needs=Object.fromEntries(parents.map(job => [job, {result:'success'}]));
+  needs.plan.outputs={resource_plan:JSON.stringify({linux:true,app_server:true,legacy:true})};
+  needs['resource-canaries'].outputs={linux:'success',app_server:'success',app_server_rpc:'success',legacy:'success'};
+  return needs;
+};
 test('实际YAML全部父任务与严格结果门精确一致', () => assert.deepEqual([...parents].sort(), [...REQUIRED_JOBS].sort()));
 function run(needs) {
   return spawnSync(process.execPath, [gate], {
@@ -37,3 +42,18 @@ test('缺失预期跑道、异常JSON和空对象均拒绝', () => {
     assert.notEqual(run(needs).status, 0);
   }
 });
+
+ test('资源最终门只允许合法空计划跳过，必选 step 级跳过也拒绝',()=>{
+   const needs=good(); needs['resource-canaries']={result:'skipped'};
+   assert.notEqual(run(needs).status,0);
+   needs.plan.outputs.resource_plan=JSON.stringify({linux:false,app_server:false,legacy:false});
+   assert.equal(run(needs).status,0);
+   for(const encoded of ['', '{}','null','{','{"linux":false,"app_server":false,"legacy":false,"not_applicable":true}']) {
+     needs.plan.outputs.resource_plan=encoded; assert.notEqual(run(needs).status,0);
+   }
+   for(const field of ['linux','app_server','app_server_rpc','legacy']) {
+     const required=good();required['resource-canaries'].outputs[field]='skipped';assert.notEqual(run(required).status,0);
+     delete required['resource-canaries'].outputs[field];assert.notEqual(run(required).status,0);
+   }
+   const missing=good();delete missing.plan.outputs;assert.notEqual(run(missing).status,0);
+ });

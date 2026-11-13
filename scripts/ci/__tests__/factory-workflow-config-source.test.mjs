@@ -420,15 +420,15 @@ test('非执行变更缺失侧显式冻结absence，不能给已删除head造普
 });
 test('当前功能跑道仅为Dashboard features及选中Ops读者提供验证输入',t=>assertFunctionalConsumerInputs(t,{basicEntryFixture,derived,root:fileURLToPath(new URL('../../../',import.meta.url))}));
 
-test('当前候选输入入口逐项读取完整封组及共享身份解析器，篡改后失去入口资格',t=>{
+test('当前候选输入入口逐项读取身份及资源完整控制封组，混配与坏计划失去入口资格',t=>{
  const path='scripts/ci/__tests__/basic-candidate-source.test.mjs',f=basicEntryFixture(t,path);
  const live=fileURLToPath(new URL('../../../',import.meta.url));
  const module=parse(readFileSync(join(live,'scripts/ci/implementation-verification-inputs.mjs'),'utf8'),{ecmaVersion:'latest',sourceType:'module'});
- const declaration=module.body.find(n=>n.type==='VariableDeclaration'&&n.declarations.some(d=>d.id.name==='CURRENT_BASIC_ENTRY_PROTOCOLS'));
+ const declaration=module.body.find(n=>n.type==='VariableDeclaration'&&n.declarations.some(d=>d.id.name==='SLIM_BASIC_ENTRY_PROTOCOLS'));
  const protocols=declaration.declarations[0].init;
  assert.equal(protocols.type,'ArrayExpression');
  const members=protocols.elements.at(-1).properties.map(p=>p.key.value);
- assert.ok(members.includes('scripts/skill_source_ownership.py'));
+ for(const member of ['scripts/skill_source_ownership.py','scripts/ci/resource-canary-scope.mjs','scripts/ci/__tests__/basic-resource-canary-scope.test.mjs','scripts/ci/__tests__/basic-resource-canary.test.mjs','scripts/ci/__tests__/basic-results.test.mjs','scripts/ci/__tests__/basic-workflow.test.mjs'])assert.ok(members.includes(member),member);
  for(const member of ['.github/workflows/ci.yml',...members]){mkdirSync(join(f.root,member,'..'),{recursive:true});writeFileSync(join(f.root,member),readFileSync(join(live,member)));}
  f.git('rm','--sparse','-r','scripts/ci/check-w19-frozen.mjs','scripts/ci/__tests__/basic-w19-freeze.test.mjs','playground');
  f.source.base_revision=f.commit();writeFileSync(join(f.root,path),'export const currentCandidateSource=true;\n');f.source.head_revision=f.commit();f.source.changed_files=[{path}];
@@ -437,7 +437,7 @@ test('当前候选输入入口逐项读取完整封组及共享身份解析器�
  assert.ok(row.witness.entry.support.some(r=>r.path==='scripts/skill_source_ownership.py'));
  assert.equal(row.input_facts.entry_verified,false);assert.equal(row.execution_status,'not_evaluated');
  for(const [member,revision] of [
-  ...['scripts/ci/run-basic-check.mjs','packages/brain/vitest.config.js'].map(path=>[path,'d06de84e9f7d2d489a151e0b13b38f81651dd3fa']),
+  ...['scripts/ci/check-basic-results.mjs','scripts/ci/run-basic-check.mjs','packages/brain/vitest.config.js'].map(path=>[path,'d06de84e9f7d2d489a151e0b13b38f81651dd3fa']),
   ...['scripts/ci/prepare-ubuntu-archive.mjs','scripts/ci/__tests__/basic-ubuntu-archive.test.mjs','scripts/ci/__tests__/basic-skill-source-coverage.test.mjs'].map(path=>[path,'4d8bed7c7504f8e3e2d84b283bde735927642f8b']),
  ]){
   const candidate=readFileSync(join(f.root,member));
@@ -447,6 +447,16 @@ test('当前候选输入入口逐项读取完整封组及共享身份解析器�
   const mixed=derived(f);assert.equal(mixed.rows.some(r=>r.input_facts.path===path&&r.input_facts.source.side==='head'),false);
   assert.ok(mixed.unproven.some(r=>r.path===path&&r.reason==='entry_unproven'));
   writeFileSync(join(f.root,member),candidate);f.source.head_revision=f.commit();
+ }
+ for(const member of ['scripts/ci/resource-canary-scope.mjs','scripts/ci/__tests__/basic-resource-canary-scope.test.mjs','scripts/ci/__tests__/basic-resource-canary.test.mjs','scripts/ci/__tests__/basic-results.test.mjs','scripts/ci/__tests__/basic-workflow.test.mjs']){
+  const original=readFileSync(join(f.root,member),'utf8');
+  for(const changed of ['', original+'\n// unknown scope member\n', ...(member.endsWith('/resource-canary-scope.mjs')?[original.replace('typeof plan[flag] !== \'boolean\'','false')]:[])]){
+   assert.notEqual(changed,original);writeFileSync(join(f.root,member),changed);f.source.head_revision=f.commit();
+   f.source.changed_files=f.git('diff','--name-only',f.source.base_revision,f.source.head_revision).split('\n').filter(Boolean).map(path=>({path}));
+   const invalid=derived(f);assert.equal(invalid.rows.some(r=>r.input_facts.path===path&&r.input_facts.source.side==='head'),false);
+   assert.ok(invalid.unproven.some(r=>r.path===path&&r.reason==='entry_unproven'));
+   writeFileSync(join(f.root,member),original);f.source.head_revision=f.commit();
+  }
  }
  writeFileSync(join(f.root,'scripts/skill_source_ownership.py'),readFileSync(join(f.root,'scripts/skill_source_ownership.py'),'utf8')+'\n# unknown source\n');
  f.source.head_revision=f.commit();f.source.changed_files=f.git('diff','--name-only',f.source.base_revision,f.source.head_revision).split('\n').filter(Boolean).map(path=>({path}));

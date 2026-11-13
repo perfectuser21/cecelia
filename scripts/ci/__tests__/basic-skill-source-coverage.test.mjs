@@ -74,7 +74,7 @@ test('唯一最终门直接覆盖实际Skill矩阵，任一失败/跳过/取消/
   const step = gate.steps.find(step => step.env?.NEEDS_JSON);
   assert.equal(step.env.NEEDS_JSON, '${{ toJSON(needs) }}');
   for (const contracts of ['success', 'failure', 'cancelled', 'skipped', undefined]) {
-      const needs = Object.fromEntries(gate.needs.map(id => [id,{result:'success'}]));
+      const needs = Object.fromEntries(gate.needs.map(id => [id,{result:'success', outputs:id === 'plan' ? {resource_plan:JSON.stringify({linux:true,app_server:true,legacy:true})} : {linux:'success',app_server:'success',app_server_rpc:'success',legacy:'success'}}]));
       if (contracts === undefined) delete needs['skill-contracts']; else needs['skill-contracts'].result = contracts;
       const result = spawnSync('bash', ['-e', '-o', 'pipefail', '-c', step.run], {
         cwd: root, encoding: 'utf8', env: {...process.env, NEEDS_JSON: JSON.stringify(needs)},

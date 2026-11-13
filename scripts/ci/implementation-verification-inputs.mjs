@@ -136,7 +136,32 @@ const CURRENT_BASIC_ENTRY_PROTOCOLS=[
     "scripts/skill_source_ownership.py": "20fca16bcf474588e9e4d0add00a66c5885b3d85a82275fb9082a0787e72b9a7"
   }
 ];
-const ENTRY_PROTOCOLS_BY_WORKFLOW={[CURRENT_BASIC_CI]:CURRENT_BASIC_ENTRY_PROTOCOLS};
+const SLIM_BASIC_CI="fd7dd2888f4abdfb9d70762fdea5213a9a4cfe104dbe5cd01defff58af6b8ffd";
+const SLIM_BASIC_ENTRY_PROTOCOLS=[
+  {
+    "scripts/ci/run-basic-check.mjs": "a7eb0c2f679385f6f5d79127b226972bc3f9bcfd488363273fcdc1268547483d",
+    "scripts/ci/basic-scope.mjs": "dcc7b67cc8dd5df9a370754be400bd276c98c7e747acdfdd8b3f52dc8416c3c4",
+    "scripts/ci/check-basic-results.mjs": "d76e0606978ba5bd69d6fb5583412b918cf2075d14cd3a0c4a47ffbe5e51f8ec",
+    "scripts/ci/ops-checks.mjs": "1208e7e1bf7325311de69ab8bb8c3e1cead535b733bf426e2a0cacaeb201a690",
+    "packages/brain/vitest.config.js": "12510a152768ac1b7c704a0f163ae8216d0860347c6225f2c366e5209547c2fb",
+    "scripts/ci/skill-source-tests.mjs": "dbb749f30271472fe1f24e1eec2215d7b5999f20c1d4ed74c00fd4b40f6c57c8",
+    "scripts/ci/run-skill-source-check.mjs": "debcaf26aa7025f47d846052e0c2b43d1a04976003936143d80ddac1582d7204",
+    "scripts/ci/__tests__/basic-skill-source-coverage.test.mjs": "5e84879a56e2161b40787f469265bcacb1298ec1dd1805b1e6133247adf9f1d1",
+    ".github/actions/skills-source/action.yml": "f106e23e090e1fd1aca6c035f63478365cf4aae2e6b4f2d379569c0a22f18169",
+    "scripts/ci/check-skill-source-identity.py": "ebc6b90fbe187b49c31101a5dba997d133fd45825cfcaa3549aad30581d747c1",
+    "apps/api/vitest.config.ts": "dbb1e74af497db63cbd2326c5378bb05ca036e1a4590dc2061dce2e5257e776a",
+    "apps/dashboard/vitest.config.ts": "a5899ed07ee4aa8ff262f7da361d695ef8eb26005571c5e09988aac53c1cc261",
+    "scripts/ci/prepare-ubuntu-archive.mjs": "209dcc9a05110f433d9a53586d657d0f7d7da20c008d85147ffc7e11dd76ac88",
+    "scripts/ci/__tests__/basic-ubuntu-archive.test.mjs": "404af7e10ae55b4c25136ce6d20c4af086f49f399cc7b6b6b5da02884d7c79bf",
+    "scripts/skill_source_ownership.py": "20fca16bcf474588e9e4d0add00a66c5885b3d85a82275fb9082a0787e72b9a7",
+    "scripts/ci/resource-canary-scope.mjs": "3a68ec68747a80aec250c17ef614735c6a2b85de55c3d1916d01a41aca50b48a",
+    "scripts/ci/__tests__/basic-resource-canary-scope.test.mjs": "4aada88475d642b08440fb53eee58800d8ae940aae923df3e8f3838038a5b21b",
+    "scripts/ci/__tests__/basic-resource-canary.test.mjs": "63d47e6271138059c90a32a78fdf2e11e0da7158621c89114258e2c1838558f2",
+    "scripts/ci/__tests__/basic-results.test.mjs": "eb3d1993ef7ba3ee72f510e7122be3040b3a4d0cb22151053a97aaacc9428b64",
+    "scripts/ci/__tests__/basic-workflow.test.mjs": "59fb6deeab2470fae7ef17cc3bf115ab24277f8a2b28f222f5b15a6cc2b620c7"
+  }
+];
+const ENTRY_PROTOCOLS_BY_WORKFLOW={[CURRENT_BASIC_CI]:CURRENT_BASIC_ENTRY_PROTOCOLS,[SLIM_BASIC_CI]:SLIM_BASIC_ENTRY_PROTOCOLS};
 const functionalEntry=entry=>Object.hasOwn(ENTRY_PROTOCOLS_BY_WORKFLOW,entry?.canonical_sha256??'');
 const UNIT_CONFIGS=[
  {component:'brain',directory:'packages/brain',path:'packages/brain/vitest.config.js'},
