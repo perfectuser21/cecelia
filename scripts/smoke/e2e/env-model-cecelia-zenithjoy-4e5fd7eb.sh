@@ -4,9 +4,7 @@
 #
 # 运行全部合同 BEHAVIOR 的静态验收检查：
 #   - BEHAVIOR-01/06: Staging tick 双保险 + restart=unless-stopped
-#   - BEHAVIOR-03: dev-deploy.sh 规范
 #   - BEHAVIOR-04: develop 健康监控
-#   - BEHAVIOR-05: Brain deploy/dev 端点
 #   - BEHAVIOR-07: ZJ_DEV_PORT 占位 + DEFINITION.md
 
 set -uo pipefail
@@ -48,20 +46,6 @@ else
   log_fail "BEHAVIOR-06: staging tick 双保险不完整（count=${TICK_OFF_COUNT}，期望>=2）"
 fi
 
-# ---- BEHAVIOR-03: dev-deploy.sh ----
-echo ""
-echo "=== BEHAVIOR-03: Develop 部署脚本 ==="
-DEV_DEPLOY="$ROOT_DIR/scripts/dev-deploy.sh"
-if [[ -f "$DEV_DEPLOY" ]]; then
-  log_pass "BEHAVIOR-03-T01: scripts/dev-deploy.sh 存在"
-  grep -q "pg_dump" "$DEV_DEPLOY" && log_pass "BEHAVIOR-03-T02: 含 pg_dump" || log_fail "BEHAVIOR-03-T02: 缺少 pg_dump"
-  grep -q "/opt/cecelia-backups" "$DEV_DEPLOY" && log_pass "BEHAVIOR-03-T03: 备份路径 /opt/cecelia-backups" || log_fail "BEHAVIOR-03-T03: 缺少 /opt/cecelia-backups"
-  grep -qE "exit [1-9]|exit \$" "$DEV_DEPLOY" && log_pass "BEHAVIOR-03-T04: 含 exit 非0" || log_fail "BEHAVIOR-03-T04: 缺少 exit 非0"
-  grep -q "psql.*cecelia_dev\|回滚\|rollback" "$DEV_DEPLOY" && log_pass "BEHAVIOR-03-T05: 含回滚指引" || log_fail "BEHAVIOR-03-T05: 缺少回滚指引"
-else
-  log_fail "BEHAVIOR-03: scripts/dev-deploy.sh 不存在"
-fi
-
 # ---- BEHAVIOR-04: develop 健康监控 ----
 echo ""
 echo "=== BEHAVIOR-04: Develop 健康监控 ==="
@@ -77,24 +61,6 @@ if grep -q "5220" "$ROOT_DIR/docker-compose.dev.yml" 2>/dev/null && grep -q "hea
   log_pass "BEHAVIOR-04-T04: docker-compose.dev.yml 含 5220 healthcheck"
 else
   log_fail "BEHAVIOR-04-T04: docker-compose.dev.yml 缺少 5220 healthcheck"
-fi
-
-# ---- BEHAVIOR-05: Brain deploy/dev 端点 ----
-echo ""
-echo "=== BEHAVIOR-05: Brain Deploy Dev 端点 ==="
-DEPLOY_ROUTE="$ROOT_DIR/packages/brain/src/routes/deploy-dev.js"
-if [[ -f "$DEPLOY_ROUTE" ]]; then
-  log_pass "BEHAVIOR-05-T01: packages/brain/src/routes/deploy-dev.js 存在"
-  grep -q "deploy/dev/status" "$DEPLOY_ROUTE" && log_pass "BEHAVIOR-05-T02: 含 /deploy/dev/status 端点" || log_fail "BEHAVIOR-05-T02: 缺少 /deploy/dev/status"
-else
-  log_fail "BEHAVIOR-05: Brain deploy-dev.js 路由不存在"
-fi
-
-DEPLOY_TEST="$ROOT_DIR/packages/brain/src/__tests__/deploy-dev.test.js"
-if [[ -f "$DEPLOY_TEST" ]]; then
-  log_pass "BEHAVIOR-05-T03: deploy-dev 单元测试存在"
-else
-  log_fail "BEHAVIOR-05-T03: deploy-dev 单元测试缺失"
 fi
 
 # ---- BEHAVIOR-07: ZJ_DEV_PORT + DEFINITION.md ----

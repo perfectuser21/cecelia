@@ -6,7 +6,7 @@ import {execFileSync} from 'node:child_process';
 import {createRequire} from 'node:module';
 import {activityInvocationPrompt} from '../../orchestrator/skill-activity-adapter.js';
 import {randomUUID} from 'node:crypto';
-import {authoringExecutionDatabase,startPureAuthoring,settleInvocation} from '../fixtures/authoring-execution-db.test.js';
+import {authoringExecutionDatabase,startPureAuthoring,settleInvocation} from '../fixtures/authoring-execution-db.js';
 let f;afterEach(async()=>{await f?.close();f=null;});
 it('实际HTTP compose入口自动冻结候选并幂等排队，无需人工提交build或抄验证任务ID',async()=>{
  f=await authoringExecutionDatabase();const run=await startPureAuthoring(f);

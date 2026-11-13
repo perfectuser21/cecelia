@@ -72,26 +72,6 @@ async function dispatchScraperTask(pool, publishTask, taskCreator = createTask) 
 }
 
 /**
- * 将 scraper 采集结果写入 pipeline_publish_stats 表。
- *
- * @param {import('pg').Pool} pool
- * @param {object} params
- * @param {string} params.pipelineId
- * @param {string} params.publishTaskId
- * @param {string} params.platform
- * @param {object} params.metrics - { views, likes, comments, shares }
- */
-export async function writePipelinePublishStats(pool, { pipelineId, publishTaskId, platform, metrics }) {
-  const { views = 0, likes = 0, comments = 0, shares = 0 } = metrics || {};
-  await pool.query(
-    `INSERT INTO pipeline_publish_stats
-       (pipeline_id, publish_task_id, platform, views, likes, comments, shares, scraped_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())`,
-    [pipelineId, publishTaskId, platform, views, likes, comments, shares]
-  );
-}
-
-/**
  * 查询排队中的 platform_scraper 任务（Brain 内部处理队列）。
  *
  * @param {import('pg').Pool} pool

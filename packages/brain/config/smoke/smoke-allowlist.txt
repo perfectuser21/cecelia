@@ -40,10 +40,8 @@ circuit-breaker-reset-smoke.sh
 claude-headed-dispatch-smoke.sh
 cockpit-route-wire-smoke.sh
 codex-cred-isolation-smoke.sh
-codex-gen-description-fix-smoke.sh
 codex-grok-launcher-supervisor-smoke.sh
 codex-headed-dispatch-smoke.sh
-codex-test-gen-smoke.sh
 coding-workflow-runner-smoke.sh
 coding-source-compat-smoke.sh
 company-key-results-smoke.sh
@@ -98,11 +96,9 @@ fleet-worker-workspace-smoke.sh
 four-cell-router-smoke.sh
 gan-case-file-smoke.sh
 gan-node-deps-smoke.sh
-gan-trend-backstop-smoke.sh
 gate3-brain-deploy-smoke.sh
 git-sha-health-smoke.sh
 golden-path-contract-version-smoke.sh
-golden-path-proposal-smoke.sh
 golden-paths-t1-smoke.sh
 gp-anchor-lockdown-smoke.sh
 gp-assertion-command-smoke.sh
@@ -117,7 +113,6 @@ gp-ledger-phase3-readiness-smoke.sh
 graph-multi-repo-smoke.sh
 graph-photo-layer-smoke.sh
 graph-query-api-smoke.sh
-grok-relay-smoke.sh
 guard-drill-smoke.sh
 guard-ref-bare-fr-smoke.sh
 handoff-schemas-smoke.sh

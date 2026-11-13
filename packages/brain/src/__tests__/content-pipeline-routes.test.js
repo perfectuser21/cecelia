@@ -4,6 +4,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
+import { readFileSync } from 'node:fs';
+import { parse } from 'acorn';
 
 const mockCreateTask = vi.hoisted(() => vi.fn());
 
@@ -24,6 +26,7 @@ vi.mock('../content-types/content-type-registry.js', () => ({
 import pool from '../db.js';
 import { listContentTypes, getContentType } from '../content-types/content-type-registry.js';
 import contentPipelineRouter from '../routes/content-pipeline.js';
+import publishJobsRouter from '../routes/publish-jobs.js';
 
 function resetTaskCreator() {
   mockCreateTask.mockReset();
@@ -342,27 +345,21 @@ describe('POST /:id/run-langgraph — endpoint 已删除', () => {
   });
 });
 
-describe('POST /api/brain/pipelines/e2e-trigger — 编排搬走后只创 task', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    resetTaskCreator();
-  });
+describe('已退役的内容触发入口', () => {
+  beforeEach(() => vi.clearAllMocks());
 
-  it('返回 200 + pipeline_id（不再同步 orchestrate）', async () => {
-    pool.query.mockResolvedValueOnce({ rows: [{ id: 'pipe-e2e-1' }] });
-
-    const res = await request(makeApp())
-      .post('/api/brain/pipelines/e2e-trigger')
-      .send({ keyword: 'cursor', skip_topic_selection: true });
-
-    expect(res.status).toBe(200);
-    expect(res.body.pipeline_id).toBe('pipe-e2e-1');
-    expect(mockCreateTask).toHaveBeenCalledTimes(1);
-    expect(mockCreateTask).toHaveBeenCalledWith(expect.objectContaining({
-      task_type: 'content-pipeline',
-      source: 'api',
-    }));
-  });
+  it.each(['trigger-topics', 'e2e-trigger', 'batch-e2e-trigger'])(
+    '%s 拒绝写入且指向现役入口', async (endpoint) => {
+      const res = await request(makeApp())
+        .post(`/api/brain/pipelines/${endpoint}`)
+        .send({ keyword: 'cursor', keywords: ['cursor'], skip_topic_selection: true });
+      expect(res.status).toBe(410);
+      expect(res.body.error).toBe('CONTENT_TRIGGER_RETIRED');
+      expect(res.body.successor).toBe('/api/brain/topics/generate');
+      expect(pool.query).not.toHaveBeenCalled();
+      expect(mockCreateTask).not.toHaveBeenCalled();
+    },
+  );
 });
 
 describe('POST /api/brain/pipelines — notebook_id 自动读取 + fail-fast 记录', () => {
@@ -585,5 +582,58 @@ describe('POST /api/brain/pipelines/:id/approve (KR5-P1)', () => {
       .post('/api/brain/pipelines/missing/approve')
       .send({});
     expect(res.status).toBe(404);
+  });
+});
+
+// 仅装配被测路由；从 server.js 读取真实声明顺序，不启动监听器或后台任务。
+function makeServerContentApp() {
+  const app = express();
+  app.use(express.json());
+  const brainRoutes = express.Router();
+  brainRoutes.stack.push(...publishJobsRouter.stack);
+  brainRoutes.use('/pipelines', contentPipelineRouter);
+  const bindings = { brainRoutes, contentPipelineRoutes: contentPipelineRouter, publishJobsRoutes: publishJobsRouter };
+  const ast = parse(readFileSync(new URL('../../server.js', import.meta.url), 'utf8'), { ecmaVersion: 'latest', sourceType: 'module' });
+  for (const { expression } of ast.body) {
+    if (expression?.callee?.object?.name !== 'app' || expression.callee.property?.name !== 'use') continue;
+    const [path, handler] = expression.arguments;
+    if (path?.type === 'Literal' && bindings[handler?.name]) app.use(path.value, bindings[handler.name]);
+  }
+  return app;
+}
+
+describe('server 内容与发布路由装配', () => {
+  beforeEach(() => { vi.clearAllMocks(); pool.query.mockResolvedValue({ rows: [] }); });
+
+  it.each(['/api/brain/publish/publish-jobs', '/api/brain/publish/publish/stats'])(
+    '不暴露错误重复前缀 %s', async (url) => {
+      const res = await request(makeServerContentApp()).get(url);
+      expect(res.status).toBe(404);
+      expect(pool.query).not.toHaveBeenCalled();
+    },
+  );
+
+  it('保留正确发布列表 URL', async () => {
+    const res = await request(makeServerContentApp()).get('/api/brain/publish-jobs');
+    expect(res.status).toBe(200);
+    expect(res.body.jobs).toEqual([]);
+    expect(pool.query).toHaveBeenCalledTimes(1);
+  });
+
+  it('保留正确发布统计 URL', async () => {
+    const res = await request(makeServerContentApp()).get('/api/brain/publish/stats');
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(res.body.stats.total).toBe(0);
+  });
+
+  it('保留正确 pipeline URL 与 content-types 配置 URL', async () => {
+    const app = makeServerContentApp();
+    listContentTypes.mockResolvedValue(['solo-company-case']);
+    const types = await request(app).get('/api/brain/content-types');
+    expect(types.status).toBe(200);
+    expect(types.body).toEqual(['solo-company-case']);
+    const pipelines = await request(app).get('/api/brain/pipelines');
+    expect(pipelines.status).toBe(200);
   });
 });

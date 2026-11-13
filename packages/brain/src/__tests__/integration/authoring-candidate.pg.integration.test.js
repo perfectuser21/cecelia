@@ -1,6 +1,6 @@
 import {it,expect,afterEach} from 'vitest';
 import {randomUUID} from 'node:crypto';
-import {authoringExecutionDatabase} from '../fixtures/authoring-execution-db.test.js';
+import {authoringExecutionDatabase} from '../fixtures/authoring-execution-db.js';
 import {prepareDefinitionFreeze} from '../../workflow-authoring/freeze.js';
 import {definitionDigest} from '../../workflow-authoring/contracts.js';
 import {resolveInvocation} from '../../invocations/resolve.js';

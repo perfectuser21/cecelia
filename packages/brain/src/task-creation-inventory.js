@@ -101,6 +101,5 @@ export const TASK_CREATION_INVENTORY = Object.freeze([
   // factory-judge 本身不直连写入口：createTask 由 factory-cycle 注入（actions.js 边界），故不单独算可执行建单边界。
   { module: 'lib/factory-judge.js', source: 'scheduler', creates_executable_task: false, migration_status: 'routed' },
   { module: 'thalamus.js', source: 'conversation', creates_executable_task: true, migration_status: 'routed' },
-  { module: 'topic-selection-scheduler.js', source: 'scheduler', creates_executable_task: true, migration_status: 'routed' },
   { module: 'topic-suggestion-manager.js', source: 'scheduler', creates_executable_task: true, migration_status: 'routed' },
 ]);

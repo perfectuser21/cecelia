@@ -9,7 +9,8 @@ import { deployFixture } from './helpers/deploy-owned-fs.js';
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, unlinkSync, rmSync, mkdirSync, writeFileSync } from 'fs';
+import { mkdtempSync, unlinkSync, rmSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
+import { parse } from 'acorn';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import express from 'express';
@@ -99,7 +100,23 @@ describe('deploy webhook 回执接线（T4）', () => {
     const { default: opsRouter } = await import('../routes/ops.js');
     app = express();
     app.use(express.json());
-    app.use('/api/brain', opsRouter);
+    // 按 server.js 的真实挂载顺序装配实际 ops router，禁止启动 server 后台循环。
+    const ast = parse(readFileSync(new URL('../../server.js', import.meta.url), 'utf8'), { ecmaVersion: 'latest', sourceType: 'module' });
+    for (const { expression } of ast.body) {
+      if (expression?.callee?.object?.name !== 'app' || expression.callee.property?.name !== 'use') continue;
+      const [path, handler] = expression.arguments;
+      if (path?.type === 'Literal' && handler?.name === 'brainRoutes') app.use(path.value, opsRouter);
+    }
+  });
+
+  it('旧 dev 请求仍先由现役 deploy 鉴权处理，不触发部署', async () => {
+    const res = await request(app).post('/api/brain/deploy').send({ dev: true });
+    expect(res.status).toBe(401);
+    expect(res.body.error).toBe('Invalid or missing deploy token');
+    expect(recordActionReceipt).not.toHaveBeenCalled();
+    expect(execFileMock).not.toHaveBeenCalled();
+    expect(capturedSpawnArgs).toBeNull();
+    expect((await request(app).get('/api/brain/deploy/dev/status')).status).toBe(404);
   });
 
   afterEach(() => {

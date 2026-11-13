@@ -95,7 +95,6 @@ relay-codex-executor-smoke.sh
 report-postpromote-smoke.sh
 retire-harness-planner-smoke.sh
 review-env-smoke.sh
-review-gating-smoke.sh
 routing-phase2-smoke.sh
 rumination-smoke.sh
 self-model-lock-smoke.sh
