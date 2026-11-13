@@ -34,31 +34,29 @@ test('Ubuntu mirror selection is removed while suites, signing and third-party s
   const security = stanza('noble-security', 'mirror+file:/etc/apt/apt-mirrors-security.txt');
   const input = primary + '\n' + security + '\n' + thirdParty;
   const actual = prepareUbuntuSources(input);
-  assert.equal(actual, primary.replace('mirror+file:/etc/apt/apt-mirrors.txt', 'https://mirrors.edge.kernel.org/ubuntu')
-    + '\n' + security.replace('mirror+file:/etc/apt/apt-mirrors-security.txt', 'https://mirrors.edge.kernel.org/ubuntu')
+  assert.equal(actual, primary.replace('mirror+file:/etc/apt/apt-mirrors.txt', 'https://archive.ubuntu.com/ubuntu')
+    + '\n' + security.replace('mirror+file:/etc/apt/apt-mirrors-security.txt', 'https://security.ubuntu.com/ubuntu')
     + '\n' + thirdParty);
   assert.equal(prepareUbuntuSources(actual), actual);
 });
 
-test('Azure Ubuntu URIs use the signed mirror while retaining security suites', () => {
+test('Azure Ubuntu URIs use the official security endpoint while retaining security suites', () => {
   assert.equal(prepareUbuntuSources(stanza('noble-security', 'http://azure.archive.ubuntu.com/ubuntu')),
-    stanza('noble-security', 'https://mirrors.edge.kernel.org/ubuntu'));
+    stanza('noble-security', 'https://security.ubuntu.com/ubuntu'));
 });
 
-test('direct Ubuntu archive domains are replaced without changing Ubuntu signing or suites', () => {
+test('official Ubuntu archive and security sources remain unchanged', () => {
   const primary = stanza('noble noble-updates noble-backports', 'https://archive.ubuntu.com/ubuntu');
   const security = stanza('noble-security', 'https://security.ubuntu.com/ubuntu');
   const input = primary + '\n' + security + '\n' + thirdParty;
   const actual = prepareUbuntuSources(input);
-  assert.equal(actual, primary.replace('https://archive.ubuntu.com/ubuntu', 'https://mirrors.edge.kernel.org/ubuntu')
-    + '\n' + security.replace('https://security.ubuntu.com/ubuntu', 'https://mirrors.edge.kernel.org/ubuntu')
-    + '\n' + thirdParty);
+  assert.equal(actual, input);
   assert.equal(prepareUbuntuSources(actual), actual);
 });
 
 test('Windows line endings and comments are retained', () => {
   const input = ('# Ubuntu archive\n' + stanza('noble')).replaceAll('\n', '\r\n');
-  assert.equal(prepareUbuntuSources(input), input.replace('mirror+file:/etc/apt/apt-mirrors.txt', 'https://mirrors.edge.kernel.org/ubuntu'));
+  assert.equal(prepareUbuntuSources(input), input.replace('mirror+file:/etc/apt/apt-mirrors.txt', 'https://archive.ubuntu.com/ubuntu'));
 });
 
 test('unsupported Ubuntu sources fail before any source file can be written', () => {
@@ -90,4 +88,20 @@ test('CLI refuses a non-Actions process with a nonzero exit', () => {
     { env: { PATH: process.env.PATH, GITHUB_ACTIONS: 'false' }, encoding: 'utf8' });
   assert.equal(child.status, 1);
   assert.equal(child.stdout, '');
+});
+
+test('Ubuntu archive and security suites do not share the failed third-party mirror', () => {
+  const input = stanza('noble noble-updates noble-backports') + '\n'
+    + stanza('noble-security', 'mirror+file:/etc/apt/apt-mirrors-security.txt') + '\n' + thirdParty;
+  const expected = stanza('noble noble-updates noble-backports', 'https://archive.ubuntu.com/ubuntu') + '\n'
+    + stanza('noble-security', 'https://security.ubuntu.com/ubuntu') + '\n' + thirdParty;
+  assert.equal(prepareUbuntuSources(input), expected);
+  assert.equal(prepareUbuntuSources(expected), expected);
+});
+
+test('previously prepared kernel mirror sources recover to official endpoints by suite', () => {
+  const failedMirror = 'https://mirrors.edge.kernel.org/ubuntu';
+  const input = stanza('noble noble-updates', failedMirror) + '\n' + stanza('noble-security', failedMirror);
+  assert.equal(prepareUbuntuSources(input), stanza('noble noble-updates', 'https://archive.ubuntu.com/ubuntu')
+    + '\n' + stanza('noble-security', 'https://security.ubuntu.com/ubuntu'));
 });
