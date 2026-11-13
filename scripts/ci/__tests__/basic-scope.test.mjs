@@ -9,7 +9,7 @@ import {planChecks} from '../basic-scope.mjs';
 
 const cli = fileURLToPath(new URL('../basic-scope.mjs', import.meta.url));
 const components = rows => [...new Set(rows.map(row => row.component))];
-const all = ['brain-unit', 'brain-integration', 'image', 'mcp', 'dashboard', 'ops', 'scripts'];
+const all = ['brain-unit', 'brain-integration', 'image', 'dashboard', 'ops', 'scripts'];
 
 test('已退役frontend不再进入矩阵，旧路径差分仍保守验证全部现役组件', () => {
   assert.equal(planChecks([], {full: true}).some(row => row.component === 'frontend'), false);
@@ -61,6 +61,7 @@ test('独立组件选择完整测试范围，结果去重且顺序稳定', () =>
   const expected = ['mcp', 'dashboard', 'scripts'];
   assert.deepEqual(components(planChecks(paths)), expected);
   assert.deepEqual(planChecks([...paths].reverse().concat(paths)), planChecks(paths));
+  assert.deepEqual(components(planChecks(['packages/mcp-readonly/server.js'], {full:true})), ['brain-unit', 'brain-integration', 'image', 'mcp', 'dashboard', 'ops', 'scripts']);
 });
 
 test('共享脚本、根依赖与任意层级测试或编译配置改动都运行全量', () => {

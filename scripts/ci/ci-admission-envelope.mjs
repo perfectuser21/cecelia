@@ -8,16 +8,8 @@ import {classifyAssertionRef} from '../../packages/brain/src/lib/gp-assertion-co
 import {fixedLocalGit} from './fixed-local-git.mjs';
 const FORMAT='cecelia.ci-admission/v1',SCOPE_FORMAT='cecelia.ci-scope/v1',HASH=/^[a-f0-9]{64}$/;
 const capabilities=new WeakMap(),need=(ok,code)=>{if(!ok)throw Object.assign(Error(code),{code});};
-const seal=(body,key)=>({...body,[key]:hash(body)});
 const keys=(object,names)=>object&&hash(Object.keys(object).sort())===hash([...names].sort());
 const commonKeys=['ci_format','ci_purpose','ci_repository','ci_source_revision','ci_control_revision','ci_source_tree','ci_seed_sha256','ci_scopes','ci_assertions'];
-function encode(value){
- if(value===null)return ['ci.null'];
- if(Array.isArray(value))return ['ci.array',value.map(encode)];
- if(typeof value==='object')return ['ci.object',Object.keys(value).sort().map(k=>[k,encode(value[k])])];
- need(['string','boolean','number'].includes(typeof value)&&!(typeof value==='number'&&!Number.isFinite(value)),'CI_ADMISSION_DOCUMENT_TYPE');
- return [`ci.${typeof value}`,value];
-}
 function decode(document){
  let count=0;
  const read=(n,depth=0)=>{
@@ -80,27 +72,6 @@ function assertionsValid(statement,seed,snapshots,source,seedHash){
  }
  need(hash(ids.sort())===hash(expected.map(a=>a.id).sort()),'CI_ADMISSION_ASSERTION_DENOMINATOR');
  const {ci_assertions_sha256,...body}=statement;need(ci_assertions_sha256===hash(body),'CI_ADMISSION_ASSERTION_DIGEST');
-}
-export async function createCiAdmissionDraft({controlRoot,controlRevision,sourceRevision,snapshots,executions,sourceTree}){
- const {seed,digest}=loadCiAdmissionSeed(controlRoot,controlRevision);
- snapshotsValid(snapshots,sourceRevision);canonicalValid(seed,snapshots);
- const tree=fixedLocalGit(controlRoot,['rev-parse',`${sourceRevision}^{tree}`],{encoding:'utf8'}).trim();
- need(tree===sourceTree,'CI_ADMISSION_TREE_MISMATCH');
- const statement=seal({ci_assertion_format:'cecelia.ci-assertions/v1',source_revision:sourceRevision,seed_sha256:digest,
-  scope_hashes:Object.fromEntries(snapshots.map(s=>[s.scope,s.snapshot_sha256])),required:seed.required_assertions.map(({id,scope,assertion_ref})=>({id,scope,assertion_ref})).sort((a,b)=>a.id.localeCompare(b.id)),executions:structuredClone(executions)},'ci_assertions_sha256');
- assertionsValid(statement,seed,snapshots,sourceRevision,digest);
- return seal({ci_format:'cecelia.ci-admission-draft/v1',ci_purpose:'ci_admission_draft',ci_repository:'perfectuser21/cecelia',ci_source_revision:sourceRevision,ci_control_revision:controlRevision,
-  ci_source_tree:tree,ci_seed_sha256:digest,
-  ci_scopes:snapshots.map(s=>({ci_scope_format:SCOPE_FORMAT,ci_scope_key:s.scope,ci_document:encode(s),ci_document_sha256:s.snapshot_sha256})),ci_assertions:statement},'ci_envelope_sha256');
-}
-export async function createCiAdmissionEnvelope({authority,controlRoot,draft,...input}){
- const proof=ciAuthorityProof(authority);
- draft??=await createCiAdmissionDraft({...input,controlRoot,controlRevision:proof.control_revision,sourceRevision:proof.source_revision});
- need(keys(draft,[...commonKeys,'ci_envelope_sha256'])&&draft.ci_format==='cecelia.ci-admission-draft/v1'&&draft.ci_purpose==='ci_admission_draft','CI_ADMISSION_DRAFT_INVALID');
- const {ci_envelope_sha256,...raw}=draft;need(ci_envelope_sha256===hash(raw),'CI_ADMISSION_DRAFT_DIGEST');
- const envelope=seal({...raw,ci_format:FORMAT,ci_purpose:'ci_admission_only',ci_authority:identity(proof)},'ci_envelope_sha256');
- const {seed,digest}=loadCiAdmissionSeed(controlRoot,proof.control_revision);validate(envelope,proof,seed,digest);
- need(envelope.ci_source_tree===fixedLocalGit(controlRoot,['rev-parse',`${proof.source_revision}^{tree}`],{encoding:'utf8'}).trim(),'CI_ADMISSION_TREE_MISMATCH');return envelope;
 }
 function validate(envelope,proof,seed,digest){
  need(keys(envelope,[...commonKeys,'ci_authority','ci_envelope_sha256'])&&envelope.ci_format===FORMAT&&envelope.ci_purpose==='ci_admission_only'&&envelope.ci_repository==='perfectuser21/cecelia'

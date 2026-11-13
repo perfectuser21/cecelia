@@ -4,7 +4,7 @@ import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {buildInfraConsumerSources,assertInfraConsumerRuntime,validateInfraConsumerRegistry,registerInfraConsumerSources,INFRA_CONSUMER_PATHS as paths,INFRA_CONSUMER_IDENTITY as I} from '../infra-consumer-source.js';
 import {stepSha256} from '../../../scripts/sync-steps-from-workspace.mjs';
-const root=fileURLToPath(new URL('../../../../../',import.meta.url)),revision='65205751baba232fa6402065460b3c8f68b21a37';
+const root=fileURLToPath(new URL('../../../../../',import.meta.url)),revision='d06de84e9f7d2d489a151e0b13b38f81651dd3fa';
 const input={scope:'cecelia-infra',repo:'perfectuser21/cecelia',revision,paths:[...paths],readSource:async path=>execFileSync('git',['show',`${revision}:${path}`],{cwd:root,encoding:'utf8',env:{PATH:process.env.PATH,HOME:process.env.HOME,GIT_NO_REPLACE_OBJECTS:'1'}})};
 it('真实固定Git闭包哈希覆盖两个运行文件和两个实际读取者，不伪执行能力',async()=>{
  const proof=await buildInfraConsumerSources(input);expect(proof.status).toBe('verified');expect(proof.definition_scope).toBe('consumer_evidence');

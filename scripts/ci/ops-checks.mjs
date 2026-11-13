@@ -22,7 +22,6 @@ const ROOT_SHELL = [
 const SAFE_SMOKES = [
   'brain-compose-envfile-authority', 'brain-deploy-service-isolation',
   'dashboard-sha-reconcile', 'deploy-chain-wounds', 'deploy-local-npm-cache', 'gate3-brain-deploy',
-  'runner-credential-single-chain',
 ].map(name => `scripts/smoke/${name}-smoke.sh`);
 const STAGING_SMOKE = 'scripts/smoke/dashboard-staging-gate-smoke.sh';
 
@@ -92,7 +91,6 @@ export function opsChecks(root, {paths: changedPaths = null} = {}) {
   const shell = filesIn(cwd, 'scripts/__tests__');
   const preview = filesIn(cwd, 'scripts/preview-agent/__tests__');
   const ops = filesIn(cwd, 'scripts/ops/__tests__', true);
-  const runner = filesIn(cwd, 'docker/cecelia-runner/__tests__');
   const smoke = filesIn(cwd, 'scripts/smoke');
   for (const file of [...SAFE_SMOKES, STAGING_SMOKE]) {
     if (!smoke.includes(file)) throw new Error(`Ops 隔离 smoke 缺失：${file}`);
@@ -102,8 +100,6 @@ export function opsChecks(root, {paths: changedPaths = null} = {}) {
     ...ROOT_SHELL.flatMap(expression => select(shell, expression, `scripts/__tests__/${expression.source}`)),
     ...select(preview, /\.test\.mjs$/, 'preview-agent Node'),
     ...select(ops, /\.test\.sh$/, 'Ops Shell（含子目录）'),
-    ...select(runner, /\.test\.sh$/, 'Runner Shell'),
-    ...select(runner, /\.test\.cjs$/, 'Runner CJS'),
     ...select(shell, /^dashboard-release-bind.*\.test\.mjs$/, 'Dashboard 发布/回档真实fixture'),
     ...SAFE_SMOKES, STAGING_SMOKE,
   ];
@@ -118,4 +114,17 @@ export function opsChecks(root, {paths: changedPaths = null} = {}) {
     args: path.endsWith('.mjs') ? ['--test', path] : [path],
     cwd,
   }));
+}
+
+// 旧镜像/attempt 兼容实现专用；现役默认与未知输入回退均不得调用本入口。
+export function legacyRunnerChecks(root) {
+  if (typeof root !== 'string' || !root) throw new Error('Runner 兼容回归需要仓库根目录');
+  const cwd = resolve(root);
+  const runner = filesIn(cwd, 'docker/cecelia-runner/__tests__');
+  const smoke = 'scripts/smoke/runner-credential-single-chain-smoke.sh';
+  if (!filesIn(cwd, 'scripts/smoke').includes(smoke)) throw new Error('Runner 兼容 smoke 缺失');
+  return [
+    ...select(runner, /\.test\.sh$/, '旧Runner Shell'),
+    ...select(runner, /\.test\.cjs$/, '旧Runner CJS'), smoke,
+  ].sort().map(path => ({command: path.endsWith('.sh') ? 'bash' : 'node', args: [path], cwd}));
 }

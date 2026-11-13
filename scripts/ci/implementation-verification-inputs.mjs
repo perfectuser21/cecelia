@@ -68,33 +68,45 @@ export function verifyVerificationInputFacts(root,{source,row,purpose='admission
 }
 
 const CI='.github/workflows/ci.yml',BASIC_RUNNER='scripts/ci/run-basic-check.mjs';
-const CURRENT_BASIC_CI="3636a0489fdc4ce2d9a362db0d635774b13f222d8c3d14939751460a2637faa7";
-const CANDIDATE_BASIC_CI="1283f9f7b9825a925318b20420d483de5f5daad5a032a476a20f100441c12a3f";
+const CURRENT_BASIC_CI="1283f9f7b9825a925318b20420d483de5f5daad5a032a476a20f100441c12a3f";
 const CURRENT_BASIC_ENTRY_PROTOCOLS=[
   {
-    "scripts/ci/run-basic-check.mjs": "10e030617fb6ca219bd4965afa2566213f8788bc4e3741d3e7b3d7ebf5e45918",
-    "scripts/ci/basic-scope.mjs": "446605f2052c09c44c21bd2c9f8bcee206b3198be4d18858f1c8298ece0be726",
-    "scripts/ci/check-basic-results.mjs": "084cc7187734c0dd83dddb528d87aa16d3ed9a49c3ea0eebf2c97cb4c4775da3",
-    "scripts/ci/ops-checks.mjs": "a5eb851d2f526e940432563a70e8a82fb0f128d66a8104515fec530974a55f6b",
     "packages/brain/vitest.config.js": "9566bd1cff449dc15ee924aea4c9f46aaa3457392fadf8cbf10d0b6556c2634e",
+    "scripts/ci/basic-scope.mjs": "7277d4d2c0bda8fdd4b218e8cc3c2e285c0a176f1a7fa436a0ab00344005c2ef",
+    "scripts/ci/run-basic-check.mjs": "01d52b299cb561a1f5b21bef3d6b29065573cdbebc9669a647fca27295889533",
+    "scripts/ci/check-basic-results.mjs": "084cc7187734c0dd83dddb528d87aa16d3ed9a49c3ea0eebf2c97cb4c4775da3",
+    "scripts/ci/basic-runtime-smoke.mjs": "b386b8c0c8631de5b6a0eec19494835f48c6ca3822a4533ee154ce8767a21eec",
+    "scripts/ci/ops-checks.mjs": "a5eb851d2f526e940432563a70e8a82fb0f128d66a8104515fec530974a55f6b",
+    "scripts/ci/run-isolated-staging-smoke.mjs": "fa19da1eaf14621a75d95763229fa8d6de40ce3e55940401458346da37f8fbaf",
     "scripts/ci/skill-source-tests.mjs": "dbb749f30271472fe1f24e1eec2215d7b5999f20c1d4ed74c00fd4b40f6c57c8",
-    "scripts/ci/run-skill-source-check.mjs": "debcaf26aa7025f47d846052e0c2b43d1a04976003936143d80ddac1582d7204",
+    "apps/api/vitest.config.ts": "dbb1e74af497db63cbd2326c5378bb05ca036e1a4590dc2061dce2e5257e776a",
     "scripts/ci/__tests__/basic-skill-source-coverage.test.mjs": "acc2046d6691423b739edc4071c9ea87f00e57a1a8b7a06be91d5487d24ad2c9",
+    "scripts/ci/check-brain-version-bump.sh": "361c35c33c2d0d404d9365c51478212e50ebe84df6a65eacca473ea57bffa0eb",
     ".github/actions/skills-source/action.yml": "f106e23e090e1fd1aca6c035f63478365cf4aae2e6b4f2d379569c0a22f18169",
     "scripts/ci/check-skill-source-identity.py": "ebc6b90fbe187b49c31101a5dba997d133fd45825cfcaa3549aad30581d747c1",
-    "apps/api/vitest.config.ts": "dbb1e74af497db63cbd2326c5378bb05ca036e1a4590dc2061dce2e5257e776a",
-    "apps/dashboard/vitest.config.ts": "a5899ed07ee4aa8ff262f7da361d695ef8eb26005571c5e09988aac53c1cc261",
+    "scripts/ci/__tests__/basic-skill-identity.test.mjs": "151af50620164e01f9e112746aa81adc0efe2e2b46857dae09c5c4c8f7fdd423",
+    "scripts/ci/check-w19-frozen.mjs": "9e3a937e951e712934f8268a3af237b8ba3689d68f42fc9de10bf1b6e3b3ca7b",
     "scripts/ci/__tests__/basic-w19-freeze.test.mjs": "127bfd50494259a78e2f3649c399596fc94acc90a3db17c43077a6ea47cf785a",
+    "playground/package-lock.json": "e2fa656e54b0d2d4f8c7398c24651589ff1556ffabbcec368465ff19d12bb6e9",
+    "playground/package.json": "9c340ea6eae6af3ad2cf7e41b003141193dbe6369451529e40deb41dd786e85d",
+    "playground/server.js": "c77d87096634b48a699c3951a07e0a74609535454f38078b97a0b35f87cfd38e",
+    "playground/tests/echo.test.js": "1fb291fdb3de19aca4cbfe5c61ef1571867b720dd4ec2378b169236ab652d7be",
+    "playground/tests/kernel-e.test.js": "53c24290c95377b88ab497c5c50f2246fc9accedb6f298c0b484dfb630211ecf",
+    "playground/tests/ping.test.js": "d364c15e08f487c70a312c1299a1b02758d935fb4f395a64992456c8fb09eb62",
+    "playground/tests/server.test.js": "b6b0628c4435d5a69de002207a35a34c713bda7897505586f501c7048c4adbf8",
+    "playground/vitest.config.js": "e6b279b6d857f890dfa2b3a84deb4f52d2d9e9300bdfaf392ebf94f258f6e204",
+    "scripts/ci/run-skill-source-check.mjs": "debcaf26aa7025f47d846052e0c2b43d1a04976003936143d80ddac1582d7204",
+    "apps/dashboard/vitest.config.ts": "a5899ed07ee4aa8ff262f7da361d695ef8eb26005571c5e09988aac53c1cc261",
     "scripts/ci/prepare-ubuntu-archive.mjs": "ca83d00df2f865fc1836e0f8841bc5f4ba7ddf57416b6f718855f5840205311b",
     "scripts/ci/__tests__/basic-ubuntu-archive.test.mjs": "525456457c116c91aba038f35916352abed5ec38a0aa7c5287fd263ef9ffb175",
     "scripts/skill_source_ownership.py": "20fca16bcf474588e9e4d0add00a66c5885b3d85a82275fb9082a0787e72b9a7"
   },
   {
-    "scripts/ci/run-basic-check.mjs": "01d52b299cb561a1f5b21bef3d6b29065573cdbebc9669a647fca27295889533",
-    "scripts/ci/basic-scope.mjs": "7277d4d2c0bda8fdd4b218e8cc3c2e285c0a176f1a7fa436a0ab00344005c2ef",
+    "scripts/ci/run-basic-check.mjs": "a7eb0c2f679385f6f5d79127b226972bc3f9bcfd488363273fcdc1268547483d",
+    "scripts/ci/basic-scope.mjs": "dcc7b67cc8dd5df9a370754be400bd276c98c7e747acdfdd8b3f52dc8416c3c4",
     "scripts/ci/check-basic-results.mjs": "084cc7187734c0dd83dddb528d87aa16d3ed9a49c3ea0eebf2c97cb4c4775da3",
-    "scripts/ci/ops-checks.mjs": "a5eb851d2f526e940432563a70e8a82fb0f128d66a8104515fec530974a55f6b",
-    "packages/brain/vitest.config.js": "9566bd1cff449dc15ee924aea4c9f46aaa3457392fadf8cbf10d0b6556c2634e",
+    "scripts/ci/ops-checks.mjs": "1208e7e1bf7325311de69ab8bb8c3e1cead535b733bf426e2a0cacaeb201a690",
+    "packages/brain/vitest.config.js": "12510a152768ac1b7c704a0f163ae8216d0860347c6225f2c366e5209547c2fb",
     "scripts/ci/skill-source-tests.mjs": "dbb749f30271472fe1f24e1eec2215d7b5999f20c1d4ed74c00fd4b40f6c57c8",
     "scripts/ci/run-skill-source-check.mjs": "debcaf26aa7025f47d846052e0c2b43d1a04976003936143d80ddac1582d7204",
     "scripts/ci/__tests__/basic-skill-source-coverage.test.mjs": "acc2046d6691423b739edc4071c9ea87f00e57a1a8b7a06be91d5487d24ad2c9",
@@ -102,16 +114,12 @@ const CURRENT_BASIC_ENTRY_PROTOCOLS=[
     "scripts/ci/check-skill-source-identity.py": "ebc6b90fbe187b49c31101a5dba997d133fd45825cfcaa3549aad30581d747c1",
     "apps/api/vitest.config.ts": "dbb1e74af497db63cbd2326c5378bb05ca036e1a4590dc2061dce2e5257e776a",
     "apps/dashboard/vitest.config.ts": "a5899ed07ee4aa8ff262f7da361d695ef8eb26005571c5e09988aac53c1cc261",
-    "scripts/ci/__tests__/basic-w19-freeze.test.mjs": "127bfd50494259a78e2f3649c399596fc94acc90a3db17c43077a6ea47cf785a",
     "scripts/ci/prepare-ubuntu-archive.mjs": "ca83d00df2f865fc1836e0f8841bc5f4ba7ddf57416b6f718855f5840205311b",
     "scripts/ci/__tests__/basic-ubuntu-archive.test.mjs": "525456457c116c91aba038f35916352abed5ec38a0aa7c5287fd263ef9ffb175",
     "scripts/skill_source_ownership.py": "20fca16bcf474588e9e4d0add00a66c5885b3d85a82275fb9082a0787e72b9a7"
   }
 ];
-const ENTRY_PROTOCOLS_BY_WORKFLOW={
- [CURRENT_BASIC_CI]:[CURRENT_BASIC_ENTRY_PROTOCOLS[0]],
- [CANDIDATE_BASIC_CI]:[CURRENT_BASIC_ENTRY_PROTOCOLS[1]],
-};
+const ENTRY_PROTOCOLS_BY_WORKFLOW={[CURRENT_BASIC_CI]:CURRENT_BASIC_ENTRY_PROTOCOLS};
 const functionalEntry=entry=>Object.hasOwn(ENTRY_PROTOCOLS_BY_WORKFLOW,entry?.canonical_sha256??'');
 const UNIT_CONFIGS=[
  {component:'brain',directory:'packages/brain',path:'packages/brain/vitest.config.js'},
@@ -150,8 +158,12 @@ function unitEntry(read,side){
  const signature=sha(JSON.stringify(canonical(doc)));if(!Object.hasOwn(ENTRY_PROTOCOLS_BY_WORKFLOW,signature))return null;
  const support=[workflow.reference];let selected;
  for(const seals of ENTRY_PROTOCOLS_BY_WORKFLOW[signature]){
-  const files=Object.entries(seals).map(([path,expected])=>({file:read(side,path),expected}));
-  if(files.every(({file,expected})=>file?.reference.sha256===expected)){selected=files;break;}
+  const files=[];let matches=true;
+  for(const [path,expected] of Object.entries(seals)){
+   const file=read(side,path);if(file?.reference.sha256!==expected){matches=false;break;}
+   files.push({file,expected});
+  }
+  if(matches){selected=files;break;}
  }
  if(!selected)return null;
  support.push(...selected.map(({file})=>file.reference));

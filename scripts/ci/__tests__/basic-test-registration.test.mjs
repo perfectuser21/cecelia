@@ -7,7 +7,7 @@ import {parse} from 'acorn';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const entries = [
-  ...['guard', 'reader-tuples'].map(name => `claude-channel-retired.${name}.test.js`),
+  'claude-channel-retired.guard.test.js',
   ...['guard', 'lexical'].map(name => `task-type-registry.${name}.test.js`),
 ].map(name => resolve(root, `packages/brain/src/__tests__/${name}`));
 

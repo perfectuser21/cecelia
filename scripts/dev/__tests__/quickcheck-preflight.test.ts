@@ -10,7 +10,7 @@ const packages = [
   ['apps/dashboard', 'build'],
 ] as const;
 
-function fixture(changes: string[], options: { missingScript?: boolean; failure?: number; missingTool?: boolean; missingRunner?: boolean; noBase?: boolean; frozenFailure?: boolean; ownershipUnitFailure?: boolean; ownershipScannerFailure?: boolean; emptyOwnershipSuite?: boolean } = {}) {
+function fixture(changes: string[], options: { missingScript?: boolean; failure?: number; missingTool?: boolean; missingRunner?: boolean; noBase?: boolean; ownershipUnitFailure?: boolean; ownershipScannerFailure?: boolean; emptyOwnershipSuite?: boolean } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'qc-preflight-'));
   const env = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' };
   for (const key of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_INDEX_FILE']) delete env[key];
@@ -35,7 +35,6 @@ function fixture(changes: string[], options: { missingScript?: boolean; failure?
     }
     put('apps/api/package.json', JSON.stringify({private:true,scripts:{test:'node forbidden.cjs'}}));
     // 真正执行 production runner 的 scripts 分支；边界命令只写隔离目录里的标记。
-    put('scripts/ci/check-w19-frozen.mjs', `import {appendFileSync} from 'node:fs'; appendFileSync(${JSON.stringify(join(root, 'marker.log'))}, 'scripts:w19-frozen\\n'); process.exit(${options.frozenFailure ? 17 : 0});`);
     put('scripts/ci/__tests__/basic-fixture.test.mjs', `import {appendFileSync} from 'node:fs'; appendFileSync(${JSON.stringify(join(root, 'marker.log'))}, 'scripts:node-test\\n');`);
     put('scripts/dev/check.mjs', `import {appendFileSync} from 'node:fs'; appendFileSync(${JSON.stringify(join(root, 'marker.log'))}, 'scripts:dev-tools\\n');`);
     put('scripts/facts-check.mjs', ''); put('scripts/check-version-sync.sh', '#!/bin/bash\nexit 0\n');
@@ -94,13 +93,13 @@ describe('quickcheck 快速准备检查，完整单测由GitHub必需检查负�
   it.each(['scripts/ci/change.mjs', '.github/workflows/change.yml', 'package-lock.json', 'package.json'])('共享入口 %s 实际执行 scripts CI runner', path => {
     const result = fixture([path]);
     expect(result.status, result.stdout + result.stderr).toBe(0);
-    expect(result.markers).toEqual(['scripts:w19-frozen', 'scripts:node-test', 'scripts:dev-tools', 'scripts:ownership-unit', 'scripts:ownership-scan']);
+    expect(result.markers).toEqual(['scripts:node-test', 'scripts:dev-tools', 'scripts:ownership-unit', 'scripts:ownership-scan']);
   });
   it.each(['unit', 'scanner'] as const)('所有权%s失败必须传播并阻止push', stage => {
     const result = fixture(['scripts/ci/change.mjs'], stage === 'unit'
       ? { ownershipUnitFailure: true } : { ownershipScannerFailure: true });
     expect(result.status, result.stdout + result.stderr).not.toBe(0);
-    expect(result.markers).toEqual(['scripts:w19-frozen', 'scripts:node-test', 'scripts:dev-tools',
+    expect(result.markers).toEqual(['scripts:node-test', 'scripts:dev-tools',
       'scripts:ownership-unit', ...(stage === 'scanner' ? ['scripts:ownership-scan'] : [])]);
     expect(result.stdout).not.toContain('本地准备检查通过');
   });
@@ -108,14 +107,7 @@ describe('quickcheck 快速准备检查，完整单测由GitHub必需检查负�
     const result = fixture(['scripts/ci/change.mjs'], { emptyOwnershipSuite: true });
     expect(result.status, result.stdout + result.stderr).not.toBe(0);
     expect(result.stderr).toContain('NO TESTS RAN: owned quickcheck fixture');
-    expect(result.markers).toEqual(['scripts:w19-frozen', 'scripts:node-test', 'scripts:dev-tools']);
-    expect(result.stdout).not.toContain('本地准备检查通过');
-  });
-  it('冻结检查失败必须阻止后续测试和push', () => {
-    const result = fixture(['scripts/ci/change.mjs'], { frozenFailure: true });
-    expect(result.status).not.toBe(0);
-    expect(result.markers).toEqual(['scripts:w19-frozen']);
-    expect(result.stdout).toContain('exit=17');
+    expect(result.markers).toEqual(['scripts:node-test', 'scripts:dev-tools']);
     expect(result.stdout).not.toContain('本地准备检查通过');
   });
   it.each([{ missingScript: true }, { missingTool: true }, { failure: 17 }])('缺入口/工具或真实命令非零时阻止push：%j', options => {

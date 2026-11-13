@@ -112,17 +112,6 @@ jobs:
           API_CAPTURE_SCHEMA_INTEGRATION: '1'
           CI_PG_SERVER_ADDRESS: ${{ steps.pg_identity.outputs.address }}
         run: cd apps/api && npx --no-install vitest run --config vitest.schema.config.ts --reporter=dot
-      - name: Verify readonly MCP with owned PostgreSQL fixtures
-        env:
-          PGPASSWORD: isolated-ci
-          MCP_PG_FIXTURE_SERVER_ADDRESS: ${{ steps.pg_identity.outputs.address }}
-        run: |
-          set -euo pipefail
-          mcp_db="cecelia_mcp_ci_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}"
-          [[ "$mcp_db" =~ ^cecelia_mcp_ci_[0-9]+_[0-9]+$ ]]
-          createdb -h 127.0.0.1 -p 5432 -U cecelia "$mcp_db"
-          trap 'dropdb -h 127.0.0.1 -p 5432 -U cecelia "$mcp_db"' EXIT
-          TEST_DATABASE_URL="postgresql://cecelia:isolated-ci@127.0.0.1:5432/$mcp_db" npm run test:pg -w packages/mcp-readonly
       - name: Run isolated launcher and utility regressions
         run: |
           set -euo pipefail

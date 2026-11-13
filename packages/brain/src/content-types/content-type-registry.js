@@ -160,25 +160,9 @@ async function listContentTypes() {
   return merged;
 }
 
-/**
- * 加载所有内容类型配置（启动时验证用）
- * @returns {{ name: string, config: object }[]} 所有类型配置数组
- * @throws {Error} 任何类型配置无效时抛出
- */
-async function loadAllContentTypes() {
-  const names = await listContentTypes();
-  const results = [];
-  for (const name of names) {
-    const config = await getContentType(name);
-    results.push({ name, config });
-  }
-  return results;
-}
-
 export {
   getContentType,
   getContentTypeFromYaml,
   listContentTypes,
   listContentTypesFromYaml,
-  loadAllContentTypes,
 };

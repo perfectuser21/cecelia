@@ -18,19 +18,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { parse } from 'acorn';
-import { provenanceReaderTuples, matchesProvenanceReaderTuple, registerReaderTupleGuardTests, readHistoricalReader, PROVENANCE_CALLER_SHA256, registerReviewedAGuardTests, reviewedADataRanges } from './claude-channel-retired.reader-tuples.fixture.js';
-/** 模式常量只能留在已审解析闭包；每种突变均应使纯数据资格失败。 */
-function mutateStageMode(kind,sources,root){
- const file=path.join(root,'existing-ops-stage-modes.js'),other=path.join(root,'../unreviewed-mode-consumer.js');
- if(kind==='mode eval')sources.set(file,sources.get(file)+'\neval(REVIEWED_STAGE_MODES[0]["lib/repo-profile.mjs"]);');
- if(kind==='mode raw export')sources.set(file,sources.get(file)+'\nexport const raw=STAGE_ENVELOPES.recorded.spec;');
- if(kind==='mode process')sources.set(file,sources.get(file)+"\nimport {spawn as launch} from 'node:child_process';launch('claude',['-p']);");
- if(kind==='third mode')sources.set(other,"import {REVIEWED_STAGE_MODES} from './lib/existing-ops-stage-modes.js';eval(REVIEWED_STAGE_MODES[0]['lib/repo-profile.mjs']);");
- if(kind==='escaped mode')sources.set(other,"const m=await import('./lib/existing-ops-stage-\\u006dodes.js');eval(m.REVIEWED_STAGE_MODES[0]['lib/repo-profile.mjs']);");
- if(kind==='concat mode')sources.set(other,"const m=await import('./lib/existing-ops-stage-'+'modes.js');Function(m.REVIEWED_STAGE_MODES[0]['lib/repo-profile.mjs'])();");
- if(kind==='changed mode path'){sources.set(path.join(root,'other-stage-modes.js'),sources.get(file));sources.delete(file);}
-}
-
+import {registerReviewedAGuardTests,reviewedADataRanges} from './claude-channel-retired.reader-tuples.fixture.js';
 import { createHash } from 'node:crypto';
 import { readFileSync, readdirSync, lstatSync } from 'node:fs';
 import path from 'node:path';
@@ -87,7 +75,6 @@ function stripComments(src) {
 
 // 只剥离已证明流入 Acorn 的固定模板值；模块其余内容仍经过所有原规则。
 const ENVELOPE_FILE = path.join(BRAIN_ROOT,'src/lib/existing-ops-build-envelopes.js');
-const ENVELOPE_CONSUMER = path.join(BRAIN_ROOT,'src/lib/existing-ops-build-source.js');
 const parseModule = text => parse(text,{ecmaVersion:'latest',sourceType:'module'});
 function astRows(tree) {
   const rows=[];
@@ -95,27 +82,6 @@ function astRows(tree) {
   visit(tree);return rows;
 }
 const astShape = n => JSON.stringify(n,(k,v)=>['start','end','raw'].includes(k)?undefined:v);
-// 已独审的 boolean readers 及其纯比较闭包；摘要只决定模板可否剥除，并不豁免模块扫描。
-// 模板 AST 不得流出这些固定函数；改变 matcher 时需显式复审此有限消费合同。
-const PURE_READERS = new Set(["canonical", "declaration", "walk", "nodes", "bound", "member", "call", "variable", "fn", "same", "intact", "moduleEnvelope", "namedFunctionsLink", "functionMatches", "registration", "registrationBody", "testSetup", "testWitness", "mainPrefix", "cliEnvelope", "proveLegacyBuildSources", "proveBuildSources", "proveLegacyPublishSources", "provePublishSources"]);
-const PURE_READERS_SHA256 = '32834e4869d8d7b9f6062813044fcc44224ac9712082b7ab36ea98a4ac889d63';
-function provenReaderClosure(consumer) {
-  if(consumer.body.some(n=>n.type==='ExportNamedDeclaration'&&n.source&&(n.source.value!=='./existing-ops-build-envelopes.js'||n.specifiers.length!==1||n.specifiers[0].local.name!=='buildSelectorEnabled'||n.specifiers[0].exported.name!=='buildSelectorEnabled')))return false;
-  const declarations=consumer.body.map(n=>n.type==='ExportNamedDeclaration'?n.declaration:n).filter(Boolean);
-  const definitions=declarations.flatMap(n=>n.type==='VariableDeclaration'?n.declarations:[n]);
-  const selected=[...PURE_READERS].map(name=>definitions.filter(n=>n.id?.name===name));
-  if(selected.some(rows=>rows.length!==1)||createHash('sha256').update(astShape(selected.map(rows=>rows[0]))).digest('hex')!==PURE_READERS_SHA256)return false;
-  const constants=new Set(['requireAcorn','PREFIX','BUILD_SOURCE_PATHS','PUBLISH_TEST','PUBLISH_ENTRY']);
-  const functions=new Set([...PURE_READERS,'parseEnvelope','collectBuildSources','collectPublishSources','provenanceInputs','collectProvenanceInputs']);
-  if(declarations.some(n=>n.type==='ImportDeclaration'?!['node:module','./existing-ops-build-envelopes.js','./existing-ops-provenance-envelope.js','./existing-ops-stage-source.js','./existing-ops-native-evidence-source.js'].includes(n.source.value):n.type==='VariableDeclaration'?n.declarations.some(d=>!constants.has(d.id.name)&&!PURE_READERS.has(d.id.name)):n.type==='FunctionDeclaration'?!functions.has(n.id.name):true))return false;
-  // 真实模块无需动态代码/模块入口；新增顶层副作用或读取者之外的全局写入一律失败关闭。
-  const rows=astRows(consumer),parents=new Map(rows.map(r=>[r.node,r.parent]));
-  const readerOf=node=>{for(let n=node;n;n=parents.get(n))if(n.type==='FunctionDeclaration'&&PURE_READERS.has(n.id?.name))return n;return null;};
-  return !rows.some(({node,parent})=>node.type==='ImportExpression'||node.type==='Identifier'&&['eval','Function','global','globalThis','process','Reflect'].includes(node.name)
-    ||node.type==='AssignmentExpression'&&!readerOf(node)
-    ||node.type==='Identifier'&&node.name==='parseEnvelope'&&parent?.type==='CallExpression'&&parent.callee===node&&!readerOf(node));
-}
-
 // 已独审的完整 runtime 指纹闭包：固定十五/十六文件只读→SHA摘要/比较；没有模板执行或原文出口。
 // 仅此路径且整个模块 AST 相等时认可该消费者；任何语义改动都须重新审查。
 // 这不把 runtime 加入文件白名单，模块原 R1–R7/进程别名扫描照常执行。
@@ -126,15 +92,8 @@ const provenFingerprintReader = (file,text) => file===HASH_RUNTIME_FILE
 
 // V2 normalize 返回代码字符串投影；安全边界是完整已审 helper + 唯一已审 caller，
 // caller 只将投影交回旧 Acorn/matcher。未知消费者不能继承此资格。
-const STAGE_HELPER=path.join(BRAIN_ROOT,'src/lib/existing-ops-stage-source.js');
 const STAGE_DATA=path.join(BRAIN_ROOT,'src/lib/existing-ops-stage-envelopes.js');
-const STAGE_MODES=path.join(BRAIN_ROOT,'src/lib/existing-ops-stage-modes.js');
-const PROVENANCE_HELPER = path.join(BRAIN_ROOT,'src/lib/existing-ops-provenance-envelope.js');
-const NATIVE_HELPER = path.join(BRAIN_ROOT,'src/lib/existing-ops-native-evidence-source.js');
-const NATIVE_DATA = path.join(BRAIN_ROOT,'src/lib/existing-ops-native-evidence-envelopes.js');
-const PROVENANCE_READER_TUPLES = provenanceReaderTuples(path.join(BRAIN_ROOT,'src/lib'));
-const PROVENANCE_READER_HASHES = PROVENANCE_READER_TUPLES[0];
-const DOC_RUNTIME_FILE = path.join(BRAIN_ROOT,'src/lib/existing-ops-runtime-source.js');
+const NATIVE_DATA=path.join(BRAIN_ROOT,'src/lib/existing-ops-native-evidence-envelopes.js');
 // 仅静态折叠有界字面量拼接；不求值标识符、调用或运行时表达式。
 function constantReferenceString(node,depth=0) {
   if(!node||depth>32)return null;
@@ -158,62 +117,6 @@ function decodedReferenceTexts(text) {
   })];}
   catch{return [text];} // 非 JS 文件仍保留原文本检查。
 }
-function provenanceReaderClosure(sources) {
-  if(!matchesProvenanceReaderTuple(sources,PROVENANCE_READER_TUPLES.map(tuple=>new Map([[ENVELOPE_CONSUMER,PROVENANCE_CALLER_SHA256],...tuple])),text=>createHash('sha256').update(astShape(parseModule(text))).digest('hex')))return false;
-  const decoded=new Map([...sources].map(([file,text])=>[file,decodedReferenceTexts(text)]));
-  for(const file of PROVENANCE_READER_HASHES.keys()) {
-    for(const [consumer,text] of sources) {
-      if(!decoded.get(consumer).some(value=>value.includes(path.basename(file))))continue;
-      const callers=file===NATIVE_DATA?[NATIVE_HELPER]:file===NATIVE_HELPER?[ENVELOPE_CONSUMER,STAGE_HELPER,PROVENANCE_HELPER]
-        :file===STAGE_DATA?[STAGE_HELPER,STAGE_MODES]:file===STAGE_MODES?[STAGE_HELPER]:file===STAGE_HELPER?[ENVELOPE_CONSUMER,STAGE_HELPER]:file===PROVENANCE_HELPER?[ENVELOPE_CONSUMER]:[PROVENANCE_HELPER];
-      if(callers.includes(consumer))continue;
-      if(provenFingerprintReader(consumer,text))continue;
-      if(file===PROVENANCE_HELPER&&consumer===DOC_RUNTIME_FILE&&matchesProvenanceReaderTuple(sources,PROVENANCE_READER_TUPLES.slice(2),value=>createHash('sha256').update(astShape(parseModule(value))).digest('hex')))continue;
-      return false;
-    }
-  }
-  return true;
-}
-
-function envelopeRanges(src,sources) {
-  const tree=parseModule(src), rows=astRows(tree);
-  const declarations=tree.body.filter(n=>n.type==='ExportNamedDeclaration'&&n.declaration?.kind==='const').flatMap(n=>n.declaration.declarations).filter(n=>n.id.name==='ENVELOPES');
-  if(declarations.length!==1)return null;
-  const data=declarations[0],properties=data.init?.properties;
-  if(data.init?.type!=='ObjectExpression'||!properties?.length||properties.some(p=>p.type!=='Property'||p.computed||p.method||p.kind!=='init'||p.value?.type!=='TemplateLiteral'||p.value.expressions.length))return null;
-  if(rows.some(({node,parent})=>node.type==='Identifier'&&node.name==='ENVELOPES'&&!(parent===data&&parent.id===node)))return null;
-  // 额外消费者没有获得纯数据资格；不推断它不会执行字符串。
-  if(!provenanceReaderClosure(sources))return null;
-  for(const [file,text] of sources)if(file!==ENVELOPE_FILE&&file!==ENVELOPE_CONSUMER&&file!==PROVENANCE_HELPER&&text.includes('existing-ops-build-envelopes')&&!provenFingerprintReader(file,text))return null;
-  const consumer=parseModule(sources.get(ENVELOPE_CONSUMER)||''), usages=astRows(consumer);
-  if(!provenReaderClosure(consumer))return null;
-  const imports=consumer.body.filter(n=>n.type==='ImportDeclaration');
-  const dataImport=imports.filter(n=>n.source.value==='./existing-ops-build-envelopes.js');
-  const moduleImport=imports.filter(n=>n.source.value==='node:module');
-  if(dataImport.length!==1||dataImport[0].specifiers.length!==1||dataImport[0].specifiers[0].imported?.name!=='ENVELOPES'||dataImport[0].specifiers[0].local.name!=='ENVELOPES')return null;
-  if(moduleImport.length!==1||moduleImport[0].specifiers.length!==1||moduleImport[0].specifiers[0].imported?.name!=='createRequire'||moduleImport[0].specifiers[0].local.name!=='createRequire')return null;
-  const requireDeclaration=consumer.body.find(n=>n.type==='VariableDeclaration'&&n.declarations.some(d=>d.id.name==='requireAcorn'));
-  const parser=consumer.body.find(n=>n.type==='FunctionDeclaration'&&n.id.name==='parseEnvelope');
-  if(astShape(requireDeclaration)!==astShape(parseModule('const requireAcorn = createRequire(import.meta.url);').body[0])||astShape(parser)!==astShape(parseModule("function parseEnvelope(text) { return requireAcorn('acorn').parse(text, { ecmaVersion: 'latest', sourceType: 'module' }); }").body[0]))return null;
-  const parents=new Map(usages.map(({node,parent})=>[node,parent]));
-  let count=0;
-  for(const {node,parent} of usages) {
-    if(node.type!=='Identifier')continue;
-    if(node.name==='ENVELOPES') {
-      if(parent?.type==='ImportSpecifier')continue;
-      if(parent?.type!=='MemberExpression'||parent.object!==node)return null;
-      if(parent.computed&&!['Identifier','Literal','BinaryExpression'].includes(parent.property.type))return null;
-      const use=parents.get(parent);
-      const direct=use?.type==='CallExpression'&&use.callee.name==='parseEnvelope'&&use.arguments.length===1&&use.arguments[0]===parent;
-      const wrapped=use?.type==='TemplateLiteral'&&use.expressions.length===1&&use.expressions[0]===parent&&parent.property.name==='mainPrefix'&&!parent.computed&&use.quasis.map(q=>q.value.cooked).join('|')==='async function main(input) {|}'&&parents.get(use)?.callee?.name==='parseEnvelope'&&parents.get(use).arguments.length===1;
-      if(!direct&&!wrapped)return null;count++;
-    }
-    if(node.name==='parseEnvelope'&&!(parent===parser&&parent.id===node)&&!(parent?.type==='CallExpression'&&parent.callee===node))return null;
-    if(node.name==='requireAcorn'&&!(parent===requireDeclaration.declarations[0]&&parent.id===node)&&!(parent?.type==='CallExpression'&&parent.callee===node&&node.start>=parser.start&&node.end<=parser.end))return null;
-    if(node.name==='createRequire'&&parent?.type!=='ImportSpecifier'&&!(parent?.type==='CallExpression'&&parent.callee===node&&node.start>=requireDeclaration.start&&node.end<=requireDeclaration.end))return null;
-  }
-  return count?properties.map(p=>[p.value.start,p.value.end]):null;
-}
 // 原正则仍保留；补充进程函数的显式本地别名，不能靠改名藏起真实启动。
 function aliasedProcessCalls(src) {
   try {
@@ -228,22 +131,8 @@ export function findClaudeInvocations(src, {file,sources}={}) {
   const original=src;
   const reviewedRanges=reviewedADataRanges(src,{file,sources,root:path.join(BRAIN_ROOT,'src/lib'),parse:parseModule,shape:astShape,rows:astRows,decoded:decodedReferenceTexts,provenFingerprintReader});
   if(reviewedRanges){for(const [start,end] of reviewedRanges.reverse())src=src.slice(0,start)+src.slice(start,end).replace(/[^\n]/g,' ')+src.slice(end);}
-  else {
-  if(file===NATIVE_DATA){
-    let readonly=false;try{readonly=src===sources.get(file)&&provenanceReaderClosure(sources);}catch{}
-    // 压缩并不隐藏可执行语句：整个数据模块不匹配或任何新消费者出现都明确E1，原R1-R7继续扫描。
-    if(!readonly)return [{rule:'E1',line:1,text:'原生封套不在已审只读消费闭包'},...findClaudeInvocations(src)];
-  }
-  if(file===STAGE_DATA){
-    let ranges;try{if(src===sources.get(file)&&provenanceReaderClosure(sources))ranges=astRows(parseModule(src)).filter(({node})=>node.type==='Literal'&&typeof node.value==='string').map(({node})=>[node.start,node.end]);}catch{}
-    if(!ranges)return [{rule:'E1',line:1,text:'阶段封套不在已审只读消费闭包'},...findClaudeInvocations(src)];
-    for(const [start,end] of ranges.reverse())src=src.slice(0,start)+src.slice(start,end).replace(/[^\n]/g,' ')+src.slice(end);
-  }
-  if(file===ENVELOPE_FILE) {
-    let ranges;try{ranges=envelopeRanges(src,sources);}catch{ranges=null;}
-    if(!ranges)return [{rule:"E1",line:1,text:"来源模板不是已证明的只读 Acorn 输入"},...findClaudeInvocations(src)];
-    for(const [start,end] of [...ranges].reverse())src=src.slice(0,start)+src.slice(start,end).replace(/[^\n]/g," ")+src.slice(end);
-  }
+  else if([NATIVE_DATA,STAGE_DATA,ENVELOPE_FILE].includes(file)) {
+    return [{rule:'E1',line:1,text:'封套不在现役完整只读消费闭包'},...findClaudeInvocations(src)];
   }
   const hits = [];
   stripComments(src).forEach((line, i) => {
@@ -328,171 +217,4 @@ describe('守卫自证：每条判据都会报警', () => {
     expect(findClaudeInvocations(line)).toEqual([]);
   });
 });
-describe('只读来源封套数据与实际执行代码分离',()=>{
- const dataFile=path.join(BRAIN_ROOT,'src/lib/existing-ops-build-envelopes.js');
- const consumer=path.join(BRAIN_ROOT,'src/lib/existing-ops-build-source.js');
- const baseSources=()=>new Map([[dataFile,readHistoricalReader(dataFile)],[consumer,readHistoricalReader(consumer)],...[...PROVENANCE_READER_HASHES.keys()].map(file=>[file,readHistoricalReader(file)])]);
- const scan=(edit=()=>{},suffix='')=>{const sources=baseSources();edit(sources);return findClaudeInvocations(sources.get(dataFile)+suffix,{file:dataFile,sources});};
- it('真实无插值ENVELOPES仅供Acorn解析，原R3文本不是进程执行',()=>expect(scan()).toEqual([]));
- it.each(['spawn','alias','interpolation','consume','consumer_alias','extra_consumer','parser_shadow','parser_reassign','ast_escape','helper_side_effect','top_side_effect','dynamic_module'])('封套 %s 不得被纯数据豁免遮住',kind=>{
-  const result=scan(sources=>{
-   if(kind==='spawn')sources.set(dataFile,sources.get(dataFile)+"\nspawn('claude',['-p']);");
-   if(kind==='alias')sources.set(dataFile,sources.get(dataFile)+"\nimport {spawn as launch} from 'node:child_process';launch('claude',['-p']);");
-   if(kind==='interpolation')sources.set(dataFile,sources.get(dataFile).replace('spawnParameters: `','spawnParameters: `${launch("claude")}'));
-   if(kind==='consume')sources.set(consumer,sources.get(consumer)+"\nexec(ENVELOPES.spawnParameters);");
-   if(kind==='consumer_alias')sources.set(consumer,sources.get(consumer)+"\nconst escaped=ENVELOPES;exec(escaped.spawnParameters);");
-   if(kind==='extra_consumer')sources.set(path.join(BRAIN_ROOT,'src/extra.js'),"import {ENVELOPES} from './lib/existing-ops-build-envelopes.js';exec(ENVELOPES.spawnParameters)");
-   if(kind==='ast_escape')sources.set(consumer,sources.get(consumer)+"\nimport {spawn as executeDerived} from 'node:child_process';const derived=parseEnvelope(ENVELOPES.spawnParameters);executeDerived(derived.body[0].params[0].properties.find(p=>p.key.name==='bin').value.right.right.value,['-p','probe']);");
-   if(kind==='helper_side_effect')sources.set(consumer,sources.get(consumer).replace('const same=(a,b)=>canonical(a)===canonical(b);','const same=(a,b)=>{ sendElsewhere(b); return true; };'));
-   if(kind==='top_side_effect')sources.set(consumer,sources.get(consumer)+"\nJSON.stringify=executeDerived;");
-   if(kind==='dynamic_module')sources.set(consumer,sources.get(consumer)+"\nconst tool=await import('node:child_process');");
-   if(kind==='parser_shadow')sources.set(consumer,sources.get(consumer).replace('function functionMatches(tree,name,_parse)', 'function functionMatches(tree,name,_parse,parseEnvelope)'));
-   if(kind==='parser_reassign')sources.set(consumer,sources.get(consumer)+"\nparseEnvelope=eval;");
-  });expect(result.length).toBeGreaterThan(0);
- });
- it.each(['helper eval','helper raw export','third helper consumer','escaped helper import','escaped dynamic helper import','third data consumer','other helper path','data top effect'])('V2 %s 不得逃逸完整只读消费闭包',kind=>{
-  const result=scan(sources=>{
-   if(kind==='helper eval')sources.set(PROVENANCE_HELPER,sources.get(PROVENANCE_HELPER)+'\neval(ENVELOPES.runClaude);');
-   if(kind==='helper raw export')sources.set(PROVENANCE_HELPER,sources.get(PROVENANCE_HELPER)+'\nexport const raw=ENVELOPES.runClaude;');
-   if(kind==='third helper consumer')sources.set(path.join(BRAIN_ROOT,'src/other.js'),"import {normalizeProvenanceBuild} from './lib/existing-ops-provenance-envelope.js'; eval(normalizeProvenanceBuild(candidate,parse).cli);");
-   if(kind==='escaped helper import')sources.set(path.join(BRAIN_ROOT,'src/other.js'),"import {normalizeProvenanceBuild} from './lib/existing-ops-provenance-\\u0065nvelope.js'; eval(normalizeProvenanceBuild(candidate,parse).cli);");
-   if(kind==='escaped dynamic helper import')sources.set(path.join(BRAIN_ROOT,'src/other.js'),"const {normalizeProvenanceBuild}=await import('./lib/existing-ops-provenance-\\u0065nvelope.js'); eval(normalizeProvenanceBuild(candidate,parse).cli);");
-   if(kind==='third data consumer')sources.set(path.join(BRAIN_ROOT,'src/other.js'),"import {REVIEWED} from './lib/existing-ops-provenance-entry-envelopes.js'; eval(REVIEWED.runClaude);");
-   if(kind==='other helper path'){sources.set(path.join(BRAIN_ROOT,'src/lib/other-helper.js'),sources.get(PROVENANCE_HELPER));sources.delete(PROVENANCE_HELPER);}
-   if(kind==='data top effect'){const file=path.join(BRAIN_ROOT,'src/lib/existing-ops-provenance-entry-envelopes.js');sources.set(file,sources.get(file)+'\nexecute(REVIEWED.runClaude);');}
-  });expect(result.some(hit=>hit.rule==='E1')).toBe(true);
- });
-});
-describe('新增阶段封套不允许执行或额外消费者',()=>{
- const helper=path.join(BRAIN_ROOT,'src/lib/existing-ops-stage-source.js'),data=path.join(BRAIN_ROOT,'src/lib/existing-ops-stage-envelopes.js');
- const base=()=>new Map([[ENVELOPE_FILE,readHistoricalReader(ENVELOPE_FILE)],[ENVELOPE_CONSUMER,readHistoricalReader(ENVELOPE_CONSUMER)],...[...PROVENANCE_READER_HASHES.keys(),helper,data,STAGE_MODES].map(file=>[file,readHistoricalReader(file)])]);
- it('实际只读阶段数据合同继续经过完整闭包资格',()=>{const sources=base();expect(findClaudeInvocations(sources.get(data),{file:data,sources})).toEqual([]);});
- it.each(['helper side effect','data side effect','third helper','third data','escaped data','mode eval','mode raw export','mode process','third mode','escaped mode','concat mode','changed mode path'])('%s使阶段及原封套资格失败',kind=>{
-  const sources=base();
-  mutateStageMode(kind,sources,path.join(BRAIN_ROOT,'src/lib'));
-  if(kind==='helper side effect')sources.set(helper,sources.get(helper)+'\neval(REVIEWED.recorded.spec);');
-  if(kind==='data side effect')sources.set(data,sources.get(data)+'\neval(STAGE_ENVELOPES.recorded.spec);');
-  if(kind==='third helper')sources.set(path.join(BRAIN_ROOT,'src/extra.js'),"import {stageSourceVersion} from './lib/existing-ops-stage-source.js';stageSourceVersion(candidate,eval);");
-  if(kind==='third data')sources.set(path.join(BRAIN_ROOT,'src/extra.js'),"import {STAGE_ENVELOPES} from './lib/existing-ops-stage-envelopes.js';eval(STAGE_ENVELOPES.recorded.spec);");
-  if(kind==='escaped data')sources.set(path.join(BRAIN_ROOT,'src/extra.js'),"const {STAGE_ENVELOPES}=await import('./lib/existing-ops-stage-\\u0065nvelopes.js');eval(STAGE_ENVELOPES.recorded.spec);");
-  expect(findClaudeInvocations(sources.get(data),{file:data,sources}).some(hit=>hit.rule==='E1')).toBe(true);
-  expect(findClaudeInvocations(sources.get(ENVELOPE_FILE),{file:ENVELOPE_FILE,sources}).some(hit=>hit.rule==='E1')).toBe(true);
- });
-});
-describe('isolation 新封套仍只允许已审 Acorn 消费闭包',()=>{
- const core=path.join(BRAIN_ROOT,'src/lib/existing-ops-provenance-core-envelope.js');
- const local=path.join(BRAIN_ROOT,'src/lib/existing-ops-provenance-local-envelopes.js');
- const base=()=>new Map([[ENVELOPE_FILE,readHistoricalReader(ENVELOPE_FILE)],[ENVELOPE_CONSUMER,readHistoricalReader(ENVELOPE_CONSUMER)],...[...PROVENANCE_READER_HASHES.keys()].map(file=>[file,readHistoricalReader(file)])]);
- const scan=sources=>[ENVELOPE_FILE,STAGE_DATA].map(file=>findClaudeInvocations(sources.get(file),{file,sources}));
- it('完整新版本取得只读资格，原执行规则仍扫描剩余代码',()=>{
-  const sources=base();
-  expect(sources.get(core)).toContain('export const ISOLATION_REVIEWED');
-  expect(sources.get(local)).toContain('export const ISOLATION_REVIEWED');
-  expect(sources.get(STAGE_DATA)).toContain('export const ISOLATION_STAGE_ENVELOPES');
-  expect(scan(sources)).toEqual([[],[]]);
- });
- it.each(['core eval','local Function','stage exec','raw helper export','extra core consumer','extra local consumer','escaped stage consumer','dynamic helper consumer','caller executes selector'])('%s不能继承新增数据的只读资格',kind=>{
-  const sources=base(),other=path.join(BRAIN_ROOT,'src/unreviewed-isolation-consumer.js');
-  if(kind==='core eval')sources.set(core,sources.get(core)+'\neval(ISOLATION_REVIEWED.recordProvenance);');
-  if(kind==='local Function')sources.set(local,sources.get(local)+'\nnew Function(ISOLATION_REVIEWED.qaIsolation)();');
-  if(kind==='stage exec')sources.set(STAGE_DATA,sources.get(STAGE_DATA)+'\nexec(ISOLATION_STAGE_ENVELOPES.evaluate);');
-  if(kind==='raw helper export')sources.set(PROVENANCE_HELPER,sources.get(PROVENANCE_HELPER)+'\nexport const raw=ISOLATION_CORE.recordProvenance;');
-  if(kind==='extra core consumer')sources.set(other,"import {ISOLATION_REVIEWED} from './lib/existing-ops-provenance-core-envelope.js';export const raw=ISOLATION_REVIEWED;");
-  if(kind==='extra local consumer')sources.set(other,"import {ISOLATION_REVIEWED} from './lib/existing-ops-provenance-local-envelopes.js';eval(ISOLATION_REVIEWED.qaIsolation);");
-  if(kind==='escaped stage consumer')sources.set(other,"import {ISOLATION_STAGE_ENVELOPES} from './lib/existing-ops-stage-\\u0065nvelopes.js';eval(ISOLATION_STAGE_ENVELOPES.evaluate);");
-  if(kind==='dynamic helper consumer')sources.set(other,"const {provenanceSourceVersion}=await import('./lib/existing-ops-provenance-\\u0065nvelope.js');provenanceSourceVersion(candidate,eval);");
-  if(kind==='caller executes selector')sources.set(ENVELOPE_CONSUMER,sources.get(ENVELOPE_CONSUMER)+'\nprovenanceSourceVersion(candidate,eval);');
-  for(const hits of scan(sources))expect(hits.some(h=>h.rule==='E1')).toBe(true);
- });
- it('新阶段数据后的真实claude进程调用仍同时触发E1与R1',()=>{
-  const sources=base();sources.set(STAGE_DATA,sources.get(STAGE_DATA)+"\nimport {spawn as launch} from 'node:child_process';launch('claude',['-p','probe']);");
-  const hits=findClaudeInvocations(sources.get(STAGE_DATA),{file:STAGE_DATA,sources});
-  expect(hits.some(h=>h.rule==='E1')).toBe(true);expect(hits.some(h=>h.rule==='R1')).toBe(true);
- });
-});
-describe('固定runtime字节指纹不执行来源模板',()=>{
- const runtime=path.join(BRAIN_ROOT,'src/lib/native-consumer-runtime.js');
- const source=readHistoricalReader(runtime);
- const base=()=>new Map([[ENVELOPE_FILE,readHistoricalReader(ENVELOPE_FILE)],[ENVELOPE_CONSUMER,readHistoricalReader(ENVELOPE_CONSUMER)],[runtime,source],...[...PROVENANCE_READER_HASHES.keys()].map(file=>[file,readHistoricalReader(file)])]);
- const scan=sources=>findClaudeInvocations(sources.get(ENVELOPE_FILE),{file:ENVELOPE_FILE,sources});
- it('真实固定模块仅fs读取后hash/比较，允许模板数据且模块本身仍经过R1-R7',()=>{
-  expect(scan(base())).toEqual([]);
-  expect(findClaudeInvocations(source,{file:runtime,sources:base()})).toEqual([]);
- });
- it.each([
-  ['eval',s=>s+"\neval(readFileSync(new URL('existing-ops-build-envelopes.js',import.meta.url),'utf8'));"],
-  ['Function',s=>s+"\nFunction(readFileSync(new URL('existing-ops-build-envelopes.js',import.meta.url),'utf8'))();"],
-  ['exec',s=>s+"\nimport {exec} from 'node:child_process';exec(readFileSync(new URL('existing-ops-build-envelopes.js',import.meta.url),'utf8'));"],
-  ['spawn',s=>s+"\nimport {spawn} from 'node:child_process';spawn(readFileSync(new URL('existing-ops-build-envelopes.js',import.meta.url),'utf8'));"],
-  ['raw export',s=>s+"\nexport const raw=readFileSync(new URL('existing-ops-build-envelopes.js',import.meta.url),'utf8');"],
-  ['raw hash replacement',s=>s.replace("createHash('sha256').update(bytes).digest('hex')","bytes.toString('utf8')")],
-  ['hash rebinding',s=>s+"\ncreateHash=eval;"],
-  ['dynamic import',s=>s+"\nawait import('node:child_process');"],
-  ['changed read path',s=>s.replace('new URL(name,import.meta.url)',"new URL(name,'file:///tmp/')")],
-  ['global side effect',s=>s+"\nBuffer.from=eval;"],
-  ['exec alias',s=>s+"\nimport {exec as launch} from 'node:child_process';launch(readFileSync(new URL('existing-ops-build-envelopes.js',import.meta.url),'utf8'));"],
-  ['names expansion',s=>s.replace("'existing-ops-source.js',","'unreviewed-source.js','existing-ops-source.js',")],
-  ['raw return',s=>s.replace("files:files.map(f=>({...f}))","files:readFileSync(new URL('existing-ops-build-envelopes.js',import.meta.url),'utf8')")],
-  ['extra top call',s=>s+"\nsendElsewhere(readFileSync(new URL('existing-ops-build-envelopes.js',import.meta.url),'utf8'));"],
- ])('runtime %s 必须拒绝整条模板数据资格',(_name,edit)=>{
-  const sources=base();sources.set(runtime,edit(source));
-  expect(scan(sources).some(hit=>hit.rule==='E1')).toBe(true);
- });
- it.each(['same source at other path','third consumer'])('%s 不继承固定runtime资格',kind=>{
-  const sources=base(),other=path.join(BRAIN_ROOT,'src/lib/other-runtime.js');
-  if(kind==='same source at other path'){sources.delete(runtime);sources.set(other,source);}
-  else sources.set(other,"import {ENVELOPES} from './existing-ops-build-envelopes.js';export const raw=ENVELOPES;");
-  expect(scan(sources).some(hit=>hit.rule==='E1')).toBe(true);
- });
-});
-describe('merge 读取封套不增加 Claude 原文执行出口',()=>{
- const local=path.join(BRAIN_ROOT,'src/lib/existing-ops-provenance-local-envelopes.js');
- const base=()=>new Map([[ENVELOPE_FILE,readHistoricalReader(ENVELOPE_FILE)],[ENVELOPE_CONSUMER,readHistoricalReader(ENVELOPE_CONSUMER)],...[...PROVENANCE_READER_HASHES.keys()].map(file=>[file,readHistoricalReader(file)])]);
- it('新实际五模块仅在完整固定 reader 闭包内取得纯数据资格',()=>{const sources=base();for(const file of [local,STAGE_DATA,ENVELOPE_FILE])expect(findClaudeInvocations(sources.get(file),{file,sources})).toEqual([]);});
- it.each(['local eval','escaped consumer','stage execution'])('%s 仍使原封套 E1 拒绝',kind=>{
-  const sources=base();
-  if(kind==='local eval')sources.set(local,sources.get(local)+'\neval(MERGE_REVIEWED.sourceMergeProof);');
-  if(kind==='escaped consumer')sources.set(path.join(BRAIN_ROOT,'src/merge-escape.js'),"import {MERGE_REVIEWED} from './lib/existing-ops-provenance-local-\\u0065nvelopes.js';eval(MERGE_REVIEWED.sourceProvenance);");
-  if(kind==='stage execution')sources.set(STAGE_DATA,sources.get(STAGE_DATA)+'\nFunction(MERGE_STAGE_ENVELOPES.evaluate)();');
-  expect(findClaudeInvocations(sources.get(ENVELOPE_FILE),{file:ENVELOPE_FILE,sources}).some(h=>h.rule==='E1')).toBe(true);
- });
-});
-describe('原生QA完整封套只作为有界解码后的Acorn输入',()=>{
- const helper=path.join(BRAIN_ROOT,'src/lib/existing-ops-native-evidence-source.js');
- const data=path.join(BRAIN_ROOT,'src/lib/existing-ops-native-evidence-envelopes.js');
- const base=()=>new Map([...new Set([ENVELOPE_FILE,ENVELOPE_CONSUMER,HASH_RUNTIME_FILE,helper,data,...PROVENANCE_READER_HASHES.keys()])].map(file=>[file,readHistoricalReader(file)]));
- const scan=sources=>findClaudeInvocations(sources.get(data),{file:data,sources});
- it('完整已审新旧闭包及十五文件只读指纹不恢复任何Claude执行路径',()=>{
-  const sources=base();
-  for(const file of [ENVELOPE_FILE,STAGE_DATA,helper,data,HASH_RUNTIME_FILE])expect(findClaudeInvocations(sources.get(file),{file,sources})).toEqual([]);
- });
- it.each(['data eval','data Function','unbounded decode','changed encoding','changed payload','helper eval','helper raw export','caller eval','stage eval','provenance eval','third data consumer','third helper consumer','escaped data consumer','dynamic helper consumer','missing helper','runtime raw export','concat data consumer','concat helper consumer'])('%s 必须拒绝原生封套纯数据资格',kind=>{
-  const sources=base(),other=path.join(BRAIN_ROOT,'src/unreviewed-native-reader.js');
-  if(kind==='data eval')sources.set(data,sources.get(data)+'\neval(NATIVE_EVIDENCE_ENVELOPES.legacyCli);');
-  if(kind==='data Function')sources.set(data,sources.get(data)+'\nFunction(NATIVE_EVIDENCE_ENVELOPES.legacyCli)();');
-  if(kind==='unbounded decode')sources.set(data,sources.get(data).replace('{ maxOutputLength: 321616 }','{}'));
-  if(kind==='changed encoding')sources.set(data,sources.get(data).replace(", 'base64')",", 'utf8')"));
-  if(kind==='changed payload')sources.set(data,sources.get(data).replace(/Buffer\.from\('([A-Za-z0-9+/=])/,(_all,c)=>`Buffer.from('${c==='A'?'B':'A'}`));
-  if(kind==='helper eval')sources.set(helper,sources.get(helper)+'\neval(REVIEWED.legacyCli);');
-  if(kind==='helper raw export')sources.set(helper,sources.get(helper)+'\nexport const raw=REVIEWED.legacyCli;');
-  if(kind==='caller eval')sources.set(ENVELOPE_CONSUMER,sources.get(ENVELOPE_CONSUMER)+'\nnativeBuildSources(candidate,eval);');
-  if(kind==='stage eval')sources.set(STAGE_HELPER,sources.get(STAGE_HELPER)+'\nnativeEvidenceStages(candidate,eval);');
-  if(kind==='provenance eval')sources.set(PROVENANCE_HELPER,sources.get(PROVENANCE_HELPER)+'\nnativeEvidenceForwarding(candidate,eval);');
-  if(kind==='third data consumer')sources.set(other,"import {NATIVE_EVIDENCE_ENVELOPES as data} from './lib/existing-ops-native-evidence-envelopes.js';eval(data.legacyCli);");
-  if(kind==='third helper consumer')sources.set(other,"import {nativeCompatibleCli} from './lib/existing-ops-native-evidence-source.js';eval(nativeCompatibleCli());");
-  if(kind==='escaped data consumer')sources.set(other,"import {NATIVE_EVIDENCE_ENVELOPES} from './lib/existing-ops-native-evidence-\\u0065nvelopes.js';eval(NATIVE_EVIDENCE_ENVELOPES.legacyCli);");
-  if(kind==='dynamic helper consumer')sources.set(other,"const reader=await import('./lib/existing-ops-native-evidence-\\u0073ource.js');eval(reader.nativeCompatibleCli());");
-  if(kind==='concat data consumer')sources.set(other,"const d=await import('./lib/existing-ops-native-evidence-'+'envelopes.js');Function(d.NATIVE_EVIDENCE_ENVELOPES.legacyCli)();");
-  if(kind==='concat helper consumer')sources.set(other,"const d=await import('./lib/existing-ops-native-evidence-'+'source.js');Function(d.nativeCompatibleCli())();");
-  if(kind==='missing helper')sources.delete(helper);
-  if(kind==='runtime raw export')sources.set(HASH_RUNTIME_FILE,sources.get(HASH_RUNTIME_FILE)+"\nexport const raw=readFileSync(new URL('existing-ops-native-evidence-envelopes.js',import.meta.url),'utf8');");
-  expect(scan(sources).some(hit=>hit.rule==='E1')).toBe(true);
- });
- it('数据后的实际进程别名调用仍同时触发E1与原R1',()=>{
-  const sources=base();sources.set(data,sources.get(data)+"\nimport {spawn as launch} from 'node:child_process';launch('claude',['-p']);");
-  const hits=scan(sources);expect(hits.some(hit=>hit.rule==='E1')).toBe(true);expect(hits.some(hit=>hit.rule==='R1')).toBe(true);
- });
-});
-registerReaderTupleGuardTests({ BRAIN_ROOT, ENVELOPE_FILE, ENVELOPE_CONSUMER, NATIVE_HELPER, NATIVE_DATA, PROVENANCE_READER_HASHES, findClaudeInvocations });
-
 registerReviewedAGuardTests({ BRAIN_ROOT, findClaudeInvocations });

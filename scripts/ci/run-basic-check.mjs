@@ -60,7 +60,6 @@ export function commandsFor(component, shard, context = {}) {
         }).sort().map(name => `scripts/ci/__tests__/${name}`);
       if (!tests.length) throw new Error('Node测试集合为空');
       return [
-        step('.', 'node', 'scripts/ci/check-w19-frozen.mjs'),
         step('.', 'node', '--test', ...tests),
         step('.', 'node', 'scripts/dev/check.mjs'),
         step('.', 'node', 'scripts/facts-check.mjs'),

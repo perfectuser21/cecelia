@@ -8,7 +8,7 @@ import {readFixedLocalGitBlob} from '../../fixed-local-git.mjs';
 export const VERIFICATION_GIT_OPTIONS=Object.freeze([
  '-c','maintenance.auto=false','-c','gc.auto=0','-c','gc.autoDetach=false',
 ]);
-let legacySeed;
+let currentSeed;
 export function cleanupVerificationFixture(root,{remove=rmSync}={}){
  for(let attempt=0;;attempt++){
   try{return remove(root,{recursive:true,force:true});}
@@ -18,12 +18,12 @@ export function cleanupVerificationFixture(root,{remove=rmSync}={}){
   }
  }
 }
-export function disposeVerificationSeed(){if(legacySeed)cleanupVerificationFixture(legacySeed);legacySeed=undefined;}
+export function disposeVerificationSeed(){if(currentSeed)cleanupVerificationFixture(currentSeed);currentSeed=undefined;}
 export function immutableVerificationSeed(root){
- if(legacySeed)return legacySeed;legacySeed=realpathSync(mkdtempSync(join(tmpdir(),'derived-immutable-git-')));
- const git=(...args)=>execFileSync('git',[...VERIFICATION_GIT_OPTIONS,...args],{cwd:legacySeed,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
+ if(currentSeed)return currentSeed;currentSeed=realpathSync(mkdtempSync(join(tmpdir(),'derived-immutable-git-')));
+ const git=(...args)=>execFileSync('git',[...VERIFICATION_GIT_OPTIONS,...args],{cwd:currentSeed,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
  git('init','--bare','-q');const objects=execFileSync('git',[...VERIFICATION_GIT_OPTIONS,'rev-parse','--path-format=absolute','--git-common-dir'],{cwd:root,encoding:'utf8'}).trim()+'/objects';
- writeFileSync(join(legacySeed,'objects/info/alternates'),objects+'\n');git('update-ref','refs/heads/immutable-current','dce0866298f5db9a17b472de3a50cfb24efff52e');git('symbolic-ref','HEAD','refs/heads/immutable-current');return legacySeed;
+ writeFileSync(join(currentSeed,'objects/info/alternates'),objects+'\n');git('update-ref','refs/heads/immutable-current','d06de84e9f7d2d489a151e0b13b38f81651dd3fa');git('symbolic-ref','HEAD','refs/heads/immutable-current');return currentSeed;
 }
 export function fixedInputFixture(t,{kind='regular'}={}){
  const root=mkdtempSync(join(tmpdir(),'derived-input-git-'));
@@ -92,10 +92,10 @@ export function assertFunctionalConsumerInputs(t,{basicEntryFixture,derived,root
  const support=['.github/workflows/ci.yml','scripts/ci/run-basic-check.mjs','scripts/ci/basic-scope.mjs',
   'scripts/ci/check-basic-results.mjs','scripts/ci/ops-checks.mjs','packages/brain/vitest.config.js',
   'scripts/ci/skill-source-tests.mjs','scripts/ci/run-skill-source-check.mjs','scripts/ci/__tests__/basic-skill-source-coverage.test.mjs',
-  '.github/actions/skills-source/action.yml','scripts/ci/check-skill-source-identity.py','apps/api/vitest.config.ts','apps/dashboard/vitest.config.ts','scripts/ci/__tests__/basic-w19-freeze.test.mjs'];
+  '.github/actions/skills-source/action.yml','scripts/ci/check-skill-source-identity.py','apps/api/vitest.config.ts','apps/dashboard/vitest.config.ts'];
  const fixture=path=>{
   const f=basicEntryFixture(t,path);
-  for(const p of support){mkdirSync(join(f.root,p.slice(0,p.lastIndexOf('/'))),{recursive:true});writeFileSync(join(f.root,p),readFixedLocalGitBlob(liveRoot,{revision:'dce0866298f5db9a17b472de3a50cfb24efff52e',path:p}));}
+  for(const p of support){mkdirSync(join(f.root,p.slice(0,p.lastIndexOf('/'))),{recursive:true});writeFileSync(join(f.root,p),readFixedLocalGitBlob(liveRoot,{revision:'d06de84e9f7d2d489a151e0b13b38f81651dd3fa',path:p}));}
   f.source.base_revision=f.commit();writeFileSync(join(f.root,path),'export const changedFunctionalInput=true;\n');
   f.source.head_revision=f.commit();f.source.changed_files=[{path}];return f;
  };

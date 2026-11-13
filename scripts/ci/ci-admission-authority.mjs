@@ -18,9 +18,8 @@ export function ciAuthorityDocument(capability){need(documents.has(capability),'
 export async function verifyCiAdmissionAuthority({repoRoot,sourceRevision,controlRevision,sourceRunId,publisher,artifactId},deps={}){
  need(SHA.test(sourceRevision||'')&&SHA.test(controlRevision||'')&&positive(sourceRunId),'CI_ADMISSION_AUTHORITY_INPUT');
  if(publisher)need(positive(publisher.runId)&&positive(publisher.attempt)
-  &&Object.keys(publisher).every(k=>['runId','attempt','artifactCreatedAt','phase'].includes(k))
-  &&[undefined,'publishing'].includes(publisher.phase),'CI_ADMISSION_PUBLISHER_INPUT');
- if(artifactId!==undefined)need(positive(artifactId)&&publisher&&publisher.phase===undefined,'CI_ADMISSION_ARTIFACT_INPUT');
+  &&Object.keys(publisher).every(k=>['runId','attempt','artifactCreatedAt'].includes(k)),'CI_ADMISSION_PUBLISHER_INPUT');
+ if(artifactId!==undefined)need(positive(artifactId)&&publisher,'CI_ADMISSION_ARTIFACT_INPUT');
  const deadline=Date.now()+120000;let requests=0;
  const call=async(path,binary=false)=>{
   need(++requests<=32&&Date.now()<deadline,'CI_ADMISSION_AUTHORITY_BUDGET');
@@ -52,19 +51,17 @@ export async function verifyCiAdmissionAuthority({repoRoot,sourceRevision,contro
   }
  }catch(error){if(error.code?.startsWith('CI_ADMISSION_'))throw error;need(false,'CI_ADMISSION_MAIN_CHAIN');}
  need(chain.includes(controlRevision)&&chain.includes(sourceRevision)&&chain.indexOf(controlRevision)<=chain.indexOf(sourceRevision),'CI_ADMISSION_MAIN_CHAIN');
- const checkRun=async({runId,revision,path,name,event,attempt,artifactCreatedAt,phase})=>{
+ const checkRun=async({runId,revision,path,name,event,attempt,artifactCreatedAt})=>{
   const run=await call(`${PREFIX}/actions/runs/${runId}`);
-  const publishing=phase==='publishing';
   need(run?.id===runId&&run.head_sha===revision&&run.head_branch==='main'&&run.event===event
    &&run.repository?.full_name===REPO&&run.head_repository?.full_name===REPO
    &&run.repository.id===repository.id&&run.head_repository.id===repository.id
    &&positive(run.run_attempt)&&run.run_attempt<=10&&(!attempt||run.run_attempt===attempt)
    &&run.path===path&&positive(run.workflow_id)&&positive(run.check_suite_id)
-   &&(publishing?run.status==='in_progress':run.status==='completed'&&run.conclusion==='success'),'CI_ADMISSION_RUN_INVALID');
+   &&run.status==='completed'&&run.conclusion==='success','CI_ADMISSION_RUN_INVALID');
   const workflow=await call(`${PREFIX}/actions/workflows/${run.workflow_id}`);
   need(workflow?.id===run.workflow_id&&workflow.path===path&&workflow.state==='active','CI_ADMISSION_WORKFLOW_INVALID');
   const result={run_id:runId,attempt:run.run_attempt,workflow_id:run.workflow_id,workflow_path:path,head_revision:revision};
-  if(publishing)return result;
   const jobs=await call(`${PREFIX}/actions/runs/${runId}/attempts/${run.run_attempt}/jobs?per_page=100`);
   need(Array.isArray(jobs?.jobs)&&jobs.total_count===jobs.jobs.length&&jobs.total_count<=100,'CI_ADMISSION_JOBS_INCOMPLETE');
   const matches=jobs.jobs.filter(j=>j.name===name);

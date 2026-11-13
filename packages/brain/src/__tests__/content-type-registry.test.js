@@ -21,7 +21,7 @@ beforeEach(() => {
   });
 });
 afterEach(() => vi.restoreAllMocks());
-import { getContentType, listContentTypes, loadAllContentTypes } from '../content-types/content-type-registry.js';
+import { getContentType, listContentTypes } from '../content-types/content-type-registry.js';
 
 describe('content-type-registry', () => {
   describe('getContentType', () => {
@@ -78,17 +78,7 @@ describe('content-type-registry', () => {
     });
   });
 
-  describe('loadAllContentTypes', () => {
-    it('应加载所有类型并验证通过', async () => {
-      const results = await loadAllContentTypes();
-      expect(Array.isArray(results)).toBe(true);
-      expect(results.length).toBeGreaterThan(0);
-      for (const { name, config } of results) {
-        expect(name).toBeTruthy();
-        expect(config.content_type).toBe(name);
-      }
-    });
-  });
+
 });
 
 describe('新增内容类型 — 5 个模板', () => {

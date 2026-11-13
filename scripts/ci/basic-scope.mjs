@@ -4,6 +4,8 @@ import {resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 
 const ORDER = ['brain-unit', 'brain-integration', 'image', 'mcp', 'dashboard', 'ops', 'scripts'];
+// 独立只读MCP没有已证现役消费者；包自身变更仍验证，不进入Brain全量默认。
+const ACTIVE = ORDER.filter(component => component !== 'mcp');
 // 现役前端为 apps/dashboard；已退役根 frontend 不再创建源码任务。
 const SHARED_RUNTIME = ['brain-unit', 'brain-integration', 'image', 'ops'];
 const DOCUMENT = /\.(?:md|txt|rst|png|jpe?g|gif|svg|webp|pdf)$/i;
@@ -53,8 +55,7 @@ export function planChecks(paths, {full = false} = {}) {
     // Markdown 也可能是实际运行时提示词；只有明确的文档位置/文件名才走轻量路径。
     if (DOCUMENT_NAME.test(path) || ROOT_DOCUMENT.test(path) ||
       ((path.startsWith('docs/') || path.startsWith('sprints/')) && DOCUMENT.test(path))) continue;
-    // 退役W19样机不再扩散到现役组件；scripts仍逐字验证固定历史输入，变更不能空绿。
-    if (path.startsWith('playground/')) continue;
+    if (path.startsWith('packages/mcp-readonly/')) selected.add('mcp');
     if (isConfiguration(path) || /^(?:\.github|scripts|config)\//.test(path) ||
       /^(?:package(?:-lock)?\.json|npm-shrinkwrap\.json|\.npmrc|\.skills-source\.json)$/.test(path)) {
       all = true;
@@ -69,7 +70,7 @@ export function planChecks(paths, {full = false} = {}) {
     else if (path.startsWith('apps/dashboard/')) selected.add('dashboard');
     else all = true;
   }
-  return matrixFor(all ? new Set([...ORDER, ...selected]) : selected);
+  return matrixFor(all ? new Set([...ACTIVE, ...selected]) : selected);
 }
 
 function revision(value) {

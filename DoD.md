@@ -1,12 +1,12 @@
-# DoD：CI外围价值审查与明确残留清理
+# DoD：落实CI旧协议与无用残留清退
 
-- [x] [BEHAVIOR] 完整审查镜像、MCP、Android、内容、Ops与Scripts，结论具真实入口、消费者和限制证据。
-  Test: manual:curl -sf http://localhost:5221/api/brain/health
-- [x] [BEHAVIOR] Cecelia旧Android骨架及专属Gradle选择退出，ZenithJoy现役客户端不受影响。
-  Test: manual:node --test scripts/ci/__tests__/basic-scope.test.mjs scripts/ci/__tests__/basic-workflow.test.mjs scripts/ci/__tests__/run-basic-check.test.mjs
-- [x] [BEHAVIOR] 内容库无已知消费者的孤立路由和专属测试退出，当前跨仓内容消费者及通用调度能力保留。
+- [ ] [BEHAVIOR] 默认PR不再运行已退役Runner和旧准入/历史冻结回放；兼容路径如仍保留，只由明确的定向入口消费。
   Test: manual:node scripts/ci/run-basic-check.mjs scripts
-- [x] [BEHAVIOR] 现役来源封印、固定SHA、篡改拒绝和当前资格限制保留，Brain版本一致。
+- [ ] [BEHAVIOR] Ops去掉已确认的静态/手抄假覆盖；当前部署、凭据隔离及WorkflowRunner真实行为回归仍有效。
+  Test: manual:node scripts/ci/run-basic-check.mjs ops
+- [ ] [BEHAVIOR] 删除无消费者的旧实现、专属测试及引用；现役内容跨仓消费者不断链，通用任务/PG/接入行为保留。
+  Test: manual:node scripts/ci/run-basic-check.mjs brain-integration
+- [ ] [BEHAVIOR] 源码准入只接受经核实整组，拒绝混组/篡改，不用默认成功掩盖退役；事实版本一致。
   Test: manual:node scripts/facts-check.mjs
-- [ ] [BEHAVIOR] 受保护PR完整通过且真实合并，任务事实证据读回。
-  Test: manual:curl -sf http://localhost:5221/api/brain/tasks/aa88987b-53a9-43ec-8753-c050db9c8c86
+- [ ] [BEHAVIOR] PR完整CI通过且真实合并，事实证据actor与未迁出边界准确回写。
+  Test: manual:curl -sf http://localhost:5221/api/brain/tasks/627ddaec-dd51-437f-97b4-dfc2dbeae02b

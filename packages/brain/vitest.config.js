@@ -203,6 +203,8 @@ export default defineConfig({
     // 以下测试需要真实 PostgreSQL 连接或有其他 CI 环境 pre-existing 失败
     // brain-unit 跑纯单元测试（有 vi.mock('db.js') 的），集成测试走 brain-integration
     exclude: [
+      // 旧准入兼容合同只由显式legacy CLI执行。
+      '../../scripts/ci/legacy/**',
       ...skillSourceExcludes('brain'),
       // 根tests中的六个symlink只保兼容调用；自动收集使用src/__tests__唯一真实owner。
       '../../tests/dept-heartbeat-plugin.test.js',

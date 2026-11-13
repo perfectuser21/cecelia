@@ -2,12 +2,11 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import {syncBuiltinESMExports} from 'node:module';
-import {execFileSync,spawnSync} from 'node:child_process';
+import {spawnSync} from 'node:child_process';
 import {fileURLToPath,pathToFileURL} from 'node:url';
 import {resolve} from 'node:path';
 
-const root=fileURLToPath(new URL('../../../',import.meta.url));
-const historicalRevision='f67184328cf877d438869606eb828d1d25d92d20';
+const root=fileURLToPath(new URL('../../../../',import.meta.url));
 const modulePath='scripts/ci/implementation-verification-context.mjs';
 const canonical=value=>Array.isArray(value)?value.map(canonical):value&&typeof value==='object'
  ?Object.fromEntries(Object.keys(value).sort().map(key=>[key,canonical(value[key])])):value;
@@ -50,18 +49,6 @@ function fixture(){
 }
 
 async function observe(){
- const env=Object.fromEntries(Object.entries(process.env).filter(([key])=>!key.startsWith('GIT_')));
- Object.assign(env,{GIT_NO_REPLACE_OBJECTS:'1',GIT_CONFIG_GLOBAL:'/dev/null',GIT_CONFIG_NOSYSTEM:'1'});
- const original=execFileSync('git',['--no-replace-objects','show',historicalRevision+':'+modulePath],{cwd:root,env,encoding:'utf8'});
- // Published main object is fixed; only dependency specifiers become absolute for the data module.
- assert.equal(crypto.createHash('sha256').update(original).digest('hex'),'c916259bd1a917b57e99f80f949fd6f475d9a6dacc0a491af2ac4d154adcc038');
- let rewritten=original,replaced=0;
- for(const specifier of ['../../packages/brain/src/lib/implementation-impact.js','./implementation-verification-inputs.mjs']){
-  const target=pathToFileURL(resolve(root,'scripts/ci',specifier)).href;
-  assert.equal(rewritten.split("from '"+specifier+"'").length,2);
-  rewritten=rewritten.replace("from '"+specifier+"'","from '"+target+"'");replaced++;
- }
- assert.equal(replaced,2);
  const watched=new Map(),counts=new Map(),createHash=crypto.createHash;
  crypto.createHash=function(...args){
   const hash=createHash.apply(this,args),update=hash.update;
@@ -74,7 +61,6 @@ async function observe(){
  };
  syncBuiltinESMExports();
  try{
-  const old=await import('data:text/javascript;base64,'+Buffer.from(rewritten).toString('base64'));
   const current=await import(pathToFileURL(resolve(root,modulePath)).href);
   const options=fixture();
   const measure=build=>{
@@ -82,18 +68,14 @@ async function observe(){
    const untouched=JSON.stringify(options),context=build(options);assert.equal(JSON.stringify(options),untouched);
    return {context,counts:Object.fromEntries(options.reports.map(report=>[report.scope_key,counts.get(report.scope_key)||0]))};
   };
-  const historical=measure(old.buildVerificationInputContext),first=measure(current.buildVerificationInputContext);
-  assert.deepEqual(first.context,historical.context);
-  assert.equal(first.context.context_sha256,historical.context.context_sha256);
+  const first=measure(current.buildVerificationInputContext);
   assert.equal(first.context.authorized_inputs.length,2);assert.equal(first.context.authorized_retirements.length,1);
   assert.equal(first.context.authorized_retirements[0].replacements.length,2);
-  assert.deepEqual(historical.counts,{'cecelia-kr':8,'cecelia-factory':8,'cecelia-infra':0});
   options.reports[0].changed_between_calls='actual new report bytes';
-  const second=measure(current.buildVerificationInputContext),historicalSecond=measure(old.buildVerificationInputContext);
-  assert.deepEqual(second.context,historicalSecond.context);
+  const second=measure(current.buildVerificationInputContext);
   assert.notEqual(second.context.context_sha256,first.context.context_sha256);
   assert.notEqual(second.context.authorized_inputs[0].owner_claims[0].source_report_sha256,first.context.authorized_inputs[0].owner_claims[0].source_report_sha256);
-  for(const api of [old,current]){
+  for(const api of [current]){
    assert.throws(()=>api.assertVerificationInputContext({source:options.source,reports:options.reports,context:first.context}),{code:'VERIFICATION_CONTEXT_MISMATCH'});
    const forged=structuredClone(second.context);forged.authorized_inputs[0].owner_claims[0].source_report_sha256='0'.repeat(64);
    const {context_sha256,...body}=forged;forged.context_sha256=sha(body);
@@ -103,17 +85,17 @@ async function observe(){
    const inputTamper=structuredClone(options);inputTamper.evidence.verification_inputs_sha256='0'.repeat(64);
    assert.throws(()=>api.buildVerificationInputContext(inputTamper),{code:'VERIFICATION_CONTEXT_INPUT_INVALID'});
   }
-  process.stdout.write(JSON.stringify({historical:historical.counts,first:first.counts,second:second.counts,old_current_deep_equal:true,cross_call_changed_and_fresh:true,tamper_rejected:true}));
+  process.stdout.write(JSON.stringify({first:first.counts,second:second.counts,cross_call_changed_and_fresh:true,tamper_rejected:true}));
  }finally{crypto.createHash=createHash;syncBuiltinESMExports();}
 }
 
 if(process.argv[2]==='--observe-context-hashes')await observe();
-else test('单次context对多owner及退休共用report仅精确SHA一次，跨调用重读且与已发布D逐字段一致',()=>{
+else test('兼容context对多owner共用report仅摘要一次，跨调用重读且拒伪造',()=>{
  const env={...process.env};delete env.NODE_TEST_CONTEXT;
  const result=spawnSync(process.execPath,[fileURLToPath(import.meta.url),'--observe-context-hashes'],{cwd:root,env,encoding:'utf8',timeout:15000,killSignal:'SIGKILL',maxBuffer:1024*1024});
  assert.ifError(result.error);assert.equal(result.signal,null);assert.equal(result.status,0,result.stderr);
  const observed=JSON.parse(result.stdout);
- assert.equal(observed.old_current_deep_equal,true);assert.equal(observed.cross_call_changed_and_fresh,true);assert.equal(observed.tamper_rejected,true);
+ assert.equal(observed.cross_call_changed_and_fresh,true);assert.equal(observed.tamper_rejected,true);
  assert.deepEqual(observed.first,{'cecelia-kr':1,'cecelia-factory':1,'cecelia-infra':0});
  assert.deepEqual(observed.second,observed.first);
 });

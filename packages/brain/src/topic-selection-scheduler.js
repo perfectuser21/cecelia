@@ -2,7 +2,7 @@
  * topic-selection-scheduler.js
  *
  * 每日内容选题调度器。
- * 每次 Tick 末尾调用 triggerDailyTopicSelection()，内部判断是否到达每日触发时间（01:00 UTC = 09:00 北京时间）。
+ * 由保留的选题 API 调用 triggerDailyTopicSelection()；Brain Tick 不再调度内容业务。
  * 如果是，则调用 topic-selector.js 生成选题，并为每个选题创建 content-pipeline task。
  *
  * 触发窗口：UTC 01:00 - 12:00（北京时间 09:00 - 20:00）
@@ -50,7 +50,7 @@ const CONTENT_KR_GOAL_ID = '65b4142d-242b-457d-abfa-c0c38037f1e9';
 // ─── 主入口 ──────────────────────────────────────────────────────────────────
 
 /**
- * 每日选题触发器。由 tick.js 在每次 Tick 末尾调用。
+ * 选题触发器。供现役内容 API 使用。
  *
  * @param {import('pg').Pool} pool - PostgreSQL 连接池
  * @param {Date} [now] - 当前时间（测试时可注入）
@@ -93,13 +93,13 @@ export async function triggerDailyTopicSelection(pool, now = new Date()) {
   // 5. 限流：取 MIN_DAILY_TOPICS～MAX_DAILY_TOPICS 个，确保 ≥5 条
   const toCreate = topics.slice(0, MAX_DAILY_TOPICS);
 
-  // 6. 将全部选题存入推荐队列（pending，2h 后自动晋级创建 content-pipeline task）
+  // 6. 将全部选题存入推荐队列（pending，等待审核）
   const today = toDateString(now);
   const savedSuggestions = await saveSuggestions(pool, toCreate, today).catch(err => {
     console.warn('[topic-selection-scheduler] saveSuggestions 失败:', err.message);
     return 0;
   });
-  console.log(`[topic-selection-scheduler] 已推荐 ${savedSuggestions} 个选题待审核（2h 后自动晋级，目标≥${MIN_DAILY_TOPICS}条）`);
+  console.log(`[topic-selection-scheduler] 已推荐 ${savedSuggestions} 个选题待审核（目标≥${MIN_DAILY_TOPICS}条）`);
 
   // 剩余选题（saveSuggestions 未入队的）直接进内容队列
   const autoQueue = toCreate.slice(savedSuggestions);
@@ -114,7 +114,7 @@ export async function triggerDailyTopicSelection(pool, now = new Date()) {
     }
   }
 
-  console.log(`[topic-selection-scheduler] 今日选题完成，推荐队列 ${savedSuggestions} 个（2h自动晋级），直接创建 ${created} 个`);
+  console.log(`[topic-selection-scheduler] 今日选题完成，推荐队列 ${savedSuggestions} 个待审核，直接创建 ${created} 个`);
   return { triggered: created, suggested: savedSuggestions, skipped: false, skipped_window: false };
 }
 

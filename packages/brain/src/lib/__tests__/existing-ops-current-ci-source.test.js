@@ -3,7 +3,7 @@ import {parse} from 'acorn';
 import {collectBasicCiSources,collectDeepCiSources} from '../existing-ops-stage-source.js';
 import {collectWorkspaceInputEdges} from '../existing-ops-workspace-source.js';
 import {readFixedExistingOpsGitFixture} from './helpers/fixed-existing-ops-git-fixture.js';
-const fixed=readFixedExistingOpsGitFixture('dce0866298f5db9a17b472de3a50cfb24efff52e');
+const fixed=readFixedExistingOpsGitFixture('d06de84e9f7d2d489a151e0b13b38f81651dd3fa');
 const ast=text=>parse(text,{ecmaVersion:'latest',sourceType:'module'});
 const collect=async(overrides={})=>{
  const relations=[],read=async path=>overrides[path]??fixed.read(path);
@@ -44,5 +44,14 @@ it('候选完整封组真实读取共享身份解析器；单成员混配与篡�
  expect(relations).toContainEqual(expect.objectContaining({consumer_path:'.github/actions/skills-source/action.yml',input_path:'scripts/skill_source_ownership.py',kind:'registered_skill_ownership_resolver'}));
  for(const path of ['.github/actions/skills-source/action.yml','scripts/skill_source_ownership.py'])await expect(observe({[path]:(await read(path))+'\n# unknown source\n'})).rejects.toThrow('basic_ci_source_unproven');
  await expect(observe({'scripts/ci/run-basic-check.mjs':fixed.read('scripts/ci/run-basic-check.mjs')})).rejects.toThrow('basic_ci_source_unproven');
- await expect(observe({'.github/workflows/ci.yml':fixed.read('.github/workflows/ci.yml')})).rejects.toThrow('basic_ci_source_unproven');
+ await expect(observe({'.github/workflows/ci.yml':(await read('.github/workflows/ci.yml')).replace('name:', 'unknown_control:')})).rejects.toThrow('basic_ci_source_unproven');
+});
+
+it('d06历史完整封组仍校验W19真实输入；候选不依赖这些退役文件',async()=>{
+ for(const target of ['scripts/ci/check-w19-frozen.mjs','scripts/ci/__tests__/basic-w19-freeze.test.mjs','playground/server.js']){
+  for(const missing of [false,true]){
+   const read=async path=>{if(path===target){if(missing)throw Error('missing historical input');return fixed.read(path)+'\n// drift';}return fixed.read(path);};
+   await expect(collectBasicCiSources({read,ci:fixed.read('.github/workflows/ci.yml'),revision:fixed.revision,relations:[],parse:ast,paths:fixed.paths})).rejects.toThrow();
+  }
+ }
 });

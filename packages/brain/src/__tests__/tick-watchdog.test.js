@@ -143,10 +143,6 @@ vi.mock('../daily-review-scheduler.js', () => ({
   triggerContractScan: vi.fn().mockResolvedValue(null),
 }));
 
-vi.mock('../topic-selection-scheduler.js', () => ({
-  triggerDailyTopicSelection: vi.fn().mockResolvedValue(null),
-}));
-
 vi.mock('../desire/index.js', () => ({
   runDesireSystem: vi.fn().mockResolvedValue(null),
 }));

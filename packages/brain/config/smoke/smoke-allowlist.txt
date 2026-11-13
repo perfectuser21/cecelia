@@ -418,7 +418,6 @@ runs-execution-table-smoke.sh
 openclaw-run-ingest-smoke.sh
 
 workflow-contract-identity-smoke.sh
-workspace-ci-source-bundle-smoke.sh
 enablers-failure-semantics-smoke.sh
 
 native-scoped-admission-smoke.sh
@@ -463,4 +462,3 @@ workflow-assembly-reconcile-smoke.sh
 workflow-assembly-native-smoke.sh
 
 infra-consumer-source-smoke.sh
-ci-admission-bootstrap-smoke.sh
