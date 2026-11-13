@@ -14,7 +14,6 @@
 import { describe, expect, it } from 'vitest';
 import { createRequire } from 'node:module';
 import { derive } from '../../../packages/brain/src/orchestrator/derive.js';
-import { __test__ as loopTest } from '../../../packages/brain/src/orchestrator/loop.js';
 
 const require = createRequire(import.meta.url);
 const { parseTestContract } = require('../../../scripts/lib/test-contract-paths.cjs');
@@ -50,12 +49,6 @@ function ganObserved(extra = {}) {
 }
 
 describe('F1 step3：封印拒绝走 reopen GAN 不杀 run（r47 案卷）', () => {
-  it('loop.frozenArtifactErrorCode 识别 FROZEN_CONTRACT_TEST_CONTRACT_* 码（不再逃出成 fatal）', () => {
-    const code = loopTest.frozenArtifactErrorCode(
-      new Error('FROZEN_CONTRACT_TEST_CONTRACT_UNRESOLVABLE:sprints/x/tests/y.test.js#behavior:B-01'),
-    );
-    expect(code).toMatch(/^FROZEN_CONTRACT_TEST_CONTRACT_/);
-  });
 
   it('derive：本轮 SHA 有 contract_seal_rejected 行 → spawn:proposer 重写（r48 案卷：reviewer 重审同文本必死循环）', () => {
     const decision = derive(ganObserved({

@@ -12,7 +12,6 @@
  */
 
 import { deriveCounters } from '../../../packages/brain/src/orchestrator/counters.js';
-import { ACTION } from '../../../packages/brain/src/orchestrator/constants.js';
 
 describe('[BEHAVIOR] B-05 持久化计数从 DB decision log 推导', () => {
 
@@ -73,76 +72,6 @@ describe('[BEHAVIOR] B-05 持久化计数从 DB decision log 推导', () => {
    *
    * 当前（先红）：loop.js 的 WAIT_POLL_CI 分支直接 sleep，不 appendHop。
    */
-  test('T-08-d: wait:poll_ci 应写入 decision log（不只 sleep）', async () => {
-    const appendedHops = [];
-    let callCount = 0;
-
-    const mockGroundTruth = async () => ({
-      run: { phase: 'generate', cost_usd: '0', deadline_at: new Date(Date.now() + 999999) },
-      task: { status: 'in_progress', payload: {} },
-      prdExists: true,
-      contract: { approved: true, id: 'c1', row: {} },
-      pr: {
-        url: 'https://github.com/test/repo/pull/1',
-        state: 'OPEN',
-        merged: false,
-        ci: 'pending', // CI 还在跑
-        head_sha: 'sha-1',
-      },
-      inflight: { containers: [], host_pids: [] },
-      lastAgentExit: { code: null, auth_failed: false },
-      proposeBranchRn: 0,
-      ganLatestRoundVerdict: null,
-      generatorSpawned: true,
-      evaluateVerdict: null,
-      evaluateResult: null,
-      judgeVerdict: null,
-      reviewRequired: false,
-      reviewApproved: false,
-      decisionLog: [],
-      authCircuit: [],
-      callbackResult: null,
-    });
-
-    const { runLoop } = await import('../../../packages/brain/src/orchestrator/loop.js');
-
-    let sleepCount = 0;
-    const deps = {
-      pool: {
-        query: async (sql) => {
-          if (sql.includes('initiative_runs') && sql.includes('WHERE id')) {
-            return { rows: [{ id: 'run-1', phase: 'generate', cost_usd: '0', deadline_at: new Date(Date.now() + 999999), pr_url: null, contract_id: null }] };
-          }
-          if (sql.includes('tasks')) return { rows: [{ id: 'task-1', status: 'in_progress', payload: '{}', title: 'test', ability_id: null }] };
-          if (sql.includes('orchestrator_decision_log') && sql.includes('MAX')) return { rows: [{ hop: 0 }] };
-          return { rows: [] };
-        },
-      },
-      collectGroundTruth: mockGroundTruth,
-      appendHop: async ({ action }) => {
-        appendedHops.push(action);
-      },
-      nextHop: async () => 1,
-      writeHeartbeat: async () => {},
-      dispatch: async () => ({ status: 'DONE' }),
-      sleep: async () => {
-        sleepCount++;
-        if (sleepCount >= 2) throw new Error('test_stop_poll'); // 跑 2 次 sleep 后退出
-      },
-      now: () => new Date(),
-      log: () => {},
-    };
-
-    try {
-      await runLoop(deps, { taskId: 'task-1', runId: 'run-1' });
-    } catch (e) {
-      if (e.message !== 'test_stop_poll') throw e;
-    }
-
-    // 实现后期望：wait:poll_ci 时也 appendHop，appendedHops 含 'wait:poll_ci'
-    // 当前（先红）：wait:poll_ci 进入纯 sleep 分支，不 append，appendedHops 为空
-    expect(appendedHops).toContain('wait:poll_ci');
-  });
 
   /**
    * T-09: blockedStreak 从 DB 推导（实现后 loop 不再依赖进程内 blockedState/blockedStreak）

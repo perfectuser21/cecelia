@@ -368,9 +368,9 @@ describe('全灭保底放行', () => {
   });
 });
 
-describe('run.js 生产接线（这些接缝不接上就是死代码）', () => {
+describe('kernel-runtime-deps.js 实际依赖接线（这些接缝不接上就是死代码）', () => {
   const src = readFileSync(
-    fileURLToPath(new URL('../../../packages/brain/src/orchestrator/run.js', import.meta.url)),
+    fileURLToPath(new URL('../../../packages/brain/src/orchestrator/kernel-runtime-deps.js', import.meta.url)),
     'utf8',
   );
 

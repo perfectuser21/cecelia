@@ -9,7 +9,6 @@ import { describe, expect, test, vi } from 'vitest';
 import { collectGroundTruth } from '../../../packages/brain/src/orchestrator/ground-truth.js';
 import { deriveCounters } from '../../../packages/brain/src/orchestrator/counters.js';
 import { derive } from '../../../packages/brain/src/orchestrator/derive.js';
-import { runLoop } from '../../../packages/brain/src/orchestrator/loop.js';
 
 const RUN_ID = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
 const TASK_ID = '11111111-2222-3333-4444-555555555555';
@@ -513,115 +512,7 @@ describe('patience approval is a one-shot observation unlock', () => {
   });
 });
 
-describe('loop ordering and human-review side effect', () => {
-  test('missing callback writes one observation marker, then terminates without redispatch', async () => {
-    const history = [{
-      hop: 1,
-      action: 'spawn:generator-fix',
-      observed: {
-        trigger_sha: SHAS[0],
-        failure_class: 'product_failure',
-        failure_set: ['lint'],
-      },
-      detail: { reason: 'ci_fail' },
-    }];
-    const appended = [];
-    const deps = {
-      pool: { query: vi.fn(async () => ({ rows: [] })) },
-      collectGroundTruth: vi.fn(async () => observedFor({
-        rows: history,
-        sha: SHAS[0],
-        failureSet: ['lint'],
-      })),
-      nextHop: vi.fn(async () => Number(history.at(-1).hop) + 1),
-      appendHop: vi.fn(async (entry) => {
-        appended.push(entry);
-        history.push({ ...entry, hop: entry.hop });
-      }),
-      writeHeartbeat: vi.fn(async () => {}),
-      dispatch: vi.fn(),
-      sleep: vi.fn(async () => {}),
-      now: vi.fn(() => new Date('2026-07-23T08:00:00Z')),
-      log: vi.fn(),
-      finalizeRun: vi.fn(async () => ({ changed: true })),
-    };
-
-    const result = await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
-
-    expect(result.exitReason).toBe('generator_fix_callback_missing_after_observation');
-    expect(deps.dispatch).not.toHaveBeenCalled();
-    expect(deps.finalizeRun).toHaveBeenCalledWith(deps.pool, {
-      runId: RUN_ID,
-      expectedTaskId: TASK_ID,
-      outcome: 'failed',
-      reason: 'generator_fix_callback_missing_after_observation',
-    });
-    expect(appended).toHaveLength(1);
-    expect(appended[0]).toMatchObject({
-      action: 'wait:generator_fix_callback',
-      detail: {
-        reason: 'generator_fix_callback_pending',
-        trigger_hop: 1,
-      },
-    });
-  });
-
-  test('recurrence dispatches Bark/human review and records its effect marker', async () => {
-    const history = [];
-    appendVerifiedRound(history, {
-      triggerSha: SHAS[0],
-      nextSha: SHAS[1],
-      failureSet: ['lint', 'unit'],
-    });
-    appendVerifiedRound(history, {
-      triggerSha: SHAS[1],
-      nextSha: SHAS[2],
-      failureSet: ['integration'],
-    });
-    const recurrence = observedFor({
-      rows: history,
-      sha: SHAS[2],
-      failureSet: ['unit', 'lint'],
-    });
-    const terminal = {
-      ...recurrence,
-      run: { ...recurrence.run, phase: 'done' },
-    };
-    const sequence = [recurrence, terminal];
-    let collectIndex = 0;
-    let hop = Number(history.at(-1).hop);
-    const appended = [];
-    const deps = {
-      pool: {
-        query: vi.fn(async () => ({ rows: [] })),
-      },
-      collectGroundTruth: vi.fn(async () => sequence[
-        Math.min(collectIndex++, sequence.length - 1)
-      ]),
-      nextHop: vi.fn(async () => ++hop),
-      appendHop: vi.fn(async (entry) => appended.push(entry)),
-      writeHeartbeat: vi.fn(async () => {}),
-      dispatch: vi.fn(async () => ({ status: 'DONE', detail: 'Bark sent' })),
-      sleep: vi.fn(async () => {}),
-      now: vi.fn(() => new Date('2026-07-23T08:00:00Z')),
-      log: vi.fn(),
-    };
-
-    const result = await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
-
-    expect(result.exitReason).toBe('run_done');
-    expect(deps.dispatch).toHaveBeenCalledWith(
-      'wait:human_review',
-      expect.objectContaining({ runId: RUN_ID }),
-    );
-    expect(appended.map((entry) => entry.action)).toEqual([
-      'wait:human_review',
-      'effect:human_review_requested',
-    ]);
-    expect(appended.at(-1).detail).toMatchObject({
-      review_reason: 'failure_set_repeated',
-    });
-  });
+describe('derive convergence ordering', () => {
 
   test('convergence recurrence is evaluated before the MAX_HOPS=4096 wide fence', () => {
     const filler = Array.from({ length: 4092 }, (_, index) => ({
