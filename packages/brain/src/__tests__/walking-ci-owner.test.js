@@ -21,6 +21,8 @@ describe('Walking actual CI owner and PG acceptance', () => {
   });
   it.each(['success', 'failure', 'cancelled', 'skipped', 'timed_out', '', 'unknown'])('普通PR汇总严格检查实际checks结果 %j，独立demo不伪装required', result => {
     const needs = Object.fromEntries(REQUIRED_JOBS.map(job => [job, {result:job === 'checks' ? result : 'success'}]));
+    needs.plan.outputs = {resource_plan: JSON.stringify({linux:false, app_server:false, legacy:false})};
+    needs['resource-canaries'] = {result:'skipped'};
     if (result === 'success') expect(() => checkResults(needs)).not.toThrow();
     else expect(() => checkResults(needs)).toThrow();
     expect(planChecks([], {full: true}).some(row => row.component === 'walking-ci-e2e')).toBe(false);
