@@ -19,11 +19,10 @@
 // d) humanReviewDeadlinePauseActive：正在等人（decision=wait:human_review 且有开放请求）就停表，
 //    不再要求请求行 head 与当前 head 全等（r76 的"stale 人审不停表"让位：等人期间时钟不能杀人）。
 //
-// 真 import 协调器 / loop（被改的边），deps 注入 fake。
+// 真 import 协调器，保留基础设施 failover、复活与升人审保护。
 import { randomUUID } from 'node:crypto';
 import { describe, it, expect, vi } from 'vitest';
 import { createCommanderCoordinator } from '../../../packages/brain/src/orchestrator/commander-coordinator.js';
-import { __test__ as loopTest } from '../../../packages/brain/src/orchestrator/loop.js';
 
 const runId = randomUUID();
 const commanderAttemptId = randomUUID();
@@ -174,26 +173,5 @@ describe('b) Commander 已 failed 时的拟判死：先复活一次，再升人�
     }));
 
     expect(outcome).toMatchObject({ kind: 'continue', degraded: true, decision: { action: 'spawn:evaluator' } });
-  });
-});
-
-describe('d) 等人期间时钟不杀人：humanReviewDeadlinePauseActive 不再要求 head 全等', () => {
-  const sha = 'e'.repeat(40);
-  it('请求行 head 与当前 head 不同（人肉 rebase 推新 head）但仍在等人 → 停表', () => {
-    expect(loopTest.humanReviewDeadlinePauseActive({
-      decisionAction: 'wait:human_review', hasOpenHumanReview: true,
-      reviewHeadSha: 'a'.repeat(40), currentHeadSha: sha,
-    })).toBe(true);
-  });
-  it('负向：无开放请求 / 不在等人 / 当前 head 缺失 → 不停表', () => {
-    expect(loopTest.humanReviewDeadlinePauseActive({
-      decisionAction: 'wait:human_review', hasOpenHumanReview: false, reviewHeadSha: sha, currentHeadSha: sha,
-    })).toBe(false);
-    expect(loopTest.humanReviewDeadlinePauseActive({
-      decisionAction: 'spawn:evaluator', hasOpenHumanReview: true, reviewHeadSha: sha, currentHeadSha: sha,
-    })).toBe(false);
-    expect(loopTest.humanReviewDeadlinePauseActive({
-      decisionAction: 'wait:human_review', hasOpenHumanReview: true, reviewHeadSha: null, currentHeadSha: null,
-    })).toBe(false);
   });
 });

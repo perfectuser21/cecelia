@@ -4,7 +4,7 @@ import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {execFileSync} from 'node:child_process';
 import {createRequire} from 'node:module';
-import {authoringExecutionDatabase,startPureAuthoring,settleInvocation} from '../fixtures/authoring-execution-db.test.js';
+import {authoringExecutionDatabase,startPureAuthoring,settleInvocation} from '../fixtures/authoring-execution-db.js';
 import {createInvocationsRouter} from '../../routes/invocations.js';
 import {readCapabilitySystem} from '../../lib/capability-system.js';
 import {activityInvocationPrompt} from '../../orchestrator/skill-activity-adapter.js';

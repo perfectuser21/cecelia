@@ -1,4 +1,4 @@
-import { effects } from './helpers/silent-wait-effects.js';
+
 // F1「工厂 · 开发闭环」步骤 3「造完真验」—— 边：静默等待活锁（r80 run 5100560e 案卷）
 //
 // 真相（08-30 复盘，推翻"控制循环半死"的初判）：hop 206 Commander 提案（dispatch_role
@@ -28,7 +28,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { createCommanderCoordinator } from '../../../packages/brain/src/orchestrator/commander-coordinator.js';
 import { buildCommanderBundle } from '../../../packages/brain/src/orchestrator/commander-bundle.js';
 import { classifyCommanderWakeup } from '../../../packages/brain/src/orchestrator/commander-wakeup.js';
-import { runLoop, __test__ as loopTest } from '../../../packages/brain/src/orchestrator/loop.js';
+
 import {
   detectSilentWaitStall,
   SILENT_WAIT_STALL_MS,
@@ -239,98 +239,9 @@ describe('② 替换派发的 bundle 游标与状态游标对齐（活锁发生�
 });
 
 // ---------- loop fake（与 __tests__/loop.test.js makeEnv 同形，精简） ----------
-const RUN_ID = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
-const TASK_ID = '11111111-2222-3333-4444-555555555555';
-const CONTRACT_ID = '99999999-8888-7777-6666-555555555555';
-const IDENTITY = Object.freeze({
-  contract_id: CONTRACT_ID,
-  manifest_sha256: 'a'.repeat(64),
-  source_revision: 'b'.repeat(40),
-});
+
 const NOW = new Date('2026-07-04T12:00:00Z');
 
-function obs(overrides = {}) {
-  return {
-    run: { id: RUN_ID, phase: 'generate', cost_usd: 0 },
-    task: { status: 'in_progress' },
-    prdExists: true,
-    contract: { approved: true, id: CONTRACT_ID, identity: IDENTITY },
-    pr: null,
-    inflight: { containers: [], host_pids: [] },
-    lastAgentExit: { code: null, auth_failed: false },
-    proposeBranchRn: 0,
-    ganLatestRoundVerdict: null,
-    generatorSpawned: false,
-    evaluateVerdict: null,
-    judgeVerdict: null,
-    reviewRequired: false,
-    reviewApproved: false,
-    decisionLog: [],
-    authCircuit: [],
-    callbackResult: null,
-    ...overrides,
-  };
-}
-
-function makeEnv({ observedSeq }) {
-  let i = 0;
-  let hopCounter = 0;
-  let observedMaxHop = 0;
-  const appended = [];
-  const persistedRows = [];
-  const sleeps = [];
-  const deps = {
-    pool: {
-      query: vi.fn(async (sql) => {
-        if (sql.includes('SELECT run.initiative_id, run.current_task_id')) {
-          return { rows: [{ initiative_id: TASK_ID, current_task_id: TASK_ID }] };
-        }
-        return { rows: [] };
-      }),
-    },
-    collectGroundTruth: vi.fn(async () => {
-      const value = observedSeq[Math.min(i, observedSeq.length - 1)];
-      i++;
-      const decisionLog = [...(value.decisionLog ?? []), ...persistedRows];
-      observedMaxHop = decisionLog.reduce((max, row) => Math.max(max, Number(row.hop) || 0), 0);
-      return { ...value, decisionLog };
-    }),
-    // loop 的 stale-observation 护栏要求 DB next hop 紧接 observed max hop
-    nextHop: vi.fn(async () => { hopCounter = Math.max(hopCounter, observedMaxHop) + 1; return hopCounter; }),
-    appendHop: vi.fn(async (entry) => {
-      appended.push(entry);
-      persistedRows.push({
-        hop: entry.hop,
-        action: entry.action,
-        observed: entry.observed,
-        gate_verdict: entry.gateVerdict,
-        detail: entry.detail,
-        created_at: NOW.toISOString(),
-      });
-    }),
-    writeHeartbeat: vi.fn(async () => {}),
-    dispatch: vi.fn(async () => ({ status: 'DONE', detail: 'human review requested: preview' })),
-    impactGate: {
-      beforeGenerate: vi.fn(async () => ({ gate: 'pass', stage: 'structure' })),
-      beforeEvaluate: vi.fn(async () => ({ gate: 'pass', stage: 'diff' })),
-      beforeMerge: vi.fn(async () => ({ gate: 'pass', stage: 'merge' })),
-    },
-    finalizeRun: vi.fn(async () => ({ changed: true, outcome: 'failed', runId: RUN_ID, taskId: TASK_ID })),
-    runEventStore: { append: vi.fn(async () => ({ cursor: 99 })) },
-    sleep: vi.fn(async (ms) => { sleeps.push(ms); }),
-    now: () => NOW,
-    host: 'test-host',
-    pid: 4242,
-    log: vi.fn(),
-  };
-  return { deps, appended, sleeps };
-}
-
-const pr = { url: 'u', state: 'OPEN', ci: 'pass', merged: false, head_sha: 'sha-review' };
-const passVerdicts = {
-  evaluateVerdict: { verdict: 'PASS', pr_head_sha: 'sha-review', contract_identity: IDENTITY },
-  judgeVerdict: { verdict: 'PASS', pr_head_sha: 'sha-review', contract_identity: IDENTITY },
-};
 const requestedRow = (hop, createdAt = NOW.toISOString()) => ({
   hop,
   action: LOG_ACTION.HUMAN_REVIEW_REQUESTED,
@@ -338,60 +249,8 @@ const requestedRow = (hop, createdAt = NOW.toISOString()) => ({
   detail: null,
   created_at: createdAt,
 });
-const decidedRow = (hop, requestHop) => ({
-  hop,
-  action: LOG_ACTION.VERDICT_HUMAN_REVIEW,
-  observed: { pr: { head_sha: 'sha-review' } },
-  detail: { verdict: 'APPROVED', approved: true, pr_head_sha: 'sha-review', review_request_hop: requestHop },
-  created_at: NOW.toISOString(),
-});
 
-describe('③ loop：人审去重只认未裁决的请求', () => {
-  it('同 SHA 旧请求已有 verdict:human_review 指回 → 视为新一轮，重新派发通知并落新请求行', async () => {
-    const decided = obs({
-      generatorSpawned: true, pr, reviewRequired: true, ...passVerdicts,
-      decisionLog: [requestedRow(2), decidedRow(3, 2)],
-    });
-    const { deps, appended } = makeEnv({
-      observedSeq: [decided, obs({ run: { id: RUN_ID, phase: 'done', cost_usd: 0 } })],
-    });
-
-    const result = await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
-
-    expect(result.exitReason).toBe('run_done');
-    expect(deps.dispatch).toHaveBeenCalledWith('wait:human_review', expect.any(Object));
-    expect(appended.map((entry) => entry.action)).toEqual([
-      'wait:human_review',
-      LOG_ACTION.HUMAN_REVIEW_REQUESTED,
-    ]);
-  });
-
-  it('负向：同 SHA 旧请求尚未裁决 → 仍只心跳等待，不重复通知（原去重语义保住）', async () => {
-    const pending = obs({
-      generatorSpawned: true, pr, reviewRequired: true, ...passVerdicts,
-      decisionLog: [requestedRow(2)],
-    });
-    const { deps, appended, sleeps } = makeEnv({
-      observedSeq: [pending, obs({ run: { id: RUN_ID, phase: 'done', cost_usd: 0 } })],
-    });
-
-    await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
-
-    expect(deps.dispatch).not.toHaveBeenCalled();
-    expect(appended).toHaveLength(0);
-    expect(sleeps).toHaveLength(1);
-    expect(effects.raise).not.toHaveBeenCalled();
-  });
-
-  it('纯函数：humanReviewRequestDecided 只认 review_request_hop 指回该请求行的裁决', () => {
-    const { humanReviewRequestDecided } = loopTest;
-    expect(humanReviewRequestDecided([requestedRow(2), decidedRow(3, 2)], 2)).toBe(true);
-    expect(humanReviewRequestDecided([requestedRow(2), decidedRow(3, 1)], 2)).toBe(false);
-    expect(humanReviewRequestDecided([requestedRow(2)], 2)).toBe(false);
-  });
-});
-
-describe('④ loop：静默等待 ≥15 分钟必须落行 + 发事件唤醒 Commander', () => {
+describe('④ 静默等待观测与 Commander 唤醒', () => {
   const twentyMinAgo = new Date(NOW.getTime() - 20 * 60 * 1000).toISOString();
 
   it('detectSilentWaitStall：无行/无 created_at/新行 → 不停摆；最后一行 ≥ 阈值 → 停摆带 last_hop/last_action', () => {
@@ -404,36 +263,6 @@ describe('④ loop：静默等待 ≥15 分钟必须落行 + 发事件唤醒 Com
     });
     expect(stall).toMatchObject({ stalled: true, last_hop: 2, last_action: LOG_ACTION.HUMAN_REVIEW_REQUESTED });
     expect(stall.idle_ms).toBeGreaterThanOrEqual(SILENT_WAIT_STALL_MS);
-  });
-
-  it('人审等待 20 分钟无行 → 落 result:wait_stalled 行、发 run.wait_stalled 事件，再落行后计时归零', async () => {
-    const pending = obs({
-      generatorSpawned: true, pr, reviewRequired: true, ...passVerdicts,
-      decisionLog: [requestedRow(2, twentyMinAgo)],
-    });
-    const { deps, appended } = makeEnv({
-      observedSeq: [pending, pending, obs({ run: { id: RUN_ID, phase: 'done', cost_usd: 0 } })],
-    });
-
-    const result = await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
-
-    expect(result.exitReason).toBe('run_done');
-    const stallRows = appended.filter((entry) => entry.action === LOG_ACTION.WAIT_STALLED);
-    expect(stallRows).toHaveLength(1);
-    expect(effects.raise).toHaveBeenCalledTimes(1);
-    expect(effects.raise).toHaveBeenCalledWith('P1', 'kernel_wait_stalled',
-      `Kernel run 静默等待 20min（human_review_pending）：run=${RUN_ID} task=${TASK_ID} last=${LOG_ACTION.HUMAN_REVIEW_REQUESTED}@2`);
-
-    expect(stallRows[0].detail).toMatchObject({
-      last_hop: 2,
-      last_action: LOG_ACTION.HUMAN_REVIEW_REQUESTED,
-      idle_minutes: 20,
-    });
-    expect(deps.runEventStore.append).toHaveBeenCalledWith(expect.objectContaining({
-      runId: RUN_ID,
-      eventType: 'run.wait_stalled',
-    }));
-    expect(deps.dispatch).not.toHaveBeenCalled();
   });
 
   it('run.wait_stalled 是 material 事件：唤醒 Commander，理由 wait_stalled', () => {

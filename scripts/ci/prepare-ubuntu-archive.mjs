@@ -4,11 +4,14 @@ import { pathToFileURL } from 'node:url';
 
 const keyring = '/usr/share/keyrings/ubuntu-archive-keyring.gpg';
 const sourceFile = '/etc/apt/sources.list.d/ubuntu.sources';
-const archive = 'https://mirrors.edge.kernel.org/ubuntu';
+const archive = 'https://archive.ubuntu.com/ubuntu';
+const securityArchive = 'https://security.ubuntu.com/ubuntu';
+// 仅识别旧脚本写入的源，以便按suite恢复；不再选择第三方镜像。
+const previousMirror = 'https://mirrors.edge.kernel.org/ubuntu';
 const indirect = uri => /^mirror\+file:\/etc\/apt\/apt-mirrors(?:-security)?\.txt$/.test(uri)
   || /^https?:\/\/azure\.archive\.ubuntu\.com\/ubuntu\/?$/.test(uri);
 const official = uri => /^https?:\/\/(?:archive|security)\.ubuntu\.com\/ubuntu\/?$/.test(uri);
-const supported = uri => indirect(uri) || official(uri) || uri === archive || uri === archive + '/';
+const supported = uri => indirect(uri) || official(uri) || uri === previousMirror || uri === previousMirror + '/';
 
 export function prepareUbuntuSources(text) {
   let ubuntu = 0;
@@ -25,9 +28,10 @@ export function prepareUbuntuSources(text) {
     if (!uris.every(supported)) throw Error('ubuntu_source_uri_unsupported');
     const security = fields.Suites.split(/\s+/).map(suite => suite.endsWith('-security'));
     if (security.some(Boolean) && !security.every(Boolean)) throw Error('ubuntu_source_security_suites_mixed');
-    if (uris.length === 1 && uris[0] === archive) return paragraph;
+    const destination = security.every(Boolean) ? securityArchive : archive;
+    if (uris.length === 1 && uris[0] === destination) return paragraph;
     return paragraph.replace(/^(URIs:[ \t]*)([^\r\n]*)/m,
-      (_, prefix) => prefix + archive);
+      (_, prefix) => prefix + destination);
   }).join('');
   if (!ubuntu) throw Error('ubuntu_sources_not_found');
   return result;
@@ -49,7 +53,7 @@ function main() {
     if (write.error || write.status !== 0) throw Error('ubuntu_source_write_failed');
     if (fs.readFileSync(sourceFile, 'utf8') !== after) throw Error('ubuntu_source_readback_failed');
   }
-  console.log('Ubuntu signed package mirror prepared; signatures and suites preserved.');
+  console.log('Ubuntu official archive and security sources prepared; signatures and suites preserved.');
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

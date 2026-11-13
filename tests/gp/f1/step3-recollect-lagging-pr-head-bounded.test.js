@@ -15,7 +15,6 @@
  */
 import { describe, expect, it } from 'vitest';
 import { derive } from '../../../packages/brain/src/orchestrator/derive.js';
-import { __test__ as loopTest } from '../../../packages/brain/src/orchestrator/loop.js';
 
 const CANDIDATE_SHA = 'b'.repeat(40); // Runner 验证的本地候选头（真验收对象）
 const STALE_PR_SHA = 'c'.repeat(40); // 滞后的远端 PR 头（fix 后未发布）
@@ -111,17 +110,5 @@ describe('recollect 止损闸不依赖快照 SHA 锚定（r54 滞后 PR 头变�
     ]));
     expect(r.action).toBe('spawn:evaluator');
     expect(r.reason).toBe('judge_evidence_insufficient_recollect');
-  });
-});
-
-describe('recollect 派发快照记录派发时真实验收头（候选优先）', () => {
-  it('buildSnapshot 对 spawn:evaluator recollect 写 trigger_sha=候选头，供事后排查锚定', () => {
-    const snapshot = loopTest.buildSnapshot(
-      observed([]),
-      { hops: 60 },
-      'spawn:evaluator',
-      'judge_evidence_insufficient_recollect',
-    );
-    expect(snapshot.trigger_sha).toBe(CANDIDATE_SHA);
   });
 });

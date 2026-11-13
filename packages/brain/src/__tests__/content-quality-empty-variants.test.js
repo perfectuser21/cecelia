@@ -9,7 +9,6 @@ vi.mock('../content-types/content-type-registry.js', () => ({
   getContentType: async () => ({ copy_rules: { min_word_count: { short_copy: 2, long_form: 3 }, keywords_required: ['AI'] } }),
   listContentTypes: io.forbidden, getContentTypeFromYaml: io.forbidden, listContentTypesFromYaml: io.forbidden,
 }));
-vi.mock('../topic-selection-scheduler.js', () => ({ triggerDailyTopicSelection: io.forbidden, hasTodayTopics: io.forbidden }));
 vi.mock('../llm-caller.js', () => ({ callLLM: io.forbidden }));
 vi.mock('../actions.js', () => ({ createTask: io.forbidden }));
 import router from '../routes/content-pipeline.js';

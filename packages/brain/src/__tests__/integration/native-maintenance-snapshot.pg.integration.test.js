@@ -1,6 +1,6 @@
 import {afterEach,expect,it} from 'vitest';
 import {randomUUID} from 'node:crypto';
-import {nativeMaintenanceDatabase,readSource} from '../fixtures/workflow-assembly-native-db.test.js';
+import {nativeMaintenanceDatabase,readSource} from '../fixtures/workflow-assembly-native-db.js';
 import {nativeSpec as spec,prepareNativeSource} from '../../lib/workflow-assembly-native-source.js';
 import {registerNativeReconcile} from '../../lib/workflow-assembly-native-registration.js';
 import {runNativeReconcile} from '../../lib/workflow-assembly-native.js';

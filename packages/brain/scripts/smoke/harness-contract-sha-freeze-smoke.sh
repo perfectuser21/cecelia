@@ -37,6 +37,5 @@ try {
 if (!rejected) throw new Error('unsafe repository path was accepted');
 NODE
 
-grep -q 'ganLatestRoundContractSha' "$REPO_ROOT/packages/brain/src/orchestrator/loop.js"
 grep -q 'contract_sha' "$REPO_ROOT/packages/brain/src/routes/harness-callback.js"
 echo 'harness contract SHA freeze smoke: OK'

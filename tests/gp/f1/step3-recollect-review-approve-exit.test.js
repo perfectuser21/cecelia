@@ -22,7 +22,6 @@ import express from 'express';
 import request from 'supertest';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { derive } from '../../../packages/brain/src/orchestrator/derive.js';
-import { __test__ as loopTest } from '../../../packages/brain/src/orchestrator/loop.js';
 
 const CANDIDATE_SHA = 'e'.repeat(40);
 const IDENTITY = { contract_id: 'c1', manifest_sha256: 'm1', source_revision: 'r1' };
@@ -116,17 +115,6 @@ describe('derive：recollect 人审被批准后有出口', () => {
       stale,
     ]));
     expect(r.action).toBe('wait:human_review');
-  });
-});
-
-describe('loop：review 请求 detail 带候选头结构化锚', () => {
-  it('humanReviewDetail 输出 candidate_head_sha=候选优先头', () => {
-    const detail = loopTest.humanReviewDetail(
-      observed([]),
-      'evidence_insufficient_after_recollect',
-    );
-    expect(detail.candidate_head_sha).toBe(CANDIDATE_SHA);
-    expect(detail.review_reason).toBe('evidence_insufficient_after_recollect');
   });
 });
 

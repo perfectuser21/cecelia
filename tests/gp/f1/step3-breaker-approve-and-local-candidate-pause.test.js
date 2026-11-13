@@ -17,10 +17,9 @@
 // b) 停表判定抽纯函数并支持候选头：请求行头锚回落 detail.candidate_head_sha，
 //    当前头回落 observed.candidate.head_sha。
 //
-// 真 import derive 与 loop.__test__（被改的边），不 mock。
+// 真 import derive，保留批准消费与过期头拒绝的保护。
 import { describe, it, expect } from 'vitest';
 import { derive } from '../../../packages/brain/src/orchestrator/derive.js';
-import { __test__ as loopTest } from '../../../packages/brain/src/orchestrator/loop.js';
 
 const CAND_SHA = '1d44883be30b3e7019a262489cfa9d453838f5ab';
 const IDENTITY = { contract_id: 'c76', manifest_sha256: 'm76', source_revision: 'r76' };
@@ -116,47 +115,5 @@ describe('F1 step3 — global_loop_breaker 批准消费（r76 案卷①）', () 
     }));
     expect(r.action).toBe('wait:human_review');
     expect(r.reason).toBe('global_loop_breaker');
-  });
-});
-
-describe('F1 step3 — 本地候选人审停表（r76 案卷②）', () => {
-  it('本地候选（pr=null）挂人审：请求行候选头锚命中 → 停表', () => {
-    const paused = loopTest.humanReviewDeadlinePauseActive({
-      decisionAction: 'wait:human_review',
-      hasOpenHumanReview: true,
-      reviewHeadSha: CAND_SHA,
-      currentHeadSha: CAND_SHA,
-    });
-    expect(paused).toBe(true);
-  });
-
-  it('请求行头锚与当前头不符但仍在等人 → 停表（第 48 批翻案 r83：等人期间时钟不杀人）', () => {
-    const paused = loopTest.humanReviewDeadlinePauseActive({
-      decisionAction: 'wait:human_review',
-      hasOpenHumanReview: true,
-      reviewHeadSha: 'a'.repeat(40),
-      currentHeadSha: CAND_SHA,
-    });
-    expect(paused).toBe(true);
-  });
-
-  it('负向：无开放人审 → 不停表', () => {
-    const paused = loopTest.humanReviewDeadlinePauseActive({
-      decisionAction: 'wait:human_review',
-      hasOpenHumanReview: false,
-      reviewHeadSha: CAND_SHA,
-      currentHeadSha: CAND_SHA,
-    });
-    expect(paused).toBe(false);
-  });
-
-  it('负向：当前头缺失（无 pr 无 candidate）→ 不停表（fail-closed）', () => {
-    const paused = loopTest.humanReviewDeadlinePauseActive({
-      decisionAction: 'wait:human_review',
-      hasOpenHumanReview: true,
-      reviewHeadSha: null,
-      currentHeadSha: null,
-    });
-    expect(paused).toBe(false);
   });
 });

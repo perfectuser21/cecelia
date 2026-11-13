@@ -97,11 +97,6 @@ vi.mock('../../content-types/content-type-registry.js', () => ({
 
 // content-pipeline orchestrator 已删除（搬到 ZJ pipeline-worker），不再 mock。
 
-vi.mock('../../topic-selection-scheduler.js', () => ({
-  triggerDailyTopicSelection: vi.fn().mockResolvedValue({ triggered: false }),
-  hasTodayTopics: vi.fn().mockResolvedValue(false),
-}));
-
 vi.mock('../../llm-caller.js', () => ({
   callLLM: vi.fn(),
   callLLMStream: vi.fn(),

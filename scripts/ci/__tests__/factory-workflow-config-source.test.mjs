@@ -436,9 +436,12 @@ test('当前候选输入入口逐项读取完整封组及共享身份解析器�
  assert.ok(row);assert.ok(row.eligible_owner_paths.includes('scripts/ci/run-basic-check.mjs'));
  assert.ok(row.witness.entry.support.some(r=>r.path==='scripts/skill_source_ownership.py'));
  assert.equal(row.input_facts.entry_verified,false);assert.equal(row.execution_status,'not_evaluated');
- for(const member of ['scripts/ci/run-basic-check.mjs','packages/brain/vitest.config.js']){
+ for(const [member,revision] of [
+  ...['scripts/ci/run-basic-check.mjs','packages/brain/vitest.config.js'].map(path=>[path,'d06de84e9f7d2d489a151e0b13b38f81651dd3fa']),
+  ...['scripts/ci/prepare-ubuntu-archive.mjs','scripts/ci/__tests__/basic-ubuntu-archive.test.mjs','scripts/ci/__tests__/basic-skill-source-coverage.test.mjs'].map(path=>[path,'4d8bed7c7504f8e3e2d84b283bde735927642f8b']),
+ ]){
   const candidate=readFileSync(join(f.root,member));
-  const main=execFileSync('git',[...VERIFICATION_GIT_OPTIONS,'--no-replace-objects','show','d06de84e9f7d2d489a151e0b13b38f81651dd3fa:'+member],{cwd:f.root});
+  const main=execFileSync('git',[...VERIFICATION_GIT_OPTIONS,'--no-replace-objects','show',revision+':'+member],{cwd:f.root});
   writeFileSync(join(f.root,member),main);f.source.head_revision=f.commit();
   f.source.changed_files=f.git('diff','--name-only',f.source.base_revision,f.source.head_revision).split('\n').filter(Boolean).map(path=>({path}));
   const mixed=derived(f);assert.equal(mixed.rows.some(r=>r.input_facts.path===path&&r.input_facts.source.side==='head'),false);

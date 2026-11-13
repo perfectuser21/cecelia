@@ -5,7 +5,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {execFileSync} from 'node:child_process';
 import {createRequire} from 'node:module';
-import {authoringExecutionDatabase,startPureAuthoring,settleInvocation} from '../fixtures/authoring-execution-db.test.js';
+import {authoringExecutionDatabase,startPureAuthoring,settleInvocation} from '../fixtures/authoring-execution-db.js';
 import {runWorkflowAssemblyReconcile} from '../../lib/workflow-assembly-reconcile.js';
 import {JOBS,runSchedulerJobsOnce} from '../../scheduler-jobs.js';
 import {readAuthoringReadiness} from '../../workflow-authoring/execution-proof.js';

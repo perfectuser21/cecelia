@@ -8,7 +8,6 @@
  *   - COALESCE 防御修复：completeScraperTask 使用 COALESCE(payload, '{}'::jsonb) 写法
  *   - schedulePostPublishCollection 主流程：无任务、有任务、异常
  *   - processPendingScraperTasks：缺数据保持待采集、真实数据回填、缺失字段不伪报完成
- *   - writePipelinePublishStats：正常写入、metrics 缺省
  *
  * Sprint: 07220725-fix-markdispatched-null-payload
  * Task ID: 2faafa72-9358-4057-b1e6-6f5a67133ed7
@@ -21,7 +20,6 @@ const mockQuery = vi.fn();
 const mockPool = { query: mockQuery };
 
 let schedulePostPublishCollection;
-let writePipelinePublishStats;
 let processPendingScraperTasks;
 
 beforeEach(async () => {
@@ -29,7 +27,6 @@ beforeEach(async () => {
   vi.clearAllMocks();
   const mod = await import('../post-publish-data-collector.js');
   schedulePostPublishCollection = mod.schedulePostPublishCollection;
-  writePipelinePublishStats = mod.writePipelinePublishStats;
   processPendingScraperTasks = mod.processPendingScraperTasks;
 });
 
@@ -170,41 +167,5 @@ describe('processPendingScraperTasks', () => {
     const result = await processPendingScraperTasks(mockPool);
 
     expect(result.processed).toBe(0);
-  });
-});
-
-// ─── writePipelinePublishStats ────────────────────────────────────────────────
-
-describe('writePipelinePublishStats', () => {
-  it('正常写入时调用 INSERT', async () => {
-    mockQuery.mockResolvedValueOnce({ rows: [] });
-
-    await writePipelinePublishStats(mockPool, {
-      pipelineId: 'pipe-1',
-      publishTaskId: 'task-1',
-      platform: 'douyin',
-      metrics: { views: 1000, likes: 50, comments: 10, shares: 5 },
-    });
-
-    expect(mockQuery).toHaveBeenCalledTimes(1);
-    const [sql, params] = mockQuery.mock.calls[0];
-    expect(sql).toContain('pipeline_publish_stats');
-    expect(params).toContain('pipe-1');
-    expect(params).toContain('douyin');
-    expect(params).toContain(1000);
-  });
-
-  it('metrics 缺省时使用 0', async () => {
-    mockQuery.mockResolvedValueOnce({ rows: [] });
-
-    await writePipelinePublishStats(mockPool, {
-      pipelineId: 'pipe-2',
-      publishTaskId: 'task-2',
-      platform: 'weibo',
-      metrics: {},
-    });
-
-    const [, params] = mockQuery.mock.calls[0];
-    expect(params).toContain(0);
   });
 });

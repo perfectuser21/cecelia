@@ -4,7 +4,6 @@
  * 编排已搬到 ZJ pipeline-worker（Python LangGraph，PR zenithjoy#216）。
  * Cecelia 端只剩：
  *   - 任务 CRUD（创 / 列 / 阶段查 / 产出查 / 统计）
- *   - 选题入口（trigger-topics）
  *   - 发布前内容质量检查（pre-publish-check）
  *   - LLM 测试入口（test-step）
  *
@@ -15,9 +14,6 @@
  * GET  /api/brain/pipelines                    列出 content-pipeline 任务
  * GET  /api/brain/pipelines/daily-stats        每日产出统计（completed/in_progress/failed/queued）
  * POST /api/brain/pipelines                    创建新 content-pipeline 任务
- * POST /api/brain/pipelines/trigger-topics     手动触发今日选题生成（忽略时间窗口限制）
- * POST /api/brain/pipelines/e2e-trigger        端到端：创建 task（实际执行由 ZJ pipeline-worker 60s 内拉到）
- * POST /api/brain/pipelines/batch-e2e-trigger  批量创建（同上）
  * POST /api/brain/pipelines/:id/run            重置 + 等 ZJ pipeline-worker 拉到（202 Accepted）
  * POST /api/brain/pipelines/:id/pre-publish-check  发布前内容质量检查
  * GET  /api/brain/pipelines/:id/stages         查询 pipeline 子任务进度
@@ -32,7 +28,6 @@ import { existsSync, readFileSync, readdirSync } from 'fs';
 import { join } from 'path';
 import pool from '../db.js';
 import { listContentTypes, getContentType, getContentTypeFromYaml, listContentTypesFromYaml } from '../content-types/content-type-registry.js';
-import { triggerDailyTopicSelection, hasTodayTopics } from '../topic-selection-scheduler.js';
 import { callLLM } from '../llm-caller.js';
 import { validateAllVariants } from '../content-quality-validator.js';
 import { createTask } from '../actions.js';
@@ -473,37 +468,6 @@ router.post('/batch', async (req, res) => {
     res.status(201).json({ count: created.length, pipelines: created });
   } catch (err) {
     console.error('[routes/content-pipeline] POST /batch error:', err.message);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-/**
- * POST /pipelines/trigger-topics
- * 手动触发今日选题生成（忽略时间窗口限制，强制执行）
- * 用于测试、调试或手动补充当日选题
- */
-router.post('/trigger-topics', async (req, res) => {
-  res.set('Deprecation', 'true');
-  res.set('Sunset', '2026-07-11');
-  res.set('Link', '</api/brain/tasks>; rel="successor-version"');
-  try {
-    const alreadyDone = await hasTodayTopics(pool);
-    if (alreadyDone && !req.query.force) {
-      return res.status(200).json({
-        ok: false,
-        skipped: true,
-        reason: '今日选题已生成，如需强制重新生成请加 ?force=1',
-      });
-    }
-
-    // 传入触发窗口内的时间（UTC 01:02）绕过时间检查
-    const windowTime = new Date();
-    windowTime.setUTCHours(1, 2, 0, 0);
-
-    const result = await triggerDailyTopicSelection(pool, windowTime);
-    res.json({ ok: true, ...result });
-  } catch (err) {
-    console.error('[routes/content-pipeline] POST /trigger-topics error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
@@ -1066,175 +1030,11 @@ router.post('/:id/pre-publish-check', async (req, res) => {
   }
 });
 
-/**
- * POST /pipelines/e2e-trigger
- * 端到端链路触发：选题（可选）→ 创建 Pipeline → 立即执行第一阶段。
- *
- * Body: {
- *   keyword: string,        // 必填：内容关键词（如 "Cursor AI"）
- *   content_type?: string,  // 可选：内容类型，默认 "solo-company-case"
- *   skip_topic_selection?: boolean,  // 可选：跳过选题生成，默认 false
- * }
- *
- * Response: { pipeline_id: string, status: string, message: string }
- */
-router.post('/e2e-trigger', async (req, res) => {
-  res.set('Deprecation', 'true');
-  res.set('Sunset', '2026-07-11');
-  res.set('Link', '</api/brain/tasks>; rel="successor-version"');
-  const { keyword, content_type = 'solo-company-case', skip_topic_selection = false } = req.body || {};
-
-  if (!keyword || typeof keyword !== 'string' || keyword.trim().length === 0) {
-    return res.status(400).json({ error: '必填字段 keyword 不能为空' });
-  }
-
-  const cleanKeyword = keyword.trim();
-
-  try {
-    // Step 1: 触发选题生成（除非跳过）
-    let topicTriggered = false;
-    if (!skip_topic_selection) {
-      try {
-        await triggerDailyTopicSelection();
-        topicTriggered = true;
-      } catch (topicErr) {
-        console.warn(`[e2e-trigger] 选题生成失败（不阻断流程）: ${topicErr.message}`);
-      }
-    }
-
-    // Step 2: 创建 content-pipeline 任务
-    const pipelinePayload = {
-      keyword: cleanKeyword,
-      content_type,
-      trigger_source: 'e2e-trigger',
-      triggered_at: new Date().toISOString(),
-    };
-
-    const insertResult = await createTask({
-      title: `[Pipeline] ${cleanKeyword} (${content_type})`,
-      task_type: 'content-pipeline',
-      status: 'queued',
-      payload: pipelinePayload,
-      priority: 'P2',
-      tags: ['e2e-trigger', 'auto'],
-      trigger_source: 'content_e2e',
-      source: 'api',
-      allow_unscoped: true,
-      db: pool,
-    });
-
-    const pipelineId = insertResult.task.id;
-    console.log(`[e2e-trigger] 创建 pipeline ${pipelineId}：${cleanKeyword}（等 ZJ pipeline-worker 拉取）`);
-
-    return res.json({
-      ok: true,
-      pipeline_id: pipelineId,
-      keyword: cleanKeyword,
-      content_type,
-      topic_triggered: topicTriggered,
-      message: `Pipeline ${pipelineId} 已创建（queued），将由 ZJ pipeline-worker 60s 内拉到执行`,
-      check_progress: `/api/brain/pipelines/${pipelineId}/stages`,
-    });
-  } catch (err) {
-    console.error('[routes/content-pipeline] POST /e2e-trigger error:', err.message);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-/**
- * POST /pipelines/batch-e2e-trigger
- * 批量端到端触发：一次创建多条 content-pipeline，轮换3种内容类型，
- * 用于验证"AI一人公司"主题的完整内容生成闭环。
- *
- * Body: {
- *   keywords: string[],       // 必填：关键词数组（建议5个，支持1-10个）
- *   skip_topic_selection?: boolean,  // 可选：跳过选题生成，默认 true（批量场景通常已有关键词）
- * }
- *
- * 内容类型轮换策略：
- *   索引 0,3 → solo-company-case
- *   索引 1,4 → ai-tools-review
- *   索引 2   → ai-workflow-guide
- *
- * Response: { ok: boolean, created: number, pipelines: Array<{pipeline_id, keyword, content_type}> }
- */
-router.post('/batch-e2e-trigger', async (req, res) => {
-  res.set('Deprecation', 'true');
-  res.set('Sunset', '2026-07-11');
-  res.set('Link', '</api/brain/tasks>; rel="successor-version"');
-  const { keywords, skip_topic_selection = true } = req.body || {};
-
-  if (!Array.isArray(keywords) || keywords.length === 0) {
-    return res.status(400).json({ error: '必填字段 keywords 不能为空，需为字符串数组' });
-  }
-  if (keywords.length > 10) {
-    return res.status(400).json({ error: 'keywords 最多10个' });
-  }
-
-  // 内容类型轮换表（"AI一人公司"主题3种）
-  const CONTENT_TYPE_ROTATION = ['solo-company-case', 'ai-tools-review', 'ai-workflow-guide'];
-
-  const results = [];
-  const errors = [];
-
-  // 可选触发一次选题生成
-  if (!skip_topic_selection) {
-    try { await triggerDailyTopicSelection(); } catch { /* 不阻断 */ }
-  }
-
-  // 关键词安全校验：只允许中英文、数字、空格和常用符号，最长50字符
-  const SAFE_KEYWORD_RE = /^[\w\u4e00-\u9fa5\-\s]{1,50}$/;
-
-  for (let i = 0; i < keywords.length; i++) {
-    const keyword = String(keywords[i]).trim();
-    if (!keyword) continue;
-
-    if (!SAFE_KEYWORD_RE.test(keyword)) {
-      errors.push({ keyword, error: '关键词包含非法字符或超过50字符' });
-      continue;
-    }
-
-    const content_type = CONTENT_TYPE_ROTATION[i % CONTENT_TYPE_ROTATION.length];
-
-    try {
-      const pipelinePayload = {
-        keyword,
-        content_type,
-        trigger_source: 'batch-e2e-trigger',
-        batch_index: i,
-        triggered_at: new Date().toISOString(),
-      };
-
-      const insertResult = await createTask({
-        title: `[Pipeline] ${keyword} (${content_type})`,
-        task_type: 'content-pipeline',
-        status: 'queued',
-        payload: pipelinePayload,
-        priority: 'P2',
-        tags: ['batch-e2e-trigger', 'auto'],
-        trigger_source: 'content_batch_e2e',
-        source: 'api',
-        allow_unscoped: true,
-        db: pool,
-      });
-
-      const pipelineId = insertResult.task.id;
-      results.push({ pipeline_id: pipelineId, keyword, content_type, status: 'queued' });
-      console.log(`[batch-e2e-trigger] [${i + 1}/${keywords.length}] 创建 pipeline ${pipelineId}：${keyword} (${content_type})`);
-    } catch (err) {
-      errors.push({ keyword, error: err.message });
-      console.error(`[batch-e2e-trigger] 创建 pipeline 失败：${keyword} — ${err.message}`);
-    }
-  }
-
-  return res.json({
-    ok: errors.length === 0,
-    created: results.length,
-    failed: errors.length,
-    pipelines: results,
-    errors: errors.length > 0 ? errors : undefined,
-    message: `已创建 ${results.length} 条 pipeline（queued），内容类型: ${[...new Set(results.map((r) => r.content_type))].join(', ')}。将由 ZJ pipeline-worker 60s 内逐条拉到。`,
-    check_each: results.map((r) => `/api/brain/pipelines/${r.pipeline_id}/stages`),
+// 旧触发入口已退出；只保留拒写响应，防止旧客户端重新创建内容任务。
+router.post(['/trigger-topics', '/e2e-trigger', '/batch-e2e-trigger'], (_req, res) => {
+  res.status(410).json({
+    error: 'CONTENT_TRIGGER_RETIRED',
+    successor: '/api/brain/topics/generate',
   });
 });
 

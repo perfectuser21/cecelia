@@ -83,39 +83,10 @@ fi
 
 echo ""
 
-# ---- FR-02: 脚本存在 ----
-echo "--- [FR-02] Develop 部署脚本 ---"
-
-if [[ -f "$ROOT_DIR/scripts/dev-deploy.sh" ]]; then
-  log_pass "scripts/dev-deploy.sh 存在"
-  if grep -q "pg_dump" "$ROOT_DIR/scripts/dev-deploy.sh"; then
-    log_pass "dev-deploy.sh 含 pg_dump 备份"
-  else
-    log_fail "dev-deploy.sh 缺少 pg_dump 备份"
-  fi
-else
-  log_fail "scripts/dev-deploy.sh 不存在"
-fi
-
 if [[ -f "$ROOT_DIR/scripts/dev-verify.sh" ]]; then
   log_pass "scripts/dev-verify.sh 存在"
 else
   log_fail "scripts/dev-verify.sh 不存在"
-fi
-
-echo ""
-
-# ---- FR-03: Brain deploy/dev 端点 ----
-echo "--- [FR-03] Brain deploy/dev 端点 ---"
-
-DEPLOY_DEV_ROUTE="$ROOT_DIR/packages/brain/src/routes/deploy-dev.js"
-if [[ -f "$DEPLOY_DEV_ROUTE" ]]; then
-  log_pass "packages/brain/src/routes/deploy-dev.js 存在"
-  if grep -q "deploy.*dev\|dev.*deploy" "$DEPLOY_DEV_ROUTE"; then
-    log_pass "deploy-dev.js 含 dev 部署端点逻辑"
-  fi
-else
-  log_fail "packages/brain/src/routes/deploy-dev.js 不存在（FR-03 未实施）"
 fi
 
 echo ""

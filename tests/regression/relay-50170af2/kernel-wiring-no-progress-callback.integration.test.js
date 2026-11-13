@@ -33,7 +33,6 @@ import callbackRouter from '../../../packages/brain/src/routes/harness-callback.
 import {
   replayProductConvergence,
 } from '../../../packages/brain/src/orchestrator/counters.js';
-import { runLoop } from '../../../packages/brain/src/orchestrator/loop.js';
 
 const RUN_ID = '80000000-0000-4000-8000-000000000008';
 const TASK_ID = '90000000-0000-4000-8000-000000000009';
@@ -46,11 +45,6 @@ const VERIFIED_SHA = 'abcdefabcdefabcdefabcdefabcdefabcdefabcd';
 const UPPERCASE_VERIFIED_SHA = VERIFIED_SHA.toUpperCase();
 const SHORT_SHA = 'abc1234';
 const FAKE_SHA = 'ffffffffffffffffffffffffffffffffffffffff';
-const CONTRACT_IDENTITY = Object.freeze({
-  contract_id: '70000000-0000-4000-8000-000000000007',
-  manifest_sha256: '7'.repeat(64),
-  source_revision: '6'.repeat(40),
-});
 
 function callbackRowFromResult(result, triggerSha = SHA) {
   const pullRequest = result.artifacts.find((artifact) => (
@@ -148,60 +142,7 @@ function installCallbackPersistence({
   });
 }
 
-function observed(decisionLog, provider) {
-  return {
-    run: {
-      id: RUN_ID,
-      phase: 'evaluate',
-      cost_usd: '0',
-      deadline_at: new Date(Date.now() + 120 * 60 * 1000),
-    },
-    task: {
-      id: TASK_ID,
-      status: 'in_progress',
-      payload: { provider, sprint_dir: 'sprints/kernel', worktree_path: '/workspace' },
-    },
-    prdExists: true,
-    contract: {
-      approved: true,
-      id: CONTRACT_IDENTITY.contract_id,
-      identity: CONTRACT_IDENTITY,
-      row: {},
-    },
-    pr: {
-      url: PR_URL,
-      state: 'OPEN',
-      merged: false,
-      ci: 'pass',
-      head_sha: SHA,
-    },
-    inflight: { containers: [], host_pids: [] },
-    lastAgentExit: { code: null, auth_failed: false },
-    proposeBranchRn: 0,
-    ganLatestRoundVerdict: null,
-    generatorSpawned: true,
-    evaluateVerdict: {
-      verdict: 'FAIL',
-      pr_head_sha: SHA,
-      failure_class: 'product_failure',
-      contract_identity: CONTRACT_IDENTITY,
-    },
-    evaluateResult: null,
-    judgeVerdict: {
-      verdict: 'FAIL',
-      pr_head_sha: SHA,
-      failure_class: 'product_failure',
-      contract_identity: CONTRACT_IDENTITY,
-    },
-    reviewRequired: false,
-    reviewApproved: false,
-    decisionLog: decisionLog.map((row) => structuredClone(row)),
-    authCircuit: [],
-    callbackResult: null,
-  };
-}
-
-describe('kernel wiring: generator fix callback feeds no-progress terminal', () => {
+describe('kernel callback: server-confirmed SHA and convergence replay', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     runtime.attempt = {
@@ -233,132 +174,6 @@ describe('kernel wiring: generator fix callback feeds no-progress terminal', () 
       attempt: { ...runtime.attempt, status: result.status, result },
       deduped: false,
     }));
-  });
-
-  test('real loop→derive→dispatch→HTTP callback detects same SHA despite next-hop provider change', async () => {
-    const decisionLog = [];
-    const resolver = vi.fn(async () => SHA);
-    const app = mountCallbackRouter({ resolver });
-    let failureReason = null;
-    runtime.pool.query.mockImplementation(async (sql, params) => {
-      if (sql.includes('FROM initiative_runs r')) {
-        return {
-          rows: [{
-            pr_url: PR_URL,
-            task_id: TASK_ID,
-            payload: { base_repo: 'perfectuser21/cecelia' },
-          }],
-          rowCount: 1,
-        };
-      }
-      if (sql.includes('SELECT deadline_at')) {
-        return { rows: [{ deadline_at: new Date(Date.now() + 120 * 60 * 1000) }] };
-      }
-      if (sql.includes("action='spawn:generator-fix'")) {
-        return { rows: [{ trigger_sha: SHA }], rowCount: 1 };
-      }
-      if (sql.includes('UPDATE initiative_runs') && sql.includes('failure_reason')) {
-        failureReason = params[1];
-      }
-      return { rows: [], rowCount: 1 };
-    });
-    runtime.store.recordCallbackTerminal.mockImplementation(async ({ result: callback }) => {
-      const callbackRow = callbackRowFromResult(callback, SHA);
-      if (callbackRow) {
-        decisionLog.push({
-          hop: decisionLog.reduce((max, row) => Math.max(max, row.hop), 0) + 1,
-          ...callbackRow,
-        });
-      }
-      return {
-        attempt: { ...runtime.attempt, status: callback.status, result: callback },
-        deduped: false,
-      };
-    });
-
-    let collections = 0;
-    let dispatches = 0;
-    const deps = {
-      pool: runtime.pool,
-      collectGroundTruth: async () => {
-        collections += 1;
-        return observed(decisionLog, collections === 1 ? 'codex' : 'claude');
-      },
-      nextHop: async () => decisionLog.reduce((max, row) => Math.max(max, row.hop), 0) + 1,
-      appendHop: async (entry) => {
-        decisionLog.push({
-          hop: entry.hop,
-          action: entry.action,
-          observed: structuredClone(entry.observed),
-          gate_verdict: entry.gateVerdict,
-          detail: structuredClone(entry.detail),
-        });
-      },
-      writeHeartbeat: async () => {},
-      sleep: async () => {},
-      now: () => new Date(),
-      log: () => {},
-      impactGate: {
-        beforeGenerate: async () => ({
-          allowed: true,
-          gate: 'pass',
-          stage: 'structure',
-        }),
-      },
-      finalizeRun: async (_pool, input) => {
-        failureReason = input.reason;
-        expect(input).toMatchObject({
-          runId: RUN_ID,
-          expectedTaskId: TASK_ID,
-          outcome: 'failed',
-        });
-      },
-      dispatch: async () => {
-        dispatches += 1;
-        if (dispatches > 1) throw new Error('no_progress_not_detected');
-        const response = await request(app)
-          .post(`/api/brain/harness/attempts/${ATTEMPT_ID}/callback`)
-          .set('Authorization', `Bearer ${CALLBACK_TOKEN}`)
-          .set('X-Harness-Lease-Owner', LEASE_OWNER)
-          .set('X-Harness-Lease-Generation', '0')
-          .send({
-            contract_version: '1.0',
-            attempt_id: ATTEMPT_ID,
-            status: 'completed',
-            summary: 'generator completed without advancing the PR',
-            artifacts: [{
-              type: 'pull_request',
-              url: PR_URL,
-              head_sha: SHA,
-            }],
-            checks: [],
-            decision: null,
-            error: null,
-            provider_metadata: { provider: 'codex', session_id: 'generator-session' },
-          });
-        expect(response.status).toBe(200);
-        return { status: 'DONE', detail: 'stub generator callback completed' };
-      },
-    };
-
-    let result;
-    try {
-      result = await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
-    } catch (error) {
-      result = { exitReason: error.message };
-    }
-
-    expect(decisionLog.find((row) => row.action === 'spawn:generator-fix')?.observed)
-      .toMatchObject({ trigger_sha: SHA });
-    expect(decisionLog).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        action: 'verdict:generator-fix-callback',
-        observed: expect.objectContaining({ pr_head_sha: SHA }),
-      }),
-    ]));
-    expect(result.exitReason).toBe('no_progress_same_sha');
-    expect(failureReason).toBe('no_progress_same_sha');
-    expect(dispatches).toBe(1);
   });
 
   test('uppercase artifact SHA is stored only as the lowercase resolver-confirmed head', async () => {

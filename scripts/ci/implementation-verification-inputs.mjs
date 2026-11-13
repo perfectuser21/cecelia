@@ -117,6 +117,23 @@ const CURRENT_BASIC_ENTRY_PROTOCOLS=[
     "scripts/ci/prepare-ubuntu-archive.mjs": "ca83d00df2f865fc1836e0f8841bc5f4ba7ddf57416b6f718855f5840205311b",
     "scripts/ci/__tests__/basic-ubuntu-archive.test.mjs": "525456457c116c91aba038f35916352abed5ec38a0aa7c5287fd263ef9ffb175",
     "scripts/skill_source_ownership.py": "20fca16bcf474588e9e4d0add00a66c5885b3d85a82275fb9082a0787e72b9a7"
+  },
+  {
+    "scripts/ci/run-basic-check.mjs": "a7eb0c2f679385f6f5d79127b226972bc3f9bcfd488363273fcdc1268547483d",
+    "scripts/ci/basic-scope.mjs": "dcc7b67cc8dd5df9a370754be400bd276c98c7e747acdfdd8b3f52dc8416c3c4",
+    "scripts/ci/check-basic-results.mjs": "084cc7187734c0dd83dddb528d87aa16d3ed9a49c3ea0eebf2c97cb4c4775da3",
+    "scripts/ci/ops-checks.mjs": "1208e7e1bf7325311de69ab8bb8c3e1cead535b733bf426e2a0cacaeb201a690",
+    "packages/brain/vitest.config.js": "12510a152768ac1b7c704a0f163ae8216d0860347c6225f2c366e5209547c2fb",
+    "scripts/ci/skill-source-tests.mjs": "dbb749f30271472fe1f24e1eec2215d7b5999f20c1d4ed74c00fd4b40f6c57c8",
+    "scripts/ci/run-skill-source-check.mjs": "debcaf26aa7025f47d846052e0c2b43d1a04976003936143d80ddac1582d7204",
+    "scripts/ci/__tests__/basic-skill-source-coverage.test.mjs": "8c1a483e9bfbd5dcd15ec5fd099bdb7b97744145b73aa62ff0bc58551eab60f7",
+    ".github/actions/skills-source/action.yml": "f106e23e090e1fd1aca6c035f63478365cf4aae2e6b4f2d379569c0a22f18169",
+    "scripts/ci/check-skill-source-identity.py": "ebc6b90fbe187b49c31101a5dba997d133fd45825cfcaa3549aad30581d747c1",
+    "apps/api/vitest.config.ts": "dbb1e74af497db63cbd2326c5378bb05ca036e1a4590dc2061dce2e5257e776a",
+    "apps/dashboard/vitest.config.ts": "a5899ed07ee4aa8ff262f7da361d695ef8eb26005571c5e09988aac53c1cc261",
+    "scripts/ci/prepare-ubuntu-archive.mjs": "209dcc9a05110f433d9a53586d657d0f7d7da20c008d85147ffc7e11dd76ac88",
+    "scripts/ci/__tests__/basic-ubuntu-archive.test.mjs": "404af7e10ae55b4c25136ce6d20c4af086f49f399cc7b6b6b5da02884d7c79bf",
+    "scripts/skill_source_ownership.py": "20fca16bcf474588e9e4d0add00a66c5885b3d85a82275fb9082a0787e72b9a7"
   }
 ];
 const ENTRY_PROTOCOLS_BY_WORKFLOW={[CURRENT_BASIC_CI]:CURRENT_BASIC_ENTRY_PROTOCOLS};

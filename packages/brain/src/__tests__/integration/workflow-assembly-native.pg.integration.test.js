@@ -1,6 +1,6 @@
-import {nativeMaintenanceDatabase,readSource} from '../fixtures/workflow-assembly-native-db.test.js';
+import {nativeMaintenanceDatabase,readSource} from '../fixtures/workflow-assembly-native-db.js';
 import {it,expect,afterEach} from 'vitest';
-import {startPureAuthoring,settleInvocation} from '../fixtures/authoring-execution-db.test.js';
+import {startPureAuthoring,settleInvocation} from '../fixtures/authoring-execution-db.js';
 import {nativeSpec as s,prepareNativeSource} from '../../lib/workflow-assembly-native-source.js';
 import {registerNativeReconcile} from '../../lib/workflow-assembly-native-registration.js';
 import {runNativeReconcile} from '../../lib/workflow-assembly-native.js';

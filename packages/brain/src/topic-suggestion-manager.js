@@ -17,7 +17,7 @@ import { createTask } from './actions.js';
 /** 每日最多推荐给 Alex 的选题数 */
 const MAX_DAILY_SUGGESTIONS = 5;
 
-/** 内容生成 KR goal_id（与 topic-selection-scheduler.js 保持一致） */
+/** 人工审核通过后创建内容任务所关联的 KR。 */
 const CONTENT_KR_GOAL_ID = '65b4142d-242b-457d-abfa-c0c38037f1e9';
 
 // ─── 写入 ─────────────────────────────────────────────────────────────────────

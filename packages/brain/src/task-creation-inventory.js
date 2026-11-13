@@ -46,7 +46,7 @@ export const TASK_CREATION_INVENTORY = Object.freeze([
   // 棒4（决策 ee4842a6/3feeae3e）：scope/initiative/project 完成检测清空为 no-op，不再建任务
   { module: 'okr-closer.js', source: 'child', creates_executable_task: false, migration_status: 'routed' },
   { module: 'orchestrator-chat.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
-  { module: 'orchestrator/run.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
+  { module: 'orchestrator/kernel-runtime-deps.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
   { module: 'pipeline-patrol.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
   { module: 'planner.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
   { module: 'post-publish-data-collector.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
@@ -101,6 +101,5 @@ export const TASK_CREATION_INVENTORY = Object.freeze([
   // factory-judge 本身不直连写入口：createTask 由 factory-cycle 注入（actions.js 边界），故不单独算可执行建单边界。
   { module: 'lib/factory-judge.js', source: 'scheduler', creates_executable_task: false, migration_status: 'routed' },
   { module: 'thalamus.js', source: 'conversation', creates_executable_task: true, migration_status: 'routed' },
-  { module: 'topic-selection-scheduler.js', source: 'scheduler', creates_executable_task: true, migration_status: 'routed' },
   { module: 'topic-suggestion-manager.js', source: 'scheduler', creates_executable_task: true, migration_status: 'routed' },
 ]);

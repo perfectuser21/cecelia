@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# relay-spine-smoke — 接力棒 PR1 脊柱真库火：真列落地、project 类型放开、FK 在、链上下文可拼、派发 prompt 已接注入。
+# relay-spine-smoke — 接力棒真列、project 类型、FK 和链上下文读回。
 set -euo pipefail
 if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-${BRAIN:-http://localhost:5221}}" "${DATABASE_URL:-postgresql://localhost/cecelia}"; then
   exit 0
@@ -38,9 +38,5 @@ const txt = formatChainForPrompt(ctx);
 if (!txt.includes('smoke 接力棒根') || !txt.includes('目标：smoke') || !txt.includes('kind=resume_headed（有头续接）|dispatch_headless（无头派发）')) { console.error('prompt 段缺关键内容', txt); process.exit(1); }
 " || fail "链上下文拼装失败"
 pass "getChainContext 沿真列找到根，formatChainForPrompt 含根/目标/规矩"
-
-grep -q "buildChainPromptSafe({ pool }, task.id)" "$BRAIN_DIR/src/harness-skill-relay.js" || fail "派发 prompt 未接链上下文"
-[[ "$(grep -c "= buildRelayPrompt({" "$BRAIN_DIR/src/harness-skill-relay.js")" == "2" ]] || fail "两处派发 prompt 应各走一次 buildRelayPrompt"
-pass "harness-skill-relay 两处派发 prompt 已注入链上下文"
 
 echo "ALL PASS: relay-spine"

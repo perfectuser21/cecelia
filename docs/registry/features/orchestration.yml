@@ -103,7 +103,7 @@ features:
         - packages/brain/src/__tests__/focus.test.js
         - packages/brain/src/__tests__/format-bytes.test.js
         - packages/brain/src/__tests__/greet.test.js
-        - packages/brain/src/__tests__/heartbeat-api.test.js
+        - packages/brain/src/__tests__/heartbeat-file-routes.test.js
         - packages/brain/src/__tests__/heartbeat-inspector.test.js
         - packages/brain/src/__tests__/heartbeat-tick.test.js
         - packages/brain/src/__tests__/heartbeat-whitelist.test.js
@@ -202,7 +202,7 @@ features:
             - packages/brain/src/__tests__/focus.test.js
             - packages/brain/src/__tests__/format-bytes.test.js
             - packages/brain/src/__tests__/greet.test.js
-            - packages/brain/src/__tests__/heartbeat-api.test.js
+            - packages/brain/src/__tests__/heartbeat-file-routes.test.js
             - packages/brain/src/__tests__/heartbeat-inspector.test.js
             - packages/brain/src/__tests__/heartbeat-tick.test.js
             - packages/brain/src/__tests__/heartbeat-whitelist.test.js
@@ -363,7 +363,7 @@ features:
         - packages/brain/scripts/fleet-worker/attempt-runner.test.cjs
         - packages/brain/scripts/fleet-worker/credential-envelope.test.cjs
       integration:
-        - packages/brain/src/orchestrator/__tests__/kernel-callback-flow.integration.test.js
+        - packages/brain/src/__tests__/integration/kernel-wiring.pg.integration.test.js
         - packages/brain/scripts/fleet-worker/install-fleet-worker.test.sh
         - packages/brain/scripts/fleet-worker/fleet-worker-docker-access.test.sh
         - packages/brain/scripts/fleet-worker/fleet-nodectl.test.sh
@@ -380,7 +380,7 @@ features:
         - packages/brain/scripts/smoke/fleet-credential-envelope-smoke.sh
     capabilities:
       - id: provider_neutral_harness_relay
-        name: Provider-neutral Harness Relay
+        name: 历史 Harness Relay（新执行已退役，仅保留观察与历史安全合同）
         entry_file: packages/brain/src/orchestrator/run.js
         maturity: 2
         tests:
@@ -388,10 +388,10 @@ features:
             - packages/brain/src/orchestrator/__tests__/execution-contract.test.js
             - packages/brain/src/orchestrator/__tests__/dispatcher.test.js
           integration:
-            - packages/brain/src/orchestrator/__tests__/kernel-callback-flow.integration.test.js
+            - packages/brain/src/__tests__/integration/kernel-wiring.pg.integration.test.js
           e2e:
             - packages/brain/scripts/smoke/provider-neutral-harness-smoke.sh
-        status: active
+        status: retired
       - id: fleet_node_base_admission
         name: Fleet Node mandatory base admission
         entry_file: packages/brain/src/orchestrator/fleet-node/node-admission.js

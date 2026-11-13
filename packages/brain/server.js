@@ -69,7 +69,6 @@ import strategyTreeRoutes from './src/routes/strategy-tree.js';
 import krConvergenceRoutes from './src/routes/kr-convergence.js';
 import krProjectMapRoutes from './src/routes/kr-project-map.js';
 import contextRoutes from './src/routes/context.js';
-import publishJobsRoutes from './src/routes/publish-jobs.js';
 import registryRoutes from './src/routes/registry.js';
 import notesRoutes from './src/routes/notes.js';
 import harnessRoutes from './src/routes/harness.js';
@@ -111,7 +110,6 @@ import commanderHeartbeatRouter from './src/routes/commander-heartbeat.js';
 import goldenPathsRouter from './src/routes/golden-paths.js';
 import skillEvalRoutes from './src/routes/eval.js';
 import rpaDevVerifyRouter from './src/routes/rpa-dev-verify.js';
-import deployDevRouter from './src/routes/deploy-dev.js';
 import incidentsRouter from './src/routes/incidents.js';
 import graphRoutes from './src/routes/graph.js';
 import { createImplementationCiRouter } from './src/routes/implementation-ci.js';
@@ -434,9 +432,7 @@ app.use('/api/brain', brainRoutes);
 
 app.use('/api/brain', canRunRoutes);
 app.use('/api/brain', bypassActionsRoutes); // 旁路报警：执行机上报 + 运维视图（派发总闸 H，任务 865b502c）
-app.use('/api/brain/pipelines', contentPipelineRoutes);
 app.use('/api/brain', contentPipelineRoutes); // /api/brain/content-types
-app.use('/api/brain/publish', publishJobsRoutes);
 app.use('/api/brain/okr', okrHierarchyRoutes);
 app.use('/api/brain/context', contextRoutes);
 app.use('/api/brain/strategy-tree', strategyTreeRoutes);
@@ -523,8 +519,6 @@ app.use('/api/brain/task-intake', taskIntakeRoutes);
 // RPA 开发快验通道（execFile channel）
 app.use('/api/brain/rpa', rpaDevVerifyRouter);
 
-// Develop 部署端点（POST /api/brain/deploy {dev:true} + GET /api/brain/deploy/dev/status）
-app.use('/api/brain', deployDevRouter);
 app.use('/api/brain', incidentsRouter);
 
 // Mount cecelia task execution routes

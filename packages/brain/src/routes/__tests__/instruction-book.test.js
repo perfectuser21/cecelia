@@ -72,7 +72,7 @@ it.each([
  ['content-pipeline-llm-calling','Content Pipeline LLM 调用','executeCopywriting','previous_feedback','llm_generated','无需重启服务'],
  ['post-publish-data-collection','功能说明：发布后数据回收（内容飞轮 I3）','content_publish','source_publish_task_id','/api/brain/pipelines/:id/stats','migration 207','post-publish-data-collector.js'],
  ['social-trending-api','Social Trending API','GET /api/brain/social/trending','内容选题','platform | string','v_all_platforms','HTTP 200'],
- ['topics-api','GET /api/brain/topics — 内容选题候选库 API','GET /api/brain/topics?date=YYYY-MM-DD','"total": 10','priority_score','POST /api/brain/pipelines/trigger-topics'],
+ ['topics-api','GET /api/brain/topics — 内容选题候选库 API','GET /api/brain/topics?date=YYYY-MM-DD','"total": 10','priority_score','POST /api/brain/topics/generate','CONTENT_TRIGGER_RETIRED','HTTP 410'],
  ['system-registry','System Registry (`/api/brain/registry`)','GET `/api/brain/registry/exists`','metadata | JSONB','创建新 skill 前','197_system_registry.sql'],
 ])('真实无frontmatter中文文档%s正文进入UI现用sections',async(name,title,...markers)=>{
  // 仅在格式回归中把旧错误根映射到真实文档，独立于路径修复证明原parser缺口。

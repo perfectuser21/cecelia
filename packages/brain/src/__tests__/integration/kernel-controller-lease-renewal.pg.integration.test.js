@@ -1,10 +1,9 @@
 /** Controller lease/CAS 永久真 PG 回归；禁 mock pg/writeHeartbeat/reconciler。 */
 import { randomUUID } from 'node:crypto';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { finalizeKernelRun, CONTROLLER_LEASE_DEFAULT_SECONDS } from '../../orchestrator/kernel-run-store.js';
 import { writeHeartbeat as writeHeartbeatExact } from '../../orchestrator/heartbeat.js';
 import { reconcileOwnerlessKernelRuns } from '../../orchestrator/kernel-controller-lifecycle.js';
-import { runLoop } from '../../orchestrator/loop.js';
 import { createKernelLeasePgFixture, LEASE, MIN } from './kernel-controller-lease-renewal.pg-fixture.js';
 const fixture = createKernelLeasePgFixture();
 let testPool;
@@ -131,7 +130,7 @@ describe('Controller lease heartbeat 续租 CAS（真 PG）', () => {
   });
   it('AUDIT-1: 成功续租每个 hop 恰写一条幂等事件，错误 session/终态零假事件且 payload 不泄露 session', async () => {
     const session = randomUUID();
-    const { runId, taskId, controllerGeneration } = await seedOwnedRun({ controllerSessionId: session });
+    const { runId, taskId } = await seedOwnedRun({ controllerSessionId: session });
     const before = await leaseOf(runId);
     const heartbeatAt = new Date(Date.parse(before.controller_lease_expires_at) - MIN);
     const first = await writeHeartbeat(testPool, {
@@ -357,39 +356,5 @@ describe('Controller lease heartbeat 续租 CAS（真 PG）', () => {
     expect(after.phase).toBe('failed');
     expect(after.task_status).toBe('failed');
   });
-  it('OWNERSHIP-B: 错误 session 在首次 collect/append/dispatch 前失败并零业务动作', async () => {
-    const session = randomUUID();
-    const { runId, taskId, controllerGeneration } = await seedOwnedRun({ controllerSessionId: session });
-    const collect = vi.fn(async () => ({
-      run: { id: runId, phase: 'planning', cost_usd: 0 },
-      task: { id: taskId, status: 'in_progress' },
-      prdExists: false,
-      contract: { approved: false, id: null }, pr: null,
-      inflight: { containers: [], host_pids: [], attempts: [] }, lastAgentExit: { code: null, auth_failed: false },
-      proposeBranchRn: 0, ganLatestRoundVerdict: null, generatorSpawned: false,
-      evaluateVerdict: null, judgeVerdict: null, reviewRequired: false, reviewApproved: false,
-      decisionLog: [], authCircuit: [], callbackResult: null,
-    }));
-    const append = vi.fn(async () => {});
-    const dispatch = vi.fn(async () => ({ status: 'DONE', detail: 'must-not-run' }));
-    let hop = 0;
-    const result = await runLoop({
-      pool: testPool, collectGroundTruth: collect, appendHop: append,
-      nextHop: vi.fn(async () => ++hop), dispatch, sleep: vi.fn(async () => {}),
-      now: () => new Date(), host: 'kernel-wrong-owner', pid: 4242, log: vi.fn(),
-    }, {
-      taskId,
-      runId,
-      controllerSessionId: 'forged-wrong-session',
-      controllerGeneration,
-    });
-    const { rows } = await testPool.query(
-      `SELECT orchestrator_heartbeat_at, phase FROM initiative_runs WHERE id = $1`, [runId]);
-    expect(result).toEqual({ exitReason: 'singleton_conflict', hops: 0 });
-    expect(collect).not.toHaveBeenCalled();
-    expect(append).not.toHaveBeenCalled();
-    expect(dispatch).not.toHaveBeenCalled();
-    expect(rows[0].orchestrator_heartbeat_at).toBeNull();
-    expect(rows[0].phase).toBe('planning');
-  });
+
 });
