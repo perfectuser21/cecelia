@@ -186,8 +186,6 @@ vi.mock('../../daily-review-scheduler.js', () => ({
   triggerArchReview: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock('../../diary-scheduler.js', () => ({ generateDailyDiaryIfNeeded: vi.fn() }));
-vi.mock('../../topic-selection-scheduler.js', () => ({ triggerDailyTopicSelection: vi.fn() }));
-vi.mock('../../topic-suggestion-manager.js', () => ({ autoPromoteSuggestions: vi.fn() }));
 vi.mock('../../daily-publish-scheduler.js', () => ({ triggerDailyPublish: vi.fn() }));
 vi.mock('../../daily-report-generator.js', () => ({ generateDailyReport: vi.fn() }));
 vi.mock('../../weekly-report-generator.js', () => ({ generateWeeklyReport: vi.fn() }));
@@ -344,6 +342,10 @@ describe('tick-runner executeTick — full tick wire-up', () => {
     }
     const { callLLM } = await import('../../llm-caller.js');
     expect(callLLM).not.toHaveBeenCalled();
+    // 内容领域的选题和审核由 ZJ 管理，通用 tick 不再读写其业务队列。
+    for (const [sql] of mockPool.query.mock.calls) {
+      expect(String(sql)).not.toMatch(/topic_suggestions|topic_selection_log|daily_topic_selection/i);
+    }
 
     // ── 8 个 plugin .tick 必须全被调 ─────────────────────────────────────
     expect(dept.tick).toHaveBeenCalled();

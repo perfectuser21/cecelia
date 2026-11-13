@@ -6,7 +6,7 @@ import {appendConsumerEvidence,assertConsumerScratch,withConsumerEvidenceTransac
 export const INFRA_CONSUMER_SCOPE='cecelia-infra';
 export const INFRA_CONSUMER_REPO='perfectuser21/cecelia';
 export const INFRA_CONSUMER_IDENTITY=Object.freeze({workflow_id:'f03b16c6-b3b8-4a43-8bf0-4da878660c38',workflow_key:'infra_cleanup_capacity_ops',capability_id:'55cb3b8d-200c-445f-9467-616498b40521',root:'2d22d890-dbab-441b-a602-2727de668aaf',skill_id:'03770894-5ac3-4eb7-ae44-5a3e15951d99',slot_key:'janitor_frequent_orphan_reconciliation'});
-export const INFRA_CONSUMER_PATHS=Object.freeze(['scripts/ops/janitor.sh','scripts/ops/janitor-effects.sh','scripts/ops/__tests__/janitor/janitor_resident_service_exempt.test.sh','scripts/ops/__tests__/janitor/janitor_kill_exempt.test.sh']);
+export const INFRA_CONSUMER_PATHS=Object.freeze(['scripts/ops/janitor.sh','scripts/ops/janitor-effects.sh','scripts/ops/__tests__/janitor/janitor_resident_service_exempt.test.sh','scripts/ops/__tests__/janitor/janitor_system_domain_service_exempt.test.sh']);
 const I=INFRA_CONSUMER_IDENTITY,SHA=/^[a-f0-9]{40}$/;
 const infraRuntime=['infra-consumer-source.js','infra-consumer-snapshot.js','consumer-evidence-store.js'].map(name=>({path:`packages/brain/src/lib/${name}`,sha256:createHash('sha256').update(readFileSync(new URL(name,import.meta.url))).digest('hex')}));
 export async function assertInfraConsumerRuntime(readSource){
@@ -52,12 +52,12 @@ export async function buildInfraConsumerSources(options){
   texts.set(path,text);const hash=createHash('sha256').update(text).digest('hex');
   bindings.push({kind:'code',repo,path,revision,digest:`sha256:${hash}`,content_sha256:hash,scope:'activity',validation_scope:'consumer_source',status:'verified'});
  }
- // 精确已审652消费封套；未知Shell结构拒绝，不将文字匹配当执行边。
+ // 精确已审常驻及system域行为消费封套；未知Shell结构拒绝，不将文字匹配当执行边。
  const rawHash=text=>createHash('sha256').update(text).digest('hex');
  const sourceLine='source "$(dirname "$SCRIPT_PATH")/janitor-effects.sh" || exit 1\n';
  const shell=texts.get(INFRA_CONSUMER_PATHS[0]),end=shell.indexOf(sourceLine)+sourceLine.length;
  if(end<sourceLine.length||shell.indexOf(sourceLine,end)!==-1||rawHash(shell.slice(0,end))!=='e577b0bc161ebfd1694993ef288d7d35d2e50e12513526fb757b69f9a11e6849')throw fail('INFRA_SOURCE_DEPENDENCY_UNPROVEN');
- const readers=['03a884cfe5231e027d22be84c1d0d42937dac4b52278b84025f0b16c36d0bc5c','37d19a73fb01a16cbc33e71726a4ffa25e5adfbccbce8a0ad4e78e9f36471997'];
+ const readers=['03a884cfe5231e027d22be84c1d0d42937dac4b52278b84025f0b16c36d0bc5c','fec43c69f03835a81b1f01dd072dbe2c93ffbfbf4075c80dcb374db35e3ae223'];
  for(const [index,path] of INFRA_CONSUMER_PATHS.slice(2).entries())if(rawHash(texts.get(path))!==readers[index])throw fail('INFRA_VERIFICATION_CONSUMER_UNPROVEN');
  return {scope:options.scope,repo,revision,status:'verified',definition_scope:'consumer_evidence',bindings:bindings.sort((a,b)=>a.path.localeCompare(b.path)),
   input_relations:[{src_path:INFRA_CONSUMER_PATHS[0],dst_path:INFRA_CONSUMER_PATHS[1],relation:'shell_source'},...INFRA_CONSUMER_PATHS.slice(2).map(path=>({src_path:path,dst_path:INFRA_CONSUMER_PATHS[0],relation:'verification_input'}))]};

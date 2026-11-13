@@ -7,20 +7,15 @@
  *   topic-selector 生成 N 个候选
  *   → saveSuggestions 存入 topic_suggestions（status=pending，取 TOP 5）
  *   → Alex 可通过 API approveSuggestion / rejectSuggestion 审核
- *   → autoPromoteSuggestions（每 tick 调用）：pending 超过 2 小时 → auto_promoted
- *   → 审批/自动晋级后创建 content-pipeline task
+ *   → 审批后创建 content-pipeline task
  */
 
-import _pool from './db.js';
 import { createTask } from './actions.js';
 
 // ─── 常量 ─────────────────────────────────────────────────────────────────────
 
 /** 每日最多推荐给 Alex 的选题数 */
 const MAX_DAILY_SUGGESTIONS = 5;
-
-/** pending 超过此分钟数后自动晋级 */
-const AUTO_PROMOTE_AFTER_MINUTES = 120;
 
 /** 内容生成 KR goal_id（与 topic-selection-scheduler.js 保持一致） */
 const CONTENT_KR_GOAL_ID = '65b4142d-242b-457d-abfa-c0c38037f1e9';
@@ -150,46 +145,6 @@ export async function rejectSuggestion(dbPool, suggestionId, reviewer = 'alex', 
   );
 
   return { ok: true };
-}
-
-// ─── 自动晋级 ─────────────────────────────────────────────────────────────────
-
-/**
- * 自动晋级：将超过 AUTO_PROMOTE_AFTER_MINUTES 分钟未审核的 pending 选题晋级为 auto_promoted。
- * 由 tick.js 周期调用。
- *
- * @param {import('pg').Pool} dbPool
- * @returns {Promise<number>} 晋级数量
- */
-export async function autoPromoteSuggestions(dbPool) {
-  const { rows } = await dbPool.query(
-    `SELECT id, keyword, content_type, title_candidates, hook, why_hot, priority_score, selected_date
-     FROM topic_suggestions
-     WHERE status = 'pending'
-       AND created_at <= NOW() - INTERVAL '${AUTO_PROMOTE_AFTER_MINUTES} minutes'`
-  );
-
-  if (rows.length === 0) return 0;
-
-  let promoted = 0;
-  for (const suggestion of rows) {
-    try {
-      const pipelineTaskId = await createPipelineTask(dbPool, suggestion);
-      await dbPool.query(
-        `UPDATE topic_suggestions
-         SET status = 'auto_promoted', pipeline_task_id = $1, reviewed_at = NOW(),
-             reviewed_by = 'system', updated_at = NOW()
-         WHERE id = $2`,
-        [pipelineTaskId, suggestion.id]
-      );
-      promoted++;
-      console.log(`[topic-suggestion-manager] 自动晋级: ${suggestion.keyword}`);
-    } catch (err) {
-      console.error(`[topic-suggestion-manager] 自动晋级失败 (${suggestion.keyword}):`, err.message);
-    }
-  }
-
-  return promoted;
 }
 
 // ─── 内部工具 ─────────────────────────────────────────────────────────────────

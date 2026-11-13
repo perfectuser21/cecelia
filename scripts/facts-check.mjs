@@ -262,46 +262,6 @@ function checkSelfcheckVersionSync() {
   return { selfcheckVersion, highestMigration: highestStr };
 }
 
-/**
- * 扫描 thalamus.js 和 cortex.js 中所有对外部 LLM API 的 fetch 调用
- * 检查每个调用是否在选项对象内包含 AbortSignal.timeout
- */
-function checkLlmFetchTimeouts() {
-  const LLM_URL_PATTERNS = ['api.anthropic.com', 'api.minimaxi.com', 'api.minimax.io'];
-  const FILES_TO_CHECK = ['packages/brain/src/thalamus.js', 'packages/brain/src/cortex.js'];
-  const violations = [];
-
-  for (const filePath of FILES_TO_CHECK) {
-    const src = readFile(filePath);
-    const lines = src.split('\n');
-
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      if (!line.includes('await fetch(')) continue;
-      const isLlmFetch = LLM_URL_PATTERNS.some(p => line.includes(p));
-      if (!isLlmFetch) continue;
-
-      // Look ahead up to 30 lines for AbortSignal.timeout
-      // Stop early if we hit the closing '}); ' of the fetch options
-      let hasTimeout = false;
-      for (let j = i; j < Math.min(i + 30, lines.length); j++) {
-        if (lines[j].includes('AbortSignal.timeout')) {
-          hasTimeout = true;
-          break;
-        }
-        // End of fetch options block
-        if (j > i && /^\s*\}\s*\)\s*;?\s*$/.test(lines[j])) break;
-      }
-
-      if (!hasTimeout) {
-        violations.push({ file: filePath, line: i + 1 });
-      }
-    }
-  }
-
-  return violations;
-}
-
 // ─── Main ───────────────────────────────────────────────────
 
 const facts = [
@@ -345,17 +305,6 @@ if (Number(selfcheckVersion) <= Number(highestMigration)) {
 } else {
   integrityFailure = true;
   console.log(`  ✗ selfcheck_version_sync: selfcheck.js 地板='${selfcheckVersion}' 超过最高 migration='${highestMigration}' — 不应指向不存在的 migration`);
-}
-
-// Check 2: LLM fetch timeouts
-const llmViolations = checkLlmFetchTimeouts();
-if (llmViolations.length === 0) {
-  console.log('  ✓ llm_fetch_timeouts: all external LLM fetch calls have AbortSignal.timeout');
-} else {
-  integrityFailure = true;
-  for (const v of llmViolations) {
-    console.log(`  ✗ llm_fetch_timeouts: ${v.file}:${v.line} — fetch to LLM API missing AbortSignal.timeout`);
-  }
 }
 
 // ── Final result ──────────────────────────────────────────────

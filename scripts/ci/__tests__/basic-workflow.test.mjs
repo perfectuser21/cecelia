@@ -164,9 +164,9 @@ test('周扫描仅CodeQL执行，closed仅cleanup；评论写权限限于预览�
   assert.ok(workflow.concurrency['cancel-in-progress'].includes("github.event.action != 'closed'"));
 });
 
-test('全量PR含UI预览实际展开26个runner，不重复计算定义合并', () => {
+test('现役全量PR含UI预览实际展开25个runner，不重复计算定义合并', () => {
   const selected = planChecks(['apps/dashboard/src/App.tsx'], {full:true});
-  assert.equal(selected.length, 12);
+  assert.equal(selected.length, 11);
   const expanded = Object.entries(workflow.jobs).filter(([id]) => id !== 'preview-cleanup').map(([id, job]) => {
     if (id === 'checks') return selected.length;
     const matrix = job.strategy?.matrix;
@@ -177,7 +177,7 @@ test('全量PR含UI预览实际展开26个runner，不重复计算定义合并',
     }
     return Object.values(matrix).reduce((count, axis) => count * axis.length, 1);
   });
-  assert.equal(expanded.reduce((sum, count) => sum + count, 0), 26);
+  assert.equal(expanded.reduce((sum, count) => sum + count, 0), 25);
 });
 
 

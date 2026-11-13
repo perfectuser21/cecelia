@@ -24,6 +24,6 @@ copy_rules: {}                    # 文案规则（可为空）
 
 | 文件 | 说明 |
 |------|------|
-| `content-type-registry.js` | YAML 加载器（`getContentType` / `listContentTypes` / `loadAllContentTypes`） |
+| `content-type-registry.js` | YAML 加载器（`getContentType` / `listContentTypes`） |
 | `content-type-validator.js` | 格式校验器（`validateContentType` / `validateAllContentTypes`） |
 | `solo-company-case.yaml` | 独立公司案例内容类型（示例） |

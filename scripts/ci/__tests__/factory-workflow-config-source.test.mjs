@@ -116,7 +116,7 @@ function currentEntryFixture(t,{path='packages/brain/src/__tests__/derived-input
  const git=(...args)=>execFileSync('git',[...VERIFICATION_GIT_OPTIONS,'--no-replace-objects','-c','core.hooksPath=/dev/null','-c','commit.gpgSign=false',...args],{cwd:root,encoding:'utf8',stdio:['ignore','pipe','pipe'],maxBuffer:32*1024*1024}).trim();
  git('clone','--shared','--no-checkout',immutableVerificationSeed(fileURLToPath(new URL('../../../',import.meta.url))),'.');
  git('sparse-checkout','set','--no-cone','/.github/','/scripts/ci/','/scripts/skill_source_ownership.py','/packages/brain/vitest.config.js','/packages/brain/vitest.skill-source.config.mjs','/scripts/ci/skill-source-tests.mjs','/packages/engine/vitest.config.ts','/packages/quality/vitest.config.ts','/vitest.skill-source.config.mjs','/apps/api/vitest.config.ts','/apps/dashboard/vitest.config.ts','/'+path);
- git('checkout','--detach','dce0866298f5db9a17b472de3a50cfb24efff52e');git('remote','set-url','origin','https://github.com/perfectuser21/cecelia.git');
+ git('checkout','--detach','d06de84e9f7d2d489a151e0b13b38f81651dd3fa');git('remote','set-url','origin','https://github.com/perfectuser21/cecelia.git');
  mkdirSync(join(root,path.slice(0,path.lastIndexOf('/'))),{recursive:true});writeFileSync(join(root,path),'export const baseInput=true;\n');
  const commit=()=>{git('add','--sparse','-A');git('-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','--allow-empty','-qm','test: fixed input source');return git('rev-parse','HEAD');};
  const base=commit();if(deleted)rmSync(join(root,path));else writeFileSync(join(root,path),'export const headInput=true;\n');const head=commit();
@@ -418,17 +418,6 @@ test('非执行变更缺失侧显式冻结absence，不能给已删除head造普
  const path='docs/current/README.md',f=currentEntryFixture(t,{path,deleted:true}),proof=derived(f);
  assert.ok(proof.metadata_git_facts.some(r=>r.path===path&&r.side==='base'&&r.exists===true));assert.ok(proof.metadata_git_facts.some(r=>r.path===path&&r.side==='head'&&r.exists===false));
 });
-test('退休合同CI登记逐项绑定真实退休实现且没有重复或错误角色', () => {
- const require = createRequire(import.meta.url);
- const {relations} = require('../../../.implementation-source-relations.json');
- for (const path of ['scripts/ci/__tests__/basic-verification-retirements.test.mjs']) {
-  assert.deepEqual(relations.filter(row => row.path === path), [{owner_path: 'scripts/ci/implementation-verification-retirements.mjs', path, role: 'verification'}]);
- }
- for(const path of ['packages/brain/src/__tests__/ci-verification-retirement-contracts.test.js','packages/brain/src/__tests__/ci-admission-baseline-contracts.test.js'])assert.deepEqual(relations.filter(row=>row.path===path),[]);
-});
-
-
-
 test('当前功能跑道仅为Dashboard features及选中Ops读者提供验证输入',t=>assertFunctionalConsumerInputs(t,{basicEntryFixture,derived,root:fileURLToPath(new URL('../../../',import.meta.url))}));
 
 test('当前候选输入入口逐项读取完整封组及共享身份解析器，篡改后失去入口资格',t=>{
@@ -441,14 +430,15 @@ test('当前候选输入入口逐项读取完整封组及共享身份解析器�
  const members=protocols.elements.at(-1).properties.map(p=>p.key.value);
  assert.ok(members.includes('scripts/skill_source_ownership.py'));
  for(const member of ['.github/workflows/ci.yml',...members]){mkdirSync(join(f.root,member,'..'),{recursive:true});writeFileSync(join(f.root,member),readFileSync(join(live,member)));}
+ f.git('rm','--sparse','-r','scripts/ci/check-w19-frozen.mjs','scripts/ci/__tests__/basic-w19-freeze.test.mjs','playground');
  f.source.base_revision=f.commit();writeFileSync(join(f.root,path),'export const currentCandidateSource=true;\n');f.source.head_revision=f.commit();f.source.changed_files=[{path}];
  const row=derived(f).rows.find(r=>r.input_facts.path===path&&r.input_facts.source.side==='head');
  assert.ok(row);assert.ok(row.eligible_owner_paths.includes('scripts/ci/run-basic-check.mjs'));
  assert.ok(row.witness.entry.support.some(r=>r.path==='scripts/skill_source_ownership.py'));
  assert.equal(row.input_facts.entry_verified,false);assert.equal(row.execution_status,'not_evaluated');
- for(const member of ['.github/workflows/ci.yml','scripts/ci/run-basic-check.mjs']){
+ for(const member of ['scripts/ci/run-basic-check.mjs','packages/brain/vitest.config.js']){
   const candidate=readFileSync(join(f.root,member));
-  const main=execFileSync('git',[...VERIFICATION_GIT_OPTIONS,'--no-replace-objects','show','dce0866298f5db9a17b472de3a50cfb24efff52e:'+member],{cwd:f.root});
+  const main=execFileSync('git',[...VERIFICATION_GIT_OPTIONS,'--no-replace-objects','show','d06de84e9f7d2d489a151e0b13b38f81651dd3fa:'+member],{cwd:f.root});
   writeFileSync(join(f.root,member),main);f.source.head_revision=f.commit();
   f.source.changed_files=f.git('diff','--name-only',f.source.base_revision,f.source.head_revision).split('\n').filter(Boolean).map(path=>({path}));
   const mixed=derived(f);assert.equal(mixed.rows.some(r=>r.input_facts.path===path&&r.input_facts.source.side==='head'),false);
@@ -463,4 +453,14 @@ test('当前候选输入入口逐项读取完整封组及共享身份解析器�
  f.source.changed_files=f.git('diff','--name-only',f.source.base_revision,f.source.head_revision).split('\n').filter(Boolean).map(path=>({path}));
  const missing=derived(f);assert.equal(missing.rows.some(r=>r.input_facts.path===path&&r.input_facts.source.side==='head'),false);
  assert.ok(missing.unproven.some(r=>r.path===path&&r.reason==='entry_unproven'));
+});
+
+test('退役publisher不再授予publishing资格；历史读取仍要求已完成真实run',async t=>{
+ const {authorityFixture}=await import('./fixtures/ci-admission-authority.mjs');
+ const {verifyCiAdmissionAuthority,ciAuthorityProof}=await import('../ci-admission-authority.mjs');
+ const f=authorityFixture(t);
+ assert.equal(ciAuthorityProof(await f.run()).publisher.run_id,22);
+ await assert.rejects(verifyCiAdmissionAuthority({...f.options,publisher:{...f.options.publisher,phase:'publishing'}},{api:f.api}),/CI_ADMISSION_PUBLISHER_INPUT/);
+ const run=f.data.get('repos/perfectuser21/cecelia/actions/runs/22');run.status='in_progress';run.conclusion=null;
+ await assert.rejects(f.run(),/CI_ADMISSION_RUN_INVALID/);
 });

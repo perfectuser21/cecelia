@@ -87,9 +87,7 @@ const ignore = (promise) => promise.catch(() => undefined);
 });
 NODE
 
-# Guard the retry-critical control contract: resource release cannot kill the
-# callback Runner, and Brain validates artifacts before requesting cleanup.
-bash "$ROOT_DIR/docker/cecelia-runner/__tests__/entrypoint-callback-retry.test.sh"
+# 资源生命周期的正式实现回归；兼容Runner合同由显式legacy入口运行。
 cd "$ROOT_DIR/packages/brain"
 npx vitest run \
   scripts/fleet-worker/attempt-resources.test.cjs \

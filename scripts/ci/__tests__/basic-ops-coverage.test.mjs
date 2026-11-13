@@ -6,6 +6,7 @@ import {dirname, join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {spawnSync} from 'node:child_process';
 import {opsChecks} from '../ops-checks.mjs';
+import * as opsModule from '../ops-checks.mjs';
 import {commandsFor} from '../run-basic-check.mjs';
 
 const root = fileURLToPath(new URL('../../../', import.meta.url));
@@ -34,13 +35,10 @@ const representative = [
   'scripts/__tests__/codex-request.test.sh',
   'scripts/ops/__tests__/credentials/op-item-to-env.test.sh',
   'scripts/ops/__tests__/janitor/janitor_dry_run.test.sh',
-  'docker/cecelia-runner/__tests__/entrypoint-callback-retry.test.sh',
-  'docker/cecelia-runner/__tests__/assertion-exec-package-root.test.cjs',
 ];
 const safeSmokes = [
   'brain-compose-envfile-authority', 'brain-deploy-service-isolation',
   'dashboard-sha-reconcile', 'deploy-chain-wounds', 'deploy-local-npm-cache', 'gate3-brain-deploy',
-  'runner-credential-single-chain',
 ].map(name => `scripts/smoke/${name}-smoke.sh`);
 const paths = steps => steps.map(step => step.args.at(-1));
 
@@ -57,8 +55,6 @@ test('真实依赖域分别保留自己的测试，公共输入和未知路径�
     ['apps/dashboard/src/App.tsx', 'scripts/__tests__/dashboard-release-bind.test.mjs'],
     ['scripts/preview-env-start.sh', 'scripts/__tests__/preview-env-start.test.sh'],
     ['packages/brain/src/routes/preview.js', 'scripts/preview-cache.test.mjs'],
-    ['packages/brain/scripts/fleet-worker/attempt-runner.cjs', 'docker/cecelia-runner/__tests__/entrypoint-callback-retry.test.sh'],
-    ['packages/brain/src/orchestrator/executor.js', 'scripts/smoke/runner-credential-single-chain-smoke.sh'],
     ['scripts/ops/opc-kr-current.py', 'scripts/ops/__tests__/opc_company_kr.test.sh'],
     ['scripts/codex-request.sh', 'scripts/__tests__/codex-request.test.sh'],
   ];
@@ -157,17 +153,17 @@ function fixture(t) {
   return directory;
 }
 
-test('独立fixture实际执行 Node、Shell、CJS，结果确定排序且新增同类文件自动加入', t => {
+test('独立fixture实际执行现役Node与Shell，结果确定排序且新增同类文件自动加入', t => {
   const directory = fixture(t);
   const before = opsChecks(directory);
-  assert.deepEqual(paths(before), [...fixtureFiles].sort());
+  assert.deepEqual(paths(before), fixtureFiles.filter(file => !file.startsWith('docker/')).sort());
   const newFile = 'scripts/ops/__tests__/new-category/new-behavior.test.sh';
   mkdirSync(dirname(join(directory, newFile)), {recursive: true});
   writeFileSync(join(directory, newFile), `printf '%s\\n' '${newFile}' >> "$OPS_CAPTURE"\n`);
   const extraNode = 'scripts/brain-image-retention-new.test.mjs';
   writeFileSync(join(directory, extraNode), `import {appendFileSync} from 'node:fs'; appendFileSync(process.env.OPS_CAPTURE, ${JSON.stringify(extraNode + '\n')});\n`);
   const steps = opsChecks(directory);
-  assert.deepEqual(paths(steps), [...fixtureFiles, newFile, extraNode].sort());
+  assert.deepEqual(paths(steps), [...fixtureFiles, newFile, extraNode].filter(file => !file.startsWith('docker/')).sort());
   assert.deepEqual(steps, opsChecks(directory));
   const capture = join(directory, 'executed');
   const env = {...process.env, OPS_CAPTURE: capture};
@@ -188,7 +184,7 @@ test('关键目录不存在或任何关键测试类别为空都明确失败', t 
   assert.throws(() => opsChecks(directory), /空|empty/i);
 });
 
-test('部署与Runner测试全部被删时不能用别的目录测试冒充该类别已覆盖', t => {
+test('部署类别全部被删时不能用别的目录测试冒充该类别已覆盖', t => {
   const directory = fixture(t);
   rmSync(join(directory, 'scripts/__tests__/brain-deploy-fixture.test.sh'));
   assert.throws(() => opsChecks(directory), /空|empty/i);
@@ -233,4 +229,43 @@ printf 'ISOLATED_FIXTURE_OK\\n'
     cwd: directory, encoding: 'utf8', timeout: 10000,
   });
   assert.equal(failed.status, 23, failed.stderr);
+});
+
+// 历史实现不因未知PR或新执行内核变更重新进入现役默认。
+test('旧Runner仅保留显式兼容入口，所有默认回退仍只执行现役Ops', () => {
+  const active = paths(opsChecks(root));
+  assert.equal(active.length, 56);
+  for (const source of [null, 'unknown/product.js', 'docker/cecelia-runner/entrypoint.sh',
+    'packages/brain/scripts/fleet-worker/attempt-runner.cjs',
+    'packages/brain/scripts/fleet-worker/workflow-runner.cjs',
+    'packages/brain/src/orchestrator/run.js']) {
+    const selected = paths(opsChecks(root, {paths: source === null ? null : [source]}));
+    assert.ok(!selected.some(path => /cecelia-runner|runner-credential-single-chain/.test(path)), source);
+  }
+  const legacy = paths(opsModule.legacyRunnerChecks(root));
+  assert.equal(legacy.length, 21);
+  assert.ok(legacy.includes('docker/cecelia-runner/__tests__/entrypoint-credential-contract-probe.test.sh'));
+  assert.ok(legacy.includes('scripts/smoke/runner-credential-single-chain-smoke.sh'));
+  assert.ok(!legacy.some(path => /callback-retry|proposer-tests-in-tree/.test(path)));
+  assert.ok(!legacy.some(path => active.includes(path)));
+});
+
+test('显式兼容集合实际执行独立Shell与CJS，默认不依赖旧Runner目录', t => {
+  const directory = fixture(t);
+  const smoke = 'scripts/smoke/runner-credential-single-chain-smoke.sh';
+  writeFileSync(join(directory, smoke), `printf '%s\\n' '${smoke}' >> "$OPS_CAPTURE"\n`);
+  const steps = opsModule.legacyRunnerChecks(directory);
+  assert.equal(steps.length, 3);
+  const capture = join(directory, 'legacy-executed');
+  const env = {...process.env, OPS_CAPTURE: capture};
+  delete env.NODE_TEST_CONTEXT;
+  for (const step of steps) {
+    const result = spawnSync(step.command, step.args, {cwd: step.cwd, encoding: 'utf8', env, timeout: 5000});
+    assert.equal(result.status, 0, result.stderr);
+  }
+  assert.deepEqual(readFileSync(capture, 'utf8').trim().split('\n'), paths(steps));
+  const active = opsChecks(directory);
+  rmSync(join(directory, 'docker'), {recursive: true});
+  assert.deepEqual(opsChecks(directory), active);
+  assert.throws(() => opsModule.legacyRunnerChecks(directory), /目录/);
 });

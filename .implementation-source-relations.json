@@ -543,11 +543,6 @@
       "role": "documentation"
     },
     {
-      "owner_path": "packages/brain/src/lib/existing-ops-build-source.js",
-      "path": "packages/brain/src/__tests__/claude-channel-retired.reader-tuples.test.js",
-      "role": "verification"
-    },
-    {
       "owner_path": "packages/brain/src/lib/existing-ops-native-evidence-source.js",
       "path": "packages/brain/src/lib/__tests__/existing-ops-native-report-compat.test.js",
       "role": "verification"
@@ -1529,11 +1524,6 @@
     },
     {
       "owner_path": "packages/brain/src/lib/workspace-ci-source-bundle.js",
-      "path": "scripts/ci/__tests__/workspace-ci-source-bundle.test.mjs",
-      "role": "verification"
-    },
-    {
-      "owner_path": "packages/brain/src/lib/workspace-ci-source-bundle.js",
       "path": "docs/learnings/cp-10090451-workspace-ci-source-bundle.md",
       "role": "documentation"
     },
@@ -1555,11 +1545,6 @@
     {
       "owner_path": "packages/brain/src/lib/workspace-ci-source-bundle.js",
       "path": "packages/brain/src/lib/__tests__/workspace-ci-source-bundle.test.js",
-      "role": "verification"
-    },
-    {
-      "owner_path": "packages/brain/src/lib/workspace-ci-source-bundle.js",
-      "path": "packages/brain/scripts/smoke/workspace-ci-source-bundle-smoke.sh",
       "role": "verification"
     },
     {
@@ -2573,11 +2558,6 @@
       "role": "verification"
     },
     {
-      "owner_path": "scripts/ci/ci-admission-builder.mjs",
-      "path": "scripts/ci/__tests__/ci-admission-builder.pg.test.mjs",
-      "role": "verification"
-    },
-    {
       "owner_path": "scripts/ci/ci-admission-inputs.mjs",
       "path": "scripts/ci/__tests__/ci-admission-inputs.pg.test.mjs",
       "role": "verification"
@@ -2590,81 +2570,6 @@
     {
       "owner_path": "scripts/ci/implementation-pr-gate.mjs",
       "path": "scripts/ci/__tests__/ci-admission-verification-lease.pg.test.mjs",
-      "role": "verification"
-    },
-    {
-      "owner_path": "scripts/ci/implementation-verification-retirements.mjs",
-      "path": "scripts/ci/__tests__/basic-verification-retirements.test.mjs",
-      "role": "verification"
-    },
-    {
-      "owner_path": "scripts/ci/ci-admission-archive.mjs",
-      "path": "scripts/ci/__tests__/basic-ci-admission-archive.test.mjs",
-      "role": "verification"
-    },
-    {
-      "owner_path": "scripts/ci/ci-admission-artifact.mjs",
-      "path": "scripts/ci/__tests__/basic-ci-admission-artifact.test.mjs",
-      "role": "verification"
-    },
-    {
-      "owner_path": "scripts/ci/ci-admission-authority.mjs",
-      "path": "scripts/ci/__tests__/basic-ci-admission-authority.test.mjs",
-      "role": "verification"
-    },
-    {
-      "owner_path": "scripts/ci/ci-admission-builder.mjs",
-      "path": "scripts/ci/__tests__/basic-ci-admission-builder.test.mjs",
-      "role": "verification"
-    },
-    {
-      "owner_path": "scripts/ci/ci-admission-envelope.mjs",
-      "path": "scripts/ci/__tests__/basic-ci-admission-envelope.test.mjs",
-      "role": "verification"
-    },
-    {
-      "owner_path": "scripts/ci/implementation-infra-inputs.mjs",
-      "path": "scripts/ci/__tests__/basic-ci-admission-infra.test.mjs",
-      "role": "verification"
-    },
-    {
-      "owner_path": "scripts/ci/ci-admission-inputs.mjs",
-      "path": "scripts/ci/__tests__/basic-ci-admission-inputs.test.mjs",
-      "role": "verification"
-    },
-    {
-      "owner_path": "scripts/ci/ci-admission-authority.mjs",
-      "path": "scripts/ci/__tests__/basic-ci-admission-legacy.test.mjs",
-      "role": "verification"
-    },
-    {
-      "owner_path": "scripts/ci/implementation-pr-baseline.mjs",
-      "path": "scripts/ci/__tests__/basic-ci-admission-resolver.test.mjs",
-      "role": "verification"
-    },
-    {
-      "owner_path": "scripts/ci/implementation-scratch.mjs",
-      "path": "scripts/ci/__tests__/basic-ci-admission-scratch-import.test.mjs",
-      "role": "verification"
-    },
-    {
-      "owner_path": "scripts/ci/ci-admission-scratch.mjs",
-      "path": "scripts/ci/__tests__/basic-ci-admission-scratch.test.mjs",
-      "role": "verification"
-    },
-    {
-      "owner_path": "scripts/ci/ci-admission-seed.mjs",
-      "path": "scripts/ci/__tests__/basic-ci-admission-seed.test.mjs",
-      "role": "verification"
-    },
-    {
-      "owner_path": "scripts/ci/implementation-skill-source.mjs",
-      "path": "scripts/ci/__tests__/basic-ci-admission-skill-cache.test.mjs",
-      "role": "verification"
-    },
-    {
-      "owner_path": "scripts/ci/ci-admission-worker-runner.mjs",
-      "path": "scripts/ci/__tests__/basic-ci-admission-worker.test.mjs",
       "role": "verification"
     },
     {

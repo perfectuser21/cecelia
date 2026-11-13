@@ -19,7 +19,6 @@ vi.mock('../topic-selector.js', () => ({
 
 vi.mock('../topic-suggestion-manager.js', () => ({
   saveSuggestions: vi.fn().mockResolvedValue(0),
-  autoPromoteSuggestions: vi.fn().mockResolvedValue(0),
   getActiveSuggestions: vi.fn().mockResolvedValue([]),
   approveSuggestion: vi.fn(),
   rejectSuggestion: vi.fn(),

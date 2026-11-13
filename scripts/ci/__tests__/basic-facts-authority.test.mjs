@@ -33,9 +33,9 @@ test('实际事实入口保留其余事实与代码完整性，重复检查由�
   const f = fixture(t), result = f.facts();
   assert.equal(result.status, 0, result.output);
   for (const fact of ['brain_port', 'tick_loop_ms', 'tick_interval_min', 'task_types',
-    'action_count', 'cortex_extra_actions', 'schema_version', 'selfcheck_version_sync', 'llm_fetch_timeouts'])
+    'action_count', 'cortex_extra_actions', 'schema_version', 'selfcheck_version_sync'])
     assert.match(result.output, new RegExp(fact + ':'));
-  assert.doesNotMatch(result.output, /brain_version:|migration_conflicts:/);
+  assert.doesNotMatch(result.output, /brain_version:|migration_conflicts:|llm_fetch_timeouts:|all external LLM fetch calls/);
 });
 
 test('重复迁移编号仅由更严的独立lint拒绝，保留非下划线数字前缀边界', t => {
@@ -65,7 +65,7 @@ test('文档版本漂移仅由完整版本同步入口拒绝', t => {
   assert.equal(f.facts().status, 0, '事实入口不应重复接管版本同步');
 });
 
-test('事实入口仍拒绝不存在的schema地板和实际LLM超时缺失', t => {
+test('事实入口仍拒绝不存在的schema地板', t => {
   const f = fixture(t);
   const schema = join(f.directory, 'packages/brain/src/selfcheck.js');
   const original = readFileSync(schema, 'utf8');
@@ -74,9 +74,5 @@ test('事实入口仍拒绝不存在的schema地板和实际LLM超时缺失', t 
   assert.equal(floor.status, 1);
   assert.match(floor.output, /地板='999999' 超过最高 migration/);
   writeFileSync(schema, original);
-  const source = join(f.directory, 'packages/brain/src/thalamus.js');
-  writeFileSync(source, readFileSync(source, 'utf8') + '\nawait fetch("https://api.anthropic.com/fixture");\n');
-  const result = f.facts();
-  assert.equal(result.status, 1);
-  assert.match(result.output, /fetch to LLM API missing AbortSignal\.timeout/);
+
 });

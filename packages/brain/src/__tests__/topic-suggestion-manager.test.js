@@ -1,6 +1,6 @@
 /**
  * topic-suggestion-manager.js 单元测试
- * 覆盖 saveSuggestions, autoPromoteSuggestions, getActiveSuggestions
+ * 覆盖 saveSuggestions, getActiveSuggestions
  * DB 操作全部通过 vi.mock 隔离
  */
 
@@ -12,7 +12,7 @@ const mockCreateTask = vi.hoisted(() => vi.fn());
 vi.mock('../db.js', () => ({ default: { query: mockQuery } }));
 vi.mock('../actions.js', () => ({ createTask: mockCreateTask }));
 
-let saveSuggestions, getActiveSuggestions, autoPromoteSuggestions, approveSuggestion, rejectSuggestion;
+let saveSuggestions, getActiveSuggestions, approveSuggestion, rejectSuggestion;
 
 beforeEach(async () => {
   vi.resetModules();
@@ -21,7 +21,6 @@ beforeEach(async () => {
   const mod = await import('../topic-suggestion-manager.js');
   saveSuggestions = mod.saveSuggestions;
   getActiveSuggestions = mod.getActiveSuggestions;
-  autoPromoteSuggestions = mod.autoPromoteSuggestions;
   approveSuggestion = mod.approveSuggestion;
   rejectSuggestion = mod.rejectSuggestion;
 });
@@ -90,49 +89,6 @@ describe('saveSuggestions', () => {
 
     const count = await saveSuggestions(dbPool, [makeTopic()]);
     expect(count).toBe(0);
-  });
-});
-
-// ─── autoPromoteSuggestions ───────────────────────────────────────────────────
-
-describe('autoPromoteSuggestions', () => {
-  it('无待晋级选题时返回 0', async () => {
-    mockQuery.mockResolvedValue({ rows: [] });
-    const dbPool = { query: mockQuery };
-
-    const count = await autoPromoteSuggestions(dbPool);
-    expect(count).toBe(0);
-  });
-
-  it('晋级选题时创建 content-pipeline task 并更新状态', async () => {
-    const pendingSuggestion = {
-      id: 'sug-001',
-      keyword: '待晋级选题',
-      content_type: 'solo-company-case',
-      title_candidates: [],
-      hook: '',
-      why_hot: '',
-      priority_score: 0.7,
-      selected_date: '2026-04-06',
-    };
-
-    // 第1次 query: SELECT pending → 返回1条
-    // 第2次 query: UPDATE topic_suggestions status = auto_promoted
-    let callCount = 0;
-    mockQuery.mockImplementation(async (sql) => {
-      callCount++;
-      if (sql.trim().startsWith('SELECT id')) return { rows: [pendingSuggestion] };
-      return { rows: [] };
-    });
-
-    const dbPool = { query: mockQuery };
-    const promoted = await autoPromoteSuggestions(dbPool);
-    expect(promoted).toBe(1);
-    expect(mockCreateTask).toHaveBeenCalledWith(expect.objectContaining({
-      task_type: 'content-pipeline',
-      source: 'scheduler',
-      source_id: 'topic-suggestion:sug-001',
-    }));
   });
 });
 

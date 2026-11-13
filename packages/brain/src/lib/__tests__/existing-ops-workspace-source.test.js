@@ -7,7 +7,8 @@ import {createHash} from 'node:crypto';
 import { collectWorkspaceInputEdges } from '../existing-ops-workspace-source.js';
 
 const root = fileURLToPath(new URL('../../../../../', import.meta.url));
-const revision = 'dce0866298f5db9a17b472de3a50cfb24efff52e';
+const revision = execFileSync('git', ['--no-replace-objects', 'rev-parse', '--verify', 'HEAD^{commit}'],
+  {cwd: root, encoding: 'utf8'}).trim();
 const paths = execFileSync('git', ['ls-tree', '-rz', '--name-only', revision], { cwd: root, encoding: 'utf8' }).split('\0').filter(Boolean);
 const cache = new Map();
 const read = path => {
