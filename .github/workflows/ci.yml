@@ -265,6 +265,11 @@ jobs:
           TEST_DB_URL: postgresql://onboarding_ci:onboarding_ci@127.0.0.1:5432/cecelia_scratch
         run: node packages/brain/scripts/smoke/commander-dbos-recovery-smoke.mjs
         if: '!cancelled()'
+      - name: Verify Commander decisions and activity recovery
+        env:
+          TEST_DB_URL: postgresql://onboarding_ci:onboarding_ci@127.0.0.1:5432/cecelia_scratch
+        run: node packages/brain/scripts/smoke/commander-foundation-smoke.mjs
+        if: '!cancelled()'
     if: github.event_name != 'schedule' && github.event.action != 'closed'
   pwa-upgrade:
     name: Browser regression (Chromium)
