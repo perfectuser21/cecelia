@@ -14,6 +14,7 @@ import pool from '../db.js';
 import router from '../routes/cognitive-map.js';
 
 const app = express();
+app.set('trust proxy', 1);
 app.use(express.json());
 app.use('/api/brain/cognitive-map', router);
 
@@ -130,6 +131,27 @@ describe('GET /api/brain/cognitive-map', () => {
       expect(res.body.subsystems.find(node => node.id === 'tick').status).toBe('dormant');
     } finally { clock.mockRestore(); }
   });
+
+  it('独立IP允许1200次图读取；未匹配穿透不耗预算，429不再查询数据库', async () => {
+    let queries = 0;
+    pool.query.mockImplementation(async () => { queries++; return { rows: [] }; });
+    const ip = '203.0.113.81';
+    const unmatched = await request(app).get('/api/brain/cognitive-map/unrelated').set('X-Forwarded-For', ip);
+    expect(unmatched.status).toBe(404);
+    expect(unmatched.headers.ratelimit).toBeUndefined();
+    expect(queries).toBe(0);
+    for (let index = 0; index < 1200; index++) {
+      const response = await request(app).get('/api/brain/cognitive-map').set('X-Forwarded-For', ip);
+      expect(response.status, `合法读取第${index + 1}次`).toBe(200);
+      pool.query.mockClear();
+    }
+    expect(queries).toBeGreaterThan(0);
+    const beforeBlocked = queries;
+    const blocked = await request(app).get('/api/brain/cognitive-map').set('X-Forwarded-For', ip);
+    expect(blocked.status).toBe(429);
+    expect(queries).toBe(beforeBlocked);
+    expect(pool.query).not.toHaveBeenCalled();
+  }, 30000);
 
   it('数据库错误返回 500', async () => {
     pool.query.mockRejectedValueOnce(new Error('DB down'));

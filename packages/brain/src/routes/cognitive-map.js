@@ -6,6 +6,7 @@
  */
 
 import { Router } from 'express';
+import { rateLimit } from 'express-rate-limit';
 import pool from '../db.js';
 
 const router = Router();
@@ -46,7 +47,7 @@ const CONNECTIONS = [
   { from: 'tick', to: 'cognitive', label: 'TICK→认知' },
 ];
 
-router.get('/', async (_req, res) => {
+router.get('/', rateLimit({ windowMs: 60_000, limit: 1200, standardHeaders: 'draft-7', legacyHeaders: false }), async (_req, res) => {
   try {
     const [
       tickResult,
