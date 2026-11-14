@@ -1,6 +1,6 @@
 ---
 id: current-ci-pipeline
-version: 3.0.1
+version: 3.0.2
 updated: 2026-11-14
 authority: CURRENT_STATE
 ---
@@ -18,7 +18,7 @@ authority: CURRENT_STATE
 | plan | 固定BASE/HEAD核对版本增量，并选择受影响组件的整套检查 |
 | security | 凭据扫描、运行依赖high及全部依赖critical漏洞审计 |
 | checks | Brain六分片、5个明确PG合同与源码运行、镜像构建、共享前端、Ops及scripts；MCP仅包自身变更触发 |
-| resource-canaries | 真实Docker离线实例/RPC、共享预算/OOM与cgroup观测 |
+| resource-canaries | Linux专用容器的真实cgroup观测；只接受none/linux手动入口或真实输入变更 |
 | runtime-integration | 机器接入、Linux授权的真实PG合同，以及公共Runner/Commander进程故障恢复 |
 | pwa-upgrade | Chromium验证PWA升级、交办回执、指挥舱收件箱和去向路由；业务API为隔离fixture |
 | codeql | Actions、JS/TS、Python三个语言安全分析；另有每周扫描 |

@@ -1,6 +1,8 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.445.212
+**Brain 版本**: 1.445.213
+
+清退 App Server 与旧 attempt/OOM 的专项 CI 入口、专属 Canary 脚本及测试；资源专项仅保留 Linux 限额读取实测。普通运行 API、adapter 与历史资源清理不变，手动参数只接受 none/linux。
 
 清退 PR CI 的固定 Skill 来源合同：删除四个矩阵检查、五份 Skill 正文静态测试及专属配置/入口，并清退无现役调用的旧 Harness 合同检查脚本、测试与假数据；通用 Skill 固定来源恢复机制与业务运行接口保留。Brain 单测继续按 Vitest 文件路径哈希切六片，不按业务分组。
 

@@ -11,3 +11,6 @@
 
 - [x] 删除固定 Skill 来源合同四个矩阵job、五份专属测试、无调用旧Harness合同脚本/测试/假数据及无用接线，现役CI来源/汇总仍严格拒绝缺失和未知输入，历史证据不重写。
   Test: manual:node --test scripts/ci/__tests__/basic-workflow.test.mjs scripts/ci/__tests__/basic-brain-test-debt.test.mjs
+
+- [x] 清退App Server及旧attempt/OOM专项CI和专属Canary，Linux真实读取、严格计划/汇总及运行清理边界保留。
+  Test: manual:node --test scripts/ci/__tests__/basic-resource-canary-scope.test.mjs scripts/ci/__tests__/basic-resource-canary.test.mjs scripts/ci/__tests__/basic-results.test.mjs

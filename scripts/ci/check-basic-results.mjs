@@ -14,10 +14,15 @@ export function checkResults(needs) {
   const resource = needs['resource-canaries'];
   if (!selected) {
     if (resource?.result !== 'skipped') throw new Error('resource-canaries 空计划必须跳过');
+    const outputs = resource.outputs;
+    if (outputs !== undefined && (!outputs || typeof outputs !== 'object' || Array.isArray(outputs)
+        || Object.keys(outputs).some(key => key !== 'linux' || outputs[key] !== ''))) {
+      throw new Error('resource-canaries 空计划只允许缺省或空linux输出');
+    }
   } else {
     if (resource?.result !== 'success') throw new Error('resource-canaries 必选专项未成功');
-    for (const [step, flag] of Object.entries({linux:'linux', app_server:'app_server', app_server_rpc:'app_server', legacy:'legacy'})) {
-      if (resource.outputs?.[step] !== (plan[flag] ? 'success' : 'skipped')) throw new Error(`resource-canaries ${step} 结果与计划不符`);
+    if (!resource.outputs || Object.keys(resource.outputs).length !== 1 || resource.outputs.linux !== 'success') {
+      throw new Error('resource-canaries 必须精确提供linux成功结果');
     }
   }
   for (const job of REQUIRED_JOBS.filter(job => job !== 'resource-canaries')) {

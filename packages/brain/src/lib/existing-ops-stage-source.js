@@ -353,7 +353,7 @@ const REVIEWED_SKILL_RETIREMENT = {
   "packages/brain/vitest.config.js": "ccaa6eda60569d92fba18802776d025849a92ada3698d92170057c9c76e97f66",
   "scripts/ci/basic-scope.mjs": "dcc7b67cc8dd5df9a370754be400bd276c98c7e747acdfdd8b3f52dc8416c3c4",
   "scripts/ci/run-basic-check.mjs": "a7eb0c2f679385f6f5d79127b226972bc3f9bcfd488363273fcdc1268547483d",
-  "scripts/ci/check-basic-results.mjs": "b58c1d265dce7d6b1c3ab66a7f3b43e0c222902aa38c0fa982d5eb7681b42718",
+  "scripts/ci/check-basic-results.mjs": "7b788eb490d0713542688ab88bbf0be5ffd458c8475dd8a6a4e91fe630e582ce",
   "scripts/ci/basic-runtime-smoke.mjs": "b386b8c0c8631de5b6a0eec19494835f48c6ca3822a4533ee154ce8767a21eec",
   "scripts/ci/ops-checks.mjs": "c3cf7da7f7dcbb1e4cd8112abdcab3c7ffc854adb371f65fd13158fe96aac510",
   "scripts/ci/run-isolated-staging-smoke.mjs": "fa19da1eaf14621a75d95763229fa8d6de40ce3e55940401458346da37f8fbaf",
@@ -366,15 +366,15 @@ const REVIEWED_SKILL_RETIREMENT = {
   "scripts/ci/prepare-ubuntu-archive.mjs": "209dcc9a05110f433d9a53586d657d0f7d7da20c008d85147ffc7e11dd76ac88",
   "scripts/ci/__tests__/basic-ubuntu-archive.test.mjs": "404af7e10ae55b4c25136ce6d20c4af086f49f399cc7b6b6b5da02884d7c79bf",
   "scripts/skill_source_ownership.py": "20fca16bcf474588e9e4d0add00a66c5885b3d85a82275fb9082a0787e72b9a7",
-  "scripts/ci/resource-canary-scope.mjs": "3a68ec68747a80aec250c17ef614735c6a2b85de55c3d1916d01a41aca50b48a",
-  "scripts/ci/__tests__/basic-resource-canary-scope.test.mjs": "4aada88475d642b08440fb53eee58800d8ae940aae923df3e8f3838038a5b21b",
-  "scripts/ci/__tests__/basic-resource-canary.test.mjs": "63d47e6271138059c90a32a78fdf2e11e0da7158621c89114258e2c1838558f2",
-  "scripts/ci/__tests__/basic-results.test.mjs": "eb3d1993ef7ba3ee72f510e7122be3040b3a4d0cb22151053a97aaacc9428b64",
-  "scripts/ci/__tests__/basic-workflow.test.mjs": "a823a59bb8af3db7db24ae994486af86390d6d7210e9d902642b1ceb4724deaa",
+  "scripts/ci/resource-canary-scope.mjs": "c7f1e565ae6fb3a1d70f76e95ef301220aab45648473b60e45e7ebc530096d2b",
+  "scripts/ci/__tests__/basic-resource-canary-scope.test.mjs": "77d4feda65d9a810dd2308fd2cf9927ca94fd592f582727c9bfa24553c8e4763",
+  "scripts/ci/__tests__/basic-resource-canary.test.mjs": "27b46ce34355a9891c11a72368d19d618a7b44f28f6ca578afadc924212564df",
+  "scripts/ci/__tests__/basic-results.test.mjs": "1b41f80bbc2ecadd85b90b1b918a1bd065637ef9db067bf02f0d1218265d9802",
+  "scripts/ci/__tests__/basic-workflow.test.mjs": "bcdb34d8d3bacfb2cc5a011a7b97edb70d99357c8eed2de4e7a95451b40e6182",
   "vitest.config.js": "3400f6ba2d5886c139535b28dc0ffde32cf50838c22f1946a1bba4415e695a71",
   "packages/brain/src/workflows/__tests__/impact-contract-evaluator-receipts.skill-source.test.js": null, "packages/brain/src/__tests__/golden-path-skill-snapshot.skill-source.test.js": null, "packages/brain/src/__tests__/ci-defense.skill-source.test.ts": null, "packages/brain/src/__tests__/golden-path-contract-task.skill-source.test.js": null, "tests/contract-e2e-extractor.skill-source.test.ts": null, "packages/brain/vitest.skill-source.config.mjs": null, "vitest.skill-source.config.mjs": null, "scripts/ci/run-skill-source-check.mjs": null, "scripts/ci/skill-source-tests.mjs": null, "scripts/ci/__tests__/basic-skill-source-coverage.test.mjs": null
 };
-const SKILL_RETIREMENT_CI = 'bcc6a2d4c101d634b98a5a3b346d10d9964b8acb0d41e869ec8ef43b786ab11b';
+const SKILL_RETIREMENT_CI = '7195c295058535d0a014e66343803d144647f2991120fe274ca8036728cb2ea9';
 const basicProtocolsFor = digest => digest === SKILL_RETIREMENT_CI ? [REVIEWED_SKILL_RETIREMENT] : BASIC_PROTOCOLS[digest];
 const reject = () => { throw Error('basic_ci_source_unproven'); };
 export function basicCiSelectorEnabled(text, parse) {
