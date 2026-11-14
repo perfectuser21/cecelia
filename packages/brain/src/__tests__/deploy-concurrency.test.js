@@ -28,7 +28,7 @@ vi.mock('../suggestion-triage.js', () => ({
   cleanupExpiredSuggestions: vi.fn(),
   getTriageStats: vi.fn(),
 }));
-vi.mock('../decomposition-checker.js', () => ({ runDecompositionChecks: vi.fn() }));
+
 vi.mock('../pr-callback-handler.js', () => ({
   verifyWebhookSignature: vi.fn(),
   extractPrInfo: vi.fn(),
@@ -47,7 +47,6 @@ vi.mock('fs', async original => ({...await original(),
   readFileSync:() => {throw Error('no fixture deployment status file');},
   writeFileSync:boundary.write,mkdirSync:boundary.write,writeSync:boundary.write,closeSync:boundary.write,openSync:() => 123,
 }));
-
 
 let app, deployState;
 beforeEach(async () => {

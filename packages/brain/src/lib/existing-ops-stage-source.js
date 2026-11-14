@@ -350,7 +350,7 @@ const BASIC_PROTOCOLS = {"1283f9f7b9825a925318b20420d483de5f5daad5a032a476a20f10
 
 // 当前完整控制及精确退役路径；null只证明固定Git不存在，不授予执行资格。
 const REVIEWED_SKILL_RETIREMENT = {
-  "packages/brain/vitest.config.js": "ccaa6eda60569d92fba18802776d025849a92ada3698d92170057c9c76e97f66",
+  "packages/brain/vitest.config.js": "7fbba49f1b01db8020bcc233d5866fc6351f72e8dd7137fc8807372ed7f27971",
   "scripts/ci/basic-scope.mjs": "dcc7b67cc8dd5df9a370754be400bd276c98c7e747acdfdd8b3f52dc8416c3c4",
   "scripts/ci/run-basic-check.mjs": "a7eb0c2f679385f6f5d79127b226972bc3f9bcfd488363273fcdc1268547483d",
   "scripts/ci/check-basic-results.mjs": "7b788eb490d0713542688ab88bbf0be5ffd458c8475dd8a6a4e91fe630e582ce",

@@ -30,8 +30,4 @@ describe('tick-runner.js — runConversationConsolidator 接入', () => {
     expect(surroundings.includes('catch') || surroundings.includes('.catch')).toBe(true);
   });
 
-  it('原有 10.18 runSuggestionCycle 调用未受影响', () => {
-    expect(tickContent).toContain('10.18');
-    expect(tickContent).toContain('runSuggestionCycle');
-  });
 });

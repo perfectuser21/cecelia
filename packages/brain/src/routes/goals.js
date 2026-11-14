@@ -1,8 +1,8 @@
 import { Router } from 'express';
 import { readFileSync } from 'fs';
 import pool from '../db.js';
-import { executeOkrTick as _executeOkrTick, runOkrTickSafe, startOkrTickLoop, stopOkrTickLoop, getOkrTickStatus, addQuestionToGoal, answerQuestionForGoal, getPendingQuestions, OKR_STATUS } from '../okr-tick.js';
-import { executeNightlyAlignment as _executeNightlyAlignment, runNightlyAlignmentSafe, startNightlyScheduler, stopNightlyScheduler, getNightlyTickStatus, getDailyReports } from '../nightly-tick.js';
+import { addQuestionToGoal, answerQuestionForGoal, getPendingQuestions, OKR_STATUS } from '../okr-tick.js';
+import { getDailyReports } from '../nightly-tick.js';
 import { ensureEventsTable, queryEvents, getEventCounts } from '../event-bus.js';
 import { getState as getCBState, resetBreaker as resetCBBreaker, getAllStates as getAllCBStates } from '../circuit-breaker.js';
 import { getCurrentAlertness, setManualOverride as _setManualOverride, clearManualOverride as _clearManualOverride, ALERTNESS_LEVELS, LEVEL_NAMES } from '../alertness/index.js';
@@ -34,7 +34,6 @@ async function checkXianBridgeHealth() {
 const pkg = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url)));
 
 const router = Router();
-
 
 // ==================== Events API (EventBus) ====================
 
@@ -509,40 +508,21 @@ router.delete('/blocks/:id', async (req, res) => {
  * GET /api/brain/okr-tick/status
  * Get OKR tick loop status
  */
-router.get('/okr-tick/status', (req, res) => {
-  res.json({ success: true, ...getOkrTickStatus() });
-});
 
 /**
  * POST /api/brain/okr-tick
  * Manually trigger OKR tick
  */
-router.post('/okr-tick', async (req, res) => {
-  try {
-    const result = await runOkrTickSafe();
-    res.json({ success: true, ...result });
-  } catch (err) {
-    res.status(500).json({ success: false, error: 'OKR tick failed', details: err.message });
-  }
-});
 
 /**
  * POST /api/brain/okr-tick/enable
  * Enable OKR tick loop
  */
-router.post('/okr-tick/enable', (req, res) => {
-  const started = startOkrTickLoop();
-  res.json({ success: true, started, ...getOkrTickStatus() });
-});
 
 /**
  * POST /api/brain/okr-tick/disable
  * Disable OKR tick loop
  */
-router.post('/okr-tick/disable', (req, res) => {
-  const stopped = stopOkrTickLoop();
-  res.json({ success: true, stopped, ...getOkrTickStatus() });
-});
 
 // ==================== OKR Question API ====================
 
@@ -616,40 +596,21 @@ router.get('/okr/statuses', (req, res) => {
  * GET /api/brain/nightly/status
  * Get nightly tick scheduler status
  */
-router.get('/nightly/status', (req, res) => {
-  res.json({ success: true, ...getNightlyTickStatus() });
-});
 
 /**
  * POST /api/brain/nightly/trigger
  * Manually trigger nightly alignment
  */
-router.post('/nightly/trigger', async (req, res) => {
-  try {
-    const result = await runNightlyAlignmentSafe();
-    res.json({ success: true, ...result });
-  } catch (err) {
-    res.status(500).json({ success: false, error: 'Nightly alignment failed', details: err.message });
-  }
-});
 
 /**
  * POST /api/brain/nightly/enable
  * Enable nightly scheduler
  */
-router.post('/nightly/enable', (req, res) => {
-  const started = startNightlyScheduler();
-  res.json({ success: true, started, ...getNightlyTickStatus() });
-});
 
 /**
  * POST /api/brain/nightly/disable
  * Disable nightly scheduler
  */
-router.post('/nightly/disable', (req, res) => {
-  const stopped = stopNightlyScheduler();
-  res.json({ success: true, stopped, ...getNightlyTickStatus() });
-});
 
 // ==================== Daily Reports API ====================
 
@@ -701,7 +662,6 @@ router.get('/daily-reports/:date/summary', async (req, res) => {
     res.status(500).json({ success: false, error: 'Failed to get summary', details: err.message });
   }
 });
-
 
 // ==================== Hardening Status Dashboard ====================
 

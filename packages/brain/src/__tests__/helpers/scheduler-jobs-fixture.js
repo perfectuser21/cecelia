@@ -22,9 +22,7 @@ vi.mock('../../daily-review-scheduler.js', () => ({
   triggerArchReview: vi.fn().mockResolvedValue({ triggered: false, skipped_window: true }),
   triggerCiPatrol: vi.fn().mockResolvedValue({ triggered: false, skipped_window: true }),
 }));
-vi.mock('../../active-goals-zero-trigger.js', () => ({
-  maybeTriggerStrategySession: vi.fn().mockResolvedValue({ created: false, reason: 'active_goals_present' }),
-}));
+
 vi.mock('../../daily-backup-scheduler.js', () => ({
   scheduleDailyBackup: vi.fn().mockResolvedValue({ inWindow: false, triggered: false, alreadyDone: false }),
 }));
@@ -46,9 +44,7 @@ vi.mock('../../receipt-collector.js', () => ({
 vi.mock('../../launchd-patrol.js', () => ({
   runLaunchdPatrol: vi.fn().mockResolvedValue({ skipped: true }),
 }));
-vi.mock('../../direction-proposer.js', () => ({
-  maybeRunDirectionProposer: vi.fn().mockResolvedValue({ triggered: false }),
-}));
+
 vi.mock('../../postdeploy-verifier.js', () => ({
   runPostdeployVerifier: vi.fn().mockResolvedValue({ triggered: false }),
 }));

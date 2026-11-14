@@ -1028,75 +1028,6 @@ router.post('/execution-callback', executionCallbackRateLimit, internalAuthOrLoo
 
       // 旧拆解已退役：在途回执仍正常收尾，不再自动创建旧审查或改写审核状态。
 
-      // 5c-strategy. strategy_session 闭环：解析 KR JSON → 写入 goals 表
-      try {
-        const ssTaskResult = await pool.query('SELECT task_type, goal_id FROM tasks WHERE id = $1', [task_id]);
-        const ssTaskRow = ssTaskResult.rows[0];
-
-        if (ssTaskRow?.task_type === 'strategy_session') {
-          console.log(`[execution-callback] strategy_session task completed, parsing KR JSON...`);
-
-          const outputStr = typeof result === 'string' ? result
-            : (result?.result || result?.output || JSON.stringify(result || ''));
-
-          let parsedOutput = null;
-          const jsonMatch = outputStr.match(/\{[\s\S]*"krs"\s*:\s*\[[\s\S]*?\][\s\S]*\}/);
-          if (jsonMatch) {
-            try {
-              parsedOutput = JSON.parse(jsonMatch[0]);
-            } catch (jsonParseErr) {
-              console.error(`[execution-callback] strategy_session JSON parse error: ${jsonParseErr.message}`);
-            }
-          }
-
-          if (parsedOutput && Array.isArray(parsedOutput.krs) && parsedOutput.krs.length > 0) {
-            const meetingSummary = parsedOutput.meeting_summary || '';
-            const krs = parsedOutput.krs;
-
-            await pool.query(
-              `UPDATE tasks SET payload = jsonb_set(COALESCE(payload, '{}'), '{meeting_summary}', $1::jsonb) WHERE id = $2`,
-              [JSON.stringify(meetingSummary), task_id]
-            );
-
-            // 查找关联 objective（migration 181：goals(area_okr).id = objectives.id）
-            let krObjectiveId = null;
-            if (ssTaskRow.goal_id) {
-              const objCheck = await pool.query('SELECT id FROM objectives WHERE id = $1', [ssTaskRow.goal_id]);
-              if (objCheck.rows.length > 0) {
-                krObjectiveId = ssTaskRow.goal_id;
-              }
-            }
-            if (!krObjectiveId) {
-              console.warn(`[execution-callback] strategy_session KR 无关联 Objective（goal_id=${ssTaskRow.goal_id || 'null'}）— KR 将成为孤岛`);
-            }
-
-            for (const kr of krs) {
-              const krTitle = kr.title || '(untitled KR)';
-              const krDomain = kr.domain || null;
-              const krOwnerRole = kr.owner_role ? kr.owner_role.toLowerCase() : null;
-              const krPriority = ['P0', 'P1', 'P2'].includes(kr.priority) ? kr.priority : 'P1';
-
-              await pool.query(
-                `INSERT INTO key_results (title, status, owner_role, objective_id, metadata)
-                 VALUES ($1, 'pending', $2, $3, $4)`,
-                [krTitle, krOwnerRole, krObjectiveId, JSON.stringify({ priority: krPriority, domain: krDomain })]
-              );
-              console.log(`[execution-callback] strategy_session KR created: "${krTitle}" domain=${krDomain} owner=${krOwnerRole} objective_id=${krObjectiveId}`);
-            }
-
-            console.log(`[execution-callback] strategy_session: ${krs.length} KRs written to goals`);
-          } else {
-            console.warn(`[execution-callback] strategy_session: no valid krs found in output`);
-            await pool.query(
-              `UPDATE tasks SET payload = jsonb_set(COALESCE(payload, '{}'), '{strategy_raw_output}', $1::jsonb) WHERE id = $2`,
-              [JSON.stringify(outputStr.slice(0, 2000)), task_id]
-            );
-          }
-        }
-      } catch (strategySessionErr) {
-        console.error(`[execution-callback] strategy_session handling error: ${strategySessionErr.message}`);
-      }
-
       // 5c. Review 闭环：发现问题 → 自动创建修复 Task
       try {
         const taskResult = await pool.query('SELECT task_type, project_id, goal_id, title FROM tasks WHERE id = $1', [task_id]);
@@ -1160,45 +1091,7 @@ ${resultStr.substring(0, 2000)}
         console.error(`[execution-callback] Review handling error: ${reviewErr.message}`);
       }
 
-      // 5c6. 断链 #1: suggestion_plan 完成 → 创建 architecture_design (M1 scan) 任务
-      try {
-        const spAdRow = await pool.query(
-          'SELECT task_type, project_id, goal_id, title FROM tasks WHERE id = $1',
-          [task_id]
-        );
-        const spAdTask = spAdRow.rows[0];
-
-        if (spAdTask?.task_type === 'suggestion_plan') {
-          const projectId = spAdTask.project_id;
-          const existing = await pool.query(
-            `SELECT id FROM tasks
-             WHERE project_id = $1 AND task_type = 'architecture_design'
-               AND status IN ('queued', 'in_progress')
-             LIMIT 1`,
-            [projectId]
-          );
-          if (existing.rows.length > 0) {
-            console.log(`[execution-callback] architecture_design already queued for project ${projectId}, skip`);
-          } else {
-            const { createTask: createAdTask } = await import('../actions.js');
-            await createAdTask({
-              title: `[M1 Scan] architecture_design — ${spAdTask.title}`,
-              description: `suggestion_plan「${spAdTask.title}」已完成，开始 M1 全量扫描代码库，建立 system_modules 知识库。\n原始 suggestion_plan task_id: ${task_id}`,
-              priority: 'P1',
-              project_id: projectId,
-              goal_id: spAdTask.goal_id,
-              task_type: 'architecture_design',
-              trigger_source: 'execution_callback_auto',
-              payload: { mode: 'scan', parent_task_id: task_id }
-            });
-            console.log(`[execution-callback] 断链#1 修复: architecture_design (M1 scan) created for suggestion_plan ${task_id}`);
-          }
-        }
-      } catch (spAdErr) {
-        console.error(`[execution-callback] suggestion_plan → architecture_design creation failed (non-fatal): ${spAdErr.message}`);
-      }
-
-      // 5c7. 断链 #3: architecture_design 完成 → M1 创建 initiative_plan / M2 验证 dev 任务
+      // architecture_design完成后，验证既有design任务的交付情况。
       try {
         const adRow = await pool.query(
           'SELECT task_type, project_id, goal_id, title, payload FROM tasks WHERE id = $1',
@@ -1209,31 +1102,7 @@ ${resultStr.substring(0, 2000)}
         if (adTask?.task_type === 'architecture_design') {
           const mode = adTask.payload?.mode || 'scan';
           const projectId = adTask.project_id;
-          if (mode === 'scan') {
-            const existingIp = await pool.query(
-              `SELECT id FROM tasks
-               WHERE project_id = $1 AND task_type = 'initiative_plan'
-                 AND status IN ('queued', 'in_progress')
-               LIMIT 1`,
-              [projectId]
-            );
-            if (existingIp.rows.length > 0) {
-              console.log(`[execution-callback] initiative_plan already queued for project ${projectId}, skip`);
-            } else {
-              const { createTask: createIpTask } = await import('../actions.js');
-              await createIpTask({
-                title: `[秋米] initiative_plan — ${adTask.title}`,
-                description: `architecture_design (M1 scan)「${adTask.title}」已完成，秋米开始拆解规划 Initiatives。\n原始 architecture_design task_id: ${task_id}`,
-                priority: 'P1',
-                project_id: projectId,
-                goal_id: adTask.goal_id,
-                task_type: 'initiative_plan',
-                trigger_source: 'execution_callback_auto',
-                payload: { parent_task_id: task_id, architecture_scan_task_id: task_id }
-              });
-              console.log(`[execution-callback] 断链#3 修复: initiative_plan created for architecture_design(scan) ${task_id}`);
-            }
-          } else {
+          if (mode !== 'scan') {
             // M2 design 完成 → 验证 dev 任务已存在（日志告警）
             const devTasks = await pool.query(
               `SELECT COUNT(*) AS cnt FROM tasks
@@ -1748,7 +1617,6 @@ ${resultStr.substring(0, 2000)}
 
 // ==================== Heartbeat File API ====================
 
-
 const HEARTBEAT_DEFAULT_TEMPLATE = `# HEARTBEAT.md — Cecelia 巡检清单
 
 ## 巡检项目
@@ -2195,7 +2063,6 @@ router.post('/validate/trd', (req, res) => {
 
 // TRD API — removed (decomposer.js deleted, TRD decomposition now handled by 秋米 /okr)
 
-
 /**
  * POST /api/brain/goal/compare
  * Compare goal progress against expected progress
@@ -2285,7 +2152,6 @@ router.post('/decision/:id/rollback', async (req, res) => {
 });
 
 // ==================== VPS Slots API ====================
-
 
 /**
  * GET /api/brain/slots

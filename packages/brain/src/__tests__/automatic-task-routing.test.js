@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { maybeTriggerStrategySession } from '../active-goals-zero-trigger.js';
 import { checkAndCreateCodeReviewTrigger } from '../code-review-trigger.js';
 import { ensureCodexImmune } from '../codex-immune.js';
 
@@ -12,27 +11,6 @@ function taskCreator(id = 'task-routed') {
 }
 
 describe('automatic task routing boundaries', () => {
-  it('routes active-goals-zero strategy sessions through createTask', async () => {
-    const pool = {
-      query: vi.fn(async (sql) => {
-        if (sql.includes('FROM objectives')) return { rows: [{ cnt: '0' }] };
-        if (sql.includes("task_type = 'strategy_session'")) return { rows: [] };
-        return { rows: [] };
-      }),
-    };
-    const create = taskCreator('strategy-task');
-
-    const result = await maybeTriggerStrategySession(pool, create);
-
-    expect(result).toEqual({ created: true, taskId: 'strategy-task' });
-    expect(create).toHaveBeenCalledWith(expect.objectContaining({
-      db: pool,
-      source: 'scheduler',
-      task_type: 'strategy_session',
-      trigger_source: 'active_goals_zero',
-      allow_unscoped: true,
-    }));
-  });
 
   it('routes accumulated code review through createTask', async () => {
     const pool = {

@@ -69,9 +69,9 @@ function configurationInventory(config, cwd = brainRoot) {
   return {maintained: select({test: {include: maintainedPatterns}}, cwd), selected: select(config, cwd)};
 }
 
-test('当前六个兼容symlink与真实owner在自动单测集合只收集一次，且保留真实owner入口', () => {
+test('当前五个兼容symlink与真实owner在自动单测集合只收集一次，且保留真实owner入口', () => {
   const selected = select(brain, brainRoot);
-  const aliases = ['dept-heartbeat-plugin', 'goal-eval-plugin', 'heartbeat-plugin',
+  const aliases = ['dept-heartbeat-plugin', 'heartbeat-plugin',
     'kr-progress-sync-plugin', 'tick-runner', 'tick-state'].map(name => `tests/${name}.test.js`);
   for (const alias of aliases) {
     assert.ok(lstatSync(join(root, alias)).isSymbolicLink(), `${alias}兼容入口仍在`);

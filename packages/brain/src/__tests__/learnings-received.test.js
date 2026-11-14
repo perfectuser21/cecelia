@@ -104,7 +104,7 @@ vi.mock('../memory-retriever.js', () => ({ buildMemoryContext: vi.fn(), getRecen
 vi.mock('../self-report-collector.js', () => ({ collectSelfReport: vi.fn() }));
 vi.mock('../learning.js', () => ({ getRecentLearnings: vi.fn(() => []) }));
 vi.mock('../suggestion-triage.js', () => ({ createSuggestion: vi.fn(), PRIORITY_WEIGHTS: {} }));
-vi.mock('../suggestion-dispatcher.js', () => ({ dispatchSuggestions: vi.fn() }));
+
 vi.mock('../executor.js', () => ({ triggerCeceliaRun: vi.fn(), checkCeceliaRunAvailable: vi.fn() }));
 vi.mock('../tick-helpers.js', () => ({ routeTask: vi.fn(), TASK_TYPE_AGENT_MAP: {} }));
 vi.mock('../routes/shared.js', () => ({ classifyLearningType: vi.fn().mockResolvedValue(null) }));

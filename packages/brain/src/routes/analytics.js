@@ -7,7 +7,7 @@ import {
   checkShouldCreateRCA,
   getQualityStats,
 } from '../cortex-quality.js';
-import { runDecompositionChecks as _runDecompositionChecks } from '../decomposition-checker.js';
+
 import { getActiveExecutionPaths as _getActiveExecutionPaths, INVENTORY_CONFIG as _INVENTORY_CONFIG } from './shared.js';
 
 const router = Router();

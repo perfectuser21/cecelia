@@ -33,8 +33,7 @@ skills:
     entry_file: packages/workflows/skills/plan/SKILL.md
     version: 1.8.0
     status: active
-    triggers_features:
-      - decomposition_engine
+    triggers_features: []
 
   - skill_id: decomp
     command: /decomp
@@ -43,7 +42,6 @@ skills:
     version: 2.1.0
     status: active
     triggers_features:
-      - decomposition_engine
       - okr_system
 
   - skill_id: decomp_check
@@ -52,8 +50,7 @@ skills:
     entry_file: packages/workflows/skills/decomp-check/SKILL.md
     version: 2.1.0
     status: active
-    triggers_features:
-      - decomposition_engine
+    triggers_features: []
 
   - skill_id: architect
     command: /architect
@@ -134,8 +131,7 @@ skills:
     entry_file: packages/workflows/skills/autumnrice/SKILL.md
     version: 7.0.0
     status: active
-    triggers_features:
-      - decomposition_engine
+    triggers_features: []
 
   - skill_id: intent_expand
     command: intent_expand

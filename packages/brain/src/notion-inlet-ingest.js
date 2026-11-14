@@ -3,9 +3,8 @@
  *
  * 入口库人写、Brain 收；机器不写入口库（受理凭据在 Brain 的 notion_ingest_receipts）。
  * 幂等：收据按 notion_page_id（文件类按 page#file）；页面 last_edited_time 更新 → 再收并在收据 history 留痕（冲突人赢）。
- * 两条血管：
+ * 决策回灌：
  *   「决策」库(f93e) → decisions（只收 状态=已决定；类型→category 对齐 CHECK 白名单；made_by=user）
- *   员工「Ai超级员工系统｜Skill库」→ skill_evals（下载 zip → 复用 /api/skill-eval/upload 的校验/去重/排队）
  * 库 id 与开关来自 notion_projection_map（face=inlet, direction=ingest, status=active）。
  */
 import { notionReq as defaultNotionReq, getToken } from './recurring-notion-sync.js';
@@ -146,50 +145,7 @@ async function ingestDecisionPage(pool, page, dbId) {
   }
 }
 
-/** 员工 Skill 库(zip) → /api/skill-eval/upload → skill_evals */
-export async function ingestStaffSkillInlet(pool, token, {
-  dbId, notionReq = defaultNotionReq, fetchFn = globalThis.fetch,
-  brainBaseUrl = `http://localhost:${process.env.PORT || 5221}`,
-  evalToken = process.env.EVAL_PROXY_TOKEN || '', log = console,
-} = {}) {
-  const stat = { uploaded: 0, skipped: 0, failed: 0 };
-  const pages = await queryAll(notionReq, token, dbId, { filter: { property: 'Skill压缩包', files: { is_not_empty: true } } });
-  for (const page of pages) {
-    const p = page.properties ?? {};
-    const skillName = text(p['Skill名称']) || 'unknown';
-    const platform = p['适用平台']?.multi_select?.[0]?.name ?? null;
-    const submitter = p['开发人员']?.people?.[0]?.name ?? null;
-    for (const f of p['Skill压缩包']?.files ?? []) {
-      const key = `${page.id}#${f.name}`;
-      try {
-        if (await getReceipt(pool, key)) { stat.skipped++; continue; }
-        const url = f.file?.url ?? f.external?.url;
-        if (!url || !/\.zip$/i.test(f.name)) { stat.skipped++; continue; }
-        const dl = await fetchFn(url);
-        if (!dl.ok) throw new Error(`下载 ${f.name} 失败: ${dl.status}`);
-        const buf = Buffer.from(await dl.arrayBuffer());
-        const form = new FormData();
-        form.append('file', new Blob([buf], { type: 'application/zip' }), f.name);
-        form.append('skill_name', skillName);
-        if (platform) form.append('platform', platform);
-        if (submitter) form.append('submitter', submitter);
-        const res = await fetchFn(`${brainBaseUrl}/api/skill-eval/upload`, {
-          method: 'POST', headers: { 'X-Eval-Proxy-Token': evalToken }, body: form,
-        });
-        const json = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(`upload ${res.status}: ${json.error || ''}`);
-        await putReceipt(pool, { key, dbId, table: 'skill_evals', brainId: json.task_id ?? null, lastEdited: new Date(page.last_edited_time) });
-        stat.uploaded++;
-      } catch (err) {
-        stat.failed++;
-        log.warn(`[notion-inlet] 员工skill ${key} 收账失败: ${err.message}`);
-      }
-    }
-  }
-  return stat;
-}
-
-const HANDLERS = { decisions: ingestDecisionsInlet, skill_evals: ingestStaffSkillInlet };
+const HANDLERS = { decisions: ingestDecisionsInlet };
 const GATE_MS = parseInt(process.env.NOTION_INLET_INGEST_INTERVAL_MS || String(5 * 60 * 1000), 10);
 let lastRunAt = 0;
 

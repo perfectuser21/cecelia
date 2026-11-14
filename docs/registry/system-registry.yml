@@ -24,7 +24,7 @@ systems:
   - id: memory
     name: 记忆系统
     package: packages/brain
-    purpose: 语义搜索、embedding、多巴胺奖励、建议循环、蒸馏文档
+    purpose: 语义搜索、embedding、多巴胺奖励、人工建议台账、蒸馏文档
     features_file: features/memory.yml
     feature_count: 12
     ci_jobs: [brain-unit]
@@ -37,9 +37,9 @@ systems:
   - id: orchestration
     name: 编排系统
     package: packages/brain
-    purpose: Tick 调度、OKR 管理、Area 调度、拆解引擎
+    purpose: Tick 调度、OKR 台账、Area 调度
     features_file: features/orchestration.yml
-    feature_count: 5
+    feature_count: 4
     ci_jobs: [brain-unit, brain-integration]
     health:
       maturity_avg: 1.75
@@ -76,12 +76,12 @@ systems:
 
 summary:
   total_systems: 5
-  total_features: 37
+  total_features: 36
   ci_jobs_available: [secrets-scan, brain-unit, brain-integration, workspace-build, ci-passed]
   maturity_distribution:
     level_0: 1
     level_1: 7
-    level_2: 24
+    level_2: 23
     level_3: 4
     level_4: 1
     level_5: 0

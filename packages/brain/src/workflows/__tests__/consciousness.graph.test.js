@@ -5,14 +5,12 @@ const {
   mockThalamusProcessEvent,
   mockGenerateDecision,
   mockRunRumination,
-  mockPlanNextTask,
   mockSetGuidance,
   mockPool,
 } = vi.hoisted(() => ({
   mockThalamusProcessEvent: vi.fn(),
   mockGenerateDecision: vi.fn(),
   mockRunRumination: vi.fn(),
-  mockPlanNextTask: vi.fn(),
   mockSetGuidance: vi.fn(),
   mockPool: { query: vi.fn() },
 }));
@@ -29,9 +27,7 @@ vi.mock('../../decision.js', () => ({
 vi.mock('../../rumination.js', () => ({
   runRumination: (...args) => mockRunRumination(...args),
 }));
-vi.mock('../../planner.js', () => ({
-  planNextTask: (...args) => mockPlanNextTask(...args),
-}));
+
 vi.mock('../../guidance.js', () => ({
   setGuidance: (...args) => mockSetGuidance(...args),
 }));
@@ -108,7 +104,7 @@ describe('consciousness.graph.js', () => {
       expect(result.completed_steps).toContain('decision');
     });
 
-    it('generateDecision 有 actions 时调用 setGuidance strategy:global', async () => {
+    it('恢复分析照常执行，不输出新增目标的战略guidance', async () => {
       mockGenerateDecision.mockResolvedValue({
         decision_id: 'dec-1',
         actions: [{ type: 'focus', target: 'KR-42' }],
@@ -118,12 +114,8 @@ describe('consciousness.graph.js', () => {
         { completed_steps: [], errors: [], run_ts: '2026-05-05T00:00:00.000Z' },
         { configurable: { thread_id: 'test-decision-guidance:1' } }
       );
-      expect(mockSetGuidance).toHaveBeenCalledWith(
-        'strategy:global',
-        expect.objectContaining({ decision_id: 'dec-1' }),
-        'cortex',
-        24 * 3600_000
-      );
+      expect(mockGenerateDecision).toHaveBeenCalledWith({ trigger: 'consciousness_loop' });
+      expect(mockSetGuidance).not.toHaveBeenCalled();
     });
 
     it('异常路径：generateDecision 抛错 → errors 含 decision 错误', async () => {
@@ -147,53 +139,18 @@ describe('consciousness.graph.js', () => {
         { configurable: { thread_id: 'test-rumination-ff:1' } }
       );
       expect(result.completed_steps).toContain('rumination');
-      expect(result.completed_steps).toContain('plan');
       expect(mockRunRumination).toHaveBeenCalled();
     });
   });
 
-  describe('planNextTaskNode', () => {
-    it('有 KR 时调用 planNextTask', async () => {
-      mockPool.query.mockResolvedValue({ rows: [{ id: 'kr-1' }, { id: 'kr-2' }] });
-      const graph = await getCompiledConsciousnessGraph();
-      await graph.invoke(
-        { completed_steps: [], errors: [], run_ts: '2026-05-05T00:00:00.000Z' },
-        { configurable: { thread_id: 'test-plan-kr:1' } }
-      );
-      expect(mockPlanNextTask).toHaveBeenCalledWith(['kr-1', 'kr-2']);
-    });
-
-    it('无 KR 时不调用 planNextTask', async () => {
-      mockPool.query.mockResolvedValue({ rows: [] });
-      const graph = await getCompiledConsciousnessGraph();
-      await graph.invoke(
-        { completed_steps: [], errors: [], run_ts: '2026-05-05T00:00:00.000Z' },
-        { configurable: { thread_id: 'test-plan-no-kr:1' } }
-      );
-      expect(mockPlanNextTask).not.toHaveBeenCalled();
-    });
-
-    it('异常路径：planNextTask 抛错 → errors 含 plan 错误', async () => {
-      mockPool.query.mockResolvedValue({ rows: [{ id: 'kr-1' }] });
-      mockPlanNextTask.mockRejectedValue(new Error('plan fail'));
-      const graph = await getCompiledConsciousnessGraph();
-      const result = await graph.invoke(
-        { completed_steps: [], errors: [], run_ts: '2026-05-05T00:00:00.000Z' },
-        { configurable: { thread_id: 'test-plan-err:1' } }
-      );
-      expect(result.completed_steps).toContain('plan');
-      expect(result.errors.some(e => e.startsWith('plan:'))).toBe(true);
-    });
-  });
-
   describe('全图正常执行', () => {
-    it('completed_steps 顺序：thalamus → decision → rumination → plan', async () => {
+    it('completed_steps 顺序：thalamus → decision → rumination', async () => {
       const graph = await getCompiledConsciousnessGraph();
       const result = await graph.invoke(
         { completed_steps: [], errors: [], run_ts: '2026-05-05T00:00:00.000Z' },
         { configurable: { thread_id: 'test-full-run:1' } }
       );
-      expect(result.completed_steps).toEqual(['thalamus', 'decision', 'rumination', 'plan']);
+      expect(result.completed_steps).toEqual(['thalamus', 'decision', 'rumination']);
       expect(result.errors).toHaveLength(0);
     });
 
@@ -204,7 +161,7 @@ describe('consciousness.graph.js', () => {
         { completed_steps: [], errors: [], run_ts: '2026-05-05T00:00:00.000Z' },
         { configurable: { thread_id: 'test-partial-fail:1' } }
       );
-      expect(result.completed_steps).toEqual(['thalamus', 'decision', 'rumination', 'plan']);
+      expect(result.completed_steps).toEqual(['thalamus', 'decision', 'rumination']);
       expect(result.errors).toHaveLength(1);
     });
   });

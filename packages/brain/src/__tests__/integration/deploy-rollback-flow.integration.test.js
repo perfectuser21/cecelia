@@ -115,10 +115,6 @@ vi.mock('../../suggestion-triage.js', () => ({
   getTriageStats: vi.fn(),
 }));
 
-vi.mock('../../decomposition-checker.js', () => ({
-  runDecompositionChecks: vi.fn(),
-}));
-
 vi.mock('../../pr-callback-handler.js', () => ({
   verifyWebhookSignature: vi.fn(),
   extractPrInfo: vi.fn(),

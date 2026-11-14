@@ -240,9 +240,6 @@ scripts/smoke/e2e/relay-565fa27a.sh
 scripts/smoke/e2e/relay-dedbca0c.sh
 selfmodel-cap-smoke.sh
 seven-ring-audit-smoke.sh
-skill-eval-formb-smoke.sh
-skill-eval-report-smoke.sh
-skill-eval-smoke.sh
 skill-inventory-smoke.sh
 skill-registry-projection-smoke.sh
 skill-business-grouping-smoke.sh

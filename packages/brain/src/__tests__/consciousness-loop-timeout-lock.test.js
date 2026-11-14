@@ -4,7 +4,7 @@ vi.mock('../db.js', () => ({ default: { query: io.query } }));
 vi.mock('../guidance.js', () => ({ getGuidance: io.guidance, setGuidance: io.set }));
 vi.mock('../workflows/consciousness.graph.js', () => ({ getCompiledConsciousnessGraph: io.graph }));
 vi.mock('../consciousness-guard.js', () => ({ isConsciousnessEnabled: () => true }));
-const completed = { completed_steps: ['thalamus', 'decision', 'rumination', 'plan'], errors: [] };
+const completed = { completed_steps: ['thalamus', 'decision', 'rumination'], errors: [] };
 let loop, savedThread;
 beforeEach(async () => {
   vi.useFakeTimers(); vi.resetModules(); vi.resetAllMocks(); savedThread = null;

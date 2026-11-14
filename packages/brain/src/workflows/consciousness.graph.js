@@ -2,7 +2,7 @@
 /**
  * Brain 意识层 StateGraph（Wave 2 LangGraph 改造）
  *
- * 4-node graph：thalamus → decision → rumination → plan_next_task
+ * 3-node graph：thalamus → decision（任务恢复）→ rumination
  * PG Checkpointer 实现步骤级崩溃恢复。
  * thread_id 由 consciousness-loop.js 管理（rotating consciousness:{epochMs}）。
  *
@@ -13,7 +13,7 @@ import { StateGraph, Annotation, START, END } from '@langchain/langgraph';
 import { processEvent as thalamusProcessEvent, EVENT_TYPES } from '../thalamus.js';
 import { generateDecision } from '../decision.js';
 import { runRumination } from '../rumination.js';
-import { planNextTask } from '../planner.js';
+
 import { setGuidance } from '../guidance.js';
 import { getPgCheckpointer } from '../orchestrator/pg-checkpointer.js';
 import pool from '../db.js';
@@ -57,15 +57,8 @@ async function thalamusNode(state) {
 
 async function decisionNode(state) {
   try {
-    const decision = await generateDecision({ trigger: 'consciousness_loop' });
-    if (decision.actions?.length > 0) {
-      await setGuidance(
-        'strategy:global',
-        { decision_id: decision.decision_id, actions: decision.actions },
-        'cortex',
-        24 * 3600_000
-      );
-    }
+    await generateDecision({ trigger: 'consciousness_loop' });
+
     return {
       completed_steps: [...state.completed_steps, 'decision'],
       errors: state.errors,
@@ -98,41 +91,15 @@ async function ruminationNode(state) {
   };
 }
 
-async function planNextTaskNode(state) {
-  try {
-    const { rows } = await pool.query(
-      `SELECT id FROM key_results WHERE status IN ('active', 'in_progress') LIMIT 5`
-    );
-    const krIds = rows.map(r => r.id);
-    if (krIds.length > 0) {
-      await planNextTask(krIds);
-    }
-    return {
-      // 步骤标识用简写 'plan'，区别于 LangGraph 内部节点名 'plan_next_task'
-      completed_steps: [...state.completed_steps, 'plan'],
-      errors: state.errors,
-    };
-  } catch (err) {
-    console.warn('[consciousness-graph] planNextTask 失败（非致命）:', err.message);
-    return {
-      // 步骤标识用简写 'plan'，区别于 LangGraph 内部节点名 'plan_next_task'
-      completed_steps: [...state.completed_steps, 'plan'],
-      errors: [...state.errors, `plan: ${err.message}`],
-    };
-  }
-}
-
 export function buildConsciousnessGraph() {
   return new StateGraph(ConsciousnessState)
     .addNode('thalamus', thalamusNode)
     .addNode('decision', decisionNode)
     .addNode('rumination', ruminationNode)
-    .addNode('plan_next_task', planNextTaskNode)
     .addEdge(START, 'thalamus')
     .addEdge('thalamus', 'decision')
     .addEdge('decision', 'rumination')
-    .addEdge('rumination', 'plan_next_task')
-    .addEdge('plan_next_task', END);
+    .addEdge('rumination', END);
 }
 
 let _compiled = null;

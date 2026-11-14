@@ -47,11 +47,7 @@ vi.mock('../okr-tick.js', () => ({
   stopOkrTickLoop: vi.fn(), getOkrTickStatus: vi.fn(), addQuestionToGoal: vi.fn(),
   answerQuestionForGoal: vi.fn(), getPendingQuestions: vi.fn(), OKR_STATUS: {},
 }));
-vi.mock('../nightly-tick.js', () => ({
-  executeNightlyAlignment: vi.fn(), runNightlyAlignmentSafe: vi.fn(),
-  startNightlyScheduler: vi.fn(), stopNightlyScheduler: vi.fn(),
-  getNightlyTickStatus: vi.fn(), getDailyReports: vi.fn(),
-}));
+
 vi.mock('../intent.js', () => ({
   parseIntent: vi.fn(), parseAndCreate: vi.fn(), INTENT_TYPES: {}, INTENT_ACTION_MAP: {},
   extractEntities: vi.fn(), classifyIntent: vi.fn(), getSuggestedAction: vi.fn(),
@@ -145,6 +141,25 @@ describe('execution-callback 韧性：updated_at / claim 清空', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     setupDefaultMocks();
+  });
+
+  it('architecture scan完成只结算回执，不造规划或执行design断链检查', async () => {
+    const fallback = mockPool.query.getMockImplementation();
+    mockPool.query.mockImplementation((sql, params) => {
+      if (typeof sql === 'string' && sql.includes('SELECT task_type, project_id, goal_id, title, payload FROM tasks')) {
+        return Promise.resolve({ rows: [{ task_type: 'architecture_design', project_id: 'scan-project', title: '扫描', payload: { mode: 'scan' } }] });
+      }
+      return fallback(sql, params);
+    });
+    const response = await mockReqRes('POST', '/execution-callback', {
+      task_id: 'scan-completed', run_id: 'scan-run', status: 'AI Done', result: { result: '扫描完成' },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(mockClient.query.mock.calls.some(([sql]) => /UPDATE tasks/.test(sql))).toBe(true);
+    expect(mockPool.query.mock.calls.some(([sql]) => /SELECT COUNT\(\*\).*cnt FROM tasks/.test(sql))).toBe(false);
+    const { createTask } = await import('../actions.js');
+    expect(createTask).not.toHaveBeenCalled();
+    expect(mockPool.query.mock.calls.some(([,params]) => params?.includes?.('pipeline_gap'))).toBe(false);
   });
 
   it('UPDATE tasks SQL 包含 updated_at = NOW()', async () => {

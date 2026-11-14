@@ -57,17 +57,14 @@ vi.mock('../progress-ledger.js', () => ({ recordProgressStep: vi.fn(async () => 
 vi.mock('../llm-caller.js', () => ({ callLLM: vi.fn(async () => ({})) }));
 vi.mock('../working-memory.js', () => ({ getMemory: vi.fn(async () => null), setMemory: vi.fn(async () => {}) }));
 vi.mock('../watchdog.js', () => ({ startWatching: vi.fn(), stopWatching: vi.fn(), sampleAll: vi.fn(async () => []) }));
-vi.mock('../desire-engine.js', () => ({ processDesires: vi.fn(async () => ({})) }));
 vi.mock('../dev-failure-classifier.js', () => ({ classifyDevFailure: vi.fn(async () => ({})) }));
 vi.mock('../self-model.js', () => ({ updateSelfModel: vi.fn(async () => {}), getSelfModel: vi.fn(async () => ({})) }));
-vi.mock('../suggestion-dispatcher.js', () => ({ dispatchSuggestion: vi.fn(async () => {}) }));
+
 vi.mock('../dep-cascade.js', () => ({ propagateDependencyFailure: vi.fn(async () => ({ affected: [] })), recoverDependencyChain: vi.fn(async () => ({ recovered: [] })) }));
 
 import express from 'express';
 import request from 'supertest';
 import { runTickSafe } from '../tick.js';
-
-
 
 const failed = JSON.stringify({suggestion_id:'suggestion-1',identified_layer:'unknown',status:'failed',error:'insufficient information'});
 const good = JSON.stringify({suggestion_id:'suggestion-1',identified_layer:'feature',status:'success'});
@@ -105,11 +102,11 @@ describe('isolated suggestion callback compatibility', () => {
   expect(mockClient.query.mock.calls.some(c=>c[0]==='ROLLBACK')).toBe(true);
   expect(mockPool.query.mock.calls.some(c=>c[0].includes('processed_at = NOW()'))).toBe(false);
  });
- it('successful structured suggestion retains current completed behavior',async()=>{
-  const x=await scenario({result:good}); expect(x.status).toBe('completed'); expect(x.architecture).toHaveLength(1); expect(x.suggestion).toBe('processed');
+ it('successful structured suggestion completes without creating an architecture task',async()=>{
+  const x=await scenario({result:good}); expect(x.status).toBe('completed'); expect(x.architecture).toHaveLength(0); expect(x.suggestion).toBe('processed');
  });
- it('historical unstructured output retains current completed behavior',async()=>{
-  const x=await scenario({result:'legacy output'}); expect(x.status).toBe('completed'); expect(x.architecture).toHaveLength(1);
+ it('historical unstructured output completes without creating an architecture task',async()=>{
+  const x=await scenario({result:'legacy output'}); expect(x.status).toBe('completed'); expect(x.architecture).toHaveLength(0);
  });
  it('non-suggestion failure-shaped content retains outer status',async()=>{
   const x=await scenario({type:'research'}); expect(x.status).toBe('completed'); expect(x.architecture).toHaveLength(0);

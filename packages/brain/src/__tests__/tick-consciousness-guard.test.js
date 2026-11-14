@@ -5,8 +5,8 @@ import ts from 'typescript';
 const source = readFileSync(new URL('../tick-runner.js', import.meta.url), 'utf8');
 const guarded = [
   'generateDailyDiaryIfNeeded', 'runRumination', 'collectSelfReport', 'feedDailyIfNeeded',
-  'runSynthesisSchedulerIfNeeded', 'runSuggestionCycle', 'runConversationConsolidator',
-  'runDesireSystem', 'synthesizeEvolutionIfNeeded',
+  'runSynthesisSchedulerIfNeeded', 'runConversationConsolidator',
+  'synthesizeEvolutionIfNeeded',
 ];
 
 // 证明真实调用位于条件为真的语法分支，邻近注释/空if/else不能提供保护。

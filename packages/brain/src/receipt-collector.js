@@ -1,7 +1,7 @@
 /**
  * receipt-collector.js — 对外动作回执台账（九要素 T4）
  *
- * 三入口（notifier sendFeishu/sendBark、feishu-alert sendToFeishu、ops.js deploy webhook）
+ * 现役入口（notifier sendFeishu/sendBark、ops.js deploy webhook）
  * 真正发起对外调用时写 action_receipts(pending)，按真实结果核销 confirmed/failed；
  * 无人核销的 pending 由 runReceiptCollector（scheduler-jobs 60s 轮询 + 本模块 10min 自 gate）
  * 超 30min 标 timeout。未确认段由 getUnconfirmedReceipts 喂 battle-report 第⑥段。

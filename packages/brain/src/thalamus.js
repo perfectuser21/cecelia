@@ -222,9 +222,7 @@ const EVENT_TYPES = {
   USER_COMMAND: 'user_command',
 
   // 认知闭环事件
-  GOAL_STALLED: 'goal_stalled',
   RUMINATION_RESULT: 'rumination_result',
-  DESIRE_ACTION: 'desire_action',
   OWNER_INTENT: 'owner_intent',
 
   // 系统相关
@@ -252,8 +250,6 @@ const EVENT_TYPES = {
   // 学习相关
   LEARNINGS_RECEIVED: 'learnings_received',
 
-  // 建议相关（suggestion-dispatcher → 丘脑统一创建任务）
-  SUGGESTION_READY: 'suggestion_ready',
 };
 
 // ============================================================
@@ -289,7 +285,6 @@ const ACTION_WHITELIST = {
   'predict_progress': { dangerous: false, description: '预测进度' },
 
   // 规划操作
-  'create_proposal': { dangerous: false, description: '创建计划提案' },
 
   // okr_initiative_plan / okr_scope_plan / okr_project_plan 已移除（决策 ee4842a6/
   // 3feeae3e，接力棒链 2afa6d69 棒4）：scope/initiative 层退役，这三个 action 对应的
@@ -315,18 +310,14 @@ const ACTION_WHITELIST = {
   'fallback_to_tick': { dangerous: false, description: '降级到纯代码 Tick' },
 
   // 认知闭环操作（v1.142.0）
-  'kr_replan': { dangerous: false, description: '触发 KR 重新规划（KR停滞/失败率高时）' },
   // write_self_model 已从白名单移除（PRD f63cf8e8）：self_model 写入仅允许
   // 内部模块（consolidation / rumination / rumination-scheduler / thalamus）通过
   // updateSelfModel() 进行；LLM 不得作为可派发 action 提议。
   'escalate_to_cortex': { dangerous: false, description: '升级到 L2 Opus 皮层做深度战略分析' },
 
   // 提案操作（Inbox 系统，全部 dangerous → 进 pending_actions）
-  'propose_decomposition': { dangerous: true, description: 'OKR/Initiative 拆解结果确认' },
-  'propose_weekly_plan': { dangerous: true, description: '本周计划确认' },
   'propose_priority_change': { dangerous: true, description: '优先级调整建议' },
   'propose_anomaly_action': { dangerous: true, description: '异常处理方案选择' },
-  'propose_milestone_review': { dangerous: true, description: 'Initiative 完成验收' },
   'heartbeat_finding': { dangerous: true, description: '巡检发现异常' },
 
   // 扩展操作 v1.121.0
@@ -1224,7 +1215,6 @@ function quickRoute(event) {
     return null;
   }
 
-
   // USER_MESSAGE：按意图分级处理
   if (event.type === EVENT_TYPES.USER_MESSAGE) {
     // 状态查询：直接记录，无需 LLM 决策
@@ -1251,59 +1241,6 @@ function quickRoute(event) {
     return null;
   }
 
-  // GOAL_STALLED：KR 停滞事件，判断是否需要升级 L2
-  if (event.type === EVENT_TYPES.GOAL_STALLED) {
-    const daysStalledNum = parseInt(event.days_stalled || '0', 10);
-    if (daysStalledNum >= 14) {
-      // 长期停滞 → 升级到 L2 Opus 皮层战略分析
-      return {
-        level: 2,
-        actions: [
-          { type: 'escalate_to_cortex', params: { goal_id: event.goal_id, reason: 'kr_stalled_14d', days_stalled: daysStalledNum } },
-          { type: 'log_event', params: { event_type: 'goal_stalled', goal_id: event.goal_id, days_stalled: daysStalledNum } },
-        ],
-        rationale: `KR 停滞 ${daysStalledNum} 天，需要 Opus 皮层深度战略分析`,
-        confidence: 0.9,
-        safety: false
-      };
-    }
-    // 短期停滞（< 14天）→ L1 重新规划
-    return {
-      level: 1,
-      actions: [
-        { type: 'kr_replan', params: { goal_id: event.goal_id, days_stalled: daysStalledNum } },
-        { type: 'log_event', params: { event_type: 'goal_stalled', goal_id: event.goal_id } },
-      ],
-      rationale: `KR 停滞 ${daysStalledNum} 天，触发重新规划`,
-      confidence: 0.85,
-      safety: false
-    };
-  }
-
-  // DESIRE_ACTION：欲望系统信号，直接创建任务
-  if (event.type === EVENT_TYPES.DESIRE_ACTION) {
-    const desireTaskType = event.desire_type === 'explore' ? 'research' : 'initiative_plan';
-    const priority = event.urgency >= 8 ? 'P0' : event.urgency >= 5 ? 'P1' : 'P2';
-    return {
-      level: 0,
-      actions: [
-        {
-          type: 'create_task',
-          params: {
-            title: event.title || `[欲望] ${(event.content || '').slice(0, 80)}`,
-            description: event.description || event.content || '',
-            task_type: desireTaskType,
-            priority,
-          }
-        },
-        { type: 'log_event', params: { event_type: 'desire_action', desire_type: event.desire_type } },
-      ],
-      rationale: `欲望系统 ${event.desire_type} 信号，创建 ${desireTaskType} 任务`,
-      confidence: 0.85,
-      safety: false
-    };
-  }
-
   // OWNER_INTENT：主人意图信号，交 L1 LLM 根据意图路由（/plan 规则已融合在 THALAMUS_PROMPT）
   // L0 不再硬编码 task_type，由 LLM 按路由表决定
 
@@ -1311,30 +1248,9 @@ function quickRoute(event) {
   if (event.type === EVENT_TYPES.RUMINATION_RESULT) {
     // self_updates：self_model 已由 rumination.js 直接调用 updateSelfModel() 更新；
     // write_self_model 已从白名单移除，L1 LLM 无法处理，且洞察→task 绑定已在
-    // rumination.js 的 maybeCreateRuminationTask 中完成。继续往下做 L0 处理。
 
     // 有可执行行动 → L0 直接创建 research 任务
-    if (Array.isArray(event.actions) && event.actions.length > 0) {
-      return {
-        level: 0,
-        actions: [
-          ...event.actions.map(actionTitle => ({
-            type: 'create_task',
-            params: {
-              title: actionTitle,
-              description: `反刍洞察自动创建：${(event.learnings || []).map(l => l.title).join(', ').slice(0, 400)}`,
-              task_type: 'research',
-              priority: 'P2',
-              trigger_source: 'rumination',
-            }
-          })),
-          { type: 'log_event', params: { event_type: 'rumination_result', has_actions: true } },
-        ],
-        rationale: `反刍有 ${event.actions.length} 个可执行行动，创建 research 任务`,
-        confidence: 0.85,
-        safety: false
-      };
-    }
+
     // 仅有 learnings 无 actions → L0 记录即可
     return {
       level: 0,
@@ -1486,41 +1402,6 @@ function quickRoute(event) {
   }
 
   // Suggestion 就绪：由丘脑统一创建 suggestion_plan 任务，断开直接 INSERT 路径
-  if (event.type === EVENT_TYPES.SUGGESTION_READY) {
-    const contentPreview = typeof event.content === 'string'
-      ? event.content.substring(0, 200)
-      : JSON.stringify(event.content).substring(0, 200);
-    const fullContent = typeof event.content === 'string'
-      ? event.content
-      : JSON.stringify(event.content, null, 2);
-    return {
-      level: 0,
-      actions: [
-        {
-          type: 'create_task',
-          params: {
-            title: `[SUGGESTION_PLAN] 层级识别：${contentPreview}`,
-            description: `[SUGGESTION_MODE]\n\nSuggestion ID: ${event.suggestion_id}\nScore: ${event.priority_score}\nSource: ${event.source || 'unknown'}\n\n内容：\n${fullContent}\n\n请识别此 Suggestion 的层级（Layer 3 KR / Layer 4 Project / Layer 5 Scope / Layer 6 Initiative / Layer 7 Task/Pipeline），\n找到最合适的挂载点，并调用对应的 Brain API 创建结构。`,
-            task_type: 'suggestion_plan',
-            priority: 'P2',
-            trigger_source: 'suggestion_dispatcher',
-            payload: {
-              suggestion_id: String(event.suggestion_id),
-              suggestion_score: event.priority_score,
-              source: event.source || null,
-              agent_id: event.agent_id || null,
-            },
-            domain: event.domain || null,
-            owner_role: event.owner_role || null,
-          }
-        },
-        { type: 'log_event', params: { event_type: 'suggestion_ready', suggestion_id: event.suggestion_id } },
-      ],
-      rationale: `Suggestion ${event.suggestion_id} 分数=${event.priority_score}，创建 suggestion_plan 任务`,
-      confidence: 0.9,
-      safety: false
-    };
-  }
 
   // 其他情况需要 L1 LLM 判断
   return null;
@@ -1768,7 +1649,7 @@ async function observeChat(signal, context = {}) {
 // Exports
 // ============================================================
 
-// routeEvent 别名（goal-evaluator 等外部模块使用）
+// routeEvent 兼容别名
 const routeEvent = processEvent;
 
 export {

@@ -56,7 +56,6 @@ const BRAIN_ALWAYS_ACTIVE = new Set([
   'quarantine-review-system',     // 隔离区，嵌入任务处理
   'emotion-perception',           // 情绪感知，嵌入 tick 循环
   'curiosity-exploration',        // 好奇心探索，意识层固有
-  'desire-formation',             // 欲望涌现，意识层固有
   'rumination',                   // 反刍，意识层固有
   'memory-working',               // 工作记忆，Brain 上下文
   'memory-episodic',              // 情节记忆，memory_stream 支撑

@@ -103,11 +103,10 @@ vi.mock('../memory-retriever.js', () => ({ buildMemoryContext: vi.fn(), getRecen
 vi.mock('../self-report-collector.js', () => ({ collectSelfReport: vi.fn() }));
 vi.mock('../learning.js', () => ({ getRecentLearnings: vi.fn(() => []) }));
 vi.mock('../suggestion-triage.js', () => ({ createSuggestion: vi.fn(), PRIORITY_WEIGHTS: {} }));
-vi.mock('../suggestion-dispatcher.js', () => ({ dispatchSuggestions: vi.fn() }));
+
 vi.mock('fs', () => ({ readFileSync: vi.fn(() => ''), readdirSync: vi.fn(() => []) }));
 // T12: mock capture-inbox（ESM export 无法 vi.spyOn，用工厂 mock；等价断言，与 handoff.test.js 手法一致）
 vi.mock('../capture-inbox.js', () => ({ pushCaptureAtom: vi.fn().mockResolvedValue('atom-1') }));
-
 
 // 本测试需要控制 executor（learnings 前奏未 mock）
 vi.mock('../executor.js', () => ({

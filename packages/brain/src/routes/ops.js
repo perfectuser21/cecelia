@@ -24,15 +24,12 @@ import {
   cleanupExpiredSuggestions,
   getTriageStats
 } from '../suggestion-triage.js';
-import {
-  runDecompositionChecks,
-} from '../decomposition-checker.js';
+
 import { verifyWebhookSignature, extractPrInfo, handlePrMerged } from '../pr-callback-handler.js';
 import { getAllStates as getAllCBStates } from '../circuit-breaker.js';
 import { getActiveExecutionPaths, INVENTORY_CONFIG } from './shared.js';
 
 const router = Router();
-
 
 // ============================================================
 // Desire System API — Cecelia 的欲望/表达
@@ -183,7 +180,6 @@ router.post('/desires/:id/respond', async (req, res) => {
   }
 });
 
-
 /**
  * GET /api/brain/decomposition/missing
  * 查询缺失拆解任务的 Initiative 列表
@@ -234,35 +230,6 @@ router.get('/decomposition/missing', async (req, res) => {
  * POST /api/brain/decomposition/create-missing
  * 手动触发为缺失拆解任务的 Initiative 创建任务
  */
-router.post('/decomposition/create-missing', async (req, res) => {
-  try {
-    const result = await runDecompositionChecks();
-
-    // 统计创建的任务
-    const createdTasks = result.actions?.filter(action => action.action === 'create_decomposition') || [];
-    const inventoryTasks = createdTasks.filter(task => task.check === 'inventory_replenishment');
-    const initiativeTasks = createdTasks.filter(task => task.check === 'initiative_decomposition');
-
-    res.json({
-      success: true,
-      message: 'Decomposition check completed',
-      summary: result.summary || {},
-      created_tasks: {
-        total: createdTasks.length,
-        inventory_replenishment: inventoryTasks.length,
-        initiative_seeding: initiativeTasks.length
-      },
-      details: {
-        active_paths: result.active_paths || [],
-        created_tasks: result.created_tasks || []
-      }
-    });
-
-  } catch (err) {
-    console.error('[API] decomposition/create-missing error:', err.message);
-    res.status(500).json({ error: err.message });
-  }
-});
 
 /**
  * GET /api/brain/decomposition/stats
@@ -2871,6 +2838,5 @@ router.post('/deploy/rollback', async (req, res) => {
     console.error(`[rollback] ❌ 回滚失败:`, err.message);
   }
 });
-
 
 export default router;

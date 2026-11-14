@@ -97,7 +97,7 @@ const COHORTS=[
 const COMMANDER_CI_COHORT={...COHORTS[4],
  'existing-ops-stage-source.js':'ef6a2191f1db8b939e21e2b5c62a8de4bd01f225f713c5c88175194cb938623a'};
 const SKILL_RETIREMENT_CI_COHORT={...COMMANDER_CI_COHORT,
- 'existing-ops-stage-source.js':'f4ed19bbdf1e26cc4c820f17eafbaf9627c3d907c551c48b5ba1e67db6798de8'};
+ 'existing-ops-stage-source.js':'079b4f1785a462bb77d3a12493b24f1352cda40b260a1775a7a8a61289f531f5'};
 export const ciVersionGuardCohorts=()=>[...COHORTS,COMMANDER_CI_COHORT,SKILL_RETIREMENT_CI_COHORT];
 export function registerCiRetirementGuardTests({root,base,scan}){
  describe('当前来源完整闭包及执行防复活',()=>{

@@ -96,7 +96,6 @@ import phoneRegistryRouter from './src/routes/phone-registry.js';
 import resourceHealthRouter from './src/routes/resource-health.js';
 import commanderHeartbeatRouter from './src/routes/commander-heartbeat.js';
 import goldenPathsRouter from './src/routes/golden-paths.js';
-import skillEvalRoutes from './src/routes/eval.js';
 import rpaDevVerifyRouter from './src/routes/rpa-dev-verify.js';
 import incidentsRouter from './src/routes/incidents.js';
 import graphRoutes from './src/routes/graph.js';
@@ -426,8 +425,6 @@ app.use('/api/brain/strategy-tree', strategyTreeRoutes);
 app.use('/api/brain/kr/convergence', krConvergenceRoutes);
 app.use('/api/brain/kr-project-map', krProjectMapRoutes);
 app.use('/api/brain/registry', registryRoutes);
-// Skill Evaluator 端点（POST /upload 需 X-Eval-Proxy-Token，GET /status 无需 token）
-app.use('/api/skill-eval', skillEvalRoutes);
 app.use('/api/brain', vocabAlias); // 行业词汇 API 别名：/value-streams 等 → 旧路径（决策 a340f100）
 app.use('/api/brain', journeysRouter);
 // GET /api/brain/issues — skills 期望的端点（journey_features 里有 issues，此处提供独立路由）
@@ -867,15 +864,6 @@ async function onBrainListening() {
     }
   } else {
     console.log('[Server] Evolution Scanner SKIPPED (CONSCIOUSNESS_ENABLED=false)');
-  }
-
-  // Initialize Nightly Tick (每日质检 + 对齐)
-  try {
-    const { startNightlyScheduler } = await import('./src/nightly-tick.js');
-    startNightlyScheduler();
-    console.log('[Server] Nightly Scheduler started');
-  } catch (e) {
-    console.warn('[Server] Nightly Scheduler init failed (non-fatal):', e.message);
   }
 
   // Initialize Nightly Orchestrator (夜间自驱引擎 v1 — 任务自动编排)

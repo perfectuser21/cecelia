@@ -1,5 +1,5 @@
 # 记忆系统 (memory) - Feature 详情
-# 更新时间: 2026-04-03
+# 更新时间: 2026-11-14
 # Schema: v2.0.0
 
 system_id: memory
@@ -189,13 +189,13 @@ features:
         - L3
     runtime: {}
   - feature_id: memory_suggestion_cycle
-    name: 建议循环
-    purpose: 将 active desires 注入 suggestion pipeline，生成行动建议
+    name: 人工建议台账
+    purpose: 人工登记、查询、分拣及更新建议状态；不自动生成建议或派发任务
     maturity: 2
     code:
       root: packages/brain/src
       entry_files:
-        - packages/brain/src/suggestion-cycle.js
+        - packages/brain/src/suggestion-triage.js
       language: javascript
       runtime: node
     docs:
@@ -209,9 +209,6 @@ features:
     tests:
       unit:
         - packages/brain/src/__tests__/suggestion-api.test.js
-        - packages/brain/src/__tests__/suggestion-dispatcher-domain.test.js
-        - packages/brain/src/__tests__/suggestion-dispatcher-thalamus.test.js
-        - packages/brain/src/__tests__/suggestion-dispatcher.test.js
         - packages/brain/src/__tests__/suggestion-events.test.js
         - packages/brain/src/__tests__/suggestion-integration.test.js
         - packages/brain/src/__tests__/suggestion-triage.test.js
@@ -220,15 +217,12 @@ features:
       regression: []
     capabilities:
       - id: memory_suggestion_cycle_suggest
-        name: 行动建议生成
-        entry_file: packages/brain/src/suggestion-cycle.js
+        name: 建议台账管理
+        entry_file: packages/brain/src/suggestion-triage.js
         maturity: 2
         tests:
           unit:
             - packages/brain/src/__tests__/suggestion-api.test.js
-            - packages/brain/src/__tests__/suggestion-dispatcher-domain.test.js
-            - packages/brain/src/__tests__/suggestion-dispatcher-thalamus.test.js
-            - packages/brain/src/__tests__/suggestion-dispatcher.test.js
             - packages/brain/src/__tests__/suggestion-events.test.js
             - packages/brain/src/__tests__/suggestion-integration.test.js
             - packages/brain/src/__tests__/suggestion-triage.test.js
@@ -319,7 +313,6 @@ features:
         - packages/brain/src/__tests__/cortex-cross-task-rca.test.js
         - packages/brain/src/__tests__/cortex-dedup-persist.test.js
         - packages/brain/src/__tests__/cortex-feedback-loop.test.js
-        - packages/brain/src/__tests__/cortex-insight-autoclose.test.js
         - packages/brain/src/__tests__/cortex-memory.test.js
         - packages/brain/src/__tests__/cortex-output-dedup.test.js
         - packages/brain/src/__tests__/cortex-p2.test.js
@@ -366,7 +359,6 @@ features:
             - packages/brain/src/__tests__/cortex-cross-task-rca.test.js
             - packages/brain/src/__tests__/cortex-dedup-persist.test.js
             - packages/brain/src/__tests__/cortex-feedback-loop.test.js
-            - packages/brain/src/__tests__/cortex-insight-autoclose.test.js
             - packages/brain/src/__tests__/cortex-memory.test.js
             - packages/brain/src/__tests__/cortex-output-dedup.test.js
             - packages/brain/src/__tests__/cortex-p2.test.js
@@ -560,13 +552,13 @@ features:
         - L3
     runtime: {}
   - feature_id: memory_desire
-    name: 欲望系统
-    purpose: 管理 Cecelia 的 desires（想做的事），驱动主动行为
+    name: 欲望反馈台账
+    purpose: 读取及回应已有欲望记录，接收任务结果反馈；不再形成欲望或触发表达
     maturity: 2
     code:
       root: packages/brain/src
       entry_files:
-        - packages/brain/src/desire/desire-formation.js
+        - packages/brain/src/desire-feedback.js
       language: javascript
       runtime: node
     docs:
@@ -581,21 +573,19 @@ features:
       unit:
         - packages/brain/src/__tests__/desire-feedback.test.js
         - packages/brain/src/__tests__/desire-respond-api.test.js
-        - packages/brain/src/__tests__/desire-system.test.js
         - packages/brain/src/__tests__/desires-api.test.js
       integration: []
       e2e: []
       regression: []
     capabilities:
       - id: memory_desire_core
-        name: 欲望系统
-        entry_file: packages/brain/src/desire/desire-formation.js
+        name: 欲望反馈台账
+        entry_file: packages/brain/src/desire-feedback.js
         maturity: 2
         tests:
           unit:
             - packages/brain/src/__tests__/desire-feedback.test.js
             - packages/brain/src/__tests__/desire-respond-api.test.js
-            - packages/brain/src/__tests__/desire-system.test.js
             - packages/brain/src/__tests__/desires-api.test.js
           integration: []
           e2e: []
@@ -631,7 +621,6 @@ features:
         - packages/brain/src/__tests__/rumination-memory-stream.test.js
         - packages/brain/src/__tests__/rumination-quarantine.test.js
         - packages/brain/src/__tests__/rumination-scheduler.test.js
-        - packages/brain/src/__tests__/rumination-suggestions.test.js
         - packages/brain/src/__tests__/rumination-threshold.test.js
         - packages/brain/src/__tests__/rumination.test.js
       integration: []
@@ -649,7 +638,6 @@ features:
             - packages/brain/src/__tests__/rumination-memory-stream.test.js
             - packages/brain/src/__tests__/rumination-quarantine.test.js
             - packages/brain/src/__tests__/rumination-scheduler.test.js
-            - packages/brain/src/__tests__/rumination-suggestions.test.js
             - packages/brain/src/__tests__/rumination-threshold.test.js
             - packages/brain/src/__tests__/rumination.test.js
           integration: []

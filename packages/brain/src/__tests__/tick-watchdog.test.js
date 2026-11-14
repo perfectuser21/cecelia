@@ -143,10 +143,6 @@ vi.mock('../daily-review-scheduler.js', () => ({
   triggerContractScan: vi.fn().mockResolvedValue(null),
 }));
 
-vi.mock('../desire/index.js', () => ({
-  runDesireSystem: vi.fn().mockResolvedValue(null),
-}));
-
 vi.mock('../rumination.js', () => ({
   runRumination: vi.fn().mockResolvedValue(null),
 }));
@@ -204,7 +200,6 @@ vi.mock('../zombie-sweep.js', () => ({
 vi.mock('../pipeline-patrol.js', () => ({
   runPipelinePatrol: vi.fn().mockResolvedValue(null),
 }));
-
 
 vi.mock('../pre-flight-check.js', () => ({
   preFlightCheck: vi.fn().mockResolvedValue({ passed: true, issues: [], suggestions: [] }),

@@ -16,7 +16,6 @@ import { buildMemoryContext } from './memory-retriever.js';
 import { queryNotebook, addTextSource } from './notebook-adapter.js';
 import { updateSelfModel } from './self-model.js';
 import { processEvent, EVENT_TYPES } from './thalamus.js';
-import { createTask } from './actions.js';
 
 // ── 配置 ──────────────────────────────────────────────────
 export const DAILY_BUDGET = 100; // 基础预算（从 20 提到 100，向后兼容，内部逻辑请使用 getDailyBudget()）
@@ -183,12 +182,10 @@ ${learningsList}
 
 1. **模式发现**：这些知识之间有什么共同点或关联？是否揭示了某个系统性的规律？
 2. **关联分析**：与用户的 OKR/目标有什么关联？能帮助推进哪些关键结果？
-3. **可执行洞察**：基于分析，有什么具体可执行的建议？（在末尾加 [ACTION: 建议标题]）
-4. **风险或机会**：是否暗示了某些风险或未被发现的机会？${hasQuarantinePattern ? '\n\n注意：其中含有隔离失败记录，请重点分析应如何避免同类失败，给出策略调整建议。' : ''}
+3. **风险或机会**：是否暗示了某些风险或未被发现的机会？${hasQuarantinePattern ? '\n\n注意：其中含有隔离失败记录，请重点分析应如何避免同类失败，给出策略调整建议。' : ''}
 
 ## 输出格式
 用 [反刍洞察] 开头，300-500 字深度分析。
-如果有可执行建议，每个建议单独一行 [ACTION: 建议标题]。
 简体中文回复。`;
 
   return prompt;
@@ -211,7 +208,7 @@ export function buildNotebookQuery(items) {
 对这些新内容进行深度分析：
 1. 发现跨时间的模式或规律
 2. 与 OKR/目标的关联
-3. 可执行的洞察建议（格式：[ACTION: 建议标题]）
+3. 对已有经验的事实总结
 4. 潜在风险或机会
 用 [反刍洞察] 开头，300-500 字，简体中文。`;
 }
@@ -245,43 +242,8 @@ export function cleanNotebookResponse(text) {
 // ── 消化核心逻辑（v3 NotebookLM 主路）──────────────────────
 
 /**
- * 洞察→task 绑定：为 learnings 表中的单条记录创建 dev task（去重，幂等）
  * 仅处理 source='learning' 的条目；memory_stream 会话条目不创建 task。
- * 镜像 cortex.maybeCreateInsightTask，使用传入的 db 连接而非 cortex 模块级 pool。
  */
-async function maybeCreateRuminationTask(db, learning, insight) {
-  try {
-    const { rows } = await db.query(
-      `SELECT id FROM tasks WHERE payload->>'insight_learning_id' = $1 AND status != 'cancelled' LIMIT 1`,
-      [learning.id]
-    );
-    if (rows.length > 0) {
-      console.log(`[rumination] insight task already exists for learning ${learning.id}, skip`);
-      return;
-    }
-
-    const titleText = learning.title || insight.slice(0, 80).replace(/\n/g, ' ');
-    await createTask({
-      title: `[Insight修复] ${titleText.slice(0, 120)}`,
-      description: `由 Rumination 自动生成的修复任务。\n\n原始 insight (learning_id: ${learning.id}):\n${insight.slice(0, 500)}`,
-      priority: 'P2',
-      task_type: 'dev',
-      trigger_source: 'rumination',
-      payload: {
-        insight_learning_id: learning.id,
-        event_type: 'rumination_result',
-      },
-    });
-
-    await db.query(
-      `UPDATE learnings SET applied = true, applied_at = NOW() WHERE id = $1`,
-      [learning.id]
-    );
-    console.log(`[rumination] auto-created dev task for insight learning ${learning.id}`);
-  } catch (err) {
-    console.warn(`[rumination] maybeCreateRuminationTask failed for ${learning.id}:`, err.message);
-  }
-}
 
 /**
  * 批量消化 learnings（v3: NotebookLM ask 为主路，callLLM 为 fallback）
@@ -482,42 +444,6 @@ async function digestLearnings(db, learnings) {
         workingNotebookId
       ).catch(err => console.warn('[rumination] NotebookLM write-back failed (non-blocking):', err.message));
 
-      // 4.1 检测 actionable 洞察 → 收集 [ACTION:] 标记，统一发给丘脑 L1 处理
-      // （丘脑 RUMINATION_RESULT L0 handler 会创建 research 任务）
-    }
-
-    // 4.2 检测好奇心信号 → 写入 working_memory curiosity_topics（环2：自主学习驱动）
-    if (insight) {
-      const CURIOSITY_PATTERNS = [
-        /不理解|不清楚|机制不明|原因未知|需要验证|需要更多信息|值得深入研究|待探索|unclear/i,
-        /为什么会|如何实现|背后的原因|有待研究|还不确定/i,
-      ];
-      const hasCuriosity = CURIOSITY_PATTERNS.some(p => p.test(insight));
-      if (hasCuriosity) {
-        try {
-          // 提取好奇的主题（优先用 [ACTION:] 标记，否则取洞察前80字）
-          const actionMatch = insight.match(/\[ACTION:\s*(.+?)\]/);
-          const topic = actionMatch ? actionMatch[1].trim() : insight.slice(0, 80).trim();
-
-          // 读取现有 curiosity_topics，追加，保留最近 10 个
-          const existing = await db.query(
-            `SELECT value_json FROM working_memory WHERE key = 'curiosity_topics' LIMIT 1`
-          );
-          const topics = Array.isArray(existing.rows[0]?.value_json) ? existing.rows[0].value_json : [];
-          topics.push({ topic, ts: new Date().toISOString() });
-          const trimmed = topics.slice(-10);
-
-          await db.query(`
-            INSERT INTO working_memory (key, value_json, updated_at)
-            VALUES ('curiosity_topics', $1, NOW())
-            ON CONFLICT (key) DO UPDATE SET value_json = $1, updated_at = NOW()
-          `, [JSON.stringify(trimmed)]);
-
-          console.log(`[rumination] curiosity detected → topic: ${topic}`);
-        } catch (curErr) {
-          console.warn('[rumination] curiosity_topics write failed (non-blocking):', curErr.message);
-        }
-      }
     }
 
     // 5. 自我反思：基于洞察更新 self-model（仅在有实质性洞察时触发）
@@ -557,23 +483,16 @@ ${insight.trim().slice(0, 800)}
 
       _dailyCount += learnings.length;
 
-      // 6.1 洞察→task 绑定：为 learnings 表记录创建 dev task（memory_stream 条目跳过）
-      for (const learning of learnings) {
-        if (learning.source !== 'learning') continue;
-        await maybeCreateRuminationTask(db, learning, insight);
-      }
     } else {
       console.warn(`[rumination] no insight produced (LLM all failed) — leaving ${learnings.length} learnings undigested for retry`);
     }
 
     // 7. 发 RUMINATION_RESULT 事件给丘脑（闭环线 1）
     if (insights.length > 0) {
-      const actionMatches = [...(insights[0] || '').matchAll(/\[ACTION:\s*(.+?)\]/g)];
       const ruminationSignal = {
         type: EVENT_TYPES.RUMINATION_RESULT,
         learnings: learnings.map(l => ({ id: l.id, title: l.title, category: l.category })),
         self_updates: selfInsightText ? [selfInsightText] : [],
-        actions: actionMatches.map(m => m[1]),
         insight_count: insights.length,
       };
       try {
@@ -584,34 +503,6 @@ ${insight.trim().slice(0, 800)}
       }
     }
 
-    // 8. P0-C：反刍洞察写入 suggestions 表（由 suggestion-dispatcher 统一分发）
-    // content_hash 去重：24h DEDUP_WINDOW 内同一洞察不重复写入（P0 死循环修复）
-    if (insights.length > 0 && insights[0]) {
-      const mainInsight = insights[0];
-      const content_hash = crypto.createHash('sha256').update(mainInsight).digest('hex');
-      try {
-        const { rows: dedupRows } = await db.query(
-          `SELECT id FROM suggestions WHERE content_hash = $1 AND created_at > NOW() - INTERVAL '24 hours' LIMIT 1`,
-          [content_hash]
-        );
-        if (dedupRows.length > 0) {
-          console.warn(`[rumination] skipped duplicate insight (content_hash=${content_hash.slice(0, 8)}...)`);
-        } else {
-          await db.query(`
-            INSERT INTO suggestions (content, source, priority_score, status, suggestion_type, metadata, content_hash)
-            VALUES ($1, 'rumination', $2, 'pending', 'desire_formation', $3, $4)
-          `, [
-            mainInsight,
-            0.7,
-            JSON.stringify({ origin: 'rumination_p0c', insight: mainInsight }),
-            content_hash
-          ]);
-          console.warn('[rumination] insight written to suggestions table for dispatcher');
-        }
-      } catch (sugErr) {
-        console.warn('[rumination] failed to write suggestion (non-blocking):', sugErr.message);
-      }
-    }
   } catch (err) {
     console.error(`[rumination] batch digest failed:`, err.message);
   }

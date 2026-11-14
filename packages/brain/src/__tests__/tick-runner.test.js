@@ -33,10 +33,6 @@ describe('tick-runner.js — D1.7c-plugin1 plugin wire-up', () => {
     expect(SRC).toMatch(/import\s+\*\s+as\s+heartbeatPlugin\s+from\s+['"]\.\/heartbeat-plugin\.js['"]/);
   });
 
-  it('imports goalEvalPlugin namespace', () => {
-    expect(SRC).toMatch(/import\s+\*\s+as\s+goalEvalPlugin\s+from\s+['"]\.\/goal-eval-plugin\.js['"]/);
-  });
-
   it('calls deptHeartbeatPlugin.tick(...)', () => {
     expect(SRC).toMatch(/deptHeartbeatPlugin\.tick\s*\(/);
   });
@@ -47,10 +43,6 @@ describe('tick-runner.js — D1.7c-plugin1 plugin wire-up', () => {
 
   it('calls heartbeatPlugin.tick(...)', () => {
     expect(SRC).toMatch(/heartbeatPlugin\.tick\s*\(/);
-  });
-
-  it('calls goalEvalPlugin.tick(...)', () => {
-    expect(SRC).toMatch(/goalEvalPlugin\.tick\s*\(/);
   });
 
   it('removes old inline triggerDeptHeartbeats(pool) call', () => {

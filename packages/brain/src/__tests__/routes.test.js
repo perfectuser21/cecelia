@@ -13,12 +13,6 @@ const mockPool = vi.hoisted(() => ({ query: vi.fn() }));
 
 vi.mock('../db.js', () => ({ default: mockPool }));
 
-vi.mock('../decomposition-checker.js', () => ({
-  runDecompositionChecks: vi.fn(),
-}));
-
-import { runDecompositionChecks } from '../decomposition-checker.js';
-
 // isolate:false 修复：不在顶层 await import，改为 beforeAll + vi.resetModules()
 // 每次测试文件运行时都重新加载 routes.js，避免跨文件模块缓存污染
 let router;
@@ -114,45 +108,6 @@ describe('Decomposition API Routes', () => {
 
       expect(res._status).toBe(500);
       expect(res._data.error).toBe('Database error');
-    });
-  });
-
-  describe('POST /decomposition/create-missing', () => {
-    let handler;
-    beforeAll(() => { handler = getHandler('post', '/decomposition/create-missing'); });
-
-    it('should trigger decomposition check and return results', async () => {
-      const mockResult = {
-        summary: { created: 2, skipped: 1 },
-        actions: [
-          { action: 'create_decomposition', check: 'inventory_replenishment', task_id: 'task-1' },
-          { action: 'create_decomposition', check: 'initiative_decomposition', task_id: 'task-2' },
-          { action: 'skip_inventory', check: 'inventory_replenishment' }
-        ],
-        active_paths: [{ id: 'init-1', name: 'Initiative 1' }],
-        created_tasks: [{ id: 'task-1', initiative: 'Initiative 1' }]
-      };
-
-      runDecompositionChecks.mockResolvedValueOnce(mockResult);
-
-      const { req, res } = mockReqRes();
-      await handler(req, res);
-
-      expect(res._status).toBe(200);
-      expect(res._data.success).toBe(true);
-      expect(res._data.created_tasks.total).toBe(2);
-      expect(res._data.created_tasks.inventory_replenishment).toBe(1);
-      expect(res._data.created_tasks.initiative_seeding).toBe(1);
-    });
-
-    it('should handle errors gracefully', async () => {
-      runDecompositionChecks.mockRejectedValueOnce(new Error('Check failed'));
-
-      const { req, res } = mockReqRes();
-      await handler(req, res);
-
-      expect(res._status).toBe(500);
-      expect(res._data.error).toBe('Check failed');
     });
   });
 

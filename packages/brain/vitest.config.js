@@ -188,9 +188,8 @@ export default defineConfig({
     exclude: [
       // 旧准入兼容合同只由显式legacy CLI执行。
       '../../scripts/ci/legacy/**',
-      // 根tests中的六个symlink只保兼容调用；自动收集使用src/__tests__唯一真实owner。
+      // 根tests中的五个symlink只保兼容调用；自动收集使用src/__tests__唯一真实owner。
       '../../tests/dept-heartbeat-plugin.test.js',
-      '../../tests/goal-eval-plugin.test.js',
       '../../tests/heartbeat-plugin.test.js',
       '../../tests/kr-progress-sync-plugin.test.js',
       '../../tests/tick-runner.test.js',

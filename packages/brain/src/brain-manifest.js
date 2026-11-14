@@ -79,8 +79,8 @@ export const BRAIN_MANIFEST = {
       id: 'core',
       label: '意识核心',
       color: '#a855f7',
-      desc: '丘脑路由 + 皮层分析 + 欲望形成 + 反刍洞察',
-      nodeIds: ['thalamus', 'cortex', 'cognitive', 'desire', 'rumination'],
+      desc: '丘脑路由 + 皮层分析 + 反刍洞察',
+      nodeIds: ['thalamus', 'cortex', 'cognitive', 'rumination'],
       modules: [
         {
           id: 'thalamus',
@@ -102,13 +102,6 @@ export const BRAIN_MANIFEST = {
           desc: '汇总情绪 + 记忆 + 自我模型，生成认知状态快照',
           file: 'cognitive-core.js',
           nature: 'dynamic',
-        },
-        {
-          id: 'desire',
-          label: '欲望系统',
-          desc: '感知→情绪→记忆→反思→欲望形成→表达（6 层管道）',
-          file: 'desire/index.js',
-          nature: 'growing',
         },
         {
           id: 'rumination',

@@ -1,12 +1,15 @@
 /**
  * TDD：入口血管 ingest（三面模型 PR②b，决策 297ffee5 / 立项 f5ba8ee3）
- * ✍️ 入口库人写、Brain 收：「决策」库 → decisions；员工 Skill 库(zip) → skill_evals（经现有 /api/skill-eval/upload）。
+ * ✍️ 入口库人写、Brain 收：「决策」库 → decisions。
  * 收据表 notion_ingest_receipts 保证幂等；人改了 → 再收并留痕（冲突人赢）。机器不写入口库。
  */
 import { describe, it, expect, vi } from 'vitest';
+vi.mock('../recurring-notion-sync.js', () => ({
+  notionReq: vi.fn(), getToken: () => 'isolated-test-token',
+}));
 import {
   NOTION_TYPE_TO_CATEGORY, mapDecisionPage,
-  ingestDecisionsInlet, ingestStaffSkillInlet,
+  ingestDecisionsInlet, runNotionInletIngest,
 } from '../notion-inlet-ingest.js';
 
 const page = (over = {}) => ({
@@ -86,36 +89,31 @@ describe('ingestDecisionsInlet', () => {
   });
 });
 
-describe('ingestStaffSkillInlet', () => {
-  it('有 zip 且无收据 → 下载并 POST /api/skill-eval/upload(带 token)，成功后写收据', async () => {
+describe('注册表入口派发', () => {
+  it('历史员工Skill注册不再下载或建单，仍正常回灌决策', async () => {
     const { pool, calls } = mkPool();
-    const p = { id: 'pg-s1', last_edited_time: '2026-09-18T00:00:00.000Z', properties: {
-      'Skill名称': { type: 'title', title: [{ plain_text: '朋友圈内容创作' }] },
-      'Skill压缩包': { type: 'files', files: [{ name: 'skill_v1.5.zip', type: 'file', file: { url: 'https://s3/x.zip' } }] },
-      '适用平台': { type: 'multi_select', multi_select: [{ name: '微信' }] },
-      '开发人员': { type: 'people', people: [{ name: '小李' }] },
-    } };
-    const fetchFn = vi.fn(async (url, init) => {
-      if (url === 'https://s3/x.zip') return { ok: true, arrayBuffer: async () => new Uint8Array([80, 75, 3, 4]).buffer };
-      return { ok: true, status: 200, json: async () => ({ task_id: 'task-9', queue_position: 1 }) };
+    const query = pool.query.getMockImplementation();
+    pool.query.mockImplementation(async (sql, params) => {
+      if (sql.includes('FROM notion_projection_map')) return { rows: [
+        { face: 'inlet', brain_table: 'skill_evals', notion_db_id: 'old-staff', status: 'active', direction: 'ingest' },
+        { face: 'inlet', brain_table: 'decisions', notion_db_id: 'decisions-live', status: 'active', direction: 'both' },
+      ] };
+      return query(sql, params);
     });
-    const s = await ingestStaffSkillInlet(pool, 't', { dbId: 'db', notionReq: notionOf([p]), fetchFn, brainBaseUrl: 'http://localhost:5221', evalToken: 'tok' });
-    expect(s.uploaded).toBe(1);
-    const up = fetchFn.mock.calls.find(c => /skill-eval\/upload/.test(c[0]));
-    expect(up).toBeTruthy();
-    expect(up[1].method).toBe('POST');
-    expect(up[1].headers['X-Eval-Proxy-Token']).toBe('tok');
-    const rc = calls.find(c => /INSERT INTO notion_ingest_receipts/.test(c.sql));
-    expect(rc.params).toContain('pg-s1#skill_v1.5.zip');
-    expect(rc.params).toContain('skill_evals');
-  });
-  it('已有该文件收据 → 不再下载不再上传（zip 去重在收据层就挡住）', async () => {
-    const { pool } = mkPool({ 'pg-s1#skill_v1.5.zip': { notion_page_id: 'pg-s1#skill_v1.5.zip', brain_id: 'task-9' } });
-    const p = { id: 'pg-s1', last_edited_time: 'x', properties: {
-      'Skill名称': { type: 'title', title: [{ plain_text: 'a' }] },
-      'Skill压缩包': { type: 'files', files: [{ name: 'skill_v1.5.zip', type: 'file', file: { url: 'https://s3/x.zip' } }] } } };
-    const fetchFn = vi.fn();
-    const s = await ingestStaffSkillInlet(pool, 't', { dbId: 'db', notionReq: notionOf([p]), fetchFn, brainBaseUrl: 'http://x', evalToken: '' });
-    expect(s.skipped).toBe(1); expect(fetchFn).not.toHaveBeenCalled();
+    const notionReq = notionOf([page()]);
+    const download = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('unexpected download'));
+    try {
+      const result = await runNotionInletIngest(pool, { now: () => 1_800_000_000_000, notionReq });
+      expect(result.ok).toBe(true);
+      expect(result.results.decisions.inserted).toBe(1);
+      expect(result.results).not.toHaveProperty('skill_evals');
+      expect(result.sources.map((source) => source.brain_table)).toEqual(['decisions']);
+      expect(notionReq.mock.calls.map((call) => call[1])).toEqual(['/databases/decisions-live/query']);
+      expect(download).not.toHaveBeenCalled();
+      expect(calls.filter(({ sql }) => /INSERT INTO decisions/.test(sql))).toHaveLength(1);
+      expect(calls.some(({ sql }) => /INSERT INTO (tasks|skill_evals)/.test(sql))).toBe(false);
+    } finally {
+      download.mockRestore();
+    }
   });
 });

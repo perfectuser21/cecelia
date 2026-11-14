@@ -59,9 +59,7 @@ vi.mock('../../kr-progress-sync-plugin.js', () => ({
 vi.mock('../../heartbeat-plugin.js', () => ({
   tick: vi.fn().mockResolvedValue({ actions: [] }),
 }));
-vi.mock('../../goal-eval-plugin.js', () => ({
-  tick: vi.fn().mockResolvedValue({ actions: [] }),
-}));
+
 vi.mock('../../pipeline-patrol-plugin.js', () => ({
   tick: vi.fn().mockResolvedValue({ scanned: 0 }),
 }));
@@ -186,13 +184,9 @@ vi.mock('../../diary-scheduler.js', () => ({ generateDailyDiaryIfNeeded: vi.fn()
 
 vi.mock('../../daily-report-generator.js', () => ({ generateDailyReport: vi.fn() }));
 
-
-
-
-vi.mock('../../desire/index.js', () => ({ runDesireSystem: vi.fn() }));
 vi.mock('../../rumination.js', () => ({ runRumination: vi.fn().mockResolvedValue(null) }));
 vi.mock('../../rumination-scheduler.js', () => ({ runSynthesisSchedulerIfNeeded: vi.fn() }));
-vi.mock('../../suggestion-cycle.js', () => ({ runSuggestionCycle: vi.fn() }));
+
 vi.mock('../../conversation-consolidator.js', () => ({ runConversationConsolidator: vi.fn() }));
 vi.mock('../../notebook-feeder.js', () => ({ feedDailyIfNeeded: vi.fn() }));
 vi.mock('../../events/taskEvents.js', () => ({
@@ -259,9 +253,7 @@ vi.mock('../../heartbeat-inspector.js', () => ({
   HEARTBEAT_INTERVAL_MS: 30 * 60 * 1000,
   runHeartbeatInspection: vi.fn().mockResolvedValue({ skipped: false, actions_count: 0 }),
 }));
-vi.mock('../../active-goals-zero-trigger.js', () => ({
-  maybeTriggerStrategySession: vi.fn().mockResolvedValue({ created: false }),
-}));
+
 vi.mock('../../orphan-pr-worker.js', () => ({
   scanOrphanPrs: vi.fn().mockResolvedValue({ scanned: 0, merged: 0, labeled: 0, closed: 0 }),
 }));
@@ -288,7 +280,6 @@ describe('tick-runner executeTick — full tick wire-up', () => {
       ['../../zombie-cleaner.js', ['runZombieCleanup']],
       ['../../zombie-sweep.js', ['zombieSweep']],
       ['../../heartbeat-inspector.js', ['runHeartbeatInspection']],
-      ['../../active-goals-zero-trigger.js', ['maybeTriggerStrategySession']],
       ['../../orphan-pr-worker.js', ['scanOrphanPrs']],
       ['../../credential-expiry-checker.js', ['checkAndAlertExpiringCredentials', 'recoverAuthQuarantinedTasks', 'scanAuthLayerHealth', 'cleanupDuplicateRescueTasks', 'cancelCredentialAlertTasks']],
       ['../../shepherd.js', ['shepherdOpenPRs', 'reconcileTerminalOpenPRs']],
@@ -306,7 +297,6 @@ describe('tick-runner executeTick — full tick wire-up', () => {
     const dept = await import('../../dept-heartbeat.js');
     const krProgress = await import('../../kr-progress-sync-plugin.js');
     const heartbeat = await import('../../heartbeat-plugin.js');
-    const goalEval = await import('../../goal-eval-plugin.js');
     const patrol = await import('../../pipeline-patrol-plugin.js');
     const krHealth = await import('../../kr-health-daily-plugin.js');
     const cleanup = await import('../../cleanup-worker-plugin.js');
@@ -342,7 +332,6 @@ describe('tick-runner executeTick — full tick wire-up', () => {
     expect(dept.tick).toHaveBeenCalled();
     expect(krProgress.tick).toHaveBeenCalled();
     expect(heartbeat.tick).toHaveBeenCalled();
-    expect(goalEval.tick).toHaveBeenCalled();
     expect(patrol.tick).toHaveBeenCalled();
     expect(krHealth.tick).toHaveBeenCalled();
     expect(cleanup.tick).toHaveBeenCalled();

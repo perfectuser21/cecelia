@@ -5,7 +5,6 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 const mockThalamusProcessEvent = vi.fn();
 const mockGenerateDecision = vi.fn();
 const mockRunRumination = vi.fn();
-const mockPlanNextTask = vi.fn();
 const mockSetGuidance = vi.fn();
 const mockIsConsciousnessEnabled = vi.fn();
 const mockQuery = vi.fn();
@@ -24,10 +23,6 @@ vi.mock('../decision.js', () => ({
 
 vi.mock('../rumination.js', () => ({
   runRumination: (...args) => mockRunRumination(...args),
-}));
-
-vi.mock('../planner.js', () => ({
-  planNextTask: (...args) => mockPlanNextTask(...args),
 }));
 
 vi.mock('../guidance.js', () => ({
@@ -57,7 +52,6 @@ describe('consciousness-loop', () => {
     mockThalamusProcessEvent.mockResolvedValue({ actions: [], level: 'normal' });
     mockGenerateDecision.mockResolvedValue({ confidence: 0.5, actions: [], decision_id: 'dec-1' });
     mockRunRumination.mockResolvedValue({ processed: 1 });
-    mockPlanNextTask.mockResolvedValue({ task_id: 'task-1' });
     mockSetGuidance.mockResolvedValue(undefined);
     mockQuery.mockResolvedValue({ rows: [] });
   });
@@ -120,7 +114,7 @@ describe('consciousness-loop', () => {
       mockIsConsciousnessEnabled.mockReturnValue(true);
       mockGetCompiledConsciousnessGraph.mockResolvedValue({ invoke: mockGraphInvoke });
       mockGraphInvoke.mockResolvedValue({
-        completed_steps: ['thalamus', 'decision', 'rumination', 'plan'],
+        completed_steps: ['thalamus', 'decision', 'rumination'],
         errors: [],
       });
       // 无 active thread → fresh start
@@ -138,14 +132,14 @@ describe('consciousness-loop', () => {
     it('thread_id 格式为 consciousness:{数字}', async () => {
       await _runConsciousnessOnce();
       const [_input, config] = mockGraphInvoke.mock.calls[0];
-      expect(config.configurable.thread_id).toMatch(/^consciousness:\d+$/);
+      expect(config.configurable.thread_id).toMatch(/^consciousness:knowledge-v2:\d+$/);
     });
 
     it('invoke 前将 thread_id 写入 brain_guidance', async () => {
       await _runConsciousnessOnce();
       expect(mockSetGuidance).toHaveBeenCalledWith(
         'consciousness:active_thread',
-        expect.objectContaining({ thread_id: expect.stringMatching(/^consciousness:\d+$/) }),
+        expect.objectContaining({ thread_id: expect.stringMatching(/^consciousness:knowledge-v2:\d+$/) }),
         'consciousness-loop',
         expect.any(Number)
       );
@@ -164,11 +158,20 @@ describe('consciousness-loop', () => {
     });
 
     it('已有 active thread 时 resume（input=null）', async () => {
-      mockGetGuidanceForThread.mockResolvedValue({ thread_id: 'consciousness:111111' });
+      mockGetGuidanceForThread.mockResolvedValue({ thread_id: 'consciousness:knowledge-v2:111111' });
       await _runConsciousnessOnce();
       const [input, config] = mockGraphInvoke.mock.calls[0];
-      expect(config.configurable.thread_id).toBe('consciousness:111111');
+      expect(config.configurable.thread_id).toBe('consciousness:knowledge-v2:111111');
       expect(input).toBeNull();
+    });
+
+    it('旧四节点checkpoint开启新的知识线程，仍完成恢复与消化', async () => {
+      mockGetGuidanceForThread.mockResolvedValue({ thread_id: 'consciousness:111111' });
+      const result = await _runConsciousnessOnce();
+      const [input, config] = mockGraphInvoke.mock.calls[0];
+      expect(input).toMatchObject({ completed_steps: [], errors: [] });
+      expect(config.configurable.thread_id).toMatch(/^consciousness:knowledge-v2:\d+$/);
+      expect(result.completed).toBe(true);
     });
 
     it('_isRunning 锁防并发：第二次调用立即返回', async () => {
@@ -180,7 +183,7 @@ describe('consciousness-loop', () => {
       const result2 = await _runConsciousnessOnce();
       expect(result2.completed).toBe(false);
       expect(result2.reason).toBe('already_running');
-      resolveInvoke({ completed_steps: ['thalamus', 'decision', 'rumination', 'plan'], errors: [] });
+      resolveInvoke({ completed_steps: ['thalamus', 'decision', 'rumination'], errors: [] });
       await p1;
     });
 
