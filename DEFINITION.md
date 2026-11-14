@@ -1,6 +1,8 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.445.209
+**Brain 版本**: 1.445.210
+
+显式Commander Workflow宿主将有界决策和单Activity验收结果存入DBOS；PG动作意图先提交，恢复只读回并核验原身份，未知动作隔离。首版仅非交互source单次活动；独立CLI与scratch故障验收，不改变生产公共Runner入口。
 
 Blocked 恢复单测隔离宿主资源清理：真实 tick 入口保留，工作树/slot 清理均绑定 stub，并在 tick 导入之前核对隔离。仅测试修复，不改变生产清理策略。
 

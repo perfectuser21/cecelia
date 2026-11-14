@@ -436,6 +436,14 @@ test('当前候选输入入口逐项读取身份及资源完整控制封组，�
  assert.ok(row);assert.ok(row.eligible_owner_paths.includes('scripts/ci/run-basic-check.mjs'));
  assert.ok(row.witness.entry.support.some(r=>r.path==='scripts/skill_source_ownership.py'));
  assert.equal(row.input_facts.entry_verified,false);assert.equal(row.execution_status,'not_evaluated');
+ const workflowPath='.github/workflows/ci.yml',workflowText=readFileSync(join(f.root,workflowPath),'utf8');
+ for(const changed of [workflowText.replace('node packages/brain/scripts/smoke/commander-foundation-smoke.mjs','echo no-recovery'),
+   workflowText.replace("run: node packages/brain/scripts/smoke/commander-foundation-smoke.mjs\n        if: '!cancelled()'","run: node packages/brain/scripts/smoke/commander-foundation-smoke.mjs\n        if: 'false'")]){
+  assert.notEqual(changed,workflowText);writeFileSync(join(f.root,workflowPath),changed);f.source.head_revision=f.commit();
+  f.source.changed_files=f.git('diff','--name-only',f.source.base_revision,f.source.head_revision).split('\n').filter(Boolean).map(path=>({path}));
+  const invalid=derived(f);assert.ok(invalid.unproven.some(r=>r.path===path&&r.side==='head'&&r.reason==='entry_unproven'));
+  writeFileSync(join(f.root,workflowPath),workflowText);f.source.head_revision=f.commit();
+ }
  for(const [member,revision] of [
   ...['scripts/ci/check-basic-results.mjs','scripts/ci/run-basic-check.mjs','packages/brain/vitest.config.js'].map(path=>[path,'d06de84e9f7d2d489a151e0b13b38f81651dd3fa']),
   ...['scripts/ci/prepare-ubuntu-archive.mjs','scripts/ci/__tests__/basic-ubuntu-archive.test.mjs','scripts/ci/__tests__/basic-skill-source-coverage.test.mjs'].map(path=>[path,'4d8bed7c7504f8e3e2d84b283bde735927642f8b']),

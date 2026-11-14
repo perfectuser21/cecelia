@@ -17,11 +17,11 @@ const failedResult = (input, reason, strict) => ({ schema_version: 1, run_tag: i
   failure_class: strict ? 'needs_human' : 'fatal', reason_code: reason, outputs: {}, metrics: {}, evidence: [] });
 
 /** 唯一活动循环。业务适配器仅提供执行、独立检查与资源安全回调。 */
-export async function runActivityContract(contract, input, {
+async function executeContract(contract, input, {
   cwd = process.cwd(), signal, onEvent = async () => {}, prepareInput = async (_activity, value) => value,
   executeActivity = callActivityProcess, recoverActivity, checkActivity, commander,
   canFinalize, isExecutionUnknown = unknownExecution, checkpoint, resume,
-} = {}) {
+} = {}, selection) {
   const plan = parseActivityContract(contract);
   if (resume && (plan.activities.length !== 1 || plan.activities[0].runtime.phase !== 'source'
     || plan.activities[0].runtime.interactive === true || resume.attempt !== 1
@@ -29,7 +29,7 @@ export async function runActivityContract(contract, input, {
     || resume.receipt.activities.length !== 1 || resume.receipt.activities[0].key !== plan.activities[0].key
     || resume.receipt.activities[0].status !== 'running' || resume.receipt.activities[0].attempts.length !== 0)) throw new Error('activity_resume_invalid');
   if (!object(input) || typeof input.run_tag !== 'string' || !input.run_tag.trim()) throw new Error('run_tag_required');
-  const original = structuredClone(input), context = structuredClone(resume?.context ?? input);
+  const original = structuredClone(input), context = structuredClone(resume?.context ?? selection?.context ?? input);
   const strict = Boolean(checkActivity || commander || contract.on_status || contract.activities.some(a => a.runtime.on_status || a.on_status));
   const receipt = resume ? structuredClone(resume.receipt) : { schema_version: 1, workflow: plan.workflow, run_tag: input.run_tag,
     status: 'running', outputs: {}, metrics: {}, evidence: [], activities: [] };
@@ -79,7 +79,7 @@ export async function runActivityContract(contract, input, {
     if (grouping?.when && readActivityPath(grouping.when.path, roots) !== grouping.when.equals) {
       record.status = 'skipped'; await emit('ACTIVITY_SKIPPED', {activity: a.key, item: record.item, reason_code: 'condition_unmatched'}); return;
     }
-    let deadline = resume?.deadline ?? Date.now() + a.budget.max_duration_s * 1000;
+    let deadline = resume?.deadline ?? Math.min(Date.now() + a.budget.max_duration_s * 1000, selection?.deadlineMs ?? Infinity);
     const observe = async event => {
       const began = Date.now();
       try {return await notify(a, event, a.runtime.executor_kind ?? 'code');}
@@ -216,7 +216,7 @@ export async function runActivityContract(contract, input, {
   }
 
   if (!resume) await emit('WF_RUN_STARTED', {workflow: plan.workflow});
-  const main = plan.activities.filter(a => a.runtime.phase !== 'finalize');
+  const main = plan.activities.filter(a => a.runtime.phase !== 'finalize' && (!selection || a.key === selection.activityKey));
   try {
     for (let i = 0; i < main.length && !stopped; i++) {
       if (signal?.aborted) {failed = true; stopped = true; break;}
@@ -231,7 +231,7 @@ export async function runActivityContract(contract, input, {
     }
   } catch (error) {failed = true; receipt.reason_code = error.message;}
   finally {
-    for (const a of plan.activities.filter(a => a.runtime.phase === 'finalize')) {
+    for (const a of plan.activities.filter(a => !selection && a.runtime.phase === 'finalize')) {
       try {
         if ((canFinalize && !await canFinalize(structuredClone(receipt), a)) || (!canFinalize && receipt.execution_unknown)) {
           receipt.execution_unknown = true; needsReview = true; stopped = true;
@@ -245,4 +245,21 @@ export async function runActivityContract(contract, input, {
   const finalStatus = () => needsReview ? 'needs_review' : failed ? productive ? 'partial' : 'failed' : 'completed';
   receipt.status = finalStatus(); await emit('WF_RUN_FINALIZED', {status: receipt.status}); receipt.status = finalStatus();
   return receipt;
+}
+
+export function runActivityContract(contract, input, options) {
+  return executeContract(contract, input, options);
+}
+
+/** Commander的单项入口保留完整合同、原输入和独立检查；未支持的形态明确拒绝。 */
+export async function runSingleActivity(contract, input, {activityKey, context = input, deadlineMs, ...options} = {}) {
+  const plan = parseActivityContract(contract);
+  if (!plan.activities.some(a => a.key === activityKey) || !object(context)
+    || context.run_tag !== input.run_tag || context.line_key !== input.line_key
+    || typeof options.checkActivity !== 'function' || options.resume || options.commander || options.recoverActivity
+    || (deadlineMs !== undefined && (!Number.isSafeInteger(deadlineMs) || deadlineMs <= 0))
+    || plan.activities.some(a => a.runtime.phase !== 'source' || a.runtime.interactive || a.runtime.detached
+      || (a.runtime.max_attempts ?? 1) !== 1 || a.runtime.recovery_safe)) throw Error('single_activity_unsupported');
+  const receipt = await executeContract(plan, input, options, {activityKey, context, deadlineMs});
+  return {...receipt, scope:'activity', activity_key:activityKey};
 }
