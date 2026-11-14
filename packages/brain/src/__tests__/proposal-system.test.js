@@ -43,13 +43,10 @@ describe('提案系统核心', () => {
       expect(isActionDangerous({ type: 'request_human_review' })).toBe(true);
     });
 
-    it('新增 6 种提案类型全部被识别为 dangerous', () => {
+    it('人工确认的异常方案和优先级调整需要审批', () => {
       const proposalTypes = [
-        'propose_decomposition',
-        'propose_weekly_plan',
         'propose_priority_change',
         'propose_anomaly_action',
-        'propose_milestone_review',
         'heartbeat_finding',
       ];
       for (const type of proposalTypes) {
@@ -63,12 +60,11 @@ describe('提案系统核心', () => {
       expect(isActionDangerous({ type: 'log_event' })).toBe(false);
     });
 
-    it('PROPOSAL_DEFAULTS 包含所有提案类型的默认配置', () => {
-      expect(PROPOSAL_DEFAULTS['propose_decomposition']).toBeDefined();
-      expect(PROPOSAL_DEFAULTS['propose_decomposition'].category).toBe('proposal');
+    it('现役异常提案使用紧急审批与明确期限', () => {
+      expect(PROPOSAL_DEFAULTS['propose_priority_change'].category).toBe('proposal');
       expect(PROPOSAL_DEFAULTS['propose_anomaly_action'].priority).toBe('urgent');
       expect(PROPOSAL_DEFAULTS['heartbeat_finding'].priority).toBe('urgent');
-      expect(PROPOSAL_DEFAULTS['propose_weekly_plan'].expiresHours).toBe(72);
+      expect(PROPOSAL_DEFAULTS['propose_priority_change'].expiresHours).toBe(72);
       expect(PROPOSAL_DEFAULTS['quarantine_task'].category).toBe('approval');
     });
   });
@@ -82,13 +78,13 @@ describe('提案系统核心', () => {
 
     it('有重复 signature → 节流', async () => {
       mockPool.query.mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'existing' }] });
-      const result = await shouldThrottleProposal(mockPool, 'kr:abc:propose_decomposition');
+      const result = await shouldThrottleProposal(mockPool, 'kr:abc:propose_anomaly_action');
       expect(result).toBe(true);
     });
 
     it('无重复 signature → 不节流', async () => {
       mockPool.query.mockResolvedValueOnce({ rowCount: 0, rows: [] });
-      const result = await shouldThrottleProposal(mockPool, 'kr:abc:propose_decomposition');
+      const result = await shouldThrottleProposal(mockPool, 'kr:abc:propose_anomaly_action');
       expect(result).toBe(false);
     });
   });

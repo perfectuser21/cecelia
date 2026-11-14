@@ -70,7 +70,6 @@ features:
         - packages/brain/src/__tests__/proactive-mouth.test.js
         - packages/brain/src/__tests__/thalamus-memory-injection.test.js
         - packages/brain/src/__tests__/thalamus-record-llm-error.test.js
-        - packages/brain/src/__tests__/thalamus-scope-layer.test.js
         - packages/brain/src/__tests__/thalamus-self-awareness.test.js
         - packages/brain/src/__tests__/thalamus-suggest-task-type.test.js
         - packages/brain/src/__tests__/thalamus.test.js
@@ -108,7 +107,6 @@ features:
             - packages/brain/src/__tests__/proactive-mouth.test.js
             - packages/brain/src/__tests__/thalamus-memory-injection.test.js
             - packages/brain/src/__tests__/thalamus-record-llm-error.test.js
-            - packages/brain/src/__tests__/thalamus-scope-layer.test.js
             - packages/brain/src/__tests__/thalamus-self-awareness.test.js
             - packages/brain/src/__tests__/thalamus-suggest-task-type.test.js
             - packages/brain/src/__tests__/thalamus.test.js

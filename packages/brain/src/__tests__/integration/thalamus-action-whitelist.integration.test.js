@@ -97,7 +97,7 @@ describe('Thalamus ACTION_WHITELIST + validateDecision 集成验证', () => {
 
     it('dangerous=true 的 action 类型正确标记', () => {
       // 已知危险操作（必须存在且 dangerous=true）
-      const knownDangerous = ['quarantine_task', 'request_human_review', 'propose_decomposition'];
+      const knownDangerous = ['quarantine_task', 'request_human_review', 'propose_anomaly_action'];
       for (const type of knownDangerous) {
         expect(ACTION_WHITELIST[type], `缺少必要的危险操作: ${type}`).toBeDefined();
         expect(ACTION_WHITELIST[type].dangerous, `${type} 应为 dangerous=true`).toBe(true);

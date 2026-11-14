@@ -56,13 +56,13 @@ describe('提案去重/节流', () => {
 
     it('有重复 pending_approval 记录 → 节流', async () => {
       mockPool.query.mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'existing-1' }] });
-      const result = await shouldThrottleProposal(mockPool, 'kr:abc:propose_decomposition');
+      const result = await shouldThrottleProposal(mockPool, 'kr:abc:propose_anomaly_action');
       expect(result).toBe(true);
     });
 
     it('无重复记录 → 不节流', async () => {
       mockPool.query.mockResolvedValueOnce({ rowCount: 0, rows: [] });
-      const result = await shouldThrottleProposal(mockPool, 'kr:abc:propose_decomposition');
+      const result = await shouldThrottleProposal(mockPool, 'kr:abc:propose_anomaly_action');
       expect(result).toBe(false);
     });
 
@@ -99,7 +99,7 @@ describe('提案去重/节流', () => {
       mockClient.query.mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'existing' }] });
 
       const result = await enqueueDangerousAction(
-        { type: 'propose_decomposition', params: {}, signature: 'kr:1:decomp' },
+        { type: 'propose_anomaly_action', params: {}, signature: 'kr:1:decomp' },
         { source: 'system' },
         mockClient
       );
@@ -117,7 +117,7 @@ describe('提案去重/节流', () => {
       });
 
       const result = await enqueueDangerousAction(
-        { type: 'propose_decomposition', params: { kr_id: 'kr-2' }, signature: 'kr:2:decomp' },
+        { type: 'propose_anomaly_action', params: { kr_id: 'kr-2' }, signature: 'kr:2:decomp' },
         { source: 'cortex' },
         mockClient
       );

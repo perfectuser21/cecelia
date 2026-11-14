@@ -476,7 +476,6 @@ features:
         - packages/brain/src/__tests__/check-okr-structure.test.js
         - packages/brain/src/__tests__/contracts/initiative-closer-contract.test.js
         - packages/brain/src/__tests__/initiative-closer.test.js
-        - packages/brain/src/__tests__/initiative-completion-review.test.js
         - packages/brain/src/__tests__/initiative-lock.test.js
         - packages/brain/src/__tests__/initiative-orchestration-migration.test.js
         - packages/brain/src/__tests__/kr-completion.test.js
@@ -508,7 +507,6 @@ features:
             - packages/brain/src/__tests__/check-okr-structure.test.js
             - packages/brain/src/__tests__/contracts/initiative-closer-contract.test.js
             - packages/brain/src/__tests__/initiative-closer.test.js
-            - packages/brain/src/__tests__/initiative-completion-review.test.js
             - packages/brain/src/__tests__/initiative-lock.test.js
             - packages/brain/src/__tests__/initiative-orchestration-migration.test.js
             - packages/brain/src/__tests__/kr-completion.test.js
