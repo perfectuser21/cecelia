@@ -346,7 +346,7 @@ const REVIEWED_HARNESS_REMOVAL = {
   "scripts/ci/__tests__/basic-results.test.mjs": "eb3d1993ef7ba3ee72f510e7122be3040b3a4d0cb22151053a97aaacc9428b64",
   "scripts/ci/__tests__/basic-workflow.test.mjs": "59fb6deeab2470fae7ef17cc3bf115ab24277f8a2b28f222f5b15a6cc2b620c7"
 };
-const BASIC_PROTOCOLS = {"1283f9f7b9825a925318b20420d483de5f5daad5a032a476a20f100441c12a3f":[REVIEWED_CURRENT,REVIEWED_CANDIDATE,REVIEWED_OBSERVATION],"fd7dd2888f4abdfb9d70762fdea5213a9a4cfe104dbe5cd01defff58af6b8ffd":[REVIEWED_SLIM,REVIEWED_HARNESS_REMOVAL]};
+const BASIC_PROTOCOLS = {"1283f9f7b9825a925318b20420d483de5f5daad5a032a476a20f100441c12a3f":[REVIEWED_CURRENT,REVIEWED_CANDIDATE,REVIEWED_OBSERVATION],"fd7dd2888f4abdfb9d70762fdea5213a9a4cfe104dbe5cd01defff58af6b8ffd":[REVIEWED_SLIM,REVIEWED_HARNESS_REMOVAL],"d20caae43b3156bde1b07d141c3bd54b888da847e9c78e3b21e1440fd848e59a":[REVIEWED_HARNESS_REMOVAL]};
 const reject = () => { throw Error('basic_ci_source_unproven'); };
 export function basicCiSelectorEnabled(text, parse) {
   const name = 'EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA';

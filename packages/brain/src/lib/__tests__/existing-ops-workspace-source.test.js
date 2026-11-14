@@ -76,3 +76,19 @@ describe('当前Basic workspace子收集器来源', () => {
     await expect(collect({ [selected]: '' })).rejects.toThrow(/workspace/i);
   });
 });
+
+// 当前候选的必需步骤与历史完整组合兼容分别验证，不把旧版兼容误称为当前CI验收。
+it('Commander恢复回归是当前真实CI的必需隔离步骤，改命令或禁用不能借新封组造边', async () => {
+  const command='node packages/brain/scripts/smoke/commander-foundation-smoke.mjs';
+  const doc=yaml.load(read(workflow)),job=doc.jobs['runtime-integration'];
+  const selectedSteps=job.steps.filter(step=>step.run===command);
+  expect(selectedSteps).toHaveLength(1);
+  expect(selectedSteps[0]).toEqual({name:'Verify Commander decisions and activity recovery',
+    env:{TEST_DB_URL:'postgresql://onboarding_ci:onboarding_ci@127.0.0.1:5432/cecelia_scratch'},run:command,if:'!cancelled()'});
+  expect(job.if).toBe("github.event_name != 'schedule' && github.event.action != 'closed'");
+  for(const mutate of [step=>{step.run='echo no-recovery';},step=>{step.if='false';},step=>{delete step.run;},
+    step=>{step.env.TEST_DB_URL='postgresql://other@127.0.0.1:5432/cecelia';}]){
+    const changed=structuredClone(doc);mutate(changed.jobs['runtime-integration'].steps.find(step=>step.run===command));
+    await expect(collect({[workflow]:yaml.dump(changed)})).rejects.toMatchObject({code:'WORKSPACE_INPUT_SOURCE_UNPROVEN'});
+  }
+});
