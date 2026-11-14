@@ -30,7 +30,7 @@ function getHandler(routes, method, path) {
   const layer = routes.stack?.find(
     l => l.route?.path === path && l.route?.methods?.[method.toLowerCase()]
   );
-  return layer?.route?.stack?.[0]?.handle;
+  return layer?.route?.stack?.at(-1)?.handle;
 }
 
 describe('System Reports API', () => {

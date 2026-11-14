@@ -51,7 +51,7 @@ function mockReqRes(method, path, body = {}, query = {}) {
       return;
     }
 
-    const handler = layers[0].route.stack[0].handle;
+    const handler = layers[0].route.stack.at(-1).handle;
     handler(req, res).catch(err => {
       resData.statusCode = 500;
       resData.body = { error: err.message };

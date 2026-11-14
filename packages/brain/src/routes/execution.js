@@ -46,6 +46,14 @@ import { authoringMutationError, assertAuthoringCompletion } from '../workflow-a
 
 const router = Router();
 
+// 仅匹配本模块的受保护路由计数，避免消耗其他Brain模块的额度。
+const moduleRouteRateLimit = rateLimit({
+  windowMs: 60_000,
+  limit: 1200,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+});
+
 // 回执入口按 task_id 限流：同一任务一分钟内超 60 次回执视为失控（正常一次执行只有 1~3 次）
 const executionCallbackRateLimit = rateLimit({
   windowMs: 60_000,
@@ -1631,7 +1639,7 @@ const HEARTBEAT_DEFAULT_TEMPLATE = `# HEARTBEAT.md — Cecelia 巡检清单
  * Read HEARTBEAT.md file content.
  * Returns default template if file does not exist.
  */
-router.get('/heartbeat', async (req, res) => {
+router.get('/heartbeat', moduleRouteRateLimit, async (req, res) => {
   try {
     const { readFile } = await import('fs/promises');
     const content = await readFile(HEARTBEAT_PATH, 'utf-8');
@@ -1650,7 +1658,7 @@ router.get('/heartbeat', async (req, res) => {
  * Write content to HEARTBEAT.md file.
  * Request body: { content: "..." }
  */
-router.put('/heartbeat', async (req, res) => {
+router.put('/heartbeat', moduleRouteRateLimit, async (req, res) => {
   try {
     const { content } = req.body;
     if (content === undefined || content === null) {
@@ -1716,7 +1724,7 @@ router.get('/executor/status', async (req, res) => {
  * GET /api/brain/cluster/status
  * Get status of all servers in the cluster (US + HK)
  */
-router.get('/cluster/status', async (req, res) => {
+router.get('/cluster/status', moduleRouteRateLimit, async (req, res) => {
   try {
     const os = await import('os');
 
@@ -1878,7 +1886,7 @@ router.get('/cluster/status', async (req, res) => {
  * POST /api/brain/generate/prd
  * Generate a PRD from task description
  */
-router.post('/generate/prd', async (req, res) => {
+router.post('/generate/prd', moduleRouteRateLimit, async (req, res) => {
   try {
     const { title, description, type = 'feature', goal_id } = req.body;
 
@@ -2204,7 +2212,7 @@ router.put('/budget-cap', async (req, res) => {
  * GET /api/brain/vps-slots
  * Get real Claude process information with task details
  */
-router.get('/vps-slots', async (req, res) => {
+router.get('/vps-slots', moduleRouteRateLimit, async (req, res) => {
   try {
     const tickStatus = await getTickStatus();
     const MAX_SLOTS = tickStatus.max_concurrent || 6;
@@ -2299,7 +2307,7 @@ router.get('/vps-slots', async (req, res) => {
  * GET /api/brain/execution-history
  * Get cecelia execution history from decision_log
  */
-router.get('/execution-history', async (req, res) => {
+router.get('/execution-history', moduleRouteRateLimit, async (req, res) => {
   try {
     const limit = parseInt(req.query.limit) || 20;
 
@@ -2356,7 +2364,7 @@ router.get('/execution-history', async (req, res) => {
  * GET /api/brain/cecelia/overview
  * Overview of Cecelia execution: running/completed/failed counts + recent runs
  */
-router.get('/cecelia/overview', async (req, res) => {
+router.get('/cecelia/overview', moduleRouteRateLimit, async (req, res) => {
   try {
     const { getActiveProcesses, getActiveProcessCount } = await import('../executor.js');
 
@@ -2434,7 +2442,7 @@ router.get('/cecelia/overview', async (req, res) => {
  * GET /api/brain/dev/health
  * Health check for dev task tracking
  */
-router.get('/dev/health', async (req, res) => {
+router.get('/dev/health', moduleRouteRateLimit, async (req, res) => {
   try {
     const { checkCeceliaRunAvailable, getActiveProcessCount } = await import('../executor.js');
 
@@ -2472,7 +2480,7 @@ router.get('/dev/health', async (req, res) => {
  * GET /api/brain/dev/tasks
  * Get all active dev tasks with step status
  */
-router.get('/dev/tasks', async (req, res) => {
+router.get('/dev/tasks', moduleRouteRateLimit, async (req, res) => {
   try {
     const { getActiveProcesses } = await import('../executor.js');
 
@@ -2578,7 +2586,7 @@ router.get('/dev/tasks', async (req, res) => {
  * GET /api/brain/dev/repos
  * Get list of tracked repositories
  */
-router.get('/dev/repos', async (req, res) => {
+router.get('/dev/repos', moduleRouteRateLimit, async (req, res) => {
   try {
     const result = await pool.query(`
       -- 迁移：projects → okr_projects/okr_scopes/okr_initiatives metadata.repo_path
@@ -2682,7 +2690,7 @@ router.post('/plan/next', async (req, res) => {
  * GET /api/brain/planner/initiatives-without-tasks
  * 监控端点：返回所有有 active Initiative 但无 queued/in_progress Task 的 KR 及其 Initiative 列表
  */
-router.get('/planner/initiatives-without-tasks', async (_req, res) => {
+router.get('/planner/initiatives-without-tasks', moduleRouteRateLimit, async (_req, res) => {
   try {
     const result = await pool.query(`
       SELECT

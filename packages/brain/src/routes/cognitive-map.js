@@ -2,7 +2,7 @@
  * Cognitive Map 路由 — 大脑认知地图 API
  *
  * GET /api/brain/cognitive-map
- *   返回：15 个子系统状态 + 21 条连接关系
+ *   返回：15 个子系统状态 + 17 条连接定义
  */
 
 import { Router } from 'express';
@@ -25,7 +25,7 @@ function judgeConnectionStatus(fromStatus, toStatus) {
   return 'active';
 }
 
-// 21 条静态连接定义
+// 17 条连接定义
 const CONNECTIONS = [
   { from: 'tick', to: 'thalamus', label: 'TICK 事件' },
   { from: 'tick', to: 'planner', label: '调度触发' },
@@ -34,9 +34,6 @@ const CONNECTIONS = [
   { from: 'thalamus', to: 'emotion', label: '情绪感知' },
   { from: 'cortex', to: 'memory', label: '深度记忆写入' },
   { from: 'cortex', to: 'learning', label: '学习提取' },
-  { from: 'emotion', to: 'desire', label: '情绪驱动欲望' },
-  { from: 'desire', to: 'suggestion', label: '欲望→建议' },
-  { from: 'suggestion', to: 'planner', label: '建议→规划' },
   { from: 'memory', to: 'rumination', label: '记忆→反刍' },
   { from: 'rumination', to: 'learning', label: '反刍→学习' },
   { from: 'learning', to: 'self_model', label: '学习→自我模型' },
@@ -45,16 +42,15 @@ const CONNECTIONS = [
   { from: 'dialog', to: 'thalamus', label: '对话→丘脑' },
   { from: 'dialog', to: 'memory', label: '对话→记忆' },
   { from: 'executor', to: 'immune', label: '执行→免疫检查' },
-  { from: 'immune', to: 'planner', label: '隔离→重规划' },
+  { from: 'immune', to: 'planner', label: '隔离后队列重选' },
   { from: 'tick', to: 'cognitive', label: 'TICK→认知' },
-  { from: 'desire', to: 'executor', label: '欲望→执行' },
 ];
 
 router.get('/', async (_req, res) => {
   try {
     const [
       tickResult,
-      plannerResult,
+      dispatchResult,
       executorResult,
       thalamusResult,
       cortexResult,
@@ -72,12 +68,12 @@ router.get('/', async (_req, res) => {
       // tick: working_memory key='tick_last'
       pool.query("SELECT updated_at FROM working_memory WHERE key = 'tick_last'"),
 
-      // planner: cecelia_events today where source='planner' or 'tick'
+      // 队列观测只认recordDispatchResult持久化的真实派发尝试，不能借Tick心跳报活跃。
       pool.query(`
         SELECT COUNT(*) AS cnt,
                MAX(created_at) AS last_at
-        FROM cecelia_events
-        WHERE source IN ('planner', 'tick')
+        FROM dispatch_events
+        WHERE event_type IN ('dispatched', 'failed_dispatch')
           AND created_at > CURRENT_DATE
       `),
 
@@ -195,18 +191,18 @@ router.get('/', async (_req, res) => {
     const subsystems = [
       {
         id: 'tick', name: '心脏 Tick', group: 'core',
-        status: judgeStatus(r(tickResult).updated_at, 1),
+        status: judgeStatus(r(tickResult).updated_at, r(tickResult).updated_at ? 1 : 0),
         metrics: {
-          today_count: parseInt(r(plannerResult).cnt || 0),
+          today_count: null, // tick_last只保留最近心跳，没有可靠的今日累计。
           last_active_at: r(tickResult).updated_at || null,
         },
       },
       {
-        id: 'planner', name: '调度规划', group: 'core',
-        status: judgeStatus(r(plannerResult).last_at, parseInt(r(plannerResult).cnt || 0)),
+        id: 'planner', name: '队列选择', group: 'core',
+        status: judgeStatus(r(dispatchResult).last_at, parseInt(r(dispatchResult).cnt || 0)),
         metrics: {
-          today_count: parseInt(r(plannerResult).cnt || 0),
-          last_active_at: r(plannerResult).last_at || null,
+          today_count: parseInt(r(dispatchResult).cnt || 0),
+          last_active_at: r(dispatchResult).last_at || null,
         },
       },
       {
@@ -240,7 +236,7 @@ router.get('/', async (_req, res) => {
       },
       {
         id: 'cognitive', name: '认知核心', group: 'cognition',
-        status: judgeStatus(r(tickResult).updated_at, 1),
+        status: judgeStatus(r(tickResult).updated_at, r(tickResult).updated_at ? 1 : 0),
         metrics: {
           today_count: null,
           last_active_at: r(tickResult).updated_at || null,
@@ -260,7 +256,7 @@ router.get('/', async (_req, res) => {
         },
       },
       {
-        id: 'desire', name: '欲望系统', group: 'consciousness',
+        id: 'desire', name: '欲望反馈台账', group: 'consciousness',
         status: judgeStatus(r(desireResult).last_at, parseInt(r(desireResult).cnt || 0)),
         metrics: {
           today_count: parseInt(r(desireResult).cnt || 0),
@@ -302,7 +298,7 @@ router.get('/', async (_req, res) => {
         },
       },
       {
-        id: 'suggestion', name: '建议系统', group: 'interface',
+        id: 'suggestion', name: '人工建议台账', group: 'interface',
         status: judgeStatus(r(suggestionResult).last_at, parseInt(r(suggestionResult).cnt || 0)),
         metrics: {
           today_count: parseInt(r(suggestionResult).cnt || 0),

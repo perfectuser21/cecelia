@@ -176,7 +176,7 @@ export async function handleRealtimeTool(toolName, args = {}, dbPool = pool) {
         return { success: false, error: `Unknown tool: ${toolName}` };
     }
   } catch (err) {
-    console.error(`[orchestrator-realtime] Tool ${toolName} failed:`, err.message);
+    console.error('[orchestrator-realtime] Tool failed:', toolName, err.message);
     return { success: false, error: err.message };
   }
 }

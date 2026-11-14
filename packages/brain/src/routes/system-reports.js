@@ -10,9 +10,18 @@
  */
 
 import { Router } from 'express';
+import { rateLimit } from 'express-rate-limit';
 import pool from '../db.js';
 
 const router = Router();
+
+// 仅匹配本模块的受保护路由计数，避免消耗其他Brain模块的额度。
+const moduleRouteRateLimit = rateLimit({
+  windowMs: 60_000,
+  limit: 1200,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+});
 
 /**
  * GET /
@@ -20,7 +29,7 @@ const router = Router();
  * @query {number} limit - 最多返回数量（默认 20，最大 100）
  * @query {string} type - 筛选报告类型（可选）
  */
-router.get('/', async (req, res) => {
+router.get('/', moduleRouteRateLimit, async (req, res) => {
   try {
     const limit = Math.min(parseInt(req.query.limit) || 20, 100);
     const offset = parseInt(req.query.offset) || 0;
@@ -71,7 +80,7 @@ router.get('/', async (req, res) => {
  * GET /:id
  * 获取指定简报详情（含完整 content）
  */
-router.get('/:id', async (req, res) => {
+router.get('/:id', moduleRouteRateLimit, async (req, res) => {
   try {
     const { id } = req.params;
 

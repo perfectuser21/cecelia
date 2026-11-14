@@ -14,6 +14,14 @@ import {registerDeviceLockRelease} from './device-lock-release.js';
 
 const router = Router();
 
+// 仅匹配本模块的受保护路由计数，避免消耗其他Brain模块的额度。
+const moduleRouteRateLimit = rateLimit({
+  windowMs: 60_000,
+  limit: 1200,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+});
+
 
 // ============================================================
 // Immune System API
@@ -23,7 +31,7 @@ const router = Router();
  * GET /api/brain/policies
  * List absorption policies with optional filtering
  */
-router.get('/policies', async (req, res) => {
+router.get('/policies', moduleRouteRateLimit, async (req, res) => {
   try {
     const { status, limit = 50, offset = 0 } = req.query;
 
@@ -85,7 +93,7 @@ router.get('/policies', async (req, res) => {
  * Get promotion history (probation → active)
  * NOTE: Must be before /policies/:id to avoid matching "promotions" as an ID
  */
-router.get('/policies/promotions', async (req, res) => {
+router.get('/policies/promotions', moduleRouteRateLimit, async (req, res) => {
   try {
     const { limit = 20, days = 7 } = req.query;
 
@@ -129,7 +137,7 @@ router.get('/policies/promotions', async (req, res) => {
  * GET /api/brain/policies/:id
  * Get single policy with recent evaluations
  */
-router.get('/policies/:id', async (req, res) => {
+router.get('/policies/:id', moduleRouteRateLimit, async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -193,7 +201,7 @@ router.get('/policies/:id', async (req, res) => {
  * GET /api/brain/policies/:id/evaluations
  * Get policy evaluation history with pagination
  */
-router.get('/policies/:id/evaluations', async (req, res) => {
+router.get('/policies/:id/evaluations', moduleRouteRateLimit, async (req, res) => {
   try {
     const { id } = req.params;
     const { limit = 20, offset = 0 } = req.query;
@@ -249,7 +257,7 @@ router.get('/policies/:id/evaluations', async (req, res) => {
  * PATCH /api/brain/policies/:id/status
  * Update policy status (manual control)
  */
-router.patch('/policies/:id/status', async (req, res) => {
+router.patch('/policies/:id/status', moduleRouteRateLimit, async (req, res) => {
   try {
     const { id } = req.params;
     const { status, reason } = req.body;
@@ -308,7 +316,7 @@ router.patch('/policies/:id/status', async (req, res) => {
  * GET /api/brain/failures/signatures
  * Get failure signatures statistics
  */
-router.get('/failures/signatures', async (req, res) => {
+router.get('/failures/signatures', moduleRouteRateLimit, async (req, res) => {
   try {
     const { limit = 20, min_count = 1 } = req.query;
 
@@ -346,7 +354,7 @@ router.get('/failures/signatures', async (req, res) => {
  * GET /api/brain/failures/signatures/:signature
  * Get single failure signature with related policies
  */
-router.get('/failures/signatures/:signature', async (req, res) => {
+router.get('/failures/signatures/:signature', moduleRouteRateLimit, async (req, res) => {
   try {
     const { signature } = req.params;
 
@@ -409,7 +417,7 @@ router.get('/failures/signatures/:signature', async (req, res) => {
  * GET /api/brain/immune/dashboard
  * Immune system overview with aggregated data
  */
-router.get('/immune/dashboard', async (req, res) => {
+router.get('/immune/dashboard', moduleRouteRateLimit, async (req, res) => {
   try {
     // Policy statistics
     const policyStats = await pool.query(`
@@ -547,7 +555,7 @@ router.get('/immune/status', async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /api/brain/routing/decisions - Thalamus routing decision history
 // ─────────────────────────────────────────────────────────────────────────────
-router.get('/routing/decisions', async (req, res) => {
+router.get('/routing/decisions', moduleRouteRateLimit, async (req, res) => {
   try {
     const limit = Math.min(parseInt(req.query.limit) || 50, 200);
     const offset = parseInt(req.query.offset) || 0;
@@ -618,7 +626,7 @@ router.get('/routing/decisions', async (req, res) => {
 });
 
 // POST /api/brain/manual-mode — 启用/禁用手动模式（暂停自动任务创建）
-router.post('/manual-mode', async (req, res) => {
+router.post('/manual-mode', moduleRouteRateLimit, async (req, res) => {
   try {
     const { enabled } = req.body;
     await pool.query(`
@@ -635,7 +643,7 @@ router.post('/manual-mode', async (req, res) => {
 });
 
 // GET /api/brain/manual-mode — 查询手动模式状态
-router.get('/manual-mode', async (req, res) => {
+router.get('/manual-mode', moduleRouteRateLimit, async (req, res) => {
   try {
     const result = await pool.query(
       "SELECT value_json FROM working_memory WHERE key = 'manual_mode'"
@@ -792,7 +800,7 @@ router.post('/orchestrator/chat/stream', async (req, res) => {
  * source_type='diary', importance=6, memory_type='reflection'
  * 使用 content_hash 去重（同一内容不重复写入）
  */
-router.post('/diary', async (req, res) => {
+router.post('/diary', moduleRouteRateLimit, async (req, res) => {
   const { content } = req.body;
 
   if (!content || typeof content !== 'string' || content.trim().length === 0) {
@@ -825,7 +833,7 @@ router.post('/diary', async (req, res) => {
  * Query: ?limit=20 (默认 20，最大 100)
  * Response: Array<{ role: 'user'|'assistant', content: string, created_at: string }>
  */
-router.get('/orchestrator/chat/history', async (req, res) => {
+router.get('/orchestrator/chat/history', moduleRouteRateLimit, async (req, res) => {
   try {
     const limit = Math.min(parseInt(req.query.limit) || 20, 100);
 
@@ -936,7 +944,7 @@ router.post('/orchestrator/realtime/tool', async (req, res) => {
  * GET /api/brain/staff
  * 返回所有员工列表，含角色和模型配置
  */
-router.get('/staff', async (_req, res) => {
+router.get('/staff', moduleRouteRateLimit, async (_req, res) => {
   try {
     const fs = await import('fs');
     const _path = await import('path');
@@ -1116,7 +1124,7 @@ router.post('/codex-usage/refresh', async (_req, res) => {
  * Request: { query: string, limit?: number (default 5) }
  * Response: { ok: true, matches: [{ content, memory_type, importance, summary, similarity }] }
  */
-router.post('/memory-search', async (req, res) => {
+router.post('/memory-search', moduleRouteRateLimit, async (req, res) => {
   const { query, limit = 5 } = req.body || {};
 
   if (!query || typeof query !== 'string' || !query.trim()) {
@@ -1159,7 +1167,7 @@ router.post('/memory-search', async (req, res) => {
  * 实时返回 slot 状态（3区：user/cecelia/taskPool）
  * 每个活跃 slot 含 account/model/task_title/started_at
  */
-router.get('/runner-status', async (_req, res) => {
+router.get('/runner-status', moduleRouteRateLimit, async (_req, res) => {
   try {
     const { calculateSlotBudget } = await import('../slot-allocator.js');
     const budget = await calculateSlotBudget();
@@ -1223,7 +1231,7 @@ router.get('/runner-status', async (_req, res) => {
  * GET /api/brain/slot-recommendation
  * 动态推荐 slot 数：floor(剩余请求 / 预计剩余小时 / 平均请求每任务)
  */
-router.get('/slot-recommendation', async (_req, res) => {
+router.get('/slot-recommendation', moduleRouteRateLimit, async (_req, res) => {
   try {
     const usage = await getAccountUsage();
     const accounts = Object.values(usage);
@@ -1278,7 +1286,7 @@ router.get('/slot-recommendation', async (_req, res) => {
  * GET /api/brain/credentials
  * 返回可用账户列表（扫描 account*.json 和 ~/.credentials/*.json）
  */
-router.get('/credentials', async (_req, res) => {
+router.get('/credentials', moduleRouteRateLimit, async (_req, res) => {
   const credentials = [];
 
   // 1. Anthropic OAuth accounts: ~/.claude/.account*.json
@@ -1401,7 +1409,7 @@ router.get('/skills-registry', async (_req, res) => {
  * GET /api/brain/device-locks
  * 查看所有设备锁状态
  */
-router.get('/device-locks', async (_req, res) => {
+router.get('/device-locks', moduleRouteRateLimit, async (_req, res) => {
   try {
     const { rows } = await pool.query(
       `SELECT device_name, locked_by, locked_at, expires_at,xmin::text AS lease_version,

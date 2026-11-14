@@ -4,6 +4,7 @@
  * Provides standardized templates for PRD (Product Requirements Document)
  * and TRD (Technical Requirements Document) generation.
  */
+import { documentTitle, successCriteria } from './lib/document-sections.js';
 
 /**
  * Get current date in YYYY-MM-DD format
@@ -707,9 +708,8 @@ function validatePrd(prdContent) {
   }
 
   // Content quality - acceptance criteria
-  const successMatch = prdContent.match(/(?:##\s*(?:成功标准|验收标准)|\*\*成功标准\*\*)([\s\S]*?)(?=\n##|\n\*\*[^*]|\n---|\n$)/);
-  if (successMatch) {
-    const section = successMatch[1];
+  const section = successCriteria(prdContent);
+  if (section !== null) {
     if (!/[-*]\s|^\d+\./m.test(section)) {
       warnings.push('成功标准 section has no list items');
     }
@@ -774,8 +774,7 @@ function validateTrd(trdContent) {
  * @returns {Object} Structured PRD object
  */
 function prdToJson(prdContent) {
-  const titleMatch = prdContent.match(/^#\s+(.+)$/m);
-  const title = titleMatch ? titleMatch[1].replace(/^PRD\s*-\s*/, '') : '';
+  const title = documentTitle(prdContent, 'PRD');
 
   const sections = {};
   for (const section of PRD_TEMPLATE.sections) {
@@ -791,8 +790,7 @@ function prdToJson(prdContent) {
  * @returns {Object} Structured TRD object
  */
 function trdToJson(trdContent) {
-  const titleMatch = trdContent.match(/^#\s+(.+)$/m);
-  const title = titleMatch ? titleMatch[1].replace(/^TRD\s*-\s*/, '') : '';
+  const title = documentTitle(trdContent, 'TRD');
 
   const sections = {};
   for (const section of TRD_TEMPLATE.sections) {

@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { rateLimit } from 'express-rate-limit';
 import { readFileSync } from 'fs';
 import pool from '../db.js';
 import { addQuestionToGoal, answerQuestionForGoal, getPendingQuestions, OKR_STATUS } from '../okr-tick.js';
@@ -34,6 +35,14 @@ async function checkXianBridgeHealth() {
 const pkg = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url)));
 
 const router = Router();
+
+// 仅匹配本模块的受保护路由计数，避免消耗其他Brain模块的额度。
+const moduleRouteRateLimit = rateLimit({
+  windowMs: 60_000,
+  limit: 1200,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+});
 
 // ==================== Events API (EventBus) ====================
 
@@ -101,7 +110,7 @@ router.post('/circuit-breaker/:key/reset', async (req, res) => {
  * GET /api/brain/health
  * One-stop health check for all Cecelia organs
  */
-router.get('/health', async (req, res) => {
+router.get('/health', moduleRouteRateLimit, async (req, res) => {
   const isolated = isIsolatedRuntime();
   const runtime = { isolated, background_automation: !isolated };
   try {
@@ -279,7 +288,7 @@ router.get('/credentials/status', async (req, res) => {
  * GET /api/brain/blocks/:parentType/:parentId
  * Get all blocks for a parent entity (goal, task, project, or block)
  */
-router.get('/blocks/:parentType/:parentId', async (req, res) => {
+router.get('/blocks/:parentType/:parentId', moduleRouteRateLimit, async (req, res) => {
   try {
     const { parentType, parentId } = req.params;
 
@@ -309,7 +318,7 @@ router.get('/blocks/:parentType/:parentId', async (req, res) => {
  * POST /api/brain/blocks
  * Create a new block
  */
-router.post('/blocks', async (req, res) => {
+router.post('/blocks', moduleRouteRateLimit, async (req, res) => {
   try {
     const { parent_id, parent_type, type, content, order_index } = req.body;
 
@@ -371,7 +380,7 @@ router.post('/blocks', async (req, res) => {
  * Batch reorder blocks (must be before :id route)
  * Body: { blocks: [{ id, order_index }, ...] }
  */
-router.put('/blocks/reorder', async (req, res) => {
+router.put('/blocks/reorder', moduleRouteRateLimit, async (req, res) => {
   try {
     const { blocks } = req.body;
 
@@ -420,7 +429,7 @@ router.put('/blocks/reorder', async (req, res) => {
  * PUT /api/brain/blocks/:id
  * Update a block
  */
-router.put('/blocks/:id', async (req, res) => {
+router.put('/blocks/:id', moduleRouteRateLimit, async (req, res) => {
   try {
     const { id } = req.params;
     const { type, content, order_index } = req.body;
@@ -484,7 +493,7 @@ router.put('/blocks/:id', async (req, res) => {
  * DELETE /api/brain/blocks/:id
  * Delete a block
  */
-router.delete('/blocks/:id', async (req, res) => {
+router.delete('/blocks/:id', moduleRouteRateLimit, async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -669,7 +678,7 @@ router.get('/daily-reports/:date/summary', async (req, res) => {
  * GET /api/brain/hardening/status
  * One-eye dashboard: aggregates all 6 stability hardening features
  */
-router.get('/hardening/status', async (req, res) => {
+router.get('/hardening/status', moduleRouteRateLimit, async (req, res) => {
   try {
     const version = pkg.version;
     const checked_at = new Date().toISOString();

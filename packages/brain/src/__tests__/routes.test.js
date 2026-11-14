@@ -7,6 +7,8 @@
  */
 
 import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
+import express from 'express';
+import request from 'supertest';
 
 // Mock dependencies — mockPool hoisted so routes.js 总能获得这个 pool 实例
 const mockPool = vi.hoisted(() => ({ query: vi.fn() }));
@@ -38,13 +40,25 @@ function mockReqRes(params = {}, query = {}, body = {}) {
   return { req, res };
 }
 
-// Get route handlers from the router
+// 经过真实路由和全部middleware，不把首个middleware当业务handler
 function getHandler(method, path) {
   const layers = router.stack.filter(
     l => l.route && l.route.methods[method] && l.route.path === path
   );
   if (layers.length === 0) throw new Error(`No handler for ${method} ${path}`);
-  return layers[0].route.stack[0].handle;
+  return async (req, res) => {
+    const app = express(); app.use(express.json()); app.use(router);
+    const server = await new Promise(resolve => {
+      const listener = app.listen(0, '127.0.0.1', () => resolve(listener));
+    });
+    try {
+      const response = await request(`http://127.0.0.1:${server.address().port}`)
+        [method](path).query(req.query).send(req.body);
+      res.status(response.status).json(response.body);
+    } finally {
+      await new Promise(resolve => server.close(resolve));
+    }
+  };
 }
 
 describe('Decomposition API Routes', () => {

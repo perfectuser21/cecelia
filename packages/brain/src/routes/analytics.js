@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { rateLimit } from 'express-rate-limit';
 import pool from '../db.js';
 import { getMonthlyPRCount, getMonthlyPRsByKR, getPRSuccessRate, getPRTrend } from '../stats.js';
 import { searchRelevantAnalyses } from '../cortex.js';
@@ -12,6 +13,14 @@ import { getActiveExecutionPaths as _getActiveExecutionPaths, INVENTORY_CONFIG a
 
 const router = Router();
 
+// 仅匹配本模块的受保护路由计数，避免消耗其他Brain模块的额度。
+const moduleRouteRateLimit = rateLimit({
+  windowMs: 60_000,
+  limit: 1200,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+});
+
 /**
  * GET /api/brain/cortex/analyses
  * Query historical Cortex analyses
@@ -22,7 +31,7 @@ const router = Router();
  * - trigger_event: Filter by trigger event type
  * - limit: Max results (default 10)
  */
-router.get('/cortex/analyses', async (req, res) => {
+router.get('/cortex/analyses', moduleRouteRateLimit, async (req, res) => {
   try {
     const { task_id, failure_class, trigger_event, limit } = req.query;
 
@@ -53,7 +62,7 @@ router.get('/cortex/analyses', async (req, res) => {
  * GET /api/brain/cortex/analyses/:id
  * Get single analysis by ID
  */
-router.get('/cortex/analyses/:id', async (req, res) => {
+router.get('/cortex/analyses/:id', moduleRouteRateLimit, async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT * FROM cortex_analyses WHERE id = $1
@@ -172,7 +181,7 @@ router.post('/cortex/feedback', async (req, res) => {
  *
  * Query params: hours (default: 24, max: 168)
  */
-router.get('/cortex/stats', async (req, res) => {
+router.get('/cortex/stats', moduleRouteRateLimit, async (req, res) => {
   try {
     const hours = Math.min(168, Math.max(1, parseInt(req.query.hours || '24', 10)));
     const result = await pool.query(`
@@ -235,7 +244,7 @@ router.post('/cortex/generate-report', async (req, res) => {
  * GET /api/brain/cortex/reports
  * 获取最近的系统简报列表
  */
-router.get('/cortex/reports', async (req, res) => {
+router.get('/cortex/reports', moduleRouteRateLimit, async (req, res) => {
   try {
     const limit = Math.min(20, parseInt(req.query.limit) || 10);
     const result = await pool.query(`
@@ -282,7 +291,7 @@ router.post('/learning/evaluate-strategy', async (req, res) => {
  * Cecelia 成长档案统计概览
  * 返回: birth_date, days_since_birth, tasks_completed, learnings_count
  */
-router.get('/stats/overview', async (req, res) => {
+router.get('/stats/overview', moduleRouteRateLimit, async (req, res) => {
   try {
     const BIRTH_DATE = '2026-02-28';
     const birthMs = new Date(BIRTH_DATE + 'T00:00:00+08:00').getTime();
@@ -430,7 +439,7 @@ router.get('/stats/autonomous-prs', async (req, res) => {
  *   current_stage: number (optional, 1-4)
  *   owner: string (optional)
  */
-router.get('/capabilities', async (req, res) => {
+router.get('/capabilities', moduleRouteRateLimit, async (req, res) => {
   try {
     const { current_stage, owner, scope } = req.query;
 
@@ -475,7 +484,7 @@ router.get('/capabilities', async (req, res) => {
  * GET /api/brain/capabilities/:id
  * Get a single capability by ID
  */
-router.get('/capabilities/:id', async (req, res) => {
+router.get('/capabilities/:id', moduleRouteRateLimit, async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -523,7 +532,7 @@ router.get('/capabilities/:id', async (req, res) => {
  *   owner: string (optional, default 'system')
  * }
  */
-router.post('/capabilities', async (req, res) => {
+router.post('/capabilities', moduleRouteRateLimit, async (req, res) => {
   try {
     const {
       id,
@@ -635,7 +644,7 @@ router.post('/capabilities', async (req, res) => {
  *   key_tables: string[] (optional)
  * }
  */
-router.patch('/capabilities/:id', async (req, res) => {
+router.patch('/capabilities/:id', moduleRouteRateLimit, async (req, res) => {
   try {
     const { id } = req.params;
     const {
@@ -761,7 +770,7 @@ router.patch('/capabilities/:id', async (req, res) => {
  *   estimated_hours: number (optional)
  * }
  */
-router.post('/pr-plans', async (req, res) => {
+router.post('/pr-plans', moduleRouteRateLimit, async (req, res) => {
   try {
     const {
       project_id,
@@ -869,7 +878,7 @@ router.post('/pr-plans', async (req, res) => {
  *   project_id: string (optional)
  *   status: string (optional)
  */
-router.get('/pr-plans', async (req, res) => {
+router.get('/pr-plans', moduleRouteRateLimit, async (req, res) => {
   try {
     const { project_id, status } = req.query;
 
@@ -912,7 +921,7 @@ router.get('/pr-plans', async (req, res) => {
  * GET /api/brain/pr-plans/:id
  * Get a single PR Plan with full context
  */
-router.get('/pr-plans/:id', async (req, res) => {
+router.get('/pr-plans/:id', moduleRouteRateLimit, async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -959,7 +968,7 @@ router.get('/pr-plans/:id', async (req, res) => {
  *   status: string (optional)
  * }
  */
-router.patch('/pr-plans/:id', async (req, res) => {
+router.patch('/pr-plans/:id', moduleRouteRateLimit, async (req, res) => {
   try {
     const { id } = req.params;
     const {
@@ -1110,7 +1119,7 @@ router.patch('/pr-plans/:id', async (req, res) => {
  * DELETE /api/brain/pr-plans/:id
  * Delete a PR Plan
  */
-router.delete('/pr-plans/:id', async (req, res) => {
+router.delete('/pr-plans/:id', moduleRouteRateLimit, async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -1258,7 +1267,7 @@ router.post('/capabilities/scan', async (req, res) => {
 /**
  * GET /api/brain/config/area-slots - 读取 Area Slot 配置
  */
-router.get('/config/area-slots', async (req, res) => {
+router.get('/config/area-slots', moduleRouteRateLimit, async (req, res) => {
   try {
     const { rows } = await pool.query(
       `SELECT value FROM brain_config WHERE key = 'area_slots'`
@@ -1290,7 +1299,7 @@ router.get('/config/area-slots', async (req, res) => {
 /**
  * PUT /api/brain/config/area-slots - 保存 Area Slot 配置
  */
-router.put('/config/area-slots', async (req, res) => {
+router.put('/config/area-slots', moduleRouteRateLimit, async (req, res) => {
   try {
     const config = req.body;
     await pool.query(
