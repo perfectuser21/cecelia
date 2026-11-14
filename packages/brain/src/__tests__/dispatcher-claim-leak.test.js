@@ -13,7 +13,6 @@
  * the task is marked failed instead of being left dangling.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { canonicalRoutingReceipt, routedCodingPayload } from './helpers/routing-receipt-fixture.js';
 
 const mockQuery = vi.fn();
 vi.mock('../db.js', () => ({
@@ -45,14 +44,7 @@ vi.mock('../slot-allocator.js', () => ({
     codex: { available: true, running: 0, max: 5 },
     budgetState: { state: 'abundant' },
   }),
-  harnessSlotCheck: vi.fn().mockResolvedValue({
-    allow: true,
-    reason: null,
-    containers: 0,
-    inflight: 0,
-    cap: { effective: 4, mem_cap: 4, acct_cap: 4, hard_cap: 4 },
-    stale: false,
-  }),
+
 }));
 vi.mock('../token-budget-planner.js', () => ({ shouldDowngrade: vi.fn(() => false) }));
 vi.mock('../event-bus.js', () => ({ emit: vi.fn().mockResolvedValue(undefined) }));
@@ -96,9 +88,9 @@ describe('dispatchNextTask — claim leak on mid-flight exception (fabf6bd6)', (
   const TASK_ID = 'bd7e251c-0000-0000-0000-000000000001';
   const ROUTED_TASK = {
     id: TASK_ID,
-    task_type: 'harness_initiative',
-    title: 'harness task',
-    payload: routedCodingPayload(TASK_ID),
+    task_type: 'research',
+    title: 'research task',
+    payload: {},
   };
 
   beforeEach(() => {
@@ -107,9 +99,9 @@ describe('dispatchNextTask — claim leak on mid-flight exception (fabf6bd6)', (
     mockSelectNextDispatchableTask.mockReset();
     mockSelectNextDispatchableTask.mockResolvedValue({
       id: TASK_ID,
-      task_type: 'harness_initiative',
+      task_type: 'research',
       project_id: null,
-      title: 'harness task that will explode',
+      title: 'research task that will explode',
     });
   });
 
@@ -163,9 +155,6 @@ describe('dispatchNextTask — claim leak on mid-flight exception (fabf6bd6)', (
         // succeeds normally this time — task really gets dispatched
         return Promise.resolve({ rows: [ROUTED_TASK] });
       }
-      if (/FROM work_routing_receipts receipt/.test(sql)) {
-        return Promise.resolve({ rows: [canonicalRoutingReceipt(ROUTED_TASK)] });
-      }
       if (/INSERT INTO working_memory/.test(sql) && params?.[0] === 'tick_last_dispatch') {
         // simulate a transient DB hiccup on the post-success dispatch-info bookkeeping insert
         return Promise.reject(new Error('simulated transient DB error on working_memory upsert'));
@@ -199,7 +188,6 @@ describe('dispatchNextTask — claim leak on mid-flight exception (fabf6bd6)', (
     mockQuery.mockImplementation(async(sql)=>{
       if(/UPDATE tasks SET claimed_by\s*=\s*\$1/.test(sql))return {rows:[{id:TASK_ID}]};
       if(/SELECT \* FROM tasks WHERE id/.test(sql))return {rows:[ROUTED_TASK]};
-      if(/FROM work_routing_receipts receipt/.test(sql))return {rows:[canonicalRoutingReceipt(ROUTED_TASK)]};
       return {rows:[]};
     });
     const {dispatchNextTask}=await import('../dispatcher.js');

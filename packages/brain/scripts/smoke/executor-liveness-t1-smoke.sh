@@ -41,8 +41,7 @@ else
   skip "Brain 离线 — 跳过 API 检查（CI 无 DB 时正常）"
 fi
 
-# 静态检查：executor-contracts.js 六合同结构
-# （2026-07-27 由五增六：kernel-process = Kernel v1 的裸 Node 进程，不是 docker 容器）
+# 现役执行器合同结构
 REPO_ROOT="$(cd "$(dirname "$0")/../../../.." && pwd)"
 CONTRACTS_JS="$REPO_ROOT/packages/brain/src/executor-contracts.js"
 
@@ -55,7 +54,7 @@ else
 import { EXECUTOR_CONTRACTS, VALID_EXECUTOR_KINDS, assessTaskLiveness } from '${CONTRACTS_JS}';
 // PR1-B 由七增八：openclaw-agent = 秋米中文 GTD 任务的执行者（Brain 经 ssh 在 MMV 起 agent）
 // 棒3 由八增九：script = executor=script 一等任务类型（Brain 经 ssh 在跑场机执行确定性脚本）
-const EXPECTED = ['brain-local','relay-container','kernel-process','headed-session','bridge','external-worker','codex-review-local','openclaw-agent','script','preview-janitor','app-server-controller','image-janitor','phone-ssh-controller','linux-pool-controller','coding-workflow-runner'];
+const EXPECTED = ['brain-local','headed-session','bridge','external-worker','codex-review-local','openclaw-agent','script','preview-janitor','app-server-controller','image-janitor','phone-ssh-controller','linux-pool-controller','coding-workflow-runner'];
 if (JSON.stringify([...VALID_EXECUTOR_KINDS].sort()) !== JSON.stringify(EXPECTED.sort())) throw new Error('VALID_EXECUTOR_KINDS 名单不对');
 const appServer = EXECUTOR_CONTRACTS['app-server-controller'];
 if (await appServer.probe(null, null) !== 'unknown' || appServer.staleMinutes !== null || appServer.onStale !== 'none') throw new Error('app-server 只允许专属控制器确认清理');
@@ -100,7 +99,6 @@ EOF
     || fail "EXECUTOR_KIND_FOR 映射缺失"
 import { EXECUTOR_KIND_FOR } from '${CONTRACTS_JS}';
 const checks = {
-  'harness_initiative': 'relay-container',
   'dev': 'brain-local',
   'content-pipeline': 'external-worker',
   '__bridge_path': 'bridge',
@@ -111,25 +109,7 @@ for (const [k,v] of Object.entries(checks)) {
 }
 EOF
 
-  # kernel-process：按 payload.harness_runtime 分派 + 判活 fail-open（事故 51836fb2）
-  node --input-type=module <<EOF 2>/dev/null \
-    && ok "kernel-v1 任务解析为 kernel-process 且判活 fail-open" \
-    || fail "kernel-process 分派/fail-open 异常"
-import { resolveExecutorKind, resolveLivenessKind, assessTaskLiveness, EXECUTOR_CONTRACTS } from '${CONTRACTS_JS}';
-const kt = { id: 'smoke-kernel', task_type: 'harness_initiative', payload: { harness_runtime: 'kernel-v1' } };
-if (resolveExecutorKind(kt) !== 'kernel-process') throw new Error('打标点未分派 kernel-process');
-if (resolveLivenessKind({ ...kt, executor_kind: 'relay-container' }) !== 'kernel-process') {
-  throw new Error('存量 relay-container 误标未被判活点纠正');
-}
-if (resolveExecutorKind({ task_type: 'harness_initiative', payload: {} }) !== 'relay-container') {
-  throw new Error('旧 relay 路径被改变');
-}
-const c = EXECUTOR_CONTRACTS['kernel-process'];
-if (c.onStale !== EXECUTOR_CONTRACTS['relay-container'].onStale) throw new Error('kernel-process 比 relay-container 更容易被杀');
-// 无 pool → 必须 unknown（fail-open），绝不能 dead
-const r = await assessTaskLiveness({ ...kt, executor_kind: 'relay-container' }, { pool: null, allowDefaultPool: false });
-if (r.verdict !== 'unknown') throw new Error('无 pool 时应 fail-open unknown，实际 ' + r.verdict);
-EOF
+
 fi
 
 echo ""

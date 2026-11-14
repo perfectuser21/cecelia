@@ -22,8 +22,8 @@ import os from 'os';
 import path from 'path';
 import pool from './db.js';
 import { updateTaskStatus } from './task-updater.js';
-import { normalizeAcceptance } from './harness-final-e2e.js';
-import { resolveLine, decidePromote, runInternalPromote, defaultPromoteExec, getRepoRoot, PROMOTE_STATUS, spawnHarnessReport, readProductionInfo, REPORT_KIND } from './staging-promote.js';
+import { normalizeAcceptance } from './staging-acceptance.js';
+import { resolveLine, decidePromote, runInternalPromote, defaultPromoteExec, getRepoRoot, PROMOTE_STATUS } from './staging-promote.js';
 import { sendFeishu, sendBark } from './notifier.js';
 
 export const STAGING_PORT = 5222;
@@ -456,21 +456,6 @@ export async function handlePromote(dbPool, { verdict, baseRepo, prUrl, initiati
       // 自动 promote 成功用 auto_promoted（区分客户线 confirm 后的 promoted）；失败 promote_failed。
       const status = r.ok ? PROMOTE_STATUS.AUTO_PROMOTED : PROMOTE_STATUS.PROMOTE_FAILED;
       await updatePromoteStatus(dbPool, prUrl, status, r.output);
-      // Slice3：内部线 auto_promoted → 派成功交付证书 report；promote_failed → 失败报告。
-      const prod = readProductionInfo(process.env.REPO_ROOT || getRepoRoot());
-      await spawnHarnessReport(
-        { db: dbPool },
-        {
-          initiativeId, prUrl,
-          reportKind: r.ok ? REPORT_KIND.SUCCESS : REPORT_KIND.FAILURE,
-          stagingE2eVerdict: verdict,
-          promoteStatus: status,
-          promotedAt: new Date().toISOString(),
-          promotedBy: 'auto',
-          productionVersion: prod.productionVersion,
-          rollbackAnchor: prod.rollbackAnchor,
-        },
-      );
       return status;
     }
     // pending：客户线 / base_repo 缺失 → 挂起 + 通知主理人
@@ -479,7 +464,7 @@ export async function handlePromote(dbPool, { verdict, baseRepo, prUrl, initiati
       await notify(
         `⏳ [Pending Promote] staging E2E PASS，等主理人放行上生产\n`
         + `initiative: ${initiativeId || '?'}\nPR: ${prUrl || '?'}\nbase_repo: ${baseRepo || '(缺失,保守挂起)'}\n`
-        + `confirm: POST /api/brain/harness/promote/<resultId>`
+        + `confirm: POST /api/brain/staging/promote/<resultId>`
       );
     } catch (e) {
       console.warn(`[staging-e2e] pending_promote 通知失败（忽略）: ${e.message}`);
@@ -740,7 +725,7 @@ export async function runStagingE2E(task, opts = {}) {
         notifyMessage:
           `⏳ [Unknown 线] staging_e2e 收到第三方 repo，无 staging 部署目标，已挂 pending 等人工决策\n`
           + `initiative: ${initiativeId || '?'}\nPR: ${prUrl || '?'}\nbase_repo: ${baseRepo}\n`
-          + `confirm: POST /api/brain/harness/promote/<resultId>`,
+          + `confirm: POST /api/brain/staging/promote/<resultId>`,
       });
     }
 

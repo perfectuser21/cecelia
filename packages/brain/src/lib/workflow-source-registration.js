@@ -1,7 +1,7 @@
 /** 只登记既有工作流的 Git 来源；不创建/激活流程、活动或执行定义。 */
 import { createHash } from 'node:crypto';
 import yaml from 'js-yaml';
-import { resolveGitHubToken } from '../harness-credentials.js';
+import { resolveGitHubToken } from '../github-credentials.js';
 import { contractPath } from './activity-contract-loader.js';
 const REPO='perfectuser21/zenithjoy-workspace';
 const UUID=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;

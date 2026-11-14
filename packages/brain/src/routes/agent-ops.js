@@ -21,8 +21,7 @@ export const STALE_FACTOR = 3;
 
 export const SKILL_BY_TASK_TYPE = {
   dev: '/dev',
-  harness_initiative: 'harness(skill-relay)',
-  harness_intervention: 'harness(skill-relay)',
+  coding_workflow: 'coding-workflow-runner',
   ci_patrol: '/ci-patrol',
   code_review: '/code-review',
   arch_review: '/arch-review',

@@ -5,7 +5,6 @@ vi.mock('../runtime-safety.js', () => ({ assertExternalExecutionAllowed: () => {
  *
  * TC-A: POST /api/brain/tasks 携带 status=blocked → DB 写入 blocked，blocked_at 非 null
  * TC-B: dispatcher 遇 blocked 任务 → selectNextDispatchableTask 不选它（只选 queued）
- * TC-C: 同 task_id 在途容器（initiative_runs 非终态）→ spawn 被拒，reason=active_run_guard
  * TC-REG: 注册序列 1 queued + 2 blocked → 仅首个被选中派发
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -43,7 +42,6 @@ vi.mock('../quarantine.js', () => ({
 }));
 
 const { default: taskTasksRouter } = await import('../routes/task-tasks.js');
-const { spawnSkillRelaySession } = await import('../harness-skill-relay.js');
 
 function makeApp() {
   const app = express();
@@ -103,7 +101,7 @@ describe('TC-A: POST /tasks status=blocked 注册', () => {
       .send({ title: '被阻断任务', task_type: 'research', status: 'blocked' });
 
     // 断言：HTTP 成功（201）
-    expect(res.status).toBe(201);
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
 
     // 断言：INSERT params 中 status 位置（$5）应为 'blocked'，不能被改成 'queued'
     // params 顺序：title, description, priority, task_type, status, project_id, ...
@@ -125,7 +123,7 @@ describe('TC-A: POST /tasks status=blocked 注册', () => {
       .post('/api/brain/tasks')
       .send({ title: '被阻断任务B', task_type: 'research', status: 'blocked' });
 
-    expect(res.status).toBe(201);
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
 
     // 断言：INSERT SQL 中含 blocked_at 列
     expect(routedTaskMock.mock.calls[0][1].task.blocked_at).toBeTruthy();
@@ -141,7 +139,7 @@ describe('TC-A: POST /tasks status=blocked 注册', () => {
       .post('/api/brain/tasks')
       .send({ title: '普通任务', task_type: 'research' });
 
-    expect(res.status).toBe(201);
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
     expect(res.body.status).toBe('queued');
   });
 
@@ -155,17 +153,8 @@ describe('TC-A: POST /tasks status=blocked 注册', () => {
       .post('/api/brain/tasks')
       .send({ title: '部署后任务', task_type: 'research', status: 'pending_postdeploy' });
 
-    expect(res.status).toBe(201);
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
   });
-});
-
-// 退役入口在查询旧run之前拒绝；既有在途run保持原状，不再建第二个会话。
-describe('TC-C: 旧relay退役防重新启动',()=>{
- it.each(['claude','codex','existing_run','db_unavailable'])('无论旧执行状态%s均拒绝，零DB/worktree/session副作用',async state=>{
-  const effect=vi.fn(()=>{throw Error('must not execute');});
-  const result=await spawnSkillRelaySession({id:'historical',task_type:'harness_initiative',payload:{orchestrator:'skill-relay',executor:state==='claude'?'claude':'codex'}},{pool:{query:effect},spawnFn:effect,execFn:effect,ensureWt:effect,loadSkill:effect,tokenFn:effect});
-  expect(result).toMatchObject({ok:false,error:'kernel_runtime_retired'});expect(effect).not.toHaveBeenCalled();
- });
 });
 
 // ─── TC-B：dispatcher selectNextDispatchableTask WHERE 仅选 queued ────────────

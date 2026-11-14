@@ -42,14 +42,10 @@ vi.mock('../slot-allocator.js', () => ({
     dispatchAllowed: true,
     taskPool: { budget: 5, available: 3 },
     user: { mode: 'absent', used: 0 },
+    codex: { available: true, running: 0, max: 5 },
   }),
   shouldBypassBackpressure: vi.fn(() => false),
-  // harness admission 收权后（beeba317）dispatcher 会调 harnessSlotCheck；
-  // 本文件测的是 bridge guard bypass，admission 直接放行
-  harnessSlotCheck: vi.fn().mockResolvedValue({
-    allow: true, reason: 'ok', containers: 0, inflight: 0,
-    cap: { effective: 4, mem_cap: 8, acct_cap: 4, hard_cap: 8 }, stale: false,
-  }),
+
 }));
 
 const mockIsAllowed = vi.fn().mockReturnValue(true);
@@ -133,18 +129,12 @@ vi.mock('../account-usage.js', () => ({
 const TASK = {
   id: 'task-claude-bound', title: 'Claude bound task title',
   description: '依赖 claude 桥接的任务，应被跳过而不是记失败',
-  status: 'queued', priority: 'P1', payload: {},
+  task_type:'research', status: 'queued', priority: 'P1', payload: {},
   created_at: '2026-07-16T00:00:00Z', // 锚点执法闸上线前的存量任务，豁免 anchor 校验
 };
 
 function queueOneCandidate() {
-  mockQuery.mockResolvedValueOnce({ rows: [] });        // drain retired harness types
-  mockQuery.mockResolvedValueOnce({ rows: [] });        // 无头 kernel drain（harness_initiative 无头入口退役）
-  mockQuery.mockResolvedValueOnce({ rows: [TASK] });    // selectNextDispatchableTask
-  mockQuery.mockResolvedValueOnce({ rows: [] });        // 派发前语义查重
-  mockQuery.mockResolvedValueOnce({ rows: [{ id: TASK.id }] }); // atomic claim
-  mockQuery.mockResolvedValueOnce({ rows: [TASK] });    // SELECT * FROM tasks
-  mockQuery.mockResolvedValue({ rows: [], rowCount: 1 });
+  serveQueue([TASK]);
 }
 
 // 按 SQL 应答的候选队列：selectNextDispatchableTask 返回第一个未被跳过的；claude 候选执行时被拒，其它成功
@@ -157,6 +147,8 @@ function serveQueue(queue) {
       const next = queue.find(t => !excluded.includes(t.id));
       return { rows: next ? [next] : [] };
     }
+    if (/SELECT count\(\*\)::int AS n FROM tasks/.test(text)) return {rows:[{n:0}],rowCount:1};
+    if (/SELECT id, run_id FROM task_runs/.test(text)) return {rows:[{id:'owned-run',run_id:params[0]}],rowCount:1};
     if (/SET claimed_by = \$1/.test(text)) return { rows: [{ id: params[1] }], rowCount: 1 };
     if (/SELECT \* FROM tasks WHERE id = \$1/.test(text)) return { rows: [byId[params[0]]], rowCount: 1 };
     return { rows: [], rowCount: 1 };
@@ -173,7 +165,8 @@ describe('dispatcher：claude 通道退役按 no_executor 收口', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockQuery.mockReset();
-    mockCheckAvailable.mockResolvedValue({ available: true });
+    mockTriggerCeceliaRun.mockReset();
+    mockCheckAvailable.mockReset().mockResolvedValue({ available: true });
   });
 
   it('派前可用性检查传入候选任务（恒可用，不预测路由）', async () => {

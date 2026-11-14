@@ -140,3 +140,24 @@ describe('createRoutedTask 写 tasks.kind', () => {
     expect(pool.query.mock.calls.some(([sql]) => sql === 'ROLLBACK')).toBe(true);
   });
 });
+
+describe('开发账本现役入口',()=>{
+  it('有头开发落dev和headed标记，不产生旧Kernel字段，也不成为Runner候选',async()=>{
+    const base=makePool(), native=base.query;
+    base.query=vi.fn(async(sql,...args)=>/WITH authoritative_scope AS/.test(sql)?{rows:[{node_key:'F1'}]}:native(sql,...args));
+    const request={source:'api',source_id:'headed-development',title:'开发账本',requested_task_type:'dev',mutation_intent:'write',declared_change_kind:'bugfix',repo_hint:'cecelia',map_scope_hint:['F1'],branch:'cp-headed-ledger',base_sha:'a'.repeat(40),task:{status:'in_progress',payload:{headed_manual:'true'}}};
+    const result=await createRoutedTask(base,request,[{scope_key:'cecelia',repo:'cecelia'}]);
+    expect(result.decision).toMatchObject({canonical_task_type:'dev',pipeline:'headed_development',orchestrator:'headed-session'});
+    expect(insertedValue(base,'task_type')).toBe('dev');
+    const payload=JSON.parse(insertedValue(base,'payload'));
+    expect(payload.headed_manual).toBe('true');expect(payload.orchestrator).toBe('headed-session');
+    expect(payload).not.toHaveProperty('harness_runtime');expect(payload).not.toHaveProperty('harness_mode');
+    const {isSwitched}=await import('../../scripts/coding-workflow/runner/lib/plan.mjs');
+    expect(isSwitched({task_type:'dev',payload})).toBe(false);
+  });
+  it.each(['queued','in_progress','completed'])('旧类型以%s创建在事务或查库前拒绝',async status=>{
+    const pool=makePool();
+    await expect(createRoutedTask(pool,{source:'api',source_id:'retired-ledger',requested_task_type:'harness_initiative',task:{status,payload:{headed_manual:'true'}}},[])).rejects.toMatchObject({code:'task_type_retired'});
+    expect(pool.query).not.toHaveBeenCalled();
+  });
+});

@@ -72,7 +72,7 @@ export function domainsForChanges(paths) {
         /^packages\/brain\/src\/(?:lib\/(?:infra-|existing-ops-)|.*company-kr)/.test(path)) domains.add('ops');
     else if (/^(?:scripts\/(?:preview-|request-preview-|wait-preview-|verify-preview-|lib\/preview-)|packages\/brain\/src\/(?:preview-|routes\/preview\.js|capacity-gate\.js))/.test(path)) domains.add('preview');
     else if (/^(?:apps\/dashboard\/|frontend-proxy\.js$|scripts\/(?:promote-dashboard|rollback-cecelia|dashboard-|dev-preview|lib\/(?:dashboard-|release-)))/.test(path)) domains.add('dashboard');
-    else if (/^(?:docker\/cecelia-runner\/|docker\/build\.sh$|packages\/brain\/(?:scripts\/fleet-worker\/|src\/(?:orchestrator\/|app-server\/|routes\/harness|executor|spawn\/)))/.test(path)) domains.add('runner');
+    else if (/^(?:docker\/cecelia-runner\/|docker\/build\.sh$|packages\/brain\/(?:scripts\/fleet-worker\/|src\/(?:orchestrator\/|app-server\/|executor|spawn\/)))/.test(path)) domains.add('runner');
     else if (/^scripts\/deploy-local\.sh$|^docker-compose.*\.ya?ml$/.test(path)) {
       for (const domain of ['runner', 'dashboard', 'preview']) domains.add(domain);
     } else if (/^scripts\/(?:brain-(?:deploy|build|rollback)|lib\/(?:brain-|bluegreen|internal-auth))/.test(path)) domains.add('runner');

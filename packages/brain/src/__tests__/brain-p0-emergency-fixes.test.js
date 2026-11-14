@@ -1,10 +1,8 @@
 /**
  * P0 救急修复回归测试
  *
- * 覆盖 4 个救急修复：
+ * 保留启动输入和端口恢复的通用保护：
  *  1. cecelia-run.sh setsid 重定向 stdin 到 /dev/null（Bridge 0 字节根因）
- *  2. task-router SKILL_WHITELIST 包含 harness_evaluate
- *  3. pre-flight-check SYSTEM_TASK_TYPES 包含 harness_evaluate
  *  4. server.js 启动前端口冲突清理（EADDRINUSE）
  */
 
@@ -46,29 +44,6 @@ describe('Brain P0 救急修复', () => {
       for (const line of allSetsidLines) {
         expect(line, `行未重定向 stdin: ${line.trim().slice(0, 120)}`).toMatch(/<\/dev\/null \&$/);
       }
-    });
-  });
-
-  describe('Fix 2: task-router SKILL_WHITELIST 含 harness_evaluate', () => {
-    it("SKILL_WHITELIST['harness_evaluate'] === '/harness-evaluator'", async () => {
-      const mod = await import('../task-router.js');
-      expect(mod.SKILL_WHITELIST).toBeDefined();
-      expect(mod.SKILL_WHITELIST['harness_evaluate']).toBe('/harness-evaluator');
-    });
-  });
-
-  describe('Fix 3: pre-flight-check SYSTEM_TASK_TYPES 含 harness_evaluate', () => {
-    it('harness_evaluate 任务无 description 时 pre-flight 应通过', async () => {
-      const { preFlightCheck } = await import('../pre-flight-check.js');
-      const task = {
-        id: 'p0-fix-test',
-        title: 'harness evaluate sample',
-        task_type: 'harness_evaluate',
-        // 故意不给 description / prd_content / payload
-        priority: 'P1',
-      };
-      const result = await preFlightCheck(task);
-      expect(result.passed, `pre-flight 必须通过, issues=${JSON.stringify(result.issues)}`).toBe(true);
     });
   });
 

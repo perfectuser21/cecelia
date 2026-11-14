@@ -1249,41 +1249,23 @@ describe('Backpressure', () => {
 });
 
 // ============================================================
-// P0 Harness Backpressure Bypass — whitelist + getBackpressureState({task})
+// P0 Task Backpressure Bypass — whitelist + getBackpressureState({task})
 // ============================================================
-describe('shouldBypassBackpressure: P0 harness whitelist', () => {
-  it('exports BACKPRESSURE_BYPASS_TASK_TYPES with 10 types (8 harness + dev + content_publish)', async () => {
-    // Task 3（qiumi-task-router PR1）之后名单来自 lib/task-type-registry.js 的
-    // tagged() 派生，顺序follows注册表声明顺序而非这份手写字面量的原顺序——
-    // 消费方只用 .includes()（见 slot-allocator.js:93 shouldBypassBackpressure），
-    // 顺序不是行为的一部分，故改为 Set 比较（集合相等）。
+describe('shouldBypassBackpressure: P0 active task whitelist', () => {
+  it('仅现役dev与content_publish享有P0背压优先权', async () => {
     const { BACKPRESSURE_BYPASS_TASK_TYPES } = await import('../slot-allocator.js');
-    // 合并前 Minor：Set 相等只比对成员，不比对个数——数组里混进一个重复项
-    // （如 'dev' 出现两次顶替掉别的类型）不会被 Set toEqual 抓到，补一条长度
-    // 断言钉住"确实是 10 个不同类型"，不只是"这堆值的去重集合长这样"。
-    expect(BACKPRESSURE_BYPASS_TASK_TYPES).toHaveLength(10);
-    expect(new Set(BACKPRESSURE_BYPASS_TASK_TYPES)).toEqual(new Set([
-      'harness_initiative',
-      'harness_task',
-      'harness_planner',
-      'harness_contract_propose',
-      'harness_contract_review',
-      'harness_fix',
-      'harness_ci_watch',
-      'harness_deploy_watch',
-      'dev',
-      'content_publish',
-    ]));
+    expect(BACKPRESSURE_BYPASS_TASK_TYPES).toHaveLength(2);
+    expect(new Set(BACKPRESSURE_BYPASS_TASK_TYPES)).toEqual(new Set(['dev','content_publish']));
   });
 
-  it('P0 harness_task → true', async () => {
+  it('P0旧任务harness_task不再享有旁路特权', async () => {
     const { shouldBypassBackpressure } = await import('../slot-allocator.js');
-    expect(shouldBypassBackpressure({ priority: 'P0', task_type: 'harness_task' })).toBe(true);
+    expect(shouldBypassBackpressure({ priority: 'P0', task_type: 'harness_task' })).toBe(false);
   });
 
-  it('P0 harness_initiative → true', async () => {
+  it('P0旧任务harness_initiative不再享有旁路特权', async () => {
     const { shouldBypassBackpressure } = await import('../slot-allocator.js');
-    expect(shouldBypassBackpressure({ priority: 'P0', task_type: 'harness_initiative' })).toBe(true);
+    expect(shouldBypassBackpressure({ priority: 'P0', task_type: 'harness_initiative' })).toBe(false);
   });
 
   // RCA 2026-04-25 §6: Brain 自修复 PR 多为 dev 类型，必须能 bypass 才能解锁
@@ -1327,14 +1309,14 @@ describe('shouldBypassBackpressure: P0 harness whitelist', () => {
 });
 
 describe('getBackpressureState: task bypass behavior', () => {
-  it('queue_depth=200 + P0 harness_task → active=false, override_burst_limit=null', async () => {
+  it('queue_depth=200 + P0 harness_task → 旧任务不享背压豁免', async () => {
     const { getBackpressureState } = await import('../slot-allocator.js');
     const state = getBackpressureState({
       queue_depth: 200,
       task: { priority: 'P0', task_type: 'harness_task' },
     });
-    expect(state.active).toBe(false);
-    expect(state.override_burst_limit).toBeNull();
+    expect(state.active).toBe(true);
+    expect(state.override_burst_limit).toBe(3);
     expect(state.queue_depth).toBe(200);
   });
 

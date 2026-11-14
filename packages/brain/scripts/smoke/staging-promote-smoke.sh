@@ -3,9 +3,9 @@
 #
 # 验证链路真落地（不是占位）：
 #   L1 (静态)  : staging-promote.js 导出 resolveLine/decidePromote/runInternalPromote；
-#                runStagingE2E finalize 接 handlePromote；routes/harness.js POST /staging-e2e
+#                runStagingE2E finalize 接 handlePromote；routes/staging.js POST /staging-e2e
 #                端点解析请求体 base_repo 字段并写入 payload；
-#                harness.js 有 POST /promote/:resultId 幂等回流接口；
+#                staging.js 有 POST /promote/:resultId 幂等回流接口；
 #                migration 306 ALTER 加 promote_status（不 CREATE TABLE）。
 #   L2 (gate)  : Brain 健康；不可达 SKIP exit 0。
 #   L3 (真验)  : 真 DB 上 promote_status CHECK 约束生效 + 放行状态机 pending→promoted + 幂等
@@ -17,7 +17,7 @@ fi
 
 PROMOTE="packages/brain/src/staging-promote.js"
 RUNNER="packages/brain/src/staging-e2e-runner.js"
-ROUTE="packages/brain/src/routes/harness.js"
+ROUTE="packages/brain/src/routes/staging.js"
 MIG306="packages/brain/migrations/306_staging_e2e_promote_status.sql"
 BRAIN="${BRAIN_URL:-http://localhost:5221}"
 DB="${DATABASE_URL:-postgresql://cecelia:cecelia@localhost:5432/cecelia}"
@@ -41,12 +41,12 @@ if(!/handlePromote/.test(r)){console.error('L1 FAIL: runStagingE2E 未接 handle
 if(!/base_repo/.test(r)){console.error('L1 FAIL: runner 未读 base_repo');process.exit(1)}
 
 const rt=fs.readFileSync('$ROUTE','utf8');
-const si=rt.indexOf(\"router.post('/staging-e2e'\");
-if(si<0){console.error('L1 FAIL: routes/harness.js 缺 POST /staging-e2e 端点');process.exit(1)}
+const si=rt.indexOf(\"router.post('/e2e'\");
+if(si<0){console.error('L1 FAIL: routes/staging.js 缺 POST /staging-e2e 端点');process.exit(1)}
 const sh=rt.slice(si, rt.indexOf('router.', si+20));
 if(!/base_repo/.test(sh)){console.error('L1 FAIL: POST /staging-e2e 未解析请求体 base_repo 并写入 payload');process.exit(1)}
 
-if(!/\/promote\/:resultId/.test(rt)){console.error('L1 FAIL: harness.js 缺 POST /promote/:resultId');process.exit(1)}
+if(!/\/promote\/:resultId/.test(rt)){console.error('L1 FAIL: staging.js 缺 POST /promote/:resultId');process.exit(1)}
 if(!/pending_promote/.test(rt) || !/409/.test(rt)){console.error('L1 FAIL: 回流接口缺幂等校验（pending_promote + 409）');process.exit(1)}
 
 const m=fs.readFileSync('$MIG306','utf8');

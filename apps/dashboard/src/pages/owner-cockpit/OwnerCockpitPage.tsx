@@ -5,34 +5,23 @@
  * Sprint:  sprints/07162300-owner-cockpit
  *
  * 功能：
- * - 六指标 Header（来自真实 Brain API）
+ * - 四指标 Header（来自真实 Brain API）
  * - 作战板（in_progress/queued/blocked 任务）
  * - 晨报 Feed（design_docs type=diary）
  * - 演习状态条（guard-drill）
- * - 导览区（16 个已有页面快捷入口）
+ * - 导览区（已有页面快捷入口）
  * - 移动端响应式（375px 单列）
  */
 
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import {
-  Activity, CheckCircle, GitMerge, Layers, AlertCircle, Shield,
-  ChevronDown, ChevronRight, ExternalLink, Clock, Zap,
-  BarChart2, Settings, Map, FileText, Video, Brain,
-  Target, BookOpen, Radio, Inbox, Database, TrendingUp,
-  Users, Code,
-} from 'lucide-react';
+import { Activity, Layers, AlertCircle, Shield, ChevronDown, ChevronRight, ExternalLink, Clock, Zap, BarChart2, Settings, Map, FileText, Video, Brain, Target, BookOpen, Radio, Inbox, Database, Users, Code } from 'lucide-react';
 
 // 相对路径走代理（本机 5211 frontend-proxy / HK / vite dev 均已配 /api/brain 转发）。
 // 禁止硬编码 localhost:5221——浏览器端 localhost=用户设备，手机/公网打开会全空（task 935499cb）。
 const BRAIN_URL = '';
 
 // ======== 类型定义 ========
-
-interface HarnessStats {
-  completion_rate: number | null;
-  total_pipelines: number | null;
-}
 
 interface Task {
   id: string;
@@ -66,11 +55,6 @@ interface DiaryDoc {
 
 // ======== 辅助函数 ========
 
-function fmtPct(val: number | null | undefined): string {
-  if (val == null) return '--';
-  return `${Math.round(val * 100)}%`;
-}
-
 function fmtNum(val: number | null | undefined): string {
   if (val == null) return '--';
   return String(val);
@@ -86,7 +70,7 @@ function fmtDate(iso: string | null | undefined): string {
   }
 }
 
-// ======== 六指标卡组件 ========
+// ======== 四指标卡组件 ========
 
 interface MetricCardProps {
   slug: string;
@@ -123,7 +107,7 @@ function BattleCard({ task }: BattleCardProps) {
   const navigate = useNavigate();
 
   function handleClick() {
-    navigate(`/harness-pipeline?task_id=${task.id}`);
+    navigate(`/tasks/${task.id}/prd`);
   }
 
   const statusColor: Record<string, string> = {
@@ -142,7 +126,7 @@ function BattleCard({ task }: BattleCardProps) {
       <div className="flex-1 min-w-0">
         <a
           data-testid={`task-link-${task.id}`}
-          href={`/harness-pipeline?task_id=${task.id}`}
+          href={`/tasks/${task.id}/prd`}
           onClick={(e) => { e.preventDefault(); handleClick(); }}
           className="text-sm text-slate-200 hover:text-white line-clamp-2 leading-snug"
         >
@@ -242,13 +226,11 @@ function DrillStatusBar({ status }: { status: GuardDrillStatus | null }) {
 
 const NAV_LINKS = [
   { path: '/warroom', label: '战情室', icon: <Radio className="w-4 h-4" /> },
-  { path: '/pipeline', label: 'Harness 流水线', icon: <Zap className="w-4 h-4" /> },
+  { path: '/pipeline', label: '战情室', icon: <Zap className="w-4 h-4" /> },
   { path: '/tasks', label: '任务列表', icon: <Layers className="w-4 h-4" /> },
   { path: '/roadmap', label: '路线图', icon: <Map className="w-4 h-4" /> },
-  { path: '/harness-pipeline', label: '流水线详情', icon: <Activity className="w-4 h-4" /> },
   { path: '/reports', label: '报告中心', icon: <BarChart2 className="w-4 h-4" /> },
   { path: '/test-pyramid', label: '测试金字塔', icon: <Target className="w-4 h-4" /> },
-  { path: '/relay-progress', label: '中继进度', icon: <TrendingUp className="w-4 h-4" /> },
   { path: '/viral-analysis', label: '传播分析', icon: <Users className="w-4 h-4" /> },
   { path: '/clips', label: '内容剪辑', icon: <Video className="w-4 h-4" /> },
   { path: '/live-monitor', label: '直播监控', icon: <Radio className="w-4 h-4" /> },
@@ -283,7 +265,6 @@ function NavArea() {
 // ======== 主页面 ========
 
 export default function OwnerCockpitPage() {
-  const [harnessStats, setHarnessStats] = useState<HarnessStats | null>(null);
   const [inProgressTasks, setInProgressTasks] = useState<Task[]>([]);
   const [queuedTasks, setQueuedTasks] = useState<Task[]>([]);
   const [blockedTasks, setBlockedTasks] = useState<Task[]>([]);
@@ -294,20 +275,13 @@ export default function OwnerCockpitPage() {
   useEffect(() => {
     async function fetchAll() {
       // 并行 fetch 所有 API
-      const [statsRes, ipTasksRes, queuedRes, blockedRes, drillRes, diaryRes] = await Promise.allSettled([
-        fetch(`${BRAIN_URL}/api/brain/harness/stats`).then(r => r.json()),
+      const [ipTasksRes, queuedRes, blockedRes, drillRes, diaryRes] = await Promise.allSettled([
         fetch(`${BRAIN_URL}/api/brain/tasks?status=in_progress&limit=20`).then(r => r.json()),
         fetch(`${BRAIN_URL}/api/brain/tasks?status=queued&limit=10`).then(r => r.json()),
         fetch(`${BRAIN_URL}/api/brain/tasks?status=blocked&limit=5`).then(r => r.json()),
         fetch(`${BRAIN_URL}/api/brain/guard-drill/status`).then(r => r.json()),
         fetch(`${BRAIN_URL}/api/brain/design-docs?type=diary&limit=7`).then(r => r.json()),
       ]);
-
-      if (statsRes.status === 'fulfilled') {
-        setHarnessStats(statsRes.value);
-      } else {
-        setLoadError(e => ({ ...e, stats: 'load_failed' }));
-      }
 
       if (ipTasksRes.status === 'fulfilled') {
         const d = ipTasksRes.value;
@@ -337,22 +311,12 @@ export default function OwnerCockpitPage() {
     fetchAll().catch(e => console.error('[OwnerCockpit] fetchAll error:', e));
   }, []);
 
-  // 计算六指标
-  const completionRate = harnessStats?.completion_rate != null ? fmtPct(harnessStats.completion_rate) : '--';
-  const totalPipelines = harnessStats?.total_pipelines != null ? fmtNum(harnessStats.total_pipelines) : '--';
-
   // canary-green-days: guard 中连续未 stale 的计数（简化：返回非过期守卫数）
   const greenGuards = drillStatus?.guards.filter(g => !g.stale).length ?? null;
   const canaryGreenDays = greenGuards != null ? fmtNum(greenGuards) : '--';
 
   // gate-fires: blocked 任务数（关卡拦截次数）
   const gateFires = fmtNum(blockedTasks.length);
-
-  // merge-to-deploy: 从 harnessStats avg_duration 换算（秒/60 分钟，约表）
-  const avgDurationMs = (harnessStats as any)?.avg_duration;
-  const mergeToDeploy = avgDurationMs != null
-    ? `${Math.round(avgDurationMs / 60000)}m`
-    : '--';
 
   // queue-health: queued 数
   const queueHealth = fmtNum(queuedTasks.length);
@@ -388,16 +352,8 @@ export default function OwnerCockpitPage() {
           </div>
         </div>
 
-        {/* === 六指标 Header === */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3">
-          <MetricCard
-            slug="completion-rate"
-            label="完成率"
-            value={completionRate}
-            sub={`共 ${totalPipelines} 条流水线`}
-            icon={<CheckCircle className="w-5 h-5" />}
-            color="text-green-400"
-          />
+        {/* === 四指标 Header === */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
           <MetricCard
             slug="canary-green-days"
             label="金丝雀绿天"
@@ -413,14 +369,6 @@ export default function OwnerCockpitPage() {
             sub="blocked 任务数"
             icon={<AlertCircle className="w-5 h-5" />}
             color="text-orange-400"
-          />
-          <MetricCard
-            slug="merge-to-deploy"
-            label="合并到部署"
-            value={mergeToDeploy}
-            sub="平均耗时"
-            icon={<GitMerge className="w-5 h-5" />}
-            color="text-purple-400"
           />
           <MetricCard
             slug="queue-health"

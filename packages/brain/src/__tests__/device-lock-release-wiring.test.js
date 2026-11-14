@@ -46,7 +46,6 @@ function makeRecoveryOpts(overrides = {}) {
   return {
     pool: { query: mockQuery },
     cleanupStaleClaims: vi.fn().mockResolvedValue({ cleaned: 0 }),
-    checkStuckPipelines: vi.fn().mockResolvedValue({ canceled: [] }),
     fetchInProgress: vi.fn().mockResolvedValue([]),
     autoFailTimedOutTasks: vi.fn().mockResolvedValue([]),
     probeTaskLiveness: vi.fn().mockResolvedValue([]),

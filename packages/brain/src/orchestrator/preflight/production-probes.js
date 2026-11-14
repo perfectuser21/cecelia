@@ -1,4 +1,4 @@
-import { resolveGitHubToken } from '../../harness-credentials.js';
+import { resolveGitHubToken } from '../../github-credentials.js';
 import { createNodeAdmissionClient } from '../fleet-node/node-admission-client.js';
 import { getNodeProfile, getRoleCapacity } from '../fleet-node/node-profile.js';
 import { resolveCanonicalMachineId } from './canonical-machine-id.js';

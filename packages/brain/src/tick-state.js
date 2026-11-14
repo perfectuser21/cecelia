@@ -25,7 +25,6 @@ export const tickState = {
   lastZombieSweepTime: 0,       // zombie sweep
   lastZombieCleanupTime: 0,     // zombie 资源回收
   lastPipelinePatrolTime: 0,    // pipeline patrol
-  lastPipelineWatchdogTime: 0,  // pipeline-level stuck watchdog
   lastKrHealthDailyTime: 0,     // 每日 KR health
   lastCredentialCheckTime: 0,   // credential 过期检查
   lastCleanupWorkerTime: 0,     // R4 orphan worktree cleanup
@@ -57,7 +56,6 @@ export function resetTickStateForTests() {
   tickState.lastZombieSweepTime = 0;
   tickState.lastZombieCleanupTime = 0;
   tickState.lastPipelinePatrolTime = 0;
-  tickState.lastPipelineWatchdogTime = 0;
   tickState.lastKrHealthDailyTime = 0;
   tickState.lastCredentialCheckTime = 0;
   tickState.lastCleanupWorkerTime = 0;

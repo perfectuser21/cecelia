@@ -13,7 +13,7 @@ import { validateImplementationBindings } from './lib/implementation-bindings.js
 import { loadActivityContracts } from './lib/activity-contract-loader.js';
 import { storeActivityContracts, REGISTRATIONS_SQL } from './lib/activity-contract-store.js';
 import { raise } from './alerting.js';
-import { resolveGitHubToken } from './harness-credentials.js';
+import { resolveGitHubToken } from './github-credentials.js';
 import { readFixedImplementationBinding,createFixedGitReadSession } from './workflow-authoring/fixed-git-source.js';
 
 export const CONTRACT_REPO = 'perfectuser21/zenithjoy-workspace';

@@ -90,12 +90,12 @@ if [ -f docker-compose.us-vps.yml ]; then
     || fail "docker-compose.us-vps.yml 不是 read_only:false，可能重新踩SSH socket创建失败的坑"
   # [结构] HOME 必须显式 override 成 /root——Dockerfile 烙入 ENV HOME=/Users/administrator
   # (macOS 专属)，Linux 容器内 os.homedir() 若不被 override 会继续解析成这个不存在的路径。
-  # 生产实测(2026-09-12)：harness-credentials.js 的 resolveGitHubToken() 用 os.homedir()
+  # 生产实测(2026-09-12)：github-credentials.js 的 resolveGitHubToken() 用 os.homedir()
   # 拼 GitHub token 文件回退路径，us-vps 上永远拼错 → github_token_unavailable，
   # 是 golden_path_proposal 任务(feef7d3f)卡死/失败的真根因。
   grep -qE '^\s*- HOME=/root\s*$' docker-compose.us-vps.yml \
     && ok "[结构] docker-compose.us-vps.yml environment 段 override HOME=/root（修复 os.homedir() 误解析）" \
-    || fail "docker-compose.us-vps.yml 未 override HOME=/root，Linux 容器内 os.homedir() 会继续解析成镜像烙入的 macOS 路径 /Users/administrator，导致 harness-credentials.js 等依赖 os.homedir() 的代码全部拼错路径"
+    || fail "docker-compose.us-vps.yml 未 override HOME=/root，Linux 容器内 os.homedir() 会继续解析成镜像烙入的 macOS 路径 /Users/administrator，导致 github-credentials.js 等依赖 os.homedir() 的代码全部拼错路径"
 else
   fail "docker-compose.us-vps.yml 不存在，跳过内容断言"
 fi
@@ -165,17 +165,6 @@ if [[ "$MARKED_EXIT" -eq 1 ]] && [[ "$MARKED_OUT" == 'SOURCE_ONLY_PRODUCTION_FOR
 else
   fail "source-only fixture 未由原生产拒绝闸精确阻断"
 fi
-
-# [结构] harness-worktree.js 的 DEFAULT_BASE_REPO 不能永远硬编码 macOS 路径——
-# us-vps 生产实测：golden_path_proposal 任务在 loadSkillBundle 成功后，下一步建
-# worktree 时 git clone 源仍是 /Users/administrator/perfect21/cecelia，Linux 上不存在，
-# 整个任务直接 fatal 失败。
-grep -q "process.platform === 'linux'" packages/brain/src/harness-worktree.js \
-  && ok "[结构] harness-worktree.js DEFAULT_BASE_REPO 按 platform 区分 Linux/macOS" \
-  || fail "harness-worktree.js DEFAULT_BASE_REPO 未区分 Linux，us-vps 上会 clone 一个不存在的 macOS 路径"
-grep -q "process.env.REPO_ROOT || '/root/cecelia'" packages/brain/src/harness-worktree.js \
-  && ok "[结构] harness-worktree.js Linux 分支跟着 REPO_ROOT 走(缺省 /root/cecelia)" \
-  || fail "harness-worktree.js Linux 分支未接 REPO_ROOT"
 
 echo "结果: PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ] || exit 1

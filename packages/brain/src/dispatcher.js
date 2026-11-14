@@ -3,8 +3,6 @@
  *
  * 原在 tick.js L706-L1115（dispatchNextTask），瘦身抽出独立模块。
  * dev 任务默认走 triggerCeceliaRun 本地 spawn（活性信号已通）；改代码类 dev 任务
- * （见 dispatch-code-routing.js classifyCodeChange）在此之前已被改道 harness_initiative，
- * 走 runHarnessInitiativeRouter（kernel evaluator/judge/GAN 全链路），不再走本地 spawn。
  *
  * 模块状态：
  * - `_lastDispatchTime` 私有计时器（旧逻辑只写不读，留作潜在 telemetry hook）
@@ -20,7 +18,7 @@ import { getFleetStatus } from './fleet-resource-cache.js';
 import { codeTaskIdentitySql, compareCodeTaskIdentity } from './lib/code-task-identity.js';
 import { validateScriptPayload } from './lib/script-task-spec.js';
 import { finalizeTask } from './lib/task-terminal.js';
-import { assertDispatchRoutingReceipt } from './orchestrator/dispatcher.js';
+import { assertDispatchRoutingReceipt } from './lib/dispatch-receipt-authority.js';
 import { isGlobalQuotaCooling, getQuotaCoolingState } from './quota-cooling.js';
 import { isDraining, getDrainStartedAt } from './drain.js';
 import {
@@ -29,8 +27,8 @@ import {
   killProcessTwoStage,
   getBillingPause,
 } from './executor.js';
-import { calculateSlotBudget, harnessSlotCheck } from './slot-allocator.js';
-import { INITIATIVE_LOCK_TASK_TYPES, RETIRED_HARNESS_TYPES_DISPATCH, HEADLESS_KERNEL_RETIRED_TASK_TYPES, HARNESS_INFLIGHT_TASK_TYPES, OPENCLAW_PASSTHROUGH_TASK_TYPES, LAYER_RETIRED_TASK_TYPES, getTaskType } from './lib/task-type-registry.js';
+import { calculateSlotBudget } from './slot-allocator.js';
+import { OPENCLAW_PASSTHROUGH_TASK_TYPES, LAYER_RETIRED_TASK_TYPES, getTaskType } from './lib/task-type-registry.js';
 import { emit } from './event-bus.js';
 import { isAllowed, recordFailure, recordSuccess } from './circuit-breaker.js';
 import { publishTaskStarted } from './events/taskEvents.js';
@@ -65,7 +63,6 @@ const isOpenclawSurface = task => isCommanderVerification(task) || getTaskType(t
 /** script 表面（script_run，棒 3）同样是 Brain 经 ssh 直派跑场机，不经 cecelia-bridge；熔断 key 独立，互不牵连。 */
 const isScriptSurface = (type) => getTaskType(type)?.surface === 'script';
 
-const MINIMAL_MODE = process.env.BRAIN_MINIMAL_MODE === 'true';
 const TICK_LAST_DISPATCH_KEY = 'tick_last_dispatch';
 
 // ============================================================
@@ -79,48 +76,6 @@ export const DISPATCH_FAIL_AUTOBLOCK_THRESHOLD = (() => {
   const raw = parseInt(process.env.DISPATCH_FAIL_AUTOBLOCK_THRESHOLD || '', 10);
   return Number.isFinite(raw) && raw >= 1 ? raw : 3;
 })();
-
-// ============================================================
-// harness 派发闸——判定唯一入口在 slot-allocator.harnessSlotCheck()（beeba317 收权）
-// 数活容器不数任务：任务生命周期一半在等 CI，容器已退仍占任务数位 = 纸面满机器空转。
-// 这里只留任务数纯兜底（docker 层全瞎时防无限叠加），阈值宽到正常永不触发。
-// ============================================================
-export const HARNESS_TASK_CAP_BACKSTOP = 12;
-
-/**
- * 纯判定：候选任务是否应受 harness 并发 cap 限制。
- *
- * OPEN-2：看门狗把 parked in_progress 任务重排（resume_from_checkpoint=true）后，
- * 这条 resume 不是「新工作」——它恢复的是一个已经存在、已经占过 cap 槽的 initiative。
- * 若仍受 cap 限制，其它活跑占满 cap 时 resume 会被永久挡住 → 自愈被 cap 锁死。
- * 因此 resume 任务豁免 cap。
- *
- * @param {{ task_type?: string, payload?: object }} candidate
- * @returns {boolean} true=应套用并发 cap 检查
- */
-export function shouldApplyHarnessCap(candidate) {
-  if (!candidate) return false;
-  // 名单见 lib/task-type-registry.js（HARNESS_INFLIGHT_TASK_TYPES，与 slot-allocator.js
-  // inflight 查询同一份，= {harness_initiative, golden_path_proposal}）。
-  if (!HARNESS_INFLIGHT_TASK_TYPES.includes(candidate.task_type)) return false;
-  if (candidate.payload?.resume_from_checkpoint === true) return false;
-  return true;
-}
-
-// Initiative-level lock 仅对 harness pipeline 类型生效。
-// dev / talk / audit / qa 等通用任务不持有 initiative lock，避免单 project 内死锁
-// （bb245cb4 教训：harness Initiative Phase A 跑期间整个 project 通用任务全被拒派）。
-// 名单见 lib/task-type-registry.js（INITIATIVE_LOCK_TASK_TYPES）。
-
-// Retired harness task types — 全部归入 harness_initiative full-graph sub-graph。
-// 这些类型不再需要 executor / cecelia-bridge：派发路径上直接标 pipeline_terminal_failure。
-// 必须在 `checkCeceliaRunAvailable` 之前拦截，否则在没有 bridge 的环境（CI clean docker /
-// brain-only deploy）retired task 会被永远 revert 回 queued，无法 terminate。
-// executor.js 内 `triggerCeceliaRun` 也保留同款拦截作 defense-in-depth（老 caller 直
-// 调 executor 时仍然有效）。名单见 lib/task-type-registry.js（RETIRED_HARNESS_TYPES_DISPATCH）。
-const _RETIRED_HARNESS_TYPES_DISPATCH = new Set(RETIRED_HARNESS_TYPES_DISPATCH);
-// 无头 kernel 入口退役（任务 dacd75f3）：drain 段把存量无头 queued 单标这个 error_message。
-export const RETIRED_HARNESS_KERNEL_ERROR = 'retired_harness_kernel';
 
 // 私有计时器（旧只写不读，保留 hook 给未来 telemetry）
 let _lastDispatchTime = 0;
@@ -139,7 +94,6 @@ async function releaseDeviceLockIfHeld(task) {
 
 async function enforceDispatchRoutingReceipt(task) {
   const isCoding = task?.task_type === 'dev'
-    || task?.task_type === 'harness_initiative'
     || task?.payload?.work_kind === 'coding_mutation';
   if (!isCoding) return;
 
@@ -677,59 +631,10 @@ export async function dispatchNextTask(goalIds, options = {}) {
 
   } // AI slots; codeOnly uses existing independent script-host concurrency.
 
-  // 2.5 Drain retired harness tasks — 一次 SQL 把所有 queued retired 类型批量
-  //     标 pipeline_terminal_failure。必须在 selectNextDispatchableTask 之前，
-  //     防止 retired task 跟正常 P0/P1 队列竞争 — 在 bridge 不可用的环境（CI
-  //     clean docker / brain-only deploy）retired task 会被 no_executor revert
-  //     永远循环，挤占调度器算力。
-  //     放在所有 skip 检查（drain/quota_cooling/billing/slot/circuit）之后，
-  //     这样系统不健康时不写 DB（保持调度路径侧效应一致性）。
-  if (!codeOnly) try {
-    const drained = await finalizeTask(pool, null, 'failed', {
-      set: { completed_at: 'now', error_message: 'task_type retired (subsumed by harness_initiative full graph)' },
-      mergePayload: { failure_class: 'pipeline_terminal_failure' },
-      onlyIfStatus: 'queued',
-      where: { sql: 'task_type = ANY($1::text[])', params: [Array.from(_RETIRED_HARNESS_TYPES_DISPATCH)] },
-      returning: ['task_type'],
-    });
-    if (drained.rowCount > 0) {
-      tickLog(`[dispatch] drained ${drained.rowCount} queued retired harness task(s)`);
-      for (const row of drained.tasks) {
-        actions.push({ action: 'retire-task', task_id: row.id, task_type: row.task_type });
-      }
-    }
-  } catch (drainErr) {
-    console.error(`[dispatch] retired task drain failed (non-fatal): ${drainErr.message}`);
-  }
-  // 2.5' 无头 kernel 入口退役（任务 dacd75f3）：存量 queued、未认领、非有头的 harness_initiative
-  //      （如 relay-baton 子单）一律终态 failed，不再进已死的 kernel 派发（09-30 起全败 kernel_authority_not_created）。
-  //      有头账本行（headed_manual 字符串/布尔，payload->> 两种都给 'true'）与已认领行不碰。
-  if (!codeOnly) try {
-    const drained = await finalizeTask(pool, null, 'failed', {
-      set: { completed_at: 'now', error_message: RETIRED_HARNESS_KERNEL_ERROR },
-      mergePayload: { failure_class: 'pipeline_terminal_failure' },
-      onlyIfStatus: 'queued',
-      where: {
-        sql: "task_type = ANY($1::text[]) AND claimed_by IS NULL AND COALESCE(payload->>'headed_manual', 'false') <> 'true'",
-        params: [[...HEADLESS_KERNEL_RETIRED_TASK_TYPES]],
-      },
-      returning: ['task_type'],
-    });
-    if (drained.rowCount > 0) {
-      tickLog(`[dispatch] drained ${drained.rowCount} queued headless harness kernel task(s) → ${RETIRED_HARNESS_KERNEL_ERROR}`);
-      for (const row of drained.tasks) {
-        actions.push({ action: 'retire-task', task_id: row.id, task_type: row.task_type });
-      }
-    }
-  } catch (drainErr) {
-    console.error(`[dispatch] headless kernel drain failed (non-fatal): ${drainErr.message}`);
-  }
-
   // 3. Select next task (with dependency check + pre-flight validation)
   //    If pre-flight fails, skip that task and try the next candidate (max 5 retries).
   //    HOL fix: non-P0 codex tasks blocked by full pool → release claim, skip, try next.
   //    HOL fix (issue 0014cd42): no_executor（bridge 不可用）也跳过该候选试下一个，
-  //    防止队头一个需要 bridge 的任务把不需要 bridge 的 harness_initiative 堵死。
   //    Max MAX_SKIP_HEAD_FOR_BLOCKED HOL skips before giving up.
   const MAX_PRE_FLIGHT_RETRIES = 5;
   const MAX_SKIP_HEAD_FOR_BLOCKED = 10;
@@ -784,7 +689,6 @@ export async function dispatchNextTask(goalIds, options = {}) {
   candidateLoop: for (;;) {
   // HOL fix (0014cd42)：外层循环把「claim 之后的 executor 可用性检查」纳入候选重选——
   // no_executor 时 revert + 记入 noExecutorSkipIds，回来选下一个候选，而不是整个 tick 直接放弃。
-  // circuit_breaker / cortex / retired / harness 并发上限等分支保持原「直接 return 让位」语义不变。
   dispatchLoop: for (;;) {
   nextTask = null;
   for (let attempt = 0; attempt <= MAX_PRE_FLIGHT_RETRIES; attempt++) {
@@ -923,78 +827,6 @@ export async function dispatchNextTask(goalIds, options = {}) {
       continue;
     }
 
-    // 3b'. Retired harness task_types — 不需要 executor，直接标 terminal_failure。
-    //      必须放在 checkCeceliaRunAvailable 之前，否则在 cecelia-bridge 不可用的环境
-    //      （CI / brain-only deploy）retired task 永远 revert 回 queued。
-    if (_RETIRED_HARNESS_TYPES_DISPATCH.has(candidate.task_type)) {
-      tickLog(`[dispatch] retired task_type=${candidate.task_type} task=${candidate.id} → marking pipeline_terminal_failure`);
-      try {
-        await finalizeTask(pool, candidate.id, 'failed', {
-          set: { completed_at: 'now', error_message: `task_type ${candidate.task_type} retired (subsumed by harness_initiative full graph)` },
-          mergePayload: { failure_class: 'pipeline_terminal_failure' },
-        });
-      } catch (err) {
-        console.error(`[dispatch] mark retired task failed: ${err.message}`);
-      }
-      await recordDispatchResult(pool, false, 'retired_task_type');
-      actions.push({
-        action: 'retire-task',
-        task_id: candidate.id,
-        title: candidate.title,
-        task_type: candidate.task_type,
-      });
-      return { dispatched: false, reason: 'retired_task_type', task_id: candidate.id, task_type: candidate.task_type, retired: true, actions };
-    }
-
-    // 3b''. harness admission —— 判定收归 slot-allocator（beeba317）。
-    //       放在原子 claim 之前 → 被拒时无需释放 claim；拒发直接 return 让位下一 tick。
-    if (shouldApplyHarnessCap(candidate)) {
-      // 任务数纯兜底：docker 层全瞎时防无限叠加（正常永不触发）
-      const capRes = await pool.query(
-        `SELECT count(*)::int AS n FROM tasks
-           WHERE task_type = ANY($2::text[])
-             AND status = 'in_progress'
-             AND id != $1`,
-        [candidate.id, [...HARNESS_INFLIGHT_TASK_TYPES]]
-      );
-      const running = capRes.rows[0]?.n ?? 0;
-      if (running >= HARNESS_TASK_CAP_BACKSTOP) {
-        tickLog(`[dispatch] harness 任务数兜底 ${running}/${HARNESS_TASK_CAP_BACKSTOP}，延后派发 ${candidate.id}`);
-        await recordDispatchResult(pool, false, 'task_cap_backstop');
-        return { dispatched: false, reason: 'task_cap_backstop', running, task_id: candidate.id, actions };
-      }
-
-      const slotCheck = await harnessSlotCheck({ candidate });
-      const capStr = slotCheck.cap
-        ? `${slotCheck.cap.effective}(mem=${slotCheck.cap.mem_cap} acct=${slotCheck.cap.acct_cap} hard=${slotCheck.cap.hard_cap})`
-        : 'n/a';
-      tickLog(`[dispatch] slot_check containers=${slotCheck.containers} inflight=${slotCheck.inflight} cap=${capStr} stale=${slotCheck.stale} verdict=${slotCheck.allow ? 'allow' : `deny:${slotCheck.reason}`}`);
-      if (!slotCheck.allow) {
-        await recordDispatchResult(pool, false, slotCheck.reason);
-        return { dispatched: false, reason: slotCheck.reason, slot_check: slotCheck, task_id: candidate.id, actions };
-      }
-    }
-
-    // 3c. Initiative-level lock: 仅对 harness pipeline 类型生效，且只查同 project 的 harness blocker。
-    //     dev / talk / audit 等通用任务不进入这条分支，避免单 project 死锁（bb245cb4 教训）。
-    if (candidate.project_id && INITIATIVE_LOCK_TASK_TYPES.includes(candidate.task_type)) {
-      const lockCheck = await pool.query(
-        `SELECT id, title FROM tasks
-         WHERE project_id = $1
-           AND status = 'in_progress'
-           AND task_type = ANY($3::text[])
-           AND id != $2
-         LIMIT 1`,
-        [candidate.project_id, candidate.id, INITIATIVE_LOCK_TASK_TYPES]
-      );
-      if (lockCheck.rows.length > 0) {
-        const blocker = lockCheck.rows[0];
-        tickLog(`[dispatch] Initiative 已有进行中 harness 任务 (task_id: ${blocker.id})，跳过派发: ${candidate.title}`);
-        await recordDispatchResult(pool, false, 'initiative_locked');
-        return { dispatched: false, reason: 'initiative_locked', blocking_task_id: blocker.id, task_id: candidate.id, actions };
-      }
-    }
-
     // 3c'. C1 Atomic claim: 确保没被其他 runner（如外部 autonomous agent）抢先 claim
     //      放在 pre-flight / initiative lock 之后、mark in_progress 之前，
     //      让 UPDATE...WHERE claimed_by IS NULL 的原子性承担"同一 task 只能派给一个 runner"的保证。
@@ -1068,7 +900,6 @@ export async function dispatchNextTask(goalIds, options = {}) {
         attempt--; // 让位不消耗 pre-flight attempt 预算
         continue;
       }
-      // proceed：agent 决策已落库 → 不进分配指南（指南只管 dev/harness 的 codex/grok 降级），
       // 直接交给主流程标 in_progress → 读全行（拿到刚写进去的 model/run_id）→ triggerCeceliaRun
       nextTask = candidate;
       break;
@@ -1099,7 +930,7 @@ export async function dispatchNextTask(goalIds, options = {}) {
     //     HOL fix: non-P0 codex tasks blocked by full pool → release claim, skip, try next.
     //     P0 tasks stop the loop immediately (high-priority signal must not be bypassed).
     const budgetState = slotBudget?.budgetState?.state || 'abundant';
-    if (!llmCapacitySnapshot && (candidate.task_type === 'dev' || candidate.task_type === 'harness_initiative')) {
+    if (!llmCapacitySnapshot && (candidate.task_type === 'dev')) {
       try {
         llmCapacitySnapshot = await getLlmCapacitySnapshot();
       } catch (err) {
@@ -1230,14 +1061,9 @@ export async function dispatchNextTask(goalIds, options = {}) {
   });
 
   // 5. Check executor availability and trigger
-  // harness_initiative 走 Docker spawn 路径，完全不依赖 cecelia-bridge。
-  // 跳过 bridge check，否则 bridge 不在时 harness 会被错误 revert 到 queued。
-  // 名单见 lib/task-type-registry.js（HARNESS_INFLIGHT_TASK_TYPES）。
-  const needsBridgeCheck = !HARNESS_INFLIGHT_TASK_TYPES.includes(nextTask.task_type)
-    && !isOpenclawSurface(nextTask)
+  const needsBridgeCheck = !isOpenclawSurface(nextTask)
     && !isScriptSurface(nextTask.task_type);
 
-  // Circuit breaker — 只对依赖 cecelia-bridge 的任务生效（harness_initiative 豁免）
   // 注意：此检查在 atomic claim 和 mark in_progress 之后，
   //       所以拦截时必须回滚 task 状态和 claim。
   if (needsBridgeCheck && !isAllowed('cecelia-run')) {
@@ -1247,7 +1073,6 @@ export async function dispatchNextTask(goalIds, options = {}) {
     await recordDispatchResult(pool, false, 'circuit_breaker_open', undefined, nextTask.id);
     // 与下面 no_executor 同一条 HOL 规矩：熔断只拦依赖 bridge 的这一条，跳过它继续选下一候选。
     // 原来直接 return：P1 的 bridge 任务每轮占着队头被弹回，排在后面不依赖 bridge 的
-    // qiumi/harness/script 任务永远轮不到（09-29 实测 11 条秋米任务堵了一上午）。
     breakerSkipIds.push(nextTask.id);
     if (breakerSkipIds.length >= MAX_SKIP_HEAD_FOR_BLOCKED) {
       tickLog(`[tick] circuit_breaker_open: 跳过数达上限 (${MAX_SKIP_HEAD_FOR_BLOCKED})，本 tick 放弃派发`);
@@ -1279,7 +1104,6 @@ export async function dispatchNextTask(goalIds, options = {}) {
     await recordDispatchResult(pool, false, 'no_executor', undefined, nextTask.id);
 
     // HOL fix (0014cd42)：不再整个 tick 直接 return 放弃——把该候选记入跳过列表，
-    // 回到候选选择循环选下一个（如豁免 bridge 的 harness_initiative）。
     noExecutorSkipIds.push(nextTask.id);
     if (noExecutorSkipIds.length >= MAX_SKIP_HEAD_FOR_BLOCKED) {
       tickLog(`[tick] no_executor: 跳过数达上限 (${MAX_SKIP_HEAD_FOR_BLOCKED})，本 tick 放弃派发`);
@@ -1307,7 +1131,7 @@ export async function dispatchNextTask(goalIds, options = {}) {
   let taskToDispatch = fullTaskResult.rows[0];
   try {
     const budgetState = slotBudget?.budgetState?.state || 'abundant';
-    if (!llmCapacitySnapshot && (taskToDispatch.task_type === 'dev' || taskToDispatch.task_type === 'harness_initiative')) {
+    if (!llmCapacitySnapshot && (taskToDispatch.task_type === 'dev')) {
       try {
         llmCapacitySnapshot = await getLlmCapacitySnapshot();
       } catch (err) {
@@ -1404,123 +1228,6 @@ export async function dispatchNextTask(goalIds, options = {}) {
     return { dispatched: false, reason: RETIRED_DECOMPOSITION, task_id: nextTask.id, parked, actions };
   }
 
-  if (
-    taskToDispatch.payload?.harness_runtime === 'kernel-v1'
-    && execResult?.success === true
-    && (typeof execResult.runId !== 'string' || execResult.runId.trim() === '')
-  ) {
-    execResult = {
-      ...execResult,
-      success: false,
-      reason: 'kernel_authority_not_created',
-      error: 'kernel_authority_not_created',
-    };
-  }
-
-  if (
-    taskToDispatch.payload?.harness_runtime === 'kernel-v1'
-    && execResult?.success === false
-    && execResult?.authorityUnknown === true
-    && execResult?.reason === 'kernel_authority_reconciliation_unavailable'
-  ) {
-    await recordTaskEventSafe(
-      pool,
-      nextTask.id,
-      'kernel_authority_reconciliation_unavailable',
-      {
-        reason: execResult.reason,
-        error: String(execResult.error || '').slice(0, 300) || null,
-      },
-    );
-    await recordDispatchResult(
-      pool,
-      false,
-      'kernel_authority_reconciliation_unavailable',
-      undefined,
-      nextTask.id,
-    );
-    return {
-      dispatched: false,
-      reason: 'kernel_authority_reconciliation_unavailable',
-      task_id: nextTask.id,
-      authority_unknown: true,
-      actions,
-    };
-  }
-
-  if (
-    taskToDispatch.payload?.harness_runtime === 'kernel-v1'
-    && execResult?.success === false
-    && execResult?.taskTerminal === true
-    && execResult?.reason === 'kernel_pre_run_terminal'
-  ) {
-    await pool.query(
-      `UPDATE tasks
-          SET claimed_by = NULL,
-              claimed_at = NULL,
-              updated_at = NOW()
-        WHERE id = $1
-          AND status IN ('completed', 'failed', 'cancelled', 'canceled')
-      RETURNING status`,
-      [nextTask.id],
-    );
-    await recordDispatchResult(
-      pool,
-      false,
-      'kernel_pre_run_terminal',
-      undefined,
-      nextTask.id,
-    );
-    return {
-      dispatched: false,
-      reason: 'kernel_pre_run_terminal',
-      task_id: nextTask.id,
-      terminal: true,
-      actions,
-    };
-  }
-
-  if (
-    taskToDispatch.payload?.harness_runtime === 'kernel-v1'
-    && execResult?.success === false
-    && execResult?.authorityExists === true
-    && execResult?.kernelAuthority === 'terminal'
-    && typeof execResult?.runId === 'string'
-    && execResult.runId.trim() !== ''
-  ) {
-    const claimCleanup = await pool.query(
-      `UPDATE tasks
-          SET claimed_by = NULL,
-              claimed_at = NULL,
-              updated_at = NOW()
-        WHERE id = $1
-          AND status IN ('completed', 'failed', 'cancelled', 'canceled')
-      RETURNING status`,
-      [nextTask.id],
-    );
-    if (claimCleanup.rowCount === 0) {
-      console.error(
-        `[dispatch] Kernel terminal authority/task status mismatch task=${nextTask.id} `
-        + `run=${execResult.runId}; claim preserved`,
-      );
-    }
-    await recordDispatchResult(
-      pool,
-      false,
-      'kernel_terminal_authority',
-      undefined,
-      nextTask.id,
-    );
-    return {
-      dispatched: false,
-      reason: 'kernel_terminal_authority',
-      task_id: nextTask.id,
-      run_id: execResult.runId,
-      terminal: true,
-      actions,
-    };
-  }
-
   if (!execResult.success && execResult.wait === true) {
     if(execResult.taskStateHandled!==true)await pool.query(`UPDATE tasks SET status='queued',claimed_by=NULL,claimed_at=NULL,updated_at=NOW()
       WHERE id=$1 AND status='in_progress'`, [nextTask.id]);
@@ -1563,7 +1270,6 @@ export async function dispatchNextTask(goalIds, options = {}) {
 
   if (!execResult.success) {
     console.warn(`[dispatch] triggerCeceliaRun failed for task ${nextTask.id}: ${execResult.error || execResult.reason}`);
-    // executor 只在 kernel-v1 catch 里把 reason 也改成 needs_rebase；其他返回路径只带 reason_code，
     // 两个都认，避免停车信号漏判后被当成执行故障计入三振。
     const needsRebase = execResult.reason === 'needs_rebase' || execResult.reason_code === 'needs_rebase';
     // fail-closed 回执（task 94ee0ec4）：claim 后 spawn 失败必须留 task_events 行，
@@ -1586,7 +1292,6 @@ export async function dispatchNextTask(goalIds, options = {}) {
     // 不应累积 cecelia-run breaker（否则配置漂移会 trip breaker 阻断所有 dispatch）。
     // spawn_deduplicated 是 DB 级去重命中（良性防重入，跨进程/跨重启防双 spawn），
     // 不是执行故障，同样不应计入熔断（否则抖动期的正常去重会误停派全系统）。
-    // local_execution_disabled_on_scheduler 是 skill-relay 非 kernel-v1 任务在
     // CECELIA_LOCAL_EXECUTION_ENABLED=false 时的永久性配置态拒绝（非执行故障），
     // 同样不应计入熔断（否则连累其他任务类型也一起派不出去，决策 96054a8b）。
     if (needsRebase) {
@@ -1624,8 +1329,7 @@ export async function dispatchNextTask(goalIds, options = {}) {
       console.warn(`[dispatch] configError detected (reason=${execResult.reason}) — skipping cecelia-run breaker count`);
     } else if (execResult.reason === 'spawn_deduplicated') {
       console.warn(`[dispatch] spawn_deduplicated detected — skipping cecelia-run breaker count`);
-    } else if (execResult.reason === 'local_execution_disabled_on_scheduler') {
-      console.warn(`[dispatch] local_execution_disabled_on_scheduler detected — skipping cecelia-run breaker count`);
+
     } else {
       await recordFailure(isOpenclawSurface(nextTask) ? 'openclaw-agent' : isScriptSurface(nextTask.task_type) ? SCRIPT_BREAKER_KEY : 'cecelia-run');
 

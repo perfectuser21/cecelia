@@ -4,7 +4,7 @@
 # 3 层验证：
 #   L1 (静态)  : staging-e2e-runner.js 导出 runStagingE2E/deployStaging；
 #                executor.js 含 staging_e2e native 短路；
-#                routes/harness.js POST /staging-e2e 端点按 payload->>'pr_url' WHERE NOT EXISTS 幂等去重；
+#                routes/staging.js POST /staging-e2e 端点按 payload->>'pr_url' WHERE NOT EXISTS 幂等去重；
 #                migration 304 含 staging_e2e_results 表 + task_type 约束追加。
 #   L2 (gate)  : Brain 健康；不可达 SKIP exit 0。
 #   L3 (真验)  : DB 里 staging_e2e_results 表存在 + task_type 约束接受 'staging_e2e'
@@ -16,7 +16,7 @@ fi
 
 RUNNER_FILE="packages/brain/src/staging-e2e-runner.js"
 EXECUTOR_FILE="packages/brain/src/executor.js"
-ROUTE_FILE="packages/brain/src/routes/harness.js"
+ROUTE_FILE="packages/brain/src/routes/staging.js"
 MIGRATION_FILE="packages/brain/migrations/304_staging_e2e_results.sql"
 MIGRATION305_FILE="packages/brain/migrations/305_staging_e2e_pr_url_unique.sql"
 BRAIN="${BRAIN_URL:-http://localhost:5221}"
@@ -44,11 +44,11 @@ const exec=fs.readFileSync('$EXECUTOR_FILE','utf8');
 if(!/task_type === 'staging_e2e'/.test(exec) || !/staging-e2e-runner\.js/.test(exec)){
   console.error('L1 FAIL: executor 缺 staging_e2e native 短路');process.exit(1)}
 
-// staging_e2e 派生在 routes/harness.js POST /staging-e2e：先精确查 pr_url，
+// staging_e2e 派生在 routes/staging.js POST /staging-e2e：先精确查 pr_url，
 // 再以 Work Router source_id 作事务幂等权威。
 const route=fs.readFileSync('$ROUTE_FILE','utf8');
-const ri=route.indexOf(\"router.post('/staging-e2e'\");
-if(ri<0){console.error('L1 FAIL: routes/harness.js 缺 POST /staging-e2e 端点');process.exit(1)}
+const ri=route.indexOf(\"router.post('/e2e'\");
+if(ri<0){console.error('L1 FAIL: routes/staging.js 缺 POST /staging-e2e 端点');process.exit(1)}
 const rh=route.slice(ri, route.indexOf('router.', ri+20));
 if(!/payload->>'pr_url'/.test(rh) || !/source_id:\s*[^\n]*staging-e2e:/.test(rh)){
   console.error('L1 FAIL: POST /staging-e2e 缺 pr_url 预检或 Router source_id 幂等');process.exit(1)}

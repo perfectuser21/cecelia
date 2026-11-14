@@ -17,25 +17,9 @@
 import { spawnSync } from 'child_process';
 import { finalizeTask } from './lib/task-terminal.js';
 import { isValidGithubPrUrl } from './lib/callback-utils.js';
+import { isRetiredDevelopmentTask, RETIRED_DEVELOPMENT_TASK_TYPES } from './lib/task-type-registry.js';
 
-// 最多允许的 CI 修复重试次数
-/**
- * merge 主权唯一性（r42 run f44bdef7 / PR #5012 案卷，2026-08-22）：
- * kernel harness 任务的 merge 由 kernel merge_pr（含 capability-change 的人批
- * merge fence）唯一执行。shepherd 的旧豁免只认 LangGraph 时代的 payload.harness_mode，
- * kernel-v1 任务（task_type=harness_initiative / payload.harness_runtime=kernel-v1）
- * 漏网被 auto-merge，fence 整个被旁路。SQL 层 + 行级双保险。
- */
-export const SHEPHERD_KERNEL_EXEMPT_SQL = "AND COALESCE(task_type, '') <> 'harness_initiative'";
-
-export function isKernelSovereignTask(task) {
-  if (!task || typeof task !== 'object') return false;
-  if (task.task_type === 'harness_initiative') return true;
-  const payload = task.payload && typeof task.payload === 'object' ? task.payload : {};
-  if (payload.harness_runtime === 'kernel-v1') return true;
-  return ['true', 't'].includes(String(payload.harness_mode ?? 'false'));
-}
-
+// 退役任务保留历史记录，不进入现役PR自动合并与对账。
 const MAX_CI_RETRY = 2;
 
 // reconcileTerminalOpenPRs 低频 gate + 非重入 guard（Fix B）
@@ -184,13 +168,11 @@ export async function shepherdOpenPRs(pool) {
       WHERE pr_url IS NOT NULL
         AND pr_status IN ('open', 'ci_pending', 'ci_passed')
         AND status NOT IN ('quarantined', 'cancelled', 'failed', 'completed')
-        -- Sprint 1: harness_mode PR 由 sub-graph merge_pr node 自管，shepherd 不动
         AND COALESCE(payload->>'harness_mode', 'false') NOT IN ('true', 't')
-        -- r42 案卷：kernel harness 任务的 merge 主权归 kernel merge_pr（含人批 fence）
-        AND COALESCE(task_type, '') <> 'harness_initiative'
+        AND COALESCE(task_type, '') <> ALL($1::text[])
       ORDER BY updated_at ASC
       LIMIT 20
-    `);
+    `, [RETIRED_DEVELOPMENT_TASK_TYPES]);
     rows = queryResult.rows;
   } catch (dbErr) {
     console.error('[shepherd] DB query failed (non-fatal):', dbErr.message);
@@ -202,7 +184,7 @@ export async function shepherdOpenPRs(pool) {
   console.log(`[shepherd] 检查 ${rows.length} 个 open PR...`);
 
   for (const task of rows) {
-    if (isKernelSovereignTask(task)) continue; // r42 案卷：kernel 主权任务行级双保险
+    if (isRetiredDevelopmentTask(task)) continue;
     result.processed++;
 
     try {
@@ -408,8 +390,7 @@ export async function reconcileTerminalOpenPRs(pool, opts = {}) {
           AND pr_status IN ('open', 'ci_pending', 'ci_passed')
           AND pr_merged_at IS NULL
           AND COALESCE(payload->>'harness_mode', 'false') NOT IN ('true', 't')
-          -- r42 案卷：kernel harness 任务的 merge 主权归 kernel merge_pr（含人批 fence）
-          AND COALESCE(task_type, '') <> 'harness_initiative'
+            AND COALESCE(task_type, '') <> ALL($1::text[])
         ORDER BY CASE
           WHEN COALESCE(payload->>'last_reconcile_checked_at', '')
             ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$'
@@ -418,7 +399,7 @@ export async function reconcileTerminalOpenPRs(pool, opts = {}) {
         END ASC,
         id ASC
         LIMIT ${batchLimit}
-      `);
+      `, [RETIRED_DEVELOPMENT_TASK_TYPES]);
       rows = queryResult.rows;
     } catch (dbErr) {
       console.error('[shepherd:reconcile] DB query failed (non-fatal):', dbErr.message);
@@ -430,7 +411,7 @@ export async function reconcileTerminalOpenPRs(pool, opts = {}) {
     console.log(`[shepherd:reconcile] 对账 ${rows.length} 个 terminal+open PR 任务 (budget=${budgetMs}ms)...`);
 
     for (const task of rows) {
-      if (isKernelSovereignTask(task)) continue; // r42 案卷：kernel 主权任务行级双保险
+      if (isRetiredDevelopmentTask(task)) continue;
       // I4: 计算剩余预算（支持注入时钟函数用于测试）
       const elapsedMs = _elapsedMsFn ? _elapsedMsFn() : (Date.now() - startMs);
       const remainingMs = Math.max(0, budgetMs - elapsedMs);

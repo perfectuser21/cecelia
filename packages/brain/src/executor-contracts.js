@@ -6,26 +6,20 @@ import {LINUX_POOL_EXECUTOR_KIND} from './linux-pool/task-authority.js';
  * 执行者活性合同统一模块（T1）
  * 架构文档：docs/architecture/2026-07-10-executor-liveness-contract/architecture.md
  *
- * 六类执行者：brain-local / relay-container / kernel-process / headed-session / bridge / external-worker
+ * 现役执行者按本机进程、有头会话、桥接、外部worker及专属controller各自探活
  * - probe(task, ctx) → 'alive' | 'dead' | 'unknown'
  * - unknown 一律 fail-open：不杀 + console.warn
  * - assessTaskLiveness 是守护刀的唯一入口（T2 接入，T1 建模块）
  *
- * kernel-process（2026-07-27 补）：Kernel v1 的执行体是 Brain 容器内的裸 Node 进程
- * （harness-skill-relay.js launchKernelProcess），不是 docker 容器。此前这类任务被
- * EXECUTOR_KIND_FOR 硬编码打成 relay-container，探活走 `docker ps --filter
- * name=cecelia-relay-*` 恒返回 dead（事故 51836fb2）。
  */
 
 import { execSync } from 'child_process';
 import { execFileSync } from 'node:child_process';
-import { assessKernelLiveness } from './lib/kernel-liveness.js';
 import { probeCodexReviewLock } from './lib/codex-review-liveness.js';
 import { EXECUTOR_KIND_FOR_TASK_TYPE, EXTERNALLY_EXECUTED_TASK_TYPES } from './lib/task-type-registry.js';
 import { sshTargetFor, resolvePrimaryWorkerId, resolveMachineId, listComputeWorkerIds } from './machine-registry.js';
 import { SSH_BASE_ARGS } from './lib/ssh-args.js';
 
-export const KERNEL_EXECUTOR_KIND = 'kernel-process';
 export const OPENCLAW_AGENT_EXECUTOR_KIND = 'openclaw-agent';
 export const SCRIPT_EXECUTOR_KIND = 'script';
 // coding workflow runner：执行机 LaunchDaemon 认领 task_type=data 的开关任务跑 coding 链，进程不在 Brain 本机。
@@ -38,8 +32,6 @@ export const VALID_EXECUTOR_KINDS = [
   'preview-janitor',
   'image-janitor',
   'brain-local',
-  'relay-container',
-  KERNEL_EXECUTOR_KIND,
   'headed-session',
   'bridge',
   'external-worker',
@@ -59,43 +51,17 @@ export const EXECUTOR_KIND_FOR = Object.freeze({
   __local_spawn: 'brain-local',
 });
 
-// EXECUTOR_KIND_FOR 是纯常量、被 executor.js 与多个测试直接 import，形态不能改。
-// 运行时分派（harness_runtime='kernel-v1' → kernel-process）走下面两个解析函数。
-
-/**
- * 打标点用：派发时该写进 tasks.executor_kind 的值。
- * 只把 relay-container 家族按 payload.harness_runtime 升级成 kernel-process，
- * 其余 task_type 一字不动（dev / external-worker / bridge 路径不受影响）。
- * @returns {string|null} 无映射返回 null（保持调用方原有兜底语义）
- */
+/** 派发时只使用现役注册表映射；未知类型没有执行体。 */
 export function resolveExecutorKind(task) {
   if (isCommanderVerification(task)) return OPENCLAW_AGENT_EXECUTOR_KIND;
-  const mapped = Object.prototype.hasOwnProperty.call(EXECUTOR_KIND_FOR, task?.task_type)
-    ? EXECUTOR_KIND_FOR[task.task_type]
-    : null;
-  if (mapped === 'relay-container' && task?.payload?.harness_runtime === 'kernel-v1') {
-    return KERNEL_EXECUTOR_KIND;
-  }
-  return mapped;
+  return Object.prototype.hasOwnProperty.call(EXECUTOR_KIND_FOR, task?.task_type)
+    ? EXECUTOR_KIND_FOR[task.task_type] : null;
 }
 
-/**
- * 判活点用：库里存量的 executor_kind 可能是派发时写下的旧值
- * （实测 13 个 harness_runtime='kernel-v1' 的任务全被标成 relay-container），
- * 判活必须以 payload 为准，否则存量任务照样被 docker 探活判死。
- * 只做 relay-container → kernel-process 这一个方向的纠正，其余原样返回。
- */
+/** 判活只认持久化的执行体，未知历史值沿用unknown处理。 */
 export function resolveLivenessKind(task) {
   if (isCommanderVerification(task)) return OPENCLAW_AGENT_EXECUTOR_KIND;
-  const persisted = task?.executor_kind || null;
-  if (task?.payload?.harness_runtime === 'kernel-v1') {
-    const mappedIsRelay = EXECUTOR_KIND_FOR[task?.task_type] === 'relay-container';
-    if (persisted === 'relay-container' || persisted === KERNEL_EXECUTOR_KIND
-        || (!persisted && mappedIsRelay)) {
-      return KERNEL_EXECUTOR_KIND;
-    }
-  }
-  return persisted;
+  return task?.executor_kind || null;
 }
 
 // ─── 外部执行体统一谓词 ──────────────────────────────────────────────────────
@@ -123,18 +89,6 @@ export function isExternallyExecuted(task) {
   if (EXTERNALLY_EXECUTED_TASK_TYPES.includes(task.task_type)) return true;
   return Boolean(task.executor_kind) && EXTERNALLY_EXECUTED_KINDS.includes(task.executor_kind);
 }
-
-// kernel-process probe 的默认 pool：懒加载，只在调用方没给 ctx.pool 时才 import，
-// 避免单测里意外拉起真 pg Pool。
-let _defaultPoolPromise = null;
-async function _defaultKernelPool() {
-  if (!_defaultPoolPromise) {
-    _defaultPoolPromise = import('./db.js').then((m) => m.default).catch(() => null);
-  }
-  return _defaultPoolPromise;
-}
-
-// ─── 五合同 ────────────────────────────────────────────────────────────────────
 
 export const EXECUTOR_CONTRACTS = {
   [LINUX_POOL_EXECUTOR_KIND]: { probe: async () => 'unknown', staleMinutes: null, onStale: 'none' },
@@ -191,50 +145,6 @@ export const EXECUTOR_CONTRACTS = {
     probe: async (task, _ctx) => probeCodexReviewLock(task.id),
     staleMinutes: 90,
     onStale: 'requeue',
-  },
-
-  /**
-   * relay-container: skill-relay docker/tmux session
-   * 活性：docker ps 容器名前缀匹配
-   */
-  'relay-container': {
-    probe: async (task, _ctx) => {
-      const shortId = task.id?.substring(0, 8)?.toLowerCase();
-      if (!shortId) return 'unknown';
-      try {
-        const out = execSync(
-          `docker ps --filter "name=cecelia-relay-${shortId}" --format "{{.Names}}"`,
-          { encoding: 'utf-8', timeout: 5000, stdio: 'pipe' }
-        ).trim();
-        return out ? 'alive' : 'dead';
-      } catch {
-        return 'unknown';
-      }
-    },
-    staleMinutes: null,
-    onStale: 'reignite',
-  },
-
-  /**
-   * kernel-process: Kernel v1 的裸 Node 进程（Brain 容器内 detached spawn）
-   * 活性：initiative_runs.orchestrator_heartbeat_at → orchestrator_pid(+host) kill -0
-   * fail-open：拿不到确定答案一律 unknown，绝不把"不知道"当"死"（事故 51836fb2）。
-   *
-   * staleMinutes/onStale 与 relay-container 完全对齐 —— 'reignite' 让 zombie-reaper 与
-   * alertness/healing 都跳过它，交给 harness-relay-watchdog 的 kernel 专属回收路径。
-   * 这个合同绝不能比 relay-container 更容易杀。
-   */
-  [KERNEL_EXECUTOR_KIND]: {
-    probe: async (task, ctx) => {
-      let pool = ctx?.pool ?? ctx?.dbPool ?? null;
-      if (!pool && ctx?.allowDefaultPool !== false) pool = await _defaultKernelPool();
-      const r = await assessKernelLiveness({ pool, task, run: ctx?.kernelRun ?? null });
-      if (r.verdict === 'alive') return 'alive';
-      if (r.verdict === 'dead') return 'dead';
-      return 'unknown';
-    },
-    staleMinutes: null,
-    onStale: 'reignite',
   },
 
   /**
@@ -371,7 +281,6 @@ export const EXECUTOR_CONTRACTS = {
  * unknown 一律 fail-open（不杀 + console.warn）
  */
 export async function assessTaskLiveness(task, ctx) {
-  // 以 payload.harness_runtime 为准纠正存量误标（relay-container → kernel-process）
   const kind = resolveLivenessKind(task);
 
   if (!kind) {
@@ -409,7 +318,7 @@ export async function assessTaskLiveness(task, ctx) {
 
   const staleMinutes = contract.staleMinutes;
 
-  // staleMinutes=null → 不走超时窗口判断（relay-container/external-worker）
+  // staleMinutes=null → 不走超时窗口判断（外部worker和专属controller）
   if (verdict === 'dead' && staleMinutes !== null) {
     const updatedAt = task.updated_at ? new Date(task.updated_at) : null;
     if (updatedAt && !isNaN(updatedAt.getTime())) {

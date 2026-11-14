@@ -11,7 +11,6 @@
  */
 import { sendBark } from './notifier.js';
 import { pushCaptureAtom } from './capture-inbox.js';
-import { legacyReadEnabled } from './lib/golden-path-legacy.js';
 
 /** 每晚触发窗口（UTC）= 北京时间 05:10-05:15 */
 const LEDGER_HYGIENE_HOUR_UTC = 21;
@@ -70,27 +69,6 @@ const toInt = (v) => parseInt(v ?? '0', 10) || 0;
  * debt=欠账数（棘轮口径）；enabled=false 表示该指标暂不可用/未激活，不参与棘轮。
  */
 export async function computeMetrics(pool, now = new Date()) {
-  // m1 读 golden_path 旧表（已退役，任务 7d312fd8）：默认停计、不参与棘轮；应急放行窗口下沿用旧口径
-  const m1 = !legacyReadEnabled()
-    ? { key: 'm1', name: 'FR沉淀率', value: null, debt: 0, enabled: false, retired: 'golden_path' }
-    : await safeMetric(async () => {
-    // FR 沉淀率：近 7 天 merged 的 harness run 中 golden_path 有行的比例
-    const { rows } = await pool.query(
-      `SELECT count(*) AS total,
-              count(*) FILTER (
-                WHERE NOT EXISTS (SELECT 1 FROM golden_path gp WHERE gp.owner_task_id = t.id)
-              ) AS debt
-       FROM tasks t
-       WHERE t.task_type = 'harness_initiative'
-         AND t.status = 'completed'
-         AND t.pr_merged_at IS NOT NULL
-         AND t.completed_at >= NOW() - INTERVAL '7 days'`
-    );
-    const total = toInt(rows[0]?.total);
-    const debt = toInt(rows[0]?.debt);
-    return { key: 'm1', name: 'FR沉淀率', value: total === 0 ? 1 : (total - debt) / total, debt, enabled: true };
-  }, { key: 'm1', name: 'FR沉淀率', value: null, debt: 0 });
-
   const m2 = await safeMetric(async () => {
     // 归属完整率：近 7 天新建 tasks/issues 的 journey 归属。
     // 排除守卫自产与冒烟噪声（debt 与 total 同步排除，防分母被噪声稀释）：
@@ -98,9 +76,6 @@ export async function computeMetrics(pool, now = new Date()) {
     //     （前缀由 '[紧急] ' 模板 + LEDGER_SELF_ATOM_PREFIX 拼接派生，与写入侧同源）
     //     与 payload.smoke_tag 非空的 headed 派发冒烟 task
     //   - issues：守卫自产 '[ledger-hygiene]%' 前缀 issue（LEDGER_SELF_ISSUE_PREFIX 同源）
-    // attribution_harness 子指标（tasks.ability_id IS NULL）停计：ability_id 未接线
-    // （全库仅 15 行非空），恒空即纯噪声源，且 harness 任务缺 journey_id 时会被
-    // tasks/harness 两条子查询双重计数——ability_id 接线后恢复该子项属后续 sprint。
     const [t, i] = await Promise.all([
       pool.query(
         `SELECT count(*) AS total,
@@ -169,28 +144,6 @@ export async function computeMetrics(pool, now = new Date()) {
     return { key: 'm5', name: '判定点活性', value: cnt, debt: cnt === 0 ? 1 : 0, enabled: true, absolute: true };
   }, { key: 'm5', name: '判定点活性', value: null, debt: 0 });
 
-  const m6 = await safeMetric(async () => {
-    // evaluator 门禁覆盖率：近 7 天 v2 relay run 里 phase='done' 的行，
-    // 有多少缺失 initiative_run_events(node='evaluator', status='done')——
-    // 缺失即"PR 合并但从未经 evaluator 验收"（c36326c8 machine gate 配套指标）。
-    const { rows } = await pool.query(
-      `SELECT count(*) AS total,
-              count(*) FILTER (
-                WHERE NOT EXISTS (
-                  SELECT 1 FROM initiative_run_events e
-                  WHERE e.initiative_id = r.initiative_id AND e.node = 'evaluator' AND e.status = 'done'
-                )
-              ) AS debt
-       FROM initiative_runs r
-       WHERE r.orchestrator_version = 'v2'
-         AND r.phase = 'done'
-         AND r.completed_at >= NOW() - INTERVAL '7 days'`
-    );
-    const total = toInt(rows[0]?.total);
-    const debt = toInt(rows[0]?.debt);
-    return { key: 'm6', name: 'evaluator门禁覆盖率', value: total === 0 ? 1 : (total - debt) / total, debt, enabled: true };
-  }, { key: 'm6', name: 'evaluator门禁覆盖率', value: null, debt: 0 });
-
   const m7 = await safeMetric(async () => {
     // 自主循环零产出：上一完整北京日（Asia/Shanghai 昨日自然日）内，下列"应产出"
     // 循环是否出现零产出天——
@@ -258,7 +211,7 @@ export async function computeMetrics(pool, now = new Date()) {
     };
   }, { key: 'm7', name: '自主循环零产出', value: null, debt: 0 });
 
-  return { m1, m2, m3, m4, m5, m6, m7 };
+  return { m2, m3, m4, m5, m7 };
 }
 
 /**
@@ -294,7 +247,7 @@ export function evaluateRatchet(metrics, prev, today) {
   return { state, breaches };
 }
 
-/** 渲染卫生分 markdown（m1-m7 指标表格 + 击穿段）。 */
+/** 渲染卫生分 markdown（现役指标表格 + 击穿段）。 */
 export function renderHygieneMarkdown(today, metrics, breaches) {
   const lines = [`# 账本卫生分 ${today}`, ''];
   lines.push('| 指标 | 值 | 欠账 | 状态 |');

@@ -6,7 +6,7 @@ const skillLoader = vi.hoisted(() => vi.fn((name) => {
   if (name !== 'line-strategist') throw new Error(`unexpected skill: ${name}`);
   return 'NATIVE_STRATEGIST_SKILL_FIXTURE_83c2';
 }));
-vi.mock('../harness-shared.js', async importOriginal => ({
+vi.mock('../execution-shared.js', async importOriginal => ({
   ...await importOriginal(),
   loadSkillContent: skillLoader,
 }));

@@ -37,13 +37,4 @@ if (!/rubric_scores/.test(s)) process.exit(1);
 "
 echo "schema 字段在位 ✓"
 
-echo "[gan-case-file-smoke] 5. bundle 注入 + 256KB 硬闸常量"
-node -e "
-const d = require('fs').readFileSync('src/orchestrator/dispatcher.js','utf8');
-const c = require('fs').readFileSync('src/orchestrator/constants.js','utf8');
-if (!d.includes('case_file')) process.exit(1);
-if (!/HARNESS_BUNDLE_MAX_BYTES/.test(c) || !/CASE_FILE_TEXT_MAX_BYTES/.test(c)) process.exit(1);
-"
-echo "bundle 注入与硬闸在位 ✓"
-
 echo "[gan-case-file-smoke] 全部检查通过 ✓"

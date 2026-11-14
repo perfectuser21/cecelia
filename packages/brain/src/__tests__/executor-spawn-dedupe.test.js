@@ -17,10 +17,7 @@ describe('executor spawn dedupe 接线（结构断言）', () => {
     expect(code).not.toMatch(/releaseDedupeKey\('spawn'/);
   });
 
-  it('不碰 harness-callback claim（该文件零改动）', () => {
-    const cb = readFileSync(join(__dirname, '..', 'routes', 'harness-callback.js'), 'utf8');
-    expect(cb).not.toMatch(/claimDedupeKey/);
-  });
+
 });
 
 describe('dispatcher spawn_deduplicated carve-out（结构断言）', () => {

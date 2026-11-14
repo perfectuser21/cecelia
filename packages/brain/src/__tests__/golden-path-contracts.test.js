@@ -416,7 +416,7 @@ describe('Golden Path contract signature and Harness launch', () => {
 
     expect(db.contracts[0].status).toBe('signed');
     expect(db.tasks).toHaveLength(1);
-    expect(db.tasks[0].task_type).toBe('harness_initiative');
+    expect(db.tasks[0].task_type).toBe('dev');
     expect(db.tasks[0].payload).toMatchObject({ headed_manual: 'true', repo: 'zenithjoy-miniapp' });
   });
 

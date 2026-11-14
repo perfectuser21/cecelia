@@ -94,7 +94,6 @@ import { zombieSweep } from './zombie-sweep.js';
 import * as pipelinePatrolPlugin from './pipeline-patrol-plugin.js';
 import * as lineStrategistDispatchPlugin from './line-strategist-dispatch-plugin.js';
 import * as pausedRequeuPlugin from './paused-requeuer-plugin.js';
-import * as pipelineWatchdogPlugin from './pipeline-watchdog-plugin.js';
 import * as krHealthDailyPlugin from './kr-health-daily-plugin.js';
 import * as cleanupWorkerPlugin from './cleanup-worker-plugin.js';
 import { scheduleDailyScrape } from './daily-scrape-scheduler.js';
@@ -106,7 +105,6 @@ import { runSkillDriftPatrol, isInPatrolWindow } from './cron/skill-drift-patrol
 import { runTestLifecyclePatrol, isInPatrolWindow as isInTestLifecyclePatrolWindow } from './test-lifecycle-patrol.js';
 import { runCredentialsHealthCheck } from './credentials-health-scheduler.js';
 import { scheduleDailyBackup } from './daily-backup-scheduler.js';
-// Sprint 1: harness-watcher.js retired (Phase B/C 进 LangGraph，sub-graph poll_ci 自管)
 // processHarnessCiWatchers / processHarnessDeployWatchers 不再使用
 import {
   checkAndAlertExpiringCredentials,
@@ -186,7 +184,6 @@ const ZOMBIE_SWEEP_INTERVAL_MS = parseInt(process.env.CECELIA_ZOMBIE_SWEEP_INTER
 // PIPELINE_PATROL_INTERVAL_MS / PIPELINE_WATCHDOG_INTERVAL_MS / CLEANUP_WORKER_INTERVAL_MS
 // 已收口到对应 plugin 内部（D1.7c）— tick-runner.js 不再读这些常量
 const ORPHAN_PR_WORKER_INTERVAL_MS = parseInt(process.env.CECELIA_ORPHAN_PR_WORKER_INTERVAL_MS || String(30 * 60 * 1000), 10);
-// W3 harness watchdog 间隔已搬到 harness-watchdog-loop.js（2026-06-13 P1 修复）— tick-runner.js 不再读
 // GOAL_EVAL_INTERVAL_MS 已收口到 goal-eval-plugin.js（D1.7c-plugin1）— tick-runner.js 不再读
 
 /** Check if a task is stale (in_progress for too long) — 与 tick.js 同名同义 */
@@ -369,18 +366,6 @@ async function executeTick() {
     Promise.resolve().then(() => reloadConsciousnessCache(pool))
       .catch(e => console.warn('[tick] consciousness reload failed:', e.message));
   }
-
-  // [感知] Pipeline-level Watchdog：每 30 分钟检测 pipeline 整体是否卡死（D1.7c plugin）
-  // 与 pipeline-patrol 正交（patrol 看 stage 超时，watchdog 看 pipeline 整体 6h 无进展）
-  pipelineWatchdogPlugin.tick({ pool, tickState, tickLog, MINIMAL_MODE }).catch(err => {
-    console.warn('[tick] pipeline-watchdog plugin failed (non-fatal):', err.message);
-  });
-
-  // [感知] Harness Initiative Watchdog (W3)：已搬到独立 harness-watchdog-loop.js（2026-06-13 P1 修复）。
-  // 历史 bug：executeTick 自 Wave 2（2026-05-04）起从不被调用（tick-loop.js 改调 runScheduler），
-  // 这里的 watchdog 块因此形同虚设 → GAN/planner 卡死无人自救。修复后由 startTickLoop() 启动的
-  // 独立 setInterval（harness-watchdog-loop.js）周期执行，不依赖 tick body。
-  // 即便紧急回滚到 executeTick 路径，独立循环仍在跑（无双驱动风险），故此处不再重复调用。
 
   // [R4] Orphan worktree 清理：每 10 分钟调一次 shell 脚本（D1.7c plugin）
   // 扫描白名单 worktree，若对应 PR 已 merged 超过 1h 且满足安全守卫则清理
@@ -821,19 +806,6 @@ async function executeTick() {
     }
   }
 
-  // 0.4.6. Harness worktree cleanup: 每 20 分钟清理 harness-v2/ 下 7 天以上的遗留 worktree
-  if (zombieElapsed >= ZOMBIE_CLEANUP_INTERVAL_MS) {
-    try {
-      const { cleanupStaleHarnessWorktrees } = await import('./harness-worktree.js');
-      const staleResult = await cleanupStaleHarnessWorktrees();
-      if (staleResult.cleaned > 0) {
-        tickLog(`[tick] Harness stale worktree cleanup: removed=${staleResult.cleaned}`);
-      }
-    } catch (staleErr) {
-      console.error('[tick] Harness stale worktree cleanup failed (non-fatal):', staleErr.message);
-    }
-  }
-
   // 0.5. Periodic cleanup: run once per CLEANUP_INTERVAL_MS (default 1 hour)
   const cleanupElapsed = Date.now() - tickState.lastCleanupTime;
   if (cleanupElapsed >= CLEANUP_INTERVAL_MS) {
@@ -954,10 +926,6 @@ async function executeTick() {
   } catch (reconcileErr) {
     console.error('[tick] missed-webhook reconcile failed (non-fatal):', reconcileErr.message);
   }
-
-  // 0.15. Harness Watcher: retired in Sprint 1
-  // sub-graph harness-task.graph poll_ci/merge_pr nodes 取代了 harness_ci_watch 轮询逻辑。
-  // 老数据派的 harness_ci_watch task 由 executor.js _RETIRED_HARNESS_TYPES 标 terminal。
 
   // 1. Decision Engine: Compare goal progress
   try {
@@ -1380,10 +1348,6 @@ async function executeTick() {
   if (burstOverride != null) {
     tickLog(`[tick] Backpressure active: queue_depth=${tickSlotBudget.backpressure.queue_depth} > ${tickSlotBudget.backpressure.threshold}, burst_limit=${effectiveBurstLimit}`);
   }
-
-  // Sprint 1: harness-phase-advancer.js retired
-  // 顶层 graph buildHarnessFullGraph 自己推进 phase。
-  // initiative_runs.phase 由 reportNode 写。
 
   // 7a. Fill slots from focused objective's tasks
   // Predictive resource gate: pre-deduct estimated memory per dispatched agent

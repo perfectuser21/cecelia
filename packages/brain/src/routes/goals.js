@@ -13,6 +13,7 @@ import { createProposal, approveProposal, rollbackProposal, rejectProposal, getP
 import { probe as dockerRuntimeProbe } from '../docker-runtime-probe.js';
 import { describeFleetTransportReadiness } from '../orchestrator/production-transport.js';
 import { isIsolatedRuntime } from '../runtime-safety.js';
+import { CODING_MUTATION_TASK_TYPES, REVIEW_TASK_TYPES } from '../lib/task-type-registry.js';
 
 // Constants previously in old alertness.js
 const EVENT_BACKLOG_THRESHOLD = 50;
@@ -108,17 +109,17 @@ router.get('/health', async (req, res) => {
     const [tickStatus, cbStates, activePipelinesResult, evaluatorStatsResult, docker_runtime, xian_bridge_status] = await Promise.all([
       getTickStatus(),
       Promise.resolve(getAllCBStates()),
-      // active_pipelines: harness_planner 已退役（PR retire-harness-planner），改统计 harness_initiative
-      pool.query("SELECT count(*)::integer AS cnt FROM tasks WHERE task_type='harness_initiative' AND status='in_progress'"),
+      // 现役开发任务：交互式dev与自动coding_workflow
+      pool.query("SELECT count(*)::integer AS cnt FROM tasks WHERE task_type = ANY($1::text[]) AND status='in_progress'", [CODING_MUTATION_TASK_TYPES]),
       pool.query(`
         SELECT
           COUNT(*) FILTER (WHERE status = 'completed')::integer AS passed,
           COUNT(*) FILTER (WHERE status IN ('canceled', 'failed'))::integer AS failed,
           MAX(completed_at) AS last_run_at
         FROM tasks
-        WHERE task_type = 'harness_evaluate'
+        WHERE task_type = ANY($1::text[])
           AND status IN ('completed', 'canceled', 'failed')
-      `).catch((err) => {
+      `, [REVIEW_TASK_TYPES]).catch((err) => {
         // 被动实例依靠 DB 提供 API，查询失败不能伪装成健康；生产统计仍按原约定容错。
         if (isolated) throw err;
         return null;
@@ -190,10 +191,9 @@ router.get('/health', async (req, res) => {
     const local_execution = {
       enabled: localExecutionEnabled,
       role: isolated ? 'disabled' : localExecutionEnabled ? 'executor' : 'scheduler_only',
-      guard: 'harness-skill-relay.spawnSkillRelaySession',
       reason: isolated ? 'runtime_isolated' : localExecutionEnabled
         ? null
-        : 'CECELIA_LOCAL_EXECUTION_ENABLED=false — 本机执行已禁用，harness 派发一律拒绝并要求下放 Mac worker（决策 96054a8b）',
+        : 'CECELIA_LOCAL_EXECUTION_ENABLED=false — 本机配置为纯调度角色',
     };
     res.json({
       status: healthy ? 'healthy' : 'degraded',

@@ -20,7 +20,7 @@ export function validateGitSource({ repo, path, revision } = {}, { central = fal
 }
 
 /** token 只发往固定 GitHub API；commit/tree/blob 身份均回读，禁止重定向。 */
-async function readGitFile(source, { fetchFn=globalThis.fetch, resolveToken=async()=>(await import('../harness-credentials.js')).resolveGitHubToken(),signal,deadline=Date.now()+60000,allowMissing=false,gitSession } = {}, central=false) {
+async function readGitFile(source, { fetchFn=globalThis.fetch, resolveToken=async()=>(await import('../github-credentials.js')).resolveGitHubToken(),signal,deadline=Date.now()+60000,allowMissing=false,gitSession } = {}, central=false) {
   validateGitSource(source,{central});
   const check=()=>{if(signal?.aborted||Date.now()>=deadline)throw Object.assign(Error('固定来源读取已取消或超时'),{code:'readiness_deadline_exceeded',status:503});};
   check();

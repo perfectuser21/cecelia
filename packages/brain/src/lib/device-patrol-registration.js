@@ -1,6 +1,6 @@
 /** 内部认证入口背后的真实Git引入登记；客户端不能自报Git树、来源摘要或空base。 */
 import {createHash} from 'node:crypto';
-import {resolveGitHubToken} from '../harness-credentials.js';
+import {resolveGitHubToken} from '../github-credentials.js';
 import {snapshotDefinitions} from './definition-versions.js';
 import {PATROL_SCOPE,PATROL_REPO,PATROL_PATH,PATROL_CAPABILITY,sha,canonical,validatePatrolBootstrap,validatePatrolContract,patrolSourceProof} from './device-patrol-admission.js';
 const fail=(code,status=422)=>{throw Object.assign(Error(code),{code,status});};

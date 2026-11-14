@@ -22,7 +22,6 @@ import {
   pickDefaultTask,
   absoluteShanghai,
   shanghaiClock,
-  stageRows,
   elapsedForStatus,
   lineProgress,
   stepStatusMeta,
@@ -33,7 +32,6 @@ import {
   type LineAdvancementItem,
   type FeedArea,
   type FeedTask,
-  type FeedStage,
   type LineSummary,
   type LineArea,
   type LineStep,
@@ -42,13 +40,13 @@ import {
 describe('routingAuditRows（Work Router 审计）', () => {
   it('展示 work kind、Pipeline、repo、Map、Impact Contract、reason 与阻塞 Gate', () => {
     expect(routingAuditRows({
-      work_kind: 'coding_mutation', pipeline: 'harness', repo: 'cecelia',
+      work_kind: 'coding_mutation', pipeline: 'headed', repo: 'cecelia',
       map_status: 'fresh', impact_contract_status: 'active',
-      route_reason: 'coding mutation requires Harness', blocking_gate: 'map_stale',
+      route_reason: 'coding mutation uses headed ledger', blocking_gate: 'map_stale',
     })).toEqual([
-      ['Work kind', 'coding_mutation'], ['Pipeline', 'harness'], ['Repo', 'cecelia'],
+      ['Work kind', 'coding_mutation'], ['Pipeline', 'headed'], ['Repo', 'cecelia'],
       ['Map', 'fresh'], ['Impact Contract', 'active'],
-      ['Route reason', 'coding mutation requires Harness'], ['阻塞 Gate', 'map_stale'],
+      ['Route reason', 'coding mutation uses headed ledger'], ['阻塞 Gate', 'map_stale'],
     ]);
   });
 });
@@ -132,7 +130,6 @@ describe('statusMeta（状态元信息）', () => {
 
 describe('kindLabel（种类标签）', () => {
   it('各 kind 映射', () => {
-    expect(kindLabel('sprint')).toBe('Sprint');
     expect(kindLabel('pipeline')).toBe('Pipeline');
     expect(kindLabel('scraper')).toBe('采集');
     expect(kindLabel('task')).toBe('Task');
@@ -143,7 +140,7 @@ describe('kindLabel（种类标签）', () => {
 function mkTask(over: Partial<FeedTask>): FeedTask {
   return {
     id: 't1',
-    kind: 'sprint',
+    kind: 'task',
     title: 'demo',
     status: 'done',
     raw_status: 'completed',
@@ -256,7 +253,7 @@ describe('filterByKind（任务种类过滤）', () => {
           groupName: 'Brain API',
           count: 2,
           tasks: [
-            mkTask({ id: 's1', kind: 'sprint' }),
+            mkTask({ id: 's1', kind: 'scraper' }),
             mkTask({ id: 't1k', kind: 'task' }),
           ],
         },
@@ -291,13 +288,13 @@ describe('filterByKind（任务种类过滤）', () => {
   });
 
   it('过滤后 count 反映剩余任务数', () => {
-    const out = filterByKind(MIXED, 'sprint');
+    const out = filterByKind(MIXED, 'scraper');
     expect(out[0].count).toBe(1);
     expect(out[0].groups[0].count).toBe(1);
   });
 
   it('无命中返回空数组', () => {
-    expect(filterByKind(MIXED, 'scraper')).toHaveLength(0);
+    expect(filterByKind(MIXED, 'unknown')).toHaveLength(0);
   });
 });
 
@@ -386,40 +383,6 @@ describe('elapsedForStatus（历时仅对 in_progress 显示）', () => {
   });
 });
 
-describe('stageRows（stage 时间线渲染行）', () => {
-  const STAGES: FeedStage[] = [
-    { key: 'plan', label: 'Planner', status: 'done', elapsed_ms: 5_000 },
-    { key: 'gen', label: 'Generator', status: 'running', elapsed_ms: null },
-    { key: 'eval', label: 'Evaluator', status: 'pending', elapsed_ms: null },
-    { key: 'final', label: 'Final E2E', status: 'failed', elapsed_ms: 12_000 },
-  ];
-
-  it('空/缺省安全：null 与 [] 都返回空数组', () => {
-    expect(stageRows(null)).toEqual([]);
-    expect(stageRows(undefined)).toEqual([]);
-    expect(stageRows([])).toEqual([]);
-  });
-
-  it('逐步映射 label/status，并把 elapsed_ms 格式化成 elapsed 串', () => {
-    const rows = stageRows(STAGES);
-    expect(rows).toHaveLength(4);
-    expect(rows[0]).toMatchObject({ key: 'plan', label: 'Planner', status: 'done', elapsed: '5s' });
-    expect(rows[3]).toMatchObject({ key: 'final', label: 'Final E2E', status: 'failed', elapsed: '12s' });
-  });
-
-  it('running/pending 无耗时 → elapsed 为空串', () => {
-    const rows = stageRows(STAGES);
-    expect(rows[1].elapsed).toBe('');
-    expect(rows[2].elapsed).toBe('');
-  });
-
-  it('非法 status 兜底为 pending', () => {
-    // @ts-expect-error 故意传非法 status 验证兜底
-    const rows = stageRows([{ key: 'x', label: 'X', status: 'weird', elapsed_ms: null }]);
-    expect(rows[0].status).toBe('pending');
-  });
-});
-
 describe('rootClass（全屏覆盖外壳）', () => {
   it('非全屏 → h-full，不覆盖', () => {
     const c = rootClass(false);
@@ -453,7 +416,7 @@ describe('isToday（上海日判断）', () => {
 describe('applyViewFilters（聚焦/状态/归档 组合过滤）', () => {
   const now = new Date('2026-06-03T02:00:00Z').getTime();
   const mk = (o: Partial<FeedTask>): FeedTask => ({
-    id: 'x', kind: 'sprint', title: 't', status: 'done', raw_status: 'completed',
+    id: 'x', kind: 'task', title: 't', status: 'done', raw_status: 'completed',
     priority: null, created_at: '2026-06-03T01:00:00Z', elapsed_ms: null, progress_pct: null,
     current_node: null, fail_reason: null, pr_url: null, detail_route: '/x', ...o,
   });

@@ -72,9 +72,6 @@ vi.mock('../health-monitor.js', () => ({ runLayer2HealthCheck: vi.fn().mockResol
 vi.mock('../dept-heartbeat.js', () => ({ triggerDeptHeartbeats: vi.fn().mockResolvedValue({}) }));
 // 本测试验证suggestion入口退役，心跳巡检的真实LLM/网络由其独立测试覆盖。
 // executeTick的遗留清理支路必须隔离真实git worktree；此测试只验suggestion调用边界。
-vi.mock('../harness-worktree.js', () => ({
-  cleanupStaleHarnessWorktrees: vi.fn().mockResolvedValue({ cleaned: 0, skipped: 0 }),
-}));
 vi.mock('../heartbeat-plugin.js', async (importOriginal) => {
   const actual = await importOriginal();
   return { ...actual, tick: vi.fn(actual.tick) };
@@ -149,7 +146,6 @@ describe('Tick Suggestion Integration (v2 — L1 架构)', () => {
       ['../heartbeat-inspector.js', ['runHeartbeatInspection']],
       ['../zombie-sweep.js', ['zombieSweep']],
       ['../zombie-cleaner.js', ['runZombieCleanup']],
-      ['../harness-worktree.js', ['cleanupStaleHarnessWorktrees']],
       ['../active-goals-zero-trigger.js', ['maybeTriggerStrategySession']],
       ['../orphan-pr-worker.js', ['scanOrphanPrs']],
       ['../credential-expiry-checker.js', ['checkAndAlertExpiringCredentials']],
@@ -171,7 +167,6 @@ describe('Tick Suggestion Integration (v2 — L1 架构)', () => {
         ['../heartbeat-inspector.js', 'runHeartbeatInspection'],
         ['../zombie-sweep.js', 'zombieSweep'],
         ['../zombie-cleaner.js', 'runZombieCleanup'],
-        ['../harness-worktree.js', 'cleanupStaleHarnessWorktrees'],
         ['../active-goals-zero-trigger.js', 'maybeTriggerStrategySession'],
       ]) expect((await import(path))[name], `${path}:${name}`).toHaveBeenCalledTimes(1);
     }, 60000);

@@ -46,12 +46,10 @@ async function runWithProbe(kind, probeResult, taskOverrides = {}) {
 // ─── VALID_EXECUTOR_KINDS ─────────────────────────────────────────────────────
 
 describe('VALID_EXECUTOR_KINDS', () => {
-  it('包含十五个合法值（新增 coding-workflow-runner；新增固定image-janitor）（2026-09-22 增 openclaw-agent；2026-09-25 增 script：executor=script 一等类型，链 bf5088a3 棒3）', () => {
+  it('包含十三个现役执行体，覆盖公共runner和独立controller', () => {
     expect(VALID_EXECUTOR_KINDS).toEqual(
       expect.arrayContaining([
         'brain-local',
-        'relay-container',
-        'kernel-process',
         'headed-session',
         'bridge',
         'external-worker',
@@ -66,19 +64,15 @@ describe('VALID_EXECUTOR_KINDS', () => {
         'coding-workflow-runner',
       ])
     );
-    expect(VALID_EXECUTOR_KINDS).toHaveLength(15);
+    expect(VALID_EXECUTOR_KINDS).toHaveLength(13);
   });
 });
 
 // ─── EXECUTOR_KIND_FOR 打标映射 ───────────────────────────────────────────────
 
 describe('EXECUTOR_KIND_FOR 打标映射', () => {
-  it('harness_initiative → relay-container', () => {
-    expect(EXECUTOR_KIND_FOR.harness_initiative).toBe('relay-container');
-  });
-
-  it('dev → brain-local（dispatcher 暂标）', () => {
-    expect(EXECUTOR_KIND_FOR.dev).toBe('brain-local');
+  it('dev → headed-session（有头开发账本）', () => {
+    expect(EXECUTOR_KIND_FOR.dev).toBe('headed-session');
   });
 
   it('content-pipeline → external-worker', () => {
@@ -97,7 +91,7 @@ describe('EXECUTOR_KIND_FOR 打标映射', () => {
 // ─── EXECUTOR_CONTRACTS 结构校验 ──────────────────────────────────────────────
 
 describe('EXECUTOR_CONTRACTS 结构', () => {
-  const KINDS = ['brain-local', 'relay-container', 'headed-session', 'bridge', 'external-worker'];
+  const KINDS = ['brain-local', 'headed-session', 'bridge', 'external-worker'];
 
   for (const kind of KINDS) {
     it(`${kind} 合同有 probe / staleMinutes / onStale`, () => {
@@ -184,31 +178,10 @@ describe('brain-local 合同矩阵', () => {
 
 // ─── relay-container 合同矩阵 ─────────────────────────────────────────────────
 
-describe('relay-container 合同矩阵', () => {
-  it('probe=alive → verdict=alive', async () => {
-    const res = await runWithProbe('relay-container', 'alive');
-    expect(res.verdict).toBe('alive');
-  });
-
-  it('probe=dead → verdict=dead, onStale=reignite', async () => {
-    const res = await runWithProbe('relay-container', 'dead');
-    // relay-container staleMinutes=null → dead 直接透传（无宽限期）
-    expect(res.verdict).toBe('dead');
-    expect(res.onStale).toBe('reignite');
-  });
-
-  it('probe=unknown → fail-open，verdict=unknown', async () => {
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const res = await runWithProbe('relay-container', 'unknown');
-    expect(res.verdict).toBe('unknown');
-    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('fail-open'));
-    warnSpy.mockRestore();
-  });
-});
-
-// ─── headed-session 合同矩阵 ──────────────────────────────────────────────────
-
 describe('headed-session 合同矩阵', () => {
+  it('当前有头会话的真实PID存活时返回alive', async () => {
+    expect(await EXECUTOR_CONTRACTS['headed-session'].probe({id:'owned-headed',claimed_by:`pid:${process.pid}`},{})).toBe('alive');
+  });
   it('probe=alive → verdict=alive', async () => {
     const res = await runWithProbe('headed-session', 'alive');
     expect(res.verdict).toBe('alive');

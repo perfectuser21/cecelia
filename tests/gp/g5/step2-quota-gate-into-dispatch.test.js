@@ -15,7 +15,7 @@ import {
 } from '../../../packages/brain/src/ops-model-accounts-collector.js';
 import { listVerifiedExecutionTargets } from '../../../packages/brain/src/orchestrator/preflight/execution-targets.js';
 import { createCapabilityGate } from '../../../packages/brain/src/orchestrator/preflight/capability-gate.js';
-import { createKernelAlertEmitter } from '../../../packages/brain/src/orchestrator/run.js';
+
 import {
   judgeAccount, RESET_SOON_MINUTES,
 } from '../../../packages/brain/src/orchestrator/preflight/account-quota-ledger.js';
@@ -365,79 +365,5 @@ describe('全灭保底放行', () => {
     expect(second.status).toBe('ok');
     expect(second.to_target.account).toBe('account1');
     expect(second.fallback_reason).not.toBe('account_quota_degraded_admit');
-  });
-});
-
-describe('kernel-runtime-deps.js 实际依赖接线（这些接缝不接上就是死代码）', () => {
-  const src = readFileSync(
-    fileURLToPath(new URL('../../../packages/brain/src/orchestrator/kernel-runtime-deps.js', import.meta.url)),
-    'utf8',
-  );
-
-  it('loadAccountQuota 被注入给 capability gate', () => {
-    expect(src).toMatch(/loadAccountQuota\s*:/);
-    expect(src).toMatch(/createQuotaLedgerLoader/);
-  });
-
-  it('emitAlert 被注入——否则 capability-gate 的 optional chain 永远静默', () => {
-    expect(src).toMatch(/emitAlert\s*:/);
-  });
-
-  it('注入层不再有裸 catch { return true } 的无痕 fail-open', () => {
-    expect(src).not.toMatch(/catch\s*\{\s*\n?\s*return true;\s*\/\/\s*fail-open/);
-  });
-
-  it('全灭告警是 P0 且带 n=1 去抖（首击即响 + 之后静默，防每跳刷屏）', () => {
-    expect(src).toMatch(/kernel_account_quota_all_exhausted/);
-    expect(src).toMatch(/n:\s*1/);
-  });
-
-  it('preflight_blocked 不重复告警（run.js:328-338 的 onPreflightBlocked 已覆盖）', () => {
-    expect(src).toMatch(/kernel_capability_preflight_blocked/);
-  });
-});
-
-describe('emitAlert adapter 的级别映射与去重', () => {
-  const mk = () => {
-    const raised = [];
-    return {
-      raised,
-      emit: createKernelAlertEmitter({ raise: async (...a) => { raised.push(a); } }),
-    };
-  };
-
-  it('全灭 → P0 + n=1 去抖', async () => {
-    const { raised, emit } = mk();
-    await emit({ kind: 'kernel_account_quota_all_exhausted', admitted_account: 'account2', admitted_pct: 92 });
-    expect(raised).toHaveLength(1);
-    const [level, eventType, , opts] = raised[0];
-    expect(level).toBe('P0');
-    expect(eventType).toBe('kernel_account_quota_all_exhausted');
-    expect(opts?.debounce?.n).toBe(1);
-  });
-
-  it('判据降级 → P1 + 去抖', async () => {
-    const { raised, emit } = mk();
-    await emit({ kind: 'kernel_account_quota_gate_degraded', reason: 'ledger_unavailable:ECONNREFUSED' });
-    expect(raised[0][0]).toBe('P1');
-    expect(raised[0][3]?.debounce).toBeTruthy();
-  });
-
-  it('preflight_blocked 不再发一遍（onPreflightBlocked 已覆盖）', async () => {
-    const { raised, emit } = mk();
-    await emit({ kind: 'kernel_capability_preflight_blocked', action: 'wait:human_review' });
-    expect(raised).toHaveLength(0);
-  });
-
-  it('未知 kind 兜底 P2，不静默丢弃', async () => {
-    const { raised, emit } = mk();
-    await emit({ kind: 'something_new' });
-    expect(raised).toHaveLength(1);
-    expect(raised[0][0]).toBe('P2');
-  });
-
-  it('raise 抛错不冒泡（告警不能反过来打断派发）', async () => {
-    const emit = createKernelAlertEmitter({ raise: async () => { throw new Error('alert down'); } });
-    await expect(emit({ kind: 'kernel_account_quota_all_exhausted' })).resolves.toBeUndefined();
   });
 });

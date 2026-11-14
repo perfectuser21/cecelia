@@ -34,13 +34,13 @@ describe('固定 GitHub 文件安全读取',()=>{
   });
   it('未读Git时不加载凭据依赖，默认真实读取仍调用原resolver',async()=>{
     vi.resetModules();const load=vi.fn(()=>{throw Error('credential_dependency_observed');});
-    vi.doMock('../harness-credentials.js',load);
+    vi.doMock('../github-credentials.js',load);
     try{
       const source=await import('./fixed-git-source.js');expect(load).not.toHaveBeenCalled();
       await expect(source.readFixedGitFile({repo,path:'contract.json',revision},{resolveToken:async()=> 'test-token',fetchFn:async()=>{throw Error('fixture_network');}})).rejects.toThrow('fixture_network');
       expect(load).not.toHaveBeenCalled();
       await expect(source.readFixedGitFile({repo,path:'contract.json',revision})).rejects.toThrow();expect(load).toHaveBeenCalledOnce();
-    }finally{vi.doUnmock('../harness-credentials.js');vi.resetModules();}
+    }finally{vi.doUnmock('../github-credentials.js');vi.resetModules();}
   });
 
 });

@@ -273,23 +273,6 @@ describe('Fleet NodeProfile registry', () => {
     });
   });
 
-  // 防再漏：dispatcher 每个 spawn/publish 条目声明的 role 都必须能算出容量。
-  // 单靠"给权重表补一个角色"挡不住下一次——新增角色时照样会忘。
-  it('every role dispatcher can dispatch has a registered capacity weight', async () => {
-    const { getRoleCapacity } = await loadContract();
-    const dispatcherSrc = await import('node:fs/promises')
-      .then((fs) => fs.readFile(new URL('../dispatcher.js', import.meta.url), 'utf8'));
-    const roles = [...dispatcherSrc.matchAll(/role:\s*'([a-z_]+)'/g)].map((m) => m[1]);
-
-    expect(roles.length).toBeGreaterThan(5);
-    for (const role of [...new Set(roles)]) {
-      expect(
-        () => getRoleCapacity({ baseCapacity: 8, role }),
-        `dispatcher 可派发角色 '${role}' 未注册容量权重`,
-      ).not.toThrow();
-    }
-  });
-
   it('fails closed for unknown, empty, and non-string roles', async () => {
     const { getRoleCapacity } = await loadContract();
 

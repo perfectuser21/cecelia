@@ -15,7 +15,6 @@
 
 import pool from './db.js';
 import { updateTask } from './actions.js';
-import { finalizeTask } from './lib/task-terminal.js';
 import {
   shouldAnalyzeFailure,
   cacheRcaResult,
@@ -27,15 +26,13 @@ import {
   getAutoFixStats
 } from './auto-fix.js';
 import { validatePolicyJson } from './policy-validator.js';
-import { MONITOR_LONG_RUNNING_TASK_TYPES as HARNESS_TASK_TYPES, HARNESS_CHAIN_TASK_TYPES } from './lib/task-type-registry.js';
+import { MONITOR_LONG_RUNNING_TASK_TYPES, RETIRED_DEVELOPMENT_TASK_TYPES } from './lib/task-type-registry.js';
 
 // Configuration
 const MONITOR_INTERVAL_MS = 30000; // 30 seconds
 const STUCK_THRESHOLD_MINUTES = 5;
-// Harness pipeline tasks run much longer than normal tasks:
-// harness_generate/harness_fix (Generator): ~13 min, harness evaluator: ~4 min
-// Use a 30-minute threshold to avoid false "stuck" detection during legitimate runs.
-const HARNESS_STUCK_THRESHOLD_MINUTES = 30;
+// 现役长时评审任务允许更长心跳间隔，普通任务仍使用5分钟。
+const LONG_RUNNING_STUCK_THRESHOLD_MINUTES = 30;
 const FAILURE_SPIKE_THRESHOLD = 0.3; // 30% failure rate in last hour
 const RESOURCE_PRESSURE_THRESHOLD = 0.85;
 
@@ -49,8 +46,6 @@ let _cycleCount = 0;
  * Detector: Stuck Runs
  * 检测卡住的任务（心跳超时或运行时间过长）
  *
- * Harness 任务（harness_generate/harness_fix 等）运行时间远超 5 分钟，
- * 使用独立的 HARNESS_STUCK_THRESHOLD_MINUTES（30 分钟）避免误判。
  */
 async function detectStuckRuns() {
   const query = `
@@ -66,20 +61,21 @@ async function detectStuckRuns() {
     FROM run_events r
     LEFT JOIN tasks t ON t.id = r.task_id
     WHERE r.status = 'running'
+      AND (t.task_type IS NULL OR t.task_type <> ALL($2::text[]))
       AND (
-        -- Non-harness tasks: standard 5-minute threshold
+        -- Standard tasks: 5-minute threshold
         (t.task_type IS NULL OR t.task_type != ALL($1::text[]))
         AND r.heartbeat_ts < NOW() - INTERVAL '${STUCK_THRESHOLD_MINUTES} minutes'
         OR
-        -- Harness tasks: extended 30-minute threshold
+        -- Long-running reviews: 30-minute threshold
         (t.task_type = ANY($1::text[]))
-        AND r.heartbeat_ts < NOW() - INTERVAL '${HARNESS_STUCK_THRESHOLD_MINUTES} minutes'
+        AND r.heartbeat_ts < NOW() - INTERVAL '${LONG_RUNNING_STUCK_THRESHOLD_MINUTES} minutes'
       )
     ORDER BY r.heartbeat_ts ASC
     LIMIT 10
   `;
 
-  const result = await pool.query(query, [HARNESS_TASK_TYPES]);
+  const result = await pool.query(query, [MONITOR_LONG_RUNNING_TASK_TYPES, RETIRED_DEVELOPMENT_TASK_TYPES]);
   return result.rows;
 }
 
@@ -193,74 +189,6 @@ async function handleStuckRun(stuck) {
   }
 
   const retryCount = taskQuery.rows[0].retry_count || 0;
-
-  // harness 链式任务感知：检查是否已有下游任务
-  const HARNESS_CHAIN_TYPES = new Set(HARNESS_CHAIN_TASK_TYPES);
-
-  // 查询任务类型
-  const typeQuery = await pool.query(
-    'SELECT task_type, payload FROM tasks WHERE id = $1',
-    [stuck.task_id]
-  );
-  const taskType = typeQuery.rows[0]?.task_type;
-  const _taskPayload = typeQuery.rows[0]?.payload || {};
-
-  if (HARNESS_CHAIN_TYPES.has(taskType)) {
-    // 检查是否已有基于此任务派生的下游任务（completed/queued/in_progress）
-    const downstreamCheck = await pool.query(
-      `SELECT id, task_type, status FROM tasks
-       WHERE payload->>'planner_task_id' = $1
-          OR payload->>'dev_task_id' = $1
-       ORDER BY created_at DESC LIMIT 5`,
-      [stuck.task_id]
-    );
-    const activeDownstream = downstreamCheck.rows.filter(
-      r => ['queued', 'in_progress', 'completed'].includes(r.status)
-    );
-    if (activeDownstream.length > 0) {
-      console.log(
-        `[Monitor] Harness chain: task ${stuck.task_id} (${taskType}) has ${activeDownstream.length} downstream tasks ` +
-        `(${activeDownstream.map(d => `${d.task_type}:${d.status}`).join(', ')}), ` +
-        `marking as completed instead of restarting to avoid duplicates`
-      );
-      // 标记当前任务为 completed（下游已存在说明它已成功完成过，只是回调没更新状态）
-      await finalizeTask(pool, stuck.task_id, 'completed');
-      await pool.query(
-        `UPDATE run_events
-         SET status = 'completed',
-             ts_end = NOW(),
-             reason_code = 'MONITOR_HARNESS_CHAIN_RESOLVED',
-             reason_kind = 'RESOLVED'
-         WHERE run_id = $1 AND status = 'running'`,
-        [stuck.run_id]
-      );
-      return; // 跳过重启逻辑
-    }
-    // 回调调和：检查 run 是否已结束但回调丢失
-    const runCheck = await pool.query(
-      `SELECT status, ts_end FROM run_events WHERE run_id = $1 ORDER BY ts_start DESC LIMIT 1`,
-      [stuck.run_id]
-    );
-    const runStatus = runCheck.rows[0];
-    if (runStatus && (runStatus.ts_end !== null || runStatus.status === 'completed' || runStatus.status === 'failed')) {
-      console.log(
-        `[Monitor] Harness reconciliation: task ${stuck.task_id} (${taskType}) run already ended ` +
-        `(status=${runStatus.status}), simulating callback with result=null to trigger retry chain`
-      );
-      await finalizeTask(pool, stuck.task_id, 'completed', { set: { result: null } });
-      await pool.query(
-        `UPDATE run_events
-         SET status = 'completed',
-             ts_end = NOW(),
-             reason_code = 'MONITOR_CALLBACK_RECONCILED',
-             reason_kind = 'RECONCILED'
-         WHERE run_id = $1 AND status = 'running'`,
-        [stuck.run_id]
-      );
-      return;
-    }
-    console.log(`[Monitor] Harness chain: task ${stuck.task_id} (${taskType}) has no downstream tasks, proceeding with normal stuck handling`);
-  }
 
   if (retryCount === 0) {
     // First time: restart (requeue)

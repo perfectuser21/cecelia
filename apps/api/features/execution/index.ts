@@ -28,17 +28,12 @@ const manifest: FeatureManifest = {
     { path: '/n8n/workflows/:instance/:id', component: 'N8nWorkflowDetail' },
     { path: '/n8n/live-status', component: 'N8nLiveStatus' },
     { path: '/n8n/live-status/:instance/:executionId', component: 'N8nLiveStatusDetail' },
-    // Harness Pipeline 旧路径 → 直接渲染对应组件（redirect 被 DynamicRouter map 丢弃，用 component 代替）
-    { path: '/harness-pipeline', component: 'WarRoomPage' },
-    { path: '/harness-pipeline/:id', component: 'HarnessPipelineDetailPage' },
-    { path: '/harness-pipeline/:id/step/:step', component: 'HarnessPipelineStepPage' },
     // Workers
     {
       path: '/workers',
       component: 'WorkersOverview',
     },
     // Relay 进度条页面
-    { path: '/relay-progress', component: 'RelayProgressPage' },
     // 测试金字塔面板（刀0：test-pyramid-guard --json 可视化）
     { path: '/test-pyramid', component: 'TestPyramidPage' },
     // Orchestrator removed — use BrainDashboard
@@ -68,7 +63,6 @@ const manifest: FeatureManifest = {
     N8nLiveStatus: () => import('./pages/N8nLiveStatus'),
     N8nLiveStatusDetail: () => import('./pages/N8nLiveStatusDetail'),
     WorkersOverview: () => import('./pages/WorkersOverview'),
-    RelayProgressPage: () => import('./pages/RelayProgressPage'),
     TestPyramidPage: () => import('./pages/TestPyramidPage'),
   },
 };

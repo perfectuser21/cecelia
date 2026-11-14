@@ -6,7 +6,6 @@ import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll,beforeAll,describe,expect,it } from 'vitest';
 import { DB_DEFAULTS } from '../../db-config.js';
-import { reconcileOwnerlessKernelRuns } from '../../orchestrator/kernel-controller-lifecycle.js';
 
 const { Pool } = pg;
 const BRAIN_ROOT = fileURLToPath(new URL('../../../',import.meta.url));
@@ -102,7 +101,5 @@ describe('production 413–416 anchors → PR migrations 往返（真 PG）',()=
     );
     expect(migrated.rows[0]).toEqual({controller_session_id:null,
       controller_generation:null,controller_lease_expires_at:null});
-    const recovered=await reconcileOwnerlessKernelRuns(pool,{now:new Date()});
-    expect(recovered.map(({runId})=>runId)).toContain(legacyRunId);
   });
 });

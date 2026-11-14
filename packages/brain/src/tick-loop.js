@@ -19,7 +19,6 @@ import { recordTickExecution } from './tick-stats.js';
 import { executeTick as _executeTick } from './tick-runner.js'; // Wave 2 废弃，保留供回滚
 import { runScheduler } from './tick-scheduler.js';
 import { startConsciousnessLoop } from './consciousness-loop.js';
-import { startHarnessWatchdogLoop, stopHarnessWatchdogLoop } from './harness-watchdog-loop.js';
 import { startRecoveryLoop, stopRecoveryLoop } from './recovery-loop.js';
 import { startPipelinePatrolLoop, stopPipelinePatrolLoop } from './pipeline-patrol-loop.js';
 import { startLineStrategistLoop, stopLineStrategistLoop } from './line-strategist-loop.js';
@@ -155,20 +154,15 @@ export function startTickLoop() {
   // Wave 2: 启动 LLM 意识循环（每 20 分钟，独立于调度层）
   startConsciousnessLoop();
 
-  // P1 修复（2026-06-13）：启动独立 harness 看门狗循环（默认每 5 分钟，独立于调度层）。
-  // watchdog 原先只接在 Wave-2 废弃的 executeTick，runScheduler 路径从不调用 → 形同虚设。
-  // 改用独立 setInterval：不被 runScheduler 的 circuit_open / no_goals 早 return 或异常跳过。
-  startHarnessWatchdogLoop();
-
   // P0 修复（2026-06-27）：启动独立任务恢复循环（默认每 5 分钟，独立于调度层）。
-  // cleanupStaleClaims / checkStuckPipelines / autoFailTimedOutTasks 三条恢复网原只接在
+  // cleanupStaleClaims / autoFailTimedOutTasks 等恢复网原只接在
   // Wave-2 废弃的 executeTick → runScheduler 迁移后从不调用，导致 queued+stale-claim 永久卡死、
-  // pipeline 整体 spin 无人 cancel、普通任务超时无人收尾。仿 harness-watchdog-loop 接回独立 loop。
+  // pipeline 整体 spin 无人 cancel、普通任务超时无人收尾。由独立 loop 接回。
   startRecoveryLoop();
 
   // Slice5 P1（2026-06-27）：启动独立 pipeline 巡航循环。runPipelinePatrol（/dev 卡住会话救援）+
   // runHarnessInitiativePatrol（harness Planner/GAN 卡住 → 建 harness_intervention）原只挂废弃
-  // executeTick → 从不运行 → 干预通道整条死代码。仿 recovery-loop / harness-watchdog-loop 接回。
+  // executeTick → 从不运行 → 干预通道整条死代码。由独立 loop 接回。
   startPipelinePatrolLoop();
 
   // Line 军师终态派发：line-strategist-dispatch 若像 pipeline-patrol 一样挂在废弃 executeTick 上
@@ -194,7 +188,6 @@ export function stopTickLoop() {
   clearInterval(tickState.loopTimer);
   tickState.loopTimer = null;
   // 同步停掉独立 harness 看门狗循环 + 恢复循环 + pipeline 巡航循环（保持 start/stop 对称）
-  stopHarnessWatchdogLoop();
   stopRecoveryLoop();
   stopPipelinePatrolLoop();
   stopLineStrategistLoop();

@@ -20,8 +20,6 @@ import contentPipelineRouter from './routes/content-pipeline.js';
 import socialTrendingRouter from './routes/social-trending.js';
 import topicsRouter from './routes/topics.js';
 // llm-service 在 server.js 里以 /api/brain/llm-service 独立挂载（带 internalAuth 中间件）
-import harnessRouter from './routes/harness.js';
-import harnessSelftestRouter from './routes/harness-selftest.js';
 import warroomRouter from './routes/warroom.js';
 import kr3Router from './routes/kr3.js';
 import handoffsRouter from './routes/handoffs.js';
@@ -33,9 +31,8 @@ import kvRouter from './routes/kv.js';
 import guardDrillRouter from './routes/guard-drill.js';
 import releaseGateRouter from './routes/release-gate.js';
 import opsPanoramaRouter from './routes/ops-panorama.js';
-import kernelReviewsRouter from './routes/harness-kernel-approvals.js';
 import impactContractsRouter from './routes/impact-contracts.js';
-import harnessGapsRouter from './routes/gaps.js';
+import gapsRouter from './routes/gaps.js';
 import agentOpsRouter from './routes/agent-ops.js';
 import crystalRouter from './routes/crystal.js';
 import sessionProvenanceRouter from './routes/session-provenance.js';
@@ -51,7 +48,7 @@ router.use('/common-runner', createCommonRunnerRouter({ pool: directoryPool }));
 router.use('/workflow-assembly-maintenance',createNativeAssemblyRouter({pool:nativeAssemblyPool}));
 router.use('/session-provenance', sessionProvenanceRouter);
 router.use('/projections/notion/directory', createDirectoryProjectionRouter({ pool: directoryPool }));
-for (const subRouter of [statusRouter, tasksRouter, tickRouter, actionsRouter, executionRouter, goalsRouter, analyticsRouter, brainMetaRouter, opsRouter, publishResultsRouter, publishJobsRouter, capacityBudgetRouter, harnessSelftestRouter]) {
+for (const subRouter of [statusRouter, tasksRouter, tickRouter, actionsRouter, executionRouter, goalsRouter, analyticsRouter, brainMetaRouter, opsRouter, publishResultsRouter, publishJobsRouter, capacityBudgetRouter]) {
   router.stack.push(...subRouter.stack);
 }
 
@@ -73,8 +70,6 @@ router.use('/social', socialTrendingRouter);
 // 内容选题候选库 — GET /topics
 router.use('/topics', topicsRouter);
 
-// Harness 可视化 — GET /harness/pipeline-detail, GET /harness/pipeline/:id
-router.use('/harness', harnessRouter);
 
 // 战情室统一 feed — GET /warroom/feed（聚合所有任务，按 Area/Group 分组）
 router.use('/warroom', warroomRouter);
@@ -108,7 +103,6 @@ router.use('/release-gate', releaseGateRouter);
 
 // kernel 人审门 — POST /kernel-reviews/:runId/approve|reject, GET/POST /kernel-reviews/contexts
 // （kernel 三修案卷 task 31b93fd4：路由写好+单测好但从未挂载，生产 404，只能操作员 psql 直写绕过）
-router.use('/kernel-reviews', kernelReviewsRouter);
 
 // 执行全景面板 — GET /ops-panorama
 router.use('/ops-panorama', opsPanoramaRouter);
@@ -117,9 +111,9 @@ router.use('/ops-panorama', opsPanoramaRouter);
 // （FR-2 Impact Contract Schema + 持久化，sprint 08110022-relay-d96c9fa0 ws2）
 router.use('/', impactContractsRouter);
 
-// Gap Ledger — GET/POST /harness/gaps, GET /harness/gaps/:id/events, PATCH /harness/gaps/:id/status
+// Gap Ledger — GET/POST /gaps, GET /gaps/:id/events, PATCH /gaps/:id/status
 // （FR-5 Gap 生命周期台账，sprint 08110022-relay-d96c9fa0 ws5）
-router.use('/harness/gaps', harnessGapsRouter);
+router.use('/gaps', gapsRouter);
 
 // 运行舱只读投影 — GET /agent-ops/agents, /agent-ops/calendar（指挥舱 G1 S1 刀1）
 router.use('/agent-ops', agentOpsRouter);

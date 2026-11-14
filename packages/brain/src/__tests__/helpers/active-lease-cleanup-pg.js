@@ -98,14 +98,14 @@ export async function waitForLock(client, settled) {
   throw new Error('未观察到真实PG事务锁等待');
 }
 
-/** 真实周期默认cleanup动态入口；其它五恢复网显式record-only，不启动定时器。 */
+/** 真实周期默认cleanup动态入口；其它四恢复网显式record-only，不启动定时器。 */
 export async function cycle() {
   const calls = [];
   const record = name => async () => { calls.push(name); return []; };
   const result = await recover({ pool: clients.cleaner,
-    checkStuckPipelines: record('pipelines'), fetchInProgress: async () => [],
+    fetchInProgress: async () => [],
     autoFailTimedOutTasks: record('timeouts'), probeTaskLiveness: record('liveness'),
     unblockExpiredTasks: record('unblock'), sweepStaleDeviceLocks: record('devices') });
-  expect(calls).toEqual(['pipelines', 'timeouts', 'liveness', 'unblock', 'devices']);
+  expect(calls).toEqual(['timeouts', 'liveness', 'unblock', 'devices']);
   return result;
 }

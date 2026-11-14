@@ -11,7 +11,7 @@ import { stepSha256 } from '../../scripts/sync-steps-from-workspace.mjs';
 import { validateImplementationQuery } from './implementation-consumers.js';
 import { syncActivityContracts,CONTRACT_REPO } from '../activity-contract-sync.js';
 import { registerCompanyKrWorkflow } from './company-kr-registration.js';
-import { resolveGitHubToken } from '../harness-credentials.js';
+import { resolveGitHubToken } from '../github-credentials.js';
 import { TREE_NODES_SQL } from './tree-nodes-sql.js';
 import { EXISTING_OPS_SCOPE,EXISTING_OPS_REPO,EXISTING_OPS_IDENTITIES } from './existing-ops-source.js';
 import { readExistingOpsRegistry,registerExistingOpsSources,validateExistingOpsRegistry,prepareExistingOpsManifestAdvance } from './existing-ops-registration.js';

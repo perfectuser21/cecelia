@@ -5,8 +5,8 @@
  *
  * Root cause: dispatchNextTask() 在候选 claim 成功后才查 checkCeceliaRunAvailable()，
  * bridge 不可用时 revert + 释放 claim 后直接 return {reason:'no_executor'}，不试下一个
- * 候选。结果：队头一个需要 bridge 的任务（dev / harness_intervention）反复占位，
- * 不需要 bridge 的 harness_initiative（豁免 bridge check）被堵死 13 小时。
+ * 候选。结果：队头一个需要 bridge 的任务（普通任务）反复占位，
+ * 不需要 bridge 的 OpenClaw 任务被堵死 13 小时。
  * 且 no_executor 只写 working_memory / decision_log，无 console 日志，完全静默。
  *
  * 修复语义：
@@ -16,7 +16,6 @@
  * - 每次跳过 tickLog 一行含 "no_executor"（可观测）
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { canonicalRoutingReceipt, routedCodingPayload } from './helpers/routing-receipt-fixture.js';
 
 const mockQuery = vi.fn();
 vi.mock('../db.js', () => ({
@@ -51,14 +50,7 @@ vi.mock('../slot-allocator.js', () => ({
     codex: { available: true, running: 0, max: 5 },
     budgetState: { state: 'abundant' },
   }),
-  harnessSlotCheck: vi.fn().mockResolvedValue({
-    allow: true,
-    reason: null,
-    containers: 0,
-    inflight: 0,
-    cap: { effective: 4, mem_cap: 4, acct_cap: 4, hard_cap: 4 },
-    stale: false,
-  }),
+
 }));
 vi.mock('../token-budget-planner.js', () => ({ shouldDowngrade: vi.fn(() => false) }));
 vi.mock('../event-bus.js', () => ({ emit: vi.fn().mockResolvedValue(undefined) }));
@@ -108,13 +100,13 @@ const DEV_TASK = {
   payload: {},
   created_at: '2026-07-16T00:00:00Z',
 };
-const HARNESS_TASK = {
+const OPENCLAW_TASK = {
   id: '22222222-0000-0000-0000-000000000002',
-  task_type: 'harness_initiative',
+  task_type: 'qiumi_task',
   project_id: null,
   priority: 'P1',
-  title: 'harness_initiative that does NOT need bridge',
-  payload: routedCodingPayload('22222222-0000-0000-0000-000000000002', { sprint_dir: 'sprints/test', base_repo: '/repo' }),
+  title: 'OpenClaw task that does NOT need bridge',
+  payload: {run_id:'owned-qiumi-route',model:'openai/gpt-5.6-terra',qiumi_route:{source:'jev'}},
 };
 
 /** 生成 N 个都需要 bridge 的 dev 候选 */
@@ -151,6 +143,8 @@ describe('dispatchNextTask — no_executor HOL skip (issue 0014cd42)', () => {
 
     // 默认 DB mock：claim 总是成功；释放 claim 记账；full-task fetch 返回对应候选行
     mockQuery.mockImplementation((sql, params) => {
+      if (/SELECT count\(\*\)::int AS n FROM tasks/.test(sql)) return Promise.resolve({rows:[{n:0}]});
+      if (/SELECT id, run_id FROM task_runs/.test(sql)) return Promise.resolve({rows:[{id:'owned-run',run_id:params[0]}]});
       if (/UPDATE tasks SET claimed_by\s*=\s*\$1/.test(sql)) {
         return Promise.resolve({ rows: [{ id: params[1], claim_stamp: '2026-11-07 00:00:00.123456+00' }] });
       }
@@ -158,15 +152,9 @@ describe('dispatchNextTask — no_executor HOL skip (issue 0014cd42)', () => {
         releasedClaimIds.push(params[0]);
         return Promise.resolve({ rows: [] });
       }
-      if (/SELECT count\(\*\)::int AS n FROM tasks/.test(sql)) {
-        return Promise.resolve({ rows: [{ n: 0 }] }); // harness 并发计数 0 < cap
-      }
       if (/SELECT \* FROM tasks WHERE id/.test(sql)) {
         const row = candidates.find((c) => c.id === params[0]);
         return Promise.resolve({ rows: row ? [row] : [] });
-      }
-      if (/FROM work_routing_receipts receipt/.test(sql)) {
-        return Promise.resolve({ rows: [canonicalRoutingReceipt(HARNESS_TASK)] });
       }
       if (/SET payload = COALESCE\(payload/.test(sql)) {
         expect(params[3]).toBe('2026-11-07 00:00:00.123456+00');
@@ -180,17 +168,17 @@ describe('dispatchNextTask — no_executor HOL skip (issue 0014cd42)', () => {
     mockTriggerCeceliaRun.mockResolvedValue({ success: true, pid: 12345, runId: 'run-hol-1' });
   });
 
-  it('用例 A（复现 bug）：队头 dev 任务 no_executor → 跳过，第二个 harness_initiative 被派发', async () => {
-    candidates = [DEV_TASK, HARNESS_TASK];
+  it('用例 A（复现 bug）：队头 dev 任务 no_executor → 跳过，第二个 现役 OpenClaw 任务被派发', async () => {
+    candidates = [DEV_TASK, OPENCLAW_TASK];
 
     const { dispatchNextTask } = await import('../dispatcher.js');
     const result = await dispatchNextTask([]);
 
-    // 修前：返回 { dispatched:false, reason:'no_executor' }，harness 候选永远轮不上
+    // 修前：返回 { dispatched:false, reason:'no_executor' }，OpenClaw 候选永远轮不上
     expect(result.dispatched).toBe(true);
-    expect(result.task_id).toBe(HARNESS_TASK.id);
+    expect(result.task_id).toBe(OPENCLAW_TASK.id);
     expect(mockTriggerCeceliaRun).toHaveBeenCalledWith(
-      expect.objectContaining({ id: HARNESS_TASK.id, task_type: 'harness_initiative' })
+      expect.objectContaining({ id: OPENCLAW_TASK.id, task_type: 'qiumi_task' })
     );
     // dev 候选没有被派发
     expect(mockTriggerCeceliaRun).not.toHaveBeenCalledWith(
@@ -199,7 +187,7 @@ describe('dispatchNextTask — no_executor HOL skip (issue 0014cd42)', () => {
   });
 
   it('用例 B：被 no_executor 跳过的候选 claim 已释放 + status revert 回 queued', async () => {
-    candidates = [DEV_TASK, HARNESS_TASK];
+    candidates = [DEV_TASK, OPENCLAW_TASK];
 
     const { dispatchNextTask } = await import('../dispatcher.js');
     const result = await dispatchNextTask([]);
@@ -212,8 +200,8 @@ describe('dispatchNextTask — no_executor HOL skip (issue 0014cd42)', () => {
     expect(updateTask.mock.calls).toEqual(
       expect.arrayContaining([[{ task_id: DEV_TASK.id, status: 'queued' }]])
     );
-    // 派发成功的 harness 候选的 claim 不能被释放
-    expect(releasedClaimIds).not.toContain(HARNESS_TASK.id);
+    // 派发成功的 OpenClaw 候选的 claim 不能被释放
+    expect(releasedClaimIds).not.toContain(OPENCLAW_TASK.id);
   });
 
   it('用例 C1：全部候选都需 bridge 且 bridge 挂 → 最终 return no_executor，每个候选 claim 都已释放', async () => {
@@ -243,7 +231,7 @@ describe('dispatchNextTask — no_executor HOL skip (issue 0014cd42)', () => {
   });
 
   it('用例 D：no_executor 跳过必须有 console 日志（不再静默）', async () => {
-    candidates = [DEV_TASK, HARNESS_TASK];
+    candidates = [DEV_TASK, OPENCLAW_TASK];
     const logSpy = vi.spyOn(console, 'log');
 
     try {

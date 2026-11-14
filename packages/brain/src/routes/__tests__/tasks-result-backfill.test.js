@@ -65,17 +65,19 @@ describe('PATCH /api/brain/tasks/:task_id — result 补写 [BEHAVIOR]', () => {
 
   it('in_progress→completed 带 result → 200 且 status 与 result 同时进 UPDATE', async () => {
     mockQuery
-      .mockResolvedValueOnce({ rows: [{ id: 't3', status: 'in_progress' }] })
+      .mockResolvedValueOnce({ rows: [{ id: 't3', status: 'in_progress', task_type: 'dev',
+        pr_url: 'https://github.com/owned/repo/pull/2', pr_merged_at: '2026-11-14T00:00:00Z' }] })
       .mockResolvedValueOnce({ rows: [{ status: 'completed', updated_at: 'x' }] });
 
     const res = await request(app)
       .patch('/api/brain/tasks/t3')
-      .send({ status: 'completed', result: { pr_url: 'https://x/pr/2' } });
+      .send({ status: 'completed', result: { pr_url: 'https://github.com/owned/repo/pull/2' } });
 
     expect(res.status).toBe(200);
     const updCall = mockQuery.mock.calls.find(([sql]) => /UPDATE tasks/.test(sql));
     expect(updCall[0]).toMatch(/status = \$/);
     expect(updCall[0]).toMatch(/status_history/);
+    expect(updCall[1]).toContain(JSON.stringify({pr_url:'https://github.com/owned/repo/pull/2'}));
     expect(updCall[0]).toMatch(/result = COALESCE\(result, '\{\}'::jsonb\) \|\|/);
   });
 

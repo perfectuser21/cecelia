@@ -1,3 +1,4 @@
+import {assertActiveDevelopmentTask} from '../lib/task-type-registry.js';
 import {registerHeadedTakeoverRoute} from './task-headed-takeover.js';
 import {assertGpuExecutionSupported} from '../lib/gpu-execution-contract.js';
 /**
@@ -85,6 +86,8 @@ router.post('/', async (req, res) => {
     if (!title || title.trim() === '') {
       return res.status(400).json({ error: 'title is required' });
     }
+
+    assertActiveDevelopmentTask({task_type,payload:payload || metadata});
 
     // scope/initiative 层退役（决策 ee4842a6/3feeae3e，接力棒链 2afa6d69 棒4）：这几个
     // headless 拆解 task_type 的目标层已冻结，建单在入口统一拒绝（registry 行本身保留，
@@ -220,11 +223,9 @@ router.post('/', async (req, res) => {
       ? (blockedAtInput ?? new Date().toISOString())
       : null;
 
-    // B51: harness_initiative 任务缺 journey_id 会导致 initiative_runs + Notion 游离，提前 warn
+
+
     const warnings = [];
-    if (task_type === 'harness_initiative' && !(payload?.journey_id)) {
-      warnings.push('journey_id missing in payload — initiative_run.journey_id will be null, Notion Project will be orphaned');
-    }
 
     // ─── 决策分档机械守卫（决策 105a5868，链 bf5088a3 棒5，任务 3fad28e0）─────────
     // 均为「给了才校验」：不给 goal_id / blocked_reason / depends_on 的调用方行为与查询次序不变。
@@ -358,6 +359,7 @@ router.post('/', async (req, res) => {
     if (resolvedChangeKind !== null) responseBody.change_kind = resolvedChangeKind;
     res.status(201).json(responseBody);
   } catch (err) {
+    if (err.code === 'task_type_retired') return res.status(410).json({error:err.code,task_type:err.task_type});
     const governance = governanceErrorResponse(err);
     if (governance) return res.status(governance.status).json(governance.body);
     if (err.code === 'parent_task_not_found') {

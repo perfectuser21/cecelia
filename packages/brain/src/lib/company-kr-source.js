@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { stepSha256 } from '../../scripts/sync-steps-from-workspace.mjs';
-import { resolveGitHubToken } from '../harness-credentials.js';
+import { resolveGitHubToken } from '../github-credentials.js';
 const root=fileURLToPath(new URL('../../../../',import.meta.url));
 const repo='perfectuser21/cecelia',path='packages/brain/config/company-kr-workflow.json';
 export async function readCompanyKrFile(revision,filePath=path) {

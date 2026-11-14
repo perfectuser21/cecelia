@@ -9,7 +9,6 @@
  * [BEHAVIOR] B5 — payload.action=spike 免锚放行
  * [BEHAVIOR] B6 — payload.action=hotfix_emergency 免锚放行
  * [BEHAVIOR] B7 — 存量任务（刀2上线前创建）免锚放行
- * [BEHAVIOR] B8 — harness_initiative 免锚放行
  * [BEHAVIOR] B9 — 锚点缺 step_id 时仍被拒
  */
 
@@ -89,16 +88,6 @@ describe('S2 anchor-check — checkAnchor', () => {
     const task = {
       task_type: 'dev',
       created_at: BEFORE_CUTOFF,
-      payload: {},
-    };
-    const result = checkAnchor(task);
-    expect(result.blocked).toBe(false);
-  });
-
-  it('[B8] harness_initiative 免锚放行', () => {
-    const task = {
-      task_type: 'harness_initiative',
-      created_at: AFTER_CUTOFF,
       payload: {},
     };
     const result = checkAnchor(task);

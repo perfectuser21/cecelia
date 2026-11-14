@@ -57,7 +57,7 @@ function resetRouteMocks() {
       id: 'routed-task',
       title: request.title,
       status: request.task?.status ?? 'queued',
-      task_type: request.mutation_intent === 'read_only' ? 'code_review' : 'harness_initiative',
+      task_type: request.mutation_intent === 'read_only' ? 'code_review' : 'dev',
       priority: request.task?.priority ?? 'P2',
       ability_id: request.task?.ability_id ?? null,
       payload: request.metadata,
@@ -147,53 +147,6 @@ describe('task-tasks routes — PATCH 参数对齐', () => {
   });
 });
 
-describe('task-tasks routes — B51 journey_id warning', () => {
-  let app;
-  beforeEach(() => {
-    resetRouteMocks();
-    app = createApp();
-  });
-
-  it('harness_initiative 缺 journey_id → 201 + warnings', async () => {
-    mockPool.query.mockResolvedValueOnce({ rows: [] }); // dedup: 无命中
-    mockPool.query.mockResolvedValueOnce({
-      rows: [{ id: 'hi-1', title: 'Init', status: 'queued', task_type: 'harness_initiative' }],
-    });
-    const res = await request(app).post('/tasks').send(coding({
-      title: 'Init',
-      task_type: 'harness_initiative',
-      payload: { sprint_dir: 'sprints/t' },
-    }));
-    expect(res.status).toBe(201);
-    expect(Array.isArray(res.body.warnings)).toBe(true);
-    expect(res.body.warnings[0]).toMatch(/journey_id/);
-  });
-
-  it('harness_initiative 含 journey_id → 201 无 warnings', async () => {
-    mockPool.query.mockResolvedValueOnce({ rows: [] }); // dedup: 无命中
-    mockPool.query.mockResolvedValueOnce({
-      rows: [{ id: 'hi-2', title: 'Init', status: 'queued', task_type: 'harness_initiative' }],
-    });
-    const res = await request(app).post('/tasks').send(coding({
-      title: 'Init',
-      task_type: 'harness_initiative',
-      payload: { sprint_dir: 'sprints/t', journey_id: 'j-1' },
-    }));
-    expect(res.status).toBe(201);
-    expect(res.body.warnings).toBeUndefined();
-  });
-
-  it('非 harness_initiative 缺 journey_id → 无 warnings', async () => {
-    mockPool.query.mockResolvedValueOnce({ rows: [] }); // dedup: 无命中
-    mockPool.query.mockResolvedValueOnce({
-      rows: [{ id: 'dev-1', title: 'Dev Task', status: 'queued', task_type: 'dev' }],
-    });
-    const res = await request(app).post('/tasks').send(coding({ title: 'Dev Task' }));
-    expect(res.status).toBe(201);
-    expect(res.body.warnings).toBeUndefined();
-  });
-});
-
 describe('task-tasks routes — 顶层 journey_id 合并进 payload', () => {
   let app;
   beforeEach(() => {
@@ -217,11 +170,11 @@ describe('task-tasks routes — 顶层 journey_id 合并进 payload', () => {
   it('顶层 journey_id 与已有 payload 合并（不覆盖其他字段）', async () => {
     mockPool.query.mockResolvedValueOnce({ rows: [] }); // dedup: 无命中
     mockPool.query.mockResolvedValueOnce({
-      rows: [{ id: 'dev-j2', title: 'Task', status: 'queued', task_type: 'harness_initiative' }],
+      rows: [{ id: 'dev-j2', title: 'Task', status: 'queued', task_type: 'dev' }],
     });
     const res = await request(app).post('/tasks').send(coding({
       title: 'Task',
-      task_type: 'harness_initiative',
+      task_type: 'dev',
       journey_id: 'j-line04',
       payload: { sprint_dir: 'sprints/abc' },
     }));

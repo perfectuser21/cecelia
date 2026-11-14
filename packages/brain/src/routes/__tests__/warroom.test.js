@@ -32,10 +32,10 @@ describe('GET /warroom/feed', () => {
     mockPool.query
       // tasks
       .mockResolvedValueOnce({ rows: [
-        { id: 'a', task_type: 'harness_initiative', status: 'completed', title: 'brain x',
+        { id: 'a', task_type: 'dev', status: 'completed', title: 'brain x',
           created_at: '2026-06-02T01:00:00Z', completed_at: '2026-06-02T02:00:00Z',
           pr_url: 'http://pr/1', payload: { base_repo: 'cecelia.git' } },
-        { id: 'b', task_type: 'harness_initiative', status: 'failed', title: 'iLink 通道',
+        { id: 'b', task_type: 'dev', status: 'failed', title: 'iLink 通道',
           created_at: '2026-06-02T00:00:00Z',
           payload: { base_repo: 'zenithjoy-workspace.git', journey_id: 'j1' } },
       ] })
@@ -64,23 +64,6 @@ describe('GET /warroom/feed', () => {
     expect(res.status).toBe(200);
     expect(res.body.areas).toEqual([]);
     expect(res.body.total).toBe(0);
-  });
-
-  it('active harness 查 events 算进度', async () => {
-    mockPool.query
-      .mockResolvedValueOnce({ rows: [
-        { id: 'h1', task_type: 'harness_initiative', status: 'in_progress', title: 'x',
-          created_at: '2026-06-02T01:00:00Z', started_at: '2026-06-02T01:00:00Z',
-          payload: { base_repo: 'cecelia.git' } },
-      ] })
-      .mockResolvedValueOnce({ rows: [] })  // journeys
-      .mockResolvedValueOnce({ rows: [{ initiative_id: 'h1', node: 'ganLoop' }] }); // events
-
-    const res = await request(app()).get('/warroom/feed');
-    expect(res.status).toBe(200);
-    const task = res.body.areas[0].groups[0].tasks[0];
-    expect(task.progress_pct).toBe(40);
-    expect(task.current_node).toBe('ganLoop');
   });
 
   it('DB 异常 → 500', async () => {
@@ -121,14 +104,10 @@ describe('GET /warroom/line/:id/command', () => {
     }] });
     // 6. open issues
     mockPool.query.mockResolvedValueOnce({ rows: [] });
-    // 7. recent runs（真列名 phase，handler 内映射为前端 status）
-    mockPool.query.mockResolvedValueOnce({ rows: [
-      { id: 'r1', phase: 'done', started_at: '2026-07-01T00:00:00Z', completed_at: '2026-07-01T01:00:00Z', created_at: '2026-07-01T00:00:00Z' },
-    ] });
     // 8. health runs (30 days)（真列名 phase，done=成功）
     mockPool.query.mockResolvedValueOnce({ rows: [
-      { id: 'r1', phase: 'done', created_at: '2026-07-01T00:00:00Z' },
-      { id: 'r2', phase: 'failed', created_at: '2026-07-02T00:00:00Z' },
+      { id: 'r1', status: 'completed', created_at: '2026-07-01T00:00:00Z' },
+      { id: 'r2', status: 'failed', created_at: '2026-07-02T00:00:00Z' },
     ] });
     // 9. health pr count
     mockPool.query.mockResolvedValueOnce({ rows: [{ cnt: '3' }] });
@@ -164,15 +143,12 @@ describe('GET /warroom/line/:id/command', () => {
     expect(res.body.generated_at).toBeDefined();
   });
 
-  it('health 查询剔除排队 run（槽满回队不算失败）', async () => {
+  it('health读取现役任务并排除未开始的queued任务', async () => {
     mockCommandQueries();
     await request(app()).get('/warroom/line/j1/command');
-    const healthSql = mockPool.query.mock.calls
-      .map(([sql]) => sql)
-      .find((s) => /FROM initiative_runs/.test(s) && /30 days/.test(s));
-    expect(healthSql).toBeTruthy();
-    expect(healthSql).toContain("starts_with(ir.failure_reason, 'kernel_remote_launch_deferred:')");
-    expect(healthSql).toMatch(/AND NOT \(/);
+    const call = mockPool.query.mock.calls.find(([sql]) => /SELECT status FROM tasks/.test(sql));
+    expect(call[0]).toContain("status IN ('in_progress', 'completed', 'failed', 'cancelled')");
+    expect(call[1][0]).not.toContain('harness_initiative');
   });
 
   it('journey 不存在 → 404', async () => {
@@ -196,8 +172,6 @@ describe('GET /warroom/line/:id/command', () => {
     // active tasks
     mockPool.query.mockResolvedValueOnce({ rows: [] });
     // open issues
-    mockPool.query.mockResolvedValueOnce({ rows: [] });
-    // recent runs
     mockPool.query.mockResolvedValueOnce({ rows: [] });
     // health runs
     mockPool.query.mockResolvedValueOnce({ rows: [] });

@@ -7,10 +7,6 @@ vi.mock('../cron/disk-guard.js', () => ({
   __resetDiskGuardForTest: vi.fn(),
 }));
 
-vi.mock('../cron/worktree-reaper.js', () => ({
-  runWorktreeReaper: vi.fn().mockResolvedValue({ results: [] }),
-}));
-
 async function buildApp() {
   const { default: router } = await import('./cron.js');
   const app = express();
@@ -46,12 +42,4 @@ describe('POST /trigger', () => {
     expect(res.body).toMatchObject({ triggered: true, job: 'disk-guard' });
   });
 
-  it('worktree-reaper: 调用 runWorktreeReaper + 返回结果', async () => {
-    const { runWorktreeReaper } = await import('../cron/worktree-reaper.js');
-    const app = await buildApp();
-    const res = await request(app).post('/trigger').send({ job: 'worktree-reaper' });
-    expect(res.status).toBe(200);
-    expect(runWorktreeReaper).toHaveBeenCalled();
-    expect(res.body).toMatchObject({ triggered: true, job: 'worktree-reaper' });
-  });
 });

@@ -35,10 +35,6 @@ const cleanupMocks = vi.hoisted(() => ({
     timestamp: '2026-07-27T00:00:00.000Z',
     errors: [],
   }),
-  cleanupStaleHarnessWorktrees: vi.fn().mockResolvedValue({
-    cleaned: 0,
-    errors: 0,
-  }),
 }));
 
 const hostMutationMocks = vi.hoisted(() => ({
@@ -172,9 +168,6 @@ vi.mock('../../cleanup-worker-plugin.js', () => ({
 }));
 vi.mock('../../zombie-cleaner.js', () => ({
   runZombieCleanup: cleanupMocks.runZombieCleanup,
-}));
-vi.mock('../../harness-worktree.js', () => ({
-  cleanupStaleHarnessWorktrees: cleanupMocks.cleanupStaleHarnessWorktrees,
 }));
 vi.mock('../../watchdog.js', () => ({
   checkRunaways: hostMutationMocks.checkRunaways,
@@ -416,9 +409,6 @@ describe('consciousness tick runtime (real executeTick + mocked deps)', () => {
       slotsReclaimed: 0,
       worktreesRemoved: 0,
     });
-    expect(
-      await cleanupMocks.cleanupStaleHarnessWorktrees.mock.results[0].value,
-    ).toEqual({ cleaned: 0, errors: 0 });
     expect(hostMutationMocks.checkRunaways).toHaveBeenCalledTimes(1);
     expect(hostMutationMocks.scanOrphanPrs).toHaveBeenCalledTimes(1);
     expect(hostMutationMocks.shepherdOpenPRs).toHaveBeenCalledTimes(1);

@@ -10,7 +10,7 @@ function ast(file){return parse(readFileSync(file,'utf8'),{ecmaVersion:'latest',
 const entry=join(root,'packages/brain/src/routes/tasks.js'),tree=ast(entry),imports=new Map(),reachable=new Set([entry]);
 for(const node of tree.body)if(node.type==='ImportDeclaration'&&/^\.\/tasks-.*\.js$/.test(node.source.value))for(const s of node.specifiers)imports.set(s.local.name,resolve(root,'packages/brain/src/routes',node.source.value));
 walk(tree,node=>{if(node.type==='CallExpression'&&imports.has(node.callee.name)&&node.arguments[0]?.name==='router')reachable.add(imports.get(node.callee.name));});
-const scripts=['callback-postprocess-smoke.sh','ledger-hygiene-m7-window-smoke.sh','harness-lifecycle-gates-smoke.sh','handoff-kinds-smoke.sh','task-result-backfill-smoke.sh','task-terminal-relay-hub-smoke.sh','relay-baton-smoke.sh','task-governance-guards-smoke.sh'];
+const scripts=['ledger-hygiene-m7-window-smoke.sh','handoff-kinds-smoke.sh','task-result-backfill-smoke.sh','task-terminal-relay-hub-smoke.sh','relay-baton-smoke.sh','task-governance-guards-smoke.sh'];
 for(const name of scripts)test(`${name} static task reader targets the actually registered handler module`,()=>{
  const source=readFileSync(join(root,'packages/brain/scripts/smoke',name),'utf8');
  const targets=[...new Set(source.match(/(?:packages\/brain\/)?src\/routes\/tasks(?:-[a-z-]+)?\.js/g)||[])];

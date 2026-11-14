@@ -7,7 +7,6 @@ vi.mock('../../../packages/brain/src/runtime-safety.js', () => ({ assertExternal
 //   provider-registry：auto 永不选 claude，显式 claude 抛 claude_channel_retired
 //   providers/claude：start/resume 不再生成任何命令
 //   spawn：CECELIA_EXECUTOR 缺省/claude 的容器在最底层拒绝，不碰 docker
-//   harness-skill-relay：显式 claude / 非 kernel 无头缺省执行体 → claude_channel_retired，不建 run 不 spawn
 //
 // 真 import 被改模块（lint-gp-anchor-artifact 要求），不 mock 它们；只注入外部 IO 桩。
 import { describe, it, expect, vi } from 'vitest';
@@ -16,7 +15,6 @@ import { claudeAdapter } from '../../../packages/brain/src/orchestrator/provider
 import { codexAdapter } from '../../../packages/brain/src/orchestrator/providers/codex.js';
 import { grokAdapter } from '../../../packages/brain/src/orchestrator/providers/grok.js';
 import { spawn } from '../../../packages/brain/src/spawn/spawn.js';
-import { spawnSkillRelaySession } from '../../../packages/brain/src/harness-skill-relay.js';
 
 const RETIRED = expect.objectContaining({ code: 'claude_channel_retired' });
 const TASK_ID = '88888888-8888-4888-8888-888888888888';
@@ -44,33 +42,4 @@ describe('GP F1 step3 — Claude 无头通道已退役：执行体选择不再�
     await expect(spawn({ task: { id: TASK_ID }, env: { CECELIA_EXECUTOR: 'claude' } })).rejects.toThrow(RETIRED);
     await expect(spawn({ task: { id: TASK_ID }, env: {} })).rejects.toThrow(RETIRED);
   });
-
-  it('harness-skill-relay：显式 executor=claude / 非 kernel 无头缺省执行体 → kernel_runtime_retired，不建 run 不 spawn', async () => {
-    for (const payload of [{ executor: 'claude' }, {}, { executor: 'claude', mode: 'headed' }]) {
-      const deps = {
-        env: {},
-        pool: { query: vi.fn(async () => ({ rows: [] })) },
-        spawnFn: vi.fn(),
-        createKernelRun: vi.fn(),
-        execFn: vi.fn(() => ''),
-      };
-      const result = await spawnSkillRelaySession({ id: TASK_ID, payload }, deps);
-      expect(result).toMatchObject({ ok: false, error: 'kernel_runtime_retired' });
-      expect(deps.spawnFn).not.toHaveBeenCalled();
-      expect(deps.createKernelRun).not.toHaveBeenCalled();
-      expect(deps.execFn).not.toHaveBeenCalled();
-      expect(deps.pool.query).not.toHaveBeenCalled();
-    }
-  });
-
-  it('harness-skill-relay：kernel-v1 显式 executor=claude 同样拒绝，不建 kernel run', async () => {
-    const deps = { env: {}, pool: { query: vi.fn(async () => ({ rows: [] })) }, createKernelRun: vi.fn() };
-    const result = await spawnSkillRelaySession(
-      { id: TASK_ID, payload: { harness_runtime: 'kernel-v1', executor: 'claude' } },
-      deps,
-    );
-    expect(result).toMatchObject({ ok: false, error: 'kernel_runtime_retired' });
-    expect(deps.createKernelRun).not.toHaveBeenCalled();
-  });
-
 });

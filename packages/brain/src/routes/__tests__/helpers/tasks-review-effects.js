@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, vi } from 'vitest';
 const effects = vi.hoisted(() => ({
-  forbidden: [], query: vi.fn(), block: vi.fn(), emit: vi.fn(), terminal: vi.fn(), promote: vi.fn(), finalize: vi.fn(),
+  forbidden: [], query: vi.fn(), block: vi.fn(), emit: vi.fn(), terminal: vi.fn(), verifyPr: vi.fn(),
   deny(kind) { effects.forbidden.push(kind); throw Error('forbidden_'+kind); },
 }));
 vi.mock('../../../db.js', () => ({ default: { query: effects.query, connect: () => effects.deny('db_connect') } }));
@@ -22,15 +22,14 @@ vi.mock('../../../lib/manual-dispatch-device-gate.js', () => ({ checkDeviceLockF
 vi.mock('../../../lib/manual-qiumi-dispatch.js', () => ({ dispatchManualQiumi: () => effects.deny('device_dispatch') }));
 vi.mock('../../../llm-caller.js', () => ({ callLLM: () => effects.deny('llm') }));
 vi.mock('../../../lib/task-terminal.js', async importActual => ({ ...await importActual(), afterTerminalTransition: effects.terminal }));
-vi.mock('../../../lib/callback-postprocess.js', () => ({ promoteRegressionOnHarnessMerged: effects.promote }));
-vi.mock('../../../lib/harness-finalize.js', () => ({ finalizeHarnessTask: effects.finalize }));
+
+vi.mock('../../../lib/task-completion-pr.js',()=>({verifyTaskCompletionPr:effects.verifyPr}));
 
 beforeEach(() => {
   effects.forbidden.length=0;
-  for (const key of ['query','block','emit','terminal','promote','finalize']) effects[key].mockReset();
+  for (const key of ['query','block','emit','terminal','verifyPr']) effects[key].mockReset();
   effects.block.mockResolvedValue({success:true}); effects.terminal.mockResolvedValue({relay:null});
-  effects.emit.mockResolvedValue(undefined); effects.promote.mockResolvedValue(undefined);
-  effects.finalize.mockResolvedValue({applies:true,allow:false,reason:'synthetic_unverified'});
+  effects.emit.mockResolvedValue(undefined); effects.verifyPr.mockImplementation(async task=>{if(task.pr_url&&!task.pr_merged_at)throw Object.assign(Error('PR_NOT_MERGED'),{code:'PR_NOT_MERGED',pr_url:task.pr_url});return null;});
 });
 afterEach(() => { expect(effects.forbidden).toEqual([]); });
 export function getReviewEffects() { return effects; }

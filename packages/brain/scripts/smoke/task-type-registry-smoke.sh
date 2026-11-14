@@ -74,13 +74,4 @@ if (JSON.stringify([...SSH_BASE_ARGS]) !== JSON.stringify(expected)) {
 console.log('SSH_BASE_ARGS 值零变化 ✓');
 "
 
-echo "[task-type-registry-smoke] 4. 注册表 vs 基线源码 审计脚本"
-BASE_COMMIT=5c232c9da
-if git cat-file -e "${BASE_COMMIT}^{commit}" 2>/dev/null; then
-  node packages/brain/scripts/audit/registry-vs-base.mjs
-  echo "  审计脚本通过 ✓"
-else
-  echo "  ⏭️ 基线 commit ${BASE_COMMIT} 在本次 checkout 中不可得（浅克隆），跳过审计"
-fi
-
 echo "[task-type-registry-smoke] 全部检查通过 ✓"

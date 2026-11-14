@@ -37,7 +37,6 @@ vi.mock('fs', () => ({
 }));
 
 vi.mock('../task-router.js', () => ({
-  getInternalTaskHandler: vi.fn(() => null),
   getTaskLocation: vi.fn(() => 'us')
 }));
 
@@ -243,108 +242,19 @@ describe('syncOrphanTasksOnStartup requeue 行为', () => {
     expect(result2.orphans_found).toBe(0);
   });
 
-  it('harness_initiative 任务 → requeued with resume_from_checkpoint=true，不走 failed', async () => {
-    // SELECT 返回一个 harness_initiative in_progress 任务
-    mockQuery.mockResolvedValueOnce({
-      rows: [{
-        id: 'harness-init-1',
-        title: 'harness initiative test task',
-        payload: { watchdog_retry_count: 0 },
-        started_at: new Date().toISOString(),
-        error_message: null,
-        task_type: 'harness_initiative',
-      }]
-    });
-    mockQuery.mockResolvedValue({ rows: [], rowCount: 1 });
-
-    const { syncOrphanTasksOnStartup } = await import('../executor.js');
-    const result = await syncOrphanTasksOnStartup();
-
-    // 应该被 requeue（不是 orphan_fixed）
-    expect(result.requeued).toBe(1);
-
-    // 必须有 status='queued' 的 UPDATE
-    const requeueCall = mockQuery.mock.calls.find(
-      call => typeof call[0] === 'string' && call[0].includes("status = 'queued'")
-    );
-    expect(requeueCall).toBeTruthy();
-
-    // payload 必须含 resume_from_checkpoint: true
-    const payloadPatch = JSON.parse(requeueCall[1][1]);
-    expect(payloadPatch.resume_from_checkpoint).toBe(true);
-
-    // 不能有 status='failed' 的 UPDATE
-    const failedCall = mockQuery.mock.calls.find(
-      call => typeof call[0] === 'string' && call[0].includes("status = 'failed'")
-    );
-    expect(failedCall).toBeUndefined();
-  });
-
-  // 雷11：startup-sync 把 skill-relay 当 LangGraph requeue 导致双 spawn（R5 首航实证）。
-  // skill-relay（payload.orchestrator==='skill-relay'，无头 docker 或有头 tmux）不是
-  // LangGraph（已废弃），有真实进程，存活恢复归 harness-relay-watchdog 专管。
-  // startup-sync 必须整个跳过它，不 requeue、不清 claim、不计数。
-  it('雷11: orchestrator=skill-relay 的 harness_initiative 任务 → startup-sync 完全跳过（不 requeue）', async () => {
-    mockQuery.mockResolvedValueOnce({
-      rows: [{
-        id: 'skill-relay-task-1',
-        title: 'headed skill-relay task',
-        payload: { orchestrator: 'skill-relay', mode: 'headed', watchdog_retry_count: 0 },
-        started_at: new Date().toISOString(),
-        error_message: null,
-        task_type: 'harness_initiative',
-      }]
-    });
-    mockQuery.mockResolvedValue({ rows: [], rowCount: 1 });
-
-    const { syncOrphanTasksOnStartup } = await import('../executor.js');
-    const result = await syncOrphanTasksOnStartup();
-
-    // 不计入 requeued/orphans_found（整个跳过，不是 requeue 判0）
-    expect(result.requeued).toBe(0);
-    expect(result.orphans_found).toBe(0);
-
-    // 除了最初的 SELECT，不应再对该任务发起任何 UPDATE
-    const updateCalls = mockQuery.mock.calls.filter(
-      (call) => typeof call[0] === 'string' && /^\s*UPDATE tasks/i.test(call[0])
-    );
-    expect(updateCalls.length).toBe(0);
-  });
-
-  // Bug A: claim 锁泄漏 — harness_initiative requeue 时必须清 claim 字段，
-  // 否则死 runner 残留的 claimed_by 让 dispatch-helpers.js 的
-  // `AND t.claimed_by IS NULL` 永远选不出该任务 → Brain 重启后死锁在 queued。
-  it('Bug A: harness_initiative requeue 必须清 claimed_by/claimed_at/started_at（防 claim 锁泄漏）', async () => {
-    mockQuery.mockResolvedValueOnce({
-      rows: [{
-        id: 'harness-claimed-orphan-1',
-        title: 'harness initiative with stale claim lock',
-        payload: { watchdog_retry_count: 0 },
-        started_at: new Date().toISOString(),
-        error_message: null,
-        task_type: 'harness_initiative',
-        claimed_by: 'dead-runner-pid-999',
-      }]
-    });
-    mockQuery.mockResolvedValue({ rows: [], rowCount: 1 });
-
-    const { syncOrphanTasksOnStartup } = await import('../executor.js');
-    const result = await syncOrphanTasksOnStartup();
-
-    expect(result.requeued).toBe(1);
-
-    // 找到 requeue 的 UPDATE（status='queued'）
-    const requeueCall = mockQuery.mock.calls.find(
-      call => typeof call[0] === 'string' && call[0].includes("status = 'queued'")
-    );
-    expect(requeueCall).toBeTruthy();
-
-    // UPDATE 必须把 claim 三件套清空（样板见 tick-runner.js:1270/:1297）
-    const sql = requeueCall[0];
-    expect(sql).toMatch(/claimed_by\s*=\s*NULL/i);
-    expect(sql).toMatch(/claimed_at\s*=\s*NULL/i);
-    expect(sql).toMatch(/started_at\s*=\s*NULL/i);
-  });
+  it.each(['harness_initiative', 'harness_report', 'sprint_report'])(
+    '历史开发任务 %s 启动恢复不重派、不改记录', async task_type => {
+      mockQuery.mockResolvedValueOnce({ rows: [{ id: 'historical-development', task_type,
+        title: '历史开发记录', payload: { watchdog_retry_count: 0 },
+        started_at: new Date().toISOString(), claimed_by: 'historical-owner' }] });
+      mockQuery.mockResolvedValue({ rows: [], rowCount: 1 });
+      const { syncOrphanTasksOnStartup } = await import('../executor.js');
+      const result = await syncOrphanTasksOnStartup();
+      expect(result.requeued).toBe(0);
+      expect(result.orphans_found).toBe(0);
+      expect(mockQuery.mock.calls).toHaveLength(1);
+    },
+  );
 });
 
 it('Linux audit专管kind启动同步保持父任务及证据的原claim',async()=>{

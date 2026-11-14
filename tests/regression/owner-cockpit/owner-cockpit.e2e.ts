@@ -27,10 +27,8 @@ const BASE_URL = 'http://localhost:5174';
 const SCREENSHOT_PATH = path.resolve(process.cwd(), 'owner-cockpit.png');
 
 const METRIC_CARD_SLUGS = [
-  'completion-rate',
   'canary-green-days',
   'gate-fires',
-  'merge-to-deploy',
   'queue-health',
   'blocked-count',
 ];
@@ -59,8 +57,8 @@ test.describe('Owner Cockpit — 主理人指挥舱', () => {
     await expect(cockpitRoot).toBeVisible({ timeout: 10000 });
   });
 
-  // ---- FR-02: 六指标卡可见性 ----
-  test('FR-02: 六张指标卡均可见', async ({ page }) => {
+  // ---- FR-02: 四指标卡可见性 ----
+  test('FR-02: 四张指标卡均可见', async ({ page }) => {
     for (const slug of METRIC_CARD_SLUGS) {
       const card = page.locator(`[data-testid="metric-card-${slug}"]`);
       await expect(card).toBeVisible({ timeout: 10000 });
@@ -68,7 +66,7 @@ test.describe('Owner Cockpit — 主理人指挥舱', () => {
   });
 
   // ---- FR-02: 指标卡数值非空 ----
-  test('FR-02: 六张指标卡数值均非空（真实 API 数据）', async ({ page }) => {
+  test('FR-02: 四张指标卡数值均非空（真实 API 数据）', async ({ page }) => {
     for (const slug of METRIC_CARD_SLUGS) {
       const card = page.locator(`[data-testid="metric-card-${slug}"]`);
       await expect(card).toBeVisible({ timeout: 10000 });
@@ -100,7 +98,7 @@ test.describe('Owner Cockpit — 主理人指挥舱', () => {
   });
 
   // ---- FR-03: 点击任务跳转 ----
-  test('FR-03: 点击任务条目跳转 /harness-pipeline?task_id=', async ({ page }) => {
+  test('FR-03: 点击任务条目跳转 /tasks/:id/prd', async ({ page }) => {
     // 先探查 Brain API，若无 in_progress 任务则显式 skip（依赖真实 DB 数据）
     const resp = await page.request.get('http://localhost:5221/api/brain/tasks?status=in_progress');
     const body = await resp.json();
@@ -113,7 +111,7 @@ test.describe('Owner Cockpit — 主理人指挥舱', () => {
 
     // 找第一个任务链接（在 battle-card 内部），用 click + URL 断言验证跳转
     const taskLink = page.locator('[data-testid="battle-card"] a[data-testid^="task-link-"]').first();
-    const fallbackLink = page.locator('[data-testid="battle-card"] a[href*="harness-pipeline"]').first();
+    const fallbackLink = page.locator('[data-testid="battle-card"] a[href*="/tasks/"]').first();
 
     const primaryExists = await taskLink.count();
     const linkToClick = primaryExists > 0 ? taskLink : fallbackLink;
@@ -121,7 +119,7 @@ test.describe('Owner Cockpit — 主理人指挥舱', () => {
 
     // 使用 click + URL 断言（而非纯 href 检查）
     await linkToClick.click();
-    await expect(page).toHaveURL(/harness-pipeline.*task_id=/, { timeout: 10000 });
+    await expect(page).toHaveURL(/tasks\/[^/]+\/prd/, { timeout: 10000 });
   });
 
   // ---- FR-07: 移动端无水平滚动 ----

@@ -55,10 +55,7 @@ const manifest: FeatureManifest = {
     { path: '/system/skills-registry', redirect: '/system/team' },
     // Drill-down routes (remain separate)
     { path: '/live-monitor', component: 'LiveMonitor' },
-    // 战情室：统一 feed（替换旧 harness-only 列表为入口；详情走 HarnessPipelineDetailPage）
     { path: '/pipeline', component: 'WarRoomPage' },
-    { path: '/pipeline/:id', component: 'HarnessPipelineDetailPage' },
-    { path: '/pipeline/:id/step/:step', component: 'HarnessPipelineStepPage' },
     { path: '/warroom/line/:id', component: 'WarRoomLineCommandPage' },
     { path: '/warroom/gp/:gpId', component: 'WarRoomGoldenPathPage' },
     // 军师台：入口（线列表）+ 线空间（七页签）
@@ -66,11 +63,9 @@ const manifest: FeatureManifest = {
     { path: '/strategist/:lineId', component: 'StrategistLinePage' },
     // War Room PR-C：退役死页/重复详情页 → 统一收口到 /pipeline（战情室）
     // - /autonomous: /api/brain/autonomous/sessions 0 条死页
-    // - /harness/:id: 老 SSE stream 详情页，SSE 日志 + sprint-docs tab 已吸收进 HarnessPipelineDetailPage(/pipeline/:id)
     // 注：/initiatives/:id 的 system-hub 死页（指向已删的 harness/InitiativeDetail）已移除；
     //     该路径由 planning feature 的工作页继续持有，不在此重复注册。
     { path: '/autonomous', redirect: '/pipeline' },
-    { path: '/harness/:id', redirect: '/pipeline' },
     { path: '/collection-dashboard', component: 'CollectionDashboardPage' },
     { path: '/viral-analysis', component: 'ViralAnalysisPage' },
     { path: '/clips', component: 'ContentClipsPage', navItem: { label: 'Content Clips', icon: 'Scissors', group: 'content', order: 1 } },
@@ -184,8 +179,6 @@ const manifest: FeatureManifest = {
     WarRoomGoldenPathPage: () => import('../../../dashboard/src/pages/warroom/WarRoomGoldenPathPage'),
     StrategistPage: () => import('../../../dashboard/src/pages/strategist/StrategistPage'),
     StrategistLinePage: () => import('../../../dashboard/src/pages/strategist/StrategistLinePage'),
-    HarnessPipelineDetailPage: () => import('../../../dashboard/src/pages/harness-pipeline/HarnessPipelineDetailPage'),
-    HarnessPipelineStepPage: () => import('../../../dashboard/src/pages/harness-pipeline/HarnessPipelineStepPage'),
     CollectionDashboardPage: () => import('../../../dashboard/src/pages/collection-dashboard/CollectionDashboardPage'),
     ViralAnalysisPage: () => import('../../../dashboard/src/pages/viral-analysis/ViralAnalysisPage'),
     ContentClipsPage: () => import('../../../dashboard/src/pages/clips/ContentClipsPage'),

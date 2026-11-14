@@ -23,7 +23,7 @@ vi.mock('../spawn/middleware/resource-tier.js', () => ({
   RESOURCE_TIERS: {},
   TASK_TYPE_TIER: {},
 }));
-vi.mock('../harness-shared.js', () => ({
+vi.mock('../execution-shared.js', () => ({
   parseDockerOutput: vi.fn().mockReturnValue({}),
   extractField: vi.fn().mockReturnValue(null),
 }));
@@ -189,7 +189,7 @@ describe('[I1] writeDockerCallback — _meta.pr_url 在 tasks.pr_url 非法时�
 
     // Mock parseDockerOutput/extractField to return explicit URL from stdout
     vi.resetModules();
-    const { parseDockerOutput, extractField } = await import('../harness-shared.js');
+    const { parseDockerOutput, extractField } = await import('../execution-shared.js');
     vi.mocked(extractField).mockReturnValue(STDOUT_URL);
 
     const result = {

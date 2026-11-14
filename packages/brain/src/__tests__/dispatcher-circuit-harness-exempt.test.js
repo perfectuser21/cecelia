@@ -103,9 +103,9 @@ vi.mock('../pre-flight-check.js', () => ({
 function makeHarnessQueryMock(taskId) {
   const task = {
     id: taskId,
-    task_type: 'harness_initiative',
+    task_type: 'research',
     title: 'harness sprint',
-    payload: routedCodingPayload(taskId),
+    payload: {verification_transport:'openclaw-agent-v1'},
   };
   return (sql) => {
     if (/UPDATE tasks SET claimed_by/.test(sql)) {
@@ -124,7 +124,7 @@ function makeHarnessQueryMock(taskId) {
   };
 }
 
-describe('dispatcher circuit-breaker — harness_initiative 豁免', () => {
+describe('dispatcher circuit-breaker通用拒绝与队头阻塞恢复', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockQuery.mockReset();
@@ -135,25 +135,6 @@ describe('dispatcher circuit-breaker — harness_initiative 豁免', () => {
       pid: 12345,
       runId: '11111111-1111-4111-8111-111111111111',
     });
-  });
-
-  it('case 1: harness_initiative + 熔断 OPEN → dispatched（不被拦截）', async () => {
-    mockIsAllowed.mockReturnValue(false); // 熔断 OPEN
-    mockQuery.mockImplementation(makeHarnessQueryMock('task-harness-1'));
-
-    mockSelectNextDispatchableTask.mockResolvedValue({
-      id: 'task-harness-1',
-      task_type: 'harness_initiative',
-      project_id: 'proj-1',
-      title: 'harness sprint',
-      payload: routedCodingPayload('task-harness-1'),
-    });
-
-    const { dispatchNextTask } = await import('../dispatcher.js');
-    const result = await dispatchNextTask([]);
-
-    expect(result.reason).not.toBe('circuit_breaker_open');
-    expect(result.dispatched).toBe(true);
   });
 
   it('case 2: dev task + 熔断 OPEN → circuit_breaker_open', async () => {
@@ -198,8 +179,8 @@ describe('dispatcher circuit-breaker — harness_initiative 豁免', () => {
         created_at: '2026-09-29T00:58:00Z',
       })
       .mockResolvedValueOnce({
-        id: 'task-harness-4', task_type: 'harness_initiative', project_id: 'proj-4',
-        title: 'harness sprint 4', payload: routedCodingPayload('task-harness-4'),
+        id: 'task-harness-4', task_type: 'research', project_id: 'proj-4',
+        title: 'harness sprint 4', payload: {verification_transport:'openclaw-agent-v1'},
       });
 
     const { dispatchNextTask } = await import('../dispatcher.js');
@@ -211,21 +192,4 @@ describe('dispatcher circuit-breaker — harness_initiative 豁免', () => {
     expect(mockSelectNextDispatchableTask.mock.calls[1][1]).toContain('task-data-head');
   });
 
-  it('case 3: harness_initiative + 熔断 CLOSED → dispatched（正常流程不受影响）', async () => {
-    mockIsAllowed.mockReturnValue(true); // 熔断 CLOSED
-    mockQuery.mockImplementation(makeHarnessQueryMock('task-harness-2'));
-
-    mockSelectNextDispatchableTask.mockResolvedValue({
-      id: 'task-harness-2',
-      task_type: 'harness_initiative',
-      project_id: 'proj-2',
-      title: 'harness sprint 2',
-      payload: routedCodingPayload('task-harness-2'),
-    });
-
-    const { dispatchNextTask } = await import('../dispatcher.js');
-    const result = await dispatchNextTask([]);
-
-    expect(result.dispatched).toBe(true);
-  });
 });

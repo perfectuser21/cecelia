@@ -10,8 +10,7 @@
     "test:coverage": "NODE_OPTIONS='--max-old-space-size=3072' vitest run --coverage",
     "test:coverage:watch": "vitest --coverage",
     "backfill:l1": "node src/scripts/backfill-l1.js",
-    "lint": "eslint src/",
-    "audit:registry-vs-base": "node scripts/audit/registry-vs-base.mjs"
+    "lint": "eslint src/"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.1",
@@ -49,7 +48,7 @@
     "vitest": "^1.6.1",
     "zod-v3-compat": "npm:zod@3.25.76"
   },
-  "version": "1.445.208",
+  "version": "1.445.209",
   "overrides": {
     "fast-uri": "^3.1.6"
   }

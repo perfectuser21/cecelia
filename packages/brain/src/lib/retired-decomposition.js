@@ -12,7 +12,6 @@ export function isRetiredDecompositionReview(task) {
 export function isRetiredDecomposition(task) {
   const payload = task?.payload;
   const taskType = task?.task_type || 'dev';
-  const normalizedDev = taskType === 'harness_initiative' && payload?.requested_task_type === 'dev';
   if (isRetiredDecompositionReview(task)) return true;
   // 六类规划的目标层已退役，历史 queued 行仍可能绕过建单闸。
   if (LAYER_RETIRED_TASK_TYPES.includes(taskType)) return true;
@@ -23,13 +22,12 @@ export function isRetiredDecomposition(task) {
     } catch { /* 无法转换的覆盖不能在此伪判为旧拆解 */ }
   }
   // 这些专用执行面原本不读取旧拆解技能或提示，不能仅因同名字段拦截。
-  if (['qiumi_task', 'script_run', 'staging_e2e', 'harness_intervention'].includes(taskType)) return false;
-  if (taskType === 'harness_initiative' && !normalizedDev) return false;
+  if (['qiumi_task', 'script_run', 'staging_e2e'].includes(taskType)) return false;
   if (taskType === 'research' && (payload?.invocation || payload?.invocation_activity ||
       payload?.verification_transport === 'openclaw-agent-v1')) return false;
   return ['true', 'continue', 'okr'].includes(payload?.decomposition) ||
     payload?.next_action === 'decompose' ||
-    (payload?.decomposition === true && (taskType === 'dev' || normalizedDev));
+    (payload?.decomposition === true && taskType === 'dev');
 }
 
 // 仅停放选择时仍未被领取、且 payload 未变的 queued 任务。

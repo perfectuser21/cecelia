@@ -167,12 +167,12 @@ async function routeAtom(pool, atom, verdict, opts) {
         db: client,
         title: `[紧急] ${atom.content.slice(0, 80)}`,
         description: `来源: capture_atoms urgent路由, atom_id=${atom.id}\n\n${atom.content}`,
-        task_type: 'harness_initiative',
+        task_type: 'dev',
         priority: 'P1',
         trigger_source: 'cortex',
         dedupe_key: `capture-triage-urgent-${atom.id}`,
         // 有头待办（A2）：headed_manual 字符串 "true" 才落有头账本行，否则路由按无头编码改投 coding_workflow runner
-        payload: { orchestrator: 'skill-relay', executor: 'claude', mode: 'headed', headed_manual: 'true' },
+        payload: {headed_manual:'true'},
         ...codingRoute(),
       });
       taskId = result?.task?.id;
@@ -224,14 +224,11 @@ async function routeAtom(pool, atom, verdict, opts) {
         db: client,
         title: `[自动派工] ${atom.content.slice(0, 80)}`,
         description: `系统自动创建（来源: capture_atoms分诊, atom_id=${atom.id}）\n\n${atom.content}`,
-        task_type: 'harness_initiative',
+        task_type: 'dev',
         priority,
         trigger_source: 'cortex',
         dedupe_key: `capture-triage-line-backlog-${atom.id}`,
         payload: {
-          orchestrator: 'skill-relay',
-          executor: 'claude',
-          mode: 'headed',
           headed_manual: 'true',
           journey_id: journeyId,
           thin_prd: atom.content,

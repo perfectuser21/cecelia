@@ -6,7 +6,7 @@ vi.mock('fs', () => ({
 }));
 
 import { existsSync, readFileSync } from 'fs';
-import { loadSkillContent } from '../harness-shared.js';
+import { loadSkillContent } from '../execution-shared.js';
 
 beforeEach(() => {
   vi.clearAllMocks();

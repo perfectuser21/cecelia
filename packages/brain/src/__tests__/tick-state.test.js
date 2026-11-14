@@ -18,7 +18,6 @@ const REQUIRED_LAST_TIME_FIELDS = [
   'lastZombieSweepTime',
   'lastZombieCleanupTime',
   'lastPipelinePatrolTime',
-  'lastPipelineWatchdogTime',
   'lastKrHealthDailyTime',
   'lastCredentialCheckTime',
   'lastCleanupWorkerTime',

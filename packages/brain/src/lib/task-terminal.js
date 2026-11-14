@@ -29,7 +29,6 @@ export const TASK_STATUS_WRITER_REGISTRY = Object.freeze([
   { module: 'routes/execution.js', may_write_terminal: true, reason: '执行回调路由事务内 CAS 写 newStatus；COMMIT 后调 afterTerminalTransition' },
   { module: 'task-updater.js', may_write_terminal: true, reason: 'updateTaskStatus 终态分支委托 finalizeTask；参数化 SQL 只服务非终态' },
   { module: 'actions.js', may_write_terminal: true, reason: 'update_task / bulk 动作可写任意状态；终态后调 afterTerminalTransition' },
-  { module: 'orchestrator/kernel-run-store.js', may_write_terminal: true, reason: 'Kernel run 权威终态化事务内写 taskOutcome（completed/failed）；COMMIT 后调 afterTerminalTransition' },
   { module: 'script-managed-executor.js', may_write_terminal: false, reason: '准入结果只写 blocked/queued；终态委托 script-settlement → finalizeTask' },
   { module: 'lib/proposal-rollback.js', may_write_terminal: false, reason: '快照回滚恢复原状态，是撤销不是迁移，不接棒' },
   { module: 'dep-cascade.js', may_write_terminal: false, reason: 'dep_failed 恢复回 queued / 原非终态' },

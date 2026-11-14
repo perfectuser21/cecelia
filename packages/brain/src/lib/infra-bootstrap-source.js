@@ -4,7 +4,7 @@ import {execFileSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
 import {readFixedGitFile,createFixedGitReadSession} from '../workflow-authoring/fixed-git-source.js';
-import {resolveGitHubToken} from '../harness-credentials.js';
+import {resolveGitHubToken} from '../github-credentials.js';
 import {buildInfraConsumerSources,INFRA_CONSUMER_PATHS} from './infra-consumer-source.js';
 import {stepSha256} from '../../scripts/sync-steps-from-workspace.mjs';
 const root=fileURLToPath(new URL('../../../../',import.meta.url)),repo='perfectuser21/cecelia';

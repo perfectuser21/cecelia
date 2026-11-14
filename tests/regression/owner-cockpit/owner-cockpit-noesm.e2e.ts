@@ -6,10 +6,8 @@ const BASE_URL = 'http://localhost:5174';
 const SCREENSHOT_PATH = path.resolve(process.cwd(), 'owner-cockpit.png');
 
 const METRIC_CARD_SLUGS = [
-  'completion-rate',
   'canary-green-days',
   'gate-fires',
-  'merge-to-deploy',
   'queue-health',
   'blocked-count',
 ];
@@ -30,14 +28,14 @@ test.describe('Owner Cockpit — 主理人指挥舱', () => {
     await expect(cockpitRoot).toBeVisible({ timeout: 10000 });
   });
 
-  test('FR-02: 六张指标卡均可见', async ({ page }) => {
+  test('FR-02: 四张指标卡均可见', async ({ page }) => {
     for (const slug of METRIC_CARD_SLUGS) {
       const card = page.locator(`[data-testid="metric-card-${slug}"]`);
       await expect(card).toBeVisible({ timeout: 10000 });
     }
   });
 
-  test('FR-02: 六张指标卡数值均非空（真实 API 数据）', async ({ page }) => {
+  test('FR-02: 四张指标卡数值均非空（真实 API 数据）', async ({ page }) => {
     for (const slug of METRIC_CARD_SLUGS) {
       const card = page.locator(`[data-testid="metric-card-${slug}"]`);
       await expect(card).toBeVisible({ timeout: 10000 });
@@ -62,7 +60,7 @@ test.describe('Owner Cockpit — 主理人指挥舱', () => {
     expect(count).toBeGreaterThanOrEqual(1);
   });
 
-  test('FR-03: 点击任务条目跳转 /harness-pipeline?task_id=', async ({ page }) => {
+  test('FR-03: 点击任务条目跳转 /tasks/:id/prd', async ({ page }) => {
     const resp = await page.request.get('http://localhost:5221/api/brain/tasks?status=in_progress');
     const body = await resp.json();
     const tasks = Array.isArray(body) ? body : (body?.tasks ?? []);
@@ -71,12 +69,12 @@ test.describe('Owner Cockpit — 主理人指挥舱', () => {
       return;
     }
     const taskLink = page.locator('[data-testid="battle-card"] a[data-testid^="task-link-"]').first();
-    const fallbackLink = page.locator('[data-testid="battle-card"] a[href*="harness-pipeline"]').first();
+    const fallbackLink = page.locator('[data-testid="battle-card"] a[href*="/tasks/"]').first();
     const primaryExists = await taskLink.count();
     const linkToClick = primaryExists > 0 ? taskLink : fallbackLink;
     await expect(linkToClick).toBeVisible({ timeout: 10000 });
     await linkToClick.click();
-    await expect(page).toHaveURL(/harness-pipeline.*task_id=/, { timeout: 10000 });
+    await expect(page).toHaveURL(/tasks\/[^/]+\/prd/, { timeout: 10000 });
   });
 
   test('FR-07: 移动端（375px）无水平滚动条', async ({ page }) => {

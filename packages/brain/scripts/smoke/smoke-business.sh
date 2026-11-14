@@ -69,11 +69,6 @@ echo "$r" | jq -e 'type == "array"' >/dev/null 2>&1 \
   && ok "analytics-collection: /analytics/content 返回数组" \
   || fail "analytics-collection: /analytics/content 格式错误"
 
-r=$(curl -q -sf "$BRAIN/api/brain/harness/stats") || { fail "analytics-pipeline: /harness/stats 不可达"; r="{}"; }
-echo "$r" | jq -e '.completed_pipelines != null' >/dev/null 2>&1 \
-  && ok "analytics-pipeline: /harness/stats 含 completed_pipelines" \
-  || fail "analytics-pipeline: /harness/stats 缺少 completed_pipelines"
-
 r=$(curl -q -sf "$BRAIN/api/brain/stats/overview") || { fail "analytics-platform: /stats/overview 不可达"; r="{}"; }
 echo "$r" | jq -e 'type == "object"' >/dev/null 2>&1 \
   && ok "analytics-platform: /stats/overview 返回 object" \
@@ -156,16 +151,6 @@ r=$(curl -q -sf "$BRAIN/api/brain/context") || { fail "dashboard-collection: /co
 echo "$r" | jq -e 'type == "object"' >/dev/null 2>&1 \
   && ok "dashboard-collection: /context 返回 object" \
   || fail "dashboard-collection: /context 格式错误"
-
-r=$(curl -q -sf "$BRAIN/api/brain/harness/stats") || { fail "dashboard-harness: /harness/stats 不可达"; r="{}"; }
-echo "$r" | jq -e '.completed_pipelines != null' >/dev/null 2>&1 \
-  && ok "dashboard-harness: /harness/stats 含 completed_pipelines" \
-  || fail "dashboard-harness: /harness/stats 缺少 completed_pipelines"
-
-r=$(curl -q -sf "$BRAIN/api/brain/harness/stats") || { fail "dashboard-harness-pipeline: /harness/stats 不可达"; r="{}"; }
-echo "$r" | jq -e '.completion_rate != null' >/dev/null 2>&1 \
-  && ok "dashboard-harness-pipeline: /harness/stats 含 completion_rate" \
-  || fail "dashboard-harness-pipeline: /harness/stats 缺少 completion_rate"
 
 r=$(curl -q -sf "$BRAIN/api/brain/health") || { fail "dashboard-live-monitor: /health 不可达"; r="{}"; }
 echo "$r" | jq -e '.status != null' >/dev/null 2>&1 \
@@ -322,11 +307,6 @@ echo "$r" | jq -e 'type == "array"' >/dev/null 2>&1 \
   && ok "pipeline-approve: /pipelines 返回数组" \
   || fail "pipeline-approve: /pipelines 格式错误"
 
-r=$(curl -q -sf "$BRAIN/api/brain/harness/stats") || { fail "pipeline-daily-stats: /harness/stats 不可达"; r="{}"; }
-echo "$r" | jq -e 'type == "object"' >/dev/null 2>&1 \
-  && ok "pipeline-daily-stats: /harness/stats 返回 object" \
-  || fail "pipeline-daily-stats: /harness/stats 格式错误"
-
 r=$(curl -q -sf "$BRAIN/api/brain/pipelines") || { fail "pipeline-publish-check: /pipelines 不可达"; r="[]"; }
 echo "$r" | jq -e 'type == "array"' >/dev/null 2>&1 \
   && ok "pipeline-publish-check: /pipelines 返回数组" \
@@ -478,11 +458,6 @@ r=$(curl -q -sf "$BRAIN/api/brain/quarantine") || { fail "failure-signatures: /q
 echo "$r" | jq -e 'type == "object"' >/dev/null 2>&1 \
   && ok "failure-signatures: /quarantine 返回 object（失败特征可查）" \
   || fail "failure-signatures: /quarantine 格式错误"
-
-r=$(curl -q -sf "$BRAIN/api/brain/harness/stats") || { fail "harness-pipeline: /harness/stats 不可达"; r="{}"; }
-echo "$r" | jq -e '.completion_rate != null' >/dev/null 2>&1 \
-  && ok "harness-pipeline: /harness/stats 含 completion_rate" \
-  || fail "harness-pipeline: /harness/stats 缺少 completion_rate"
 
 r=$(curl -q -sf "$BRAIN/api/brain/infra-status/health") || { fail "infra-status: /infra-status/health 不可达"; r="{}"; }
 echo "$r" | jq -e '.healthy != null' >/dev/null 2>&1 \

@@ -47,47 +47,11 @@ describe('isInLedgerHygieneWindow — UTC 21:10-21:15（北京 05:10）', () => 
 });
 
 describe('computeMetrics — 6 项指标', () => {
-  // m1 读 golden_path 旧表（已退役，任务 7d312fd8）：默认停计、不查旧表、不参与棘轮；应急放行窗口下沿用旧口径
-  it('m1 FR沉淀率：flag 未开 → enabled=false、retired=golden_path、不发 golden_path 查询、debt=0 不进棘轮', async () => {
-    delete process.env.GOLDEN_PATH_LEGACY_READ;
-    const pool = makePool([
-      { match: 'FROM tasks t', rows: [{ total: '3', debt: '3' }] },
-    ]);
+  it('只返回五个有现役数据对象的指标，不再查询旧开发沉淀和Kernel验收记录', async () => {
+    const pool = makePool();
     const m = await computeMetrics(pool);
-    expect(m.m1).toMatchObject({ key: 'm1', name: 'FR沉淀率', value: null, debt: 0, enabled: false, retired: 'golden_path' });
-    expect(pool.calls.some((c) => /golden_path/.test(c.sql))).toBe(false);
-    const prev = { baseline: { m1: 0 }, last: { m1: 0 }, streaks: { m1: 0 }, baseline_date: '2026-09-29' };
-    const { breaches } = evaluateRatchet({ m1: m.m1 }, prev, '2026-09-30');
-    expect(breaches.find((b) => b.key === 'm1')).toBeUndefined();
-  });
-
-  it('m1 FR沉淀率（GOLDEN_PATH_LEGACY_READ=1 应急窗口）：3 个 merged run，1 个无 golden_path 行 → value=2/3, debt=1', async () => {
-    process.env.GOLDEN_PATH_LEGACY_READ = '1';
-    try {
-      const pool = makePool([
-        { match: 'FROM tasks t', rows: [{ total: '3', debt: '1' }] },
-      ]);
-      const m = await computeMetrics(pool);
-      expect(m.m1.debt).toBe(1);
-      expect(m.m1.value).toBeCloseTo(2 / 3);
-      expect(m.m1.enabled).toBe(true);
-    } finally {
-      delete process.env.GOLDEN_PATH_LEGACY_READ;
-    }
-  });
-
-  it('m1 应急窗口下近7天无 merged run → value=1, debt=0（真空真值）', async () => {
-    process.env.GOLDEN_PATH_LEGACY_READ = '1';
-    try {
-      const pool = makePool([
-        { match: 'FROM tasks t', rows: [{ total: '0', debt: '0' }] },
-      ]);
-      const m = await computeMetrics(pool);
-      expect(m.m1.value).toBe(1);
-      expect(m.m1.debt).toBe(0);
-    } finally {
-      delete process.env.GOLDEN_PATH_LEGACY_READ;
-    }
+    expect(Object.keys(m)).toEqual(['m2','m3','m4','m5','m7']);
+    expect(pool.calls.some(({sql}) => /golden_path|initiative_runs|initiative_run_events/.test(sql))).toBe(false);
   });
 
   it('m2 归属完整率：tasks缺2 + issues缺1 → debt=3（attribution_harness 停计，接线前不入和）', async () => {
@@ -140,43 +104,17 @@ describe('computeMetrics — 6 项指标', () => {
     expect(m.m5.value).toBe(0);
   });
 
-  it('单指标 SQL 失败 → 该指标 enabled=false，其他指标不受影响', async () => {
-    process.env.GOLDEN_PATH_LEGACY_READ = '1'; // 让 m1 真走 SQL，验证的是失败容错而非退役停计
-    try {
-      const pool = makePool([
-        { match: 'review_after < NOW()', rows: [{ debt: '5' }] },
-      ]);
-      const orig = pool.query.getMockImplementation();
-      pool.query.mockImplementation(async (sql, params) => {
-        if (sql.includes('FROM tasks t')) throw new Error('boom');
-        return orig(sql, params);
-      });
-      const m = await computeMetrics(pool);
-      expect(m.m1.enabled).toBe(false);
-      expect(m.m1.error).toBe('boom');
-      expect(m.m4.debt).toBe(5);
-    } finally {
-      delete process.env.GOLDEN_PATH_LEGACY_READ;
-    }
-  });
-
-  it('m6 evaluator 门禁覆盖率：4 个 done run，1 个无 evaluator 事件 → value=3/4, debt=1', async () => {
-    const pool = makePool([
-      { match: 'FROM initiative_runs r', rows: [{ total: '4', debt: '1' }] },
-    ]);
+  it('单指标SQL失败时其余现役指标仍计算', async () => {
+    const pool = makePool([{match:'review_after < NOW()',rows:[{debt:'5'}]}]);
+    const original = pool.query.getMockImplementation();
+    pool.query.mockImplementation(async (sql, params) => {
+      if (sql.includes('attribution_tasks')) throw Error('boom');
+      return original(sql,params);
+    });
     const m = await computeMetrics(pool);
-    expect(m.m6.debt).toBe(1);
-    expect(m.m6.value).toBeCloseTo(3 / 4);
-    expect(m.m6.enabled).toBe(true);
-  });
-
-  it('m6 近7天无 done run → value=1, debt=0（真空真值）', async () => {
-    const pool = makePool([
-      { match: 'FROM initiative_runs r', rows: [{ total: '0', debt: '0' }] },
-    ]);
-    const m = await computeMetrics(pool);
-    expect(m.m6.value).toBe(1);
-    expect(m.m6.debt).toBe(0);
+    expect(m.m2.enabled).toBe(false);
+    expect(m.m2.error).toBe('boom');
+    expect(m.m4.debt).toBe(5);
   });
 });
 
@@ -190,31 +128,31 @@ describe('evaluateRatchet — 棘轮逻辑', () => {
   };
 
   it('首跑无 prev → 建基线，零击穿', () => {
-    const { state, breaches } = evaluateRatchet(metrics({ m1: 3, m4: 5 }), null, '2026-07-10');
+    const { state, breaches } = evaluateRatchet(metrics({ m2: 3, m4: 5 }), null, '2026-07-10');
     expect(breaches).toEqual([]);
-    expect(state.baseline).toEqual({ m1: 3, m4: 5 });
-    expect(state.last).toEqual({ m1: 3, m4: 5 });
-    expect(state.streaks).toEqual({ m1: 0, m4: 0 });
+    expect(state.baseline).toEqual({ m2: 3, m4: 5 });
+    expect(state.last).toEqual({ m2: 3, m4: 5 });
+    expect(state.streaks).toEqual({ m2: 0, m4: 0 });
   });
 
   it('debt 上升 → 击穿 + streak+1', () => {
-    const prev = { baseline: { m1: 3 }, last: { m1: 3 }, streaks: { m1: 0 }, baseline_date: '2026-07-09' };
-    const { state, breaches } = evaluateRatchet(metrics({ m1: 4 }), prev, '2026-07-10');
+    const prev = { baseline: { m2: 3 }, last: { m2: 3 }, streaks: { m2: 0 }, baseline_date: '2026-07-09' };
+    const { state, breaches } = evaluateRatchet(metrics({ m2: 4 }), prev, '2026-07-10');
     expect(breaches).toHaveLength(1);
-    expect(breaches[0]).toMatchObject({ key: 'm1', prevDebt: 3, debt: 4, streak: 1 });
-    expect(state.streaks.m1).toBe(1);
+    expect(breaches[0]).toMatchObject({ key: 'm2', prevDebt: 3, debt: 4, streak: 1 });
+    expect(state.streaks.m2).toBe(1);
   });
 
   it('debt 持平或下降 → 无击穿，streak 清零', () => {
-    const prev = { baseline: { m1: 3 }, last: { m1: 4 }, streaks: { m1: 2 }, baseline_date: '2026-07-09' };
-    const { state, breaches } = evaluateRatchet(metrics({ m1: 4 }), prev, '2026-07-10');
+    const prev = { baseline: { m2: 3 }, last: { m2: 4 }, streaks: { m2: 2 }, baseline_date: '2026-07-09' };
+    const { state, breaches } = evaluateRatchet(metrics({ m2: 4 }), prev, '2026-07-10');
     expect(breaches).toEqual([]);
-    expect(state.streaks.m1).toBe(0);
+    expect(state.streaks.m2).toBe(0);
   });
 
   it('连续第 3 天击穿 → streak=3', () => {
-    const prev = { baseline: { m1: 3 }, last: { m1: 5 }, streaks: { m1: 2 }, baseline_date: '2026-07-08' };
-    const { breaches } = evaluateRatchet(metrics({ m1: 6 }), prev, '2026-07-10');
+    const prev = { baseline: { m2: 3 }, last: { m2: 5 }, streaks: { m2: 2 }, baseline_date: '2026-07-08' };
+    const { breaches } = evaluateRatchet(metrics({ m2: 6 }), prev, '2026-07-10');
     expect(breaches[0].streak).toBe(3);
   });
 
@@ -255,13 +193,13 @@ describe('evaluateRatchet — 棘轮逻辑', () => {
 describe('renderHygieneMarkdown', () => {
   it('含 5 指标表格与击穿段', () => {
     const metrics = {
-      m1: { key: 'm1', name: 'FR沉淀率', value: 0.5, debt: 2, enabled: true },
+      m2: { key: 'm2', name: '归属完整率', value: 0.5, debt: 2, enabled: true },
       m3: { key: 'm3', name: '回执核销', value: null, debt: 0, enabled: false },
     };
     const md = renderHygieneMarkdown('2026-07-10', metrics, [
-      { key: 'm1', name: 'FR沉淀率', prevDebt: 1, debt: 2, streak: 1 },
+      { key: 'm2', name: '归属完整率', prevDebt: 1, debt: 2, streak: 1 },
     ]);
-    expect(md).toContain('FR沉淀率');
+    expect(md).toContain('归属完整率');
     expect(md).toContain('未启用');
     expect(md).toContain('击穿');
   });
@@ -273,27 +211,17 @@ describe('maybeRunLedgerHygiene — 主入口', () => {
   function fullRoutes(overrides = {}) {
     return [
       { match: "type = 'ledger_hygiene'", rows: overrides.dedupe ?? [] },
-      { match: 'FROM tasks t', rows: [{ total: '3', debt: overrides.m1debt ?? '1' }] },
       { match: 'attribution_tasks', rows: [{ total: '10', debt: '0' }] },
       { match: 'attribution_issues', rows: [{ total: '5', debt: '0' }] },
-      { match: 'attribution_harness', rows: [{ total: '3', debt: '0' }] },
       { match: 'FROM action_receipts LIMIT 1', rows: [] },
-      { match: 'review_after < NOW()', rows: [{ debt: '0' }] },
+      { match: 'review_after < NOW()', rows: [{ debt: overrides.m4debt ?? '0' }] },
       { match: "category = 'judgment' LIMIT 1", rows: [] },
       { match: 'title LIKE', rows: overrides.issueDup ?? [] },
       { match: RATCHET_KEY, rows: overrides.ratchet ?? [] },
     ];
   }
 
-  beforeEach(() => {
-    vi.clearAllMocks();
-    // 主入口用例用 m1 当击穿驱动（proven-to-fire）；m1 默认已随 golden_path 退役停计，
-    // 这里开应急窗口让旧口径仍可驱动棘轮。
-    process.env.GOLDEN_PATH_LEGACY_READ = '1';
-  });
-  afterEach(() => {
-    delete process.env.GOLDEN_PATH_LEGACY_READ;
-  });
+  beforeEach(() => vi.clearAllMocks());
 
   it('非窗口期不执行', async () => {
     const pool = makePool();
@@ -325,13 +253,13 @@ describe('maybeRunLedgerHygiene — 主入口', () => {
 
   it('欠账上升 → 击穿开 P2 issue（proven-to-fire）', async () => {
     const prev = {
-      baseline: { m1: 0, m2: 0, m4: 0 },
-      last: { m1: 0, m2: 0, m4: 0 },
-      streaks: { m1: 0, m2: 0, m4: 0 },
+      baseline: { m2: 0, m4: 0 },
+      last: { m2: 0, m4: 0 },
+      streaks: { m2: 0, m4: 0 },
       baseline_date: '2026-07-09',
     };
     const pool = makePool(
-      fullRoutes({ m1debt: '2', ratchet: [{ value_json: JSON.stringify(prev) }] })
+      fullRoutes({ m4debt: '2', ratchet: [{ value_json: JSON.stringify(prev) }] })
     );
     const r = await maybeRunLedgerHygiene(pool, IN_WINDOW);
     expect(r.breaches).toBe(1);
@@ -344,13 +272,13 @@ describe('maybeRunLedgerHygiene — 主入口', () => {
 
   it('连续 3 天击穿 → P1 + Bark', async () => {
     const prev = {
-      baseline: { m1: 0, m2: 0, m4: 0 },
-      last: { m1: 1, m2: 0, m4: 0 },
-      streaks: { m1: 2, m2: 0, m4: 0 },
+      baseline: { m2: 0, m4: 0 },
+      last: { m2: 0, m4: 1 },
+      streaks: { m2: 0, m4: 2 },
       baseline_date: '2026-07-07',
     };
     const pool = makePool(
-      fullRoutes({ m1debt: '2', ratchet: [{ value_json: JSON.stringify(prev) }] })
+      fullRoutes({ m4debt: '2', ratchet: [{ value_json: JSON.stringify(prev) }] })
     );
     await maybeRunLedgerHygiene(pool, IN_WINDOW);
     const issueInsert = pool.calls.find((c) => c.sql.includes('INSERT INTO issues'));
@@ -360,14 +288,14 @@ describe('maybeRunLedgerHygiene — 主入口', () => {
 
   it('当日已有同指标 issue → 跳过 INSERT 与 Bark（每指标每日最多一条）', async () => {
     const prev = {
-      baseline: { m1: 0, m2: 0, m4: 0 },
-      last: { m1: 1, m2: 0, m4: 0 },
-      streaks: { m1: 2, m2: 0, m4: 0 },
+      baseline: { m2: 0, m4: 0 },
+      last: { m2: 0, m4: 1 },
+      streaks: { m2: 0, m4: 2 },
       baseline_date: '2026-07-07',
     };
     const pool = makePool(
       fullRoutes({
-        m1debt: '2',
+        m4debt: '2',
         ratchet: [{ value_json: JSON.stringify(prev) }],
         issueDup: [{ '?column?': 1 }],
       })
@@ -382,13 +310,13 @@ describe('maybeRunLedgerHygiene — 主入口', () => {
 
   it('issue 写入失败不阻断落库', async () => {
     const prev = {
-      baseline: { m1: 0, m2: 0, m4: 0 },
-      last: { m1: 0, m2: 0, m4: 0 },
-      streaks: { m1: 0, m2: 0, m4: 0 },
+      baseline: { m2: 0, m4: 0 },
+      last: { m2: 0, m4: 0 },
+      streaks: { m2: 0, m4: 0 },
       baseline_date: '2026-07-09',
     };
     const pool = makePool(
-      fullRoutes({ m1debt: '2', ratchet: [{ value_json: JSON.stringify(prev) }] })
+      fullRoutes({ m4debt: '2', ratchet: [{ value_json: JSON.stringify(prev) }] })
     );
     const orig = pool.query.getMockImplementation();
     pool.query.mockImplementation(async (sql, params) => {

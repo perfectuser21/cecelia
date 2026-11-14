@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 
-import { resolveGitHubToken } from '../harness-credentials.js';
+import { resolveGitHubToken } from '../github-credentials.js';
 
 const SHA_PATTERN = /^[a-f0-9]{40}$/;
 const REPO_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;

@@ -67,7 +67,7 @@ export async function readConsumerSourceMainWitness(input,{fetchFn=globalThis.fe
   ||!Array.isArray(sources)||!sources.length||sources.length>4||sources.some(s=>!s||Object.keys(s).sort().join(',')!=='repo,revision'||!TRUSTED_REPOS.has(s.repo)||!isSha(s.revision))
   ||new Set(sources.map(s=>s.repo+'@'+s.revision)).size!==sources.length)return unknown('CONSUMER_MAIN_INPUT_INVALID');
  try {
-  const token=await (resolveToken||((await import('../harness-credentials.js')).resolveGitHubToken))();
+  const token=await (resolveToken||((await import('../github-credentials.js')).resolveGitHubToken))();
   const request=async(path,accept='application/vnd.github+json')=>{
    const response=await fetchFn(`https://api.github.com/repos/${path}`,{redirect:'error',headers:{Accept:accept,Authorization:`Bearer ${token}`},signal:AbortSignal.timeout(15000)});
    if(!response.ok)throw Error('CONSUMER_MAIN_SOURCE_UNAVAILABLE');return response;
@@ -127,7 +127,7 @@ export async function collectWorkspaceConsumerSourceSet(input,{fetchFn=globalThi
  try{({extractWorkspaceCiSourceBundle:extract}=await import('./workspace-ci-source-bundle.js'));}
  catch{return unknown('CONSUMER_CORE_UNAVAILABLE');}
  try{
-  const token=await (resolveToken||((await import('../harness-credentials.js')).resolveGitHubToken))();
+  const token=await (resolveToken||((await import('../github-credentials.js')).resolveGitHubToken))();
   const allowed=[workspace,...brain.revisions.map(revision=>({repo:brain.repo,revision}))];
   const readSource=async({repo,revision,path})=>{
    if(!allowed.some(s=>s.repo===repo&&s.revision===revision)||typeof path!=='string'||path.length>1024||path.startsWith('/')

@@ -4,7 +4,7 @@ const skillLoader = vi.hoisted(() => vi.fn((name) => {
   if (name !== 'ci-patrol') throw new Error(`unexpected skill: ${name}`);
   return 'NATIVE_CI_PATROL_SKILL_FIXTURE_92d3';
 }));
-vi.mock('../harness-shared.js', async importOriginal => ({
+vi.mock('../execution-shared.js', async importOriginal => ({
   ...await importOriginal(),
   loadSkillContent: skillLoader,
 }));

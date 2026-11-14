@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # D Tick Runner Full — real-env smoke
 #
-# 目标：验证 tick 主循环在生产容器内真跑，且 8 个核心 plugin 都被 wired + 调用。
+# 目标：验证 tick 主循环在生产容器内真跑，且 7 个核心 plugin 都被 wired + 调用。
 #
 # 设计契约（CI 友好 + 生产同样适用）：
 #   1. /api/brain/tick/status 可达 + enabled 字段存在
@@ -9,7 +9,7 @@
 #      （CI real-env-smoke 把 CECELIA_TICK_ENABLED=false，loop 不会自启）
 #   3. 验 last_tick 推进 + tick_stats.total_executions++
 #      —— 强契约：tick 端到端跑过 = executeTick() 走完整 plugin 序列
-#   4. 静态验 tick-runner.js 必须 import 8 个核心 plugin（防重构悄悄删 wire）
+#   4. 静态验 tick-runner.js 必须 import 7 个核心 plugin（防重构悄悄删 wire）
 #   5. 软验：docker logs 至少 1 条 plugin 痕迹（CI 空 DB 多数 plugin silent on no-op
 #      所以阈值仅 1，仅作 diagnostic）
 #
@@ -51,7 +51,7 @@ echo "=== D Tick Runner Full Smoke ==="
 echo "  BRAIN_URL=$BRAIN_URL"
 echo "  BRAIN_CONTAINER=${BRAIN_CONTAINER:-<not detected>}"
 echo "  TICK_SETTLE_S=$TICK_SETTLE_S"
-echo "  PLUGIN_RUNTIME_THRESHOLD=$PLUGIN_RUNTIME_THRESHOLD/8"
+echo "  PLUGIN_RUNTIME_THRESHOLD=$PLUGIN_RUNTIME_THRESHOLD/7"
 echo ""
 
 FAILED=0
@@ -142,9 +142,9 @@ if [ "$TICK_ADVANCED" -eq 0 ]; then
   fail "tick 未推进 (last_tick: $LAST_TICK_BEFORE → $LAST_TICK_AFTER; total_executions: $EXEC_COUNT_BEFORE → $EXEC_COUNT_AFTER)"
 fi
 
-# 4) 静态验：tick-runner.js 必须 import 8 plugin（容器内）
+# 4) 静态验：tick-runner.js 必须 import 7 plugin（容器内）
 echo ""
-echo "[4/5] 静态验：tick-runner.js import 8 plugin"
+echo "[4/5] 静态验：tick-runner.js import 7 plugin"
 
 declare -a PLUGIN_IMPORTS=(
   'dept-heartbeat'
@@ -152,7 +152,6 @@ declare -a PLUGIN_IMPORTS=(
   'heartbeat-plugin'
   'goal-eval-plugin'
   'pipeline-patrol-plugin'
-  'pipeline-watchdog-plugin'
   'kr-health-daily-plugin'
   'cleanup-worker-plugin'
 )
@@ -170,11 +169,11 @@ for plugin in "${PLUGIN_IMPORTS[@]}"; do
   fi
 done
 
-[ "$IMPORT_HITS" -eq 8 ] && pass "8 plugin 全部 wired" || fail "仅 $IMPORT_HITS/8 plugin 被 import"
+[ "$IMPORT_HITS" -eq 7 ] && pass "7 plugin 全部 wired" || fail "仅 $IMPORT_HITS/7 plugin 被 import"
 
 # 5) 软验：docker logs 至少 1 plugin 留痕（diagnostic — 不是强契约）
 echo ""
-echo "[5/5] 软验：docker logs plugin 痕迹（阈值 ≥${PLUGIN_RUNTIME_THRESHOLD}/8 — diagnostic）"
+echo "[5/5] 软验：docker logs plugin 痕迹（阈值 ≥${PLUGIN_RUNTIME_THRESHOLD}/7 — diagnostic）"
 echo "  注意：CI 空 DB / 短窗口下多数 plugin silent on no-op；强契约由 [3/5] 兜底"
 
 declare -a PLUGIN_LOG_PATTERNS=(
@@ -184,7 +183,6 @@ declare -a PLUGIN_LOG_PATTERNS=(
   'goal-eval|\[goal-evaluator\]|\[tick\] goal-eval'
   'kr-health-daily|KR 可信度|\[tick\] KR health'
   'pipeline-patrol|\[pipeline-patrol\]|Pipeline patrol|\[tick\] Pipeline patrol'
-  'pipeline-watchdog|pipeline-watchdog|Pipeline watchdog|\[tick\] Pipeline watchdog'
   'cleanup-worker|cleanup-worker|Orphan worktree'
 )
 

@@ -7,7 +7,6 @@ import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
 
 const cleanupStubs = vi.hoisted(() => ({
   zombie: vi.fn().mockName('runZombieCleanup').mockResolvedValue({ slotsReclaimed: 0, worktreesRemoved: 0 }),
-  harness: vi.fn().mockName('cleanupStaleHarnessWorktrees').mockResolvedValue({ cleaned: 0, errors: 0 }),
   worker: vi.fn().mockName('runCleanupWorker').mockResolvedValue({ success: true, stdout: '' }),
 }));
 
@@ -86,9 +85,6 @@ vi.mock('../zombie-sweep.js', () => ({ zombieSweep: vi.fn().mockResolvedValue({}
 vi.mock('../zombie-cleaner.js', () => ({
   runZombieCleanup: cleanupStubs.zombie,
 }));
-vi.mock('../harness-worktree.js', () => ({
-  cleanupStaleHarnessWorktrees: cleanupStubs.harness,
-}));
 vi.mock('../cleanup-worker.js', () => ({
   runCleanupWorker: cleanupStubs.worker,
 }));
@@ -108,12 +104,12 @@ vi.mock('../task-updater.js', () => ({
 let executeTick, tickState, resourceCleaners;
 
 beforeAll(async () => {
-  const [zombie, harness, cleanup] = await Promise.all([
-    import('../zombie-cleaner.js'), import('../harness-worktree.js'), import('../cleanup-worker.js'),
+  const [zombie, cleanup] = await Promise.all([
+    import('../zombie-cleaner.js'), import('../cleanup-worker.js'),
   ]);
-  resourceCleaners = [zombie.runZombieCleanup, harness.cleanupStaleHarnessWorktrees, cleanup.runCleanupWorker];
+  resourceCleaners = [zombie.runZombieCleanup, cleanup.runCleanupWorker];
   // 在导入/执行 tick 之前失败，漏 mock 时不能先清理宿主再报断言错误。
-  expect(resourceCleaners).toEqual([cleanupStubs.zombie, cleanupStubs.harness, cleanupStubs.worker]);
+  expect(resourceCleaners).toEqual([cleanupStubs.zombie, cleanupStubs.worker]);
   ({ tickState } = await import('../tick-state.js'));
   const mod = await import('../tick.js');
   executeTick = mod.executeTick;

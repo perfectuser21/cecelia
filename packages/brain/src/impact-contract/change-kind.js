@@ -35,21 +35,15 @@ export const CHANGE_KINDS = Object.freeze([
 const TASK_TYPE_MAP = {
   // 新功能类
   new_feature: 'new_capability',
-  harness_initiative: 'new_capability',
-  golden_path_proposal: 'new_capability',
 
   // 增强/变更类
   enhancement: 'capability_change',
   dev: 'capability_change',
-  harness_task: 'capability_change',
-  harness_generate: 'capability_change',
-  harness_fix: 'capability_change',
   scope_plan: 'capability_change',
 
   // 缺陷修复类
   bugfix: 'bugfix',
   hotfix: 'bugfix',
-  sprint_fix: 'bugfix',
 
   // 参数/配置类
   config_change: 'parameter_only',

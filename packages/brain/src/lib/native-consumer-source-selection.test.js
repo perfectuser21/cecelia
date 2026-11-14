@@ -9,6 +9,8 @@ import {readFixedExistingOpsGitFixture} from './__tests__/helpers/fixed-existing
 const historical=readFixedExistingOpsGitFixture();
 const root=fileURLToPath(new URL('../../../../',import.meta.url));
 const controllerPath='packages/brain/src/lib/native-consumer-source-selection.js';
+const credentialPath='packages/brain/src/github-credentials.js';
+const currentCredential=readFileSync(new URL('../github-credentials.js',import.meta.url));
 const currentController=readFileSync(new URL('./native-consumer-source-selection.js',import.meta.url));
 const fixture=mkdtempSync(join(tmpdir(),'native-selection-git-'));
 const git=(...args)=>execFileSync('git',['--no-replace-objects','-c','core.hooksPath=/dev/null','-c','commit.gpgSign=false',...args],{
@@ -17,11 +19,12 @@ const git=(...args)=>execFileSync('git',['--no-replace-objects','-c','core.hooks
 afterAll(()=>rmSync(fixture,{recursive:true,force:true}));
 let prepareNativeConsumerSelection,EXISTING_OPS_IDENTITIES,readNativeConsumerRuntime;
 try{
- // 只在本人私有克隆中替换当前被测控制器；16份collector保持历史字节，不授予当前候选资格。
+ // 私有克隆装载当前控制器及迁名后的凭据依赖；16份collector保持历史字节，不授予当前候选资格。
  git('clone','--shared','--no-checkout',root,'.');
  git('-c','core.autocrlf=false','checkout','--detach',historical.revision);
  writeFileSync(join(fixture,controllerPath),currentController);
- git('add','--',controllerPath);
+ writeFileSync(join(fixture,credentialPath),currentCredential);
+ git('add','--',controllerPath,credentialPath);
  git('-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','--allow-empty','-m','test: load current controller with consistent historical dependencies');
  symlinkSync(join(root,'node_modules'),join(fixture,'node_modules'),'dir');
  const load=path=>import(/* @vite-ignore */ pathToFileURL(join(fixture,'packages/brain/src/lib',path)).href);
@@ -64,7 +67,8 @@ function source(delay=200){
 }
 afterEach(()=>{vi.restoreAllMocks();vi.useRealTimers();});
 it('已知历史Git fixture全proof经历超过120秒的逐请求延迟仍在540秒预算内完成',async()=>{
- const changed=currentController.equals(Buffer.from(historical.read(controllerPath)))?[]:[controllerPath];
+ const changed=[credentialPath,...(currentController.equals(Buffer.from(historical.read(controllerPath)))?[]:[controllerPath])].sort();
+ expect(Buffer.from(read(credentialPath))).toEqual(currentCredential);
  expect(git('diff','--name-only',historical.revision,revision).trim().split('\n').filter(Boolean)).toEqual(changed);
  expect(Buffer.from(read(controllerPath))).toEqual(currentController);
  const runtime=readNativeConsumerRuntime();expect(runtime.files).toHaveLength(16);

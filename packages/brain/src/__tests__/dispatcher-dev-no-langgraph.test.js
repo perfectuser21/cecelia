@@ -1,15 +1,4 @@
-/**
- * TDD: dev 派发迁离 LangGraph（F7）
- *
- * 验收：
- * - dev task 派发不再经 _dispatchViaWorkflowRuntime / runWorkflow('dev-task')
- * - dev task 走 triggerCeceliaRun，执行后 dispatched:true 且 runtime != 'v2'
- * - _dispatchViaWorkflowRuntime 不在 dispatcher 导出（函数已删除）
- * - orchestrator/graph-runtime.js + orchestrator/workflow-registry.js 物理不存在
- *   （刀4a 死码清理：LangGraph workflow runtime 整体移除，import 必失败）
- *
- * 回归防护：此测试永久留 CI，防止 LangGraph 路径被意外复活。
- */
+/** 当前派发所有权：无合法归属的dev不得在调度器内猜改后执行，普通审查保持派发。 */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -41,7 +30,6 @@ vi.mock('../executor.js', () => ({
   INTERACTIVE_RESERVE: 2,
 }));
 vi.mock('../slot-allocator.js', () => ({
-  harnessSlotCheck: vi.fn().mockResolvedValue({ allow: true, reason: 'ok', containers: 0, inflight: 0, cap: { effective: 4, mem_cap: 8, acct_cap: 4, hard_cap: 8 }, stale: false }),
   calculateSlotBudget: mocks.calculateSlotBudget,
   shouldBypassBackpressure: vi.fn(() => false),
 }));
@@ -96,6 +84,10 @@ vi.mock('../dispatch-helpers.js', () => ({
   selectNextDispatchableTask: mocks.selectNextDispatchableTask,
   processCortexTask: vi.fn().mockResolvedValue({ handled: false }),
 }));
+vi.mock('../pre-flight-check.js', () => ({
+  preFlightCheck: vi.fn(async () => ({passed:true,issues:[],suggestions:[]})),
+  getPreFlightStats: vi.fn(async () => ({})), alertOnPreFlightFail: vi.fn(),
+}));
 // 顶层 import（在 vi.mock 之后）
 import { dispatchNextTask } from '../dispatcher.js';
 
@@ -104,11 +96,11 @@ import { dispatchNextTask } from '../dispatcher.js';
 function makeDevTask(overrides = {}) {
   return {
     id: 'dev-task-t6-001',
-    title: 'T6 dev task for LangGraph migration test',
+    title: '开发任务派发所有权测试',
     task_type: 'dev',
     status: 'queued',
     priority: 'P1',
-    description: 'Implement feature X per PRD: remove LangGraph dispatch path and route dev tasks through triggerCeceliaRun local spawn.',
+    description: '只能由合法当前执行者认领和执行开发任务。',
     payload: {},
     metadata: {},
     retry_count: 0,
@@ -120,45 +112,11 @@ function makeDevTask(overrides = {}) {
   };
 }
 
-function makeRoutedHarnessTask(overrides = {}) {
-  return makeDevTask({
-    task_type: 'harness_initiative',
-    payload: {
-      routing_receipt_id: 'receipt-t6-001',
-      work_kind: 'coding_mutation',
-      change_kind: 'bugfix',
-      repo: 'cecelia',
-      orchestrator: 'skill-relay',
-      harness_runtime: 'kernel-v1',
-    },
-    ...overrides,
-  });
-}
-
-function setupDispatch(task, { receipt = undefined } = {}) {
+function setupDispatch(task) {
   mocks.selectNextDispatchableTask.mockResolvedValueOnce(task);
   mocks.query.mockImplementation((sql) => {
     if (typeof sql === 'string' && sql.includes('SELECT * FROM tasks')) {
       return Promise.resolve({ rows: [task] });
-    }
-    if (typeof sql === 'string' && sql.includes('FROM work_routing_receipts')) {
-      const canonical = receipt === undefined && task.payload?.routing_receipt_id
-        ? {
-            id: task.payload.routing_receipt_id,
-            task_id: task.id,
-            superseded: false,
-            router_version: 'work-router-v1',
-            work_kind: 'coding_mutation',
-            change_kind: task.payload.change_kind,
-            repo: task.payload.repo,
-            pipeline: 'harness',
-            canonical_task_type: 'harness_initiative',
-            impact_contract_required: true,
-            map_scope_validation_version: 'active-business-node-v1',
-            has_v2_run: false,
-          }
-        : receipt;
-      return Promise.resolve({ rows: canonical ? [canonical] : [] });
     }
     // 原子 claim：RETURNING id 必须返回行，否则 dispatcher 认为已被他人抢占
     if (typeof sql === 'string' && sql.includes('claimed_by') && sql.includes('RETURNING id')) {
@@ -173,7 +131,7 @@ function setupDispatch(task, { receipt = undefined } = {}) {
 
 // ─── tests ────────────────────────────────────────────────────────────────────
 
-describe('F7: dev 派发迁离 LangGraph', () => {
+describe('当前开发任务派发所有权', () => {
   beforeEach(() => {
     mocks.query.mockReset();
     mocks.triggerCeceliaRun.mockReset();
@@ -199,143 +157,10 @@ describe('F7: dev 派发迁离 LangGraph', () => {
 
     expect(result).toMatchObject({ dispatched: false, reason: 'dispatch_exception', error: 'route_violation' });
     expect(mocks.triggerCeceliaRun).not.toHaveBeenCalled();
-    expect(mocks.query.mock.calls.some(([sql]) => String(sql).includes("task_type = 'harness_initiative'"))).toBe(false);
     expect(mocks.query).toHaveBeenCalledWith(
       expect.stringContaining('INSERT INTO cecelia_events'),
       ['route_violation', expect.stringContaining(`\"task_id\":\"${task.id}\"`)],
     );
-  });
-
-  it('合法 routed harness task 校验 canonical receipt 后进入 Kernel executor', async () => {
-    const task = makeRoutedHarnessTask();
-    setupDispatch(task);
-
-    const result = await dispatchNextTask(['goal-1']);
-
-    expect(result.dispatched).toBe(true);
-    expect(mocks.triggerCeceliaRun).toHaveBeenCalledWith(expect.objectContaining({
-      id: task.id,
-      task_type: 'harness_initiative',
-      payload: expect.objectContaining({ harness_runtime: 'kernel-v1' }),
-    }));
-    expect(mocks.query.mock.calls.some(([sql]) => String(sql).includes('FROM work_routing_receipts'))).toBe(true);
-  });
-
-  it('queued legacy receipt 有同 task 的 v2 run 时 grandfather 并进入 Kernel executor', async () => {
-    const task = makeRoutedHarnessTask({ id: 'legacy-with-current-task-run' });
-    setupDispatch(task, { receipt: {
-      id: task.payload.routing_receipt_id,
-      task_id: task.id,
-      superseded: false,
-      router_version: 'work-router-v1',
-      work_kind: 'coding_mutation',
-      change_kind: task.payload.change_kind,
-      repo: task.payload.repo,
-      pipeline: 'harness',
-      canonical_task_type: 'harness_initiative',
-      impact_contract_required: true,
-      map_scope_validation_version: null,
-      has_v2_run: true,
-    } });
-
-    const result = await dispatchNextTask(['goal-1']);
-
-    expect(result.dispatched).toBe(true);
-    expect(mocks.triggerCeceliaRun).toHaveBeenCalledWith(expect.objectContaining({ id: task.id }));
-  });
-
-  it('queued legacy receipt 无 v2 run 时仍 fail closed', async () => {
-    const task = makeRoutedHarnessTask({ id: 'legacy-without-run' });
-    setupDispatch(task, { receipt: {
-      id: task.payload.routing_receipt_id,
-      task_id: task.id,
-      superseded: false,
-      router_version: 'work-router-v1',
-      work_kind: 'coding_mutation',
-      change_kind: task.payload.change_kind,
-      repo: task.payload.repo,
-      pipeline: 'harness',
-      canonical_task_type: 'harness_initiative',
-      impact_contract_required: true,
-      map_scope_validation_version: null,
-      has_v2_run: false,
-    } });
-
-    const result = await dispatchNextTask(['goal-1']);
-
-    expect(result).toMatchObject({
-      dispatched: false,
-      reason: 'dispatch_exception',
-      error: 'route_violation',
-    });
-    expect(mocks.triggerCeceliaRun).not.toHaveBeenCalled();
-  });
-
-  it('只认 current_task_id 相同的 v2 run，不按 initiative_id 兄弟 run 放行', async () => {
-    const task = makeRoutedHarnessTask({ id: 'legacy-with-sibling-run' });
-    setupDispatch(task, { receipt: {
-      id: task.payload.routing_receipt_id,
-      task_id: task.id,
-      superseded: false,
-      router_version: 'work-router-v1',
-      work_kind: 'coding_mutation',
-      change_kind: task.payload.change_kind,
-      repo: task.payload.repo,
-      pipeline: 'harness',
-      canonical_task_type: 'harness_initiative',
-      impact_contract_required: true,
-      map_scope_validation_version: null,
-      has_v2_run: false,
-    } });
-
-    const result = await dispatchNextTask(['goal-1']);
-
-    expect(result).toMatchObject({
-      dispatched: false,
-      reason: 'dispatch_exception',
-      error: 'route_violation',
-    });
-    const receiptQuery = mocks.query.mock.calls.find(([sql]) => (
-      String(sql).includes('FROM work_routing_receipts receipt')
-    ));
-    expect(String(receiptQuery?.[0])).toMatch(
-      /initiative_runs[\s\S]+current_task_id\s*=\s*receipt\.task_id/,
-    );
-    expect(mocks.triggerCeceliaRun).not.toHaveBeenCalled();
-  });
-
-  it('harness task 的 projected receipt 找不到时 fail closed', async () => {
-    const task = makeRoutedHarnessTask({ id: 'harness-missing-receipt' });
-    setupDispatch(task, { receipt: null });
-
-    const result = await dispatchNextTask(['goal-1']);
-
-    expect(result).toMatchObject({ dispatched: false, reason: 'dispatch_exception', error: 'route_violation' });
-    expect(mocks.triggerCeceliaRun).not.toHaveBeenCalled();
-  });
-
-  it('LangGraph workflow runtime 物理不存在（graph-runtime / workflow-registry 已删除）', async () => {
-    await expect(
-      import('../orchestrator/graph-runtime.js')
-    ).rejects.toThrow();
-    await expect(
-      import('../orchestrator/workflow-registry.js')
-    ).rejects.toThrow();
-  });
-
-  it('Kernel harness 派发结果 runtime 不为旧 LangGraph v2', async () => {
-    const task = makeRoutedHarnessTask();
-    setupDispatch(task);
-
-    const result = await dispatchNextTask(['goal-1']);
-
-    expect(result.dispatched).toBe(true);
-    expect(result.runtime).not.toBe('v2');
-  });
-
-  it('_dispatchViaWorkflowRuntime 不在 dispatcher 导出（函数已物理删除）', async () => {
-    const dispatcherModule = await import('../dispatcher.js');
-    expect(dispatcherModule._dispatchViaWorkflowRuntime).toBeUndefined();
   });
 
   it('non-dev task_type 也走 triggerCeceliaRun（行为不变）', async () => {
@@ -348,23 +173,14 @@ describe('F7: dev 派发迁离 LangGraph', () => {
     expect(mocks.triggerCeceliaRun).toHaveBeenCalledTimes(1);
   });
 
-  it('budget_state=tight 且任务可降级时，传给 triggerCeceliaRun 的 payload.executor 必须是 codex', async () => {
-    const task = makeRoutedHarnessTask({ id: 'harness-task-downgrade-001' });
-    setupDispatch(task);
-    mocks.calculateSlotBudget.mockResolvedValueOnce({
-      dispatchAllowed: true,
-      budgetState: { state: 'tight' },
-      taskPool: { budget: 5, available: 3 },
-      user: { mode: 'absent', used: 0 },
-      codex: { available: true, running: 0, max: 5 },
-    });
-    // 引导员在候选阶段与派发阶段各调一次 shouldDowngrade，两次都须返回 tight 判定
-    mocks.shouldDowngrade.mockReturnValue(true);
-
-    const result = await dispatchNextTask(['goal-1']);
-
-    expect(result.dispatched).toBe(true);
-    expect(mocks.triggerCeceliaRun).toHaveBeenCalledTimes(1);
-    expect(mocks.triggerCeceliaRun.mock.calls[0][0].payload?.executor).toBe('codex');
+  it('普通候选SQL排除Runner任务并要求未被有头执行者认领', async () => {
+    const actual = await vi.importActual('../dispatch-helpers.js');
+    mocks.query.mockResolvedValue({rows:[]});
+    await actual.selectNextDispatchableTask(['goal-1']);
+    const [sql,bindings]=mocks.query.mock.calls.find(([statement])=>/FROM tasks t\b/.test(statement));
+    expect(sql).toContain('t.claimed_by IS NULL');
+    expect(bindings.flat()).toContain('coding_workflow');
+    expect(mocks.triggerCeceliaRun).not.toHaveBeenCalled();
   });
+
 });

@@ -16,11 +16,10 @@ vi.mock('../notifier.js', () => ({
   sendFeishu: vi.fn(),
   sendBark: vi.fn().mockResolvedValue(true),
 }));
-vi.mock('../harness-final-e2e.js', () => ({ normalizeAcceptance: vi.fn() }));
+vi.mock('../staging-acceptance.js', () => ({ normalizeAcceptance: vi.fn() }));
 vi.mock('../staging-promote.js', () => ({
   decidePromote: vi.fn(), runInternalPromote: vi.fn(), defaultPromoteExec: vi.fn(),
-  getRepoRoot: () => '/repo', PROMOTE_STATUS: {}, spawnHarnessReport: vi.fn(),
-  readProductionInfo: vi.fn(), REPORT_KIND: {},
+  getRepoRoot: () => '/repo', PROMOTE_STATUS: {},
 }));
 vi.mock('../preview-manager.js', () => ({ allocatePort: vi.fn() }));
 

@@ -3,8 +3,8 @@
  * 任务 94465721（链 bf5088a3 棒4），决策 df67a9d6 / e073bdc2。
  *
  * 回填 CASE 里的 workflow 名单是 SQL 字面量（migrate.js 只跑 SQL，进不了 JS 注册表），
- * 所以这里钉死：名单与注册表 WORKFLOW_KIND_TASK_TYPES 逐字一致——注册表改一处、
- * 迁移没跟着改，先在这红。
+ * 所以这里钉死：历史名单精确等于当时有效的 workflow 类型；已退役类型仍保留历史回填语义，
+ * 不修改已经运行的迁移。
  */
 import { readFileSync, existsSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
@@ -46,7 +46,7 @@ describe('migration 466 — tasks.kind 真列 + CHECK + 回填', () => {
     expect(listed).toEqual([...TASK_KINDS]);
   });
 
-  it('回填：只动 kind IS NULL 的行（幂等）、分批 5000、CASE 名单与注册表 WORKFLOW_KIND_TASK_TYPES 逐字一致', () => {
+  it('回填：只动 kind IS NULL 的行（幂等）、分批 5000、CASE 精确保留历史 workflow 名单', () => {
     const sql = read(up466);
     expect(sql).toMatch(/DO \$\$[\s\S]*LOOP[\s\S]*UPDATE tasks SET kind = CASE[\s\S]*ELSE 'agent' END[\s\S]*WHERE kind IS NULL[\s\S]*LIMIT 5000[\s\S]*EXIT WHEN updated_count = 0[\s\S]*END\s*\$\$;/);
     const listed = workflowListFromSql(sql);
@@ -55,11 +55,12 @@ describe('migration 466 — tasks.kind 真列 + CHECK + 回填', () => {
     //   workflow_dispatch —— 迁移 549（任务 f38e7cc2）
     //   coding_workflow —— 迁移 550（任务 0a70684f）
     const ADDED_AFTER_466 = ['workflow_dispatch', 'coding_workflow'];
-    const expectedList = WORKFLOW_KIND_TASK_TYPES.filter((t) => !ADDED_AFTER_466.includes(t));
+    const RETIRED_AT_466 = ['harness_initiative', 'harness_task', 'golden_path_proposal'];
+    const expectedList = [...WORKFLOW_KIND_TASK_TYPES.filter((t) => !ADDED_AFTER_466.includes(t)), ...RETIRED_AT_466];
     expect(listed.length).toBe(expectedList.length);
     expect(new Set(listed)).toEqual(new Set(expectedList));
     // 变异：名单少一项 / 多一项都必须被上面两条抓住
-    expect(new Set(listed.slice(1))).not.toEqual(new Set(WORKFLOW_KIND_TASK_TYPES));
+    expect(new Set(listed.slice(1))).not.toEqual(new Set(expectedList));
   });
 
   it('登记 schema_version 466；down 删约束、删列、删版本行', () => {

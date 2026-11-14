@@ -75,14 +75,6 @@ interface OpenIssue {
   created_at: string;
 }
 
-interface RecentRun {
-  id: string;
-  status: string;
-  started_at: string | null;
-  completed_at: string | null;
-  created_at: string;
-}
-
 interface Health {
   run_total: number;
   run_success: number;
@@ -100,7 +92,6 @@ interface CommandData {
     advancements: AdvancementItem[];
     active_tasks: ActiveTask[];
     open_issues: OpenIssue[];
-    recent_runs: RecentRun[];
   };
   health: Health;
   generated_at: string;
@@ -116,13 +107,6 @@ function relativeTime(iso: string): string {
   const h = Math.floor(m / 60);
   if (h < 24) return `${h}小时前`;
   return `${Math.floor(h / 24)}天前`;
-}
-
-function runStatusColor(status: string): string {
-  if (status === 'completed') return 'text-emerald-400';
-  if (status === 'failed') return 'text-red-400';
-  if (status === 'in_progress') return 'text-blue-400';
-  return 'text-slate-500';
 }
 
 function featureStatusBadge(status: string | null): string {
@@ -183,7 +167,7 @@ function DecisionCard({ d }: { d: Decision }) {
 }
 
 function ConnectionsPanel({ connections }: { connections: CommandData['connections'] }) {
-  const { abilities, features, advancements, active_tasks, open_issues, recent_runs } = connections;
+  const { abilities, features, advancements, active_tasks, open_issues } = connections;
 
   const advByAbility = advancements.reduce<Record<string, AdvancementItem[]>>((acc, a) => {
     if (!acc[a.ability_id]) acc[a.ability_id] = [];
@@ -293,28 +277,8 @@ function ConnectionsPanel({ connections }: { connections: CommandData['connectio
         </div>
       )}
 
-      {/* Recent Runs */}
-      {recent_runs.length > 0 && (
-        <div>
-          <div className="text-[11px] text-slate-500 uppercase tracking-wider mb-2">近期 Harness Runs</div>
-          <div className="space-y-1">
-            {recent_runs.map((r) => (
-              <div key={r.id} className="flex items-center gap-2 py-1 px-2.5 rounded border border-slate-700/30 bg-slate-800/20">
-                <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
-                  r.status === 'completed' ? 'bg-emerald-400' :
-                  r.status === 'failed' ? 'bg-red-400' :
-                  r.status === 'in_progress' ? 'bg-blue-400 animate-pulse' : 'bg-slate-600'
-                }`} />
-                <span className={`text-[11px] font-mono ${runStatusColor(r.status)}`}>{r.status}</span>
-                <span className="text-[11px] text-slate-600 ml-auto">{relativeTime(r.created_at)}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
       {abilities.length === 0 && features.length === 0 && active_tasks.length === 0 &&
-        open_issues.length === 0 && recent_runs.length === 0 && (
+        open_issues.length === 0 && (
         <div className="text-[12px] text-slate-600 text-center py-4">该 Line 暂无连接数据</div>
       )}
     </div>

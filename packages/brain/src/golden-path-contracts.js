@@ -11,7 +11,7 @@ import {
   GP_HARNESS_TARGET_ENVIRONMENTS,
 } from './golden-path-contract-task.js';
 import { createRoutedTask } from './work-routing-store.js';
-import { GP_IMPLEMENTATION_TASK_TYPES } from './lib/task-type-registry.js';
+import { GP_IMPLEMENTATION_TASK_TYPES, RETIRED_DEVELOPMENT_TASK_TYPES } from './lib/task-type-registry.js';
 import { CHANGE_KINDS, normalizeRepoHint } from './work-router.js';
 import { PHOTO_STALE_THRESHOLD_SECONDS } from './lib/registry-freshness.js';
 
@@ -159,7 +159,7 @@ export async function createGoldenPathContractVersion(db, {
         AND payload->>'golden_path_id' = $1
         AND status IN ('queued', 'blocked', 'dispatched', 'in_progress')
       FOR UPDATE`,
-    [goldenPathId, GP_IMPLEMENTATION_TASK_TYPES],
+    [goldenPathId, [...GP_IMPLEMENTATION_TASK_TYPES,...RETIRED_DEVELOPMENT_TASK_TYPES.filter(type=>type==='harness_initiative')]],
   );
   const runningTasks = activeTasks.filter(
     (task) => task.status === 'dispatched' || task.status === 'in_progress',
@@ -325,7 +325,7 @@ async function findHarnessTaskForContract(db, contractId) {
       ORDER BY created_at ASC
       LIMIT 1
       FOR UPDATE`,
-    [contractId, GP_IMPLEMENTATION_TASK_TYPES],
+    [contractId, [...GP_IMPLEMENTATION_TASK_TYPES,...RETIRED_DEVELOPMENT_TASK_TYPES.filter(type=>type==='harness_initiative')]],
   );
   return rows[0] || null;
 }
@@ -468,7 +468,6 @@ export async function signAndLaunchGoldenPathContract(db, {
     proposal_doc: goldenPath.proposal_doc || null,
     judgment_decision_id: judgmentId,
     phase: 'implement',
-    orchestrator: 'skill-relay',
     sprint_dir: sprintDir,
     thin_prd: goldenPath.one_liner,
     prep_prd_body: goldenPath.proposal_doc || null,
@@ -492,9 +491,9 @@ export async function signAndLaunchGoldenPathContract(db, {
   const routeRequest = (metadata) => ({
     source: 'discovery',
     source_id: `golden-path-contract:${signedVersion.id}`,
-    title: `[GP harness] ${goldenPath.title}`,
-    description: `签字后 harness 实现任务——${goldenPath.one_liner}`,
-    requested_task_type: 'harness_initiative',
+    title: `[GP implementation] ${goldenPath.title}`,
+    description: `签字后开发任务——${goldenPath.one_liner}`,
+    requested_task_type: 'dev',
     declared_change_kind: harnessGlue.changeKind,
     declared_domain: 'coding',
     mutation_intent: 'write',

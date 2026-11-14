@@ -108,9 +108,6 @@ vi.mock('../zombie-sweep.js', () => ({
 vi.mock('../zombie-cleaner.js', () => ({
   runZombieCleanup: vi.fn().mockResolvedValue({ slotsReclaimed: 0, worktreesRemoved: 0 }),
 }));
-vi.mock('../harness-worktree.js', () => ({
-  cleanupStaleHarnessWorktrees: vi.fn().mockResolvedValue({ cleaned: 0 }),
-}));
 
 // ── Setup ─────────────────────────────────────────────────────────────────────
 
