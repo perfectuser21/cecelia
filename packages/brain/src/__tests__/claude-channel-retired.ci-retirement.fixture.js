@@ -94,9 +94,20 @@ const COHORTS=[
     "../../../../scripts/ci/implementation-snapshot.mjs": "3bd83218b5db7125a0af7c92bf916bb4bde5cc159905acd8746c263bac3e2511"
   }
 ];
-export const ciVersionGuardCohorts=()=>COHORTS;
+const COMMANDER_CI_COHORT={...COHORTS[4],
+ 'existing-ops-stage-source.js':'ef6a2191f1db8b939e21e2b5c62a8de4bd01f225f713c5c88175194cb938623a'};
+export const ciVersionGuardCohorts=()=>[...COHORTS,COMMANDER_CI_COHORT];
 export function registerCiRetirementGuardTests({root,base,scan}){
  describe('当前来源完整闭包及执行防复活',()=>{
+  it('Commander CI登记只替换已审stage成员，未知登记不能继承只读资格',()=>{
+   const member='existing-ops-stage-source.js';
+   expect(Object.keys(COMMANDER_CI_COHORT)).toEqual(Object.keys(COHORTS[4]));
+   expect(Object.keys(COMMANDER_CI_COHORT).filter(name=>COMMANDER_CI_COHORT[name]!==COHORTS[4][name])).toEqual([member]);
+   const current=base(),file=path.join(root,member);expect(scan(current)).toEqual([]);
+   const original=current.get(file),changed=original.replace('d20caae43b3156bde1b07d141c3bd54b888da847e9c78e3b21e1440fd848e59a','f'.repeat(64));
+   expect(changed).not.toBe(original);current.set(file,changed);
+   expect(scan(current).some(hit=>hit.rule==='E1')).toBe(true);
+  });
   it('当前main与候选完整组只取得只读数据资格',()=>{
    const previous=new Map([...base().keys()].map(file=>[file,execFileSync('git',['--no-replace-objects','show','d06de84e9f7d2d489a151e0b13b38f81651dd3fa:'+path.relative(path.resolve(root,'../../../..'),file)],{cwd:root,encoding:'utf8',maxBuffer:1024*1024})]));
    for(const sources of [previous,base()])for(const kind of ['build','stage','native-evidence'])expect(scan(sources,path.join(root,'existing-ops-'+kind+'-envelopes.js'))).toEqual([]);
