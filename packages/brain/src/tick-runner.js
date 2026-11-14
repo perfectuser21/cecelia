@@ -61,11 +61,6 @@ import {
   triggerArchReview,
 } from './daily-review-scheduler.js';
 import { generateDailyDiaryIfNeeded } from './diary-scheduler.js';
-import { triggerDailyPublish } from './daily-publish-scheduler.js';
-import { generateWeeklyReport } from './weekly-report-generator.js';
-import { monitorPublishQueue } from './publish-monitor.js';
-import { schedulePostPublishCollection } from './post-publish-data-collector.js';
-import { syncSocialMediaData } from './social-media-sync.js';
 import { runDesireSystem } from './desire/index.js';
 import { runRumination } from './rumination.js';
 import { runCanaryDrillIfNeeded } from './canary-drill-scheduler.js';
@@ -96,10 +91,8 @@ import * as lineStrategistDispatchPlugin from './line-strategist-dispatch-plugin
 import * as pausedRequeuPlugin from './paused-requeuer-plugin.js';
 import * as krHealthDailyPlugin from './kr-health-daily-plugin.js';
 import * as cleanupWorkerPlugin from './cleanup-worker-plugin.js';
-import { scheduleDailyScrape } from './daily-scrape-scheduler.js';
 import { scheduleKR3ProgressReport } from './kr3-progress-scheduler.js';
 import { calculateAndWrite as calculateKR3Progress } from './kr3-progress-calculator.js';
-import { runDailySmoke } from './cron/daily-real-business-smoke.js';
 import { runDriftSentinel, DRIFT_SENTINEL_INTERVAL_MS } from './cron/drift-sentinel.js';
 import { runSkillDriftPatrol, isInPatrolWindow } from './cron/skill-drift-patrol.js';
 import { runTestLifecyclePatrol, isInPatrolWindow as isInTestLifecyclePatrolWindow } from './test-lifecycle-patrol.js';
@@ -1583,36 +1576,12 @@ async function executeTick() {
   Promise.resolve().then(() => triggerContractScan(pool))
     .catch(e => console.warn('[tick] 契约扫描失败:', e.message));
 
-  // 10.17b 每日发布调度（UTC 03:00 = 北京时间 11:00，处理 pending content_publish_jobs，fire-and-forget）
-  Promise.resolve().then(() => triggerDailyPublish(pool))
-    .catch(e => console.warn('[tick] 每日发布调度失败:', e.message));
-
-  // 10.17d 每日内容日报（UTC 01:00 = 北京时间 09:00，汇总昨日数据，fire-and-forget）
+  // 10.17d 每日运行日报（UTC 01:00 = 北京时间 09:00，汇总昨日数据，fire-and-forget）
   // flag 门控：DBOS_DURABLE_ENABLED 关=原 generateDailyReport（行为零变化），开=durable 崩溃可恢复路径
   Promise.resolve().then(async () => {
     const { routeDailyReport } = await import('./durable/daily-report-router.js');
     return routeDailyReport(pool);
-  }).catch(e => console.warn('[tick] 每日内容日报失败:', e.message));
-
-  // 10.17e 每周内容周报（每周一 UTC 01:00 = 北京时间 09:00，汇总上周数据，fire-and-forget）
-  Promise.resolve().then(() => generateWeeklyReport(pool))
-    .catch(e => console.warn('[tick] 每周内容周报失败:', e.message));
-
-  // 10.17c 发布队列监控（每 tick，自动重试 failed 任务 + 更新今日统计，fire-and-forget）
-  Promise.resolve().then(() => monitorPublishQueue(pool))
-    .catch(e => console.warn('[tick] 发布队列监控失败:', e.message));
-
-  // 10.17d 发布后数据回收（每 tick，触发 4h 后的平台数据采集，fire-and-forget）
-  Promise.resolve().then(() => schedulePostPublishCollection(pool))
-    .catch(e => console.warn('[tick] 发布后数据回收失败:', e.message));
-
-  // 10.17e social_media_raw 数据同步（每 tick，将本机 raw DB 同步到 content_analytics，fire-and-forget）
-  Promise.resolve().then(() => syncSocialMediaData(pool))
-    .catch(e => console.warn('[tick] social-media-sync 失败:', e.message));
-
-  // 10.17f 每日全平台采集调度（UTC 20:00 = 北京时间次日 04:00，fire-and-forget）
-  Promise.resolve().then(() => scheduleDailyScrape(pool))
-    .catch(e => console.warn('[tick] 每日平台采集调度失败:', e.message));
+  }).catch(e => console.warn('[tick] 每日运行日报失败:', e.message));
 
   // 10.17g KR3 每日进度报告（UTC 06:00 = 北京时间 14:00，fire-and-forget）
   Promise.resolve().then(() => scheduleKR3ProgressReport(pool))
@@ -1621,10 +1590,6 @@ async function executeTick() {
   // 10.17g2 KR3 进度回写（每 tick，将里程碑 decisions 转化为 key_results.progress，修复 25% 陈旧数据）
   Promise.resolve().then(() => calculateKR3Progress(pool))
     .catch(e => console.warn('[tick] KR3 进度回写失败:', e.message));
-
-  // 10.17h 每日真业务 E2E smoke（UTC 20:00 = 北京时间 04:00，防生产腐蚀，fire-and-forget）
-  Promise.resolve().then(() => runDailySmoke(pool))
-    .catch(e => console.warn('[tick] daily smoke 失败:', e.message));
 
   // 10.18 欲望解堵循环（每 tick，将高紧迫度 desires 转化为 suggestions，CONSCIOUSNESS_ENABLED=false 时跳过）
   if (isConsciousnessEnabled()) {

@@ -13,7 +13,6 @@ const manifest: FeatureManifest = {
 
   routes: [
     { path: '/knowledge', component: 'KnowledgeHome' },
-    { path: '/knowledge/content', component: 'ContentStudio' },
     { path: '/knowledge/brain', component: 'SuperBrain' },
     { path: '/knowledge/digestion', component: 'KnowledgeDigestion' },
     { path: '/knowledge/instruction-book', component: 'InstructionBook' },
@@ -57,28 +56,12 @@ const manifest: FeatureManifest = {
     { path: '/knowledge/modules/:groupId/:moduleId', component: 'KnowledgeModuleDetail' },
     { path: '/knowledge/view', component: 'KnowledgePageViewer' },
     { path: '/knowledge/doc-chat/:id', component: 'DocChatPage' },
-    // 内容工厂
-    {
-      path: '/content-factory',
-      component: 'ContentFactory',
-      requireAuth: false,
-      navItem: { label: '内容工厂', icon: 'Factory', group: 'execution', order: 10 },
-    },
-    // 内容作品详情页（四 Tab）
-    { path: '/content-factory/:id', component: 'PipelineOutputPage', requireAuth: false },
-    {
-      path: '/content-factory/config',
-      component: 'ContentTypeConfigPage',
-      requireAuth: false,
-    },
     // Legacy redirects
-    { path: '/content', redirect: '/knowledge/content' },
     { path: '/super-brain', redirect: '/knowledge/brain' },
   ],
 
   components: {
     KnowledgeHome: () => import('./pages/KnowledgeHome'),
-    ContentStudio: () => import('../content/pages/ContentStudio'),
     SuperBrain: () => import('../brain/pages/SuperBrain'),
     KnowledgeDigestion: () => import('./pages/KnowledgeDigestion'),
     InstructionBook: () => import('./pages/InstructionBook'),
@@ -93,9 +76,6 @@ const manifest: FeatureManifest = {
     KnowledgeModuleDetail: () => import('./pages/KnowledgeModuleDetail'),
     KnowledgePageViewer: () => import('./pages/KnowledgePageViewer'),
     DocChatPage: () => import('./pages/DocChatPage'),
-    ContentFactory: () => import('../content/pages/ContentFactory'),
-    PipelineOutputPage: () => import('../content/pages/PipelineOutputPage'),
-    ContentTypeConfigPage: () => import('../content/pages/ContentTypeConfigPage'),
   },
 };
 

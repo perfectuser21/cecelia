@@ -26,11 +26,8 @@ import {
   isInReportTriggerWindow,
   getYesterdayString,
   hasTodayReport,
-  fetchYesterdayContentOutput,
-  fetchYesterdayPublishStats,
-  fetchYesterdayEngagementData,
-  fetchYesterdayFailureCount,
   buildReportText,
+  collectOperationalReportState,
   saveReportToWorkingMemory,
   markTodayDone,
 } from '../daily-report-generator.js';
@@ -70,26 +67,14 @@ export function configureDurableDeps(deps = {}) {
 }
 
 // ── 注册 step（module load 时一次性，早于 launch） ──
-const stepFetchContent = DBOS.registerStep(
-  async (yesterday) => { await _deps.trace('fetchContentOutput'); return fetchYesterdayContentOutput(_deps.pool, yesterday); },
-  { name: 'fetchContentOutput' }
-);
-const stepFetchPublish = DBOS.registerStep(
-  async (yesterday) => { await _deps.trace('fetchPublishStats'); return fetchYesterdayPublishStats(_deps.pool, yesterday); },
-  { name: 'fetchPublishStats' }
-);
-const stepFetchEngagement = DBOS.registerStep(
-  async (yesterday) => { await _deps.trace('fetchEngagement'); return fetchYesterdayEngagementData(_deps.pool, yesterday); },
-  { name: 'fetchEngagement' }
-);
-const stepFetchFailure = DBOS.registerStep(
-  async (yesterday) => { await _deps.trace('fetchFailureCount'); return fetchYesterdayFailureCount(_deps.pool, yesterday); },
-  { name: 'fetchFailureCount' }
+const stepFetchRuntime = DBOS.registerStep(
+  async () => { await _deps.trace('fetchRuntimeChecks'); return collectOperationalReportState(_deps.pool); },
+  { name: 'fetchRuntimeChecks' }
 );
 const stepGenerate = DBOS.registerStep(
-  async ({ today, yesterday, contentOutput, publishStats, engagementData, failureCount }) => {
+  async ({ today, yesterday, state }) => {
     await _deps.trace('generateReport');
-    return buildReportText(today, yesterday, contentOutput, publishStats, engagementData, failureCount);
+    return buildReportText(today, yesterday, state);
   },
   { name: 'generateReport' }
 );
@@ -110,11 +95,8 @@ const stepSendFeishu = DBOS.registerStep(
 // ── 注册 workflow（module load 时一次性，早于 launch；日期作为可序列化入参） ──
 export const durableDailyReportWorkflow = DBOS.registerWorkflow(
   async ({ today, yesterday }) => {
-    const contentOutput = await stepFetchContent(yesterday);
-    const publishStats = await stepFetchPublish(yesterday);
-    const engagementData = await stepFetchEngagement(yesterday);
-    const failureCount = await stepFetchFailure(yesterday);
-    const reportText = await stepGenerate({ today, yesterday, contentOutput, publishStats, engagementData, failureCount });
+    const state = await stepFetchRuntime();
+    const reportText = await stepGenerate({ today, yesterday, state });
     await stepSave({ today, reportText });
     await stepSendFeishu(reportText);
     return { generated: true, date: today };

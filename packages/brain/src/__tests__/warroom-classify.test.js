@@ -76,8 +76,6 @@ describe('classifyGroup', () => {
 });
 
 describe('classifyKind', () => {
-  it('content-pipeline → pipeline', () => { expect(classifyKind('content-pipeline')).toBe('pipeline'); });
-  it('platform_scraper → scraper', () => { expect(classifyKind('platform_scraper')).toBe('scraper'); });
   it('dev → task', () => { expect(classifyKind('dev')).toBe('task'); });
   it('未知 → task', () => { expect(classifyKind('whatever')).toBe('task'); });
 });

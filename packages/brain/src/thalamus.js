@@ -524,7 +524,7 @@ ${buildDomainRouteTable()}
 ### 路由规则
 1. 判断用户意图属于哪个 domain
 2. 在 create_task 的 params 中设置 domain 字段
-3. task_type 使用该 domain 角色的默认值（coding→dev, planning→initiative_plan, content→content-pipeline, finance→dev, operations→data）
+3. task_type 使用该 domain 角色的默认值（coding→dev, planning→initiative_plan, finance→dev, operations→data）
 4. 不确定 domain 时默认 coding
 
 ### domain 判断关键词

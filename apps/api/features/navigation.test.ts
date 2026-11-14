@@ -26,8 +26,8 @@ describe('Cecelia 主导航', () => {
         ],
       },
       {
-        label: 'AI 管理', path: '/brain-models',
-        children: ['/brain-models', '/account-usage', '/system/team', '/knowledge/memory', '/settings'],
+        label: 'AI 管理', path: '/system/team',
+        children: ['/account-usage', '/system/team', '/knowledge/memory', '/settings'],
       },
       {
         label: '机器资源', path: '/machines',
@@ -36,13 +36,13 @@ describe('Cecelia 主导航', () => {
     ]);
   });
 
-  it('22 个终端入口去重且全部登记页面加载器', () => {
+  it('21 个终端入口去重且全部登记页面加载器', () => {
     const leaves = config.navGroups.flatMap(group => group.items.flatMap(item => item.children ?? [item]));
-    expect(leaves).toHaveLength(22);
+    expect(leaves).toHaveLength(21);
     expect(leaves.find(item => item.path === '/website-functions')?.label).toBe('网站功能');
     expect(config.allRoutes.find(route => route.path === '/ledger')?.component).toBe('LedgerPage');
     expect(leaves.find(item => item.path === '/account-usage')?.label).toBe('AI 额度');
-    expect(new Set(leaves.map(item => item.path)).size).toBe(22);
+    expect(new Set(leaves.map(item => item.path)).size).toBe(21);
     for (const item of leaves) {
       const route = config.allRoutes.find(route => route.path === item.path);
       expect(route?.component, item.path).toBeTruthy();
@@ -50,7 +50,7 @@ describe('Cecelia 主导航', () => {
     }
   });
 
-  it('主导航22入口实际加载模块并导出可渲染页面', async () => {
+  it('主导航21入口实际加载模块并导出可渲染页面', async () => {
     const leaves = config.navGroups.flatMap(group => group.items.flatMap(item => item.children ?? [item]));
     for (const item of leaves) {
       const route = config.allRoutes.find(route => route.path === item.path)!;
@@ -84,7 +84,7 @@ describe('Cecelia 主导航', () => {
       '/workbench/inbox', '/cecelia/chat', '/workbench/overview', '/workbench/tasks', '/workbench/projections',
       '/gtd', '/gtd/area', '/gtd/okr', '/gtd/projects', '/gtd/tasks', '/gtd/knowledge',
       '/today', '/pipeline', '/strategist', '/okr-roadmap',
-      '/content-factory', '/knowledge/content', '/knowledge/decisions',
+      '/knowledge/decisions',
       '/knowledge/designs', '/knowledge/diary', '/cecelia/diary', '/clips',
     ]) {
       expect(visiblePaths, path).not.toContain(path);

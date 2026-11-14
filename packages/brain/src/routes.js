@@ -10,15 +10,10 @@ import goalsRouter from './routes/goals.js';
 import analyticsRouter from './routes/analytics.js';
 import brainMetaRouter from './routes/brain-meta.js';
 import opsRouter from './routes/ops.js';
-import publishResultsRouter from './routes/publish-results.js';
-import publishJobsRouter from './routes/publish-jobs.js';
 import capacityBudgetRouter from './routes/capacity-budget.js';
 import registryRouter from './routes/registry.js';
 import machinesRouter from './routes/machines.js';
 import skillsRouter from './routes/skills.js';
-import contentPipelineRouter from './routes/content-pipeline.js';
-import socialTrendingRouter from './routes/social-trending.js';
-import topicsRouter from './routes/topics.js';
 // llm-service 在 server.js 里以 /api/brain/llm-service 独立挂载（带 internalAuth 中间件）
 import warroomRouter from './routes/warroom.js';
 import kr3Router from './routes/kr3.js';
@@ -48,7 +43,7 @@ router.use('/common-runner', createCommonRunnerRouter({ pool: directoryPool }));
 router.use('/workflow-assembly-maintenance',createNativeAssemblyRouter({pool:nativeAssemblyPool}));
 router.use('/session-provenance', sessionProvenanceRouter);
 router.use('/projections/notion/directory', createDirectoryProjectionRouter({ pool: directoryPool }));
-for (const subRouter of [statusRouter, tasksRouter, tickRouter, actionsRouter, executionRouter, goalsRouter, analyticsRouter, brainMetaRouter, opsRouter, publishResultsRouter, publishJobsRouter, capacityBudgetRouter]) {
+for (const subRouter of [statusRouter, tasksRouter, tickRouter, actionsRouter, executionRouter, goalsRouter, analyticsRouter, brainMetaRouter, opsRouter, capacityBudgetRouter]) {
   router.stack.push(...subRouter.stack);
 }
 
@@ -60,16 +55,6 @@ router.use('/registry', registryRouter);
 
 // 机器拓扑 — 叠加 Tailscale 状态 + 冲突检测
 router.use('/machines', machinesRouter);
-
-// 内容 pipeline — GET /pipelines/:id/stats 等路由
-router.use('/pipelines', contentPipelineRouter);
-
-// 社媒热点 — GET /social/trending
-router.use('/social', socialTrendingRouter);
-
-// 内容选题候选库 — GET /topics
-router.use('/topics', topicsRouter);
-
 
 // 战情室统一 feed — GET /warroom/feed（聚合所有任务，按 Area/Group 分组）
 router.use('/warroom', warroomRouter);

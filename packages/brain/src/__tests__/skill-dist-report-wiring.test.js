@@ -79,18 +79,18 @@ describe('晨报 Bark：skill 分发漂移一行', () => {
 });
 
 describe('日报：skill 分发漂移板块', () => {
-  const base = ['2026-09-25', '2026-09-24', { count: 0, keywords: [] }, [], [], 0];
+  const base = ['2026-09-25', '2026-09-24', ];
 
   it('传入漂移结果 → 日报含板块与 🟡 AMBER，点名机器与 skill', () => {
-    const text = buildReportText(...base, null, null, driftState());
+    const text = buildReportText(...base, { skillDist: driftState() });
     expect(text).toContain('== skill 分发漂移 ==');
     expect(text).toMatch(/🟡 AMBER xian-m1\/claude/);
   });
 
   it('无数据（null / 省略）→ 不出板块，原板块不受影响', () => {
-    expect(buildReportText(...base, null, null, null)).not.toContain('skill 分发漂移');
+    expect(buildReportText(...base, { skillDist: null })).not.toContain('skill 分发漂移');
     expect(buildReportText(...base)).not.toContain('skill 分发漂移');
-    expect(buildReportText(...base)).toContain('== 异常告警 ==');
+    expect(buildReportText(...base)).toContain('Brain 运行日报');
   });
 
   it('generateDailyReport 读 working_memory 的检测结果进入日报正文；读取失败不拖垮日报', async () => {
@@ -110,7 +110,7 @@ describe('日报：skill 分发漂移板块', () => {
         }),
       };
       const out = await generateDailyReport(p, new Date('2026-09-25T01:01:00Z'));
-      return { out, report: saved.map((x) => String(x[1])).find((v) => v.includes('ZenithJoy')) ?? '' };
+      return { out, report: saved.map((x) => String(x[1])).find((v) => v.includes('Brain 运行日报')) ?? '' };
     };
     const a = await run(driftState());
     expect(a.out.generated).toBe(true);

@@ -160,7 +160,6 @@ features:
         - packages/brain/src/__tests__/websocket-events.test.js
         - packages/brain/src/__tests__/websocket-new-events.test.js
         - packages/brain/src/__tests__/websocket.test.js
-        - packages/brain/src/__tests__/weekly-report-generator.test.js
         - packages/brain/src/__tests__/work-streams-route.test.js
         - packages/brain/src/utils/format-duration.test.js
       integration:
@@ -259,7 +258,6 @@ features:
             - packages/brain/src/__tests__/websocket-events.test.js
             - packages/brain/src/__tests__/websocket-new-events.test.js
             - packages/brain/src/__tests__/websocket.test.js
-            - packages/brain/src/__tests__/weekly-report-generator.test.js
             - packages/brain/src/__tests__/work-streams-route.test.js
             - packages/brain/src/utils/format-duration.test.js
           integration:

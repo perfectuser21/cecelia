@@ -97,13 +97,3 @@ describe('task-router 已有类型不受影响', () => {
     expect(mod.isValidTaskType('local_expand')).toBe(false);
   });
 });
-
-describe('model-registry intent_expand agent 注册', () => {
-  it('D7: AGENTS 包含 intent_expand agent', async () => {
-    const mod = await import('../model-registry.js');
-    const agent = mod.AGENTS.find(a => a.id === 'intent_expand');
-    expect(agent).toBeDefined();
-    expect(agent.layer).toBe('executor');
-    expect(agent.allowed_models).toContain('claude-sonnet-4-6');
-  });
-});

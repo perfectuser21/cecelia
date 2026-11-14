@@ -130,7 +130,6 @@ router.get('/workbench/summary', projectionLimiter, async (_req, res) => {
            COUNT(*) FILTER (WHERE status IN ('queued','pending') AND claimed_by IS NULL)::int AS waiting,
            COUNT(*) FILTER (WHERE ${queueLaneSql('tasks')}='ready')::int AS ready,
            COUNT(*) FILTER (WHERE ${queueLaneSql('tasks')}='ide')::int AS ide,
-           COUNT(*) FILTER (WHERE ${queueLaneSql('tasks')}='pipeline')::int AS pipeline,
            COUNT(*) FILTER (WHERE status='in_progress' AND claimed_by IS NOT NULL)::int AS in_progress,
            COUNT(*) FILTER (WHERE status IN ('blocked','paused','quarantined','failed'))::int AS blocked,
            COUNT(*) FILTER (WHERE status='completed')::int AS done,

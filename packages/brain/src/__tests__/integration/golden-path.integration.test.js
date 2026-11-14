@@ -1,5 +1,5 @@
 /**
- * 真实 PostgreSQL 核心链路：Brain 调度、内容流水线和 Deploy 状态。
+ * 真实 PostgreSQL 核心链路：Brain 调度和 Deploy 状态。
  * content_type 注册表及外部 AI/告警依赖使用 mock，数据库与 HTTP 路由不 mock。
  */
 
@@ -87,16 +87,6 @@ vi.mock('../../task-updater.js', () => ({
   broadcastTaskState: vi.fn(),
 }));
 
-// Path 2: content-pipeline 依赖的注册表 mock
-vi.mock('../../content-types/content-type-registry.js', () => ({
-  listContentTypes: vi.fn().mockResolvedValue(['golden-path-test-type']),
-  getContentType: vi.fn().mockResolvedValue({ notebook_id: null }),
-  getContentTypeFromYaml: vi.fn().mockReturnValue(null),
-  listContentTypesFromYaml: vi.fn().mockReturnValue([]),
-}));
-
-// content-pipeline orchestrator 已删除（搬到 ZJ pipeline-worker），不再 mock。
-
 vi.mock('../../llm-caller.js', () => ({
   callLLM: vi.fn(),
   callLLMStream: vi.fn(),
@@ -183,23 +173,21 @@ async function makeApp() {
   const app = express();
   app.use(express.json());
 
-  const [taskTasksRouter, contentPipelineRouter, goalsRouter, opsRouter] = await Promise.all([
+  const [taskTasksRouter, goalsRouter, opsRouter] = await Promise.all([
     import('../../routes/task-tasks.js').then(m => m.default),
-    import('../../routes/content-pipeline.js').then(m => m.default),
     import('../../routes/goals.js').then(m => m.default),
     import('../../routes/ops.js').then(m => m.default),
   ]);
 
   // 与 server.js 挂载路径一致
   app.use('/api/brain/tasks', taskTasksRouter);
-  app.use('/api/brain/pipelines', contentPipelineRouter);
   app.use('/api/brain', goalsRouter);
   app.use('/api/brain', opsRouter);
 
   return app;
 }
 
-describe('Golden Path E2E — Brain 3 条核心链路（真实 PostgreSQL）', () => {
+describe('Golden Path E2E — Brain 2 条核心链路（真实 PostgreSQL）', () => {
   let app;
 
   beforeAll(async () => {
@@ -314,82 +302,6 @@ describe('Golden Path E2E — Brain 3 条核心链路（真实 PostgreSQL）', (
     });
   });
 
-  // Path 2: 内容流水线触发链路
-  // POST /api/brain/pipelines → 写入 tasks 表 → GET 可查询
-
-  describe('Path 2: 内容流水线触发链路', () => {
-    let createdPipelineId;
-
-    it('POST /api/brain/pipelines — 触发 pipeline，DB 写入 content-pipeline 任务，返回 id', async () => {
-      const res = await request(app)
-        .post('/api/brain/pipelines')
-        .send({
-          keyword: `golden-path-smoke-test-${runKey}`,
-          content_type: 'golden-path-test-type',
-          priority: 'P2',
-        })
-        .expect(201);
-
-      expect(res.body).toHaveProperty('id');
-      expect(res.body.title).toContain(`golden-path-smoke-test-${runKey}`);
-
-      createdPipelineId = res.body.id;
-      insertedTaskIds.push(createdPipelineId);
-    });
-
-    it('GET /api/brain/pipelines — 列表包含刚创建的 pipeline 记录', async () => {
-      expect(createdPipelineId).toBeDefined();
-
-      const res = await request(app)
-        .get('/api/brain/pipelines')
-        .expect(200);
-
-      expect(Array.isArray(res.body)).toBe(true);
-      const ids = res.body.map(t => t.id);
-      expect(ids).toContain(createdPipelineId);
-    });
-
-    it('DB 中 pipeline 任务 task_type = content-pipeline', async () => {
-      expect(createdPipelineId).toBeDefined();
-
-      const dbRes = await testPool.query(
-        'SELECT task_type, status, payload FROM tasks WHERE id = $1',
-        [createdPipelineId]
-      );
-
-      expect(dbRes.rows).toHaveLength(1);
-      expect(dbRes.rows[0].task_type).toBe('content-pipeline');
-      expect(dbRes.rows[0].status).toBe('queued');
-
-      // payload 包含 keyword 和 content_type
-      const payload = dbRes.rows[0].payload;
-      expect(payload.keyword).toBe(`golden-path-smoke-test-${runKey}`);
-      expect(payload.content_type).toBe('golden-path-test-type');
-    });
-
-    it('POST /api/brain/pipelines — 缺少 keyword 返回 400', async () => {
-      const res = await request(app)
-        .post('/api/brain/pipelines')
-        .send({ content_type: 'golden-path-test-type' })
-        .expect(400);
-
-      expect(res.body).toHaveProperty('error');
-    });
-
-    it('POST /api/brain/pipelines — 未知 content_type 返回 400', async () => {
-      const { listContentTypes } = await import('../../content-types/content-type-registry.js');
-      listContentTypes.mockResolvedValueOnce(['golden-path-test-type']);
-
-      const res = await request(app)
-        .post('/api/brain/pipelines')
-        .send({ keyword: 'test', content_type: 'nonexistent-type' })
-        .expect(400);
-
-      expect(res.body.error).toContain('nonexistent-type');
-    });
-  });
-
-  // ═══════════════════════════════════════════════════════════════════════════
   // Path 3: Deploy 链路完整性
   // health 端点 + deploy/status 端点存在且响应正常
   // ═══════════════════════════════════════════════════════════════════════════

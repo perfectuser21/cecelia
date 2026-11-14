@@ -5,7 +5,7 @@
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { BookOpen, PenTool, Brain, Sparkles, ArrowRight } from 'lucide-react';
+import { BookOpen, Brain, Sparkles, ArrowRight } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 interface KnowledgeCard {
@@ -18,7 +18,6 @@ interface KnowledgeCard {
 }
 
 const cards: KnowledgeCard[] = [
-  { id: 'content', label: 'Content Studio', desc: '内容创作与媒体资源', icon: PenTool, path: '/knowledge/content', color: 'text-pink-400' },
   { id: 'brain', label: 'Super Brain', desc: '知识库与笔记', icon: Brain, path: '/knowledge/brain', color: 'text-purple-400' },
   { id: 'digestion', label: '知识消化', desc: '反刍洞察与知识归档', icon: Sparkles, path: '/knowledge/digestion', color: 'text-amber-400' },
 ];

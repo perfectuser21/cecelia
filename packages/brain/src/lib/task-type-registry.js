@@ -50,14 +50,12 @@ const CODEX = 'codex_slot';          // slot-allocator countCodexInProgress
 const OCPASS = 'openclaw_passthrough'; // dispatcher 任务池总闸关着时仍可放行的类型（穿透 MMV 网关，不占 fleet 槽位）
 const GUIDE = 'allocation_guided';   // dispatch-allocation-guide GUIDED_TASK_TYPES
 const CM = 'coding_mutation';        // routes/task-tasks CODING_MUTATION_TASK_TYPES
-const FC = 'family:content';         // actions.js CONTENT_TASK_TYPES
 const FR = 'family:research';        // actions.js RESEARCH_TASK_TYPES
 const FV = 'family:review';          // actions.js REVIEW_TASK_TYPES
 const FK = 'family:coding';          // actions.js CODING_TASK_TYPES
 const RECUR = 'recurring';           // task-cleanup RECURRING_TASK_TYPES
 const PROT = 'protected';            // task-cleanup PROTECTED_TASK_TYPES
 const AUTHSKIP = 'auth_recovery_skip'; // credential-expiry-checker SKIP_TASK_TYPES
-const PIPELN = 'queue_lane_pipeline'; // task-queue-lanes PIPELINE_TASK_TYPES
 const NOGOAL = 'no_goal_required';   // actions.js isSystemTask systemTypes
 const ASYNCCB = 'async_callback';    // task-router.js ASYNC_CALLBACK_TYPES
 const REVIEWISO = 'review_isolation';
@@ -66,7 +64,8 @@ const RECMUT = 'recurring_coding_mutation';
 
 export const RETIRED_DEVELOPMENT_CODE = 'task_type_retired';
 export const RETIRED_DEVELOPMENT_TASK_TYPES = Object.freeze(['sprint_planner', 'sprint_contract_propose', 'sprint_contract_review', 'sprint_generate', 'sprint_evaluate', 'sprint_fix', 'sprint_report', 'harness_planner', 'harness_contract_propose', 'harness_contract_review', 'harness_generate', 'harness_generator', 'harness_ci_watch', 'harness_evaluate', 'harness_fix', 'harness_deploy_watch', 'harness_report', 'harness_initiative', 'harness_task', 'harness_final_e2e', 'harness_intervention', 'golden_path_proposal', 'harness_controller']);
-const retiredDevelopmentTypes = new Set(RETIRED_DEVELOPMENT_TASK_TYPES);
+export const RETIRED_CONTENT_TASK_TYPES = Object.freeze(['content-research', 'content-generate', 'content-review', 'content-export', 'content_publish', 'content-copywriting', 'content-copy-review', 'content-image-review', 'platform_scraper']);
+const retiredDevelopmentTypes = new Set([...RETIRED_DEVELOPMENT_TASK_TYPES, ...RETIRED_CONTENT_TASK_TYPES]);
 export function isRetiredDevelopmentTask(task) {
   return retiredDevelopmentTypes.has(task?.task_type)
     || task?.kernel_continuation === true || task?.payload?.kernel_continuation === true
@@ -81,6 +80,7 @@ export function assertActiveDevelopmentTask(task) {
 }
 
 export const TASK_TYPE_REGISTRY = Object.freeze({
+  'content-pipeline': workflow(T('external', false, false, 'external-worker', 'external-worker', true, false, 'none', true, [V, ANC])),
   dev:                 T('none', true,  true,  'headed-session', 'none', true, true, 'none', true, [V, BP, GUIDE, CM, FK, RECMUT, NKR, GPSCOPE, DEVDASH, WARROOM, GPIMPL]),
   review:              T('codex-review', false, false, null, 'kernel', true, true, 'none', true, [V, FV, NKR, DEVDASH]),
   talk:                T('codex-bridge', false, false, null, 'none', true, true, 'none', true, [V, ANC, FR]),
@@ -118,15 +118,6 @@ export const TASK_TYPE_REGISTRY = Object.freeze({
   okr_initiative_plan: T('codex-bridge', false, false, null, 'none', true, true, 'none', true, [V, FR]),
   okr_scope_plan:      T('codex-bridge', false, false, null, 'none', true, true, 'none', true, [V, FR]),
   okr_project_plan:    T('codex-bridge', false, false, null, 'none', true, true, 'none', true, [V, FR]),
-  'content-pipeline':     workflow(T('external', false, false, 'external-worker', 'external-worker', true, false, 'none', true, [V, SYS, ESC, FC, CX, PIPELN, ANC, WARROOM])),
-  'content-research':     T('external', false, false, 'external-worker', 'external-worker', true, false, 'none', true, [V, SYS, ESC, FC, CX, PIPELN, ANC]),
-  'content-generate':     T('external', false, false, 'external-worker', 'external-worker', true, false, 'none', true, [V, SYS, ESC, FC, CX, PIPELN, ANC]),
-  'content-review':       T('none', false, false, null, 'none', true, true, 'none', true, [PIPELN]),
-  'content-export':       T('external', false, false, 'external-worker', 'external-worker', true, false, 'none', true, [V, SYS, ESC, FC, CX, PIPELN, ANC]),
-  content_publish:        T('none', false, false, null, 'none', true, true, 'none', true, [V, SYS, BP, FC, CX, PIPELN, ANC]),
-  'content-copywriting':  T('external', false, false, 'external-worker', 'external-worker', true, false, 'none', true, [V, SYS, ESC, FC, CX, PIPELN, ANC]),
-  'content-copy-review':  T('external', false, false, 'external-worker', 'external-worker', true, false, 'none', true, [V, SYS, ESC, FC, CX, PIPELN, ANC]),
-  'content-image-review': T('external', false, false, 'external-worker', 'external-worker', true, false, 'none', true, [V, SYS, ESC, FC, CX, PIPELN, ANC]),
   pipeline_rescue:        T('none', true, true, null, 'kernel', true, true, 'none', true, [CM, FK, AUTHSKIP, RECMUT]),
   crystallize:          workflow(T('codex-bridge', false, false, null, 'kernel', true, true, 'none', true, [V, SYS, ANC, CODEX])),
   crystallize_scope:    T('codex-bridge', false, false, null, 'kernel', true, true, 'none', true, [V, SYS, ANC, CODEX]),
@@ -134,7 +125,6 @@ export const TASK_TYPE_REGISTRY = Object.freeze({
   crystallize_verify:   T('codex-bridge', false, false, null, 'kernel', true, true, 'none', true, [V, SYS, ANC, CODEX]),
   crystallize_register: T('codex-bridge', false, false, null, 'kernel', true, true, 'none', true, [V, SYS, ANC, CODEX]),
   cecelia_event:           T('none', false, false, null, 'none', true, true, 'none', true, []),
-  platform_scraper:         T('brain-internal', false, false, null, 'none', true, false, 'none', true, [V, WARROOM]),
   trigger_backup:           T('none', false, false, null, 'none', true, true, 'none', true, []),
   staging_e2e:              T('codex-review', false, false, null, 'none', true, true, 'none', true, [V, ANC, FV]),
   skill_eval:               T('none', false, false, null, 'none', true, true, 'none', true, []),
@@ -173,7 +163,7 @@ export function tagged(tag) {
 }
 
 export const TICK_DISPATCH_EXCLUDED = Object.freeze(
-  [...RETIRED_DEVELOPMENT_TASK_TYPES, ...Object.entries(TASK_TYPE_REGISTRY).filter(([, e]) => e.db && !e.tick_dispatchable).map(([k]) => k)],
+  [...RETIRED_DEVELOPMENT_TASK_TYPES, ...RETIRED_CONTENT_TASK_TYPES, ...Object.entries(TASK_TYPE_REGISTRY).filter(([, e]) => e.db && !e.tick_dispatchable).map(([k]) => k)],
 );
 export const GUIDED_TASK_TYPES = tagged(GUIDE);
 export const BACKPRESSURE_BYPASS_TASK_TYPES = tagged(BP);
@@ -186,7 +176,6 @@ export const LAYER_RETIRED_TASK_TYPES = Object.freeze([
   'scope_plan', 'initiative_plan', 'project_plan',
   'okr_scope_plan', 'okr_initiative_plan', 'okr_project_plan',
 ]);
-export const CONTENT_TASK_TYPES = tagged(FC);
 export const RESEARCH_TASK_TYPES = tagged(FR);
 export const REVIEW_TASK_TYPES = tagged(FV);
 export const REVIEW_SKILL_BINDING_TASK_TYPES = tagged(REVIEW_SKILL);
@@ -224,15 +213,6 @@ export const CRYSTALLIZE_ORCHESTRATOR_STAGE_LABELS = Object.freeze({
   crystallize_register: 'Register',
 });
 
-export const DAILY_SMOKE_STAGE_ORDER = Object.freeze([
-  'content-research',
-  'content-copywriting',
-  'content-copy-review',
-  'content-generate',
-  'content-image-review',
-  'content-export',
-]);
-
 export const EXEC_STATUS_US_TASK_TYPES = Object.freeze(['dev', 'review', 'qa', 'audit']);
 
 export const EXEC_STATUS_HK_TASK_TYPES = Object.freeze(['talk', 'research', 'data']);
@@ -242,11 +222,6 @@ export const ESCALATION_EXEMPT_TASK_TYPES = tagged(ESC);
 export const CANCEL_EXEMPT_TYPES = tagged(CX);
 export const AUTH_RECOVERY_SKIP_TASK_TYPES = tagged(AUTHSKIP);
 export const NIGHTLY_EXCLUDED_TASK_TYPES = tagged(NIT);
-export const PIPELINE_TASK_TYPES = tagged(PIPELN);
-
-export const CONTENT_PIPELINE_TYPES = Object.freeze(
-  Object.entries(TASK_TYPE_REGISTRY).filter(([, e]) => e.executor === 'external-worker').map(([k]) => k),
-);
 
 export const EXTERNAL_WATCHDOG_TASK_TYPES = Object.freeze(
   Object.entries(TASK_TYPE_REGISTRY).filter(([, e]) => e.watchdog === 'external-worker').map(([k]) => k),
@@ -264,7 +239,7 @@ export const REVIEW_ISOLATION_TASK_TYPES = tagged(REVIEWISO);
 
 export const RECURRING_CODING_MUTATION_TASK_TYPES = tagged(RECMUT);
 export const DB_WHITELISTED_TASK_TYPES = Object.freeze(
-  [...RETIRED_DEVELOPMENT_TASK_TYPES.filter(type=>type!=='harness_controller'), ...Object.entries(TASK_TYPE_REGISTRY).filter(([, e]) => e.db).map(([k]) => k)],
+  [...RETIRED_DEVELOPMENT_TASK_TYPES.filter(type=>type!=='harness_controller'), ...RETIRED_CONTENT_TASK_TYPES, ...Object.entries(TASK_TYPE_REGISTRY).filter(([, e]) => e.db).map(([k]) => k)],
 );
 
 export const EXECUTOR_KIND_FOR_TASK_TYPE = Object.freeze(
@@ -302,14 +277,6 @@ export const SKILL_WHITELIST = Object.freeze({
   'strategy_session': '/strategy-session',
   'intent_expand': '/intent-expand',  // 意图扩展 → US 本机，查 OKR/Vision 链路补全 PRD
   'initiative_execute': '/dev',       // Initiative 执行 → US 本机，/dev 全流程
-  'content-pipeline': '/content-creator',
-  'content-research': '/notebooklm',
-  'content-copywriting': '/content-creator',
-  'content-copy-review': '/content-creator',
-  'content-generate': '/content-creator',
-  'content-image-review': '/content-creator',
-  'content-export': '/content-creator',
-  'content_publish': '/content-creator',  // 发布阶段 → executor 按 payload.platform 路由到对应 publisher skill
   'prd_review': '/prd-review',              // PRD 审查
   'spec_review': '/spec-review',            // Spec 审查
   'code_review_gate': '/code-review-gate',  // 代码质量门禁
@@ -322,7 +289,6 @@ export const SKILL_WHITELIST = Object.freeze({
   'okr_initiative_plan': '/decomp',  // OKR Scope 内规划下一个 Initiative
   'okr_scope_plan': '/decomp',       // OKR Project 内规划下一个 Scope
   'okr_project_plan': '/decomp',     // OKR Project 层完成后规划
-  'platform_scraper': '/media-scraping',
 });
 
 export const LOCATION_MAP = Object.freeze({
@@ -356,14 +322,6 @@ export const LOCATION_MAP = Object.freeze({
   'talk': 'xian',     // 对话 → 西安 Codex (general，任意可用机器)
   'research': 'xian', // 深度调研 → 西安 Codex (general，任意可用机器)
   'data': 'xian',     // 数据处理 → 西安 Codex (general)
-  'content-pipeline': 'xian',  // Pipeline 编排入口 → 西安 Codex
-  'content-research': 'xian',  // 调研阶段 → 西安 (/notebooklm)
-  'content-copywriting': 'xian', // 文案生成 → 西安 (/content-creator)
-  'content-copy-review': 'xian', // 文案审核 → 西安（纯规则检查）
-  'content-generate': 'xian',  // 图片生成 → 西安 (/content-creator)
-  'content-image-review': 'xian', // 图片审核 → 西安（规则+视觉检查）
-  'content-export': 'xian',    // 导出阶段 → 西安 (card-renderer.mjs)
-  'content_publish': 'us',     // 发布阶段 → US 本机（publisher skills 需要浏览器 CDP，在 US Mac mini 跑）
   'ci_patrol': 'us',  // CI 巡检 → US 本机（需读本地 repo + gh + Brain DB）
   'strategist_decision': 'us',  // line-strategist 需读 git 历史 + decisions API → US
   'prd_review': 'us',            // PRD 审查 → US 本机 Codex
@@ -376,7 +334,6 @@ export const LOCATION_MAP = Object.freeze({
   'okr_scope_plan': 'xian',        // OKR Scope 规划 → 西安 Codex (B類，/decomp skill)
   'okr_project_plan': 'xian',      // OKR Project 规划 → 西安 Codex (B類，/decomp skill)
   'pipeline_rescue': 'us',        // Pipeline 救援 → US 本机（需读 .dev-mode + worktree）
-  'platform_scraper': 'us',       // 数据采集任务 → Brain 内部处理（不走外部 executor，见 post-publish-data-collector.js）
   'staging_e2e': 'us',          // Slice9: staging E2E native 执行 → US 本机
 });
 
@@ -423,15 +380,6 @@ export const TASK_REQUIREMENTS = Object.freeze({
   'explore':            ['general'],
   'data':               ['general'],
   'dept_heartbeat':     ['general'],
-  'content-pipeline':   ['general'],
-  'content-research':   ['general'],
-  'content-copywriting': ['general'],
-  'content-copy-review': ['general'],
-  'content-generate':   ['general'],
-  'content-image-review': ['general'],
-  'content-export':     ['general'],
-  'platform_scraper':   ['has_browser'],  // 需要 CDP 浏览器接入各平台
-  'content_publish':    ['has_browser'],  // 发布 skill（douyin/kuaishou 等）需要 CDP 浏览器控制
 });
 
 export const EXECUTOR_SKILL_MAP = Object.freeze({
@@ -449,19 +397,10 @@ export const EXECUTOR_SKILL_MAP = Object.freeze({
   'suggestion_plan': '/plan',       // Suggestion 层级识别 → /plan skill
   'architecture_design': '/architect', // Initiative 级架构设计 → /architect skill
   'strategy_session': '/strategy-session',
-  'content-pipeline': '/content-creator',      // 编排入口：触发完整内容生成流程
-  'content-research': '/notebooklm',           // 调研阶段：NotebookLM 深度调研
-  'content-copywriting': '/content-creator',   // 文案生成阶段
-  'content-copy-review': '/content-creator',   // 文案审核阶段
-  'content-generate': '/content-creator',      // 生成阶段：图片+文案生成
-  'content-image-review': '/content-creator',  // 图片审核阶段
-  'content-review': '/content-creator',        // 审核阶段：AI 质量评分
-  'content-export': '/content-creator',        // 导出阶段：NAS 存储 + manifest
   'qa': '/code-review',
   'audit': '/code-review',
   'intent_expand': '/intent-expand',  // 意图扩展：查 OKR/Vision 链路补全 PRD
   'initiative_execute': '/dev',       // Initiative 执行：/dev 全流程
-  'content_publish': '/dev',          // fallback：正常由上方平台路由拦截
   'prd_review': '/prd-review',              // PRD 审查
   'spec_review': '/spec-review',            // Spec 审查
   'code_review_gate': '/code-review-gate',  // 代码质量门禁
@@ -470,7 +409,6 @@ export const EXECUTOR_SKILL_MAP = Object.freeze({
   'project_plan': '/decomp',      // Phase 4: Project 内规划下一个 Scope
   'pipeline_rescue': '/dev',       // 卡住的 pipeline 接管修复 → /dev 全流程
   'codex_test_gen': '/codex-test-gen',  // Codex 自动生成测试 → 西安 M4
-  'platform_scraper': '/media-scraping', // 平台数据采集 → CN Mac mini (/media-scraping skill)
   'strategist_decision': '/line-strategist',  // Line 军师决策（PR3674 终态钩子派发，见 line-strategist-dispatch.js）
 });
 
@@ -483,3 +421,9 @@ export const EXECUTOR_MODE_MAP = Object.freeze({
   'qa': 'bypassPermissions',
   'audit': 'bypassPermissions',
 });
+
+export function isExternalWorkerTask(task) {
+  const entry = getTaskType(task?.task_type);
+  return entry?.surface === 'external' && entry.executor === 'external-worker'
+    && entry.tick_dispatchable === false;
+}

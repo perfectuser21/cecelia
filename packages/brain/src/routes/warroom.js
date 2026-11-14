@@ -2,7 +2,7 @@
  * routes/warroom.js — 战情室统一 feed API
  *
  * GET /api/brain/warroom/feed?days=7
- *   聚合所有"跑起来的任务"（dev / coding_workflow / content-pipeline / platform_scraper），
+ *   聚合所有"跑起来的任务"（dev / coding_workflow 等现役执行类型），
  *   按 Area → Group 两级分组，返回通用任务统计。
  *
  * 分组/聚合逻辑全在 warroom-classify.js（纯函数，已单测）；本 route 只做 SQL + 装配。

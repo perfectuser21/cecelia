@@ -16,12 +16,10 @@ const restored = [
   "packages/brain/src/__tests__/tasks-feedback.test.js",
   "packages/brain/src/__tests__/tick-codex-immune.test.js",
   "packages/brain/src/__tests__/startup-sync.test.js",
-  "packages/brain/src/__tests__/model-registry.test.js",
   "packages/brain/src/__tests__/dept-heartbeat.test.js",
   "packages/brain/src/__tests__/services/memory-service.test.js",
   "packages/brain/src/__tests__/code-review-trigger.test.js",
   "packages/brain/src/__tests__/executor-retry-strategy.test.js",
-  "packages/brain/src/__tests__/content-type-registry.test.js",
   "packages/brain/src/__tests__/debt-04-planner-score.test.js",
   "packages/brain/src/__tests__/debt-04-scratch-guard.test.js"
 ];

@@ -225,9 +225,7 @@ vi.mock('../../canary-drill-scheduler.js', () => ({
 vi.mock('../../credentials-health-scheduler.js', () => ({
   runCredentialsHealthCheck: externalBoundaryMocks.runCredentialsHealthCheck,
 }));
-vi.mock('../../social-media-sync.js', () => ({
-  syncSocialMediaData: externalBoundaryMocks.syncSocialMediaData,
-}));
+
 vi.mock('../../durable/daily-report-router.js', () => ({
   routeDailyReport: externalBoundaryMocks.routeDailyReport,
 }));

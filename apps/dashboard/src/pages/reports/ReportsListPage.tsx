@@ -61,8 +61,6 @@ export default function ReportsListPage() {
   const [merged, setMerged] = useState<MergedReport[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [generating, setGenerating] = useState(false);
-  const [generatingWeekly, setGeneratingWeekly] = useState(false);
 
   const fetchReports = useCallback(async () => {
     try {
@@ -89,40 +87,6 @@ export default function ReportsListPage() {
     fetchReports();
   }, [fetchReports]);
 
-  const handleGenerate = async () => {
-    setGenerating(true);
-    try {
-      const res = await fetch('/api/brain/reports/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: '48h_system_report' }),
-      });
-      if (!res.ok) throw new Error(`生成失败: HTTP ${res.status}`);
-      await fetchReports();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '生成失败');
-    } finally {
-      setGenerating(false);
-    }
-  };
-
-  const handleGenerateWeekly = async () => {
-    setGeneratingWeekly(true);
-    try {
-      const res = await fetch('/api/brain/reports/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: 'weekly_report' }),
-      });
-      if (!res.ok) throw new Error(`生成失败: HTTP ${res.status}`);
-      await fetchReports();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '周报生成失败');
-    } finally {
-      setGeneratingWeekly(false);
-    }
-  };
-
   return (
     <div style={{
       minHeight: '100vh',
@@ -137,7 +101,7 @@ export default function ReportsListPage() {
             系统简报
           </h1>
           <p style={{ fontSize: '13px', color: '#8b949e', marginTop: '4px' }}>
-            系统简报 · 48h 摘要 · 内容周报
+            系统运行简报历史
           </p>
         </div>
         <div style={{ display: 'flex', gap: '8px' }}>
@@ -154,38 +118,6 @@ export default function ReportsListPage() {
             }}
           >
             刷新
-          </button>
-          <button
-            onClick={handleGenerateWeekly}
-            disabled={generatingWeekly}
-            style={{
-              padding: '8px 16px',
-              borderRadius: '8px',
-              border: '1px solid rgba(129,140,248,0.3)',
-              background: 'rgba(129,140,248,0.1)',
-              color: '#818cf8',
-              fontSize: '13px',
-              cursor: generatingWeekly ? 'not-allowed' : 'pointer',
-              opacity: generatingWeekly ? 0.6 : 1,
-            }}
-          >
-            {generatingWeekly ? '生成中...' : '手动生成周报'}
-          </button>
-          <button
-            onClick={handleGenerate}
-            disabled={generating}
-            style={{
-              padding: '8px 16px',
-              borderRadius: '8px',
-              border: '1px solid rgba(56,189,248,0.3)',
-              background: 'rgba(56,189,248,0.1)',
-              color: '#38bdf8',
-              fontSize: '13px',
-              cursor: generating ? 'not-allowed' : 'pointer',
-              opacity: generating ? 0.6 : 1,
-            }}
-          >
-            {generating ? '生成中...' : '手动生成'}
           </button>
         </div>
       </div>
@@ -242,7 +174,7 @@ export default function ReportsListPage() {
           <div style={{ fontSize: '32px', marginBottom: '12px' }}>📊</div>
           <div style={{ fontSize: '14px' }}>暂无简报记录</div>
           <div style={{ fontSize: '12px', marginTop: '8px', color: '#6e7681' }}>
-            点击「手动生成」创建第一份简报，或等待 48h 自动触发
+            尚无已归档的系统简报
           </div>
         </div>
       )}

@@ -4,7 +4,7 @@
 
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import { act } from 'react';
 
 vi.mock('react-router-dom', () => ({
@@ -54,7 +54,7 @@ describe('ReportsListPage', () => {
 
   it('渲染副标题文案', async () => {
     await act(async () => { render(<ReportsListPage />); });
-    expect(screen.getByText(/系统简报.*48h.*内容周报/)).toBeInTheDocument();
+    expect(screen.getByText('系统运行简报历史')).toBeInTheDocument();
   });
 
   it('加载后显示简报标题', async () => {
@@ -87,14 +87,5 @@ describe('ReportsListPage', () => {
     expect(screen.getByText(/HTTP 500/)).toBeInTheDocument();
   });
 
-  it('点击"手动生成"按钮触发 POST 请求', async () => {
-    await act(async () => { render(<ReportsListPage />); });
-    await act(async () => {});
-    const generateBtn = screen.getByText('手动生成');
-    fireEvent.click(generateBtn);
-    expect(global.fetch).toHaveBeenCalledWith(
-      expect.stringContaining('/api/brain/reports'),
-      expect.objectContaining({ method: 'POST' })
-    );
-  });
+
 });

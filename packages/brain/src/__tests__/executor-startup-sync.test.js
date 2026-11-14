@@ -335,3 +335,19 @@ describe('startup恢复遵守部署角色', () => {
     }
   });
 });
+
+
+it('外部领单式工作单不会回落/dev或由手动派发伪造本机run', async () => {
+  mockQuery.mockClear();
+  const safety = await import('../runtime-safety.js');
+  const boundary = vi.spyOn(safety, 'assertExternalExecutionAllowed').mockImplementation(() => {});
+  const { getSkillForTaskType, triggerCeceliaRun } = await import('../executor.js');
+  const task = { id: 'external-passport', task_type: 'content-pipeline', payload: { executor: 'codex', machine: 'xian' } };
+  try {
+    expect(getSkillForTaskType(task.task_type, task.payload)).toBeNull();
+    const result = await triggerCeceliaRun(task);
+    expect(result).toMatchObject({ success: false, reason: 'external_consumer_required' });
+    expect(result.runId).toBeUndefined();
+    expect(mockQuery).not.toHaveBeenCalled();
+  } finally { boundary.mockRestore(); }
+});

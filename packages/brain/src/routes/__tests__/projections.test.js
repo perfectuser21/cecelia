@@ -12,7 +12,7 @@ import projectionsRouter from '../projections.js';
 describe('projections routes', () => {
   it('returns the canonical Workbench summary from Brain tables', async () => {
     mocks.query
-      .mockResolvedValueOnce({ rows: [{ waiting: 3, ready: 1, ide: 1, pipeline: 1, in_progress: 1, blocked: 0, done: 3, dropped: 0 }] })
+      .mockResolvedValueOnce({ rows: [{ waiting: 3, ready: 2, ide: 1, in_progress: 1, blocked: 0, done: 3, dropped: 0 }] })
       .mockResolvedValueOnce({ rows: [{ captured: 4, clarified: 1 }] })
       .mockResolvedValueOnce({ rows: [{ pending: 2, dead: 0 }] });
     const app = express();
@@ -24,11 +24,9 @@ describe('projections routes', () => {
     const taskSummarySql = mocks.query.mock.calls[0][0];
     expect(taskSummarySql).toContain('AS ready');
     expect(taskSummarySql).toContain('AS ide');
-    expect(taskSummarySql).toContain('AS pipeline');
     expect(taskSummarySql).toContain("payload->>'headed_manual'");
-    expect(taskSummarySql).toContain("task_type IN ('content-pipeline'");
     expect(response.body).toEqual({
-      tasks: { waiting: 3, ready: 1, ide: 1, pipeline: 1, in_progress: 1, blocked: 0, done: 3, dropped: 0 },
+      tasks: { waiting: 3, ready: 2, ide: 1, in_progress: 1, blocked: 0, done: 3, dropped: 0 },
       captures: { captured: 4, clarified: 1 },
       projection: { pending: 2, dead: 0 },
     });

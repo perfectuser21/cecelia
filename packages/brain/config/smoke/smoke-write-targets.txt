@@ -10,7 +10,6 @@ cecelia-smoke-audit.sh
 circuit-breaker-reset-smoke.sh
 claimed-by-cleared-smoke.sh
 claude-headed-dispatch-smoke.sh
-cleanup-content-pipeline-smoke.sh
 clips-notion-smoke.sh
 clips-smoke.sh
 codex-headed-dispatch-smoke.sh

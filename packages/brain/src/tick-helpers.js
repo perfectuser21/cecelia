@@ -19,6 +19,7 @@ import { emit } from './event-bus.js';
 import { getCurrentAlertness, ALERTNESS_LEVELS } from './alertness/index.js';
 import { isPostDrainCooldown } from './drain.js';
 import { assessTaskLiveness } from './executor-contracts.js';
+import { isRetiredDevelopmentTask } from './lib/task-type-registry.js';
 
 // ─── 配置常量（从 tick.js 同步迁过来）────────────────────────────────────
 const DISPATCH_TIMEOUT_MINUTES = parseInt(process.env.DISPATCH_TIMEOUT_MINUTES || '100', 10);
@@ -30,18 +31,6 @@ export const TASK_TYPE_AGENT_MAP = {
   'qa': '/code-review',    // 旧类型 → 已迁移到 /code-review
   'audit': '/code-review', // 旧类型 → 已迁移到 /code-review
   'research': null,        // 需要人工/Opus 处理
-  'content_publish': null  // Platform-aware routing via routeTask
-};
-
-export const PLATFORM_SKILL_MAP = {
-  'zhihu': '/zhihu-publisher',
-  'douyin': '/douyin-publisher',
-  'xiaohongshu': '/xiaohongshu-publisher',
-  'weibo': '/weibo-publisher',
-  'wechat': '/wechat-publisher',
-  'toutiao': '/toutiao-publisher',
-  'kuaishou': '/kuaishou-publisher',
-  'shipinhao': '/shipinhao-publisher'
 };
 
 // ─── 日志 helper（与 tick.js tickLog 同风格）──────────────────────────
@@ -66,22 +55,13 @@ async function logTickDecision(trigger, inputSummary, decision, result) {
  * @returns {string|null} - Agent skill path or null if requires manual handling
  */
 export function routeTask(task) {
+  if (isRetiredDevelopmentTask(task)) return null;
   const taskType = task.task_type || 'dev';
   const agent = TASK_TYPE_AGENT_MAP[taskType];
 
   if (agent === undefined) {
     console.warn(`[routeTask] Unknown task_type: ${taskType}, defaulting to /dev`);
     return '/dev';
-  }
-
-  // Special handling for content_publish: route by platform
-  if (taskType === 'content_publish' && task.payload) {
-    const platform = task.payload.platform;
-    if (platform && PLATFORM_SKILL_MAP[platform]) {
-      return PLATFORM_SKILL_MAP[platform];
-    }
-    console.warn(`[routeTask] Unknown platform: ${platform} in content_publish task ${task.id}`);
-    return null;
   }
 
   return agent;

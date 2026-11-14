@@ -131,8 +131,6 @@ export function taskMatchesJourney(task, journey) {
  */
 export function classifyKind(taskType) {
   switch (taskType) {
-    case 'content-pipeline':   return 'pipeline';
-    case 'platform_scraper':   return 'scraper';
     default:                   return 'task';
   }
 }

@@ -11,13 +11,8 @@ vi.mock('../../db.js', () => ({
 vi.mock('../../event-bus.js', () => ({ emit: vi.fn() }));
 
 describe('CANCEL_EXEMPT_TYPES', () => {
-  it('包含 content_publish（下划线），不能是 content-publish（连字符）', async () => {
-    const { CANCEL_EXEMPT_TYPES } = await import('../escalation.js');
-    expect(CANCEL_EXEMPT_TYPES).toContain('content_publish');
-    expect(CANCEL_EXEMPT_TYPES).not.toContain('content-publish');
-  });
 
-  it('content_publish 任务在 cancel_pending 动作执行时传入豁免参数', async () => {
+  it('cancel_pending 动作传入注册表派生的通用豁免参数', async () => {
     mockQuery.mockResolvedValue({ rowCount: 0, rows: [] });
 
     const { executeResponse, CANCEL_EXEMPT_TYPES } = await import('../escalation.js');
@@ -27,8 +22,7 @@ describe('CANCEL_EXEMPT_TYPES', () => {
     const updateCall = mockQuery.mock.calls[0];
     const exemptParam = updateCall[1][0]; // query(sql, [CANCEL_EXEMPT_TYPES])
     expect(exemptParam).toEqual(CANCEL_EXEMPT_TYPES);
-    expect(exemptParam).toContain('content_publish');
-    expect(exemptParam).not.toContain('content-publish');
+    expect(exemptParam).toContain('research');
   });
 
   it('cancel_pending 动作现在是可逆 pause，不是终态 canceled，且写 trigger_source 过滤 + 留痕', async () => {

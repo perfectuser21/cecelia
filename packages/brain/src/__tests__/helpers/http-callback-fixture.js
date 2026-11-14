@@ -122,9 +122,6 @@ vi.mock('../../auto-learning.js', () => ({
   processExecutionAutoLearning: vi.fn().mockResolvedValue(null),
 }));
 
-vi.mock('../../zenithjoy-db.js', () => ({
-  getZenithjoyPool: vi.fn().mockReturnValue(null),
-}));
 
 
 vi.mock('../../lib/retry-policy.js', () => ({

@@ -9,28 +9,28 @@ vi.mock('../notifier.js', () => ({ sendFeishu: vi.fn().mockResolvedValue(true) }
 
 import { buildReportText } from '../daily-report-generator.js';
 
-const base = ['2026-09-25', '2026-09-24', { count: 0, keywords: [] }, [], [], 0];
+const base = ['2026-09-25', '2026-09-24', ];
 
 describe('buildReportText 的 skill 绑定漂移板块', () => {
   it('registry 缺映射 → 日报含 🟡 AMBER 与缺失 task_type', () => {
-    const text = buildReportText(...base, null, {
+    const text = buildReportText(...base, { skillDrift: {
       missing: [{ task_type: 'ci_patrol', hardcoded: '/ci-patrol' }], mismatched: [], conflicts: [],
-    });
+    } });
     expect(text).toContain('== skill 绑定漂移 ==');
     expect(text).toMatch(/🟡 AMBER/);
     expect(text).toContain('ci_patrol');
   });
 
   it('无漂移：出板块但不含 AMBER', () => {
-    const text = buildReportText(...base, null, { missing: [], mismatched: [], conflicts: [] });
+    const text = buildReportText(...base, { skillDrift: { missing: [], mismatched: [], conflicts: [] } });
     expect(text).toContain('== skill 绑定漂移 ==');
     expect(text).not.toMatch(/AMBER/);
   });
 
   it('检测不可用（null / 省略）：不出该板块，原有板块不受影响', () => {
-    expect(buildReportText(...base, null, null)).not.toContain('skill 绑定漂移');
+    expect(buildReportText(...base, { skillDrift: null })).not.toContain('skill 绑定漂移');
     expect(buildReportText(...base)).not.toContain('skill 绑定漂移');
-    expect(buildReportText(...base)).toContain('== 异常告警 ==');
+    expect(buildReportText(...base)).toContain('Brain 运行日报');
   });
 });
 
@@ -47,7 +47,7 @@ describe('generateDailyReport 接线：skill 绑定漂移进入日报正文', ()
       }),
     };
     const out = await generateDailyReport(pool, new Date('2026-09-25T01:01:00Z'));
-    return { out, report: saved.map((p) => String(p[1])).find((v) => v.includes('ZenithJoy')) ?? '' };
+    return { out, report: saved.map((p) => String(p[1])).find((v) => v.includes('Brain 运行日报')) ?? '' };
   };
 
   it('账本缺映射（空表）→ 日报正文含 🟡 AMBER skill 绑定漂移', async () => {

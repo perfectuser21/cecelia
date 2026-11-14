@@ -141,7 +141,6 @@ features:
         - packages/brain/src/__tests__/routing-decisions.test.js
         - packages/brain/src/__tests__/task-router-code-review.test.js
         - packages/brain/src/__tests__/task-router-codex-immune.test.js
-        - packages/brain/src/__tests__/task-router-content-pipeline.test.js
         - packages/brain/src/__tests__/task-router-core.test.js
         - packages/brain/src/__tests__/task-router-crystallize.test.js
         - packages/brain/src/__tests__/task-router-decomp-review.test.js
@@ -170,7 +169,6 @@ features:
             - packages/brain/src/__tests__/routing-decisions.test.js
             - packages/brain/src/__tests__/task-router-code-review.test.js
             - packages/brain/src/__tests__/task-router-codex-immune.test.js
-            - packages/brain/src/__tests__/task-router-content-pipeline.test.js
             - packages/brain/src/__tests__/task-router-core.test.js
             - packages/brain/src/__tests__/task-router-crystallize.test.js
             - packages/brain/src/__tests__/task-router-decomp-review.test.js
@@ -487,7 +485,6 @@ features:
         - packages/brain/src/__tests__/executor-billing-pause-persist.test.js
         - packages/brain/src/__tests__/executor-code-review-env.test.js
         - packages/brain/src/__tests__/executor-codex-review.test.js
-        - packages/brain/src/__tests__/executor-content-publish.test.js
         - packages/brain/src/__tests__/executor-dept-heartbeat.test.js
         - packages/brain/src/__tests__/executor-diagnostics.test.js
         - packages/brain/src/__tests__/executor-domain-prompt.test.js
@@ -514,7 +511,6 @@ features:
         - packages/brain/src/__tests__/minimax-provider.test.js
         - packages/brain/src/__tests__/model-profile-dispatch.test.js
         - packages/brain/src/__tests__/model-profile.test.js
-        - packages/brain/src/__tests__/model-registry.test.js
         - packages/brain/src/__tests__/openai-client.test.js
         - packages/brain/src/__tests__/pr-callback-handler.test.js
         - packages/brain/src/__tests__/pr-progress.test.js
@@ -560,7 +556,6 @@ features:
             - packages/brain/src/__tests__/executor-billing-pause-persist.test.js
             - packages/brain/src/__tests__/executor-code-review-env.test.js
             - packages/brain/src/__tests__/executor-codex-review.test.js
-            - packages/brain/src/__tests__/executor-content-publish.test.js
             - packages/brain/src/__tests__/executor-dept-heartbeat.test.js
             - packages/brain/src/__tests__/executor-diagnostics.test.js
             - packages/brain/src/__tests__/executor-domain-prompt.test.js
@@ -587,7 +582,6 @@ features:
             - packages/brain/src/__tests__/minimax-provider.test.js
             - packages/brain/src/__tests__/model-profile-dispatch.test.js
             - packages/brain/src/__tests__/model-profile.test.js
-            - packages/brain/src/__tests__/model-registry.test.js
             - packages/brain/src/__tests__/openai-client.test.js
             - packages/brain/src/__tests__/pr-callback-handler.test.js
             - packages/brain/src/__tests__/pr-progress.test.js

@@ -2,7 +2,6 @@
  * System Reports API Route Tests
  * GET /api/brain/reports
  * GET /api/brain/reports/:id
- * POST /api/brain/reports/generate
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -146,40 +145,5 @@ describe('System Reports API', () => {
     });
   });
 
-  describe('POST /generate - 手动生成简报', () => {
-    it('成功创建简报并返回', async () => {
-      const newReport = {
-        id: 'new-uuid',
-        type: '48h_summary',
-        metadata: { triggered_by: 'api' },
-        created_at: new Date().toISOString(),
-      };
 
-      pool.query.mockResolvedValue({ rows: [newReport] });
-
-      const { req, res } = mockReqRes({}, {}, { type: '48h_summary' });
-      const handler = getHandler(systemReportsRoutes, 'post', '/generate');
-      expect(handler).toBeDefined();
-
-      await handler(req, res);
-
-      expect(res._status).toBe(200);
-      expect(res._data.success).toBe(true);
-      expect(res._data.report.id).toBe('new-uuid');
-    });
-
-    it('默认类型为 48h_summary', async () => {
-      pool.query.mockResolvedValue({
-        rows: [{ id: 'uuid', type: '48h_summary', metadata: {}, created_at: new Date().toISOString() }]
-      });
-
-      const { req, res } = mockReqRes({}, {}, {});
-      const handler = getHandler(systemReportsRoutes, 'post', '/generate');
-      await handler(req, res);
-
-      // 检查 SQL 传入的第一个参数是默认 type
-      const callArgs = pool.query.mock.calls[0];
-      expect(callArgs[1][0]).toBe('48h_summary');
-    });
-  });
 });

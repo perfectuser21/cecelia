@@ -206,12 +206,6 @@ tests:
   # Unit 测试 - 内容管道
   # ============================================================
 
-  - test_id: content_pipeline_run_api
-    file: tests/content-pipeline-run-api.test.js
-    type: unit
-    covers_feature: pipeline_orchestrator
-    ci_layer: L3
-    status: active
 
   # ============================================================
   # Unit 测试 - OKR
@@ -268,6 +262,6 @@ missing_tests:
     priority: medium
 
 summary:
-  listed_above: 25  # 仅本文件关键记录，不代表仓库全量
+  listed_above: 23  # 仅本文件关键记录，不代表仓库全量
   missing_tests_count: 9  # 本文件仍列出的待补测试项
   last_updated: "2026-11-02"

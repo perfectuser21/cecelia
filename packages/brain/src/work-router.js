@@ -93,7 +93,9 @@ export function classifyAnswerKnown(request = {}) {
 
 export function classifyWork(request) {
   if (request.mutation_intent === 'write' || request.mutation_intent === 'unknown') return 'coding_mutation';
-  if (request.declared_domain === 'content') return 'content_creation';
+  // 业务实现由外部owner执行；这里只保留统一工作单入口，不恢复内容引擎。
+  if (request.requested_task_type === 'content-pipeline') return 'operations';
+  if (request.declared_domain === 'content') throw new Error('unsupported_work_kind');
   if (request.declared_domain === 'research') return 'research';
   if (request.declared_domain === 'operations') return 'operations';
   return 'coding_review';
@@ -181,7 +183,6 @@ export function selectPipeline(input) {
     return { work_kind: input.work_kind, change_kind: input.change_kind, pipeline: 'coding_workflow', canonical_task_type: 'coding_workflow', default_execution_profile: defaultProfile, execution_profile_override: override, impact_contract_required: false, orchestrator: 'coding-workflow-runner', ...axes };
   }
   const nonCoding = {
-    content_creation: ['content', 'content-pipeline'],
     research: ['research', 'research'],
     coding_review: ['code_review', 'code_review'],
     operations: ['operations', 'data'],

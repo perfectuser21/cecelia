@@ -26,12 +26,11 @@ import { raise } from '../alerting.js';
 import { handleTaskFailure } from '../quarantine.js';
 import { triggerCeceliaRun } from '../executor.js';
 import { REVIEW_TASK_TYPES } from '../lib/review-task-types.js';
-import { EXEC_STATUS_US_TASK_TYPES, EXEC_STATUS_HK_TASK_TYPES, DEV_DASHBOARD_TASK_TYPES } from '../lib/task-type-registry.js';
+import { isExternalWorkerTask, EXEC_STATUS_US_TASK_TYPES, EXEC_STATUS_HK_TASK_TYPES, DEV_DASHBOARD_TASK_TYPES } from '../lib/task-type-registry.js';
 import { serialUnlockNext, writeReviewResult } from '../lib/callback-postprocess.js';
 import { updateDesireFromTask } from '../desire-feedback.js';
 import { checkAndCreateCodeReviewTrigger } from '../code-review-trigger.js';
 import { resolveRelatedFailureMemories } from './shared.js';
-import { getZenithjoyPool } from '../zenithjoy-db.js';
 import { normalizeCallbackStatus, extractPrNumber, maybeMarkCompletedNoPr, resolveCanonicalPrUrl, buildExecMetaJson, buildFailureFields, extractFindingsValue, buildLastRunResult } from '../lib/callback-utils.js';
 import { suggestionPlanFailure, recordSuggestionPlanFailure, hasCommittedSuggestionPlanFailure, reconcileSuggestionPlanRun } from '../lib/suggestion-plan-callback.js';
 import { recordRunFromCallback } from '../lib/task-run.js';
@@ -288,8 +287,7 @@ router.post('/execution-callback', executionCallbackRateLimit, internalAuthOrLoo
     }
 
     // P1-0: terminal failure guard — 不允许 execution-callback 覆盖 pipeline_terminal_failure 终态
-    // 场景：orchestrator 在 Xian 执行期间将 content-pipeline 设为 failed + failure_class=pipeline_terminal_failure，
-    //       Xian 完成后调用 execution-callback(AI Done) 试图将状态改回 completed。
+    // 已标记不可重试失败的任务不能由迟到成功回调覆盖。
     // 即使主 UPDATE 有 WHERE status='in_progress' 保护，也需此守卫覆盖竞态情形。
     if (newStatus === 'completed') {
       try {
@@ -741,87 +739,6 @@ router.post('/execution-callback', executionCallbackRateLimit, internalAuthOrLoo
 
       // T9（addendum-01）：原 task_completion learnings 写入块已删除——
       // 事件层记录与 tasks 表信息完全重复，属纯噪音源头，禁止复活。
-
-      // content_publish 完成 → 写入 zenithjoy.publish_logs（fire-and-forget）
-      Promise.resolve().then(async () => {
-        try {
-          const zjPool = getZenithjoyPool();
-          const pubTaskRow = await pool.query(
-            'SELECT task_type, payload FROM tasks WHERE id = $1',
-            [task_id]
-          );
-          const pubTask = pubTaskRow.rows[0];
-          if (!pubTask || pubTask.task_type !== 'content_publish') return;
-
-          const { platform, pipeline_keyword, parent_pipeline_id, content_type } = pubTask.payload || {};
-          if (!platform) return;
-
-          // 规范化 platform：publish_logs 只接受固定枚举值
-          const VALID_PLATFORMS = ['wechat', 'douyin', 'xiaohongshu', 'zhihu', 'toutiao', 'kuaishou', 'weibo', 'channels'];
-          if (!VALID_PLATFORMS.includes(platform)) {
-            console.warn(`[execution-callback] publish_logs: platform '${platform}' 不在枚举列表，跳过`);
-            return;
-          }
-
-          // 规范化 content_type → works 表枚举（long_form_article / image_text / video）
-          const CONTENT_TYPE_MAP = {
-            article: 'long_form_article',
-            long_form: 'long_form_article',
-            long_form_article: 'long_form_article',
-            image_text: 'image_text',
-            'image-text': 'image_text',
-            'solo-company-case': 'image_text',
-            video: 'video',
-          };
-          const normalizedContentType = CONTENT_TYPE_MAP[content_type] || 'image_text';
-
-          // Upsert zenithjoy.works（以 parent_pipeline_id 为 content_id，幂等）
-          const workTitle = pipeline_keyword || `pipeline:${parent_pipeline_id || task_id}`;
-          const contentId = parent_pipeline_id || task_id;
-
-          const workUpsert = await zjPool.query(
-            `INSERT INTO zenithjoy.works (content_id, title, content_type, status)
-             VALUES ($1, $2, $3, 'published')
-             ON CONFLICT (content_id) DO UPDATE SET
-               status = 'published',
-               updated_at = NOW()
-             RETURNING id`,
-            [contentId, workTitle, normalizedContentType]
-          );
-          const workId = workUpsert.rows[0]?.id;
-          if (!workId) return;
-
-          // 幂等检查 publish_logs（同一 work_id + platform 不重复写）
-          const existing = await zjPool.query(
-            `SELECT id FROM zenithjoy.publish_logs WHERE work_id = $1 AND platform = $2`,
-            [workId, platform]
-          );
-          if (existing.rows.length > 0) {
-            console.log(`[execution-callback] publish_logs 已存在 work_id=${workId} platform=${platform}，跳过`);
-            return;
-          }
-
-          // 从 task result 提取 platform_post_id（优先级：platform_post_id > msg_id > media_id > url）
-          const platformPostId = (result !== null && typeof result === 'object')
-            ? (result.platform_post_id || result.msg_id || result.media_id || result.url || null)
-            : null;
-
-          await zjPool.query(
-            `INSERT INTO zenithjoy.publish_logs
-               (work_id, platform, status, published_at, response, platform_post_id)
-             VALUES ($1, $2, 'published', NOW(), $3, $4)`,
-            [
-              workId,
-              platform,
-              JSON.stringify({ task_id, pipeline_keyword: pipeline_keyword || null, parent_pipeline_id: parent_pipeline_id || null }),
-              platformPostId
-            ]
-          );
-          console.log(`[execution-callback] publish_logs 写入成功: work_id=${workId} platform=${platform} keyword=${pipeline_keyword} platform_post_id=${platformPostId}`);
-        } catch (plErr) {
-          console.warn(`[execution-callback] publish_logs 写入失败（非致命）: ${plErr.message}`);
-        }
-      }).catch(err => console.warn(`[execution-callback] publish_logs 异步异常: ${err.message}`));
 
       // 小任务积累触发：dev 任务完成后检查是否需要触发 code_review（fire-and-forget）
       Promise.resolve().then(async () => {
@@ -1656,10 +1573,6 @@ ${resultStr.substring(0, 2000)}
         console.error(`[execution-callback] Suggestion status update error (non-fatal): ${spErr.message}`);
       }
     }
-
-    // 5c11. content-* pipeline 子任务推进 — 已废除
-    // in-Brain content-pipeline 编排已搬到 ZJ pipeline-worker（Python LangGraph，PR zenithjoy#216）。
-    // ZJ pipeline-worker 自己维护各 stage 状态机，Cecelia 不再需要 advanceContentPipeline。
 
     // 5c13. crystallize_* 子任务完成/失败 → 推进 crystallize 流水线状态机
     if (newStatus === 'completed' || newStatus === 'failed') {
@@ -3038,6 +2951,10 @@ router.post('/dispatch-now', rateLimit(TASK_MUTATION_RATE_LIMIT_OPTIONS), async 
     }
 
     let task = result.rows[0];
+
+    if (isExternalWorkerTask(task)) {
+      return res.status(409).json({ error: 'external_consumer_required', id: task_id, status: task.status });
+    }
 
     if (isRetiredDecomposition(task)) {
       return res.status(410).json({ error: RETIRED_DECOMPOSITION, detail: '旧任务拆解已退役，未派发' });

@@ -54,7 +54,6 @@ import {
   autoFailTimedOutTasks,
   getRampedDispatchMax,
   TASK_TYPE_AGENT_MAP,
-  PLATFORM_SKILL_MAP,
 } from '../tick-helpers.js';
 
 describe('tick-helpers', () => {
@@ -88,26 +87,12 @@ describe('tick-helpers', () => {
       expect(routeTask({ task_type: 'research' })).toBeNull();
     });
 
-    it('content_publish + 已知平台 → 对应 publisher', () => {
-      expect(routeTask({ task_type: 'content_publish', payload: { platform: 'zhihu' } }))
-        .toBe('/zhihu-publisher');
-      expect(routeTask({ task_type: 'content_publish', payload: { platform: 'douyin' } }))
-        .toBe('/douyin-publisher');
-    });
-
-    it('content_publish + 未知平台 → null', () => {
-      expect(routeTask({ task_type: 'content_publish', payload: { platform: 'unknown' } }))
-        .toBeNull();
-      expect(routeTask({ task_type: 'content_publish', payload: {} })).toBeNull();
-    });
-
     it('未知 task_type → fallback /dev', () => {
       expect(routeTask({ task_type: 'made_up_type' })).toBe('/dev');
     });
 
-    it('TASK_TYPE_AGENT_MAP / PLATFORM_SKILL_MAP 已 export', () => {
+    it('TASK_TYPE_AGENT_MAP 已 export', () => {
       expect(TASK_TYPE_AGENT_MAP.dev).toBe('/dev');
-      expect(PLATFORM_SKILL_MAP.zhihu).toBe('/zhihu-publisher');
     });
   });
 

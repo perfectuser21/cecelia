@@ -119,12 +119,6 @@ tests:
     status: active
     note: "isValidLocation(xian_m1) 验证西安M1节点路由合法性"
 
-  - id: content-pipeline-run-api
-    path: tests/content-pipeline-run-api.test.js
-    type: unit
-    ci: L3
-    status: active
-    note: "LOCATION_MAP 中 content-pipeline → xian 路由配置"
 
   # — 内容与捕获管道 ————————————————————————————————————————————————————————————
 
@@ -176,21 +170,9 @@ tests:
     status: pending-ci
     note: "Migration 197存在、registry路由存在（文件存在性检查，价值一般）"
 
-  - id: packages-brain-social-trending
-    path: packages/brain/src/__tests__/social-trending.test.ts
-    type: unit
-    ci: L3
-    status: active
-    note: "social-trending API合约：路由注册、platform/limit参数、失败降级"
 
   # — Brain API 路由契约测试 —————————————————————————————————————————————————————
 
-  - id: brain-topics-route-contract
-    path: tests/packages/brain/src/__tests__/topics-route.test.ts
-    type: unit
-    ci: L3
-    status: active
-    note: "GET /api/brain/topics 路由契约：文件存在、路由注册、实现结构、topic-selector/llm-caller 契约"
 
   - id: brain-runtime-isolation
     path: packages/brain/src/__tests__/runtime-safety.test.js

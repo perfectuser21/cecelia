@@ -31,7 +31,7 @@ export interface Operation {
 
 // 旧清单的 EI 合并了输入与变更；这里按主要作用细分，保留原始分类用于复核。
 const inputIds = new Set([
-  'ConsciousnessChat:04', 'ConsciousnessChat:05', 'ContentClipsPage:02', 'ContentFactory:03',
+  'ConsciousnessChat:04', 'ConsciousnessChat:05', 'ContentClipsPage:02',
   'DailyDiary:02', 'DecisionRegistry:02', 'DecisionRegistry:04', 'DesignVault:02', 'DesignVault:04',
   'DevLog:03', 'DocChatPage:04', 'ProfileFacts:02', 'ProfileFacts:03', 'ProjectDetail:01',
   'TaskDesk:01', 'Tasks:01', 'TodayTabbed:01', 'Whiteboard:01', 'WorkbenchInbox:01',

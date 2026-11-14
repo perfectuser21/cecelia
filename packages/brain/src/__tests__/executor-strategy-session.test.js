@@ -3,7 +3,6 @@
  *
  * DoD 覆盖：
  * - D1: getSkillForTaskType('strategy_session') === '/strategy-session'
- * - D2/D3: model-registry strategy_session agent 存在且配置正确
  * - D4/D5/D6: execution-callback 解析 KR JSON → 写入 goals + metadata
  * - D7: JSON 解析失败时不抛出
  */
@@ -103,49 +102,6 @@ describe('executor getSkillForTaskType — strategy_session 映射 (D1)', () => 
 
   it('D1-回归: architecture_design → /architect', () => {
     expect(getSkillForTaskType('architecture_design')).toBe('/architect');
-  });
-});
-
-// ─── D2/D3: model-registry ─────────────────────────────────────────────────────
-
-describe('model-registry — strategy_session agent 注册 (D2/D3)', () => {
-  let getAgentById;
-
-  beforeEach(async () => {
-    vi.resetModules();
-    const registry = await import('../model-registry.js');
-    getAgentById = registry.getAgentById;
-  });
-
-  it('D2: getAgentById("strategy_session") 返回有效 agent', () => {
-    const agent = getAgentById('strategy_session');
-    expect(agent).not.toBeNull();
-    expect(agent.id).toBe('strategy_session');
-  });
-
-  it('D2: recommended_model 为 claude-opus-4-6', () => {
-    const agent = getAgentById('strategy_session');
-    expect(agent.recommended_model).toBe('claude-opus-4-6');
-  });
-
-  it('D3: layer 为 executor', () => {
-    const agent = getAgentById('strategy_session');
-    expect(agent.layer).toBe('executor');
-  });
-
-  it('D3: allowed_models 包含 claude-opus-4-6', () => {
-    const agent = getAgentById('strategy_session');
-    expect(agent.allowed_models).toContain('claude-opus-4-6');
-  });
-
-  it('D3: allowed_models 包含 claude-sonnet-4-6', () => {
-    const agent = getAgentById('strategy_session');
-    expect(agent.allowed_models).toContain('claude-sonnet-4-6');
-  });
-
-  it('D3: fixed_provider 为 null', () => {
-    const agent = getAgentById('strategy_session');
-    expect(agent.fixed_provider).toBeNull();
   });
 });
 

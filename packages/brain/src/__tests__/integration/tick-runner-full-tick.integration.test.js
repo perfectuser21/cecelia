@@ -183,12 +183,12 @@ vi.mock('../../daily-review-scheduler.js', () => ({
   triggerArchReview: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock('../../diary-scheduler.js', () => ({ generateDailyDiaryIfNeeded: vi.fn() }));
-vi.mock('../../daily-publish-scheduler.js', () => ({ triggerDailyPublish: vi.fn() }));
+
 vi.mock('../../daily-report-generator.js', () => ({ generateDailyReport: vi.fn() }));
-vi.mock('../../weekly-report-generator.js', () => ({ generateWeeklyReport: vi.fn() }));
-vi.mock('../../publish-monitor.js', () => ({ monitorPublishQueue: vi.fn() }));
-vi.mock('../../post-publish-data-collector.js', () => ({ schedulePostPublishCollection: vi.fn() }));
-vi.mock('../../social-media-sync.js', () => ({ syncSocialMediaData: vi.fn() }));
+
+
+
+
 vi.mock('../../desire/index.js', () => ({ runDesireSystem: vi.fn() }));
 vi.mock('../../rumination.js', () => ({ runRumination: vi.fn().mockResolvedValue(null) }));
 vi.mock('../../rumination-scheduler.js', () => ({ runSynthesisSchedulerIfNeeded: vi.fn() }));

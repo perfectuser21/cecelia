@@ -75,9 +75,6 @@ describe('EXECUTOR_KIND_FOR 打标映射', () => {
     expect(EXECUTOR_KIND_FOR.dev).toBe('headed-session');
   });
 
-  it('content-pipeline → external-worker', () => {
-    expect(EXECUTOR_KIND_FOR['content-pipeline']).toBe('external-worker');
-  });
 
   it('bridge 路径 → bridge', () => {
     expect(EXECUTOR_KIND_FOR.__bridge_path).toBe('bridge');
@@ -328,4 +325,19 @@ it('Commander核验SSH派发在途按外部OpenClaw判活，普通research不变
  const task={task_type:'research',payload:{verification_transport:'openclaw-agent-v1'}};
  expect(resolveExecutorKind(task)).toBe('openclaw-agent');expect(resolveLivenessKind(task)).toBe('openclaw-agent');expect(isExternallyExecuted(task)).toBe(true);
  expect(isExternallyExecuted({task_type:'research',payload:{}})).toBe(false);
+});
+
+
+describe('认领式外部工作单的有限租约活性', () => {
+  const task = { id: 'external-task', task_type: 'content-pipeline', executor_kind: 'external-worker', claimed_by: 'zj-worker', claimed_at: '2026-11-14T02:00:00.000Z' };
+  it('没有租约读取证据时保持unknown，不伪称alive', async () => {
+    expect(await EXECUTOR_CONTRACTS['external-worker'].probe(task, {})).toBe('unknown');
+    const pool = { query: vi.fn().mockResolvedValue({ rows: [] }) };
+    expect(await EXECUTOR_CONTRACTS['external-worker'].probe(task, {pool})).toBe('unknown');
+  });
+  it('有效同owner/claim epoch租约为alive，过期证据留给lease reaper处理', async () => {
+    const pool = { query: vi.fn().mockResolvedValueOnce({ rows: [{ lease_active: true }] }).mockResolvedValueOnce({ rows: [{ lease_active: false }] }) };
+    expect(await EXECUTOR_CONTRACTS['external-worker'].probe(task, {pool})).toBe('alive');
+    expect(await EXECUTOR_CONTRACTS['external-worker'].probe(task, {pool})).toBe('unknown');
+  });
 });

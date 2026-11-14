@@ -89,21 +89,17 @@ export const REMAINING_LEGACY_SITES = {
   // kind: map（long-lived）— Task 4 评估：:62 model_map 是 task_type→{provider,model,cascade}
   // 的模型路由调优配置（嵌套对象，非简单字符串），逐 type 独立调参（如 harness_planner 用 opus、
   // harness_generate 用 sonnet），无匹配注册表单一字段，且属运营调参数据非"哪类"分类标签
-  'model-profile.js': ['62:model_map'],
+  'model-profile.js': ['50:model_map'],
   // kind: map（long-lived）— Task 4 评估：4 处 task_types 是 CTO/CPO/CMO/CFO/COO
   // 五个业务角色的任务归属划分（key===value 恒等映射，充当归属集合），是与现有 9 个字段
   // （surface/coding/pr/executor/watchdog/push_to_notion/tick_dispatchable/cleanup_class/db）
   // 正交的第 10 个业务归属轴，新增会是主理人裁决范畴（角色边界怎么划），非 PR1 零行为变化范围
-  'role-registry.js': ['26:task_types', '49:task_types', '70:task_types', '95:task_types'],
+  'role-registry.js': ['26:task_types', '49:task_types', '70:task_types', '89:task_types'],
   // kind: map（long-lived）— Task 6 评估：:17 SKILL_BY_TASK_TYPE 只覆盖 10 个
   // task_type（不是全量），且值与 SKILL_WHITELIST/EXECUTOR_SKILL_MAP 都不同（如
   // harness_initiative 这里写 'harness(skill-relay)'，两处已有映射表都是别的值）——是运行舱只读
   // 展示端点自己的第三份独立"推不出=null"降级展示文案，不是"哪类"的分类标签，无匹配注册表字段
   'routes/agent-ops.js': ['22:SKILL_BY_TASK_TYPE'],
-  // kind: map（long-lived）— Task 6 评估：:106（清退旧内容入口前为 :111）STEP_SYSTEM_PROMPTS 是
-  // 6 个 content-* task_type 各自专属的完整 LLM system prompt 长文本（调 LLM 用），不是分类标签，
-  // 无法也不应该折进注册表的 T() 字段
-  'routes/content-pipeline.js': ['106:STEP_SYSTEM_PROMPTS'],
   // kind: map（long-lived）— enum 部分（STAGE_ORDER/STAGE_LABELS）已搬进注册表 HARNESS_BUILD_STAGE_ORDER/LABELS；
   // 剩 TASK_TYPE_TO_SKILL（:933，task_type→skill目录名，与 SKILL_WHITELIST/EXECUTOR_SKILL_MAP
   // 语义相近但值不同——第3份独立维护，PR1 只搬家不合并）+ BASE_LABELS（:1021，task_type→短展示
@@ -116,11 +112,8 @@ export const REMAINING_LEGACY_SITES = {
   // 调优表（+20/-10 这类优先级加减分），与现有 9 个字段（分类/流程标签）正交的第三个独立运营
   // 调参轴（另两个已知独立轴：model-profile.js 的模型路由、role-registry.js 的角色归属）
   'task-weight.js': ['25:TASK_TYPE_ADJUSTMENTS'],
-  // kind: map（long-lived）— Task 6 评估：:27 TASK_TYPE_AGENT_MAP 只 6 项，且
-  // research/content_publish 故意写 null 触发特殊降级路径（人工处理 / 按 payload.platform 动态路由），
-  // 与 EXECUTOR_SKILL_MAP 同名 key 的值不完全相同（research: null vs ''；content_publish: null vs
-  // '/dev'）——是 routeTask() 自己的降级判据表，不是纯粹的分类标签
-  'tick-helpers.js': ['27:TASK_TYPE_AGENT_MAP'],
+  // routeTask保留research人工处理与通用任务技能路由，和静态skill映射的值不同。
+  'tick-helpers.js': ['28:TASK_TYPE_AGENT_MAP'],
   // kind: map（long-lived）— Task 6 评估：:58 EXECUTOR_AFFINITY 是
   // task_type→{primary,fallback,no_downgrade} 的 LLM 供应商亲和度调优配置（Claude/Codex 选型 +
   // 降级策略），与 model-profile.js 的模型路由同属运营调参数据，非分类标签，无匹配注册表字段

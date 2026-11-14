@@ -45,8 +45,8 @@ describe('isExternallyExecuted —— 外部执行体统一谓词', () => {
     expect(isExternallyExecuted({ task_type: 'codex_qa', executor_kind: 'bridge' })).toBe(false);
   });
 
-  it('content-pipeline 家族不纳入（启动同步对它的既有回队语义不变）', () => {
-    expect(isExternallyExecuted({ task_type: 'content-pipeline', executor_kind: null })).toBe(false);
+  it('外部工作单护照不在本机起进程，退役业务阶段不获得外部执行身份', () => {
+    expect(isExternallyExecuted({ task_type: 'content-pipeline', executor_kind: 'external-worker' })).toBe(true);
     expect(isExternallyExecuted({ task_type: 'content-export', executor_kind: 'external-worker' })).toBe(false);
   });
 

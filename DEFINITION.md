@@ -4,6 +4,8 @@
 
 显式Commander Workflow宿主将有界决策和单Activity验收结果存入DBOS；PG动作意图先提交，恢复只读回并核验原身份，未知动作隔离。首版仅非交互source单次活动；独立CLI与scratch故障验收，不改变生产公共Runner入口。
 
+清退 Cecelia 的内容业务：移除内容流水线、选题、内容类型/质量、发布队列和社媒效果采集的业务接口、自动调度、页面及专属测试；仅保留 content-pipeline 外部工作单登记类型，复用公共认领、租约与回执，禁止手动派发回落编码执行。保留通用任务、运行检查日报、Notion 连接和历史数据库记录。删除动态模型配置管理和写入口，运行时继续只读装载既有参数，不改变当前 API 模型调用。旧 Claude 订阅额度不作为其他执行器准入；本轮保留 Codex/Grok 账本与现役额度判断。
+
 Blocked 恢复单测隔离宿主资源清理：真实 tick 入口保留，工作树/slot 清理均绑定 stub，并在 tick 导入之前核对隔离。仅测试修复，不改变生产清理策略。
 
 独立 Skill 起跑登记：`POST /api/brain/runs/:run_id/start-skill` 在真实 Task claim 与固定发布来源校验后，原子登记 TaskRun 及 internal binding；入口不启动模型或执行业务，重复请求必须保持原执行者、Skill 和范围。

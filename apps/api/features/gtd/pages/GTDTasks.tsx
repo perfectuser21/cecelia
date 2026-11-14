@@ -20,7 +20,7 @@ interface Task {
   goal_id: string | null;
   claimed_by: string | null;
   executor_kind: string | null;
-  queue_lane: 'ready' | 'ide' | 'pipeline' | null;
+  queue_lane: 'ready' | 'ide' | null;
 }
 
 interface Project {
@@ -32,7 +32,6 @@ const TASK_VIEWS: Array<{ id: TaskView; label: string }> = [
   { id: 'all', label: 'All' },
   { id: 'ready', label: 'Brain' },
   { id: 'ide', label: 'IDE' },
-  { id: 'pipeline', label: 'Pipeline' },
   { id: 'in_progress', label: 'In Progress' },
   { id: 'blocked', label: 'Blocked' },
   { id: 'done', label: 'Done' },
@@ -161,7 +160,6 @@ export default function GTDTasks() {
 
   const ready = tasks.filter(t => t.queue_lane === 'ready').length;
   const ide = tasks.filter(t => t.queue_lane === 'ide').length;
-  const pipeline = tasks.filter(t => t.queue_lane === 'pipeline').length;
   const inProgress = tasks.filter(t => t.status === 'in_progress' && Boolean(t.claimed_by)).length;
   const completed = tasks.filter(t => t.status === 'completed').length;
 
@@ -222,7 +220,6 @@ export default function GTDTasks() {
           <span>{tasks.length} 个 Task</span>
           <span>{ready} Brain</span>
           <span>{ide} IDE</span>
-          <span>{pipeline} Pipeline</span>
           <span>{inProgress} 进行中</span>
           <span>{completed} 已完成</span>
         </>

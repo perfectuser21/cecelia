@@ -64,20 +64,10 @@ echo "$r" | jq -e '.reason != null' >/dev/null 2>&1 \
 
 section "analytics"
 
-r=$(curl -q -sf "$BRAIN/api/brain/analytics/content") || { fail "analytics-collection: /analytics/content 不可达"; r="[]"; }
-echo "$r" | jq -e 'type == "array"' >/dev/null 2>&1 \
-  && ok "analytics-collection: /analytics/content 返回数组" \
-  || fail "analytics-collection: /analytics/content 格式错误"
-
 r=$(curl -q -sf "$BRAIN/api/brain/stats/overview") || { fail "analytics-platform: /stats/overview 不可达"; r="{}"; }
 echo "$r" | jq -e 'type == "object"' >/dev/null 2>&1 \
   && ok "analytics-platform: /stats/overview 返回 object" \
   || fail "analytics-platform: /stats/overview 格式错误"
-
-r=$(curl -q -sf "$BRAIN/api/brain/analytics/roi") || { fail "analytics-roi: /analytics/roi 不可达"; r="{}"; }
-echo "$r" | jq -e 'type == "object"' >/dev/null 2>&1 \
-  && ok "analytics-roi: /analytics/roi 返回 object" \
-  || fail "analytics-roi: /analytics/roi 格式错误"
 
 # ── okr 域 (7 features) ──────────────────────────────────────────────────
 
@@ -288,64 +278,6 @@ echo "$r" | jq -e '.status == "healthy"' >/dev/null 2>&1 \
   && ok "immune-sweep: /health status=healthy（系统正常）" \
   || fail "immune-sweep: /health status 不是 healthy"
 
-# ── pipeline 域 (6 features) ──────────────────────────────────────────────
-
-section "pipeline"
-
-r=$(curl -q -sf "$BRAIN/api/brain/pipelines") || { fail "pipeline-list: /pipelines 不可达"; r="[]"; }
-echo "$r" | jq -e 'type == "array"' >/dev/null 2>&1 \
-  && ok "pipeline-list: /pipelines 返回数组" \
-  || fail "pipeline-list: /pipelines 格式错误"
-
-r=$(curl -q -sf "$BRAIN/api/brain/pipelines") || { fail "pipeline-create: /pipelines 不可达"; r="[]"; }
-echo "$r" | jq -e 'type == "array"' >/dev/null 2>&1 \
-  && ok "pipeline-create: /pipelines 端点可用" \
-  || fail "pipeline-create: /pipelines 格式错误"
-
-r=$(curl -q -sf "$BRAIN/api/brain/pipelines") || { fail "pipeline-approve: /pipelines 不可达"; r="[]"; }
-echo "$r" | jq -e 'type == "array"' >/dev/null 2>&1 \
-  && ok "pipeline-approve: /pipelines 返回数组" \
-  || fail "pipeline-approve: /pipelines 格式错误"
-
-r=$(curl -q -sf "$BRAIN/api/brain/pipelines") || { fail "pipeline-publish-check: /pipelines 不可达"; r="[]"; }
-echo "$r" | jq -e 'type == "array"' >/dev/null 2>&1 \
-  && ok "pipeline-publish-check: /pipelines 返回数组" \
-  || fail "pipeline-publish-check: /pipelines 格式错误"
-
-r=$(curl -q -sf "$BRAIN/api/brain/pipelines") || { fail "pipeline-run: /pipelines 不可达"; r="[]"; }
-echo "$r" | jq -e 'type == "array"' >/dev/null 2>&1 \
-  && ok "pipeline-run: /pipelines 端点可用" \
-  || fail "pipeline-run: /pipelines 格式错误"
-
-# ── publish 域 (8 features) ──────────────────────────────────────────────
-# features: wechat-publisher douyin-publisher kuaishou-publisher weibo-publisher
-#           shipinhao-publisher toutiao-publisher xiaohongshu-publisher zhihu-publisher
-
-section "publish"
-
-for platform in wechat douyin kuaishou weibo shipinhao toutiao xiaohongshu zhihu; do
-  r=$(curl -q -sf "$BRAIN/api/brain/publish-jobs?platform=${platform}") \
-    || { fail "${platform}-publisher: /publish-jobs?platform=${platform} 不可达"; r="{}"; continue; }
-  echo "$r" | jq -e '.jobs != null' >/dev/null 2>&1 \
-    && ok "${platform}-publisher: /publish-jobs?platform=${platform} 含 jobs 字段" \
-    || fail "${platform}-publisher: /publish-jobs?platform=${platform} 缺少 jobs 字段"
-done
-
-r=$(curl -q -sf "$BRAIN/api/brain/publish-jobs") || { fail "publish-system: /publish-jobs 不可达"; r="{}"; }
-echo "$r" | jq -e '.jobs != null' >/dev/null 2>&1 \
-  && ok "publish-system: /publish-jobs 含 jobs 字段" \
-  || fail "publish-system: /publish-jobs 缺少 jobs 字段"
-
-r=$(curl -q -sf "$BRAIN/api/brain/publish-jobs") || { fail "publish-result: /publish-jobs 不可达"; r="{}"; }
-echo "$r" | jq -e '.success == true' >/dev/null 2>&1 \
-  && ok "publish-result: /publish-jobs 返回 success=true" \
-  || fail "publish-result: /publish-jobs 缺少 success 字段"
-
-r=$(curl -q -sf "$BRAIN/api/brain/publish-jobs") || { fail "image-text-publisher: /publish-jobs 不可达"; r="{}"; }
-echo "$r" | jq -e '.jobs != null' >/dev/null 2>&1 \
-  && ok "image-text-publisher: /publish-jobs 含 jobs 字段" \
-  || fail "image-text-publisher: /publish-jobs 缺少 jobs 字段"
-
 # ── brain-meta 域 (4 features) ──────────────────────────────────────────────
 
 section "brain-meta"
@@ -398,16 +330,6 @@ r=$(curl -q -sf "$BRAIN/api/brain/capacity-budget") || { fail "capacity-budget: 
 echo "$r" | jq -e '.confidence != null' >/dev/null 2>&1 \
   && ok "capacity-budget: /capacity-budget 含 confidence" \
   || fail "capacity-budget: /capacity-budget 缺少 confidence"
-
-r=$(curl -q -sf "$BRAIN/api/brain/content-types") || { fail "content-type-config: /content-types 不可达"; r="[]"; }
-echo "$r" | jq -e 'type == "array"' >/dev/null 2>&1 \
-  && ok "content-type-config: /content-types 返回数组" \
-  || fail "content-type-config: /content-types 格式错误"
-
-r=$(curl -q -sf "$BRAIN/api/brain/content-types") || { fail "content-type-list: /content-types 不可达"; r="[]"; }
-echo "$r" | jq -e 'length >= 0' >/dev/null 2>&1 \
-  && ok "content-type-list: /content-types length >= 0" \
-  || fail "content-type-list: /content-types 格式错误"
 
 r=$(curl -q -sf "$BRAIN/api/brain/context") || { fail "context-snapshot: /context 不可达"; r="{}"; }
 echo "$r" | jq -e '.active_tasks != null' >/dev/null 2>&1 \
@@ -476,11 +398,6 @@ echo "$r" | jq -e 'type == "object"' >/dev/null 2>&1 \
 
 # license-management：Brain /api/brain/license 路由已随迁移 486 收尾删除（#5654，决策 28674999），不再探测。
 
-r=$(curl -q -sf "$BRAIN/api/brain/pipelines") || { fail "media-scraping: /pipelines 不可达"; r="[]"; }
-echo "$r" | jq -e 'type == "array"' >/dev/null 2>&1 \
-  && ok "media-scraping: /pipelines 返回数组" \
-  || fail "media-scraping: /pipelines 格式错误"
-
 r=$(curl -q -sf "$BRAIN/api/brain/settings/muted") || { fail "muted-notifications: /settings/muted 不可达"; r="{}"; }
 echo "$r" | jq -e '.env_override != null' >/dev/null 2>&1 \
   && ok "muted-notifications: /settings/muted 含 env_override" \
@@ -500,11 +417,6 @@ r=$(curl -q -sf "$BRAIN/api/brain/orchestrator/chat/history") || { fail "orchest
 echo "$r" | jq -e 'type == "array"' >/dev/null 2>&1 \
   && ok "orchestrator-chat: /orchestrator/chat/history 返回数组" \
   || fail "orchestrator-chat: /orchestrator/chat/history 格式错误"
-
-r=$(curl -q -sf "$BRAIN/api/brain/social/trending") || { fail "platform-scraper: /social/trending 不可达"; r="[]"; }
-echo "$r" | jq -e 'type == "array"' >/dev/null 2>&1 \
-  && ok "platform-scraper: /social/trending 返回数组" \
-  || fail "platform-scraper: /social/trending 格式错误"
 
 r=$(curl -q -sf "$BRAIN/api/brain/health") || { fail "policy-list: /health 不可达"; r="{}"; }
 echo "$r" | jq -e '.status != null' >/dev/null 2>&1 \
@@ -532,16 +444,6 @@ echo "$r" | jq -e '.period_days != null' >/dev/null 2>&1 \
   && ok "rca-query: /cortex/quality-stats 含 period_days" \
   || fail "rca-query: /cortex/quality-stats 缺少 period_days"
 
-r=$(curl -q -sf "$BRAIN/api/brain/social/trending") || { fail "social-media-sync: /social/trending 不可达"; r="[]"; }
-echo "$r" | jq -e 'type == "array"' >/dev/null 2>&1 \
-  && ok "social-media-sync: /social/trending 返回数组" \
-  || fail "social-media-sync: /social/trending 格式错误"
-
-r=$(curl -q -sf "$BRAIN/api/brain/social/trending") || { fail "social-trending: /social/trending 不可达"; r="[]"; }
-echo "$r" | jq -e 'type == "array"' >/dev/null 2>&1 \
-  && ok "social-trending: /social/trending 返回数组" \
-  || fail "social-trending: /social/trending 格式错误"
-
 r=$(curl -q -sf "$BRAIN/api/brain/stats/overview") || { fail "stats-overview: /stats/overview 不可达"; r="{}"; }
 echo "$r" | jq -e '.tasks_completed != null' >/dev/null 2>&1 \
   && ok "stats-overview: /stats/overview 含 tasks_completed" \
@@ -551,21 +453,6 @@ r=$(curl -q -sf "$BRAIN/api/brain/stats/pr-trend") || { fail "stats-pr-trend: /s
 echo "$r" | jq -e '.total != null' >/dev/null 2>&1 \
   && ok "stats-pr-trend: /stats/pr-trend 含 total" \
   || fail "stats-pr-trend: /stats/pr-trend 缺少 total"
-
-r=$(curl -q -sf "$BRAIN/api/brain/topics?limit=1") || { fail "topic-list: /topics 不可达"; r="{}"; }
-echo "$r" | jq -e '.total != null' >/dev/null 2>&1 \
-  && ok "topic-list: /topics 含 total 字段" \
-  || fail "topic-list: /topics 缺少 total"
-
-r=$(curl -q -sf "$BRAIN/api/brain/topics?limit=1") || { fail "topic-generate: /topics 不可达"; r="{}"; }
-echo "$r" | jq -e '.data != null' >/dev/null 2>&1 \
-  && ok "topic-generate: /topics 含 data 字段" \
-  || fail "topic-generate: /topics 缺少 data"
-
-r=$(curl -q -sf "$BRAIN/api/brain/topics?limit=1") || { fail "topic-approve: /topics 不可达"; r="{}"; }
-echo "$r" | jq -e '.data != null' >/dev/null 2>&1 \
-  && ok "topic-approve: /topics 含 data（approve 可操作）" \
-  || fail "topic-approve: /topics 缺少 data"
 
 r=$(curl -q -sf "$BRAIN/api/brain/health") || { fail "vps-containers: /health 不可达"; r="{}"; }
 echo "$r" | jq -e '.status != null' >/dev/null 2>&1 \

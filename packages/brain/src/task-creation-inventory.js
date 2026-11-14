@@ -19,14 +19,11 @@ export const TASK_CREATION_INVENTORY = Object.freeze([
   { module: 'code-review-trigger.js', source: 'scheduler', creates_executable_task: true, migration_status: 'routed' },
   { module: 'codex-immune.js', source: 'scheduler', creates_executable_task: true, migration_status: 'routed' },
   { module: 'credentials-health-scheduler.js', source: 'scheduler', creates_executable_task: true, migration_status: 'routed' },
-  { module: 'cron/daily-real-business-smoke.js', source: 'scheduler', creates_executable_task: true, migration_status: 'routed' },
   { module: 'crystallize-orchestrator.js', source: 'scheduler', creates_executable_task: true, migration_status: 'routed' },
   { module: 'cortex.js', source: 'discovery', creates_executable_task: true, migration_status: 'routed' },
   { module: 'credential-expiry-checker.js', source: 'scheduler', creates_executable_task: true, migration_status: 'routed' },
   { module: 'daily-backup-scheduler.js', source: 'scheduler', creates_executable_task: true, migration_status: 'routed' },
-  { module: 'daily-publish-scheduler.js', source: 'scheduler', creates_executable_task: true, migration_status: 'routed' },
   { module: 'daily-review-scheduler.js', source: 'discovery', creates_executable_task: true, migration_status: 'routed' },
-  { module: 'daily-scrape-scheduler.js', source: 'discovery', creates_executable_task: true, migration_status: 'routed' },
   { module: 'decomposition-checker.js', source: 'discovery', creates_executable_task: true, migration_status: 'routed' },
   { module: 'decision-executor.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
   { module: 'dept-heartbeat.js', source: 'discovery', creates_executable_task: true, migration_status: 'routed' },
@@ -45,7 +42,6 @@ export const TASK_CREATION_INVENTORY = Object.freeze([
   { module: 'orchestrator-chat.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
   { module: 'pipeline-patrol.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
   { module: 'planner.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
-  { module: 'post-publish-data-collector.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
   { module: 'progress-reviewer.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
   { module: 'proposal.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
   // 2026-09-14 Notion 排单接手（双向·pull）：主理人 Notion Tasks 库 Delegated → createRoutedTask
@@ -67,7 +63,6 @@ export const TASK_CREATION_INVENTORY = Object.freeze([
   { module: 'routes/capture-atoms.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
   { module: 'routes/acceptance.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
   { module: 'routes/actions.js', source: 'api', creates_executable_task: true, migration_status: 'routed' },
-  { module: 'routes/content-pipeline.js', source: 'api', creates_executable_task: true, migration_status: 'routed' },
   { module: 'routes/eval.js', source: 'api', creates_executable_task: true, migration_status: 'routed' },
   { module: 'routes/execution.js', source: 'api', creates_executable_task: true, migration_status: 'routed' },
   { module: 'routes/golden-paths.js', source: 'discovery', creates_executable_task: true, migration_status: 'routed' },
@@ -96,5 +91,4 @@ export const TASK_CREATION_INVENTORY = Object.freeze([
   // factory-judge 本身不直连写入口：createTask 由 factory-cycle 注入（actions.js 边界），故不单独算可执行建单边界。
   { module: 'lib/factory-judge.js', source: 'scheduler', creates_executable_task: false, migration_status: 'routed' },
   { module: 'thalamus.js', source: 'conversation', creates_executable_task: true, migration_status: 'routed' },
-  { module: 'topic-suggestion-manager.js', source: 'scheduler', creates_executable_task: true, migration_status: 'routed' },
 ]);

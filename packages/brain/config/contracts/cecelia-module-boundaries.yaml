@@ -48,16 +48,6 @@ contracts:
     test_file: packages/brain/src/__tests__/selfcheck.test.js
     priority: P0
 
-  - id: llm_agents_registry
-    description: >
-      所有 callLLM('agentId') 调用的 agentId 必须在 model-registry.js AGENTS[] 中注册。
-      fitness-check CI 已强制验证。
-    consumer: packages/brain/src/
-    provider: packages/brain/src/model-registry.js
-    signature_file: packages/brain/src/model-registry.js
-    test_file: scripts/devgate/check-llm-agents.mjs
-    priority: P0
-
   # --------------------------------------------------------------------------
   # 需要测试覆盖的高风险契约
   # --------------------------------------------------------------------------

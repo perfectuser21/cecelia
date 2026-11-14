@@ -45,8 +45,8 @@ import { loadSkillContent } from './execution-shared.js';
 import { REVIEW_TASK_TYPES } from './lib/review-task-types.js';
 import {
   isRetiredDevelopmentTask,
+  isExternalWorkerTask,
   RETIRED_DEVELOPMENT_CODE,
-  CONTENT_PIPELINE_TYPES as CONTENT_PIPELINE_EXTERNAL_WORKER_TYPES,
   EXTERNAL_WATCHDOG_TASK_TYPES,
   EXECUTOR_SKILL_MAP,
 } from './lib/task-type-registry.js';
@@ -1287,6 +1287,8 @@ function generateRunId(_taskId) {
  * - 无 payload → 保持 taskType 原有路由（向后兼容）
  */
 function getSkillForTaskType(taskType, payload) {
+  if (isExternalWorkerTask({ task_type: taskType })) return null;
+  if (isRetiredDevelopmentTask({ task_type: taskType, payload })) return null;
   // payload 特判：decomposition 模式路由（优先级高于 taskType 静态映射）
   if (payload) {
     // decomposition='true' + task_type=dev → /decomp（OKR 拆解，由秋米执行）
@@ -1308,31 +1310,7 @@ function getSkillForTaskType(taskType, payload) {
     // payload.decomposition === 'known' 或其他值 → 继续走 taskType 映射
   }
 
-  // content_publish → 按 payload.platform 路由到对应 publisher skill
-  if (taskType === 'content_publish') {
-    const platform = payload?.platform;
-    const publisherSkillMap = {
-      'douyin': '/douyin-publisher',
-      'kuaishou': '/kuaishou-publisher',
-      'toutiao': '/toutiao-publisher',
-      'weibo': '/weibo-publisher',
-      'xiaohongshu': '/xiaohongshu-publisher',
-      'zhihu': '/zhihu-publisher',
-      'wechat': '/wechat-publisher',
-      'shipinhao': '/shipinhao-publisher',
-    };
-    const skill = publisherSkillMap[platform];
-    if (skill) {
-      console.log(`[executor] content_publish 路由: platform=${platform} → ${skill}`);
-      return skill;
-    }
-    console.log(`[executor] content_publish 路由: platform=${platform || '未知'} → /dev（fallback）`);
-    return '/dev';
-  }
 
-  // 任务→技能解析：skill_registry（能力账本，进程内快照，由 preparePrompt 经 resolveSkillWithLedger
-  // 刷新）优先；硬编码 EXECUTOR_SKILL_MAP（lib/task-type-registry.js）降为兜底，漂移/缺映射会告警。
-  // 账本读取失败或尚未加载时等价于旧行为（纯硬编码）。链 bf5088a3 棒7。
   return resolveTaskTypeSkill(taskType, EXECUTOR_SKILL_MAP) || '/dev';
 }
 
@@ -2628,6 +2606,9 @@ async function triggerCeceliaRun(task) {
   if (isRetiredDevelopmentTask(task)) {
     return { success: false, taskId: task?.id, reason: RETIRED_DEVELOPMENT_CODE, error: RETIRED_DEVELOPMENT_CODE, retiredBeforeStart: true };
   }
+  if (isExternalWorkerTask(task)) {
+    return { success: false, taskId: task?.id, reason: 'external_consumer_required' };
+  }
   const execResult = await _triggerCeceliaRunInner(task);
   const source = 'executor';
   const runId = await startRunForExecResult({ task, execResult, source });
@@ -2715,7 +2696,6 @@ async function _triggerCeceliaRunInner(task) {
   if (!forceUsClaude && location === 'xian') {
     const src = dynamicLocation ? 'dynamic-cache' : 'location-map';
     console.log(`[executor] 路由决策: task_type=${task.task_type} → Codex Bridge (location=xian, src=${src})`);
-    // 打标：content-pipeline 系由外部 ZJ pipeline-worker 管 → external-worker；其余 xian 任务 → bridge
     const xianKind = Object.prototype.hasOwnProperty.call(EXECUTOR_KIND_FOR, task.task_type)
       ? EXECUTOR_KIND_FOR[task.task_type]
       : EXECUTOR_KIND_FOR.__bridge_path;
@@ -2938,15 +2918,6 @@ async function probeTaskLiveness() {
       continue;
     }
 
-    // content-pipeline parent tasks and all content-* stage tasks are orchestrated externally
-    // by the ZJ pipeline-worker (Python LangGraph, see PR zenithjoy#216). They have no OS
-    // process inside Brain, so the liveness probe must skip them — otherwise it would mark
-    // legitimate ZJ-managed tasks as zombies.
-    const CONTENT_PIPELINE_TYPES = new Set(CONTENT_PIPELINE_EXTERNAL_WORKER_TYPES);
-    if (CONTENT_PIPELINE_TYPES.has(task.task_type) || task.payload?.pipeline_orchestrated === true) {
-      continue;
-    }
-
     const EXTERNAL_WATCHDOG_TYPES = new Set(EXTERNAL_WATCHDOG_TASK_TYPES);
 
     // 外部 run 镜像（workflow_run / device_job source=cron，任务 0004aceb，决策 3c98fb36 阶段1）：
@@ -3007,7 +2978,7 @@ async function probeTaskLiveness() {
     // agent 实际在跑。生死交给专属收割器（reapOpenclawAgentRuns / script-reaper 读远端 .exit）
     // 与合同层超时（executor-contracts staleMinutes → zombie-reaper）。
     // 旧device_job保留45分钟策略；独立手机controller由持久租约及远端退出/解锁回执收口。
-    if (isPhoneDispatchTask(task) || (isExternallyExecuted(task) && !EXTERNAL_WATCHDOG_TYPES.has(task.task_type))) {
+    if (isPhoneDispatchTask(task) || (isExternallyExecuted(task) && (!EXTERNAL_WATCHDOG_TYPES.has(task.task_type) || EXECUTOR_KIND_FOR[task.task_type] === 'external-worker'))) {
       suspectProcesses.delete(task.id);
       continue;
     }
@@ -3406,7 +3377,7 @@ async function syncOrphanTasksOnStartup() {
       orphansFound++;
 
       // Tasks with run_id = null never spawned a real process — they are inline
-      // orchestration markers (e.g. content-pipeline). On Brain restart these
+      // inline orchestration markers. On Brain restart these
       // should always be requeued rather than quarantined, because no process
       // actually died; the task was simply running inline when Brain stopped.
       if (!runId) {

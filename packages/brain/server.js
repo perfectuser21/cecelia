@@ -60,7 +60,6 @@ import createDecisionsMatchRouter from './src/routes/decisions.js';
 import captureAtomsRoutes from './src/routes/capture-atoms.js';
 import capturesRoutes from './src/routes/captures.js';
 import projectionsRoutes from './src/routes/projections.js';
-import contentPipelineRoutes from './src/routes/content-pipeline.js';
 import canRunRoutes from './src/routes/can-run.js';
 import bypassActionsRoutes from './src/routes/bypass-actions.js';
 import okrHierarchyRoutes from './src/routes/okr-hierarchy.js';
@@ -417,13 +416,10 @@ app.use('/api/brain', projectionsRoutes);
 // Notion 写入端点：POST /notes, POST /notion/project, POST /notion/task
 app.use('/api/brain', notesRoutes);
 
-// Mount brain routes BEFORE contentPipelineRoutes to prevent /:id/stats wildcard
-// from intercepting /publish-results/stats and other specific routes in brainRoutes
 app.use('/api/brain', brainRoutes);
 
 app.use('/api/brain', canRunRoutes);
 app.use('/api/brain', bypassActionsRoutes); // 旁路报警：执行机上报 + 运维视图（派发总闸 H，任务 865b502c）
-app.use('/api/brain', contentPipelineRoutes); // /api/brain/content-types
 app.use('/api/brain/okr', okrHierarchyRoutes);
 app.use('/api/brain/context', contextRoutes);
 app.use('/api/brain/strategy-tree', strategyTreeRoutes);
