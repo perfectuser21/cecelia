@@ -424,12 +424,14 @@ test('当前候选输入入口逐项读取身份及资源完整控制封组，�
  const path='scripts/ci/__tests__/basic-candidate-source.test.mjs',f=basicEntryFixture(t,path);
  const live=fileURLToPath(new URL('../../../',import.meta.url));
  const module=parse(readFileSync(join(live,'scripts/ci/implementation-verification-inputs.mjs'),'utf8'),{ecmaVersion:'latest',sourceType:'module'});
- const declaration=module.body.find(n=>n.type==='VariableDeclaration'&&n.declarations.some(d=>d.id.name==='SLIM_BASIC_ENTRY_PROTOCOLS'));
+ const declaration=module.body.find(n=>n.type==='VariableDeclaration'&&n.declarations.some(d=>d.id.name==='SKILL_RETIREMENT_ENTRY_PROTOCOL'));
  const protocols=declaration.declarations[0].init;
- assert.equal(protocols.type,'ArrayExpression');
- const members=protocols.elements.at(-1).properties.map(p=>p.key.value);
+ assert.equal(protocols.type,'ObjectExpression');
+ const members=protocols.properties.filter(p=>p.value.value!==null).map(p=>p.key.value);
+ const retired=protocols.properties.filter(p=>p.value.value===null).map(p=>p.key.value);
  for(const member of ['scripts/skill_source_ownership.py','scripts/ci/resource-canary-scope.mjs','scripts/ci/__tests__/basic-resource-canary-scope.test.mjs','scripts/ci/__tests__/basic-resource-canary.test.mjs','scripts/ci/__tests__/basic-results.test.mjs','scripts/ci/__tests__/basic-workflow.test.mjs'])assert.ok(members.includes(member),member);
  for(const member of ['.github/workflows/ci.yml',...members]){mkdirSync(join(f.root,member,'..'),{recursive:true});writeFileSync(join(f.root,member),readFileSync(join(live,member)));}
+ f.git('rm','--sparse','--ignore-unmatch',...retired);
  f.git('rm','--sparse','-r','scripts/ci/check-w19-frozen.mjs','scripts/ci/__tests__/basic-w19-freeze.test.mjs','playground');
  f.source.base_revision=f.commit();writeFileSync(join(f.root,path),'export const currentCandidateSource=true;\n');f.source.head_revision=f.commit();f.source.changed_files=[{path}];
  const row=derived(f).rows.find(r=>r.input_facts.path===path&&r.input_facts.source.side==='head');
@@ -446,7 +448,7 @@ test('当前候选输入入口逐项读取身份及资源完整控制封组，�
  }
  for(const [member,revision] of [
   ...['scripts/ci/check-basic-results.mjs','scripts/ci/run-basic-check.mjs','packages/brain/vitest.config.js'].map(path=>[path,'d06de84e9f7d2d489a151e0b13b38f81651dd3fa']),
-  ...['scripts/ci/prepare-ubuntu-archive.mjs','scripts/ci/__tests__/basic-ubuntu-archive.test.mjs','scripts/ci/__tests__/basic-skill-source-coverage.test.mjs'].map(path=>[path,'4d8bed7c7504f8e3e2d84b283bde735927642f8b']),
+  ...['scripts/ci/prepare-ubuntu-archive.mjs','scripts/ci/__tests__/basic-ubuntu-archive.test.mjs'].map(path=>[path,'4d8bed7c7504f8e3e2d84b283bde735927642f8b']),
  ]){
   const candidate=readFileSync(join(f.root,member));
   const main=execFileSync('git',[...VERIFICATION_GIT_OPTIONS,'--no-replace-objects','show',revision+':'+member],{cwd:f.root});
@@ -465,6 +467,13 @@ test('当前候选输入入口逐项读取身份及资源完整控制封组，�
    assert.ok(invalid.unproven.some(r=>r.path===path&&r.reason==='entry_unproven'));
    writeFileSync(join(f.root,member),original);f.source.head_revision=f.commit();
   }
+ }
+ for(const member of retired){
+  mkdirSync(join(f.root,member,'..'),{recursive:true});writeFileSync(join(f.root,member),'export const retired=true;\n');f.source.head_revision=f.commit();
+  f.source.changed_files=f.git('diff','--name-only',f.source.base_revision,f.source.head_revision).split('\n').filter(Boolean).map(path=>({path}));
+  const invalid=derived(f);assert.equal(invalid.rows.some(r=>r.input_facts.path===path&&r.input_facts.source.side==='head'),false);
+  assert.ok(invalid.unproven.some(r=>r.path===path&&r.reason==='entry_unproven'));
+  f.git('rm','--sparse',member);f.source.head_revision=f.commit();
  }
  writeFileSync(join(f.root,'scripts/skill_source_ownership.py'),readFileSync(join(f.root,'scripts/skill_source_ownership.py'),'utf8')+'\n# unknown source\n');
  f.source.head_revision=f.commit();f.source.changed_files=f.git('diff','--name-only',f.source.base_revision,f.source.head_revision).split('\n').filter(Boolean).map(path=>({path}));

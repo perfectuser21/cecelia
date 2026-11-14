@@ -1,6 +1,8 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.445.211
+**Brain 版本**: 1.445.212
+
+清退 PR CI 的固定 Skill 来源合同：删除四个矩阵检查、五份 Skill 正文静态测试及专属配置/入口，并清退无现役调用的旧 Harness 合同检查脚本、测试与假数据；通用 Skill 固定来源恢复机制与业务运行接口保留。Brain 单测继续按 Vitest 文件路径哈希切六片，不按业务分组。
 
 显式Commander Workflow宿主将有界决策和单Activity验收结果存入DBOS；PG动作意图先提交，恢复只读回并核验原身份，未知动作隔离。首版仅非交互source单次活动；独立CLI与scratch故障验收，不改变生产公共Runner入口。
 

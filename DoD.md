@@ -8,3 +8,6 @@
   Test: manual:npm exec -w apps/api -- vitest run
 - [ ] 准确候选提交的源码CI通过后合并，任务回写并清理本次工作树。
   Test: manual:bash -c 'gh pr checks --repo perfectuser21/cecelia'
+
+- [x] 删除固定 Skill 来源合同四个矩阵job、五份专属测试、无调用旧Harness合同脚本/测试/假数据及无用接线，现役CI来源/汇总仍严格拒绝缺失和未知输入，历史证据不重写。
+  Test: manual:node --test scripts/ci/__tests__/basic-workflow.test.mjs scripts/ci/__tests__/basic-brain-test-debt.test.mjs

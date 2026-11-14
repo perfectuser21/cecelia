@@ -107,7 +107,7 @@ test('统一CI真实合并runner，保持独有命令和产物并隔离安全权
   }),['ci.yml']);
   for(const [id,job]of Object.entries(workflow.jobs))assert.equal(job.uses,undefined,id+'不得复用另一个workflow');
   assert.ok(readFileSync(new URL('../../../.github/workflows/ci.yml',import.meta.url),'utf8').trimEnd().split('\n').length<=500);
-  assert.equal(Object.keys(workflow.jobs).length, 11);
+  assert.equal(Object.keys(workflow.jobs).length, 10);
   const baseline=yaml.load(execFileSync('git',['show','0e2c3c81717ab08ae678a869f526a258f850fec8:.github/workflows/ci.yml'],{cwd:root,encoding:'utf8'}));
   for (const oldId of ['app-server-canary','attempt-runtime-limits','linux-resource-canary']) {
     assert.equal(workflow.jobs[oldId], undefined);
@@ -164,7 +164,7 @@ test('周扫描仅CodeQL执行，closed仅cleanup；评论写权限限于预览�
   assert.ok(workflow.concurrency['cancel-in-progress'].includes("github.event.action != 'closed'"));
 });
 
-test('现役全量PR含UI预览实际展开25个runner，不重复计算定义合并', () => {
+test('现役全量PR含UI预览实际展开21个runner，不重复计算定义合并', () => {
   const selected = planChecks(['apps/dashboard/src/App.tsx'], {full:true});
   assert.equal(selected.length, 11);
   const expanded = Object.entries(workflow.jobs).filter(([id]) => id !== 'preview-cleanup').map(([id, job]) => {
@@ -177,7 +177,7 @@ test('现役全量PR含UI预览实际展开25个runner，不重复计算定义�
     }
     return Object.values(matrix).reduce((count, axis) => count * axis.length, 1);
   });
-  assert.equal(expanded.reduce((sum, count) => sum + count, 0), 25);
+  assert.equal(expanded.reduce((sum, count) => sum + count, 0), 21);
 });
 
 

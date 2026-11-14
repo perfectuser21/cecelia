@@ -300,47 +300,6 @@ jobs:
           GIT_SHA="$GITHUB_SHA" npx --no-install vite build --outDir .dist-pwa-e2e
           node e2e/playwright-cli.mjs test --config ../../tests/regression/manual-ui/playwright.config.ts
     if: github.event_name != 'schedule' && github.event.action != 'closed'
-  skill-contracts:
-    name: Skill contracts and restoration (${{ matrix.os }} / ${{ matrix.component }})
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            component: brain
-          - os: ubuntu-latest
-            component: root
-          - os: windows-latest
-            component: restore
-          - os: macos-latest
-            component: restore
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: npm
-        if: matrix.component != 'restore'
-      - name: Install locked test dependencies
-        run: npm ci --ignore-scripts --no-audit --no-fund
-        if: matrix.component != 'restore'
-      - name: Restore pinned skill sources
-        uses: ./.github/actions/skills-source
-        with:
-          ssh-key: ${{ secrets.SKILLS_SOURCE_SSH_KEY }}
-          expected-public-sha256: ${{ vars.SKILLS_SOURCE_PUBLIC_KEY_SHA256 }}
-      - name: Run actual source contracts
-        env:
-          COMPONENT: ${{ matrix.component }}
-          CI: 'true'
-          POSTGRES_INTEGRATION: '0'
-        run: node scripts/ci/run-skill-source-check.mjs "$COMPONENT"
-        if: matrix.component != 'restore'
-    if: github.event_name != 'schedule' && github.event.action != 'closed'
   codeql:
     name: CodeQL (${{ matrix.language }})
     if: github.event.action != 'closed'
@@ -399,7 +358,6 @@ jobs:
       - resource-canaries
       - runtime-integration
       - pwa-upgrade
-      - skill-contracts
       - codeql
     if: always() && github.event_name != 'schedule' && github.event.action != 'closed'
     runs-on: ubuntu-latest

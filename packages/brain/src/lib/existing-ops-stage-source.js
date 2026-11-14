@@ -347,6 +347,35 @@ const REVIEWED_HARNESS_REMOVAL = {
   "scripts/ci/__tests__/basic-workflow.test.mjs": "59fb6deeab2470fae7ef17cc3bf115ab24277f8a2b28f222f5b15a6cc2b620c7"
 };
 const BASIC_PROTOCOLS = {"1283f9f7b9825a925318b20420d483de5f5daad5a032a476a20f100441c12a3f":[REVIEWED_CURRENT,REVIEWED_CANDIDATE,REVIEWED_OBSERVATION],"fd7dd2888f4abdfb9d70762fdea5213a9a4cfe104dbe5cd01defff58af6b8ffd":[REVIEWED_SLIM,REVIEWED_HARNESS_REMOVAL],"d20caae43b3156bde1b07d141c3bd54b888da847e9c78e3b21e1440fd848e59a":[REVIEWED_HARNESS_REMOVAL]};
+
+// 当前完整控制及精确退役路径；null只证明固定Git不存在，不授予执行资格。
+const REVIEWED_SKILL_RETIREMENT = {
+  "packages/brain/vitest.config.js": "ccaa6eda60569d92fba18802776d025849a92ada3698d92170057c9c76e97f66",
+  "scripts/ci/basic-scope.mjs": "dcc7b67cc8dd5df9a370754be400bd276c98c7e747acdfdd8b3f52dc8416c3c4",
+  "scripts/ci/run-basic-check.mjs": "a7eb0c2f679385f6f5d79127b226972bc3f9bcfd488363273fcdc1268547483d",
+  "scripts/ci/check-basic-results.mjs": "b58c1d265dce7d6b1c3ab66a7f3b43e0c222902aa38c0fa982d5eb7681b42718",
+  "scripts/ci/basic-runtime-smoke.mjs": "b386b8c0c8631de5b6a0eec19494835f48c6ca3822a4533ee154ce8767a21eec",
+  "scripts/ci/ops-checks.mjs": "c3cf7da7f7dcbb1e4cd8112abdcab3c7ffc854adb371f65fd13158fe96aac510",
+  "scripts/ci/run-isolated-staging-smoke.mjs": "fa19da1eaf14621a75d95763229fa8d6de40ce3e55940401458346da37f8fbaf",
+  "apps/api/vitest.config.ts": "dbb1e74af497db63cbd2326c5378bb05ca036e1a4590dc2061dce2e5257e776a",
+  "scripts/ci/check-brain-version-bump.sh": "361c35c33c2d0d404d9365c51478212e50ebe84df6a65eacca473ea57bffa0eb",
+  ".github/actions/skills-source/action.yml": "f106e23e090e1fd1aca6c035f63478365cf4aae2e6b4f2d379569c0a22f18169",
+  "scripts/ci/check-skill-source-identity.py": "ebc6b90fbe187b49c31101a5dba997d133fd45825cfcaa3549aad30581d747c1",
+  "scripts/ci/__tests__/basic-skill-identity.test.mjs": "da2687bd8adc80808a580a7955d2c0c619a3defb694b1ecf3d72e8fa58ab163d",
+  "apps/dashboard/vitest.config.ts": "a5899ed07ee4aa8ff262f7da361d695ef8eb26005571c5e09988aac53c1cc261",
+  "scripts/ci/prepare-ubuntu-archive.mjs": "209dcc9a05110f433d9a53586d657d0f7d7da20c008d85147ffc7e11dd76ac88",
+  "scripts/ci/__tests__/basic-ubuntu-archive.test.mjs": "404af7e10ae55b4c25136ce6d20c4af086f49f399cc7b6b6b5da02884d7c79bf",
+  "scripts/skill_source_ownership.py": "20fca16bcf474588e9e4d0add00a66c5885b3d85a82275fb9082a0787e72b9a7",
+  "scripts/ci/resource-canary-scope.mjs": "3a68ec68747a80aec250c17ef614735c6a2b85de55c3d1916d01a41aca50b48a",
+  "scripts/ci/__tests__/basic-resource-canary-scope.test.mjs": "4aada88475d642b08440fb53eee58800d8ae940aae923df3e8f3838038a5b21b",
+  "scripts/ci/__tests__/basic-resource-canary.test.mjs": "63d47e6271138059c90a32a78fdf2e11e0da7158621c89114258e2c1838558f2",
+  "scripts/ci/__tests__/basic-results.test.mjs": "eb3d1993ef7ba3ee72f510e7122be3040b3a4d0cb22151053a97aaacc9428b64",
+  "scripts/ci/__tests__/basic-workflow.test.mjs": "a823a59bb8af3db7db24ae994486af86390d6d7210e9d902642b1ceb4724deaa",
+  "vitest.config.js": "3400f6ba2d5886c139535b28dc0ffde32cf50838c22f1946a1bba4415e695a71",
+  "packages/brain/src/workflows/__tests__/impact-contract-evaluator-receipts.skill-source.test.js": null, "packages/brain/src/__tests__/golden-path-skill-snapshot.skill-source.test.js": null, "packages/brain/src/__tests__/ci-defense.skill-source.test.ts": null, "packages/brain/src/__tests__/golden-path-contract-task.skill-source.test.js": null, "tests/contract-e2e-extractor.skill-source.test.ts": null, "packages/brain/vitest.skill-source.config.mjs": null, "vitest.skill-source.config.mjs": null, "scripts/ci/run-skill-source-check.mjs": null, "scripts/ci/skill-source-tests.mjs": null, "scripts/ci/__tests__/basic-skill-source-coverage.test.mjs": null
+};
+const SKILL_RETIREMENT_CI = 'bcc6a2d4c101d634b98a5a3b346d10d9964b8acb0d41e869ec8ef43b786ab11b';
+const basicProtocolsFor = digest => digest === SKILL_RETIREMENT_CI ? [REVIEWED_SKILL_RETIREMENT] : BASIC_PROTOCOLS[digest];
 const reject = () => { throw Error('basic_ci_source_unproven'); };
 export function basicCiSelectorEnabled(text, parse) {
   const name = 'EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA';
@@ -363,7 +392,7 @@ export async function basicCiEnabledAt({ paths, readSource, revision, parse }) {
   return paths.includes(SOURCE) && basicCiSelectorEnabled(await readSource(SOURCE, revision), parse);
 }
 export function basicCiWorkflowProven(text) {
-  return Object.hasOwn(BASIC_PROTOCOLS, workflowHash(text));
+  return Boolean(basicProtocolsFor(workflowHash(text)));
 }
 /** 返回明确的排除字面量；不调用外置helper，也不将动态JS猜为选择器。 */
 export function skillSourceLiteralExcludes(text, component, parse) {
@@ -398,14 +427,17 @@ export function deepPostgresDirectorySelected(path) {
 }
 export async function collectBasicCiSources({ read, ci, revision, relations, parse, paths }) {
   let protocol;
-  for (const candidate of [BASIC_PROTOCOLS[workflowHash(ci)]].flat().filter(Boolean)) {
+  for (const candidate of [basicProtocolsFor(workflowHash(ci))].flat().filter(Boolean)) {
     let matches = true;
-    for (const [path, digest] of Object.entries(candidate)) if (hash(await read(path)) !== digest) { matches = false; break; }
+    for (const [path, digest] of Object.entries(candidate)) {
+      if (digest === null ? !Array.isArray(paths) || paths.includes(path) : hash(await read(path)) !== digest) { matches = false; break; }
+    }
     if (matches) { protocol = candidate; break; }
   }
   if (!protocol) reject();
   const relation = (consumer_path, input_path, kind) => relations.push({ consumer_path, input_path, kind, revision }); const skillWorkflow = Object.hasOwn(protocol, PINNED_WORKFLOW) ? PINNED_WORKFLOW : BASIC_CI;
-  if (Object.hasOwn(protocol, PINNED_READER)) {
+  const retiredSkills = protocol === REVIEWED_SKILL_RETIREMENT;
+  if (retiredSkills || Object.hasOwn(protocol, PINNED_READER)) {
     if (!Array.isArray(paths)) reject();
     const prefix = 'scripts/ci/__tests__/';
     const testName = /^(basic-.*|run-basic-check|brain-source-only-deploy)\.test\.mjs$/;
@@ -416,16 +448,16 @@ export async function collectBasicCiSources({ read, ci, revision, relations, par
     }
     const selected = paths.filter(path => path.startsWith(prefix) && !path.slice(prefix.length).includes('/')
       && testName.test(path.slice(prefix.length))).sort();
-    if (!selected.includes(PINNED_READER)) reject();
+    if (!retiredSkills && !selected.includes(PINNED_READER)) reject();
     for (const path of selected) {
       if (!await read(path)) reject();
       relation(BASIC_RUNNER, path, 'reviewed_scripts_node_test_selector');
     }
     // 完整已审reader证明真实URL读取；这条边只声明验证输入，绝不宣称私有源workflow已运行。
-    relation(PINNED_READER, skillWorkflow, 'literal_url_workflow_verification_input');
+    if (!retiredSkills) relation(PINNED_READER, skillWorkflow, 'literal_url_workflow_verification_input');
   }
   const identity = 'scripts/ci/check-skill-source-identity.py'; if (Object.hasOwn(protocol, 'scripts/ci/prepare-ubuntu-archive.mjs')) relation(BASIC_CI, 'scripts/ci/prepare-ubuntu-archive.mjs', 'official_ubuntu_archive_preparation');
-  if (Object.hasOwn(protocol, identity)) {
+  if (!retiredSkills && Object.hasOwn(protocol, identity)) {
     relation(skillWorkflow, '.github/actions/skills-source/action.yml', 'registered_skill_identity_composite');
     relation('.github/actions/skills-source/action.yml', identity, 'pre_fetch_registered_ssh_identity_guard');
     if(Object.hasOwn(protocol,'scripts/skill_source_ownership.py')) relation('.github/actions/skills-source/action.yml','scripts/skill_source_ownership.py','registered_skill_ownership_resolver');
@@ -451,8 +483,9 @@ export async function collectBasicCiSources({ read, ci, revision, relations, par
   for (const path of ['package.json', 'package-lock.json']) { await read(path); relation(BASIC_CI, path, 'root_npm_ci_manifest_input'); }
   await read('packages/brain/vitest.config.js');
   relation(BASIC_RUNNER, 'packages/brain/vitest.config.js', 'complete_brain_unit_six_shards');
-  relation('packages/brain/vitest.config.js', SKILL_SELECTOR, 'reviewed_skill_source_exclusion');
   relation(BASIC_RUNNER, 'apps/api/vitest.config.ts', 'dashboard_features_unit_config');
+  if (retiredSkills) return [];
+  relation('packages/brain/vitest.config.js', SKILL_SELECTOR, 'reviewed_skill_source_exclusion');
   return skillSourceLiteralExcludes(await read(SKILL_SELECTOR), 'brain', parse);
 }
 /** Deep全PG仅接受现行完整Nightly/config pair，不声明普通PR已执行。 */

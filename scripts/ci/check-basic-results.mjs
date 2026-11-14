@@ -2,7 +2,7 @@ import {validateResourcePlan} from './resource-canary-scope.mjs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export const REQUIRED_JOBS = ['plan', 'security', 'checks', 'resource-canaries', 'runtime-integration', 'pwa-upgrade', 'skill-contracts', 'codeql'];
+export const REQUIRED_JOBS = ['plan', 'security', 'checks', 'resource-canaries', 'runtime-integration', 'pwa-upgrade', 'codeql'];
 
 export function checkResults(needs) {
   if (!needs || typeof needs !== 'object' || Array.isArray(needs)) throw new Error('CI 结果必须是对象');
