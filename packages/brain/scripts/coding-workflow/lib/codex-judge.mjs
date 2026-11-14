@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
+import {normalizeCodexAuth} from './codex-auth.mjs';
 import { runClaude, claudeFailure } from './claude.mjs';
 
 // 仅约束受控stdin的UTF8字节，不表示模型隐藏系统消息或token预算。
@@ -16,16 +17,18 @@ export function inspectJudgeInput({ system, user }, maxInputBytes = 1024 * 1024)
   return { stdin, stdin_bytes, stdin_sha256: hash(stdin), materials_sha256: hash(JSON.stringify({ system, user })) };
 }
 
-export async function callCodexJudge({ system, user }, { model, codexHome, codexBin, transcriptPath, timeoutMs = 600000, maxInputBytes, judgeInputReceipt }) {
+export async function callCodexJudge({ system, user }, { model, codexHome, codexBin, codexAuth, transcriptPath, timeoutMs = 600000, maxInputBytes, judgeInputReceipt }) {
   const input = inspectJudgeInput({ system, user }, maxInputBytes);
   if (judgeInputReceipt && ['stdin_sha256', 'materials_sha256', 'stdin_bytes'].some(key => judgeInputReceipt[key] !== input[key])) throw new Error('judge_input_receipt_mismatch');
+  const auth=normalizeCodexAuth(codexAuth,codexHome);
+  codexHome=auth?.home??codexHome;
   if (!codexHome || !model) throw new Error('judge_codex_config_missing');
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'coding-wf-judge-'));
   const lastMessage = path.join(cwd, 'last-message.txt');
   try {
     const run = await runClaude({
       provider: 'codex', cwd, timeoutMs, tag: 'judge', transcriptPath, isolateRemote: true,
-      nativeOptions: { access: 'judge', outputLastMessage: lastMessage },
+      nativeOptions: { access: 'judge', outputLastMessage: lastMessage, codexAuth:auth },
       codexEnv: { CODING_WF_CODEX_HOME: codexHome, CODING_WF_CODEX_MODEL: model, CODING_WF_CODEX_BIN: codexBin || 'codex' },
       args: ['-p', input.stdin, '--permission-mode', 'acceptEdits', '--disallowedTools', 'Bash'],
     });

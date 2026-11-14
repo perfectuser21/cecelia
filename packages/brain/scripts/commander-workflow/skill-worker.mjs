@@ -6,12 +6,14 @@ import {spawn} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import {durableWrite} from '../../src/orchestrator/activity-supervisor.js';
 import {projectModelInput} from '../../src/orchestrator/commander-decision.js';
+import {prepareCodexAuth,codexAuthEnvironment} from '../coding-workflow/lib/codex-auth.mjs';
 import {codexWorkerArgs} from './skill-protocol.mjs';
 const chunks=[];for await(const c of process.stdin)chunks.push(c);
 const request=JSON.parse(Buffer.concat(chunks).toString()),{codex,identity,thread_file,work_dir,skill_text,tools_text,context}=request;
 if(createHash('sha256').update(fs.readFileSync(codex.command)).digest('hex')!==codex.command_sha256)throw Error('skill_codex_source_drift');
+const auth=prepareCodexAuth(request.codex_auth,{codex});
 const previous=fs.existsSync(thread_file)?JSON.parse(fs.readFileSync(thread_file,'utf8')):null;
-if(previous&&previous.run_id!==identity.run_id)throw Error('skill_thread_identity_conflict');
+if(previous&&(previous.run_id!==identity.run_id||(auth||previous.auth_identity)&&previous.auth_identity!==auth?.identity))throw Error('skill_thread_identity_conflict');
 const output=path.join(work_dir,'proposal.json'),transcript=fs.openSync(path.join(work_dir,'agent.jsonl'),'a',0o600);
 const activityInput=path.join(work_dir,'activity-input.json');
 const promptContext=projectModelInput(context,{sourceFile:activityInput,sourceField:'context.verification.runtime_sha256'});
@@ -25,12 +27,12 @@ for(const key of codex.env_keys??[])if(process.env[key]!==undefined)env[key]=pro
 durableWrite(activityInput,{identity,activity_key:request.activity_key,transport:'codex-cli',context});
 env.COMMANDER_ACTIVITY_KEY=request.activity_key;env.COMMANDER_ACTIVITY_INPUT_FILE=activityInput;
 let partial='',thread=previous?.thread_id;
-const child=spawn(codex.command,codexWorkerArgs(codex,thread,output),{cwd:request.cwd,env,stdio:['pipe','pipe','pipe']});
+const child=spawn(codex.command,codexWorkerArgs(codex,thread,output,auth),{cwd:request.cwd,env:codexAuthEnvironment(env,auth?.auth),stdio:['pipe','pipe','pipe']});
 child.stdout.on('data',data=>{fs.writeSync(transcript,data);partial+=data.toString();let end;
   while((end=partial.indexOf('\n'))>=0){const line=partial.slice(0,end);partial=partial.slice(end+1);try{const event=JSON.parse(line);
     if(event.type==='thread.started'&&typeof event.thread_id==='string'){
       if(thread&&thread!==event.thread_id){child.kill('SIGTERM');throw Error('skill_thread_changed');}
-      thread=event.thread_id;durableWrite(thread_file,{run_id:identity.run_id,thread_id:thread});
+      thread=event.thread_id;durableWrite(thread_file,{run_id:identity.run_id,thread_id:thread,...(auth?{auth_identity:auth.identity}:{})});
     }}catch{ /* 非JSON日志仅留原生transcript */ }}
 });
 child.stderr.on('data',data=>fs.writeSync(transcript,data));

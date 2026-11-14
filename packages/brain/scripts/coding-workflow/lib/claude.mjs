@@ -1,3 +1,4 @@
+import {codexAuthEnvironment} from './codex-auth.mjs';
 // claude CLI 子进程公共逻辑：spec / build / verify 共用。
 // 进程组收割、超时 SIGTERM→SIGKILL、执行器取消、退出宽限、env 剥离、鉴权判定、越界写快照都在这里。
 import fs from 'node:fs';
@@ -40,7 +41,7 @@ function claudeEnv() {
 function remoteIsolatedEnv(ghConfigDir) {
   const env = claudeEnv();
   for (const key of GH_TOKEN_KEYS) delete env[key];
-  // 编排凭据不属于开发/QA/裁判；Codex 必须使用选定账号的订阅登录。
+  // 编排凭据不属于开发/QA/裁判；Codex 的显式认证由独立账号文件提供。
   for (const key of ['DEPLOY_TOKEN', 'CECELIA_INTERNAL_TOKEN', 'TOAPIS_API_KEY', 'OPENAI_API_KEY', 'CODEX_API_KEY', 'CODEX_ACCESS_TOKEN', 'OPENAI_ACCESS_TOKEN', 'ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN', 'BARK_TOKEN', 'OP_SERVICE_ACCOUNT_TOKEN']) delete env[key];
   env.GH_CONFIG_DIR = ghConfigDir;
   return env;
@@ -144,7 +145,7 @@ export async function runClaude({ args: callerArgs, cwd, timeoutMs, tag, isolate
   if (!isolateRemote && provider === 'claude') return priced(await spawnClaude({ args, cwd, timeoutMs, tag, env: claudeEnv(), transcriptPath }));
   const ghConfigDir = fs.mkdtempSync(path.join(os.tmpdir(), 'coding-wf-gh-'));
   try {
-    return priced(await spawnClaude({ args, bin: native?.bin, stdin: native?.stdin, cwd, timeoutMs, tag, env: { ...remoteIsolatedEnv(ghConfigDir), ...native?.env }, transcriptPath }));
+    return priced(await spawnClaude({ args, bin: native?.bin, stdin: native?.stdin, cwd, timeoutMs, tag, env: codexAuthEnvironment({ ...remoteIsolatedEnv(ghConfigDir), ...native?.env },nativeOptions?.codexAuth), transcriptPath }));
   } finally {
     fs.rmSync(ghConfigDir, { recursive: true, force: true });
   }

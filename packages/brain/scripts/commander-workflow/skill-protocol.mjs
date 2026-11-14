@@ -12,7 +12,7 @@ export function verifySkillReadback(value,request,{allowEmpty=false}={}) {
         &&!Array.isArray(e.observation)&&Object.keys(e.observation).length))))throw Error('skill_readback_unconfirmed');
   canonical(value);return value;
 }
-export function codexWorkerArgs(codex,thread,output) {
-  return [...(codex.args??[]),'exec',...(thread?['resume']:[]),'--json','--skip-git-repo-check','-o',output,...(thread?[thread]:[]),'-'];
+export function codexWorkerArgs(codex,thread,output,auth) {
+  return [...(codex.args??[]),...(auth?.args??[]),'exec',...(thread?['resume']:[]),...(auth?['--ignore-user-config']:[]),'--json','--skip-git-repo-check','-o',output,...(thread?[thread]:[]),'-'];
 }
 export const sameIdentity=(a,b)=>Boolean(a&&b&&digest(a)===digest(b));

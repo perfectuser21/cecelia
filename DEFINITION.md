@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.445.216
+**Brain 版本**: 1.445.217
 
 通用 Commander Workflow 支持冻结契约下的 Skill/Code Activity、独立读回验收、末尾 finalize 和外部宿主持久恢复。Code Activity 不依赖模型配置；未知在途动作隔离、不重复执行。当前支持顺序活动及一个末尾收尾，使用隔离 PG/DBOS 和真实样本验收，不改变生产公共 Runner 入口。
 
