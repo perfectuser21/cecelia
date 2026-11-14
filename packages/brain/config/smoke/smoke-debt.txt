@@ -83,7 +83,6 @@ sse-stream-smoke.sh
 tenant-isolation-rule-smoke.sh
 test-lifecycle-patrol-smoke.sh
 thalamus-pure-functions.sh
-walking-skeleton-1node-smoke.sh
 warroom-lines-smoke.sh
 warroom-verdict-smoke.sh
 wave2-scheduler-consciousness-smoke.sh

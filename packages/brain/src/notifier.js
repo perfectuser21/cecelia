@@ -307,97 +307,6 @@ async function notifyDailySummary(summary) {
   return sendFeishu(lines.join('\n'));
 }
 
-// ─── Harness v2 关键事件通知（M6）────────────────────────────────────────
-// PRD: docs/design/harness-v2-prd.md §6.9 飞书通知
-// 钩子点由 harness-initiative-runner.js 在 phase 切换 / 事件分发时调用。
-
-/**
- * 阶段 A 合同 APPROVED 时推送（含 DAG task 数量 + GAN 轮次）
- * @param {{ initiative_id: string, task_count: number, review_rounds?: number, initiative_title?: string }} info
- */
-async function notifyHarnessContractApproved(info) {
-  const rounds = info.review_rounds ? `（GAN ${info.review_rounds} 轮）` : '';
-  const title = info.initiative_title || info.initiative_id;
-  const text = `📜 Harness 合同已 APPROVED：${title}${rounds}
-→ ${info.task_count} 个 Task 进入阶段 B 顺序执行`;
-  return sendRateLimited(`harness_contract_approved_${info.initiative_id}`, text);
-}
-
-/**
- * 阶段 B 每个 Task PR merged
- * @param {{ initiative_id: string, task_id: string, title: string, pr_url?: string }} info
- */
-async function notifyHarnessTaskMerged(info) {
-  const link = info.pr_url ? `\n${info.pr_url}` : '';
-  const text = `✅ Harness Task PR merged：${info.title}${link}`;
-  return sendRateLimited(`harness_task_merged_${info.task_id}`, text);
-}
-
-/**
- * 阶段 C E2E 结果（PASS / FAIL）
- * @param {{ initiative_id: string, verdict: 'PASS'|'FAIL', initiative_title?: string, failed_task_id?: string, failed_scenarios?: string[] }} info
- */
-async function notifyHarnessFinalE2E(info) {
-  const title = info.initiative_title || info.initiative_id;
-  if (info.verdict === 'PASS') {
-    const text = `🎉 Harness 阶段 C E2E PASS：${title}`;
-    return sendRateLimited(`harness_final_e2e_${info.initiative_id}`, text);
-  }
-  const failedId = info.failed_task_id ? `\n归因 Task：${info.failed_task_id}` : '';
-  const scenarios =
-    Array.isArray(info.failed_scenarios) && info.failed_scenarios.length
-      ? `\n失败场景：${info.failed_scenarios.slice(0, 3).join('；')}`
-      : '';
-  const text = `🚨 Harness 阶段 C E2E FAIL：${title}${failedId}${scenarios}`;
-  return sendRateLimited(`harness_final_e2e_${info.initiative_id}`, text);
-}
-
-/**
- * 预算 80% 预警 / 超时 30 分钟预警
- * @param {{ initiative_id: string, kind: 'budget'|'timeout', detail?: string }} info
- */
-async function notifyHarnessBudgetWarning(info) {
-  const label = info.kind === 'budget' ? '预算 80%' : '超时 30 分钟';
-  const detail = info.detail ? `\n${info.detail}` : '';
-  const text = `⚠️ Harness 预警：${info.initiative_id} ${label}${detail}`;
-  return sendRateLimited(`harness_warn_${info.kind}_${info.initiative_id}`, text);
-}
-
-const BRAIN_PUBLIC_URL = process.env.BRAIN_PUBLIC_URL || 'http://38.23.47.81:5221';
-
-/**
- * Evaluator PASS，PR 等待人工验收后才 merge。
- *
- * kernel 三修案卷(task 31b93fd4)：此前通知只给预览链接，approve 端点要的
- * run_id/task_id/pr_head_sha 都没带，操作员只能现挖 DB 手写 SQL。补一条可直接
- * 复制运行的 curl 审批模板——$HARNESS_REVIEW_APPROVER_TOKEN 是字面 shell 变量名
- * 占位（操作员本机 env 里取），绝不嵌入真实 token 值。不含 review_request_hop：
- * 该 hop 在通知发出这一刻的 decision-log 行还没 append，approve 端点已改为按
- * run_id+head_sha 自动解析最新一条待审请求（无需调用方预知未来才分配的 hop 号）。
- *
- * @param {{ task_id: string, pr_url: string, title?: string, preview_url?: string,
- *   run_id?: string, pr_head_sha?: string }} info
- */
-async function notifyHarnessReviewPending(info) {
-  const title = info.title || info.task_id;
-  const preview = info.preview_url ? `\n预览：${info.preview_url}` : '';
-  const pr = info.pr_url ? `\nPR：${info.pr_url}` : '';
-  const canApprove = info.run_id && info.task_id && info.pr_head_sha;
-  const approveCmd = canApprove
-    ? `\n批准：curl -X POST ${BRAIN_PUBLIC_URL}/api/brain/kernel-reviews/${info.run_id}/approve `
-      + `-H 'Content-Type: application/json' -H "x-approver-token: $HARNESS_REVIEW_APPROVER_TOKEN" `
-      + `-d '${JSON.stringify({
-        task_id: info.task_id,
-        pr_head_sha: info.pr_head_sha,
-        approved_by: 'bark-approve',
-      })}'`
-    : '';
-  return sendBark(
-    `🔍 待验收：${title}`,
-    `Evaluator PASS，请验收后批准 merge。${preview}${pr}${approveCmd}`
-  );
-}
-
 export {
   sendFeishu,
   sendBark,
@@ -406,10 +315,5 @@ export {
   notifyCircuitOpen,
   notifyPatrolCleanup,
   notifyDailySummary,
-  notifyHarnessContractApproved,
-  notifyHarnessTaskMerged,
-  notifyHarnessFinalE2E,
-  notifyHarnessBudgetWarning,
-  notifyHarnessReviewPending,
   RATE_LIMIT_MS
 };

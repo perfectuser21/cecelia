@@ -111,8 +111,7 @@ describe('旧拆解标记禁止启动', () => {
   it.each([
     {task_type:'talk',payload:{next_action:'decompose'}},
     {task_type:'project_plan',payload:{decomposition:'true'}},
-    {task_type:'harness_initiative',payload:{requested_task_type:'dev',decomposition:true}},
-  ])('非 dev 或归一 dev 的旧路由也拒绝启动 %j',async task=>{
+  ])('其他任务类型的旧拆解路由也拒绝启动 %j',async task=>{
     const result=await executor.triggerCeceliaRun({id:'owned-other',...task});
     expect(result).toMatchObject({success:false,reason:'retired_decomposition'});
     expect(io.spawn).not.toHaveBeenCalled(); expect(global.fetch).not.toHaveBeenCalled();
@@ -121,9 +120,7 @@ describe('旧拆解标记禁止启动', () => {
     {task_type:'qiumi_task',payload:{decomposition:'true'}},
     {task_type:'script_run',payload:{next_action:'decompose'}},
     {task_type:'staging_e2e',payload:{decomposition:'continue'}},
-    {task_type:'harness_intervention',payload:{decomposition:'true'}},
     {task_type:'research',payload:{invocation:{id:'owned'},decomposition:'true'}},
-    {task_type:'harness_initiative',payload:{decomposition:'true'}},
   ])('不把专用执行面同名字段当旧拆解 %j',async task=>{
     const {isRetiredDecomposition}=await import('../lib/retired-decomposition.js');
     expect(isRetiredDecomposition(task)).toBe(false);

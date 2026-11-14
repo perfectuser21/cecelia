@@ -70,7 +70,6 @@ import krProjectMapRoutes from './src/routes/kr-project-map.js';
 import contextRoutes from './src/routes/context.js';
 import registryRoutes from './src/routes/registry.js';
 import notesRoutes from './src/routes/notes.js';
-import walkingSkeletonRouter from './src/routes/walking-skeleton.js';
 import backupRoutes from './src/routes/backup.js';
 import llmServiceRoutes from './src/routes/llm-service.js';
 import featuresRoutes from './src/routes/features.js';
@@ -434,7 +433,6 @@ app.use('/api/brain/registry', registryRoutes);
 // Skill Evaluator 端点（POST /upload 需 X-Eval-Proxy-Token，GET /status 无需 token）
 app.use('/api/skill-eval', skillEvalRoutes);
 app.use('/api/brain', vocabAlias); // 行业词汇 API 别名：/value-streams 等 → 旧路径（决策 a340f100）
-app.use('/api/brain', walkingSkeletonRouter);
 app.use('/api/brain', journeysRouter);
 // GET /api/brain/issues — skills 期望的端点（journey_features 里有 issues，此处提供独立路由）
 app.get('/api/brain/issues', async (req, res) => {

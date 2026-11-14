@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
 # Smoke: task-type-registry — 秋米任务路由 PR1-A（task_type 单一事实源）
 #
-# 真环境验证四件事：
+# 核对当前注册表与只读台账：
 #   1. 注册表模块能被 node 真实 import，派生导出非空且冻结（不是空壳）
 #   2. 真库 tasks 表可读，库里出现过的 task_type 逐条拿注册表比对，孤儿列出来
 #   3. SSH_BASE_ARGS 已从 notion-push-sync.js 抽到 lib/ssh-args.js，生产文件真 import
 #      （孤岛闸要求的那条入边，同时防"抽完没人用"的假重构）
-#   4. 「注册表 vs 基线源码」审计脚本真跑一遍（基线 commit 在浅克隆里取不到才跳过）
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
@@ -17,7 +16,7 @@ node --input-type=module -e "
 import * as R from './packages/brain/src/lib/task-type-registry.js';
 const mustBeNonEmptyFrozen = [
   'VALID_TASK_TYPES', 'SYSTEM_TASK_TYPES', 'CODING_TASK_TYPES',
-  'TICK_DISPATCH_EXCLUDED', 'HARNESS_INFLIGHT_TASK_TYPES',
+  'TICK_DISPATCH_EXCLUDED',
 ];
 const bad = [];
 for (const name of mustBeNonEmptyFrozen) {

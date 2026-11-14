@@ -86,4 +86,12 @@ describe('真实PATCH完成审查门只允许明确approved', () => {
     const res=await patch({status:'completed',result:{pr_url:task.pr_url}});
     expect(res.status).toBe(200);expect(updates).toHaveLength(1);expect(effects.verifyPr).toHaveBeenCalledWith(expect.objectContaining({pr_url:task.pr_url,pr_merged_at:null}),expect.any(Object));
   });
+  it.each(['code_review','pr_review','research'])('%s可完成合并前评审，OPEN嵌套引用不调用PR查询',async task_type=>{
+    const {verifyTaskCompletionPr}=await vi.importActual('../../lib/task-completion-pr.js');
+    const url='https://github.com/owned/repo/pull/10',readPr=vi.fn().mockResolvedValue({url,state:'OPEN',mergedAt:null});
+    task.task_type=task_type;task.review_required_raw='false';task.payload={pr_url:url};task.result={pr_url:url};
+    effects.verifyPr.mockImplementation((current,body)=>verifyTaskCompletionPr(current,body,{readPr}));
+    const res=await patch({status:'completed',result:{pr_url:url,verdict:'APPROVED'}});
+    expect(res.status).toBe(200);expect(updates).toHaveLength(1);expect(effects.terminal).toHaveBeenCalledOnce();expect(readPr).not.toHaveBeenCalled();
+  });
 });

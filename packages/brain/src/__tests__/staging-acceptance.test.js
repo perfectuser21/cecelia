@@ -42,4 +42,3 @@ describe('normalizeAcceptance', () => {
     expect(() => normalizeAcceptance({ scenarios: [null] })).toThrow();
   });
 });
-

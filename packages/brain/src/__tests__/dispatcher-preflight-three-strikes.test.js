@@ -11,7 +11,7 @@
  * - blocked 后不再入候选（selectNextDispatchableTask 只选 queued，自然止血）
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const mockQuery = vi.fn();
 vi.mock('../db.js', () => ({
@@ -19,7 +19,6 @@ vi.mock('../db.js', () => ({
 }));
 
 vi.mock('../slot-allocator.js', () => ({
-  harnessSlotCheck: vi.fn().mockResolvedValue({ allow: true, reason: 'ok', containers: 0, inflight: 0, cap: { effective: 4, mem_cap: 8, acct_cap: 4, hard_cap: 8 }, stale: false }),
   calculateSlotBudget: vi.fn().mockResolvedValue({
     dispatchAllowed: true,
     taskPool: { budget: 5, available: 3 },
@@ -98,27 +97,30 @@ vi.mock('../account-usage.js', () => ({
   getAuthFailedAccounts: vi.fn().mockReturnValue([]),
 }));
 
-// ──────────────────────────────────────────────────────────
-// Helper: 构造 queryMock 序列，供"单 tick 派发"调用
-// 每次 dispatchNextTask 调用需要:
-//   [0] drain retired harness types
-//   [0'] drain 无头 kernel harness_initiative
-//   [1] selectNextDispatchableTask → [task]
-//   [2] UPDATE metadata (三振相关)
-//   [3] selectNextDispatchableTask → [] (no more candidates)
-// ──────────────────────────────────────────────────────────
+const unexpectedSql = [];
+afterEach(async () => {
+  expect(unexpectedSql).toEqual([]);
+  expect((await import('../executor.js')).triggerCeceliaRun).not.toHaveBeenCalled();
+});
+// 按实际候选排除/UPDATE语义响应，不依赖旧Harness查询序号。
 function setupSingleTickReject(task) {
-  mockQuery.mockResolvedValueOnce({ rows: [] });           // [0] drain retired
-  mockQuery.mockResolvedValueOnce({ rows: [] });           // [0'] 无头 kernel drain（harness_initiative 无头入口退役）
-  mockQuery.mockResolvedValueOnce({ rows: [task] });       // [1] select → task
-  mockQuery.mockResolvedValueOnce({ rowCount: 1 });        // [2] UPDATE metadata/blocked
-  mockQuery.mockResolvedValueOnce({ rows: [] });           // [3] select → empty
+  mockQuery.mockImplementation(async (statement,values=[]) => {
+    const sql=String(statement).replace(/\s+/g,' ').trim();
+    if (/FROM tasks t\b/.test(sql)) {
+      const excluded=values.find(value=>Array.isArray(value)&&value.includes(task.id))||[];
+      return {rows:excluded.includes(task.id)?[]:[task],rowCount:excluded.includes(task.id)?0:1};
+    }
+    if (/^(?:INSERT|UPDATE)\b/.test(sql)) return {rows:[],rowCount:1};
+    unexpectedSql.push(sql);throw Error(`unexpected_test_sql: ${sql}`);
+  });
 }
 
 describe('dispatcher: pre-flight 三振持久终结', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockPreFlightCheck.mockResolvedValue({
+    mockQuery.mockReset();
+    unexpectedSql.length=0;
+    mockPreFlightCheck.mockReset().mockResolvedValue({
       passed: false,
       issues: ['description is empty'],
       suggestions: ['Fill in the description field']
@@ -128,7 +130,7 @@ describe('dispatcher: pre-flight 三振持久终结', () => {
   it('第 1 次拒绝：metadata 写入 pre_flight_fail_count=1，status 保持 queued', async () => {
     const task = {
       id: 'task-strikes-1', title: 'Task with no description', description: null,
-      prd_content: null, status: 'queued', priority: 'P1', payload: {},
+      task_type:'research', prd_content: null, status: 'queued', priority: 'P1', payload: {},
       metadata: null
     };
     setupSingleTickReject(task);
@@ -159,7 +161,7 @@ describe('dispatcher: pre-flight 三振持久终结', () => {
   it('第 2 次拒绝（metadata 有 count=1）：count 更新为 2，status 保持 queued', async () => {
     const task = {
       id: 'task-strikes-2', title: 'Task with no description', description: null,
-      prd_content: null, status: 'queued', priority: 'P1', payload: {},
+      task_type:'research', prd_content: null, status: 'queued', priority: 'P1', payload: {},
       metadata: { pre_flight_fail_count: 1 }
     };
     setupSingleTickReject(task);
@@ -183,7 +185,7 @@ describe('dispatcher: pre-flight 三振持久终结', () => {
   it('第 3 次拒绝（metadata 有 count=2）：置 blocked，blocked_reason=pre_flight_rejected', async () => {
     const task = {
       id: 'task-strikes-3', title: 'Task with no description', description: null,
-      prd_content: null, status: 'queued', priority: 'P1', payload: {},
+      task_type:'research', prd_content: null, status: 'queued', priority: 'P1', payload: {},
       metadata: { pre_flight_fail_count: 2 }
     };
     setupSingleTickReject(task);
@@ -218,7 +220,7 @@ describe('dispatcher: pre-flight 三振持久终结', () => {
   it('第 3 次拒绝后只告警一次（告警自然止血）', async () => {
     const task = {
       id: 'task-strikes-alert', title: 'Task with no description', description: null,
-      prd_content: null, status: 'queued', priority: 'P1', payload: {},
+      task_type:'research', prd_content: null, status: 'queued', priority: 'P1', payload: {},
       metadata: { pre_flight_fail_count: 2 }
     };
     setupSingleTickReject(task);

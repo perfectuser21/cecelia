@@ -61,7 +61,6 @@ t4-claim-protocol-smoke.sh
 task-delete-postdeploy-filter-smoke.sh
 task-tasks-dedup-smoke.sh
 unified-map-api-smoke.sh
-walking-skeleton-1node-smoke.sh
 warroom-line-command-smoke.sh
 alertness-schema-smoke.sh
 account-quota-gate-smoke.sh

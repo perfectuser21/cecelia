@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 import { resolve } from 'node:path';
 import { isIsolatedRuntime } from '../../../src/runtime-safety.js';
+import { CODING_MUTATION_TASK_TYPES, REVIEW_TASK_TYPES } from '../../../src/lib/task-type-registry.js';
 import { root, fixture } from './fixtures/smoke-production-guard-fixture.mjs';
 
 // Run the real health handler; inject only DB/probe I/O so no server automation starts.
@@ -15,7 +16,8 @@ async function actualHealth(env) {
   vm.runInNewContext(source.slice(start, source.indexOf('\n/**', start)), {
     router: { get: (_, fn) => { handler = fn; } },
     isIsolatedRuntime: () => isIsolatedRuntime(env),
-    pool: { query: async sql => ({ rows: [sql.includes('harness_initiative')
+    CODING_MUTATION_TASK_TYPES, REVIEW_TASK_TYPES,
+    pool: { query: async sql => ({ rows: [sql.includes('count(*)::integer AS cnt')
       ? { cnt: 0 } : { passed: 0, failed: 0, last_run_at: null }] }) },
     getTickStatus: async () => ({ loop_running: true, enabled: true }),
     getAllCBStates: () => ({}),

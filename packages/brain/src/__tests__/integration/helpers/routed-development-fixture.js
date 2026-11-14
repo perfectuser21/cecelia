@@ -69,4 +69,3 @@ export async function seedRoutedDevelopmentTask(pool, {
   );
   return { initiativeId, taskId, receiptId, payload: routedPayload };
 }
-
