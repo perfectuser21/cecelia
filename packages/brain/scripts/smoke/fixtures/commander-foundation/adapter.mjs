@@ -5,7 +5,9 @@ import {pathToFileURL} from 'node:url';
 export async function createRuntime({profile}) {
   const {callActivityProcess}=await import(pathToFileURL(path.join(profile.runtimeRoot,'src/orchestrator/activity-process.js')));
   const {callCodexJudge}=await import(pathToFileURL(path.join(profile.runtimeRoot,'scripts/coding-workflow/lib/codex-judge.mjs')));
+  const {startSupervisedActivity,waitSupervisedActivity}=await import(pathToFileURL(path.join(profile.runtimeRoot,'src/orchestrator/activity-supervisor.js')));
   const root=profile.cwd;
+  const supervisedDir=identity=>path.join(root,'control',identity.run_id,'actions',identity.action_id);
   const stopped=pid=>{try{process.kill(pid,0);return false;}catch(e){if(e.code==='ESRCH')return true;throw e;}};
   return {
     decide:async(request,{timeoutMs,signal})=>{
@@ -13,6 +15,7 @@ export async function createRuntime({profile}) {
       if(raw.exit_code!==0)throw Error('fixture_commander_died');return JSON.parse(raw.stdout);
     },
     executeActivity:async(activity,input,{identity,...options})=>{
+      if(profile.scenario==='auto-supervise')return startSupervisedActivity(supervisedDir(identity),identity,activity,{...input,root,scenario:profile.scenario,action_identity:identity},options,options.deadlineMs);
       if(activity.runtime.executor_kind==='agent'&&profile.realAgent){
         fs.writeFileSync(path.join(root,`${activity.key}.pid`),String(process.pid));
         const reply=await callCodexJudge({system:fs.readFileSync(path.join(root,'skill.txt'),'utf8'),user:JSON.stringify(input)},
@@ -23,7 +26,8 @@ export async function createRuntime({profile}) {
       }
       return callActivityProcess(activity,{...input,root,scenario:profile.scenario,action_identity:identity},options);
     },
-    inspectActivity:async(activity,_input,{identity})=>{
+    inspectActivity:async(activity,_input,{identity,signal})=>{
+      if(profile.scenario==='auto-supervise'){const transport=await waitSupervisedActivity(supervisedDir(identity),identity,{signal,reconnecting:true});return {state:'completed',execution_stopped:!transport.reason_code,identity,result:JSON.parse(transport.stdout)};}
       fs.appendFileSync(path.join(root,'readbacks.jsonl'),JSON.stringify({activity_key:activity.key,action_id:identity.action_id})+'\n');
       if(profile.scenario==='unknown-readback')return {state:'unknown'};
       const stored=JSON.parse(fs.readFileSync(path.join(root,`${activity.key}.json`),'utf8'));

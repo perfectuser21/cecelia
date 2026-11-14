@@ -66,3 +66,30 @@ test('同run的另一action读回不能冒用本次回执',async()=>{
   env.inspectActivity=async(_a,input,{identity})=>({state:'completed',identity:{...identity,activity_key:'other'},execution_stopped:true,result:result(input)});
   expect((await run()).status).toBe('needs_review');expect(env.executeActivity).not.toHaveBeenCalled();
 });
+
+const finalized=()=>{const r=request();const cleanup=activity('cleanup',3);cleanup.runtime.phase='finalize';r.contract.activities.push(cleanup);r.cleanup_deadline_ms=r.deadline_ms+10000;return r;};
+test('尾部finalize真正执行一次',async()=>{const out=await run(finalized());expect(out.status).toBe('completed');expect(env.executeActivity.mock.calls.map(([a])=>a.key)).toEqual(['a','b','cleanup']);});
+test.each(['stop','next'])('empty按冻结%s路线推进',async route=>{const r=finalized();r.contract.activities[0].runtime.on_status={done:'next',empty:route,needs_review:'pause'};env.executeActivity=vi.fn(async(a,i)=>({...result(i),status:a.key==='a'?'empty':'completed',outputs:a.key==='a'?{}:{answer:42}}));const out=await run(r);expect(out.status).toBe('completed');expect(env.executeActivity.mock.calls.map(([a])=>a.key)).toEqual(route==='stop'?['a','cleanup']:['a','b','cleanup']);});
+test('已停止的业务失败清理后仍失败',async()=>{env.executeActivity=vi.fn(async(a,i)=>a.key==='a'?{...result(i),status:'failed',failure_class:'fatal',execution_stopped:true,outputs:{}}:result(i));const out=await run(finalized());expect(out.status).toBe('needs_review');expect(out.business_pass).toBe(false);expect(out.cleanup_status).toBe('completed');expect(env.executeActivity.mock.calls.map(([a])=>a.key)).toEqual(['a','cleanup']);});
+test('未知在途禁止finalize',async()=>{env.executeActivity=vi.fn(async(_a,i)=>({...result(i),execution_stopped:false}));const out=await run(finalized());expect(out.cleanup_status).toBe('blocked');expect(env.executeActivity).toHaveBeenCalledTimes(1);});
+test('Commander失效无在途由代码执行安全清理',async()=>{env.decide=vi.fn(async()=>{throw Error('dead');});const out=await run(finalized());expect(out.status).toBe('needs_review');expect(out.cleanup_status).toBe('completed');expect(env.executeActivity.mock.calls.map(([a])=>a.key)).toEqual(['cleanup']);});
+test('业务已过期仍可使用独立cleanup期限',async()=>{const r=finalized();r.deadline_ms=Date.now()-10;const out=await run(r);expect(out.status).toBe('needs_review');expect(out.cleanup_status).toBe('completed');expect(env.executeActivity.mock.calls.map(([a])=>a.key)).toEqual(['cleanup']);});
+test('过期旧意图只能只读证明停止，保留原动作deadline再清理',async()=>{const r=finalized(),reserve=env.actionStore.reserve;env.actionStore.reserve=async(id,options)=>id.activity_key==='a'?{created:false,record:{identity:id,state:'reserved',deadline_ms:1}}:reserve(id,options);env.inspectActivity=vi.fn(async(_a,_i,{identity,deadlineMs})=>{expect(deadlineMs).toBe(1);return {state:'completed',execution_stopped:true,identity};});const out=await run(r);expect(out.reason).toBe('commander_deadline_exceeded');expect(out.cleanup_status).toBe('completed');expect(env.executeActivity.mock.calls.map(([a])=>a.key)).toEqual(['cleanup']);});
+test('finalize必须单尾且cleanup期限变化被run identity拒绝',async()=>{const r=finalized();const normalized=normalizeCommanderRun(r);expect(()=>normalizeCommanderRun({...normalized,cleanup_deadline_ms:r.cleanup_deadline_ms+1})).toThrow('commander_identity_conflict');r.contract.activities[0].order=4;expect(()=>normalizeCommanderRun(r)).toThrow();});
+test('产物通过但事件落账失败不可被empty-stop兼容放宽为成功',async()=>{env.onEvent=async event=>{if(event.event_type==='WF_RUN_FINALIZED')throw Error('sink');};const out=await run();expect(out.status).toBe('needs_review');expect(env.executeActivity).toHaveBeenCalledTimes(1);});
+
+test('finalize执行后来源漂移不结算成功也不重放副作用',async()=>{
+ let drift=false;env.verifySource=vi.fn(async()=>{if(drift)throw Error('commander_source_drift');});
+ env.executeActivity=vi.fn(async(a,i)=>{if(a.key==='cleanup')drift=true;return {...result(i),execution_stopped:true};});
+ const out=await run(finalized());expect(out.status).toBe('needs_review');expect(out.business_pass).toBe(false);expect(out.cleanup_status).not.toBe('completed');
+ expect(env.executeActivity.mock.calls.filter(([a])=>a.key==='cleanup')).toHaveLength(1);
+ const cleanup=[...records.values()].find(r=>r.identity.activity_key==='cleanup');expect(cleanup.state).toBe('reserved');
+ expect(out.receipts.at(-1).activity_key).toBe('cleanup');
+});
+test('所有动作已结算后终态成功前仍复核来源，不重放已完成动作',async()=>{
+ let drift=false;const settle=env.actionStore.settle;env.verifySource=vi.fn(async()=>{if(drift)throw Error('commander_source_drift');});
+ env.actionStore.settle=async(id,value)=>{const out=await settle(id,value);if(id.activity_key==='cleanup')drift=true;return out;};
+ const out=await run(finalized());expect(out.status).toBe('needs_review');expect(out.business_pass).toBe(false);expect(out.reason).toBe('commander_source_unavailable');
+ expect(env.executeActivity.mock.calls.map(([a])=>a.key)).toEqual(['a','b','cleanup']);
+ expect([...records.values()].every(r=>r.state==='settled')).toBe(true);
+});

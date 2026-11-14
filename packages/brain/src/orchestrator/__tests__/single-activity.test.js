@@ -13,3 +13,5 @@ test('完整冻结合同中仅执行Commander选中的单Activity，原输入与
   expect(calls).toEqual([['second',1,2]]);
   expect(receipt.scope).toBe('activity');expect(receipt.activities.map(x=>x.key)).toEqual(['second']);
 });
+
+test('选择finalize确实执行，start检查失败不得绕权',async()=>{const contract=structuredClone(plan);contract.activities[1].runtime.phase='finalize';let calls=0;const options={activityKey:'second',executeActivity:async(_a,i)=>{calls++;return result(i);},checkActivity:async()=>({verdict:'pass'})};expect((await runSingleActivity(contract,{run_tag:'one'},options)).activities.map(a=>a.key)).toEqual(['second']);expect(calls).toBe(1);options.checkActivity=async()=>({verdict:'fail'});expect((await runSingleActivity(contract,{run_tag:'one'},options)).status).not.toBe('completed');expect(calls).toBe(1);});
