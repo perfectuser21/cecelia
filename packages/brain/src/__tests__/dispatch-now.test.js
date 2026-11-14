@@ -7,6 +7,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 // 被测模块（vitest hoists vi.mock before imports，所以静态 import 安全）
 import _router from '../routes/execution.js';
+import { Router } from 'express';
+import { registerTaskManualDispatchRoutes } from '../routes/tasks-manual-dispatch.js';
 
 // Mock pool
 const mockQuery = vi.fn();
@@ -108,6 +110,41 @@ vi.mock('./shared.js', () => ({
 }));
 
 describe('POST /api/brain/dispatch-now', () => {
+  it.each(['queued', 'in_progress'])('单任务手动入口拒绝外部工作单%s，零状态/锁/run写入', async (status) => {
+    mockQuery.mockReset(); mockTriggerCeceliaRun.mockReset();
+    const task = { id: 'external-task', task_type: 'content-pipeline', status, location: 'xian',
+      executor_kind: 'external-worker', claimed_by: status === 'in_progress' ? 'zj-worker' : null,
+      payload: { executor: 'codex' } };
+    mockQuery.mockResolvedValue({ rows: [task] });
+    const router = Router(); registerTaskManualDispatchRoutes(router);
+    const handler = router.stack.find(layer => layer.route?.path === '/tasks/:id/dispatch').route.stack.at(-1).handle;
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() };
+    await handler({ params: { id: task.id }, body: {} }, res);
+    expect(res.status).toHaveBeenCalledWith(409);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ error: 'external_consumer_required' }));
+    expect(mockQuery).toHaveBeenCalledTimes(1);
+    expect(mockQuery.mock.calls[0][0]).toMatch(/^SELECT/);
+    expect(mockTriggerCeceliaRun).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['远程位置', { location: 'xian', payload: {} }],
+    ['显式Codex偏好', { location: 'us', payload: { executor: 'codex', machine: 'xian' } }],
+  ])('外部已认领工作单%s在任何状态或设备锁写入前返回409', async (_name, routeFields) => {
+    mockQuery.mockReset(); mockTriggerCeceliaRun.mockReset();
+    const task = { id: 'external-task', task_type: 'content-pipeline', status: 'in_progress',
+      executor_kind: 'external-worker', claimed_by: 'zj-worker', ...routeFields };
+    mockQuery.mockResolvedValue({ rows: [task] });
+    const handler = _router.stack.find(layer => layer.route?.path === '/dispatch-now').route.stack.at(-1).handle;
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() };
+    await handler({ body: { task_id: task.id } }, res);
+    expect(res.status).toHaveBeenCalledWith(409);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ error: 'external_consumer_required' }));
+    expect(mockQuery).toHaveBeenCalledTimes(1);
+    expect(mockQuery.mock.calls[0][0]).toMatch(/^SELECT/);
+    expect(mockTriggerCeceliaRun).not.toHaveBeenCalled();
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
   });

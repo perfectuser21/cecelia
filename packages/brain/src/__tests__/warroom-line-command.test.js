@@ -23,7 +23,7 @@ function mockReqRes(body = {}, params = {}, query = {}) {
 function getHandler(method, path) {
   const layers = routes.stack.filter(l => l.route && l.route.methods[method] && l.route.path === path);
   if (layers.length === 0) throw new Error(`No handler for ${method} ${path}`);
-  return layers[0].route.stack[0].handle;
+  return layers[0].route.stack.at(-1).handle;
 }
 
 const JOURNEY_ID = 'aaaaaaaa-0000-0000-0000-000000000001';

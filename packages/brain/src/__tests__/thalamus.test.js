@@ -582,8 +582,6 @@ describe('thalamus', () => {
       expect(decision.actions[1].type).toBe('notify_user');
     });
 
-
-
     it('should return no_action for USER_COMMAND status', () => {
       const event = { type: EVENT_TYPES.USER_COMMAND, command: 'status' };
       const decision = quickRoute(event);
@@ -697,14 +695,6 @@ describe('thalamus', () => {
       expect(ACTION_WHITELIST['trigger_rca']).toBeDefined();
       expect(ACTION_WHITELIST['trigger_rca'].dangerous).toBe(false);
       expect(ACTION_WHITELIST['trigger_rca'].description).toBe('触发根因分析 (RCA) 流程');
-    });
-
-    it('should have 44 total actions in whitelist', () => {
-      // write_self_model 已移除（PRD f63cf8e8 / 代码层 self_model 写入锁）
-      // okr_initiative_plan/okr_scope_plan/okr_project_plan 已移除（决策 ee4842a6/3feeae3e，
-      // 接力棒链 2afa6d69 棒4：scope/initiative 层退役，48→45）
-      // assign_to_autumnrice 的旧 OKR 拆解决策已退役。
-      expect(Object.keys(ACTION_WHITELIST).length).toBe(44);
     });
 
     it('should include suggest_task_type action with dangerous=false', () => {

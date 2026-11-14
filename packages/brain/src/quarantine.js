@@ -1049,7 +1049,7 @@ async function hasActiveCheckpoint(taskId) {
  *
  * 背景：hasActiveCheckpoint 只覆盖走 LangGraph 的 GAN 类任务
  * (harness_contract_propose / harness_contract_review 等，会写 checkpoints 表)。
- * Generator 类（harness_task / content-pipeline 等）不走 LangGraph，
+ * 外部执行器任务不走 LangGraph，
  * 直接在 docker 容器里跑 Claude Code，心跳偶尔丢失 → failure_count 累积
  * → 被 shepherd 打 quarantined: repeated_failure。
  *
@@ -1136,7 +1136,7 @@ async function handleTaskFailure(taskId, options = {}) {
     };
   }
 
-  // 活跃信号守卫 (2/3)：Generator 类任务（harness_task / content-pipeline 等）
+  // 活跃信号守卫 (2/3)：外部执行器任务
   // 不走 LangGraph，不写 checkpoints，但会在 docker 容器里跑 Claude Code。
   // 容器名约定：cecelia-task-<taskId 前 12 位 hex>，docker ps 命中即视为活跃。
   const hasContainer = await hasActiveContainer(taskId);

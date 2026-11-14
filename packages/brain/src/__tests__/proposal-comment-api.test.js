@@ -44,7 +44,7 @@ describe('提案评论 API', () => {
     });
     mockPool.query.mockResolvedValueOnce({
       rowCount: 1,
-      rows: [{ id: 'action-1', comments: [{ role: 'user', text: 'hello' }], action_type: 'propose_decomposition', params: {} }],
+      rows: [{ id: 'action-1', comments: [{ role: 'user', text: 'hello' }], action_type: 'propose_anomaly_action', params: {} }],
     });
 
     const result = await addProposalComment('action-1', 'hello', 'user');

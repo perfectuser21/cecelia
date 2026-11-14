@@ -24,15 +24,16 @@ import {
   cleanupExpiredSuggestions,
   getTriageStats
 } from '../suggestion-triage.js';
-import {
-  runDecompositionChecks,
-} from '../decomposition-checker.js';
+
 import { verifyWebhookSignature, extractPrInfo, handlePrMerged } from '../pr-callback-handler.js';
 import { getAllStates as getAllCBStates } from '../circuit-breaker.js';
 import { getActiveExecutionPaths, INVENTORY_CONFIG } from './shared.js';
 
 const router = Router();
-
+// 只对匹配的运维路由计数，不占用其他根挂载模块的请求预算。
+const opsRateLimit = rateLimit({
+  windowMs: 60_000, limit: 1200, standardHeaders: 'draft-7', legacyHeaders: false,
+});
 
 // ============================================================
 // Desire System API — Cecelia 的欲望/表达
@@ -43,7 +44,7 @@ const router = Router();
  * 列出 desires，支持按 type/status 筛选
  * Query: type, status, limit(default 50)
  */
-router.get('/desires', async (req, res) => {
+router.get('/desires', opsRateLimit, async (req, res) => {
   try {
     const { type, status = 'pending', limit = 50 } = req.query;
     const conditions = [];
@@ -81,7 +82,7 @@ router.get('/desires', async (req, res) => {
  * GET /api/brain/desires/stats
  * 各状态/类型数量，用于前端 badge
  */
-router.get('/desires/stats', async (req, res) => {
+router.get('/desires/stats', opsRateLimit, async (req, res) => {
   try {
     const { rows } = await pool.query(`
       SELECT
@@ -105,7 +106,7 @@ router.get('/desires/stats', async (req, res) => {
  * 更新 desire 状态（read / dismissed / expressed）
  * Body: { status: 'expressed' | 'suppressed' }
  */
-router.patch('/desires/:id', async (req, res) => {
+router.patch('/desires/:id', opsRateLimit, async (req, res) => {
   try {
     const { id } = req.params;
     const { status } = req.body;
@@ -137,7 +138,7 @@ router.patch('/desires/:id', async (req, res) => {
  * 用户对 desire 回复意见/想法（对话式决策）
  * Body: { message: string }
  */
-router.post('/desires/:id/respond', async (req, res) => {
+router.post('/desires/:id/respond', opsRateLimit, async (req, res) => {
   try {
     const { id } = req.params;
     const { message } = req.body;
@@ -183,12 +184,11 @@ router.post('/desires/:id/respond', async (req, res) => {
   }
 });
 
-
 /**
  * GET /api/brain/decomposition/missing
  * 查询缺失拆解任务的 Initiative 列表
  */
-router.get('/decomposition/missing', async (req, res) => {
+router.get('/decomposition/missing', opsRateLimit, async (req, res) => {
   try {
     // 获取缺失拆解任务的活跃 Initiative
     const activePaths = await getActiveExecutionPaths();
@@ -234,41 +234,12 @@ router.get('/decomposition/missing', async (req, res) => {
  * POST /api/brain/decomposition/create-missing
  * 手动触发为缺失拆解任务的 Initiative 创建任务
  */
-router.post('/decomposition/create-missing', async (req, res) => {
-  try {
-    const result = await runDecompositionChecks();
-
-    // 统计创建的任务
-    const createdTasks = result.actions?.filter(action => action.action === 'create_decomposition') || [];
-    const inventoryTasks = createdTasks.filter(task => task.check === 'inventory_replenishment');
-    const initiativeTasks = createdTasks.filter(task => task.check === 'initiative_decomposition');
-
-    res.json({
-      success: true,
-      message: 'Decomposition check completed',
-      summary: result.summary || {},
-      created_tasks: {
-        total: createdTasks.length,
-        inventory_replenishment: inventoryTasks.length,
-        initiative_seeding: initiativeTasks.length
-      },
-      details: {
-        active_paths: result.active_paths || [],
-        created_tasks: result.created_tasks || []
-      }
-    });
-
-  } catch (err) {
-    console.error('[API] decomposition/create-missing error:', err.message);
-    res.status(500).json({ error: err.message });
-  }
-});
 
 /**
  * GET /api/brain/decomposition/stats
  * 获取拆解任务统计信息
  */
-router.get('/decomposition/stats', async (req, res) => {
+router.get('/decomposition/stats', opsRateLimit, async (req, res) => {
   try {
     // 获取活跃的执行路径
     const activePaths = await getActiveExecutionPaths();
@@ -381,7 +352,7 @@ router.get('/rumination/status', async (req, res) => {
  * GET /api/brain/learnings — 知识列表（分页 + 筛选）
  * Query: digested=true|false, archived=true|false, limit=20, offset=0
  */
-router.get('/learnings', async (req, res) => {
+router.get('/learnings', opsRateLimit, async (req, res) => {
   try {
     const limit = Math.min(parseInt(req.query.limit || '20'), 100);
     const offset = parseInt(req.query.offset || '0');
@@ -443,7 +414,7 @@ router.get('/learnings', async (req, res) => {
 /**
  * GET /api/brain/progress/:task_id — 获取任务的完整进展历史
  */
-router.get('/progress/:task_id', async (req, res) => {
+router.get('/progress/:task_id', opsRateLimit, async (req, res) => {
   try {
     const { task_id } = req.params;
     const { run_id } = req.query;
@@ -470,7 +441,7 @@ router.get('/progress/:task_id', async (req, res) => {
 /**
  * GET /api/brain/progress/latest — 获取最新的进展步骤
  */
-router.get('/progress/latest', async (req, res) => {
+router.get('/progress/latest', opsRateLimit, async (req, res) => {
   try {
     const limit = parseInt(req.query.limit) || 20;
 
@@ -568,7 +539,7 @@ router.post('/suggestions', async (req, res) => {
 /**
  * GET /api/brain/suggestions — 查询建议列表
  */
-router.get('/suggestions', async (req, res) => {
+router.get('/suggestions', opsRateLimit, async (req, res) => {
   try {
     const {
       status = 'pending',
@@ -727,7 +698,7 @@ router.get('/suggestions/stats', async (req, res) => {
 /**
  * GET /api/brain/goal-evaluations — 查询 goal 评估结果（最新一条/每 goal）
  */
-router.get('/goal-evaluations', async (req, res) => {
+router.get('/goal-evaluations', opsRateLimit, async (req, res) => {
   try {
     const limit = Math.min(parseInt(req.query.limit || '20', 10), 100);
     // 新 OKR 表：goal_evaluations.goal_id 对应 key_results.id（UUID 相同）
@@ -748,7 +719,7 @@ router.get('/goal-evaluations', async (req, res) => {
 /**
  * GET /api/brain/goal-evaluations/latest — 每个 goal 的最新评估
  */
-router.get('/goal-evaluations/latest', async (_req, res) => {
+router.get('/goal-evaluations/latest', opsRateLimit, async (_req, res) => {
   try {
     const result = await pool.query(`SELECT * FROM v_latest_goal_evaluation ORDER BY goal_priority, created_at DESC`);
     res.json({ success: true, evaluations: result.rows, count: result.rows.length });
@@ -787,7 +758,7 @@ router.get('/self-model', async (_req, res) => {
  * GET /api/brain/learnings/stats
  * Get learnings statistics for RNA KR progress calculation
  */
-router.get('/learnings/stats', async (req, res) => {
+router.get('/learnings/stats', opsRateLimit, async (req, res) => {
   try {
     const { getAutoLearningStats } = await import('../auto-learning.js');
 
@@ -854,6 +825,19 @@ router.get('/learnings/stats', async (req, res) => {
  * 环境变量：FEISHU_APP_ID, FEISHU_APP_SECRET, FEISHU_BOT_OPEN_ID（可选）
  */
 
+/** 外部 ID 只能成为一个飞书 API 路径段，拒绝点段、分隔和二次解码逃逸。 */
+function feishuPathSegment(value) {
+  if (typeof value !== 'string' || !value || value === '.' || value === '..'
+      || /[/\\?#%]/.test(value)
+      || [...value].some(character => {
+        const code = character.charCodeAt(0);
+        return code < 32 || code === 127;
+      })) {
+    throw new Error('非法飞书 API 路径标识');
+  }
+  return encodeURIComponent(value);
+}
+
 /** 获取飞书 tenant_access_token（每次请求均获取，飞书 token 有效期2小时） */
 async function getFeishuToken() {
   const resp = await fetch('https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal', {
@@ -863,7 +847,7 @@ async function getFeishuToken() {
       app_id: process.env.FEISHU_APP_ID,
       app_secret: process.env.FEISHU_APP_SECRET,
     }),
-    signal: AbortSignal.timeout(6000),
+    redirect: 'error', signal: AbortSignal.timeout(6000),
   });
   const data = await resp.json();
   if (data.code !== 0) throw new Error(`飞书 token 失败: ${data.msg}`);
@@ -891,8 +875,8 @@ async function getGroupMembers(chatId, accessToken) {
 
   try {
     const resp = await fetch(
-      `https://open.feishu.cn/open-apis/im/v1/chats/${chatId}/members?member_id_type=open_id&page_size=100`,
-      { headers: { 'Authorization': `Bearer ${accessToken}` }, signal: AbortSignal.timeout(5000) }
+      `https://open.feishu.cn/open-apis/im/v1/chats/${feishuPathSegment(chatId)}/members?member_id_type=open_id&page_size=100`,
+      { headers: { 'Authorization': `Bearer ${accessToken}` }, redirect: 'error', signal: AbortSignal.timeout(5000) }
     );
     const data = await resp.json();
     if (data.code !== 0) {
@@ -1020,8 +1004,8 @@ async function getFeishuUserName(openId, accessToken) {
   let apiSuccess = false;
   try {
     const resp = await fetch(
-      `https://open.feishu.cn/open-apis/contact/v3/users/${openId}?user_id_type=open_id`,
-      { headers: { 'Authorization': `Bearer ${accessToken}` }, signal: AbortSignal.timeout(5000) }
+      `https://open.feishu.cn/open-apis/contact/v3/users/${feishuPathSegment(openId)}?user_id_type=open_id`,
+      { headers: { 'Authorization': `Bearer ${accessToken}` }, redirect: 'error', signal: AbortSignal.timeout(5000) }
     );
     const data = await resp.json();
     if (data.code === 0 && data.data?.user) {
@@ -1042,7 +1026,7 @@ async function getFeishuUserName(openId, accessToken) {
       console.warn(`[feishu/event] 联系人 API 返回 code=${data.code}，openId=${openId}，尝试 staleCache 回退`);
     }
   } catch (err) {
-    console.warn(`[feishu/event] 获取用户名失败 ${openId}:`, err.message);
+    console.warn('[feishu/event] 获取用户名失败:', openId, err.message);
   }
 
   // API 失败时，回退到任何历史缓存记录（ORDER BY fetched_at，忽略 TTL，比默认 guest 更可靠）
@@ -1066,8 +1050,8 @@ async function getFeishuUserName(openId, accessToken) {
 /** 下载飞书图片并返回 base64 + media_type */
 async function downloadFeishuImage(messageId, imageKey, accessToken) {
   const dlResp = await fetch(
-    `https://open.feishu.cn/open-apis/im/v1/messages/${messageId}/resources/${imageKey}?type=image`,
-    { headers: { 'Authorization': `Bearer ${accessToken}` }, signal: AbortSignal.timeout(10000) }
+    `https://open.feishu.cn/open-apis/im/v1/messages/${feishuPathSegment(messageId)}/resources/${feishuPathSegment(imageKey)}?type=image`,
+    { headers: { 'Authorization': `Bearer ${accessToken}` }, redirect: 'error', signal: AbortSignal.timeout(10000) }
   );
   if (!dlResp.ok) throw new Error(`图片下载失败: ${dlResp.status}`);
   const contentType = dlResp.headers.get('content-type') || 'image/jpeg';
@@ -1081,8 +1065,8 @@ async function downloadFeishuImage(messageId, imageKey, accessToken) {
 async function transcribeFeishuAudio(messageId, fileKey, accessToken) {
   // 1. 下载音频文件
   const dlResp = await fetch(
-    `https://open.feishu.cn/open-apis/im/v1/messages/${messageId}/resources/${fileKey}?type=file`,
-    { headers: { 'Authorization': `Bearer ${accessToken}` }, signal: AbortSignal.timeout(10000) }
+    `https://open.feishu.cn/open-apis/im/v1/messages/${feishuPathSegment(messageId)}/resources/${feishuPathSegment(fileKey)}?type=file`,
+    { headers: { 'Authorization': `Bearer ${accessToken}` }, redirect: 'error', signal: AbortSignal.timeout(10000) }
   );
   if (!dlResp.ok) throw new Error(`音频下载失败: ${dlResp.status}`);
   const audioBuffer = await dlResp.arrayBuffer();
@@ -1098,7 +1082,7 @@ async function transcribeFeishuAudio(messageId, fileKey, accessToken) {
         speech: { speech: audioBase64 },
         config: { file_id: fileKey, format: 'opus', engine_type: '16k_auto' },
       }),
-      signal: AbortSignal.timeout(15000),
+      redirect: 'error', signal: AbortSignal.timeout(15000),
     }
   );
   const asrData = await asrResp.json();
@@ -1189,7 +1173,7 @@ async function sendFeishuMessage(accessToken, receiveId, receiveIdType, text) {
         msg_type: 'text',
         content: JSON.stringify({ text }),
       }),
-      signal: AbortSignal.timeout(8000),
+      redirect: 'error', signal: AbortSignal.timeout(8000),
     });
     const data = await resp.json();
     if (data.code !== 0) {
@@ -1217,7 +1201,7 @@ async function sendFeishuCard(accessToken, receiveId, receiveIdType, placeholder
           msg_type: 'interactive',
           content: JSON.stringify(cardContent),
         }),
-        signal: AbortSignal.timeout(8000),
+        redirect: 'error', signal: AbortSignal.timeout(8000),
       }
     );
     const data = await resp.json();
@@ -1236,12 +1220,12 @@ async function patchFeishuCard(accessToken, messageId, content) {
       elements: [{ tag: 'div', text: { content, tag: 'lark_md' } }],
     };
     const resp = await fetch(
-      `https://open.feishu.cn/open-apis/im/v1/messages/${messageId}`,
+      `https://open.feishu.cn/open-apis/im/v1/messages/${feishuPathSegment(messageId)}`,
       {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${accessToken}` },
         body: JSON.stringify({ content: JSON.stringify(cardContent) }),
-        signal: AbortSignal.timeout(8000),
+        redirect: 'error', signal: AbortSignal.timeout(8000),
       }
     );
     const data = await resp.json();
@@ -1257,7 +1241,7 @@ async function patchFeishuCard(accessToken, messageId, content) {
 }
 
 /** GET /api/brain/feishu/users — 查询已知飞书用户（嘴巴 call_brain_api 用） */
-router.get('/feishu/users', async (req, res) => {
+router.get('/feishu/users', opsRateLimit, async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT open_id, name, relationship
@@ -1272,7 +1256,7 @@ router.get('/feishu/users', async (req, res) => {
 });
 
 /** GET /api/brain/feishu/groups — 查询已知飞书群（嘴巴 call_brain_api 用） */
-router.get('/feishu/groups', async (req, res) => {
+router.get('/feishu/groups', opsRateLimit, async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT group_id,
@@ -1771,7 +1755,7 @@ router.post('/feishu/event', async (req, res) => {
  * GET /api/brain/dispatch/weights
  * 查看当前 queued 任务的派发权重（用于调试和监控）
  */
-router.get('/dispatch/weights', async (req, res) => {
+router.get('/dispatch/weights', opsRateLimit, async (req, res) => {
   try {
     const limit = parseInt(req.query.limit || '50', 10);
     const result = await pool.query(`
@@ -1856,7 +1840,7 @@ router.post('/zombie-cleanup', async (req, res) => {
  * - weight_system_active: 权重系统是否生效（队列中有任务且能按权重排序）
  * - queued_snapshot: 当前队列快照（按权重排序的前 10 个任务）
  */
-router.get('/dispatch/effectiveness', async (req, res) => {
+router.get('/dispatch/effectiveness', opsRateLimit, async (req, res) => {
   try {
     // 1. 24h 内 canceled 任务按 task_type 分组
     const canceledByTypeResult = await pool.query(`
@@ -1997,7 +1981,7 @@ router.get('/cleanup/audit', async (req, res) => {
  * Response: text/event-stream — 格式 `data: {"delta":"..."}\n\n`，结束为 `data: [DONE]\n\n`
  * 调用 MiniMax 流式回答，以 brain-manifest.generated.json 作为上下文
  */
-router.post('/manual/ask', async (req, res) => {
+router.post('/manual/ask', opsRateLimit, async (req, res) => {
   const { question } = req.body;
   if (!question || typeof question !== 'string' || question.trim().length === 0) {
     res.status(400).json({ error: 'question is required' });
@@ -2075,7 +2059,7 @@ router.post('/manual/ask', async (req, res) => {
  * 查询 system_reports 历史简报
  * Query params: ?type=48h_summary&limit=10
  */
-router.get('/reports', async (req, res) => {
+router.get('/reports', opsRateLimit, async (req, res) => {
   try {
     const type = req.query.type || null;
     const limit = Math.min(parseInt(req.query.limit || '10', 10), 100);
@@ -2111,7 +2095,7 @@ router.get('/reports', async (req, res) => {
  * 获取最新的系统简报
  * Query params: ?type=48h_summary（可选，默认返回最新任意类型）
  */
-router.get('/reports/latest', async (req, res) => {
+router.get('/reports/latest', opsRateLimit, async (req, res) => {
   try {
     const type = req.query.type || null;
 
@@ -2198,7 +2182,7 @@ router.post('/reports/trigger', async (req, res) => {
  *     failed_count, progress_percentage, time_range, daily_breakdown, last_updated
  *   }
  */
-router.get('/pr-progress/:kr_id', async (req, res) => {
+router.get('/pr-progress/:kr_id', opsRateLimit, async (req, res) => {
   try {
     const { kr_id } = req.params;
     const { month } = req.query;
@@ -2351,7 +2335,7 @@ router.get('/pr-progress/:kr_id', async (req, res) => {
  *     repository: { full_name: "owner/repo" }
  *   }
  */
-router.post('/webhook/github', express.raw({ type: 'application/json' }), async (req, res) => {
+router.post('/webhook/github', opsRateLimit, express.raw({ type: 'application/json' }), async (req, res) => {
   try {
     const signature = req.headers['x-hub-signature-256'];
     const event = req.headers['x-github-event'];
@@ -2426,7 +2410,7 @@ router.post('/webhook/github', express.raw({ type: 'application/json' }), async 
  *   window_1h  - 最近 1 小时派发窗口统计（来自 dispatch-stats）
  *   lifetime   - 历史 dev 任务统计（来自 DB）
  */
-router.get('/dev-pipeline/success-rate', async (req, res) => {
+router.get('/dev-pipeline/success-rate', opsRateLimit, async (req, res) => {
   try {
     // 1h 窗口统计（dispatch-stats）
     const dispatchStats = await getDispatchStats(pool);
@@ -2471,7 +2455,7 @@ router.get('/dev-pipeline/success-rate', async (req, res) => {
  *   pr_callback    - 近期是否有成功的 PR 合并回调
  *   retry          - dev-failure-classifier 是否可正常加载
  */
-router.get('/dev-pipeline/health', async (req, res) => {
+router.get('/dev-pipeline/health', opsRateLimit, async (req, res) => {
   const checks = {};
   let allOk = true;
 
@@ -2823,7 +2807,7 @@ router.post('/deploy/staging/cleanup', async (req, res) => {
 });
 
 // POST /api/brain/deploy/rollback — 回滚到指定 SHA
-router.post('/deploy/rollback', async (req, res) => {
+router.post('/deploy/rollback', opsRateLimit, async (req, res) => {
   const token = (req.headers.authorization || '').replace('Bearer ', '');
   const expectedToken = process.env.DEPLOY_TOKEN;
 
@@ -2871,6 +2855,5 @@ router.post('/deploy/rollback', async (req, res) => {
     console.error(`[rollback] ❌ 回滚失败:`, err.message);
   }
 });
-
 
 export default router;

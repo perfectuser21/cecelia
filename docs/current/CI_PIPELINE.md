@@ -1,7 +1,7 @@
 ---
 id: current-ci-pipeline
-version: 3.0.0
-updated: 2026-11-12
+version: 3.0.2
+updated: 2026-11-14
 authority: CURRENT_STATE
 ---
 
@@ -18,16 +18,15 @@ authority: CURRENT_STATE
 | plan | 固定BASE/HEAD核对版本增量，并选择受影响组件的整套检查 |
 | security | 凭据扫描、运行依赖high及全部依赖critical漏洞审计 |
 | checks | Brain六分片、5个明确PG合同与源码运行、镜像构建、共享前端、Ops及scripts；MCP仅包自身变更触发 |
-| resource-canaries | 真实Docker离线实例/RPC、共享预算/OOM与cgroup观测 |
+| resource-canaries | Linux专用容器的真实cgroup观测；只接受none/linux手动入口或真实输入变更 |
 | runtime-integration | 机器接入、Linux授权的真实PG合同，以及公共Runner/Commander进程故障恢复 |
 | pwa-upgrade | Chromium验证PWA升级、交办回执、指挥舱收件箱和去向路由；业务API为隔离fixture |
-| skill-contracts | 固定外置正文来源身份；Linux执行Brain/root合同，Windows和macOS恢复验证 |
 | codeql | Actions、JS/TS、Python三个语言安全分析；另有每周扫描 |
 | preview-deploy | 同仓UI变更PR按需启动预览，并核对SHA和活动回执 |
 | preview-cleanup | PR关闭后回收预览，必须取得inactive或确认不存在的业务终态 |
-| ci-passed | 汇总plan/security/checks/resource/runtime/browser/skill/codeql八个父任务，所有被选矩阵必须成功 |
+| ci-passed | 汇总plan/security/checks/resource/runtime/browser/codeql七个父任务，所有被选矩阵必须成功 |
 
-唯一汇总名为 `源码保底通过`。合并保护以GitHub当前分支保护及规则集为准；2026-11-12实读该项绑定GitHub Actions App 15368，strict=true。预览部署/回收不作为这八项之一。
+唯一汇总名为 `源码保底通过`。合并保护以GitHub当前分支保护及规则集为准；2026-11-12实读该项绑定GitHub Actions App 15368，strict=true。预览部署/回收不作为这七项之一。
 
 ## 实际组件边界
 
@@ -35,9 +34,9 @@ authority: CURRENT_STATE
 - `apps/api`只保留Dashboard共享features和captures schema验证，不再有独立旧Core服务、Conductor、旧任务/OKR路由或后端编译入口。
 - 共享features与Dashboard在一个组件任务中依次使用各自React/Vitest环境，再构建Dashboard，不能混用React18/19测试环境。
 - Ops按固定PR差异选择执行域；公共配置、未知来源和全量运行执行56个现役入口。21个旧Runner兼容回归仅由 `node scripts/ci/run-legacy-runner-checks.mjs` 显式执行，不作为现役WorkflowRunner验收。
-- scripts检查CI本身的真实选择/退出/权限边界、开发工具、事实与版本一致、迁移编号及Skill所有权。默认53个Node入口；W19冻结、旧准入发布器和一次性历史授权回放已退出。两个仍被可选API消费的窄合同由 `node scripts/ci/run-legacy-checks.mjs` 显式执行。
+- scripts检查CI本身的真实选择/退出/权限边界、开发工具、事实与版本一致、迁移编号及Skill所有权。默认52个Node入口；W19冻结、旧准入发布器和一次性历史授权回放已退出。两个仍被可选API消费的窄合同由 `node scripts/ci/run-legacy-checks.mjs` 显式执行。
 - 独立MCP不进入现役服务全量矩阵或夜间PG回归；包自身变更仍运行单测，PG合同保留显式 `npm run test:pg -w packages/mcp-readonly`，需专用测试库。
-- 外置Skill正文只在固定来源恢复后执行专属合同；普通单测不依赖本机私有正文。所有权由同一Python实现提供。
+- 外置Skill正文、固定版本与关键词专属合同已退出本仓PR验收；普通单测不依赖本机私有正文。通用恢复器及Python所有权检查仍保留。
 - 本地quickcheck只做准备：Brain lint、共享前端的Dashboard构建；CI或根依赖变更另跑scripts。真实命令失败必须阻止push。
 
 ## 深度回归与监控

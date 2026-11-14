@@ -1,6 +1,6 @@
 # Test Registry - Cecelia 测试清单
 # 更新时间: 2026-11-02
-# 当前列出: 25 项关键测试记录；不是仓库全量统计
+# 当前列出: 20 项关键测试记录；不是仓库全量统计
 # 说明: 每条记录对应一个测试文件或测试脚本，标注类型、覆盖功能、CI 层级
 #
 # [DEPRECATED] SSOT 已迁移至 features/*.yml（schema v2.0.0）
@@ -55,20 +55,6 @@ tests:
     status: active
     description: Tick healing 循环防死锁
 
-  - test_id: tick_suggestion_integration
-    file: packages/brain/src/__tests__/tick-suggestion-integration.test.js
-    type: integration
-    covers_feature: memory_suggestion_cycle
-    ci_layer: L3
-    status: active
-
-  - test_id: tick_goal_eval_integration
-    file: packages/brain/src/__tests__/tick-goal-eval-integration.test.js
-    type: integration
-    covers_feature: okr_system
-    ci_layer: L3
-    status: active
-
   - test_id: database_integration
     file: tests/database/integration.test.js
     type: integration
@@ -105,13 +91,6 @@ tests:
     file: packages/brain/src/__tests__/tick-watchdog-quarantine.test.js
     type: unit
     covers_feature: task_quarantine
-    ci_layer: L3
-    status: active
-
-  - test_id: tick_kr_decomp
-    file: packages/brain/src/__tests__/tick-kr-decomp.test.js
-    type: unit
-    covers_feature: decomposition_engine
     ci_layer: L3
     status: active
 
@@ -206,12 +185,6 @@ tests:
   # Unit 测试 - 内容管道
   # ============================================================
 
-  - test_id: content_pipeline_run_api
-    file: tests/content-pipeline-run-api.test.js
-    type: unit
-    covers_feature: pipeline_orchestrator
-    ci_layer: L3
-    status: active
 
   # ============================================================
   # Unit 测试 - OKR
@@ -268,6 +241,6 @@ missing_tests:
     priority: medium
 
 summary:
-  listed_above: 25  # 仅本文件关键记录，不代表仓库全量
+  listed_above: 23  # 仅本文件关键记录，不代表仓库全量
   missing_tests_count: 9  # 本文件仍列出的待补测试项
   last_updated: "2026-11-02"

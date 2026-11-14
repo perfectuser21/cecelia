@@ -24,7 +24,6 @@ canary-tick-gate-smoke.sh
 cecelia-run-container-detect-smoke.sh
 cecelia-smoke-audit.sh
 claimed-by-cleared-smoke.sh
-cleanup-content-pipeline-smoke.sh
 cleanup-lock-mutex.sh
 clips-smoke.sh
 codex-bridge-detached-smoke.sh

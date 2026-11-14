@@ -1,3 +1,4 @@
+import { isExternalWorkerTask } from '../lib/task-type-registry.js';
 import { rateLimit } from 'express-rate-limit';
 import { TASK_MUTATION_RATE_LIMIT_OPTIONS } from './task-mutation-rate-limit.js';
 import pool from '../db.js';
@@ -30,6 +31,10 @@ router.post('/tasks/:id/dispatch', rateLimit(TASK_MUTATION_RATE_LIMIT_OPTIONS), 
     }
 
     let task = taskResult.rows[0];
+
+    if (isExternalWorkerTask(task)) {
+      return res.status(409).json({ error: 'external_consumer_required', id, status: task.status });
+    }
 
     if (isRetiredDecomposition(task)) {
       return res.status(410).json({ error: RETIRED_DECOMPOSITION, detail: '旧任务拆解已退役，未派发' });

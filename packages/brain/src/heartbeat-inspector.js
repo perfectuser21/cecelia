@@ -26,7 +26,6 @@ const HEARTBEAT_ALLOWED_ACTIONS = [
   'no_action',
   'log_event',
   'propose_priority_change',
-  'propose_weekly_plan',
   'heartbeat_finding',
   'request_human_review',
 ];
@@ -140,7 +139,6 @@ ${heartbeatMd}
 可用的 action type（仅限以下白名单）：
 - log_event: 记录日志
 - propose_priority_change: 创建优先级调整提案
-- propose_weekly_plan: 创建本周计划提案
 - heartbeat_finding: 巡检发现异常（通用提案）
 - request_human_review: 请求人工审核
 - no_action: 不需要行动

@@ -58,11 +58,6 @@ SKILL_COUNT=$(node --input-type=module -e \
   "import { SKILL_WHITELIST } from './packages/brain/src/task-router.js'; console.log(Object.keys(SKILL_WHITELIST).length);" 2>/dev/null || echo "0")
 assert_nonzero "skill-names extract 输出 skill 数量" "$SKILL_COUNT"
 
-# ─── Test 6: model-ids extract 命令可执行 ───
-MODEL_COUNT=$(node --input-type=module -e \
-  "import { MODELS } from './packages/brain/src/model-registry.js'; console.log(MODELS.length);" 2>/dev/null || echo "0")
-assert_nonzero "model-ids extract 输出模型数量" "$MODEL_COUNT"
-
 # ─── 结果汇总 ───
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

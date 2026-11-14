@@ -23,13 +23,13 @@ describe('smoke-business.sh 结构验证', () => {
     expect(c).toContain('section()');
   });
 
-  it('包含 Brain-only feature 断言标签（抽样 30 个）', () => {
+  it('包含仍在使用的 feature 断言标签（抽样）', () => {
     const c = fs.readFileSync(SMOKE_SCRIPT, 'utf8');
     const features = [
       // alertness
       'alertness-get', 'alertness-override', 'alertness-diagnosis',
       // analytics
-      'analytics-collection', 'analytics-roi', 'analytics-platform',
+      'analytics-platform',
       // okr
       'okr-current', 'okr-progress', 'okr-create', 'okr-update',
       // dashboard
@@ -40,10 +40,6 @@ describe('smoke-business.sh 结构验证', () => {
       'desire-list', 'desire-stats',
       // memory
       'memory-search', 'memory-rumination',
-      // pipeline
-      'pipeline-list', 'pipeline-create',
-      // publish
-      'wechat-publisher', 'douyin-publisher',
       // external service features
       'agent-register', 'scraper-wechat', 'license-create',
       'creator-health', 'label-admin',

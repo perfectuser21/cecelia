@@ -132,7 +132,6 @@ vi.mock('../../platform-utils.js', () => ({
 vi.mock('../../alerting.js', () => ({ raise: vi.fn() }));
 vi.mock('../../desire-feedback.js', () => ({ updateDesireFromTask: vi.fn() }));
 vi.mock('../../code-review-trigger.js', () => ({ checkAndCreateCodeReviewTrigger: vi.fn() }));
-vi.mock('../../zenithjoy-db.js', () => ({ getZenithjoyPool: vi.fn() }));
 
 // ── Fixtures ──────────────────────────────────────────────
 

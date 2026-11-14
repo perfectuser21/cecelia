@@ -54,7 +54,7 @@ vi.mock('../tick.js', () => ({ getTickStatus: vi.fn(), enableTick: vi.fn(), disa
 vi.mock('../task-router.js', () => ({
   getInternalTaskHandler: vi.fn(() => null), identifyWorkType: vi.fn(), getTaskLocation: vi.fn(), routeTaskCreate: vi.fn(), getValidTaskTypes: vi.fn(), LOCATION_MAP: {} }));
 vi.mock('../okr-tick.js', () => ({ executeOkrTick: vi.fn(), runOkrTickSafe: vi.fn(), startOkrTickLoop: vi.fn(), stopOkrTickLoop: vi.fn(), getOkrTickStatus: vi.fn(), addQuestionToGoal: vi.fn(), answerQuestionForGoal: vi.fn(), getPendingQuestions: vi.fn(), OKR_STATUS: {} }));
-vi.mock('../nightly-tick.js', () => ({ executeNightlyAlignment: vi.fn(), runNightlyAlignmentSafe: vi.fn(), startNightlyScheduler: vi.fn(), stopNightlyScheduler: vi.fn(), getNightlyTickStatus: vi.fn(), getDailyReports: vi.fn() }));
+
 vi.mock('../intent.js', () => ({ parseIntent: vi.fn(), parseAndCreate: vi.fn(), INTENT_TYPES: {}, INTENT_ACTION_MAP: {}, extractEntities: vi.fn(), classifyIntent: vi.fn(), getSuggestedAction: vi.fn() }));
 vi.mock('../templates.js', () => ({ generatePrdFromTask: vi.fn(), generatePrdFromGoalKR: vi.fn(), generateTrdFromGoal: vi.fn(), generateTrdFromGoalKR: vi.fn(), validatePrd: vi.fn(), validateTrd: vi.fn(), prdToJson: vi.fn(), trdToJson: vi.fn(), PRD_TYPE_MAP: {} }));
 vi.mock('../decision.js', () => ({ compareGoalProgress: vi.fn(), generateDecision: vi.fn(), executeDecision: vi.fn(), getDecisionHistory: vi.fn(), rollbackDecision: vi.fn() }));

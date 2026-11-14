@@ -1252,10 +1252,10 @@ describe('Backpressure', () => {
 // P0 Task Backpressure Bypass — whitelist + getBackpressureState({task})
 // ============================================================
 describe('shouldBypassBackpressure: P0 active task whitelist', () => {
-  it('仅现役dev与content_publish享有P0背压优先权', async () => {
+  it('现役dev享有P0背压优先权', async () => {
     const { BACKPRESSURE_BYPASS_TASK_TYPES } = await import('../slot-allocator.js');
-    expect(BACKPRESSURE_BYPASS_TASK_TYPES).toHaveLength(2);
-    expect(new Set(BACKPRESSURE_BYPASS_TASK_TYPES)).toEqual(new Set(['dev','content_publish']));
+    expect(BACKPRESSURE_BYPASS_TASK_TYPES).toHaveLength(1);
+    expect(new Set(BACKPRESSURE_BYPASS_TASK_TYPES)).toEqual(new Set(['dev']));
   });
 
   it('P0旧任务harness_task不再享有旁路特权', async () => {
@@ -1270,7 +1270,7 @@ describe('shouldBypassBackpressure: P0 active task whitelist', () => {
 
   // RCA 2026-04-25 §6: Brain 自修复 PR 多为 dev 类型，必须能 bypass 才能解锁
   // "修 dispatcher 的任务被 dispatcher 卡住" 死循环。
-  it('P0 dev → true (Brain 自修复 不被 P1 content-pipeline 拖累)', async () => {
+  it('P0 dev → true (Brain 自修复不被普通队列积压拖累)', async () => {
     const { shouldBypassBackpressure } = await import('../slot-allocator.js');
     expect(shouldBypassBackpressure({ priority: 'P0', task_type: 'dev' })).toBe(true);
   });
@@ -1285,19 +1285,11 @@ describe('shouldBypassBackpressure: P0 active task whitelist', () => {
     expect(shouldBypassBackpressure({ priority: 'P1', task_type: 'harness_task' })).toBe(false);
   });
 
-  it('P0 content_publish → true (P0 发布任务在 Pool C 满时不被 deny)', async () => {
-    const { shouldBypassBackpressure } = await import('../slot-allocator.js');
-    expect(shouldBypassBackpressure({ priority: 'P0', task_type: 'content_publish' })).toBe(true);
-  });
 
-  it('P1 content_publish → false (非 P0 发布任务不享受 bypass)', async () => {
-    const { shouldBypassBackpressure } = await import('../slot-allocator.js');
-    expect(shouldBypassBackpressure({ priority: 'P1', task_type: 'content_publish' })).toBe(false);
-  });
 
-  it('P0 content-pipeline → false (task_type 不在白名单)', async () => {
+  it('P0 research → false (普通研究任务不享背压旁路)', async () => {
     const { shouldBypassBackpressure } = await import('../slot-allocator.js');
-    expect(shouldBypassBackpressure({ priority: 'P0', task_type: 'content-pipeline' })).toBe(false);
+    expect(shouldBypassBackpressure({ priority: 'P0', task_type: 'research' })).toBe(false);
   });
 
   it('null/undefined/empty task → false', async () => {
@@ -1332,14 +1324,15 @@ describe('getBackpressureState: task bypass behavior', () => {
     expect(state.bypassed).toBe(true);
   });
 
-  it('queue_depth=200 + P1 content-pipeline → active=true, override_burst_limit=3 (保持原行为)', async () => {
+  it('queue_depth=200 + P1 research → active=true, override_burst_limit=3', async () => {
     const { getBackpressureState } = await import('../slot-allocator.js');
     const state = getBackpressureState({
       queue_depth: 200,
-      task: { priority: 'P1', task_type: 'content-pipeline' },
+      task: { priority: 'P1', task_type: 'research' },
     });
     expect(state.active).toBe(true);
     expect(state.override_burst_limit).toBe(3);
+    expect(state.bypassed).toBeUndefined();
   });
 
   it('queue_depth=200 不传 task → active=true, override_burst_limit=3 (默认行为不变)', async () => {
@@ -1349,29 +1342,7 @@ describe('getBackpressureState: task bypass behavior', () => {
     expect(state.override_burst_limit).toBe(3);
   });
 
-  // RCA: content_publish P0 在 Pool C 满时被 deny 导致永久积压
-  it('Pool C 满（queue_depth=200）+ P0 content_publish → active=false, bypassed=true', async () => {
-    const { getBackpressureState } = await import('../slot-allocator.js');
-    const state = getBackpressureState({
-      queue_depth: 200,
-      task: { priority: 'P0', task_type: 'content_publish' },
-    });
-    expect(state.active).toBe(false);
-    expect(state.override_burst_limit).toBeNull();
-    expect(state.bypassed).toBe(true);
-    expect(state.queue_depth).toBe(200);
-  });
 
-  it('Pool C 满 + P1 content_publish → active=true (非 P0 不 bypass)', async () => {
-    const { getBackpressureState } = await import('../slot-allocator.js');
-    const state = getBackpressureState({
-      queue_depth: 200,
-      task: { priority: 'P1', task_type: 'content_publish' },
-    });
-    expect(state.active).toBe(true);
-    expect(state.override_burst_limit).toBe(3);
-    expect(state.bypassed).toBeUndefined();
-  });
 });
 
 describe('dispatch-helpers: bypass marker on candidates', () => {

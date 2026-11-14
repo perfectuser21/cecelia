@@ -5,14 +5,12 @@ const {
   mockThalamusProcessEvent,
   mockGenerateDecision,
   mockRunRumination,
-  mockPlanNextTask,
   mockSetGuidance,
   mockPool,
 } = vi.hoisted(() => ({
   mockThalamusProcessEvent: vi.fn(),
   mockGenerateDecision: vi.fn(),
   mockRunRumination: vi.fn(),
-  mockPlanNextTask: vi.fn(),
   mockSetGuidance: vi.fn(),
   mockPool: { query: vi.fn() },
 }));
@@ -29,9 +27,7 @@ vi.mock('../decision.js', () => ({
 vi.mock('../rumination.js', () => ({
   runRumination: (...args) => mockRunRumination(...args),
 }));
-vi.mock('../planner.js', () => ({
-  planNextTask: (...args) => mockPlanNextTask(...args),
-}));
+
 vi.mock('../guidance.js', () => ({
   setGuidance: (...args) => mockSetGuidance(...args),
 }));
@@ -81,13 +77,13 @@ describe('consciousness.graph.js', () => {
   });
 
   describe('全图正常执行', () => {
-    it('completed_steps 顺序：thalamus → decision → rumination → plan', async () => {
+    it('completed_steps 顺序：thalamus → decision → rumination', async () => {
       const graph = await getCompiledConsciousnessGraph();
       const result = await graph.invoke(
         { completed_steps: [], errors: [], run_ts: '2026-05-05T00:00:00.000Z' },
         { configurable: { thread_id: 'test-full-run:2' } }
       );
-      expect(result.completed_steps).toEqual(['thalamus', 'decision', 'rumination', 'plan']);
+      expect(result.completed_steps).toEqual(['thalamus', 'decision', 'rumination']);
       expect(result.errors).toHaveLength(0);
     });
   });

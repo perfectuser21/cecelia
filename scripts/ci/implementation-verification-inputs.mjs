@@ -186,7 +186,34 @@ const SLIM_BASIC_ENTRY_PROTOCOLS=[
 const COMMANDER_FOUNDATION_BASIC_CI="d20caae43b3156bde1b07d141c3bd54b888da847e9c78e3b21e1440fd848e59a";
 const ENTRY_PROTOCOLS_BY_WORKFLOW={[CURRENT_BASIC_CI]:CURRENT_BASIC_ENTRY_PROTOCOLS,[SLIM_BASIC_CI]:SLIM_BASIC_ENTRY_PROTOCOLS,
  [COMMANDER_FOUNDATION_BASIC_CI]:[SLIM_BASIC_ENTRY_PROTOCOLS[1]]};
-const functionalEntry=entry=>Object.hasOwn(ENTRY_PROTOCOLS_BY_WORKFLOW,entry?.canonical_sha256??'');
+const SKILL_RETIREMENT_ENTRY_PROTOCOL = {
+  "packages/brain/vitest.config.js": "7fbba49f1b01db8020bcc233d5866fc6351f72e8dd7137fc8807372ed7f27971",
+  "scripts/ci/basic-scope.mjs": "dcc7b67cc8dd5df9a370754be400bd276c98c7e747acdfdd8b3f52dc8416c3c4",
+  "scripts/ci/run-basic-check.mjs": "a7eb0c2f679385f6f5d79127b226972bc3f9bcfd488363273fcdc1268547483d",
+  "scripts/ci/check-basic-results.mjs": "7b788eb490d0713542688ab88bbf0be5ffd458c8475dd8a6a4e91fe630e582ce",
+  "scripts/ci/basic-runtime-smoke.mjs": "b386b8c0c8631de5b6a0eec19494835f48c6ca3822a4533ee154ce8767a21eec",
+  "scripts/ci/ops-checks.mjs": "c3cf7da7f7dcbb1e4cd8112abdcab3c7ffc854adb371f65fd13158fe96aac510",
+  "scripts/ci/run-isolated-staging-smoke.mjs": "fa19da1eaf14621a75d95763229fa8d6de40ce3e55940401458346da37f8fbaf",
+  "apps/api/vitest.config.ts": "dbb1e74af497db63cbd2326c5378bb05ca036e1a4590dc2061dce2e5257e776a",
+  "scripts/ci/check-brain-version-bump.sh": "361c35c33c2d0d404d9365c51478212e50ebe84df6a65eacca473ea57bffa0eb",
+  ".github/actions/skills-source/action.yml": "f106e23e090e1fd1aca6c035f63478365cf4aae2e6b4f2d379569c0a22f18169",
+  "scripts/ci/check-skill-source-identity.py": "ebc6b90fbe187b49c31101a5dba997d133fd45825cfcaa3549aad30581d747c1",
+  "scripts/ci/__tests__/basic-skill-identity.test.mjs": "da2687bd8adc80808a580a7955d2c0c619a3defb694b1ecf3d72e8fa58ab163d",
+  "apps/dashboard/vitest.config.ts": "a5899ed07ee4aa8ff262f7da361d695ef8eb26005571c5e09988aac53c1cc261",
+  "scripts/ci/prepare-ubuntu-archive.mjs": "209dcc9a05110f433d9a53586d657d0f7d7da20c008d85147ffc7e11dd76ac88",
+  "scripts/ci/__tests__/basic-ubuntu-archive.test.mjs": "404af7e10ae55b4c25136ce6d20c4af086f49f399cc7b6b6b5da02884d7c79bf",
+  "scripts/skill_source_ownership.py": "20fca16bcf474588e9e4d0add00a66c5885b3d85a82275fb9082a0787e72b9a7",
+  "scripts/ci/resource-canary-scope.mjs": "c7f1e565ae6fb3a1d70f76e95ef301220aab45648473b60e45e7ebc530096d2b",
+  "scripts/ci/__tests__/basic-resource-canary-scope.test.mjs": "77d4feda65d9a810dd2308fd2cf9927ca94fd592f582727c9bfa24553c8e4763",
+  "scripts/ci/__tests__/basic-resource-canary.test.mjs": "27b46ce34355a9891c11a72368d19d618a7b44f28f6ca578afadc924212564df",
+  "scripts/ci/__tests__/basic-results.test.mjs": "1b41f80bbc2ecadd85b90b1b918a1bd065637ef9db067bf02f0d1218265d9802",
+  "scripts/ci/__tests__/basic-workflow.test.mjs": "bcdb34d8d3bacfb2cc5a011a7b97edb70d99357c8eed2de4e7a95451b40e6182",
+  "vitest.config.js": "3400f6ba2d5886c139535b28dc0ffde32cf50838c22f1946a1bba4415e695a71",
+  "packages/brain/src/workflows/__tests__/impact-contract-evaluator-receipts.skill-source.test.js": null, "packages/brain/src/__tests__/golden-path-skill-snapshot.skill-source.test.js": null, "packages/brain/src/__tests__/ci-defense.skill-source.test.ts": null, "packages/brain/src/__tests__/golden-path-contract-task.skill-source.test.js": null, "tests/contract-e2e-extractor.skill-source.test.ts": null, "packages/brain/vitest.skill-source.config.mjs": null, "vitest.skill-source.config.mjs": null, "scripts/ci/run-skill-source-check.mjs": null, "scripts/ci/skill-source-tests.mjs": null, "scripts/ci/__tests__/basic-skill-source-coverage.test.mjs": null
+};
+const SKILL_RETIREMENT_CI = '7195c295058535d0a014e66343803d144647f2991120fe274ca8036728cb2ea9';
+const entryProtocolsFor = digest => digest === SKILL_RETIREMENT_CI ? [SKILL_RETIREMENT_ENTRY_PROTOCOL] : ENTRY_PROTOCOLS_BY_WORKFLOW[digest];
+const functionalEntry=entry=>Boolean(entryProtocolsFor(entry?.canonical_sha256??''));
 const UNIT_CONFIGS=[
  {component:'brain',directory:'packages/brain',path:'packages/brain/vitest.config.js'},
  {component:'engine',directory:'packages/engine',path:'packages/engine/vitest.config.ts'},
@@ -221,12 +248,12 @@ function supportReader(root,source,git){
 function unitEntry(read,side){
  const workflow=read(side,CI);if(!workflow)return null;let doc;
  try{doc=yaml.load(workflow.text);}catch{return null;}
- const signature=sha(JSON.stringify(canonical(doc)));if(!Object.hasOwn(ENTRY_PROTOCOLS_BY_WORKFLOW,signature))return null;
+ const signature=sha(JSON.stringify(canonical(doc)));if(!entryProtocolsFor(signature))return null;
  const support=[workflow.reference];let selected;
- for(const seals of ENTRY_PROTOCOLS_BY_WORKFLOW[signature]){
+ for(const seals of entryProtocolsFor(signature)){
   const files=[];let matches=true;
   for(const [path,expected] of Object.entries(seals)){
-   const file=read(side,path);if(file?.reference.sha256!==expected){matches=false;break;}
+   const file=read(side,path);if(expected===null){if(file){matches=false;break;}continue;}if(file?.reference.sha256!==expected){matches=false;break;}
    files.push({file,expected});
   }
   if(matches){selected=files;break;}

@@ -26,12 +26,11 @@ import { raise } from '../alerting.js';
 import { handleTaskFailure } from '../quarantine.js';
 import { triggerCeceliaRun } from '../executor.js';
 import { REVIEW_TASK_TYPES } from '../lib/review-task-types.js';
-import { EXEC_STATUS_US_TASK_TYPES, EXEC_STATUS_HK_TASK_TYPES, DEV_DASHBOARD_TASK_TYPES } from '../lib/task-type-registry.js';
+import { isExternalWorkerTask, EXEC_STATUS_US_TASK_TYPES, EXEC_STATUS_HK_TASK_TYPES, DEV_DASHBOARD_TASK_TYPES } from '../lib/task-type-registry.js';
 import { serialUnlockNext, writeReviewResult } from '../lib/callback-postprocess.js';
 import { updateDesireFromTask } from '../desire-feedback.js';
 import { checkAndCreateCodeReviewTrigger } from '../code-review-trigger.js';
 import { resolveRelatedFailureMemories } from './shared.js';
-import { getZenithjoyPool } from '../zenithjoy-db.js';
 import { normalizeCallbackStatus, extractPrNumber, maybeMarkCompletedNoPr, resolveCanonicalPrUrl, buildExecMetaJson, buildFailureFields, extractFindingsValue, buildLastRunResult } from '../lib/callback-utils.js';
 import { suggestionPlanFailure, recordSuggestionPlanFailure, hasCommittedSuggestionPlanFailure, reconcileSuggestionPlanRun } from '../lib/suggestion-plan-callback.js';
 import { recordRunFromCallback } from '../lib/task-run.js';
@@ -46,6 +45,14 @@ import { TASK_MUTATION_RATE_LIMIT_OPTIONS } from './task-mutation-rate-limit.js'
 import { authoringMutationError, assertAuthoringCompletion } from '../workflow-authoring/task-guard.js';
 
 const router = Router();
+
+// 仅匹配本模块的受保护路由计数，避免消耗其他Brain模块的额度。
+const moduleRouteRateLimit = rateLimit({
+  windowMs: 60_000,
+  limit: 1200,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+});
 
 // 回执入口按 task_id 限流：同一任务一分钟内超 60 次回执视为失控（正常一次执行只有 1~3 次）
 const executionCallbackRateLimit = rateLimit({
@@ -288,8 +295,7 @@ router.post('/execution-callback', executionCallbackRateLimit, internalAuthOrLoo
     }
 
     // P1-0: terminal failure guard — 不允许 execution-callback 覆盖 pipeline_terminal_failure 终态
-    // 场景：orchestrator 在 Xian 执行期间将 content-pipeline 设为 failed + failure_class=pipeline_terminal_failure，
-    //       Xian 完成后调用 execution-callback(AI Done) 试图将状态改回 completed。
+    // 已标记不可重试失败的任务不能由迟到成功回调覆盖。
     // 即使主 UPDATE 有 WHERE status='in_progress' 保护，也需此守卫覆盖竞态情形。
     if (newStatus === 'completed') {
       try {
@@ -742,87 +748,6 @@ router.post('/execution-callback', executionCallbackRateLimit, internalAuthOrLoo
       // T9（addendum-01）：原 task_completion learnings 写入块已删除——
       // 事件层记录与 tasks 表信息完全重复，属纯噪音源头，禁止复活。
 
-      // content_publish 完成 → 写入 zenithjoy.publish_logs（fire-and-forget）
-      Promise.resolve().then(async () => {
-        try {
-          const zjPool = getZenithjoyPool();
-          const pubTaskRow = await pool.query(
-            'SELECT task_type, payload FROM tasks WHERE id = $1',
-            [task_id]
-          );
-          const pubTask = pubTaskRow.rows[0];
-          if (!pubTask || pubTask.task_type !== 'content_publish') return;
-
-          const { platform, pipeline_keyword, parent_pipeline_id, content_type } = pubTask.payload || {};
-          if (!platform) return;
-
-          // 规范化 platform：publish_logs 只接受固定枚举值
-          const VALID_PLATFORMS = ['wechat', 'douyin', 'xiaohongshu', 'zhihu', 'toutiao', 'kuaishou', 'weibo', 'channels'];
-          if (!VALID_PLATFORMS.includes(platform)) {
-            console.warn(`[execution-callback] publish_logs: platform '${platform}' 不在枚举列表，跳过`);
-            return;
-          }
-
-          // 规范化 content_type → works 表枚举（long_form_article / image_text / video）
-          const CONTENT_TYPE_MAP = {
-            article: 'long_form_article',
-            long_form: 'long_form_article',
-            long_form_article: 'long_form_article',
-            image_text: 'image_text',
-            'image-text': 'image_text',
-            'solo-company-case': 'image_text',
-            video: 'video',
-          };
-          const normalizedContentType = CONTENT_TYPE_MAP[content_type] || 'image_text';
-
-          // Upsert zenithjoy.works（以 parent_pipeline_id 为 content_id，幂等）
-          const workTitle = pipeline_keyword || `pipeline:${parent_pipeline_id || task_id}`;
-          const contentId = parent_pipeline_id || task_id;
-
-          const workUpsert = await zjPool.query(
-            `INSERT INTO zenithjoy.works (content_id, title, content_type, status)
-             VALUES ($1, $2, $3, 'published')
-             ON CONFLICT (content_id) DO UPDATE SET
-               status = 'published',
-               updated_at = NOW()
-             RETURNING id`,
-            [contentId, workTitle, normalizedContentType]
-          );
-          const workId = workUpsert.rows[0]?.id;
-          if (!workId) return;
-
-          // 幂等检查 publish_logs（同一 work_id + platform 不重复写）
-          const existing = await zjPool.query(
-            `SELECT id FROM zenithjoy.publish_logs WHERE work_id = $1 AND platform = $2`,
-            [workId, platform]
-          );
-          if (existing.rows.length > 0) {
-            console.log(`[execution-callback] publish_logs 已存在 work_id=${workId} platform=${platform}，跳过`);
-            return;
-          }
-
-          // 从 task result 提取 platform_post_id（优先级：platform_post_id > msg_id > media_id > url）
-          const platformPostId = (result !== null && typeof result === 'object')
-            ? (result.platform_post_id || result.msg_id || result.media_id || result.url || null)
-            : null;
-
-          await zjPool.query(
-            `INSERT INTO zenithjoy.publish_logs
-               (work_id, platform, status, published_at, response, platform_post_id)
-             VALUES ($1, $2, 'published', NOW(), $3, $4)`,
-            [
-              workId,
-              platform,
-              JSON.stringify({ task_id, pipeline_keyword: pipeline_keyword || null, parent_pipeline_id: parent_pipeline_id || null }),
-              platformPostId
-            ]
-          );
-          console.log(`[execution-callback] publish_logs 写入成功: work_id=${workId} platform=${platform} keyword=${pipeline_keyword} platform_post_id=${platformPostId}`);
-        } catch (plErr) {
-          console.warn(`[execution-callback] publish_logs 写入失败（非致命）: ${plErr.message}`);
-        }
-      }).catch(err => console.warn(`[execution-callback] publish_logs 异步异常: ${err.message}`));
-
       // 小任务积累触发：dev 任务完成后检查是否需要触发 code_review（fire-and-forget）
       Promise.resolve().then(async () => {
         const taskMeta = await pool.query('SELECT task_type, project_id FROM tasks WHERE id = $1', [task_id]);
@@ -1111,75 +1036,6 @@ router.post('/execution-callback', executionCallbackRateLimit, internalAuthOrLoo
 
       // 旧拆解已退役：在途回执仍正常收尾，不再自动创建旧审查或改写审核状态。
 
-      // 5c-strategy. strategy_session 闭环：解析 KR JSON → 写入 goals 表
-      try {
-        const ssTaskResult = await pool.query('SELECT task_type, goal_id FROM tasks WHERE id = $1', [task_id]);
-        const ssTaskRow = ssTaskResult.rows[0];
-
-        if (ssTaskRow?.task_type === 'strategy_session') {
-          console.log(`[execution-callback] strategy_session task completed, parsing KR JSON...`);
-
-          const outputStr = typeof result === 'string' ? result
-            : (result?.result || result?.output || JSON.stringify(result || ''));
-
-          let parsedOutput = null;
-          const jsonMatch = outputStr.match(/\{[\s\S]*"krs"\s*:\s*\[[\s\S]*?\][\s\S]*\}/);
-          if (jsonMatch) {
-            try {
-              parsedOutput = JSON.parse(jsonMatch[0]);
-            } catch (jsonParseErr) {
-              console.error(`[execution-callback] strategy_session JSON parse error: ${jsonParseErr.message}`);
-            }
-          }
-
-          if (parsedOutput && Array.isArray(parsedOutput.krs) && parsedOutput.krs.length > 0) {
-            const meetingSummary = parsedOutput.meeting_summary || '';
-            const krs = parsedOutput.krs;
-
-            await pool.query(
-              `UPDATE tasks SET payload = jsonb_set(COALESCE(payload, '{}'), '{meeting_summary}', $1::jsonb) WHERE id = $2`,
-              [JSON.stringify(meetingSummary), task_id]
-            );
-
-            // 查找关联 objective（migration 181：goals(area_okr).id = objectives.id）
-            let krObjectiveId = null;
-            if (ssTaskRow.goal_id) {
-              const objCheck = await pool.query('SELECT id FROM objectives WHERE id = $1', [ssTaskRow.goal_id]);
-              if (objCheck.rows.length > 0) {
-                krObjectiveId = ssTaskRow.goal_id;
-              }
-            }
-            if (!krObjectiveId) {
-              console.warn(`[execution-callback] strategy_session KR 无关联 Objective（goal_id=${ssTaskRow.goal_id || 'null'}）— KR 将成为孤岛`);
-            }
-
-            for (const kr of krs) {
-              const krTitle = kr.title || '(untitled KR)';
-              const krDomain = kr.domain || null;
-              const krOwnerRole = kr.owner_role ? kr.owner_role.toLowerCase() : null;
-              const krPriority = ['P0', 'P1', 'P2'].includes(kr.priority) ? kr.priority : 'P1';
-
-              await pool.query(
-                `INSERT INTO key_results (title, status, owner_role, objective_id, metadata)
-                 VALUES ($1, 'pending', $2, $3, $4)`,
-                [krTitle, krOwnerRole, krObjectiveId, JSON.stringify({ priority: krPriority, domain: krDomain })]
-              );
-              console.log(`[execution-callback] strategy_session KR created: "${krTitle}" domain=${krDomain} owner=${krOwnerRole} objective_id=${krObjectiveId}`);
-            }
-
-            console.log(`[execution-callback] strategy_session: ${krs.length} KRs written to goals`);
-          } else {
-            console.warn(`[execution-callback] strategy_session: no valid krs found in output`);
-            await pool.query(
-              `UPDATE tasks SET payload = jsonb_set(COALESCE(payload, '{}'), '{strategy_raw_output}', $1::jsonb) WHERE id = $2`,
-              [JSON.stringify(outputStr.slice(0, 2000)), task_id]
-            );
-          }
-        }
-      } catch (strategySessionErr) {
-        console.error(`[execution-callback] strategy_session handling error: ${strategySessionErr.message}`);
-      }
-
       // 5c. Review 闭环：发现问题 → 自动创建修复 Task
       try {
         const taskResult = await pool.query('SELECT task_type, project_id, goal_id, title FROM tasks WHERE id = $1', [task_id]);
@@ -1243,45 +1099,7 @@ ${resultStr.substring(0, 2000)}
         console.error(`[execution-callback] Review handling error: ${reviewErr.message}`);
       }
 
-      // 5c6. 断链 #1: suggestion_plan 完成 → 创建 architecture_design (M1 scan) 任务
-      try {
-        const spAdRow = await pool.query(
-          'SELECT task_type, project_id, goal_id, title FROM tasks WHERE id = $1',
-          [task_id]
-        );
-        const spAdTask = spAdRow.rows[0];
-
-        if (spAdTask?.task_type === 'suggestion_plan') {
-          const projectId = spAdTask.project_id;
-          const existing = await pool.query(
-            `SELECT id FROM tasks
-             WHERE project_id = $1 AND task_type = 'architecture_design'
-               AND status IN ('queued', 'in_progress')
-             LIMIT 1`,
-            [projectId]
-          );
-          if (existing.rows.length > 0) {
-            console.log(`[execution-callback] architecture_design already queued for project ${projectId}, skip`);
-          } else {
-            const { createTask: createAdTask } = await import('../actions.js');
-            await createAdTask({
-              title: `[M1 Scan] architecture_design — ${spAdTask.title}`,
-              description: `suggestion_plan「${spAdTask.title}」已完成，开始 M1 全量扫描代码库，建立 system_modules 知识库。\n原始 suggestion_plan task_id: ${task_id}`,
-              priority: 'P1',
-              project_id: projectId,
-              goal_id: spAdTask.goal_id,
-              task_type: 'architecture_design',
-              trigger_source: 'execution_callback_auto',
-              payload: { mode: 'scan', parent_task_id: task_id }
-            });
-            console.log(`[execution-callback] 断链#1 修复: architecture_design (M1 scan) created for suggestion_plan ${task_id}`);
-          }
-        }
-      } catch (spAdErr) {
-        console.error(`[execution-callback] suggestion_plan → architecture_design creation failed (non-fatal): ${spAdErr.message}`);
-      }
-
-      // 5c7. 断链 #3: architecture_design 完成 → M1 创建 initiative_plan / M2 验证 dev 任务
+      // architecture_design完成后，验证既有design任务的交付情况。
       try {
         const adRow = await pool.query(
           'SELECT task_type, project_id, goal_id, title, payload FROM tasks WHERE id = $1',
@@ -1292,31 +1110,7 @@ ${resultStr.substring(0, 2000)}
         if (adTask?.task_type === 'architecture_design') {
           const mode = adTask.payload?.mode || 'scan';
           const projectId = adTask.project_id;
-          if (mode === 'scan') {
-            const existingIp = await pool.query(
-              `SELECT id FROM tasks
-               WHERE project_id = $1 AND task_type = 'initiative_plan'
-                 AND status IN ('queued', 'in_progress')
-               LIMIT 1`,
-              [projectId]
-            );
-            if (existingIp.rows.length > 0) {
-              console.log(`[execution-callback] initiative_plan already queued for project ${projectId}, skip`);
-            } else {
-              const { createTask: createIpTask } = await import('../actions.js');
-              await createIpTask({
-                title: `[秋米] initiative_plan — ${adTask.title}`,
-                description: `architecture_design (M1 scan)「${adTask.title}」已完成，秋米开始拆解规划 Initiatives。\n原始 architecture_design task_id: ${task_id}`,
-                priority: 'P1',
-                project_id: projectId,
-                goal_id: adTask.goal_id,
-                task_type: 'initiative_plan',
-                trigger_source: 'execution_callback_auto',
-                payload: { parent_task_id: task_id, architecture_scan_task_id: task_id }
-              });
-              console.log(`[execution-callback] 断链#3 修复: initiative_plan created for architecture_design(scan) ${task_id}`);
-            }
-          } else {
+          if (mode !== 'scan') {
             // M2 design 完成 → 验证 dev 任务已存在（日志告警）
             const devTasks = await pool.query(
               `SELECT COUNT(*) AS cnt FROM tasks
@@ -1657,10 +1451,6 @@ ${resultStr.substring(0, 2000)}
       }
     }
 
-    // 5c11. content-* pipeline 子任务推进 — 已废除
-    // in-Brain content-pipeline 编排已搬到 ZJ pipeline-worker（Python LangGraph，PR zenithjoy#216）。
-    // ZJ pipeline-worker 自己维护各 stage 状态机，Cecelia 不再需要 advanceContentPipeline。
-
     // 5c13. crystallize_* 子任务完成/失败 → 推进 crystallize 流水线状态机
     if (newStatus === 'completed' || newStatus === 'failed') {
       try {
@@ -1835,7 +1625,6 @@ ${resultStr.substring(0, 2000)}
 
 // ==================== Heartbeat File API ====================
 
-
 const HEARTBEAT_DEFAULT_TEMPLATE = `# HEARTBEAT.md — Cecelia 巡检清单
 
 ## 巡检项目
@@ -1850,7 +1639,7 @@ const HEARTBEAT_DEFAULT_TEMPLATE = `# HEARTBEAT.md — Cecelia 巡检清单
  * Read HEARTBEAT.md file content.
  * Returns default template if file does not exist.
  */
-router.get('/heartbeat', async (req, res) => {
+router.get('/heartbeat', moduleRouteRateLimit, async (req, res) => {
   try {
     const { readFile } = await import('fs/promises');
     const content = await readFile(HEARTBEAT_PATH, 'utf-8');
@@ -1869,7 +1658,7 @@ router.get('/heartbeat', async (req, res) => {
  * Write content to HEARTBEAT.md file.
  * Request body: { content: "..." }
  */
-router.put('/heartbeat', async (req, res) => {
+router.put('/heartbeat', moduleRouteRateLimit, async (req, res) => {
   try {
     const { content } = req.body;
     if (content === undefined || content === null) {
@@ -1935,7 +1724,7 @@ router.get('/executor/status', async (req, res) => {
  * GET /api/brain/cluster/status
  * Get status of all servers in the cluster (US + HK)
  */
-router.get('/cluster/status', async (req, res) => {
+router.get('/cluster/status', moduleRouteRateLimit, async (req, res) => {
   try {
     const os = await import('os');
 
@@ -2097,7 +1886,7 @@ router.get('/cluster/status', async (req, res) => {
  * POST /api/brain/generate/prd
  * Generate a PRD from task description
  */
-router.post('/generate/prd', async (req, res) => {
+router.post('/generate/prd', moduleRouteRateLimit, async (req, res) => {
   try {
     const { title, description, type = 'feature', goal_id } = req.body;
 
@@ -2282,7 +2071,6 @@ router.post('/validate/trd', (req, res) => {
 
 // TRD API — removed (decomposer.js deleted, TRD decomposition now handled by 秋米 /okr)
 
-
 /**
  * POST /api/brain/goal/compare
  * Compare goal progress against expected progress
@@ -2373,7 +2161,6 @@ router.post('/decision/:id/rollback', async (req, res) => {
 
 // ==================== VPS Slots API ====================
 
-
 /**
  * GET /api/brain/slots
  * Three-pool slot allocation status
@@ -2425,7 +2212,7 @@ router.put('/budget-cap', async (req, res) => {
  * GET /api/brain/vps-slots
  * Get real Claude process information with task details
  */
-router.get('/vps-slots', async (req, res) => {
+router.get('/vps-slots', moduleRouteRateLimit, async (req, res) => {
   try {
     const tickStatus = await getTickStatus();
     const MAX_SLOTS = tickStatus.max_concurrent || 6;
@@ -2520,7 +2307,7 @@ router.get('/vps-slots', async (req, res) => {
  * GET /api/brain/execution-history
  * Get cecelia execution history from decision_log
  */
-router.get('/execution-history', async (req, res) => {
+router.get('/execution-history', moduleRouteRateLimit, async (req, res) => {
   try {
     const limit = parseInt(req.query.limit) || 20;
 
@@ -2577,7 +2364,7 @@ router.get('/execution-history', async (req, res) => {
  * GET /api/brain/cecelia/overview
  * Overview of Cecelia execution: running/completed/failed counts + recent runs
  */
-router.get('/cecelia/overview', async (req, res) => {
+router.get('/cecelia/overview', moduleRouteRateLimit, async (req, res) => {
   try {
     const { getActiveProcesses, getActiveProcessCount } = await import('../executor.js');
 
@@ -2655,7 +2442,7 @@ router.get('/cecelia/overview', async (req, res) => {
  * GET /api/brain/dev/health
  * Health check for dev task tracking
  */
-router.get('/dev/health', async (req, res) => {
+router.get('/dev/health', moduleRouteRateLimit, async (req, res) => {
   try {
     const { checkCeceliaRunAvailable, getActiveProcessCount } = await import('../executor.js');
 
@@ -2693,7 +2480,7 @@ router.get('/dev/health', async (req, res) => {
  * GET /api/brain/dev/tasks
  * Get all active dev tasks with step status
  */
-router.get('/dev/tasks', async (req, res) => {
+router.get('/dev/tasks', moduleRouteRateLimit, async (req, res) => {
   try {
     const { getActiveProcesses } = await import('../executor.js');
 
@@ -2799,7 +2586,7 @@ router.get('/dev/tasks', async (req, res) => {
  * GET /api/brain/dev/repos
  * Get list of tracked repositories
  */
-router.get('/dev/repos', async (req, res) => {
+router.get('/dev/repos', moduleRouteRateLimit, async (req, res) => {
   try {
     const result = await pool.query(`
       -- 迁移：projects → okr_projects/okr_scopes/okr_initiatives metadata.repo_path
@@ -2903,7 +2690,7 @@ router.post('/plan/next', async (req, res) => {
  * GET /api/brain/planner/initiatives-without-tasks
  * 监控端点：返回所有有 active Initiative 但无 queued/in_progress Task 的 KR 及其 Initiative 列表
  */
-router.get('/planner/initiatives-without-tasks', async (_req, res) => {
+router.get('/planner/initiatives-without-tasks', moduleRouteRateLimit, async (_req, res) => {
   try {
     const result = await pool.query(`
       SELECT
@@ -3038,6 +2825,10 @@ router.post('/dispatch-now', rateLimit(TASK_MUTATION_RATE_LIMIT_OPTIONS), async 
     }
 
     let task = result.rows[0];
+
+    if (isExternalWorkerTask(task)) {
+      return res.status(409).json({ error: 'external_consumer_required', id: task_id, status: task.status });
+    }
 
     if (isRetiredDecomposition(task)) {
       return res.status(410).json({ error: RETIRED_DECOMPOSITION, detail: '旧任务拆解已退役，未派发' });

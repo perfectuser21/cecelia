@@ -57,7 +57,7 @@ vi.mock('../dept-heartbeat.js', () => ({ triggerDeptHeartbeats: vi.fn().mockReso
 vi.mock('../daily-review-scheduler.js', () => ({
   triggerDailyReview: vi.fn().mockResolvedValue(null), triggerContractScan: vi.fn().mockResolvedValue(null),
 }));
-vi.mock('../desire/index.js', () => ({ runDesireSystem: vi.fn().mockResolvedValue(null) }));
+
 vi.mock('../rumination.js', () => ({ runRumination: vi.fn().mockResolvedValue(null) }));
 vi.mock('../rumination-scheduler.js', () => ({ runSynthesisSchedulerIfNeeded: vi.fn().mockResolvedValue(null) }));
 vi.mock('../notebook-feeder.js', () => ({ feedDailyIfNeeded: vi.fn().mockResolvedValue(null) }));

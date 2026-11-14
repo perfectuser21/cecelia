@@ -1,5 +1,5 @@
 # 任务系统 (task) - Feature 详情
-# 更新时间: 2026-04-03
+# 更新时间: 2026-11-14
 # Schema: v2.0.0
 # 成熟度: 0=只有代码 1=+文档 2=+unit 3=+integration+ADR 4=+e2e+api_docs 5=+runbook+regression
 
@@ -62,7 +62,6 @@ features:
         - packages/brain/src/__tests__/task-generators/coverage-scanner.test.js
         - packages/brain/src/__tests__/task-generators/scheduler.test.js
         - packages/brain/src/__tests__/task-generators/untested-scanner.test.js
-        - packages/brain/src/__tests__/task-quality-gate.test.js
         - packages/brain/src/__tests__/task-run-metrics-parse.test.js
         - packages/brain/src/__tests__/task-updater.test.js
         - packages/brain/src/__tests__/task-websocket.test.js
@@ -93,7 +92,6 @@ features:
             - packages/brain/src/__tests__/task-generators/coverage-scanner.test.js
             - packages/brain/src/__tests__/task-generators/scheduler.test.js
             - packages/brain/src/__tests__/task-generators/untested-scanner.test.js
-            - packages/brain/src/__tests__/task-quality-gate.test.js
             - packages/brain/src/__tests__/task-run-metrics-parse.test.js
             - packages/brain/src/__tests__/task-updater.test.js
             - packages/brain/src/__tests__/task-websocket.test.js
@@ -141,7 +139,6 @@ features:
         - packages/brain/src/__tests__/routing-decisions.test.js
         - packages/brain/src/__tests__/task-router-code-review.test.js
         - packages/brain/src/__tests__/task-router-codex-immune.test.js
-        - packages/brain/src/__tests__/task-router-content-pipeline.test.js
         - packages/brain/src/__tests__/task-router-core.test.js
         - packages/brain/src/__tests__/task-router-crystallize.test.js
         - packages/brain/src/__tests__/task-router-decomp-review.test.js
@@ -170,7 +167,6 @@ features:
             - packages/brain/src/__tests__/routing-decisions.test.js
             - packages/brain/src/__tests__/task-router-code-review.test.js
             - packages/brain/src/__tests__/task-router-codex-immune.test.js
-            - packages/brain/src/__tests__/task-router-content-pipeline.test.js
             - packages/brain/src/__tests__/task-router-core.test.js
             - packages/brain/src/__tests__/task-router-crystallize.test.js
             - packages/brain/src/__tests__/task-router-decomp-review.test.js
@@ -474,7 +470,6 @@ features:
         - packages/brain/src/__tests__/codex-bridge-lb.test.js
         - packages/brain/src/__tests__/codex-bridge-token-inject.test.js
         - packages/brain/src/__tests__/codex-oauth-team-rotation.test.js
-        - packages/brain/src/__tests__/planner-retired-entry.test.js
         - packages/brain/src/__tests__/completed-no-pr.test.js
         - packages/brain/src/__tests__/contracts/executor-contract.test.js
         - packages/brain/src/__tests__/coverage-config.test.js
@@ -487,7 +482,6 @@ features:
         - packages/brain/src/__tests__/executor-billing-pause-persist.test.js
         - packages/brain/src/__tests__/executor-code-review-env.test.js
         - packages/brain/src/__tests__/executor-codex-review.test.js
-        - packages/brain/src/__tests__/executor-content-publish.test.js
         - packages/brain/src/__tests__/executor-dept-heartbeat.test.js
         - packages/brain/src/__tests__/executor-diagnostics.test.js
         - packages/brain/src/__tests__/executor-domain-prompt.test.js
@@ -514,7 +508,6 @@ features:
         - packages/brain/src/__tests__/minimax-provider.test.js
         - packages/brain/src/__tests__/model-profile-dispatch.test.js
         - packages/brain/src/__tests__/model-profile.test.js
-        - packages/brain/src/__tests__/model-registry.test.js
         - packages/brain/src/__tests__/openai-client.test.js
         - packages/brain/src/__tests__/pr-callback-handler.test.js
         - packages/brain/src/__tests__/pr-progress.test.js
@@ -547,7 +540,6 @@ features:
             - packages/brain/src/__tests__/codex-bridge-lb.test.js
             - packages/brain/src/__tests__/codex-bridge-token-inject.test.js
             - packages/brain/src/__tests__/codex-oauth-team-rotation.test.js
-            - packages/brain/src/__tests__/planner-retired-entry.test.js
             - packages/brain/src/__tests__/completed-no-pr.test.js
             - packages/brain/src/__tests__/contracts/executor-contract.test.js
             - packages/brain/src/__tests__/coverage-config.test.js
@@ -560,7 +552,6 @@ features:
             - packages/brain/src/__tests__/executor-billing-pause-persist.test.js
             - packages/brain/src/__tests__/executor-code-review-env.test.js
             - packages/brain/src/__tests__/executor-codex-review.test.js
-            - packages/brain/src/__tests__/executor-content-publish.test.js
             - packages/brain/src/__tests__/executor-dept-heartbeat.test.js
             - packages/brain/src/__tests__/executor-diagnostics.test.js
             - packages/brain/src/__tests__/executor-domain-prompt.test.js
@@ -587,7 +578,6 @@ features:
             - packages/brain/src/__tests__/minimax-provider.test.js
             - packages/brain/src/__tests__/model-profile-dispatch.test.js
             - packages/brain/src/__tests__/model-profile.test.js
-            - packages/brain/src/__tests__/model-registry.test.js
             - packages/brain/src/__tests__/openai-client.test.js
             - packages/brain/src/__tests__/pr-callback-handler.test.js
             - packages/brain/src/__tests__/pr-progress.test.js

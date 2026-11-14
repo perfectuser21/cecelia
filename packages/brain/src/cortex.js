@@ -29,7 +29,7 @@ import {
 } from './cortex-quality.js';
 import { validatePolicyJson } from './policy-validator.js';
 import { recordFailure } from './circuit-breaker.js';
-import { createTask } from './actions.js';
+
 import { autoExtractAndPersist } from './insight-to-constraint.js';
 import { pushCaptureAtom } from './capture-inbox.js';
 
@@ -901,7 +901,6 @@ async function recordLearnings(learnings, event) {
         eventTaskId,
       ]);
       recorded++;
-      // 自动闭合：若 insight 含代码修复信号，派发修复 task
       if (insertResult.rows.length > 0) {
         const learningId = insertResult.rows[0].id;
         // T10 统一收件箱：cortex insight learning 落库后顺手进箱
@@ -917,78 +916,13 @@ async function recordLearnings(learnings, event) {
         await autoExtractAndPersist(learningId, content).catch(err =>
           console.warn('[cortex] insight-to-constraint failed:', err.message)
         );
-        await maybeCreateInsightTask(learningId, content, event).catch(err =>
-          console.error('[cortex] maybeCreateInsightTask failed:', err.message)
-        );
+
       }
     } catch (err) {
       console.error('[cortex] Failed to record learning:', err.message);
     }
   }
   console.log(`[cortex] Recorded ${recorded}/${learnings.length} learnings to learnings table`);
-}
-
-// 代码修复信号关键词（中英文）
-const CODE_FIX_SIGNALS = [
-  'bug', 'fix', 'repair', 'patch', 'crash', 'error', 'exception',
-  '修复', '修改', '改进', '重构', '代码', '实现', '问题', '异常', '崩溃',
-  '优化代码', '代码问题', '需要改', '应该改', '可以改', '建议修',
-];
-
-/**
- * 检测 insight 内容是否含代码修复信号
- * @param {string} content
- * @returns {boolean}
- */
-function hasCodeFixSignal(content) {
-  const lower = content.toLowerCase();
-  return CODE_FIX_SIGNALS.some(signal => lower.includes(signal.toLowerCase()));
-}
-
-/**
- * 强制为 cortex insight 创建 dev task（强制绑定，不依赖关键词检测）
- * 同一 learning 已有对应 task 时跳过（去重），task 创建后标记 applied=true
- * @param {string} learningId - learnings.id
- * @param {string} content - insight 内容
- * @param {Object} event - 触发事件
- */
-async function maybeCreateInsightTask(learningId, content, event) {
-  // 去重：同一 learning 是否已有对应 task
-  const dedup = await pool.query(
-    `SELECT id FROM tasks WHERE payload->>'insight_learning_id' = $1 AND status != 'cancelled' LIMIT 1`,
-    [learningId]
-  );
-  if (dedup.rows.length > 0) {
-    console.log(`[cortex] Insight task already exists for learning ${learningId}, skip`);
-    return;
-  }
-
-  // 生成任务标题（截取 insight 首 120 字符）
-  const shortContent = content.slice(0, 120).replace(/\n/g, ' ');
-  const taskTitle = `[Insight修复] ${shortContent}`;
-
-  try {
-    await createTask({
-      title: taskTitle,
-      description: `由 Cortex Insight 自动生成的修复任务。\n\n原始 insight (learning_id: ${learningId}):\n${content}`,
-      priority: 'P2',
-      task_type: 'dev',
-      trigger_source: 'cortex',
-      payload: {
-        insight_learning_id: learningId,
-        event_type: event.type || 'cortex_analysis',
-      },
-    });
-
-    // 标记 learning applied=true
-    await pool.query(
-      `UPDATE learnings SET applied = true, applied_at = NOW() WHERE id = $1`,
-      [learningId]
-    );
-    console.log(`[cortex] Auto-created dev task for insight learning ${learningId}`);
-  } catch (err) {
-    console.error(`[cortex] Failed to create insight task for learning ${learningId}:`, err.message);
-  }
 }
 
 /**
@@ -1587,7 +1521,4 @@ export {
   CORTEX_ACTION_WHITELIST,
   OUTPUT_DEDUP_THRESHOLD,
 
-  // Insight 自动闭合（测试用）
-  hasCodeFixSignal,
-  maybeCreateInsightTask,
 };

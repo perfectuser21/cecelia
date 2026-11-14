@@ -3,7 +3,6 @@ import { makePool } from "./helpers/scheduler-jobs-fixture.js";
 import { startSchedulerJobsLoop, stopSchedulerJobsLoop, JOBS } from '../scheduler-jobs.js';
 import * as schedulerJobsModule from '../scheduler-jobs.js';
 import { triggerArchReview } from '../daily-review-scheduler.js';
-import { maybeTriggerStrategySession } from '../active-goals-zero-trigger.js';
 const { startProjectionJobsLoop, stopProjectionJobsLoop } = schedulerJobsModule;
 describe('scheduler-jobs loop 幂等与重入守卫', () => {
   beforeEach(() => {
@@ -39,7 +38,6 @@ describe('scheduler-jobs loop 幂等与重入守卫', () => {
     startSchedulerJobsLoop(pool);
     await vi.advanceTimersByTimeAsync(60 * 1000);
     expect(triggerArchReview).toHaveBeenCalledTimes(1);
-    expect(maybeTriggerStrategySession).toHaveBeenCalledTimes(1);
   });
 
   it('重入守卫：慢 handler 挂起时前进 120s 不叠加并发', async () => {

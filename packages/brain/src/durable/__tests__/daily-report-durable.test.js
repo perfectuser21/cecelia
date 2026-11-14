@@ -67,9 +67,6 @@ describe.skipIf(!RUN)('daily-report durable 崩溃恢复 + exactly-once', () => 
         id text, task_type text, status text, payload jsonb,
         completed_at timestamptz, created_at timestamptz
       );
-      CREATE TABLE content_publish_jobs (
-        platform text, status text, created_at timestamptz
-      );
       CREATE TABLE working_memory (
         key text PRIMARY KEY, value_json jsonb, updated_at timestamptz
       );
@@ -98,7 +95,7 @@ describe.skipIf(!RUN)('daily-report durable 崩溃恢复 + exactly-once', () => 
     const db = new pg.Client({ connectionString: TEST_DB_URL });
     await db.connect();
 
-    // 崩溃时：fetch×4 + generate 已执行（trace 各 1），save/feishu 未执行
+    // 崩溃时：运行检查 + generate 已执行（trace 各 1），save/feishu 未执行
     const genBefore = (await db.query(`SELECT COUNT(*)::int c FROM step_trace WHERE step='generateReport'`)).rows[0].c;
     const feishuBefore = (await db.query(`SELECT COUNT(*)::int c FROM feishu_sends`)).rows[0].c;
     expect(genBefore).toBe(1);

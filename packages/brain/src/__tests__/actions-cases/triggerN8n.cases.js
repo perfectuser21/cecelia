@@ -32,13 +32,13 @@ describe('triggerN8n', () => {
       });
 
       const result = await triggerN8n({
-        webhook_path: 'http://custom:8080/hook',
+        webhook_path: `${process.env.N8N_API_URL || 'http://localhost:5679'}/webhook/test-hook`,
         data: { foo: 'bar' },
       });
 
       expect(result.success).toBe(true);
       const fetchCall = mockFetch.mock.calls[0];
-      expect(fetchCall[0]).toBe('http://custom:8080/hook');
+      expect(fetchCall[0]).toBe(`${process.env.N8N_API_URL || 'http://localhost:5679'}/webhook/test-hook`);
     });
 
     it('webhook 返回非 200', async () => {

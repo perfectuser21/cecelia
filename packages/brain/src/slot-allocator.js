@@ -53,11 +53,10 @@ const MEMORY_PRESSURE_THRESHOLD_MB = 600;   // 系统可用内存低于此值时
 // ============================================================
 // Backpressure Bypass Whitelist (P0 任务 / Brain 自修复 优先派发)
 // ============================================================
-// 10 个类型在 priority=P0 时跳过 backpressure burst limit，
-// 避免被 P1 content-pipeline 积压拖累。
+// 现役自修复任务在 priority=P0 时跳过 backpressure burst limit，
+// 避免被普通任务积压拖累。
 // 'dev' 在列：Brain 自修复 PR 多为 dev 类型，若被卡住会形成"修 dispatcher 的
 // 任务被 dispatcher 卡住"的死循环（RCA: 2026-04-25-24h-business-failures §6）。
-// 'content_publish' 在列：P0 发布任务在 Pool C 满时被 deny 会永久积压（RCA: backpressure 根因）。
 // 名单见 lib/task-type-registry.js（BACKPRESSURE_BYPASS_TASK_TYPES）。
 
 /**
@@ -263,7 +262,7 @@ function getBackpressureState({
   task,
 } = {}) {
   // P0 任务白名单短路：直接返回 inactive，让 burst_limit 不生效。
-  // 避免 88 个 P1 content-pipeline 积压拖累 P0 修复任务派发（PRD 1d904af8）。
+  // 避免普通任务积压拖累 P0 修复任务派发。
   if (shouldBypassBackpressure(task)) {
     return {
       active: false,

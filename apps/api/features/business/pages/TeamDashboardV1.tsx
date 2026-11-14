@@ -2,40 +2,25 @@
  * TeamDashboardV1 — 团队数据一览
  * 面向非工程师，每日打开一眼知全局
  *
- * 5 个面板：
- *  publishStats     昨日发布统计（目标 5条/天）
- *  successRate      各平台发布成功率
- *  contentRanking   近7日内容效果排行
- *  krProgress       KR 进度可视化
- *  clusterUtil      算力利用率实时
+ * KR 进度与机器集群资源状态。
  */
 
 import { useEffect, useState, useCallback } from 'react';
 import {
   RefreshCw,
-  CheckCircle2,
-  XCircle,
-  BarChart2,
   Target,
   Cpu,
-  TrendingUp,
   Clock,
   AlertCircle,
 } from 'lucide-react';
 import {
-  fetchPublishStats,
   fetchOkrCurrent,
   fetchClusterStatus,
-  fetchContentPerformance,
-  type PublishStats,
   type OkrData,
   type ClusterStatus,
-  type ContentPerformance,
 } from '../api/team-dashboard.api';
 
 // ── 工具 ──────────────────────────────────────────────
-
-const DAILY_TARGET = 5; // 目标每天发布条数
 
 function fmtSH(): string {
   return new Date().toLocaleString('zh-CN', {
@@ -47,16 +32,6 @@ function fmtSH(): string {
     minute: '2-digit',
   });
 }
-
-const PLATFORM_LABELS: Record<string, string> = {
-  douyin: '抖音',
-  kuaishou: '快手',
-  xiaohongshu: '小红书',
-  wechat: '公众号',
-  weibo: '微博',
-  zhihu: '知乎',
-  toutiao: '头条',
-};
 
 // ── 子组件 ────────────────────────────────────────────
 
@@ -147,203 +122,7 @@ const ProgressBar = ({
   );
 };
 
-// ── 面板 1: 昨日发布统计 ──────────────────────────────
-
-const publishStats = 'publishStats';
-
-const PublishStatsPanel = ({ data }: { data: PublishStats | null }) => {
-  const total = data?.total ?? 0;
-  const color = total >= DAILY_TARGET ? 'emerald' : total >= DAILY_TARGET / 2 ? 'amber' : 'rose';
-
-  return (
-    <Card>
-      <CardHeader icon={BarChart2} title="昨日发布" subtitle="目标 5 条/天" color="blue" />
-      <div className="p-5 space-y-4">
-        {/* 主进度 */}
-        <div className="flex items-end gap-3">
-          <span className={`text-4xl font-bold ${
-            color === 'emerald' ? 'text-emerald-600' :
-            color === 'amber'   ? 'text-amber-500'  : 'text-rose-500'
-          }`}>{total}</span>
-          <span className="text-slate-400 text-sm mb-1">/ {DAILY_TARGET} 条</span>
-          {total >= DAILY_TARGET
-            ? <CheckCircle2 className="w-5 h-5 text-emerald-500 mb-1" />
-            : <AlertCircle className="w-5 h-5 text-amber-400 mb-1" />}
-        </div>
-        <ProgressBar value={total} max={DAILY_TARGET} color={color} />
-
-        {/* 按平台分布 */}
-        {data && data.by_platform.length > 0 ? (
-          <div className="space-y-2 pt-2">
-            {data.by_platform.map((p) => (
-              <div key={p.platform} className="flex items-center gap-2">
-                <span className="text-xs w-16 text-slate-500 dark:text-slate-400 shrink-0">
-                  {PLATFORM_LABELS[p.platform] ?? p.platform}
-                </span>
-                <div className="flex-1">
-                  <ProgressBar value={p.total_count} max={Math.max(data.total, 1)} color="blue" />
-                </div>
-                <span className="text-xs text-slate-400 w-4 text-right">{p.total_count}</span>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <EmptyState msg="数据采集中，稍后更新" />
-        )}
-      </div>
-    </Card>
-  );
-};
-
-// ── 面板 2: 各平台发布成功率 ─────────────────────────
-
-const successRate = 'successRate';
-
-const SuccessRatePanel = ({ data }: { data: PublishStats | null }) => (
-  <Card>
-    <CardHeader icon={CheckCircle2} title="平台成功率" subtitle="近 24h" color="emerald" />
-    <div className="p-5">
-      {data && data.by_platform.length > 0 ? (
-        <div className="space-y-3">
-          {data.by_platform.map((p) => (
-            <div key={p.platform} className="space-y-1.5">
-              <div className="flex justify-between text-sm">
-                <span className="text-slate-700 dark:text-slate-300 font-medium">
-                  {PLATFORM_LABELS[p.platform] ?? p.platform}
-                </span>
-                <div className="flex items-center gap-2 text-xs">
-                  <span className="text-emerald-600 flex items-center gap-0.5">
-                    <CheckCircle2 className="w-3 h-3" /> {p.success_count}
-                  </span>
-                  {p.fail_count > 0 && (
-                    <span className="text-rose-500 flex items-center gap-0.5">
-                      <XCircle className="w-3 h-3" /> {p.fail_count}
-                    </span>
-                  )}
-                </div>
-              </div>
-              <ProgressBar
-                value={p.success_count}
-                max={p.total_count}
-                color={
-                  p.success_rate === null ? 'blue' :
-                  p.success_rate >= 80 ? 'emerald' :
-                  p.success_rate >= 50 ? 'amber' : 'rose'
-                }
-              />
-              {p.fail_reasons.length > 0 && (
-                <p className="text-xs text-rose-400 truncate" title={p.fail_reasons.join(' | ')}>
-                  ⚠ {p.fail_reasons[0]}
-                </p>
-              )}
-            </div>
-          ))}
-        </div>
-      ) : (
-        <EmptyState msg="数据采集中，稍后更新" />
-      )}
-    </div>
-  </Card>
-);
-
-// ── 面板 3: 近7日内容效果排行 ────────────────────────
-
-const contentRanking = 'contentRanking';
-
-const ContentRankingPanel = ({ data }: { data: ContentPerformance | null }) => {
-  // 优先展示自有内容效果数据（analytics/content），降级到平台趋势（social/trending）
-  const hasAnalytics = (data?.analytics?.length ?? 0) > 0;
-  const hasPosts = (data?.posts?.length ?? 0) > 0;
-
-  return (
-    <Card className="col-span-2">
-      <CardHeader icon={TrendingUp} title="近7日内容排行" subtitle="浏览 · 互动数" color="violet" />
-      <div className="p-5">
-        {hasAnalytics ? (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-xs text-slate-400 uppercase border-b border-slate-200 dark:border-slate-700">
-                  <th className="pb-2 text-left w-8">#</th>
-                  <th className="pb-2 text-left">内容</th>
-                  <th className="pb-2 text-right">平台</th>
-                  <th className="pb-2 text-right">浏览</th>
-                  <th className="pb-2 text-right">互动</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data!.analytics.map((item, i) => (
-                  <tr
-                    key={item.id}
-                    className="border-b border-slate-100 dark:border-slate-700/50 last:border-0"
-                  >
-                    <td className="py-2 text-slate-400 text-xs">{i + 1}</td>
-                    <td className="py-2 text-slate-700 dark:text-slate-300 truncate max-w-[200px]">
-                      {item.title || item.content_id || '—'}
-                    </td>
-                    <td className="py-2 text-right text-xs text-slate-500">
-                      {PLATFORM_LABELS[item.platform] ?? item.platform}
-                    </td>
-                    <td className="py-2 text-right text-slate-600 dark:text-slate-400">
-                      {item.view_count.toLocaleString()}
-                    </td>
-                    <td className="py-2 text-right text-slate-600 dark:text-slate-400">
-                      {(item.like_count + item.comment_count).toLocaleString()}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : hasPosts ? (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-xs text-slate-400 uppercase border-b border-slate-200 dark:border-slate-700">
-                  <th className="pb-2 text-left w-8">#</th>
-                  <th className="pb-2 text-left">内容</th>
-                  <th className="pb-2 text-right">平台</th>
-                  <th className="pb-2 text-right">浏览</th>
-                  <th className="pb-2 text-right">互动</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data!.posts.map((post, i) => (
-                  <tr
-                    key={i}
-                    className="border-b border-slate-100 dark:border-slate-700/50 last:border-0"
-                  >
-                    <td className="py-2 text-slate-400 text-xs">{i + 1}</td>
-                    <td className="py-2 text-slate-700 dark:text-slate-300 truncate max-w-[200px]">
-                      {post.title || post.author || '—'}
-                    </td>
-                    <td className="py-2 text-right text-xs text-slate-500">
-                      {PLATFORM_LABELS[post.platform] ?? post.platform}
-                    </td>
-                    <td className="py-2 text-right text-slate-600 dark:text-slate-400">
-                      {post.view_count?.toLocaleString() ?? '—'}
-                    </td>
-                    <td className="py-2 text-right text-slate-600 dark:text-slate-400">
-                      {post.like_count !== undefined
-                        ? (post.like_count + (post.comment_count ?? 0)).toLocaleString()
-                        : '—'}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : (
-          <EmptyState msg="内容效果数据采集进行中（数据闭环任务）" />
-        )}
-      </div>
-    </Card>
-  );
-};
-
-// ── 面板 4: KR 进度 ──────────────────────────────────
-
-const krProgress = 'krProgress';
+// ── KR 进度 ──────────────────────────────────
 
 const KrProgressPanel = ({ data }: { data: OkrData | null }) => {
   const allKrs = data?.objectives.flatMap((o) => o.key_results) ?? [];
@@ -389,7 +168,7 @@ const KrProgressPanel = ({ data }: { data: OkrData | null }) => {
   );
 };
 
-// ── 面板 5: 算力利用率 ───────────────────────────────
+// ── 算力利用率 ───────────────────────────────
 
 const clusterUtil = 'clusterUtil';
 
@@ -462,10 +241,8 @@ const ClusterUtilPanel = ({ data }: { data: ClusterStatus | null }) => {
 // ── 主页面 ────────────────────────────────────────────
 
 export default function TeamDashboardV1() {
-  const [publishData, setPublishData] = useState<PublishStats | null>(null);
   const [okrData, setOkrData] = useState<OkrData | null>(null);
   const [clusterData, setClusterData] = useState<ClusterStatus | null>(null);
-  const [contentData, setContentData] = useState<ContentPerformance | null>(null);
   const [loading, setLoading] = useState(true);
   const [lastRefresh, setLastRefresh] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -474,17 +251,13 @@ export default function TeamDashboardV1() {
     setLoading(true);
     setError(null);
     try {
-      const [pub, okr, cluster, content] = await Promise.allSettled([
-        fetchPublishStats(1),
+      const [okr, cluster] = await Promise.allSettled([
         fetchOkrCurrent(),
         fetchClusterStatus(),
-        fetchContentPerformance(7),
       ]);
 
-      if (pub.status === 'fulfilled') setPublishData(pub.value);
       if (okr.status === 'fulfilled') setOkrData(okr.value);
       if (cluster.status === 'fulfilled') setClusterData(cluster.value);
-      if (content.status === 'fulfilled') setContentData(content.value);
     } catch (e) {
       setError(e instanceof Error ? e.message : '数据加载失败');
     } finally {
@@ -508,7 +281,7 @@ export default function TeamDashboardV1() {
             团队 Dashboard
           </h1>
           <p className="text-sm text-slate-500 dark:text-slate-400 mt-0.5">
-            内容运营 · 系统状态 · 一眼全局
+            目标进度 · 系统资源 · 一眼全局
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -535,16 +308,7 @@ export default function TeamDashboardV1() {
         </div>
       )}
 
-      {/* Grid: 2 + 2 + 2 layout */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-        {/* Row 1 */}
-        <PublishStatsPanel data={publishData} />
-        <SuccessRatePanel data={publishData} />
-
-        {/* Row 2: full width */}
-        <ContentRankingPanel data={contentData} />
-
-        {/* Row 3 */}
         <KrProgressPanel data={okrData} />
         <ClusterUtilPanel data={clusterData} />
       </div>

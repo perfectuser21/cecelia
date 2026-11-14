@@ -18,8 +18,11 @@
  */
 import { EXECUTOR_CONTRACTS, resolveLivenessKind } from '../executor-contracts.js';
 import { releaseDeviceLocksHeldBy } from '../device-lock-helpers.js';
-import { finalizeTask } from './task-terminal.js';
+import { afterTerminalTransition, finalizeTask } from './task-terminal.js';
 import { recordTaskEventSafe } from './task-event-log.js';
+import { TASK_TYPE_REGISTRY, isExternalWorkerTask } from './task-type-registry.js';
+import { validClaimEpoch } from './task-lease-finish.js';
+const externalWorkerTypes = Object.keys(TASK_TYPE_REGISTRY).filter(task_type => isExternalWorkerTask({ task_type }));
 
 export const LEASE_MIN_SECONDS = 30;
 export const LEASE_MAX_SECONDS = 4 * 3600;
@@ -84,7 +87,7 @@ async function claimAndStart(pool, { taskId, claimer, kind, forceKind, seconds, 
                 ELSE status_history END
         WHERE id = $2 AND claimed_by IS NULL AND status IN ('queued', 'in_progress')
           AND payload->>'commander_protocol' IS DISTINCT FROM 'commander-v2'
-        RETURNING id, claimed_by, claimed_at, executor_kind, status, started_at`,
+        RETURNING id, claimed_by, claimed_at, claimed_at::text AS claim_epoch, executor_kind, status, started_at`,
       [claimer, taskId, kind, forceKind],
     );
     if (!rows.length) {
@@ -119,13 +122,13 @@ export async function claimTaskWithLease(pool, { taskId, claimer, executorKind, 
   if (start === true && seconds === null) return { status: 400, body: { error: 'start requires valid lease_seconds' } };
   const kind = executorKind || 'headed-session';
   // 执行机 coding workflow runner 认领必须落下自己的 kind（executor-contracts 据此当外部执行体，启动同步不打回）
-  const forceKind = kind === 'coding-workflow-runner';
+  const forceKind = ['coding-workflow-runner', 'external-worker'].includes(kind);
   if (start === true) return claimAndStart(pool, { taskId, claimer, kind, forceKind, seconds, expire });
   const result = await pool.query(
     `UPDATE tasks SET claimed_by = $1, claimed_at = NOW(),
             executor_kind = CASE WHEN $4 THEN $3 ELSE COALESCE(executor_kind, $3) END
       WHERE id = $2 AND claimed_by IS NULL AND payload->>'commander_protocol' IS DISTINCT FROM 'commander-v2'
-      RETURNING id, claimed_by, claimed_at, executor_kind`,
+      RETURNING id, claimed_by, claimed_at, claimed_at::text AS claim_epoch, executor_kind`,
     [claimer, taskId, kind, forceKind],
   );
   if (!result.rows?.length) {
@@ -170,13 +173,16 @@ export async function ensureClaimedTaskLease({ taskId, claimer, claimedAt, lease
 }
 
 /** 心跳续约：先锁同owner活跃任务再更新lease，和清理器同序；不改变认领时间。 */
-export async function heartbeatTaskLease(pool, { taskId, claimer, leaseSeconds } = {}) {
+export async function heartbeatTaskLease(pool, { taskId, claimer, leaseSeconds, claimEpoch } = {}) {
+  if (claimEpoch !== undefined && !validClaimEpoch(claimEpoch)) return { ok: false, reason: 'lease_lost' };
   const seconds = clampLeaseSeconds(leaseSeconds);
   const { rows } = await pool.query(
     `WITH owned_task AS MATERIALIZED (
-       SELECT id FROM tasks
+       SELECT id, task_type, claimed_at FROM tasks
         WHERE id = $1 AND claimed_by = $2 AND status IN ('queued', 'in_progress')
           AND payload->>'commander_protocol' IS DISTINCT FROM 'commander-v2'
+          AND ($4::timestamptz IS NULL OR claimed_at=$4::timestamptz)
+          AND (NOT(task_type=ANY($5::text[])) OR $4::timestamptz IS NOT NULL)
         FOR UPDATE
      )
      UPDATE task_leases l
@@ -185,8 +191,10 @@ export async function heartbeatTaskLease(pool, { taskId, claimer, leaseSeconds }
             heartbeat_at = NOW(), heartbeat_count = l.heartbeat_count + 1
        FROM owned_task t
       WHERE l.task_id = $1 AND t.id = l.task_id AND l.claimer = $2 AND l.released_at IS NULL
+        AND ($4::timestamptz IS NULL OR l.claimed_at=$4::timestamptz)
+        AND (NOT(t.task_type=ANY($5::text[])) OR (l.claimed_at=t.claimed_at AND l.source='claim' AND l.lease_until>clock_timestamp()))
       RETURNING l.task_id, l.lease_until, l.heartbeat_count, l.lease_seconds`,
-    [taskId, claimer, seconds],
+    [taskId, claimer, seconds, claimEpoch ?? null, externalWorkerTypes],
   );
   if (rows?.length) {
     await syncDeviceLocks(pool, taskId, rows[0].lease_until);
@@ -197,12 +205,20 @@ export async function heartbeatTaskLease(pool, { taskId, claimer, leaseSeconds }
 }
 
 /** 领单方主动关租约（正常收尾可选调用；不关也会在过期时按终态收掉）。 */
-export async function releaseTaskLease(pool, { taskId, claimer, reason } = {}) {
+export async function releaseTaskLease(pool, { taskId, claimer, reason, claimEpoch } = {}) {
+  if (claimEpoch !== undefined && !validClaimEpoch(claimEpoch)) return { released: false };
   const { rows } = await pool.query(
-    `UPDATE task_leases SET released_at = NOW(), release_reason = $3
-      WHERE task_id = $1 AND claimer IS NOT DISTINCT FROM $2 AND released_at IS NULL
-      RETURNING task_id`,
-    [taskId, claimer ?? null, String(reason || 'released_by_claimer').slice(0, 200)],
+    `WITH owned_task AS MATERIALIZED (
+       SELECT id,task_type,claimed_at FROM tasks WHERE id=$1
+         AND (NOT(task_type=ANY($5::text[])) OR
+           (claimed_by=$2 AND claimed_at=$4::timestamptz AND status='in_progress')) FOR UPDATE
+     )
+     UPDATE task_leases l SET released_at=clock_timestamp(), release_reason=$3 FROM owned_task t
+      WHERE l.task_id=$1 AND t.id=l.task_id AND l.claimer IS NOT DISTINCT FROM $2 AND l.released_at IS NULL
+        AND ($4::timestamptz IS NULL OR l.claimed_at=$4::timestamptz)
+        AND (NOT(t.task_type=ANY($5::text[])) OR l.claimed_at=t.claimed_at)
+      RETURNING l.task_id`,
+    [taskId, claimer ?? null, String(reason || 'released_by_claimer').slice(0, 200), claimEpoch ?? null, externalWorkerTypes],
   );
   return { released: Boolean(rows?.length) };
 }
@@ -245,7 +261,7 @@ async function failLost(pool, row, why, detail) {
   const r = await finalizeTask(pool, row.task_id, 'failed', {
     set: { error_message: why, completed_at: 'now' },
     mergeResult: { lease_expired: { ...detail, at: new Date().toISOString() } },
-    onlyIfStatus: ACTIVE,
+    onlyIfStatus: ACTIVE, relay: false,
     ...(where ? { where } : {}),
   });
   return (r?.rowCount ?? 0) > 0;
@@ -257,6 +273,7 @@ export async function reapExpiredLeases(pool, deps = {}) {
   const out = { requeued: 0, failed: 0, extended: 0, released: 0, skipped: 0 };
   const { rows } = await pool.query(
     `SELECT l.task_id, l.claimer, l.source, l.on_expire, l.lease_until, l.extend_count, l.heartbeat_count, l.requeue_count,
+            l.claimed_at::text AS lease_epoch,
             EXTRACT(EPOCH FROM (NOW() - l.lease_until))::int AS expired_sec,
             t.id, t.status, t.task_type, t.executor_kind, t.claimed_by AS task_claimed_by,
             t.payload
@@ -266,17 +283,18 @@ export async function reapExpiredLeases(pool, deps = {}) {
       LIMIT ${REAP_BATCH}`,
   );
   let probes = 0;
-  for (const row of rows ?? []) {
-    if (row.payload?.commander_protocol === 'commander-v2') { out.skipped++; continue; }
+  let events = [];
+  const processRow = async (pool, row) => {
+    if (row.payload?.commander_protocol === 'commander-v2') { out.skipped++; return; }
     if (!row.id || !ACTIVE.includes(row.status)) {
       await markReleased(pool, row.task_id, 'task_terminal');
       out.released++;
-      continue;
+      return;
     }
     if (row.source === 'claim' && row.task_claimed_by !== row.claimer) {
       await markReleased(pool, row.task_id, 'claim_changed');
       out.released++;
-      continue;
+      return;
     }
     const detail = {
       claimer: row.claimer, source: row.source, lease_until: row.lease_until,
@@ -285,7 +303,7 @@ export async function reapExpiredLeases(pool, deps = {}) {
     let reason = `lease_expired: ${row.source === 'brain' ? 'brain lease' : `claimer=${row.claimer}`} 过期 ${row.expired_sec}s 无心跳`;
     let action;
     if (row.source === 'brain') {
-      if (probes >= PROBE_BUDGET) { out.skipped++; continue; }
+      if (probes >= PROBE_BUDGET) { out.skipped++; return; }
       probes++;
       const verdict = await probe(row);
       detail.probe = verdict;
@@ -293,7 +311,7 @@ export async function reapExpiredLeases(pool, deps = {}) {
       if (row.payload?.leadgen_run) {
         const renewed=await pool.query("UPDATE task_leases SET lease_until=NOW()+($2::int * INTERVAL '1 second'),extend_count=extend_count+1 WHERE task_id=$1 AND released_at IS NULL RETURNING lease_until",[row.task_id,BRAIN_LEASE_EXTEND_SECONDS]);
         if(renewed.rows?.[0]?.lease_until)await syncDeviceLocks(pool,row.task_id,renewed.rows[0].lease_until);
-        await recordTaskEventSafe(pool,row.task_id,'leadgen_lease_retained_unknown_or_alive',detail);out.extended++;continue;
+        events.push(['leadgen_lease_retained_unknown_or_alive', detail]);out.extended++;return;
       }
       if (verdict === 'alive' && row.extend_count < BRAIN_LEASE_MAX_EXTENDS) {
         await pool.query(
@@ -301,11 +319,11 @@ export async function reapExpiredLeases(pool, deps = {}) {
             WHERE task_id = $1 AND released_at IS NULL`,
           [row.task_id, BRAIN_LEASE_EXTEND_SECONDS],
         );
-        await recordTaskEventSafe(pool, row.task_id, 'lease_extended_alive', detail);
+        events.push(['lease_extended_alive', detail]);
         out.extended++;
-        continue;
+        return;
       }
-      if (verdict === 'dead' && row.expired_sec < DEAD_GRACE_SECONDS) { out.skipped++; continue; }
+      if (verdict === 'dead' && row.expired_sec < DEAD_GRACE_SECONDS) { out.skipped++; return; }
       reason = `lease_expired: brain lease 过期 ${row.expired_sec}s，probe=${verdict}`;
       action = 'fail';
     } else {
@@ -320,13 +338,37 @@ export async function reapExpiredLeases(pool, deps = {}) {
     if (!done) {
       await markReleased(pool, row.task_id, 'task_changed');
       out.released++;
-      continue;
+      return;
     }
     await releaseDeviceLocksHeldBy(row.task_id, pool);
     await markReleased(pool, row.task_id, action === 'requeue' ? 'expired_requeued' : 'expired_lost');
-    await recordTaskEventSafe(pool, row.task_id, 'lease_expired', { ...detail, action, reason });
+    events.push(['lease_expired', { ...detail, action, reason }]);
     if (action === 'requeue') out.requeued++;
-    else out.failed++;
+    else { out.failed++; return { terminal: 'failed' }; }
+    };
+  for (const snapshot of rows ?? []) {
+    const db = await pool.connect();
+    let action;
+    events = [];
+    try {
+      await db.query('BEGIN');
+      await db.query('SELECT id FROM tasks WHERE id=$1 FOR UPDATE', [snapshot.task_id]);
+      await db.query('SELECT task_id FROM task_leases WHERE task_id=$1 FOR UPDATE', [snapshot.task_id]);
+      // Re-read after both locks: a snapshot may predate heartbeat, replacement claim, or terminal settlement.
+      const current = (await db.query(`SELECT l.task_id,l.claimer,l.source,l.on_expire,l.lease_until,
+          l.extend_count,l.heartbeat_count,l.requeue_count,l.claimed_at::text AS lease_epoch,
+          EXTRACT(EPOCH FROM (clock_timestamp()-l.lease_until))::int AS expired_sec,
+          t.id,t.status,t.task_type,t.executor_kind,t.claimed_by AS task_claimed_by,t.payload
+        FROM task_leases l LEFT JOIN tasks t ON t.id=l.task_id
+        WHERE l.task_id=$1 AND l.released_at IS NULL AND l.lease_until<clock_timestamp()`, [snapshot.task_id])).rows[0];
+      if (!current || current.lease_epoch !== snapshot.lease_epoch || current.claimer !== snapshot.claimer
+        || current.source !== snapshot.source) out.skipped++;
+      else action = await processRow(db, current);
+      await db.query('COMMIT');
+    } catch (error) { await db.query('ROLLBACK'); throw error; }
+    finally { db.release(); }
+    for (const [name, detail] of events) await recordTaskEventSafe(pool, snapshot.task_id, name, detail);
+    if (action?.terminal) await (deps.afterTransition ?? afterTerminalTransition)(pool, snapshot.task_id, action.terminal);
   }
   return out;
 }

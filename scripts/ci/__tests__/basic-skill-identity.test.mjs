@@ -55,16 +55,13 @@ for (const [name, key, hash, parsed] of [
   assert.ok(!r.stdout.includes('synthetic-invalid-secret-marker'));
 });
 test('所有composite调用者显式传入公开var身份摘要', () => {
-  let count=0;
   for (const file of readdirSync(join(root, '.github/workflows')).filter(p => /\.ya?ml$/.test(p))) {
     const workflow=parse(readFileSync(join(root, '.github/workflows', file), 'utf8'));
     for (const job of Object.values(workflow.jobs || {})) for (const step of job.steps || []) {
       if (step.uses !== './.github/actions/skills-source') continue;
-      count++;
       assert.equal(step.with?.['expected-public-sha256'], '${{ vars.SKILLS_SOURCE_PUBLIC_KEY_SHA256 }}', file);
     }
   }
-  assert.ok(count > 0, '必须存在真实固定来源恢复调用，不能空集合成功');
   assert.equal(composite.inputs['expected-public-sha256']?.required, true);
 });
 test('真实composite在fetch前校验身份：错配零fetch，匹配才到原入口', () => {

@@ -41,8 +41,9 @@ it('候选完整控制封组真实读取身份与资源计划；单成员混配�
  const read=async path=>readFileSync(new URL(path,'file://'+root),'utf8');
  const observe=async overrides=>{const relations=[],source=async path=>overrides[path]??read(path);await collectBasicCiSources({read:source,ci:await source('.github/workflows/ci.yml'),revision:'f'.repeat(40),relations,parse:ast,paths});return relations;};
  const relations=await observe({});
+ expect(relations).toContainEqual(expect.objectContaining({consumer_path:'scripts/ci/run-basic-check.mjs',input_path:'apps/api/vitest.config.ts',kind:'dashboard_features_unit_config'}));
  expect(relations).toContainEqual(expect.objectContaining({consumer_path:'.github/workflows/ci.yml',input_path:'scripts/ci/resource-canary-scope.mjs',kind:'reviewed_resource_canary_scope_plan'}));
- expect(relations).toContainEqual(expect.objectContaining({consumer_path:'.github/actions/skills-source/action.yml',input_path:'scripts/skill_source_ownership.py',kind:'registered_skill_ownership_resolver'}));
+ expect(relations.some(r=>r.kind==='registered_skill_ownership_resolver'||r.kind==='reviewed_skill_source_exclusion'||r.kind==='literal_url_workflow_verification_input')).toBe(false);
  for(const path of ['.github/actions/skills-source/action.yml','scripts/skill_source_ownership.py'])await expect(observe({[path]:(await read(path))+'\n# unknown source\n'})).rejects.toThrow('basic_ci_source_unproven');
  for(const member of ['scripts/ci/resource-canary-scope.mjs','scripts/ci/check-basic-results.mjs','scripts/ci/__tests__/basic-resource-canary-scope.test.mjs','scripts/ci/__tests__/basic-resource-canary.test.mjs','scripts/ci/__tests__/basic-results.test.mjs','scripts/ci/__tests__/basic-workflow.test.mjs']){
   await expect(observe({[member]:''})).rejects.toThrow('basic_ci_source_unproven');
@@ -55,8 +56,11 @@ it('候选完整控制封组真实读取身份与资源计划；单成员混配�
  await expect(observe({'scripts/ci/resource-canary-scope.mjs':badPlan})).rejects.toThrow('basic_ci_source_unproven');
  await expect(observe({'scripts/ci/run-basic-check.mjs':fixed.read('scripts/ci/run-basic-check.mjs')})).rejects.toThrow('basic_ci_source_unproven');
  const previous=readFixedExistingOpsGitFixture('4d8bed7c7504f8e3e2d84b283bde735927642f8b');
- for(const path of ['scripts/ci/prepare-ubuntu-archive.mjs','scripts/ci/__tests__/basic-ubuntu-archive.test.mjs','scripts/ci/__tests__/basic-skill-source-coverage.test.mjs'])await expect(observe({[path]:previous.read(path)})).rejects.toThrow('basic_ci_source_unproven');
+ for(const path of ['scripts/ci/prepare-ubuntu-archive.mjs','scripts/ci/__tests__/basic-ubuntu-archive.test.mjs'])await expect(observe({[path]:previous.read(path)})).rejects.toThrow('basic_ci_source_unproven');
  await expect(observe({'.github/workflows/ci.yml':(await read('.github/workflows/ci.yml')).replace('name:', 'unknown_control:')})).rejects.toThrow('basic_ci_source_unproven');
+ for(const retired of ['scripts/ci/skill-source-tests.mjs','scripts/ci/__tests__/basic-skill-source-coverage.test.mjs','packages/brain/vitest.skill-source.config.mjs','packages/brain/src/__tests__/golden-path-skill-snapshot.skill-source.test.js']){
+  await expect(collectBasicCiSources({read,ci:await read('.github/workflows/ci.yml'),revision:'f'.repeat(40),relations:[],parse:ast,paths:[...paths,retired]})).rejects.toThrow('basic_ci_source_unproven');
+ }
 });
 
 it('d06历史完整封组仍校验W19真实输入；候选不依赖这些退役文件',async()=>{

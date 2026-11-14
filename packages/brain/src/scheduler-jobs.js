@@ -14,12 +14,10 @@ import { isSelfSkipped, schedulerOutcome, recordSchedulerRun, pruneSchedulerRuns
  * Wave 2（2026-05-04）后 executeTick 死掉的定时任务的恢复通道。
  * 调度模型：统一 60s 轮询 + 模块自 gate —— 每轮无脑调用所有 job，
  * "该不该真正执行"由各 handler 内置窗口/幂等逻辑决定（triggerArchReview
- * 自带 4h 窗口+recent 去重+guard；maybeTriggerStrategySession 自带
- * active_goals gate+24h 冷却）。注册表只负责：错误隔离、timeout、观测哨兵。
+ * 自带 4h 窗口+recent 去重+guard）。注册表只负责：错误隔离、timeout、观测哨兵。
  * 哨兵只作观测（死人开关/战报查"最近一跑"），幂等由模块自 gate 负责。
  */
 import { triggerArchReview, triggerCiPatrol } from './daily-review-scheduler.js';
-import { maybeTriggerStrategySession } from './active-goals-zero-trigger.js';
 import { scheduleDailyBackup } from './daily-backup-scheduler.js';
 import { maybeRunLineDreaming } from './line-dreaming.js';
 import { maybeGenerateBattleReport } from './battle-report.js';
@@ -29,7 +27,6 @@ import { runReceiptCollector } from './receipt-collector.js';
 import { runLaunchdPatrol } from './launchd-patrol.js';
 import { runGpShelfLife } from './gp-shelf-life.js';
 import { maybeRefreshMapProjections } from './map-projection-refresh.js';
-import { maybeRunDirectionProposer } from './direction-proposer.js';
 import { runPostdeployVerifier } from './postdeploy-verifier.js';
 import { runSevenRingAuditJob } from './seven-ring-audit.js';
 import { runGuardDrill } from './guard-drill.js';
@@ -108,7 +105,6 @@ export const JOBS = [
   { name: 'us-brain-image-janitor', cadence: { everySec: 60 }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runImageRetentionJanitor, description: 'US固定Brain历史镜像保留：默认停用、每轮最多两项、未知只读精确ID对账' },
   { name: 'arch-review', cadence: { everySec: 14400 }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: triggerArchReview, description: '架构巡检（自带4h窗口+guard）' },
   { name: 'ci-patrol', cadence: { cron: '0 8 * * *', tz: BJ_TZ }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: triggerCiPatrol, description: 'CI/CD 巡检（自带北京08:00窗口+当日去重）' },
-  { name: 'strategy-trigger', cadence: { everySec: 86400 }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: maybeTriggerStrategySession, description: '战略会应急触发（自带active_goals gate+24h冷却）' },
   { name: 'daily-backup', cadence: { cron: '0 2 * * *', tz: BJ_TZ }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: scheduleDailyBackup, description: '每日 DB 备份任务创建（自带窗口+当日去重；作战史单库保命符）' },
   { name: 'line-dreaming', cadence: { cron: '0 5 * * *', tz: BJ_TZ }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: maybeRunLineDreaming, description: 'L1 line 级夜间蒸馏（自带北京05:00窗口+20h去重，晨报前跑完）' },
   { name: 'ledger-hygiene', cadence: { cron: '10 5 * * *', tz: BJ_TZ }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: maybeRunLedgerHygiene, description: '账本保鲜守卫（自带北京05:10窗口+20h去重，m1-m7指标+棘轮击穿开issue）' },
@@ -118,7 +114,6 @@ export const JOBS = [
   { name: 'map-projection-refresh', cadence: { everySec: 180 }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: maybeRefreshMapProjections, description: '地图投影保鲜：fact_snapshot_headers 与 active 投影 fact_revisions 漂移即 rebuild（自带3min gate；09-05/06 map_radius_stale 案，决策 8f22f71c）' },
   { name: 'gp-shelf-life', cadence: { everySec: 600 }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runGpShelfLife, description: 'GP 保质期 delta（自带10min gate，approved 超 review_after 置 expired；报备否决窗过期自动生效，GP1/T1）' },
   { name: 'launchd-patrol', cadence: { everySec: 900 }, needsPool: false, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runLaunchdPatrol, description: '宿主 launchd 服务巡检（自带15min gate，manifest核对，异常P1+Bark，a5a6209a）' },
-  { name: 'direction-proposer', cadence: { cron: '30 5 * * 1', tz: BJ_TZ }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: maybeRunDirectionProposer, description: '每周方向菜单（自带北京周一05:30窗口+20h去重，候选写golden_paths+缺口全景写working_memory，GP4/T4）' },
   { name: 'postdeploy-verifier', cadence: { everySec: 300 }, needsPool: true, timeoutMs: 2 * 60 * 1000, handler: runPostdeployVerifier, description: '第5环部署验证（自带5min节流gate，扫 pending_postdeploy 任务执行 postdeploy_check.command，通过→completed，失败3次→P1）' },
   { name: 'seven-ring-audit', cadence: { everySec: 86400 }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runSevenRingAuditJob, description: '七环对账日巡检（自带24h冷却，逐环核对测试入册/调度在跑/指纹新鲜/账本写对/产出消费/告警活着/面板新鲜，棘轮只许降，刀3-T6）' },
   { name: 'guard-drill', cadence: { everySec: 2592000 }, needsPool: true, timeoutMs: 10 * 60 * 1000, handler: runGuardDrill, description: '月度守卫演习（自带30天gate，轮选 auto 守卫全流程弄死→验红→恢复，未叫→P1+Bark，刀4-T4）' },
@@ -181,7 +176,7 @@ export const JOBS = [
     if (result?.status === 'failed') throw new Error(`目录投影失败 ${result.failed ?? 0} 项：${result.errors?.[0]?.code || '未知错误'}`);
     return result;
   }, description: '六层目录：先导入人工组织树，再按固定身份分批投影机器关系；锁与游标防重入，未知留缺口，读回后收据' },
-  { name: 'notion-inlet-ingest', cadence: { everySec: 300 }, needsPool: true, timeoutMs: 120_000, handler: (pool) => runNotionInletIngest(pool), description: '✍️入口血管（三面模型PR②b，决策297ffee5）：遍历注册表 face=inlet&active 的库，「决策」库→decisions、员工Skill库zip→/api/skill-eval/upload；收据表幂等，人改了再收并留痕，机器不写入口库；自gate 5min' },
+  { name: 'notion-inlet-ingest', cadence: { everySec: 300 }, needsPool: true, timeoutMs: 120_000, handler: (pool) => runNotionInletIngest(pool), description: '✍️入口血管（三面模型PR②b，决策297ffee5）：遍历注册表 face=inlet&active 的库，「决策」库→decisions；收据表幂等，人改了再收并留痕，机器不写入口库；自gate 5min' },
   { name: 'notion-gtd-sync', cadence: { everySec: 30 }, needsPool: true, timeoutMs: 30_000, livenessIntervalSec: 30, handler: (pool) => gtdSyncJobHandler(pool), description: '秋米中文GTD表↔英文Tasks库双向同步+入账+急停+回写（QIUMI_SYNC_ENABLED 门，handler 只确保 30s 自循环在跑并回报上次结果；活性按 handler 自报 liveness_at 算，09-24 卡死案；决策 b8abd28c，task b7efdbff）' },
   { name: 'crm-notion-sync', cadence: { everySec: 300 }, needsPool: true, timeoutMs: 150_000, handler: runCrmSyncJobs, description: 'CRM登记源回读和Brain结果投影；CRM_SYNC_ENABLED显式启用，默认关闭' },
   { name: 'ops-notion-ingest', cadence: { everySec: 60 }, needsPool: true, timeoutMs: 120_000, handler: (pool) => runOpsNotionIngest(pool, { execFn: defaultExec }), description: '运行舱人工列回读（Notion→Brain，last_edited_time增量）。含停用意图落实——主理人拍板直接生效真停n8n，故幂等+留痕+失败落enable_error显红' },

@@ -68,16 +68,12 @@ describe('unified work router', () => {
   it('keeps registered non-coding entry types inside their selected pipeline', () => {
     expect(selectPipeline({
       work_kind: 'operations',
-      requested_task_type: 'platform_scraper',
+      requested_task_type: 'data',
     })).toMatchObject({
       pipeline: 'operations',
-      canonical_task_type: 'platform_scraper',
+      canonical_task_type: 'data',
       orchestrator: 'operations',
     });
-    expect(selectPipeline({
-      work_kind: 'content_creation',
-      requested_task_type: 'content_publish',
-    })).toMatchObject({ pipeline: 'content', canonical_task_type: 'content_publish' });
     expect(selectPipeline({
       work_kind: 'coding_review',
       requested_task_type: 'ci_patrol',
@@ -88,13 +84,13 @@ describe('unified work router', () => {
     expect(routeWork({
       source: 'scheduler', source_id: 'ops-1', title: 'collect metrics',
       mutation_intent: 'none', declared_domain: 'operations',
-      requested_task_type: 'platform_scraper',
+      requested_task_type: 'data',
       decided_at: '2026-08-13T00:00:00.000Z',
-    })).toMatchObject({ work_kind: 'operations', canonical_task_type: 'platform_scraper' });
+    })).toMatchObject({ work_kind: 'operations', canonical_task_type: 'data' });
     expect(routeWork({
       source: 'scheduler', source_id: 'code-1', title: 'repair scraper',
       mutation_intent: 'write', declared_domain: 'operations',
-      requested_task_type: 'platform_scraper', declared_change_kind: 'bugfix',
+      requested_task_type: 'data', declared_change_kind: 'bugfix',
       repo_hint: 'cecelia', map_scope_hint: ['F4'],
       decided_at: '2026-08-13T00:00:00.000Z',
     }, [{ repo: 'cecelia' }])).toMatchObject({

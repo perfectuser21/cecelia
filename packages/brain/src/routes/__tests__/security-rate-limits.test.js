@@ -2,13 +2,12 @@ import { describe, expect, it, vi } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 import captureAtomsRouter from '../capture-atoms.js';
-import evalRouter from '../eval.js';
 
 describe('database and filesystem route rate limits', () => {
-  it.each([['capture atoms', captureAtomsRouter], ['skill eval', evalRouter]])('%s先限流再放行到后续路由', async (_name, router) => {
+  it('capture atoms先限流再放行到后续路由', async () => {
     const reached = vi.fn();
     const app = express();
-    app.use('/limited', router);
+    app.use('/limited', captureAtomsRouter);
     app.use('/limited', (_req, res) => { reached(); res.json({ sentinel: true }); });
     // 未匹配的路径仍需先经过router级限流，避免发任何业务写动作。
     for (let index = 0; index < 300; index++) {

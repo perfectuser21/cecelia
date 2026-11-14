@@ -54,19 +54,3 @@ rules:
       - packages/workflows/skills/*/SKILL.md
       - packages/workflows/agents/*/SKILL.md
     check: name-match
-
-  - id: model-ids
-    description: >
-      model-registry.js 中 MODELS 数组的 id 字段是全局模型 ID 的 SSOT。
-      model-profile.js 在调用 updateAgentModel / isModelAllowedForAgent 时
-      传入的 modelId 必须是 MODELS 中已注册的 ID。
-    ssot:
-      file: packages/brain/src/model-registry.js
-      symbol: MODELS[].id
-      extract: >
-        node --input-type=module -e
-        "import { MODELS } from './packages/brain/src/model-registry.js';
-        console.log(MODELS.map(m => m.id).join('\n'));"
-    consumers:
-      - packages/brain/src/model-profile.js
-    check: value-match

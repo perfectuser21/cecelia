@@ -15,7 +15,6 @@
 import crypto from 'crypto';
 import { promisify } from 'util';
 import { exec } from 'child_process';
-import { validateAllContentTypes } from './content-types/content-type-validator.js';
 import { SERVERS, computeServerIds, buildSshCommand } from './routes/infra-status.js';
 
 const _execAsync = promisify(exec);
@@ -183,22 +182,6 @@ export async function runSelfCheck(pool, opts = {}) {
     }
   } catch (err) {
     record('Config Fingerprint', false, err.message);
-  }
-
-  // 7. Content type YAML validation (non-blocking WARN)
-  try {
-    const { valid, results: yamlResults } = await validateAllContentTypes();
-    if (!valid) {
-      const failedTypes = yamlResults.filter(r => !r.valid);
-      for (const r of failedTypes) {
-        console.warn(`  [WARN] Content type "${r.name}" 配置有误：${r.errors.join('；')}`);
-      }
-    } else {
-      const count = yamlResults.length;
-      console.log(`  [INFO] Content type YAML 校验通过 (${count} 个类型)`);
-    }
-  } catch (err) {
-    console.warn(`  [WARN] Content type YAML 校验失败：${err.message}`);
   }
 
   // 8. Watchdog RSS Sanity Check (non-blocking WARN)

@@ -65,6 +65,43 @@ beforeEach(() => {
 });
 
 describe('POST /api/brain/tasks — B1 executor/mode 白名单', () => {
+  it('外部工作单护照可统一挂号且不进入编码写流程', async () => {
+    const res = await request(makeApp()).post('/api/brain/tasks').send({
+      title: 'ZJ外部工作单', task_type: 'content-pipeline', domain: 'content', mutation_intent: 'none',
+      payload: { owner_repo: 'zenithjoy-workspace', external_job_id: 'zj-job-1' },
+    });
+    expect(res.status).toBe(201);
+    const inserted = queryMock.mock.calls.find(([sql]) => /INSERT INTO tasks/.test(sql));
+    expect(inserted[1][3]).toBe('content-pipeline');
+    const payload = JSON.parse(inserted[1][9]);
+    expect(payload.work_kind).toBe('operations');
+    expect(payload.external_job_id).toBe('zj-job-1');
+  });
+
+  it('外部护照不能绕过编码write/unknown的change_kind必填保护', async () => {
+    for (const mutation_intent of ['write', 'unknown']) {
+      queryMock.mockClear();
+      const res = await request(makeApp()).post('/api/brain/tasks').send({
+        title: '明确代码写入', task_type: 'content-pipeline', mutation_intent,
+      });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe('change_kind_required');
+      expect(queryMock).not.toHaveBeenCalled();
+    }
+  });
+
+  it('退役业务类型在任何路由和数据库副作用之前拒绝建单', async () => {
+    for (const task_type of ['content_publish', 'platform_scraper']) {
+      queryMock.mockClear();
+      const res = await request(makeApp()).post('/api/brain/tasks').send({
+        title: '历史业务请求', ...routeFields, task_type, payload: { headed_manual: 'true' },
+      });
+      expect(res.status).toBe(410);
+      expect(res.body.error).toBe('task_type_retired');
+      expect(queryMock).not.toHaveBeenCalled();
+    }
+  });
+
   it('executor=claude + mode=headed → 不再 400（有头 claude 已解锁）', async () => {
     const res = await request(makeApp())
       .post('/api/brain/tasks')

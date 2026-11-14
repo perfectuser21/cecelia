@@ -37,33 +37,30 @@ for (const id of suites) {
   }
 }
 
-test('四个真实canary共享准备但失败不吞后续，镜像和证据保持独立', () => {
+test('现役Linux观测保留不可变镜像、真实shell失败和独立证据', () => {
   const jobs = workflow('ci.yml').jobs, job = jobs['resource-canaries'];
   assert.ok(job);
-  for (const old of ['app-server-canary','linux-resource-canary','attempt-runtime-limits']) assert.equal(jobs[old], undefined);
+  for (const old of ['linux-resource-canary']) assert.equal(jobs[old], undefined);
   assert.equal(job.steps.filter(step => step.uses === 'actions/checkout@v4').length, 1);
   assert.deepEqual(job.steps.filter(step => step.uses === 'actions/setup-node@v4').map(step => step.with['node-version']), ['24']);
   const canaries = job.steps.filter(step => step.run?.includes('| tee '));
-  assert.equal(canaries.length, 4);
+  assert.equal(canaries.length, 1);
   for (const step of canaries) {
-    const flag = step.id === 'app_server_rpc' ? 'app_server' : step.id;
+    const flag = step.id;
     assert.equal(step.if, `!cancelled() && fromJSON(needs.plan.outputs.resource_plan).${flag}`);
     assert.equal(job.outputs[step.id], '${{ steps.' + step.id + '.outcome }}');
     assert.equal(step['continue-on-error'], undefined);
     assert.match(step.run, /set -o pipefail/);
   }
   const preparation = job.steps.filter(step => step.run && !step.run.includes('| tee ')).map(step => step.run).join('\n');
-  for (const variable of ['APP_SERVER_CANARY_IMAGE','HARNESS_LIMITS_CANARY_IMAGE','HARNESS_LIMITS_CANARY_POSTGRES_IMAGE','LINUX_RESOURCE_CANARY_IMAGE']) {
+  for (const variable of ['LINUX_RESOURCE_CANARY_IMAGE']) {
     assert.match(preparation, new RegExp(variable + '=\\$\\(docker image inspect'));
   }
-  assert.match(preparation, /FROM mirror\.gcr\.io\/library\/node:22-bookworm-slim/);
   assert.equal(job.steps.some(step => step.uses === './.github/actions/dockerhub-mirror'), false, '共享runner不能热加载Docker导致host-gateway失效');
-  assert.match(preparation, /@openai\/codex@0\.158\.0/);
   assert.match(preparation, /node:24-bookworm-slim/);
-  assert.match(preparation, /pgvector\/pgvector:pg15/);
   const artifacts = job.steps.filter(step => step.uses === 'actions/upload-artifact@v4');
-  assert.deepEqual(artifacts.map(step => step.with.name).sort(), ['app-server-canary-evidence','attempt-runtime-limits-evidence','linux-resource-observation'].sort());
-  for (const artifact of artifacts) assert.match(artifact.if, /^always\(\) && fromJSON\(needs.plan.outputs.resource_plan\)\.(app_server|linux|legacy)$/);
+  assert.deepEqual(artifacts.map(step => step.with.name).sort(), ['linux-resource-observation'].sort());
+  for (const artifact of artifacts) assert.match(artifact.if, /^always\(\) && fromJSON\(needs.plan.outputs.resource_plan\)\.linux$/);
 });
 
 // 执行真实 canary 发给容器的采样程序；变异数据必须触发同一组断言。
@@ -82,50 +79,19 @@ for (const [field, value] of [[null, null], ['status', 'unknown'], ['cpu_cores',
   });
 }
 
-const attemptSource = readFileSync(join(root, worker, 'attempt-limits-canary.cjs'), 'utf8');
-const limitFunction = attemptSource.match(/function checkLimits\(container, limits\) \{([\s\S]*?)\n\}/)[1];
-const checkLimits = runInNewContext(`(container, limits) => {${limitFunction}}`, { assert });
-const limits = { cpus: 0.25, memoryBytes: 805306368, pidsLimit: 96 };
-const config = { NanoCpus: 250000000, Memory: 805306368, MemorySwap: 805306368, PidsLimit: 96 };
-for (const field of [null, 'NanoCpus', 'Memory', 'MemorySwap', 'PidsLimit']) {
-  test(`Attempt真实Docker限额断言拒绝变异 ${field ?? '正常基线'}`, () => {
-    const container = { HostConfig: { ...config, ...(field ? { [field]: 1 } : {}) } };
-    if (field) assert.throws(() => checkLimits(container, limits), { code: 'ERR_ASSERTION' });
-    else checkLimits(container, limits);
-  });
-}
-const appSource = readFileSync(join(root, worker, 'app-server-canary.cjs'), 'utf8');
-const appChecks = appSource.slice(appSource.indexOf('    assert.equal(inspected.HostConfig.Memory,'),
-  appSource.indexOf('    const connection = await initialize(identity);'));
-const profile = { memoryBytes: 536870912 };
-const inspectedBase = { HostConfig: { Memory: 536870912, MemorySwap: 536870912, NanoCpus: 1e9,
-  PidsLimit: 64, LogConfig: { Type: 'none' }, ReadonlyRootfs: true, NetworkMode: 'none', CapDrop: ['ALL'] },
-  Config: { Tty: false, User: '1000:1000' }, Mounts: [{ Type: 'volume', Name: 'canary-volume' }] };
-for (const field of [null, 'Memory', 'MemorySwap', 'NanoCpus', 'PidsLimit', 'NetworkMode', 'ReadonlyRootfs']) {
-  test(`App-server真实Docker隔离断言拒绝变异 ${field ?? '正常基线'}`, () => {
-    const inspected = structuredClone(inspectedBase);
-    if (field) inspected.HostConfig[field] = 'wrong';
-    const evaluate = () => runInNewContext('const inspected = JSON.parse(serialized);\n' + appChecks,
-      { assert, serialized: JSON.stringify(inspected), profile, volumes: ['canary-volume'] });
-    if (field) assert.throws(evaluate, { code: 'ERR_ASSERTION' });
-    else evaluate();
-  });
-}
-
 test('实际YAML计划控制每个准备/执行/证据step，不允许job绿掩盖step跳过',()=>{
   const config=workflow('ci.yml'), job=config.jobs['resource-canaries'];
   assert.equal(config.jobs.plan.outputs.resource_plan,'${{ steps.resources.outputs.resource_plan }}');
-  assert.deepEqual(config.on.workflow_dispatch.inputs.resource_canary.options,['none','linux','app-server','legacy','all']);
+  assert.deepEqual(config.on.workflow_dispatch.inputs.resource_canary.options,['none','linux']);
   const scope=config.jobs.plan.steps.find(step=>step.id==='resources');
   assert.match(scope.run,/--base "\$BASE_SHA" --head "\$HEAD_SHA" --manual "\$RESOURCE_CANARY"/);
-  for(const flags of [{linux:false,app_server:false,legacy:false},{linux:true,app_server:false,legacy:false},
-    {linux:false,app_server:true,legacy:false},{linux:false,app_server:false,legacy:true},{linux:true,app_server:true,legacy:true}]) {
+  for(const flags of [{linux:false},{linux:true}]) {
     const ctx={github:{event_name:'pull_request',event:{action:'opened'}},needs:{plan:{outputs:{resource_plan:JSON.stringify(flags)}}},
       contains:(value,part)=>value.includes(part),fromJSON:JSON.parse,always:()=>true,cancelled:()=>false};
     assert.equal(runInNewContext(job.if,ctx),Object.values(flags).some(Boolean));
     for(const step of job.steps.filter(step=>step.run || step.uses==='actions/upload-artifact@v4')) {
       assert.ok(step.if,step.name);
-      const flag=step.if.match(/\.(linux|app_server|legacy)$/)?.[1];assert.ok(flag,step.name);
+      const flag=step.if.match(/\.(linux)$/)?.[1];assert.ok(flag,step.name);
       assert.equal(runInNewContext(step.if,ctx),flags[flag],step.name);
       assert.equal(step['continue-on-error'],undefined);
     }

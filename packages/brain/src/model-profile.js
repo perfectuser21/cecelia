@@ -1,14 +1,7 @@
 /**
- * Model Profile 运行时切换系统
- *
- * 支持在后台一键切换 LLM 模型配置：
- * - Profile A: MiniMax 主力（默认）
- * - Profile B: Anthropic 主力（回退）
- *
- * 内存缓存 + DB 持久化，切换时刷新缓存，无需重启。
+ * Brain 运行时模型参数的只读装载器。
+ * 启动时读取已生效的数据库参数；不提供配置目录、切换或修改入口。
  */
-
-import { persistAgentModelChange } from './agent-model-change.js';
 
 // ============================================================
 // Fallback Profile（DB 不可用时的默认值）
@@ -18,11 +11,6 @@ export const FALLBACK_PROFILE = {
   id: 'profile-anthropic',
   name: 'Anthropic 主力（Claude Code 无头）',
   config: {
-    // thalamus uses anthropic-api (direct REST) instead of anthropic (bridge/claude -p).
-    // Reason: claude -p bridge exits with code 1 in <1s, causing silent fallback to static templates.
-    // Direct REST API is stable (same as cortex). Rollback: UPDATE model_profiles
-    // SET config=jsonb_set(config,'{thalamus,provider}','"anthropic"') WHERE id='profile-anthropic'
-    // fallbacks: bridge path as last resort if REST API is unavailable
     thalamus: {
       provider: 'anthropic-api',
       model: 'claude-haiku-4-5-20251001',
@@ -94,7 +82,7 @@ let _activeProfile = null;
 
 /**
  * 从 DB 加载 active profile 到内存缓存
- * 启动时调用一次，切换时自动刷新
+ * 启动时读取，不修改数据库。
  */
 export async function loadActiveProfile(pool) {
   try {
@@ -121,210 +109,6 @@ export async function loadActiveProfile(pool) {
  */
 export function getActiveProfile() {
   return _activeProfile || FALLBACK_PROFILE;
-}
-
-/**
- * 切换 active profile
- * 事务安全：先取消旧 active，再激活新的
- */
-export async function switchProfile(pool, profileId) {
-  // 验证 profile 存在
-  const { rows: check } = await pool.query(
-    'SELECT id, name, config FROM model_profiles WHERE id = $1',
-    [profileId]
-  );
-  if (check.length === 0) {
-    throw new Error(`Profile not found: ${profileId}`);
-  }
-
-  // 事务切换
-  await pool.query('BEGIN');
-  try {
-    await pool.query('UPDATE model_profiles SET is_active = false, updated_at = NOW() WHERE is_active = true');
-    await pool.query('UPDATE model_profiles SET is_active = true, updated_at = NOW() WHERE id = $1', [profileId]);
-    await pool.query('COMMIT');
-  } catch (err) {
-    await pool.query('ROLLBACK');
-    throw err;
-  }
-
-  // 刷新缓存
-  _activeProfile = { ...check[0], is_active: true };
-  console.log(`[model-profile] Switched to profile: ${_activeProfile.name} (${_activeProfile.id})`);
-
-  return _activeProfile;
-}
-
-/**
- * 列出所有 profile
- */
-export async function listProfiles(pool) {
-  const { rows } = await pool.query(
-    'SELECT id, name, config, is_active, created_at, updated_at FROM model_profiles ORDER BY created_at ASC'
-  );
-  return rows;
-}
-
-/**
- * 更新单个 agent 的模型配置
- * 直接修改 active profile 的 config JSONB
- */
-/**
- * 更新单个 agent 的模型配置
- * @param {object} pool - DB pool
- * @param {string} agentId - agent ID
- * @param {string} modelId - model ID
- * @param {object} [options]
- * @param {string} [options.provider] - brain-layer 专用：覆盖自动推导的 provider
- *   仅当 model 的自然 provider 是 'anthropic' 时允许覆盖为 'anthropic-api'（反之亦然）
- */
-export async function updateAgentModel(pool, agentId, modelId, options = {}) {
-  // 动态导入避免循环依赖
-  const { getAgentById, isModelAllowedForAgent, getProviderForModel } = await import('./model-registry.js');
-
-  const agent = getAgentById(agentId);
-  if (!agent) {
-    throw new Error(`Unknown agent: ${agentId}`);
-  }
-
-  if (!isModelAllowedForAgent(agentId, modelId)) {
-    throw new Error(`Model ${modelId} is not allowed for agent ${agentId}`);
-  }
-
-  const naturalProvider = getProviderForModel(modelId);
-  if (agent.fixed_provider && naturalProvider !== agent.fixed_provider) {
-    throw new Error(`Agent ${agentId} is locked to provider ${agent.fixed_provider}, cannot use ${naturalProvider}`);
-  }
-
-  // 确定最终使用的 provider
-  // brain-layer 专用：允许 anthropic ↔ anthropic-api 互相覆盖（同为 Anthropic，区别只在调用方式）
-  let newProvider = naturalProvider;
-  if (options.provider && agent.layer === 'brain') {
-    const ANTHROPIC_VARIANTS = ['anthropic', 'anthropic-api'];
-    if (
-      ANTHROPIC_VARIANTS.includes(naturalProvider) &&
-      ANTHROPIC_VARIANTS.includes(options.provider)
-    ) {
-      newProvider = options.provider;
-    }
-    // 非 Anthropic 模型的 provider 覆盖忽略（minimax/openai 只有一种调用方式）
-  }
-
-  // 获取 active profile
-  const { rows: activeRows } = await pool.query(
-    'SELECT id, name, config FROM model_profiles WHERE is_active = true LIMIT 1'
-  );
-  if (activeRows.length === 0) {
-    throw new Error('No active profile found');
-  }
-
-  const profile = activeRows[0];
-  const config = { ...profile.config };
-  const previous = {};
-
-  if (agent.layer === 'brain') {
-    // brain 层: 直接更新 thalamus 或 cortex
-    previous.provider = config[agentId]?.provider;
-    previous.model = config[agentId]?.model;
-    config[agentId] = { ...config[agentId], provider: newProvider, model: modelId };
-  } else {
-    // executor 层: 更新 model_map
-    const modelMap = { ...config.executor.model_map };
-    previous.model_map = modelMap[agentId] ? { ...modelMap[agentId] } : null;
-
-    // 设置新模型，其他 provider 设为 null
-    const newMap = {};
-    for (const p of ['anthropic', 'minimax', 'openai']) {
-      newMap[p] = p === newProvider ? modelId : null;
-    }
-    modelMap[agentId] = newMap;
-
-    // 执行器从 fixed_provider/default_provider 选路，而非从 model_map 推导。
-    // 只调整当前Agent选路，避免改变其他Agent的默认服务商。
-    previous.provider = config.executor.fixed_provider?.[agentId] || config.executor.default_provider;
-    config.executor = { ...config.executor, model_map: modelMap,
-      fixed_provider: { ...config.executor.fixed_provider, [agentId]: newProvider } };
-  }
-
-  const current = { provider: newProvider, model: modelId };
-  const committed = await persistAgentModelChange(pool, {
-    profile, config, agent, previous, current,
-    actor: options.actor, sessionId: options.sessionId,
-  });
-  // 只从数据库已提交的结果刷新运行缓存。
-  _activeProfile = committed.profile;
-
-  return {
-    agent_id: agentId,
-    previous,
-    current,
-    profile: _activeProfile,
-    receipt: committed.receipt,
-  };
-}
-
-/**
- * 批量更新多个 agent 的模型配置
- * 前端"保存"按钮一次提交所有修改
- */
-export async function batchUpdateAgentModels(pool, updates) {
-  // updates = [{ agent_id: 'dev', model_id: 'xxx' }, ...]
-  const { getAgentById, isModelAllowedForAgent, getProviderForModel } = await import('./model-registry.js');
-
-  // 先校验所有 updates
-  for (const { agent_id, model_id } of updates) {
-    const agent = getAgentById(agent_id);
-    if (!agent) throw new Error(`Unknown agent: ${agent_id}`);
-    if (!isModelAllowedForAgent(agent_id, model_id)) {
-      throw new Error(`Model ${model_id} is not allowed for agent ${agent_id}`);
-    }
-    const newProvider = getProviderForModel(model_id);
-    if (agent.fixed_provider && newProvider !== agent.fixed_provider) {
-      throw new Error(`Agent ${agent_id} is locked to provider ${agent.fixed_provider}`);
-    }
-  }
-
-  // 获取 active profile
-  const { rows: activeRows } = await pool.query(
-    'SELECT id, name, config FROM model_profiles WHERE is_active = true LIMIT 1'
-  );
-  if (activeRows.length === 0) {
-    throw new Error('No active profile found');
-  }
-
-  const profile = activeRows[0];
-  const config = JSON.parse(JSON.stringify(profile.config)); // deep clone
-
-  // 应用所有更新
-  const results = [];
-  for (const { agent_id, model_id } of updates) {
-    const agent = getAgentById(agent_id);
-    const newProvider = getProviderForModel(model_id);
-
-    if (agent.layer === 'brain') {
-      config[agent_id] = { provider: newProvider, model: model_id };
-    } else {
-      if (!config.executor.model_map) config.executor.model_map = {};
-      const newMap = {};
-      for (const p of ['anthropic', 'minimax', 'openai']) {
-        newMap[p] = p === newProvider ? model_id : null;
-      }
-      config.executor.model_map[agent_id] = newMap;
-    }
-    results.push({ agent_id, provider: newProvider, model: model_id });
-  }
-
-  // 单次 DB 写入
-  await pool.query(
-    'UPDATE model_profiles SET config = $1, updated_at = NOW() WHERE id = $2',
-    [JSON.stringify(config), profile.id]
-  );
-
-  // 刷新缓存
-  _activeProfile = { ...profile, config, is_active: true };
-  console.log(`[model-profile] Batch updated ${updates.length} agents`);
-
-  return { updated: results, profile: _activeProfile };
 }
 
 /**
@@ -364,7 +148,7 @@ export function getCascadeForTask(task) {
 
   if (!mapping) return DEFAULT_CASCADE;
 
-  // 优先使用手动配置的 cascade
+  // 优先使用已生效参数中的 cascade
   if (Array.isArray(mapping.cascade) && mapping.cascade.length > 0) {
     return mapping.cascade;
   }
@@ -373,43 +157,4 @@ export function getCascadeForTask(task) {
   const ceiling = mapping.anthropic;
   if (!ceiling) return DEFAULT_CASCADE;
   return CEILING_TO_CASCADE[ceiling] || DEFAULT_CASCADE;
-}
-
-/**
- * 更新指定 agent 的 cascade 配置并持久化到 DB
- *
- * @param {import('pg').Pool} pool
- * @param {string} agentId - executor 层 agent ID（如 'dev'、'initiative_plan'）
- * @param {string[]|null} cascade - 降级瀑布数组（null 表示恢复自动）
- * @returns {Promise<{ agent_id: string, cascade: string[]|null, profile: Object }>}
- */
-export async function updateAgentCascade(pool, agentId, cascade) {
-  const { rows: activeRows } = await pool.query(
-    'SELECT id, name, config FROM model_profiles WHERE is_active = true LIMIT 1'
-  );
-  if (activeRows.length === 0) throw new Error('No active profile found');
-
-  const profile = activeRows[0];
-  const config = JSON.parse(JSON.stringify(profile.config));
-
-  if (!config.executor.model_map) config.executor.model_map = {};
-  if (!config.executor.model_map[agentId]) {
-    config.executor.model_map[agentId] = {};
-  }
-
-  if (cascade === null) {
-    delete config.executor.model_map[agentId].cascade;
-  } else {
-    config.executor.model_map[agentId].cascade = cascade;
-  }
-
-  await pool.query(
-    'UPDATE model_profiles SET config = $1, updated_at = NOW() WHERE id = $2',
-    [JSON.stringify(config), profile.id]
-  );
-
-  _activeProfile = { ...profile, config, is_active: true };
-  console.log(`[model-profile] updateAgentCascade: ${agentId} → ${cascade ? cascade.join(',') : 'auto'}`);
-
-  return { agent_id: agentId, cascade, profile: _activeProfile };
 }

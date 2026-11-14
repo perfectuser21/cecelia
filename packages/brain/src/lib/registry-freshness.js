@@ -30,10 +30,8 @@ export const RESCAN_CRON_PERIOD_SECONDS = 300;
  * 扫描器一直在跑、source_revision 一直等于 main HEAD、24h 账龄哨兵全程报绿,
  * 所以烂了 11 天无人发现(issue e180b05c 误判成"扫描链全挂")。
  *
- * 放宽是安全的:正确性由 assertMapImpactContract 里的
- * `map.source_revision === base_sha` 精确保证(不匹配直接 map_revision_mismatch),
- * 账龄只是活性心跳——它防的是「扫描器死了」,而扫描器死了 main 又没动时,
- * 快照其实仍然准确。真正的停摆由 promise-map-nightly 的 24h 哨兵押尾。
+ * 本阈值只表示快照账龄，不授予派发或执行资格。
+ * 已退役的旧派发前置检查不再作为此处安全性依据；固定版本由实际消费者核对。
  */
 export const PHOTO_STALE_THRESHOLD_SECONDS = 1800;
 export const PHOTO_STALE_THRESHOLD_HOURS = PHOTO_STALE_THRESHOLD_SECONDS / 3600;

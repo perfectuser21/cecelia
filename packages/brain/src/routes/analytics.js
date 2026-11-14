@@ -1,6 +1,6 @@
 import { Router } from 'express';
+import { rateLimit } from 'express-rate-limit';
 import pool from '../db.js';
-import { syncSocialMediaData, getCollectionCoverage } from '../social-media-sync.js';
 import { getMonthlyPRCount, getMonthlyPRsByKR, getPRSuccessRate, getPRTrend } from '../stats.js';
 import { searchRelevantAnalyses } from '../cortex.js';
 import {
@@ -8,18 +8,18 @@ import {
   checkShouldCreateRCA,
   getQualityStats,
 } from '../cortex-quality.js';
-import { runDecompositionChecks as _runDecompositionChecks } from '../decomposition-checker.js';
+
 import { getActiveExecutionPaths as _getActiveExecutionPaths, INVENTORY_CONFIG as _INVENTORY_CONFIG } from './shared.js';
-import {
-  writeContentAnalytics,
-  bulkWriteContentAnalytics,
-  queryWeeklyROI,
-  getTopContentByPlatform,
-  upsertPipelinePublishStats,
-} from '../content-analytics.js';
-import { scheduleDailyScrape } from '../daily-scrape-scheduler.js';
 
 const router = Router();
+
+// 仅匹配本模块的受保护路由计数，避免消耗其他Brain模块的额度。
+const moduleRouteRateLimit = rateLimit({
+  windowMs: 60_000,
+  limit: 1200,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+});
 
 /**
  * GET /api/brain/cortex/analyses
@@ -31,7 +31,7 @@ const router = Router();
  * - trigger_event: Filter by trigger event type
  * - limit: Max results (default 10)
  */
-router.get('/cortex/analyses', async (req, res) => {
+router.get('/cortex/analyses', moduleRouteRateLimit, async (req, res) => {
   try {
     const { task_id, failure_class, trigger_event, limit } = req.query;
 
@@ -62,7 +62,7 @@ router.get('/cortex/analyses', async (req, res) => {
  * GET /api/brain/cortex/analyses/:id
  * Get single analysis by ID
  */
-router.get('/cortex/analyses/:id', async (req, res) => {
+router.get('/cortex/analyses/:id', moduleRouteRateLimit, async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT * FROM cortex_analyses WHERE id = $1
@@ -181,7 +181,7 @@ router.post('/cortex/feedback', async (req, res) => {
  *
  * Query params: hours (default: 24, max: 168)
  */
-router.get('/cortex/stats', async (req, res) => {
+router.get('/cortex/stats', moduleRouteRateLimit, async (req, res) => {
   try {
     const hours = Math.min(168, Math.max(1, parseInt(req.query.hours || '24', 10)));
     const result = await pool.query(`
@@ -244,7 +244,7 @@ router.post('/cortex/generate-report', async (req, res) => {
  * GET /api/brain/cortex/reports
  * 获取最近的系统简报列表
  */
-router.get('/cortex/reports', async (req, res) => {
+router.get('/cortex/reports', moduleRouteRateLimit, async (req, res) => {
   try {
     const limit = Math.min(20, parseInt(req.query.limit) || 10);
     const result = await pool.query(`
@@ -291,7 +291,7 @@ router.post('/learning/evaluate-strategy', async (req, res) => {
  * Cecelia 成长档案统计概览
  * 返回: birth_date, days_since_birth, tasks_completed, learnings_count
  */
-router.get('/stats/overview', async (req, res) => {
+router.get('/stats/overview', moduleRouteRateLimit, async (req, res) => {
   try {
     const BIRTH_DATE = '2026-02-28';
     const birthMs = new Date(BIRTH_DATE + 'T00:00:00+08:00').getTime();
@@ -439,7 +439,7 @@ router.get('/stats/autonomous-prs', async (req, res) => {
  *   current_stage: number (optional, 1-4)
  *   owner: string (optional)
  */
-router.get('/capabilities', async (req, res) => {
+router.get('/capabilities', moduleRouteRateLimit, async (req, res) => {
   try {
     const { current_stage, owner, scope } = req.query;
 
@@ -484,7 +484,7 @@ router.get('/capabilities', async (req, res) => {
  * GET /api/brain/capabilities/:id
  * Get a single capability by ID
  */
-router.get('/capabilities/:id', async (req, res) => {
+router.get('/capabilities/:id', moduleRouteRateLimit, async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -532,7 +532,7 @@ router.get('/capabilities/:id', async (req, res) => {
  *   owner: string (optional, default 'system')
  * }
  */
-router.post('/capabilities', async (req, res) => {
+router.post('/capabilities', moduleRouteRateLimit, async (req, res) => {
   try {
     const {
       id,
@@ -644,7 +644,7 @@ router.post('/capabilities', async (req, res) => {
  *   key_tables: string[] (optional)
  * }
  */
-router.patch('/capabilities/:id', async (req, res) => {
+router.patch('/capabilities/:id', moduleRouteRateLimit, async (req, res) => {
   try {
     const { id } = req.params;
     const {
@@ -770,7 +770,7 @@ router.patch('/capabilities/:id', async (req, res) => {
  *   estimated_hours: number (optional)
  * }
  */
-router.post('/pr-plans', async (req, res) => {
+router.post('/pr-plans', moduleRouteRateLimit, async (req, res) => {
   try {
     const {
       project_id,
@@ -878,7 +878,7 @@ router.post('/pr-plans', async (req, res) => {
  *   project_id: string (optional)
  *   status: string (optional)
  */
-router.get('/pr-plans', async (req, res) => {
+router.get('/pr-plans', moduleRouteRateLimit, async (req, res) => {
   try {
     const { project_id, status } = req.query;
 
@@ -921,7 +921,7 @@ router.get('/pr-plans', async (req, res) => {
  * GET /api/brain/pr-plans/:id
  * Get a single PR Plan with full context
  */
-router.get('/pr-plans/:id', async (req, res) => {
+router.get('/pr-plans/:id', moduleRouteRateLimit, async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -968,7 +968,7 @@ router.get('/pr-plans/:id', async (req, res) => {
  *   status: string (optional)
  * }
  */
-router.patch('/pr-plans/:id', async (req, res) => {
+router.patch('/pr-plans/:id', moduleRouteRateLimit, async (req, res) => {
   try {
     const { id } = req.params;
     const {
@@ -1119,7 +1119,7 @@ router.patch('/pr-plans/:id', async (req, res) => {
  * DELETE /api/brain/pr-plans/:id
  * Delete a PR Plan
  */
-router.delete('/pr-plans/:id', async (req, res) => {
+router.delete('/pr-plans/:id', moduleRouteRateLimit, async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -1267,7 +1267,7 @@ router.post('/capabilities/scan', async (req, res) => {
 /**
  * GET /api/brain/config/area-slots - 读取 Area Slot 配置
  */
-router.get('/config/area-slots', async (req, res) => {
+router.get('/config/area-slots', moduleRouteRateLimit, async (req, res) => {
   try {
     const { rows } = await pool.query(
       `SELECT value FROM brain_config WHERE key = 'area_slots'`
@@ -1299,7 +1299,7 @@ router.get('/config/area-slots', async (req, res) => {
 /**
  * PUT /api/brain/config/area-slots - 保存 Area Slot 配置
  */
-router.put('/config/area-slots', async (req, res) => {
+router.put('/config/area-slots', moduleRouteRateLimit, async (req, res) => {
   try {
     const config = req.body;
     await pool.query(
@@ -1529,686 +1529,6 @@ router.post('/attach-decision', async (req, res) => {
       error: 'Failed to make attachment decision',
       details: err.message
     });
-  }
-});
-
-// ─── 内容效果数据采集 API ─────────────────────────────────────────────────────
-
-/**
- * POST /api/brain/analytics/content
- * 写入内容效果采集快照（单条）。
- *
- * Body: { platform, contentId?, title?, publishedAt?, metrics: { views, likes, comments, shares, clicks }, source?, pipelineId?, rawData? }
- */
-router.post('/analytics/content', async (req, res) => {
-  try {
-    const { platform, contentId, title, publishedAt, metrics, source, pipelineId, rawData } = req.body;
-    if (!platform) {
-      return res.status(400).json({ error: 'platform is required' });
-    }
-    const id = await writeContentAnalytics(pool, {
-      platform, contentId, title, publishedAt, metrics, source, pipelineId, rawData,
-    });
-    res.status(201).json({ id });
-  } catch (err) {
-    console.error('[API] analytics/content POST 失败:', err.message);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-/**
- * POST /api/brain/analytics/content/bulk
- * 批量写入内容效果采集快照。
- *
- * Body: { items: Array<{ platform, contentId?, title?, publishedAt?, metrics, source?, pipelineId?, rawData? }> }
- */
-router.post('/analytics/content/bulk', async (req, res) => {
-  try {
-    const { items } = req.body;
-    if (!Array.isArray(items)) {
-      return res.status(400).json({ error: 'items must be an array' });
-    }
-    const count = await bulkWriteContentAnalytics(pool, items);
-    res.status(201).json({ written: count });
-  } catch (err) {
-    console.error('[API] analytics/content/bulk POST 失败:', err.message);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-/**
- * GET /api/brain/analytics/content
- * 查询内容效果数据（最近 7 天，按平台分组热门）。
- *
- * Query params:
- * - platform: 筛选平台
- * - limit: 返回条数（默认 10）
- * - since: ISO 日期字符串（默认 7 天前）
- */
-router.get('/analytics/content', async (req, res) => {
-  try {
-    const { platform, limit, since } = req.query;
-    const sinceDate = since ? new Date(since) : undefined;
-    const items = await getTopContentByPlatform(pool, {
-      platform,
-      since: sinceDate,
-      limit: parseInt(limit) || 10,
-    });
-    res.json(items);
-  } catch (err) {
-    console.error('[API] analytics/content GET 失败:', err.message);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-/**
- * GET /api/brain/analytics/roi
- * 查询指定时间范围内的内容 ROI（平台维度汇总）。
- *
- * Query params:
- * - start: ISO 日期（默认 7 天前）
- * - end: ISO 日期（默认当前时间）
- */
-router.get('/analytics/roi', async (req, res) => {
-  try {
-    const { start, end } = req.query;
-    const startDate = start ? new Date(start) : new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-    const endDate = end ? new Date(end) : new Date();
-    const roi = await queryWeeklyROI(pool, startDate, endDate);
-    res.json({ start: startDate.toISOString(), end: endDate.toISOString(), roi });
-  } catch (err) {
-    console.error('[API] analytics/roi GET 失败:', err.message);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ─── 爬虫结果写回（N8N / platform_scrape.sh → Brain）──────────────────────────
-
-/**
- * POST /api/brain/analytics/scrape-result
- * 接收平台爬虫采集结果，写入 content_analytics（ROI 计算）和
- * pipeline_publish_stats（话题热度评分）。
- *
- * Body:
- * {
- *   platform: string,                  // 平台名（必填）
- *   publishTaskId?: string,            // content_publish 任务 ID（带时则写 pipeline_publish_stats）
- *   pipelineId?: string,               // 上游 pipeline ID（可选）
- *   items: Array<{                     // 采集到的内容列表
- *     contentId?: string,
- *     title?: string,
- *     publishedAt?: string,
- *     views?: number,
- *     likes?: number,
- *     comments?: number,
- *     shares?: number,
- *     clicks?: number,
- *     rawData?: object,
- *   }>
- * }
- *
- * Returns: { written: number, platform: string, totals: { views, likes, comments, shares } }
- */
-router.post('/analytics/scrape-result', async (req, res) => {
-  try {
-    const { platform, publishTaskId, pipelineId, items } = req.body;
-    if (!platform) {
-      return res.status(400).json({ error: 'platform is required' });
-    }
-    if (!Array.isArray(items)) {
-      return res.status(400).json({ error: 'items must be an array' });
-    }
-
-    // 1. 写入 content_analytics（每条内容单独记录，供 ROI 计算）
-    const analyticsItems = items.map(item => ({
-      platform,
-      contentId: item.contentId,
-      title: item.title,
-      publishedAt: item.publishedAt,
-      metrics: {
-        views: item.views || 0,
-        likes: item.likes || 0,
-        comments: item.comments || 0,
-        shares: item.shares || 0,
-        clicks: item.clicks || 0,
-      },
-      source: 'scraper',
-      pipelineId: pipelineId || null,
-      rawData: item.rawData || {},
-    }));
-    const written = await bulkWriteContentAnalytics(pool, analyticsItems);
-
-    // 2. 聚合指标写入 pipeline_publish_stats（供话题热度评分）
-    let totals = { views: 0, likes: 0, comments: 0, shares: 0 };
-    if (publishTaskId && items.length > 0) {
-      totals = items.reduce(
-        (acc, item) => ({
-          views: acc.views + (item.views || 0),
-          likes: acc.likes + (item.likes || 0),
-          comments: acc.comments + (item.comments || 0),
-          shares: acc.shares + (item.shares || 0),
-        }),
-        { views: 0, likes: 0, comments: 0, shares: 0 }
-      );
-      await upsertPipelinePublishStats(pool, {
-        publishTaskId,
-        pipelineId: pipelineId || null,
-        platform,
-        metrics: totals,
-      });
-    }
-
-    res.status(201).json({ written, platform, totals });
-  } catch (err) {
-    console.error('[API] analytics/scrape-result POST 失败:', err.message);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-/**
- * GET /api/brain/analytics/platform-summary
- * 按平台聚合内容效果数据（供 Dashboard 和周报使用）。
- *
- * Query params:
- * - days: 统计天数（默认 7）
- * - platform: 筛选特定平台（可选）
- */
-router.get('/analytics/platform-summary', async (req, res) => {
-  try {
-    const days = parseInt(req.query.days) || 7;
-    const platform = req.query.platform;
-    const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
-
-    const params = [since];
-    const platformClause = platform ? `AND platform = $2` : '';
-    if (platform) params.push(platform);
-
-    const { rows } = await pool.query(
-      `SELECT
-         platform,
-         COUNT(*)::int                                    AS content_count,
-         COALESCE(SUM(views), 0)::bigint                 AS total_views,
-         COALESCE(SUM(likes), 0)::bigint                 AS total_likes,
-         COALESCE(SUM(comments), 0)::bigint              AS total_comments,
-         COALESCE(SUM(shares), 0)::bigint                AS total_shares,
-         CASE WHEN COUNT(*) > 0
-           THEN ROUND(COALESCE(SUM(views), 0)::numeric / COUNT(*), 0)
-           ELSE 0
-         END                                             AS avg_views,
-         CASE WHEN COALESCE(SUM(views), 0) > 0
-           THEN ROUND(
-             (COALESCE(SUM(likes), 0) + COALESCE(SUM(comments), 0) + COALESCE(SUM(shares), 0))::numeric
-             / COALESCE(SUM(views), 0) * 1000, 2
-           )
-           ELSE 0
-         END                                             AS engagement_rate,
-         MAX(collected_at)                               AS last_collected_at
-       FROM content_analytics
-       WHERE collected_at >= $1
-         ${platformClause}
-       GROUP BY platform
-       ORDER BY total_views DESC`,
-      params
-    );
-
-    res.json({
-      since: since.toISOString(),
-      days,
-      platforms: rows.map(r => ({
-        platform: r.platform,
-        content_count: Number(r.content_count),
-        total_views: Number(r.total_views),
-        total_likes: Number(r.total_likes),
-        total_comments: Number(r.total_comments),
-        total_shares: Number(r.total_shares),
-        avg_views: Number(r.avg_views),
-        engagement_rate: Number(r.engagement_rate),
-        last_collected_at: r.last_collected_at,
-      })),
-    });
-  } catch (err) {
-    console.error('[API] analytics/platform-summary GET 失败:', err.message);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ─── 采集覆盖状态 ─────────────────────────────────────────────────────────────
-
-/**
- * GET /api/brain/analytics/collection-coverage
- * 查询各平台在 content_analytics 中的数据覆盖状态。
- *
- * 返回 8 个已知平台的数据条数、最后采集时间、是否新鲜（7天内）。
- * 供选题引擎感知哪些平台数据缺失，自动触发补采。
- */
-router.get('/analytics/collection-coverage', async (req, res) => {
-  try {
-    const coverage = await getCollectionCoverage(pool);
-    const missing = coverage.filter(p => !p.has_data).map(p => p.platform);
-    const stale   = coverage.filter(p => p.has_data && !p.is_fresh).map(p => p.platform);
-
-    res.json({
-      platforms: coverage,
-      summary: {
-        total:   coverage.length,
-        has_data: coverage.filter(p => p.has_data).length,
-        missing,
-        stale,
-        coverage_pct: coverage.length > 0
-          ? Math.round(coverage.filter(p => p.has_data).length / coverage.length * 100)
-          : 0,
-      },
-    });
-  } catch (err) {
-    console.error('[API] analytics/collection-coverage GET 失败:', err.message);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-/**
- * POST /api/brain/analytics/social-media-sync
- * 手动触发从 social_media_raw 到 content_analytics 的数据同步。
- *
- * 无需 body。返回同步结果: { synced, skipped, source_count }
- */
-router.post('/analytics/social-media-sync', async (req, res) => {
-  try {
-    const result = await syncSocialMediaData(pool);
-    res.json({ success: true, ...result });
-  } catch (err) {
-    console.error('[API] analytics/social-media-sync POST 失败:', err.message);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ─── 数据管道健康状态 ──────────────────────────────────────────────────────────
-
-/**
- * GET /api/brain/analytics/pipeline-status
- * 返回全平台数据采集管道的健康状态。
- *
- * 供 Dashboard、选题引擎、日报感知哪些平台数据新鲜、哪些缺失。
- *
- * Returns:
- * {
- *   overall_health: 'healthy' | 'stale' | 'empty',
- *   content_analytics_total: number,
- *   platforms: [{ platform, content_count, last_collected_at, is_fresh, has_data }],
- *   missing_platforms: string[],
- *   stale_platforms: string[],
- *   coverage_pct: number,
- *   checked_at: string (ISO)
- * }
- */
-router.get('/analytics/pipeline-status', async (req, res) => {
-  try {
-    const [coverage, totalResult] = await Promise.all([
-      getCollectionCoverage(pool),
-      pool.query('SELECT COUNT(*)::int AS total FROM content_analytics'),
-    ]);
-
-    const total         = totalResult.rows[0]?.total || 0;
-    const missingPlats  = coverage.filter(p => !p.has_data).map(p => p.platform);
-    const stalePlats    = coverage.filter(p => p.has_data && !p.is_fresh).map(p => p.platform);
-    const coveragePct   = coverage.length > 0
-      ? Math.round(coverage.filter(p => p.has_data).length / coverage.length * 100)
-      : 0;
-
-    let overallHealth;
-    if (total === 0) {
-      overallHealth = 'empty';
-    } else if (stalePlats.length >= Math.ceil(coverage.length / 2)) {
-      overallHealth = 'stale';
-    } else {
-      overallHealth = 'healthy';
-    }
-
-    res.json({
-      overall_health:           overallHealth,
-      content_analytics_total:  total,
-      platforms:                coverage,
-      missing_platforms:        missingPlats,
-      stale_platforms:          stalePlats,
-      coverage_pct:             coveragePct,
-      checked_at:               new Date().toISOString(),
-    });
-  } catch (err) {
-    console.error('[API] analytics/pipeline-status GET 失败:', err.message);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ─── 每日平台采集手动触发 ──────────────────────────────────────────────────────
-
-/**
- * POST /api/brain/analytics/trigger-platform-scrape
- * 立即为所有平台创建 platform_scraper 任务（跳过时间窗口检查）。
- * 用于初始数据填充和手动补采。
- *
- * Returns: { created: number, skipped: number }
- */
-router.post('/analytics/trigger-platform-scrape', async (req, res) => {
-  try {
-    const { scheduled, skipped } = await scheduleDailyScrape(pool, { force: true });
-    res.status(201).json({ created: scheduled, skipped });
-  } catch (err) {
-    console.error('[API] analytics/trigger-platform-scrape POST 失败:', err.message);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ─── 采集仪表盘 ────────────────────────────────────────────────────────────────
-
-/**
- * GET /api/brain/analytics/collection-dashboard
- * 采集仪表盘：各平台每日数据量 + 采集任务失败率 + 平均延迟 + 全平台正常率。
- *
- * Query params:
- * - days: 统计天数（默认 7）
- *
- * Returns:
- * {
- *   generated_at, days, normality_rate,
- *   platforms: [{ platform, daily_counts, total_count, failure_rate, avg_latency_min, last_collected_at, is_healthy }],
- *   summary: { total_data_points, platforms_with_data, platforms_missing, healthy_platform_count }
- * }
- */
-router.get('/analytics/collection-dashboard', async (req, res) => {
-  try {
-    const days = Math.min(parseInt(req.query.days) || 7, 90);
-    const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
-
-    // 1. 每日数据量：按平台 + 日期聚合
-    const { rows: dailyRows } = await pool.query(
-      `SELECT
-         platform,
-         DATE(collected_at AT TIME ZONE 'Asia/Shanghai')::text AS day,
-         COUNT(*)::int AS count
-       FROM content_analytics
-       WHERE collected_at >= $1
-       GROUP BY platform, day
-       ORDER BY platform, day`,
-      [since]
-    );
-
-    // 2. platform_scraper 任务统计：成功/失败数量 + 平均延迟
-    const { rows: taskRows } = await pool.query(
-      `SELECT
-         payload->>'platform'                                   AS platform,
-         COUNT(*)::int                                          AS total_tasks,
-         COUNT(*) FILTER (WHERE status = 'failed')::int        AS failed_tasks,
-         COUNT(*) FILTER (WHERE status = 'completed')::int     AS completed_tasks,
-         ROUND(
-           AVG(
-             EXTRACT(EPOCH FROM (completed_at - created_at)) / 60
-           ) FILTER (WHERE status = 'completed' AND completed_at IS NOT NULL),
-           1
-         )                                                      AS avg_latency_min
-       FROM tasks
-       WHERE task_type = 'platform_scraper'
-         AND created_at >= $1
-         AND payload->>'platform' IS NOT NULL
-       GROUP BY payload->>'platform'`,
-      [since]
-    );
-
-    // 3. 最后采集时间（从 content_analytics）
-    const { rows: lastRows } = await pool.query(
-      `SELECT platform, MAX(collected_at) AS last_collected_at
-       FROM content_analytics
-       WHERE collected_at >= $1
-       GROUP BY platform`,
-      [since]
-    );
-    const lastMap = new Map(lastRows.map(r => [r.platform, r.last_collected_at]));
-
-    // 整合数据
-    const KNOWN_PLATFORMS_DASH = [
-      'douyin', 'kuaishou', 'xiaohongshu', 'toutiao', 'toutiao-2',
-      'weibo', 'channels', 'gongzhonghao',
-    ];
-
-    // 构建日期序列（最近 days 天，精确到日）
-    const dateLabels = [];
-    for (let i = days - 1; i >= 0; i--) {
-      const d = new Date(Date.now() - i * 24 * 60 * 60 * 1000);
-      const tz = new Date(d.toLocaleString('en-US', { timeZone: 'Asia/Shanghai' }));
-      const label = `${tz.getFullYear()}-${String(tz.getMonth() + 1).padStart(2, '0')}-${String(tz.getDate()).padStart(2, '0')}`;
-      dateLabels.push(label);
-    }
-
-    // 建立 dailyMap: platform → { date → count }
-    const dailyMap = new Map();
-    for (const r of dailyRows) {
-      if (!dailyMap.has(r.platform)) dailyMap.set(r.platform, new Map());
-      dailyMap.get(r.platform).set(r.day, r.count);
-    }
-
-    // 建立 taskMap: platform → stats
-    const taskMap = new Map(taskRows.map(r => [r.platform, r]));
-
-    // 合并所有出现过的平台（已知 + 实际有数据的）
-    const allPlatforms = new Set([
-      ...KNOWN_PLATFORMS_DASH,
-      ...dailyMap.keys(),
-      ...taskMap.keys(),
-    ]);
-
-    // 计算每日正常（有数据）的 platform-day 数量
-    let totalPlatformDays = 0;
-    let normalPlatformDays = 0;
-
-    const platforms = [];
-    for (const platform of allPlatforms) {
-      const dayMap = dailyMap.get(platform) || new Map();
-      const stats = taskMap.get(platform);
-
-      const daily_counts = dateLabels.map(date => ({
-        date,
-        count: dayMap.get(date) || 0,
-      }));
-
-      const total_count = daily_counts.reduce((s, d) => s + d.count, 0);
-
-      // 正常率计算：有数据的天 / 总天数
-      totalPlatformDays += days;
-      normalPlatformDays += daily_counts.filter(d => d.count > 0).length;
-
-      const total_tasks = stats ? Number(stats.total_tasks) : 0;
-      const failed_tasks = stats ? Number(stats.failed_tasks) : 0;
-      const failure_rate = total_tasks > 0
-        ? Math.round((failed_tasks / total_tasks) * 1000) / 10
-        : null;
-      const avg_latency_min = stats?.avg_latency_min != null
-        ? Number(stats.avg_latency_min)
-        : null;
-
-      const last_collected_at = lastMap.get(platform) || null;
-      const is_healthy = total_count > 0 && (failure_rate === null || failure_rate < 50);
-
-      platforms.push({
-        platform,
-        daily_counts,
-        total_count,
-        failure_rate,
-        avg_latency_min,
-        last_collected_at,
-        is_healthy,
-      });
-    }
-
-    platforms.sort((a, b) => b.total_count - a.total_count);
-
-    const normality_rate = totalPlatformDays > 0
-      ? Math.round((normalPlatformDays / totalPlatformDays) * 1000) / 10
-      : 0;
-
-    const platforms_with_data = platforms.filter(p => p.total_count > 0).map(p => p.platform);
-    const platforms_missing = KNOWN_PLATFORMS_DASH.filter(p => !platforms_with_data.includes(p));
-
-    res.json({
-      generated_at: new Date().toISOString(),
-      days,
-      normality_rate,
-      platforms,
-      summary: {
-        total_data_points: platforms.reduce((s, p) => s + p.total_count, 0),
-        platforms_with_data: platforms_with_data.length,
-        platforms_missing,
-        healthy_platform_count: platforms.filter(p => p.is_healthy).length,
-      },
-    });
-  } catch (err) {
-    console.error('[API] analytics/collection-dashboard GET 失败:', err.message);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ─── 采集仪表盘统计 ────────────────────────────────────────────────────────────
-
-/**
- * GET /api/brain/analytics/collection-stats
- * 采集仪表盘：各平台每日数据量、scraper 任务成功率、整体健康率。
- *
- * Query params:
- *   - days: 回溯天数（默认 7，最大 30）
- *
- * Returns:
- *   {
- *     health: { overall_inflow_rate, target_rate, healthy },
- *     platforms: [{ platform, daily_volumes, scraper_stats, last_collected_at, is_fresh }],
- *     synced_at: ISO string
- *   }
- */
-router.get('/analytics/collection-stats', async (req, res) => {
-  try {
-    const days = Math.min(parseInt(req.query.days) || 7, 30);
-    const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
-
-    // 1. 各平台每日数据量（content_analytics）
-    const { rows: volumeRows } = await pool.query(
-      `SELECT
-         platform,
-         DATE(collected_at AT TIME ZONE 'UTC') AS date,
-         COUNT(*)::int                          AS count
-       FROM content_analytics
-       WHERE collected_at >= $1
-       GROUP BY platform, DATE(collected_at AT TIME ZONE 'UTC')
-       ORDER BY platform, date`,
-      [since.toISOString()]
-    );
-
-    // 2. platform_scraper 任务成功率（tasks 表，忽略不存在的 task_type）
-    let scraperRows = [];
-    try {
-      const { rows } = await pool.query(
-        `SELECT
-           payload->>'platform'  AS platform,
-           status,
-           COUNT(*)::int          AS cnt
-         FROM tasks
-         WHERE task_type = 'platform_scraper'
-           AND created_at >= $1
-         GROUP BY payload->>'platform', status`,
-        [since.toISOString()]
-      );
-      scraperRows = rows;
-    } catch {
-      // platform_scraper 类型不存在时静默忽略
-    }
-
-    // 3. 各平台最后采集时间
-    const { rows: coverageRows } = await pool.query(
-      `SELECT
-         platform,
-         COUNT(*)::int  AS total_records,
-         MAX(collected_at) AS last_collected_at
-       FROM content_analytics
-       GROUP BY platform`
-    );
-
-    // 整理 scraper stats per platform
-    const scraperMap = {};
-    for (const r of scraperRows) {
-      if (!r.platform) continue;
-      if (!scraperMap[r.platform]) {
-        scraperMap[r.platform] = { total: 0, completed: 0, failed: 0 };
-      }
-      scraperMap[r.platform].total += r.cnt;
-      if (r.status === 'completed') scraperMap[r.platform].completed += r.cnt;
-      if (r.status === 'failed') scraperMap[r.platform].failed += r.cnt;
-    }
-
-    // 整理 coverage per platform
-    const coverageMap = {};
-    for (const r of coverageRows) {
-      coverageMap[r.platform] = {
-        total_records: r.total_records,
-        last_collected_at: r.last_collected_at,
-      };
-    }
-
-    // 整理 daily volumes per platform
-    const volumeMap = {};
-    for (const r of volumeRows) {
-      if (!volumeMap[r.platform]) volumeMap[r.platform] = [];
-      volumeMap[r.platform].push({ date: r.date, count: r.count });
-    }
-
-    // 所有出现过的平台（已知 + DB 实际）
-    const { KNOWN_PLATFORMS } = await import('../social-media-sync.js');
-    const allPlatforms = new Set([...KNOWN_PLATFORMS, ...Object.keys(volumeMap), ...Object.keys(coverageMap)]);
-
-    // 生成返回结构
-    const freshCutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-    const platforms = [...allPlatforms].sort().map(platform => {
-      const cov = coverageMap[platform] || {};
-      const scraper = scraperMap[platform] || { total: 0, completed: 0, failed: 0 };
-      const lastAt = cov.last_collected_at ? new Date(cov.last_collected_at) : null;
-      const isFresh = lastAt ? lastAt > freshCutoff : false;
-      const successRate = scraper.total > 0
-        ? Math.round((scraper.completed / scraper.total) * 100)
-        : null;
-
-      return {
-        platform,
-        daily_volumes: volumeMap[platform] || [],
-        last_collected_at: cov.last_collected_at || null,
-        is_fresh: isFresh,
-        has_data: Boolean(cov.total_records > 0),
-        total_records: cov.total_records || 0,
-        scraper_stats: {
-          total: scraper.total,
-          completed: scraper.completed,
-          failed: scraper.failed,
-          success_rate: successRate,
-        },
-      };
-    });
-
-    // 整体健康率：过去 N 天内，有数据的平台占比
-    const activeDays = days;
-    const platformsWithData = platforms.filter(p => p.has_data).length;
-    const overallInflowRate = platforms.length > 0
-      ? Math.round((platformsWithData / platforms.length) * 100)
-      : 0;
-    const TARGET_RATE = 95;
-
-    res.json({
-      health: {
-        overall_inflow_rate: overallInflowRate,
-        target_rate: TARGET_RATE,
-        healthy: overallInflowRate >= TARGET_RATE,
-        platforms_with_data: platformsWithData,
-        total_platforms: platforms.length,
-      },
-      platforms,
-      query_days: activeDays,
-      synced_at: new Date().toISOString(),
-    });
-  } catch (err) {
-    console.error('[API] analytics/collection-stats GET 失败:', err.message);
-    res.status(500).json({ error: err.message });
   }
 });
 

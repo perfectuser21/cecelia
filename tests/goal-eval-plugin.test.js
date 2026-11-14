@@ -1,1 +1,0 @@
-../packages/brain/src/__tests__/goal-eval-plugin.test.js

@@ -46,14 +46,14 @@ describe('提案 WebSocket 推送', () => {
       });
 
       await enqueueDangerousAction(
-        { type: 'propose_decomposition', params: { kr_id: 'kr-1' } },
+        { type: 'propose_priority_change', params: { kr_id: 'kr-1' } },
         { source: 'cortex', decision_id: 'd-1' },
         mockClient
       );
 
       expect(mockBroadcast).toHaveBeenCalledWith('proposal:created', expect.objectContaining({
         id: 'pa-new-1',
-        action_type: 'propose_decomposition',
+        action_type: 'propose_priority_change',
         category: 'proposal',
         priority: 'normal',
         source: 'cortex',
@@ -64,7 +64,7 @@ describe('提案 WebSocket 推送', () => {
       mockClient.query.mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'existing' }] });
 
       const result = await enqueueDangerousAction(
-        { type: 'propose_decomposition', params: {}, signature: 'kr:1:propose_decomposition' },
+        { type: 'propose_priority_change', params: {}, signature: 'kr:1:propose_priority_change' },
         { source: 'system' },
         mockClient
       );
@@ -99,7 +99,7 @@ describe('提案 WebSocket 推送', () => {
       });
       mockPool.query.mockResolvedValueOnce({
         rowCount: 1,
-        rows: [{ id: 'pa-1', comments: [{ role: 'user', text: 'test' }], action_type: 'propose_decomposition', params: {} }],
+        rows: [{ id: 'pa-1', comments: [{ role: 'user', text: 'test' }], action_type: 'propose_priority_change', params: {} }],
       });
 
       await addProposalComment('pa-1', 'test', 'user');

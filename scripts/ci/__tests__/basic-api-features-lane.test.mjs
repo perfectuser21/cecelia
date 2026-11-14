@@ -27,8 +27,7 @@ test('默认真实收集仅接收Dashboard共享features，旧Express和CLI不�
     .map(path => `features/${path}`).sort();
   assert.ok(expected.length > 0, '必须真实发现共享前端测试');
   assert.deepEqual(selected, expected, '默认集合必须完整保护共享前端且排除旧服务');
-  for (const path of ['features/navigation.test.ts', 'features/business/__tests__/team-dashboard-routing.test.ts',
-    'features/content/pages/ContentFactory.test.tsx', 'features/planning/pages/capability-system/InvocationPanel.test.tsx']) {
+  for (const path of ['features/navigation.test.ts', 'features/planning/pages/capability-system/InvocationPanel.test.tsx']) {
     assert.ok(selected.includes(path), `动态manifest消费者不能丢失：${path}`);
   }
 });

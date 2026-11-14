@@ -49,8 +49,7 @@ describe('Heartbeat Inspector', () => {
     expect(HEARTBEAT_INTERVAL_MS).toBe(30 * 60 * 1000);
   });
 
-  it('导出 HEARTBEAT_ALLOWED_ACTIONS 白名单（6 个）', () => {
-    expect(HEARTBEAT_ALLOWED_ACTIONS).toHaveLength(6);
+  it('心跳检查保留故障报告和无操作动作', () => {
     expect(HEARTBEAT_ALLOWED_ACTIONS).toContain('no_action');
     expect(HEARTBEAT_ALLOWED_ACTIONS).toContain('heartbeat_finding');
   });

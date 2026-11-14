@@ -23,9 +23,6 @@ describe('EXTERNAL_RUN_MIRROR_*_TASK_TYPES —— 从注册表派生（铁律 76
     expect(Object.isFrozen(EXTERNAL_RUN_MIRROR_TASK_TYPES)).toBe(true);
   });
 
-  it('content-pipeline（workflow+external 但 watchdog=external-worker，ZJ pipeline-worker 管）不纳入', () => {
-    expect(EXTERNAL_RUN_MIRROR_TASK_TYPES).not.toContain('content-pipeline');
-  });
 });
 
 describe('isExternalRunMirror —— 与 lost-deadline / commander-watchdog 的 RUN_TYPES_SQL 同义', () => {
@@ -44,10 +41,9 @@ describe('isExternalRunMirror —— 与 lost-deadline / commander-watchdog 的 
     expect(isExternalRunMirror({ task_type: 'device_job', payload: null })).toBe(false);
   });
 
-  it('其它类型（dev / qiumi_task / content-pipeline）与空输入 → false', () => {
+  it('其它类型（dev / qiumi_task）与空输入 → false', () => {
     expect(isExternalRunMirror({ task_type: 'dev', payload: { source: 'cron' } })).toBe(false);
     expect(isExternalRunMirror({ task_type: 'qiumi_task', payload: { source: 'cron' } })).toBe(false);
-    expect(isExternalRunMirror({ task_type: 'content-pipeline', payload: {} })).toBe(false);
     expect(isExternalRunMirror(null)).toBe(false);
     expect(isExternalRunMirror(undefined)).toBe(false);
     expect(isExternalRunMirror({})).toBe(false);

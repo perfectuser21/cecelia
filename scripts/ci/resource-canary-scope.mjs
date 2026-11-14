@@ -5,18 +5,17 @@ import {posix, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 
 const WORKER = 'packages/brain/scripts/fleet-worker/';
-const FLAGS = ['linux', 'app_server', 'legacy'];
+const FLAGS = ['linux'];
 const CONTROL = ['.github/workflows/ci.yml', 'scripts/ci/resource-canary-scope.mjs', 'scripts/ci/check-basic-results.mjs'];
 export function validateResourcePlan(encoded) {
   const plan = JSON.parse(encoded);
   if (!plan || typeof plan !== 'object' || Array.isArray(plan) ||
       Object.keys(plan).length !== FLAGS.length || FLAGS.some(flag => typeof plan[flag] !== 'boolean')) {
-    throw new Error('资源专项计划必须精确包含三个布尔标志');
+    throw new Error('资源专项计划必须精确包含linux布尔标志');
   }
   return plan;
 }
 
-// 生产未启用AppServer，历史attempt/OOM也没有现役消费：都只显式按需验收。
 // Linux观测容器只消费下列bind输入及其相对require，直接用Node内置模块，
 // 不读取npm依赖；根manifest/lock版本或无关依赖变化无需拉起真实Docker。
 export function collectInputs(read) {
@@ -35,16 +34,14 @@ export function collectInputs(read) {
   }
   // 采样器在容器内require，路径通过两个bind挂载解析，必须包含宿主对应文件。
   ['linux-resource-canary.cjs','linux-resource-probe.cjs','linux-cgroup.cjs'].forEach(name=>visit(WORKER+name));
-  return {linux:[...seen],app_server:[]};
+  return {linux:[...seen]};
 }
 export function planResourceCanaries(paths, {manual = 'none', inputs} = {}) {
-  if (!['none','linux','app-server','legacy','all'].includes(manual)) throw new Error('未知资源专项选项');
+  if (!['none','linux'].includes(manual)) throw new Error('未知资源专项选项');
   if (!Array.isArray(paths) || paths.some(path => typeof path !== 'string' || !path || path.startsWith('/') || path.split('/').some(part => !part || part === '.' || part === '..') || path.includes('\0'))) throw new Error('非法资源专项路径');
-  if (!inputs || !Array.isArray(inputs.linux) || !Array.isArray(inputs.app_server)) throw new Error('缺少专项输入闭包');
+  if (!inputs || Object.keys(inputs).length !== 1 || !Array.isArray(inputs.linux)) throw new Error('缺少专项输入闭包');
   const affected = flag => paths.some(path => CONTROL.includes(path) || inputs[flag].includes(path));
-  return {linux: manual === 'all' || manual === 'linux' || affected('linux'),
-    app_server: manual === 'all' || manual === 'app-server',
-    legacy: manual === 'all' || manual === 'legacy'};
+  return {linux: manual === 'linux' || affected('linux')};
 }
 const git = args => execFileSync('git', args, {encoding:'utf8', maxBuffer:16*1024*1024});
 function revision(value) {
@@ -61,7 +58,7 @@ export function main(argv = process.argv.slice(2)) {
   const head=revision(options['--head']),base=options['--base'] ? revision(options['--base']) : undefined;
   const revisions=[...new Set([base,head].filter(Boolean))];
   const closures=revisions.map(ref=>collectInputs(path=>git(['show',`${ref}:${path}`])));
-  const inputs=Object.fromEntries(['linux','app_server'].map(flag=>[flag,[...new Set(closures.flatMap(input=>input[flag]))]]));
+  const inputs=Object.fromEntries(['linux'].map(flag=>[flag,[...new Set(closures.flatMap(input=>input[flag]))]]));
   const raw=base ? git(['diff','--no-ext-diff','--no-textconv','--name-only','--no-renames','-z',base,head,'--']) : '';
   const paths=raw ? raw.slice(0,-1).split('\0') : [];
   const plan=JSON.stringify(planResourceCanaries(paths,{manual:options['--manual'] ?? 'none',inputs}));

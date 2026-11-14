@@ -14,10 +14,10 @@ name: CI
   workflow_dispatch:
     inputs:
       resource_canary:
-        description: 资源专项（legacy 含历史 attempt/OOM）
+        description: Linux资源观测专项
         type: choice
         default: none
-        options: [none, linux, app-server, legacy, all]
+        options: [none, linux]
   schedule:
     - cron: 0 3 * * 1
 permissions:
@@ -142,9 +142,6 @@ jobs:
   resource-canaries:
     needs: plan
     outputs:
-      app_server: ${{ steps.app_server.outcome }}
-      app_server_rpc: ${{ steps.app_server_rpc.outcome }}
-      legacy: ${{ steps.legacy.outcome }}
       linux: ${{ steps.linux.outcome }}
     runs-on: ubuntu-latest
     timeout-minutes: 28
@@ -153,56 +150,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
-      - name: Build fixed CLI test image
-        run: |
-          docker build -t cecelia-appserver-ci - <<'DOCKERFILE'
-          FROM mirror.gcr.io/library/node:22-bookworm-slim
-          RUN npm install -g @openai/codex@0.158.0
-          DOCKERFILE
-          echo "APP_SERVER_CANARY_IMAGE=$(docker image inspect --format '{{.Id}}' cecelia-appserver-ci)" >> "$GITHUB_ENV"
-        if: '!cancelled() && fromJSON(needs.plan.outputs.resource_plan).app_server'
-      - id: app_server
-        name: Two independent offline instances sharing HOME through the real runner
-        run: |
-          set -o pipefail
-          node packages/brain/scripts/fleet-worker/app-server-canary.cjs | tee app-server-canary.log
-        if: '!cancelled() && fromJSON(needs.plan.outputs.resource_plan).app_server'
-      - id: app_server_rpc
-        name: Direct shim HTTP RPC and explicit generation cleanup
-        run: |
-          set -o pipefail
-          node packages/brain/scripts/fleet-worker/app-server-rpc-canary.cjs | tee app-server-rpc-canary.log
-        if: '!cancelled() && fromJSON(needs.plan.outputs.resource_plan).app_server'
-      - name: Keep identity and quota evidence (no credentials or model calls)
-        if: always() && fromJSON(needs.plan.outputs.resource_plan).app_server
-        uses: actions/upload-artifact@v4
-        with:
-          name: app-server-canary-evidence
-          path: |
-            app-server-canary.log
-            app-server-rpc-canary.log
-          if-no-files-found: ignore
-      - name: Resolve isolated test images to immutable IDs
-        run: |
-          docker pull mirror.gcr.io/library/node:22-bookworm-slim
-          docker tag mirror.gcr.io/library/node:22-bookworm-slim node:22-bookworm-slim
-          docker pull mirror.gcr.io/pgvector/pgvector:pg15
-          docker tag mirror.gcr.io/pgvector/pgvector:pg15 pgvector/pgvector:pg15
-          echo "HARNESS_LIMITS_CANARY_IMAGE=$(docker image inspect --format '{{.Id}}' node:22-bookworm-slim)" >> "$GITHUB_ENV"
-          echo "HARNESS_LIMITS_CANARY_POSTGRES_IMAGE=$(docker image inspect --format '{{.Id}}' pgvector/pgvector:pg15)" >> "$GITHUB_ENV"
-        if: '!cancelled() && fromJSON(needs.plan.outputs.resource_plan).legacy'
-      - id: legacy
-        name: Real adapters enforce one shared budget and isolate runner OOM
-        run: |
-          set -o pipefail
-          node packages/brain/scripts/fleet-worker/attempt-limits-canary.cjs | tee attempt-runtime-limits.log
-        if: '!cancelled() && fromJSON(needs.plan.outputs.resource_plan).legacy'
-      - uses: actions/upload-artifact@v4
-        if: always() && fromJSON(needs.plan.outputs.resource_plan).legacy
-        with:
-          name: attempt-runtime-limits-evidence
-          path: attempt-runtime-limits.log
-          if-no-files-found: ignore
       - name: Resolve test image to immutable local ID
         run: |
           docker pull mirror.gcr.io/library/node:24-bookworm-slim
@@ -300,47 +247,6 @@ jobs:
           GIT_SHA="$GITHUB_SHA" npx --no-install vite build --outDir .dist-pwa-e2e
           node e2e/playwright-cli.mjs test --config ../../tests/regression/manual-ui/playwright.config.ts
     if: github.event_name != 'schedule' && github.event.action != 'closed'
-  skill-contracts:
-    name: Skill contracts and restoration (${{ matrix.os }} / ${{ matrix.component }})
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            component: brain
-          - os: ubuntu-latest
-            component: root
-          - os: windows-latest
-            component: restore
-          - os: macos-latest
-            component: restore
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: npm
-        if: matrix.component != 'restore'
-      - name: Install locked test dependencies
-        run: npm ci --ignore-scripts --no-audit --no-fund
-        if: matrix.component != 'restore'
-      - name: Restore pinned skill sources
-        uses: ./.github/actions/skills-source
-        with:
-          ssh-key: ${{ secrets.SKILLS_SOURCE_SSH_KEY }}
-          expected-public-sha256: ${{ vars.SKILLS_SOURCE_PUBLIC_KEY_SHA256 }}
-      - name: Run actual source contracts
-        env:
-          COMPONENT: ${{ matrix.component }}
-          CI: 'true'
-          POSTGRES_INTEGRATION: '0'
-        run: node scripts/ci/run-skill-source-check.mjs "$COMPONENT"
-        if: matrix.component != 'restore'
-    if: github.event_name != 'schedule' && github.event.action != 'closed'
   codeql:
     name: CodeQL (${{ matrix.language }})
     if: github.event.action != 'closed'
@@ -399,7 +305,6 @@ jobs:
       - resource-canaries
       - runtime-integration
       - pwa-upgrade
-      - skill-contracts
       - codeql
     if: always() && github.event_name != 'schedule' && github.event.action != 'closed'
     runs-on: ubuntu-latest

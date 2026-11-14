@@ -36,6 +36,19 @@ beforeAll(async () => {
 });
 
 describe('syncOrphanTasksOnStartup', () => {
+  it('已认领的外部工作单重启时不按本机无PID回队或伪造本地进程', async () => {
+    mockPool.query.mockResolvedValueOnce({ rows: [{
+      id: 'external-task', task_type: 'content-pipeline', executor_kind: 'external-worker',
+      status: 'in_progress', claimed_by: 'zj-worker', claimed_at: '2026-11-14T02:00:00.000Z',
+      payload: { external_job_id: 'zj-job-1' }, started_at: '2026-11-14T02:00:00.000Z',
+    }] }).mockResolvedValue({ rows: [] });
+    const result = await syncOrphanTasksOnStartup();
+    expect(result.orphans_found).toBe(0);
+    expect(result.requeued).toBe(0);
+    expect(result.rebuilt).toBe(0);
+    expect(mockPool.query.mock.calls.some(([sql]) => /UPDATE tasks/.test(sql))).toBe(false);
+  });
+
   beforeEach(() => {
     mockPool.query.mockReset();
     for (const { taskId } of executor.getActiveProcesses()) executor.removeActiveProcess(taskId);

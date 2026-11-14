@@ -3,13 +3,13 @@
  * consciousness-loop.js — Wave 2 LLM 意识层（LangGraph 改造版）
  *
  * 每 20 分钟运行一次，通过 consciousness.graph.js 的 StateGraph 串行执行：
- *   thalamus → decision → rumination → plan_next_task
+ *   thalamus → decision（已有任务恢复）→ rumination
  *
  * PG Checkpointer 实现步骤级崩溃恢复：
- *   - thread_id = consciousness:{epochMs}（rotating，每次完整 run 用新 id）
+ *   - thread_id = consciousness:knowledge-v2:{epochMs}（rotating，每次完整 run 用新 id）
  *   - active thread_id 存入 brain_guidance（key = consciousness:active_thread）
  *   - Brain 重启后读 brain_guidance 恢复 thread_id，从断点续跑
- *   - 4 步全部完成后删除 brain_guidance 条目，下次 run 使用新 thread_id
+ *   - 3 步全部完成后删除 brain_guidance 条目，下次 run 使用新 thread_id
  *
  * 并发控制设计：
  *   - _isRunning 锁防止重入
@@ -97,7 +97,7 @@ export async function _runConsciousnessOnce({ timeoutMs = DEFAULT_TIMEOUT_MS } =
 
     // 确定 thread_id（优先使用 DB 中的恢复记录）
     let threadId, isResume;
-    if (existingThread?.thread_id) {
+    if (existingThread?.thread_id?.startsWith('consciousness:knowledge-v2:')) {
       // Brain 重启恢复场景：DB 中有未完成的 thread
       threadId = existingThread.thread_id;
       _activeThreadId = threadId;
@@ -108,7 +108,7 @@ export async function _runConsciousnessOnce({ timeoutMs = DEFAULT_TIMEOUT_MS } =
       isResume = true;
     } else {
       // 全新 run：生成新 thread_id
-      threadId = `consciousness:${Date.now()}`;
+      threadId = `consciousness:knowledge-v2:${Date.now()}`;
       _activeThreadId = threadId;
       isResume = false;
     }
@@ -146,7 +146,7 @@ export async function _runConsciousnessOnce({ timeoutMs = DEFAULT_TIMEOUT_MS } =
     await _clearActiveThread();
 
     return {
-      completed: completed_steps.length === 4,
+      completed: completed_steps.length === 3,
       actions: completed_steps,
       ...(errors.length > 0 ? { error: errors.join('; ') } : {}),
     };

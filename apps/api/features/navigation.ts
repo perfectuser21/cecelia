@@ -31,11 +31,10 @@ export function buildCoreNavigation(): NavGroup[] {
           entry('/cecelia/evolution', '进化复盘', 'TrendingUp'),
         ],
       }),
-      entry('/brain-models', 'AI 管理', 'Brain', {
+      entry('/system/team', 'AI 管理', 'Brain', {
         children: [
-          entry('/brain-models', '模型方案', 'Cpu'),
           entry('/account-usage', 'AI 额度', 'Gauge'),
-          entry('/system/team', '员工配置', 'Users'),
+          entry('/system/team', '员工目录', 'Users'),
           entry('/knowledge/memory', '记忆管理', 'Brain'),
           entry('/settings', '系统设置', 'Settings'),
         ],

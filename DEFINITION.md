@@ -1,8 +1,18 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.445.210
+**Brain 版本**: 1.445.215
+
+继续清理历史安全债务：固定N8N与飞书请求目的地及重定向边界，未限流的现役接口按匹配路由限流；日志首参固定，文档解析改为有界线性扫描。清退已证无调用的治理残留，现役任务与跨仓发布证据链保留。
+
+按主理人决定清退自动规划与旧 Skill ZIP 评分业务：移除自动生成建议/目标拆解/夜间规划及其专属入口；保留已有任务的登记归属、选择派发、租约回执、组织项目台账、现役 Skill 注册与工厂。历史数据库结构与数据保留。
+
+清退 App Server 与旧 attempt/OOM 的专项 CI 入口、专属 Canary 脚本及测试；资源专项仅保留 Linux 限额读取实测。普通运行 API、adapter 与历史资源清理不变，手动参数只接受 none/linux。
+
+清退 PR CI 的固定 Skill 来源合同：删除四个矩阵检查、五份 Skill 正文静态测试及专属配置/入口，并清退无现役调用的旧 Harness 合同检查脚本、测试与假数据；通用 Skill 固定来源恢复机制与业务运行接口保留。Brain 单测继续按 Vitest 文件路径哈希切六片，不按业务分组。
 
 显式Commander Workflow宿主将有界决策和单Activity验收结果存入DBOS；PG动作意图先提交，恢复只读回并核验原身份，未知动作隔离。首版仅非交互source单次活动；独立CLI与scratch故障验收，不改变生产公共Runner入口。
+
+清退 Cecelia 的内容业务：移除内容流水线、选题、内容类型/质量、发布队列和社媒效果采集的业务接口、自动调度、页面及专属测试；仅保留 content-pipeline 外部工作单登记类型，复用公共认领、租约与回执，禁止手动派发回落编码执行。保留通用任务、运行检查日报、Notion 连接和历史数据库记录。删除动态模型配置管理和写入口，运行时继续只读装载既有参数，不改变当前 API 模型调用。旧 Claude 订阅额度不作为其他执行器准入；本轮保留 Codex/Grok 账本与现役额度判断。
 
 Blocked 恢复单测隔离宿主资源清理：真实 tick 入口保留，工作树/slot 清理均绑定 stub，并在 tick 导入之前核对隔离。仅测试修复，不改变生产清理策略。
 
@@ -6317,19 +6327,18 @@ executeTick() 流程：
                └─ level=2 → 升级到皮层
 ```
 
-**44 个白名单 action**（棒4起 okr_initiative_plan/okr_scope_plan/okr_project_plan 随 scope/initiative 层退役移除，决策 ee4842a6；旧秋米 OKR 拆解决策已退役）：
+**39 个白名单 action**（棒4起 okr_initiative_plan/okr_scope_plan/okr_project_plan 随 scope/initiative 层退役移除，决策 ee4842a6；旧秋米 OKR 拆解决策已退役）：
 - 任务：dispatch_task, create_task, cancel_task, retry_task, reprioritize_task, pause_task, resume_task, mark_task_blocked, quarantine_task
 - OKR：create_okr, update_okr_progress
 - 系统：notify_user, log_event, escalate_to_brain, request_human_review
 - 分析：analyze_failure, predict_progress
-- 规划：create_proposal
 - 知识/学习：create_learning, update_learning, trigger_rca
 - 任务生命周期：update_task_prd, archive_task, defer_task
 - 控制：no_action, fallback_to_tick
 - 类型建议：suggest_task_type
 - 对话：handle_chat
-- 认知闭环：kr_replan, write_self_model, escalate_to_cortex
-- 提案（Inbox）：propose_decomposition, propose_weekly_plan, propose_priority_change, propose_anomaly_action, propose_milestone_review, heartbeat_finding
+- 认知闭环：escalate_to_cortex
+- 提案（Inbox）：propose_priority_change, propose_anomaly_action, heartbeat_finding
 - 扩展（v1.121.0）：reschedule_task, aggregate_tasks, merge_tasks, split_task, notify_oncall, adjust_resource_allocation, trigger_backup, rotate_credentials
 
 ### 3.3 L2 皮层 — Opus 深度分析

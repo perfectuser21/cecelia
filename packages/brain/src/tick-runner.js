@@ -32,7 +32,7 @@ import {
   executeDecision,
   splitActionsBySafety,
 } from './decision.js';
-import { planNextTask } from './planner.js';
+
 import { emit } from './event-bus.js';
 import { processEvent as thalamusProcessEvent, EVENT_TYPES } from './thalamus.js';
 import {
@@ -42,7 +42,6 @@ import {
 import {
   evaluateAlertness,
   canDispatch,
-  canPlan,
   getDispatchRate,
   ALERTNESS_LEVELS,
   LEVEL_NAMES,
@@ -54,23 +53,18 @@ import { runLayer2HealthCheck } from './health-monitor.js';
 import * as deptHeartbeatPlugin from './dept-heartbeat.js';
 import * as krProgressSyncPlugin from './kr-progress-sync-plugin.js';
 import * as heartbeatPlugin from './heartbeat-plugin.js';
-import * as goalEvalPlugin from './goal-eval-plugin.js';
+
 import {
   triggerDailyReview,
   triggerContractScan,
   triggerArchReview,
 } from './daily-review-scheduler.js';
 import { generateDailyDiaryIfNeeded } from './diary-scheduler.js';
-import { triggerDailyPublish } from './daily-publish-scheduler.js';
-import { generateWeeklyReport } from './weekly-report-generator.js';
-import { monitorPublishQueue } from './publish-monitor.js';
-import { schedulePostPublishCollection } from './post-publish-data-collector.js';
-import { syncSocialMediaData } from './social-media-sync.js';
-import { runDesireSystem } from './desire/index.js';
+
 import { runRumination } from './rumination.js';
 import { runCanaryDrillIfNeeded } from './canary-drill-scheduler.js';
 import { runSynthesisSchedulerIfNeeded } from './rumination-scheduler.js';
-import { runSuggestionCycle } from './suggestion-cycle.js';
+
 import { runConversationConsolidator } from './conversation-consolidator.js';
 import { feedDailyIfNeeded } from './notebook-feeder.js';
 import { publishCognitiveState } from './events/taskEvents.js';
@@ -92,14 +86,12 @@ import {
 import { triggerCodeQualityScan } from './task-generator-scheduler.js';
 import { zombieSweep } from './zombie-sweep.js';
 import * as pipelinePatrolPlugin from './pipeline-patrol-plugin.js';
-import * as lineStrategistDispatchPlugin from './line-strategist-dispatch-plugin.js';
+
 import * as pausedRequeuPlugin from './paused-requeuer-plugin.js';
 import * as krHealthDailyPlugin from './kr-health-daily-plugin.js';
 import * as cleanupWorkerPlugin from './cleanup-worker-plugin.js';
-import { scheduleDailyScrape } from './daily-scrape-scheduler.js';
 import { scheduleKR3ProgressReport } from './kr3-progress-scheduler.js';
 import { calculateAndWrite as calculateKR3Progress } from './kr3-progress-calculator.js';
-import { runDailySmoke } from './cron/daily-real-business-smoke.js';
 import { runDriftSentinel, DRIFT_SENTINEL_INTERVAL_MS } from './cron/drift-sentinel.js';
 import { runSkillDriftPatrol, isInPatrolWindow } from './cron/skill-drift-patrol.js';
 import { runTestLifecyclePatrol, isInPatrolWindow as isInTestLifecyclePatrolWindow } from './test-lifecycle-patrol.js';
@@ -184,7 +176,6 @@ const ZOMBIE_SWEEP_INTERVAL_MS = parseInt(process.env.CECELIA_ZOMBIE_SWEEP_INTER
 // PIPELINE_PATROL_INTERVAL_MS / PIPELINE_WATCHDOG_INTERVAL_MS / CLEANUP_WORKER_INTERVAL_MS
 // 已收口到对应 plugin 内部（D1.7c）— tick-runner.js 不再读这些常量
 const ORPHAN_PR_WORKER_INTERVAL_MS = parseInt(process.env.CECELIA_ORPHAN_PR_WORKER_INTERVAL_MS || String(30 * 60 * 1000), 10);
-// GOAL_EVAL_INTERVAL_MS 已收口到 goal-eval-plugin.js（D1.7c-plugin1）— tick-runner.js 不再读
 
 /** Check if a task is stale (in_progress for too long) — 与 tick.js 同名同义 */
 function isStale(task) {
@@ -347,11 +338,6 @@ async function executeTick() {
     console.error('[tick] Pipeline patrol plugin failed (non-fatal):', err.message);
   });
 
-  // [感知] Line 军师终态派发：每 10 分钟扫描落终态任务，按 line 建 strategist_decision
-  lineStrategistDispatchPlugin.tick({ pool, tickState, tickLog }).catch(err => {
-    console.error('[tick] Line-strategist dispatch plugin failed (non-fatal):', err.message);
-  });
-
   // [恢复] Paused 任务重排：每 5 分钟扫 paused>1h+retry<3 → requeue；retry>=3 → archived
   pausedRequeuPlugin.tick({ pool, tickState, tickLog }).catch(err => {
     console.error('[tick] Paused requeuer plugin failed (non-fatal):', err.message);
@@ -464,112 +450,10 @@ async function executeTick() {
   }
 
   // [感知] Initiative 闭环检查：每次 tick 都跑，纯 SQL，无 LLM
-  try {
-    const { checkInitiativeCompletion } = await import('./initiative-closer.js');
-    const initiativeResult = await checkInitiativeCompletion(pool);
-    tickLog(`[TICK] Initiative 完成检查: ${initiativeResult.closedCount} 个已关闭`);
-    if (initiativeResult.closedCount > 0) {
-      actionsTaken.push({
-        action: 'initiative_completion_check',
-        closed_count: initiativeResult.closedCount,
-        closed: initiativeResult.closed,
-      });
-    }
-  } catch (initiativeErr) {
-    console.error('[tick] Initiative completion check failed (non-fatal):', initiativeErr.message);
-  }
 
   // [感知] Scope 闭环检查：每次 tick 都跑，纯 SQL，无 LLM
-  try {
-    const { checkScopeCompletion } = await import('./initiative-closer.js');
-    const scopeResult = await checkScopeCompletion(pool);
-    if (scopeResult.closedCount > 0) {
-      tickLog(`[TICK] Scope 完成检查: ${scopeResult.closedCount} 个已关闭`);
-      actionsTaken.push({
-        action: 'scope_completion_check',
-        closed_count: scopeResult.closedCount,
-        closed: scopeResult.closed,
-      });
-    }
-  } catch (scopeErr) {
-    console.error('[tick] Scope completion check failed (non-fatal):', scopeErr.message);
-  }
-
-  // [感知] Project 完成检查：每次 tick 都跑，纯 SQL，无 LLM
-  try {
-    const { checkProjectCompletion } = await import('./initiative-closer.js');
-    const projectResult = await checkProjectCompletion(pool);
-    if (projectResult.closedCount > 0) {
-      tickLog(`[TICK] Project 完成检查: ${projectResult.closedCount} 个已关闭`);
-      actionsTaken.push({
-        action: 'project_completion_check',
-        closed_count: projectResult.closedCount,
-        closed: projectResult.closed,
-      });
-    }
-  } catch (projectErr) {
-    console.error('[tick] Project completion check failed (non-fatal):', projectErr.message);
-  }
-
-  // [感知] OKR Initiative 完成检测：新 okr_initiatives 表飞轮，纯 SQL，无 LLM
-  try {
-    const { checkOkrInitiativeCompletion } = await import('./okr-closer.js');
-    const okrInitResult = await checkOkrInitiativeCompletion(pool);
-    if (okrInitResult.closedCount > 0) {
-      actionsTaken.push({
-        action: 'okr_initiative_completion_check',
-        closed_count: okrInitResult.closedCount,
-        closed: okrInitResult.closed,
-      });
-    }
-  } catch (okrInitErr) {
-    console.error('[tick] OKR Initiative completion check failed (non-fatal):', okrInitErr.message);
-  }
-
-  // [感知] OKR Scope 完成检测：新 okr_scopes 表飞轮，纯 SQL，无 LLM
-  try {
-    const { checkOkrScopeCompletion } = await import('./okr-closer.js');
-    const okrScopeResult = await checkOkrScopeCompletion(pool);
-    if (okrScopeResult.closedCount > 0) {
-      actionsTaken.push({
-        action: 'okr_scope_completion_check',
-        closed_count: okrScopeResult.closedCount,
-        closed: okrScopeResult.closed,
-      });
-    }
-  } catch (okrScopeErr) {
-    console.error('[tick] OKR Scope completion check failed (non-fatal):', okrScopeErr.message);
-  }
-
-  // [感知] OKR Project 完成检测：新 okr_projects 表飞轮，纯 SQL，无 LLM
-  try {
-    const { checkOkrProjectCompletion } = await import('./okr-closer.js');
-    const okrProjectResult = await checkOkrProjectCompletion(pool);
-    if (okrProjectResult.closedCount > 0) {
-      actionsTaken.push({
-        action: 'okr_project_completion_check',
-        closed_count: okrProjectResult.closedCount,
-        closed: okrProjectResult.closed,
-      });
-    }
-  } catch (okrProjectErr) {
-    console.error('[tick] OKR Project completion check failed (non-fatal):', okrProjectErr.message);
-  }
 
   // [感知] Initiative 队列激活：每次 tick 检查，从 pending 按优先级激活（capacity-aware）
-  try {
-    const { activateNextInitiatives } = await import('./initiative-closer.js');
-    const activated = await activateNextInitiatives(pool);
-    if (activated > 0) {
-      tickLog(`[TICK] Initiative 激活: ${activated} 个从 pending → active`);
-      actionsTaken.push({
-        action: 'initiative_queue_activate',
-        activated_count: activated,
-      });
-    }
-  } catch (activateErr) {
-    console.error('[tick] Initiative queue activation failed (non-fatal):', activateErr.message);
-  }
 
   // [感知] KR 队列激活：从 pending KR 中按优先级激活
   try {
@@ -587,23 +471,6 @@ async function executeTick() {
   }
 
   // [感知] Project 层容量管理：激活/降级确保 active 在 capacity 范围内
-  try {
-    const { manageProjectActivation } = await import('./project-activator.js');
-    const { computeCapacity } = await import('./capacity.js');
-    const DEFAULT_SLOTS = 9;
-    const cap = computeCapacity(DEFAULT_SLOTS);
-    const projectResult = await manageProjectActivation(pool, cap.project);
-    if (projectResult.activated > 0 || projectResult.deactivated > 0) {
-      tickLog(`[TICK] Project 容量管理: +${projectResult.activated} 激活, -${projectResult.deactivated} 降级`);
-      actionsTaken.push({
-        action: 'project_capacity_management',
-        activated: projectResult.activated,
-        deactivated: projectResult.deactivated,
-      });
-    }
-  } catch (projectCapErr) {
-    console.error('[tick] Project capacity management failed (non-fatal):', projectCapErr.message);
-  }
 
   // [感知] KR 进度验证：每小时一次，从外部数据源采集真实指标
   // D1.7c-plugin1: 抽到 kr-progress-sync-plugin.js
@@ -691,41 +558,6 @@ async function executeTick() {
     // Continue with normal tick if thalamus fails
   }
   } // end isConsciousnessEnabled() (thalamus)
-
-  // 0.5. PR Plans Completion Check (三层拆解状态自动更新)
-  try {
-    const { checkPrPlansCompletion } = await import('./planner.js');
-    const completedPrPlans = await checkPrPlansCompletion();
-    if (completedPrPlans.length > 0) {
-      tickLog(`[tick] Auto-completed ${completedPrPlans.length} PR Plans`);
-      actionsTaken.push({
-        action: 'pr_plans_completion_check',
-        completed_count: completedPrPlans.length,
-        completed_ids: completedPrPlans
-      });
-    }
-  } catch (prPlansErr) {
-    console.error('[tick] PR Plans completion check failed:', prPlansErr.message);
-  }
-
-  // 0.7. 统一拆解检查（七层架构）
-  publishCognitiveState({ phase: 'decomposition', detail: '检查 OKR 拆解状态…' });
-  try {
-    const { runDecompositionChecks } = await import('./decomposition-checker.js');
-    const decompSummary = await runDecompositionChecks();
-    if (decompSummary.total_created > 0) {
-      const activePaths = decompSummary.active_paths?.length ?? 0;
-      tickLog(`[tick] Created ${decompSummary.total_created} decomposition tasks (${activePaths} active paths)`);
-      actionsTaken.push({
-        action: 'decomposition_check',
-        created_count: decompSummary.total_created,
-        active_paths: activePaths,
-        tasks: decompSummary.created_tasks
-      });
-    }
-  } catch (decompErr) {
-    console.error('[tick] Decomposition check failed:', decompErr.message);
-  }
 
   // 0.5.4b. Crystallize Pipeline Orchestration Check — 检测 queued crystallize 任务，创建子任务
   try {
@@ -873,17 +705,6 @@ async function executeTick() {
     }
   }
 
-  // 0.5.5. Goal Outer Loop 评估：每 24 小时评估一次所有活跃 KR 整体进展
-  // D1.7c-plugin1: 抽到 goal-eval-plugin.js
-  try {
-    const goalRes = await goalEvalPlugin.tick(now, tickState);
-    if (goalRes && goalRes.actions && goalRes.actions.length > 0) {
-      actionsTaken.push(...goalRes.actions);
-    }
-  } catch (goalPluginErr) {
-    console.error('[tick] goal-eval plugin failed (non-fatal):', goalPluginErr.message);
-  }
-
   // 0.13. HEARTBEAT.md 灵活巡检：每 30 分钟一次，L1 丘脑执行
   // D1.7c-plugin1: 抽到 heartbeat-plugin.js
   try {
@@ -962,7 +783,6 @@ async function executeTick() {
     );
   }
 
-
   // 3. Get daily focus
   const focusResult = await getDailyFocus();
 
@@ -1031,24 +851,6 @@ async function executeTick() {
   // Fix: 无活跃目标时直接返回，避免 SQL OR '{}' 条件导致返回全部任务
   if (allGoalIds.length === 0) {
     tickLog('[tick] No active goals found, skipping tick');
-    // Cortex Insight 7670a6c3: active_goals=0 是方向性崩溃前置信号，立即派
-    // strategy_session 自动生成新 OKR（带 24h 冷却 + 幂等保护）。失败不阻塞 tick。
-    let zeroGoalsTrigger = null;
-    try {
-      const { maybeTriggerStrategySession } = await import('./active-goals-zero-trigger.js');
-      // DEPRECATED(P1-PR1 2026-07-06): 已迁移 scheduler-jobs.js。executeTick 自 Wave 2 起不被调用；若未来复活本函数，必须先移除此调用以防双跑。
-      zeroGoalsTrigger = await maybeTriggerStrategySession(pool);
-      if (zeroGoalsTrigger.created) {
-        tickLog(`[tick] active_goals=0 trigger: dispatched strategy_session task ${zeroGoalsTrigger.taskId}`);
-        actionsTaken.push({
-          action: 'trigger_strategy_session',
-          reason: 'active_goals_zero',
-          task_id: zeroGoalsTrigger.taskId,
-        });
-      }
-    } catch (triggerErr) {
-      console.error('[tick] active_goals=0 trigger failed (non-fatal):', triggerErr.message);
-    }
 
     return {
       success: true,
@@ -1056,7 +858,6 @@ async function executeTick() {
       decision_engine: decisionEngineResult,
       focus: null,
       dispatch: { dispatched: 0, reason: 'no_active_goals' },
-      zero_goals_trigger: zeroGoalsTrigger,
       actions_taken: actionsTaken,
       summary: { in_progress: 0, queued: 0, stale: 0 },
       tick_duration_ms: Date.now() - now.getTime(),
@@ -1200,26 +1001,6 @@ async function executeTick() {
       reason: `Task has been in_progress for over ${STALE_THRESHOLD_HOURS} hours`
     });
   }
-
-  // 6. Planning: 队列 < 3 时预规划下一批（不再要求完全空闲）
-  //    原设计：queued=0 AND in_progress=0 才规划，导致 Cecelia 只能被动消化
-  //    修复后：队列较少时提前规划，更主动
-  publishCognitiveState({ phase: 'planning', detail: '规划下一步任务…', meta: { queued: queued.length, in_progress: inProgress.length } });
-  if (queued.length < 3 && allGoalIds.length > 0) {
-    const planKrIds = readyKrIds.length > 0 ? readyKrIds : allGoalIds; // 优先 ready KRs
-    Promise.resolve()
-      .then(async () => {
-        const planned = await planNextTask(planKrIds);
-        if (planned.planned) {
-          tickLog(`[tick] plan fire-and-forget: ${planned.task?.title}`);
-        }
-      })
-      .catch(e => console.warn('[tick] planNextTask fire-and-forget 失败:', e.message));
-  } else if (!canPlan() && queued.length === 0 && inProgress.length === 0) {
-    tickLog(`[tick] Planning disabled at alertness level ${LEVEL_NAMES[alertnessResult?.level || 0]}`);
-  }
-
-  // Note: Auto OKR decomposition now handled by decomposition-checker.js (0.7)
 
   // 6.5. quota_exhausted requeue — billing pause 未激活时，梯度释放 quota_exhausted 任务
   // 逻辑：pause 激活期间任务留在 quota_exhausted；pause 过期后每 tick 最多释放 MAX_REQUEUE_PER_TICK 个
@@ -1583,36 +1364,12 @@ async function executeTick() {
   Promise.resolve().then(() => triggerContractScan(pool))
     .catch(e => console.warn('[tick] 契约扫描失败:', e.message));
 
-  // 10.17b 每日发布调度（UTC 03:00 = 北京时间 11:00，处理 pending content_publish_jobs，fire-and-forget）
-  Promise.resolve().then(() => triggerDailyPublish(pool))
-    .catch(e => console.warn('[tick] 每日发布调度失败:', e.message));
-
-  // 10.17d 每日内容日报（UTC 01:00 = 北京时间 09:00，汇总昨日数据，fire-and-forget）
+  // 10.17d 每日运行日报（UTC 01:00 = 北京时间 09:00，汇总昨日数据，fire-and-forget）
   // flag 门控：DBOS_DURABLE_ENABLED 关=原 generateDailyReport（行为零变化），开=durable 崩溃可恢复路径
   Promise.resolve().then(async () => {
     const { routeDailyReport } = await import('./durable/daily-report-router.js');
     return routeDailyReport(pool);
-  }).catch(e => console.warn('[tick] 每日内容日报失败:', e.message));
-
-  // 10.17e 每周内容周报（每周一 UTC 01:00 = 北京时间 09:00，汇总上周数据，fire-and-forget）
-  Promise.resolve().then(() => generateWeeklyReport(pool))
-    .catch(e => console.warn('[tick] 每周内容周报失败:', e.message));
-
-  // 10.17c 发布队列监控（每 tick，自动重试 failed 任务 + 更新今日统计，fire-and-forget）
-  Promise.resolve().then(() => monitorPublishQueue(pool))
-    .catch(e => console.warn('[tick] 发布队列监控失败:', e.message));
-
-  // 10.17d 发布后数据回收（每 tick，触发 4h 后的平台数据采集，fire-and-forget）
-  Promise.resolve().then(() => schedulePostPublishCollection(pool))
-    .catch(e => console.warn('[tick] 发布后数据回收失败:', e.message));
-
-  // 10.17e social_media_raw 数据同步（每 tick，将本机 raw DB 同步到 content_analytics，fire-and-forget）
-  Promise.resolve().then(() => syncSocialMediaData(pool))
-    .catch(e => console.warn('[tick] social-media-sync 失败:', e.message));
-
-  // 10.17f 每日全平台采集调度（UTC 20:00 = 北京时间次日 04:00，fire-and-forget）
-  Promise.resolve().then(() => scheduleDailyScrape(pool))
-    .catch(e => console.warn('[tick] 每日平台采集调度失败:', e.message));
+  }).catch(e => console.warn('[tick] 每日运行日报失败:', e.message));
 
   // 10.17g KR3 每日进度报告（UTC 06:00 = 北京时间 14:00，fire-and-forget）
   Promise.resolve().then(() => scheduleKR3ProgressReport(pool))
@@ -1621,16 +1378,6 @@ async function executeTick() {
   // 10.17g2 KR3 进度回写（每 tick，将里程碑 decisions 转化为 key_results.progress，修复 25% 陈旧数据）
   Promise.resolve().then(() => calculateKR3Progress(pool))
     .catch(e => console.warn('[tick] KR3 进度回写失败:', e.message));
-
-  // 10.17h 每日真业务 E2E smoke（UTC 20:00 = 北京时间 04:00，防生产腐蚀，fire-and-forget）
-  Promise.resolve().then(() => runDailySmoke(pool))
-    .catch(e => console.warn('[tick] daily smoke 失败:', e.message));
-
-  // 10.18 欲望解堵循环（每 tick，将高紧迫度 desires 转化为 suggestions，CONSCIOUSNESS_ENABLED=false 时跳过）
-  if (isConsciousnessEnabled()) {
-    Promise.resolve().then(() => runSuggestionCycle(pool))
-      .catch(e => console.warn('[tick] suggestion cycle 失败:', e.message));
-  }
 
   // 10.19 对话压缩（每 tick，将长对话自动摘要写入 memory_stream，CONSCIOUSNESS_ENABLED=false 时跳过）
   if (isConsciousnessEnabled()) {
@@ -1667,17 +1414,6 @@ async function executeTick() {
   }
 
   } // end !MINIMAL_MODE (10.x 所有自动调度)
-
-  // 11. 欲望系统（六层主动意识）— CONSCIOUSNESS_ENABLED=false 时跳过
-  let desireResult = null;
-  if (isConsciousnessEnabled()) {
-    publishCognitiveState({ phase: 'desire', detail: '感知与表达…' });
-    try {
-      desireResult = await runDesireSystem(pool);
-    } catch (desireErr) {
-      console.error('[tick] desire system error:', desireErr.message);
-    }
-  }
 
   // 11.5 代码质量扫描（每天首次 tick 时触发）— CONSCIOUSNESS_ENABLED=false 时跳过
   let scanResult = null;
@@ -1739,7 +1475,6 @@ async function executeTick() {
     dept_heartbeats: deptHeartbeatResult,
     daily_review: dailyReviewResult,
     rumination: ruminationResult,
-    desire_system: desireResult,
     cognition: cognitionSnapshot,
     actions_taken: actionsTaken,
     summary: {

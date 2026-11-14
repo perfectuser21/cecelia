@@ -79,8 +79,8 @@ export const BRAIN_MANIFEST = {
       id: 'core',
       label: '意识核心',
       color: '#a855f7',
-      desc: '丘脑路由 + 皮层分析 + 欲望形成 + 反刍洞察',
-      nodeIds: ['thalamus', 'cortex', 'cognitive', 'desire', 'rumination'],
+      desc: '丘脑路由 + 皮层分析 + 反刍洞察',
+      nodeIds: ['thalamus', 'cortex', 'cognitive', 'rumination'],
       modules: [
         {
           id: 'thalamus',
@@ -104,13 +104,6 @@ export const BRAIN_MANIFEST = {
           nature: 'dynamic',
         },
         {
-          id: 'desire',
-          label: '欲望系统',
-          desc: '感知→情绪→记忆→反思→欲望形成→表达（6 层管道）',
-          file: 'desire/index.js',
-          nature: 'growing',
-        },
-        {
           id: 'rumination',
           label: '反刍',
           desc: '批量深度反思，30min 周期，洞察写回 self_model',
@@ -124,12 +117,12 @@ export const BRAIN_MANIFEST = {
       id: 'action',
       label: '行动层',
       color: '#22c55e',
-      desc: '调度执行——规划任务、执行任务、建议路由与防护机制',
+      desc: '调度执行——选择已有任务、执行、人工建议台账与防护机制',
       nodeIds: ['planner', 'executor', 'suggestion', 'immune'],
       modules: [
         {
           id: 'planner',
-          label: '调度规划',
+          label: '队列选择',
           desc: '选择下一个任务，KR 轮转评分，资源检查',
           file: 'planner.js',
           nature: 'dynamic',
@@ -144,7 +137,7 @@ export const BRAIN_MANIFEST = {
         {
           id: 'suggestion',
           label: '建议系统',
-          desc: '欲望→行动建议评分（score >= 0.7）——⚠️ P0: 下游 planner 路径已废弃（PR #252）',
+          desc: '人工登记、分拣与更新建议状态，不自动生成建议或派发任务',
           file: 'suggestion-triage.js',
           nature: 'dynamic',
         },
@@ -228,7 +221,7 @@ export const BRAIN_MANIFEST = {
       to: 'action',
       label: '决策→行动',
       type: 'primary',
-      desc: '丘脑路由任务 → 调度规划 → 执行器（⚠️ suggestion→planner 子路径已废弃）',
+      desc: '明确任务 → 队列选择 → 执行器',
       broken: false,
     },
     {
@@ -250,24 +243,10 @@ export const BRAIN_MANIFEST = {
   ],
 
   // 模块级别断路连接（Level 2 可视化标红）
-  brokenConnections: [
-    {
-      from: 'suggestion',
-      to: 'planner',
-      reason: 'PR #252 废弃 suggestion-dispatcher.js，欲望信号现在直接到 executor',
-      severity: 'P0',
-    },
-  ],
+  brokenConnections: [],
 
   // 已知问题（孤岛/盲场）
   issues: [
-    {
-      severity: 'P0',
-      type: 'broken_connection',
-      title: 'suggestion→planner 路径断路',
-      detail: 'PR #252 后 suggestion-dispatcher.js 废弃，desire→suggestion→planner 路径不再工作。图上的线已是死路。',
-      affected: ['suggestion', 'planner'],
-    },
     {
       severity: 'P1',
       type: 'no_consumer',

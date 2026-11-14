@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
+import { parse } from 'acorn';
 import { describe, expect, it, vi } from 'vitest';
 import { isIsolatedRuntime } from '../runtime-safety.js';
 import { CODING_MUTATION_TASK_TYPES, REVIEW_TASK_TYPES } from '../lib/task-type-registry.js';
@@ -7,9 +8,21 @@ import { CODING_MUTATION_TASK_TYPES, REVIEW_TASK_TYPES } from '../lib/task-type-
 // Execute the actual route handler without importing the server/module graph or
 // starting background loops. Every I/O boundary is injected; the runtime guard is real.
 const source = readFileSync(new URL('../routes/goals.js', import.meta.url), 'utf8');
-const start = source.indexOf("router.get('/health',");
-const end = source.indexOf('\n/**', start);
-const healthSource = source.slice(start, end);
+const ast = parse(source, { ecmaVersion: 'latest', sourceType: 'module' });
+const registrations = ast.body
+  .filter(node => node.type === 'ExpressionStatement')
+  .map(node => node.expression)
+  .filter(node => node.type === 'CallExpression'
+    && node.callee.type === 'MemberExpression'
+    && node.callee.object.name === 'router'
+    && node.callee.property.name === 'get'
+    && node.arguments[0]?.value === '/health');
+expect(registrations).toHaveLength(1);
+const callback = registrations[0].arguments
+  .filter(node => node.type === 'FunctionExpression' || node.type === 'ArrowFunctionExpression')
+  .at(-1);
+expect(callback).toBeDefined();
+const healthSource = `(${source.slice(callback.start, callback.end)})`;
 
 function harness(env = { NODE_ENV: 'test' }) {
   const deps = {
@@ -22,11 +35,9 @@ function harness(env = { NODE_ENV: 'test' }) {
     checkXianBridgeHealth: vi.fn().mockResolvedValue('online'),
     describeFleetTransportReadiness: vi.fn(() => ({ enabled: true, status: 'ready', reason: null, shared_secret_configured: true, worker_machines: ['mock-worker'] })),
   };
-  let handler;
-  vm.runInNewContext(healthSource, {
+  const handler = vm.runInNewContext(healthSource, {
     ...deps,
     CODING_MUTATION_TASK_TYPES, REVIEW_TASK_TYPES,
-    router: { get: (path, fn) => { expect(path).toBe('/health'); handler = fn; } },
     isIsolatedRuntime: () => isIsolatedRuntime(env),
     process: { env, uptime: () => 100.5 },
     pkg: { version: 'test-version' },

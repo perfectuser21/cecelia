@@ -60,7 +60,6 @@ import createDecisionsMatchRouter from './src/routes/decisions.js';
 import captureAtomsRoutes from './src/routes/capture-atoms.js';
 import capturesRoutes from './src/routes/captures.js';
 import projectionsRoutes from './src/routes/projections.js';
-import contentPipelineRoutes from './src/routes/content-pipeline.js';
 import canRunRoutes from './src/routes/can-run.js';
 import bypassActionsRoutes from './src/routes/bypass-actions.js';
 import okrHierarchyRoutes from './src/routes/okr-hierarchy.js';
@@ -97,7 +96,6 @@ import phoneRegistryRouter from './src/routes/phone-registry.js';
 import resourceHealthRouter from './src/routes/resource-health.js';
 import commanderHeartbeatRouter from './src/routes/commander-heartbeat.js';
 import goldenPathsRouter from './src/routes/golden-paths.js';
-import skillEvalRoutes from './src/routes/eval.js';
 import rpaDevVerifyRouter from './src/routes/rpa-dev-verify.js';
 import incidentsRouter from './src/routes/incidents.js';
 import graphRoutes from './src/routes/graph.js';
@@ -417,21 +415,16 @@ app.use('/api/brain', projectionsRoutes);
 // Notion 写入端点：POST /notes, POST /notion/project, POST /notion/task
 app.use('/api/brain', notesRoutes);
 
-// Mount brain routes BEFORE contentPipelineRoutes to prevent /:id/stats wildcard
-// from intercepting /publish-results/stats and other specific routes in brainRoutes
 app.use('/api/brain', brainRoutes);
 
 app.use('/api/brain', canRunRoutes);
 app.use('/api/brain', bypassActionsRoutes); // 旁路报警：执行机上报 + 运维视图（派发总闸 H，任务 865b502c）
-app.use('/api/brain', contentPipelineRoutes); // /api/brain/content-types
 app.use('/api/brain/okr', okrHierarchyRoutes);
 app.use('/api/brain/context', contextRoutes);
 app.use('/api/brain/strategy-tree', strategyTreeRoutes);
 app.use('/api/brain/kr/convergence', krConvergenceRoutes);
 app.use('/api/brain/kr-project-map', krProjectMapRoutes);
 app.use('/api/brain/registry', registryRoutes);
-// Skill Evaluator 端点（POST /upload 需 X-Eval-Proxy-Token，GET /status 无需 token）
-app.use('/api/skill-eval', skillEvalRoutes);
 app.use('/api/brain', vocabAlias); // 行业词汇 API 别名：/value-streams 等 → 旧路径（决策 a340f100）
 app.use('/api/brain', journeysRouter);
 // GET /api/brain/issues — skills 期望的端点（journey_features 里有 issues，此处提供独立路由）
@@ -871,15 +864,6 @@ async function onBrainListening() {
     }
   } else {
     console.log('[Server] Evolution Scanner SKIPPED (CONSCIOUSNESS_ENABLED=false)');
-  }
-
-  // Initialize Nightly Tick (每日质检 + 对齐)
-  try {
-    const { startNightlyScheduler } = await import('./src/nightly-tick.js');
-    startNightlyScheduler();
-    console.log('[Server] Nightly Scheduler started');
-  } catch (e) {
-    console.warn('[Server] Nightly Scheduler init failed (non-fatal):', e.message);
   }
 
   // Initialize Nightly Orchestrator (夜间自驱引擎 v1 — 任务自动编排)

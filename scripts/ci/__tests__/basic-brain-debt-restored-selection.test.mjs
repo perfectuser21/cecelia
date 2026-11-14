@@ -8,7 +8,6 @@ import config from '../../../packages/brain/vitest.config.js';
 const require = createRequire(import.meta.url), glob = require('fast-glob');
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 const restored = [
-  "packages/brain/src/__tests__/planner-domain-routing.test.js",
   "packages/brain/src/__tests__/resolve-repo-path.test.js",
   "packages/brain/src/__tests__/task-generator-scheduler.test.js",
   "packages/brain/src/__tests__/daily-review-scheduler.test.js",
@@ -16,12 +15,10 @@ const restored = [
   "packages/brain/src/__tests__/tasks-feedback.test.js",
   "packages/brain/src/__tests__/tick-codex-immune.test.js",
   "packages/brain/src/__tests__/startup-sync.test.js",
-  "packages/brain/src/__tests__/model-registry.test.js",
   "packages/brain/src/__tests__/dept-heartbeat.test.js",
   "packages/brain/src/__tests__/services/memory-service.test.js",
   "packages/brain/src/__tests__/code-review-trigger.test.js",
   "packages/brain/src/__tests__/executor-retry-strategy.test.js",
-  "packages/brain/src/__tests__/content-type-registry.test.js",
   "packages/brain/src/__tests__/debt-04-planner-score.test.js",
   "packages/brain/src/__tests__/debt-04-scratch-guard.test.js"
 ];

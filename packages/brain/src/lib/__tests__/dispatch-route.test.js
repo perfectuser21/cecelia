@@ -28,8 +28,8 @@ describe('resolveDispatchRoute：按 executor 分支顺序判真实路由', () =
     }
   });
 
-  it('dev / trigger_backup / content_publish / workflow_run 以 queued 无头派发落已退役 Claude 桥接 → 无执行者', () => {
-    for (const t of ['dev', 'trigger_backup', 'content_publish', 'dept_heartbeat', 'strategist_decision']) {
+  it('dev / trigger_backup / dept_heartbeat / strategist_decision 无头派发落已退役 Claude 桥接 → 无执行者', () => {
+    for (const t of ['dev', 'trigger_backup', 'dept_heartbeat', 'strategist_decision']) {
       const r = route(t);
       expect(r.available, t).toBe(false);
       expect(r.route, t).toBe('claude-retired');
@@ -90,9 +90,8 @@ describe('守卫：注册表 surface 与真实路由一致', () => {
     expect(drift).toEqual([]);
   });
 
-  it('exploratory（画布线停车待人工）/ platform_scraper（Brain 内部采集器自领）不进 tick', () => {
+  it('exploratory（画布线停车待人工）不进 tick', () => {
     expect(TICK_DISPATCH_EXCLUDED).toContain('exploratory');
-    expect(TICK_DISPATCH_EXCLUDED).toContain('platform_scraper');
   });
 });
 

@@ -82,7 +82,7 @@ describe('generateDailyReport — 裸跑检测接线：AMBER 行进入日报正�
         }),
       };
       const out = await generateDailyReport(pool, new Date('2026-09-25T01:01:00Z'));
-      return { out, report: saved.map((p) => String(p[1])).find((v) => v.includes('ZenithJoy')) ?? '' };
+      return { out, report: saved.map((p) => String(p[1])).find((v) => v.includes('Brain 运行日报')) ?? '' };
     };
     const clean = await run(false);
     expect(clean.out.generated).toBe(true);

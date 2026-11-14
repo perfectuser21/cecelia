@@ -59,9 +59,9 @@ describe('getDomainSkillOverride - non-coding domains', () => {
     expect(result).toBe('/knowledge');
   });
 
-  it('growth domain → CMO 首选 skill /content-creator', () => {
+  it('growth domain → CMO 保留通用调研 skill /research', () => {
     const result = getDomainSkillOverride('dev', 'growth');
-    expect(result).toBe('/content-creator');
+    expect(result).toBe('/research');
   });
 });
 

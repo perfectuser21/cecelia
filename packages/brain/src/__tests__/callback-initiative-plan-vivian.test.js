@@ -59,7 +59,6 @@ vi.mock('../watchdog.js', () => ({ startWatching: vi.fn(), stopWatching: vi.fn()
 vi.mock('../desire-engine.js', () => ({ processDesires: vi.fn(async () => ({})) }));
 vi.mock('../dev-failure-classifier.js', () => ({ classifyDevFailure: vi.fn(async () => ({})) }));
 vi.mock('../self-model.js', () => ({ updateSelfModel: vi.fn(async () => {}), getSelfModel: vi.fn(async () => ({})) }));
-vi.mock('../suggestion-dispatcher.js', () => ({ dispatchSuggestion: vi.fn(async () => {}) }));
 
 import express from 'express';
 import request from 'supertest';

@@ -12,7 +12,6 @@ import deep from '../deep-integration.config.mjs';
 import privatePg from '../debt-pg.config.mjs';
 import realEnv from '../../../packages/brain/vitest.real-env-smoke.config.js';
 import rootConfig from '../../../vitest.config.js';
-import {skillSourceConfig} from '../skill-source-tests.mjs';
 import {commandsFor} from '../run-basic-check.mjs';
 import {planChecks} from '../basic-scope.mjs';
 import {isDeepStrictEqual} from 'node:util';
@@ -70,9 +69,9 @@ function configurationInventory(config, cwd = brainRoot) {
   return {maintained: select({test: {include: maintainedPatterns}}, cwd), selected: select(config, cwd)};
 }
 
-test('当前六个兼容symlink与真实owner在自动单测集合只收集一次，且保留真实owner入口', () => {
+test('当前五个兼容symlink与真实owner在自动单测集合只收集一次，且保留真实owner入口', () => {
   const selected = select(brain, brainRoot);
-  const aliases = ['dept-heartbeat-plugin', 'goal-eval-plugin', 'heartbeat-plugin',
+  const aliases = ['dept-heartbeat-plugin', 'heartbeat-plugin',
     'kr-progress-sync-plugin', 'tick-runner', 'tick-state'].map(name => `tests/${name}.test.js`);
   for (const alias of aliases) {
     assert.ok(lstatSync(join(root, alias)).isSymbolicLink(), `${alias}兼容入口仍在`);
@@ -194,7 +193,7 @@ for (const [name, include] of [
 }
 
 function loadWorkflows() {
-  return Object.fromEntries([['basic', 'ci.yml'], ['nightly', 'nightly-regression.yml'], ['pinned', 'ci.yml'], ['browser', 'ci.yml']]
+  return Object.fromEntries([['basic', 'ci.yml'], ['nightly', 'nightly-regression.yml'], ['browser', 'ci.yml']]
     .map(([name, file]) => [name, yaml.load(readFileSync(join(root, '.github/workflows', file), 'utf8'))]));
 }
 
@@ -244,7 +243,7 @@ function browserLane(workflow, text = browserConfig()) {
     ].join('\n')});
 }
 
-function automaticLanes({basic, nightly, pinned, browser}) {
+function automaticLanes({basic, nightly, browser}) {
   const lanes = [], checks = basic.jobs?.checks;
   const shards = planChecks(['packages/brain/src/server.js']).filter(row => row.component === 'brain-unit').map(row => row.shard);
   const unitCommands = isDeepStrictEqual(shards, [1, 2, 3, 4, 5, 6]) && shards.every(shard => commandsFor('brain-unit', String(shard)).some(command =>
@@ -272,14 +271,6 @@ function automaticLanes({basic, nightly, pinned, browser}) {
     env: {...pgEnv, SMOKE_ALLOW_WRITE: '1', BRAIN_URL: 'http://localhost:5221', BRAIN_CONTAINER: 'cecelia-brain-smoke'},
   })) lanes.push('real-env');
 
-  const contracts = pinned.jobs?.['skill-contracts'];
-  if (mainEvents(pinned) && isDeepStrictEqual(contracts?.strategy?.matrix, {include: [
-    {os:'ubuntu-latest',component:'brain'}, {os:'ubuntu-latest',component:'root'},
-    {os:'windows-latest',component:'restore'}, {os:'macos-latest',component:'restore'},
-  ]})
-    && knownStep(pinned, 'skill-contracts', {run: 'node scripts/ci/run-skill-source-check.mjs "$COMPONENT"',
-      runsOn:'${{ matrix.os }}', if:"matrix.component != 'restore'",
-      env: {COMPONENT: '${{ matrix.component }}', CI: 'true', POSTGRES_INTEGRATION: '0'}})) lanes.push('pinned-brain', 'pinned-root');
   if (browserLane(browser)) lanes.push('browser');
   return lanes;
 }
@@ -329,7 +320,6 @@ for (const [name, change] of [
 for (const [lane, workflowName, jobName, marker] of [
   ['deep', 'nightly', 'brain-integration', 'deep-integration.config.mjs'],
   ['real-env', 'nightly', 'real-env-smoke', 'vitest.real-env-smoke.config.js'],
-  ['pinned', 'pinned', 'skill-contracts', 'run-skill-source-check.mjs'],
 ]) {
   for (const mutation of ['--list', 'if false', 'heredoc', '错误cwd', '错误env', 'job-if-false', 'step-if-false', '打印shell', '仅手动']) {
     test(`${lane}自动接入拒绝${mutation}`, () => {
@@ -340,14 +330,13 @@ for (const [lane, workflowName, jobName, marker] of [
       if (mutation === 'heredoc') step.run = `cat <<'PRINTED'\n${step.run}\nPRINTED`;
       if (mutation === '错误cwd') workflow.defaults = {run: {'working-directory': '/tmp'}};
       if (mutation === '错误env') {
-        if (lane === 'pinned') step.env.COMPONENT = 'brain';
-        else job.env.POSTGRES_INTEGRATION = '0';
+        job.env.POSTGRES_INTEGRATION = '0';
       }
       if (mutation === 'job-if-false') job.if = false;
       if (mutation === 'step-if-false') step.if = false;
       if (mutation === '打印shell') step.shell = 'cat {0}';
       if (mutation === '仅手动') workflow.on = {workflow_dispatch: {}};
-      assert.ok(!automaticLanes(workflows).some(value => value === lane || (lane === 'pinned' && value.startsWith('pinned-'))));
+      assert.ok(!automaticLanes(workflows).some(value => value === lane));
     });
   }
 }
@@ -368,10 +357,9 @@ for (const mutation of ['--list', 'if false', 'heredoc', '错误cwd', 'job-if-fa
 }
 
 test('当前无人自动接收的Brain测试与精确债务清单一致', () => {
-  const configurations = {default: [brain, brainRoot], deep: [deep, brainRoot], 'private-pg': [privatePg, brainRoot], 'real-env': [realEnv, brainRoot],
-    'pinned-brain': [skillSourceConfig('brain'), brainRoot], 'pinned-root': [skillSourceConfig('root'), root]};
+  const configurations = {default: [brain, brainRoot], deep: [deep, brainRoot], 'private-pg': [privatePg, brainRoot], 'real-env': [realEnv, brainRoot]};
   const lanes = automaticLanes(loadWorkflows());
-  assert.deepEqual(lanes, ['default', 'deep', 'private-pg', 'real-env', 'pinned-brain', 'pinned-root', 'browser']);
+  assert.deepEqual(lanes, ['default', 'deep', 'private-pg', 'real-env', 'browser']);
   const selected = lanes.flatMap(lane => lane === 'browser' ? browserFiles : select(...configurations[lane]));
   const manifest = require('../brain-test-debt.json');
   assert.equal(manifest.version, 1);

@@ -96,12 +96,6 @@ const EXECUTOR_AFFINITY = {
   'dept_heartbeat':       { primary: 'codex',   fallback: null,     no_downgrade: true  },
 
   // 内容工厂 Pipeline（始终走 Codex 西安）
-  'content-pipeline':     { primary: 'codex',   fallback: null,     no_downgrade: true  },
-  'content-research':     { primary: 'codex',   fallback: null,     no_downgrade: true  },
-  'content-generate':     { primary: 'codex',   fallback: null,     no_downgrade: true  },
-  'content-review':       { primary: 'codex',   fallback: null,     no_downgrade: true  },
-  'content-export':       { primary: 'codex',   fallback: null,     no_downgrade: true  },
-  'content_publish':      { primary: 'codex',   fallback: null,     no_downgrade: true  },
 };
 
 /** 未定义的 task_type 默认走 Claude，允许降级到 Codex */

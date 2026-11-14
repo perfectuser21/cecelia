@@ -225,9 +225,7 @@ vi.mock('../../canary-drill-scheduler.js', () => ({
 vi.mock('../../credentials-health-scheduler.js', () => ({
   runCredentialsHealthCheck: externalBoundaryMocks.runCredentialsHealthCheck,
 }));
-vi.mock('../../social-media-sync.js', () => ({
-  syncSocialMediaData: externalBoundaryMocks.syncSocialMediaData,
-}));
+
 vi.mock('../../durable/daily-report-router.js', () => ({
   routeDailyReport: externalBoundaryMocks.routeDailyReport,
 }));
@@ -249,7 +247,7 @@ vi.mock('../../credential-expiry-checker.js', () => ({
 // ========== 意识模块 mocks（要断言调用次数）==========
 vi.mock('../../rumination.js', () => ({ runRumination: vi.fn().mockResolvedValue({ accumulator: 0 }) }));
 vi.mock('../../diary-scheduler.js', () => ({ generateDailyDiaryIfNeeded: vi.fn().mockResolvedValue({}) }));
-vi.mock('../../suggestion-cycle.js', () => ({ runSuggestionCycle: vi.fn().mockResolvedValue({}) }));
+
 vi.mock('../../conversation-consolidator.js', () => ({ runConversationConsolidator: vi.fn().mockResolvedValue({}) }));
 vi.mock('../../notebook-feeder.js', () => ({ feedDailyIfNeeded: vi.fn().mockResolvedValue({}) }));
 vi.mock('../../self-report-collector.js', () => ({ collectSelfReport: vi.fn().mockResolvedValue({}) }));
@@ -257,7 +255,7 @@ vi.mock('../../evolution-scanner.js', () => ({
   scanEvolutionIfNeeded: vi.fn().mockResolvedValue({}),
   synthesizeEvolutionIfNeeded: vi.fn().mockResolvedValue({}),
 }));
-vi.mock('../../desire/index.js', () => ({ runDesireSystem: vi.fn().mockResolvedValue({}) }));
+
 vi.mock('../../rumination-scheduler.js', () => ({ runSynthesisSchedulerIfNeeded: vi.fn().mockResolvedValue({}) }));
 vi.mock('../../dept-heartbeat.js', () => ({ triggerDeptHeartbeats: vi.fn().mockResolvedValue({ triggered: 0, skipped: 0, results: [] }) }));
 
@@ -319,12 +317,11 @@ import {
 } from '../../consciousness-guard.js';
 import { runRumination } from '../../rumination.js';
 import { generateDailyDiaryIfNeeded } from '../../diary-scheduler.js';
-import { runDesireSystem } from '../../desire/index.js';
 import { resetTickStateForTests } from '../../tick-state.js';
 // scanEvolutionIfNeeded 不在此列：已移出 consciousness 守护（纯 GitHub API 调用，不消耗 LLM），
 // consciousness=false 时仍正常运行，不应断言它被跳过。
 
-const CONSCIOUSNESS_MOCKS = [runRumination, generateDailyDiaryIfNeeded, runDesireSystem];
+const CONSCIOUSNESS_MOCKS = [runRumination, generateDailyDiaryIfNeeded];
 const CLEANUP_MOCKS = Object.values(cleanupMocks);
 const HOST_MUTATION_MOCKS = Object.values(hostMutationMocks);
 const EXTERNAL_BOUNDARY_MOCKS = Object.values(externalBoundaryMocks);

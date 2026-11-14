@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
+import { parse } from 'acorn';
 import { resolve } from 'node:path';
 import { isIsolatedRuntime } from '../../../src/runtime-safety.js';
 import { CODING_MUTATION_TASK_TYPES, REVIEW_TASK_TYPES } from '../../../src/lib/task-type-registry.js';
@@ -10,11 +11,22 @@ import { root, fixture } from './fixtures/smoke-production-guard-fixture.mjs';
 // Run the real health handler; inject only DB/probe I/O so no server automation starts.
 async function actualHealth(env) {
   const source = await readFile(resolve(root, 'packages/brain/src/routes/goals.js'), 'utf8');
-  const start = source.indexOf("router.get('/health',");
-  assert.ok(start >= 0);
-  let handler, body;
-  vm.runInNewContext(source.slice(start, source.indexOf('\n/**', start)), {
-    router: { get: (_, fn) => { handler = fn; } },
+  const ast = parse(source, { ecmaVersion: 'latest', sourceType: 'module' });
+  const registrations = ast.body
+    .filter(node => node.type === 'ExpressionStatement')
+    .map(node => node.expression)
+    .filter(node => node.type === 'CallExpression'
+      && node.callee.type === 'MemberExpression'
+      && node.callee.object.name === 'router'
+      && node.callee.property.name === 'get'
+      && node.arguments[0]?.value === '/health');
+  assert.equal(registrations.length, 1, 'expected exactly one real GET /health registration');
+  const callback = registrations[0].arguments
+    .filter(node => node.type === 'FunctionExpression' || node.type === 'ArrowFunctionExpression')
+    .at(-1);
+  assert.ok(callback, 'GET /health must retain its real business callback');
+  let body;
+  const handler = vm.runInNewContext(`(${source.slice(callback.start, callback.end)})`, {
     isIsolatedRuntime: () => isIsolatedRuntime(env),
     CODING_MUTATION_TASK_TYPES, REVIEW_TASK_TYPES,
     pool: { query: async sql => ({ rows: [sql.includes('count(*)::integer AS cnt')

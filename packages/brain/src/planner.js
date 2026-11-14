@@ -448,7 +448,7 @@ async function selectTargetProject(kr, state) {
  * @param {boolean} [options.dryRun=false] - If true, don't write to DB
  * @returns {Object|null} - Task or null
  */
-async function generateNextTask(kr, project, state, options = {}) {
+async function generateNextTask(kr, project, state, _options = {}) {
   // V4: Phase-aware task selection — dev tasks first.
   // Scope-aware: if project is a scope, look for tasks in its child initiatives
   let projectIds = [project.id];
@@ -544,17 +544,8 @@ async function generateNextTask(kr, project, state, options = {}) {
   return scored[0].task;
 }
 
-/**
- * 迁移499后保留显式拒绝边界，供旧调用者识别退役入口。
- * 历史 Initiative 只读，不再据其创建 architecture_design / initiative_plan。
- */
-async function generateArchitectureDesignTask(kr, project) {
-  throw new Error('layer_retired: Initiative 规划入口已退役，请通过 projects/tasks 当前入口创建任务');
-}
-
 // autoGenerateTask, KR_STRATEGIES, getFallbackTasks, generateTaskFromKR, generateTaskPRD
 // — all removed. Task creation is now 秋米's responsibility via /okr skill.
-
 
 /**
  * =============================================================================
@@ -695,7 +686,6 @@ export function selectActiveInitiativeForArea(area, state) {
 
   return queuedCandidates[0];
 }
-
 
 /**
  * =============================================================================
@@ -1113,7 +1103,6 @@ export {
   selectTargetProject,
   selectTargetScope,
   generateNextTask,
-  generateArchitectureDesignTask,
   // Learning penalty
   buildLearningPenaltyMap,
   LEARNING_PENALTY_SCORE,

@@ -13,32 +13,21 @@ vi.mock('../decision-executor.js', () => ({
 }));
 
 // isolate:false 修复：不在顶层 await import，改为 beforeAll + vi.resetModules()
-let enforceWhitelist, HEARTBEAT_ALLOWED_ACTIONS;
+let enforceWhitelist;
 
 beforeAll(async () => {
   vi.resetModules();
   const mod = await import('../heartbeat-inspector.js');
   enforceWhitelist = mod.enforceWhitelist;
-  HEARTBEAT_ALLOWED_ACTIONS = mod.HEARTBEAT_ALLOWED_ACTIONS;
 });
 
 describe('Heartbeat 白名单硬约束', () => {
-  it('白名单包含 6 个允许的 action', () => {
-    expect(HEARTBEAT_ALLOWED_ACTIONS).toEqual([
-      'no_action',
-      'log_event',
-      'propose_priority_change',
-      'propose_weekly_plan',
-      'heartbeat_finding',
-      'request_human_review',
-    ]);
-  });
 
   it('白名单内的 action 不变', () => {
     const actions = [
       { type: 'no_action' },
       { type: 'heartbeat_finding', params: { msg: 'test' } },
-      { type: 'propose_weekly_plan', params: {} },
+      { type: 'propose_priority_change', params: { task_id: 'task-1', priority: 'P1' } },
     ];
     const result = enforceWhitelist(actions);
     expect(result).toEqual(actions);

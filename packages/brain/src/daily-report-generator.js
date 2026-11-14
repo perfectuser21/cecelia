@@ -4,7 +4,7 @@
  * 自动日报生成器。
  *
  * 每次 Tick 末尾调用 generateDailyReport()，内部判断是否到达每日触发时间（UTC 01:00 = 北京时间 09:00）。
- * 如果是，则查询昨日内容产出数据，生成日报并推送飞书。
+ * 如果是，则汇总运行检查结果，保存日报并推送飞书。
  *
  * 触发窗口：UTC 01:00 - 01:05（北京时间 09:00 - 09:05）
  * 幂等机制：working_memory key='daily_report_triggered_{DATE}'
@@ -116,112 +116,6 @@ export async function markTodayDone(dbPool, today) {
 // ─── 数据查询 ─────────────────────────────────────────────────────────────────
 
 /**
- * 查询昨日 content-pipeline 完成任务。
- *
- * @param {import('pg').Pool} dbPool
- * @param {string} yesterday - YYYY-MM-DD
- * @returns {Promise<{count: number, keywords: string[]}>}
- */
-export async function fetchYesterdayContentOutput(dbPool, yesterday) {
-  const { rows } = await dbPool.query(
-    `SELECT id, payload
-     FROM tasks
-     WHERE task_type = 'content-pipeline'
-       AND status = 'completed'
-       AND DATE(completed_at) = $1`,
-    [yesterday]
-  );
-  const keywords = rows
-    .map(r => r.payload?.keyword)
-    .filter(Boolean)
-    .slice(0, 10);
-  return { count: rows.length, keywords };
-}
-
-/**
- * 查询各平台昨日发布情况（成功/失败数）。
- *
- * @param {import('pg').Pool} dbPool
- * @param {string} yesterday - YYYY-MM-DD
- * @returns {Promise<Array<{platform: string, success: number, failed: number}>>}
- */
-export async function fetchYesterdayPublishStats(dbPool, yesterday) {
-  const { rows } = await dbPool.query(
-    `SELECT platform,
-            COUNT(CASE WHEN status = 'success' THEN 1 END)::int AS success,
-            COUNT(CASE WHEN status = 'failed' THEN 1 END)::int AS failed
-     FROM content_publish_jobs
-     WHERE DATE(created_at) = $1
-     GROUP BY platform
-     ORDER BY platform`,
-    [yesterday]
-  );
-  return rows;
-}
-
-/**
- * 查询各平台昨日数据回收（读取/点赞/评论）。
- * 从 content_publish 类型 tasks 的 payload 中提取。
- *
- * @param {import('pg').Pool} dbPool
- * @param {string} yesterday - YYYY-MM-DD
- * @returns {Promise<Array<{platform: string, views: number|null, likes: number|null, comments: number|null}>>}
- */
-export async function fetchYesterdayEngagementData(dbPool, yesterday) {
-  const { rows } = await dbPool.query(
-    `SELECT payload->>'platform' AS platform,
-            payload->>'views' AS views,
-            payload->>'likes' AS likes,
-            payload->>'comments' AS comments
-     FROM tasks
-     WHERE task_type = 'content_publish'
-       AND DATE(created_at) = $1
-       AND payload->>'platform' IS NOT NULL`,
-    [yesterday]
-  );
-
-  const platformMap = {};
-  for (const row of rows) {
-    const p = row.platform;
-    if (!platformMap[p]) {
-      platformMap[p] = { platform: p, views: null, likes: null, comments: null };
-    }
-    if (row.views !== null) platformMap[p].views = (platformMap[p].views || 0) + Number(row.views);
-    if (row.likes !== null) platformMap[p].likes = (platformMap[p].likes || 0) + Number(row.likes);
-    if (row.comments !== null) platformMap[p].comments = (platformMap[p].comments || 0) + Number(row.comments);
-  }
-
-  return Object.values(platformMap);
-}
-
-/**
- * 查询昨日异常数量（content_publish_jobs 失败数）。
- *
- * @param {import('pg').Pool} dbPool
- * @param {string} yesterday - YYYY-MM-DD
- * @returns {Promise<number>}
- */
-export async function fetchYesterdayFailureCount(dbPool, yesterday) {
-  const { rows } = await dbPool.query(
-    `SELECT COUNT(*)::int AS cnt
-     FROM content_publish_jobs
-     WHERE status = 'failed'
-       AND DATE(created_at) = $1`,
-    [yesterday]
-  );
-  return rows[0]?.cnt || 0;
-}
-
-// ─── 日报生成 ─────────────────────────────────────────────────────────────────
-
-/**
- * 将数字转为友好展示（null 显示 N/A）。
- */
-function fmt(val) {
-  return val === null || val === undefined ? 'N/A' : String(val);
-}
-
-/**
  * 裸跑检测板块（链 bf5088a3 棒1，需求④ 出口）：窗口内有 dispatch_events(dispatched)、
  * 却没有对应 task_runs 行的执行——run 原语漏接或写入失败，留痕缺口，标 🟡 AMBER。
  * 无裸跑返回不含 AMBER 标记的一行说明（不误报）。
@@ -246,71 +140,13 @@ export function renderBareRunSection(bareRuns) {
 }
 
 /**
- * 生成日报文本（包含四个板块：内容产出、发布情况、数据回收、异常告警）。
- *
- * @param {string} reportDate - 日报日期（今天 YYYY-MM-DD）
- * @param {string} yesterday - 昨日日期
- * @param {{count: number, keywords: string[]}} contentOutput
- * @param {Array<{platform: string, success: number, failed: number}>} publishStats
- * @param {Array<{platform: string, views: number|null, likes: number|null, comments: number|null}>} engagementData
- * @param {number} failureCount
- * @param {Array|null} [bareRuns] findBareRuns 返回；null = 检测不可用，不出该板块
- * @param {{missing:Array,mismatched:Array,conflicts:Array}|null} [skillDrift] detectSkillBindingDrift 返回；null = 检测不可用，不出该板块
- * @param {object|null} [skillDist] readSkillDistState 返回（skill 分发漂移，链 bf5088a3 棒8）；null = 无数据，不出该板块
- * @param {object|null} [rescanStaleness] readRescanStalenessState 返回（地图照相层 rescan 停滞哨兵，P0 9dfd873a 案）；null = 无数据，不出该板块
- * @param {object|null} [assertionRed] readAssertionRedState 返回（业务断言红灯，链 bf5088a3 棒4 消费）；null = 24h 无探针 FAIL，不出该板块
- * @param {object|null} [mirrorDb] readMirrorDbState 返回（镜子库失联，守夜 A11 探活，决策 24a37029）；null = 无失联，不出该板块
- * @returns {string}
+ * 生成 Brain 运行日报，汇总派发留痕、Skill 漂移、断言及镜子库检查。
+ * @param {string} reportDate 日报日期
+ * @param {string} yesterday 检查覆盖日期
+ * @param {object} state 已采集的运行检查结果；不可用的检查为 null
  */
-export function buildReportText(reportDate, yesterday, contentOutput, publishStats, engagementData, failureCount, bareRuns = null, skillDrift = null, skillDist = null, rescanStaleness = null, assertionRed = null, mirrorDb = null) {
-  const lines = [];
-
-  lines.push(`ZenithJoy 内容日报 ${reportDate}`);
-  lines.push(`统计范围：${yesterday} 全天`);
-  lines.push('');
-
-  // ── 板块一：内容产出 ──────────────────────────────────────────────────────
-  lines.push('== 内容产出 ==');
-  if (contentOutput.count === 0) {
-    lines.push('昨日无 content-pipeline 完成任务。');
-  } else {
-    lines.push(`完成任务数：${contentOutput.count} 条`);
-    if (contentOutput.keywords.length > 0) {
-      lines.push(`关键词：${contentOutput.keywords.join('、')}`);
-    }
-  }
-  lines.push('');
-
-  // ── 板块二：发布情况 ──────────────────────────────────────────────────────
-  lines.push('== 发布情况 ==');
-  if (publishStats.length === 0) {
-    lines.push('昨日无发布任务。');
-  } else {
-    for (const stat of publishStats) {
-      lines.push(`${stat.platform}：成功 ${stat.success} / 失败 ${stat.failed}`);
-    }
-  }
-  lines.push('');
-
-  // ── 板块三：数据回收 ──────────────────────────────────────────────────────
-  lines.push('== 数据回收 ==');
-  if (engagementData.length === 0) {
-    lines.push('昨日无数据回收记录（payload 中无 views/likes/comments 字段）。');
-  } else {
-    for (const item of engagementData) {
-      lines.push(`${item.platform}：阅读 ${fmt(item.views)} / 点赞 ${fmt(item.likes)} / 评论 ${fmt(item.comments)}`);
-    }
-  }
-  lines.push('');
-
-  // ── 板块四：异常告警 ──────────────────────────────────────────────────────
-  lines.push('== 异常告警 ==');
-  if (failureCount === 0) {
-    lines.push('昨日无发布失败记录，一切正常。');
-  } else {
-    lines.push(`昨日 content_publish_jobs 失败 ${failureCount} 次，请及时排查。`);
-  }
-  lines.push('');
+export function buildReportText(reportDate, yesterday, { bareRuns = null, skillDrift = null, skillDist = null, rescanStaleness = null, assertionRed = null, mirrorDb = null } = {}) {
+  const lines = [`Cecelia Brain 运行日报 ${reportDate}`, `检查范围：${yesterday} 全天`, ''];
 
   // ── 板块五：裸跑检测（run 原语留痕缺口，AMBER）─────────────────────────────
   if (Array.isArray(bareRuns)) {
@@ -376,8 +212,34 @@ export async function saveReportToWorkingMemory(dbPool, date, reportText) {
 
 // ─── 主入口 ──────────────────────────────────────────────────────────────────
 
+/** 共享给普通路径与 durable step；不访问内容业务表。 */
+export async function collectOperationalReportState(dbPool) {
+  // 3.5 裸跑检测（run 原语）：查询失败降级为 null（不出该板块，不拖垮日报）
+  const bareRuns = await findBareRuns(dbPool, { windowMinutes: 24 * 60 }).catch((err) => {
+    console.warn(`[daily-report-generator] 裸跑检测失败（非阻断）: ${err.message}`);
+    return null;
+  });
+
+  // 3.6 skill 绑定漂移检测：检测不可用（查询失败/列未迁移）返回 null，不出该板块
+  const skillDrift = await detectSkillBindingDrift(dbPool, EXECUTOR_SKILL_MAP);
+
+  // 3.7 skill 分发漂移（读 skill-dist-drift job 落在 working_memory 的结果）：无数据/读取失败返回 null，不出该板块
+  const skillDist = await readSkillDistState(dbPool);
+
+  // 3.8 地图照相层 rescan 停滞哨兵（读 rescan-staleness-patrol job 落在 working_memory 的结果）：无数据/读取失败返回 null，不出该板块
+  const rescanStaleness = await readRescanStalenessState(dbPool);
+
+  // 3.9 业务断言红灯（直查 journey_assertion_receipts 24h 探针 FAIL）：无 FAIL/查询失败返回 null，不出该板块
+  const assertionRed = await readAssertionRedState(dbPool);
+
+  // 3.10 镜子库失联（读 promise-map-nightly 落在 working_memory 的 A11 探活结果）：无失联/读取失败返回 null，不出该板块
+  const mirrorDb = await readMirrorDbState(dbPool);
+
+  return { bareRuns, skillDrift, skillDist, rescanStaleness, assertionRed, mirrorDb };
+}
+
 /**
- * 每日内容日报生成器。由 tick.js 在每次 Tick 末尾调用。
+ * 每日运行日报生成器。由 tick.js 在每次 Tick 末尾调用。
  *
  * @param {import('pg').Pool} [dbPool] - PostgreSQL 连接池（默认使用 db.js 的 pool）
  * @param {Date} [now] - 当前时间（测试时可注入）
@@ -400,37 +262,8 @@ export async function generateDailyReport(dbPool = pool, now = new Date()) {
   console.log(`[daily-report-generator] 开始生成 ${today} 日报，统计范围：${yesterday}`);
 
   try {
-    // 3. 并发查询四类数据
-    const [contentOutput, publishStats, engagementData, failureCount] = await Promise.all([
-      fetchYesterdayContentOutput(dbPool, yesterday),
-      fetchYesterdayPublishStats(dbPool, yesterday),
-      fetchYesterdayEngagementData(dbPool, yesterday),
-      fetchYesterdayFailureCount(dbPool, yesterday),
-    ]);
-
-    // 3.5 裸跑检测（run 原语）：查询失败降级为 null（不出该板块，不拖垮日报）
-    const bareRuns = await findBareRuns(dbPool, { windowMinutes: 24 * 60 }).catch((err) => {
-      console.warn(`[daily-report-generator] 裸跑检测失败（非阻断）: ${err.message}`);
-      return null;
-    });
-
-    // 3.6 skill 绑定漂移检测：检测不可用（查询失败/列未迁移）返回 null，不出该板块
-    const skillDrift = await detectSkillBindingDrift(dbPool, EXECUTOR_SKILL_MAP);
-
-    // 3.7 skill 分发漂移（读 skill-dist-drift job 落在 working_memory 的结果）：无数据/读取失败返回 null，不出该板块
-    const skillDist = await readSkillDistState(dbPool);
-
-    // 3.8 地图照相层 rescan 停滞哨兵（读 rescan-staleness-patrol job 落在 working_memory 的结果）：无数据/读取失败返回 null，不出该板块
-    const rescanStaleness = await readRescanStalenessState(dbPool);
-
-    // 3.9 业务断言红灯（直查 journey_assertion_receipts 24h 探针 FAIL）：无 FAIL/查询失败返回 null，不出该板块
-    const assertionRed = await readAssertionRedState(dbPool);
-
-    // 3.10 镜子库失联（读 promise-map-nightly 落在 working_memory 的 A11 探活结果）：无失联/读取失败返回 null，不出该板块
-    const mirrorDb = await readMirrorDbState(dbPool);
-
-    // 4. 生成日报文本（内容产出、发布情况、数据回收、异常告警、裸跑检测、skill 绑定漂移、skill 分发漂移、rescan 停滞哨兵、业务断言红灯、镜子库失联）
-    const reportText = buildReportText(today, yesterday, contentOutput, publishStats, engagementData, failureCount, bareRuns, skillDrift, skillDist, rescanStaleness, assertionRed, mirrorDb);
+    const state = await collectOperationalReportState(dbPool);
+    const reportText = buildReportText(today, yesterday, state);
 
     // 5. 写入 working_memory，key=daily_report_{YYYY-MM-DD}
     await saveReportToWorkingMemory(dbPool, today, reportText);

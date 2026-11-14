@@ -2,24 +2,33 @@ import { useMemo, useState } from 'react';
 import { buildCoreNavigation } from '../../../navigation';
 import snapshot from './inventory.json';
 import { buildInventory, categories, filterOperations, statusLabels, summarize } from './model';
-import type { Category, Operation, Status } from './model';
-import { growth, verifications } from './verification';
+import type { Category, Operation, SourceRow, Status } from './model';
+import { verifications } from './verification';
 
 const navigation = new Set(buildCoreNavigation().flatMap(group => group.items.flatMap(item =>
   (item.children ?? [item]).map(child => child.path))));
 // 历史审计快照保留原始记录，当前视图排除已退役页面及议题对话操作。
 const retiredOperationIds = new Set([
+  'ReportsListPage:02', 'ReportsListPage:03', 'SystemTabbed:03', 'SystemTabbed:04',
   'StrategistLinePage:01', 'StrategistLinePage:02',
   'WarRoomGoldenPathPage:01', 'WarRoomGoldenPathPage:02',
   'WarRoomLineCommandPage:01', 'WarRoomLineCommandPage:02',
 ]);
+const retiredPagePrefixes = ['ViralAnalysisPage:', 'CollectionDashboardPage:', 'BrainModelsPage:', 'QualityMonitorPage:', 'ContentFactory:', 'ContentStudio:', 'ContentTypeConfigPage:', 'PipelineOutputPage:'];
 const currentPageNames: Record<string, string> = {
   'WarRoomGoldenPathPage:03': 'Golden Path 详情',
   'WarRoomLineCommandPage:03': '价值流指挥',
 };
+const currentOperationDetails: Record<string, Partial<SourceRow>> = {
+  'TeamDashboardV1:01': {
+    后台接口: '/api/brain/okr/current; /api/brain/cluster/status',
+    处理效果: '展示目标进度与机器集群资源，每分钟刷新。',
+  },
+};
 const activeRows = snapshot.rows.filter(row =>
-  !row['审计编号'].startsWith('QualityMonitorPage:') && !retiredOperationIds.has(row['审计编号']))
-  .map(row => currentPageNames[row['审计编号']] ? { ...row, 页面名称: currentPageNames[row['审计编号']] } : row);
+  !retiredPagePrefixes.some(prefix => row['审计编号'].startsWith(prefix)) && !retiredOperationIds.has(row['审计编号']))
+  .map(row => ({ ...row, ...currentOperationDetails[row['审计编号']],
+    ...(currentPageNames[row['审计编号']] ? { 页面名称: currentPageNames[row['审计编号']] } : {}) }));
 const operations = buildInventory(activeRows, verifications, navigation);
 const totals = summarize(operations);
 const statusStyles: Record<Status, string> = {
@@ -77,7 +86,7 @@ export default function WebsiteFunctionsPage() {
     <header>
       <h1 className="text-2xl font-semibold text-white">网站功能清单</h1>
       <p className="mt-2 text-sm text-slate-400">查询、输入、变更、输出：看有什么、哪些有证据可用、哪些需要修或继续验证。</p>
-      <p className="mt-2 text-xs text-slate-500">盘点 {snapshot.auditDate} · 验收更新 {growth.date} · {snapshot.pageComponents} 个页面组件</p>
+      <p className="mt-2 text-xs text-slate-500">盘点 {snapshot.auditDate} · {snapshot.pageComponents} 个页面组件</p>
     </header>
 
     <section aria-label="功能分类说明" className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
@@ -95,12 +104,7 @@ export default function WebsiteFunctionsPage() {
       </div>)}
     </section>
 
-    <section className="rounded-xl border border-emerald-900 bg-emerald-950/20 p-4" aria-label="成长记录">
-      <h2 className="font-medium text-emerald-300">这次成长了多少</h2>
-      <p className="mt-2 text-sm">已验证的配置变更闭环增加 {growth.newlyVerifiedChanges} 项：单 Agent 模型保存、读回与数据库留痕。</p>
-      <p className="mt-2 text-xs text-slate-400">查询与变更分别登记验收；不是新增两条 Workflow。全站可用率缺少完整验收基线，未计算百分比。</p>
-      <a href={growth.evidenceUrl} target="_blank" rel="noreferrer" className="inline-block mt-2 text-sm text-emerald-300 hover:underline">查看这次变更与验证</a>
-    </section>
+
 
     <p className="text-xs leading-relaxed text-slate-400">
       可用数是已验收下限，不代表全站只有这些功能能用。读取抽查通过不等于完整可用；待验证不等于坏了。

@@ -2,7 +2,7 @@
 # Smoke: 九要素 T4 — 回执 collector
 # 验证（纯读源码，CI 兼容不连库）：
 #   1. receipt-collector.js 四导出 + 超时核销 SQL + 防环（不 import notifier/alerting）
-#   2. 三入口接线：notifier / feishu-alert / ops.js deploy 都出现回执调用
+#   2. 现役入口接线：notifier / ops.js deploy 都出现回执调用
 #   3. scheduler-jobs 注册 receipt-collector job
 #   4. battle-report 含未确认动作段
 set -euo pipefail
@@ -27,12 +27,11 @@ if (/from '\.\/notifier\.js'|from '\.\/alerting\.js'/.test(src)) {
 console.log('receipt-collector.js 结构正确 ✓');
 "
 
-echo "[t4-receipt-collector-smoke] 2. 三入口接线"
+echo "[t4-receipt-collector-smoke] 2. 现役入口接线"
 node -e "
 const fs = require('fs');
 const entries = [
   ['packages/brain/src/notifier.js', ['recordActionReceipt', 'resolveActionReceipt']],
-  ['packages/brain/src/feishu-alert.js', ['recordActionReceipt', 'skill_eval_webhook']],
   ['packages/brain/src/routes/ops.js', ['recordActionReceipt', \"target: 'production'\", \"target: 'staging'\"]],
 ];
 for (const [file, needles] of entries) {
@@ -40,7 +39,7 @@ for (const [file, needles] of entries) {
   const missing = needles.filter((n) => !src.includes(n));
   if (missing.length) { console.error('FAIL: ' + file + ' 缺少: ' + missing.join(', ')); process.exit(1); }
 }
-console.log('三入口接线正确 ✓');
+console.log('现役入口接线正确 ✓');
 "
 
 echo "[t4-receipt-collector-smoke] 3. scheduler-jobs 注册"

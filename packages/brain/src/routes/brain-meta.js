@@ -4,9 +4,8 @@ import { readFileSync as _readFileSync, readdirSync } from 'fs';
 import { callLLM as _callLLM } from '../llm-caller.js';
 import { loadUserProfile, upsertUserProfile } from '../user-profile.js';
 import { getRealtimeConfig, handleRealtimeTool } from '../orchestrator-realtime.js';
-import { loadActiveProfile as _loadActiveProfile, getActiveProfile, switchProfile, listProfiles as listModelProfiles, updateAgentModel, batchUpdateAgentModels, updateAgentCascade } from '../model-profile.js';
+import { getActiveProfile } from '../model-profile.js';
 import { getAccountUsage, selectBestAccount } from '../account-usage.js';
-import websocketService, { WS_EVENTS as _WS_EVENTS } from '../websocket.js';
 import { handleChat, handleChatStream } from '../orchestrator-chat.js';
 import { acquireDeviceLock } from '../device-lock-helpers.js';
 import { noteDeviceLockAcquire } from '../bypass-audit.js';
@@ -14,6 +13,14 @@ import { rateLimit } from 'express-rate-limit';
 import {registerDeviceLockRelease} from './device-lock-release.js';
 
 const router = Router();
+
+// 仅匹配本模块的受保护路由计数，避免消耗其他Brain模块的额度。
+const moduleRouteRateLimit = rateLimit({
+  windowMs: 60_000,
+  limit: 1200,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+});
 
 
 // ============================================================
@@ -24,7 +31,7 @@ const router = Router();
  * GET /api/brain/policies
  * List absorption policies with optional filtering
  */
-router.get('/policies', async (req, res) => {
+router.get('/policies', moduleRouteRateLimit, async (req, res) => {
   try {
     const { status, limit = 50, offset = 0 } = req.query;
 
@@ -86,7 +93,7 @@ router.get('/policies', async (req, res) => {
  * Get promotion history (probation → active)
  * NOTE: Must be before /policies/:id to avoid matching "promotions" as an ID
  */
-router.get('/policies/promotions', async (req, res) => {
+router.get('/policies/promotions', moduleRouteRateLimit, async (req, res) => {
   try {
     const { limit = 20, days = 7 } = req.query;
 
@@ -130,7 +137,7 @@ router.get('/policies/promotions', async (req, res) => {
  * GET /api/brain/policies/:id
  * Get single policy with recent evaluations
  */
-router.get('/policies/:id', async (req, res) => {
+router.get('/policies/:id', moduleRouteRateLimit, async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -194,7 +201,7 @@ router.get('/policies/:id', async (req, res) => {
  * GET /api/brain/policies/:id/evaluations
  * Get policy evaluation history with pagination
  */
-router.get('/policies/:id/evaluations', async (req, res) => {
+router.get('/policies/:id/evaluations', moduleRouteRateLimit, async (req, res) => {
   try {
     const { id } = req.params;
     const { limit = 20, offset = 0 } = req.query;
@@ -250,7 +257,7 @@ router.get('/policies/:id/evaluations', async (req, res) => {
  * PATCH /api/brain/policies/:id/status
  * Update policy status (manual control)
  */
-router.patch('/policies/:id/status', async (req, res) => {
+router.patch('/policies/:id/status', moduleRouteRateLimit, async (req, res) => {
   try {
     const { id } = req.params;
     const { status, reason } = req.body;
@@ -309,7 +316,7 @@ router.patch('/policies/:id/status', async (req, res) => {
  * GET /api/brain/failures/signatures
  * Get failure signatures statistics
  */
-router.get('/failures/signatures', async (req, res) => {
+router.get('/failures/signatures', moduleRouteRateLimit, async (req, res) => {
   try {
     const { limit = 20, min_count = 1 } = req.query;
 
@@ -347,7 +354,7 @@ router.get('/failures/signatures', async (req, res) => {
  * GET /api/brain/failures/signatures/:signature
  * Get single failure signature with related policies
  */
-router.get('/failures/signatures/:signature', async (req, res) => {
+router.get('/failures/signatures/:signature', moduleRouteRateLimit, async (req, res) => {
   try {
     const { signature } = req.params;
 
@@ -410,7 +417,7 @@ router.get('/failures/signatures/:signature', async (req, res) => {
  * GET /api/brain/immune/dashboard
  * Immune system overview with aggregated data
  */
-router.get('/immune/dashboard', async (req, res) => {
+router.get('/immune/dashboard', moduleRouteRateLimit, async (req, res) => {
   try {
     // Policy statistics
     const policyStats = await pool.query(`
@@ -548,7 +555,7 @@ router.get('/immune/status', async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /api/brain/routing/decisions - Thalamus routing decision history
 // ─────────────────────────────────────────────────────────────────────────────
-router.get('/routing/decisions', async (req, res) => {
+router.get('/routing/decisions', moduleRouteRateLimit, async (req, res) => {
   try {
     const limit = Math.min(parseInt(req.query.limit) || 50, 200);
     const offset = parseInt(req.query.offset) || 0;
@@ -619,7 +626,7 @@ router.get('/routing/decisions', async (req, res) => {
 });
 
 // POST /api/brain/manual-mode — 启用/禁用手动模式（暂停自动任务创建）
-router.post('/manual-mode', async (req, res) => {
+router.post('/manual-mode', moduleRouteRateLimit, async (req, res) => {
   try {
     const { enabled } = req.body;
     await pool.query(`
@@ -636,7 +643,7 @@ router.post('/manual-mode', async (req, res) => {
 });
 
 // GET /api/brain/manual-mode — 查询手动模式状态
-router.get('/manual-mode', async (req, res) => {
+router.get('/manual-mode', moduleRouteRateLimit, async (req, res) => {
   try {
     const result = await pool.query(
       "SELECT value_json FROM working_memory WHERE key = 'manual_mode'"
@@ -793,7 +800,7 @@ router.post('/orchestrator/chat/stream', async (req, res) => {
  * source_type='diary', importance=6, memory_type='reflection'
  * 使用 content_hash 去重（同一内容不重复写入）
  */
-router.post('/diary', async (req, res) => {
+router.post('/diary', moduleRouteRateLimit, async (req, res) => {
   const { content } = req.body;
 
   if (!content || typeof content !== 'string' || content.trim().length === 0) {
@@ -826,7 +833,7 @@ router.post('/diary', async (req, res) => {
  * Query: ?limit=20 (默认 20，最大 100)
  * Response: Array<{ role: 'user'|'assistant', content: string, created_at: string }>
  */
-router.get('/orchestrator/chat/history', async (req, res) => {
+router.get('/orchestrator/chat/history', moduleRouteRateLimit, async (req, res) => {
   try {
     const limit = Math.min(parseInt(req.query.limit) || 20, 100);
 
@@ -937,7 +944,7 @@ router.post('/orchestrator/realtime/tool', async (req, res) => {
  * GET /api/brain/staff
  * 返回所有员工列表，含角色和模型配置
  */
-router.get('/staff', async (_req, res) => {
+router.get('/staff', moduleRouteRateLimit, async (_req, res) => {
   try {
     const fs = await import('fs');
     const _path = await import('path');
@@ -1005,86 +1012,6 @@ router.get('/staff', async (_req, res) => {
     });
   } catch (err) {
     console.error('[API] staff error:', err.message);
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-// ==================== Staff Worker Edit API ====================
-
-/**
- * PUT /api/brain/staff/workers/:workerId
- * 更新 worker 的 skill 和/或 model 配置
- * body: { skill?: string, model?: { provider: string, name: string } }
- */
-router.put('/staff/workers/:workerId', async (req, res) => {
-  try {
-    const { workerId } = req.params;
-    const { skill, model, credentials_file } = req.body;
-    const fs = await import('fs');
-
-    const workersPath = '/Users/administrator/perfect21/cecelia/packages/workflows/staff/workers.config.json';
-    const workersConfig = JSON.parse(fs.readFileSync(workersPath, 'utf-8'));
-
-    // 找到 worker
-    let targetWorker = null;
-    for (const team of workersConfig.teams) {
-      const worker = team.workers.find(w => w.id === workerId);
-      if (worker) {
-        if (skill !== undefined) {
-          worker.skill = skill || null;
-        }
-        if (credentials_file !== undefined) {
-          worker.credentials_file = credentials_file || null;
-        }
-        targetWorker = worker;
-        break;
-      }
-    }
-    if (!targetWorker) {
-      return res.status(404).json({ success: false, error: `Worker ${workerId} not found` });
-    }
-
-    // 保存 workers.config.json（skill 变更）
-    fs.writeFileSync(workersPath, JSON.stringify(workersConfig, null, 2));
-
-    // 更新 model（直接写 active profile 的 model_map）
-    if (model?.provider && model?.name) {
-      const { rows: activeRows } = await pool.query(
-        'SELECT id, config FROM model_profiles WHERE is_active = true LIMIT 1'
-      );
-      if (activeRows.length > 0) {
-        const profile = activeRows[0];
-        const config = { ...profile.config };
-        const modelMap = { ...(config.executor?.model_map || {}) };
-        const skillKey = targetWorker.skill?.replace('/', '') || workerId;
-        const existing = modelMap[skillKey] || {};
-        const newMap = {
-          anthropic: model.provider === 'anthropic' ? model.name : (existing.anthropic || null),
-          minimax:   model.provider === 'minimax'   ? model.name : (existing.minimax   || null),
-          openai:    model.provider === 'openai'    ? model.name : (existing.openai    || null),
-        };
-        // 保存 credentials（通用账户选择，适用所有 provider）
-        if (credentials_file !== undefined) {
-          newMap.credentials = credentials_file || null;
-          newMap.minimax_credentials = credentials_file || null; // 向后兼容
-        } else if (existing.credentials !== undefined) {
-          newMap.credentials = existing.credentials;
-          newMap.minimax_credentials = existing.minimax_credentials;
-        }
-        modelMap[skillKey] = newMap;
-        config.executor = { ...config.executor, model_map: modelMap };
-        await pool.query(
-          'UPDATE model_profiles SET config = $1, updated_at = NOW() WHERE id = $2',
-          [JSON.stringify(config), profile.id]
-        );
-        const { loadActiveProfile } = await import('../model-profile.js');
-        await loadActiveProfile(pool);
-      }
-    }
-
-    res.json({ success: true, workerId });
-  } catch (err) {
-    console.error('[API] staff worker PUT error:', err.message);
     res.status(500).json({ success: false, error: err.message });
   }
 });
@@ -1197,7 +1124,7 @@ router.post('/codex-usage/refresh', async (_req, res) => {
  * Request: { query: string, limit?: number (default 5) }
  * Response: { ok: true, matches: [{ content, memory_type, importance, summary, similarity }] }
  */
-router.post('/memory-search', async (req, res) => {
+router.post('/memory-search', moduleRouteRateLimit, async (req, res) => {
   const { query, limit = 5 } = req.body || {};
 
   if (!query || typeof query !== 'string' || !query.trim()) {
@@ -1240,7 +1167,7 @@ router.post('/memory-search', async (req, res) => {
  * 实时返回 slot 状态（3区：user/cecelia/taskPool）
  * 每个活跃 slot 含 account/model/task_title/started_at
  */
-router.get('/runner-status', async (_req, res) => {
+router.get('/runner-status', moduleRouteRateLimit, async (_req, res) => {
   try {
     const { calculateSlotBudget } = await import('../slot-allocator.js');
     const budget = await calculateSlotBudget();
@@ -1304,7 +1231,7 @@ router.get('/runner-status', async (_req, res) => {
  * GET /api/brain/slot-recommendation
  * 动态推荐 slot 数：floor(剩余请求 / 预计剩余小时 / 平均请求每任务)
  */
-router.get('/slot-recommendation', async (_req, res) => {
+router.get('/slot-recommendation', moduleRouteRateLimit, async (_req, res) => {
   try {
     const usage = await getAccountUsage();
     const accounts = Object.values(usage);
@@ -1359,7 +1286,7 @@ router.get('/slot-recommendation', async (_req, res) => {
  * GET /api/brain/credentials
  * 返回可用账户列表（扫描 account*.json 和 ~/.credentials/*.json）
  */
-router.get('/credentials', async (_req, res) => {
+router.get('/credentials', moduleRouteRateLimit, async (_req, res) => {
   const credentials = [];
 
   // 1. Anthropic OAuth accounts: ~/.claude/.account*.json
@@ -1474,206 +1401,6 @@ router.get('/skills-registry', async (_req, res) => {
   }
 });
 
-// ==================== Model Profile API ====================
-
-router.get('/model-profiles', async (_req, res) => {
-  try {
-    const profiles = await listModelProfiles(pool);
-    res.json({ success: true, profiles });
-  } catch (err) {
-    console.error('[API] model-profiles list error:', err.message);
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-// ==================== Model Registry API ====================
-
-router.get('/model-profiles/models', async (_req, res) => {
-  try {
-    const { MODELS, AGENTS } = await import('../model-registry.js');
-    res.json({ success: true, models: MODELS, agents: AGENTS });
-  } catch (err) {
-    console.error('[API] model-registry error:', err.message);
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-router.get('/model-profiles/active', (_req, res) => {
-  try {
-    const profile = getActiveProfile();
-    res.json({ success: true, profile });
-  } catch (err) {
-    console.error('[API] model-profiles active error:', err.message);
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-router.put('/model-profiles/active', async (req, res) => {
-  try {
-    const { profile_id } = req.body;
-    if (!profile_id) {
-      return res.status(400).json({ success: false, error: 'profile_id is required' });
-    }
-    const profile = await switchProfile(pool, profile_id);
-
-    // WebSocket 广播 profile:changed
-    websocketService.broadcast(websocketService.WS_EVENTS.PROFILE_CHANGED, {
-      profile_id: profile.id,
-      profile_name: profile.name,
-    });
-
-    res.json({ success: true, profile });
-  } catch (err) {
-    console.error('[API] model-profiles switch error:', err.message);
-    const status = err.message.includes('not found') ? 404 : 500;
-    res.status(status).json({ success: false, error: err.message });
-  }
-});
-
-router.patch('/model-profiles/active/agent', async (req, res) => {
-  try {
-    const { agent_id, model_id, provider } = req.body;
-    if (!agent_id || !model_id) {
-      return res.status(400).json({ success: false, error: 'agent_id and model_id are required' });
-    }
-
-    const result = await updateAgentModel(pool, agent_id, model_id, {
-      provider, actor: 'dashboard', sessionId: req.get('x-session-id')?.slice(0, 200),
-    });
-
-    // WebSocket 广播
-    websocketService.broadcast(websocketService.WS_EVENTS.PROFILE_CHANGED, {
-      profile_id: result.profile.id,
-      profile_name: result.profile.name,
-      agent_id: result.agent_id,
-      model_id: model_id,
-    });
-
-    res.json({ success: true, ...result });
-  } catch (err) {
-    console.error('[API] update-agent-model error:', err.message);
-    const status = err.message.includes('Unknown agent') || err.message.includes('not allowed') || err.message.includes('locked to provider')
-      ? 400 : err.message.includes('No active profile') ? 404 : err.message.includes('修改冲突') ? 409 : 500;
-    res.status(status).json({ success: false, error: err.message });
-  }
-});
-
-router.patch('/model-profiles/active/agents', async (req, res) => {
-  try {
-    const { updates } = req.body;
-    if (!Array.isArray(updates) || updates.length === 0) {
-      return res.status(400).json({ success: false, error: 'updates array is required' });
-    }
-
-    const result = await batchUpdateAgentModels(pool, updates);
-
-    websocketService.broadcast(websocketService.WS_EVENTS.PROFILE_CHANGED, {
-      profile_id: result.profile.id,
-      profile_name: result.profile.name,
-      batch: true,
-      count: updates.length,
-    });
-
-    res.json({ success: true, ...result });
-  } catch (err) {
-    console.error('[API] batch-update-agent-models error:', err.message);
-    const status = err.message.includes('Unknown agent') || err.message.includes('not allowed') || err.message.includes('locked to provider')
-      ? 400 : err.message.includes('No active profile') ? 404 : 500;
-    res.status(status).json({ success: false, error: err.message });
-  }
-});
-
-router.patch('/model-profiles/active/agent-cascade', async (req, res) => {
-  try {
-    const { agent_id, cascade } = req.body;
-    if (!agent_id) {
-      return res.status(400).json({ success: false, error: 'agent_id is required' });
-    }
-    if (cascade !== null && !Array.isArray(cascade)) {
-      return res.status(400).json({ success: false, error: 'cascade must be an array or null' });
-    }
-
-    const result = await updateAgentCascade(pool, agent_id, cascade);
-
-    websocketService.broadcast(websocketService.WS_EVENTS.PROFILE_CHANGED, {
-      profile_id: result.profile.id,
-      profile_name: result.profile.name,
-      agent_id: result.agent_id,
-      cascade: result.cascade,
-    });
-
-    res.json({ success: true, ...result });
-  } catch (err) {
-    console.error('[API] update-agent-cascade error:', err.message);
-    res.status(err.message.includes('No active profile') ? 404 : 500)
-       .json({ success: false, error: err.message });
-  }
-});
-
-// ============================================================
-// Mouth Config API（嘴巴模型+调用方式独立切换）
-// ============================================================
-
-/**
- * GET /api/brain/mouth-config
- * 返回当前 mouth 的 model + provider
- */
-router.get('/mouth-config', async (_req, res) => {
-  try {
-    const { rows } = await pool.query(
-      'SELECT config FROM model_profiles WHERE is_active = true LIMIT 1'
-    );
-    if (!rows.length) return res.status(404).json({ success: false, error: 'No active profile' });
-    const cfg = rows[0].config;
-    const mouth = cfg.mouth || {};
-    res.json({ success: true, model: mouth.model || null, provider: mouth.provider || null });
-  } catch (err) {
-    console.error('[API] mouth-config GET error:', err.message);
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-/**
- * PATCH /api/brain/mouth-config
- * 直接设置 mouth 的 model + provider（不经过 getProviderForModel 自动推导）
- * Body: { model: string, provider: "anthropic" | "anthropic-api" }
- */
-router.patch('/mouth-config', async (req, res) => {
-  try {
-    const { model, provider } = req.body;
-    const ALLOWED_MODELS = ['claude-haiku-4-5-20251001', 'claude-sonnet-4-6'];
-    const ALLOWED_PROVIDERS = ['anthropic', 'anthropic-api'];
-    if (!ALLOWED_MODELS.includes(model)) {
-      return res.status(400).json({ success: false, error: `Invalid model: ${model}` });
-    }
-    if (!ALLOWED_PROVIDERS.includes(provider)) {
-      return res.status(400).json({ success: false, error: `Invalid provider: ${provider}` });
-    }
-
-    const { rows } = await pool.query(
-      'SELECT id, config FROM model_profiles WHERE is_active = true LIMIT 1'
-    );
-    if (!rows.length) return res.status(404).json({ success: false, error: 'No active profile' });
-
-    const profile = rows[0];
-    const config = { ...profile.config, mouth: { model, provider } };
-    await pool.query(
-      'UPDATE model_profiles SET config = $1, updated_at = NOW() WHERE id = $2',
-      [JSON.stringify(config), profile.id]
-    );
-
-    // 刷新内存缓存
-    const { loadActiveProfile } = await import('../model-profile.js');
-    await loadActiveProfile(pool);
-
-    console.log(`[API] mouth-config updated → model=${model} provider=${provider}`);
-    res.json({ success: true, model, provider });
-  } catch (err) {
-    console.error('[API] mouth-config PATCH error:', err.message);
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
 // ============================================================
 // Device Lock API（部门主管架构 - 脚本员工设备互斥锁）
 // ============================================================
@@ -1682,7 +1409,7 @@ router.patch('/mouth-config', async (req, res) => {
  * GET /api/brain/device-locks
  * 查看所有设备锁状态
  */
-router.get('/device-locks', async (_req, res) => {
+router.get('/device-locks', moduleRouteRateLimit, async (_req, res) => {
   try {
     const { rows } = await pool.query(
       `SELECT device_name, locked_by, locked_at, expires_at,xmin::text AS lease_version,

@@ -131,7 +131,6 @@ vi.mock('../../lib/internal-service-auth.js', () => ({ internalServiceHeaders: (
 vi.mock('../../desire-feedback.js', () => ({ updateDesireFromTask: vi.fn(async () => {}) }));
 vi.mock('../../code-review-trigger.js', () => ({ checkAndCreateCodeReviewTrigger: vi.fn(async () => {}) }));
 vi.mock('../../routes/shared.js', () => ({ resolveRelatedFailureMemories: vi.fn(async () => {}) }));
-vi.mock('../../zenithjoy-db.js', () => ({ getZenithjoyPool: () => ({ query: () => boundary.deny('business DB') }) }));
 vi.mock('../../watchdog.js', () => ({ cleanupMetrics: vi.fn(async () => {}) }));
 vi.mock('../../auto-learning.js', () => ({ processExecutionAutoLearning: vi.fn(async () => null) }));
 vi.mock('../../dep-cascade.js', () => ({

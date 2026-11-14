@@ -319,152 +319,17 @@ describe('rumination', () => {
     });
   });
 
-  describe('actionable 洞察', () => {
-    it('检测 [ACTION:] 标记 → processEvent 发 RUMINATION_RESULT 含 actions', async () => {
-      mockCallLLM.mockResolvedValueOnce({
-        text: '这个技术值得深入研究 [ACTION: 研究 React Server Components]',
-      });
-
-      setupIdleAndLearnings(pool, [{ id: 'l1', title: 'RSC', content: 'React Server Components', category: 'tech' }]);
-
-      const result = await runRumination(pool);
-      expect(result.digested).toBe(1);
-
-      expect(mockProcessEvent).toHaveBeenCalledWith(expect.objectContaining({
-        type: 'rumination_result',
-        actions: expect.arrayContaining(['研究 React Server Components']),
-      }));
-    });
-
-    it('无 [ACTION:] 标记时不创建 research task（但 maybeCreateRuminationTask 创建 dev task）', async () => {
-      mockCallLLM.mockResolvedValueOnce({ text: '一条普通洞察，没有行动建议' });
-
-      setupIdleAndLearnings(pool, [{ id: 'l1', title: '测试', content: '内容', category: 'u' }]);
-
-      await runRumination(pool);
-      // 无 [ACTION:] → processEvent 不携带 actions（不创建 research task）
-      expect(mockProcessEvent).toHaveBeenCalledWith(expect.objectContaining({ actions: [] }));
-      // 但 maybeCreateRuminationTask 仍为 learnings 表记录创建 dev task
-      expect(mockCreateTask).toHaveBeenCalledWith(expect.objectContaining({
-        task_type: 'dev',
-        trigger_source: 'rumination',
-        payload: expect.objectContaining({ insight_learning_id: 'l1' }),
-      }));
-    });
-
-    it('多个 [ACTION:] 标记 → processEvent 收到全部 actions', async () => {
-      mockCallLLM.mockResolvedValueOnce({
-        text: '深度分析结论 [ACTION: 调研 React Server Components] 另外 [ACTION: 升级 Vite 到 v5] 还有 [ACTION: 编写性能基准测试]',
-      });
-
-      setupIdleAndLearnings(pool, [{ id: 'l1', title: '前端技术', content: '内容', category: 'tech' }]);
-
-      const result = await runRumination(pool);
-      expect(result.digested).toBe(1);
-
-      // 3 个 [ACTION:] 标记 → processEvent 收到 3 个 actions
-      expect(mockProcessEvent).toHaveBeenCalledWith(expect.objectContaining({
-        type: 'rumination_result',
-        actions: expect.arrayContaining(['调研 React Server Components', '升级 Vite 到 v5', '编写性能基准测试']),
-      }));
-      const callArgs = mockProcessEvent.mock.calls[0][0];
-      expect(callArgs.actions).toHaveLength(3);
-    });
-
-    it('createTask 失败不影响消化', async () => {
-      mockCallLLM.mockResolvedValueOnce({
-        text: '洞察 [ACTION: 测试任务]',
-      });
-      mockCreateTask.mockRejectedValueOnce(new Error('DB error'));
-
-      setupIdleAndLearnings(pool, [{ id: 'l1', title: '测试', content: '内容', category: 'u' }]);
-
-      const result = await runRumination(pool);
-      expect(result.digested).toBe(1);
-    });
-  });
-
-  describe('洞察→task 绑定（maybeCreateRuminationTask）', () => {
-    it('消化 learnings 表记录时自动创建 dev task', async () => {
-      setupIdleAndLearnings(pool, [
-        { id: 'l-bind-1', title: '洞察标题', content: '洞察内容', category: 'user_shared' },
-      ]);
-
-      await runRumination(pool);
-
-      expect(mockCreateTask).toHaveBeenCalledWith(expect.objectContaining({
-        title: expect.stringContaining('[Insight修复]'),
-        task_type: 'dev',
-        priority: 'P2',
-        trigger_source: 'rumination',
-        payload: expect.objectContaining({
-          insight_learning_id: 'l-bind-1',
-          event_type: 'rumination_result',
-        }),
-      }));
-    });
-
-    it('同一 learning 已有 task 时去重跳过', async () => {
-      // 用 mockImplementation 精确匹配 dedup SELECT（队列顺序不可靠，因中间有其他 DB 调用）
-      mockQuery.mockImplementation((sql) => {
-        if (typeof sql === 'string' && sql.includes('insight_learning_id')) {
-          return Promise.resolve({ rows: [{ id: 'existing-task-id' }] }); // 已有 task → 去重
-        }
-        if (typeof sql === 'string' && sql.includes('in_progress') && sql.includes('queued')) {
-          return Promise.resolve({ rows: [{ in_progress: '0', queued: '0' }] }); // idle
-        }
-        if (typeof sql === 'string' && sql.includes('FROM learnings') && sql.includes('digested = false')) {
-          return Promise.resolve({ rows: [{ id: 'l-dedup', title: '已绑定', content: '内容', category: 'u' }] });
-        }
-        return Promise.resolve({ rows: [] }); // default
-      });
-
-      await runRumination(pool);
-
-      expect(mockCreateTask).not.toHaveBeenCalled();
-    });
-
-    it('memory_stream 来源的条目不创建 task', async () => {
-      // 直接测试 digestLearnings 接收 source='memory_stream' 条目的行为：
-      // runRumination 主路取 memory_stream 条目时 source='memory_stream'，不触发绑定
-      // 这里通过验证只有 source='learning' 才会触发 mockCreateTask 来间接验证
-      mockQuery
-        .mockResolvedValueOnce({ rows: [] })                                   // rumination_invoke INSERT
-        .mockResolvedValueOnce({ rows: [{ in_progress: '0', queued: '0' }] }) // idle check
-        .mockResolvedValueOnce({ rows: [] });                                  // learnings（空）
-
-      // memory_stream 补充（fetchMemoryStreamItems mock）
-      mockQuery.mockResolvedValueOnce({
-        rows: [{ id: 'ms-1', content: '对话内容', salience_score: 0.8, source_type: 'conversation_turn' }],
-      }); // memory_stream SELECT
-
-      // memory_stream 条目消化：INSERT memory_stream + UPDATE digested（memory_stream 条目 UPDATE 是 no-op）
-      mockQuery.mockResolvedValueOnce({ rows: [] }); // INSERT memory_stream（洞察写入）
-      mockQuery.mockResolvedValueOnce({ rows: [] }); // UPDATE digested（无 learnings 表记录，no-op）
-      mockQuery.mockResolvedValueOnce({ rows: [] }); // UPDATE memory_stream.status='ruminated'
-
-      await runRumination(pool);
-
-      // source='memory_stream' 条目不应创建 task
-      expect(mockCreateTask).not.toHaveBeenCalled();
-    });
-
-    it('多条 learnings 各自创建独立 dev task', async () => {
-      setupIdleAndLearnings(pool, [
-        { id: 'l-multi-1', title: '知识1', content: '内容1', category: 'tech' },
-        { id: 'l-multi-2', title: '知识2', content: '内容2', category: 'tech' },
-      ]);
-
-      await runRumination(pool);
-
-      expect(mockCreateTask).toHaveBeenCalledTimes(2);
-      expect(mockCreateTask).toHaveBeenCalledWith(expect.objectContaining({
-        payload: expect.objectContaining({ insight_learning_id: 'l-multi-1' }),
-      }));
-      expect(mockCreateTask).toHaveBeenCalledWith(expect.objectContaining({
-        payload: expect.objectContaining({ insight_learning_id: 'l-multi-2' }),
-      }));
-    });
+  it('带行动标记的知识仍被消化，但不会创建任务或新增建议', async () => {
+    mockCallLLM.mockResolvedValueOnce({ text: '结论 [ACTION: 调研一个新方向]' });
+    setupIdleAndLearnings(pool, [{ id: 'l-no-plan', title: '知识', content: '事实', category: 'tech' }]);
+    const result = await runRumination(pool);
+    expect(result.digested).toBe(1);
+    expect(result.insights).toHaveLength(1);
+    expect(mockCreateTask).not.toHaveBeenCalled();
+    expect(mockQuery.mock.calls.some(([sql]) => /UPDATE learnings SET digested/.test(sql))).toBe(true);
+    expect(mockQuery.mock.calls.some(([sql]) => /INSERT INTO (tasks|suggestions)/.test(sql))).toBe(false);
+    expect(mockProcessEvent).toHaveBeenCalledWith(expect.objectContaining({ type: 'rumination_result' }));
+    expect(mockProcessEvent.mock.calls[0][0]).not.toHaveProperty('actions');
   });
 
   describe('buildRuminationPrompt', () => {
@@ -542,10 +407,10 @@ describe('rumination', () => {
       expect(query).toContain('Vue 3');
     });
 
-    it('包含 ACTION 格式说明', () => {
+    it('包含知识事实总结要求', () => {
       const learnings = [{ title: 'CI Fix', content: 'x', category: 'ci' }];
       const query = buildNotebookQuery(learnings);
-      expect(query).toContain('[ACTION:');
+      expect(query).toContain('对已有经验的事实总结');
     });
 
     it('类别为空时显示"未分类"', () => {

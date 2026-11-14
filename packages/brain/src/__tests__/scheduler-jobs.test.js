@@ -5,7 +5,6 @@ import { runSchedulerJobsOnce, JOBS, SENTINEL_KEY_PREFIX } from '../scheduler-jo
 import * as schedulerJobsModule from '../scheduler-jobs.js';
 import { runPhoneRpaDispatch } from '../lib/phone-rpa-dispatch.js';
 import { triggerArchReview, triggerCiPatrol } from '../daily-review-scheduler.js';
-import { maybeTriggerStrategySession } from '../active-goals-zero-trigger.js';
 import { scheduleDailyBackup } from '../daily-backup-scheduler.js';
 import { maybeGenerateBattleReport } from '../battle-report.js';
 import { maybeRunLineDreaming } from '../line-dreaming.js';
@@ -13,7 +12,6 @@ import { maybeRunLedgerHygiene } from '../ledger-hygiene.js';
 import { runCaptureTriage } from '../capture-triage.js';
 import { runReceiptCollector } from '../receipt-collector.js';
 import { runLaunchdPatrol } from '../launchd-patrol.js';
-import { maybeRunDirectionProposer } from '../direction-proposer.js';
 import { runPostdeployVerifier } from '../postdeploy-verifier.js';
 import { runDirectoryJob } from '../projection/directory-job.js';
 it('手机独立派发注册30s节奏且不被串行慢job阻塞', () => {
@@ -302,7 +300,6 @@ describe('scheduler-jobs 注册表', () => {
     expect(runOpenclawGuards).toHaveBeenCalledWith(pool, expect.objectContaining({ raiseFn: expect.any(Function) }));
     expect(triggerArchReview).toHaveBeenCalledWith(pool);
     expect(triggerCiPatrol).toHaveBeenCalledWith(pool);
-    expect(maybeTriggerStrategySession).toHaveBeenCalledWith(pool);
     expect(scheduleDailyBackup).toHaveBeenCalledWith(pool);
     expect(maybeRunLineDreaming).toHaveBeenCalledWith(pool);
     expect(maybeRunLedgerHygiene).toHaveBeenCalledWith(pool);
@@ -310,7 +307,6 @@ describe('scheduler-jobs 注册表', () => {
     expect(runCaptureTriage).toHaveBeenCalledWith(pool);
     expect(runReceiptCollector).toHaveBeenCalledWith(pool);
     expect(runLaunchdPatrol).toHaveBeenCalledWith();
-    expect(maybeRunDirectionProposer).toHaveBeenCalledWith(pool);
     expect(runPostdeployVerifier).toHaveBeenCalledWith(pool);
     expect(results).toHaveLength(JOBS.length);
     expect(results.every((r) => r.ok)).toBe(true);
@@ -384,7 +380,6 @@ describe('scheduler-jobs 注册表', () => {
     for (const name of ['null-at', 'date-at', 'num-at']) expect(rec(name)).not.toHaveProperty('liveness_at');
   });
 });
-
 
 it('默认调度完整一轮只消费注入pool，不触canonical DB/网络/子进程', async () => {
   vi.clearAllMocks();

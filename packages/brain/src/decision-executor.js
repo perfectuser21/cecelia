@@ -35,11 +35,8 @@ const MAX_COMMENT_HISTORY = 10;
 
 // 提案类型的默认配置
 const PROPOSAL_DEFAULTS = {
-  'propose_decomposition':    { category: 'proposal', priority: 'normal', expiresHours: 72 },
-  'propose_weekly_plan':      { category: 'proposal', priority: 'normal', expiresHours: 72 },
   'propose_priority_change':  { category: 'proposal', priority: 'normal', expiresHours: 72 },
   'propose_anomaly_action':   { category: 'proposal', priority: 'urgent', expiresHours: 24 },
-  'propose_milestone_review': { category: 'proposal', priority: 'normal', expiresHours: 72 },
   'heartbeat_finding':        { category: 'proposal', priority: 'urgent', expiresHours: 24 },
   'quarantine_task':          { category: 'approval', priority: 'urgent', expiresHours: 24 },
   'request_human_review':     { category: 'approval', priority: 'normal', expiresHours: 24 },

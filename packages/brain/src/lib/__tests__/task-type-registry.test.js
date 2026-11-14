@@ -3,7 +3,7 @@ import {readFileSync} from 'node:fs';
 import * as R from '../task-type-registry.js';
 
 const active=Object.keys(R.TASK_TYPE_REGISTRY);
-const retired=R.RETIRED_DEVELOPMENT_TASK_TYPES;
+const retired=[...R.RETIRED_DEVELOPMENT_TASK_TYPES,...R.RETIRED_CONTENT_TASK_TYPES];
 const maps=['EXECUTOR_KIND_FOR_TASK_TYPE','EXECUTOR_SKILL_MAP','EXECUTOR_MODE_MAP','LOCATION_MAP','SKILL_WHITELIST','TASK_REQUIREMENTS'];
 describe('现役任务类型注册表与历史枚举分离',()=>{
   it('声明字段完备、类型唯一且显式区分agent/workflow',()=>{
@@ -50,7 +50,6 @@ describe('现役任务类型注册表与历史枚举分离',()=>{
   it('当前运营和接力消费者仍具备明确免锚/执行配置',()=>{
     expect(R.getTaskType('qiumi_task')).toMatchObject({surface:'openclaw-agent',executor:'openclaw-agent',tick_dispatchable:true,push_to_notion:false});
     expect(R.ANCHOR_EXEMPT_TASK_TYPES).toContain('qiumi_task');
-    expect(R.CONTENT_PIPELINE_TYPES).toContain('content-pipeline');
     expect(R.getTaskType('project')).toMatchObject({kind:'workflow',tick_dispatchable:false});
     expect(R.getTaskType('script_run')).toMatchObject({surface:'script',executor:'script'});
   });

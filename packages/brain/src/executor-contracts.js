@@ -16,7 +16,7 @@ import {LINUX_POOL_EXECUTOR_KIND} from './linux-pool/task-authority.js';
 import { execSync } from 'child_process';
 import { execFileSync } from 'node:child_process';
 import { probeCodexReviewLock } from './lib/codex-review-liveness.js';
-import { EXECUTOR_KIND_FOR_TASK_TYPE, EXTERNALLY_EXECUTED_TASK_TYPES } from './lib/task-type-registry.js';
+import { EXECUTOR_KIND_FOR_TASK_TYPE, EXTERNALLY_EXECUTED_TASK_TYPES, isExternalWorkerTask } from './lib/task-type-registry.js';
 import { sshTargetFor, resolvePrimaryWorkerId, resolveMachineId, listComputeWorkerIds } from './machine-registry.js';
 import { SSH_BASE_ARGS } from './lib/ssh-args.js';
 
@@ -81,6 +81,7 @@ export const EXTERNALLY_EXECUTED_KINDS = Object.freeze([
  */
 export function isExternallyExecuted(task) {
   if (!task) return false;
+  if (isExternalWorkerTask(task)) return true;
   if (isCommanderVerification(task)) return true;
   // audit是通用类型；只有网关私有authority铸造并持久化的kind才交专用controller。
   if (task.executor_kind === LINUX_POOL_EXECUTOR_KIND) return true;
@@ -200,12 +201,23 @@ export const EXECUTOR_CONTRACTS = {
     onStale: 'requeue',
   },
 
-  /**
-   * external-worker: ZJ pipeline-worker 等外部编排
-   * 永不探活，永不超时，等回调
-   */
+  /** 外部领单者不在Brain本机；护照活性只认同owner/claim epoch的有限租约。 */
   'external-worker': {
-    probe: async () => 'alive',
+    probe: async (task, ctx) => {
+      if (!isExternalWorkerTask(task)) return 'alive';
+      if (task.executor_kind !== 'external-worker' || !task.claimed_by || !task.claimed_at || !ctx?.pool?.query) return 'unknown';
+      const { rows } = await ctx.pool.query(
+        `SELECT l.lease_until > NOW() AS lease_active
+         FROM task_leases l JOIN tasks t ON t.id = l.task_id
+         WHERE t.id = $1 AND t.status = 'in_progress' AND t.claimed_by = $2
+           AND t.executor_kind = 'external-worker'
+           AND l.claimer = t.claimed_by AND l.claimed_at = t.claimed_at
+           AND l.released_at IS NULL`,
+        [task.id, task.claimed_by],
+      );
+      return rows[0]?.lease_active === true ? 'alive' : 'unknown';
+    },
+    // 期限由公共lease reaper裁决，未知/过期都不能据本机无PID回队。
     staleMinutes: null,
     onStale: 'never',
   },

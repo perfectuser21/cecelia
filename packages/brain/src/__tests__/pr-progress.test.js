@@ -6,6 +6,8 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import express from 'express';
+import request from 'supertest';
 
 // ---- Mock 数据库 ----
 const mockPool = { query: vi.fn() };
@@ -144,52 +146,19 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-// ---- 辅助函数：模拟 Express 请求/响应 ----
-function callRoute(routerInstance, method, path, { params = {}, query = {}, body = {} } = {}) {
-  return new Promise((resolve) => {
-    const req = {
-      method: method.toUpperCase(),
-      path,
-      params,
-      query,
-      body,
-      headers: {},
-      get: () => null,
-    };
-    const resData = { statusCode: 200, body: null };
-    const res = {
-      status(code) { resData.statusCode = code; return res; },
-      json(data) { resData.body = data; resolve(resData); },
-      send(data) { resData.body = data; resolve(resData); },
-    };
-
-    // 查找匹配的路由层
-    const layers = routerInstance.stack.filter((layer) => {
-      if (!layer.route) return false;
-      const routeMethods = layer.route.methods;
-      if (!routeMethods[method.toLowerCase()]) return false;
-      // 简单路径匹配（支持 :param）
-      const routePath = layer.route.path;
-      const routeParts = routePath.split('/');
-      const reqParts = path.split('/');
-      if (routeParts.length !== reqParts.length) return false;
-      return routeParts.every((part, i) => part.startsWith(':') || part === reqParts[i]);
-    });
-
-    if (layers.length === 0) {
-      resData.statusCode = 404;
-      resData.body = { error: `Route not found: ${method} ${path}` };
-      resolve(resData);
-      return;
-    }
-
-    const handler = layers[0].route.stack[0].handle;
-    Promise.resolve(handler(req, res)).catch((err) => {
-      resData.statusCode = 500;
-      resData.body = { error: err.message };
-      resolve(resData);
-    });
+// 经过真实HTTP路由与全部middleware，不能把首个middleware当成业务handler。
+async function callRoute(routerInstance, method, path, { query = {}, body = {} } = {}) {
+  const app = express(); app.use(express.json()); app.use(routerInstance);
+  const server = await new Promise(resolve => {
+    const listener = app.listen(0, '127.0.0.1', () => resolve(listener));
   });
+  try {
+    const response = await request(`http://127.0.0.1:${server.address().port}`)
+      [method.toLowerCase()](path).query(query).send(body);
+    return { statusCode: response.status, body: response.body };
+  } finally {
+    await new Promise(resolve => server.close(resolve));
+  }
 }
 
 // ---- 测试套件 ----

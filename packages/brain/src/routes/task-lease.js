@@ -7,6 +7,7 @@
  * 认领本身仍是 POST /:id/claim（带 lease_seconds / on_lease_expire 即落租约）。
  */
 import { Router } from 'express';
+import { finishTaskLease } from '../lib/task-lease-finish.js';
 import pool from '../db.js';
 import { heartbeatTaskLease, releaseTaskLease } from '../lib/task-lease.js';
 
@@ -14,9 +15,9 @@ const router = Router();
 
 router.post('/:id/heartbeat', async (req, res) => {
   try {
-    const { claimer, lease_seconds: leaseSeconds } = req.body || {};
+    const { claimer, lease_seconds: leaseSeconds, claim_epoch: claimEpoch } = req.body || {};
     if (!claimer) return res.status(400).json({ error: 'claimer is required' });
-    const r = await heartbeatTaskLease(pool, { taskId: req.params.id, claimer, leaseSeconds });
+    const r = await heartbeatTaskLease(pool, { taskId: req.params.id, claimer, leaseSeconds, claimEpoch });
     if (!r.ok) {
       return res.status(409).json({ error: 'lease_lost', status: r.task?.status ?? null, claimed_by: r.task?.claimed_by ?? null });
     }
@@ -28,12 +29,20 @@ router.post('/:id/heartbeat', async (req, res) => {
 
 router.post('/:id/lease/release', async (req, res) => {
   try {
-    const { claimer, reason } = req.body || {};
+    const { claimer, reason, claim_epoch: claimEpoch } = req.body || {};
     if (!claimer) return res.status(400).json({ error: 'claimer is required' });
-    res.json(await releaseTaskLease(pool, { taskId: req.params.id, claimer, reason }));
+    res.json(await releaseTaskLease(pool, { taskId: req.params.id, claimer, reason, claimEpoch }));
   } catch (err) {
     res.status(500).json({ error: 'Failed to release lease', details: err.message });
   }
+});
+
+router.post('/:id/lease/finish', async (req, res) => {
+  try {
+    const { claimer, claim_epoch: claimEpoch, status, result } = req.body || {};
+    const response = await finishTaskLease(pool, { taskId: req.params.id, claimer, claimEpoch, status, result });
+    res.status(response.status).json(response.body);
+  } catch { res.status(503).json({ error: 'lease_finish_unavailable' }); }
 });
 
 export default router;

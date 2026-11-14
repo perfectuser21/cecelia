@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Smoke: fix-markdispatched-null-payload
 # Task ID: 2faafa72-9358-4057-b1e6-6f5a67133ed7
-# 验证 markDispatched/writeBackToPublishTask/completeScraperTask
+# 验证 markDispatched 与通用终态写入
 # 现役任务写入的 NULL payload 陷阱已修复为 COALESCE 防御写法
 set -e
 
@@ -13,7 +13,6 @@ echo "=== [BEHAVIOR-4] 静态扫描：现役文件中不存在裸 NULL 陷阱写
 
 SCAN_RESULT=$(grep -rn 'payload = payload ||' \
   packages/brain/src/nightly-orchestrator.js \
-  packages/brain/src/post-publish-data-collector.js \
   2>/dev/null || true)
 
 if [ -n "$SCAN_RESULT" ]; then
@@ -35,26 +34,11 @@ fi
 echo "PASS: $COALESCE_MARK"
 
 echo ""
-echo "=== [BEHAVIOR-4] 验证 post-publish-data-collector.js 两处 payload 写入都有 NULL 防御 ==="
-
-# writeBackToPublishTask：本文件内 COALESCE(payload
-PPDC_COUNT=$(grep -c 'COALESCE(payload' \
-  packages/brain/src/post-publish-data-collector.js 2>/dev/null || echo 0)
-if [ "$PPDC_COUNT" -lt 1 ]; then
-  echo "FAIL: post-publish-data-collector.js writeBackToPublishTask 期望至少 1 处 COALESCE(payload，实际 $PPDC_COUNT"
-  exit 1
-fi
-# completeScraperTask：终态写入已收口到 lib/task-terminal.js（09-25），payload 合并的 COALESCE 防御在 hub 里
-if ! grep -q "finalizeTask(pool, scraperTaskId, 'completed'" packages/brain/src/post-publish-data-collector.js \
-  || ! grep -q 'mergePayload' packages/brain/src/post-publish-data-collector.js; then
-  echo "FAIL: post-publish-data-collector.js completeScraperTask 未经 finalizeTask + mergePayload 写终态"
-  exit 1
-fi
 if ! grep -qF 'COALESCE(${col}, '"'"'{}'"'"'::jsonb)' packages/brain/src/lib/task-terminal.js; then
   echo "FAIL: lib/task-terminal.js 的 jsonb 合并丢了 COALESCE(col, '{}') NULL 防御"
   exit 1
 fi
-echo "PASS: post-publish-data-collector.js writeBack 有 $PPDC_COUNT 处 COALESCE；completeScraperTask 经 hub（hub 内 COALESCE 防御在）"
+echo "PASS: 通用终态写入保留NULL payload防御"
 
 echo ""
 echo "=== [BEHAVIOR-5] 验证集成测试文件存在且无 pg mock ==="

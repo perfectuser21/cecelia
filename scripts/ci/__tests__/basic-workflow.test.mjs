@@ -56,7 +56,7 @@ test('实际workflow的最终命令严格传播失败、跳过和取消', () => 
   for (const status of ['success', 'failure', 'cancelled', 'skipped', '']) {
     const result = spawnSync('bash', ['-e', '-o', 'pipefail', '-c', step.run], {
       cwd: root, encoding: 'utf8',
-      env: { ...process.env, NEEDS_JSON: JSON.stringify(Object.fromEntries(workflow.jobs['ci-passed'].needs.map(job => [job,{result:job === 'checks' ? status : 'success', outputs:job === 'plan' ? {resource_plan:JSON.stringify({linux:true,app_server:true,legacy:true})} : {linux:'success',app_server:'success',app_server_rpc:'success',legacy:'success'}}]))) },
+      env: { ...process.env, NEEDS_JSON: JSON.stringify(Object.fromEntries(workflow.jobs['ci-passed'].needs.map(job => [job,{result:job === 'checks' ? status : 'success', outputs:job === 'plan' ? {resource_plan:JSON.stringify({linux:true})} : {linux:'success'}}]))) },
     });
     assert.equal(result.status === 0, status === 'success', result.stderr);
   }
@@ -107,9 +107,9 @@ test('统一CI真实合并runner，保持独有命令和产物并隔离安全权
   }),['ci.yml']);
   for(const [id,job]of Object.entries(workflow.jobs))assert.equal(job.uses,undefined,id+'不得复用另一个workflow');
   assert.ok(readFileSync(new URL('../../../.github/workflows/ci.yml',import.meta.url),'utf8').trimEnd().split('\n').length<=500);
-  assert.equal(Object.keys(workflow.jobs).length, 11);
+  assert.equal(Object.keys(workflow.jobs).length, 10);
   const baseline=yaml.load(execFileSync('git',['show','0e2c3c81717ab08ae678a869f526a258f850fec8:.github/workflows/ci.yml'],{cwd:root,encoding:'utf8'}));
-  for (const oldId of ['app-server-canary','attempt-runtime-limits','linux-resource-canary']) {
+  for (const oldId of ['linux-resource-canary']) {
     assert.equal(workflow.jobs[oldId], undefined);
     for (const step of baseline.jobs[oldId].steps.filter(step => step.run?.includes('| tee '))) {
       assert.equal(workflow.jobs['resource-canaries'].steps.filter(actual => actual.run === step.run).length, 1, step.name);
@@ -164,7 +164,7 @@ test('周扫描仅CodeQL执行，closed仅cleanup；评论写权限限于预览�
   assert.ok(workflow.concurrency['cancel-in-progress'].includes("github.event.action != 'closed'"));
 });
 
-test('现役全量PR含UI预览实际展开25个runner，不重复计算定义合并', () => {
+test('现役全量PR含UI预览实际展开21个runner，不重复计算定义合并', () => {
   const selected = planChecks(['apps/dashboard/src/App.tsx'], {full:true});
   assert.equal(selected.length, 11);
   const expanded = Object.entries(workflow.jobs).filter(([id]) => id !== 'preview-cleanup').map(([id, job]) => {
@@ -177,14 +177,14 @@ test('现役全量PR含UI预览实际展开25个runner，不重复计算定义�
     }
     return Object.values(matrix).reduce((count, axis) => count * axis.length, 1);
   });
-  assert.equal(expanded.reduce((sum, count) => sum + count, 0), 25);
+  assert.equal(expanded.reduce((sum, count) => sum + count, 0), 21);
 });
 
 
 test('真实YAML事件表达式隔离closed/weekly，普通PR push manual严格汇总', () => {
   function context(name, action='', ui='true') {
     return {github:{event_name:name,actor:'owner',repository:'example/repo',head_ref:'feature/ui',ref:'refs/heads/main',event:{action,pull_request:{number:42,user:{login:'owner'},head:{repo:{full_name:'example/repo'}},labels:[]}}},
-      needs:{plan:{outputs:{preview_ui:ui,resource_plan:'{"linux":true,"app_server":true,"legacy":true}'}}},always:()=>true,contains:(xs,x)=>xs.includes(x),startsWith:(s,p)=>s.startsWith(p),format:(s,...values)=>s.replace(/\{(\d+)\}/g,(_,i)=>values[Number(i)])};
+      needs:{plan:{outputs:{preview_ui:ui,resource_plan:'{"linux":true}'}}},always:()=>true,contains:(xs,x)=>xs.includes(x),startsWith:(s,p)=>s.startsWith(p),format:(s,...values)=>s.replace(/\{(\d+)\}/g,(_,i)=>values[Number(i)])};
   }
   const evaluate=(expression,ctx)=>runInNewContext(expression.replace(/github\.event\.pull_request\.labels\.\*\.name/g,'github.event.pull_request.labels.map(label => label.name)'),ctx);
   for(const event of ['pull_request','push','workflow_dispatch']) {

@@ -2,13 +2,14 @@
  * routes/warroom.js — 战情室统一 feed API
  *
  * GET /api/brain/warroom/feed?days=7
- *   聚合所有"跑起来的任务"（dev / coding_workflow / content-pipeline / platform_scraper），
+ *   聚合所有"跑起来的任务"（dev / coding_workflow 等现役执行类型），
  *   按 Area → Group 两级分组，返回通用任务统计。
  *
  * 分组/聚合逻辑全在 warroom-classify.js（纯函数，已单测）；本 route 只做 SQL + 装配。
  */
 
 import { Router } from 'express';
+import { rateLimit } from 'express-rate-limit';
 import pool from '../db.js';
 import {
   buildFeed, computeStats, shanghaiDay, toFeedItem,
@@ -27,12 +28,20 @@ import { TREE_NODES_SQL } from '../lib/tree-nodes-sql.js';
 
 const router = Router();
 
+// 仅匹配本模块的受保护路由计数，避免消耗其他Brain模块的额度。
+const moduleRouteRateLimit = rateLimit({
+  windowMs: 60_000,
+  limit: 1200,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+});
+
 // 纳入 feed 的任务类型（有实质执行的；排除无实质执行的子任务噪音）
 const FEED_TYPES = WARROOM_FEED_TASK_TYPES;
 
 const AREA_NAMES = { cecelia: 'Cecelia', zenithjoy: 'ZenithJoy', infrastructure: 'Infrastructure' };
 
-router.get('/feed', async (req, res) => {
+router.get('/feed', moduleRouteRateLimit, async (req, res) => {
   try {
     const days = Math.min(Math.max(parseInt(req.query.days || '7', 10) || 7, 1), 90);
 
@@ -94,7 +103,7 @@ router.get('/feed', async (req, res) => {
  *   Area → Line 树（只含 status='active' 的 journey，按名字归 Area）。
  *   每条线：roadmap 进度（step_total/step_done）+ 近30天关联任务（running/task_total/last_activity）。
  */
-router.get('/lines', async (req, res) => {
+router.get('/lines', moduleRouteRateLimit, async (req, res) => {
   try {
     // 1. active journeys
     const { rows: journeys } = await pool.query(
@@ -173,7 +182,7 @@ router.get('/lines', async (req, res) => {
  *   单条 Line 详情：{ line, steps(按 step_number 升序), tasks(toFeedItem 装配，含 lg+verdict) }。
  *   tasks 复用 /feed 的 reportByInitiativeId(verdict) + lgByPlannerTaskId(LangGraph) 富数据逻辑。
  */
-router.get('/line/:id', async (req, res) => {
+router.get('/line/:id', moduleRouteRateLimit, async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -256,7 +265,7 @@ router.get('/line/:id', async (req, res) => {
  *   带 ability_id + ability_name，供前端按 ability 分组渲染进度条。
  *   返回 { line_id, items }；无推进项返回空数组（200）。
  */
-router.get('/line/:id/advancements', async (req, res) => {
+router.get('/line/:id/advancements', moduleRouteRateLimit, async (req, res) => {
   try {
     const { id } = req.params;
     const { rows } = await pool.query(
@@ -284,7 +293,7 @@ router.get('/line/:id/advancements', async (req, res) => {
  *   - connections: journey_features(abilities/features) + advancements + in_progress tasks + open issues
  *   - health: 近30天 run 成功率、PR 频率、是否停线
  */
-router.get('/line/:id/command', async (req, res) => {
+router.get('/line/:id/command', moduleRouteRateLimit, async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -441,7 +450,7 @@ router.get('/line/:id/command', async (req, res) => {
  *   - invariants / cumulative_fr: 与三角色注入同源（fetchLineContext）
  *   - prompt_block: formatLineContextForPrompt 直出，skill 可整段注入
  */
-router.get('/line/:id/context-manifest', async (req, res) => {
+router.get('/line/:id/context-manifest', moduleRouteRateLimit, async (req, res) => {
   try {
     const { id } = req.params;
     const { rows: jrows } = await pool.query(

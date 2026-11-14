@@ -260,75 +260,18 @@ endpoints:
   # 内容管道
   # ============================================================
 
-  - method: GET
-    path: /api/brain/pipelines
-    purpose: 列出 content-pipeline 任务
-    code_file: packages/brain/src/routes/content-pipeline.js
-    covers_feature: pipeline_orchestrator
-    auth: none
 
-  - method: POST
-    path: /api/brain/pipelines
-    purpose: 创建新 content-pipeline 任务
-    code_file: packages/brain/src/routes/content-pipeline.js
-    covers_feature: pipeline_orchestrator
-    body:
-      content_type: string
-      topic: string
-    auth: none
 
-  - method: POST
-    path: /api/brain/pipelines/:id/run
-    purpose: 手动触发 pipeline 执行
-    code_file: packages/brain/src/routes/content-pipeline.js
-    covers_feature: pipeline_orchestrator
-    auth: none
 
-  - method: GET
-    path: /api/brain/pipelines/:id/stages
-    purpose: 查询 pipeline 子任务进度
-    code_file: packages/brain/src/routes/content-pipeline.js
-    covers_feature: pipeline_orchestrator
-    auth: none
 
-  - method: GET
-    path: /api/brain/pipelines/:id/output
-    purpose: 查询 pipeline 产出物（manifest）
-    code_file: packages/brain/src/routes/content-pipeline.js
-    covers_feature: pipeline_export
-    auth: none
 
-  - method: POST
-    path: /api/brain/pipelines/trigger-topics
-    purpose: 手动触发今日选题生成
-    code_file: packages/brain/src/routes/content-pipeline.js
-    covers_feature: pipeline_orchestrator
-    auth: none
 
   # ============================================================
   # 发布任务
   # ============================================================
 
-  - method: GET
-    path: /api/brain/publish-jobs
-    purpose: 查询发布任务列表（支持按 platform/status 过滤）
-    code_file: packages/brain/src/routes/publish-jobs.js
-    covers_feature: publish_monitor
-    auth: none
 
-  - method: POST
-    path: /api/brain/publish-jobs
-    purpose: 创建发布任务
-    code_file: packages/brain/src/routes/publish-jobs.js
-    covers_feature: publish_monitor
-    auth: none
 
-  - method: PATCH
-    path: /api/brain/publish-jobs/:id
-    purpose: 更新发布任务状态
-    code_file: packages/brain/src/routes/publish-jobs.js
-    covers_feature: publish_monitor
-    auth: none
 
   # ============================================================
   # 设计文档 & 知识库
@@ -372,11 +315,11 @@ endpoints:
     auth: none
 
 summary:
-  total_endpoints: 42
+  total_endpoints: 33
   by_method:
-    GET: 22
-    POST: 14
-    PATCH: 5
+    GET: 16
+    POST: 13
+    PATCH: 3
     WS: 1
   by_system:
     task: 6
@@ -384,7 +327,7 @@ summary:
     memory: 3
     okr: 7
     decision: 5
-    pipeline: 6
-    publisher: 3
+    pipeline: 0
+    publisher: 0
     other: 7
   last_updated: "2026-04-01"

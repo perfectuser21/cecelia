@@ -1,3 +1,4 @@
+import { trustedN8nWebhookUrl } from './lib/n8n-webhook-url.js';
 import {assertActiveDevelopmentTask} from './lib/task-type-registry.js';
 import { COMPANY_KR_SQL_GUARD, isCompanyKr } from './lib/company-kr-metrics.js';
 import { randomUUID } from 'node:crypto';
@@ -9,7 +10,7 @@ import { detectDomain } from './domain-detector.js';
 import { getDomainRole } from './role-registry.js';
 import { createRoutedTask } from './work-routing-store.js';
 import {
-  CONTENT_TASK_TYPES as _C, RESEARCH_TASK_TYPES as _R, REVIEW_TASK_TYPES as _V, CODING_TASK_TYPES as _K,
+  RESEARCH_TASK_TYPES as _R, REVIEW_TASK_TYPES as _V, CODING_TASK_TYPES as _K,
   NO_GOAL_TASK_TYPES, LAYER_RETIRED_TASK_TYPES,
 } from './lib/task-type-registry.js';
 
@@ -31,8 +32,7 @@ function isSystemTask(task_type, trigger_source) {
   return NO_GOAL_TASK_TYPES.includes(task_type) || systemSources.includes(trigger_source);
 }
 
-// 名单见 lib/task-type-registry.js（CONTENT_TASK_TYPES / RESEARCH_TASK_TYPES / REVIEW_TASK_TYPES / CODING_TASK_TYPES）。
-const CONTENT_TASK_TYPES = new Set(_C);
+// 名单见 lib/task-type-registry.js（RESEARCH_TASK_TYPES / REVIEW_TASK_TYPES / CODING_TASK_TYPES）。
 const RESEARCH_TASK_TYPES = new Set(_R);
 const REVIEW_TASK_TYPES = new Set(_V);
 const CODING_TASK_TYPES = new Set(_K);
@@ -48,7 +48,6 @@ function routeSource(triggerSource, explicitSource) {
 function legacyWorkContract({ taskType, mutationIntent, workDomain }) {
   if (mutationIntent) return { mutation_intent: mutationIntent, declared_domain: workDomain };
   if (CODING_TASK_TYPES.has(taskType)) return { mutation_intent: 'write', declared_domain: 'coding' };
-  if (CONTENT_TASK_TYPES.has(taskType)) return { mutation_intent: 'none', declared_domain: 'content' };
   if (RESEARCH_TASK_TYPES.has(taskType)) return { mutation_intent: 'none', declared_domain: 'research' };
   if (REVIEW_TASK_TYPES.has(taskType)) return { mutation_intent: 'read_only', declared_domain: 'coding' };
   return { mutation_intent: 'none', declared_domain: 'operations' };
@@ -546,18 +545,18 @@ async function triggerN8n({ webhook_path, data }) {
       ...(N8N_API_KEY ? { 'X-N8N-API-KEY': N8N_API_KEY } : {})
     };
 
-    const url = webhook_path.startsWith('http')
-      ? webhook_path
-      : `${N8N_API_URL}/webhook/${webhook_path}`;
+    const url = trustedN8nWebhookUrl(N8N_API_URL, webhook_path);
 
     const response = await fetch(url, {
       method: 'POST',
       headers,
-      body: JSON.stringify(data || {})
+      body: JSON.stringify(data || {}),
+      redirect: 'error',
+      signal: AbortSignal.timeout(10000),
     });
 
     const responseData = await response.text();
-    console.log(`[Action] Triggered n8n webhook: ${webhook_path}`);
+    console.log('[Action] Triggered n8n webhook:', webhook_path);
 
     return {
       success: response.ok,

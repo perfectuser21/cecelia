@@ -51,7 +51,7 @@ describe('pauseLowPriorityTasks — 现役关键路径豁免', () => {
     expect(params[3]).toEqual(ESCALATION_EXEMPT_TASK_TYPES);
   });
 
-  it('现役架构评审和内容关键路径仍受保护，普通dev及退役类型没有额外特权', async () => {
+  it('现役架构评审仍受保护，普通dev及退役类型没有额外特权', async () => {
     await executeResponse({
       actions: [{type:'pause_low_priority', params:{priorities:['P2','P3']}}],
     });
@@ -61,7 +61,6 @@ describe('pauseLowPriorityTasks — 现役关键路径豁免', () => {
     expect(params[1]).not.toContain('owner_input');
     expect(params[0]).toEqual(['P2','P3']);
     expect(params[3]).toContain('arch_review');
-    expect(params[3]).toContain('content-pipeline');
     expect(params[3]).not.toContain('dev');
     expect(params[3].some(type => /^(?:harness|sprint)_/.test(type))).toBe(false);
   });

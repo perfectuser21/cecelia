@@ -71,14 +71,7 @@ vi.mock('../okr-tick.js', () => ({
   answerQuestionForGoal: vi.fn(),
   getPendingQuestions: vi.fn(),
 }));
-vi.mock('../nightly-tick.js', () => ({
-  executeNightlyAlignment: vi.fn(),
-  runNightlyAlignmentSafe: vi.fn(),
-  startNightlyScheduler: vi.fn(),
-  stopNightlyScheduler: vi.fn(),
-  getNightlyTickStatus: vi.fn(),
-  getDailyReports: vi.fn(),
-}));
+
 vi.mock('../intent.js', () => ({
   parseIntent: vi.fn(),
   parseAndCreate: vi.fn(),

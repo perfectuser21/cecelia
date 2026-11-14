@@ -1,11 +1,9 @@
 /**
- * Model Profile 运行时切换系统 - 单元测试
+ * Brain 运行时模型参数只读装载 - 单元测试
  *
  * 覆盖：
  * - loadActiveProfile（从 DB 加载、fallback）
  * - getActiveProfile（缓存、fallback）
- * - switchProfile（事务切换、不存在 profile、rollback）
- * - listProfiles
  * - executor profile-aware 路由
  * - thalamus profile dispatch
  * - cortex profile-aware 模型选择
@@ -15,8 +13,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   loadActiveProfile,
   getActiveProfile,
-  switchProfile,
-  listProfiles,
   FALLBACK_PROFILE,
   _resetProfileCache,
 } from '../model-profile.js';
@@ -34,13 +30,6 @@ function makeMockPool(queryHandler) {
 describe('model-profile', () => {
   beforeEach(() => {
     _resetProfileCache();
-  });
-
-  it('默认执行配置只保留现役任务模型，不再公布旧Harness模型路由', () => {
-    const map = getActiveProfile().config.executor.model_map;
-    expect(map.dev.anthropic).toBe('claude-sonnet-4-6');
-    expect(map.review).toBeDefined();
-    expect(Object.keys(map).filter(type => type.startsWith('harness_'))).toEqual([]);
   });
 
   // ==================== loadActiveProfile ====================
@@ -105,91 +94,6 @@ describe('model-profile', () => {
       await loadActiveProfile(pool);
 
       expect(getActiveProfile()).toEqual(dbProfile);
-    });
-  });
-
-  // ==================== switchProfile ====================
-
-  describe('switchProfile', () => {
-    it('D6: 成功切换 profile（事务安全）', async () => {
-      const targetProfile = {
-        id: 'profile-anthropic',
-        name: 'Anthropic 主力',
-        config: { thalamus: { provider: 'anthropic' } },
-      };
-
-      const calls = [];
-      const pool = makeMockPool(async (sql, params) => {
-        calls.push(sql);
-        if (sql.includes('SELECT') && sql.includes('model_profiles') && params) {
-          return { rows: [targetProfile] };
-        }
-        return { rows: [] };
-      });
-
-      const result = await switchProfile(pool, 'profile-anthropic');
-
-      expect(result.id).toBe('profile-anthropic');
-      expect(result.is_active).toBe(true);
-      expect(getActiveProfile().id).toBe('profile-anthropic');
-
-      // 验证事务流程
-      expect(calls).toContain('BEGIN');
-      expect(calls).toContain('COMMIT');
-      expect(calls).not.toContain('ROLLBACK');
-    });
-
-    it('D7: 不存在的 profile 抛出错误', async () => {
-      const pool = makeMockPool(async () => ({ rows: [] }));
-
-      await expect(switchProfile(pool, 'profile-nonexistent'))
-        .rejects.toThrow('Profile not found: profile-nonexistent');
-    });
-
-    it('D8: 事务失败时 ROLLBACK', async () => {
-      const calls = [];
-      let callCount = 0;
-      const pool = makeMockPool(async (sql, params) => {
-        calls.push(sql);
-        callCount++;
-        // 第一次 SELECT 返回结果
-        if (sql.includes('SELECT') && params) {
-          return { rows: [{ id: 'profile-anthropic', name: 'Anthropic 主力', config: {} }] };
-        }
-        // BEGIN 正常
-        if (sql === 'BEGIN') return { rows: [] };
-        // 第一个 UPDATE（deactivate）正常
-        if (sql.includes('UPDATE') && sql.includes('false')) return { rows: [] };
-        // 第二个 UPDATE（activate）失败
-        if (sql.includes('UPDATE') && sql.includes('true')) {
-          throw new Error('DB write error');
-        }
-        return { rows: [] };
-      });
-
-      await expect(switchProfile(pool, 'profile-anthropic'))
-        .rejects.toThrow('DB write error');
-
-      expect(calls).toContain('ROLLBACK');
-      expect(calls).not.toContain('COMMIT');
-    });
-  });
-
-  // ==================== listProfiles ====================
-
-  describe('listProfiles', () => {
-    it('D9: 列出所有 profile', async () => {
-      const profiles = [
-        { id: 'profile-minimax', name: 'MiniMax 主力', is_active: true },
-        { id: 'profile-anthropic', name: 'Anthropic 主力', is_active: false },
-      ];
-      const pool = makeMockPool(async () => ({ rows: profiles }));
-
-      const result = await listProfiles(pool);
-
-      expect(result).toHaveLength(2);
-      expect(result[0].id).toBe('profile-minimax');
-      expect(result[1].id).toBe('profile-anthropic');
     });
   });
 
