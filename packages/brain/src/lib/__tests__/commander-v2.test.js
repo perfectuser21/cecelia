@@ -10,9 +10,24 @@ it('旧reaper不能以自述completed终结v2或释放锁', async()=>{
  expect(pool.query).toHaveBeenCalledTimes(1);
 });
 it('旧租约过期不误判v2死亡、不放锁、不重排',async()=>{
- const pool={query:vi.fn(async()=>({rows:[{...task,task_id:task.id,source:'brain',expired_sec:99999}]}))},probe=vi.fn(async()=> 'unknown');
+ const row={...task,task_id:task.id,source:'brain',claimer:null,lease_epoch:'2026-11-14 10:00:00.123456+00',expired_sec:99999};
+ const db={query:vi.fn(async sql=>{
+  if (['BEGIN','COMMIT','ROLLBACK'].includes(sql)) return {rows:[]};
+  if (sql==='SELECT id FROM tasks WHERE id=$1 FOR UPDATE') return {rows:[{id:task.id}]};
+  if (sql==='SELECT task_id FROM task_leases WHERE task_id=$1 FOR UPDATE') return {rows:[{task_id:task.id}]};
+  if (sql.includes('FROM task_leases l LEFT JOIN tasks t') && sql.includes('clock_timestamp()')) return {rows:[row]};
+  throw Error(`Unexpected transaction query: ${sql}`);
+ }),release:vi.fn()};
+ const pool={query:vi.fn(async sql=>{
+  if(sql.includes('FROM task_leases l LEFT JOIN tasks t')&&sql.includes('LIMIT 50')) return {rows:[row]};
+  throw Error(`Unexpected pool query: ${sql}`);
+ }),connect:vi.fn(async()=>db)},probe=vi.fn(async()=> 'unknown');
  const result=await reapExpiredLeases(pool,{probe});
- expect(result.failed).toBe(0);expect(probe).not.toHaveBeenCalled();expect(pool.query).toHaveBeenCalledTimes(1);
+ expect(result).toEqual({failed:0,requeued:0,released:0,extended:0,skipped:1});
+ expect(probe).not.toHaveBeenCalled();expect(pool.query).toHaveBeenCalledTimes(1);
+ expect(pool.connect).toHaveBeenCalledOnce();expect(db.release).toHaveBeenCalledOnce();
+ expect(db.query.mock.calls.map(([sql])=>sql).filter(sql=>['BEGIN','COMMIT','ROLLBACK'].includes(sql))).toEqual(['BEGIN','COMMIT']);
+ expect(db.query.mock.calls.some(([sql])=>/^\s*(?:UPDATE|DELETE|INSERT)\b/.test(sql))).toBe(false);
 });
 it('通用终态SQL必须以持久控制器终判为闸',()=>{
  const sql=buildTerminalUpdate(task.id,'completed').sql;
