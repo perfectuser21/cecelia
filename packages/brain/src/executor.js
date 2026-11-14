@@ -33,7 +33,7 @@ import { buildLearningContext } from './learning-retriever.js';
 import { generateL0Summary } from './memory-utils.js';
 import { getDecisionsSummary } from './decisions-context.js';
 import { getActiveProfile, FALLBACK_PROFILE } from './model-profile.js';
-import { getTaskLocation, getInternalTaskHandler } from './task-router.js';
+import { getTaskLocation } from './task-router.js';
 import { isCommanderVerification } from './lib/commander-verification-transport.js';
 import { resolveExecutor } from './routing/resolve-executor.js';
 import { loadCache as _loadCache, getCachedLocation, getCachedConfig, refreshCache as _refreshCache } from './task-type-config-cache.js';
@@ -41,14 +41,11 @@ import { updateTaskStatus, updateTaskProgress as _updateTaskProgress } from './t
 import { finalizeTask } from './lib/task-terminal.js';
 import { getAccountUsage } from './account-usage.js';
 import { writeDockerCallback, resolveResourceTier, isDockerAvailable } from './docker-executor.js';
-import { loadSkillContent, assertSprintDir } from './harness-shared.js';
+import { loadSkillContent } from './execution-shared.js';
 import { REVIEW_TASK_TYPES } from './lib/review-task-types.js';
 import {
-  RETIRED_HARNESS_TYPES_DISPATCH,
-  RECOVERY_HARNESS_TASK_TYPES,
-  FIX_MODE_TASK_TYPES,
-  HARNESS_V4_TASK_TYPES,
-  SPRINT_HARNESS_DEV_TASK_TYPES,
+  isRetiredDevelopmentTask,
+  RETIRED_DEVELOPMENT_CODE,
   CONTENT_PIPELINE_TYPES as CONTENT_PIPELINE_EXTERNAL_WORKER_TYPES,
   EXTERNAL_WATCHDOG_TASK_TYPES,
   EXECUTOR_SKILL_MAP,
@@ -65,9 +62,8 @@ import { consumeReviewSkill } from './lib/review-skill-plan.js';
 // 超过仍无回执 → 落回既有 SUSPECT→DEAD 流程，工作机断电/领单器挂了照样有出路。
 const EXTERNAL_CLAIM_GRACE_MS = Number(process.env.EXTERNAL_CLAIM_GRACE_MS || 45 * 60 * 1000);
 import { classifyCodexFailure } from './lib/codex-fatal-patterns.js';
-import { classifyDispatchReasonCode, dispatchFailureFromError } from './lib/dispatch-reason-code.js';
 import { raise } from './alerting.js';
-import { EXECUTOR_KIND_FOR, resolveExecutorKind, isExternallyExecuted, assessTaskLiveness } from './executor-contracts.js';
+import { EXECUTOR_KIND_FOR, isExternallyExecuted, assessTaskLiveness } from './executor-contracts.js';
 import {
   isExternalRunMirror,
   externalActivityAgeMs,
@@ -1403,19 +1399,6 @@ function getCredentialsForTask(task) {
   return profileMap?.[taskType]?.credentials || profileMap?.[taskType]?.minimax_credentials || null;
 }
 
-// 各 harness 阶段的预定义 goal conditions（task.goal_condition 为空时作为 fallback）
-const HARNESS_GOAL_CONDITIONS = {
-  'harness_spec':  'The spec document has been written and committed to docs/superpowers/specs/',
-  'harness_code':  'All implementation is complete, all tests pass, and changes are committed to git',
-  'harness_prci':  'A pull request has been created and pushed to GitHub, PR URL is shown in the conversation',
-  'harness_ship':  'The pull request has been merged and all CI checks have passed',
-  'spec':          'The spec document has been written and committed to docs/superpowers/specs/',
-  'code':          'All implementation is complete, all tests pass, and changes are committed to git',
-  'prci':          'A pull request has been created and pushed to GitHub, PR URL is shown in the conversation',
-  'ship':          'The pull request has been merged and all CI checks have passed',
-  'generic':       'The task described in the prompt has been completed successfully',
-};
-
 /**
  * 生成 Claude Code --settings prompt-based stop hook JSON。
  * @param {string|null} goalCondition
@@ -1637,26 +1620,6 @@ function buildSystemContextBlock() {
 `;
 }
 
-// ─── Sprint 跨 worktree 文件读取（git fetch + git show） ─────────────────────
-
-async function _fetchSprintFile(branch, filePath) {
-  try {
-    execSync('git fetch origin', { cwd: WORK_DIR, stdio: 'pipe' });
-  } catch {
-    // fetch 失败不阻塞，继续尝试 show
-  }
-  try {
-    const content = execSync(`git show origin/${branch}:${filePath}`, {
-      cwd: WORK_DIR,
-      encoding: 'utf-8',
-      stdio: 'pipe',
-    });
-    return content;
-  } catch {
-    return null;
-  }
-}
-
 // ─── preparePrompt 子函数 ────────────────────────────────────────────────────
 
 function _prepareProjectTaskDecomp(task, krId, krTitle, projectId) {
@@ -1796,80 +1759,6 @@ async function _prepareProjectPlanPrompt(task) {
   return `${await _prepareDecompositionPrompt({ ...task, project_id: task.project_id || task.payload?.entity_id || task.payload?.project_id })}\n${formatHint}`;
 }
 
-function _prepareSprintPrompt(task, taskType) {
-  const payload = task.payload || {};
-  const sprintDir = assertSprintDir(payload.sprint_dir, '_prepareSprintPrompt');
-  const evalRound = payload.eval_round || 0;
-  const isFixMode = FIX_MODE_TASK_TYPES.includes(taskType);
-  const isHarnessV4 = HARNESS_V4_TASK_TYPES.includes(taskType);
-  const skillCmd = isHarnessV4 ? '/harness-generator' : '/sprint-generator';
-  const mode = isFixMode ? taskType : (isHarnessV4 ? 'harness_generate' : 'sprint_generate');
-  const headerText = isHarnessV4
-    ? `## Harness v4.0 — ${isFixMode ? 'Fix (Round ' + evalRound + ')' : 'Generate'}`
-    : `## Harness v3.1 — ${isFixMode ? 'Sprint Fix (Round ' + evalRound + ')' : 'Sprint Generate'}`;
-  return `${skillCmd}
-
-${headerText}
-
-**task_type**: ${mode}
-**task_id**: ${task.id}
-**sprint_dir**: ${sprintDir}
-${isFixMode ? `**eval_round**: ${evalRound}\n**读取 eval-round-${evalRound}.md 中的 FAIL 反馈进行修复**\n**ci_fail_context**: ${payload.ci_fail_context || ''}` : ''}
-
-任务描述:
-${task.description || task.title}`;
-}
-
-function _prepareSprintEvaluatePrompt(task) {
-  const payload = task.payload || {};
-  const sprintDir = assertSprintDir(payload.sprint_dir, '_prepareSprintEvaluatePrompt');
-  const devTaskId = payload.dev_task_id || '';
-  const evalRound = payload.eval_round || 1;
-  return `/sprint-evaluator
-
-## Harness v2.0 — Sprint Evaluator (R${evalRound})
-
-**任务 ID**: ${task.id}
-**Sprint 目录**: ${sprintDir}
-**Dev Task ID**: ${devTaskId}
-**评估轮次**: R${evalRound}
-**Initiative**: ${task.project_id || 'unknown'}
-
-你的目标: 读取 ${sprintDir}/sprint-contract.md，逐条验证 Generator 的代码。
-输出: ${sprintDir}/evaluation.md (PASS 或 FAIL + 具体问题)`;
-}
-
-async function _prepareHarnessEvaluatePrompt(task) {
-  const payload = task.payload || {};
-  const sprintDir = assertSprintDir(payload.sprint_dir, '_prepareHarnessEvaluatePrompt');
-  const prUrl = payload.pr_url || '';
-  const evalRound = payload.eval_round || 1;
-  const contractBranch = payload.contract_branch || '';
-
-  // v5.0: Evaluator 是对抗性 E2E 验收 Agent，不是机械命令执行器
-  // 注入合同内容供 Evaluator 理解验收标准（Given-When-Then）
-  let contractContent = '';
-  if (contractBranch) {
-    // ⚠️ harness::contract-filename 接口约定：proposer 写 contract-draft.md（v8.x 起不再有 sprint-contract.md）
-    const content = await _fetchSprintFile(contractBranch, `${sprintDir}/contract-draft.md`);
-    if (content) contractContent = `\n\n## ${sprintDir}/contract-draft.md（来自 ${contractBranch}）\n${content}`;
-  }
-
-  return `/harness-evaluator
-
-## Harness v5.0 — Evaluator (R${evalRound})
-
-**task_id**: ${task.id}
-**sprint_dir**: ${sprintDir}
-**pr_url**: ${prUrl}
-**eval_round**: ${evalRound}
-**contract_branch**: ${contractBranch}
-
-目标：部署服务（重启 Brain / Dashboard），然后对照合同验收标准（Given-When-Then）进行 E2E 功能验收。
-用 curl 验证 API，用 Playwright/浏览器验证前端。你的工作是找到失败，不是确认成功。
-写入 ${sprintDir}/eval-round-${evalRound}.md。${contractContent}`;
-}
-
 function _prepareSpecReviewPrompt(task) {
   // payload.branch 优先，兼容 metadata.branch（两种派发方式）
   const branch = task.payload?.branch || task.metadata?.branch || '';
@@ -1984,51 +1873,6 @@ ${task.description || task.title}
   return `${skill}\n\n${sysCtx}${prd}${learningCtx}${retryCtx}`;
 }
 
-// ─── preparePrompt 子函数（Harness 系列）────────────────────────────────────
-
-async function _prepareHarnessGeneratePrompt(task) {
-  const taskType = task.task_type || 'dev';
-  const sprintDir = assertSprintDir(task.payload?.sprint_dir, '_prepareHarnessGeneratePrompt');
-  const contractBranch = task.payload?.contract_branch || null;
-  let basePrompt = _prepareSprintPrompt(task, taskType);
-  if (contractBranch) {
-    // ⚠️ harness::contract-filename 接口约定：proposer 写 contract-draft.md（v8.x 起不再有 sprint-contract.md）
-    const contractContent = await _fetchSprintFile(contractBranch, `${sprintDir}/contract-draft.md`);
-    if (contractContent) {
-      basePrompt += `\n\n## ${sprintDir}/contract-draft.md（来自 ${contractBranch}）\n${contractContent}`;
-    }
-  }
-  return basePrompt;
-}
-
-function _prepareHarnessReportPrompt(task, taskType) {
-  const sprintDir = assertSprintDir(task.payload?.sprint_dir, '_prepareHarnessReportPrompt');
-  const totalCost = (task.payload?.sub_tasks || []).reduce((a, s) => a + (s.cost_usd || 0), 0);
-  // 参数块（task_id/sprint_dir/pr_url/...），与原实现一致。
-  const paramsBlock = `## Harness v4.0 — Report\n\ntask_id: ${task.id}\nsprint_dir: ${sprintDir}\npr_url: ${task.payload?.pr_url || ''}\ninitiative_id: ${task.payload?.initiative_id || task.id}\nfeature_id: ${task.payload?.feature_id || ''}\nfeature_name: ${task.payload?.feature_name || task.title || ''}\njourney_id: ${task.payload?.journey_id || ''}\ntotal_cost: ${totalCost}\nscreenshots: ${JSON.stringify(task.payload?.screenshots || [])}\npr_urls: ${JSON.stringify(task.payload?.pr_urls || [])}\n\n${task.description || task.title}`;
-
-  // Bug B fix（Bug 7 复刻）：容器内 headless `claude -p` 不展开 slash command，
-  // 裸 `/harness-report` 会让 report agent 收到字面量 + 零 SKILL 指令 → 空壳报告 exit 0 静默降级。
-  // 和其余 5 个阶段对齐：用 loadSkillContent 把 SKILL.md 完整内联进 prompt（SKILL.md 是 SSOT）。
-  if (taskType === 'harness_report') {
-    const skillContent = loadSkillContent('harness-report');
-    return [
-      '你是 harness-report agent。按下面 SKILL 指令工作。',
-      '',
-      skillContent,
-      '',
-      '---',
-      '',
-      paramsBlock,
-    ].join('\n');
-  }
-
-  // sprint_report 路径：sprint-report SKILL 未同步进 CI fallback 目录
-  // (packages/workflows/skills/)，inline 化会在缺 host skill 的容器/CI 触发 B56 fail-fast。
-  // 本次只修 harness_report（确认在 headless 容器跑），sprint_report 保持原 slash 形式。
-  return `/sprint-report\n\n${paramsBlock}`;
-}
-
 function _prepareStrategistDecisionPrompt(task) {
   const skillContent = loadSkillContent('line-strategist');
   const payload = task.payload || {};
@@ -2054,7 +1898,7 @@ ${task.description || task.title}`;
 }
 
 function _prepareCiPatrolPrompt(task) {
-  // 容器内 headless claude -p 不展开 slash command（同 harness-report Bug B），
+  // 容器内 headless claude -p 不展开 slash command，
   // 裸 /ci-patrol 会让巡检 agent 零 SKILL 指令即兴发挥——日报只留 stdout、notes/棘轮全丢、任务假 completed。
   const skillContent = loadSkillContent('ci-patrol');
   const payload = task.payload || {};
@@ -2075,62 +1919,6 @@ ${task.description || task.title}`;
     '',
     paramsBlock,
   ].join('\n');
-}
-
-function _prepareHarnessPlannerPrompt(task, _taskType) {
-  // harness_planner task_type 已退役（retire-harness-planner PR），此函数仅 sprint_planner 调用
-  const sprintDir = assertSprintDir(task.payload?.sprint_dir, '_prepareHarnessPlannerPrompt');
-  return `/sprint-planner\n\n## Harness v4.0 — Planner\n\ntask_id: ${task.id}\nsprint_dir: ${sprintDir}\n\n${task.description || task.title}`;
-}
-
-async function _prepareContractProposePrompt(task, taskType) {
-  const sprintDir = assertSprintDir(task.payload?.sprint_dir, '_prepareContractProposePrompt');
-  const proposeRound = task.payload?.propose_round || 1;
-  const plannerBranch = task.payload?.planner_branch || null;
-  const reviewBranch = task.payload?.review_branch || null;
-  const skillName = taskType === 'harness_contract_propose' ? '/harness-contract-proposer' : '/sprint-contract-proposer';
-  let basePrompt = `${skillName}\n\n## Harness v4.0 — Contract Proposer\n\ntask_id: ${task.id}\nsprint_dir: ${sprintDir}\npropose_round: ${proposeRound}\nplanner_task_id: ${task.payload?.planner_task_id || ''}\nplanner_branch: ${plannerBranch || ''}\nreview_feedback_task_id: ${task.payload?.review_feedback_task_id || ''}\nreview_branch: ${reviewBranch || ''}\n\n${task.description || task.title}`;
-  if (plannerBranch) {
-    const sprintPrdContent = await _fetchSprintFile(plannerBranch, `${sprintDir}/sprint-prd.md`);
-    if (sprintPrdContent) {
-      basePrompt += `\n\n## ${sprintDir}/sprint-prd.md（来自 ${plannerBranch}）\n${sprintPrdContent}`;
-    }
-  }
-  if (reviewBranch) {
-    const reviewFeedback = await _fetchSprintFile(reviewBranch, `${sprintDir}/contract-review-feedback.md`);
-    if (reviewFeedback) {
-      basePrompt += `\n\n## ${sprintDir}/contract-review-feedback.md（来自 ${reviewBranch}）\n${reviewFeedback}`;
-    }
-  }
-  return basePrompt;
-}
-
-async function _prepareContractReviewPrompt(task, taskType) {
-  const sprintDir = assertSprintDir(task.payload?.sprint_dir, '_prepareContractReviewPrompt');
-  const plannerBranch = task.payload?.planner_branch || null;
-  const proposeBranch = task.payload?.propose_branch || null;
-  const skillName = taskType === 'harness_contract_review' ? '/harness-contract-reviewer' : '/sprint-contract-reviewer';
-  let basePrompt = `${skillName}\n\n## Harness v4.0 — Contract Reviewer\n\ntask_id: ${task.id}\nsprint_dir: ${sprintDir}\npropose_task_id: ${task.payload?.propose_task_id || ''}\npropose_round: ${task.payload?.propose_round || 1}\nplanner_branch: ${plannerBranch || ''}\npropose_branch: ${proposeBranch || ''}\n\n${task.description || task.title}`;
-  if (plannerBranch) {
-    const sprintPrdContent = await _fetchSprintFile(plannerBranch, `${sprintDir}/sprint-prd.md`);
-    if (sprintPrdContent) {
-      basePrompt += `\n\n## ${sprintDir}/sprint-prd.md（来自 ${plannerBranch}）\n${sprintPrdContent}`;
-    }
-  }
-  if (proposeBranch) {
-    const contractDraftContent = await _fetchSprintFile(proposeBranch, `${sprintDir}/contract-draft.md`);
-    if (contractDraftContent) {
-      basePrompt += `\n\n## ${sprintDir}/contract-draft.md（来自 ${proposeBranch}）\n${contractDraftContent}`;
-    }
-  }
-  return basePrompt;
-}
-
-// ─── preparePrompt 辅助：条件判断 + 路由内联 lambda 拆分 ────────────────────
-
-function _isSprintOrHarnessDevMode(taskType, payload) {
-  return SPRINT_HARNESS_DEV_TASK_TYPES.includes(taskType)
-    || (taskType === 'dev' && payload?.harness_mode);
 }
 
 function _prepareInitiativePlanPrompt(t) {
@@ -2158,22 +1946,12 @@ function _prepareInitiativeReviewPrompt(t) {
 }
 
 const _DECOMP_TYPES = new Set(['true', 'continue']);
-const _HARNESS_GENERATE_TYPES = new Set(HARNESS_V4_TASK_TYPES);
 
 // 路由表：taskType → handler（模块级常量，避免每次调用重建）
 const _TASK_ROUTES = {
-  sprint_report:            (t) => _prepareHarnessReportPrompt(t, 'sprint_report'),
-  harness_report:           (t) => _prepareHarnessReportPrompt(t, 'harness_report'),
-  sprint_planner:           (t) => _prepareHarnessPlannerPrompt(t, 'sprint_planner'),
-  sprint_contract_propose:  (t) => _prepareContractProposePrompt(t, 'sprint_contract_propose'),
-  harness_contract_propose: (t) => _prepareContractProposePrompt(t, 'harness_contract_propose'),
-  sprint_contract_review:   (t) => _prepareContractReviewPrompt(t, 'sprint_contract_review'),
-  harness_contract_review:  (t) => _prepareContractReviewPrompt(t, 'harness_contract_review'),
   initiative_plan:          _prepareInitiativePlanPrompt,
   scope_plan:               _prepareScopePlanPrompt,
   project_plan:             _prepareProjectPlanPrompt,
-  sprint_evaluate:          _prepareSprintEvaluatePrompt,
-  harness_evaluate:         _prepareHarnessEvaluatePrompt,
   initiative_verify:        _prepareInitiativeVerifyPrompt,
   architecture_design:      _prepareArchitectureDesignPrompt,
   decomp_review:            _prepareDecompReviewPrompt,
@@ -2199,8 +1977,6 @@ async function preparePrompt(task) {
   const skill = arguments.length > 1 ? arguments[1] : await resolveSkillWithLedger(pool, { ...task, task_type: taskType }, getSkillForTaskType);
 
   if (_DECOMP_TYPES.has(task.payload?.decomposition)) return _prepareDecompositionPrompt(task);
-  if (_HARNESS_GENERATE_TYPES.has(taskType)) return _prepareHarnessGeneratePrompt(task);
-  if (_isSprintOrHarnessDevMode(taskType, task.payload)) return _prepareSprintPrompt(task, taskType);
 
   const handler = _TASK_ROUTES[taskType];
   if (handler) return handler(task);
@@ -2822,434 +2598,6 @@ async function triggerLocalCodexExec(task) {
 }
 
 /**
- * MAX_INITIATIVE_FRESH_STARTS — harness_initiative 全局 fresh-start 上限。
- *
- * 坏 checkpoint（channel_values.error 有值）会升 attemptN 做 fresh start 从头重跑 planner，
- * 但 execution_attempts 一直涨却从无上限判定 → 本机 Docker 抽风时无限重跑、永不收敛。
- * 达到此上限后不再 fresh-start，直接把 task 标 terminal failed
- * （failure_class='max_fresh_starts_exceeded'）。
- */
-export const MAX_INITIATIVE_FRESH_STARTS = 3;
-
-/**
- * markInitiativeTerminalFailed — 把 harness_initiative task 标为 terminal failed。
- *
- * 写法对齐 runHarnessInitiativeRouter 内已有的 watchdog_deadline 写法：
- * status='failed' + custom_props.failure_class=<failureClass>。terminal 失败后
- * consciousness-loop 不再 retry（status=failed 终态），杜绝无限重跑。
- *
- * @param {{query: Function}} dbPool
- * @param {string} taskId
- * @param {string} failureClass - failure_class 值（如 'max_fresh_starts_exceeded'）
- * @param {string} errorMessage
- */
-async function markInitiativeTerminalFailed(dbPool, taskId, failureClass, errorMessage) {
-  try {
-    await finalizeTask(dbPool, taskId, 'failed', {
-      set: { error_message: String(errorMessage).slice(0, 500) },
-      mergeCustomProps: { failure_class: failureClass },
-    });
-    // 2b-2b: 镜像同步对应 okr_initiative → failed（non-fatal，best-effort）
-    try {
-      const { syncOkrInitiativeStatus } = await import('./okr-initiative-sync.js');
-      await syncOkrInitiativeStatus(dbPool, taskId, 'failed');
-    } catch (syncErr) {
-      console.warn(`[executor] okr-initiative sync(failed) non-fatal: ${syncErr.message}`);
-    }
-  } catch (markErr) {
-    console.warn(`[executor] markInitiativeTerminalFailed failed (non-fatal): ${markErr.message}`);
-  }
-}
-
-/**
- * runHarnessInitiativeRouter — harness_initiative 路由分支的可测函数化。
- *
- * Spec: docs/superpowers/specs/2026-05-06-harness-langgraph-reliability-design.md
- * §W1 (thread_id 版本化), §W3 (AbortSignal + watchdog), §W4 (streamMode → events)
- *
- * - W1: thread_id = `harness-initiative:<id>:<attemptN>`，attemptN = task.execution_attempts + 1。
- *       payload.resume_from_checkpoint=true 才续 checkpoint，否则 fresh start。
- *       同 attemptN 已有 checkpoint 但未 resume → 升 N 写新 thread。
- * - W3: invoke 加 AbortSignal，deadline 来源 initiative_runs.deadline_at fallback 6h。
- *       逾期触发 abort，标 task.failure_class='watchdog_deadline'。
- * - W4: invoke → stream({streamMode:'updates'})，逐 node 推 emitGraphNodeUpdate
- *       事件到 task_events 表（cap 100 防写爆）。
- *
- * @param {object} task - tasks 表行
- * @param {object} [opts] - { pool, compiled } 测试可注入
- * @returns {Promise<{ ok: boolean, threadId: string, attemptN: number, finalState?: object, error?: string }>}
- */
-// 图级并发 invoke 互斥：同一 initiative 同时只能被一个 brain 驱动器跑。
-const _activeInitiativeRuns = new Map(); // initiativeId -> startedAtMs
-
-// 测试 hook：清空执行锁表
-export function _resetActiveInitiativeRunsForTests() {
-  _activeInitiativeRuns.clear();
-}
-
-export async function runHarnessInitiativeRouter(task, opts = {}) {
-  const initiativeId = task.payload?.initiative_id || task.id;
-
-  // P1: 图级并发 invoke 互斥 —— 必须在任何 await 之前（Node 单线程，has()->set() 之间无 await，
-  // check-and-set 原子）。根因：checkpoint 在 merge 节点后写盘前被截断、Brain 重启后，
-  // startup-sync re-queue + dispatcher dispatch 可对【同一 thread】并发 invoke 本函数，各驱动一份图
-  // → 双图执行（A 重跑 evaluate 在已删 PR 分支上 FAIL→fix loop spawn generator；B 又 spawn evaluator，
-  // 同 thread 两容器并行）。#3335 的 containerId claim 只挡容器回调重入，挡不住这里的图级并发。
-  // 后到者直接跳过 + log（不抢同一 thread 的驱动权）。
-  if (_activeInitiativeRuns.has(initiativeId)) {
-    console.warn(`[executor] runHarnessInitiativeRouter: initiative=${initiativeId} 已在驱动中，跳过本次并发 invoke（防双图执行）`);
-    return { ok: null, skipped: true, reason: 'already_running', initiativeId, threadId: null };
-  }
-  _activeInitiativeRuns.set(initiativeId, Date.now());
-  try {
-    return await _driveHarnessInitiative(task, opts);
-  } finally {
-    _activeInitiativeRuns.delete(initiativeId);
-  }
-}
-
-async function _driveHarnessInitiative(task, opts = {}) {
-  const dbPool = opts.pool || pool;
-
-  // N4 orchestrator 硬校验（主理人 2026-07-05 拍板，见 memory harness-skill-relay-pivot）：
-  // skill-relay 已验证优于 LangGraph 图（3/3~4/4 merged vs 旧图 30 天基线 21.7%），
-  // 不再允许 orchestrator 缺省时隐式降级到 LangGraph 图——必须显式声明 skill-relay，
-  // 否则直接 terminal failed。LangGraph 图调用死代码已在刀4阶段3物理删除。
-  if (task?.payload?.orchestrator !== 'skill-relay') {
-    await markInitiativeTerminalFailed(
-      dbPool,
-      task.id,
-      'missing_orchestrator_flag',
-      `${task?.task_type ?? 'harness_initiative'} requires payload.orchestrator==='skill-relay'; got: ${task?.payload?.orchestrator ?? '(missing)'}`
-    );
-    console.error(
-      `[executor] task=${task.id} 缺少/非法 orchestrator flag（值=${task?.payload?.orchestrator ?? '(missing)'}），标 terminal failed（不再降级走 LangGraph 图）`
-    );
-    return { ok: false, error: 'missing_orchestrator_flag', terminal: true };
-  }
-
-  // harness gear 档位硬校验（07-17 一体化设计决策1，同 missing_orchestrator_flag 处理形态）：
-  // payload.gear 非法值（不在 GEAR_VALUES 枚举）→ 点火即 terminal failed，不再继续往下走
-  // （不 spawn relay session）。缺省/合法值 → deriveGear 不抛错，行为与现行完全一致（零回归）。
-  try {
-    const { deriveGear } = await import('./harness-skill-relay.js');
-    deriveGear(task);
-  } catch (gearErr) {
-    await markInitiativeTerminalFailed(dbPool, task.id, 'invalid_gear', gearErr.message);
-    console.error(
-      `[executor] task=${task.id} 非法 gear（值=${task?.payload?.gear ?? '(missing)'}），标 terminal failed: ${gearErr.message}`
-    );
-    return { ok: false, error: 'invalid_gear', terminal: true };
-  }
-
-  // gp_anchor 硬校验（GP锚定闭环刀4 — 仅当 base_repo 含 zenithjoy-workspace 时生效，
-  // 不误伤 cecelia 自己或 zenithjoy-skills 等其他项目的 harness_initiative 任务。
-  // 与 orchestrator/gear 同一处理形态：drive-time terminal failed，不在 POST /tasks
-  // 创建时拦——创建接口是所有项目共用的，不能无差别要求 gp_anchor 字段）。
-  const baseRepoForAnchor = String(task?.payload?.base_repo ?? '');
-  if (baseRepoForAnchor.toLowerCase().includes('zenithjoy-workspace')) {
-    const gpAnchor = task?.payload?.gp_anchor;
-    const GP_ANCHOR_FORMAT = /^([a-z0-9_]+\/[a-z0-9_]+(#step\d+|\s+keep-green)|none\((infra|docs|config|backlog)\))$/;
-    if (!gpAnchor || !GP_ANCHOR_FORMAT.test(String(gpAnchor).trim())) {
-      await markInitiativeTerminalFailed(
-        dbPool,
-        task.id,
-        'missing_gp_anchor',
-        `zenithjoy-workspace 的 harness_initiative 任务必须在 payload.gp_anchor 声明合法的 GP-Anchor（<line>/<gp>#stepN、<line>/<gp> keep-green、或 none(infra|docs|config|backlog)）；got: ${gpAnchor ?? '(missing)'}`
-      );
-      console.error(
-        `[executor] task=${task.id} 缺少/非法 gp_anchor（值=${gpAnchor ?? '(missing)'}），标 terminal failed`
-      );
-      return { ok: false, error: 'missing_gp_anchor', terminal: true };
-    }
-  }
-
-  // 2b-2b: harness 开跑 → 镜像同步对应 okr_initiative → running（non-fatal，best-effort，
-  // 解析/新建对应 okr_initiatives 行使规划侧 Initiative 成为实时真相；绝不阻断 harness）。
-  // 刀4阶段3发现：此调用原本躺在物理不可达的旧图调用死代码块里（orchestrator 硬校验后
-  // 从未真正执行过），随死代码一并被删除时才暴露这层同步早已失效，移到硬校验通过后的
-  // 活路径上，让它真正生效。
-  try {
-    const { syncOkrInitiativeStatus } = await import('./okr-initiative-sync.js');
-    await syncOkrInitiativeStatus(dbPool, task.id, 'running');
-  } catch (syncErr) {
-    console.warn(`[executor] okr-initiative sync(running) non-fatal: ${syncErr.message}`);
-  }
-
-  // W4 initiative_run_events 留痕（供 GET /api/brain/harness/stream SSE 消费）：
-  // 旧图逐节点（pick_sub_task/run_sub_task/...）写事件的模式随图一起删除——skill-relay
-  // 单 session 模型没有离散节点，改在 spawn 这个粗粒度节点上留一条 running 记录，
-  // 让该 SSE 流对 skill-relay initiative 至少还有起点信号（non-fatal，best-effort）。
-  try {
-    const { writeInitiativeRunEvent } = await import('./events/initiativeRunEvents.js');
-    const initiativeId = task.payload?.initiative_id || task.id;
-    await writeInitiativeRunEvent({ initiativeId, node: 'skill-relay-spawn', status: 'running', dbPool });
-  } catch (ireErr) {
-    console.warn(`[executor] writeInitiativeRunEvent failed (non-fatal): ${ireErr.message}`);
-  }
-
-  // N3 skill-relay 分支（主理人 2026-07-04 拍板）：spawn 单 claude session 跑
-  // harness-controller skill，不 compile / 不 invoke 图。
-  const { spawnSkillRelaySession } = await import('./harness-skill-relay.js');
-  const relayDeps = { pool: dbPool, ...(opts.skillRelayDeps || {}) };
-  const _ireInitiativeId = task.payload?.initiative_id || task.id;
-  let _relayResult;
-  try {
-    _relayResult = await spawnSkillRelaySession(task, relayDeps);
-  } catch (spawnErr) {
-    // 刀C-3：spawn 失败 → skill-relay-spawn 事件写终态 failed（解决 17 条永久 running）
-    try {
-      await dbPool.query(
-        `UPDATE initiative_run_events SET status = $1
-           WHERE initiative_id = $2 AND node = 'skill-relay-spawn' AND status = 'running'`,
-        ['failed', _ireInitiativeId]
-      );
-    } catch (ireErr) {
-      console.warn(`[executor] skill-relay-spawn event terminal update failed (non-fatal): ${ireErr.message}`);
-    }
-    throw spawnErr;
-  }
-  // 刀C-3：spawn 完成 → skill-relay-spawn 事件写终态 done（解决 17 条永久 running）
-  try {
-    await dbPool.query(
-      `UPDATE initiative_run_events SET status = $1
-         WHERE initiative_id = $2 AND node = 'skill-relay-spawn' AND status = 'running'`,
-      ['done', _ireInitiativeId]
-    );
-  } catch (ireErr) {
-    console.warn(`[executor] skill-relay-spawn event terminal update failed (non-fatal): ${ireErr.message}`);
-  }
-  return _relayResult;
-}
-
-/**
- * Bug 3 fix: 判断 harness initiative graph 是否成功完成
- * verdict=FAIL 必须返 false（即便 error 字段没设）
- *
- * @param {object|null} final - graph 最终 state
- * @returns {boolean} ok
- */
-export function computeHarnessInitiativeOk(final) {
-  if (!final) return false;
-  if (final.error) return false;
-  if (final.final_e2e_verdict === 'FAIL') return false;
-  // B48: graph 处于 interrupt 等待（planner callback 未回）时：
-  // final 既无 report_path 也无 final_e2e_verdict → 返回 null，executor 留 in_progress。
-  // 有 report_path（reportNode 完成写入）或有 final_e2e_verdict（老路径显式设置）→ true。
-  if (!final.report_path && !final.final_e2e_verdict) return null;
-  return true;
-}
-
-/**
- * P1 bug 39b97ade 修复：runHarnessInitiativeRouter 结果 → dispatch 分支动作分类（纯函数，便于测试）。
- *
- * 之前 result.deferred（codex_concurrent_limit / codex_quota_low / spawnSkillRelaySession 新增的
- * live_container_guard）没有专门分支，ok=false 直接落到最终 else 被标 failed —— 对 live_container_guard
- * 场景尤其危险：意味着仍在跑的 relay 任务会被判定为终态，反而制造新的重复 spawn 触发点。
- *
- * 雷8（headed 变体·2856dada R4 首航实证）：_spawnHeadedSession 成功时返回
- * mode 为 HEADED_HOSTS 映射值（'skill-relay-codex-headed' / 'skill-relay-claude-headed'，
- * 见 harness-skill-relay.js），严格等值判断 `=== 'skill-relay'` 不命中 → 落到最终
- * `if (result?.ok) return 'completed'`，headed session 刚 spawn（还在跑）就被秒标
- * completed。改用前缀匹配，同时覆盖 headless 'skill-relay' 与两个 headed host 值。
- *
- * @param {{ok: boolean|null, mode?: string, deferred?: boolean}} result
- * @returns {'waiting'|'relay_spawned'|'deferred'|'completed'|'failed'|'terminalized'}
- */
-export function classifyHarnessRelayAction(result) {
-  if (result?.ok === null) return 'waiting';
-  if (
-    result?.mode === 'kernel-v1'
-    && result?.terminalized === true
-  ) return 'terminalized';
-  if (
-    result?.ok
-    && typeof result?.mode === 'string'
-    && (result.mode.startsWith('skill-relay') || result.mode === 'kernel-v1')
-  ) return 'relay_spawned';
-  if (result?.deferred) return 'deferred';
-  if (result?.ok) return 'completed';
-  return 'failed';
-}
-
-/**
- * Kernel run store is the only authority allowed to terminalize both a v2 run
- * and its parent task. Legacy relay tasks retain the historical task-only path.
- */
-export function shouldUseGenericHarnessTaskWriteback(task) {
-  return task?.payload?.harness_runtime !== 'kernel-v1';
-}
-
-async function readBackKernelRunAuthority(dbPool, taskId, error) {
-  try {
-    const { rows } = await dbPool.query(
-      `SELECT id, phase
-         FROM initiative_runs
-        WHERE current_task_id = $1
-          AND orchestrator_version = 'v2'
-        ORDER BY (phase IN ('done', 'failed')) ASC,
-                 created_at DESC,
-                 id DESC
-        LIMIT 1`,
-      [taskId],
-    );
-    const run = rows[0] ?? null;
-    if (!run) return null;
-    const terminal = run.phase === 'done' || run.phase === 'failed';
-    return {
-      success: !terminal,
-      taskId,
-      initiative: true,
-      runId: run.id,
-      runPhase: run.phase,
-      authorityExists: true,
-      kernelAuthority: terminal ? 'terminal' : 'active',
-      deferred: !terminal,
-      terminal,
-      reason: terminal ? 'kernel_terminal_authority' : 'kernel_authority_reconciled',
-      error: error?.message?.slice(0, 500),
-    };
-  } catch (readError) {
-    console.error(
-      `[executor] Kernel authority read-back failed task=${taskId}: ${readError.message}`,
-    );
-    return {
-      success: false,
-      taskId,
-      initiative: true,
-      reason: 'kernel_authority_reconciliation_unavailable',
-      error: readError.message?.slice(0, 500),
-      authorityUnknown: true,
-      reconciliationCause: error?.message?.slice(0, 500),
-    };
-  }
-}
-
-export async function reconcileTerminalizedKernelAuthority(dbPool, {
-  taskId,
-  runId,
-  error,
-}) {
-  const unavailable = (message) => ({
-    success: false,
-    taskId,
-    initiative: true,
-    ...(typeof runId === 'string' && runId.trim() ? { runId } : {}),
-    reason: 'kernel_authority_reconciliation_unavailable',
-    error: String(message ?? 'kernel_terminal_authority_unverified').slice(0, 500),
-    authorityUnknown: true,
-    reconciliationCause: error?.message?.slice(0, 500),
-  });
-  if (typeof runId !== 'string' || !runId.trim()) {
-    return unavailable('kernel_terminal_authority_identity_missing');
-  }
-  try {
-    const { rows } = await dbPool.query(
-      `SELECT id, phase
-         FROM initiative_runs
-        WHERE id = $1
-          AND current_task_id = $2
-          AND orchestrator_version = 'v2'
-          AND phase IN ('done', 'failed')`,
-      [runId, taskId],
-    );
-    const run = rows[0];
-    if (!run) return unavailable('kernel_terminal_authority_unverified');
-    return {
-      success: false,
-      taskId,
-      initiative: true,
-      runId: run.id,
-      runPhase: run.phase,
-      authorityExists: true,
-      kernelAuthority: 'terminal',
-      terminal: true,
-      reason: 'kernel_terminal_authority',
-      error: error?.message?.slice(0, 500),
-    };
-  } catch (readError) {
-    console.error(
-      `[executor] Kernel terminal authority read-back failed task=${taskId} run=${runId}: `
-      + readError.message,
-    );
-    return unavailable(readError.message);
-  }
-}
-
-async function readBackKernelPreRunTerminal(dbPool, taskId, error) {
-  try {
-    const { rows } = await dbPool.query(
-      `SELECT status
-         FROM tasks
-        WHERE id = $1`,
-      [taskId],
-    );
-    const status = rows[0]?.status;
-    if (!['completed', 'failed', 'cancelled', 'canceled'].includes(status)) return null;
-    return {
-      success: false,
-      taskId,
-      initiative: true,
-      reason: 'kernel_pre_run_terminal',
-      error: error?.message?.slice(0, 500),
-      taskTerminal: true,
-      terminal: true,
-      taskStatus: status,
-    };
-  } catch (readError) {
-    return {
-      success: false,
-      taskId,
-      initiative: true,
-      reason: 'kernel_authority_reconciliation_unavailable',
-      error: readError.message?.slice(0, 500),
-      authorityUnknown: true,
-      reconciliationCause: error?.message?.slice(0, 500),
-    };
-  }
-}
-
-/**
- * Bug 3 fix: 计算 harness initiative 失败时的 error_message
- * 优先使用 final.error；其次从 final_e2e_verdict=FAIL 的 failed_scenarios 拼装
- * 保证 ≤ 500 字符（DB 字段长度限制）
- *
- * @param {object|null} final - graph 最终 state
- * @returns {string|undefined} error message or undefined if no error（保持 r.error undefined 跟现有 watchdog 集成测试一致）
- */
-export function computeHarnessInitiativeError(final) {
-  if (!final) return 'harness graph returned no state (null final)';
-  if (final.error) {
-    if (typeof final.error === 'string') return final.error.slice(0, 500);
-    return (final.error.message || JSON.stringify(final.error)).slice(0, 500);
-  }
-  if (final.final_e2e_verdict === 'FAIL') {
-    const scenarios = (final.final_e2e_failed_scenarios || [])
-      .map((s) => s.name || s.failed_step || 'unknown')
-      .join('; ');
-    return `final_e2e_verdict=FAIL: ${scenarios}`.slice(0, 500);
-  }
-  return undefined;
-}
-
-/**
- * 安全 summarize node state — 长字符串截断、对象/数组只记 shape，避免 task_events 写爆。
- * @param {object} state
- * @returns {object}
- */
-export function summarizeNodeState(state) {
-  const out = {};
-  for (const [k, v] of Object.entries(state || {})) {
-    if (v == null) continue;
-    if (typeof v === 'string') out[k] = v.length > 200 ? v.slice(0, 200) + '…' : v;
-    else if (typeof v === 'number' || typeof v === 'boolean') out[k] = v;
-    else if (Array.isArray(v)) out[k] = `[Array ${v.length}]`;
-    else if (typeof v === 'object') out[k] = `{Object ${Object.keys(v).length} keys}`;
-  }
-  return out;
-}
-
-/**
  * Trigger cecelia-run for a task.
  *
  * v2: Uses spawn() for PID tracking + task-level dedup.
@@ -3266,12 +2614,6 @@ export function summarizeNodeState(state) {
 // 注意：Coding 通道（dev/codex_dev/initiative_plan 等）在 task-router.js 中标注为 'us'，
 //       不需要在此维护第二份白名单，改 task-router.js 即可影响路由。
 
-// Retired harness task_types — 全部归入 harness_initiative full-graph sub-graph。
-// - Sprint 1 (PR #2640)：harness_task / harness_ci_watch / harness_fix / harness_final_e2e
-// - retire-harness-planner：harness_planner（subsumed by harness_initiative full graph）
-// 模块级常量：override 分支（排除 harness/retired）与下方 retired 短路块共用，引用顺序无忧。
-const _RETIRED_HARNESS_TYPES = new Set(RETIRED_HARNESS_TYPES_DISPATCH);
-
 /**
  * 所有执行的漏斗（dispatcher / routes/tasks / routes/execution 三处调用）：
  * 内层分派完成后统一经 run 原语落一行 task_runs（一次执行 = 一行，幂等；fail-open 不拖垮执行）。
@@ -3283,8 +2625,11 @@ async function triggerCeceliaRun(task) {
   if (isRetiredDecomposition(task)) {
     return { success: false, taskId: task?.id, reason: RETIRED_DECOMPOSITION, retiredBeforeStart: true, error: '旧任务拆解已退役' };
   }
+  if (isRetiredDevelopmentTask(task)) {
+    return { success: false, taskId: task?.id, reason: RETIRED_DEVELOPMENT_CODE, error: RETIRED_DEVELOPMENT_CODE, retiredBeforeStart: true };
+  }
   const execResult = await _triggerCeceliaRunInner(task);
-  const source = task?.payload?.harness_runtime === 'kernel-v1' ? 'kernel' : 'executor';
+  const source = 'executor';
   const runId = await startRunForExecResult({ task, execResult, source });
   if (runId && execResult && execResult.success === true && !execResult.runId) {
     return { ...execResult, runId };
@@ -3318,22 +2663,6 @@ async function _triggerCeceliaRunInner(task) {
     return runStagingE2E(task);
   }
 
-  // 0.6 Slice5: internal task handler 内联短路 —— harness_intervention 等注册的 internal type 被
-  //     pick up 后直接在 brain 内跑 handler（读 docker logs + LLM 诊断），不当普通任务派 claude/codex。
-  //     否则 pipeline-patrol 建的 harness_intervention 永远无人执行，整条干预通道是死代码。
-  //     必须传 deps.updateTaskResult，否则 handler 无法把诊断结论写回 task.result。
-  const internalHandler = getInternalTaskHandler(task.task_type);
-  if (internalHandler) {
-    console.log(`[executor] 路由决策: task_type=${task.task_type} → 内联 internal handler`);
-    const intResult = await internalHandler(task, {
-      pool,
-      updateTaskResult: async (id, result) => {
-        await finalizeTask(pool, id, 'completed', { set: { result } });
-      },
-    });
-    return { success: true, internal: true, taskId: task.id, action: intResult?.action };
-  }
-
   // 0.7 秋米非设备任务（PR3）→ openclaw-agent 执行体：ssh 到主力 worker 起 `openclaw agent`。
   //     不占 claude/codex 槽位，也绝不在 us-vps 本地跑（铁律 96054a8b）。
   //     动态 import：executor.js 是热路径，秋米链路只在真有 qiumi_task 时才拉起来。
@@ -3354,15 +2683,10 @@ async function _triggerCeceliaRunInner(task) {
 
   // 1. 显式 override（phase 2 单元1）：payload.{machine,executor} → DB 驱动路由。
   //    REVIEW 短路之后、location-map 路由之前。无显式偏好则整段跳过（零回归）。
-  //    [MINOR 3] 排除 harness_initiative / retired harness types：这些任务即使误传
-  //    payload.executor 也必须走下方 harness graph / retired 短路，不进 override。
   //    resolveExecutor 抛错 → loud-fail（标 failed + return），绝不静默改派。
   let forceUsClaude = false; // [BLOCKER 1] claude override 命中后短路掉下方 location 路由（落到退役收口）
   if (
-    (task.payload?.machine || task.payload?.executor) &&
-    task.task_type !== 'harness_initiative' &&
-    task.task_type !== 'golden_path_proposal' &&
-    !_RETIRED_HARNESS_TYPES.has(task.task_type)
+    (task.payload?.machine || task.payload?.executor)
   ) {
     let route;
     try {
@@ -3372,7 +2696,7 @@ async function _triggerCeceliaRunInner(task) {
       await updateTaskStatus(task.id, 'failed', {
         error_message: `executor route: ${err.message}`.slice(0, 500),
       });
-      // [BLOCKER 2] terminal loud-fail：对齐 harness 块模式，返回 success:true 告诉
+      // [BLOCKER 2] terminal loud-fail：返回 success:true 告诉
       // dispatcher「executor 已处理完毕（已标 failed），无需回退 queued、不污染 cecelia-run 熔断器」。
       return { success: true, taskId: task.id, failed: true, executor: 'route-rejected', error: err.message };
     }
@@ -3418,140 +2742,7 @@ async function _triggerCeceliaRunInner(task) {
     return triggerLocalCodexExec(task);
   }
 
-  // 2.85 Harness Full Graph (Phase A+B+C) — 一个 graph 跑到底，默认路径。
-  // W1 (thread_id 版本化) + W3 (AbortSignal + watchdog) + W4 (streamMode events)
-  // 实现下沉到 runHarnessInitiativeRouter，便于测试 + 复用。
-  if (task.task_type === 'harness_initiative' || task.task_type === 'golden_path_proposal') {
-    console.log(`[executor] 路由决策: task_type=${task.task_type} → Harness Full Graph (A+B+C)`);
-    // 打标：relay-container；harness_runtime='kernel-v1' → kernel-process（事故 51836fb2）
-    await setExecutorKind(task.id, resolveExecutorKind(task));
-
-    // OAuth token 自动刷新，无需 session ≥ 4h 的 pre-check
-
-    try {
-      const result = await runHarnessInitiativeRouter(task);
-      const genericTaskWriteback = shouldUseGenericHarnessTaskWriteback(task);
-      if (
-        !genericTaskWriteback
-        && result?.mode === 'kernel-v1'
-        && result?.terminalized === true
-      ) {
-        return reconcileTerminalizedKernelAuthority(pool, {
-          taskId: task.id,
-          runId: result.runId,
-          error: new Error(result?.error || 'kernel_terminal_authority_unverified'),
-        });
-      }
-      if (!genericTaskWriteback && !result?.runId) {
-        const authority = await readBackKernelRunAuthority(
-          pool,
-          task.id,
-          new Error(result?.error || result?.reason || 'kernel_authority_not_created'),
-        );
-        if (authority) return authority;
-        if (result?.terminal === true) {
-          const taskTerminal = await readBackKernelPreRunTerminal(
-            pool,
-            task.id,
-            new Error(result?.error || result?.reason || 'kernel_pre_run_terminal'),
-          );
-          if (taskTerminal) return taskTerminal;
-        }
-        console.error(
-          `[executor] Kernel pre-run failed before authority creation task=${task.id}: `
-          + `${result?.error || result?.reason || 'kernel_authority_not_created'}`,
-        );
-        return {
-          success: false,
-          taskId: task.id,
-          initiative: true,
-          reason: 'kernel_authority_not_created',
-          reason_code: classifyDispatchReasonCode({ error: result?.error, reason: result?.reason }),
-          error: String(result?.error || result?.reason || 'kernel_authority_not_created')
-            .slice(0, 500),
-        };
-      }
-      // B48 ok=null=waiting；relay_spawned=spawn成功非完成（Issue df107724）；
-      // deferred=软闸/去重护栏非失败（P1 bug 39b97ade，见 classifyHarnessRelayAction）。
-      const action = classifyHarnessRelayAction(result);
-      if (action === 'waiting') {
-        console.log(`[executor] harness graph interrupted/waiting task=${task.id} thread=${result.threadId}, leaving in_progress`);
-      } else if (action === 'relay_spawned') {
-        console.log(`[executor] skill-relay session spawned task=${task.id} container=${result.containerId}, leaving in_progress`);
-      } else if (action === 'deferred') {
-        console.log(`[executor] skill-relay session deferred task=${task.id} reason=${result.reason || 'unknown'}, leaving in_progress`);
-      } else if (action === 'terminalized') {
-        console.log(`[executor] Kernel run authority terminalized task=${task.id}; skipping task-only writeback`);
-      } else if (action === 'completed') {
-        if (genericTaskWriteback) {
-          await updateTaskStatus(task.id, 'completed');
-        }
-      } else {
-        if (genericTaskWriteback) {
-          await updateTaskStatus(task.id, 'failed', { error_message: String(result.error || 'harness graph failed').slice(0, 500) });
-        } else {
-          console.error(`[executor] Kernel failure lacks authoritative terminalization task=${task.id}; leaving exact reconciliation to run authority`);
-        }
-      }
-      return {
-        success: true, // executor 已处理完毕，dispatcher 无需回退 queued
-        taskId: task.id,
-        initiative: true,
-        fullGraph: true,
-        runId: result.runId,
-        threadId: result.threadId,
-        attemptN: result.attemptN,
-        finalState: result.finalState,
-        error: result.error,
-      };
-    } catch (err) {
-      console.error(`[executor] Harness Full Graph error task=${task.id}: ${err.message}`);
-      if (shouldUseGenericHarnessTaskWriteback(task)) {
-        try {
-          await updateTaskStatus(task.id, 'failed', { error_message: err.message.slice(0, 500) });
-        } catch (updateErr) {
-          console.error(`[executor] 状态回写失败 task=${task.id}: ${updateErr.message}`);
-        }
-      } else {
-        console.error(`[executor] Kernel exception task=${task.id}; task-only failure writeback forbidden`);
-        const authority = await readBackKernelRunAuthority(pool, task.id, err);
-        if (authority) {
-          if (authority.authorityUnknown) return authority;
-          console.warn(
-            `[executor] Kernel authority reconciled after exception task=${task.id} `
-            + `run=${authority.runId} phase=${authority.runPhase}`,
-          );
-          return authority;
-        }
-        return {
-          success: false,
-          taskId: task.id,
-          initiative: true,
-          // 重锚定预检抛的白名单码（needs_rebase / 契约违约码）优先于文本猜码
-          ...dispatchFailureFromError(err),
-          error: err.message?.slice(0, 500),
-        };
-      }
-      return { success: true, taskId: task.id, initiative: true, error: err.message?.slice(0, 500) };
-    }
-  }
-
-  // Retired harness task_types（_RETIRED_HARNESS_TYPES 在模块顶部定义，override 分支共用）。
-  // 老数据派到 executor → 标 terminal failure 防止"复活"。
-  if (_RETIRED_HARNESS_TYPES.has(task.task_type)) {
-    console.warn(`[executor] retired task_type=${task.task_type} task=${task.id} → marking pipeline_terminal_failure`);
-    try {
-      await finalizeTask(pool, task.id, 'failed', {
-        set: { completed_at: 'now', error_message: `task_type ${task.task_type} retired (subsumed by harness_initiative full graph)` },
-        mergePayload: { failure_class: 'pipeline_terminal_failure' },
-      });
-    } catch (err) {
-      console.error(`[executor] mark retired task failed: ${err.message}`);
-    }
-    return { success: false, retired: true, taskType: task.task_type };
-  }
-
-  // 3. US → Claude Code（cecelia-bridge /trigger-cecelia → cecelia-run → claude -p；或 HARNESS_DOCKER_ENABLED 起 claude 容器）
+  // 3. US → Claude Code（cecelia-bridge /trigger-cecelia → cecelia-run → claude -p）
   //    Claude 无头通道已退役（任务 76a160b3，决策 067867c8）：不 fetch、不起容器，返回 claude_channel_retired。
   //    dispatcher 按 no_executor 收口（不计熔断 / dispatch 失败 / autoblock）。
   console.warn(`[executor] task=${task.id} type=${task.task_type} 落在已退役的 Claude 桥接路径 → ${CLAUDE_CHANNEL_RETIRED_CODE}`);
@@ -3692,6 +2883,7 @@ async function probeTaskLiveness() {
   `);
 
   for (const task of result.rows) {
+    if (isRetiredDevelopmentTask(task)) continue;
     if (task.payload?.commander_protocol === 'commander-v2') continue;
     if(await reconcileInvocationLiveness(pool,task,{entry:activeProcesses.get(task.id)})){
       suspectProcesses.delete(task.id);continue;
@@ -3755,14 +2947,7 @@ async function probeTaskLiveness() {
       continue;
     }
 
-    // harness_* 任务由 harness-watchdog-loop（心跳判据）专管，运行在 Docker 容器内无 OS 进程，
-    // reAttachActiveExecutors 未能重建其 activeProcesses 条目时会被误判为死进程。
-    // 统一排除，避免 wall-clock 孤儿探针与心跳看门狗双重处理同一任务。
-    const HARNESS_LIVENESS_EXEMPT_TYPES = new Set(RECOVERY_HARNESS_TASK_TYPES);
     const EXTERNAL_WATCHDOG_TYPES = new Set(EXTERNAL_WATCHDOG_TASK_TYPES);
-    if (HARNESS_LIVENESS_EXEMPT_TYPES.has(task.task_type)) {
-      continue;
-    }
 
     // 外部 run 镜像（workflow_run / device_job source=cron，任务 0004aceb，决策 3c98fb36 阶段1）：
     // wall-report / Notion ssh 直派在执行机上起跑，Brain 行只是账本镜像——从不 claim（下方认领新鲜度分支
@@ -4169,27 +3354,11 @@ async function syncOrphanTasksOnStartup() {
   let requeued = 0;
   let rebuilt = 0;
 
-  // LangGraph 任务（harness_initiative）无 OS 子进程，不走孤儿检测路径。
-  // Brain 重启后以 resume_from_checkpoint=true 重排队，让 dispatcher 下次 tick 从 checkpoint 续跑。
-  const LANGGRAPH_TYPES = new Set(['harness_initiative']);
-
   for (const task of result.rows) {
+    if (isRetiredDevelopmentTask(task)) continue;
     if (task.payload?.commander_protocol === 'commander-v2') continue;
     if(await reconcileInvocationLiveness(pool,task,{entry:activeProcesses.get(task.id)})){
       externalSkipped++;continue;
-    }
-    // 雷11（R5 首航实证 39b97ade/a3d61486/4cedf175/174dea35 同源）：
-    // skill-relay（payload.orchestrator==='skill-relay'）虽然 task_type 也是
-    // harness_initiative，但它不是 LangGraph（已废弃）——它有真实进程（无头=docker
-    // 容器 / 有头=宿主 tmux），存活恢复归 harness-relay-watchdog.js::resumeStalledRelayRuns
-    // 专管（该函数已对 skill-relay 任务做完整的容器/tmux 存活检测 + PR 状态检查 +
-    // 重点火上限熔断）。startup-sync 若把它当 LangGraph 无脑 requeue，会导致 dispatcher
-    // 重新 claim 并再次 spawn，与仍存活的旧进程撞名（headed 分支 tmux new-session 报错），
-    // 第二次 spawn 失败标 task=failed，而第一次的真 session 还活着，无人知道。
-    // → 整个跳过，交给 harness-relay-watchdog 处理，不 requeue、不清 claim、不计数。
-    if (task.payload?.orchestrator === 'skill-relay') {
-      console.log(`[startup-sync] skip skill-relay task=${task.id} title="${task.title}"（归 harness-relay-watchdog 管）`);
-      continue;
     }
     // 外部执行体（device_job 在西安 Mac、openclaw-agent 秋米在 MMV、script 在跑场机）：
     // 本机永远查不到进程，下方孤儿路径会在每次部署重启时把它回 queued 且不清 claimed_by
@@ -4204,26 +3373,6 @@ async function syncOrphanTasksOnStartup() {
       console.log(`[startup-sync] skip external executor task=${task.id} type=${task.task_type} kind=${task.executor_kind || '-'}（进程不在本机，归专属收割/对账）`);
       continue;
     }
-    if (LANGGRAPH_TYPES.has(task.task_type)) {
-      // Bug A fix: requeue 时必须清 claim 三件套，否则死 runner 残留的 claimed_by
-      // 让 dispatch-helpers.js 的 `AND t.claimed_by IS NULL` 永远选不出该任务，
-      // Brain 重启后任务死锁在 queued。样板见 tick-runner.js:1270/:1297。
-      await pool.query(
-        `UPDATE tasks SET
-          status = 'queued',
-          claimed_by = NULL,
-          claimed_at = NULL,
-          started_at = NULL,
-          payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb,
-          updated_at = NOW()
-        WHERE id = $1`,
-        [task.id, JSON.stringify({ resume_from_checkpoint: true })]
-      );
-      requeued++;
-      console.log(`[startup-sync] LangGraph task re-queued for checkpoint resume: task=${task.id} type=${task.task_type} title="${task.title}"`);
-      continue;
-    }
-
     // reAttachActiveExecutors 已认领（如 docker-executor 的 cecelia-task-* 容器）→ 跳过孤儿检测
     if (activeProcesses.has(task.id)&&activeProcesses.get(task.id)?.source!=='shared-activity-runner') {
       rebuilt++;
@@ -4430,7 +3579,6 @@ export {
   getExtraEnvForTaskType,
   // v18: goal-based stop hook
   buildGoalSettings,
-  HARNESS_GOAL_CONDITIONS,
   // v14: Input validation for shell commands
   assertSafeId,
   assertSafePid,

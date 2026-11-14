@@ -27,7 +27,7 @@ test('默认实际配置不选外置正文，原生混合测试仍在普通单�
     const external = glob.sync(SKILL_SOURCE_TESTS[component], {cwd, ignore:['**/node_modules/**']});
     for (const path of external) assert.ok(!selected[component].has(path), `${component}/${path}仍误入普通单测`);
   }
-  for (const path of ['src/orchestrator/__tests__/kernel-observation.test.js', 'src/__tests__/golden-path-contract-task.test.js', 'src/__tests__/executor-report-prompt.test.js']) {
+  for (const path of ['src/__tests__/golden-path-contract-task.test.js']) {
     assert.ok(selected.brain.has(path), `${path}的原生机制丢失`);
   }
 

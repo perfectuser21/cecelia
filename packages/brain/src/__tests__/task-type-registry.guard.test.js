@@ -82,7 +82,7 @@ const REGISTRY = join(SRC, 'lib', 'task-type-registry.js');
 //   另行对全部已替换站点做"注册表派生值 vs 基线源码原文"机械审计，见该脚本头注释）。
 export const REMAINING_LEGACY_SITES = {
   // 旧拆解退役边界：四种专用执行面不读取旧技能，保留精确站点供退役清理。
-  'lib/retired-decomposition.js': ['26:if(...)'],
+  'lib/retired-decomposition.js': ['25:if(...)'],
   // kind: map（long-lived）— 仅唯一程序级const handler表按AST结构身份许可，行号仍用于错误定位。
   // 空白/注释移动不改变身份；第二份表、字符串枚举或非法handler结构仍由守卫拒绝。
   'executor.js': [EXECUTOR_HANDLER_SITE],
@@ -108,7 +108,6 @@ export const REMAINING_LEGACY_SITES = {
   // 剩 TASK_TYPE_TO_SKILL（:933，task_type→skill目录名，与 SKILL_WHITELIST/EXECUTOR_SKILL_MAP
   // 语义相近但值不同——第3份独立维护，PR1 只搬家不合并）+ BASE_LABELS（:1021，task_type→短展示
   // 标签，第5份独立维护的 label 映射，无匹配注册表字段）
-  'routes/harness.js': ['936:TASK_TYPE_TO_SKILL', '1024:BASE_LABELS'],
   // kind: map（long-lived）— Task 4 评估：当前:367（拆分前:926，#6712前:915）description 是 GET /api/brain/task-types
   // 的人类可读展示文案（仅5个类型有文案，不是"哪类"的分类标签），要对应注册表字段需给全部
   // ~80 个 task_type 逐个写产品文案，属独立的文档撰写工作，非 PR1 零行为变化范围

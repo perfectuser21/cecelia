@@ -1,3 +1,4 @@
+import {assertActiveDevelopmentTask} from './lib/task-type-registry.js';
 import { COMPANY_KR_SQL_GUARD, isCompanyKr } from './lib/company-kr-metrics.js';
 import { randomUUID } from 'node:crypto';
 import pool from './db.js';
@@ -74,6 +75,7 @@ function legacyWorkContract({ taskType, mutationIntent, workDomain }) {
  */
 async function createTask({ title, description, priority, project_id, area_id, goal_id, okr_initiative_id, ability_id, blocked_at, tags, task_type, status, location, context, prd_content, execution_profile, payload, trigger_source, domain: domainInput, owner_role: ownerRoleInput, delivery_type, created_by, dept, phase, executor_kind, journey_id, dedupe_key, dedupe_ttl_sec, source, source_id, mutation_intent, declared_domain, declared_change_kind, execution_profile_override_request, repo_hint, map_scope_hint, branch, base_sha, parent_task_id, sequence_no = null, allow_unscoped = false, db = pool }, internal = {}) {
   const requestedTaskType = task_type || 'dev';
+  assertActiveDevelopmentTask({task_type:requestedTaskType,payload});
 
   // scope/initiative 层退役（决策 ee4842a6/3feeae3e，接力棒链 2afa6d69 棒4）：这几个
   // headless 拆解 task_type 的目标层已冻结，建单在这里统一拒绝，不让请求打到

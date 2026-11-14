@@ -1,16 +1,16 @@
 /**
  * Integration Test: tick-runner executeTick — 完整 1 次 tick 全 plugin wire
  *
- * 验证 D1.7c plugin 拆解后，executeTick 一次调用确实把 8 个 plugin 全 wire 上：
+ * 验证 D1.7c plugin 拆解后，executeTick 一次调用确实把 7 个 plugin 全 wire 上：
  *   - dept-heartbeat / kr-progress-sync / heartbeat / goal-eval
- *   - pipeline-patrol / pipeline-watchdog / kr-health-daily / cleanup-worker
+ *   - pipeline-patrol / kr-health-daily / cleanup-worker
  *
  * 同时验证：
  *   - dispatcher.dispatchNextTask 被调（行动层入口）
  *   - tickState 时间戳被推进（运行确实跑过感知层）
  *
  * 设计要点：
- *   - 全 mock 模式 — pool/spawn/8 plugin/dispatcher/heavy modules 全 stub，
+ *   - 全 mock 模式 — pool/spawn/7 plugin/dispatcher/heavy modules 全 stub，
  *     不真连 PG/Docker/网络
  *   - 测试关注"wire 是否对"，不测 plugin 内部逻辑（plugin 自有单测）
  *   - 不开 MINIMAL_MODE — 必须能完整跑过感知层并触达行动层
@@ -49,7 +49,7 @@ const mockPool = {
 };
 vi.mock('../../db.js', () => ({ default: mockPool }));
 
-// ─── Mock 8 个 plugin（KEY assertion 目标） ─────────────────────────────────
+// ─── Mock 7 个 plugin（KEY assertion 目标） ─────────────────────────────────
 vi.mock('../../dept-heartbeat.js', () => ({
   tick: vi.fn().mockResolvedValue({ triggered: 0, skipped: 0, results: [] }),
 }));
@@ -63,9 +63,6 @@ vi.mock('../../goal-eval-plugin.js', () => ({
   tick: vi.fn().mockResolvedValue({ actions: [] }),
 }));
 vi.mock('../../pipeline-patrol-plugin.js', () => ({
-  tick: vi.fn().mockResolvedValue({ scanned: 0 }),
-}));
-vi.mock('../../pipeline-watchdog-plugin.js', () => ({
   tick: vi.fn().mockResolvedValue({ scanned: 0 }),
 }));
 vi.mock('../../kr-health-daily-plugin.js', () => ({
@@ -254,12 +251,9 @@ vi.mock('../../tick-helpers.js', () => ({
   getRampedDispatchMax: vi.fn().mockReturnValue(1),
 }));
 
-// 保留真实 executeTick 与 8 个 plugin wire；隔离用户机器、凭据和外部服务边界。
+// 保留真实 executeTick 与 7 个 plugin wire；隔离用户机器、凭据和外部服务边界。
 vi.mock('../../zombie-cleaner.js', () => ({
   runZombieCleanup: vi.fn().mockResolvedValue({ slotsReclaimed: 0, worktreesRemoved: 0 }),
-}));
-vi.mock('../../harness-worktree.js', () => ({
-  cleanupStaleHarnessWorktrees: vi.fn().mockResolvedValue({ cleaned: 0 }),
 }));
 vi.mock('../../heartbeat-inspector.js', () => ({
   HEARTBEAT_INTERVAL_MS: 30 * 60 * 1000,
@@ -292,7 +286,6 @@ describe('tick-runner executeTick — full tick wire-up', () => {
   it('fixture 外部边界阻止真实清理、凭据读取和 LLM/GitHub 调用', async () => {
     for (const [path, names] of [
       ['../../zombie-cleaner.js', ['runZombieCleanup']],
-      ['../../harness-worktree.js', ['cleanupStaleHarnessWorktrees']],
       ['../../zombie-sweep.js', ['zombieSweep']],
       ['../../heartbeat-inspector.js', ['runHeartbeatInspection']],
       ['../../active-goals-zero-trigger.js', ['maybeTriggerStrategySession']],
@@ -306,7 +299,7 @@ describe('tick-runner executeTick — full tick wire-up', () => {
     }
   });
 
-  it('一次 executeTick：8 个 plugin .tick 都被调；dispatcher 被调；tickState 时间戳前移', async () => {
+  it('一次 executeTick：7 个 plugin .tick 都被调；dispatcher 被调；tickState 时间戳前移', async () => {
     const before = Date.now() - 1; // 防同毫秒赋值导致 ">" 比较失败
 
     // 重新 import 各 mock 拿到 spy reference
@@ -315,7 +308,6 @@ describe('tick-runner executeTick — full tick wire-up', () => {
     const heartbeat = await import('../../heartbeat-plugin.js');
     const goalEval = await import('../../goal-eval-plugin.js');
     const patrol = await import('../../pipeline-patrol-plugin.js');
-    const watchdog = await import('../../pipeline-watchdog-plugin.js');
     const krHealth = await import('../../kr-health-daily-plugin.js');
     const cleanup = await import('../../cleanup-worker-plugin.js');
     const dispatcher = await import('../../dispatcher.js');
@@ -331,7 +323,6 @@ describe('tick-runner executeTick — full tick wire-up', () => {
     // 真实 tick 必须实际触达隔离后的清理/凭据/GitHub 边界，不能删调用换取安全。
     for (const [path, names] of [
       ['../../zombie-cleaner.js', ['runZombieCleanup']],
-      ['../../harness-worktree.js', ['cleanupStaleHarnessWorktrees']],
       ['../../zombie-sweep.js', ['zombieSweep']],
       ['../../orphan-pr-worker.js', ['scanOrphanPrs']],
       ['../../credential-expiry-checker.js', ['checkAndAlertExpiringCredentials']],
@@ -347,13 +338,12 @@ describe('tick-runner executeTick — full tick wire-up', () => {
       expect(String(sql)).not.toMatch(/topic_suggestions|topic_selection_log|daily_topic_selection/i);
     }
 
-    // ── 8 个 plugin .tick 必须全被调 ─────────────────────────────────────
+    // ── 7 个 plugin .tick 必须全被调 ─────────────────────────────────────
     expect(dept.tick).toHaveBeenCalled();
     expect(krProgress.tick).toHaveBeenCalled();
     expect(heartbeat.tick).toHaveBeenCalled();
     expect(goalEval.tick).toHaveBeenCalled();
     expect(patrol.tick).toHaveBeenCalled();
-    expect(watchdog.tick).toHaveBeenCalled();
     expect(krHealth.tick).toHaveBeenCalled();
     expect(cleanup.tick).toHaveBeenCalled();
 

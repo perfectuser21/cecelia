@@ -4,8 +4,7 @@ export function routedCodingPayload(taskId, overrides = {}) {
     work_kind: 'coding_mutation',
     change_kind: 'bugfix',
     repo: 'cecelia',
-    orchestrator: 'skill-relay',
-    harness_runtime: 'kernel-v1',
+    orchestrator: 'headed-session',
     ...overrides,
   };
 }
@@ -19,9 +18,10 @@ export function canonicalRoutingReceipt(task) {
     work_kind: 'coding_mutation',
     change_kind: task.payload.change_kind,
     repo: task.payload.repo,
-    pipeline: 'harness',
-    canonical_task_type: 'harness_initiative',
-    impact_contract_required: true,
+    pipeline: task.task_type === 'coding_workflow' ? 'coding_workflow' : 'headed_development',
+    canonical_task_type: task.task_type,
+    orchestrator: task.task_type === 'coding_workflow' ? 'coding-workflow-runner' : 'headed-session',
+    impact_contract_required: task.task_type !== 'coding_workflow',
     map_scope_validation_version: 'active-business-node-v1',
   };
 }

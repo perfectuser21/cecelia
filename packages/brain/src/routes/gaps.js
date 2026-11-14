@@ -1,22 +1,22 @@
 /**
  * routes/gaps.js — Gap Ledger API 路由（FR-5）
  *
- * GET  /api/brain/harness/gaps?task_id=<uuid>
+ * GET  /api/brain/gaps?task_id=<uuid>
  *   查询任务的所有 gap（source 或 repair 角色）
  *   成功：200 + { gaps: [...] }
  *   缺少 task_id：400
  *
- * GET  /api/brain/harness/gaps/:id/events
+ * GET  /api/brain/gaps/:id/events
  *   查询单个 gap 的完整事件链
  *   存在：200 + { events: [...] }
  *   不存在：404
  *
- * POST /api/brain/harness/gaps
+ * POST /api/brain/gaps
  *   为 drift 事件开一个新的 gap（幂等）
  *   成功创建：201 + { gap }
  *   幂等返回：200 + { gap }
  *
- * PATCH /api/brain/harness/gaps/:id/status
+ * PATCH /api/brain/gaps/:id/status
  *   执行状态机跳转
  *   成功：200 + { gap, event }
  *   非法跳转：422
@@ -43,7 +43,7 @@ const router = Router();
 // ---------- GET /gaps?task_id=<uuid> ----------
 
 /**
- * GET /api/brain/harness/gaps
+ * GET /api/brain/gaps
  * 查询任务的所有 gap
  */
 router.get('/', async (req, res) => {
@@ -75,7 +75,7 @@ router.get('/', async (req, res) => {
 // ---------- GET /gaps/:id ----------
 
 /**
- * GET /api/brain/harness/gaps/:id
+ * GET /api/brain/gaps/:id
  * 获取单个 gap 详情
  */
 router.get('/:id', async (req, res) => {
@@ -102,7 +102,7 @@ router.get('/:id', async (req, res) => {
 // ---------- GET /gaps/:id/events ----------
 
 /**
- * GET /api/brain/harness/gaps/:id/events
+ * GET /api/brain/gaps/:id/events
  * 查询 gap 的完整事件链
  */
 router.get('/:id/events', async (req, res) => {
@@ -129,7 +129,7 @@ router.get('/:id/events', async (req, res) => {
 // ---------- POST /gaps — 开新 gap ----------
 
 /**
- * POST /api/brain/harness/gaps
+ * POST /api/brain/gaps
  * 为 drift 事件开一个新的 gap（幂等）
  *
  * body: {
@@ -202,7 +202,7 @@ router.post('/:id/repair-task', internalAuthOrLoopback, async (req, res) => {
 // ---------- PATCH /gaps/:id/status — 状态机跳转 ----------
 
 /**
- * PATCH /api/brain/harness/gaps/:id/status
+ * PATCH /api/brain/gaps/:id/status
  * 执行状态机跳转
  *
  * body: {

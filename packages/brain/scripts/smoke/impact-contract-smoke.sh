@@ -61,10 +61,10 @@ if [[ -n "$TASK_ID" ]]; then
 fi
 
 # Case 4: Gap 列表路由可达
-GAPS=$(curl -q -sf "$BRAIN/api/brain/harness/gaps?status=open" 2>/dev/null) || \
-  { fail "GET /harness/gaps 不可达"; GAPS="{}"; }
-echo "$GAPS" | jq -e 'type == "array"' >/dev/null 2>&1 && ok "GET /harness/gaps 返回数组" || \
-  fail "GET /harness/gaps 结构异常"
+GAPS=$(curl -q -sf "$BRAIN/api/brain/gaps?status=open" 2>/dev/null) || \
+  { fail "GET /gaps 不可达"; GAPS="{}"; }
+echo "$GAPS" | jq -e 'type == "array"' >/dev/null 2>&1 && ok "GET /gaps 返回数组" || \
+  fail "GET /gaps 结构异常"
 
 echo ""
 echo "PASS: $PASS  FAIL: $FAIL"

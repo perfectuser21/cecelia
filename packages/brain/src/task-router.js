@@ -10,7 +10,6 @@
  */
 
 import { DOMAIN_TO_ROLE, ROLES } from './role-registry.js';
-import { handleIntervention } from './harness-intervention-handler.js';
 import {
   VALID_TASK_TYPES, ASYNC_CALLBACK_TASK_TYPES,
   SKILL_WHITELIST as SKILL_WHITELIST_REGISTRY,
@@ -30,23 +29,6 @@ const ASYNC_CALLBACK_TYPES = new Set(ASYNC_CALLBACK_TASK_TYPES);
 
 // Skill whitelist based on task type — 名单见 lib/task-type-registry.js（SKILL_WHITELIST）。
 const SKILL_WHITELIST = SKILL_WHITELIST_REGISTRY;
-
-// Internal task handlers — Brain tick 内联处理的 task_type（skill='/_internal'），
-// 不派外部 agent，由 Brain 进程内的 handler 函数直接处理。
-// WS5: harness_intervention → harness-intervention-handler（读 Docker logs + LLM 分析 → retry/skip/alert）
-const INTERNAL_TASK_HANDLERS = {
-  'harness_intervention': handleIntervention,
-};
-
-/**
- * 查询某个 task_type 对应的 Brain 内联 handler。
- * @param {string} taskType
- * @returns {Function|null} handler 函数，未注册则返回 null
- */
-function getInternalTaskHandler(taskType) {
-  if (!taskType || typeof taskType !== 'string') return null;
-  return INTERNAL_TASK_HANDLERS[taskType.toLowerCase()] || null;
-}
 
 // Task type patterns for identifying single tasks
 const SINGLE_TASK_PATTERNS = [
@@ -403,7 +385,5 @@ export {
   DEFAULT_LOCATION,
   VALID_TASK_TYPES,
   SKILL_WHITELIST,
-  ASYNC_CALLBACK_TYPES,
-  INTERNAL_TASK_HANDLERS,
-  getInternalTaskHandler
+  ASYNC_CALLBACK_TYPES
 };

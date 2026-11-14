@@ -1868,11 +1868,6 @@
       "role": "verification"
     },
     {
-      "owner_path": "packages/brain/src/dispatcher.js",
-      "path": "packages/brain/src/__tests__/integration/retired-harness-dispatch.pg.integration.test.js",
-      "role": "verification"
-    },
-    {
       "owner_path": "packages/brain/src/lib/dispatch-route.js",
       "path": "packages/brain/src/lib/__tests__/dispatch-route.test.js",
       "role": "verification"
@@ -1920,21 +1915,6 @@
     {
       "owner_path": "packages/brain/src/lib/workflow-commander-dispatch.js",
       "path": "packages/brain/scripts/smoke/factory-commander-route-smoke.sh",
-      "role": "verification"
-    },
-    {
-      "owner_path": "packages/brain/src/orchestrator/planner-recovery-consumption-store.js",
-      "path": "packages/brain/src/orchestrator/__tests__/planner-recovery-consumption-store.test.js",
-      "role": "verification"
-    },
-    {
-      "owner_path": "packages/brain/src/orchestrator/planner-recovery-consumption-store.js",
-      "path": "packages/brain/src/__tests__/integration/planner-recovery-consumption.pg.integration.test.js",
-      "role": "verification"
-    },
-    {
-      "owner_path": "packages/brain/src/harness-skill-relay.js",
-      "path": "packages/brain/src/__tests__/kernel-runtime-retired.test.js",
       "role": "verification"
     },
     {
@@ -2085,11 +2065,6 @@
     {
       "owner_path": "packages/brain/src/lib/commander-verification-transport.js",
       "path": "packages/brain/src/lib/__tests__/commander-verification-transport.test.js",
-      "role": "verification"
-    },
-    {
-      "owner_path": "packages/brain/src/dispatcher.js",
-      "path": "packages/brain/src/__tests__/golden-path-proposal-wiring.test.js",
       "role": "verification"
     },
     {
@@ -2538,18 +2513,8 @@
       "role": "documentation"
     },
     {
-      "owner_path": "packages/brain/src/harness-watchdog.js",
-      "path": "packages/brain/src/__tests__/harness-watchdog-never-started.test.js",
-      "role": "verification"
-    },
-    {
       "owner_path": "packages/brain/src/routes/tasks.js",
       "path": "packages/brain/src/routes/__tests__/claim-protocol.test.js",
-      "role": "verification"
-    },
-    {
-      "owner_path": "packages/brain/src/harness-watchdog.js",
-      "path": "tests/gp/f1/step1-headed-lease.test.js",
       "role": "verification"
     },
     {

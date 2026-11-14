@@ -434,6 +434,25 @@ describe('monitor-loop', () => {
   // =====================================================
 
   describe('handleStuckRun - retry_count = 0（第一次卡住：RESTART）', () => {
+    it('现役dev恢复不再查询旧开发链，长任务仍保留arch_review阈值且排除退役类型', async () => {
+      const stuck = makeStuckRun({ task_id: 'current-dev' });
+      mockPool.query.mockImplementation(async sql => {
+        if (sql.includes('FROM run_events r')) return { rows: [stuck] };
+        if (sql.includes('SELECT retry_count')) return { rows: [{ retry_count: 0, status: 'in_progress', task_type: 'dev' }] };
+        if (sql.includes('SELECT task_type, payload')) return { rows: [{ task_type: 'dev', payload: {} }] };
+        return { rows: [] };
+      });
+      startMonitorLoop();
+      await flushCycle();
+      expect(mockUpdateTask).toHaveBeenCalledWith({task_id:'current-dev', status:'queued'});
+      expect(mockPool.query.mock.calls.some(([sql]) => sql.includes('SELECT task_type, payload'))).toBe(false);
+      const detector = mockPool.query.mock.calls.find(([sql]) => sql.includes('FROM run_events r'));
+      expect(detector[0]).toContain('30 minutes');
+      expect(detector[1][0]).toContain('arch_review');
+      expect(detector[1][1]).toContain('harness_initiative');
+      vi.clearAllTimers();
+    });
+
     it('应将任务状态重置为 queued（updateTask 被调用）', async () => {
       const stuck = makeStuckRun({ task_id: 'task-restart-001', run_id: 'run-001' });
 
@@ -447,10 +466,6 @@ describe('monitor-loop', () => {
         if (queryIndex === 2) {
           // SELECT retry_count FROM tasks
           return Promise.resolve({ rows: [{ retry_count: 0 }] });
-        }
-        if (queryIndex === 3) {
-          // SELECT task_type, payload (harness chain check)
-          return Promise.resolve({ rows: [{ task_type: 'dev', payload: {} }] });
         }
         // UPDATE run_events + resource_snapshot + detectFailureSpike etc.
         return Promise.resolve({ rows: [{ failed_count: '0', total_count: '5', failure_rate: '0' }] });
@@ -475,7 +490,6 @@ describe('monitor-loop', () => {
         queryIndex++;
         if (queryIndex === 1) return Promise.resolve({ rows: [stuck] });
         if (queryIndex === 2) return Promise.resolve({ rows: [{ retry_count: 0 }] });
-        if (queryIndex === 3) return Promise.resolve({ rows: [{ task_type: 'dev', payload: {} }] });
         return Promise.resolve({ rows: [{ failed_count: '0', total_count: '5', failure_rate: '0' }] });
       });
       mockUpdateTask.mockResolvedValue({ success: true });
@@ -518,7 +532,6 @@ describe('monitor-loop', () => {
         queryIndex++;
         if (queryIndex === 1) return Promise.resolve({ rows: [stuck] });
         if (queryIndex === 2) return Promise.resolve({ rows: [{ retry_count: 1 }] });
-        if (queryIndex === 3) return Promise.resolve({ rows: [{ task_type: 'dev', payload: {} }] });
         return Promise.resolve({ rows: [{ failed_count: '0', total_count: '5', failure_rate: '0' }] });
       });
 
@@ -544,7 +557,6 @@ describe('monitor-loop', () => {
         queryIndex++;
         if (queryIndex === 1) return Promise.resolve({ rows: [stuck] });
         if (queryIndex === 2) return Promise.resolve({ rows: [{ retry_count: 1 }] });
-        if (queryIndex === 3) return Promise.resolve({ rows: [{ task_type: 'dev', payload: {} }] });
         return Promise.resolve({ rows: [{ failed_count: '0', total_count: '5', failure_rate: '0' }] });
       });
 
@@ -573,7 +585,6 @@ describe('monitor-loop', () => {
         queryIndex++;
         if (queryIndex === 1) return Promise.resolve({ rows: [stuck] });
         if (queryIndex === 2) return Promise.resolve({ rows: [{ retry_count: 2 }] });
-        if (queryIndex === 3) return Promise.resolve({ rows: [{ task_type: 'dev', payload: {} }] });
         return Promise.resolve({ rows: [{ failed_count: '0', total_count: '5', failure_rate: '0' }] });
       });
 
@@ -601,7 +612,6 @@ describe('monitor-loop', () => {
         queryIndex++;
         if (queryIndex === 1) return Promise.resolve({ rows: [stuck] });
         if (queryIndex === 2) return Promise.resolve({ rows: [{ retry_count: null }] });
-        if (queryIndex === 3) return Promise.resolve({ rows: [{ task_type: 'dev', payload: {} }] });
         return Promise.resolve({ rows: [{ failed_count: '0', total_count: '5', failure_rate: '0' }] });
       });
       mockUpdateTask.mockResolvedValue({ success: true });
@@ -618,23 +628,11 @@ describe('monitor-loop', () => {
       const stuck1 = makeStuckRun({ task_id: 'task-A', run_id: 'run-A' });
       const stuck2 = makeStuckRun({ task_id: 'task-B', run_id: 'run-B' });
 
-      let queryIndex = 0;
-      mockPool.query.mockImplementation((sql) => {
-        queryIndex++;
-        if (queryIndex === 1) return Promise.resolve({ rows: [stuck1, stuck2] });
-        // SELECT retry_count for task-A
-        if (queryIndex === 2) return Promise.resolve({ rows: [{ retry_count: 0 }] });
-        // SELECT task_type, payload for task-A (harness chain check)
-        if (queryIndex === 3) return Promise.resolve({ rows: [{ task_type: 'dev', payload: {} }] });
-        // UPDATE run_events for task-A
-        if (queryIndex === 4) return Promise.resolve({ rows: [] });
-        // SELECT retry_count for task-B
-        if (queryIndex === 5) return Promise.resolve({ rows: [{ retry_count: 0 }] });
-        // SELECT task_type, payload for task-B (harness chain check)
-        if (queryIndex === 6) return Promise.resolve({ rows: [{ task_type: 'dev', payload: {} }] });
-        // UPDATE run_events for task-B
-        if (queryIndex === 7) return Promise.resolve({ rows: [] });
-        return Promise.resolve({ rows: [{ failed_count: '0', total_count: '5', failure_rate: '0' }] });
+      mockPool.query.mockImplementation(async sql => {
+        if (sql.includes('FROM run_events r')) return { rows: [stuck1, stuck2] };
+        if (sql.includes('SELECT retry_count')) return { rows: [{ retry_count: 0, status: 'in_progress' }] };
+        if (sql.includes('COUNT(*) FILTER')) return { rows: [{ failed_count:'0', total_count:'5', failure_rate:'0' }] };
+        return { rows: [] };
       });
       mockUpdateTask.mockResolvedValue({ success: true });
 

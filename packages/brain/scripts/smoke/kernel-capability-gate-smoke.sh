@@ -60,7 +60,5 @@ if (JSON.stringify(evidence).includes('secret')) {
 }
 NODE
 
-grep -q 'preflightGate.evaluate' packages/brain/src/orchestrator/dispatcher.js
-grep -q 'validateSnapshotForDispatch' packages/brain/src/orchestrator/dispatcher.js
 
 echo "kernel-capability-gate-smoke: PASS"

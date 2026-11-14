@@ -1,8 +1,8 @@
 /**
  * Regression: pipeline-patrol 必须周期性跑（接回 live tick）。
  *
- * 根因（2026-06-27 审计）：runPipelinePatrol / runHarnessInitiativePatrol 只挂在 Wave-2 废弃的
- * executeTick 上 → runScheduler 迁移后从不调用，harness_intervention 干预通道整条死代码、卡住的
+ * 根因（2026-06-27 审计）：runPipelinePatrol 只挂在 Wave-2 废弃的
+ * executeTick 上 → runScheduler 迁移后从不调用，卡住的
  * /dev 会话无人救援。仿 recovery-loop 独立 setInterval 接回。
  */
 import { describe, it, expect, vi } from 'vitest';
@@ -11,22 +11,19 @@ import { runPipelinePatrolOnce, startPipelinePatrolLoop, stopPipelinePatrolLoop 
 const fakePool = { query: async () => ({ rows: [] }) };
 
 describe('pipeline-patrol-loop', () => {
-  it('一次执行同时调 runPipelinePatrol（dev 救援）+ runHarnessInitiativePatrol（harness 干预）', async () => {
+  it('只救援现役dev会话，返回对应结果', async () => {
     const runPipelinePatrol = vi.fn(async () => ({ rescued: 1 }));
-    const runHarnessInitiativePatrol = vi.fn(async () => ({ intervened: 2 }));
-    const r = await runPipelinePatrolOnce({ pool: fakePool, runPipelinePatrol, runHarnessInitiativePatrol });
+    const r = await runPipelinePatrolOnce({ pool: fakePool, runPipelinePatrol });
     expect(runPipelinePatrol).toHaveBeenCalledTimes(1);
-    expect(runHarnessInitiativePatrol).toHaveBeenCalledTimes(1);
-    expect(r).toMatchObject({ devRescued: 1, harnessIntervened: 2 });
+    expect(r).toEqual({ devRescued: 1 });
   });
 
-  it('其中一条抛错不影响另一条（non-fatal 容错，绝不让 loop 崩）', async () => {
-    const runPipelinePatrol = vi.fn(async () => { throw new Error('boom'); });
-    const runHarnessInitiativePatrol = vi.fn(async () => ({ intervened: 3 }));
-    const r = await runPipelinePatrolOnce({ pool: fakePool, runPipelinePatrol, runHarnessInitiativePatrol });
-    expect(runHarnessInitiativePatrol).toHaveBeenCalledTimes(1);
-    expect(r).toMatchObject({ devRescued: 0, harnessIntervened: 3 });
+  it('dev救援失败仍可继续下次巡航', async () => {
+    const runPipelinePatrol = vi.fn().mockRejectedValueOnce(new Error('boom')).mockResolvedValueOnce({rescued: 2});
+    expect(await runPipelinePatrolOnce({ pool: fakePool, runPipelinePatrol })).toEqual({devRescued:0});
+    expect(await runPipelinePatrolOnce({ pool: fakePool, runPipelinePatrol })).toEqual({devRescued:2});
   });
+
 });
 
 describe('pipeline-patrol-loop start/stop（独立 setInterval，重复启动幂等）', () => {

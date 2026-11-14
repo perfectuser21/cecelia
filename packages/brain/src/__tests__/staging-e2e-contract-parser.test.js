@@ -15,7 +15,7 @@ vi.mock('../task-updater.js', () => ({ updateTaskStatus: vi.fn().mockResolvedVal
 vi.mock('../db.js', () => ({ default: { query: vi.fn().mockResolvedValue({ rows: [] }) } }));
 
 const { parseE2eAcceptanceFromContract, runStagingE2E } = await import('../staging-e2e-runner.js');
-const { normalizeAcceptance } = await import('../harness-final-e2e.js');
+const { normalizeAcceptance } = await import('../staging-acceptance.js');
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // src/__tests__ → src → brain → packages → repo root (4 levels)

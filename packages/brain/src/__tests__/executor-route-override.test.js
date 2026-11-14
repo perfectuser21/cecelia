@@ -45,10 +45,8 @@ vi.mock('../task-updater.js', () => ({
 // ── task-router：默认 location='us'，可被单测覆写 ──────────────────
 const getTaskLocationMock = vi.fn(() => 'us');
 // Slice5: internal task handler 路由（默认 null=非 internal，不影响现有路径）
-const getInternalTaskHandlerMock = vi.fn(() => null);
 vi.mock('../task-router.js', () => ({
   getTaskLocation: (...args) => getTaskLocationMock(...args),
-  getInternalTaskHandler: (...args) => getInternalTaskHandlerMock(...args),
   TASK_REQUIREMENTS: {},
 }));
 
@@ -90,7 +88,6 @@ describe('triggerCeceliaRun: 显式 executor override 分支（phase 2 单元 1�
   beforeEach(async () => {
     vi.clearAllMocks();
     getTaskLocationMock.mockReturnValue('us');
-    getInternalTaskHandlerMock.mockReturnValue(null);
 
     // fetch：codex bridge /run 命中此 mock；US claude 不走 fetch
     fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({ok:true,status:'healthy',accounts:[{primaryUsedPct:10,tokenExpired:false}],account:'team3'}) }));
@@ -241,23 +238,18 @@ describe('triggerCeceliaRun: 显式 executor override 分支（phase 2 单元 1�
     );
   });
 
-  it('[MINOR 3] harness_initiative 带 payload.executor → 仍走 harness graph，不进 override 分支', async () => {
-    // harness 任务误传 payload.executor 不能绕过 harness graph。
-    const task = {
-      id: '11111111-2222-3333-4444-555555555555',
-      task_type: 'harness_initiative',
-      title: 't',
-      payload: { executor: 'codex', machine: 'xian-m4' },
-    };
-
-    const res = await triggerCeceliaRun(task);
-
-    // override 分支被排除：resolveExecutor 不被调
-    expect(resolveExecutorMock).not.toHaveBeenCalled();
-    // 走 harness graph（runHarnessInitiativeRouter 在本测试环境会抛错被 catch，
-    // 但返回 success:true + initiative:true 是 harness 块的标志）
-    expect(res.initiative).toBe(true);
-  });
+  it.each(['harness_initiative', 'golden_path_proposal', 'harness_report', 'sprint_report'])(
+    '已移除的开发类型 %s 在 override 和运行记账前拒绝', async task_type => {
+      const task = { id: '11111111-2222-3333-4444-555555555555', task_type,
+        title: '旧开发任务', payload: { executor: 'codex', machine: 'xian-m4' } };
+      const res = await triggerCeceliaRun(task);
+      expect(res).toMatchObject({ success: false, reason: 'task_type_retired', retiredBeforeStart: true });
+      expect(resolveExecutorMock).not.toHaveBeenCalled();
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect((await import('../db.js')).default.query).not.toHaveBeenCalled();
+      expect((await import('../spawn/index.js')).spawn).not.toHaveBeenCalled();
+    },
+  );
 
   it('无 payload.machine/executor → location=xian 仍 triggerCodexBridge（默认 xian bridge），不调 resolveExecutor（回归保护）', async () => {
     getTaskLocationMock.mockReturnValue('xian');
@@ -294,48 +286,4 @@ describe('triggerCeceliaRun: 显式 executor override 分支（phase 2 单元 1�
     expectClaudeRetired(res);
   });
 
-  // Slice5: internal task handler 内联短路 —— harness_intervention 等注册的 internal type 被
-  // pick up 后直接在 brain 内跑 handler，不当普通任务派 claude/codex（否则整条死代码）。
-  it('Slice5: internal type（harness_intervention）→ 内联 handler 短路，传 deps.updateTaskResult，不走 location 派发', async () => {
-    const handlerSpy = vi.fn(async () => ({ action: 'alert' }));
-    getInternalTaskHandlerMock.mockReturnValue(handlerSpy);
-    const task = {
-      id: '99999999-aaaa-bbbb-cccc-dddddddddddd',
-      task_type: 'harness_intervention',
-      title: 't',
-      payload: { container_id: 'harness-task-x-r0-abcd' },
-    };
-
-    const res = await triggerCeceliaRun(task);
-
-    // getInternalTaskHandler 用 task_type 查
-    expect(getInternalTaskHandlerMock).toHaveBeenCalledWith('harness_intervention');
-    // handler 被内联调用
-    expect(handlerSpy).toHaveBeenCalledTimes(1);
-    expect(handlerSpy.mock.calls[0][0]).toBe(task);
-    // 必须传 deps.updateTaskResult（否则 handleIntervention 无法写 task.result）
-    const deps = handlerSpy.mock.calls[0][1];
-    expect(typeof deps.updateTaskResult).toBe('function');
-    // 没走 location 派发（不进 US claude，不调 codex bridge）
-    expect(traceStepMock).not.toHaveBeenCalled();
-    expect(codexFetchCalls().length).toBe(0);
-    expect(res.internal).toBe(true);
-  });
-
-  it('Slice5: 非 internal type（dev）→ getInternalTaskHandler 返回 null，正常走 location 路由（回归保护）', async () => {
-    getInternalTaskHandlerMock.mockReturnValue(null);
-    getTaskLocationMock.mockReturnValue('us');
-    const task = {
-      id: '88888888-aaaa-bbbb-cccc-dddddddddddd',
-      task_type: 'dev',
-      title: 't',
-      payload: {},
-    };
-
-    const res = await triggerCeceliaRun(task);
-
-    // 走正常 location 路由，落 US claude 收口（已退役 → claude_channel_retired）
-    expect(getInternalTaskHandlerMock).toHaveBeenCalledWith('dev');
-    expectClaudeRetired(res);
-  });
 });

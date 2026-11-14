@@ -30,14 +30,11 @@ staging-promote-smoke.sh
 zj-staging-guardrail-smoke.sh
 
 # === 需要 xian 远端机器 ===
-harness-xian-spawn-smoke.sh
 xian-bridge-health-smoke.sh
 
 # === 需要真实 Fleet Worker、Runner 与角色 Provider ===
-unified-work-router-role-chain-smoke.sh
 
 # === 运行时间过长（>30 分钟），不适合 CI ===
-harness-pipeline-lifecycle-smoke.sh
 
 # === 需活体 Brain(5221)+fleet worker+codex 凭据，CI 无此环境；由 brain-deploy 部署后真环境执行（第51批）===
 attempt-run-smoke.sh

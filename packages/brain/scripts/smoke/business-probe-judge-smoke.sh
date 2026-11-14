@@ -67,7 +67,6 @@ const checks = [
   ['src/event-bus.js', ['function on(eventType, handler)', 'await dispatch(eventType, source, payload)']],
   ['src/lib/task-run.js', [\"emit('run.finished', 'task-run'\", 'RETURNING id, task_id, status, result']],
   ['migrations/475_business_probe_receipts.sql', [\"CHECK (executor_kind IN ('brain_assertion_runner', 'business_probe_runner'))\", \"executor_kind = 'business_probe_runner'\"]],
-  ['src/impact-contract/harness-gates.js', [\"receipt.executor_kind = 'brain_assertion_runner'\"]],
   ['src/lib/map-state-resolver.js', [\"executor_kind === 'business_probe_runner'\", 'probe_receipt_pass']],
   ['src/map/state-resolver.js', ['export function resolveReceiptState', 'probe_fail']],
 ];
@@ -76,7 +75,6 @@ for (const [file, needles] of checks) {
   const src = fs.readFileSync(file, 'utf8');
   for (const n of needles) if (!src.includes(n)) { console.error('FAIL ' + file + ' 缺少: ' + n); fail = true; }
 }
-if (fs.readFileSync('src/impact-contract/harness-gates.js', 'utf8').includes('business_probe_runner')) { console.error('FAIL 合并闸不得认 business_probe_runner'); fail = true; }
 if (fail) process.exit(1);
 console.log('server / event-bus / task-run / 迁移 475 / 合并闸 / 两处 resolver 全部接线 ✓');
 "

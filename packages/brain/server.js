@@ -32,7 +32,6 @@ import taskProjectsRoutes from './src/routes/task-projects.js';
 import taskGoalsRoutes from './src/routes/task-goals.js';
 import taskAreasRoutes from './src/routes/task-areas.js';
 import taskTasksRoutes from './src/routes/task-tasks.js';
-import workRoutingRoutes from './src/routes/work-routing.js';
 import taskIntakeRoutes from './src/routes/task-intake.js';
 import innerLifeRoutes from './src/routes/inner-life.js';
 import intentMatchRoutes from './src/routes/intent-match.js';
@@ -71,16 +70,6 @@ import krProjectMapRoutes from './src/routes/kr-project-map.js';
 import contextRoutes from './src/routes/context.js';
 import registryRoutes from './src/routes/registry.js';
 import notesRoutes from './src/routes/notes.js';
-import harnessRoutes from './src/routes/harness.js';
-import harnessRoutesRouter from './src/routes/harness.routes.js';
-import harnessCommanderRouter from './src/routes/harness-commander.js';
-import { createHarnessAttemptRunRouter } from './src/routes/harness-attempt-run.js';
-import harnessInterruptsRouter from './src/routes/harness-interrupts.js';
-import harnessReviewsRouter from './src/routes/harness-pending-reviews.js';
-import harnessKernelApprovalsRouter from './src/routes/harness-kernel-approvals.js';
-import harnessCallbackRouter from './src/routes/harness-callback.js';
-import walkingSkeletonRouter from './src/routes/walking-skeleton.js';
-import initiativesRoutes from './src/routes/initiatives.js';
 import backupRoutes from './src/routes/backup.js';
 import llmServiceRoutes from './src/routes/llm-service.js';
 import featuresRoutes from './src/routes/features.js';
@@ -127,6 +116,7 @@ import { runSelfCheck } from './src/selfcheck.js';
 import { runMigrations } from './src/migrate.js';
 import { sendBark } from './src/notifier.js';
 import pool from './src/db.js';
+import stagingRoutes from './src/routes/staging.js';
 import { initNarrativeTimer } from './src/cognitive-core.js';
 import { isConsciousnessEnabled, logStartupDeclaration, initConsciousnessGuard } from './src/consciousness-guard.js';
 import { initMutedGuard } from './src/muted-guard.js';
@@ -328,6 +318,7 @@ app.use((_req, res, next) => {
 app.use(express.json({ limit: '4mb' }));
 
 // Mount memory routes (before brain routes to avoid conflicts)
+app.use('/api/brain/staging', stagingRoutes);
 app.use('/api/brain/memory', memoryRoutes);
 app.use('/api/brain/settings', settingsRoutes);
 app.use('/api/brain/quality', qualityRoutes);
@@ -439,15 +430,9 @@ app.use('/api/brain/strategy-tree', strategyTreeRoutes);
 app.use('/api/brain/kr/convergence', krConvergenceRoutes);
 app.use('/api/brain/kr-project-map', krProjectMapRoutes);
 app.use('/api/brain/registry', registryRoutes);
-// LangGraph Stream 1: callback router 必须挂在 harnessRoutes 之前，
-// 因为它注册了 /harness/callback/:containerId（在 /api/brain 命名空间下），
-// 而 harnessRoutes 挂在 /api/brain/harness 路径，没有 callback 子路径不会冲突，
-// 但保险起见仍按照先 specific 后 generic 的顺序排列。
-app.use('/api/brain', harnessCallbackRouter);
 // Skill Evaluator 端点（POST /upload 需 X-Eval-Proxy-Token，GET /status 无需 token）
 app.use('/api/skill-eval', skillEvalRoutes);
 app.use('/api/brain', vocabAlias); // 行业词汇 API 别名：/value-streams 等 → 旧路径（决策 a340f100）
-app.use('/api/brain', walkingSkeletonRouter);
 app.use('/api/brain', journeysRouter);
 // GET /api/brain/issues — skills 期望的端点（journey_features 里有 issues，此处提供独立路由）
 app.get('/api/brain/issues', async (req, res) => {
@@ -486,16 +471,7 @@ app.use('/api/brain', phoneRegistryRouter); // 手机台账 GET/PUT /phone-regis
 app.use('/api/brain', resourceHealthRouter); // 资源健康进仓库 /resource-health（任务 5bf2512a，决策 de6dff5d 第 5 步）
 app.use('/api/brain', commanderHeartbeatRouter); // Commander escort 心跳 POST /commander-heartbeat（任务 17ea4536，决策 3c98fb36）
 app.use('/api/brain', goldenPathsRouter);
-app.use('/api/brain/harness', harnessCommanderRouter);
 // 第 51 批（决策 bc242b62）：V4 画布 Worker 的单角色 attempt 接线（派发+轮询结果）。
-app.use('/api/brain/harness', createHarnessAttemptRunRouter({ pool }));
-app.use('/api/brain/harness', harnessRoutesRouter);
-app.use('/api/brain/harness', harnessRoutes);
-app.use('/api/brain/harness-interrupts', harnessInterruptsRouter);
-app.use('/api/brain/harness/pending-reviews', harnessReviewsRouter);
-app.use('/api/brain/harness/kernel-reviews', harnessKernelApprovalsRouter);
-app.use('/api/brain/initiatives', initiativesRoutes);
-app.use('/api/brain/orchestrator', initiativesRoutes);
 app.use('/api/brain/backup', backupRoutes);
 app.use('/api/brain/acceptance', createAcceptanceInternalRouter({ pool }));
 
@@ -512,7 +488,6 @@ app.get('/api/brain/autonomous/sessions', createAutonomousRouter(join(dirname(fi
 // 必须在 brainRoutes 之后，避免干扰已有 GET/PATCH /api/brain/tasks
 app.use('/api/brain/workflow-commander', createWorkflowCommanderRouter(pool));
 app.use('/api/brain/tasks', taskTasksRoutes);
-app.use('/api/brain/work-routing', workRoutingRoutes);
 app.use('/api/brain/task-intake', taskIntakeRoutes);
 
 
@@ -682,22 +657,12 @@ if (!process.env.VITEST) {
     // launch 失败只记日志、绝不阻断 brain 启动。放 listen 之前，确保 tick 路由时 DBOS 已就绪。
     await bootDurable();
 
-    // migration 422 会把无法证明存活 authority 的旧 active v2 run 留为 ownerless。
-    // 在 listener 接受任何请求前先 fail-closed 收敛，定时 orphan guard 只做后备。
-    const { reconcileOwnerlessKernelRuns } = await import(
-      './src/orchestrator/kernel-controller-lifecycle.js'
-    );
-    const startupRecovered = await reconcileOwnerlessKernelRuns(pool);
-    if (startupRecovered.length > 0) {
-      console.log(`[Server] startup ownerless Kernel runs recovered=${startupRecovered.length}`);
-    }
-
     // 排空状态必须在 listener 接受任何请求前恢复完毕（任务 30861749）：原先
     // restoreDrainState() 在 onBrainListening() 异步链尾部（initTickLoop 里）才跑，
     // 而 Express 路由在 listenWithRetry() 之后立即可用——部署脚本的健康检查和
     // drain-cancel 请求几乎必然抢在 restore 之前到达，新容器 _draining 还是初始
     // false，cancel 被当 no-op，随后 restore 又把旧容器的持久化排空状态误恢复。
-    // 挪到这里与 reconcileOwnerlessKernelRuns 同一处 "listener 前收敛"，从根本上
+    // 挪到这里 "listener 前收敛"，从根本上
     // 消除这个时间窗口。
     try {
       const { restoreDrainState } = await import('./src/drain.js');
@@ -816,23 +781,6 @@ async function onBrainListening() {
   } catch (claimErr) {
     console.error('[Server] Startup stale-claim cleanup failed (non-fatal):', claimErr.message);
   }
-
-  // S0: batch-recover orphaned relay tasks after restart（A8-2）
-  import('./src/startup-sync.js').then(async ({ scanOrphanedRelayTasks }) => {
-    const { spawnSkillRelaySession } = await import('./src/harness-skill-relay.js');
-    return scanOrphanedRelayTasks({ pool, spawnFn: spawnSkillRelaySession });
-  }).then(r => {
-    console.log(`[startup-sync] relay orphan scan: scanned=${r.scanned} recovered=${r.recovered}`);
-  }).catch(err => console.warn(`[startup-sync] relay orphan scan failed (non-fatal): ${err.message}`));
-
-  // TOP2 刀1：把死于基础设施（容器 OOM / provider 早退 / spawn-guard 死锁）的
-  // harness 任务捞回队列。上面那条 scan 只管还在 in_progress 的，已被 orphan-guard
-  // requeue 超限打成 failed 的（2026-08-07 W1/W2/W3 三条）它看不见。
-  import('./src/startup-sync.js').then(({ reviveOrphanedHarnessTasks }) =>
-    reviveOrphanedHarnessTasks({ pool })
-  ).then(r => {
-    console.log(`[startup-sync] harness revival: scanned=${r.scanned} revived=${r.revived} skipped=${r.skipped}`);
-  }).catch(err => console.warn(`[startup-sync] harness revival failed (non-fatal): ${err.message}`));
 
   // Initialize Fleet Resource Cache (全局多机器资源感知)
   startFleetRefresh();
@@ -1052,8 +1000,6 @@ async function onBrainListening() {
   try {
     const { startZombieReaper } = await import('./src/zombie-reaper.js');
     startZombieReaper();
-    const { startHarnessOrphanGuard } = await import('./src/lib/harness-orphan-guard.js');
-    await startHarnessOrphanGuard();
     console.log('[Server] Zombie Reaper started (5min interval) - auto-reap in_progress tasks idle >30min');
   } catch (e) {
     console.warn('[Server] Zombie Reaper init failed (non-fatal):', e.message);

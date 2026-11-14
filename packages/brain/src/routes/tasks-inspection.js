@@ -1,7 +1,6 @@
 import { rateLimit } from 'express-rate-limit';
 import { TASK_MUTATION_RATE_LIMIT_OPTIONS } from './task-mutation-rate-limit.js';
 import pool from '../db.js';
-import { blockTask } from '../task-updater.js';
 
 export function registerTaskInspectionRoutes(router) {
 

@@ -31,10 +31,7 @@ vi.mock('../slot-allocator.js', () => ({
     user: { mode: 'absent', used: 0 },
     codex: { available: true, running: 0, max: 5 },
   }),
-  harnessSlotCheck: vi.fn().mockResolvedValue({
-    allow: true, reason: 'ok', containers: 0, inflight: 0,
-    cap: { effective: 4, mem_cap: 8, acct_cap: 4, hard_cap: 8 }, stale: false,
-  }),
+
 }));
 
 vi.mock('../quota-cooling.js', () => ({
@@ -105,7 +102,7 @@ vi.mock('../task-updater.js', () => ({ blockTask: vi.fn() }));
 vi.mock('../alerting.js', () => ({ raise: vi.fn() }));
 vi.mock('../anchor-check.js', () => ({ checkAnchor: vi.fn(() => ({ blocked: false })) }));
 vi.mock('../token-budget-planner.js', () => ({
-  shouldDowngrade: vi.fn((taskType, budgetState) => ['dev', 'harness_initiative'].includes(taskType) && (budgetState === 'tight' || budgetState === 'critical')),
+  shouldDowngrade: vi.fn((taskType, budgetState) => taskType === 'dev' && (budgetState === 'tight' || budgetState === 'critical')),
 }));
 
 describe('dispatcher allocation guide', () => {
@@ -116,7 +113,7 @@ describe('dispatcher allocation guide', () => {
   it.each(['write_error', 'claim_changed'])('Codex 路由标记未持久化（%s）时不启动执行', async (failure) => {
     const task = {
       id: 'task-guided-persist-error', title: 'guided task', description: 'dev task',
-      task_type: 'harness_initiative', status: 'queued', priority: 'P1',
+      task_type: 'dev', status: 'queued', priority: 'P1',
       payload: { ...routedCodingPayload('task-guided-persist-error'), device_serial: 'device-1' },
       created_at: '2026-07-16T00:00:00Z',
     };
@@ -154,7 +151,7 @@ describe('dispatcher allocation guide', () => {
       id: 'task-guided-1',
       title: 'guided dev task',
       description: 'dev task',
-      task_type: 'harness_initiative',
+      task_type: 'dev',
       status: 'queued',
       priority: 'P1',
       payload: routedCodingPayload('task-guided-1'),
@@ -207,12 +204,12 @@ describe('dispatcher allocation guide', () => {
     });
   });
 
-  it('harness_initiative 在 claude 无可用容量时续接到 codex', async () => {
+  it('现役dev在Claude不可用容量时续接Codex', async () => {
     const task = {
       id: 'task-guided-2',
-      title: 'guided harness task',
-      description: 'harness task',
-      task_type: 'harness_initiative',
+      title: 'guided dev task',
+      description: '现役有头开发账本的路由合同',
+      task_type: 'dev',
       status: 'queued',
       priority: 'P1',
       payload: routedCodingPayload('task-guided-2'),

@@ -18,7 +18,7 @@ import { sendFeishu } from './notifier.js';
 import { getUnconfirmedReceipts } from './receipt-collector.js';
 import { getMachineVitals } from './machine-vitals.js';
 import { TREE_NODES_SQL } from './lib/tree-nodes-sql.js';
-import { journeyRunStatsSelectSql, mapJourneyRunStatsRow } from './lib/kernel-launch-deferral.js';
+import { journeyRunStatsSelectSql, mapJourneyRunStatsRow } from './lib/journey-run-stats.js';
 
 /** 每日触发小时（UTC）= 北京时间 06:00 */
 const BATTLE_REPORT_HOUR_UTC = 22;

@@ -4,8 +4,8 @@
  * TDD RED → GREEN: 验证 resolvedPrUrl 贯通 callback 生命周期全路径
  *
  * 场景：callback body pr_url=null，但 task.payload.existing_pr_url 有合法 GitHub URL。
- * 修复前：prNumber/$8、publishTaskCompleted.pr_url、serialUnlockNext.pr_url、
- *         promoteRegressionOnHarnessMerged.pr_url 全部得到 null（原始 pr_url）。
+ * 修复前：prNumber/$8、publishTaskCompleted.pr_url、serialUnlockNext.pr_url
+ *         得到 null（原始 pr_url）。
  * 修复后：所有路径都使用 resolvedPrUrl（从 DB 兜底的权威 URL）。
  */
 
@@ -48,11 +48,10 @@ vi.mock('../code-review-trigger.js', () => ({ checkAndCreateCodeReviewTrigger: v
 vi.mock('../lib/callback-postprocess.js', () => ({
   serialUnlockNext: vi.fn().mockResolvedValue(null),
   writeReviewResult: vi.fn().mockResolvedValue(null),
-  promoteRegressionOnHarnessMerged: vi.fn().mockResolvedValue(null),
 }));
 
 import { publishTaskCompleted } from '../events/taskEvents.js';
-import { serialUnlockNext, promoteRegressionOnHarnessMerged } from '../lib/callback-postprocess.js';
+import { serialUnlockNext } from '../lib/callback-postprocess.js';
 import { processExecutionCallback } from '../callback-processor.js';
 
 // ── 工厂函数：构造模拟 pool，使 resolveCanonicalPrUrl 能返回 CANONICAL_URL ──
@@ -156,22 +155,6 @@ describe('callback-authority-propagation — resolvedPrUrl 贯通全路径', () 
     expect(serialUnlockNext).toHaveBeenCalled();
     const callArgs = vi.mocked(serialUnlockNext).mock.calls[0];
     // serialUnlockNext(task_id, result, pr_url, pool) — 第3个参数 pr_url
-    expect(callArgs[2]).toBe(CANONICAL_URL);
-  });
-
-  it('promoteRegressionOnHarnessMerged 收到 resolvedPrUrl 作为 pr_url 参数（非 null）', async () => {
-    const pool = makePool();
-    await processExecutionCallback({
-      task_id: TASK_ID,
-      run_id: 'run-004',
-      status: 'AI Done',
-      pr_url: null,
-      result: { result: 'done' },
-    }, pool);
-
-    expect(promoteRegressionOnHarnessMerged).toHaveBeenCalled();
-    const callArgs = vi.mocked(promoteRegressionOnHarnessMerged).mock.calls[0];
-    // promoteRegressionOnHarnessMerged(task_id, result, pr_url, pool) — 第3个参数 pr_url
     expect(callArgs[2]).toBe(CANONICAL_URL);
   });
 

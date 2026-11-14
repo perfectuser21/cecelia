@@ -6,7 +6,6 @@ import { describe, expect, it } from 'vitest';
 const commanderContractUrl = new URL('../commander-contract.js', import.meta.url);
 const commanderModules = [
   commanderContractUrl,
-  new URL('../../routes/harness-commander.js', import.meta.url),
 ];
 const rootRequire = createRequire(new URL('../../../../../package.json', import.meta.url));
 

@@ -1,3 +1,4 @@
+import {verifyTaskCompletionPr} from '../lib/task-completion-pr.js';
 import { headedTaskMutation, registerHeadedTakeoverRoute } from './task-headed-takeover.js';
 import { rateLimit } from 'express-rate-limit';
 import { TASK_MUTATION_RATE_LIMIT_OPTIONS } from './task-mutation-rate-limit.js';
@@ -157,14 +158,8 @@ router.patch('/tasks/:task_id', rateLimit(TASK_MUTATION_RATE_LIMIT_OPTIONS), hea
       });
     }
 
-    // 完成态前置条件硬闸（三案实证漏洞，2026-07-19）
-    // 阻止 review 未通过/PR 未合并绕过验证直接写 completed。
-    // harness_initiative(skill-relay) 任务已有专属的"收账权收归"机制(finalizeHarnessTask，
-    // 决策dc18d43d，见下方紧接的代码块)独立核验外部真相并优雅降级——这两条硬闸规则不覆盖
-    // 它，避免抢在前面短路已有的降级逻辑（07-19 回归实测：会导致该机制的测试从
-    // 200 accepted:false 变成本处硬 422，是真实冲突不是理论风险）。
-    const isSkillRelayHarness = task.task_type === 'harness_initiative' && task.orchestrator === 'skill-relay';
-    if (status === 'completed' && !isStatusNoop && !isSkillRelayHarness) {
+    // 通用完成门：审核必须批准，关联PR必须有真实合并记录。
+    if (status === 'completed' && !isStatusNoop) {
       // Rule 1: review_required=true → review_status 必须是明确 approved（拒绝或未知均不得完成）
       if (task.review_required_raw === 'true' && task.review_status !== 'approved') {
         // liveness probe 误杀回归（07-19 实锤）：若不把任务转出 in_progress，
@@ -181,50 +176,15 @@ router.patch('/tasks/:task_id', rateLimit(TASK_MUTATION_RATE_LIMIT_OPTIONS), hea
         });
       }
 
-      // Rule 2: pr_url 非空 → pr_merged_at 必须非空（PR 已合并）
-      if (task.pr_url && !task.pr_merged_at) {
-        // 同上：转 blocked 避免 liveness probe 误杀重跑（dc69c8df 任务实测复现，
-        // 4106→4108→4112 三个重复 PR）。PR 真正合并后 engine-pr-watchdog 的
-        // 终态 PATCH 会重新尝试，此时 pr_merged_at 有值，本闸放行。
-        await blockTask(task_id, { reason: 'pr_not_merged', detail: `pr_url=${task.pr_url} 已设置但尚未合并` });
-        return res.status(422).json({
-          success: false,
-          error: 'pr_url 已设置但 pr_merged_at 为空 — PR 需先合并',
-          code: 'PR_NOT_MERGED',
-          pr_url: task.pr_url,
-        });
-      }
     }
-
-    // 收账权收归（决策 dc18d43d）：harness_initiative(skill-relay) completed 一律申请，
-    // Brain 核验外部真相不过 → 降级中间态（保持原状态 + 写 generator_done），200 accepted:false。
-    let harnessDemoted = false;
-    let harnessDemoteReason = null;
-    let harnessUngated = false;
-    let harnessUngatedReason = null;
-    if (status === 'completed' && !isStatusNoop
-        && task.task_type === 'harness_initiative' && task.orchestrator === 'skill-relay') {
-      const { finalizeHarnessTask } = await import('../lib/harness-finalize.js');
-      // 把本次请求里带的 pr_url 传下去：engine-pr-watchdog 的终态回写是
-      // PATCH {status:'completed', result:{pr_url}}，闸此前只看库里的字段，
-      // 协议两头对不上导致任务干完也回不去账本（issue a4991491）。
-      // 只是线索——finalize 仍会 gh pr view 核到 MERGED 才认。
-      const requestedPrUrl = req.body?.result?.pr_url ?? req.body?.pr_url ?? null;
-      const fin = await finalizeHarnessTask(task_id, { pool, requestedPrUrl });
-      if (fin.applies && !fin.allow) { harnessDemoted = true; harnessDemoteReason = fin.reason; }
-      // 未验收合并：放行但留疤 + 不自动提升回归（照 relay-watchdog 的策略）
-      if (fin.applies && fin.allow && fin.ungated) {
-        harnessUngated = true;
-        harnessUngatedReason = fin.failureReason;
-      }
-    }
+    if (status === 'completed' && !isStatusNoop) await verifyTaskCompletionPr(task,req.body);
 
     // Build dynamic UPDATE query
     const setClauses = ['updated_at = NOW()'];
     const params = [];
     let paramIdx = 1;
 
-    if (status && !isStatusNoop && !harnessDemoted) {
+    if (status && !isStatusNoop) {
       const changedAt = new Date().toISOString();
       const historyEntry = { from: currentStatus, to: status, changed_at: changedAt, source: 'engine' };
       setClauses.push(`status = $${paramIdx++}`);
@@ -293,14 +253,14 @@ router.patch('/tasks/:task_id', rateLimit(TASK_MUTATION_RATE_LIMIT_OPTIONS), hea
     // 统一走 lib/task-terminal.js 的终态钩子（09-25 收口：completed_no_pr 也接棒）。
     // 两个触发口：① 本次转可接棒终态；② 已终态的任务补写 result.handoff（watchdog 顺序）。
     let relay = null;
-    const becameRelayTerminal = isRelayTerminalStatus(status) && !isStatusNoop && !harnessDemoted;
+    const becameRelayTerminal = isRelayTerminalStatus(status) && !isStatusNoop;
     const handoffArrivedOnTerminal = Boolean(result?.handoff) && isRelayTerminalStatus(updatedTask?.status);
     if (becameRelayTerminal || handoffArrivedOnTerminal) {
       const hook = await pool.afterCommit(pool => afterTerminalTransition(pool, task_id, updatedTask?.status || status, { sessionId: req.headers['x-session-id'] || null }));
       relay = hook?.relay ?? null;
     }
 
-    if (status && !isStatusNoop && !harnessDemoted) {
+    if (status && !isStatusNoop) {
       await emitEvent('task_status_changed', {
         task_id,
         from: currentStatus,
@@ -311,19 +271,6 @@ router.patch('/tasks/:task_id', rateLimit(TASK_MUTATION_RATE_LIMIT_OPTIONS), hea
 
       // 任务完成时自动触发 KR 进度重算
       if (status === 'completed') {
-        // T2. harness merged 终态 → 累积 FR 冻结（fail-open；harness-report Step 1 走此路径）
-        // 未验收合并不享受自动提升 —— 这是 relay-watchdog 已定策略里真正的惩罚所在
-        // （放行是因为 PR 客观已合并拦不住，惩罚落在"不提升"而不是锁死账本）。
-        if (harnessUngated) {
-          console.warn(`[tasks-patch] task=${task_id} ${harnessUngatedReason} → 跳过 regression 自动提升`);
-        } else {
-          try {
-            const { promoteRegressionOnHarnessMerged } = await import('../lib/callback-postprocess.js');
-            await promoteRegressionOnHarnessMerged(task_id, result || null, req.body.pr_url || null, pool);
-          } catch (promoteErr) {
-            console.warn(`[tasks-patch] promoteRegressionOnHarnessMerged 失败 (non-fatal): ${promoteErr.message}`);
-          }
-        }
         try {
           const initiativeRow = await pool.query(
             'SELECT okr_initiative_id FROM tasks WHERE id = $1',
@@ -374,15 +321,9 @@ router.patch('/tasks/:task_id', rateLimit(TASK_MUTATION_RATE_LIMIT_OPTIONS), hea
     }
 
     res.json({
-      // 被降级时不许再报 success:true —— 请求的状态变更没发生，
-      // 报成功就是"写被丢弃却发成功回执"（issue 9cce296f 那一族）。
-      // HTTP 仍是 200 且保留 accepted:false：既有调用方按这个契约判（见
-      // harness-completion-authority.test.js），改 HTTP 码会连带打翻它们。
-      success: !harnessDemoted,
-      ...(harnessDemoted ? { accepted: false, reason: harnessDemoteReason } : {}),
+      success: true,
       ...(relay ? { relay } : {}),
       ...(handoffFeedback ? { handoff_next_steps: handoffFeedback } : {}),
-      ...(harnessUngated ? { ungated_merge: true, failure_reason: harnessUngatedReason } : {}),
       task_id,
       status: updatedTask.status,
       updated_at: updatedTask.updated_at,
@@ -390,6 +331,10 @@ router.patch('/tasks/:task_id', rateLimit(TASK_MUTATION_RATE_LIMIT_OPTIONS), hea
       completed_at: updatedTask.completed_at
     });
   } catch (err) {
+    if (['PR_NOT_MERGED','PR_MERGE_UNVERIFIED'].includes(err.code)) {
+      await blockTask(req.params.task_id,{reason:'pr_not_merged',detail:err.message});
+      return res.status(422).json({success:false,code:err.code,error:err.message,...(err.pr_url?{pr_url:err.pr_url}:{})});
+    }
     console.error('Failed to update task:', err);
     res.status(500).json({
       success: false,

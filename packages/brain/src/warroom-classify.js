@@ -5,7 +5,7 @@
  * 全部纯函数，无 DB / 无副作用，便于单测。
  *
  * 分组依据优先级：
- *   Area：payload.base_repo（最可靠，~98% harness 任务有）
+ *   Area：payload.base_repo
  *   Group：journey 名（有 journey_id 时）> 关键词推断子系统（Cecelia 无 journey 时）
  */
 
@@ -131,7 +131,6 @@ export function taskMatchesJourney(task, journey) {
  */
 export function classifyKind(taskType) {
   switch (taskType) {
-    case 'harness_initiative': return 'sprint';
     case 'content-pipeline':   return 'pipeline';
     case 'platform_scraper':   return 'scraper';
     default:                   return 'task';
@@ -140,11 +139,9 @@ export function classifyKind(taskType) {
 
 /**
  * 下钻路由（L2 详情页）
- * sprint → /pipeline/:id（HarnessPipelineDetailPage，有阶段时间线）
- * 其他   → /tasks/:id/prd（通用任务详情）
+ * 任务 → /tasks/:id/prd（通用任务详情）
  */
-export function detailRoute(task, kind) {
-  if (kind === 'sprint') return `/pipeline/${task.id}`;
+export function detailRoute(task, _kind) {
   return `/tasks/${task.id}/prd`;
 }
 
@@ -181,87 +178,14 @@ export function shanghaiDay(ts) {
   }
 }
 
-// harness-pipelines stage.status → 战情室 4 态（done/running/pending/failed）
-const STAGE_STATUS_MAP = {
-  completed: 'done',
-  in_progress: 'running',
-  running: 'running',
-  not_started: 'pending',
-  pending: 'pending',
-  queued: 'pending',
-  failed: 'failed',
-};
-
-/**
- * 把 /api/brain/harness-pipelines 的一条 pipeline 记录归一成 feed 用的 lg 契约（纯函数）。
- *
- * - stages：`{task_type,label,status}` → `{key,label,status,elapsed_ms}`，status 收敛为 4 态。
- *   harness-pipelines 当前 stage 不带 elapsed，统一给 null（前端按缺省处理）。
- * - ws_verdicts：langgraph 里 workstreams `["ws1"]` + ws_verdicts `["queued"]` 两个平行数组，
- *   拉链成 `[{name,verdict}]`。空 → null。
- * - 空 stages → null（非 sprint / 老 pipeline）。
- *
- * @param {object} rec  harness-pipelines.pipelines[] 单条记录
- * @returns {object} 归一后的 lg 契约
- */
-export function normalizeLg(rec) {
-  const g = (rec && rec.langgraph) || {};
-
-  const rawStages = Array.isArray(rec?.stages) ? rec.stages : [];
-  const stages = rawStages.length > 0
-    ? rawStages.map((s) => ({
-        key: s.task_type || s.key || 'unknown',
-        label: s.label || s.task_type || 'unknown',
-        status: STAGE_STATUS_MAP[s.status] || 'pending',
-        elapsed_ms: typeof s.elapsed_ms === 'number' ? s.elapsed_ms : null,
-      }))
-    : null;
-
-  const wsNames = Array.isArray(g.workstreams) ? g.workstreams : [];
-  const wsRaw = Array.isArray(g.ws_verdicts) ? g.ws_verdicts : [];
-  let ws_verdicts = null;
-  if (wsRaw.length > 0) {
-    ws_verdicts = wsRaw.map((v, i) => {
-      // 已是 {name,verdict} 对象则透传；否则与 workstreams 拉链
-      if (v && typeof v === 'object' && !Array.isArray(v)) {
-        return { name: v.name ?? wsNames[i] ?? `ws${i + 1}`, verdict: v.verdict ?? '' };
-      }
-      return { name: wsNames[i] ?? `ws${i + 1}`, verdict: v == null ? '' : String(v) };
-    });
-  }
-
-  const num = (x) => (typeof x === 'number' ? x : null);
-
-  return {
-    node_label: g.current_node_label ?? null,
-    current_node: g.current_node ?? null,
-    gan_rounds: num(g.gan_rounds),
-    fix_rounds: num(g.fix_rounds),
-    review_round: num(g.review_round),
-    eval_round: num(g.eval_round),
-    last_error: g.last_error ?? null,
-    pr_urls: Array.isArray(g.pr_urls) ? g.pr_urls : null,
-    ws_verdicts,
-    stages,
-    elapsed_ms: num(rec?.elapsed_ms),
-  };
-}
-
 /**
  * 把一行 task 组装成战情室 feed item（纯函数）
  * @param {object} t            task row
  * @param {string|null} journeyName
  * @param {{pct:number, node:string}|null} progress
  * @param {number} nowMs
- * @param {{verdict?:string, pr_url?:string, findings_count?:number}|null} report
- *        对应 sprint 的 harness_report 摘要（按 initiative_id 关联）。
- *        harness_report 不单独成行，其 verdict/pr/findings 合并进所属 sprint。
- * @param {object|null} lg
- *        normalizeLg 产出的 LangGraph 富数据（仅 sprint 命中 harness-pipelines 时有）。
- *        非 sprint 任务一律忽略 lg，契约字段全部 null。
- *        lg 命中时用其 current_node/elapsed_ms 覆盖 initiative_run_events 拼的较弱值。
  */
-export function toFeedItem(t, journeyName, progress, nowMs, report = null, lg = null) {
+export function toFeedItem(t, journeyName, progress, nowMs) {
   const area = classifyArea(t);
   const group = classifyGroup(t, area, journeyName);
   const kind = classifyKind(t.task_type);
@@ -274,16 +198,10 @@ export function toFeedItem(t, journeyName, progress, nowMs, report = null, lg = 
     else if (status === 'active') elapsed_ms = nowMs - start;
   }
 
-  // pr_url 优先级：task 自身 > task.result > report 兜底
-  const pr_url = t.pr_url || (t.result && t.result.pr_url) || (report && report.pr_url) || null;
+  // pr_url 优先级：task 自身 > task.result
+  const pr_url = t.pr_url || (t.result && t.result.pr_url) || null;
 
-  // LangGraph 富数据仅对 sprint 生效；其余任务该批字段全 null（契约要求）。
-  const useLg = kind === 'sprint' && lg ? lg : null;
-
-  // current_node / elapsed_ms：lg 命中时用 lg 覆盖（更准），否则回退原逻辑。
-  let current_node = progress ? progress.node : null;
-  if (useLg && useLg.current_node != null) current_node = useLg.current_node;
-  if (useLg && typeof useLg.elapsed_ms === 'number') elapsed_ms = useLg.elapsed_ms;
+  const current_node = progress ? progress.node : null;
 
   return {
     id: t.id,
@@ -298,20 +216,8 @@ export function toFeedItem(t, journeyName, progress, nowMs, report = null, lg = 
     current_node,
     fail_reason: status === 'failed' ? (t.error_message || null) : null,
     pr_url,
-    verdict: report ? (report.verdict || null) : null,
-    findings_count: report ? (report.findings_count ?? null) : null,
     routing: t.routing ?? null,
     detail_route: detailRoute(t, kind),
-    // —— LangGraph 富字段（仅 sprint，join harness-pipelines）——
-    node_label: useLg ? (useLg.node_label ?? null) : null,
-    gan_rounds: useLg ? (useLg.gan_rounds ?? null) : null,
-    fix_rounds: useLg ? (useLg.fix_rounds ?? null) : null,
-    review_round: useLg ? (useLg.review_round ?? null) : null,
-    eval_round: useLg ? (useLg.eval_round ?? null) : null,
-    stages: useLg ? (useLg.stages ?? null) : null,
-    ws_verdicts: useLg ? (useLg.ws_verdicts ?? null) : null,
-    last_error: useLg ? (useLg.last_error ?? null) : null,
-    pr_urls: useLg ? (useLg.pr_urls ?? null) : null,
     _area: area,
     _group: group,
   };
@@ -323,19 +229,15 @@ export function toFeedItem(t, journeyName, progress, nowMs, report = null, lg = 
  * @param {Record<string,string>} journeyNameById  journey_id → name（notion_id 或 uuid）
  * @param {Record<string,{pct:number,node:string}>} progressById  task.id → progress
  * @param {number} nowMs
- * @param {Record<string,{verdict?:string,pr_url?:string,findings_count?:number}>} reportByInitiativeId
- *        sprint task.id → 该 sprint 的 harness_report 摘要
- * @param {Record<string,object>} lgByPlannerTaskId
- *        sprint task.id（=== harness-pipelines.planner_task_id）→ normalizeLg 富数据
  * @returns {Array} areas[]
  */
-export function buildFeed(tasks, journeyNameById = {}, progressById = {}, nowMs = 0, reportByInitiativeId = {}, lgByPlannerTaskId = {}) {
+export function buildFeed(tasks, journeyNameById = {}, progressById = {}, nowMs = 0) {
   const areaMap = new Map();
 
   for (const t of tasks) {
     const jId = t?.payload?.journey_id;
     const jName = jId ? (journeyNameById[jId] || null) : null;
-    const item = toFeedItem(t, jName, progressById[t.id] || null, nowMs, reportByInitiativeId[t.id] || null, lgByPlannerTaskId[t.id] || null);
+    const item = toFeedItem(t, jName, progressById[t.id] || null, nowMs);
     const { _area: area, _group: group } = item;
     delete item._area; delete item._group;
 

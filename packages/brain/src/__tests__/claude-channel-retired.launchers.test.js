@@ -120,37 +120,3 @@ describe('worker-pool-dispatch：不再往 tmux 槽发射 claude', () => {
     expect(pool.query).not.toHaveBeenCalled();
   });
 });
-
-describe('harness-skill-relay：全部旧provider relay退役', () => {
-  function relayDeps() {
-    return {
-      env: {},
-      pool: { query: vi.fn(async () => ({ rows: [], rowCount: 0 })) },
-      execFn: vi.fn(() => ''),
-      spawnFn: vi.fn(async () => {}),
-      sshSpawnFn: vi.fn(async () => {}),
-      inDockerFn: () => false,
-      sshKeyFn: () => null,
-      loadSkill: vi.fn(() => 'skill'),
-      ensureWt: vi.fn(async () => '/tmp/relay-wt'),
-      resolveAccountFn: vi.fn(async (opts) => { opts.env.CECELIA_CREDENTIALS = 'account1'; }),
-      authorizeLegacyRelay: async (_input, operation) => operation(),
-      tokenFn: vi.fn(async () => 'gh-token'),
-    };
-  }
-
-  it.each([
-    ['无头缺省执行体（即 claude）', {}],
-    ['无头显式 executor=claude', { executor: 'claude' }],
-    ['有头 executor=claude', { executor: 'claude', mode: 'headed' }],
-  ])('%s → kernel_runtime_retired，不起容器/不 ssh tmux', async (_label, payload) => {
-    const { spawnSkillRelaySession } = await import('../harness-skill-relay.js');
-    const deps = relayDeps();
-    const out = await spawnSkillRelaySession({ id: 'aaaaaaaa-0000-4000-8000-000000000001', task_type: 'harness_initiative', payload }, deps);
-    expect(out.ok).toBe(false);
-    expect(out.error).toBe('kernel_runtime_retired');
-    expect(deps.spawnFn).not.toHaveBeenCalled();
-    expect(deps.sshSpawnFn).not.toHaveBeenCalled();
-    expect(deps.execFn.mock.calls.some(([cmd]) => /tmux|claude/.test(String(cmd)))).toBe(false);
-  });
-});

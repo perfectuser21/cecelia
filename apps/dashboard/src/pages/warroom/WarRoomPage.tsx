@@ -7,7 +7,7 @@
  *   右  选中任务详情（active sprint 展示进度/节点，其余展示基本信息 + 下钻入口）
  *
  * 数据：GET /api/brain/warroom/feed（warroom-classify.js 聚合，见 packages/brain）
- * 下钻：sprint → /pipeline/:id（HarnessPipelineDetailPage），其余 → /tasks/:id/prd
+ * 下钻：任务 → /tasks/:id/prd
  *
  * 设计刻意走深色"指挥中心"风格（不跟随主题），对齐已确认的 HTML 原型。
  */
@@ -42,23 +42,7 @@ const STATUS_FILTERS: Array<{ key: string; label: string }> = [
 // ====================== 数据契约（对齐 /api/brain/warroom/feed）======================
 
 export type WarStatus = 'active' | 'done' | 'failed' | 'canceled';
-export type WarKind = 'sprint' | 'pipeline' | 'scraper' | 'task';
-export type StageStatus = 'done' | 'running' | 'pending' | 'failed';
-
-/** sprint LangGraph 单步（来自 PR-A：harness-pipelines join，仅 sprint 携带） */
-export interface FeedStage {
-  key: string;
-  label: string;
-  status: StageStatus;
-  elapsed_ms: number | null;
-}
-
-/** 单个 workstream 的验收结论（多 workstream sprint 才有） */
-export interface WsVerdict {
-  name: string;
-  verdict: string;
-}
-
+export type WarKind = 'pipeline' | 'scraper' | 'task';
 export interface FeedTask {
   id: string;
   kind: WarKind;
@@ -72,31 +56,10 @@ export interface FeedTask {
   current_node: string | null;
   fail_reason: string | null;
   pr_url: string | null;
-  /** 由所属 sprint 的 harness_report 合并而来（最终验收结论 PASS/FAIL） */
+  /** 通用任务的验收结论 */
   verdict?: string | null;
-  /** harness_report findings 数量 */
-  findings_count?: number | null;
   detail_route: string;
 
-  // ── 以下为 PR-A LangGraph 富数据（仅 sprint，PR-A 未合时全部缺省，可选读取）──
-  /** langgraph.current_node_label，如 "Proposer" / "Evaluator" */
-  node_label?: string | null;
-  /** GAN 对抗轮次 */
-  gan_rounds?: number | null;
-  /** Fix 修复轮次 */
-  fix_rounds?: number | null;
-  /** Reviewer 审查轮次 */
-  review_round?: number | null;
-  /** Evaluator 评估轮次 */
-  eval_round?: number | null;
-  /** 真实 stage 时间线（每步 label/status/耗时） */
-  stages?: FeedStage[] | null;
-  /** 多 workstream 各自验收结论 */
-  ws_verdicts?: WsVerdict[] | null;
-  /** 失败时的最后报错（pipeline 级，比 fail_reason 更细） */
-  last_error?: string | null;
-  /** 多个 PR 链接（一个 sprint 可能拆多 PR） */
-  pr_urls?: string[] | null;
   routing?: RoutingAudit | null;
 }
 
@@ -316,23 +279,6 @@ export function shanghaiClock(now: Date = new Date()): string {
   return `${hh}:${get('minute')}:${get('second')}`;
 }
 
-/**
- * stages[] → 可渲染行（每步 key/label/status/elapsed 串）。
- * null/undefined/空 安全返回 []；status 非法兜底为 'pending'。纯函数，便于单测。
- */
-export function stageRows(
-  stages: FeedStage[] | null | undefined,
-): Array<{ key: string; label: string; status: StageStatus; elapsed: string }> {
-  if (!Array.isArray(stages)) return [];
-  const valid: StageStatus[] = ['done', 'running', 'pending', 'failed'];
-  return stages.map((s) => ({
-    key: s.key,
-    label: s.label,
-    status: valid.includes(s.status) ? s.status : 'pending',
-    elapsed: formatElapsed(s.elapsed_ms),
-  }));
-}
-
 /** ISO 时间 → 相对中文（刚刚 / N分钟前 / N小时前 / N天前）；空值返回空 */
 export function relativeTime(iso: string | null): string {
   if (!iso) return '';
@@ -372,7 +318,6 @@ export function statusMeta(status: WarStatus): {
 /** 任务种类 → 标签 */
 export function kindLabel(kind: WarKind): string {
   switch (kind) {
-    case 'sprint': return 'Sprint';
     case 'pipeline': return 'Pipeline';
     case 'scraper': return '采集';
     default: return 'Task';
@@ -392,7 +337,7 @@ export function formatPriority(p: string | number | null): string {
   return /^p/i.test(s) ? s.toUpperCase() : `P${s}`;
 }
 
-/** 最终验收结论(harness_report.final_e2e_verdict) → 徽章样式；空/未知返回 null（不渲染） */
+/** 最终验收结论 → 徽章样式；空/未知返回 null（不渲染） */
 export function verdictMeta(v: string | null | undefined): { label: string; pill: string } | null {
   if (!v) return null;
   const up = String(v).toUpperCase();
@@ -585,7 +530,6 @@ const AREA_BAR: Record<string, string> = {
 
 // kind 徽章配色（静态类名，Tailwind JIT 可收录）
 const KIND_BADGE: Record<WarKind, string> = {
-  sprint: 'bg-violet-500/10 text-violet-300 border border-violet-500/20',
   pipeline: 'bg-teal-500/10 text-teal-300 border border-teal-500/20',
   scraper: 'bg-amber-500/10 text-amber-300 border border-amber-500/20',
   task: 'bg-slate-500/10 text-slate-300 border border-slate-500/20',
@@ -762,43 +706,6 @@ function AreaBlock({
   );
 }
 
-// stage 状态 → 圆点色 + 文字色（静态类名，Tailwind JIT 可收录）
-const STAGE_DOT: Record<StageStatus, string> = {
-  done: 'bg-emerald-500',
-  running: 'bg-blue-400',
-  pending: 'bg-slate-700',
-  failed: 'bg-red-500',
-};
-const STAGE_TEXT: Record<StageStatus, string> = {
-  done: 'text-slate-400',
-  running: 'text-blue-300',
-  pending: 'text-slate-600',
-  failed: 'text-red-400',
-};
-
-/** sprint 真实 stage 时间线（用 stages[]，每步 label/status/耗时） */
-function StageTimeline({ stages }: { stages: FeedStage[] | null | undefined }) {
-  const rows = stageRows(stages);
-  if (rows.length === 0) return null;
-  return (
-    <div className="px-3 py-2 border-b border-slate-800/40 flex-shrink-0">
-      <div className="text-[11px] text-slate-600 mb-1.5 tracking-wider uppercase">Stage 时间线</div>
-      <div className="space-y-1">
-        {rows.map((r) => {
-          const running = r.status === 'running';
-          return (
-            <div key={r.key} className="flex items-center gap-2 text-[12px]">
-              <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${STAGE_DOT[r.status]} ${running ? 'wr-pulse' : ''}`} />
-              <span className={`flex-1 truncate ${STAGE_TEXT[r.status]} ${running ? 'font-medium' : ''}`}>{r.label}</span>
-              {r.elapsed && <span className="font-mono text-slate-600 flex-shrink-0">{r.elapsed}</span>}
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
 function DetailPanel({ task, onOpen }: { task: FeedTask | null; onOpen: (t: FeedTask) => void }) {
   if (!task) {
     return (
@@ -809,12 +716,9 @@ function DetailPanel({ task, onOpen }: { task: FeedTask | null; onOpen: (t: Feed
   }
   const meta = statusMeta(task.status);
   const isActive = task.status === 'active';
-  const isSprint = task.kind === 'sprint';
   // 历时仅对真正运行中的任务显示，避免 queued/历史任务展示误导累加值
   const elapsed = elapsedForStatus(task.elapsed_ms, task.raw_status);
-  const stages = task.stages ?? [];
-  const wsVerdicts = task.ws_verdicts ?? [];
-  const prUrls = (task.pr_urls && task.pr_urls.length ? task.pr_urls : (task.pr_url ? [task.pr_url] : []));
+  const prUrls = task.pr_url ? [task.pr_url] : [];
   return (
     <>
       <div className="px-3 py-2 border-b border-slate-800/60 flex-shrink-0">
@@ -846,9 +750,8 @@ function DetailPanel({ task, onOpen }: { task: FeedTask | null; onOpen: (t: Feed
         </div>
       </div>
 
-      {isActive && (task.progress_pct != null || task.current_node || task.node_label) && (() => {
-        // 当前节点优先用 sprint 的 node_label（langgraph，更准），回落 current_node
-        const node = task.node_label || task.current_node;
+      {isActive && (task.progress_pct != null || task.current_node) && (() => {
+        const node = task.current_node;
         return (
           <div className="px-3 py-2 border-b border-slate-800/40 flex-shrink-0">
             <div className="flex justify-between text-[11px] text-slate-600 mb-1">
@@ -865,58 +768,6 @@ function DetailPanel({ task, onOpen }: { task: FeedTask | null; onOpen: (t: Feed
         );
       })()}
 
-      {/* GAN/Fix 对抗轮次计数（仅 sprint，有数据时） */}
-      {isSprint && (task.gan_rounds != null || task.fix_rounds != null || task.review_round != null || task.eval_round != null) && (
-        <div className="px-3 py-2 border-b border-slate-800/40 flex-shrink-0">
-          <div className="text-[11px] text-slate-600 mb-1.5 tracking-wider uppercase">对抗轮次</div>
-          <div className="flex flex-wrap gap-1.5">
-            {task.gan_rounds != null && (
-              <span className="text-[12px] font-mono px-1.5 py-0.5 rounded bg-violet-500/10 text-violet-300 border border-violet-500/20">GAN ×{task.gan_rounds}</span>
-            )}
-            {task.fix_rounds != null && (
-              <span className="text-[12px] font-mono px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-300 border border-amber-500/20">Fix ×{task.fix_rounds}</span>
-            )}
-            {task.review_round != null && (
-              <span className="text-[12px] font-mono px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-300 border border-cyan-500/20">Review ×{task.review_round}</span>
-            )}
-            {task.eval_round != null && (
-              <span className="text-[12px] font-mono px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-300 border border-blue-500/20">Eval ×{task.eval_round}</span>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* 真实 stage 时间线（仅 sprint，有 stages 数据时） */}
-      {isSprint && <StageTimeline stages={stages} />}
-
-      {/* 多 workstream 验收结论 */}
-      {isSprint && wsVerdicts.length > 0 && (
-        <div className="px-3 py-2 border-b border-slate-800/40 flex-shrink-0">
-          <div className="text-[11px] text-slate-600 mb-1.5 tracking-wider uppercase">Workstream 验收</div>
-          <div className="space-y-1">
-            {wsVerdicts.map((w, i) => {
-              const v = verdictMeta(w.verdict);
-              return (
-                <div key={`${w.name}-${i}`} className="flex items-center justify-between text-[12px] gap-2">
-                  <span className="text-slate-500 truncate">{w.name}</span>
-                  {v
-                    ? <span className={`text-[11px] tracking-wide px-1.5 py-px rounded font-bold flex-shrink-0 ${v.pill}`}>{v.label}</span>
-                    : <span className="text-slate-600 font-mono flex-shrink-0">{w.verdict}</span>}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* 失败时显示 pipeline 级 last_error（比 fail_reason 更细，sprint 优先展示） */}
-      {task.status === 'failed' && task.last_error && (
-        <div className="px-3 py-2 border-b border-slate-800/40 flex-shrink-0">
-          <div className="text-[11px] text-slate-600 mb-1 tracking-wider uppercase">Pipeline 报错</div>
-          <div className="text-[12px] text-red-400/80 leading-relaxed break-words whitespace-pre-wrap">{task.last_error}</div>
-        </div>
-      )}
-
       {task.status === 'failed' && task.fail_reason && (
         <div className="px-3 py-2 border-b border-slate-800/40 flex-shrink-0">
           <div className="text-[11px] text-slate-600 mb-1 tracking-wider uppercase">失败原因</div>
@@ -928,7 +779,6 @@ function DetailPanel({ task, onOpen }: { task: FeedTask | null; onOpen: (t: Feed
         <div className="flex justify-between"><span className="text-slate-700">种类</span><span>{kindLabel(task.kind)}</span></div>
         <div className="flex justify-between"><span className="text-slate-700">原始状态</span><span className="font-mono">{task.raw_status}</span></div>
         {task.verdict && <div className="flex justify-between"><span className="text-slate-700">最终验收</span><span className={`font-mono font-semibold ${verdictMeta(task.verdict)?.label === 'FAIL' ? 'text-red-400' : 'text-emerald-400'}`}>{verdictMeta(task.verdict)?.label}</span></div>}
-        {task.findings_count != null && <div className="flex justify-between"><span className="text-slate-700">findings</span><span className="font-mono">{task.findings_count}</span></div>}
         <div className="flex justify-between"><span className="text-slate-700">创建</span><span>{relativeTime(task.created_at)}</span></div>
         {elapsed && <div className="flex justify-between"><span className="text-slate-700">历时</span><span className="font-mono">{elapsed}</span></div>}
         <div className="flex justify-between gap-2"><span className="text-slate-700 flex-shrink-0">ID</span><span className="font-mono truncate">{task.id}</span></div>
@@ -1170,10 +1020,9 @@ const FILTERS: Array<{ key: string; label: string }> = [
   { key: 'zenithjoy', label: 'ZENITHJOY' },
 ];
 
-// kind 过滤项（区分 harness sprint 与 dev/pipeline/采集）
+// kind 过滤项（区分任务与pipeline/采集）
 const KIND_FILTERS: Array<{ key: string; label: string }> = [
   { key: 'all', label: '全部' },
-  { key: 'sprint', label: 'Sprint' },
   { key: 'task', label: 'Task' },
   { key: 'pipeline', label: 'Pipeline' },
   { key: 'scraper', label: '采集' },

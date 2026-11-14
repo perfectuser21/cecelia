@@ -80,12 +80,6 @@ for script in "$SMOKE_DIR"/*.sh; do
     continue
   fi
 
-  if [ "$fname" = 'walking-skeleton-1node-smoke.sh' ]; then
-    DELEGATED=$((DELEGATED + 1))
-    echo "── DELEGATED: $fname → manual-only walking demo (retired nightly owner)"
-    continue
-  fi
-
   # 真 Brain 写入入口必须通过身份校验；默认本地执行只运行安全脚本。
   if _in_list "$fname" "$WRITE_TARGETS"; then
     if ! node "$REPO_ROOT/packages/brain/scripts/lib/smoke-production-guard.mjs" "$BRAIN_URL"; then

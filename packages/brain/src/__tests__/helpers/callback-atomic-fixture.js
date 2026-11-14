@@ -124,17 +124,14 @@ vi.mock('../../quarantine.js', () => ({
   classifyFailure: vi.fn(() => ({ class: 'task_error', pattern: null })),
 }));
 vi.mock('../../lib/callback-postprocess.js', () => ({
-  serialUnlockNext: vi.fn(async () => {}), writeReviewResult: vi.fn(async () => {}), promoteRegressionOnHarnessMerged: vi.fn(async () => {}),
+  serialUnlockNext: vi.fn(async () => {}), writeReviewResult: vi.fn(async () => {}),
 }));
 vi.mock('../../lib/cascade-writeback.js', () => ({ writeCascadeCellStatuses: vi.fn(async () => {}) }));
 vi.mock('../../lib/internal-service-auth.js', () => ({ internalServiceHeaders: () => ({}) }));
-vi.mock('../../lib/harness-report-writeback.js', () => ({ finalizeHarnessReportFeature: vi.fn(async () => {}) }));
 vi.mock('../../desire-feedback.js', () => ({ updateDesireFromTask: vi.fn(async () => {}) }));
 vi.mock('../../code-review-trigger.js', () => ({ checkAndCreateCodeReviewTrigger: vi.fn(async () => {}) }));
 vi.mock('../../routes/shared.js', () => ({ resolveRelatedFailureMemories: vi.fn(async () => {}) }));
 vi.mock('../../zenithjoy-db.js', () => ({ getZenithjoyPool: () => ({ query: () => boundary.deny('business DB') }) }));
-vi.mock('../../execution.js', () => ({ readVerdictWithRetry: vi.fn(), persistVerdictTimeout: vi.fn(),
-  isBridgeSessionCrash: () => false, handleEvaluateSessionCrash: vi.fn() }));
 vi.mock('../../watchdog.js', () => ({ cleanupMetrics: vi.fn(async () => {}) }));
 vi.mock('../../auto-learning.js', () => ({ processExecutionAutoLearning: vi.fn(async () => null) }));
 vi.mock('../../dep-cascade.js', () => ({

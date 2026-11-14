@@ -3,8 +3,6 @@
  *
  * DoD 映射：
  * - DoD-1: selectNextDispatchableTask SQL 包含 NOT EXISTS 子查询（Initiative 锁）
- * - DoD-2: dispatchNextTask 在 pre-flight 后做二次 initiative 锁检查
- * - DoD-3: 跳过时 reason = 'initiative_locked'
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -16,7 +14,6 @@ vi.mock('../db.js', () => ({
 }));
 
 vi.mock('../slot-allocator.js', () => ({
-  harnessSlotCheck: vi.fn().mockResolvedValue({ allow: true, reason: 'ok', containers: 0, inflight: 0, cap: { effective: 4, mem_cap: 8, acct_cap: 4, hard_cap: 8 }, stale: false }),
   calculateSlotBudget: vi.fn().mockResolvedValue({
     dispatchAllowed: true,
     taskPool: { budget: 5, available: 3 },
@@ -114,133 +111,5 @@ describe('selectNextDispatchableTask: Initiative 锁 SQL', () => {
     const result = await selectNextDispatchableTask(['goal-1']);
 
     expect(result).toBeNull();
-  });
-});
-
-describe('dispatchNextTask: Initiative 二次锁检查', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
-  it('候选任务有 project_id 且二次检查发现 in_progress 任务时返回 initiative_locked', async () => {
-    // 注：initiative lock 仅对 harness pipeline 类型生效（dev/talk/audit 不锁）
-    const candidateTask = {
-      id: 'task-candidate',
-      title: '实现新功能',
-      description: '功能描述',
-      prd_content: null,
-      status: 'queued',
-      priority: 'P1',
-      payload: {},
-      project_id: 'proj-initiative-1',
-      task_type: 'harness_initiative',
-      metadata: {}
-    };
-
-    // pool.query 调用顺序：
-    // 0. Phase 2.5: drain retired harness types（0 retired，本 PR 加）
-    mockQuery.mockResolvedValueOnce({ rows: [] });
-    // 0'. 无头 kernel drain（harness_initiative 无头入口退役）
-    mockQuery.mockResolvedValueOnce({ rows: [] });
-    // 1. selectNextDispatchableTask 主查询 → 返回候选
-    mockQuery.mockResolvedValueOnce({ rows: [candidateTask] });
-    // 1.5 派发前语义查重（本 PR 加）→ 无 sibling
-    mockQuery.mockResolvedValueOnce({ rows: [] });
-    // 2. 全局 harness 并发计数（本 PR 加）→ 0 < cap，放行
-    mockQuery.mockResolvedValueOnce({ rows: [{ n: 0 }] });
-    // 3. Initiative 二次锁检查 → 发现已有 in_progress 任务
-    mockQuery.mockResolvedValueOnce({
-      rows: [{ id: 'task-blocking', title: '另一个进行中任务' }]
-    });
-
-    const { dispatchNextTask } = await import('../tick.js');
-    const result = await dispatchNextTask(['goal-1']);
-
-    expect(result.dispatched).toBe(false);
-    expect(result.reason).toBe('initiative_locked');
-    expect(result.blocking_task_id).toBe('task-blocking');
-    expect(result.task_id).toBe('task-candidate');
-  });
-
-  it('候选任务 project_id 为 null 时跳过 Initiative 锁检查，正常派发', async () => {
-    const candidateTask = {
-      id: 'task-no-project',
-      title: '独立任务（无 Initiative）',
-      description: '描述',
-      prd_content: null,
-      status: 'queued',
-      priority: 'P1',
-      payload: {},
-      project_id: null,
-      metadata: {}
-    };
-
-    // pool.query 调用顺序：
-    // 0. Phase 2.5: drain retired harness types（0 retired，本 PR 加）
-    mockQuery.mockResolvedValueOnce({ rows: [] });
-    // 0'. 无头 kernel drain（harness_initiative 无头入口退役）
-    mockQuery.mockResolvedValueOnce({ rows: [] });
-    // 1. 主查询 → 候选（无 initiative 锁检查，project_id 为 null）
-    mockQuery.mockResolvedValueOnce({ rows: [candidateTask] });
-    // 1.5 派发前语义查重（本 PR 加）→ 无 sibling
-    mockQuery.mockResolvedValueOnce({ rows: [] });
-    // 2. C1 claim: UPDATE tasks SET claimed_by ... RETURNING id
-    mockQuery.mockResolvedValueOnce({ rows: [{ id: candidateTask.id }] });
-    // 3. SELECT * FROM tasks（fullTaskResult，dispatch 继续执行时）
-    mockQuery.mockResolvedValueOnce({ rows: [candidateTask] });
-
-    const { dispatchNextTask } = await import('../tick.js');
-    const result = await dispatchNextTask(['goal-1']);
-
-    // 关键：没有 initiative_locked，锁检查被跳过
-    expect(result.reason).not.toBe('initiative_locked');
-    const lockCheckCalls = mockQuery.mock.calls.filter(
-      c => typeof c[0] === 'string' && c[0].includes('project_id = $1') && c[0].includes("status = 'in_progress'")
-    );
-    expect(lockCheckCalls).toHaveLength(0);
-  });
-
-  it('Initiative 无 in_progress 任务时正常派发（锁检查通过）', async () => {
-    // 注：initiative lock 仅对 harness pipeline 类型生效
-    const candidateTask = {
-      id: 'task-candidate-2',
-      title: '实现新功能 v2',
-      description: '功能描述',
-      prd_content: null,
-      status: 'queued',
-      priority: 'P1',
-      payload: {},
-      project_id: 'proj-initiative-2',
-      task_type: 'harness_initiative',
-      metadata: {}
-    };
-
-    // pool.query 调用顺序：
-    // 0. Phase 2.5: drain retired harness types（0 retired，本 PR 加）
-    mockQuery.mockResolvedValueOnce({ rows: [] });
-    // 0'. 无头 kernel drain（harness_initiative 无头入口退役）
-    mockQuery.mockResolvedValueOnce({ rows: [] });
-    // 1. 主查询 → 候选
-    mockQuery.mockResolvedValueOnce({ rows: [candidateTask] });
-    // 1.5 派发前语义查重（本 PR 加）→ 无 sibling
-    mockQuery.mockResolvedValueOnce({ rows: [] });
-    // 2. 全局 harness 并发计数（本 PR 加）→ 0 < cap，放行
-    mockQuery.mockResolvedValueOnce({ rows: [{ n: 0 }] });
-    // 3. Initiative 锁检查 → 无 in_progress 任务（锁通过）
-    mockQuery.mockResolvedValueOnce({ rows: [] });
-    // 4. C1 claim: UPDATE tasks SET claimed_by ... RETURNING id
-    mockQuery.mockResolvedValueOnce({ rows: [{ id: candidateTask.id }] });
-    // 5. SELECT * FROM tasks（fullTaskResult，dispatch 继续执行时）
-    mockQuery.mockResolvedValueOnce({ rows: [candidateTask] });
-
-    const { dispatchNextTask } = await import('../tick.js');
-    const result = await dispatchNextTask(['goal-1']);
-
-    // Initiative 锁检查应被执行，且通过
-    const lockCheckCalls = mockQuery.mock.calls.filter(
-      c => typeof c[0] === 'string' && c[0].includes("status = 'in_progress'") && c[0].includes('project_id = $1')
-    );
-    expect(lockCheckCalls).toHaveLength(1);
-    expect(result.reason).not.toBe('initiative_locked');
   });
 });

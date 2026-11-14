@@ -1,0 +1,71 @@
+import { randomUUID } from 'node:crypto';
+
+export async function seedRoutedDevelopmentTask(pool, {
+  titlePrefix,
+  initiativeId = randomUUID(),
+  taskId = randomUUID(),
+  changeKind = 'bugfix',
+  // 默认 F0 = 既有调用方的原行为；只有需要别的能力节点的用例才显式传。
+  mapScope = ['F0'],
+  payload = {},
+}) {
+  const receiptId = randomUUID();
+  const defaultExecutionProfile = ({
+    new_capability: 'new-capability-v1',
+    capability_change: 'capability-change-v1',
+    bugfix: 'hotfix-v1',
+    parameter_only: 'parameter-only-v1',
+  })[changeKind];
+  const routedPayload = {
+    ...payload,
+    initiative_id: initiativeId,
+    routing_receipt_id: receiptId,
+    work_kind: 'coding_mutation',
+    change_kind: changeKind,
+    repo: 'cecelia',
+    map_scope: mapScope,
+    default_execution_profile: defaultExecutionProfile,
+    impact_contract_required: true,
+    orchestrator: 'headed-session',
+    headed_manual: 'true',
+  };
+  await pool.query(
+    `INSERT INTO tasks (id, title, status, priority, task_type, trigger_source, payload)
+     VALUES ($1, $2, 'in_progress', 'P2', 'dev', 'api', $3::jsonb)`,
+    [taskId, `${titlePrefix}-${taskId}`, JSON.stringify(routedPayload)],
+  );
+  await pool.query(
+    `INSERT INTO work_routing_receipts (
+       id, task_id, source, source_id, work_kind, change_kind, pipeline,
+       canonical_task_type, default_execution_profile, repo, map_scope,
+       impact_contract_required, orchestrator, router_version, route_reason, evidence,
+       direct_contract_seed, map_scope_validation_version
+     ) VALUES (
+       $1, $2, 'integration', $3, 'coding_mutation', $4, 'headed_development',
+       'dev', $5, 'cecelia', $8::jsonb,
+       true, 'headed-session', 'work-router-v1', 'integration_fixture', $6::jsonb,
+       $7::jsonb, 'active-business-node-v1'
+     )`,
+    [
+      receiptId,
+      taskId,
+      `${titlePrefix}:${taskId}`,
+      changeKind,
+      defaultExecutionProfile,
+      JSON.stringify({
+        branch: `cp-${titlePrefix}-${taskId.slice(0, 8)}`,
+        base_sha: 'a'.repeat(40),
+      }),
+      ['hotfix-v1', 'parameter-only-v1'].includes(defaultExecutionProfile)
+        ? JSON.stringify({
+          contract_version: 'direct-profile-contract-seed/v1',
+          title: `${titlePrefix}-${taskId}`,
+          objective: `${titlePrefix}-${taskId}`,
+          execution_profile: defaultExecutionProfile,
+        })
+        : null,
+      JSON.stringify(mapScope),
+    ],
+  );
+  return { initiativeId, taskId, receiptId, payload: routedPayload };
+}

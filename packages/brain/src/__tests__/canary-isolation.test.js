@@ -4,7 +4,6 @@
  *
  * 覆盖：
  *   BEHAVIOR-1  canary 隔离过滤 dev-records
- *   BEHAVIOR-2  canary 隔离过滤回归池
  *   BEHAVIOR-3  canary 隔离过滤统计计数（battle-report + diary-scheduler）
  *
  * 规则（INV-04/INV-16）：
@@ -52,51 +51,6 @@ describe('BEHAVIOR-1: dev-records 查询 canary 隔离', () => {
     const selectSql = dbStub._calls.find((c) => c.sql.includes('dev_records') && c.sql.includes('SELECT'));
     expect(selectSql).toBeDefined();
     expect(selectSql.sql).toMatch(/IS DISTINCT FROM/i);
-  });
-});
-
-// ─── BEHAVIOR-2：回归池入池逻辑 canary 过滤 ───────────────────────────────────
-
-describe('BEHAVIOR-2: 回归池入池 canary 隔离', () => {
-  it('task.payload.canary=true 时 promoteToRegression 跳过，不调用写库', async () => {
-    const { promoteToRegression } = await import('../harness-promote-regression.js');
-    const dbStub = makeDbStub();
-    const canaryTask = { id: 'canary-promo-001', payload: { canary: true } };
-    const result = await promoteToRegression(
-      { pool: dbStub, execFile: vi.fn(), fsImpl: { readFileSync: vi.fn(() => '') } },
-      { task: canaryTask, sprintDir: 'sprints/test', worktreePath: '/tmp/test' }
-    );
-    expect(result.skipped).toBe(true);
-    expect(result.reason).toMatch(/canary/i);
-    // 不应有任何 INSERT 写库
-    const insertCalls = dbStub._calls.filter((c) => c.sql.toLowerCase().includes('insert'));
-    expect(insertCalls).toHaveLength(0);
-  });
-
-  it('task.payload.canary=true（字符串）时 promoteToRegression 也跳过', async () => {
-    const { promoteToRegression } = await import('../harness-promote-regression.js');
-    const dbStub = makeDbStub();
-    const canaryTask = { id: 'canary-promo-002', payload: { canary: 'true' } };
-    const result = await promoteToRegression(
-      { pool: dbStub, execFile: vi.fn(), fsImpl: { readFileSync: vi.fn(() => '') } },
-      { task: canaryTask, sprintDir: 'sprints/test', worktreePath: '/tmp/test' }
-    );
-    expect(result.skipped).toBe(true);
-    expect(result.reason).toMatch(/canary/i);
-  });
-
-  it('task.payload.canary 未设 → 正常走后续路径（不因 canary 守卫跳出）', async () => {
-    const { promoteToRegression } = await import('../harness-promote-regression.js');
-    const dbStub = makeDbStub();
-    const normalTask = { id: 'task-normal-001', payload: {} };
-    const result = await promoteToRegression(
-      { pool: dbStub, execFile: vi.fn(), fsImpl: { readFileSync: vi.fn(() => '') } },
-      { task: normalTask, sprintDir: 'sprints/test', worktreePath: '/tmp/test' }
-    );
-    // 非 canary 任务不应因 canary 守卫返回 skipped（可能因其他原因 skip，但不是 canary）
-    if (result.skipped) {
-      expect(result.reason).not.toMatch(/canary/i);
-    }
   });
 });
 

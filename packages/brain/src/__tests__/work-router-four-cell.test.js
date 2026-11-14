@@ -87,7 +87,7 @@ describe('selectPipeline 四格路由', () => {
     expect(d.pipeline).toBe('canvas');
     expect(d.answer_known).toBe(true);
   });
-  it('code 类无头走 coding_workflow runner(A2,无头 kernel 已退役),有头仍记 harness 账本,四格字段随行留痕', () => {
+  it('code 类无头走 coding_workflow runner(A2,无头 kernel 已退役),有头使用dev账本,四格字段随行留痕', () => {
     const d = selectPipeline({
       work_kind: 'coding_mutation', change_kind: 'bugfix',
       artifact_kind: 'code', answer_known: true,
@@ -97,7 +97,7 @@ describe('selectPipeline 四格路由', () => {
     expect(selectPipeline({
       work_kind: 'coding_mutation', change_kind: 'bugfix',
       artifact_kind: 'code', answer_known: true, headed: true,
-    })).toMatchObject({ pipeline: 'harness', orchestrator: 'kernel-harness-v2' });
+    })).toMatchObject({ pipeline: 'headed_development', canonical_task_type: 'dev', orchestrator: 'headed-session' });
     expect(d.artifact_kind).toBe('code');
     expect(d.answer_known).toBe(true);
   });

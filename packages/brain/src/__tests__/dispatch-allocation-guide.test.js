@@ -46,11 +46,11 @@ describe('dispatch-allocation-guide', () => {
     expect(res.task.payload.allocation.reason).not.toBe('default_claude');
   });
 
-  it('harness_initiative 纳入引导范围，claude 不可用时续接到 codex', () => {
+  it('现役dev使用容量快照选择Codex', () => {
     const task = {
       id: 'task-4',
-      task_type: 'harness_initiative',
-      payload: { orchestrator: 'skill-relay' },
+      task_type: 'dev',
+      payload: {},
     };
 
     const res = applyDispatchAllocationGuide(task, {
@@ -77,8 +77,8 @@ describe('dispatch-allocation-guide', () => {
   it('计费厂商都不可用时 grok 作为四级续接兜底', () => {
     const task = {
       id: 'task-5',
-      task_type: 'harness_initiative',
-      payload: { orchestrator: 'skill-relay' },
+      task_type: 'dev',
+      payload: {},
     };
 
     const res = applyDispatchAllocationGuide(task, {

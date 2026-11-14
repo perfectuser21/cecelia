@@ -155,11 +155,7 @@ test('all explicit live Brain shell write entries remain registered and guarded'
     }
     assert.ok(listed.has(name), `${name}: new live write script must join write guard inventory`);
     assert.match(source, /smoke-production-guard\.mjs/, `${name}: standalone write guard missing`);
-    if (name === 'unified-work-router-role-chain-smoke.sh') {
-      const prefix = source.slice(0, source.indexOf('if ! node '));
-      assert.doesNotMatch(prefix, /(?:^|[ \t;(])(?:curl|psql|mkdir|docker|cd|git|node)\b|\$\(/m,
-        'Harness input checks must remain inert before write guard');
-    } else if (!optional.has(name)) {
+    if (!optional.has(name)) {
       const commands = source.split('\n').filter(line => line.trim() && !line.startsWith('#'));
       assert.match(commands[1], /if ! node.*smoke-production-guard\.mjs/, `${name}: guard must run before any side effect`);
     }
@@ -188,7 +184,7 @@ test('ratchet runner does not execute a registered write script without authoriz
 });
 
 
-for (const script of ['blade-bc-harness-gates', 'claimed-by-cleared', 'claude-headed-dispatch',
+for (const script of ['claimed-by-cleared', 'claude-headed-dispatch',
   'codex-headed-dispatch', 'golden-paths-t1', 'golden-path-step-nfr', 'journey-goldenpaths-invariants', 'unified-map-api']) {
   test(`${script}: ignored DB_URL cannot mask the actual production DATABASE_URL`, async () => {
     await fixture(async ({ smoke }) => {
@@ -421,28 +417,6 @@ test('guarded live psql invocations must disable default startup config', async 
   }
 });
 
-
-for (const [name, overrides, expected] of [
-  ['disabled Harness', { HARNESS_ROLE_CHAIN_ENABLED: '' }, 'SKIP: real Harness role chain requires explicit opt-in'],
-  ['missing explicit DB', { HARNESS_ROLE_CHAIN_ENABLED: '1', DB_URL: '' }, 'DB_URL is required'],
-]) {
-  test(`role-chain keeps its inert input contract: ${name}`, async () => {
-    await fixture(async ({ requests, smoke }) => {
-      const result = await smoke('unified-work-router-role-chain', overrides);
-      assert.ok(result.output.includes(expected), result.output);
-      if (name === 'missing explicit DB') assert.notEqual(result.code, 0);
-      assert.deepEqual(requests, []);
-    });
-  });
-}
-test('valid Harness inputs still cannot write without the general write authorization', async () => {
-  await fixture(async ({ requests, smoke }) => {
-    const result = await smoke('unified-work-router-role-chain', { HARNESS_ROLE_CHAIN_ENABLED: '1',
-      DB_URL: 'postgresql://localhost/cecelia_test', BASELINE_SHA: 'fixture' });
-    assert.equal(result.code, 0, result.output);
-    assert.deepEqual(requests, []);
-  });
-});
 
 for (const [name, overrides] of [
   ['remote DOCKER_HOST', { DOCKER_HOST: 'tcp://remote.invalid:2376' }],

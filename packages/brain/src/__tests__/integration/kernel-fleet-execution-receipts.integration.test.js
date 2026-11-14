@@ -6,7 +6,6 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { DB_DEFAULTS } from '../../db-config.js';
 import { createAttemptStore } from '../../orchestrator/attempt-store.js';
-import { createDispatcher } from '../../orchestrator/dispatcher.js';
 
 const migration357 = readFileSync(
   new URL('../../../migrations/357_harness_provider_attempts.sql', import.meta.url),
@@ -367,53 +366,6 @@ describe('migrations 363-366 and fleet execution receipts on PostgreSQL', () => 
         requested_machine_id: 'xian-mac-m4',
       }]);
 
-      const launch = vi.fn();
-      const start = vi.fn();
-      const duplicateDispatch = createDispatcher({
-        attemptStore: createAttemptStore(schemaPool),
-        registry: {
-          resolve: vi.fn(() => ({
-            name: 'codex',
-            capabilities: ['structured_output'],
-            start,
-          })),
-        },
-        launcher: { launch, cancel: vi.fn() },
-        handlers: {},
-        loadSkill: vi.fn(() => ({
-          name: 'harness-generator',
-          version: '1.0.0',
-          digest: `sha256:${'d'.repeat(64)}`,
-          content: 'generate',
-        })),
-        machineId: 'xian-mac-m4',
-        randomUUID: () => duplicateInput.id,
-        createCallbackSecret: () => 'duplicate-callback-secret',
-      });
-      await expect(duplicateDispatch('spawn:generator', {
-        taskId: 'task-concurrent-duplicate',
-        runId,
-        hop: 41,
-        decision: { phase: 'generate' },
-        observed: {
-          task: {
-            id: 'task-concurrent-duplicate',
-            title: 'duplicate dispatch suppression',
-            payload: {
-              sprint_dir: 'sprints/concurrent-dispatch',
-              worktree_path: '/workspace',
-            },
-          },
-          run: { id: runId, phase: 'generate' },
-          contract: { row: {} },
-          pr: null,
-        },
-      })).resolves.toMatchObject({
-        status: 'DONE_WITH_CONCERNS',
-        attemptId: winnerInput.id,
-      });
-      expect(start).not.toHaveBeenCalled();
-      expect(launch).not.toHaveBeenCalled();
     } finally {
       if (!winnerCommitted) await winnerClient.query('ROLLBACK').catch(() => {});
       await duplicateClient.query('ROLLBACK').catch(() => {});

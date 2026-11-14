@@ -320,13 +320,6 @@ describe('执行路径接线钉子（漏接即红）', () => {
     expect(at).toBeLessThan(src.indexOf('幂等性保护：run_id + status 组合去重'));
   });
 
-  it('kernel 终态：finalizeKernelRun 提交后 finishRun', () => {
-    const src = read('src/orchestrator/kernel-run-store.js');
-    const commit = src.lastIndexOf("await client.query('COMMIT');\n    committed = true;\n    // run 原语补终态");
-    expect(commit).toBeGreaterThan(0);
-    expect(src).toMatch(/await finishRun\(\{\s*runId,/);
-  });
-
   it('cecelia-run.sh 终态回执带 run_id + exit_code（脚本不改码，由 execution-callback 收尾）', () => {
     const sh = read('scripts/cecelia-run.sh');
     expect(sh).toMatch(/--arg run_id "\$CHECKPOINT_ID"/);

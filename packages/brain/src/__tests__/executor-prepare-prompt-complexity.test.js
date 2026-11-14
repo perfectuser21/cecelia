@@ -66,12 +66,4 @@ describe('preparePrompt 圈复杂度回归测试', () => {
     expect(executorSrc).toContain('_TASK_ROUTES[taskType]');
   });
 
-  it('preparePrompt 使用 Set 常量替代 || 条件链', () => {
-    expect(executorSrc).toContain('const _DECOMP_TYPES =');
-    expect(executorSrc).toContain('const _HARNESS_GENERATE_TYPES =');
-  });
-
-  it('_isSprintOrHarnessDevMode 辅助函数已提取', () => {
-    expect(executorSrc).toContain('function _isSprintOrHarnessDevMode(');
-  });
 });

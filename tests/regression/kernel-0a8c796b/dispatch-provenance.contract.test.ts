@@ -1,6 +1,4 @@
-// 此执行器测试注入模拟传输；真实隔离入口由 runtime-isolation.test.js 验证。
-vi.mock('../../../packages/brain/src/runtime-safety.js', () => ({ assertExternalExecutionAllowed: () => {} }));
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -24,34 +22,4 @@ describe('machine launch provenance command contract', () => {
     expect(result.stdout).toContain(`HARNESS_TASK_ID=${taskId}`);
   });
 
-  it('headed Claude 已退役（任务 76a160b3）：拒绝 kernel_runtime_retired，不构造 tmux 启动命令', async () => {
-    const { spawnSkillRelaySession } = await import(
-      '../../../packages/brain/src/harness-skill-relay.js'
-    );
-    const calls: string[] = [];
-    const task = {
-      id: taskId,
-      title: 'provenance contract',
-      payload: {
-        orchestrator: 'skill-relay',
-        executor: 'claude',
-        mode: 'headed',
-      },
-    };
-    const result = await spawnSkillRelaySession(task, {
-      pool: { query: vi.fn().mockResolvedValue({ rows: [] }) },
-      execFn: (command: string) => {
-        calls.push(command);
-        return 'TMUX_DEAD';
-      },
-      inDockerFn: () => false,
-      authorizeLegacyRelay: async (_identity, operation) => operation(),
-      sshKeyFn: () => null,
-      loadSkill: () => 'contract prompt',
-      ensureWt: async () => '/tmp/contract-worktree',
-      now: () => new Date('2026-07-25T00:00:00Z'),
-    });
-    expect(result).toMatchObject({ ok: false, error: 'kernel_runtime_retired' });
-    expect(calls.some((command) => command.includes('tmux new-session'))).toBe(false);
-  });
 });

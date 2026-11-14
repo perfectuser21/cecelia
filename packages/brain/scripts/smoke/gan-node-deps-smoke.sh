@@ -4,13 +4,6 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 
-echo "[gan-node-deps-smoke] 1. dispatcher 对 proposer/reviewer 默认开 node_deps"
-node -e "
-const s = require('fs').readFileSync('src/orchestrator/dispatcher.js','utf8');
-if (!s.includes('node_deps')) process.exit(1);
-"
-echo "dispatcher 接线 ✓"
-
 echo "[gan-node-deps-smoke] 2. provision 剥离防线（node_deps 不得进 resourceManager）"
 node -e "
 const s = require('fs').readFileSync('scripts/fleet-worker/attempt-runner.cjs','utf8');

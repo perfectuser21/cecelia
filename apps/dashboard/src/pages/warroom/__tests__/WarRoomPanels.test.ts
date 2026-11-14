@@ -5,53 +5,9 @@
  */
 import { describe, it, expect } from 'vitest';
 import {
-  pctLabel, journeyStatRows, handoffRows, decisionRows, issueRows,
+  handoffRows, decisionRows, issueRows,
   sentinelLight, sentinelRows, sentinelVisible, SENTINEL_STALE_SECONDS,
 } from '../WarRoomPanels';
-
-describe('pctLabel（成功率 0-1 → 百分比）', () => {
-  it('0.8 → 80%；0 → 0%；1 → 100%', () => {
-    expect(pctLabel(0.8)).toBe('80%');
-    expect(pctLabel(0)).toBe('0%');
-    expect(pctLabel(1)).toBe('100%');
-  });
-  it('null/undefined/非数 → —', () => {
-    expect(pctLabel(null)).toBe('—');
-    expect(pctLabel(undefined)).toBe('—');
-    expect(pctLabel('abc')).toBe('—');
-  });
-});
-
-describe('journeyStatRows（/harness/stats?by=journey）', () => {
-  const stat = {
-    by: 'journey', period_days: 30,
-    journeys: [{
-      journey_id: 'j1', journey_name: 'Line 05 视频剪辑', runs: 5, done: 4, failed: 1,
-      success_rate: 0.8, last_run_at: '2026-07-05T00:00:00Z', last_failure: null,
-    }],
-  };
-  it('正常映射：name/runs/pct/last_run_at', () => {
-    const rows = journeyStatRows(stat);
-    expect(rows).toHaveLength(1);
-    expect(rows[0].name).toBe('Line 05 视频剪辑');
-    expect(rows[0].runs).toBe(5);
-    expect(rows[0].pct).toBe('80%');
-    expect(rows[0].hasFailure).toBe(false);
-  });
-  it('last_failure 多行长文本 → 压成单行截断 36 字 + 原文保留', () => {
-    const long = 'x'.repeat(50) + '\nbash: line 2: error\n' + 'y'.repeat(50);
-    const rows = journeyStatRows({ journeys: [{ ...stat.journeys[0], last_failure: long }] });
-    expect(rows[0].hasFailure).toBe(true);
-    expect(rows[0].failure_short.length).toBeLessThanOrEqual(37); // 36 + 省略号
-    expect(rows[0].failure_short.includes('\n')).toBe(false);
-    expect(rows[0].failure_full).toBe(long);
-  });
-  it('非对象 / 缺 journeys / journeys 非数组 → []', () => {
-    expect(journeyStatRows(null)).toEqual([]);
-    expect(journeyStatRows({})).toEqual([]);
-    expect(journeyStatRows({ journeys: 'no' })).toEqual([]);
-  });
-});
 
 describe('handoffRows（/api/brain/handoffs 包装对象）', () => {
   it('取 resp.handoffs；next_step 取 next_steps[0]', () => {

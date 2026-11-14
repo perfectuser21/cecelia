@@ -11,7 +11,7 @@ const request = {
   map_scope_hint: ['F1'], branch: 'cp-route-assurance', base_sha: 'b'.repeat(40),
 };
 
-describe('GP F1 step1：普通无头编码走Runner，历史Kernel续跑无执行者', () => {
+describe('GP F1 step1：普通无头编码走Runner', () => {
   it('普通无头编码实际分类为coding_workflow，并通过现役执行者准入', () => {
     const decision = routeWork(request, FACTS);
     expect(decision).toMatchObject({
@@ -23,13 +23,4 @@ describe('GP F1 step1：普通无头编码走Runner，历史Kernel续跑无执�
     expect(() => assertTaskTypeHasExecutor(task)).not.toThrow();
   });
 
-  it('kernel_continuation只保留历史分类，真实执行者闸拒绝无头续跑', () => {
-    const decision = routeWork({ ...request, kernel_continuation: true }, FACTS);
-    expect(decision).toMatchObject({ canonical_task_type: 'harness_initiative', pipeline: 'harness' });
-    const task = { task_type: decision.canonical_task_type, status: 'queued', payload: {} };
-    expect(resolveDispatchRoute(task)).toMatchObject({ available: false, route: 'retired-harness-kernel' });
-    expect(() => assertTaskTypeHasExecutor(task)).toThrow(expect.objectContaining({
-      code: 'no_executor_for_task_type', task_type: 'harness_initiative', route: 'retired-harness-kernel',
-    }));
-  });
 });

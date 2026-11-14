@@ -16,7 +16,7 @@ vi.mock('../quarantine.js', () => ({
 
 import { spawnSync } from 'child_process';
 import { quarantineTask } from '../quarantine.js';
-import { checkPrStatus, classifyFailedChecks, shepherdOpenPRs } from '../shepherd.js';
+import { checkPrStatus, classifyFailedChecks, shepherdOpenPRs, reconcileTerminalOpenPRs, _resetReconcileGateForTesting } from '../shepherd.js';
 
 // ===== classifyFailedChecks =====
 describe('classifyFailedChecks', () => {
@@ -116,6 +116,16 @@ describe('shepherdOpenPRs', () => {
     vi.mocked(spawnSync).mockReset();
     vi.mocked(quarantineTask).mockReset().mockResolvedValue({ success: true });
     mockPool = { query: vi.fn() };
+  });
+
+  it.each(['harness_report','sprint_report','harness_initiative'])('历史退役任务%s不再被PR收口器执行或合并', async task_type => {
+    const task = {id:'history', task_type, pr_url:'https://github.com/o/r/pull/1', payload:{}};
+    mockPool.query.mockResolvedValue({rows:[task]});
+    expect((await shepherdOpenPRs(mockPool)).processed).toBe(0);
+    _resetReconcileGateForTesting();
+    expect((await reconcileTerminalOpenPRs(mockPool)).processed).toBe(0);
+    expect(spawnSync).not.toHaveBeenCalled();
+    expect(mockPool.query.mock.calls.every(([sql]) => !/UPDATE/.test(sql))).toBe(true);
   });
 
   it('S1: 没有 open PR 时直接返回空结果', async () => {

@@ -14,7 +14,7 @@ import os from 'os';
 import { MAX_SEATS, checkServerResources, getActiveProcessCount as _getActiveProcessCount, getEffectiveMaxSeats, PHYSICAL_CAPACITY as _PHYSICAL_CAPACITY, getBudgetCap, getTokenPressure } from './executor.js';
 import pool from './db.js';
 import { deterministicScriptSql } from './lib/code-script-policy.js';
-import { BACKPRESSURE_BYPASS_TASK_TYPES, CODEX_SLOT_TASK_TYPES, HARNESS_INFLIGHT_TASK_TYPES } from './lib/task-type-registry.js';
+import { BACKPRESSURE_BYPASS_TASK_TYPES, CODEX_SLOT_TASK_TYPES } from './lib/task-type-registry.js';
 import {
   listProcessesWithElapsed,
   listProcessesWithPpid,
@@ -23,11 +23,6 @@ import {
 } from './platform-utils.js';
 import { calculateBudgetState } from './token-budget-planner.js';
 import { getFleetStatus, getRemoteCapacity, getTotalEffectiveSlots } from './fleet-resource-cache.js';
-import { getMachineVitals } from './machine-vitals.js';
-import { checkQuotaGuard } from './quota-guard.js';
-import { getAvailableAccountCount } from './account-usage.js';
-import { RESOURCE_TIERS } from './spawn/middleware/resource-tier.js';
-import { KERNEL_HEARTBEAT_STALE_MS } from './lib/kernel-liveness.js';
 
 // ============================================================
 // Constants
@@ -38,7 +33,7 @@ function getTotalCapacity() { return getEffectiveMaxSeats(); }
 const CECELIA_RESERVED = 0;                  // Pool A: removed static reserve — dynamic model handles this
 const USER_RESERVED_BASE = 1;                // Pool B: minimum when user absent (1 slot suffices)
 const USER_PRIORITY_HEADROOM = 1;            // Extra free slots when user is active (1 headroom)
-const SESSION_TTL_SECONDS = 24 * 60 * 60;   // 24 hours: long-running harness/pipeline sessions stay valid
+const SESSION_TTL_SECONDS = 24 * 60 * 60;   // 24 hours: long-running interactive sessions stay valid
 const CODEX_ACCOUNT_COUNT = 5;              // Codex 账号总数（硬上限）
 
 /**
@@ -56,20 +51,7 @@ const BACKPRESSURE_BURST_LIMIT = 3;         // 背压激活时 burst limit（动
 const MEMORY_PRESSURE_THRESHOLD_MB = 600;   // 系统可用内存低于此值时触发背压，防止 dev 任务叠加 vitest OOM
 
 // ============================================================
-// harnessSlotCheck 动态 cap（beeba317 产能判定合并）
-// cap 是函数不是常数：min(内存余量÷档位, 账号数×每账号并发, 硬顶)
-// ============================================================
-const RELAY_TIER_MB = RESOURCE_TIERS.normal.memoryMB;   // relay 容器档位（1024），改档位自动跟
-export const PER_ACCOUNT_CONCURRENCY = 2;               // 每 Claude 账号安全并发
-export const HARNESS_HARD_CAP = (() => {                // 失控兜底
-  const raw = parseInt(process.env.HARNESS_HARD_CAP || '', 10);
-  return Number.isFinite(raw) && raw >= 1 ? raw : 8;
-})();
-export const INFLIGHT_GRACE_MS = 5 * 60 * 1000;         // 派发→容器出现的超发窗口宽限期
-const DISK_PRESSURE_PCT = 85;
-
-// ============================================================
-// Backpressure Bypass Whitelist (P0 harness / Brain 自修复 优先派发)
+// Backpressure Bypass Whitelist (P0 任务 / Brain 自修复 优先派发)
 // ============================================================
 // 10 个类型在 priority=P0 时跳过 backpressure burst limit，
 // 避免被 P1 content-pipeline 积压拖累。
@@ -280,8 +262,8 @@ function getBackpressureState({
   memory_health,
   task,
 } = {}) {
-  // P0 harness 白名单短路：直接返回 inactive，让 burst_limit 不生效。
-  // 避免 88 个 P1 content-pipeline 积压拖累 P0 harness 派发（PRD 1d904af8）。
+  // P0 任务白名单短路：直接返回 inactive，让 burst_limit 不生效。
+  // 避免 88 个 P1 content-pipeline 积压拖累 P0 修复任务派发（PRD 1d904af8）。
   if (shouldBypassBackpressure(task)) {
     return {
       active: false,
@@ -571,109 +553,6 @@ async function getSlotStatus() {
   };
 }
 
-/**
- * harness 派发 admission 判定——唯一入口（beeba317 收权自 dispatcher 任务数 cap）。
- * 拟占用 = 活 relay 容器数 + 宽限期内已派发但尚无容器的 harness 数（防超发窗口）
- *          + 在跑的 Kernel v1 run 数。
- * 动态 cap = min(mem_cap, acct_cap, hard_cap)，任一维度保守失败即拒。
- *
- * Kernel v1（2026-07-27 补）：执行体是 Brain 容器内的裸 Node 进程，没有
- * cecelia-relay-* 容器 → v.relay_count 恒 0；inflight 那段只覆盖 INFLIGHT_GRACE_MS
- * (5min) 宽限期，于是 kernel run 起来 5 分钟后从产能账本上彻底消失，闸门以为槽是空的
- * 会继续放新 harness 进来超发。改用 initiative_runs 直接数，不再依赖 docker。
- * @param {{candidate?: {priority?: string}, _memHealthOverride?: object}} opts
- */
-async function harnessSlotCheck({ candidate, _memHealthOverride } = {}) {
-  const v = getMachineVitals();
-  const base = { containers: v.relay_count, inflight: null, kernel_active: null, cap: null, stale: v.stale };
-
-  // 1. vitals 可用性（保守：看不见机器就不派）
-  if (v.error) return { ...base, allow: false, reason: v.error === 'never_sampled' ? 'vitals_stale' : 'vitals_error' };
-  if (v.stale) return { ...base, allow: false, reason: 'vitals_stale' };
-
-  // 2. 盘水位（07-15 宿主盘满事故案底）
-  if ((v.host_disk_pct ?? 0) > DISK_PRESSURE_PCT || (v.docker_disk_pct ?? 0) > DISK_PRESSURE_PCT) {
-    return { ...base, allow: false, reason: 'disk_pressure' };
-  }
-
-  // 3. 内存健康（仅 Brain RSS halt；2026-04-18 pivot 语义不改）
-  const memHealth = _memHealthOverride ?? evaluateMemoryHealth({
-    brain_rss_mb: getBrainRssMB(),
-    system_available_mb: Math.round(os.freemem() / 1024 / 1024),
-    system_total_mb: Math.round(os.totalmem() / 1024 / 1024),
-    system_floor_mb: MEMORY_PRESSURE_THRESHOLD_MB,
-  });
-  if (memHealth.action === 'halt') return { ...base, allow: false, reason: 'memory_pressure' };
-
-  // 4. Claude 额度——收编 quota-guard，禁在此重写阈值（考古：初版漏查酿第五套）
-  const qg = await checkQuotaGuard();
-  if (!qg.allow) return { ...base, allow: false, reason: 'quota_critical' };
-  if (qg.priorityFilter && candidate?.priority && !qg.priorityFilter.includes(candidate.priority)) {
-    return { ...base, allow: false, reason: 'quota_low_priority' };
-  }
-
-  // 5. 动态 cap 三分量
-  const memFreeMB = (v.vm_total_mb ?? 0) - (v.vm_used_mb ?? 0);
-  const mem_cap = Math.floor(memFreeMB / RELAY_TIER_MB);
-  const acct_cap = getAvailableAccountCount() * PER_ACCOUNT_CONCURRENCY;
-  // max(1,…) 地板值 = 零容器时的探针放行逃生阀：VM used 可能全是前台/其他占用，
-  // 若 mem_cap<=0 就全锁死会让 harness 被 VM 内存算术永久饿死；零容器时放行 1 条探针，
-  // 已有容器时由下面 no_memory_headroom 分支拒绝叠加兜底。
-  const cap = { mem_cap, acct_cap, hard_cap: HARNESS_HARD_CAP, effective: Math.max(1, Math.min(mem_cap, acct_cap, HARNESS_HARD_CAP)) };
-
-  // 内存余量连 1 档都不够且已有容器在跑 → 不再叠加
-  if (mem_cap <= 0 && v.relay_count >= 1) return { ...base, cap, allow: false, reason: 'no_memory_headroom' };
-
-  // inflight：宽限期内已 in_progress 但 docker ps 还看不到容器的 harness（防派发→容器出现间隙超发）
-  // kernel-v1 排除在外——它永远没有容器，条件恒真，改由下面 kernel_active 精确计数，防数两遍。
-  let inflight;
-  try {
-    const r = await pool.query(
-      `SELECT count(*)::int AS n FROM tasks
-         WHERE task_type = ANY($3::text[])
-           AND status = 'in_progress'
-           AND COALESCE(payload->>'harness_runtime', '') <> 'kernel-v1'
-           AND started_at > NOW() - make_interval(secs => $1)
-           AND NOT EXISTS (
-             SELECT 1 FROM unnest($2::text[]) AS c(name)
-             WHERE c.name LIKE 'cecelia-relay-' || substring(tasks.id::text, 1, 8) || '%'
-           )`,
-      [INFLIGHT_GRACE_MS / 1000, v.relay_containers, [...HARNESS_INFLIGHT_TASK_TYPES]]
-    );
-    inflight = r.rows[0]?.n ?? 0;
-  } catch {
-    return { ...base, cap, allow: false, reason: 'inflight_query_error' };
-  }
-
-  // kernel_active：在跑的 Kernel v1 run。判据 = v2 非终态 run + 对应 task 是 kernel-v1
-  // 且（心跳新鲜 或 刚落行还没来得及打第一跳）。全程不查 docker。
-  let kernelActive;
-  try {
-    const r = await pool.query(
-      `SELECT count(*)::int AS n
-         FROM initiative_runs r
-         JOIN tasks t ON t.id = r.current_task_id
-        WHERE r.orchestrator_version = 'v2'
-          AND r.phase NOT IN ('done','failed')
-          AND t.status = 'in_progress'
-          AND t.payload->>'harness_runtime' = 'kernel-v1'
-          AND (r.orchestrator_heartbeat_at > NOW() - make_interval(secs => $1)
-               OR (r.orchestrator_heartbeat_at IS NULL
-                   AND r.started_at > NOW() - make_interval(secs => $2)))`,
-      [KERNEL_HEARTBEAT_STALE_MS / 1000, INFLIGHT_GRACE_MS / 1000]
-    );
-    kernelActive = r.rows[0]?.n ?? 0;
-  } catch {
-    return { ...base, inflight, cap, allow: false, reason: 'kernel_active_query_error' };
-  }
-
-  const occupied = v.relay_count + inflight + kernelActive;
-  if (occupied >= cap.effective) {
-    return { containers: v.relay_count, inflight, kernel_active: kernelActive, cap, stale: false, allow: false, reason: 'cap_reached' };
-  }
-  return { containers: v.relay_count, inflight, kernel_active: kernelActive, cap, stale: false, allow: true, reason: 'ok' };
-}
-
 // ============================================================
 // Exports
 // ============================================================
@@ -706,5 +585,4 @@ export {
   getSlotStatus,
   applySlotBuffer,
   _resetSlotBuffer,
-  harnessSlotCheck,
 };

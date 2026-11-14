@@ -104,8 +104,8 @@ describe('selectPipeline：无头编码改投 coding_workflow', () => {
 
   it('有头账本行 → 仍是 harness_initiative（有头 /dev 记账不受影响）', () => {
     expect(selectPipeline({ work_kind: 'coding_mutation', change_kind: 'bugfix', headed: true })).toMatchObject({
-      pipeline: 'harness',
-      canonical_task_type: 'harness_initiative',
+      pipeline: 'headed_development',
+      canonical_task_type: 'dev',
     });
   });
 });
@@ -121,20 +121,17 @@ describe('routeWork：有头判定与 runner 仓库判定', () => {
 
   it('headed_manual 字符串/布尔、非 queued|blocked、executor_kind=headed-session → harness_initiative', () => {
     expect(routeWork(codingRequest({ metadata: { headed_manual: 'true' } }), FACTS))
-      .toMatchObject({ canonical_task_type: 'harness_initiative' });
+      .toMatchObject({ canonical_task_type: 'dev' });
     expect(routeWork(codingRequest({ task: { payload: { headed_manual: true } } }), FACTS))
-      .toMatchObject({ canonical_task_type: 'harness_initiative' });
+      .toMatchObject({ canonical_task_type: 'dev' });
     expect(routeWork(codingRequest({ task: { status: 'in_progress' } }), FACTS))
-      .toMatchObject({ canonical_task_type: 'harness_initiative' });
+      .toMatchObject({ canonical_task_type: 'dev' });
     expect(routeWork(codingRequest({ task: { executor_kind: 'headed-session' } }), FACTS))
-      .toMatchObject({ canonical_task_type: 'harness_initiative' });
+      .toMatchObject({ canonical_task_type: 'dev' });
   });
 
-  it('kernel 续跑单（planner recovery 后继，kernel_continuation）仍是 harness_initiative，不受 runner 仓库限制', () => {
-    expect(routeWork(codingRequest({ kernel_continuation: true }), FACTS))
-      .toMatchObject({ canonical_task_type: 'harness_initiative', pipeline: 'harness' });
-    expect(routeWork(codingRequest({ kernel_continuation: true, repo_hint: 'zenithjoy-workspace' }), FACTS))
-      .toMatchObject({ canonical_task_type: 'harness_initiative' });
+  it('旧kernel_continuation请求不能转换成现役任务绕过退役',()=>{
+    expect(()=>routeWork(codingRequest({kernel_continuation:true}),FACTS)).toThrow('task_type_retired');
   });
 
   it('C7 开闸后 zenithjoy 无头编码单 canonical=coding_workflow（不再抛 runner_repo_unsupported）', () => {
@@ -149,7 +146,7 @@ describe('routeWork：有头判定与 runner 仓库判定', () => {
     expect(caught?.message).toBe('runner_repo_unsupported');
     expect(caught?.code).toBe('runner_repo_unsupported');
     expect(routeWork({ ...headless, metadata: { headed_manual: 'true' } }, FACTS))
-      .toMatchObject({ canonical_task_type: 'harness_initiative', repo: 'zenithjoy-miniapp' });
+      .toMatchObject({ canonical_task_type: 'dev', repo: 'zenithjoy-miniapp' });
   });
 });
 
@@ -177,8 +174,8 @@ describe('createRoutedTask：建出的编码单能被 runner 认领', () => {
       metadata: { headed_manual: 'true' },
       task: { status: 'queued' },
     }, FACTS);
-    expect(db.tasks[0]).toMatchObject({ task_type: 'harness_initiative' });
-    expect(db.tasks[0].payload).toMatchObject({ orchestrator: 'skill-relay', harness_runtime: 'kernel-v1' });
+    expect(db.tasks[0]).toMatchObject({ task_type: 'dev' });
+    expect(db.tasks[0].payload).toMatchObject({ orchestrator: 'headed-session', headed_manual: 'true' });
     expect(db.tasks[0].payload.coding_workflow).toBeUndefined();
     expect(pickCandidates(db.tasks)).toEqual([]);
   });
@@ -195,8 +192,7 @@ describe('A4：harness_initiative 只当有头账本类型——建单入口拒�
         task: { status: 'queued' },
       }, FACTS);
     } catch (error) { caught = error; }
-    expect(caught?.code).toBe('no_executor_for_task_type');
-    expect(caught?.route).toBe('retired-harness-kernel');
+    expect(caught?.code).toBe('task_type_retired');
     expect(db.tasks).toEqual([]);
   });
 
@@ -208,7 +204,7 @@ describe('A4：harness_initiative 只当有头账本类型——建单入口拒�
     ].entries()) {
       const db = fakeDb();
       await createRoutedTask(db, { ...codingRequest({ source_id: `headed-a4-${i}` }), requested_task_type: 'dev', ...extra }, FACTS);
-      expect(db.tasks[0]).toMatchObject({ task_type: 'harness_initiative' });
+      expect(db.tasks[0]).toMatchObject({ task_type: 'dev' });
     }
   });
 });

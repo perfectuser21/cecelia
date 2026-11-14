@@ -24,7 +24,7 @@ describe('issue 创建 → capture_atoms 推送（T10）', () => {
         return { rows: [] };
       }),
     };
-    await raiseBreachAlerts(pool, [{ name: 'm1', prevDebt: 1, debt: 2, streak: 1 }], '2026-07-10');
+    await raiseBreachAlerts(pool, [{ name: 'm2', prevDebt: 1, debt: 2, streak: 1 }], '2026-07-10');
     expect(pushMock).toHaveBeenCalledTimes(1);
     const [, fields] = pushMock.mock.calls[0];
     expect(fields.targetType).toBe('issue');
@@ -35,7 +35,7 @@ describe('issue 创建 → capture_atoms 推送（T10）', () => {
 
   it('当日去重命中 → 不 INSERT 也不推送', async () => {
     const pool = { query: vi.fn(async (sql) => (/SELECT 1 FROM issues/.test(sql) ? { rows: [{ 1: 1 }] } : { rows: [] })) };
-    await raiseBreachAlerts(pool, [{ name: 'm1', prevDebt: 1, debt: 2, streak: 1 }], '2026-07-10');
+    await raiseBreachAlerts(pool, [{ name: 'm2', prevDebt: 1, debt: 2, streak: 1 }], '2026-07-10');
     expect(pushMock).not.toHaveBeenCalled();
   });
 

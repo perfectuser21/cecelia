@@ -11,7 +11,7 @@
  * - 所有候选都失败时返回 all_candidates_failed_pre_flight
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Mock DB
 const mockQuery = vi.fn();
@@ -21,7 +21,6 @@ vi.mock('../db.js', () => ({
 
 // Mock all dependencies
 vi.mock('../slot-allocator.js', () => ({
-  harnessSlotCheck: vi.fn().mockResolvedValue({ allow: true, reason: 'ok', containers: 0, inflight: 0, cap: { effective: 4, mem_cap: 8, acct_cap: 4, hard_cap: 8 }, stale: false }),
   calculateSlotBudget: vi.fn().mockResolvedValue({
     dispatchAllowed: true,
     taskPool: { budget: 5, available: 3 },
@@ -105,6 +104,31 @@ vi.mock('../account-usage.js', () => ({
   getAuthFailedAccounts: vi.fn().mockReturnValue([]),
 }));
 
+const unexpectedSql = [];
+beforeEach(() => {
+  mockQuery.mockReset();
+  mockPreFlightCheck.mockReset();
+  unexpectedSql.length = 0;
+});
+afterEach(() => { expect(unexpectedSql).toEqual([]); });
+function serveCandidates(queue) {
+  mockQuery.mockImplementation(async (statement, values=[]) => {
+    const sql=String(statement).replace(/\s+/g,' ').trim();
+    if (/FROM tasks t\b/.test(sql)) {
+      const excluded=values.find(value=>Array.isArray(value)&&value.some(id=>queue.some(task=>task.id===id)))||[];
+      const candidate=queue.find(task=>!excluded.includes(task.id));
+      return {rows:candidate?[candidate]:[],rowCount:candidate?1:0};
+    }
+    if (/^UPDATE tasks SET claimed_by = \$1/.test(sql)) return {rows:[{id:values[1]}],rowCount:1};
+    if (/^SELECT \* FROM tasks WHERE id/.test(sql)) return {rows:queue.filter(task=>task.id===values[0]),rowCount:1};
+    if (/^SELECT tasks\.id AS id/.test(sql)) return {rows:[],rowCount:0};
+    if (/^SELECT metadata FROM tasks WHERE id/.test(sql)) return {rows:[{metadata:{}}],rowCount:1};
+    if (/^SELECT id, run_id FROM task_runs WHERE run_id/.test(sql)) return {rows:[{id:'owned-run',run_id:values[0]}],rowCount:1};
+    if (/^(?:INSERT|UPDATE)\b/.test(sql)) return {rows:[],rowCount:1};
+    unexpectedSql.push(sql);throw Error(`unexpected_test_sql: ${sql}`);
+  });
+}
+
 describe('selectNextDispatchableTask: excludeIds 参数', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -181,25 +205,7 @@ describe('dispatchNextTask: pre-flight 失败时跳过并尝试下一个任务',
       .mockResolvedValueOnce({ passed: false, issues: ['Task title too short'], suggestions: [] })
       .mockResolvedValueOnce({ passed: true, issues: [], suggestions: [] });
 
-    // Mock pool.query calls in order:
-    // 0. Phase 2.5: drain retired harness types (本 PR 加, 0 retired drained)
-    mockQuery.mockResolvedValueOnce({ rows: [] });
-    // 0'. 无头 kernel drain（harness_initiative 无头入口退役）
-    mockQuery.mockResolvedValueOnce({ rows: [] });
-    // 1. selectNextDispatchableTask query (no excludeIds) → returns badTask
-    mockQuery.mockResolvedValueOnce({ rows: [badTask] });
-    // 2. UPDATE metadata for failed pre-flight
-    mockQuery.mockResolvedValueOnce({ rowCount: 1 });
-    // 3. selectNextDispatchableTask query (excludeIds=[task-bad]) → returns goodTask
-    mockQuery.mockResolvedValueOnce({ rows: [goodTask] });
-    // 3.5 派发前语义查重（本 PR 加）→ 无 sibling
-    mockQuery.mockResolvedValueOnce({ rows: [] });
-    // 4. C1 atomic claim for goodTask
-    mockQuery.mockResolvedValueOnce({ rows: [{ id: goodTask.id }] });
-    // 5. SELECT * FROM tasks WHERE id (full task for triggerCeceliaRun)
-    mockQuery.mockResolvedValueOnce({ rows: [goodTask] });
-    // 6+ various post-dispatch calls (working_memory, decision_log, pre-flight stats, etc.)
-    mockQuery.mockResolvedValue({ rows: [], rowCount: 1 });
+    serveCandidates([badTask,goodTask]);
 
     const { dispatchNextTask } = await import('../tick.js');
     const result = await dispatchNextTask(['goal-1']);
@@ -226,20 +232,7 @@ describe('dispatchNextTask: pre-flight 失败时跳过并尝试下一个任务',
       .mockResolvedValueOnce({ passed: false, issues: ['Title too short'], suggestions: [] })
       .mockResolvedValueOnce({ passed: false, issues: ['Title too short'], suggestions: [] });
 
-    // 0. Phase 2.5: drain retired harness types (本 PR 加, 0 retired drained)
-    mockQuery.mockResolvedValueOnce({ rows: [] });
-    // 0'. 无头 kernel drain（harness_initiative 无头入口退役）
-    mockQuery.mockResolvedValueOnce({ rows: [] });
-    // 1. select → bad1
-    mockQuery.mockResolvedValueOnce({ rows: [bad1] });
-    // 2. UPDATE metadata
-    mockQuery.mockResolvedValueOnce({ rowCount: 1 });
-    // 3. select (exclude bad1) → bad2
-    mockQuery.mockResolvedValueOnce({ rows: [bad2] });
-    // 4. UPDATE metadata
-    mockQuery.mockResolvedValueOnce({ rowCount: 1 });
-    // 5. select (exclude bad1, bad2) → empty
-    mockQuery.mockResolvedValueOnce({ rows: [] });
+    serveCandidates([bad1,bad2]);
 
     const { dispatchNextTask } = await import('../tick.js');
     const result = await dispatchNextTask(['goal-1']);
@@ -260,22 +253,13 @@ describe('dispatchNextTask: pre-flight 失败时跳过并尝试下一个任务',
       suggestions: ['Use a more descriptive title']
     });
 
-    // 0. Phase 2.5: drain retired harness types (本 PR 加, 0 retired drained)
-    mockQuery.mockResolvedValueOnce({ rows: [] });
-    // 0'. 无头 kernel drain（harness_initiative 无头入口退役）
-    mockQuery.mockResolvedValueOnce({ rows: [] });
-    // 1. select → badTask
-    mockQuery.mockResolvedValueOnce({ rows: [badTask] });
-    // 2. UPDATE metadata
-    mockQuery.mockResolvedValueOnce({ rowCount: 1 });
-    // 3. select (exclude bad-meta) → empty
-    mockQuery.mockResolvedValueOnce({ rows: [] });
+    serveCandidates([badTask]);
 
     const { dispatchNextTask } = await import('../tick.js');
     await dispatchNextTask(['goal-1']);
 
-    // Verify the metadata UPDATE was called (index 3: Phase 2.5 retired drain at 0, 无头 kernel drain at 1)
-    const updateCall = mockQuery.mock.calls[3];
+    const updateCall = mockQuery.mock.calls.find(([sql]) => /UPDATE tasks SET metadata/.test(sql));
+    expect(updateCall).toBeDefined();
     expect(updateCall[0]).toContain('UPDATE tasks SET metadata');
     expect(updateCall[1][0]).toBe('bad-meta');
     const metaJson = JSON.parse(updateCall[1][1]);

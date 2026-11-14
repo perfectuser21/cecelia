@@ -1,11 +1,4 @@
-/**
- * pipeline-patrol-loop.js — 独立巡航循环（接回 live tick）。
- *
- * 根因（2026-06-27 审计）：runPipelinePatrol（/dev 卡住会话救援）+ runHarnessInitiativePatrol
- * （harness initiative Planner/GAN 卡住 → 建 harness_intervention 任务）只挂在 Wave-2 废弃的
- * executeTick 上 → runScheduler 迁移后从不调用 → 干预通道整条死代码。仿 recovery-loop / harness-
- * watchdog-loop 用独立 setInterval 接回，不依赖 runScheduler 跑完（不被 circuit_open / no_goals 早 return 跳过）。
- */
+/** 现役开发会话救援的独立巡航循环。 */
 
 import pool from './db.js';
 
@@ -14,16 +7,10 @@ const PATROL_INTERVAL_MS = Number(process.env.CECELIA_PATROL_LOOP_INTERVAL_MS) |
 let _loopTimer = null;
 let _isRunning = false;
 
-/**
- * 跑一次巡航：dev 会话救援 + harness initiative 干预。两条彼此独立 try/catch，
- * 一条失败不拖累另一条，绝不让异常杀掉 interval。
- * @param {{ pool?: any, runPipelinePatrol?: Function, runHarnessInitiativePatrol?: Function }} [opts]
- * @returns {Promise<{devRescued: number, harnessIntervened: number}>}
- */
+/** 执行开发会话救援；失败不终止后续巡航。 */
 export async function runPipelinePatrolOnce(opts = {}) {
   const dbPool = opts.pool || pool;
   let devRescued = 0;
-  let harnessIntervened = 0;
 
   try {
     const fn = opts.runPipelinePatrol
@@ -34,19 +21,10 @@ export async function runPipelinePatrolOnce(opts = {}) {
     console.warn(`[pipeline-patrol-loop] runPipelinePatrol failed (non-fatal): ${err.message}`);
   }
 
-  try {
-    const fn = opts.runHarnessInitiativePatrol
-      || (await import('./harness-initiative-patrol.js')).runHarnessInitiativePatrol;
-    const r = await fn(dbPool);
-    harnessIntervened = r?.intervened ?? 0;
-  } catch (err) {
-    console.warn(`[pipeline-patrol-loop] runHarnessInitiativePatrol failed (non-fatal): ${err.message}`);
-  }
-
   // 无条件可观测性：每次执行都打一行"我在跑"，即使全 0
-  console.log(`[pipeline-patrol-loop] devRescued=${devRescued} harnessIntervened=${harnessIntervened}`);
+  console.log(`[pipeline-patrol-loop] devRescued=${devRescued}`);
 
-  return { devRescued, harnessIntervened };
+  return { devRescued };
 }
 
 /**

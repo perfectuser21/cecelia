@@ -38,7 +38,7 @@ describe('m7 — 自主循环零产出指标', () => {
     const pool = {
       async query(sql) {
         const s = sql.replace(/\s+/g, ' ').trim();
-        // m1-m6 返回 0 行（只测 m7）
+        // 其他现役指标 返回 0 行（只测 m7）
         if (s.includes('strategy_session') && s.includes('Asia/Shanghai')) {
           return { rows: [{ cnt: '0' }] }; // 近 24h 零产出
         }
@@ -48,7 +48,7 @@ describe('m7 — 自主循环零产出指标', () => {
         if (s.includes('capture_atoms') && !s.includes('INTERVAL')) {
           return { rows: [] }; // capture 未激活
         }
-        // 所有 m1-m6 的查询
+        // 所有 其他现役指标 的查询
         return { rows: [{ total: '0', debt: '0', cnt: '0' }] };
       },
     };
@@ -131,12 +131,10 @@ describe('m7 — 自主循环零产出指标', () => {
 
 describe('m7 棘轮击穿', () => {
   const fakeMetrics = (m7Debt, m7Enabled = true) => ({
-    m1: { key: 'm1', enabled: false, debt: 0 },
     m2: { key: 'm2', enabled: false, debt: 0 },
     m3: { key: 'm3', enabled: false, debt: 0 },
     m4: { key: 'm4', enabled: false, debt: 0 },
     m5: { key: 'm5', enabled: false, debt: 0 },
-    m6: { key: 'm6', enabled: false, debt: 0 },
     m7: { key: 'm7', name: '自主循环零产出', enabled: m7Enabled, debt: m7Debt, absolute: true },
   });
 

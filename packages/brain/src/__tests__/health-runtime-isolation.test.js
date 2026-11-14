@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import { describe, expect, it, vi } from 'vitest';
 import { isIsolatedRuntime } from '../runtime-safety.js';
+import { CODING_MUTATION_TASK_TYPES, REVIEW_TASK_TYPES } from '../lib/task-type-registry.js';
 
 // Execute the actual route handler without importing the server/module graph or
 // starting background loops. Every I/O boundary is injected; the runtime guard is real.
@@ -12,7 +13,7 @@ const healthSource = source.slice(start, end);
 
 function harness(env = { NODE_ENV: 'test' }) {
   const deps = {
-    pool: { query: vi.fn(async sql => ({ rows: [sql.includes('harness_initiative')
+    pool: { query: vi.fn(async sql => ({ rows: [sql.includes('count(*)::integer AS cnt')
       ? { cnt: 2 }
       : { passed: 3, failed: 1, last_run_at: null }] })) },
     getTickStatus: vi.fn().mockResolvedValue({ loop_running: false, enabled: false, max_concurrent: 3 }),
@@ -24,6 +25,7 @@ function harness(env = { NODE_ENV: 'test' }) {
   let handler;
   vm.runInNewContext(healthSource, {
     ...deps,
+    CODING_MUTATION_TASK_TYPES, REVIEW_TASK_TYPES,
     router: { get: (path, fn) => { expect(path).toBe('/health'); handler = fn; } },
     isIsolatedRuntime: () => isIsolatedRuntime(env),
     process: { env, uptime: () => 100.5 },
@@ -79,10 +81,10 @@ describe('GET /health runtime isolation', () => {
     expect(body.organs.circuit_breaker).toMatchObject({ status: 'has_open', open: ['model'] });
   });
 
-  it.each(['harness_initiative', 'harness_evaluate'])('reports DB failure in %s as an error in isolation', async taskType => {
+  it.each(['coding_workflow', 'code_review'])('reports DB failure in %s as an error in isolation', async taskType => {
     const h = harness();
     const healthyQuery = h.pool.query.getMockImplementation();
-    h.pool.query.mockImplementation(sql => sql.includes(taskType)
+    h.pool.query.mockImplementation((sql, args) => args?.[0]?.includes(taskType)
       ? Promise.reject(new Error('database unavailable'))
       : healthyQuery(sql));
     const { statusCode, body } = await h.request();
@@ -126,7 +128,7 @@ describe('GET /health runtime isolation', () => {
   it('production evaluator statistics remain best-effort', async () => {
     const h = harness({ NODE_ENV: 'production' });
     h.getTickStatus.mockResolvedValue({ loop_running: true, enabled: true });
-    h.pool.query.mockImplementation(sql => sql.includes('harness_evaluate')
+    h.pool.query.mockImplementation((sql, args) => args?.[0]?.includes('code_review')
       ? Promise.reject(new Error('optional evaluator statistics unavailable'))
       : Promise.resolve({ rows: [{ cnt: 0 }] }));
     const { statusCode, body } = await h.request();

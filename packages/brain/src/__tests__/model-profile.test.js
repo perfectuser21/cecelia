@@ -36,6 +36,13 @@ describe('model-profile', () => {
     _resetProfileCache();
   });
 
+  it('默认执行配置只保留现役任务模型，不再公布旧Harness模型路由', () => {
+    const map = getActiveProfile().config.executor.model_map;
+    expect(map.dev.anthropic).toBe('claude-sonnet-4-6');
+    expect(map.review).toBeDefined();
+    expect(Object.keys(map).filter(type => type.startsWith('harness_'))).toEqual([]);
+  });
+
   // ==================== loadActiveProfile ====================
 
   describe('loadActiveProfile', () => {

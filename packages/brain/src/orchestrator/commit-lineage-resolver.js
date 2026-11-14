@@ -1,4 +1,4 @@
-import { resolveGitHubToken } from '../harness-credentials.js';
+import { resolveGitHubToken } from '../github-credentials.js';
 
 const CANONICAL_SHA = /^[0-9a-f]{40}$/;
 const CANONICAL_REPO = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;

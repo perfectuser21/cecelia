@@ -1,7 +1,6 @@
 import { rateLimit } from 'express-rate-limit';
 import { TASK_MUTATION_RATE_LIMIT_OPTIONS } from './task-mutation-rate-limit.js';
 import pool from '../db.js';
-import { createTask } from '../actions.js';
 import { triggerCeceliaRun, checkCeceliaRunAvailable } from '../executor.js';
 import { checkAnchor } from '../anchor-check.js';
 import { checkDeviceLockForManualDispatch, releaseDeviceLockNonFatal } from '../lib/manual-dispatch-device-gate.js';

@@ -52,11 +52,12 @@ if (!wfDispatch.includes('tasks_task_type_check') || !wfDispatch.includes(String
 const factoryCoding = readFileSync('migrations/550_skill_factory_coding_workflow_task_types.sql','utf8');
 if (!['skill_factory_run','coding_workflow'].every((t) => factoryCoding.includes(String.fromCharCode(39) + t + String.fromCharCode(39)))) throw Error('FAIL 550 skill_factory_run/coding_workflow');
 ek.push('coding-workflow-runner','linux-pool-controller','preview-janitor','app-server-controller','image-janitor','phone-ssh-controller'); ek.sort(); tt.push('janitor','app_server_run','workflow_dispatch','skill_factory_run','coding_workflow'); tt.sort();
-if (JSON.stringify(ek) !== JSON.stringify([...VALID_EXECUTOR_KINDS].sort())) { console.error('FAIL executor_kind 名单 != VALID_EXECUTOR_KINDS'); process.exit(1); }
+const historicalKinds = ['relay-container','kernel-process'];
+if (VALID_EXECUTOR_KINDS.length !== 13 || ek.length !== 15 || historicalKinds.some(k => VALID_EXECUTOR_KINDS.includes(k)) || JSON.stringify(ek) !== JSON.stringify([...VALID_EXECUTOR_KINDS,...historicalKinds].sort())) { console.error('FAIL 历史DB名单必须精确等于13种现役执行器与2种退役历史kind的并集'); process.exit(1); }
 if (JSON.stringify(tt) !== JSON.stringify([...R.DB_WHITELISTED_TASK_TYPES].sort())) { console.error('FAIL task_type 名单 != 注册表 DB 白名单'); process.exit(1); }
 const v = readFileSync('migrations/472_validate_script_executor_constraints.sql', 'utf8');
 for (const c of ['tasks_executor_kind_check', 'tasks_task_type_check']) if (!v.includes('VALIDATE CONSTRAINT ' + c)) { console.error('FAIL 472 缺 VALIDATE ' + c); process.exit(1); }
-console.log('471/472 结构正确，叠加502/504/508/510精确增量后与 lib 真身一致 ✓');
+console.log('471/472 结构正确，叠加502/504/508/510/512/535精确增量后，现役与历史名单精确对齐 ✓');
 "
 
 echo "[script-executor-contract-smoke] 3. payload 契约：合法通过 / 违规被拒"

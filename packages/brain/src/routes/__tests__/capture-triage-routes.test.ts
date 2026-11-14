@@ -56,8 +56,9 @@ describe('FR-5: urgent 路由 → 真实 task + Bark', () => {
     });
     expect(await runCaptureTriage(db.pool)).toEqual({ processed: 1, failed: 0 });
     const task = db.calls.find(call => call.sql.includes('INSERT INTO tasks'));
-    expect(task.params.slice(0, 5)).toEqual(['[紧急] 解析函数在空输入下崩溃', '来源: capture_atoms urgent路由, atom_id=atom-urgent\n\n解析函数在空输入下崩溃', 'P1', 'harness_initiative', 'queued']);
-    expect(JSON.parse(task.params[9])).toMatchObject({ mode: 'headed', headed_manual: 'true', repo: 'cecelia', map_scope: ['F1'] });
+    expect(task.params.slice(0, 5)).toEqual(['[紧急] 解析函数在空输入下崩溃', '来源: capture_atoms urgent路由, atom_id=atom-urgent\n\n解析函数在空输入下崩溃', 'P1', 'dev', 'queued']);
+    expect(JSON.parse(task.params[9])).toMatchObject({ orchestrator: 'headed-session', headed_manual: 'true', repo: 'cecelia', map_scope: ['F1'] });
+    expect(JSON.parse(task.params[9])).not.toHaveProperty('harness_runtime');
     const update = db.calls.find(call => call.sql.startsWith('UPDATE capture_atoms'));
     expect(update.params).toEqual(['atom-urgent', '[triage:urgent] task=task-1. ', 'tasks', 'task-1', 1]);
     expect(update.sql).toContain("status = 'confirmed'");

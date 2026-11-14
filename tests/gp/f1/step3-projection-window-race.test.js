@@ -12,7 +12,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { resolveImpactRadius } from '../../../packages/brain/src/map/radius.js';
 import { evaluateDiffGate } from '../../../packages/brain/src/impact-contract/diff-gate.js';
-import { __test__ as harnessGatesTest } from '../../../packages/brain/src/impact-contract/harness-gates.js';
+
 
 const REV = 'a'.repeat(40);
 
@@ -88,14 +88,5 @@ describe('F1 step3：投影换代窗口不误判确定性（r43/r44 双死案卷
     expect(result.freshness.unclaimed_files).toEqual(['apps/unclaimed/file.js']);
   });
 
-  it('gateReceipt 透传 unclaimed_files（evidence 可考古，r44 案卷）', () => {
-    const receipt = harnessGatesTest.gateReceipt('diff', {
-      gate: 'impact_unknown',
-      reason: 'impact_anchor_missing',
-      reason_code: 'impact_anchor_missing',
-      retryable: false,
-      unclaimed_files: ['apps/unclaimed/file.js'],
-    });
-    expect(receipt.unclaimed_files).toEqual(['apps/unclaimed/file.js']);
-  });
+
 });

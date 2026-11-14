@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { PIPELINE_TASK_TYPES, queueLaneSql } from '../task-queue-lanes.js';
 
 describe('task queue lanes', () => {
-  it('生成互斥的等待队列分类 SQL，并覆盖内容生产与 Harness 流水线', () => {
+  it('生成互斥的等待队列分类 SQL，并覆盖现役内容生产队列', () => {
     const sql = queueLaneSql('candidate');
 
     expect(sql).toContain("candidate.status NOT IN ('queued','pending')");
@@ -14,8 +14,6 @@ describe('task queue lanes', () => {
       'content-pipeline',
       'content-review',
       'content_publish',
-      'harness_ci_watch',
-      'harness_deploy_watch',
     ]));
   });
 });

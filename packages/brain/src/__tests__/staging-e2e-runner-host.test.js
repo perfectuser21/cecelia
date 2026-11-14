@@ -6,11 +6,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 vi.mock('../db.js', () => ({ default: { query: vi.fn() } }));
 vi.mock('../task-updater.js', () => ({ updateTaskStatus: vi.fn() }));
 vi.mock('../notifier.js', () => ({ sendFeishu: vi.fn() }));
-vi.mock('../harness-final-e2e.js', () => ({ normalizeAcceptance: vi.fn() }));
+vi.mock('../staging-acceptance.js', () => ({ normalizeAcceptance: vi.fn() }));
 vi.mock('../staging-promote.js', () => ({
   decidePromote: vi.fn(), runInternalPromote: vi.fn(), defaultPromoteExec: vi.fn(),
-  getRepoRoot: () => '/repo', PROMOTE_STATUS: {}, spawnHarnessReport: vi.fn(),
-  readProductionInfo: vi.fn(), REPORT_KIND: {},
+  getRepoRoot: () => '/repo', PROMOTE_STATUS: {},
 }));
 
 import { runStagingCommand } from '../staging-e2e-runner.js';

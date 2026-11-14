@@ -13,12 +13,6 @@
  * - GP-5 [BEHAVIOR-5]  configError 失败不计入计数，不触发 autoblock
  * - BEHAVIOR-6         spawn_deduplicated 失败不计入计数，不触发 autoblock
  * - BEHAVIOR-7         阈值非法值（NaN / <1）回退默认 3
- * - BEHAVIOR-8         local_execution_disabled_on_scheduler 失败不计入计数、不 trip cecelia-run breaker
- *                      （根因：us-vps 纯调度器化后，非 kernel-v1 的 skill-relay 任务在
- *                       CECELIA_LOCAL_EXECUTION_ENABLED=false 时必然返回此 reason，是永久性的
- *                       配置态失败而非任务执行故障，不应像真实执行失败一样累积熔断计数——
- *                       否则会像 configError 一样"配置漂移 trip breaker 阻断所有 dispatch"，
- *                       而且是共享的 'cecelia-run' key，会连累其他任务类型也派不出去）
  *
  * 规范：
  * - failing test 先 commit（Phase 1），实现后全绿（Phase 2）
@@ -39,7 +33,6 @@ vi.mock('../db.js', () => ({
 // Mock: slot-allocator（始终允许派发）
 // ─────────────────────────────────────────────────────────────────────────────
 vi.mock('../slot-allocator.js', () => ({
-  harnessSlotCheck: vi.fn().mockResolvedValue({ allow: true, reason: 'ok', containers: 0, inflight: 0, cap: { effective: 4, mem_cap: 8, acct_cap: 4, hard_cap: 8 }, stale: false }),
   calculateSlotBudget: vi.fn().mockResolvedValue({
     dispatchAllowed: true,
     taskPool: { budget: 5, available: 3 },
@@ -245,71 +238,51 @@ function makeTask(overrides = {}) {
   };
 }
 
-/**
- * 构造 dispatchNextTask 一次执行所需的 mockQuery 调用序列（trigger=fail 路径）
- *
- * 调用顺序（参考 dispatch-executor-fail.test.js + 本 Sprint 加入的 autoblock 写 DB）：
- *  0. drain retired harness types → { rows: [], rowCount: 0 }
- *  1. selectNextDispatchableTask 内部 SQL → 由 mockSelectNextDispatchableTask 处理（不走 pool.query 直通）
- *  2. 派发前查重 (SELECT tasks.id AS id, tasks.title…) → { rows: [] }
- *  3. C1 atomic claim (UPDATE tasks SET claimed_by…) → { rows: [{ id }] }
- *  4. SELECT * FROM tasks (full task for triggerCeceliaRun) → { rows: [task] }
- *  5. [fail path] revert claim (UPDATE claimed_by=NULL)
- *  6. [autoblock] SELECT metadata FROM tasks → { rows: [{ metadata: { dispatch_fail_consecutive: N } }] }
- *  7. [autoblock] UPDATE metadata (write new count)
- *  若达阈值：
- *  8. [autoblock] blockTask 内部 UPDATE（由 mockBlockTask 接管，不经 pool.query）
- *  8/9. logTickDecision INSERT → { rows: [] }（必须显式注册 Once，避免与同批次第二次 setupQuerySequence 交叉消耗）
- */
-function setupQuerySequence(task, prevFailCount = 0, reachedThreshold = false) {
-  mockQuery
-    // 0. drain retired
-    .mockResolvedValueOnce({ rows: [], rowCount: 0 })
-    // 0'. 无头 kernel drain（harness_initiative 无头入口退役）
-    .mockResolvedValueOnce({ rows: [], rowCount: 0 })
-    // 2. duplicate check
-    .mockResolvedValueOnce({ rows: [] })
-    // 3. atomic claim
-    .mockResolvedValueOnce({ rows: [{ id: task.id }] })
-    // 4. SELECT * (full task)
-    .mockResolvedValueOnce({ rows: [task] })
-    // 4.5 spawn 失败 fail-closed task_events 留痕 INSERT（task 94ee0ec4）
-    .mockResolvedValueOnce({ rows: [], rowCount: 1 })
-    // 5. revert claim
-    .mockResolvedValueOnce({ rows: [], rowCount: 1 })
-    // 6. SELECT metadata for autoblock counter
-    .mockResolvedValueOnce({ rows: [{ metadata: { dispatch_fail_consecutive: prevFailCount } }] })
-    // 7. UPDATE metadata (write new count)
-    .mockResolvedValueOnce({ rows: [], rowCount: 1 })
-    // 8. logTickDecision INSERT（显式注册，防止被后续 setupQuerySequence 的 Once 挤占位置）
-    .mockResolvedValueOnce({ rows: [], rowCount: 1 })
-    // fallback for any additional bookkeeping calls
-    .mockResolvedValue({ rows: [], rowCount: 1 });
+// 数据夹具按SQL语义响应；移除旧Harness查询不应改变普通任务的claim/计数结果。
+const pendingDispatches = [];
+let activeDispatch = null;
+let preparedDispatches = 0;
+const unexpectedSql = [];
+beforeEach(() => {
+  pendingDispatches.length = 0;
+  unexpectedSql.length = 0;
+  activeDispatch = null;
+  preparedDispatches = 0;
+  mockQuery.mockReset();
+});
+afterEach(() => {
+  expect(pendingDispatches).toHaveLength(0);
+  expect(unexpectedSql).toEqual([]);
+  if (preparedDispatches) expect(mockTriggerCeceliaRun).toHaveBeenCalled();
+});
+function setupQuerySequence(task, prevFailCount = 0) {
+  pendingDispatches.push({ task, prevFailCount });
+  preparedDispatches++;
+  mockQuery.mockImplementation(async (statement, values = []) => {
+    const sql = String(statement).replace(/\s+/g, ' ').trim();
+    if (/^UPDATE tasks SET claimed_by = \$1, claimed_at = NOW\(\)/.test(sql)) {
+      activeDispatch = pendingDispatches.shift();
+      if (!activeDispatch || values[1] !== activeDispatch.task.id) throw Error('unexpected_atomic_claim');
+      return { rows: [{ id: activeDispatch.task.id }], rowCount: 1 };
+    }
+    if (/^SELECT \* FROM tasks WHERE id = \$1/.test(sql)) {
+      if (!activeDispatch || values[0] !== activeDispatch.task.id) throw Error('unexpected_full_task_read');
+      return { rows: [activeDispatch.task], rowCount: 1 };
+    }
+    if (/^SELECT metadata FROM tasks WHERE id = \$1/.test(sql)) {
+      if (!activeDispatch || values[0] !== activeDispatch.task.id) throw Error('unexpected_metadata_read');
+      return { rows: [{ metadata: { dispatch_fail_consecutive: activeDispatch.prevFailCount } }], rowCount: 1 };
+    }
+    if (/^SELECT tasks\.id AS id, tasks\.title AS title/.test(sql)) return { rows: [], rowCount: 0 };
+    if (/^SELECT id, run_id FROM task_runs WHERE run_id = \$1/.test(sql)) {
+      return { rows: [{ id: 'owned-run-ledger', run_id: values[0] }], rowCount: 1 };
+    }
+    if (/^(?:INSERT|UPDATE)\b/.test(sql)) return { rows: [], rowCount: 1 };
+    unexpectedSql.push(sql);
+    throw Error(`unexpected_test_sql: ${sql}`);
+  });
 }
-
-/**
- * 构造 dispatchNextTask 一次执行所需的 mockQuery 调用序列（trigger=success 路径）
- * success 路径：claim → full SELECT → [success] → [reset count if >0] → bookkeeping
- */
-function setupSuccessQuerySequence(task, prevFailCount = 0) {
-  mockQuery
-    // 0. drain retired
-    .mockResolvedValueOnce({ rows: [], rowCount: 0 })
-    // 0'. 无头 kernel drain（harness_initiative 无头入口退役）
-    .mockResolvedValueOnce({ rows: [], rowCount: 0 })
-    // 2. duplicate check
-    .mockResolvedValueOnce({ rows: [] })
-    // 3. atomic claim
-    .mockResolvedValueOnce({ rows: [{ id: task.id }] })
-    // 4. SELECT * (full task)
-    .mockResolvedValueOnce({ rows: [task] })
-    // 5. [success path] SELECT metadata for reset-count check
-    .mockResolvedValueOnce({ rows: [{ metadata: { dispatch_fail_consecutive: prevFailCount } }] })
-    // 6. UPDATE metadata (reset to 0) — 仅当 prevFailCount > 0 时会执行
-    .mockResolvedValueOnce({ rows: [], rowCount: 1 })
-    // bookkeeping (INSERT working_memory, logTickDecision, etc.)
-    .mockResolvedValue({ rows: [], rowCount: 1 });
-}
+const setupSuccessQuerySequence = setupQuerySequence;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GP-1 [BEHAVIOR-1]：三连失败 → 自动 blocked
@@ -557,14 +530,7 @@ describe('GP-5 [BEHAVIOR-5]: configError 失败不计入计数', () => {
     // configError 路径：不走 autoblock 分支，也不调 recordFailure
     // 但仍走 revert claim 路径，query 序列比 fail 路径少 autoblock 的 2 次 SELECT/UPDATE
     for (let i = 0; i < 3; i++) {
-      mockQuery
-        .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // drain retired
-        .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // 无头 kernel drain
-        .mockResolvedValueOnce({ rows: [] })               // duplicate check
-        .mockResolvedValueOnce({ rows: [{ id: task.id }] }) // claim
-        .mockResolvedValueOnce({ rows: [task] })           // full SELECT
-        .mockResolvedValueOnce({ rows: [], rowCount: 1 })  // revert claim
-        .mockResolvedValue({ rows: [], rowCount: 1 });     // logTickDecision etc.
+      setupQuerySequence(task);
 
       const { dispatchNextTask } = await import('../dispatcher.js');
       await dispatchNextTask(['goal-1']);
@@ -605,13 +571,7 @@ describe('[BEHAVIOR-6]: spawn_deduplicated 失败不计入计数', () => {
       .mockResolvedValueOnce(task);
 
     for (let i = 0; i < 3; i++) {
-      mockQuery
-        .mockResolvedValueOnce({ rows: [], rowCount: 0 })
-        .mockResolvedValueOnce({ rows: [] })
-        .mockResolvedValueOnce({ rows: [{ id: task.id }] })
-        .mockResolvedValueOnce({ rows: [task] })
-        .mockResolvedValueOnce({ rows: [], rowCount: 1 })
-        .mockResolvedValue({ rows: [], rowCount: 1 });
+      setupQuerySequence(task);
 
       const { dispatchNextTask } = await import('../dispatcher.js');
       await dispatchNextTask(['goal-1']);
@@ -622,63 +582,6 @@ describe('[BEHAVIOR-6]: spawn_deduplicated 失败不计入计数', () => {
   });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// [BEHAVIOR-8]：local_execution_disabled_on_scheduler 不计入连续计数、不 trip cecelia-run breaker
-//
-// 复现场景：us-vps 纯调度器化（决策 96054a8b）后，非 kernel-v1 的 skill-relay 任务
-// （如 golden_path_proposal）在 CECELIA_LOCAL_EXECUTION_ENABLED=false 时，
-// spawnSkillRelaySession 必然返回 { ok:false, error:'local_execution_disabled_on_scheduler' }
-// ——这是永久性的配置态失败，不是任务本身执行故障。修复前 dispatcher 把它当真实执行失败，
-// 每次都调 recordFailure('cecelia-run')，把共享的 'cecelia-run' 熔断器打到 OPEN，
-// 连累其他任务类型（如需要 cecelia-bridge 的任务）也一起派不出去。
-// ─────────────────────────────────────────────────────────────────────────────
-describe('[BEHAVIOR-8]: local_execution_disabled_on_scheduler 失败不计入计数、不 trip breaker', () => {
-  const task = makeTask();
-
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mockTriggerCeceliaRun.mockResolvedValue({
-      success: false,
-      reason: 'local_execution_disabled_on_scheduler',
-      error: 'local_execution_disabled_on_scheduler',
-    });
-  });
-
-  it('local_execution_disabled_on_scheduler 连续 3 次：不计入 dispatch_fail_consecutive，不 block，不 trip breaker', async () => {
-    mockSelectNextDispatchableTask
-      .mockResolvedValueOnce(task)
-      .mockResolvedValueOnce(task)
-      .mockResolvedValueOnce(task);
-
-    for (let i = 0; i < 3; i++) {
-      mockQuery
-        .mockResolvedValueOnce({ rows: [], rowCount: 0 })
-        .mockResolvedValueOnce({ rows: [] })
-        .mockResolvedValueOnce({ rows: [{ id: task.id }] })
-        .mockResolvedValueOnce({ rows: [task] })
-        .mockResolvedValueOnce({ rows: [], rowCount: 1 })
-        .mockResolvedValue({ rows: [], rowCount: 1 });
-
-      const { dispatchNextTask } = await import('../dispatcher.js');
-      await dispatchNextTask(['goal-1']);
-    }
-
-    expect(mockBlockTask).not.toHaveBeenCalled();
-    expect(mockRaise).not.toHaveBeenCalled();
-
-    // 核心断言：不应 trip 共享的 cecelia-run 熔断器（否则连累其他任务类型）
-    expect(mockRecordFailure).not.toHaveBeenCalledWith('cecelia-run');
-
-    const anyCountWrite = mockQuery.mock.calls.some(
-      (c) => typeof c[0] === 'string' &&
-        c[0].includes('dispatch_fail_consecutive') &&
-        c[0].includes('UPDATE')
-    );
-    expect(anyCountWrite).toBe(false);
-  });
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
 // [BEHAVIOR-7]：阈值非法值回退默认 3
 // ─────────────────────────────────────────────────────────────────────────────
 describe('[BEHAVIOR-7]: DISPATCH_FAIL_AUTOBLOCK_THRESHOLD 非法值回退默认 3', () => {

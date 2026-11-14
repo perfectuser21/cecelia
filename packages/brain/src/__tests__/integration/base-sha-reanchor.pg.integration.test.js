@@ -10,11 +10,11 @@ import {
   reanchorReceiptIfEmptyBranch,
 } from '../../orchestrator/preflight/base-sha-reanchor.js';
 import { seedOwnedActiveV2Run } from './helpers/controller-authority-fixture.js';
-import { seedRoutedKernelTask } from './helpers/routed-kernel-fixture.js';
+import { seedRoutedDevelopmentTask } from './helpers/routed-development-fixture.js';
 
 const { Pool } = pg;
 const BRAIN_ROOT = fileURLToPath(new URL('../../../', import.meta.url));
-// routed-kernel-fixture 种的收据锚在 'a'*40；地图 revision 用 'b'*40 制造可快进的落差。
+// routed-development-fixture 种的收据锚在 'a'*40；地图 revision 用 'b'*40 制造可快进的落差。
 const OLD = 'a'.repeat(40);
 const NEW = 'b'.repeat(40);
 let adminPool;
@@ -39,7 +39,7 @@ function freshMap(revision = NEW) {
 function seedTask() {
   // helper 只把 base_sha 写进收据 evidence；生产的 createRoutedTask 会同时投影进 payload，
   // 补上它才验得了「快进前后 payload.base_sha 怎么动」。
-  return seedRoutedKernelTask(pool, {
+  return seedRoutedDevelopmentTask(pool, {
     titlePrefix: 'reanchor', mapScope: ['F1'], payload: { base_sha: OLD },
   });
 }
@@ -116,7 +116,7 @@ describe.sequential('base_sha reanchor against real PostgreSQL（任务 d9c405e2
       await client.query('BEGIN');
       const { task, receipt } = await loadLocked(client, taskId, receiptId);
       successor = await reanchorReceiptIfEmptyBranch(client, {
-        task, receipt, map: freshMap(), now: new Date(), createdSource: 'kernel_dispatch',
+        task, receipt, map: freshMap(), now: new Date(), createdSource: 'headed_development',
       });
       await client.query('COMMIT');
     } catch (error) {

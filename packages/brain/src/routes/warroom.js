@@ -2,8 +2,8 @@
  * routes/warroom.js — 战情室统一 feed API
  *
  * GET /api/brain/warroom/feed?days=7
- *   聚合所有"跑起来的任务"（harness_initiative / dev / content-pipeline / platform_scraper），
- *   按 Area → Group 两级分组，附 active harness 的进度，返回全局统计。
+ *   聚合所有"跑起来的任务"（dev / coding_workflow / content-pipeline / platform_scraper），
+ *   按 Area → Group 两级分组，返回通用任务统计。
  *
  * 分组/聚合逻辑全在 warroom-classify.js（纯函数，已单测）；本 route 只做 SQL + 装配。
  */
@@ -11,11 +11,10 @@
 import { Router } from 'express';
 import pool from '../db.js';
 import {
-  buildFeed, computeStats, shanghaiDay, normalizeLg, toFeedItem,
+  buildFeed, computeStats, shanghaiDay, toFeedItem,
   classifyJourneyArea, computeStepProgress, journeyIdKeys, taskMatchesJourney,
   normStatus,
 } from '../warroom-classify.js';
-import { buildPipelineRecord } from './status.js';
 import { fetchLineContext, formatLineContextForPrompt } from '../harness-line-context.js';
 import { buildLineDreamData } from '../line-dreaming.js';
 import {
@@ -25,92 +24,13 @@ import {
 } from '../work-routing-observability.js';
 import { WARROOM_FEED_TASK_TYPES } from '../lib/task-type-registry.js';
 import { TREE_NODES_SQL } from '../lib/tree-nodes-sql.js';
-import { launchDeferredSql } from '../lib/kernel-launch-deferral.js';
 
 const router = Router();
 
-// harness initiative_run_events 节点 → 进度百分比（与 harness.js progress 端点对齐）
-const NODE_PCT = {
-  prep: 5, planner: 15, parsePrd: 25, ganLoop: 40, dbUpsert: 50,
-  generator: 65, evaluator: 80, merge: 90, report: 100,
-};
-
-// 纳入 feed 的任务类型（有实质执行的；排除 harness_report 等子任务噪音）
+// 纳入 feed 的任务类型（有实质执行的；排除无实质执行的子任务噪音）
 const FEED_TYPES = WARROOM_FEED_TASK_TYPES;
 
 const AREA_NAMES = { cecelia: 'Cecelia', zenithjoy: 'ZenithJoy', infrastructure: 'Infrastructure' };
-
-/**
- * 拉一批 sprint（harness_initiative）任务的 harness_report 摘要（verdict / pr / findings）。
- * 与 /feed 同源逻辑，抽成可复用函数供 /line/:id 复用。
- * @param {number} days  时间窗（天）
- * @returns {Promise<Record<string,{verdict,pr_url,findings_count}>>}  key = initiative_id
- */
-async function fetchReportByInitiativeId(days) {
-  const reportByInitiativeId = {};
-  try {
-    const { rows: reps } = await pool.query(
-      `SELECT payload->>'initiative_id' AS initiative_id,
-              payload->>'final_e2e_verdict' AS verdict,
-              payload->>'pr_url' AS pr_url,
-              payload->'findings' AS findings
-       FROM tasks
-       WHERE task_type = 'harness_report'
-         AND created_at > NOW() - ($1 || ' days')::interval
-         AND payload->>'initiative_id' IS NOT NULL`,
-      [String(days)]
-    );
-    for (const r of reps) {
-      const fc = Array.isArray(r.findings) ? r.findings.length : null;
-      reportByInitiativeId[r.initiative_id] = {
-        verdict: r.verdict || null,
-        pr_url: r.pr_url || null,
-        findings_count: fc,
-      };
-    }
-  } catch { /* harness_report 缺失不阻塞 */ }
-  return reportByInitiativeId;
-}
-
-/**
- * 为一批 sprint 任务构造 LangGraph 富数据（join cecelia_events langgraph_step → buildPipelineRecord → normalizeLg）。
- * 与 /feed 同源逻辑，抽成可复用函数供 /line/:id 复用。
- * @param {object[]} tasks  含 harness_initiative 的任务列表
- * @returns {Promise<Record<string,object>>}  key = planner_task_id（=== harness_initiative.id）
- */
-async function fetchLgByPlannerTaskId(tasks) {
-  const lgByPlannerTaskId = {};
-  try {
-    const sprintIds = tasks
-      .filter((t) => t.task_type === 'harness_initiative')
-      .map((t) => t.id);
-    if (sprintIds.length === 0) return lgByPlannerTaskId;
-
-    const eventsByTask = new Map();
-    const { rows: evRows } = await pool.query(
-      `SELECT task_id, payload, created_at
-       FROM cecelia_events
-       WHERE task_id = ANY($1::uuid[])
-         AND event_type = 'langgraph_step'
-       ORDER BY created_at ASC`,
-      [sprintIds]
-    );
-    for (const row of evRows) {
-      const tid = String(row.task_id);
-      if (!eventsByTask.has(tid)) eventsByTask.set(tid, []);
-      eventsByTask.get(tid).push(row);
-    }
-    for (const t of tasks) {
-      if (t.task_type !== 'harness_initiative') continue;
-      const evs = eventsByTask.get(String(t.id)) || [];
-      const rec = buildPipelineRecord(t, evs, null);
-      lgByPlannerTaskId[t.id] = normalizeLg(rec);
-    }
-  } catch (e) {
-    console.error('[warroom] langgraph join failed:', e.message);
-  }
-  return lgByPlannerTaskId;
-}
 
 router.get('/feed', async (req, res) => {
   try {
@@ -138,35 +58,6 @@ router.get('/feed', async (req, res) => {
       }
     } catch { /* journeys 表缺失不阻塞 feed */ }
 
-    // 3. active harness 的进度（仅进行中的查 events，省开销）
-    const activeHarness = tasks
-      .filter((t) => t.task_type === 'harness_initiative' && t.status === 'in_progress')
-      .map((t) => t.id);
-    const progressById = {};
-    if (activeHarness.length > 0) {
-      try {
-        const { rows: evs } = await pool.query(
-          `SELECT initiative_id, node FROM initiative_run_events
-           WHERE initiative_id = ANY($1::uuid[]) AND status = 'completed'`,
-          [activeHarness]
-        );
-        for (const e of evs) {
-          const pct = NODE_PCT[e.node];
-          if (pct == null) continue;
-          const cur = progressById[e.initiative_id];
-          if (!cur || pct > cur.pct) progressById[e.initiative_id] = { pct, node: e.node };
-        }
-      } catch { /* events 表缺失不阻塞 */ }
-    }
-
-    // 3b. harness_report 摘要 → 按 initiative_id 合并进所属 sprint（不单独成行）
-    //     report.payload.initiative_id === harness_initiative.id（1:1 关联，已验证）
-    const reportByInitiativeId = await fetchReportByInitiativeId(days);
-
-    // 3c. LangGraph 富数据：join harness-pipelines（同源逻辑，复用 status.js 的 buildPipelineRecord）。
-    //     join key：harness_initiative.id === harness-pipelines.planner_task_id。
-    const lgByPlannerTaskId = await fetchLgByPlannerTaskId(tasks);
-
     let routingByTaskId = {};
     try {
       routingByTaskId = await loadTaskRoutingAudit(pool, tasks.map(({ id }) => id));
@@ -185,7 +76,7 @@ router.get('/feed', async (req, res) => {
     // 4. 装配
     const nowMs = Date.now();
     const todayStr = shanghaiDay(new Date().toISOString());
-    const areas = buildFeed(tasks, journeyNameById, progressById, nowMs, reportByInitiativeId, lgByPlannerTaskId);
+    const areas = buildFeed(tasks, journeyNameById, {}, nowMs);
     const stats = computeStats(tasks, todayStr);
 
     res.json({
@@ -323,39 +214,13 @@ router.get('/line/:id', async (req, res) => {
       [FEED_TYPES, keys]
     );
 
-    // 4. 富数据：verdict（harness_report）+ LangGraph（复用 /feed 同源 helper）
-    const reportByInitiativeId = await fetchReportByInitiativeId(30);
-    const lgByPlannerTaskId = await fetchLgByPlannerTaskId(tasks);
-
-    // 5. active harness 进度（与 /feed 一致）
-    const activeHarness = tasks
-      .filter((t) => t.task_type === 'harness_initiative' && t.status === 'in_progress')
-      .map((t) => t.id);
-    const progressById = {};
-    if (activeHarness.length > 0) {
-      try {
-        const { rows: evs } = await pool.query(
-          `SELECT initiative_id, node FROM initiative_run_events
-           WHERE initiative_id = ANY($1::uuid[]) AND status = 'completed'`,
-          [activeHarness]
-        );
-        for (const e of evs) {
-          const pct = NODE_PCT[e.node];
-          if (pct == null) continue;
-          const cur = progressById[e.initiative_id];
-          if (!cur || pct > cur.pct) progressById[e.initiative_id] = { pct, node: e.node };
-        }
-      } catch { /* events 缺失不阻塞 */ }
-    }
-
     // 6. toFeedItem 装配（journeyName 固定为本线名）；剥离内部 _area/_group 字段
     const nowMs = Date.now();
     const statusRank = { active: 0, failed: 1, done: 2, canceled: 3 };
     const feedTasks = tasks
       .map((t) => {
         const item = toFeedItem(
-          t, journey.name, progressById[t.id] || null, nowMs,
-          reportByInitiativeId[t.id] || null, lgByPlannerTaskId[t.id] || null
+          t, journey.name, null, nowMs
         );
         delete item._area; delete item._group;
         return item;
@@ -416,7 +281,7 @@ router.get('/line/:id/advancements', async (req, res) => {
  * GET /api/brain/warroom/line/:id/command
  *   Line 指挥页聚合数据，返回三块：
  *   - decisions: notes 表中 title LIKE '军师决策[<line名>]%' 的记录，时间倒序
- *   - connections: journey_features(abilities/features) + advancements + in_progress tasks + open issues + recent harness runs
+ *   - connections: journey_features(abilities/features) + advancements + in_progress tasks + open issues
  *   - health: 近30天 run 成功率、PR 频率、是否停线
  */
 router.get('/line/:id/command', async (req, res) => {
@@ -513,41 +378,16 @@ router.get('/line/:id/command', async (req, res) => {
       openIssues = issueRows;
     } catch { /* issues 表缺失优雅降级 */ }
 
-    // 7. 最近 harness runs（initiative_runs，该 journey，时间倒序）
-    //    真列名是 phase（值域 done/failed/evaluate/planning/gan…），无 status/result 列；
-    //    映射为前端 RecentRun 契约的 status（done→completed / failed→failed / 其余→in_progress）
-    let recentRuns = [];
-    try {
-      const { rows: runRows } = await pool.query(
-        `SELECT id, phase, started_at, completed_at, created_at
-         FROM initiative_runs
-         WHERE journey_id = $1
-         ORDER BY created_at DESC
-         LIMIT 10`,
-        [journey.id]
-      );
-      recentRuns = runRows.map((r) => ({
-        id: r.id,
-        status: r.phase === 'done' ? 'completed' : r.phase === 'failed' ? 'failed' : 'in_progress',
-        started_at: r.started_at,
-        completed_at: r.completed_at,
-        created_at: r.created_at,
-      }));
-    } catch { /* initiative_runs 缺失优雅降级 */ }
-
     // 8. 健康度计算（近30天）
     let health = { run_total: 0, run_success: 0, success_rate: null, pr_count: 0, is_stopped: false };
     try {
       const { rows: healthRows } = await pool.query(
-        `SELECT ir.id, ir.phase, ir.created_at
-         FROM initiative_runs ir
-         WHERE ir.journey_id = $1
-           AND ir.created_at > NOW() - INTERVAL '30 days'
-           AND NOT ${launchDeferredSql('ir')}`, // 编排槽满回队的 run 不是真实失败，不计入健康度
-        [journey.id]
+        `SELECT status FROM tasks WHERE task_type = ANY($1) AND payload->>'journey_id' = ANY($2)
+           AND status IN ('in_progress', 'completed', 'failed', 'cancelled')
+           AND created_at > NOW() - INTERVAL '30 days'`, [FEED_TYPES, keys]
       );
       const runTotal = healthRows.length;
-      const runSuccess = healthRows.filter((r) => r.phase === 'done').length;
+      const runSuccess = healthRows.filter((row) => row.status === 'completed').length;
 
       // PR 频率：近30天该 journey 相关任务有 pr_url
       const { rows: prRows } = await pool.query(
@@ -583,7 +423,6 @@ router.get('/line/:id/command', async (req, res) => {
         advancements,
         active_tasks: activeTasks,
         open_issues: openIssues,
-        recent_runs: recentRuns,
       },
       health,
       generated_at: new Date().toISOString(),

@@ -9,8 +9,7 @@
  * - processCortexTask 反复失败 → quarantine
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { canonicalRoutingReceipt, routedCodingPayload } from './helpers/routing-receipt-fixture.js';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Mock DB
 const mockQuery = vi.fn();
@@ -47,12 +46,7 @@ vi.mock('../slot-allocator.js', () => ({
     user: { mode: 'absent', used: 0 },
   }),
   shouldBypassBackpressure: vi.fn(() => false),
-  // harness admission 收权后（beeba317）dispatcher 会调 harnessSlotCheck；
-  // 本文件测的是 bridge guard bypass，admission 直接放行
-  harnessSlotCheck: vi.fn().mockResolvedValue({
-    allow: true, reason: 'ok', containers: 0, inflight: 0,
-    cap: { effective: 4, mem_cap: 8, acct_cap: 4, hard_cap: 8 }, stale: false,
-  }),
+
 }));
 
 const mockIsAllowed = vi.fn().mockReturnValue(true);
@@ -131,23 +125,33 @@ vi.mock('../account-usage.js', () => ({
   getAuthFailedAccounts: vi.fn().mockReturnValue([]),
 }));
 
-function kernelDispatchTask(id, description) {
-  return {
-    id, title: id, description,
-    task_type: 'harness_initiative', status: 'queued', priority: 'P1',
-    payload: routedCodingPayload(id),
-    created_at: '2026-08-15T00:00:00Z',
-  };
-}
-
-function setupKernelDispatch(task, result) {
-  mockTriggerCeceliaRun.mockResolvedValueOnce(result);
-  // 首项 retired drain、次项无头 kernel drain（harness_initiative 无头入口退役），之后是候选/查重/并发/claim/取全量/分配落盘
-  for (const rows of [[], [], [task], [], [{ n: 0 }], [{ id: task.id }], [task], []]) {
-    mockQuery.mockResolvedValueOnce({ rows, rowCount: rows.length });
-  }
-  mockQuery.mockResolvedValueOnce({ rows: [canonicalRoutingReceipt(task)] });
-  mockQuery.mockResolvedValue({ rows: [], rowCount: 1 });
+// 派发收口测试只替换候选选择，保留processCortexTask真实实现。
+const mockSelectCandidate = vi.fn();
+vi.mock('../dispatch-helpers.js', async original => ({
+  ...await original(), selectNextDispatchableTask: (...args) => mockSelectCandidate(...args),
+}));
+const unexpectedSql = [];
+beforeEach(() => {
+  mockQuery.mockReset();
+  mockSelectCandidate.mockReset();
+  mockTriggerCeceliaRun.mockReset();
+  unexpectedSql.length = 0;
+});
+afterEach(() => { expect(unexpectedSql).toEqual([]); });
+function setupDispatch(task) {
+  mockSelectCandidate.mockResolvedValueOnce(task).mockResolvedValue(null);
+  mockQuery.mockImplementation(async (statement, values = []) => {
+    const sql = String(statement).replace(/\s+/g, ' ').trim();
+    if (/^UPDATE tasks SET claimed_by = \$1/.test(sql)) return {rows:[{id:task.id,claim_stamp:'owned-claim'}],rowCount:1};
+    if (/^SELECT \* FROM tasks WHERE id/.test(sql)) return {rows:[task],rowCount:1};
+    if (/^SELECT count\(\*\)::int AS n FROM tasks/.test(sql)) return {rows:[{n:0}],rowCount:1};
+    if (/^SELECT value_json FROM working_memory WHERE key/.test(sql)) return {rows:[],rowCount:0};
+    if (/^SELECT metadata FROM tasks WHERE id/.test(sql)) return {rows:[{metadata:{}}],rowCount:1};
+    if (/^SELECT id, run_id FROM task_runs WHERE run_id/.test(sql)) return {rows:[{id:'owned-run',run_id:values[0]}],rowCount:1};
+    if (/^SELECT tasks\.id AS id/.test(sql)) return {rows:[],rowCount:0};
+    if (/^(?:INSERT|UPDATE)\b/.test(sql)) return {rows:[],rowCount:1};
+    unexpectedSql.push(sql); throw Error(`unexpected_test_sql: ${sql}`);
+  });
 }
 
 describe('Bug #1: triggerCeceliaRun 失败时 revert 任务并返回 dispatched=false', () => {
@@ -158,7 +162,7 @@ describe('Bug #1: triggerCeceliaRun 失败时 revert 任务并返回 dispatched=
   it('executor success=false → dispatched=false, task reverted to queued', async () => {
     const task = {
       id: 'task-exec-fail', title: 'Good task title here',
-      description: '有完整描述的合法任务，应该通过 pre-flight',
+      description: '有完整描述的合法任务，应该通过 pre-flight', task_type:'research',
       status: 'queued', priority: 'P1', payload: {},
       created_at: '2026-07-16T00:00:00Z',
     };
@@ -171,21 +175,7 @@ describe('Bug #1: triggerCeceliaRun 失败时 revert 任务并返回 dispatched=
       error: 'Bridge connection refused'
     });
 
-    // Mock pool.query calls:
-    // 0. Phase 2.5: drain retired harness types (本 PR 加, 0 retired drained)
-    mockQuery.mockResolvedValueOnce({ rows: [] });
-    // 0'. 无头 kernel drain（harness_initiative 无头入口退役）
-    mockQuery.mockResolvedValueOnce({ rows: [] });
-    // 1. selectNextDispatchableTask → returns task
-    mockQuery.mockResolvedValueOnce({ rows: [task] });
-    // 1.5 (本 PR 加) 派发前语义查重: SELECT id,title FROM tasks WHERE task_type=... → 无 sibling
-    mockQuery.mockResolvedValueOnce({ rows: [] });
-    // 2. C1 atomic claim: UPDATE tasks SET claimed_by ... RETURNING id
-    mockQuery.mockResolvedValueOnce({ rows: [{ id: task.id }] });
-    // 3. SELECT * FROM tasks (full task for triggerCeceliaRun)
-    mockQuery.mockResolvedValueOnce({ rows: [task] });
-    // 4+ post-failure DB calls (logTickDecision, etc.)
-    mockQuery.mockResolvedValue({ rows: [], rowCount: 1 });
+    setupDispatch(task);
 
     const { dispatchNextTask } = await import('../tick.js');
     const result = await dispatchNextTask(['goal-1']);
@@ -213,7 +203,7 @@ describe('Bug #1: triggerCeceliaRun 失败时 revert 任务并返回 dispatched=
   it('executor success=true → dispatched=true (正常路径不受影响)', async () => {
     const task = {
       id: 'task-exec-ok', title: 'Normal working task',
-      description: '正常任务应该成功派发',
+      description: '正常任务应该成功派发', task_type:'research',
       status: 'queued', priority: 'P1', payload: {},
       created_at: '2026-07-16T00:00:00Z',
     };
@@ -224,20 +214,7 @@ describe('Bug #1: triggerCeceliaRun 失败时 revert 任务并返回 dispatched=
       taskId: task.id
     });
 
-    // 0. Phase 2.5: drain retired harness types (本 PR 加, 0 retired drained)
-    mockQuery.mockResolvedValueOnce({ rows: [] });
-    // 0'. 无头 kernel drain（harness_initiative 无头入口退役）
-    mockQuery.mockResolvedValueOnce({ rows: [] });
-    // 1. selectNextDispatchableTask
-    mockQuery.mockResolvedValueOnce({ rows: [task] });
-    // 1.5 (本 PR 加) 派发前语义查重: SELECT id,title FROM tasks WHERE task_type=... → 无 sibling
-    mockQuery.mockResolvedValueOnce({ rows: [] });
-    // 2. C1 atomic claim
-    mockQuery.mockResolvedValueOnce({ rows: [{ id: task.id }] });
-    // 3. SELECT * FROM tasks
-    mockQuery.mockResolvedValueOnce({ rows: [task] });
-    // 4+ post-success DB calls
-    mockQuery.mockResolvedValue({ rows: [], rowCount: 1 });
+    setupDispatch(task);
 
     const { dispatchNextTask } = await import('../tick.js');
     const result = await dispatchNextTask(['goal-1']);
@@ -253,98 +230,6 @@ describe('Bug #1: triggerCeceliaRun 失败时 revert 任务并返回 dispatched=
 
     // recordFailure 不应该被调用
     expect(mockRecordFailure).not.toHaveBeenCalled();
-  });
-
-  it('Kernel executor 声称 success 但没有 runId 时按失败收口并释放 claim', async () => {
-    const task = kernelDispatchTask('kernel-no-authority', '测试 Kernel 假成功不得泄漏 claim');
-    setupKernelDispatch(task, { success: true, taskId: task.id });
-
-    const { dispatchNextTask } = await import('../tick.js');
-    const result = await dispatchNextTask(['goal-1']);
-
-    expect(result).toMatchObject({
-      dispatched: false,
-      reason: 'executor_failed',
-      task_id: task.id,
-      error: 'kernel_authority_not_created',
-    });
-    expect(mockUpdateTask).toHaveBeenCalledWith({ task_id: task.id, status: 'queued' });
-    expect(mockQuery.mock.calls.some(([sql, params]) => (
-      /SET\s+claimed_by = NULL,\s+claimed_at = NULL/.test(String(sql))
-      && params?.[0] === task.id
-    ))).toBe(true);
-    expect(mockQuery.mock.calls.some(([sql, params]) => (
-      /INSERT INTO task_events/.test(String(sql))
-      && params?.[1] === 'failed_dispatch'
-      && params?.[2]?.includes('kernel_authority_not_created')
-    ))).toBe(true);
-  });
-
-  it.each([
-    ['kernel-terminal-authority', 'kernel_terminal_authority', {
-      runId: '33333333-3333-4333-8333-333333333333',
-      kernelAuthority: 'terminal', authorityExists: true,
-    }],
-    ['kernel-pre-run-terminal', 'kernel_pre_run_terminal', { taskTerminal: true }],
-  ])('Kernel terminal fence %s 保持终态并只清理 claim', async (id, reason, extra) => {
-    const task = kernelDispatchTask(id, '测试 Kernel 终态任务不得被 dispatcher 复活');
-    setupKernelDispatch(task, {
-      success: false, taskId: task.id, reason, terminal: true, ...extra,
-    });
-    const { dispatchNextTask } = await import('../tick.js');
-    const result = await dispatchNextTask(['goal-1']);
-    expect(result).toMatchObject({
-      dispatched: false, reason, task_id: task.id, terminal: true,
-      ...(extra.runId ? { run_id: extra.runId } : {}),
-    });
-    expect(mockUpdateTask).not.toHaveBeenCalledWith({ task_id: task.id, status: 'queued' });
-    expect(mockQuery.mock.calls.some(([sql, params]) => (
-      /SET\s+claimed_by = NULL,\s+claimed_at = NULL/.test(String(sql))
-      && /status\s+IN\s+\('completed', 'failed', 'cancelled', 'canceled'\)/.test(String(sql))
-      && params?.[0] === task.id
-    ))).toBe(true);
-    expect(mockQuery.mock.calls.some(([sql, params]) => (
-      /INSERT INTO task_events/.test(String(sql)) && params?.[1] === 'failed_dispatch'
-    ))).toBe(false);
-    expect(mockRecordFailure).not.toHaveBeenCalled();
-  });
-
-  it('Kernel authority reconciliation 查询失败时保留 claim 交给 Watchdog', async () => {
-    const task = kernelDispatchTask('kernel-authority-unknown', '测试 authority 查询失败不得导致双跑');
-    setupKernelDispatch(task, {
-      success: false,
-      taskId: task.id,
-      reason: 'kernel_authority_reconciliation_unavailable',
-      error: 'database connection reset',
-      authorityUnknown: true,
-    });
-
-    const { dispatchNextTask } = await import('../tick.js');
-    const result = await dispatchNextTask(['goal-1']);
-
-    expect(result).toMatchObject({
-      dispatched: false,
-      reason: 'kernel_authority_reconciliation_unavailable',
-      task_id: task.id,
-      authority_unknown: true,
-    });
-    expect(mockUpdateTask).not.toHaveBeenCalledWith({ task_id: task.id, status: 'queued' });
-    expect(mockQuery.mock.calls.some(([sql, params]) => (
-      /SET\s+claimed_by = NULL,\s+claimed_at = NULL/.test(String(sql))
-      && params?.[0] === task.id
-    ))).toBe(false);
-    expect(mockQuery.mock.calls.some(([sql, params]) => (
-      /INSERT INTO task_events/.test(String(sql))
-      && params?.[1] === 'kernel_authority_reconciliation_unavailable'
-    ))).toBe(true);
-    expect(mockRecordFailure).not.toHaveBeenCalled();
-    expect(mockRecordDispatchResult).toHaveBeenCalledWith(
-      expect.anything(),
-      false,
-      'kernel_authority_reconciliation_unavailable',
-      undefined,
-      task.id,
-    );
   });
 
 });
@@ -434,93 +319,28 @@ describe('Bug #5: processCortexTask 失败时调用 handleTaskFailure', () => {
   });
 });
 
-describe('Bug 回归: harness_initiative bridge guard bypass', () => {
-  // 验证行为：cecelia-bridge 不可用时，harness_initiative 仍被派发（不被拦截）
-  // 根因：dispatcher 对所有任务检查 bridge，但 harness_initiative 走 Docker spawn，不依赖 bridge。
-  // 修法：needsBridgeCheck = nextTask.task_type !== 'harness_initiative'
-  //
-  // 注意：此 describe 与上面 Bug #1/5 共享同一模块级 vi.mock 配置（checkCeceliaRunAvailable 默认 available=true）。
-  // 这里用 mockResolvedValueOnce({ available: false }) 覆盖，模拟 bridge 不可用场景。
-
-  beforeEach(() => {
-    vi.clearAllMocks();
+describe('现役执行体按实际依赖使用bridge可用性闸', () => {
+  beforeEach(() => { vi.clearAllMocks(); });
+  it('bridge不可用时OpenClaw任务仍可派发且不回滚claim', async () => {
+    const executor = await import('../executor.js');
+    executor.checkCeceliaRunAvailable.mockResolvedValue({available:false,error:'Bridge not running'});
+    const task={id:'openclaw-direct',title:'现役OpenClaw任务',description:'独立远端执行体',task_type:'qiumi_task',status:'queued',priority:'P1',payload:{run_id:'owned-qiumi-route',model:'openai/gpt-5.6-terra',qiumi_route:{source:'jev'}}};
+    setupDispatch(task);
+    mockTriggerCeceliaRun.mockResolvedValueOnce({success:true,taskId:task.id,runId:'owned-openclaw-run'});
+    const {dispatchNextTask}=await import('../tick.js');
+    expect(await dispatchNextTask(['goal-1'])).toMatchObject({dispatched:true,task_id:task.id});
+    expect(mockTriggerCeceliaRun).toHaveBeenCalledWith(expect.objectContaining({task_type:'qiumi_task'}));
+    expect(executor.checkCeceliaRunAvailable).not.toHaveBeenCalled();
+    expect(mockUpdateTask.mock.calls.filter(([row])=>row?.status==='queued')).toHaveLength(0);
+    executor.checkCeceliaRunAvailable.mockResolvedValue({available:true});
   });
-
-  it('bridge 不可用时 harness_initiative 仍被派发（不走 bridge guard）', async () => {
-    // 覆盖 checkCeceliaRunAvailable 返回不可用（bridge 不在）
-    const executorMod = await import('../executor.js');
-    executorMod.checkCeceliaRunAvailable.mockResolvedValueOnce({ available: false, error: 'Bridge not running' });
-
-    mockTriggerCeceliaRun.mockResolvedValueOnce({
-      success: true,
-      taskId: 'harness-task-1',
-      runId: '11111111-1111-4111-8111-111111111111',
-    });
-
-    const harnessTask = {
-      id: 'harness-task-1',
-      title: 'GET /api/brain/harness/runs/:id — 回归测试任务',
-      description: 'harness_initiative 测试，bridge 不可用时仍应派发',
-      task_type: 'harness_initiative',
-      status: 'queued',
-      priority: 'P1',
-      payload: routedCodingPayload('harness-task-1', { sprint_dir: 'sprints/test', base_repo: '/repo' }),
-    };
-
-    mockQuery.mockResolvedValueOnce({ rows: [] });                    // retired drain
-    mockQuery.mockResolvedValueOnce({ rows: [] }); // 无头 kernel drain
-    mockQuery.mockResolvedValueOnce({ rows: [harnessTask] });        // candidate tasks
-    mockQuery.mockResolvedValueOnce({ rows: [] });                    // 派发前语义查重（本 PR 加）→ 无 sibling
-    mockQuery.mockResolvedValueOnce({ rows: [{ n: 0 }] });           // 全局 harness 并发计数（本 PR 加）→ 0 < cap
-    mockQuery.mockResolvedValueOnce({ rows: [{ id: harnessTask.id }] }); // C1 claim
-    mockQuery.mockResolvedValueOnce({ rows: [harnessTask] });        // full task fetch
-    mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 1 });      // allocation payload persist
-    mockQuery.mockResolvedValueOnce({ rows: [canonicalRoutingReceipt(harnessTask)] }); // canonical receipt
-    mockQuery.mockResolvedValue({ rows: [], rowCount: 1 });          // 其余 DB 调用
-
-    const { dispatchNextTask } = await import('../tick.js');
-    const result = await dispatchNextTask(['goal-1']);
-
-    // harness_initiative 应绕过 bridge guard，成功派发
-    expect(mockTriggerCeceliaRun).toHaveBeenCalledWith(
-      expect.objectContaining({ task_type: 'harness_initiative' })
-    );
-    expect(result.dispatched).toBe(true);
-    expect(result.task_id).toBe('harness-task-1');
-
-    // 任务不应被 revert 回 queued
-    const revertCalls = mockUpdateTask.mock.calls.filter(c => c[0]?.status === 'queued');
-    expect(revertCalls).toHaveLength(0);
-  });
-
-  it('bridge 不可用时普通 dev 任务仍被拦截（bridge guard 对非 harness 任务有效）', async () => {
-    const executorMod = await import('../executor.js');
-    executorMod.checkCeceliaRunAvailable.mockResolvedValueOnce({ available: false, error: 'Bridge not running' });
-
-    const devTask = {
-      id: 'dev-task-1',
-      title: 'Regular dev task that needs bridge',
-      description: '普通 dev 任务，bridge 不在时应被拦截',
-      task_type: 'dev',
-      status: 'queued',
-      priority: 'P1',
-      payload: {},
-      created_at: '2026-07-16T00:00:00Z',
-    };
-
-    mockQuery.mockResolvedValueOnce({ rows: [] });
-    mockQuery.mockResolvedValueOnce({ rows: [] }); // 无头 kernel drain
-    mockQuery.mockResolvedValueOnce({ rows: [devTask] });
-    mockQuery.mockResolvedValueOnce({ rows: [] });                    // 派发前语义查重（本 PR 加）→ 无 sibling
-    mockQuery.mockResolvedValueOnce({ rows: [{ id: devTask.id }] });
-    mockQuery.mockResolvedValueOnce({ rows: [devTask] });
-    mockQuery.mockResolvedValue({ rows: [], rowCount: 1 });
-
-    const { dispatchNextTask } = await import('../tick.js');
-    const result = await dispatchNextTask(['goal-1']);
-
-    expect(result.dispatched).toBe(false);
-    expect(result.reason).toBe('no_executor');
+  it('bridge不可用时普通研究任务受阻，保留可用性闸', async () => {
+    const executor=await import('../executor.js');
+    executor.checkCeceliaRunAvailable.mockResolvedValueOnce({available:false,error:'Bridge not running'});
+    const task={id:'bridge-research',title:'研究任务',description:'依赖现役bridge',task_type:'research',status:'queued',priority:'P1',payload:{},created_at:'2026-07-16T00:00:00Z'};
+    setupDispatch(task);
+    const {dispatchNextTask}=await import('../tick.js');
+    expect(await dispatchNextTask(['goal-1'])).toMatchObject({dispatched:false,reason:'no_executor'});
     expect(mockTriggerCeceliaRun).not.toHaveBeenCalled();
   });
 });

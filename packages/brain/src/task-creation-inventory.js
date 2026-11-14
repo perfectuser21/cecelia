@@ -12,8 +12,6 @@ export const TASK_CREATION_INVENTORY = Object.freeze([
   { module: 'actions.js', source: 'api', creates_executable_task: true, migration_status: 'routed' },
   // 公共Runner按固定Activity创建独立子运行；同API路由边界，父回执不得代替子执行。
   { module: 'invocations/activity-worker.js', source: 'api', creates_executable_task: true, migration_status: 'routed' },
-  // 第 51 批（决策 bc242b62）：V4 attempt-run 薄端点的惰性 task 锚（status 直建 in_progress，非可执行任务）
-  { module: 'routes/harness-attempt-run.js', source: 'child', creates_executable_task: false, migration_status: 'routed' },
   { module: 'active-goals-zero-trigger.js', source: 'api', creates_executable_task: true, migration_status: 'routed' },
   { module: 'auto-fix.js', source: 'discovery', creates_executable_task: true, migration_status: 'routed' },
   { module: 'capture-triage.js', source: 'discovery', creates_executable_task: true, migration_status: 'routed' },
@@ -35,7 +33,6 @@ export const TASK_CREATION_INVENTORY = Object.freeze([
   { module: 'dispatch-helpers.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
   { module: 'goal-evaluator.js', source: 'discovery', creates_executable_task: true, migration_status: 'routed' },
   { module: 'golden-path-contracts.js', source: 'discovery', creates_executable_task: true, migration_status: 'routed' },
-  { module: 'harness-initiative-patrol.js', source: 'discovery', creates_executable_task: true, migration_status: 'routed' },
   { module: 'intent.js', source: 'discovery', creates_executable_task: true, migration_status: 'routed' },
   { module: 'impact-contract/gap-dependencies.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
   // 棒4（决策 ee4842a6/3feeae3e）：scope/initiative 层退役，闭环检测清空为 no-op，不再建任务
@@ -46,7 +43,6 @@ export const TASK_CREATION_INVENTORY = Object.freeze([
   // 棒4（决策 ee4842a6/3feeae3e）：scope/initiative/project 完成检测清空为 no-op，不再建任务
   { module: 'okr-closer.js', source: 'child', creates_executable_task: false, migration_status: 'routed' },
   { module: 'orchestrator-chat.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
-  { module: 'orchestrator/kernel-runtime-deps.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
   { module: 'pipeline-patrol.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
   { module: 'planner.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
   { module: 'post-publish-data-collector.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
@@ -75,7 +71,7 @@ export const TASK_CREATION_INVENTORY = Object.freeze([
   { module: 'routes/eval.js', source: 'api', creates_executable_task: true, migration_status: 'routed' },
   { module: 'routes/execution.js', source: 'api', creates_executable_task: true, migration_status: 'routed' },
   { module: 'routes/golden-paths.js', source: 'discovery', creates_executable_task: true, migration_status: 'routed' },
-  { module: 'routes/harness.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
+  { module: 'routes/staging.js', source: 'api', creates_executable_task: true, migration_status: 'routed' },
   // 链 2afa6d69 棒3（任务 8a40825a）：POST /projects/:id/tasks 一步建单，与 task-tasks.js 同走 createRoutedTask。
   { module: 'routes/project-locate-routes.js', source: 'api', creates_executable_task: true, migration_status: 'routed' },
   { module: 'routes/task-tasks.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
@@ -86,7 +82,6 @@ export const TASK_CREATION_INVENTORY = Object.freeze([
   // 子任务由手机领单器真领真跑，所以 creates_executable_task=true。
   { module: 'routing/qiumi-router.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
   { module: 'rumination.js', source: 'discovery', creates_executable_task: true, migration_status: 'routed' },
-  { module: 'staging-promote.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
   { module: 'suggestion-dispatcher.js', source: 'discovery', creates_executable_task: true, migration_status: 'routed' },
   { module: 'image-retention-controller.js', source: 'scheduler', creates_executable_task: true, migration_status: 'routed' },
   { module: 'preview-cache-controller.js', source: 'scheduler', creates_executable_task: true, migration_status: 'routed' },

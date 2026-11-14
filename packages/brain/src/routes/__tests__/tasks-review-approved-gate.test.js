@@ -35,7 +35,7 @@ describe('真实PATCH完成审查门只允许明确approved', () => {
     expect(res.body.current_review_status).toBe(review||null);
     expect(effects.block).toHaveBeenCalledWith(id,expect.objectContaining({reason:'review_not_approved'}));
     expect(updates).toEqual([]); expect(task.status).toBe('in_progress');
-    expect(effects.emit).not.toHaveBeenCalled(); expect(effects.terminal).not.toHaveBeenCalled(); expect(effects.promote).not.toHaveBeenCalled();
+    expect(effects.emit).not.toHaveBeenCalled(); expect(effects.terminal).not.toHaveBeenCalled();
   });
   it('请求自称approved不能覆盖数据库的rejected',async () => {
     task.review_status='rejected';const res=await patch({status:'completed',review_status:'approved'});
@@ -52,7 +52,7 @@ describe('真实PATCH完成审查门只允许明确approved', () => {
     expect(res.status).toBe(200); expect(res.body.success).toBe(true); expect(res.body.status).toBe('completed');
     expect(updates).toHaveLength(1);expect(updates[0].params[0]).toBe('completed');
     expect(effects.block).not.toHaveBeenCalled(); expect(effects.emit).toHaveBeenCalledWith('task_status_changed',expect.objectContaining({task_id:id,from:'in_progress',to:'completed'}));
-    expect(effects.terminal).toHaveBeenCalledTimes(1); expect(effects.promote).toHaveBeenCalledTimes(1);
+    expect(effects.terminal).toHaveBeenCalledTimes(1);
   });
   it('blocked审核通过仍可重试完成',async () => {
     task.status='blocked'; const res=await patch({status:'completed'});
@@ -75,10 +75,23 @@ describe('真实PATCH完成审查门只允许明确approved', () => {
     task.pr_url='https://github.com/synthetic/owned/pull/1';const res=await patch({status:'completed'});
     expect(res.status).toBe(422);expect(res.body.code).toBe('PR_NOT_MERGED');expect(updates).toEqual([]);
   });
-  it('skill-relay保原独立finalize权威且不因rejected越权',async () => {
-    task.task_type='harness_initiative';task.orchestrator='skill-relay';task.review_status='rejected';
-    const res=await patch({status:'completed'});
-    expect(res.status).toBe(200);expect(res.body.accepted).toBe(false);expect(res.body.success).toBe(false);
-    expect(effects.finalize).toHaveBeenCalledTimes(1);expect(effects.block).not.toHaveBeenCalled();expect(updates[0].sql).not.toMatch(/status = \$/);
+  it('首次随result上报OPEN PR不能直接完成，真实PR核验未过不写状态',async()=>{
+    const error=Object.assign(Error('PR_NOT_MERGED'),{code:'PR_NOT_MERGED'});effects.verifyPr.mockRejectedValue(error);
+    const res=await patch({status:'completed',result:{pr_url:'https://github.com/owned/repo/pull/1',merged:true}});
+    expect(res.status).toBe(422);expect(res.body.code).toBe('PR_NOT_MERGED');expect(updates).toEqual([]);expect(effects.terminal).not.toHaveBeenCalled();
+  });
+  it('已存PR但合并缓存为空，真实核验MERGED后可完成，不被旧缓存挡住',async()=>{
+    task.pr_url='https://github.com/owned/repo/pull/1';task.pr_merged_at=null;
+    effects.verifyPr.mockResolvedValue({url:task.pr_url,mergedAt:'2026-11-14T00:00:00Z'});
+    const res=await patch({status:'completed',result:{pr_url:task.pr_url}});
+    expect(res.status).toBe(200);expect(updates).toHaveLength(1);expect(effects.verifyPr).toHaveBeenCalledWith(expect.objectContaining({pr_url:task.pr_url,pr_merged_at:null}),expect.any(Object));
+  });
+  it.each(['code_review','pr_review','research'])('%s可完成合并前评审，OPEN嵌套引用不调用PR查询',async task_type=>{
+    const {verifyTaskCompletionPr}=await vi.importActual('../../lib/task-completion-pr.js');
+    const url='https://github.com/owned/repo/pull/10',readPr=vi.fn().mockResolvedValue({url,state:'OPEN',mergedAt:null});
+    task.task_type=task_type;task.review_required_raw='false';task.payload={pr_url:url};task.result={pr_url:url};
+    effects.verifyPr.mockImplementation((current,body)=>verifyTaskCompletionPr(current,body,{readPr}));
+    const res=await patch({status:'completed',result:{pr_url:url,verdict:'APPROVED'}});
+    expect(res.status).toBe(200);expect(updates).toHaveLength(1);expect(effects.terminal).toHaveBeenCalledOnce();expect(readPr).not.toHaveBeenCalled();
   });
 });

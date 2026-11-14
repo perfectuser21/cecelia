@@ -280,21 +280,17 @@ features:
     runtime: {}
 
   - feature_id: provider_neutral_harness
-    name: Provider-neutral Harness Kernel
-    purpose: 用统一 relay 契约和冻结 Skill 调度 Claude Code、Codex 等可替换执行器，并保留独立对抗验收
+    name: Fleet Worker 共享运行部件
+    purpose: 登记现役Fleet节点准入、工作目录、Provider传输与凭据封套的共享实现和测试
     maturity: 2
     code:
       root: packages/brain/src/orchestrator
       entry_files:
-        - packages/brain/src/orchestrator/run.js
-        - packages/brain/src/orchestrator/dispatcher.js
         - packages/brain/src/orchestrator/execution-contract.js
         - packages/brain/src/orchestrator/workspace-spec.js
         - packages/brain/src/orchestrator/production-transport.js
         - packages/brain/src/orchestrator/remote-bridge-transport.js
         - packages/brain/src/orchestrator/credential-broker.js
-        - packages/brain/src/harness-skill-relay.js
-        - packages/brain/src/harness-relay-watchdog.js
         - packages/brain/config/fleet-node-profiles.json
         - packages/brain/src/orchestrator/fleet-node/node-profile.js
         - packages/brain/src/orchestrator/fleet-node/node-admission.js
@@ -323,19 +319,7 @@ features:
       api_doc: packages/brain/src/orchestrator/README.md
       runbook: packages/brain/src/orchestrator/README.md
     skills: []
-    apis:
-      - method: POST
-        path: /api/brain/harness/attempts/:attemptId/heartbeat
-        service: brain
-        purpose: 延长当前 provider attempt 的执行租约
-        code_file: packages/brain/src/routes/harness-callback.js
-        auth: internal
-      - method: POST
-        path: /api/brain/harness/attempts/:attemptId/callback
-        service: brain
-        purpose: 幂等接收并校验结构化 HarnessResult
-        code_file: packages/brain/src/routes/harness-callback.js
-        auth: internal
+    apis: []
     tests:
       unit:
         - packages/brain/src/orchestrator/__tests__/execution-contract.test.js
@@ -345,32 +329,26 @@ features:
         - packages/brain/src/orchestrator/providers/claude.test.js
         - packages/brain/src/orchestrator/providers/codex.test.js
         - packages/brain/src/orchestrator/providers/grok.test.js
-        - packages/brain/src/orchestrator/__tests__/dispatcher.test.js
         - packages/brain/src/orchestrator/workspace-spec.test.js
         - packages/brain/src/orchestrator/production-transport.test.js
         - packages/brain/src/orchestrator/remote-bridge-transport.test.js
         - packages/brain/src/orchestrator/credential-broker.test.js
         - packages/brain/src/orchestrator/providers/grok.test.js
-        - packages/brain/src/routes/__tests__/harness-attempt-callback.test.js
-        - packages/brain/src/__tests__/harness-relay-watchdog.test.js
         - packages/brain/src/orchestrator/fleet-node/node-profile.test.js
         - packages/brain/src/orchestrator/fleet-node/node-admission.test.js
         - packages/brain/src/orchestrator/fleet-node/node-admission-client.test.js
         - packages/brain/src/orchestrator/preflight/production-probes.test.js
-        - packages/brain/src/orchestrator/preflight/production-wiring.test.js
         - packages/brain/scripts/fleet-worker/fleet-worker.test.js
         - packages/brain/scripts/fleet-worker/workspace-manager.test.cjs
         - packages/brain/scripts/fleet-worker/attempt-runner.test.cjs
         - packages/brain/scripts/fleet-worker/credential-envelope.test.cjs
       integration:
-        - packages/brain/src/__tests__/integration/kernel-wiring.pg.integration.test.js
         - packages/brain/scripts/fleet-worker/install-fleet-worker.test.sh
         - packages/brain/scripts/fleet-worker/fleet-worker-docker-access.test.sh
         - packages/brain/scripts/fleet-worker/fleet-nodectl.test.sh
         - packages/brain/scripts/fleet-worker/reconcile-fleet-node-baseline.test.sh
         - packages/brain/scripts/fleet-worker/fleet-rollout.test.sh
       e2e:
-        - packages/brain/scripts/smoke/provider-neutral-harness-smoke.sh
         - packages/brain/scripts/smoke/kernel-fleet-node-admission-smoke.sh
         - packages/brain/scripts/smoke/fleet-worker-workspace-smoke.sh
         - packages/brain/scripts/smoke/fleet-credential-envelope-smoke.sh
@@ -379,19 +357,6 @@ features:
         - packages/brain/scripts/smoke/fleet-worker-workspace-smoke.sh
         - packages/brain/scripts/smoke/fleet-credential-envelope-smoke.sh
     capabilities:
-      - id: provider_neutral_harness_relay
-        name: 历史 Harness Relay（新执行已退役，仅保留观察与历史安全合同）
-        entry_file: packages/brain/src/orchestrator/run.js
-        maturity: 2
-        tests:
-          unit:
-            - packages/brain/src/orchestrator/__tests__/execution-contract.test.js
-            - packages/brain/src/orchestrator/__tests__/dispatcher.test.js
-          integration:
-            - packages/brain/src/__tests__/integration/kernel-wiring.pg.integration.test.js
-          e2e:
-            - packages/brain/scripts/smoke/provider-neutral-harness-smoke.sh
-        status: retired
       - id: fleet_node_base_admission
         name: Fleet Node mandatory base admission
         entry_file: packages/brain/src/orchestrator/fleet-node/node-admission.js
@@ -402,7 +367,6 @@ features:
             - packages/brain/src/orchestrator/fleet-node/node-admission.test.js
             - packages/brain/src/orchestrator/fleet-node/node-admission-client.test.js
             - packages/brain/src/orchestrator/preflight/production-probes.test.js
-            - packages/brain/src/orchestrator/preflight/production-wiring.test.js
             - packages/brain/scripts/fleet-worker/fleet-worker.test.js
           integration:
             - packages/brain/scripts/fleet-worker/install-fleet-worker.test.sh
@@ -439,7 +403,6 @@ features:
             - packages/brain/src/orchestrator/remote-bridge-transport.test.js
             - packages/brain/scripts/fleet-worker/credential-envelope.test.cjs
             - packages/brain/scripts/fleet-worker/attempt-runner.test.cjs
-            - packages/brain/src/routes/__tests__/harness-attempt-callback.test.js
           integration:
             - docker/cecelia-runner/__tests__/entrypoint-codex-credential-envelope.test.sh
           e2e:
@@ -452,8 +415,7 @@ features:
       layers:
         - L2
         - L3
-    runtime:
-      flag: payload.harness_runtime=kernel-v1
+    runtime: {}
   - feature_id: okr_system
     name: OKR 层级管理
     purpose: 管理 Vision→Objective→KR→Project→Scope→Initiative→Task 7层结构

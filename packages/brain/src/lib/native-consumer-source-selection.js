@@ -3,7 +3,7 @@ import {createHash} from 'node:crypto';
 import {buildExistingOpsSources,EXISTING_OPS_IDENTITIES,EXISTING_OPS_REPO,EXISTING_OPS_SCOPE} from './existing-ops-source.js';
 import {readExistingOpsRegistry,validateExistingOpsRegistry} from './existing-ops-registration.js';
 import {readNativeConsumerRuntime,assertNativeConsumerRuntime} from './native-consumer-runtime.js';
-import {resolveGitHubToken} from '../harness-credentials.js';
+import {resolveGitHubToken} from '../github-credentials.js';
 import {stepSha256} from '../../scripts/sync-steps-from-workspace.mjs';
 const SHA=/^[a-f0-9]{40}$/;
 const native=q=>q.repo===EXISTING_OPS_REPO&&q.scope===EXISTING_OPS_SCOPE&&SHA.test(q.revision||'');

@@ -35,7 +35,7 @@ describe('actions.js - domain 自动填充', () => {
 
   // ===== createTask =====
   describe('createTask - domain 填充', () => {
-    it('harness_initiative 缺省仍按 coding mutation 分类，不得落入 operations', async () => {
+    it('dev缺省仍按coding mutation分类，不得落入 operations', async () => {
       mockQuery.mockResolvedValueOnce({ rows: [] });
       mockCreateRoutedTask.mockResolvedValueOnce({
         task: { id: 'task-kernel', title: '修复执行链', status: 'queued' },
@@ -43,7 +43,7 @@ describe('actions.js - domain 自动填充', () => {
 
       await createTask({
         title: '修复执行链',
-        task_type: 'harness_initiative',
+        task_type: 'dev',
         trigger_source: 'cortex',
         declared_change_kind: 'bugfix',
         repo_hint: 'cecelia',

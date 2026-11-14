@@ -205,7 +205,6 @@ for (const [name, overrides] of [
   ['t10-capture-atom-routing-smoke.sh', { DB_NAME: 'cecelia' }],
   ['preview-ledger-activate-smoke.sh', { DB_NAME: 'cecelia', PGDATABASE: 'cecelia_test' }],
   ['workflow-run-lost-deadline-smoke.sh', { DATABASE_URL: '', PGDATABASE: 'cecelia' }],
-  ['c8a-harness-checkpoint-resume.sh', { CONTAINER_DATABASE_URL: unsafe }],
 ]) {
   test(`${name}: unused safe URI cannot hide the actual production connection`, async () => {
     await fixture(async ({ smoke, reachedBoundary, psqlCalls, requests }) => {

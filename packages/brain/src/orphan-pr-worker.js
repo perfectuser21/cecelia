@@ -29,7 +29,7 @@
  *   - 返回：{ scanned, merged, labeled, skipped, details }
  *   - 错误隔离：单个 PR 处理失败不阻止扫描其他 PR
  *   - 日志前缀：[orphan-pr-worker]
- *   - 参考 cleanup-worker.js / pipeline-watchdog.js
+ *   - 参考 cleanup-worker.js
  *
  * 落位: packages/brain/src/orphan-pr-worker.js（与 cleanup-worker.js 同级）
  */

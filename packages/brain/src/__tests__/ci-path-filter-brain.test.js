@@ -5,7 +5,7 @@ import brainConfig from '../../vitest.config.js';
 const detectsBrain = files => planChecks(files).some(row => row.component === 'brain-unit');
 describe('CI Brain 组件选择', () => {
   it('真实 Brain 源码与未分类跨包变更运行 Brain 测试', () => {
-    for (const file of ['packages/brain/src/routes/harness.js', 'packages/engine/src/index.ts'])
+    for (const file of ['packages/brain/src/routes/tasks.js', 'packages/engine/src/index.ts'])
       expect(detectsBrain([file])).toBe(true);
   });
   it('旧API服务不再触发Brain，现役共享features归Dashboard', () => {

@@ -6,7 +6,7 @@
 // unblockExpiredTasks 只挂在 executeTick 体内（tick-runner.js:1039），于是**死了四个月**。
 //
 // 同期断在 executeTick 里的其他安全网都已被一条条接回独立循环——
-// cleanupStaleClaims / checkStuckPipelines / autoFailTimedOutTasks / probeTaskLiveness
+// cleanupStaleClaims / autoFailTimedOutTasks / probeTaskLiveness
 // 四条都在 recovery-loop 里跑着，唯独 TTL 自愈这条漏了。
 //
 // 实测代价：blocked 积压 217 个，其中 15 个 blocked_until 已过期本该自动回 queued，
@@ -46,7 +46,6 @@ describe('F1 step1 · TTL 自愈接在活着的循环上', () => {
       pool: { query: vi.fn().mockResolvedValue({ rows: [] }) },
       sweepStaleDeviceLocks: vi.fn().mockResolvedValue(0),
       cleanupStaleClaims: vi.fn().mockResolvedValue({ cleaned: 0 }),
-      checkStuckPipelines: vi.fn().mockResolvedValue({ canceled: [] }),
       fetchInProgress: vi.fn().mockResolvedValue([]),
       autoFailTimedOutTasks: vi.fn().mockResolvedValue([]),
       probeTaskLiveness: vi.fn().mockResolvedValue([]),
@@ -62,7 +61,6 @@ describe('F1 step1 · TTL 自愈接在活着的循环上', () => {
       pool: { query: vi.fn().mockResolvedValue({ rows: [] }) },
       sweepStaleDeviceLocks: vi.fn().mockResolvedValue(0),
       cleanupStaleClaims: vi.fn().mockResolvedValue({ cleaned: 1 }),
-      checkStuckPipelines: vi.fn().mockResolvedValue({ canceled: [] }),
       fetchInProgress: vi.fn().mockResolvedValue([]),
       autoFailTimedOutTasks: vi.fn().mockResolvedValue([]),
       probeTaskLiveness,
@@ -79,7 +77,6 @@ describe('F1 step1 · TTL 自愈接在活着的循环上', () => {
       pool: { query: vi.fn().mockResolvedValue({ rows: [] }) },
       sweepStaleDeviceLocks: vi.fn().mockResolvedValue(0),
       cleanupStaleClaims: vi.fn().mockResolvedValue({ cleaned: 0 }),
-      checkStuckPipelines: vi.fn().mockResolvedValue({ canceled: [] }),
       fetchInProgress: vi.fn().mockResolvedValue([]),
       autoFailTimedOutTasks: vi.fn().mockResolvedValue([]),
       probeTaskLiveness: vi.fn().mockResolvedValue([]),

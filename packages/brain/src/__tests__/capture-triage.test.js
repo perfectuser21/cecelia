@@ -132,7 +132,7 @@ describe('runCaptureTriage 四路落地', () => {
     }));
     // A2：紧急收件建的是有头待办（mode=headed），必须带 headed_manual 字符串 "true" 才落有头账本行，
     // 否则路由按无头编码改投 coding_workflow，被 runner 无人值守认领
-    expect(createTask.mock.calls[0][0].payload).toMatchObject({ headed_manual: 'true', mode: 'headed' });
+    expect(createTask.mock.calls[0][0].payload).toMatchObject({ headed_manual: 'true' });
     const upd = pool.updates[0];
     expect(upd.sql).toMatch(/status = 'confirmed'/);
     expect(upd.params.join(' ')).toContain('[triage:urgent]');
@@ -148,18 +148,15 @@ describe('runCaptureTriage 四路落地', () => {
     expect(pool.updates).toHaveLength(0);
   });
 
-  it('line_backlog：handoff FAIL → 真调用 createTask 建 harness_initiative，atom 改写为 tasks/新task id', async () => {
+  it('line_backlog：handoff FAIL → 真调用 createTask 建dev有头待办，atom 改写为 tasks/新task id', async () => {
     const pool = makePool([{ id: 'a2', target_type: 'handoff', target_subtype: 'FAIL', content: 'x', routed_to_table: 'tasks', routed_to_id: 't1' }]);
     await runCaptureTriage(pool);
     expect(createTask).toHaveBeenCalledTimes(1);
     const callArg = createTask.mock.calls[0][0];
-    expect(callArg.task_type).toBe('harness_initiative');
+    expect(callArg.task_type).toBe('dev');
     expect(callArg.trigger_source).toBe('cortex');
     expect(callArg.priority).toBe('P1');
     expect(callArg.payload).toMatchObject({
-      orchestrator: 'skill-relay',
-      executor: 'claude',
-      mode: 'headed',
       headed_manual: 'true',
       journey_id: 'jrn-1',
     });

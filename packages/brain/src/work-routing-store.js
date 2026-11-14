@@ -1,3 +1,4 @@
+import {assertActiveDevelopmentTask} from './lib/task-type-registry.js';
 import {assertLinuxPoolAuthority} from './linux-pool/task-authority.js';
 import {assertGpuExecutionSupported} from './lib/gpu-execution-contract.js';
 import {assertAppServerAuthority} from './app-server/task-authority.js';
@@ -202,6 +203,7 @@ export function stripReanchorEvidence(evidence) {
 
 export async function createRoutedTask(db, request, repositoryFacts = null, options = {}) {
   assertGpuExecutionSupported(request.metadata);
+  assertActiveDevelopmentTask({kernel_continuation: request.kernel_continuation, task_type: request.requested_task_type ?? request.task?.task_type, payload:{...(request.metadata || {}), ...(request.task?.payload || {})}});
   assertGpuExecutionSupported(request.task?.payload);
   assertJanitorAuthority(request, options);
   assertAppServerAuthority(request, options);
@@ -299,10 +301,7 @@ export async function createRoutedTask(db, request, repositoryFacts = null, opti
       impact_contract_required: decision.impact_contract_required,
       ...(decision.evidence.branch ? { branch: decision.evidence.branch } : {}),
       ...(decision.evidence.base_sha ? { base_sha: decision.evidence.base_sha } : {}),
-      ...(decision.pipeline === 'harness' ? {
-        orchestrator: 'skill-relay',
-        harness_runtime: 'kernel-v1',
-      } : {}),
+      ...(decision.pipeline === 'headed_development' ? {headed_manual:'true',orchestrator:'headed-session'} : {}),
       // 无头编码单改投 runner（A2）：对齐 new-task.mjs 的 payload 形状，runner plan.mjs isSwitched 按类型认领
       ...(decision.pipeline === 'coding_workflow' ? {
         coding_workflow: true,
@@ -310,21 +309,16 @@ export async function createRoutedTask(db, request, repositoryFacts = null, opti
       } : {}),
     };
     // 调用方沿用旧 kernel 元数据（如 GP 签字 metadata）时不把 kernel-v1 标记带进 runner 单
-    if (decision.pipeline === 'coding_workflow') delete payload.harness_runtime;
+    delete payload.harness_runtime;
+    delete payload.harness_mode;
     if (existing.rows[0]) {
       const persisted = existing.rows[0].persisted_receipt;
       const persistedDirectSeed = persisted.direct_contract_seed ?? null;
       const legacyDirectSeed = directContractSeed != null && persistedDirectSeed == null;
-      // A2 前已按无头 kernel 路由入账的同一来源（重放/重试）：路由形态从 harness 改为 coding_workflow，
-      // 仍算同一路由返回已有单，不报幂等冲突（已有单由 A1 drain 收口）
-      const legacyKernelReplay = persisted.pipeline === 'harness'
-        && persisted.canonical_task_type === 'harness_initiative'
-        && decision.pipeline === 'coding_workflow';
       const sameRoute = persisted.work_kind === decision.work_kind
         && persisted.change_kind === decision.change_kind
-        && (persisted.pipeline === decision.pipeline || legacyKernelReplay)
-        && (legacyKernelReplay ||
-          persisted.canonical_task_type === decision.canonical_task_type
+        && persisted.pipeline === decision.pipeline
+        && (persisted.canonical_task_type === decision.canonical_task_type
           // 归一前已按借壳老类型入账的同一来源（重放/重试）仍算同一路由，返回已有单，不报幂等冲突
           || (normalizedType !== request.requested_task_type
             && persisted.canonical_task_type === request.requested_task_type)
@@ -334,8 +328,8 @@ export async function createRoutedTask(db, request, repositoryFacts = null, opti
           === (decision.execution_profile_override ?? null)
         && persisted.repo === decision.repo
         && JSON.stringify(persisted.map_scope) === JSON.stringify(decision.map_scope)
-        && (legacyKernelReplay || persisted.impact_contract_required === decision.impact_contract_required)
-        && (legacyKernelReplay || persisted.orchestrator === decision.orchestrator)
+        && persisted.impact_contract_required === decision.impact_contract_required
+        && persisted.orchestrator === decision.orchestrator
         && JSON.stringify(canonicalJson(stripReanchorEvidence(persisted.evidence)))
           === JSON.stringify(canonicalJson(stripReanchorEvidence(decision.evidence)))
         && (

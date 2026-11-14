@@ -1,3 +1,4 @@
+import {verifyTaskCompletionPr} from '../lib/task-completion-pr.js';
 import {headedTaskMutation} from './task-headed-takeover.js';
 import { rateLimit } from 'express-rate-limit';
 import { TASK_MUTATION_RATE_LIMIT_OPTIONS } from './task-mutation-rate-limit.js';
@@ -17,8 +18,6 @@ export function registerTaskPatchRoute(router, { pool, terminalStatuses }) {
         result: taskResult,
         description,
       } = req.body;
-      let harnessDemoted = false;
-      let harnessDemoteReason = null;
       const reservedError = authoringMutationError(null, { result: taskResult });
       if (reservedError) return res.status(409).json(reservedError);
 
@@ -26,7 +25,7 @@ export function registerTaskPatchRoute(router, { pool, terminalStatuses }) {
         const current = await pool.query(
           `SELECT status, claimed_by, payload, result,
                   task_type,
-                  payload->>'orchestrator' AS orchestrator,
+                  payload->>'review_required' AS review_required_raw, review_status, pr_url, pr_merged_at,
                   EXISTS (
                     SELECT 1 FROM harness_gaps
                     WHERE source_task_id = tasks.id AND status <> 'resolved'
@@ -62,13 +61,12 @@ export function registerTaskPatchRoute(router, { pool, terminalStatuses }) {
           currentTask.status === 'blocked'
           && ['queued', 'in_progress', 'completed'].includes(status)
           && (
-            currentTask.has_unresolved_harness_gaps
-            || currentTask.has_pending_hard_dependencies
+            currentTask.has_unresolved_harness_gaps || currentTask.has_pending_hard_dependencies
           )
         ) {
           return res.status(409).json({
             error: 'harness_gap_dependencies_unresolved',
-            details: 'Harness Gap 或硬依赖尚未验真完成',
+            details: '硬依赖尚未验真完成',
           });
         }
         if (terminalStatuses.includes(currentTask.status) && !terminalStatuses.includes(status)) {
@@ -77,24 +75,18 @@ export function registerTaskPatchRoute(router, { pool, terminalStatuses }) {
             details: `Cannot transition from terminal status '${currentTask.status}' to '${status}'`,
           });
         }
-        if (
-          status === 'completed'
-          && currentTask.task_type === 'harness_initiative'
-          && currentTask.orchestrator === 'skill-relay'
-        ) {
-          const { finalizeHarnessTask } = await import('../lib/harness-finalize.js');
-          const finalization = await finalizeHarnessTask(req.params.id, { pool });
-          if (finalization.applies && !finalization.allow) {
-            harnessDemoted = true;
-            harnessDemoteReason = finalization.reason;
+        if (status === 'completed' && currentTask.status !== 'completed') {
+          if (currentTask.review_required_raw === 'true' && currentTask.review_status !== 'approved') {
+            return res.status(422).json({code:'REVIEW_NOT_APPROVED',error:'完成前必须通过审核'});
           }
+          await verifyTaskCompletionPr(currentTask,req.body);
         }
       }
 
       const setClauses = [];
       const params = [];
       let paramIndex = 1;
-      if (status !== undefined && !harnessDemoted) {
+      if (status !== undefined) {
         setClauses.push(`status = $${paramIndex++}`);
         params.push(status);
         if (status === 'in_progress') {
@@ -123,7 +115,7 @@ export function registerTaskPatchRoute(router, { pool, terminalStatuses }) {
         setClauses.push(`success_metrics = $${paramIndex++}`);
         params.push(JSON.stringify(taskResult));
       }
-      if (setClauses.length === 0 && !harnessDemoted) {
+      if (setClauses.length === 0) {
         return res.status(400).json({ error: 'No fields to update' });
       }
 
@@ -155,13 +147,12 @@ export function registerTaskPatchRoute(router, { pool, terminalStatuses }) {
         return res.status(404).json({ error: 'Task not found', id: req.params.id });
       }
       // 终态收口（lib/task-terminal.js）：动态 SET 写完终态后必经钩子（completed / completed_no_pr 接棒）
-      if (!harnessDemoted && isTerminalStatus(result.rows[0].status) && isTerminalStatus(status)) {
+      if (isTerminalStatus(result.rows[0].status) && isTerminalStatus(status)) {
         await pool.afterCommit(original => afterTerminalTransition(original, req.params.id, result.rows[0].status, { sessionId: req.headers?.['x-session-id'] || null }));
       }
-      return res.json(harnessDemoted
-        ? { ...result.rows[0], accepted: false, reason: harnessDemoteReason }
-        : result.rows[0]);
+      return res.json(result.rows[0]);
     } catch (error) {
+      if (['PR_NOT_MERGED','PR_MERGE_UNVERIFIED'].includes(error.code)) return res.status(422).json({code:error.code,error:error.message});
       return res.status(500).json({ error: 'Failed to update task', details: error.message });
     }
   }));

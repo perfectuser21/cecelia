@@ -53,7 +53,6 @@ export async function runDiskGuard(deps = {}) {
   const _exec = deps.execAsync || execAsync
   const _raise = deps.raise || raise
   const _sendBark = deps.sendBark || sendBark
-  const _runWorktreeReaper = deps.runWorktreeReaper || null
   const _cleanOldKernelLogs = deps.cleanOldKernelLogs || cleanOldKernelLogsDefault
 
   let used = -1
@@ -71,13 +70,6 @@ export async function runDiskGuard(deps = {}) {
       // INV-04: 固定顺序
       await _exec(buildHostCmd('docker container prune -f --filter until=24h', inContainer)).catch(e => console.warn('[disk_check] docker container prune failed:', e.message))
       await _exec(buildHostCmd('docker builder prune -f', inContainer)).catch(e => console.warn('[disk_check] docker builder prune failed:', e.message))
-      if (_runWorktreeReaper) {
-        await _runWorktreeReaper().catch(e => console.warn('[disk_check] worktree reaper failed:', e.message))
-      } else {
-        // 动态 import 避免循环依赖
-        const { runWorktreeReaper } = await import('./worktree-reaper.js')
-        await runWorktreeReaper().catch(e => console.warn('[disk_check] worktree reaper failed:', e.message))
-      }
       await _exec(buildHostCmd('npm cache clean --force 2>/dev/null; brew cleanup 2>/dev/null; true', inContainer)).catch(e => console.warn('[disk_check] npm/brew cache clean failed:', e.message))
 
       const kernelLogDir = join(process.env.REPO_ROOT || fileURLToPath(new URL('../../../..', import.meta.url)), 'logs', 'kernel')

@@ -9,7 +9,6 @@
 
 import { describe, it, expect } from 'vitest';
 import systemHub from './index';
-import execution from '../execution/index';
 import type { FeatureRoute } from '../types';
 
 function routeFor(routes: FeatureRoute[], path: string): FeatureRoute | undefined {
@@ -24,13 +23,7 @@ describe('system-hub 路由退役（War Room PR-C）', () => {
     expect(r?.component).toBe('WarRoomPage');
   });
 
-  it('保留 /pipeline/:id 详情（component HarnessPipelineDetailPage）', () => {
-    expect(routeFor(routes, '/pipeline/:id')?.component).toBe('HarnessPipelineDetailPage');
-  });
 
-  it('保留 /pipeline/:id/step/:step 步骤钻取', () => {
-    expect(routeFor(routes, '/pipeline/:id/step/:step')?.component).toBe('HarnessPipelineStepPage');
-  });
 
   it('保留 /live-monitor（不动）', () => {
     expect(routeFor(routes, '/live-monitor')?.component).toBe('LiveMonitor');
@@ -42,11 +35,6 @@ describe('system-hub 路由退役（War Room PR-C）', () => {
     expect(r?.component).toBeUndefined();
   });
 
-  it('退役 /harness/:id → redirect /pipeline', () => {
-    const r = routeFor(routes, '/harness/:id');
-    expect(r?.redirect).toBe('/pipeline');
-    expect(r?.component).toBeUndefined();
-  });
 
   it('移除 /initiatives/:id 的死 harness 组件映射（不再指向 InitiativeDetail）', () => {
     // system-hub 不再注册 /initiatives/:id 组件路由（planning 仍持有该路径的工作页）
@@ -67,27 +55,5 @@ describe('system-hub 路由退役（War Room PR-C）', () => {
     const sys = routeFor(routes, '/system');
     const children = sys?.navItem?.children ?? [];
     expect(children.some(c => c.path === '/autonomous')).toBe(false);
-  });
-});
-
-describe('execution 路由退役（War Room PR-C）', () => {
-  const routes = execution.routes;
-
-  it('旧 /harness-pipeline 兼容入口保留 WarRoomPage 组件映射', () => {
-    const r = routeFor(routes, '/harness-pipeline');
-    expect(r?.component).toBe('WarRoomPage');
-    expect(r?.navItem).toBeUndefined();
-  });
-
-  it('退役 /harness-pipeline/:id → 直接渲染 HarnessPipelineDetailPage', () => {
-    expect(routeFor(routes, '/harness-pipeline/:id')?.component).toBe('HarnessPipelineDetailPage');
-  });
-
-  it('退役 /harness-pipeline/:id/step/:step → 直接渲染 HarnessPipelineStepPage', () => {
-    expect(routeFor(routes, '/harness-pipeline/:id/step/:step')?.component).toBe('HarnessPipelineStepPage');
-  });
-
-  it('execution components 不再含 HarnessPipelinePage', () => {
-    expect(Object.keys(execution.components)).not.toContain('HarnessPipelinePage');
   });
 });

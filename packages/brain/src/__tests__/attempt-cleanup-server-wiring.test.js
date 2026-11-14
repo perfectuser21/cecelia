@@ -34,10 +34,10 @@ describe('attempt cleanup delivery server wiring', () => {
     );
   });
 
-  it('starts non-blockingly before harness revival and automatic tick dispatch', () => {
+  it('starts non-blockingly before automatic tick dispatch', () => {
     const startIndex = server.indexOf('attemptCleanupLoop.start()');
     expect(startIndex).toBeGreaterThan(-1);
-    expect(startIndex).toBeLessThan(server.indexOf('reviveOrphanedHarnessTasks'));
+    expect(server.indexOf('await initTickLoop()')).toBeGreaterThan(-1);
     expect(startIndex).toBeLessThan(server.indexOf('await initTickLoop()'));
     expect(server).not.toContain('await attemptCleanupLoop.start()');
   });

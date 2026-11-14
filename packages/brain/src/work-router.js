@@ -1,3 +1,4 @@
+import {assertActiveDevelopmentTask} from './lib/task-type-registry.js';
 import {assertLinuxPoolAuthority} from './linux-pool/task-authority.js';
 import {assertAppServerAuthority} from './app-server/task-authority.js';
 import { assertJanitorAuthority } from './janitor-authority.js';
@@ -109,7 +110,6 @@ export function resolveRepo(request, repositoryFacts = []) {
   return matches[0].repo;
 }
 
-// 有头账本行（A2，任务 eb9094ee）：有头 /dev / Codex 会话拿 harness_initiative 记账——带 headed_manual、
 // 直接以非 queued|blocked 入账，或声明 executor_kind=headed-session。其余编码单是无头的，改投 coding_workflow runner。
 const HEADLESS_ENTRY_STATUSES = new Set(['queued', 'blocked']);
 
@@ -174,8 +174,8 @@ export function selectPipeline(input) {
       }
     }
     if (input.headed === true) {
-      // 有头账本行：执行者是会话里的人，类型沿用 harness_initiative（finalizeHarnessTask 收账 / shepherd / warroom 按它判）
-      return { work_kind: input.work_kind, change_kind: input.change_kind, pipeline: 'harness', canonical_task_type: 'harness_initiative', default_execution_profile: defaultProfile, execution_profile_override: override, impact_contract_required: true, orchestrator: 'kernel-harness-v2', ...axes };
+      // 有头开发由当前会话执行，使用通用dev账本，不交给Runner或旧编排器。
+      return { work_kind: input.work_kind, change_kind: input.change_kind, pipeline: 'headed_development', canonical_task_type: 'dev', default_execution_profile: defaultProfile, execution_profile_override: override, impact_contract_required: true, orchestrator: 'headed-session', ...axes };
     }
     // 无头编码单：无头 kernel 已退役（A1），由 coding-workflow-runner 认领跑 spec→GAN→实现→QA→合并
     return { work_kind: input.work_kind, change_kind: input.change_kind, pipeline: 'coding_workflow', canonical_task_type: 'coding_workflow', default_execution_profile: defaultProfile, execution_profile_override: override, impact_contract_required: false, orchestrator: 'coding-workflow-runner', ...axes };
@@ -195,6 +195,7 @@ export function selectPipeline(input) {
 }
 
 export function routeWork(input, repositoryFacts = [], context = {}) {
+  assertActiveDevelopmentTask({kernel_continuation: input.kernel_continuation, task_type: input.requested_task_type ?? input.task?.task_type, payload:{...(input.metadata || {}), ...(input.task?.payload || {})}});
   const previewCache = assertLinuxPoolAuthority(input, context) || assertJanitorAuthority(input, context) || assertAppServerAuthority(input, context);
   const request = normalizeWorkRequest(input);
   const work_kind = previewCache ? 'operations' : classifyWork(request);
@@ -203,9 +204,7 @@ export function routeWork(input, repositoryFacts = [], context = {}) {
   // execution 类交付物是 run,不强制解析 repo(map/impact 尺子不适用)
   const codingCode = work_kind === 'coding_mutation' && artifact_kind === 'code';
   const repo = codingCode ? resolveRepo(request, repositoryFacts) : null;
-  // kernel_continuation：kernel 自身的续跑单（planner recovery 后继，绑定 initiative_runs 收据）只能是 harness_initiative，
-  // runner 不认 kernel 收据；随 A5 删 kernel 代码一并移除。
-  const headed = codingCode && (isHeadedLedgerRequest(input) || input.kernel_continuation === true);
+  const headed = codingCode && isHeadedLedgerRequest(input);
   // 无头编码单只能交给 runner；runner 不支持的仓库不建无头单（有头带 headed_manual 照建）
   if (codingCode && !headed && runnerRepoOf(repo) === null) throw runnerRepoUnsupported(repo);
   return {

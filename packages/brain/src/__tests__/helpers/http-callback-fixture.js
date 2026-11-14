@@ -84,13 +84,12 @@ vi.mock('../../executor.js', () => ({
 }));
 
 vi.mock('../../lib/review-task-types.js', () => ({
-  REVIEW_TASK_TYPES: ['harness_contract_review', 'code_review'],
+  REVIEW_TASK_TYPES: ['code_review'],
 }));
 
 vi.mock('../../lib/callback-postprocess.js', () => ({
   serialUnlockNext: vi.fn().mockResolvedValue(null),
   writeReviewResult: vi.fn().mockResolvedValue(null),
-  promoteRegressionOnHarnessMerged: vi.fn().mockResolvedValue(null),
 }));
 
 vi.mock('../../lib/cascade-writeback.js', () => ({
@@ -101,9 +100,6 @@ vi.mock('../../lib/internal-service-auth.js', () => ({
   internalServiceHeaders: vi.fn().mockReturnValue({}),
 }));
 
-vi.mock('../../lib/harness-report-writeback.js', () => ({
-  finalizeHarnessReportFeature: vi.fn().mockResolvedValue(null),
-}));
 
 vi.mock('../../desire-feedback.js', () => ({
   updateDesireFromTask: vi.fn().mockResolvedValue(null),
@@ -130,12 +126,6 @@ vi.mock('../../zenithjoy-db.js', () => ({
   getZenithjoyPool: vi.fn().mockReturnValue(null),
 }));
 
-vi.mock('../../execution.js', () => ({
-  readVerdictWithRetry: vi.fn().mockResolvedValue(null),
-  persistVerdictTimeout: vi.fn().mockResolvedValue(null),
-  isBridgeSessionCrash: vi.fn().mockReturnValue(false),
-  handleEvaluateSessionCrash: vi.fn().mockResolvedValue(null),
-}));
 
 vi.mock('../../lib/retry-policy.js', () => ({
   isTransientClass: vi.fn().mockReturnValue(false),
@@ -170,7 +160,7 @@ vi.mock('../../progress-ledger.js', () => ({
 }));
 
 vi.mock('../../actions.js', () => ({
-  createTask: vi.fn().mockResolvedValue({ id: 'new-harness-task-001' }),
+  createTask: vi.fn().mockResolvedValue({ id: 'new-callback-task-001' }),
 }));
 
 
