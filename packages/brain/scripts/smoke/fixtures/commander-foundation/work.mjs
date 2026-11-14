@@ -11,4 +11,5 @@ if(['effect-window','unknown-readback'].includes(input.scenario)&&key==='prepare
   fs.writeFileSync(path.join(input.root,'fault-window'),'effect-committed-before-receipt');
   await new Promise(()=>setInterval(()=>{},1000));
 }
+if(input.scenario==='auto-supervise'&&key==='prepare'){fs.writeFileSync(path.join(input.root,'fault-window'),'supervised-effect-committed');await new Promise(r=>setTimeout(r,2500));}
 console.log(JSON.stringify(result));

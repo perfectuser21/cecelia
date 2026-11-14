@@ -10,9 +10,10 @@ import {DBOS} from '@dbos-inc/dbos-sdk';
 import {configureCommanderWorkflow,startCommanderWorkflow} from '../../src/durable/commander-workflow.js';
 import {createCommanderActionStore} from '../../src/durable/commander-action-store.js';
 import {createCodexCommander} from '../../src/orchestrator/commander-codex.js';
+import {durableWrite} from '../../src/orchestrator/activity-supervisor.js';
 import {digest,normalizeCommanderRun} from '../../src/orchestrator/commander-decision.js';
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
-const runtimeFiles = ['host.mjs','../../src/durable/commander-workflow.js','../../src/durable/commander-action-store.js',
+const runtimeFiles = ['supervise.mjs','skill-adapter.mjs','skill-worker.mjs','skill-protocol.mjs','../../src/orchestrator/activity-supervisor.js','../../src/orchestrator/activity-supervisor-state.cjs','host.mjs','../../src/durable/commander-workflow.js','../../src/durable/commander-action-store.js',
   '../../src/orchestrator/commander-decision.js','../../src/orchestrator/commander-codex.js',
   '../coding-workflow/lib/codex-judge.mjs','../coding-workflow/lib/claude.mjs','../coding-workflow/lib/codex-session.mjs',
   '../coding-workflow/lib/provenance-path.mjs','../coding-workflow/lib/preview-bridge.mjs','../../../../package-lock.json',
@@ -66,16 +67,16 @@ export async function runCommanderHost({manifestPath,resultPath}) {
     held=(await owner.query('SELECT pg_try_advisory_lock($1::bigint) AS acquired',[ownerKey])).rows[0].acquired;
     if(!held)throw Error('commander_host_already_running');
     const adapter = await import(pathToFileURL(path.resolve(profile.cwd,profile.adapter)).href);
-    const env = await adapter.createRuntime({profile,pool});
-    const decide = profile.commander.provider === 'codex' ? createCodexCommander(profile.commander) : env.decide;
+    const env = await adapter.createRuntime({profile,pool,run:normalizeCommanderRun(run),verifySource:verifyOwnership});
+    const decide = profile.commander.provider === 'codex' ? createCodexCommander({...profile.commander,manifestPath:path.resolve(manifestPath)}) : env.decide;
     configureCommanderWorkflow({...env,decide,cwd:profile.cwd,revision,verifySource:verifyOwnership,actionStore:createCommanderActionStore(pool)});
     DBOS.setConfig({name:'cecelia-commander-foundation',applicationVersion:revision,executorID:`commander-${run.run_id}`,
       systemDatabaseUrl:url,systemDatabaseSchemaName:dbosSchema});
     await DBOS.launch();
     const {workflow_id,handle} = await startCommanderWorkflow(run);
     const result = await handle.getResult();
-    const output = {...result,workflow_id,runtime_revision:revision};
-    fs.writeFileSync(resultPath,JSON.stringify(output,null,2),{mode:0o600});
+    const output = {...result,workflow_id,runtime_revision:revision,definition_sha256:normalizeCommanderRun(run).definition_sha256};
+    durableWrite(resultPath,output);
     return output;
   } finally {
     try{if(DBOS.isInitialized())await DBOS.shutdown();}

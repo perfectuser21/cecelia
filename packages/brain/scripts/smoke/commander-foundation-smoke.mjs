@@ -27,7 +27,7 @@ const activity=(key,order,kind)=>({key,order,budget:{max_duration_s:real?180:30,
 function launch(root,resultName='result.json'){
   const logPath=path.join(root,`host-${Date.now()}.log`);
   const fd=fs.openSync(logPath,'a',0o600);
-  const child=spawn(process.execPath,[path.join(brain,'scripts/commander-workflow/host.mjs'),'--manifest',path.join(root,'manifest.json'),'--result',path.join(root,resultName)],
+  const child=spawn(process.execPath,[path.join(brain,root.endsWith('/auto-supervise')?'scripts/commander-workflow/supervise.mjs':'scripts/commander-workflow/host.mjs'),'--manifest',path.join(root,'manifest.json'),'--result',path.join(root,resultName)],
     {detached:true,stdio:['ignore',fd,fd],env:{...process.env,DBOS_DURABLE_ENABLED:'true',COMMANDER_DATABASE_URL:url.href,COMMANDER_DATABASE_SCHEMA:schema,COMMANDER_DBOS_SCHEMA:dbosSchema}});
   fs.closeSync(fd);child.logPath=logPath;return child;
 }
@@ -39,7 +39,7 @@ async function killDomain(root,host){
   return [...new Set(pids)];
 }
 async function scenario(name){
-  const root=path.join(artifactRoot,name);fs.mkdirSync(root);
+  const root=path.join(artifactRoot,name);fs.mkdirSync(root,{mode:0o700});
   const files={};for(const name of ['adapter.mjs','work.mjs','commander.mjs','skill.txt']){
     const data=fs.readFileSync(path.join(here,'fixtures/commander-foundation',name));fs.writeFileSync(path.join(root,name),data);files[name]=hash(data);
   }
@@ -49,6 +49,14 @@ async function scenario(name){
   fs.writeFileSync(path.join(root,'manifest.json'),JSON.stringify({run,profile:{cwd:root,adapter:'adapter.mjs',files,commander,runtimeRoot:brain,scenario:name,realAgent:real}}));
   let host=launch(root),killed=[],duplicate,duplicateRejected=false,ownershipRevoked=false;
   try{
+    if(name==='auto-supervise'){
+      await until(()=>fs.existsSync(path.join(root,'fault-window')));
+      duplicate=launch(root,'duplicate-result.json');
+      await until(()=>duplicate.exitCode!==null||duplicate.signalCode!==null,10000);
+      assert.match(fs.readFileSync(duplicate.logPath,'utf8'),/commander_supervisor_already_running/);duplicateRejected=true;
+      const state=read(path.join(root,'result.json.supervisor.json'));
+      process.kill(state.child.pid,'SIGKILL');killed=[state.child.pid];
+    }
     if(['host-kill','effect-window','unknown-readback'].includes(name)){
       await until(()=>fs.existsSync(path.join(root,'fault-window')));
       if(name==='effect-window'){
@@ -73,6 +81,7 @@ async function scenario(name){
     }
     await until(()=>fs.existsSync(path.join(root,'result.json')),real?590000:45000);
     const result=read(path.join(root,'result.json'));
+    if(name==='auto-supervise'){await until(()=>read(path.join(root,'result.json.supervisor.json')).terminal_status==='completed');assert.equal(read(path.join(root,'result.json.supervisor.json')).starts,2);await until(()=>host.exitCode!==null||host.signalCode!==null);const replay=launch(root);await until(()=>replay.exitCode!==null||replay.signalCode!==null);assert.equal(replay.exitCode,0);assert.equal(read(path.join(root,'result.json.supervisor.json')).starts,2);}
     assert.equal(result.run_id,run.run_id);assert.equal(result.task_id,run.task_id);
     assert.equal(result.status,name==='unknown-readback'?'needs_review':'completed');
     assert.equal(fs.readFileSync(path.join(root,'prepare.effects'),'utf8'),'x');
@@ -116,7 +125,7 @@ try{
     assert.deepEqual((await store.reserve(identity,{deadline_ms})).record.result,{proof:'original'});
     fs.writeFileSync(path.join(artifactRoot,'action-store-verification.json'),JSON.stringify({verdict:'pass',concurrent_rounds:50,concurrent_workers:8,new_reservations_per_round:1,primary_key_collision_rejected:true,identity_conflict_rejected:true,original_deadline_retained:true,settlement_immutable:true},null,2));
   }finally{await storePool.end();}
-  const results=[];for(const name of real?['normal']:['normal','commander-kill','host-kill','effect-window','unknown-readback'])results.push(await scenario(name));
+  const results=[];for(const name of real?['normal']:['normal','commander-kill','host-kill','effect-window','unknown-readback','auto-supervise'])results.push(await scenario(name));
   const proof={verdict:'pass',artifact_root:artifactRoot,schema,dbos_schema:dbosSchema,scenarios:results.map(r=>({scenario:r.scenario,status:r.status,verdict:r.verdict,run_id:r.run_id}))};
   fs.writeFileSync(path.join(artifactRoot,'verification.json'),JSON.stringify(proof,null,2));console.log(JSON.stringify(proof));
 }finally{await pool.end();}

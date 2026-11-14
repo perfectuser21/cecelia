@@ -127,7 +127,7 @@ async function executeContract(contract, input, {
         if (recovering) activityInput.recovery_mode = lastResult.external_effect === 'unknown' ? 'readback_only' : 'repair';
         }
         const start = resume ? {verdict:'pass'} : await runCheck('start', null, activityInput);
-        if (start.verdict !== 'pass' && a.runtime.phase !== 'finalize') {
+        if (start.verdict !== 'pass' && (selection || a.runtime.phase !== 'finalize')) {
           result = failedResult(activityInput, 'activity_precondition_unconfirmed', true); check = start;
         } else {
           if (aborted(a) && a.runtime.phase !== 'finalize') throw new Error('commander_aborted');
@@ -216,7 +216,7 @@ async function executeContract(contract, input, {
   }
 
   if (!resume) await emit('WF_RUN_STARTED', {workflow: plan.workflow});
-  const main = plan.activities.filter(a => a.runtime.phase !== 'finalize' && (!selection || a.key === selection.activityKey));
+  const main = plan.activities.filter(a => selection ? a.key === selection.activityKey : a.runtime.phase !== 'finalize');
   try {
     for (let i = 0; i < main.length && !stopped; i++) {
       if (signal?.aborted) {failed = true; stopped = true; break;}
@@ -258,7 +258,7 @@ export async function runSingleActivity(contract, input, {activityKey, context =
     || context.run_tag !== input.run_tag || context.line_key !== input.line_key
     || typeof options.checkActivity !== 'function' || options.resume || options.commander || options.recoverActivity
     || (deadlineMs !== undefined && (!Number.isSafeInteger(deadlineMs) || deadlineMs <= 0))
-    || plan.activities.some(a => a.runtime.phase !== 'source' || a.runtime.interactive || a.runtime.detached
+    || plan.activities.some(a => !['source','finalize'].includes(a.runtime.phase) || a.runtime.interactive || a.runtime.detached
       || (a.runtime.max_attempts ?? 1) !== 1 || a.runtime.recovery_safe)) throw Error('single_activity_unsupported');
   const receipt = await executeContract(plan, input, options, {activityKey, context, deadlineMs});
   return {...receipt, scope:'activity', activity_key:activityKey};
