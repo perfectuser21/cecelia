@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.445.210
+**Brain 版本**: 1.445.211
 
 显式Commander Workflow宿主将有界决策和单Activity验收结果存入DBOS；PG动作意图先提交，恢复只读回并核验原身份，未知动作隔离。首版仅非交互source单次活动；独立CLI与scratch故障验收，不改变生产公共Runner入口。
 
