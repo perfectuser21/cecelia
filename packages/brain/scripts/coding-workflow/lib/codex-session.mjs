@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
+import {prepareCodexAuth} from './codex-auth.mjs';
 import { previewCapability } from './preview-bridge.mjs';
 import { provenanceRoot, canonicalPath, assertProvenanceSeparation } from './provenance-path.mjs';
 
@@ -39,6 +40,7 @@ function gitDirectories(cwd) {
   return [...new Set(['--absolute-git-dir', '--git-common-dir'].map((flag) => path.resolve(cwd, execFileSync('git', ['rev-parse', flag], { cwd, encoding: 'utf8' }).trim())))];
 }
 export function prepareCodexSession({ args, cwd, env = process.env, nativeOptions = {} }) {
+  const auth=prepareCodexAuth(nativeOptions.codexAuth,{legacyHome:env.CODING_WF_CODEX_HOME});
   const input = parse(args);
   const judge = nativeOptions.access === 'judge';
   if (nativeOptions.access && !judge) throw new Error('codex_access_unsupported');
@@ -48,7 +50,7 @@ export function prepareCodexSession({ args, cwd, env = process.env, nativeOption
   const noShell = judge || input.denied.includes('Bash');
   if (noShell && input.denied.some((s) => s.startsWith('Read('))) throw new Error('codex_read_denial_with_mcp_unsupported');
   const readGit = noShell || MUTATIONS.some((c) => input.denied.includes(`Bash(${c}:*)`));
-  const native = ['exec', '--json', '--ignore-user-config', '--ignore-rules', '--ephemeral'];
+  const native = [...(auth?.args??[]),'exec', '--json', '--ignore-user-config', '--ignore-rules', '--ephemeral'];
   const toml = (value) => value && typeof value === 'object' && !Array.isArray(value)
     ? `{${Object.entries(value).map(([k, v]) => `${JSON.stringify(k)}=${toml(v)}`).join(',')}}` : JSON.stringify(value);
   const config = (key, value) => native.push('-c', `${key}=${toml(value)}`);
@@ -62,7 +64,7 @@ export function prepareCodexSession({ args, cwd, env = process.env, nativeOption
     ...(preview ? [preview.runtimeDir] : []), ...(nativeOptions.outputLastMessage ? [nativeOptions.outputLastMessage] : [])]);
   filesystem[path.join(home, '.credentials')] = 'deny';
   // The CLI controller logs in outside the command sandbox; its tools must not read the account token.
-  const accountHome = env.CODING_WF_CODEX_HOME || env.CODEX_HOME || path.join(home, '.codex');
+  const accountHome = auth?.auth.home || env.CODING_WF_CODEX_HOME || env.CODEX_HOME || path.join(home, '.codex');
   filesystem[path.resolve(accountHome, 'auth.json')] = 'deny';
   config('web_search', 'disabled');
   config('shell_environment_policy.ignore_default_excludes', false);
@@ -116,5 +118,5 @@ export function prepareCodexSession({ args, cwd, env = process.env, nativeOption
   if (env.CODING_WF_CODEX_MODEL) native.push('--model', env.CODING_WF_CODEX_MODEL);
   native.push('-');
   return { bin: env.CODING_WF_CODEX_BIN || 'codex', args: native, stdin: input.prompt,
-    env: { ...(env.CODING_WF_CODEX_HOME ? { CODEX_HOME: env.CODING_WF_CODEX_HOME } : {}), ...(preview ? { CURL_HOME: preview.runtimeDir, CODING_WF_PREVIEW_BROWSER_HELPER: preview.browserHelperPath } : {}) } };
+    env: { ...(auth ? {CODEX_HOME:auth.auth.home} : env.CODING_WF_CODEX_HOME ? { CODEX_HOME: env.CODING_WF_CODEX_HOME } : {}), ...(preview ? { CURL_HOME: preview.runtimeDir, CODING_WF_PREVIEW_BROWSER_HELPER: preview.browserHelperPath } : {}) } };
 }

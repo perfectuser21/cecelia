@@ -26,6 +26,10 @@ function fixture(){
  async function worker(action='one'){const runtime=await createRuntime({profile,run});return runtime.executeActivity(activity,run.input,{identity:{task_id:'task',run_id:'run',action_id:action,activity_key:'one'},cwd:root,deadlineMs:Date.now()+5000});}
  return {root,home,auth,profile,run,activity,calls,commander,worker};
 }
+async function rejectedWorker(f,action){
+ let result;try{result=await f.worker(action);}catch(error){expect(error.message).toMatch(/activity_supervisor_|codex_auth_/);}
+ if(result)expect(result.status).toBe('needs_review');expect(f.calls()).toEqual([]);
+}
 const forced=['forced_login_method="api"','cli_auth_credentials_store="file"','model_provider="openai"'];
 test('两个完整caller使用同一API身份，exec/resume强制file/openai并净化继承环境',async()=>{
  const f=fixture();for(const k of ['OPENAI_API_KEY','CODEX_API_KEY','CODEX_ACCESS_TOKEN','OPENAI_ACCESS_TOKEN','OPENAI_BASE_URL','CODEX_AUTHAPI_BASE_URL','OPENAI_IDENTITY_TOKEN_FILE','OPENAI_FEDERATION_RULE_ID','CODEX_MODEL_PROVIDER'])vi.stubEnv(k,'conflicting-value');vi.stubEnv('CODEX_HOME','/wrong/subscription-home');
@@ -35,7 +39,7 @@ test('两个完整caller使用同一API身份，exec/resume强制file/openai并�
  expect(calls[2].args).toContain('resume');
  expect(JSON.parse(fs.readFileSync(path.join(f.root,'control','run','thread.json'),'utf8')).auth_identity).toMatch(/^[a-f0-9]{64}$/);
 });
-test.each(['missing','empty','oauth','mixed','directory-mode','file-mode','symlink'])('API %s两caller都在模型spawn前拒绝且无订阅fallback',async kind=>{
+test.each(['missing','empty','oauth','mixed','directory-mode','file-mode','symlink','home-symlink'])('API %s两caller都在模型spawn前拒绝且无订阅fallback',async kind=>{
  const f=fixture(),file=path.join(f.home,'auth.json');
  if(kind==='missing')fs.unlinkSync(file);
  if(kind==='empty')fs.writeFileSync(file,JSON.stringify({auth_mode:'apikey',OPENAI_API_KEY:''}));
@@ -43,20 +47,21 @@ test.each(['missing','empty','oauth','mixed','directory-mode','file-mode','symli
  if(kind==='mixed')fs.writeFileSync(file,JSON.stringify({auth_mode:'apikey',OPENAI_API_KEY:'synthetic-api-key',tokens:{access_token:'fake-oauth'}}));
  if(kind==='directory-mode')fs.chmodSync(f.home,0o755);
  if(kind==='file-mode')fs.chmodSync(file,0o644);
+ if(kind==='home-symlink'){const target=path.join(f.root,'real-home');fs.renameSync(f.home,target);fs.symlinkSync(target,f.home);}
  if(kind==='symlink'){const target=path.join(f.root,'real-auth');fs.renameSync(file,target);fs.symlinkSync(target,file);}
  vi.stubEnv('CODEX_HOME','/wrong/subscription-home');
  await expect(f.commander()).rejects.toThrow();
- expect((await f.worker()).status).toBe('needs_review');expect(f.calls()).toEqual([]);
+ await rejectedWorker(f);
 });
 test.each([
  ['-c','forced_login_method="chatgpt"'],['--config=model_provider="custom"'],['-cmodel_providers.openai.base_url="http://wrong"'],['--profile','subscription'],['--oss'],
 ].map(args=>[args]))('worker拒绝覆盖共享认证的argv %j',async args=>{
  const f=fixture();f.profile.skill_runtime.codex.args=args;
- expect((await f.worker()).status).toBe('needs_review');expect(f.calls()).toEqual([]);
+ await rejectedWorker(f);
 });
 test.each(['CODEX_HOME','OPENAI_API_KEY','OPENAI_BASE_URL','CODEX_AUTHAPI_BASE_URL'])('worker拒绝认证env_keys覆盖%s',async key=>{
  const f=fixture();vi.stubEnv(key,'wrong');f.profile.skill_runtime.codex.env_keys=[key];
- expect((await f.worker()).status).toBe('needs_review');expect(f.calls()).toEqual([]);
+ await rejectedWorker(f);
 });
 test('Commander显式旧home冲突不启动模型；Worker同thread不允许改认证身份',async()=>{
  const f=fixture();await expect(f.commander({codexHome:path.join(f.root,'other')})).rejects.toThrow();expect(f.calls()).toEqual([]);
@@ -69,4 +74,40 @@ test('已提交动作readback与Code执行不读取缺失API凭据',async()=>{
  const runtime=await createRuntime({profile:f.profile,run:f.run});
  expect((await runtime.inspectActivity(f.activity,f.run.input,{identity:{task_id:'task',run_id:'run',action_id:'one',activity_key:'one'}})).state).toBe('completed');
  f.activity.runtime.executor_kind='code';expect((await f.worker('cleanup')).status).toBe('completed');expect(f.calls()).toHaveLength(1);
+});
+
+test('显式认证Worker工具权限只写workspace，拒读认证目录与credentials',async()=>{
+ const f=fixture();expect((await f.worker()).status).toBe('completed');const args=f.calls()[0].args;
+ const permissions=args.find(a=>a.startsWith('permissions='));
+ expect(permissions).toContain(':workspace');expect(permissions).toContain(JSON.stringify(f.home)+'="deny"');
+ expect(permissions).toContain(JSON.stringify(path.join(process.env.HOME,'.credentials'))+'="deny"');
+ expect(permissions).toContain('"enabled"=true');expect(args).toContain('default_permissions="commander_activity"');
+});
+test.each([['--dangerously-bypass-approvals-and-sandbox'],['--sandbox','danger-full-access'],['-c','sandbox_mode="danger-full-access"'],['-c','permissions={}']].map(args=>[args]))('显式认证Worker拒绝sandbox绕过 %j',async args=>{
+ const f=fixture();f.profile.skill_runtime.codex.args=args;await rejectedWorker(f);
+});
+test('subscription同样显式file/chatgpt且不能消费API文件',async()=>{
+ const f=fixture();f.auth.mode='subscription';await expect(f.commander()).rejects.toThrow();expect(f.calls()).toEqual([]);
+ fs.writeFileSync(path.join(f.home,'auth.json'),JSON.stringify({auth_mode:'chatgpt',OPENAI_API_KEY:null,tokens:{access_token:'synthetic-access-token',refresh_token:'synthetic-refresh-token'}}));
+ await f.commander();expect((await f.worker()).status).toBe('completed');
+ for(const call of f.calls()){expect(call.args).toContain('forced_login_method="chatgpt"');expect(call.env).toEqual({CODEX_HOME:f.home});}
+});
+test('每次模型调用重新检查auth，密钥轮换不换线程身份且密钥不进执行产物',async()=>{
+ const f=fixture();await f.commander();expect((await f.worker()).status).toBe('completed');
+ const thread=path.join(f.root,'control','run','thread.json'),identity=JSON.parse(fs.readFileSync(thread,'utf8')).auth_identity;
+ fs.writeFileSync(path.join(f.home,'auth.json'),JSON.stringify({auth_mode:'apikey',OPENAI_API_KEY:'rotated-synthetic-key'}));
+ expect((await f.worker('two')).status).toBe('completed');expect(JSON.parse(fs.readFileSync(thread,'utf8')).auth_identity).toBe(identity);
+ fs.unlinkSync(path.join(f.home,'auth.json'));await expect(f.commander()).rejects.toThrow();expect((await f.worker('three')).status).toBe('needs_review');expect(f.calls()).toHaveLength(3);
+ function scan(dir){for(const item of fs.readdirSync(dir,{withFileTypes:true})){const p=path.join(dir,item.name);if(item.isDirectory())scan(p);else if(item.isFile())expect(fs.readFileSync(p,'utf8')).not.toMatch(/synthetic-api-key|rotated-synthetic-key/);}}
+ scan(path.join(f.root,'control'));expect(fs.readFileSync(path.join(f.root,'commander.jsonl'),'utf8')).not.toContain('synthetic-api-key');
+});
+
+import {loadCommanderManifest} from '../../../scripts/commander-workflow/host.mjs';
+test('host仅冻结公共认证引用，凭据轮换和丢失不改变revision或阻断加载',()=>{
+ const f=fixture();f.profile.commander={provider:'codex',model:'fixture',codexBin:path.join(f.root,'codex')};f.profile.adapter='work.js';f.run.contract.activities=[f.activity];
+ const manifest=path.join(f.root,'manifest.json'),save=()=>fs.writeFileSync(manifest,JSON.stringify({profile:f.profile,run:f.run}));save();
+ const loaded=loadCommanderManifest(manifest);expect(loaded.profile.codex_auth).toEqual(f.auth);
+ fs.unlinkSync(path.join(f.home,'auth.json'));expect(loadCommanderManifest(manifest).revision).toBe(loaded.revision);
+ f.profile.codex_auth={mode:'subscription',home:f.home};save();expect(loadCommanderManifest(manifest).revision).not.toBe(loaded.revision);
+ f.profile.codex_auth={mode:'api-only',home:f.home,api_key:'synthetic-key'};save();expect(()=>loadCommanderManifest(manifest)).toThrow('codex_auth_config_invalid');
 });

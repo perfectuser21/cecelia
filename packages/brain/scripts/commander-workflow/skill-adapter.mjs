@@ -115,7 +115,7 @@ export async function createRuntime({profile,run,verifySource=async()=>{}}) {
       }
       const workerActivity={...activity,runtime:{...activity.runtime,entry:fileURLToPath(new URL('./skill-worker.mjs',import.meta.url)),argv:[],interactive:false}};
       const transport=await startSupervisedActivity(directory,options.identity,workerActivity,{identity:options.identity,activity_key:activity.key,cwd:profile.cwd,
-        codex:config.codex,thread_file:path.join(root,'thread.json'),work_dir:directory,skill_text:fs.readFileSync(path.resolve(profile.cwd,spec.skill),'utf8'),
+        codex:config.codex,codex_auth:profile.codex_auth,thread_file:path.join(root,'thread.json'),work_dir:directory,skill_text:fs.readFileSync(path.resolve(profile.cwd,spec.skill),'utf8'),
         tools_text:fs.readFileSync(path.resolve(profile.cwd,config.tools),'utf8'),context:{...run.input,...input}},options,options.deadlineMs);
       return verifiedResult(activity,input,transport,options.signal);
     },

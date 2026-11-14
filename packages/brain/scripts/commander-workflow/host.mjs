@@ -6,6 +6,7 @@ import path from 'node:path';
 import {pathToFileURL,fileURLToPath} from 'node:url';
 import {createHash} from 'node:crypto';
 import pg from 'pg';
+import {normalizeCodexAuth} from '../coding-workflow/lib/codex-auth.mjs';
 import {DBOS} from '@dbos-inc/dbos-sdk';
 import {configureCommanderWorkflow,startCommanderWorkflow} from '../../src/durable/commander-workflow.js';
 import {createCommanderActionStore} from '../../src/durable/commander-action-store.js';
@@ -22,6 +23,7 @@ export function loadCommanderManifest(filename) {
   const manifest = JSON.parse(fs.readFileSync(filename,'utf8')), profile = manifest.profile;
   if (!profile || !path.isAbsolute(profile.cwd) || typeof profile.adapter !== 'string' || !profile.files?.[profile.adapter]
     || !['codex','adapter'].includes(profile.commander?.provider)) throw Error('commander_profile_invalid');
+  if(profile.codex_auth!==undefined)profile.codex_auth=normalizeCodexAuth(profile.codex_auth,profile.commander.codexHome);
   const cwd = fs.realpathSync(profile.cwd);
   function verifySource() {
     for (const [entry,expected] of Object.entries(profile.files)) {
@@ -68,7 +70,7 @@ export async function runCommanderHost({manifestPath,resultPath}) {
     if(!held)throw Error('commander_host_already_running');
     const adapter = await import(pathToFileURL(path.resolve(profile.cwd,profile.adapter)).href);
     const env = await adapter.createRuntime({profile,pool,run:normalizeCommanderRun(run),verifySource:verifyOwnership});
-    const decide = profile.commander.provider === 'codex' ? createCodexCommander({...profile.commander,manifestPath:path.resolve(manifestPath)}) : env.decide;
+    const decide = profile.commander.provider === 'codex' ? createCodexCommander({...profile.commander,codexAuth:profile.codex_auth,manifestPath:path.resolve(manifestPath)}) : env.decide;
     configureCommanderWorkflow({...env,decide,cwd:profile.cwd,revision,verifySource:verifyOwnership,actionStore:createCommanderActionStore(pool)});
     DBOS.setConfig({name:'cecelia-commander-foundation',applicationVersion:revision,executorID:`commander-${run.run_id}`,
       systemDatabaseUrl:url,systemDatabaseSchemaName:dbosSchema});
