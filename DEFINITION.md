@@ -1,6 +1,8 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.445.225
+**Brain 版本**: 1.445.226
+
+Commander 的 Agent Activity 可在 profile.skill_runtime.activities 中配置 session_group：同组共享、不同组独立、按 run 隔离；缺省保留旧共享线程。恢复严格校验线程身份，损坏记录或线程换号拒绝成功。Code Activity 不接受会话配置。
 
 Commander 通用底座在恢复前冻结核对运行身份，监督器按事件循环心跳识别卡死并有界收尾；current 软链接入口正常执行，数据库 URL options 保留声明 schema 与用户超时设置。
 
