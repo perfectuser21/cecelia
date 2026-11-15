@@ -4,7 +4,6 @@ authoring-execution-smoke.sh
 advancement-items-smoke.sh
 alarm-ledger-smoke.sh
 all-features-smoke.sh
-attempt-run-smoke.sh
 capture-destination-link-smoke.sh
 cecelia-smoke-audit.sh
 circuit-breaker-reset-smoke.sh
@@ -14,10 +13,8 @@ clips-notion-smoke.sh
 clips-smoke.sh
 codex-headed-dispatch-smoke.sh
 commander-watchdog-smoke.sh
-contract-seal-smoke.sh
 crystal-evidence-feed-smoke.sh
 crystal-judge-smoke.sh
-d-tick-runner-full.sh
 daily-backup-scheduler-smoke.sh
 decision-system-smoke.sh
 dispatcher-real-paths.sh
@@ -31,10 +28,8 @@ impact-contract-smoke.sh
 inbox-p1-smoke.sh
 journey-goldenpaths-invariants-smoke.sh
 journey-id-entry-points-smoke.sh
-judge-api-smoke.sh
 kv-route-smoke.sh
 map-engine-smoke.sh
-merge-pr-smoke.sh
 nfr-decisions-assertion-ref-smoke.sh
 notion-brain-first-smoke.sh
 notion-endpoints-smoke.sh
@@ -43,14 +38,9 @@ phone-registry-smoke.sh
 postdeploy-verifier-smoke.sh
 preview-env-smoke.sh
 preview-environments-smoke.sh
-publish-pr-smoke.sh
 quality-test-pyramid-smoke.sh
-relay-runs-patch-shortid-smoke.sh
 release-gate-smoke.sh
-review-approve-auth-smoke.sh
 rumination-smoke.sh
-skill-drift-patrol-smoke.sh
-skill-drift-smoke.sh
 smoke-business.sh
 smoke-runtime.sh
 sprint-d-7table-smoke.sh
@@ -105,7 +95,6 @@ staging-e2e-smoke.sh
 staging-promote-smoke.sh
 t10-capture-atom-routing-smoke.sh
 task-governance-guards-smoke.sh
-task-run-primitive-smoke.sh
 workflow-run-lost-deadline-smoke.sh
 harness-weighted-reservation-smoke.sh
 managed-script-capacity-smoke.sh

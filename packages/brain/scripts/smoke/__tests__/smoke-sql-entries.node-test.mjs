@@ -197,7 +197,6 @@ for (const [name, overrides] of [
   ['model-accounts-smoke.sh', { DATABASE_URL: '', DB_URL: unsafe, DB: safe }],
   ['script-executor-dispatch-smoke.sh', { SCRIPT_SMOKE_DB_URL: unsafe }],
   ['task-governance-guards-smoke.sh', { GOV_GUARD_SMOKE_DB_URL: unsafe }],
-  ['task-run-primitive-smoke.sh', { TASK_RUN_SMOKE_DB_URL: unsafe }],
   ['crontab-ledger-smoke.sh', { PGDATABASE: 'cecelia' }],
   ['openclaw-cron-ledger-smoke.sh', { PGDATABASE: 'cecelia' }],
   ['journeys-bizarea-smoke.sh', { DB_NAME: 'cecelia' }],

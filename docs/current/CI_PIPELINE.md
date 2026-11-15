@@ -1,6 +1,6 @@
 ---
 id: current-ci-pipeline
-version: 3.0.4
+version: 3.0.5
 updated: 2026-11-15
 authority: CURRENT_STATE
 ---
@@ -40,7 +40,9 @@ authority: CURRENT_STATE
 - 外置Skill正文、固定版本与关键词专属合同已退出本仓PR验收；普通单测不依赖本机私有正文。通用恢复器及Python所有权检查仍保留。
 - 本地quickcheck只做准备：Brain lint、共享前端的Dashboard构建；CI或根依赖变更另跑scripts。真实命令失败必须阻止push。
 
-部署烟测已清退25份失效旧链路/重复源码字面包装（21条allow、3条debt、1条deny登记同步移除）。现役模块、真实函数/HTTP/PG回归及部署扫描器保留；shell烟测存量466→441，不代表PR有441项检查。
+原466份shell烟测已逐项审读：两批清退86份（43份明确失效、43份重复包装），同步对应登记和退役入口专属fixture；现存380份中247份保留、133份用途或覆盖证据不足，不视作垃圾直接删除。脚本文件数不是PR job数。现役模块、真实函数/HTTP/PG回归及部署扫描器保留。安全fixture会在执行前拒绝缺失的被测入口，避免把shell未执行造成的无副作用误判为安全验证通过。
+
+`fleet-worker-workspace` 与 `kernel-runtime-resource` 的实际验证保留，移除其已删除旧suite委托；受控shell回归核对完整现役suite集合和失败退出码，不点火真实Docker/PG。
 
 ## 深度回归与监控
 

@@ -6,13 +6,6 @@
     "source_commit": "ee00e9bff8c951a5e3c8eba7d9af9013b9b4ad94"
   },
   "managed-script-capacity-smoke.sh": {"kind":"write","connection":"TEST_DATABASE_URL最高优先，否则实际DB_HOST/DB_PORT/DB_NAME；URI缺port时实际PGPORT一致校验。","evidence":"实际NodePG两callee script-capacity-reservation/script-managed-executor.pg.integration.test.js用Client及Pool CREATE/TRUNCATE/DROP私有schema；受控真实wrapper默认及有效URI/DB边界回归不运行数据库。","source_commit":"1ef58332eda5fabf1218fc4db70e4905602811fd"},
-  "ability-id-chain-pr2-smoke.sh": {
-    "kind": "readonly",
-    "connection": "实际DB_HOST/DB_PORT/DB_USER/DB_NAME参数；默认localhost/5432/cecelia/cecelia，PGPASSWORD来自DB_PASSWORD；仅只读列查询",
-    "evidence": "2026-11-03退役断言复核：INSERT仅用于检测relay源码不得创建run；实际psql两处仅information_schema.columns的SELECT列类型，未增加数据库写入。",
-    "sha256": "621a7bfad20987d9819f859359ecaf4f8219bbda65b262ffc6b8496e81524624",
-    "source_commit": "9cd5cc55f626b63793e5eb60ff779550ff58cfab"
-  },
   "action-receipts-schema-smoke.sh": {
     "kind": "write",
     "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
@@ -281,19 +274,6 @@
     "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
     "evidence": "INSERT仅grep迁移文件断言；实际psql仅SELECT notion_projection_map状态/方向。",
     "sha256": "e3a7ba1398096a3df78ae5265c7d5e126a618bfd1fadc3505e92e103dbbecb2c",
-    "source_commit": "d664db65c9"
-  },
-  "task-run-primitive-smoke.sh": {
-    "kind": "write",
-    "connection": "TASK_RUN_SMOKE_DB_URL；缺失或与容器真实DB不一致则拒绝",
-    "evidence": "实际SQL/写调用源码行 70,73,77,82；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。",
-    "source_commit": "d664db65c9"
-  },
-  "task-terminal-relay-hub-smoke.sh": {
-    "kind": "readonly",
-    "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
-    "evidence": "UPDATE仅静态写口代码扫描；实际psql仅SELECT列/表存在，HTTP GET health。",
-    "sha256": "99f60f43aa0b1d181da42dcb8b9cd6fb729d72b277621bdb82c240bf7b5c957d",
     "source_commit": "d664db65c9"
   },
   "tasks-ability-id-smoke.sh": {

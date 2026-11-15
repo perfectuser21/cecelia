@@ -10,7 +10,6 @@
 
 8table-schema-smoke.sh
 account-resilience-smoke.sh
-account1-restore-smoke.sh
 accounts-config-smoke.sh
 action-receipts-schema-smoke.sh
 all-features-smoke.sh
@@ -25,13 +24,10 @@ cecelia-smoke-audit.sh
 claimed-by-cleared-smoke.sh
 cleanup-lock-mutex.sh
 clips-smoke.sh
-consciousness-graph-smoke.sh
 contract-gate-smoke.sh
 cortex-pure-functions.sh
-d-tick-runner-full.sh
 daily-backup-scheduler-smoke.sh
 dbos-durable-smoke.sh
-decision-ttl-smoke.sh
 deploy-token-verify-smoke.sh
 dev-registry-smoke.sh
 dispatch-events-smoke.sh
@@ -40,11 +36,8 @@ e1-observer-runner-flow.sh
 example-health-check.sh
 executor-pure-functions.sh
 failure-type-deny-payload-smoke.sh
-fleet-heartbeat-smoke.sh
 forensics-no-overwrite-smoke.sh
-gate5-a1-otel-smoke.sh
 gate5-b1-b2-smoke.sh
-goal-condition-smoke.sh
 golden-path-step-nfr-smoke.sh
 handoff-smoke.sh
 heartbeat-active-goals-alert-smoke.sh
@@ -56,21 +49,16 @@ learning-to-constraint-smoke.sh
 llm-caller-token-probe-smoke.sh
 machine-executor-routing-smoke.sh
 machines-smoke.sh
-monitor-loop-guard-smoke.sh
 okr-initiatives-project-id-smoke.sh
 p1pr2-deadman-trigger-backup-smoke.sh
 review-env-smoke.sh
 routing-phase2-smoke.sh
 rumination-smoke.sh
 self-model-lock-smoke.sh
-skill-drift-patrol-smoke.sh
-skill-drift-smoke.sh
 smoke-business.sh
 smoke-fix-license-taskrouter.sh
 smoke-runtime.sh
 sprint-d-7table-smoke.sh
-sprint-docs-smoke.sh
-sse-stream-smoke.sh
 tenant-isolation-rule-smoke.sh
 test-lifecycle-patrol-smoke.sh
 thalamus-pure-functions.sh
@@ -78,6 +66,4 @@ warroom-lines-smoke.sh
 warroom-verdict-smoke.sh
 wave2-scheduler-consciousness-smoke.sh
 wave2-tick-scheduler-smoke.sh
-ws3-initiative-run-events-smoke.sh
-zombie-reaper-smoke.sh
 capture-atoms-idempotent-smoke.sh
