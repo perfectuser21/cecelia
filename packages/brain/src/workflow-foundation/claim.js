@@ -44,7 +44,7 @@ export async function prepareFoundationTask(pool,taskId,input){
   const release=await getRelease(db,job.definition.release_id),workflow=release.payload.workflows.find(w=>w.id===job.definition.workflow_definition_version_id&&w.workflow_id===job.definition.workflow_id);
   requireFoundation(workflow&&workflow.payload_sha256===job.definition.snapshot_sha256,'foundation_definition_changed');
   const doc=parseFoundationProfile(input.profile_document,job.runtime,release,workflow);
-  const run=preparedFoundationRun(job,doc.contract,input.runtime_revision);
+  const run=preparedFoundationRun(job,doc.contract,input.runtime_revision,doc.playbook);
   requireFoundation(run.definition_sha256===input.definition_sha256,'foundation_manifest_identity_conflict');
   if(job.run){requireFoundation(digest(job.run)===digest(run),'foundation_manifest_identity_conflict');return {run:job.run};}
   requireFoundation(Date.now()<job.deadline_ms,'foundation_deadline_exceeded');

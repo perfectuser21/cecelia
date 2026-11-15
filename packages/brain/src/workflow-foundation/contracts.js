@@ -1,6 +1,6 @@
 import {createHash} from 'node:crypto';
 import Ajv from 'ajv';
-import {digest,normalizeCommanderRun} from '../orchestrator/commander-decision.js';
+import {digest,normalizeCommanderRun,normalizeCommanderPlaybook} from '../orchestrator/commander-decision.js';
 import {parseActivityContract} from '../orchestrator/activity-contract.js';
 export const FOUNDATION_PROTOCOL='commander-foundation-v1';
 export const UUID=/^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
@@ -36,7 +36,8 @@ export function parseFoundationProfile(text,runtime,release,workflow){
  requireFoundation(typeof text==='string'&&Buffer.byteLength(text)<=1048576,'foundation_profile_invalid',400);
  requireFoundation('sha256:'+byteHash(text)===runtime.profile_ref.digest,'foundation_profile_digest_mismatch');
  let doc;try{doc=JSON.parse(text);}catch{throw foundationError('foundation_profile_invalid',400);}
- onlyKeys(doc,['schema_version','contract','profile']);requireFoundation(doc.schema_version===1&&object(doc.profile),'foundation_profile_invalid',400);
+ onlyKeys(doc,['schema_version','contract','playbook','profile']);requireFoundation(doc.schema_version===1&&object(doc.profile),'foundation_profile_invalid',400);
+ if(doc.playbook!==undefined){try{doc.playbook=normalizeCommanderPlaybook(doc.playbook);}catch{throw foundationError('foundation_playbook_invalid',400);}}
  const p=doc.profile;
  requireFoundation(!['cwd','runtimeRoot','codex_auth','env'].some(k=>Object.hasOwn(p,k))&&object(p.files)&&relativePath(p.adapter)&&HASH.test(p.files[p.adapter]??''),'foundation_profile_invalid',400);
  const rejectAbsolute=(x)=>{if(!object(x)&&!Array.isArray(x))return;for(const [k,v]of Object.entries(x)){requireFoundation(!['cwd','runtimeRoot','codex_auth','env','codexHome','codexBin'].includes(k)&&!(typeof v==='string'&&(v.startsWith('/')||/^[A-Za-z]:[\\/]/.test(v))),'foundation_profile_paths_invalid',400);rejectAbsolute(v);}};rejectAbsolute(p);
@@ -48,7 +49,7 @@ export function parseFoundationProfile(text,runtime,release,workflow){
  requireFoundation([workflow.payload.contract?.key,workflow.payload.key,workflow.payload.contract?.workflow].includes(contract.workflow),'foundation_workflow_identity_mismatch');
  return {...doc,contract};
 }
-export function preparedFoundationRun(job,contract,runtimeRevision){
+export function preparedFoundationRun(job,contract,runtimeRevision,playbook){
  requireFoundation(HASH.test(runtimeRevision??''),'foundation_runtime_revision_invalid',400);
- return normalizeCommanderRun({schema_version:1,task_id:job.task_id,run_id:job.run_id,contract,input:job.input,runtime_revision:runtimeRevision,deadline_ms:job.deadline_ms,...(job.cleanup_deadline_ms?{cleanup_deadline_ms:job.cleanup_deadline_ms}:{}),commander_timeout_ms:job.runtime.commander_timeout_ms??60000});
+ return normalizeCommanderRun({schema_version:1,task_id:job.task_id,run_id:job.run_id,contract,...(playbook===undefined?{}:{playbook}),input:job.input,runtime_revision:runtimeRevision,deadline_ms:job.deadline_ms,...(job.cleanup_deadline_ms?{cleanup_deadline_ms:job.cleanup_deadline_ms}:{}),commander_timeout_ms:job.runtime.commander_timeout_ms??60000});
 }
