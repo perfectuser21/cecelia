@@ -43,3 +43,8 @@ describe('RESOURCE_TIERS / TASK_TYPE_TIER constants', () => {
     }
   });
 });
+
+// 旧执行器退役后，报告任务的真实资源映射仍受保护。
+it("harness_report 使用 normal 资源", () => {
+  expect(resolveResourceTier("harness_report")).toEqual({ memoryMB: 1024, cpuCores: 1, timeoutMs: 5400000, tier: "normal" });
+});

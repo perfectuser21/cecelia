@@ -55,11 +55,6 @@ vi.mock('../trace.js', () => ({
   EXECUTOR_HOSTS: {},
 }));
 vi.mock('../account-usage.js', () => ({ getAccountUsage: vi.fn(async () => ({})) }));
-vi.mock('../docker-executor.js', () => ({
-  writeDockerCallback: vi.fn(async () => {}),
-  resolveResourceTier: vi.fn(() => ({ tier: 'default' })),
-  isDockerAvailable: vi.fn(async () => false),
-}));
 vi.mock('../events/initiativeRunEvents.js', () => ({ writeInitiativeRunEvent: vi.fn(async () => {}) }));
 vi.mock('../platform-utils.js', () => ({
   sampleCpuUsage: vi.fn(async () => 0),

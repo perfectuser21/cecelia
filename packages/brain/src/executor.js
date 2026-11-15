@@ -40,7 +40,6 @@ import { loadCache as _loadCache, getCachedLocation, getCachedConfig, refreshCac
 import { updateTaskStatus, updateTaskProgress as _updateTaskProgress } from './task-updater.js';
 import { finalizeTask } from './lib/task-terminal.js';
 import { getAccountUsage } from './account-usage.js';
-import { writeDockerCallback, resolveResourceTier, isDockerAvailable } from './docker-executor.js';
 import { loadSkillContent } from './execution-shared.js';
 import { REVIEW_TASK_TYPES } from './lib/review-task-types.js';
 import {
@@ -3232,7 +3231,7 @@ async function reAttachActiveExecutors(dbPool) {
   }
 
   // ── 3. Docker task container scan (cecelia-task-*) ──────────────────────────
-  // docker-executor 派发的任务容器命名：cecelia-task-{short12}-{rand}
+  // 历史任务容器命名：cecelia-task-{short12}-{rand}
   // short12 = task.id 去掉连字符后取前 12 字符
   try {
     const dockerTaskOut = execSync(
@@ -3344,7 +3343,7 @@ async function syncOrphanTasksOnStartup() {
       console.log(`[startup-sync] skip external executor task=${task.id} type=${task.task_type} kind=${task.executor_kind || '-'}（进程不在本机，归专属收割/对账）`);
       continue;
     }
-    // reAttachActiveExecutors 已认领（如 docker-executor 的 cecelia-task-* 容器）→ 跳过孤儿检测
+    // reAttachActiveExecutors 已认领（如历史 cecelia-task-* 容器）→ 跳过孤儿检测
     if (activeProcesses.has(task.id)&&activeProcesses.get(task.id)?.source!=='shared-activity-runner') {
       rebuilt++;
       console.log(`[startup-sync] Already reattached by reAttachActiveExecutors: task=${task.id} title="${task.title}"`);
@@ -3556,9 +3555,4 @@ export {
   // v15: Token-aware slot allocation
   getTokenPressure,
   TOKEN_PRESSURE_THRESHOLD,
-  // v17: Docker Sandbox executor (HARNESS_DOCKER_ENABLED=true) — spawn() 已成唯一入口，
-  // 仅保留 callback / 资源 tier / 探活辅助函数对外。
-  writeDockerCallback,
-  resolveResourceTier,
-  isDockerAvailable,
 };

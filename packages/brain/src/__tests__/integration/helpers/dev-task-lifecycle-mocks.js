@@ -1,7 +1,5 @@
 import { vi } from 'vitest';
 
-const MOCK_PR_URL = 'https://github.com/mock/cecelia/pull/42';
-
 vi.mock('../../../thalamus.js', () => ({
   processEvent: vi.fn().mockResolvedValue({ level: 'normal', actions: [] }),
   EVENT_TYPES: { TASK_COMPLETED: 'task_completed', TASK_FAILED: 'task_failed' },
@@ -88,61 +86,7 @@ vi.mock('../../../executor.js', () => ({
   triggerCeceliaRun: vi.fn(),
 }));
 
-vi.mock('../../../spawn/middleware/docker-run.js', () => ({
-  runDocker: vi.fn().mockImplementation(async (_args, ctx) => ({
-    exit_code: 0,
-    stdout: `{"type":"result","result":"pr_url: ${MOCK_PR_URL}\\nTask completed successfully"}`,
-    stderr: '',
-    duration_ms: 50,
-    container: ctx.name,
-    container_id: null,
-    command: `docker run ... ${ctx.name}`,
-    timed_out: false,
-    started_at: new Date().toISOString(),
-    ended_at: new Date().toISOString(),
-  })),
-}));
 
-vi.mock('../../../spawn/middleware/account-rotation.js', () => ({
-  resolveAccount: vi.fn().mockResolvedValue(undefined),
-  resolveAccountForOpts: vi.fn().mockResolvedValue(undefined),
-}));
+vi.mock('../../../tick.js', () => ({ runTickSafe: vi.fn().mockResolvedValue({ actions_taken: [] }), getTickStatus: vi.fn() }));
 
-vi.mock('../../../spawn/middleware/cascade.js', () => ({
-  resolveCascade: vi.fn().mockResolvedValue(undefined),
-}));
-
-vi.mock('../../../spawn/middleware/cost-cap.js', () => ({
-  checkCostCap: vi.fn().mockResolvedValue(undefined),
-  CostCapExceededError: class CostCapExceededError extends Error {},
-}));
-
-vi.mock('../../../spawn/middleware/billing.js', () => ({
-  recordBilling: vi.fn().mockResolvedValue(undefined),
-}));
-
-vi.mock('../../../spawn/middleware/cap-marking.js', () => ({
-  checkCap: vi.fn().mockResolvedValue(undefined),
-}));
-
-vi.mock('../../../spawn/middleware/logging.js', () => ({
-  createSpawnLogger: vi.fn().mockReturnValue({ logStart: vi.fn(), logEnd: vi.fn() }),
-}));
-
-vi.mock('../../../spawn/middleware/resource-tier.js', () => ({
-  resolveResourceTier: vi.fn().mockReturnValue({
-    tier: 'standard',
-    memoryMB: 4096,
-    cpuCores: 2,
-    timeoutMs: 300000,
-  }),
-  RESOURCE_TIERS: {},
-  TASK_TYPE_TIER: {},
-}));
-
-vi.mock('child_process', () => ({
-  exec: vi.fn(),
-  execFile: vi.fn(),
-  execSync: vi.fn(),
-  spawn: vi.fn(),
-}));
+vi.mock('../../../auto-learning.js', () => ({ processExecutionAutoLearning: vi.fn().mockResolvedValue(null) }));
