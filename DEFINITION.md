@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.445.219
+**Brain 版本**: 1.445.220
 
 清退旧 Planner 的任务生成、KR 评分及四个规划 API 与专属测试；工作流视图从独立 work-streams 只读模型读取当前任务，保留 FIFO 和在途任务优先。现役 Tick/Dispatcher 与历史数据保留。
 

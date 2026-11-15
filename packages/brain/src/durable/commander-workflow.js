@@ -30,7 +30,7 @@ const decide = DBOS.registerStep(async (run, request) => {
     const value = await bounded(signal => env.decide(structuredClone(request),{signal,timeoutMs:remaining}),remaining);
     if (Date.now() >= run.deadline_ms) return {error:'commander_deadline_exceeded'};
     return {decision:parseCommanderDecision(value,request)};
-  } catch {return {error:'commander_decision_unavailable'};}
+  } catch (error) {return {error:/^usage_(?:(?:token|cost)_budget|budget|ledger)_/.test(error.message)?error.message:'commander_decision_unavailable'};}
 },{name:'commanderFoundationDecide'});
 function accepted(receipt, key) {
   const a = receipt?.activities?.[0];
@@ -40,6 +40,10 @@ function accepted(receipt, key) {
     && a.validator_verdict?.verdict === 'pass' && a.attempts?.length === 1
     && a.attempts.every(x => ['completed','empty'].includes(x.status) && x.external_effect !== 'unknown'
       && x.execution_stopped !== false && x.adapter_result?.execution_stopped !== false);
+}
+function unverifiedReason(receipt){
+  const reason=receipt?.activities?.[0]?.attempts?.at(-1)?.reason_code;
+  return /^usage_(?:(?:token|cost)_budget_(?:exceeded|unknown)|ledger_busy)$/.test(reason??'')?reason:'commander_activity_unverified';
 }
 const execute = DBOS.registerStep(async (run, key, context) => {
   const env = environment(run);
@@ -53,7 +57,7 @@ const execute = DBOS.registerStep(async (run, key, context) => {
   if (!Number.isSafeInteger(deadline) || deadline > phaseDeadline || deadline <= 0) throw Error('commander_action_deadline_invalid');
   if (reservation.record.state === 'settled') {
     const receipt=reservation.record.result;
-    return {receipt,safe:accepted(receipt,key)||receipt.execution_stopped===true,...(!accepted(receipt,key)?{error:'commander_activity_unverified'}:{})};
+    return {receipt,safe:accepted(receipt,key)||receipt.execution_stopped===true,...(!accepted(receipt,key)?{error:unverifiedReason(receipt)}:{})};
   }
   const recovering = !reservation.created;
   if(Date.now()>=deadline){
@@ -86,7 +90,7 @@ const execute = DBOS.registerStep(async (run, key, context) => {
   if(Date.now()>=deadline)return {error:'commander_deadline_exceeded',receipt,safe};
   try {await env.verifySource();}catch{return {error:'commander_source_unavailable',receipt,safe};}
   if(safe)await env.actionStore.settle(identity,receipt);
-  return {receipt,safe,...(!accepted(receipt,key)?{error:'commander_activity_unverified'}:{})};
+  return {receipt,safe,...(!accepted(receipt,key)?{error:unverifiedReason(receipt)}:{})};
 },{name:'commanderFoundationActivity'});
 
 const verifyCompletion = DBOS.registerStep(async run => {
@@ -94,12 +98,21 @@ const verifyCompletion = DBOS.registerStep(async run => {
   catch {return {error:'commander_source_unavailable'};}
 },{name:'commanderFoundationVerifyCompletion'});
 
+// 通过DBOS正常step保存调用账单；重放复用快照，不重发模型、不改已结算动作。
+const recordRunReport = DBOS.registerStep(async (run, output) => {
+  const ledger=environment(run).ledger;
+  return {schema_version:1,task_id:run.task_id,run_id:run.run_id,workflow:run.contract.workflow,
+    status:output.status,business_pass:output.business_pass,cleanup_status:output.cleanup_status??'not_required',
+    reason_code:output.reason??null,ledger:ledger.snapshot(),
+    budget_enforcement:'模型调用边界准入；一次已启动CLI调用可能超过token或费用阈值'};
+},{name:'commanderFoundationRunReport'});
+
 const workflow = DBOS.registerWorkflow(async value => {
   const run=normalizeCommanderRun(value),receipts=[],context=structuredClone(run.input);
   const sources=run.contract.activities.filter(a=>a.runtime.phase==='source');
   const finalizer=run.contract.activities.find(a=>a.runtime.phase==='finalize');
   let reason=null,safe=true,stopped=false;
-  async function perform(a){try{return await execute(run,a.key,context);}catch{return {error:'commander_activity_unavailable',safe:false};}}
+  async function perform(a){try{return await execute(run,a.key,context);}catch(error){return {error:/^usage_(?:(?:token|cost)_budget|budget|ledger)_/.test(error.message)?error.message:'commander_activity_unavailable',safe:false};}}
   for(let sequence=0;sequence<=sources.length;sequence++){
     const next=stopped?null:(sources[sequence]??null);
     const request=decisionRequest(run,receipts,next);let response;
@@ -126,7 +139,9 @@ const workflow = DBOS.registerWorkflow(async value => {
   }
   if(!reason){const verification=await verifyCompletion(run);if(verification.error){reason=verification.error;if(finalizer)cleanupStatus='needs_review';}}
   const output=reason?review(run,reason,receipts):{task_id:run.task_id,run_id:run.run_id,status:'completed',business_pass:true,outputs:Object.assign({},...receipts.map(r=>r.outputs)),receipts};
-  return {...output,...(cleanupStatus?{cleanup_status:cleanupStatus}:{})};
+  const result={...output,...(cleanupStatus?{cleanup_status:cleanupStatus}:{})};
+  if(environment(run).ledger)result.run_report=await recordRunReport(run,result);
+  return result;
 },{name:'commanderFoundationWorkflow'});
 
 /** 显式选择此入口才启用；不改变原公共Runner调度路径。 */

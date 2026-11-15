@@ -8,6 +8,7 @@ import {durableWrite} from '../../src/orchestrator/activity-supervisor.js';
 import {projectModelInput} from '../../src/orchestrator/commander-decision.js';
 import {prepareCodexAuth,codexAuthEnvironment} from '../coding-workflow/lib/codex-auth.mjs';
 import {codexWorkerArgs} from './skill-protocol.mjs';
+import {createRunLedger,normalizeTurns} from '../../src/orchestrator/commander-usage-ledger.js';
 const chunks=[];for await(const c of process.stdin)chunks.push(c);
 const request=JSON.parse(Buffer.concat(chunks).toString()),{codex,identity,thread_file,work_dir,skill_text,tools_text,context}=request;
 if(createHash('sha256').update(fs.readFileSync(codex.command)).digest('hex')!==codex.command_sha256)throw Error('skill_codex_source_drift');
@@ -27,9 +28,25 @@ for(const key of codex.env_keys??[])if(process.env[key]!==undefined)env[key]=pro
 durableWrite(activityInput,{identity,activity_key:request.activity_key,transport:'codex-cli',context});
 env.COMMANDER_ACTIVITY_KEY=request.activity_key;env.COMMANDER_ACTIVITY_INPUT_FILE=activityInput;
 let partial='',thread=previous?.thread_id;
-const child=spawn(codex.command,codexWorkerArgs(codex,thread,output,auth),{cwd:request.cwd,env:codexAuthEnvironment(env,auth?.auth),stdio:['pipe','pipe','pipe']});
-child.stdout.on('data',data=>{fs.writeSync(transcript,data);partial+=data.toString();let end;
+const argv=codexWorkerArgs(codex,thread,output,auth),childEnv=codexAuthEnvironment(env,auth?.auth);
+const ledger=request.ledger_directory?createRunLedger({directory:request.ledger_directory,identity:{task_id:identity.task_id,run_id:identity.run_id},policy:request.ledger_policy??{}}):null;
+// model只来自实际固定CLI参数；缺字段不能根据默认值猜测计价。
+let model='unknown';for(let i=0;i<(codex.args??[]).length;i++){
+ const arg=codex.args[i];let config;
+ if(['-c','--config'].includes(arg))config=codex.args[++i];else if(arg.startsWith('--config='))config=arg.slice(9);else if(arg.startsWith('-c')&&arg.length>2)config=arg.slice(2);
+ if(typeof config==='string'&&/^model\s*=/.test(config)){const raw=config.slice(config.indexOf('=')+1).trim();try{const value=JSON.parse(raw);model=typeof value==='string'&&value?value:'unknown';}catch{model=raw.replace(/^'(.*)'$/,'$1')||'unknown';}}
+ else if(['-m','--model'].includes(arg))model=codex.args[++i]||'unknown';else if(arg.startsWith('--model='))model=arg.slice(8)||'unknown';
+}
+let call;
+try{call=ledger?.beginCall({role:'activity',activity_key:request.activity_key,action_id:identity.action_id,attempt:context.attempt??1,provider:'codex',model,auth_mode:request.codex_auth?.mode??'unknown'});}
+catch(error){process.stdout.write(JSON.stringify({protocol:'skill-worker-failure/v1',reason_code:error.code??error.message,execution_stopped:true,dispatch_status:'not_started'}));fs.closeSync(transcript);throw error;}
+const nativePath=call?path.join(call.directory,'native.jsonl'):null,nativeFd=call?fs.openSync(nativePath,'wx',0o600):null;
+const events=[];let spawned=false,closed=false,failed,endedAt,spawnFailure;
+const child=spawn(codex.command,argv,{cwd:request.cwd,env:childEnv,stdio:['pipe','pipe','pipe']});
+child.once('spawn',()=>{spawned=true;});child.once('error',error=>{spawnFailure=error;});
+child.stdout.on('data',data=>{fs.writeSync(transcript,data);if(nativeFd!==null)fs.writeSync(nativeFd,data);partial+=data.toString();let end;
   while((end=partial.indexOf('\n'))>=0){const line=partial.slice(0,end);partial=partial.slice(end+1);try{const event=JSON.parse(line);
+    events.push(event);
     if(event.type==='thread.started'&&typeof event.thread_id==='string'){
       if(thread&&thread!==event.thread_id){child.kill('SIGTERM');throw Error('skill_thread_changed');}
       thread=event.thread_id;durableWrite(thread_file,{run_id:identity.run_id,thread_id:thread,...(auth?{auth_identity:auth.identity}:{})});
@@ -38,9 +55,17 @@ child.stdout.on('data',data=>{fs.writeSync(transcript,data);partial+=data.toStri
 child.stderr.on('data',data=>fs.writeSync(transcript,data));
 const timer=setInterval(()=>process.stderr.write(JSON.stringify({protocol:'activity-agent-event/v1',type:'heartbeat',activity:request.activity_key})+'\n'),1000);
 try {
+  child.stdin.on('error',()=>{});
   child.stdin.end(prompt);
-  const code=await new Promise((resolve,reject)=>{child.once('error',reject);child.once('close',resolve);});
+  const code=await new Promise(resolve=>{child.once('close',code=>{closed=true;endedAt=Date.now();resolve(code);});});
   if(code!==0||!thread)throw Error('skill_codex_execution_failed');
   const proposal=JSON.parse(fs.readFileSync(output,'utf8'));
   process.stdout.write(JSON.stringify({proposal,thread_id:thread}));
-}finally{clearInterval(timer);fs.closeSync(transcript);}
+}catch(error){failed=error;throw error;}
+finally{
+ clearInterval(timer);fs.closeSync(transcript);
+ if(nativeFd!==null){fs.fsyncSync(nativeFd);fs.closeSync(nativeFd);}
+ if(partial.trim()){try{events.push(JSON.parse(partial));}catch{}}
+ const reason=spawnFailure?.code??failed?.code??failed?.message;
+ if(call)ledger.finishCall(call.call_id,{status:!spawned&&spawnFailure?'not_started':closed?(failed?'failed':'completed'):'unknown',dispatch_status:spawned?'dispatched':spawnFailure?'not_started':'unknown',usage:normalizeTurns(events),...(failed?{reason_code:/^[a-zA-Z0-9][a-zA-Z0-9_.:/@+-]{0,255}$/.test(reason)?reason:'skill_proposal_invalid'}:{}),evidence_ref:nativePath,...(endedAt?{ended_at_ms:endedAt}:{})});
+}

@@ -107,7 +107,7 @@ export function callActivityProcess(activity, input, { cwd, signal, onHeartbeat 
       kill('SIGKILL');
       await eventQueue;
       resolveResult({ stdout, stderr, exit_code, exit_signal,
-        reason_code: reason || spawnError, duration_s: (Date.now() - started) / 1000,
+        reason_code: reason || spawnError, started_at_ms:started,ended_at_ms:closedAt,duration_s: (closedAt - started) / 1000,
         supervision_wait_ms:questionWaitMs+Date.now()-closedAt,
         // 根进程或原进程组退出不能证明已脱离的子任务停止。取消后保留执行权，
         // 由业务的独立停止读回证明归还；启动失败则明确没有旧执行者。

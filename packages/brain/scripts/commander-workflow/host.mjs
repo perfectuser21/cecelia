@@ -11,10 +11,12 @@ import {DBOS} from '@dbos-inc/dbos-sdk';
 import {configureCommanderWorkflow,startCommanderWorkflow} from '../../src/durable/commander-workflow.js';
 import {createCommanderActionStore} from '../../src/durable/commander-action-store.js';
 import {createCodexCommander} from '../../src/orchestrator/commander-codex.js';
+import {createRunLedger} from '../../src/orchestrator/commander-usage-ledger.js';
 import {durableWrite} from '../../src/orchestrator/activity-supervisor.js';
 import {digest,normalizeCommanderRun} from '../../src/orchestrator/commander-decision.js';
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const runtimeFiles = ['supervise.mjs','skill-adapter.mjs','skill-worker.mjs','skill-protocol.mjs','../../src/orchestrator/activity-supervisor.js','../../src/orchestrator/activity-supervisor-state.cjs','host.mjs','../../src/durable/commander-workflow.js','../../src/durable/commander-action-store.js',
+  '../../src/orchestrator/commander-usage-ledger.js','../../src/orchestrator/commander-usage-ledger-summary.js',
   '../../src/orchestrator/commander-decision.js','../../src/orchestrator/commander-codex.js',
   '../coding-workflow/lib/codex-judge.mjs','../coding-workflow/lib/claude.mjs','../coding-workflow/lib/codex-session.mjs',
   '../coding-workflow/lib/provenance-path.mjs','../coding-workflow/lib/preview-bridge.mjs','../../../../package-lock.json',
@@ -49,6 +51,9 @@ export async function runCommanderHost({manifestPath,resultPath}) {
   const url = process.env.COMMANDER_DATABASE_URL;
   if (!url) throw Error('commander_database_required');
   normalizeCommanderRun(run);
+  const controlRoot=path.resolve(profile.cwd,profile.skill_runtime?.control_dir??'control');
+  if(!controlRoot.startsWith(profile.cwd+path.sep))throw Error('commander_control_path_invalid');
+  const ledger=createRunLedger({directory:path.join(controlRoot,run.run_id,'ledger'),identity:{task_id:run.task_id,run_id:run.run_id},policy:profile.usage_budget??{}});
   const pool = new pg.Pool({connectionString:url,options:`-c search_path=${schema}`,max:5});
   const owner = new pg.Client({connectionString:url,application_name:`commander-owner-${run.run_id}`,statement_timeout:5000,query_timeout:6000,keepAlive:true});
   const ownerKey = BigInt.asIntN(64,BigInt('0x'+hash('commander-foundation:'+run.run_id).slice(0,16))).toString();
@@ -69,9 +74,9 @@ export async function runCommanderHost({manifestPath,resultPath}) {
     held=(await owner.query('SELECT pg_try_advisory_lock($1::bigint) AS acquired',[ownerKey])).rows[0].acquired;
     if(!held)throw Error('commander_host_already_running');
     const adapter = await import(pathToFileURL(path.resolve(profile.cwd,profile.adapter)).href);
-    const env = await adapter.createRuntime({profile,pool,run:normalizeCommanderRun(run),verifySource:verifyOwnership});
-    const decide = profile.commander.provider === 'codex' ? createCodexCommander({...profile.commander,codexAuth:profile.codex_auth,manifestPath:path.resolve(manifestPath)}) : env.decide;
-    configureCommanderWorkflow({...env,decide,cwd:profile.cwd,revision,verifySource:verifyOwnership,actionStore:createCommanderActionStore(pool)});
+    const env = await adapter.createRuntime({profile,pool,run:normalizeCommanderRun(run),verifySource:verifyOwnership,ledger});
+    const decide = profile.commander.provider === 'codex' ? createCodexCommander({...profile.commander,codexAuth:profile.codex_auth,manifestPath:path.resolve(manifestPath),ledger}) : env.decide;
+    configureCommanderWorkflow({...env,decide,ledger,cwd:profile.cwd,revision,verifySource:verifyOwnership,actionStore:createCommanderActionStore(pool)});
     DBOS.setConfig({name:'cecelia-commander-foundation',applicationVersion:revision,executorID:`commander-${run.run_id}`,
       systemDatabaseUrl:url,systemDatabaseSchemaName:dbosSchema});
     await DBOS.launch();
