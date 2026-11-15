@@ -2,6 +2,8 @@
 
 **Brain 版本**: 1.445.226
 
+清理模型账号账本的旧西安转发元数据：五条 Codex 声明改为不可转发、空目的地；保留账号目录、额度采集、API字段与实际派发授权，成功及失败采集均更新该元数据。
+
 Commander 的 Agent Activity 可在 profile.skill_runtime.activities 中配置 session_group：同组共享、不同组独立、按 run 隔离；缺省保留旧共享线程。恢复严格校验线程身份，损坏记录或线程换号拒绝成功。Code Activity 不接受会话配置。
 
 Commander 通用底座在恢复前冻结核对运行身份，监督器按事件循环心跳识别卡死并有界收尾；current 软链接入口正常执行，数据库 URL options 保留声明 schema 与用户超时设置。

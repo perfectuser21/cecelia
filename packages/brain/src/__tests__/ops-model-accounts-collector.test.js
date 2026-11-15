@@ -93,11 +93,42 @@ describe('ops-model-accounts-collector 纯函数', () => {
     expect(MODEL_ACCOUNTS.every((a) => a.host_alias === 'mmv')).toBe(true);
   });
 
-  it('forwardable/forward_targets 静态：Codex 可转发 / Grok 锁本机', () => {
-    const codex = MODEL_ACCOUNTS.find((a) => /codex/i.test(a.provider));
-    expect(codex.forwardable).toBe(true);
-    expect(codex.forward_targets).toEqual(expect.arrayContaining(['xian-m4', 'xian-m1']));
-    const grok = MODEL_ACCOUNTS.find((a) => /grok/i.test(a.provider));
+  it.each(['成功', '失败'])('五个Codex账号%s采集均写入当前无登记转发目的地，保留账号与状态', async (outcome) => {
+    const writes = [];
+    const pool = { query: async (sql, params) => {
+      if (sql.includes('INSERT INTO ops_model_accounts')) writes.push({ sql, params });
+      return { rows: [] };
+    } };
+    const result = await runModelAccountsCollector(pool, {
+      force: true,
+      only: 'codex',
+      fetchUsage: async () => {
+        if (outcome === '失败') throw new Error('no_credential: auth.json missing');
+        return { five_hour: { usage_percent: 31 }, seven_day: { usage_percent: 42 } };
+      },
+    });
+    const ids = Array.from({ length: 5 }, (_, i) => `codex-team${i + 1}`);
+    expect(result.collected).toBe(5);
+    expect(result.results).toEqual(ids.map(account_id => ({
+      account_id, status: outcome === '成功' ? 'ok' : 'no_credential',
+    })));
+    expect(writes.map(({ params }) => params[0])).toEqual(ids);
+    for (const { sql, params } of writes) {
+      // 从真实INSERT列顺序定位绑定值，覆盖成功和失败两种写路径。
+      const columns = sql.match(/INSERT INTO ops_model_accounts\s*\(([^)]+)\)/)[1]
+        .split(',').map(column => column.trim());
+      const value = column => params[columns.indexOf(column)];
+      expect(value('provider')).toBe('codex');
+      expect(value('host_alias')).toBe('mmv');
+      expect(value('forwardable')).toBe(false);
+      expect(JSON.parse(value('forward_targets'))).toEqual([]);
+      expect(value('status')).toBe(outcome === '成功' ? 'ok' : 'no_credential');
+      if (outcome === '成功') {
+        expect(value('five_hour_pct')).toBe(31);
+        expect(value('seven_day_pct')).toBe(42);
+      }
+    }
+    const grok = MODEL_ACCOUNTS.find(a => a.provider === 'grok');
     expect(grok.forwardable).toBe(false);
     expect(grok.forward_targets).toEqual([]);
   });
