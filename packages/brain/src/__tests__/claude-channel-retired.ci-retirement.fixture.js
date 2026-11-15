@@ -102,7 +102,9 @@ const PLANNER_RETIREMENT_CI_COHORT={...SKILL_RETIREMENT_CI_COHORT,
  'existing-ops-stage-source.js':'c2bcb8e1a941ed95a4ad527fabbe33b2d63752c20c8eb5696918e5f4fe58899c'};
 const COMMANDER_AUDIT_CI_COHORT={...PLANNER_RETIREMENT_CI_COHORT,
  'existing-ops-stage-source.js':'ddb44a3487e8f63c5feeededf008b82c192e6d50c48a103218263015074f4da2'};
-export const ciVersionGuardCohorts=()=>[...COHORTS,COMMANDER_CI_COHORT,SKILL_RETIREMENT_CI_COHORT,PLANNER_RETIREMENT_CI_COHORT,COMMANDER_AUDIT_CI_COHORT];
+const SCRIPT_CLEANUP_CI_COHORT={...COMMANDER_AUDIT_CI_COHORT,
+ 'existing-ops-stage-source.js':'ebc1bfd56b0d5989e63089c07bd6c8ceac4fdadf266ea879092ba6e91fe6e81f'};
+export const ciVersionGuardCohorts=()=>[...COHORTS,COMMANDER_CI_COHORT,SKILL_RETIREMENT_CI_COHORT,PLANNER_RETIREMENT_CI_COHORT,COMMANDER_AUDIT_CI_COHORT,SCRIPT_CLEANUP_CI_COHORT];
 export function registerCiRetirementGuardTests({root,base,scan}){
  describe('当前来源完整闭包及执行防复活',()=>{
   it('Commander审计CI完整闭包只读通过，CI或测试选择摘要漂移仍拒绝',()=>{

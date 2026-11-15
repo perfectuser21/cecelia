@@ -1,5 +1,6 @@
 /** 派生verification输入的固定Git事实；事实层不授予入口、owner或执行资格。 */
 import {createHash} from 'node:crypto';
+import {readFileSync} from 'node:fs';
 import yaml from 'js-yaml';
 import {planChecks} from './basic-scope.mjs';
 import {domainForTest,domainsForChanges} from './ops-checks.mjs';
@@ -215,7 +216,11 @@ const PLANNER_RETIREMENT_ENTRY_PROTOCOL = {...SKILL_RETIREMENT_ENTRY_PROTOCOL,
   "packages/brain/vitest.config.js": "1fe8d41c6d6f0761c553248ff320b5255a9276e2143ae9305b5183a844f0a7b8",
   "packages/brain/src/planner.js": null, "packages/brain/src/__tests__/planner.test.js": null, "packages/brain/src/__tests__/planner-learning-penalty.test.js": null};
 const SKILL_RETIREMENT_CI = '7195c295058535d0a014e66343803d144647f2991120fe274ca8036728cb2ea9';
-const entryProtocolsFor = digest => digest === SKILL_RETIREMENT_CI ? [SKILL_RETIREMENT_ENTRY_PROTOCOL,PLANNER_RETIREMENT_ENTRY_PROTOCOL] : ENTRY_PROTOCOLS_BY_WORKFLOW[digest];
+const COMMANDER_AUDIT_ENTRY_PROTOCOL={...PLANNER_RETIREMENT_ENTRY_PROTOCOL,'packages/brain/vitest.config.js':'cf3307a3508e5feb473951fb645197d74a714c2c8decc44ec6bfe690982b17b5'};
+const SCRIPT_PROFILE_PATH='packages/brain/src/lib/existing-ops-script-cleanup-profile.json', SCRIPT_PROFILE_SHA='fc9b4df6a9c128f5186571e9a89f3a45c818171544730f88b1c5d5977247a98f', scriptProfileText=readFileSync(new URL('../../packages/brain/src/lib/existing-ops-script-cleanup-profile.json',import.meta.url),'utf8');
+if(sha(scriptProfileText)!==SCRIPT_PROFILE_SHA) fail('SCRIPT_PROFILE_MISMATCH');
+const SCRIPT_CLEANUP_ENTRY_PROTOCOL={...JSON.parse(scriptProfileText),[SCRIPT_PROFILE_PATH]:SCRIPT_PROFILE_SHA};
+const entryProtocolsFor = digest => digest === '014b5b54984ff322b0783c6070113199673efd53bb900ea9934d038de3cd5e5d' ? [COMMANDER_AUDIT_ENTRY_PROTOCOL,SCRIPT_CLEANUP_ENTRY_PROTOCOL] : digest === SKILL_RETIREMENT_CI ? [SKILL_RETIREMENT_ENTRY_PROTOCOL,PLANNER_RETIREMENT_ENTRY_PROTOCOL] : ENTRY_PROTOCOLS_BY_WORKFLOW[digest];
 const functionalEntry=entry=>Boolean(entryProtocolsFor(entry?.canonical_sha256??''));
 const UNIT_CONFIGS=[
  {component:'brain',directory:'packages/brain',path:'packages/brain/vitest.config.js'},
