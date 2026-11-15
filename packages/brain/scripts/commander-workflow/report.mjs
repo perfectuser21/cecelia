@@ -13,6 +13,7 @@ export async function queryCommanderReport({manifestPath,resultPath,clientFactor
  const schema=process.env.COMMANDER_DATABASE_SCHEMA??'public',dbosSchema=process.env.COMMANDER_DBOS_SCHEMA??'commander_workflow_dbos';
  if(!/^[a-z][a-z0-9_]{0,62}$/.test(schema)||!/^[a-z][a-z0-9_]{0,62}$/.test(dbosSchema)||schema===dbosSchema)throw Error('commander_schema_invalid');
  const url=process.env.COMMANDER_DATABASE_URL;if(!url)throw Error('commander_database_required');
+ const readOnlyUrl=new URL(url);readOnlyUrl.searchParams.set('options',`${readOnlyUrl.searchParams.get('options')??''} -c default_transaction_read_only=on`.trim());
  const root=fs.realpathSync(profile.cwd),controlRoot=path.resolve(root,profile.skill_runtime?.control_dir??'control');
  if(!controlRoot.startsWith(root+path.sep)||!/^[a-zA-Z0-9_-]+$/.test(run.run_id))throw Error('commander_control_path_invalid');
  const identity={task_id:run.task_id,run_id:run.run_id};let observedLedger=null,ledgerUnavailable=null;
@@ -25,7 +26,7 @@ export async function queryCommanderReport({manifestPath,resultPath,clientFactor
  }
  let client;const db=databaseFactory({connectionString:url,options:`-c search_path=${schema} -c default_transaction_read_only=on`,application_name:'commander-report-readonly'});
  try{
-  client=await clientFactory({systemDatabaseUrl:url,systemDatabaseSchemaName:dbosSchema});await db.connect();
+  client=await clientFactory({systemDatabaseUrl:readOnlyUrl.toString(),systemDatabaseSchemaName:dbosSchema});await db.connect();
   const workflowID=`commander-foundation:${run.run_id}`;
   const [workflow,steps,actions]=await Promise.all([client.getWorkflow(workflowID),client.listWorkflowSteps(workflowID),
    db.query('SELECT action_id,activity_key,identity,state,result,deadline_ms FROM commander_activity_actions WHERE run_id=$1 ORDER BY activity_key',[run.run_id])]);
