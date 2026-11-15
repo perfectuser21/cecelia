@@ -106,7 +106,7 @@ test('Commander调用时限随固定runtime进入run哈希，不能退回默认�
 });
 
  test('ready明确拒绝收账：过期未授权失败，已授权冲突只采纳服务端blocked',async()=>{
- for(const [code,status] of [['foundation_deadline_exceeded','failed'],['foundation_manifest_identity_conflict','blocked'],['foundation_profile_paths_invalid','failed']]){
+ for(const [code,status] of [['foundation_deadline_exceeded','failed'],['foundation_manifest_identity_conflict','blocked'],['foundation_profile_paths_invalid','failed'],['foundation_playbook_invalid','failed']]){
   const f=fixture(),launch=vi.fn(),calls=[];
   const request=createFoundationRequest(f.config,{env:{CECELIA_INTERNAL_TOKEN:'test-only'},fetchFn:async(url,options)=>{
    const route=url.pathname,body=JSON.parse(options.body);calls.push({route,body});
