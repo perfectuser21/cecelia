@@ -70,7 +70,6 @@ conversation-capture-smoke.sh
 crontab-ledger-smoke.sh
 dev-registry-smoke.sh
 device-job-foundation-smoke.sh
-direction-proposer-t4-smoke.sh
 handoff-smoke.sh
 journeys-bizarea-smoke.sh
 line-context-smoke.sh

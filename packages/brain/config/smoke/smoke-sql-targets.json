@@ -47,12 +47,6 @@
     "evidence": "实际SQL/写调用源码行 22,43；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。",
     "source_commit": "d664db65c9"
   },
-  "direction-proposer-t4-smoke.sh": {
-    "kind": "write",
-    "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
-    "evidence": "实际SQL/写调用源码行 42,43；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。",
-    "source_commit": "d664db65c9"
-  },
   "handoff-smoke.sh": {
     "kind": "write",
     "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",

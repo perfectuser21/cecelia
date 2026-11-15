@@ -1,6 +1,8 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.445.222
+**Brain 版本**: 1.445.224
+
+清退旧 Harness 故障演习 CLI、每日 Tick 调度及专属测试/smoke，历史演习记录与 migration 保留。删除已无源模块的方向规划 smoke、失效旧 baseline 与重复 evaluator 包装，以及退役 autoblock 空壳和专属测试；同步 smoke 执行清单。现役 Linux 资源/机器接入验证、蓝绿 Tick 隔离、正常派发和资源回收保留。
 
 清退无现役调用的旧 Harness Final E2E 启停脚本及专属 Compose、旧合同 lint、退役根向量回填入口和专属拒执行测试；删除只检查旧 Harness 标签与固定容量文字的预览测试，保留现役容量行为测试与数据库保护。
 

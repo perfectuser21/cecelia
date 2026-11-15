@@ -126,19 +126,9 @@ const externalBoundaryMocks = vi.hoisted(() => ({
     skipped_today: false,
     triggered: false,
   }),
-  runCanaryDrillIfNeeded: vi.fn().mockResolvedValue({
-    triggered: false,
-    skipped: true,
-    reason: 'test_noop',
-  }),
   runCredentialsHealthCheck: vi.fn().mockResolvedValue({
     skipped_window: true,
     skipped_today: false,
-  }),
-  syncSocialMediaData: vi.fn().mockResolvedValue({
-    synced: 0,
-    skipped: 0,
-    source_count: 0,
   }),
   routeDailyReport: vi.fn().mockResolvedValue({
     skipped: true,
@@ -218,9 +208,6 @@ vi.mock('../../daily-review-scheduler.js', () => ({
   triggerDailyReview: externalBoundaryMocks.triggerDailyReview,
   triggerArchReview: externalBoundaryMocks.triggerArchReview,
   triggerContractScan: externalBoundaryMocks.triggerContractScan,
-}));
-vi.mock('../../canary-drill-scheduler.js', () => ({
-  runCanaryDrillIfNeeded: externalBoundaryMocks.runCanaryDrillIfNeeded,
 }));
 vi.mock('../../credentials-health-scheduler.js', () => ({
   runCredentialsHealthCheck: externalBoundaryMocks.runCredentialsHealthCheck,
@@ -430,9 +417,7 @@ describe('consciousness tick runtime (real executeTick + mocked deps)', () => {
     expect(externalBoundaryMocks.triggerDailyReview).toHaveBeenCalledTimes(1);
     expect(externalBoundaryMocks.triggerArchReview).toHaveBeenCalledTimes(1);
     expect(externalBoundaryMocks.triggerContractScan).toHaveBeenCalledTimes(1);
-    expect(externalBoundaryMocks.runCanaryDrillIfNeeded).toHaveBeenCalledTimes(1);
     expect(externalBoundaryMocks.runCredentialsHealthCheck).toHaveBeenCalledTimes(1);
-    expect(externalBoundaryMocks.syncSocialMediaData).toHaveBeenCalledTimes(1);
     expect(externalBoundaryMocks.routeDailyReport).toHaveBeenCalledTimes(1);
     expect(externalBoundaryMocks.checkAndAlertExpiringCredentials).toHaveBeenCalledTimes(1);
     expect(externalBoundaryMocks.recoverAuthQuarantinedTasks).toHaveBeenCalledTimes(1);
