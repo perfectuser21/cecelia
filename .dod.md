@@ -1,10 +1,12 @@
-- [ ] 清退无生产上游的 spawn、host-executor 和 retry/spawn-pre 闭包；保留现役 provider、派发、任务配置和资源分类回归。
-  Test: manual:npm exec -w packages/brain -- vitest run src/__tests__/claude-channel-retired.launchers.test.js src/__tests__/claude-channel-retired.executor.test.js src/__tests__/executor-route-override.test.js src/__tests__/goal-settings-serializer.test.js src/spawn/middleware/__tests__/resource-tier.test.js
-- [ ] 清退旧 Docker writer 与专属中间件；保留混合测试中的真实回调、既有 PR 权限、任务状态和 fleet runner 隔离合同。
-  Test: manual:npm exec -w packages/brain -- vitest run src/__tests__/existing-pr-authority.test.js src/__tests__/callback-utils-sync-resolver.test.js src/__tests__/executor-reattach.test.js src/__tests__/executor-contracts-docker-probe.test.js
-- [ ] 真实隔离 PG 验证任务创建、现役回调及完成/失败终态，历史数据读路径不变。
-  Test: manual:npm exec -w packages/brain -- vitest run --config ../../scripts/ci/deep-integration.config.mjs src/__tests__/integration/dev-task-lifecycle.e2e.test.js
-- [ ] 删除五份旧 CORE-INV 包装，合同分类改复用现役行为测试并保留原三条规则映射；保留 GAN 和发布回归。
-  Test: manual:bash scripts/ci/__tests__/run-core-regression.test.sh
-- [ ] smoke 安全分类、默认脚本、事实/版本/清单一致性通过；完整源码 CI 通过后正常合并并回写账本。
+- [ ] 删除独立资源专项及专用计划/CLI，保留生产资源采样与真实fleet回归；CI汇总严格校验六父任务。
+  Test: manual:node --test scripts/ci/__tests__/basic-results.test.mjs scripts/ci/__tests__/basic-workflow.test.mjs
+- [ ] 来源证明只接受已审完整新旧cohort，拒绝篡改、缺失与单成员混配，隔离启动fixture带齐运行依赖。
+  Test: manual:npm exec -w packages/brain -- vitest run src/lib/__tests__/existing-ops-current-ci-source.test.js src/lib/__tests__/existing-ops-parser-startup.test.js src/lib/__tests__/existing-ops-stage-source.test.js
+- [ ] 预览无资源时不发成功评论，实际inactive回收和失败回执维持严格；成功文案不再虚报UI验收。
+  Test: manual:node --test scripts/ci/__tests__/basic-preview-deploy.test.mjs
+- [ ] runtime去掉重复mock调用，原行为测试仍由普通单测执行，真实PG接入合同不减。
+  Test: manual:npm exec -w packages/brain -- vitest run src/node-onboarding/__tests__/service-completion-isolation.test.js
+- [ ] 本地默认脚本、版本、事实和清单检查通过；完整固定HEAD源码CI成功后正常合并并回写账本。
   Test: manual:node scripts/ci/run-basic-check.mjs scripts
+- [ ] 用量账本在递增时钟下精确读回各自持久化时间，不依赖开始与准备完成恰好同一毫秒。
+  Test: manual:npm exec -w packages/brain -- vitest run src/orchestrator/__tests__/commander-usage-ledger.test.js src/orchestrator/__tests__/commander-usage-wiring.test.js

@@ -104,12 +104,18 @@ const COMMANDER_AUDIT_CI_COHORT={...PLANNER_RETIREMENT_CI_COHORT,
  'existing-ops-stage-source.js':'ddb44a3487e8f63c5feeededf008b82c192e6d50c48a103218263015074f4da2'};
 const SCRIPT_CLEANUP_CI_COHORT={...COMMANDER_AUDIT_CI_COHORT,
  'existing-ops-stage-source.js':'ebc1bfd56b0d5989e63089c07bd6c8ceac4fdadf266ea879092ba6e91fe6e81f'};
-export const ciVersionGuardCohorts=()=>[...COHORTS,COMMANDER_CI_COHORT,SKILL_RETIREMENT_CI_COHORT,PLANNER_RETIREMENT_CI_COHORT,COMMANDER_AUDIT_CI_COHORT,SCRIPT_CLEANUP_CI_COHORT];
+export const CI_READER_PROFILES=['existing-ops-script-cleanup-profile.json','existing-ops-resource-retirement-profile.json'];
+const SCRIPT_CLEANUP_PROFILE_COHORT={...SCRIPT_CLEANUP_CI_COHORT,
+ 'existing-ops-script-cleanup-profile.json':'fc9b4df6a9c128f5186571e9a89f3a45c818171544730f88b1c5d5977247a98f'};
+const RESOURCE_RETIREMENT_CI_COHORT={...SCRIPT_CLEANUP_PROFILE_COHORT,
+ 'existing-ops-stage-source.js':'5240eb393b4662046cd8c828757f098e90aee629d4c0de76bb505144f003fcf0',
+ 'existing-ops-resource-retirement-profile.json':'0189fe174fa8ee2b734e4a05b42f296f83d7ebb36acd162813db266bce9252f3'};
+export const ciVersionGuardCohorts=()=>[...COHORTS,COMMANDER_CI_COHORT,SKILL_RETIREMENT_CI_COHORT,PLANNER_RETIREMENT_CI_COHORT,COMMANDER_AUDIT_CI_COHORT,SCRIPT_CLEANUP_CI_COHORT,SCRIPT_CLEANUP_PROFILE_COHORT,RESOURCE_RETIREMENT_CI_COHORT];
 export function registerCiRetirementGuardTests({root,base,scan}){
  describe('当前来源完整闭包及执行防复活',()=>{
   it('Commander审计CI完整闭包只读通过，CI或测试选择摘要漂移仍拒绝',()=>{
    const current=base(),member=path.join(root,'existing-ops-stage-source.js');
-   expect(current.size).toBe(16);expect(scan(current)).toEqual([]);
+   expect(current.size).toBe(18);expect(scan(current)).toEqual([]);
    for(const digest of ['014b5b54984ff322b0783c6070113199673efd53bb900ea9934d038de3cd5e5d','cf3307a3508e5feb473951fb645197d74a714c2c8decc44ec6bfe690982b17b5']){
     const changed=base(),source=changed.get(member);expect(source).toContain(digest);
     changed.set(member,source.replace(digest,'f'.repeat(64)));
@@ -126,12 +132,12 @@ export function registerCiRetirementGuardTests({root,base,scan}){
    expect(scan(current).some(hit=>hit.rule==='E1')).toBe(true);
   });
   it('当前main与候选完整组只取得只读数据资格',()=>{
-   const previous=new Map([...base().keys()].map(file=>[file,execFileSync('git',['--no-replace-objects','show','d06de84e9f7d2d489a151e0b13b38f81651dd3fa:'+path.relative(path.resolve(root,'../../../..'),file)],{cwd:root,encoding:'utf8',maxBuffer:1024*1024})]));
+   const previous=new Map([...base().keys()].filter(file=>!file.endsWith('.json')).map(file=>[file,execFileSync('git',['--no-replace-objects','show','d06de84e9f7d2d489a151e0b13b38f81651dd3fa:'+path.relative(path.resolve(root,'../../../..'),file)],{cwd:root,encoding:'utf8',maxBuffer:1024*1024})]));
    for(const sources of [previous,base()])for(const kind of ['build','stage','native-evidence'])expect(scan(sources,path.join(root,'existing-ops-'+kind+'-envelopes.js'))).toEqual([]);
   });
-  it.each([...Array(16).keys()].flatMap(index=>['missing','drift'].map(kind=>[index,kind])))('当前16成员第%s项%s拒绝',(index,kind)=>{
-   const current=base();expect(current.size).toBe(16);const file=[...current.keys()][index];
-   if(kind==='missing')current.delete(file);else current.set(file,current.get(file)+'\nexport const unknownMember=true;\n');
+  it.each([...Array(18).keys()].flatMap(index=>['missing','drift'].map(kind=>[index,kind])))('当前18成员第%s项%s拒绝',(index,kind)=>{
+   const current=base();expect(current.size).toBe(18);const file=[...current.keys()][index];
+   if(kind==='missing')current.delete(file);else current.set(file,current.get(file)+(file.endsWith('.json')?'\n':'\nexport const unknownMember=true;\n'));
    const target=path.join(root,'existing-ops-'+(file.endsWith('stage-envelopes.js')?'build':'stage')+'-envelopes.js');
    expect(scan(current,target).some(hit=>hit.rule==='E1')).toBe(true);
   });
@@ -139,6 +145,20 @@ export function registerCiRetirementGuardTests({root,base,scan}){
    const current=base(),file=path.join(root,'existing-ops-'+name+'.js');
    current.set(file,execFileSync('git',['--no-replace-objects','show','88be2549bed2a8d8a3b5a6324bf5ea6267dda0da:packages/brain/src/lib/'+path.basename(file)],{cwd:root,encoding:'utf8',maxBuffer:1024*1024}));
    expect(scan(current).some(hit=>hit.rule==='E1')).toBe(true);
+  });
+  it('旧script-cleanup完整Git封组仍通过，新旧stage或profile混配拒绝',()=>{
+   const current=base(),stage=path.join(root,'existing-ops-stage-source.js'),profile=path.join(root,'existing-ops-resource-retirement-profile.json');
+   const previous=new Map([...current.keys()].filter(file=>file!==profile).map(file=>[file,execFileSync('git',['--no-replace-objects','show','91d37b2c3aab471aeaf88df25eec6dda9cb306d3:'+path.relative(path.resolve(root,'../../../..'),file)],{cwd:root,encoding:'utf8',maxBuffer:1024*1024})]));
+   expect(scan(previous)).toEqual([]);
+   const mixed=base();mixed.set(stage,previous.get(stage));expect(scan(mixed).some(hit=>hit.rule==='E1')).toBe(true);
+   const missing=base();missing.delete(profile);expect(scan(missing).some(hit=>hit.rule==='E1')).toBe(true);
+  });
+  it.each(CI_READER_PROFILES)('只读profile精确字节篡改、缺失与非JSON内容拒绝：%s',name=>{
+   const file=path.join(root,name),original=base().get(file);
+   for(const text of [original+'\n',JSON.stringify({...JSON.parse(original),unknown:'f'.repeat(64)}),'{}',original+'\nspawn("claude",["-p"]);']){
+    const changed=base();changed.set(file,text);expect(scan(changed).some(hit=>hit.rule==='E1')).toBe(true);
+   }
+   const missing=base();missing.delete(file);expect(scan(missing).some(hit=>hit.rule==='E1')).toBe(true);
   });
   it('未知外部caller不能取得只读资格',()=>{
    const current=base();current.set(path.join(root,'unknown-reader.js'),"import {ENVELOPES} from './existing-ops-build-envelopes.js';eval(ENVELOPES.spawnParameters);");

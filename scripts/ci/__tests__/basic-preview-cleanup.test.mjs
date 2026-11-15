@@ -86,6 +86,19 @@ for (const [name, status, body, success] of [
   const result = await run(f);
   assert.equal(result.status === 0, success, result.out);
   assert.equal(result.output.includes('success=true'), success, result.output);
+  const outputs = Object.fromEntries(result.output.trim().split('\n').filter(Boolean).map(line => line.split('=')));
+  const commentStep = steps.find(step => step.if?.includes("outputs.success == 'true'"));
+  const enabled = new Function('steps', `return (${commentStep.if});`)({
+    check_ts: { outputs: { configured: 'true' } }, brain_stop: { outputs },
+  });
+  const comments = [];
+  if (enabled) await new Function('github', 'context', 'process', `return (async()=>{${commentStep.with.script}})();`)(
+    { rest: { issues: { createComment: async value => comments.push(value) } } },
+    { repo: { owner: 'fixture-owner', repo: 'fixture-repo' }, issue: { number: 999999 } },
+    { env: { PREVIEW_BRANCH: 'fixture-branch' } });
+  const actuallyCleaned = success && body.status === 'inactive';
+  if (success) assert.equal(outputs.cleaned, String(actuallyCleaned), result.output);
+  assert.equal(comments.length, actuallyCleaned ? 1 : 0, '无记录或失败不得发布成功评论');
   assert.deepEqual(f.requests, [{ method: 'POST', path: '/api/brain/preview/stop/999999', auth: 'Bearer isolated-fixture-token' }]);
 });
 
@@ -100,7 +113,7 @@ test('真实清理步骤：连接失败不得写成功', { timeout: 10000 }, asy
 test('评论区分确认成功与未确认，不把所有失败归为不可达', async () => {
   const success = steps.find(step => step.if?.includes("outputs.success == 'true'"));
   assert.ok(success);
-  assert.match(success.with.script, /无需清理|无需回收/);
+  assert.doesNotMatch(success.with.script, /无需清理|无需回收|无预览记录/);
   const failure = steps.find(step => step.if?.includes("brain_stop.outcome == 'failure'"));
   assert.ok(failure.if.includes('always()'));
   assert.match(failure.with.script, /未确认/);

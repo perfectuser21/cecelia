@@ -220,7 +220,10 @@ const COMMANDER_AUDIT_ENTRY_PROTOCOL={...PLANNER_RETIREMENT_ENTRY_PROTOCOL,'pack
 const SCRIPT_PROFILE_PATH='packages/brain/src/lib/existing-ops-script-cleanup-profile.json', SCRIPT_PROFILE_SHA='fc9b4df6a9c128f5186571e9a89f3a45c818171544730f88b1c5d5977247a98f', scriptProfileText=readFileSync(new URL('../../packages/brain/src/lib/existing-ops-script-cleanup-profile.json',import.meta.url),'utf8');
 if(sha(scriptProfileText)!==SCRIPT_PROFILE_SHA) fail('SCRIPT_PROFILE_MISMATCH');
 const SCRIPT_CLEANUP_ENTRY_PROTOCOL={...JSON.parse(scriptProfileText),[SCRIPT_PROFILE_PATH]:SCRIPT_PROFILE_SHA};
-const entryProtocolsFor = digest => digest === '014b5b54984ff322b0783c6070113199673efd53bb900ea9934d038de3cd5e5d' ? [COMMANDER_AUDIT_ENTRY_PROTOCOL,SCRIPT_CLEANUP_ENTRY_PROTOCOL] : digest === SKILL_RETIREMENT_CI ? [SKILL_RETIREMENT_ENTRY_PROTOCOL,PLANNER_RETIREMENT_ENTRY_PROTOCOL] : ENTRY_PROTOCOLS_BY_WORKFLOW[digest];
+const RESOURCE_PROFILE_PATH='packages/brain/src/lib/existing-ops-resource-retirement-profile.json', RESOURCE_PROFILE_SHA='0189fe174fa8ee2b734e4a05b42f296f83d7ebb36acd162813db266bce9252f3', resourceProfileText=readFileSync(new URL('../../packages/brain/src/lib/existing-ops-resource-retirement-profile.json',import.meta.url),'utf8');
+if(sha(resourceProfileText)!==RESOURCE_PROFILE_SHA) fail('RESOURCE_PROFILE_MISMATCH');
+const RESOURCE_RETIREMENT_ENTRY_PROTOCOL={...JSON.parse(resourceProfileText),[RESOURCE_PROFILE_PATH]:RESOURCE_PROFILE_SHA};
+const entryProtocolsFor = digest => digest === '763f9075175442249e9500a3d6c55936e2b7c424344f9319baac5fe08ccd5128' ? [RESOURCE_RETIREMENT_ENTRY_PROTOCOL] : digest === '014b5b54984ff322b0783c6070113199673efd53bb900ea9934d038de3cd5e5d' ? [COMMANDER_AUDIT_ENTRY_PROTOCOL,SCRIPT_CLEANUP_ENTRY_PROTOCOL] : digest === SKILL_RETIREMENT_CI ? [SKILL_RETIREMENT_ENTRY_PROTOCOL,PLANNER_RETIREMENT_ENTRY_PROTOCOL] : ENTRY_PROTOCOLS_BY_WORKFLOW[digest];
 const functionalEntry=entry=>Boolean(entryProtocolsFor(entry?.canonical_sha256??''));
 const UNIT_CONFIGS=[
  {component:'brain',directory:'packages/brain',path:'packages/brain/vitest.config.js'},

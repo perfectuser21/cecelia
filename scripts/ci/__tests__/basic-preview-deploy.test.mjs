@@ -109,7 +109,11 @@ test('Composite成功与失败评论执行原Github-script并写入真实PR目�
       {rest:{issues:{createComment:async value=>comments.push(value)}}}, context);
     assert.equal(comments.length, 1);
     assert.deepEqual({...comments[0],body:undefined}, {owner:'fixture-owner',repo:'fixture-repo',issue_number:42,body:undefined});
-    assert.match(comments[0].body, success ? /完整预览环境已就绪/ : /预览环境部署失败/);
+    assert.match(comments[0].body, success ? /后端预览入口已核验/ : /预览环境部署失败/);
+    if (success) {
+      assert.match(comments[0].body, /代码提交.*隔离数据库.*Tick/);
+      assert.doesNotMatch(comments[0].body, /完整预览环境|前端 UI|前端界面已就绪/);
+    }
     assert.match(comments[0].body, /fixture-branch/);
     if (success) assert.match(comments[0].body, /http:\/\/preview.invalid:5311/);
   }
