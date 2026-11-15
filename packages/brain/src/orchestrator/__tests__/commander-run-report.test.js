@@ -13,3 +13,8 @@ test.each([false,true])('DBOS保存统一账单快照，正常或预算失败仍
  process.env.DBOS_DURABLE_ENABLED='true';const f=fixture(fail);sdk.initialized=false;configureCommanderWorkflow(f.env);sdk.initialized=true;
  try{const out=await (await startCommanderWorkflow(f.run)).handle.getResult();expect(out.run_report.ledger).toEqual(f.snapshot);expect(out.run_report.run_id).toBe(f.run.run_id);expect(sdk.steps).toContain('commanderFoundationRunReport');if(fail){expect(out.status).toBe('needs_review');expect(out.reason).toBe('usage_budget_exceeded');}else expect(out.status).toBe('completed');}finally{sdk.initialized=false;}
 });
+test('Activity模型准入拒绝保留精确预算原因，不改成通用验收失败',async()=>{
+ process.env.DBOS_DURABLE_ENABLED='true';const f=fixture();f.env.executeActivity=async(_a,input)=>({schema_version:1,run_tag:input.run_tag,status:'needs_review',failure_class:'needs_human',outputs:{},metrics:{},evidence:[],execution_stopped:true,reason_code:'usage_token_budget_exceeded'});
+ sdk.initialized=false;configureCommanderWorkflow(f.env);sdk.initialized=true;
+ try{const out=await(await startCommanderWorkflow(f.run)).handle.getResult();expect(out.status).toBe('needs_review');expect(out.reason).toBe('usage_token_budget_exceeded');}finally{sdk.initialized=false;}
+});
