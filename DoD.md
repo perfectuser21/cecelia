@@ -5,6 +5,6 @@
 - [ ] 两个保留资源/工作区wrapper移除失效旧委托，真实现役suite集合与退出17阻断行为保持。
   Test: manual:node --test packages/brain/scripts/smoke/__tests__/smoke-delegate-targets.node-test.mjs
 - [ ] 活跃资源保护、派发/终态/回调/Notion与授权隔离回归保留，未改业务源码或生产设置。
-  Test: manual:npm exec -w packages/brain -- vitest run src/__tests__/task-terminal.test.js src/__tests__/notion-push-sync.test.js src/__tests__/dispatcher-hol.test.js
+  Test: manual:npm exec -w packages/brain -- vitest run src/lib/__tests__/task-terminal.test.js src/__tests__/notion-push-sync.test.js src/__tests__/dispatcher-hol.test.js
 - [ ] 固定候选通过默认脚本与事实/版本/清单门禁，独立复审后正常PR、CI成功合并、任务与资源收尾。
   Test: manual:node scripts/ci/run-basic-check.mjs scripts
