@@ -38,7 +38,6 @@ const graphData = {
     // Decision Layer
     { id: 'thalamus', name: 'Thalamus\n丘脑', x: 680, y: 450, type: 'llm' as const, health: 'healthy' as const, size: 75, file: 'src/thalamus.js', description: 'Sonnet 模型，事件路由和快速决策（1-2秒）', llmModel: 'Claude Sonnet', responseTime: '1-2 秒', layer: 'decision' as const },
     { id: 'cortex', name: 'Cortex\n皮层', x: 920, y: 330, type: 'llm' as const, health: 'warning' as const, size: 75, file: 'src/cortex.js', description: 'Opus 模型，深度分析和战略决策（10-30秒）', llmModel: 'Claude Opus', responseTime: '10-30 秒', problems: ['cortex-quality.js 功能重叠'], solution: '整合 quality 逻辑', time: '30 分钟', layer: 'decision' as const },
-    { id: 'planner', name: 'Planner\n规划', x: 920, y: 200, type: 'llm' as const, health: 'healthy' as const, size: 60, file: 'src/planner.js', description: 'LLM 辅助的任务规划', llmModel: 'Claude', responseTime: '2-5 秒', layer: 'decision' as const },
     { id: 'decision', name: 'Decision\n决策', x: 920, y: 450, type: 'llm' as const, health: 'healthy' as const, size: 60, file: 'src/decision.js', description: 'LLM 辅助的决策制定', llmModel: 'Claude', responseTime: '2-5 秒', layer: 'decision' as const },
     // Execution Layer
     { id: 'executor', name: 'Executor\n执行器', x: 1150, y: 450, type: 'code' as const, health: 'warning' as const, size: 70, file: 'src/executor.js', description: '任务执行器，调度和管理 Agent', problems: ['1402 行代码（偏大）'], solution: '拆分 Agent 管理逻辑', time: '1 小时', layer: 'execution' as const },
@@ -62,13 +61,10 @@ const graphData = {
     { source: 'user', target: 'routes', seq: 'B1', desc: '用户请求' },
     { source: 'routes', target: 'thalamus', seq: 'B2', desc: '路由' },
     { source: 'thalamus', target: 'cortex', seq: 'B3', desc: '复杂任务' },
-    { source: 'cortex', target: 'planner', seq: 'B4', desc: 'Opus分析' },
-    { source: 'planner', target: 'decision', seq: 'B5', desc: '决策' },
     { source: 'decision', target: 'actions', seq: 'B6', desc: '执行' },
     { source: 'actions', target: 'database', seq: 'B7', desc: '存储' },
     // Path C - Autonomous loop
     { source: 'routes', target: 'tick', seq: 'C1', desc: '启动心跳' },
-    { source: 'tick', target: 'planner', seq: 'C2', desc: '规划' },
     { source: 'tick', target: 'alertness', seq: 'C3', desc: '检查' },
     { source: 'tick', target: 'actions', seq: 'C4', desc: '调度' },
     // Path D - Protection layer
@@ -76,7 +72,6 @@ const graphData = {
     { source: 'quarantine', target: 'database', seq: 'D2', desc: '记录' },
     { source: 'tick', target: 'alertness', seq: 'D3', desc: '监控' },
     { source: 'alertness', target: 'database', seq: 'D4', desc: '健康数据' },
-    { source: 'planner', target: 'focus', seq: 'D5', desc: '优先级' },
     { source: 'focus', target: 'database', seq: 'D6', desc: '焦点数据' },
     // Infrastructure
     { source: 'routes', target: 'executor', desc: '备用直达' },

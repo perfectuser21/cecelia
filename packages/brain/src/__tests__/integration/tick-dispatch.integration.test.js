@@ -1,8 +1,8 @@
 /**
- * Integration Test: tick selectNextDispatchableTask + planner planNextTask
+ * Integration Test: tick selectNextDispatchableTask
  *
  * Uses vi.mock for DB (pool) and external APIs, but tests the real
- * logic flow across tick.js and planner.js functions.
+ * task dispatch selection.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -20,15 +20,7 @@ vi.mock('../../llm-caller.js', () => ({
   default: vi.fn().mockResolvedValue('{}'),
 }));
 
-// Mock focus.js (getDailyFocus needs multiple DB queries internally)
-vi.mock('../../focus.js', () => ({
-  getDailyFocus: vi.fn().mockResolvedValue({ kr_ids: [], manual: false }),
-  setDailyFocus: vi.fn(),
-  clearDailyFocus: vi.fn(),
-  getReadyKRs: vi.fn().mockResolvedValue([]),
-}));
-
-describe('Tick-Planner Integration', () => {
+describe('Tick dispatch selection', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
@@ -78,30 +70,4 @@ describe('Tick-Planner Integration', () => {
     });
   });
 
-  describe('planNextTask', () => {
-    it('returns no_active_kr when no KRs exist', async () => {
-      const { planNextTask } = await import('../../planner.js');
-
-      // getGlobalState: Promise.all runs 6 pool.query calls (getDailyFocus is mocked)
-      // 1. objectives (mission, vision)
-      // 2. keyResults (area_okr, global_kr, area_kr)
-      // 3. projects (active)
-      // 4. activeTasks (queued, in_progress)
-      // 5. recentCompleted
-      // 6. initiativeKRResult
-      mockPool.query
-        .mockResolvedValueOnce({ rows: [] }) // objectives
-        .mockResolvedValueOnce({ rows: [] }) // keyResults
-        .mockResolvedValueOnce({ rows: [] }) // projects
-        .mockResolvedValueOnce({ rows: [] }) // activeTasks
-        .mockResolvedValueOnce({ rows: [] }) // recentCompleted
-        .mockResolvedValueOnce({ rows: [] }) // initiativeKRResult
-        // skipPrPlans=false (default) → PR Plans query
-        .mockResolvedValueOnce({ rows: [] }); // PR plans initiatives
-
-      const result = await planNextTask(null, { skipAreaStreams: true });
-      expect(result.planned).toBe(false);
-      expect(result.reason).toBe('no_active_kr');
-    });
-  });
 });

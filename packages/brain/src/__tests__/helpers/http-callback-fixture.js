@@ -29,15 +29,6 @@ vi.mock('../../decision.js', () => ({
   rollbackDecision: vi.fn(),
 }));
 
-vi.mock('../../planner.js', () => ({
-  planNextTask: vi.fn(),
-  getPlanStatus: vi.fn(),
-  handlePlanInput: vi.fn(),
-  getGlobalState: vi.fn(),
-  selectTopAreas: vi.fn(),
-  selectActiveInitiativeForArea: vi.fn(),
-  ACTIVE_AREA_COUNT: 3,
-}));
 
 vi.mock('../../decision-executor.js', () => ({
   executeDecision: vi.fn(),

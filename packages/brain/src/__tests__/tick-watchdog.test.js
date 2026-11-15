@@ -67,9 +67,6 @@ vi.mock('../decision.js', () => ({
   splitActionsBySafety: vi.fn().mockReturnValue({ safe: [], unsafe: [] }),
 }));
 
-vi.mock('../planner.js', () => ({
-  planNextTask: vi.fn().mockResolvedValue(null),
-}));
 
 vi.mock('../event-bus.js', () => ({
   emit: vi.fn().mockResolvedValue(undefined),

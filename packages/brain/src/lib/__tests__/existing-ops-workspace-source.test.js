@@ -67,6 +67,10 @@ describe('当前Basic workspace子收集器来源', () => {
     }
   });
   it('当前完整封组拒绝未审exclude、动态选择器及缺字节', async () => {
+    const brainConfig = 'packages/brain/vitest.config.js';
+    const narrowed = read(brainConfig).replace("    exclude: [", "    exclude: ['src/**',");
+    expect(narrowed).not.toBe(read(brainConfig));
+    await expect(collect({ [brainConfig]: narrowed })).rejects.toThrow(/workspace/i);
     const changed=read(config).replace(/^    exclude: \[\n/m, "    exclude: [\n      'features/**',\n");
     expect(changed).not.toBe(read(config));
     await expect(collect({[config]:changed})).rejects.toThrow(/workspace/i);

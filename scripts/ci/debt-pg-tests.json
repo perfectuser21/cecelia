@@ -122,11 +122,6 @@
       "status": "ready"
     },
     {
-      "path": "packages/brain/src/__tests__/planner-learning-penalty.test.js",
-      "mode": "full",
-      "status": "ready"
-    },
-    {
       "path": "packages/brain/src/__tests__/learning.test.js",
       "mode": "full",
       "status": "ready"
@@ -183,11 +178,6 @@
     },
     {
       "path": "packages/brain/src/__tests__/integration/learning-current-contract.pg.integration.test.js",
-      "mode": "full",
-      "status": "ready"
-    },
-    {
-      "path": "packages/brain/src/__tests__/planner.test.js",
       "mode": "full",
       "status": "ready"
     },

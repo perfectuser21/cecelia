@@ -12,7 +12,6 @@ const mockPool = { query: vi.fn() };
 vi.mock('../db.js', () => ({ default: mockPool }));
 
 // tick.js 依赖的外部模块全部 mock
-vi.mock('../planner.js', () => ({ planNextTask: vi.fn() }));
 vi.mock('../quarantine.js', () => ({
   handleTaskFailure: vi.fn(),
   getQuarantineStats: vi.fn().mockResolvedValue({ total: 0 }),

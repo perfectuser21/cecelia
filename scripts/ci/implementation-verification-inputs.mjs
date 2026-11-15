@@ -211,8 +211,11 @@ const SKILL_RETIREMENT_ENTRY_PROTOCOL = {
   "vitest.config.js": "3400f6ba2d5886c139535b28dc0ffde32cf50838c22f1946a1bba4415e695a71",
   "packages/brain/src/workflows/__tests__/impact-contract-evaluator-receipts.skill-source.test.js": null, "packages/brain/src/__tests__/golden-path-skill-snapshot.skill-source.test.js": null, "packages/brain/src/__tests__/ci-defense.skill-source.test.ts": null, "packages/brain/src/__tests__/golden-path-contract-task.skill-source.test.js": null, "tests/contract-e2e-extractor.skill-source.test.ts": null, "packages/brain/vitest.skill-source.config.mjs": null, "vitest.skill-source.config.mjs": null, "scripts/ci/run-skill-source-check.mjs": null, "scripts/ci/skill-source-tests.mjs": null, "scripts/ci/__tests__/basic-skill-source-coverage.test.mjs": null
 };
+const PLANNER_RETIREMENT_ENTRY_PROTOCOL = {...SKILL_RETIREMENT_ENTRY_PROTOCOL,
+  "packages/brain/vitest.config.js": "1fe8d41c6d6f0761c553248ff320b5255a9276e2143ae9305b5183a844f0a7b8",
+  "packages/brain/src/planner.js": null, "packages/brain/src/__tests__/planner.test.js": null, "packages/brain/src/__tests__/planner-learning-penalty.test.js": null};
 const SKILL_RETIREMENT_CI = '7195c295058535d0a014e66343803d144647f2991120fe274ca8036728cb2ea9';
-const entryProtocolsFor = digest => digest === SKILL_RETIREMENT_CI ? [SKILL_RETIREMENT_ENTRY_PROTOCOL] : ENTRY_PROTOCOLS_BY_WORKFLOW[digest];
+const entryProtocolsFor = digest => digest === SKILL_RETIREMENT_CI ? [SKILL_RETIREMENT_ENTRY_PROTOCOL,PLANNER_RETIREMENT_ENTRY_PROTOCOL] : ENTRY_PROTOCOLS_BY_WORKFLOW[digest];
 const functionalEntry=entry=>Boolean(entryProtocolsFor(entry?.canonical_sha256??''));
 const UNIT_CONFIGS=[
  {component:'brain',directory:'packages/brain',path:'packages/brain/vitest.config.js'},

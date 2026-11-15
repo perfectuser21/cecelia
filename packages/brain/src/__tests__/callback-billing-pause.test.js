@@ -114,11 +114,6 @@ vi.mock('../decision.js', () => ({
   getDecisionHistory: vi.fn(),
   rollbackDecision: vi.fn(),
 }));
-vi.mock('../planner.js', () => ({
-  planNextTask: vi.fn(),
-  getPlanStatus: vi.fn(),
-  handlePlanInput: vi.fn(),
-}));
 vi.mock('../event-bus.js', () => ({
   ensureEventsTable: vi.fn(),
   queryEvents: vi.fn(),

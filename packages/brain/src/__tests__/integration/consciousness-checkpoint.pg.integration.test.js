@@ -14,7 +14,6 @@ const boundary = vi.hoisted(() => ({
 vi.mock('../../thalamus.js', () => ({ processEvent: boundary.thalamus, EVENT_TYPES: { TICK: 'tick' } }));
 vi.mock('../../decision.js', () => ({ generateDecision: boundary.decision }));
 vi.mock('../../rumination.js', () => ({ runRumination: boundary.rumination }));
-vi.mock('../../planner.js', () => ({ planNextTask: boundary.plan }));
 vi.mock('../../guidance.js', () => ({ setGuidance: vi.fn() }));
 vi.mock('../../db.js', () => ({ default: { query: boundary.query } }));
 

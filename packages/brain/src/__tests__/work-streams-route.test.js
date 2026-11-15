@@ -2,7 +2,7 @@
  * Work Streams API Route Tests
  * GET /api/brain/work/streams
  *
- * 路由使用 planner.js 的 selectTopAreas + selectActiveInitiativeForArea + ACTIVE_AREA_COUNT
+ * 路由使用 work-streams.js 的 selectTopAreas + selectActiveInitiativeForArea + ACTIVE_AREA_COUNT
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -12,33 +12,15 @@ vi.mock('../db.js', () => {
   return { default: mockPool };
 });
 
-vi.mock('../planner.js', () => ({
-  planNextTask: vi.fn(),
-  getPlanStatus: vi.fn(),
-  handlePlanInput: vi.fn(),
+vi.mock('../work-streams.js', () => ({
   getGlobalState: vi.fn(),
-  scoreKRs: vi.fn(),
-  selectTargetKR: vi.fn(),
-  selectTargetProject: vi.fn(),
-  generateNextTask: vi.fn(),
-  buildLearningPenaltyMap: vi.fn().mockResolvedValue(new Map()),
-  LEARNING_PENALTY_SCORE: 0,
-  LEARNING_LOOKBACK_DAYS: 7,
-  LEARNING_FAILURE_THRESHOLD: 3,
-  CONTENT_SCORE_KNOWN_DECOMPOSITION_BONUS: 10,
-  getPrPlansByInitiative: vi.fn().mockResolvedValue([]),
-  isPrPlanCompleted: vi.fn(),
-  updatePrPlanStatus: vi.fn(),
-  canExecutePrPlan: vi.fn(),
-  getNextPrPlan: vi.fn(),
-  checkPrPlansCompletion: vi.fn(),
   ACTIVE_AREA_COUNT: 3,
   selectTopAreas: vi.fn(),
   selectActiveInitiativeForArea: vi.fn(),
 }));
 
 import pool from '../db.js';
-import { getGlobalState, selectTopAreas, selectActiveInitiativeForArea } from '../planner.js';
+import { getGlobalState, selectTopAreas, selectActiveInitiativeForArea } from '../work-streams.js';
 import routes from '../routes.js';
 
 function mockReqRes(params = {}, query = {}) {

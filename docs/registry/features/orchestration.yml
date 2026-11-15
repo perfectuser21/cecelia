@@ -91,7 +91,7 @@ features:
         - packages/brain/src/__tests__/capability-probe.test.js
         - packages/brain/src/__tests__/capability-scanner.test.js
         - packages/brain/src/__tests__/contract-scan-scheduler.test.js
-        - packages/brain/src/__tests__/contracts/planner-contract.test.js
+        - packages/brain/src/__tests__/contracts/work-streams-contract.test.js
         - packages/brain/src/__tests__/daily-report-generator.test.js
         - packages/brain/src/__tests__/daily-review-scheduler.test.js
         - packages/brain/src/__tests__/db-config.test.js
@@ -115,11 +115,7 @@ features:
         - packages/brain/src/__tests__/migration-030.test.js
         - packages/brain/src/__tests__/migration-041.test.js
         - packages/brain/src/__tests__/migrations-087-suggestions.test.js
-        - packages/brain/src/__tests__/planner-area-stream.test.js
-        - packages/brain/src/__tests__/planner-insight.test.js
-        - packages/brain/src/__tests__/planner-learning-penalty.test.js
-        - packages/brain/src/__tests__/planner-scope.test.js
-        - packages/brain/src/__tests__/planner.test.js
+        - packages/brain/src/__tests__/work-streams.test.js
         - packages/brain/src/__tests__/recurring.test.js
         - packages/brain/src/__tests__/registry.test.js
         - packages/brain/src/__tests__/role-registry.test.js
@@ -185,7 +181,7 @@ features:
             - packages/brain/src/__tests__/capability-probe.test.js
             - packages/brain/src/__tests__/capability-scanner.test.js
             - packages/brain/src/__tests__/contract-scan-scheduler.test.js
-            - packages/brain/src/__tests__/contracts/planner-contract.test.js
+            - packages/brain/src/__tests__/contracts/work-streams-contract.test.js
             - packages/brain/src/__tests__/daily-report-generator.test.js
             - packages/brain/src/__tests__/daily-review-scheduler.test.js
             - packages/brain/src/__tests__/db-config.test.js
@@ -209,11 +205,7 @@ features:
             - packages/brain/src/__tests__/migration-030.test.js
             - packages/brain/src/__tests__/migration-041.test.js
             - packages/brain/src/__tests__/migrations-087-suggestions.test.js
-            - packages/brain/src/__tests__/planner-area-stream.test.js
-            - packages/brain/src/__tests__/planner-insight.test.js
-            - packages/brain/src/__tests__/planner-learning-penalty.test.js
-            - packages/brain/src/__tests__/planner-scope.test.js
-            - packages/brain/src/__tests__/planner.test.js
+            - packages/brain/src/__tests__/work-streams.test.js
             - packages/brain/src/__tests__/recurring.test.js
             - packages/brain/src/__tests__/registry.test.js
             - packages/brain/src/__tests__/role-registry.test.js

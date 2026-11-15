@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { selectTopAreas, selectActiveInitiativeForArea } from '../planner.js';
+import { selectTopAreas, selectActiveInitiativeForArea } from '../work-streams.js';
 
 // ============================================================
 // selectTopAreas

@@ -116,12 +116,11 @@
       "id": "core",
       "label": "意识核心",
       "color": "#a855f7",
-      "desc": "丘脑路由 + 皮层分析 + 欲望形成 + 反刍洞察",
+      "desc": "丘脑路由 + 皮层分析 + 反刍洞察",
       "nodeIds": [
         "thalamus",
         "cortex",
         "cognitive",
-        "desire",
         "rumination"
       ],
       "modules": [
@@ -218,11 +217,6 @@
               "dangerous": false
             },
             {
-              "name": "create_proposal",
-              "description": "创建计划提案",
-              "dangerous": false
-            },
-            {
               "name": "create_learning",
               "description": "保存经验教训到 learnings 表",
               "dangerous": false
@@ -273,24 +267,9 @@
               "dangerous": false
             },
             {
-              "name": "kr_replan",
-              "description": "触发 KR 重新规划（KR停滞/失败率高时）",
-              "dangerous": false
-            },
-            {
               "name": "escalate_to_cortex",
               "description": "升级到 L2 Opus 皮层做深度战略分析",
               "dangerous": false
-            },
-            {
-              "name": "propose_decomposition",
-              "description": "OKR/Initiative 拆解结果确认",
-              "dangerous": true
-            },
-            {
-              "name": "propose_weekly_plan",
-              "description": "本周计划确认",
-              "dangerous": true
             },
             {
               "name": "propose_priority_change",
@@ -300,11 +279,6 @@
             {
               "name": "propose_anomaly_action",
               "description": "异常处理方案选择",
-              "dangerous": true
-            },
-            {
-              "name": "propose_milestone_review",
-              "description": "Initiative 完成验收",
               "dangerous": true
             },
             {
@@ -369,13 +343,6 @@
           "nature": "dynamic"
         },
         {
-          "id": "desire",
-          "label": "欲望系统",
-          "desc": "感知→情绪→记忆→反思→欲望形成→表达（6 层管道）",
-          "file": "desire/index.js",
-          "nature": "growing"
-        },
-        {
           "id": "rumination",
           "label": "反刍",
           "desc": "批量深度反思，30min 周期，洞察写回 self_model",
@@ -388,21 +355,13 @@
       "id": "action",
       "label": "行动层",
       "color": "#22c55e",
-      "desc": "调度执行——规划任务、执行任务、建议路由与防护机制",
+      "desc": "调度执行——选择已有任务、执行、人工建议台账与防护机制",
       "nodeIds": [
-        "planner",
         "executor",
         "suggestion",
         "immune"
       ],
       "modules": [
-        {
-          "id": "planner",
-          "label": "调度规划",
-          "desc": "选择下一个任务，KR 轮转评分，资源检查",
-          "file": "planner.js",
-          "nature": "dynamic"
-        },
         {
           "id": "executor",
           "label": "执行器",
@@ -414,7 +373,7 @@
         {
           "id": "suggestion",
           "label": "建议系统",
-          "desc": "欲望→行动建议评分（score >= 0.7）——⚠️ P0: 下游 planner 路径已废弃（PR #252）",
+          "desc": "人工登记、分拣与更新建议状态，不自动生成建议或派发任务",
           "file": "suggestion-triage.js",
           "nature": "dynamic"
         },
@@ -499,7 +458,7 @@
       "to": "action",
       "label": "决策→行动",
       "type": "primary",
-      "desc": "丘脑路由任务 → 调度规划 → 执行器（⚠️ suggestion→planner 子路径已废弃）",
+      "desc": "明确任务 → 队列选择 → 执行器",
       "broken": false
     },
     {
@@ -519,25 +478,8 @@
       "broken": false
     }
   ],
-  "brokenConnections": [
-    {
-      "from": "suggestion",
-      "to": "planner",
-      "reason": "PR #252 废弃 suggestion-dispatcher.js，欲望信号现在直接到 executor",
-      "severity": "P0"
-    }
-  ],
+  "brokenConnections": [],
   "issues": [
-    {
-      "severity": "P0",
-      "type": "broken_connection",
-      "title": "suggestion→planner 路径断路",
-      "detail": "PR #252 后 suggestion-dispatcher.js 废弃，desire→suggestion→planner 路径不再工作。图上的线已是死路。",
-      "affected": [
-        "suggestion",
-        "planner"
-      ]
-    },
     {
       "severity": "P1",
       "type": "no_consumer",
@@ -617,10 +559,6 @@
       "dangerous": false,
       "description": "预测进度"
     },
-    "create_proposal": {
-      "dangerous": false,
-      "description": "创建计划提案"
-    },
     "create_learning": {
       "dangerous": false,
       "description": "保存经验教训到 learnings 表"
@@ -661,21 +599,9 @@
       "dangerous": false,
       "description": "降级到纯代码 Tick"
     },
-    "kr_replan": {
-      "dangerous": false,
-      "description": "触发 KR 重新规划（KR停滞/失败率高时）"
-    },
     "escalate_to_cortex": {
       "dangerous": false,
       "description": "升级到 L2 Opus 皮层做深度战略分析"
-    },
-    "propose_decomposition": {
-      "dangerous": true,
-      "description": "OKR/Initiative 拆解结果确认"
-    },
-    "propose_weekly_plan": {
-      "dangerous": true,
-      "description": "本周计划确认"
     },
     "propose_priority_change": {
       "dangerous": true,
@@ -684,10 +610,6 @@
     "propose_anomaly_action": {
       "dangerous": true,
       "description": "异常处理方案选择"
-    },
-    "propose_milestone_review": {
-      "dangerous": true,
-      "description": "Initiative 完成验收"
     },
     "heartbeat_finding": {
       "dangerous": true,
@@ -747,7 +669,7 @@
   ],
   "allSkills": {},
   "skillWhitelist": {},
-  "generatedAt": "2026-11-07T01:50:45.192Z",
+  "generatedAt": "2026-11-15T00:27:44.200Z",
   "generatedBy": "packages/brain/scripts/generate-manifest.mjs",
   "sourceFiles": [
     "src/brain-manifest.js",

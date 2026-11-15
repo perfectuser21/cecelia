@@ -1,55 +1,16 @@
 /**
- * Contract Test: planner.js
+ * Contract Test: work-streams.js
  *
  * Guards the interface contract of planner functions.
  * Tests pure exported functions; DB-dependent functions tested via shape validation.
  */
 import { describe, it, expect } from 'vitest';
 import {
-  applyContentAwareScore,
   selectTopAreas,
   selectActiveInitiativeForArea,
-} from '../../planner.js';
+} from '../../work-streams.js';
 
-describe('planner contract', () => {
-  describe('applyContentAwareScore', () => {
-    it('returns an array', () => {
-      const result = applyContentAwareScore([]);
-      expect(Array.isArray(result)).toBe(true);
-    });
-
-    it('preserves all input tasks', () => {
-      const tasks = [
-        { id: '1', payload: {} },
-        { id: '2', payload: { decomposition_mode: 'known' } },
-      ];
-      const result = applyContentAwareScore(tasks);
-      expect(result).toHaveLength(2);
-    });
-
-    it('adds _content_score_bonus to each task', () => {
-      const tasks = [{ id: '1', payload: {} }];
-      const result = applyContentAwareScore(tasks);
-      expect(result[0]).toHaveProperty('_content_score_bonus');
-      expect(typeof result[0]._content_score_bonus).toBe('number');
-    });
-
-    it('gives bonus to known decomposition tasks', () => {
-      const tasks = [
-        { id: '1', payload: {} },
-        { id: '2', payload: { decomposition_mode: 'known' } },
-      ];
-      const result = applyContentAwareScore(tasks);
-      expect(result[1]._content_score_bonus).toBeGreaterThan(result[0]._content_score_bonus);
-    });
-
-    it('handles tasks without payload', () => {
-      const tasks = [{ id: '1' }];
-      const result = applyContentAwareScore(tasks);
-      expect(result[0]._content_score_bonus).toBe(0);
-    });
-  });
-
+describe('work streams contract', () => {
   describe('selectTopAreas', () => {
     it('returns array for valid state', () => {
       const state = {

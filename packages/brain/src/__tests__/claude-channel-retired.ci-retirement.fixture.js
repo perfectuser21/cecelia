@@ -98,7 +98,9 @@ const COMMANDER_CI_COHORT={...COHORTS[4],
  'existing-ops-stage-source.js':'ef6a2191f1db8b939e21e2b5c62a8de4bd01f225f713c5c88175194cb938623a'};
 const SKILL_RETIREMENT_CI_COHORT={...COMMANDER_CI_COHORT,
  'existing-ops-stage-source.js':'079b4f1785a462bb77d3a12493b24f1352cda40b260a1775a7a8a61289f531f5'};
-export const ciVersionGuardCohorts=()=>[...COHORTS,COMMANDER_CI_COHORT,SKILL_RETIREMENT_CI_COHORT];
+const PLANNER_RETIREMENT_CI_COHORT={...SKILL_RETIREMENT_CI_COHORT,
+ 'existing-ops-stage-source.js':'c2bcb8e1a941ed95a4ad527fabbe33b2d63752c20c8eb5696918e5f4fe58899c'};
+export const ciVersionGuardCohorts=()=>[...COHORTS,COMMANDER_CI_COHORT,SKILL_RETIREMENT_CI_COHORT,PLANNER_RETIREMENT_CI_COHORT];
 export function registerCiRetirementGuardTests({root,base,scan}){
  describe('当前来源完整闭包及执行防复活',()=>{
   it('Commander CI登记只替换已审stage成员，未知登记不能继承只读资格',()=>{

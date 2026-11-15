@@ -26,7 +26,6 @@ vi.mock('../decision.js', () => ({
   compareGoalProgress: vi.fn().mockResolvedValue({ overall_health: 'healthy', next_actions: [], goals: [] }),
   generateDecision: vi.fn(), executeDecision: vi.fn(), splitActionsBySafety: vi.fn().mockReturnValue({ safeActions: [], unsafeActions: [] }),
 }));
-vi.mock('../planner.js', () => ({ planNextTask: vi.fn().mockResolvedValue(null), checkPrPlansCompletion: vi.fn().mockResolvedValue([]) }));
 vi.mock('../circuit-breaker.js', () => ({
   isAllowed: vi.fn().mockReturnValue(true), recordSuccess: vi.fn(), recordFailure: vi.fn(), getAllStates: vi.fn().mockReturnValue({}),
 }));
