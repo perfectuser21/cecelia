@@ -4,13 +4,13 @@ import os from 'node:os';
 import path from 'node:path';
 import {createHash} from 'node:crypto';
 import {createRuntime} from '../../../scripts/commander-workflow/skill-adapter.mjs';
-async function fixture(script,timeout_ms=2000,activity={key:'collect'}){
+async function fixture(script,timeout_ms=2000,activity={key:'collect'},frozenActivities){
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'commander-checker-boundary-'));fs.chmodSync(root,0o700);
  const sha=file=>createHash('sha256').update(fs.readFileSync(file)).digest('hex');
  fs.writeFileSync(path.join(root,'check.cjs'),script);fs.writeFileSync(path.join(root,'skill.txt'),'活动');fs.writeFileSync(path.join(root,'tools.txt'),'工具');
  const checker={command:process.execPath,command_sha256:sha(process.execPath),entry:'check.cjs',start_checks:['identity'],required_checks:['identity'],timeout_ms};
  const profile={cwd:root,files:Object.fromEntries(['skill.txt','tools.txt','check.cjs'].map(f=>[f,sha(path.join(root,f))])),skill_runtime:{control_dir:'control',tools:'tools.txt',codex:{command:process.execPath,command_sha256:sha(process.execPath)},activities:{collect:{skill:'skill.txt',checker}}}};
- const runtime=await createRuntime({profile,run:{task_id:'task',run_id:'run',input:{run_tag:'tag'},contract:{workflow:'101'},playbook:{schema_version:1,content:'仅供Commander的Workflow方法'}}});
+ const runtime=await createRuntime({profile,run:{task_id:'task',run_id:'run',input:{run_tag:'tag'},contract:{workflow:'101',...(frozenActivities===undefined?{}:{activities:frozenActivities})},playbook:{schema_version:1,content:'仅供Commander的Workflow方法'}}});
  return {root,check:()=>runtime.checkActivity(activity,null,{phase:'start',input:{run_tag:'tag'}}),records:()=>{
   const directory=path.join(root,'control','run','checks');return fs.readdirSync(directory).map(f=>JSON.parse(fs.readFileSync(path.join(directory,f),'utf8')));
  },close:()=>fs.rmSync(root,{recursive:true,force:true})};
@@ -54,5 +54,13 @@ test('独立checker实际收到本步Contract，不接收Skill或Workflow Playbo
   expect(received).not.toHaveProperty('skill_text');expect(received).not.toHaveProperty('playbook');
   expect(JSON.stringify(received)).not.toContain('仅供Commander的Workflow方法');
   expect(received.checks).toEqual(['identity']);
+ }finally{f.close();}
+});
+
+test('run已有冻结活动清单时不能用未绑定Activity契约启动checker',async()=>{
+ const f=await fixture(passed.replace('MUTATION','void 0'),2000,{key:'collect'},[{key:'other'}]);
+ try{
+  await expect(f.check()).rejects.toThrow('skill_activity_contract_unbound');
+  expect(fs.existsSync(path.join(f.root,'checker-started'))).toBe(false);
  }finally{f.close();}
 });

@@ -21,8 +21,10 @@ test('真实监督进程执行工具worker，下一活动续同thread且只传�
  const hashes=Object.fromEntries(Array.from({length:317},(_,i)=>['/frozen/program-'+i+'.mjs','a'.repeat(64)]));
  const run={task_id:'task',run_id:'run',input:{run_tag:'tag',keyword:'客户关键词',verification:{runtime_sha256:hashes,policy_version:29}},contract:{workflow:'fixture'},playbook:{schema_version:1,content:'仅供Commander的方法'}};
  const activities=['one','two'].map(key=>({key,acceptance:[key+'独立验收标准'],budget:{max_duration_s:10,heartbeat_s:1},runtime:{phase:'source',protocol:'json-stdio-v1',entry:'unused'}}));
- try{const runtime=await createRuntime({profile,run});for(const activity of activities){
-  const {key}=activity;
+ run.contract.activities=structuredClone(activities);
+ try{const runtime=await createRuntime({profile,run});for(const frozen of activities){
+  // activity-runtime会按剩余时间缩短执行预算，不能冒充原冻结契约。
+  const activity={...frozen,budget:{...frozen.budget,max_duration_s:6}}, {key}=activity;
   const identity={task_id:'task',run_id:'run',activity_key:key,action_id:key},input={run_tag:'tag'};
   const output=await runtime.executeActivity(activity,input,{identity,cwd:root,deadlineMs:Date.now()+10000});
   expect(output.outputs).toEqual({verified:42});expect(output.execution_stopped).toBe(true);
@@ -36,6 +38,10 @@ test('真实监督进程执行工具worker，下一活动续同thread且只传�
   expect(prompts[index]).not.toContain(other.acceptance[0]);
   expect(prompts[index]).not.toContain(run.playbook.content);
   expect(prompts[index]).toContain('Activity Contract优先于Skill');
+  const directory=path.join(root,'control','run','checks');
+  const checks=fs.readdirSync(directory).map(file=>JSON.parse(fs.readFileSync(path.join(directory,file),'utf8')).request).filter(check=>check.activity===current.key);
+  expect(checks.length).toBeGreaterThanOrEqual(2);
+  for(const check of checks)expect(check.activity_contract).toEqual(current);
  }
  }finally{fs.rmSync(root,{recursive:true,force:true});}
 },20000);
