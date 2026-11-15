@@ -12,7 +12,7 @@ import {createCodexCommander} from '../commander-codex.js';
 import {createRuntime} from '../../../scripts/commander-workflow/skill-adapter.mjs';
 const roots=[];
 afterEach(()=>{judge.mockReset();for(const root of roots.splice(0))fs.rmSync(root,{recursive:true,force:true});});
-function temporary(){const root=fs.mkdtempSync(path.join(os.tmpdir(),'commander-usage-wiring-'));fs.chmodSync(root,0o700);roots.push(root);return root;}
+function temporary(){const root=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'commander-usage-wiring-')));fs.chmodSync(root,0o700);roots.push(root);return root;}
 function ledger(root){
  const directory=path.join(root,'ledger');fs.mkdirSync(directory,{mode:0o700});
  return {directory,policy:{},identity:{task_id:'task',run_id:'run'},
