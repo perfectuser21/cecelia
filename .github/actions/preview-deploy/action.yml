@@ -120,15 +120,15 @@ runs:
             repo: context.repo.repo,
             issue_number: context.issue.number,
             body: [
-              '## 🚀 完整预览环境已就绪',
+              '## 🚀 后端预览入口已核验',
               '',
               `**Branch**: \`${branch}\``,
-              `**Preview URL**: ${previewUrl}`,
+              `**后端预览入口**: ${previewUrl}`,
               `**Port**: ${port}`,
               '',
-              '**包含**: 预览 Brain（PR 后端代码）+ 隔离数据库快照 + 前端 UI',
+              '**已核验**: PR 代码提交、隔离数据库身份、Tick 关闭状态',
               '',
-              '> 此预览环境在 PR 关闭时自动销毁。数据隔离：写入不会污染生产库。',
+              '> 此后端预览环境在 PR 关闭时自动清理；当前检查未验证前端界面可用性。',
             ].join('\n'),
           });
 
