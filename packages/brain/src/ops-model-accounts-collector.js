@@ -45,8 +45,8 @@ const FAILURE_STREAK_THRESHOLD = 3;
 
 /**
  * 8 个静态模型账号注册表（端点「恰好 8 条」的 ground truth）。
- * 凭据全在 mmv；forwardable/forward_targets 为静态配置：
- *   Codex 可经车道2 转发到 xian-m4/xian-m1；Claude Code / Grok 锁本机。
+ * 凭据全在 mmv；forwardable/forward_targets 只投影已登记的转发目的地。
+ * 当前无已登记转发目的地；不表示provider能力限制，也不参与实际执行授权。
  */
 export const MODEL_ACCOUNTS = Object.freeze([
   { account_id: 'claude-account1', provider: 'claude', plan: 'max', host_alias: 'mmv',
@@ -56,19 +56,19 @@ export const MODEL_ACCOUNTS = Object.freeze([
     forwardable: false, forward_targets: [], credential_path: '~/.claude-account2/.credentials.json',
     runtime_account_id: 'account2' },
   { account_id: 'codex-team1', provider: 'codex', plan: 'team', host_alias: 'mmv',
-    forwardable: true, forward_targets: ['xian-m4', 'xian-m1'], credential_path: '~/.codex-team1/auth.json',
+    forwardable: false, forward_targets: [], credential_path: '~/.codex-team1/auth.json',
     runtime_account_id: 'team1' },
   { account_id: 'codex-team2', provider: 'codex', plan: 'team', host_alias: 'mmv',
-    forwardable: true, forward_targets: ['xian-m4', 'xian-m1'], credential_path: '~/.codex-team2/auth.json',
+    forwardable: false, forward_targets: [], credential_path: '~/.codex-team2/auth.json',
     runtime_account_id: 'team2' },
   { account_id: 'codex-team3', provider: 'codex', plan: 'team', host_alias: 'mmv',
-    forwardable: true, forward_targets: ['xian-m4', 'xian-m1'], credential_path: '~/.codex-team3/auth.json',
+    forwardable: false, forward_targets: [], credential_path: '~/.codex-team3/auth.json',
     runtime_account_id: 'team3' },
   { account_id: 'codex-team4', provider: 'codex', plan: 'team', host_alias: 'mmv',
-    forwardable: true, forward_targets: ['xian-m4', 'xian-m1'], credential_path: '~/.codex-team4/auth.json',
+    forwardable: false, forward_targets: [], credential_path: '~/.codex-team4/auth.json',
     runtime_account_id: 'team4' },
   { account_id: 'codex-team5', provider: 'codex', plan: 'team', host_alias: 'mmv',
-    forwardable: true, forward_targets: ['xian-m4', 'xian-m1'], credential_path: '~/.codex-team5/auth.json',
+    forwardable: false, forward_targets: [], credential_path: '~/.codex-team5/auth.json',
     runtime_account_id: 'team5' },
   { account_id: 'grok', provider: 'grok', plan: null, host_alias: 'mmv',
     forwardable: false, forward_targets: [], credential_path: '~/.grok/auth.json',

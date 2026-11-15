@@ -17,7 +17,7 @@ function withoutParser(script) {
     writeFileSync(join(root, 'existing-ops-runtime-source.js'), readFileSync(new URL('../existing-ops-runtime-source.js', import.meta.url)));
     for (const name of ['existing-ops-build-source.js','existing-ops-build-envelopes.js','existing-ops-workspace-source.js',
       'existing-ops-provenance-envelope.js','existing-ops-provenance-core-envelope.js',
-      'existing-ops-provenance-entry-envelopes.js','existing-ops-provenance-local-envelopes.js','existing-ops-stage-source.js','existing-ops-stage-envelopes.js','existing-ops-stage-modes.js',
+      'existing-ops-provenance-entry-envelopes.js','existing-ops-provenance-local-envelopes.js','existing-ops-stage-source.js','existing-ops-stage-envelopes.js','existing-ops-stage-modes.js','existing-ops-script-cleanup-profile.json',
       'existing-ops-native-evidence-source.js','existing-ops-native-evidence-envelopes.js','workspace-ci-source-bundle.js','existing-ops-us-compose-source.js','native-consumer-runtime.js'])
       writeFileSync(join(root, name), readFileSync(new URL('../'+name, import.meta.url)));
     return spawnSync(process.execPath, ['--input-type=module', '-e', script], { cwd: root, encoding: 'utf8', timeout: 10000 });

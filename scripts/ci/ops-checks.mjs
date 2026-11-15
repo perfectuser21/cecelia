@@ -115,16 +115,3 @@ export function opsChecks(root, {paths: changedPaths = null} = {}) {
     cwd,
   }));
 }
-
-// 旧镜像/attempt 兼容实现专用；现役默认与未知输入回退均不得调用本入口。
-export function legacyRunnerChecks(root) {
-  if (typeof root !== 'string' || !root) throw new Error('Runner 兼容回归需要仓库根目录');
-  const cwd = resolve(root);
-  const runner = filesIn(cwd, 'docker/cecelia-runner/__tests__');
-  const smoke = 'scripts/smoke/runner-credential-single-chain-smoke.sh';
-  if (!filesIn(cwd, 'scripts/smoke').includes(smoke)) throw new Error('Runner 兼容 smoke 缺失');
-  return [
-    ...select(runner, /\.test\.sh$/, '旧Runner Shell'),
-    ...select(runner, /\.test\.cjs$/, '旧Runner CJS'), smoke,
-  ].sort().map(path => ({command: path.endsWith('.sh') ? 'bash' : 'node', args: [path], cwd}));
-}

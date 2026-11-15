@@ -71,3 +71,18 @@ it('d06历史完整封组仍校验W19真实输入；候选不依赖这些退役�
   }
  }
 });
+
+it('脚本清退新profile拒绝缺失/篡改/未知成员，完整旧组仍兼容',async()=>{
+ const {readFileSync,existsSync}=await import('node:fs'),{execFileSync}=await import('node:child_process'),{fileURLToPath}=await import('node:url');
+ const root=fileURLToPath(new URL('../../../../../',import.meta.url));
+ const paths=execFileSync('git',['ls-files','-z','--cached','--others','--exclude-standard'],{cwd:root,encoding:'utf8'}).split('\0').filter(p=>p&&existsSync(new URL(p,'file://'+root)));
+ const profile='packages/brain/src/lib/existing-ops-script-cleanup-profile.json',ops='scripts/ci/ops-checks.mjs';
+ const read=path=>readFileSync(new URL(path,'file://'+root),'utf8');
+ const observe=async(overrides={},missing)=>{const relations=[],source=async path=>{if(path===missing)throw Error('missing profile');return overrides[path]??read(path);};await collectBasicCiSources({read:source,ci:read('.github/workflows/ci.yml'),revision:'f'.repeat(40),relations,parse:ast,paths});return relations;};
+ await expect(observe()).resolves.toEqual(expect.any(Array));
+ await expect(observe({},profile)).rejects.toThrow();
+ for(const text of [read(profile)+'\n',JSON.stringify({...JSON.parse(read(profile)),unknown:'f'.repeat(64)}),'{}'])await expect(observe({[profile]:text})).rejects.toThrow('basic_ci_source_unproven');
+ await expect(observe({[ops]:read(ops)+'\n// unknown operations selector\n'})).rejects.toThrow('basic_ci_source_unproven');
+ const oldOps=execFileSync('git',['show','10e5943803aa9338f468df7ac19e647967aca7b5:scripts/ci/ops-checks.mjs'],{cwd:root,encoding:'utf8'});
+ await expect(observe({[ops]:oldOps})).resolves.toEqual(expect.any(Array));
+});

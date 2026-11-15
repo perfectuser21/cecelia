@@ -33,7 +33,7 @@ authority: CURRENT_STATE
 - Brain普通单测、PG、源码HTTP生命周期和Docker构建是不同证据；PR镜像只build，不代表已启动生产服务。
 - `apps/api`只保留Dashboard共享features和captures schema验证，不再有独立旧Core服务、Conductor、旧任务/OKR路由或后端编译入口。
 - 共享features与Dashboard在一个组件任务中依次使用各自React/Vitest环境，再构建Dashboard，不能混用React18/19测试环境。
-- Ops按固定PR差异选择执行域；公共配置、未知来源和全量运行执行56个现役入口。21个旧Runner兼容回归仅由 `node scripts/ci/run-legacy-runner-checks.mjs` 显式执行，不作为现役WorkflowRunner验收。
+- Ops按固定PR差异选择执行域；公共配置、未知来源和全量运行执行55个现役入口。旧Runner兼容行为测试保留按具体文件显式执行，不作为现役WorkflowRunner验收；无调用的汇总脚本已清退。
 - scripts检查CI本身的真实选择/退出/权限边界、开发工具、事实与版本一致、迁移编号及Skill所有权。默认52个Node入口；W19冻结、旧准入发布器和一次性历史授权回放已退出。两个仍被可选API消费的窄合同由 `node scripts/ci/run-legacy-checks.mjs` 显式执行。
 - 独立MCP不进入现役服务全量矩阵或夜间PG回归；包自身变更仍运行单测，PG合同保留显式 `npm run test:pg -w packages/mcp-readonly`，需专用测试库。
 - 外置Skill正文、固定版本与关键词专属合同已退出本仓PR验收；普通单测不依赖本机私有正文。通用恢复器及Python所有权检查仍保留。
