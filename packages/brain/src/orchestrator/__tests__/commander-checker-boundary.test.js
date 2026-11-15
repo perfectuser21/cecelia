@@ -4,14 +4,14 @@ import os from 'node:os';
 import path from 'node:path';
 import {createHash} from 'node:crypto';
 import {createRuntime} from '../../../scripts/commander-workflow/skill-adapter.mjs';
-async function fixture(script,timeout_ms=2000){
+async function fixture(script,timeout_ms=2000,activity={key:'collect'}){
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'commander-checker-boundary-'));fs.chmodSync(root,0o700);
  const sha=file=>createHash('sha256').update(fs.readFileSync(file)).digest('hex');
  fs.writeFileSync(path.join(root,'check.cjs'),script);fs.writeFileSync(path.join(root,'skill.txt'),'活动');fs.writeFileSync(path.join(root,'tools.txt'),'工具');
  const checker={command:process.execPath,command_sha256:sha(process.execPath),entry:'check.cjs',start_checks:['identity'],required_checks:['identity'],timeout_ms};
  const profile={cwd:root,files:Object.fromEntries(['skill.txt','tools.txt','check.cjs'].map(f=>[f,sha(path.join(root,f))])),skill_runtime:{control_dir:'control',tools:'tools.txt',codex:{command:process.execPath,command_sha256:sha(process.execPath)},activities:{collect:{skill:'skill.txt',checker}}}};
- const runtime=await createRuntime({profile,run:{task_id:'task',run_id:'run',input:{run_tag:'tag'},contract:{workflow:'101'}}});
- return {root,check:()=>runtime.checkActivity({key:'collect'},null,{phase:'start',input:{run_tag:'tag'}}),records:()=>{
+ const runtime=await createRuntime({profile,run:{task_id:'task',run_id:'run',input:{run_tag:'tag'},contract:{workflow:'101'},playbook:{schema_version:1,content:'仅供Commander的Workflow方法'}}});
+ return {root,check:()=>runtime.checkActivity(activity,null,{phase:'start',input:{run_tag:'tag'}}),records:()=>{
   const directory=path.join(root,'control','run','checks');return fs.readdirSync(directory).map(f=>JSON.parse(fs.readFileSync(path.join(directory,f),'utf8')));
  },close:()=>fs.rmSync(root,{recursive:true,force:true})};
 }
@@ -39,5 +39,20 @@ test.each(['invalid_json','nonzero_exit','timeout'])('checker运输失败%s仍�
   if(mode==='invalid_json'){expect(saved.status).toBe('parse_error');expect(saved.reason).toBe('skill_checker_invalid_json');expect(saved.transport.exit_code).toBe(0);}
   if(mode==='nonzero_exit'){expect(saved.reason).toBe('skill_checker_failed');expect(saved.transport.exit_code).toBe(7);}
   if(mode==='timeout'){expect(saved.reason).toBe('skill_checker_timeout');expect(saved.transport.timed_out).toBe(true);expect(saved.transport.signal).toBe('SIGKILL');}
+ }finally{f.close();}
+});
+
+test('独立checker实际收到本步Contract，不接收Skill或Workflow Playbook方法',async()=>{
+ const activity={key:'collect',acceptance:['原生身份与目标产物均读回'],failure:{needs_human:{cases:['身份不能证实']}}};
+ const f=await fixture(passed.replace('MUTATION',`fs.writeFileSync('checker-request.json',JSON.stringify(r))`),2000,activity);
+ try{
+  expect((await f.check()).verdict).toBe('pass');
+  const received=JSON.parse(fs.readFileSync(path.join(f.root,'checker-request.json'),'utf8'));
+  const [saved]=f.records();
+  expect(received.activity_contract).toEqual(activity);
+  expect(saved.request.activity_contract).toEqual(activity);
+  expect(received).not.toHaveProperty('skill_text');expect(received).not.toHaveProperty('playbook');
+  expect(JSON.stringify(received)).not.toContain('仅供Commander的Workflow方法');
+  expect(received.checks).toEqual(['identity']);
  }finally{f.close();}
 });
