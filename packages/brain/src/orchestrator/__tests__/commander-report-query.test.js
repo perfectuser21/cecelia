@@ -5,6 +5,7 @@ import {createRunLedger} from '../commander-usage-ledger.js';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import pg from 'pg';
 const identity={task_id:'task',run_id:'run'};
 const run={...identity,contract:{workflow:'example',activities:[{key:'work',runtime:{executor_kind:'agent',phase:'source'}}]}};
 const base={schema_version:1,identity,policy:{},as_of_ms:200,calls:[],attempts:[],observations:[],pending_call_ids:[],coverage:'complete',summary:{total_tokens:0}};
@@ -33,10 +34,10 @@ test('同一调用迟到终态补全账单，重复查询不增加用量',()=>{
 });
 test('只读查询缺失journal不创建目录，数据库接口只读且释放连接',async()=>{
  const root=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'report-readonly-'))),previous=process.env.COMMANDER_DATABASE_URL;
- process.env.COMMANDER_DATABASE_URL='postgresql://fixture/unused';const calls=[];
+ process.env.COMMANDER_DATABASE_URL='postgresql://fixture/unused?options=-c%20statement_timeout%3D5000';const calls=[];
  try{const manifestPath=path.join(root,'manifest.json');fs.writeFileSync(manifestPath,JSON.stringify({run,profile:{cwd:root}}));
   const report=await queryCommanderReport({manifestPath,clientFactory:async options=>{expect(new URL(options.systemDatabaseUrl).searchParams.get('options')).toContain('default_transaction_read_only=on');return {getWorkflow:async()=>({workflowID:'commander-foundation:run',status:'ERROR'}),listWorkflowSteps:async()=>[],destroy:async()=>calls.push('destroy')};},databaseFactory:options=>{
-   expect(options.options).toContain('default_transaction_read_only=on');return {connect:async()=>{},query:async(sql,params)=>{expect(sql).toMatch(/^SELECT /);expect(params).toEqual(['run']);return {rows:[]};},end:async()=>calls.push('end')};
+   const actual=new pg.Client(options).connectionParameters.options;expect(actual).toContain('default_transaction_read_only=on');expect(actual).toContain('search_path=');return {connect:async()=>{},query:async(sql,params)=>{expect(sql).toMatch(/^SELECT /);expect(params).toEqual(['run']);return {rows:[]};},end:async()=>calls.push('end')};
   }});expect(report.usage.total_tokens).toBeNull();expect(report.status).toBe('failed');expect(fs.existsSync(path.join(root,'control'))).toBe(false);expect(calls.sort()).toEqual(['destroy','end']);
  }finally{if(previous===undefined)delete process.env.COMMANDER_DATABASE_URL;else process.env.COMMANDER_DATABASE_URL=previous;fs.rmSync(root,{recursive:true,force:true});}
 });
