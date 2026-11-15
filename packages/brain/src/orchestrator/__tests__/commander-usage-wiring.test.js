@@ -3,6 +3,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {createHash,randomUUID} from 'node:crypto';
+import {spawnSync} from 'node:child_process';
+import {fileURLToPath} from 'node:url';
+import {createRunLedger} from '../commander-usage-ledger.js';
 const judge=vi.hoisted(()=>vi.fn());
 vi.mock('../../../scripts/coding-workflow/lib/codex-judge.mjs',()=>({callCodexJudge:judge}));
 import {createCodexCommander} from '../commander-codex.js';
@@ -66,4 +69,21 @@ test('未知执行不能把attempt记成完成，恢复不增尝试',async()=>{
  expect(f.ledger.beginAttempt).toHaveBeenCalledTimes(1);
  expect(f.ledger.finishAttempt.mock.calls.every(([,r])=>r.status==='unknown')).toBe(true);
  expect(f.ledger.beginObservation.mock.calls.some(([m])=>m.kind==='recovery_readback')).toBe(true);
+});
+test('监督transport持久化真实进程起止，不把读回时间伪装为执行结束',async()=>{
+ const f=codeFixture(),runtime=await createRuntime(f);await runtime.executeActivity(f.activity,f.input,f.options);
+ const t=JSON.parse(fs.readFileSync(path.join(f.root,'control','run','actions','action','result.json'))).transport;
+ expect(t.started_at_ms).toBeTypeOf('number');expect(t.ended_at_ms).toBeGreaterThanOrEqual(t.started_at_ms);expect(t.duration_s).toBe((t.ended_at_ms-t.started_at_ms)/1000);
+});
+test.each(['valid','invalid'])('worker原生两轮usage归同一CLI调用，%s提案不改变token来源',mode=>{
+ const root=temporary(),work=path.join(root,'work');fs.mkdirSync(work,{mode:0o700});
+ const identity={task_id:randomUUID(),run_id:randomUUID(),activity_key:'report',action_id:'action'},directory=path.join(root,'ledger');
+ const book=createRunLedger({directory,identity:{task_id:identity.task_id,run_id:identity.run_id}});
+ const executable=path.join(root,'fake.cjs');fs.writeFileSync(executable,`const fs=require('fs');process.stdin.resume();process.stdin.on('end',()=>{console.log(JSON.stringify({type:'thread.started',thread_id:'thread'}));for(let i=0;i<2;i++)console.log(JSON.stringify({type:'turn.completed',usage:{input_tokens:100,cached_input_tokens:40,output_tokens:7}}));fs.writeFileSync(process.argv[process.argv.indexOf('-o')+1],${JSON.stringify(mode==='valid'?'{"usage":{"total_tokens":999999}}':'not-json')});});`);
+ const request={identity,activity_key:'report',ledger_directory:directory,ledger_policy:{},cwd:root,work_dir:work,thread_file:path.join(root,'thread.json'),codex:{command:process.execPath,command_sha256:sha(process.execPath),args:[executable,'-c','model="gpt-6-astra"'],env_keys:[]},context:{run_tag:'tag'},skill_text:'fixture',tools_text:'fixture'};
+ const worker=fileURLToPath(new URL('../../../scripts/commander-workflow/skill-worker.mjs',import.meta.url));
+ const result=spawnSync(process.execPath,[worker],{input:JSON.stringify(request),encoding:'utf8',timeout:10000});
+ expect(result.status).toBe(mode==='valid'?0:1);
+ const snapshot=book.snapshot();expect(snapshot.calls).toHaveLength(1);expect(snapshot.calls[0]).toMatchObject({role:'activity',model:'gpt-6-astra',dispatch_status:'dispatched',usage:{input_tokens:200,cached_input_tokens:80,output_tokens:14,total_tokens:214}});
+ expect(snapshot.calls[0].status).toBe(mode==='valid'?'completed':'failed');expect(snapshot.calls[0].evidence_ref).not.toBe(path.join(work,'proposal.json'));
 });
