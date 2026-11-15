@@ -28,7 +28,7 @@ test('同一调用迟到终态补全账单，重复查询不增加用量',()=>{
   journal.finishCall(call.call_id,{status:'completed',usage:{input_tokens:9,output_tokens:3,cached_input_tokens:2}});
   const args={run,workflow:{workflowID:'commander-foundation:run',output:{run_report:{ledger:saved}}},observedLedger:journal.snapshot()};
   const a=buildCommanderRunReport(args),b=buildCommanderRunReport(args);
-  expect(a.usage.total_tokens).toBe(12);expect(a.usage.activity_calls).toHaveLength(1);expect(b).toEqual(a);
+  expect(a.usage.total_tokens).toBe(12);expect(a.usage.activity_calls).toHaveLength(1);expect(a.usage.by_role.activity.total_tokens).toBe(12);expect(a.usage.by_role.commander.total_tokens).toBe(0);expect(a.activities[0].usage.total_tokens).toBe(12);expect(b).toEqual(a);
  }finally{fs.rmSync(root,{recursive:true,force:true});}
 });
 test('只读查询缺失journal不创建目录，数据库接口只读且释放连接',async()=>{
