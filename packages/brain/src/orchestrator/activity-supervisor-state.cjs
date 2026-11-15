@@ -5,12 +5,22 @@ const {spawnSync}=require('node:child_process');
 const {createHash}=require('node:crypto');
 const digest=value=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
 function protectedText(file,depth=1){
- let directory=path.dirname(file);
- for(let i=0;i<depth;i++,directory=path.dirname(directory)){
-  const d=fs.lstatSync(directory);if(!d.isDirectory()||d.isSymbolicLink()||d.uid!==process.getuid()||(d.mode&0o077))throw Error('activity_state_directory_unprotected');
+ for(let attempt=0;attempt<3;attempt++){
+  let directory=path.dirname(file);
+  for(let i=0;i<depth;i++,directory=path.dirname(directory)){
+   const d=fs.lstatSync(directory);if(!d.isDirectory()||d.isSymbolicLink()||d.uid!==process.getuid()||(d.mode&0o077))throw Error('activity_state_directory_unprotected');
+  }
+  const fd=fs.openSync(file,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW);
+  try{
+   const s=fs.fstatSync(fd);
+   if(!s.isFile()||s.uid!==process.getuid()||(s.mode&0o077)||s.size>40*1024*1024)throw Error('activity_state_file_unprotected');
+   // durableWrite可能在open之后原子替换旧inode；关闭脱链fd并重新验证当前路径。
+   if(s.nlink===0)continue;
+   if(s.nlink!==1)throw Error('activity_state_file_unprotected');
+   return fs.readFileSync(fd,'utf8');
+  }finally{fs.closeSync(fd);}
  }
- const fd=fs.openSync(file,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW);
- try{const s=fs.fstatSync(fd);if(!s.isFile()||s.uid!==process.getuid()||(s.mode&0o077)||s.nlink!==1||s.size>40*1024*1024)throw Error('activity_state_file_unprotected');return fs.readFileSync(fd,'utf8');}finally{fs.closeSync(fd);}
+ throw Error('activity_state_file_replaced');
 }
 const protectedRead=(file,depth=1)=>JSON.parse(protectedText(file,depth));
 function processBirth(pid){

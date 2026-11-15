@@ -49,15 +49,35 @@ test.each([
  if(result.external_effect)expect(out.external_effect).toBe(result.external_effect);
  const recovered=await runtime.inspectActivity(f.activity,input,f.options);expect(recovered.result).toEqual(out);expect(recovered.execution_stopped).toBe(stopped);
 });
-test.each(['wrong-tag','wrong-line','invalid','nonzero','hang'])('Code %s不能成为成功或错误地证明已停止',async mode=>{
+test.each(['wrong-tag','wrong-line','invalid','nonzero'])('Code %s不能成为成功或错误地证明已停止',async mode=>{
  const f=fixture(),runtime=await createRuntime(f),input={...f.input,mode};
  if(mode==='wrong-tag')input.result={run_tag:'other'};
  if(mode==='wrong-line')input.result={line_key:'other'};
- const options={...f.options,deadlineMs:Date.now()+(mode==='hang'?400:5000)};
+ const options={...f.options,deadlineMs:Date.now()+5000};
  const out=await runtime.executeActivity(f.activity,input,options);
  expect(out.status).toBe('needs_review');
  if(mode!=='nonzero')expect(out.execution_stopped).toBe(false);
  const recovered=await runtime.inspectActivity(f.activity,input,options);expect(recovered.result).toEqual(out);
+});
+test('Code已启动后卡住：截止收尾保持未知，恢复不重复执行',async()=>{
+ const f=fixture(),runtime=await createRuntime(f),input={...f.input,mode:'hang'};
+ // 预算包含独立start checker和监督进程启动；400ms会在CI中先耗尽，根本未测到hang。
+ const options={...f.options,deadlineMs:Date.now()+5000};
+ const out=await runtime.executeActivity(f.activity,input,options);
+ expect(out.status).toBe('needs_review');expect(out.execution_stopped).toBe(false);
+ expect(fs.existsSync(path.join(f.root,'owned-resource'))).toBe(true);
+ const calls=()=>fs.readFileSync(path.join(f.root,'executions.jsonl'),'utf8').trim().split('\n').map(JSON.parse);
+ expect(calls()).toHaveLength(1);expect(calls()[0].input.mode).toBe('hang');
+ const recovered=await runtime.inspectActivity(f.activity,input,options);
+ expect(recovered.result).toEqual(out);expect(recovered.execution_stopped).toBe(false);
+ expect(calls()).toHaveLength(1);
+},15000);
+test('Code启动前预算已耗尽：明确拒绝且没有执行副作用',async()=>{
+ const f=fixture(),runtime=await createRuntime(f);
+ await expect(runtime.executeActivity(f.activity,{...f.input,mode:'hang'},{...f.options,deadlineMs:Date.now()-1}))
+  .rejects.toMatchObject({message:'activity_deadline_elapsed',executionStopped:true});
+ expect(fs.existsSync(path.join(f.root,'executions.jsonl'))).toBe(false);
+ expect(fs.existsSync(path.join(f.root,'owned-resource'))).toBe(true);
 });
 test.each(['check_failed','bad_nonce'])('Code %s独立checker不能被exit0覆盖',async mode=>{
  const f=fixture(),runtime=await createRuntime(f);

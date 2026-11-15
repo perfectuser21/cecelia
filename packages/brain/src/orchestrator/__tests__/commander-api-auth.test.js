@@ -27,8 +27,8 @@ function fixture(){
  return {root,home,auth,profile,run,activity,calls,commander,worker};
 }
 async function rejectedWorker(f,action){
- let result;try{result=await f.worker(action);}catch(error){expect(error.message).toMatch(/activity_supervisor_|codex_auth_/);}
- if(result)expect(result.status).toBe('needs_review');expect(f.calls()).toEqual([]);
+ const result=await f.worker(action);
+ expect(result.status).toBe('needs_review');expect(f.calls()).toEqual([]);
 }
 const forced=['forced_login_method="api"','cli_auth_credentials_store="file"','model_provider="openai"'];
 test('两个完整caller使用同一API身份，exec/resume强制file/openai并净化继承环境',async()=>{
