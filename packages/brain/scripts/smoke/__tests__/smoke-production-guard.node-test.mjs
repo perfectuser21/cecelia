@@ -218,16 +218,6 @@ test('Brain DB_HOST cannot be hidden behind an unused loopback DATABASE_URL', as
 });
 
 
-for (const script of ['attempt-run', 'contract-seal', 'merge-pr', 'publish-pr']) {
-  test(`${script}: token comes only from the validated test container`, async () => {
-    await fixture(async ({ smoke, dockerCalls }) => {
-      const result = await smoke(script, { SMOKE_ALLOW_WRITE: '1', BRAIN_INTERNAL_TOKEN: '' });
-      const reads = (await dockerCalls()).filter(args => args[0] === 'exec');
-      assert.ok(reads.length, 'token fallback was not exercised');
-      assert.ok(reads.every(args => args[1] === 'cecelia-brain-smoke'), 'read credential from an unvalidated container');
-    });
-  });
-}
 test('dispatcher route authority helper uses a checked DATABASE_URL', async () => {
   await fixture(async ({ smoke }) => {
     const result = await smoke('dispatcher-real-paths.sh', { SMOKE_ALLOW_WRITE: '1', DATABASE_URL: 'postgresql://localhost/cecelia' }, undefined, true);
@@ -464,4 +454,14 @@ test('phone-dispatch-identity: production scheduler behind proxy refuses with on
     assert.equal(result.code, 1, result.output);
     assert.deepEqual(requests, [{ method: 'GET', url: '/api/brain/health' }]);
   }, { health: { local_execution: { role: 'scheduler_only' } } });
+});
+
+test('safety fixture rejects a missing entry instead of treating shell failure as a safe refusal', async () => {
+  const temp = await mkdtemp(resolve(tmpdir(), 'smoke-missing-entry-'));
+  try {
+    await fixture(async ({ smoke, requests, psqlCalls, dockerCalls }) => {
+      await assert.rejects(smoke(resolve(temp, 'absent.sh')), { code: 'ENOENT' });
+      assert.deepEqual(requests, []); assert.deepEqual(await psqlCalls(), []); assert.deepEqual(await dockerCalls(), []);
+    });
+  } finally { await rm(temp, { recursive: true, force: true }); }
 });

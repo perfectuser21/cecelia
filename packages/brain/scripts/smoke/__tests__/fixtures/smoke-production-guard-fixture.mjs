@@ -52,8 +52,8 @@ trap guard_fixture_boundary DEBUG
   const info = { State: { Running: true }, Config: { Env: ['NODE_ENV=test', 'DB_NAME=cecelia_test', `BRAIN_PORT=${port}`] }, HostConfig: { NetworkMode: 'host' }, NetworkSettings: { Ports: {} } };
   async function smoke(script, overrides = {}, dockerInfo = info, guardOnly = false, scriptArgs = []) {
     let args = [script === '-c' || script.includes('/') ? script : `packages/brain/scripts/smoke/${script.endsWith('.sh') ? script : script + '-smoke.sh'}`, ...scriptArgs];
+    const source = script === '-c' ? null : await readFile(resolve(root, args[0]), 'utf8');
     if (guardOnly) {
-      const source = await readFile(resolve(root, args[0]), 'utf8');
       const prefix = source.slice(0, source.indexOf('\nfi') + 3)
         .replace(/\$\(dirname "\$\{BASH_SOURCE\[0\]\}"\)\/\.\.\/lib/g, resolve(root, 'packages/brain/scripts/lib'));
       args = ['-c', prefix + '\nprintf "GUARD_ACCEPTED"\n'];

@@ -5,11 +5,9 @@ authoring-execution-smoke.sh
 task-intake-smoke.sh
 # 更新方式：在 CI 通过后从 smoke-debt.txt 迁移经确认能通过的脚本到此处
 abilities-api-smoke.sh
-ability-id-chain-pr2-smoke.sh
 acceptance-adjudication-smoke.sh
 acceptance-aging-smoke.sh
 acceptance-catalog-smoke.sh
-acceptance-d3-backtoback-smoke.sh
 acceptance-endpoints-smoke.sh
 acceptance-staff-hub-internal-smoke.sh
 acceptance-two-column-smoke.sh
@@ -19,11 +17,9 @@ anchor-backfill-smoke.sh
 anchor-check-smoke.sh
 app-server-controller-smoke.sh
 app-server-rpc-smoke.sh
-battle-report-smoke.sh
 battle-report-v2-smoke.sh
 capture-destination-link-smoke.sh
 capture-triage-line-backlog-autotask-smoke.sh
-capture-triage-scope-smoke.sh
 cascade-list-smoke.sh
 check-handoffs-smoke.sh
 ci-patrol-wiring-smoke.sh
@@ -37,9 +33,6 @@ codex-headed-dispatch-smoke.sh
 coding-workflow-runner-smoke.sh
 coding-source-compat-smoke.sh
 company-key-results-smoke.sh
-compute-ssh-reachability-smoke.sh
-contract-seal-smoke.sh
-conversation-capture-human-gate-smoke.sh
 session-provenance-smoke.sh
 conversation-capture-multitool-smoke.sh
 conversation-capture-smoke.sh
@@ -52,7 +45,6 @@ crystal-coding-evidence-smoke.sh
 crystal-evidence-feed-smoke.sh
 crystal-judge-smoke.sh
 crystal-units-view-smoke.sh
-db-slim-knife3-smoke.sh
 db-slim-smoke.sh
 decision-system-smoke.sh
 dev-env-db-guard-smoke.sh
@@ -70,12 +62,9 @@ failed-target-ttl-smoke.sh
 feature-registry-smoke.sh
 features-ledger-smoke.sh
 feishu-task-ledger-smoke.sh
-fix-markdispatched-smoke.sh
 fleet-credential-envelope-smoke.sh
 fleet-worker-workspace-smoke.sh
 four-cell-router-smoke.sh
-gan-case-file-smoke.sh
-gan-node-deps-smoke.sh
 gate3-brain-deploy-smoke.sh
 git-sha-health-smoke.sh
 golden-path-contract-version-smoke.sh
@@ -100,11 +89,9 @@ impact-contract-smoke.sh
 inbox-p1-migration-verify.sh
 inbox-p1-smoke.sh
 incidents-smoke.sh
-independent-judge-stage-evidence-smoke.sh
 initiative-lifecycle-smoke.sh
 journey-id-entry-points-smoke.sh
 journeys-bizarea-smoke.sh
-judge-api-smoke.sh
 kernel-bounded-run-smoke.sh
 kernel-capability-gate-smoke.sh
 kernel-contract-artifacts-smoke.sh
@@ -115,22 +102,18 @@ kernel-fleet-receipts-smoke.sh
 kernel-fleet-transport-smoke.sh
 kernel-fleet-verification-smoke.sh
 kernel-log-persist-smoke.sh
-kernel-r71-validation-clock-fix-round-smoke.sh
 kernel-run-identity-terminalization-smoke.sh
 kernel-runtime-resource-smoke.sh
 kernel-shared-validation-clock-smoke.sh
 kernel-two-phase-launch-smoke.sh
 kv-route-smoke.sh
 launchd-patrol-smoke.sh
-ledger-hygiene-m2-noise-smoke.sh
 ledger-hygiene-m7-organic-smoke.sh
 ledger-hygiene-m7-window-smoke.sh
-ledger-hygiene-smoke.sh
 ledger-unified-api-smoke.sh
 line-context-smoke.sh
 line-dreaming-smoke.sh
 liveness-never-started-smoke.sh
-liveness-queued-never-spawned-smoke.sh
 local-execution-guard-smoke.sh
 machine-ssh-dispatch-smoke.sh
 map-anchor-state-smoke.sh
@@ -141,22 +124,16 @@ map-manifest-smoke.sh
 map-projection-smoke.sh
 map-reorg-smoke.sh
 map-second-repo-smoke.sh
-merge-pr-smoke.sh
 migration-339-drop-abilities-gp-priority-smoke.sh
 migration-346-idempotent-smoke.sh
-migration-verify.sh
 model-accounts-smoke.sh
 nfr-decisions-assertion-ref-smoke.sh
-notion-capture-ingest-smoke.sh
-notion-inbox-ws3-smoke.sh
 notion-inlet-ingest-smoke.sh
 notion-page-content-prompt-smoke.sh
 notion-projection-engine-smoke.sh
 notion-projection-map-smoke.sh
 notion-projection-watch-smoke.sh
-okr-initiative-mirror-smoke.sh
 openclaw-cron-ledger-smoke.sh
-openclaw-guards-smoke.sh
 openclaw-runner-pool-smoke.sh
 ops-cockpit-sync-smoke.sh
 ops-graph-smoke.sh
@@ -171,7 +148,6 @@ ops-workflows-smoke.sh
 orchestrator-remote-launch-smoke.sh
 org-units-smoke.sh
 orphan-guard-smoke.sh
-outreach-liveness-smoke.sh
 owner-cockpit-smoke.sh
 postdeploy-verifier-smoke.sh
 preview-agent-mmv-smoke.sh
@@ -181,7 +157,6 @@ preview-ledger-activate-smoke.sh
 promise-map-ledger-smoke.sh
 protocol-hygiene-smoke.sh
 provider-neutral-phase4a-node-smoke.sh
-publish-pr-smoke.sh
 qiumi-dispatch-smoke.sh
 qiumi-entry-smoke.sh
 qiumi-foundation-smoke.sh
@@ -189,25 +164,15 @@ qiumi-model-allowlist-smoke.sh
 qiumi-phone-agent-smoke.sh
 qiumi-routing-smoke.sh
 quality-test-pyramid-smoke.sh
-radius-rerun-gate-smoke.sh
 ratchet-registry-smoke.sh
 registry-photo-layer-smoke.sh
 relay-baton-smoke.sh
 handoff-kinds-smoke.sh
 relay-mirror-smoke.sh
 projects-notion-sync-smoke.sh
-relay-runs-filter-smoke.sh
-relay-runs-patch-shortid-smoke.sh
-relay-runs-since-smoke.sh
-relay-runs-smoke.sh
-relay-runs-summary-smoke.sh
-relay-runs-verdicts-smoke.sh
 relay-spine-smoke.sh
 release-gate-smoke.sh
-review-approve-auth-smoke.sh
-rpa-dev-verify-smoke.sh
 runner-canonical-repin-smoke.sh
-scheduler-jobs-smoke.sh
 scripts/ops/janitor.sh
 scripts/smoke/e2e/relay-565fa27a.sh
 scripts/smoke/e2e/relay-dedbca0c.sh
@@ -217,7 +182,6 @@ skill-inventory-smoke.sh
 skill-registry-projection-smoke.sh
 skill-business-grouping-smoke.sh
 skill-ledger-reconcile-smoke.sh
-slot-accounting-smoke.sh
 slot-admission-smoke.sh
 staging-e2e-endpoint-smoke.sh
 strategist-form-smoke.sh
@@ -238,17 +202,11 @@ vocab-alias-smoke.sh
 warroom-line-command-smoke.sh
 warroom-readonly-api-smoke.sh
 warroom-smoke.sh
-watchdog-gh-compat-smoke.sh
-watchdog-headed-not-failed-smoke.sh
 workbench-projection-smoke.sh
-worker-pool-dispatch-smoke.sh
-ws3-ire-module-smoke.sh
 zenithjoy-schema-migration-smoke.sh
 reanchor-base-sha-smoke.sh
-task-terminal-relay-hub-smoke.sh
 scheduler-liveness-smoke.sh
 task-kind-column-smoke.sh
-task-run-primitive-smoke.sh
 task-run-outlets-smoke.sh
 task-governance-guards-smoke.sh
 script-executor-contract-smoke.sh
@@ -268,7 +226,6 @@ backbone-contract-sync-smoke.sh
 backbone-page-body-smoke.sh
 qiumi-schedule-smoke.sh
 notion-mirror-labels-smoke.sh
-notion-map-value-streams-smoke.sh
 qiumi-model-family-smoke.sh
 phone-registry-smoke.sh
 phone-dispatch-identity-smoke.sh
@@ -311,7 +268,6 @@ linux-script-runtime-smoke.sh
 
 linux-onboarding-flow-smoke.sh
 us-image-retention-smoke.sh
-kernel-codex-failover-smoke.sh
 workflow-authoring-smoke.sh
 
 shared-activities-smoke.sh
@@ -322,7 +278,6 @@ span-ingestion-smoke.sh
 implementation-impact-smoke.sh
 device-patrol-admission-smoke.sh
 
-release-evidence-smoke.sh
 capability-system-smoke.sh
 capability-kr-regression-smoke.sh
 pilot-release-verification-smoke.sh

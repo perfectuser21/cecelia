@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:net';
 import { createServer as createHttpServer } from 'node:http';
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { test } from 'node:test';
@@ -210,3 +210,48 @@ for (const [script, args] of [...delegates, ['-c', ['DB="$DATABASE_URL"; ' + gol
     }
   });
 }
+
+
+for (const [wrapper, required] of [
+  ['fleet-worker-workspace', ['src/orchestrator/workspace-spec.test.js', 'src/orchestrator/__tests__/execution-contract.test.js', 'scripts/fleet-worker/workspace-manager.test.cjs', 'scripts/fleet-worker/attempt-runner.test.cjs', 'scripts/fleet-worker/fleet-worker.test.js', 'src/orchestrator/providers/grok.test.js', 'src/orchestrator/production-transport.test.js', 'src/orchestrator/remote-bridge-transport.test.js']],
+  ['kernel-runtime-resource', ['scripts/fleet-worker/attempt-resources.test.cjs', 'scripts/fleet-worker/attempt-runner.test.cjs']],
+]) test(`owned resource wrappers: ${wrapper} delegates current suites and propagates their failure`, async () => {
+  const temp = await mkdtemp(resolve(tmpdir(), 'owned-resource-delegation-'));
+  try {
+    const script = `packages/brain/scripts/smoke/${wrapper}-smoke.sh`;
+    await mkdir(resolve(temp, 'packages/brain/scripts/smoke'), {recursive: true});
+    await mkdir(resolve(temp, 'node_modules/.bin'), {recursive: true});
+    await mkdir(resolve(temp, 'bin'));
+    await writeFile(resolve(temp, script), await readFile(resolve(root, script)));
+    // Run the real shell orchestration with an owned CLI boundary. Never start
+    // Docker, install dependencies, or execute the inline resource provisioner.
+    await writeFile(resolve(temp, 'bin/git'), '#!/bin/bash\nprintf "%s\\n" "$OWNED_ROOT"\n', {mode: 0o700});
+    await writeFile(resolve(temp, 'bin/node'), '#!/bin/bash\ncat >/dev/null\n', {mode: 0o700});
+    const delegate = `#!/bin/bash
+set -euo pipefail
+printf '%s\\n' "$@" > "$OWNED_ARGS"
+for arg in "$@"; do
+  case "$arg" in
+    run|vitest) ;;
+    *) [[ -f "$OWNED_REPO/packages/brain/$arg" ]] || exit 91 ;;
+  esac
+done
+exit "$OWNED_EXIT"
+`;
+    await writeFile(resolve(temp, 'bin/npx'), delegate, {mode: 0o700});
+    await writeFile(resolve(temp, 'node_modules/.bin/vitest'), delegate, {mode: 0o700});
+    for (const exit of [0, 17]) {
+      const marker = resolve(temp, 'args');
+      const child = spawnSync('bash', [resolve(temp, script)], {
+        cwd: temp, encoding: 'utf8', timeout: 5000,
+        env: {...process.env, PATH: `${temp}/bin:${process.env.PATH}`, OWNED_ROOT: temp,
+          OWNED_REPO: root, OWNED_ARGS: marker, OWNED_EXIT: String(exit)},
+      });
+      assert.equal(child.status, exit, child.stdout + child.stderr);
+      const args = (await readFile(marker, 'utf8')).trim().split('\n');
+      assert.deepEqual(args, [...(wrapper === 'kernel-runtime-resource' ? ['vitest'] : []), 'run', ...required]);
+      assert.equal(/(?:kernel runtime resource smoke: PASS|PASS: Fleet Worker)/.test(child.stdout), exit === 0,
+        'failed delegate must stop the actual wrapper before its success message');
+    }
+  } finally { await rm(temp, {recursive: true, force: true}); }
+});

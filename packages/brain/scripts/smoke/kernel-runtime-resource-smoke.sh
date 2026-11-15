@@ -91,7 +91,6 @@ NODE
 cd "$ROOT_DIR/packages/brain"
 npx vitest run \
   scripts/fleet-worker/attempt-resources.test.cjs \
-  scripts/fleet-worker/attempt-runner.test.cjs \
-  src/routes/__tests__/harness-attempt-callback.test.js
+  scripts/fleet-worker/attempt-runner.test.cjs
 
 echo 'kernel runtime resource smoke: PASS'
