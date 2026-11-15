@@ -421,13 +421,13 @@ test('非执行变更缺失侧显式冻结absence，不能给已删除head造普
 });
 test('当前功能跑道仅为Dashboard features及选中Ops读者提供验证输入',t=>assertFunctionalConsumerInputs(t,{basicEntryFixture,derived,root:fileURLToPath(new URL('../../../',import.meta.url))}));
 
-test('当前候选输入入口逐项读取身份及资源完整控制封组，混配与坏计划失去入口资格',t=>{
+test('当前候选输入入口逐项读取身份及六父任务完整控制封组，混配失去入口资格',t=>{
  const path='scripts/ci/__tests__/basic-candidate-source.test.mjs',f=basicEntryFixture(t,path);
  const live=fileURLToPath(new URL('../../../',import.meta.url));
- const profile='packages/brain/src/lib/existing-ops-script-cleanup-profile.json',bytes=readFileSync(join(live,profile));
+ const profile='packages/brain/src/lib/existing-ops-resource-retirement-profile.json',bytes=readFileSync(join(live,profile));
  const controls={...JSON.parse(bytes),[profile]:createHash('sha256').update(bytes).digest('hex')};
  const members=Object.keys(controls).filter(p=>controls[p]!==null),retired=Object.keys(controls).filter(p=>controls[p]===null);
- for(const member of ['scripts/skill_source_ownership.py','scripts/ci/resource-canary-scope.mjs','scripts/ci/__tests__/basic-resource-canary-scope.test.mjs','scripts/ci/__tests__/basic-resource-canary.test.mjs','scripts/ci/__tests__/basic-results.test.mjs','scripts/ci/__tests__/basic-workflow.test.mjs'])assert.ok(members.includes(member),member);
+ for(const member of ['scripts/skill_source_ownership.py','scripts/ci/check-basic-results.mjs','scripts/ci/__tests__/basic-results.test.mjs','scripts/ci/__tests__/basic-workflow.test.mjs'])assert.ok(members.includes(member),member);
  for(const member of ['.github/workflows/ci.yml',...members]){mkdirSync(join(f.root,member,'..'),{recursive:true});writeFileSync(join(f.root,member),readFileSync(join(live,member)));}
  f.git('rm','--sparse','--ignore-unmatch',...retired);
  f.git('rm','--sparse','-r','scripts/ci/check-w19-frozen.mjs','scripts/ci/__tests__/basic-w19-freeze.test.mjs','playground');
@@ -438,7 +438,7 @@ test('当前候选输入入口逐项读取身份及资源完整控制封组，�
  assert.equal(row.input_facts.entry_verified,false);assert.equal(row.execution_status,'not_evaluated');
  const ops='scripts/ci/ops-checks.mjs',newOps=readFileSync(join(f.root,ops));
  writeFileSync(join(f.root,ops),execFileSync('git',[...VERIFICATION_GIT_OPTIONS,'show','10e5943803aa9338f468df7ac19e647967aca7b5:'+ops],{cwd:live}));f.source.head_revision=f.commit();f.source.changed_files=f.git('diff','--name-only',f.source.base_revision,f.source.head_revision).split('\n').filter(Boolean).map(path=>({path}));
- assert.ok(derived(f).rows.some(r=>r.input_facts.path===path&&r.input_facts.source.side==='head'),'完整旧Commander组仍兼容');
+ assert.equal(derived(f).rows.some(r=>r.input_facts.path===path&&r.input_facts.source.side==='head'),false,'新workflow不能混入旧Commander单成员');
  writeFileSync(join(f.root,ops),newOps);f.source.head_revision=f.commit();f.source.changed_files=f.git('diff','--name-only',f.source.base_revision,f.source.head_revision).split('\n').filter(Boolean).map(path=>({path}));
  const workflowPath='.github/workflows/ci.yml',workflowText=readFileSync(join(f.root,workflowPath),'utf8');
  for(const changed of [workflowText.replace('node packages/brain/scripts/smoke/commander-foundation-smoke.mjs','echo no-recovery'),
@@ -460,9 +460,9 @@ test('当前候选输入入口逐项读取身份及资源完整控制封组，�
   assert.ok(mixed.unproven.some(r=>r.path===path&&r.reason==='entry_unproven'));
   writeFileSync(join(f.root,member),candidate);f.source.head_revision=f.commit();
  }
- for(const member of [profile,'scripts/ci/resource-canary-scope.mjs','scripts/ci/__tests__/basic-resource-canary-scope.test.mjs','scripts/ci/__tests__/basic-resource-canary.test.mjs','scripts/ci/__tests__/basic-results.test.mjs','scripts/ci/__tests__/basic-workflow.test.mjs']){
+ for(const member of [profile,'scripts/ci/check-basic-results.mjs','scripts/ci/__tests__/basic-results.test.mjs','scripts/ci/__tests__/basic-workflow.test.mjs']){
   const original=readFileSync(join(f.root,member),'utf8');
-  for(const changed of ['', original+'\n// unknown scope member\n', ...(member.endsWith('/resource-canary-scope.mjs')?[original.replace('typeof plan[flag] !== \'boolean\'','false')]:[])]){
+  for(const changed of ['', original+'\n// unknown scope member\n']){
    assert.notEqual(changed,original);writeFileSync(join(f.root,member),changed);f.source.head_revision=f.commit();
    f.source.changed_files=f.git('diff','--name-only',f.source.base_revision,f.source.head_revision).split('\n').filter(Boolean).map(path=>({path}));
    const invalid=derived(f);assert.equal(invalid.rows.some(r=>r.input_facts.path===path&&r.input_facts.source.side==='head'),false);

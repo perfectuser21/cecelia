@@ -375,7 +375,8 @@ const REVIEWED_PLANNER_RETIREMENT = {...REVIEWED_SKILL_RETIREMENT,
   "packages/brain/vitest.config.js": "1fe8d41c6d6f0761c553248ff320b5255a9276e2143ae9305b5183a844f0a7b8",
   "packages/brain/src/planner.js": null, "packages/brain/src/__tests__/planner.test.js": null, "packages/brain/src/__tests__/planner-learning-penalty.test.js": null};
 const REVIEWED_COMMANDER_AUDIT = {...REVIEWED_PLANNER_RETIREMENT, 'packages/brain/vitest.config.js': 'cf3307a3508e5feb473951fb645197d74a714c2c8decc44ec6bfe690982b17b5'}, SKILL_RETIREMENT_CI = '7195c295058535d0a014e66343803d144647f2991120fe274ca8036728cb2ea9';
-const SCRIPT_PROFILE_PATH='packages/brain/src/lib/existing-ops-script-cleanup-profile.json', SCRIPT_PROFILE_SHA='fc9b4df6a9c128f5186571e9a89f3a45c818171544730f88b1c5d5977247a98f', scriptProfileText=readFileSync(new URL('./existing-ops-script-cleanup-profile.json',import.meta.url),'utf8');if(hash(scriptProfileText)!==SCRIPT_PROFILE_SHA) throw Error('basic_ci_source_unproven');const scriptProfileData=JSON.parse(scriptProfileText);if(JSON.stringify(Object.keys(scriptProfileData).sort())!==JSON.stringify(Object.keys(REVIEWED_COMMANDER_AUDIT).sort())||Object.entries(REVIEWED_COMMANDER_AUDIT).some(([p,v])=>p!=='scripts/ci/ops-checks.mjs'&&scriptProfileData[p]!==v)) throw Error('basic_ci_source_unproven');const REVIEWED_SCRIPT_CLEANUP={...scriptProfileData,[SCRIPT_PROFILE_PATH]:SCRIPT_PROFILE_SHA};const basicProtocolsFor = digest => digest === '014b5b54984ff322b0783c6070113199673efd53bb900ea9934d038de3cd5e5d' ? [REVIEWED_COMMANDER_AUDIT,REVIEWED_SCRIPT_CLEANUP] : digest === SKILL_RETIREMENT_CI ? [REVIEWED_SKILL_RETIREMENT,REVIEWED_PLANNER_RETIREMENT] : BASIC_PROTOCOLS[digest];
+const SCRIPT_PROFILE_PATH='packages/brain/src/lib/existing-ops-script-cleanup-profile.json', SCRIPT_PROFILE_SHA='fc9b4df6a9c128f5186571e9a89f3a45c818171544730f88b1c5d5977247a98f', scriptProfileText=readFileSync(new URL('./existing-ops-script-cleanup-profile.json',import.meta.url),'utf8');if(hash(scriptProfileText)!==SCRIPT_PROFILE_SHA) throw Error('basic_ci_source_unproven');const scriptProfileData=JSON.parse(scriptProfileText);if(JSON.stringify(Object.keys(scriptProfileData).sort())!==JSON.stringify(Object.keys(REVIEWED_COMMANDER_AUDIT).sort())||Object.entries(REVIEWED_COMMANDER_AUDIT).some(([p,v])=>p!=='scripts/ci/ops-checks.mjs'&&scriptProfileData[p]!==v)) throw Error('basic_ci_source_unproven');const REVIEWED_SCRIPT_CLEANUP={...scriptProfileData,[SCRIPT_PROFILE_PATH]:SCRIPT_PROFILE_SHA};const basicProtocolsFor = digest => digest === '763f9075175442249e9500a3d6c55936e2b7c424344f9319baac5fe08ccd5128' ? [REVIEWED_RESOURCE_RETIREMENT] : digest === '014b5b54984ff322b0783c6070113199673efd53bb900ea9934d038de3cd5e5d' ? [REVIEWED_COMMANDER_AUDIT,REVIEWED_SCRIPT_CLEANUP] : digest === SKILL_RETIREMENT_CI ? [REVIEWED_SKILL_RETIREMENT,REVIEWED_PLANNER_RETIREMENT] : BASIC_PROTOCOLS[digest];
+const RESOURCE_PROFILE_PATH='packages/brain/src/lib/existing-ops-resource-retirement-profile.json', RESOURCE_PROFILE_SHA='0189fe174fa8ee2b734e4a05b42f296f83d7ebb36acd162813db266bce9252f3', resourceProfileText=readFileSync(new URL('./existing-ops-resource-retirement-profile.json',import.meta.url),'utf8');if(hash(resourceProfileText)!==RESOURCE_PROFILE_SHA) throw Error('basic_ci_source_unproven');const REVIEWED_RESOURCE_RETIREMENT={...JSON.parse(resourceProfileText),[RESOURCE_PROFILE_PATH]:RESOURCE_PROFILE_SHA};
 const reject = () => { throw Error('basic_ci_source_unproven'); };
 export function basicCiSelectorEnabled(text, parse) {
   const name = 'EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA';
@@ -436,7 +437,7 @@ export async function collectBasicCiSources({ read, ci, revision, relations, par
   }
   if (!protocol) reject();
   const relation = (consumer_path, input_path, kind) => relations.push({ consumer_path, input_path, kind, revision }); const skillWorkflow = Object.hasOwn(protocol, PINNED_WORKFLOW) ? PINNED_WORKFLOW : BASIC_CI;
-  const retiredSkills = [REVIEWED_SKILL_RETIREMENT,REVIEWED_PLANNER_RETIREMENT,REVIEWED_COMMANDER_AUDIT,REVIEWED_SCRIPT_CLEANUP].includes(protocol);
+  const retiredSkills = [REVIEWED_SKILL_RETIREMENT,REVIEWED_PLANNER_RETIREMENT,REVIEWED_COMMANDER_AUDIT,REVIEWED_SCRIPT_CLEANUP,REVIEWED_RESOURCE_RETIREMENT].includes(protocol);
   if (retiredSkills || Object.hasOwn(protocol, PINNED_READER)) {
     if (!Array.isArray(paths)) reject();
     const prefix = 'scripts/ci/__tests__/';
@@ -467,9 +468,8 @@ export async function collectBasicCiSources({ read, ci, revision, relations, par
   if (Object.hasOwn(protocol, 'scripts/ci/check-brain-version-bump.sh')) {
     relation(BASIC_CI, 'scripts/ci/check-brain-version-bump.sh', 'required_brain_version_increment_guard');
   }
-  // 新资源计划仅为同一完整控制协议提供声明边；不授予专项运行成功或业务源码白名单资格。
   const resourceScope = 'scripts/ci/resource-canary-scope.mjs';
-  if (Object.hasOwn(protocol, resourceScope)) {
+  if (typeof protocol[resourceScope] === 'string') {
     relation(BASIC_CI, resourceScope, 'reviewed_resource_canary_scope_plan');
     relation('scripts/ci/check-basic-results.mjs', resourceScope, 'strict_resource_plan_decoder');
     for (const path of ['scripts/ci/__tests__/basic-resource-canary-scope.test.mjs', 'scripts/ci/__tests__/basic-resource-canary.test.mjs', 'scripts/ci/__tests__/basic-results.test.mjs']) {

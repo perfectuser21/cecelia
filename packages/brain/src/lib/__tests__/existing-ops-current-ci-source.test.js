@@ -32,7 +32,7 @@ it('当前workspace来源不向已退役Engine或Quality测试授予自动消费
  const edges=await collectWorkspaceInputEdges({revision:fixed.revision,paths:fixed.paths,readSource:async path=>fixed.read(path),parse:ast});
  expect(edges.some(edge=>/^(?:packages\/engine|packages\/quality)\//.test(edge.dst_path))).toBe(false);
 });
-it('候选完整控制封组真实读取身份与资源计划；单成员混配与坏计划均无来源资格',async()=>{
+it('候选完整控制封组真实读取六父任务协议；单成员混配均无来源资格',async()=>{
  const {readFileSync,existsSync}=await import('node:fs');
  const {execFileSync}=await import('node:child_process');
  const {fileURLToPath}=await import('node:url');
@@ -42,18 +42,14 @@ it('候选完整控制封组真实读取身份与资源计划；单成员混配�
  const observe=async overrides=>{const relations=[],source=async path=>overrides[path]??read(path);await collectBasicCiSources({read:source,ci:await source('.github/workflows/ci.yml'),revision:'f'.repeat(40),relations,parse:ast,paths});return relations;};
  const relations=await observe({});
  expect(relations).toContainEqual(expect.objectContaining({consumer_path:'scripts/ci/run-basic-check.mjs',input_path:'apps/api/vitest.config.ts',kind:'dashboard_features_unit_config'}));
- expect(relations).toContainEqual(expect.objectContaining({consumer_path:'.github/workflows/ci.yml',input_path:'scripts/ci/resource-canary-scope.mjs',kind:'reviewed_resource_canary_scope_plan'}));
+ expect(relations.some(r=>r.kind==='reviewed_resource_canary_scope_plan'||r.kind==='strict_resource_plan_decoder'||r.kind==='reviewed_resource_control_node_test')).toBe(false);
  expect(relations.some(r=>r.kind==='registered_skill_ownership_resolver'||r.kind==='reviewed_skill_source_exclusion'||r.kind==='literal_url_workflow_verification_input')).toBe(false);
  for(const path of ['.github/actions/skills-source/action.yml','scripts/skill_source_ownership.py'])await expect(observe({[path]:(await read(path))+'\n# unknown source\n'})).rejects.toThrow('basic_ci_source_unproven');
- for(const member of ['scripts/ci/resource-canary-scope.mjs','scripts/ci/check-basic-results.mjs','scripts/ci/__tests__/basic-resource-canary-scope.test.mjs','scripts/ci/__tests__/basic-resource-canary.test.mjs','scripts/ci/__tests__/basic-results.test.mjs','scripts/ci/__tests__/basic-workflow.test.mjs']){
+ for(const member of ['scripts/ci/check-basic-results.mjs','scripts/ci/__tests__/basic-results.test.mjs','scripts/ci/__tests__/basic-workflow.test.mjs']){
   await expect(observe({[member]:''})).rejects.toThrow('basic_ci_source_unproven');
   await expect(observe({[member]:(await read(member))+'\n// unknown scope member\n'})).rejects.toThrow('basic_ci_source_unproven');
  }
  await expect(observe({'scripts/ci/check-basic-results.mjs':fixed.read('scripts/ci/check-basic-results.mjs')})).rejects.toThrow('basic_ci_source_unproven');
- const scope=await read('scripts/ci/resource-canary-scope.mjs');
- const badPlan=scope.replace('typeof plan[flag] !== \'boolean\'', 'false');
- expect(badPlan).not.toBe(scope);
- await expect(observe({'scripts/ci/resource-canary-scope.mjs':badPlan})).rejects.toThrow('basic_ci_source_unproven');
  await expect(observe({'scripts/ci/run-basic-check.mjs':fixed.read('scripts/ci/run-basic-check.mjs')})).rejects.toThrow('basic_ci_source_unproven');
  const previous=readFixedExistingOpsGitFixture('4d8bed7c7504f8e3e2d84b283bde735927642f8b');
  for(const path of ['scripts/ci/prepare-ubuntu-archive.mjs','scripts/ci/__tests__/basic-ubuntu-archive.test.mjs'])await expect(observe({[path]:previous.read(path)})).rejects.toThrow('basic_ci_source_unproven');
@@ -76,7 +72,7 @@ it('脚本清退新profile拒绝缺失/篡改/未知成员，完整旧组仍兼�
  const {readFileSync,existsSync}=await import('node:fs'),{execFileSync}=await import('node:child_process'),{fileURLToPath}=await import('node:url');
  const root=fileURLToPath(new URL('../../../../../',import.meta.url));
  const paths=execFileSync('git',['ls-files','-z','--cached','--others','--exclude-standard'],{cwd:root,encoding:'utf8'}).split('\0').filter(p=>p&&existsSync(new URL(p,'file://'+root)));
- const profile='packages/brain/src/lib/existing-ops-script-cleanup-profile.json',ops='scripts/ci/ops-checks.mjs';
+ const profile='packages/brain/src/lib/existing-ops-resource-retirement-profile.json',ops='scripts/ci/ops-checks.mjs';
  const read=path=>readFileSync(new URL(path,'file://'+root),'utf8');
  const observe=async(overrides={},missing)=>{const relations=[],source=async path=>{if(path===missing)throw Error('missing profile');return overrides[path]??read(path);};await collectBasicCiSources({read:source,ci:read('.github/workflows/ci.yml'),revision:'f'.repeat(40),relations,parse:ast,paths});return relations;};
  await expect(observe()).resolves.toEqual(expect.any(Array));
@@ -84,5 +80,7 @@ it('脚本清退新profile拒绝缺失/篡改/未知成员，完整旧组仍兼�
  for(const text of [read(profile)+'\n',JSON.stringify({...JSON.parse(read(profile)),unknown:'f'.repeat(64)}),'{}'])await expect(observe({[profile]:text})).rejects.toThrow('basic_ci_source_unproven');
  await expect(observe({[ops]:read(ops)+'\n// unknown operations selector\n'})).rejects.toThrow('basic_ci_source_unproven');
  const oldOps=execFileSync('git',['show','10e5943803aa9338f468df7ac19e647967aca7b5:scripts/ci/ops-checks.mjs'],{cwd:root,encoding:'utf8'});
- await expect(observe({[ops]:oldOps})).resolves.toEqual(expect.any(Array));
+ await expect(observe({[ops]:oldOps})).rejects.toThrow('basic_ci_source_unproven');
+ const old=readFixedExistingOpsGitFixture('91d37b2c3aab471aeaf88df25eec6dda9cb306d3');
+ await expect(collectBasicCiSources({read:async path=>old.read(path),ci:old.read('.github/workflows/ci.yml'),revision:old.revision,relations:[],parse:ast,paths:old.paths})).resolves.toEqual(expect.any(Array));
 });
