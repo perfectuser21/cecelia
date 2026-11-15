@@ -7,7 +7,7 @@ import os from 'node:os';
 import {test,expect,afterAll,beforeAll} from 'vitest';
 import {DBOSClient} from '@dbos-inc/dbos-sdk';
 import {closeoutCommander} from '../../../scripts/commander-workflow/supervisor-closeout.mjs';
-import {ownerKey} from '../../../scripts/commander-workflow/runtime-support.mjs';
+import {databaseConfig} from '../../../scripts/commander-workflow/runtime-support.mjs';
 import {loadCommanderManifest} from '../../../scripts/commander-workflow/host.mjs';
 import {normalizeCommanderRun} from '../commander-decision.js';
 import {fileURLToPath} from 'node:url';
@@ -104,3 +104,8 @@ test.skipIf(!enabled)('结果文件未发布但DBOS已成功，收尾保留成�
  const run=normalizeCommanderRun(loadCommanderManifest(path.join(f.dir,'manifest.json')).run);const result=await closeoutCommander(run,'deadline',{url});expect(result.status).toBe('completed');expect(result.outputs).toEqual(original.outputs);expect((await dbState(f))[0].status).toBe('SUCCESS');
  }finally{kill(proc?.pid);}
 },20000);
+
+test.skipIf(!enabled)('真实连接保留URL指定的statement_timeout',async()=>{
+ const u=new URL(url);u.searchParams.set('options','-c statement_timeout=1234 -c search_path=public');const client=new pg.Client(databaseConfig(u.href,{schema:'commander_workflow_actions'}));
+ try{await client.connect();const row=(await client.query("SELECT current_setting('statement_timeout') AS timeout,current_schema() AS schema")).rows[0];expect(row.timeout).toBe('1234ms');expect(row.schema).toBe('commander_workflow_actions');}finally{await client.end();}
+});
