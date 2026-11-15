@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# model-accounts-smoke.sh — 模型账号配额+机器可达性投影真环境冒烟（工厂·F5 指挥舱 刀2）
+# model-accounts-smoke.sh — 模型账号快照投影数据合同冒烟（工厂·F5 指挥舱 刀2）
 #
 # 真起 Brain + 真 PG（real-env-smoke / smoke-ratchet 均注入 BRAIN_URL + DATABASE_URL/PG*）。
 # seed 8 行 e2e- 账号快照 → curl GET /agent-ops/model-accounts 验读路径 + 失败隔离 +
-# key_expired 语义 + forwardable 静态配置 + agents.model_role，并静态断言 refresh_token 铁律。
-# 断言口径与合同 DoD B-01~B-04 / E2E 逐字一致。
+# key_expired 语义 + forwardable/forward_targets 原样投影 + agents.model_role。
+# 中性 fixture 不代表采集器的现役机器配置，不验证凭据采集或机器可达性。
+# 保留账号字段、失败隔离与 agents.model_role 的投影合同。
 set -euo pipefail
 if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-${BRAIN:-http://localhost:5221}}" "${DATABASE_URL:-${DB_URL:-${DB:-postgresql://localhost/cecelia}}}"; then
   exit 0
@@ -12,7 +13,6 @@ fi
 
 BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"
 ROOT_DIR="$(cd "$(dirname "$0")/../../../.." && pwd)"
-COLLECTOR="$ROOT_DIR/packages/brain/src/ops-model-accounts-collector.js"
 
 echo "🔬 model-accounts-smoke — BRAIN_URL=$BRAIN_URL"
 
@@ -33,15 +33,13 @@ jq -e '[.data.accounts[]|select(.account_id=="e2e-codex4")]|.[0].status=="unknow
 jq -e '[.data.accounts[]|select(.account_id=="e2e-codex5")]|.[0].status=="no_credential"' /tmp/ma-smoke.json >/dev/null \
   || { echo "FAIL: e2e-codex5 应 no_credential"; exit 1; }
 
-# 4. Grok key 过期语义 + refresh_token 铁律（collector 源码非注释行零命中）
+# 4. Grok key 过期状态原样投影（采集行为由 collector 单测验证）
 jq -e '[.data.accounts[]|select(.account_id=="e2e-grok")]|.[0].status=="key_expired"' /tmp/ma-smoke.json >/dev/null \
   || { echo "FAIL: e2e-grok 应 key_expired"; exit 1; }
-HITS=$(grep -nE 'refresh_token' "$COLLECTOR" | grep -vE '^[0-9]+:[[:space:]]*(//|\*|#)' || true)
-[ -z "$HITS" ] || { echo "FAIL: collector 非注释行出现 refresh_token: $HITS"; exit 1; }
 
-# 5. forwardable/forward_targets 静态：codex 可转发 / grok 锁本机
-jq -e '[.data.accounts[]|select(.account_id=="e2e-codex1")]|.[0].forwardable==true and (.[0].forward_targets|index("xian-m4"))' /tmp/ma-smoke.json >/dev/null \
-  || { echo "FAIL: e2e-codex1 forwardable/forward_targets 静态配置不符"; exit 1; }
+# 5. forwardable/forward_targets：中性 fixture 的字段原样返回
+jq -e '[.data.accounts[]|select(.account_id=="e2e-codex1")]|.[0].forwardable==true and .[0].forward_targets==["fixture-worker"]' /tmp/ma-smoke.json >/dev/null \
+  || { echo "FAIL: e2e-codex1 forwardable/forward_targets 投影不符"; exit 1; }
 jq -e '[.data.accounts[]|select(.account_id=="e2e-grok")]|.[0].forwardable==false and (.[0].forward_targets|length==0)' /tmp/ma-smoke.json >/dev/null \
   || { echo "FAIL: e2e-grok 应锁本机（forwardable=false, forward_targets=[]）"; exit 1; }
 
@@ -54,4 +52,4 @@ curl -q -sf "$BRAIN_URL/api/brain/agent-ops/agents" \
 CONN="${DATABASE_URL:-${DB_URL:-${DB:-}}}"
 psql -X "$CONN" -c "DELETE FROM ops_model_accounts WHERE account_id LIKE 'e2e-%'" >/dev/null 2>&1 || true
 
-echo "✅ model-accounts-smoke 通过（8 条 + 失败隔离 + key_expired 铁律 + forwardable + model_role）"
+echo "✅ model-accounts-smoke 通过（8 条投影 + 失败隔离 + key_expired 状态 + forwardable 字段 + model_role）"
