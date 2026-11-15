@@ -4,7 +4,7 @@
   Test: manual:npm exec -w packages/brain -- vitest run src/__tests__/existing-pr-authority.test.js src/__tests__/callback-utils-sync-resolver.test.js src/__tests__/executor-reattach.test.js src/__tests__/executor-contracts-docker-probe.test.js
 - [ ] 真实隔离 PG 验证任务创建、现役回调及完成/失败终态，历史数据读路径不变。
   Test: manual:npm exec -w packages/brain -- vitest run --config ../../scripts/ci/deep-integration.config.mjs src/__tests__/integration/dev-task-lifecycle.e2e.test.js
-- [ ] 删除三份旧 CORE-INV 包装与登记；保留现役合同分类、GAN 和发布回归。
+- [ ] 删除五份旧 CORE-INV 包装，合同分类改复用现役行为测试并保留原三条规则映射；保留 GAN 和发布回归。
   Test: manual:bash scripts/ci/__tests__/run-core-regression.test.sh
 - [ ] smoke 安全分类、默认脚本、事实/版本/清单一致性通过；完整源码 CI 通过后正常合并并回写账本。
   Test: manual:node scripts/ci/run-basic-check.mjs scripts

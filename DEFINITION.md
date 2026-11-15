@@ -2,7 +2,7 @@
 
 **Brain 版本**: 1.445.229
 
-清退无生产上游的旧 spawn/host 执行与重试包装、Docker executor 及专属中间件和测试，清理混合测试中的旧 writer；现役回调、任务状态、既有 PR 权限、资源分类、历史容器恢复和 fleet runner 来源/隔离合同保留。删除旧 CORE-INV 审核、单 PR、GAN 包装与登记，保留现役合同分类和编码审核/发布行为回归。
+清退无生产上游的旧 spawn/host 执行与重试包装、Docker executor 及专属中间件和测试，清理混合测试中的旧 writer；现役回调、任务状态、既有 PR 权限、资源分类、历史容器恢复和 fleet runner 来源/隔离合同保留。删除旧 CORE-INV 审核、单 PR、GAN 包装与登记；mock 与租户合同分类去掉独立重复包装，直接复用现役行为测试，保留三条规则映射和编码审核/发布回归。
 
 删除七项仅检查旧注释、源码字面或表存在的弱 smoke，以及无生产上游的 detached Docker/Codex 启动器、独立 test-docker CLI 和专属回归；保留真实调度、回调、分诊、投影、provider 拒绝与 worker-pool 行为测试。现役派发、历史容器恢复、资源分类与 coding-workflow 不变。
 
