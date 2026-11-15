@@ -56,7 +56,7 @@ for (const [name, route] of [
 for (const [name, scriptExit, gateExit, summary, executed] of [
   ['abilities-api-smoke.sh', 0, 0, /PASS:\s+1/, true],
   ['abilities-api-smoke.sh', 9, 1, /FAIL\(基线\):\s+1/, true],
-  ['brain-guidance-smoke.sh', 9, 0, /FAIL\(债务\):\s+1/, true],
+  ['example-health-check.sh', 9, 0, /FAIL\(债务\):\s+1/, true],
   ['ratchet-unregistered-fixture.sh', 0, 1, null, false],
   ['map-engine-smoke.sh', 9, 0, /SKIP\(deny\):\s+1/, false],
 ]) {

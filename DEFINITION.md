@@ -1,6 +1,8 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.445.227
+**Brain 版本**: 1.445.228
+
+删除七项仅检查旧注释、源码字面或表存在的弱 smoke，以及无生产上游的 detached Docker/Codex 启动器、独立 test-docker CLI 和专属回归；保留真实调度、回调、分诊、投影、provider 拒绝与 worker-pool 行为测试。现役派发、历史容器恢复、资源分类与 coding-workflow 不变。
 
 同步脚本清退后的完整 CI 来源证明：固定新 ops 控制字节与纯数据 profile，保留已审历史完整组，缺失、篡改及未知拼接仍拒绝；不改变检查执行与资源回收。
 

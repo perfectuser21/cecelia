@@ -9,7 +9,6 @@ vi.mock('node:child_process', async (original) => ({ ...await original(), spawn:
 vi.mock('../runtime-safety.js', async (original) => ({ ...await original(), assertExternalExecutionAllowed: () => {} }));
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import * as nodeChild from 'node:child_process';
 
 const RETIRED = /claude_channel_retired/;
 beforeEach(() => vi.clearAllMocks());
@@ -39,13 +38,6 @@ describe('spawn 层：claude 一律拒绝，不发起 SSH', () => {
       const env = executor === undefined ? {} : { CECELIA_EXECUTOR: executor };
       await expect(spawn({ task: { id: 't-docker' }, prompt: 'p', env })).rejects.toThrow(RETIRED);
     } finally { vi.unstubAllEnvs(); }
-  });
-
-  it.each([[undefined], ['claude']])('spawnDockerDetached：容器执行体=%s 拒绝，不写 prompt、不 docker run', async (executor) => {
-    const { spawnDockerDetached } = await import('../spawn/detached.js');
-    const env = executor === undefined ? {} : { CECELIA_EXECUTOR: executor };
-    await expect(spawnDockerDetached({ task: { id: 't-det' }, prompt: 'p', containerId: 'c-det', env })).rejects.toThrow(RETIRED);
-    expect(nodeChild.spawn).not.toHaveBeenCalled();
   });
 });
 
