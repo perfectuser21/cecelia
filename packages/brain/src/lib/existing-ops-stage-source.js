@@ -218,9 +218,7 @@ const hash = text => createHash('sha256').update(text).digest('hex');
 const sorted = x => Array.isArray(x) ? x.map(sorted) : x && typeof x === 'object'
   ? Object.fromEntries(Object.keys(x).sort().map(k => [k, sorted(x[k])])) : x;
 const workflowHash = text => hash(JSON.stringify(sorted(yaml.load(text))));
-// 完整封印包括plan的组件集合/六分片、真实命令/退出码、scratch隔离和拒绝非success的汇总。
 // 更新封印必须先重跑真实命令正反例；候选自己声明marker并不能修改受信任解析器内的封印。
-// 仅现行main与经独立审查的新候选完整组可提供来源；历史组合不再授予入口资格。
 const REVIEWED_CURRENT = {
   "packages/brain/vitest.config.js": "9566bd1cff449dc15ee924aea4c9f46aaa3457392fadf8cbf10d0b6556c2634e",
   "scripts/ci/basic-scope.mjs": "7277d4d2c0bda8fdd4b218e8cc3c2e285c0a176f1a7fa436a0ab00344005c2ef",
@@ -347,7 +345,6 @@ const REVIEWED_HARNESS_REMOVAL = {
   "scripts/ci/__tests__/basic-workflow.test.mjs": "59fb6deeab2470fae7ef17cc3bf115ab24277f8a2b28f222f5b15a6cc2b620c7"
 };
 const BASIC_PROTOCOLS = {"1283f9f7b9825a925318b20420d483de5f5daad5a032a476a20f100441c12a3f":[REVIEWED_CURRENT,REVIEWED_CANDIDATE,REVIEWED_OBSERVATION],"fd7dd2888f4abdfb9d70762fdea5213a9a4cfe104dbe5cd01defff58af6b8ffd":[REVIEWED_SLIM,REVIEWED_HARNESS_REMOVAL],"d20caae43b3156bde1b07d141c3bd54b888da847e9c78e3b21e1440fd848e59a":[REVIEWED_HARNESS_REMOVAL]};
-
 // 当前完整控制及精确退役路径；null只证明固定Git不存在，不授予执行资格。
 const REVIEWED_SKILL_RETIREMENT = {
   "packages/brain/vitest.config.js": "7fbba49f1b01db8020bcc233d5866fc6351f72e8dd7137fc8807372ed7f27971",
@@ -374,8 +371,11 @@ const REVIEWED_SKILL_RETIREMENT = {
   "vitest.config.js": "3400f6ba2d5886c139535b28dc0ffde32cf50838c22f1946a1bba4415e695a71",
   "packages/brain/src/workflows/__tests__/impact-contract-evaluator-receipts.skill-source.test.js": null, "packages/brain/src/__tests__/golden-path-skill-snapshot.skill-source.test.js": null, "packages/brain/src/__tests__/ci-defense.skill-source.test.ts": null, "packages/brain/src/__tests__/golden-path-contract-task.skill-source.test.js": null, "tests/contract-e2e-extractor.skill-source.test.ts": null, "packages/brain/vitest.skill-source.config.mjs": null, "vitest.skill-source.config.mjs": null, "scripts/ci/run-skill-source-check.mjs": null, "scripts/ci/skill-source-tests.mjs": null, "scripts/ci/__tests__/basic-skill-source-coverage.test.mjs": null
 };
+const REVIEWED_PLANNER_RETIREMENT = {...REVIEWED_SKILL_RETIREMENT,
+  "packages/brain/vitest.config.js": "1fe8d41c6d6f0761c553248ff320b5255a9276e2143ae9305b5183a844f0a7b8",
+  "packages/brain/src/planner.js": null, "packages/brain/src/__tests__/planner.test.js": null, "packages/brain/src/__tests__/planner-learning-penalty.test.js": null};
 const SKILL_RETIREMENT_CI = '7195c295058535d0a014e66343803d144647f2991120fe274ca8036728cb2ea9';
-const basicProtocolsFor = digest => digest === SKILL_RETIREMENT_CI ? [REVIEWED_SKILL_RETIREMENT] : BASIC_PROTOCOLS[digest];
+const basicProtocolsFor = digest => digest === SKILL_RETIREMENT_CI ? [REVIEWED_SKILL_RETIREMENT,REVIEWED_PLANNER_RETIREMENT] : BASIC_PROTOCOLS[digest];
 const reject = () => { throw Error('basic_ci_source_unproven'); };
 export function basicCiSelectorEnabled(text, parse) {
   const name = 'EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA';
@@ -436,7 +436,7 @@ export async function collectBasicCiSources({ read, ci, revision, relations, par
   }
   if (!protocol) reject();
   const relation = (consumer_path, input_path, kind) => relations.push({ consumer_path, input_path, kind, revision }); const skillWorkflow = Object.hasOwn(protocol, PINNED_WORKFLOW) ? PINNED_WORKFLOW : BASIC_CI;
-  const retiredSkills = protocol === REVIEWED_SKILL_RETIREMENT;
+  const retiredSkills = [REVIEWED_SKILL_RETIREMENT,REVIEWED_PLANNER_RETIREMENT].includes(protocol);
   if (retiredSkills || Object.hasOwn(protocol, PINNED_READER)) {
     if (!Array.isArray(paths)) reject();
     const prefix = 'scripts/ci/__tests__/';
