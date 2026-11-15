@@ -39,12 +39,10 @@ postdeploy-verifier-smoke.sh
 preview-env-smoke.sh
 preview-environments-smoke.sh
 quality-test-pyramid-smoke.sh
-release-gate-smoke.sh
 rumination-smoke.sh
 smoke-business.sh
 smoke-runtime.sh
 sprint-d-7table-smoke.sh
-staging-e2e-endpoint-smoke.sh
 t4-claim-protocol-smoke.sh
 task-delete-postdeploy-filter-smoke.sh
 task-tasks-dedup-smoke.sh

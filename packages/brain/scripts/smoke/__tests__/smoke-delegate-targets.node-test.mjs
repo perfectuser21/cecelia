@@ -11,8 +11,8 @@ import { fixture, root, clientCommands } from './fixtures/smoke-production-guard
 test('ratchet long-list membership survives early grep exit under pipefail', async () => {
   const source = await readFile(resolve(root, 'packages/brain/scripts/smoke-tools/run-smoke-ratchet.sh'), 'utf8');
   const membership = source.match(/^_in_list\(\).*$/m)[0];
-  const input = 'abilities-api-smoke.sh\n' + 'private-fixture-tail\n'.repeat(100000);
-  for (const [name, expected] of [['abilities-api-smoke.sh', 0], ['abilities-api-smoke', 1]]) {
+  const input = 'company-key-results-smoke.sh\n' + 'private-fixture-tail\n'.repeat(100000);
+  for (const [name, expected] of [['company-key-results-smoke.sh', 0], ['company-key-results-smoke', 1]]) {
     const result = spawnSync('bash', ['-c', `set -uo pipefail\n${membership}\nentries=$(cat)\n_in_list '${name}' "$entries"`], { input, encoding: 'utf8', timeout: 5000 });
     assert.equal(result.status, expected, `literal membership must not turn into SIGPIPE exit 141: ${result.stderr}`);
   }
@@ -54,8 +54,8 @@ for (const [name, route] of [
 }
 
 for (const [name, scriptExit, gateExit, summary, executed] of [
-  ['abilities-api-smoke.sh', 0, 0, /PASS:\s+1/, true],
-  ['abilities-api-smoke.sh', 9, 1, /FAIL\(基线\):\s+1/, true],
+  ['company-key-results-smoke.sh', 0, 0, /PASS:\s+1/, true],
+  ['company-key-results-smoke.sh', 9, 1, /FAIL\(基线\):\s+1/, true],
   ['example-health-check.sh', 9, 0, /FAIL\(债务\):\s+1/, true],
   ['ratchet-unregistered-fixture.sh', 0, 1, null, false],
   ['map-engine-smoke.sh', 9, 0, /SKIP\(deny\):\s+1/, false],

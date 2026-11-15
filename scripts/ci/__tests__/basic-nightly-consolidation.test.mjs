@@ -25,14 +25,14 @@ for (const childExit of [0, 17]) test(`保留的真实分类器CLI执行私有�
   const temp = mkdtempSync(join(tmpdir(), 'nightly-classified-'));
   try {
     const marker = join(temp, 'executed');
-    writeFileSync(join(temp, 'abilities-api-smoke.sh'), `printf actual > '${marker}'\nprintf 'FAIL: T-2\\n'\nexit ${childExit}\n`);
+    writeFileSync(join(temp, 'company-key-results-smoke.sh'), `printf actual > '${marker}'\nprintf 'FAIL: T-2\\n'\nexit ${childExit}\n`);
     const result = spawnSync('bash', ['packages/brain/scripts/smoke-tools/run-smoke-ratchet.sh'], {
       cwd: root, encoding: 'utf8', timeout: 10000,
       env: { PATH: process.env.PATH, HOME: temp, SMOKE_DIR: temp, SMOKE_ALLOW_WRITE: '', BRAIN_URL: 'http://127.0.0.1:1' },
     });
     assert.equal(result.status, childExit === 0 ? 0 : 1, result.stdout + result.stderr);
     assert.equal(readFileSync(marker, 'utf8'), 'actual');
-    assert.deepEqual(smokeCiFailures(result.stdout, 'abilities-api-smoke.sh'),
+    assert.deepEqual(smokeCiFailures(result.stdout, 'company-key-results-smoke.sh'),
       childExit === 0 ? { failed: false, ids: [] } : { failed: true, ids: ['T-2'] });
   } finally { rmSync(temp, { recursive: true, force: true }); }
 });

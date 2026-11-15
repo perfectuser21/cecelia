@@ -10,10 +10,8 @@
 
 8table-schema-smoke.sh
 account-resilience-smoke.sh
-accounts-config-smoke.sh
 action-receipts-schema-smoke.sh
 all-features-smoke.sh
-api-credentials-checker-smoke.sh
 b13-dbupsert-idempotent-smoke.sh
 brain-ops-reliability-smoke.sh
 bridge-keepalive-smoke.sh
@@ -59,7 +57,6 @@ smoke-business.sh
 smoke-fix-license-taskrouter.sh
 smoke-runtime.sh
 sprint-d-7table-smoke.sh
-tenant-isolation-rule-smoke.sh
 test-lifecycle-patrol-smoke.sh
 thalamus-pure-functions.sh
 warroom-lines-smoke.sh
