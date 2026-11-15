@@ -6,7 +6,6 @@ import {dirname, join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {spawnSync} from 'node:child_process';
 import {opsChecks} from '../ops-checks.mjs';
-import * as opsModule from '../ops-checks.mjs';
 import {commandsFor} from '../run-basic-check.mjs';
 
 const root = fileURLToPath(new URL('../../../', import.meta.url));
@@ -129,8 +128,6 @@ const fixtureFiles = [
   'scripts/__tests__/codex-request.test.sh',
   'scripts/__tests__/codex-remote-launch.test.sh',
   'scripts/ops/__tests__/nested/fixture.test.sh',
-  'docker/cecelia-runner/__tests__/fixture.test.sh',
-  'docker/cecelia-runner/__tests__/fixture.test.cjs',
   ...safeSmokes,
   'scripts/smoke/dashboard-staging-gate-smoke.sh',
 ];
@@ -143,9 +140,7 @@ function fixture(t) {
     const write = `appendFileSync(process.env.OPS_CAPTURE, ${JSON.stringify(file + '\n')});`;
     writeFileSync(join(directory, file), file.endsWith('.sh')
       ? `#!/usr/bin/env bash\nset -eu\nprintf '%s\\n' '${file}' >> "$OPS_CAPTURE"\n`
-      : file.endsWith('.cjs')
-        ? `const {appendFileSync} = require('node:fs'); ${write}\n`
-        : `import {appendFileSync} from 'node:fs'; ${write}\n`);
+      : `import {appendFileSync} from 'node:fs'; ${write}\n`);
   }
   mkdirSync(join(directory, 'scripts/ci'), {recursive: true});
   writeFileSync(join(directory, 'scripts/ci/run-isolated-staging-smoke.mjs'),
@@ -156,14 +151,14 @@ function fixture(t) {
 test('独立fixture实际执行现役Node与Shell，结果确定排序且新增同类文件自动加入', t => {
   const directory = fixture(t);
   const before = opsChecks(directory);
-  assert.deepEqual(paths(before), fixtureFiles.filter(file => !file.startsWith('docker/')).sort());
+  assert.deepEqual(paths(before), fixtureFiles.slice().sort());
   const newFile = 'scripts/ops/__tests__/new-category/new-behavior.test.sh';
   mkdirSync(dirname(join(directory, newFile)), {recursive: true});
   writeFileSync(join(directory, newFile), `printf '%s\\n' '${newFile}' >> "$OPS_CAPTURE"\n`);
   const extraNode = 'scripts/brain-image-retention-new.test.mjs';
   writeFileSync(join(directory, extraNode), `import {appendFileSync} from 'node:fs'; appendFileSync(process.env.OPS_CAPTURE, ${JSON.stringify(extraNode + '\n')});\n`);
   const steps = opsChecks(directory);
-  assert.deepEqual(paths(steps), [...fixtureFiles, newFile, extraNode].filter(file => !file.startsWith('docker/')).sort());
+  assert.deepEqual(paths(steps), [...fixtureFiles, newFile, extraNode].sort());
   assert.deepEqual(steps, opsChecks(directory));
   const capture = join(directory, 'executed');
   const env = {...process.env, OPS_CAPTURE: capture};
@@ -232,7 +227,7 @@ printf 'ISOLATED_FIXTURE_OK\\n'
 });
 
 // 历史实现不因未知PR或新执行内核变更重新进入现役默认。
-test('旧Runner仅保留显式兼容入口，所有默认回退仍只执行现役Ops', () => {
+test('默认及未知输入回退仍执行现役Ops集合', () => {
   const active = paths(opsChecks(root));
   assert.equal(active.length, 55);
   for (const source of [null, 'unknown/product.js', 'docker/cecelia-runner/entrypoint.sh',
@@ -242,30 +237,4 @@ test('旧Runner仅保留显式兼容入口，所有默认回退仍只执行现�
     const selected = paths(opsChecks(root, {paths: source === null ? null : [source]}));
     assert.ok(!selected.some(path => /cecelia-runner|runner-credential-single-chain/.test(path)), source);
   }
-  const legacy = paths(opsModule.legacyRunnerChecks(root));
-  assert.equal(legacy.length, 21);
-  assert.ok(legacy.includes('docker/cecelia-runner/__tests__/entrypoint-credential-contract-probe.test.sh'));
-  assert.ok(legacy.includes('scripts/smoke/runner-credential-single-chain-smoke.sh'));
-  assert.ok(!legacy.some(path => /callback-retry|proposer-tests-in-tree/.test(path)));
-  assert.ok(!legacy.some(path => active.includes(path)));
-});
-
-test('显式兼容集合实际执行独立Shell与CJS，默认不依赖旧Runner目录', t => {
-  const directory = fixture(t);
-  const smoke = 'scripts/smoke/runner-credential-single-chain-smoke.sh';
-  writeFileSync(join(directory, smoke), `printf '%s\\n' '${smoke}' >> "$OPS_CAPTURE"\n`);
-  const steps = opsModule.legacyRunnerChecks(directory);
-  assert.equal(steps.length, 3);
-  const capture = join(directory, 'legacy-executed');
-  const env = {...process.env, OPS_CAPTURE: capture};
-  delete env.NODE_TEST_CONTEXT;
-  for (const step of steps) {
-    const result = spawnSync(step.command, step.args, {cwd: step.cwd, encoding: 'utf8', env, timeout: 5000});
-    assert.equal(result.status, 0, result.stderr);
-  }
-  assert.deepEqual(readFileSync(capture, 'utf8').trim().split('\n'), paths(steps));
-  const active = opsChecks(directory);
-  rmSync(join(directory, 'docker'), {recursive: true});
-  assert.deepEqual(opsChecks(directory), active);
-  assert.throws(() => opsModule.legacyRunnerChecks(directory), /目录/);
 });
