@@ -7,7 +7,8 @@ import {startSupervisedActivity,waitSupervisedActivity,inspectSupervisor,durable
 import {verifySkillReadback,sameIdentity} from './skill-protocol.mjs';
 import {parseActivityResult} from '../../src/orchestrator/activity-contract.js';
 const hash=file=>createHash('sha256').update(fs.readFileSync(file)).digest('hex');
-export async function createRuntime({profile,run,verifySource=async()=>{}}) {
+const reasonCode=error=>/^[a-zA-Z0-9][a-zA-Z0-9_.:/@+-]{0,255}$/.test(error.code??error.message)?error.code??error.message:'skill_observation_failed';
+export async function createRuntime({profile,run,verifySource=async()=>{},ledger}) {
   const config=profile.skill_runtime;
   if(!config||!run||!profile.files||!config.control_dir||path.isAbsolute(config.control_dir)||config.control_dir.split(path.sep).includes('..'))throw Error('skill_profile_invalid');
   const root=path.resolve(profile.cwd,config.control_dir,run.run_id);fs.mkdirSync(root,{recursive:true,mode:0o700});
@@ -50,6 +51,12 @@ export async function createRuntime({profile,run,verifySource=async()=>{}}) {
     });
   }
   async function readback(activity,input,phase,proposal,signal){
+    const observation=ledger?.beginObservation({kind:'checker',activity_key:activity.key,...(input.action_id?{action_id:input.action_id}:{}),phase});
+    try{const value=await performReadback(activity,input,phase,proposal,signal);
+      if(observation)ledger.endObservation(observation.observation_id,{status:'passed'});return value;
+    }catch(error){if(observation)ledger.endObservation(observation.observation_id,{status:'failed',reason_code:reasonCode(error)});throw error;}
+  }
+  async function performReadback(activity,input,phase,proposal,signal){
     const spec=specFor(activity),checker=spec.checker;
     const request={task_id:run.task_id,run_id:run.run_id,run_tag:run.input.run_tag,workflow:spec.workflow??run.contract.workflow,
       activity:spec.activity??activity.key,attempt:1,nonce:randomUUID(),phase,
@@ -91,13 +98,21 @@ export async function createRuntime({profile,run,verifySource=async()=>{}}) {
   }
   async function verifiedResult(activity,input,transport,signal){
     if(activity.runtime?.executor_kind==='code')return codeResult(input,transport);
-    if(transport.reason_code||transport.exit_code!==0){return {schema_version:1,run_tag:input.run_tag,...(input.line_key===undefined?{}:{line_key:input.line_key}),status:'needs_review',failure_class:'needs_human',outputs:{},metrics:{},evidence:[],execution_stopped:transport.execution_stopped===true,reason_code:transport.reason_code??'skill_worker_failed'};}
+    if(transport.reason_code||transport.exit_code!==0){
+      let failure;try{const value=JSON.parse(transport.stdout);if(value.protocol==='skill-worker-failure/v1'&&value.execution_stopped===true&&value.dispatch_status==='not_started'&&/^usage_(?:(?:token|cost)_budget_(?:exceeded|unknown)|ledger_busy)$/.test(value.reason_code))failure=value;}catch{}
+      return {schema_version:1,run_tag:input.run_tag,...(input.line_key===undefined?{}:{line_key:input.line_key}),status:'needs_review',failure_class:'needs_human',outputs:{},metrics:{},evidence:[],execution_stopped:failure?true:transport.execution_stopped===true,reason_code:failure?.reason_code??transport.reason_code??'skill_worker_failed'};
+    }
     const {proposal}=JSON.parse(transport.stdout);
     try{
       const verified=await readback(activity,input,'end',proposal,signal);
       return {schema_version:1,run_tag:input.run_tag,...(input.line_key===undefined?{}:{line_key:input.line_key}),status:verified.outcome==='empty'?'empty':'completed',
         outputs:verified.output,metrics:{},evidence:verified.checks.flatMap(c=>c.evidence.map(e=>e.source)),execution_stopped:true};
     }catch{return {schema_version:1,run_tag:input.run_tag,...(input.line_key===undefined?{}:{line_key:input.line_key}),status:'needs_review',failure_class:'needs_human',outputs:{},metrics:{},evidence:[],execution_stopped:true,reason_code:'skill_readback_unconfirmed'};}
+  }
+  function settleAttempt(attempt,result,transport,directory){
+    // 外部执行未知或旧监督协议缺起止时间时保留prepared；读回时间不充当执行结束。
+    if(!attempt||result.execution_stopped!==true||!Number.isSafeInteger(transport.started_at_ms)||!Number.isSafeInteger(transport.ended_at_ms)||transport.ended_at_ms<transport.started_at_ms)return;
+    ledger.finishAttempt(attempt.attempt_id,{status:result.status==='empty'?'completed':result.status,ended_at_ms:transport.ended_at_ms,evidence_ref:path.join(directory,'result.json')});
   }
   return {
     async checkActivity(activity,result,{phase,input,signal}){
@@ -109,22 +124,31 @@ export async function createRuntime({profile,run,verifySource=async()=>{}}) {
       // 单独再核授权；旧完整Runner的finalize宽松策略不能赋予执行权。
       try{await readback(activity,input,'start',null,options.signal);}catch(e){e.executionStopped=true;throw e;}
       const spec=specFor(activity),directory=actionDir(options.identity);
+      const attempt=ledger?.beginAttempt({activity_key:activity.key,action_id:options.identity.action_id,attempt:1,kind:activity.runtime?.executor_kind??'agent'});
+      try{
       if(activity.runtime?.executor_kind==='code'){
         const transport=await startSupervisedActivity(directory,options.identity,activity,input,options,options.deadlineMs);
-        return verifiedResult(activity,input,transport,options.signal);
+        const result=await verifiedResult(activity,input,transport,options.signal);settleAttempt(attempt,result,transport,directory);
+        return result;
       }
       const workerActivity={...activity,runtime:{...activity.runtime,entry:fileURLToPath(new URL('./skill-worker.mjs',import.meta.url)),argv:[],interactive:false}};
       const transport=await startSupervisedActivity(directory,options.identity,workerActivity,{identity:options.identity,activity_key:activity.key,cwd:profile.cwd,
-        codex:config.codex,codex_auth:profile.codex_auth,thread_file:path.join(root,'thread.json'),work_dir:directory,skill_text:fs.readFileSync(path.resolve(profile.cwd,spec.skill),'utf8'),
+        codex:config.codex,codex_auth:profile.codex_auth,...(ledger?{ledger_directory:ledger.directory,ledger_policy:ledger.policy}:{}),thread_file:path.join(root,'thread.json'),work_dir:directory,skill_text:fs.readFileSync(path.resolve(profile.cwd,spec.skill),'utf8'),
         tools_text:fs.readFileSync(path.resolve(profile.cwd,config.tools),'utf8'),context:{...run.input,...input}},options,options.deadlineMs);
-      return verifiedResult(activity,input,transport,options.signal);
+      const result=await verifiedResult(activity,input,transport,options.signal);settleAttempt(attempt,result,transport,directory);
+      return result;
+      }catch(error){if(attempt&&error.executionStopped===true)ledger.finishAttempt(attempt.attempt_id,{status:'not_started',reason_code:reasonCode(error)});throw error;}
     },
     async inspectActivity(activity,input,options){
       const directory=actionDir(options.identity);
+      const observation=ledger?.beginObservation({kind:'recovery_readback',activity_key:activity.key,action_id:options.identity.action_id});
       try{specFor(activity);await verifyFrozenSources();inspectSupervisor(directory,options.identity);const transport=await waitSupervisedActivity(directory,options.identity,{signal:options.signal,reconnecting:true});
         const result=await verifiedResult(activity,input,transport,options.signal);
+        const original=ledger?.snapshot?.().attempts.find(a=>a.action_id===options.identity.action_id&&a.attempt===1&&a.status==='prepared');
+        settleAttempt(original,result,transport,directory);
+        if(observation)ledger.endObservation(observation.observation_id,{status:result.execution_stopped===true?'completed':'unknown',evidence_ref:path.join(directory,'result.json')});
         return {state:'completed',identity:options.identity,execution_stopped:result.execution_stopped===true,result};
-      }catch{return {state:'unknown',identity:options.identity,execution_stopped:false};}
+      }catch(error){if(observation)ledger.endObservation(observation.observation_id,{status:'unknown',reason_code:reasonCode(error)});return {state:'unknown',identity:options.identity,execution_stopped:false};}
     },
   };
 }
