@@ -424,11 +424,13 @@ test('当前候选输入入口逐项读取身份及资源完整控制封组，�
  const path='scripts/ci/__tests__/basic-candidate-source.test.mjs',f=basicEntryFixture(t,path);
  const live=fileURLToPath(new URL('../../../',import.meta.url));
  const module=parse(readFileSync(join(live,'scripts/ci/implementation-verification-inputs.mjs'),'utf8'),{ecmaVersion:'latest',sourceType:'module'});
- const declaration=module.body.find(n=>n.type==='VariableDeclaration'&&n.declarations.some(d=>d.id.name==='SKILL_RETIREMENT_ENTRY_PROTOCOL'));
- const protocols=declaration.declarations[0].init;
- assert.equal(protocols.type,'ObjectExpression');
- const members=protocols.properties.filter(p=>p.value.value!==null).map(p=>p.key.value);
- const retired=protocols.properties.filter(p=>p.value.value===null).map(p=>p.key.value);
+ const protocol=name=>module.body.find(n=>n.type==='VariableDeclaration'&&n.declarations.some(d=>d.id.name===name)).declarations[0].init;
+ const inherited=protocol('SKILL_RETIREMENT_ENTRY_PROTOCOL'),current=protocol('PLANNER_RETIREMENT_ENTRY_PROTOCOL');
+ assert.equal(inherited.type,'ObjectExpression');assert.equal(current.type,'ObjectExpression');
+ assert.equal(current.properties[0].argument.name,'SKILL_RETIREMENT_ENTRY_PROTOCOL');
+ const properties=[...new Map([...inherited.properties,...current.properties.filter(p=>p.type==='Property')].map(p=>[p.key.value,p])).values()];
+ const members=properties.filter(p=>p.value.value!==null).map(p=>p.key.value);
+ const retired=properties.filter(p=>p.value.value===null).map(p=>p.key.value);
  for(const member of ['scripts/skill_source_ownership.py','scripts/ci/resource-canary-scope.mjs','scripts/ci/__tests__/basic-resource-canary-scope.test.mjs','scripts/ci/__tests__/basic-resource-canary.test.mjs','scripts/ci/__tests__/basic-results.test.mjs','scripts/ci/__tests__/basic-workflow.test.mjs'])assert.ok(members.includes(member),member);
  for(const member of ['.github/workflows/ci.yml',...members]){mkdirSync(join(f.root,member,'..'),{recursive:true});writeFileSync(join(f.root,member),readFileSync(join(live,member)));}
  f.git('rm','--sparse','--ignore-unmatch',...retired);
