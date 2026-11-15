@@ -32,7 +32,8 @@ test('Playbook方法独立冻结并仅交给Commander，恢复不能换方法或
   received.playbook.content='改动提示副本';expect(value.playbook.content).toBe('先核对输入，再逐项交出证据。\n');
   expect((await startCommanderWorkflow(value)).handle).toBeTruthy();expect(env.executeActivity).toHaveBeenCalledTimes(2);
   await expect(startCommanderWorkflow({...value,playbook:{schema_version:1,content:'换一种方法'}})).rejects.toThrow('commander_identity_conflict');
-  await expect(startCommanderWorkflow(request())).rejects.toThrow('commander_identity_conflict');
+  const removed=structuredClone(value);delete removed.playbook;
+  await expect(startCommanderWorkflow(removed)).rejects.toThrow('commander_identity_conflict');
 });
 test('Playbook要求跳步不能更改机械动作授权与独立验收',async()=>{
   env.decide=vi.fn(async req=>({...decision(req),action:'complete',activity_key:undefined}));

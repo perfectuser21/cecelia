@@ -39,7 +39,7 @@ async function addFoundationTaskSchema(db){
 }
 
 /** 隔离协议夹具：定义来源/CI报告是合成的，执行产物、PG、DBOS和宿主是真实的。 */
-export async function workflowFoundationDatabase({scenario='healthy'}={}){
+export async function workflowFoundationDatabase({scenario='healthy',playbook}={}){
  const base=await releaseEvidenceDatabase(),f={...base,pool:base.db},root=fs.mkdtempSync(path.join(os.tmpdir(),'foundation-registration-'));
  const dbosSchema=`foundation_dbos_${randomUUID().replaceAll('-','')}`;
  let closed=false;
@@ -56,7 +56,7 @@ export async function workflowFoundationDatabase({scenario='healthy'}={}){
    runtime:{phase:'source',protocol:'json-stdio-v1',entry:'work.mjs',argv:[key],executor_kind:'code'}});
   const contract={workflow:key,goal:'先写base=21，再交answer=42，逐项真实读回',activities:[activity('prepare',1),activity('double',2)]};
   const sourceFiles=Object.fromEntries(['adapter.mjs','work.mjs','commander.mjs','skill.txt'].map(name=>[name,fs.readFileSync(path.join(fixtureDir,name),'utf8')]));
-  const profileDocument=JSON.stringify({schema_version:1,contract,profile:{adapter:'adapter.mjs',files:Object.fromEntries(Object.entries(sourceFiles).map(([name,text])=>[name,hash(text)])),commander:{provider:'adapter'},scenario,realAgent:false}});
+  const profileDocument=JSON.stringify({schema_version:1,contract,...(playbook===undefined?{}:{playbook}),profile:{adapter:'adapter.mjs',files:Object.fromEntries(Object.entries(sourceFiles).map(([name,text])=>[name,hash(text)])),commander:{provider:'adapter'},scenario,realAgent:false}});
   sourceFiles['profile.json']=profileDocument;
   const runtime={kind:'commander-foundation-v1',profile_ref:{repo:FOUNDATION_FIXTURE_REPO,path:'profile.json',revision:FOUNDATION_FIXTURE_REVISION,digest:`sha256:${hash(profileDocument)}`},timeout_ms:45000,input_schema:inputSchema};
   const binding=name=>({kind:'code',repo:FOUNDATION_FIXTURE_REPO,path:name,revision:'contract'});

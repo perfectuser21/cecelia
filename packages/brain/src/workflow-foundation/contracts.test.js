@@ -18,8 +18,9 @@ import {validateFoundationRuntime,validateFoundationInput,byteHash,parseFoundati
 import {verifyFoundationObservation} from './reconcile.js';
 import {buildTerminalUpdate} from '../lib/task-terminal.js';
 const activity=()=>({key:'report',order:1,budget:{max_duration_s:10,heartbeat_s:1},acceptance:{description:'结果为42'},failure:{empty_ok:[],retryable:[],fatal:['error'],needs_human:{cases:['unknown']}},runtime:{phase:'source',protocol:'json-stdio-v1',entry:'work.mjs',argv:[],executor_kind:'code'}});
-function profileFixture(){
+function profileFixture(playbook){
  const doc={schema_version:1,contract:{workflow:'example_report',activities:[activity()]},profile:{adapter:'adapter.mjs',files:{'adapter.mjs':'c'.repeat(64),'work.mjs':'d'.repeat(64)}}};
+ if(playbook!==undefined)doc.playbook=playbook;
  const text=JSON.stringify(doc),r=runtime();r.profile_ref.digest='sha256:'+byteHash(text);
  return {doc,text,r,release:{payload:{components:[{kind:'code',...r.profile_ref},...Object.entries(doc.profile.files).map(([path,hash])=>({kind:'code',...r.profile_ref,path,digest:'sha256:'+hash}))]}},workflow:{payload:{contract:{key:'example_report'},activities:[{slot_key:'report'}]}}};
 }
@@ -74,4 +75,14 @@ it('冻结合同显式stop可省略后续source，但必须完成finalize',()=>{
  expect(()=>verifyFoundationObservation(job,observed)).toThrow('foundation_result_unverified');
  const receipt=structuredClone(observed.output.receipts[0]);receipt.activity_key='cleanup';receipt.activities[0].key='cleanup';observed.output.receipts.push(receipt);observed.output.cleanup_status='completed';
  expect(verifyFoundationObservation(job,observed).status).toBe('completed');
+});
+
+it.each([null,{},'方法',{schema_version:2,content:'方法'},{schema_version:1,content:' '},{schema_version:1,content:'文'.repeat(22000)},{schema_version:1,content:'方法',contract:{}}])('已发布但格式非法的Playbook在ready拒绝：%j',playbook=>{
+ const f=profileFixture(playbook);
+ expect(()=>parseFoundationProfile(f.text,f.r,f.release,f.workflow)).toThrow(expect.objectContaining({code:'foundation_playbook_invalid',status:400}));
+});
+it('Playbook正文是发布原文，不按路径解释或混入契约',()=>{
+ const playbook={schema_version:1,content:'/业务知识/说明：只核对本流程\r\n'};const f=profileFixture(playbook);
+ const parsed=parseFoundationProfile(f.text,f.r,f.release,f.workflow);expect(parsed.playbook).toEqual(playbook);expect(parsed.contract.playbook).toBeUndefined();
+ expect(parseFoundationProfile(profileFixture().text,profileFixture().r,profileFixture().release,profileFixture().workflow).playbook).toBeUndefined();
 });
