@@ -374,8 +374,8 @@ const REVIEWED_SKILL_RETIREMENT = {
 const REVIEWED_PLANNER_RETIREMENT = {...REVIEWED_SKILL_RETIREMENT,
   "packages/brain/vitest.config.js": "1fe8d41c6d6f0761c553248ff320b5255a9276e2143ae9305b5183a844f0a7b8",
   "packages/brain/src/planner.js": null, "packages/brain/src/__tests__/planner.test.js": null, "packages/brain/src/__tests__/planner-learning-penalty.test.js": null};
-const SKILL_RETIREMENT_CI = '7195c295058535d0a014e66343803d144647f2991120fe274ca8036728cb2ea9';
-const basicProtocolsFor = digest => digest === SKILL_RETIREMENT_CI ? [REVIEWED_SKILL_RETIREMENT,REVIEWED_PLANNER_RETIREMENT] : BASIC_PROTOCOLS[digest];
+const REVIEWED_COMMANDER_AUDIT = {...REVIEWED_PLANNER_RETIREMENT, 'packages/brain/vitest.config.js': 'cf3307a3508e5feb473951fb645197d74a714c2c8decc44ec6bfe690982b17b5'}, SKILL_RETIREMENT_CI = '7195c295058535d0a014e66343803d144647f2991120fe274ca8036728cb2ea9';
+const basicProtocolsFor = digest => digest === '014b5b54984ff322b0783c6070113199673efd53bb900ea9934d038de3cd5e5d' ? [REVIEWED_COMMANDER_AUDIT] : digest === SKILL_RETIREMENT_CI ? [REVIEWED_SKILL_RETIREMENT,REVIEWED_PLANNER_RETIREMENT] : BASIC_PROTOCOLS[digest];
 const reject = () => { throw Error('basic_ci_source_unproven'); };
 export function basicCiSelectorEnabled(text, parse) {
   const name = 'EXISTING_OPS_BASIC_CI_SELECTOR_SCHEMA';
@@ -436,7 +436,7 @@ export async function collectBasicCiSources({ read, ci, revision, relations, par
   }
   if (!protocol) reject();
   const relation = (consumer_path, input_path, kind) => relations.push({ consumer_path, input_path, kind, revision }); const skillWorkflow = Object.hasOwn(protocol, PINNED_WORKFLOW) ? PINNED_WORKFLOW : BASIC_CI;
-  const retiredSkills = [REVIEWED_SKILL_RETIREMENT,REVIEWED_PLANNER_RETIREMENT].includes(protocol);
+  const retiredSkills = [REVIEWED_SKILL_RETIREMENT,REVIEWED_PLANNER_RETIREMENT,REVIEWED_COMMANDER_AUDIT].includes(protocol);
   if (retiredSkills || Object.hasOwn(protocol, PINNED_READER)) {
     if (!Array.isArray(paths)) reject();
     const prefix = 'scripts/ci/__tests__/';

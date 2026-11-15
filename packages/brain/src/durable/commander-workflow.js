@@ -11,6 +11,7 @@ export function configureCommanderWorkflow(value) {
 }
 function environment(run) {
   if (!runtime || runtime.revision !== run.runtime_revision) throw Error('commander_runtime_revision_mismatch');
+  if(runtime.run&&(runtime.run.task_id!==run.task_id||runtime.run.run_id!==run.run_id||runtime.run.definition_sha256!==run.definition_sha256))throw Error('commander_identity_conflict');
   return runtime;
 }
 const review = (run, reason, receipts = []) => ({task_id:run.task_id,run_id:run.run_id,status:'needs_review',business_pass:false,reason,receipts});

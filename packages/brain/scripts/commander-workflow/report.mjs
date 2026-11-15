@@ -2,8 +2,8 @@
 // 只读入口：不启动DBOS执行器，不迁移，不恢复或重发业务动作。
 import fs from 'node:fs';
 import path from 'node:path';
-import {fileURLToPath} from 'node:url';
 import pg from 'pg';
+import {isMainModule} from './runtime-support.mjs';
 import {DBOSClient} from '@dbos-inc/dbos-sdk';
 import {readRunLedger} from '../../src/orchestrator/commander-usage-ledger.js';
 import {buildCommanderRunReport} from '../../src/orchestrator/commander-run-report.js';
@@ -35,7 +35,7 @@ export async function queryCommanderReport({manifestPath,resultPath,clientFactor
   return buildCommanderRunReport({run,workflow,steps:steps??[],actions:actions.rows,observedLedger,supervision,ledgerUnavailable});
  }finally{await Promise.all([client?.destroy(),db.end()]);}
 }
-if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)){
+if(isMainModule(import.meta.url)){
  const args=process.argv.slice(2);if(![2,4].includes(args.length)||args[0]!=='--manifest'||(args.length===4&&args[2]!=='--result'))throw Error('usage: report.mjs --manifest FILE [--result FILE]');
  console.log(JSON.stringify(await queryCommanderReport({manifestPath:path.resolve(args[1]),resultPath:args[3]?path.resolve(args[3]):undefined}),null,2));
 }

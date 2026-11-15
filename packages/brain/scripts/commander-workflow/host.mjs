@@ -3,7 +3,7 @@
 // adapter是操作者提供的受信代码，必须在files中声明其活动/Skill依赖；不是模型可选的插件。
 import fs from 'node:fs';
 import path from 'node:path';
-import {pathToFileURL,fileURLToPath} from 'node:url';
+import {pathToFileURL} from 'node:url';
 import {createHash} from 'node:crypto';
 import pg from 'pg';
 import {normalizeCodexAuth} from '../coding-workflow/lib/codex-auth.mjs';
@@ -14,8 +14,10 @@ import {createCodexCommander} from '../../src/orchestrator/commander-codex.js';
 import {createRunLedger} from '../../src/orchestrator/commander-usage-ledger.js';
 import {durableWrite} from '../../src/orchestrator/activity-supervisor.js';
 import {digest,normalizeCommanderRun} from '../../src/orchestrator/commander-decision.js';
+import {isMainModule,databaseConfig,ownerKey,withWorkflowClient,assertStoredRun} from './runtime-support.mjs';
+import {startHostHeartbeat} from './host-heartbeat.mjs';
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
-const runtimeFiles = ['supervise.mjs','skill-adapter.mjs','skill-worker.mjs','skill-protocol.mjs','../../src/orchestrator/activity-supervisor.js','../../src/orchestrator/activity-supervisor-state.cjs','host.mjs','../../src/durable/commander-workflow.js','../../src/durable/commander-action-store.js',
+const runtimeFiles = ['runtime-support.mjs','host-heartbeat.mjs','supervisor-closeout.mjs','supervise.mjs','skill-adapter.mjs','skill-worker.mjs','skill-protocol.mjs','../../src/orchestrator/activity-supervisor.js','../../src/orchestrator/activity-supervisor-state.cjs','host.mjs','../../src/durable/commander-workflow.js','../../src/durable/commander-action-store.js',
   '../../src/orchestrator/commander-usage-ledger.js','../../src/orchestrator/commander-usage-ledger-summary.js',
   '../../src/orchestrator/commander-decision.js','../../src/orchestrator/commander-codex.js',
   '../coding-workflow/lib/codex-judge.mjs','../coding-workflow/lib/claude.mjs','../coding-workflow/lib/codex-session.mjs',
@@ -50,13 +52,13 @@ export async function runCommanderHost({manifestPath,resultPath}) {
   if (!/^[a-z][a-z0-9_]{0,62}$/.test(schema) || !/^[a-z][a-z0-9_]{0,62}$/.test(dbosSchema) || schema === dbosSchema) throw Error('commander_schema_invalid');
   const url = process.env.COMMANDER_DATABASE_URL;
   if (!url) throw Error('commander_database_required');
-  normalizeCommanderRun(run);
+  const normalized=normalizeCommanderRun(run);
   const controlRoot=path.resolve(profile.cwd,profile.skill_runtime?.control_dir??'control');
   if(!controlRoot.startsWith(profile.cwd+path.sep))throw Error('commander_control_path_invalid');
-  const ledger=createRunLedger({directory:path.join(controlRoot,run.run_id,'ledger'),identity:{task_id:run.task_id,run_id:run.run_id},policy:profile.usage_budget??{}});
-  const pool = new pg.Pool({connectionString:url,options:`-c search_path=${schema}`,max:5});
-  const owner = new pg.Client({connectionString:url,application_name:`commander-owner-${run.run_id}`,statement_timeout:5000,query_timeout:6000,keepAlive:true});
-  const ownerKey = BigInt.asIntN(64,BigInt('0x'+hash('commander-foundation:'+run.run_id).slice(0,16))).toString();
+  const stopHeartbeat=startHostHeartbeat({task_id:run.task_id,run_id:run.run_id,definition_sha256:normalized.definition_sha256});
+  const pool = new pg.Pool({...databaseConfig(url,{schema}),max:5});
+  const owner = new pg.Client(databaseConfig(url,{applicationName:`commander-owner-${run.run_id}`}));
+  const lockKey = ownerKey(run.run_id);
   let held=false,closing=false,lost=false;
   const revoke = () => {
     lost=true;
@@ -71,12 +73,15 @@ export async function runCommanderHost({manifestPath,resultPath}) {
   };
   try {
     await owner.connect();
-    held=(await owner.query('SELECT pg_try_advisory_lock($1::bigint) AS acquired',[ownerKey])).rows[0].acquired;
+    held=(await owner.query('SELECT pg_try_advisory_lock($1::bigint) AS acquired',[lockKey])).rows[0].acquired;
     if(!held)throw Error('commander_host_already_running');
+    await withWorkflowClient(url,dbosSchema,client=>assertStoredRun(client,normalized));
+    if((await pool.query('SELECT current_schema() AS schema')).rows[0].schema!==schema)throw Error('commander_action_schema_mismatch');
+    const ledger=createRunLedger({directory:path.join(controlRoot,run.run_id,'ledger'),identity:{task_id:run.task_id,run_id:run.run_id},policy:profile.usage_budget??{}});
     const adapter = await import(pathToFileURL(path.resolve(profile.cwd,profile.adapter)).href);
     const env = await adapter.createRuntime({profile,pool,run:normalizeCommanderRun(run),verifySource:verifyOwnership,ledger});
     const decide = profile.commander.provider === 'codex' ? createCodexCommander({...profile.commander,codexAuth:profile.codex_auth,manifestPath:path.resolve(manifestPath),ledger}) : env.decide;
-    configureCommanderWorkflow({...env,decide,ledger,cwd:profile.cwd,revision,verifySource:verifyOwnership,actionStore:createCommanderActionStore(pool)});
+    configureCommanderWorkflow({...env,run:normalized,decide,ledger,cwd:profile.cwd,revision,verifySource:verifyOwnership,actionStore:createCommanderActionStore(pool)});
     DBOS.setConfig({name:'cecelia-commander-foundation',applicationVersion:revision,executorID:`commander-${run.run_id}`,
       systemDatabaseUrl:url,systemDatabaseSchemaName:dbosSchema});
     await DBOS.launch();
@@ -86,11 +91,12 @@ export async function runCommanderHost({manifestPath,resultPath}) {
     durableWrite(resultPath,output);
     return output;
   } finally {
+    stopHeartbeat();
     try{if(DBOS.isInitialized())await DBOS.shutdown();}
     finally{closing=true;await owner.end().catch(()=>{});await pool.end();}
   }
 }
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isMainModule(import.meta.url)) {
   const args=process.argv.slice(2);
   if (args.length !== 4 || args[0] !== '--manifest' || args[2] !== '--result') throw Error('usage: host.mjs --manifest FILE --result FILE');
   const output=await runCommanderHost({manifestPath:path.resolve(args[1]),resultPath:path.resolve(args[3])});

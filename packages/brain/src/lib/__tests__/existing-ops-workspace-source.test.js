@@ -96,3 +96,16 @@ it('Commander恢复回归是当前真实CI的必需隔离步骤，改命令或�
     await expect(collect({[workflow]:yaml.dump(changed)})).rejects.toMatchObject({code:'WORKSPACE_INPUT_SOURCE_UNPROVEN'});
   }
 });
+
+it('审计故障回归只认可准确的必需PG入口，禁用或换库不得取得来源证明', async () => {
+  const doc=yaml.load(read(workflow)),fragment='commander-foundation-audit.pg.integration.test.js';
+  const steps=doc.jobs['runtime-integration'].steps.filter(step=>step.run?.includes(fragment));
+  expect(steps).toHaveLength(1);
+  expect(steps[0]['working-directory']).toBe('packages/brain');
+  expect(steps[0].env.TEST_DB_URL).toBe('postgresql://onboarding_ci:onboarding_ci@127.0.0.1:5432/cecelia_scratch');
+  expect(await collect()).not.toHaveLength(0);
+  for(const mutate of [step=>{step.run='echo audited';},step=>{step.if='false';},step=>{step.env.TEST_DB_URL='postgresql://ci@127.0.0.1:5432/cecelia';}]){
+    const changed=structuredClone(doc);mutate(changed.jobs['runtime-integration'].steps.find(step=>step.run?.includes(fragment)));
+    await expect(collect({[workflow]:yaml.dump(changed)})).rejects.toMatchObject({code:'WORKSPACE_INPUT_SOURCE_UNPROVEN'});
+  }
+});
