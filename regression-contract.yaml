@@ -122,23 +122,15 @@ golden_paths:
   #   关联 Brain decisions 表 invariant 的稳定 uuid（快照 config/invariants-snapshot.json）。
   #   scripts/ci/check-invariant-coverage.mjs 用它对账「有红线无守卫 = 裸奔」。
 
-  - id: CORE-INV-01
-    name: "铁律1 真环境非mock：contract-gate mock 红线 proven-to-fire（违规合同命中 / 干净合同不误伤）"
+  - id: CORE-CONTRACT-GATE-01
+    name: "合同文本红线：mock 作弊命中、干净合同放行、租户探测约束与单条豁免回归"
     priority: P0
     trigger: [PR, Release]
     method: auto
-    test_command: "node scripts/ci/invariants/core-inv-01-no-mock-env.mjs"
-    must_never_break: true
-    invariant_ids: [3c30394c-ee76-4ff9-b087-bafa137e1d75]  # [系统]真环境验证才算done
-
-  - id: CORE-INV-02
-    name: "铁律2 租户隔离：contract-gate 租户隔离红线 proven-to-fire（跨租户 DB 探测命中 / 带 tenant_id 约束不误伤）"
-    priority: P0
-    trigger: [PR, Release]
-    method: auto
-    test_command: "node scripts/ci/invariants/core-inv-02-tenant-isolation.mjs"
+    test_command: "bash -c 'cd packages/brain && npx --no-install vitest run src/lib/__tests__/contract-gate.test.js'"
     must_never_break: true
     invariant_ids:
+      - 3c30394c-ee76-4ff9-b087-bafa137e1d75  # [系统]真环境验证才算done
       - 68976b17-3f9b-4ffb-9c23-83ae1d2ce4c0  # [系统]租户隔离
       - 55b8eb46-2b50-4a75-ba96-f84436ba08e8  # [系统]测试默认多租户
 
