@@ -10,6 +10,6 @@ function fixture(fail=false){
  return {run,env,snapshot};
 }
 test.each([false,true])('DBOS保存统一账单快照，正常或预算失败仍保留用量：%s',async fail=>{
- const f=fixture(fail);sdk.initialized=false;configureCommanderWorkflow(f.env);sdk.initialized=true;
+ process.env.DBOS_DURABLE_ENABLED='true';const f=fixture(fail);sdk.initialized=false;configureCommanderWorkflow(f.env);sdk.initialized=true;
  try{const out=await (await startCommanderWorkflow(f.run)).handle.getResult();expect(out.run_report.ledger).toEqual(f.snapshot);expect(out.run_report.run_id).toBe(f.run.run_id);expect(sdk.steps).toContain('commanderFoundationRunReport');if(fail){expect(out.status).toBe('needs_review');expect(out.reason).toBe('usage_budget_exceeded');}else expect(out.status).toBe('completed');}finally{sdk.initialized=false;}
 });
