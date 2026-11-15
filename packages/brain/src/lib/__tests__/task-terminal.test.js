@@ -137,7 +137,7 @@ describe('applyDecisionTaskTransition', () => {
     const db = { query: vi.fn(async () => ({ rowCount })) };
     const result = await applyDecisionTaskTransition(db, { type: 'retry', target_id: ID });
     expect(db.query).toHaveBeenCalledWith(
-      "UPDATE tasks SET status = $1 WHERE id = $2 AND payload->>'commander_protocol' IS DISTINCT FROM 'commander-v2'",
+      "UPDATE tasks SET status = $1 WHERE id = $2 AND payload->>'commander_protocol' IS DISTINCT FROM 'commander-v2' AND payload->>'commander_protocol' IS DISTINCT FROM 'commander-foundation-v1' AND NOT COALESCE(result ? 'foundation_runner',false)",
       ['queued', ID]
     );
     expect(result).toEqual(rowCount === 0
@@ -148,7 +148,8 @@ describe('applyDecisionTaskTransition', () => {
     const db = { query: vi.fn(async () => ({ rowCount: 1 })) };
     await expect(applyDecisionTaskTransition(db, { type: 'skip', target_id: ID }))
       .resolves.toEqual({ success: true, action: 'cancelled' });
-    expect(db.query).toHaveBeenCalledWith('UPDATE tasks SET status = $1 WHERE id = $2', ['cancelled', ID]);
+    expect(db.query.mock.calls[0][0]).toContain("payload->>'commander_protocol' IS DISTINCT FROM 'commander-foundation-v1'");
+    expect(db.query.mock.calls[0][1]).toEqual(['cancelled',ID]);
   });
   it('未知action零写拒绝', async () => {
     const db = { query: vi.fn() };
@@ -200,4 +201,10 @@ describe('DBOS公共Runner明确未启动的失败收口', () => {
   it('明确未启动出口必须有唯一taskId，不能用于批量收口', () => {
     expect(() => buildTerminalUpdate(null, 'failed', {where: {sql: 'TRUE'}, commonRunnerNoLaunchReconciliation: proof()})).toThrow(/commonRunnerNoLaunchReconciliation/);
   });
+});
+
+it.each(['retry','skip'])('decision %s不得改变foundation原任务',async type=>{
+ const db={query:vi.fn(async sql=>({rowCount:sql.includes("IS DISTINCT FROM 'commander-foundation-v1'")&&sql.includes("result ? 'foundation_runner'")?0:1}))};
+ const result=await applyDecisionTaskTransition(db,{type,target_id:ID});
+ expect(result.success).toBe(false);expect(result.reason).toBe('task_missing_or_commander_control_owned');
 });

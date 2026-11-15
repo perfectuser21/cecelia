@@ -98,6 +98,8 @@ export async function updateTaskStatus(taskId, status, additionalFields = {}) {
         UPDATE tasks
         SET ${updates.join(', ')}, updated_at = NOW()
         WHERE id = $1
+          AND payload->>'commander_protocol' IS DISTINCT FROM 'commander-foundation-v1'
+          AND NOT COALESCE(result ? 'foundation_runner',false)
           AND NOT COALESCE(payload->>'commander_protocol'='commander-v2'
             AND result->'workflow_control' ? 'failed_reconciliation',false)
         RETURNING *
@@ -309,6 +311,8 @@ export async function unblockTask(taskId, { db = pool } = {}) {
           updated_at = NOW()
       WHERE id = $1
         AND status = 'blocked'
+        AND payload->>'commander_protocol' IS DISTINCT FROM 'commander-foundation-v1'
+        AND NOT COALESCE(result ? 'foundation_runner',false)
         AND NOT EXISTS (
           SELECT 1
           FROM harness_gaps

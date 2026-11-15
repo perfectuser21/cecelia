@@ -43,7 +43,7 @@ beforeAll(async () => {
   expect(commandDdl).toBeTruthy();
   await admin.query(`CREATE TABLE tasks (
     id uuid PRIMARY KEY,status text NOT NULL,priority text DEFAULT 'P2',
-    payload jsonb DEFAULT '{}',description text,updated_at timestamptz DEFAULT now(),
+    payload jsonb DEFAULT '{}',result jsonb DEFAULT '{}',description text,updated_at timestamptz DEFAULT now(),
     claimed_by text,started_at timestamptz
   ); CREATE TABLE cecelia_events (
     id bigint GENERATED ALWAYS AS IDENTITY,event_type text,source text,payload jsonb

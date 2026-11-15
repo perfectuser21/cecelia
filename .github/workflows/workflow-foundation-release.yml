@@ -1,0 +1,84 @@
+name: Publish verified Workflow to Brain
+# 业务仓CI完成后调用；在已部署业务包的受信执行节点上核验，注册不会启动业务。
+on:
+  workflow_call:
+    inputs:
+      tooling_revision:
+        description: Cecelia发布工具的完整固定commit SHA
+        required: true
+        type: string
+      target_machine:
+        description: 目标机专用self-hosted runner标签；须与节点FOUNDATION_MACHINE_ID一致
+        required: true
+        type: string
+      evidence_run_id:
+        description: 本调用仓库生成发布计划及CI证据的Actions运行ID
+        required: true
+        type: string
+      evidence_artifact:
+        description: 包含foundation-publication.json的已验收证据artifact
+        required: true
+        type: string
+    secrets:
+      BRAIN_API_URL:
+        required: true
+      BRAIN_INTERNAL_TOKEN:
+        required: true
+      TOOLING_READ_TOKEN:
+        description: 跨私有仓库读取固定发布工具的只读凭据
+        required: false
+permissions:
+  contents: read
+  actions: read
+jobs:
+  register:
+    runs-on: [self-hosted, workflow-foundation, '${{ inputs.target_machine }}']
+    environment: workflow-foundation
+    timeout-minutes: 10
+    concurrency:
+      group: workflow-foundation-publication-${{ inputs.target_machine }}
+      cancel-in-progress: false
+    steps:
+      - name: Validate fixed tooling revision
+        env:
+          TOOLING_REVISION: ${{ inputs.tooling_revision }}
+        run: |
+          [[ "$TOOLING_REVISION" =~ ^[a-f0-9]{40}$ ]] || exit 2
+      - uses: actions/checkout@v4
+        with:
+          repository: perfectuser21/cecelia
+          ref: ${{ inputs.tooling_revision }}
+          path: foundation-tooling
+          persist-credentials: false
+          fetch-depth: 0
+          token: ${{ secrets.TOOLING_READ_TOKEN || github.token }}
+      - name: Require merged tooling
+        working-directory: foundation-tooling
+        run: git merge-base --is-ancestor HEAD origin/main
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.evidence_artifact }}
+          run-id: ${{ inputs.evidence_run_id }}
+          github-token: ${{ github.token }}
+          path: foundation-evidence
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify installed files and register the verified release
+        env:
+          CECELIA_API_BASE_URL: ${{ secrets.BRAIN_API_URL }}
+          CECELIA_INTERNAL_TOKEN: ${{ secrets.BRAIN_INTERNAL_TOKEN }}
+          PUBLICATION_RESULT: ${{ runner.temp }}/foundation-${{ github.run_id }}-${{ github.run_attempt }}.json
+        # FOUNDATION_BUNDLE_ROOT及FOUNDATION_MACHINE_ID由受信节点服务环境配置，不能来自业务任务。
+        run: |
+          test -n "$FOUNDATION_BUNDLE_ROOT"
+          test -n "$FOUNDATION_MACHINE_ID"
+          node foundation-tooling/packages/brain/scripts/commander-workflow/foundation-publish.mjs \
+            --plan foundation-evidence/foundation-publication.json \
+            --bundle-root "$FOUNDATION_BUNDLE_ROOT" \
+            --result "$PUBLICATION_RESULT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: foundation-registration-result
+          path: ${{ runner.temp }}/foundation-${{ github.run_id }}-${{ github.run_attempt }}.json
+          if-no-files-found: error

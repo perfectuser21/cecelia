@@ -168,6 +168,24 @@ jobs:
           TEST_DB_URL: postgresql://onboarding_ci:onboarding_ci@127.0.0.1:5432/cecelia_scratch
         run: node packages/brain/scripts/smoke/commander-foundation-smoke.mjs
         if: '!cancelled()'
+      - name: Verify Workflow publication does not start business tasks
+        working-directory: packages/brain
+        run: npx vitest run scripts/commander-workflow/__tests__/foundation-publish.test.mjs --maxWorkers=1 --minWorkers=1
+      - name: Verify Workflow registration to Brain and real DBOS execution
+        working-directory: packages/brain
+        env:
+          DB_NAME: cecelia_scratch
+          DB_HOST: 127.0.0.1
+          DB_PORT: '5432'
+          DB_USER: onboarding_ci
+          DB_PASSWORD: onboarding_ci
+          TEST_DB_URL: postgresql://onboarding_ci:onboarding_ci@127.0.0.1:5432/cecelia_scratch
+        run: >-
+          npx vitest run --config vitest.integration.config.js
+          src/__tests__/integration/workflow-foundation.pg.integration.test.js
+          src/__tests__/integration/foundation-legacy-entrances.pg.integration.test.js
+          --maxWorkers=1 --minWorkers=1
+        if: '!cancelled()'
       - name: Verify audited Commander failure boundaries
         working-directory: packages/brain
         env:

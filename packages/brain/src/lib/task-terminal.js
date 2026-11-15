@@ -205,6 +205,25 @@ export function buildTerminalUpdate(taskId, status, opts = {}) {
   } else {
     where.push("((payload->>'commander_protocol' IS DISTINCT FROM 'commander-v2' AND NOT COALESCE(result ? 'workflow_common_runner',false)) OR (NOT COALESCE(result ? 'workflow_common_runner',false) AND result->'workflow_control'->>'phase' = 'final' AND result->'workflow_control'->>'verdict' = 'PASS' AND " + (isRelayTerminalStatus(status) ? 'TRUE' : 'FALSE') + ")" + failedGate + commonGate + ")");
   }
+  // foundation只接服务端核验记录；无ready时仅允许已确认未授权启动的失败。
+  const foundation=opts.foundationReconciliation;
+  if(foundation!==undefined){
+    if(taskId==null||!['completed','failed'].includes(status)||foundation.status!==status
+      ||!/^[a-f0-9-]{36}$/.test(foundation.runId??''))throw Error('foundation_terminal_proof_invalid');
+    where.push(`payload->>'commander_protocol'='commander-foundation-v1' AND result->'foundation_runner'->>'run_id'=$${push(foundation.runId)}
+      AND result#>>'{foundation_reconciliation,run_id}'=result#>>'{foundation_runner,run_id}'
+      AND result#>>'{foundation_reconciliation,status}'=$${push(status)}
+      AND EXISTS(SELECT 1 FROM task_runs fr WHERE fr.task_id=tasks.id AND fr.run_id=tasks.result#>>'{foundation_runner,run_id}' AND fr.ended_at IS NOT NULL AND fr.status=$${push(status==='completed'?'success':'failed')} AND fr.context->>'source'='commander-foundation')`);
+    if(foundation.mode==='preflight'){
+      if(status!=='failed')throw Error('foundation_terminal_proof_invalid');
+      where.push("NOT COALESCE((result->'foundation_runner') ? 'run',false) AND result#>>'{foundation_reconciliation,dbos_status}'='NOT_STARTED'");
+    }else{
+      if(!/^[a-f0-9]{64}$/.test(foundation.definitionSha256??''))throw Error('foundation_terminal_proof_invalid');
+      where.push(`result#>>'{foundation_runner,run,definition_sha256}'=$${push(foundation.definitionSha256)}
+        AND result#>>'{foundation_reconciliation,definition_sha256}'=result#>>'{foundation_runner,run,definition_sha256}'
+        AND result#>>'{foundation_reconciliation,dbos_status}'='SUCCESS'`);
+    }
+  }else where.push("payload->>'commander_protocol' IS DISTINCT FROM 'commander-foundation-v1' AND NOT COALESCE(result ? 'foundation_runner',false)");
   const returning = ['id', 'status', ...toList(opts.returning).filter((c) => c !== 'id' && c !== 'status')];
   const sql = `UPDATE tasks SET ${sets.join(', ')} WHERE ${where.join(' AND ')} RETURNING ${returning.join(', ')}`;
   return { sql, params };
@@ -252,7 +271,7 @@ export async function finalizeTask(db, taskId, status, opts = {}) {
 export async function applyDecisionTaskTransition(db, action) {
   if (action.type === 'retry') {
     const retryUpdate = await db.query(
-      "UPDATE tasks SET status = $1 WHERE id = $2 AND payload->>'commander_protocol' IS DISTINCT FROM 'commander-v2'",
+      "UPDATE tasks SET status = $1 WHERE id = $2 AND payload->>'commander_protocol' IS DISTINCT FROM 'commander-v2' AND payload->>'commander_protocol' IS DISTINCT FROM 'commander-foundation-v1' AND NOT COALESCE(result ? 'foundation_runner',false)",
       ['queued', action.target_id]
     );
     return retryUpdate.rowCount === 0
@@ -260,8 +279,8 @@ export async function applyDecisionTaskTransition(db, action) {
       : { success: true, action: 'reset_to_queued' };
   }
   if (action.type === 'skip') {
-    await db.query('UPDATE tasks SET status = $1 WHERE id = $2', ['cancelled', action.target_id]);
-    return { success: true, action: 'cancelled' };
+    const updated=await db.query("UPDATE tasks SET status = $1 WHERE id = $2 AND payload->>'commander_protocol' IS DISTINCT FROM 'commander-foundation-v1' AND NOT COALESCE(result ? 'foundation_runner',false)", ['cancelled', action.target_id]);
+    return updated.rowCount===0?{success:false,action:'not_cancelled',reason:'task_missing_or_commander_control_owned'}:{ success: true, action: 'cancelled' };
   }
   throw new Error('Unsupported decision task transition');
 }

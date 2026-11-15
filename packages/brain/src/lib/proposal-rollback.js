@@ -1,4 +1,5 @@
 // Current proposal rollback; the public wrapper supplies its canonical pool and reader.
+import {NON_FOUNDATION_TASK_SQL} from './foundation-task-guard.js';
 export async function rollbackAppliedProposal(pool, proposalId, getProposal) {
   const proposal = await getProposal(proposalId);
   if (!proposal) throw new Error('Proposal not found');
@@ -12,10 +13,11 @@ export async function rollbackAppliedProposal(pool, proposalId, getProposal) {
   // Restore tasks from snapshot
   for (const [taskId, taskData] of Object.entries(snapshot.tasks || {})) {
     try {
-      await pool.query(`
+      const restored=await pool.query(`
         UPDATE tasks SET priority = $2, status = $3, payload = $4, updated_at = NOW()
-        WHERE id = $1
+        WHERE id = $1 AND ${NON_FOUNDATION_TASK_SQL}
       `, [taskId, taskData.priority, taskData.status, taskData.payload || {}]);
+      if(restored.rowCount!==1)throw Error('task_missing_or_foundation_control_owned');
       results.push({ task_id: taskId, restored: true });
     } catch (err) {
       results.push({ task_id: taskId, restored: false, error: err.message });

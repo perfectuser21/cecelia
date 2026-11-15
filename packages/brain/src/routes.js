@@ -1,3 +1,4 @@
+import {createWorkflowFoundationRouter} from './routes/workflow-foundation.js';
 import { Router } from 'express';
 import {createNativeAssemblyRouter} from './routes/workflow-assembly-native.js';
 import nativeAssemblyPool from './db.js';
@@ -39,6 +40,7 @@ export { triggerAutoRCA } from './routes/brain-meta.js';
 export { resolveRelatedFailureMemories } from './routes/shared.js';
 
 const router = Router();
+router.use('/workflow-foundation',createWorkflowFoundationRouter({pool:directoryPool}));
 router.use('/common-runner', createCommonRunnerRouter({ pool: directoryPool }));
 router.use('/workflow-assembly-maintenance',createNativeAssemblyRouter({pool:nativeAssemblyPool}));
 router.use('/session-provenance', sessionProvenanceRouter);

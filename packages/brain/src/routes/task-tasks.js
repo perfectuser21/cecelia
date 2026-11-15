@@ -1,3 +1,4 @@
+import {authoringMutationError} from '../workflow-authoring/task-guard.js';
 import {assertActiveDevelopmentTask} from '../lib/task-type-registry.js';
 import {registerHeadedTakeoverRoute} from './task-headed-takeover.js';
 import {assertGpuExecutionSupported} from '../lib/gpu-execution-contract.js';
@@ -47,6 +48,9 @@ const INVALID_TASK_ID = { error: 'Invalid task id: must be a UUID' };
 // POST /tasks — 创建新任务（供外部 agent 如 /architect 注册任务到 Brain 队列）
 router.post('/', async (req, res) => {
   try {
+    if([req.body?.payload,req.body?.metadata].some(value=>value&&typeof value==='object'&&(value.commander_protocol==='commander-foundation-v1'||Object.hasOwn(value,'foundation_request')))){
+      return res.status(400).json({code:'FOUNDATION_CONTROL_RESERVED',error:'底座派单请使用已发布Workflow专用入口'});
+    }
     assertGpuExecutionSupported(req.body?.payload);
     assertGpuExecutionSupported(req.body?.metadata);
     let {
@@ -541,10 +545,12 @@ registerTaskDependencyRoutes(router, { pool });
 // 其余 → UPDATE status='cancelled'，200 返回更新后整行。
 router.delete('/:id', async (req, res) => {
   try {
-    const current = await pool.query('SELECT status FROM tasks WHERE id = $1', [req.params.id]);
+    const current = await pool.query('SELECT status,payload,result FROM tasks WHERE id = $1', [req.params.id]);
     if (!current.rows.length) {
       return res.status(404).json({ error: 'Task not found', id: req.params.id });
     }
+    const owned=authoringMutationError(current.rows[0],{status:'cancelled'});
+    if(owned)return res.status(409).json(owned);
     const currentStatus = current.rows[0].status;
     if (TERMINAL_STATUSES.includes(currentStatus)) {
       return res.status(409).json({
@@ -554,7 +560,9 @@ router.delete('/:id', async (req, res) => {
     }
 
     const result = await pool.query(
-      `UPDATE tasks SET status = 'cancelled', updated_at = NOW() WHERE id = $1 RETURNING *`,
+      `UPDATE tasks SET status = 'cancelled', updated_at = NOW() WHERE id = $1
+        AND payload->>'commander_protocol' IS DISTINCT FROM 'commander-foundation-v1'
+        AND NOT COALESCE(result ? 'foundation_runner',false) RETURNING *`,
       [req.params.id]
     );
 

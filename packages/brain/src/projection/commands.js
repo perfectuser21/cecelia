@@ -1,3 +1,4 @@
+import {NON_FOUNDATION_TASK_SQL} from '../lib/foundation-task-guard.js';
 const ALLOWED_COMMANDS = new Set([
   'start_requested',
   'cancel_requested',
@@ -81,7 +82,7 @@ async function applyOne(pool, command) {
     // The earlier SELECT may have autocommitted; authority belongs to this write.
     const { rowCount } = await pool.query(
       `UPDATE tasks SET status='cancelled', updated_at=NOW()
-       WHERE id=$1 AND status = ANY($2::text[]) RETURNING id`,
+       WHERE id=$1 AND status = ANY($2::text[]) AND ${NON_FOUNDATION_TASK_SQL} RETURNING id`,
       [task.id, ['queued', 'pending', 'blocked', 'paused']]
     );
     if (rowCount !== 1) {
