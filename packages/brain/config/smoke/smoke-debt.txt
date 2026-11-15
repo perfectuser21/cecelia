@@ -16,7 +16,6 @@ action-receipts-schema-smoke.sh
 all-features-smoke.sh
 api-credentials-checker-smoke.sh
 b13-dbupsert-idempotent-smoke.sh
-brain-guidance-smoke.sh
 brain-ops-reliability-smoke.sh
 bridge-keepalive-smoke.sh
 callback-url-smoke.sh
@@ -26,7 +25,6 @@ cecelia-smoke-audit.sh
 claimed-by-cleared-smoke.sh
 cleanup-lock-mutex.sh
 clips-smoke.sh
-codex-bridge-detached-smoke.sh
 consciousness-graph-smoke.sh
 container-name-unique-smoke.sh
 contract-gate-smoke.sh
@@ -37,7 +35,6 @@ daily-codereview-autofix-smoke.sh
 dbos-durable-smoke.sh
 decision-ttl-smoke.sh
 deploy-token-verify-smoke.sh
-detached-prompt-naming-smoke.sh
 dev-registry-smoke.sh
 dispatch-events-smoke.sh
 dispatcher-hol-skip-smoke.sh

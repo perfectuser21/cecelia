@@ -21,7 +21,6 @@ app-server-controller-smoke.sh
 app-server-rpc-smoke.sh
 battle-report-smoke.sh
 battle-report-v2-smoke.sh
-callback-postprocess-smoke.sh
 capture-destination-link-smoke.sh
 capture-inbox-smoke.sh
 capture-triage-line-backlog-autotask-smoke.sh
@@ -64,18 +63,13 @@ device-locks-smoke.sh
 disk-guard-smoke.sh
 dispatch-allocation-guide-smoke.sh
 dispatch-fail-autoblock-smoke.sh
-doc-zombie-retire-smoke.sh
 drift-sentinel-smoke.sh
 executor-liveness-t1-smoke.sh
 factory-commander-route-api-smoke.sh
-factory-f1-devloop-smoke.sh
 factory-f2-deploy-smoke.sh
 factory-verify-only-smoke.sh
-factory-f3-nightly-smoke.sh
 factory-f4-selfheal-smoke.sh
 factory-f5-cockpit-smoke.sh
-factory-f6-inbox-smoke.sh
-factory-f7-memory-smoke.sh
 failed-target-ttl-smoke.sh
 feature-registry-smoke.sh
 features-ledger-smoke.sh
