@@ -8,3 +8,5 @@
   Test: manual:npm exec -w packages/brain -- vitest run src/node-onboarding/__tests__/service-completion-isolation.test.js
 - [ ] 本地默认脚本、版本、事实和清单检查通过；完整固定HEAD源码CI成功后正常合并并回写账本。
   Test: manual:node scripts/ci/run-basic-check.mjs scripts
+- [ ] 用量账本在递增时钟下精确读回各自持久化时间，不依赖开始与准备完成恰好同一毫秒。
+  Test: manual:npm exec -w packages/brain -- vitest run src/orchestrator/__tests__/commander-usage-ledger.test.js src/orchestrator/__tests__/commander-usage-wiring.test.js

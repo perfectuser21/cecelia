@@ -16,10 +16,11 @@ test('持久call记录CLI准备与完整usage，缓存推理不重复累加，�
  let clock=1760000000000;vi.spyOn(Date,'now').mockImplementation(()=>clock++);
  const {directory,ledger}=await fixture({pricing});const started=ledger.beginCall(meta);
  expect(started.call_id).toMatch(/^[a-f0-9-]{36}$/);expect(fs.statSync(directory).mode&0o777).toBe(0o700);
+ const prepared=JSON.parse(fs.readFileSync(path.join(directory,'calls',started.call_id+'.json'),'utf8'));
  const incomplete=ledger.snapshot();expect(incomplete.pending_call_ids).toEqual([started.call_id]);expect(incomplete.summary.total_tokens).toBeNull();
  const value={status:'completed',dispatch_status:'dispatched',usage};ledger.finishCall(started.call_id,value);ledger.finishCall(started.call_id,value);
  const out=(await api()).readRunLedger({directory,identity});expect(out.calls).toHaveLength(1);expect(out.summary.total_tokens).toBe(120);expect(out.summary.cost.estimated_usd).toBeCloseTo(0.00104);expect(out.summary.cost.actual_usd).toBe(0);
- expect(out.calls[0].prepared_at_ms).toBe(started.started_at_ms);expect(out.calls[0].duration_ms).toBeGreaterThanOrEqual(0);expect(out.coverage.complete).toBe(true);
+ expect(out.calls[0].prepared_at_ms).toBe(prepared.prepared_at_ms);expect(out.calls[0].started_at_ms).toBe(started.started_at_ms);expect(out.calls[0].prepared_at_ms).toBeGreaterThanOrEqual(out.calls[0].started_at_ms);expect(out.calls[0].duration_ms).toBeGreaterThanOrEqual(0);expect(out.coverage.complete).toBe(true);
  expect(()=>ledger.finishCall(started.call_id,{...value,usage:{...usage,output_tokens:21}})).toThrow('usage_ledger_terminal_conflict');
  expect((await api()).createRunLedger({directory,identity,policy:{pricing}}).snapshot().summary.total_tokens).toBe(120);
 });
