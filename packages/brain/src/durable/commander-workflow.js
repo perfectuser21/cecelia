@@ -41,6 +41,10 @@ function accepted(receipt, key) {
     && a.attempts.every(x => ['completed','empty'].includes(x.status) && x.external_effect !== 'unknown'
       && x.execution_stopped !== false && x.adapter_result?.execution_stopped !== false);
 }
+function unverifiedReason(receipt){
+  const reason=receipt?.activities?.[0]?.attempts?.at(-1)?.reason_code;
+  return /^usage_(?:(?:token|cost)_budget_(?:exceeded|unknown)|ledger_busy)$/.test(reason??'')?reason:'commander_activity_unverified';
+}
 const execute = DBOS.registerStep(async (run, key, context) => {
   const env = environment(run);
   const activity = run.contract.activities.find(a => a.key === key);
@@ -53,7 +57,7 @@ const execute = DBOS.registerStep(async (run, key, context) => {
   if (!Number.isSafeInteger(deadline) || deadline > phaseDeadline || deadline <= 0) throw Error('commander_action_deadline_invalid');
   if (reservation.record.state === 'settled') {
     const receipt=reservation.record.result;
-    return {receipt,safe:accepted(receipt,key)||receipt.execution_stopped===true,...(!accepted(receipt,key)?{error:'commander_activity_unverified'}:{})};
+    return {receipt,safe:accepted(receipt,key)||receipt.execution_stopped===true,...(!accepted(receipt,key)?{error:unverifiedReason(receipt)}:{})};
   }
   const recovering = !reservation.created;
   if(Date.now()>=deadline){
@@ -86,7 +90,7 @@ const execute = DBOS.registerStep(async (run, key, context) => {
   if(Date.now()>=deadline)return {error:'commander_deadline_exceeded',receipt,safe};
   try {await env.verifySource();}catch{return {error:'commander_source_unavailable',receipt,safe};}
   if(safe)await env.actionStore.settle(identity,receipt);
-  return {receipt,safe,...(!accepted(receipt,key)?{error:'commander_activity_unverified'}:{})};
+  return {receipt,safe,...(!accepted(receipt,key)?{error:unverifiedReason(receipt)}:{})};
 },{name:'commanderFoundationActivity'});
 
 const verifyCompletion = DBOS.registerStep(async run => {
