@@ -35,7 +35,7 @@ test('只读查询缺失journal不创建目录，数据库接口只读且释放�
  const root=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'report-readonly-'))),previous=process.env.COMMANDER_DATABASE_URL;
  process.env.COMMANDER_DATABASE_URL='postgresql://fixture/unused';const calls=[];
  try{const manifestPath=path.join(root,'manifest.json');fs.writeFileSync(manifestPath,JSON.stringify({run,profile:{cwd:root}}));
-  const report=await queryCommanderReport({manifestPath,clientFactory:async()=>({getWorkflow:async()=>({workflowID:'commander-foundation:run',status:'ERROR'}),listWorkflowSteps:async()=>[],destroy:async()=>calls.push('destroy')}),databaseFactory:options=>{
+  const report=await queryCommanderReport({manifestPath,clientFactory:async options=>{expect(new URL(options.systemDatabaseUrl).searchParams.get('options')).toContain('default_transaction_read_only=on');return {getWorkflow:async()=>({workflowID:'commander-foundation:run',status:'ERROR'}),listWorkflowSteps:async()=>[],destroy:async()=>calls.push('destroy')};},databaseFactory:options=>{
    expect(options.options).toContain('default_transaction_read_only=on');return {connect:async()=>{},query:async(sql,params)=>{expect(sql).toMatch(/^SELECT /);expect(params).toEqual(['run']);return {rows:[]};},end:async()=>calls.push('end')};
   }});expect(report.usage.total_tokens).toBeNull();expect(report.status).toBe('failed');expect(fs.existsSync(path.join(root,'control'))).toBe(false);expect(calls.sort()).toEqual(['destroy','end']);
  }finally{if(previous===undefined)delete process.env.COMMANDER_DATABASE_URL;else process.env.COMMANDER_DATABASE_URL=previous;fs.rmSync(root,{recursive:true,force:true});}
