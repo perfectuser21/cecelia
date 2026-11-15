@@ -1,7 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import {randomUUID,createHash} from 'node:crypto';
-import {fail,copy,canonical,equal,normalizeUsage,summarize} from './commander-usage-ledger-summary.js';
+import {fail,copy,canonical,equal,normalizeUsage,summarize,admissionFor} from './commander-usage-ledger-summary.js';
 export {normalizeTurns,mergeLedgerSnapshots} from './commander-usage-ledger-summary.js';
 const token=/^[a-zA-Z0-9][a-zA-Z0-9_.:/@+-]{0,255}$/;
 const statusValues=['completed','failed','interrupted','cancelled','not_started','unknown','needs_review','passed','blocked'];
@@ -28,9 +29,21 @@ function safePath(directory,create=false){
  }
  safeDirectory(resolved);return resolved;
 }
+function safeLinks(fd,file,stat){
+ if(stat.nlink===1)return true;
+ if(stat.nlink!==2)return false;
+ let alias=false;
+ for(const name of fs.readdirSync(path.dirname(file)).filter(n=>/^\.[a-f0-9-]{36}\.tmp$/.test(n))){
+  try{const other=fs.lstatSync(path.join(path.dirname(file),name));
+   if(other.isFile()&&!other.isSymbolicLink()&&other.dev===stat.dev&&other.ino===stat.ino&&other.uid===stat.uid&&(other.mode&0o777)===0o600)alias=true;
+  }catch(error){if(error.code!=='ENOENT')throw error;}
+ }
+ const current=fs.fstatSync(fd);
+ return current.nlink===1||(current.nlink===2&&alias);
+}
 function read(file){
  safeDirectory(path.dirname(file));const fd=fs.openSync(file,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW);
- try{const s=fs.fstatSync(fd);if(!s.isFile()||s.uid!==process.getuid()||(s.mode&0o777)!==0o600||s.nlink!==1||s.size>10*1024*1024)fail('usage_ledger_file_unprotected');return JSON.parse(fs.readFileSync(fd,'utf8'));}
+ try{const s=fs.fstatSync(fd);if(!s.isFile()||s.uid!==process.getuid()||(s.mode&0o777)!==0o600||s.size>10*1024*1024||!safeLinks(fd,file,s))fail('usage_ledger_file_unprotected');return JSON.parse(fs.readFileSync(fd,'utf8'));}
  finally{fs.closeSync(fd);}
 }
 function exists(file){try{fs.lstatSync(file);return true;}catch(e){if(e.code==='ENOENT')return false;throw e;}}
@@ -59,7 +72,7 @@ function openManifest(directory,identity){
  policyValue(manifest.policy);return {root,manifest};
 }
 function snapshotAt(root,manifest){
- safePath(root);const out={schema_version:1,identity:copy(manifest.identity),policy:copy(manifest.policy),as_of_ms:Date.now()};
+ safePath(root);const out={schema_version:1,identity:copy(manifest.identity),policy:copy(manifest.policy),as_of_ms:Date.now(),admission_lock_present:exists(path.join(root,'.write-lock'))};
  for(const [group,id] of Object.entries(groups)){
   const directory=path.join(root,group);safeDirectory(directory);out[group]=[];
   for(const filename of fs.readdirSync(directory).filter(f=>f.endsWith('.json')&&!f.endsWith('.end.json'))){
@@ -82,29 +95,29 @@ export function createRunLedger({directory,identity,policy={}}){
  for(const group of Object.keys(groups)){const dir=path.join(root,group);try{fs.mkdirSync(dir,{mode:0o700});}catch(e){if(e.code!=='EEXIST')throw e;}safeDirectory(dir);}
  const lock=path.join(root,'.write-lock');
  function mutate(fn){
-  safePath(root);let fd;const owner=randomUUID();try{fd=fs.openSync(lock,fs.constants.O_WRONLY|fs.constants.O_CREAT|fs.constants.O_EXCL|fs.constants.O_NOFOLLOW,0o600);}catch(e){if(e.code==='EEXIST')fail('usage_ledger_busy');throw e;}
-  try{fs.writeFileSync(fd,JSON.stringify({owner}));fs.fsyncSync(fd);return fn();}
-  finally{fs.closeSync(fd);const value=read(lock);if(value.owner!==owner)fail('usage_ledger_lock_conflict');fs.unlinkSync(lock);}
+  safePath(root);const owner=randomUUID();
+  try{durable(lock,{owner,pid:process.pid,host:os.hostname(),created_at_ms:Date.now()});}catch(e){if(e.code==='EEXIST')fail('usage_ledger_busy');throw e;}
+  try{return fn();}
+  finally{const value=read(lock);if(value.owner!==owner)fail('usage_ledger_lock_conflict');fs.unlinkSync(lock);}
  }
  const snapshot=()=>snapshotAt(root,manifest);
  function budget(ignoreLock=false){
-  const value=snapshot(),summary=value.summary;
-  const no=reason_code=>({allowed:false,reason_code,summary});
-  if(!ignoreLock&&exists(lock))return no('usage_ledger_busy');
-  if(ownPolicy.max_total_tokens!==undefined){if(summary.total_tokens===null)return no('usage_token_budget_unknown');if(summary.total_tokens>=ownPolicy.max_total_tokens)return no('usage_token_budget_exceeded');}
-  if(ownPolicy.max_cost_usd!==undefined){if(summary.cost.total_usd===null)return no('usage_cost_budget_unknown');if(summary.cost.total_usd>=ownPolicy.max_cost_usd)return no('usage_cost_budget_exceeded');}
-  return {allowed:true,reason_code:null,summary};
+  const summary=snapshot().summary;return {...admissionFor(summary,ownPolicy,!ignoreLock&&exists(lock)),summary};
  }
- function begin(group,value){return mutate(()=>{
+ function begin(group,value){const operation=()=>{
+  safePath(root);
   const meta=metadata(value,group),id=groups[group],key=group==='attempts'?createHash('sha256').update(canonical({action_id:meta.action_id,attempt:meta.attempt})).digest('hex'):randomUUID();
   const file=path.join(root,group,key+'.json');
-  if(exists(file)){const old=read(file);if(value.started_at_ms!==undefined&&time(value.started_at_ms)!==old.started_at_ms)fail('usage_ledger_time_invalid');if(!equal(old.metadata,meta)||!equal(old.identity,ownIdentity))fail('usage_ledger_identity_conflict');return {[id]:key,directory:path.join(root,group,key),started_at_ms:old.started_at_ms};}
+  const existing=()=>{const old=read(file);if(value.started_at_ms!==undefined&&time(value.started_at_ms)!==old.started_at_ms)fail('usage_ledger_time_invalid');if(!equal(old.metadata,meta)||!equal(old.identity,ownIdentity))fail('usage_ledger_identity_conflict');return {[id]:key,directory:path.join(root,group,key),started_at_ms:old.started_at_ms};};
+  if(exists(file))return existing();
   if(group==='calls'){const check=budget(true);if(!check.allowed)fail(check.reason_code);}
   const started_at_ms=time(value.started_at_ms??Date.now()),record={schema_version:1,group,[id]:key,identity:ownIdentity,metadata:meta,prepared_at_ms:Date.now(),started_at_ms};
-  const operationDirectory=path.join(root,group,key);fs.mkdirSync(operationDirectory,{mode:0o700});durable(file,record);
+  const operationDirectory=path.join(root,group,key);try{fs.mkdirSync(operationDirectory,{mode:0o700});}catch(error){if(error.code!=='EEXIST')throw error;}safeDirectory(operationDirectory);
+  try{durable(file,record);}catch(error){if(error.code!=='EEXIST')throw error;return existing();}
   return {[id]:key,directory:operationDirectory,started_at_ms};
- });}
- function finish(group,key,value){return mutate(()=>{
+ };return group==='calls'?mutate(operation):operation();}
+ function finish(group,key,value){
+  safePath(root);
   if(typeof key!=='string'||!/^[a-f0-9-]{36,64}$/.test(key))fail('usage_ledger_metadata_invalid');
   keys(value,['status','reason_code','evidence_ref','started_at_ms','ended_at_ms',...(group==='calls'?['usage','dispatch_status','cost_usd']:[])]);
   const started=read(path.join(root,group,key+'.json'));if(!equal(started.identity,ownIdentity))fail('usage_ledger_identity_conflict');
@@ -120,9 +133,11 @@ export function createRunLedger({directory,identity,policy={}}){
    if(value.cost_usd!==undefined&&(!Number.isFinite(value.cost_usd)||value.cost_usd<0||started.metadata.auth_mode==='subscription'))fail('usage_ledger_cost_invalid');
   }
   const file=path.join(root,group,key+'.end.json');
-  if(exists(file)){const old=read(file);if(!equal(old.terminal,terminal))fail('usage_ledger_terminal_conflict');return copy(old);}
-  const result={identity:ownIdentity,[groups[group]]:key,terminal,ended_at_ms};durable(file,result);return copy(result);
- });}
+  const existing=()=>{const old=read(file);if(!equal(old.identity,ownIdentity)||old[groups[group]]!==key)fail('usage_ledger_identity_conflict');if(!equal(old.terminal,terminal))fail('usage_ledger_terminal_conflict');return copy(old);};
+  if(exists(file))return existing();
+  const result={identity:ownIdentity,[groups[group]]:key,terminal,ended_at_ms};
+  try{durable(file,result);}catch(error){if(error.code!=='EEXIST')throw error;return existing();}return copy(result);
+ }
  return Object.freeze({directory:root,identity:frozen(copy(ownIdentity)),policy:frozen(copy(ownPolicy)),
   beginCall:value=>begin('calls',value),finishCall:(id,value)=>finish('calls',id,value),beginAttempt:value=>begin('attempts',value),finishAttempt:(id,value)=>finish('attempts',id,value),
   beginObservation:value=>begin('observations',value),endObservation:(id,value)=>finish('observations',id,value),snapshot,checkBudget:()=>budget()});

@@ -95,3 +95,37 @@ test('只读记录替换为符号链接拒绝，跨run合并不得串账',async(
  const {ledger,directory,root}=await fixture();const call=ledger.beginCall(meta),before=ledger.snapshot();const record=path.join(directory,'calls',call.call_id+'.json'),target=path.join(root,'target');fs.renameSync(record,target);fs.symlinkSync(target,record);
  expect(()=>ledger.snapshot()).toThrow();const other=structuredClone(before);other.identity.run_id='another';const {mergeLedgerSnapshots}=await api();expect(()=>mergeLedgerSnapshots(before,other)).toThrow('usage_ledger_identity_conflict');
 });
+
+async function killedAtPublish(f,target){
+ const marker=path.join(f.root,'publish-'+target),script=`import fs from 'node:fs';import {createRunLedger} from ${JSON.stringify(pathToFileURL(moduleFile).href)};let lockfd;const open=fs.openSync,sync=fs.fsyncSync;fs.openSync=(name,...args)=>{const fd=open(name,...args);if(String(name).endsWith('/.write-lock'))lockfd=fd;return fd;};fs.fsyncSync=fd=>{const value=sync(fd);if(${JSON.stringify(target)}==='lock'&&fd===lockfd){fs.writeFileSync(${JSON.stringify(marker)},'ready');process.kill(process.pid,'SIGSTOP');}return value;};const link=fs.linkSync;fs.linkSync=(from,to)=>{const value=link(from,to);if(${target==='lock'?"to.endsWith('/.write-lock')":"/\\/calls\\/[^/]+\\.json$/.test(to)"}){fs.writeFileSync(${JSON.stringify(marker)},'ready');process.kill(process.pid,'SIGSTOP');}return value;};createRunLedger({directory:${JSON.stringify(f.directory)},identity:${JSON.stringify(identity)}}).beginCall(${JSON.stringify(meta)});`;
+ const child=spawn(process.execPath,['--input-type=module','-e',script],{stdio:['ignore','pipe','pipe']});let stderr='';child.stderr.on('data',d=>stderr+=d);let exited=false;const closed=new Promise(resolve=>child.once('close',(code,signal)=>{exited=true;resolve({code,signal});}));
+ try{const deadline=Date.now()+5000;while(!fs.existsSync(marker)&&!exited&&Date.now()<deadline)await new Promise(r=>setTimeout(r,10));expect(fs.existsSync(marker),stderr).toBe(true);}
+ finally{if(!exited)child.kill('SIGKILL');await closed;}
+}
+test('真实writer在锁发布后死亡，旧调用收口及观察/Code留痕继续，新模型仍明确拒绝',async()=>{
+ const f=await fixture(),call=f.ledger.beginCall(meta);await killedAtPublish(f,'lock');
+ f.ledger.finishCall(call.call_id,{status:'completed',usage});
+ const a=f.ledger.beginAttempt({activity_key:'cleanup',action_id:'cleanup',attempt:1,kind:'code'});f.ledger.finishAttempt(a.attempt_id,{status:'completed'});
+ const o=f.ledger.beginObservation({kind:'recovery_readback',attempt_id:a.attempt_id});f.ledger.endObservation(o.observation_id,{status:'passed'});
+ const out=f.ledger.snapshot();expect(out.calls[0].status).toBe('completed');expect(out.observations[0].status).toBe('passed');expect(out.admission).toMatchObject({allowed:false,reason_code:'usage_ledger_busy'});expect(()=>f.ledger.beginCall(meta)).toThrow('usage_ledger_busy');
+});
+test('真实record link发布后死亡的受控双link仍可读取，其他硬链接拒绝',async()=>{
+ const f=await fixture();await killedAtPublish(f,'record');const out=f.ledger.snapshot();expect(out.calls).toHaveLength(1);expect(out.calls[0].status).toBe('prepared');
+ const record=path.join(f.directory,'calls',out.calls[0].call_id+'.json');expect(fs.lstatSync(record).nlink).toBe(2);
+ f.ledger.finishCall(out.calls[0].call_id,{status:'not_started'});expect(f.ledger.snapshot().summary.total_tokens).toBe(0);
+ fs.linkSync(record,path.join(f.root,'uncontrolled-link'));expect(()=>f.ledger.snapshot()).toThrow('usage_ledger_file_unprotected');
+});
+test.each(['failed','interrupted','open'])('completed之后%s的未计量turn不能冒充完整调用费用',async ending=>{
+ const {normalizeTurns}=await api(),events=[{type:'turn.completed',usage:{input_tokens:10,output_tokens:2,cached_input_tokens:3}},{type:'turn.started'}];if(ending!=='open')events.push({type:'turn.'+ending});
+ const result=normalizeTurns(events);expect(result?.total_tokens??null).toBeNull();
+ const {ledger}=await fixture({max_total_tokens:100}),call=ledger.beginCall(meta);ledger.finishCall(call.call_id,{status:'failed',usage:result});expect(ledger.checkBudget()).toMatchObject({allowed:false,reason_code:'usage_token_budget_unknown'});
+});
+test('应用提案解析失败不抹掉已完整计量的原生turn',async()=>{
+ const {normalizeTurns}=await api(),value=normalizeTurns([{type:'turn.started'},{type:'turn.completed',usage:{input_tokens:10,output_tokens:2,cached_input_tokens:3}}]);
+ const {ledger}=await fixture(),call=ledger.beginCall(meta);ledger.finishCall(call.call_id,{status:'failed',reason_code:'proposal_invalid_json',usage:value});expect(ledger.snapshot().summary.total_tokens).toBe(12);
+});
+test('并发同attempt与同终态按不可变记录幂等，终态冲突不覆盖',async()=>{
+ const f=await fixture(),gate=path.join(f.root,'concurrent-go');
+ const script=`import fs from 'node:fs';import {createRunLedger} from ${JSON.stringify(pathToFileURL(moduleFile).href)};const l=createRunLedger({directory:${JSON.stringify(f.directory)},identity:${JSON.stringify(identity)}});while(!fs.existsSync(${JSON.stringify(gate)}))await new Promise(r=>setTimeout(r,2));const a=l.beginAttempt({activity_key:'write',action_id:'same',attempt:1,kind:'code',started_at_ms:100});l.finishAttempt(a.attempt_id,{status:'completed',ended_at_ms:200});console.log(a.attempt_id);`;
+ const children=Array.from({length:2},()=>{const child=spawn(process.execPath,['--input-type=module','-e',script],{stdio:['ignore','pipe','pipe']});let stdout='',stderr='';child.stdout.on('data',d=>stdout+=d);child.stderr.on('data',d=>stderr+=d);return new Promise(resolve=>child.once('close',code=>resolve({code,stdout:stdout.trim(),stderr})));});fs.writeFileSync(gate,'go');const out=await Promise.all(children);expect(out.every(x=>x.code===0&&x.stderr==='')).toBe(true);expect(out[0].stdout).toBe(out[1].stdout);expect(f.ledger.snapshot().attempts).toHaveLength(1);
+});

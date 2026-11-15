@@ -22,7 +22,12 @@ export function normalizeUsage(value){
 }
 export function normalizeTurns(events){
  if(!Array.isArray(events))fail('usage_ledger_usage_invalid');
- const turns=events.filter(e=>e?.type==='turn.completed');if(!turns.length)return null;
+ const turns=[];let pending=0;
+ for(const event of events){
+  if(event?.type==='turn.started')pending++;
+  else if(['turn.completed','turn.failed','turn.interrupted'].includes(event?.type)){if(pending)pending--;turns.push(event);}
+ }
+ if(pending)turns.push({usage:null});if(!turns.length)return null;
  const rows=turns.map(e=>normalizeUsage(e.usage?{...e.usage,cached_input_tokens:e.usage.cached_input_tokens??e.usage.input_tokens_details?.cached_tokens,
   reasoning_output_tokens:e.usage.reasoning_output_tokens??e.usage.output_tokens_details?.reasoning_tokens}:null));
  return normalizeUsage(Object.fromEntries(tokens.map(k=>[k,rows.some(u=>u?.[k]==null)?null:rows.reduce((n,u)=>n+u[k],0)])));
@@ -36,6 +41,13 @@ export function callCost(call,policy){
  const usd=((u.input_tokens-u.cached_input_tokens)*rate.input_per_million+u.cached_input_tokens*rate.cached_input_per_million+u.output_tokens*rate.output_per_million)/1e6;
  return {kind:'estimated',usd,pricing_version:rate.version,pricing_source:rate.source};
 }
+export function admissionFor(summary,policy,busy=false){
+ if(busy)return {allowed:false,reason_code:'usage_ledger_busy'};
+ for(const [limit,total,prefix] of [['max_total_tokens',summary.total_tokens,'usage_token_budget'],['max_cost_usd',summary.cost.total_usd,'usage_cost_budget']]){
+  if(policy[limit]!==undefined){if(total===null)return {allowed:false,reason_code:prefix+'_unknown'};if(total>=policy[limit])return {allowed:false,reason_code:prefix+'_exceeded'};}
+ }
+ return {allowed:true,reason_code:null};
+}
 export function summarize(snapshot){
  const calls=snapshot.calls.map(c=>({...c,usage:normalizeUsage(c.usage),cost:callCost(c,snapshot.policy)}));
  const active=calls.filter(c=>c.dispatch_status!=='not_started');
@@ -46,19 +58,20 @@ export function summarize(snapshot){
  const actual=active.filter(c=>c.cost.kind==='actual').reduce((n,c)=>n+c.cost.usd,0);
  const estimated=active.filter(c=>c.cost.kind==='estimated').reduce((n,c)=>n+c.cost.usd,0);
  const kind=!active.length?'not_applicable':unknownCost?'unknown':actual&&estimated?'mixed':active.some(c=>c.cost.kind==='estimated')?'estimated':'actual';
- return {...snapshot,calls,pending_call_ids:pending,
+ const result={...snapshot,calls,pending_call_ids:pending,
   coverage:{complete:pending.length===0&&unknown===0,measurement:'cli_turn_usage',call_count:calls.length,known_usage_calls:active.length-unknown,unknown_usage_calls:unknown,pending_calls:pending.length},
   summary:{call_count:calls.length,known_total_tokens:known,total_tokens:unknown?null:known,unknown_usage_calls:unknown,
    input_tokens:active.some(c=>c.usage?.input_tokens==null)?null:active.reduce((n,c)=>n+c.usage.input_tokens,0),
    output_tokens:active.some(c=>c.usage?.output_tokens==null)?null:active.reduce((n,c)=>n+c.usage.output_tokens,0),
    cost:{kind,total_usd:unknownCost?null:actual+estimated,actual_usd:actual,estimated_usd:estimated,unknown_calls:unknownCost}}};
+ return {...result,admission:admissionFor(result.summary,result.policy,result.admission_lock_present===true)};
 }
 export function mergeLedgerSnapshots(persisted,observed){
  if(!persisted)return observed?copy(summarize(observed)):null;
  if(!observed)return copy(summarize(persisted));
  if(!equal(persisted.identity,observed.identity))fail('usage_ledger_identity_conflict');
  if(!equal(persisted.policy,observed.policy))fail('usage_ledger_policy_conflict');
- const merged={schema_version:1,identity:copy(observed.identity),policy:copy(observed.policy),as_of_ms:Math.max(persisted.as_of_ms,observed.as_of_ms)};
+ const merged={schema_version:1,identity:copy(observed.identity),policy:copy(observed.policy),as_of_ms:Math.max(persisted.as_of_ms,observed.as_of_ms),admission_lock_present:(observed.as_of_ms>=persisted.as_of_ms?observed:persisted).admission_lock_present===true};
  for(const [group,id] of [['calls','call_id'],['attempts','attempt_id'],['observations','observation_id']]){
   const records=new Map();
   for(const r of [...persisted[group],...observed[group]]){
