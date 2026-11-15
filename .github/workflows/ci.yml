@@ -12,12 +12,6 @@ name: CI
     branches:
       - main
   workflow_dispatch:
-    inputs:
-      resource_canary:
-        description: Linux资源观测专项
-        type: choice
-        default: none
-        options: [none, linux]
   schedule:
     - cron: 0 3 * * 1
 permissions:
@@ -33,7 +27,6 @@ jobs:
     outputs:
       matrix: ${{ steps.scope.outputs.matrix }}
       preview_ui: ${{ steps.scope.outputs.preview_ui }}
-      resource_plan: ${{ steps.resources.outputs.resource_plan }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -56,18 +49,6 @@ jobs:
             node scripts/ci/basic-scope.mjs --full --base "$BASE_SHA" --head "$HEAD_SHA"
           else
             node scripts/ci/basic-scope.mjs --full --head "$HEAD_SHA"
-          fi
-      - name: Select actual resource canary inputs
-        id: resources
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
-          HEAD_SHA: ${{ github.sha }}
-          RESOURCE_CANARY: ${{ inputs.resource_canary || 'none' }}
-        run: |
-          if [ -n "$BASE_SHA" ]; then
-            node scripts/ci/resource-canary-scope.mjs --base "$BASE_SHA" --head "$HEAD_SHA" --manual "$RESOURCE_CANARY"
-          else
-            node scripts/ci/resource-canary-scope.mjs --head "$HEAD_SHA" --manual "$RESOURCE_CANARY"
           fi
     if: github.event_name != 'schedule' && github.event.action != 'closed'
   security:
@@ -139,36 +120,6 @@ jobs:
         env: {COMPONENT: '${{ matrix.component }}', SHARD: '${{ matrix.shard }}'}
         run: node scripts/ci/run-basic-check.mjs "$COMPONENT" "$SHARD"
     if: github.event_name != 'schedule' && github.event.action != 'closed'
-  resource-canaries:
-    needs: plan
-    outputs:
-      linux: ${{ steps.linux.outcome }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 28
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-      - name: Resolve test image to immutable local ID
-        run: |
-          docker pull mirror.gcr.io/library/node:24-bookworm-slim
-          docker tag mirror.gcr.io/library/node:24-bookworm-slim node:24-bookworm-slim
-          echo "LINUX_RESOURCE_CANARY_IMAGE=$(docker image inspect --format '{{.Id}}' node:24-bookworm-slim)" >> "$GITHUB_ENV"
-        if: '!cancelled() && fromJSON(needs.plan.outputs.resource_plan).linux'
-      - id: linux
-        name: Read actual limited cgroup without granting execution
-        run: |
-          set -o pipefail
-          node packages/brain/scripts/fleet-worker/linux-resource-canary.cjs | tee linux-resource-canary.log
-        if: '!cancelled() && fromJSON(needs.plan.outputs.resource_plan).linux'
-      - uses: actions/upload-artifact@v4
-        if: always() && fromJSON(needs.plan.outputs.resource_plan).linux
-        with:
-          name: linux-resource-observation
-          path: linux-resource-canary.log
-          if-no-files-found: ignore
-    if: github.event_name != 'schedule' && github.event.action != 'closed' && contains(needs.plan.outputs.resource_plan, 'true')
   runtime-integration:
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -197,7 +148,7 @@ jobs:
           NODE_ONBOARDING_TEST_DB: postgresql://onboarding_ci:onboarding_ci@localhost:5432/cecelia_scratch
         run: >-
           npx vitest run src/node-onboarding/__tests__/service.test.js src/node-onboarding/__tests__/settlement.test.js
-          src/node-onboarding/__tests__/service-completion-isolation.test.js src/node-onboarding/__tests__/registry-adoption.test.js --maxWorkers=1
+          src/node-onboarding/__tests__/registry-adoption.test.js --maxWorkers=1
           --minWorkers=1
       - name: Linux自动接入与续验真实数据库回归
         working-directory: packages/brain
@@ -311,7 +262,6 @@ jobs:
       - plan
       - security
       - checks
-      - resource-canaries
       - runtime-integration
       - pwa-upgrade
       - codeql

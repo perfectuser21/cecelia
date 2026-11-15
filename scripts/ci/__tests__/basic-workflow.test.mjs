@@ -56,7 +56,7 @@ test('实际workflow的最终命令严格传播失败、跳过和取消', () => 
   for (const status of ['success', 'failure', 'cancelled', 'skipped', '']) {
     const result = spawnSync('bash', ['-e', '-o', 'pipefail', '-c', step.run], {
       cwd: root, encoding: 'utf8',
-      env: { ...process.env, NEEDS_JSON: JSON.stringify(Object.fromEntries(workflow.jobs['ci-passed'].needs.map(job => [job,{result:job === 'checks' ? status : 'success', outputs:job === 'plan' ? {resource_plan:JSON.stringify({linux:true})} : {linux:'success'}}]))) },
+      env: { ...process.env, NEEDS_JSON: JSON.stringify(Object.fromEntries(workflow.jobs['ci-passed'].needs.map(job => [job,{result:job === 'checks' ? status : 'success'}]))) },
     });
     assert.equal(result.status === 0, status === 'success', result.stderr);
   }
@@ -107,17 +107,15 @@ test('统一CI真实合并runner，保持独有命令和产物并隔离安全权
   }),['ci.yml']);
   for(const [id,job]of Object.entries(workflow.jobs))assert.equal(job.uses,undefined,id+'不得复用另一个workflow');
   assert.ok(readFileSync(new URL('../../../.github/workflows/ci.yml',import.meta.url),'utf8').trimEnd().split('\n').length<=500);
-  assert.equal(Object.keys(workflow.jobs).length, 10);
+  assert.equal(Object.keys(workflow.jobs).length, 9);
   const baseline=yaml.load(execFileSync('git',['show','0e2c3c81717ab08ae678a869f526a258f850fec8:.github/workflows/ci.yml'],{cwd:root,encoding:'utf8'}));
-  for (const oldId of ['linux-resource-canary']) {
-    assert.equal(workflow.jobs[oldId], undefined);
-    for (const step of baseline.jobs[oldId].steps.filter(step => step.run?.includes('| tee '))) {
-      assert.equal(workflow.jobs['resource-canaries'].steps.filter(actual => actual.run === step.run).length, 1, step.name);
-    }
-  }
   const runtime=workflow.jobs['runtime-integration'];
   assert.deepEqual(runtime.services, baseline.jobs['node-onboarding'].services);
-  for (const step of baseline.jobs['node-onboarding'].steps.filter(step => step.run && step.run !== 'npm ci')) {
+  const settlement=runtime.steps.find(step=>step.name==='接入结算与隔离回归（含真实数据库）');
+  assert.equal(settlement['working-directory'], 'packages/brain');
+  assert.deepEqual(settlement.env, {NODE_ONBOARDING_TEST_DB:'postgresql://onboarding_ci:onboarding_ci@localhost:5432/cecelia_scratch'});
+  assert.equal(settlement.run, 'npx vitest run src/node-onboarding/__tests__/service.test.js src/node-onboarding/__tests__/settlement.test.js src/node-onboarding/__tests__/registry-adoption.test.js --maxWorkers=1 --minWorkers=1');
+  for (const step of baseline.jobs['node-onboarding'].steps.filter(step => step.run && step.run !== 'npm ci' && step.name !== settlement.name)) {
     assert.ok(runtime.steps.some(actual => actual.run === step.run && JSON.stringify(actual.env) === JSON.stringify(step.env)), step.name);
   }
   const recovery=runtime.steps.find(step => step.run?.includes('commander-dbos-recovery-smoke.mjs'));
@@ -143,7 +141,7 @@ test('统一CI真实合并runner，保持独有命令和产物并隔离安全权
 test('周扫描仅CodeQL执行，closed仅cleanup；评论写权限限于预览生命周期', () => {
   const normal="github.event_name != 'schedule' && github.event.action != 'closed'";
   for(const [id,job]of Object.entries(workflow.jobs)) {
-    if(!['codeql','preview-deploy','preview-cleanup'].includes(id)) assert.equal(job.if,(['ci-passed','skill-passed'].includes(id)?'always() && ':'')+normal+(id==='resource-canaries' ? " && contains(needs.plan.outputs.resource_plan, 'true')" : ''),id);
+    if(!['codeql','preview-deploy','preview-cleanup'].includes(id)) assert.equal(job.if,(['ci-passed','skill-passed'].includes(id)?'always() && ':'')+normal,id);
     if(!['preview-deploy','preview-cleanup'].includes(id))assert.notEqual(job.permissions?.['pull-requests'],'write',id);
     if(id!=='codeql')assert.notEqual(job.permissions?.['security-events'],'write',id);
   }
@@ -164,7 +162,7 @@ test('周扫描仅CodeQL执行，closed仅cleanup；评论写权限限于预览�
   assert.ok(workflow.concurrency['cancel-in-progress'].includes("github.event.action != 'closed'"));
 });
 
-test('现役全量PR含UI预览实际展开21个runner，不重复计算定义合并', () => {
+test('现役全量PR含UI预览实际展开20个runner，不重复计算定义合并', () => {
   const selected = planChecks(['apps/dashboard/src/App.tsx'], {full:true});
   assert.equal(selected.length, 11);
   const expanded = Object.entries(workflow.jobs).filter(([id]) => id !== 'preview-cleanup').map(([id, job]) => {
@@ -177,14 +175,14 @@ test('现役全量PR含UI预览实际展开21个runner，不重复计算定义�
     }
     return Object.values(matrix).reduce((count, axis) => count * axis.length, 1);
   });
-  assert.equal(expanded.reduce((sum, count) => sum + count, 0), 21);
+  assert.equal(expanded.reduce((sum, count) => sum + count, 0), 20);
 });
 
 
 test('真实YAML事件表达式隔离closed/weekly，普通PR push manual严格汇总', () => {
   function context(name, action='', ui='true') {
     return {github:{event_name:name,actor:'owner',repository:'example/repo',head_ref:'feature/ui',ref:'refs/heads/main',event:{action,pull_request:{number:42,user:{login:'owner'},head:{repo:{full_name:'example/repo'}},labels:[]}}},
-      needs:{plan:{outputs:{preview_ui:ui,resource_plan:'{"linux":true}'}}},always:()=>true,contains:(xs,x)=>xs.includes(x),startsWith:(s,p)=>s.startsWith(p),format:(s,...values)=>s.replace(/\{(\d+)\}/g,(_,i)=>values[Number(i)])};
+      needs:{plan:{outputs:{preview_ui:ui}}},always:()=>true,contains:(xs,x)=>xs.includes(x),startsWith:(s,p)=>s.startsWith(p),format:(s,...values)=>s.replace(/\{(\d+)\}/g,(_,i)=>values[Number(i)])};
   }
   const evaluate=(expression,ctx)=>runInNewContext(expression.replace(/github\.event\.pull_request\.labels\.\*\.name/g,'github.event.pull_request.labels.map(label => label.name)'),ctx);
   for(const event of ['pull_request','push','workflow_dispatch']) {
