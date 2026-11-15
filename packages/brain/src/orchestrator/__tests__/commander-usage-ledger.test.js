@@ -1,4 +1,4 @@
-import {test,expect,afterEach} from 'vitest';
+import {test,expect,afterEach,vi} from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -6,13 +6,14 @@ import {spawn} from 'node:child_process';
 import {pathToFileURL,fileURLToPath} from 'node:url';
 const moduleFile=fileURLToPath(new URL('../commander-usage-ledger.js',import.meta.url));
 const api=()=>import(pathToFileURL(moduleFile).href);
-const roots=[];afterEach(()=>{for(const root of roots.splice(0))fs.rmSync(root,{recursive:true,force:true});});
+const roots=[];afterEach(()=>{vi.restoreAllMocks();for(const root of roots.splice(0))fs.rmSync(root,{recursive:true,force:true});});
 const identity={task_id:'task-1',run_id:'run-1'};
 const meta={role:'activity',activity_key:'write',action_id:'a1',attempt:1,provider:'openai',model:'fixture-model',auth_mode:'api-only'};
 const usage={input_tokens:100,output_tokens:20,cached_input_tokens:40,cache_write_input_tokens:0,reasoning_output_tokens:5};
 const pricing={provider:'openai',model:'fixture-model',version:'frozen-1',source:'fixture-only',input_per_million:10,cached_input_per_million:1,output_per_million:20};
 async function fixture(policy={}){const root=fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()),'usage-ledger-'));roots.push(root);const directory=path.join(root,'ledger');return {root,directory,ledger:(await api()).createRunLedger({directory,identity,policy})};}
 test('持久call记录CLI准备与完整usage，缓存推理不重复累加，读回不重计',async()=>{
+ let clock=1760000000000;vi.spyOn(Date,'now').mockImplementation(()=>clock++);
  const {directory,ledger}=await fixture({pricing});const started=ledger.beginCall(meta);
  expect(started.call_id).toMatch(/^[a-f0-9-]{36}$/);expect(fs.statSync(directory).mode&0o777).toBe(0o700);
  const incomplete=ledger.snapshot();expect(incomplete.pending_call_ids).toEqual([started.call_id]);expect(incomplete.summary.total_tokens).toBeNull();
