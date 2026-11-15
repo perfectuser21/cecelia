@@ -45,6 +45,19 @@ test('Commander失败原生用量保留，预算拒绝不调用模型且reason�
  book.beginCall.mockImplementation(()=>{throw Error('usage_token_budget_exceeded');});
  await expect(decide({sequence:2,input:{}},{timeoutMs:1000})).rejects.toThrow('usage_token_budget_exceeded');expect(judge).toHaveBeenCalledTimes(1);
 });
+test('带ledger的API Commander仅codexAuth.home即可通过真实fakeCLI，旧home冲突仍拒绝',async()=>{
+ const root=temporary(),home=path.join(root,'api-home'),bin=path.join(root,'codex'),capture=path.join(root,'spawn.json');
+ fs.mkdirSync(home,{mode:0o700});fs.writeFileSync(path.join(home,'auth.json'),JSON.stringify({auth_mode:'apikey',OPENAI_API_KEY:'synthetic-fixture-key'}),{mode:0o600});
+ fs.writeFileSync(bin,`#!${process.execPath}\nconst fs=require('fs');process.stdin.resume();process.stdin.on('end',()=>{const args=process.argv.slice(2),text='{"action":"complete"}';fs.writeFileSync(${JSON.stringify(capture)},JSON.stringify({home:process.env.CODEX_HOME,args}));fs.writeFileSync(args[args.indexOf('--output-last-message')+1],text);console.log(JSON.stringify({type:'thread.started',thread_id:'fixture'}));console.log(JSON.stringify({type:'item.completed',item:{type:'agent_message',text}}));console.log(JSON.stringify({type:'turn.completed',usage:{input_tokens:9,cached_input_tokens:2,output_tokens:3}}));});`,{mode:0o755});
+ const actual=await vi.importActual('../../../scripts/coding-workflow/lib/codex-judge.mjs');judge.mockImplementation(actual.callCodexJudge);
+ const book=createRunLedger({directory:path.join(root,'ledger'),identity:{task_id:'task',run_id:'run'}});
+ const options={model:'gpt-6-astra',codexAuth:{mode:'api-only',home},codexBin:bin,ledger:book},request={sequence:1,run_id:'run',input:{}};
+ await expect(createCodexCommander(options)(request,{timeoutMs:3000})).resolves.toEqual({action:'complete'});
+ const spawned=JSON.parse(fs.readFileSync(capture));expect(spawned.home).toBe(home);expect(spawned.args).toContain('forced_login_method="api"');
+ expect(book.snapshot().calls).toHaveLength(1);expect(book.snapshot().calls[0]).toMatchObject({status:'completed',auth_mode:'api-only',usage:{total_tokens:12}});
+ await expect(createCodexCommander({...options,codexHome:path.join(root,'conflicting-home')})(request,{timeoutMs:3000})).rejects.toThrow('codex_auth_home_conflict');
+ expect(book.snapshot().calls).toHaveLength(1);
+});
 const sha=file=>createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 function codeFixture(){
  const root=temporary(),book=ledger(root);
