@@ -85,3 +85,13 @@ test('跨独立进程预算检查与prepared同一原子占位，只放行一次
  const children=Array.from({length:2},()=>{const child=spawn(process.execPath,['--input-type=module','-e',script],{stdio:['ignore','pipe','pipe']});let stdout='',stderr='';child.stdout.on('data',d=>stdout+=d);child.stderr.on('data',d=>stderr+=d);return new Promise(resolve=>child.once('close',code=>resolve({code,stdout:stdout.trim(),stderr})));});
  fs.writeFileSync(gate,'go');const out=await Promise.all(children);expect(out.every(x=>x.code===0&&x.stderr==='')).toBe(true);expect(out.filter(x=>x.stdout==='allowed')).toHaveLength(1);expect(out.filter(x=>/usage_(?:ledger_busy|token_budget_unknown)/.test(x.stdout))).toHaveLength(1);
 });
+
+test('同attempt不能换开始时间；总分项缺值不会产生负数或溢出',async()=>{
+ const {ledger}=await fixture();ledger.beginAttempt({activity_key:'write',action_id:'a1',attempt:1,kind:'code',started_at_ms:100});
+ expect(()=>ledger.beginAttempt({activity_key:'write',action_id:'a1',attempt:1,kind:'code',started_at_ms:200})).toThrow('usage_ledger_time_invalid');
+ const {normalizeTurns}=await api();expect(()=>normalizeTurns([{type:'turn.completed',usage:{input_tokens:10,output_tokens:1,cached_input_tokens:8,cache_write_input_tokens:5}}])).toThrow('usage_ledger_usage_invalid');
+});
+test('只读记录替换为符号链接拒绝，跨run合并不得串账',async()=>{
+ const {ledger,directory,root}=await fixture();const call=ledger.beginCall(meta),before=ledger.snapshot();const record=path.join(directory,'calls',call.call_id+'.json'),target=path.join(root,'target');fs.renameSync(record,target);fs.symlinkSync(target,record);
+ expect(()=>ledger.snapshot()).toThrow();const other=structuredClone(before);other.identity.run_id='another';const {mergeLedgerSnapshots}=await api();expect(()=>mergeLedgerSnapshots(before,other)).toThrow('usage_ledger_identity_conflict');
+});
