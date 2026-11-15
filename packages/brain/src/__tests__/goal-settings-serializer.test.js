@@ -61,7 +61,6 @@ vi.mock('../docker-executor.js', () => ({
   isDockerAvailable: vi.fn(async () => false),
 }));
 vi.mock('../events/initiativeRunEvents.js', () => ({ writeInitiativeRunEvent: vi.fn(async () => {}) }));
-vi.mock('../spawn/index.js', () => ({ spawn: vi.fn(async () => {}) }));
 vi.mock('../platform-utils.js', () => ({
   sampleCpuUsage: vi.fn(async () => 0),
   _resetCpuSampler: vi.fn(),

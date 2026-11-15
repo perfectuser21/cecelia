@@ -13,34 +13,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const RETIRED = /claude_channel_retired/;
 beforeEach(() => vi.clearAllMocks());
 
-describe('spawn 层：claude 一律拒绝，不发起 SSH', () => {
-  it('executeOnHost（mac_web 宿主执行，唯一用途是跑 claude）直接拒绝，不调用 spawnFn', async () => {
-    const { executeOnHost } = await import('../spawn/host-executor.js');
-    const spawnFn = vi.fn(BOOM);
-    for (const inContainer of [true, false]) {
-      await expect(executeOnHost({ task: { id: 't-host' }, prompt: 'p', spawnFn, inContainer })).rejects.toThrow(RETIRED);
-    }
-    expect(spawnFn).not.toHaveBeenCalled();
-  });
-
-  it('spawn()：mac_web 任务拒绝', async () => {
-    vi.stubEnv('SPAWN_V2_ENABLED', 'false');
-    try {
-      const { spawn } = await import('../spawn/spawn.js');
-      await expect(spawn({ task: { id: 't-mac', payload: { target_environment: 'mac_web' } }, prompt: 'p' })).rejects.toThrow(RETIRED);
-    } finally { vi.unstubAllEnvs(); }
-  });
-
-  it.each([[undefined], [''], ['claude']])('spawn()：容器执行体=%s（即 claude）拒绝', async (executor) => {
-    vi.stubEnv('SPAWN_V2_ENABLED', 'false');
-    try {
-      const { spawn } = await import('../spawn/spawn.js');
-      const env = executor === undefined ? {} : { CECELIA_EXECUTOR: executor };
-      await expect(spawn({ task: { id: 't-docker' }, prompt: 'p', env })).rejects.toThrow(RETIRED);
-    } finally { vi.unstubAllEnvs(); }
-  });
-});
-
 describe('orchestrator：Brain 永不选择 claude 作为 attempt provider', () => {
   it('provider registry：auto 选 codex；显式 claude 抛 claude_channel_retired；names 不含 claude', async () => {
     const { createProviderRegistry } = await import('../orchestrator/provider-registry.js');

@@ -1,4 +1,3 @@
-vi.mock('../spawn/index.js', () => ({ spawn: vi.fn(async () => ({ exit_code: 0, started_at: 'now', container: 'fake' })) }));
 vi.mock('../execution-directory/legacy-executor.js', async original => ({ ...await original(), withLegacyExecution: async (_input, operation) => operation() }));
 vi.mock('../runtime-safety.js', () => ({ assertExternalExecutionAllowed: () => {} }));
 /**
@@ -105,7 +104,6 @@ describe('executor：claude 桥接派发下线', () => {
     vi.stubEnv('HARNESS_DOCKER_ENABLED', 'true');
     const r = await executor.triggerCeceliaRun(CLAUDE_BOUND);
     expect(r).toMatchObject({ success: false, reason: 'claude_channel_retired' });
-    expect((await import('../spawn/index.js')).spawn).not.toHaveBeenCalled();
   });
 
   it('显式路由解析到 claude → claude_channel_retired，不派发', async () => {
