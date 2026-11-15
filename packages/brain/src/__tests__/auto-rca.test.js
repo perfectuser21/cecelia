@@ -159,11 +159,6 @@ vi.mock('../decision.js', () => ({
   rollbackDecision: vi.fn(),
 }));
 
-vi.mock('../planner.js', () => ({
-  planNextTask: vi.fn(),
-  getPlanStatus: vi.fn(),
-  handlePlanInput: vi.fn(),
-}));
 
 vi.mock('../alertness/index.js', () => ({
   getCurrentAlertness: vi.fn(async () => ({ level: 0 })),

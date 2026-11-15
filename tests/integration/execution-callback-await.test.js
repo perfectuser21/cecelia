@@ -19,7 +19,6 @@ vi.mock('../../packages/brain/src/tick.js', () => ({
 }));
 vi.mock('../../packages/brain/src/templates.js', () => ({}));
 vi.mock('../../packages/brain/src/decision.js', () => ({}));
-vi.mock('../../packages/brain/src/planner.js', () => ({}));
 vi.mock('../../packages/brain/src/thalamus.js', () => ({ processEvent: vi.fn(), EVENT_TYPES: {} }));
 vi.mock('../../packages/brain/src/decision-executor.js', () => ({ executeDecision: vi.fn() }));
 vi.mock('../../packages/brain/src/embedding-service.js', () => ({ generateTaskEmbeddingAsync: vi.fn() }));

@@ -13,7 +13,7 @@ import { promisify } from 'util';
 import { runTickSafe, getTickStatus } from '../tick.js';
 import { generatePrdFromTask, generatePrdFromGoalKR, generateTrdFromGoal, generateTrdFromGoalKR, validatePrd, validateTrd, prdToJson, trdToJson, PRD_TYPE_MAP } from '../templates.js';
 import { compareGoalProgress, generateDecision, executeDecision, rollbackDecision } from '../decision.js';
-import { planNextTask, getPlanStatus, handlePlanInput, getGlobalState, selectTopAreas, selectActiveInitiativeForArea, ACTIVE_AREA_COUNT } from '../planner.js';
+import { getGlobalState, selectTopAreas, selectActiveInitiativeForArea, ACTIVE_AREA_COUNT } from '../work-streams.js';
 import { processEvent as thalamusProcessEvent, EVENT_TYPES } from '../thalamus.js';
 import { executeDecision as executeThalamusDecision } from '../decision-executor.js';
 import { generateTaskEmbeddingAsync } from '../embedding-service.js';
@@ -2617,132 +2617,12 @@ router.get('/dev/repos', moduleRouteRateLimit, async (req, res) => {
   }
 });
 
-// ==================== Planner API ====================
-
-/**
- * POST /api/brain/plan
- * Accept input and create resources at the correct OKR level
- */
-router.post('/plan', async (req, res) => {
-  try {
-    const { input, dry_run = false } = req.body;
-
-    if (!input || typeof input !== 'object') {
-      return res.status(400).json({
-        success: false,
-        error: 'input is required and must be an object containing one of: objective, key_result, project, task'
-      });
-    }
-
-    const result = await handlePlanInput(input, dry_run);
-
-    res.json({
-      success: true,
-      dry_run,
-      ...result
-    });
-  } catch (err) {
-    const status = err.message.startsWith('Hard constraint') ? 400 : 500;
-    res.status(status).json({
-      success: false,
-      error: err.message
-    });
-  }
-});
-
-// POST /api/brain/plan/llm — removed (planner-llm.js deleted, task planning now handled by 秋米 /okr)
-
-/**
- * GET /api/brain/plan/status
- * Get current planning status (target KR, project, queued tasks)
- */
-router.get('/plan/status', async (req, res) => {
-  try {
-    const status = await getPlanStatus();
-    res.json({ success: true, ...status });
-  } catch (err) {
-    res.status(500).json({
-      success: false,
-      error: 'Failed to get plan status',
-      details: err.message
-    });
-  }
-});
-
-/**
- * POST /api/brain/plan/next
- * Trigger planner to select next task (same as what tick does)
- */
-router.post('/plan/next', async (req, res) => {
-  try {
-    const result = await planNextTask();
-    res.json({ success: true, ...result });
-  } catch (err) {
-    res.status(500).json({
-      success: false,
-      error: 'Failed to plan next task',
-      details: err.message
-    });
-  }
-});
-
-/**
- * GET /api/brain/planner/initiatives-without-tasks
- * 监控端点：返回所有有 active Initiative 但无 queued/in_progress Task 的 KR 及其 Initiative 列表
- */
-router.get('/planner/initiatives-without-tasks', moduleRouteRateLimit, async (_req, res) => {
-  try {
-    const result = await pool.query(`
-      SELECT
-        kr.id AS kr_id,
-        kr.title AS kr_title,
-        NULL AS kr_priority,
-        CASE WHEN kr.target_value > 0 THEN ROUND(kr.current_value / kr.target_value * 100) ELSE 0 END AS kr_progress,
-        kr.status AS kr_status,
-        op.id AS project_id,
-        op.title AS project_name,
-        json_agg(json_build_object(
-          'id', oi.id,
-          'name', oi.title,
-          'status', oi.status,
-          'created_at', oi.created_at
-        ) ORDER BY oi.created_at ASC) AS initiatives_needing_planning
-      FROM key_results kr
-      INNER JOIN okr_projects op ON op.kr_id = kr.id AND op.status = 'active'
-      INNER JOIN okr_scopes os ON os.project_id = op.id
-      INNER JOIN okr_initiatives oi
-        ON oi.scope_id = os.id
-        AND oi.status = 'running'
-        AND NOT EXISTS (
-          SELECT 1 FROM tasks t
-          WHERE t.okr_initiative_id = oi.id
-            AND t.status IN ('queued', 'in_progress')
-        )
-      WHERE kr.status NOT IN ('completed', 'cancelled')
-      GROUP BY kr.id, kr.title, kr.current_value, kr.target_value, kr.status, op.id, op.title
-      ORDER BY kr.id
-    `);
-
-    res.json({
-      success: true,
-      count: result.rows.length,
-      krs_with_unplanned_initiatives: result.rows
-    });
-  } catch (err) {
-    res.status(500).json({
-      success: false,
-      error: 'Failed to query initiatives without tasks',
-      details: err.message
-    });
-  }
-});
-
 // ==================== Work Streams API ====================
 
 /**
  * GET /api/brain/work/streams
  * 返回当前 Area Stream 调度状态，供前端展示
- * 使用 planner.js 的 selectTopAreas + selectActiveInitiativeForArea
+ * 使用 work-streams.js 的 selectTopAreas + selectActiveInitiativeForArea
  */
 router.get('/work/streams', async (_req, res) => {
   try {

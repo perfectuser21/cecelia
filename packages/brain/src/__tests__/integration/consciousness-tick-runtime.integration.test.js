@@ -289,7 +289,6 @@ vi.mock('../../executor.js', () => ({
   getTotalCapacity: vi.fn().mockReturnValue(3),
   getBillingPause: vi.fn().mockReturnValue({ active: false }),
 }));
-vi.mock('../../planner.js', () => ({ planNextTask: vi.fn().mockResolvedValue(null) }));
 vi.mock('../../decision.js', () => ({
   compareGoalProgress: vi.fn().mockResolvedValue({}),
   generateDecision: vi.fn().mockResolvedValue({ action: 'noop' }),

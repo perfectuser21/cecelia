@@ -45,7 +45,6 @@ vi.mock('../decision.js', () => ({
   executeDecision: vi.fn(),
   splitActionsBySafety: vi.fn().mockReturnValue({ safeActions: [], unsafeActions: [] }),
 }));
-vi.mock('../planner.js', () => ({ planNextTask: vi.fn().mockResolvedValue(null) }));
 vi.mock('../circuit-breaker.js', () => ({
   isAllowed: vi.fn().mockReturnValue(true),
   recordSuccess: vi.fn(),

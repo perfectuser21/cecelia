@@ -118,15 +118,8 @@ export const BRAIN_MANIFEST = {
       label: '行动层',
       color: '#22c55e',
       desc: '调度执行——选择已有任务、执行、人工建议台账与防护机制',
-      nodeIds: ['planner', 'executor', 'suggestion', 'immune'],
+      nodeIds: ['executor', 'suggestion', 'immune'],
       modules: [
-        {
-          id: 'planner',
-          label: '队列选择',
-          desc: '选择下一个任务，KR 轮转评分，资源检查',
-          file: 'planner.js',
-          nature: 'dynamic',
-        },
         {
           id: 'executor',
           label: '执行器',

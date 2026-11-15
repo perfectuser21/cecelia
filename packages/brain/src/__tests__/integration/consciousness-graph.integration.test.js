@@ -38,7 +38,6 @@ vi.mock('../../thalamus.js', () => ({
 }));
 vi.mock('../../decision.js', () => ({ generateDecision: (...a) => mockGenerateDecision(...a) }));
 vi.mock('../../rumination.js', () => ({ runRumination: (...a) => mockRunRumination(...a) }));
-vi.mock('../../planner.js', () => ({ planNextTask: (...a) => mockPlanNextTask(...a) }));
 vi.mock('../../guidance.js', () => ({ setGuidance: (...a) => mockSetGuidance(...a) }));
 vi.mock('../../db.js', () => ({ default: mockPool }));
 vi.mock('../../orchestrator/pg-checkpointer.js', () => ({

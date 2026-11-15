@@ -24,7 +24,6 @@ vi.mock('../executor.js', () => ({
   killProcessTwoStage: vi.fn(), requeueTask: vi.fn(),
   MAX_SEATS: 4, INTERACTIVE_RESERVE: 1, getBillingPause: vi.fn().mockResolvedValue(false),
 }));
-vi.mock('../planner.js', () => ({ planNextTask: vi.fn().mockResolvedValue({ reason: 'no_tasks' }) }));
 vi.mock('../thalamus.js', () => ({
   processEvent: vi.fn().mockResolvedValue(null),
   EVENT_TYPES: {},

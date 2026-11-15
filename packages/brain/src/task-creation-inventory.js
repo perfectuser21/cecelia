@@ -33,7 +33,6 @@ export const TASK_CREATION_INVENTORY = Object.freeze([
   // 棒4（决策 ee4842a6/3feeae3e）：scope/initiative/project 完成检测清空为 no-op，不再建任务
   { module: 'orchestrator-chat.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
   { module: 'pipeline-patrol.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
-  { module: 'planner.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
   { module: 'progress-reviewer.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
   { module: 'proposal.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
   // 2026-09-14 Notion 排单接手（双向·pull）：主理人 Notion Tasks 库 Delegated → createRoutedTask

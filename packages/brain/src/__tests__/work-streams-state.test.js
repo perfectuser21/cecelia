@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 
 const { query } = vi.hoisted(() => ({ query: vi.fn() }));
 vi.mock('../db.js', () => ({ default: { query } }));
-import { getGlobalState, selectTopAreas, selectActiveInitiativeForArea } from '../planner.js';
+import { getGlobalState, selectTopAreas, selectActiveInitiativeForArea } from '../work-streams.js';
 
 describe('work streams state', () => {
   it('renders active work from the read model without needing planning history', async () => {

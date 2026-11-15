@@ -134,10 +134,6 @@ vi.mock('../../focus.js', () => ({
   clearDailyFocus: vi.fn(),
   getReadyKRs: vi.fn().mockResolvedValue([]),
 }));
-vi.mock('../../planner.js', () => ({
-  planNextTask: vi.fn().mockResolvedValue({ planned: false, reason: 'no_active_kr' }),
-  checkPrPlansCompletion: vi.fn().mockResolvedValue([]),
-}));
 vi.mock('../../decision.js', () => ({
   compareGoalProgress: vi.fn().mockReturnValue([]),
   generateDecision: vi.fn().mockResolvedValue(null),
