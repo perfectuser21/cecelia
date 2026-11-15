@@ -2,6 +2,13 @@ import {test,expect,vi} from 'vitest';
 const judge=vi.hoisted(()=>vi.fn(async()=>({content:'{}'})));
 vi.mock('../../../scripts/coding-workflow/lib/codex-judge.mjs',()=>({callCodexJudge:judge}));
 import {createCodexCommander} from '../commander-codex.js';
+test('每个Workflow的独立方法原文进入真实Commander提示，合同优先',async()=>{
+ for(const [workflow,content]of [['report','先核对来源，再生成报告'],['audit','逐条核验账目，不生成报告']]){
+  const request={workflow,contract:{workflow,goal:'冻结目标'},playbook:{schema_version:1,content},input:{run_tag:workflow},allowed_actions:[{action:'pause'}]};
+  await createCodexCommander({})(request,{timeoutMs:1000});const {system,user}=judge.mock.calls.at(-1)[0];
+  expect(JSON.parse(user)).toEqual(request);expect(system).toContain('Playbook');expect(system).toContain('Contract');expect(system).toContain('不能覆盖');
+ }
+});
 test('Commander只投影巨大runtime摘要，完整原输入与决策绑定不变',async()=>{
  const hashes=Object.fromEntries(Array.from({length:317},(_,i)=>['/frozen/program-'+i+'.mjs','a'.repeat(64)]));
  const request={protocol:'commander-decision/v1',run_id:'run',definition_sha256:'definition',sequence:2,state_sha256:'state',
