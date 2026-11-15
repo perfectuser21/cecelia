@@ -1,6 +1,8 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.445.228
+**Brain 版本**: 1.445.229
+
+清退无生产上游的旧 spawn/host 执行与重试包装、Docker executor 及专属中间件和测试，清理混合测试中的旧 writer；现役回调、任务状态、既有 PR 权限、资源分类、历史容器恢复和 fleet runner 来源/隔离合同保留。删除旧 CORE-INV 审核、单 PR、GAN 包装与登记，保留现役合同分类和编码审核/发布行为回归。
 
 删除七项仅检查旧注释、源码字面或表存在的弱 smoke，以及无生产上游的 detached Docker/Codex 启动器、独立 test-docker CLI 和专属回归；保留真实调度、回调、分诊、投影、provider 拒绝与 worker-pool 行为测试。现役派发、历史容器恢复、资源分类与 coding-workflow 不变。
 
@@ -1205,7 +1207,7 @@ F3已有消费者以固定Git字节解析Vitest导出的literal include/exclude�
 - Brain 不再自动拉起 cecelia-bridge；桥接的 `/llm-call`、`/trigger-cecelia` 一律 410 `claude_channel_retired`，notebook 端点不变；cecelia-run.sh 开头即退出。
 - executor 的 US 桥接 / Docker claude 派发删除，执行时返回 `claude_channel_retired`；dispatcher 按 no_executor 收口（回 queued、放 claim，不计熔断 / dispatch 失败 / autoblock），同一 tick 换下一个候选继续派。派发前可用性检查传入任务时恒可用（不探活已不自启的桥接、不预测路由）；手动派发落到 claude 路径返回 409 `claude_channel_retired`。
 - llm-caller 的 anthropic（经桥接）不发请求、直接走 fallbacks，不计入账号熔断；anthropic-api、codex、minimax、openai 不变。
-- Commander 默认 runner、宿主 SSH 逃逸（host-executor）、skill-relay 的 claude 执行体（含 headed tmux）、容器缺省 claude 执行体、worker 池 tmux 发射、对话回路、skill 评估 worker 均拒绝 claude；orchestrator 不再注册 claude provider，auto 落 codex；分配引导员不再选 claude。
+- Commander 默认 runner、skill-relay 的 claude 执行体（含 headed tmux）、容器缺省 claude 执行体、worker 池 tmux 发射、对话回路、skill 评估 worker 均拒绝 claude；orchestrator 不再注册 claude provider，auto 落 codex；分配引导员不再选 claude。
 - 删除无运行进程的 AI Gateway（packages/workflows/gateway）及 deploy.sh 中对应段落。
 - 保留新编码流水线 `scripts/coding-workflow/`（runClaude/spawnClaude 用机器默认 Claude 登录），防复活守卫对该目录白名单并有反向用例证明白名单生效。
 - skill-relay 本机执行闸（`local_execution_disabled_on_scheduler`）先于 claude 退役检查，闸关时错误码不变；秋米总闸旁路的 `onlyTaskTypes` 改从注册表 `OPENCLAW_PASSTHROUGH_TASK_TYPES` 派生（行为不变）。
