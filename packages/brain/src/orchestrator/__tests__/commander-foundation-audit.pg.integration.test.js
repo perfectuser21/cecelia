@@ -79,7 +79,7 @@ test.skipIf(!enabled)('SIGSTOP宿主可安全接管且旧动作不重发',async(
  const f=fixture('heartbeat',30000);let proc,pid;
  try{proc=launch(f,true);await until(()=>fs.existsSync(path.join(f.dir,'started')));pid=read(path.join(f.dir,'result.json.supervisor.json')).child.pid;process.kill(pid,'SIGSTOP');fs.writeFileSync(path.join(f.dir,'resume'),'1');await until(()=>proc.signalCode!==null||proc.exitCode!==null,18000);
  expect(proc.exitCode).toBe(0);expect(read(path.join(f.dir,'result.json')).status).toBe('completed');expect(read(path.join(f.dir,'result.json.supervisor.json')).starts).toBe(2);expect(alive(pid)).toBe(false);expect(fs.readFileSync(path.join(f.dir,'effects.jsonl'),'utf8').trim().split('\n')).toHaveLength(2);
- }finally{kill(pid);const p=path.join(f.dir,'result.json.supervisor.json');if(fs.existsSync(p))kill(read(p).child?.pid);kill(proc?.pid);}
+ }catch(error){error.message+='\n'+fs.readFileSync(path.join(f.dir,'result.json.supervisor.json.log'),'utf8');throw error;}finally{kill(pid);const p=path.join(f.dir,'result.json.supervisor.json');if(fs.existsSync(p))kill(read(p).child?.pid);kill(proc?.pid);}
 },23000);
 test.skipIf(!enabled)('期限到达停止卡死宿主并关闭DBOS pending',async()=>{
  const f=fixture('deadline',3000);let proc,pid;

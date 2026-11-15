@@ -34,6 +34,10 @@ export async function superviseCommander({manifestPath,resultPath,statePath=resu
   if(!held)throw Error('commander_supervisor_already_running');
   const state=supervisionState(fs.existsSync(statePath)?JSON.parse(fs.readFileSync(statePath,'utf8')):null,identity,maxStarts);
   let heartbeat;
+  const completed=()=>{
+   if(!fs.existsSync(resultPath))return null;const result=JSON.parse(fs.readFileSync(resultPath,'utf8'));
+   if(!terminalResult(result,identity))return null;state.terminal_status=result.status;durableWrite(statePath,state);return result;
+  };
   const finish=async reason=>{
    await stopOwnedHost(state.child);
    const result=await closeoutCommander(run,reason);
@@ -41,13 +45,15 @@ export async function superviseCommander({manifestPath,resultPath,statePath=resu
   };
   while(true){
    await db.query('SELECT 1');loaded.verifySource();
-   if(fs.existsSync(resultPath)){const result=JSON.parse(fs.readFileSync(resultPath,'utf8'));if(terminalResult(result,identity)){state.terminal_status=result.status;durableWrite(statePath,state);return result;}}
+   const terminal=completed();if(terminal)return terminal;
    if(Date.now()>=(run.cleanup_deadline_ms??run.deadline_ms)+2000)return await finish('commander_supervisor_deadline_exceeded');
    if(state.child&&processState.sameProcess(state.child.pid,state.child.birth)){
     heartbeat=observeHeartbeat(statePath+'.heartbeat.json',state.child,identity,heartbeat);
     if(heartbeat.stale){await stopOwnedHost(state.child);state.last_restart_reason='commander_host_heartbeat_stalled';}
    }
    if(!state.child||!processState.sameProcess(state.child.pid,state.child.birth)){
+    // 宿主可能在本轮首次检查之后完成并退出；退出后再读一次，禁止完成后的多余重启。
+    const terminal=completed();if(terminal)return terminal;
     if(state.starts>=state.max_starts)return await finish('commander_supervisor_budget_exhausted');
     state.starts++;state.child=null;durableWrite(statePath,state);
     const nonce=randomUUID();

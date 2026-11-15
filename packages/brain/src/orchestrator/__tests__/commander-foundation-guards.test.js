@@ -25,7 +25,7 @@ test('birth不符不误杀；只终止同birth宿主',async()=>{
 });
 test('URL中的其他options保留而声明schema最后生效',()=>{
  const config=databaseConfig('postgresql://user@localhost/cecelia_scratch?options=-c%20statement_timeout%3D1234%20-c%20search_path%3Dpublic',{schema:'actions'});
- expect(new pg.Client(config).connectionParameters.options).toBe('-c statement_timeout=1234 -c search_path=public -c search_path=actions');expect(config.query_timeout).toBe(6000);expect(()=>databaseConfig('postgresql://localhost/db',{schema:'bad;DROP'})).toThrow('commander_schema_invalid');
+ expect(new pg.Client(config).connectionParameters.options).toBe('-c statement_timeout=5000 -c statement_timeout=1234 -c search_path=public -c search_path=actions');expect(config.query_timeout).toBe(6000);expect(()=>databaseConfig('postgresql://localhost/db',{schema:'bad;DROP'})).toThrow('commander_schema_invalid');
 });
 test('import的模块不被当作CLI执行',()=>{expect(isMainModule(import.meta.url,'/absent-entry')).toBe(false);expect(isMainModule(import.meta.url,undefined)).toBe(false);});
 test.each(['CANCELLED','MAX_RECOVERY_ATTEMPTS_EXCEEDED'])('取消或恢复预算终态%s不得显示运行中',status=>{

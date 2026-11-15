@@ -10,8 +10,9 @@ export function isMainModule(url,entry=process.argv[1]){
 export const ownerKey=runId=>BigInt.asIntN(64,BigInt('0x'+createHash('sha256').update('commander-foundation:'+runId).digest('hex').slice(0,16))).toString();
 export function databaseConfig(url,{schema,applicationName}={}){
  const connection=new URL(url);
+ connection.searchParams.set('options',`-c statement_timeout=5000 ${connection.searchParams.get('options')??''}`.trim());
  if(schema){if(!/^[a-z][a-z0-9_]{0,62}$/.test(schema))throw Error('commander_schema_invalid');connection.searchParams.set('options',`${connection.searchParams.get('options')??''} -c search_path=${schema}`.trim());}
- return {connectionString:connection.href,application_name:applicationName,connectionTimeoutMillis:5000,statement_timeout:5000,query_timeout:6000,keepAlive:true};
+ return {connectionString:connection.href,application_name:applicationName,connectionTimeoutMillis:5000,query_timeout:6000,keepAlive:true};
 }
 /** 此客户端只读取/取消已有workflow，不启动执行器，也不执行迁移。 */
 export async function withWorkflowClient(url,schema,fn){
