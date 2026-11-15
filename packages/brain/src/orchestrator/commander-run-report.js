@@ -1,4 +1,5 @@
 import {mergeLedgerSnapshots} from './commander-usage-ledger.js';
+import {digest} from './commander-decision.js';
 const number=value=>Number.isFinite(value)?value:null;
 const interval=(start,end)=>({started_at_ms:number(start),ended_at_ms:number(end),duration_ms:Number.isFinite(start)&&Number.isFinite(end)&&end>=start?end-start:null});
 const mismatch=()=>{throw Error('report_identity_mismatch');};
@@ -7,9 +8,14 @@ export function buildCommanderRunReport({run,workflow,steps=[],actions=[],observ
  const identity={task_id:run.task_id,run_id:run.run_id};
  const verify=value=>{if(value&&(value.task_id!==identity.task_id||value.run_id!==identity.run_id))mismatch();};
  if(workflow?.workflowID!==`commander-foundation:${run.run_id}`)mismatch();
+ const original=workflow.input?.[0];
+ if(original){
+  const definition=value=>{const out={...value,commander_timeout_ms:value.commander_timeout_ms??60000,contract:{...value.contract,activities:[...value.contract.activities].sort((a,b)=>a.order-b.order)}};delete out.runtime_revision;delete out.definition_sha256;return out;};
+  if(digest(definition(original))!==digest(definition(run)))mismatch();
+ }
  const output=workflow.output??{};
  if(output.task_id!==undefined||output.run_id!==undefined)verify(output);
- for(const action of actions)verify(action.identity);
+ for(const action of actions){if(!action.identity)mismatch();verify(action.identity);if(original?.definition_sha256&&action.identity.definition_sha256!==original.definition_sha256)mismatch();}
  const saved=output.run_report??steps.find(s=>s.name==='commanderFoundationRunReport')?.output;
  if(saved?.task_id!==undefined)verify(saved);
  verify(saved?.ledger?.identity);verify(observedLedger?.identity);
