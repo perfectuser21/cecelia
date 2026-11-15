@@ -1,6 +1,8 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.445.220
+**Brain 版本**: 1.445.221
+
+清退旧西安独立机器池的满额选单豁免与专属测试、静态 smoke；普通任务统一遵守任务池预算。现役 OpenClaw/Commander 独立候选窄通道、机器接入、Codex 并发及资源保护保留。
 
 清退旧 Planner 的任务生成、KR 评分及四个规划 API 与专属测试；工作流视图从独立 work-streams 只读模型读取当前任务，保留 FIFO 和在途任务优先。现役 Tick/Dispatcher 与历史数据保留。
 

@@ -578,43 +578,19 @@ export async function dispatchNextTask(goalIds, options = {}) {
     // Re-check budget after potential eviction
     const slotBudgetAfter = await calculateSlotBudget();
     if (!slotBudgetAfter.dispatchAllowed) {
-      // Xian bypass: xian-type tasks use independent Codex Bridge pool, not task_pool.
-      // Allow them through when codex pool has capacity, even if task_pool is full.
-      let xianBypass = false;
-      if (slotBudgetAfter.codex?.available) {
-        try {
-          const { getTaskLocation } = await import('./task-router.js');
-          const peekXian = await pool.query(`
-            SELECT task_type, location FROM tasks WHERE status = 'queued'
-            ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 ELSE 9 END, created_at ASC
-            LIMIT 1
-          `);
-          const nextTask = peekXian.rows[0];
-          const nextType = nextTask?.task_type;
-          // BEHAVIOR-8: task.location='xian' 直接判断（DB 字段驱动），或 getTaskLocation 静态映射
-          if ((nextTask?.location === 'xian') || (nextType && getTaskLocation(nextType) === 'xian')) {
-            tickLog(`[tick] Codex xian bypass: task_pool full but codex pool available for task_type=${nextType} location=${nextTask?.location}`);
-            xianBypass = true;
-          }
-        } catch (bypassErr) {
-          console.warn(`[tick] xian bypass check failed (non-fatal): ${bypassErr.message}`);
+      try {
+        const qiumiProbe = await selectNextDispatchableTask(goalIds, [], {
+          priorityFilter: null,
+          onlyTaskTypes: [...OPENCLAW_PASSTHROUGH_TASK_TYPES], includeCommanderVerification: true,
+        });
+        if (qiumiProbe) {
+          tickLog(`[tick] qiumi bypass: task_pool 已满但队列有 qiumi_task=${qiumiProbe.id}，穿透 MMV 不占 fleet 槽位，放行（仅选 qiumi_task）`);
+          qiumiOnlyBypass = true;
         }
+      } catch (probeErr) {
+        console.warn(`[tick] qiumi bypass probe failed (non-fatal): ${probeErr.message}`);
       }
-      if (!xianBypass) {
-        try {
-          const qiumiProbe = await selectNextDispatchableTask(goalIds, [], {
-            priorityFilter: null,
-            onlyTaskTypes: [...OPENCLAW_PASSTHROUGH_TASK_TYPES], includeCommanderVerification: true,
-          });
-          if (qiumiProbe) {
-            tickLog(`[tick] qiumi bypass: task_pool 已满但队列有 qiumi_task=${qiumiProbe.id}，穿透 MMV 不占 fleet 槽位，放行（仅选 qiumi_task）`);
-            qiumiOnlyBypass = true;
-          }
-        } catch (probeErr) {
-          console.warn(`[tick] qiumi bypass probe failed (non-fatal): ${probeErr.message}`);
-        }
-      }
-      if (!xianBypass && !qiumiOnlyBypass) {
+      if (!qiumiOnlyBypass) {
         const slotReason = slotBudget.user.mode === 'team' ? 'user_team_mode' :
                            slotBudget.taskPool.budget === 0 ? 'pool_exhausted' : 'pool_c_full';
         tickLog(`[tick] dispatch 停止: ${slotReason}（slot budget 不足，本 tick 不派发）`);
