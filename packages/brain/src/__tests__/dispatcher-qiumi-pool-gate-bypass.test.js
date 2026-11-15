@@ -201,3 +201,21 @@ it('池满且旧Codex池不可用时，独立核验仍可选，普通research不
  expect(routeQiumiTask).not.toHaveBeenCalled();
  expect(selectOptions().every(o=>o.includeCommanderVerification===true)).toBe(true);
 });
+
+it('普通 Mac Studio 任务在统一池满额时保持排队，独立额度不扩大选单范围', async () => {
+  const task = { ...normal, priority: 'P2', location: 'mac_studio', payload: { executor: 'codex', machine: 'mac-studio' } };
+  _candidatePool = [task];
+  _budget = { ...closedBudget(), codex: { available: true, running: 0, max: 5 } };
+  const ordinaryQuery = mockQuery.getMockImplementation();
+  mockQuery.mockImplementation(async (sql, ...args) => {
+    if (/SELECT task_type, location FROM tasks/.test(sql)) return { rows: [task] };
+    return ordinaryQuery(sql, ...args);
+  });
+
+  const result = await dispatchNextTask(null);
+
+  expect(result.dispatched).toBe(false);
+  expect(result.reason).toMatch(/^pool_/);
+  expect(mockUpdateTask).not.toHaveBeenCalled();
+  expect(mockTriggerCeceliaRun).not.toHaveBeenCalled();
+});
