@@ -1,12 +1,10 @@
-- [ ] 删除独立资源专项及专用计划/CLI，保留生产资源采样与真实fleet回归；CI汇总严格校验六父任务。
-  Test: manual:node --test scripts/ci/__tests__/basic-results.test.mjs scripts/ci/__tests__/basic-workflow.test.mjs
-- [ ] 来源证明只接受已审完整新旧cohort，拒绝篡改、缺失与单成员混配，隔离启动fixture带齐运行依赖。
-  Test: manual:npm exec -w packages/brain -- vitest run src/lib/__tests__/existing-ops-current-ci-source.test.js src/lib/__tests__/existing-ops-parser-startup.test.js src/lib/__tests__/existing-ops-stage-source.test.js
-- [ ] 预览无资源时不发成功评论，实际inactive回收和失败回执维持严格；成功文案不再虚报UI验收。
-  Test: manual:node --test scripts/ci/__tests__/basic-preview-deploy.test.mjs
-- [ ] runtime去掉重复mock调用，原行为测试仍由普通单测执行，真实PG接入合同不减。
-  Test: manual:npm exec -w packages/brain -- vitest run src/node-onboarding/__tests__/service-completion-isolation.test.js
-- [ ] 本地默认脚本、版本、事实和清单检查通过；完整固定HEAD源码CI成功后正常合并并回写账本。
+- [ ] 清退10份引用退役模块的烟测及15份重复源码字面包装，保留真实业务模块和行为回归；同步全部25登记。
+  Test: manual:bash -c 'node --test packages/brain/scripts/smoke/__tests__/*.node-test.mjs scripts/ci/__tests__/basic-task-static-readers.test.mjs'
+- [ ] 任务结果补写、HTTP联动、staging、机群资源、决策去重、磁盘保护和Notion回归保留有效。
+  Test: manual:npm exec -w packages/brain -- vitest run src/__tests__/capture-triage.test.js src/__tests__/decision-dedup.test.js src/cron/disk-guard.test.js src/__tests__/notion-push-sync.test.js
+- [ ] 夜间Commander审计使用独占新建scratch与明确TEST_DB_URL，创建失败不能进入回归，原数据库环境保持。
+  Test: manual:node --test scripts/ci/__tests__/basic-nightly-consolidation.test.mjs
+- [ ] 实际深回归配置在空的专用scratch执行12项Commander审计且不跳过，保留进程恢复与副作用边界。
+  Test: manual:npm exec -w packages/brain -- vitest run --config ../../scripts/ci/deep-integration.config.mjs src/orchestrator/__tests__/commander-foundation-audit.pg.integration.test.js
+- [ ] 当前固定候选脚本检查、事实、版本和清单检查通过，源码CI成功后正常合并并回写账本。
   Test: manual:node scripts/ci/run-basic-check.mjs scripts
-- [ ] 用量账本在递增时钟下精确读回各自持久化时间，不依赖开始与准备完成恰好同一毫秒。
-  Test: manual:npm exec -w packages/brain -- vitest run src/orchestrator/__tests__/commander-usage-ledger.test.js src/orchestrator/__tests__/commander-usage-wiring.test.js

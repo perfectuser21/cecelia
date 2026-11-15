@@ -101,8 +101,13 @@ jobs:
           pg_address=$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$POSTGRES_SERVICE_ID")
           [[ "$pg_address" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]
           printf 'address=%s\n' "$pg_address" >> "$GITHUB_OUTPUT"
+      - name: Create isolated Commander audit database
+        env:
+          PGPASSWORD: ${{ env.DB_PASSWORD }}
+        run: createdb -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" cecelia_scratch
       - name: Run full database regressions
         env:
+          TEST_DB_URL: postgresql://cecelia:isolated-ci@localhost:5432/cecelia_scratch
           CI_PG_SERVER_ADDRESS: ${{ steps.pg_identity.outputs.address }}
         run: >-
           cd packages/brain && npx --no-install vitest run --config ../../scripts/ci/deep-integration.config.mjs

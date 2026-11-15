@@ -65,3 +65,29 @@ test('Nightly迁后的launcher脚本编排真执行、失败停止，不读宿�
     } finally { rmSync(temp, { recursive: true, force: true }); }
   }
 });
+
+test('Nightly Commander真实PG审计先建独占scratch再传入其受保护URL，建库失败即停止', () => {
+  const job = workflow().jobs['brain-integration'];
+  const prepare = job.steps.find(s => s.name === 'Create isolated Commander audit database');
+  const run = job.steps.find(s => s.name === 'Run full database regressions');
+  assert.ok(prepare?.run, 'Commander PG审计缺少独占scratch准备');
+  assert.ok(job.steps.indexOf(prepare) < job.steps.indexOf(run), '必须先建库再执行PG审计');
+  const url = new URL(run.env.TEST_DB_URL);
+  assert.equal(url.pathname, '/cecelia_scratch');
+  assert.equal(url.hostname, job.env.DB_HOST);
+  assert.equal(url.port, job.env.DB_PORT);
+  assert.equal(prepare.env.PGPASSWORD, '${{ env.DB_PASSWORD }}');
+  for (const failed of [false, true]) {
+    const temp = mkdtempSync(join(tmpdir(), 'nightly-commander-db-'));
+    try {
+      const marker = join(temp, 'created');
+      writeFileSync(join(temp, 'createdb'), `#!/bin/bash\n[ "$*" = '-h localhost -p 5432 -U cecelia cecelia_scratch' ] || exit 91\n[ "$PGPASSWORD" = isolated-ci ] || exit 92\n${failed ? 'exit 17' : `printf ready > '${marker}'`}\n`, {mode: 0o700});
+      const result = spawnSync('bash', ['-e', '-o', 'pipefail', '-c', prepare.run], {
+        cwd: temp, encoding: 'utf8', timeout: 10000,
+        env: {...job.env, PATH: `${temp}:${process.env.PATH}`, PGPASSWORD: job.env.DB_PASSWORD},
+      });
+      assert.equal(result.status, failed ? 17 : 0, result.stdout + result.stderr);
+      if (!failed) assert.equal(readFileSync(marker, 'utf8'), 'ready');
+    } finally { rmSync(temp, {recursive: true, force: true}); }
+  }
+});

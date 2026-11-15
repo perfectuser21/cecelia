@@ -30,13 +30,11 @@ contract-gate-smoke.sh
 cortex-pure-functions.sh
 d-tick-runner-full.sh
 daily-backup-scheduler-smoke.sh
-daily-codereview-autofix-smoke.sh
 dbos-durable-smoke.sh
 decision-ttl-smoke.sh
 deploy-token-verify-smoke.sh
 dev-registry-smoke.sh
 dispatch-events-smoke.sh
-dispatcher-hol-skip-smoke.sh
 dispatcher-real-paths.sh
 e1-observer-runner-flow.sh
 example-health-check.sh
@@ -61,7 +59,6 @@ machines-smoke.sh
 monitor-loop-guard-smoke.sh
 okr-initiatives-project-id-smoke.sh
 p1pr2-deadman-trigger-backup-smoke.sh
-relay-codex-executor-smoke.sh
 review-env-smoke.sh
 routing-phase2-smoke.sh
 rumination-smoke.sh
