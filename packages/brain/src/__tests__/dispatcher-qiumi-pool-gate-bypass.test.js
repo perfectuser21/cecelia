@@ -4,12 +4,12 @@
  * Brain 任务 6e63bedf：任务池总闸关着（pool_exhausted / pool_c_full）时，Notion 来的
  * qiumi_task 白白排队数小时。
  *
- * 根因：dispatchNextTask 的槽位总闸 `!slotBudget.dispatchAllowed` 复查仍不通过且无 xian 旁路时
+ * 根因：dispatchNextTask 的槽位总闸 `!slotBudget.dispatchAllowed` 复查仍不通过时
  * 整轮 return；而 qiumi_task 的专用出口 dispatchQiumiTask 在后面的候选循环里，根本走不到。
  * 但 qiumi_task 穿透 MMV 的 OpenClaw 网关执行，不占 fleet 槽位，自带 MMV 并发上限
  * (env.mmvConcurrency) 与同机串行闸，不该被 fleet 槽位拦住。
  *
- * 修复语义：总闸关着且无 xian 旁路 → 先探测队列里有没有 qiumi_task 候选；有 → 置
+ * 修复语义：总闸关着 → 先探测队列里有没有 qiumi_task 候选；有 → 置
  * qiumiOnlyBypass，继续往下走，且候选循环只选 qiumi_task（onlyTaskTypes:['qiumi_task']，
  * 绝不顺带放行普通任务）；没有 → 原拦截逻辑（pool_* 原因）完全不变。
  * resourceAdmissionBlocked（资源数据不可信）早退保持不变——秋米也不派。
@@ -200,4 +200,22 @@ it('池满且旧Codex池不可用时，独立核验仍可选，普通research不
  expect(mockUpdateTask).toHaveBeenCalledWith({task_id:'verify',status:'in_progress'});
  expect(routeQiumiTask).not.toHaveBeenCalled();
  expect(selectOptions().every(o=>o.includeCommanderVerification===true)).toBe(true);
+});
+
+it('普通任务在统一池满额时保持排队，独立额度不扩大选单范围', async () => {
+  const task = { ...normal, priority: 'P2', location: 'us' };
+  _candidatePool = [task];
+  _budget = { ...closedBudget(), codex: { available: true, running: 0, max: 5 } };
+  const ordinaryQuery = mockQuery.getMockImplementation();
+  mockQuery.mockImplementation(async (sql, ...args) => {
+    if (/SELECT task_type, location FROM tasks/.test(sql)) return { rows: [task] };
+    return ordinaryQuery(sql, ...args);
+  });
+
+  const result = await dispatchNextTask(null);
+
+  expect(result.dispatched).toBe(false);
+  expect(result.reason).toMatch(/^pool_/);
+  expect(mockUpdateTask).not.toHaveBeenCalled();
+  expect(mockTriggerCeceliaRun).not.toHaveBeenCalled();
 });
