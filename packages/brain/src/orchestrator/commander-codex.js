@@ -12,8 +12,8 @@ export function createCodexCommander({model,codexHome,codexBin,codexAuth,transcr
       user:JSON.stringify({...request,input:projectModelInput(request.input,{sourceFile:manifestPath,sourceField:'run.input.verification.runtime_sha256'})}),
     };
     if(ledger){
-      if(!model||!codexHome)throw Error('judge_codex_config_missing');
-      prepareCodexAuth(codexAuth,{legacyHome:codexHome});
+      const prepared=prepareCodexAuth(codexAuth,{legacyHome:codexHome});
+      if(!model||!(prepared?.auth.home??codexHome))throw Error('judge_codex_config_missing');
       if(codexBin&&path.isAbsolute(codexBin))fs.accessSync(codexBin,fs.constants.X_OK);
     }
     const call=ledger?.beginCall({role:'commander',decision_sequence:request.sequence,provider:'codex',model:model??'unknown',auth_mode:codexAuth?.mode??'unknown'});
