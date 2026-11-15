@@ -184,6 +184,7 @@ export async function dispatchWorkflowCommanderTasks(pool, deps = {}) {
     `SELECT * FROM tasks
       WHERE task_type = '${WORKFLOW_DISPATCH_TASK_TYPE}' AND status = 'queued' AND claimed_by IS NULL
       AND NOT COALESCE(payload ? 'common_runner',false)
+      AND payload->>'commander_protocol' IS DISTINCT FROM 'commander-foundation-v1'
       AND NOT EXISTS (SELECT 1 FROM workflows w WHERE w.key=tasks.payload->>'workflow_key' AND w.status='paused' AND w.key=ANY(ARRAY['douyin_video_discovery','douyin_video_processing','douyin_comment_scoring','douyin_lead_outreach']))
       ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END, created_at ASC
       LIMIT ${BATCH * 10}`,
@@ -214,7 +215,7 @@ export async function reapWorkflowCommanderRuns(pool, deps = {}) {
   const out = { completed: 0, failed: 0 };
   const { rows } = await pool.query(
     `SELECT id, payload->>'run_id' AS run_id, payload,result FROM tasks
-      WHERE task_type = '${WORKFLOW_DISPATCH_TASK_TYPE}' AND status = 'in_progress' AND (payload->>'run_id' IS NOT NULL OR result ? 'workflow_common_runner')
+      WHERE task_type = '${WORKFLOW_DISPATCH_TASK_TYPE}' AND status = 'in_progress' AND payload->>'commander_protocol' IS DISTINCT FROM 'commander-foundation-v1' AND (payload->>'run_id' IS NOT NULL OR result ? 'workflow_common_runner')
       ORDER BY started_at ASC NULLS FIRST LIMIT 10`,
   );
   for (const row of rows ?? []) {

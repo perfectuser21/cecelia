@@ -86,7 +86,7 @@ async function claimAndStart(pool, { taskId, claimer, kind, forceKind, seconds, 
                 jsonb_build_array(jsonb_build_object('from', status, 'to', 'in_progress', 'source', 'claim', 'changed_at', NOW()))
                 ELSE status_history END
         WHERE id = $2 AND claimed_by IS NULL AND status IN ('queued', 'in_progress')
-          AND payload->>'commander_protocol' IS DISTINCT FROM 'commander-v2'
+          AND payload->>'commander_protocol' IS DISTINCT FROM 'commander-v2' AND payload->>'commander_protocol' IS DISTINCT FROM 'commander-foundation-v1'
         RETURNING id, claimed_by, claimed_at, claimed_at::text AS claim_epoch, executor_kind, status, started_at`,
       [claimer, taskId, kind, forceKind],
     );
@@ -127,7 +127,7 @@ export async function claimTaskWithLease(pool, { taskId, claimer, executorKind, 
   const result = await pool.query(
     `UPDATE tasks SET claimed_by = $1, claimed_at = NOW(),
             executor_kind = CASE WHEN $4 THEN $3 ELSE COALESCE(executor_kind, $3) END
-      WHERE id = $2 AND claimed_by IS NULL AND payload->>'commander_protocol' IS DISTINCT FROM 'commander-v2'
+      WHERE id = $2 AND claimed_by IS NULL AND payload->>'commander_protocol' IS DISTINCT FROM 'commander-v2' AND payload->>'commander_protocol' IS DISTINCT FROM 'commander-foundation-v1'
       RETURNING id, claimed_by, claimed_at, claimed_at::text AS claim_epoch, executor_kind`,
     [claimer, taskId, kind, forceKind],
   );
@@ -153,7 +153,7 @@ export async function ensureClaimedTaskLease({ taskId, claimer, claimedAt, lease
     || typeof claimedAt !== 'string' || !Number.isFinite(Date.parse(claimedAt)) || seconds === null) throw Error('task_claim_lease_identity_conflict');
   const task = (await db.query(`SELECT id,claimed_by,claimed_at FROM tasks
     WHERE id=$1 AND claimed_by=$2 AND claimed_at = $3::timestamptz AND status='in_progress'
-      AND payload->>'commander_protocol' IS DISTINCT FROM 'commander-v2' FOR UPDATE`, [taskId, claimer, claimedAt])).rows[0];
+      AND payload->>'commander_protocol' IS DISTINCT FROM 'commander-v2' AND payload->>'commander_protocol' IS DISTINCT FROM 'commander-foundation-v1' FOR UPDATE`, [taskId, claimer, claimedAt])).rows[0];
   if (!task) throw Error('task_claim_lease_identity_conflict');
   const locked = (await db.query('SELECT * FROM task_leases WHERE task_id=$1 FOR UPDATE', [taskId])).rows[0];
   if (locked) {
@@ -180,7 +180,7 @@ export async function heartbeatTaskLease(pool, { taskId, claimer, leaseSeconds, 
     `WITH owned_task AS MATERIALIZED (
        SELECT id, task_type, claimed_at FROM tasks
         WHERE id = $1 AND claimed_by = $2 AND status IN ('queued', 'in_progress')
-          AND payload->>'commander_protocol' IS DISTINCT FROM 'commander-v2'
+          AND payload->>'commander_protocol' IS DISTINCT FROM 'commander-v2' AND payload->>'commander_protocol' IS DISTINCT FROM 'commander-foundation-v1'
           AND ($4::timestamptz IS NULL OR claimed_at=$4::timestamptz)
           AND (NOT(task_type=ANY($5::text[])) OR $4::timestamptz IS NOT NULL)
         FOR UPDATE
@@ -285,7 +285,7 @@ export async function reapExpiredLeases(pool, deps = {}) {
   let probes = 0;
   let events = [];
   const processRow = async (pool, row) => {
-    if (row.payload?.commander_protocol === 'commander-v2') { out.skipped++; return; }
+    if (['commander-v2','commander-foundation-v1'].includes(row.payload?.commander_protocol)) { out.skipped++; return; }
     if (!row.id || !ACTIVE.includes(row.status)) {
       await markReleased(pool, row.task_id, 'task_terminal');
       out.released++;

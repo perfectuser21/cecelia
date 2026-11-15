@@ -11,6 +11,7 @@
 import pool from './db.js';
 import { ALLOWED_CHANGE_TYPES, ALLOWED_TASK_FIELDS, BULK_THRESHOLD, validateChange, validateChanges } from './lib/proposal-validation.js';
 import { rollbackAppliedProposal } from './lib/proposal-rollback.js';
+import {isFoundationTask,NON_FOUNDATION_TASK_SQL} from './lib/foundation-task-guard.js';
 import { createTask } from './actions.js';
 import { addTaskDependency, removeTaskDependency } from './lib/task-dependencies.js';
 
@@ -284,6 +285,7 @@ async function applyProposal(proposalId) {
         case 'update_task': {
           // Snapshot before update
           const before = await pool.query('SELECT * FROM tasks WHERE id = $1', [change.task_id]);
+          if(isFoundationTask(before.rows[0]))throw Error('FOUNDATION_CONTROL_OWNED');
           if (before.rows[0]) {
             snapshot.tasks[change.task_id] = before.rows[0];
           }
@@ -310,10 +312,11 @@ async function applyProposal(proposalId) {
 
           if (sets.length > 0) {
             sets.push('updated_at = NOW()');
-            await pool.query(
-              `UPDATE tasks SET ${sets.join(', ')} WHERE id = $1`,
+            const updated=await pool.query(
+              `UPDATE tasks SET ${sets.join(', ')} WHERE id = $1 AND ${NON_FOUNDATION_TASK_SQL}`,
               values
             );
+            if(updated.rowCount===0)throw Error('task_missing_or_foundation_control_owned');
           }
 
           result = { success: true, action: 'updated', task_id: change.task_id };

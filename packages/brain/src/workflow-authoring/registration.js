@@ -1,3 +1,4 @@
+import {FOUNDATION_PROTOCOL,validateFoundationRuntime} from '../workflow-foundation/contracts.js';
 import { createHash } from 'node:crypto';
 import { FREEZE_PROTOCOL, assertPreparedFreeze, freezeRegisteredWorkflow } from './freeze.js';
 
@@ -24,7 +25,8 @@ export function validateDefinition(d) {
   requireValue(UUID.test(d.capability_id), '缺少所属能力 UUID');
   requireValue(text(d.channel) && text(d.form) && SEMVER.test(d.version), '缺少渠道、形态或语义版本');
   requireValue(text(d.source?.ref) && /^[a-f0-9]{40}(?:[a-f0-9]{24})?$/i.test(d.source?.revision), '来源必须固定到 commit 或内容 SHA256');
-  requireValue(UUID.test(d.runtime?.skill_id) && text(d.runtime?.entrypoint), '缺少已登记的 OpenClaw 调用入口');
+  if(d.runtime?.kind===FOUNDATION_PROTOCOL)validateFoundationRuntime(d.runtime);
+  else requireValue(UUID.test(d.runtime?.skill_id) && text(d.runtime?.entrypoint), '缺少已登记的 OpenClaw 调用入口');
   requireValue(Array.isArray(d.activities) && d.activities.length > 0 && d.activities.length <= 100, '骨干活动数量必须为1至100');
   const keys = new Set();
   for (const a of d.activities) {
@@ -43,7 +45,7 @@ export async function validateReferences(client, definition, { requireActive = f
   validateDefinition(definition);
   const capability = (await client.query('SELECT id,parent_journey_id,status FROM capabilities WHERE id=$1', [definition.capability_id])).rows[0];
   if (!capability?.parent_journey_id || capability.status !== 'active') throw registrationError('capability_not_ready', '所属能力不存在、非活动状态或缺少父价值流');
-  const ids = [...new Set([definition.runtime.skill_id, ...definition.activities.filter(a => a.implementation.kind === 'skill').map(a => a.implementation.skill_id)])];
+  const ids = [...new Set([...(definition.runtime.kind===FOUNDATION_PROTOCOL?[]:[definition.runtime.skill_id]), ...definition.activities.filter(a => a.implementation.kind === 'skill').map(a => a.implementation.skill_id)])];
   const skills = (await client.query('SELECT id,name,status,location FROM skill_registry WHERE id=ANY($1::uuid[])', [ids])).rows;
   for (const id of ids) {
     const skill = skills.find(s => s.id === id);

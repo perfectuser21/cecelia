@@ -18,6 +18,7 @@
  */
 
 import pool from './db.js';
+import {NON_FOUNDATION_TASK_SQL} from './lib/foundation-task-guard.js';
 import { createTask } from './actions.js';
 import { getRecentLearnings, upsertLearning } from './learning.js';
 import { buildMemoryContext } from './memory-retriever.js';
@@ -1574,7 +1575,7 @@ async function observeChat(signal, context = {}) {
         // 支持 task_id 或 task_title 取消
         if (signal.task_id) {
           const r = await pool.query(
-            `UPDATE tasks SET status = 'cancelled' WHERE id = $1 AND status = 'queued' RETURNING id`,
+            `UPDATE tasks SET status = 'cancelled' WHERE id = $1 AND status = 'queued' AND ${NON_FOUNDATION_TASK_SQL} RETURNING id`,
             [signal.task_id]
           );
           if (r.rowCount === 0) {
@@ -1582,7 +1583,7 @@ async function observeChat(signal, context = {}) {
           }
         } else if (signal.task_title) {
           await pool.query(
-            `UPDATE tasks SET status = 'cancelled' WHERE title ILIKE $1 AND status = 'queued'`,
+            `UPDATE tasks SET status = 'cancelled' WHERE title ILIKE $1 AND status = 'queued' AND ${NON_FOUNDATION_TASK_SQL}`,
             [`%${signal.task_title}%`]
           );
         }

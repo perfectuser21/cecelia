@@ -1,4 +1,5 @@
 import { isExternalWorkerTask } from '../lib/task-type-registry.js';
+import {isFoundationTask,NON_FOUNDATION_TASK_SQL} from '../lib/foundation-task-guard.js';
 import { rateLimit } from 'express-rate-limit';
 import { TASK_MUTATION_RATE_LIMIT_OPTIONS } from './task-mutation-rate-limit.js';
 import pool from '../db.js';
@@ -31,6 +32,10 @@ router.post('/tasks/:id/dispatch', rateLimit(TASK_MUTATION_RATE_LIMIT_OPTIONS), 
     }
 
     let task = taskResult.rows[0];
+
+    if (isFoundationTask(task)) {
+      return res.status(409).json({code:'FOUNDATION_CONTROL_OWNED',error:'foundation任务只能由底座worker认领'});
+    }
 
     if (isExternalWorkerTask(task)) {
       return res.status(409).json({ error: 'external_consumer_required', id, status: task.status });
@@ -90,12 +95,16 @@ router.post('/tasks/:id/dispatch', rateLimit(TASK_MUTATION_RATE_LIMIT_OPTIONS), 
     if (deviceGate.acquired) deviceLockTaskId = task.id;
 
     // 3. 更新为 in_progress
-    await pool.query(
+    const dispatched = await pool.query(
       `UPDATE tasks SET status = 'in_progress', updated_at = NOW(),
        metadata = COALESCE(metadata, '{}'::jsonb) || '{"manually_dispatched": true}'::jsonb
-       WHERE id = $1`,
+       WHERE id = $1 AND ${NON_FOUNDATION_TASK_SQL}`,
       [id]
     );
+    if(dispatched.rowCount===0){
+      if(deviceLockTaskId)await releaseDeviceLockNonFatal(deviceLockTaskId,'tasks/:id/dispatch');
+      return res.status(409).json({code:'FOUNDATION_CONTROL_OWNED',error:'任务执行归属已变化'});
+    }
 
     // 4. 检查执行器可用性
     const ceceliaAvailable = await checkCeceliaRunAvailable(task);
