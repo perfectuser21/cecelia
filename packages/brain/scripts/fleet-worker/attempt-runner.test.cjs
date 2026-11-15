@@ -2896,7 +2896,8 @@ describe('Fleet Worker durable runtime adapters', () => {
     }
   });
 
-  it('starts only evaluator containers as root for the trusted evidence stage', async () => {
+  it.each(['generator', 'evaluator', 'publisher', 'planner'])(
+    'isolates the real %s Docker launch user and workspace mounts', async (role) => {
     const { createDockerAdapter } = loadAttemptRunner();
     const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-evaluator-root-'));
     const runCommand = vi.fn(async (_command, args) => {
@@ -2928,7 +2929,7 @@ describe('Fleet Worker durable runtime adapters', () => {
           PR_HEAD_SHA: '0123456789abcdef0123456789abcdef01234567',
         },
         timeoutSeconds: 300,
-        role: 'evaluator',
+        role,
         model: 'gpt-5',
         workspaceMount: {
           source: `/var/lib/cecelia/fleet-worker/worktrees/${ATTEMPT_ID}`,
@@ -2950,7 +2951,7 @@ describe('Fleet Worker durable runtime adapters', () => {
           token: request().callback_token,
         },
         lease: { owner: 'dispatcher-1', generation: 0 },
-        credential: CREDENTIAL,
+        credential: role === 'publisher' ? undefined : CREDENTIAL,
         githubCredential: GITHUB_CREDENTIAL,
       });
 
@@ -2958,7 +2959,23 @@ describe('Fleet Worker durable runtime adapters', () => {
         ([command, args]) => command === 'docker' && args[0] === 'create',
       );
       expect(createCall).toBeDefined();
-      expect(createCall[1]).toEqual(expect.arrayContaining(['--user', 'root']));
+      const args = createCall[1];
+      if (['generator', 'evaluator', 'publisher'].includes(role)) {
+        expect(args).toEqual(expect.arrayContaining(['--user', 'root']));
+      } else {
+        expect(args).not.toContain('--user');
+      }
+      expect(args).toEqual(expect.arrayContaining(['--env', `HARNESS_NODE=${role}`]));
+      const codexTmpfs = '/home/cecelia/.codex:rw,noexec,nosuid,nodev,mode=0700,uid=5999,gid=5999';
+      if (role === 'publisher') {
+        expect(args).not.toContain(codexTmpfs);
+      } else {
+        expect(args).toEqual(expect.arrayContaining(['--tmpfs', codexTmpfs]));
+      }
+      expect(args).toContain(`type=bind,src=/var/lib/cecelia/fleet-worker/worktrees/${ATTEMPT_ID},dst=/workspace,readonly`);
+      expect(args).toContain(`type=bind,src=/var/lib/cecelia/fleet-worker/worktrees/.admin/${ATTEMPT_ID}.git,dst=/var/lib/cecelia/fleet-worker/worktrees/.admin/${ATTEMPT_ID}.git,readonly`);
+      expect(args.join(' ')).not.toContain(GITHUB_TOKEN);
+      expect(args.join(' ')).not.toContain(CREDENTIAL.authJson);
     } finally {
       fs.rmSync(runtimeRoot, { recursive: true, force: true });
     }

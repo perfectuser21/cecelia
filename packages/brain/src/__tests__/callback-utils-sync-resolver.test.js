@@ -7,28 +7,9 @@
  *   每项独立 trim+validate，首个合法返回；invalid 高优先级不遮蔽合法低优先级
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 
-vi.mock('../db.js', () => ({ default: { query: vi.fn() } }));
-vi.mock('../alerting.js', () => ({ raise: vi.fn() }));
-vi.mock('../spawn/middleware/docker-run.js', () => ({ runDocker: vi.fn() }));
-vi.mock('../spawn/middleware/account-rotation.js', () => ({ resolveAccount: vi.fn() }));
-vi.mock('../spawn/middleware/cascade.js', () => ({ resolveCascade: vi.fn() }));
-vi.mock('../spawn/middleware/cost-cap.js', () => ({ checkCostCap: vi.fn() }));
-vi.mock('../spawn/middleware/cap-marking.js', () => ({ checkCap: vi.fn() }));
-vi.mock('../spawn/middleware/billing.js', () => ({ recordBilling: vi.fn() }));
-vi.mock('../spawn/middleware/logging.js', () => ({ createSpawnLogger: vi.fn().mockReturnValue({ log: vi.fn(), error: vi.fn() }) }));
-vi.mock('../spawn/middleware/resource-tier.js', () => ({
-  resolveResourceTier: vi.fn().mockReturnValue({ tier: 'standard' }),
-  RESOURCE_TIERS: {},
-  TASK_TYPE_TIER: {},
-}));
-vi.mock('../execution-shared.js', () => ({
-  parseDockerOutput: vi.fn().mockReturnValue({}),
-  extractField: vi.fn().mockReturnValue(null),
-}));
-
-import { resolveCanonicalPrUrlSync, isValidGithubPrUrl } from '../lib/callback-utils.js';
+import { resolveCanonicalPrUrlSync } from '../lib/callback-utils.js';
 
 const VALID_PR_URL = 'https://github.com/perfectuser21/cecelia/pull/4830';
 const INVALID_PR_URL = 'PR #4830'; // stdout 只输出了这个
@@ -109,110 +90,5 @@ describe('[I1] resolveCanonicalPrUrlSync — 逐项独立校验，invalid 不遮
   it('[I1-S7] taskRow 为 null/undefined → 不报错，返回 null', () => {
     expect(resolveCanonicalPrUrlSync(null, null)).toBeNull();
     expect(resolveCanonicalPrUrlSync(null, undefined)).toBeNull();
-  });
-});
-
-// ════════════════════════════════════════════════════════════════
-// I1: writeDockerCallback 真实调用 — callback_queue _meta.pr_url 合法
-// ════════════════════════════════════════════════════════════════
-
-describe('[I1] writeDockerCallback — _meta.pr_url 在 tasks.pr_url 非法时回落 existing_pr_url', () => {
-
-  it('[I1-W1] tasks.pr_url="PR #4830", existing_pr_url=合法 → callback_queue _meta.pr_url 合法', async () => {
-    const capturedInserts = [];
-
-    const mockPool = {
-      query: vi.fn(async (sql, args) => {
-        if (/INSERT.*callback_queue/i.test(sql)) {
-          // args[4] = result_json (JSON.stringify of resultJson)
-          if (args && args[4]) {
-            capturedInserts.push(JSON.parse(args[4]));
-          }
-        }
-        return { rows: [], rowCount: 1 };
-      }),
-    };
-
-    const task = {
-      id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
-      task_type: 'dev',
-      pr_url: INVALID_PR_URL,          // tasks.pr_url 非法
-      payload: {
-        existing_pr_url: VALID_PR_URL, // 合法的兜底 URL
-      },
-    };
-
-    const result = {
-      exit_code: 0,
-      stdout: 'Task completed successfully. PR #4830',
-      stderr: null,
-      timed_out: false,
-      container: 'cecelia-run-123',
-      started_at: '2026-08-12T10:00:00Z',
-      ended_at: '2026-08-12T10:05:00Z',
-      duration_ms: 300000,
-    };
-
-    const { writeDockerCallback } = await import('../docker-executor.js');
-    await writeDockerCallback(task, 'run-001', null, result, mockPool);
-
-    expect(capturedInserts.length).toBeGreaterThan(0);
-
-    const inserted = capturedInserts[0];
-    expect(inserted).toBeDefined();
-    expect(inserted._meta).toBeDefined();
-
-    // _meta.pr_url 必须是合法的 GitHub PR URL，而不是 null 或 'PR #4830'
-    expect(isValidGithubPrUrl(inserted._meta.pr_url)).toBe(true);
-    expect(inserted._meta.pr_url).toBe(VALID_PR_URL);
-  });
-
-  it('[I1-W2] stdout 含完整 URL → explicit 优先，不读 DB', async () => {
-    const STDOUT_URL = 'https://github.com/org/repo/pull/9999';
-    const capturedInserts = [];
-
-    const mockPool = {
-      query: vi.fn(async (sql, args) => {
-        if (/INSERT.*callback_queue/i.test(sql) && args?.[4]) {
-          capturedInserts.push(JSON.parse(args[4]));
-        }
-        return { rows: [], rowCount: 1 };
-      }),
-    };
-
-    const task = {
-      id: 'bbbbbbbb-cccc-dddd-eeee-ffffffffffff',
-      task_type: 'dev',
-      pr_url: INVALID_PR_URL,
-      payload: { existing_pr_url: VALID_PR_URL },
-    };
-
-    // Mock parseDockerOutput/extractField to return explicit URL from stdout
-    vi.resetModules();
-    const { parseDockerOutput, extractField } = await import('../execution-shared.js');
-    vi.mocked(extractField).mockReturnValue(STDOUT_URL);
-
-    const result = {
-      exit_code: 0,
-      stdout: `PR created: ${STDOUT_URL}`,
-      stderr: null,
-      timed_out: false,
-      container: 'c-002',
-      started_at: '2026-08-12T10:00:00Z',
-      ended_at: '2026-08-12T10:05:00Z',
-      duration_ms: 100000,
-    };
-
-    const { writeDockerCallback } = await import('../docker-executor.js');
-    await writeDockerCallback(task, 'run-002', null, result, mockPool);
-
-    if (capturedInserts.length > 0) {
-      // stdout URL 优先 → _meta.pr_url = STDOUT_URL
-      expect(capturedInserts[0]._meta.pr_url).toBe(STDOUT_URL);
-    }
-    // 至少不能是非法值
-    if (capturedInserts[0]?._meta?.pr_url) {
-      expect(isValidGithubPrUrl(capturedInserts[0]._meta.pr_url)).toBe(true);
-    }
   });
 });

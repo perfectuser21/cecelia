@@ -5,7 +5,7 @@
  * `docker ps -a` 里一具尸体都不剩——janitor.sh --mode frequent 每 15 分钟跑一次
  * 无过滤的 `docker container prune -f`(janitor.sh:436),三次 prune 的时刻
  * (LA 04:00:04 / 04:15:04 / 04:30:04)与三个容器的死亡时刻一一对应,
- * docker logs 连同容器一起被回收。Brain 侧 spawn/detached.js 特意不加 --rm 就是为了
+ * docker logs 连同容器一起被回收。旧 detached 启动器当时不加 --rm，就是为了
  * 留 forensic,但注释里说的"callback router 之后 docker rm 主动清"其实从未实现,
  * 真正的清理者一直是 janitor,而它不给任何人留证据。
  *

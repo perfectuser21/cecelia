@@ -1,4 +1,3 @@
-vi.mock('../spawn/index.js',()=>({spawn:vi.fn(async()=>({exit_code:0,started_at:'now',container:'fake'}))}));
 // 旧路由/payload合同使用注入执行动作；目录真实DB权限由execution-directory.pg覆盖。
 vi.mock('../execution-directory/legacy-executor.js',async original=>({...await original(),withLegacyExecution:async(_input,operation)=>operation()}));
 // 此执行器测试注入模拟传输；真实隔离入口由 runtime-isolation.test.js 验证。
@@ -112,7 +111,6 @@ describe('triggerCeceliaRun: 显式 executor override 分支（phase 2 单元 1�
     try {
       const result=await triggerCeceliaRun({id:'cccccccc-cccc-4ddd-aeee-ffffffffffff',task_type:'dev',title:'local authority',payload:{repo:'perfectuser21/cecelia'}});
       expect(result).toMatchObject({success:false,reason:'claude_channel_retired',error:'claude_channel_retired'});
-      expect((await import('../spawn/index.js')).spawn).not.toHaveBeenCalled();
       expect(fetchMock.mock.calls.some(([url])=>String(url).includes('/trigger-cecelia'))).toBe(false);
     }finally{vi.unstubAllEnvs();}
   });
@@ -247,7 +245,6 @@ describe('triggerCeceliaRun: 显式 executor override 分支（phase 2 单元 1�
       expect(resolveExecutorMock).not.toHaveBeenCalled();
       expect(fetchMock).not.toHaveBeenCalled();
       expect((await import('../db.js')).default.query).not.toHaveBeenCalled();
-      expect((await import('../spawn/index.js')).spawn).not.toHaveBeenCalled();
     },
   );
 

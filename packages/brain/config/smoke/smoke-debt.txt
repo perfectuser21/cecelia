@@ -26,7 +26,6 @@ claimed-by-cleared-smoke.sh
 cleanup-lock-mutex.sh
 clips-smoke.sh
 consciousness-graph-smoke.sh
-container-name-unique-smoke.sh
 contract-gate-smoke.sh
 cortex-pure-functions.sh
 d-tick-runner-full.sh

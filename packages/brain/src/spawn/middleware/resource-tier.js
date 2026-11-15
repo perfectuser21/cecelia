@@ -1,12 +1,6 @@
 /**
- * resource-tier middleware — Brain v2 Layer 3 attempt-loop 内循环第 c 步。
- * 见 docs/design/brain-orchestrator-v2.md §5.2。
- *
- * 职责：按 task_type 返回 docker 容器的内存/CPU tier 配置。
- *
- * v2 P2 PR 7（本 PR）：纯代码搬家，从 docker-executor.js:47-93 抽出。
- * docker-executor.js 通过 re-export 保留 resolveResourceTier，兼容外部 caller
- * （executor.js:3735 + docker-executor.test.js）。
+ * 任务资源档位：按 task_type 返回内存、CPU 与超时配置。
+ * quarantine 直接消费该映射，用于资源失败分类与恢复。
  */
 
 /**

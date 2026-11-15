@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Smoke: protocol-hygiene — 协议卫生包三件套（作战清单 T2，PR #3686）
 # 验证：
-#   1. retry-policy.js SSOT 结构正确（四类 backoff + isTransientClass + retry-circuit 豁免）
+#   1. retry-policy.js SSOT 结构正确（四类 backoff + isTransientClass）
 #   2. quarantine.js 已拆 TIMEOUT/SERVER_ERROR 且 getRetryStrategy 返回结构不变
 #   3. migration 326 side_effect_dedupe 表 + dedupe.js fail-open
 #   4. alert-debounce opt-in 接入 raise()
@@ -19,7 +19,6 @@ const checks = [
   ['timeout:', 'timeout 独立策略'],
   ['server_error:', 'server_error 独立策略'],
   ['isTransientClass', 'isTransientClass 集中判定'],
-  ['retry-circuit', 'retry-circuit 豁免注释'],
 ];
 const missing = checks.filter(([p]) => !src.includes(p));
 if (missing.length > 0) { console.error('FAIL: retry-policy.js 缺少:'); missing.forEach(([,d]) => console.error('  - ' + d)); process.exit(1); }

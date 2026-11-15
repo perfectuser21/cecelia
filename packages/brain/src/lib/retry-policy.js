@@ -2,11 +2,6 @@
  * retry-policy — 失败分类重试策略 SSOT（查表）
  *
  * 消费方：quarantine.js getRetryStrategy()（task 级、分钟级 next_run_at 退避）。
- *
- * ⚠️ 显式豁免：src/spawn/middleware/retry-circuit.js 不消费本表。
- * 理由：retry-circuit 是 attempt 级零 sleep 进程内循环（spawn.js attemptLoop，
- * 同步重试 3 次立即返回），消费分钟级 backoff 数组会让 spawn 阻塞占 slot 几分钟。
- * 两层语义不同（attempt 级瞬态重试 vs task 级退避重排），不要来"统一"。
  */
 
 const MIN = 60_000;

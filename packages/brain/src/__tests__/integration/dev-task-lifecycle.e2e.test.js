@@ -1,21 +1,4 @@
-/**
- * Dev Task 全链路 E2E 测试
- *
- * 覆盖核心路径：dev task → docker spawn → callback → status=completed
- *
- * 历史背景：此链路此前无 E2E 覆盖，导致 callback 静默吞错在 CI 中无法捕获。
- * 本测试关闭该盲区：验证 callback_queue 正确写入 + tasks 状态机迁移 + pr_url 回填。
- *
- * 测试策略：
- *   - mock cecelia-runner（不运行真实 Docker），立即返回 exit_code=0，测试速度 < 10 分钟
- *   - 真实 PostgreSQL：callback_queue + tasks 读写均走真实 DB
- *   - writeDockerCallback 真实调用（验证容器名格式 + callback_queue 写入）
- *   - processExecutionCallback 真实调用（验证状态机 + pr_url 回填）
- *
- * 运行环境：CI brain-integration job（含真实 PostgreSQL 服务）
- */
-
-import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 import pg from 'pg';
@@ -44,8 +27,7 @@ const codingRoute = {
   map_scope_hint: ['F1'],
   branch: `cp-e2e-${runKey}`,
   base_sha: 'a'.repeat(40),
-  // A2：夹具仓库不是 runner 支持的仓库，无头编码单会被拒（runner_repo_unsupported）；
-  // 本组测的是 dev 账本行的回调收账链，以有头账本行（harness_initiative）入账。
+  // 夹具仓库的 dev 账本行以有头授权登记，测试现役回执入口收账。
   payload: { headed_manual: 'true' },
 };
 
@@ -57,333 +39,103 @@ async function makeApp() {
 
   const taskTasksRouter = await import('../../routes/task-tasks.js').then(m => m.default);
   app.use('/api/brain/tasks', taskTasksRouter);
+  const executionRouter = await import('../../routes/execution.js').then(m => m.default);
+  app.use('/api/brain', executionRouter);
   return app;
 }
 
-// ─── 测试套件 ─────────────────────────────────────────────────────────────────
-
-describe('Dev Task 全链路 E2E — docker spawn → callback → status=completed', () => {
+/** 真实 PG：现役 HTTP 回执持久化、任务终态幂等门禁和普通任务终态。 */
+describe('Dev Task 生命周期 — 现役 HTTP callback 与真实数据库', () => {
   let app;
-  let createdTaskId;
   let mapFixture;
 
   beforeAll(async () => {
     mapFixture = await seedActiveCapability(testPool, {
-      scopeKey: mapFixtureRepo,
-      repo: mapFixtureRepo,
-      nodeKey: 'F1',
-      ensureRepository: true,
+      scopeKey: mapFixtureRepo, repo: mapFixtureRepo, nodeKey: 'F1', ensureRepository: true,
     });
     app = await makeApp();
   }, 20000);
 
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
   afterAll(async () => {
-    if (insertedTaskIds.length > 0) {
-      await testPool.query(
-        'DELETE FROM callback_queue WHERE task_id = ANY($1::uuid[])',
-        [insertedTaskIds]
-      );
+    if (insertedTaskIds.length) {
+      await testPool.query('DELETE FROM callback_queue WHERE task_id = ANY($1::uuid[])', [insertedTaskIds]);
       await cleanupRoutedTasks(testPool, insertedTaskIds);
     }
     await cleanupActiveCapability(testPool, mapFixture);
     await testPool.end();
   });
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // Phase 1: 创建 Dev Task
-  // ═══════════════════════════════════════════════════════════════════════════
-
-  describe('Phase 1: POST /api/brain/tasks — 创建 dev task', () => {
-    it('POST 创建 dev task → 返回 201，DB 写入 status=queued', async () => {
-      const res = await request(app)
-        .post('/api/brain/tasks')
-        .send({
-          title: `[e2e-lifecycle] Coding task 全链路测试 ${runKey}`,
-          description: '全链路 E2E 测试自动创建，测试完毕后自动清理',
-          task_type: 'dev',
-          priority: 'P2',
-          trigger_source: 'api',
-          source_id: `dev-lifecycle-success-${runKey}`,
-          ...codingRoute,
-        });
-
-      expect(res.status, JSON.stringify(res.body)).toBe(201);
-
-      expect(res.body).toHaveProperty('id');
-      expect(res.body.status).toBe('queued');
-      expect(res.body.task_type).toBe('harness_initiative');
-
-      createdTaskId = res.body.id;
-      insertedTaskIds.push(createdTaskId);
-
-      // 直查 DB 确认持久化
-      const dbRes = await testPool.query(
-        'SELECT status, task_type FROM tasks WHERE id = $1',
-        [createdTaskId]
-      );
-      expect(dbRes.rows[0].status).toBe('queued');
-      expect(dbRes.rows[0].task_type).toBe('harness_initiative');
+  async function createTask(taskType, suffix) {
+    const res = await request(app).post('/api/brain/tasks').send({
+      title: `[e2e-lifecycle] ${suffix} ${runKey}`,
+      description: '真实数据库回执生命周期回归，结束自动清理',
+      task_type: taskType, priority: 'P2', trigger_source: 'api',
+      source_id: `dev-lifecycle-${suffix}-${runKey}`,
+      ...(taskType === 'dev' ? codingRoute : {}),
     });
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    insertedTaskIds.push(res.body.id);
+    const row = (await testPool.query('SELECT status, task_type FROM tasks WHERE id=$1', [res.body.id])).rows[0];
+    expect(row.status).toBe('queued');
+    expect(row.task_type).toBe(taskType);
+    return res.body.id;
+  }
+
+  async function sendCallback(taskId, status, extra = {}) {
+    const runId = `lifecycle-${taskId}`;
+    await testPool.query(
+      `UPDATE tasks SET status='in_progress', payload=COALESCE(payload,'{}'::jsonb) || jsonb_build_object('current_run_id',$2::text) WHERE id=$1`,
+      [taskId, runId],
+    );
+    const receipt = { task_id: taskId, run_id: runId, status,
+      result: { result: '生命周期回归的真实回执', findings: '回执链正常', ...extra },
+      duration_ms: 100, exit_code: status === 'failed' ? 1 : 0,
+      ...(extra.pr_url ? { pr_url: extra.pr_url } : {}),
+    };
+    const response = await request(app).post('/api/brain/execution-callback').send(receipt);
+    expect(response.status, JSON.stringify(response.body)).toBe(200);
+    const queued = (await testPool.query(
+      'SELECT * FROM callback_queue WHERE task_id=$1 AND run_id=$2 ORDER BY created_at DESC LIMIT 1',
+      [taskId, runId],
+    )).rows[0];
+    expect(queued).toBeDefined();
+    expect(queued.status).toBe(status);
+    expect(queued.exit_code).toBe(receipt.exit_code);
+    expect(queued.result_json).toEqual(receipt.result);
+    expect(queued.processed_at).not.toBeNull();
+    return receipt;
+  }
+
+  it('dev 成功回执入队、回填 PR 并持久化 completed 终态', async () => {
+    const taskId = await createTask('dev', 'coding-success');
+    const receipt = await sendCallback(taskId, 'success', { pr_url: MOCK_PR_URL });
+    const task = (await testPool.query('SELECT status, pr_url FROM tasks WHERE id=$1', [taskId])).rows[0];
+    expect(task).toEqual({ status: 'completed', pr_url: MOCK_PR_URL });
+    // 队列消费者重放同一回执不能重新应用终态写入。
+    const { processExecutionCallback } = await import('../../callback-processor.js');
+    const replay = await processExecutionCallback(receipt, testPool);
+    expect(replay).toMatchObject({ success: true, applied: false, duplicate: true });
+    expect((await testPool.query('SELECT status FROM tasks WHERE id=$1', [taskId])).rows[0].status).toBe('completed');
   });
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // Phase 2: mock cecelia-runner 模拟容器执行完成
-  // 验证：container 名遵循 cecelia-task-* + callback_queue 写入正确
-  // ═══════════════════════════════════════════════════════════════════════════
-
-  describe('Phase 2: mock cecelia-runner — 模拟容器 exit=0', () => {
-    it('container 名格式遵循 cecelia-task-{12位无连字符} 规范', () => {
-      expect(createdTaskId).toBeDefined();
-
-      // 验证 containerName 函数的命名约定
-      const short = String(createdTaskId).replace(/-/g, '').slice(0, 12);
-      const containerName = `cecelia-task-${short}`;
-
-      // 格式：cecelia-task- + 12 位十六进制
-      expect(containerName).toMatch(/^cecelia-task-[a-f0-9]{12}$/);
-    });
-
-    it('writeDockerCallback 向 callback_queue 写入 exit_code=0 行', async () => {
-      expect(createdTaskId).toBeDefined();
-
-      // 模拟 docker container 以 exit_code=0 退出后 executor.js 调用 writeDockerCallback
-      const mockDockerResult = {
-        exit_code: 0,
-        // stdout 格式：parseDockerOutput 提取 result 段，extractField 再从中拿 pr_url
-        stdout: `{"type":"result","result":"pr_url: ${MOCK_PR_URL}\\nTask completed"}`,
-        stderr: '',
-        duration_ms: 100,
-        container: `cecelia-task-${String(createdTaskId).replace(/-/g, '').slice(0, 12)}`,
-        container_id: null,
-        timed_out: false,
-        started_at: new Date().toISOString(),
-        ended_at: new Date().toISOString(),
-      };
-
-      const { writeDockerCallback } = await import('../../docker-executor.js');
-      await writeDockerCallback(
-        { id: createdTaskId, task_type: 'harness_initiative' },
-        `mock-run-${createdTaskId}`,
-        null,
-        mockDockerResult
-      );
-
-      // 断言：callback_queue 中存在此 task 的行
-      const cbRes = await testPool.query(
-        `SELECT task_id, status, exit_code, result_json
-           FROM callback_queue
-          WHERE task_id = $1::uuid
-          ORDER BY created_at DESC
-          LIMIT 1`,
-        [createdTaskId]
-      );
-      expect(cbRes.rows).toHaveLength(1);
-      expect(cbRes.rows[0].task_id).toBe(createdTaskId);
-      expect(cbRes.rows[0].status).toBe('success');
-      expect(cbRes.rows[0].exit_code).toBe(0);
-    });
-
-    it('callback_queue.result_json._meta.pr_url 已从 stdout 提取并写入', async () => {
-      expect(createdTaskId).toBeDefined();
-
-      const cbRes = await testPool.query(
-        `SELECT result_json FROM callback_queue
-          WHERE task_id = $1::uuid
-          ORDER BY created_at DESC LIMIT 1`,
-        [createdTaskId]
-      );
-      expect(cbRes.rows).toHaveLength(1);
-
-      const meta = cbRes.rows[0].result_json?._meta;
-      expect(meta).toBeDefined();
-      expect(meta.executor).toBe('docker');
-      // pr_url 从 stdout 提取，写入 _meta
-      expect(meta.pr_url).toBe(MOCK_PR_URL);
-    });
+  it('编码失败回执持久化并落 failed 终态', async () => {
+    const taskId = await createTask('dev', 'coding-failure');
+    const receipt = await sendCallback(taskId, 'failed');
+    // HTTP 和队列消费者均不能用迟到成功覆盖失败终态。
+    const late = { ...receipt, status: 'success', exit_code: 0, pr_url: MOCK_PR_URL };
+    const response = await request(app).post('/api/brain/execution-callback').send(late);
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({ skipped: true, reason: 'late_callback_terminal', current_status: 'failed' });
+    const { processExecutionCallback } = await import('../../callback-processor.js');
+    expect(await processExecutionCallback(late, testPool)).toMatchObject({ applied: false, duplicate: true });
+    expect((await testPool.query('SELECT status FROM tasks WHERE id=$1', [taskId])).rows[0].status).toBe('failed');
   });
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // Phase 3: callback 处理 → tasks 状态迁移 + pr_url 回填
-  // ═══════════════════════════════════════════════════════════════════════════
-
-  describe('Phase 3: processExecutionCallback — callback_queue → tasks 终态', () => {
-    it('processExecutionCallback 将 dev task 迁移到 completed，pr_url 已填', async () => {
-      expect(createdTaskId).toBeDefined();
-      const runId = `mock-run-${createdTaskId}`;
-      await testPool.query(
-        `UPDATE tasks
-         SET payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object('current_run_id', $2::text)
-         WHERE id = $1`,
-        [createdTaskId, runId]
-      );
-
-      // 模拟 callback-worker 从 callback_queue 取出行后调用 processExecutionCallback
-      const { processExecutionCallback } = await import('../../callback-processor.js');
-      const result = await processExecutionCallback(
-        {
-          task_id: createdTaskId,
-          run_id: runId,
-          status: 'success',   // docker exit_code=0 → status='success' → newStatus='completed'
-          result: { pr_url: MOCK_PR_URL, result: 'Mock PR created successfully' },
-          pr_url: MOCK_PR_URL,
-          duration_ms: 100,
-          exit_code: 0,
-        },
-        testPool
-      );
-
-      expect(result.success).toBe(true);
-      // 新 coding task 由 Kernel 收账；普通 docker callback 不能越过
-      // Evaluator/Judge/merge fence 直接写 completed。
-      expect(result.newStatus).toBe('in_progress');
-    });
-
-    it('tasks.status = completed（DB 持久化验证）', async () => {
-      expect(createdTaskId).toBeDefined();
-
-      const dbRes = await testPool.query(
-        'SELECT status FROM tasks WHERE id = $1',
-        [createdTaskId]
-      );
-      expect(dbRes.rows[0].status).toBe('in_progress');
-    });
-
-    it('tasks.pr_url = MOCK_PR_URL（pr_url 回填验证）', async () => {
-      expect(createdTaskId).toBeDefined();
-
-      const dbRes = await testPool.query(
-        'SELECT pr_url FROM tasks WHERE id = $1',
-        [createdTaskId]
-      );
-      expect(dbRes.rows[0].pr_url).toBe(MOCK_PR_URL);
-    });
-  });
-
-  // ═══════════════════════════════════════════════════════════════════════════
-  // Phase 4: 全链路终态断言（cross-phase 汇总验证）
-  // ═══════════════════════════════════════════════════════════════════════════
-
-  describe('Phase 4: 全链路终态 — callback_queue + tasks 双表断言', () => {
-    it('callback_queue 有 exit_code=0 行 + tasks.status=completed + pr_url 已填', async () => {
-      expect(createdTaskId).toBeDefined();
-
-      const [taskRes, cbRes] = await Promise.all([
-        testPool.query(
-          'SELECT status, pr_url FROM tasks WHERE id = $1',
-          [createdTaskId]
-        ),
-        testPool.query(
-          `SELECT status, exit_code FROM callback_queue
-            WHERE task_id = $1::uuid AND status = 'success'`,
-          [createdTaskId]
-        ),
-      ]);
-
-      // tasks 终态
-      expect(taskRes.rows[0].status).toBe('in_progress');
-      expect(taskRes.rows[0].pr_url).toBe(MOCK_PR_URL);
-
-      // callback_queue 有 success 行
-      expect(cbRes.rows.length).toBeGreaterThanOrEqual(1);
-      expect(cbRes.rows[0].exit_code).toBe(0);
-    });
-  });
-
-  // ═══════════════════════════════════════════════════════════════════════════
-  // Phase 5: 失败路径验证
-  // docker exit_code≠0 → callback status=failed → tasks.status=failed
-  // ═══════════════════════════════════════════════════════════════════════════
-
-  describe('Phase 5: 失败路径 — exit_code=1 → tasks.status=failed', () => {
-    let failTaskId;
-
-    it('创建第二个 dev task，专用于失败路径测试', async () => {
-      const res = await request(app)
-        .post('/api/brain/tasks')
-        .send({
-          title: `[e2e-lifecycle] Coding task 失败路径测试 ${runKey}`,
-          description: '全链路 E2E 失败路径测试自动创建，测试完毕后自动清理',
-          task_type: 'dev',
-          priority: 'P2',
-          trigger_source: 'api',
-          source_id: `dev-lifecycle-failure-${runKey}`,
-          ...codingRoute,
-        });
-
-      expect(res.status, JSON.stringify(res.body)).toBe(201);
-
-      failTaskId = res.body.id;
-      insertedTaskIds.push(failTaskId);
-      expect(failTaskId).toBeDefined();
-    });
-
-    it('writeDockerCallback exit_code=1 → callback_queue status=failed', async () => {
-      expect(failTaskId).toBeDefined();
-
-      const failResult = {
-        exit_code: 1,
-        stdout: '',
-        stderr: 'Error: CI gate failed',
-        duration_ms: 50,
-        container: `cecelia-task-${String(failTaskId).replace(/-/g, '').slice(0, 12)}`,
-        container_id: null,
-        timed_out: false,
-        started_at: new Date().toISOString(),
-        ended_at: new Date().toISOString(),
-      };
-
-      const { writeDockerCallback } = await import('../../docker-executor.js');
-      await writeDockerCallback(
-        { id: failTaskId, task_type: 'harness_initiative' },
-        `mock-run-fail-${failTaskId}`,
-        null,
-        failResult
-      );
-
-      const cbRes = await testPool.query(
-        `SELECT status, exit_code FROM callback_queue
-          WHERE task_id = $1::uuid ORDER BY created_at DESC LIMIT 1`,
-        [failTaskId]
-      );
-      expect(cbRes.rows[0].status).toBe('failed');
-      expect(cbRes.rows[0].exit_code).toBe(1);
-    });
-
-    it('processExecutionCallback status=failed → tasks.status=failed', async () => {
-      expect(failTaskId).toBeDefined();
-      const runId = `mock-run-fail-${failTaskId}`;
-      await testPool.query(
-        `UPDATE tasks
-         SET payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object('current_run_id', $2::text)
-         WHERE id = $1`,
-        [failTaskId, runId]
-      );
-
-      const { processExecutionCallback } = await import('../../callback-processor.js');
-      const result = await processExecutionCallback(
-        {
-          task_id: failTaskId,
-          run_id: runId,
-          status: 'failed',
-          result: { result: 'CI gate failed' },
-          duration_ms: 50,
-          exit_code: 1,
-        },
-        testPool
-      );
-
-      expect(result.success).toBe(true);
-      expect(result.newStatus).toBe('failed');
-
-      const dbRes = await testPool.query(
-        'SELECT status FROM tasks WHERE id = $1',
-        [failTaskId]
-      );
-      expect(dbRes.rows[0].status).toBe('failed');
-    });
-  });
+  it.each([['success', 'completed'], ['failed', 'failed']])(
+    '普通任务 %s 回执入队并落 %s 真实终态', async (status, terminal) => {
+      const taskId = await createTask('research', `research-${status}`);
+      await sendCallback(taskId, status);
+      expect((await testPool.query('SELECT status FROM tasks WHERE id=$1', [taskId])).rows[0].status).toBe(terminal);
+    },
+  );
 });
