@@ -67,8 +67,17 @@ test('未知执行不能把attempt记成完成，恢复不增尝试',async()=>{
  const f=codeFixture(),runtime=await createRuntime(f),input={...f.input,unknown:true};
  await runtime.executeActivity(f.activity,input,f.options);await runtime.inspectActivity(f.activity,input,f.options);
  expect(f.ledger.beginAttempt).toHaveBeenCalledTimes(1);
- expect(f.ledger.finishAttempt.mock.calls.every(([,r])=>r.status==='unknown')).toBe(true);
+ expect(f.ledger.finishAttempt).not.toHaveBeenCalled();
  expect(f.ledger.beginObservation.mock.calls.some(([m])=>m.kind==='recovery_readback')).toBe(true);
+});
+test('恢复闭环原prepared attempt使用监督原始结束时间，不新增attempt',async()=>{
+ const f=codeFixture(),book=createRunLedger({directory:f.ledger.directory,identity:{task_id:'task',run_id:'run'}});
+ const running=await createRuntime({...f,ledger:{...book,finishAttempt:()=>{}}});await running.executeActivity(f.activity,f.input,f.options);
+ expect(book.snapshot().attempts[0].status).toBe('prepared');
+ const transport=JSON.parse(fs.readFileSync(path.join(f.root,'control','run','actions','action','result.json'))).transport;
+ const recovery=await createRuntime({...f,ledger:book});await recovery.inspectActivity(f.activity,f.input,f.options);
+ const snap=book.snapshot();expect(snap.attempts).toHaveLength(1);expect(snap.attempts[0]).toMatchObject({status:'completed',ended_at_ms:transport.ended_at_ms});
+ await recovery.inspectActivity(f.activity,f.input,f.options);expect(book.snapshot().attempts[0]).toEqual(snap.attempts[0]);
 });
 test('监督transport持久化真实进程起止，不把读回时间伪装为执行结束',async()=>{
  const f=codeFixture(),runtime=await createRuntime(f);await runtime.executeActivity(f.activity,f.input,f.options);
