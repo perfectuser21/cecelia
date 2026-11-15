@@ -23,8 +23,6 @@ app-server-rpc-smoke.sh
 battle-report-smoke.sh
 battle-report-v2-smoke.sh
 callback-postprocess-smoke.sh
-canary-drill-repair-smoke.sh
-canary-drill-smoke.sh
 capture-destination-link-smoke.sh
 capture-inbox-smoke.sh
 capture-triage-line-backlog-autotask-smoke.sh
@@ -64,13 +62,11 @@ decisions-dedup-smoke.sh
 dev-env-db-guard-smoke.sh
 device-job-foundation-smoke.sh
 device-locks-smoke.sh
-direction-proposer-t4-smoke.sh
 disk-guard-smoke.sh
 dispatch-allocation-guide-smoke.sh
 dispatch-fail-autoblock-smoke.sh
 doc-zombie-retire-smoke.sh
 drift-sentinel-smoke.sh
-evaluator-evidence-bridge-smoke.sh
 executor-liveness-t1-smoke.sh
 factory-commander-route-api-smoke.sh
 factory-f0-proposal-smoke.sh
@@ -130,7 +126,6 @@ kernel-fleet-node-admission-smoke.sh
 kernel-fleet-receipts-smoke.sh
 kernel-fleet-transport-smoke.sh
 kernel-fleet-verification-smoke.sh
-kernel-frozen-baseline-guard-smoke.sh
 kernel-log-persist-smoke.sh
 kernel-r71-validation-clock-fix-round-smoke.sh
 kernel-run-identity-terminalization-smoke.sh
