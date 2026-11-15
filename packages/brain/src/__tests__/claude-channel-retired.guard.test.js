@@ -146,7 +146,9 @@ export function findClaudeInvocations(src, {file,sources}={}) {
 function scanOffenders() {
   const offenders = [];
   const files=SCAN_ROOTS.flatMap(root=>collectSources(root));
-  const sources=new Map([...files,...collectSources(path.join(REPO_ROOT,"scripts"))].map(file=>[file,readFileSync(file,"utf8")]));
+  // JSON仅为整组只读身份输入，不加入可执行源码扫描集合。
+  const profiles=['existing-ops-script-cleanup-profile.json','existing-ops-resource-retirement-profile.json'].map(name=>path.join(BRAIN_ROOT,'src/lib',name));
+  const sources=new Map([...files,...collectSources(path.join(REPO_ROOT,"scripts")),...profiles].map(file=>[file,readFileSync(file,"utf8")]));
   for (const file of files) {
       if (isWhitelisted(file)) continue;
       for (const hit of findClaudeInvocations(sources.get(file),{file,sources})) {

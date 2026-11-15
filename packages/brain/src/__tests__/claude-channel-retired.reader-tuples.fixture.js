@@ -1,32 +1,34 @@
-/** 现役严格16成员只读消费资格；不执行来源模板。 */
+/** 现役严格18成员只读消费资格；不执行来源模板。 */
 import {createHash} from 'node:crypto';
 import {readFileSync} from 'node:fs';
 import {execFileSync} from 'node:child_process';
 import path from 'node:path';
 import {describe,it,expect} from 'vitest';
-import {registerCiRetirementGuardTests,ciVersionGuardCohorts} from './claude-channel-retired.ci-retirement.fixture.js';
+import {registerCiRetirementGuardTests,ciVersionGuardCohorts,CI_READER_PROFILES} from './claude-channel-retired.ci-retirement.fixture.js';
 
 const cache=new Map(), referenceCache=new Map();
-function hash(text,parse,shape){
- if(!cache.has(text))cache.set(text,createHash('sha256').update(shape(parse(text))).digest('hex'));
- return cache.get(text);
+function hash(text,parse,shape,name){
+ const key=(name.endsWith('.json')?'json:':'js:')+text;
+ if(!cache.has(key)){if(name.endsWith('.json'))JSON.parse(text);cache.set(key,createHash('sha256').update(name.endsWith('.json')?text:shape(parse(text))).digest('hex'));}
+ return cache.get(key);
 }
 export function reviewedADataRanges(src,{file,sources,root,parse,shape,rows,decoded,provenFingerprintReader}){
  const data=['build-envelopes','stage-envelopes','native-evidence-envelopes'].map(n=>path.join(root,`existing-ops-${n}.js`));
  if(!data.includes(file)||src!==sources?.get(file))return null;
  try{
-  const selected=ciVersionGuardCohorts().find(tuple=>Object.entries(tuple).every(([name,digest])=>{
-   const text=sources.get(path.join(root,name));return typeof text==='string'&&hash(text,parse,shape)===digest;
+  const selected=ciVersionGuardCohorts().find(tuple=>CI_READER_PROFILES.every(name=>sources.has(path.join(root,name))===Object.hasOwn(tuple,name))&&Object.entries(tuple).every(([name,digest])=>{
+   const text=sources.get(path.join(root,name));return typeof text==='string'&&hash(text,parse,shape,name)===digest;
   }));
   if(!selected)return null;
   const closure=new Set(Object.keys(selected).map(name=>path.join(root,name)));
   for(const [name,digest] of Object.entries(selected)){
    const text=sources.get(path.join(root,name));
-   if(typeof text!=='string'||![].concat(digest).includes(hash(text,parse,shape)))return null;
+   if(typeof text!=='string'||![].concat(digest).includes(hash(text,parse,shape,name)))return null;
   }
   // 准确固定所有内部消费者；外部不得取得原文或传入 eval 解析器。
   // source.js 仅向注册器返回摘要/关系，允许正常调用；其完整 AST 已在上面绑定。
-  const protectedNames=Object.keys(selected).filter(n=>n!=='existing-ops-source.js');
+  // JSON只固定reader的数据依赖；没有可剥离的代码模板，不扩充模板消费者集合。
+  const protectedNames=Object.keys(selected).filter(n=>n!=='existing-ops-source.js'&&!n.endsWith('.json'));
   for(const [consumer,text] of sources){
    if(closure.has(consumer)||provenFingerprintReader(consumer,text))continue;
    if(!referenceCache.has(text))referenceCache.set(text,decoded(text));
@@ -43,7 +45,7 @@ export function registerReviewedAGuardTests({ BRAIN_ROOT, findClaudeInvocations 
  const files=names.map(n=>path.join(root,`existing-ops-${n}.js`));
  const data=path.join(root,'existing-ops-build-envelopes.js');
  const snapshot=path.join(BRAIN_ROOT,'../../scripts/ci/implementation-snapshot.mjs');
- const base=()=>new Map([...files,snapshot].map(f=>[f,readFileSync(f,'utf8')]));
+ const base=()=>new Map([...files,snapshot,...CI_READER_PROFILES.map(name=>path.join(root,name))].map(f=>[f,readFileSync(f,'utf8')]));
  const scan=(s,f=data)=>findClaudeInvocations(s.get(f),{file:f,sources:s});
  registerCiRetirementGuardTests({root,base,scan});
  describe('A封套精确只读闭包及执行防复活',()=>{
@@ -79,7 +81,7 @@ export function registerReviewedAGuardTests({ BRAIN_ROOT, findClaudeInvocations 
 
   it.each(['build','stage','native-evidence'])('%s完整已审组合无误报',name=>{const f=path.join(root,`existing-ops-${name}-envelopes.js`);expect(scan(base(),f)).toEqual([]);});
   it.each(files)('任何闭包成员突变或缺失必须拒绝：%s',f=>{const s=base();s.set(f,s.get(f)+'\nexport const unknownClosure=true;');expect(scan(s).some(h=>h.rule==='E1')).toBe(true);const missing=base();missing.delete(f);expect(findClaudeInvocations(base().get(data),{file:data,sources:missing}).some(h=>h.rule==='E1')).toBe(true);});
-  it.each(['eval','raw','spawn','alias','interpolation','escaped','concat','dynamic','caller'])('%s不能继承只读资格',kind=>{
+  it.each(['eval','raw','spawn','alias','interpolation','escaped','concat','dynamic','reflection','caller'])('%s不能继承只读资格',kind=>{
    const s=base(),consumer=path.join(root,'existing-ops-build-source.js'),extra=path.join(root,'third.js');
    if(kind==='eval')s.set(consumer,s.get(consumer)+'\neval(A_ENVELOPES.reviewed.any);');
    if(kind==='raw')s.set(consumer,s.get(consumer)+'\nexport const raw=A_ENVELOPES;');
@@ -88,6 +90,7 @@ export function registerReviewedAGuardTests({ BRAIN_ROOT, findClaudeInvocations 
    if(kind==='escaped')s.set(extra,"import {A_ENVELOPES} from './existing-ops-build-\\u0065nvelopes.js';eval(A_ENVELOPES.reviewed.any);");
    if(kind==='concat')s.set(extra,"const m=await import('./existing-ops-build-'+'envelopes.js');eval(m.A_ENVELOPES.reviewed.any);");
    if(kind==='dynamic')s.set(extra,"const m=await import('./existing-ops-build-envelopes.js');eval(m.A_ENVELOPES.reviewed.any);");
+   if(kind==='reflection')s.set(extra,"import {A_ENVELOPES} from './existing-ops-build-envelopes.js';Reflect.apply(eval,null,[A_ENVELOPES.reviewed.any]);");
    if(kind==='caller'){const f=path.join(root,'existing-ops-source.js');s.set(f,s.get(f)+'\neval(await reviewedAContext(options));');}
    expect(scan(s).some(h=>h.rule==='E1')).toBe(true);
    if(['spawn','alias'].includes(kind))expect(scan(s).some(h=>h.rule==='R1')).toBe(true);
