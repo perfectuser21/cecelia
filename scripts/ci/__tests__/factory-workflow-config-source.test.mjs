@@ -437,9 +437,9 @@ test('当前候选输入入口逐项读取身份及资源完整控制封组，�
  assert.ok(row.witness.entry.support.some(r=>r.path==='scripts/skill_source_ownership.py'));
  assert.equal(row.input_facts.entry_verified,false);assert.equal(row.execution_status,'not_evaluated');
  const ops='scripts/ci/ops-checks.mjs',newOps=readFileSync(join(f.root,ops));
- writeFileSync(join(f.root,ops),execFileSync('git',[...VERIFICATION_GIT_OPTIONS,'show','10e5943803aa9338f468df7ac19e647967aca7b5:'+ops],{cwd:live}));f.source.head_revision=f.commit();
+ writeFileSync(join(f.root,ops),execFileSync('git',[...VERIFICATION_GIT_OPTIONS,'show','10e5943803aa9338f468df7ac19e647967aca7b5:'+ops],{cwd:live}));f.source.head_revision=f.commit();f.source.changed_files=f.git('diff','--name-only',f.source.base_revision,f.source.head_revision).split('\n').filter(Boolean).map(path=>({path}));
  assert.ok(derived(f).rows.some(r=>r.input_facts.path===path&&r.input_facts.source.side==='head'),'完整旧Commander组仍兼容');
- writeFileSync(join(f.root,ops),newOps);f.source.head_revision=f.commit();
+ writeFileSync(join(f.root,ops),newOps);f.source.head_revision=f.commit();f.source.changed_files=f.git('diff','--name-only',f.source.base_revision,f.source.head_revision).split('\n').filter(Boolean).map(path=>({path}));
  const workflowPath='.github/workflows/ci.yml',workflowText=readFileSync(join(f.root,workflowPath),'utf8');
  for(const changed of [workflowText.replace('node packages/brain/scripts/smoke/commander-foundation-smoke.mjs','echo no-recovery'),
    workflowText.replace("run: node packages/brain/scripts/smoke/commander-foundation-smoke.mjs\n        if: '!cancelled()'","run: node packages/brain/scripts/smoke/commander-foundation-smoke.mjs\n        if: 'false'")]){
