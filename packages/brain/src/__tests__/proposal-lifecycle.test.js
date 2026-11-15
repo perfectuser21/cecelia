@@ -101,7 +101,7 @@ describe('rollbackProposal', () => {
         changes: [],
       };
       mockQuery.mockResolvedValueOnce({ rows: [proposal] }); // getProposal
-      mockQuery.mockResolvedValueOnce({ rows: [] }); // UPDATE task (restore)
+      mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 1 }); // UPDATE匹配原任务，真实PG确认恢复一行
       mockQuery.mockResolvedValueOnce({ rows: [] }); // UPDATE proposals (rolled_back)
 
       const result = await rollbackProposal('p1');
@@ -109,6 +109,19 @@ describe('rollbackProposal', () => {
       expect(result.results).toHaveLength(1);
       expect(result.results[0].task_id).toBe('t1');
       expect(result.results[0].restored).toBe(true);
+    });
+
+    it('任务恢复UPDATE零行不得报告成功，保留partial及失败回执', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [{
+        id: 'p-zero', status: 'applied', changes: [],
+        snapshot: { tasks: { t1: { priority: 'P1', status: 'queued', payload: {} } } },
+      }] });
+      mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 0 });
+      mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 1 });
+      const result = await rollbackProposal('p-zero');
+      expect(result.results).toEqual([{task_id:'t1',restored:false,error:'task_missing_or_foundation_control_owned'}]);
+      expect(result.partial).toBe(true);
+      expect(result.warnings).toEqual([{kind:'task_restore_failed',task_id:'t1'}]);
     });
 
     it('回滚带 focus 快照的提案（恢复到非 null focus）', async () => {

@@ -110,7 +110,9 @@ const SCRIPT_CLEANUP_PROFILE_COHORT={...SCRIPT_CLEANUP_CI_COHORT,
 const RESOURCE_RETIREMENT_CI_COHORT={...SCRIPT_CLEANUP_PROFILE_COHORT,
  'existing-ops-stage-source.js':'5240eb393b4662046cd8c828757f098e90aee629d4c0de76bb505144f003fcf0',
  'existing-ops-resource-retirement-profile.json':'0189fe174fa8ee2b734e4a05b42f296f83d7ebb36acd162813db266bce9252f3'};
-export const ciVersionGuardCohorts=()=>[...COHORTS,COMMANDER_CI_COHORT,SKILL_RETIREMENT_CI_COHORT,PLANNER_RETIREMENT_CI_COHORT,COMMANDER_AUDIT_CI_COHORT,SCRIPT_CLEANUP_CI_COHORT,SCRIPT_CLEANUP_PROFILE_COHORT,RESOURCE_RETIREMENT_CI_COHORT];
+const WORKFLOW_REGISTRATION_CI_COHORT={...RESOURCE_RETIREMENT_CI_COHORT,
+ 'existing-ops-stage-source.js':'94944261869358c2c4d43b6f3249185f35c98285bcde5e2642c882f970d115ad'};
+export const ciVersionGuardCohorts=()=>[...COHORTS,COMMANDER_CI_COHORT,SKILL_RETIREMENT_CI_COHORT,PLANNER_RETIREMENT_CI_COHORT,COMMANDER_AUDIT_CI_COHORT,SCRIPT_CLEANUP_CI_COHORT,SCRIPT_CLEANUP_PROFILE_COHORT,RESOURCE_RETIREMENT_CI_COHORT,WORKFLOW_REGISTRATION_CI_COHORT];
 export function registerCiRetirementGuardTests({root,base,scan}){
  describe('当前来源完整闭包及执行防复活',()=>{
   it('Commander审计CI完整闭包只读通过，CI或测试选择摘要漂移仍拒绝',()=>{
@@ -121,6 +123,12 @@ export function registerCiRetirementGuardTests({root,base,scan}){
     changed.set(member,source.replace(digest,'f'.repeat(64)));
     expect(scan(changed).some(hit=>hit.rule==='E1')).toBe(true);
    }
+  });
+  it('Workflow注册CI完整只读闭包通过，新CI摘要漂移拒绝',()=>{
+   const current=base(),file=path.join(root,'existing-ops-stage-source.js'),digest='1ac9c420d1ff0a6a681d486dd117c7c935b0c55f0e14f4ba98e2e730be68204a';
+   expect(scan(current)).toEqual([]);expect(current.get(file)).toContain(digest);
+   current.set(file,current.get(file).replace(digest,'f'.repeat(64)));
+   expect(scan(current).some(hit=>hit.rule==='E1')).toBe(true);
   });
   it('Commander CI登记只替换已审stage成员，未知登记不能继承只读资格',()=>{
    const member='existing-ops-stage-source.js';

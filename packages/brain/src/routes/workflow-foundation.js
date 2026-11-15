@@ -1,12 +1,14 @@
 import {failFoundationPreflight} from '../workflow-foundation/preflight.js';
 import {Router,json} from 'express';
+import {rateLimit} from 'express-rate-limit';
+import {TASK_MUTATION_RATE_LIMIT_OPTIONS} from './task-mutation-rate-limit.js';
 import defaultPool from '../db.js';
 import {internalAuthOrLoopback} from '../middleware/internal-auth.js';
 import {listFoundationCatalog,createFoundationTask} from '../workflow-foundation/registry.js';
 import {claimFoundationTask,prepareFoundationTask} from '../workflow-foundation/claim.js';
 import {reconcileFoundationTask} from '../workflow-foundation/reconcile.js';
 export function createWorkflowFoundationRouter({pool=defaultPool,services={}}={}){
- const router=Router();router.use(internalAuthOrLoopback,json({limit:'2mb'}));
+ const router=Router();router.use(rateLimit(TASK_MUTATION_RATE_LIMIT_OPTIONS),internalAuthOrLoopback,json({limit:'2mb'}));
  const handle=fn=>async(req,res)=>{try{const result=await fn(req);res.status(result.created?201:200).json(result);}catch(error){res.status(error.status??500).json({error:error.code??'foundation_unavailable'});}};
  router.get('/catalog',handle(()=>listFoundationCatalog(pool)));
  router.post('/tasks',handle(req=>createFoundationTask(pool,req.body,services)));

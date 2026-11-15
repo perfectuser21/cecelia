@@ -181,6 +181,13 @@ beforeEach(() => {
     if (/SELECT \*, xmin::text AS dispatch_row_version FROM tasks WHERE id/.test(sql)) {
       return Promise.resolve({ rows: currentTask ? [currentTask] : [] });
     }
+    if (/UPDATE\s+tasks\s+SET\s+status\s*=\s*'in_progress'/.test(sql)) {
+      // 对齐PG UPDATE回执：匹配普通任务写一行，读取后被底座接管则条件不再命中。
+      const matches = currentTask?.id === params?.[0]
+        && currentTask.payload?.commander_protocol !== 'commander-foundation-v1'
+        && !Object.hasOwn(currentTask.result ?? {}, 'foundation_runner');
+      return Promise.resolve({ rows: [], rowCount: matches ? 1 : 0 });
+    }
     return Promise.resolve({ rows: [], rowCount: 0 });
   });
   mockCheckAvailable.mockResolvedValue({ available: true });
@@ -299,6 +306,25 @@ describe('POST /dispatch-now — 设备锁站岗（Issue e03fc740）', () => {
 // ── POST /api/brain/tasks/:id/dispatch（routes/tasks.js）──
 
 describe('POST /api/brain/tasks/:id/dispatch — 设备锁站岗（Issue e03fc740）', () => {
+  it.each(['protocol', 'result'])('抢锁期间归属改变（%s）导致零行更新：409且释放锁，不调用执行器', async marker => {
+    currentTask = phoneTask();
+    mockAcquireDeviceLock.mockImplementation(async () => {
+      if (marker === 'protocol') currentTask.payload.commander_protocol = 'commander-foundation-v1';
+      else currentTask.result = { foundation_runner: { run_id: 'same-run' } };
+      return { result: 'acquired', lock: { device_name: SERIAL, locked_by: currentTask.id } };
+    });
+    const app = await makeTasksApp();
+    const res = await request(app).post(`/api/brain/tasks/${currentTask.id}/dispatch`);
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe('FOUNDATION_CONTROL_OWNED');
+    expect(findInProgressUpdate()).toBeDefined();
+    expect(mockReleaseDeviceLocksHeldBy).toHaveBeenCalledTimes(1);
+    expect(mockReleaseDeviceLocksHeldBy).toHaveBeenCalledWith(currentTask.id);
+    expect(mockCheckAvailable).not.toHaveBeenCalled();
+    expect(mockTriggerCeceliaRun).not.toHaveBeenCalled();
+    expect(allQueries.some(({ sql }) => /SET status = 'queued'/.test(sql))).toBe(false);
+  });
+
   it('分支1 locked：设备被占 → 409 device_locked，不点火不改状态', async () => {
     currentTask = phoneTask();
     mockAcquireDeviceLock.mockResolvedValue({

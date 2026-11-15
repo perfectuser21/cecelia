@@ -84,3 +84,30 @@ it('脚本清退新profile拒绝缺失/篡改/未知成员，完整旧组仍兼�
  const old=readFixedExistingOpsGitFixture('91d37b2c3aab471aeaf88df25eec6dda9cb306d3');
  await expect(collectBasicCiSources({read:async path=>old.read(path),ci:old.read('.github/workflows/ci.yml'),revision:old.revision,relations:[],parse:ast,paths:old.paths})).resolves.toEqual(expect.any(Array));
 });
+
+
+it('Workflow发布和注册执行只认可本次完整必需CI步骤，禁用换库或空跑拒绝',async()=>{
+ const {readFileSync,existsSync}=await import('node:fs'),{execFileSync}=await import('node:child_process'),{fileURLToPath}=await import('node:url'),{default:yaml}=await import('js-yaml');
+ const root=fileURLToPath(new URL('../../../../../',import.meta.url));
+ const paths=execFileSync('git',['ls-files','-z','--cached','--others','--exclude-standard'],{cwd:root,encoding:'utf8'}).split('\0').filter(p=>p&&existsSync(new URL(p,'file://'+root)));
+ const read=path=>readFileSync(new URL(path,'file://'+root),'utf8'),workflow='.github/workflows/ci.yml',doc=yaml.load(read(workflow));
+ const steps=doc.jobs['runtime-integration'].steps,publisher='foundation-publish.test.mjs',registration='workflow-foundation.pg.integration.test.js';
+ const publishStep=steps.filter(step=>step.run?.includes(publisher)),registerStep=steps.filter(step=>step.run?.includes(registration));
+ expect(publishStep).toHaveLength(1);expect(registerStep).toHaveLength(1);
+ expect(publishStep[0]).toEqual({name:'Verify Workflow publication does not start business tasks','working-directory':'packages/brain',run:'npx vitest run scripts/commander-workflow/__tests__/foundation-publish.test.mjs --maxWorkers=1 --minWorkers=1'});
+ expect(registerStep[0]).toEqual({name:'Verify Workflow registration to Brain and real DBOS execution','working-directory':'packages/brain',env:{DB_NAME:'cecelia_scratch',DB_HOST:'127.0.0.1',DB_PORT:'5432',DB_USER:'onboarding_ci',DB_PASSWORD:'onboarding_ci',TEST_DB_URL:'postgresql://onboarding_ci:onboarding_ci@127.0.0.1:5432/cecelia_scratch'},run:'npx vitest run --config vitest.integration.config.js src/__tests__/integration/workflow-foundation.pg.integration.test.js src/__tests__/integration/foundation-legacy-entrances.pg.integration.test.js --maxWorkers=1 --minWorkers=1',if:'!cancelled()'});
+ const observe=async ci=>{const relations=[];await collectBasicCiSources({read:async path=>path===workflow?ci:read(path),ci,revision:'f'.repeat(40),relations,parse:ast,paths});return relations;};
+ expect(await observe(read(workflow))).not.toHaveLength(0);
+ for(const fragment of [publisher,registration])for(const mutate of [step=>{step.if='false';},step=>{step.run='echo not-executed';},step=>{step['working-directory']='scripts';}]){
+  const changed=structuredClone(doc);mutate(changed.jobs['runtime-integration'].steps.find(step=>step.run?.includes(fragment)));
+  await expect(observe(yaml.dump(changed))).rejects.toThrow('basic_ci_source_unproven');
+ }
+ for(const fragment of [publisher,registration]){
+  const changed=structuredClone(doc);changed.jobs['runtime-integration'].steps=changed.jobs['runtime-integration'].steps.filter(step=>!step.run?.includes(fragment));
+  await expect(observe(yaml.dump(changed))).rejects.toThrow('basic_ci_source_unproven');
+ }
+ for(const key of ['DB_NAME','TEST_DB_URL']){
+  const changed=structuredClone(doc);changed.jobs['runtime-integration'].steps.find(step=>step.run?.includes(registration)).env[key]=key==='DB_NAME'?'cecelia':'postgresql://ci@127.0.0.1:5432/cecelia';
+  await expect(observe(yaml.dump(changed))).rejects.toThrow('basic_ci_source_unproven');
+ }
+});
