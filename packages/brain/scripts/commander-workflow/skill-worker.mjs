@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// 单Activity工具执行Agent；线程归本workflow，最终JSON只是待独立验收的提案。
+// 单Activity工具执行Agent；线程归本次run的会话组，最终JSON只是待独立验收的提案。
 import fs from 'node:fs';
 import path from 'node:path';
 import {spawn} from 'node:child_process';
@@ -9,12 +9,13 @@ import {projectModelInput} from '../../src/orchestrator/commander-decision.js';
 import {prepareCodexAuth,codexAuthEnvironment} from '../coding-workflow/lib/codex-auth.mjs';
 import {codexWorkerArgs} from './skill-protocol.mjs';
 import {createRunLedger,normalizeTurns} from '../../src/orchestrator/commander-usage-ledger.js';
+import {sessionGroup,readSessionThread} from './session-group.mjs';
 const chunks=[];for await(const c of process.stdin)chunks.push(c);
 const request=JSON.parse(Buffer.concat(chunks).toString()),{codex,identity,thread_file,work_dir,skill_text,tools_text,context}=request;
 if(createHash('sha256').update(fs.readFileSync(codex.command)).digest('hex')!==codex.command_sha256)throw Error('skill_codex_source_drift');
 const auth=prepareCodexAuth(request.codex_auth,{codex});
-const previous=fs.existsSync(thread_file)?JSON.parse(fs.readFileSync(thread_file,'utf8')):null;
-if(previous&&(previous.run_id!==identity.run_id||(auth||previous.auth_identity)&&previous.auth_identity!==auth?.identity))throw Error('skill_thread_identity_conflict');
+const group=sessionGroup(request.session_group);
+const previous=readSessionThread(thread_file,{run_id:identity.run_id,auth_identity:auth?.identity,session_group:group});
 const output=path.join(work_dir,'proposal.json'),transcript=fs.openSync(path.join(work_dir,'agent.jsonl'),'a',0o600);
 const activityInput=path.join(work_dir,'activity-input.json');
 const promptContext=projectModelInput(context,{sourceFile:activityInput,sourceField:'context.verification.runtime_sha256'});
@@ -41,16 +42,22 @@ let call;
 try{call=ledger?.beginCall({role:'activity',activity_key:request.activity_key,action_id:identity.action_id,attempt:context.attempt??1,provider:'codex',model,auth_mode:request.codex_auth?.mode??'unknown'});}
 catch(error){process.stdout.write(JSON.stringify({protocol:'skill-worker-failure/v1',reason_code:error.code??error.message,execution_stopped:true,dispatch_status:'not_started'}));fs.closeSync(transcript);throw error;}
 const nativePath=call?path.join(call.directory,'native.jsonl'):null,nativeFd=call?fs.openSync(nativePath,'wx',0o600):null;
-const events=[];let spawned=false,closed=false,failed,endedAt,spawnFailure;
+const events=[];let spawned=false,closed=false,failed,endedAt,spawnFailure,protocolFailure;
 const child=spawn(codex.command,argv,{cwd:request.cwd,env:childEnv,stdio:['pipe','pipe','pipe']});
 child.once('spawn',()=>{spawned=true;});child.once('error',error=>{spawnFailure=error;});
+function recordEvent(line){
+ let event;try{event=JSON.parse(line);}catch{return; /* 非JSON日志仅留原生transcript */}
+ events.push(event);
+ if(event?.type!=='thread.started'||protocolFailure)return;
+ try{
+  if(typeof event.thread_id!=='string'||!event.thread_id.trim())throw Error('skill_thread_invalid');
+  if(thread&&thread!==event.thread_id)throw Error('skill_thread_changed');
+  durableWrite(thread_file,{run_id:identity.run_id,thread_id:event.thread_id,...(auth?{auth_identity:auth.identity}:{}),...(group===undefined?{}:{session_group:group})});
+  thread=event.thread_id;
+ }catch(error){protocolFailure=error;child.kill('SIGTERM');}
+}
 child.stdout.on('data',data=>{fs.writeSync(transcript,data);if(nativeFd!==null)fs.writeSync(nativeFd,data);partial+=data.toString();let end;
-  while((end=partial.indexOf('\n'))>=0){const line=partial.slice(0,end);partial=partial.slice(end+1);try{const event=JSON.parse(line);
-    events.push(event);
-    if(event.type==='thread.started'&&typeof event.thread_id==='string'){
-      if(thread&&thread!==event.thread_id){child.kill('SIGTERM');throw Error('skill_thread_changed');}
-      thread=event.thread_id;durableWrite(thread_file,{run_id:identity.run_id,thread_id:thread,...(auth?{auth_identity:auth.identity}:{})});
-    }}catch{ /* 非JSON日志仅留原生transcript */ }}
+  while((end=partial.indexOf('\n'))>=0){const line=partial.slice(0,end);partial=partial.slice(end+1);recordEvent(line);}
 });
 child.stderr.on('data',data=>fs.writeSync(transcript,data));
 const timer=setInterval(()=>process.stderr.write(JSON.stringify({protocol:'activity-agent-event/v1',type:'heartbeat',activity:request.activity_key})+'\n'),1000);
@@ -58,6 +65,8 @@ try {
   child.stdin.on('error',()=>{});
   child.stdin.end(prompt);
   const code=await new Promise(resolve=>{child.once('close',code=>{closed=true;endedAt=Date.now();resolve(code);});});
+  if(partial.trim()){recordEvent(partial);partial='';}
+  if(protocolFailure)throw protocolFailure;
   if(code!==0||!thread)throw Error('skill_codex_execution_failed');
   const proposal=JSON.parse(fs.readFileSync(output,'utf8'));
   process.stdout.write(JSON.stringify({proposal,thread_id:thread}));
@@ -65,7 +74,6 @@ try {
 finally{
  clearInterval(timer);fs.closeSync(transcript);
  if(nativeFd!==null){fs.fsyncSync(nativeFd);fs.closeSync(nativeFd);}
- if(partial.trim()){try{events.push(JSON.parse(partial));}catch{}}
  const reason=spawnFailure?.code??failed?.code??failed?.message;
  if(call)ledger.finishCall(call.call_id,{status:!spawned&&spawnFailure?'not_started':closed?(failed?'failed':'completed'):'unknown',dispatch_status:spawned?'dispatched':spawnFailure?'not_started':'unknown',usage:normalizeTurns(events),...(failed?{reason_code:/^[a-zA-Z0-9][a-zA-Z0-9_.:/@+-]{0,255}$/.test(reason)?reason:'skill_proposal_invalid'}:{}),evidence_ref:nativePath,...(endedAt?{ended_at_ms:endedAt}:{})});
 }

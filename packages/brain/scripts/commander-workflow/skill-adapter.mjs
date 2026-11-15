@@ -6,6 +6,7 @@ import {fileURLToPath} from 'node:url';
 import {startSupervisedActivity,waitSupervisedActivity,inspectSupervisor,durableWrite} from '../../src/orchestrator/activity-supervisor.js';
 import {verifySkillReadback,sameIdentity} from './skill-protocol.mjs';
 import {parseActivityResult} from '../../src/orchestrator/activity-contract.js';
+import {sessionGroup,sessionThreadFile} from './session-group.mjs';
 const hash=file=>createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 const reasonCode=error=>/^[a-zA-Z0-9][a-zA-Z0-9_.:/@+-]{0,255}$/.test(error.code??error.message)?error.code??error.message:'skill_observation_failed';
 export async function createRuntime({profile,run,verifySource=async()=>{},ledger}) {
@@ -15,6 +16,7 @@ export async function createRuntime({profile,run,verifySource=async()=>{},ledger
   const actionDir=identity=>path.join(root,'actions',identity.action_id);
   function specFor(activity){
     const spec=config.activities?.[activity.key],checker=spec?.checker;
+    sessionGroup(spec?.session_group,activity.runtime?.executor_kind??'agent');
     if(!spec||!profile.files[checker?.entry]||!path.isAbsolute(checker?.command??'')
       ||['start_checks','required_checks'].some(k=>!Array.isArray(checker[k])||!checker[k].length||new Set(checker[k]).size!==checker[k].length)
       ||hash(checker.command)!==checker.command_sha256)throw Error('skill_profile_unfrozen');
@@ -131,9 +133,11 @@ export async function createRuntime({profile,run,verifySource=async()=>{},ledger
         const result=await verifiedResult(activity,input,transport,options.signal);settleAttempt(attempt,result,transport,directory);
         return result;
       }
+      const group=sessionGroup(spec.session_group),threadFile=sessionThreadFile(root,group);
+      fs.mkdirSync(path.dirname(threadFile),{recursive:true,mode:0o700});
       const workerActivity={...activity,runtime:{...activity.runtime,entry:fileURLToPath(new URL('./skill-worker.mjs',import.meta.url)),argv:[],interactive:false}};
       const transport=await startSupervisedActivity(directory,options.identity,workerActivity,{identity:options.identity,activity_key:activity.key,cwd:profile.cwd,
-        codex:config.codex,codex_auth:profile.codex_auth,...(ledger?{ledger_directory:ledger.directory,ledger_policy:ledger.policy}:{}),thread_file:path.join(root,'thread.json'),work_dir:directory,skill_text:fs.readFileSync(path.resolve(profile.cwd,spec.skill),'utf8'),
+        codex:config.codex,codex_auth:profile.codex_auth,...(ledger?{ledger_directory:ledger.directory,ledger_policy:ledger.policy}:{}),thread_file:threadFile,...(group===undefined?{}:{session_group:group}),work_dir:directory,skill_text:fs.readFileSync(path.resolve(profile.cwd,spec.skill),'utf8'),
         tools_text:fs.readFileSync(path.resolve(profile.cwd,config.tools),'utf8'),context:{...run.input,...input}},options,options.deadlineMs);
       const result=await verifiedResult(activity,input,transport,options.signal);settleAttempt(attempt,result,transport,directory);
       return result;

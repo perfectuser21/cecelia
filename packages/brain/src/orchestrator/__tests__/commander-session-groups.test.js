@@ -22,7 +22,8 @@ process.stdin.on('data',d=>prompt+=d);process.stdin.on('end',()=>{
  fs.appendFileSync(${JSON.stringify(capture)},JSON.stringify({args,thread,prompt})+'\\n');
  fs.writeFileSync(args[args.indexOf('-o')+1],'{}');
  const mode=fs.existsSync(${JSON.stringify(mode)})?JSON.parse(fs.readFileSync(${JSON.stringify(mode)},'utf8')):{};
- if(mode.changed){process.on('SIGTERM',()=>process.exit(0));console.log(JSON.stringify({type:'thread.started',thread_id:crypto.randomUUID()}));setTimeout(()=>process.exit(0),1000);}
+ if(mode.block_file){fs.rmSync(mode.block_file);fs.mkdirSync(mode.block_file);}
+ if(mode.changed){process.on('SIGTERM',()=>process.exit(0));process.stdout.write(JSON.stringify({type:'thread.started',thread_id:crypto.randomUUID()})+(mode.no_newline?'':'\\n'));setTimeout(()=>process.exit(0),1000);}
  else {console.log(JSON.stringify({type:'thread.started',thread_id:thread}));console.log(JSON.stringify({type:'turn.completed'}));}
 });`,{mode:0o755});
  fs.writeFileSync(path.join(root,'skill.txt'),'仅执行指定活动');fs.writeFileSync(path.join(root,'tools.txt'),'测试工具');
@@ -59,7 +60,7 @@ test('缺省旧记录兼容共享；显式default、不同大小写组都独立'
  expect((await f.execute(f.activity('a'))).status).toBe('completed');
  const record=JSON.parse(fs.readFileSync(f.threadFile(),'utf8'));expect(record).not.toHaveProperty('session_group');
  expect((await f.execute(f.activity('b'))).status).toBe('completed');
- for(const group of ['default','Work','work'])expect((await f.execute(f.activity(group,group))).status).toBe('completed');
+ for(const [key,group] of [['explicit','default'],['upper','Work'],['lower','work']])expect((await f.execute(f.activity(key,group))).status).toBe('completed');
  const calls=f.calls();expect(calls[1].thread).toBe(calls[0].thread);expect(new Set(calls.map(c=>c.thread)).size).toBe(4);
 });
 
@@ -93,9 +94,14 @@ test('缺省线程不能消费带组身份记录，也拒绝缺失thread_id',asy
  delete record.thread_id;fs.writeFileSync(file,JSON.stringify(record));expect((await f.execute(a,'three')).status).toBe('needs_review');expect(f.calls()).toHaveLength(1);
 });
 
-test('resume返回另一thread，即使CLI收到SIGTERM后退出0也不能报告成功',async()=>{
+test.each([false,true])('resume返回另一thread，即使CLI退出0也拒绝（末尾无换行=%s）',async no_newline=>{
  const f=fixture(),a=f.activity('one');expect((await f.execute(a)).status).toBe('completed');const before=fs.readFileSync(f.threadFile(),'utf8');
- fs.writeFileSync(f.mode,JSON.stringify({changed:true}));expect((await f.execute(a,'second')).status).toBe('needs_review');expect(fs.readFileSync(f.threadFile(),'utf8')).toBe(before);
+ fs.writeFileSync(f.mode,JSON.stringify({changed:true,no_newline}));expect((await f.execute(a,'second')).status).toBe('needs_review');expect(fs.readFileSync(f.threadFile(),'utf8')).toBe(before);
+});
+
+test('线程记录持久化失败不能把CLI提案报告为成功',async()=>{
+ const f=fixture(),a=f.activity('one');expect((await f.execute(a)).status).toBe('completed');
+ fs.writeFileSync(f.mode,JSON.stringify({block_file:f.threadFile()}));expect((await f.execute(a,'second')).status).toBe('needs_review');
 });
 
 test('已提交动作恢复只读回，不依赖会话记录或API凭据，不新启动模型',async()=>{
