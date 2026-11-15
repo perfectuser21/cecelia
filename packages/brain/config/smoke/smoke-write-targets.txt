@@ -53,7 +53,6 @@ skill-drift-patrol-smoke.sh
 skill-drift-smoke.sh
 smoke-business.sh
 smoke-runtime.sh
-smoke-task-planning.sh
 sprint-d-7table-smoke.sh
 staging-e2e-endpoint-smoke.sh
 t4-claim-protocol-smoke.sh
@@ -62,7 +61,6 @@ task-tasks-dedup-smoke.sh
 unified-map-api-smoke.sh
 warroom-line-command-smoke.sh
 alertness-schema-smoke.sh
-account-quota-gate-smoke.sh
 action-receipts-schema-smoke.sh
 b13-dbupsert-idempotent-smoke.sh
 conversation-capture-multitool-smoke.sh

@@ -75,7 +75,6 @@ skill-drift-smoke.sh
 smoke-business.sh
 smoke-fix-license-taskrouter.sh
 smoke-runtime.sh
-smoke-task-planning.sh
 sprint-d-7table-smoke.sh
 sprint-docs-smoke.sh
 sse-stream-smoke.sh

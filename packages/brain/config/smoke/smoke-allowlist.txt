@@ -13,7 +13,6 @@ acceptance-d3-backtoback-smoke.sh
 acceptance-endpoints-smoke.sh
 acceptance-staff-hub-internal-smoke.sh
 acceptance-two-column-smoke.sh
-account-quota-gate-smoke.sh
 admission-report-smoke.sh
 advancement-items-smoke.sh
 anchor-backfill-smoke.sh
@@ -69,7 +68,6 @@ doc-zombie-retire-smoke.sh
 drift-sentinel-smoke.sh
 executor-liveness-t1-smoke.sh
 factory-commander-route-api-smoke.sh
-factory-f0-proposal-smoke.sh
 factory-f1-devloop-smoke.sh
 factory-f2-deploy-smoke.sh
 factory-verify-only-smoke.sh
