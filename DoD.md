@@ -1,16 +1,8 @@
-- [x] 删除Cecelia内容业务的后端、自动调度与页面接线，保留外部工作单挂号、通用任务、运行检查日报和历史数据。
+- [x] 清退旧 Harness Final E2E 启停及专属 Compose、旧合同 lint、退役根回填入口及专属测试；不增加退役占位守卫。
   Test: manual:node scripts/ci/run-basic-check.mjs scripts
-- [x] 删除动态模型管理功能，只读运行时参数不改变当前API调用语义。
-  Test: manual:npm exec -w packages/brain -- vitest run src/__tests__/model-profile.test.js src/__tests__/model-profile-dispatch.test.js src/__tests__/model-profile-rumination.test.js
-- [x] 外部任务认领与回执按owner和原生epoch校验；失约和旧回执不得覆盖现行任务。
-  Test: manual:npm exec -w packages/brain -- vitest run src/__tests__/integration/external-worker-lease-finish.pg.integration.test.js src/__tests__/integration/external-worker-lease-reaper.pg.integration.test.js
-- [x] 混合模块、UI和CI来源合同验证通过，无悬空导入或清单条目。
-  Test: manual:npm exec -w apps/api -- vitest run
-- [ ] 准确候选提交的源码CI通过后合并，任务回写并清理本次工作树。
+- [x] Ops 自动发现继续执行现役部署与容量保护回归，移除旧预览文字测试。
+  Test: manual:node scripts/ci/run-basic-check.mjs ops
+- [x] 现役容量阈值及并发预留行为测试通过，事实、版本与DoD映射一致。
+  Test: manual:npm exec -w packages/brain -- vitest run --config vitest.integration.config.js src/__tests__/integration/capacity-gate.test.js
+- [x] 固定候选源码CI通过后正常合并，读回Task合并证据并清理本次工作树，不部署生产。
   Test: manual:bash -c 'gh pr checks --repo perfectuser21/cecelia'
-
-- [x] 删除固定 Skill 来源合同四个矩阵job、五份专属测试、无调用旧Harness合同脚本/测试/假数据及无用接线，现役CI来源/汇总仍严格拒绝缺失和未知输入，历史证据不重写。
-  Test: manual:node --test scripts/ci/__tests__/basic-workflow.test.mjs scripts/ci/__tests__/basic-brain-test-debt.test.mjs
-
-- [x] 清退App Server及旧attempt/OOM专项CI和专属Canary，Linux真实读取、严格计划/汇总及运行清理边界保留。
-  Test: manual:node --test scripts/ci/__tests__/basic-resource-canary-scope.test.mjs scripts/ci/__tests__/basic-resource-canary.test.mjs scripts/ci/__tests__/basic-results.test.mjs

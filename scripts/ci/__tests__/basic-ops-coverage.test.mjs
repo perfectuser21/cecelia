@@ -234,7 +234,7 @@ printf 'ISOLATED_FIXTURE_OK\\n'
 // 历史实现不因未知PR或新执行内核变更重新进入现役默认。
 test('旧Runner仅保留显式兼容入口，所有默认回退仍只执行现役Ops', () => {
   const active = paths(opsChecks(root));
-  assert.equal(active.length, 56);
+  assert.equal(active.length, 55);
   for (const source of [null, 'unknown/product.js', 'docker/cecelia-runner/entrypoint.sh',
     'packages/brain/scripts/fleet-worker/attempt-runner.cjs',
     'packages/brain/scripts/fleet-worker/workflow-runner.cjs',
