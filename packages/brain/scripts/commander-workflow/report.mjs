@@ -24,7 +24,8 @@ export async function queryCommanderReport({manifestPath,resultPath,clientFactor
   supervision=JSON.parse(fs.readFileSync(resultPath+'.supervisor.json','utf8'));
   if(supervision.identity?.task_id!==identity.task_id||supervision.identity?.run_id!==identity.run_id)throw Error('report_identity_mismatch');
  }
- let client;const db=databaseFactory({connectionString:url,options:`-c search_path=${schema} -c default_transaction_read_only=on`,application_name:'commander-report-readonly'});
+ const actionUrl=new URL(readOnlyUrl);actionUrl.searchParams.set('options',`${actionUrl.searchParams.get('options')} -c search_path=${schema}`);
+ let client;const db=databaseFactory({connectionString:actionUrl.toString(),application_name:'commander-report-readonly'});
  try{
   client=await clientFactory({systemDatabaseUrl:readOnlyUrl.toString(),systemDatabaseSchemaName:dbosSchema});await db.connect();
   const workflowID=`commander-foundation:${run.run_id}`;
