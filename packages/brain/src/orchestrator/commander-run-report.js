@@ -23,7 +23,7 @@ export function buildCommanderRunReport({run,workflow,steps=[],actions=[],observ
  if(supervision?.run_id!==undefined&&supervision.run_id!==identity.run_id)mismatch();
  const ledger=mergeLedgerSnapshots(saved?.ledger,observedLedger);
  const usageFor=calls=>ledger?summarize({...ledger,calls}).summary:{total_tokens:null,cost:{kind:'unknown',total_usd:null}};
- const status=output.status??(workflow.status==='ERROR'?'failed':workflow.status==='SUCCESS'?'unknown':'running');
+ const status=output.status??(workflow.status==='ERROR'?'failed':['CANCELLED','MAX_RECOVERY_ATTEMPTS_EXCEEDED'].includes(workflow.status)?'needs_review':workflow.status==='SUCCESS'?'unknown':'running');
  const activities=run.contract.activities.map(activity=>{
   const action=actions.find(a=>(a.activity_key??a.identity?.activity_key)===activity.key);
   const attempts=ledger?.attempts.filter(a=>a.activity_key===activity.key)??[];
@@ -41,7 +41,7 @@ export function buildCommanderRunReport({run,workflow,steps=[],actions=[],observ
  });
  const {started_at_ms,ended_at_ms,duration_ms}=interval(workflow.createdAt,workflow.completedAt);
  return {schema_version:1,identity,workflow:run.contract.workflow,status,dbos_status:workflow.status??'unknown',
-  business_pass:output.business_pass??null,cleanup_status:output.cleanup_status??'unknown',reason_code:output.reason??null,
+  business_pass:output.business_pass??(['CANCELLED','MAX_RECOVERY_ATTEMPTS_EXCEEDED'].includes(workflow.status)?false:null),cleanup_status:output.cleanup_status??'unknown',reason_code:output.reason??supervision?.reason??(workflow.status==='CANCELLED'?'commander_workflow_cancelled':null),
   started_at_ms,ended_at_ms,duration_ms,dbos_recovery_attempts:number(workflow.recoveryAttempts),host_start_count:number(supervision?.starts),
   usage:ledger?{status:ledger.coverage.complete?'complete':'incomplete',...ledger.summary,coverage:ledger.coverage,as_of_ms:ledger.as_of_ms,
    by_role:Object.fromEntries(['commander','activity'].map(role=>[role,usageFor(ledger.calls.filter(c=>c.role===role))])),

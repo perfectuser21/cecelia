@@ -4,13 +4,20 @@ import {spawn} from 'node:child_process';
 import {randomUUID,createHash} from 'node:crypto';
 import pg from 'pg';
 import os from 'node:os';
-import {test,expect,afterAll} from 'vitest';
+import {test,expect,afterAll,beforeAll} from 'vitest';
+import {DBOSClient} from '@dbos-inc/dbos-sdk';
+import {closeoutCommander} from '../../../scripts/commander-workflow/supervisor-closeout.mjs';
+import {ownerKey} from '../../../scripts/commander-workflow/runtime-support.mjs';
+import {loadCommanderManifest} from '../../../scripts/commander-workflow/host.mjs';
+import {normalizeCommanderRun} from '../commander-decision.js';
 import {fileURLToPath} from 'node:url';
 import {spawnSync} from 'node:child_process';
 const root=fs.mkdtempSync(path.join(os.tmpdir(),'commander-regression-'));
 const brain=fileURLToPath(new URL('../../../',import.meta.url));
 const task=randomUUID();
 const url=process.env.TEST_DB_URL;const enabled=!!url;
+if(enabled){const parsed=new URL(url);if(!['127.0.0.1','localhost','[::1]'].includes(parsed.hostname)||parsed.pathname!=='/cecelia_scratch')throw Error('regression_requires_loopback_scratch');}
+const runs=[];
 const pool=enabled?new pg.Pool({connectionString:url}):null;
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const read=p=>JSON.parse(fs.readFileSync(p));
@@ -32,7 +39,7 @@ function fixture(name,deadline){
  const dir=path.join(root,name);fs.mkdirSync(dir,{recursive:true,mode:0o700});fs.writeFileSync(path.join(dir,'adapter.mjs'),adapter);
  const activity=(key,order)=>({key,order,budget:{max_duration_s:60,heartbeat_s:1},failure:{empty_ok:[],retryable:[],fatal:['error'],needs_human:{cases:[]}},runtime:{phase:'source',protocol:'json-stdio-v1',entry:'adapter.mjs',executor_kind:'code'}});
  const manifest={profile:{cwd:dir,adapter:'adapter.mjs',files:{'adapter.mjs':createHash('sha256').update(adapter).digest('hex')},commander:{provider:'adapter'}},run:{schema_version:1,task_id:task,run_id:randomUUID(),deadline_ms:Date.now()+deadline,commander_timeout_ms:2000,input:{run_tag:randomUUID(),target:'original'},contract:{workflow:'isolated-runtime-audit',activities:[activity('first',1),activity('second',2)]}}};
- fs.writeFileSync(path.join(dir,'manifest.json'),JSON.stringify(manifest,null,2));return {dir,manifest};
+ fs.writeFileSync(path.join(dir,'manifest.json'),JSON.stringify(manifest,null,2));runs.push(manifest.run.run_id);return {dir,manifest};
 }
 function launch(f,supervise=false,tag='host',connection=url){
  const fd=fs.openSync(path.join(f.dir,tag+'.log'),'a',0o600);
@@ -42,7 +49,20 @@ function alive(pid){try{process.kill(pid,0);return true;}catch{return false;}}
 function kill(pid){if(pid){try{process.kill(pid,'SIGKILL');}catch{}}}
 async function dbState(f){return (await pool.query('SELECT workflow_uuid,status,recovery_attempts FROM commander_workflow_dbos.workflow_status WHERE workflow_uuid=$1',['commander-foundation:'+f.manifest.run.run_id])).rows;}
 
-afterAll(async()=>{await pool?.end();fs.rmSync(root,{recursive:true,force:true});});
+beforeAll(async()=>{
+ if(enabled&&process.env.CI==='true'){
+  await pool.query('CREATE SCHEMA IF NOT EXISTS commander_workflow_actions');const db=await pool.connect();
+  try{await db.query('SET search_path TO commander_workflow_actions');await db.query(fs.readFileSync(path.join(brain,'migrations/558_commander_activity_actions.sql'),'utf8'));}finally{db.release();}
+ }
+});
+afterAll(async()=>{
+ if(pool){
+  const exists=(await pool.query("SELECT to_regclass('commander_workflow_dbos.workflow_status') AS name")).rows[0].name;
+  if(exists){const client=await DBOSClient.create({systemDatabaseUrl:url,systemDatabaseSchemaName:'commander_workflow_dbos'});try{for(const id of runs){const workflow=await client.getWorkflow('commander-foundation:'+id);if(workflow?.status==='PENDING')await client.cancelWorkflow(workflow.workflowID);}}finally{await client.destroy();}}
+  await pool.end();
+ }
+ fs.rmSync(root,{recursive:true,force:true});
+});
 test.each(['host.mjs','supervise.mjs','report.mjs'])('软链入口%s不得静默成功',name=>{
  const link=path.join(root,'linked-'+name);fs.symlinkSync(path.join(brain,'scripts/commander-workflow',name),link);
  const r=spawnSync(process.execPath,[link,'--invalid-regression-argument'],{encoding:'utf8',timeout:10000});expect(r.status).not.toBe(0);expect(r.stderr).toContain('usage:');
@@ -71,3 +91,16 @@ test.skipIf(!enabled)('连接URL options不覆盖指定动作schema',async()=>{
  const f=fixture('options',30000);fs.writeFileSync(path.join(f.dir,'resume'),'1');const u=new URL(url);u.searchParams.set('options','-c statement_timeout=5000 -c search_path=public');let proc;
  try{proc=launch(f,false,'host',u.href);await until(()=>proc.signalCode!==null||proc.exitCode!==null);expect(proc.exitCode).toBe(0);expect(read(path.join(f.dir,'result.json')).status).toBe('completed');}finally{kill(proc?.pid);}
 },22000);
+
+test.skipIf(!enabled)('收尾必须持原宿主锁，不能取消另一宿主的运行',async()=>{
+ const f=fixture('closeout-owner',30000);let proc;const owner=new pg.Client({connectionString:url});
+ try{proc=launch(f);await until(()=>fs.existsSync(path.join(f.dir,'started')));const run=normalizeCommanderRun(loadCommanderManifest(path.join(f.dir,'manifest.json')).run);
+ await expect(closeoutCommander(run,'deadline',{url})).rejects.toThrow('commander_closeout_owner_busy');expect((await dbState(f))[0].status).toBe('PENDING');
+ }finally{kill(proc?.pid);await owner.end();}
+},20000);
+test.skipIf(!enabled)('结果文件未发布但DBOS已成功，收尾保留成功事实',async()=>{
+ const f=fixture('closeout-success',30000);fs.writeFileSync(path.join(f.dir,'resume'),'1');let proc;
+ try{proc=launch(f);await until(()=>proc.signalCode!==null||proc.exitCode!==null);const original=read(path.join(f.dir,'result.json'));fs.unlinkSync(path.join(f.dir,'result.json'));
+ const run=normalizeCommanderRun(loadCommanderManifest(path.join(f.dir,'manifest.json')).run);const result=await closeoutCommander(run,'deadline',{url});expect(result.status).toBe('completed');expect(result.outputs).toEqual(original.outputs);expect((await dbState(f))[0].status).toBe('SUCCESS');
+ }finally{kill(proc?.pid);}
+},20000);
