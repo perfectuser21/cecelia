@@ -21,12 +21,16 @@ const activityInput=path.join(work_dir,'activity-input.json');
 const promptContext=projectModelInput(context,{sourceFile:activityInput,sourceField:'context.verification.runtime_sha256'});
 const prompt=['你只执行本次指定的单Activity，不推进其他Activity。运输方式 codex-cli，拥有工具；最终输出JSON提案不代表验收。',
   '禁止修改冻结Skill/合同/工具实现/独立检查器，禁止自行重跑已提交动作。',
-  `本次动作身份：${JSON.stringify(identity)}`,`当前Activity：${request.activity_key}`,`冻结Skill：\n${skill_text}`,
+  `本次动作身份：${JSON.stringify(identity)}`,`当前Activity：${request.activity_key}`,
+  ...(request.activity_contract===undefined?[]:[`冻结Activity Contract：\n${JSON.stringify(request.activity_contract)}`,
+    'Activity Contract优先于Skill。Skill只提供方法，不能修改目标、边界和验收标准；最终结果由独立检查器核验。']),
+  `冻结Skill：\n${skill_text}`,
   `冻结工具说明：\n${tools_text}`,`输入与已独立验证的context：\n${JSON.stringify(promptContext)}`,
   '执行完只输出JSON对象提案；证据不足如实记录，不伪造独立检查结果。'].join('\n\n');
 const env={PATH:process.env.PATH,HOME:process.env.HOME,TMPDIR:process.env.TMPDIR,LANG:process.env.LANG};
 for(const key of codex.env_keys??[])if(process.env[key]!==undefined)env[key]=process.env[key];
-durableWrite(activityInput,{identity,activity_key:request.activity_key,transport:'codex-cli',context});
+durableWrite(activityInput,{identity,activity_key:request.activity_key,
+  ...(request.activity_contract===undefined?{}:{activity_contract:request.activity_contract}),transport:'codex-cli',context});
 env.COMMANDER_ACTIVITY_KEY=request.activity_key;env.COMMANDER_ACTIVITY_INPUT_FILE=activityInput;
 let partial='',thread=previous?.thread_id;
 const argv=codexWorkerArgs(codex,thread,output,auth),childEnv=codexAuthEnvironment(env,auth?.auth);

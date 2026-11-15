@@ -58,10 +58,17 @@ export async function createRuntime({profile,run,verifySource=async()=>{},ledger
       if(observation)ledger.endObservation(observation.observation_id,{status:'passed'});return value;
     }catch(error){if(observation)ledger.endObservation(observation.observation_id,{status:'failed',reason_code:reasonCode(error)});throw error;}
   }
+  function activityContract(activity){
+    const frozen=run.contract.activities;
+    if(frozen===undefined)return structuredClone(activity);
+    const contract=Array.isArray(frozen)&&frozen.find(candidate=>candidate.key===activity.key);
+    if(!contract)throw Error('skill_activity_contract_unbound');
+    return structuredClone(contract);
+  }
   async function performReadback(activity,input,phase,proposal,signal){
     const spec=specFor(activity),checker=spec.checker;
     const request={task_id:run.task_id,run_id:run.run_id,run_tag:run.input.run_tag,workflow:spec.workflow??run.contract.workflow,
-      activity:spec.activity??activity.key,attempt:1,nonce:randomUUID(),phase,
+      activity:spec.activity??activity.key,activity_contract:activityContract(activity),attempt:1,nonce:randomUUID(),phase,
       checks:phase==='start'?checker.start_checks:checker.required_checks,proposal,context:{...run.input,...input}};
     fs.mkdirSync(path.join(root,'checks'),{recursive:true,mode:0o700});
     const evidenceFile=path.join(root,'checks',request.nonce+'.json');
@@ -136,7 +143,7 @@ export async function createRuntime({profile,run,verifySource=async()=>{},ledger
       const group=sessionGroup(spec.session_group),threadFile=sessionThreadFile(root,group);
       fs.mkdirSync(path.dirname(threadFile),{recursive:true,mode:0o700});
       const workerActivity={...activity,runtime:{...activity.runtime,entry:fileURLToPath(new URL('./skill-worker.mjs',import.meta.url)),argv:[],interactive:false}};
-      const transport=await startSupervisedActivity(directory,options.identity,workerActivity,{identity:options.identity,activity_key:activity.key,cwd:profile.cwd,
+      const transport=await startSupervisedActivity(directory,options.identity,workerActivity,{identity:options.identity,activity_key:activity.key,activity_contract:activityContract(activity),cwd:profile.cwd,
         codex:config.codex,codex_auth:profile.codex_auth,...(ledger?{ledger_directory:ledger.directory,ledger_policy:ledger.policy}:{}),thread_file:threadFile,...(group===undefined?{}:{session_group:group}),work_dir:directory,skill_text:fs.readFileSync(path.resolve(profile.cwd,spec.skill),'utf8'),
         tools_text:fs.readFileSync(path.resolve(profile.cwd,config.tools),'utf8'),context:{...run.input,...input}},options,options.deadlineMs);
       const result=await verifiedResult(activity,input,transport,options.signal);settleAttempt(attempt,result,transport,directory);
