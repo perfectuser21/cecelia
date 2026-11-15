@@ -30,7 +30,7 @@ const decide = DBOS.registerStep(async (run, request) => {
     const value = await bounded(signal => env.decide(structuredClone(request),{signal,timeoutMs:remaining}),remaining);
     if (Date.now() >= run.deadline_ms) return {error:'commander_deadline_exceeded'};
     return {decision:parseCommanderDecision(value,request)};
-  } catch (error) {return {error:/^usage_(budget|ledger)_/.test(error.message)?error.message:'commander_decision_unavailable'};}
+  } catch (error) {return {error:/^usage_(?:(?:token|cost)_budget|budget|ledger)_/.test(error.message)?error.message:'commander_decision_unavailable'};}
 },{name:'commanderFoundationDecide'});
 function accepted(receipt, key) {
   const a = receipt?.activities?.[0];
@@ -108,7 +108,7 @@ const workflow = DBOS.registerWorkflow(async value => {
   const sources=run.contract.activities.filter(a=>a.runtime.phase==='source');
   const finalizer=run.contract.activities.find(a=>a.runtime.phase==='finalize');
   let reason=null,safe=true,stopped=false;
-  async function perform(a){try{return await execute(run,a.key,context);}catch(error){return {error:/^usage_(budget|ledger)_/.test(error.message)?error.message:'commander_activity_unavailable',safe:false};}}
+  async function perform(a){try{return await execute(run,a.key,context);}catch(error){return {error:/^usage_(?:(?:token|cost)_budget|budget|ledger)_/.test(error.message)?error.message:'commander_activity_unavailable',safe:false};}}
   for(let sequence=0;sequence<=sources.length;sequence++){
     const next=stopped?null:(sources[sequence]??null);
     const request=decisionRequest(run,receipts,next);let response;
