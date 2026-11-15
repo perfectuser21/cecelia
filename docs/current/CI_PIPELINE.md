@@ -1,6 +1,6 @@
 ---
 id: current-ci-pipeline
-version: 3.0.3
+version: 3.0.4
 updated: 2026-11-15
 authority: CURRENT_STATE
 ---
@@ -35,10 +35,12 @@ authority: CURRENT_STATE
 - `apps/api`只保留Dashboard共享features和captures schema验证，不再有独立旧Core服务、Conductor、旧任务/OKR路由或后端编译入口。
 - 共享features与Dashboard在一个组件任务中依次使用各自React/Vitest环境，再构建Dashboard，不能混用React18/19测试环境。
 - Ops按固定PR差异选择执行域；公共配置、未知来源和全量运行执行55个现役入口。无生产上游的旧spawn/host/Docker执行器及专属测试、无调用的汇总脚本均已清退；现役fleet执行器保留。
-- scripts检查CI本身的真实选择/退出/权限边界、开发工具、事实与版本一致、迁移编号及Skill所有权。默认52个Node入口；W19冻结、旧准入发布器和一次性历史授权回放已退出。两个仍被可选API消费的窄合同由 `node scripts/ci/run-legacy-checks.mjs` 显式执行。
+- scripts检查CI本身的真实选择/退出/权限边界、开发工具、事实与版本一致、迁移编号及Skill所有权。默认50个Node入口；W19冻结、旧准入发布器和一次性历史授权回放已退出。两个仍被可选API消费的窄合同由 `node scripts/ci/run-legacy-checks.mjs` 显式执行。
 - 独立MCP不进入现役服务全量矩阵或夜间PG回归；包自身变更仍运行单测，PG合同保留显式 `npm run test:pg -w packages/mcp-readonly`，需专用测试库。
 - 外置Skill正文、固定版本与关键词专属合同已退出本仓PR验收；普通单测不依赖本机私有正文。通用恢复器及Python所有权检查仍保留。
 - 本地quickcheck只做准备：Brain lint、共享前端的Dashboard构建；CI或根依赖变更另跑scripts。真实命令失败必须阻止push。
+
+部署烟测已清退25份失效旧链路/重复源码字面包装（21条allow、3条debt、1条deny登记同步移除）。现役模块、真实函数/HTTP/PG回归及部署扫描器保留；shell烟测存量466→441，不代表PR有441项检查。
 
 ## 深度回归与监控
 
@@ -47,6 +49,8 @@ authority: CURRENT_STATE
 | nightly-regression.yml | 每天北京时间03:00及按需 | 私有PG与完整数据库回归、captures schema、隔离launcher；另启动Brain镜像连接本人专用PG，运行Map Manifest正例 |
 | heartbeat-sentinel.yml | 每30分钟及按需 | 从GitHub反向探测生产health，并确认main深度回归26小时内有成功回执；异常告警、恢复收口 |
 | ci-red-alert.yml | 每6小时及按需 | 跨四仓检测最近连续三次失败并开Issue、通知；与源码必需检查分开 |
+
+夜间完整数据库回归为Commander审计另建同一CI服务拥有的 `cecelia_scratch` 并显式传入 `TEST_DB_URL`；其余回归保持原 `cecelia_test`。Commander文件此前在此入口会仅跑3项本地检查并跳过9项PG用例；修复后已在独占空scratch实测12项全部执行，生产库不参与。
 
 深度回归的 `real-env-smoke` 使用GitHub隔离容器与专用PG，不是手机真机或生产账号验收。通用CI不占用手机、社媒账号或线上业务资源。
 

@@ -11,7 +11,6 @@ clips-notion-smoke.sh
 notion-brain-first-smoke.sh
 notion-endpoints-smoke.sh
 notion-mapping-r4-smoke.sh
-notion-push-sync-smoke.sh
 
 # === 需要 Langfuse API 凭据 ===
 langfuse-recent-smoke.sh
