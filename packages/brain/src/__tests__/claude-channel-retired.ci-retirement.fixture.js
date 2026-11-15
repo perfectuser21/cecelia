@@ -103,6 +103,15 @@ const PLANNER_RETIREMENT_CI_COHORT={...SKILL_RETIREMENT_CI_COHORT,
 export const ciVersionGuardCohorts=()=>[...COHORTS,COMMANDER_CI_COHORT,SKILL_RETIREMENT_CI_COHORT,PLANNER_RETIREMENT_CI_COHORT];
 export function registerCiRetirementGuardTests({root,base,scan}){
  describe('当前来源完整闭包及执行防复活',()=>{
+  it('Commander审计CI完整闭包只读通过，CI或测试选择摘要漂移仍拒绝',()=>{
+   const current=base(),member=path.join(root,'existing-ops-stage-source.js');
+   expect(current.size).toBe(16);expect(scan(current)).toEqual([]);
+   for(const digest of ['014b5b54984ff322b0783c6070113199673efd53bb900ea9934d038de3cd5e5d','cf3307a3508e5feb473951fb645197d74a714c2c8decc44ec6bfe690982b17b5']){
+    const changed=base(),source=changed.get(member);expect(source).toContain(digest);
+    changed.set(member,source.replace(digest,'f'.repeat(64)));
+    expect(scan(changed).some(hit=>hit.rule==='E1')).toBe(true);
+   }
+  });
   it('Commander CI登记只替换已审stage成员，未知登记不能继承只读资格',()=>{
    const member='existing-ops-stage-source.js';
    expect(Object.keys(COMMANDER_CI_COHORT)).toEqual(Object.keys(COHORTS[4]));
