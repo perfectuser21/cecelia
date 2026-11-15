@@ -1,6 +1,8 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.445.224
+**Brain 版本**: 1.445.225
+
+Commander 通用底座在恢复前冻结核对运行身份，监督器按事件循环心跳识别卡死并有界收尾；current 软链接入口正常执行，数据库 URL options 保留声明 schema 与用户超时设置。
 
 清退旧 Harness 故障演习 CLI、每日 Tick 调度及专属测试/smoke，历史演习记录与 migration 保留。删除已无源模块的方向规划 smoke、失效旧 baseline 与重复 evaluator 包装，以及退役 autoblock 空壳和专属测试；同步 smoke 执行清单。现役 Linux 资源/机器接入验证、蓝绿 Tick 隔离、正常派发和资源回收保留。
 
