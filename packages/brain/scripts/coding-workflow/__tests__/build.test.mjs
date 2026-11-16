@@ -27,16 +27,43 @@ describe('build 活动（子进程 + 假 claude + 真实 git 提交）', () => {
     worktree = path.join(root, 'wt');
     fs.mkdirSync(worktree);
     initCommittableRepo(worktree, path.join(root, 'no-hooks'));
-    const smokeDir = path.join(worktree, 'packages/brain/scripts/smoke');
-    const smokeConfig = path.join(worktree, 'packages/brain/config/smoke');
-    fs.mkdirSync(smokeDir, { recursive: true });
-    fs.mkdirSync(smokeConfig, { recursive: true });
-    fs.writeFileSync(path.join(smokeDir, 'build-fixture-smoke.sh'), '#!/usr/bin/env bash\nset -euo pipefail\nexit 0\n');
-    fs.writeFileSync(path.join(smokeConfig, 'smoke-allowlist.txt'), 'build-fixture-smoke.sh\n');
-    fs.writeFileSync(path.join(smokeConfig, 'smoke-denylist.txt'), '# 无禁止项\n');
-    fs.writeFileSync(path.join(smokeConfig, 'smoke-debt.txt'), '# 无待归类项\n');
-    git(worktree, 'add', 'packages/brain');
-    git(worktree, 'commit', '-qm', 'test: seed private smoke registration');
+    // 产品仓库I/O边界：默认检查仍由真实runPrechecks逐项spawn，不覆盖清单或执行器。
+    // 五个仓内入口记录真实参数/cwd；第六项继续执行可信来源的真实版本增量脚本。
+    const recorder = path.join(worktree, 'scripts/build-fixture-check.cjs');
+    fs.mkdirSync(path.dirname(recorder), { recursive: true });
+    fs.writeFileSync(recorder, `
+const fs = require('node:fs');
+const assert = require('node:assert/strict');
+module.exports = (name, args) => {
+  assert.equal(process.cwd(), ${JSON.stringify(fs.realpathSync(worktree))});
+  assert.deepEqual(args, name === 'current-ci-scripts' ? ['scripts'] : []);
+  fs.appendFileSync(${JSON.stringify(path.join(root, 'precheck-executions.jsonl'))}, JSON.stringify({ name, args, cwd: process.cwd() }) + '\\n');
+  if (process.env.BUILD_FIXTURE_PRECHECK_FAIL === name) {
+    console.error('controlled required check failed: ' + name);
+    process.exit(23);
+  }
+};
+if (require.main === module) module.exports(process.argv[2], process.argv.slice(3));
+`);
+    const entries = [
+      ['facts-check', 'scripts/facts-check.mjs'],
+      ['version-sync', 'scripts/check-version-sync.sh'],
+      ['dod-mapping', 'scripts/devgate/check-dod-mapping.cjs'],
+      ['current-ci-scripts', 'scripts/ci/run-basic-check.mjs'],
+      ['smoke-write-guard', 'packages/brain/scripts/smoke/__tests__/smoke-production-guard.node-test.mjs'],
+    ];
+    for (const [name, relative] of entries) {
+      const target = path.join(worktree, relative);
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      const modulePath = './' + path.relative(path.dirname(target), recorder).split(path.sep).join('/');
+      const call = `check(${JSON.stringify(name)}, process.argv.slice(2));`;
+      fs.writeFileSync(target, relative.endsWith('.sh')
+        ? '#!/usr/bin/env bash\nset -euo pipefail\nnode scripts/build-fixture-check.cjs version-sync "$@"\n'
+        : relative.endsWith('.cjs') ? `const check = require(${JSON.stringify(modulePath)}); ${call}\n`
+          : `import check from ${JSON.stringify(modulePath)}; ${call}\n`);
+    }
+    git(worktree, 'add', 'scripts', 'packages/brain');
+    git(worktree, 'commit', '-qm', 'test: seed isolated required precheck entrypoints');
     // 真实版本门需要固定基线；本fixture的构建只改根src，不改Brain源码。
     git(worktree, 'update-ref', 'refs/remotes/origin/main', 'HEAD');
     sprintAbs = path.join(worktree, 'sprints/s1');
@@ -60,6 +87,10 @@ describe('build 活动（子进程 + 假 claude + 真实 git 提交）', () => {
     runActivityProcess(ENTRY, input(patch), { CODING_WF_PROVIDER: 'claude', CODING_WF_CLAUDE_BIN: FAKE_CLAUDE, FAKE_CLAUDE_MODE: mode, ...extraEnv });
   const buildFile = () => path.join(sprintAbs, '03-build.md');
   const head = () => git(worktree, 'rev-parse', 'HEAD').trim();
+  const precheckExecutions = () => fs.readFileSync(path.join(root, 'precheck-executions.jsonl'), 'utf8')
+    .trim().split('\n').map(line => JSON.parse(line));
+  const expectedPrecheckExecutions = () => ['facts-check', 'version-sync', 'dod-mapping', 'current-ci-scripts', 'smoke-write-guard']
+    .map(name => ({ name, args: name === 'current-ci-scripts' ? ['scripts'] : [], cwd: fs.realpathSync(worktree) }));
 
   it('build 模型不能先提交控制器来源索引再让publish登记洗白', async () => {
     const r = await run('build-ok', {}, { FAKE_BUILD_EXTRA_FILE: '.implementation-source-relations.json' });
@@ -76,8 +107,9 @@ describe('build 活动（子进程 + 假 claude + 真实 git 提交）', () => {
     expect(r.stdout.trim().split('\n')).toHaveLength(1);
     const sha = head();
     expect(sha).not.toBe(before);
-    // 私有Smoke资源通过真实登记检查；版本门基于真实origin/main判定无Brain源码变更。
+    // 五个受控入口真实执行；版本门基于真实origin/main判定无Brain源码变更。
     expect(r.result.outputs).toEqual({ build_file: '03-build.md', build_commits: [sha], ci_precheck: { passed: true, rounds: 0, failures: [] } });
+    expect(precheckExecutions()).toEqual(expectedPrecheckExecutions());
 
     const fm = parseFrontmatter(fs.readFileSync(buildFile(), 'utf8'));
     expect(fm.data).toEqual({ task_id: TASK_ID, step: 'build', upstream: ['02-spec.md#S-1', '02-spec.md#S-2'] });
@@ -114,6 +146,28 @@ describe('build 活动（子进程 + 假 claude + 真实 git 提交）', () => {
     const expected = git(worktree, 'rev-list', '--reverse', 'HEAD~3..HEAD').trim().split('\n');
     expect(expected).toHaveLength(3);
     expect(r.result.outputs.build_commits).toEqual(expected);
+    expect(r.result.outputs.ci_precheck).toEqual({ passed: true, rounds: 0, failures: [] });
+    expect(precheckExecutions()).toEqual(expectedPrecheckExecutions());
+  });
+
+  it.each(['failed', 'missing'])('默认必需检查%s仍进入真实修复环且传播失败，不吞错或增加构建提交', async (failure) => {
+    if (failure === 'missing') fs.unlinkSync(path.join(worktree, 'scripts/facts-check.mjs'));
+    const before = head();
+    const r = await run('build-ok', {}, {
+      FAKE_CLAUDE_MODE_PRECHECK: 'precheck-noop',
+      BUILD_FIXTURE_PRECHECK_FAIL: failure === 'failed' ? 'facts-check' : '',
+      FAKE_PROMPT_LOG: path.join(root, 'required-precheck-prompt.txt'),
+    });
+    expect(r.result.status, r.stderr).toBe('completed');
+    expect(r.result.outputs.ci_precheck).toEqual({ passed: false, rounds: 2, failures: ['facts-check'] });
+    const commits = git(worktree, 'rev-list', '--reverse', `${before}..HEAD`).trim().split('\n');
+    expect(commits).toHaveLength(1);
+    expect(r.result.outputs.build_commits).toEqual(commits);
+    const expected = expectedPrecheckExecutions().filter(row => failure !== 'missing' || row.name !== 'facts-check');
+    expect(precheckExecutions()).toEqual([...expected, ...expected, ...expected]);
+    const prompt = fs.readFileSync(path.join(root, 'required-precheck-prompt.txt'), 'utf8');
+    expect(prompt).toContain('facts-check');
+    expect(prompt).toContain(failure === 'missing' ? '必需检查失败' : 'controlled required check failed: facts-check');
   });
 
   it('build-nocommit：HEAD 未前进 -> fatal build_no_commit', async () => {

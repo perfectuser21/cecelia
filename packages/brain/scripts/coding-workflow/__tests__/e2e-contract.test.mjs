@@ -89,8 +89,44 @@ describe('coding_spec 八活动契约端到端（通用执行器 + 假外部依�
     fs.writeFileSync(path.join(smokeConfig, 'smoke-allowlist.txt'), 'e2e-fixture-smoke.sh\n');
     fs.writeFileSync(path.join(smokeConfig, 'smoke-denylist.txt'), '# 无禁止项\n');
     fs.writeFileSync(path.join(smokeConfig, 'smoke-debt.txt'), '# 无待归类项\n');
-    git(worktree, 'add', 'packages/brain');
-    git(worktree, 'commit', '-q', '-m', 'test: seed private smoke registration');
+    // 隔离产品仓的检查入口；真实 defaultChecks/runPrechecks 仍逐项起子进程。
+    // 收据写到 worktree 外，避免它本身变成未提交文件；第六项保留真实版本门。
+    const entries = {
+      'facts-check': 'scripts/facts-check.mjs',
+      'version-sync': 'scripts/check-version-sync.sh',
+      'dod-mapping': 'scripts/devgate/check-dod-mapping.cjs',
+      'current-ci-scripts': 'scripts/ci/run-basic-check.mjs',
+      'smoke-write-guard': 'packages/brain/scripts/smoke/__tests__/smoke-production-guard.node-test.mjs',
+    };
+    const recorder = path.join(worktree, 'scripts/e2e-precheck.cjs');
+    fs.mkdirSync(path.dirname(recorder), { recursive: true });
+    fs.writeFileSync(recorder, `
+const fs = require('node:fs');
+const path = require('node:path');
+const assert = require('node:assert/strict');
+const entries = ${JSON.stringify(entries)};
+module.exports = (name, entry, args) => {
+  assert.equal(process.cwd(), ${JSON.stringify(fs.realpathSync(worktree))});
+  assert.equal(path.relative(process.cwd(), path.resolve(entry)), entries[name]);
+  assert.deepEqual(args, name === 'current-ci-scripts' ? ['scripts'] : []);
+  const testRunner = process.env.NODE_TEST_CONTEXT ?? null;
+  if (name === 'smoke-write-guard') assert.equal(testRunner, 'child-v8');
+  fs.appendFileSync(${JSON.stringify(path.join(root, 'prechecks.jsonl'))}, JSON.stringify({ name, entry: entries[name], args, cwd: process.cwd(), testRunner }) + '\\n');
+};
+if (require.main === module) module.exports(process.argv[2], process.argv[3], process.argv.slice(4));
+`);
+    for (const [name, relative] of Object.entries(entries)) {
+      const target = path.join(worktree, relative);
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      const modulePath = './' + path.relative(path.dirname(target), recorder).split(path.sep).join('/');
+      const call = `check(${JSON.stringify(name)}, process.argv[1], process.argv.slice(2));`;
+      fs.writeFileSync(target, relative.endsWith('.sh')
+        ? '#!/usr/bin/env bash\nset -euo pipefail\nnode scripts/e2e-precheck.cjs version-sync "$0" "$@"\n'
+        : relative.endsWith('.cjs') ? `const check = require(${JSON.stringify(modulePath)}); ${call}\n`
+          : `import check from ${JSON.stringify(modulePath)}; ${call}\n`);
+    }
+    git(worktree, 'add', 'packages/brain', 'scripts');
+    git(worktree, 'commit', '-q', '-m', 'test: seed private required precheck entrypoints');
     // 真实版本门必须能对比固定基线；假 build 只改根 src，不涉及 Brain 源码。
     git(worktree, 'update-ref', 'refs/remotes/origin/main', 'HEAD');
 
@@ -153,6 +189,20 @@ describe('coding_spec 八活动契约端到端（通用执行器 + 假外部依�
   const ghCalls = () => (fs.existsSync(ghLog)
     ? fs.readFileSync(ghLog, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l))
     : []);
+  const expectPrechecksExecuted = () => {
+    const receipts = fs.readFileSync(path.join(root, 'prechecks.jsonl'), 'utf8')
+      .trim().split('\n').map(line => JSON.parse(line));
+    expect(receipts).toEqual([
+      ['facts-check', 'scripts/facts-check.mjs'],
+      ['version-sync', 'scripts/check-version-sync.sh'],
+      ['dod-mapping', 'scripts/devgate/check-dod-mapping.cjs'],
+      ['current-ci-scripts', 'scripts/ci/run-basic-check.mjs'],
+      ['smoke-write-guard', 'packages/brain/scripts/smoke/__tests__/smoke-production-guard.node-test.mjs'],
+    ].map(([name, entry]) => ({
+      name, entry, args: name === 'current-ci-scripts' ? ['scripts'] : [],
+      cwd: fs.realpathSync(worktree), testRunner: name === 'smoke-write-guard' ? 'child-v8' : null,
+    })));
+  };
 
   it('完整八活动 completed：build 真实提交、verify 全 PASS，PR 正文含验收摘要，Brain 恰好收到一次 PATCH', async () => {
     const r = await runCli({ contract, input: runInput() }, envFor('verify-pass'));
@@ -187,6 +237,7 @@ describe('coding_spec 八活动契约端到端（通用执行器 + 假外部依�
     expect(build.build_file).toBe('03-build.md');
     expect(build.build_commits).toHaveLength(1);
     expect(build.ci_precheck).toEqual({ passed: true, rounds: 0, failures: [] });
+    expectPrechecksExecuted();
     expect(r.result.activities.find((a) => a.key === 'build').attempts.at(-1).transport.stderr).not.toContain('FAKE_ROLE: ci_precheck_fix');
     expect(r.result.outputs.verified_ids).toEqual(['I-1', 'I-2']);
     // md 链指纹贯穿全程，build/verify 的防篡改检查都实际比对过
@@ -222,6 +273,7 @@ describe('coding_spec 八活动契约端到端（通用执行器 + 假外部依�
 
     const build = r.result.activities.find((a) => a.key === 'build').attempts.at(-1).outputs;
     expect(build.ci_precheck).toEqual({ passed: true, rounds: 0, failures: [] });
+    expectPrechecksExecuted();
     expect(r.result.activities.find((a) => a.key === 'build').attempts.at(-1).transport.stderr).not.toContain('FAKE_ROLE: ci_precheck_fix');
     const verify = r.result.activities.find((a) => a.key === 'verify');
     expect(verify.status).toBe('failed');
