@@ -106,7 +106,7 @@ async function scenario(name){
 try{
   assert.equal((await pool.query('SELECT current_database() AS db')).rows[0].db,'cecelia_scratch');
   await pool.query(`CREATE SCHEMA ${schema}`);
-  const db=await pool.connect();try{await db.query(`SET search_path TO ${schema}`);await db.query(fs.readFileSync(path.join(brain,'migrations/558_commander_activity_actions.sql'),'utf8'));}finally{db.release();}
+  const db=await pool.connect();try{await db.query(`SET search_path TO ${schema}`);await db.query(fs.readFileSync(path.join(brain,'migrations/558_commander_activity_actions.sql'),'utf8'));await db.query(fs.readFileSync(path.join(brain,'migrations/559_commander_activity_attempts.sql'),'utf8'));}finally{db.release();}
   const {createCommanderActionStore}=await import('../../src/durable/commander-action-store.js');
   const storePool=new pg.Pool({connectionString:url.href,options:`-c search_path=${schema}`});
   try{

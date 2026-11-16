@@ -52,7 +52,7 @@ async function dbState(f){return (await pool.query('SELECT workflow_uuid,status,
 beforeAll(async()=>{
  if(enabled&&process.env.CI==='true'){
   await pool.query('CREATE SCHEMA IF NOT EXISTS commander_workflow_actions');const db=await pool.connect();
-  try{await db.query('SET search_path TO commander_workflow_actions');await db.query(fs.readFileSync(path.join(brain,'migrations/558_commander_activity_actions.sql'),'utf8'));}finally{db.release();}
+  try{await db.query('SET search_path TO commander_workflow_actions');await db.query(fs.readFileSync(path.join(brain,'migrations/558_commander_activity_actions.sql'),'utf8'));await db.query(fs.readFileSync(path.join(brain,'migrations/559_commander_activity_attempts.sql'),'utf8'));}finally{db.release();}
  }
 });
 afterAll(async()=>{

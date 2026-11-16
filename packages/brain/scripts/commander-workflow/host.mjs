@@ -19,7 +19,7 @@ import {startHostHeartbeat} from './host-heartbeat.mjs';
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const runtimeFiles = ['runtime-support.mjs','host-heartbeat.mjs','supervisor-closeout.mjs','supervise.mjs','skill-adapter.mjs','skill-worker.mjs','skill-protocol.mjs','session-group.mjs','../../src/orchestrator/activity-supervisor.js','../../src/orchestrator/activity-supervisor-state.cjs','host.mjs','../../src/durable/commander-workflow.js','../../src/durable/commander-action-store.js',
   '../../src/orchestrator/commander-usage-ledger.js','../../src/orchestrator/commander-usage-ledger-summary.js',
-  '../../src/orchestrator/commander-decision.js','../../src/orchestrator/commander-codex.js',
+  '../../src/orchestrator/commander-repair.js','../../src/orchestrator/commander-decision.js','../../src/orchestrator/commander-codex.js',
   '../coding-workflow/lib/codex-judge.mjs','../coding-workflow/lib/claude.mjs','../coding-workflow/lib/codex-session.mjs',
   '../coding-workflow/lib/provenance-path.mjs','../coding-workflow/lib/preview-bridge.mjs','../../../../package-lock.json',
   '../../src/orchestrator/activity-runtime.js','../../src/orchestrator/activity-contract.js','../../src/orchestrator/activity-process.js','../../src/orchestrator/activity-judgment.js'];

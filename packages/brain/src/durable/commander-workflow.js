@@ -2,6 +2,7 @@ import {DBOS} from '@dbos-inc/dbos-sdk';
 import {activityStatus,activityRoute} from '../orchestrator/activity-judgment.js';
 import {runSingleActivity} from '../orchestrator/activity-runtime.js';
 import {normalizeCommanderRun, decisionRequest, parseCommanderDecision, actionIdentity, digest} from '../orchestrator/commander-decision.js';
+import {repairFeedback, failureDecisionRequest} from '../orchestrator/commander-repair.js';
 let runtime;
 export function configureCommanderWorkflow(value) {
   if (DBOS.isInitialized() || !value || !/^[a-f0-9]{64}$/.test(value.revision ?? '')
@@ -46,19 +47,19 @@ function unverifiedReason(receipt){
   const reason=receipt?.activities?.[0]?.attempts?.at(-1)?.reason_code;
   return /^usage_(?:(?:token|cost)_budget_(?:exceeded|unknown)|ledger_busy)$/.test(reason??'')?reason:'commander_activity_unverified';
 }
-const execute = DBOS.registerStep(async (run, key, context) => {
+const execute = DBOS.registerStep(async (run, key, context, attempt = 1, feedback, activityDeadline) => {
   const env = environment(run);
   const activity = run.contract.activities.find(a => a.key === key);
   const phaseDeadline=activity.runtime.phase==='finalize'?run.cleanup_deadline_ms:run.deadline_ms;
   await env.verifySource();
-  const identity=actionIdentity(run,key,context);
-  const requestedDeadline=Math.min(phaseDeadline,Date.now()+activity.budget.max_duration_s*1000);
+  const identity=actionIdentity(run,key,context,attempt,feedback);
+  const requestedDeadline=activityDeadline??Math.min(phaseDeadline,Date.now()+activity.budget.max_duration_s*1000);
   const reservation = await env.actionStore.reserve(identity,{deadline_ms:requestedDeadline});
   const deadline = reservation.record.deadline_ms;
-  if (!Number.isSafeInteger(deadline) || deadline > phaseDeadline || deadline <= 0) throw Error('commander_action_deadline_invalid');
+  if (!Number.isSafeInteger(deadline) || deadline > phaseDeadline || deadline <= 0 || (activityDeadline !== undefined && deadline !== activityDeadline)) throw Error('commander_action_deadline_invalid');
   if (reservation.record.state === 'settled') {
     const receipt=reservation.record.result;
-    return {receipt,safe:accepted(receipt,key)||receipt.execution_stopped===true,...(!accepted(receipt,key)?{error:unverifiedReason(receipt)}:{})};
+    return {receipt,deadline_ms:deadline,safe:accepted(receipt,key)||receipt.execution_stopped===true,...(!accepted(receipt,key)?{error:unverifiedReason(receipt)}:{})};
   }
   const recovering = !reservation.created;
   if(Date.now()>=deadline){
@@ -69,7 +70,13 @@ const execute = DBOS.registerStep(async (run, key, context) => {
   const receipt = await runSingleActivity(run.contract,run.input,{
     activityKey:key,context,deadlineMs:deadline,cwd:env.cwd,
     checkActivity:env.checkActivity,onEvent:env.onEvent,
-    prepareInput:async(_a,input) => ({...input,action_id:identity.action_id,...(recovering ? {recovery_mode:'readback_only'} : {})}),
+    prepareInput:async(_a,input) => {
+      // 反馈与轮数仅来自上一轮持久化验收，禁止业务输入冒充控制信。
+      const clean={...input};
+      if(activity.runtime.executor_kind!=='code'){delete clean.checker_feedback;delete clean.execution_attempt;}
+      return {...clean,action_id:identity.action_id,...(activity.runtime.executor_kind==='agent'?{execution_attempt:attempt}:{}),
+        ...(feedback?{checker_feedback:structuredClone(feedback)}:{}),...(recovering?{recovery_mode:'readback_only'}:{})};
+    },
     executeActivity:async(a,input,options) => {
       invoked=true;
       if (!recovering) {
@@ -86,12 +93,12 @@ const execute = DBOS.registerStep(async (run, key, context) => {
     },
   });
   const safe=accepted(receipt,key)||(!invoked&&!recovering)||stopped;
-  if(receipt.execution_unknown||receipt.activities.some(a=>a.attempts.some(x=>x.external_effect==='unknown')))return {error:'commander_activity_unverified',receipt,safe:false};
+  if(receipt.execution_unknown||receipt.activities.some(a=>a.attempts.some(x=>x.external_effect==='unknown')))return {error:'commander_activity_unverified',receipt,deadline_ms:deadline,safe:false};
   if(safe)receipt.execution_stopped=true;
-  if(Date.now()>=deadline)return {error:'commander_deadline_exceeded',receipt,safe};
-  try {await env.verifySource();}catch{return {error:'commander_source_unavailable',receipt,safe};}
+  if(Date.now()>=deadline)return {error:'commander_deadline_exceeded',receipt,deadline_ms:deadline,safe};
+  try {await env.verifySource();}catch{return {error:'commander_source_unavailable',receipt,deadline_ms:deadline,safe};}
   if(safe)await env.actionStore.settle(identity,receipt);
-  return {receipt,safe,...(!accepted(receipt,key)?{error:unverifiedReason(receipt)}:{})};
+  return {receipt,deadline_ms:deadline,safe,...(!accepted(receipt,key)?{error:unverifiedReason(receipt)}:{})};
 },{name:'commanderFoundationActivity'});
 
 const verifyCompletion = DBOS.registerStep(async run => {
@@ -109,11 +116,31 @@ const recordRunReport = DBOS.registerStep(async (run, output) => {
 },{name:'commanderFoundationRunReport'});
 
 const workflow = DBOS.registerWorkflow(async value => {
-  const run=normalizeCommanderRun(value),receipts=[],context=structuredClone(run.input);
+  const run=normalizeCommanderRun(value),receipts=[],attemptHistory=[],context=structuredClone(run.input);
   const sources=run.contract.activities.filter(a=>a.runtime.phase==='source');
   const finalizer=run.contract.activities.find(a=>a.runtime.phase==='finalize');
-  let reason=null,safe=true,stopped=false;
-  async function perform(a){try{return await execute(run,a.key,context);}catch(error){return {error:/^usage_(?:(?:token|cost)_budget|budget|ledger)_/.test(error.message)?error.message:'commander_activity_unavailable',safe:false};}}
+  let reason=null,safe=true,stopped=false,escalation;
+  async function perform(a,attempt=1,feedback,deadline){
+    try{return await execute(run,a.key,context,attempt,feedback,deadline);}
+    catch(error){return {error:/^usage_(?:(?:token|cost)_budget|budget|ledger)_/.test(error.message)?error.message:'commander_activity_unavailable',safe:false};}
+  }
+  async function performWithRepair(a){
+    let feedback,deadline;
+    const limit=a.runtime.checker_repair?.max_attempts??1;
+    for(let attempt=1;attempt<=limit;attempt++){
+      const outcome=await perform(a,attempt,feedback,deadline);
+      if(outcome.receipt)attemptHistory.push(outcome.receipt);
+      if(!outcome.error)return outcome;
+      deadline??=outcome.deadline_ms;
+      const nextFeedback=repairFeedback(a,outcome,attempt);
+      if(nextFeedback&&attempt<limit&&Number.isSafeInteger(deadline)){feedback=nextFeedback;continue;}
+      const failureReason=nextFeedback&&attempt===limit&&limit>1?'checker_repair_exhausted':outcome.error;
+      const request=failureDecisionRequest(run,receipts,a,attemptHistory,outcome,failureReason);
+      // 把完整问题交给Commander；此处不能放宽契约、重置次数或放行下游。
+      escalation=await decide(run,request);
+      return {...outcome,error:failureReason};
+    }
+  }
   for(let sequence=0;sequence<=sources.length;sequence++){
     const next=stopped?null:(sources[sequence]??null);
     const request=decisionRequest(run,receipts,next);let response;
@@ -122,9 +149,9 @@ const workflow = DBOS.registerWorkflow(async value => {
     const choice=response.decision;
     if(choice.action==='pause'){reason='commander_paused';break;}
     if(choice.action==='complete')break;
-    const outcome=await perform(next);safe=outcome.safe===true;
-    if(outcome.receipt)receipts.push(outcome.receipt);
+    const outcome=await performWithRepair(next);safe=outcome.safe===true;
     if(outcome.error){reason=outcome.error;break;}
+    receipts.push(outcome.receipt);
     Object.assign(context,structuredClone(outcome.receipt.outputs));
     const result=outcome.receipt.activities[0].attempts[0];
     const route=activityRoute(run.contract,next,activityStatus(result),result,true);
@@ -133,14 +160,14 @@ const workflow = DBOS.registerWorkflow(async value => {
   let cleanupStatus;
   if(finalizer){
     if(!safe)cleanupStatus='blocked';else {
-      const outcome=await perform(finalizer);if(outcome.receipt)receipts.push(outcome.receipt);
+      const outcome=await perform(finalizer);if(outcome.receipt){receipts.push(outcome.receipt);attemptHistory.push(outcome.receipt);}
       cleanupStatus=!outcome.error&&accepted(outcome.receipt,finalizer.key)?'completed':'needs_review';
       if(cleanupStatus!=='completed')reason ||= outcome.error??'commander_cleanup_unverified';
     }
   }
   if(!reason){const verification=await verifyCompletion(run);if(verification.error){reason=verification.error;if(finalizer)cleanupStatus='needs_review';}}
   const output=reason?review(run,reason,receipts):{task_id:run.task_id,run_id:run.run_id,status:'completed',business_pass:true,outputs:Object.assign({},...receipts.map(r=>r.outputs)),receipts};
-  const result={...output,...(cleanupStatus?{cleanup_status:cleanupStatus}:{})};
+  const result={...output,attempt_history:attemptHistory,...(escalation?{escalation}:{}),...(cleanupStatus?{cleanup_status:cleanupStatus}:{})};
   if(environment(run).ledger)result.run_report=await recordRunReport(run,result);
   return result;
 },{name:'commanderFoundationWorkflow'});

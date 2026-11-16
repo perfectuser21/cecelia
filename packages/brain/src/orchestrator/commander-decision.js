@@ -35,6 +35,12 @@ export function normalizeCommanderRun(value) {
   if (normalized.playbook !== undefined) normalized.playbook = normalizeCommanderPlaybook(normalized.playbook);
   if (contract.activities.length > 100 || contract.activities.some(a => !['source','finalize'].includes(a.runtime.phase)
     || a.runtime.interactive || a.runtime.detached || (a.runtime.max_attempts ?? 1) !== 1 || a.runtime.recovery_safe)) fail('commander_activity_unsupported');
+  for (const a of contract.activities) {
+    const policy=a.runtime.checker_repair;
+    if (policy !== undefined && (!object(policy) || Object.keys(policy).some(k=>!['max_attempts','retry_safe'].includes(k))
+      || ![2,3].includes(policy.max_attempts) || policy.retry_safe!==true
+      || a.runtime.executor_kind!=='agent' || a.runtime.phase!=='source')) fail('commander_repair_policy_invalid');
+  }
   const finalizers = contract.activities.filter(a => a.runtime.phase === 'finalize');
   if (finalizers.length > 1 || finalizers.length && contract.activities.at(-1) !== finalizers[0]) fail('commander_activity_unsupported');
   if (finalizers.length && (!Number.isSafeInteger(value.cleanup_deadline_ms) || value.cleanup_deadline_ms <= value.deadline_ms)) fail('commander_cleanup_deadline_invalid');
@@ -62,9 +68,12 @@ export function parseCommanderDecision(value, request) {
     || !request.allowed_actions.some(a => a.action === value.action && a.activity_key === value.activity_key)) fail('commander_decision_rejected');
   return canonical(value);
 }
-export function actionIdentity(run, key, context) {
+export function actionIdentity(run, key, context, attempt = 1, feedback) {
+  if (!Number.isSafeInteger(attempt) || attempt < 1 || attempt > 3) fail('commander_action_attempt_invalid');
   return {task_id:run.task_id,run_id:run.run_id,activity_key:key,definition_sha256:run.definition_sha256,
-    action_id:digest({run_id:run.run_id,activity_key:key}),input_sha256:digest({input:run.input,context})};
+    ...(attempt > 1 ? {attempt} : {}),
+    action_id:digest({run_id:run.run_id,activity_key:key,...(attempt > 1 ? {attempt} : {})}),
+    input_sha256:digest({input:run.input,context,...(attempt > 1 ? {attempt,feedback} : {})})};
 }
 
 /** 只给模型的展示投影；调用者保留原始run/input用于身份、执行和独立检查。 */
