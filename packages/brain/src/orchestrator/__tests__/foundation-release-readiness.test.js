@@ -1,5 +1,10 @@
 import {afterEach,describe,it,expect,vi} from 'vitest';
 import fs from 'node:fs';
+import {execFileSync} from 'node:child_process';
+import {prepareDefinitionFreeze,assertPreparedFreeze} from '../../workflow-authoring/freeze.js';
+import {validateDefinition} from '../../workflow-authoring/registration.js';
+import {compileAssemblyPlan} from '../../workflow-authoring/assembly-plan.js';
+import {validateFoundationInput} from '../../workflow-foundation/contracts.js';
 import os from 'node:os';
 import path from 'node:path';
 import {createHash,randomUUID} from 'node:crypto';
@@ -100,5 +105,31 @@ describe('Foundation真实发布就绪报告',()=>{
   for(const [entry,digest] of Object.entries(doc.profile.files)){expect(entry.startsWith(folder+'/')).toBe(true);expect(hash(fs.readFileSync(path.join(repo,entry)))).toBe(digest);}
   for(const a of contract.activities){expect(doc.profile.files[a.runtime.entry]).toBeDefined();expect(doc.profile.skill_runtime.activities[a.key].checker.command).toBe('@node');}
   expect(doc.profile.cwd).toBeUndefined();expect(doc.profile.env).toBeUndefined();expect(doc.profile.codex_auth).toBeUndefined();
+ });
+});
+
+describe('真实注册定义与固定Git执行包',()=>{
+ const repoRoot=fileURLToPath(new URL('../../../../../',import.meta.url)),folder='packages/brain/scripts/commander-workflow/operations/release-readiness',revision='84a75cf8ae537951c8411aff096e31cbf1d507de';
+ const load=()=>JSON.parse(fs.readFileSync(path.join(repoRoot,folder,'workflow.json')));
+ const source={repo:'perfectuser21/cecelia',ref:folder+'/workflow.json',revision:'e'.repeat(40)};
+ const gitRead=s=>execFileSync('git',['show',s.revision+':'+s.path],{cwd:repoRoot,encoding:'utf8'});
+ it('注册、装配、冻结与profile解析读取同一固定执行包，源文件不自引用',async()=>{
+  const document=load(),definition={...document,source};expect(document.source).toBeUndefined();expect(validateDefinition(definition)).toBe(true);expect(compileAssemblyPlan(definition).structurally_complete).toBe(true);
+  expect(definition.runtime).toMatchObject({kind:'commander-foundation-v1',timeout_ms:300000,cleanup_timeout_ms:120000,commander_timeout_ms:90000});
+  expect(definition.capability_id).toBe('2fa4d085-1451-4f3f-8fa1-b6d4bacdb1b6');expect(definition.activities.map(a=>a.key)).toEqual(['report','cleanup']);
+  const readFile=vi.fn(async s=>{if(s.path===source.ref){expect(s.revision).toBe(source.revision);return JSON.stringify(document);}expect(s.repo).toBe(source.repo);expect(s.revision).toBe(revision);return gitRead(s);});
+  const proof=await prepareDefinitionFreeze(definition,{readFile});expect(()=>assertPreparedFreeze(definition,proof)).not.toThrow();
+  const components=[...proof.bindings.values()].flat();expect(components.every(c=>c.status==='verified')).toBe(true);
+  const profile=gitRead(definition.runtime.profile_ref),parsed=parseFoundationProfile(profile,definition.runtime,{payload:{components}},{payload:{contract:definition,activities:definition.activities.map(a=>({slot_key:a.key}))}});
+  expect(new Set(components.map(c=>c.path))).toEqual(new Set([definition.runtime.profile_ref.path,...Object.keys(parsed.profile.files)]));
+  for(const a of definition.activities){expect(a.steps).toHaveLength(1);expect(a.steps[0].dod.readback.type).toBe('file');expect(a.steps[0].implementation.revision).toBe(revision);}
+  expect(()=>validateFoundationInput(definition.runtime,{expected_brain_sha:'a'.repeat(40),expected_brain_version:'1.445.234'})).not.toThrow();
+  for(const input of [{expected_brain_sha:'main',expected_brain_version:'1.445.234'},{expected_brain_sha:'a'.repeat(40)},{expected_brain_sha:'a'.repeat(40),expected_brain_version:'1.445.234',_readiness:{root:'/foreign'}}])expect(()=>validateFoundationInput(definition.runtime,input)).toThrow();
+ });
+ it('被替换的固定实现与丢失Step读回均不能取得冻结证明',async()=>{
+  const document=load(),definition={...document,source};
+  await expect(prepareDefinitionFreeze(definition,{readFile:async s=>s.path===source.ref?JSON.stringify(document):gitRead(s)+'\n// tampered'})).rejects.toThrow(/digest/);
+  delete document.activities[0].steps[0].dod.readback;
+  await expect(prepareDefinitionFreeze({...document,source},{readFile:async s=>s.path===source.ref?JSON.stringify(document):gitRead(s)})).rejects.toThrow('step_readback_missing');
  });
 });
