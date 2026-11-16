@@ -19,15 +19,30 @@ test('真实监督进程执行工具worker，下一活动续同thread且只传�
  const checker={command:process.execPath,command_sha256:sha(process.execPath),entry:'check.cjs',start_checks:['authority'],required_checks:['product']};
  const profile={cwd:root,files:{'skill.txt':sha(path.join(root,'skill.txt')),'tools.txt':sha(path.join(root,'tools.txt')),'check.cjs':sha(path.join(root,'check.cjs'))},skill_runtime:{control_dir:'control',tools:'tools.txt',codex:{command:process.execPath,command_sha256:sha(process.execPath),args:[path.join(root,'codex.cjs')]},activities:{one:{skill:'skill.txt',checker},two:{skill:'skill.txt',checker}}}};
  const hashes=Object.fromEntries(Array.from({length:317},(_,i)=>['/frozen/program-'+i+'.mjs','a'.repeat(64)]));
- const run={task_id:'task',run_id:'run',input:{run_tag:'tag',keyword:'客户关键词',verification:{runtime_sha256:hashes,policy_version:29}},contract:{workflow:'fixture'}};
- try{const runtime=await createRuntime({profile,run});for(const key of ['one','two']){
-  const activity={key,budget:{max_duration_s:10,heartbeat_s:1},runtime:{phase:'source',protocol:'json-stdio-v1',entry:'unused'}};
+ const run={task_id:'task',run_id:'run',input:{run_tag:'tag',keyword:'客户关键词',verification:{runtime_sha256:hashes,policy_version:29}},contract:{workflow:'fixture'},playbook:{schema_version:1,content:'仅供Commander的方法'}};
+ const activities=['one','two'].map(key=>({key,acceptance:[key+'独立验收标准'],budget:{max_duration_s:10,heartbeat_s:1},runtime:{phase:'source',protocol:'json-stdio-v1',entry:'unused'}}));
+ run.contract.activities=structuredClone(activities);
+ try{const runtime=await createRuntime({profile,run});for(const frozen of activities){
+  // activity-runtime会按剩余时间缩短执行预算，不能冒充原冻结契约。
+  const activity={...frozen,budget:{...frozen.budget,max_duration_s:6}}, {key}=activity;
   const identity={task_id:'task',run_id:'run',activity_key:key,action_id:key},input={run_tag:'tag'};
   const output=await runtime.executeActivity(activity,input,{identity,cwd:root,deadlineMs:Date.now()+10000});
   expect(output.outputs).toEqual({verified:42});expect(output.execution_stopped).toBe(true);
   expect((await runtime.inspectActivity(activity,input,{identity})).result.outputs).toEqual({verified:42});
  }
  const calls=fs.readFileSync(path.join(root,'calls.jsonl'),'utf8').trim().split('\n').map(JSON.parse);expect(calls).toHaveLength(2);expect(calls[0]).not.toContain('resume');expect(calls[1]).toContain('resume');expect(calls[1]).toContain('same-thread');const envs=fs.readFileSync(path.join(root,'envs.jsonl'),'utf8').trim().split('\n').map(JSON.parse);expect(envs.map(e=>e.key)).toEqual(['one','two']);expect(JSON.parse(fs.readFileSync(envs[1].input,'utf8')).identity.activity_key).toBe('two');const fullInput=JSON.parse(fs.readFileSync(envs[1].input,'utf8'));expect(fullInput.context.verification.runtime_sha256).toEqual(hashes);const prompts=fs.readFileSync(path.join(root,'prompts.jsonl'),'utf8').trim().split('\n').map(JSON.parse);for(const prompt of prompts){expect(prompt).not.toContain('/frozen/program-316.mjs');expect(prompt).toContain('客户关键词');expect(prompt).toContain('runtime_sha256_not_inlined');}expect(prompts[1]).toContain(envs[1].input);
+ for(let index=0;index<activities.length;index++){
+  const current=activities[index],other=activities[1-index];
+  expect(JSON.parse(fs.readFileSync(envs[index].input,'utf8')).activity_contract).toEqual(current);
+  expect(prompts[index]).toContain(JSON.stringify(current));
+  expect(prompts[index]).not.toContain(other.acceptance[0]);
+  expect(prompts[index]).not.toContain(run.playbook.content);
+  expect(prompts[index]).toContain('Activity Contract优先于Skill');
+  const directory=path.join(root,'control','run','checks');
+  const checks=fs.readdirSync(directory).map(file=>JSON.parse(fs.readFileSync(path.join(directory,file),'utf8')).request).filter(check=>check.activity===current.key);
+  expect(checks.length).toBeGreaterThanOrEqual(2);
+  for(const check of checks)expect(check.activity_contract).toEqual(current);
+ }
  }finally{fs.rmSync(root,{recursive:true,force:true});}
 },20000);
 

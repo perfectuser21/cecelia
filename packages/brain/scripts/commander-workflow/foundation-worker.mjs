@@ -10,7 +10,7 @@ import {digest} from '../../src/orchestrator/commander-decision.js';
 const fail=reason=>{throw Error('foundation_worker_'+reason);};
 const reasonCode=error=>/^[A-Za-z0-9_.-]{1,150}$/.test(error?.message??'')?error.message:'foundation_worker_failed';
 const READY_REJECTIONS=new Set(['foundation_deadline_exceeded','foundation_definition_changed','foundation_manifest_identity_conflict',
- 'foundation_profile_invalid','foundation_profile_digest_mismatch','foundation_profile_paths_invalid','foundation_profile_unbound',
+ 'foundation_profile_invalid','foundation_playbook_invalid','foundation_profile_digest_mismatch','foundation_profile_paths_invalid','foundation_profile_unbound',
  'foundation_dependency_unbound','foundation_activity_binding_mismatch','foundation_activity_source_unfrozen',
  'foundation_workflow_identity_mismatch','foundation_runtime_revision_invalid','foundation_input_invalid']);
 const UUID=/^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;

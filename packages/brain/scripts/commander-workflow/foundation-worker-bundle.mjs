@@ -3,7 +3,7 @@ import path from 'node:path';
 import {createHash,randomUUID} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
 import {loadCommanderManifest} from './host.mjs';
-import {normalizeCommanderRun,digest,canonical} from '../../src/orchestrator/commander-decision.js';
+import {normalizeCommanderRun,normalizeCommanderPlaybook,digest,canonical} from '../../src/orchestrator/commander-decision.js';
 import {normalizeCodexAuth} from '../coding-workflow/lib/codex-auth.mjs';
 const UUID=/^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
 const HASH=/^[a-f0-9]{64}$/;
@@ -95,7 +95,8 @@ export function prepareFoundationJob(job,config){
  const component=(file,sha)=>components.some(c=>['code','skill'].includes(c.kind)&&c.repo===ref.repo&&c.revision===ref.revision&&c.path===file&&c.digest==='sha256:'+sha);
  if(hash(read)!==ref.digest.slice(7)||!component(ref.path,hash(read)))fail('profile_unpublished');
  let document;try{document=JSON.parse(profileDocument);canonical(document);}catch{fail('profile_json_invalid');}
- if(!object(document)||document.schema_version!==1||Object.keys(document).some(k=>!['schema_version','contract','profile'].includes(k))||!object(document.profile)||!object(document.profile.files))fail('profile_invalid');
+ if(!object(document)||document.schema_version!==1||Object.keys(document).some(k=>!['schema_version','contract','playbook','profile'].includes(k))||!object(document.profile)||!object(document.profile.files))fail('profile_invalid');
+ if(document.playbook!==undefined){try{document.playbook=normalizeCommanderPlaybook(document.playbook);}catch{fail('playbook_invalid');}}
  rejectTemplateAuthority(document.profile);
  const profile=document.profile,files=Object.entries(profile.files);
  if(files.length<1||files.length>200||!['adapter','codex'].includes(profile.commander?.provider)||!profile.files[profile.adapter])fail('profile_invalid');
@@ -117,6 +118,7 @@ export function prepareFoundationJob(job,config){
   else immutableFile(name,bytes);
  }
  const baseRun={schema_version:1,task_id:job.task_id,run_id:job.run_id,contract:document.contract,input:job.input,deadline_ms:job.deadline_ms,commander_timeout_ms:job.runtime.commander_timeout_ms??60000,
+  ...(document.playbook===undefined?{}:{playbook:document.playbook}),
   ...(job.cleanup_deadline_ms===undefined?{}:{cleanup_deadline_ms:job.cleanup_deadline_ms})};
  const manifest={run:baseRun,profile:injectLocalConfiguration(profile,config,cwd)};
  const candidate=path.join(runDirectory,randomUUID()+'.preflight.json');

@@ -67,10 +67,11 @@ test.each(['host.mjs','supervise.mjs','report.mjs'])('软链入口%s不得静默
  const link=path.join(root,'linked-'+name);fs.symlinkSync(path.join(brain,'scripts/commander-workflow',name),link);
  const r=spawnSync(process.execPath,[link,'--invalid-regression-argument'],{encoding:'utf8',timeout:10000});expect(r.status).not.toBe(0);expect(r.stderr).toContain('usage:');
 });
-test.skipIf(!enabled).each(['input','task_id','contract'])('恢复前拒绝改变%s且不载入adapter',async field=>{
+test.skipIf(!enabled).each(['input','task_id','contract','playbook','playbook_removed'])('恢复前拒绝改变%s且不载入adapter',async field=>{
  const f=fixture('identity-'+field,30000);let first,second;
+ f.manifest.run.playbook={schema_version:1,content:'冻结原方法'};fs.writeFileSync(path.join(f.dir,'manifest.json'),JSON.stringify(f.manifest));
  try{first=launch(f,false,'first');await until(()=>fs.existsSync(path.join(f.dir,'started')));kill(first.pid);await until(()=>first.signalCode!==null||first.exitCode!==null);
- if(field==='input')f.manifest.run.input.target='changed';if(field==='task_id')f.manifest.run.task_id=randomUUID();if(field==='contract')f.manifest.run.contract.goal='changed';
+ if(field==='input')f.manifest.run.input.target='changed';if(field==='task_id')f.manifest.run.task_id=randomUUID();if(field==='contract')f.manifest.run.contract.goal='changed';if(field==='playbook')f.manifest.run.playbook.content='changed';if(field==='playbook_removed')delete f.manifest.run.playbook;
  fs.writeFileSync(path.join(f.dir,'manifest.json'),JSON.stringify(f.manifest));fs.writeFileSync(path.join(f.dir,'resume'),'1');second=launch(f,false,'second');await until(()=>second.signalCode!==null||second.exitCode!==null);
  expect(second.exitCode).toBe(1);expect(fs.readFileSync(path.join(f.dir,'second.log'),'utf8')).toContain('commander_identity_conflict');expect(fs.readFileSync(path.join(f.dir,'runtime'),'utf8')).toBe('x');expect(fs.readFileSync(path.join(f.dir,'effects.jsonl'),'utf8').trim().split('\n')).toHaveLength(1);expect((await dbState(f))[0].status).toBe('PENDING');
  }finally{kill(first?.pid);kill(second?.pid);}

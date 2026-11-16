@@ -5,6 +5,7 @@ import {createHash,randomUUID} from 'node:crypto';
 import {afterEach,expect,test,vi} from 'vitest';
 import {prepareFoundationJob} from '../../../scripts/commander-workflow/foundation-worker-bundle.mjs';
 import {runFoundationWorkerOnce,readWorkerConfig,createFoundationRequest} from '../../../scripts/commander-workflow/foundation-worker.mjs';
+import {parseFoundationProfile,preparedFoundationRun} from '../../workflow-foundation/contracts.js';
 const roots=[];const hash=data=>createHash('sha256').update(data).digest('hex');
 function fixture(){
  const root=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'foundation-worker-')));roots.push(root);
@@ -24,6 +25,16 @@ function fixture(){
  return {root,config,job,installed,text};
 }
 afterEach(()=>{vi.restoreAllMocks();for(const root of roots.splice(0))fs.rmSync(root,{recursive:true,force:true});});
+test('发布方法原文进入Worker冻结清单，与服务端ready重建完全一致且恢复拒绝换方法',()=>{
+ const f=fixture(),doc=JSON.parse(f.text),playbook={schema_version:1,content:'仅交付本流程的报告。\r\n按合同验收。'};
+ function publish(value){doc.playbook=value;const text=JSON.stringify(doc);fs.writeFileSync(path.join(f.installed,'profile.json'),text);f.job.runtime.profile_ref.digest='sha256:'+hash(text);f.job.release.payload.components.find(c=>c.path==='profile.json').digest=f.job.runtime.profile_ref.digest;return text;}
+ const text=publish(playbook),p=prepareFoundationJob(f.job,f.config);
+ const serverDoc=parseFoundationProfile(text,f.job.runtime,f.job.release,f.job.release.payload.workflows[0]);
+ const serverRun=preparedFoundationRun(f.job,serverDoc.contract,p.readyBody.runtime_revision,serverDoc.playbook);
+ expect(serverRun).toEqual(p.manifest.run);expect(serverRun.playbook).toEqual(playbook);expect(p.readyBody.definition_sha256).toBe(serverRun.definition_sha256);
+ expect(prepareFoundationJob(f.job,f.config).manifest).toEqual(p.manifest);
+ publish({...playbook,content:'换了方法'});expect(()=>prepareFoundationJob(f.job,f.config)).toThrow('foundation_worker_immutable_conflict');
+});
 test('发布包复制到每run独立目录，身份与截止时间由Brain固定',()=>{
  const f=fixture(),p=prepareFoundationJob(f.job,f.config);
  expect(p.manifest.run.task_id).toBe(f.job.task_id);expect(p.manifest.run.run_id).toBe(f.job.run_id);expect(p.manifest.run.deadline_ms).toBe(f.job.deadline_ms);
@@ -95,7 +106,7 @@ test('Commander调用时限随固定runtime进入run哈希，不能退回默认�
 });
 
  test('ready明确拒绝收账：过期未授权失败，已授权冲突只采纳服务端blocked',async()=>{
- for(const [code,status] of [['foundation_deadline_exceeded','failed'],['foundation_manifest_identity_conflict','blocked'],['foundation_profile_paths_invalid','failed']]){
+ for(const [code,status] of [['foundation_deadline_exceeded','failed'],['foundation_manifest_identity_conflict','blocked'],['foundation_profile_paths_invalid','failed'],['foundation_playbook_invalid','failed']]){
   const f=fixture(),launch=vi.fn(),calls=[];
   const request=createFoundationRequest(f.config,{env:{CECELIA_INTERNAL_TOKEN:'test-only'},fetchFn:async(url,options)=>{
    const route=url.pathname,body=JSON.parse(options.body);calls.push({route,body});

@@ -1,6 +1,8 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.445.231
+**Brain 版本**: 1.445.232
+
+Workflow 方法可显式绑定为发布 profile 的独立 Playbook 快照，进入 Commander 提示与运行身份；恢复不得更换方法。执行 Agent 与独立检查器接收本步冻结 Activity Contract，动态剩余预算不改写契约；Playbook/Skill 不能覆盖契约和动作授权。
 
 新增通用 Workflow 发布与派单协议 commander-foundation-v1：复用冻结定义及发布观测，由受信 Worker 执行 Commander + DBOS，独立核验真实结果并结算原 Task / Run；旧任务入口不得接管底座运行。
 

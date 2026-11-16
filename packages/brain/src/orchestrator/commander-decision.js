@@ -18,13 +18,21 @@ export function canonical(value, seen = new Set(), depth = 0) {
   seen.delete(value); return result;
 }
 export const digest = value => createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex');
+// 发布profile的原文快照；版本权威仍是profile_ref，不从浮动文件补读方法。
+export function normalizeCommanderPlaybook(value) {
+  if (!object(value) || Object.keys(value).some(k => !['schema_version','content'].includes(k))
+    || value.schema_version !== 1 || typeof value.content !== 'string' || !value.content.trim()
+    || Buffer.byteLength(value.content,'utf8') > 65536) fail('commander_playbook_invalid');
+  return canonical(value);
+}
 export function normalizeCommanderRun(value) {
-  if (!object(value) || Object.keys(value).some(k => !['schema_version','task_id','run_id','contract','input','runtime_revision','deadline_ms','cleanup_deadline_ms','commander_timeout_ms','definition_sha256'].includes(k))
+  if (!object(value) || Object.keys(value).some(k => !['schema_version','task_id','run_id','contract','playbook','input','runtime_revision','deadline_ms','cleanup_deadline_ms','commander_timeout_ms','definition_sha256'].includes(k))
     || value.schema_version !== 1 || !UUID.test(value.task_id ?? '') || !UUID.test(value.run_id ?? '')
     || !HASH.test(value.runtime_revision ?? '') || !object(value.input)
     || typeof value.input.run_tag !== 'string' || !value.input.run_tag.trim()
     || !Number.isSafeInteger(value.deadline_ms) || value.deadline_ms <= 0) fail('commander_run_invalid');
   const normalized = canonical(value), contract = parseActivityContract(normalized.contract);
+  if (normalized.playbook !== undefined) normalized.playbook = normalizeCommanderPlaybook(normalized.playbook);
   if (contract.activities.length > 100 || contract.activities.some(a => !['source','finalize'].includes(a.runtime.phase)
     || a.runtime.interactive || a.runtime.detached || (a.runtime.max_attempts ?? 1) !== 1 || a.runtime.recovery_safe)) fail('commander_activity_unsupported');
   const finalizers = contract.activities.filter(a => a.runtime.phase === 'finalize');
@@ -43,6 +51,7 @@ export function decisionRequest(run, receipts, next = run.contract.activities[re
   return {protocol:'commander-decision/v1',run_id:run.run_id,definition_sha256:run.definition_sha256,
     sequence:receipts.length + 1,state_sha256:digest(receipts),workflow:run.contract.workflow,
     contract:structuredClone(run.contract),input:structuredClone(run.input),
+    ...(run.playbook === undefined ? {} : {playbook:structuredClone(run.playbook)}),
     accepted:receipts.map(r => ({activity_key:r.activity_key,outputs:r.outputs,evidence:r.evidence})),
     allowed_actions:[...(next ? [{action:'dispatch',activity_key:next.key}] : [{action:'complete'}]), {action:'pause'}]};
 }

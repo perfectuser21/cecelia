@@ -78,7 +78,8 @@ it('冻结Profile字节漂移在执行前失败，原Task/Run收口且无副作�
 },30000);
 
 it.each([['host-kill','completed'],['unknown-readback','blocked']])('宿主中断%s：原Run恢复、业务副作用不重做，未知结果不得伪成功',async(scenario,status)=>{
- fixture=await foundationHttpFixture({scenario});const {registration,release}=await fixture.publish();
+ const playbook={schema_version:1,content:'先核对base=21，再交出answer=42；恢复只读回。'};
+ fixture=await foundationHttpFixture({scenario,playbook});const {registration,release}=await fixture.publish();
  const created=await fixture.request('/workflow-foundation/tasks',{workflow_id:registration.workflow_id,release_id:release.id,input:{label:scenario},idempotency_key:scenario});
  expect(created.status).toBe(201);const taskId=created.body.task.id,worker=fixture.worker(taskId);
  const task=await until(async()=>(await fixture.pool.query('SELECT result FROM tasks WHERE id=$1',[taskId])).rows[0],row=>Boolean(row.result?.foundation_runner?.run_id));
@@ -91,6 +92,9 @@ it.each([['host-kill','completed'],['unknown-readback','blocked']])('宿主中�
  const final=(await fixture.pool.query('SELECT status,result FROM tasks WHERE id=$1',[taskId])).rows[0];
  expect(final.status,JSON.stringify(final.result.foundation_reconciliation)).toBe(status);
  expect(final.result.foundation_runner.run_id).toBe(run);
+ expect(final.result.foundation_runner.run.playbook).toEqual(playbook);
+ const frozen=JSON.parse(fs.readFileSync(path.join(dir,'manifest.json'),'utf8')).run;
+ expect(frozen).toEqual(final.result.foundation_runner.run);
  expect((await fixture.pool.query('SELECT run_id,status FROM task_runs WHERE task_id=$1',[taskId])).rows).toEqual([{run_id:run,status:status==='completed'?'success':'failed'}]);
  expect(fs.readFileSync(path.join(workspace,'prepare.effects'),'utf8')).toBe('x');
  expect(JSON.parse(fs.readFileSync(path.join(dir,'result.json.supervisor.json'),'utf8')).starts).toBe(2);
