@@ -18,6 +18,8 @@ FIXTURE=$(mktemp -d)
 trap 'rm -rf "$FIXTURE"' EXIT
 mkdir -p "$FIXTURE/repo/scripts" "$FIXTURE/repo/packages/brain" "$FIXTURE/bin"
 cp "$SCRIPT" "$FIXTURE/repo/scripts/brain-build.sh"
+mkdir -p "$FIXTURE/repo/scripts/lib"
+cp "$REPO_ROOT/scripts/lib/brain-candidate-docker.sh" "$FIXTURE/repo/scripts/lib/brain-candidate-docker.sh"
 printf '{"version":"1.0.0"}\n' > "$FIXTURE/repo/packages/brain/package.json"
 printf 'FROM scratch\n' > "$FIXTURE/repo/packages/brain/Dockerfile"
 printf 'candidate-A\n' > "$FIXTURE/repo/source.txt"
