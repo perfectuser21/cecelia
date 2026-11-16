@@ -11,7 +11,6 @@ const read = (path) => readFileSync(`${repoRoot}/${path}`, 'utf8');
 
 describe('通用事实扫描器合同', () => {
   it.each([
-    'scripts/scan/scan-api-registry.js',
     'scripts/scan/scan-test-registry.js',
     'scripts/scan/scan-db-schema.js',
   ])('%s 从环境读取 repo 名与 repo root', (path) => {

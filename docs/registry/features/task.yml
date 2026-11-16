@@ -480,9 +480,7 @@ features:
         - packages/brain/src/__tests__/dev-failure-classifier.test.js
         - packages/brain/src/__tests__/dev-pipeline-health.test.js
         - packages/brain/src/__tests__/executor-billing-pause-persist.test.js
-        - packages/brain/src/__tests__/executor-code-review-env.test.js
         - packages/brain/src/__tests__/executor-codex-review.test.js
-        - packages/brain/src/__tests__/executor-dept-heartbeat.test.js
         - packages/brain/src/__tests__/executor-diagnostics.test.js
         - packages/brain/src/__tests__/executor-domain-prompt.test.js
         - packages/brain/src/__tests__/executor-error-message.test.js
@@ -490,7 +488,6 @@ features:
         - packages/brain/src/__tests__/executor-input-validation.test.js
         - packages/brain/src/__tests__/executor-local-account-select.test.js
         - packages/brain/src/__tests__/executor-local-codex-exec.test.js
-        - packages/brain/src/__tests__/executor-okr-project-layer.test.js
         - packages/brain/src/__tests__/executor-payload-routing.test.js
         - packages/brain/src/__tests__/executor-requeue-learning.test.js
         - packages/brain/src/__tests__/executor-retry-strategy.test.js
@@ -549,9 +546,7 @@ features:
             - packages/brain/src/__tests__/dev-failure-classifier.test.js
             - packages/brain/src/__tests__/dev-pipeline-health.test.js
             - packages/brain/src/__tests__/executor-billing-pause-persist.test.js
-            - packages/brain/src/__tests__/executor-code-review-env.test.js
             - packages/brain/src/__tests__/executor-codex-review.test.js
-            - packages/brain/src/__tests__/executor-dept-heartbeat.test.js
             - packages/brain/src/__tests__/executor-diagnostics.test.js
             - packages/brain/src/__tests__/executor-domain-prompt.test.js
             - packages/brain/src/__tests__/executor-error-message.test.js
@@ -559,7 +554,6 @@ features:
             - packages/brain/src/__tests__/executor-input-validation.test.js
             - packages/brain/src/__tests__/executor-local-account-select.test.js
             - packages/brain/src/__tests__/executor-local-codex-exec.test.js
-            - packages/brain/src/__tests__/executor-okr-project-layer.test.js
             - packages/brain/src/__tests__/executor-payload-routing.test.js
             - packages/brain/src/__tests__/executor-requeue-learning.test.js
             - packages/brain/src/__tests__/executor-retry-strategy.test.js

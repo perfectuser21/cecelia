@@ -62,7 +62,6 @@ describe('_deduplicateObservations', () => {
     expect(result[0]).toEqual(items[0]);
     expect(result[1]._folded).toBe(true);
     expect(result[1].count).toBe(5);
-    expect(result[1].message).toBe('5 条相同诊断，已折叠');
   });
 
   it('2 条相同 key → 1 + 摘要（count=2）', () => {

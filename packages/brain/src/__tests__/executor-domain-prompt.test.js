@@ -1,133 +1,86 @@
-/**
- * executor-domain-prompt.test.js
- *
- * 测试 preparePrompt() 在自动生成 PRD 时正确注入 domain 和 owner_role 上下文。
- */
-
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-
-// Mock dependencies
-vi.mock('../db.js', () => ({
-  default: { query: vi.fn() },
+/** 通过现役triggerCeceliaRun→Codex review→preparePrompt观察实际写出的prompt，预检处阻断spawn。 */
+import { describe, it, expect, vi, beforeAll, beforeEach, afterAll } from 'vitest';
+const io = vi.hoisted(() => ({ query: vi.fn(), writeFile: vi.fn(), access: vi.fn(),
+  spawn: vi.fn(() => { throw new Error('禁止真实spawn'); }), execSync: vi.fn(),
+  card: null, diff: '', forbidden: vi.fn(() => { throw new Error('禁止非fixture外部动作'); }),
 }));
-
-vi.mock('child_process', () => ({
-  spawn: vi.fn(),
-  execSync: vi.fn(() => ''),
+vi.mock('../db.js', () => ({ default: { query: io.query } }));
+// 只放行单测中的入口保护；所有外部边界另行拒绝，绝不启动真实执行者。
+vi.mock('../runtime-safety.js', async (original) => ({ ...await original(), assertExternalExecutionAllowed: vi.fn() }));
+vi.mock('child_process', () => ({ spawn: io.spawn, execSync: io.execSync,
+  exec: io.forbidden, execFile: io.forbidden, execFileSync: io.forbidden,
 }));
-
-vi.mock('fs/promises', () => ({
-  writeFile: vi.fn(),
-  mkdir: vi.fn(),
-}));
-
-vi.mock('fs', async () => {
-  const actual = await vi.importActual('fs');
-  const { preserveFleetConfigFs } = await import('./helpers/fleet-config-fs-fixture.js');
-  return preserveFleetConfigFs(actual, {
-  readFileSync: vi.fn(() => 'SwapTotal: 0\nSwapFree: 0'),
+vi.mock('node:child_process', () => ({ spawn: io.spawn, execSync: io.execSync, exec: io.forbidden, execFile: io.forbidden, execFileSync: io.forbidden }));
+vi.mock('fs/promises', () => ({ writeFile: io.writeFile, mkdir: vi.fn(), access: io.access }));
+vi.mock('fs', async (original) => {
+  const actual = await original(); const { resolve } = await import('node:path');
+  const { fileURLToPath } = await import('node:url'); const root = fileURLToPath(new URL('../../../../', import.meta.url)).replace(/\/$/, '');
+  return { ...actual, readdirSync: vi.fn(() => []), unlinkSync: vi.fn(), existsSync: vi.fn(() => false),
+    readFileSync: vi.fn((file, ...args) => {
+      const target = file instanceof URL ? fileURLToPath(file) : resolve(String(file));
+      if (target.includes('/.task-')) {
+        if (io.card === null) throw new Error('owned fixture: no task card');
+        return io.card;
+      }
+      if (!target.startsWith(`${root}/`) || target.includes('/.env') || /credential|auth\.json/.test(target)) return io.forbidden();
+      return actual.readFileSync(file, ...args);
+    }),
+  };
 });
+vi.mock('../learning-retriever.js', () => ({ buildLearningContext: vi.fn(async () => '') }));
+let executor, resetBindings;
+beforeAll(async () => {
+  vi.stubGlobal('fetch', vi.fn(() => { throw new Error('禁止真实网络'); }));
+  executor = await import('../executor.js');
+  ({ _resetSkillBindingCacheForTest: resetBindings } = await import('../lib/skill-binding-registry.js'));
 });
-
-vi.mock('../task-router.js', () => ({
-  getInternalTaskHandler: vi.fn(() => null),
-  getTaskLocation: vi.fn(() => 'us'),
-}));
-
-vi.mock('../task-updater.js', () => ({
-  updateTaskStatus: vi.fn(),
-  updateTaskProgress: vi.fn(),
-}));
-
-vi.mock('../trace.js', () => ({
-  traceStep: vi.fn(),
-  LAYER: { L0_ORCHESTRATOR: 'l0' },
-  STATUS: { SUCCESS: 'success', FAILED: 'failed' },
-  EXECUTOR_HOSTS: { US_VPS: 'us' },
-}));
-
-describe('preparePrompt - domain/owner_role 上下文注入', () => {
-  let preparePrompt;
-
-  beforeEach(async () => {
-    vi.resetModules();
-    const executor = await import('../executor.js');
-    preparePrompt = executor.preparePrompt;
+afterAll(() => vi.unstubAllGlobals());
+beforeEach(() => {
+  vi.clearAllMocks(); resetBindings(); io.card = null; io.diff = '';
+  io.query.mockImplementation(async sql => {
+    if (sql.includes('FROM skill_registry') || sql.includes('executor_kind') || sql.includes('task_runs')) return { rows: [], rowCount: 1 };
+    return io.forbidden();
+  }); io.writeFile.mockResolvedValue(undefined);
+  io.execSync.mockImplementation((command) => {
+    if (command === 'git diff origin/main..HEAD') return io.diff;
+    throw new Error('禁止非fixture shell');
   });
-
-  it('task.domain=coding, task.owner_role=cto → prompt 包含领域上下文', async () => {
-    const task = {
-      title: 'Test coding task',
-      task_type: 'dev',
-      description: 'Implement feature X',
-      domain: 'coding',
-      owner_role: 'cto',
-    };
-    const prompt = await preparePrompt(task);
-    expect(prompt).toContain('coding');
-    expect(prompt).toContain('cto');
+  io.access.mockRejectedValue(Object.assign(new Error('owned binary unavailable'), { code: 'ENOENT' }));
+});
+async function reviewPrompt(task) {
+  const result = await executor.triggerCeceliaRun(task);
+  expect(result).toMatchObject({ success: false, configError: true, reason: 'codex_binary_missing', taskId: task.id });
+  const prompts = io.writeFile.mock.calls.filter(([file]) => String(file).endsWith('.txt'));
+  expect(prompts, '真实review消费者必须且只能写出一次prompt').toHaveLength(1);
+  expect(String(prompts[0][0])).toContain(task.id);
+  expect(io.access).toHaveBeenCalledOnce();
+  expect(io.spawn).not.toHaveBeenCalled(); expect(global.fetch).not.toHaveBeenCalled(); expect(io.forbidden).not.toHaveBeenCalled();
+  return prompts[0][1];
+}
+function task(type, payload = {}) {
+  return { id: `owned-prompt-${type}`, task_type: type, title: 'owned title', description: 'owned description', payload };
+}
+describe('现役架构审查消费者的领域上下文', () => {
+  function architecture(fields = {}) {
+    return { ...task('architecture_scan'), title: '领域审查', description: '核对当前架构', ...fields };
+  }
+  it.each([['coding', 'cto'], ['product', 'cpo']])('%s/%s进入实际写出的审查prompt', async (domain, owner_role) => {
+    const prompt = await reviewPrompt(architecture({ domain, owner_role }));
+    expect(prompt).toContain(`任务所属领域：${domain}`);
+    expect(prompt).toContain(`负责角色：${owner_role}`);
     expect(prompt).toContain('业务领域上下文');
   });
-
-  it('task.domain=product, task.owner_role=cpo → prompt 包含 product/cpo', async () => {
-    const task = {
-      title: 'Product roadmap task',
-      task_type: 'dev',
-      description: 'Plan next quarter',
-      domain: 'product',
-      owner_role: 'cpo',
-    };
-    const prompt = await preparePrompt(task);
-    expect(prompt).toContain('product');
-    expect(prompt).toContain('cpo');
+  it.each([{ domain: null, owner_role: null }, {}])('空领域字段%s不生成领域块', async fields => {
+    expect(await reviewPrompt(architecture(fields))).not.toContain('业务领域上下文');
   });
-
-  it('task.domain=null, task.owner_role=null → prompt 不含领域上下文块', async () => {
-    const task = {
-      title: 'Legacy task',
-      task_type: 'dev',
-      description: 'Do something',
-      domain: null,
-      owner_role: null,
-    };
-    const prompt = await preparePrompt(task);
-    expect(prompt).not.toContain('业务领域上下文');
+  it('只有领域时显式保留负责角色未指定', async () => {
+    const prompt = await reviewPrompt(architecture({ domain: 'quality', owner_role: null }));
+    expect(prompt).toContain('任务所属领域：quality');
+    expect(prompt).toContain('负责角色：(未指定)');
   });
-
-  it('task 无 domain/owner_role 字段 → prompt 不含领域上下文块', async () => {
-    const task = {
-      title: 'No domain task',
-      task_type: 'dev',
-      description: 'Do something',
-    };
-    const prompt = await preparePrompt(task);
-    expect(prompt).not.toContain('业务领域上下文');
-  });
-
-  it('domain 存在但 owner_role 为 null → prompt 仍包含领域上下文', async () => {
-    const task = {
-      title: 'Domain only task',
-      task_type: 'dev',
-      description: 'Quality check',
-      domain: 'quality',
-      owner_role: null,
-    };
-    const prompt = await preparePrompt(task);
-    expect(prompt).toContain('quality');
-    expect(prompt).toContain('业务领域上下文');
-    expect(prompt).toContain('(未指定)'); // owner_role 未指定
-  });
-
-  it('自动生成 PRD 包含功能描述', async () => {
-    const task = {
-      title: 'My Task',
-      task_type: 'dev',
-      description: 'Specific feature description here',
-      domain: 'coding',
-      owner_role: 'cto',
-    };
-    const prompt = await preparePrompt(task);
-    expect(prompt).toContain('Specific feature description here');
-    expect(prompt).toContain('My Task');
+  it('默认PRD保留真实标题和功能描述', async () => {
+    const prompt = await reviewPrompt(architecture());
+    expect(prompt).toContain('# PRD - 领域审查');
+    expect(prompt).toContain('## 功能描述\n核对当前架构');
   });
 });

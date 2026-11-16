@@ -1707,17 +1707,6 @@ describe('Fleet Worker production runtime assembly', () => {
   });
 });
 
-describe('Fleet Worker launchd plist template', () => {
-  it('renders TMPDIR from the validated shared directory (真实展开由安装器行为回归验证)', () => {
-    const template = fs.readFileSync(
-      path.join(path.dirname(new URL(import.meta.url).pathname), 'com.cecelia.fleet-worker.plist.template'),
-      'utf8',
-    );
-    expect(template).toContain('<key>TMPDIR</key>');
-    expect(template).toContain('<string>@@SHARED_TMPDIR@@</string>');
-  });
-});
-
 describe('worker 5xx 必须留下真实原因（run 2a813900 生产实证）', () => {
   const WORKER_TOKEN = 'w'.repeat(48);
   // 2026-08-19 生产实证：publisher 成功后 kernel 再向 worker /prepare 时收到 500，

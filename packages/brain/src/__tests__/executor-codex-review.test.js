@@ -1,12 +1,4 @@
-/**
- * executor-codex-review.test.js
- *
- * 测试 triggerCodexReview 独立审查加固：
- * - REVIEW_TASK_TYPES 路由到 triggerCodexReview
- * - buildPrompt 对 spec_review 和 code_review_gate 的内容
- * - spawn 使用 codex exec 参数
- */
-
+/** 现役Codex启动与回调接线；prompt和路由由真实消费者测试覆盖。 */
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
 import { join } from 'path';
@@ -23,18 +15,6 @@ const executorSrc = readFileSync(
 );
 
 describe('executor: Codex 独立审查加固', () => {
-  describe('REVIEW_TASK_TYPES', () => {
-    it('包含 spec_review 和 code_review_gate', () => {
-      expect(executorSrc).toContain("'spec_review'");
-      expect(executorSrc).toContain("'code_review_gate'");
-    });
-
-    it('REVIEW_TASK_TYPES 路由到 triggerCodexReview', () => {
-      expect(executorSrc).toContain('REVIEW_TASK_TYPES.includes');
-      expect(executorSrc).toContain('triggerCodexReview');
-    });
-  });
-
   describe('triggerCodexReview: codex CLI 调用', () => {
     it('使用 /opt/homebrew/bin/codex 路径', () => {
       expect(executorSrc).toContain('/opt/homebrew/bin/codex');
@@ -47,20 +27,6 @@ describe('executor: Codex 独立审查加固', () => {
 
     it('使用独立锁目录 codex-review-locks', () => {
       expect(executorSrc).toContain('codex-review-locks');
-    });
-  });
-
-  describe('buildPrompt: prompt 内容完整性', () => {
-    it('spec_review buildPrompt 读取 taskCardContent', () => {
-      expect(executorSrc).toContain('taskCardContent');
-    });
-
-    it('spec_review 使用 readFileSync 读取文件', () => {
-      expect(executorSrc).toContain('readFileSync');
-    });
-
-    it('code_review_gate buildPrompt 包含 git diff origin/main..HEAD', () => {
-      expect(executorSrc).toContain('git diff origin/main..HEAD');
     });
   });
 
@@ -92,19 +58,5 @@ describe('triggerCodexReview: spawn error handler', () => {
     const snippet = executorSrc.slice(errorHandlerIdx, errorHandlerIdx + 600);
     expect(snippet).toContain('AI Failed');
     expect(snippet).toContain('execution-callback');
-  });
-});
-
-describe('executor: buildPrompt case 路由', () => {
-  it("spec_review 有专属路由处理", () => {
-    // 重构后用 routes 对象，由 _prepareSpecReviewPrompt 处理
-    expect(executorSrc).toContain("spec_review");
-    expect(executorSrc).toContain("_prepareSpecReviewPrompt");
-  });
-
-  it("code_review_gate 有专属路由处理", () => {
-    // 重构后用 routes 对象，由 _prepareCodeReviewGatePrompt 处理
-    expect(executorSrc).toContain("code_review_gate");
-    expect(executorSrc).toContain("_prepareCodeReviewGatePrompt");
   });
 });
