@@ -11,4 +11,4 @@ export function runCleanup(input){
  if(read(dir,'lease.json',false))fs.unlinkSync(path.join(dir,'lease.json'));
  if(read(dir,'lease.json',false))fail('readiness_resource_not_released');return value;
 }
-cli(import.meta.url,runCleanup);
+cli(import.meta.url,runCleanup,{stoppedActivity:true});

@@ -24,4 +24,4 @@ export async function runReport(input,{fetchFn=fetch}={}){
  writeOnce(dir,'effect.json',{owner:who,count:1,report_sha256:reportHash,snapshot_sha256:snapshotHash});
  const value=result(input,{report_sha256:reportHash,snapshot_sha256:snapshotHash,brain_sha:health.git_sha,brain_version:health.version},['snapshot.json','report.json','effect.json']);writeOnce(dir,'report-result.json',value);return value;
 }
-cli(import.meta.url,runReport);
+cli(import.meta.url,runReport,{stoppedActivity:true});

@@ -36,9 +36,19 @@ export function ownedResources(dir,expected,action=false){
  for(const name of ['reservation.json','lease.json']){const value=read(dir,name,false);if(value)owner(value,expected,action);}
 }
 export const result=(input,outputs,evidence)=>({schema_version:1,run_tag:input.run_tag,status:'completed',outputs,metrics:{},evidence:evidence.map(name=>'readiness-evidence/'+name),execution_stopped:true});
-export function cli(meta,fn){
+export function cli(meta,fn,{stoppedActivity=false}={}){
  if(process.argv[1]&&meta===pathToFileURL(process.argv[1]).href){
   let data='';process.stdin.setEncoding('utf8');process.stdin.on('data',chunk=>{data+=chunk;if(data.length>1024*1024){process.stderr.write('readiness_input_limit\n');process.exit(1);}});
-  process.stdin.on('end',async()=>{try{process.stdout.write(JSON.stringify(await fn(JSON.parse(data)))+'\n');}catch(error){process.stderr.write(/^readiness_[a-z_]+$/.test(error.message)?error.message+'\n':'readiness_execution_failed\n');process.exitCode=1;}});
+  process.stdin.on('end',async()=>{
+   let input;
+   try{input=JSON.parse(data);process.stdout.write(JSON.stringify(await fn(input))+'\n');}
+   catch(error){
+    const reason=/^readiness_[a-z_]+$/.test(error.message)?error.message:'readiness_execution_failed';
+    // 仅本包只读/同步文件Activity使用：await已退出，没有后台子任务或未决外部写入。
+    // checker保持非0拒绝；异常终止/信号不会经过此catch，不能冒充已停止。
+    if(stoppedActivity&&typeof input?.run_tag==='string')process.stdout.write(JSON.stringify({...result(input,{},[]),status:'failed',failure_class:'fatal',reason_code:reason})+'\n');
+    process.stderr.write(reason+'\n');process.exitCode=1;
+   }
+  });
  }
 }
