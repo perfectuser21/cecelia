@@ -4,6 +4,12 @@ import {readFileSync} from 'node:fs';
 import {createRequire} from 'node:module';
 import test from 'node:test';
 import {fetchFoundationSnapshot} from '../foundation-release-snapshot.mjs';
+import {commandsFor} from '../run-basic-check.mjs';
+
+test('快照安全回归由实际scripts默认入口收集',()=>{
+ const path='scripts/ci/__tests__/'+new URL(import.meta.url).pathname.split('/').at(-1);
+ assert.ok(commandsFor('scripts').some(step=>step.command==='node'&&step.args[0]==='--test'&&step.args.includes(path)));
+});
 
 const revision='a'.repeat(40),scope='foundation-release-readiness',repo='perfectuser21/cecelia';
 const snapshot={scope,repo,revision,status:'verified',gaps:[]};

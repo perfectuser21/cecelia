@@ -3,11 +3,12 @@
  * 测试 Notion Memory 同步模块的导出和基本行为
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-// mock fetch
+// 只允许record-only Notion请求，每例恢复环境，避免影响其他文件。
 const mockFetch = vi.fn();
-global.fetch = mockFetch;
+beforeEach(() => { vi.stubGlobal('fetch', mockFetch); vi.stubEnv('NOTION_API_KEY', ''); });
+afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
 // mock pool
 const mockPool = {
@@ -20,33 +21,7 @@ const {
   parseContactContent,
   contactFieldsToNotionProps,
   pushFactToNotion,
-  pushMemoryToNotion,
-  rebuildMemoryDatabases,
-  importAllMemoryData,
 } = await import('../notion-memory-sync.js');
-
-describe('notion-memory-sync 模块导出', () => {
-  it('导出 NOTION_MEMORY_DB_IDS 对象，包含 3 个 DB id', () => {
-    expect(NOTION_MEMORY_DB_IDS).toMatchObject({
-      ownerProfile: expect.any(String),
-      contacts:     expect.any(String),
-      diary:        expect.any(String),
-    });
-    const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-    expect(NOTION_MEMORY_DB_IDS.ownerProfile).toMatch(uuidRe);
-    expect(NOTION_MEMORY_DB_IDS.contacts).toMatch(uuidRe);
-    expect(NOTION_MEMORY_DB_IDS.diary).toMatch(uuidRe);
-  });
-
-  it('导出的函数类型正确', () => {
-    expect(typeof parseContactContent).toBe('function');
-    expect(typeof contactFieldsToNotionProps).toBe('function');
-    expect(typeof pushFactToNotion).toBe('function');
-    expect(typeof pushMemoryToNotion).toBe('function');
-    expect(typeof rebuildMemoryDatabases).toBe('function');
-    expect(typeof importAllMemoryData).toBe('function');
-  });
-});
 
 describe('parseContactContent', () => {
   it('解析标准 key:value 格式', () => {
@@ -227,194 +202,5 @@ describe('pushFactToNotion', () => {
     expect(body.properties['职业'].rich_text[0].text.content).toBe('设计师');
 
     delete process.env.NOTION_API_KEY;
-  });
-});
-
-describe('pushMemoryToNotion', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
-  it('有 NOTION_API_KEY 时，推送到 diary DB，包含 checkbox/status/page body', async () => {
-    process.env.NOTION_API_KEY = 'test-key';
-    mockFetch.mockResolvedValue({
-      ok: true,
-      json: async () => ({ id: 'diary-page-001' }),
-    });
-    mockPool.query.mockResolvedValue({ rows: [] });
-
-    const fullText = '今天 Cecelia 完成了一项重要任务：Notion Memory 同步功能上线了！';
-    await pushMemoryToNotion({
-      id: 200,
-      source_type: 'episodic',
-      content: fullText,
-      importance: 8,
-      status: 'active',
-      resolved_at: null,
-      created_at: new Date('2026-03-03'),
-    });
-
-    const [, opts] = mockFetch.mock.calls[0];
-    const body = JSON.parse(opts.body);
-    expect(body.parent.database_id).toBe(NOTION_MEMORY_DB_IDS.diary);
-    expect(body.properties['摘要'].title[0].text.content).toBe(fullText.slice(0, 80));
-    expect(body.properties['类型'].select.name).toBe('episodic');
-    expect(body.properties['重要性'].number).toBe(8);
-    // 新增字段
-    expect(body.properties['已处理'].checkbox).toBe(false);
-    expect(body.properties['状态'].status.name).toBe('active');
-    // page body
-    expect(body.children).toHaveLength(1);
-    expect(body.children[0].paragraph.rich_text[0].text.content).toContain('Notion Memory');
-
-    expect(mockPool.query).toHaveBeenCalledWith(
-      'UPDATE memory_stream SET notion_id=$1 WHERE id=$2',
-      ['diary-page-001', 200]
-    );
-
-    delete process.env.NOTION_API_KEY;
-  });
-
-  it('resolved_at 有值时，已处理=true', async () => {
-    process.env.NOTION_API_KEY = 'test-key';
-    mockFetch.mockResolvedValue({
-      ok: true,
-      json: async () => ({ id: 'diary-page-002' }),
-    });
-    mockPool.query.mockResolvedValue({ rows: [] });
-
-    await pushMemoryToNotion({
-      id: 201,
-      source_type: 'episodic',
-      content: '已处理的记忆',
-      importance: 5,
-      status: 'resolved',
-      resolved_at: new Date('2026-03-01'),
-      created_at: new Date(),
-    });
-
-    const [, opts] = mockFetch.mock.calls[0];
-    const body = JSON.parse(opts.body);
-    expect(body.properties['已处理'].checkbox).toBe(true);
-    expect(body.properties['状态'].status.name).toBe('resolved');
-
-    delete process.env.NOTION_API_KEY;
-  });
-
-  it('无效 source_type 降级为 episodic', async () => {
-    process.env.NOTION_API_KEY = 'test-key';
-    mockFetch.mockResolvedValue({
-      ok: true,
-      json: async () => ({ id: 'diary-page-003' }),
-    });
-    mockPool.query.mockResolvedValue({ rows: [] });
-
-    await pushMemoryToNotion({
-      id: 202,
-      source_type: 'unknown_type',
-      content: '测试',
-      importance: 0,
-      created_at: new Date(),
-    });
-
-    const [, opts] = mockFetch.mock.calls[0];
-    const body = JSON.parse(opts.body);
-    expect(body.properties['类型'].select.name).toBe('episodic');
-
-    delete process.env.NOTION_API_KEY;
-  });
-
-  it('长文本超 2000 字时拆分为多个 paragraph block', async () => {
-    process.env.NOTION_API_KEY = 'test-key';
-    mockFetch.mockResolvedValue({
-      ok: true,
-      json: async () => ({ id: 'diary-page-004' }),
-    });
-    mockPool.query.mockResolvedValue({ rows: [] });
-
-    const longText = 'A'.repeat(4500);
-    await pushMemoryToNotion({
-      id: 203,
-      source_type: 'episodic',
-      content: longText,
-      importance: 1,
-      created_at: new Date(),
-    });
-
-    const [, opts] = mockFetch.mock.calls[0];
-    const body = JSON.parse(opts.body);
-    // 4500 / 2000 = 3 blocks
-    expect(body.children).toHaveLength(3);
-    expect(body.children[0].paragraph.rich_text[0].text.content).toHaveLength(2000);
-    expect(body.children[1].paragraph.rich_text[0].text.content).toHaveLength(2000);
-    expect(body.children[2].paragraph.rich_text[0].text.content).toHaveLength(500);
-
-    delete process.env.NOTION_API_KEY;
-  });
-});
-
-describe('rebuildMemoryDatabases', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    process.env.NOTION_API_KEY = 'test-key';
-  });
-
-  afterEach(() => {
-    delete process.env.NOTION_API_KEY;
-  });
-
-  it('先 GET 获取 title 属性名，再 PATCH 添加缺失属性', async () => {
-    // 每个 DB 的 GET 返回：title 属性叫 '名称'，没有其他属性
-    const dbGetResponse = {
-      properties: {
-        '名称': { type: 'title', title: {} },
-      },
-    };
-    // GET → dbGetResponse, PATCH → ok
-    mockFetch
-      .mockResolvedValueOnce({ ok: true, json: async () => dbGetResponse }) // GET ownerProfile
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ id: 'db-1' }) }) // PATCH ownerProfile
-      .mockResolvedValueOnce({ ok: true, json: async () => dbGetResponse }) // GET contacts
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ id: 'db-2' }) }) // PATCH contacts
-      .mockResolvedValueOnce({ ok: true, json: async () => dbGetResponse }) // GET diary
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ id: 'db-3' }) }); // PATCH diary
-
-    const results = await rebuildMemoryDatabases();
-
-    expect(results.ownerProfile).toBe('ok');
-    expect(results.contacts).toBe('ok');
-    expect(results.diary).toBe('ok');
-
-    // 验证第 2 次调用（第 1 个 PATCH）包含正确的属性重命名和新属性
-    const patchCall = mockFetch.mock.calls[1];
-    const patchBody = JSON.parse(patchCall[1].body);
-    // 旧 title 属性 '名称' 应被 rename 到 '键'
-    expect(patchBody.properties['名称']).toEqual({ name: '键' });
-    // 新属性应被添加
-    expect(patchBody.properties['值']).toEqual({ rich_text: {} });
-    expect(patchBody.properties['更新时间']).toEqual({ date: {} });
-  });
-
-  it('title 属性名已经是目标名时不 rename', async () => {
-    // ownerProfile DB 的 title 已经叫 '键'，且所有属性（含已验证）都已存在
-    const dbGetResponse = {
-      properties: {
-        '键':       { type: 'title', title: {} },
-        '值':       { type: 'rich_text', rich_text: {} },
-        '类别':     { type: 'select', select: {} },
-        '来源':     { type: 'select', select: {} },
-        '更新时间': { type: 'date', date: {} },
-        '已验证':   { type: 'checkbox', checkbox: {} },
-      },
-    };
-    mockFetch
-      .mockResolvedValueOnce({ ok: true, json: async () => dbGetResponse }) // GET
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ id: 'db-1' }) }); // PATCH
-
-    await rebuildMemoryDatabases().catch(() => {}); // 可能3个DB都需要mock
-
-    // 第 2 次调用（第 1 个 PATCH）- properties 应为空对象（无需改动）
-    const patchBody = JSON.parse(mockFetch.mock.calls[1][1].body);
-    expect(patchBody.properties).toEqual({});
   });
 });

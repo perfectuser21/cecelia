@@ -34,10 +34,13 @@ const representative = [
   'scripts/__tests__/codex-request.test.sh',
   'scripts/ops/__tests__/credentials/op-item-to-env.test.sh',
   'scripts/ops/__tests__/janitor/janitor_dry_run.test.sh',
+  'scripts/ops/__tests__/janitor/janitor_alert_admission.test.sh',
+  'scripts/__tests__/dashboard-release-bind.test.mjs',
+  'scripts/__tests__/dashboard-release-sha-failure.test.sh',
 ];
 const safeSmokes = [
   'brain-compose-envfile-authority', 'brain-deploy-service-isolation',
-  'dashboard-sha-reconcile', 'deploy-chain-wounds', 'deploy-local-npm-cache', 'gate3-brain-deploy',
+  'dashboard-sha-reconcile', 'deploy-local-npm-cache', 'gate3-brain-deploy',
 ].map(name => `scripts/smoke/${name}-smoke.sh`);
 const paths = steps => steps.map(step => step.args.at(-1));
 

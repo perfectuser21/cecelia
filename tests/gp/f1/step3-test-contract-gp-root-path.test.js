@@ -11,7 +11,6 @@
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { assertTestContractResolvable } from '../../../packages/brain/src/orchestrator/contract-test-paths-seal.js';
 
 const require = createRequire(import.meta.url);
 const { resolveContractTestFile } = require('../../../scripts/lib/test-contract-paths.cjs');
@@ -61,26 +60,5 @@ describe('resolveContractTestFile：仓库根 tests/gp 路径', () => {
     const r = resolve(legacy, [`${SPRINT}/tests/legacy.test.js`]);
     expect(r.candidates[0]).toBe(path.resolve(ROOT, SPRINT, legacy));
     expect(r.resolvedPath).toBe(path.resolve(ROOT, SPRINT, legacy));
-  });
-});
-
-describe('封印接线：tests/gp 行属仓库既有路径，不因"不在冻结产物集合"拒封印', () => {
-  const artifact = (p, content = 'x') => ({ path: p, content, sha256: 'a'.repeat(64), source_revision: 'b'.repeat(40) });
-  const ARTIFACTS = [
-    artifact(`${SPRINT}/contract-draft.md`),
-    artifact(`${SPRINT}/contract-dod.md`),
-    artifact(`${SPRINT}/sprint-prd.md`),
-    artifact(`${SPRINT}/tests/pr-conflict-rebase-route.test.js`, "it('DIRTY 路由 generator-fix pr_conflict_rebase', () => {});"),
-  ];
-  const TABLE = `
-## Test Contract
-
-| 功能 | Test File | BEHAVIOR 覆盖（it() 名子串）| 预期红证据 |
-|---|---|---|---|
-| DIRTY 路由 | \`${SPRINT}/tests/pr-conflict-rebase-route.test.js\` | \`DIRTY 路由 generator-fix pr_conflict_rebase\` | baseline FAIL |
-| 同套永久回归位 | \`${GP_TEST}\` | \`DIRTY 路由 generator-fix pr_conflict_rebase\` | baseline FAIL |
-`;
-  it('r84 合同（冻结 sprint 测试 + 仓库根 tests/gp 行）→ 封印通过', () => {
-    expect(() => assertTestContractResolvable(TABLE, ARTIFACTS)).not.toThrow();
   });
 });

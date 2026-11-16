@@ -110,14 +110,7 @@ tests:
     type: unit
     ci: L3
     status: active
-    note: "B类任务在US位置的执行器路由规则（local-codex vs cecelia-bridge）"
-
-  - id: task-router-xian-m1
-    path: tests/task-router-xian-m1.test.js
-    type: unit
-    ci: L3
-    status: active
-    note: "isValidLocation(xian_m1) 验证西安M1节点路由合法性"
+    note: "动态任务配置缓存未加载时，真实getter返回null"
 
 
   # — 内容与捕获管道 ————————————————————————————————————————————————————————————

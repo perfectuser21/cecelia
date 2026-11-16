@@ -322,7 +322,6 @@ features:
         - packages/brain/src/__tests__/cortex-reflection-breaker.test.js
         - packages/brain/src/__tests__/cortex-report-dedup.test.js
         - packages/brain/src/__tests__/cortex-report.test.js
-        - packages/brain/src/__tests__/cortex-structure.test.js
         - packages/brain/src/__tests__/cortex-timeout-classifier.test.js
         - packages/brain/src/__tests__/cortex-timeout.test.js
         - packages/brain/src/__tests__/cortex-timing.test.js
@@ -368,7 +367,6 @@ features:
             - packages/brain/src/__tests__/cortex-reflection-breaker.test.js
             - packages/brain/src/__tests__/cortex-report-dedup.test.js
             - packages/brain/src/__tests__/cortex-report.test.js
-            - packages/brain/src/__tests__/cortex-structure.test.js
             - packages/brain/src/__tests__/cortex-timeout-classifier.test.js
             - packages/brain/src/__tests__/cortex-timeout.test.js
             - packages/brain/src/__tests__/cortex-timing.test.js
@@ -518,13 +516,10 @@ features:
     apis: []
     tests:
       unit:
-        - packages/brain/src/__tests__/bare-modules/recurring-notion-sync.test.js
         - packages/brain/src/__tests__/knowledge-dedup.test.js
         - packages/brain/src/__tests__/knowledge-modules-route.test.js
         - packages/brain/src/__tests__/knowledge-routes.test.js
         - packages/brain/src/__tests__/notion-memory-sync.test.js
-        - packages/brain/src/__tests__/notion-sync.test.js
-        - packages/brain/src/__tests__/routes/notion-sync.test.js
       integration: []
       e2e: []
       regression: []
@@ -535,13 +530,10 @@ features:
         maturity: 2
         tests:
           unit:
-            - packages/brain/src/__tests__/bare-modules/recurring-notion-sync.test.js
             - packages/brain/src/__tests__/knowledge-dedup.test.js
             - packages/brain/src/__tests__/knowledge-modules-route.test.js
             - packages/brain/src/__tests__/knowledge-routes.test.js
             - packages/brain/src/__tests__/notion-memory-sync.test.js
-            - packages/brain/src/__tests__/notion-sync.test.js
-            - packages/brain/src/__tests__/routes/notion-sync.test.js
           integration: []
           e2e: []
         status: active

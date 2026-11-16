@@ -21,7 +21,7 @@ const ROOT_SHELL = [
 // 仅纳入经核对的隔离 fixture 或只读部署守卫；不恢复整个历史 smoke glob。
 const SAFE_SMOKES = [
   'brain-compose-envfile-authority', 'brain-deploy-service-isolation',
-  'dashboard-sha-reconcile', 'deploy-chain-wounds', 'deploy-local-npm-cache', 'gate3-brain-deploy',
+  'dashboard-sha-reconcile', 'deploy-local-npm-cache', 'gate3-brain-deploy',
 ].map(name => `scripts/smoke/${name}-smoke.sh`);
 const STAGING_SMOKE = 'scripts/smoke/dashboard-staging-gate-smoke.sh';
 

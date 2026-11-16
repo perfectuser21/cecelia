@@ -1,58 +1,48 @@
-/**
- * tick-runner-drift-sentinel-wiring.test.js — G2 哑火修复回归测试
- *
- * 根因：G2 PR (#4006) 把 drift sentinel 接入了已废弃的 executeTick
- * （Wave 2 起从不被调用），正确接入点是 scheduler-jobs.js JOBS。
- * 本测试用源码自省验证：不烧 LLM、不接真实 DB。
- *
- * TDD Red: 以下断言在修复前全部失败。
- */
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import '../../../packages/brain/src/__tests__/helpers/scheduler-jobs-fixture.js';
+vi.mock('../../../packages/brain/src/notifier.js', () => ({
+  sendFeishu: vi.fn(), sendBark: vi.fn(), notifyTaskCompleted: vi.fn(),
+  notifyTaskFailed: vi.fn(), notifyCircuitOpen: vi.fn(), notifyPatrolCleanup: vi.fn(),
+  notifyDailySummary: vi.fn(), RATE_LIMIT_MS: 0,
+}));
+import { sendBark } from '../../../packages/brain/src/notifier.js';
+import * as processIo from 'child_process';
+import { JOBS } from '../../../packages/brain/src/scheduler-jobs.js';
+import { runDriftSentinel } from '../../../packages/brain/src/cron/drift-sentinel.js';
 
-import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'fs';
-import { resolve, dirname } from 'path';
-import { fileURLToPath } from 'url';
+// 取真实调度条目，并将handler边界替身委托回真实实现。
+// SHA、数据库均为夹具，非夹具进程会立即失败，禁止运行部署。
+afterEach(() => { vi.restoreAllMocks(); });
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-// 毕业搬家修正（5167ef48 顺手清雷）：sprints/<x>/tests/ 时代是 4 级，tests/regression/<x>/ 是 3 级
-const BRAIN_SRC = resolve(__dirname, '../../../packages/brain/src');
-
-const SCHEDULER_JOBS_SRC = readFileSync(resolve(BRAIN_SRC, 'scheduler-jobs.js'), 'utf8');
-const DRIFT_SENTINEL_SRC = readFileSync(resolve(BRAIN_SRC, 'cron/drift-sentinel.js'), 'utf8');
-
-describe('G2 drift-sentinel 接线修复（scheduler-jobs 路径）', () => {
-  // ─── scheduler-jobs.js 接线 ───────────────────────────────────────────────
-
-  it('scheduler-jobs.js 导入 runDriftSentinel', () => {
-    // G2 PR (#4006) 把 drift sentinel 只挂在 executeTick（已废弃），
-    // 必须改为从 scheduler-jobs.js 正式调度
-    expect(SCHEDULER_JOBS_SRC).toMatch(/import.*runDriftSentinel.*drift-sentinel/);
-  });
-
-  it('scheduler-jobs.js JOBS 数组含 drift-sentinel 条目', () => {
-    expect(SCHEDULER_JOBS_SRC).toMatch(/name:\s*['"]drift-sentinel['"]/);
-  });
-
-  it('drift-sentinel JOBS 条目使用 runDriftSentinel 作为 handler', () => {
-    // handler: runDriftSentinel
-    expect(SCHEDULER_JOBS_SRC).toMatch(/handler:\s*runDriftSentinel/);
-  });
-
-  // ─── drift-sentinel.js 内置 30min gate ───────────────────────────────────
-
-  it('drift-sentinel.js 有模块级 lastRunAt = 0 内置间隔门控', () => {
-    // 模块自 gate 模式（同 launchd-patrol.js）：
-    // let lastRunAt = 0；每次调用先检查时间间隔，未到 30min 直接 return skipped
-    expect(DRIFT_SENTINEL_SRC).toMatch(/let\s+lastRunAt\s*=\s*0/);
-  });
-
-  it('drift-sentinel.js runDriftSentinel 导出测试用 _resetLastRunAt', () => {
-    // 测试隔离钩子，与 tick-state.js 的 _resetLastXxxTime 模式一致
-    expect(DRIFT_SENTINEL_SRC).toMatch(/export function _resetLastRunAt/);
-  });
-
-  it('drift-sentinel.js runDriftSentinel 内置 30min 跳过逻辑（两次调用间隔短则 skip）', () => {
-    // 函数内有 lastRunAt 检查，保证 scheduler-jobs 60s 轮询下只有每 30min 才真跑
-    expect(DRIFT_SENTINEL_SRC).toMatch(/lastRunAt.*DRIFT_SENTINEL_INTERVAL_MS|DRIFT_SENTINEL_INTERVAL_MS.*lastRunAt/s);
+describe('drift-sentinel 调度条目真实执行与节流', () => {
+  it('已注册条目读取SHA，间隔内不访问外部边界，满30min后重新对账', async () => {
+    const sha = 'a'.repeat(40);
+    const exec = vi.spyOn(processIo, 'exec').mockImplementation((command, options, callback) => {
+      const stdout = command.startsWith('git ls-remote ') ? sha
+        : command.startsWith('curl -sf ') ? JSON.stringify({ git_sha: sha }) : null;
+      if (stdout === null) throw new Error(`禁止执行非夹具进程：${command}`);
+      // 对应生产execAsync的结果；这个外部边界替身没有Node原exec的custom-promisify。
+      callback(null, { stdout, stderr: '' });
+    });
+    const actual = await vi.importActual('../../../packages/brain/src/cron/drift-sentinel.js');
+    actual._resetLastRunAt();
+    runDriftSentinel.mockImplementation(actual.runDriftSentinel);
+    let now = Date.parse('2026-11-16T00:00:00Z');
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const db = { query: vi.fn().mockResolvedValue({ rows: [] }) };
+    const job = JOBS.find(row => row.name === 'drift-sentinel');
+    expect(job).toBeDefined();
+    try {
+      expect(await job.handler(db)).toEqual({ verdict: 'ok', sha_main: sha, sha_prod: sha });
+      expect(exec).toHaveBeenCalledTimes(2);
+      const writes = db.query.mock.calls.length;
+      expect(await job.handler(db)).toEqual({ skipped: true, reason: 'interval_not_reached' });
+      expect(exec).toHaveBeenCalledTimes(2);
+      expect(db.query).toHaveBeenCalledTimes(writes);
+      now += 30 * 60 * 1000 + 1;
+      expect(await job.handler(db)).toEqual({ verdict: 'ok', sha_main: sha, sha_prod: sha });
+      expect(exec).toHaveBeenCalledTimes(4);
+      expect(sendBark).not.toHaveBeenCalled();
+    } finally { actual._resetLastRunAt(); }
   });
 });

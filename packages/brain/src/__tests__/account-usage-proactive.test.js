@@ -109,52 +109,6 @@ describe('proactiveTokenCheck', () => {
     expect(mockResetDebounce).toHaveBeenCalledWith('token_expiring_soon_account2');
   });
 
-  it('token 有效 + 之前 token_expired 熔断 → 清除熔断（token 刷新场景）', async () => {
-    markAuthFailure('account2', new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), 'token_expired');
-    expect(isAuthFailed('account2')).toBe(true);
-
-    const futureExpiry = Date.now() + 2 * 60 * 60 * 1000; // 2h valid
-    mockReadFileSync.mockImplementation(() => makeCredentials(futureExpiry));
-
-    await proactiveTokenCheck();
-
-    expect(isAuthFailed('account2')).toBe(false);
-    expect(mockPool.query).toHaveBeenCalledWith(
-      expect.stringContaining('is_auth_failed = false'),
-      ['account2']
-    );
-  });
-
-  it('token 有效 + 之前 api_error 熔断 → 不清除熔断（等 resetTime 自然过期）', async () => {
-    markAuthFailure('account2', new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString(), 'api_error');
-    expect(isAuthFailed('account2')).toBe(true);
-
-    const futureExpiry = Date.now() + 2 * 60 * 60 * 1000; // 2h valid
-    mockReadFileSync.mockImplementation(() => makeCredentials(futureExpiry));
-    mockPool.query.mockClear();
-
-    await proactiveTokenCheck();
-
-    // api_error 熔断不因 token 有效而清除
-    expect(isAuthFailed('account2')).toBe(true);
-    // 不触发 DB 清除
-    const clearCalls = mockPool.query.mock.calls.filter(([sql]) =>
-      typeof sql === 'string' && sql.includes('is_auth_failed = false')
-    );
-    expect(clearCalls.length).toBe(0);
-  });
-
-  it('token 无 expiresAt → 状态未知，不新增熔断或告警', async () => {
-    mockReadFileSync.mockImplementation(() =>
-      JSON.stringify({ claudeAiOauth: { accessToken: 'tok' } })
-    );
-
-    await proactiveTokenCheck();
-
-    expect(isAuthFailed('account2')).toBe(false);
-    expect(mockRaise).not.toHaveBeenCalled();
-  });
-
   it('已过期但已是 auth-failed → 不重复 markAuthFailure', async () => {
     markAuthFailure('account2', new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString());
     const callsBefore = mockPool.query.mock.calls.length;

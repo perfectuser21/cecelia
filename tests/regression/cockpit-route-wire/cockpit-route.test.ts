@@ -1,44 +1,25 @@
-import { describe, it, expect } from 'vitest'
-import { readFile } from 'fs/promises'
-import { dirname, resolve } from 'path'
-import { fileURLToPath } from 'url'
+import { describe, it, expect } from 'vitest';
+import dashboard from '../../../apps/api/features/dashboard';
+import workbench from '../../../apps/api/features/workbench';
+import OwnerCockpitPage from '../../../apps/dashboard/src/pages/owner-cockpit/OwnerCockpitPage';
+import GTDInbox from '../../../apps/api/features/gtd/pages/GTDInbox';
 
-// 从测试文件自身定位 repo root——process.cwd() 会随跑测的 package 变化
-// （brain-unit 的 cwd=packages/brain，用 cwd 解析必炸；#4038 合入时 brain-unit 未触发所以没暴露）
-const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..')
+describe('OwnerCockpit 工作台入口', () => {
+  it('真实manifest根路由和工作台入口都转入运行诊断', () => {
+    expect(dashboard.routes.find(route => route.path === '/')?.redirect).toBe('/system');
+    expect(workbench.routes.find(route => route.path === '/workbench')?.redirect).toBe('/system');
+  });
 
-// 封装为 async 函数，满足 lint-test-quality 规则（await fn() 调用）
-async function readSourceFile(relativePath: string): Promise<string> {
-  return readFile(resolve(REPO_ROOT, relativePath), 'utf-8')
-}
-
-async function getManifestRoutes(relativePath: string): Promise<Array<{ path: string; component?: string; redirect?: string }>> {
-  // 加载真实 manifest，避免正则把父路由与嵌套导航 children 混在一起。
-  const { default: manifest } = await import(resolve(REPO_ROOT, relativePath))
-  return manifest.routes
-}
-
-describe('OwnerCockpit 路由接线 — 防孤儿断言', () => {
-  it('App.tsx 顶层静态含 OwnerCockpitPage 引用（防孤儿断言）', async () => {
-    const content = await readSourceFile('apps/dashboard/src/App.tsx')
-    expect(content).toContain('OwnerCockpitPage')
-  })
-
-  it('根路由进入运行诊断，Overview 仍挂载 OwnerCockpit（防孤儿 manifest 断言）', async () => {
-    const routes = await getManifestRoutes('apps/api/features/dashboard/index.ts')
-    const rootRoute = routes.find(r => r.path === '/')
-    expect(rootRoute).toBeDefined()
-    expect(rootRoute?.redirect).toBe('/system')
-
-    const workbenchRoutes = await getManifestRoutes('apps/api/features/workbench/index.ts')
-    expect(workbenchRoutes.find(r => r.path === '/workbench')?.redirect).toBe('/system')
-    expect(workbenchRoutes.find(r => r.path === '/workbench/inbox' && r.component)?.component).toBe('WorkbenchInbox')
-    const overviewRoute = workbenchRoutes.find(r => r.path === '/workbench/overview' && r.component)
-    expect(overviewRoute).toBeDefined()
-    expect(overviewRoute?.component).toBe('WorkbenchOverview')
-
-    const workbenchManifest = await readSourceFile('apps/api/features/workbench/index.ts')
-    expect(workbenchManifest).toContain("WorkbenchInbox: () => import('../gtd/pages/GTDInbox')")
-    expect(workbenchManifest).toContain("WorkbenchOverview: () => import('../../../dashboard/src/pages/owner-cockpit/OwnerCockpitPage')")
-  })
-})
+  it('Overview与Inbox路由的真实loader分别交付对应页面组件', async () => {
+    const overview = workbench.routes.find(route => route.path === '/workbench/overview');
+    const inbox = workbench.routes.find(route => route.path === '/workbench/inbox');
+    expect(overview?.component).toBe('WorkbenchOverview');
+    expect(inbox?.component).toBe('WorkbenchInbox');
+    const [overviewModule, inboxModule] = await Promise.all([
+      workbench.components![overview!.component!](),
+      workbench.components![inbox!.component!](),
+    ]);
+    expect(overviewModule.default).toBe(OwnerCockpitPage);
+    expect(inboxModule.default).toBe(GTDInbox);
+  });
+});

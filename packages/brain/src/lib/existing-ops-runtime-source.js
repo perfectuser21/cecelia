@@ -186,7 +186,7 @@ export async function collectRuntimeSources({ parse, paths, selectors, read, rea
       await read(RUNNER); relation(TEST,SANDBOX,'active_named_test_helper_call'); relation(SANDBOX,RUNNER,'native_node_runner_spawn');
     }
   }
-  if (paths.includes(PROVIDER)) {
+  if (paths.includes(PROVIDER) && (!basicCi || paths.includes(WORKFLOW))) {
     const doc = yaml.load(await readSource(WORKFLOW,revision)), job = doc?.jobs?.['snapshot-main'];
     const run = job?.steps?.find(s => s.run?.trim() === `set -euo pipefail\nnode tooling/${PROVIDER}`);
     const checkout = job?.steps?.find(s => s.uses === 'actions/checkout@v4' && s.with?.repository === 'perfectuser21/cecelia' && s.with?.path === 'tooling');

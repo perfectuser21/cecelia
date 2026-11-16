@@ -94,3 +94,15 @@ export const REVIEWED_FOUNDATION_FIXED_CHECKS={...REVIEWED_FIXED_CHECKS,[FOUNDAT
  'scripts/ci/foundation-release-snapshot.mjs':REVIEWED_FOUNDATION_RELEASE['scripts/ci/foundation-release-snapshot.mjs'],
  'scripts/ci/__tests__/foundation-release-readiness.test.mjs':'b0b806af90f3675c88e8e79d2d7f46fe9b2f801ab3cfdf1afb3d7f982fa782fc',
  'scripts/ci/pilot-release-verification.mjs':REVIEWED_FOUNDATION_RELEASE['scripts/ci/pilot-release-verification.mjs']};
+
+// 清退重复默认检查后的完整控制组；纯数据字节固定，历史组不覆盖。
+export const CLOSEOUT_PROFILE_PATH='packages/brain/src/lib/existing-ops-closeout-profile.json';
+const closeoutSha='7ccb681d2e3aa696bee74e109e028fb55b42b6ac29419d20d7e82fb908297c19',closeoutText=readFileSync(new URL('./existing-ops-closeout-profile.json',import.meta.url),'utf8');
+if(createHash('sha256').update(closeoutText).digest('hex')!==closeoutSha)reject();
+export const REVIEWED_CLOSEOUT={...JSON.parse(closeoutText),[CLOSEOUT_PROFILE_PATH]:closeoutSha};
+export async function collectReviewedCloseoutDeep({read,paths,relation}){
+ if(!paths?.includes(CLOSEOUT_PROFILE_PATH))reject();
+ for(const [path,digest] of Object.entries(REVIEWED_CLOSEOUT)){if(digest===null){if(paths.includes(path))reject();continue;}const bytes=await read(path);if(createHash('sha256').update(bytes).digest('hex')!==digest)reject();}
+ relation('packages/brain/src/lib/existing-ops-stage-modes.js',CLOSEOUT_PROFILE_PATH,'reviewed_deep_ci_source_profile');
+ for(const [consumer,input] of [['scripts/ci/deep-integration.config.mjs','scripts/ci/debt-pg.config.mjs'],['scripts/ci/debt-pg.config.mjs','scripts/ci/debt-pg-tests.json'],['scripts/ci/debt-pg.config.mjs','packages/brain/vitest.config.js']])relation(consumer,input,'reviewed_deep_postgres_config_input');
+}

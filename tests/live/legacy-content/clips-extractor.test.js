@@ -1,11 +1,14 @@
+// 显式legacy-content跑道；兼容API仍挂载，默认Brain CI不收本目录。
 /**
  * __tests__/clips-extractor.test.js
  * Tests the extractClip function
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Mock global fetch
-global.fetch = vi.fn();
+const mockFetch = vi.fn();
+beforeEach(() => vi.stubGlobal('fetch', mockFetch));
+afterEach(() => vi.unstubAllGlobals());
 
 describe('extractClip', () => {
   beforeEach(() => vi.clearAllMocks());
@@ -16,7 +19,7 @@ describe('extractClip', () => {
       json: async () => ({ queued: true }),
     });
 
-    const { extractClip } = await import('../clips-extractor.js');
+    const { extractClip } = await import('../../../packages/brain/src/clips-extractor.js');
     await extractClip('test-uuid', 'https://v.douyin.com/abc123');
 
     expect(global.fetch).toHaveBeenCalledOnce();
@@ -34,7 +37,7 @@ describe('extractClip', () => {
       text: async () => 'Service Unavailable',
     });
 
-    const { extractClip } = await import('../clips-extractor.js');
+    const { extractClip } = await import('../../../packages/brain/src/clips-extractor.js');
     await expect(extractClip('id-2', 'https://v.douyin.com/xyz')).rejects.toThrow('503');
   });
 });

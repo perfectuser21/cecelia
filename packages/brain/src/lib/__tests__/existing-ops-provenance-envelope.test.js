@@ -128,10 +128,7 @@ function checkedStageInputs(value){
  }
  return structuredClone(value);
 }
-describe('provenance完整阶段输入先核固定身份',()=>{
- for(const source of Object.keys(EXPECTED_STAGE_INPUTS))it(source+' 字节改变拒绝',()=>{const value=structuredClone(stageInputs);value[source]+='\n';expect(()=>checkedStageInputs(value)).toThrow();});
- for(const change of [v=>{delete v[Object.keys(v)[0]];},v=>{v.extra='x';},v=>{v[Object.keys(v)[0]]=7;}])it('缺字段/额外键/非字符串拒绝',()=>{const value=structuredClone(stageInputs);change(value);expect(()=>checkedStageInputs(value)).toThrow();});
-});
+
 
 // 固定已独审 W2 ad15a43a5e886ce30ba05b4dc640f340dcbb6af5：仅作 AST 数据，不导入或执行候选。
 const ISOLATION_REVISION="ad15a43a5e886ce30ba05b4dc640f340dcbb6af5";

@@ -35,8 +35,15 @@ printf '%s' "\${DASHBOARD_DIST_DIR:-$CECELIA_DEPLOY_ROOT/apps/dashboard/dist}" >
   // Keep the fingerprint step enabled and check the selected mount's real build-info bytes.
   writeFileSync(join(root, 'scripts/check-deploy-fingerprint.sh'), `#!/bin/sh
 printf 'checked\\n' >> "$CECELIA_DEPLOY_ROOT/fingerprint.log"
+printf 'fingerprint\\n' >> "$CECELIA_DEPLOY_ROOT/order.log"
+[ "\${FAIL_FINGERPRINT:-0}" = 0 ] || exit 1
 node -e 'const fs=require("fs"),p=fs.readFileSync(process.env.CECELIA_DEPLOY_ROOT+"/mounted-source","utf8");process.exit(JSON.parse(fs.readFileSync(p+"/build-info.json")).git_sha===process.env.EXPECTED_GIT_SHA?0:1)'
 `);
+  writeFileSync(join(root, 'bin/rsync'), `#!/bin/sh
+printf '%s\\0' "$@" >> "$CECELIA_DEPLOY_ROOT/rsync.args"
+printf 'rsync\\n' >> "$CECELIA_DEPLOY_ROOT/order.log"
+exit "\${FAIL_RSYNC:-0}"
+`, { mode: 0o755 });
   const run = (script, args = [], extra = {}) => {
     const env = { ...process.env, PATH: `${root}/bin:${process.env.PATH}`, CECELIA_DEPLOY_ROOT: root,
       CECELIA_SKIP_HK: '1', CECELIA_SKIP_BRAIN_PROMOTE: '1', CECELIA_SKIP_GIT_TAG: '1', ...extra };
@@ -113,3 +120,18 @@ test('release-only retention never deletes the currently mounted old release', t
   succeeded(f.run('promote-dashboard.sh', ['--release-only']));
   assert.ok(existsSync(join(f.release(1), 'frozen-sentinel')), 'retention removed the active mount source');
 });
+
+for (const mode of ['success', 'rsync-failure', 'fingerprint-failure']) {
+  test(`HK同步与指纹验收真实promote边界：${mode}`, t => {
+    const f = fixture(t);
+    const r = f.promote(2, { CECELIA_SKIP_HK: '', FAIL_RSYNC: mode === 'rsync-failure' ? '1' : '0', FAIL_FINGERPRINT: mode === 'fingerprint-failure' ? '1' : '0' });
+    assert.equal(r.status, mode === 'success' ? 0 : 1, r.stdout + r.stderr);
+    assert.deepEqual(f.read('rsync.args').split('\0').slice(0, -1), ['-az', '--delete', '-e', 'ssh -o ConnectTimeout=10', `${f.dash}/dist/`, 'hk-vps:/opt/cecelia/frontend/dist/']);
+    assert.equal(f.read('order.log'), 'rsync\nfingerprint\n');
+    assert.equal(f.read('fingerprint.log'), 'checked\n');
+    // 远端或终验失败不能伪报成功；本地已上线产物与指针不能被误回滚。
+    assert.equal(f.read('mounted-source'), f.release(2));
+    assert.equal(JSON.parse(f.read('apps/dashboard/dist/build-info.json')).git_sha, 'new');
+    assert.match(f.read('.production-release'), /current=prod-cecelia-v2/);
+  });
+}

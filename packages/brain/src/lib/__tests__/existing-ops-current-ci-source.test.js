@@ -10,7 +10,7 @@ const collect=async(overrides={})=>{
  await collectBasicCiSources({read,ci:await read('.github/workflows/ci.yml'),revision:fixed.revision,relations,parse:ast,paths:fixed.paths});
  await collectDeepCiSources({read,revision:fixed.revision,relations});return relations;
 };
-it('当前固定main完整来源证明真实入口及固定Git，不授予历史执行结果',async()=>{
+it('历史d06完整来源可读且不授予历史执行结果',async()=>{
  const relations=await collect();
  expect(relations).toContainEqual(expect.objectContaining({consumer_path:'scripts/ci/run-basic-check.mjs',input_path:'apps/api/vitest.config.ts',kind:'dashboard_features_unit_config',revision:fixed.revision}));
  expect(relations.some(r=>r.kind==='scheduled_or_manual_full_postgres_entry')).toBe(true);
@@ -32,7 +32,7 @@ it('当前workspace来源不向已退役Engine或Quality测试授予自动消费
  const edges=await collectWorkspaceInputEdges({revision:fixed.revision,paths:fixed.paths,readSource:async path=>fixed.read(path),parse:ast});
  expect(edges.some(edge=>/^(?:packages\/engine|packages\/quality)\//.test(edge.dst_path))).toBe(false);
 });
-it('候选完整控制封组真实读取六父任务协议；单成员混配均无来源资格',async()=>{
+it('候选完整控制封组真实读取五项必需任务协议；单成员混配均无来源资格',async()=>{
  const {readFileSync,existsSync}=await import('node:fs');
  const {execFileSync}=await import('node:child_process');
  const {fileURLToPath}=await import('node:url');
@@ -93,16 +93,17 @@ it('Workflow发布和注册执行只认可本次完整必需CI步骤，禁用换
  const read=path=>readFileSync(new URL(path,'file://'+root),'utf8'),workflow='.github/workflows/ci.yml',doc=yaml.load(read(workflow));
  const steps=doc.jobs['runtime-integration'].steps,publisher='foundation-publish.test.mjs',registration='workflow-foundation.pg.integration.test.js';
  const publishStep=steps.filter(step=>step.run?.includes(publisher)),registerStep=steps.filter(step=>step.run?.includes(registration));
- expect(publishStep).toHaveLength(1);expect(registerStep).toHaveLength(1);
- expect(publishStep[0]).toEqual({name:'Verify Workflow publication does not start business tasks','working-directory':'packages/brain',run:'npx vitest run scripts/commander-workflow/__tests__/foundation-publish.test.mjs --maxWorkers=1 --minWorkers=1'});
+ expect(publishStep).toHaveLength(0);expect(registerStep).toHaveLength(1);
+ const {default:brain}=await import('../../../vitest.config.js'),{default:fg}=await import('fast-glob');
+ expect(fg.sync(brain.test.include,{cwd:root+'packages/brain',ignore:brain.test.exclude})).toContain('scripts/commander-workflow/__tests__/foundation-publish.test.mjs');
  expect(registerStep[0]).toEqual({name:'Verify Workflow registration to Brain and real DBOS execution','working-directory':'packages/brain',env:{DB_NAME:'cecelia_scratch',DB_HOST:'127.0.0.1',DB_PORT:'5432',DB_USER:'onboarding_ci',DB_PASSWORD:'onboarding_ci',TEST_DB_URL:'postgresql://onboarding_ci:onboarding_ci@127.0.0.1:5432/cecelia_scratch'},run:'npx vitest run --config vitest.integration.config.js src/__tests__/integration/workflow-foundation.pg.integration.test.js src/__tests__/integration/foundation-legacy-entrances.pg.integration.test.js --maxWorkers=1 --minWorkers=1',if:'!cancelled()'});
  const observe=async ci=>{const relations=[];await collectBasicCiSources({read:async path=>path===workflow?ci:read(path),ci,revision:'f'.repeat(40),relations,parse:ast,paths});return relations;};
  expect(await observe(read(workflow))).not.toHaveLength(0);
- for(const fragment of [publisher,registration])for(const mutate of [step=>{step.if='false';},step=>{step.run='echo not-executed';},step=>{step['working-directory']='scripts';}]){
+ for(const fragment of [registration])for(const mutate of [step=>{step.if='false';},step=>{step.run='echo not-executed';},step=>{step['working-directory']='scripts';}]){
   const changed=structuredClone(doc);mutate(changed.jobs['runtime-integration'].steps.find(step=>step.run?.includes(fragment)));
   await expect(observe(yaml.dump(changed))).rejects.toThrow('basic_ci_source_unproven');
  }
- for(const fragment of [publisher,registration]){
+ for(const fragment of [registration]){
   const changed=structuredClone(doc);changed.jobs['runtime-integration'].steps=changed.jobs['runtime-integration'].steps.filter(step=>!step.run?.includes(fragment));
   await expect(observe(yaml.dump(changed))).rejects.toThrow('basic_ci_source_unproven');
  }
@@ -118,7 +119,7 @@ it('现役十项PG控制闭包固定读取；缺失、篡改及旧新成员拼�
  const root=fileURLToPath(new URL('../../../../../',import.meta.url));
  const paths=execFileSync('git',['ls-files','-z','--cached','--others','--exclude-standard'],{cwd:root,encoding:'utf8'}).split('\0').filter(p=>p&&existsSync(new URL(p,'file://'+root)));
  const read=path=>readFileSync(new URL(path,'file://'+root),'utf8');
- const profile='packages/brain/src/lib/existing-ops-fixed-checks-profile.json';
+ const profile='packages/brain/src/lib/existing-ops-closeout-profile.json';
  const observe=async(overrides={},missing)=>{const relations=[],source=async path=>{if(path===missing)throw Error('missing control');return overrides[path]??read(path);};await collectBasicCiSources({read:source,ci:await source('.github/workflows/ci.yml'),revision:'f'.repeat(40),relations,parse:ast,paths});return relations;};
  const relations=await observe();
  expect(relations).toContainEqual(expect.objectContaining({consumer_path:'packages/brain/src/lib/existing-ops-stage-modes.js',input_path:profile,kind:'reviewed_basic_ci_source_profile'}));
@@ -153,7 +154,7 @@ it('Foundation手动发布新封组完整固定，旧封组兼容且发布命令
  const read=path=>readFileSync(new URL(path,'file://'+root),'utf8');
  const observe=async(overrides={},missing)=>{const source=async path=>{if(path===missing)throw Error('missing publication control');return overrides[path]??read(path);};return collectBasicCiSources({read:source,ci:await source(workflow),revision:'f'.repeat(40),relations:[],parse:ast,paths});};
  await expect(observe()).resolves.toEqual(expect.any(Array));
- for(const member of ['packages/brain/src/lib/existing-ops-foundation-release-profile.json','scripts/ci/__tests__/basic-workflow.test.mjs','scripts/ci/foundation-release-snapshot.mjs','scripts/ci/__tests__/foundation-release-readiness.test.mjs','scripts/ci/pilot-release-verification.mjs']){
+ for(const member of ['packages/brain/src/lib/existing-ops-foundation-release-profile.json','scripts/ci/__tests__/basic-workflow.test.mjs','scripts/ci/foundation-release-snapshot.mjs','scripts/ci/__tests__/basic-foundation-release-readiness.test.mjs','scripts/ci/pilot-release-verification.mjs']){
   await expect(observe({},member)).rejects.toThrow();
   await expect(observe({[member]:read(member)+'\n// unreviewed publication control\n'})).rejects.toThrow('basic_ci_source_unproven');
  }
@@ -181,4 +182,40 @@ it('固定核心CI只证明实际11矩阵与Scripts版本门，不再生成Plan�
  expect(relations).toContainEqual(expect.objectContaining({consumer_path:'.github/workflows/ci.yml',input_path:'scripts/ci/check-brain-version-bump.sh',kind:'required_scripts_lane_brain_version_increment_guard'}));
  expect(relations).toContainEqual(expect.objectContaining({consumer_path:'.github/workflows/ci.yml',input_path:'scripts/ci/preview-ui.mjs',kind:'preview_only_fixed_git_ui_selector'}));
  expect(relations.filter(r=>r.kind==='reviewed_pr_postgres_test_selector')).toHaveLength(10);
+});
+
+
+async function currentSourceInputs(){
+ const {readFileSync,existsSync}=await import('node:fs'),{execFileSync}=await import('node:child_process'),{fileURLToPath}=await import('node:url');
+ const root=fileURLToPath(new URL('../../../../../',import.meta.url));
+ const paths=execFileSync('git',['ls-files','-z','--cached','--others','--exclude-standard'],{cwd:root,encoding:'utf8'}).split('\0').filter(p=>p&&existsSync(new URL(p,'file://'+root)));
+ return {paths,revision:'f'.repeat(40),read:async path=>readFileSync(new URL(path,'file://'+root),'utf8')};
+}
+it('当前Deep真实字节必须独立证明，不能用d06历史绿替代',async()=>{
+ const inputs=await currentSourceInputs(),relations=[];
+ await collectDeepCiSources({...inputs,relations,parse:ast});
+ expect(relations).toContainEqual(expect.objectContaining({consumer_path:'.github/workflows/nightly-regression.yml',input_path:'scripts/ci/deep-integration.config.mjs',kind:'scheduled_or_manual_full_postgres_entry'}));
+});
+it('当前聚合真实读源：退休F2及未审现役F3失败关闭，不借历史绿恢复资格',async()=>{
+ const {buildExistingOpsSources}=await import('../existing-ops-source.js'),inputs=await currentSourceInputs();
+ const proof=await buildExistingOpsSources({scope:'cecelia-factory',repo:'perfectuser21/cecelia',paths:inputs.paths,revision:inputs.revision,readSource:inputs.read});
+ const [f2,f3]=proof.consumers;
+ expect(f2.status).toBe('unknown');expect(f2.bindings).toEqual([]);expect(f2.input_relations).toEqual([]);
+ expect(f2.gaps).toContainEqual(expect.objectContaining({code:'deployment_entry_unproven'}));
+ expect(f3.status).toBe('unknown');expect(f3.bindings).toEqual([]);expect(f3.input_relations).toEqual([]);
+ expect(f3.gaps).toEqual(['native_build_execution_unproven','native_publish_execution_unproven','native_stage_execution_unproven'].map(code=>({code})));
+ const relations=[];await collectBasicCiSources({...inputs,ci:await inputs.read('.github/workflows/ci.yml'),relations,parse:ast});await collectDeepCiSources({...inputs,relations});
+ expect(relations).toContainEqual(expect.objectContaining({input_path:'packages/brain/src/lib/existing-ops-closeout-profile.json',kind:'reviewed_basic_ci_source_profile'}));
+ expect(relations).toContainEqual(expect.objectContaining({input_path:'packages/brain/src/lib/existing-ops-closeout-profile.json',kind:'reviewed_deep_ci_source_profile'}));
+ expect(f3.input_relations.some(r=>r.consumer_path==='.github/workflows/implementation-impact.yml'||r.kind==='trusted_main_snapshot_node_entry')).toBe(false);
+ expect(proof.workflows.every(w=>w.executable===false)).toBe(true);
+});
+
+it('当前Deep完整组缺失、篡改、旧Nightly或旧单成员拼接均拒绝',async()=>{
+ const inputs=await currentSourceInputs(),profile='packages/brain/src/lib/existing-ops-closeout-profile.json';
+ for(const member of [profile,'.github/workflows/nightly-regression.yml','scripts/ci/deep-integration.config.mjs','scripts/ci/debt-pg.config.mjs','scripts/ci/debt-pg-tests.json','packages/brain/vitest.config.js']){
+  for(const missing of [false,true])await expect(collectDeepCiSources({...inputs,relations:[],read:async path=>{if(path===member){if(missing)throw Error('missing');return (await inputs.read(path))+'\n';}return inputs.read(path);}})).rejects.toThrow();
+ }
+ await expect(collectDeepCiSources({...inputs,paths:inputs.paths.filter(p=>p!==profile),relations:[]})).rejects.toThrow();
+ await expect(collectDeepCiSources({...inputs,relations:[],read:async path=>path==='.github/workflows/nightly-regression.yml'?fixed.read(path):inputs.read(path)})).rejects.toThrow();
 });

@@ -43,7 +43,7 @@ for c in sudo shutdown osascript reboot halt; do
   chmod +x "${STUB_DIR}/${c}"
 done
 
-# 源码级断言：KALLOC_KB 注入支持 + 合法 task_type
+# 注入支持；告警准入由独立真实路由fixture验证
 if grep -q 'KALLOC_KB' "${JANITOR}"; then
   ok "janitor.sh 支持 KALLOC_KB 环境变量注入"
 else
@@ -58,16 +58,7 @@ if [ -z "${KALLOC_BLOCK}" ]; then
 fi
 ok "成功提取 check_kalloc_guard 函数体"
 
-if echo "${KALLOC_BLOCK}" | grep -q 'task_type\\":\\"alert\\"'; then
-  fail "check_kalloc_guard 函数体里用了非法 task_type=\"alert\""
-else
-  ok "check_kalloc_guard 函数体无非法 task_type=\"alert\""
-fi
-if echo "${KALLOC_BLOCK}" | grep -q 'task_type\\":\\"harness_intervention\\"'; then
-  ok "check_kalloc_guard 函数体使用合法 task_type=harness_intervention"
-else
-  fail "check_kalloc_guard 函数体缺少合法 task_type=harness_intervention"
-fi
+# 任务准入与禁止自动执行由 janitor_alert_admission.test.sh 调真实路由校验。
 
 # 阈值常量必须定义在【函数体内】。本脚本全文无 set -u，若常量定义在函数外而
 # 提取出的块看不见它，$((UNDEF*1024*1024)) 静默取 0 → [ kb -ge 0 ] 恒真 →

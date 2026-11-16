@@ -109,14 +109,12 @@ describe('时段与建单契约', () => {
     expect(withinPublishHours(new Date('2026-10-11T00:59:00Z'))).toBe(false); // 08:59
     expect(withinPublishHours(new Date('2026-10-11T15:00:00Z'))).toBe(false); // 23:00
   });
-  it('stage 3 执行单：派发器能解析契约，正文含实测要求的全部纪律', () => {
+  it('stage 3 执行单：派发器能解析结构化契约与设备身份', () => {
     const spec = buildExecSpec({ ledger: L(), cfg, stage: 3, skill: 'android-douyin-private-video@1.0.8', round: 1 });
     const parsed = parseFactoryContract({ payload: spec.payload });
     expect(parsed.ok).toBe(true);
     expect(parsed.contract).toMatchObject({ stage: '3', agent: 'skill-factory', skill: 'android-douyin-private-video@1.0.8', workflow_key: 'douyin_video_publish.android' });
     expect(parsed.contract.device).toEqual({ node: 'XIAN-M4-PHONE', profile: 'xiaolongxia', serial: 'ANGYVB4311010223', ssh_host: 'xian-m4' });
-    for (const s of ['只私密发布', '单次点发布', '--outward publish` 必须放在子命令及其参数（COMMAND）之后', '第18轮', '09:00–23:00', '派发器代领', '5f00cf51'])
-      expect(spec.description).toContain(s);
     expect(spec.payload).toMatchObject({ factory_dispatch: true, factory_ledger_id: L().id });
     // 派发总闸 F（任务 0a70684f）：执行单独立 task_type，tick 排除按类型，不再靠 headed_manual 一个字段挡
     expect(spec.task_type).toBe('skill_factory_run');

@@ -409,6 +409,7 @@ it('默认调度完整一轮只消费注入pool，不触canonical DB/网络/子�
 
 
 it.each([
+  ['factory-cycle', '../lib/factory-cycle.js', 'runFactoryCycle'],
   ['credential-freshness', '../credential-freshness.js', 'maybeRunCredentialFreshness'],
   ['seven-ring-audit', '../seven-ring-audit.js', 'runSevenRingAuditJob'],
   ['crystal-judge', '../crystal-judge.js', 'maybeRunCrystalJudge'],

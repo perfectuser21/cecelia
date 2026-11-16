@@ -128,7 +128,6 @@ features:
         - packages/brain/src/__tests__/startup-recovery.test.js
         - packages/brain/src/__tests__/startup-sync.test.js
         - packages/brain/src/__tests__/stats.test.js
-        - packages/brain/src/__tests__/strategy-session-parser.test.js
         - packages/brain/src/__tests__/strategy-tree-routes.test.js
         - packages/brain/src/__tests__/system-reports-route.test.js
         - packages/brain/src/__tests__/tick-billing-pause.test.js
@@ -218,7 +217,6 @@ features:
             - packages/brain/src/__tests__/startup-recovery.test.js
             - packages/brain/src/__tests__/startup-sync.test.js
             - packages/brain/src/__tests__/stats.test.js
-            - packages/brain/src/__tests__/strategy-session-parser.test.js
             - packages/brain/src/__tests__/strategy-tree-routes.test.js
             - packages/brain/src/__tests__/system-reports-route.test.js
             - packages/brain/src/__tests__/tick-billing-pause.test.js
