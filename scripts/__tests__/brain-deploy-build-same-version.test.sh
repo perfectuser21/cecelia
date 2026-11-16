@@ -117,6 +117,8 @@ make_repo() {
   printf '{"name":"x","version":"%s"}\n' "$version" > "$dir/packages/brain/package.json"
   printf 'FROM scratch\n' > "$dir/packages/brain/Dockerfile"
   cp "$SRC" "$dir/scripts/brain-build.sh"
+  mkdir -p "$dir/scripts/lib"
+  cp "$REPO_ROOT/scripts/lib/brain-candidate-docker.sh" "$dir/scripts/lib/brain-candidate-docker.sh"
   git -C "$dir" add -A
   git -C "$dir" -c core.hooksPath=/dev/null -c user.email=t@t -c user.name=t commit -qm init
   git -C "$dir" branch -M main

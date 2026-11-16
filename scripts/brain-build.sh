@@ -3,6 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+source "$SCRIPT_DIR/lib/brain-candidate-docker.sh"
 
 # v1.2.0 (2026-05-05): build 用 origin/main 而不是 HEAD — 工具链对 cwd 分支彻底免疫。
 # 旧版 v1.1.0 用 git archive HEAD：当主仓库 cwd 被切到 cp-* 分支（如另一个 session 在做
@@ -89,14 +90,29 @@ if [[ -n "$OLD_ID" ]]; then
   fi
 fi
 
-# 从干净的 origin/main 快照构建
-docker build \
+# 从干净快照构建；远端只构建候选，生产 tag 等同 ID/SHA 的导入校验通过后更新。
+if [[ -n "${BRAIN_CANDIDATE_DOCKER_CONTEXT:-}" ]]; then
+  candidate_docker build --platform linux/amd64 --iidfile "$TEMP_BUILD/.candidate-image-id" \
+    -t "${IMAGE_REPO}:candidate-${BUILD_SHA}" \
+    --build-arg "GIT_SHA=${BUILD_SHA}" \
+    -f "$TEMP_BUILD/packages/brain/Dockerfile" "$TEMP_BUILD"
+  CANDIDATE_ID=$(cat "$TEMP_BUILD/.candidate-image-id")
+  candidate_verify_image candidate_docker "$CANDIDATE_ID" "$BUILD_SHA"
+  # 用 ID 导出不携带可变发布 tag；任一端失败均拒绝晋升。
+  candidate_docker image save "$CANDIDATE_ID" | docker image load
+  candidate_verify_image docker "$CANDIDATE_ID" "$BUILD_SHA"
+  docker tag "$CANDIDATE_ID" "${IMAGE_REPO}:${VERSION}"
+  docker tag "$CANDIDATE_ID" "${IMAGE_REPO}:latest"
+  if [[ -n "$EXTRA_TAG" ]]; then docker tag "$CANDIDATE_ID" "$EXTRA_TAG"; fi
+else
+  docker build \
   -t "${IMAGE_REPO}:${VERSION}" \
   -t "${IMAGE_REPO}:latest" \
   ${EXTRA_TAG_ARGS[@]+"${EXTRA_TAG_ARGS[@]}"} \
   --build-arg "GIT_SHA=${BUILD_SHA}" \
   -f "$TEMP_BUILD/packages/brain/Dockerfile" \
   "$TEMP_BUILD"
+fi
 
 # 收敛：被顶替的镜像（旧版本 tag 持有者 / 旧 latest）只留一个 tag，摘掉 ${VERSION}-${sha12} 别名（至少还剩一个 tag 时才摘）
 NEW_ID=$(image_id_of "${IMAGE_REPO}:${VERSION}")

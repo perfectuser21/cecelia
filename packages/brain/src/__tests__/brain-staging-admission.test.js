@@ -9,7 +9,7 @@ afterEach(()=>{if(dir)rmSync(dir,{recursive:true,force:true});});
 function run(mode){
  dir=mkdtempSync(join(tmpdir(),'brain-admission-'));
  for(const sub of ['scripts/lib','packages/brain','bin','logs','state'])mkdirSync(join(dir,sub),{recursive:true});
- for(const file of ['brain-deploy.sh','staging-deploy.sh','lib/brain-staging.sh','staging-verify.sh']){
+ for(const file of ['brain-deploy.sh','staging-deploy.sh','lib/brain-staging.sh','lib/brain-candidate-docker.sh','staging-verify.sh']){
   const from=join(repo,'scripts',file);if(existsSync(from))copyFileSync(from,join(dir,'scripts',file));
  }
  writeFileSync(join(dir,'packages/brain/package.json'),JSON.stringify({version:'1.445.48'}));
@@ -24,12 +24,19 @@ echo "$*" >> "$COMMANDS"
 case "$1" in
  info) exit 0;;
  ps)
+  if [[ "$*" == *cecelia-admission-* ]]; then
+   for name in cecelia-admission-brain cecelia-admission-db; do
+    [[ "$*" != *"$name"* || ! -f "$STATE/$name" ]] || echo "$name"
+   done
+   exit 0
+  fi
   [[ "$MODE" != sidecar-query-failure ]] || exit 42
   [[ "$MODE" != sidecar-running ]] || echo cecelia-bluegreen-sidecar
   exit 0;;
  image) [[ "$MODE" != missing-image ]] || exit 1; if [[ "$*" == *Config.Env* ]]; then echo "GIT_SHA=$SHA"; else echo "$DIGEST"; fi; exit 0;;
  network)
-  if [[ "$2" == inspect ]]; then
+  if [[ "$2" == ls ]]; then [[ ! -f "$STATE/network" ]] || echo cecelia-admission
+  elif [[ "$2" == inspect ]]; then
    [[ -f "$STATE/network" ]] || exit 1
    if [[ "$*" == *cecelia.staging.request* ]]; then cat "$STATE/network"; elif [[ "$*" == *cecelia.staging* ]]; then echo admission-v1; fi
   elif [[ "$2" == create ]]; then for arg in "$@"; do case "$arg" in cecelia.staging.request=*) echo "$arg" | cut -d= -f2 > "$STATE/network";; esac; done

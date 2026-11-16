@@ -1,20 +1,21 @@
 #!/usr/bin/env bash
 # 候选自身读回：固定来源、隔离运行、关闭 tick、任务 API 真连库。
 set -euo pipefail
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/brain-candidate-docker.sh"
 [[ "${EXPECTED_SHA:-}" =~ ^[a-f0-9]{40}$ ]] || { echo '缺少固定候选 SHA' >&2; exit 1; }
 [[ "${STAGING_CONTAINER:-}" == cecelia-admission-brain ]] || { echo '非法候选容器' >&2; exit 1; }
-health=$(docker exec "$STAGING_CONTAINER" curl -fsS --max-time 15 http://localhost:5222/api/brain/health)
+health=$(candidate_docker exec "$STAGING_CONTAINER" curl -fsS --max-time 15 http://localhost:5222/api/brain/health)
 printf '%s' "$health" | node -e '
  const fs=require("fs"),d=JSON.parse(fs.readFileSync(0,"utf8"));
  if(d.status!=="healthy"||d.git_sha!==process.env.EXPECTED_SHA||d.version!==process.env.EXPECTED_VERSION||d.runtime?.isolated!==true||d.runtime?.background_automation!==false)throw Error("候选健康/来源/隔离核验失败");
 '
-docker exec "$STAGING_CONTAINER" curl -fsS --max-time 15 http://localhost:5222/api/brain/tick/status | node -e '
+candidate_docker exec "$STAGING_CONTAINER" curl -fsS --max-time 15 http://localhost:5222/api/brain/tick/status | node -e '
  const d=JSON.parse(require("fs").readFileSync(0,"utf8"));if(d.enabled!==false)throw Error("候选 tick 未关闭");
 '
-docker exec "$STAGING_CONTAINER" curl -fsS --max-time 15 'http://localhost:5222/api/brain/tasks?limit=1' | node -e '
+candidate_docker exec "$STAGING_CONTAINER" curl -fsS --max-time 15 'http://localhost:5222/api/brain/tasks?limit=1' | node -e '
  const d=JSON.parse(require("fs").readFileSync(0,"utf8"));if(!Array.isArray(d)||d.some(t=>!t||typeof t!=="object"||!/^([a-f0-9]{8}-){1}[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(t.id)||typeof t.title!=="string"||typeof t.status!=="string"))throw Error("候选任务读回无效");
 '
-database=$(docker exec "$STAGING_CONTAINER" node --input-type=module -e '
+database=$(candidate_docker exec "$STAGING_CONTAINER" node --input-type=module -e '
  const {default:pg}=await import("pg"),{DB_DEFAULTS}=await import("./src/db-config.js");
  if(DB_DEFAULTS.host!=="stage-db"||DB_DEFAULTS.database!=="cecelia_staging")throw Error("候选连接配置不隔离");
  const c=new pg.Client({...DB_DEFAULTS,query_timeout:15000});await c.connect();

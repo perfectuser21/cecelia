@@ -26,13 +26,14 @@ function execute(command,args,options) {
     child.once('error',reject);child.once('close',code=>{clearTimeout(timeout);resolve({code,stdout,stderr});});
   });
 }
-async function fixture(t,{arch='x86_64',failures=0,badChecksum=false,version='2.45.0',tmpLayout=false}={}) {
+async function fixture(t,{arch='x86_64',failures=0,badChecksum=false,version='2.45.0',tmpLayout=false,gcSensitive=false}={}) {
   const parent=await mkdtemp(join(tmpdir(),'brain-gh-install-'));t.after(()=>rm(parent,{recursive:true,force:true}));
   const root=tmpLayout?join(parent,'tmp','fixture'):parent;await mkdir(root,{recursive:true});
   for(const p of ['bin','tmp','out','home','payload'])await mkdir(join(root,p));
   const targetArch=arch==='aarch64'?'arm64':'amd64',folder='gh_2.45.0_linux_'+targetArch;
   await mkdir(join(root,'payload',folder,'bin'),{recursive:true});
-  await writeFile(join(root,'payload',folder,'bin/gh'),'#!/bin/sh\nprintf "gh version '+version+' (synthetic)\\n"\n');
+  const gcProbe=gcSensitive?'[ "${GOGC-}" = off ] || { echo "runtime: lfstack.push (synthetic emulation fault)" >&2; exit 2; }\nprintf "%s" "$GOGC" > "$GOGC_TRACE"\n':'';
+  await writeFile(join(root,'payload',folder,'bin/gh'),'#!/bin/sh\n'+gcProbe+'printf "gh version '+version+' (synthetic)\\n"\n');
   await chmod(join(root,'payload',folder,'bin/gh'),0o755);
   const pack=await execute('/usr/bin/tar',['-czf',join(root,'package.tgz'),'-C',join(root,'payload'),folder],{env:{PATH:'/usr/bin:/bin'}});assert.equal(pack.code,0,pack.stderr);
   const body=await readFile(join(root,'package.tgz'));const hash=badChecksum?'0'.repeat(64):createHash('sha256').update(body).digest('hex');let requests=0;const urls=[];
@@ -49,9 +50,11 @@ async function fixture(t,{arch='x86_64',failures=0,badChecksum=false,version='2.
   for(const pin of originalHashes)shell=shell.replaceAll(pin,hash);
   // Only paths and the artifact bytes/hash are rebound; the actual RUN control flow executes.
   assertFixtureDownload(shell,server.address().port);assert.ok(!shell.includes('/usr/local/bin'));
-  const script=join(root,'install.sh');await writeFile(script,'set -e\n'+shell+'\n');
-  const result=await execute('/bin/sh',[script],{cwd:root,env:{PATH:join(root,'bin')+':/usr/bin:/bin',HOME:join(root,'home')}});
-  return {...result,requests,urls,installed:await readFile(join(root,'out/gh'),'utf8').catch(()=>null)};
+  const script=join(root,'install.sh');await writeFile(script,'set -e\n'+shell+'\ninstaller_status=$?\n[ "$installer_status" -eq 0 ] || exit "$installer_status"\nprintf "%s" "${GOGC-unset}" > "$GOGC_AFTER"\n');
+  const gcTrace=join(root,'out/gogc-probe'),gcAfter=join(root,'out/gogc-after');
+  const result=await execute('/bin/sh',[script],{cwd:root,env:{PATH:join(root,'bin')+':/usr/bin:/bin',HOME:join(root,'home'),GOGC_TRACE:gcTrace,GOGC_AFTER:gcAfter}});
+  return {...result,requests,urls,installed:await readFile(join(root,'out/gh'),'utf8').catch(()=>null),
+    gcObserved:await readFile(gcTrace,'utf8').catch(()=>null),gcAfter:await readFile(gcAfter,'utf8').catch(()=>null)};
 }
 for(const arch of ['x86_64','aarch64'])test(`actual Docker RUN retries HTTP504 and installs fixed version for ${arch}`,async t=>{
  const x=await fixture(t,{arch,failures:1});assert.equal(x.code,0,x.stderr);assert.equal(x.requests,2);assert.match(x.installed,/2\.45\.0/);assert.ok(x.urls.every(u=>u.endsWith(arch==='aarch64'?'linux_arm64.tar.gz':'linux_amd64.tar.gz')));
@@ -59,6 +62,16 @@ for(const arch of ['x86_64','aarch64'])test(`actual Docker RUN retries HTTP504 a
 test('actual RUN refuses corrupt checksum before installing',async t=>{const x=await fixture(t,{badChecksum:true});assert.notEqual(x.code,0);assert.match(x.stdout+x.stderr,/checksum|FAILED/i);assert.equal(x.installed,null);});
 test('actual RUN rejects unsupported architecture before HTTP',async t=>{const x=await fixture(t,{arch:'unsupported'});assert.notEqual(x.code,0);assert.equal(x.requests,0);assert.equal(x.installed,null);});
 test('actual RUN verifies the installed version',async t=>{const x=await fixture(t,{version:'0.0.0'});assert.notEqual(x.code,0);assert.ok(x.installed?.includes('0.0.0'),'wrong-version archive must reach version gate');});
+
+test('真实 RUN 仅 gh 自检进程关闭 GC，仿真崩溃得到修复且不影响后续命令',async t=>{
+ const x=await fixture(t,{gcSensitive:true});assert.equal(x.code,0,x.stderr);assert.equal(x.gcObserved,'off');assert.equal(x.gcAfter,'unset');assert.match(x.stdout,/gh version 2\.45\.0 /);
+});
+test('关闭 gh 自检 GC 后，错误版本仍必须拒绝',async t=>{
+ const x=await fixture(t,{gcSensitive:true,version:'0.0.0'});assert.equal(x.gcObserved,'off','必须先越过仿真 GC 故障再验证错误版本');assert.notEqual(x.code,0);assert.ok(x.installed?.includes('0.0.0'));assert.doesNotMatch(x.stderr,/lfstack/);
+});
+test('Dockerfile 不向运行镜像写入全局 GOGC 配置',async()=>{
+ const text=(await readFile(dockerfile,'utf8')).replaceAll('\\\n',' ');assert.doesNotMatch(text,/^\s*ENV\s+[^\n]*\bGOGC\b/m);
+});
 
 test('owned path containing /tmp is rebound once, as on Linux runners',async t=>{const x=await fixture(t,{tmpLayout:true});assert.equal(x.code,0,x.stderr);assert.match(x.installed,/2\.45\.0/);});
 
