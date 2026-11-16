@@ -12,6 +12,18 @@ const require = createRequire(import.meta.url);
 const cli = join(dirname(require.resolve('vitest/package.json', {paths:[join(root, 'packages/brain')]})), 'vitest.mjs');
 const capture = 'packages/brain/src/routes/__tests__/captures-conversation-source.test.js';
 const recovery = 'tests/gp/f1/step1-unblock-expired-selfheal.test.js';
+const recoveryBehaviors = [
+  'recovery-loop 会调用 unblockExpiredTasks',
+  '这条网抛错不影响其他四条（各自独立 try-catch）',
+  '恢复数进可观测输出——全 0 也要打，才证明"我在跑"',
+];
+
+function assertRecoveryBehaviors(report, status) {
+  const cases = report.testResults.flatMap(suite => suite.assertionResults);
+  for (const title of recoveryBehaviors) {
+    assert.equal(cases.find(row => row.title === title)?.status, status, JSON.stringify(cases));
+  }
+}
 
 // 私有目录只复制被测模块；所有默认数据库/设备锁入口是拒绝调用的替身。
 function fixture(run) {
@@ -72,7 +84,8 @@ test('TTL 自愈测试正确注入 pool 与设备锁；默认资源一旦调用�
     `${anchor}\nif (dbPool === pool) throw new Error('DEFAULT_POOL_SELECTED');`));
   const result = execute(recovery);
   assert.equal(result.status, 0, result.stdout + result.stderr + JSON.stringify(result.report.testResults));
-  assert.equal(result.report.numPassedTests, 5);
+  assertRecoveryBehaviors(result.report, 'passed');
+  assert.ok(result.report.testResults.flatMap(suite => suite.assertionResults).every(row => row.status === 'passed'));
   assert.equal(existsSync(touch), false, '默认 DB 或设备锁 sweep 被调用');
   const originalTest = readFileSync(join(root, recovery), 'utf8');
   for (const [mutation, marker] of [
@@ -83,7 +96,7 @@ test('TTL 自愈测试正确注入 pool 与设备锁；默认资源一旦调用�
     put(recovery, mutation);
     const broken = execute(recovery);
     assert.notEqual(broken.status, 0, '缺少依赖注入却通过');
-    assert.equal(broken.report.numFailedTests, 3);
+    assertRecoveryBehaviors(broken.report, 'failed');
     assert.match(JSON.stringify(broken.report) + broken.stdout + broken.stderr, new RegExp(marker));
     assert.equal(existsSync(touch), false, '反例也不得调用真实资源');
   }

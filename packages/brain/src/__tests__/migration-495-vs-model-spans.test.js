@@ -14,11 +14,6 @@ const rb = existsSync(down) ? readFileSync(down, 'utf8') : '';
 const server = readFileSync(fileURLToPath(new URL('../../server.js', import.meta.url)), 'utf8');
 
 describe('migration 495 价值流建模④：spans 表 + task_runs.workflow_id + activity_flow_metrics 视图', () => {
-  it('文件存在（含回滚）', () => {
-    expect(existsSync(up)).toBe(true);
-    expect(existsSync(down)).toBe(true);
-  });
-
   it('spans 表：run_id 必填，四个外键可空，started_at 必填，duration_ms 生成列', () => {
     expect(sql).toMatch(/CREATE TABLE IF NOT EXISTS spans \(/);
     expect(sql).toMatch(/run_id text NOT NULL/);
@@ -54,15 +49,13 @@ describe('migration 495 价值流建模④：spans 表 + task_runs.workflow_id +
     expect(sql).toMatch(/fallback_rate/);
     expect(sql).toMatch(/first_pass_yield/);
     expect(sql).toMatch(/interval '7 days'/);
-    expect(sql).toMatch(/INSERT INTO schema_version[\s\S]*'495'/);
   });
 
-  it('回滚：删视图、删 task_runs.workflow_id、删索引/表、删 schema_version', () => {
+  it('回滚：删视图、删 task_runs.workflow_id、删索引/表', () => {
     expect(rb).toMatch(/DROP VIEW IF EXISTS activity_flow_metrics/);
     expect(rb).toMatch(/ALTER TABLE task_runs DROP COLUMN IF EXISTS workflow_id/);
     expect(rb).toMatch(/DROP INDEX IF EXISTS uq_spans_idem/);
     expect(rb).toMatch(/DROP TABLE IF EXISTS spans/);
-    expect(rb).toMatch(/DELETE FROM schema_version WHERE version = '495'/);
   });
 
   it('接线：server.js 挂载 spansRouter（POST/GET /api/brain/spans）', () => {

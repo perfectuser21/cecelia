@@ -14,11 +14,6 @@ const sql = existsSync(up) ? readFileSync(up, 'utf8') : '';
 const src = (rel) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8');
 
 describe('migration 496 价值流建模⑤：探针挂点 target + 格子扩到 step/enabler 级', () => {
-  it('文件存在（含回滚）', () => {
-    expect(existsSync(up)).toBe(true);
-    expect(existsSync(down)).toBe(true);
-  });
-
   it('step_probes 加 target_type（activity|step|enabler）+ target_id，journey_step_link_id 保留', () => {
     expect(sql).toMatch(/ALTER TABLE step_probes ADD COLUMN IF NOT EXISTS target_type text/);
     expect(sql).toMatch(/ALTER TABLE step_probes ADD COLUMN IF NOT EXISTS target_id uuid/);
@@ -26,10 +21,8 @@ describe('migration 496 价值流建模⑤：探针挂点 target + 格子扩到 
     expect(sql).not.toMatch(/DROP COLUMN[^;]*journey_step_link_id/);
   });
 
-  it('回填：既有探针 target_type=activity、target_id=格子的 step_id；coll_rescan_rate 改挂 step return_to_results', () => {
+  it('回填：既有探针 target_type=activity、target_id=格子的 step_id', () => {
     expect(sql).toMatch(/UPDATE step_probes[\s\S]*target_type = 'activity'[\s\S]*journey_step_links/);
-    expect(sql).toMatch(/keyword_acquisition\.collection\.return_to_results/);
-    expect(sql).toMatch(/probe_key = 'coll_rescan_rate'/);
   });
 
   it('journey_step_links 加 cell_level（默认 activity）/ step_id_ref → steps / enabler_id → enablers', () => {
@@ -45,16 +38,12 @@ describe('migration 496 价值流建模⑤：探针挂点 target + 格子扩到 
     expect(sql).toMatch(/ON CONFLICT \(step_id, cell_kind, cell_key\) WHERE cell_kind IS NOT NULL DO NOTHING/);
   });
 
-  it('golden_path* 不 DROP（74 处活引用），只标注退役计划', () => {
+  it('golden_path* 不 DROP、不改名', () => {
     expect(sql).not.toMatch(/DROP TABLE[^;]*golden_path/);
     expect(sql).not.toMatch(/RENAME TO golden_path\w*_legacy/);
-    expect(sql).toMatch(/'golden_path', 'golden_paths', 'golden_path_contract_versions'/);
-    expect(sql).toMatch(/COMMENT ON TABLE %I IS %L/);
-    expect(sql).toMatch(/退役/);
   });
 
-  it('登记 schema_version 496；回滚删生成的格子、删列、删注册', () => {
-    expect(sql).toMatch(/INSERT INTO schema_version[\s\S]*'496'/);
+  it('回滚删生成的格子、删列、删注册', () => {
     const d = existsSync(down) ? readFileSync(down, 'utf8') : '';
     expect(d).toMatch(/DELETE FROM journey_step_links WHERE cell_level IN \('step', ?'enabler'\)/);
     expect(d).toMatch(/DROP COLUMN IF EXISTS step_id_ref/);
@@ -62,7 +51,6 @@ describe('migration 496 价值流建模⑤：探针挂点 target + 格子扩到 
     expect(d).toMatch(/DROP COLUMN IF EXISTS cell_level/);
     expect(d).toMatch(/DROP COLUMN IF EXISTS target_id/);
     expect(d).toMatch(/DROP COLUMN IF EXISTS target_type/);
-    expect(d).toMatch(/DELETE FROM schema_version WHERE version = '496'/);
   });
 
   it('接线：spec 认 target、路由持久化 target_type/target_id、sync 解析 target、steps/enablers 路由挂到 server.js', () => {

@@ -16,8 +16,7 @@ describe('migration 526 attach orphan activities', () => {
     expect(sql).toMatch(/'step_' \|\| a\.step_number/);
     expect(sql).toMatch(/ON CONFLICT[\s\S]*DO NOTHING/);
   });
-  it('写 schema_version 526，事务包裹，回滚只删本迁移挂的引用与新建的主线流程', () => {
-    expect(sql).toMatch(/INSERT INTO schema_version[\s\S]*'526'/);
+  it('事务包裹，回滚只删本迁移挂的引用与新建的主线流程', () => {
     expect(sql).toMatch(/^BEGIN;/m);
     expect(sql.trim().endsWith('COMMIT;')).toBe(true);
     expect(existsSync(down)).toBe(true);

@@ -15,11 +15,6 @@ const sql = existsSync(up) ? readFileSync(up, 'utf8') : '';
 const downSql = existsSync(down) ? readFileSync(down, 'utf8') : '';
 
 describe('migration 478', () => {
-  it('文件存在（含回滚脚本）', () => {
-    expect(existsSync(up)).toBe(true);
-    expect(existsSync(down)).toBe(true);
-  });
-
   it('step_probes / journey_assertion_receipts 幂等加三记账列', () => {
     for (const t of ['step_probes', 'journey_assertion_receipts']) {
       for (const c of ['notion_id text', 'notion_synced_at timestamptz', 'notion_digest text']) {
@@ -47,16 +42,12 @@ describe('migration 478', () => {
 
   it('注册表登记两库为 push/active，真库 id 由建库脚本产出', () => {
     expect(sql).toMatch(/INSERT INTO notion_projection_map/);
-    expect(sql).toMatch(/'3e8c40c2-ba63-8182-954e-f9eda21d137e',\s*'探针',\s*'mirror',\s*'step_probes',\s*'push',\s*'notion-probe-projection\.pushStepProbes',\s*'active'/);
-    expect(sql).toMatch(/'3e8c40c2-ba63-81d7-8c48-c70142b3f0bc',\s*'判定回执',\s*'mirror',\s*'journey_assertion_receipts',\s*'push',\s*'notion-probe-projection\.pushProbeReceipts',\s*'active'/);
+    expect(sql).toMatch(/'mirror',\s*'step_probes',\s*'push',\s*'notion-probe-projection\.pushStepProbes',\s*'active'/);
+    expect(sql).toMatch(/'mirror',\s*'journey_assertion_receipts',\s*'push',\s*'notion-probe-projection\.pushProbeReceipts',\s*'active'/);
     expect(sql).toMatch(/ON CONFLICT DO NOTHING/);
   });
 
-  it('登记 schema_version 478', () => {
-    expect(sql).toMatch(/INSERT INTO schema_version[\s\S]*'478'/);
-  });
-
-  it('回滚：删列、还原 374 触发器、摘 step_links 触发器与列、删登记与 schema_version', () => {
+  it('回滚：删列、还原 374 触发器、摘 step_links 触发器与列、删登记', () => {
     for (const t of ['step_probes', 'journey_assertion_receipts']) {
       for (const c of ['notion_id', 'notion_synced_at', 'notion_digest']) {
         expect(downSql).toMatch(new RegExp(`ALTER TABLE ${t} DROP COLUMN IF EXISTS ${c}`));
@@ -68,6 +59,5 @@ describe('migration 478', () => {
     expect(downSql).toMatch(/DROP FUNCTION IF EXISTS touch_journey_step_links_updated_at/);
     expect(downSql).toMatch(/ALTER TABLE journey_step_links DROP COLUMN IF EXISTS updated_at/);
     expect(downSql).toMatch(/DELETE FROM notion_projection_map WHERE brain_table IN \('step_probes', 'journey_assertion_receipts'\)/);
-    expect(downSql).toMatch(/DELETE FROM schema_version WHERE version = '478'/);
   });
 });

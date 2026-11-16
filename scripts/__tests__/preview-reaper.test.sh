@@ -186,36 +186,50 @@ else
 fi
 teardown
 
-# ── 测试 8：cron 裸 PATH 环境接缝 ────────────────────────────────────────────
-# 2026-07-20 事故根因：以上 1-7 全部在 setup() 里把 mock 塞进 PATH 最前面，
-# 从未模拟过 cron 真实的裸 PATH（/usr/bin:/bin），导致 gh/psql/dropdb 在 cron
-# 下 100% 找不到（都装在 /opt/homebrew/bin），dropdb 从建库以来从未被真正执行过。
-# 这条不 mock，直接检查脚本自身有没有显式导出 PATH 覆盖 /opt/homebrew/bin，
-# 并在真实裸 PATH 环境下验证脚本的导出行确实能让这些二进制被找到。
-echo ""
-echo "── 测试 8：cron 裸 PATH 环境接缝 ──"
-if grep -q 'export PATH=.*opt/homebrew/bin' "$REAPER"; then
-  pass "脚本顶部有显式 PATH 导出覆盖 /opt/homebrew/bin"
+# ── 测试 8：cron 裸 PATH 环境接缝（只执行已审明的唯一纯 export）────────────
+echo "── 测试 8：隔离 cron PATH 与调用方优先级 ──"
+PATH_LINES=$(sed -n '/^export PATH=/p' "$REAPER")
+# 允许执行的内容必须逐字为纯 PATH 追加；拒绝命令替换、额外语句与多行。
+if [[ "$PATH_LINES" != 'export PATH="$PATH:/opt/homebrew/bin:/usr/local/bin"' ]]; then
+  fail "唯一 PATH 导出是已审纯 literal" "$PATH_LINES"
 else
-  fail "脚本没有显式 PATH 导出" "cron 默认 PATH（/usr/bin:/bin）下 gh/psql/dropdb 必然找不到，dropdb 步骤永远不会被触发"
-fi
-
-PATH_LINE=$(grep -m1 '^export PATH=' "$REAPER" || echo "")
-if [ -n "$PATH_LINE" ]; then
-  MISSING=""
-  for bin in gh psql dropdb; do
-    real_path=$(env -i HOME="$HOME" PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin" bash -c "command -v ${bin}" 2>/dev/null)
-    [ -z "$real_path" ] && continue  # 本机没装，跳过该项
-    found=$(env -i HOME="$HOME" PATH="/usr/bin:/bin" bash -c "$PATH_LINE; command -v ${bin}" 2>/dev/null)
-    [ -z "$found" ] && MISSING="$MISSING $bin"
+  PATH_FIXTURE=$(mktemp -d /tmp/reaper-path-fixture.XXXXXX)
+  mkdir -p "$PATH_FIXTURE/homebrew" "$PATH_FIXTURE/local" "$PATH_FIXTURE/caller"
+  for tool in gh psql dropdb; do
+    destination=homebrew
+    [[ "$tool" == psql ]] && destination=local
+    printf '#!/bin/bash\nprintf "%%s\\n" "fixture-%s"\n' "$tool" > "$PATH_FIXTURE/$destination/$tool"
+    printf '#!/bin/bash\nprintf "%%s\\n" "caller-%s"\n' "$tool" > "$PATH_FIXTURE/caller/$tool"
+    chmod +x "$PATH_FIXTURE/$destination/$tool" "$PATH_FIXTURE/caller/$tool"
   done
-  if [ -z "$MISSING" ]; then
-    pass "脚本的 PATH 导出行能让裸 cron 环境找到 gh/psql/dropdb"
+  path_probe() {
+    local initial="$1" brew="$2" localbin="$3" line="$PATH_LINES"
+    line="${line//\/opt\/homebrew\/bin/$brew}"
+    line="${line//\/usr\/local\/bin/$localbin}"
+    /usr/bin/env -i PATH="$initial" /bin/bash -c "$line"'
+      for tool in gh psql dropdb; do
+        command -v "$tool" || exit 1
+        "$tool" || exit 1
+      done'
+  }
+  EXPECTED_BARE=$(printf '%s\n' "$PATH_FIXTURE/homebrew/gh" fixture-gh "$PATH_FIXTURE/local/psql" fixture-psql "$PATH_FIXTURE/homebrew/dropdb" fixture-dropdb)
+  if OUTPUT=$(path_probe "" "$PATH_FIXTURE/homebrew" "$PATH_FIXTURE/local") && [[ "$OUTPUT" == "$EXPECTED_BARE" ]]; then
+    pass "空 PATH 经真实导出行解析并运行全部三个 fixture 工具"
   else
-    fail "脚本的 PATH 导出行仍找不到:$MISSING" "裸 cron 环境下这些工具不可用"
+    fail "空 PATH 工具解析与运行" "$OUTPUT"
   fi
-else
-  fail "跳过二进制查找测试" "脚本没有 PATH 导出行"
+  EXPECTED_CALLER=$(printf '%s\n' "$PATH_FIXTURE/caller/gh" caller-gh "$PATH_FIXTURE/caller/psql" caller-psql "$PATH_FIXTURE/caller/dropdb" caller-dropdb)
+  if OUTPUT=$(path_probe "$PATH_FIXTURE/caller" "$PATH_FIXTURE/homebrew" "$PATH_FIXTURE/local") && [[ "$OUTPUT" == "$EXPECTED_CALLER" ]]; then
+    pass "调用方 PATH 工具优先于追加 Homebrew 目录"
+  else
+    fail "调用方 PATH 优先级" "$OUTPUT"
+  fi
+  if path_probe "" "$PATH_FIXTURE/homebrew" "$PATH_FIXTURE/missing" >/dev/null 2>&1; then
+    fail "故意断开 local 工具路径必须失败" "缺少 psql 仍通过"
+  else
+    pass "故意断开 local 工具路径被实际执行检测"
+  fi
+  rm -rf "$PATH_FIXTURE"
 fi
 
 # ── 测试 9：PR npm cache 也是对账源，终态 PR 的未知归属cache保留给固定Janitor策略 ────────────────────────

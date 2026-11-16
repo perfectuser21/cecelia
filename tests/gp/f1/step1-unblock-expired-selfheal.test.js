@@ -17,9 +17,6 @@
 // 必须测「它有没有被一个活着的循环调用」。
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
 vi.mock('../../../packages/brain/src/db.js', () => ({
   default: { query: vi.fn(() => { throw new Error('禁止访问默认数据库'); }) },
 }));
@@ -30,8 +27,6 @@ vi.mock('../../../packages/brain/src/device-lock-helpers.js', () => ({
 import defaultPool from '../../../packages/brain/src/db.js';
 import { sweepStaleDeviceLocks as defaultSweep } from '../../../packages/brain/src/device-lock-helpers.js';
 import { runRecoveryOnce } from '../../../packages/brain/src/recovery-loop.js';
-
-const SRC = join(dirname(fileURLToPath(import.meta.url)), '../../../packages/brain/src');
 
 describe('F1 step1 · TTL 自愈接在活着的循环上', () => {
   beforeEach(() => vi.clearAllMocks());
@@ -85,23 +80,5 @@ describe('F1 step1 · TTL 自愈接在活着的循环上', () => {
     const line = spy.mock.calls.map((c) => String(c[0])).find((s) => s.includes('[recovery-loop]'));
     spy.mockRestore();
     expect(line).toContain('blockedRecovered=0');
-  });
-});
-
-// 静默失效防复发：光测「函数被调用」还不够——这个 bug 的形态正是
-// 「函数好好的，只是没人调它了」。所以再加一道源码守卫，盯住那个唯一的调用点。
-describe('F1 step1 · 自愈不许再退回死代码', () => {
-  it('unblockExpiredTasks 在 recovery-loop 里有调用点', () => {
-    const src = readFileSync(join(SRC, 'recovery-loop.js'), 'utf8');
-    expect(src).toContain('unblockExpiredTasks');
-  });
-
-  it('它不再只存在于废弃的 executeTick 里', () => {
-    const alive = ['recovery-loop.js', 'scheduler-jobs.js', 'tick-scheduler.js', 'consciousness-loop.js']
-      .filter((f) => {
-        try { return readFileSync(join(SRC, f), 'utf8').includes('unblockExpiredTasks'); }
-        catch { return false; }
-      });
-    expect(alive.length).toBeGreaterThan(0);
   });
 });

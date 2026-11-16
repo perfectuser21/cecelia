@@ -191,10 +191,16 @@ if [[ -z "${CECELIA_SKIP_BRAIN_PROMOTE:-}" ]]; then
         BRAIN_ROLLBACK="$MAIN_ROOT/scripts/brain-rollback.sh"
         if [[ -f "$BRAIN_ROLLBACK" ]]; then
             echo "🧠 brain → brain-rollback.sh ${TARGET_BRAIN_IMAGE}（复用现有原语，换镜像+健康检查）"
-            bash "$BRAIN_ROLLBACK" "$TARGET_BRAIN_IMAGE" \
-                || echo "⚠️  brain-rollback.sh 失败（dashboard 已回档，brain 保持原状）"
+            if bash "$BRAIN_ROLLBACK" "$TARGET_BRAIN_IMAGE"; then
+                :
+            else
+                BRAIN_ROLLBACK_RC=$?
+                echo "❌ brain-rollback.sh 失败（dashboard 与指针已回档，整体回档未完成）" >&2
+                exit "$BRAIN_ROLLBACK_RC"
+            fi
         else
-            echo "⚠️  scripts/brain-rollback.sh 不存在，跳过 brain 回档（仅 dashboard 回档）"
+            echo "❌ 必需的 scripts/brain-rollback.sh 不存在（dashboard 与指针已回档，整体回档未完成）" >&2
+            exit 1
         fi
     else
         echo "⚠️  无 brain_image（manifest 缺失，--confirm-db 已放行）→ 跳过 brain 回档，仅 dashboard 回档"

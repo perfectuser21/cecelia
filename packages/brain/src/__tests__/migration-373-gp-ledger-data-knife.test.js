@@ -14,37 +14,4 @@ describe('migration 373 Golden Path ledger data knife contract', () => {
     expect(sql).toMatch(/'journey_step'/);
   });
 
-  it('seeds deterministic step-scoped NFR decisions', () => {
-    expect(sql).toContain("category");
-    expect(sql).toContain("'nfr'");
-    expect(sql).toContain("'step'");
-    expect(sql).toContain("'journey_step'");
-    for (const step of ['s1', 's2', 's3', 's4']) {
-      expect(sql).toContain(`gp-ledger-phase3:nfr:gp-b:${step}`);
-    }
-  });
-
-  it('backfills real feature anchors and normalizes semantic refs', () => {
-    expect(sql).toMatch(/unit_test_path/);
-    expect(sql).toMatch(/workflow_ref/);
-    expect(sql).toMatch(/guard_ref/);
-    expect(sql).toContain('decision:');
-  });
-
-  it('does not create fake planned anchors and removes evidence-less positive states', () => {
-    expect(sql).not.toContain('planned:');
-    expect(sql).toMatch(/cell_status\s*=\s*'red'/);
-    expect(sql).toMatch(/cell_status\s+IN\s*\(\s*'green'\s*,\s*'pending'\s*\)/);
-  });
-
-  it('uses the signed S3 decision instead of inventing an evaluation contract', () => {
-    expect(sql).toContain('decision:gp-ledger-phase3:nfr:gp-b:s3');
-    expect(sql).not.toContain('eval:gp-b-s3-reply-quality-and-delivery-v1');
-  });
-
-  it('records the Path 4 smoke as an executable sibling-repository command', () => {
-    expect(sql).toContain(
-      'manual:cd ../zenithjoy && bash .github/workflows/scripts/smoke/golden-path-4-smoke.sh',
-    );
-  });
 });

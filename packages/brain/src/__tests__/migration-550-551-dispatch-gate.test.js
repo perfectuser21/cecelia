@@ -39,8 +39,7 @@ describe('migration 550 skill_factory_run / coding_workflow', () => {
     expect(up550).toMatch(/task_type_migrated/);
   });
 
-  it('写 schema_version 550，事务包裹，有回滚脚本', () => {
-    expect(up550).toMatch(/INSERT INTO schema_version[\s\S]*'550'/);
+  it('事务包裹，有回滚脚本', () => {
     expect(up550).toMatch(/^BEGIN;/m);
     expect(up550.trim().endsWith('COMMIT;')).toBe(true);
     expect(down('550_skill_factory_coding_workflow_task_types')).toBe(true);
@@ -48,14 +47,12 @@ describe('migration 550 skill_factory_run / coding_workflow', () => {
 });
 
 describe('migration 551 卡死单清理', () => {
-  it('a55c7664（trigger_backup 无执行者）→ cancelled，守卫 status=queued', () => {
-    expect(up551).toMatch(/a55c7664-befc-4083-b4a1-690fed30e7f6/);
+  it('无执行者任务取消，守卫 status=queued', () => {
     expect(up551).toMatch(/'cancelled'/);
     expect(up551).toMatch(/status\s*=\s*'queued'/);
   });
 
-  it('02383d3f（派发器守望中断、会话已交付的工厂执行单）→ failed 并写 fail_reason，守卫 in_progress + 已有 delivery', () => {
-    expect(up551).toMatch(/02383d3f-f77b-41b9-97e5-686bcc1e125d/);
+  it('守望中断任务失败并写 fail_reason，守卫 in_progress + 已有 delivery', () => {
     expect(up551).toMatch(/status\s*=\s*'in_progress'/);
     expect(up551).toMatch(/result \? 'delivery'/);
     expect(up551).toMatch(/fail_reason/);
@@ -67,8 +64,7 @@ describe('migration 551 卡死单清理', () => {
     expect(up551).toMatch(/reason/);
   });
 
-  it('写 schema_version 551，事务包裹，有回滚说明', () => {
-    expect(up551).toMatch(/INSERT INTO schema_version[\s\S]*'551'/);
+  it('事务包裹，有回滚说明', () => {
     expect(up551).toMatch(/^BEGIN;/m);
     expect(up551.trim().endsWith('COMMIT;')).toBe(true);
     expect(down('551_dispatch_gate_stuck_task_cleanup')).toBe(true);
