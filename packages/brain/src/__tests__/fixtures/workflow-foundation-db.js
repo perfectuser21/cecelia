@@ -46,6 +46,7 @@ export async function workflowFoundationDatabase({scenario='healthy',playbook}={
  try{
   await addFoundationTaskSchema(f.pool);
   await f.pool.query(fs.readFileSync(path.join(brain,'migrations/558_commander_activity_actions.sql'),'utf8'));
+  await f.pool.query(fs.readFileSync(path.join(brain,'migrations/559_commander_activity_attempts.sql'),'utf8'));
   const cap=randomUUID(),vs=randomUUID(),task=randomUUID(),key=`foundation_${cap.slice(0,8)}`;
   await f.pool.query("INSERT INTO value_streams(id,name) VALUES($1,'隔离Foundation价值流')",[vs]);
   await f.pool.query("INSERT INTO capabilities(id,name,parent_journey_id,status) VALUES($1,'隔离Foundation能力',$2,'active')",[cap,vs]);

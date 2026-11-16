@@ -23,6 +23,12 @@ beforeAll(async()=>{
   await client.query(`CREATE SCHEMA ${schema}`);created=true;
   await client.query(`SET search_path TO ${schema}`);
   await client.query(fs.readFileSync(new URL('../../../migrations/558_commander_activity_actions.sql',import.meta.url),'utf8'));
+  const legacy=identity(randomUUID());
+  await client.query("INSERT INTO commander_activity_actions(action_id,run_id,activity_key,identity,state,result,deadline_ms) VALUES($1,$2,$3,$4,'settled',$5,$6)",[legacy.action_id,legacy.run_id,legacy.activity_key,JSON.stringify(legacy),JSON.stringify({status:'completed'}),deadline_ms]);
+  const migration=fs.readFileSync(new URL('../../../migrations/559_commander_activity_attempts.sql',import.meta.url),'utf8');
+  await client.query(migration);await client.query(migration);
+  const migrated=(await client.query('SELECT attempt,identity,result FROM commander_activity_actions WHERE action_id=$1',[legacy.action_id])).rows[0];
+  expect(migrated).toEqual({attempt:1,identity:legacy,result:{status:'completed'}});
   store=createCommanderActionStore(client);
 });
 afterAll(async()=>{

@@ -155,6 +155,11 @@ jobs:
           TEST_DB_URL: postgresql://onboarding_ci:onboarding_ci@127.0.0.1:5432/cecelia_scratch
         run: node packages/brain/scripts/smoke/commander-foundation-smoke.mjs
         if: '!cancelled()'
+      - name: Verify bounded checker repair and host recovery
+        env:
+          TEST_DB_URL: postgresql://onboarding_ci:onboarding_ci@127.0.0.1:5432/cecelia_scratch
+        run: node packages/brain/scripts/smoke/commander-repair-smoke.mjs
+        if: '!cancelled()'
       - name: Verify Workflow registration to Brain and real DBOS execution
         working-directory: packages/brain
         env:
@@ -177,6 +182,7 @@ jobs:
         run: >-
           npx vitest run --config vitest.integration.config.js
           src/orchestrator/__tests__/commander-foundation-audit.pg.integration.test.js
+          src/durable/__tests__/commander-action-store.pg.integration.test.js
           --maxWorkers=1 --minWorkers=1
         if: '!cancelled()'
     if: github.event_name != 'schedule' && github.event.action != 'closed'

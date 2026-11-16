@@ -4,3 +4,5 @@
   Test: manual:npm exec -w packages/brain -- vitest run src/durable/__tests__/commander-repair.test.js
 - [ ] 恢复复用各轮动作账；不同轮不冲突，未确认执行不得重放。
   Test: manual:npm exec -w packages/brain -- vitest run src/durable/__tests__/commander-repair.test.js
+- [ ] 真PostgreSQL、DBOS与监督进程跑通返工成功、耗尽升级、第二轮杀宿主恢复，恢复不新增执行。
+  Test: manual:node packages/brain/scripts/smoke/commander-repair-smoke.mjs

@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {createHash} from 'node:crypto';
 import {createRuntime} from '../../../scripts/commander-workflow/skill-adapter.mjs';
+import {verifySkillFailure} from '../../../scripts/commander-workflow/skill-protocol.mjs';
 const sha=file=>createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 function fixture(mode='normal'){
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'checker-feedback-'));fs.chmodSync(root,0o700);
@@ -27,8 +28,9 @@ test('独立checker失败明细回传同thread，第二轮真实监督执行修�
   expect(await runtime.checkActivity(f.activity,first,{phase:'end',input})).toMatchObject({verdict:'fail'});
   const secondInput={run_tag:'tag',execution_attempt:2,checker_feedback:first.checker_feedback};
   const second=await runtime.executeActivity(f.activity,secondInput,f.opts(2));expect(second.status).toBe('completed');expect(second.outputs).toEqual({answer:42});
+  expect((await runtime.inspectActivity(f.activity,secondInput,f.opts(2))).result.outputs).toEqual({answer:42});
   const calls=f.calls();expect(calls).toHaveLength(2);expect(calls[1].argv).toContain('resume');expect(calls[1].argv).toContain('original-thread');expect(calls[1].prompt).toContain('answer 应为42');expect(calls[1].prompt).toContain('"answer":41');
-  const checks=fs.readFileSync(path.join(f.root,'checks.jsonl'),'utf8').trim().split('\n').map(JSON.parse);expect(checks.filter(c=>c.attempt===2)).toHaveLength(2);
+  const checks=fs.readFileSync(path.join(f.root,'checks.jsonl'),'utf8').trim().split('\n').map(JSON.parse);expect(checks.filter(c=>c.attempt===2)).toHaveLength(3);
  }finally{f.cleanup();}
 },20000);
 test.each(['missing','changed'])('原thread%s时返工拒绝启动新Agent',async mode=>{
@@ -38,3 +40,11 @@ test.each(['missing','changed'])('原thread%s时返工拒绝启动新Agent',asyn
 },20000);
 test.each(['bad_identity','missing_detail'])('checker %s 不产生可返工反馈',async mode=>{const f=fixture(mode);try{const runtime=await createRuntime(f),first=await runtime.executeActivity(f.activity,{run_tag:'tag'},f.opts(1));expect(first.status).toBe('needs_review');expect(first.checker_feedback).toBeUndefined();}finally{f.cleanup();}},20000);
 test('副作用未知的失败保留诊断但不给返工许可',async()=>{const f=fixture('unknown_effect');try{const runtime=await createRuntime(f),first=await runtime.executeActivity(f.activity,{run_tag:'tag'},f.opts(1));expect(first.checker_feedback).toMatchObject({retryable:false,external_effect:'unknown'});expect(first.external_effect).toBe('unknown');}finally{f.cleanup();}},20000);
+test('可修复失败协议拒绝错轮、旧nonce、漏check、空证据和含糊失败项',()=>{
+ const req={task_id:'task',run_id:'run',run_tag:'tag',workflow:'wf',activity:'answer',attempt:2,nonce:'current',checks:['answer']};
+ const value={identity:Object.fromEntries(['task_id','run_id','run_tag','workflow','activity','attempt'].map(k=>[k,req[k]])),nonce:req.nonce,outcome:'failed',retryable:true,external_effect:'none',checks:[{id:'answer',status:'failed',expected:42,actual:41,reason:'answer 应为42',evidence:[{source:'product.json',observation:{answer:41}}]}]};
+ expect(verifySkillFailure(value,req)).toEqual(value);
+ for(const mutate of [v=>v.identity.attempt=1,v=>v.nonce='old',v=>v.checks=[],v=>v.checks[0].evidence=[],v=>v.checks[0].evidence[0].observation={},v=>delete v.checks[0].expected,v=>delete v.checks[0].actual,v=>v.checks[0].reason='',v=>v.checks[0].status='unknown',v=>v.checks[0].status='passed',v=>delete v.external_effect,v=>delete v.retryable]){
+  const candidate=structuredClone(value);mutate(candidate);expect(()=>verifySkillFailure(candidate,req)).toThrow('skill_readback_unconfirmed');
+ }
+});
