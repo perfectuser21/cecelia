@@ -237,20 +237,21 @@ router.get('/', rateLimit({ windowMs: 60_000, limit: 1200, standardHeaders: 'dra
       },
       {
         id: 'cognitive', name: '认知核心', group: 'cognition',
-        status: judgeStatus(r(tickResult).updated_at, r(tickResult).updated_at ? 1 : 0),
+        status: 'dormant',
         metrics: {
           today_count: null,
-          last_active_at: r(tickResult).updated_at || null,
+          last_active_at: null,
         },
       },
       {
         id: 'emotion', name: '情绪层', group: 'consciousness',
-        status: judgeStatus(r(emotionWmResult).updated_at, parseInt(r(emotionMsResult).cnt || 0) + 1),
+        status: 'dormant',
         metrics: {
           today_count: parseInt(r(emotionMsResult).cnt || 0),
           last_active_at: r(emotionWmResult).updated_at || null,
           extra: {
-            current_emotion: (() => {
+            historical: true,
+            historical_emotion: (() => {
               try { return JSON.parse(r(emotionWmResult).value_json || '{}'); } catch { return {}; }
             })(),
           },

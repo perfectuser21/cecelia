@@ -54,16 +54,9 @@ features:
         - packages/brain/src/__tests__/routes/task-tasks.test.js
         - packages/brain/src/__tests__/task-cleanup.test.js
         - packages/brain/src/__tests__/task-feedback-suggestions.test.js
-        - packages/brain/src/__tests__/task-generator-scheduler.test.js
-        - packages/brain/src/__tests__/task-generators/base-scanner.test.js
-        - packages/brain/src/__tests__/task-generators/complexity-scanner.test.js
-        - packages/brain/src/__tests__/task-generators/coverage-scanner.test.js
-        - packages/brain/src/__tests__/task-generators/scheduler.test.js
-        - packages/brain/src/__tests__/task-generators/untested-scanner.test.js
         - packages/brain/src/__tests__/task-run-metrics-parse.test.js
         - packages/brain/src/__tests__/task-updater.test.js
         - packages/brain/src/__tests__/task-websocket.test.js
-        - packages/brain/src/__tests__/task-weight-rpe.test.js
         - packages/brain/src/__tests__/task-weight.test.js
       integration:
         - packages/brain/src/__tests__/integration/agent-lifecycle.integration.test.js
@@ -82,16 +75,9 @@ features:
             - packages/brain/src/__tests__/routes/task-tasks.test.js
             - packages/brain/src/__tests__/task-cleanup.test.js
             - packages/brain/src/__tests__/task-feedback-suggestions.test.js
-            - packages/brain/src/__tests__/task-generator-scheduler.test.js
-            - packages/brain/src/__tests__/task-generators/base-scanner.test.js
-            - packages/brain/src/__tests__/task-generators/complexity-scanner.test.js
-            - packages/brain/src/__tests__/task-generators/coverage-scanner.test.js
-            - packages/brain/src/__tests__/task-generators/scheduler.test.js
-            - packages/brain/src/__tests__/task-generators/untested-scanner.test.js
             - packages/brain/src/__tests__/task-run-metrics-parse.test.js
             - packages/brain/src/__tests__/task-updater.test.js
             - packages/brain/src/__tests__/task-websocket.test.js
-            - packages/brain/src/__tests__/task-weight-rpe.test.js
             - packages/brain/src/__tests__/task-weight.test.js
           integration:
             - packages/brain/src/__tests__/integration/agent-lifecycle.integration.test.js

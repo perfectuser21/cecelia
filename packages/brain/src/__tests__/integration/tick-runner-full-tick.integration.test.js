@@ -171,44 +171,24 @@ vi.mock('../../health-monitor.js', () => ({
 }));
 
 // ─── Mock 后台 scheduler / digest / report 等（fire-and-forget 类） ────────
-vi.mock('../../daily-review-scheduler.js', () => ({
-  triggerDailyReview: vi.fn().mockResolvedValue({ triggered: 0, skipped: 0 }),
-  triggerContractScan: vi.fn().mockResolvedValue(undefined),
-  triggerArchReview: vi.fn().mockResolvedValue(undefined),
-}));
+// 退休边界只作零调用护栏，不参与意识功能的正向覆盖。
 vi.mock('../../diary-scheduler.js', () => ({ generateDailyDiaryIfNeeded: vi.fn() }));
+vi.mock('../../durable/daily-report-router.js', () => ({ routeDailyReport: vi.fn() }));
 
-vi.mock('../../daily-report-generator.js', () => ({ generateDailyReport: vi.fn() }));
 
 vi.mock('../../rumination.js', () => ({ runRumination: vi.fn().mockResolvedValue(null) }));
-vi.mock('../../rumination-scheduler.js', () => ({ runSynthesisSchedulerIfNeeded: vi.fn() }));
 
 vi.mock('../../conversation-consolidator.js', () => ({ runConversationConsolidator: vi.fn() }));
-vi.mock('../../notebook-feeder.js', () => ({ feedDailyIfNeeded: vi.fn() }));
 vi.mock('../../events/taskEvents.js', () => ({
   publishCognitiveState: vi.fn(),
   publishTickExecuted: vi.fn(),
 }));
-vi.mock('../../cognitive-core.js', () => ({
-  evaluateEmotion: vi.fn().mockReturnValue({
-    label: '平静',
-    state: 'calm',
-    dispatch_rate_modifier: 1.0,
-  }),
-  getCurrentEmotion: vi.fn().mockReturnValue({ label: '平静', state: 'calm' }),
-  updateSubjectiveTime: vi.fn(),
-  getSubjectiveTime: vi.fn().mockReturnValue({ pace: 'normal' }),
-  updateNarrative: vi.fn().mockResolvedValue(undefined),
-  recordTickEvent: vi.fn(),
-}));
 vi.mock('../../self-report-collector.js', () => ({ collectSelfReport: vi.fn() }));
 vi.mock('../../consolidation.js', () => ({ runDailyConsolidationIfNeeded: vi.fn() }));
-vi.mock('../../alerting.js', () => ({ flushAlertsIfNeeded: vi.fn() }));
+vi.mock('../../alerting.js', () => ({ flushAlertsIfNeeded: vi.fn(), raise: vi.fn().mockResolvedValue(undefined) }));
 vi.mock('../../evolution-scanner.js', () => ({
   scanEvolutionIfNeeded: vi.fn(),
-  synthesizeEvolutionIfNeeded: vi.fn(),
 }));
-vi.mock('../../task-generator-scheduler.js', () => ({ triggerCodeQualityScan: vi.fn() }));
 vi.mock('../../zombie-sweep.js', () => ({
   zombieSweep: vi.fn().mockResolvedValue({
     worktrees: { removed: 0 },
@@ -217,7 +197,6 @@ vi.mock('../../zombie-sweep.js', () => ({
   }),
 }));
 vi.mock('../../daily-scrape-scheduler.js', () => ({ scheduleDailyScrape: vi.fn() }));
-vi.mock('../../kr3-progress-scheduler.js', () => ({ scheduleKR3ProgressReport: vi.fn() }));
 vi.mock('../../credential-expiry-checker.js', () => ({
   checkAndAlertExpiringCredentials: vi.fn().mockResolvedValue({ alerted: 0 }),
   recoverAuthQuarantinedTasks: vi.fn().mockResolvedValue({ recovered: 0 }),
@@ -228,11 +207,6 @@ vi.mock('../../credential-expiry-checker.js', () => ({
 vi.mock('../../consciousness-guard.js', () => ({
   isConsciousnessEnabled: vi.fn().mockReturnValue(false), // 跳过 LLM 后台路径
   reloadConsciousnessCache: vi.fn(),
-}));
-vi.mock('../../report-48h.js', () => ({
-  check48hReport: vi.fn().mockResolvedValue(false),
-  generate48hReport: vi.fn(),
-  REPORT_INTERVAL_MS: 48 * 60 * 60 * 1000,
 }));
 vi.mock('../../tick-helpers.js', () => ({
   releaseBlockedTasks: vi.fn().mockResolvedValue([]),
@@ -283,6 +257,29 @@ describe('tick-runner executeTick — full tick wire-up', () => {
     ]) {
       const module = await import(path);
       for (const name of names) expect(vi.isMockFunction(module[name]), `${path}:${name}`).toBe(true);
+    }
+  });
+
+  it('意识启用时仍运行反刍和记忆压缩，退休日报日记没有调用', async () => {
+    const guard = await import('../../consciousness-guard.js');
+    try {
+      guard.isConsciousnessEnabled.mockReturnValue(true);
+      const { executeTick } = await import('../../tick-runner.js');
+      const result = await executeTick();
+      await Promise.resolve();
+      expect(result.success).toBe(true);
+      expect(result.cognition).toBeNull();
+      const { runRumination } = await import('../../rumination.js');
+      const { runConversationConsolidator } = await import('../../conversation-consolidator.js');
+      const { routeDailyReport } = await import('../../durable/daily-report-router.js');
+      const { generateDailyDiaryIfNeeded } = await import('../../diary-scheduler.js');
+      expect(runRumination).toHaveBeenCalledTimes(1);
+      expect(runConversationConsolidator).toHaveBeenCalledTimes(1);
+      expect(routeDailyReport).not.toHaveBeenCalled();
+      expect(generateDailyDiaryIfNeeded).not.toHaveBeenCalled();
+      for (const [sql] of mockPool.query.mock.calls) expect(String(sql)).not.toMatch(/daily_logs|source_type\s*=\s*'narrative'/i);
+    } finally {
+      guard.isConsciousnessEnabled.mockReturnValue(false);
     }
   });
 
@@ -341,7 +338,7 @@ describe('tick-runner executeTick — full tick wire-up', () => {
     // ── 棒4验收（决策 ee4842a6）：tick 一轮不产生任何对 okr_scopes/okr_initiatives 的
     // 查询。复用本测试已经跑过的真实 executeTick；清理边界已隔离，
     // 不额外运行第二轮调度。planner.js/
-    // kr-progress-sync-plugin.js/daily-review-scheduler.js 本文件顶部整体 mock 掉，
+    // kr-progress-sync-plugin.js 本文件顶部整体 mock 掉，
     // 下面覆盖的是没被 mock、真实参与每轮 tick 的模块：initiative-closer.js /
     // okr-closer.js / decomposition-checker.js / kr-completion.js /
     // project-activator.js——这些才是真正可能触达 okr_scopes/okr_initiatives 的查询源，

@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { checkAndCreateCodeReviewTrigger } from '../code-review-trigger.js';
-import { ensureCodexImmune } from '../codex-immune.js';
 
 function taskCreator(id = 'task-routed') {
   return vi.fn().mockResolvedValue({
@@ -35,19 +34,4 @@ describe('automatic task routing boundaries', () => {
     }));
   });
 
-  it('routes codex immune review through createTask', async () => {
-    const pool = { query: vi.fn().mockResolvedValue({ rows: [] }) };
-    const create = taskCreator('immune-task');
-
-    const result = await ensureCodexImmune(pool, create);
-
-    expect(result).toEqual({ created: true, elapsed_ms: Infinity });
-    expect(create).toHaveBeenCalledWith(expect.objectContaining({
-      db: pool,
-      source: 'scheduler',
-      task_type: 'codex_qa',
-      trigger_source: 'brain_auto',
-      allow_unscoped: true,
-    }));
-  });
 });

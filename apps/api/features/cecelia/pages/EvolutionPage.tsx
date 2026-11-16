@@ -3,11 +3,11 @@
  *
  * 展示 Cecelia 各组件的进化历程：
  * - 左侧：组件选择器
- * - 右侧：合成叙事（周期性） + 原始 PR 记录时间线
+ * - 右侧：已保存的历史叙事 + 原始 PR 记录时间线
  */
 
 import { useState, useEffect, useCallback } from 'react';
-import { TrendingUp, GitMerge, Sparkles, ChevronDown, ChevronUp, RefreshCw } from 'lucide-react';
+import { TrendingUp, GitMerge, Sparkles, ChevronDown, ChevronUp } from 'lucide-react';
 
 // ── Types ──────────────────────────────────────────────────
 
@@ -161,8 +161,6 @@ export default function EvolutionPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [expandedSummaries, setExpandedSummaries] = useState<Set<number>>(new Set());
-  const [synthesizing, setSynthesizing] = useState(false);
-  const [synthResult, setSynthResult] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -194,21 +192,6 @@ export default function EvolutionPage() {
     });
   };
 
-  const triggerSynthesis = async () => {
-    setSynthesizing(true);
-    setSynthResult(null);
-    try {
-      const res = await fetch('/api/brain/evolution/synthesize', { method: 'POST' });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || '合成失败');
-      setSynthResult(`完成：${data.components_processed ?? 0} 个组件`);
-      await load();
-    } catch (err) {
-      setSynthResult(err instanceof Error ? err.message : '合成失败');
-    } finally {
-      setSynthesizing(false);
-    }
-  };
 
   return (
     <div className="flex h-full min-h-0 bg-slate-950 text-slate-200">
@@ -235,20 +218,6 @@ export default function EvolutionPage() {
           ))}
         </ul>
 
-        {/* 触发合成 */}
-        <div className="mt-6 pt-4 border-t border-slate-800/60">
-          <button
-            onClick={triggerSynthesis}
-            disabled={synthesizing}
-            className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs text-violet-400 border border-violet-800/40 hover:bg-violet-900/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <RefreshCw size={11} className={synthesizing ? 'animate-spin' : ''} />
-            {synthesizing ? '合成中…' : '触发合成'}
-          </button>
-          {synthResult && (
-            <p className="text-xs text-slate-500 mt-2 text-center leading-relaxed">{synthResult}</p>
-          )}
-        </div>
       </aside>
 
       {/* 右侧：内容 */}
@@ -301,7 +270,6 @@ export default function EvolutionPage() {
                     <p className="text-sm text-slate-500">暂无进化记录</p>
                     <p className="text-xs mt-2 text-slate-600 leading-relaxed max-w-xs mx-auto">
                       进化记录在每次 PR 合并后自动写入。<br />
-                      点击左侧「触发合成」可立即生成已有记录的叙事摘要。
                     </p>
                   </div>
                 ) : (

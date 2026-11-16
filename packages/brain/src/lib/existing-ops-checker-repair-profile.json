@@ -1,5 +1,5 @@
 {
-  "packages/brain/vitest.config.js": "7666c03ab43fdb330e25655b78e88eee879aa6732958e4ba26877f8843006751",
+  "packages/brain/vitest.config.js": "45624b1a7d0ff369e972925cc7afa81ada0048d154db5f20be530fc4df25b886",
   "scripts/ci/basic-scope.mjs": null,
   "scripts/ci/run-basic-check.mjs": "7d71e22795ae0026c3b30c869e48bde7bb83040d469a5b1428e2b6a86945c303",
   "scripts/ci/check-basic-results.mjs": "269ce584b1cb83561ca07e4e584bbf399e4e0975ffc5226f288b1258e3566967",
@@ -61,7 +61,9 @@
   "scripts/smoke/deploy-chain-wounds-smoke.sh": null,
   "scripts/ci/__tests__/basic-foundation-release-readiness.test.mjs": "7913b41ded3a273f4caf829ef33043b9c45fb02f55094a2cce35c30906051894",
   ".github/workflows/nightly-regression.yml": "2a1e77454450ee7737acb90f933c044e915685cc4caf0815f971e1476056d49f",
+  "scripts/ci/__tests__/basic-brain-debt-restored-selection.test.mjs": "672c5c47e06c4f23569cab2694b899f782de2fe830b8c9a43132d8cfc76ab65f",
   "packages/brain/src/lib/existing-ops-closeout-profile.json": "7ccb681d2e3aa696bee74e109e028fb55b42b6ac29419d20d7e82fb908297c19",
+  "packages/brain/src/lib/existing-ops-dormant-boundaries-profile.json": "c4e0d5cdda063ac3425146327b38562af8361f694b720e77066f91176a4dfd2a",
   "packages/brain/scripts/smoke/commander-repair-smoke.mjs": "d99e6fd9ab56978e237d0b3765201f1fbd0b907dbc81ed2bb44d3c5b921a2a28",
   "packages/brain/src/durable/__tests__/commander-action-store.pg.integration.test.js": "d28a19a84b194b468290d12b6e265dfe164b781ca5878452daac12a83413804a"
 }

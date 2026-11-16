@@ -1,15 +1,9 @@
-/**
- * assertion-red-report.js — 业务断言红灯（链 bf5088a3 棒4 消费，决策 702949b6）。
- * 24h 内 business_probe_runner 的 FAIL 回执：任一 severity=error → RED，只有 warn → AMBER，
- * 空集/查询失败 → null（晨报不出行、日报不出板块）。
- */
+// 真实业务断言回执读取、严重级分组与probe身份；不测退休日报渲染。
 import { describe, it, expect, vi } from 'vitest';
 import {
   PROBE_EXECUTOR_KIND,
   probeKeyOf,
   readAssertionRedState,
-  renderAssertionRedLine,
-  renderAssertionRedSection,
 } from '../assertion-red-report.js';
 
 const row = (o) => ({
@@ -73,48 +67,5 @@ describe('readAssertionRedState — 分组与分级', () => {
     expect(probeKeyOf('probe:videos_readback')).toBe('videos_readback');
     expect(probeKeyOf('tests/e2e/x.spec.ts')).toBe('tests/e2e/x.spec.ts');
     expect(probeKeyOf(null)).toBe('');
-  });
-});
-
-describe('render — 晨报一行 / 日报板块', () => {
-  const state = {
-    level: 'RED', total: 4, window_hours: 24,
-    groups: [
-      { journey: '客户智能获客路径', step: 'Lead 表进人', probe_key: 'videos_readback', fail_count: 3, severity: 'error', last_at: null },
-      { journey: '客户智能获客路径', step: 'Lead 表进人', probe_key: 'line_key_not_null', fail_count: 1, severity: 'warn', last_at: null },
-    ],
-  };
-
-  it('null → 晨报无行，日报空串', () => {
-    expect(renderAssertionRedLine(null)).toBeNull();
-    expect(renderAssertionRedSection(null)).toBe('');
-  });
-
-  it('RED 行：徽标 + 路径/步骤 + key×次数（24h）', () => {
-    expect(renderAssertionRedLine(state)).toBe(
-      '🔴 RED 断言红灯：客户智能获客路径/Lead 表进人 videos_readback×3, line_key_not_null×1（24h）',
-    );
-  });
-
-  it('AMBER 行用 🟡 AMBER 徽标', () => {
-    expect(renderAssertionRedLine({ ...state, level: 'AMBER' })).toMatch(/^🟡 AMBER 断言红灯：/);
-  });
-
-  it('行最多列 3 个路径/步骤组，超出加省略号，组间用；分隔', () => {
-    const groups = ['a', 'b', 'c', 'd'].map((s) => ({ journey: 'J', step: s, probe_key: 'k', fail_count: 1, severity: 'warn', last_at: null }));
-    const line = renderAssertionRedLine({ level: 'AMBER', total: 4, window_hours: 24, groups });
-    expect(line).toContain('J/a k×1；J/b k×1；J/c k×1 …');
-    expect(line).not.toContain('J/d');
-  });
-
-  it('日报板块：标题 + 汇总行 + 每组一行带严重级', () => {
-    const section = renderAssertionRedSection(state);
-    expect(section.split('\n')).toEqual([
-      '== 业务断言红灯（24h）==',
-      '🔴 RED 共 4 次 FAIL（含 error 级）',
-      '  - 🔴 客户智能获客路径 / Lead 表进人 · videos_readback ×3（error）',
-      '  - 🟡 客户智能获客路径 / Lead 表进人 · line_key_not_null ×1（warn）',
-    ]);
-    expect(renderAssertionRedSection({ ...state, level: 'AMBER' })).toContain('🟡 AMBER 共 4 次 FAIL（仅 warn 级）');
   });
 });

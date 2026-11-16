@@ -35,12 +35,6 @@ const FRONTEND_PATTERNS = {
 // Route aliases for navigation (Chinese + English)
 const ROUTE_ALIASES: Record<string, string> = {
   // OKR
-  'okr': '/okr',
-  'okrs': '/okr',
-  'objectives': '/okr',
-  '目标': '/okr',
-  'okr目标': '/okr',
-  '工作目标': '/okr',
   // Projects
   'projects': '/projects',
   'project': '/projects',
@@ -84,7 +78,6 @@ const ROUTE_ALIASES: Record<string, string> = {
 
 // Friendly page names for display
 const PAGE_DISPLAY_NAMES: Record<string, string> = {
-  '/okr': 'OKR 目标',
   '/projects': '项目列表',
   '/orchestrator': 'Command Center',
   '/tasks': '任务列表',
@@ -219,7 +212,6 @@ export function CeceliaChat() {
     // Handle navigate_to_page if backend sends it
     if (toolName === 'navigate_to_page' && result?.page) {
       const pageRoutes: Record<string, string> = {
-        'okr': '/okr',
         'projects': '/projects',
         'tasks': '/tasks',
         'orchestrator': '/orchestrator',

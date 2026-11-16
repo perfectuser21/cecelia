@@ -54,14 +54,12 @@ const BRAIN_ALWAYS_ACTIVE = new Set([
   'three-layer-consciousness',    // Brain 三层架构本身
   'watchdog-resource-monitor',    // 看门狗，嵌入 tick 循环
   'quarantine-review-system',     // 隔离区，嵌入任务处理
-  'emotion-perception',           // 情绪感知，嵌入 tick 循环
   'curiosity-exploration',        // 好奇心探索，意识层固有
   'rumination',                   // 反刍，意识层固有
   'memory-working',               // 工作记忆，Brain 上下文
   'memory-episodic',              // 情节记忆，memory_stream 支撑
   'memory-semantic',              // 语义记忆，learnings 支撑
   'learning-absorption',          // 学习吸收，嵌入 tick 循环
-  'narrative-expression',         // 叙事表达，意识层固有
   'postgresql-database-service',  // Brain 数据层，每次 tick/API 调用都通过 pool 访问 PostgreSQL
   // ── 误判修正（scanner fix）──────────────────────────────────────────
   // 以下三个能力被 Scanner 误判为孤岛/休眠，根本原因：
@@ -206,6 +204,11 @@ async function evaluateCapability(cap, skillUsageMap, taskUsageMap, tableCountCa
     evidence: [], last_activity: null, usage_30d: 0, success_rate: null,
   };
 
+  if (['emotion-perception', 'narrative-expression'].includes(cap.id)) {
+    health.status = 'dormant';
+    health.evidence.push('runtime:dormant');
+    return health;
+  }
   if (BRAIN_ALWAYS_ACTIVE.has(cap.id)) {
     health.status = 'active';
     health.evidence.push('brain_embedded:true');

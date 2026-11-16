@@ -31,20 +31,11 @@ const execute = (entry, args = [], cwd = repo) => spawnSync(process.execPath, [e
 });
 
 describe('模块边界契约的真实CLI消费者', () => {
-  it('扫描新配置位置并在dry-run报告未覆盖契约，不调用Brain', () => {
-    const f = fixture();
-    const result = execute(join(repo, 'packages/brain/scripts/run-contract-scan.mjs'), ['--dry-run', `--repo-root=${f.root}`]);
-    expect(result.status, result.stderr).toBe(0);
-    const summaryLine = result.stdout.trim().split('\n').at(-1);
-    expect(summaryLine, result.stdout + result.stderr).toMatch(/^\{/);
-    const summary = JSON.parse(summaryLine);
-    expect(summary).toEqual({ event: 'contract_scan_complete', covered: 0, uncovered: 1, tasks_created: 1, errors: 0 });
-    f.put('tests/boundary.test.js', '// covered fixture\n');
-    const covered = execute(join(repo, 'packages/brain/scripts/run-contract-scan.mjs'), ['--dry-run', `--repo-root=${f.root}`]);
-    expect(covered.status, covered.stderr).toBe(0);
-    expect(JSON.parse(covered.stdout.trim().split('\n').at(-1))).toEqual({
-      event: 'contract_scan_complete', covered: 1, uncovered: 0, tasks_created: 0, errors: 0,
-    });
+  it('旧契约扫描CLI明确退役，不再扫描或自动建开发单', () => {
+    const result = execute(join(repo, 'packages/brain/scripts/run-contract-scan.mjs'), ['--dry-run']);
+    expect(result.status, result.stdout + result.stderr).toBe(1);
+    expect(JSON.parse(result.stderr.trim())).toMatchObject({ status: 410, code: 'CONTRACT_SCAN_RETIRED' });
+    expect(result.stdout).toBe('');
   });
 
   it('漂移检查从新配置读取P0边界：缺测试拒绝、有测试通过', () => {

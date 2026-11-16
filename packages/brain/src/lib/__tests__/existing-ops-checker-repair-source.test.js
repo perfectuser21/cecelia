@@ -52,3 +52,12 @@ it.each(['commander-repair-smoke.mjs','commander-action-store.pg.integration.tes
   await expect(collect({[workflow]:yaml.dump(doc)})).rejects.toThrow('basic_ci_source_unproven');
  }
 });
+
+it('合并保留dormant主分支完整组，混入其旧CI或旧config则拒绝',async()=>{
+ const main=readFixedExistingOpsGitFixture('2aa96ff033440d2e70816a05151aa135e792cb4f');
+ const request={read:async p=>main.read(p),revision:main.revision,relations:[],parse:ast,paths:main.paths};
+ await collectBasicCiSources({...request,ci:main.read(workflow)});await collectDeepCiSources(request);
+ for(const member of [config,workflow])await expect(collect({[member]:main.read(member)})).rejects.toThrow('basic_ci_source_unproven');
+ const dormant='packages/brain/src/lib/existing-ops-dormant-boundaries-profile.json';
+ for(const deep of [false,true])await expect(collect({},undefined,deep,paths.filter(p=>p!==dormant))).rejects.toThrow('basic_ci_source_unproven');
+});

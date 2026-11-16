@@ -102,7 +102,7 @@ if(createHash('sha256').update(closeoutText).digest('hex')!==closeoutSha)reject(
 export const REVIEWED_CLOSEOUT={...JSON.parse(closeoutText),[CLOSEOUT_PROFILE_PATH]:closeoutSha};
 // Checker有限返工只增加本次已验收的完整控制封组；旧closeout字节保持兼容。
 export const REPAIR_PROFILE_PATH='packages/brain/src/lib/existing-ops-checker-repair-profile.json';
-const repairSha='dc44b14310c42d82f6f62798a336c83c56e37f77d5f12590b2bd4bd4e810ee0d',repairText=readFileSync(new URL('./existing-ops-checker-repair-profile.json',import.meta.url),'utf8');
+const repairSha='b9e11b26b52fc0f189542585581af7aa4d259ada5859bb88b8e7659c1905a776',repairText=readFileSync(new URL('./existing-ops-checker-repair-profile.json',import.meta.url),'utf8');
 if(createHash('sha256').update(repairText).digest('hex')!==repairSha)reject();
 export const REVIEWED_CHECKER_REPAIR={...JSON.parse(repairText),[REPAIR_PROFILE_PATH]:repairSha};
 export async function collectReviewedCloseoutDeep({read,paths,relation}){
@@ -110,6 +110,20 @@ export async function collectReviewedCloseoutDeep({read,paths,relation}){
  const profile=paths.includes(REPAIR_PROFILE_PATH)?REVIEWED_CHECKER_REPAIR:REVIEWED_CLOSEOUT;
  for(const [path,digest] of Object.entries(profile)){if(digest===null){if(paths.includes(path))reject();continue;}const bytes=await read(path);if(createHash('sha256').update(bytes).digest('hex')!==digest)reject();}
  relation('packages/brain/src/lib/existing-ops-stage-modes.js',CLOSEOUT_PROFILE_PATH,'reviewed_deep_ci_source_profile');
+ if(profile===REVIEWED_CHECKER_REPAIR)relation('packages/brain/src/lib/existing-ops-stage-modes.js',REPAIR_PROFILE_PATH,'reviewed_deep_ci_source_profile');
+ for(const [consumer,input] of [['scripts/ci/deep-integration.config.mjs','scripts/ci/debt-pg.config.mjs'],['scripts/ci/debt-pg.config.mjs','scripts/ci/debt-pg-tests.json'],['scripts/ci/debt-pg.config.mjs','packages/brain/vitest.config.js']])relation(consumer,input,'reviewed_deep_postgres_config_input');
+}
+
+// 本轮休眠边界完整只读封组；旧Closeout字节与历史资格保持独立。
+export const DORMANT_PROFILE_PATH='packages/brain/src/lib/existing-ops-dormant-boundaries-profile.json';
+const dormantSha='c4e0d5cdda063ac3425146327b38562af8361f694b720e77066f91176a4dfd2a',dormantText=readFileSync(new URL('./existing-ops-dormant-boundaries-profile.json',import.meta.url),'utf8');
+if(createHash('sha256').update(dormantText).digest('hex')!==dormantSha)reject();
+export const REVIEWED_DORMANT_BOUNDARIES={...JSON.parse(dormantText),[DORMANT_PROFILE_PATH]:dormantSha};
+export async function collectReviewedDormantDeep({read,paths,relation}){
+ if(!paths?.includes(DORMANT_PROFILE_PATH))reject();
+ const profile=paths.includes(REPAIR_PROFILE_PATH)?REVIEWED_CHECKER_REPAIR:REVIEWED_DORMANT_BOUNDARIES;
+ for(const [path,digest] of Object.entries(profile)){if(digest===null){if(paths.includes(path))reject();continue;}const bytes=await read(path);if(createHash('sha256').update(bytes).digest('hex')!==digest)reject();}
+ relation('packages/brain/src/lib/existing-ops-stage-modes.js',DORMANT_PROFILE_PATH,'reviewed_deep_ci_source_profile');
  if(profile===REVIEWED_CHECKER_REPAIR)relation('packages/brain/src/lib/existing-ops-stage-modes.js',REPAIR_PROFILE_PATH,'reviewed_deep_ci_source_profile');
  for(const [consumer,input] of [['scripts/ci/deep-integration.config.mjs','scripts/ci/debt-pg.config.mjs'],['scripts/ci/debt-pg.config.mjs','scripts/ci/debt-pg-tests.json'],['scripts/ci/debt-pg.config.mjs','packages/brain/vitest.config.js']])relation(consumer,input,'reviewed_deep_postgres_config_input');
 }

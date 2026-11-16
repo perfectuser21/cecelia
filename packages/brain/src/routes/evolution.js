@@ -4,12 +4,12 @@
  * GET  /api/brain/evolution/records        — 查询原始记录
  * POST /api/brain/evolution/record         — 写入原始记录
  * GET  /api/brain/evolution/summaries      — 查询合成叙事
- * POST /api/brain/evolution/synthesize     — 手动触发合成
+ * POST /api/brain/evolution/synthesize     — 内置叙事生成已退役
  */
 
 import { Router } from 'express';
 import pool from '../db.js';
-import { recordEvolution, runEvolutionSynthesis } from '../evolution-synthesizer.js';
+import { recordEvolution } from '../evolution-synthesizer.js';
 
 const router = Router();
 
@@ -71,18 +71,8 @@ router.get('/summaries', async (req, res) => {
 });
 
 // POST /api/brain/evolution/synthesize
-router.post('/synthesize', async (req, res) => {
-  try {
-    const { dry_run } = req.body || {};
-    if (dry_run) {
-      return res.json({ ok: true, dry_run: true, message: '试运行模式，未实际合成' });
-    }
-    const result = await runEvolutionSynthesis(pool);
-    res.json(result);
-  } catch (err) {
-    console.error('[evolution] POST /synthesize error:', err.message);
-    res.status(500).json({ error: err.message });
-  }
+router.post('/synthesize', (_req, res) => {
+  res.status(410).json({ error: 'report_generation_retired', message: '内置叙事生成已退役；由明确任务调用外置 Skill 生成。' });
 });
 
 export default router;

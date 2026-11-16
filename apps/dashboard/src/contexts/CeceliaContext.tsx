@@ -5,7 +5,6 @@ import { Navigation, Sparkles } from 'lucide-react';
 
 // Page display names for navigation toast
 const PAGE_DISPLAY_NAMES: Record<string, string> = {
-  '/okr': 'OKR 目标',
   '/projects': '项目列表',
   '/orchestrator': 'Command Center',
   '/tasks': '任务列表',
@@ -129,7 +128,7 @@ const createFrontendTools = (
     name: 'navigate_to',
     description: 'Navigate to a different page',
     parameters: [
-      { name: 'path', type: 'string', description: 'The path to navigate to, e.g., "/okr", "/projects", "/projects/123"', required: true }
+      { name: 'path', type: 'string', description: 'The path to navigate to, e.g., "/gtd/area", "/projects", "/projects/123"', required: true }
     ],
     execute: async (args) => {
       const { path } = args;

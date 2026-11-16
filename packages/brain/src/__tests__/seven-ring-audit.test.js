@@ -31,8 +31,6 @@ function makePool(overrides = {}) {
     ],
     // 环3: 最近 24h 有 postdeploy_verified 任务
     postdeploy_tasks: [{ id: 'abc', title: 'deploy v1', updated_at: new Date(Date.now() - 3600_000).toISOString() }],
-    // 环4: 最近 24h 有 line_ledger
-    line_ledger: [{ id: 'ld1', title: 'L1 账本', created_at: new Date(Date.now() - 3600_000).toISOString() }],
     // 环5: 最近 48h 有 ci_patrol 完成
     ci_patrol: [{ id: 'cp1', title: 'ci_patrol 日报', updated_at: { toISOString: () => new Date(Date.now() - 7200_000).toISOString() } }],
     // 环6: launchd-patrol 在 5min 内
@@ -56,10 +54,6 @@ function buildPool(data) {
       // 环3: postdeploy_verified tasks
       if (sql.includes('postdeploy_verified') && sql.includes("status = 'completed'")) {
         return { rows: data.postdeploy_tasks ?? [] };
-      }
-      // 环4: line_ledger
-      if (sql.includes("type = 'line_ledger'")) {
-        return { rows: data.line_ledger ?? [] };
       }
       // 环5: ci_patrol
       if (sql.includes("task_type = 'ci_patrol'") && sql.includes("status = 'completed'")) {
@@ -85,10 +79,10 @@ describe('runSevenRingAudit', () => {
     __resetSevenRingAuditForTest();
   });
 
-  it('七环全过 → pass=true, hard_flaws=0', async () => {
+  it('现役六项全过，退役环4不伪造通过 → pass=true, hard_flaws=0', async () => {
     const pool = buildPool(makePool());
     const result = await runSevenRingAudit(pool);
-    expect(result.rings).toHaveLength(7);
+    expect(result.rings.map(r => r.ring)).toEqual([1, 2, 3, 5, 6, 7]);
     expect(result.pass).toBe(true);
     expect(result.hard_flaws).toBe(0);
     expect(result.ratchet_breached).toBe(false);
@@ -134,18 +128,20 @@ describe('runSevenRingAudit', () => {
     expect(result.rings[2].hard_flaw).toBe(false);
   });
 
-  it('环4失败（无 line_ledger）→ hard_flaw=true', async () => {
+  it('没有日摘要不触发告警，也不查询或生成line_ledger', async () => {
     const pool = buildPool(makePool({ line_ledger: [] }));
+    const query = vi.spyOn(pool, 'query');
     const result = await runSevenRingAudit(pool);
-    expect(result.rings[3].ok).toBe(false);
-    expect(result.rings[3].hard_flaw).toBe(true);
+    expect(result.rings.some(r => r.ring === 4)).toBe(false);
+    expect(result.hard_flaws).toBe(0);
+    expect(query.mock.calls.some(([sql]) => sql.includes('line_ledger'))).toBe(false);
   });
 
   it('环5失败（无 ci_patrol 消费）→ hard_flaw=true', async () => {
     const pool = buildPool(makePool({ ci_patrol: [] }));
     const result = await runSevenRingAudit(pool);
-    expect(result.rings[4].ok).toBe(false);
-    expect(result.rings[4].hard_flaw).toBe(true);
+    expect(result.rings.find(r => r.ring === 5).ok).toBe(false);
+    expect(result.rings.find(r => r.ring === 5).hard_flaw).toBe(true);
   });
 
   it('棘轮击穿：hard_flaws > ratchet_max → ratchet_breached=true', async () => {
@@ -153,7 +149,6 @@ describe('runSevenRingAudit', () => {
     const pool = buildPool(makePool({
       quality_test_pyramid: null,          // 环1 失败
       'scheduler_job_last_run:%': [],      // 环2 失败
-      line_ledger: [],                     // 环4 失败
       ci_patrol: [],                       // 环5 失败
       'scheduler_job_last_run:launchd-patrol': null, // 环6 失败
     }));

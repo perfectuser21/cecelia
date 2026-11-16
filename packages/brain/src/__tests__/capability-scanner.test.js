@@ -64,7 +64,7 @@ describe('capability-scanner', () => {
       expect(cap.status).toBe('island');
     });
 
-    it('should mark BRAIN_ALWAYS_ACTIVE capabilities as active with brain_embedded evidence', async () => {
+    it('should keep emotion dormant while watchdog remains embedded and active', async () => {
       const pool = (await import('../db.js')).default;
 
       pool.query
@@ -72,6 +72,7 @@ describe('capability-scanner', () => {
           rows: [
             // An always-active capability (in BRAIN_ALWAYS_ACTIVE set)
             { id: 'emotion-perception', name: '情绪感知', current_stage: 2, related_skills: [], key_tables: [], scope: 'cecelia', owner: 'cecelia' },
+            { id: 'narrative-expression', name: '旧叙事', current_stage: 2, related_skills: [], key_tables: [], scope: 'cecelia', owner: 'cecelia' },
             // Another always-active capability
             { id: 'watchdog-resource-monitor', name: '看门狗资源监控', current_stage: 3, related_skills: [], key_tables: [], scope: 'cecelia', owner: 'system' },
           ],
@@ -84,8 +85,9 @@ describe('capability-scanner', () => {
       const result = await scanCapabilities();
 
       const emotionCap = result.capabilities.find(c => c.id === 'emotion-perception');
-      expect(emotionCap.status).toBe('active');
-      expect(emotionCap.evidence).toContain('brain_embedded:true');
+      expect(emotionCap.status).toBe('dormant');
+      expect(emotionCap.evidence).toContain('runtime:dormant');
+      expect(result.capabilities.find(c => c.id === 'narrative-expression').status).toBe('dormant');
 
       const watchdogCap = result.capabilities.find(c => c.id === 'watchdog-resource-monitor');
       expect(watchdogCap.status).toBe('active');

@@ -151,7 +151,7 @@ beforeEach(() => {
 it("默认全体系：共享活动两位置同规范ID，历史无引用活动与unknown都可见", async () => {
   render(<MapPage />);
   expect(
-    await screen.findByRole("heading", { name: "能力系统" }),
+    await screen.findByRole("heading", { name: "执行与证据" }),
   ).toBeInTheDocument();
   expect(
     await screen.findByRole("heading", { name: "增长部门" }),
@@ -240,20 +240,6 @@ it("来源切换取消旧结果语义，慢返回的旧仓库报告不能污染�
     expect(screen.queryByText("读取中…")).not.toBeInTheDocument(),
   );
   expect(screen.queryByText("OLD_REPO_REPORT")).not.toBeInTheDocument();
-});
-it("旧Feature切换保留独立名称与旧查询协议，新登记失败有明确错误", async () => {
-  vi.mocked(fetch).mockResolvedValueOnce({
-    ok: false,
-    status: 503,
-    json: async () => ({ error: { message: "登记读取失败" } }),
-  } as Response);
-  render(<MapPage />);
-  expect(await screen.findByRole("alert")).toHaveTextContent("登记读取失败");
-  fireEvent.click(screen.getByRole("button", { name: "旧 Feature 地图" }));
-  expect(
-    await screen.findByRole("heading", { name: "Feature 地图" }),
-  ).toBeInTheDocument();
-  expect(screen.queryByRole("tab", { name: "结构" })).not.toBeInTheDocument();
 });
 it("未知层级Journey中的Workflow仍进入未归属组，不能被全集结构遗漏", async () => {
   const data = structuredClone(registry);
@@ -439,4 +425,11 @@ it("无定义版本的仓库仍可显式输入影响查询，由API返回unknown
 it('无固定版本的使用位置保持unknown，不借共享Activity当前版本冒充固定引用',async()=>{
  const data=structuredClone(registry);Object.assign(data.activities[0],{current_definition_version_id:'canonical-current-av'});Object.assign(data.workflows[0].activities[0].usage,{activity_definition_version_id:null});vi.mocked(fetch).mockResolvedValue(json(data));
  render(<MapPage/>);await screen.findByRole('heading',{name:'增长部门'});fireEvent.click(screen.getAllByRole('button',{name:/共享预检/})[0]);const detail=screen.getByRole('region',{name:'活动详情'});expect(within(detail).getByText(/固定定义版本：unknown/)).toBeInTheDocument();expect(within(detail).queryByText('canonical-current-av')).not.toBeInTheDocument();expect(within(detail).queryByText('runner.sh')).not.toBeInTheDocument();
+});
+
+it("登记读取失败仍显示明确错误，不提供旧地图后门", async () => {
+  vi.mocked(fetch).mockResolvedValueOnce({ok: false, status: 503, json: async () => ({error: {message: "登记读取失败"}})} as Response);
+  render(<MapPage />);
+  expect(await screen.findByRole("alert")).toHaveTextContent("登记读取失败");
+  expect(screen.queryByRole("button", {name: "旧 Feature 地图"})).not.toBeInTheDocument();
 });
