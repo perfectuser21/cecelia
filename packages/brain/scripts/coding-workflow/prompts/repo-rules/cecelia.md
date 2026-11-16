@@ -1,11 +1,11 @@
 ## 本仓库规矩（cecelia）
 
-仓库 perfectuser21/cecelia（Cecelia monorepo）。CI 的规矩（提交后程序会在本地先跑一遍这些门禁，没过会要求修；一次写对最省事；门禁脚本在 .github/workflows/scripts/ 下，看不懂日志就读脚本）：
-- lint-test-pairing：新增或修改的 packages/brain/src/**/*.js 必须有配套测试（同目录、__tests__/ 或 __tests__/integration/），测试要真引用被测模块、有真实断言。
-- lint-feature-has-smoke：需求标题不是以「修复」开头的，这个 PR 会以 feat 合入：只要改了 packages/brain/src 的非测试文件，就要新增 packages/brain/scripts/smoke/<名字>.sh（至少 5 行真实代码，真的用 curl/psql/node 等验证改动），并登记进 packages/brain/config/smoke/smoke-allowlist.txt（如该文件存在）。
-- lint-tdd-commit-order：按提交顺序，改 src 的提交之前必须已有带真实测试的提交（同一个提交里同时有测试和实现也算）。顺序不对时不要改写历史，改为在新提交里补齐测试使后续提交满足规则。
-- lint-test-quality / lint-no-fake-test / lint-no-mock-only-test：新增测试要有真实断言（不能全是 toBeDefined 之类的弱断言）、不能全是 skip、不能靠大量 mock 撑着。
-- branch-naming / pr-size-check：改动规模相对 main 新增不超过 3000 行；分支名和改动规模问题无法靠改代码解决时，在最终回复里说明原因即可，不要做无关改动。
+仓库 perfectuser21/cecelia（Cecelia monorepo）。提交后程序在worktree里依次执行以下必需检查，缺入口或非零退出都会进入修复环；日志指向的真实脚本是排查依据：
+- 开工门：`node scripts/facts-check.mjs` → `bash scripts/check-version-sync.sh` → `node scripts/devgate/check-dod-mapping.cjs`。
+- 当前PR CI脚本层：`node scripts/ci/run-basic-check.mjs scripts`，与CI共用同一入口，执行现代开发工具回归、事实/版本、迁移编号及Skill来源ownership检查。
+- 安全与版本：保留 `node --test packages/brain/scripts/smoke/__tests__/smoke-production-guard.node-test.mjs` 和真实Brain版本增量检查。不能通过修改权限、来源校验或生产边界使检查通过。
+- 行为回归：修复bug先写可复现的失败测试，修好后永久保留。围绕被改业务的真实不变量写断言，可以复用现役测试覆盖。测试组织不要求源文件与测试文件同名；需求类型不决定必须新增smoke。删除重复或无效测试时确认独有行为覆盖和实际执行入口，避免为了满足命名或数量制造stub。
+- 本地预检成功只证明上述检查；完整PR CI、隔离预览QA及来源资格仍按各自真实结果判定。
 - 版本：改 packages/brain/src 必须在实现与验收阶段同步升高Brain package、嵌套lock、根workspace lock、.brain-versions和DEFINITION版本。相对目标main必须有真实版本增量；changes/碎片不能替代升版。publish只读校验，失败后修真实候选并重新验收。
 - 数据库迁移：main 新增的迁移和本 PR 的迁移用了同一个编号（packages/brain/migrations/NNN_*.sql）时，把本 PR 的迁移用 `git mv` 顺延到 main 之后第一个空闲编号，并同步改引用它的测试、回滚文件和 selfcheck 期望版本。
 - runner 生成的 QA 回归 smoke：packages/brain/scripts/smoke/cw-*-qa-smoke.sh 由 runner 按 QA 报告固化，勿手改、勿删除。

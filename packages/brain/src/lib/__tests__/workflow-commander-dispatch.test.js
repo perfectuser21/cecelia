@@ -9,15 +9,12 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
   WORKFLOW_DISPATCH_TASK_TYPE,
-  resolveCommanderOrder,
-  buildCommanderMessage,
   parseCommanderResult,
   dispatchWorkflowCommanderTasks,
   reapWorkflowCommanderRuns,
 } from '../workflow-commander-dispatch.js';
 import { TASK_TYPE_REGISTRY, TICK_DISPATCH_EXCLUDED } from '../task-type-registry.js';
 import { EXTERNAL_RUN_MIRROR_TASK_TYPES } from '../external-mirror-liveness.js';
-import { resolveWorkflowConfig } from '../factory-workflow-config.js';
 
 const CFG = {
   workflow_key: 'douyin_video_publish.android',
@@ -72,52 +69,6 @@ describe('task_type 注册：workflow_dispatch 不与镜像语义冲突', () => 
   });
   it('不是外部 run 镜像（commander-watchdog / lost-deadline / 活性豁免都不收它）', () => {
     expect(EXTERNAL_RUN_MIRROR_TASK_TYPES).not.toContain(WORKFLOW_DISPATCH_TASK_TYPE);
-  });
-});
-
-describe('resolveCommanderOrder', () => {
-  it('按 workflow 登记解析出调度单：<能力> <机器> <profile> <serial> <biz>', () => {
-    const r = resolveCommanderOrder(task(), { resolveConfig });
-    expect(r.ok).toBe(true);
-    expect(r.order).toBe('douyin_video_publish xian-m4 xiaolongxia ANGYVB4311010223 Ai办公室');
-    expect(r.serial).toBe('ANGYVB4311010223');
-    expect(r.timeoutSec).toBe(40 * 60);
-  });
-  it('真配置：抖音·视频发布（安卓真机）登记了 commander 调度单', () => {
-    const r = resolveCommanderOrder(task(), { resolveConfig: (k) => resolveWorkflowConfig(k) });
-    expect(r.ok).toBe(true);
-    expect(r.order).toBe('douyin_video_publish xian-m4 xiaolongxia ANGYVB4311010223 Ai办公室');
-  });
-  it('未登记 workflow / 缺 commander 项 → 不猜，返回缺什么', () => {
-    expect(resolveCommanderOrder(task({ payload: { workflow_key: 'nope' } }), { resolveConfig }).error).toMatch(/未在 config\/factory-workflows.json 登记/);
-    expect(resolveCommanderOrder(task({ payload: {} }), { resolveConfig }).error).toMatch(/workflow_key/);
-    const noBiz = { ...CFG, commander: { capability: 'douyin_video_publish' } };
-    expect(resolveCommanderOrder(task(), { resolveConfig: () => noBiz }).error).toMatch(/biz/);
-  });
-  it('字段含空白/引号等非法字符 → 拒绝（调度单会被 Commander 拼进 shell）', () => {
-    const bad = { ...CFG, commander: { ...CFG.commander, biz: 'a b' } };
-    expect(resolveCommanderOrder(task(), { resolveConfig: () => bad }).error).toMatch(/非法/);
-    const bad2 = { ...CFG, device: { ...CFG.device, profile: "x';rm" } };
-    expect(resolveCommanderOrder(task(), { resolveConfig: () => bad2 }).error).toMatch(/非法/);
-  });
-  it('payload.commander_args 只放行白名单旗标', () => {
-    const ok = resolveCommanderOrder(task({ payload: { workflow_key: CFG.workflow_key, commander_args: ['--allow-missing'] } }), { resolveConfig });
-    expect(ok.order.endsWith(' --allow-missing')).toBe(true);
-    const bad = resolveCommanderOrder(task({ payload: { workflow_key: CFG.workflow_key, commander_args: ['--push', '1;reboot'] } }), { resolveConfig });
-    expect(bad.error).toMatch(/commander_args/);
-  });
-});
-
-describe('buildCommanderMessage', () => {
-  it('消息含调度单、Brain 任务号、run_id、正文纪律与 COMMANDER_RESULT 回写约定', () => {
-    const r = resolveCommanderOrder(task(), { resolveConfig });
-    const m = buildCommanderMessage(task(), r, 'wfd-aaaaaaaa-1');
-    expect(m).toContain('调度单：douyin_video_publish xian-m4 xiaolongxia ANGYVB4311010223 Ai办公室');
-    expect(m).toContain('aaaaaaaa-1111-2222-3333-444444444444');
-    expect(m).toContain('wfd-aaaaaaaa-1');
-    expect(m).toContain('只私密发布');
-    expect(m).toContain('COMMANDER_RESULT');
-    expect(m).toContain('小彩 Ai办公室账号，仅私密');
   });
 });
 

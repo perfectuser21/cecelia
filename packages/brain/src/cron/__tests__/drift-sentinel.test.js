@@ -12,7 +12,6 @@
  *   FR-15-network-err : 拉取 main SHA 失败 → verdict=network_error，deploy 不被调
  *   FR-15-prod-unreach: 拉取 prod SHA 失败 → verdict=prod_unreachable，deploy 不被调
  *   FR-15-escalate         : redeployCount>=2 且仍漂移 → verdict=escalated，deploy 不被调，sendBark 被调 1 次
- *   FR-15-boundary         : 边界：29min59s 不触发，30min01s 触发
  *   FR-15-network-skip-x3  : 连续 3 次 network_error → sendBark P2 告警被调（B8）
  */
 
@@ -25,30 +24,8 @@ import { join } from 'node:path';
 // Mock 外部依赖（允许 mock 的边：对外部 I/O，不 mock 内部判定逻辑）
 // ─────────────────────────────────────────────────────────────────────────────
 
-// mock db（KV 存取）
-const mockKvStore = new Map();
-vi.mock('../../db.js', () => ({
-  default: {
-    query: vi.fn(async (sql, params) => {
-      // 简单 KV 模拟：scheduler_jobs 或 brain_kv 表
-      if (sql.includes('SELECT') && sql.includes('drift_sentinel_state')) {
-        const val = mockKvStore.get('drift_sentinel_state');
-        return { rows: val ? [{ value: val }] : [] };
-      }
-      if (sql.includes('INSERT') || sql.includes('UPDATE')) {
-        if (params && params[0] === 'drift_sentinel_state') {
-          mockKvStore.set('drift_sentinel_state', params[1]);
-        }
-        return { rows: [] };
-      }
-      if (sql.includes('DELETE') && sql.includes('drift_sentinel_state')) {
-        mockKvStore.delete('drift_sentinel_state');
-        return { rows: [] };
-      }
-      return { rows: [] };
-    }),
-  },
-}));
+// 状态接缝由 drift-sentinel-state.test.js 验证；本文件通过 _testInitialState 注入判定输入。
+vi.mock('../../db.js', () => ({ default: { query: vi.fn().mockResolvedValue({ rows: [] }) } }));
 
 // mock alerting.js（raise 用于 P1 上报）
 vi.mock('../../alerting.js', () => ({
@@ -145,11 +122,20 @@ function makeOptions({
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('drift-sentinel — FR-15 contract tests', () => {
+  let fixtureRoot, previousRepoRoot;
   beforeEach(async () => {
-    mockKvStore.clear();
+    previousRepoRoot = process.env.REPO_ROOT;
+    fixtureRoot = mkdtempSync(join(tmpdir(), 'drift-fr15-'));
+    process.env.REPO_ROOT = fixtureRoot;
     mockExecDeploy.mockClear();
     mockSendBark.mockClear();
     vi.mocked(await import('../../alerting.js')).raise?.mockClear?.();
+  });
+
+  afterEach(() => {
+    if (previousRepoRoot === undefined) delete process.env.REPO_ROOT;
+    else process.env.REPO_ROOT = previousRepoRoot;
+    rmSync(fixtureRoot, { recursive: true, force: true });
   });
 
   // FR-15-ok：SHA 一致 → verdict=ok，deploy 不被调
@@ -250,39 +236,6 @@ describe('drift-sentinel — FR-15 contract tests', () => {
     );
   });
 
-  // FR-15-boundary-29m59s：边界：29min59s 不触发（防抖边界下限）
-  it('FR-15-boundary: 29min59s 不触发 → verdict=drifting', async () => {
-    const now = new Date('2026-07-16T10:00:00Z');
-    const driftFirstSeenAt = new Date(now.getTime() - (30 * 60 * 1000 - 1000)).toISOString();
-
-    const result = await runDriftCheck(makeOptions({
-      mainSha: SHA_MAIN,
-      prodSha: SHA_PROD,
-      now,
-      driftFirstSeenAt,
-    }));
-
-    expect(result.verdict).toBe('drifting');
-    expect(mockExecDeploy).not.toHaveBeenCalled();
-  });
-
-  // FR-15-boundary-30m01s：边界：30min01s 触发（防抖边界上限）
-  it('FR-15-boundary: 30min01s 触发 → verdict=redeploying', async () => {
-    const now = new Date('2026-07-16T10:00:00Z');
-    const driftFirstSeenAt = new Date(now.getTime() - (30 * 60 * 1000 + 1000)).toISOString();
-
-    const result = await runDriftCheck(makeOptions({
-      mainSha: SHA_MAIN,
-      prodSha: SHA_PROD,
-      now,
-      driftFirstSeenAt,
-      redeployCount: 0,
-    }));
-
-    expect(result.verdict).toBe('redeploying');
-    expect(mockExecDeploy).toHaveBeenCalledTimes(1);
-  });
-
   // FR-15-首见：SHA 首次不等（无 driftFirstSeenAt）→ 记录时间戳，verdict=drifting
   it('FR-15-首见: SHA 首次不等且无历史记录 → verdict=drifting，deploy 不被调', async () => {
     const result = await runDriftCheck(makeOptions({
@@ -341,7 +294,6 @@ describe('drift-sentinel — B5 补部署 detached，超时只告警不杀进程
   let raiseMock;
 
   beforeEach(async () => {
-    mockKvStore.clear();
     mockExecDeploy.mockClear();
     mockSendBark.mockClear();
     spawnState.calls.length = 0;

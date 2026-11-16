@@ -47,14 +47,6 @@ tests:
     ci_layer: L4
     status: active
 
-  - test_id: tick_healing_integration
-    file: packages/brain/src/__tests__/tick-healing-integration.test.js
-    type: integration
-    covers_feature: tick_loop
-    ci_layer: L3
-    status: active
-    description: Tick healing 循环防死锁
-
   - test_id: database_integration
     file: tests/database/integration.test.js
     type: integration

@@ -4,16 +4,25 @@
 // 第四病（僵尸检测 + 发射后探活）各组：已随 Claude 通道退役删除（任务 76a160b3）。
 // 现行为：每轮只返回 skipped=claude_channel_retired，不查库、不预占、不执行任何命令。
 import { describe, it, expect, vi } from 'vitest';
+const acquireDeviceLock = vi.fn();
+const releaseDeviceLocksHeldBy = vi.fn();
+vi.mock('../device-lock-helpers.js', () => ({
+  acquireDeviceLock: (...args) => acquireDeviceLock(...args),
+  releaseDeviceLocksHeldBy: (...args) => releaseDeviceLocksHeldBy(...args),
+}));
+
 import { runWorkerPoolDispatch } from '../worker-pool-dispatch.js';
 
 describe('worker 池派发（Claude 通道已退役）', () => {
   it('有 queued 的 parallel_worker 任务也不认领：返回 skipped=claude_channel_retired、dispatched=0，不查库不执行命令', async () => {
-    const pool = { query: vi.fn(async () => ({ rows: [{ id: 't1', payload: { parallel_worker: true } }], rowCount: 1 })) };
+    const pool = { query: vi.fn(async () => ({ rows: [{ id: 't1', payload: { parallel_worker: true, device_serial: 'retired-device-fixture', account_id: 'retired-account-fixture' } }], rowCount: 1 })) };
     const execFn = vi.fn(() => '');
     const r = await runWorkerPoolDispatch(pool, { execFn });
     expect(r).toEqual({ skipped: 'claude_channel_retired', dispatched: 0 });
     expect(pool.query).not.toHaveBeenCalled();
     expect(execFn).not.toHaveBeenCalled();
+    expect(acquireDeviceLock).not.toHaveBeenCalled();
+    expect(releaseDeviceLocksHeldBy).not.toHaveBeenCalled();
   });
 
   it('连续调用每轮结果一致（不再有 5min 自 gate 状态）', async () => {

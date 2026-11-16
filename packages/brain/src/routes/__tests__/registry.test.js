@@ -163,14 +163,6 @@ describe('POST /api/brain/registry VALID_STATUSES — planned status', () => {
       .post('/api/brain/registry')
       .send({ name: 'my-planned-api', type: 'api', status: 'planned' });
     expect(res.status).toBe(201);
-  });
-
-  it('POST with status=planned should not return 400 invalid status error', async () => {
-    mockQuery.mockResolvedValueOnce({ rows: [{ id: 'reg-5', name: 'planned-endpoint', type: 'api', status: 'planned' }] });
-    const request = await import('supertest');
-    const res = await request.default(app)
-      .post('/api/brain/registry')
-      .send({ name: 'planned-endpoint', type: 'api', status: 'planned' });
     expect(res.body.error).toBeUndefined();
   });
 });

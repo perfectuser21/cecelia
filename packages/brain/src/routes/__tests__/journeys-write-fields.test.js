@@ -33,8 +33,10 @@ describe('PATCH /journeys/:id 承诺地图字段', () => {
     app.use('/api/brain', router);
 
     const request = await import('supertest');
-    const res = await request.default(await bindFixture(app)).patch('/api/brain/journeys/j1').send({ home: 'nope' });
+    const res = await request.default(await bindFixture(app)).patch('/api/brain/journeys/a0000000-0000-4000-8000-000000000001').send({ home: 'nope' });
     expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/home must be one of/);
+    expect(mockQuery).not.toHaveBeenCalled();
   });
 });
 

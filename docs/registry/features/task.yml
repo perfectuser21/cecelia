@@ -51,11 +51,9 @@ features:
     tests:
       unit:
         - packages/brain/src/__tests__/autocreate-task-from-cortex.test.js
-        - packages/brain/src/__tests__/bare-modules/task-updater.test.js
         - packages/brain/src/__tests__/routes/task-tasks.test.js
         - packages/brain/src/__tests__/task-cleanup.test.js
         - packages/brain/src/__tests__/task-feedback-suggestions.test.js
-        - packages/brain/src/__tests__/task-generator-dedup.test.js
         - packages/brain/src/__tests__/task-generator-scheduler.test.js
         - packages/brain/src/__tests__/task-generators/base-scanner.test.js
         - packages/brain/src/__tests__/task-generators/complexity-scanner.test.js
@@ -81,11 +79,9 @@ features:
         tests:
           unit:
             - packages/brain/src/__tests__/autocreate-task-from-cortex.test.js
-            - packages/brain/src/__tests__/bare-modules/task-updater.test.js
             - packages/brain/src/__tests__/routes/task-tasks.test.js
             - packages/brain/src/__tests__/task-cleanup.test.js
             - packages/brain/src/__tests__/task-feedback-suggestions.test.js
-            - packages/brain/src/__tests__/task-generator-dedup.test.js
             - packages/brain/src/__tests__/task-generator-scheduler.test.js
             - packages/brain/src/__tests__/task-generators/base-scanner.test.js
             - packages/brain/src/__tests__/task-generators/complexity-scanner.test.js
@@ -400,7 +396,6 @@ features:
         - packages/brain/src/__tests__/dedup-dispatch-fixes.test.js
         - packages/brain/src/__tests__/dispatch-effectiveness.test.js
         - packages/brain/src/__tests__/dispatch-executor-fail.test.js
-        - packages/brain/src/__tests__/dispatch-low-rate.test.js
         - packages/brain/src/__tests__/dispatch-now.test.js
         - packages/brain/src/__tests__/dispatch-preflight-description.test.js
         - packages/brain/src/__tests__/dispatch-preflight-skip.test.js
@@ -422,7 +417,6 @@ features:
             - packages/brain/src/__tests__/dedup-dispatch-fixes.test.js
             - packages/brain/src/__tests__/dispatch-effectiveness.test.js
             - packages/brain/src/__tests__/dispatch-executor-fail.test.js
-            - packages/brain/src/__tests__/dispatch-low-rate.test.js
             - packages/brain/src/__tests__/dispatch-now.test.js
             - packages/brain/src/__tests__/dispatch-preflight-description.test.js
             - packages/brain/src/__tests__/dispatch-preflight-skip.test.js
@@ -475,7 +469,6 @@ features:
         - packages/brain/src/__tests__/coverage-config.test.js
         - packages/brain/src/__tests__/coverage-reporters.test.js
         - packages/brain/src/__tests__/coverage-thresholds.test.js
-        - packages/brain/src/__tests__/cto-review-callback.test.js
         - packages/brain/src/__tests__/deploy-status.test.js
         - packages/brain/src/__tests__/dev-failure-classifier.test.js
         - packages/brain/src/__tests__/dev-pipeline-health.test.js
@@ -541,7 +534,6 @@ features:
             - packages/brain/src/__tests__/coverage-config.test.js
             - packages/brain/src/__tests__/coverage-reporters.test.js
             - packages/brain/src/__tests__/coverage-thresholds.test.js
-            - packages/brain/src/__tests__/cto-review-callback.test.js
             - packages/brain/src/__tests__/deploy-status.test.js
             - packages/brain/src/__tests__/dev-failure-classifier.test.js
             - packages/brain/src/__tests__/dev-pipeline-health.test.js

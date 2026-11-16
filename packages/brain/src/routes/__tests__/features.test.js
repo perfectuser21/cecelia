@@ -1,4 +1,9 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import express from 'express';
+import request from 'supertest';
+const { query } = vi.hoisted(() => ({ query: vi.fn() }));
+vi.mock('../../db.js', () => ({ default: { query } }));
+beforeEach(() => vi.resetAllMocks());
 
 // buildWhereClause 测试不需要 DB mock，单独 import
 // computeLedgerStatus 纯函数测试见 lib/__tests__/eleven-elements-ledger.test.js
@@ -34,32 +39,33 @@ describe('features route — buildWhereClause', () => {
   });
 });
 
-// 验证 GET /ledger 端点查询的是 brain_modules 表，而非旧的 features 表
-// 通过读源码确认（避免 vi.mock hoisting 复杂性，且更直接）
-describe('features route — SQL 表名验证', () => {
-  it('features.js 源码所有 SQL 使用 brain_modules 而非 features', async () => {
-    const { readFileSync } = await import('fs');
-    const { fileURLToPath } = await import('url');
-    const { dirname, join } = await import('path');
-    const __dirname = dirname(fileURLToPath(import.meta.url));
-    const src = readFileSync(join(__dirname, '../features.js'), 'utf8');
-
-    // 所有 SQL 关键字后应该跟 brain_modules，不能有 FROM features / INTO features 等
-    expect(src).toMatch(/FROM brain_modules/);
-    expect(src).toMatch(/INTO brain_modules/);
-    expect(src).toMatch(/UPDATE brain_modules/);
-    expect(src).not.toMatch(/FROM features\b/);
-    expect(src).not.toMatch(/INTO features\b/);
-    expect(src).not.toMatch(/UPDATE features\b/);
+describe('features HTTP brain_modules与账本计算', () => {
+  async function app() { const a = express(); a.use(express.json()); a.use('/features', (await import('../features.js')).default); return a; }
+  it('列表实际查询brain_modules并绑定过滤参数', async () => {
+    query.mockResolvedValueOnce({ rows: [{ id: 'owned' }] });
+    const r = await request(await app()).get('/features?priority=P0&domain=brain');
+    expect(r.status).toBe(200); expect(r.body).toEqual({ features: [{ id: 'owned' }], total: 1 });
+    expect(query.mock.calls[0][0]).toMatch(/FROM brain_modules WHERE priority = \$1 AND domain = \$2/);
+    expect(query.mock.calls[0][1]).toEqual(['P0', 'brain']);
   });
-
-  it('features.js 导入了 computeLedgerStatus 共享函数', async () => {
-    const { readFileSync } = await import('fs');
-    const { fileURLToPath } = await import('url');
-    const { dirname, join } = await import('path');
-    const __dirname = dirname(fileURLToPath(import.meta.url));
-    const src = readFileSync(join(__dirname, '../features.js'), 'utf8');
-    expect(src).toContain("import { computeLedgerStatus }");
-    expect(src).toContain("eleven-elements-ledger");
+  it('ledger实际合并决策统计并计算模块健康', async () => {
+    query.mockResolvedValueOnce({ rows: [
+      { id: 'covered', domain: 'brain', description: 'FR', has_unit_test: true, smoke_cmd: 'owned smoke', smoke_status: 'passing' },
+      { id: 'bare', domain: null },
+    ] }).mockResolvedValueOnce({ rows: [{ target_id: 'covered', cnt: '2' }] }).mockResolvedValueOnce({ rows: [{ target_id: 'covered', cnt: '1' }] });
+    const r = await request(await app()).get('/features/ledger');
+    expect(r.status).toBe(200); expect(r.body.total).toBe(2);
+    expect(query.mock.calls[0][0]).toMatch(/FROM brain_modules/);
+    expect(query.mock.calls[1][0]).toMatch(/category = 'nfr'/); expect(query.mock.calls[2][0]).toMatch(/category = 'invariant'/);
+    expect(r.body.domains[0].items[0].ledger).toMatchObject({ fr: 'ok', nfr: 'ok', invariant: 'ok', checkpoints: 1, checkpoints_status: 'partial', effect_confirmed: 'ok' });
+    expect(r.body.domains[1]).toMatchObject({ domain: '(未分类)', items: [{ id: 'bare', ledger: { fr: 'missing', nfr: 'missing', invariant: 'missing', checkpoints: 0 } }] });
+  });
+  it('新增和PATCH均操作brain_modules并绑定请求字段', async () => {
+    query.mockResolvedValue({ rows: [{ id: 'owned' }] }); const a = await app();
+    expect((await request(a).post('/features').send({ id: 'owned', name: 'Owned', domain: 'brain' })).status).toBe(201);
+    expect(query.mock.calls[0][0]).toMatch(/INSERT INTO brain_modules/); expect(query.mock.calls[0][1].slice(0, 3)).toEqual(['owned', 'Owned', 'brain']);
+    expect((await request(a).patch('/features/owned').send({ name: 'Updated' })).status).toBe(200);
+    expect(query.mock.calls[1][0]).toMatch(/UPDATE brain_modules SET name = \$1/);
+    expect(query.mock.calls[1][1]).toEqual(['Updated', expect.any(String), 'owned']);
   });
 });

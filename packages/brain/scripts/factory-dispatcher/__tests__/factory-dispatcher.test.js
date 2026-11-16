@@ -12,21 +12,16 @@ import {
   parseFactoryContract,
   buildRunId,
   buildSessionId,
-  buildAgentMessage,
   decodeUtf8Strict,
   writeMessageFile,
   parseLockStatus,
   remoteLockCommand,
   hostSelfCheck,
   detectOkFalse,
-  dispatchTask,
-  pollOnce,
 } from '../factory-dispatcher.js';
 
 const MODULE_PATH = fileURLToPath(new URL('../factory-dispatcher.js', import.meta.url));
 const TASK_ID = 'abcdef12-3456-7890-abcd-ef1234567890';
-// 2026-10-11 14:00 上海 = 06:00 UTC
-const DAYTIME = Date.parse('2026-10-11T06:00:00Z');
 
 function makeTask(overrides = {}) {
   return {
@@ -46,100 +41,6 @@ function makeTask(overrides = {}) {
     },
   };
 }
-
-/** 假世界：时钟、Brain、远端设备锁、OpenClaw 会话全部可控。 */
-function makeWorld({ task = makeTask(), lockOwner = null, claimStatus = 200, start = DAYTIME } = {}) {
-  const w = {
-    t: start,
-    task: { ...task },
-    lockOwner,
-    patches: [],
-    claims: [],
-    sshCalls: [],
-    spawned: [],
-    logText: '',
-    agentExited: false,
-    agentExitCode: null,
-    killed: false,
-    files: new Map(),
-    onTick: null,
-  };
-  const deps = {
-    now: () => new Date(w.t),
-    sleep: async (ms) => {
-      w.t += ms;
-      if (w.onTick) w.onTick(w);
-    },
-    log: () => {},
-    brain: {
-      listQueued: async () => (w.task.status === 'queued' ? [w.task] : []),
-      getTask: async () => ({ ...w.task }),
-      claim: async (id) => {
-        w.claims.push(id);
-        return { status: claimStatus };
-      },
-      patch: async (id, body) => {
-        w.patches.push(body);
-        if (body.status) w.task.status = body.status;
-        if (body.result) w.task.result = { ...(w.task.result || {}), ...body.result };
-        return { status: 200 };
-      },
-    },
-    runSsh: async (host, cmd) => {
-      w.sshCalls.push({ host, cmd });
-      const m = cmd.match(/douyin-phone-adb --profile (\S+) (lock-\w+)(?: (\S+))?$/);
-      if (!m) return { code: 1, stdout: '', stderr: 'bad cmd' };
-      const [, , sub, arg] = m;
-      if (sub === 'lock-status') {
-        return { code: 0, stdout: w.lockOwner ? `lock=held owner=${w.lockOwner} age=5s stale=false reclaimable=false ttl=1800s\n` : 'lock=free\n', stderr: '' };
-      }
-      if (sub === 'lock-acquire') {
-        if (w.lockOwner && w.lockOwner !== arg) return { code: 1, stdout: '', stderr: `lock is held by another run: ${w.lockOwner}` };
-        w.lockOwner = arg;
-        return { code: 0, stdout: `lock=acquired owner=${arg}\nlock_evidence_id=${arg}-lock-acquire\n`, stderr: '' };
-      }
-      if (sub === 'lock-release') {
-        if (!w.lockOwner) return { code: 0, stdout: 'lock=free\n', stderr: '' };
-        if (w.lockOwner !== arg) return { code: 1, stdout: '', stderr: 'refusing to release lock owned by another run' };
-        w.lockOwner = null;
-        return { code: 0, stdout: `lock=released owner=${arg}\n`, stderr: '' };
-      }
-      if (sub === 'lock-refresh') {
-        if (w.lockOwner !== arg) return { code: 1, stdout: '', stderr: 'refusing' };
-        return { code: 0, stdout: `lock=refreshed owner=${arg} ttl=1800s\n`, stderr: '' };
-      }
-      return { code: 1, stdout: '', stderr: 'unknown' };
-    },
-    spawnAgent: async (spec) => {
-      w.spawned.push(spec);
-      return {
-        isExited: () => w.agentExited,
-        exitCode: () => w.agentExitCode,
-        kill: async () => {
-          w.killed = true;
-          w.agentExited = true;
-        },
-      };
-    },
-    readLog: async () => w.logText,
-    writeFile: async (p, buf) => w.files.set(p, Buffer.from(buf)),
-    readFile: async (p) => w.files.get(p),
-    mkdir: async () => {},
-  };
-  const opts = {
-    claimer: 'factory-dispatcher@test',
-    stateDir: '/state',
-    lockPollMs: 60_000,
-    lockWaitTimeoutMs: 10 * 60_000,
-    sessionPollMs: 30_000,
-    sessionTimeoutMs: 60 * 60_000,
-    exitGraceMs: 2 * 60_000,
-    lockRefreshMs: 10 * 60_000,
-  };
-  return { w, deps, opts };
-}
-
-const lastFailed = (w) => [...w.patches].reverse().find((p) => p.status === 'failed');
 
 describe('时段闸与日期', () => {
   it('上海 09:00–23:00 内放行，外拒绝', () => {
@@ -205,16 +106,6 @@ describe('任务契约解析', () => {
 });
 
 describe('消息文件 UTF-8', () => {
-  it('消息含 run_id、任务 id、锁纪律与交付要求', () => {
-    const { contract } = parseFactoryContract(makeTask({ message: '附加说明：先截图' }));
-    const msg = buildAgentMessage({ runId: 'sf3-abcdef12-20261011-r1', taskId: TASK_ID, contract });
-    expect(msg).toContain('sf3-abcdef12-20261011-r1');
-    expect(msg).toContain(TASK_ID);
-    expect(msg).toContain('锁已由派发器代领，开工 lock-status 核对，不要再 lock-acquire；结束必须 lock-release 并回读 free');
-    expect(msg).toContain('先读任务正文按【执行参数】执行；结束把交付 JSON 写入 result.delivery');
-    expect(msg).toContain('附加说明：先截图');
-  });
-
   it('LANG=C 子进程写出的中文文件字节与 UTF-8 编码完全一致', () => {
     const dir = mkdtempSync(join(tmpdir(), 'fd-utf8-'));
     const file = join(dir, 'msg.txt');
@@ -277,25 +168,8 @@ describe('Brain 客户端 claim 的 executor_kind', () => {
   });
 });
 
-// 统一领单租约（派发总闸 G，任务 c5f6e683）：claim 带 lease_seconds，守望每轮心跳续约；
-// 心跳 409 lease_lost = Brain 已按租约回收（回队或判 lost）→ 派发器停手：杀会话、放自己的锁、不再回写任务。
+// Brain 客户端租约字段与心跳协议。
 describe('统一领单租约 + 心跳', () => {
-  function withLease(world, { lostAfterMs = null } = {}) {
-    const { w, deps } = world;
-    w.claimArgs = [];
-    w.heartbeats = 0;
-    deps.brain.claim = async (id, claimer, leaseSeconds) => {
-      w.claims.push(id);
-      w.claimArgs.push({ claimer, leaseSeconds });
-      return { status: 200 };
-    };
-    deps.brain.heartbeat = async () => {
-      w.heartbeats += 1;
-      return { status: lostAfterMs !== null && w.t - DAYTIME >= lostAfterMs ? 409 : 200 };
-    };
-    return world;
-  }
-
   it('Brain 客户端：claim 带 lease_seconds，heartbeat POST /tasks/:id/heartbeat', async () => {
     const mod = await import('../factory-dispatcher.js');
     const calls = [];

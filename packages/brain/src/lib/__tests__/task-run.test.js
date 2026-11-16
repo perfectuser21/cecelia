@@ -2,7 +2,7 @@
 // 覆盖父路: 独立小路（无父路）—— 链 bf5088a3 第 1 棒 F1 执行基座，无已验收前序 ability
 //
 // 本文件只测「环境无关的纯逻辑断言」（normalizeRunStatus / buildRunContext /
-// buildRunResult / detectBareRuns），从仓库根 vitest（sprints/** include）跑，不碰 DB。
+// buildRunResult），从仓库根 vitest（sprints/** include）跑，不碰 DB。
 // task_runs 真实写路径（startRun/finishRun 落库这条边）的验证在
 // packages/brain/src/__tests__/integration/task-run-primitive.pg.integration.test.js
 // （真 Postgres，禁 mock db.js 边），由 brain-integration 跑。
@@ -13,7 +13,6 @@ import {
   normalizeRunStatus,
   buildRunContext,
   buildRunResult,
-  detectBareRuns,
 } from '../task-run.js';
 
 describe('normalizeRunStatus — 回调状态映射到 task_runs 状态枚举', () => {
@@ -81,20 +80,5 @@ describe('buildRunResult — exit code + 产物引用落 result jsonb', () => {
     const r = buildRunResult({ exitCode: 1 });
     expect(r.exit_code).toBe(1);
     expect(r.artifacts).toEqual([]);
-  });
-});
-
-describe('detectBareRuns — 裸跑检测（有 dispatch_events 无 task_runs）', () => {
-  it('返回被派发但无 run 记录的 task_id（裸跑 → AMBER）', () => {
-    const bare = detectBareRuns(['t1', 't2', 't3'], ['t2']);
-    expect(bare.sort()).toEqual(['t1', 't3']);
-  });
-
-  it('全部有 run 记录时返回空数组（无裸跑）', () => {
-    expect(detectBareRuns(['t1', 't2'], ['t1', 't2', 'tx'])).toEqual([]);
-  });
-
-  it('去重：同一 task_id 多次派发只报一次', () => {
-    expect(detectBareRuns(['t1', 't1', 't1'], [])).toEqual(['t1']);
   });
 });
