@@ -1,154 +1,80 @@
-/**
- * executor-initiative-skill-map.test.js
- *
- * DoD:
- * - initiative_plan → /decomp（L1-001 修复验证）
- * - initiative_verify → /architect（Mode 3 verify，原错误映射 /decomp 已修复）
- * - decomp_review → /decomp-check
- * - preparePrompt(initiative_plan) 返回 `/decomp\n\n<task.description>`
- * - preparePrompt(initiative_verify) 返回 `/architect verify --initiative-id ...`
- * - preparePrompt(decomp_review) 返回 `/decomp-check\n\n<task.description>`
- */
-
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-
-// Mock dependencies
-vi.mock('../db.js', () => ({
-  default: {
-    query: vi.fn()
-  }
+/** 通过现役triggerCeceliaRun→Codex review→preparePrompt观察实际写出的prompt，预检处阻断spawn。 */
+import { describe, it, expect, vi, beforeAll, beforeEach, afterAll } from 'vitest';
+const io = vi.hoisted(() => ({ query: vi.fn(), writeFile: vi.fn(), access: vi.fn(),
+  spawn: vi.fn(() => { throw new Error('禁止真实spawn'); }), execSync: vi.fn(),
+  card: null, diff: '', forbidden: vi.fn(() => { throw new Error('禁止非fixture外部动作'); }),
 }));
-
-vi.mock('child_process', () => ({
-  spawn: vi.fn(),
-  execSync: vi.fn(() => '')
+vi.mock('../db.js', () => ({ default: { query: io.query } }));
+// 只放行单测中的入口保护；所有外部边界另行拒绝，绝不启动真实执行者。
+vi.mock('../runtime-safety.js', async (original) => ({ ...await original(), assertExternalExecutionAllowed: vi.fn() }));
+vi.mock('child_process', () => ({ spawn: io.spawn, execSync: io.execSync,
+  exec: io.forbidden, execFile: io.forbidden, execFileSync: io.forbidden,
 }));
-
-vi.mock('fs/promises', () => ({
-  writeFile: vi.fn(),
-  mkdir: vi.fn()
-}));
-
-vi.mock('fs', async () => {
-  const actual = await vi.importActual('fs');
-  const { preserveFleetConfigFs } = await import('./helpers/fleet-config-fs-fixture.js');
-  return preserveFleetConfigFs(actual, {
-  readFileSync: vi.fn(() => 'SwapTotal: 0\nSwapFree: 0')
+vi.mock('node:child_process', () => ({ spawn: io.spawn, execSync: io.execSync, exec: io.forbidden, execFile: io.forbidden, execFileSync: io.forbidden }));
+vi.mock('fs/promises', () => ({ writeFile: io.writeFile, mkdir: vi.fn(), access: io.access }));
+vi.mock('fs', async (original) => {
+  const actual = await original(); const { resolve } = await import('node:path');
+  const { fileURLToPath } = await import('node:url'); const root = fileURLToPath(new URL('../../../../', import.meta.url)).replace(/\/$/, '');
+  return { ...actual, readdirSync: vi.fn(() => []), unlinkSync: vi.fn(), existsSync: vi.fn(() => false),
+    readFileSync: vi.fn((file, ...args) => {
+      const target = file instanceof URL ? fileURLToPath(file) : resolve(String(file));
+      if (target.includes('/.task-')) {
+        if (io.card === null) throw new Error('owned fixture: no task card');
+        return io.card;
+      }
+      if (!target.startsWith(`${root}/`) || target.includes('/.env') || /credential|auth\.json/.test(target)) return io.forbidden();
+      return actual.readFileSync(file, ...args);
+    }),
+  };
 });
+vi.mock('../learning-retriever.js', () => ({ buildLearningContext: vi.fn(async () => '') }));
+let executor, resetBindings;
+beforeAll(async () => {
+  vi.stubGlobal('fetch', vi.fn(() => { throw new Error('禁止真实网络'); }));
+  executor = await import('../executor.js');
+  ({ _resetSkillBindingCacheForTest: resetBindings } = await import('../lib/skill-binding-registry.js'));
 });
-
-vi.mock('../task-router.js', () => ({
-  getInternalTaskHandler: vi.fn(() => null),
-  getTaskLocation: vi.fn(() => 'us')
-}));
-
-vi.mock('../task-updater.js', () => ({
-  updateTaskStatus: vi.fn(),
-  updateTaskProgress: vi.fn()
-}));
-
-vi.mock('../trace.js', () => ({
-  traceStep: vi.fn(),
-  LAYER: { L0_ORCHESTRATOR: 'l0' },
-  STATUS: { SUCCESS: 'success', FAILED: 'failed' },
-  EXECUTOR_HOSTS: { US_VPS: 'us' }
-}));
-
-describe('executor getSkillForTaskType — initiative 映射', () => {
-  let getSkillForTaskType;
-
-  beforeEach(async () => {
-    vi.resetModules();
-    const executor = await import('../executor.js');
-    getSkillForTaskType = executor.getSkillForTaskType;
+afterAll(() => vi.unstubAllGlobals());
+beforeEach(() => {
+  vi.clearAllMocks(); resetBindings(); io.card = null; io.diff = '';
+  io.query.mockImplementation(async sql => {
+    if (sql.includes('FROM skill_registry') || sql.includes('executor_kind') || sql.includes('task_runs')) return { rows: [], rowCount: 1 };
+    return io.forbidden();
+  }); io.writeFile.mockResolvedValue(undefined);
+  io.execSync.mockImplementation((command) => {
+    if (command === 'git diff origin/main..HEAD') return io.diff;
+    throw new Error('禁止非fixture shell');
   });
-
-  it('initiative_plan → /decomp', () => {
-    expect(getSkillForTaskType('initiative_plan')).toBe('/decomp');
-  });
-
-  it('initiative_verify → /architect (Mode 3)', () => {
-    expect(getSkillForTaskType('initiative_verify')).toBe('/architect');
-  });
-
-  it('decomp_review → /decomp-check', () => {
-    expect(getSkillForTaskType('decomp_review')).toBe('/decomp-check');
-  });
-
-  it('dev 仍然 → /dev（回归）', () => {
-    expect(getSkillForTaskType('dev')).toBe('/dev');
-  });
-
-  it('未知类型 fallback → /dev（回归）', () => {
-    expect(getSkillForTaskType('unknown_xyz')).toBe('/dev');
-  });
+  io.access.mockRejectedValue(Object.assign(new Error('owned binary unavailable'), { code: 'ENOENT' }));
 });
-
-describe('executor preparePrompt — initiative_plan / decomp_review 分支', () => {
-  let preparePrompt;
-
-  beforeEach(async () => {
-    vi.resetModules();
-    const executor = await import('../executor.js');
-    preparePrompt = executor.preparePrompt;
+async function reviewPrompt(task) {
+  const result = await executor.triggerCeceliaRun(task);
+  expect(result).toMatchObject({ success: false, configError: true, reason: 'codex_binary_missing', taskId: task.id });
+  const prompts = io.writeFile.mock.calls.filter(([file]) => String(file).endsWith('.txt'));
+  expect(prompts, '真实review消费者必须且只能写出一次prompt').toHaveLength(1);
+  expect(String(prompts[0][0])).toContain(task.id);
+  expect(io.access).toHaveBeenCalledOnce();
+  expect(io.spawn).not.toHaveBeenCalled(); expect(global.fetch).not.toHaveBeenCalled(); expect(io.forbidden).not.toHaveBeenCalled();
+  return prompts[0][1];
+}
+function task(type, payload = {}) {
+  return { id: `owned-prompt-${type}`, task_type: type, title: 'owned title', description: 'owned description', payload };
+}
+describe('现役initiative核验与拆解审查消费者', () => {
+  it('initiative_verify优先消费Project真列，不被旧payload归属覆盖', async () => {
+    const row = { ...task('initiative_verify', { initiative_id: 'historical-layer-id' }), project_id: 'current-project-id' };
+    expect(await reviewPrompt(row)).toBe('/architect verify --initiative-id current-project-id\n\nowned description');
   });
-
-  it('initiative_plan 返回 /decomp + task.description', async () => {
-    const task = {
-      id: 'task-ip-001',
-      task_type: 'initiative_plan',
-      title: 'Initiative 规划: 测试 Initiative',
-      description: 'Initiative ID: abc123\nKR ID: kr-456\n请规划下一个 PR。',
-      payload: {},
-    };
-
-    const prompt = await preparePrompt(task);
-    expect(prompt).toMatch(/^\/decomp\n\n/);
-    expect(prompt).toContain('Initiative ID: abc123');
-    expect(prompt).not.toMatch(/^\/dev/);
+  it('initiative_verify没有Project真列时兼容已存payload归属', async () => {
+    expect(await reviewPrompt(task('initiative_verify', { initiative_id: 'stored-project-id' })))
+      .toBe('/architect verify --initiative-id stored-project-id\n\nowned description');
   });
-
-  it('initiative_verify 返回 /architect verify --initiative-id + task.description', async () => {
-    const task = {
-      id: 'task-iv-001',
-      task_type: 'initiative_verify',
-      title: 'Initiative 验证: 测试 Initiative',
-      description: 'Initiative ID: abc123\n验证 Initiative 是否已完成。',
-      project_id: 'proj-xyz-789',
-      payload: {},
-    };
-
-    const prompt = await preparePrompt(task);
-    expect(prompt).toMatch(/^\/architect verify --initiative-id/);
-    expect(prompt).toContain('proj-xyz-789');
-    expect(prompt).not.toMatch(/^\/decomp/);
+  it('没有旧拆解review_scope的decomp_review仍经真实review路由执行', async () => {
+    expect(await reviewPrompt(task('decomp_review', { review_scope: 'plan_adjustment' })))
+      .toBe('/decomp-check\n\nowned description');
   });
-
-  it('decomp_review 返回 /decomp-check + task.description', async () => {
-    const task = {
-      id: 'task-dr-001',
-      task_type: 'decomp_review',
-      title: '拆解质检: 测试 Initiative',
-      description: 'Initiative ID: abc123\n请审查拆解质量。',
-      payload: {},
-    };
-
-    const prompt = await preparePrompt(task);
-    expect(prompt).toMatch(/^\/decomp-check\n\n/);
-    expect(prompt).toContain('Initiative ID: abc123');
-  });
-
-  it('initiative_plan 无 description 时用 title', async () => {
-    const task = {
-      id: 'task-ip-002',
-      task_type: 'initiative_plan',
-      title: 'Initiative 规划: 无描述任务',
-      description: '',
-      payload: {},
-    };
-
-    const prompt = await preparePrompt(task);
-    expect(prompt).toMatch(/^\/decomp\n\n/);
-    expect(prompt).toContain('Initiative 规划: 无描述任务');
+  it('decomp_review缺description时消费标题', async () => {
+    expect(await reviewPrompt({ ...task('decomp_review'), description: '' }))
+      .toBe('/decomp-check\n\nowned title');
   });
 });

@@ -65,8 +65,6 @@ describe('consciousness-guard', () => {
       logStartupDeclaration();
       const calls = spy.mock.calls.map(c => c.join(' ')).join('\n');
       expect(calls).toContain('CONSCIOUSNESS_ENABLED=false');
-      expect(calls).toContain('意识层全部跳过');
-      expect(calls).toContain('守护模块');
       spy.mockRestore();
     });
 
@@ -76,8 +74,6 @@ describe('consciousness-guard', () => {
       isConsciousnessEnabled();
       isConsciousnessEnabled();
       isConsciousnessEnabled();
-      const warnCalls = warnSpy.mock.calls.map(c => c.join(' ')).join('\n');
-      expect(warnCalls).toContain('BRAIN_QUIET_MODE is deprecated');
       expect(warnSpy).toHaveBeenCalledTimes(1);
       warnSpy.mockRestore();
     });

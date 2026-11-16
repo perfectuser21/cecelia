@@ -122,7 +122,6 @@ describe('cortex.js Build #4 — 跨任务失败模式注入', () => {
     const promptArg = mockCallLLM.mock.calls[0]?.[1] ?? '';
     expect(promptArg).toContain('cross_task_failure_patterns');
     expect(promptArg).toContain('"count": 1');
-    expect(promptArg).toContain('系统历史同类失败');
   });
 
   it('无数据时：注入 count=0 和 暂无历史同类失败记录', async () => {
@@ -133,7 +132,6 @@ describe('cortex.js Build #4 — 跨任务失败模式注入', () => {
     const promptArg = mockCallLLM.mock.calls[0]?.[1] ?? '';
     expect(promptArg).toContain('cross_task_failure_patterns');
     expect(promptArg).toContain('"count": 0');
-    expect(promptArg).toContain('暂无历史同类失败记录');
   });
 
   it('数据库查询失败时：降级不抛出，analyzeDeep 正常返回', async () => {

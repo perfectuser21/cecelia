@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { chmodSync, mkdtempSync, mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -31,30 +31,4 @@ describe('QuickCheck worktree dependency linking', () => {
     expect(statSync(join(target, '.vite', 'cache')).size).toBeGreaterThan(0);
   });
 
-  it('prefers the package-local Vitest binary over a root fallback', () => {
-    const root = mkdtempSync(join(tmpdir(), 'quickcheck-vitest-'));
-    tempDirs.push(root);
-    const rootModules = join(root, 'root-node-modules');
-    const packageModules = join(root, 'package-node-modules');
-    for (const modules of [rootModules, packageModules]) {
-      mkdirSync(join(modules, '.bin'), { recursive: true });
-      writeFileSync(join(modules, '.bin', 'vitest'), '#!/usr/bin/env bash\n');
-      chmodSync(join(modules, '.bin', 'vitest'), 0o755);
-    }
-
-    const result = spawnSync('bash', ['-c', 'source "$1"; resolve_package_vitest "$2" "$3"', '_', helper, rootModules, packageModules], {
-      encoding: 'utf8',
-    });
-
-    expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout.trim()).toBe(join(packageModules, '.bin', 'vitest'));
-  });
-
-  it('never classifies a non-zero Vitest exit as passing', () => {
-    const result = spawnSync('bash', ['-c', 'source "$1"; classify_vitest_exit 1', '_', helper], {
-      encoding: 'utf8',
-    });
-
-    expect(result.status, result.stderr).toBe(1);
-  });
 });

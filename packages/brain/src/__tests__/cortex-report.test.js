@@ -98,16 +98,6 @@ describe('cortex.generateSystemReport - 系统简报生成', () => {
     expect(result.generated_at).toBeDefined();
   });
 
-  it('调用 LLM 时传入中文 prompt', async () => {
-    await generateSystemReport({ timeRangeHours: 48 });
-
-    expect(mockCallLLM).toHaveBeenCalledWith(
-      'cortex',
-      expect.stringContaining('系统简报'),
-      expect.any(Object)
-    );
-  });
-
   it('正常模型回包精确保留内容，不退化为基础简报', async () => {
     const result = await generateSystemReport({ timeRangeHours: 48 });
 

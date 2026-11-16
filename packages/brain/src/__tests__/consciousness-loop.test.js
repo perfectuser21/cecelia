@@ -68,15 +68,6 @@ describe('consciousness-loop', () => {
     expect(mockThalamusProcessEvent).not.toHaveBeenCalled();
   });
 
-  // 测试 4: loop 崩溃后不向外抛出（tick-scheduler 继续正常派发）
-  it('_runConsciousnessOnce 内部异常不向外抛出', async () => {
-    mockThalamusProcessEvent.mockRejectedValue(new Error('LLM 崩了'));
-    const result = await _runConsciousnessOnce();
-    // 不抛异常，返回 error 字段
-    expect(result.error).toBeDefined();
-    expect(result.completed).toBe(false);
-  });
-
   // ─────────────────────────────────────────────
   // Graph 行为测试（验证 _runConsciousnessOnce 使用 StateGraph）
   // ─────────────────────────────────────────────

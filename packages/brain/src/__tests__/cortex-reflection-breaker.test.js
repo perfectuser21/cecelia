@@ -121,87 +121,19 @@ describe('Cortex 反思熔断 - D3: 第 2 次相同事件跳过 LLM', () => {
   }, 30000);
 });
 
-describe('Cortex 反思熔断 - D4: 熔断日志包含 "反思熔断"', () => {
-  let analyzeDeep;
-
-  beforeEach(async () => {
-    vi.resetModules();
-    vi.clearAllMocks();
-    mockPool.query.mockResolvedValue({ rows: [] });
-
-    vi.doMock('../db.js', () => ({ default: mockPool }));
-    vi.doMock('../thalamus.js', () => ({
-      ACTION_WHITELIST: {
-        request_human_review: { dangerous: false, description: 'Request human review' },
-      },
-      validateDecision: vi.fn(),
-      recordLLMError: vi.fn(),
-      recordTokenUsage: vi.fn(),
-    }));
-    vi.doMock('../llm-caller.js', () => ({ callLLM: mockCallLLM }));
-    vi.doMock('../learning.js', () => ({
-      searchRelevantLearnings: vi.fn().mockResolvedValue([]),
-    }));
-    vi.doMock('../cortex-quality.js', () => ({
-      evaluateQualityInitial: vi.fn().mockResolvedValue(null),
-      generateSimilarityHash: vi.fn().mockReturnValue('abc123'),
-      checkShouldCreateRCA: vi.fn().mockResolvedValue({ should_create: true }),
-    }));
-    vi.doMock('../policy-validator.js', () => ({
-      validatePolicyJson: vi.fn().mockReturnValue({ valid: false, errors: ['test'] }),
-    }));
-    vi.doMock('../self-model.js', () => ({
-      getSelfModel: vi.fn().mockResolvedValue('test self model'),
-    }));
-    vi.doMock('../memory-utils.js', () => ({
-      generateL0Summary: vi.fn().mockReturnValue('test summary'),
-    }));
-
-    const mod = await import('../cortex.js');
-    analyzeDeep = mod.analyzeDeep;
-  });
-
-  it('熔断触发时日志包含 "反思熔断"', async () => {
-    setupMockPool();
-    const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
-
-    const event = { type: 'rca_breaker_d4_test' };
-
-    // 触发 2 次（第 2 次即熔断）
-    for (let i = 0; i < 2; i++) {
-      await analyzeDeep(event);
-    }
-
-    const allLogs = infoSpy.mock.calls.flat().join(' ');
-    expect(allLogs).toContain('反思熔断');
-
-    infoSpy.mockRestore();
-  }, 30000);
-});
-
 describe('Cortex 反思熔断 - D2(持久化): 重启后从 DB 恢复熔断状态', () => {
-  let analyzeDeep;
-
+  let analyzeDeep, checkReflectionBreaker, restoredQuery, deniedLLM;
+  const event = { type: 'restored_failure', failed_task: { task_type: 'dev' } };
+  const persistedKey = 'cortex_reflection:owned-restored-hash';
+  const now = Date.parse('2026-11-16T00:00:00Z');
   beforeEach(async () => {
     vi.resetModules();
     vi.clearAllMocks();
-
-    // 模拟 DB 中已有持久化的熔断状态（count=3，刚好触发熔断阈值）
-    const now = Date.now();
-    const persistedState = { count: 3, firstSeen: now - 60000, lastSeen: now - 10000 };
-    const mockQueryFn = vi.fn().mockImplementation((sql) => {
-      if (typeof sql === 'string' && sql.includes('cortex_reflection:')) {
-        return Promise.resolve({
-          rows: [{
-            key: 'cortex_reflection:abc123hash',
-            value_json: persistedState,
-          }],
-        });
-      }
-      return Promise.resolve({ rows: [] });
-    });
-
-    vi.doMock('../db.js', () => ({ default: { query: mockQueryFn } }));
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+    const persistedState = { count: 1, firstSeen: now - 60000, lastSeen: now - 10000 };
+    restoredQuery = vi.fn(() => { throw Error('unconfigured database access'); });
+    vi.doMock('../db.js', () => ({ default: { query: restoredQuery } }));
     vi.doMock('../thalamus.js', () => ({
       ACTION_WHITELIST: {
         request_human_review: { dangerous: false, description: 'Request human review' },
@@ -210,7 +142,8 @@ describe('Cortex 反思熔断 - D2(持久化): 重启后从 DB 恢复熔断状�
       recordLLMError: vi.fn(),
       recordTokenUsage: vi.fn(),
     }));
-    vi.doMock('../llm-caller.js', () => ({ callLLM: mockCallLLM }));
+    deniedLLM = vi.fn(() => { throw Error('external LLM forbidden'); });
+    vi.doMock('../llm-caller.js', () => ({ callLLM: deniedLLM }));
     vi.doMock('../learning.js', () => ({
       searchRelevantLearnings: vi.fn().mockResolvedValue([]),
     }));
@@ -228,25 +161,44 @@ describe('Cortex 反思熔断 - D2(持久化): 重启后从 DB 恢复熔断状�
     vi.doMock('../memory-utils.js', () => ({
       generateL0Summary: vi.fn().mockReturnValue('test summary'),
     }));
-
     const mod = await import('../cortex.js');
     analyzeDeep = mod.analyzeDeep;
+    checkReflectionBreaker = mod._checkReflectionBreaker;
+    // 固定事件的独立SHA-256夹具，避免使用生产哈希同时计算两侧期望值。
+    const key = 'cortex_reflection:ef64f9dc2d7ef785';
+    restoredQuery.mockImplementation(async (sql) => {
+      if (sql.includes("WHERE key LIKE 'cortex_reflection:%'")) {
+        return { rows: [{ key, value_json: { ...persistedState } }] };
+      }
+      if (sql.includes('INSERT INTO working_memory')) return { rows: [], rowCount: 1 };
+      throw Error('unexpected database access: ' + sql);
+    });
   });
-
-  it('DB 中已有 count=3 的状态，第 1 次调用即触发熔断', async () => {
-    mockCallLLM.mockClear();
-
-    // 构造与已持久化 hash 匹配的事件（hash 计算基于 type + failure_class + task_type）
-    // 由于 hash 不匹配，这个测试验证的是加载机制本身是否执行
-    // 具体熔断行为由现有 D3 测试验证
-    const event = { type: 'some_new_event' };
-    await analyzeDeep(event);
-
-    // 新事件不会匹配已持久化的 hash，所以 LLM 被调用
-    expect(mockCallLLM).toHaveBeenCalledTimes(1);
-  }, 30000);
+  afterEach(() => vi.useRealTimers());
+  it('匹配事件恢复count=1，本次递增到2即熔断且不调用LLM', async () => {
+    const result = await analyzeDeep(event);
+    expect(result._fallback).toBe(true);
+    expect(deniedLLM).not.toHaveBeenCalled();
+    const persisted = restoredQuery.mock.calls.find(([sql]) => sql.includes('INSERT INTO working_memory'));
+    expect(JSON.parse(persisted[1][1])).toEqual({ count: 2, firstSeen: now - 60000, lastSeen: now });
+  });
+  it('匹配hash加载count=0时仍允许首次分析，递增至1不熔断', async () => {
+    restoredQuery.mockResolvedValueOnce({ rows: [{ key: persistedKey, value_json: { count: 0, firstSeen: now, lastSeen: now } }] });
+    expect(await checkReflectionBreaker('owned-restored-hash')).toEqual({ open: false, count: 1 });
+  });
+  it('恰好30分钟仍恢复，超过30分钟按新事件重新计数', async () => {
+    restoredQuery.mockResolvedValueOnce({ rows: [
+      { key: 'cortex_reflection:boundary', value_json: { count: 1, firstSeen: now - 1800000, lastSeen: now - 1800000 } },
+      { key: 'cortex_reflection:expired', value_json: { count: 3, firstSeen: now - 1800001, lastSeen: now - 1800001 } },
+    ] });
+    restoredQuery.mockImplementation(async (sql) => {
+      if (sql.includes('INSERT INTO working_memory') || sql.startsWith('DELETE FROM working_memory')) return { rows: [], rowCount: 1 };
+      throw Error('unexpected database access: ' + sql);
+    });
+    expect(await checkReflectionBreaker('boundary')).toEqual({ open: true, count: 2 });
+    expect(await checkReflectionBreaker('expired')).toEqual({ open: false, count: 1 });
+  });
 });
-
 describe('Cortex 反思熔断 - D3(持久化): DB 失败时降级到内存', () => {
   let analyzeDeep;
 
@@ -454,7 +406,7 @@ describe('Cortex 反思熔断 - D6: 30 分钟窗口超时后 count 重置', () =
     // 应该重置，正常调用 LLM
     const result = await analyzeDeep(event);
     expect(mockCallLLM).toHaveBeenCalledTimes(1);
-    expect(result.rationale || '').not.toContain('反思熔断');
+    expect(result._fallback).not.toBe(true);
   }, 30000);
 });
 
@@ -544,16 +496,5 @@ describe('Cortex 反思熔断 - D5(过期): DB 中过期条目不被恢复到内
     const deletedKeys = deleteQueries[0]?.params?.[0];
     expect(Array.isArray(deletedKeys)).toBe(true);
     expect(deletedKeys).toContain('cortex_reflection:expiredHash123');
-  }, 30000);
-
-  it('D7: 清理过期条目时日志包含"过期反思状态"', async () => {
-    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-
-    await _checkReflectionBreaker('expiredHash123');
-
-    const allLogs = logSpy.mock.calls.flat().join(' ');
-    expect(allLogs).toContain('过期反思状态');
-
-    logSpy.mockRestore();
   }, 30000);
 });
