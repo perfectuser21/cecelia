@@ -1,3 +1,4 @@
+import {CI_READER_PROFILES} from './claude-channel-retired.ci-retirement.fixture.js';
 /**
  * Claude Code 无头调用通道防复活守卫（任务 76a160b3，决策 067867c8）
  *
@@ -147,7 +148,7 @@ function scanOffenders() {
   const offenders = [];
   const files=SCAN_ROOTS.flatMap(root=>collectSources(root));
   // JSON仅为整组只读身份输入，不加入可执行源码扫描集合。
-  const profiles=['existing-ops-script-cleanup-profile.json','existing-ops-resource-retirement-profile.json','existing-ops-business-smoke-retirement-profile.json'].map(name=>path.join(BRAIN_ROOT,'src/lib',name));
+  const profiles=CI_READER_PROFILES.map(name=>path.join(BRAIN_ROOT,'src/lib',name));
   const sources=new Map([...files,...collectSources(path.join(REPO_ROOT,"scripts")),...profiles].map(file=>[file,readFileSync(file,"utf8")]));
   for (const file of files) {
       if (isWhitelisted(file)) continue;

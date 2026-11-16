@@ -104,7 +104,7 @@ const COMMANDER_AUDIT_CI_COHORT={...PLANNER_RETIREMENT_CI_COHORT,
  'existing-ops-stage-source.js':'ddb44a3487e8f63c5feeededf008b82c192e6d50c48a103218263015074f4da2'};
 const SCRIPT_CLEANUP_CI_COHORT={...COMMANDER_AUDIT_CI_COHORT,
  'existing-ops-stage-source.js':'ebc1bfd56b0d5989e63089c07bd6c8ceac4fdadf266ea879092ba6e91fe6e81f'};
-export const CI_READER_PROFILES=['existing-ops-script-cleanup-profile.json','existing-ops-resource-retirement-profile.json','existing-ops-business-smoke-retirement-profile.json'];
+export const CI_READER_PROFILES=['existing-ops-script-cleanup-profile.json','existing-ops-resource-retirement-profile.json','existing-ops-business-smoke-retirement-profile.json','existing-ops-foundation-release-profile.json'];
 const SCRIPT_CLEANUP_PROFILE_COHORT={...SCRIPT_CLEANUP_CI_COHORT,
  'existing-ops-script-cleanup-profile.json':'fc9b4df6a9c128f5186571e9a89f3a45c818171544730f88b1c5d5977247a98f'};
 const RESOURCE_RETIREMENT_CI_COHORT={...SCRIPT_CLEANUP_PROFILE_COHORT,
@@ -116,12 +116,17 @@ const BUSINESS_SMOKE_RETIREMENT_CI_COHORT={...WORKFLOW_REGISTRATION_CI_COHORT,
  'existing-ops-stage-source.js':'c284c66242416671c69336a5b4e29a295942757fc26aa50f5443030ff2465e94',
  'existing-ops-stage-modes.js':'fe9b633afc1cc4bd128dd4b92a37bad0adebbfbf7fcc144ce09c7664fa965620',
  'existing-ops-business-smoke-retirement-profile.json':'18e8a6aff7886a7875468d923010ef1936fb100b497abc17f9e09c05b83218bd'};
-export const ciVersionGuardCohorts=()=>[...COHORTS,COMMANDER_CI_COHORT,SKILL_RETIREMENT_CI_COHORT,PLANNER_RETIREMENT_CI_COHORT,COMMANDER_AUDIT_CI_COHORT,SCRIPT_CLEANUP_CI_COHORT,SCRIPT_CLEANUP_PROFILE_COHORT,RESOURCE_RETIREMENT_CI_COHORT,WORKFLOW_REGISTRATION_CI_COHORT,BUSINESS_SMOKE_RETIREMENT_CI_COHORT];
+const FOUNDATION_RELEASE_CI_COHORT={...BUSINESS_SMOKE_RETIREMENT_CI_COHORT,
+ 'existing-ops-stage-source.js':'5fdae1a4a7ba88bebef553a41857c3e331f94f6cbef4b66dc540b11acb1e6961',
+ 'existing-ops-stage-modes.js':'5f49ccddfce66416fc62a84c160c843767ce6f19653dd22bb95e76e248d69642',
+ 'existing-ops-foundation-release-profile.json':'1ff02f908373ff61365f413433f2ed1c61450e4c3ab813920631db38da862b57'};
+const currentMemberCount=Object.keys(FOUNDATION_RELEASE_CI_COHORT).length;
+export const ciVersionGuardCohorts=()=>[...COHORTS,COMMANDER_CI_COHORT,SKILL_RETIREMENT_CI_COHORT,PLANNER_RETIREMENT_CI_COHORT,COMMANDER_AUDIT_CI_COHORT,SCRIPT_CLEANUP_CI_COHORT,SCRIPT_CLEANUP_PROFILE_COHORT,RESOURCE_RETIREMENT_CI_COHORT,WORKFLOW_REGISTRATION_CI_COHORT,BUSINESS_SMOKE_RETIREMENT_CI_COHORT,FOUNDATION_RELEASE_CI_COHORT];
 export function registerCiRetirementGuardTests({root,base,scan}){
  describe('当前来源完整闭包及执行防复活',()=>{
   it('Commander审计CI完整闭包只读通过，CI或测试选择摘要漂移仍拒绝',()=>{
    const current=base(),member=path.join(root,'existing-ops-stage-source.js');
-   expect(current.size).toBe(19);expect(scan(current)).toEqual([]);
+   expect(current.size).toBe(currentMemberCount);expect(scan(current)).toEqual([]);
    for(const digest of ['014b5b54984ff322b0783c6070113199673efd53bb900ea9934d038de3cd5e5d','cf3307a3508e5feb473951fb645197d74a714c2c8decc44ec6bfe690982b17b5']){
     const changed=base(),source=changed.get(member);expect(source).toContain(digest);
     changed.set(member,source.replace(digest,'f'.repeat(64)));
@@ -147,8 +152,8 @@ export function registerCiRetirementGuardTests({root,base,scan}){
    const previous=new Map([...base().keys()].filter(file=>!file.endsWith('.json')).map(file=>[file,execFileSync('git',['--no-replace-objects','show','d06de84e9f7d2d489a151e0b13b38f81651dd3fa:'+path.relative(path.resolve(root,'../../../..'),file)],{cwd:root,encoding:'utf8',maxBuffer:1024*1024})]));
    for(const sources of [previous,base()])for(const kind of ['build','stage','native-evidence'])expect(scan(sources,path.join(root,'existing-ops-'+kind+'-envelopes.js'))).toEqual([]);
   });
-  it.each([...Array(19).keys()].flatMap(index=>['missing','drift'].map(kind=>[index,kind])))('当前19成员第%s项%s拒绝',(index,kind)=>{
-   const current=base();expect(current.size).toBe(19);const file=[...current.keys()][index];
+  it.each([...Array(currentMemberCount).keys()].flatMap(index=>['missing','drift'].map(kind=>[index,kind])))('当前完整成员第%s项%s拒绝',(index,kind)=>{
+   const current=base();expect(current.size).toBe(currentMemberCount);const file=[...current.keys()][index];
    if(kind==='missing')current.delete(file);else current.set(file,current.get(file)+(file.endsWith('.json')?'\n':'\nexport const unknownMember=true;\n'));
    const target=path.join(root,'existing-ops-'+(file.endsWith('stage-envelopes.js')?'build':'stage')+'-envelopes.js');
    expect(scan(current,target).some(hit=>hit.rule==='E1')).toBe(true);
@@ -160,7 +165,7 @@ export function registerCiRetirementGuardTests({root,base,scan}){
   });
   it('旧script-cleanup完整Git封组仍通过，新旧stage或profile混配拒绝',()=>{
    const current=base(),stage=path.join(root,'existing-ops-stage-source.js'),profile=path.join(root,'existing-ops-resource-retirement-profile.json');
-   const previous=new Map([...current.keys()].filter(file=>file!==profile&&!file.endsWith('/existing-ops-business-smoke-retirement-profile.json')).map(file=>[file,execFileSync('git',['--no-replace-objects','show','91d37b2c3aab471aeaf88df25eec6dda9cb306d3:'+path.relative(path.resolve(root,'../../../..'),file)],{cwd:root,encoding:'utf8',maxBuffer:1024*1024})]));
+   const previous=new Map([...current.keys()].filter(file=>file!==profile&&!file.endsWith('/existing-ops-business-smoke-retirement-profile.json')&&!file.endsWith('/existing-ops-foundation-release-profile.json')).map(file=>[file,execFileSync('git',['--no-replace-objects','show','91d37b2c3aab471aeaf88df25eec6dda9cb306d3:'+path.relative(path.resolve(root,'../../../..'),file)],{cwd:root,encoding:'utf8',maxBuffer:1024*1024})]));
    expect(scan(previous)).toEqual([]);
    const mixed=base();mixed.set(stage,previous.get(stage));expect(scan(mixed).some(hit=>hit.rule==='E1')).toBe(true);
    const missing=base();missing.delete(profile);expect(scan(missing).some(hit=>hit.rule==='E1')).toBe(true);

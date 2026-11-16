@@ -1,4 +1,4 @@
-/** 现役严格19成员只读消费资格；不执行来源模板。 */
+/** 现役固定完整成员只读消费资格；不执行来源模板。 */
 import {createHash} from 'node:crypto';
 import {readFileSync} from 'node:fs';
 import {execFileSync} from 'node:child_process';
