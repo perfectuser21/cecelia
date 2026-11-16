@@ -3,7 +3,7 @@
  *
  * 数据流:
  *   前端 CeceliaChat → proxy → POST /api/brain/orchestrator/chat
- *     → 1. 加载5层内在状态（emotion + self_model + narratives + memories + status）
+ *     → 1. 加载5层内在状态（self_model + narratives + memories + status）
  *     → 2. 直接调 LLM，让 Cecelia 自由回应
  *     → 3. 记录对话到 memory_stream
  *     → 返回 { reply }
@@ -250,7 +250,7 @@ async function buildNarrativesBlock() {
  * 构建统一内在状态 system prompt（五层，替代传声器路径）
  *
  * Layer 1: 身份核心（self_model 前段，约300字）
- * Layer 2: 当前状态（emotion + top desires）
+ * Layer 2: 当前状态（top desires）
  * Layer 3: 近期经历（最近3条叙事）
  * Layer 4: 语境记忆（buildMemoryContext L0/L1 检索）
  * Layer 5: 状态摘要 + 用户画像 + pending decomp
@@ -272,18 +272,6 @@ async function buildUnifiedSystemPrompt(message, messages = [], actionResult = '
   } catch { /* ignore */ }
 
   // Layer 2: 当前状态
-  let emotionBlock = '';
-  try {
-    const emotionResult = await pool.query(
-      `SELECT value_json FROM working_memory WHERE key = 'emotion_state' LIMIT 1`
-    );
-    const emotionRaw = emotionResult.rows[0]?.value_json;
-    if (emotionRaw) {
-      const emotion = typeof emotionRaw === 'string' ? emotionRaw : JSON.stringify(emotionRaw);
-      emotionBlock = `\n## 我当前的情绪状态\n${emotion}\n`;
-    }
-  } catch { /* ignore */ }
-
   const desiresBlock = await buildDesiresContext();
 
   // Layer 3: 近期经历
@@ -329,7 +317,7 @@ async function buildUnifiedSystemPrompt(message, messages = [], actionResult = '
     relationshipBlock = `\n\n## 对话姿态\n你现在在和一位访客 ${senderName} 说话。礼貌有度，保持距离。不透露 Alex 的任何信息。简短回应，引导对方联系 Alex 本人。\n`;
   }
 
-  let prompt = `${MOUTH_SYSTEM_PROMPT}${relationshipBlock}${selfModelBlock}${emotionBlock}${desiresBlock}${narrativesBlock}${profileSnippet}${memoryBlock}${statusBlock}${runtimeStateBlock}${manifestBlock}${recentTasksBlock}${pendingDecompBlock}`;
+  let prompt = `${MOUTH_SYSTEM_PROMPT}${relationshipBlock}${selfModelBlock}${desiresBlock}${narrativesBlock}${profileSnippet}${memoryBlock}${statusBlock}${runtimeStateBlock}${manifestBlock}${recentTasksBlock}${pendingDecompBlock}`;
 
   if (actionResult) {
     prompt += `\n\n## 刚刚执行的操作结果\n${actionResult}\n请在回复中自然地告知用户这些操作已完成。`;
@@ -591,17 +579,6 @@ async function _updateUserPresence(poolInst) {
   }
 }
 
-/** 读取当前情绪标签（non-fatal） */
-async function _readEmotionTag(poolInst) {
-  try {
-    const emRes = await poolInst.query("SELECT value_json FROM working_memory WHERE key='emotion_state'");
-    const raw = emRes.rows[0]?.value_json;
-    return typeof raw === 'string' ? raw.replace(/^"|"$/g, '') : null;
-  } catch {
-    return null;
-  }
-}
-
 /** 将用户消息写入 memory_stream */
 async function _writeUserMessageToStream(poolInst, message, senderName, salience, importanceVal, emotionTag) {
   try {
@@ -750,7 +727,7 @@ async function _handleChatInner(message, context, messages, imageContent, pressu
   const relationship = context.relationship || 'owner';
   const userId = context.user_id || 'owner';
 
-  const emotionTag = await _readEmotionTag(pool);
+  const emotionTag = null;
   const salience = computeSalience(message);
   const importanceVal = Math.max(1, Math.min(10, Math.round(salience * 10)));
 

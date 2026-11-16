@@ -146,8 +146,8 @@ features:
     runtime: {}
   - feature_id: memory_dopamine
     name: 多巴胺奖励
-    purpose: 任务完成→奖赏计算→习惯强化
-    maturity: 2
+    purpose: 长期休眠，源码保留；不参与现役任务完成记账或奖励计算
+    maturity: 0
     code:
       root: packages/brain/src
       entry_files:
@@ -163,9 +163,7 @@ features:
     skills: []
     apis: []
     tests:
-      unit:
-        - packages/brain/src/__tests__/dopamine-rpe.test.js
-        - packages/brain/src/__tests__/dopamine.test.js
+      unit: []
       integration: []
       e2e: []
       regression: []
@@ -173,18 +171,15 @@ features:
       - id: memory_dopamine_reward
         name: 多巴胺奖励计算
         entry_file: packages/brain/src/dopamine.js
-        maturity: 2
+        maturity: 0
         tests:
-          unit:
-            - packages/brain/src/__tests__/dopamine-rpe.test.js
-            - packages/brain/src/__tests__/dopamine.test.js
+          unit: []
           integration: []
           e2e: []
-        status: active
+        status: deprecated
     ci:
       jobs: []
-      layers:
-        - L3
+      layers: []
     runtime: {}
   - feature_id: memory_suggestion_cycle
     name: 人工建议台账
@@ -305,7 +300,6 @@ features:
     apis: []
     tests:
       unit:
-        - packages/brain/src/__tests__/cognitive-core.test.js
         - packages/brain/src/__tests__/cognitive-map-api.test.js
         - packages/brain/src/__tests__/cortex-cross-task-rca.test.js
         - packages/brain/src/__tests__/cortex-dedup-persist.test.js
@@ -324,8 +318,6 @@ features:
         - packages/brain/src/__tests__/cortex-timing.test.js
         - packages/brain/src/__tests__/cortex.test.js
         - packages/brain/src/__tests__/curiosity-scorer.test.js
-        - packages/brain/src/__tests__/emotion-dispatch.test.js
-        - packages/brain/src/__tests__/emotion-layer.test.js
         - packages/brain/src/__tests__/entity-linker.test.js
         - packages/brain/src/__tests__/evolution-scanner.test.js
         - packages/brain/src/__tests__/evolution-synthesizer.test.js
@@ -334,7 +326,6 @@ features:
         - packages/brain/src/__tests__/owner-input-extractor.test.js
         - packages/brain/src/__tests__/person-model.test.js
         - packages/brain/src/__tests__/profile-facts-api.test.js
-        - packages/brain/src/__tests__/reflection.test.js
         - packages/brain/src/__tests__/salience-score.test.js
         - packages/brain/src/__tests__/user-profile-extraction.test.js
         - packages/brain/src/__tests__/user-profile-vector.test.js
@@ -349,7 +340,6 @@ features:
         maturity: 2
         tests:
           unit:
-            - packages/brain/src/__tests__/cognitive-core.test.js
             - packages/brain/src/__tests__/cognitive-map-api.test.js
             - packages/brain/src/__tests__/cortex-cross-task-rca.test.js
             - packages/brain/src/__tests__/cortex-dedup-persist.test.js
@@ -368,8 +358,6 @@ features:
             - packages/brain/src/__tests__/cortex-timing.test.js
             - packages/brain/src/__tests__/cortex.test.js
             - packages/brain/src/__tests__/curiosity-scorer.test.js
-            - packages/brain/src/__tests__/emotion-dispatch.test.js
-            - packages/brain/src/__tests__/emotion-layer.test.js
             - packages/brain/src/__tests__/entity-linker.test.js
             - packages/brain/src/__tests__/evolution-scanner.test.js
             - packages/brain/src/__tests__/evolution-synthesizer.test.js
@@ -378,7 +366,6 @@ features:
             - packages/brain/src/__tests__/owner-input-extractor.test.js
             - packages/brain/src/__tests__/person-model.test.js
             - packages/brain/src/__tests__/profile-facts-api.test.js
-            - packages/brain/src/__tests__/reflection.test.js
             - packages/brain/src/__tests__/salience-score.test.js
             - packages/brain/src/__tests__/user-profile-extraction.test.js
             - packages/brain/src/__tests__/user-profile-vector.test.js
@@ -608,7 +595,6 @@ features:
         - packages/brain/src/__tests__/rumination-fallback-context.test.js
         - packages/brain/src/__tests__/rumination-memory-stream.test.js
         - packages/brain/src/__tests__/rumination-quarantine.test.js
-        - packages/brain/src/__tests__/rumination-scheduler.test.js
         - packages/brain/src/__tests__/rumination-threshold.test.js
         - packages/brain/src/__tests__/rumination.test.js
       integration: []
@@ -625,7 +611,6 @@ features:
             - packages/brain/src/__tests__/rumination-fallback-context.test.js
             - packages/brain/src/__tests__/rumination-memory-stream.test.js
             - packages/brain/src/__tests__/rumination-quarantine.test.js
-            - packages/brain/src/__tests__/rumination-scheduler.test.js
             - packages/brain/src/__tests__/rumination-threshold.test.js
             - packages/brain/src/__tests__/rumination.test.js
           integration: []

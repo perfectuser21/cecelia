@@ -55,9 +55,9 @@ describe('LiveMonitorPage v19', () => {
     expect(screen.queryByText('CECELIA NOC')).not.toBeInTheDocument();
   });
 
-  it('渲染 OKR 总览和 Projects 区块标题', () => {
+  it('保留 Projects 区块而不再渲染旧 OKR 总览', () => {
     renderWithRouter();
-    expect(screen.getByText('OKR 总览')).toBeInTheDocument();
+    expect(screen.queryByText('OKR 总览')).not.toBeInTheDocument();
     expect(screen.getByText('Projects')).toBeInTheDocument();
   });
 
@@ -93,9 +93,9 @@ describe('LiveMonitorPage v19', () => {
     expect(screen.getByText('空闲')).toBeInTheDocument();
   });
 
-  it('无 global_okr 时显示"全局目标未设置"占位', () => {
+  it('不再显示旧全局目标占位', () => {
     renderWithRouter();
-    expect(screen.getByText('全局目标未设置')).toBeInTheDocument();
+    expect(screen.queryByText('全局目标未设置')).not.toBeInTheDocument();
   });
 
   it('DevStepPanel: 渲染 DEV STEPS 区块标签', () => {
@@ -248,15 +248,18 @@ describe('LiveMonitorPage v19', () => {
     expect(screen.getByTestId('live-monitor-source-errors')).toHaveTextContent('保留 '+sampledAt+' 采样');
   });
 
-  it('真实goals响应经normalize进入UI，area_kr计入活跃KR且其他类型不计', async () => {
+  it('真实goals响应经normalize仍保留项目所属领域和关联KR', async () => {
     const goals = [
       {id:'area',type:'area_okr',title:'Fixture Area',status:'active',parent_id:null},
       {id:'kr',type:'area_kr',title:'Fixture KR',status:'active',parent_id:'area',current_value:'76'},
       {id:'other',type:'other',title:'Ignored',status:'active'},
     ];
-    vi.mocked(fetch).mockImplementation(async input => ({ok:true,json:async()=>String(input)==='/api/brain/goals'?goals:{}}) as Response);
+    vi.mocked(fetch).mockImplementation(async input => ({ok:true,json:async()=>String(input)==='/api/brain/goals'?goals:String(input).startsWith('/api/brain/projects?')?[{id:'project',name:'归属可验证的项目',type:'project',status:'active',goal_id:'kr'}]:{}}) as Response);
     await act(async()=>{renderWithRouter();});
-    expect(screen.getByText('1 Area · 1 活跃 KR')).toBeInTheDocument();
+    expect(screen.getByText('Fixture Area')).toBeInTheDocument();
+    expect(screen.getByText('Fixture KR')).toBeInTheDocument();
+    expect(screen.getByText('归属可验证的项目')).toBeInTheDocument();
+    expect(screen.queryByText('Ignored')).not.toBeInTheDocument();
   });
 
 });

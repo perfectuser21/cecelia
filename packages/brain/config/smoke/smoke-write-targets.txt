@@ -84,7 +84,6 @@ strategic-decisions-category-smoke.sh
 cw-bd2b1556-qa-smoke.sh
 runs-read-smoke.sh
 factory-ledger-smoke.sh
-factory-pusher-smoke.sh
 workflow-commander-dispatch-smoke.sh
 factory-commander-route-smoke.sh
 bypass-audit-smoke.sh

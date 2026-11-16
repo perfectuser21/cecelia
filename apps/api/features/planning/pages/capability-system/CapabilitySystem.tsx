@@ -73,7 +73,7 @@ export default function CapabilitySystem() {
     <main className="min-h-screen bg-slate-50 p-4 text-slate-900 dark:bg-slate-950 dark:text-slate-100 md:p-6">
       <header className="mb-5 flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold">能力系统</h1>
+          <h1 className="text-2xl font-bold">执行与证据</h1>
           <p className="mt-1 text-sm text-slate-500">
             部门 → 价值流 → 能力 → 工作流 → 活动使用位置 → 步骤
           </p>

@@ -48,7 +48,7 @@ export const BRAIN_MANIFEST = {
       id: 'perception',
       label: '感知层',
       color: '#6366f1',
-      desc: '信号感知——16 个感知信号（工作+非工作）+ 情绪推导 + 记忆检索',
+      desc: '信号感知——16 个感知信号（工作+非工作）+ 记忆检索；情绪推导长期休眠',
       nodeIds: ['emotion'],
       modules: [
         {
@@ -61,9 +61,10 @@ export const BRAIN_MANIFEST = {
         {
           id: 'emotion',
           label: '情绪层',
-          desc: '基于感知信号推导当前情绪状态（calm/excited/curious/anxious/tired）',
+          desc: '长期休眠：保留情绪推导实现，不参与现役运行',
           file: 'emotion-layer.js',
-          nature: 'dynamic',
+          nature: 'fixed',
+          runtime_status: 'dormant',
         },
         {
           id: 'memory_retriever',
@@ -99,9 +100,10 @@ export const BRAIN_MANIFEST = {
         {
           id: 'cognitive',
           label: '认知核心',
-          desc: '汇总情绪 + 记忆 + 自我模型，生成认知状态快照',
+          desc: '长期休眠：保留旧认知快照与情绪倍率实现',
           file: 'cognitive-core.js',
-          nature: 'dynamic',
+          nature: 'fixed',
+          runtime_status: 'dormant',
         },
         {
           id: 'rumination',
@@ -206,7 +208,7 @@ export const BRAIN_MANIFEST = {
       to: 'core',
       label: '感知→意识',
       type: 'primary',
-      desc: '情绪状态 + 记忆检索结果 → 注入意识核心上下文',
+      desc: '记忆检索结果 → 注入意识核心上下文',
       broken: false,
     },
     {

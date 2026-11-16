@@ -45,6 +45,8 @@ describe('GET /api/brain/inner-life', () => {
       undigested_count: 2,
     });
     expect(res.body.reflection).toEqual({
+      status: 'dormant',
+      historical: true,
       accumulator: 15.5,
       threshold: 30,
       progress_pct: 52,

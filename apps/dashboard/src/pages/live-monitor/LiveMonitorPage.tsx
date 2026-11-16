@@ -148,7 +148,6 @@ const ALERT_DESC: Record<string, string> = {
 };
 
 const metricColor = (p: number) => p > 80 ? '#ef4444' : p > 60 ? '#f59e0b' : '#10b981';
-const krColor = (p: number) => p >= 80 ? '#10b981' : p >= 50 ? '#f59e0b' : '#ef4444';
 const clip = (s: string, n: number) => s.length > n ? s.slice(0, n - 1) + '…' : s;
 
 /** ps startTime (CST 本地时间) → 相对时间字符串 */
@@ -1350,19 +1349,6 @@ export default function LiveMonitorPage() {
   const backgroundProcs = allProcs.filter(p => classifyProcess(p.command) === 'background');
   const totalAgents = foregroundProcs.length + backgroundProcs.length;
 
-  const activeGlobals = allGoals.filter(g => g.type === 'global_okr' && !INACTIVE_STATUSES.has(g.status));
-  const activeAreas = allGoals
-    .filter(g => g.type === 'area_okr' && !g.parent_id && !INACTIVE_STATUSES.has(g.status))
-    .map(area => {
-      // 从子 KR 聚合进度：取子 KR progress 平均值
-      const childKRs = allGoals.filter(g => g.type === 'kr' && g.parent_id === area.id && g.status !== 'cancelled' && g.status !== 'archived');
-      const progValues = childKRs.map(k => k.progress).filter((v): v is number => v != null);
-      const computedProgress = progValues.length > 0
-        ? Math.round(progValues.reduce((a, b) => a + b, 0) / progValues.length)
-        : (area.progress ?? 0);
-      return { ...area, progress: computedProgress };
-    });
-  const todayMs = new Date(new Date().setHours(0, 0, 0, 0)).getTime();
 
   const wrapStyle: React.CSSProperties = fullscreen
     ? { position: 'fixed', inset: 0, zIndex: 9999, overflowY: 'auto', background: '#0d1117' }
@@ -1639,77 +1625,6 @@ export default function LiveMonitorPage() {
 
             {/* ── RIGHT COLUMN ── */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-
-              {/* OKR 总览 */}
-              <div
-                onClick={() => navigate('/okr')}
-                style={{ background: '#161b22', border: '1px solid #21262d', borderRadius: 12, padding: '16px 18px', cursor: 'pointer', transition: 'border-color .15s' }}
-                onMouseEnter={e => (e.currentTarget.style.borderColor = '#58a6ff')}
-                onMouseLeave={e => (e.currentTarget.style.borderColor = '#21262d')}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
-                  <span style={{ fontSize: 10, fontWeight: 700, color: '#c084fc', letterSpacing: 1.4, textTransform: 'uppercase' }}>OKR 总览</span>
-                  <span style={{ fontSize: 9, color: '#484f58' }}>
-                    {activeAreas.length} Area · {allGoals.filter(g => g.type === 'kr' && (g.status === 'active' || g.status === 'in_progress' || g.status === 'ready')).length} 活跃 KR
-                  </span>
-                  <div style={{ flex: 1, height: 1, background: '#21262d' }} />
-                  <span style={{ fontSize: 10, color: '#484f58' }}>↗</span>
-                </div>
-
-                {/* Global OKR 层 */}
-                {activeGlobals.length > 0 ? (
-                  <div style={{ marginBottom: 10 }}>
-                    <div style={{ fontSize: 9, fontWeight: 700, color: '#f59e0b', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 6 }}>全局目标</div>
-                    {activeGlobals.map(g => {
-                      const gc = krColor(g.progress ?? 0);
-                      return (
-                        <div key={g.id} style={{ marginBottom: 6 }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
-                            <span style={{ fontFamily: 'monospace', fontSize: 9, background: 'rgba(245,158,11,.15)', color: '#f59e0b', padding: '0 5px', borderRadius: 3, flexShrink: 0 }}>GLOBAL</span>
-                            <span style={{ fontSize: 11, color: '#c9d1d9', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{clip(g.title, 50)}</span>
-                            <span style={{ fontFamily: 'monospace', fontSize: 11, fontWeight: 700, color: gc, flexShrink: 0 }}>{g.progress ?? 0}%</span>
-                          </div>
-                          <PBar pct={g.progress ?? 0} color={gc} h={3} />
-                        </div>
-                      );
-                    })}
-                  </div>
-                ) : (
-                  <div style={{ marginBottom: 10, padding: '5px 8px', fontSize: 10, color: '#484f58', background: '#0d1117', borderRadius: 6 }}>
-                    全局目标未设置
-                  </div>
-                )}
-
-                {/* 分隔线 */}
-                <div style={{ height: 1, background: '#21262d', margin: '8px 0 12px' }} />
-
-                {/* Area OKR 层 */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                  {activeAreas.length > 0 ? activeAreas.map(area => {
-                    const c = krColor(area.progress ?? 0);
-                    const krCount = allGoals.filter(g => g.type === 'kr' && g.parent_id === area.id && g.status !== 'cancelled').length;
-                    const endDate = area.custom_props?.end_date;
-                    const daysLeft = endDate ? Math.ceil((new Date(endDate).setHours(0, 0, 0, 0) - todayMs) / 86400000) : null;
-                    return (
-                      <div key={area.id}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-                          <span style={{ fontFamily: 'monospace', fontSize: 9, background: 'rgba(192,132,252,.15)', color: '#c084fc', padding: '0 5px', borderRadius: 3, flexShrink: 0 }}>AREA</span>
-                          <span style={{ fontSize: 11, color: '#c9d1d9', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{clip(area.title, 50)}</span>
-                          <span style={{ fontFamily: 'monospace', fontSize: 11, fontWeight: 700, color: c, flexShrink: 0 }}>{area.progress ?? 0}%</span>
-                          {krCount > 0 && <span style={{ fontFamily: 'monospace', fontSize: 9, color: '#484f58', flexShrink: 0 }}>{krCount}KR</span>}
-                        </div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                          <div style={{ flex: 1 }}><PBar pct={area.progress ?? 0} color={c} h={4} /></div>
-                          {daysLeft !== null && (
-                            <span style={{ fontSize: 9, fontFamily: 'monospace', color: daysLeft < 0 ? '#ef4444' : daysLeft < 30 ? '#f59e0b' : '#484f58', flexShrink: 0 }}>
-                              {daysLeft < 0 ? `逾${-daysLeft}d` : `${daysLeft}d`}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  }) : <Skel />}
-                </div>
-              </div>
 
               {/* Projects by Area */}
               <div style={{ background: '#161b22', border: '1px solid #21262d', borderRadius: 12, padding: '16px 18px' }}>

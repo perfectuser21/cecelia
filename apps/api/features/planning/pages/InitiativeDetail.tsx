@@ -114,11 +114,11 @@ export default function InitiativeDetail() {
               The initiative you're looking for doesn't exist.
             </p>
             <Link
-              to="/planning/okr"
+              to="/gtd/projects"
               className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"
             >
               <ArrowLeft className="w-4 h-4" />
-              Back to OKR
+              返回项目
             </Link>
           </div>
         </div>
@@ -132,11 +132,11 @@ export default function InitiativeDetail() {
         {/* Header */}
         <div className="mb-6">
           <Link
-            to="/planning/okr"
+            to="/gtd/projects"
             className="inline-flex items-center gap-2 text-sm text-slate-600 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 mb-4 transition-colors"
           >
             <ArrowLeft className="w-4 h-4" />
-            Back to OKR
+            返回项目
           </Link>
 
           <div className="flex items-start justify-between">

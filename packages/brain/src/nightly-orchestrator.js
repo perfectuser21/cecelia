@@ -12,7 +12,6 @@
  *
  * 调度节律：
  *   - 夜间窗口内每 30 分钟运行一次编排周期
- *   - 07:00 UTC 触发夜间总结报告（写入 daily_logs）
  */
 
 import pool from './db.js';
@@ -30,8 +29,6 @@ const NIGHT_END_HOUR_UTC   = parseInt(process.env.NIGHT_ORCHESTRATOR_END_UTC   |
 const CYCLE_INTERVAL_MS = parseInt(process.env.NIGHT_ORCHESTRATOR_INTERVAL_MS || String(30 * 60 * 1000), 10);
 /** 每次编排周期最多派发的任务数量（防止过载） */
 const MAX_DISPATCH_PER_CYCLE = parseInt(process.env.NIGHT_ORCHESTRATOR_MAX_DISPATCH || '3', 10);
-/** 早报触发小时（UTC） */
-const MORNING_REPORT_HOUR_UTC = parseInt(process.env.NIGHT_ORCHESTRATOR_MORNING_UTC || '7', 10);
 
 // ── 内部状态 ──────────────────────────────────────────────
 
@@ -323,18 +320,7 @@ function msUntilNextCycle() {
   return next.getTime() - now.getTime();
 }
 
-/**
- * 检查是否需要触发早报（07:00 UTC 的宽窗口：07:00-08:00）
- */
-function shouldTriggerMorningReport(now = new Date()) {
-  const hour = now.getUTCHours();
-  const today = now.toISOString().split('T')[0];
-  return hour === MORNING_REPORT_HOUR_UTC && _lastReportDate !== today;
-}
-
-/**
- * 安全运行编排周期（含早报逻辑）
- */
+/** 安全运行已登记任务的编排周期；不生成定时报告。 */
 async function runCycleSafe() {
   if (_running) {
     console.log('[NightlyOrchestrator] Already running, skipping');
@@ -343,13 +329,6 @@ async function runCycleSafe() {
   _running = true;
 
   try {
-    const now = new Date();
-
-    // 早报优先
-    if (shouldTriggerMorningReport(now)) {
-      await generateOvernightReport();
-    }
-
     // 编排周期
     await runOrchestrationCycle();
   } catch (err) {

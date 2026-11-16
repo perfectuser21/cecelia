@@ -42,11 +42,6 @@ const manifest: FeatureManifest = {
       component: 'DailyDiary',
       navItem: { label: '每日日报', icon: 'BookOpen', group: 'knowledge-docs', order: 5 },
     },
-    {
-      path: '/knowledge/strategy-tree',
-      component: 'StrategyTree',
-      navItem: { label: 'Strategy Tree', icon: 'GitBranch', group: 'knowledge-docs', order: 6 },
-    },
     // Knowledge Modules
     {
       path: '/knowledge/modules',
@@ -71,7 +66,6 @@ const manifest: FeatureManifest = {
     DesignVault: () => import('./pages/DesignVault'),
     DailyDiary: () => import('./pages/DailyDiary'),
     KnowledgeMap: () => import('./pages/KnowledgeMap'),
-    StrategyTree: () => import('./pages/StrategyTree'),
     KnowledgeModules: () => import('./pages/KnowledgeModules'),
     KnowledgeModuleDetail: () => import('./pages/KnowledgeModuleDetail'),
     KnowledgePageViewer: () => import('./pages/KnowledgePageViewer'),

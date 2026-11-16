@@ -119,7 +119,7 @@ it('现役十项PG控制闭包固定读取；缺失、篡改及旧新成员拼�
  const root=fileURLToPath(new URL('../../../../../',import.meta.url));
  const paths=execFileSync('git',['ls-files','-z','--cached','--others','--exclude-standard'],{cwd:root,encoding:'utf8'}).split('\0').filter(p=>p&&existsSync(new URL(p,'file://'+root)));
  const read=path=>readFileSync(new URL(path,'file://'+root),'utf8');
- const profile='packages/brain/src/lib/existing-ops-closeout-profile.json';
+ const profile='packages/brain/src/lib/existing-ops-dormant-boundaries-profile.json';
  const observe=async(overrides={},missing)=>{const relations=[],source=async path=>{if(path===missing)throw Error('missing control');return overrides[path]??read(path);};await collectBasicCiSources({read:source,ci:await source('.github/workflows/ci.yml'),revision:'f'.repeat(40),relations,parse:ast,paths});return relations;};
  const relations=await observe();
  expect(relations).toContainEqual(expect.objectContaining({consumer_path:'packages/brain/src/lib/existing-ops-stage-modes.js',input_path:profile,kind:'reviewed_basic_ci_source_profile'}));
@@ -205,17 +205,51 @@ it('当前聚合真实读源：退休F2及未审现役F3失败关闭，不借历
  expect(f3.status).toBe('unknown');expect(f3.bindings).toEqual([]);expect(f3.input_relations).toEqual([]);
  expect(f3.gaps).toEqual(['native_build_execution_unproven','native_publish_execution_unproven','native_stage_execution_unproven'].map(code=>({code})));
  const relations=[];await collectBasicCiSources({...inputs,ci:await inputs.read('.github/workflows/ci.yml'),relations,parse:ast});await collectDeepCiSources({...inputs,relations});
- expect(relations).toContainEqual(expect.objectContaining({input_path:'packages/brain/src/lib/existing-ops-closeout-profile.json',kind:'reviewed_basic_ci_source_profile'}));
- expect(relations).toContainEqual(expect.objectContaining({input_path:'packages/brain/src/lib/existing-ops-closeout-profile.json',kind:'reviewed_deep_ci_source_profile'}));
+ expect(relations).toContainEqual(expect.objectContaining({input_path:'packages/brain/src/lib/existing-ops-dormant-boundaries-profile.json',kind:'reviewed_basic_ci_source_profile'}));
+ expect(relations).toContainEqual(expect.objectContaining({input_path:'packages/brain/src/lib/existing-ops-dormant-boundaries-profile.json',kind:'reviewed_deep_ci_source_profile'}));
  expect(f3.input_relations.some(r=>r.consumer_path==='.github/workflows/implementation-impact.yml'||r.kind==='trusted_main_snapshot_node_entry')).toBe(false);
  expect(proof.workflows.every(w=>w.executable===false)).toBe(true);
 });
 
 it('当前Deep完整组缺失、篡改、旧Nightly或旧单成员拼接均拒绝',async()=>{
- const inputs=await currentSourceInputs(),profile='packages/brain/src/lib/existing-ops-closeout-profile.json';
+ const inputs=await currentSourceInputs(),profile='packages/brain/src/lib/existing-ops-dormant-boundaries-profile.json';
  for(const member of [profile,'.github/workflows/nightly-regression.yml','scripts/ci/deep-integration.config.mjs','scripts/ci/debt-pg.config.mjs','scripts/ci/debt-pg-tests.json','packages/brain/vitest.config.js']){
   for(const missing of [false,true])await expect(collectDeepCiSources({...inputs,relations:[],read:async path=>{if(path===member){if(missing)throw Error('missing');return (await inputs.read(path))+'\n';}return inputs.read(path);}})).rejects.toThrow();
  }
  await expect(collectDeepCiSources({...inputs,paths:inputs.paths.filter(p=>p!==profile),relations:[]})).rejects.toThrow();
  await expect(collectDeepCiSources({...inputs,relations:[],read:async path=>path==='.github/workflows/nightly-regression.yml'?fixed.read(path):inputs.read(path)})).rejects.toThrow();
+});
+
+it('本轮休眠清退仅接受新完整控制组，缺失、篡改和历史单成员混配均拒绝',async()=>{
+ const inputs=await currentSourceInputs(),profile='packages/brain/src/lib/existing-ops-dormant-boundaries-profile.json';
+ const source=JSON.parse(await inputs.read(profile));
+ expect(source['packages/brain/src/lib/existing-ops-closeout-profile.json']).toBe('7ccb681d2e3aa696bee74e109e028fb55b42b6ac29419d20d7e82fb908297c19');
+ expect(source['scripts/ci/__tests__/basic-brain-debt-restored-selection.test.mjs']).toMatch(/^[a-f0-9]{64}$/);
+ const observe=async({read=inputs.read,paths=inputs.paths}={})=>{
+  const relations=[];await collectBasicCiSources({...inputs,read,paths,ci:await read('.github/workflows/ci.yml'),relations,parse:ast});
+  await collectDeepCiSources({...inputs,read,paths,relations});return relations;
+ };
+ const relations=await observe();
+ for(const kind of ['reviewed_basic_ci_source_profile','reviewed_deep_ci_source_profile'])expect(relations).toContainEqual(expect.objectContaining({input_path:profile,kind}));
+ for(const member of [profile,'packages/brain/vitest.config.js','scripts/ci/__tests__/basic-brain-debt-restored-selection.test.mjs']){
+  for(const missing of [false,true])await expect(observe({read:async path=>{if(path===member){if(missing)throw Error('missing member');return (await inputs.read(path))+'\n';}return inputs.read(path);}})).rejects.toThrow();
+ }
+ await expect(observe({paths:inputs.paths.filter(p=>p!==profile)})).rejects.toThrow();
+ const {execFileSync}=await import('node:child_process'),{fileURLToPath}=await import('node:url');
+ const root=fileURLToPath(new URL('../../../../../',import.meta.url));
+ const previous=readFixedExistingOpsGitFixture('3e827180e50e5c73e999ca744a2689488f75814b');
+ await expect(observe({read:async path=>previous.read(path),paths:previous.paths})).resolves.toEqual(expect.any(Array));
+ const oldConfig=execFileSync('git',['show','3e827180e50e5c73e999ca744a2689488f75814b:packages/brain/vitest.config.js'],{cwd:root,encoding:'utf8'});
+ await expect(observe({read:async path=>path==='packages/brain/vitest.config.js'?oldConfig:inputs.read(path)})).rejects.toThrow();
+});
+
+it('人工验收十项退出真实默认及Deep选择，迁移和公共正常验收继续登记',async()=>{
+ const {default:brain,POSTGRES_INTEGRATION_TESTS:pg}=await import('../../../vitest.config.js');
+ const {default:deep}=await import('../../../../../scripts/ci/deep-integration.config.mjs');
+ const {default:glob}=await import('fast-glob'),{fileURLToPath}=await import('node:url');
+ const cwd=fileURLToPath(new URL('../../../',import.meta.url));
+ const retired=['acceptance','acceptance-state-machine','acceptance-run-scope','acceptance-ai-results','acceptance-scenario-gate','acceptance-aging-expire','acceptance-lifecycle','acceptance-review-closure','acceptance-create-gate','acceptance-version-freeze'].map(n=>`src/__tests__/integration/${n}.integration.test.js`);
+ const selected=config=>glob.sync(config.test.include,{cwd,ignore:config.test.exclude});
+ for(const file of retired){expect(pg).not.toContain(file);expect(selected(brain)).not.toContain(file);expect(selected(deep)).not.toContain(file);}
+ for(const file of ['src/__tests__/integration/migration-392-acceptance-two-column.integration.test.js','src/__tests__/integration/migration-393-gp-harness-glue.integration.test.js','src/__tests__/integration/golden-path-contract.integration.test.js'])expect(pg).toContain(file);
 });

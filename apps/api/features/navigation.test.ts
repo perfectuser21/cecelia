@@ -40,6 +40,7 @@ describe('Cecelia 主导航', () => {
     const leaves = config.navGroups.flatMap(group => group.items.flatMap(item => item.children ?? [item]));
     expect(leaves).toHaveLength(21);
     expect(leaves.find(item => item.path === '/website-functions')?.label).toBe('网站功能');
+    expect(leaves.find(item => item.path === '/map')?.label).toBe('执行与证据');
     expect(config.allRoutes.find(route => route.path === '/ledger')?.component).toBe('LedgerPage');
     expect(leaves.find(item => item.path === '/account-usage')?.label).toBe('AI 额度');
     expect(new Set(leaves.map(item => item.path)).size).toBe(21);
@@ -82,8 +83,8 @@ describe('Cecelia 主导航', () => {
     const visiblePaths = config.navGroups.flatMap(group => group.items.flatMap(item => [item.path, ...(item.children?.map(child => child.path) ?? [])]));
     for (const path of [
       '/workbench/inbox', '/cecelia/chat', '/workbench/overview', '/workbench/tasks', '/workbench/projections',
-      '/gtd', '/gtd/area', '/gtd/okr', '/gtd/projects', '/gtd/tasks', '/gtd/knowledge',
-      '/today', '/pipeline', '/strategist', '/okr-roadmap',
+      '/gtd', '/gtd/area', '/gtd/projects', '/gtd/tasks', '/gtd/knowledge',
+      '/today', '/pipeline', '/strategist',
       '/knowledge/decisions',
       '/knowledge/designs', '/knowledge/diary', '/cecelia/diary', '/clips',
     ]) {
@@ -91,6 +92,12 @@ describe('Cecelia 主导航', () => {
       expect(config.allRoutes.some(route => route.path === path), path).toBe(true);
     }
     expect(visiblePaths).toContain('/knowledge/memory');
+  });
+
+  it.each(['/okr', '/work/okr', '/gtd/okr', '/okr/tree', '/work/okr/area/:areaId', '/okr-roadmap', '/knowledge/strategy-tree'])('%s 已退休，不注册深链或导航', path => {
+    expect(config.allRoutes.some(route => route.path === path)).toBe(false);
+    const visiblePaths = config.navGroups.flatMap(group => group.items.flatMap(item => [item.path, ...(item.children?.map(child => child.path) ?? [])]));
+    expect(visiblePaths).not.toContain(path);
   });
 
   it.each(['/gtd/warroom', '/gtd/warroom/:areaId'])('%s 保留跳转到流水线的兼容入口', path => {

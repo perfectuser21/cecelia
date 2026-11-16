@@ -19,12 +19,8 @@ const manifest: FeatureManifest = {
     {
       path: '/map',
       component: 'MapPage',
-      navItem: { label: '地图', icon: 'Map', group: 'execution', order: 1 },
+      navItem: { label: '执行与证据', icon: 'Map', group: 'execution', order: 1 },
     },
-    // OKR → 重定向到 GTD
-    { path: '/okr', redirect: '/gtd/okr' },
-    // OKR 全树视图
-    { path: '/okr/tree', component: 'OKRTreePage' },
     // Tasks → 重定向到 GTD
     { path: '/tasks', redirect: '/gtd/tasks' },
     // Projects → 重定向到 GTD
@@ -65,8 +61,6 @@ const manifest: FeatureManifest = {
   components: {
     BrainDashboard: () => import('./pages/BrainDashboard'),
     MapPage: () => import('./pages/MapPage'),
-    OKRPage: () => import('./pages/OKRPage'),
-    OKRTreePage: () => import('./pages/OKRTreePage'),
     Tasks: () => import('./pages/Tasks'),
     CompanyTasks: () => import('./pages/Tasks'),
     ProjectsDashboard: () => import('./pages/ProjectsDashboard'),

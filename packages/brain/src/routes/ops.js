@@ -9,7 +9,6 @@ import { readFileSync, writeFileSync, openSync, writeSync, closeSync, mkdirSync 
 import { join as pathJoin } from 'node:path';
 import { callLLM, callLLMStream } from '../llm-caller.js';
 import { handleChat } from '../orchestrator-chat.js';
-import { check48hReport } from '../tick.js';
 import { getTaskWeights } from '../task-weight.js';
 import { getCleanupStats, runTaskCleanup, getCleanupAuditLog } from '../task-cleanup.js';
 import { getDispatchStats } from '../dispatch-stats.js';
@@ -2126,47 +2125,19 @@ router.get('/reports/latest', opsRateLimit, async (req, res) => {
 
 /**
  * POST /api/brain/reports/generate
- * 手动触发 cortex 生成系统简报（使用 LLM 深度分析）
+ * 内置报告生成已退役（历史报告读取保留）
  * Body: { time_range_hours: 48 }（可选）
  */
-router.post('/reports/generate', async (req, res) => {
-  try {
-    const timeRangeHours = Math.max(1, Math.min(168, Number(req.body?.time_range_hours) || 48));
-    const { generateSystemReport } = await import('../cortex.js');
-    const report = await generateSystemReport({ timeRangeHours });
-    res.json({
-      success: true,
-      report_id: report.id,
-      generated_at: report.generated_at,
-      time_range_hours: timeRangeHours,
-      message: `${timeRangeHours}h 系统简报已成功生成`
-    });
-  } catch (err) {
-    console.error('[API] reports/generate error:', err.message);
-    res.status(500).json({ success: false, error: err.message });
-  }
+router.post('/reports/generate', (_req, res) => {
+  res.status(410).json({ error: 'report_generation_retired', message: '内置报告生成已退役；由明确任务调用外置 Skill 生成。' });
 });
 
 /**
  * POST /api/brain/reports/trigger
- * 手动触发 48h 简报生成（强制，忽略时间检查）
+ * 内置 48h 简报生成已退役
  */
-router.post('/reports/trigger', async (req, res) => {
-  try {
-    const record = await check48hReport(pool, { force: true });
-    if (!record) {
-      return res.status(500).json({ success: false, error: '简报生成失败，请查看服务器日志' });
-    }
-    res.json({
-      success: true,
-      report_id: record.id,
-      created_at: record.created_at,
-      message: '48h 简报已成功生成'
-    });
-  } catch (err) {
-    console.error('[API] reports/trigger error:', err.message);
-    res.status(500).json({ success: false, error: err.message });
-  }
+router.post('/reports/trigger', (_req, res) => {
+  res.status(410).json({ error: 'report_generation_retired', message: '内置报告生成已退役；由明确任务调用外置 Skill 生成。' });
 });
 
 /**

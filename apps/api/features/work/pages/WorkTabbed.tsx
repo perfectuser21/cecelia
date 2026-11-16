@@ -1,15 +1,8 @@
-import { FolderKanban, Map, ListTodo, GitBranch, Zap, Layers } from 'lucide-react';
+import { FolderKanban, Map, ListTodo, Zap, Layers } from 'lucide-react';
 import TabbedPage from '../../shared/components/TabbedPage';
 import type { TabConfig } from '../../shared/components/TabbedPage';
 
 const tabs: TabConfig[] = [
-  {
-    id: 'okr',
-    label: 'OKR',
-    icon: GitBranch,
-    path: '/work/okr',
-    component: () => import('../../planning/pages/OKRDashboard'),
-  },
   {
     id: 'area',
     label: 'Area',

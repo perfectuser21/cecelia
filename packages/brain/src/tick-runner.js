@@ -3,8 +3,8 @@
  *
  * ⚠️  WAVE 2 废弃通知（2026-05-04）：
  * executeTick() 已被 tick-scheduler.js（调度层）+ consciousness-loop.js（意识层）取代。
- * 本文件保留供紧急回滚。tick-loop.js 已改为调用 runScheduler()，不再调用 executeTick()。
- * 回滚方法：tick-loop.js 中将 runScheduler → executeTick，删 startConsciousnessLoop() 调用。
+ * 仅保留历史兼容接口；tick-loop.js 默认调用 runScheduler()。
+ * 已退休的自主扫描、情绪与定时报告不得经本接口恢复。
  *
  * Phase D Part 1.7b: 从 tick.js 抽出 executeTick 函数体（~1626 行）
  * tick.js 通过 `import { executeTick } from './tick-runner.js'` re-export 兼容老 caller
@@ -54,42 +54,20 @@ import * as deptHeartbeatPlugin from './dept-heartbeat.js';
 import * as krProgressSyncPlugin from './kr-progress-sync-plugin.js';
 import * as heartbeatPlugin from './heartbeat-plugin.js';
 
-import {
-  triggerDailyReview,
-  triggerContractScan,
-  triggerArchReview,
-} from './daily-review-scheduler.js';
-import { generateDailyDiaryIfNeeded } from './diary-scheduler.js';
-
 import { runRumination } from './rumination.js';
-import { runSynthesisSchedulerIfNeeded } from './rumination-scheduler.js';
 
 import { runConversationConsolidator } from './conversation-consolidator.js';
-import { feedDailyIfNeeded } from './notebook-feeder.js';
 import { publishCognitiveState } from './events/taskEvents.js';
-import {
-  evaluateEmotion,
-  getCurrentEmotion,
-  updateSubjectiveTime,
-  getSubjectiveTime,
-  updateNarrative,
-  recordTickEvent,
-} from './cognitive-core.js';
 import { collectSelfReport } from './self-report-collector.js';
 import { runDailyConsolidationIfNeeded } from './consolidation.js';
 import { flushAlertsIfNeeded } from './alerting.js';
-import {
-  scanEvolutionIfNeeded,
-  synthesizeEvolutionIfNeeded,
-} from './evolution-scanner.js';
-import { triggerCodeQualityScan } from './task-generator-scheduler.js';
+import { scanEvolutionIfNeeded } from './evolution-scanner.js';
 import { zombieSweep } from './zombie-sweep.js';
 import * as pipelinePatrolPlugin from './pipeline-patrol-plugin.js';
 
 import * as pausedRequeuPlugin from './paused-requeuer-plugin.js';
 import * as krHealthDailyPlugin from './kr-health-daily-plugin.js';
 import * as cleanupWorkerPlugin from './cleanup-worker-plugin.js';
-import { scheduleKR3ProgressReport } from './kr3-progress-scheduler.js';
 import { calculateAndWrite as calculateKR3Progress } from './kr3-progress-calculator.js';
 import { runDriftSentinel, DRIFT_SENTINEL_INTERVAL_MS } from './cron/drift-sentinel.js';
 import { runSkillDriftPatrol, isInPatrolWindow } from './cron/skill-drift-patrol.js';
@@ -108,7 +86,6 @@ import {
   isConsciousnessEnabled,
   reloadConsciousnessCache,
 } from './consciousness-guard.js';
-import { check48hReport } from './report-48h.js';
 import { dispatchNextTask } from './dispatcher.js';
 import {
   releaseBlockedTasks,
@@ -268,55 +245,13 @@ async function executeTick() {
     recordOperation(false, 'alertness_evaluation');
   }
 
-  // 0.5 认知评估：情绪 + 主观时间 + 并发意识（轻量，纯计算）
-  publishCognitiveState({ phase: 'cognition', detail: '认知评估…' });
-  let cognitionSnapshot = null;
-  try {
-    const resources = checkServerResources();
-    const cpuPercent = resources.cpu_percent || 0;
-
-    // 从 DB 获取真实的队列深度和最近成功率（用于情绪评估）
-    let queueDepth = 0;
-    let successRate = 1.0;
-    try {
-      const queueRes = await pool.query(
-        "SELECT COUNT(*) AS cnt FROM tasks WHERE status = 'queued'"
-      );
-      queueDepth = parseInt(queueRes.rows[0]?.cnt || 0, 10);
-
-      const successRes = await pool.query(`
-        SELECT
-          COUNT(*) FILTER (WHERE status = 'completed') AS completed,
-          COUNT(*) FILTER (WHERE status = 'failed') AS failed
-        FROM tasks
-        WHERE updated_at >= NOW() - INTERVAL '1 hour'
-      `);
-      const completed = parseInt(successRes.rows[0]?.completed || 0, 10);
-      const failed = parseInt(successRes.rows[0]?.failed || 0, 10);
-      const total = completed + failed;
-      if (total > 0) successRate = completed / total;
-    } catch {
-      // 静默降级：使用默认值
-    }
-
-    const emotionResult = evaluateEmotion({
-      alertnessLevel: alertnessResult?.level ?? 1,
-      cpuPercent,
-      queueDepth,
-      successRate
-    });
-    updateSubjectiveTime();
-    recordTickEvent({ phase: 'tick', detail: `警觉=${alertnessResult?.levelName || 'CALM'}, 情绪=${emotionResult.label}` });
-    cognitionSnapshot = { emotion: emotionResult, time: getSubjectiveTime?.() };
-    tickLog(`[tick] 认知状态: 情绪=${emotionResult.label}(${emotionResult.state}), 队列=${queueDepth}, 成功率=${Math.round(successRate * 100)}%, 派发修正=${emotionResult.dispatch_rate_modifier}`);
-  } catch (cogErr) {
-    console.warn('[tick] 认知评估跳过:', cogErr.message);
-  }
+  // 情绪与主观时钟已休眠；普通派发仅依据资源与警觉等级。
+  const cognitionSnapshot = null;
 
   // ═══════════════════════════════════════════════════════════════════
   // 感知层：不受 canDispatch 限制
   // 以下模块是"感知"动作，无论 canDispatch/thalamus 结果如何都必须运行。
-  // 放在 alertness/cognition 评估之后、thalamus 路由之前，确保不被任何
+  // 放在 alertness 评估之后、thalamus 路由之前，确保不被任何
   // 中间 return（thalamus dispatch_task / allGoalIds=0 / canDispatch=false）跳过。
   // ═══════════════════════════════════════════════════════════════════
 
@@ -1084,34 +1019,13 @@ async function executeTick() {
     dispatchRate = RECOVERY_DISPATCH_CAP;
   }
 
-  // 情绪门禁：过载状态跳过本轮派发
-  const emotionState = cognitionSnapshot?.emotion?.state ?? 'calm';
-  const emotionDispatchModifier = cognitionSnapshot?.emotion?.dispatch_rate_modifier ?? 1.0;
-  if (emotionState === 'overloaded') {
-    tickLog('[tick] 情绪过载，跳过本轮派发（dispatch_rate_modifier=' + emotionDispatchModifier + '）');
-    actionsTaken.push({ action: 'emotion_gate', emotion: emotionState, reason: 'overloaded_skip_dispatch' });
-    return {
-      success: true,
-      alertness: alertnessResult,
-      cognition: cognitionSnapshot,
-      dispatch: { dispatched: 0, reason: 'emotion_overloaded' },
-      actions_taken: actionsTaken,
-      summary: { in_progress: inProgress.length, queued: queued.length, stale: staleTasks.length },
-      next_tick: new Date(now.getTime() + TICK_INTERVAL_MINUTES * 60 * 1000).toISOString()
-    };
-  }
-
   // Use slot budget for max dispatch count (slot-allocator replaces flat AUTO_DISPATCH_MAX)
   const tickSlotBudget = await calculateSlotBudget();
   const poolCAvailable = tickSlotBudget.taskPool.available;
   // 保证有 slot 且 rate > 0 时至少能派发 1 个（Math.floor 会把 0.3~0.9 杀成 0）
-  // 乘以情绪修正系数（focused/excited 加速，tired/anxious 减速）
   const effectiveDispatchMax = (poolCAvailable > 0 && dispatchRate > 0)
-    ? Math.max(1, Math.floor(poolCAvailable * dispatchRate * emotionDispatchModifier))
+    ? Math.max(1, Math.floor(poolCAvailable * dispatchRate))
     : 0;
-  if (emotionDispatchModifier !== 1.0) {
-    tickLog(`[tick] 情绪派发修正: ${emotionState} × ${emotionDispatchModifier} → effectiveMax=${effectiveDispatchMax}`);
-  }
   if (tickSlotBudget.user.mode !== 'absent') {
     tickLog(`[tick] User mode: ${tickSlotBudget.user.mode} (${tickSlotBudget.user.used} headed), Pool C: ${poolCAvailable}/${tickSlotBudget.taskPool.budget}`);
   }
@@ -1277,29 +1191,10 @@ async function executeTick() {
 
   // 结果变量声明在 MINIMAL_MODE 块外 —— return 语句在块外引用这些变量（line ~3224-3225）
   // 否则 MINIMAL_MODE=true 或 !isConsciousnessEnabled 时 ReferenceError
-  let dailyReviewResult = { triggered: 0, skipped: 0, skipped_window: true, results: [] };
   let ruminationResult = null;
 
   // 10.x 所有自动调度 — MINIMAL_MODE 下全部跳过
   if (!MINIMAL_MODE) {
-
-  // 10. Trigger daily code review (每天 02:00 UTC，为活跃 repo 创建 code_review task)
-  try {
-    dailyReviewResult = await triggerDailyReview(pool);
-  } catch (reviewErr) {
-    console.error('[tick] daily review error:', reviewErr.message);
-  }
-
-  // 10.1 每4小时 arch_review 巡检（guard: 上次 review 后至少1个 dev 任务完成）
-  // DEPRECATED(P1-PR1 2026-07-06): 已迁移 scheduler-jobs.js。executeTick 自 Wave 2 起不被调用；若未来复活本函数，必须先移除此调用以防双跑。
-  Promise.resolve().then(() => triggerArchReview(pool))
-    .catch(e => console.warn('[tick] arch review scheduler 失败:', e.message));
-
-  // 10.2 每日日报生成（15:00 UTC = 23:00 上海，CONSCIOUSNESS_ENABLED=false 时跳过）
-  if (isConsciousnessEnabled()) {
-    Promise.resolve().then(() => generateDailyDiaryIfNeeded(pool))
-      .catch(e => console.warn('[tick] diary scheduler 失败:', e.message));
-  }
 
   // 10.3–10.8 LLM 后台调用（CONSCIOUSNESS_ENABLED=false 时全部跳过）
   if (isConsciousnessEnabled()) {
@@ -1308,12 +1203,6 @@ async function executeTick() {
   publishCognitiveState({ phase: 'rumination', detail: '反刍消化知识…' });
   Promise.resolve().then(() => runRumination(pool))
     .catch(e => console.warn('[tick] rumination 失败（fire-and-forget）:', e.message));
-
-  // 10.7 内在叙事更新（每小时一次，fire-and-forget）
-  try {
-    const currentEmotion = getCurrentEmotion();
-    updateNarrative(currentEmotion, pool).catch(e => console.warn('[tick] 叙事更新失败:', e.message));
-  } catch { /* 静默 */ }
 
   // 10.8 欲望轨迹采集（每 6 小时一次，fire-and-forget，Layer 4）
   Promise.resolve().then(() => collectSelfReport(pool)).catch(e => console.warn('[tick] self-report 采集失败:', e.message));
@@ -1325,50 +1214,13 @@ async function executeTick() {
   Promise.resolve().then(() => runDailyConsolidationIfNeeded(pool))
     .catch(e => console.warn('[tick] 每日合并失败:', e.message));
 
-  // 10.10 NotebookLM 喂入（每天定时喂入 learnings/memory/OKR，fire-and-forget）
-  if (isConsciousnessEnabled()) {
-    Promise.resolve().then(() => feedDailyIfNeeded(pool))
-      .catch(e => console.warn('[tick] notebook feeder 失败:', e.message));
-  }
-
-  // 10.11 分层记忆压缩调度（daily/weekly/monthly synthesis，fire-and-forget）
-  if (isConsciousnessEnabled()) {
-    Promise.resolve().then(() => runSynthesisSchedulerIfNeeded(pool))
-      .catch(e => console.warn('[tick] synthesis scheduler 失败:', e.message));
-  }
-
   // 10.12 分级报警刷新（P1 每小时，P2 每日，fire-and-forget）
   Promise.resolve().then(() => flushAlertsIfNeeded())
     .catch(e => console.warn('[tick] alerting flush 失败:', e.message));
 
-  // 10.13 48h 系统简报检查（每 48h 生成一次，fire-and-forget）
-  Promise.resolve().then(() => check48hReport(pool))
-    .catch(e => console.warn('[tick] 48h 简报检查失败:', e.message));
-
   // 10.14 进化日志扫描（每日一次，GitHub API 扫描，不依赖 LLM，consciousness 不门控）
   Promise.resolve().then(() => scanEvolutionIfNeeded(pool))
     .catch(e => console.warn('[tick] 进化日志扫描失败:', e.message));
-
-  // 10.15 进化叙事合成（每 7 天一次，更新各器官叙事摘要，依赖 LLM，CONSCIOUSNESS_ENABLED=false 时跳过）
-  if (isConsciousnessEnabled()) {
-    Promise.resolve().then(() => synthesizeEvolutionIfNeeded(pool))
-      .catch(e => console.warn('[tick] 进化叙事合成失败:', e.message));
-  }
-
-  // 10.16 每日契约扫描（UTC 03:00，检查模块边界是否有测试覆盖，fire-and-forget）
-  Promise.resolve().then(() => triggerContractScan(pool))
-    .catch(e => console.warn('[tick] 契约扫描失败:', e.message));
-
-  // 10.17d 每日运行日报（UTC 01:00 = 北京时间 09:00，汇总昨日数据，fire-and-forget）
-  // flag 门控：DBOS_DURABLE_ENABLED 关=原 generateDailyReport（行为零变化），开=durable 崩溃可恢复路径
-  Promise.resolve().then(async () => {
-    const { routeDailyReport } = await import('./durable/daily-report-router.js');
-    return routeDailyReport(pool);
-  }).catch(e => console.warn('[tick] 每日运行日报失败:', e.message));
-
-  // 10.17g KR3 每日进度报告（UTC 06:00 = 北京时间 14:00，fire-and-forget）
-  Promise.resolve().then(() => scheduleKR3ProgressReport(pool))
-    .catch(e => console.warn('[tick] KR3 进度报告失败:', e.message));
 
   // 10.17g2 KR3 进度回写（每 tick，将里程碑 decisions 转化为 key_results.progress，修复 25% 陈旧数据）
   Promise.resolve().then(() => calculateKR3Progress(pool))
@@ -1410,19 +1262,6 @@ async function executeTick() {
 
   } // end !MINIMAL_MODE (10.x 所有自动调度)
 
-  // 11.5 代码质量扫描（每天首次 tick 时触发）— CONSCIOUSNESS_ENABLED=false 时跳过
-  let scanResult = null;
-  if (isConsciousnessEnabled()) {
-    try {
-      scanResult = await triggerCodeQualityScan(pool);
-      if (scanResult?.triggered) {
-        tickLog('[tick] Code quality scan triggered:', scanResult);
-      }
-    } catch (scanErr) {
-      console.error('[tick] code quality scan error:', scanErr.message);
-    }
-  }
-
   // 12. 广播 tick:executed WebSocket 事件
   const nextTickAt = new Date(now.getTime() + TICK_INTERVAL_MINUTES * 60 * 1000).toISOString();
   try {
@@ -1437,27 +1276,6 @@ async function executeTick() {
     console.error('[tick] WebSocket tick:executed broadcast failed:', wsErr.message);
   }
 
-  // 13. 主动推送：检查新叙事（最近 10 分钟内写完的），直接推送给前端
-  try {
-    const recentNarrative = await pool.query(
-      `SELECT content FROM memory_stream
-       WHERE source_type = 'narrative'
-         AND created_at > NOW() - INTERVAL '10 minutes'
-       ORDER BY created_at DESC LIMIT 1`
-    );
-    if (recentNarrative.rows.length > 0) {
-      const { publishCeceliaMessage } = await import('./events/taskEvents.js');
-      publishCeceliaMessage({
-        type: 'narrative',
-        message: recentNarrative.rows[0].content.slice(0, 500),
-        meta: { source: 'tick_proactive' },
-      });
-      tickLog('[tick] 主动推送新叙事');
-    }
-  } catch (pushErr) {
-    console.warn('[tick] 主动推送叙事失败（non-critical）:', pushErr.message);
-  }
-
   return {
     success: true,
     alertness: alertnessResult,
@@ -1468,7 +1286,6 @@ async function executeTick() {
     } : null,
     dispatch: { dispatched: dispatched, last: lastDispatchResult, burst_limited: burstLimited },
     dept_heartbeats: deptHeartbeatResult,
-    daily_review: dailyReviewResult,
     rumination: ruminationResult,
     cognition: cognitionSnapshot,
     actions_taken: actionsTaken,

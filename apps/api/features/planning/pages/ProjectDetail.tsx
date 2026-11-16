@@ -5,7 +5,6 @@ import {
   RefreshCw,
   Target,
   ListTodo,
-  ChevronRight,
   ChevronLeft,
   CheckCircle2,
   Clock,
@@ -123,7 +122,6 @@ export default function ProjectDetail() {
     setFilter_status: (_name: string, value: string) => handleSetStatusFilter(value),
     setFilter_priority: (_name: string, value: string) => handleSetPriorityFilter(value),
     goBack: () => navigate('/projects'),
-    goToOkr: () => navigate('/okr'),
   }), [handleSetStatusFilter, handleSetPriorityFilter, navigate]);
 
   // Register with Cecelia
@@ -273,21 +271,19 @@ export default function ProjectDetail() {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {/* Linked OKR */}
         {linkedGoal && (
-          <Link
-            to="/okr"
-            className="bg-gradient-to-r from-violet-500/10 to-purple-500/10 dark:from-violet-500/20 dark:to-purple-500/20 rounded-xl p-4 border border-violet-200 dark:border-violet-800 hover:border-violet-400 dark:hover:border-violet-600 transition-colors group"
+          <div
+            className="bg-gradient-to-r from-violet-500/10 to-purple-500/10 dark:from-violet-500/20 dark:to-purple-500/20 rounded-xl p-4 border border-violet-200 dark:border-violet-800"
           >
             <div className="flex items-center gap-3 mb-2">
               <Target className="w-5 h-5 text-violet-600 dark:text-violet-400" />
-              <span className="text-sm font-medium text-violet-700 dark:text-violet-300">Part of OKR</span>
-              <ChevronRight className="w-4 h-4 text-violet-400 ml-auto group-hover:translate-x-1 transition-transform" />
+              <span className="text-sm font-medium text-violet-700 dark:text-violet-300">关联目标</span>
             </div>
             <h3 className="font-semibold text-slate-900 dark:text-white">{linkedGoal.title}</h3>
             <div className="flex items-center gap-3 mt-2 text-sm">
               <PriorityBadge priority={linkedGoal.priority} />
               <span className="text-violet-600 dark:text-violet-400">{linkedGoal.progress}% complete</span>
             </div>
-          </Link>
+          </div>
         )}
 
         {/* Repo Path */}

@@ -7,6 +7,8 @@ vi.mock('../../db.js', () => ({ default: mockPool }));
 
 const mockRecordEvolution     = vi.hoisted(() => vi.fn());
 const mockRunEvolutionSynthesis = vi.hoisted(() => vi.fn());
+const mockLLM = vi.hoisted(() => vi.fn());
+vi.mock('../../llm-caller.js', () => ({ callLLM: mockLLM }));
 
 vi.mock('../../evolution-synthesizer.js', () => ({
   recordEvolution:       (...a) => mockRecordEvolution(...a),
@@ -187,34 +189,23 @@ describe('evolution routes', () => {
   // ── POST /synthesize ──────────────────────────────────────────────────────
 
   describe('POST /synthesize', () => {
-    it('dry_run mode returns immediately without calling synthesizer', async () => {
-      const res = await request(app).post('/evolution/synthesize').send({ dry_run: true });
-      expect(res.status).toBe(200);
-      expect(res.body.ok).toBe(true);
-      expect(res.body.dry_run).toBe(true);
-      expect(mockRunEvolutionSynthesis).not.toHaveBeenCalled();
-    });
-
-    it('runs synthesis and returns result', async () => {
-      mockRunEvolutionSynthesis.mockResolvedValueOnce({ ok: true, synthesized: 3 });
-
-      const res = await request(app).post('/evolution/synthesize').send({});
-      expect(res.status).toBe(200);
-      expect(res.body.synthesized).toBe(3);
-      expect(mockRunEvolutionSynthesis).toHaveBeenCalledWith(mockPool);
-    });
-
-    it('also runs synthesis when body is empty', async () => {
-      mockRunEvolutionSynthesis.mockResolvedValueOnce({ ok: true });
-      const res = await request(app).post('/evolution/synthesize');
-      expect(res.status).toBe(200);
-      expect(mockRunEvolutionSynthesis).toHaveBeenCalled();
-    });
-
-    it('returns 500 when synthesis throws', async () => {
-      mockRunEvolutionSynthesis.mockRejectedValueOnce(new Error('llm error'));
-      const res = await request(app).post('/evolution/synthesize').send({});
-      expect(res.status).toBe(500);
-    });
+    for (const [label, body] of [
+      ['dry_run', { dry_run: true }],
+      ['普通生成请求', {}],
+      ['无正文', undefined],
+      ['强制生成标记', { dry_run: false, force: true }],
+    ]) {
+      it(`${label} 返回410且不调用合成、模型或数据库`, async () => {
+        mockRunEvolutionSynthesis.mockResolvedValue({ ok: true, synthesized: 3 });
+        const req = request(app).post('/evolution/synthesize');
+        const res = await (body === undefined ? req : req.send(body));
+        expect(res.status).toBe(410);
+        expect(res.body).toMatchObject({ error: 'report_generation_retired' });
+        expect(mockRunEvolutionSynthesis).not.toHaveBeenCalled();
+        expect(mockRecordEvolution).not.toHaveBeenCalled();
+        expect(mockPool.query).not.toHaveBeenCalled();
+        expect(mockLLM).not.toHaveBeenCalled();
+      });
+    }
   });
 });

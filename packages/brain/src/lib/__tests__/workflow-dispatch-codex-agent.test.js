@@ -214,14 +214,7 @@ describe('推进器经开关改建 workflow_dispatch', () => {
     expect(await isFactoryCommanderRouteEnabled(db('"true"'))).toBe(true);
     expect(await isFactoryCommanderRouteEnabled({ query: async () => { throw new Error('x'); } })).toBe(false);
   });
-  it('runFactoryPusher 把 commanderRoute 传给建单', async () => {
-    const createTask = vi.fn(async () => ({ task: { id: 'cccccccc-1111-4222-8333-444444444444' } }));
-    const store = {
-      listLedgers: vi.fn(async () => [L]), inFlight: vi.fn(async () => null), countRounds: vi.fn(async () => 0),
-      consecutiveFails: vi.fn(async () => 0), tickets: vi.fn(async () => ({ done: 0, total: 0 })),
-    };
-    const fakeDb = { query: vi.fn(async () => ({ rows: [] })) };
-    await runFactoryPusher(fakeDb, { store, createTask, resolveConfig: resolveWorkflowConfig, now: () => new Date('2026-10-11T06:00:00Z'), commanderRoute: true });
-    expect(createTask.mock.calls[0][0].task_type).toBe('workflow_dispatch');
+  it('旧推进器即使启用Commander路由也明确拒绝自主建单', async () => {
+    await expect(runFactoryPusher({}, { commanderRoute: true })).rejects.toMatchObject({ status: 410, code: 'FACTORY_PUSHER_RETIRED' });
   });
 });
