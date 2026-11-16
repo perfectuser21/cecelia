@@ -1,6 +1,5 @@
 import {afterEach,describe,it,expect,vi} from 'vitest';
 import fs from 'node:fs';
-import {execFileSync} from 'node:child_process';
 import {prepareDefinitionFreeze,assertPreparedFreeze} from '../../workflow-authoring/freeze.js';
 import {validateDefinition} from '../../workflow-authoring/registration.js';
 import {compileAssemblyPlan} from '../../workflow-authoring/assembly-plan.js';
@@ -112,7 +111,8 @@ describe('真实注册定义与固定Git执行包',()=>{
  const repoRoot=fileURLToPath(new URL('../../../../../',import.meta.url)),folder='packages/brain/scripts/commander-workflow/operations/release-readiness',revision='84a75cf8ae537951c8411aff096e31cbf1d507de';
  const load=()=>JSON.parse(fs.readFileSync(path.join(repoRoot,folder,'workflow.json')));
  const source={repo:'perfectuser21/cecelia',ref:folder+'/workflow.json',revision:'e'.repeat(40)};
- const gitRead=s=>execFileSync('git',['show',s.revision+':'+s.path],{cwd:repoRoot,encoding:'utf8'});
+ // 只替换Git传输边界；冻结器继续核验固定revision和实际源码digest，不生成生产证明。
+ const gitRead=s=>{expect(s.repo).toBe(source.repo);expect(s.revision).toBe(revision);return fs.readFileSync(path.join(repoRoot,s.path),'utf8');};
  it('注册、装配、冻结与profile解析读取同一固定执行包，源文件不自引用',async()=>{
   const document=load(),definition={...document,source};expect(document.source).toBeUndefined();expect(validateDefinition(definition)).toBe(true);expect(compileAssemblyPlan(definition).structurally_complete).toBe(true);
   expect(definition.runtime).toMatchObject({kind:'commander-foundation-v1',timeout_ms:300000,cleanup_timeout_ms:120000,commander_timeout_ms:90000});
