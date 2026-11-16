@@ -109,23 +109,6 @@ const externalBoundaryMocks = vi.hoisted(() => ({
     actions: [],
     reason: 'test_noop',
   }),
-  triggerDailyReview: vi.fn().mockResolvedValue({
-    triggered: 0,
-    skipped: 0,
-    skipped_window: true,
-    results: [],
-  }),
-  triggerArchReview: vi.fn().mockResolvedValue({
-    triggered: false,
-    skipped_window: true,
-    skipped_recent: false,
-    skipped_guard: false,
-  }),
-  triggerContractScan: vi.fn().mockResolvedValue({
-    skipped_window: true,
-    skipped_today: false,
-    triggered: false,
-  }),
   runCredentialsHealthCheck: vi.fn().mockResolvedValue({
     skipped_window: true,
     skipped_today: false,
@@ -136,11 +119,6 @@ const externalBoundaryMocks = vi.hoisted(() => ({
   }),
   sendFeishu: vi.fn().mockResolvedValue(false),
   sendBark: vi.fn().mockResolvedValue(false),
-  triggerCodeQualityScan: vi.fn().mockResolvedValue({
-    triggered: false,
-    skipped: true,
-    reason: 'test_noop',
-  }),
   checkAndAlertExpiringCredentials: vi.fn().mockResolvedValue({ alerted: 0 }),
   recoverAuthQuarantinedTasks: vi.fn().mockResolvedValue({ recovered: 0 }),
   scanAuthLayerHealth: vi.fn().mockResolvedValue({ alerted: 0 }),
@@ -204,11 +182,6 @@ vi.mock('../../slot-allocator.js', () => ({
 vi.mock('../../dispatcher.js', () => ({
   dispatchNextTask: externalBoundaryMocks.dispatchNextTask,
 }));
-vi.mock('../../daily-review-scheduler.js', () => ({
-  triggerDailyReview: externalBoundaryMocks.triggerDailyReview,
-  triggerArchReview: externalBoundaryMocks.triggerArchReview,
-  triggerContractScan: externalBoundaryMocks.triggerContractScan,
-}));
 vi.mock('../../credentials-health-scheduler.js', () => ({
   runCredentialsHealthCheck: externalBoundaryMocks.runCredentialsHealthCheck,
 }));
@@ -219,9 +192,6 @@ vi.mock('../../durable/daily-report-router.js', () => ({
 vi.mock('../../notifier.js', () => ({
   sendFeishu: externalBoundaryMocks.sendFeishu,
   sendBark: externalBoundaryMocks.sendBark,
-}));
-vi.mock('../../task-generator-scheduler.js', () => ({
-  triggerCodeQualityScan: externalBoundaryMocks.triggerCodeQualityScan,
 }));
 vi.mock('../../credential-expiry-checker.js', () => ({
   checkAndAlertExpiringCredentials: externalBoundaryMocks.checkAndAlertExpiringCredentials,
@@ -236,14 +206,11 @@ vi.mock('../../rumination.js', () => ({ runRumination: vi.fn().mockResolvedValue
 vi.mock('../../diary-scheduler.js', () => ({ generateDailyDiaryIfNeeded: vi.fn().mockResolvedValue({}) }));
 
 vi.mock('../../conversation-consolidator.js', () => ({ runConversationConsolidator: vi.fn().mockResolvedValue({}) }));
-vi.mock('../../notebook-feeder.js', () => ({ feedDailyIfNeeded: vi.fn().mockResolvedValue({}) }));
 vi.mock('../../self-report-collector.js', () => ({ collectSelfReport: vi.fn().mockResolvedValue({}) }));
 vi.mock('../../evolution-scanner.js', () => ({
   scanEvolutionIfNeeded: vi.fn().mockResolvedValue({}),
-  synthesizeEvolutionIfNeeded: vi.fn().mockResolvedValue({}),
 }));
 
-vi.mock('../../rumination-scheduler.js', () => ({ runSynthesisSchedulerIfNeeded: vi.fn().mockResolvedValue({}) }));
 vi.mock('../../dept-heartbeat.js', () => ({ triggerDeptHeartbeats: vi.fn().mockResolvedValue({ triggered: 0, skipped: 0, results: [] }) }));
 
 // ========== 其它重依赖 mocks（noop 防副作用）==========
@@ -307,7 +274,7 @@ import { resetTickStateForTests } from '../../tick-state.js';
 // scanEvolutionIfNeeded 不在此列：已移出 consciousness 守护（纯 GitHub API 调用，不消耗 LLM），
 // consciousness=false 时仍正常运行，不应断言它被跳过。
 
-const CONSCIOUSNESS_MOCKS = [runRumination, generateDailyDiaryIfNeeded];
+const CONSCIOUSNESS_MOCKS = [runRumination];
 const CLEANUP_MOCKS = Object.values(cleanupMocks);
 const HOST_MUTATION_MOCKS = Object.values(hostMutationMocks);
 const EXTERNAL_BOUNDARY_MOCKS = Object.values(externalBoundaryMocks);
@@ -339,6 +306,7 @@ describe('consciousness tick runtime (real executeTick + mocked deps)', () => {
     CLEANUP_MOCKS.forEach((m) => m.mockClear());
     HOST_MUTATION_MOCKS.forEach((m) => m.mockClear());
     EXTERNAL_BOUNDARY_MOCKS.forEach((m) => m.mockClear());
+    generateDailyDiaryIfNeeded.mockClear();
     delete process.env.CONSCIOUSNESS_ENABLED;
     delete process.env.BRAIN_QUIET_MODE;
   });
@@ -347,6 +315,8 @@ describe('consciousness tick runtime (real executeTick + mocked deps)', () => {
     try {
       expect(processKillSpy).not.toHaveBeenCalled();
       expect(fetchSpy).not.toHaveBeenCalled();
+      expect(externalBoundaryMocks.routeDailyReport).not.toHaveBeenCalled();
+      expect(generateDailyDiaryIfNeeded).not.toHaveBeenCalled();
     } finally {
       processKillSpy.mockRestore();
       fetchSpy.mockRestore();
@@ -414,11 +384,8 @@ describe('consciousness tick runtime (real executeTick + mocked deps)', () => {
     // AI budget is zero; only the deterministic code lane may attempt dispatch.
     expect(externalBoundaryMocks.dispatchNextTask).toHaveBeenCalledTimes(1);
     expect(externalBoundaryMocks.dispatchNextTask).toHaveBeenCalledWith(null, { codeOnly: true });
-    expect(externalBoundaryMocks.triggerDailyReview).toHaveBeenCalledTimes(1);
-    expect(externalBoundaryMocks.triggerArchReview).toHaveBeenCalledTimes(1);
-    expect(externalBoundaryMocks.triggerContractScan).toHaveBeenCalledTimes(1);
     expect(externalBoundaryMocks.runCredentialsHealthCheck).toHaveBeenCalledTimes(1);
-    expect(externalBoundaryMocks.routeDailyReport).toHaveBeenCalledTimes(1);
+    expect(externalBoundaryMocks.routeDailyReport).not.toHaveBeenCalled();
     expect(externalBoundaryMocks.checkAndAlertExpiringCredentials).toHaveBeenCalledTimes(1);
     expect(externalBoundaryMocks.recoverAuthQuarantinedTasks).toHaveBeenCalledTimes(1);
     expect(externalBoundaryMocks.scanAuthLayerHealth).toHaveBeenCalledTimes(1);
@@ -426,7 +393,6 @@ describe('consciousness tick runtime (real executeTick + mocked deps)', () => {
     expect(externalBoundaryMocks.cancelCredentialAlertTasks).toHaveBeenCalledTimes(1);
     expect(externalBoundaryMocks.sendFeishu).not.toHaveBeenCalled();
     expect(externalBoundaryMocks.sendBark).not.toHaveBeenCalled();
-    expect(externalBoundaryMocks.triggerCodeQualityScan).not.toHaveBeenCalled();
     const { killProcessTwoStage } = await import('../../executor.js');
     expect(killProcessTwoStage).not.toHaveBeenCalled();
     expect(processKillSpy).not.toHaveBeenCalled();

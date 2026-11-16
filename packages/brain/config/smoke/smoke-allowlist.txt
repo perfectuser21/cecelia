@@ -11,7 +11,6 @@ app-server-rpc-smoke.sh
 battle-report-v2-smoke.sh
 capture-destination-link-smoke.sh
 capture-triage-line-backlog-autotask-smoke.sh
-ci-patrol-wiring-smoke.sh
 circuit-breaker-reset-smoke.sh
 claude-headed-dispatch-smoke.sh
 codex-cred-isolation-smoke.sh
