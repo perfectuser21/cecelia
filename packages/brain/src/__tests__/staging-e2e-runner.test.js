@@ -86,6 +86,21 @@ describe('deployStaging', () => {
 
 // ─── deployStaging — ZenithJoy customer line 蓝绿护栏 ─────────────────────────
 describe('deployStaging — ZenithJoy customer line（:5201 护栏）', () => {
+  it('客户健康检查使用配置主机的5201，不触碰生产5200或部署脚本', async () => {
+    const previous = process.env.ZJ_STAGING_HOST;
+    process.env.ZJ_STAGING_HOST = 'isolated-zj-host';
+    const exec = vi.fn(() => '{"status":"ok","sha":"fixture-sha"}');
+    try {
+      const result = await deployStaging({ exec, line: 'customer' });
+      expect(result.status).toBe('success');
+      expect(exec).toHaveBeenCalledTimes(1);
+      expect(exec.mock.calls[0][0]).toBe('curl -sf --connect-timeout 30 --max-time 30 http://isolated-zj-host:5201/health');
+      expect(result.stagingSha).toBe('fixture-sha');
+    } finally {
+      if (previous === undefined) delete process.env.ZJ_STAGING_HOST;
+      else process.env.ZJ_STAGING_HOST = previous;
+    }
+  });
   it(':5201 健康响应 → success（护栏 pass，准备跑 E2E）', async () => {
     let seen = null;
     const exec = (cmd) => { seen = cmd; return '{"status":"ok"}'; };

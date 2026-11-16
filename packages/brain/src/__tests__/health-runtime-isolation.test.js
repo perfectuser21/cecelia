@@ -57,6 +57,11 @@ function harness(env = { NODE_ENV: 'test' }) {
 }
 
 describe('GET /health runtime isolation', () => {
+  it('健康响应保留完整构建SHA，未配置时明确unknown', async () => {
+    const sha = 'a1'.repeat(20);
+    expect((await harness({ NODE_ENV: 'test', GIT_SHA: sha }).request()).body.git_sha).toBe(sha);
+    expect((await harness({ NODE_ENV: 'test' }).request()).body.git_sha).toBe('unknown');
+  });
   it.each([
     { NODE_ENV: 'test' },
     { NODE_ENV: 'development' },
