@@ -14,7 +14,7 @@ import {parseActivityContract,parseActivityResult} from '../activity-contract.js
 const hash=x=>createHash('sha256').update(x).digest('hex');
 const dirs=[];
 function fixture(){
- const root=fs.mkdtempSync(path.join(os.tmpdir(),'foundation-readiness-'));dirs.push(root);
+ const root=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'foundation-readiness-')));dirs.push(root);
  const taskId=randomUUID(),runId=randomUUID(),sha='a'.repeat(40),version='1.445.234';
  const input={run_tag:runId,expected_brain_sha:sha,expected_brain_version:version,action_id:'b'.repeat(64),_readiness:{root,task_id:taskId,run_id:runId}};
  const body={health:{status:'healthy',git_sha:sha,version,runtime:{isolated:false}},version:{version},task:{id:taskId,status:'in_progress',task_type:'workflow_dispatch',payload:{commander_protocol:'commander-foundation-v1'},result:{foundation_runner:{task_id:taskId,run_id:runId}},private_payload:'must-not-be-saved'}};
@@ -23,7 +23,7 @@ function fixture(){
  const request=(activity,phase,proposal)=>({task_id:taskId,run_id:runId,run_tag:runId,workflow:'foundation_release_readiness',activity,attempt:1,nonce:randomUUID(),phase,checks:phase==='start'?['input_identity','resource_owned']:activity==='report'?['report_content','single_effect']:['resource_released','evidence_preserved'],proposal,context:input});
  return {root,input,body,fetchFn,file,request};
 }
-afterEach(()=>{for(const d of dirs.splice(0))fs.rmSync(d,{recursive:true,force:true});});
+afterEach(()=>{vi.unstubAllEnvs();for(const d of dirs.splice(0))fs.rmSync(d,{recursive:true,force:true});});
 describe('Foundation真实发布就绪报告',()=>{
  it('采集实际API响应、按原Task/Run存证，独立检查后只释放本run资源',async()=>{
   const f=fixture();
@@ -77,6 +77,19 @@ describe('Foundation真实发布就绪报告',()=>{
   const f=fixture();f.body.task={id:f.input._readiness.task_id,status:'in_progress',task_type:'qa'};const value=await runReport(f.input,{fetchFn:f.fetchFn});expect(checkRequest(f.request('report','end',value)).outcome).toBe('passed');
   fs.unlinkSync(f.file('reservation.json'));expect(()=>checkRequest(f.request('report','end',value))).toThrow('readiness_evidence_missing');
  });
+ it('真实CLI失败经监督器和adapter明确停止，finalize可以清理原占位',async()=>{
+  const f=fixture(),repo=fileURLToPath(new URL('../../../../../',import.meta.url)),folder='packages/brain/scripts/commander-workflow/operations/release-readiness';
+  const doc=JSON.parse(fs.readFileSync(path.join(repo,folder,'profile.json'))),profile={...doc.profile,cwd:f.root,runtimeRoot:path.join(repo,'packages/brain')};
+  for(const entry of Object.keys(profile.files)){fs.mkdirSync(path.dirname(path.join(f.root,entry)),{recursive:true});fs.copyFileSync(path.join(repo,entry),path.join(f.root,entry));}
+  for(const activity of Object.values(profile.skill_runtime.activities))Object.assign(activity.checker,{command:process.execPath,command_sha256:hash(fs.readFileSync(process.execPath))});
+  const preload=path.join(f.root,'network-boundary.mjs');fs.writeFileSync(preload,"globalThis.fetch=async()=>{throw Error('offline-test-boundary');};\n");vi.stubEnv('NODE_OPTIONS','--import='+preload);
+  const run={task_id:f.input._readiness.task_id,run_id:f.input._readiness.run_id,input:f.input,contract:doc.contract},runtime=await createRuntime({profile,run});
+  const options=key=>({identity:{task_id:run.task_id,run_id:run.run_id,activity_key:key,action_id:key==='report'?f.input.action_id:'c'.repeat(64)},cwd:f.root,deadlineMs:Date.now()+10000});
+  const failed=await runtime.executeActivity(doc.contract.activities[0],f.input,options('report'));
+  expect(failed.status).toBe('failed');expect(failed.failure_class).toBe('fatal');expect(failed.execution_stopped).toBe(true);expect(failed.external_effect).not.toBe('unknown');
+  const cleanupInput={...f.input,action_id:'c'.repeat(64)},cleaned=await runtime.executeActivity(doc.contract.activities[1],cleanupInput,options('cleanup'));
+  expect(cleaned.status).toBe('completed');expect((await runtime.checkActivity(doc.contract.activities[1],cleaned,{phase:'end',input:cleanupInput})).verdict).toBe('pass');expect(fs.existsSync(f.file('lease.json'))).toBe(false);
+ },15000);
  it('源码profile冻结真实文件，Code活动与独立checker保持同一契约',()=>{
   const repo=fileURLToPath(new URL('../../../../../',import.meta.url)),folder='packages/brain/scripts/commander-workflow/operations/release-readiness';const doc=JSON.parse(fs.readFileSync(path.join(repo,folder,'profile.json')));
   const source=fs.readFileSync(path.join(repo,folder,'profile.json'),'utf8'),ref={repo:'owner/repo',path:folder+'/profile.json',revision:'a'.repeat(40),digest:'sha256:'+hash(source)};
