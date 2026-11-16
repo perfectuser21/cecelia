@@ -108,6 +108,16 @@ describe('selectPipeline 四格路由', () => {
 });
 
 describe('routeWork 端到端携带四格', () => {
+  it('默认租户走当前代码runner，真实租户只走执行交付且不要求仓库', () => {
+    const code = routeWork({ ...base, payload: { tenant_id: 'default' } }, FACTS);
+    expect(code).toMatchObject({ artifact_kind: 'code', canonical_task_type: 'coding_workflow', orchestrator: 'coding-workflow-runner' });
+    const execution = routeWork({ ...base, repo_hint: undefined, payload: { tenant_id: 'fixture-tenant' } }, []);
+    expect(execution.artifact_kind).toBe('execution');
+    expect(execution.repo).toBeNull();
+    expect(execution.impact_contract_required).toBe(false);
+    expect(execution.orchestrator).not.toBe(code.orchestrator);
+    expect(execution.canonical_task_type).not.toBe(code.canonical_task_type);
+  });
   it('execution 请求:决策带两轴,repo 不强制解析', () => {
     const d = routeWork({
       ...base, declared_change_kind: 'new_capability',

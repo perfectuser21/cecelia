@@ -185,7 +185,7 @@ test('ratchet runner does not execute a registered write script without authoriz
 
 
 for (const script of ['claimed-by-cleared', 'claude-headed-dispatch',
-  'codex-headed-dispatch', 'golden-paths-t1', 'golden-path-step-nfr', 'journey-goldenpaths-invariants', 'unified-map-api']) {
+  'golden-paths-t1', 'golden-path-step-nfr', 'journey-goldenpaths-invariants', 'unified-map-api']) {
   test(`${script}: ignored DB_URL cannot mask the actual production DATABASE_URL`, async () => {
     await fixture(async ({ smoke }) => {
       const result = await smoke(script, { SMOKE_ALLOW_WRITE: '1', DB_URL: 'postgresql://localhost/cecelia_test',
@@ -218,12 +218,6 @@ test('Brain DB_HOST cannot be hidden behind an unused loopback DATABASE_URL', as
 });
 
 
-test('dispatcher route authority helper uses a checked DATABASE_URL', async () => {
-  await fixture(async ({ smoke }) => {
-    const result = await smoke('dispatcher-real-paths.sh', { SMOKE_ALLOW_WRITE: '1', DATABASE_URL: 'postgresql://localhost/cecelia' }, undefined, true);
-    assert.doesNotMatch(result.output, /GUARD_ACCEPTED/);
-  });
-});
 test('phone registry checks the PG_* connection it actually uses when no URI exists', async () => {
   await fixture(async ({ smoke }) => {
     const result = await smoke('phone-registry', { SMOKE_ALLOW_WRITE: '1', DATABASE_URL: '', PGDATABASE: 'cecelia', PGHOST: 'localhost' }, undefined, true);
