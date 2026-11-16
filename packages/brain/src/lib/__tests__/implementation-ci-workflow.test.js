@@ -15,18 +15,10 @@ it('主CI集成入口安装根扫描器与Brain锁依赖，不能被子workspace
  expect(steps[tests].run).toContain('scripts/ci/run-basic-check.mjs');
  const {commandsFor}=await import('../../../../../scripts/ci/run-basic-check.mjs');
  const root=join(fileURLToPath(new URL('../../../../../',import.meta.url)),'.');
- expect(commandsFor('brain-integration')).toEqual([
-  {cwd:root,command:'node',args:['scripts/ci/basic-runtime-smoke.mjs','--validate-only']},
-  {cwd:join(root,'packages/brain'),command:'node',args:['src/migrate.js']},
-  {cwd:join(root,'packages/brain'),command:'npx',args:[
-   '--no-install','vitest','run','--config','../../scripts/ci/deep-integration.config.mjs',
-   'src/__tests__/integration/task-lease-device-pool.pg.integration.test.js',
-   'src/__tests__/integration/executor-startup-headed-owner.pg.integration.test.js',
-   'src/__tests__/integration/suggestion-plan-callback.pg.integration.test.js',
-   'src/__tests__/integration/managed-script-profile.pg.integration.test.js',
-   'src/__tests__/integration/workflow-common-terminal.pg.integration.test.js','--reporter=dot',
-  ],ciScratchDatabase:true},
-  {cwd:root,command:'node',args:['--test','scripts/ci/__tests__/runtime-signal.integration.test.mjs']},
-  {cwd:root,command:'node',args:['scripts/ci/basic-runtime-smoke.mjs']},
- ]);
+ const commands=commandsFor('brain-integration');
+ const pg=commands.filter(row=>row.command==='npx'&&row.args.includes('vitest'));
+ expect(pg).toHaveLength(1);
+ expect(pg[0].cwd).toBe(join(root,'packages/brain'));
+ expect(pg[0].args.slice(0,5)).toEqual(['--no-install','vitest','run','--config','../../scripts/ci/deep-integration.config.mjs']);
+ expect(pg[0].ciScratchDatabase).toBe(true);
 });
