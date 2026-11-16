@@ -118,8 +118,8 @@ const BUSINESS_SMOKE_RETIREMENT_CI_COHORT={...WORKFLOW_REGISTRATION_CI_COHORT,
  'existing-ops-business-smoke-retirement-profile.json':'18e8a6aff7886a7875468d923010ef1936fb100b497abc17f9e09c05b83218bd'};
 const FIXED_CHECKS_CI_COHORT={...BUSINESS_SMOKE_RETIREMENT_CI_COHORT,
  'existing-ops-stage-source.js':'5a772db4a4457f3a5d71fd0de1300074adc1aae9088ddd75330c7bc7fc5fe97f',
- 'existing-ops-stage-modes.js':'657400cd70934267d8a3eca8139da2589a5d6ae578d6d94c74c7f5e2ed223402',
- 'existing-ops-fixed-checks-profile.json':'c1c29a922e42a025463d2ed7a3dba53a672feb0be3e4034f0d5093dc7e8a42d5'};
+ 'existing-ops-stage-modes.js':'b31aba92f87e76ccb139064c483c66adcd244b56582bad485478d8ef49bcf3df',
+ 'existing-ops-fixed-checks-profile.json':'9cca439f60bccb91b84726e4a59d4f9b1f58782bab25fd135a68974262000aa2'};
 export const ciVersionGuardCohorts=()=>[...COHORTS,COMMANDER_CI_COHORT,SKILL_RETIREMENT_CI_COHORT,PLANNER_RETIREMENT_CI_COHORT,COMMANDER_AUDIT_CI_COHORT,SCRIPT_CLEANUP_CI_COHORT,SCRIPT_CLEANUP_PROFILE_COHORT,RESOURCE_RETIREMENT_CI_COHORT,WORKFLOW_REGISTRATION_CI_COHORT,BUSINESS_SMOKE_RETIREMENT_CI_COHORT,FIXED_CHECKS_CI_COHORT];
 export function registerCiRetirementGuardTests({root,base,scan}){
  describe('当前来源完整闭包及执行防复活',()=>{

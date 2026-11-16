@@ -79,6 +79,6 @@ export async function collectReviewedBusinessPgSources({read,parse,relation,prof
 
 // 固定11核心矩阵的完整只读控制组；旧组不覆盖。
 export const FIXED_PROFILE_PATH='packages/brain/src/lib/existing-ops-fixed-checks-profile.json';
-const FIXED_SHA='c1c29a922e42a025463d2ed7a3dba53a672feb0be3e4034f0d5093dc7e8a42d5',fixedText=readFileSync(new URL('./existing-ops-fixed-checks-profile.json',import.meta.url),'utf8');
+const FIXED_SHA='9cca439f60bccb91b84726e4a59d4f9b1f58782bab25fd135a68974262000aa2',fixedText=readFileSync(new URL('./existing-ops-fixed-checks-profile.json',import.meta.url),'utf8');
 if(createHash('sha256').update(fixedText).digest('hex')!==FIXED_SHA)reject();
 export const REVIEWED_FIXED_CHECKS={...JSON.parse(fixedText),[FIXED_PROFILE_PATH]:FIXED_SHA};

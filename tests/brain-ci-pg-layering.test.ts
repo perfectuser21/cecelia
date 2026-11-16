@@ -6,7 +6,7 @@ import { createTempMigratedDb } from '../packages/brain/src/__tests__/helpers/te
 import { spawnSync } from 'node:child_process';
 import glob from 'fast-glob';
 import { commandsFor } from '../scripts/ci/run-basic-check.mjs';
-import { planChecks } from '../scripts/ci/basic-scope.mjs';
+import yaml from 'js-yaml';
 import deepIntegrationConfig from '../scripts/ci/deep-integration.config.mjs';
 import brainConfig from '../packages/brain/vitest.config.js';
 import brainIntegrationConfig from '../packages/brain/vitest.integration.config.js';
@@ -42,7 +42,9 @@ describe('Brain PostgreSQL test layering', () => {
   });
 
   it('基础runtime跑道必须先正式迁移，再调用真实服务任务验收', () => {
-    expect(planChecks(['packages/brain/src/routes/tasks.js'])).toContainEqual({component: 'brain-integration'});
+    const workflow = yaml.load(readFileSync(join(REPO_ROOT, '.github/workflows/ci.yml'), 'utf8')) as {jobs: {plan?: unknown; checks: {strategy: {matrix: {include: Array<{component: string}>}}}}};
+    expect(workflow.jobs.plan).toBeUndefined();
+    expect(workflow.jobs.checks.strategy.matrix.include).toContainEqual({component: 'brain-integration'});
     const steps = commandsFor('brain-integration');
     expect(steps.map(step => ({command: step.command, args: step.args}))).toEqual([
       {command: 'node', args: ['scripts/ci/basic-runtime-smoke.mjs', '--validate-only']},
