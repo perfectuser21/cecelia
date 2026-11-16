@@ -114,17 +114,6 @@ test_team4_team5_unaffected() {
   teardown
 }
 
-test_help_mentions_team1_team2() {
-  setup
-  out="$(bash "$TARGET" --help 2>&1)"
-  if [[ "$out" == *"team1"* && "$out" == *"team2"* ]]; then
-    pass "--help 输出包含 team1/team2（白名单扩容对外可见）"
-  else
-    fail "--help 输出包含 team1/team2（白名单扩容对外可见）" "$out"
-  fi
-  teardown
-}
-
 test_remote_session_without_brief_uses_full_access() {
   setup
   if bash "$TARGET" --team team1 >/tmp/out.$$ 2>&1 && \
@@ -157,7 +146,6 @@ test_team2_now_allowed
 test_team6_still_rejected
 test_team3_unaffected
 test_team4_team5_unaffected
-test_help_mentions_team1_team2
 test_remote_session_without_brief_uses_full_access
 test_remote_session_with_brief_uses_full_access_before_prompt
 

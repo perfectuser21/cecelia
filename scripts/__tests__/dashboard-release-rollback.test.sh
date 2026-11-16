@@ -20,6 +20,17 @@ ROLLBACK="$REPO_ROOT/scripts/rollback-cecelia.sh"
 # ── 隔离部署根（init 成真 git repo，让 brain checkout 钩子有可切的 ref）──────────
 ROOT=$(mktemp -d)
 trap 'rm -rf "$ROOT"' EXIT
+# 所有外部执行边界仅记账，意外触发立即失败，绝不落到宿主服务。
+mkdir -p "$ROOT/bin"
+for boundary in ssh rsync sudo docker curl; do
+    cat > "$ROOT/bin/$boundary" <<'BOUNDARY'
+#!/bin/sh
+printf '%s %s\n' "${0##*/}" "$*" >> "$EXTERNAL_BOUNDARY_LOG"
+exit 97
+BOUNDARY
+    chmod +x "$ROOT/bin/$boundary"
+done
+export PATH="$ROOT/bin:$PATH" EXTERNAL_BOUNDARY_LOG="$ROOT/external-boundaries.log"
 # 本测试只验证 release/rollback 生命周期；frontend 重绑由
 # release-deploy-stage.test.sh 的 fake docker 断言独立覆盖。
 export CECELIA_SKIP_FRONTEND_RECREATE=1
@@ -41,7 +52,7 @@ cat > "$ROOT/scripts/brain-rollback.sh" <<MOCK
 #!/usr/bin/env bash
 echo "brain-rollback called with: \$*" >> "$BRAIN_RB_LOG"
 echo "\$1" > "$ROOT/.brain-rollback-last-version"
-exit 0
+exit "\${BRAIN_ROLLBACK_EXIT_CODE:-0}"
 MOCK
 chmod +x "$ROOT/scripts/brain-rollback.sh"
 
@@ -167,6 +178,41 @@ if [[ "$NOW_AFTER" == "prod-cecelia-v1" ]]; then
 else
     fail "镜像缺失报错退出却动了指针：current=$NOW_AFTER"
 fi
+
+# Brain 子步失败必须向调用方传播；已经完成的 dashboard/指针次序保持原合同。
+FAILED_ROLLBACK_OUT=$(CECELIA_DEPLOY_ROOT="$ROOT" BRAIN_ROLLBACK_EXIT_CODE=7 bash "$ROLLBACK" prod-cecelia-v1 2>&1)
+FAILED_ROLLBACK_RC=$?
+[[ "$FAILED_ROLLBACK_RC" -eq 7 ]] && pass "Brain 回档失败原样传播退出码 7" || fail "Brain 回档失败未传播" "rc=$FAILED_ROLLBACK_RC"
+if [[ "$FAILED_ROLLBACK_OUT" == *"🎉 回档完成"* ]]; then
+    fail "Brain 回档失败不得声称整体完成" "$FAILED_ROLLBACK_OUT"
+else
+    pass "Brain 回档失败不声称整体完成"
+fi
+[[ "$(cat "$DASH/dist/index.html")" == VERSION-1 && "$(grep '^current=' "$ROOT/.production-release")" == current=prod-cecelia-v1 ]] \
+    && pass "失败传播保持既有 dashboard 与指针回档次序" || fail "失败传播改变回档末态" ""
+[[ ! -e "$EXTERNAL_BOUNDARY_LOG" ]] && pass "回档 fixture 未调用外部服务边界" || fail "出现意外外部服务调用" "$(cat "$EXTERNAL_BOUNDARY_LOG")"
+
+# manifest 有目标镜像时，缺少必需 Brain 原语不能伪报整体成功。
+mv "$ROOT/scripts/brain-rollback.sh" "$ROOT/scripts/brain-rollback.fixture"
+MISSING_ROLLBACK_OUT=$(CECELIA_DEPLOY_ROOT="$ROOT" bash "$ROLLBACK" prod-cecelia-v1 2>&1)
+MISSING_ROLLBACK_RC=$?
+[[ "$MISSING_ROLLBACK_RC" -eq 1 && "$MISSING_ROLLBACK_OUT" == *"必需的 scripts/brain-rollback.sh 不存在"* && "$MISSING_ROLLBACK_OUT" != *"🎉 回档完成"* ]] \
+    && pass "必需 Brain 回档脚本缺失非零且不声称整体完成" || fail "必需 Brain 回档脚本缺失仍假成功" "rc=$MISSING_ROLLBACK_RC"
+if CECELIA_DEPLOY_ROOT="$ROOT" CECELIA_SKIP_BRAIN_PROMOTE=1 bash "$ROLLBACK" prod-cecelia-v1 >/dev/null 2>&1; then
+    pass "显式只回档 Dashboard 不要求 Brain 原语"
+else
+    fail "显式只回档 Dashboard 被错误拒绝" ""
+fi
+cp "$ROOT/.production-release" "$ROOT/.production-release.fixture"
+sed 's/brain_image=1.230.18/brain_image=/' "$ROOT/.production-release.fixture" > "$ROOT/.production-release"
+if CECELIA_DEPLOY_ROOT="$ROOT" bash "$ROLLBACK" prod-cecelia-v1 --confirm-db >/dev/null 2>&1; then
+    pass "无目标镜像且明确确认时保留仅 Dashboard 原语"
+else
+    fail "无目标镜像仅 Dashboard 原语被错误拒绝" ""
+fi
+mv "$ROOT/.production-release.fixture" "$ROOT/.production-release"
+[[ ! -e "$EXTERNAL_BOUNDARY_LOG" ]] && pass "缺原语与显式 Dashboard 路径均无外部调用" || fail "出现意外外部服务调用" "$(cat "$EXTERNAL_BOUNDARY_LOG")"
+mv "$ROOT/scripts/brain-rollback.fixture" "$ROOT/scripts/brain-rollback.sh"
 
 # ── 留存上限 5 份（独立 fresh 根，连续 8 次 promote 确定性验证删最旧）─────────────
 R2=$(mktemp -d)

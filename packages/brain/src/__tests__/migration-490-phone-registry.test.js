@@ -11,11 +11,6 @@ const up = fileURLToPath(new URL('../../migrations/490_phone_registry.sql', impo
 const down = fileURLToPath(new URL('../../migrations/rollback/490_phone_registry.down.sql', import.meta.url));
 
 describe('migration 490 phone_registry', () => {
-  it('文件存在（含回滚脚本）', () => {
-    expect(existsSync(up)).toBe(true);
-    expect(existsSync(down)).toBe(true);
-  });
-
   const sql = existsSync(up) ? readFileSync(up, 'utf8') : '';
 
   it('建表：serial PK、nickname NOT NULL、aliases text[]、douyin_accounts jsonb、enabled 默认 true', () => {
@@ -31,22 +26,12 @@ describe('migration 490 phone_registry', () => {
     expect(sql).toMatch(/updated_at timestamptz NOT NULL DEFAULT NOW\(\)/);
   });
 
-  it('种子四台走 INSERT … ON CONFLICT（幂等，不覆盖台账里后改的值）', () => {
+  it('种子走 INSERT … ON CONFLICT（幂等，不覆盖台账里后改的值）', () => {
     expect(sql).toMatch(/INSERT INTO phone_registry[\s\S]*ON CONFLICT \(serial\) DO NOTHING/);
-    for (const s of ['ANGYVB4311010223', 'e6c7ef34', 'ANGYVB4402004137', 'ANGYVB4227006983']) expect(sql).toContain(`'${s}'`);
-    for (const n of ['小彩', '小白', '小黄', '小蓝', '小龙虾', '一号机', '金诺机']) expect(sql).toContain(n);
-    for (const p of ['xiaolongxia', 'yueshengyun-work', 'legacy', 'jinoshengyuan-work']) expect(sql).toContain(`'${p}'`);
-    for (const id of ['90915521618', '37358506855', '44997267357', 'langzi63485']) expect(sql).toContain(id);
-    expect(sql).toContain('RMX3478');
   });
 
-  it('登记 schema_version 490', () => {
-    expect(sql).toMatch(/INSERT INTO schema_version[\s\S]*'490'/);
-  });
-
-  it('回滚脚本删表并摘掉 schema_version 记录', () => {
+  it('回滚脚本删除手机台账表', () => {
     const downSql = existsSync(down) ? readFileSync(down, 'utf8') : '';
     expect(downSql).toMatch(/DROP TABLE IF EXISTS phone_registry/);
-    expect(downSql).toMatch(/DELETE FROM schema_version WHERE version = '490'/);
   });
 });

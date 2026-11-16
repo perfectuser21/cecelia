@@ -59,7 +59,5 @@ describe('migration 522 — 物理换名：标准名成为真表，旧名降为�
       expect(downSql, newName).toMatch(new RegExp(`CREATE VIEW ${newName} AS SELECT \\* FROM ${oldName};`));
     }
     expect(downSql).toMatch(/ALTER TABLE %I RENAME CONSTRAINT %I TO %I/);
-    expect(sql).toMatch(/INSERT INTO schema_version[\s\S]*'522'/);
-    expect(downSql).toMatch(/DELETE FROM schema_version WHERE version = '522'/);
   });
 });

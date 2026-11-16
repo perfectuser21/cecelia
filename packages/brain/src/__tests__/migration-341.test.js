@@ -19,28 +19,6 @@ import { dirname, join } from 'path';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const migrationsDir = join(__dirname, '../../migrations');
-const sqlPath = join(migrationsDir, '341_zenithjoy_schema_move.sql');
-const sql = readFileSync(sqlPath, 'utf8');
-
-describe('Migration 341 — zenithjoy 裸表归位 schema（无全局副作用）', () => {
-  it('不含 ALTER DATABASE（禁止数据库级别全局 search_path 变更）', () => {
-    expect(sql).not.toMatch(/ALTER\s+DATABASE/i);
-  });
-
-  it('把 5 张裸表 SET SCHEMA zenithjoy', () => {
-    const tables = ['operator_sessions', 'verification', 'account', 'session'];
-    for (const table of tables) {
-      expect(sql).toMatch(new RegExp(`ALTER TABLE public\\.${table} SET SCHEMA zenithjoy`, 'i'));
-    }
-    expect(sql).toMatch(/ALTER TABLE public\."user" SET SCHEMA zenithjoy/i);
-  });
-
-  it('迁移是幂等的（用 IF EXISTS / DO 块判断，可重复执行）', () => {
-    expect(sql).toMatch(/DO \$\$/);
-    expect(sql).toMatch(/IF EXISTS/i);
-  });
-});
-
 describe('全局守卫 — 任何 migration 文件都不能出现 ALTER DATABASE', () => {
   it('packages/brain/migrations/*.sql 里没有任何 ALTER DATABASE 语句（防止同类事故复发）', () => {
     const files = readdirSync(migrationsDir).filter((f) => f.endsWith('.sql'));

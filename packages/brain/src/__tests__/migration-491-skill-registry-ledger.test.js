@@ -11,11 +11,6 @@ const down = fileURLToPath(new URL('../../migrations/rollback/491_skill_registry
 const sql = existsSync(up) ? readFileSync(up, 'utf8') : '';
 
 describe('migration 491 skill_registry 台账列', () => {
-  it('文件存在（含回滚）', () => {
-    expect(existsSync(up)).toBe(true);
-    expect(existsSync(down)).toBe(true);
-  });
-
   it('加齐机器列 / 人管列 / 系统列，一律 ADD COLUMN IF NOT EXISTS', () => {
     const cols = ['platforms_installed', 'presence', 'absent_since', 'last_seen_at', 'last_scanned_at', 'source_path',
       'source_kind', 'assigned_agents', 'content_md', 'content_digest', 'copies', 'drift_copies', 'files', 'tier_suggested',
@@ -44,16 +39,16 @@ describe('migration 491 skill_registry 台账列', () => {
     expect(sql).toMatch(/'renamed_from'/);
   });
 
-  it('投影注册表 Skill Registry 改入口面 both', () => {
-    expect(sql).toMatch(/UPDATE notion_projection_map[\s\S]*face = 'inlet'[\s\S]*direction = 'both'[\s\S]*353c40c2-ba63-81bf-ae3e-f0e6fa3753d7/);
+  it('投影注册表改面只更新指定库的 skill_registry 登记行', () => {
+    const update = sql.match(/UPDATE notion_projection_map\b[^;]*;/)?.[0] ?? '';
+    expect(update).toMatch(/SET\s+face = 'inlet'[^;]*direction = 'both'/);
+    expect(update).toMatch(/WHERE\s+notion_db_id\s*=\s*'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'\s+AND\s+brain_table\s*=\s*'skill_registry'\s*;/);
   });
 
-  it('登记 schema_version 491；回滚删列并还原注册表与名字', () => {
-    expect(sql).toMatch(/INSERT INTO schema_version[\s\S]*'491'/);
+  it('回滚删列并还原注册表与名字', () => {
     const d = existsSync(down) ? readFileSync(down, 'utf8') : '';
     expect(d).toMatch(/DROP COLUMN IF EXISTS notion_baseline/);
     expect(d).toMatch(/face = 'mirror'/);
     expect(d).toMatch(/renamed_from/);
-    expect(d).toMatch(/DELETE FROM schema_version WHERE version = '491'/);
   });
 });

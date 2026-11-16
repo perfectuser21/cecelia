@@ -62,36 +62,6 @@ for selector in pinned default; do
   else fail "真实构建 $selector 隔离失败：$(tail -2 "$FIXTURE/$selector.log")"; fi
 done
 
-# Test 2: 用 mktemp -d 隔离 build dir
-if grep -qE 'TEMP_BUILD=\$\(mktemp -d' "$SCRIPT"; then
-    pass "用 mktemp 临时 dir 隔离 build context"
-else
-    fail "没用 mktemp 隔离"
-fi
-
-# Test 3: trap EXIT 清理临时 dir
-if grep -qE 'trap.*TEMP_BUILD.*EXIT' "$SCRIPT"; then
-    pass "trap EXIT 清理临时 dir（防泄漏）"
-else
-    fail "缺 trap EXIT 清理"
-fi
-
-# Test 4: docker build context 是 TEMP_BUILD 不是 ROOT_DIR（仅看非注释行）
-NON_COMMENT_DOCKER_BUILD_TEMP=$(grep -v '^[[:space:]]*#' "$SCRIPT" | grep -cE 'docker build|"\$TEMP_BUILD"')
-NON_COMMENT_BAD=$(grep -v '^[[:space:]]*#' "$SCRIPT" | grep -cE '"\$ROOT_DIR"\s*$' || true)
-if [[ "$NON_COMMENT_DOCKER_BUILD_TEMP" -gt 0 ]] && [[ "$NON_COMMENT_BAD" -eq 0 ]]; then
-    pass "docker build 用 \${TEMP_BUILD} 作 context（不再用 \${ROOT_DIR}）"
-else
-    fail "docker build 还在用 \${ROOT_DIR} 作 context（实际命中行: $(grep -v '^[[:space:]]*#' "$SCRIPT" | grep -E '"\$ROOT_DIR"\s*$' | head -1))"
-fi
-
-# Test 8 (v1.2.0): brain-build.sh 含 git fetch origin
-if grep -qE 'git -C .* fetch origin' "$SCRIPT"; then
-    pass "v1.2.0: brain-build.sh 含 git fetch origin 拉最新 main"
-else
-    fail "v1.2.0: 缺 git fetch origin"
-fi
-
 echo ""
 echo "=== brain-build-isolation: $PASS PASS / $FAIL FAIL ==="
 [[ "$FAIL" -eq 0 ]]

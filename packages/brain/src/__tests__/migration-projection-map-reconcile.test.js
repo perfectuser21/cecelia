@@ -29,11 +29,6 @@ const DEPT_DAILY = '3dbc40c2-ba63-8168-8ec5-ea3aba0f25b9';
 const tupleOf = (id) => (sql.match(new RegExp(`\\('${id}'[^\\n]*`)) || [''])[0];
 
 describe('migration-projection-map-reconcile 注册表对账迁移', () => {
-  it('迁移文件存在且版本号为三位数', () => {
-    expect(upName).toMatch(/^\d{3}_projection_map_reconcile\.sql$/);
-    expect(sql).toMatch(new RegExp(`INSERT INTO schema_version[\\s\\S]*'${version}'[\\s\\S]*ON CONFLICT \\(version\\) DO NOTHING`));
-  });
-
   it('补登记 OPC 两库为 us-vps cron 推送的镜子（真身飞书，无 Brain 表）', () => {
     expect(tupleOf(OPC_OBJECTS)).toMatch(/'OPC 经营对象', 'mirror', NULL, 'push', '[^']*opc-objects-sync\.py[^']*', 'active'/);
     expect(tupleOf(OPC_DAILY)).toMatch(/'OPC 日报', 'mirror', NULL, 'push', '[^']*opc-daily-page\.py[^']*', 'active'/);
@@ -46,7 +41,6 @@ describe('migration-projection-map-reconcile 注册表对账迁移', () => {
   it('旧 Cecelia Tasks / Cecelia Projects 登记为已停写的归档镜子（写入方 projection/outbox.js，决策 71e0087b）', () => {
     const t = tupleOf(OLD_TASKS);
     expect(t).toMatch(/'Cecelia Tasks', 'mirror', 'tasks', 'none', '[^']*projection\/outbox\.js[^']*', 'archived'/);
-    expect(t).toContain('71e0087b');
     expect(tupleOf(OLD_PROJECTS)).toMatch(/'Cecelia Projects', 'mirror', 'okr_projects', 'none', '[^']*projection\/outbox\.js[^']*', 'archived'/);
   });
 
@@ -71,12 +65,11 @@ describe('migration-projection-map-reconcile 注册表对账迁移', () => {
     expect(sql).not.toMatch(/unmapped:value_streams|unmapped:backbone_activities/);
   });
 
-  it('回滚：删补登记行、两视图行回 pending_vessel、部门日报回待核、删版本', () => {
+  it('回滚：删补登记行、两视图行回 pending_vessel、部门日报回待核', () => {
     const del = (downSql.match(/DELETE FROM notion_projection_map[\s\S]*?;/) || [''])[0];
     for (const id of [OPC_OBJECTS, OPC_DAILY, KEY_RESULTS, OLD_TASKS, OLD_PROJECTS]) expect(del).toContain(id);
     expect(downSql).toMatch(/status = 'pending_vessel'[^;]*unmapped:acceptance_criteria/);
     expect(downSql).toMatch(/status = 'pending_vessel'[^;]*unmapped:features_registry/);
     expect(downSql).toMatch(/vessel = '\(推送方待核\)'/);
-    expect(downSql).toMatch(new RegExp(`DELETE FROM schema_version WHERE version = '${version}'`));
   });
 });

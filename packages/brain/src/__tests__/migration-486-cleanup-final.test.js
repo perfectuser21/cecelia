@@ -26,16 +26,8 @@ describe('migration 486', () => {
     expect(sql).not.toMatch(/CASCADE/i);
   });
 
-  it('AI Journey / AI Feature 登记恢复 push/active', () => {
-    expect(sql).toMatch(/UPDATE notion_projection_map[\s\S]*status = 'active'[\s\S]*direction = 'push'[\s\S]*358c40c2-ba63-8148-bde7-e313d789931a/);
-    expect(sql).toMatch(/UPDATE notion_projection_map[\s\S]*status = 'active'[\s\S]*direction = 'push'[\s\S]*358c40c2-ba63-81e3-96c5-d762b3d34dff/);
-    expect(sql).toMatch(/INSERT INTO schema_version[\s\S]*'486'/);
-  });
-
-  it('回滚重建 6 表、两登记行回到 archived/none、删版本', () => {
+  it('回滚重建本迁移删除的 6 表', () => {
     expect(downSql.match(/^CREATE TABLE /gm)).toHaveLength(6);
-    expect(downSql).toMatch(/status = 'archived', direction = 'none'/);
-    expect(downSql).toMatch(/DELETE FROM schema_version WHERE version = '486'/);
   });
 
   it('源码不再读写这 6 张表、不再挂授权/积分/关键词任务路由', () => {

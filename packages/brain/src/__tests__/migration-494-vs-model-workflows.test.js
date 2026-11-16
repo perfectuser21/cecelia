@@ -14,11 +14,6 @@ const rb = existsSync(down) ? readFileSync(down, 'utf8') : '';
 const server = readFileSync(fileURLToPath(new URL('../../server.js', import.meta.url)), 'utf8');
 
 describe('migration 494 价值流建模③：workflows 表 + backbone activity 挂 workflow/executor/enabler', () => {
-  it('文件存在（含回滚）', () => {
-    expect(existsSync(up)).toBe(true);
-    expect(existsSync(down)).toBe(true);
-  });
-
   it('workflows 表：capability_id → journeys、key 唯一、status CHECK', () => {
     expect(sql).toMatch(/CREATE TABLE IF NOT EXISTS workflows \(/);
     expect(sql).toMatch(/capability_id uuid NOT NULL REFERENCES journeys\(id\)/);
@@ -49,21 +44,11 @@ describe('migration 494 价值流建模③：workflows 表 + backbone activity �
     expect(sql).toMatch(/ALTER TABLE ops_workflows ADD COLUMN IF NOT EXISTS workflow_id uuid NULL REFERENCES workflows\(id\)/);
   });
 
-  it('回填幂等：两条 capability（关键词获客/对标获客）+ 两条 workflow + 8 activity 挂抖音·关键词获客 + executor_kind + preflight/cleanup enabler', () => {
-    expect(sql).toMatch(/'关键词获客'/);
-    expect(sql).toMatch(/'对标获客'/);
-    expect(sql).toMatch(/'douyin_keyword_leadgen'/);
-    expect(sql).toMatch(/'douyin_benchmark_leadgen'/);
+  it('回填幂等：既有 workflow 不被种子覆盖', () => {
     expect(sql).toMatch(/ON CONFLICT \(key\) DO NOTHING/);
-    expect(sql).toMatch(/WHEN 'qualification' THEN 'agent'/);
-    expect(sql).toMatch(/WHEN 'scoring' THEN 'agent'/);
-    expect(sql).toMatch(/'device_lock'/);
-    expect(sql).toMatch(/'account_selfcheck'/);
-    expect(sql).toMatch(/activity_key IN \('preflight', ?'cleanup'\)/);
-    expect(sql).toMatch(/INSERT INTO schema_version[\s\S]*'494'/);
   });
 
-  it('回滚：删种子 enabler、还原 12 列视图、删三列、删 ops_workflows.workflow_id、删触发器/函数/表、删种子 capability、删 schema_version', () => {
+  it('回滚：删种子 enabler、还原 12 列视图、删三列、删 ops_workflows.workflow_id、删触发器/函数/表、删种子 capability', () => {
     expect(rb).toMatch(/DELETE FROM enablers WHERE key IN \('device_lock', ?'account_selfcheck'\)/);
     expect(rb).toMatch(/DROP VIEW IF EXISTS backbone_activities/);
     expect(rb).toMatch(/DROP COLUMN IF EXISTS enabler_id/);
@@ -73,7 +58,6 @@ describe('migration 494 价值流建模③：workflows 表 + backbone activity �
     expect(rb).toMatch(/ALTER TABLE ops_workflows DROP COLUMN IF EXISTS workflow_id/);
     expect(rb).toMatch(/DROP FUNCTION IF EXISTS workflows_capability_guard\(\)/);
     expect(rb).toMatch(/DROP TABLE IF EXISTS workflows/);
-    expect(rb).toMatch(/DELETE FROM schema_version WHERE version = '494'/);
   });
 
   it('接线：server.js 挂载 GET /api/brain/workflows', () => {

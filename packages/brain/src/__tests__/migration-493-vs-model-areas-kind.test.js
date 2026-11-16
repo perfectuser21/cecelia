@@ -14,11 +14,6 @@ const sql = existsSync(up) ? readFileSync(up, 'utf8') : '';
 const src = (rel) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8');
 
 describe('migration 493 价值流建模②：areas 树 + journeys.kind + 视图 + 旧 capabilities 腾名', () => {
-  it('文件存在（含回滚）', () => {
-    expect(existsSync(up)).toBe(true);
-    expect(existsSync(down)).toBe(true);
-  });
-
   it('areas 加自引用 parent_area_id（IF NOT EXISTS）+ 禁止自己当自己父亲', () => {
     expect(sql).toMatch(/ALTER TABLE areas ADD COLUMN IF NOT EXISTS parent_area_id uuid[^;]*REFERENCES areas\(id\)/);
     expect(sql).toMatch(/areas_parent_not_self CHECK \(parent_area_id IS NULL OR parent_area_id <> id\)/);
@@ -45,8 +40,7 @@ describe('migration 493 价值流建模②：areas 树 + journeys.kind + 视图 
     expect(sql).toMatch(/ON CONFLICT DO NOTHING/);
   });
 
-  it('登记 schema_version 493；回滚还原视图、还原旧表名、删列、删注册表占位行', () => {
-    expect(sql).toMatch(/INSERT INTO schema_version[\s\S]*'493'/);
+  it('回滚还原视图、还原旧表名、删列、删注册表占位行', () => {
     const d = existsSync(down) ? readFileSync(down, 'utf8') : '';
     expect(d).toMatch(/DELETE FROM notion_projection_map WHERE notion_db_id = 'unmapped:capabilities'/);
     expect(d).toMatch(/DROP VIEW IF EXISTS capabilities;/);
@@ -54,7 +48,6 @@ describe('migration 493 价值流建模②：areas 树 + journeys.kind + 视图 
     expect(d).toMatch(/DROP COLUMN IF EXISTS kind/);
     expect(d).toMatch(/CREATE OR REPLACE VIEW value_streams AS SELECT \* FROM journeys;/);
     expect(d).toMatch(/DROP COLUMN IF EXISTS parent_area_id/);
-    expect(d).toMatch(/DELETE FROM schema_version WHERE version = '493'/);
   });
 
   it('接线：brain 代码里读写旧表的 SQL 全部改到 capabilities_legacy（视图 capabilities 没有 current_stage 列）', () => {

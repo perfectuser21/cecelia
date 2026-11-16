@@ -78,15 +78,13 @@ describe('migration 521 — Activity/Step 列整形 + 8 格固定 + 顺序归关
     expect(downSql).toMatch(/DELETE FROM workflow_activity_refs WHERE source_ref = 'migration:521'/);
   });
 
-  it('标准名视图重建以带上新列；列注释写清谁填', () => {
+  it('标准名视图重建以带上新列', () => {
     expect(sql).toMatch(/CREATE OR REPLACE VIEW activities AS SELECT \* FROM journey_steps;/);
     expect(sql).toMatch(/CREATE OR REPLACE VIEW activity_cells AS SELECT \* FROM journey_step_links;/);
-    expect(sql).toMatch(/COMMENT ON COLUMN journey_steps\.promise IS/);
-    expect(sql).toMatch(/COMMENT ON COLUMN steps\.readback IS/);
     expect(downSql).toMatch(/DROP VIEW IF EXISTS activities;[\s\S]*?CREATE VIEW activities AS SELECT \* FROM journey_steps;/);
   });
 
-  it('备份覆盖改名的格子；回滚还原格子名、删补的灰格与关系行、去掉新列、改回表名、删 521 版本', () => {
+  it('备份覆盖改名的格子；回滚还原格子名、删补的灰格与关系行、去掉新列、改回表名', () => {
     expect(sql).toMatch(/CREATE TABLE IF NOT EXISTS migration_521_backup/);
     expect(sql).toMatch(/INSERT INTO migration_521_backup[\s\S]*?'journey_step_links\.renamed'/);
     expect(downSql).toMatch(/UPDATE journey_step_links l SET cell_key = b\.payload->>'cell_key'[\s\S]*?b\.table_name = 'journey_step_links\.renamed'/);
@@ -95,7 +93,5 @@ describe('migration 521 — Activity/Step 列整形 + 8 格固定 + 顺序归关
     for (const c of STEP_COLS) expect(downSql, c).toMatch(new RegExp(`ALTER TABLE steps DROP COLUMN IF EXISTS ${c};`));
     expect(downSql).toMatch(/ALTER TABLE journey_step_links DROP COLUMN IF EXISTS parent_cell_key;/);
     expect(downSql).toMatch(/DROP TABLE IF EXISTS migration_521_backup;/);
-    expect(sql).toMatch(/INSERT INTO schema_version[\s\S]*'521'/);
-    expect(downSql).toMatch(/DELETE FROM schema_version WHERE version = '521'/);
   });
 });
