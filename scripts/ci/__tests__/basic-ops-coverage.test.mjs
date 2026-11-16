@@ -229,7 +229,10 @@ printf 'ISOLATED_FIXTURE_OK\\n'
 // 历史实现不因未知PR或新执行内核变更重新进入现役默认。
 test('默认及未知输入回退仍执行现役Ops集合', () => {
   const active = paths(opsChecks(root));
-  assert.equal(active.length, 55);
+  for (const fixture of ['deadman-and-provider', 'keepalive-isolation', 'preview-agent-startup', 'restore-missing-only']) {
+    assert.ok(active.includes(`scripts/ops/__tests__/credentials/${fixture}.test.sh`), `现役隔离fixture未收集：${fixture}`);
+  }
+  assert.equal(new Set(active).size, active.length, 'Ops入口不能重复执行');
   for (const source of [null, 'unknown/product.js', 'docker/cecelia-runner/entrypoint.sh',
     'packages/brain/scripts/fleet-worker/attempt-runner.cjs',
     'packages/brain/scripts/fleet-worker/workflow-runner.cjs',

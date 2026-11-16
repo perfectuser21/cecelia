@@ -1,7 +1,7 @@
 ---
 id: current-ci-pipeline
-version: 3.0.6
-updated: 2026-11-15
+version: 3.0.7
+updated: 2026-11-16
 authority: CURRENT_STATE
 ---
 
@@ -17,7 +17,7 @@ authority: CURRENT_STATE
 |---|---|
 | plan | 固定BASE/HEAD核对版本增量，并选择受影响组件的整套检查 |
 | security | 凭据扫描、运行依赖high及全部依赖critical漏洞审计 |
-| checks | Brain六分片、5个明确PG合同与源码运行、镜像构建、共享前端、Ops及scripts；MCP仅包自身变更触发 |
+| checks | Brain六分片、10个明确PG入口与源码运行、镜像构建、共享前端、Ops及scripts；MCP仅包自身变更触发 |
 | runtime-integration | 机器接入、Linux授权的真实PG合同，以及公共Runner/Commander进程故障恢复；纯mock隔离回归仅在普通单测执行 |
 | pwa-upgrade | Chromium验证PWA升级、交办回执、指挥舱收件箱和去向路由；业务API为隔离fixture |
 | codeql | Actions、JS/TS、Python三个语言安全分析；另有每周扫描 |
@@ -34,13 +34,13 @@ authority: CURRENT_STATE
 - Brain普通单测、PG、源码HTTP生命周期和Docker构建是不同证据；PR镜像只build，不代表已启动生产服务。
 - `apps/api`只保留Dashboard共享features和captures schema验证，不再有独立旧Core服务、Conductor、旧任务/OKR路由或后端编译入口。
 - 共享features与Dashboard在一个组件任务中依次使用各自React/Vitest环境，再构建Dashboard，不能混用React18/19测试环境。
-- Ops按固定PR差异选择执行域；公共配置、未知来源和全量运行执行55个现役入口。无生产上游的旧spawn/host/Docker执行器及专属测试、无调用的汇总脚本均已清退；现役fleet执行器保留。
-- scripts检查CI本身的真实选择/退出/权限边界、开发工具、事实与版本一致、迁移编号及Skill所有权。默认50个Node入口；W19冻结、旧准入发布器和一次性历史授权回放已退出。两个仍被可选API消费的窄合同由 `node scripts/ci/run-legacy-checks.mjs` 显式执行。
+- Ops按固定PR差异选择执行域；公共配置、未知来源和全量运行执行59个现役入口。无生产上游的旧spawn/host/Docker执行器及专属测试、无调用的汇总脚本均已清退；现役fleet执行器保留。
+- scripts检查CI本身的真实选择/退出/权限边界、开发工具、事实与版本一致、迁移编号及Skill所有权。默认按目录发现现役Node入口；W19冻结、旧准入发布器和一次性历史授权回放已退出。两个仍被可选API消费的窄合同由 `node scripts/ci/run-legacy-checks.mjs` 显式执行。
 - 独立MCP不进入现役服务全量矩阵或夜间PG回归；包自身变更仍运行单测，PG合同保留显式 `npm run test:pg -w packages/mcp-readonly`，需专用测试库。
 - 外置Skill正文、固定版本与关键词专属合同已退出本仓PR验收；普通单测不依赖本机私有正文。通用恢复器及Python所有权检查仍保留。
 - 本地quickcheck只做准备：Brain lint、共享前端的Dashboard构建；CI或根依赖变更另跑scripts。真实命令失败必须阻止push。
 
-原466份shell烟测已逐项审读：三批清退112份（49份明确失效、63份重复包装），同步对应登记和退役入口专属fixture；最新一批复核原133份待定项，清退26份、确认14份独特边界，剩93份需补行为或实际消费证据。现存354份中261份有保留依据、93份待核实，不视作垃圾直接删除。脚本文件数不是PR job数。现役模块、真实函数/HTTP/PG回归及部署扫描器保留。安全fixture会在执行前拒绝缺失的被测入口，避免把shell未执行造成的无副作用误判为安全验证通过。
+原466份shell烟测已逐项审读，累计清退198份。最新一轮对93份待审项追溯建立目的、现役业务入口和断言效果：86份旧壳清退，必要边界迁入实际函数/路由、受控CLI与私有PG测试；7份保留（合同版本、invariants读回、部署节点profile、fleet回执schema、DBOS模块启动、内部模块健康账本、专属控制器权限）。现存268份；本轮93份均有明确处置，不再作为未核实项挂起。另清退两份无现役调用且硬读退役脚本的历史E2E副本。脚本文件数不是PR job数。现役模块、真实函数/HTTP/PG回归及部署扫描器保留。安全fixture会在执行前拒绝缺失的被测入口，避免把shell未执行造成的无副作用误判为安全验证通过。
 
 `fleet-worker-workspace` 与 `kernel-runtime-resource` 的实际验证保留，移除其已删除旧suite委托；受控shell回归核对完整现役suite集合和失败退出码，不点火真实Docker/PG。
 

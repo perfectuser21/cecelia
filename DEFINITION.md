@@ -2,6 +2,8 @@
 
 **Brain 版本**: 1.445.234
 
+完成93份待审烟测的业务深审：86份旧壳及两份无现役调用的历史E2E副本清退，7份明确保留；安全fixture、真实V2验收、派发/投影、组织图、推理治理及凭据/运维隔离改用实际行为验证。5份必要私有schema回归并入现有PR集成job，不新增工作流或job。业务运行实现与迁移不变。
+
 Workflow 方法可显式绑定为发布 profile 的独立 Playbook 快照，进入 Commander 提示与运行身份；恢复不得更换方法。执行 Agent 与独立检查器接收本步冻结 Activity Contract，动态剩余预算不改写契约；Playbook/Skill 不能覆盖契约和动作授权。
 
 新增通用 Workflow 发布与派单协议 commander-foundation-v1：复用冻结定义及发布观测，由受信 Worker 执行 Commander + DBOS，独立核验真实结果并结算原 Task / Run；旧任务入口不得接管底座运行。

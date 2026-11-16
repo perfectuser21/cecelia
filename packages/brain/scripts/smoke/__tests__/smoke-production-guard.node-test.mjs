@@ -186,7 +186,7 @@ test('ratchet runner does not execute a registered write script without authoriz
 
 
 for (const script of ['claimed-by-cleared', 'claude-headed-dispatch',
-  'golden-paths-t1', 'golden-path-step-nfr', 'journey-goldenpaths-invariants', 'unified-map-api']) {
+  'golden-paths-t1', 'b13-dbupsert-idempotent', 'journey-goldenpaths-invariants', 'unified-map-api']) {
   test(`${script}: ignored DB_URL cannot mask the actual production DATABASE_URL`, async () => {
     await fixture(async ({ smoke }) => {
       const result = await smoke(script, { SMOKE_ALLOW_WRITE: '1', DB_URL: 'postgresql://localhost/cecelia_test',
