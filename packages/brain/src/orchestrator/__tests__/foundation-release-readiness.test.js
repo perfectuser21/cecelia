@@ -1,4 +1,5 @@
 import {afterEach,describe,it,expect,vi} from 'vitest';
+import Ajv from 'ajv';
 import fs from 'node:fs';
 import {prepareDefinitionFreeze,assertPreparedFreeze} from '../../workflow-authoring/freeze.js';
 import {validateDefinition} from '../../workflow-authoring/registration.js';
@@ -125,6 +126,14 @@ describe('真实注册定义与固定Git执行包',()=>{
   for(const a of definition.activities){expect(a.steps).toHaveLength(1);expect(a.steps[0].dod.readback.type).toBe('file');expect(a.steps[0].implementation.revision).toBe(revision);}
   expect(()=>validateFoundationInput(definition.runtime,{expected_brain_sha:'a'.repeat(40),expected_brain_version:'1.445.234'})).not.toThrow();
   for(const input of [{expected_brain_sha:'main',expected_brain_version:'1.445.234'},{expected_brain_sha:'a'.repeat(40)},{expected_brain_sha:'a'.repeat(40),expected_brain_version:'1.445.234',_readiness:{root:'/foreign'}}])expect(()=>validateFoundationInput(definition.runtime,input)).toThrow();
+ });
+ it('两项真实Activity合并产物完全满足顶层输出契约且字段映射齐全',async()=>{
+  const f=fixture(),document=load(),report=await runReport(f.input,{fetchFn:f.fetchFn}),cleanup=runCleanup({...f.input,action_id:'c'.repeat(64)});
+  const outputs={...report.outputs,...cleanup.outputs},validate=new Ajv({strict:true}).compile(document.output_schema);
+  expect(validate(outputs),JSON.stringify(validate.errors)).toBe(true);
+  expect(Object.keys(document.output_mapping).sort()).toEqual(Object.keys(outputs).sort());
+  expect(document.output_mapping.report_present).toBe('$activity.cleanup.report_present');
+  expect(document.output_schema.required).toContain('report_present');
  });
  it('被替换的固定实现与丢失Step读回均不能取得冻结证明',async()=>{
   const document=load(),definition={...document,source};
