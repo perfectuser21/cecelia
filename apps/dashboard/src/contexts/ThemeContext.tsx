@@ -13,8 +13,12 @@ const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setThemeState] = useState<Theme>(() => {
-    const saved = localStorage.getItem('theme');
-    return (saved as Theme) || 'dark';
+    try {
+      const saved = localStorage.getItem('theme');
+      return (saved as Theme) || 'dark';
+    } catch {
+      return 'dark';
+    }
   });
 
   const [actualTheme, setActualTheme] = useState<'light' | 'dark'>('light');
@@ -52,7 +56,11 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 
   const setTheme = (newTheme: Theme) => {
     setThemeState(newTheme);
-    localStorage.setItem('theme', newTheme);
+    try {
+      localStorage.setItem('theme', newTheme);
+    } catch {
+      // 隐私存储拒绝持久化时，当前界面的主题仍可切换。
+    }
   };
 
   return (

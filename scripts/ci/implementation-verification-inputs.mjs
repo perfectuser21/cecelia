@@ -232,7 +232,10 @@ const FOUNDATION_PROFILE_PATH='packages/brain/src/lib/existing-ops-foundation-re
 if(sha(foundationProfileText)!==FOUNDATION_PROFILE_SHA) fail('FOUNDATION_PROFILE_MISMATCH');
 const FOUNDATION_RELEASE_ENTRY_PROTOCOL={...JSON.parse(foundationProfileText),[FOUNDATION_PROFILE_PATH]:FOUNDATION_PROFILE_SHA};
 const FOUNDATION_FIXED_CHECKS_ENTRY_PROTOCOL={...FIXED_CHECKS_ENTRY_PROTOCOL,[FOUNDATION_PROFILE_PATH]:FOUNDATION_PROFILE_SHA,'scripts/ci/__tests__/basic-workflow.test.mjs':'2d969e97dd0a72f8555400b041ec3772d1d85f0321b27bb7a4cac18d9458f807','scripts/ci/foundation-release-snapshot.mjs':FOUNDATION_RELEASE_ENTRY_PROTOCOL['scripts/ci/foundation-release-snapshot.mjs'],'scripts/ci/__tests__/foundation-release-readiness.test.mjs':'b0b806af90f3675c88e8e79d2d7f46fe9b2f801ab3cfdf1afb3d7f982fa782fc','scripts/ci/pilot-release-verification.mjs':FOUNDATION_RELEASE_ENTRY_PROTOCOL['scripts/ci/pilot-release-verification.mjs']};
-const entryProtocolsFor = digest => digest === 'f0c62163548023720101d8608e3cbf156e5939b4721039f0606225c0fea3c5d0' ? [FOUNDATION_FIXED_CHECKS_ENTRY_PROTOCOL] : digest === 'b85efe37ad0cb363d9e0436758e45eb17355b21ad56c6053b60308b280f8fdb2' ? [FOUNDATION_RELEASE_ENTRY_PROTOCOL] : digest === '7569948b26aef8374c7f81935c29655a225375102e73992617309c3a8c8bcfa5' ? [FIXED_CHECKS_ENTRY_PROTOCOL] : digest === '763f9075175442249e9500a3d6c55936e2b7c424344f9319baac5fe08ccd5128' ? [RESOURCE_RETIREMENT_ENTRY_PROTOCOL] : digest === '1ac9c420d1ff0a6a681d486dd117c7c935b0c55f0e14f4ba98e2e730be68204a' ? [RESOURCE_RETIREMENT_ENTRY_PROTOCOL,BUSINESS_SMOKE_RETIREMENT_ENTRY_PROTOCOL] : digest === '014b5b54984ff322b0783c6070113199673efd53bb900ea9934d038de3cd5e5d' ? [COMMANDER_AUDIT_ENTRY_PROTOCOL,SCRIPT_CLEANUP_ENTRY_PROTOCOL] : digest === SKILL_RETIREMENT_CI ? [SKILL_RETIREMENT_ENTRY_PROTOCOL,PLANNER_RETIREMENT_ENTRY_PROTOCOL] : ENTRY_PROTOCOLS_BY_WORKFLOW[digest];
+const CLOSEOUT_PROFILE_PATH='packages/brain/src/lib/existing-ops-closeout-profile.json',CLOSEOUT_SHA='7ccb681d2e3aa696bee74e109e028fb55b42b6ac29419d20d7e82fb908297c19',closeoutText=readFileSync(new URL('../../packages/brain/src/lib/existing-ops-closeout-profile.json',import.meta.url),'utf8');
+if(sha(closeoutText)!==CLOSEOUT_SHA)fail('CLOSEOUT_PROFILE_MISMATCH');
+const CLOSEOUT_ENTRY_PROTOCOL={...JSON.parse(closeoutText),[CLOSEOUT_PROFILE_PATH]:CLOSEOUT_SHA};
+const entryProtocolsFor = digest => digest === 'ec07185a4dd09572373d2f82de3ae5de4adcdec4e68f6c5fa35fa17f6a02bd3a' ? [CLOSEOUT_ENTRY_PROTOCOL] : digest === 'f0c62163548023720101d8608e3cbf156e5939b4721039f0606225c0fea3c5d0' ? [FOUNDATION_FIXED_CHECKS_ENTRY_PROTOCOL] : digest === 'b85efe37ad0cb363d9e0436758e45eb17355b21ad56c6053b60308b280f8fdb2' ? [FOUNDATION_RELEASE_ENTRY_PROTOCOL] : digest === '7569948b26aef8374c7f81935c29655a225375102e73992617309c3a8c8bcfa5' ? [FIXED_CHECKS_ENTRY_PROTOCOL] : digest === '763f9075175442249e9500a3d6c55936e2b7c424344f9319baac5fe08ccd5128' ? [RESOURCE_RETIREMENT_ENTRY_PROTOCOL] : digest === '1ac9c420d1ff0a6a681d486dd117c7c935b0c55f0e14f4ba98e2e730be68204a' ? [RESOURCE_RETIREMENT_ENTRY_PROTOCOL,BUSINESS_SMOKE_RETIREMENT_ENTRY_PROTOCOL] : digest === '014b5b54984ff322b0783c6070113199673efd53bb900ea9934d038de3cd5e5d' ? [COMMANDER_AUDIT_ENTRY_PROTOCOL,SCRIPT_CLEANUP_ENTRY_PROTOCOL] : digest === SKILL_RETIREMENT_CI ? [SKILL_RETIREMENT_ENTRY_PROTOCOL,PLANNER_RETIREMENT_ENTRY_PROTOCOL] : ENTRY_PROTOCOLS_BY_WORKFLOW[digest];
 const functionalEntry=entry=>Boolean(entryProtocolsFor(entry?.canonical_sha256??''));
 const UNIT_CONFIGS=[
  {component:'brain',directory:'packages/brain',path:'packages/brain/vitest.config.js'},
@@ -272,7 +275,7 @@ function unitEntry(read,side){
  const signature=sha(JSON.stringify(canonical(doc)));if(!entryProtocolsFor(signature))return null;
  const support=[workflow.reference];let selected;
  for(const seals of entryProtocolsFor(signature)){
-  if(read(side,FIXED_PROFILE_PATH)?seals!==(read(side,FOUNDATION_PROFILE_PATH)?FOUNDATION_FIXED_CHECKS_ENTRY_PROTOCOL:FIXED_CHECKS_ENTRY_PROTOCOL):read(side,FOUNDATION_PROFILE_PATH)?seals!==FOUNDATION_RELEASE_ENTRY_PROTOCOL:read(side,BUSINESS_PROFILE_PATH)&&seals!==BUSINESS_SMOKE_RETIREMENT_ENTRY_PROTOCOL)continue;
+  if(read(side,CLOSEOUT_PROFILE_PATH)?seals!==CLOSEOUT_ENTRY_PROTOCOL:read(side,FIXED_PROFILE_PATH)?seals!==(read(side,FOUNDATION_PROFILE_PATH)?FOUNDATION_FIXED_CHECKS_ENTRY_PROTOCOL:FIXED_CHECKS_ENTRY_PROTOCOL):read(side,FOUNDATION_PROFILE_PATH)?seals!==FOUNDATION_RELEASE_ENTRY_PROTOCOL:read(side,BUSINESS_PROFILE_PATH)&&seals!==BUSINESS_SMOKE_RETIREMENT_ENTRY_PROTOCOL)continue;
   const files=[];let matches=true;
   for(const [path,expected] of Object.entries(seals)){
    const file=read(side,path);if(expected===null){if(file){matches=false;break;}continue;}if(file?.reference.sha256!==expected){matches=false;break;}
@@ -282,7 +285,7 @@ function unitEntry(read,side){
  }
  if(!selected)return null;
  support.push(...selected.map(({file})=>file.reference));
- return {profile:'basic',fixedChecks:['7569948b26aef8374c7f81935c29655a225375102e73992617309c3a8c8bcfa5','f0c62163548023720101d8608e3cbf156e5939b4721039f0606225c0fea3c5d0'].includes(signature),canonical_sha256:signature,workflow:workflow.reference,support,
+ return {profile:'basic',closeout:signature==='ec07185a4dd09572373d2f82de3ae5de4adcdec4e68f6c5fa35fa17f6a02bd3a',fixedChecks:['ec07185a4dd09572373d2f82de3ae5de4adcdec4e68f6c5fa35fa17f6a02bd3a','7569948b26aef8374c7f81935c29655a225375102e73992617309c3a8c8bcfa5','f0c62163548023720101d8608e3cbf156e5939b4721039f0606225c0fea3c5d0'].includes(signature),canonical_sha256:signature,workflow:workflow.reference,support,
   declaration_only:true,execution_status:'not_evaluated'};
 }
 function runnerSelector(path,entry,paths){
@@ -294,7 +297,7 @@ function runnerSelector(path,entry,paths){
    ||direct('scripts/__tests__',/^dashboard-release-bind.*\.test\.mjs$/)||direct('scripts/preview-agent/__tests__',/\.test\.mjs$/)
    ||direct('docker/cecelia-runner/__tests__',/\.test\.(?:cjs|sh)$/)||/^scripts\/ops\/__tests__\/.+\.test\.sh$/.test(path)
    ||['brain-compose-envfile-authority','brain-deploy-service-isolation','dashboard-sha-reconcile','deploy-chain-wounds','deploy-local-npm-cache','gate3-brain-deploy','runner-credential-single-chain','dashboard-staging-gate'].some(n=>path===`scripts/smoke/${n}-smoke.sh`);
-  if(ops){if(entry.fixedChecks)return !path.startsWith('docker/cecelia-runner/')&&!path.endsWith('/runner-credential-single-chain-smoke.sh')?{component:'ops',kind:'basic_ops_regular_test',owner:'scripts/ci/ops-checks.mjs'}:null;const domain=legacyDomainForTest(path),domains=legacyDomainsForChanges(paths);return componentSelected(entry,'ops',paths)&&domain&&(!domains||domains.has(domain))?{component:'ops',kind:'basic_ops_regular_test',owner:'scripts/ci/ops-checks.mjs'}:null;}
+  if(ops){if(entry.closeout&&path==='scripts/smoke/deploy-chain-wounds-smoke.sh')return null;if(entry.fixedChecks)return !path.startsWith('docker/cecelia-runner/')&&!path.endsWith('/runner-credential-single-chain-smoke.sh')?{component:'ops',kind:'basic_ops_regular_test',owner:'scripts/ci/ops-checks.mjs'}:null;const domain=legacyDomainForTest(path),domains=legacyDomainsForChanges(paths);return componentSelected(entry,'ops',paths)&&domain&&(!domains||domains.has(domain))?{component:'ops',kind:'basic_ops_regular_test',owner:'scripts/ci/ops-checks.mjs'}:null;}
  }
  if(direct('scripts/ci/__tests__',/^(basic-.*|run-basic-check|brain-source-only-deploy)\.test\.mjs$/))return {component:'scripts',kind:'basic_regular_node_test',owner:BASIC_RUNNER};
 

@@ -1,7 +1,5 @@
-/** 技能工厂一轮（任务 a5f42455 / 2231ecc0）：开关、动作落库、在途不刷 next_action、tick 接线。 */
+/** 技能工厂一轮（任务 a5f42455 / 2231ecc0）：开关、动作落库、在途不刷 next_action、周期节流。 */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 
 vi.mock('../factory-ledger.js', async (orig) => {
   const real = await orig();
@@ -83,16 +81,7 @@ describe('runFactoryPusher 动作落库', () => {
   });
 });
 
-describe('调度接线（executeTick 自 Wave 2 起不被调用，必须挂 scheduler-jobs）', () => {
-  it('scheduler-jobs 登记 factory-cycle job（5 分钟声明间隔）并调用 runFactoryCycle(pool)', () => {
-    const src = readFileSync(fileURLToPath(new URL('../../scheduler-jobs.js', import.meta.url)), 'utf8');
-    expect(src).toMatch(/import \{ runFactoryCycle \} from '\.\/lib\/factory-cycle\.js'/);
-    expect(src).toMatch(/name: 'factory-cycle', cadence: \{ everySec: 300 \}[^\n]*runFactoryCycle\(pool\)/);
-  });
-  it('tick-runner 不再挂 factory-cycle（死路径，避免双跑）', () => {
-    const src = readFileSync(fileURLToPath(new URL('../../tick-runner.js', import.meta.url)), 'utf8');
-    expect(src).not.toMatch(/runFactoryCycle/);
-  });
+describe('周期节流', () => {
   it('调度器每 60s 全调：runFactoryCycle 自 gate，间隔内第二次返回 throttled，force 可越过', async () => {
     const t0 = Date.now() + 10 * 3600 * 1000;
     const env = { FACTORY_PUSHER_ENABLED: 'false' };

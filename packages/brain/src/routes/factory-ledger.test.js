@@ -1,5 +1,7 @@
 /** 技能工厂台账接口（迁移 548）：库函数全 mock；锁参数校验、状态码透传、写接口挂内部鉴权。 */
-import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest';
+import express from 'express';
+import request from 'supertest';
 
 const mocks = vi.hoisted(() => ({
   listLedger: vi.fn(), getLedger: vi.fn(), createLedger: vi.fn(), patchLedger: vi.fn(), transitionLedger: vi.fn(), recordRun: vi.fn(),
@@ -19,6 +21,7 @@ const httpError = (status, code) => Object.assign(new Error(code), { status, cod
 
 beforeAll(async () => { vi.resetModules(); routes = (await import('./factory-ledger.js')).default; });
 beforeEach(() => Object.values(mocks).forEach(m => m.mockReset()));
+afterEach(() => vi.unstubAllEnvs());
 
 describe('读接口', () => {
   it('GET 列表：透传 stage / workflow_id 过滤；stage 越界 400', async () => {
@@ -39,9 +42,27 @@ describe('读接口', () => {
 });
 
 describe('写接口', () => {
-  it('四个写接口都挂内部鉴权（handler 前有中间件）', () => {
-    for (const [m, p] of [['post', '/factory/ledger'], ['patch', '/factory/ledger/:id'], ['post', '/factory/ledger/:id/transition'], ['post', '/factory/ledger/:id/runs']])
-      expect(layer(m, p).stack.length).toBeGreaterThan(1);
+  it.each([
+    ['post', '/factory/ledger', { workflow_id: ID }],
+    ['patch', `/factory/ledger/${ID}`, { next_action: '待执行' }],
+    ['post', `/factory/ledger/${ID}/transition`, { to_stage: 2, actor: 'human', reason: '核验' }],
+    ['post', `/factory/ledger/${ID}/runs`, { run_id: 'fixture-run', pass: true }],
+  ])('HTTP %s %s 拒绝无认证请求且不触发台账操作', async (method, path, body) => {
+    vi.stubEnv('CECELIA_INTERNAL_TOKEN', 'fixture-factory-token');
+    const app = express();
+    app.use(express.json());
+    app.use('/api/brain', routes);
+    const server = await new Promise(resolve => {
+      const listening = app.listen(0, '127.0.0.1', () => resolve(listening));
+    });
+    try {
+      const response = await request(server)[method](`/api/brain${path}`).send(body);
+      expect(response.status).toBe(401);
+      expect(response.body.error.code).toBe('UNAUTHORIZED');
+      for (const fn of Object.values(mocks)) expect(fn).not.toHaveBeenCalled();
+    } finally {
+      await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    }
   });
   it('POST 建行 201；参数错 400 不进库；重复进厂 409 透传', async () => {
     mocks.createLedger.mockResolvedValueOnce({ ledger: { id: ID, stage: 1 } }).mockRejectedValueOnce(httpError(409, 'LEDGER_EXISTS'));

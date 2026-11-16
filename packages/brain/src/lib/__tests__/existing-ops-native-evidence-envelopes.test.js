@@ -1,7 +1,7 @@
 // 冻结Git原件字节合同：该模块是完整AST对照数据，不执行数据中的任何源码。
 import {createHash} from 'node:crypto';
 import {parse} from 'acorn';
-import {describe,it,expect} from 'vitest';
+import {it,expect} from 'vitest';
 import {NATIVE_EVIDENCE_ENVELOPES as reviewed} from '../existing-ops-native-evidence-envelopes.js';
 
 // 独立期望来自7da3d486及fd845665的Git原件，不在测试时从被测常量计算。
@@ -39,24 +39,14 @@ const expected = {
 };
 const texts = () => Object.fromEntries(Object.entries(expected).map(([name]) => [name, name.split('.').reduce((value,key) => value[key],reviewed)]));
 
-describe('native evidence已审完整源码封套数据', () => {
-  it('只导出已审版本的完整support、entries、tests和legacy CLI，不增删隐式封套', () => {
-    expect(Object.keys(reviewed).sort()).toEqual(['entries','legacyCli','revision','support','tests']);
-    expect(reviewed.revision).toBe('7da3d486c7385fe7baea72903cbb9c56ceedcd4f');
-    const actual = Object.entries(reviewed).flatMap(([key,value]) => key === 'revision' ? [] : typeof value === 'string' ? [key] : Object.keys(value).map(name => key + '.' + name));
-    expect(actual.sort()).toEqual(Object.keys(expected).sort());
-    expect(actual).toHaveLength(30);
-  });
-  it.each(Object.keys(expected))('%s逐字节匹配独立冻结Git原件', name => {
-    const text = texts()[name];
-    expect(typeof text).toBe('string');
-    expect(createHash('sha256').update(text).digest('hex')).toBe(expected[name]);
-  });
-  it('所有对照值均能完整静态解析成模块程序，不依赖执行候选源码', () => {
-    for(const [name,text] of Object.entries(texts())) {
-      const ast = parse(text,{ecmaVersion:'latest',sourceType:'module'});
-      expect(ast.type,name).toBe('Program');
-      expect(ast.body.length,name).toBeGreaterThan(0);
-    }
-  });
+it('完整冻结数据一次核验全部字段身份与静态可解析性',()=>{
+ expect(Object.keys(reviewed).sort()).toEqual(['entries','legacyCli','revision','support','tests']);
+ expect(reviewed.revision).toBe('7da3d486c7385fe7baea72903cbb9c56ceedcd4f');
+ const actual=Object.entries(reviewed).flatMap(([key,value])=>key==='revision'?[]:typeof value==='string'?[key]:Object.keys(value).map(name=>key+'.'+name));
+ expect(actual.sort()).toEqual(Object.keys(expected).sort());
+ for(const [name,text]of Object.entries(texts())){
+  expect(typeof text,name).toBe('string');
+  expect(createHash('sha256').update(text).digest('hex'),name).toBe(expected[name]);
+  const ast=parse(text,{ecmaVersion:'latest',sourceType:'module'});expect(ast.type,name).toBe('Program');expect(ast.body.length,name).toBeGreaterThan(0);
+ }
 });

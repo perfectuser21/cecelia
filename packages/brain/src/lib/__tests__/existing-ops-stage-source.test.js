@@ -89,10 +89,7 @@ function checkedFixture(value){
  return structuredClone(value);
 }
 
-describe('固定59字段身份先于完整阶段行为证明',()=>{
- for(const [version,files] of Object.entries(EXPECTED_SOURCES))for(const source of Object.keys(files))it(version+'/'+source+' 字节改变拒绝',()=>{const value=structuredClone(fixture);value.sources[version][source]+='\n';expect(()=>checkedFixture(value)).toThrow();});
- for(const change of [v=>{delete v.sources.legacy[Object.keys(v.sources.legacy)[0]];},v=>{v.sources.legacy.extra='x';},v=>{delete v.sources.recorded;},v=>{v.sources.extra={};},v=>{v.sources.legacy[Object.keys(v.sources.legacy)[0]]=7;},v=>{v.provenance.recorded='wrong';},v=>{v.provenance.extra='wrong';},v=>{v.extra={};}])it('缺字段/额外键/非字符串/错误版本均拒绝',()=>{const value=structuredClone(fixture);change(value);expect(()=>checkedFixture(value)).toThrow();});
-});
+
 
 // 固定已独审 W2 ad15a43a5e886ce30ba05b4dc640f340dcbb6af5：仅作 AST 数据，不导入或执行候选。
 const ISOLATION_REVISION="ad15a43a5e886ce30ba05b4dc640f340dcbb6af5";

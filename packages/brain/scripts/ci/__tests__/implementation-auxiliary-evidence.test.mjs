@@ -84,6 +84,7 @@ it('版本机器人不跟随来源声明软链接，也拒绝重复JSON键而不
 it('本仓库发布片段只登记为release，全部当前辅助关系提供真实Git HEAD/HEAD字节',()=>{
  const repoRoot=new URL('../../../../../',import.meta.url);
  const manifest=JSON.parse(readFileSync(new URL('.implementation-source-relations.json',repoRoot),'utf8'));
+ expect(manifest.relations.filter(row=>row.path.endsWith('.history.mjs'))).toEqual([]);
  const f=fixture([]);f.git('remote','set-url','origin',`https://github.com/${manifest.repo}.git`);
  for(const row of manifest.relations){
   if(/^changes\/cp-.*\.md$/.test(row.path))expect(row.role).toBe('release');

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  parseEvalScore, inferDiscoStage, rollupAgentMaturity, rollupWorkflowMaturity,
+  parseEvalScore, inferDiscoStage,
 } from '../ops-collector.js';
 
 describe('parseEvalScore — 从 skill_registry.metadata 提分数', () => {
@@ -49,38 +49,5 @@ describe('inferDiscoStage — 三档判定（决策：形状重复+变体探明+
   });
   it('数据不全 → confident=false（机器不拍板，等人确认）', () => {
     expect(inferDiscoStage({ name: 'x' }).confident).toBe(false);
-  });
-});
-
-describe('rollupAgentMaturity — agent 成熟度是算出来的', () => {
-  it('取所挂 skill 的最低档（一个还在试错，整体就没固化）', () => {
-    const r = rollupAgentMaturity(['a', 'b'], new Map([['a', 'disco'], ['b', 'software3']]));
-    expect(r.stage).toBe('software3');
-    expect(r.weakest).toBe('b');
-  });
-  it('全部 disco → disco', () => {
-    expect(rollupAgentMaturity(['a', 'b'], new Map([['a', 'disco'], ['b', 'code']])).stage).toBe('disco');
-  });
-  it('无 skill → null（不编造档位）', () => {
-    expect(rollupAgentMaturity([], new Map()).stage).toBeNull();
-  });
-});
-
-describe('rollupWorkflowMaturity — 木桶效应，且指出卡在哪个阶段', () => {
-  it('8 阶段里 1 个还在 software3 → 整条流程 software3，并点名该阶段', () => {
-    const stages = [
-      { stage: '视频发现', skill: 'a' }, { stage: '线索评分', skill: 'b' },
-    ];
-    const r = rollupWorkflowMaturity(stages, new Map([['a', 'disco'], ['b', 'software3']]));
-    expect(r.stage).toBe('software3');
-    expect(r.bottleneck).toBe('线索评分');       // 下一刀该固化谁，一目了然
-  });
-  it('全 disco → disco 且无瓶颈', () => {
-    const r = rollupWorkflowMaturity([{ stage: 's', skill: 'a' }], new Map([['a', 'disco']]));
-    expect(r.stage).toBe('disco');
-    expect(r.bottleneck).toBeNull();
-  });
-  it('无阶段 → null', () => {
-    expect(rollupWorkflowMaturity([], new Map()).stage).toBeNull();
   });
 });

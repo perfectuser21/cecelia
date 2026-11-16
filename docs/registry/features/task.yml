@@ -490,7 +490,6 @@ features:
         - packages/brain/src/__tests__/executor-input-validation.test.js
         - packages/brain/src/__tests__/executor-local-account-select.test.js
         - packages/brain/src/__tests__/executor-local-codex-exec.test.js
-        - packages/brain/src/__tests__/executor-model-select.test.js
         - packages/brain/src/__tests__/executor-okr-project-layer.test.js
         - packages/brain/src/__tests__/executor-payload-routing.test.js
         - packages/brain/src/__tests__/executor-requeue-learning.test.js
@@ -560,7 +559,6 @@ features:
             - packages/brain/src/__tests__/executor-input-validation.test.js
             - packages/brain/src/__tests__/executor-local-account-select.test.js
             - packages/brain/src/__tests__/executor-local-codex-exec.test.js
-            - packages/brain/src/__tests__/executor-model-select.test.js
             - packages/brain/src/__tests__/executor-okr-project-layer.test.js
             - packages/brain/src/__tests__/executor-payload-routing.test.js
             - packages/brain/src/__tests__/executor-requeue-learning.test.js

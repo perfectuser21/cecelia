@@ -88,6 +88,17 @@ async function waitForLegacyReload(page: import('@playwright/test').Page) {
   await page.waitForLoadState('load');
 }
 
+async function expectWorkbenchReady(page: import('@playwright/test').Page, targetPath: string) {
+  await expect(page).toHaveURL(url => url.pathname === targetPath);
+  const ready = targetPath.endsWith('/overview') ? page.getByTestId('owner-cockpit')
+    : targetPath.endsWith('/inbox') ? page.getByRole('textbox', { name: '交办内容' })
+    : targetPath.endsWith('/tasks') ? page.getByRole('textbox', { name: '搜索 Task...' })
+    : page.getByRole('heading', { name: targetPath.endsWith('/activity') ? 'Activity' : 'Projections', exact: true });
+  await expect(ready).toBeVisible({ timeout: 20_000 });
+  await expect.poll(() => page.evaluate(async () => (await navigator.serviceWorker.getRegistrations()).length)).toBe(0);
+  await expect.poll(() => page.evaluate(() => caches.has('legacy-navigation-cache'))).toBe(false);
+}
+
 test('旧版 catch-all Service Worker 升级后保留 Workbench 深层路由', async ({ page }) => {
   await page.goto(origin);
   await waitForLegacyReload(page);
@@ -133,13 +144,13 @@ for (const targetPath of workbenchPaths) {
     serveCurrentBuild = true;
 
     await page.goto(`${origin}${targetPath}`);
-    await page.waitForTimeout(10_000);
-    expect(new URL(page.url()).pathname).toBe(targetPath);
+    // 隐私限制会使旧legacy.js在安装controllerchange监听前停止；沿用原场景的显式刷新，
+    // 先等真实新SW激活并清除旧导航缓存，再刷新加载当前bundle。
+    await expect.poll(() => page.evaluate(() => caches.has('legacy-navigation-cache')), { timeout: 20_000 }).toBe(false);
+    await expect(page).toHaveURL(url => url.pathname === targetPath);
 
     await page.reload();
-    await page.waitForTimeout(10_000);
-    expect(new URL(page.url()).pathname).toBe(targetPath);
-    expect(await page.evaluate(async () => (await navigator.serviceWorker.getRegistrations()).length)).toBe(0);
+    await expectWorkbenchReady(page, targetPath);
 
     await context.close();
   });

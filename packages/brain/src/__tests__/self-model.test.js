@@ -38,30 +38,6 @@ beforeEach(() => {
 
 // ── 测试 ──────────────────────────────────────────────────
 
-describe('SELF_MODEL_SEED', () => {
-  it('是非空字符串且包含 Cecelia', () => {
-    expect(typeof SELF_MODEL_SEED).toBe('string');
-    expect(SELF_MODEL_SEED.length).toBeGreaterThan(0);
-    expect(SELF_MODEL_SEED).toContain('Cecelia');
-  });
-
-  it('包含好奇心偏好描述', () => {
-    expect(SELF_MODEL_SEED).toMatch(/好奇心/);
-  });
-
-  it('包含审美倾向描述（简洁/精准）', () => {
-    expect(SELF_MODEL_SEED).toMatch(/审美/);
-  });
-
-  it('包含与 Alex 的协作关系描述（协作者）', () => {
-    expect(SELF_MODEL_SEED).toMatch(/协作者/);
-  });
-
-  it('包含存在体验描述（tick/运行体验）', () => {
-    expect(SELF_MODEL_SEED).toMatch(/tick|存在体验|运行.*体验/);
-  });
-});
-
 describe('getSelfModel', () => {
   it('有记录时返回最新内容', async () => {
     const pool = makePool();

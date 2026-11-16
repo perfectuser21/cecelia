@@ -421,12 +421,11 @@ test('非执行变更缺失侧显式冻结absence，不能给已删除head造普
 });
 test('当前功能跑道仅为Dashboard features及选中Ops读者提供验证输入',t=>assertFunctionalConsumerInputs(t,{basicEntryFixture,derived,root:fileURLToPath(new URL('../../../',import.meta.url))}));
 
-test('当前候选输入入口逐项读取身份及六父任务完整控制封组，混配失去入口资格',t=>{
+test('当前候选输入入口逐项读取身份及五项必需任务完整控制封组，混配失去入口资格',t=>{
  const path='scripts/ci/__tests__/basic-candidate-source.test.mjs',f=basicEntryFixture(t,path);
  const live=fileURLToPath(new URL('../../../',import.meta.url));
- const profile='packages/brain/src/lib/existing-ops-fixed-checks-profile.json',bytes=readFileSync(join(live,profile));
- const foundation='packages/brain/src/lib/existing-ops-foundation-release-profile.json',foundationBytes=readFileSync(join(live,foundation)),foundationControls=JSON.parse(foundationBytes);
- const controls={...JSON.parse(bytes),[profile]:createHash('sha256').update(bytes).digest('hex'),[foundation]:createHash('sha256').update(foundationBytes).digest('hex'),...Object.fromEntries(['scripts/ci/foundation-release-snapshot.mjs','scripts/ci/__tests__/foundation-release-readiness.test.mjs','scripts/ci/pilot-release-verification.mjs'].map(p=>[p,p.endsWith('foundation-release-readiness.test.mjs')?createHash('sha256').update(readFileSync(join(live,p))).digest('hex'):foundationControls[p]])),'scripts/ci/__tests__/basic-workflow.test.mjs':createHash('sha256').update(readFileSync(join(live,'scripts/ci/__tests__/basic-workflow.test.mjs'))).digest('hex')};
+ const profile='packages/brain/src/lib/existing-ops-closeout-profile.json',bytes=readFileSync(join(live,profile));
+ const controls={...JSON.parse(bytes),[profile]:createHash('sha256').update(bytes).digest('hex')};
  const members=Object.keys(controls).filter(p=>controls[p]!==null),retired=Object.keys(controls).filter(p=>controls[p]===null);
  for(const member of ['scripts/skill_source_ownership.py','scripts/ci/check-basic-results.mjs','scripts/ci/__tests__/basic-results.test.mjs','scripts/ci/__tests__/basic-workflow.test.mjs'])assert.ok(members.includes(member),member);
  for(const member of ['.github/workflows/ci.yml',...members]){mkdirSync(join(f.root,member,'..'),{recursive:true});writeFileSync(join(f.root,member),readFileSync(join(live,member)));}
@@ -442,7 +441,7 @@ test('当前候选输入入口逐项读取身份及六父任务完整控制封�
  assert.equal(derived(f).rows.some(r=>r.input_facts.path===path&&r.input_facts.source.side==='head'),false,'新workflow不能混入旧Commander单成员');
  writeFileSync(join(f.root,ops),newOps);f.source.head_revision=f.commit();f.source.changed_files=f.git('diff','--name-only',f.source.base_revision,f.source.head_revision).split('\n').filter(Boolean).map(path=>({path}));
  const workflowPath='.github/workflows/ci.yml',workflowText=readFileSync(join(f.root,workflowPath),'utf8');
- for(const changed of [...['foundation-publish.test.mjs','workflow-foundation.pg.integration.test.js'].flatMap(fragment=>['disabled','echo','remove','wrong-db'].map(kind=>{const doc=yaml.load(workflowText),steps=doc.jobs['runtime-integration'].steps,step=steps.find(item=>item.run?.includes(fragment));assert.ok(step);if(kind==='disabled')step.if='false';else if(kind==='echo')step.run='echo not-executed';else if(kind==='remove')steps.splice(steps.indexOf(step),1);else step.env={...step.env,TEST_DB_URL:'postgresql://ci@127.0.0.1:5432/cecelia'};return yaml.dump(doc);})),workflowText.replace('node packages/brain/scripts/smoke/commander-foundation-smoke.mjs','echo no-recovery'),
+ for(const changed of [...['workflow-foundation.pg.integration.test.js'].flatMap(fragment=>['disabled','echo','remove','wrong-db'].map(kind=>{const doc=yaml.load(workflowText),steps=doc.jobs['runtime-integration'].steps,step=steps.find(item=>item.run?.includes(fragment));assert.ok(step);if(kind==='disabled')step.if='false';else if(kind==='echo')step.run='echo not-executed';else if(kind==='remove')steps.splice(steps.indexOf(step),1);else step.env={...step.env,TEST_DB_URL:'postgresql://ci@127.0.0.1:5432/cecelia'};return yaml.dump(doc);})),workflowText.replace('node packages/brain/scripts/smoke/commander-foundation-smoke.mjs','echo no-recovery'),
    workflowText.replace("run: node packages/brain/scripts/smoke/commander-foundation-smoke.mjs\n        if: '!cancelled()'","run: node packages/brain/scripts/smoke/commander-foundation-smoke.mjs\n        if: 'false'")]){
   assert.notEqual(changed,workflowText);writeFileSync(join(f.root,workflowPath),changed);f.source.head_revision=f.commit();
   f.source.changed_files=f.git('diff','--name-only',f.source.base_revision,f.source.head_revision).split('\n').filter(Boolean).map(path=>({path}));
@@ -461,7 +460,7 @@ test('当前候选输入入口逐项读取身份及六父任务完整控制封�
   assert.ok(mixed.unproven.some(r=>r.path===path&&r.reason==='entry_unproven'));
   writeFileSync(join(f.root,member),candidate);f.source.head_revision=f.commit();
  }
- for(const member of [profile,foundation,'scripts/ci/foundation-release-snapshot.mjs','scripts/ci/__tests__/foundation-release-readiness.test.mjs','scripts/ci/pilot-release-verification.mjs','scripts/ci/check-basic-results.mjs','scripts/ci/__tests__/basic-results.test.mjs','scripts/ci/__tests__/basic-workflow.test.mjs']){
+ for(const member of [profile,'packages/brain/src/lib/existing-ops-foundation-release-profile.json','scripts/ci/foundation-release-snapshot.mjs','scripts/ci/__tests__/basic-foundation-release-readiness.test.mjs','scripts/ci/pilot-release-verification.mjs','scripts/ci/check-basic-results.mjs','scripts/ci/__tests__/basic-results.test.mjs','scripts/ci/__tests__/basic-workflow.test.mjs']){
   const original=readFileSync(join(f.root,member),'utf8');
   for(const changed of ['', original+'\n// unknown scope member\n']){
    assert.notEqual(changed,original);writeFileSync(join(f.root,member),changed);f.source.head_revision=f.commit();

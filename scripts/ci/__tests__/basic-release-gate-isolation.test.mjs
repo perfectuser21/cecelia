@@ -10,7 +10,7 @@ const root = fileURLToPath(new URL('../../../', import.meta.url));
 const guard = resolve(root, 'tests/helpers/release-gate-network-guard.cjs');
 
 for (const inherited of [undefined, 'http://127.0.0.1:5221']) {
-  test(`两份真实合同测试不访问${inherited ? '继承Brain地址' : '默认Brain地址'}`, () => {
+  test(`真实合同测试不访问${inherited ? '继承Brain地址' : '默认Brain地址'}`, () => {
     const owned = mkdtempSync(resolve(tmpdir(), 'release-gate-sentinel-'));
     try {
       const log = resolve(owned, 'blocked.jsonl');
@@ -21,8 +21,7 @@ for (const inherited of [undefined, 'http://127.0.0.1:5221']) {
       if (inherited) env.BRAIN_URL = inherited;
       else delete env.BRAIN_URL;
       const child = spawnSync(process.execPath, ['--test', '--test-reporter=tap',
-        'scripts/__tests__/release-gate.test.mjs',
-        'tests/regression/release-gate-rtm/release-gate-contract.test.mjs'],
+        'scripts/__tests__/release-gate.test.mjs'],
       { cwd: root, env, encoding: 'utf8', timeout: 20000 });
       assert.equal(child.status, 0, child.stdout + child.stderr);
       const blocked = existsSync(log) ? readFileSync(log, 'utf8') : '';

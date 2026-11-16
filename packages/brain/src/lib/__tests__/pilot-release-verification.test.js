@@ -5,7 +5,6 @@ import {tmpdir} from 'node:os';
 import {createHash} from 'node:crypto';
 import {join} from 'node:path';
 import {execFileSync,spawnSync} from 'node:child_process';
-import {pathToFileURL} from 'node:url';
 import yaml from 'js-yaml';
 import {pilotPlanHash} from '../pilot-release-verification.js';
 const roots=[];afterEach(()=>{vi.unstubAllEnvs();for(const r of roots.splice(0))rmSync(r,{recursive:true,force:true});});
@@ -26,42 +25,46 @@ it('真实固定Git测试进程使用白名单环境，发布证明不要求改�
  const result=await runPilotReleaseVerification({...f,repoRoot:f.root});expect(result.receipt.verdict).toBe('PASS');expect(result.receipt).toMatchObject({purpose:'release_verification',actor:'pilot_release_verification',scope:'declared_pilot_regressions',business_runtime_status:'not_evaluated'});
  expect(result.report.source).not.toHaveProperty('base_revision');expect(result.report).not.toHaveProperty('mapping_status');expect(readFileSync(join(f.root,'actual-output'),'utf8')).toBe('tested');
 });
-it('双 checkout 的正式 Pilot CLI 读取中央固定 Skill 并拒绝工作树漂移',()=>{
- const smoke=new URL('../../../scripts/smoke/central-skill-fixed-source-smoke.sh',import.meta.url);
- const result=spawnSync('bash',[smoke.pathname,'--scenario','baseline'],{cwd:new URL('../../../../../',import.meta.url).pathname,encoding:'utf8',env:{...process.env,SMOKE_ALLOW_WRITE:'1'}});
- expect(result.status,result.stderr).toBe(0);
- expect(result.stdout).toContain('baseline: PASS (3 CLI runs)');
-});
 const centralScenarios=[['baseline',3],['two-revisions',2],['invalid',9],['concurrency',7],['cold-cache',3]];
+const centralEntry=new URL('../../../scripts/smoke/central-skill-fixed-source-smoke.sh',import.meta.url).pathname;
+const toolingRoot=new URL('../../../../../',import.meta.url).pathname;
 function centralSmoke(args=[],env={}){
- return spawnSync('bash',[new URL('../../../scripts/smoke/central-skill-fixed-source-smoke.sh',import.meta.url).pathname,...args],{
-  cwd:new URL('../../../../../',import.meta.url).pathname,encoding:'utf8',timeout:25000,env:{...process.env,SMOKE_ALLOW_WRITE:'1',...env},
+ return spawnSync('/bin/bash',[centralEntry,...args],{
+  cwd:toolingRoot,encoding:'utf8',timeout:25000,env:{...process.env,SMOKE_ALLOW_WRITE:'1',...env},
  });
 }
-it('中央Skill smoke官方无参Glob入口真实完成全部四场景',()=>{
- const result=centralSmoke();expect(result.status,result.stderr).toBe(0);
- expect(result.stdout.trim().split('\n')).toEqual(centralScenarios.map(([name,count])=>`central skill smoke ${name}: PASS (${count} CLI runs)`));
+// 运行真实shell分派；只替换node场景执行边界，不再为入口参数/退出传播重复构建Git树。
+function recordedCentralSmoke(args=[],failedScenario=''){
+ const directory=mkdtempSync(join(tmpdir(),'central-smoke-dispatch-'));roots.push(directory);
+ const calls=join(directory,'calls');
+ writeFileSync(join(directory,'node'),'#!/bin/bash\nset -eu\nprintf "%s|%s|%s|%s\\n" "$SMOKE_SCENARIO" "$*" "$SMOKE_TOOLING" "$PWD" >> "$CALLS"\nif [[ "$SMOKE_SCENARIO" = "$FAIL_SCENARIO" ]]; then exit 37; fi\n',{mode:0o755});
+ const result=centralSmoke(args,{PATH:`${directory}:/usr/bin:/bin`,CALLS:calls,FAIL_SCENARIO:failedScenario});
+ return {...result,calls:existsSync(calls)?readFileSync(calls,'utf8').trim().split('\n').map(line=>line.split('|')):[]};
+}
+it('中央Skill无参入口按顺序分派五种场景，使用实际Node参数与工具根',()=>{
+ const result=recordedCentralSmoke();expect(result.status,result.stderr).toBe(0);
+ expect(result.calls).toEqual(centralScenarios.map(([name])=>[name,'--input-type=module',expect.any(String),expect.any(String)]));
+ for(const [, , root,cwd] of result.calls){expect(root).toBe(cwd);expect(root).toBe(execFileSync('/bin/pwd',['-P'],{cwd:toolingRoot,encoding:'utf8'}).trim());}
 });
-it.each(centralScenarios)('中央Skill smoke显式场景%s保持真实CLI验收', (name,count)=>{
+it.each(centralScenarios)('中央Skill显式场景%s保持一份真实CLI验收', (name,count)=>{
  const result=centralSmoke(['--scenario',name]);expect(result.status,result.stderr).toBe(0);
  expect(result.stdout.trim()).toBe(`central skill smoke ${name}: PASS (${count} CLI runs)`);
 });
-it('中央Skill smoke未知参数或场景继续拒绝',()=>{
+it.each(centralScenarios)('中央Skill显式入口只分派所选场景%s',name=>{
+ const result=recordedCentralSmoke(['--scenario',name]);expect(result.status,result.stderr).toBe(0);
+ expect(result.calls.map(row=>row[0])).toEqual([name]);
+});
+it('中央Skill未知参数或场景不启动任何Node场景',()=>{
  for(const args of [['--unknown'],['--scenario'],['--scenario','unknown']]){
-  const result=centralSmoke(args);expect(result.status).toBe(2);expect(result.stdout).toBe('');
+  const result=recordedCentralSmoke(args);expect(result.status).toBe(2);expect(result.calls).toEqual([]);
  }
 });
-it('中央Skill smoke无参及显式入口保留每个实际场景的非零状态',()=>{
- const directory=mkdtempSync(join(tmpdir(),'central-smoke-failure-'));roots.push(directory);
- for(const [index,[name]] of centralScenarios.entries()){
-  const hook=join(directory,`${name}.mjs`);
-  writeFileSync(hook,`if(!process.argv[1]&&process.env.SMOKE_SCENARIO===${JSON.stringify(name)}){console.error('INJECTED_SCENARIO_FAILURE');process.exit(37);}`);
-  const env={NODE_OPTIONS:[process.env.NODE_OPTIONS,'--import='+pathToFileURL(hook).href].filter(Boolean).join(' ')};
-  const aggregate=centralSmoke([],env);expect(aggregate.status,aggregate.stderr).toBe(37);
-  expect(aggregate.stderr).toContain('INJECTED_SCENARIO_FAILURE');
-  expect(aggregate.stdout.trim().split('\n').filter(Boolean)).toEqual(centralScenarios.slice(0,index).map(([prior,count])=>`central skill smoke ${prior}: PASS (${count} CLI runs)`));
-  const explicit=centralSmoke(['--scenario',name],env);expect(explicit.status,explicit.stderr).toBe(37);expect(explicit.stdout).toBe('');
- }
+it.each(centralScenarios)('中央Skill无参与显式入口保留%s失败码且不继续后续场景',name=>{
+ const index=centralScenarios.findIndex(([scenario])=>scenario===name);
+ const aggregate=recordedCentralSmoke([],name);expect(aggregate.status,aggregate.stderr).toBe(37);
+ expect(aggregate.calls.map(row=>row[0])).toEqual(centralScenarios.slice(0,index+1).map(([scenario])=>scenario));
+ const explicit=recordedCentralSmoke(['--scenario',name],name);expect(explicit.status,explicit.stderr).toBe(37);
+ expect(explicit.calls.map(row=>row[0])).toEqual([name]);
 });
 const descriptions=[
  {kind:'raw',scope:'activity',field:'runtime',status:'unresolved',raw:{entry:'discover-keyword.sh',phase:'source'}},

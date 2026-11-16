@@ -33,8 +33,9 @@ C1=$(git -C "$R" rev-parse HEAD~1)
 C2=$(git -C "$R" rev-parse HEAD)
 
 echo "[1] 生产 sha 落后且改动在 apps/dashboard → 必须触发 Dashboard 构建"
-OUT=$(cd "$R" && CECELIA_DEPLOY_ROOT="$R" CECELIA_PROD_DASHBOARD_SHA="$C1" bash "$DEPLOY" --dry-run 2>&1) || true
-if echo "$OUT" | grep -q "Dashboard 改动"; then
+CODE=0
+OUT=$(cd "$R" && CECELIA_DEPLOY_ROOT="$R" CECELIA_PROD_DASHBOARD_SHA="$C1" bash "$DEPLOY" --dry-run 2>&1) || CODE=$?
+if [[ "$CODE" -eq 0 ]] && echo "$OUT" | grep -q "✅ 部署完成" && echo "$OUT" | grep -q "Dashboard 改动"; then
   pass "判变触发 Dashboard 构建"
 else
   fail "未触发 Dashboard 构建（静默跳过复发）"
@@ -42,8 +43,12 @@ else
 fi
 
 echo "[2] 生产 sha == HEAD → 不触发（防误报）"
-OUT=$(cd "$R" && CECELIA_DEPLOY_ROOT="$R" CECELIA_PROD_DASHBOARD_SHA="$C2" bash "$DEPLOY" --dry-run 2>&1) || true
-if echo "$OUT" | grep -q "Dashboard 改动"; then
+CODE=0
+OUT=$(cd "$R" && CECELIA_DEPLOY_ROOT="$R" CECELIA_PROD_DASHBOARD_SHA="$C2" bash "$DEPLOY" --dry-run 2>&1) || CODE=$?
+if [[ "$CODE" -ne 0 ]] || ! echo "$OUT" | grep -q "跳过：没有 Brain、Dashboard 或 Workflow Skills 改动，无需部署"; then
+  fail "dry-run未完整成功（exit=${CODE}），不能证明sha一致正确跳过"
+  echo "$OUT" | sed 's/^/    | /'
+elif echo "$OUT" | grep -q "Dashboard 改动"; then
   fail "sha 一致仍触发（误报）"
   echo "$OUT" | sed 's/^/    | /'
 else

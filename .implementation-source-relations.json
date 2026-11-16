@@ -133,11 +133,6 @@
       "role": "documentation"
     },
     {
-      "owner_path": "packages/brain/src/lib/existing-ops-native-evidence-source.js",
-      "path": "packages/brain/src/lib/__tests__/existing-ops-qa-artifact-envelopes.test.js",
-      "role": "verification"
-    },
-    {
       "owner_path": "packages/brain/src/lib/existing-ops-runtime-source.js",
       "path": "packages/brain/src/lib/__tests__/existing-ops-us-compose-source.test.js",
       "role": "verification"
@@ -541,11 +536,6 @@
       "owner_path": "packages/brain/scripts/coding-workflow/lib/shell-command.mjs",
       "path": "docs/learnings/cp-10241215-native-command-roundtrip.md",
       "role": "documentation"
-    },
-    {
-      "owner_path": "packages/brain/src/lib/existing-ops-native-evidence-source.js",
-      "path": "packages/brain/src/lib/__tests__/existing-ops-native-report-compat.test.js",
-      "role": "verification"
     },
     {
       "owner_path": "packages/brain/src/lib/existing-ops-native-evidence-source.js",
@@ -1483,11 +1473,6 @@
       "role": "verification"
     },
     {
-      "owner_path": "packages/brain/src/lib/existing-ops-source.js",
-      "path": "packages/brain/src/lib/__tests__/existing-ops-source-impact.test.js",
-      "role": "verification"
-    },
-    {
       "owner_path": "scripts/ci/implementation-pr-gate.mjs",
       "path": "packages/brain/src/lib/__tests__/implementation-pr-gate.test.js",
       "role": "verification"
@@ -1785,11 +1770,6 @@
     {
       "owner_path": "packages/brain/src/lib/existing-ops-workspace-source.js",
       "path": "packages/brain/src/lib/__tests__/existing-ops-workspace-source.test.js",
-      "role": "verification"
-    },
-    {
-      "owner_path": "packages/brain/src/lib/existing-ops-workspace-source.js",
-      "path": "packages/brain/src/lib/__tests__/existing-ops-workspace-graph.test.js",
       "role": "verification"
     },
     {
