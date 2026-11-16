@@ -18,7 +18,7 @@
 # v5.1 变更（2026-09-18，kalloc 内核泄漏事故后补，决策 64d38870）：
 #   - 修复 Brain 告警 task_type="alert" 非法枚举（CHECK constraint 拒绝，被
 #     2>/dev/null 吞掉，CPU/孤儿分支/磁盘三处告警从写下起就静默失效），
-#     告警仅以 blocked exploratory 记账；无执行体，不自动派发
+#     改为合法值 harness_intervention
 #   - frequent 模式新增 check_kalloc_guard：kalloc.1024 内核内存泄漏三档检测
 #     （WARN/ALERT/CRITICAL），复用同一条 Brain 告警通道，不新建独立监控权威
 # =============================================================================

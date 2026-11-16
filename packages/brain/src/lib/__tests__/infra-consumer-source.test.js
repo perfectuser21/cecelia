@@ -52,3 +52,10 @@ it('受审启动前缀不冻结后续Janitor函数且始终不宣称业务执行
  const proof=await buildInfraConsumerSources({...input,readSource:async p=>(await input.readSource(p))+(p===paths[0]?'\n# later function change\n':'')});
  expect(proof.status).toBe('verified');expect(proof).not.toHaveProperty('execution_status');
 });
+
+it('当前磁盘Janitor真实来源仍须通过原受审前缀及两份实际读取者，保持非执行身份',async()=>{
+ const proof=await buildInfraConsumerSources({...input,readSource:async path=>readFileSync(new URL('../../../../../'+path,import.meta.url),'utf8')});
+ expect(proof.status).toBe('verified');expect(proof.bindings).toHaveLength(4);
+ expect(proof.input_relations).toContainEqual({src_path:paths[0],dst_path:paths[1],relation:'shell_source'});
+ expect(proof).not.toHaveProperty('execution_status');
+});
