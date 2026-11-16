@@ -4,10 +4,7 @@ import { runNodeOnboardingJob } from '../node-onboarding/service.js';
 import { runSchedulerJobsOnce, JOBS, SENTINEL_KEY_PREFIX } from '../scheduler-jobs.js';
 import * as schedulerJobsModule from '../scheduler-jobs.js';
 import { runPhoneRpaDispatch } from '../lib/phone-rpa-dispatch.js';
-import { triggerArchReview, triggerCiPatrol } from '../daily-review-scheduler.js';
 import { scheduleDailyBackup } from '../daily-backup-scheduler.js';
-import { maybeGenerateBattleReport } from '../battle-report.js';
-import { maybeRunLineDreaming } from '../line-dreaming.js';
 import { maybeRunLedgerHygiene } from '../ledger-hygiene.js';
 import { runCaptureTriage } from '../capture-triage.js';
 import { runConversationCapture } from '../conversation-capture.js';
@@ -315,12 +312,8 @@ describe('scheduler-jobs 注册表', () => {
     const results = await runSchedulerJobsOnce(pool);
     expect(runOpsCollector).toHaveBeenCalledWith(pool);
     expect(runOpenclawGuards).toHaveBeenCalledWith(pool, expect.objectContaining({ raiseFn: expect.any(Function) }));
-    expect(triggerArchReview).toHaveBeenCalledWith(pool);
-    expect(triggerCiPatrol).toHaveBeenCalledWith(pool);
     expect(scheduleDailyBackup).toHaveBeenCalledWith(pool);
-    expect(maybeRunLineDreaming).toHaveBeenCalledWith(pool);
     expect(maybeRunLedgerHygiene).toHaveBeenCalledWith(pool);
-    expect(maybeGenerateBattleReport).toHaveBeenCalledWith(pool);
     expect(runCaptureTriage).toHaveBeenCalledWith(pool);
     expect(runReceiptCollector).toHaveBeenCalledWith(pool);
     expect(runLaunchdPatrol).toHaveBeenCalledWith();
@@ -331,10 +324,10 @@ describe('scheduler-jobs 注册表', () => {
 
   it('单 job reject 不影响其余 job，且结果记录 ok:false', async () => {
     const pool = makePool();
-    triggerArchReview.mockRejectedValueOnce(new Error('boom'));
+    scheduleDailyBackup.mockRejectedValueOnce(new Error('boom'));
     const results = await runSchedulerJobsOnce(pool);
-    expect(results.find((r) => r.name === 'arch-review')).toMatchObject({ ok: false, error: 'boom' });
-    expect(results.filter((r) => r.name !== 'arch-review').every((r) => r.ok)).toBe(true);
+    expect(results.find((r) => r.name === 'daily-backup')).toMatchObject({ ok: false, error: 'boom' });
+    expect(results.filter((r) => r.name !== 'daily-backup').every((r) => r.ok)).toBe(true);
     expect(results).toHaveLength(JOBS.length);
   });
 
@@ -354,9 +347,9 @@ describe('scheduler-jobs 注册表', () => {
     await runSchedulerJobsOnce(pool);
     const sentinelCalls = pool.query.mock.calls.filter(([sql]) => sql.includes('working_memory') && sql.includes('ON CONFLICT'));
     expect(sentinelCalls).toHaveLength(JOBS.length);
-    const archReviewCall = sentinelCalls.find(([, params]) => params[0] === `${SENTINEL_KEY_PREFIX}arch-review`);
-    expect(archReviewCall[0]).toMatch(/ON CONFLICT \(key\) DO UPDATE/);
-    const payload = JSON.parse(archReviewCall[1][1]);
+    const backupCall = sentinelCalls.find(([, params]) => params[0] === `${SENTINEL_KEY_PREFIX}daily-backup`);
+    expect(backupCall[0]).toMatch(/ON CONFLICT \(key\) DO UPDATE/);
+    const payload = JSON.parse(backupCall[1][1]);
     expect(payload).toHaveProperty('at');
     expect(payload).toHaveProperty('ok');
   });
@@ -413,7 +406,6 @@ it.each([
   ['credential-freshness', '../credential-freshness.js', 'maybeRunCredentialFreshness'],
   ['seven-ring-audit', '../seven-ring-audit.js', 'runSevenRingAuditJob'],
   ['crystal-judge', '../crystal-judge.js', 'maybeRunCrystalJudge'],
-  ['line-dreaming', '../line-dreaming.js', 'maybeRunLineDreaming'],
   ['ledger-hygiene', '../ledger-hygiene.js', 'maybeRunLedgerHygiene'],
   ['ops-notion-push', '../notion-push-sync.js', 'runOpsNotionPush'],
   ['ops-notion-ingest', '../ops-notion-ingest.js', 'runOpsNotionIngest'],
@@ -429,4 +421,31 @@ it.each([
   expect(result).toMatchObject({ name, ok: true });
   const sentinel = pool.query.mock.calls.find(([, args]) => args?.[0] === `${SENTINEL_KEY_PREFIX}${name}`);
   expect(JSON.parse(sentinel[1][1])).toMatchObject({ ok: true });
+});
+
+
+it('真实默认调度退役六类自主活动，仍执行任务、核验、Notion与恢复并留哨兵', async () => {
+  vi.clearAllMocks();
+  const pool = makePool();
+  const results = await runSchedulerJobsOnce(pool);
+  const retired = ['arch-review', 'ci-patrol', 'line-dreaming', 'battle-report', 'morning-cockpit-bark', 'acceptance-aging'];
+  for (const name of retired) {
+    expect(JOBS.find(job => job.name === name), name).toBeUndefined();
+    expect(results.find(result => result.name === name), name).toBeUndefined();
+    expect(pool.query.mock.calls.some(([, args]) => args?.[0] === `${SENTINEL_KEY_PREFIX}${name}`), name).toBe(false);
+  }
+  const active = [
+    ['recurring-tasks', '../recurring.js', 'runRecurringTasksJob'],
+    ['postdeploy-verifier', '../postdeploy-verifier.js', 'runPostdeployVerifier'],
+    ['notion-directory', '../projection/directory-job.js', 'runDirectoryJob'],
+    ['workflow-run-lost-deadline', '../workflow-run-lost-deadline.js', 'runWorkflowRunLostDeadline'],
+  ];
+  for (const [name, module, exported] of active) {
+    const handler = (await import(module))[exported];
+    expect(handler, name).toHaveBeenCalledWith(pool);
+    expect(results.find(result => result.name === name), name).toMatchObject({ ok: true });
+    const sentinel = pool.query.mock.calls.find(([, args]) => args?.[0] === `${SENTINEL_KEY_PREFIX}${name}`);
+    expect(JSON.parse(sentinel[1][1]), name).toMatchObject({ ok: true });
+  }
+  expect(results).toHaveLength(JOBS.length);
 });

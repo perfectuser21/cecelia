@@ -63,7 +63,6 @@ import projectionsRoutes from './src/routes/projections.js';
 import canRunRoutes from './src/routes/can-run.js';
 import bypassActionsRoutes from './src/routes/bypass-actions.js';
 import okrHierarchyRoutes from './src/routes/okr-hierarchy.js';
-import strategyTreeRoutes from './src/routes/strategy-tree.js';
 import krConvergenceRoutes from './src/routes/kr-convergence.js';
 import krProjectMapRoutes from './src/routes/kr-project-map.js';
 import contextRoutes from './src/routes/context.js';
@@ -105,8 +104,6 @@ import { createCapabilitySystemRouter } from './src/routes/capability-system.js'
 import { createMapManifestRouter } from './src/routes/map-manifests.js';
 import mapRoutes from './src/routes/map.js';
 import opsPanoramaRoutes from './src/routes/ops-panorama.js';
-import { createAcceptanceInternalRouter } from './src/routes/acceptance.js';
-import { startAcceptancePublicServer } from './src/acceptance-public-server.js';
 import { internalAuth } from './src/middleware/internal-auth.js';
 import createAutonomousRouter from './src/routes/autonomous.js';
 import { initTickLoop } from './src/tick.js';
@@ -115,7 +112,6 @@ import { runMigrations } from './src/migrate.js';
 import { sendBark } from './src/notifier.js';
 import pool from './src/db.js';
 import stagingRoutes from './src/routes/staging.js';
-import { initNarrativeTimer } from './src/cognitive-core.js';
 import { isConsciousnessEnabled, logStartupDeclaration, initConsciousnessGuard } from './src/consciousness-guard.js';
 import { initMutedGuard } from './src/muted-guard.js';
 import { initWebSocketServer, shutdownWebSocketServer } from './src/websocket.js';
@@ -128,7 +124,6 @@ import { loadFromDB as loadCircuitBreakerStatesFromDB } from './src/circuit-brea
 import { WebSocketServer } from 'ws';
 import { handleRealtimeWebSocket } from './src/orchestrator-realtime.js';
 import { handleChat } from './src/orchestrator-chat.js';
-import { getScanStatus } from './src/task-generator-scheduler.js';
 import { waitForPortFree, listenWithRetry } from './src/startup-port-guard.js';
 import { setupGitCredentials } from './src/lib/git-credentials-setup.js';
 import { bootDurable } from './src/durable/dbos-runtime.js';
@@ -213,8 +208,6 @@ process.on('unhandledRejection', (reason, promise) => {
 // collide with a still-bound socket on 5221.
 let __shuttingDown = false;
 const __startedAtMs = Date.now();
-// Acceptance 公网 listener（5223）；token 未配置时保持 null
-let acceptancePublicServer = null;
 async function gracefulShutdown(signal) {
   if (__shuttingDown) return;
   __shuttingDown = true;
@@ -265,10 +258,6 @@ async function gracefulShutdown(signal) {
     ]);
   } catch (e) {
     console.warn('[shutdown] server.close error:', e && e.message);
-  }
-  if (acceptancePublicServer) {
-    acceptancePublicServer.close(() => console.log('[acceptance-public] listener 已关闭'));
-    acceptancePublicServer = null;
   }
 
   // 2) Close WebSocket server (clients get 1001 Going Away)
@@ -421,7 +410,6 @@ app.use('/api/brain', canRunRoutes);
 app.use('/api/brain', bypassActionsRoutes); // 旁路报警：执行机上报 + 运维视图（派发总闸 H，任务 865b502c）
 app.use('/api/brain/okr', okrHierarchyRoutes);
 app.use('/api/brain/context', contextRoutes);
-app.use('/api/brain/strategy-tree', strategyTreeRoutes);
 app.use('/api/brain/kr/convergence', krConvergenceRoutes);
 app.use('/api/brain/kr-project-map', krProjectMapRoutes);
 app.use('/api/brain/registry', registryRoutes);
@@ -466,7 +454,6 @@ app.use('/api/brain', commanderHeartbeatRouter); // Commander escort 心跳 POST
 app.use('/api/brain', goldenPathsRouter);
 // 第 51 批（决策 bc242b62）：V4 画布 Worker 的单角色 attempt 接线（派发+轮询结果）。
 app.use('/api/brain/backup', backupRoutes);
-app.use('/api/brain/acceptance', createAcceptanceInternalRouter({ pool }));
 
 // LLM 服务对外入口（供 zenithjoy pipeline-worker 等内部系统调用）
 // 鉴权仅在此路径生效：env CECELIA_INTERNAL_TOKEN 未设置时 dev 放行
@@ -499,16 +486,6 @@ app.use('/api/brain/features', featuresRoutes);
 
 // GET /api/brain/ops-panorama — 执行全景面板聚合端点 [28e7c41a]
 app.use('/api/brain/ops-panorama', opsPanoramaRoutes);
-
-// GET /api/brain/scan-status
-app.get('/api/brain/scan-status', (_req, res) => {
-  try {
-    res.json(getScanStatus());
-  } catch (err) {
-    console.error('[scan-status]', err.message);
-    res.status(500).json({ error: err.message });
-  }
-});
 
 // POST /api/brain/conversation-summary — 对话结束 summary 触发
 // Stop Hook 调用，触发 conversation-consolidator 写入 memory_stream
@@ -668,16 +645,6 @@ if (!process.env.VITEST) {
 
   await listenWithRetry(server, Number(PORT), { maxAttempts: 3, retryDelayMs: 2_000 });
 
-  // Acceptance 公网 listener（刀 1，决策 c08c2173）：token 未配置时静默不启动
-  try {
-    const ACCEPTANCE_PUBLIC_PORT = Number(process.env.ACCEPTANCE_PUBLIC_PORT || 5223);
-    if (!isIsolatedRuntime()) {
-      acceptancePublicServer = startAcceptancePublicServer({ pool, port: ACCEPTANCE_PUBLIC_PORT });
-    }
-  } catch (err) {
-    console.error('[acceptance-public] 启动失败（不影响主服务）:', err.message);
-  }
-
   // Fire the onListening body now that we own the port.
   await onBrainListening();
 }
@@ -708,19 +675,6 @@ async function onBrainListening() {
   initWebSocketServer(server);
   console.log(`WebSocket server ready at ws://localhost:${PORT}/ws`);
   console.log(`Realtime WebSocket ready at ws://localhost:${PORT}/api/brain/orchestrator/realtime/ws`);
-
-  // Initialize narrative timer from DB (prevent duplicate diary on restart)
-  // CONSCIOUSNESS_ENABLED=false 时跳过
-  if (isConsciousnessEnabled()) {
-    try {
-      await initNarrativeTimer(pool);
-      console.log('[Server] Narrative timer initialized from DB');
-    } catch (narrativeErr) {
-      console.error('[Server] Narrative timer init failed (non-fatal):', narrativeErr.message);
-    }
-  } else {
-    console.log('[Server] Narrative Timer SKIPPED (CONSCIOUSNESS_ENABLED=false)');
-  }
 
   // Startup recovery: environment cleanup (worktree / lock slot / dev-mode files)
   try {
@@ -970,15 +924,6 @@ async function onBrainListening() {
   const { startPromotionJobLoop } = await import('./src/promotion-job.js');
   startPromotionJobLoop();
   console.log('[Server] Promotion Job Loop started (10min interval) - P1: Auto-promote probation→active, auto-disable failed');
-
-  // Initialize Dopamine System (多巴胺奖赏回路 — 任务完成→奖赏→习惯形成)
-  try {
-    const { initDopamineListeners } = await import('./src/dopamine.js');
-    initDopamineListeners();
-    console.log('[Server] Dopamine reward system initialized');
-  } catch (e) {
-    console.warn('[Server] Dopamine system init failed (non-fatal):', e.message);
-  }
 
   // Initialize Zombie Reaper (自动清理 DB 层 zombie in_progress tasks)
   try {

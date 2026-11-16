@@ -87,6 +87,7 @@ beforeEach(() => {
       chatEvents.push({ type: params[0], payload: JSON.parse(params[2]) });
       return { rows: [], rowCount: 1 };
     }
+    if (text.startsWith('SELECT') && text.includes("'emotion_state'")) return { rows: [{ value_json: '旧情绪边界标记', updated_at: new Date().toISOString() }] };
     if (text.startsWith('SELECT') && /FROM (working_memory|desires|memory_stream|tasks|key_results|unified_conversations|feishu_users|pending_actions)\b/.test(text)) {
       return { rows: [], rowCount: 0 };
     }
@@ -149,5 +150,24 @@ describe('handleChat memory embedding failure isolation', () => {
     expect(memoryWrites).toHaveLength(2);
     expect(warn).not.toHaveBeenCalled();
     expect(unhandled).toEqual([]);
+  });
+});
+
+
+describe('长期休眠的情绪不再参与现役聊天', () => {
+  it('忽略旧情绪记录，同时保留用户、回复记忆与聊天事件', async () => {
+    const result = await handleChat('owned message', { user_id: 'owned-user', conversation_id: 'owned-conversation' });
+    await settleEffects();
+    expect(result).toEqual({ reply: 'owned reply' });
+    expect(boundary.pool.query.mock.calls.filter(([sql]) => sql.includes("'emotion_state'"))).toEqual([]);
+    expect(JSON.stringify(boundary.llm.mock.calls)).not.toContain('旧情绪边界标记');
+    expect(JSON.stringify(boundary.llm.mock.calls)).not.toContain('我当前的情绪状态');
+    expect(memoryWrites).toHaveLength(2);
+    expect(memoryWrites.map(write => write.params[4])).toEqual([null, null]);
+    expect(memoryWrites[0].params[0]).toContain('[用户对话]');
+    expect(memoryWrites[1].params[0]).toContain('[对话回复]');
+    expect(chatEvents).toHaveLength(1);
+    expect(boundary.memory).toHaveBeenCalled();
+    expect(boundary.embedding).toHaveBeenCalledTimes(2);
   });
 });

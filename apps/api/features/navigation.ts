@@ -20,7 +20,7 @@ export function buildCoreNavigation(): NavGroup[] {
           entry('/system/cecelia', '执行概览', 'Bot'),
           entry('/system/automation', '自动化运行', 'Workflow'),
           entry('/system/engine', '开发引擎', 'Cpu'),
-          entry('/map', '功能地图', 'Map'),
+          entry('/map', '执行与证据', 'Map'),
           entry('/system/feature-map', '架构图', 'Network'),
           entry('/test-pyramid', '测试质量', 'Triangle'),
           entry('/traces', '调用追踪', 'Route'),

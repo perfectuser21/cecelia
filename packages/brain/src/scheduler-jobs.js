@@ -13,14 +13,14 @@ import { isSelfSkipped, schedulerOutcome, recordSchedulerRun, pruneSchedulerRuns
  *
  * Wave 2（2026-05-04）后 executeTick 死掉的定时任务的恢复通道。
  * 调度模型：统一 60s 轮询 + 模块自 gate —— 每轮无脑调用所有 job，
- * "该不该真正执行"由各 handler 内置窗口/幂等逻辑决定（triggerArchReview
- * 自带 4h 窗口+recent 去重+guard）。注册表只负责：错误隔离、timeout、观测哨兵。
+ * "该不该真正执行"由各 handler 内置窗口/幂等逻辑决定。
+ * 注册表只负责：错误隔离、timeout、观测哨兵。
  * 哨兵只作观测（死人开关/战报查"最近一跑"），幂等由模块自 gate 负责。
  */
-import { triggerArchReview, triggerCiPatrol } from './daily-review-scheduler.js';
+
 import { scheduleDailyBackup } from './daily-backup-scheduler.js';
-import { maybeRunLineDreaming } from './line-dreaming.js';
-import { maybeGenerateBattleReport } from './battle-report.js';
+
+
 import { maybeRunLedgerHygiene } from './ledger-hygiene.js';
 import { runCaptureTriage } from './capture-triage.js';
 import { runReceiptCollector } from './receipt-collector.js';
@@ -30,7 +30,7 @@ import { maybeRefreshMapProjections } from './map-projection-refresh.js';
 import { runPostdeployVerifier } from './postdeploy-verifier.js';
 import { runSevenRingAuditJob } from './seven-ring-audit.js';
 import { runGuardDrill } from './guard-drill.js';
-import { runMorningCockpitBark } from './morning-cockpit-bark.js';
+
 import { runDriftSentinel } from './cron/drift-sentinel.js';
 import { runFactoryCycle } from './lib/factory-cycle.js';
 import { runDiskGuard } from './cron/disk-guard.js';
@@ -38,7 +38,7 @@ import { runPromiseMapNightly } from './promise-map-nightly.js';
 import { runRescanStalenessPatrol } from './cron/rescan-staleness-patrol.js';
 import { sampleMachineVitals } from './machine-vitals.js';
 import { runCaptureAging } from './capture-aging.js';
-import { runAcceptanceAging } from './acceptance-aging.js';
+
 import { runConversationCapture } from './conversation-capture.js';
 import { maybeRunTriageOfficerRank } from './triage-officer-rank.js';
 import { runTriageOfficer15min } from './triage-officer-15min.js';
@@ -103,12 +103,12 @@ export const JOBS = [
   { name: 'app-server-reconcile', cadence: { everySec: 60 }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: reconcileAppServers, description: '按持久HOME/代际身份恢复探查与取消；无授权不启动，不按TTL释放' },
   { name: 'preview-owned-cache-janitor', cadence: { everySec: 60 }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runPreviewCacheJanitor, description: 'MMV专属npm cache过期回收：默认停用、真实任务与持久回执对账' },
   { name: 'us-brain-image-janitor', cadence: { everySec: 60 }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runImageRetentionJanitor, description: 'US固定Brain历史镜像保留：默认停用、每轮最多两项、未知只读精确ID对账' },
-  { name: 'arch-review', cadence: { everySec: 14400 }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: triggerArchReview, description: '架构巡检（自带4h窗口+guard）' },
-  { name: 'ci-patrol', cadence: { cron: '0 8 * * *', tz: BJ_TZ }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: triggerCiPatrol, description: 'CI/CD 巡检（自带北京08:00窗口+当日去重）' },
+
+
   { name: 'daily-backup', cadence: { cron: '0 2 * * *', tz: BJ_TZ }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: scheduleDailyBackup, description: '每日 DB 备份任务创建（自带窗口+当日去重；作战史单库保命符）' },
-  { name: 'line-dreaming', cadence: { cron: '0 5 * * *', tz: BJ_TZ }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: maybeRunLineDreaming, description: 'L1 line 级夜间蒸馏（自带北京05:00窗口+20h去重，晨报前跑完）' },
+
   { name: 'ledger-hygiene', cadence: { cron: '10 5 * * *', tz: BJ_TZ }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: maybeRunLedgerHygiene, description: '账本保鲜守卫（自带北京05:10窗口+20h去重，m1-m7指标+棘轮击穿开issue）' },
-  { name: 'battle-report', cadence: { cron: '0 6 * * *', tz: BJ_TZ }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: maybeGenerateBattleReport, description: '作战日报（北京06:00窗口+当日去重自 gate）' },
+
   { name: 'capture-triage', cadence: { everySec: 600 }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runCaptureTriage, description: '收件箱四路分诊（自带10min间隔gate+批量上限，T10）' },
   { name: 'receipt-collector', cadence: { everySec: 600 }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runReceiptCollector, description: '回执核销（自带10min间隔gate，pending超30min标timeout，T4）' },
   { name: 'map-projection-refresh', cadence: { everySec: 180 }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: maybeRefreshMapProjections, description: '地图投影保鲜：fact_snapshot_headers 与 active 投影 fact_revisions 漂移即 rebuild（自带3min gate；09-05/06 map_radius_stale 案，决策 8f22f71c）' },
@@ -117,17 +117,13 @@ export const JOBS = [
   { name: 'postdeploy-verifier', cadence: { everySec: 300 }, needsPool: true, timeoutMs: 2 * 60 * 1000, handler: runPostdeployVerifier, description: '第5环部署验证（自带5min节流gate，扫 pending_postdeploy 任务执行 postdeploy_check.command，通过→completed，失败3次→P1）' },
   { name: 'seven-ring-audit', cadence: { everySec: 86400 }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runSevenRingAuditJob, description: '七环对账日巡检（自带24h冷却，逐环核对测试入册/调度在跑/指纹新鲜/账本写对/产出消费/告警活着/面板新鲜，棘轮只许降，刀3-T6）' },
   { name: 'guard-drill', cadence: { everySec: 2592000 }, needsPool: true, timeoutMs: 10 * 60 * 1000, handler: runGuardDrill, description: '月度守卫演习（自带30天gate，轮选 auto 守卫全流程弄死→验红→恢复，未叫→P1+Bark，刀4-T4）' },
-  { name: 'morning-cockpit-bark', cadence: { cron: '30 8 * * *', tz: BJ_TZ }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: async (pool) => {
-    const result = await runMorningCockpitBark(pool);
-    if (result?.sent === false) throw new Error(result.error || 'bark_send_failed');
-    return result;
-  }, description: '主理人指挥舱晨报 Bark（北京08:30窗口+当日去重，推送指挥舱链接+完成率/任务数简报，task:80a5be84）' },
+
   { name: 'drift-sentinel', cadence: { everySec: 1800 }, needsPool: false, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runDriftSentinel, description: 'G2 部署漂移哨兵（自带30min自gate，SHA对账+自动补部署，G2 S0）' },
   { name: 'disk-guard', cadence: { everySec: 900 }, needsPool: false, timeoutMs: 120_000, handler: runDiskGuard, description: '磁盘哨兵（15min自gate，宿主SSH逃逸df检测，80/85/90%三级响应，[disk_check]日志）' },
   { name: 'promise-map-nightly', cadence: { cron: '0 2 * * *', tz: 'UTC' }, needsPool: false, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runPromiseMapNightly, description: 'MJ5 S4 承诺地图保鲜对账（每日 UTC 02:00，4 条断言，失败 Bark，刀4）' },
   { name: 'rescan-staleness-patrol', cadence: { everySec: 300 }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: (pool) => runRescanStalenessPatrol(pool), description: '地图照相层 rescan 停滞哨兵（自带5min gate，fact_snapshot_headers 账龄>30min即 P1+晨报AMBER，与派发闸账龄预算同源，P0 9dfd873a 案）' },
   { name: 'capture-aging', cadence: { everySec: 60 }, needsPool: true, timeoutMs: 30_000, handler: runCaptureAging, description: '账龄哨兵：超7天告警+llm_failed重试(≤3次)+超限转parked' },
-  { name: 'acceptance-aging', cadence: { everySec: 3600 }, needsPool: true, timeoutMs: 30_000, handler: runAcceptanceAging, description: '验收超时哨兵：pending/in_review超48h红灯Bark验收人+其中pending转expired(A10②)+历史failed无驳回任务补偿扫描（1h自gate，主理人条件一，决策18174291）' },
+
   { name: 'triage-officer-rank', cadence: { cron: '0 7 * * *', tz: BJ_TZ }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: maybeRunTriageOfficerRank, description: '排序官每日大轮（北京07:00产能感知排序，晨报前1.5h，Top N榜单+两层预算+否决窗90min）' },
   { name: 'triage-officer-15min', cadence: { everySec: 900 }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runTriageOfficer15min, description: '排序官15min规则小轮（纯SQL精确重名归并+否决窗过期自动放行，不走LLM）' },
   { name: 'conversation-capture', cadence: { everySec: 600 }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: async (pool) => {
@@ -203,7 +199,7 @@ export const JOBS = [
     return summary;
   }, description: 'recurring_tasks 定时引擎（任务 3d0db274，5 月起停摆复活：原只挂在废弃 executeTick）：走独立 completion 循环 30s 一跑（任务 942491c2/c8320370：原排在串行轮里，定时精度=轮长 3-9 分钟）；每轮扫活模板，北京时区（template.timezone 可覆盖）、next_run_at 到点即建单；首次启用只写基线不补跑；迟到超 catchup_minutes(默认30) 记 missed+P2；CAS 占位防重、source_id=recurring:<id>:<时间点>；同模板有未完结实例跳过、连续3次告警；透传 assigned_to/due_at/过期，过期未认领取消；落后>10min 告警' },
   { name: 'alerting-flush', cadence: { everySec: 60 }, needsPool: false, timeoutMs: 120_000, handler: () => flushAlertsIfNeeded(), description: 'P1 每小时/P2 每日告警汇总推飞书（任务 309d864c：原只挂在废弃 executeTick，5 月起从未 flush；缓冲与上次刷新时间落 working_memory.alerting_buffers，部署重启不丢）' },
-  { name: 'factory-cycle', cadence: { everySec: 300 }, needsPool: true, timeoutMs: 120_000, livenessIntervalSec: 60, handler: (pool) => runFactoryCycle(pool), description: '技能工厂自动裁判+推进器（任务 2231ecc0 / a5f42455，决策 cc008b7e）：5min 自 gate；执行单终态代码裁判→run-verify 核验→入台账滑窗；逐行按规则推进/清零/退回/建 factory_dispatch 执行单；开关 FACTORY_PUSHER_ENABLED / brain_config factory_pusher_enabled' },
+  { name: 'factory-cycle', cadence: { everySec: 300 }, needsPool: true, timeoutMs: 120_000, livenessIntervalSec: 60, handler: (pool) => runFactoryCycle(pool), description: '已登记Skill任务的自动核验与记账；不从台账自主创建执行任务' },
   // 放末尾：第一轮串行跑到这里时前面所有 job 的哨兵都已刷新，重启后不会把后排 job 误判 dead 再"恢复"。JOBS 经闭包注入——
   // 本模块已 import ops-collector/notion-push-sync，反向 import 会成环（routes/sentinel.js 同款避坑）。
   // scheduler 行推 Notion 滞后一轮 60s，设计 §3.2 接受。

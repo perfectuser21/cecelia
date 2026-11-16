@@ -39,10 +39,9 @@ describe('executor: ci_patrol skill 映射（防 strategist_decision 式降级 /
   });
 });
 
-describe('scheduler-jobs: ci-patrol 已注册', () => {
-  it('JOBS 含 ci-patrol 且 needsPool', () => {
+describe('scheduler-jobs: 仅显式Task可请求CI巡检', () => {
+  it('不再周期注册ci-patrol自主造单', () => {
     const job = JOBS.find((j) => j.name === 'ci-patrol');
-    expect(job).toBeDefined();
-    expect(job.needsPool).toBe(true);
+    expect(job).toBeUndefined();
   });
 });

@@ -13,7 +13,6 @@ const manifest: FeatureManifest = {
   routes: [
     // 所有 /work/* 路由重定向到 /gtd/*
     { path: '/work', redirect: '/gtd/area' },
-    { path: '/work/okr', redirect: '/gtd/okr' },
     { path: '/work/projects', redirect: '/gtd/projects' },
     { path: '/work/tasks', redirect: '/workbench/tasks' },
     { path: '/work/roadmap', component: 'RoadmapView' },
@@ -22,13 +21,11 @@ const manifest: FeatureManifest = {
     { path: '/work/projects/:projectId', component: 'ProjectDetail' },
     { path: '/work/project-panorama', component: 'ProjectPanorama' },
     { path: '/work/whiteboard', component: 'Whiteboard' },
-    { path: '/work/okr/area/:areaId', component: 'AreaOKRDetail' },
     // Legacy redirects
     { path: '/work/dev-tasks', redirect: '/workbench/tasks' },
     { path: '/work/panorama', redirect: '/dashboard/panorama' },
     { path: '/tasks', redirect: '/workbench/tasks' },
     { path: '/projects', redirect: '/gtd/projects' },
-    { path: '/okr', redirect: '/gtd/okr' },
     { path: '/roadmap', redirect: '/work/roadmap' },
     { path: '/whiteboard', redirect: '/work/whiteboard' },
     { path: '/portfolio', redirect: '/gtd/area' },
@@ -45,7 +42,6 @@ const manifest: FeatureManifest = {
     ProjectDetail: () => import('../planning/pages/ProjectDetail'),
     ProjectPanorama: () => import('../planning/pages/ProjectPanorama'),
     Whiteboard: () => import('../planning/pages/Whiteboard'),
-    AreaOKRDetail: () => import('../planning/pages/AreaOKRDetail'),
   },
 };
 

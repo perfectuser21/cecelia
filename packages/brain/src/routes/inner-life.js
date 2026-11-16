@@ -75,6 +75,8 @@ router.get('/', async (_req, res) => {
         undigested_count: undigestedCount,
       },
       reflection: {
+        status: 'dormant',
+        historical: true,
         accumulator: Math.round(accumulator * 10) / 10,
         threshold: reflectionThreshold,
         progress_pct: Math.min(100, Math.round((accumulator / reflectionThreshold) * 100)),

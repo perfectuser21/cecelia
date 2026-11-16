@@ -221,23 +221,12 @@ router.get('/cortex/stats', moduleRouteRateLimit, async (req, res) => {
 
 /**
  * POST /api/brain/cortex/generate-report
- * 手动触发 Cortex 生成系统简报
+ * 内置 Cortex 报告生成已退役
  *
  * Body: { time_range_hours?: number (default: 48) }
  */
-router.post('/cortex/generate-report', async (req, res) => {
-  try {
-    const { time_range_hours = 48 } = req.body || {};
-    const timeRangeHours = Math.max(1, Math.min(168, Number(time_range_hours) || 48));
-
-    const { generateSystemReport } = await import('../cortex.js');
-    const report = await generateSystemReport({ timeRangeHours });
-
-    res.json({ success: true, report });
-  } catch (err) {
-    console.error('[API] cortex/generate-report failed:', err.message);
-    res.status(500).json({ error: err.message });
-  }
+router.post('/cortex/generate-report', (_req, res) => {
+  res.status(410).json({ error: 'report_generation_retired', message: '内置报告生成已退役；由明确任务调用外置 Skill 生成。' });
 });
 
 /**

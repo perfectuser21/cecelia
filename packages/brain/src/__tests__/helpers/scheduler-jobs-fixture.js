@@ -3,7 +3,6 @@ vi.mock('../../gp-shelf-life.js', () => ({ runGpShelfLife: vi.fn().mockResolvedV
 vi.mock('../../map-projection-refresh.js', () => ({ maybeRefreshMapProjections: vi.fn().mockResolvedValue({ skipped: true, reason: 'fixture' }) }));
 vi.mock('../../lib/factory-cycle.js', () => ({ runFactoryCycle: vi.fn().mockResolvedValue({ skipped: true, reason: 'fixture' }) }));
 vi.mock('../../cron/rescan-staleness-patrol.js', () => ({ runRescanStalenessPatrol: vi.fn().mockResolvedValue({ skipped: true, reason: 'fixture' }) }));
-vi.mock('../../acceptance-aging.js', () => ({ runAcceptanceAging: vi.fn().mockResolvedValue({ skipped: true, reason: 'fixture' }) }));
 vi.mock('../../projection/key-results.js', () => ({ runNotionKrProjection: vi.fn().mockResolvedValue({ skipped: true, reason: 'fixture' }) }));
 vi.mock('../../feishu-task-ledger.js', () => ({ maybeRunFeishuTaskLedger: vi.fn().mockResolvedValue({ skipped: true, reason: 'fixture' }) }));
 vi.mock('../../credential-freshness.js', () => ({ maybeRunCredentialFreshness: vi.fn().mockResolvedValue({ skipped: true, reason: 'fixture' }) }));
@@ -39,19 +38,9 @@ vi.mock('../../node-onboarding/service.js', () => ({
 }));
 
 
-vi.mock('../../daily-review-scheduler.js', () => ({
-  triggerArchReview: vi.fn().mockResolvedValue({ triggered: false, skipped_window: true }),
-  triggerCiPatrol: vi.fn().mockResolvedValue({ triggered: false, skipped_window: true }),
-}));
 
 vi.mock('../../daily-backup-scheduler.js', () => ({
   scheduleDailyBackup: vi.fn().mockResolvedValue({ inWindow: false, triggered: false, alreadyDone: false }),
-}));
-vi.mock('../../battle-report.js', () => ({
-  maybeGenerateBattleReport: vi.fn().mockResolvedValue({ skipped: true, reason: 'outside_window' }),
-}));
-vi.mock('../../line-dreaming.js', () => ({
-  maybeRunLineDreaming: vi.fn().mockResolvedValue({ created: false, reason: 'outside_window' }),
 }));
 vi.mock('../../ledger-hygiene.js', () => ({
   maybeRunLedgerHygiene: vi.fn().mockResolvedValue({ triggered: false }),
@@ -74,9 +63,6 @@ vi.mock('../../seven-ring-audit.js', () => ({
 }));
 vi.mock('../../guard-drill.js', () => ({
   runGuardDrill: vi.fn().mockResolvedValue({ skipped: true }),
-}));
-vi.mock('../../morning-cockpit-bark.js', () => ({
-  runMorningCockpitBark: vi.fn().mockResolvedValue({ skipped: true, reason: 'outside_window' }),
 }));
 vi.mock('../../cron/drift-sentinel.js', () => ({
   runDriftSentinel: vi.fn().mockResolvedValue({ skipped: true, reason: 'interval_not_reached' }),

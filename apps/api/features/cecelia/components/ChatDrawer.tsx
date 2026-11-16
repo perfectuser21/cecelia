@@ -14,7 +14,6 @@ import { useRealtimeVoice } from '@features/core/shared/hooks/useRealtimeVoice';
 // ── Route aliases ────────────────────────────────────────
 
 const ROUTE_ALIASES: Record<string, string> = {
-  'okr': '/okr', '目标': '/okr',
   'projects': '/projects', '项目': '/projects',
   'tasks': '/work/tasks', '任务': '/work/tasks',
   'work': '/work', '工作': '/work',

@@ -424,7 +424,7 @@ test('当前功能跑道仅为Dashboard features及选中Ops读者提供验证�
 test('当前候选输入入口逐项读取身份及五项必需任务完整控制封组，混配失去入口资格',t=>{
  const path='scripts/ci/__tests__/basic-candidate-source.test.mjs',f=basicEntryFixture(t,path);
  const live=fileURLToPath(new URL('../../../',import.meta.url));
- const profile='packages/brain/src/lib/existing-ops-closeout-profile.json',bytes=readFileSync(join(live,profile));
+ const profile='packages/brain/src/lib/existing-ops-dormant-boundaries-profile.json',bytes=readFileSync(join(live,profile));
  const controls={...JSON.parse(bytes),[profile]:createHash('sha256').update(bytes).digest('hex')};
  const members=Object.keys(controls).filter(p=>controls[p]!==null),retired=Object.keys(controls).filter(p=>controls[p]===null);
  for(const member of ['scripts/skill_source_ownership.py','scripts/ci/check-basic-results.mjs','scripts/ci/__tests__/basic-results.test.mjs','scripts/ci/__tests__/basic-workflow.test.mjs'])assert.ok(members.includes(member),member);
@@ -436,6 +436,18 @@ test('当前候选输入入口逐项读取身份及五项必需任务完整控�
  assert.ok(row);assert.ok(row.eligible_owner_paths.includes('scripts/ci/run-basic-check.mjs'));
  assert.ok(row.witness.entry.support.some(r=>r.path==='scripts/skill_source_ownership.py'));
  assert.equal(row.input_facts.entry_verified,false);assert.equal(row.execution_status,'not_evaluated');
+ // 新完整组的两个本轮实际变更成员不可缺失、篡改或借旧单成员混配。
+ const assertRejectedHead=()=>{f.source.changed_files=f.git('diff','--name-only',f.source.base_revision,f.source.head_revision).split('\n').filter(Boolean).map(path=>({path}));assert.equal(derived(f).rows.some(r=>r.input_facts.path===path&&r.input_facts.source.side==='head'),false);};
+ for(const member of [profile,'packages/brain/vitest.config.js','scripts/ci/__tests__/basic-brain-debt-restored-selection.test.mjs']){
+  const original=readFileSync(join(f.root,member));
+  for(const missing of [false,true]){
+   if(missing)f.git('rm','--sparse',member);else writeFileSync(join(f.root,member),Buffer.concat([original,Buffer.from('\n')]));
+   f.source.head_revision=f.commit();assertRejectedHead();writeFileSync(join(f.root,member),original);f.source.head_revision=f.commit();
+  }
+ }
+ const config='packages/brain/vitest.config.js',newConfig=readFileSync(join(f.root,config));
+ writeFileSync(join(f.root,config),execFileSync('git',[...VERIFICATION_GIT_OPTIONS,'show','3e827180e50e5c73e999ca744a2689488f75814b:'+config],{cwd:live}));
+ f.source.head_revision=f.commit();assertRejectedHead();writeFileSync(join(f.root,config),newConfig);f.source.head_revision=f.commit();
  const ops='scripts/ci/ops-checks.mjs',newOps=readFileSync(join(f.root,ops));
  writeFileSync(join(f.root,ops),execFileSync('git',[...VERIFICATION_GIT_OPTIONS,'show','10e5943803aa9338f468df7ac19e647967aca7b5:'+ops],{cwd:live}));f.source.head_revision=f.commit();f.source.changed_files=f.git('diff','--name-only',f.source.base_revision,f.source.head_revision).split('\n').filter(Boolean).map(path=>({path}));
  assert.equal(derived(f).rows.some(r=>r.input_facts.path===path&&r.input_facts.source.side==='head'),false,'新workflow不能混入旧Commander单成员');

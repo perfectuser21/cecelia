@@ -17,12 +17,10 @@ export const TASK_CREATION_INVENTORY = Object.freeze([
   { module: 'capture-triage.js', source: 'discovery', creates_executable_task: true, migration_status: 'routed' },
   { module: 'chat-action-dispatcher.js', source: 'conversation', creates_executable_task: true, migration_status: 'routed' },
   { module: 'code-review-trigger.js', source: 'scheduler', creates_executable_task: true, migration_status: 'routed' },
-  { module: 'codex-immune.js', source: 'scheduler', creates_executable_task: true, migration_status: 'routed' },
   { module: 'credentials-health-scheduler.js', source: 'scheduler', creates_executable_task: true, migration_status: 'routed' },
   { module: 'crystallize-orchestrator.js', source: 'scheduler', creates_executable_task: true, migration_status: 'routed' },
   { module: 'credential-expiry-checker.js', source: 'scheduler', creates_executable_task: true, migration_status: 'routed' },
   { module: 'daily-backup-scheduler.js', source: 'scheduler', creates_executable_task: true, migration_status: 'routed' },
-  { module: 'daily-review-scheduler.js', source: 'discovery', creates_executable_task: true, migration_status: 'routed' },
   { module: 'decision-executor.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
   { module: 'dept-heartbeat.js', source: 'discovery', creates_executable_task: true, migration_status: 'routed' },
   { module: 'dispatch-helpers.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
@@ -53,7 +51,8 @@ export const TASK_CREATION_INVENTORY = Object.freeze([
   { module: 'recurring.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
   { module: 'review-gate.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
   { module: 'routes/capture-atoms.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
-  { module: 'routes/acceptance.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
+  // 独立人工验收门户已停挂；历史实现留存不授予现役建单资格。
+  { module: 'routes/acceptance.js', source: 'child', creates_executable_task: false, migration_status: 'retired' },
   { module: 'routes/actions.js', source: 'api', creates_executable_task: true, migration_status: 'routed' },
   { module: 'routes/execution.js', source: 'api', creates_executable_task: true, migration_status: 'routed' },
   { module: 'routes/golden-paths.js', source: 'discovery', creates_executable_task: true, migration_status: 'routed' },
@@ -70,9 +69,8 @@ export const TASK_CREATION_INVENTORY = Object.freeze([
   { module: 'image-retention-controller.js', source: 'scheduler', creates_executable_task: true, migration_status: 'routed' },
   { module: 'preview-cache-controller.js', source: 'scheduler', creates_executable_task: true, migration_status: 'routed' },
   { module: 'task-intake.js', source: 'api', creates_executable_task: true, migration_status: 'routed' },
-  { module: 'task-generator-scheduler.js', source: 'scheduler', creates_executable_task: true, migration_status: 'routed' },
   { module: 'lib/company-kr-analysis.js', source: 'scheduler', creates_executable_task: true, migration_status: 'routed' },
-  // 技能工厂推进器 / 自动裁判（任务 a5f42455 / 2231ecc0）：经 actions.createTask 建 factory_dispatch 执行单 / run-verify 核验单 / 阶段工单。
+  // 已登记任务的后续核验仍经factory-cycle注入actions边界；台账自主推进已退役。
   { module: 'lib/workflow-assembly-reconcile-tasks.js', source: 'scheduler', creates_executable_task: true, migration_status: 'routed' },
   { module: 'lib/commander-v2-control.js', source: 'scheduler', creates_executable_task: true, migration_status: 'routed' },
   { module: 'lib/commander-improvement.js', source: 'scheduler', creates_executable_task: true, migration_status: 'routed' },

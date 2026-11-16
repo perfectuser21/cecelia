@@ -80,24 +80,6 @@ async function checkRing3DeployFresh(pool) {
 }
 
 /**
- * 环4：账本写对——24h 内有 line_ledger 文档写入
- */
-async function checkRing4LedgerWritten(pool) {
-  const { rows } = await pool.query(
-    `SELECT id, title, created_at
-     FROM design_docs
-     WHERE type = 'line_ledger'
-       AND created_at >= NOW() - INTERVAL '24 hours'
-     ORDER BY created_at DESC
-     LIMIT 1`,
-  );
-  if (rows.length === 0) {
-    return { ok: false, detail: '24h 内无 line_ledger 写入（账本停更）' };
-  }
-  return { ok: true, detail: `最新账本：${rows[0].title?.slice(0, 40)} (${new Date(rows[0].created_at).toISOString().slice(0, 10)})` };
-}
-
-/**
  * 环5：产出有人消费——24h 内有 ci_patrol 任务被完成
  */
 async function checkRing5OutputConsumed(pool) {
@@ -174,17 +156,17 @@ const RING_LABELS = [
   '测试入册',
   '定时循环在跑',
   '部署指纹是新的',
-  '账本写对',
   '产出有人消费',
   '告警通道活着',
   '面板数据新鲜',
 ];
 
+// 环4日摘要已退役；保留其余环编号，不将缺席的摘要伪装为通过。
+const ACTIVE_RING_NUMBERS = [1, 2, 3, 5, 6, 7];
 const RING_CHECKS = [
   checkRing1TestRegistered,
   checkRing2SchedulerRunning,
   checkRing3DeployFresh,
-  checkRing4LedgerWritten,
   checkRing5OutputConsumed,
   checkRing6AlertAlive,
   checkRing7PanelFresh,
@@ -218,7 +200,7 @@ export async function runSevenRingAudit(pool) {
     const isHardFlaw = !result.ok && !result.warn;
     if (isHardFlaw) hardFlaws++;
     rings.push({
-      ring: i + 1,
+      ring: ACTIVE_RING_NUMBERS[i],
       label: RING_LABELS[i],
       ok: result.ok,
       warn: result.warn ?? false,

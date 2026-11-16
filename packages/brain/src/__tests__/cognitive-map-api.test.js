@@ -57,6 +57,13 @@ describe('GET /api/brain/cognitive-map', () => {
     expect(ids).toContain('tick');
     expect(ids).toContain('thalamus');
     expect(ids).toContain('emotion');
+    const emotion = res.body.subsystems.find(node => node.id === 'emotion');
+    expect(emotion.status).toBe('dormant');
+    expect(emotion.metrics.extra.current_emotion).toBeUndefined();
+    expect(emotion.metrics.extra.historical_emotion).toEqual({ mood: 'calm' });
+    const cognitive = res.body.subsystems.find(node => node.id === 'cognitive');
+    expect(cognitive.status).toBe('dormant');
+    expect(cognitive.metrics.last_active_at).toBeNull();
     expect(ids).toContain('memory');
     expect(ids).toContain('dialog');
 

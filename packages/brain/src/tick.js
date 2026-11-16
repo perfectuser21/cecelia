@@ -5,7 +5,7 @@
 
 // D1.7b: executeTick body 移到 tick-runner.js 后，本文件保留：
 // 入口/状态管理（getTickStatus / runTickSafe / startTickLoop / initTickLoop /
-// enableTick / disableTick）+ test helpers + Codex immune。executeTick 用到的
+// enableTick / disableTick）+ test helpers。executeTick 用到的
 // 50+ 模块在 tick-runner.js 内 import；本文件只保留 getTickStatus 等还在用的
 // + re-export 给老 caller 的（dispatchNextTask / drainTick 等）。
 // Phase D2.4: pool 不再需要（getTickStatus / getStartupErrors 已搬到 tick-status.js，_recordRecoveryAttempt 已搬到 tick-recovery.js）
@@ -115,7 +115,6 @@ const GOAL_EVAL_INTERVAL_MS = parseInt(process.env.CECELIA_GOAL_EVAL_INTERVAL_MS
 //   D1.7c plugin1+plugin2 (8 scheduled jobs)
 //   D2.1 reset helpers → tick-state.js / D2.2 tick-loop.js
 //   D2.3 tick-recovery.js / D2.4 tick-status.js
-//   D3 codex-immune.js
 import {
   _recordRecoveryAttempt,
   tryRecoverTickLoop,
@@ -123,7 +122,6 @@ import {
   enableTick,
   disableTick,
 } from './tick-recovery.js';
-import { ensureCodexImmune } from './codex-immune.js';
 
 export {
   getTickStatus,
@@ -137,7 +135,6 @@ export {
   initTickLoop,
   tryRecoverTickLoop,
   _recordRecoveryAttempt,
-  ensureCodexImmune,
   dispatchNextTask,
   processCortexTask,
   selectNextDispatchableTask,

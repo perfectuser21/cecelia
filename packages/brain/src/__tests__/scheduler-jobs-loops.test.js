@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { makePool } from "./helpers/scheduler-jobs-fixture.js";
 import { startSchedulerJobsLoop, stopSchedulerJobsLoop, JOBS } from '../scheduler-jobs.js';
 import * as schedulerJobsModule from '../scheduler-jobs.js';
-import { triggerArchReview } from '../daily-review-scheduler.js';
+import { scheduleDailyBackup } from '../daily-backup-scheduler.js';
 const { startProjectionJobsLoop, stopProjectionJobsLoop } = schedulerJobsModule;
 describe('scheduler-jobs loop 幂等与重入守卫', () => {
   beforeEach(() => {
@@ -37,17 +37,17 @@ describe('scheduler-jobs loop 幂等与重入守卫', () => {
     const pool = makePool();
     startSchedulerJobsLoop(pool);
     await vi.advanceTimersByTimeAsync(60 * 1000);
-    expect(triggerArchReview).toHaveBeenCalledTimes(1);
+    expect(scheduleDailyBackup).toHaveBeenCalledTimes(1);
   });
 
   it('重入守卫：慢 handler 挂起时前进 120s 不叠加并发', async () => {
     const pool = makePool();
-    triggerArchReview.mockImplementationOnce(() => new Promise(() => {}));
+    scheduleDailyBackup.mockImplementationOnce(() => new Promise(() => {}));
     startSchedulerJobsLoop(pool);
     await vi.advanceTimersByTimeAsync(120 * 1000);
-    // 首轮在 arch-review 处挂起，running 仍为 true，第二次 tick 应被守卫短路，
-    // arch-review 只被调用一次（无守卫则会被第二轮再调一次）。
-    expect(triggerArchReview).toHaveBeenCalledTimes(1);
+    // 首轮在 daily-backup 处挂起，running 仍为 true，第二次 tick 应被守卫短路，
+    // daily-backup 只被调用一次（无守卫则会被第二轮再调一次）。
+    expect(scheduleDailyBackup).toHaveBeenCalledTimes(1);
   });
 
   it('stopSchedulerJobsLoop 后前进 60s 不再触发', async () => {
@@ -55,7 +55,24 @@ describe('scheduler-jobs loop 幂等与重入守卫', () => {
     startSchedulerJobsLoop(pool);
     stopSchedulerJobsLoop();
     await vi.advanceTimersByTimeAsync(60 * 1000);
-    expect(triggerArchReview).not.toHaveBeenCalled();
+    expect(scheduleDailyBackup).not.toHaveBeenCalled();
+  });
+
+  it('停止后重新启动只保留新一条循环，并恢复预期计数', async () => {
+    const pool = makePool();
+    const firstTimer = startSchedulerJobsLoop(pool);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(scheduleDailyBackup).toHaveBeenCalledTimes(1);
+    stopSchedulerJobsLoop();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(scheduleDailyBackup).toHaveBeenCalledTimes(1);
+    const secondTimer = startSchedulerJobsLoop(pool);
+    expect(secondTimer).not.toBe(firstTimer);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(scheduleDailyBackup).toHaveBeenCalledTimes(2);
+    const expectedWrites = pool.query.mock.calls.filter(([, args]) => args?.[0] === 'scheduler_jobs_expected');
+    expect(expectedWrites).toHaveLength(2);
+    expect(expectedWrites.map(([, args]) => JSON.parse(args[1]))).toEqual([{ count: JOBS.length }, { count: JOBS.length }]);
   });
 });
 
@@ -89,7 +106,7 @@ describe('projection 独立调度 loop', () => {
   it('慢速串行 job 挂起时，projection 仍在独立 loop 立即执行并按 60s 继续', async () => {
     expect(schedulerJobsModule.startProjectionJobsLoop).toBeTypeOf('function');
     const pool = makePool();
-    triggerArchReview.mockImplementationOnce(() => new Promise(() => {}));
+    scheduleDailyBackup.mockImplementationOnce(() => new Promise(() => {}));
     const projectionRunner = vi.fn().mockResolvedValue([]);
 
     startSchedulerJobsLoop(pool);
@@ -99,7 +116,7 @@ describe('projection 独立调度 loop', () => {
     expect(projectionRunner).toHaveBeenCalledTimes(1);
 
     await vi.advanceTimersByTimeAsync(60 * 1000);
-    expect(triggerArchReview).toHaveBeenCalledTimes(1);
+    expect(scheduleDailyBackup).toHaveBeenCalledTimes(1);
     expect(projectionRunner).toHaveBeenCalledTimes(2);
     expect(projectionRunner.mock.calls[0][1].map(job => job.name)).toEqual([
       'notion-task-command-ingest',
@@ -125,16 +142,6 @@ describe('capture-triage job 注册', () => {
     expect(job).toBeTruthy();
     expect(job.needsPool).toBe(true);
     expect(typeof job.handler).toBe('function');
-  });
-});
-
-describe('line-dreaming job 注册', () => {
-  it('JOBS 里存在 line-dreaming，且排在 battle-report 之前', () => {
-    const dreamIdx = JOBS.findIndex((j) => j.name === 'line-dreaming');
-    const reportIdx = JOBS.findIndex((j) => j.name === 'battle-report');
-    expect(dreamIdx).toBeGreaterThanOrEqual(0);
-    expect(reportIdx).toBeGreaterThanOrEqual(0);
-    expect(dreamIdx).toBeLessThan(reportIdx);
   });
 });
 
@@ -180,8 +187,7 @@ describe('scheduler-jobs Preview Brain 隔离（BRAIN_PREVIEW=1 幂等保护）'
     const timer = startSchedulerJobsLoop(pool);
     expect(timer).not.toBeNull();
     await vi.advanceTimersByTimeAsync(60 * 1000);
-    const { triggerArchReview } = await import('../daily-review-scheduler.js');
-    expect(triggerArchReview).toHaveBeenCalledTimes(1);
+    expect(scheduleDailyBackup).toHaveBeenCalledTimes(1);
   });
 
   // [BEHAVIOR] B-4: Preview 模式打印含 "BRAIN_PREVIEW" 字样的日志
