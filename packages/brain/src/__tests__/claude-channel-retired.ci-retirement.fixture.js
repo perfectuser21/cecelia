@@ -104,7 +104,7 @@ const COMMANDER_AUDIT_CI_COHORT={...PLANNER_RETIREMENT_CI_COHORT,
  'existing-ops-stage-source.js':'ddb44a3487e8f63c5feeededf008b82c192e6d50c48a103218263015074f4da2'};
 const SCRIPT_CLEANUP_CI_COHORT={...COMMANDER_AUDIT_CI_COHORT,
  'existing-ops-stage-source.js':'ebc1bfd56b0d5989e63089c07bd6c8ceac4fdadf266ea879092ba6e91fe6e81f'};
-export const CI_READER_PROFILES=['existing-ops-script-cleanup-profile.json','existing-ops-resource-retirement-profile.json','existing-ops-business-smoke-retirement-profile.json','existing-ops-foundation-release-profile.json'];
+export const CI_READER_PROFILES=['existing-ops-script-cleanup-profile.json','existing-ops-resource-retirement-profile.json','existing-ops-business-smoke-retirement-profile.json','existing-ops-fixed-checks-profile.json','existing-ops-foundation-release-profile.json'];
 const SCRIPT_CLEANUP_PROFILE_COHORT={...SCRIPT_CLEANUP_CI_COHORT,
  'existing-ops-script-cleanup-profile.json':'fc9b4df6a9c128f5186571e9a89f3a45c818171544730f88b1c5d5977247a98f'};
 const RESOURCE_RETIREMENT_CI_COHORT={...SCRIPT_CLEANUP_PROFILE_COHORT,
@@ -116,12 +116,20 @@ const BUSINESS_SMOKE_RETIREMENT_CI_COHORT={...WORKFLOW_REGISTRATION_CI_COHORT,
  'existing-ops-stage-source.js':'c284c66242416671c69336a5b4e29a295942757fc26aa50f5443030ff2465e94',
  'existing-ops-stage-modes.js':'fe9b633afc1cc4bd128dd4b92a37bad0adebbfbf7fcc144ce09c7664fa965620',
  'existing-ops-business-smoke-retirement-profile.json':'18e8a6aff7886a7875468d923010ef1936fb100b497abc17f9e09c05b83218bd'};
+const FIXED_CHECKS_CI_COHORT={...BUSINESS_SMOKE_RETIREMENT_CI_COHORT,
+ 'existing-ops-stage-source.js':'5a772db4a4457f3a5d71fd0de1300074adc1aae9088ddd75330c7bc7fc5fe97f',
+ 'existing-ops-stage-modes.js':'b31aba92f87e76ccb139064c483c66adcd244b56582bad485478d8ef49bcf3df',
+ 'existing-ops-fixed-checks-profile.json':'9cca439f60bccb91b84726e4a59d4f9b1f58782bab25fd135a68974262000aa2'};
 const FOUNDATION_RELEASE_CI_COHORT={...BUSINESS_SMOKE_RETIREMENT_CI_COHORT,
  'existing-ops-stage-source.js':'5fdae1a4a7ba88bebef553a41857c3e331f94f6cbef4b66dc540b11acb1e6961',
  'existing-ops-stage-modes.js':'5f49ccddfce66416fc62a84c160c843767ce6f19653dd22bb95e76e248d69642',
  'existing-ops-foundation-release-profile.json':'1ff02f908373ff61365f413433f2ed1c61450e4c3ab813920631db38da862b57'};
-const currentMemberCount=Object.keys(FOUNDATION_RELEASE_CI_COHORT).length;
-export const ciVersionGuardCohorts=()=>[...COHORTS,COMMANDER_CI_COHORT,SKILL_RETIREMENT_CI_COHORT,PLANNER_RETIREMENT_CI_COHORT,COMMANDER_AUDIT_CI_COHORT,SCRIPT_CLEANUP_CI_COHORT,SCRIPT_CLEANUP_PROFILE_COHORT,RESOURCE_RETIREMENT_CI_COHORT,WORKFLOW_REGISTRATION_CI_COHORT,BUSINESS_SMOKE_RETIREMENT_CI_COHORT,FOUNDATION_RELEASE_CI_COHORT];
+const FOUNDATION_FIXED_CHECKS_CI_COHORT={...FIXED_CHECKS_CI_COHORT,
+ 'existing-ops-stage-source.js':'07e48bf0cf6fddba764249029ef01dac7d090e53e2badee8b1c943a91018e0e0',
+ 'existing-ops-stage-modes.js':'992eae2093ef2d02bb269514f25b5c2ef742149da2bfa9f38b7c24cd0a61908e',
+ 'existing-ops-foundation-release-profile.json':'1ff02f908373ff61365f413433f2ed1c61450e4c3ab813920631db38da862b57'};
+const currentMemberCount=Object.keys(FOUNDATION_FIXED_CHECKS_CI_COHORT).length;
+export const ciVersionGuardCohorts=()=>[...COHORTS,COMMANDER_CI_COHORT,SKILL_RETIREMENT_CI_COHORT,PLANNER_RETIREMENT_CI_COHORT,COMMANDER_AUDIT_CI_COHORT,SCRIPT_CLEANUP_CI_COHORT,SCRIPT_CLEANUP_PROFILE_COHORT,RESOURCE_RETIREMENT_CI_COHORT,WORKFLOW_REGISTRATION_CI_COHORT,BUSINESS_SMOKE_RETIREMENT_CI_COHORT,FIXED_CHECKS_CI_COHORT,FOUNDATION_RELEASE_CI_COHORT,FOUNDATION_FIXED_CHECKS_CI_COHORT];
 export function registerCiRetirementGuardTests({root,base,scan}){
  describe('当前来源完整闭包及执行防复活',()=>{
   it('Commander审计CI完整闭包只读通过，CI或测试选择摘要漂移仍拒绝',()=>{
@@ -165,7 +173,7 @@ export function registerCiRetirementGuardTests({root,base,scan}){
   });
   it('旧script-cleanup完整Git封组仍通过，新旧stage或profile混配拒绝',()=>{
    const current=base(),stage=path.join(root,'existing-ops-stage-source.js'),profile=path.join(root,'existing-ops-resource-retirement-profile.json');
-   const previous=new Map([...current.keys()].filter(file=>file!==profile&&!file.endsWith('/existing-ops-business-smoke-retirement-profile.json')&&!file.endsWith('/existing-ops-foundation-release-profile.json')).map(file=>[file,execFileSync('git',['--no-replace-objects','show','91d37b2c3aab471aeaf88df25eec6dda9cb306d3:'+path.relative(path.resolve(root,'../../../..'),file)],{cwd:root,encoding:'utf8',maxBuffer:1024*1024})]));
+   const previous=new Map([...current.keys()].filter(file=>file!==profile&&!file.endsWith('/existing-ops-business-smoke-retirement-profile.json')&&!file.endsWith('/existing-ops-fixed-checks-profile.json')&&!file.endsWith('/existing-ops-foundation-release-profile.json')).map(file=>[file,execFileSync('git',['--no-replace-objects','show','91d37b2c3aab471aeaf88df25eec6dda9cb306d3:'+path.relative(path.resolve(root,'../../../..'),file)],{cwd:root,encoding:'utf8',maxBuffer:1024*1024})]));
    expect(scan(previous)).toEqual([]);
    const mixed=base();mixed.set(stage,previous.get(stage));expect(scan(mixed).some(hit=>hit.rule==='E1')).toBe(true);
    const missing=base();missing.delete(profile);expect(scan(missing).some(hit=>hit.rule==='E1')).toBe(true);

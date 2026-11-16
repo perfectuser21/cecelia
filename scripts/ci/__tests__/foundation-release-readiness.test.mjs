@@ -52,5 +52,5 @@ test('实际CI只在main显式触发正式验证，原PR源码门不持有生产
  assert.ok(verify.run.includes('--event workflow_dispatch --ref refs/heads/main'));
  assert.doesNotMatch(JSON.stringify(verify),/CECELIA_INTERNAL_TOKEN|secrets\./);
  assert.ok(job.steps.some(s=>s.uses==='actions/upload-artifact@v4'&&s.if==='always()'));
- for(const id of ['plan','security','checks','ci-passed'])assert.doesNotMatch(JSON.stringify(workflow.jobs[id]),/CECELIA_INTERNAL_TOKEN/);
+ for(const id of ['security','checks','runtime-integration','pwa-upgrade','codeql','ci-passed'])assert.doesNotMatch(JSON.stringify(workflow.jobs[id]),/CECELIA_INTERNAL_TOKEN/);
 });

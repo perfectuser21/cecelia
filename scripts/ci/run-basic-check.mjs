@@ -1,4 +1,4 @@
-import { spawnSync, execFileSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { readdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -6,7 +6,7 @@ import { opsChecks } from './ops-checks.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 
-export function commandsFor(component, shard, context = {}) {
+export function commandsFor(component, shard) {
   const step = (directory, command, ...args) => ({ cwd: resolve(root, directory), command, args });
   const vitest = directory => step(directory, 'npx', '--no-install', 'vitest', 'run', '--reporter=dot', '--silent');
   const shellTests = directory => {
@@ -55,7 +55,7 @@ export function commandsFor(component, shard, context = {}) {
     case 'dashboard':
       return [vitest('apps/api'), vitest('apps/dashboard'), step('apps/dashboard', 'npm', 'run', 'build')];
     case 'mcp': return [vitest('packages/mcp-readonly')];
-    case 'ops': return opsChecks(root, {paths: context.paths ?? null});
+    case 'ops': return opsChecks(root);
     case 'scripts': {
       const tests = readdirSync(resolve(root, 'scripts/ci/__tests__'), { withFileTypes: true })
         .filter(entry => /^(basic-.*|run-basic-check|brain-source-only-deploy)\.test\.mjs$/.test(entry.name))
@@ -76,21 +76,6 @@ export function commandsFor(component, shard, context = {}) {
     }
     default: throw new Error(`未知 CI 组件：${component}`);
   }
-}
-
-// 仅固定事件SHA可决定PR裁剪；未知模式、缺失对象或Git失败不能当作无变更。
-export function readCheckContext(env = process.env, cwd = root) {
-  if (env.CI_CHECK_SCOPE === undefined || env.CI_CHECK_SCOPE === 'full') return {};
-  if (env.CI_CHECK_SCOPE !== 'changed') throw new Error('Invalid CI check scope');
-  const {CI_BASE_SHA: base, CI_HEAD_SHA: head} = env;
-  if (![base, head].every(value => typeof value === 'string' && /^[a-f0-9]{40}$/.test(value))) {
-    throw new Error('CI scope requires fixed BASE/HEAD SHA');
-  }
-  const raw = execFileSync('git', ['--no-replace-objects', 'diff', '--no-ext-diff', '--no-textconv', '--name-only', '--no-renames', '-z', base, head, '--'],
-    {cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 16 * 1024 * 1024});
-  const paths = raw ? raw.slice(0, -1).split('\0') : [];
-  if (!paths.length) throw new Error('CI scope has no changed paths');
-  return {paths};
 }
 
 // 只使用真实退出状态；日志中的 passed/OOM/No tests 都不是成功凭据。
@@ -125,14 +110,9 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     const list = args[0] === '--list';
     if (list) args.shift();
     if (args.length < 1 || args.length > 2) throw new Error('用法：run-basic-check.mjs [--list] component [shard]');
-    const steps = commandsFor(args[0], args[1], readCheckContext());
+    const steps = commandsFor(args[0], args[1]);
     if (list) process.stdout.write(`${JSON.stringify(steps)}\n`);
-    else {
-      const env = {...process.env};
-      // 范围只约束本次顶层执行，不污染测试自己创建的私有CLI/Git进程。
-      for (const key of ['CI_CHECK_SCOPE','CI_BASE_SHA','CI_HEAD_SHA']) delete env[key];
-      process.exitCode = runSteps(steps, {env});
-    }
+    else process.exitCode = runSteps(steps);
   } catch (error) {
     process.stderr.write(`${error.message}\n`);
     process.exitCode = 1;
