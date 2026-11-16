@@ -6,14 +6,13 @@ import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import { planChecks } from '../basic-scope.mjs';
 import { commandsFor } from '../run-basic-check.mjs';
 
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 const require = createRequire(import.meta.url);
 const versionEntry = '实际PR必须通过现仓库Brain版本策略';
 const versionTestPath = 'scripts/ci/__tests__/basic-brain-version-policy.test.mjs';
-// 实际PR版本门由主CI plan执行；此入口只供隔离Git fixture验证拒绝边界。
+// 实际PR版本门由主CI scripts矩阵执行；此入口只供隔离Git fixture验证拒绝边界。
 if (process.env.BRAIN_VERSION_POLICY_FIXTURE === '1') test(versionEntry, t => {
   const eventName = process.env.GITHUB_EVENT_NAME;
   if (eventName !== 'pull_request') {
@@ -65,7 +64,7 @@ function versionFixture(t, { version = '1.0.0', fragment = false } = {}) {
     return result.stdout.trim();
   };
   const put = (path, bytes) => { mkdirSync(dirname(join(directory, path)), { recursive: true }); writeFileSync(join(directory, path), bytes); };
-  for (const path of [versionTestPath, 'scripts/ci/basic-scope.mjs', 'scripts/ci/run-basic-check.mjs',
+  for (const path of [versionTestPath, 'scripts/ci/run-basic-check.mjs',
     'scripts/ci/ops-checks.mjs', 'scripts/ci/check-brain-version-bump.sh', '.github/workflows/ci.yml']) {
     mkdirSync(dirname(join(directory, path)), { recursive: true }); copyFileSync(join(root, path), join(directory, path));
   }
@@ -185,18 +184,18 @@ test('正式scripts入口自动选择新的实际PR版本策略文件且不使�
   assert.equal(selected.length, 1, '必须唯一发现正式Node测试入口');
   assert.equal(selected[0].args.filter(path => path === versionTestPath).length, 1);
   assert.ok(!selected[0].args.some(arg => arg.startsWith('--test-name-pattern')));
-  assert.ok(planChecks([versionTestPath]).some(row => row.component === 'scripts'));
 });
 
 
-test('必需主CI的plan在真实固定BASE/HEAD上执行同一版本增量门禁', t => {
+test('必需scripts矩阵在真实固定BASE/HEAD上执行同一版本增量门禁', t => {
   const yaml = require('js-yaml');
   const workflow = yaml.load(readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8'));
-  const step = workflow.jobs.plan.steps.find(step => step.name === 'Require actual Brain version increment');
-  assert.ok(step?.run, '版本门必须在plan执行，不能仅作为可筛选测试存在');
+  const step = workflow.jobs.checks.steps.find(step => step.name === 'Require actual Brain version increment');
+  assert.ok(step?.run, '版本门必须在scripts矩阵执行，不能仅作为可筛选测试存在');
   assert.equal(step.env.BASE_REF, '${{ github.event.pull_request.base.sha || github.event.before }}');
   assert.equal(step.env.HEAD_REF, '${{ github.event.pull_request.head.sha || github.sha }}');
-  assert.ok(workflow.jobs['ci-passed'].needs.includes('plan'));
+  assert.ok(workflow.jobs['ci-passed'].needs.includes('checks'));
+  assert.equal(step.if,"matrix.component == 'scripts' && (github.event_name == 'pull_request' || github.event_name == 'push')");
   for (const [version, fragment, accepted] of [['1.0.0', false, false], ['1.0.0', true, false], ['1.0.1', false, true]]) {
     const f = versionFixture(t, { version, fragment });
     const result = spawnSync('bash', ['-e', '-o', 'pipefail', '-c', step.run], {
