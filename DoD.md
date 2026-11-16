@@ -6,5 +6,7 @@
   Test: manual:node --test scripts/ci/__tests__/basic-current-pg-gate.test.mjs
 - [ ] 凭据恢复/保活/预览/体外哨兵仅在隔离CLI替身运行；Ops实际发现新增fixture，不用固定历史数量判断覆盖。
   Test: manual:node --test scripts/ci/__tests__/basic-ops-coverage.test.mjs
+- [ ] 新CI定义具有固定完整来源封组，历史完整组仍有效；未知、缺失、篡改和单成员混配不取得资格，静态PG闭包不执行候选代码。
+  Test: manual:npm exec -w packages/brain -- vitest run src/lib/__tests__/existing-ops-current-ci-source.test.js src/lib/__tests__/existing-ops-workspace-source.test.js src/lib/__tests__/implementation-ci-workflow.test.js
 - [ ] 事实、版本、DoD及默认scripts通过；独立复审、完整CI和正常PR合并后回写任务并清理本轮资源。
   Test: manual:node scripts/ci/run-basic-check.mjs scripts
