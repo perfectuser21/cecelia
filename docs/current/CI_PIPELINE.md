@@ -1,6 +1,6 @@
 ---
 id: current-ci-pipeline
-version: 3.0.7
+version: 3.0.8
 updated: 2026-11-16
 authority: CURRENT_STATE
 ---
@@ -12,6 +12,8 @@ authority: CURRENT_STATE
 ## PR 与 main
 
 只有 `ci.yml` 承担 PR 合并前 CI。main push 复用同一入口并跑全部现役服务组件。
+
+现有4份工作流：主CI、夜间深度回归、健康哨兵和CI红灯告警。无实际调用方、发布计划生成器或业务安装步骤的 `workflow-foundation-release.yml` 模板已清退。Workflow发布、真实PG注册与故障恢复验收仍在主CI的 `runtime-integration` 中；`foundation-publish.mjs` 保留为已部署业务包验收后的注册脚本。此次清退没有接入或触发生产自动部署/注册。
 
 | job | 实际责任 |
 |---|---|
