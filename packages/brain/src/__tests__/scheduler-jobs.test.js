@@ -406,3 +406,26 @@ it('默认调度完整一轮只消费注入pool，不触canonical DB/网络/子�
   expect(schedulerBoundary.network).not.toHaveBeenCalled();
   expect(schedulerBoundary.process).not.toHaveBeenCalled();
 });
+
+
+it.each([
+  ['credential-freshness', '../credential-freshness.js', 'maybeRunCredentialFreshness'],
+  ['seven-ring-audit', '../seven-ring-audit.js', 'runSevenRingAuditJob'],
+  ['crystal-judge', '../crystal-judge.js', 'maybeRunCrystalJudge'],
+  ['line-dreaming', '../line-dreaming.js', 'maybeRunLineDreaming'],
+  ['ledger-hygiene', '../ledger-hygiene.js', 'maybeRunLedgerHygiene'],
+  ['ops-notion-push', '../notion-push-sync.js', 'runOpsNotionPush'],
+  ['ops-notion-ingest', '../ops-notion-ingest.js', 'runOpsNotionIngest'],
+])('现役 %s 从真实调度入口取得同一连接并留哨兵', async (name, module, exported) => {
+  vi.clearAllMocks();
+  const handler = (await import(module))[exported];
+  const pool = makePool();
+  const job = JOBS.find(row => row.name === name);
+  expect(job).toBeDefined();
+  const [result] = await runSchedulerJobsOnce(pool, [job]);
+  expect(handler).toHaveBeenCalledTimes(1);
+  expect(handler.mock.calls[0][0]).toBe(pool);
+  expect(result).toMatchObject({ name, ok: true });
+  const sentinel = pool.query.mock.calls.find(([, args]) => args?.[0] === `${SENTINEL_KEY_PREFIX}${name}`);
+  expect(JSON.parse(sentinel[1][1])).toMatchObject({ ok: true });
+});

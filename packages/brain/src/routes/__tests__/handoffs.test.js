@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const mockQuery = vi.fn();
 vi.mock('../../db.js', () => ({ default: { query: mockQuery } }));
@@ -93,4 +93,9 @@ describe('GET /api/brain/handoffs — warroom 接力史（relay-baton4 item1）'
     const bad = await (await req())(app).get('/api/brain/handoffs');
     expect(bad.status).toBe(500);
   });
+});
+
+
+afterEach(() => {
+  for (const [sql] of mockQuery.mock.calls) expect(sql.trim()).toMatch(/^SELECT\b/i);
 });

@@ -1,3 +1,24 @@
+// 调度测试只运行真实JOBS编排；所有具体handler是记录用本地替身，禁止探测凭据或宿主。
+vi.mock('../../gp-shelf-life.js', () => ({ runGpShelfLife: vi.fn().mockResolvedValue({ skipped: true, reason: 'fixture' }) }));
+vi.mock('../../map-projection-refresh.js', () => ({ maybeRefreshMapProjections: vi.fn().mockResolvedValue({ skipped: true, reason: 'fixture' }) }));
+vi.mock('../../lib/factory-cycle.js', () => ({ runFactoryCycle: vi.fn().mockResolvedValue({ skipped: true, reason: 'fixture' }) }));
+vi.mock('../../cron/rescan-staleness-patrol.js', () => ({ runRescanStalenessPatrol: vi.fn().mockResolvedValue({ skipped: true, reason: 'fixture' }) }));
+vi.mock('../../acceptance-aging.js', () => ({ runAcceptanceAging: vi.fn().mockResolvedValue({ skipped: true, reason: 'fixture' }) }));
+vi.mock('../../projection/key-results.js', () => ({ runNotionKrProjection: vi.fn().mockResolvedValue({ skipped: true, reason: 'fixture' }) }));
+vi.mock('../../feishu-task-ledger.js', () => ({ maybeRunFeishuTaskLedger: vi.fn().mockResolvedValue({ skipped: true, reason: 'fixture' }) }));
+vi.mock('../../credential-freshness.js', () => ({ maybeRunCredentialFreshness: vi.fn().mockResolvedValue({ skipped: true, reason: 'fixture' }) }));
+vi.mock('../../notion-inlet-ingest.js', () => ({ runNotionInletIngest: vi.fn().mockResolvedValue({ skipped: true, reason: 'fixture' }) }));
+vi.mock('../../notion-gtd-sync.js', () => ({ gtdSyncJobHandler: vi.fn().mockResolvedValue({ skipped: true, reason: 'fixture' }) }));
+vi.mock('../../crm/notion-sync.js', () => ({ runCrmSyncJobs: vi.fn().mockResolvedValue({ skipped: true, reason: 'fixture' }) }));
+vi.mock('../../crystal/coding-evidence.js', () => ({ syncCodingEvidence: vi.fn().mockResolvedValue({ skipped: true, reason: 'fixture' }) }));
+vi.mock('../../notion-mirror-labels.js', () => ({ runMirrorLabelJob: vi.fn().mockResolvedValue({ skipped: true, reason: 'fixture' }) }));
+vi.mock('../../phone-registry-sync.js', () => ({ runPhoneRegistrySync: vi.fn().mockResolvedValue({ skipped: true, reason: 'fixture' }) }));
+vi.mock('../../ops-alarm-ledger.js', () => ({ syncRecurringLedger: vi.fn().mockResolvedValue({ skipped: true, reason: 'fixture' }) }));
+vi.mock('../../lib/phone-rpa-dispatch.js', () => ({ runPhoneRpaDispatch: vi.fn().mockResolvedValue({ skipped: true, reason: 'fixture' }) }));
+vi.mock('../../projection/company-kr-workflow.js', () => ({ runCompanyKrWorkflow: vi.fn().mockResolvedValue({ skipped: true, reason: 'fixture' }) }));
+vi.mock('../../crystal-judge.js', () => ({ maybeRunCrystalJudge: vi.fn().mockResolvedValue({ triggered: false }) }));
+vi.mock('../../ops-notion-ingest.js', async original => ({ ...(await original()), runOpsNotionIngest: vi.fn().mockResolvedValue({ ok: true, updated: 0 }) }));
+vi.mock('../../notion-push-sync.js', async original => ({ ...(await original()), runOpsNotionPush: vi.fn().mockResolvedValue({ ok: true, pushed: 0 }) }));
 vi.mock('../../lib/workflow-assembly-native.js',()=>({runNativeReconcile:vi.fn().mockResolvedValue({checked:0})}));
 vi.mock('../../common-runner-executor.js', () => ({ runCommonRunnerTasks: vi.fn().mockResolvedValue({ dispatched: 0, reaped: 0 }) }));
 
