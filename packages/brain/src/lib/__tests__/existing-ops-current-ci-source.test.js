@@ -131,12 +131,11 @@ it('现役十项PG控制闭包固定读取；缺失、篡改及旧新成员拼�
   for(const text of ['',read(member)+'\n/* unknown control */'])await expect(observe({[member]:text})).rejects.toThrow('basic_ci_source_unproven');
  }
  await expect(observe({[profile]:JSON.stringify({...JSON.parse(read(profile)),unknown:'f'.repeat(64)})})).rejects.toThrow('basic_ci_source_unproven');
- const old=readFixedExistingOpsGitFixture('5278f39a3b915da7e7d8a3b0bbabee2789a8ef06');
  const before=readFixedExistingOpsGitFixture('91d37b2c3aab471aeaf88df25eec6dda9cb306d3');
  for(const member of ['scripts/ci/run-basic-check.mjs']){
   expect(before.read(member)).not.toBe(read(member));
   await expect(observe({[member]:before.read(member)})).rejects.toThrow('basic_ci_source_unproven');
-  await expect(collectBasicCiSources({read:async path=>path===member?old.read(member):before.read(path),ci:before.read('.github/workflows/ci.yml'),revision:before.revision,relations:[],parse:ast,paths:before.paths})).rejects.toThrow();
+  await expect(collectBasicCiSources({read:async path=>path===member?read(member):before.read(path),ci:before.read('.github/workflows/ci.yml'),revision:before.revision,relations:[],parse:ast,paths:before.paths})).rejects.toThrow();
  }
  const olderOps=execFileSync('git',['show','10e5943803aa9338f468df7ac19e647967aca7b5:scripts/ci/ops-checks.mjs'],{cwd:root,encoding:'utf8'});
  await expect(observe({'scripts/ci/ops-checks.mjs':olderOps})).rejects.toThrow('basic_ci_source_unproven');
