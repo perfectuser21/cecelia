@@ -146,6 +146,31 @@ it('现役十项PG控制闭包固定读取；缺失、篡改及旧新成员拼�
  for(const row of pg)await expect(observe({},row.input_path)).rejects.toThrow();
 });
 
+it('Foundation手动发布新封组完整固定，旧封组兼容且发布命令篡改不能继承入口',async()=>{
+ const {readFileSync,existsSync}=await import('node:fs'),{execFileSync}=await import('node:child_process'),{fileURLToPath}=await import('node:url'),{default:yaml}=await import('js-yaml');
+ const root=fileURLToPath(new URL('../../../../../',import.meta.url)),workflow='.github/workflows/ci.yml';
+ const paths=execFileSync('git',['ls-files','-z','--cached','--others','--exclude-standard'],{cwd:root,encoding:'utf8'}).split('\0').filter(p=>p&&existsSync(new URL(p,'file://'+root)));
+ const read=path=>readFileSync(new URL(path,'file://'+root),'utf8');
+ const observe=async(overrides={},missing)=>{const source=async path=>{if(path===missing)throw Error('missing publication control');return overrides[path]??read(path);};return collectBasicCiSources({read:source,ci:await source(workflow),revision:'f'.repeat(40),relations:[],parse:ast,paths});};
+ await expect(observe()).resolves.toEqual(expect.any(Array));
+ for(const member of ['packages/brain/src/lib/existing-ops-foundation-release-profile.json','scripts/ci/__tests__/basic-workflow.test.mjs','scripts/ci/foundation-release-snapshot.mjs','scripts/ci/__tests__/foundation-release-readiness.test.mjs','scripts/ci/pilot-release-verification.mjs']){
+  await expect(observe({},member)).rejects.toThrow();
+  await expect(observe({[member]:read(member)+'\n// unreviewed publication control\n'})).rejects.toThrow('basic_ci_source_unproven');
+ }
+ for(const mutate of [job=>{job.if='true';},job=>{job.needs=[];},job=>{job.steps.find(s=>s.run?.includes('pilot-release-verification.mjs')).run='echo PASS';}]){
+  const doc=yaml.load(read(workflow));mutate(doc.jobs['foundation-release-verification']);await expect(observe({[workflow]:yaml.dump(doc)})).rejects.toThrow('basic_ci_source_unproven');
+ }
+ const before=readFixedExistingOpsGitFixture('6df58b83c8a0814fd16ff5b3d61f8acad33ef480');
+ await expect(collectBasicCiSources({read:async path=>before.read(path),ci:before.read(workflow),revision:before.revision,relations:[],parse:ast,paths:before.paths})).resolves.toEqual(expect.any(Array));
+ await expect(observe({'scripts/ci/__tests__/basic-workflow.test.mjs':before.read('scripts/ci/__tests__/basic-workflow.test.mjs')})).rejects.toThrow('basic_ci_source_unproven');
+ for(const revision of ['a96a0abafd','7682eea73b8b898bbf9a9c802b963d8cdca4f04d']){
+  const full=execFileSync('git',['rev-parse',revision+'^{commit}'],{cwd:root,encoding:'utf8'}).trim(),historical=readFixedExistingOpsGitFixture(full);
+  await expect(collectBasicCiSources({read:async path=>historical.read(path),ci:historical.read(workflow),revision:full,relations:[],parse:ast,paths:historical.paths})).resolves.toEqual(expect.any(Array));
+  await expect(observe({[workflow]:historical.read(workflow),'scripts/ci/__tests__/basic-workflow.test.mjs':historical.read('scripts/ci/__tests__/basic-workflow.test.mjs')})).rejects.toThrow('basic_ci_source_unproven');
+ }
+
+});
+
 it('固定核心CI只证明实际11矩阵与Scripts版本门，不再生成Plan消费边',async()=>{
  const {readFileSync,existsSync}=await import('node:fs'),{execFileSync}=await import('node:child_process'),{fileURLToPath}=await import('node:url');
  const root=fileURLToPath(new URL('../../../../../',import.meta.url));

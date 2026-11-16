@@ -425,7 +425,8 @@ test('当前候选输入入口逐项读取身份及六父任务完整控制封�
  const path='scripts/ci/__tests__/basic-candidate-source.test.mjs',f=basicEntryFixture(t,path);
  const live=fileURLToPath(new URL('../../../',import.meta.url));
  const profile='packages/brain/src/lib/existing-ops-fixed-checks-profile.json',bytes=readFileSync(join(live,profile));
- const controls={...JSON.parse(bytes),[profile]:createHash('sha256').update(bytes).digest('hex')};
+ const foundation='packages/brain/src/lib/existing-ops-foundation-release-profile.json',foundationBytes=readFileSync(join(live,foundation)),foundationControls=JSON.parse(foundationBytes);
+ const controls={...JSON.parse(bytes),[profile]:createHash('sha256').update(bytes).digest('hex'),[foundation]:createHash('sha256').update(foundationBytes).digest('hex'),...Object.fromEntries(['scripts/ci/foundation-release-snapshot.mjs','scripts/ci/__tests__/foundation-release-readiness.test.mjs','scripts/ci/pilot-release-verification.mjs'].map(p=>[p,p.endsWith('foundation-release-readiness.test.mjs')?createHash('sha256').update(readFileSync(join(live,p))).digest('hex'):foundationControls[p]])),'scripts/ci/__tests__/basic-workflow.test.mjs':createHash('sha256').update(readFileSync(join(live,'scripts/ci/__tests__/basic-workflow.test.mjs'))).digest('hex')};
  const members=Object.keys(controls).filter(p=>controls[p]!==null),retired=Object.keys(controls).filter(p=>controls[p]===null);
  for(const member of ['scripts/skill_source_ownership.py','scripts/ci/check-basic-results.mjs','scripts/ci/__tests__/basic-results.test.mjs','scripts/ci/__tests__/basic-workflow.test.mjs'])assert.ok(members.includes(member),member);
  for(const member of ['.github/workflows/ci.yml',...members]){mkdirSync(join(f.root,member,'..'),{recursive:true});writeFileSync(join(f.root,member),readFileSync(join(live,member)));}
@@ -460,7 +461,7 @@ test('当前候选输入入口逐项读取身份及六父任务完整控制封�
   assert.ok(mixed.unproven.some(r=>r.path===path&&r.reason==='entry_unproven'));
   writeFileSync(join(f.root,member),candidate);f.source.head_revision=f.commit();
  }
- for(const member of [profile,'scripts/ci/check-basic-results.mjs','scripts/ci/__tests__/basic-results.test.mjs','scripts/ci/__tests__/basic-workflow.test.mjs']){
+ for(const member of [profile,foundation,'scripts/ci/foundation-release-snapshot.mjs','scripts/ci/__tests__/foundation-release-readiness.test.mjs','scripts/ci/pilot-release-verification.mjs','scripts/ci/check-basic-results.mjs','scripts/ci/__tests__/basic-results.test.mjs','scripts/ci/__tests__/basic-workflow.test.mjs']){
   const original=readFileSync(join(f.root,member),'utf8');
   for(const changed of ['', original+'\n// unknown scope member\n']){
    assert.notEqual(changed,original);writeFileSync(join(f.root,member),changed);f.source.head_revision=f.commit();

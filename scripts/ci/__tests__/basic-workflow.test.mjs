@@ -37,7 +37,7 @@ test('每个声明的源码检查都必须抵达同一个最终结果，没有�
     for (const parent of Array.isArray(needs) ? needs : [needs]) visit(parent);
   }
   visit('ci-passed');
-  assert.deepEqual([...reached].sort(), Object.keys(workflow.jobs).filter(id => !['preview-deploy','preview-cleanup'].includes(id)).sort());
+  assert.deepEqual([...reached].sort(), Object.keys(workflow.jobs).filter(id => !['preview-deploy','preview-cleanup','foundation-release-verification'].includes(id)).sort());
   assert.equal(workflow.jobs['ci-passed'].if, "always() && github.event_name != 'schedule' && github.event.action != 'closed'");
   assert.equal(workflow.jobs['ci-passed'].name, '源码保底通过');
   assert.equal(workflow.jobs.checks.strategy['fail-fast'], false);
@@ -108,7 +108,7 @@ test('统一CI真实合并runner，保持独有命令和产物并隔离安全权
   }),['ci.yml']);
   for(const [id,job]of Object.entries(workflow.jobs))assert.equal(job.uses,undefined,id+'不得复用另一个workflow');
   assert.ok(readFileSync(new URL('../../../.github/workflows/ci.yml',import.meta.url),'utf8').trimEnd().split('\n').length<=500);
-  assert.equal(Object.keys(workflow.jobs).length, 8);
+  assert.equal(Object.keys(workflow.jobs).length, 9);
   const baseline=yaml.load(execFileSync('git',['show','0e2c3c81717ab08ae678a869f526a258f850fec8:.github/workflows/ci.yml'],{cwd:root,encoding:'utf8'}));
   const runtime=workflow.jobs['runtime-integration'];
   assert.deepEqual(runtime.services, baseline.jobs['node-onboarding'].services);
@@ -142,7 +142,7 @@ test('统一CI真实合并runner，保持独有命令和产物并隔离安全权
 test('周扫描仅CodeQL执行，closed仅cleanup；评论写权限限于预览生命周期', () => {
   const normal="github.event_name != 'schedule' && github.event.action != 'closed'";
   for(const [id,job]of Object.entries(workflow.jobs)) {
-    if(!['codeql','preview-deploy','preview-cleanup'].includes(id)) assert.equal(job.if,(['ci-passed','skill-passed'].includes(id)?'always() && ':'')+normal,id);
+    if(!['codeql','preview-deploy','preview-cleanup','foundation-release-verification'].includes(id)) assert.equal(job.if,(['ci-passed','skill-passed'].includes(id)?'always() && ':'')+normal,id);
     if(!['preview-deploy','preview-cleanup'].includes(id))assert.notEqual(job.permissions?.['pull-requests'],'write',id);
     if(id!=='codeql')assert.notEqual(job.permissions?.['security-events'],'write',id);
   }
@@ -165,7 +165,7 @@ test('周扫描仅CodeQL执行，closed仅cleanup；评论写权限限于预览�
 test('现役全量PR含UI预览实际展开19个runner，不重复计算定义合并', () => {
   const selected = workflow.jobs.checks.strategy.matrix.include;
   assert.equal(selected.length, 11);
-  const expanded = Object.entries(workflow.jobs).filter(([id]) => id !== 'preview-cleanup').map(([id, job]) => {
+  const expanded = Object.entries(workflow.jobs).filter(([id]) => !['preview-cleanup','foundation-release-verification'].includes(id)).map(([id, job]) => {
     if (id === 'checks') return selected.length;
     const matrix = job.strategy?.matrix;
     if (!matrix) return 1;
@@ -182,12 +182,12 @@ test('现役全量PR含UI预览实际展开19个runner，不重复计算定义�
 test('真实YAML事件表达式隔离closed/weekly，普通PR push manual严格汇总', () => {
   function context(name, action='') {
     return {github:{event_name:name,actor:'owner',repository:'example/repo',head_ref:'feature/ui',ref:'refs/heads/main',event:{action,pull_request:{number:42,user:{login:'owner'},head:{repo:{full_name:'example/repo'}},labels:[]}}},
-      always:()=>true,contains:(xs,x)=>xs.includes(x),startsWith:(s,p)=>s.startsWith(p),format:(s,...values)=>s.replace(/\{(\d+)\}/g,(_,i)=>values[Number(i)])};
+      inputs:{foundation_release_verification:false},always:()=>true,contains:(xs,x)=>xs.includes(x),startsWith:(s,p)=>s.startsWith(p),format:(s,...values)=>s.replace(/\{(\d+)\}/g,(_,i)=>values[Number(i)])};
   }
   const evaluate=(expression,ctx)=>runInNewContext(expression.replace(/github\.event\.pull_request\.labels\.\*\.name/g,'github.event.pull_request.labels.map(label => label.name)'),ctx);
   for(const event of ['pull_request','push','workflow_dispatch']) {
     const ctx=context(event,event==='pull_request'?'opened':'');
-    for(const [id,job]of Object.entries(workflow.jobs))if(!['preview-deploy','preview-cleanup'].includes(id)) assert.equal(evaluate(job.if,ctx),true,event+':'+id);
+    for(const [id,job]of Object.entries(workflow.jobs))if(!['preview-deploy','preview-cleanup'].includes(id)) assert.equal(evaluate(job.if,ctx),id!=='foundation-release-verification',event+':'+id);
   }
   const closed=context('pull_request','closed'),scheduled=context('schedule');
   for(const [id,job]of Object.entries(workflow.jobs)) {
@@ -195,6 +195,10 @@ test('真实YAML事件表达式隔离closed/weekly，普通PR push manual严格�
     assert.equal(evaluate(job.if,scheduled),id==='codeql','schedule:'+id);
   }
   const deploy=workflow.jobs['preview-deploy'];
+  const release=context('workflow_dispatch');release.inputs.foundation_release_verification=true;
+  assert.equal(evaluate(workflow.jobs['foundation-release-verification'].if,release),true);
+  release.github.ref='refs/heads/feature/untrusted';
+  assert.equal(evaluate(workflow.jobs['foundation-release-verification'].if,release),false);
   assert.equal(evaluate(deploy.if,context('pull_request','opened')),true); // UI差异在job内部判定后才可调用预览action。
   assert.equal(evaluate(deploy.if,context('pull_request','opened')),true);
   const group=ctx=>evaluate(workflow.concurrency.group.match(/\$\{\{([\s\S]+)\}\}/)[1],ctx);

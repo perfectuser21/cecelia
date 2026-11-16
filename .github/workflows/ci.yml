@@ -12,6 +12,11 @@ name: CI
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      foundation_release_verification:
+        description: 验证已正式登记的发布就绪报告Workflow
+        type: boolean
+        default: false
   schedule:
     - cron: 0 3 * * 1
 permissions:
@@ -262,6 +267,35 @@ jobs:
         uses: ./.github/actions/preview-cleanup
         with: {ts-authkey: '${{ secrets.TS_AUTHKEY }}', deploy-token: '${{ secrets.DEPLOY_TOKEN }}', brain-url: '${{ secrets.BRAIN_DEPLOY_URL || ''http://100.71.151.105:5241'' }}', github-token: '${{ secrets.GITHUB_TOKEN }}'}
     if: github.event_name == 'pull_request' && github.event.action == 'closed'
+  foundation-release-verification:
+    name: Foundation正式发布验证
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.foundation_release_verification == true
+    needs: [ci-passed]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions: {contents: read}
+    steps:
+      - uses: actions/checkout@v4
+        with: {fetch-depth: 0, persist-credentials: false}
+      - uses: actions/setup-node@v4
+        with: {node-version: '22', cache: npm}
+      - name: 安装固定依赖
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: 连接现役Brain只读快照接口
+        uses: tailscale/github-action@v2
+        with: {authkey: '${{ secrets.TS_AUTHKEY }}'}
+      - name: 获取本次main的正式Workflow快照
+        env: {CECELIA_INTERNAL_TOKEN: '${{ secrets.CECELIA_INTERNAL_TOKEN }}'}
+        run: node scripts/ci/foundation-release-snapshot.mjs "$GITHUB_SHA" "$RUNNER_TEMP/foundation-release/snapshot.json"
+      - name: 执行全部已登记发布回归
+        run: node scripts/ci/pilot-release-verification.mjs --repo-root . --snapshot "$RUNNER_TEMP/foundation-release/snapshot.json" --output-dir "$RUNNER_TEMP/foundation-release/proof" --event workflow_dispatch --ref refs/heads/main
+      - name: 保留原始发布报告与失败证据
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: foundation-release-verification-${{ github.sha }}
+          path: ${{ runner.temp }}/foundation-release/
+          if-no-files-found: error
   ci-passed:
     name: 源码保底通过
     needs:

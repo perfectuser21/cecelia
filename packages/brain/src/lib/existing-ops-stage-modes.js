@@ -82,3 +82,15 @@ export const FIXED_PROFILE_PATH='packages/brain/src/lib/existing-ops-fixed-check
 const FIXED_SHA='9cca439f60bccb91b84726e4a59d4f9b1f58782bab25fd135a68974262000aa2',fixedText=readFileSync(new URL('./existing-ops-fixed-checks-profile.json',import.meta.url),'utf8');
 if(createHash('sha256').update(fixedText).digest('hex')!==FIXED_SHA)reject();
 export const REVIEWED_FIXED_CHECKS={...JSON.parse(fixedText),[FIXED_PROFILE_PATH]:FIXED_SHA};
+/** 手动Foundation发布入口的完整已审封组；保留历史PG控制封组原身份。 */
+export const FOUNDATION_PROFILE_PATH='packages/brain/src/lib/existing-ops-foundation-release-profile.json';
+const foundationSha='1ff02f908373ff61365f413433f2ed1c61450e4c3ab813920631db38da862b57',foundationText=readFileSync(new URL('./existing-ops-foundation-release-profile.json',import.meta.url),'utf8');
+if(createHash('sha256').update(foundationText).digest('hex')!==foundationSha)throw Error('basic_ci_source_unproven');
+export const REVIEWED_FOUNDATION_RELEASE={...JSON.parse(foundationText),[FOUNDATION_PROFILE_PATH]:foundationSha};
+
+// 合并固定核心检查与手动发布；只复用已封印清单，不动态扩大允许来源。
+export const REVIEWED_FOUNDATION_FIXED_CHECKS={...REVIEWED_FIXED_CHECKS,[FOUNDATION_PROFILE_PATH]:REVIEWED_FOUNDATION_RELEASE[FOUNDATION_PROFILE_PATH],
+ 'scripts/ci/__tests__/basic-workflow.test.mjs':'2d969e97dd0a72f8555400b041ec3772d1d85f0321b27bb7a4cac18d9458f807',
+ 'scripts/ci/foundation-release-snapshot.mjs':REVIEWED_FOUNDATION_RELEASE['scripts/ci/foundation-release-snapshot.mjs'],
+ 'scripts/ci/__tests__/foundation-release-readiness.test.mjs':'b0b806af90f3675c88e8e79d2d7f46fe9b2f801ab3cfdf1afb3d7f982fa782fc',
+ 'scripts/ci/pilot-release-verification.mjs':REVIEWED_FOUNDATION_RELEASE['scripts/ci/pilot-release-verification.mjs']};

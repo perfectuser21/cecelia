@@ -1,0 +1,378 @@
+{
+  "key": "foundation_release_readiness",
+  "name": "底座发布就绪报告",
+  "capability_id": "2fa4d085-1451-4f3f-8fa1-b6d4bacdb1b6",
+  "channel": "internal",
+  "form": "commander_foundation",
+  "version": "1.0.0",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "expected_brain_sha": {
+        "type": "string",
+        "pattern": "^[a-f0-9]{40}$"
+      },
+      "expected_brain_version": {
+        "type": "string",
+        "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"
+      }
+    },
+    "required": [
+      "expected_brain_sha",
+      "expected_brain_version"
+    ],
+    "additionalProperties": false
+  },
+  "output_schema": {
+    "type": "object",
+    "properties": {
+      "report_sha256": {
+        "type": "string"
+      },
+      "snapshot_sha256": {
+        "type": "string"
+      },
+      "brain_sha": {
+        "type": "string"
+      },
+      "brain_version": {
+        "type": "string"
+      },
+      "released": {
+        "type": "boolean"
+      },
+      "report_present": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "report_sha256",
+      "snapshot_sha256",
+      "brain_sha",
+      "brain_version",
+      "released",
+      "report_present"
+    ],
+    "additionalProperties": false
+  },
+  "output_mapping": {
+    "report_sha256": "$activity.report.report_sha256",
+    "snapshot_sha256": "$activity.report.snapshot_sha256",
+    "brain_sha": "$activity.report.brain_sha",
+    "brain_version": "$activity.report.brain_version",
+    "released": "$activity.cleanup.released",
+    "report_present": "$activity.cleanup.report_present"
+  },
+  "runtime": {
+    "kind": "commander-foundation-v1",
+    "profile_ref": {
+      "repo": "perfectuser21/cecelia",
+      "path": "packages/brain/scripts/commander-workflow/operations/release-readiness/profile.json",
+      "revision": "84a75cf8ae537951c8411aff096e31cbf1d507de",
+      "digest": "sha256:d86c263e322c37c20e00faa41e4c6703e1b122f06c3a069d970997704331d453"
+    },
+    "timeout_ms": 300000,
+    "cleanup_timeout_ms": 120000,
+    "commander_timeout_ms": 90000,
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "expected_brain_sha": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{40}$"
+        },
+        "expected_brain_version": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"
+        }
+      },
+      "required": [
+        "expected_brain_sha",
+        "expected_brain_version"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "activities": [
+    {
+      "key": "report",
+      "name": "生成发布就绪报告",
+      "order": 1,
+      "executor_kind": "code",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "expected_brain_sha": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{40}$"
+          },
+          "expected_brain_version": {
+            "type": "string",
+            "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"
+          }
+        },
+        "required": [
+          "expected_brain_sha",
+          "expected_brain_version"
+        ],
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "report_sha256": {
+            "type": "string"
+          },
+          "snapshot_sha256": {
+            "type": "string"
+          },
+          "brain_sha": {
+            "type": "string"
+          },
+          "brain_version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "report_sha256",
+          "snapshot_sha256",
+          "brain_sha",
+          "brain_version"
+        ],
+        "additionalProperties": false
+      },
+      "input_mapping": {
+        "expected_brain_sha": "$input.expected_brain_sha",
+        "expected_brain_version": "$input.expected_brain_version"
+      },
+      "acceptance": [
+        "Brain健康状态、版本和SHA匹配目标，Task及已存在的派单Run身份匹配",
+        "独立checker读回真实snapshot/report/effect，哈希一致且动作计数为1"
+      ],
+      "implementation": {
+        "kind": "code",
+        "ref": "packages/brain/scripts/commander-workflow/operations/release-readiness/report.mjs",
+        "version": "1.0.0",
+        "repo": "perfectuser21/cecelia",
+        "path": "packages/brain/scripts/commander-workflow/operations/release-readiness/report.mjs",
+        "revision": "84a75cf8ae537951c8411aff096e31cbf1d507de",
+        "digest": "sha256:47cedc734ee642d49b0232fe299765ebac510c9f60abbc5f324e05ca34537367"
+      },
+      "runtime": {
+        "kind": "code",
+        "ref": "packages/brain/scripts/commander-workflow/operations/release-readiness/report.mjs",
+        "version": "1.0.0",
+        "repo": "perfectuser21/cecelia",
+        "path": "packages/brain/scripts/commander-workflow/operations/release-readiness/report.mjs",
+        "revision": "84a75cf8ae537951c8411aff096e31cbf1d507de",
+        "digest": "sha256:47cedc734ee642d49b0232fe299765ebac510c9f60abbc5f324e05ca34537367",
+        "transport": "script"
+      },
+      "steps": [
+        {
+          "key": "collect_brain_snapshot",
+          "name": "生成发布就绪报告",
+          "order": 1,
+          "reads": [
+            "expected_brain_sha",
+            "expected_brain_version"
+          ],
+          "writes": [
+            "report_sha256",
+            "snapshot_sha256",
+            "brain_sha",
+            "brain_version"
+          ],
+          "implementation": {
+            "kind": "code",
+            "ref": "packages/brain/scripts/commander-workflow/operations/release-readiness/report.mjs",
+            "version": "1.0.0",
+            "repo": "perfectuser21/cecelia",
+            "path": "packages/brain/scripts/commander-workflow/operations/release-readiness/report.mjs",
+            "revision": "84a75cf8ae537951c8411aff096e31cbf1d507de",
+            "digest": "sha256:47cedc734ee642d49b0232fe299765ebac510c9f60abbc5f324e05ca34537367"
+          },
+          "on_fail": "abort",
+          "dod": {
+            "mode": "checkpoint",
+            "readback": {
+              "type": "file",
+              "checker": "packages/brain/scripts/commander-workflow/operations/release-readiness/checker.mjs",
+              "checks": [
+                "report_content",
+                "single_effect"
+              ]
+            }
+          }
+        }
+      ],
+      "implementation_bindings": [
+        {
+          "kind": "code",
+          "ref": "packages/brain/scripts/commander-workflow/operations/release-readiness/profile.json",
+          "version": "1.0.0",
+          "repo": "perfectuser21/cecelia",
+          "path": "packages/brain/scripts/commander-workflow/operations/release-readiness/profile.json",
+          "revision": "84a75cf8ae537951c8411aff096e31cbf1d507de",
+          "digest": "sha256:d86c263e322c37c20e00faa41e4c6703e1b122f06c3a069d970997704331d453"
+        },
+        {
+          "kind": "code",
+          "ref": "packages/brain/scripts/commander-workflow/operations/release-readiness/adapter.mjs",
+          "version": "1.0.0",
+          "repo": "perfectuser21/cecelia",
+          "path": "packages/brain/scripts/commander-workflow/operations/release-readiness/adapter.mjs",
+          "revision": "84a75cf8ae537951c8411aff096e31cbf1d507de",
+          "digest": "sha256:ea4adee80202e4985d13b7dce2bdff18899e7f07e3acad7e01938c9716f0586c"
+        },
+        {
+          "kind": "code",
+          "ref": "packages/brain/scripts/commander-workflow/operations/release-readiness/checker.mjs",
+          "version": "1.0.0",
+          "repo": "perfectuser21/cecelia",
+          "path": "packages/brain/scripts/commander-workflow/operations/release-readiness/checker.mjs",
+          "revision": "84a75cf8ae537951c8411aff096e31cbf1d507de",
+          "digest": "sha256:63770999f6bd839f77afd704753c0454b099c0a7a9e5093722f24828fab5076a"
+        },
+        {
+          "kind": "code",
+          "ref": "packages/brain/scripts/commander-workflow/operations/release-readiness/cleanup.mjs",
+          "version": "1.0.0",
+          "repo": "perfectuser21/cecelia",
+          "path": "packages/brain/scripts/commander-workflow/operations/release-readiness/cleanup.mjs",
+          "revision": "84a75cf8ae537951c8411aff096e31cbf1d507de",
+          "digest": "sha256:7e9be97f4683e086013a7055d76aacbc71c4913d379dad2e69bebe6ad1673649"
+        },
+        {
+          "kind": "code",
+          "ref": "packages/brain/scripts/commander-workflow/operations/release-readiness/report.mjs",
+          "version": "1.0.0",
+          "repo": "perfectuser21/cecelia",
+          "path": "packages/brain/scripts/commander-workflow/operations/release-readiness/report.mjs",
+          "revision": "84a75cf8ae537951c8411aff096e31cbf1d507de",
+          "digest": "sha256:47cedc734ee642d49b0232fe299765ebac510c9f60abbc5f324e05ca34537367"
+        },
+        {
+          "kind": "code",
+          "ref": "packages/brain/scripts/commander-workflow/operations/release-readiness/shared.mjs",
+          "version": "1.0.0",
+          "repo": "perfectuser21/cecelia",
+          "path": "packages/brain/scripts/commander-workflow/operations/release-readiness/shared.mjs",
+          "revision": "84a75cf8ae537951c8411aff096e31cbf1d507de",
+          "digest": "sha256:d3461d04b130fd2fadb334037af5fd35198de3b073f1ac7a1df94b329fbfed2f"
+        }
+      ]
+    },
+    {
+      "key": "cleanup",
+      "name": "释放本轮占位并保留证据",
+      "order": 2,
+      "executor_kind": "code",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "expected_brain_sha": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{40}$"
+          },
+          "expected_brain_version": {
+            "type": "string",
+            "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"
+          }
+        },
+        "required": [
+          "expected_brain_sha",
+          "expected_brain_version"
+        ],
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "released": {
+            "type": "boolean"
+          },
+          "report_present": {
+            "type": "boolean"
+          },
+          "report_sha256": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "released",
+          "report_present",
+          "report_sha256"
+        ],
+        "additionalProperties": false
+      },
+      "input_mapping": {
+        "expected_brain_sha": "$input.expected_brain_sha",
+        "expected_brain_version": "$input.expected_brain_version"
+      },
+      "acceptance": [
+        "只释放本Task/Run的lease，外来占位保持不动",
+        "独立checker确认清理计数为1且原报告证据保留"
+      ],
+      "implementation": {
+        "kind": "code",
+        "ref": "packages/brain/scripts/commander-workflow/operations/release-readiness/cleanup.mjs",
+        "version": "1.0.0",
+        "repo": "perfectuser21/cecelia",
+        "path": "packages/brain/scripts/commander-workflow/operations/release-readiness/cleanup.mjs",
+        "revision": "84a75cf8ae537951c8411aff096e31cbf1d507de",
+        "digest": "sha256:7e9be97f4683e086013a7055d76aacbc71c4913d379dad2e69bebe6ad1673649"
+      },
+      "runtime": {
+        "kind": "code",
+        "ref": "packages/brain/scripts/commander-workflow/operations/release-readiness/cleanup.mjs",
+        "version": "1.0.0",
+        "repo": "perfectuser21/cecelia",
+        "path": "packages/brain/scripts/commander-workflow/operations/release-readiness/cleanup.mjs",
+        "revision": "84a75cf8ae537951c8411aff096e31cbf1d507de",
+        "digest": "sha256:7e9be97f4683e086013a7055d76aacbc71c4913d379dad2e69bebe6ad1673649",
+        "transport": "script"
+      },
+      "steps": [
+        {
+          "key": "release_owned_lease",
+          "name": "释放本轮占位并保留证据",
+          "order": 1,
+          "reads": [
+            "expected_brain_sha",
+            "expected_brain_version"
+          ],
+          "writes": [
+            "released",
+            "report_present",
+            "report_sha256"
+          ],
+          "implementation": {
+            "kind": "code",
+            "ref": "packages/brain/scripts/commander-workflow/operations/release-readiness/cleanup.mjs",
+            "version": "1.0.0",
+            "repo": "perfectuser21/cecelia",
+            "path": "packages/brain/scripts/commander-workflow/operations/release-readiness/cleanup.mjs",
+            "revision": "84a75cf8ae537951c8411aff096e31cbf1d507de",
+            "digest": "sha256:7e9be97f4683e086013a7055d76aacbc71c4913d379dad2e69bebe6ad1673649"
+          },
+          "on_fail": "abort",
+          "dod": {
+            "mode": "checkpoint",
+            "readback": {
+              "type": "file",
+              "checker": "packages/brain/scripts/commander-workflow/operations/release-readiness/checker.mjs",
+              "checks": [
+                "resource_released",
+                "evidence_preserved"
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

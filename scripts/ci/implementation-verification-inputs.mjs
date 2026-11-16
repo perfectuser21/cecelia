@@ -228,7 +228,11 @@ const BUSINESS_SMOKE_RETIREMENT_ENTRY_PROTOCOL={...JSON.parse(businessProfileTex
 const FIXED_PROFILE_PATH='packages/brain/src/lib/existing-ops-fixed-checks-profile.json', FIXED_SHA='9cca439f60bccb91b84726e4a59d4f9b1f58782bab25fd135a68974262000aa2',fixedText=readFileSync(new URL('../../packages/brain/src/lib/existing-ops-fixed-checks-profile.json',import.meta.url),'utf8');
 if(sha(fixedText)!==FIXED_SHA)fail('FIXED_PROFILE_MISMATCH');
 const FIXED_CHECKS_ENTRY_PROTOCOL={...JSON.parse(fixedText),[FIXED_PROFILE_PATH]:FIXED_SHA};
-const entryProtocolsFor = digest => digest === '7569948b26aef8374c7f81935c29655a225375102e73992617309c3a8c8bcfa5' ? [FIXED_CHECKS_ENTRY_PROTOCOL] : digest === '763f9075175442249e9500a3d6c55936e2b7c424344f9319baac5fe08ccd5128' ? [RESOURCE_RETIREMENT_ENTRY_PROTOCOL] : digest === '1ac9c420d1ff0a6a681d486dd117c7c935b0c55f0e14f4ba98e2e730be68204a' ? [RESOURCE_RETIREMENT_ENTRY_PROTOCOL,BUSINESS_SMOKE_RETIREMENT_ENTRY_PROTOCOL] : digest === '014b5b54984ff322b0783c6070113199673efd53bb900ea9934d038de3cd5e5d' ? [COMMANDER_AUDIT_ENTRY_PROTOCOL,SCRIPT_CLEANUP_ENTRY_PROTOCOL] : digest === SKILL_RETIREMENT_CI ? [SKILL_RETIREMENT_ENTRY_PROTOCOL,PLANNER_RETIREMENT_ENTRY_PROTOCOL] : ENTRY_PROTOCOLS_BY_WORKFLOW[digest];
+const FOUNDATION_PROFILE_PATH='packages/brain/src/lib/existing-ops-foundation-release-profile.json', FOUNDATION_PROFILE_SHA='1ff02f908373ff61365f413433f2ed1c61450e4c3ab813920631db38da862b57', foundationProfileText=readFileSync(new URL('../../packages/brain/src/lib/existing-ops-foundation-release-profile.json',import.meta.url),'utf8');
+if(sha(foundationProfileText)!==FOUNDATION_PROFILE_SHA) fail('FOUNDATION_PROFILE_MISMATCH');
+const FOUNDATION_RELEASE_ENTRY_PROTOCOL={...JSON.parse(foundationProfileText),[FOUNDATION_PROFILE_PATH]:FOUNDATION_PROFILE_SHA};
+const FOUNDATION_FIXED_CHECKS_ENTRY_PROTOCOL={...FIXED_CHECKS_ENTRY_PROTOCOL,[FOUNDATION_PROFILE_PATH]:FOUNDATION_PROFILE_SHA,'scripts/ci/__tests__/basic-workflow.test.mjs':'2d969e97dd0a72f8555400b041ec3772d1d85f0321b27bb7a4cac18d9458f807','scripts/ci/foundation-release-snapshot.mjs':FOUNDATION_RELEASE_ENTRY_PROTOCOL['scripts/ci/foundation-release-snapshot.mjs'],'scripts/ci/__tests__/foundation-release-readiness.test.mjs':'b0b806af90f3675c88e8e79d2d7f46fe9b2f801ab3cfdf1afb3d7f982fa782fc','scripts/ci/pilot-release-verification.mjs':FOUNDATION_RELEASE_ENTRY_PROTOCOL['scripts/ci/pilot-release-verification.mjs']};
+const entryProtocolsFor = digest => digest === 'f0c62163548023720101d8608e3cbf156e5939b4721039f0606225c0fea3c5d0' ? [FOUNDATION_FIXED_CHECKS_ENTRY_PROTOCOL] : digest === 'b85efe37ad0cb363d9e0436758e45eb17355b21ad56c6053b60308b280f8fdb2' ? [FOUNDATION_RELEASE_ENTRY_PROTOCOL] : digest === '7569948b26aef8374c7f81935c29655a225375102e73992617309c3a8c8bcfa5' ? [FIXED_CHECKS_ENTRY_PROTOCOL] : digest === '763f9075175442249e9500a3d6c55936e2b7c424344f9319baac5fe08ccd5128' ? [RESOURCE_RETIREMENT_ENTRY_PROTOCOL] : digest === '1ac9c420d1ff0a6a681d486dd117c7c935b0c55f0e14f4ba98e2e730be68204a' ? [RESOURCE_RETIREMENT_ENTRY_PROTOCOL,BUSINESS_SMOKE_RETIREMENT_ENTRY_PROTOCOL] : digest === '014b5b54984ff322b0783c6070113199673efd53bb900ea9934d038de3cd5e5d' ? [COMMANDER_AUDIT_ENTRY_PROTOCOL,SCRIPT_CLEANUP_ENTRY_PROTOCOL] : digest === SKILL_RETIREMENT_CI ? [SKILL_RETIREMENT_ENTRY_PROTOCOL,PLANNER_RETIREMENT_ENTRY_PROTOCOL] : ENTRY_PROTOCOLS_BY_WORKFLOW[digest];
 const functionalEntry=entry=>Boolean(entryProtocolsFor(entry?.canonical_sha256??''));
 const UNIT_CONFIGS=[
  {component:'brain',directory:'packages/brain',path:'packages/brain/vitest.config.js'},
@@ -268,7 +272,7 @@ function unitEntry(read,side){
  const signature=sha(JSON.stringify(canonical(doc)));if(!entryProtocolsFor(signature))return null;
  const support=[workflow.reference];let selected;
  for(const seals of entryProtocolsFor(signature)){
-  if(read(side,FIXED_PROFILE_PATH)?seals!==FIXED_CHECKS_ENTRY_PROTOCOL:read(side,BUSINESS_PROFILE_PATH)&&seals!==BUSINESS_SMOKE_RETIREMENT_ENTRY_PROTOCOL)continue;
+  if(read(side,FIXED_PROFILE_PATH)?seals!==(read(side,FOUNDATION_PROFILE_PATH)?FOUNDATION_FIXED_CHECKS_ENTRY_PROTOCOL:FIXED_CHECKS_ENTRY_PROTOCOL):read(side,FOUNDATION_PROFILE_PATH)?seals!==FOUNDATION_RELEASE_ENTRY_PROTOCOL:read(side,BUSINESS_PROFILE_PATH)&&seals!==BUSINESS_SMOKE_RETIREMENT_ENTRY_PROTOCOL)continue;
   const files=[];let matches=true;
   for(const [path,expected] of Object.entries(seals)){
    const file=read(side,path);if(expected===null){if(file){matches=false;break;}continue;}if(file?.reference.sha256!==expected){matches=false;break;}
@@ -278,7 +282,7 @@ function unitEntry(read,side){
  }
  if(!selected)return null;
  support.push(...selected.map(({file})=>file.reference));
- return {profile:'basic',fixedChecks:signature==='7569948b26aef8374c7f81935c29655a225375102e73992617309c3a8c8bcfa5',canonical_sha256:signature,workflow:workflow.reference,support,
+ return {profile:'basic',fixedChecks:['7569948b26aef8374c7f81935c29655a225375102e73992617309c3a8c8bcfa5','f0c62163548023720101d8608e3cbf156e5939b4721039f0606225c0fea3c5d0'].includes(signature),canonical_sha256:signature,workflow:workflow.reference,support,
   declaration_only:true,execution_status:'not_evaluated'};
 }
 function runnerSelector(path,entry,paths){
