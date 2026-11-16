@@ -62,7 +62,7 @@ export const REVIEWED_BUSINESS_SMOKE_RETIREMENT={...JSON.parse(text),[BUSINESS_P
 const RUNNER='scripts/ci/run-basic-check.mjs',CONFIG='scripts/ci/deep-integration.config.mjs';
 const nodes=n=>!n||typeof n!=='object'?[]:[...(n.type?[n]:[]),...Object.values(n).flatMap(v=>Array.isArray(v)?v.flatMap(nodes):nodes(v))];
 const reject=()=>{throw Error('basic_ci_source_unproven');};
-export async function collectReviewedBusinessPgSources({read,parse,relation}){
+export async function collectReviewedBusinessPgSources({read,parse,relation,profile=BUSINESS_PROFILE_PATH}){
  const cases=nodes(parse(await read(RUNNER))).filter(n=>n.type==='SwitchCase'&&n.test?.value==='brain-integration');
  if(cases.length!==1)reject();
  const steps=nodes(cases[0]).filter(n=>n.type==='CallExpression'&&n.callee?.name==='step'&&n.arguments[1]?.value==='npx');
@@ -71,8 +71,14 @@ export async function collectReviewedBusinessPgSources({read,parse,relation}){
  if(JSON.stringify(args.slice(0,7))!==JSON.stringify(['packages/brain','npx','--no-install','vitest','run','--config','../../'+CONFIG])||args.at(-1)!=='--reporter=dot')reject();
  const tests=args.slice(7,-1);
  if(tests.length!==10||new Set(tests).size!==10||tests.some(p=>!/^src\/__tests__\/integration\/[a-z0-9-]+\.pg\.integration\.test\.js$/.test(p)))reject();
- relation('packages/brain/src/lib/existing-ops-stage-modes.js',BUSINESS_PROFILE_PATH,'reviewed_basic_ci_source_profile');
+ relation('packages/brain/src/lib/existing-ops-stage-modes.js',profile,'reviewed_basic_ci_source_profile');
  relation(RUNNER,CONFIG,'reviewed_pr_postgres_config_selector');
  for(const p of tests){const input='packages/brain/'+p;if(!await read(input))reject();relation(RUNNER,input,'reviewed_pr_postgres_test_selector');}
  for(const [consumer,input] of [[CONFIG,'packages/brain/vitest.config.js'],[CONFIG,'scripts/ci/debt-pg.config.mjs'],['scripts/ci/debt-pg.config.mjs','scripts/ci/debt-pg-tests.json'],['scripts/ci/debt-pg.config.mjs','packages/brain/vitest.config.js']])relation(consumer,input,'reviewed_pr_postgres_config_input');
 }
+
+// 固定11核心矩阵的完整只读控制组；旧组不覆盖。
+export const FIXED_PROFILE_PATH='packages/brain/src/lib/existing-ops-fixed-checks-profile.json';
+const FIXED_SHA='c1c29a922e42a025463d2ed7a3dba53a672feb0be3e4034f0d5093dc7e8a42d5',fixedText=readFileSync(new URL('./existing-ops-fixed-checks-profile.json',import.meta.url),'utf8');
+if(createHash('sha256').update(fixedText).digest('hex')!==FIXED_SHA)reject();
+export const REVIEWED_FIXED_CHECKS={...JSON.parse(fixedText),[FIXED_PROFILE_PATH]:FIXED_SHA};

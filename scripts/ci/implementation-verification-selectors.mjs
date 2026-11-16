@@ -155,3 +155,114 @@ export function selectPinnedSkillVerificationInput({filePath,configPath,configTe
  return {selected:!!matched.length&&!filePath.split('/').some(p=>p.startsWith('.')||p==='node_modules'),witness:{kind:'finite_pinned_skill_selector',component,
   config_path:configPath,config_sha256:sha(configText),skill_selector_sha256:sha(skillText),include,matched_include:matched,execution_status:'not_evaluated'}};
 }
+
+// 仅解释已封印历史入口；当前固定核心CI不调用这些路径裁剪规则。
+const ORDER = ['brain-unit', 'brain-integration', 'image', 'mcp', 'dashboard', 'ops', 'scripts'];
+// 独立只读MCP没有已证现役消费者；包自身变更仍验证，不进入Brain全量默认。
+const ACTIVE = ORDER.filter(component => component !== 'mcp');
+// 现役前端为 apps/dashboard；已退役根 frontend 不再创建源码任务。
+const SHARED_RUNTIME = ['brain-unit', 'brain-integration', 'image', 'ops'];
+const DOCUMENT = /\.(?:md|txt|rst|png|jpe?g|gif|svg|webp|pdf)$/i;
+const DOCUMENT_NAME = /(?:^|\/)(?:README|CHANGELOG|CONTRIBUTING|CODE_OF_CONDUCT|SECURITY|LICENSE)\.md$/i;
+const ROOT_DOCUMENT = /^(?:AGENTS|CLAUDE|DEFINITION|PRD|DoD)\.md$/i;
+
+// 按文件名分段，避免嵌套正则对连续点号产生指数级回溯。
+function isConfiguration(path) {
+  const name = path.slice(path.lastIndexOf('/') + 1);
+  const parts = name.split('.');
+  return (['vitest', 'vite', 'eslint'].includes(parts[0]) && parts.slice(1).includes('config')) ||
+    (parts[0] === 'tsconfig' && parts.at(-1) === 'json') ||
+    name === '.eslintrc' || name.startsWith('.eslintrc.');
+}
+
+function assertPaths(paths, full) {
+  if (!Array.isArray(paths) || (!full && paths.length === 0)) {
+    throw new Error('CI scope requires nonempty paths，路径列表不能为空');
+  }
+  for (const path of paths) {
+    if (typeof path !== 'string' || !path || path.includes('\0') || path.startsWith('/') ||
+      path.split('/').some(part => !part || part === '.' || part === '..')) {
+      throw new Error(`Invalid repository path: ${JSON.stringify(path)}`);
+    }
+  }
+}
+
+function matrixFor(selected) {
+  return ORDER.filter(component => selected.has(component)).flatMap(component =>
+    component === 'brain-unit'
+      ? Array.from({length: 6}, (_, index) => ({component, shard: index + 1}))
+      : [{component}]);
+}
+
+/** Select whole component suites; dynamic file reads make import-only selection unsafe. */
+export function legacyPlanChecks(paths, {full = false} = {}) {
+  assertPaths(paths, full);
+  const selected = new Set(['scripts']);
+  let all = full;
+  for (const path of paths) {
+    // 说明书读取器只消费这两层的直接 Markdown，镜像也打包同一输入。
+    if (/^docs\/instruction-book\/(?:skills|features)\/[^/]+\.md$/.test(path)) {
+      selected.add('brain-unit');
+      selected.add('image');
+      continue;
+    }
+    // Markdown 也可能是实际运行时提示词；只有明确的文档位置/文件名才走轻量路径。
+    if (DOCUMENT_NAME.test(path) || ROOT_DOCUMENT.test(path) ||
+      ((path.startsWith('docs/') || path.startsWith('sprints/')) && DOCUMENT.test(path))) continue;
+    if (path.startsWith('packages/mcp-readonly/')) selected.add('mcp');
+    if (isConfiguration(path) || /^(?:\.github|scripts|config)\//.test(path) ||
+      /^(?:package(?:-lock)?\.json|npm-shrinkwrap\.json|\.npmrc|\.skills-source\.json)$/.test(path)) {
+      all = true;
+    } else if (path.startsWith('apps/api/features/')) selected.add('dashboard');
+    // 独立旧Core服务不在现役compose；它的src/tests不冒充Brain运行输入。
+    else if (/^apps\/api\/(?:src|tests)\//.test(path)) continue;
+    else if (path.startsWith('apps/api/')) all = true;
+    else if (path.startsWith('packages/brain/')) {
+      for (const component of SHARED_RUNTIME) selected.add(component);
+    }
+    else if (path.startsWith('packages/mcp-readonly/')) selected.add('mcp');
+    else if (path.startsWith('apps/dashboard/')) selected.add('dashboard');
+    else all = true;
+  }
+  return matrixFor(all ? new Set([...ACTIVE, ...selected]) : selected);
+}
+
+export function legacyDomainForTest(path) {
+  if (path.startsWith('docker/cecelia-runner/') || path.endsWith('/runner-credential-single-chain-smoke.sh')) return 'runner';
+  if (/\/(?:dispatch-worker|codex-request|codex-remote-launch)/.test(path)) return 'launcher';
+  if (/\/preview-|\/preview-agent\//.test(path)) return 'preview';
+  if (/\/dashboard-|\/deploy-chain-wounds-/.test(path)) return 'dashboard';
+  if (/\/brain-image-|\/bluegreen-|\/brain-deploy-|\/brain-compose-|\/gate3-brain-|\/deploy-local-npm-cache-/.test(path)) return 'brain';
+  if (/^scripts\/ops\/__tests__\/(?:credentials\/|janitor\/|opc[_-]|openclaw_)/.test(path)) return 'ops';
+  return null;
+}
+
+export function legacyDomainsForChanges(paths) {
+  if (paths === null) return null;
+  if (!Array.isArray(paths) || !paths.length || paths.some(path => typeof path !== 'string' ||
+      !path || path.includes('\0') || path.startsWith('/') || path.split('/').some(part => !part || part === '.' || part === '..'))) {
+    throw new Error('Ops PR paths 路径列表无效');
+  }
+  const domains = new Set(['brain']);
+  for (const path of paths) {
+    // 构建配置、CI调度及未分类来源都必须保守全量；不能猜测公共文件的影响面。
+    if (/^(?:\.github\/|scripts\/ci\/|config\/|package(?:-lock)?\.json$|\.npmrc$)/.test(path) ||
+        /^packages\/brain\/(?:config\/|package(?:-lock)?\.json$)/.test(path)) return null;
+    const ownTest = /\.test\.(?:mjs|cjs|sh)$|^scripts\/smoke\//.test(path) ? legacyDomainForTest(path) : null;
+    if (ownTest) { domains.add(ownTest); continue; }
+    if (/^scripts\/(?:dispatch-worker|codex-request|codex-remote-launch)/.test(path)) domains.add('launcher');
+    else if (/^(?:scripts\/ops\/|tests\/ops\/)/.test(path) ||
+        /^packages\/brain\/src\/(?:lib\/(?:infra-|existing-ops-)|.*company-kr)/.test(path)) domains.add('ops');
+    else if (/^(?:scripts\/(?:preview-|request-preview-|wait-preview-|verify-preview-|lib\/preview-)|packages\/brain\/src\/(?:preview-|routes\/preview\.js|capacity-gate\.js))/.test(path)) domains.add('preview');
+    else if (/^(?:apps\/dashboard\/|frontend-proxy\.js$|scripts\/(?:promote-dashboard|rollback-cecelia|dashboard-|dev-preview|lib\/(?:dashboard-|release-)))/.test(path)) domains.add('dashboard');
+    else if (/^(?:docker\/cecelia-runner\/|docker\/build\.sh$|packages\/brain\/(?:scripts\/fleet-worker\/|src\/(?:orchestrator\/|app-server\/|executor|spawn\/)))/.test(path)) domains.add('runner');
+    else if (/^scripts\/deploy-local\.sh$|^docker-compose.*\.ya?ml$/.test(path)) {
+      for (const domain of ['runner', 'dashboard', 'preview']) domains.add(domain);
+    } else if (/^scripts\/(?:brain-(?:deploy|build|rollback)|lib\/(?:brain-|bluegreen|internal-auth))/.test(path)) domains.add('runner');
+    // 注册/回调、入口及脚本会跨执行面。尚未逐项证明的公共接口按全量处理。
+    else if (/^packages\/brain\/(?:server\.js|scripts\/|src\/(?:routes\.js|cecelia-routes\.js|routes\/|.*(?:executor|worker|credentials|fleet)))/.test(path)) return null;
+    else if (/^packages\/brain\/src\//.test(path)) continue;
+    else return null;
+  }
+  return domains;
+}

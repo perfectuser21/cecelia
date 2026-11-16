@@ -2,12 +2,11 @@
 import {createHash} from 'node:crypto';
 import {readFileSync} from 'node:fs';
 import yaml from 'js-yaml';
-import {planChecks} from './basic-scope.mjs';
-import {domainForTest,domainsForChanges} from './ops-checks.mjs';
+
 import {parse} from 'acorn';
 import {stripTypeScriptTypes} from 'node:module';
 import {posix} from 'node:path';
-import {selectVitestVerificationInput,selectPinnedSkillVerificationInput} from './implementation-verification-selectors.mjs';
+import {selectVitestVerificationInput,selectPinnedSkillVerificationInput,legacyPlanChecks,legacyDomainForTest,legacyDomainsForChanges} from './implementation-verification-selectors.mjs';
 import {fixedLocalGit,readFixedLocalGitBlob} from './fixed-local-git.mjs';
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
 const canonical=value=>Array.isArray(value)?value.map(canonical):value&&typeof value==='object'
@@ -226,7 +225,10 @@ const RESOURCE_RETIREMENT_ENTRY_PROTOCOL={...JSON.parse(resourceProfileText),[RE
 const BUSINESS_PROFILE_PATH='packages/brain/src/lib/existing-ops-business-smoke-retirement-profile.json', BUSINESS_PROFILE_SHA='18e8a6aff7886a7875468d923010ef1936fb100b497abc17f9e09c05b83218bd', businessProfileText=readFileSync(new URL('../../packages/brain/src/lib/existing-ops-business-smoke-retirement-profile.json',import.meta.url),'utf8');
 if(sha(businessProfileText)!==BUSINESS_PROFILE_SHA) fail('BUSINESS_PROFILE_MISMATCH');
 const BUSINESS_SMOKE_RETIREMENT_ENTRY_PROTOCOL={...JSON.parse(businessProfileText),[BUSINESS_PROFILE_PATH]:BUSINESS_PROFILE_SHA};
-const entryProtocolsFor = digest => digest === '763f9075175442249e9500a3d6c55936e2b7c424344f9319baac5fe08ccd5128' ? [RESOURCE_RETIREMENT_ENTRY_PROTOCOL] : digest === '1ac9c420d1ff0a6a681d486dd117c7c935b0c55f0e14f4ba98e2e730be68204a' ? [RESOURCE_RETIREMENT_ENTRY_PROTOCOL,BUSINESS_SMOKE_RETIREMENT_ENTRY_PROTOCOL] : digest === '014b5b54984ff322b0783c6070113199673efd53bb900ea9934d038de3cd5e5d' ? [COMMANDER_AUDIT_ENTRY_PROTOCOL,SCRIPT_CLEANUP_ENTRY_PROTOCOL] : digest === SKILL_RETIREMENT_CI ? [SKILL_RETIREMENT_ENTRY_PROTOCOL,PLANNER_RETIREMENT_ENTRY_PROTOCOL] : ENTRY_PROTOCOLS_BY_WORKFLOW[digest];
+const FIXED_PROFILE_PATH='packages/brain/src/lib/existing-ops-fixed-checks-profile.json', FIXED_SHA='c1c29a922e42a025463d2ed7a3dba53a672feb0be3e4034f0d5093dc7e8a42d5',fixedText=readFileSync(new URL('../../packages/brain/src/lib/existing-ops-fixed-checks-profile.json',import.meta.url),'utf8');
+if(sha(fixedText)!==FIXED_SHA)fail('FIXED_PROFILE_MISMATCH');
+const FIXED_CHECKS_ENTRY_PROTOCOL={...JSON.parse(fixedText),[FIXED_PROFILE_PATH]:FIXED_SHA};
+const entryProtocolsFor = digest => digest === '7569948b26aef8374c7f81935c29655a225375102e73992617309c3a8c8bcfa5' ? [FIXED_CHECKS_ENTRY_PROTOCOL] : digest === '763f9075175442249e9500a3d6c55936e2b7c424344f9319baac5fe08ccd5128' ? [RESOURCE_RETIREMENT_ENTRY_PROTOCOL] : digest === '1ac9c420d1ff0a6a681d486dd117c7c935b0c55f0e14f4ba98e2e730be68204a' ? [RESOURCE_RETIREMENT_ENTRY_PROTOCOL,BUSINESS_SMOKE_RETIREMENT_ENTRY_PROTOCOL] : digest === '014b5b54984ff322b0783c6070113199673efd53bb900ea9934d038de3cd5e5d' ? [COMMANDER_AUDIT_ENTRY_PROTOCOL,SCRIPT_CLEANUP_ENTRY_PROTOCOL] : digest === SKILL_RETIREMENT_CI ? [SKILL_RETIREMENT_ENTRY_PROTOCOL,PLANNER_RETIREMENT_ENTRY_PROTOCOL] : ENTRY_PROTOCOLS_BY_WORKFLOW[digest];
 const functionalEntry=entry=>Boolean(entryProtocolsFor(entry?.canonical_sha256??''));
 const UNIT_CONFIGS=[
  {component:'brain',directory:'packages/brain',path:'packages/brain/vitest.config.js'},
@@ -240,7 +242,8 @@ function unitConfigs(path,entry){
  return UNIT_CONFIGS.filter(c=>path.startsWith(c.directory+'/')||c.component==='brain'&&/^(?:tests|sprints)\//.test(path));
 }
 function componentSelected(entry,component,paths){
- if(functionalEntry(entry))return planChecks(paths).some(row=>row.component===(component==='brain'?'brain-unit':component));
+ if(entry?.fixedChecks)return ['brain','dashboard','ops','scripts','image'].includes(component);
+ if(functionalEntry(entry))return legacyPlanChecks(paths).some(row=>row.component===(component==='brain'?'brain-unit':component));
  return false;
 }
 /** 同一份固定Git内缓存必要入口/config；仅读delta正文及固定数量的支持文件。 */
@@ -265,7 +268,7 @@ function unitEntry(read,side){
  const signature=sha(JSON.stringify(canonical(doc)));if(!entryProtocolsFor(signature))return null;
  const support=[workflow.reference];let selected;
  for(const seals of entryProtocolsFor(signature)){
-  if(read(side,BUSINESS_PROFILE_PATH)&&seals!==BUSINESS_SMOKE_RETIREMENT_ENTRY_PROTOCOL)continue;
+  if(read(side,FIXED_PROFILE_PATH)?seals!==FIXED_CHECKS_ENTRY_PROTOCOL:read(side,BUSINESS_PROFILE_PATH)&&seals!==BUSINESS_SMOKE_RETIREMENT_ENTRY_PROTOCOL)continue;
   const files=[];let matches=true;
   for(const [path,expected] of Object.entries(seals)){
    const file=read(side,path);if(expected===null){if(file){matches=false;break;}continue;}if(file?.reference.sha256!==expected){matches=false;break;}
@@ -275,7 +278,7 @@ function unitEntry(read,side){
  }
  if(!selected)return null;
  support.push(...selected.map(({file})=>file.reference));
- return {profile:'basic',canonical_sha256:signature,workflow:workflow.reference,support,
+ return {profile:'basic',fixedChecks:signature==='7569948b26aef8374c7f81935c29655a225375102e73992617309c3a8c8bcfa5',canonical_sha256:signature,workflow:workflow.reference,support,
   declaration_only:true,execution_status:'not_evaluated'};
 }
 function runnerSelector(path,entry,paths){
@@ -287,7 +290,7 @@ function runnerSelector(path,entry,paths){
    ||direct('scripts/__tests__',/^dashboard-release-bind.*\.test\.mjs$/)||direct('scripts/preview-agent/__tests__',/\.test\.mjs$/)
    ||direct('docker/cecelia-runner/__tests__',/\.test\.(?:cjs|sh)$/)||/^scripts\/ops\/__tests__\/.+\.test\.sh$/.test(path)
    ||['brain-compose-envfile-authority','brain-deploy-service-isolation','dashboard-sha-reconcile','deploy-chain-wounds','deploy-local-npm-cache','gate3-brain-deploy','runner-credential-single-chain','dashboard-staging-gate'].some(n=>path===`scripts/smoke/${n}-smoke.sh`);
-  if(ops){const domain=domainForTest(path),domains=domainsForChanges(paths);return componentSelected(entry,'ops',paths)&&domain&&(!domains||domains.has(domain))?{component:'ops',kind:'basic_ops_regular_test',owner:'scripts/ci/ops-checks.mjs'}:null;}
+  if(ops){if(entry.fixedChecks)return !path.startsWith('docker/cecelia-runner/')&&!path.endsWith('/runner-credential-single-chain-smoke.sh')?{component:'ops',kind:'basic_ops_regular_test',owner:'scripts/ci/ops-checks.mjs'}:null;const domain=legacyDomainForTest(path),domains=legacyDomainsForChanges(paths);return componentSelected(entry,'ops',paths)&&domain&&(!domains||domains.has(domain))?{component:'ops',kind:'basic_ops_regular_test',owner:'scripts/ci/ops-checks.mjs'}:null;}
  }
  if(direct('scripts/ci/__tests__',/^(basic-.*|run-basic-check|brain-source-only-deploy)\.test\.mjs$/))return {component:'scripts',kind:'basic_regular_node_test',owner:BASIC_RUNNER};
 
