@@ -155,7 +155,7 @@ export async function createRuntime({profile,run,verifySource=async()=>{},ledger
       return {verdict:phase==='start'||sameIdentity(verified.output,result?.outputs)?'pass':'fail',evidence:verified.checks};
     },
     async executeActivity(activity,input,options){
-      input={...input,execution_attempt:options.identity.attempt??1};
+      if(activity.runtime?.executor_kind!=='code')input={...input,execution_attempt:options.identity.attempt??1};
       // 单独再核授权；旧完整Runner的finalize宽松策略不能赋予执行权。
       try{await readback(activity,input,'start',null,options.signal);}catch(e){e.executionStopped=true;throw e;}
       const spec=specFor(activity),directory=actionDir(options.identity);
@@ -177,7 +177,7 @@ export async function createRuntime({profile,run,verifySource=async()=>{},ledger
       }catch(error){if(attempt&&error.executionStopped===true)ledger.finishAttempt(attempt.attempt_id,{status:'not_started',reason_code:reasonCode(error)});throw error;}
     },
     async inspectActivity(activity,input,options){
-      input={...input,execution_attempt:options.identity.attempt??1};
+      if(activity.runtime?.executor_kind!=='code')input={...input,execution_attempt:options.identity.attempt??1};
       const directory=actionDir(options.identity);
       const observation=ledger?.beginObservation({kind:'recovery_readback',activity_key:activity.key,action_id:options.identity.action_id});
       try{specFor(activity);await verifyFrozenSources();inspectSupervisor(directory,options.identity);const transport=await waitSupervisedActivity(directory,options.identity,{signal:options.signal,reconnecting:true});

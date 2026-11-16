@@ -72,8 +72,9 @@ const execute = DBOS.registerStep(async (run, key, context, attempt = 1, feedbac
     checkActivity:env.checkActivity,onEvent:env.onEvent,
     prepareInput:async(_a,input) => {
       // 反馈与轮数仅来自上一轮持久化验收，禁止业务输入冒充控制信。
-      const clean={...input};delete clean.checker_feedback;delete clean.execution_attempt;
-      return {...clean,action_id:identity.action_id,execution_attempt:attempt,
+      const clean={...input};
+      if(activity.runtime.executor_kind!=='code'){delete clean.checker_feedback;delete clean.execution_attempt;}
+      return {...clean,action_id:identity.action_id,...(activity.runtime.executor_kind==='agent'?{execution_attempt:attempt}:{}),
         ...(feedback?{checker_feedback:structuredClone(feedback)}:{}),...(recovering?{recovery_mode:'readback_only'}:{})};
     },
     executeActivity:async(a,input,options) => {

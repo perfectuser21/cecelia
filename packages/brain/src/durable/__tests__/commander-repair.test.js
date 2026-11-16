@@ -56,6 +56,17 @@ test.each([{external_effect:'unknown'},{execution_stopped:false},{checker_feedba
  expect(env.decide.mock.calls.at(-1)[0].allowed_actions).toEqual([{action:'pause'}]);
 });
 test('未配置返工仍单次，失败明确报告Commander',async()=>{failThenPass(9);const out=await run();expect(out.status).toBe('needs_review');expect(env.executeActivity).toHaveBeenCalledTimes(1);expect(out.escalation).toBeDefined();});
+test('纯Code执行保留输入契约，不注入Agent返工控制字段',async()=>{
+ const value=request();value.contract.activities.forEach(a=>{a.runtime.executor_kind='code';});
+ expect((await run(value)).status).toBe('completed');
+ for(const [,input] of env.executeActivity.mock.calls){expect(input).not.toHaveProperty('execution_attempt');expect(input).not.toHaveProperty('checker_feedback');}
+});
+test('纯Code既有同名业务字段不被Agent返工机制删除',async()=>{
+ const value=request();value.contract.activities.forEach(a=>{a.runtime.executor_kind='code';});
+ value.input.execution_attempt=42;value.input.checker_feedback={business:'existing-input'};
+ expect((await run(value)).status).toBe('completed');
+ expect(env.executeActivity.mock.calls[0][1]).toMatchObject({execution_attempt:42,checker_feedback:{business:'existing-input'}});
+});
 test('恢复同一run复用每轮已结算动作，不重放任一执行',async()=>{
  failThenPass();const value=repairRun();expect((await run(value)).status).toBe('completed');
  sdk.inputs.clear();sdk.results.clear();sdk.initialized=false;
