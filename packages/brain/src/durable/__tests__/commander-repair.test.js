@@ -45,7 +45,7 @@ test('checker失败完整回传原Activity，下一轮通过才允许下游，ac
 test('三次总执行耗尽只升级一次Commander，失败历史完整且不允许complete或第四次',async()=>{
  failThenPass(9);const out=await run(repairRun());expect(out.status).toBe('needs_review');
  expect(env.executeActivity).toHaveBeenCalledTimes(3);expect(env.decide).toHaveBeenCalledTimes(2);
- const escalation=env.decide.mock.calls[1][0];expect(escalation.allowed_actions).toEqual([{action:'pause'}]);
+ const escalation=env.decide.mock.calls[1][0];expect(escalation.sequence).toBe(2);expect(escalation.allowed_actions).toEqual([{action:'pause'}]);
  expect(escalation.accepted).toEqual([]);expect(escalation.failure.attempt_history).toHaveLength(3);
  expect(escalation.failure.checker_feedback.failed_checks[0].actual).toBe(0);
  expect(out.escalation.decision.action).toBe('pause');expect(out.reason).toBe('checker_repair_exhausted');

@@ -20,5 +20,5 @@ export function failureDecisionRequest(run,receipts,activity,history,outcome,rea
   const failure={activity_key:activity.key,reason,execution_stopped:outcome.safe===true,
     checker_feedback:failed?.checker_feedback??null,receipt:outcome.receipt??null,
     attempt_history:history.filter(r=>r.activity_key===activity.key)};
-  return {...request,state_sha256:digest({receipts,failure}),failure,allowed_actions:[{action:'pause'}]};
+  return {...request,sequence:request.sequence+1,state_sha256:digest({receipts,failure}),failure,allowed_actions:[{action:'pause'}]};
 }

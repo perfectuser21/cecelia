@@ -19,7 +19,9 @@ beforeAll(async()=>{
   if(!enabled)return;
   await client.connect();
   const {rows}=await client.query('SELECT current_database() AS name,inet_server_addr() AS address');
-  expect(rows[0]).toEqual({name:'cecelia_scratch',address:expect.stringMatching(/^(127\.0\.0\.1|::1)$/)});
+  expect(rows[0].name).toBe('cecelia_scratch');
+  // CI通过loopback映射端口连接Docker服务，服务端自身地址是私有网段。
+  expect(rows[0].address).toMatch(process.env.CI==='true'?/^(127\.0\.0\.1|::1|172\.(1[6-9]|2[0-9]|3[01])\.[0-9]+\.[0-9]+)$/:/^(127\.0\.0\.1|::1)$/);
   await client.query(`CREATE SCHEMA ${schema}`);created=true;
   await client.query(`SET search_path TO ${schema}`);
   await client.query(fs.readFileSync(new URL('../../../migrations/558_commander_activity_actions.sql',import.meta.url),'utf8'));
