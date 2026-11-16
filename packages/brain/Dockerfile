@@ -92,6 +92,8 @@ COPY packages/brain/src/ ./src/
 COPY docs/instruction-book/ ./docs/instruction-book/
 ENV INSTRUCTION_BOOK_DOCS_ROOT=/app/docs/instruction-book
 COPY packages/brain/scripts/fleet-worker/ ./scripts/fleet-worker/
+# 底座回执路由读取已有 DBOS 运行；只打包读取助手，执行器仍由外部 Worker 承担。
+COPY packages/brain/scripts/commander-workflow/runtime-support.mjs ./scripts/commander-workflow/
 # work-router 判定无头编码单能否交给 coding-workflow-runner，与 runner 同读仓库配置表 repos.json
 # （经 runner 的读表模块 runner/lib/repos.mjs，只依赖 node 内置模块；A2）。
 COPY packages/brain/scripts/coding-workflow/repos.json ./scripts/coding-workflow/
@@ -118,6 +120,7 @@ RUN node --input-type=module -e "await import('./src/lib/map-manifest-schema.js'
 RUN node --input-type=module -e "import {readInstructionBook} from './src/routes/instruction-book.js'; const book=readInstructionBook(); if(!Array.isArray(book.skills)||!Array.isArray(book.features)) throw new Error('invalid instruction book artifact')"
 RUN node --input-type=module -e "await import('./src/work-router.js')"
 RUN node --input-type=module -e "const {legacyRecords}=await import('./src/execution-directory/legacy-policy.js'); legacyRecords({env:{}})"
+RUN NODE_ENV=test DB_NAME=cecelia_scratch DB_HOST=127.0.0.1 DB_PORT=1 node --input-type=module -e "const {createWorkflowFoundationRouter}=await import('./src/routes/workflow-foundation.js'); if(typeof createWorkflowFoundationRouter!=='function') throw new Error('workflow foundation route missing')"
 
 # Root user: 容器内需要访问 /var/run/docker.sock 调 dockerd spawn 兄弟容器。
 # macOS 宿主没有 docker group，gid 映射不稳定；direct root 最简单。
