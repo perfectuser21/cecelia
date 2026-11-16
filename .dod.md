@@ -1,10 +1,8 @@
-- [ ] 按441份全量审计清退33份失效及28份重复包装，登记、写目标、SQL目标和动态fixture引用同步；保留247份和133份证据不足项。
+- [ ] 复核133份待定烟测，清退6份失效入口和20份重复脚本；同步分类、写目标及分类器fixture，保留现役业务和权限资源边界。
   Test: manual:bash -c 'node --test packages/brain/scripts/smoke/__tests__/*.node-test.mjs scripts/ci/__tests__/basic-task-static-readers.test.mjs'
-- [ ] 安全测试fixture缺失被测脚本时必须失败，不将shell未执行当作安全拒绝；原生产目标/授权边界用例仍实际执行。
-  Test: manual:node --test packages/brain/scripts/smoke/__tests__/smoke-production-guard.node-test.mjs
-- [ ] 两个保留资源/工作区wrapper移除失效旧委托，真实现役suite集合与退出17阻断行为保持。
-  Test: manual:node --test packages/brain/scripts/smoke/__tests__/smoke-delegate-targets.node-test.mjs
-- [ ] 活跃资源保护、派发/终态/回调/Notion与授权隔离回归保留，未改业务源码或生产设置。
-  Test: manual:npm exec -w packages/brain -- vitest run src/lib/__tests__/task-terminal.test.js src/__tests__/notion-push-sync.test.js src/__tests__/dispatcher-hol.test.js
-- [ ] 固定候选通过默认脚本与事实/版本/清单门禁，独立复审后正常PR、CI成功合并、任务与资源收尾。
+- [ ] 原生路由、派发、共享时钟、交接、资源预算等替代测试仍由默认unit收集且通过。
+  Test: manual:npm exec -w packages/brain -- vitest run src/routes/__tests__/abilities.test.js src/__tests__/dispatch-fail-autoblock.test.js src/orchestrator/__tests__/handoff-schemas.test.js src/__tests__/slot-allocator.test.js
+- [ ] 删除迁移494外层包装后，真实PG文件仍被unit排除、由deep完整选中；其他PG边界保持。
+  Test: manual:npm exec -w packages/brain -- vitest run ../../tests/brain-ci-pg-layering.test.ts
+- [ ] 默认scripts、事实、版本与DoD门禁通过，独立复审后正常PR与完整CI交付。
   Test: manual:node scripts/ci/run-basic-check.mjs scripts

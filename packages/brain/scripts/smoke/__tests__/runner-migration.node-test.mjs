@@ -11,8 +11,8 @@ const runner = resolve(root, 'packages/brain/scripts/smoke-tools/run-smoke-ratch
 
 // 私有脚本池直接调用迁移后的生产入口；不启动Brain、不连接数据库或Docker。
 for (const [name, childExit, expected, executed] of [
-  ['abilities-api-smoke.sh', 0, 0, true],
-  ['abilities-api-smoke.sh', 9, 1, true],
+  ['company-key-results-smoke.sh', 0, 0, true],
+  ['company-key-results-smoke.sh', 9, 1, true],
   ['unregistered-migration-fixture.sh', 0, 1, false],
   ['inbox-p1-smoke.sh', 0, 0, false],
 ]) {

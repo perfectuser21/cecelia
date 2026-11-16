@@ -13,6 +13,7 @@ import brainIntegrationConfig from '../packages/brain/vitest.integration.config.
 import { REPO_ROOT } from './helpers/repo-root.js';
 
 const POSTGRES_TESTS = [
+  'src/__tests__/integration/migration-494-vs-model-workflows.pg.integration.test.js',
   'src/__tests__/integration/account-quota-ledger.pg.integration.test.js',
   'src/__tests__/integration/escalation-cancel-pending-sql.integration.test.js',
   'src/__tests__/commander-watchdog.pg.integration.test.js',
@@ -26,7 +27,10 @@ describe('Brain PostgreSQL test layering', () => {
   it('keeps real PostgreSQL tests out of brain-unit', () => {
     const exclude = brainConfig.test?.exclude ?? [];
 
-    expect(exclude).toEqual(expect.arrayContaining(POSTGRES_TESTS));
+    const selected = glob.sync(brainConfig.test.include, {
+      cwd: join(REPO_ROOT, 'packages/brain'), ignore: exclude,
+    });
+    for (const testPath of POSTGRES_TESTS) expect(selected).not.toContain(testPath);
     expect(exclude).toContain('src/__tests__/integration/**');
   });
 
@@ -60,7 +64,6 @@ describe('Brain PostgreSQL test layering', () => {
     ['probe-targets-cells-smoke.sh', 'migration-496-probe-targets-cells.pg.integration.test.js'],
     ['vs-model-areas-kind-smoke.sh', 'migration-493-vs-model.pg.integration.test.js'],
     ['vs-model-spans-smoke.sh', 'migration-495-vs-model-spans.pg.integration.test.js'],
-    ['vs-model-workflows-smoke.sh', 'migration-494-vs-model-workflows.pg.integration.test.js'],
   ])('Smoke Glob入口 %s 保留真PG过滤器并用集成配置', (script, filter) => {
     const source = readFileSync(join(REPO_ROOT, 'packages/brain/scripts/smoke', script), 'utf8');
     const invocation = source.match(/^[^\n]*npx vitest run[^\n]*$/m)?.[0] ?? '';
