@@ -81,6 +81,18 @@ describe('task-updater', () => {
       expect(mockPublishTaskStarted).toHaveBeenCalledOnce();
     });
 
+    it('pending_postdeploy允许写入并返回，不能提前发完成事件', async () => {
+      const task = makeTask({ status: 'pending_postdeploy' });
+      mockPool.query.mockResolvedValueOnce({ rows: [task] });
+      const result = await updateTaskStatus('task-001', 'pending_postdeploy');
+      expect(result.success).toBe(true);
+      expect(result.task.status).toBe('pending_postdeploy');
+      expect(mockPool.query.mock.calls[0][1]).toEqual(['task-001', 'pending_postdeploy']);
+      expect(mockPool.query.mock.calls[0][0]).not.toContain('completed_at = NOW()');
+      expect(mockPublishTaskCompleted).not.toHaveBeenCalled();
+      expect(mockPublishTaskFailed).not.toHaveBeenCalled();
+    });
+
     it('应当成功更新状态为 completed 并广播 TaskCompleted', async () => {
       const task = makeTask({ status: 'completed', payload: { result: 'ok' } });
       mockPool.query.mockResolvedValueOnce({ rows: [task] });

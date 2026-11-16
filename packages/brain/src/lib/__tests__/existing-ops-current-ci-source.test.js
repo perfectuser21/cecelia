@@ -111,3 +111,33 @@ it('Workflow发布和注册执行只认可本次完整必需CI步骤，禁用换
   await expect(observe(yaml.dump(changed))).rejects.toThrow('basic_ci_source_unproven');
  }
 });
+
+
+it('现役十项PG控制闭包固定读取；缺失、篡改及旧新成员拼接均拒绝',async()=>{
+ const {readFileSync,existsSync}=await import('node:fs'),{execFileSync}=await import('node:child_process'),{fileURLToPath}=await import('node:url');
+ const root=fileURLToPath(new URL('../../../../../',import.meta.url));
+ const paths=execFileSync('git',['ls-files','-z','--cached','--others','--exclude-standard'],{cwd:root,encoding:'utf8'}).split('\0').filter(p=>p&&existsSync(new URL(p,'file://'+root)));
+ const read=path=>readFileSync(new URL(path,'file://'+root),'utf8');
+ const profile='packages/brain/src/lib/existing-ops-business-smoke-retirement-profile.json';
+ const observe=async(overrides={},missing)=>{const relations=[],source=async path=>{if(path===missing)throw Error('missing control');return overrides[path]??read(path);};await collectBasicCiSources({read:source,ci:read('.github/workflows/ci.yml'),revision:'f'.repeat(40),relations,parse:ast,paths});return relations;};
+ const relations=await observe();
+ expect(relations).toContainEqual(expect.objectContaining({consumer_path:'packages/brain/src/lib/existing-ops-stage-modes.js',input_path:profile,kind:'reviewed_basic_ci_source_profile'}));
+ const pg=relations.filter(row=>row.kind==='reviewed_pr_postgres_test_selector');
+ expect(pg).toHaveLength(10);
+ expect(pg.map(row=>row.input_path)).toContain('packages/brain/src/__tests__/integration/reasoning-governance-contract.pg.integration.test.js');
+ const controls=[profile,'scripts/ci/run-basic-check.mjs','scripts/ci/ops-checks.mjs','scripts/ci/deep-integration.config.mjs','scripts/ci/debt-pg.config.mjs','scripts/ci/debt-pg-tests.json','scripts/ci/__tests__/basic-current-pg-gate.test.mjs','tests/brain-ci-pg-layering.test.ts'];
+ for(const member of controls){
+  await expect(observe({},member)).rejects.toThrow();
+  for(const text of ['',read(member)+'\n/* unknown control */'])await expect(observe({[member]:text})).rejects.toThrow('basic_ci_source_unproven');
+ }
+ await expect(observe({[profile]:JSON.stringify({...JSON.parse(read(profile)),unknown:'f'.repeat(64)})})).rejects.toThrow('basic_ci_source_unproven');
+ const before=readFixedExistingOpsGitFixture('91d37b2c3aab471aeaf88df25eec6dda9cb306d3');
+ for(const member of ['scripts/ci/run-basic-check.mjs']){
+  expect(before.read(member)).not.toBe(read(member));
+  await expect(observe({[member]:before.read(member)})).rejects.toThrow('basic_ci_source_unproven');
+  await expect(collectBasicCiSources({read:async path=>path===member?read(member):before.read(path),ci:before.read('.github/workflows/ci.yml'),revision:before.revision,relations:[],parse:ast,paths:before.paths})).rejects.toThrow();
+ }
+ const olderOps=execFileSync('git',['show','10e5943803aa9338f468df7ac19e647967aca7b5:scripts/ci/ops-checks.mjs'],{cwd:root,encoding:'utf8'});
+ await expect(observe({'scripts/ci/ops-checks.mjs':olderOps})).rejects.toThrow('basic_ci_source_unproven');
+ for(const row of pg)await expect(observe({},row.input_path)).rejects.toThrow();
+});

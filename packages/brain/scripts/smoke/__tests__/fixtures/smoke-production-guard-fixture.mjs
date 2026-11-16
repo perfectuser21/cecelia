@@ -1,11 +1,33 @@
 import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
-import { mkdtemp, writeFile, rm, readFile } from 'node:fs/promises';
+import { mkdtemp, writeFile, rm, readFile, mkdir, copyFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 export const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../../../../..');
+export const guardedWriteFixture = 'packages/brain/scripts/smoke/__tests__/fixtures/guarded-write.sh';
+
+// 私有清单独立于业务脚本名，运行逐字复制的真实runner与guard。
+export async function createRunnerFixture(temp) {
+  const runnerRoot = resolve(temp, 'runner-root');
+  const config = resolve(runnerRoot, 'packages/brain/config/smoke');
+  const scripts = resolve(runnerRoot, 'packages/brain/scripts');
+  await mkdir(config, { recursive: true });
+  await mkdir(resolve(scripts, 'smoke-tools'), { recursive: true });
+  await mkdir(resolve(scripts, 'lib'), { recursive: true });
+  for (const [name, body] of Object.entries({
+    'smoke-allowlist.txt': 'allowed-fixture.sh\nguarded-fixture.sh\n',
+    'smoke-denylist.txt': '', 'smoke-debt.txt': '',
+    'smoke-write-targets.txt': 'guarded-fixture.sh\n',
+  })) await writeFile(resolve(config, name), body);
+  const runner = resolve(scripts, 'smoke-tools/run-smoke-ratchet.sh');
+  await copyFile(resolve(root, 'packages/brain/scripts/smoke-tools/run-smoke-ratchet.sh'), runner);
+  await copyFile(resolve(root, 'packages/brain/scripts/lib/smoke-production-guard.mjs'),
+    resolve(scripts, 'lib/smoke-production-guard.mjs'));
+  return runner;
+}
+
 export function clientCommands(source) {
   return source.split('\n').filter(line => !line.trim().startsWith('#')).join('\n')
     .replace(/\b(?:command\s+-v|which)\s+(?:psql|curl)\b/g, '')
@@ -51,6 +73,7 @@ trap guard_fixture_boundary DEBUG
   await writeFile(resolve(temp, 'psql'), '#!/usr/bin/env node\nconst fs=require("node:fs"); fs.appendFileSync(process.env.GUARD_PSQL_LOG,JSON.stringify(process.argv.slice(2))+"\\n"); if (process.env.GUARD_NATIVE_PSQL) { const {spawnSync}=require("node:child_process"); const env={...process.env}; for(const k of ["PGHOSTADDR","PGSERVICE","PGSERVICEFILE"]) if(!env[k]) delete env[k]; const r=spawnSync(process.env.GUARD_NATIVE_PSQL,process.argv.slice(2),{stdio:"inherit",env,timeout:3000,killSignal:"SIGKILL"}); process.exit(r.status ?? 1); } console.log(1);\n', { mode: 0o755 });
   const info = { State: { Running: true }, Config: { Env: ['NODE_ENV=test', 'DB_NAME=cecelia_test', `BRAIN_PORT=${port}`] }, HostConfig: { NetworkMode: 'host' }, NetworkSettings: { Ports: {} } };
   async function smoke(script, overrides = {}, dockerInfo = info, guardOnly = false, scriptArgs = []) {
+    if (script === guardedWriteFixture) overrides = { GUARD_PRIVATE_BRAIN_URL: `http://127.0.0.1:${port}`, ...overrides };
     let args = [script === '-c' || script.includes('/') ? script : `packages/brain/scripts/smoke/${script.endsWith('.sh') ? script : script + '-smoke.sh'}`, ...scriptArgs];
     const source = script === '-c' ? null : await readFile(resolve(root, args[0]), 'utf8');
     if (guardOnly) {

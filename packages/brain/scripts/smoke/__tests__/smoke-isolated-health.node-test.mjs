@@ -6,7 +6,7 @@ import { parse } from 'acorn';
 import { resolve } from 'node:path';
 import { isIsolatedRuntime } from '../../../src/runtime-safety.js';
 import { CODING_MUTATION_TASK_TYPES, REVIEW_TASK_TYPES } from '../../../src/lib/task-type-registry.js';
-import { root, fixture } from './fixtures/smoke-production-guard-fixture.mjs';
+import { root, fixture, guardedWriteFixture } from './fixtures/smoke-production-guard-fixture.mjs';
 
 // Run the real health handler; inject only DB/probe I/O so no server automation starts.
 async function actualHealth(env) {
@@ -50,7 +50,7 @@ for (const NODE_ENV of ['test', 'development']) {
     assert.equal(health.local_execution.role, 'disabled');
     assert.equal(health.local_execution.reason, 'runtime_isolated');
     await fixture(async ({ requests, smoke }) => {
-      await smoke('notion-mapping-r4', { SMOKE_ALLOW_WRITE: '1' });
+      await smoke(guardedWriteFixture, { SMOKE_ALLOW_WRITE: '1' });
       assert.ok(requests.some(req => req.method === 'POST'), 'real passive test health blocked authorized fixture');
     }, { health });
   });
@@ -59,7 +59,7 @@ test('real production scheduler health still refuses writes behind matching test
   const health = await actualHealth({ NODE_ENV: 'production', CECELIA_LOCAL_EXECUTION_ENABLED: 'false' });
   assert.equal(health.local_execution.role, 'scheduler_only');
   await fixture(async ({ requests, smoke }) => {
-    await smoke('notion-mapping-r4', { SMOKE_ALLOW_WRITE: '1' });
+    await smoke(guardedWriteFixture, { SMOKE_ALLOW_WRITE: '1' });
     assert.deepEqual(requests, [{ method: 'GET', url: '/api/brain/health' }]);
   }, { health });
 });
@@ -78,14 +78,14 @@ for (const [name, mutate] of [
   test(`passive health fails closed when ${name}`, async () => {
     const health = await actualHealth({ NODE_ENV: 'test' }); mutate(health);
     await fixture(async ({ requests, smoke }) => {
-      await smoke('notion-mapping-r4', { SMOKE_ALLOW_WRITE: '1' });
+      await smoke(guardedWriteFixture, { SMOKE_ALLOW_WRITE: '1' });
       assert.deepEqual(requests, [{ method: 'GET', url: '/api/brain/health' }]);
     }, { health });
   });
 }
 test('real passive test health does not bypass default authorization', async () => {
   await fixture(async ({ requests, smoke, dockerCalls }) => {
-    await smoke('notion-mapping-r4');
+    await smoke(guardedWriteFixture);
     assert.deepEqual(requests, []); assert.deepEqual(await dockerCalls(), []);
   }, { health: await actualHealth({ NODE_ENV: 'test' }) });
 });
@@ -95,7 +95,7 @@ for (const [name, mutate] of [
 ]) {
   test(`real passive health cannot bypass ${name} identity`, async () => {
     await fixture(async ({ requests, smoke, info }) => {
-      mutate(info); await smoke('notion-mapping-r4', { SMOKE_ALLOW_WRITE: '1' }, info);
+      mutate(info); await smoke(guardedWriteFixture, { SMOKE_ALLOW_WRITE: '1' }, info);
       assert.deepEqual(requests, []);
     }, { health: await actualHealth({ NODE_ENV: 'test' }) });
   });

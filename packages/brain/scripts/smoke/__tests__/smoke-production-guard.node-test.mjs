@@ -8,9 +8,9 @@ import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { createHash } from 'node:crypto';
 
-import { root, fixture, clientCommands } from './fixtures/smoke-production-guard-fixture.mjs';
+import { root, fixture, clientCommands, guardedWriteFixture, createRunnerFixture } from './fixtures/smoke-production-guard-fixture.mjs';
 
-const scripts = ['notion-mapping-r4', 'notion-endpoints', 'notion-brain-first'];
+const scripts = [guardedWriteFixture, 'notion-brain-first'];
 
 for (const script of scripts) {
   test(`${script}: no explicit authorization sends no requests`, async () => {
@@ -42,7 +42,7 @@ for (const [name, mutate] of [
   test(`authorized smoke rejects ${name} without API requests`, async () => {
     await fixture(async ({ requests, smoke, info }) => {
       mutate(info);
-      const result = await smoke('notion-mapping-r4', { SMOKE_ALLOW_WRITE: '1' }, info);
+      const result = await smoke(guardedWriteFixture, { SMOKE_ALLOW_WRITE: '1' }, info);
       assert.equal(result.code, 0, result.output);
       assert.deepEqual(requests, [], `${name} passed write guard`);
     });
@@ -51,7 +51,7 @@ for (const [name, mutate] of [
 
 test('unknown Docker identity cannot authorize writes', async () => {
   await fixture(async ({ requests, smoke }) => {
-    const result = await smoke('notion-mapping-r4', { SMOKE_ALLOW_WRITE: '1', GUARD_DOCKER_FIXTURE: 'invalid JSON' });
+    const result = await smoke(guardedWriteFixture, { SMOKE_ALLOW_WRITE: '1', GUARD_DOCKER_FIXTURE: 'invalid JSON' });
     assert.equal(result.code, 0, result.output);
     assert.deepEqual(requests, []);
   });
@@ -61,7 +61,7 @@ test('production scheduler behind a matching proxy receives only a health GET', 
   process.env.GUARD_FIXTURE_ROLE = 'scheduler_only';
   try {
     await fixture(async ({ requests, smoke }) => {
-      const result = await smoke('notion-mapping-r4', { SMOKE_ALLOW_WRITE: '1' });
+      const result = await smoke(guardedWriteFixture, { SMOKE_ALLOW_WRITE: '1' });
       assert.equal(result.code, 0, result.output);
       assert.deepEqual(requests, [{ method: 'GET', url: '/api/brain/health' }]);
     });
@@ -74,7 +74,7 @@ test('published bridge port can identify isolated staging', async () => {
     info.Config.Env[1] = 'DB_NAME=cecelia_staging';
     info.Config.Env[2] = 'BRAIN_PORT=5221';
     info.NetworkSettings.Ports = { '5221/tcp': [{ HostIp: '127.0.0.1', HostPort: String(port) }] };
-    const result = await smoke('notion-mapping-r4', { SMOKE_ALLOW_WRITE: '1' }, info);
+    const result = await smoke(guardedWriteFixture, { SMOKE_ALLOW_WRITE: '1' }, info);
     assert.equal(result.code, 0, result.output);
     assert.ok(requests.some(req => req.method === 'POST'));
   });
@@ -96,7 +96,7 @@ for (const overrides of [
 ]) {
   test(`unverifiable target configuration is denied: ${JSON.stringify(overrides)}`, async () => {
     await fixture(async ({ requests, smoke }) => {
-      const result = await smoke('notion-mapping-r4', { SMOKE_ALLOW_WRITE: '1', ...overrides });
+      const result = await smoke(guardedWriteFixture, { SMOKE_ALLOW_WRITE: '1', ...overrides });
       assert.equal(result.code, 0, result.output);
       assert.deepEqual(requests, []);
     });
@@ -119,7 +119,7 @@ for (const connection of [
   });
 }
 
-for (const script of ['inbox-p1', 'clips-notion', 'claimed-by-cleared', 'task-tasks-dedup']) {
+for (const script of [guardedWriteFixture, 'claimed-by-cleared', 'task-tasks-dedup']) {
   test(`${script}: direct entry must refuse unauthorized writes`, async () => {
     await fixture(async ({ requests, smoke }) => {
       await smoke(script);
@@ -134,7 +134,7 @@ test('all explicit live Brain shell write entries remain registered and guarded'
     .split('\n').filter(line => line && !line.startsWith('#')));
   const smokeDir = resolve(root, 'packages/brain/scripts/smoke');
   const sqlClassification = JSON.parse(await readFile(resolve(root, 'packages/brain/config/smoke/smoke-sql-targets.json'), 'utf8'));
-  const optional = new Set(['notion-mapping-r4-smoke.sh', 'notion-endpoints-smoke.sh', 'notion-brain-first-smoke.sh']);
+  const optional = new Set(['notion-brain-first-smoke.sh']);
   for (const name of await readdir(smokeDir)) {
     if (!name.endsWith('.sh')) continue;
     const source = await readFile(resolve(smokeDir, name), 'utf8');
@@ -165,10 +165,11 @@ test('all explicit live Brain shell write entries remain registered and guarded'
 test('ratchet runner does not execute a registered write script without authorization', async () => {
   const temp = await mkdtemp(resolve(tmpdir(), 'smoke-runner-guard-'));
   const marker = resolve(temp, 'mutated');
-  await writeFile(resolve(temp, 'inbox-p1-smoke.sh'), `#!/bin/bash\ntouch '${marker}'\n`);
+  const runner = await createRunnerFixture(temp);
+  await writeFile(resolve(temp, 'guarded-fixture.sh'), `#!/bin/bash\ntouch '${marker}'\n`);
   try {
     const result = await new Promise((resolveResult, reject) => {
-      const proc = spawn('bash', ['packages/brain/scripts/smoke-tools/run-smoke-ratchet.sh'], {
+      const proc = spawn('bash', [runner], {
         cwd: root, env: { ...process.env, SMOKE_DIR: temp, SMOKE_ALLOW_WRITE: '' },
       });
       let output = '';
@@ -185,7 +186,7 @@ test('ratchet runner does not execute a registered write script without authoriz
 
 
 for (const script of ['claimed-by-cleared', 'claude-headed-dispatch',
-  'codex-headed-dispatch', 'golden-paths-t1', 'golden-path-step-nfr', 'journey-goldenpaths-invariants', 'unified-map-api']) {
+  'golden-paths-t1', 'b13-dbupsert-idempotent', 'journey-goldenpaths-invariants', 'unified-map-api']) {
   test(`${script}: ignored DB_URL cannot mask the actual production DATABASE_URL`, async () => {
     await fixture(async ({ smoke }) => {
       const result = await smoke(script, { SMOKE_ALLOW_WRITE: '1', DB_URL: 'postgresql://localhost/cecelia_test',
@@ -212,18 +213,12 @@ test('task-delete discrete DB_* target must be checked instead of an unrelated U
 test('Brain DB_HOST cannot be hidden behind an unused loopback DATABASE_URL', async () => {
   await fixture(async ({ requests, smoke, info }) => {
     info.Config.Env.push('DB_HOST=remote-production', 'DATABASE_URL=postgresql://localhost/cecelia_test');
-    const result = await smoke('notion-mapping-r4', { SMOKE_ALLOW_WRITE: '1' }, info);
+    const result = await smoke(guardedWriteFixture, { SMOKE_ALLOW_WRITE: '1' }, info);
     assert.deepEqual(requests, [], result.output);
   });
 });
 
 
-test('dispatcher route authority helper uses a checked DATABASE_URL', async () => {
-  await fixture(async ({ smoke }) => {
-    const result = await smoke('dispatcher-real-paths.sh', { SMOKE_ALLOW_WRITE: '1', DATABASE_URL: 'postgresql://localhost/cecelia' }, undefined, true);
-    assert.doesNotMatch(result.output, /GUARD_ACCEPTED/);
-  });
-});
 test('phone registry checks the PG_* connection it actually uses when no URI exists', async () => {
   await fixture(async ({ smoke }) => {
     const result = await smoke('phone-registry', { SMOKE_ALLOW_WRITE: '1', DATABASE_URL: '', PGDATABASE: 'cecelia', PGHOST: 'localhost' }, undefined, true);
@@ -265,7 +260,7 @@ for (const variable of ['PGHOSTADDR', 'PGSERVICE', 'PGSERVICEFILE']) {
   test(`container libpq ${variable} cannot override its checked local target`, async () => {
     await fixture(async ({ requests, smoke, info }) => {
       info.Config.Env.push(`${variable}=external-service`);
-      const result = await smoke('notion-mapping-r4', { SMOKE_ALLOW_WRITE: '1' }, info);
+      const result = await smoke(guardedWriteFixture, { SMOKE_ALLOW_WRITE: '1' }, info);
       assert.deepEqual(requests, [], result.output);
     });
   });
@@ -283,7 +278,7 @@ test('curl proxy must not redirect authorized smoke writes outside the checked c
   await new Promise(resolve => proxy.listen(0, '127.0.0.1', resolve));
   try {
     await fixture(async ({ requests, smoke }) => {
-      const result = await smoke('notion-mapping-r4', { SMOKE_ALLOW_WRITE: '1',
+      const result = await smoke(guardedWriteFixture, { SMOKE_ALLOW_WRITE: '1',
         http_proxy: `http://127.0.0.1:${proxy.address().port}`, HTTP_PROXY: '',
         HTTPS_PROXY: '', https_proxy: '', ALL_PROXY: '', all_proxy: '',
         NO_PROXY: '', no_proxy: '' });
@@ -319,7 +314,7 @@ test('default curlrc cannot redirect writes from the checked test container', as
   await writeFile(resolve(temp, '.curlrc'), `proxy = "http://127.0.0.1:${proxy.address().port}"\nnoproxy = ""\n`);
   try {
     await fixture(async ({ requests, smoke }) => {
-      const result = await smoke('notion-mapping-r4', { SMOKE_ALLOW_WRITE: '1', CURL_HOME: temp });
+      const result = await smoke(guardedWriteFixture, { SMOKE_ALLOW_WRITE: '1', CURL_HOME: temp });
       assert.equal(result.code, 0, result.output);
       assert.deepEqual(proxied, [], 'default curlrc redirected smoke writes outside the checked container');
       assert.ok(requests.some(req => req.method === 'POST'), 'direct authorized write was not exercised');
@@ -418,7 +413,7 @@ for (const [name, overrides] of [
 ]) {
   test(`Docker daemon identity rejects ${name} before HTTP or container inspection`, async () => {
     await fixture(async ({ requests, smoke, dockerCalls }) => {
-      await smoke('notion-mapping-r4', { SMOKE_ALLOW_WRITE: '1', ...overrides });
+      await smoke(guardedWriteFixture, { SMOKE_ALLOW_WRITE: '1', ...overrides });
       assert.deepEqual(requests, [], 'unverified daemon permitted Brain requests');
       assert.ok(!(await dockerCalls()).some(args => args[0] === 'inspect'), 'unverified daemon inspected a container');
     });
@@ -426,7 +421,7 @@ for (const [name, overrides] of [
 }
 test('authorized writes require a confirmed local Unix context endpoint', async () => {
   await fixture(async ({ requests, smoke, dockerCalls }) => {
-    await smoke('notion-mapping-r4', { SMOKE_ALLOW_WRITE: '1' });
+    await smoke(guardedWriteFixture, { SMOKE_ALLOW_WRITE: '1' });
     const calls = await dockerCalls();
     assert.deepEqual(calls.slice(0, 2), [['context', 'show'], ['context', 'inspect', '--format', '{{json .Endpoints.docker.Host}}', 'default']]);
     assert.ok(requests.some(req => req.method === 'POST'));

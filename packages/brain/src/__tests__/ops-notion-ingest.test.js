@@ -1,3 +1,4 @@
+vi.mock('../db.js', () => ({ default: { query: vi.fn(() => { throw new Error('禁止canonical DB'); }) } }));
 import { describe, it, expect,vi } from 'vitest';
 import { planEnableAction, buildManualUpdateSql, runOpsNotionIngest } from '../ops-notion-ingest.js';
 
@@ -99,4 +100,29 @@ describe('真实回读只记录人工列实际变化',()=>{
   if(changed)expect(writes[0][1]).toEqual([owner,'agent-1']);
   expect(query.mock.calls.some(([sql])=>sql.includes('INSERT INTO ops_notion_ingest_cursor'))).toBe(true);
  });
+});
+
+it('真实回读启停失败落enable_error，重读同一意图不重复执行', async () => {
+  const target = { id: 'fixture-wf', wf_id: 'fixture-flow', source: 'n8n', active: true,
+    enable_intent: null, enable_error: null };
+  const query = vi.fn(async (sql, args) => {
+    if (sql.includes('ops_notion_dbs')) return { rows: [{ value_json: { workflows_db: 'fixture-db' } }] };
+    if (sql.startsWith('SELECT * FROM ops_workflows')) return { rows: [{ ...target }] };
+    if (sql.includes('SET enable_intent =')) target.enable_intent = args[0];
+    if (sql.includes('SET enable_intent_at')) target.enable_intent_at = new Date('2026-11-16T00:00:00Z');
+    if (sql.includes('enable_error = $2')) {
+      target.enable_error = args[1];
+      target.enable_applied_at = new Date('2026-11-16T00:00:01Z');
+    }
+    return { rows: [] };
+  });
+  const notionReqFn = vi.fn().mockResolvedValue({ results: [{ id: 'fixture-page',
+    last_edited_time: '2026-11-16T00:00:00Z', properties: { Enabled: { checkbox: false } } }] });
+  const execFn = vi.fn(() => { throw new Error('fixture n8n unavailable'); });
+  const options = { tokenFn: () => 'fixture-only', notionReqFn, execFn };
+  expect(await runOpsNotionIngest({ query }, options)).toMatchObject({ updated: 1, toggled: 0, failed: 1 });
+  expect(target).toMatchObject({ active: true, enable_intent: false, enable_error: 'fixture n8n unavailable' });
+  expect(query.mock.calls.some(([sql]) => sql.includes('enable_error = $2'))).toBe(true);
+  expect(await runOpsNotionIngest({ query }, options)).toMatchObject({ updated: 0, toggled: 0, failed: 0 });
+  expect(execFn).toHaveBeenCalledTimes(1);
 });

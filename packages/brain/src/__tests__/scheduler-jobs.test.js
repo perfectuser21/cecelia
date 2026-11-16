@@ -10,6 +10,7 @@ import { maybeGenerateBattleReport } from '../battle-report.js';
 import { maybeRunLineDreaming } from '../line-dreaming.js';
 import { maybeRunLedgerHygiene } from '../ledger-hygiene.js';
 import { runCaptureTriage } from '../capture-triage.js';
+import { runConversationCapture } from '../conversation-capture.js';
 import { runReceiptCollector } from '../receipt-collector.js';
 import { runLaunchdPatrol } from '../launchd-patrol.js';
 import { runPostdeployVerifier } from '../postdeploy-verifier.js';
@@ -56,6 +57,22 @@ describe('scheduler-jobs 注册表', () => {
       expect(result.ok).toBe(true);
     },
   );
+  it.each([
+    { pushed: 1, errors: 1 },
+    { ok: false, error: 'owned remote capture failure' },
+  ])('会话采集部分失败不能被scheduler记作成功：%o', async captureResult => {
+    const pool = makePool();
+    runConversationCapture.mockResolvedValueOnce(captureResult);
+    const job = JOBS.find(row => row.name === 'conversation-capture');
+    const [result] = await runSchedulerJobsOnce(pool, [job]);
+    expect(runConversationCapture).toHaveBeenCalledWith(pool);
+    expect(result).toMatchObject({ name: 'conversation-capture', ok: false });
+    const sentinel = pool.query.mock.calls.find(([, args]) => args?.[0] === `${SENTINEL_KEY_PREFIX}conversation-capture`);
+    expect(JSON.parse(sentinel[1][1])).toMatchObject({ ok: false });
+    const run = pool.query.mock.calls.find(([sql]) => sql.includes('INSERT INTO runs'));
+    expect(run[1][4]).toBe('fail');
+  });
+
   it('节点接入对账使用数据库连接并保留 handler 结果', async () => {
     const pool = makePool();
     const job = JOBS.find(row => row.name === 'node-onboarding');
@@ -388,4 +405,27 @@ it('默认调度完整一轮只消费注入pool，不触canonical DB/网络/子�
   expect(schedulerBoundary.db).not.toHaveBeenCalled();
   expect(schedulerBoundary.network).not.toHaveBeenCalled();
   expect(schedulerBoundary.process).not.toHaveBeenCalled();
+});
+
+
+it.each([
+  ['credential-freshness', '../credential-freshness.js', 'maybeRunCredentialFreshness'],
+  ['seven-ring-audit', '../seven-ring-audit.js', 'runSevenRingAuditJob'],
+  ['crystal-judge', '../crystal-judge.js', 'maybeRunCrystalJudge'],
+  ['line-dreaming', '../line-dreaming.js', 'maybeRunLineDreaming'],
+  ['ledger-hygiene', '../ledger-hygiene.js', 'maybeRunLedgerHygiene'],
+  ['ops-notion-push', '../notion-push-sync.js', 'runOpsNotionPush'],
+  ['ops-notion-ingest', '../ops-notion-ingest.js', 'runOpsNotionIngest'],
+])('现役 %s 从真实调度入口取得同一连接并留哨兵', async (name, module, exported) => {
+  vi.clearAllMocks();
+  const handler = (await import(module))[exported];
+  const pool = makePool();
+  const job = JOBS.find(row => row.name === name);
+  expect(job).toBeDefined();
+  const [result] = await runSchedulerJobsOnce(pool, [job]);
+  expect(handler).toHaveBeenCalledTimes(1);
+  expect(handler.mock.calls[0][0]).toBe(pool);
+  expect(result).toMatchObject({ name, ok: true });
+  const sentinel = pool.query.mock.calls.find(([, args]) => args?.[0] === `${SENTINEL_KEY_PREFIX}${name}`);
+  expect(JSON.parse(sentinel[1][1])).toMatchObject({ ok: true });
 });

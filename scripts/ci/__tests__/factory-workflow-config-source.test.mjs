@@ -424,7 +424,7 @@ test('当前功能跑道仅为Dashboard features及选中Ops读者提供验证�
 test('当前候选输入入口逐项读取身份及六父任务完整控制封组，混配失去入口资格',t=>{
  const path='scripts/ci/__tests__/basic-candidate-source.test.mjs',f=basicEntryFixture(t,path);
  const live=fileURLToPath(new URL('../../../',import.meta.url));
- const profile='packages/brain/src/lib/existing-ops-resource-retirement-profile.json',bytes=readFileSync(join(live,profile));
+ const profile='packages/brain/src/lib/existing-ops-business-smoke-retirement-profile.json',bytes=readFileSync(join(live,profile));
  const controls={...JSON.parse(bytes),[profile]:createHash('sha256').update(bytes).digest('hex')};
  const members=Object.keys(controls).filter(p=>controls[p]!==null),retired=Object.keys(controls).filter(p=>controls[p]===null);
  for(const member of ['scripts/skill_source_ownership.py','scripts/ci/check-basic-results.mjs','scripts/ci/__tests__/basic-results.test.mjs','scripts/ci/__tests__/basic-workflow.test.mjs'])assert.ok(members.includes(member),member);

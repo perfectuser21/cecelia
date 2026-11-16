@@ -10,13 +10,7 @@ function run(args,cwd=root){
  try{return {code:0,output:execFileSync(process.execPath,args,{cwd,env,encoding:'utf8',timeout:10000,stdio:['ignore','pipe','pipe']})};}
  catch(error){return {code:error.status,output:String(error.stdout)+String(error.stderr)};}
 }
-describe('script-executor-contract-smoke / executor-liveness-t1-smoke / factory-f4-selfheal-smoke',()=>{
-it('T1真实Node合同块接受十三种现役执行器并保留独立手机收口',()=>{
- const code=smoke('executor-liveness-t1-smoke.sh').match(/import \{ EXECUTOR_CONTRACTS, VALID_EXECUTOR_KINDS, assessTaskLiveness \}[\s\S]*?\nEOF/)[0]
-  .replace(/\nEOF$/,'').replace('${CONTRACTS_JS}',join(root,'packages/brain/src/executor-contracts.js'));
- const result=run(['--input-type=module','-e',code]);expect(result.code,result.output).toBe(0);
- expect(code).toContain("EXECUTOR_CONTRACTS['phone-ssh-controller']");
-});
+describe('script-executor-contract-smoke / factory-f4-selfheal-smoke',()=>{
 it('F4真实Node合同块保留精确名单且校验手机不能通用判死',()=>{
  const code=smoke('factory-f4-selfheal-smoke.sh').match(/node -e '\n([\s\S]*?)\n' &&/)[1];
  const result=run(['-e',code]);expect(result.code,result.output).toBe(0);

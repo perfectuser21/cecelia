@@ -15,28 +15,10 @@
   "alertness-schema-smoke.sh": {"kind":"write","connection":"DATABASE_URL；未指定则拒绝，无凭据读取","evidence":"实际SQL文件17/19/21行INSERT，psql -f执行CREATE SCHEMA/迁移；BEGIN/ROLLBACK事务保留。","source_commit":"d664db65c9"},
   "b13-dbupsert-idempotent-smoke.sh": {"kind":"write","connection":"DATABASE_URL；未指定则拒绝，无凭据读取","evidence":"实际SQL/写调用源码行 21,26,38,56；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。","source_commit":"d664db65c9"},
   "conversation-capture-multitool-smoke.sh": {"kind":"write","connection":"DATABASE_URL；未指定则拒绝，无凭据读取","evidence":"实际SQL/写调用源码行 98,102；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。","source_commit":"d664db65c9"},
-  "conversation-capture-smoke.sh": {
-    "kind": "write",
-    "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
-    "evidence": "实际SQL/写调用源码行 90；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。",
-    "source_commit": "d664db65c9"
-  },
   "crontab-ledger-smoke.sh": {
     "kind": "write",
     "connection": "PGHOST/PGPORT/PGDATABASE；默认localhost/5432/cecelia_test；pg.Pool与psql共用PGDATABASE显式默认",
     "evidence": "实际SQL/写调用源码行 22；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。",
-    "source_commit": "d664db65c9"
-  },
-  "dev-registry-smoke.sh": {
-    "kind": "write",
-    "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
-    "evidence": "实际SQL/写调用源码行 24,33,39,45,51,56,59,63；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。",
-    "source_commit": "d664db65c9"
-  },
-  "device-job-foundation-smoke.sh": {
-    "kind": "write",
-    "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
-    "evidence": "实际SQL/写调用源码行 22,43；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。",
     "source_commit": "d664db65c9"
   },
   "handoff-smoke.sh": {
@@ -88,12 +70,6 @@
     "evidence": "实际SQL/写调用源码行 26,27,28,29,30,31,32,33；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。",
     "source_commit": "d664db65c9"
   },
-  "migration-339-drop-abilities-gp-priority-smoke.sh": {
-    "kind": "write",
-    "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
-    "evidence": "实际SQL/写调用源码行 45,53；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。",
-    "source_commit": "d664db65c9"
-  },
   "model-accounts-smoke.sh": {
     "kind": "write",
     "connection": "DATABASE_URL优先DB_URL优先DB；缺失拒绝",
@@ -110,12 +86,6 @@
     "kind": "write",
     "connection": "PGHOST/PGPORT/PGDATABASE；默认localhost/5432/cecelia_test；pg.Pool与psql共用PGDATABASE显式默认",
     "evidence": "实际SQL/写调用源码行 22；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。",
-    "source_commit": "d664db65c9"
-  },
-  "ops-cockpit-sync-smoke.sh": {
-    "kind": "write",
-    "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
-    "evidence": "实际SQL/写调用源码行 18,44,46,55,60；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。",
     "source_commit": "d664db65c9"
   },
   "ops-graph-smoke.sh": {
@@ -140,12 +110,6 @@
     "kind": "write",
     "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
     "evidence": "实际SQL/写调用源码行 14,15,29,30,46,52,53；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。",
-    "source_commit": "d664db65c9"
-  },
-  "ops-skill-stats-smoke.sh": {
-    "kind": "write",
-    "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
-    "evidence": "实际SQL/写调用源码行 13,25,32,39；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。",
     "source_commit": "d664db65c9"
   },
   "ops-skill-versions-smoke.sh": {
@@ -176,12 +140,6 @@
     "kind": "write",
     "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
     "evidence": "实际SQL/写调用源码行 55,60,69,70,76,77,89,90；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。",
-    "source_commit": "d664db65c9"
-  },
-  "qiumi-schedule-smoke.sh": {
-    "kind": "write",
-    "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
-    "evidence": "实际SQL/写调用源码行 39,42；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。",
     "source_commit": "d664db65c9"
   },
   "handoff-kinds-smoke.sh": {
@@ -244,12 +202,6 @@
     "evidence": "实际SQL/写调用源码行 35,87,88,99,105,112,121；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。",
     "source_commit": "d664db65c9"
   },
-  "staging-promote-smoke.sh": {
-    "kind": "write",
-    "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
-    "evidence": "实际SQL/写调用源码行 69,73,76,81,82,87；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。",
-    "source_commit": "d664db65c9"
-  },
   "t10-capture-atom-routing-smoke.sh": {
     "kind": "write",
     "connection": "DB_HOST/DB_PORT/DB_NAME（实际Brain db-config及psql）；默认localhost/5432/cecelia_test",
@@ -274,13 +226,6 @@
     "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
     "evidence": "INSERT仅grep迁移文件断言；实际psql仅SELECT notion_projection_map状态/方向。",
     "sha256": "e3a7ba1398096a3df78ae5265c7d5e126a618bfd1fadc3505e92e103dbbecb2c",
-    "source_commit": "d664db65c9"
-  },
-  "tasks-ability-id-smoke.sh": {
-    "kind": "readonly",
-    "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
-    "evidence": "INSERT仅注释；node仅readFile路由结构；实际psql仅SELECT tasks列类型。",
-    "sha256": "ec26f4c3a2df52c69ec8c9c0a5c89cd456bd0fa54b43ebda32d3cb4be30a6e76",
     "source_commit": "d664db65c9"
   },
   "workflow-run-lost-deadline-smoke.sh": {
