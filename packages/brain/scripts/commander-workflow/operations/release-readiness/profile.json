@@ -1,0 +1,124 @@
+{
+  "schema_version": 1,
+  "contract": {
+    "workflow": "foundation_release_readiness",
+    "goal": "只读核验当前Brain发布与本次任务身份，持久保存证据并释放本run占位",
+    "activities": [
+      {
+        "key": "report",
+        "order": 1,
+        "budget": {
+          "max_duration_s": 60,
+          "heartbeat_s": 1
+        },
+        "failure": {
+          "empty_ok": [],
+          "retryable": [],
+          "fatal": [
+            "readiness_brain_mismatch",
+            "readiness_task_mismatch",
+            "readiness_owner_conflict"
+          ],
+          "needs_human": {
+            "cases": [
+              "readiness_report_incomplete",
+              "readiness_evidence_invalid"
+            ]
+          }
+        },
+        "runtime": {
+          "phase": "source",
+          "protocol": "json-stdio-v1",
+          "entry": "packages/brain/scripts/commander-workflow/operations/release-readiness/report.mjs",
+          "executor_kind": "code",
+          "max_attempts": 1,
+          "on_failure": "stop_run"
+        }
+      },
+      {
+        "key": "cleanup",
+        "order": 2,
+        "budget": {
+          "max_duration_s": 30,
+          "heartbeat_s": 1
+        },
+        "failure": {
+          "empty_ok": [],
+          "retryable": [],
+          "fatal": [
+            "readiness_brain_mismatch",
+            "readiness_task_mismatch",
+            "readiness_owner_conflict"
+          ],
+          "needs_human": {
+            "cases": [
+              "readiness_report_incomplete",
+              "readiness_evidence_invalid"
+            ]
+          }
+        },
+        "runtime": {
+          "phase": "finalize",
+          "protocol": "json-stdio-v1",
+          "entry": "packages/brain/scripts/commander-workflow/operations/release-readiness/cleanup.mjs",
+          "executor_kind": "code",
+          "max_attempts": 1,
+          "on_failure": "stop_run"
+        }
+      }
+    ]
+  },
+  "playbook": {
+    "schema_version": 1,
+    "content": "你是发布就绪报告的 Commander。严格按冻结契约推进 report，然后 cleanup。report 只读取本机 Brain health、version 和本次 Task，校验目标版本和 SHA，保存真实报告。cleanup 只释放本次 run 的占位，保留所有证据。每个活动须通过独立 checker；不把执行者自述当作验收。失败后仍执行 cleanup，不重试不确定动作。不得修改契约、输入身份、目标版本或证据。"
+  },
+  "profile": {
+    "adapter": "packages/brain/scripts/commander-workflow/operations/release-readiness/adapter.mjs",
+    "commander": {
+      "provider": "codex",
+      "model": "gpt-6-astra"
+    },
+    "files": {
+      "packages/brain/scripts/commander-workflow/operations/release-readiness/adapter.mjs": "ea4adee80202e4985d13b7dce2bdff18899e7f07e3acad7e01938c9716f0586c",
+      "packages/brain/scripts/commander-workflow/operations/release-readiness/checker.mjs": "63770999f6bd839f77afd704753c0454b099c0a7a9e5093722f24828fab5076a",
+      "packages/brain/scripts/commander-workflow/operations/release-readiness/cleanup.mjs": "e0b79e80ebc6319a76b8801e7777b388a2d57e1e42748aa48fcd901863a4a134",
+      "packages/brain/scripts/commander-workflow/operations/release-readiness/report.mjs": "e1da8238bc88277183eb6708c1640dd84963ea6b1f482979d9b269db8f6abf26",
+      "packages/brain/scripts/commander-workflow/operations/release-readiness/shared.mjs": "979beadd69d1f174ca582b642462874cfd178b4e7ffb7407c0577776b7956072"
+    },
+    "skill_runtime": {
+      "control_dir": "control",
+      "activities": {
+        "report": {
+          "checker": {
+            "command": "@node",
+            "entry": "packages/brain/scripts/commander-workflow/operations/release-readiness/checker.mjs",
+            "start_checks": [
+              "input_identity",
+              "resource_owned"
+            ],
+            "required_checks": [
+              "report_content",
+              "single_effect"
+            ],
+            "timeout_ms": 10000
+          }
+        },
+        "cleanup": {
+          "checker": {
+            "command": "@node",
+            "entry": "packages/brain/scripts/commander-workflow/operations/release-readiness/checker.mjs",
+            "start_checks": [
+              "input_identity",
+              "resource_owned"
+            ],
+            "required_checks": [
+              "resource_released",
+              "evidence_preserved"
+            ],
+            "timeout_ms": 10000
+          }
+        }
+      }
+    }
+  }
+}

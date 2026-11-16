@@ -9,6 +9,7 @@ import {runCleanup} from '../../../scripts/commander-workflow/operations/release
 import {checkRequest} from '../../../scripts/commander-workflow/operations/release-readiness/checker.mjs';
 import {createRuntime,withReadinessIdentity} from '../../../scripts/commander-workflow/operations/release-readiness/adapter.mjs';
 import {verifySkillReadback} from '../../../scripts/commander-workflow/skill-protocol.mjs';
+import {parseFoundationProfile} from '../../workflow-foundation/contracts.js';
 import {parseActivityContract,parseActivityResult} from '../activity-contract.js';
 const hash=x=>createHash('sha256').update(x).digest('hex');
 const dirs=[];
@@ -72,8 +73,15 @@ describe('Foundation真实发布就绪报告',()=>{
   expect(input._readiness).toEqual(f.input._readiness);expect(input.expected_brain_sha).toBe(f.input.expected_brain_sha);expect(input.run_tag).toBe(f.input.run_tag);
   const runtime=await createRuntime({profile,run});expect(['executeActivity','inspectActivity','checkActivity'].every(k=>typeof runtime[k]==='function')).toBe(true);
  });
+ it('独立QA任务与派单任务均读取真实Task，缺失占位不能冒充完整报告',async()=>{
+  const f=fixture();f.body.task={id:f.input._readiness.task_id,status:'in_progress',task_type:'qa'};const value=await runReport(f.input,{fetchFn:f.fetchFn});expect(checkRequest(f.request('report','end',value)).outcome).toBe('passed');
+  fs.unlinkSync(f.file('reservation.json'));expect(()=>checkRequest(f.request('report','end',value))).toThrow('readiness_evidence_missing');
+ });
  it('源码profile冻结真实文件，Code活动与独立checker保持同一契约',()=>{
   const repo=fileURLToPath(new URL('../../../../../',import.meta.url)),folder='packages/brain/scripts/commander-workflow/operations/release-readiness';const doc=JSON.parse(fs.readFileSync(path.join(repo,folder,'profile.json')));
+  const source=fs.readFileSync(path.join(repo,folder,'profile.json'),'utf8'),ref={repo:'owner/repo',path:folder+'/profile.json',revision:'a'.repeat(40),digest:'sha256:'+hash(source)};
+  const components=[{kind:'code',...ref},...Object.entries(doc.profile.files).map(([entry,digest])=>({kind:'code',repo:ref.repo,path:entry,revision:ref.revision,digest:'sha256:'+digest}))];
+  expect(parseFoundationProfile(source,{profile_ref:ref},{payload:{components}},{payload:{key:'foundation_release_readiness',activities:[{slot_key:'report'},{slot_key:'cleanup'}]}}).schema_version).toBe(1);
   const contract=parseActivityContract(doc.contract);expect(contract.workflow).toBe('foundation_release_readiness');expect(contract.activities.map(a=>[a.key,a.runtime.phase,a.runtime.executor_kind,a.runtime.max_attempts])).toEqual([['report','source','code',1],['cleanup','finalize','code',1]]);
   expect(doc.profile.commander.provider).toBe('codex');expect(doc.playbook.content).toContain('report');expect(doc.playbook.content).toContain('cleanup');
   for(const [entry,digest] of Object.entries(doc.profile.files)){expect(entry.startsWith(folder+'/')).toBe(true);expect(hash(fs.readFileSync(path.join(repo,entry)))).toBe(digest);}
