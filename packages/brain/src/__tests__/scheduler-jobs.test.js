@@ -10,6 +10,7 @@ import { maybeGenerateBattleReport } from '../battle-report.js';
 import { maybeRunLineDreaming } from '../line-dreaming.js';
 import { maybeRunLedgerHygiene } from '../ledger-hygiene.js';
 import { runCaptureTriage } from '../capture-triage.js';
+import { runConversationCapture } from '../conversation-capture.js';
 import { runReceiptCollector } from '../receipt-collector.js';
 import { runLaunchdPatrol } from '../launchd-patrol.js';
 import { runPostdeployVerifier } from '../postdeploy-verifier.js';
@@ -56,6 +57,22 @@ describe('scheduler-jobs 注册表', () => {
       expect(result.ok).toBe(true);
     },
   );
+  it.each([
+    { pushed: 1, errors: 1 },
+    { ok: false, error: 'owned remote capture failure' },
+  ])('会话采集部分失败不能被scheduler记作成功：%o', async captureResult => {
+    const pool = makePool();
+    runConversationCapture.mockResolvedValueOnce(captureResult);
+    const job = JOBS.find(row => row.name === 'conversation-capture');
+    const [result] = await runSchedulerJobsOnce(pool, [job]);
+    expect(runConversationCapture).toHaveBeenCalledWith(pool);
+    expect(result).toMatchObject({ name: 'conversation-capture', ok: false });
+    const sentinel = pool.query.mock.calls.find(([, args]) => args?.[0] === `${SENTINEL_KEY_PREFIX}conversation-capture`);
+    expect(JSON.parse(sentinel[1][1])).toMatchObject({ ok: false });
+    const run = pool.query.mock.calls.find(([sql]) => sql.includes('INSERT INTO runs'));
+    expect(run[1][4]).toBe('fail');
+  });
+
   it('节点接入对账使用数据库连接并保留 handler 结果', async () => {
     const pool = makePool();
     const job = JOBS.find(row => row.name === 'node-onboarding');

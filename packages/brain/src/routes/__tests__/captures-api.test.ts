@@ -61,6 +61,11 @@ describe('POST /api/brain/captures', () => {
     expect(data.id).toBeTruthy();
     expect(data.status).toBe('captured'); // 无 nature → captured
     expect(data.dedupe_key).toBe(dedupe);
+    const detail = await fetch(`${BRAIN_URL}/api/brain/captures/${data.id}`);
+    expect(detail.status).toBe(200);
+    expect(await detail.json()).toMatchObject({ id: data.id, content: BASE_BODY.content, source: BASE_BODY.source });
+    const listed = await (await fetch(`${BRAIN_URL}/api/brain/captures?limit=100`)).json();
+    expect(listed.items).toContainEqual(expect.objectContaining({ id: data.id, content: BASE_BODY.content }));
   });
 
   it('有 nature=learning → status=clarified', async () => {
@@ -113,6 +118,8 @@ describe('POST /api/brain/captures', () => {
     expect(resp.status).toBe(200);
     const data = await resp.json();
     expect(data.dedupe_hit).toBe(true);
+    const stored = await pool.query('SELECT id, content, source FROM captures WHERE dedupe_key=$1', [dedupe]);
+    expect(stored.rows).toEqual([{ id: data.id, content: BASE_BODY.content, source: BASE_BODY.source }]);
   });
 
   it('content 为空 → 400', async () => {

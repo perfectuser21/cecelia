@@ -113,10 +113,19 @@ function makePool({ provenance = new Map() } = {}) {
       if (sql.includes('FROM session_provenance')) {
         return { rows: params[0].filter((id) => provenance.has(id)).map((id) => ({ session_id: id, ...provenance.get(id) })) };
       }
-      if (sql.startsWith('SELECT content FROM captures')) return { rows: [] };
+      if (sql.startsWith('SELECT content FROM captures')) {
+        const found = captures.find(c => c.dedupeKey === params[0]);
+        return { rows: found ? [{ content: found.content }] : [] };
+      }
       if (sql.includes('INSERT INTO captures')) {
-        captures.push({ content: params[0], source: params[1], nature: params[2] });
-        return { rows: [{ id: captures.length }] };
+        const existing = captures.find(c => c.dedupeKey === params[8]);
+        if (existing) {
+          existing.content = params[0];
+          return { rows: [{ id: existing.id, inserted: false }] };
+        }
+        const id = captures.length + 1;
+        captures.push({ id, content: params[0], source: params[1], nature: params[2], dedupeKey: params[8] });
+        return { rows: [{ id, inserted: true }] };
       }
       if (sql.includes('INSERT INTO working_memory')) { sentinel = JSON.parse(params[1]); return { rows: [] }; }
       throw new Error(`unexpected SQL: ${sql}`);
@@ -196,5 +205,38 @@ describe('runConversationCapture 远端模式 + 有头判定', () => {
     expect(pool.captures).toHaveLength(2);
     expect(r.errors).toBe(1);
     expect(r.headed_errors).toBe(1);
+  });
+});
+
+
+describe('同一真人会话重复扫描与复聊', () => {
+  it('原文相同不再摘要或建行；内容变化更新原文/摘要并沿用同一身份', async () => {
+    const { runConversationCapture } = await import('../conversation-capture.js');
+    let now = Date.now();
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const pool = makePool();
+    let text = '第一次真人输入';
+    const exec = vi.fn(async () => JSON.stringify({ sessions: [remoteSession({ turns: [{ text }] })], failures: [], errors: {} }));
+    const llm = vi.fn(async () => ({ text: JSON.stringify({ topics: [text] }) }));
+    const attachHeaded = vi.fn(async () => ({ linked: ['owned-task'], created: null }));
+    const scan = () => runConversationCapture(pool, { exec, llm, attachHeaded, inContainer: true });
+    expect(await scan()).toMatchObject({ pushed: 1, errors: 0 });
+    const ids = pool.captures.map(c => c.id);
+    const keys = pool.captures.map(c => c.dedupeKey);
+    expect(pool.captures.map(c => c.content)).toEqual(['第一次真人输入', '1. 第一次真人输入']);
+    now += 11 * 60 * 1000;
+    expect(await scan()).toMatchObject({ pushed: 0, errors: 0 });
+    expect(exec).toHaveBeenCalledTimes(2);
+    expect(llm).toHaveBeenCalledTimes(1);
+    expect(attachHeaded).toHaveBeenCalledTimes(1);
+    expect(pool.captures.map(c => c.id)).toEqual(ids);
+    text = '复聊后的完整真人输入';
+    now += 11 * 60 * 1000;
+    expect(await scan()).toMatchObject({ pushed: 1, errors: 0 });
+    expect(llm).toHaveBeenCalledTimes(2);
+    expect(pool.captures.map(c => c.id)).toEqual(ids);
+    expect(pool.captures.map(c => c.dedupeKey)).toEqual(keys);
+    expect(pool.captures.map(c => c.content)).toEqual([text, `1. ${text}`]);
+    expect(attachHeaded).toHaveBeenCalledTimes(2);
   });
 });

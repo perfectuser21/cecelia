@@ -1464,6 +1464,61 @@ describe('Notion 排单正文 → 任务 prompt', () => {
     expect(req.metadata.prompt_file).toMatch(new RegExp(`brain-runs/notion-${PAGE_ID32}-\\d+\\.prompt`));
   });
 
+  it.each([true, false])('SSH正文特殊字符与双占位保持字节，建单成功=%s', async created => {
+    const fs = await import('node:fs');
+    const os = await import('node:os');
+    const path = await import('node:path');
+    const { spawnSync } = await import('node:child_process');
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'notion-prompt-boundary-'));
+    try {
+      const marker = path.join(home, 'injected');
+      const received = path.join(home, 'received');
+      const argvFile = path.join(home, 'recorded-argv');
+      const content = `中文'单引号 "双引号" \`touch ${marker}\` $(touch ${marker})\n第二行\\反斜杠`;
+      const command = "record-prompt {PROMPT_FILE} {PROMPT_FILE} 'literal single quote'";
+      vi.stubGlobal('fetch', vi.fn(async () => { throw Error('unexpected external fetch'); }));
+      mockQuery.mockImplementation(async sql => /FROM ops_workflows/.test(sql)
+        ? { rows: [{ wf_id: 'owned-prompt', name: '隔离排单', dispatch: { channel: 'ssh', machine: 'xian-mac-m4', command } }] }
+        : { rows: [] });
+      mockCreateRoutedTask.mockResolvedValue(created ? { task: { id: 'owned-task' } } : {});
+      mockNotionReq.mockImplementation(async (token, route) => {
+        if (String(route).includes('/query')) return { results: [sshRelationPage()] };
+        if (String(route).includes('/children')) return { results: [textBlock('paragraph', content)] };
+        return {};
+      });
+      const exec = vi.fn(() => 'DISPATCHED');
+      const mod = await import('../notion-push-sync.js');
+      await mod.pullNotionTasksForTest({ query: mockQuery }, 'fake-token', { env: {}, execFn: exec });
+      expect(mockCreateRoutedTask).toHaveBeenCalledTimes(1);
+      expect(globalThis.fetch).not.toHaveBeenCalled();
+      if (!created) {
+        expect(exec).not.toHaveBeenCalled();
+        expect(mockNotionReq.mock.calls.some(c => JSON.stringify(c[3] || {}).includes('建单失败'))).toBe(true);
+        expect(fs.existsSync(marker)).toBe(false);
+        return;
+      }
+      expect(exec).toHaveBeenCalledTimes(1);
+      expect(mockCreateRoutedTask.mock.invocationCallOrder[0]).toBeLessThan(exec.mock.invocationCallOrder[0]);
+      const remote = exec.mock.calls[0][0].at(-1);
+      expect(remote).not.toContain('{PROMPT_FILE}');
+      expect(remote).toContain(Buffer.from(content).toString('base64'));
+      // 只在私有HOME执行已捕获的remote串；nohup/sh最终只调用本地记录器。
+      fs.writeFileSync(path.join(home, 'nohup'), '#!/bin/sh\nexec "$@"\n', { mode: 0o755 });
+      fs.writeFileSync(path.join(home, 'record-prompt'), `#!${process.execPath}\nconst fs=require('node:fs');const args=process.argv.slice(2);fs.writeFileSync(process.env.RECORDED_ARGV,JSON.stringify(args));fs.copyFileSync(args[0],process.env.RECEIVED_PROMPT);\n`, { mode: 0o755 });
+      const result = spawnSync('/bin/sh', ['-c', `${remote}\nwait`], {
+        env: { HOME: home, PATH: `${home}:/usr/bin:/bin`, RECEIVED_PROMPT: received, RECORDED_ARGV: argvFile },
+        encoding: 'utf8', timeout: 5000,
+      });
+      expect(result.status, result.stderr).toBe(0);
+      expect(fs.readFileSync(received, 'utf8')).toBe(content);
+      const recorded = JSON.parse(fs.readFileSync(argvFile, 'utf8'));
+      expect(recorded).toEqual([expect.stringMatching(/\.prompt$/), recorded[0], 'literal single quote']);
+      expect(recorded[0].startsWith(home + '/brain-runs/')).toBe(true);
+      expect(fs.existsSync(marker)).toBe(false);
+      expect(mockCreateRoutedTask.mock.calls[0][1].metadata.prompt_preview).toBe(content);
+    } finally { fs.rmSync(home, { recursive: true, force: true }); }
+  });
+
   it('webhook 派发：有正文时 payload 带 prompt 字段（截 4000）', async () => {
     const mod = await import('../notion-push-sync.js');
     const content = '本轮只跑悦升云，跑完出日报';
