@@ -15,15 +15,10 @@ vi.mock('../../db.js', () => {
 });
 
 describe('db/pool.js re-export', () => {
-  it('应导出 default（pool 实例）', async () => {
+  it('default 与具名 pool 重导出上游同一实例', async () => {
+    const upstream = await import('../../db.js');
     const mod = await import('../pool.js');
-    expect(mod.default).toBeDefined();
-    expect(typeof mod.default.query).toBe('function');
-  });
-
-  it('应导出具名 pool（与 default 同一实例）', async () => {
-    const mod = await import('../pool.js');
-    expect(mod.pool).toBeDefined();
-    expect(mod.pool).toBe(mod.default);
+    expect(mod.default).toBe(upstream.default);
+    expect(mod.pool).toBe(upstream.default);
   });
 });

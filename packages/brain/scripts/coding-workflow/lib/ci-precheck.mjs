@@ -1,6 +1,5 @@
-// CI 门禁本地预检（审计 P1 #4，对应旧 harness「CI 门禁三件套前置进 generator 验收」）：推上 GitHub 之前，
-// 在 worktree 里跑 ci-passed 依赖的、能本地离线复现的规矩类门禁，免得推上去再被 CI 打红、多烧一轮修复。
-// 不在这里跑：真实版本增量（publish 只读校验）、落后 main（runner update-branch）、要数据库/联网的（dod-behavior-dynamic、brain-diff-coverage）。
+// 按仓库运行真实检查。Cecelia先跑开工门，再复用现行PR CI scripts入口，
+// 并保留版本增量及生产smoke安全检查；本地成功不替代完整CI、预览QA或来源资格证明。
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -18,23 +17,14 @@ const CHECK_TIMEOUT_MS = 5 * 60 * 1000;
 
 const lint = (name) => ({ name, cmd: ['bash', `.github/workflows/scripts/${name}.sh`, BASE] });
 
-/** ci.yml 里 ci-passed 依赖、能本地离线复现的门禁；feature PR（publish 标题为 feat）传 PR_LABELS=feature。 */
-export function defaultChecks({ branch, feature }) {
+/** Cecelia专属：开工门依次执行，scripts规矩与当前CI共用入口；缺入口必须失败。 */
+export function defaultChecks() {
   return [
-    lint('lint-test-pairing'),
-    { ...lint('lint-feature-has-smoke'), env: { PR_LABELS: feature ? 'feature' : '' } },
-    lint('lint-tdd-commit-order'),
-    lint('lint-test-quality'),
-    lint('lint-no-mock-only-test'),
-    lint('lint-no-fake-test'),
-    lint('lint-gp-anchor-artifact'),
-    { name: 'branch-naming', cmd: ['bash', 'scripts/ci/check-branch-naming.sh', branch] },
-    { name: 'registry-lint', cmd: ['node', 'scripts/registry-lint.mjs'] },
-    { name: 'lint-migration-unique-version', cmd: ['node', '.github/workflows/scripts/lint-migration-unique-version.cjs'] },
-    { name: 'pr-size-check', builtin: 'pr-size' },
-    { name: 'smoke-registration', builtin: 'smoke-registration' },
-    // 写入型 smoke 要登记 write-targets、curl 先带 -q 等（Smoke Glob Runner 同一条守卫，离线可跑；金丝雀 4 到 CI 才红）
-    { name: 'smoke-write-guard', cmd: ['node', '--test', 'packages/brain/scripts/smoke/__tests__/smoke-production-guard.node-test.mjs'] },
+    { name: 'facts-check', cmd: ['node', 'scripts/facts-check.mjs'], required: true },
+    { name: 'version-sync', cmd: ['bash', 'scripts/check-version-sync.sh'], required: true },
+    { name: 'dod-mapping', cmd: ['node', 'scripts/devgate/check-dod-mapping.cjs'], required: true },
+    { name: 'current-ci-scripts', cmd: ['node', 'scripts/ci/run-basic-check.mjs', 'scripts'], required: true },
+    { name: 'smoke-write-guard', cmd: ['node', '--test', 'packages/brain/scripts/smoke/__tests__/smoke-production-guard.node-test.mjs'], required: true },
     { name: 'brain-version-increment', cmd: ['bash', VERSION_GUARD], env: { BASE_REF: BASE, HEAD_REF: 'HEAD' }, required: true },
   ];
 }

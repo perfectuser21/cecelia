@@ -1,8 +1,7 @@
 /**
  * 任务类型模型收敛·第一刀（决策 df67a9d6 / e073bdc2，任务 94465721）：
  * kind ∈ {agent, workflow} 是任务的第一维度，注册表每个 task_type 必须显式落一个；
- * department / skill / workflow_ref / engine / device 全是属性，由 resolveTaskAttributes
- * 按「真列 → 规范 payload 键 → 历史 payload 键」的兼容链读出。
+ * 建单入口校验 kind，未声明类型按注册表的缺省规则派生。
  */
 import { describe, it, expect } from 'vitest';
 import * as R from '../task-type-registry.js';
@@ -11,7 +10,6 @@ import {
   deriveTaskKind,
   assertTaskKind,
   isTaskKind,
-  resolveTaskAttributes,
 } from '../task-kind.js';
 
 describe('TASK_KINDS 枚举', () => {
@@ -85,36 +83,5 @@ describe('deriveTaskKind / assertTaskKind', () => {
       expect(err?.code, String(bad)).toBe('invalid_task_kind');
       expect(err.message).toContain('agent');
     }
-  });
-});
-
-describe('resolveTaskAttributes 兼容链', () => {
-  it('department：dept 真列 > payload.department > payload.qiumi_department', () => {
-    expect(resolveTaskAttributes({ task_type: 'qiumi_task', dept: 'ops', payload: { department: 'a', qiumi_department: 'b' } }).department).toBe('ops');
-    expect(resolveTaskAttributes({ task_type: 'qiumi_task', payload: { department: 'a', qiumi_department: 'b' } }).department).toBe('a');
-    expect(resolveTaskAttributes({ task_type: 'qiumi_task', payload: { qiumi_department: 'b' } }).department).toBe('b');
-    expect(resolveTaskAttributes({ task_type: 'qiumi_task', payload: {} }).department).toBeNull();
-  });
-
-  it('skill：payload.skill > 注册表 SKILL_WHITELIST；workflow_ref：payload.workflow_ref > qiumi_workflow_ref', () => {
-    expect(resolveTaskAttributes({ task_type: 'dev', payload: {} }).skill).toBe('/dev');
-    expect(resolveTaskAttributes({ task_type: 'dev', payload: { skill: '/custom' } }).skill).toBe('/custom');
-    expect(resolveTaskAttributes({ task_type: 'device_job', payload: {} }).skill).toBeNull();
-    expect(resolveTaskAttributes({ task_type: 'qiumi_task', payload: { qiumi_workflow_ref: '周报生成' } }).workflow_ref).toBe('周报生成');
-    expect(resolveTaskAttributes({ task_type: 'qiumi_task', payload: { workflow_ref: 'x', qiumi_workflow_ref: 'y' } }).workflow_ref).toBe('x');
-  });
-
-  it('engine：payload.engine > qiumi_route.answers.engine.choice；device：payload.serial > device_hint.serial', () => {
-    expect(resolveTaskAttributes({ task_type: 'qiumi_task', payload: { engine: 'codex' } }).engine).toBe('codex');
-    expect(resolveTaskAttributes({ task_type: 'qiumi_task', payload: { qiumi_route: { answers: { engine: { choice: 'terra' } } } } }).engine).toBe('terra');
-    expect(resolveTaskAttributes({ task_type: 'device_job', payload: { serial: 'S1' } }).device).toBe('S1');
-    expect(resolveTaskAttributes({ task_type: 'qiumi_task', payload: { qiumi_route: { device_hint: { serial: 'S2' } } } }).device).toBe('S2');
-    expect(resolveTaskAttributes({ task_type: 'dev', payload: {} })).toMatchObject({ engine: null, device: null });
-  });
-
-  it('kind：task.kind 真列优先，缺失时按 task_type 派生；payload 缺省/null 不炸', () => {
-    expect(resolveTaskAttributes({ task_type: 'dev', kind: 'workflow' }).kind).toBe('workflow');
-    expect(resolveTaskAttributes({ task_type: 'workflow_run', payload: null }).kind).toBe('workflow');
-    expect(resolveTaskAttributes({ task_type: 'dev' }).kind).toBe('agent');
   });
 });

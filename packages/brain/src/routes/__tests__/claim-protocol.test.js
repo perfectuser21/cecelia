@@ -13,6 +13,9 @@ import request from 'supertest';
 const mockPool = vi.hoisted(() => ({ query: vi.fn() }));
 
 vi.mock('../../db.js', () => ({ default: mockPool }));
+vi.mock('../../lib/task-terminal.js', async original => ({
+  ...await original(), afterTerminalTransition: vi.fn(async () => ({ relay: null })),
+}));
 vi.mock('../../alerting.js', () => ({ raise: vi.fn() }));
 vi.mock('../../event-bus.js', () => ({ emit: vi.fn().mockResolvedValue(undefined) }));
 vi.mock('../../actions.js', () => ({ createTask: vi.fn(), updateTask: vi.fn() }));
@@ -186,13 +189,16 @@ describe('A. tasks.js PATCH /:task_id → in_progress: 自动写 claimed_by + ex
 
   it('status→completed 时 UPDATE 不写 executor_kind 列', async () => {
     mockSelectOk({ status: 'in_progress', claimed_by: 'session:x', executor_kind: 'headed-session' });
-    mockUpdateOk();
-    // KR 계산 체인 mock (best-effort, 실패해도 OK)
+    mockPool.query.mockResolvedValueOnce({ rows: [{ status: 'completed', updated_at: new Date().toISOString() }] });
+    // 终态钩子独立验证；本例隔离后续KR读取。
     mockPool.query.mockResolvedValue({ rows: [] });
     const res = await request(app)
       .patch('/api/brain/tasks/task-1')
       .send({ status: 'completed' });
-    expect([200, 500]).toContain(res.status); // KR 체인은 best-effort
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ success: true, task_id: 'task-1', status: 'completed' });
+    const { afterTerminalTransition } = await import('../../lib/task-terminal.js');
+    expect(afterTerminalTransition).toHaveBeenCalledWith(mockPool, 'task-1', 'completed', { sessionId: null });
     const updateCall = mockPool.query.mock.calls.find(([sql]) =>
       typeof sql === 'string' && sql.includes('UPDATE tasks SET')
     );
@@ -200,6 +206,7 @@ describe('A. tasks.js PATCH /:task_id → in_progress: 自动写 claimed_by + ex
     // completed 时不写 executor_kind
     const sqlParts = updateCall[0].split('WHERE')[0];
     expect(sqlParts).not.toMatch(/executor_kind\s*=\s*\$/);
+    expect(updateCall[1][0]).toBe('completed');
   });
 });
 

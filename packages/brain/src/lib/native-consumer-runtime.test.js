@@ -91,12 +91,6 @@ it.each(nativeEvidencePaths)('native evidence %s缺失或变更不能被运行�
  await expect(assertNativeConsumerRuntime(p=>read(p)+(p===path?'changed':''))).rejects.toMatchObject({code:'IMPLEMENTATION_CI_SOURCE_RUNTIME_MISMATCH'});
 });
 
-it.each(nativeEvidencePaths)('native evidence %s树blob缺失/错误不能被旧根清单漏验',async path=>{
- const paths=[...new Set([...readNativeConsumerRuntime().files.map(f=>f.path),...nativeEvidencePaths])];
- const tree={tree:paths.map(p=>{const text=read(p);return {path:p,type:'blob',mode:'100644',sha:createHash('sha1').update(`blob ${Buffer.byteLength(text)}\0`).update(text).digest('hex')};})};
- for(const mutate of [rows=>rows.filter(e=>e.path!==path),rows=>rows.map(e=>e.path===path?{...e,mode:'120000'}:e),rows=>rows.map(e=>e.path===path?{...e,sha:'0'.repeat(40)}:e)])
-  await expect(assertNativeConsumerRuntime(read,{tree:mutate(tree.tree)})).rejects.toMatchObject({code:'IMPLEMENTATION_CI_SOURCE_RUNTIME_MISMATCH'});
-});
 it.each(nativeEvidencePaths)('native evidence %s加载后磁盘替换仍保留原loaded identity且拒绝新盘字节',path=>{
  const dir=mkdtempSync(join(tmpdir(),'native-evidence-loaded-'));
  try{

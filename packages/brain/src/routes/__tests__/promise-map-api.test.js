@@ -12,6 +12,17 @@ vi.mock('../../db.js', () => ({ default: { query: mockQuery, connect: async () =
   release() {},
 }) } }));
 
+// 解析真实INSERT列与占位参数，避免仅检查预造RETURNING行就漏掉字段绑定。
+function expectInsertedFields(table, expected) {
+  const call = mockQuery.mock.calls.find(([sql]) => sql.includes(`INSERT INTO ${table}`));
+  expect(call).toBeDefined();
+  const columns = call[0].match(/INSERT INTO \w+\s*\(([^)]+)\)/)[1].split(',').map(x => x.trim());
+  for (const [field, value] of Object.entries(expected)) {
+    expect(columns).toContain(field);
+    expect(call[1][columns.indexOf(field)]).toEqual(value);
+  }
+}
+
 async function makeApp() {
   vi.resetModules();
   const { default: router } = await import('../journeys.js');
@@ -36,6 +47,7 @@ describe('POST /api/brain/journeys — home 字段', () => {
       .send({ name: 'Line04', journey_type: 'user_facing', home: 'factory' });
     expect(res.status).toBe(201);
     expect(res.body.home).toBe('factory');
+    expectInsertedFields('value_streams', { name: 'Line04', journey_type: 'user_facing', home: 'factory' });
   });
 
   it('非法 home 值返回 400', async () => {
@@ -63,6 +75,7 @@ describe('POST /api/brain/journeys — home 字段', () => {
               trigger: '主理人拍板', endpoint: '账本可查' });
     expect(res.status).toBe(201);
     expect(res.body.trigger).toBe('主理人拍板');
+    expectInsertedFields('value_streams', { home: 'biz', trigger: '主理人拍板', endpoint: '账本可查' });
   });
 });
 
@@ -81,6 +94,8 @@ describe('POST /api/brain/journey_steps — promise 字段', () => {
               promise: '账本写入', backbone_version: '1.0' });
     expect(res.status).toBe(200);
     expect(res.body.promise).toBe('账本写入');
+    expect(mockQuery.mock.calls[1][0]).toMatch(/UPDATE activities SET/);
+    expect(mockQuery.mock.calls[1][1]).toEqual(['s1', 'S1', null, '账本写入', '1.0']);
   });
 });
 
@@ -98,6 +113,7 @@ describe('POST /api/brain/journey_features — softness 字段', () => {
       .send({ name: 'RPA引擎', softness: 'hard' });
     expect(res.status).toBe(201);
     expect(res.body.softness).toBe('hard');
+    expectInsertedFields('journey_features', { name: 'RPA引擎', softness: 'hard' });
   });
 
   it('非法 softness 返回 400', async () => {
@@ -123,6 +139,8 @@ describe('PATCH /api/brain/journey_features/:id — softness 字段', () => {
       .patch('/api/brain/journey_features/f1')
       .send({ softness: 'soft' });
     expect(res.status).toBe(200);
+    expect(mockQuery.mock.calls[0][0]).toMatch(/UPDATE journey_features SET softness=\$1/);
+    expect(mockQuery.mock.calls[0][1]).toEqual(['soft', 'f1']);
   });
 });
 
@@ -150,6 +168,8 @@ describe('POST /api/brain/journey_step_links — cell 字段', () => {
     expect(res.status).toBe(201);
     expect(res.body.cell_status).toBe('green');
     expect(res.body.assertion_ref).toBe('tests/routes/crm.test.ts');
+    expect(mockQuery.mock.calls[0][1]).toEqual(['s1']);
+    expectInsertedFields('activity_cells', { journey_id: 'j1', step_id: 's1', cell_kind: 'capability', cell_key: '文字识别', cell_status: 'green', feature_id: 'f1', assertion_ref: 'tests/routes/crm.test.ts' });
   });
 
   it('非法 cell_status 返回 400', async () => {
@@ -175,6 +195,8 @@ describe('PATCH /api/brain/journey_step_links/:id — cell 状态回写', () => 
       .patch('/api/brain/journey_step_links/l1')
       .send({ cell_status: 'green', assertion_ref: 'tests/foo.test.js' });
     expect(res.status).toBe(200);
+    expect(mockQuery.mock.calls[0][0]).toMatch(/UPDATE activity_cells SET cell_status=\$1,assertion_ref=\$2 WHERE id=\$3/);
+    expect(mockQuery.mock.calls[0][1]).toEqual(['green', 'tests/foo.test.js', 'l1']);
   });
 
   it('回写 cell_status=green 无 assertion_ref → 422（fail-closed，决策 df1ccf5a §③）', async () => {

@@ -96,7 +96,6 @@ features:
         - packages/brain/src/__tests__/daily-review-scheduler.test.js
         - packages/brain/src/__tests__/db-config.test.js
         - packages/brain/src/__tests__/dep-cascade.test.js
-        - packages/brain/src/__tests__/dept-head-apis.test.js
         - packages/brain/src/__tests__/dept-heartbeat-task-type.test.js
         - packages/brain/src/__tests__/dept-heartbeat.test.js
         - packages/brain/src/__tests__/event-bus.test.js
@@ -131,17 +130,13 @@ features:
         - packages/brain/src/__tests__/strategy-tree-routes.test.js
         - packages/brain/src/__tests__/system-reports-route.test.js
         - packages/brain/src/__tests__/tick-billing-pause.test.js
-        - packages/brain/src/__tests__/tick-blocked-recovery.test.js
-        - packages/brain/src/__tests__/tick-blocked-release.test.js
         - packages/brain/src/__tests__/tick-burst-limiter.test.js
         - packages/brain/src/__tests__/tick-cleanup.test.js
         - packages/brain/src/__tests__/tick-codex-immune.test.js
         - packages/brain/src/__tests__/tick-drain.test.js
         - packages/brain/src/__tests__/tick-gradient-requeue.test.js
-        - packages/brain/src/__tests__/tick-healing-integration.test.js
         - packages/brain/src/__tests__/tick-health-monitor.test.js
         - packages/brain/src/__tests__/tick-layer2-health.test.js
-        - packages/brain/src/__tests__/tick-rampup.test.js
         - packages/brain/src/__tests__/tick-report.test.js
         - packages/brain/src/__tests__/tick-throttle.test.js
         - packages/brain/src/__tests__/tick-timeout-requeue.test.js
@@ -152,7 +147,6 @@ features:
         - packages/brain/src/__tests__/websocket-new-events.test.js
         - packages/brain/src/__tests__/websocket.test.js
         - packages/brain/src/__tests__/work-streams-route.test.js
-        - packages/brain/src/utils/format-duration.test.js
       integration:
         - packages/brain/src/__tests__/integration/brain-endpoint-contracts.test.js
         - packages/brain/src/__tests__/integration/critical-routes.integration.test.js
@@ -185,7 +179,6 @@ features:
             - packages/brain/src/__tests__/daily-review-scheduler.test.js
             - packages/brain/src/__tests__/db-config.test.js
             - packages/brain/src/__tests__/dep-cascade.test.js
-            - packages/brain/src/__tests__/dept-head-apis.test.js
             - packages/brain/src/__tests__/dept-heartbeat-task-type.test.js
             - packages/brain/src/__tests__/dept-heartbeat.test.js
             - packages/brain/src/__tests__/event-bus.test.js
@@ -220,17 +213,13 @@ features:
             - packages/brain/src/__tests__/strategy-tree-routes.test.js
             - packages/brain/src/__tests__/system-reports-route.test.js
             - packages/brain/src/__tests__/tick-billing-pause.test.js
-            - packages/brain/src/__tests__/tick-blocked-recovery.test.js
-            - packages/brain/src/__tests__/tick-blocked-release.test.js
             - packages/brain/src/__tests__/tick-burst-limiter.test.js
             - packages/brain/src/__tests__/tick-cleanup.test.js
             - packages/brain/src/__tests__/tick-codex-immune.test.js
             - packages/brain/src/__tests__/tick-drain.test.js
             - packages/brain/src/__tests__/tick-gradient-requeue.test.js
-            - packages/brain/src/__tests__/tick-healing-integration.test.js
             - packages/brain/src/__tests__/tick-health-monitor.test.js
             - packages/brain/src/__tests__/tick-layer2-health.test.js
-            - packages/brain/src/__tests__/tick-rampup.test.js
             - packages/brain/src/__tests__/tick-report.test.js
             - packages/brain/src/__tests__/tick-throttle.test.js
             - packages/brain/src/__tests__/tick-timeout-requeue.test.js
@@ -241,7 +230,6 @@ features:
             - packages/brain/src/__tests__/websocket-new-events.test.js
             - packages/brain/src/__tests__/websocket.test.js
             - packages/brain/src/__tests__/work-streams-route.test.js
-            - packages/brain/src/utils/format-duration.test.js
           integration:
             - packages/brain/src/__tests__/integration/brain-endpoint-contracts.test.js
             - packages/brain/src/__tests__/integration/critical-routes.integration.test.js
@@ -303,11 +291,9 @@ features:
     tests:
       unit:
         - packages/brain/src/orchestrator/__tests__/execution-contract.test.js
-        - packages/brain/src/orchestrator/__tests__/callback-auth.test.js
         - packages/brain/src/orchestrator/__tests__/github-pr-discovery.test.js
         - packages/brain/src/orchestrator/providers/shared.test.js
         - packages/brain/src/orchestrator/providers/claude.test.js
-        - packages/brain/src/orchestrator/providers/codex.test.js
         - packages/brain/src/orchestrator/providers/grok.test.js
         - packages/brain/src/orchestrator/workspace-spec.test.js
         - packages/brain/src/orchestrator/production-transport.test.js
@@ -465,7 +451,6 @@ features:
       unit:
         - packages/brain/src/__tests__/check-okr-structure.test.js
         - packages/brain/src/__tests__/contracts/initiative-closer-contract.test.js
-        - packages/brain/src/__tests__/initiative-closer.test.js
         - packages/brain/src/__tests__/initiative-lock.test.js
         - packages/brain/src/__tests__/initiative-orchestration-migration.test.js
         - packages/brain/src/__tests__/kr-completion.test.js
@@ -496,7 +481,6 @@ features:
           unit:
             - packages/brain/src/__tests__/check-okr-structure.test.js
             - packages/brain/src/__tests__/contracts/initiative-closer-contract.test.js
-            - packages/brain/src/__tests__/initiative-closer.test.js
             - packages/brain/src/__tests__/initiative-lock.test.js
             - packages/brain/src/__tests__/initiative-orchestration-migration.test.js
             - packages/brain/src/__tests__/kr-completion.test.js

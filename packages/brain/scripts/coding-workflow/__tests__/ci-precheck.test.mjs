@@ -11,20 +11,23 @@ const ZJ = REPOS.find((r) => r.key === 'zenithjoy-workspace');
 const CECELIA = REPOS.find((r) => r.key === 'cecelia');
 
 describe('defaultChecks', () => {
-  it('覆盖 ci-passed 里能本地离线复现的规矩类门禁，base 用 origin/main；feature PR 传 PR_LABELS=feature', () => {
+  it('Cecelia只选择现役门：开工检查依次执行，再复用当前CI脚本层，所有入口必需', () => {
     const checks = defaultChecks({ branch: 'cp-10100039-cw-05ae922c', feature: true });
-    expect(checks.map((c) => c.name)).toEqual([
-      'lint-test-pairing', 'lint-feature-has-smoke', 'lint-tdd-commit-order', 'lint-test-quality', 'lint-no-mock-only-test',
-      'lint-no-fake-test', 'lint-gp-anchor-artifact', 'branch-naming', 'registry-lint', 'lint-migration-unique-version', 'pr-size-check',
-      'smoke-registration', 'smoke-write-guard', 'brain-version-increment',
+    expect(checks.map(c => c.name)).toEqual([
+      'facts-check', 'version-sync', 'dod-mapping', 'current-ci-scripts',
+      'smoke-write-guard', 'brain-version-increment',
     ]);
-    // 金丝雀 4（PR #6232）：写入型 smoke 没登记 write-targets、curl 没带 -q，到 CI 才红 → 左移到本地预检
-    expect(checks.find((c) => c.name === 'smoke-write-guard').cmd).toEqual(['node', '--test', 'packages/brain/scripts/smoke/__tests__/smoke-production-guard.node-test.mjs']);
-    const smoke = checks.find((c) => c.name === 'lint-feature-has-smoke');
-    expect(smoke.cmd).toEqual(['bash', '.github/workflows/scripts/lint-feature-has-smoke.sh', 'origin/main']);
-    expect(smoke.env).toEqual({ PR_LABELS: 'feature' });
-    expect(defaultChecks({ branch: 'b', feature: false }).find((c) => c.name === 'lint-feature-has-smoke').env).toEqual({ PR_LABELS: '' });
-    expect(checks.find((c) => c.name === 'branch-naming').cmd).toEqual(['bash', 'scripts/ci/check-branch-naming.sh', 'cp-10100039-cw-05ae922c']);
+    expect(checks.every(c => c.required === true)).toBe(true);
+    expect(checks.slice(0, 4).map(c => c.cmd)).toEqual([
+      ['node', 'scripts/facts-check.mjs'],
+      ['bash', 'scripts/check-version-sync.sh'],
+      ['node', 'scripts/devgate/check-dod-mapping.cjs'],
+      ['node', 'scripts/ci/run-basic-check.mjs', 'scripts'],
+    ]);
+    expect(checks.find(c => c.name === 'smoke-write-guard').cmd).toEqual([
+      'node', '--test', 'packages/brain/scripts/smoke/__tests__/smoke-production-guard.node-test.mjs',
+    ]);
+    expect(defaultChecks({ branch: 'b', feature: false })).toEqual(checks);
   });
 });
 
@@ -66,6 +69,38 @@ describe('runPrechecks', () => {
     expect(r[1].output_tail).toContain('缺 smoke 脚本: feature');
   });
 
+  it('Cecelia每个必需入口缺失都失败，不可跳过；真实子进程失败后修正才通过', async () => {
+    const checks = defaultChecks({ branch: 'b', feature: false })
+      .filter(c => c.name !== 'brain-version-increment');
+    expect(checks.map(c => c.name)).toEqual([
+      'facts-check', 'version-sync', 'dod-mapping', 'current-ci-scripts', 'smoke-write-guard',
+    ]);
+    for (const check of checks) {
+      const [missing] = await runPrechecks(worktree, { checks: [check] });
+      expect(missing, check.name).toMatchObject({ ok: false, skipped: false });
+      expect(missing.output_tail).toContain('必需检查失败');
+      const script = check.cmd.slice(1).find(arg => /\.(?:sh|mjs|cjs)$/.test(arg));
+      const target = path.join(worktree, script);
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      const failure = check.cmd[0] === 'bash'
+        ? 'echo precheck-real-failure >&2\nexit 23\n'
+        : "console.error('precheck-real-failure'); process.exit(23);\n";
+      fs.writeFileSync(target, failure);
+      const [failed] = await runPrechecks(worktree, { checks: [check] });
+      expect(failed.ok, check.name).toBe(false);
+      expect(failed.skipped ?? false).toBe(false);
+      expect(failed.output_tail).toContain('precheck-real-failure');
+      fs.writeFileSync(target, check.cmd[0] === 'bash' ? 'exit 0\n'
+        : check.cmd.includes('--test')
+          ? "import test from 'node:test'; import assert from 'node:assert/strict'; test('owned fixture', () => assert.equal(2 + 2, 4));\n"
+          : "console.log(JSON.stringify(process.argv.slice(2)));\n");
+      const [passed] = await runPrechecks(worktree, { checks: [check] });
+      expect(passed.ok, check.name).toBe(true);
+      expect(passed.skipped ?? false).toBe(false);
+      if (check.name === 'current-ci-scripts') expect(passed.output_tail).toContain('["scripts"]');
+    }
+  });
+
   it('真实版本校验左移到build预检：无增量必须交修复环，已升版只读通过', async () => {
     const checks = defaultChecks({ branch: 'b', feature: false }).filter(row => row.name === 'brain-version-increment');
     expect(checks).toHaveLength(1); expect(checks[0].required).toBe(true);
@@ -89,8 +124,7 @@ describe('runPrechecks', () => {
 
   // 金丝雀 3e8414f6（PR #6160）实证：CI 修复补的 smoke 脚本没登记，被 Smoke Ratchet Gate 判「未登记脚本」打红
   it('smoke-registration：smoke 目录每个 .sh 都要在 allowlist / denylist / debt 之一；分类文件缺失则拒绝', async () => {
-    const only = (c) => c.name === 'smoke-registration';
-    const check = () => runPrechecks(worktree, { checks: defaultChecks({ branch: 'b', feature: false }).filter(only) });
+    const check = () => runPrechecks(worktree, { checks: [{ name: 'smoke-registration', builtin: 'smoke-registration' }] });
     expect((await check())[0]).toMatchObject({ ok: false });
     fs.mkdirSync(path.join(worktree, 'packages/brain/scripts/smoke'), { recursive: true });
     fs.mkdirSync(path.join(worktree, 'packages/brain/config/smoke'), { recursive: true });
@@ -119,7 +153,7 @@ describe('runPrechecks', () => {
         if (file !== missing) fs.writeFileSync(path.join(config, file), 'owned-smoke.sh\n');
       }
       const [result] = await runPrechecks(worktree, {
-        checks: defaultChecks({ branch: 'b', feature: false }).filter(c => c.name === 'smoke-registration'),
+        checks: [{ name: 'smoke-registration', builtin: 'smoke-registration' }],
       });
       expect(result.ok).toBe(false);
       expect(result.skipped).not.toBe(true);
@@ -127,11 +161,11 @@ describe('runPrechecks', () => {
     },
   );
 
-  it('pr-size-check：相对 origin/main 新增行数超过上限 → 失败（sprint md 链也算，同 CI）', async () => {
+  it('显式旧pr-size builtin仍验证相对origin/main新增行数，不属于Cecelia默认门', async () => {
     fs.writeFileSync(path.join(worktree, 'big.txt'), 'x\n'.repeat(PR_SIZE_LIMIT + 1));
     git(worktree, 'add', '.');
     git(worktree, 'commit', '-q', '-m', 'feat: big');
-    const [size] = await runPrechecks(worktree, { checks: defaultChecks({ branch: 'b', feature: false }).filter((c) => c.name === 'pr-size-check') });
+    const [size] = await runPrechecks(worktree, { checks: [{ name: 'pr-size-check', builtin: 'pr-size' }] });
     expect(size).toMatchObject({ name: 'pr-size-check', ok: false });
     expect(size.output_tail).toContain(String(PR_SIZE_LIMIT + 1));
   });

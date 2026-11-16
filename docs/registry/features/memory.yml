@@ -47,7 +47,6 @@ features:
         - packages/brain/src/__tests__/memory-capabilities-search.test.js
         - packages/brain/src/__tests__/memory-closure-chain.test.js
         - packages/brain/src/__tests__/memory-consolidator-wiring.test.js
-        - packages/brain/src/__tests__/memory-embedding-wiring.test.js
         - packages/brain/src/__tests__/memory-retriever-chat.test.js
         - packages/brain/src/__tests__/memory-retriever-l1.test.js
         - packages/brain/src/__tests__/memory-retriever-quota.test.js
@@ -75,7 +74,6 @@ features:
             - packages/brain/src/__tests__/memory-capabilities-search.test.js
             - packages/brain/src/__tests__/memory-closure-chain.test.js
             - packages/brain/src/__tests__/memory-consolidator-wiring.test.js
-            - packages/brain/src/__tests__/memory-embedding-wiring.test.js
             - packages/brain/src/__tests__/memory-retriever-chat.test.js
             - packages/brain/src/__tests__/memory-retriever-l1.test.js
             - packages/brain/src/__tests__/memory-retriever-quota.test.js
@@ -307,7 +305,6 @@ features:
     apis: []
     tests:
       unit:
-        - packages/brain/src/__tests__/bare-modules/evolution-scanner.test.js
         - packages/brain/src/__tests__/cognitive-core.test.js
         - packages/brain/src/__tests__/cognitive-map-api.test.js
         - packages/brain/src/__tests__/cortex-cross-task-rca.test.js
@@ -352,7 +349,6 @@ features:
         maturity: 2
         tests:
           unit:
-            - packages/brain/src/__tests__/bare-modules/evolution-scanner.test.js
             - packages/brain/src/__tests__/cognitive-core.test.js
             - packages/brain/src/__tests__/cognitive-map-api.test.js
             - packages/brain/src/__tests__/cortex-cross-task-rca.test.js

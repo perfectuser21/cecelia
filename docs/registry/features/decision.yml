@@ -268,7 +268,6 @@ features:
     apis: []
     tests:
       unit:
-        - packages/brain/src/__tests__/circuit-breaker-state-machine.test.js
         - packages/brain/src/__tests__/circuit-breaker-success.test.js
         - packages/brain/src/__tests__/circuit-breaker-transient-bypass.test.js
         - packages/brain/src/__tests__/circuit-breaker.test.js
@@ -282,7 +281,6 @@ features:
         maturity: 2
         tests:
           unit:
-            - packages/brain/src/__tests__/circuit-breaker-state-machine.test.js
             - packages/brain/src/__tests__/circuit-breaker-success.test.js
             - packages/brain/src/__tests__/circuit-breaker-transient-bypass.test.js
             - packages/brain/src/__tests__/circuit-breaker.test.js
@@ -333,7 +331,6 @@ features:
         - packages/brain/src/__tests__/immune-system.test.js
         - packages/brain/src/__tests__/liveness-probe.test.js
         - packages/brain/src/__tests__/metrics-routes.test.js
-        - packages/brain/src/__tests__/monitor-loop-p2.test.js
         - packages/brain/src/__tests__/monitor-loop.test.js
         - packages/brain/src/__tests__/monitor-resource-snapshot.test.js
         - packages/brain/src/__tests__/rca-deduplication.test.js
@@ -370,7 +367,6 @@ features:
             - packages/brain/src/__tests__/immune-system.test.js
             - packages/brain/src/__tests__/liveness-probe.test.js
             - packages/brain/src/__tests__/metrics-routes.test.js
-            - packages/brain/src/__tests__/monitor-loop-p2.test.js
             - packages/brain/src/__tests__/monitor-loop.test.js
             - packages/brain/src/__tests__/monitor-resource-snapshot.test.js
             - packages/brain/src/__tests__/rca-deduplication.test.js

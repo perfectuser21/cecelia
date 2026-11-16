@@ -9,9 +9,6 @@
  */
 import { describe, it, expect, vi } from 'vitest';
 import {
-  resolveCommanderOrder,
-  buildCommanderMessage,
-  orderWithRun,
   parseDeliveryBlock,
   dispatchWorkflowCommanderTasks,
   reapWorkflowCommanderRuns,
@@ -60,18 +57,7 @@ const delivery = (over = {}) => ({
   activities: ACTIVITIES, commander_skill: { name: 'wf-douyin_video_publish', version: '0.1.0' }, ...over,
 });
 
-describe('调度单带 run_id / task_id', () => {
-  it('orderWithRun：<五项> --run-id <run> --task-id <task> [commander_args]', () => {
-    const r = resolveCommanderOrder(wfTask({ payload: { workflow_key: 'douyin_video_publish.android', commander_args: ['--dry-run'] } }), { resolveConfig: resolveWorkflowConfig });
-    expect(orderWithRun(r, RUN_ID, TASK_ID)).toBe(`douyin_video_publish xian-m4 xiaolongxia ANGYVB4311010223 Ai办公室 --run-id ${RUN_ID} --task-id ${TASK_ID} --dry-run`);
-  });
-  it('消息里的调度单带 run/task，并要求 COMMANDER_RESULT 写陪跑 skill（commander_skill）', () => {
-    const r = resolveCommanderOrder(wfTask(), { resolveConfig: resolveWorkflowConfig });
-    const m = buildCommanderMessage(wfTask(), r, RUN_ID);
-    expect(m).toContain(`调度单：douyin_video_publish xian-m4 xiaolongxia ANGYVB4311010223 Ai办公室 --run-id ${RUN_ID} --task-id ${TASK_ID}`);
-    expect(m).toContain('"commander_skill"');
-    expect(m).toMatch(/第〇节/);
-  });
+describe('公共Runner派发身份', () => {
   it('新派发委托公共Runner保留原task身份，不再给执行Commander拼整段调度单', async () => {
     const t = wfTask();
     const pool = fakePool([[/FROM tasks[\s\S]*status = 'queued'/, () => ({ rows: [t] })]]);

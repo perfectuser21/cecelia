@@ -4,7 +4,7 @@
  * 全被占只等不接管；池空 → failed 写原因。派发成功后落 Brain 租约（超时 + 15 分钟）。
  */
 import { describe, it, expect, vi } from 'vitest';
-import { WORKFLOW_DISPATCH_TASK_TYPE, dispatchWorkflowCommanderTasks,resolveCommanderOrder,applyPoolMember } from '../workflow-commander-dispatch.js';
+import { WORKFLOW_DISPATCH_TASK_TYPE, dispatchWorkflowCommanderTasks } from '../workflow-commander-dispatch.js';
 import { resolveWorkflowConfig } from '../factory-workflow-config.js';
 
 const CFG = {
@@ -49,12 +49,5 @@ describe('固定发布source与历史设备池边界',()=>{
   const pool=fakePool(),sshDispatch=vi.fn(),releaseLock=vi.fn();
   const out=await dispatchWorkflowCommanderTasks(pool,{resolveConfig,now:IN_HOURS,workflowCommonDispatch:async()=>({waiting:true,reason}),sshDispatch,releaseLock});
   expect(out.waiting).toBe(1);expect(sshDispatch).not.toHaveBeenCalled();expect(releaseLock).not.toHaveBeenCalled();
- });
- it('历史调度单解析仍拒绝非法成员字符，仅供在途诊断',()=>{
-  const order=resolveCommanderOrder(T,{resolveConfig});expect(applyPoolMember(order,{...SECOND,account_ref:'a b'}).ok).toBe(false);
- });
- it('历史成员映射仍保留完整身份，不能只替换serial',()=>{
-  const order=resolveCommanderOrder(T,{resolveConfig}),selected=applyPoolMember(order,SECOND);
-  expect(selected.serial).toBe(SECOND.serial);expect(selected.order).toContain('yueshengyun-work e6c7ef34 Ai效率笔记');
  });
 });

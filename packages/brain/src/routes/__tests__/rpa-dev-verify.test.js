@@ -71,7 +71,7 @@ describe('POST /api/brain/rpa/dev-verify — 参数校验', () => {
     expect(res.body.allowed).not.toContain('shell');
   });
 
-  it('wechat 白名单与 Agent 已注册动作名对齐(E2E 接缝)', async () => {
+  it('wechat 白名单暴露注册动作名并拒绝旧通用名', async () => {
     // Agent 侧(zenithjoy-workspace DEV_VERIFY_WHITELIST)是执行权威闸——
     // 旧的 send_message/screenshot 等通用名 Agent 必拒 not_whitelisted,E2E 打不通
     const res = await request(makeApp())
@@ -90,7 +90,7 @@ describe('POST /api/brain/rpa/dev-verify — 参数校验', () => {
       .send({ line: 'douyin', action: 'send_message' });
     expect(res.status).toBe(400);
     expect(res.body.error).toBe('action_not_allowed');
-    expect(res.body.allowed).toEqual(expect.arrayContaining(['health_check', 'broadcast', 'status']));
+    expect([...res.body.allowed].sort()).toEqual(['broadcast', 'health_check', 'status']);
   });
 });
 

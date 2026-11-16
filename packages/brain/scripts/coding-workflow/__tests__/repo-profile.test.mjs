@@ -62,10 +62,17 @@ describe('repo-rules 提示词', () => {
     }
   });
 
-  it('cecelia 规矩保留原有 CI 口径（Brain 源码配测试、feat 带 smoke、迁移编号顺延、cw-*-qa-smoke.sh 勿手改、QA 场景不写 localhost:5221）', () => {
+  it('cecelia提示使用现行必需入口并保留版本、迁移和QA边界，不再按同名配对造测试', () => {
     const t = repoRules(cecelia);
-    for (const s of ['packages/brain/src', 'packages/brain/scripts/smoke', 'smoke-allowlist.txt', 'packages/brain/migrations', 'cw-*-qa-smoke.sh', 'localhost:5221', '<预览环境>']) {
+    for (const s of ['packages/brain/src', 'packages/brain/scripts/smoke', 'packages/brain/migrations', 'cw-*-qa-smoke.sh', 'localhost:5221', '<预览环境>']) {
       expect(t, s).toContain(s);
+    }
+    for (const command of ['node scripts/facts-check.mjs', 'bash scripts/check-version-sync.sh',
+      'node scripts/devgate/check-dod-mapping.cjs', 'node scripts/ci/run-basic-check.mjs scripts']) {
+      expect(t).toContain(command);
+    }
+    for (const retired of ['lint-test-pairing', 'lint-feature-has-smoke', 'lint-tdd-commit-order', 'pr-size-check']) {
+      expect(t).not.toContain(retired);
     }
     expect(repoRules(undefined)).toBe(t);
   });
