@@ -1,9 +1,8 @@
-import {BUSINESS_PROFILE_PATH,REVIEWED_BUSINESS_SMOKE_RETIREMENT,collectReviewedBusinessPgSources} from './existing-ops-business-ci-source.js';
 /** 仅证明已审真实测试消费阶段入口；不改变业务执行、不声明实际模型或业务验收成功。 */
 import {STAGE_ENVELOPES as STAGE_REVIEWED, ISOLATION_STAGE_ENVELOPES, MERGE_STAGE_ENVELOPES} from './existing-ops-stage-envelopes.js';
 import {nativeEvidenceStages,nativeStageTest,NATIVE_PROVENANCE_PATHS,NATIVE_HISTORY_PATH,nativeStaticEdges,nativeEvaluateEdges} from './existing-ops-native-evidence-source.js';
 import yaml from 'js-yaml';import {readFileSync} from 'node:fs';import { createHash } from 'node:crypto';
-import {REVIEWED_STAGE_MODES,BASIC_CI_STAGE_MODE} from './existing-ops-stage-modes.js';
+import {REVIEWED_STAGE_MODES,BASIC_CI_STAGE_MODE,BUSINESS_PROFILE_PATH,REVIEWED_BUSINESS_SMOKE_RETIREMENT,collectReviewedBusinessPgSources} from './existing-ops-stage-modes.js';
 export const EXISTING_OPS_REPO_RULES_INPUT_SCHEMA=1;
 const PREFIX='packages/brain/scripts/coding-workflow/';
 const STAGES=['intent','spec','spec-review','verify','evaluate'];

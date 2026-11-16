@@ -1,4 +1,4 @@
-/** 现役严格18成员只读消费资格；不执行来源模板。 */
+/** 现役严格19成员只读消费资格；不执行来源模板。 */
 import {createHash} from 'node:crypto';
 import {readFileSync} from 'node:fs';
 import {execFileSync} from 'node:child_process';
@@ -55,8 +55,8 @@ export function registerReviewedAGuardTests({ BRAIN_ROOT, findClaudeInvocations 
    const changed=base();changed.set(runtime,changed.get(runtime)+'\nexport const unknownStagingSource=true;');
    expect(scan(changed).some(h=>h.rule==='E1')).toBe(true);
   });
-  it.each(['eval','raw export','process'])('移动至workspace的helper出现%s仍失败关闭',kind=>{
-   const s=base(),file=path.join(root,'existing-ops-workspace-source.js');
+  it.each(['workspace-source','stage-modes'].flatMap(name=>['eval','raw export','process'].map(kind=>[name,kind])))('%s的helper出现%s仍失败关闭',(name,kind)=>{
+   const s=base(),file=path.join(root,'existing-ops-'+name+'.js');
    const edits={eval:'\neval(candidate);','raw export':"\nimport {STAGE_ENVELOPES} from './existing-ops-stage-envelopes.js';export const raw=STAGE_ENVELOPES;",process:"\nimport {spawn as launch} from 'node:child_process';launch('claude',['-p']);"};
    s.set(file,s.get(file)+edits[kind]);expect(scan(s).some(h=>h.rule==='E1')).toBe(true);
    if(kind==='process')expect(scan(s,file).some(h=>h.rule==='R1')).toBe(true);

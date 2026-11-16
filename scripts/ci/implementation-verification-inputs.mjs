@@ -223,7 +223,10 @@ const SCRIPT_CLEANUP_ENTRY_PROTOCOL={...JSON.parse(scriptProfileText),[SCRIPT_PR
 const RESOURCE_PROFILE_PATH='packages/brain/src/lib/existing-ops-resource-retirement-profile.json', RESOURCE_PROFILE_SHA='0189fe174fa8ee2b734e4a05b42f296f83d7ebb36acd162813db266bce9252f3', resourceProfileText=readFileSync(new URL('../../packages/brain/src/lib/existing-ops-resource-retirement-profile.json',import.meta.url),'utf8');
 if(sha(resourceProfileText)!==RESOURCE_PROFILE_SHA) fail('RESOURCE_PROFILE_MISMATCH');
 const RESOURCE_RETIREMENT_ENTRY_PROTOCOL={...JSON.parse(resourceProfileText),[RESOURCE_PROFILE_PATH]:RESOURCE_PROFILE_SHA};
-const entryProtocolsFor = digest => ['763f9075175442249e9500a3d6c55936e2b7c424344f9319baac5fe08ccd5128','1ac9c420d1ff0a6a681d486dd117c7c935b0c55f0e14f4ba98e2e730be68204a'].includes(digest) ? [RESOURCE_RETIREMENT_ENTRY_PROTOCOL] : digest === '014b5b54984ff322b0783c6070113199673efd53bb900ea9934d038de3cd5e5d' ? [COMMANDER_AUDIT_ENTRY_PROTOCOL,SCRIPT_CLEANUP_ENTRY_PROTOCOL] : digest === SKILL_RETIREMENT_CI ? [SKILL_RETIREMENT_ENTRY_PROTOCOL,PLANNER_RETIREMENT_ENTRY_PROTOCOL] : ENTRY_PROTOCOLS_BY_WORKFLOW[digest];
+const BUSINESS_PROFILE_PATH='packages/brain/src/lib/existing-ops-business-smoke-retirement-profile.json', BUSINESS_PROFILE_SHA='18e8a6aff7886a7875468d923010ef1936fb100b497abc17f9e09c05b83218bd', businessProfileText=readFileSync(new URL('../../packages/brain/src/lib/existing-ops-business-smoke-retirement-profile.json',import.meta.url),'utf8');
+if(sha(businessProfileText)!==BUSINESS_PROFILE_SHA) fail('BUSINESS_PROFILE_MISMATCH');
+const BUSINESS_SMOKE_RETIREMENT_ENTRY_PROTOCOL={...JSON.parse(businessProfileText),[BUSINESS_PROFILE_PATH]:BUSINESS_PROFILE_SHA};
+const entryProtocolsFor = digest => digest === '763f9075175442249e9500a3d6c55936e2b7c424344f9319baac5fe08ccd5128' ? [RESOURCE_RETIREMENT_ENTRY_PROTOCOL] : digest === '1ac9c420d1ff0a6a681d486dd117c7c935b0c55f0e14f4ba98e2e730be68204a' ? [RESOURCE_RETIREMENT_ENTRY_PROTOCOL,BUSINESS_SMOKE_RETIREMENT_ENTRY_PROTOCOL] : digest === '014b5b54984ff322b0783c6070113199673efd53bb900ea9934d038de3cd5e5d' ? [COMMANDER_AUDIT_ENTRY_PROTOCOL,SCRIPT_CLEANUP_ENTRY_PROTOCOL] : digest === SKILL_RETIREMENT_CI ? [SKILL_RETIREMENT_ENTRY_PROTOCOL,PLANNER_RETIREMENT_ENTRY_PROTOCOL] : ENTRY_PROTOCOLS_BY_WORKFLOW[digest];
 const functionalEntry=entry=>Boolean(entryProtocolsFor(entry?.canonical_sha256??''));
 const UNIT_CONFIGS=[
  {component:'brain',directory:'packages/brain',path:'packages/brain/vitest.config.js'},
@@ -262,6 +265,7 @@ function unitEntry(read,side){
  const signature=sha(JSON.stringify(canonical(doc)));if(!entryProtocolsFor(signature))return null;
  const support=[workflow.reference];let selected;
  for(const seals of entryProtocolsFor(signature)){
+  if(read(side,BUSINESS_PROFILE_PATH)&&seals!==BUSINESS_SMOKE_RETIREMENT_ENTRY_PROTOCOL)continue;
   const files=[];let matches=true;
   for(const [path,expected] of Object.entries(seals)){
    const file=read(side,path);if(expected===null){if(file){matches=false;break;}continue;}if(file?.reference.sha256!==expected){matches=false;break;}
