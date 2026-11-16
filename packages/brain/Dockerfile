@@ -68,7 +68,7 @@ RUN GH_VERSION=2.45.0 \
  && echo "${GH_SHA}  /tmp/gh.tar.gz" | sha256sum -c - \
  && tar -xzf /tmp/gh.tar.gz -C /tmp \
  && mv /tmp/gh_${GH_VERSION}_linux_${GH_ARCH}/bin/gh /usr/local/bin/gh \
- && /usr/local/bin/gh --version | head -n 1 | grep -F "gh version ${GH_VERSION} " \
+ && GOGC=off /usr/local/bin/gh --version | head -n 1 | grep -F "gh version ${GH_VERSION} " \
  && rm -rf /tmp/gh_${GH_VERSION}_linux_${GH_ARCH} /tmp/gh.tar.gz
 
 WORKDIR /app
