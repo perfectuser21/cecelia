@@ -69,7 +69,7 @@ export async function createRuntime({profile,run,verifySource=async()=>{},ledger
   async function performReadback(activity,input,phase,proposal,signal){
     const spec=specFor(activity),checker=spec.checker;
     const request={task_id:run.task_id,run_id:run.run_id,run_tag:run.input.run_tag,workflow:spec.workflow??run.contract.workflow,
-      activity:spec.activity??activity.key,activity_contract:activityContract(activity),attempt:input.execution_attempt??1,nonce:randomUUID(),phase,
+      activity:spec.activity??activity.key,activity_contract:activityContract(activity),attempt:activity.runtime?.executor_kind==='code'?1:(input.execution_attempt??1),nonce:randomUUID(),phase,
       checks:phase==='start'?checker.start_checks:checker.required_checks,proposal,context:{...run.input,...input}};
     fs.mkdirSync(path.join(root,'checks'),{recursive:true,mode:0o700});
     const evidenceFile=path.join(root,'checks',request.nonce+'.json');

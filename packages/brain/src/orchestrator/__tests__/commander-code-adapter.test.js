@@ -36,6 +36,22 @@ test('code-only无需Codex、Skill或tools，真实冻结entry执行并独立读
  expect((await runtime.inspectActivity(f.activity,f.input,f.options)).state).toBe('unknown');
  expect(fs.readFileSync(path.join(f.root,'executions.jsonl'),'utf8').trim().split('\n')).toHaveLength(1);
 });
+test('Code同名业务轮次保留原值，但checker身份信封仍是真实第一轮',async()=>{
+ const f=fixture(),runtime=await createRuntime(f),input={...f.input,execution_attempt:42,checker_feedback:{business:'existing-input'}};
+ const result=await runtime.executeActivity(f.activity,input,f.options);
+ expect(result.status).toBe('completed');
+ expect((await runtime.checkActivity(f.activity,result,{phase:'end',input})).verdict).toBe('pass');
+ expect((await runtime.inspectActivity(f.activity,input,f.options)).result).toEqual(result);
+ const calls=fs.readFileSync(path.join(f.root,'executions.jsonl'),'utf8').trim().split('\n').map(JSON.parse);
+ expect(calls).toHaveLength(1);expect(calls[0].input).toEqual(input);
+ const directory=path.join(f.root,'control',f.run.run_id,'checks');
+ const checks=fs.readdirSync(directory).map(file=>JSON.parse(fs.readFileSync(path.join(directory,file),'utf8')));
+ expect(checks).toHaveLength(2);
+ for(const check of checks){
+  expect(check.request.attempt).toBe(1);expect(check.observed.identity.attempt).toBe(1);
+  expect(check.request.context).toMatchObject({execution_attempt:42,checker_feedback:{business:'existing-input'}});
+ }
+});
 test.each([
  ['failed',{status:'failed',failure_class:'fatal'},'failed',true],
  ['needs_review',{status:'needs_review',failure_class:'needs_human'},'needs_review',true],
