@@ -5,13 +5,17 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { runInNewContext } from 'node:vm';
-import { planChecks } from '../basic-scope.mjs';
 import { commandsFor } from '../run-basic-check.mjs';
+import brainConfig from '../../../packages/brain/vitest.config.js';
 
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 const require = createRequire(import.meta.url);
 const yaml = require('js-yaml');
 const workflow = yaml.load(readFileSync(new URL('../../../.github/workflows/ci.yml', import.meta.url), 'utf8'));
+
+test('默认Brain测试集合不递归执行历史Sprint工作目录', () => {
+  assert.equal(brainConfig.test.include.some(pattern => pattern.includes('sprints/')), false);
+});
 
 test('所有启用工作流都能解析，新增文件也自动检查', () => {
   const directory = new URL('../../../.github/workflows/', import.meta.url);
@@ -41,9 +45,6 @@ test('每个声明的源码检查都必须抵达同一个最终结果，没有�
   assert.equal(workflow.jobs.checks.if, "github.event_name != 'schedule' && github.event.action != 'closed'");
   const run = workflow.jobs.checks.steps.find(step => step.name === 'Run actual checks');
   assert.equal(run.run, 'node scripts/ci/run-basic-check.mjs "$COMPONENT" "$SHARD"');
-  for (const paths of [[], ['docs/current/README.md'], ['packages/brain/src/server.js']]) {
-    assert.equal(planChecks(paths, {full: paths.length === 0}).filter(row => row.component === 'scripts').length, 1);
-  }
   const scripts = commandsFor('scripts');
   assert.equal(scripts.filter(step => step.command === 'python3' && step.args.includes('test_skill_source_ownership.py')).length, 1);
   assert.equal(scripts.filter(step => step.command === 'python3' && step.args[0] === 'scripts/skill_source_ownership.py').length, 1);
@@ -63,7 +64,7 @@ test('实际workflow的最终命令严格传播失败、跳过和取消', () => 
 });
 
 test('每个现役矩阵项都能解析到非空真实命令', () => {
-  for (const row of planChecks([], { full: true })) {
+  for (const row of workflow.jobs.checks.strategy.matrix.include) {
     const commands = commandsFor(row.component, row.shard);
     assert.ok(commands.length > 0, row.component);
     for (const command of commands) {
@@ -75,7 +76,7 @@ test('每个现役矩阵项都能解析到非空真实命令', () => {
 
 test('最小源码CI只使用只读自动令牌，不依赖生产账号或私有Skills', () => {
   assert.deepEqual(workflow.permissions, { contents: 'read' });
-  for (const id of ['plan','security','checks','ci-passed']) assert.doesNotMatch(JSON.stringify(workflow.jobs[id]), /secrets\.|skills-source|GH_PAT_BOT|CECELIA_INTERNAL_TOKEN/);
+  for (const id of ['security','checks','ci-passed']) assert.doesNotMatch(JSON.stringify(workflow.jobs[id]), /secrets\.|skills-source|GH_PAT_BOT|CECELIA_INTERNAL_TOKEN/);
 });
 
 test('只给实际PG跑道设置数据库URI，不能意外启用单测文件里的真实PG describe', () => {
@@ -93,7 +94,7 @@ test('退出旧API集成跑道，只有现役Brain PG组件可启动数据库', 
   assert.equal(job.env.API_PG_INTEGRATION, '0');
   assert.equal(job.services.postgres.image,
     "${{ matrix.component == 'brain-integration' && 'mirror.gcr.io/pgvector/pgvector:pg15' || '' }}");
-  assert.ok(!planChecks(['apps/api/src/system/routes.ts']).some(row => row.component === 'api-integration'));
+  assert.ok(!workflow.jobs.checks.strategy.matrix.include.some(row => row.component === 'api-integration'));
 });
 
 
@@ -107,7 +108,7 @@ test('统一CI真实合并runner，保持独有命令和产物并隔离安全权
   }),['ci.yml']);
   for(const [id,job]of Object.entries(workflow.jobs))assert.equal(job.uses,undefined,id+'不得复用另一个workflow');
   assert.ok(readFileSync(new URL('../../../.github/workflows/ci.yml',import.meta.url),'utf8').trimEnd().split('\n').length<=500);
-  assert.equal(Object.keys(workflow.jobs).length, 9);
+  assert.equal(Object.keys(workflow.jobs).length, 8);
   const baseline=yaml.load(execFileSync('git',['show','0e2c3c81717ab08ae678a869f526a258f850fec8:.github/workflows/ci.yml'],{cwd:root,encoding:'utf8'}));
   const runtime=workflow.jobs['runtime-integration'];
   assert.deepEqual(runtime.services, baseline.jobs['node-onboarding'].services);
@@ -154,16 +155,15 @@ test('周扫描仅CodeQL执行，closed仅cleanup；评论写权限限于预览�
   assert.deepEqual(workflow.jobs.codeql.permissions,{contents:'read','security-events':'write'});
   assert.equal(workflow.jobs['preview-cleanup'].needs,undefined);
   assert.equal(workflow.jobs['preview-cleanup'].if,"github.event_name == 'pull_request' && github.event.action == 'closed'");
-  assert.equal(workflow.jobs['preview-deploy'].needs,'plan');
-  assert.ok(workflow.jobs['preview-deploy'].if.includes("needs.plan.outputs.preview_ui == 'true'"));
-  assert.equal(workflow.jobs.plan.outputs.preview_ui,'${{ steps.scope.outputs.preview_ui }}');
+  assert.equal(workflow.jobs['preview-deploy'].needs,undefined);
+  assert.equal(workflow.jobs['preview-deploy'].steps.find(step=>step.uses==='./.github/actions/preview-deploy').if,"steps.preview_scope.outputs.preview_ui == 'true'");
   assert.ok(workflow.concurrency.group.includes("'closed-pr-{0}'"));
   assert.ok(workflow.concurrency.group.includes("'weekly-codeql'"));
   assert.ok(workflow.concurrency['cancel-in-progress'].includes("github.event.action != 'closed'"));
 });
 
-test('现役全量PR含UI预览实际展开20个runner，不重复计算定义合并', () => {
-  const selected = planChecks(['apps/dashboard/src/App.tsx'], {full:true});
+test('现役全量PR含UI预览实际展开19个runner，不重复计算定义合并', () => {
+  const selected = workflow.jobs.checks.strategy.matrix.include;
   assert.equal(selected.length, 11);
   const expanded = Object.entries(workflow.jobs).filter(([id]) => id !== 'preview-cleanup').map(([id, job]) => {
     if (id === 'checks') return selected.length;
@@ -175,14 +175,14 @@ test('现役全量PR含UI预览实际展开20个runner，不重复计算定义�
     }
     return Object.values(matrix).reduce((count, axis) => count * axis.length, 1);
   });
-  assert.equal(expanded.reduce((sum, count) => sum + count, 0), 20);
+  assert.equal(expanded.reduce((sum, count) => sum + count, 0), 19);
 });
 
 
 test('真实YAML事件表达式隔离closed/weekly，普通PR push manual严格汇总', () => {
-  function context(name, action='', ui='true') {
+  function context(name, action='') {
     return {github:{event_name:name,actor:'owner',repository:'example/repo',head_ref:'feature/ui',ref:'refs/heads/main',event:{action,pull_request:{number:42,user:{login:'owner'},head:{repo:{full_name:'example/repo'}},labels:[]}}},
-      needs:{plan:{outputs:{preview_ui:ui}}},always:()=>true,contains:(xs,x)=>xs.includes(x),startsWith:(s,p)=>s.startsWith(p),format:(s,...values)=>s.replace(/\{(\d+)\}/g,(_,i)=>values[Number(i)])};
+      always:()=>true,contains:(xs,x)=>xs.includes(x),startsWith:(s,p)=>s.startsWith(p),format:(s,...values)=>s.replace(/\{(\d+)\}/g,(_,i)=>values[Number(i)])};
   }
   const evaluate=(expression,ctx)=>runInNewContext(expression.replace(/github\.event\.pull_request\.labels\.\*\.name/g,'github.event.pull_request.labels.map(label => label.name)'),ctx);
   for(const event of ['pull_request','push','workflow_dispatch']) {
@@ -195,7 +195,7 @@ test('真实YAML事件表达式隔离closed/weekly，普通PR push manual严格�
     assert.equal(evaluate(job.if,scheduled),id==='codeql','schedule:'+id);
   }
   const deploy=workflow.jobs['preview-deploy'];
-  assert.equal(evaluate(deploy.if,context('pull_request','opened','false')),false);
+  assert.equal(evaluate(deploy.if,context('pull_request','opened')),true); // UI差异在job内部判定后才可调用预览action。
   assert.equal(evaluate(deploy.if,context('pull_request','opened')),true);
   const group=ctx=>evaluate(workflow.concurrency.group.match(/\$\{\{([\s\S]+)\}\}/)[1],ctx);
   assert.notEqual(group(closed),group(context('push')));

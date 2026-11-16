@@ -13,7 +13,6 @@ import privatePg from '../debt-pg.config.mjs';
 import realEnv from '../../../packages/brain/vitest.real-env-smoke.config.js';
 import rootConfig from '../../../vitest.config.js';
 import {commandsFor} from '../run-basic-check.mjs';
-import {planChecks} from '../basic-scope.mjs';
 import {isDeepStrictEqual} from 'node:util';
 
 const require = createRequire(import.meta.url);
@@ -217,15 +216,6 @@ function knownStep(workflow, jobId, expected) {
   });
 }
 
-const scopeRun = [
-  'if [ "$EVENT_NAME" = pull_request ]; then',
-  '  node scripts/ci/basic-scope.mjs --base "$BASE_SHA" --head "$HEAD_SHA"',
-  'elif [ "$EVENT_NAME" = push ]; then',
-  '  node scripts/ci/basic-scope.mjs --full --base "$BASE_SHA" --head "$HEAD_SHA"',
-  'else',
-  '  node scripts/ci/basic-scope.mjs --full --head "$HEAD_SHA"',
-  'fi',
-].join('\n');
 
 const browserFiles = ['tests/regression/cockpit-route-wire/e2e-verify.spec.ts',
   'tests/regression/relay-07b2fd3b/inbox-e2e.spec.ts',
@@ -245,17 +235,13 @@ function browserLane(workflow, text = browserConfig()) {
 
 function automaticLanes({basic, nightly, browser}) {
   const lanes = [], checks = basic.jobs?.checks;
-  const shards = planChecks(['packages/brain/src/server.js']).filter(row => row.component === 'brain-unit').map(row => row.shard);
+  const shards = (checks?.strategy?.matrix?.include||[]).filter(row => row.component === 'brain-unit').map(row => row.shard);
   const unitCommands = isDeepStrictEqual(shards, [1, 2, 3, 4, 5, 6]) && shards.every(shard => commandsFor('brain-unit', String(shard)).some(command =>
     command.cwd === brainRoot && command.command === 'npx' && isDeepStrictEqual(command.args,
       ['--no-install', 'vitest', 'run', `--shard=${shard}/6`, '--reporter=dot', '--silent'])));
-  const plan = basic.jobs?.plan;
-  const hasPlan = plan?.outputs?.matrix === '${{ steps.scope.outputs.matrix }}' && knownStep(basic, 'plan', {
-    id: 'scope', run: scopeRun, env: {EVENT_NAME: '${{ github.event_name }}',
-      BASE_SHA: '${{ github.event.pull_request.base.sha || github.event.before }}', HEAD_SHA: '${{ github.sha }}'},
-  });
-  if (mainEvents(basic) && hasPlan && unitCommands && checks?.needs === 'plan'
-    && checks.strategy?.matrix === '${{ fromJSON(needs.plan.outputs.matrix) }}'
+  const expected=[...Array.from({length:6},(_,i)=>({component:'brain-unit',shard:i+1})),...['brain-integration','image','dashboard','ops','scripts'].map(component=>({component}))];
+  if (mainEvents(basic) && !basic.jobs?.plan && unitCommands && checks?.needs===undefined
+    && isDeepStrictEqual(checks.strategy?.matrix,{include:expected})
     && knownStep(basic, 'checks', {run: 'node scripts/ci/run-basic-check.mjs "$COMPONENT" "$SHARD"',
       env: {COMPONENT: '${{ matrix.component }}', SHARD: '${{ matrix.shard }}', CI: 'true'}})) lanes.push('default');
 
@@ -300,11 +286,8 @@ for (const [name, change] of [
 for (const [name, change] of [
   ['只有scripts的矩阵', workflow => { workflow.jobs.checks.strategy.matrix = {include: [{component: 'scripts'}]}; }],
   ['只有一片的矩阵', workflow => { workflow.jobs.checks.strategy.matrix = {include: [{component: 'brain-unit', shard: 1}]}; }],
-  ['脱离plan的矩阵输出', workflow => { workflow.jobs.plan.outputs.matrix = '{"include":[{"component":"scripts"}]}'; }],
-  ['plan不可达分支', workflow => {
-    const step = workflow.jobs.plan.steps.find(value => value.id === 'scope');
-    step.run = `if false; then\n${step.run}\nfi`;
-  }],
+  ['动态旧plan矩阵输出', workflow => { workflow.jobs.checks.strategy.matrix='${{ fromJSON(needs.plan.outputs.matrix) }}'; }],
+  ['重新添加Plan', workflow => { workflow.jobs.plan={outputs:{matrix:'unknown'},steps:[]}; }],
   ['错误component', workflow => { workflow.jobs.checks.steps.find(step => step.run?.includes('run-basic-check.mjs')).env.COMPONENT = 'scripts'; }],
   ['错误shard', workflow => { workflow.jobs.checks.steps.find(step => step.run?.includes('run-basic-check.mjs')).env.SHARD = '1'; }],
   ['错误工作目录', workflow => { workflow.jobs.checks.defaults = {run: {'working-directory': 'packages/brain'}}; }],

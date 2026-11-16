@@ -41,60 +41,6 @@ const safeSmokes = [
 ].map(name => `scripts/smoke/${name}-smoke.sh`);
 const paths = steps => steps.map(step => step.args.at(-1));
 
-test('普通Brain业务PR只执行部署核心，默认仍保留全部Ops', () => {
-  const selected = paths(opsChecks(root, {paths: ['packages/brain/src/planner.js']}));
-  assert.equal(selected.length, 24);
-  assert.ok(selected.includes('scripts/smoke/deploy-local-npm-cache-smoke.sh'));
-  assert.ok(!selected.some(path => /preview|dashboard|cecelia-runner|dispatch-worker|scripts\/ops\//.test(path)));
-  assert.ok(opsChecks(root).length > selected.length);
-});
-
-test('真实依赖域分别保留自己的测试，公共输入和未知路径全量兜底', () => {
-  const cases = [
-    ['apps/dashboard/src/App.tsx', 'scripts/__tests__/dashboard-release-bind.test.mjs'],
-    ['scripts/preview-env-start.sh', 'scripts/__tests__/preview-env-start.test.sh'],
-    ['packages/brain/src/routes/preview.js', 'scripts/preview-cache.test.mjs'],
-    ['scripts/ops/opc-kr-current.py', 'scripts/ops/__tests__/opc_company_kr.test.sh'],
-    ['scripts/codex-request.sh', 'scripts/__tests__/codex-request.test.sh'],
-  ];
-  for (const [source, expected] of cases) {
-    const selected = paths(opsChecks(root, {paths: [source]}));
-    assert.ok(selected.includes(expected), `${source}必须覆盖${expected}`);
-    assert.ok(selected.length < opsChecks(root).length, `${source}不应膨胀为全量`);
-  }
-  for (const source of ['package-lock.json', '.github/workflows/ci.yml', 'scripts/ci/ops-checks.mjs',
-    'packages/brain/config/fleet-node-profiles.json', 'scripts/lib/shared-unclassified.sh', 'unknown/product.js']) {
-    assert.deepEqual(opsChecks(root, {paths: [source]}), opsChecks(root), source);
-  }
-});
-
-test('PR路径输入非法或为空不能静默丢测，新未分类Ops测试回退全量', t => {
-  for (const invalid of [[], ['../escape'], ['/absolute'], ['a//b'], ['a\u0000b'], 'brain'])
-    assert.throws(() => opsChecks(root, {paths: invalid}), /路径|paths/i);
-  const directory = fixture(t);
-  const newFile = 'scripts/ops/__tests__/new-category/new-behavior.test.sh';
-  mkdirSync(dirname(join(directory, newFile)), {recursive: true});
-  writeFileSync(join(directory, newFile), 'exit 0\n');
-  const selected = opsChecks(directory, {paths: ['packages/brain/src/planner.js']});
-  assert.deepEqual(selected, opsChecks(directory));
-  assert.ok(paths(selected).includes(newFile));
-});
-
-test('每个当前入口的自身变更都选中它，新增已知域测试自动加入PR子集', t => {
-  for (const file of paths(opsChecks(root)))
-    assert.ok(paths(opsChecks(root, {paths: [file]})).includes(file), `${file}必须拥有实际执行域`);
-  const directory = fixture(t);
-  // fixture里的未知Ops类别会有意全量；换成已知Janitor域以验证动态发现后的裁剪。
-  rmSync(join(directory, 'scripts/ops/__tests__/nested'), {recursive: true});
-  mkdirSync(join(directory, 'scripts/ops/__tests__/janitor'), {recursive: true});
-  writeFileSync(join(directory, 'scripts/ops/__tests__/janitor/new.test.sh'), 'exit 0\n');
-  const extraNode = 'scripts/brain-image-retention-new.test.mjs';
-  writeFileSync(join(directory, extraNode), '');
-  const selected = paths(opsChecks(directory, {paths: ['packages/brain/src/planner.js']}));
-  assert.ok(selected.includes(extraNode));
-  assert.ok(!selected.includes('scripts/ops/__tests__/janitor/new.test.sh'));
-});
-
 test('实际 CI runner 接通完整 Ops 集合，而不是只有发现器测试通过', () => {
   assert.deepEqual(commandsFor('ops'), opsChecks(root));
 });
@@ -227,17 +173,11 @@ printf 'ISOLATED_FIXTURE_OK\\n'
 });
 
 // 历史实现不因未知PR或新执行内核变更重新进入现役默认。
-test('默认及未知输入回退仍执行现役Ops集合', () => {
+test('默认Ops完整执行现役安全fixture且无重复入口', () => {
   const active = paths(opsChecks(root));
   for (const fixture of ['deadman-and-provider', 'keepalive-isolation', 'preview-agent-startup', 'restore-missing-only']) {
     assert.ok(active.includes(`scripts/ops/__tests__/credentials/${fixture}.test.sh`), `现役隔离fixture未收集：${fixture}`);
   }
   assert.equal(new Set(active).size, active.length, 'Ops入口不能重复执行');
-  for (const source of [null, 'unknown/product.js', 'docker/cecelia-runner/entrypoint.sh',
-    'packages/brain/scripts/fleet-worker/attempt-runner.cjs',
-    'packages/brain/scripts/fleet-worker/workflow-runner.cjs',
-    'packages/brain/src/orchestrator/run.js']) {
-    const selected = paths(opsChecks(root, {paths: source === null ? null : [source]}));
-    assert.ok(!selected.some(path => /cecelia-runner|runner-credential-single-chain/.test(path)), source);
-  }
+  assert.ok(!active.some(path => /cecelia-runner|runner-credential-single-chain/.test(path)));
 });

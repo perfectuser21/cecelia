@@ -1,6 +1,8 @@
-- [ ] 删除无实际调用方、无计划生成或部署实现的独立Workflow注册YAML；唯一PR CI及夜间/监控入口保持。
-  Test: manual:node --test scripts/ci/__tests__/basic-workflow.test.mjs
-- [ ] 保留主CI真实执行的发布、注册与恢复验收；发布脚本继续验证已安装固定字节、目标机、发布资格、部署gate及目录，不创建业务任务。
-  Test: manual:npm exec -w packages/brain -- vitest run scripts/commander-workflow/__tests__/foundation-publish.test.mjs
-- [ ] 调用方盘点包含业务仓main和开放PR实际文件；源码门与正常PR CI通过后合并，任务留痕并清理本轮资源。
+- [ ] PR/Main固定现役核心矩阵，移除Plan与按路径减少组件/运维回归，版本门仍在Scripts验证真实BASE/HEAD。
+  Test: manual:node --test scripts/ci/__tests__/basic-workflow.test.mjs scripts/ci/__tests__/run-basic-check.test.mjs
+- [ ] 预览入口独立判断真实UI变更，非UI/未知比较不得创建预览；PR关闭仍按原入口清理。
+  Test: manual:node --test scripts/ci/__tests__/basic-preview-deploy.test.mjs
+- [ ] 固定完整CI来源与实际读取边同步当前入口，旧完整组可读但当前不得降级，新旧混配/缺失/篡改拒绝，Claude禁用边界及运行身份协议保持。
+  Test: manual:npm exec -w packages/brain -- vitest run src/lib/__tests__/existing-ops-current-ci-source.test.js src/lib/native-consumer-runtime.test.js
+- [ ] 事实、版本、DoD与必要关联回归通过，独立复审后正常PR CI并合并，回写任务与清理本轮资源。
   Test: manual:node scripts/ci/run-basic-check.mjs scripts
