@@ -76,3 +76,9 @@ export async function collectReviewedBusinessPgSources({read,parse,relation}){
  for(const p of tests){const input='packages/brain/'+p;if(!await read(input))reject();relation(RUNNER,input,'reviewed_pr_postgres_test_selector');}
  for(const [consumer,input] of [[CONFIG,'packages/brain/vitest.config.js'],[CONFIG,'scripts/ci/debt-pg.config.mjs'],['scripts/ci/debt-pg.config.mjs','scripts/ci/debt-pg-tests.json'],['scripts/ci/debt-pg.config.mjs','packages/brain/vitest.config.js']])relation(consumer,input,'reviewed_pr_postgres_config_input');
 }
+
+/** 手动Foundation发布入口的完整已审封组；保留历史PG控制封组原身份。 */
+export const FOUNDATION_PROFILE_PATH='packages/brain/src/lib/existing-ops-foundation-release-profile.json';
+const foundationSha='1ff02f908373ff61365f413433f2ed1c61450e4c3ab813920631db38da862b57',foundationText=readFileSync(new URL('./existing-ops-foundation-release-profile.json',import.meta.url),'utf8');
+if(createHash('sha256').update(foundationText).digest('hex')!==foundationSha)throw Error('basic_ci_source_unproven');
+export const REVIEWED_FOUNDATION_RELEASE={...JSON.parse(foundationText),[FOUNDATION_PROFILE_PATH]:foundationSha};
