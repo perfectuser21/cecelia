@@ -68,35 +68,6 @@ describe('consciousness-loop', () => {
     expect(mockThalamusProcessEvent).not.toHaveBeenCalled();
   });
 
-  // 测试 2: 单次运行超过超时被中断，不影响主进程
-  // SKIP: graph.invoke 超时行为由 consciousness.graph.js 内部节点测试覆盖
-  it.skip('单次运行设有超时保护', async () => {
-    // 模拟 thalamus 永不 resolve
-    mockThalamusProcessEvent.mockReturnValue(
-      new Promise(() => {}) // 永远 pending
-    );
-    const resultPromise = _runConsciousnessOnce({ timeoutMs: 100 }); // 测试用 100ms
-    const result = await resultPromise;
-    expect(result.timedOut).toBe(true);
-    expect(result.error).toBeUndefined(); // 不抛异常
-  });
-
-  // 测试 3: thalamus 结果正确写入 guidance: routing:{task_id}
-  // SKIP: routing key 写入由 thalamus.js 内部处理，graph 版本不在 consciousness-loop 层写
-  it.skip('thalamus dispatch_task 结果写入 guidance routing key', async () => {
-    mockThalamusProcessEvent.mockResolvedValue({
-      actions: [{ type: 'dispatch_task', task_id: 'task-abc' }],
-      level: 'normal',
-    });
-    await _runConsciousnessOnce();
-    expect(mockSetGuidance).toHaveBeenCalledWith(
-      'routing:task-abc',
-      expect.objectContaining({ executor_type: expect.any(String) }),
-      'thalamus',
-      3600_000
-    );
-  });
-
   // 测试 4: loop 崩溃后不向外抛出（tick-scheduler 继续正常派发）
   it('_runConsciousnessOnce 内部异常不向外抛出', async () => {
     mockThalamusProcessEvent.mockRejectedValue(new Error('LLM 崩了'));
