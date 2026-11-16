@@ -40,6 +40,9 @@
       },
       "released": {
         "type": "boolean"
+      },
+      "report_present": {
+        "type": "boolean"
       }
     },
     "required": [
@@ -47,7 +50,8 @@
       "snapshot_sha256",
       "brain_sha",
       "brain_version",
-      "released"
+      "released",
+      "report_present"
     ],
     "additionalProperties": false
   },
@@ -56,7 +60,8 @@
     "snapshot_sha256": "$activity.report.snapshot_sha256",
     "brain_sha": "$activity.report.brain_sha",
     "brain_version": "$activity.report.brain_version",
-    "released": "$activity.cleanup.released"
+    "released": "$activity.cleanup.released",
+    "report_present": "$activity.cleanup.report_present"
   },
   "runtime": {
     "kind": "commander-foundation-v1",
