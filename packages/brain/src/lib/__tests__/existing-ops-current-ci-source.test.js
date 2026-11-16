@@ -121,6 +121,7 @@ it('现役十项PG控制闭包固定读取；缺失、篡改及旧新成员拼�
  const profile='packages/brain/src/lib/existing-ops-business-smoke-retirement-profile.json';
  const observe=async(overrides={},missing)=>{const relations=[],source=async path=>{if(path===missing)throw Error('missing control');return overrides[path]??read(path);};await collectBasicCiSources({read:source,ci:read('.github/workflows/ci.yml'),revision:'f'.repeat(40),relations,parse:ast,paths});return relations;};
  const relations=await observe();
+ expect(relations).toContainEqual(expect.objectContaining({consumer_path:'packages/brain/src/lib/existing-ops-stage-modes.js',input_path:profile,kind:'reviewed_basic_ci_source_profile'}));
  const pg=relations.filter(row=>row.kind==='reviewed_pr_postgres_test_selector');
  expect(pg).toHaveLength(10);
  expect(pg.map(row=>row.input_path)).toContain('packages/brain/src/__tests__/integration/reasoning-governance-contract.pg.integration.test.js');

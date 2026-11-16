@@ -71,6 +71,7 @@ export async function collectReviewedBusinessPgSources({read,parse,relation}){
  if(JSON.stringify(args.slice(0,7))!==JSON.stringify(['packages/brain','npx','--no-install','vitest','run','--config','../../'+CONFIG])||args.at(-1)!=='--reporter=dot')reject();
  const tests=args.slice(7,-1);
  if(tests.length!==10||new Set(tests).size!==10||tests.some(p=>!/^src\/__tests__\/integration\/[a-z0-9-]+\.pg\.integration\.test\.js$/.test(p)))reject();
+ relation('packages/brain/src/lib/existing-ops-stage-modes.js',BUSINESS_PROFILE_PATH,'reviewed_basic_ci_source_profile');
  relation(RUNNER,CONFIG,'reviewed_pr_postgres_config_selector');
  for(const p of tests){const input='packages/brain/'+p;if(!await read(input))reject();relation(RUNNER,input,'reviewed_pr_postgres_test_selector');}
  for(const [consumer,input] of [[CONFIG,'packages/brain/vitest.config.js'],[CONFIG,'scripts/ci/debt-pg.config.mjs'],['scripts/ci/debt-pg.config.mjs','scripts/ci/debt-pg-tests.json'],['scripts/ci/debt-pg.config.mjs','packages/brain/vitest.config.js']])relation(consumer,input,'reviewed_pr_postgres_config_input');
