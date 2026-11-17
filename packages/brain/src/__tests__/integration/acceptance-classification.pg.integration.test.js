@@ -27,35 +27,6 @@ const adjudicate = (key = 'S1-c1') => request(app).patch(`/runs/${runKey}/checks
 const finish = () => request(app).patch(`/runs/${runKey}/adjudicate-run`).send({});
 const checks = () => pool.query('SELECT * FROM acceptance_checks ORDER BY check_key');
 
-beforeAll(async () => {
-  expect((await pool.query('SELECT current_database() AS db')).rows[0].db).toBe('cecelia_scratch');
-  await pool.query(`CREATE SCHEMA "${schema}"`);
-  vi.stubEnv('ACCEPTANCE_TENANT_ALLOWLIST', 'fixture-owner');
-});
-beforeEach(async () => {
-  vi.mocked(createTask).mockClear();
-  await pool.query('DROP TABLE IF EXISTS acceptance_checks, acceptance_runs, tasks, schema_version CASCADE');
-  await pool.query(`CREATE TABLE schema_version(version text PRIMARY KEY, description text, applied_at timestamptz);
-    CREATE TABLE tasks(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), payload jsonb, status text)`);
-  // These actual shipped migrations reproduce the deployed 17-column table.
-  for (const file of ['369_acceptance_tables.sql', '380_acceptance_staff_hub_columns.sql', '392_acceptance_two_column.sql']) {
-    await pool.query(readFileSync(new URL(`../../../migrations/${file}`, import.meta.url), 'utf8'));
-  }
-  runKey = `classification-${randomUUID()}`;
-  const made = await request(app).post('/runs').send({ run_key: runKey, title: 'API release fixture',
-    detail: { ...stamps, backend_sha_src2: stamps.backend_sha, frontend_sha_src2: stamps.frontend_sha, tenant_account: 'fixture-owner' },
-    checks: [1, 2, 3].map(n => ({ check_key: `S${n}-c1`, kind: 'FR', name: `check ${n}` })) });
-  expect(made.status, JSON.stringify(made.body)).toBe(201);
-  const result = await request(app).post('/results').send({ run_key: runKey, ...stamps,
-    results: [1, 2, 3].map(n => ({ check_key: `S${n}-c1`, result: '通过', note: 'fixture evidence' })) });
-  expect(result.status).toBe(200);
-  expect(result.body.runs[0].status).toBe('human_complete');
-});
-afterAll(async () => {
-  await pool.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
-  await pool.end(); vi.unstubAllEnvs();
-});
-
 async function setDetail(detail) {
   await pool.query("UPDATE acceptance_checks SET detail=$1::jsonb WHERE check_key='S1-c1'", [JSON.stringify(detail)]);
 }
@@ -67,6 +38,35 @@ async function greenAll() {
 }
 
 describe.sequential('真实17列表的验收分类来源与裁决', () => {
+  beforeAll(async () => {
+    expect((await pool.query('SELECT current_database() AS db')).rows[0].db).toBe('cecelia_scratch');
+    await pool.query(`CREATE SCHEMA "${schema}"`);
+    vi.stubEnv('ACCEPTANCE_TENANT_ALLOWLIST', 'fixture-owner');
+  });
+  beforeEach(async () => {
+    vi.mocked(createTask).mockClear();
+    await pool.query('DROP TABLE IF EXISTS acceptance_checks, acceptance_runs, tasks, schema_version CASCADE');
+    await pool.query(`CREATE TABLE schema_version(version text PRIMARY KEY, description text, applied_at timestamptz);
+      CREATE TABLE tasks(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), payload jsonb, status text)`);
+    // These actual shipped migrations reproduce the deployed 17-column table.
+    for (const file of ['369_acceptance_tables.sql', '380_acceptance_staff_hub_columns.sql', '392_acceptance_two_column.sql']) {
+      await pool.query(readFileSync(new URL(`../../../migrations/${file}`, import.meta.url), 'utf8'));
+    }
+    runKey = `classification-${randomUUID()}`;
+    const made = await request(app).post('/runs').send({ run_key: runKey, title: 'API release fixture',
+      detail: { ...stamps, backend_sha_src2: stamps.backend_sha, frontend_sha_src2: stamps.frontend_sha, tenant_account: 'fixture-owner' },
+      checks: [1, 2, 3].map(n => ({ check_key: `S${n}-c1`, kind: 'FR', name: `check ${n}` })) });
+    expect(made.status, JSON.stringify(made.body)).toBe(201);
+    const result = await request(app).post('/results').send({ run_key: runKey, ...stamps,
+      results: [1, 2, 3].map(n => ({ check_key: `S${n}-c1`, result: '通过', note: 'fixture evidence' })) });
+    expect(result.status).toBe(200);
+    expect(result.body.runs[0].status).toBe('human_complete');
+  });
+  afterAll(async () => {
+    await pool.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+    await pool.end(); vi.unstubAllEnvs();
+  });
+
   it('无分类API三格完成单格与整单裁决，持久化绿且不补列或改detail', async () => {
     const columns = await pool.query('SELECT column_name FROM information_schema.columns WHERE table_schema=$1 AND table_name=$2', [schema, 'acceptance_checks']);
     expect(columns.rows).toHaveLength(17);
