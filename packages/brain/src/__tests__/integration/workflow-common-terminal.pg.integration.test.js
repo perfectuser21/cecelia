@@ -1,5 +1,6 @@
 import {it,expect,afterEach} from 'vitest';
 // 与现役 PR 集成入口共用独立 PG 回归，确保交付门禁进入必需检查。
+import './acceptance-classification.pg.integration.test.js';
 import './project-progress-no-pr.pg.integration.test.js';
 import './metrics-pr-merged-no-pr.pg.integration.test.js';
 import './postdeploy-snapshot.pg.integration.test.js';
