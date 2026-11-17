@@ -2,7 +2,7 @@
  * 迁移 493 结构断言（价值流建模②，任务 ef3aeffa，决策 3e867cad 第 1-3 张表 / 词表 f425e3fd）。
  * 真库行为（kind 派生 / 视图过滤 / 旧表腾名不丢行 / areas 自引用）见
  * integration/migration-493-vs-model.pg.integration.test.js。
- * 本文件还守住"代码引用已改到 capabilities_legacy"这条接线——否则生产启动后 scanner / analytics 会读到视图炸掉。
+ * 本文件还守住"代码引用已改到 capabilities_legacy"这条接线——否则 analytics 等保留读面会读到视图炸掉。
  */
 import { describe, it, expect } from 'vitest';
 import { readFileSync, existsSync } from 'node:fs';
@@ -52,7 +52,6 @@ describe('migration 493 价值流建模②：areas 树 + journeys.kind + 视图 
 
   it('接线：brain 代码里读写旧表的 SQL 全部改到 capabilities_legacy（视图 capabilities 没有 current_stage 列）', () => {
     const files = [
-      '../capability-scanner.js',
       '../similarity.js',
       '../generate-capability-embeddings.mjs',
       '../routes/analytics.js',

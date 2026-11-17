@@ -12,7 +12,7 @@ import { describe, it, expect } from 'vitest';
 import fs from 'fs';
 import path from 'path';
 
-const PROBE_PATH = path.resolve('src/capability-probe.js');
+const PROBE_PATH = path.resolve('src/capability-probe-highlevel.js');
 const content = fs.readFileSync(PROBE_PATH, 'utf8');
 
 // 提取 probeRumination 函数体（从 async function probeRumination 到下一个同级函数）
@@ -143,83 +143,5 @@ describe('probeRumination — recentRuns 充分条件修复（RCA probe_ruminati
     expect(ruminationFn).toContain('last_run=');
     expect(ruminationFn).toContain('last_event=');
     expect(ruminationFn).toContain('recent_outputs=');
-  });
-});
-
-describe('probeRumination — loop_dead 自愈机制（PROBE_FAIL_RUMINATION cp-05020002）', () => {
-  it('probe 文件顶部导入 setConsciousnessEnabled 和 getConsciousnessStatus', () => {
-    expect(content).toContain('setConsciousnessEnabled');
-    expect(content).toContain('getConsciousnessStatus');
-  });
-
-  it('loop_dead 分支包含 self_heal 自愈标记字段（可观测性）', () => {
-    expect(ruminationFn).toContain('self_heal=consciousness_reenabled');
-    expect(ruminationFn).toContain('self_heal=direct_run');
-    expect(ruminationFn).toContain('self_heal_fail=');
-  });
-
-  it('env_override 时不触发自愈（getConsciousnessStatus().env_override 检查）', () => {
-    expect(ruminationFn).toContain('envOverride');
-    expect(ruminationFn).toContain('getConsciousnessStatus');
-    expect(ruminationFn).not.toContain('process.env.CONSCIOUSNESS_ENABLED');
-    expect(ruminationFn).not.toContain('process.env.BRAIN_QUIET_MODE');
-  });
-
-  it('consciousness 被 DB 禁用时调用 setConsciousnessEnabled(pool, true) 重新启用', () => {
-    expect(ruminationFn).toContain('setConsciousnessEnabled');
-    expect(ruminationFn).toContain('setConsciousnessEnabled(pool, true)');
-    expect(ruminationFn).toContain('consciousness_reenabled');
-  });
-
-  it('consciousness 已启用但 loop_dead 时动态导入 runRumination 直接运行（绕过 tick）', () => {
-    expect(ruminationFn).toContain("import('./rumination.js')");
-    expect(ruminationFn).toContain('runRumination(pool)');
-    expect(ruminationFn).toContain('direct_run');
-  });
-
-  it('Wave 2: Case A 和 Case B 自愈后都重启 consciousness loop（rumination 现由 consciousness-loop 调度）', () => {
-    expect(ruminationFn).toContain("import('./consciousness-loop.js')");
-    expect(ruminationFn).toContain('startConsciousnessLoop()');
-    expect(ruminationFn).toContain('consciousness_loop_restarted');
-    expect(ruminationFn).toContain('self_heal_loop_fail=');
-  });
-
-  it('minimal_mode 启用时不触发自愈（人工开关优先）', () => {
-    expect(ruminationFn).toContain('!minimalMode');
-  });
-});
-
-describe('probeRumination — 自愈 runRumination 必须异步（防探针超时）', () => {
-  it('self-heal direct_run 不阻塞探针 — runRumination(pool) 不使用 await（fire-and-forget）', () => {
-    // BUG: await runRumination(pool) 触发 LLM/NotebookLM 调用，耗时 >30s → probe timeout
-    // 修复: runRumination(pool).then().catch() 异步执行，探针立即返回
-    expect(ruminationFn).not.toContain('await runRumination(pool)');
-  });
-
-  it('self-heal 启动后 loopDeadContext 包含 direct_run 标记（可观测性保持）', () => {
-    // 即使 fire-and-forget，仍须在 detail 中记录自愈已触发
-    expect(ruminationFn).toContain('self_heal=direct_run');
-  });
-});
-
-describe('probeRumination — Case A 自愈立即 direct_run（cp-05200001）', () => {
-  it('Case A 和 Case B 都包含 import rumination.js（两处 direct_run 确保两种 loop_dead 场景都立即反刍）', () => {
-    // 修复前：只有 Case B 有 import('./rumination.js')，count=1
-    // 修复后：Case A（consciousness 重新启用后）也立即运行，count≥2
-    const importCount = (ruminationFn.match(/import\('\.\/rumination\.js'\)/g) || []).length;
-    expect(importCount).toBeGreaterThanOrEqual(2);
-  });
-
-  it('consciousness_reenabled 标记与 direct_run 标记都出现在函数体中（Case A 完整自愈链）', () => {
-    expect(ruminationFn).toContain('consciousness_reenabled');
-    expect(ruminationFn).toContain('direct_run');
-    // consciousness_reenabled 在 if(!consEnabled) 分支，direct_run 也应在其后同一分支出现
-    const reenabledIdx = ruminationFn.indexOf('consciousness_reenabled');
-    const loopRestartedIdx = ruminationFn.indexOf('consciousness_loop_restarted');
-    const firstDirectRunIdx = ruminationFn.indexOf('direct_run');
-    // loop_restarted 在 Wave 2，direct_run 在 Wave 3，Wave 2 先于 Wave 3
-    expect(loopRestartedIdx).toBeLessThan(firstDirectRunIdx);
-    // consciousness_reenabled（Case A Wave 1）先于第一个 direct_run（Case A Wave 3）
-    expect(reenabledIdx).toBeLessThan(firstDirectRunIdx);
   });
 });

@@ -205,7 +205,7 @@ import fs from 'fs';
 import path from 'path';
 
 const probeCode = fs.readFileSync(
-  path.resolve('src/capability-probe.js'),
+  path.resolve('src/capability-probe-highlevel.js'),
   'utf8'
 );
 const evFnMatch = probeCode.match(/async function probeEvolution\(\)[^]*?(?=\nasync function |\nexport )/);

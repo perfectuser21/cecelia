@@ -88,7 +88,6 @@ features:
         - packages/brain/src/__tests__/capabilities-api.test.js
         - packages/brain/src/__tests__/capability-probe-highlevel.test.js
         - packages/brain/src/__tests__/capability-probe.test.js
-        - packages/brain/src/__tests__/capability-scanner.test.js
         - packages/brain/src/__tests__/contracts/work-streams-contract.test.js
         - packages/brain/src/__tests__/db-config.test.js
         - packages/brain/src/__tests__/dep-cascade.test.js
@@ -164,7 +163,6 @@ features:
             - packages/brain/src/__tests__/capabilities-api.test.js
             - packages/brain/src/__tests__/capability-probe-highlevel.test.js
             - packages/brain/src/__tests__/capability-probe.test.js
-            - packages/brain/src/__tests__/capability-scanner.test.js
             - packages/brain/src/__tests__/contracts/work-streams-contract.test.js
             - packages/brain/src/__tests__/db-config.test.js
             - packages/brain/src/__tests__/dep-cascade.test.js

@@ -37,7 +37,7 @@ console.log('迁移四段 + 回滚五段 ✓');
 echo "[vs-model-areas-kind-smoke] 2. 接线：旧表 SQL 已全部改到 capabilities_legacy"
 node --input-type=module -e "
 import { readFileSync } from 'node:fs';
-const files = ['src/capability-scanner.js', 'src/similarity.js', 'src/generate-capability-embeddings.mjs', 'src/routes/analytics.js'];
+const files = ['src/similarity.js', 'src/generate-capability-embeddings.mjs', 'src/routes/analytics.js'];
 let bad = 0;
 for (const f of files) {
   const text = readFileSync(f, 'utf8');

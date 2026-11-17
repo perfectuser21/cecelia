@@ -794,10 +794,6 @@ async function onBrainListening() {
   startProbeLoop();
   console.log('[Server] Capability Probe started (1h interval) - self-awareness for critical pathways');
 
-  // Initialize Capability Scanner (孤岛发现 — 每 6 小时扫描能力健康地图)
-  const { startScanLoop } = await import('./src/capability-scanner.js');
-  startScanLoop();
-  console.log('[Server] Capability Scanner started (6h interval) - island detection for unused capabilities');
 
 
   // Initialize Evolution Scanner (进化追踪 — 扫描自身代码演进)
