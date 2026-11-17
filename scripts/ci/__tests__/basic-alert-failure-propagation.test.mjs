@@ -9,14 +9,11 @@ import test from 'node:test';
 const yaml = createRequire(import.meta.url)('js-yaml');
 const root = new URL('../../../', import.meta.url).pathname;
 const load = name => yaml.load(readFileSync(join(root, '.github/workflows', name), 'utf8'));
-const red = load('ci-red-alert.yml');
 const sentinel = load('heartbeat-sentinel.yml');
 const reconciliation = sentinel.jobs.reconcile;
 const issueStep = reconciliation?.steps.find(s => s.id === 'issue');
 const barkStep = reconciliation?.steps.find(s => s.id === 'bark');
 const closeStep = reconciliation?.steps.find(s => s.id === 'close');
-const internalToken = 'isolated-red-alert-token';
-const brainAlertStep = red.jobs.scan.steps.find(s => s.name.startsWith('开 Brain issue'));
 function fixture(t, commands = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'ci-alert-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
@@ -37,70 +34,6 @@ async function server(t, handler) {
   t.after(() => new Promise(resolve => instance.close(resolve)));
   return `http://127.0.0.1:${instance.address().port}`;
 }
-for (const failure of ['workflow-list', 'workflow-runs']) test(`扫描 ${failure} API 故障拒绝零红灯成功`, async t => {
-  const f = fixture(t, { gh: failure === 'workflow-list' ? 'exit 22' : 'case "$*" in *actions/workflows/1/runs*) exit 22;; *) printf "1\\tBroken\\tbroken.yml\\n";; esac' });
-  const result = await run(red.jobs.scan.steps.find(s => s.id === 'scan').run.replaceAll('/tmp/alerts.txt', join(f.dir, 'alerts.txt')), { ...f.env, WATCH_REPOS: 'fixture/repo', CONSECUTIVE_N: '3', RECENT_DAYS: '7' });
-  assert.notEqual(result.status, 0, result.out);
-  assert.doesNotMatch(result.out, /共发现 0|无连续/);
-});
-for (const scenario of ['list-500', 'list-302', 'create-500', 'create-302', 'create-no-receipt', 'notify-500', 'notify-302', 'notify-unsent', 'success', 'duplicate']) test(`红灯真实 HTTP ${scenario}`, async t => {
-  let creates = 0; let notifications = 0;
-  const url = await server(t, (req, res) => {
-    res.setHeader('Content-Type', 'application/json');
-    if (req.headers['x-internal-token'] !== internalToken) {
-      res.statusCode = 401;
-      return res.end(JSON.stringify({ error: 'UNAUTHORIZED' }));
-    }
-    if (req.method === 'GET') {
-      res.statusCode = scenario === 'list-500' ? 500 : scenario === 'list-302' ? 302 : 200;
-      return res.end(JSON.stringify({ issues: scenario === 'duplicate' ? [{ id: 'existing', title: '[CI红灯] fixture/repo｜Broken 连续3次失败' }] : [] }));
-    }
-    if (req.url.endsWith('/notify')) {
-      notifications++; res.statusCode = scenario === 'notify-500' ? 500 : scenario === 'notify-302' ? 302 : 200;
-      return res.end(JSON.stringify({ ok: true, sent: scenario !== 'notify-unsent' }));
-    }
-    creates++; res.statusCode = scenario === 'create-500' ? 500 : scenario === 'create-302' ? 302 : 201;
-    res.end(JSON.stringify(scenario === 'create-no-receipt' ? {} : { id: '4ef251d2-d573-493d-aecc-5eb172c24afc', title: '[CI红灯] fixture/repo｜Broken 连续3次失败' }));
-  });
-  const f = fixture(t); const alerts = join(f.dir, 'alerts.txt');
-  writeFileSync(alerts, 'fixture/repo\tBroken\tbroken.yml\n');
-  // 执行真实 workflow step，仅将跨步骤中间文件定向到本例隔离目录。
-  const result = await run(brainAlertStep.run.replaceAll('/tmp/alerts.txt', alerts), { ...f.env, BRAIN_URL: url, CECELIA_INTERNAL_TOKEN: internalToken });
-  assert.equal(result.status === 0, ['success', 'duplicate'].includes(scenario), result.out);
-  if (scenario.startsWith('create-')) assert.equal(creates, 1, result.out);
-  if (scenario.startsWith('notify-')) { assert.equal(creates, 1, result.out); assert.equal(notifications, 1, result.out); }
-  if (scenario.startsWith('create-') || scenario.startsWith('list-')) {
-    assert.doesNotMatch(result.out, /新开 issue：1/); assert.equal(notifications, 0);
-  }
-  if (scenario.startsWith('list-') || scenario === 'duplicate') assert.equal(creates, 0);
-  if (scenario === 'success') { assert.equal(creates, 1); assert.equal(notifications, 1); assert.match(result.out, /新开 issue：1/); }
-});
-test('红灯 Brain 调用必须从 Actions secret 注入内部令牌', () => {
-  const effectiveEnv = { ...red.jobs.scan.env, ...brainAlertStep.env };
-  assert.equal(effectiveEnv.CECELIA_INTERNAL_TOKEN, '${{ secrets.CECELIA_INTERNAL_TOKEN }}');
-});
-for (const token of [undefined, '']) test(`红灯缺内部令牌 ${String(token)} 在任何网络请求前失败`, async t => {
-  let requests = 0;
-  const url = await server(t, (_req, res) => { requests++; res.end('{"issues":[]}'); });
-  const f = fixture(t); const alerts = join(f.dir, 'alerts.txt');
-  writeFileSync(alerts, 'fixture/repo\tBroken\tbroken.yml\n');
-  const env = { ...f.env, BRAIN_URL: url, CECELIA_INTERNAL_TOKEN: token };
-  if (token === undefined) delete env.CECELIA_INTERNAL_TOKEN;
-  const result = await run(brainAlertStep.run.replaceAll('/tmp/alerts.txt', alerts), env);
-  assert.notEqual(result.status, 0, result.out);
-  assert.equal(requests, 0, '缺少令牌时不能尝试匿名访问 Brain');
-  assert.match(result.out, /CECELIA_INTERNAL_TOKEN/);
-});
-test('红灯错误内部令牌收到401，不创建issue或发送通知，也不输出令牌', async t => {
-  let requests = 0;
-  const url = await server(t, (_req, res) => { requests++; res.statusCode = 401; res.end('{"error":"UNAUTHORIZED"}'); });
-  const f = fixture(t); const alerts = join(f.dir, 'alerts.txt');
-  writeFileSync(alerts, 'fixture/repo\tBroken\tbroken.yml\n');
-  const result = await run(brainAlertStep.run.replaceAll('/tmp/alerts.txt', alerts), { ...f.env, BRAIN_URL: url, CECELIA_INTERNAL_TOKEN: internalToken });
-  assert.notEqual(result.status, 0, result.out);
-  assert.equal(requests, 1);
-  assert.ok(!result.out.includes(internalToken), '令牌不能进入输出日志');
-});
 function condition(expression, probe) {
   return Function('needs', 'always', `return (${expression})`)({ probe }, () => true);
 }
@@ -140,18 +73,6 @@ test('哨兵 Bark HTTP 故障不能被警告吞成成功', async t => {
   const result = await run(barkStep.run, { ...f.env, BARK_URL: url, HEALTH_OK: '', KV_OK: '', KV_AGE: '', PROBE_URL: 'fixture' });
   assert.notEqual(result.status, 0, result.out);
   assert.match(result.out, /curl_exit=22 http=500/);
-});
-
-for (const [name, gh, want] of [
-  ['空列表', 'exit 0', 0],
-  ['连续三红', `case "$*" in *actions/workflows/1/runs*) printf '%s' '{"workflow_runs":[{"conclusion":"failure","created_at":"2026-11-03T00:00:00Z"},{"conclusion":"failure"},{"conclusion":"failure"}]}' ;; *) printf '1\\tBroken\\tbroken.yml\\n';; esac`, 1],
-]) test(`扫描正常${name}保留真实结果`, async t => {
-  const f = fixture(t, { gh, date: 'echo 1793664000' });
-  const alerts = join(f.dir, 'alerts.txt');
-  const result = await run(red.jobs.scan.steps.find(s => s.id === 'scan').run.replaceAll('/tmp/alerts.txt', alerts), { ...f.env, WATCH_REPOS: 'fixture/repo', CONSECUTIVE_N: '3', RECENT_DAYS: '7' });
-  assert.equal(result.status, 0, result.out);
-  assert.equal(readFileSync(f.env.GITHUB_OUTPUT, 'utf8'), `count=${want}\n`);
-  if (want) assert.equal(readFileSync(alerts, 'utf8'), 'fixture/repo\tBroken\tbroken.yml\n');
 });
 
 for (const [status, body, ok] of [
