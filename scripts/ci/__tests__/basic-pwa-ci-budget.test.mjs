@@ -24,11 +24,13 @@ function assertMandatoryChecks(candidate) {
   assert.equal(install.run.trim(), 'node e2e/playwright-cli.mjs install chromium --with-deps');
   assert.ok(install['timeout-minutes'] >= 7 && install['timeout-minutes'] <= 10,
     'slow dependency installation needs a bounded 7–10 minute step budget');
+  assert.equal(candidate.env.DASHBOARD_E2E_DIST, '.dist-pwa-e2e');
+  assert.equal(candidate.env.EXPECTED_BUILD_VERSION, '${{ github.sha }}');
   const expectedCommands = {
-    'Verify stale PWA upgrade': ['npm run test:pwa-upgrade'],
-    'Verify task desk receipts': ['npm run test:task-desk'],
+    'Build shared browser acceptance artifact': ['GIT_SHA="$GITHUB_SHA" npx --no-install vite build --outDir .dist-pwa-e2e'],
+    'Verify stale PWA upgrade': ['npm run test:pwa-upgrade:built'],
+    'Verify task desk receipts': ['npm run test:task-desk:built'],
     'Verify current cockpit inbox and destination routes': [
-      'GIT_SHA="$GITHUB_SHA" npx --no-install vite build --outDir .dist-pwa-e2e',
       'node e2e/playwright-cli.mjs test --config ../../tests/regression/manual-ui/playwright.config.ts',
     ],
   };
@@ -44,7 +46,7 @@ test('system dependency installation stays bounded and does not skip browser che
   assertMandatoryChecks(job);
 });
 
-for (const name of ['Install Chromium', 'Verify stale PWA upgrade', 'Verify task desk receipts', 'Verify current cockpit inbox and destination routes']) {
+for (const name of ['Install Chromium', 'Build shared browser acceptance artifact', 'Verify stale PWA upgrade', 'Verify task desk receipts', 'Verify current cockpit inbox and destination routes']) {
   test(`a no-op cannot stand in for ${name}`, () => {
     const mutated = structuredClone(job);
     const step = mutated.steps.find(candidate => candidate.name === name);
@@ -58,7 +60,7 @@ for (const name of ['Install Chromium', 'Verify stale PWA upgrade', 'Verify task
   });
 }
 
-for (const fragment of ['vite build', 'playwright-cli.mjs test']) {
+for (const fragment of ['playwright-cli.mjs test']) {
   test(`cockpit check cannot omit ${fragment}`, () => {
     const mutated = structuredClone(job);
     const step = mutated.steps.find(candidate => candidate.name === 'Verify current cockpit inbox and destination routes');

@@ -10,7 +10,7 @@ test('两类浏览器验收消费指定的同一产物，并拒绝错误提交�
   try {
     writeFileSync(join(directory, 'build-info.json'), JSON.stringify({ git_sha: 'actual-ci-sha' }));
     writeFileSync(join(directory, 'index.html'), '<html>真实共享产物</html>');
-    const helper = await import('./shared-build.mjs').catch(() => null);
+    const helper = await import('../../../apps/dashboard/e2e/shared-build.mjs').catch(() => null);
     assert.ok(helper, '浏览器验收需要可执行的共享产物身份校验');
     const env = { DASHBOARD_E2E_DIST: directory, EXPECTED_BUILD_VERSION: 'actual-ci-sha' };
     for (const [outDir, version] of [['.dist-pwa-e2e', 'pwa-upgrade-e2e'], ['.dist-task-desk-e2e', 'task-desk-e2e']]) {
