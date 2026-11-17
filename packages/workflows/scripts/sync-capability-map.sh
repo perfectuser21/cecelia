@@ -46,7 +46,8 @@ def classify_workflow(folder, name):
     # 自媒体
     if folder == '自媒体':
         if '数据爬取' in name or '数据采集' in name:
-            return 'data-collection'
+            # 已退役的 n8n 采集工作流不再进入共享能力映射。
+            return None
         elif '发布' in name:
             return 'content-publish'
     
@@ -58,11 +59,6 @@ def classify_workflow(folder, name):
 
 # 能力定义
 capabilities_def = {
-    'data-collection': {
-        'name': '数据采集',
-        'icon': '📊',
-        'description': '自动采集各平台数据'
-    },
     'content-publish': {
         'name': '内容发布',
         'icon': '📤',

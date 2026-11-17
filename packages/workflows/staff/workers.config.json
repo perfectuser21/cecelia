@@ -204,7 +204,7 @@
           "type": "n8n",
           "role": "数据分析",
           "description": "负责数据采集和分析任务",
-          "n8nWorkflows": ["数据采集调度器", "平台数据爬取"],
+          "n8nWorkflows": [],
           "n8nKeywords": ["爬取", "scrape", "采集", "数据爬取", "抖音", "小红书", "微博", "知乎", "快手", "公众号", "视频号", "头条", "分析", "analytics", "统计"],
           "gradient": {
             "from": "from-amber-500",

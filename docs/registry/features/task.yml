@@ -452,9 +452,6 @@ features:
         - packages/brain/src/__tests__/codex-oauth-team-rotation.test.js
         - packages/brain/src/__tests__/completed-no-pr.test.js
         - packages/brain/src/__tests__/contracts/executor-contract.test.js
-        - packages/brain/src/__tests__/coverage-config.test.js
-        - packages/brain/src/__tests__/coverage-reporters.test.js
-        - packages/brain/src/__tests__/coverage-thresholds.test.js
         - packages/brain/src/__tests__/deploy-status.test.js
         - packages/brain/src/__tests__/dev-failure-classifier.test.js
         - packages/brain/src/__tests__/dev-pipeline-health.test.js
@@ -517,9 +514,6 @@ features:
             - packages/brain/src/__tests__/codex-oauth-team-rotation.test.js
             - packages/brain/src/__tests__/completed-no-pr.test.js
             - packages/brain/src/__tests__/contracts/executor-contract.test.js
-            - packages/brain/src/__tests__/coverage-config.test.js
-            - packages/brain/src/__tests__/coverage-reporters.test.js
-            - packages/brain/src/__tests__/coverage-thresholds.test.js
             - packages/brain/src/__tests__/deploy-status.test.js
             - packages/brain/src/__tests__/dev-failure-classifier.test.js
             - packages/brain/src/__tests__/dev-pipeline-health.test.js
