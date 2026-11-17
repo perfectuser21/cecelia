@@ -1,5 +1,5 @@
 /**
- * 断链#4 NEEDS_FIX 轮次上限测试
+ * 审查问题回执不衍生新开发单
  *
  * DoD: D1
  */
@@ -24,7 +24,6 @@ vi.mock('../actions.js', () => ({
   updateTask: vi.fn(),
   createGoal: vi.fn(),
   updateGoal: vi.fn(),
-  triggerN8n: vi.fn(),
   setMemory: vi.fn(),
   batchUpdateTasks: vi.fn(),
 }));
@@ -63,7 +62,7 @@ vi.mock('../self-model.js', () => ({ updateSelfModel: vi.fn(async () => {}), get
 import express from 'express';
 import request from 'supertest';
 
-describe('断链#4: NEEDS_FIX 轮次上限', () => {
+describe('NEEDS_FIX 原问题留账', () => {
   let app;
   const taskId = 'cr-task-fix-rounds';
   const projectId = 'proj-fix-rounds-001';
@@ -110,61 +109,13 @@ describe('断链#4: NEEDS_FIX 轮次上限', () => {
     app.use('/api/brain', router);
   });
 
-  it('D1a: NEEDS_FIX 第 1 轮（existingFix=0）→ 创建修复 dev task', async () => {
-    setupCodeReviewMock({ existingFixCount: 0 });
-
-    const res = await request(app)
-      .post('/api/brain/execution-callback')
-      .send({ task_id: taskId, run_id: 'run-1a', status: 'AI Done', result: { decision: 'NEEDS_FIX' } });
-
+  it.each([0, 1, 3])('已有%i轮历史修复时仍只记录原审查问题，不新建开发单', async existingFixCount => {
+    setupCodeReviewMock({ existingFixCount });
+    const res = await request(app).post('/api/brain/execution-callback')
+      .send({ task_id: taskId, run_id: 'historical-review', status: 'AI Done', result: { decision: 'NEEDS_FIX' } });
     expect(res.status).toBe(200);
-    expect(mockCreateTask).toHaveBeenCalledWith(
-      expect.objectContaining({
-        task_type: 'dev',
-        payload: expect.objectContaining({ fix_type: 'code_review_issues', revision_round: 1 })
-      })
-    );
-    // 不应触发 P0 告警
-    const alertCall = mockPool.query.mock.calls.find(
-      c => typeof c[0] === 'string' && c[0].includes('INSERT INTO cecelia_events') && c[1]?.[0] === 'initiative_max_fixes_exceeded'
-    );
-    expect(alertCall).toBeUndefined();
-  }, 10000);
-
-  it('D1b: NEEDS_FIX 第 2 轮（existingFix=1）→ 创建修复 dev task（revision_round=2）', async () => {
-    setupCodeReviewMock({ existingFixCount: 1 });
-
-    const res = await request(app)
-      .post('/api/brain/execution-callback')
-      .send({ task_id: taskId, run_id: 'run-1b', status: 'AI Done', result: { decision: 'NEEDS_FIX' } });
-
-    expect(res.status).toBe(200);
-    expect(mockCreateTask).toHaveBeenCalledWith(
-      expect.objectContaining({
-        task_type: 'dev',
-        payload: expect.objectContaining({ fix_type: 'code_review_issues', revision_round: 2 })
-      })
-    );
-  }, 10000);
-
-  it('D1c: NEEDS_FIX 第 4 轮（existingFix=3，超上限）→ 写 cecelia_events，不创建 dev task', async () => {
-    setupCodeReviewMock({ existingFixCount: 3 });
-
-    const res = await request(app)
-      .post('/api/brain/execution-callback')
-      .send({ task_id: taskId, run_id: 'run-1c', status: 'AI Done', result: { decision: 'NEEDS_FIX' } });
-
-    expect(res.status).toBe(200);
-    // 不应创建新 dev task
-    const devCall = mockCreateTask.mock.calls.find(c => c[0]?.task_type === 'dev');
-    expect(devCall).toBeUndefined();
-    // 应触发 P0 告警
-    const alertCall = mockPool.query.mock.calls.find(
-      c => typeof c[0] === 'string' && c[0].includes('INSERT INTO cecelia_events') && c[1]?.[0] === 'initiative_max_fixes_exceeded'
-    );
-    expect(alertCall).toBeDefined();
-    const payload = JSON.parse(alertCall[1][2]);
-    expect(payload.project_id).toBe(projectId);
-    expect(payload.fix_round).toBe(3);
+    expect(mockCreateTask.mock.calls.filter(([task]) => ['dev', 'coding_workflow'].includes(task.task_type))).toEqual([]);
+    const event = mockPool.query.mock.calls.find(([sql, params]) => sql.includes('INSERT INTO cecelia_events') && params[0] === 'initiative_pipeline_blocked');
+    expect(JSON.parse(event[1][2])).toMatchObject({ project_id: projectId, alert_type: 'needs_fix', code_review_task_id: taskId });
   }, 10000);
 });

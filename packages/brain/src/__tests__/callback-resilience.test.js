@@ -28,7 +28,7 @@ vi.mock('../executor.js', () => ({
 
 vi.mock('../actions.js', () => ({
   createTask: vi.fn(), updateTask: vi.fn(), createGoal: vi.fn(), updateGoal: vi.fn(),
-  triggerN8n: vi.fn(), setMemory: vi.fn(), batchUpdateTasks: vi.fn(),
+  setMemory: vi.fn(), batchUpdateTasks: vi.fn(),
 }));
 vi.mock('../focus.js', () => ({
   getDailyFocus: vi.fn(), setDailyFocus: vi.fn(), clearDailyFocus: vi.fn(), getFocusSummary: vi.fn(),

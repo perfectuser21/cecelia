@@ -18,7 +18,7 @@
  * 幂等：子任务 source_id = handoff:<task>:<idx>（work_routing_receipts 唯一），
  *       待拍板决策按 (source_ref, topic) 去重，pending_resume 按 handoff.created_at 去重。
  */
-import { improvementRepair,readCommanderDiagnosis } from './commander-improvement.js';
+import { assertCommanderImprovementDispatchAllowed,readCommanderDiagnosis } from './commander-improvement.js';
 import { createRoutedTask } from '../work-routing-store.js';
 import { buildHandoff, saveHandoff } from '../handoff.js';
 import { RELAY_TERMINAL_STATUSES } from './task-status-transitions.js';
@@ -189,18 +189,17 @@ export async function materializeNextSteps(pool, task, handoff, deps = {}) {
     if (step.kind === 'dispatch_headless') {
       const coding = Boolean(step.change_kind);
       try {
+        assertCommanderImprovementDispatchAllowed(task);
         if(coding){
           if(step.repo_hint!==undefined&&(typeof step.repo_hint!=='string'||!step.repo_hint.trim()))throw Object.assign(Error('invalid_relay_repository'),{code:'invalid_relay_repository'});
           if(step.map_scope_hint!==undefined&&(!Array.isArray(step.map_scope_hint)||!step.map_scope_hint.length||step.map_scope_hint.some(v=>typeof v!=='string'||!v.trim())))throw Object.assign(Error('invalid_relay_scope'),{code:'invalid_relay_scope'});
           if(step.base_sha!==undefined&&!/^[a-f0-9]{40}$/.test(step.base_sha))throw Object.assign(Error('invalid_relay_base_sha'),{code:'invalid_relay_base_sha'});
         }
-        const repair=improvementRepair(task,step);
-        if(repair&&!coding)throw Object.assign(Error('commander_improvement_coding_required'),{code:'commander_improvement_coding_required'});
         const routed = await create(pool, {
           source: 'child',
-          source_id: repair?.source_id||`handoff:${task.id}:${i}`,
+          source_id: `handoff:${task.id}:${i}`,
           title: step.title,
-          description: repair?.description||step.detail || `来自上一棒「${task.title || task.id}」的 handoff.next_steps[${i}]`,
+          description: step.detail || `来自上一棒「${task.title || task.id}」的 handoff.next_steps[${i}]`,
           // 编码步默认 coding_workflow（A2）：路由按 mutation_intent=write 改投 runner；非 runner 仓库抛 runner_repo_unsupported 进 skipped
           requested_task_type: step.task_type || (coding ? 'coding_workflow' : 'data'),
           declared_domain: step.domain || (coding ? 'coding' : 'operations'),
@@ -210,7 +209,7 @@ export async function materializeNextSteps(pool, task, handoff, deps = {}) {
           map_scope_hint: coding ? (step.map_scope_hint??(Array.isArray(parentPayload.map_scope) ? parentPayload.map_scope : [])) : [],
           ...(coding&&step.base_sha?{base_sha:step.base_sha}:{}),
           parent_task_id: rootId,
-          metadata: { lane: 'AI', from_handoff: task.id, relay_step_index: i,...(repair?.metadata||{}) },
+          metadata: { lane: 'AI', from_handoff: task.id, relay_step_index: i },
           task: {
             status: 'queued',
             priority: step.priority || task.priority || 'P2',
@@ -221,6 +220,10 @@ export async function materializeNextSteps(pool, task, handoff, deps = {}) {
         if (task.project_id) nextProjectSeq += 1;
         out.tasks.push({ id: routed.task.id, title: routed.task.title, reused: Boolean(routed.reused) });
       } catch (err) {
+        if(err.code==='commander_improvement_auto_repair_retired'){
+          const {event}=await import('./commander-v2-store.js');
+          await event(pool,task.id,'commander_improvement_auto_repair_rejected',{chain_key:parentPayload.commander_improvement.chain_key??null,step_index:i,title:step.title,reason:err.code,actor:'relay-baton'});
+        }
         out.skipped.push({ index: i, kind: 'dispatch_headless', title: step.title, error: err.code || err.message });
       }
       continue;

@@ -67,7 +67,6 @@ import { runOpsNotionIngest } from './ops-notion-ingest.js';
 import { runNotionInletIngest } from './notion-inlet-ingest.js';
 import { gtdSyncJobHandler } from './notion-gtd-sync.js';
 import { runCrmSyncJobs } from './crm/notion-sync.js';
-import { defaultExec } from './host-exec.js';
 import { maybeRunCrystalJudge } from './crystal-judge.js';
 import { reapOpenclawAgentRuns } from './openclaw-agent-executor.js';
 import { runWorkflowCommanderDispatch } from './lib/workflow-commander-dispatch.js';
@@ -142,7 +141,7 @@ export const JOBS = [
   { name: 'notion-task-command-ingest', cadence: { everySec: 60 }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runNotionTaskCommandIngest, description: 'Notion Tasks 结构化回读：In Progress/Start → start_requested' },
   { name: 'projection-command-apply', cadence: { everySec: 60 }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: applyProjectionCommands, description: 'Brain 状态机校验并应用 projection commands；真实 attempt 才能进入 in_progress' },
   { name: 'projection-outbox', cadence: { everySec: 60 }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runProjectionOutbox, description: '本地数据库到 Notion/Obsidian 等可拆卸 projection 的通用 outbox' },
-  { name: 'notion-company-key-results', cadence: { everySec: 300 }, needsPool: true, timeoutMs: 120000, handler: runCompanyKrWorkflow, description: '经营KR工作流：5min回灌人工正式值、投影独立AI建议；正式变更及每日定时去重派发受限OpenClaw分析，Brain统一收账' },
+  { name: 'notion-company-key-results', cadence: { everySec: 300 }, needsPool: true, timeoutMs: 120000, handler: runCompanyKrWorkflow, description: '经营KR正式指标同步：5min回灌人工正式值并保留收据；自动分析与派单已退役' },
   { name: 'notion-kr-projection', cadence: { everySec: 300 }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runNotionKrProjection, description: 'Brain KR → 独立注册的只读镜子（5min 自 gate；经营 KR 库禁写；Current/Target/Progress 分列，02148cef）' },
   { name: 'ops-collector', cadence: { everySec: 300 }, needsPool: true, timeoutMs: 120_000, handler: (pool) => runOpsCollector(pool), description: '运行舱采集器（5min自gate，宿主launchctl+HK OpenClaw+GHA cron→ops_*投影，per-source心跳，G1 S1 刀1，task 6fcb5356）' },
   { name: 'openclaw-run-ingest', cadence: { everySec: 300 }, needsPool: true, timeoutMs: 120_000, handler: (pool) => runOpenclawRunIngest(pool), description: 'OpenClaw cron 运行记录入 runs 表（决策 c7ff6e02/9ec7a010）：ssh mmv 只读查 task_runs 增量 upsert，连败≥3 发一次 Bark' },
@@ -175,7 +174,7 @@ export const JOBS = [
   { name: 'notion-inlet-ingest', cadence: { everySec: 300 }, needsPool: true, timeoutMs: 120_000, handler: (pool) => runNotionInletIngest(pool), description: '✍️入口血管（三面模型PR②b，决策297ffee5）：遍历注册表 face=inlet&active 的库，「决策」库→decisions；收据表幂等，人改了再收并留痕，机器不写入口库；自gate 5min' },
   { name: 'notion-gtd-sync', cadence: { everySec: 30 }, needsPool: true, timeoutMs: 30_000, livenessIntervalSec: 30, handler: (pool) => gtdSyncJobHandler(pool), description: '秋米中文GTD表↔英文Tasks库双向同步+入账+急停+回写（QIUMI_SYNC_ENABLED 门，handler 只确保 30s 自循环在跑并回报上次结果；活性按 handler 自报 liveness_at 算，09-24 卡死案；决策 b8abd28c，task b7efdbff）' },
   { name: 'crm-notion-sync', cadence: { everySec: 300 }, needsPool: true, timeoutMs: 150_000, handler: runCrmSyncJobs, description: 'CRM登记源回读和Brain结果投影；CRM_SYNC_ENABLED显式启用，默认关闭' },
-  { name: 'ops-notion-ingest', cadence: { everySec: 60 }, needsPool: true, timeoutMs: 120_000, handler: (pool) => runOpsNotionIngest(pool, { execFn: defaultExec }), description: '运行舱人工列回读（Notion→Brain，last_edited_time增量）。含停用意图落实——主理人拍板直接生效真停n8n，故幂等+留痕+失败落enable_error显红' },
+  { name: 'ops-notion-ingest', cadence: { everySec: 60 }, needsPool: true, timeoutMs: 120_000, handler: (pool) => runOpsNotionIngest(pool), description: '运行舱人工列回读（Notion→Brain，last_edited_time增量）。n8n启停已退役；仅回读人工说明、归属等非执行列，不影响Notion任务入账与回执' },
   // 顺序要紧：先把编码线格子成败搬进判官口粮，再让判官判——反过来判的是上一轮的旧账
   { name: 'crystal-coding-evidence', cadence: { everySec: 600 }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: (pool) => syncCodingEvidence({ dbPool: pool }), description: '编码线九格证据同步（10min自gate，harness_attempts+sequencer_ledger→crystal_run_evidence，只补账不代判，判官口粮第二铲）' },
   { name: 'crystal-judge', cadence: { cron: '0 5 * * *', tz: BJ_TZ }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: (pool) => maybeRunCrystalJudge(pool), description: '每日结晶判官（北京05:00窗口+当日去重，OpenClaw 八格六指标聚合→三态判决→每日结晶报告落库，Crystal 第4件）' },

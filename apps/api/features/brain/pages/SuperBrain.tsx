@@ -543,9 +543,6 @@ const CHAPTER_EDITORIAL: Record<string, {
       'memory-retriever': {
         full: '记忆系统（自我演化层的副本）负责把分散的短期记忆（memory_stream 中的单条事件）整理、压缩成长期记忆摘要（L0/L1 摘要层）。定期运行的 generateL0Summary 把过去的事件批量压缩，让检索更高效，同时防止 memory_stream 无限增长。',
       },
-      'self-report-collector': {
-        full: '自我报告是 Brain 的"内心独白"机制。每 6 小时，Brain 会暂停下来，回顾这段时间的工作：完成了什么、遇到了什么困难、对当前状态有什么感受、下一步想做什么。这些报告存入数据库，不只是日志——它们是 Brain 自我意识的体现，也是追踪 Brain 成长轨迹的重要材料。',
-      },
     },
     diagram: null,
   },
@@ -771,11 +768,8 @@ function ChapterDiagram({ blockId, color, height }: { blockId: string; color: st
       {box(112, 55, 120, 55, 'learning.js', '学习记录写入', true)}
       {box(112, 130, 120, 55, 'memory', 'L0/L1 记忆压缩', true)}
       {box(300, 55, 120, 55, 'self-model', '能力/偏好认知', true)}
-      {box(300, 130, 120, 55, 'self-report', '内心独白/欲望', true)}
       {arrow(232, 82, 300, 82, 'e3')}
-      {arrow(232, 157, 300, 157, 'e4')}
       {arrow(420, 82, 448, 106, 'e5')}
-      {arrow(420, 157, 448, 127, 'e6')}
       {box(448, 95, 100, 60, '行为调整', '下轮决策优化', true)}
       {arrow(548, 125, 578, 125, 'e7')}
       {box(580, 108, 70, 34, '下一 Tick', 'Brain 决策')}
@@ -785,8 +779,6 @@ function ChapterDiagram({ blockId, color, height }: { blockId: string; color: st
       {cap(340, 28, '学习循环：每次经历 → 行为优化', '#6b7280', 8.5)}
       {cap(172, 50, '任务完成触发', '#6b7280', 7.5)}
       {cap(172, 125, 'content_hash 去重', '#6b7280', 7.5)}
-      {cap(360, 50, '6h 定期采集', '#6b7280', 7.5)}
-      {cap(360, 125, 'fire-and-forget', '#6b7280', 7.5)}
       {warnBox(8, 228, 660, 36, '⚠️ 学习循环断裂 = 停止进化（content_hash 去重失效 / memory 写入失败 → 经验无法沉淀积累）')}
     </svg>
   );

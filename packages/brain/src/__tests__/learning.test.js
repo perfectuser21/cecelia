@@ -85,7 +85,7 @@ describe('Learning Loop', () => {
       expect(tasks.rows).toHaveLength(0);
     });
 
-    it('should create [Insight修复] task when confidence >= 0.7', async () => {
+    it('高置信且完整路由的RCA仍只记录学习', async () => {
       const srcTask = await pool.query(
         `INSERT INTO tasks (title, task_type, priority, status, payload) VALUES ('lu-test src task B', 'dev', 'P2', 'completed', '{"repo":"cecelia","map_scope":["F1"]}') RETURNING id`
       );
@@ -101,8 +101,8 @@ describe('Learning Loop', () => {
         `SELECT id FROM tasks WHERE payload->>'insight_learning_id' = $1`,
         [learning.id]
       );
-      expect(tasks.rows).toHaveLength(1);
-      expect((await pool.query('SELECT task_type FROM tasks WHERE id=$1', [tasks.rows[0].id])).rows[0].task_type).toBe('coding_workflow');
+      expect(tasks.rows).toHaveLength(0);
+      expect((await pool.query('SELECT applied FROM learnings WHERE id=$1', [learning.id])).rows[0].applied).toBe(false);
     });
   });
 

@@ -1,9 +1,9 @@
 import { describe, it, expect, vi } from 'vitest';
+vi.mock('../db.js', () => ({ default: { query: vi.fn(() => { throw Error('禁止真实数据库'); }) } }));
 vi.mock('../machine-registry.js', () => ({ resolvePrimaryWorkerId: () => 'primary', sshTargetFor: () => 'worker' }));
 vi.mock('../lib/task-event-log.js', () => ({ recordTaskEventSafe: vi.fn() }));
 vi.mock('../lib/task-run.js', () => ({ startRun: vi.fn(), finishRun: vi.fn() }));
 import { reapOpenclawAgentRuns, triggerOpenclawAgent } from '../openclaw-agent-executor.js';
-import { runCompanyKrWorkflow } from '../projection/company-kr-workflow.js';
 
 const row = { id: 'task1', run_id: 'run1', payload: { company_kr_analysis: { version: 1, items: [] } } };
 async function reap(consumeCompanyAnalysis) {
@@ -38,16 +38,5 @@ describe('OpenClaw公司KR可信收割', () => {
     expect(summary).toMatchObject({ completed: 0, failed: 1 });
     expect(pool.query.mock.calls.some(([sql]) => sql.includes("SET status = 'completed_no_pr'"))).toBe(false);
     expect(markCompanyAnalysis).toHaveBeenCalledWith(pool, row, 'failed', expect.stringContaining('分析快照不完整'));
-  });
-});
-describe('公司工作流只有回灌成功后启动', () => {
-  it('成功同步先于分析，跳周期或错误不分析', async () => {
-    const order = [], analyze = vi.fn(async () => { order.push('analyze'); return { task_id: 't' }; });
-    await runCompanyKrWorkflow({}, { project: async () => { order.push('project'); return { matched: 8 }; }, analyze, register: async () => ({}), projectRegistration: async () => ({}) });
-    expect(order).toEqual(['project', 'analyze']);
-    analyze.mockClear();
-    await runCompanyKrWorkflow({}, { project: async () => ({ skipped: true }), analyze });
-    await expect(runCompanyKrWorkflow({}, { project: async () => { throw Error('Notion失败'); }, analyze })).rejects.toThrow('Notion失败');
-    expect(analyze).not.toHaveBeenCalled();
   });
 });

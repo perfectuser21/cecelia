@@ -1,12 +1,4 @@
-/**
- * Initiative Pipeline CTO 审核修复测试
- * D1: NEEDS_FIX 轮次 — fixRound=2 → 创建第3轮修复（不告警）
- * D2: NEEDS_FIX 轮次 — fixRound=3 → P0 告警（不再创建修复 task）
- * D3: NEEDS_REVISION 轮次 — revisionRound=2 → 创建第3轮修订
- * D4: NEEDS_REVISION 轮次 — revisionRound=3 → P0 告警
- * D5: TEST_BLOCK → 创建 fix_type='integration_test_failure' dev task，不写 cecelia_events
- * D6: 串行 dev task failed (seq=1) → 后续 blocked tasks (seq>1) 被 cancelled
- */
+/** Initiative问题只留账；保留超轮次告警与串行失败回收。 */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -27,7 +19,6 @@ vi.mock('../actions.js', () => ({
   updateTask: vi.fn(),
   createGoal: vi.fn(),
   updateGoal: vi.fn(),
-  triggerN8n: vi.fn(),
   setMemory: vi.fn(),
   batchUpdateTasks: vi.fn(),
 }));
@@ -115,7 +106,7 @@ describe('断链#4: NEEDS_FIX 轮次计算修复', () => {
     app.use('/api/brain', router);
   });
 
-  it('D1: fixRound=2 → 创建第3轮修复 task（不告警）', async () => {
+  it('D1: fixRound=2 → 原审查留账，不创建修复 task', async () => {
     setupNeedsFixMock(2); // 已有2个历史修复 task
 
     const res = await request(app)
@@ -123,13 +114,8 @@ describe('断链#4: NEEDS_FIX 轮次计算修复', () => {
       .send({ task_id: crTaskId, run_id: 'run-1', status: 'AI Done', result: { decision: 'NEEDS_FIX' } });
 
     expect(res.status).toBe(200);
-    // 应创建第3轮修复 task
-    expect(mockCreateTask).toHaveBeenCalledWith(
-      expect.objectContaining({
-        task_type: 'dev',
-        payload: expect.objectContaining({ fix_type: 'code_review_issues', revision_round: 3 })
-      })
-    );
+    // 保留审查结论，不创建开发单
+    expect(mockCreateTask.mock.calls.filter(([task]) => ['dev', 'coding_workflow'].includes(task.task_type))).toEqual([]);
     // 不应写 cecelia_events 告警（不应调用 INSERT INTO cecelia_events）
     const ceceliaAlert = mockPool.query.mock.calls.find(
       call => typeof call[0] === 'string' && call[0].includes('initiative_max_fixes_exceeded')
@@ -152,7 +138,7 @@ describe('断链#4: NEEDS_FIX 轮次计算修复', () => {
     expect(fixTaskCall).toBeUndefined();
     // 应写 P0 告警（event_type 在参数中，不在 SQL 字符串中）
     const alertCall = mockPool.query.mock.calls.find(
-      call => Array.isArray(call[1]) && call[1][0] === 'initiative_max_fixes_exceeded'
+      call => Array.isArray(call[1]) && call[1][0] === 'initiative_pipeline_blocked'
     );
     expect(alertCall).toBeDefined();
   }, { timeout: 10000 });
@@ -201,7 +187,7 @@ describe('断链#6: NEEDS_REVISION 轮次计算修复', () => {
     app.use('/api/brain', router);
   });
 
-  it('D3: revisionRound=2 → 创建第3轮修订 task（不告警）', async () => {
+  it('D3: revisionRound=2 → 原验收留账，不创建修订单（不告警）', async () => {
     setupNeedsRevisionMock(2);
 
     const res = await request(app)
@@ -209,12 +195,7 @@ describe('断链#6: NEEDS_REVISION 轮次计算修复', () => {
       .send({ task_id: ivTaskId, run_id: 'run-3', status: 'AI Done', result: { verdict: 'NEEDS_REVISION' } });
 
     expect(res.status).toBe(200);
-    expect(mockCreateTask).toHaveBeenCalledWith(
-      expect.objectContaining({
-        task_type: 'dev',
-        payload: expect.objectContaining({ fix_type: 'initiative_verify_revision', revision_round: 3 })
-      })
-    );
+    expect(mockCreateTask.mock.calls.filter(([task]) => ['dev', 'coding_workflow'].includes(task.task_type))).toEqual([]);
     // 不应告警
     const alertCall = mockPool.query.mock.calls.find(
       call => Array.isArray(call[1]) && call[1][0] === 'initiative_max_revisions_exceeded'
@@ -280,7 +261,7 @@ describe('断链#4: TEST_BLOCK → 创建修复 dev task', () => {
     app.use('/api/brain', router);
   });
 
-  it('D5: TEST_BLOCK → 创建 fix_type=integration_test_failure dev task，不写 P0 cecelia_events 告警', async () => {
+  it('D5: TEST_BLOCK → 记录测试阻断事件，不创建开发单', async () => {
     const res = await request(app)
       .post('/api/brain/execution-callback')
       .send({
@@ -291,19 +272,14 @@ describe('断链#4: TEST_BLOCK → 创建修复 dev task', () => {
       });
 
     expect(res.status).toBe(200);
-    // 应创建集成测试修复 task
-    expect(mockCreateTask).toHaveBeenCalledWith(
-      expect.objectContaining({
-        task_type: 'dev',
-        priority: 'P0',
-        payload: expect.objectContaining({ fix_type: 'integration_test_failure' })
-      })
-    );
-    // 不应写 initiative_pipeline_blocked 告警（TEST_BLOCK 不再走 P0 告警路径）
+    // 保留测试失败结论，不创建开发单
+    expect(mockCreateTask.mock.calls.filter(([task]) => ['dev', 'coding_workflow'].includes(task.task_type))).toEqual([]);
+    // 测试失败作为阻断事件留账
     const pipelineBlockedAlert = mockPool.query.mock.calls.find(
-      call => typeof call[0] === 'string' && call[0].includes('initiative_pipeline_blocked')
+      call => Array.isArray(call[1]) && call[1][0] === 'initiative_pipeline_blocked'
     );
-    expect(pipelineBlockedAlert).toBeUndefined();
+    expect(pipelineBlockedAlert).toBeDefined();
+    expect(JSON.parse(pipelineBlockedAlert[1][2]).alert_type).toBe('test_block');
   }, { timeout: 10000 });
 });
 

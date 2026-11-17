@@ -40,34 +40,25 @@ const mk = (src) => ({
 });
 
 describe('loadRegistryPool', () => {
-  it('从 ops_agents/device_locks/ops_workflows 读三源，手机序列号来自 device_locks（生产真身，非 meta.serial）', async () => {
-    const query = vi.fn()
-      .mockResolvedValueOnce({ rows: [{ name: 'infra', notion_id: 'b' }] })
-      .mockResolvedValueOnce({ rows: [{ serial: 'X1', host: 'xian-m4' }] })
-      .mockResolvedValueOnce({ rows: [{ name: '朋友圈跟圈', notion_id: 'w' }] });
+  it('从现役 agent 与手机台账读池，不再装入 n8n workflow', async () => {
+    const query = vi.fn(async sql => {
+      if (/FROM ops_agents/.test(sql)) return { rows: [{ name: 'infra', notion_id: 'b' }] };
+      if (/FROM device_locks/.test(sql)) return { rows: [{ serial: 'X1', host: 'xian-m4' }] };
+      return { rows: [] };
+    });
     const p = await loadRegistryPool(query);
     expect(p.agents).toEqual([{ name: 'infra', notionId: 'b' }]);
     expect(p.phones).toEqual([{ serial: 'X1', host: 'xian-m4' }]);
-    expect(p.workflows).toEqual([{ name: '朋友圈跟圈', notionId: 'w' }]);
-    expect(query.mock.calls[0][0]).toMatch(/FROM ops_agents/);
-    expect(query.mock.calls[1][0]).toMatch(/FROM device_locks/);
-    expect(query.mock.calls[1][0]).toMatch(/device_type\s*=\s*'phone'/);
-    expect(query.mock.calls[2][0]).toMatch(/FROM ops_workflows/);
+    expect(p.workflows).toEqual([]);
+    expect(query.mock.calls.some(([sql]) => /ops_workflows/.test(sql))).toBe(false);
   });
 
-  it('ops_workflows 只取 source=n8n（scheduler 行是 Brain 内部 job，job 名不能被当 workflowRef 命中）', async () => {
-    const query = vi.fn().mockResolvedValue({ rows: [] });
-    await loadRegistryPool(query);
-    const wfSql = query.mock.calls.find(([sql]) => /FROM ops_workflows/.test(sql))[0];
-    expect(wfSql).toMatch(/source\s*=\s*'n8n'/);
-    expect(wfSql).toMatch(/active = TRUE/);
-  });
 });
 
 describe('cheapGates', () => {
-  it('relation 命中设备工作流（名字含设备关键词）→ isDevice + workflowRef，matchedBy=relation:workflow（硬约束）', () => {
+  it('旧 workflow relation 不再提供设备或工作流约束', () => {
     const g = cheapGates(mk({ agentWorkflowIds: ['w1'] }), pool, env);
-    expect(g).toMatchObject({ isDevice: true, workflowRef: '朋友圈跟圈', matchedBy: ['relation:workflow'] });
+    expect(g).toMatchObject({ isDevice: false, workflowRef: null, matchedBy: [] });
   });
   it('relation 命中非部门 agent → department 为 null，agentRef 记下（不把 agent 名当部门）', () => {
     const poolWithNonDeptAgent = { ...pool, agents: [...pool.agents, { name: 'phone-ANGYVB4227006983', notionId: 'a1' }] };
@@ -78,9 +69,9 @@ describe('cheapGates', () => {
     const g = cheapGates(mk({ channel: '朋友圈跟圈' }), pool, env);
     expect(g).toMatchObject({ isDevice: true, workflowRef: '朋友圈跟圈', matchedBy: ['channel'] });
   });
-  it('relation 命中非设备工作流 + channel 非空 → isDevice=true，workflowRef 保留 relation 的（不被 channel 覆盖）', () => {
+  it('旧 workflow relation 与明确 channel 并存 → 仍保留 channel', () => {
     const g = cheapGates(mk({ channel: '发布', agentWorkflowIds: ['w2'] }), pool, env);
-    expect(g).toMatchObject({ isDevice: true, workflowRef: '周报生成', matchedBy: ['relation:workflow', 'channel'] });
+    expect(g).toMatchObject({ isDevice: true, workflowRef: '发布', matchedBy: ['channel'] });
   });
   it('正文含 device_locks 序列号 → isDevice + serial（matchedBy=text:serial）', () => {
     const g = cheapGates(mk({ body: '用 ANGYVB4227006983 这台去发' }), pool, env);
@@ -118,34 +109,32 @@ describe('cheapGates', () => {
     const g = cheapGates(mk({ body: '收集 下一个行动 阻塞 淘汰' }), pool, env);
     expect(g.isDevice).toBe(false);
   });
-  it('正文命中非设备工作流名（周报生成）→ workflowRef 但 isDevice=false', () => {
+  it('正文出现退休工作流名不再提供 workflowRef', () => {
     const g = cheapGates(mk({ body: '本周的周报生成看一下进度' }), pool, env);
-    expect(g).toMatchObject({ workflowRef: '周报生成', isDevice: false, matchedBy: ['text:workflow'] });
+    expect(g).toMatchObject({ workflowRef: null, isDevice: false, matchedBy: [] });
   });
-  it('正文命中设备工作流名（朋友圈跟圈）→ isDevice=true', () => {
+  it('正文设备关键词仍有效，但不再引用退休工作流', () => {
     const g = cheapGates(mk({ body: '记得把朋友圈跟圈这个活干了' }), pool, env);
-    expect(g).toMatchObject({ workflowRef: '朋友圈跟圈', isDevice: true, matchedBy: ['text:workflow'] });
+    expect(g).toMatchObject({ workflowRef: null, isDevice: true, matchedBy: ['text:keyword'] });
   });
-  it('workflow 文本匹配要求长度≥3 且取最长命中（不是池里第一个）', () => {
+  it('旧缓存中的长短 workflow 名均不能再命中', () => {
     const poolWithShortWorkflow = { ...pool, workflows: [...pool.workflows, { name: '发布', notionId: 'w3' }] };
     const g = cheapGates(mk({ body: '把周报生成发出去' }), poolWithShortWorkflow, env);
-    expect(g.workflowRef).toBe('周报生成');
+    expect(g.workflowRef).toBeNull();
   });
 
-  it('多选 workflow → 取用户在 Notion 的选择顺序首个命中，不是池的字母序', () => {
-    // 池按 name 排序时「周报生成」排在「朋友圈跟圈」之后；用户先选 w2 就该 w2 赢。
-    // 这条是本次 tie-break 行为变更的唯一区分用例——改回遍历池的老写法它必红。
+  it('多选旧 workflow 不再产生任何工作流引用', () => {
     const g = cheapGates(mk({ agentWorkflowIds: ['w2', 'w1'] }), pool, env);
-    expect(g.workflowRef).toBe('周报生成');
+    expect(g.workflowRef).toBeNull();
   });
 
-  it('同一 id 同时命中 workflow 池与 agent 池 → 两个都设，matchedBy 顺序 workflow 在前', () => {
+  it('同一 id 出现在旧 workflow 池与现役 agent 池 → 仍保留 agent 约束', () => {
     // ops_agents.notion_id 与 ops_workflows.notion_id 都是 TEXT 且无 UNIQUE
     // （migrations/433:12、436:16），投影重建/人工补录可能让同一 page id 在两表都有行。
     // 不假装它不会发生。
     const both = { ...pool, agents: [{ name: 'infra', notionId: 'w2' }] };
     const g = cheapGates(mk({ agentWorkflowIds: ['w2'] }), both, env);
-    expect(g).toMatchObject({ workflowRef: '周报生成', department: 'infra', matchedBy: ['relation:workflow', 'relation:agent'] });
+    expect(g).toMatchObject({ workflowRef: null, department: 'infra', matchedBy: ['relation:agent'] });
   });
 
   it('指定的 id 不在池里（workflow 已停用 active=FALSE）→ 回落，matchedBy 不出现 relation:*（判定点 0aa5d290）', () => {
@@ -260,5 +249,22 @@ describe('cheapGates 台账模式（phoneSource=phone_registry）', () => {
     const g = cheapGates(mk({ body: '写一段周报' }), regPool, env);
     expect(g.isDevice).toBe(false);
     expect(g.phoneResolution.status).toBe('none');
+  });
+});
+
+describe('已停 n8n 不再提供路由候选', () => {
+  it('注册表不再读取 ops_workflows，但保留 agent 与手机池', async () => {
+    const query = sqlRouter({ registry: REGISTRY_ROWS });
+    const registry = await loadRegistryPool(query);
+    expect(query.mock.calls.some(([sql]) => /ops_workflows/.test(sql))).toBe(false);
+    expect(registry.workflows).toEqual([]);
+    expect(registry.phones).not.toHaveLength(0);
+  });
+  it('即使传入旧缓存，relation/正文也不能推荐退休工作流，agent 与引擎照常识别', () => {
+    const gate = cheapGates(mk({ agentWorkflowIds: ['w2', 'a2'], body: '用 Codex 做周报生成' }), pool, env);
+    expect(gate.workflowRef).toBeNull();
+    expect(gate.department).toBe('infra');
+    expect(gate.hardEngine).toBe('codex');
+    expect(gate.matchedBy).toEqual(['relation:agent', 'text:engine']);
   });
 });

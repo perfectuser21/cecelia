@@ -9,7 +9,7 @@ it('同版本失败达阈值自动创建只读诊断而不是现场改实现',as
  expect(createDiagnosis).toHaveBeenCalledOnce();
  const spec=createDiagnosis.mock.calls[0][1];
  expect(spec).toMatchObject({requested_task_type:'research',mutation_intent:'read_only',declared_domain:'research'});
- expect(spec.metadata.commander_improvement).toMatchObject({phase:'diagnosis',max_repairs:1});
+ expect(spec.metadata.commander_improvement).toMatchObject({phase:'diagnosis',max_repairs:0});
  expect(spec.description).toContain('未知副作用');
  expect(db.query.mock.calls.some(([sql])=>/INSERT INTO tasks|UPDATE/.test(sql))).toBe(false);
 });

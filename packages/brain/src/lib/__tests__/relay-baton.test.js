@@ -204,12 +204,12 @@ describe('自动改进诊断接棒',()=>{
  const step={kind:'dispatch_headless',title:'修补',change_kind:'bugfix',repo_hint:repo,map_scope_hint:['F1'],base_sha:revision,
   diagnosis:{category:'source_defect',fixed_source:{repo,revision,path:'packages/brain/src/helper.js'},evidence:['readback:fixture'],reproduction:'固定输入复现错误',acceptance:['错误被修复且正常场景无退步'],effects_status:'none'}};
  const pool={query:vi.fn(async()=>({rows:[]}))};
- it('研究任务显式保留仓库范围与固定SHA，跨仓不猜父任务repo',async()=>{
+ it('旧只读诊断即使固定来源完整也不再派自主开发任务',async()=>{
   const create=vi.fn(async(_db,spec)=>({task:{id:'repair',title:spec.title}}));
   const result=await materializeNextSteps(pool,task,{next_steps:[step]},{createRoutedTask:create});
-  expect(result.tasks).toHaveLength(1);
-  expect(create.mock.calls[0][1]).toMatchObject({requested_task_type:'coding_workflow',repo_hint:repo,map_scope_hint:['F1'],base_sha:revision,
-   source_id:'commander-repair:'+chain.chain_key,metadata:{commander_improvement:{phase:'repair',max_repairs:1}}});
+  expect(result.tasks).toEqual([]);
+  expect(result.skipped).toEqual([{index:0,kind:'dispatch_headless',title:'修补',error:'commander_improvement_auto_repair_retired'}]);
+  expect(create).not.toHaveBeenCalled();
  });
  it.each(['external_environment','platform_risk_permission','verifier_defect','insufficient_evidence'])('非源码缺陷不得自动编码：%s',async category=>{
   const create=vi.fn();const result=await materializeNextSteps(pool,task,{next_steps:[{...step,diagnosis:{...step.diagnosis,category}}]},{createRoutedTask:create});

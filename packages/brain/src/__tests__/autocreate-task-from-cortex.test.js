@@ -39,7 +39,7 @@ describe('autoCreateTasksFromCortex', () => {
       recommended_actions: [
         {
           type: 'create_task',
-          params: { title: '修复任务超时问题', task_type: 'dev', priority: 'P1' },
+          params: { title: '修复任务超时问题', task_type: 'research', priority: 'P1' },
         },
       ],
     };
@@ -50,7 +50,7 @@ describe('autoCreateTasksFromCortex', () => {
       title: '修复任务超时问题',
       description: '',
       priority: 'P1',
-      task_type: 'dev',
+      task_type: 'research',
       trigger_source: 'cortex',
       goal_id: 'goal-123',
       project_id: null,
@@ -66,7 +66,7 @@ describe('autoCreateTasksFromCortex', () => {
 
     const rcaResult = {
       recommended_actions: [
-        { type: 'create_task', params: { title: '修复内存泄漏', task_type: 'dev' } },
+        { type: 'create_task', params: { title: '修复内存泄漏', task_type: 'research' } },
       ],
     };
 
@@ -81,7 +81,7 @@ describe('autoCreateTasksFromCortex', () => {
 
     const rcaResult = {
       recommended_actions: [
-        { type: 'create_task', params: { title: '失败的创建任务' } },
+        { type: 'create_task', params: { title: '失败的创建任务', task_type: 'research' } },
       ],
     };
 
@@ -97,7 +97,7 @@ describe('autoCreateTasksFromCortex', () => {
 
     const rcaResult = {
       recommended_actions: [
-        { type: 'create_task', params: { title: '任务 A', task_type: 'dev' } },
+        { type: 'create_task', params: { title: '任务 A', task_type: 'research' } },
         { type: 'adjust_strategy', params: {} },
         { type: 'create_task', params: { title: '任务 B', task_type: 'research' } },
       ],
@@ -144,21 +144,54 @@ describe('真实 Cortex 建单上下文与故障隔离', () => {
     mockCreateTask.mockResolvedValue({ success: true, deduplicated: false });
     const result = await autoCreateTasksFromCortex({ recommended_actions: [
       { type: 'create_task', params: { title: '覆盖', description: '真实描述', priority: 'P0', task_type: 'research', goal_id: 'own-goal', project_id: 'own-project' } },
-      { type: 'create_task', params: { title: '继承' } },
+      { type: 'create_task', params: { title: '继承', task_type: 'research' } },
     ] }, { goal_id: 'parent-goal', project_id: 'parent-project' });
     expect(mockCreateTask).toHaveBeenNthCalledWith(1, { title: '覆盖', description: '真实描述', priority: 'P0', task_type: 'research', trigger_source: 'cortex', goal_id: 'own-goal', project_id: 'own-project' });
-    expect(mockCreateTask).toHaveBeenNthCalledWith(2, { title: '继承', description: '', priority: 'P1', task_type: 'dev', trigger_source: 'cortex', goal_id: 'parent-goal', project_id: 'parent-project' });
+    expect(mockCreateTask).toHaveBeenNthCalledWith(2, { title: '继承', description: '', priority: 'P1', task_type: 'research', trigger_source: 'cortex', goal_id: 'parent-goal', project_id: 'parent-project' });
     expect(result).toEqual([{ title: '覆盖', deduplicated: false }, { title: '继承', deduplicated: false }]);
   });
 
   it('第一项失败后继续建第二项，返回值只包含成功项', async () => {
     mockCreateTask.mockRejectedValueOnce(new Error('fixture_write_failed')).mockResolvedValueOnce({ success: true, deduplicated: true });
     const result = await autoCreateTasksFromCortex({ recommended_actions: [
-      { type: 'create_task', params: { title: '失败' } },
-      { type: 'create_task', params: { title: '成功' } },
+      { type: 'create_task', params: { title: '失败', task_type: 'research' } },
+      { type: 'create_task', params: { title: '成功', task_type: 'research' } },
     ] });
     expect(mockCreateTask).toHaveBeenCalledTimes(2);
     expect(result).toEqual([{ title: '成功', deduplicated: true }]);
     expect(mockQuery).not.toHaveBeenCalled();
+  });
+});
+
+
+describe('Cortex 不能从诊断扩出代码变更单', () => {
+  it.each([
+    {}, { task_type: 'dev' }, { task_type: 'coding_workflow' }, { task_type: 'pipeline_rescue' },
+    { task_type: 'codex_dev' }, { task_type: 'initiative_execute' },
+    { task_type: 'research', mutation_intent: 'write' },
+    { task_type: 'research', mutation_intent: 'unknown' },
+    { task_type: 'research', payload: { coding_workflow: { repo: 'cecelia' } } },
+    { task_type: 'research', payload: { requested_task_type: 'dev' } },
+  ])('阻断编码来源 %j，其他研究继续', async params => {
+    mockCreateTask.mockResolvedValue({ success: true, task: { id: 'research-only' } });
+    const result = await autoCreateTasksFromCortex({ recommended_actions: [
+      { type: 'create_task', params: { title: '自主变更', ...params } },
+      { type: 'create_task', params: { title: '继续诊断', task_type: 'research' } },
+    ] });
+    expect(mockCreateTask).toHaveBeenCalledTimes(1);
+    expect(mockCreateTask.mock.calls[0][0]).toMatchObject({ title: '继续诊断', task_type: 'research' });
+    expect(result).toEqual([{ title: '继续诊断', deduplicated: false }]);
+  });
+});
+
+
+describe('Cortex非编码业务建议保留', () => {
+  it('明确data业务单继续入账，不因自动开发退役停掉', async () => {
+    mockCreateTask.mockResolvedValue({ success: true, task: { id: 'data-task' } });
+    const result = await autoCreateTasksFromCortex({ recommended_actions: [
+      { type: 'create_task', params: { title: '数据核对', task_type: 'data' } },
+    ] });
+    expect(mockCreateTask).toHaveBeenCalledWith(expect.objectContaining({ title: '数据核对', task_type: 'data' }));
+    expect(result).toEqual([{ title: '数据核对', deduplicated: false }]);
   });
 });

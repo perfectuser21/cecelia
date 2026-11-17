@@ -7,10 +7,7 @@ vi.mock('../db.js', () => ({
   },
 }));
 
-vi.mock('../auto-fix.js', () => ({
-  shouldAutoFix: vi.fn((rca) => rca.confidence >= 0.7),
-  dispatchToDevSkill: vi.fn().mockResolvedValue('test-task-id'),
-}));
+
 
 vi.mock('../executor.js', () => ({
   getActiveProcessCount: vi.fn().mockReturnValue(2),

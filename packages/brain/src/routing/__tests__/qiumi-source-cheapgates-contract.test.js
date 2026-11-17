@@ -7,8 +7,7 @@
  * 两头各自有绿测试、中间没有横跨两端的契约测试。本文件补上这一条：
  * 任何一段改了键名，这里都会断言红（不是崩溃红）。
  *
- * 必须 workflow 与 agent 两条都断言——只断 workflow 挡不住"实现忘了喂 agents 池"，
- * 而 agent 分支正是唤醒 qiumi-router.js:117-124 agentRef:serial 支路的那条。
+ * 旧 workflow 不再提供路由候选；agent 分支仍须沿原字段契约生效。
  */
 import { describe, it, expect } from 'vitest';
 import { parseZhPage } from '../../notion-gtd-sync.js';
@@ -54,10 +53,10 @@ const runChain = (relationIds) => {
 };
 
 describe('契约：Notion 填的「执行 Agent / Workflow」一路走到便宜闸', () => {
-  it('填了 workflow → workflowRef 命中，matchedBy 含 relation:workflow', () => {
+  it('填了旧 workflow → 原始输入保留，但不再成为路由引用', () => {
     const g = runChain(['wf-2']);
-    expect(g.workflowRef).toBe('周报生成');
-    expect(g.matchedBy).toContain('relation:workflow');
+    expect(g.workflowRef).toBeNull();
+    expect(g.matchedBy).not.toContain('relation:workflow');
   });
 
   it('填了 agent → department 命中，matchedBy 含 relation:agent（挡"忘了喂 agents 池"）', () => {
@@ -66,11 +65,11 @@ describe('契约：Notion 填的「执行 Agent / Workflow」一路走到便宜�
     expect(g.matchedBy).toContain('relation:agent');
   });
 
-  it('同时填 workflow 与 agent → 两个都命中，matchedBy 顺序恒为 workflow 在前', () => {
+  it('同时填旧 workflow 与现役 agent → agent 仍正常命中', () => {
     const g = runChain(['ag-1', 'wf-2']);
-    expect(g.workflowRef).toBe('周报生成');
+    expect(g.workflowRef).toBeNull();
     expect(g.department).toBe('infra');
-    expect(g.matchedBy).toEqual(['relation:workflow', 'relation:agent']);
+    expect(g.matchedBy).toEqual(['relation:agent']);
   });
 
   it('填的 id 不在池里（如 workflow 已停用 active=FALSE）→ 不命中，matchedBy 不得出现 relation:*（判定点 0aa5d290）', () => {

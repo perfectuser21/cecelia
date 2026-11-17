@@ -11,7 +11,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 // --- module mocks required by capability-probe.js ---
 const mockQuery = vi.fn();
 vi.mock('../db.js', () => ({ default: { query: mockQuery } }));
-vi.mock('../auto-fix.js', () => ({ shouldAutoFix: vi.fn(() => false), dispatchToDevSkill: vi.fn() }));
+
 vi.mock('../executor.js', () => ({ getActiveProcessCount: vi.fn(() => 0), MAX_SEATS: 10 }));
 vi.mock('../alerting.js', () => ({ raise: vi.fn(), sendAlert: vi.fn() }));
 vi.mock('../cortex.js', () => ({ performRCA: vi.fn() }));

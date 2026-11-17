@@ -8,6 +8,15 @@ import hierarchy from '../okr-hierarchy.js';
 import taskGoals from '../task-goals.js';
 
 describe('公司KR真实HTTP入口', () => {
+  it.each(['get', 'post', 'patch'])('退休分析%s返回410，旧enabled与retry不能重开且零数据库请求', async method => {
+    const pool = { query: vi.fn(), connect: vi.fn() }, notionReq = vi.fn();
+    const app = express(); app.use(express.json()); app.use('/api/brain/okr', createCompanyKrRouter({ pool, notionReq }));
+    const response = await request(app)[method]('/api/brain/okr/company-key-results/analysis').send({ enabled: true, hour: 8, retry: true });
+    expect(response.status).toBe(410);
+    expect(response.body.code).toBe('company_kr_analysis_retired');
+    expect(pool.query).not.toHaveBeenCalled(); expect(pool.connect).not.toHaveBeenCalled();
+    expect(notionReq).not.toHaveBeenCalled();
+  });
   it('GET公司列表保留raw precision与显式source，不依赖最近5个Objective', async () => {
     const pool = { query: vi.fn(async () => ({ rows: [{ id: 'kr', title: '经营指标', unit: '%', metadata: { metric_mode: 'company_formula_v1', company_metric: { start: '0', current: '1.234', target: '5', ratio: 0.247 } }, custom_props: { company_notion: { page_id: 'page', goal_id: 'goal', area_ids: [] } }, updated_at: new Date('2026-10-01T00:00:00Z') }] })) };
     const app = express(); app.use(express.json()); app.use('/api/brain/okr', createCompanyKrRouter({ pool }));

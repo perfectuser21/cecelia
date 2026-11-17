@@ -5,7 +5,7 @@
 export const GUARDED_MODULES = [
   'thalamus', 'rumination', 'rumination-scheduler', 'narrative',
   'diary-scheduler', 'conversation-consolidator',
-  'self-report', 'notebook-feeder',
+  'notebook-feeder',
   'proactive-mouth', 'evolution-synthesizer',
   'dept-heartbeat', 'pending-followups',
   // evolution-scanner 不在此列：GitHub API 扫描，不消耗 LLM token，不受 consciousness 门控

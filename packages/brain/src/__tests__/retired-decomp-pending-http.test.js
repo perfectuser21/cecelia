@@ -4,7 +4,7 @@ import request from 'supertest';
 
 const mocks = vi.hoisted(() => ({ query: vi.fn(), connect: vi.fn(), createTask: vi.fn() }));
 vi.mock('../db.js', () => ({ default: { query: mocks.query, connect: mocks.connect } }));
-vi.mock('../actions.js', () => ({ createTask: mocks.createTask, updateTask: vi.fn(), createGoal: vi.fn(), updateGoal: vi.fn(), triggerN8n: vi.fn(), setMemory: vi.fn(), batchUpdateTasks: vi.fn() }));
+vi.mock('../actions.js', () => ({ createTask: mocks.createTask, updateTask: vi.fn(), createGoal: vi.fn(), updateGoal: vi.fn(), setMemory: vi.fn(), batchUpdateTasks: vi.fn() }));
 vi.mock('../intent.js', () => ({ parseIntent: vi.fn(), parseAndCreate: vi.fn(), INTENT_TYPES: {}, INTENT_ACTION_MAP: {}, extractEntities: vi.fn(), classifyIntent: vi.fn(), getSuggestedAction: vi.fn() }));
 vi.mock('../proposal.js', () => ({ createProposal: vi.fn(), approveProposal: vi.fn(), rollbackProposal: vi.fn(), rejectProposal: vi.fn(), getProposal: vi.fn(), listProposals: vi.fn() }));
 vi.mock('../orchestrator-chat.js', () => ({ handleChat: vi.fn(), handleChatStream: vi.fn() }));

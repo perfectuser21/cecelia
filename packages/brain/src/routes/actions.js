@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { rateLimit } from 'express-rate-limit';
 import pool from '../db.js';
-import { createTask, updateTask, createGoal, updateGoal, triggerN8n, setMemory, batchUpdateTasks } from '../actions.js';
+import { createTask, updateTask, createGoal, updateGoal, setMemory, batchUpdateTasks } from '../actions.js';
 import { parseIntent, parseAndCreate, INTENT_TYPES, INTENT_ACTION_MAP, extractEntities as _extractEntities, classifyIntent as _classifyIntent, getSuggestedAction as _getSuggestedAction } from '../intent.js';
 import { getPendingActions, approvePendingAction, rejectPendingAction, addProposalComment, selectProposalOption, expireStaleProposals as _expireStaleProposals } from '../decision-executor.js';
 import { createProposal as _createProposal, approveProposal as _approveProposal, rollbackProposal as _rollbackProposal, rejectProposal as _rejectProposal, getProposal as _getProposal, listProposals as _listProposals } from '../proposal.js';
@@ -395,6 +395,8 @@ ${okrCtxBlock}
  * 白名单检查 + 幂等性 + 自动记录决策
  */
 async function handleAction(actionName, params, idempotencyKey, trigger = 'api') {
+  // 旧 n8n 动作先于参数、幂等与数据库副作用拒绝，旧成功缓存不能复活执行口。
+  if (actionName === 'trigger-n8n') return { success: false, error: 'n8n_retired', status: 410, message: 'n8n 业务执行通道已退役，请使用 Brain 任务入口' };
   // 1. 白名单检查
   const schema = ALLOWED_ACTIONS[actionName];
   if (!schema) {
@@ -435,9 +437,6 @@ async function handleAction(actionName, params, idempotencyKey, trigger = 'api')
         break;
       case 'set-memory':
         result = await setMemory(params);
-        break;
-      case 'trigger-n8n':
-        result = await triggerN8n(params);
         break;
       default:
         result = { success: false, error: 'Unknown action' };
@@ -577,10 +576,8 @@ router.post('/action/set-memory', async (req, res) => {
 });
 
 router.post('/action/trigger-n8n', async (req, res) => {
-  const { idempotency_key, trigger, ...params } = req.body;
-  const key = idempotency_key || `trigger-n8n-${params.webhook_path}-${Date.now()}`;
-  const result = await handleAction('trigger-n8n', params, key, trigger);
-  res.status(result.success ? 200 : 400).json(result);
+  const result = await handleAction('trigger-n8n', {}, null);
+  res.status(410).json(result);
 });
 
 /**
@@ -600,7 +597,7 @@ router.post('/action/:actionName', async (req, res) => {
     if (result.success) {
       res.json(result);
     } else {
-      res.status(400).json(result);
+      res.status(result.status || 400).json(result);
     }
   } catch (err) {
     res.status(500).json({ error: 'Action failed', details: err.message });

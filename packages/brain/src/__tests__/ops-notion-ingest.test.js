@@ -1,55 +1,6 @@
 vi.mock('../db.js', () => ({ default: { query: vi.fn(() => { throw new Error('禁止canonical DB'); }) } }));
 import { describe, it, expect,vi } from 'vitest';
-import { planEnableAction, buildManualUpdateSql, runOpsNotionIngest } from '../ops-notion-ingest.js';
-
-// 主理人拍板：Notion 上标停用 → 直接生效，真去停 n8n（判定点已登记，误触风险已知悉）。
-// 因为是不可逆动作，实现上必须保证三件事：幂等（不重复调）、留痕（改前状态）、
-// 失败可见（enable_error 落库，看板显红，绝不静默吞掉）。
-describe('planEnableAction — 决定要不要真去动 n8n', () => {
-  it('意图与现状一致 → 不动作（幂等，防每轮重复调 n8n）', () => {
-    expect(planEnableAction({ active: true, enable_intent: true }).action).toBe('none');
-    expect(planEnableAction({ active: false, enable_intent: false }).action).toBe('none');
-  });
-
-  it('标停用而 n8n 还开着 → 真去停', () => {
-    const p = planEnableAction({ wf_id: 'abc', active: true, enable_intent: false });
-    expect(p.action).toBe('deactivate');
-    expect(p.wf_id).toBe('abc');
-    expect(p.prev_active).toBe(true);   // 留痕：改前是什么样
-  });
-
-  it('标启用而 n8n 停着 → 真去开', () => {
-    expect(planEnableAction({ wf_id: 'abc', active: false, enable_intent: true }).action).toBe('activate');
-  });
-
-  it('没表达过意图（null）→ 永不动作（默认不碰生产）', () => {
-    expect(planEnableAction({ active: true, enable_intent: null }).action).toBe('none');
-    expect(planEnableAction({ active: true }).action).toBe('none');
-  });
-
-  it('上轮失败过的不无限重试——已记 error 且意图没变则跳过，等人处理', () => {
-    const p = planEnableAction({
-      wf_id: 'abc', active: true, enable_intent: false,
-      enable_error: 'n8n 500', enable_intent_at: new Date('2026-09-08T10:00:00Z'),
-      enable_applied_at: new Date('2026-09-08T10:00:01Z'),
-    });
-    expect(p.action).toBe('none');
-    expect(p.reason).toBe('last_attempt_failed');
-  });
-
-  it('人改了新意图（intent_at 晚于上次尝试）→ 即使上次失败也重试', () => {
-    const p = planEnableAction({
-      wf_id: 'abc', active: true, enable_intent: false,
-      enable_error: 'n8n 500', enable_intent_at: new Date('2026-09-08T12:00:00Z'),
-      enable_applied_at: new Date('2026-09-08T10:00:01Z'),
-    });
-    expect(p.action).toBe('deactivate');
-  });
-
-  it('非 n8n 来源的行不碰（launchd/gha 没有这个 API）', () => {
-    expect(planEnableAction({ source: 'launchd', active: true, enable_intent: false }).action).toBe('none');
-  });
-});
+import { buildManualUpdateSql, runOpsNotionIngest } from '../ops-notion-ingest.js';
 
 describe('buildManualUpdateSql — 只更新人工列', () => {
   it('生成的 SQL 只含人工列，绝不含机器列', () => {
@@ -94,7 +45,7 @@ describe('真实回读只记录人工列实际变化',()=>{
   });
   const notionReqFn=vi.fn(async()=>({results:[{id:'page-1',last_edited_time:'2026-11-04T00:00:00Z',properties:{Owner:{rich_text:owner?[{plain_text:owner}]:[]}}}]}));
   const result=await runOpsNotionIngest({query},{tokenFn:()=> 'owned-fixture',notionReqFn});
-  expect(result).toMatchObject({ok:true,read:1,updated:changed?1:0,toggled:0,failed:0});
+  expect(result).toMatchObject({ok:true,read:1,updated:changed?1:0,failed:0});
   const writes=query.mock.calls.filter(([sql])=>sql.startsWith('UPDATE ops_agents SET'));
   expect(writes).toHaveLength(changed?1:0);
   if(changed)expect(writes[0][1]).toEqual([owner,'agent-1']);
@@ -102,27 +53,28 @@ describe('真实回读只记录人工列实际变化',()=>{
  });
 });
 
-it('真实回读启停失败落enable_error，重读同一意图不重复执行', async () => {
+it('旧Enabled列不会启动n8n、写启停意图或假记执行成功，其他人工列仍回读', async () => {
   const target = { id: 'fixture-wf', wf_id: 'fixture-flow', source: 'n8n', active: true,
-    enable_intent: null, enable_error: null };
-  const query = vi.fn(async (sql, args) => {
+    enable_intent: null, owner_manual: '旧负责人' };
+  const query = vi.fn(async sql => {
     if (sql.includes('ops_notion_dbs')) return { rows: [{ value_json: { workflows_db: 'fixture-db' } }] };
     if (sql.startsWith('SELECT * FROM ops_workflows')) return { rows: [{ ...target }] };
-    if (sql.includes('SET enable_intent =')) target.enable_intent = args[0];
-    if (sql.includes('SET enable_intent_at')) target.enable_intent_at = new Date('2026-11-16T00:00:00Z');
-    if (sql.includes('enable_error = $2')) {
-      target.enable_error = args[1];
-      target.enable_applied_at = new Date('2026-11-16T00:00:01Z');
-    }
     return { rows: [] };
   });
-  const notionReqFn = vi.fn().mockResolvedValue({ results: [{ id: 'fixture-page',
-    last_edited_time: '2026-11-16T00:00:00Z', properties: { Enabled: { checkbox: false } } }] });
-  const execFn = vi.fn(() => { throw new Error('fixture n8n unavailable'); });
+  const page = properties => ({ id: 'fixture-page', last_edited_time: '2026-11-17T00:00:00Z', properties });
+  const notionReqFn = vi.fn().mockResolvedValue({ results: [page({ Enabled: { checkbox: false } })] });
+  const execFn = vi.fn();
   const options = { tokenFn: () => 'fixture-only', notionReqFn, execFn };
-  expect(await runOpsNotionIngest({ query }, options)).toMatchObject({ updated: 1, toggled: 0, failed: 1 });
-  expect(target).toMatchObject({ active: true, enable_intent: false, enable_error: 'fixture n8n unavailable' });
-  expect(query.mock.calls.some(([sql]) => sql.includes('enable_error = $2'))).toBe(true);
-  expect(await runOpsNotionIngest({ query }, options)).toMatchObject({ updated: 0, toggled: 0, failed: 0 });
-  expect(execFn).toHaveBeenCalledTimes(1);
+  expect(await runOpsNotionIngest({ query }, options)).toMatchObject({ ok: true, read: 1, updated: 0, failed: 0 });
+  expect(execFn).not.toHaveBeenCalled();
+  expect(query.mock.calls.some(([sql]) => /enable_intent|enable_applied_at|enable_error/.test(sql))).toBe(false);
+  notionReqFn.mockResolvedValue({ results: [page({ Enabled: { checkbox: true }, Owner: { rich_text: [{ plain_text: '新负责人' }] } })] });
+  expect(await runOpsNotionIngest({ query }, options)).toMatchObject({ ok: true, read: 1, updated: 1, failed: 0 });
+  expect(query.mock.calls.some(([sql, params]) => sql.startsWith('UPDATE ops_workflows SET owner_manual') && params[0] === '新负责人')).toBe(true);
+  expect(execFn).not.toHaveBeenCalled();
+  expect(query.mock.calls.some(([sql]) => /enable_intent|enable_applied_at|enable_error/.test(sql))).toBe(false);
+});
+
+it('人工更新白名单不再接受任何旧n8n控制字段', () => {
+  expect(buildManualUpdateSql('ops_workflows', 'id', { enable_intent: true, enable_applied_at: new Date(), enable_error: null })).toBeNull();
 });

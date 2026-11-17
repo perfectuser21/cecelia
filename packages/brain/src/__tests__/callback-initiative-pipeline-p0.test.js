@@ -26,7 +26,6 @@ vi.mock('../actions.js', () => ({
   updateTask: vi.fn(),
   createGoal: vi.fn(),
   updateGoal: vi.fn(),
-  triggerN8n: vi.fn(),
   setMemory: vi.fn(),
   batchUpdateTasks: vi.fn(),
 }));
@@ -135,7 +134,7 @@ describe('断链#4: code_review decision 路由（initiative scope）', () => {
     expect(devCall).toBeUndefined();
   }, 10000);
 
-  it('D2: code_review NEEDS_FIX → 创建修复 dev task（不进 initiative_verify）', async () => {
+  it('D2: code_review NEEDS_FIX → 原审查留账，不进 initiative_verify', async () => {
     setupCodeReviewMock('NEEDS_FIX');
 
     const res = await request(app)
@@ -143,13 +142,7 @@ describe('断链#4: code_review decision 路由（initiative scope）', () => {
       .send({ task_id: taskId, run_id: 'run-2', status: 'AI Done', result: { decision: 'NEEDS_FIX' } });
 
     expect(res.status).toBe(200);
-    expect(mockCreateTask).toHaveBeenCalledWith(
-      expect.objectContaining({
-        task_type: 'dev',
-        project_id: projectId,
-        payload: expect.objectContaining({ fix_type: 'code_review_issues' })
-      })
-    );
+    expect(mockCreateTask.mock.calls.filter(([task]) => ['dev', 'coding_workflow'].includes(task.task_type))).toEqual([]);
     const ivCall = mockCreateTask.mock.calls.find(c => c[0]?.task_type === 'initiative_verify');
     expect(ivCall).toBeUndefined();
   }, 10000);
@@ -172,7 +165,7 @@ describe('断链#4: code_review decision 路由（initiative scope）', () => {
     expect(payload.project_id).toBe(projectId);
   }, 10000);
 
-  it('D4: result 含 TEST_BLOCK → 创建 integration_test_failure 修复 dev task（不写 P0 告警）', async () => {
+  it('D4: result 含 TEST_BLOCK → 记录测试阻断事件，不创建开发单', async () => {
     setupCodeReviewMock('PASS');
 
     const res = await request(app)
@@ -181,18 +174,13 @@ describe('断链#4: code_review decision 路由（initiative scope）', () => {
 
     expect(res.status).toBe(200);
     // 应创建集成测试修复 dev task（CTO P0-3 修复：TEST_BLOCK 有修复路径）
-    expect(mockCreateTask).toHaveBeenCalledWith(
-      expect.objectContaining({
-        task_type: 'dev',
-        priority: 'P0',
-        payload: expect.objectContaining({ fix_type: 'integration_test_failure' })
-      })
-    );
+    expect(mockCreateTask.mock.calls.filter(([task]) => ['dev', 'coding_workflow'].includes(task.task_type))).toEqual([]);
     // 不应写 initiative_pipeline_blocked 告警（P0-3 修复后 TEST_BLOCK 走修复路径而非告警）
     const pipelineBlockedEvent = mockPool.query.mock.calls.find(
       c => typeof c[0] === 'string' && c[0].includes('INSERT INTO cecelia_events') && c[1]?.[0] === 'initiative_pipeline_blocked'
     );
-    expect(pipelineBlockedEvent).toBeUndefined();
+    expect(pipelineBlockedEvent).toBeDefined();
+    expect(JSON.parse(pipelineBlockedEvent[1][2]).alert_type).toBe('test_block');
   }, 10000);
 });
 
@@ -264,7 +252,7 @@ describe('断链#6: initiative_verify verdict 处理', () => {
     expect(mockCreateTask).not.toHaveBeenCalled();
   }, 10000);
 
-  it('D6: initiative_verify NEEDS_REVISION（第1轮）→ 创建修订 dev task', async () => {
+  it('D6: initiative_verify NEEDS_REVISION（第1轮）→ 原验收留账，不创建修订单', async () => {
     setupInitiativeVerifyMock({ revisionRound: 0 });
 
     const res = await request(app)
@@ -272,13 +260,7 @@ describe('断链#6: initiative_verify verdict 处理', () => {
       .send({ task_id: taskId, run_id: 'run-6', status: 'AI Done', result: { verdict: 'NEEDS_REVISION' } });
 
     expect(res.status).toBe(200);
-    expect(mockCreateTask).toHaveBeenCalledWith(
-      expect.objectContaining({
-        task_type: 'dev',
-        project_id: projectId,
-        payload: expect.objectContaining({ fix_type: 'initiative_verify_revision', revision_round: 1 })
-      })
-    );
+    expect(mockCreateTask.mock.calls.filter(([task]) => ['dev', 'coding_workflow'].includes(task.task_type))).toEqual([]);
     const eventCall = mockPool.query.mock.calls.find(
       c => typeof c[0] === 'string' && c[0].includes('INSERT INTO cecelia_events') && c[1]?.[0] === 'initiative_max_revisions_exceeded'
     );

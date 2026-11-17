@@ -150,7 +150,7 @@ export const BRAIN_MANIFEST = {
       id: 'evolution',
       label: '自我演化',
       color: '#ec4899',
-      desc: '慢回路——自我认知写回，学习沉淀，记忆系统，自我报告',
+      desc: '慢回路——自我认知写回，学习沉淀，记忆系统',
       nodeIds: ['self_model', 'learning', 'memory'],
       modules: [
         {
@@ -172,13 +172,6 @@ export const BRAIN_MANIFEST = {
           label: '记忆系统',
           desc: 'memory_stream L0/L1 + 情景记忆，episodic + working_memory',
           file: 'memory-retriever.js',
-          nature: 'growing',
-        },
-        {
-          id: 'self_report',
-          label: '自我报告',
-          desc: '6h 欲望轨迹采集（⚠️ 待闭环：需要 consumer 分析下游）',
-          file: 'self-report-collector.js',
           nature: 'growing',
         },
       ],

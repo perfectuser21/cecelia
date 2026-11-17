@@ -13,7 +13,7 @@ export const TASK_CREATION_INVENTORY = Object.freeze([
   { module: 'actions.js', source: 'api', creates_executable_task: true, migration_status: 'routed' },
   // 公共Runner按固定Activity创建独立子运行；同API路由边界，父回执不得代替子执行。
   { module: 'invocations/activity-worker.js', source: 'api', creates_executable_task: true, migration_status: 'routed' },
-  { module: 'auto-fix.js', source: 'discovery', creates_executable_task: true, migration_status: 'routed' },
+  { module: 'auto-fix.js', source: 'discovery', creates_executable_task: false, migration_status: 'retired' },
   { module: 'capture-triage.js', source: 'discovery', creates_executable_task: true, migration_status: 'routed' },
   { module: 'chat-action-dispatcher.js', source: 'conversation', creates_executable_task: true, migration_status: 'routed' },
   { module: 'code-review-trigger.js', source: 'scheduler', creates_executable_task: true, migration_status: 'routed' },
@@ -31,7 +31,7 @@ export const TASK_CREATION_INVENTORY = Object.freeze([
   { module: 'learning.js', source: 'discovery', creates_executable_task: true, migration_status: 'routed' },
   // 棒4（决策 ee4842a6/3feeae3e）：scope/initiative/project 完成检测清空为 no-op，不再建任务
   { module: 'orchestrator-chat.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
-  { module: 'pipeline-patrol.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
+  { module: 'pipeline-patrol.js', source: 'child', creates_executable_task: false, migration_status: 'retired' },
   { module: 'progress-reviewer.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
   { module: 'proposal.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
   // 2026-09-14 Notion 排单接手（双向·pull）：主理人 Notion Tasks 库 Delegated → createRoutedTask
@@ -60,7 +60,7 @@ export const TASK_CREATION_INVENTORY = Object.freeze([
   // 链 2afa6d69 棒3（任务 8a40825a）：POST /projects/:id/tasks 一步建单，与 task-tasks.js 同走 createRoutedTask。
   { module: 'routes/project-locate-routes.js', source: 'api', creates_executable_task: true, migration_status: 'routed' },
   { module: 'routes/task-tasks.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
-  { module: 'routes/tasks.js', source: 'api', creates_executable_task: true, migration_status: 'routed' },
+  { module: 'routes/tasks.js', source: 'api', creates_executable_task: false, migration_status: 'retired' },
   { module: 'routes/tasks-manual-dispatch.js', source: 'api', creates_executable_task: true, migration_status: 'routed' },
   // 秋米路由（PR3）：判定为设备任务时派生 device_job 子任务。迁移 421 的回执不可变触发器
   // 挡死带回执行的 task_type 原地转换，只能另建一条子任务（见计划补充五）。
@@ -69,7 +69,7 @@ export const TASK_CREATION_INVENTORY = Object.freeze([
   { module: 'image-retention-controller.js', source: 'scheduler', creates_executable_task: true, migration_status: 'routed' },
   { module: 'preview-cache-controller.js', source: 'scheduler', creates_executable_task: true, migration_status: 'routed' },
   { module: 'task-intake.js', source: 'api', creates_executable_task: true, migration_status: 'routed' },
-  { module: 'lib/company-kr-analysis.js', source: 'scheduler', creates_executable_task: true, migration_status: 'routed' },
+  { module: 'lib/company-kr-analysis.js', source: 'scheduler', creates_executable_task: false, migration_status: 'retired' },
   // 已登记任务的后续核验仍经factory-cycle注入actions边界；台账自主推进已退役。
   { module: 'lib/workflow-assembly-reconcile-tasks.js', source: 'scheduler', creates_executable_task: true, migration_status: 'routed' },
   { module: 'lib/commander-v2-control.js', source: 'scheduler', creates_executable_task: true, migration_status: 'routed' },

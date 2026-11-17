@@ -38,7 +38,7 @@ it('真实并发失败与重入只创建一份readonly诊断，不同runtime分�
  expect(results[1].improvement.task_id).toBe(results[0].improvement.task_id);
  await record(tasks[0],states[0]);
  let rows=(await pool.query("SELECT * FROM tasks WHERE task_type='research'")).rows;
- expect(rows).toHaveLength(1);expect(rows[0].payload).toMatchObject({work_kind:'research',commander_improvement:{max_repairs:1,phase:'diagnosis'}});
+ expect(rows).toHaveLength(1);expect(rows[0].payload).toMatchObject({work_kind:'research',commander_improvement:{max_repairs:0,phase:'diagnosis'}});
  const fresh=await origin();await record(fresh,control(fresh,'c'.repeat(64)));
  expect((await pool.query("SELECT count(*)::int n FROM tasks WHERE task_type='research'")).rows[0].n).toBe(2);
 });
@@ -59,7 +59,7 @@ it('无阈值或未达阈值不派单，SQL派单失败回滚保存点不损坏�
  expect((await pool.query("SELECT count(*)::int n FROM task_events WHERE event_type='commander_improvement_dispatch_failed'")).rows[0].n).toBe(3);
  expect((await pool.query("SELECT count(*)::int n FROM tasks WHERE task_type='research'")).rows[0].n).toBe(0);
 });
-it('readonly研究通过完整源码诊断真实接到一份coding_workflow，反复/多步不无限建单',async()=>{
+it('readonly研究保留完整诊断handoff，旧在途修补回执反复消费不新建coding_workflow',async()=>{
  const task=await origin(),c=control(task),failure=await record(task,c);
  const diagnosis=(await pool.query('SELECT * FROM tasks WHERE id=$1',[failure.improvement.task_id])).rows[0];
  const step={kind:'dispatch_headless',title:'修复固定来源错误',detail:'只修改开发分支，走独立QA和CI',change_kind:'bugfix',repo_hint:repo,map_scope_hint:['F1'],base_sha:revision,
@@ -67,13 +67,20 @@ it('readonly研究通过完整源码诊断真实接到一份coding_workflow，�
  const chain=diagnosis.payload.commander_improvement;
  const receipt=buildLastRunResult({status:'completed',result:'COMMANDER_DIAGNOSIS '+JSON.stringify({chain_key:chain.chain_key,origin_task_id:chain.origin_task_id,next_steps:[step]})});
  await pool.query("UPDATE tasks SET status='completed',payload=payload||jsonb_build_object('last_run_result',$2::jsonb) WHERE id=$1",[diagnosis.id,JSON.stringify(receipt)]);
- for(let i=0;i<2;i++){const {relay:result}=await afterTerminalTransition(pool,diagnosis.id,'completed');expect(result.skipped).toEqual([]);expect(result.tasks).toHaveLength(1);}
- const rows=(await pool.query("SELECT * FROM tasks WHERE task_type='coding_workflow'")).rows;
- expect(rows).toHaveLength(1);expect(rows[0].payload).toMatchObject({repo:'cecelia',map_scope:['F1'],base_sha:revision,commander_improvement:{phase:'repair',max_repairs:1}});
- const stopped=await materializeNextSteps(pool,rows[0],{next_steps:[step]});expect(stopped.tasks).toEqual([]);expect(stopped.skipped).toHaveLength(1);
+ // 模拟退役前已发出的诊断任务，其旧预算仍为1。
+ await pool.query("UPDATE tasks SET payload=jsonb_set(payload,'{commander_improvement,max_repairs}','1') WHERE id=$1",[diagnosis.id]);
+ for(let i=0;i<2;i++){
+  const {relay:result}=await afterTerminalTransition(pool,diagnosis.id,'completed');
+  expect(result.tasks).toEqual([]);expect(result.skipped).toEqual([{index:0,kind:'dispatch_headless',title:step.title,error:'commander_improvement_auto_repair_retired'}]);
+ }
+ expect((await pool.query("SELECT * FROM tasks WHERE task_type='coding_workflow'")).rows).toEqual([]);
+ const saved=(await pool.query('SELECT result FROM tasks WHERE id=$1',[diagnosis.id])).rows[0].result;
+ expect(saved.handoff.next_steps).toEqual([step]);
+ expect((await pool.query("SELECT payload FROM task_events WHERE task_id=$1 AND event_type='commander_improvement_auto_repair_rejected'",[diagnosis.id])).rows).not.toHaveLength(0);
+
 });
 
-it('冻结business声明与中央resolved_source双身份真实接到Skills runner，不信诊断自行追加的仓库',async()=>{
+it('冻结business与中央resolved_source仍留诊断来源，真实relay不再派Skills修补',async()=>{
  const skills='perfectuser21/zenithjoy-skills',skillRevision='73f87b9bbbe73402b72afab886d303063c9edcf3';
  const run=(await pool.query("SELECT id FROM map_projection_runs WHERE scope_key='cecelia'")).rows[0].id;
  await pool.query("INSERT INTO map_projection_nodes VALUES($1,'skill_distribution','crosscut')",[run]);
@@ -86,9 +93,9 @@ it('冻结business声明与中央resolved_source双身份真实接到Skills runn
   diagnosis:{category:'source_defect',fixed_source:{repo:skills,revision:skillRevision,path:'business-skills/publish/SKILL.md'},evidence:['fixed-source:sha'],reproduction:'弹窗场景未处理',acceptance:['弹窗与无弹窗均通过'],effects_status:'none'}};
  const chain=diagnosis.payload.commander_improvement;
  await pool.query("UPDATE tasks SET status='completed',payload=payload||jsonb_build_object('last_run_result',$2::jsonb) WHERE id=$1",[diagnosis.id,JSON.stringify(buildLastRunResult({status:'completed',result:'COMMANDER_DIAGNOSIS '+JSON.stringify({chain_key:chain.chain_key,origin_task_id:chain.origin_task_id,next_steps:[step]})}))]);
- const {relay:outcome}=await afterTerminalTransition(pool,diagnosis.id,'completed');expect(outcome.skipped).toEqual([]);expect(outcome.tasks).toHaveLength(1);
- const repair=(await pool.query('SELECT * FROM tasks WHERE id=$1',[outcome.tasks[0].id])).rows[0];
- expect(repair.task_type).toBe('coding_workflow');expect(repair.payload).toMatchObject({repo:'zenithjoy-skills',map_scope:['skill_distribution'],base_sha:skillRevision});
+ const {relay:outcome}=await afterTerminalTransition(pool,diagnosis.id,'completed');
+ expect(outcome.tasks).toEqual([]);expect(outcome.skipped[0].error).toBe('commander_improvement_auto_repair_retired');
+ expect((await pool.query("SELECT * FROM tasks WHERE task_type='coding_workflow'")).rows).toEqual([]);
  const forged={...step,repo_hint:'other/repo',diagnosis:{...step.diagnosis,fixed_source:{...step.diagnosis.fixed_source,repo:'other/repo'}}};
  const refused=await materializeNextSteps(pool,{...diagnosis,status:'completed'},{next_steps:[forged]});expect(refused.tasks).toEqual([]);expect(refused.skipped).toHaveLength(1);
 });

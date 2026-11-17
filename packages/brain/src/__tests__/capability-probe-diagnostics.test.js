@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 vi.mock('../db.js', () => ({ default: { query: vi.fn() } }));
-vi.mock('../auto-fix.js', () => ({ shouldAutoFix: vi.fn().mockReturnValue(true), dispatchToDevSkill: vi.fn().mockResolvedValue('unexpected-task') }));
+vi.mock('../actions.js', () => ({ createTask: vi.fn().mockResolvedValue('unexpected-task') }));
 vi.mock('../alerting.js', () => ({ raise: vi.fn() }));
 vi.mock('child_process', () => ({ spawnSync: vi.fn().mockReturnValue({ status: 0, stdout: '', stderr: '' }) }));
 vi.mock('fs', () => ({ existsSync: vi.fn().mockReturnValue(true) }));
@@ -10,7 +10,7 @@ describe('探针周期只记录诊断', () => {
     vi.resetModules(); vi.clearAllMocks(); vi.useFakeTimers();
     const { PROBES, runProbeCycle, getProbeResults } = await import('../capability-probe.js');
     const pool = (await import('../db.js')).default;
-    const { dispatchToDevSkill } = await import('../auto-fix.js');
+    const { createTask } = await import('../actions.js');
     const { spawnSync } = await import('child_process');
     const { raise } = await import('../alerting.js');
     const batches = Array.from({ length: historyCount }, () => ({ payload: { probes: [{ name: 'controlled-0', ok: false }] } }));
@@ -32,7 +32,7 @@ describe('探针周期只记录诊断', () => {
       expect(persisted).toHaveLength(1);
       expect(persisted[0]).toMatchObject({ failed: failureCount, passed: 0, probes: results });
       expect(await getProbeResults(historyCount)).toEqual(batches);
-      expect.soft(dispatchToDevSkill.mock.calls.length).toBe(0);
+      expect.soft(createTask.mock.calls.length).toBe(0);
       expect.soft(spawnSync.mock.calls.length).toBe(0);
       expect.soft(raise.mock.calls.length).toBe(0);
       expect(pool.query.mock.calls.filter(([sql]) => /INSERT INTO tasks|probe_rollback_triggered/.test(sql))).toEqual([]);

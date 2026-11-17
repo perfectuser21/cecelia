@@ -17,8 +17,6 @@ vi.mock('../rca-deduplication.js', () => ({
   generateErrorSignature: vi.fn().mockReturnValue('sig'),
 }));
 vi.mock('../auto-fix.js', () => ({
-  shouldAutoFix: vi.fn(),
-  dispatchToDevSkill: vi.fn(),
   getAutoFixStats: vi.fn(),
 }));
 vi.mock('../policy-validator.js', () => ({ validatePolicyJson: vi.fn() }));

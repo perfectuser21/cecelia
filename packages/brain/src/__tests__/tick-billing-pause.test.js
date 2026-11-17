@@ -108,7 +108,6 @@ vi.mock('../cognitive-core.js', () => ({
   recordTickEvent: vi.fn(),
   getCognitiveSnapshot: vi.fn().mockReturnValue({}),
 }));
-vi.mock('../self-report-collector.js', () => ({ collectSelfReport: vi.fn().mockResolvedValue(null) }));
 vi.mock('../consolidation.js', () => ({ runDailyConsolidationIfNeeded: vi.fn().mockResolvedValue(null) }));
 vi.mock('../task-weight.js', () => ({ sortTasksByWeight: vi.fn(tasks => tasks) }));
 vi.mock('../alerting.js', () => ({ flushAlertsIfNeeded: vi.fn().mockResolvedValue(null), raise: vi.fn() }));

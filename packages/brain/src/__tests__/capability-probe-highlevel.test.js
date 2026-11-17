@@ -7,7 +7,7 @@ const mockGetConsciousnessStatus = vi.fn(() => ({ enabled: true, env_override: f
 vi.mock('../db.js', () => ({
   default: { query: mockQuery },
 }));
-vi.mock('../auto-fix.js', () => ({ shouldAutoFix: vi.fn(() => false), dispatchToDevSkill: vi.fn() }));
+
 vi.mock('../executor.js', () => ({ getActiveProcessCount: vi.fn(() => 0), MAX_SEATS: 10 }));
 vi.mock('../alerting.js', () => ({ sendAlert: vi.fn() }));
 vi.mock('../cortex.js', () => ({ performRCA: vi.fn() }));

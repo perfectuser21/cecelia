@@ -16,7 +16,6 @@ vi.mock('../rca-deduplication.js', () => ({
   getRcaCacheStats: effects.forbidden,
 }));
 vi.mock('../auto-fix.js', () => ({
-  shouldAutoFix: effects.forbidden, dispatchToDevSkill: effects.forbidden,
   getAutoFixStats: effects.forbidden,
 }));
 vi.mock('../policy-validator.js', () => ({ validatePolicyJson: effects.forbidden }));

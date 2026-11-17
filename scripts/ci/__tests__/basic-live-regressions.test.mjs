@@ -13,8 +13,9 @@ const cli = join(dirname(require.resolve('vitest/package.json', {paths:[join(roo
 
 // 只在私有副本破坏生产实现；基线必须正常收集并通过，导入错误不算击穿。
 for (const spec of [
-  {name:'learning issues 必须调用真实建单路由', file:'learnings-received.test.js', source:'routes/tasks.js',
-    anchor:'for (const issue of issues_found) {', replacement:'for (const issue of []) {', minimum:9, failed:3},
+  {name:'learning 回执不得重新启动自主开发造单', file:'learnings-received.test.js', source:'routes/tasks.js',
+    anchor:'const results = { tasks_created: [], learnings_inserted: [] };',
+    replacement:"const results = { tasks_created: [], learnings_inserted: [] }; try { const { createTask } = await import('../actions.js'); await createTask({title:'AUDIT_UNREQUESTED_DEVELOPMENT',task_type:'dev'}); } catch {}", minimum:9, failed:3},
   {name:'Cortex建议必须调用真实建单函数', file:'autocreate-task-from-cortex.test.js', source:'dispatch-helpers.js',
     anchor:'export async function autoCreateTasksFromCortex(rcaResult, context = {}) {',
     replacement:'export async function autoCreateTasksFromCortex(rcaResult, context = {}) { return [];', minimum:7, failed:6},

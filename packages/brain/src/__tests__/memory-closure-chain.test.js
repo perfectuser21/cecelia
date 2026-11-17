@@ -1,7 +1,7 @@
 /**
  * memory-closure-chain.test.js
  *
- * 测试 memory_stream → learning → task 三段闭环链条
+ * 测试 learning 与 memory_stream 的记录、关联和解决状态
  * MC-3: recordLearning 写 source_memory_id
  * MC-4: resolveRelatedFailureMemories 回写 resolved
  */
@@ -105,9 +105,6 @@ describe('recordLearning closure chain (MC-3)', () => {
     mockQuery
       .mockResolvedValueOnce({ rows: [] })           // 去重检查：无重复
       .mockResolvedValueOnce({ rows: [{ id: learningId, version: 1 }] }) // INSERT learnings
-      .mockResolvedValueOnce({ rows: [] })           // 强制绑定：task dedup（无已存在 task）
-      .mockResolvedValueOnce({ rows: [{ payload: { repo: 'cecelia', map_scope: ['F1'] } }] }) // 来源任务路由
-      .mockResolvedValueOnce({ rowCount: 1 })        // 强制绑定：UPDATE learnings SET applied=true
       .mockResolvedValueOnce({ rows: [{ id: memId }] }) // INSERT memory_stream
       .mockResolvedValueOnce({ rowCount: 1 });        // UPDATE learnings SET source_memory_id
 
@@ -138,6 +135,7 @@ describe('recordLearning closure chain (MC-3)', () => {
     expect(updateCall).toBeDefined();
     expect(updateCall[1]).toContain(memId);
     expect(updateCall[1]).toContain(learningId);
+    expect(createTask).not.toHaveBeenCalled();
   });
 
   it('MC-3-2: memory_stream 写入失败时，recordLearning 仍然返回 learning（非阻塞）', async () => {

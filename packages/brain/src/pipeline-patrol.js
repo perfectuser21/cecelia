@@ -7,15 +7,12 @@
  * 1. 扫描主仓库 + 所有 worktree 中的 .dev-mode.* 文件
  * 2. 解析每个文件：当前 stage、started 时间、retry_count、last_block_reason
  * 3. 判断是否卡住（stage 停留超过阈值无进展）
- * 4. 卡住时：创建 pipeline_rescue 诊断任务到 Brain tasks 表
- * 5. 进程已死但 pipeline 未完成时：创建接管任务继续执行
+ * 4. 返回卡住或孤儿 pipeline 的诊断明细，不衍生开发任务
  */
 
 import { execSync } from 'child_process';
-import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'fs';
 import path from 'path';
-import { createTask } from './actions.js';
-import { buildCeceliaMutationRoute } from './system-coding-route.js';
 
 // 卡住阈值（毫秒）
 const STAGE_TIMEOUT_MS = {
@@ -27,21 +24,6 @@ const STAGE_TIMEOUT_MS = {
 
 // 默认阈值（未知 stage 用 20 分钟）
 const DEFAULT_TIMEOUT_MS = 20 * 60 * 1000;
-
-// 防止重复创建任务的冷却时间（同一个 branch 的 pipeline_rescue 任务 24 小时内不重复创建）
-// 延长至 24h 防止 canceled 后立即重建的循环：cancel → 2h 后重建 → cancel → 循环
-const DEDUP_COOLDOWN_MS = 24 * 60 * 60 * 1000;
-// quarantined 冷却期更长（72h）：rescue 本身失败说明环境有问题，不应频繁重试
-const DEDUP_QUARANTINE_COOLDOWN_MS = 72 * 60 * 60 * 1000;
-
-// 同一分支 rescue 任务 quarantined 次数上限：超限后标记 cleanup_done，永久停止创建
-// 背景：rescue 任务反复被 watchdog liveness_dead 杀死，是陈旧 .dev-mode 文件的主要失败来源（85%）
-const MAX_RESCUE_QUARANTINE = 3;
-
-// 同一分支 rescue 任务总数上限（不分状态）：防止 rescue 风暴
-// 背景：account3 认证故障期间，rescue 任务在 queued→quarantined 窗口内被 patrol 重复创建（单 PR 最多 50 次）
-// 根因：dedup 检查只看已 quarantined 任务，queued/in_progress 中的任务不在检查范围内
-const MAX_RESCUE_PER_BRANCH = 5;
 
 /**
  * 获取主仓库根路径
@@ -211,42 +193,6 @@ function hasDevLock(dirPath, branch) {
 }
 
 /**
- * 将 .dev-mode 文件标记为 cleanup_done: true，停止后续 patrol 扫描。
- * 扫描所有 worktree 路径，确保同一分支在多个 worktree 中的文件都被标记。
- * 背景：.dev-mode 文件可能因为 git 追踪而出现在多个 worktree 中（同一文件被所有 checkout 继承）。
- * @param {string} dirPath - worktree 路径（首要路径，其他路径通过 getAllWorktreePaths 补全）
- * @param {string} branch - 分支名
- */
-function writeCleanupDone(dirPath, branch) {
-  // 收集所有需要标记的路径（首要路径 + 所有其他 worktree 路径）
-  const allPaths = new Set([dirPath]);
-  try {
-    const worktreePaths = getAllWorktreePaths();
-    for (const p of worktreePaths) allPaths.add(p);
-  } catch {
-    // 获取 worktree 列表失败时只写首要路径
-  }
-
-  for (const targetDir of allPaths) {
-    const devModeFile = path.join(targetDir, `.dev-mode.${branch}`);
-    if (!existsSync(devModeFile)) continue;
-    try {
-      let content = readFileSync(devModeFile, 'utf8');
-      if (content.includes('cleanup_done: true')) continue;
-      if (content.includes('cleanup_done:')) {
-        content = content.replace(/cleanup_done:\s*\S+/, 'cleanup_done: true');
-      } else {
-        content = content.trimEnd() + '\ncleanup_done: true\n';
-      }
-      writeFileSync(devModeFile, content, 'utf8');
-      console.log(`[pipeline-patrol] 标记 cleanup_done: ${branch} @ ${targetDir}`);
-    } catch (err) {
-      console.error(`[pipeline-patrol] 写入 cleanup_done 失败 (${branch} @ ${targetDir}):`, err.message);
-    }
-  }
-}
-
-/**
  * 检查 branch 最近是否有 git commit 活动
  *
  * 先查本地 branch（worktree 可能已有新提交未 push），
@@ -371,133 +317,15 @@ function checkStuck(parsed) {
 }
 
 /**
- * 创建 pipeline_rescue 任务到 Brain tasks 表
- * @param {import('pg').Pool} dbPool
- * @param {object} info - 诊断信息
- * @returns {Promise<{created: boolean, taskId?: string, reason?: string}>}
- */
-async function createRescueTask(dbPool, info) {
-  const { branch, currentStage, blockReason, elapsedMs, worktreePath, isOrphan } = info;
-
-  // rescue 风暴检查：同一分支总 rescue 任务数（不分状态）>= MAX_RESCUE_PER_BRANCH 时，停止创建
-  // 这是防止 rescue storm 的关键：dedup 只看已结束的任务，无法阻止 queued/in_progress 期间的重复创建
-  const totalCountResult = await dbPool.query(`
-    SELECT COUNT(*) as count FROM tasks
-    WHERE COALESCE(payload->>'requested_task_type', task_type) = 'pipeline_rescue'
-      AND payload->>'branch' = $1
-  `, [branch]);
-  const totalRescueCount = parseInt(totalCountResult.rows[0]?.count || '0', 10);
-  if (totalRescueCount >= MAX_RESCUE_PER_BRANCH) {
-    writeCleanupDone(worktreePath, branch);
-    console.log(`[pipeline-patrol] rescue storm 检测：${branch} 已有 ${totalRescueCount} 个 rescue 任务（上限 ${MAX_RESCUE_PER_BRANCH}），标记 cleanup_done`);
-    return {
-      created: false,
-      reason: `rescue storm: ${totalRescueCount} 次 rescue（上限 ${MAX_RESCUE_PER_BRANCH}），已标记 cleanup_done`,
-    };
-  }
-
-  // 封顶检查：同一分支 quarantined rescue 次数 >= MAX_RESCUE_QUARANTINE 时，
-  // 写 cleanup_done 到 .dev-mode 文件，永久停止该分支的 rescue 循环
-  // 使用 payload->>'branch' 精确匹配（避免 title LIKE 在多 worktree 场景下命中错误任务）
-  const quarantineCountResult = await dbPool.query(`
-    SELECT COUNT(*) as count FROM tasks
-    WHERE COALESCE(payload->>'requested_task_type', task_type) = 'pipeline_rescue'
-      AND payload->>'branch' = $1
-      AND status = 'quarantined'
-  `, [branch]);
-  const quarantineCount = parseInt(quarantineCountResult.rows[0]?.count || '0', 10);
-  if (quarantineCount >= MAX_RESCUE_QUARANTINE) {
-    writeCleanupDone(worktreePath, branch);
-    return {
-      created: false,
-      reason: `quarantine_cap: ${quarantineCount} 次 quarantined，已标记 cleanup_done`,
-    };
-  }
-
-  // 去重检查：同一 branch 的 pipeline_rescue 任务在冷却期内不重复创建
-  // 条件1：任务仍活跃（in_progress/queued/paused 等）→ 不重建
-  // 条件2：24h 内已有 completed/cancelled/canceled 任务 → 不重建
-  // 条件3：72h 内已有 quarantined 任务 → 不重建（rescue 自身失败说明环境问题，需更长冷却）
-  // 使用 payload->>'branch' 精确匹配，防止多 worktree 扫描到同一分支时绕过 dedup
-  const dedupResult = await dbPool.query(`
-    SELECT id, created_at, status FROM tasks
-    WHERE COALESCE(payload->>'requested_task_type', task_type) = 'pipeline_rescue'
-      AND payload->>'branch' = $1
-      AND (
-        status NOT IN ('completed', 'cancelled', 'canceled', 'failed', 'quarantined')
-        OR (status IN ('completed', 'cancelled', 'canceled') AND created_at > NOW() - INTERVAL '24 hours')
-        OR (status = 'quarantined' AND created_at > NOW() - INTERVAL '72 hours')
-      )
-    LIMIT 1
-  `, [branch]);
-
-  if (dedupResult.rows.length > 0) {
-    return {
-      created: false,
-      reason: `dedup: 已有任务 ${dedupResult.rows[0].id}`,
-    };
-  }
-
-  const titlePrefix = isOrphan ? '[Orphan]' : '[Stuck]';
-  const title = `${titlePrefix} Pipeline Rescue: ${branch}`;
-
-  const elapsedMin = Math.round(elapsedMs / 60000);
-  const description = [
-    `Pipeline Patrol 检测到异常：`,
-    `- 分支: ${branch}`,
-    `- 当前阶段: ${currentStage || 'unknown'}`,
-    `- 停留时间: ${elapsedMin} 分钟`,
-    `- 阻塞原因: ${blockReason || 'unknown'}`,
-    `- Worktree: ${worktreePath}`,
-    `- 类型: ${isOrphan ? '进程已死（孤儿 pipeline）' : '阶段超时'}`,
-    ``,
-    `请诊断并恢复该 pipeline，或关闭对应任务。`,
-  ].join('\n');
-
-  const created = await createTask({
-    db: dbPool,
-    source: 'discovery',
-    source_id: `pipeline-rescue:${branch}:${new Date().toISOString().slice(0, 13)}`,
-    title,
-    description,
-    task_type: 'pipeline_rescue',
-    priority: 'P1',
-    trigger_source: 'brain_auto',
-    domain: 'agent_ops',
-    allow_unscoped: true,
-    branch,
-    payload: {
-      branch,
-      current_stage: currentStage,
-      block_reason: blockReason,
-      elapsed_ms: elapsedMs,
-      worktree_path: worktreePath,
-      is_orphan: isOrphan,
-      detected_at: new Date().toISOString(),
-    },
-    ...buildCeceliaMutationRoute({
-      change_kind: 'bugfix',
-      map_scope: ['F1'],
-      repo_root: worktreePath,
-    }),
-  });
-
-  const taskId = created.task.id;
-  console.log(`[pipeline-patrol] 创建 rescue 任务: ${title} (id: ${taskId})`);
-
-  return { created: true, taskId };
-}
-
-/**
  * Pipeline Patrol 主函数
  *
  * 扫描所有活跃 .dev-mode 文件，检测卡住或孤儿 pipeline，
- * 必要时创建 pipeline_rescue 任务。
+ * 返回诊断结果供调用方查询。
  *
  * @param {import('pg').Pool} dbPool - PostgreSQL 连接池
  * @returns {Promise<{scanned: number, stuck: number, rescued: number, details: Array}>}
  */
-export async function runPipelinePatrol(dbPool) {
+export async function runPipelinePatrol(_dbPool) {
   const result = {
     scanned: 0,
     stuck: 0,
@@ -587,29 +415,6 @@ export async function runPipelinePatrol(dbPool) {
       activitySignal,
     };
 
-    // 4. 创建 rescue 任务
-    try {
-      const rescueResult = await createRescueTask(dbPool, {
-        branch: dm.branch,
-        currentStage: parsed.currentStage,
-        blockReason: parsed.last_block_reason || stuckCheck.reason,
-        elapsedMs: stuckCheck.elapsedMs,
-        worktreePath: dm.worktreePath,
-        isOrphan,
-      });
-
-      detail.rescued = rescueResult.created;
-      detail.rescueTaskId = rescueResult.taskId;
-      detail.rescueSkipReason = rescueResult.reason;
-
-      if (rescueResult.created) {
-        result.rescued++;
-      }
-    } catch (err) {
-      detail.rescueError = err.message;
-      console.error(`[pipeline-patrol] 创建 rescue 任务失败 (${dm.branch}):`, err.message);
-    }
-
     result.details.push(detail);
   }
 
@@ -623,14 +428,9 @@ export {
   scanDevModeFiles as _scanDevModeFiles,
   parseDevMode as _parseDevMode,
   checkStuck as _checkStuck,
-  writeCleanupDone as _writeCleanupDone,
   hasRecentGitActivity as _hasRecentGitActivity,
   hasRecentCiActivity as _hasRecentCiActivity,
   hasRecentActivity as _hasRecentActivity,
   STAGE_TIMEOUT_MS,
   DEFAULT_TIMEOUT_MS,
-  DEDUP_COOLDOWN_MS,
-  DEDUP_QUARANTINE_COOLDOWN_MS,
-  MAX_RESCUE_QUARANTINE,
-  MAX_RESCUE_PER_BRANCH,
 };

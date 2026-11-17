@@ -104,10 +104,10 @@ export const REMAINING_LEGACY_SITES = {
   // 剩 TASK_TYPE_TO_SKILL（:933，task_type→skill目录名，与 SKILL_WHITELIST/EXECUTOR_SKILL_MAP
   // 语义相近但值不同——第3份独立维护，PR1 只搬家不合并）+ BASE_LABELS（:1021，task_type→短展示
   // 标签，第5份独立维护的 label 映射，无匹配注册表字段）
-  // kind: map（long-lived）— Task 4 评估：当前:367（拆分前:926，#6712前:915）description 是 GET /api/brain/task-types
+  // kind: map（long-lived）— Task 4 评估：当前:349（自主造单退役前:367）description 是 GET /api/brain/task-types
   // 的人类可读展示文案（仅5个类型有文案，不是"哪类"的分类标签），要对应注册表字段需给全部
   // ~80 个 task_type 逐个写产品文案，属独立的文档撰写工作，非 PR1 零行为变化范围
-  'routes/tasks.js': ['367:description'],
+  'routes/tasks.js': ['349:description'],
   // kind: map（long-lived）— Task 6 评估：:25 TASK_TYPE_ADJUSTMENTS 是派发权重的数值
   // 调优表（+20/-10 这类优先级加减分），与现有 9 个字段（分类/流程标签）正交的第三个独立运营
   // 调参轴（另两个已知独立轴：model-profile.js 的模型路由、role-registry.js 的角色归属）

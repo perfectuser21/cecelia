@@ -12,7 +12,7 @@ const rejectPendingAction = vi.fn();
 vi.mock('../../db.js', () => ({ default: { query: vi.fn(), connect: vi.fn() } }));
 vi.mock('../../actions.js', () => ({
   createTask: vi.fn(), updateTask: vi.fn(), createGoal: vi.fn(), updateGoal: vi.fn(),
-  triggerN8n: vi.fn(), setMemory: vi.fn(), batchUpdateTasks: vi.fn(),
+  setMemory: vi.fn(), batchUpdateTasks: vi.fn(),
 }));
 vi.mock('../../intent.js', () => ({
   parseIntent: vi.fn(), parseAndCreate: vi.fn(), INTENT_TYPES: {}, INTENT_ACTION_MAP: {},
