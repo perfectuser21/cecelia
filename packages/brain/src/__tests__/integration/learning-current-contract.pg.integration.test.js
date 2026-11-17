@@ -2,7 +2,6 @@ import { privatePgConfig, verifyPrivatePg } from '../../../../../scripts/ci/priv
 import { readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import pg from 'pg';
-import { seedActiveF1 } from '../fixtures/work-routing-fixture.js';
 import { beforeAll, afterAll, expect, it, vi } from 'vitest';
 vi.mock('../../openai-client.js', () => ({ generateEmbedding: vi.fn(() => { throw new Error('external embedding forbidden'); }) }));
 vi.mock('../../embedding-service.js', () => ({ generateLearningEmbeddingAsync: vi.fn() }));
@@ -40,62 +39,17 @@ it('完整正式迁移支持策略写入，真实读回值及审计', async () =
   expect(row.metadata).toMatchObject({ learning_id: id, old_value: 2, reason: '真实审计' });
   expect((await client.query('SELECT applied FROM learnings WHERE id=$1', [id])).rows[0].applied).toBe(true);
 });
-it('真实RCA建单走当前路由收据，未知来源拒绝自动修复', async () => {
-  await seedActiveF1(client);
-  const sourceId = (await client.query(`INSERT INTO tasks(title,payload) VALUES ('source ' || gen_random_uuid(), '{"repo":"cecelia","map_scope":["F1"]}') RETURNING id`)).rows[0].id;
-  const result = await learning.recordLearning({ task_id: sourceId, analysis: { root_cause: `routing ${randomUUID()}` }, confidence: .9, learnings: [], recommended_actions: [] });
-  const { rows } = await client.query("SELECT id,task_type,payload FROM tasks WHERE payload->>'insight_learning_id'=$1", [result.id]);
-  expect(rows).toHaveLength(1);
-  expect(rows[0].task_type).toBe('coding_workflow');
-  expect(rows[0].payload).toMatchObject({ repo: 'cecelia', map_scope: ['F1'], change_kind: 'bugfix' });
-  expect((await client.query('SELECT repo,map_scope FROM work_routing_receipts WHERE task_id=$1', [rows[0].id])).rows).toEqual([{ repo: 'cecelia', map_scope: ['F1'] }]);
-  const unknownId = (await client.query("INSERT INTO tasks(title) VALUES ('unknown ' || gen_random_uuid()) RETURNING id")).rows[0].id;
-  const blocked = await learning.recordLearning({ task_id: unknownId, analysis: { root_cause: `unknown ${randomUUID()}` }, confidence: .9, learnings: [], recommended_actions: [] });
-  expect((await client.query('SELECT applied,metadata FROM learnings WHERE id=$1', [blocked.id])).rows[0]).toMatchObject({ applied: false, metadata: { insight_task_status: 'blocked', insight_task_reason: 'source_route_context_missing' } });
-  expect((await client.query("SELECT id FROM tasks WHERE payload->>'insight_learning_id'=$1", [blocked.id])).rows).toHaveLength(0);
-});
-
 it.each([
-  ['missing-repository', ['F1'], 'repo_unknown'],
-  ['cecelia', ['missing-scope'], 'routing_map_scope_unresolved'],
-])('真实路由拒绝非法仓库或范围 %s %j，不虚标applied', async (repo, mapScope, reason) => {
-  const source = (await client.query('INSERT INTO tasks(title,payload) VALUES ($1,$2) RETURNING id', [`invalid ${randomUUID()}`, { repo, map_scope: mapScope }])).rows[0];
-  const result = await learning.recordLearning({ task_id: source.id, analysis: { root_cause: `invalid ${randomUUID()}` }, confidence: .9, learnings: [], recommended_actions: [] });
-  expect((await client.query('SELECT applied,metadata FROM learnings WHERE id=$1', [result.id])).rows[0]).toMatchObject({ applied: false, metadata: { insight_task_status: 'blocked', insight_task_reason: reason } });
+  ['cecelia', ['F1']], ['zenithjoy-workspace', ['F1']],
+  ['missing-repository', ['F1']], ['cecelia', ['missing-scope']],
+])('高置信RCA保留真实学习和记忆，无自动开发记录 %s %j', async (repo, mapScope) => {
+  const source = (await client.query('INSERT INTO tasks(title,payload) VALUES ($1,$2) RETURNING id', [`source ${randomUUID()}`, { repo, map_scope: mapScope }])).rows[0];
+  const analysis = { task_id: source.id, analysis: { root_cause: `record ${randomUUID()}` }, confidence: .99, learnings: [], recommended_actions: [] };
+  const result = await learning.recordLearning(analysis);
+  expect((await client.query('SELECT applied,source_memory_id,task_id FROM learnings WHERE id=$1', [result.id])).rows[0])
+    .toMatchObject({ applied: false, source_memory_id: result.source_memory_id, task_id: source.id });
+  expect((await client.query('SELECT id FROM memory_stream WHERE id=$1', [result.source_memory_id])).rows).toHaveLength(1);
   expect((await client.query("SELECT id FROM tasks WHERE payload->>'insight_learning_id'=$1", [result.id])).rows).toHaveLength(0);
-});
-
-it.each([
-  ['cecelia', ['F1'], null],
-  ['zenithjoy-workspace', ['F1'], null],
-  ['missing-repository', ['F1'], 'repo_unknown'],
-  ['cecelia', ['missing-scope'], 'routing_map_scope_unresolved'],
-])('同标题的不同Learning不能复用任务或绕过来源路由 %s %j', async (repo, mapScope, reason) => {
-  await seedActiveF1(client);
-  if (repo === 'zenithjoy-workspace') {
-    await client.query("INSERT INTO map_scope_repositories(scope_key,repo,adapter_key) VALUES ('zenithjoy-workspace','zenithjoy-workspace','legacy-ledger-v1') ON CONFLICT DO NOTHING");
-    await seedActiveF1(client, 'zenithjoy-workspace');
-  }
-  const cause = `shared-title-${randomUUID()}`;
-  const sourceA = (await client.query('INSERT INTO tasks(title,payload) VALUES ($1,$2) RETURNING id', [`source A ${randomUUID()}`, { repo: 'cecelia', map_scope: ['F1'] }])).rows[0].id;
-  const first = await learning.recordLearning({ task_id: sourceA, analysis: { root_cause: cause }, confidence: .9, learnings: ['first'], recommended_actions: [] });
-  const sourceB = (await client.query('INSERT INTO tasks(title,payload) VALUES ($1,$2) RETURNING id', [`source B ${randomUUID()}`, { repo, map_scope: mapScope }])).rows[0].id;
-  const analysis = { task_id: sourceB, analysis: { root_cause: cause }, confidence: .9, learnings: ['second'], recommended_actions: [] };
-  const second = await learning.recordLearning(analysis);
-  expect(second.id).not.toBe(first.id);
-  const secondRow = (await client.query('SELECT applied,metadata FROM learnings WHERE id=$1', [second.id])).rows[0];
-  const tasks = (await client.query("SELECT id,payload FROM tasks WHERE payload->>'insight_learning_id'=$1", [second.id])).rows;
-  if (reason) {
-    expect(secondRow).toMatchObject({ applied: false, metadata: { insight_task_status: 'blocked', insight_task_reason: reason } });
-    expect(tasks).toHaveLength(0);
-  } else {
-    expect(secondRow.metadata.insight_task_reason).toBeUndefined();
-    expect(secondRow.applied).toBe(true);
-    expect(tasks).toHaveLength(1);
-    expect(tasks[0].payload).toMatchObject({ insight_learning_id: second.id, repo, map_scope: mapScope });
-    expect((await client.query('SELECT source,source_id,repo,map_scope FROM work_routing_receipts WHERE task_id=$1', [tasks[0].id])).rows).toEqual([{ source: 'discovery', source_id: `learning-repair:${second.id}`, repo, map_scope: mapScope }]);
-    // 同一分析重放仍只对应一条修复任务。
-    expect((await learning.recordLearning(analysis)).id).toBe(second.id);
-    expect((await client.query("SELECT id FROM tasks WHERE payload->>'insight_learning_id'=$1", [second.id])).rows).toHaveLength(1);
-  }
+  expect((await learning.recordLearning(analysis)).id).toBe(result.id);
+  expect((await client.query("SELECT id FROM tasks WHERE payload->>'insight_learning_id'=$1", [result.id])).rows).toHaveLength(0);
 });

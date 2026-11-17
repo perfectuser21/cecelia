@@ -5,12 +5,11 @@
  *   返回最近 N 条 Cecelia 欲望自述记录
  *
  * POST /api/brain/self-reports/collect
- *   立即触发一次采集（忽略时间间隔，用于调试/初始采集）
+ *   已退役，返回 410，不触发数据库查询或模型调用
  */
 
 import { Router } from 'express';
 import pool from '../db.js';
-import { collectSelfReport, _resetTimer } from '../self-report-collector.js';
 
 const router = Router();
 
@@ -42,21 +41,12 @@ router.get('/', async (req, res) => {
   }
 });
 
-/**
- * POST /collect
- * 立即触发一次采集（调试用，强制忽略时间间隔）
- */
-router.post('/collect', async (_req, res) => {
-  try {
-    _resetTimer(); // 重置计时器，强制采集
-    const record = await collectSelfReport(pool);
-    if (!record) {
-      return res.status(500).json({ error: '采集失败，请查看 Brain 日志' });
-    }
-    res.json({ success: true, record });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+/** 已退役入口保留明确响应，历史查询继续只读。 */
+router.post('/collect', (_req, res) => {
+  res.status(410).json({
+    error: 'self_report_collection_retired',
+    message: 'Brain 自述采集已停用，历史记录仍可查询。',
+  });
 });
 
 export default router;

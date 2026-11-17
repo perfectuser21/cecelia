@@ -3,7 +3,6 @@ const io = vi.hoisted(() => ({ read: vi.fn(), fetch: vi.fn(), query: vi.fn() }))
 vi.mock('fs', () => ({ readFileSync: io.read }));
 vi.mock('../../db.js', () => ({ default: { query: io.query } }));
 vi.mock('../../embedding-service.js', () => ({ generateProfileFactEmbeddingAsync: vi.fn() }));
-vi.mock('../../notion-memory-sync.js', () => ({ pushFactToNotion: vi.fn() }));
 import profileFacts from '../profile-facts.js';
 
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });

@@ -5,8 +5,6 @@ import { createRoutedTask } from './work-routing-store.js';
 import { finalizeTask } from './lib/task-terminal.js';
 import { execFileSync as nodeExecFileSync } from 'child_process';
 import { sshTargetFor } from './machine-registry.js';
-import { readFileSync } from 'node:fs';
-import { join as joinPath } from 'node:path';
 import { computeProgress } from './advancement-progress.js';
 import { buildWorkflowPageBlocks } from './ops-collector.js';
 import { pushRegisteredRows, resolveDbId, isPageGoneError, isWrongDatabaseError } from './lib/notion-projection-engine.js';
@@ -17,7 +15,7 @@ import {
   ensureOpsDbProps, inferProviderFromModelId, pickProviderQuota, buildQuotaProps,
 } from './ops-quota-notion.js';
 import { PUSH_EXCLUDED_TASK_TYPES } from './lib/task-type-registry.js';
-import { startRun, finishRun } from './lib/task-run.js';
+import { finishRun } from './lib/task-run.js';
 import { SSH_BASE_ARGS } from './lib/ssh-args.js';
 import { readPageContent } from './lib/notion-page-content.js';
 import { qiumiSourceFromNotion } from './lib/qiumi-source.js';
@@ -38,12 +36,7 @@ const INITIATIVE_CONTRACTS_DB = '185c40c2-ba63-828c-973f-81a9c4582cd6';
 // Notion 任务编排库（2026-09-13 双向·push 半边接线；库早已存在但 Brain 从未接）
 // PR2 起导出：notion-gtd-sync.js 的 EN_TASKS_DB 需与此同值（Task 4 起改为唯一真源）。
 export const NOTION_TASKS_DB = 'd5bc40c2-ba63-82ef-965a-8153b7ad81a0';
-// 排单分流 OpenClaw（2026-09-14 v2 数据驱动）：Tasks 库 relation「Workflow」「Agent」
-// 指向运行舱四表的真实 Notion 行（workflows_db/graph_db，见 working_memory.ops_notion_dbs），
-// pull 反查 ops_workflows/ops_agents.notion_id 拿 dispatch 人工列（migration 444）：
-//   workflow.dispatch.webhook_url  = 派发入口（缺省回退 env.N8N_V4_WEBHOOK_URL）
-//   agent.dispatch.template        = 租户任务模板文件名（OPENCLAW_DISPATCH_DIR 下）
-// 禁止在代码里枚举执行方——排单可选项即两张 ops 表本身（决策：主理人 2026-09-14 纠正）。
+// 旧 Workflow relation 执行桥已退役；现代 GTD 标记行仍由 ingestQiumiPage 入账。
 
 // 与中文 GTD 表一一对应的英文 Tasks 库 Status（2026-10-10）；与 lib/qiumi-status-map.js 的 en 列保持一致（测试钉住）。
 // pending/archived 不在表里：buildTaskNotionProperties 兜底 Planned。
@@ -613,7 +606,7 @@ async function ingestQiumiPage(pool, token, page, en, { env, now = () => new Dat
  *    map 刀落地后由 unblock 流程放行。
  *  · notion_props.pushed_status 写入=当前 status，防 pushTasks 反手改用户的 Delegated
  *  · Name 前缀 [P0-3] 解析 priority，缺省 P2；回执 `brain:<id> ✓已接管` PATCH 回页面
- * @returns {{taskId: string|null, kind: 'qiumi_task'|'dev'|'openclaw'|'skipped'}}
+ * @returns {{taskId: string|null, kind: 'qiumi_task'|'dev'|'retired'|'skipped'}}
  */
 export async function ingestDelegatedPage(pool, token, page, opts = {}) {
   const props = page.properties ?? {};
@@ -628,26 +621,14 @@ export async function ingestDelegatedPage(pool, token, page, opts = {}) {
     return ingestQiumiPage(pool, token, page, en, { env: opts.env ?? process.env, ...(opts.now ? { now: opts.now } : {}) });
   }
 
-  // ─── 以下为原 pullNotionTasks 循环体，逐字搬入，非标记行行为不变 ───
-  const wfRelation = (props.Workflow?.relation ?? [])[0]?.id ?? null;
-  if (wfRelation) {
-    // 排班员 v1a·时间窗：Plan Date 在未来 = 意图排期，到点后自然进派发流程
-    const planStart = props['Plan Date']?.date?.start ?? null;
-    if (planStart && new Date(planStart).getTime() > Date.now()) {
-      await writeStatusReceipt(token, page, desc, `🕐 已排期 ${planStart}，到点自动派发`);
-      return { taskId: null, kind: 'skipped' };
+  // 无现代 GTD 标记的 Workflow relation 属于已停用的 n8n 执行桥。
+  // 保留原任务与状态，仅回写明确回执；不得转为 dev 或另造 workflow_run。
+  if ((props.Workflow?.relation ?? []).length) {
+    if (!desc.includes('[n8n_retired]')) {
+      await writeStatusReceipt(token, page, desc,
+        '⛔ [n8n_retired] 旧 Workflow 执行通道已退役；请通过 Brain 任务入口重新安排');
     }
-    await dispatchOpenClawFromNotion({
-      pool, token, page, desc,
-      pageContent: await fetchNotionPageContent(token, page.id),
-      workflowNotionId: wfRelation,
-      agentNotionId: (props.Agent?.relation ?? [])[0]?.id ?? null,
-      env: opts.env ?? process.env,
-      readTemplateFn: opts.readTemplateFn ?? defaultReadTemplate,
-      fetchFn: opts.fetchFn ?? globalThis.fetch,
-      execFn: opts.execFn,
-    });
-    return { taskId: null, kind: 'openclaw' };
+    return { taskId: null, kind: 'retired' };
   }
 
   const m = name.match(/^\[(P[0-3])\]\s*(.+)$/);
@@ -787,211 +768,6 @@ async function writeStatusReceipt(token, page, desc, status) {
       Description: { rich_text: [{ type: 'text', text: { content } }] },
     },
   });
-}
-
-function defaultReadTemplate(dir, file) {
-  return JSON.parse(readFileSync(joinPath(dir, file), 'utf8'));
-}
-
-/**
- * OpenClaw 排单派发（relation 版）：Notion relation 页 id → 反查 ops_workflows /
- * ops_agents（notion_id 归一去杠比对）→ dispatch 人工列取入口与模板 →
- * 注入唯一 run_id（内嵌 pageid32 供终态反解）→ POST n8n webhook。
- * 一切缺配置都写 ⚠ 回执到页面（不含幂等标记，修好配置下轮自动重派）。
- */
-async function dispatchOpenClawFromNotion({
-  pool, token, page, desc, pageContent = '', workflowNotionId, agentNotionId, env, readTemplateFn, fetchFn, execFn: execFnIn,
-}) {
-  const norm = (id) => String(id).replace(/-/g, '');
-  const failReceipt = async (why) => {
-    await writeStatusReceipt(token, page, desc, `⚠ 派发未成(${String(why).slice(0, 80)})`);
-    console.warn(`[notion-pull] OpenClaw 派发未成 page=${page.id}: ${why}`);
-  };
-  // 先建单再派（任务 f38e7cc2）：账先落、再动手——建单失败就不派（否则执行机在跑、Brain 无账）；
-  // 派发失败把刚建的单收成 failed（不留无主 in_progress 镜像，lost-deadline 要 4.5h 才判）。
-  const createRunTask = async (spec) => {
-    try {
-      const created = await createRoutedTask(pool, spec);
-      const id = created?.task_id ?? created?.task?.id ?? null;
-      return id ? { id } : { error: 'no_task_id' };
-    } catch (err) {
-      return { error: err.message };
-    }
-  };
-  const failRunTask = async (taskId, reason) => {
-    try {
-      await finalizeTask(pool, taskId, 'failed', { set: { error_message: reason }, onlyIfStatus: 'in_progress' });
-    } catch (err) {
-      console.warn(`[notion-pull] 派发失败收单异常 task=${taskId}: ${err.message}`);
-    }
-  };
-  // 只认 n8n 业务流程：09-24 起 ops_workflows 也装 Brain 调度 job（source='scheduler'），人在
-  // relation 里误选 ci-patrol 之类不能回退到默认 webhook 真派出去，查不到即走 workflow 不在 ops 的回执
-  const { rows: wfRows } = await pool.query(
-    `SELECT wf_id, name, dispatch FROM ops_workflows WHERE replace(notion_id::text,'-','') = $1 AND source = 'n8n' LIMIT 1`,
-    [norm(workflowNotionId)],
-  );
-  const wf = wfRows[0];
-  if (!wf) return failReceipt('workflow_not_in_ops：所选行不是 n8n 业务流程（Brain 调度 job 不可排单），请改选 source=n8n 的工作流');
-  let agent = null;
-  if (agentNotionId) {
-    const { rows } = await pool.query(
-      `SELECT name, dispatch FROM ops_agents WHERE replace(notion_id::text,'-','') = $1 LIMIT 1`,
-      [norm(agentNotionId)],
-    );
-    agent = rows[0] ?? null;
-    if (!agent) return failReceipt('agent_not_in_ops：所选行不在 ops_agents 账上');
-  }
-  const executorLabel = agent ? `${wf.name}·${agent.name}` : wf.name;
-  // 排班员 v1b·在途互斥：同 workflow 已有 in_progress run（物理资源相同）→ 排队。
-  // Delegated 行本身就是队列：不改 Status，下轮 pull 自动重试 = 资源释放自动放行。
-  const { rows: busyRows } = await pool.query(
-    `SELECT id, payload->>'run_id' AS run_id FROM tasks
-      WHERE task_type='workflow_run' AND status='in_progress'
-        AND payload->>'wf_id' = $1 LIMIT 1`,
-    [wf.wf_id],
-  );
-  if (busyRows[0]) {
-    // 文案禁写 run: 前缀——会命中 pull 幂等跳过正则 /run:notion-/，排队行永不重试（09-14 实证死锁）
-    await writeStatusReceipt(token, page, desc,
-      `⏸ 排队：${wf.name} 在途(${busyRows[0].run_id ?? busyRows[0].id})，完成后自动派发`);
-    return;
-  }
-  // ssh 直派通道（决策 2026-09-15：任务自动填机器直接下派）——直驾线入口。
-  // 派发=目标机 nohup 起后台批，exit code 落 ~/brain-runs/<run_id>.exit 由收割器回收。
-  if (wf.dispatch?.channel === 'ssh') {
-    const machine = wf.dispatch.machine;
-    const command = wf.dispatch.command;
-    if (!machine) return failReceipt(`no_machine：给 ops_workflows(${wf.wf_id}).dispatch 配 machine`);
-    if (!command) return failReceipt(`no_command：给 ops_workflows(${wf.wf_id}).dispatch 配 command`);
-    let target;
-    try { target = sshTargetFor(machine); } catch (err) { return failReceipt(err.message); }
-    const pageId32ssh = String(page.id).replace(/-/g, '');
-    const runIdSsh = `notion-${pageId32ssh}-${Date.now()}`;
-    const exitPath = `~/brain-runs/${runIdSsh}.exit`;
-    const logPath = `~/brain-runs/${runIdSsh}.log`;
-    // 页面正文=执行 prompt：base64 先写达目标机 prompt 文件（base64 经 ssh 传输零注入面），
-    // command 里的 {PROMPT_FILE} 字面量替换为该路径；无占位符则 prompt 文件照写供 command 自取。
-    let promptFile = null;
-    let promptSetup = '';
-    let effectiveCommand = command;
-    if (pageContent) {
-      promptFile = `~/brain-runs/${runIdSsh}.prompt`;
-      const promptB64 = Buffer.from(pageContent).toString('base64');
-      promptSetup = `printf '%s' '${promptB64}' | base64 -d > ${promptFile} && `;
-      effectiveCommand = command.split('{PROMPT_FILE}').join(promptFile);
-    }
-    const remote = `mkdir -p ~/brain-runs && ${promptSetup}nohup sh -c '${effectiveCommand.replace(/'/g, `'\\''`)}; echo $? > ${exitPath}' > ${logPath} 2>&1 & echo DISPATCHED`;
-    // execFile 参数数组：remote 作为 ssh 的单个 argv 传递，本地 shell 零解释
-    // （dispatch.command 本就是"要执行的命令"数据行，写入权=运维权；这里只堵本地注入面）
-    const sshArgs = [...SSH_BASE_ARGS, target, remote];
-    const execFn = execFnIn ?? defaultSshExec;
-    const runTask = await createRunTask({
-      source: 'inbox',
-      source_id: runIdSsh,
-      title: `[run] ${wf.name}@${machine}`,
-      description: '来自 Notion 排单的直驾 run（ssh 直派）',
-      mutation_intent: 'none',
-      declared_domain: 'operations',
-      requested_task_type: 'workflow_run',
-      metadata: {
-        run_id: runIdSsh, wf_id: wf.wf_id, channel: 'ssh', machine,
-        notion_page_id: page.id, exit_path: `brain-runs/${runIdSsh}.exit`,
-        ...(pageContent ? { prompt_preview: pageContent.slice(0, 500), prompt_file: promptFile } : {}),
-      },
-      task: { status: 'in_progress', priority: 'P2' },
-    });
-    if (!runTask.id) return failReceipt(`建单失败，未派发: ${String(runTask.error).slice(0, 60)}`);
-    try {
-      execFn(sshArgs);
-    } catch (err) {
-      const why = `ssh_dispatch_failed(${machine}): ${String(err.message).slice(0, 60)}`;
-      await failRunTask(runTask.id, why);
-      return failReceipt(why);
-    }
-    // 脚本步 run 原语：一次执行 = 一行 task_runs（fail-open）。终态由 reapSshWorkflowRuns 读 .exit 补齐。
-    await startRun({
-      taskId: runTask.id,
-      runId: runIdSsh,
-      source: 'ssh-workflow',
-      context: { wf_id: wf.wf_id, machine },
-    }, { pool });
-    const baseSsh = stripStatusTail(desc);
-    await notionReq(token, `/pages/${page.id}`, 'PATCH', {
-      properties: {
-        Description: { rich_text: [{ type: 'text', text: { content: `${baseSsh ? baseSsh + ' · ' : ''}▶ 已派发 ${wf.name}@${machine} run:${runIdSsh}`.slice(0, 1900) } }] },
-        Status: { status: { name: 'In Progress' } },
-      },
-    });
-    console.log(`[notion-pull] ssh 直派成功 ${wf.wf_id}@${machine} run=${runIdSsh}`);
-    return;
-  }
-  const webhookUrl = wf.dispatch?.webhook_url || env.N8N_V4_WEBHOOK_URL;
-  if (!webhookUrl) return failReceipt(`no_webhook_url：给 ops_workflows(${wf.wf_id}).dispatch 配 webhook_url`);
-  const template = agent?.dispatch?.template || wf.dispatch?.default_template || null;
-  if (!template) return failReceipt('no_template：给所选 Agent 的 ops_agents.dispatch 配 template（或 workflow 配 default_template）');
-  const dispatchDir = env.OPENCLAW_DISPATCH_DIR || '/opt/openclaw/dispatch';
-  let payload;
-  try {
-    payload = readTemplateFn(dispatchDir, template);
-  } catch (err) {
-    return failReceipt(`template_read_failed(${template}): ${err.message}`);
-  }
-  const pageId32 = String(page.id).replace(/-/g, '');
-  const runId = `notion-${pageId32}-${Date.now()}`;
-  payload = { ...payload, run_id: runId, attempt_id: 'a1' };
-  if (pageContent) payload.prompt = pageContent.slice(0, 4000); // 页面正文=执行 prompt 随 webhook 送达
-  const runTask = await createRunTask({
-    source: 'inbox',
-    source_id: runId,
-    title: `[run] ${executorLabel}`,
-    description: '来自 Notion 排单的业务流程 run',
-    mutation_intent: 'none',
-    declared_domain: 'operations',
-    requested_task_type: 'workflow_run',
-    metadata: {
-      run_id: runId, wf_id: wf.wf_id, agent_name: agent?.name ?? null,
-      notion_page_id: page.id,
-    },
-    task: { status: 'in_progress', priority: 'P2' },
-  });
-  if (!runTask.id) return failReceipt(`建单失败，未派发: ${String(runTask.error).slice(0, 60)}`);
-  let ok = false;
-  let detail = '';
-  try {
-    const resp = await fetchFn(webhookUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(90_000),
-    });
-    ok = !!resp?.ok;
-    if (!ok) detail = `http_${resp?.status}`;
-  } catch (err) {
-    detail = err.message;
-  }
-  if (ok) {
-    // 一切执行进 tasks 账（决策 2dbabb48）：run 已先入账 workflow_run；终态由 syncOpenClawRuns 回写。
-    // 脚本步 run 原语（fail-open）：终态由 syncOpenClawRuns 依 ops_runs 回写时补齐。
-    await startRun({
-      taskId: runTask.id,
-      runId,
-      source: 'openclaw-webhook',
-      context: { wf_id: wf.wf_id, agent: agent?.name ?? null },
-    }, { pool });
-  } else {
-    await failRunTask(runTask.id, `webhook_dispatch_failed: ${String(detail).slice(0, 60)}`);
-  }
-  const base = stripStatusTail(desc);
-  const receipt = ok
-    ? `${base ? base + ' · ' : ''}▶ 已派发 ${executorLabel} run:${runId}`
-    : `${base ? base + ' · ' : ''}⚠ 派发失败(${detail.slice(0, 60)})，请重试或联系 Brain`;
-  const properties = {
-    Description: { rich_text: [{ type: 'text', text: { content: receipt.slice(0, 1900) } }] },
-  };
-  if (ok) properties.Status = { status: { name: 'In Progress' } };
-  await notionReq(token, `/pages/${page.id}`, 'PATCH', { properties });
-  console.log(`[notion-pull] OpenClaw 派发${ok ? '成功' : '失败'} ${executorLabel} run=${runId}`);
 }
 
 /**

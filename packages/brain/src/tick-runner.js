@@ -58,7 +58,6 @@ import { runRumination } from './rumination.js';
 
 import { runConversationConsolidator } from './conversation-consolidator.js';
 import { publishCognitiveState } from './events/taskEvents.js';
-import { collectSelfReport } from './self-report-collector.js';
 import { runDailyConsolidationIfNeeded } from './consolidation.js';
 import { flushAlertsIfNeeded } from './alerting.js';
 import { scanEvolutionIfNeeded } from './evolution-scanner.js';
@@ -1203,9 +1202,6 @@ async function executeTick() {
   publishCognitiveState({ phase: 'rumination', detail: '反刍消化知识…' });
   Promise.resolve().then(() => runRumination(pool))
     .catch(e => console.warn('[tick] rumination 失败（fire-and-forget）:', e.message));
-
-  // 10.8 欲望轨迹采集（每 6 小时一次，fire-and-forget，Layer 4）
-  Promise.resolve().then(() => collectSelfReport(pool)).catch(e => console.warn('[tick] self-report 采集失败:', e.message));
 
   } // end isConsciousnessEnabled() (10.3–10.8 LLM calls)
 

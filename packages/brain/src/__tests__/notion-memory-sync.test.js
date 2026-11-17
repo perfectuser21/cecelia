@@ -1,14 +1,9 @@
 /**
  * notion-memory-sync.test.js
- * 测试 Notion Memory 同步模块的导出和基本行为
+ * 历史恢复工具共享联系人解析与字段映射测试
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-
-// 只允许record-only Notion请求，每例恢复环境，避免影响其他文件。
-const mockFetch = vi.fn();
-beforeEach(() => { vi.stubGlobal('fetch', mockFetch); vi.stubEnv('NOTION_API_KEY', ''); });
-afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
+import { describe, it, expect, vi } from 'vitest';
 
 // mock pool
 const mockPool = {
@@ -17,10 +12,8 @@ const mockPool = {
 vi.mock('../db.js', () => ({ default: mockPool }));
 
 const {
-  NOTION_MEMORY_DB_IDS,
   parseContactContent,
   contactFieldsToNotionProps,
-  pushFactToNotion,
 } = await import('../notion-memory-sync.js');
 
 describe('parseContactContent', () => {
@@ -123,84 +116,5 @@ describe('contactFieldsToNotionProps', () => {
   it('未知 key 但值为 URL 格式时自动检测', () => {
     const p = contactFieldsToNotionProps({ 主页: 'https://github.com/bob' });
     expect(p['网址']).toEqual({ url: 'https://github.com/bob' });
-  });
-});
-
-describe('pushFactToNotion', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    delete process.env.NOTION_API_KEY;
-  });
-
-  it('无 NOTION_API_KEY 时抛错，被 catch 吞掉不影响调用', async () => {
-    mockFetch.mockResolvedValue({ ok: false, json: async () => ({}) });
-    await expect(pushFactToNotion({ id: 1, category: 'raw', content: 'a: b', key: 'raw.a', source: 'auto' })).resolves.toBeUndefined();
-  });
-
-  it('有 NOTION_API_KEY 时，调用 Notion POST /pages（非 contact）', async () => {
-    process.env.NOTION_API_KEY = 'test-key';
-    mockFetch.mockResolvedValue({
-      ok: true,
-      json: async () => ({ id: 'page-xyz-123' }),
-    });
-    mockPool.query.mockResolvedValue({ rows: [] });
-
-    await pushFactToNotion({
-      id: 99,
-      category: 'background',
-      content: 'display_name: Alex',
-      key: 'display_name',
-      source: 'auto',
-      created_at: new Date('2026-01-01'),
-    });
-
-    expect(mockFetch).toHaveBeenCalledOnce();
-    const [url, opts] = mockFetch.mock.calls[0];
-    expect(url).toContain('api.notion.com/v1/pages');
-    expect(opts.method).toBe('POST');
-
-    const body = JSON.parse(opts.body);
-    expect(body.parent.database_id).toBe(NOTION_MEMORY_DB_IDS.ownerProfile);
-    expect(body.properties['键'].title[0].text.content).toBe('display_name');
-    expect(body.properties['值'].rich_text[0].text.content).toContain('Alex');
-    // 非 contact 必须有 已验证 checkbox
-    expect(body.properties['已验证'].checkbox).toBe(false);
-
-    expect(mockPool.query).toHaveBeenCalledWith(
-      'UPDATE user_profile_facts SET notion_id=$1 WHERE id=$2',
-      ['page-xyz-123', 99]
-    );
-
-    delete process.env.NOTION_API_KEY;
-  });
-
-  it('category=other 时，推送到 contacts DB，并解析 content 写入正确字段', async () => {
-    process.env.NOTION_API_KEY = 'test-key';
-    mockFetch.mockResolvedValue({
-      ok: true,
-      json: async () => ({ id: 'contact-page-001' }),
-    });
-    mockPool.query.mockResolvedValue({ rows: [] });
-
-    await pushFactToNotion({
-      id: 55,
-      category: 'other',
-      content: '姓名:魏嫦娥 分类:同事,朋友 职业:设计师',
-      key: null,
-      source: 'import',
-      created_at: new Date('2026-01-01'),
-    });
-
-    const [, opts] = mockFetch.mock.calls[0];
-    const body = JSON.parse(opts.body);
-    expect(body.parent.database_id).toBe(NOTION_MEMORY_DB_IDS.contacts);
-    expect(body.properties['姓名'].title[0].text.content).toBe('魏嫦娥');
-    // 分类应该是 multi_select
-    expect(body.properties['分类'].multi_select).toHaveLength(2);
-    expect(body.properties['分类'].multi_select[0].name).toBe('同事');
-    // 职业应该是 rich_text
-    expect(body.properties['职业'].rich_text[0].text.content).toBe('设计师');
-
-    delete process.env.NOTION_API_KEY;
   });
 });

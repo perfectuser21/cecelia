@@ -34,8 +34,6 @@ vi.mock('../rca-deduplication.js', () => ({
   getRcaCacheStats: vi.fn().mockReturnValue({})
 }));
 vi.mock('../auto-fix.js', () => ({
-  shouldAutoFix: vi.fn().mockReturnValue(false),
-  dispatchToDevSkill: vi.fn(),
   getAutoFixStats: vi.fn().mockReturnValue({})
 }));
 vi.mock('../policy-validator.js', () => ({ validatePolicyJson: vi.fn() }));

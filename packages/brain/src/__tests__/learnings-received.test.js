@@ -1,12 +1,4 @@
-/**
- * POST /api/brain/learnings-received 端点测试
- *
- * 验证：
- * - issues_found → createTask（fix task，任务线）
- * - next_steps_suggested → learnings 表（成长线）
- * - 空内容时正常返回
- * - 部分失败时不影响其他条目
- */
+/** LEARNINGS回执：问题原文留事件账，经验仍进learnings与capture，不生成开发单。 */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import express from 'express';
@@ -26,7 +18,6 @@ vi.mock('../actions.js', () => ({
   updateTask: vi.fn(),
   createGoal: vi.fn(),
   updateGoal: vi.fn(),
-  triggerN8n: vi.fn(),
   setMemory: vi.fn(),
   batchUpdateTasks: vi.fn(),
 }));
@@ -100,7 +91,6 @@ vi.mock('../embedding-service.js', () => ({ generateTaskEmbeddingAsync: vi.fn() 
 vi.mock('../orchestrator-chat.js', () => ({ handleChat: vi.fn(), handleChatStream: vi.fn() }));
 vi.mock('../llm-caller.js', () => ({ callLLM: vi.fn() }));
 vi.mock('../memory-retriever.js', () => ({ buildMemoryContext: vi.fn(), getRecentLearnings: vi.fn() }));
-vi.mock('../self-report-collector.js', () => ({ collectSelfReport: vi.fn() }));
 vi.mock('../learning.js', () => ({ getRecentLearnings: vi.fn(() => []) }));
 vi.mock('../suggestion-triage.js', () => ({ createSuggestion: vi.fn(), PRIORITY_WEIGHTS: {} }));
 
@@ -123,28 +113,18 @@ describe('POST /api/brain/learnings-received', () => {
     mockCreateTask.mockRejectedValue(new Error('未配置的任务写入'));
   });
 
-  it('issues_found → 创建 fix task', async () => {
-    mockCreateTask.mockResolvedValue({ task: { id: 'task-uuid-1' } });
-    mockQuery.mockResolvedValue({ rows: [] }); // cecelia_events insert
-
-    const app = express();
-    app.use(express.json());
-
-    app.use('/api/brain', router);
-
-    const response = await request(app)
-      .post('/api/brain/learnings-received')
-      .send({ issues_found: ['CI 失败：版本号未同步'], next_steps_suggested: [], branch_name: 'cp-test', pr_number: 42, task_id: 'source-task' });
-
-    expect(response.status).toBe(200);
-    expect(response.body.success).toBe(true);
-    expect(response.body).toEqual({ success: true, tasks_created: 1, learnings_inserted: 0, task_ids: ['task-uuid-1'], learning_ids: [] });
-    expect(mockCreateTask).toHaveBeenCalledWith({
-      title: 'Fix: CI 失败：版本号未同步',
-      description: '来源：LEARNINGS_RECEIVED（分支 cp-test / PR #42）\n\nCI 失败：版本号未同步',
-      task_type: 'dev', priority: 'P1', trigger_source: 'learnings_received',
-      payload: { branch_name: 'cp-test', pr_number: 42, task_id: 'source-task', source: 'learnings_received' },
+  it('issues_found 作为回执事件留账，不衍生开发任务', async () => {
+    mockCreateTask.mockResolvedValue({ task: { id: 'forbidden-task' } });
+    mockQuery.mockResolvedValue({ rows: [] });
+    const app = express(); app.use(express.json()); app.use('/api/brain', router);
+    const response = await request(app).post('/api/brain/learnings-received').send({
+      issues_found: ['CI 失败：版本号未同步'], branch_name: 'cp-test', task_id: 'source-task', repo: 'cecelia',
     });
+    expect(response.status).toBe(200);
+    expect(response.body.tasks_created).toBe(0);
+    expect(mockCreateTask).not.toHaveBeenCalled();
+    const event = mockQuery.mock.calls.find(([sql, params]) => sql.includes('INSERT INTO cecelia_events') && params[0] === 'learnings_received');
+    expect(JSON.parse(event[1][2])).toMatchObject({ issues_found: ['CI 失败：版本号未同步'], task_id: 'source-task' });
   });
 
   it('next_steps_suggested → 写 learnings 表（成长线）', async () => {
@@ -202,13 +182,13 @@ describe('POST /api/brain/learnings-received', () => {
       });
 
     expect(response.status).toBe(200);
-    expect(response.body.tasks_created).toBe(1);
+    expect(response.body.tasks_created).toBe(0);
     expect(response.body.learnings_inserted).toBe(1);
   });
 });
 
 describe('真实 learning 路由的单项故障隔离', () => {
-  it('无效条目不建单，首项写入失败仍返回后续任务与学习的真实ID', async () => {
+  it('问题与无效条目均不建单，学习仍返回真实ID', async () => {
     mockQuery.mockReset().mockImplementation(async sql => ({ rows: /INSERT INTO learnings/.test(sql) ? [{ id: 'learning-survivor' }] : [] }));
     mockCreateTask.mockReset().mockRejectedValueOnce(new Error('fixture_write_failed')).mockResolvedValueOnce({ task: { id: 'task-survivor' } });
     const app = express();
@@ -218,9 +198,8 @@ describe('真实 learning 路由的单项故障隔离', () => {
       issues_found: [null, 1, '', '失败项', '成功项'], next_steps_suggested: ['有效学习'], task_id: 'source-task',
     });
     expect(response.status).toBe(200);
-    expect(response.body).toEqual({ success: true, tasks_created: 1, learnings_inserted: 1, task_ids: ['task-survivor'], learning_ids: ['learning-survivor'] });
-    expect(mockCreateTask).toHaveBeenCalledTimes(2);
-    expect(mockCreateTask.mock.calls.map(([task]) => task.title)).toEqual(['Fix: 失败项', 'Fix: 成功项']);
+    expect(response.body).toEqual({ success: true, tasks_created: 0, learnings_inserted: 1, task_ids: [], learning_ids: ['learning-survivor'] });
+    expect(mockCreateTask).not.toHaveBeenCalled();
   });
 });
 

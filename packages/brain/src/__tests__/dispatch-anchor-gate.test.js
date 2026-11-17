@@ -25,7 +25,6 @@ vi.mock('../actions.js', () => ({
   updateTask: vi.fn(),
   createGoal: vi.fn(),
   updateGoal: vi.fn(),
-  triggerN8n: vi.fn(),
   setMemory: vi.fn(),
   batchUpdateTasks: vi.fn(),
 }));
@@ -99,7 +98,6 @@ vi.mock('../embedding-service.js', () => ({ generateTaskEmbeddingAsync: vi.fn() 
 vi.mock('../orchestrator-chat.js', () => ({ handleChat: vi.fn(), handleChatStream: vi.fn() }));
 vi.mock('../llm-caller.js', () => ({ callLLM: vi.fn() }));
 vi.mock('../memory-retriever.js', () => ({ buildMemoryContext: vi.fn(), getRecentLearnings: vi.fn() }));
-vi.mock('../self-report-collector.js', () => ({ collectSelfReport: vi.fn() }));
 vi.mock('../learning.js', () => ({ getRecentLearnings: vi.fn(() => []) }));
 vi.mock('../suggestion-triage.js', () => ({ createSuggestion: vi.fn(), PRIORITY_WEIGHTS: {} }));
 

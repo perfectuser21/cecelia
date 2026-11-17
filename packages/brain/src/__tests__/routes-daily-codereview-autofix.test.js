@@ -1,16 +1,4 @@
-/**
- * 漏点④：daily code_review 巡检发现 bug → 自动立案修复 dev task
- *
- * 背景：daily-review-scheduler 每日为活跃 repo 建 code_review 任务（payload.scope='daily'，无 project_id）。
- * 此前 execution.js code_review 路由只处理 scope='initiative'，daily-scope 命中 else-if 后只打日志 skip，
- * 发现的 bug 被丢弃（开环漏点④）。本测试验证 daily-scope code_review 完成后按 decision 自动建修复 task。
- *
- * D1: NEEDS_FIX → 建 P1 修复 dev task（带 repo_path / fix_type='daily_review_issues'）
- * D2: CRITICAL_BLOCK → 建 P0 修复 dev task
- * D3: PASS（无 L1/L2）→ 不建 task
- * D4: PASS 但 l1_count>0（decision 与计数不一致时以严重度优先）→ 建 P0 修复 task
- * D5: 幂等 — 已有未完成的 daily 修复 task → 不重复建
- */
+/** 审查回执保留原结果与终态，daily、Review及Initiative问题不再衍生开发单。 */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -31,7 +19,6 @@ vi.mock('../actions.js', () => ({
   updateTask: vi.fn(),
   createGoal: vi.fn(),
   updateGoal: vi.fn(),
-  triggerN8n: vi.fn(),
   setMemory: vi.fn(),
   batchUpdateTasks: vi.fn(),
 }));
@@ -72,23 +59,23 @@ vi.mock('../dep-cascade.js', () => ({ propagateDependencyFailure: vi.fn(async ()
 import express from 'express';
 import request from 'supertest';
 
-describe('漏点④: daily code_review 巡检发现 bug 自动立案', () => {
+describe('审查问题不再自动开发', () => {
   let app;
   const taskId = 'daily-cr-001';
   const repoPath = '/Users/administrator/perfect21/cecelia';
 
   // existingDailyFix=true 时模拟「已有未完成 daily 修复 task」
-  function setupDailyMock({ existingDailyFix = false } = {}) {
+  function setupDailyMock({ existingDailyFix = false, taskType = 'code_review', scope = 'daily' } = {}) {
     mockPool.query.mockImplementation((sql, params) => {
       // 查询 code_review task 信息（daily scope，无 project_id / goal_id）
       if (typeof sql === 'string' && sql.includes('task_type') && params?.[0] === taskId) {
         return Promise.resolve({
           rows: [{
-            task_type: 'code_review',
-            project_id: null,
+            task_type: taskType,
+            project_id: scope === 'initiative' ? 'project-1' : null,
             goal_id: null,
             title: '[code-review] cecelia 2026-06-20',
-            payload: { scope: 'daily', repo_path: repoPath, since_hours: 24 },
+            payload: { scope, repo_path: repoPath, since_hours: 24 },
           }],
         });
       }
@@ -111,79 +98,33 @@ describe('漏点④: daily code_review 巡检发现 bug 自动立案', () => {
     app.use('/api/brain', router);
   });
 
-  it('D1: NEEDS_FIX → 建 P1 修复 dev task（带 repo_path + fix_type=daily_review_issues）', async () => {
+  it.each([
+    ['NEEDS_FIX', 0, 3], ['CRITICAL_BLOCK', 2, 1], ['PASS', 0, 0], ['PASS', 1, 0],
+  ])('daily %s L1=%i L2=%i 只保存回执，不衍生开发任务', async (decision, l1_count, l2_count) => {
     setupDailyMock();
-
-    const res = await request(app)
-      .post('/api/brain/execution-callback')
-      .send({ task_id: taskId, run_id: 'run-1', status: 'AI Done', result: { decision: 'NEEDS_FIX', l1_count: 0, l2_count: 3 } });
-
+    const result = { decision, l1_count, l2_count };
+    const res = await request(app).post('/api/brain/execution-callback')
+      .send({ task_id: taskId, run_id: 'run-daily', status: 'AI Done', result });
     expect(res.status).toBe(200);
-    expect(mockCreateTask).toHaveBeenCalledWith(
-      expect.objectContaining({
-        task_type: 'dev',
-        priority: 'P1',
-        trigger_source: 'auto_fix',
-        payload: expect.objectContaining({ fix_type: 'daily_review_issues', repo_path: repoPath, code_review_task_id: taskId }),
-      })
-    );
+    expect(mockCreateTask.mock.calls.filter(([task]) => ['dev', 'coding_workflow'].includes(task.task_type))).toEqual([]);
+    expect(mockClient.query.mock.calls.some(([sql, params]) => sql.includes('UPDATE tasks') && JSON.stringify(params).includes('completed'))).toBe(true);
+    const persisted = mockClient.query.mock.calls.find(([sql]) => sql.includes('UPDATE tasks') && sql.includes('last_run_result'));
+    expect(typeof result === 'string' ? persisted[1][6] : JSON.parse(persisted[1][6])).toEqual(result);
+  }, 10000);
+  it.each([
+    ['review', 'daily', 'L1: 必修问题'],
+    ['code_review', 'initiative', { decision: 'NEEDS_FIX' }],
+    ['code_review', 'initiative', 'TEST_BLOCK: 集成测试失败'],
+    ['initiative_verify', 'initiative', { verdict: 'NEEDS_REVISION' }],
+  ])('%s %s 问题回执只留原结果，不新建编码单', async (taskType, scope, result) => {
+    setupDailyMock({ taskType, scope });
+    const res = await request(app).post('/api/brain/execution-callback')
+      .send({ task_id: taskId, run_id: 'review-original', status: 'AI Done', result });
+    expect(res.status).toBe(200);
+    expect(mockCreateTask.mock.calls.filter(([task]) => ['dev', 'coding_workflow'].includes(task.task_type))).toEqual([]);
+    expect(mockClient.query.mock.calls.some(([sql, params]) => sql.includes('UPDATE tasks') && JSON.stringify(params).includes('completed'))).toBe(true);
+    const persisted = mockClient.query.mock.calls.find(([sql]) => sql.includes('UPDATE tasks') && sql.includes('last_run_result'));
+    expect(typeof result === 'string' ? persisted[1][6] : JSON.parse(persisted[1][6])).toEqual(result);
   }, 10000);
 
-  it('D2: CRITICAL_BLOCK → 建 P0 修复 dev task', async () => {
-    setupDailyMock();
-
-    const res = await request(app)
-      .post('/api/brain/execution-callback')
-      .send({ task_id: taskId, run_id: 'run-2', status: 'AI Done', result: { decision: 'CRITICAL_BLOCK', l1_count: 2, l2_count: 1 } });
-
-    expect(res.status).toBe(200);
-    expect(mockCreateTask).toHaveBeenCalledWith(
-      expect.objectContaining({
-        task_type: 'dev',
-        priority: 'P0',
-        payload: expect.objectContaining({ fix_type: 'daily_review_issues', repo_path: repoPath }),
-      })
-    );
-  }, 10000);
-
-  it('D3: PASS（无 L1/L2）→ 不建 task', async () => {
-    setupDailyMock();
-
-    const res = await request(app)
-      .post('/api/brain/execution-callback')
-      .send({ task_id: taskId, run_id: 'run-3', status: 'AI Done', result: { decision: 'PASS', l1_count: 0, l2_count: 0 } });
-
-    expect(res.status).toBe(200);
-    const devCall = mockCreateTask.mock.calls.find(c => c[0]?.payload?.fix_type === 'daily_review_issues');
-    expect(devCall).toBeUndefined();
-  }, 10000);
-
-  it('D4: decision=PASS 但 l1_count>0（计数与 decision 不一致）→ 仍建 P0 修复 task（以严重度优先）', async () => {
-    setupDailyMock();
-
-    const res = await request(app)
-      .post('/api/brain/execution-callback')
-      .send({ task_id: taskId, run_id: 'run-4', status: 'AI Done', result: { decision: 'PASS', l1_count: 1, l2_count: 0 } });
-
-    expect(res.status).toBe(200);
-    expect(mockCreateTask).toHaveBeenCalledWith(
-      expect.objectContaining({
-        task_type: 'dev',
-        priority: 'P0',
-        payload: expect.objectContaining({ fix_type: 'daily_review_issues' }),
-      })
-    );
-  }, 10000);
-
-  it('D5: 幂等 — 已有未完成 daily 修复 task → 不重复建', async () => {
-    setupDailyMock({ existingDailyFix: true });
-
-    const res = await request(app)
-      .post('/api/brain/execution-callback')
-      .send({ task_id: taskId, run_id: 'run-5', status: 'AI Done', result: { decision: 'NEEDS_FIX', l1_count: 0, l2_count: 2 } });
-
-    expect(res.status).toBe(200);
-    const devCall = mockCreateTask.mock.calls.find(c => c[0]?.payload?.fix_type === 'daily_review_issues');
-    expect(devCall).toBeUndefined();
-  }, 10000);
 });

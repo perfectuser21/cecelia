@@ -1,10 +1,4 @@
-/**
- * T9: recordLearning Insight 任务 confidence 门槛 — CI 可跑的 mock 单测
- *
- * 背景：learning.test.js（真库集成）在 vitest.config.js exclude 列表中被 CI 断源，
- * confidence 门槛行为在 CI 里零覆盖。本文件用 mock pool + mock createTask 回填守卫，
- * 与集成测试两边并存。
- */
+/** RCA学习只落学习与记忆，不再按置信度自动生成开发单。 */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
@@ -31,7 +25,7 @@ function buildAnalysis(confidence, tag) {
   };
 }
 
-describe('recordLearning — Insight 任务 confidence 门槛（CI mock 守卫）', () => {
+describe('recordLearning — 自主修复退役', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     // 按 SQL 语义兜底返回：learnings INSERT 返回新行，memory_stream INSERT 返回 id，其余 SELECT/UPDATE 返回空
@@ -61,15 +55,13 @@ describe('recordLearning — Insight 任务 confidence 门槛（CI mock 守卫�
     expect(mockCreateTask).not.toHaveBeenCalled();
   });
 
-  it('confidence >= 0.7：建 [Insight修复] 任务（createTask 被调用）', async () => {
-    const learning = await recordLearning(buildAnalysis(0.8, 'high'));
-
-    expect(learning).toBeDefined();
-    expect(mockCreateTask).toHaveBeenCalledTimes(1);
-    expect(mockCreateTask.mock.calls[0][0]).toMatchObject({ repo_hint: 'cecelia', map_scope_hint: ['F1'], declared_change_kind: 'bugfix', mutation_intent: 'write' });
-    expect(mockPool.query.mock.calls.some(([sql]) => sql.includes('applied = true'))).toBe(true);
-    expect(mockCreateTask.mock.calls[0][0].title).toContain('[Insight修复]');
-    expect(mockCreateTask.mock.calls[0][0].payload.insight_learning_id).toBe('learning-gate-1');
+  it('高置信且完整仓库范围：保留 learning、记忆与 embedding，不衍生开发单', async () => {
+    const learning = await recordLearning(buildAnalysis(0.99, 'high'));
+    expect(learning.id).toBe('learning-gate-1');
+    expect(learning.source_memory_id).toBe('memory-gate-1');
+    expect(mockPool.query.mock.calls.some(([sql]) => sql.includes('INSERT INTO learnings'))).toBe(true);
+    expect(mockCreateTask).not.toHaveBeenCalled();
+    expect(mockPool.query.mock.calls.some(([sql]) => sql.includes('applied = true'))).toBe(false);
   });
 
   it('confidence 缺失：视为 0，不建任务', async () => {

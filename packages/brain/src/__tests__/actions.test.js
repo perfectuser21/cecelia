@@ -7,7 +7,6 @@ import { registerCreateProject } from './actions-cases/createProject.cases.js';
 import { registerUpdateTask } from './actions-cases/updateTask.cases.js';
 import { registerCreateGoal } from './actions-cases/createGoal.cases.js';
 import { registerUpdateGoal } from './actions-cases/updateGoal.cases.js';
-import { registerTriggerN8n } from './actions-cases/triggerN8n.cases.js';
 import { registerSetMemory } from './actions-cases/setMemory.cases.js';
 import { registerBatchUpdateTasks } from './actions-cases/batchUpdateTasks.cases.js';
 
@@ -21,7 +20,6 @@ describe('actions.js', () => {
   registerUpdateTask();
   registerCreateGoal();
   registerUpdateGoal();
-  registerTriggerN8n();
   registerSetMemory();
   registerBatchUpdateTasks();
 });

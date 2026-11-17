@@ -10,9 +10,7 @@ vi.mock('../actions.js', () => ({ updateTask: vi.fn() }));
 vi.mock('../rca-deduplication.js', () => ({
   shouldAnalyzeFailure: vi.fn(), cacheRcaResult: vi.fn(), getRcaCacheStats: vi.fn(),
 }));
-vi.mock('../auto-fix.js', () => ({
-  shouldAutoFix: vi.fn(), dispatchToDevSkill: vi.fn(), getAutoFixStats: vi.fn(),
-}));
+vi.mock('../auto-fix.js', () => ({ getAutoFixStats: vi.fn() }));
 vi.mock('../policy-validator.js', () => ({ validatePolicyJson: vi.fn() }));
 import { detectFailureSpike } from '../monitor-loop.js';
 

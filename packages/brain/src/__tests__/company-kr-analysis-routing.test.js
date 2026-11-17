@@ -1,12 +1,12 @@
 import { EventEmitter } from 'node:events';
 import { describe, it, expect, vi } from 'vitest';
-import { requestCompanyKrAnalysis, COMPANY_ANALYST } from '../lib/company-kr-analysis.js';
+import { companyAnalysisSnapshot, COMPANY_ANALYST } from '../lib/company-kr-analysis.js';
 import { COMPANY_KR_CATALOG, COMPANY_KR_DATABASE, companyMetric } from '../lib/company-kr-metrics.js';
 import { routeQiumiTask } from '../routing/qiumi-router.js';
 import { qiumiEnv } from '../routing/env.js';
 import { triggerOpenclawAgent } from '../openclaw-agent-executor.js';
 
-// 只替换数据库和 SSH；request/createTask/cheapGates/router/executor 均执行真实实现。
+// 历史任务以固定信封进入真实router/executor；数据库、SSH和外部调用均隔离。
 vi.mock('../db.js', () => ({ default: { query: vi.fn(() => { throw new Error('不允许访问真实数据库'); }) } }));
 
 const TASK_ID = '918811e5-1111-4222-8333-444444444444';
@@ -29,39 +29,29 @@ function database({ title = COMPANY_KR_CATALOG[0].title, fact = '本周采集到
     custom_props: { company_notion: { database_id: COMPANY_KR_DATABASE, page_id: catalog.page_id,
       goal_id: catalog.goal_id, area_ids: [] } } }];
   const config = { enabled: true, hour: 8 };
-  const tasks = [];
   const query = vi.fn(async (sql, values = []) => {
     const text = sql.replace(/\s+/g, ' ').trim();
     if (text.includes('FROM working_memory')) return { rows: [{ value_json: config }] };
     if (text.startsWith('SELECT *,updated_at::text AS observation_version')) return { rows };
-    if (text.startsWith('SELECT * FROM tasks WHERE payload')) return { rows: tasks.slice(-1) };
     if (text.includes('FROM ops_agents')) return { rows: [{ name: COMPANY_ANALYST }, { name: 'media' }] };
     if (text.includes('FROM phone_registry')) return { rows: [PHONE] };
     if (text.includes('FROM device_locks') || text.includes('FROM ops_workflows')
       || text.includes('FROM map_scope_repositories') || text.includes('FROM work_routing_receipts')) return { rows: [] };
-    if (text.startsWith('INSERT INTO tasks (')) {
-      const columns = text.match(/^INSERT INTO tasks \((.*?)\) VALUES/)[1].split(',').map(value => value.trim());
-      const task = { id: TASK_ID, ...Object.fromEntries(columns.map((column, i) => [column, column === 'payload' ? JSON.parse(values[i]) : values[i]])) };
-      tasks.push(task);
-      return { rows: [task], rowCount: 1 };
-    }
     if (text.startsWith('INSERT INTO work_routing_receipts')) return { rows: [{ id: 'receipt-company-analysis' }], rowCount: 1 };
     if (text.startsWith('INSERT INTO task_runs')) return { rows: [{ id: 'run-row', run_id: values[1] }], rowCount: 1 };
     if (/^(BEGIN|COMMIT|ROLLBACK)$/.test(text) || text.startsWith('SELECT pg_advisory_xact_lock')
-      || /^INSERT INTO (cecelia_events|task_events) /.test(text)
+      || /^INSERT INTO (cecelia_events|task_events|task_leases) /.test(text)
       || /^UPDATE (tasks|key_results) /.test(text)) return { rows: [], rowCount: 1 };
     throw new Error(`未定义的数据库边界：${text}`);
   });
   const client = { query, release: vi.fn() };
-  return { query, connect: async () => client, rows, config, tasks };
+  return { query, connect: async () => client, rows, config };
 }
 
-async function createAnalysis(pool) {
-  const created = await requestCompanyKrAnalysis(pool, { now: NOW, manual: true });
-  expect(created).toMatchObject({ success: true, task_id: TASK_ID });
-  expect(pool.tasks).toHaveLength(1);
-  expect(pool.tasks[0]).toMatchObject({ task_type: 'qiumi_task', status: 'queued' });
-  return pool.tasks[0];
+async function existingAnalysis(pool) {
+  return { id: TASK_ID, task_type: 'qiumi_task', status: 'queued', payload: {
+    company_kr_analysis: await companyAnalysisSnapshot(pool, NOW), qiumi_source: FIXED_SOURCE,
+  } };
 }
 
 function routingDeps(pool, delegation = true) {
@@ -83,7 +73,7 @@ function sshTransport() {
   return { spawnFn, child };
 }
 
-describe('公司经营KR分析的真实建单→路由边界', () => {
+describe('历史公司KR分析任务的路由兼容边界', () => {
   it.each([
     ['抖音KR', COMPANY_KR_CATALOG[0].title, '本周采集到两条合格线索', true],
     ['真机发布KR', COMPANY_KR_CATALOG[3].title, '本周暂无独立采集证据', false],
@@ -92,7 +82,7 @@ describe('公司经营KR分析的真实建单→路由边界', () => {
     ['默认设备开关关闭', COMPANY_KR_CATALOG[0].title, INJECTION, false],
   ])('%s 仅作为分析数据，不改变设备或Agent路由', async (_label, title, fact, delegation) => {
     const pool = database({ title, fact });
-    const task = await createAnalysis(pool);
+    const task = await existingAnalysis(pool);
     const deps = routingDeps(pool, delegation);
     const decision = await routeQiumiTask(task, deps);
     expect(decision).toMatchObject({ outcome: 'agent', department: COMPANY_ANALYST, engine: 'explicit',
@@ -121,7 +111,7 @@ describe('公司经营KR分析的真实建单→路由边界', () => {
 
 describe('路由后由经营快照构造执行器stdin', () => {
   async function routedAnalysis(pool) {
-    const created = await createAnalysis(pool);
+    const created = await existingAnalysis(pool);
     // 固定路由信封是此边界输入；即使旧建单仍带正文，此用例也独立验证 executor 的恢复责任。
     const task = { ...created, payload: { ...created.payload, qiumi_source: FIXED_SOURCE } };
     const decision = await routeQiumiTask(task, routingDeps(pool));

@@ -164,9 +164,6 @@ vi.mock('../cognitive-core.js', () => ({
   getCognitiveSnapshot: vi.fn().mockReturnValue(null),
 }));
 
-vi.mock('../self-report-collector.js', () => ({
-  collectSelfReport: vi.fn().mockResolvedValue(null),
-}));
 
 vi.mock('../consolidation.js', () => ({
   runDailyConsolidationIfNeeded: vi.fn().mockResolvedValue(null),

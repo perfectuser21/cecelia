@@ -6,7 +6,6 @@ const io = vi.hoisted(() => ({ read: vi.fn(), fetch: vi.fn(), query: vi.fn(), op
 vi.mock('fs', () => ({ readFileSync: io.read }));
 vi.mock('../db.js', () => ({ default: { query: io.query } }));
 vi.mock('../embedding-service.js', () => ({ generateProfileFactEmbeddingAsync: vi.fn() }));
-vi.mock('../notion-memory-sync.js', () => ({ pushFactToNotion: vi.fn() }));
 vi.mock('openai', () => ({ default: io.openai }));
 import { extractAndSaveUserFacts, _resetApiKey } from '../user-profile.js';
 import { generateEmbedding, generateEmbeddingsBatch } from '../openai-client.js';

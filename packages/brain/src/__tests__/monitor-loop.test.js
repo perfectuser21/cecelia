@@ -41,12 +41,8 @@ vi.mock('../rca-deduplication.js', () => ({
   generateErrorSignature: vi.fn().mockReturnValue('abcd1234abcd1234'),
 }));
 
-const mockShouldAutoFix = vi.hoisted(() => vi.fn());
-const mockDispatchToDevSkill = vi.hoisted(() => vi.fn());
 const mockGetAutoFixStats = vi.hoisted(() => vi.fn());
 vi.mock('../auto-fix.js', () => ({
-  shouldAutoFix: mockShouldAutoFix,
-  dispatchToDevSkill: mockDispatchToDevSkill,
   getAutoFixStats: mockGetAutoFixStats,
 }));
 
@@ -172,8 +168,6 @@ function setupDefaultMocks() {
   });
 
   // auto-fix
-  mockShouldAutoFix.mockReturnValue(false);
-  mockDispatchToDevSkill.mockResolvedValue('task-autofix-001');
   mockGetAutoFixStats.mockResolvedValue({
     total_auto_fixes: 0,
     completed_fixes: 0,
@@ -778,38 +772,6 @@ describe('monitor-loop', () => {
       vi.clearAllTimers();
     });
 
-    it('shouldAutoFix 返回 true 时调用 dispatchToDevSkill', async () => {
-      setupFailureSpike();
-      mockFindActivePolicy.mockResolvedValue(null);
-      mockFindProbationPolicy.mockResolvedValue(null);
-      mockShouldAnalyzeFailure.mockResolvedValue({ should_analyze: true });
-      mockShouldAutoFix.mockReturnValue(true);
-
-      startMonitorLoop();
-      await flushCycle();
-
-      expect(mockDispatchToDevSkill).toHaveBeenCalled();
-      vi.clearAllTimers();
-    });
-
-    it('dispatchToDevSkill 抛出异常时不影响主流程（不向上传播）', async () => {
-      setupFailureSpike();
-      mockFindActivePolicy.mockResolvedValue(null);
-      mockFindProbationPolicy.mockResolvedValue(null);
-      mockShouldAnalyzeFailure.mockResolvedValue({ should_analyze: true });
-      mockShouldAutoFix.mockReturnValue(true);
-      mockDispatchToDevSkill.mockRejectedValue(new Error('dispatch failed'));
-
-      await expect(
-        (async () => {
-          startMonitorLoop();
-          await flushCycle();
-        })()
-      ).resolves.not.toThrow();
-
-      vi.clearAllTimers();
-    });
-
     it('shouldPromoteToProbation 返回 true 时打印晋升日志', async () => {
       setupFailureSpike();
       mockFindActivePolicy.mockResolvedValue(null);
@@ -1166,7 +1128,6 @@ describe('monitor-loop', () => {
       mockPerformRCA.mockResolvedValue({
         analysis: '```json\n{"root_cause":"Network timeout","proposed_fix":"Increase retry limit in executor config above 20 chars","action_plan":"Update config","confidence":0.9,"evidence":"Logs show gap"}\n```',
       });
-      mockShouldAutoFix.mockReturnValue(false);
 
       startMonitorLoop();
       await flushCycle();
@@ -1187,7 +1148,6 @@ describe('monitor-loop', () => {
       mockPerformRCA.mockResolvedValue({
         analysis: 'This is a plain text analysis without json block. It needs manual review.',
       });
-      mockShouldAutoFix.mockReturnValue(false);
 
       startMonitorLoop();
       await flushCycle();
@@ -1205,7 +1165,6 @@ describe('monitor-loop', () => {
     it('performRCA 返回空/无 analysis 时使用默认结构（confidence=0）', async () => {
       setupForRca();
       mockPerformRCA.mockResolvedValue({});
-      mockShouldAutoFix.mockReturnValue(false);
 
       startMonitorLoop();
       await flushCycle();
@@ -1223,7 +1182,6 @@ describe('monitor-loop', () => {
     it('performRCA 抛出异常时返回 confidence=0 的错误结构', async () => {
       setupForRca();
       mockPerformRCA.mockRejectedValue(new Error('Cortex unavailable'));
-      mockShouldAutoFix.mockReturnValue(false);
 
       startMonitorLoop();
       await flushCycle();

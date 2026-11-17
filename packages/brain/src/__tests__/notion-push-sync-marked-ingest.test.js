@@ -278,3 +278,38 @@ describe('注册表：qiumi_task 此刀进 VALID_TASK_TYPES', () => {
     expect(R.VALID_TASK_TYPES).toContain('qiumi_task');
   });
 });
+
+
+describe('旧 Workflow relation 执行桥退役', () => {
+  beforeEach(() => { mockQuery.mockReset(); mockNotionReq.mockReset(); mockCreateRoutedTask.mockReset(); });
+  it.each(['webhook', 'ssh', 'future'])('%s 只回写退役回执，零查库及派发', async channel => {
+    const page = enPage('原始任务内容 · ⚠ 派发未成(旧错误)');
+    page.properties.Workflow = { relation: [{ id: 'legacy-workflow' }] };
+    page.properties['Plan Date'] = { date: { start: channel === 'future' ? '2099-01-01' : '2000-01-01' } };
+    const execFn = vi.fn(); const fetchFn = vi.fn(); const readTemplateFn = vi.fn();
+    mockQuery.mockResolvedValue({ rows: [{ wf_id: 'old', dispatch: { channel, machine: 'xian-mac-m4', command: 'old-command', webhook_url: 'https://retired.invalid' } }] });
+    mockNotionReq.mockResolvedValue({ results: [] });
+    const { ingestDelegatedPage } = await import('../notion-push-sync.js');
+    const result = await ingestDelegatedPage({ query: mockQuery }, 'tok', page, { execFn, fetchFn, readTemplateFn, env: { N8N_V4_WEBHOOK_URL: 'https://retired.invalid' } });
+    expect(result).toEqual({ taskId: null, kind: 'retired' });
+    for (const fn of [mockQuery, mockCreateRoutedTask, execFn, fetchFn, readTemplateFn]) expect(fn).not.toHaveBeenCalled();
+    expect(mockNotionReq).toHaveBeenCalledOnce();
+    const patch = mockNotionReq.mock.calls[0];
+    expect(patch.slice(1,3)).toEqual([`/pages/${page.id}`, 'PATCH']);
+    const text = patch[3].properties.Description.rich_text[0].text.content;
+    expect(text).toContain('原始任务内容'); expect(text).toContain('n8n_retired');
+    expect(text).not.toMatch(/run:notion-|brain:|到点自动派发/); expect(patch[3].properties).not.toHaveProperty('Status');
+    page.properties.Description.rich_text = [{ plain_text: text }];
+    expect(await ingestDelegatedPage({ query: mockQuery }, 'tok', page)).toEqual({ taskId: null, kind: 'retired' });
+    expect(mockNotionReq).toHaveBeenCalledOnce();
+  });
+  it('现代 marked 行带 Workflow relation 仍走 Brain 账房并回执', async () => {
+    const page = enPage('[en-native] 明确任务'); page.properties.Workflow = { relation: [{ id: 'legacy-workflow' }] };
+    mockNotionReq.mockResolvedValue({ results: [] }); mockQuery.mockResolvedValue({ rows: [] });
+    mockCreateRoutedTask.mockResolvedValue({ task: { id: 'modern-task' } });
+    const { ingestDelegatedPage } = await import('../notion-push-sync.js');
+    expect(await ingestDelegatedPage({ query: mockQuery }, 'tok', page, { env: {} })).toEqual({ taskId: 'modern-task', kind: 'qiumi_task' });
+    expect(mockCreateRoutedTask.mock.calls[0][1].requested_task_type).toBe('qiumi_task');
+    expect(JSON.stringify(mockNotionReq.mock.calls)).toContain('brain:modern-task ✓已接管');
+  });
+});

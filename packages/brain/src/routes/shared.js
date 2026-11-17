@@ -68,10 +68,6 @@ const ALLOWED_ACTIONS = {
   'set-memory': {
     required: ['key', 'value'],
     optional: []
-  },
-  'trigger-n8n': {
-    required: ['webhook_path'],
-    optional: ['data']
   }
 };
 

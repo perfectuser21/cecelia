@@ -183,7 +183,6 @@ vi.mock('../../events/taskEvents.js', () => ({
   publishCognitiveState: vi.fn(),
   publishTickExecuted: vi.fn(),
 }));
-vi.mock('../../self-report-collector.js', () => ({ collectSelfReport: vi.fn() }));
 vi.mock('../../consolidation.js', () => ({ runDailyConsolidationIfNeeded: vi.fn() }));
 vi.mock('../../alerting.js', () => ({ flushAlertsIfNeeded: vi.fn(), raise: vi.fn().mockResolvedValue(undefined) }));
 vi.mock('../../evolution-scanner.js', () => ({

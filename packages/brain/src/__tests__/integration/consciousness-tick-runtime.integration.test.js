@@ -206,7 +206,6 @@ vi.mock('../../rumination.js', () => ({ runRumination: vi.fn().mockResolvedValue
 vi.mock('../../diary-scheduler.js', () => ({ generateDailyDiaryIfNeeded: vi.fn().mockResolvedValue({}) }));
 
 vi.mock('../../conversation-consolidator.js', () => ({ runConversationConsolidator: vi.fn().mockResolvedValue({}) }));
-vi.mock('../../self-report-collector.js', () => ({ collectSelfReport: vi.fn().mockResolvedValue({}) }));
 vi.mock('../../evolution-scanner.js', () => ({
   scanEvolutionIfNeeded: vi.fn().mockResolvedValue({}),
 }));

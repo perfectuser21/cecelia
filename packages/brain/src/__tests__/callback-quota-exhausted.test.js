@@ -48,7 +48,7 @@ vi.mock('../quarantine.js', () => ({
   parseResetTime: vi.fn(() => null),
 }));
 
-vi.mock('../actions.js', () => ({ createTask: vi.fn(), updateTask: vi.fn(), createGoal: vi.fn(), updateGoal: vi.fn(), triggerN8n: vi.fn(), setMemory: vi.fn(), batchUpdateTasks: vi.fn() }));
+vi.mock('../actions.js', () => ({ createTask: vi.fn(), updateTask: vi.fn(), createGoal: vi.fn(), updateGoal: vi.fn(), setMemory: vi.fn(), batchUpdateTasks: vi.fn() }));
 vi.mock('../focus.js', () => ({ getDailyFocus: vi.fn(), setDailyFocus: vi.fn(), clearDailyFocus: vi.fn(), getFocusSummary: vi.fn() }));
 vi.mock('../tick.js', () => ({ getTickStatus: vi.fn(), enableTick: vi.fn(), disableTick: vi.fn(), executeTick: vi.fn(), runTickSafe: vi.fn(async () => ({ actions_taken: [] })), routeTask: vi.fn(), TASK_TYPE_AGENT_MAP: {} }));
 vi.mock('../task-router.js', () => ({

@@ -1,4 +1,3 @@
-vi.mock('../notion-memory-sync.js', () => ({ pushFactToNotion: vi.fn() }));
 // 本文件模拟凭据/传输；真实隔离判断由runtime直接I/O回归验证。
 vi.mock('../runtime-safety.js', () => ({ assertLiveLLMAllowed: () => {} }));
 /**

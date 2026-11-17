@@ -1,7 +1,7 @@
 /**
  * notion-memory-sync.js
  *
- * Notion Memory 系统同步：
+ * 历史 Notion Memory 数据库恢复工具（不接入聊天增量写入）：
  *  - 主人档案（user_profile_facts）↔ Notion "👤 主人档案"
  *  - 人脉网络（category=other）      ↔ Notion "👥 人脉网络"
  *  - Cecelia 日记（memory_stream）   → Notion "📖 Cecelia 日记"（只写）
@@ -407,87 +407,4 @@ export async function importAllMemoryData() {
   }
 
   return stats;
-}
-
-// ─── 增量推送（fire-and-forget）─────────────────────────────────
-
-/**
- * 推送单条 user_profile_fact 到 Notion
- */
-export async function pushFactToNotion(row) {
-  try {
-    const isContact = row.category === 'other';
-    const dbId = isContact ? NOTION_MEMORY_DB_IDS.contacts : NOTION_MEMORY_DB_IDS.ownerProfile;
-
-    let page;
-    if (isContact) {
-      const fields = parseContactContent(row.content);
-      const name   = truncate(fields['姓名'] || fields['name'] || (row.content || '').replace(/^姓名:\s*/, '').trim() || '未命名', 100);
-      const extraProps = contactFieldsToNotionProps(fields, row.source || 'auto', row.created_at || new Date());
-
-      page = await notionReq('/pages', 'POST', {
-        parent:     { database_id: dbId },
-        properties: {
-          '姓名': { title: [{ text: { content: name } }] },
-          '备注': extraProps['备注'] || { rich_text: [{ text: { content: truncate(row.content, 2000) } }] },
-          ...extraProps,
-        },
-      });
-    } else {
-      const keyName = row.key || (row.content || '').split(':')[0]?.trim() || '未命名';
-      const value   = (row.content || '').includes(':')
-        ? (row.content || '').split(':').slice(1).join(':').trim()
-        : (row.content || '');
-      page = await notionReq('/pages', 'POST', {
-        parent:     { database_id: dbId },
-        properties: {
-          '键':       { title:     [{ text: { content: truncate(keyName, 100) } }] },
-          '值':       { rich_text: [{ text: { content: truncate(value,   2000) } }] },
-          '类别':     { select:    { name: row.category || 'raw' } },
-          '来源':     { select:    { name: row.source || 'auto' } },
-          '更新时间': { date:      { start: fmtDate(row.created_at || new Date()) } },
-          '已验证':   { checkbox:  false },
-        },
-      });
-    }
-
-    if (page?.id && row.id) {
-      await pool.query('UPDATE user_profile_facts SET notion_id=$1 WHERE id=$2', [page.id, row.id]);
-    }
-  } catch (e) {
-    console.error('[notion-memory] pushFactToNotion 失败:', e.message);
-  }
-}
-
-/**
- * 推送单条 memory_stream 到 Notion 日记
- */
-export async function pushMemoryToNotion(row) {
-  try {
-    const txt    = typeof row.content === 'string' ? row.content : JSON.stringify(row.content || '');
-    const summary = truncate(txt, 80);
-    const validTypes = ['episodic', 'reflection', 'desire', 'learning', 'self_model'];
-    const typ    = validTypes.includes(row.source_type) ? row.source_type : 'episodic';
-    const isDone = !!row.resolved_at;
-    const status = row.status || 'active';
-
-    const page = await notionReq('/pages', 'POST', {
-      parent:     { database_id: NOTION_MEMORY_DB_IDS.diary },
-      properties: {
-        '摘要':   { title:    [{ text: { content: summary } }] },
-        '类型':   { select:   { name: typ } },
-        '重要性': { number:   row.importance || 0 },
-        '日期':   { date:     { start: fmtDate(row.created_at || new Date()) } },
-        '已处理': { checkbox: isDone },
-        '状态':   { status:   { name: status } },
-      },
-      children: textToBlocks(txt),
-    });
-
-    if (page?.id && row.id) {
-      await pool.query('UPDATE memory_stream SET notion_id=$1 WHERE id=$2', [page.id, row.id]);
-    }
-  } catch (e) {
-    console.error('[notion-memory] pushMemoryToNotion 失败:', e.message);
-  }
 }

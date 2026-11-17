@@ -1,57 +1,51 @@
 import { describe, expect, it, vi } from 'vitest';
+vi.mock('../../recurring-notion-sync.js', () => ({ notionReq: vi.fn(() => { throw Error('禁止真实Notion请求'); }) }));
 import { runCompanyKrWorkflow } from '../company-kr-workflow.js';
+import { runCompanyKrProjection } from '../company-key-results.js';
+import { fixture } from './company-kr.fixture.js';
 
-describe('公司KR同步后分析顺序', () => {
-  it('来源同步失败时传播错误，零分析调用', async () => {
-    const pool = {}, analyze = vi.fn();
-    const project = vi.fn().mockRejectedValue(new Error('Notion分页未完成'));
-    await expect(runCompanyKrWorkflow(pool, { project, analyze })).rejects.toThrow('Notion分页未完成');
-    expect(project).toHaveBeenCalledWith(pool);
+describe('公司KR正式同步保留，自动分析退休', () => {
+  it('真实同步保留人工正式值与导入收据，成功后零分析、零新任务', async () => {
+    const f = fixture();
+    f.page.properties.Name.title = [{ plain_text: '主理人确认的新标题' }];
+    f.page.properties.Start.number = 2;
+    f.page.properties.Current.number = 4;
+    f.page.properties.Target.number = 12;
+    const analyze = vi.fn().mockResolvedValue({ task_id: 'retired-task' });
+    const result = await runCompanyKrWorkflow(f.pool, {
+      project: pool => runCompanyKrProjection(pool, { token: 'fake', notionReq: f.notionReq, now: 1000000 }),
+      register: async () => ({}), projectRegistration: async () => ({}), analyze,
+    });
+    expect(result).toMatchObject({ matched: 1, changed_ids: ['kr'] });
+    expect(f.kr.title).toBe('主理人确认的新标题');
+    expect(f.kr.metadata.company_metric).toMatchObject({ start: '2', current: '4', target: '12' });
+    expect(f.task.result.metric_observations).toHaveLength(1);
+    expect(f.task.result.metric_observations[0]).toMatchObject({ kind: 'human_formal_claim', actor: 'notion-inlet', after: { start: '2', current: '4', target: '12' } });
+    const patches = f.notionReq.mock.calls.filter(([, path, method]) => path.startsWith('/pages/') && method === 'PATCH');
+    expect(patches.every(([, , , body]) => Object.keys(body.properties).every(k => k.startsWith('AI')))).toBe(true);
+    expect(f.page.properties.Current.number).toBe(4);
+    expect(f.page.properties.Target.number).toBe(12);
+    expect(f.page.properties.Start.number).toBe(2);
+    expect(analyze).not.toHaveBeenCalled();
+    expect(result).not.toHaveProperty('analysis');
+    expect(f.pool.query.mock.calls.some(([sql]) => sql.startsWith('INSERT INTO tasks'))).toBe(false);
+  });
+  it('正式来源读取失败继续报错，零分析', async () => {
+    const f = fixture(), analyze = vi.fn();
+    await expect(runCompanyKrWorkflow(f.pool, {
+      project: pool => runCompanyKrProjection(pool, { token: 'fake', notionReq: async () => { throw Error('Notion分页未完成'); }, now: 1000000 }), analyze,
+    })).rejects.toThrow('Notion分页未完成');
     expect(analyze).not.toHaveBeenCalled();
   });
-
-  it.each(['not_registered', 'not_configured', 'interval', 'projection_locked'])('同步未执行（%s）时不启动分析', async reason => {
-    const projection = { skipped: true, reason, changed_ids: [] }, analyze = vi.fn();
-    expect(await runCompanyKrWorkflow({}, { project: async () => projection, analyze })).toBe(projection);
+  it.each(['not_registered', 'not_configured', 'interval', 'projection_locked'])('同步未执行（%s）保持原结果', async reason => {
+    const result = { skipped: true, reason }, analyze = vi.fn();
+    expect(await runCompanyKrWorkflow({}, { project: async () => result, analyze })).toBe(result);
     expect(analyze).not.toHaveBeenCalled();
   });
-
-  it('先等待正式来源入账，再分析，保留同步结果和分析任务号', async () => {
-    const order = [], pool = {}, projection = { matched: 9, changed_ids: ['kr-9'], errors: [] };
-    const project = vi.fn(async () => { await Promise.resolve(); order.push('formal_committed'); return projection; });
-    const analyze = vi.fn(async actual => { expect(actual).toBe(pool); order.push('analysis_requested'); return { task_id: 'analysis-task' }; });
-    const result = await runCompanyKrWorkflow(pool, { project, analyze, register: async () => ({}), projectRegistration: async () => ({}) });
-    expect(order).toEqual(['formal_committed', 'analysis_requested']);
-    expect(result).toMatchObject({ ...projection, analysis: { task_id: 'analysis-task' } });
-    expect(analyze).toHaveBeenCalledOnce();
-  });
-
-  it('分析停用仍完成来源同步，真实请求函数不登记任务', async () => {
-    const pool = { query: vi.fn().mockResolvedValue({ rows: [{ value_json: { enabled: false } }] }), connect: vi.fn() };
-    const project = vi.fn().mockResolvedValue({ matched: 8, changed_ids: ['kr'] });
-    expect(await runCompanyKrWorkflow(pool, { project, register: async () => ({}), projectRegistration: async () => ({}) })).toMatchObject({ matched: 8, changed_ids: ['kr'], analysis: { skipped: true, reason: 'disabled' } });
-    expect(pool.connect).not.toHaveBeenCalled();
-    expect(pool.query.mock.calls.every(([sql]) => sql.startsWith('SELECT'))).toBe(true);
-  });
-
-  it('分析登记失败不能把该轮报告为成功', async () => {
-    const project = vi.fn().mockResolvedValue({ matched: 8 }), analyze = vi.fn().mockRejectedValue(new Error('任务登记失败'));
-    await expect(runCompanyKrWorkflow({}, { project, analyze })).rejects.toThrow('任务登记失败');
-    expect(project).toHaveBeenCalledOnce(); expect(analyze).toHaveBeenCalledOnce();
-  });
-});
-
-describe('KR同步周期登记接线',()=>{
-  it('成功同步后补登记和投影，再交给原分析入口',async()=>{
-    const order=[]; const deps=Object.fromEntries(['project','register','projectRegistration','analyze'].map(k=>[k,vi.fn(async()=>{order.push(k);return {};})]));
-    await runCompanyKrWorkflow({},deps);
-    expect(order).toEqual(['project','register','projectRegistration','analyze']);
-    deps.project.mockResolvedValue({skipped:true});order.length=0;
-    await runCompanyKrWorkflow({},deps);expect(order).toEqual([]);
-  });
-  it('Notion登记失败仍完成经营分析登记，并向调度器报失败',async()=>{
-    const analyze=vi.fn().mockResolvedValue({task_id:'t'});
-    await expect(runCompanyKrWorkflow({}, {project:async()=>({matched:8}),register:async()=>({workflow_id:'w'}),projectRegistration:async()=>{throw Error('Notion不可达');},analyze})).rejects.toThrow('Notion不可达');
-    expect(analyze).toHaveBeenCalledTimes(1);
+  it('正式同步后不再登记或投影退休分析能力', async () => {
+    const register = vi.fn().mockResolvedValue({}), projectRegistration = vi.fn().mockResolvedValue({});
+    expect(await runCompanyKrWorkflow({}, { project: async () => ({ matched: 1 }), register, projectRegistration })).toEqual({ matched: 1 });
+    expect(register).not.toHaveBeenCalled();
+    expect(projectRegistration).not.toHaveBeenCalled();
   });
 });

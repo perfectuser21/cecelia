@@ -1,44 +1,16 @@
-/** 公司经营KR分析：Brain统一触发，OpenClaw只返回建议，可信收割器入账。 */
-import { createHash, randomUUID } from 'node:crypto';
+/** 退休公司KR分析的历史任务兼容层：只保留派发校验与可信结果收割。 */
+import { createHash } from 'node:crypto';
 import { companyKrView, isActiveCompanyKr, COMPANY_METRIC_MODE } from './company-kr-metrics.js';
 
 export const COMPANY_ANALYSIS_CONFIG = 'company_kr_analysis_config';
 export const COMPANY_ANALYST = 'company-kr-analyst';
 const COMPANY_ANALYSIS_PARAMS = `【执行参数】\n执行Agent：${COMPANY_ANALYST}\n超时：15分钟\n验收：仅返回完整经营KR建议JSON，不能改正式数字。\n【执行参数结束】`;
-const OPEN = new Set(['queued', 'in_progress', 'paused', 'blocked']);
 const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const fail = message => { throw new Error(message); };
 
 export function shanghaiClock(now = new Date()) {
   const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', hourCycle: 'h23' }).formatToParts(now).map(p => [p.type, p.value]));
   return { day: `${parts.year}-${parts.month}-${parts.day}`, hour: Number(parts.hour) };
-}
-
-export function analysisPlan(config, input, latest, { hour = 0, manual = false, retry = false } = {}) {
-  if (!config.enabled) return { run: false, reason: 'disabled' };
-  if (!input.items.length) return { run: false, reason: 'no_active_krs' };
-  if (latest && OPEN.has(latest.status)) return { run: false, reason: 'in_progress' };
-  const previous = latest?.payload?.company_kr_analysis;
-  const same = previous?.formal_hash === input.formal_hash && previous?.day === input.day;
-  if (latest?.status === 'failed' && latest.error_message === 'company_kr_analysis_superseded') return { run: true, trigger: manual ? 'manual' : 'change' };
-  if (same && latest.status === 'failed' && manual && retry) return { run: true, trigger: 'manual' };
-  if (same) return { run: false, reason: latest.status === 'failed' ? 'failed_requires_retry' : 'already_analyzed' };
-  if (manual) return { run: true, trigger: 'manual' };
-  if (!previous || previous.formal_hash !== input.formal_hash) return { run: true, trigger: 'change' };
-  return hour >= (config.hour ?? 8) ? { run: true, trigger: 'daily' } : { run: false, reason: 'before_daily_hour' };
-}
-
-export async function companyAnalysisStatus(pool) {
-  const config = (await pool.query('SELECT value_json FROM working_memory WHERE key=$1', [COMPANY_ANALYSIS_CONFIG])).rows[0]?.value_json || { enabled: false, hour: 8 };
-  const latest = (await pool.query("SELECT id,status,error_message,created_at,completed_at,payload->'company_kr_analysis' AS input,result->'company_kr_analysis' AS analysis FROM tasks WHERE payload->'company_kr_analysis'->>'version'='1' ORDER BY created_at DESC LIMIT 1")).rows[0] || null;
-  return { config: { enabled: config.enabled === true, hour: config.hour ?? 8, timezone: 'Asia/Shanghai', agent: COMPANY_ANALYST }, latest };
-}
-
-export async function configureCompanyAnalysis(pool, input) {
-  if (Object.keys(input).some(k => !['enabled', 'hour'].includes(k)) || typeof input.enabled !== 'boolean' || !Number.isInteger(input.hour) || input.hour < 0 || input.hour > 23) fail('enabled须为布尔值，hour须为0至23整数');
-  await pool.query(`INSERT INTO working_memory(key,value_json,updated_at) VALUES($1,$2::jsonb,NOW())
-    ON CONFLICT(key) DO UPDATE SET value_json=EXCLUDED.value_json,updated_at=NOW()`, [COMPANY_ANALYSIS_CONFIG, JSON.stringify({ enabled: input.enabled, hour: input.hour, actor: 'notion-owner-workflow', updated_at: new Date().toISOString() })]);
-  return companyAnalysisStatus(pool);
 }
 
 export async function companyAnalysisSnapshot(pool, now = new Date()) {
@@ -74,41 +46,6 @@ export async function markCompanyAnalysis(pool, task, status, error = null) {
   if (!input?.items?.length) return;
   const value = { task_id: task.id, status, at: new Date().toISOString(), ...(error ? { error: String(error).slice(0, 300) } : {}) };
   await pool.query("UPDATE key_results SET metadata=jsonb_set(COALESCE(metadata,'{}'::jsonb),'{company_analysis}',$2::jsonb,true) WHERE id=ANY($1::uuid[])", [input.items.map(i => i.id), JSON.stringify(value)]);
-}
-
-export async function requestCompanyKrAnalysis(pool, { now = new Date(), manual = false, retry = false, createTask } = {}) {
-  const configured = (await pool.query('SELECT value_json FROM working_memory WHERE key=$1', [COMPANY_ANALYSIS_CONFIG])).rows[0]?.value_json;
-  if (configured?.enabled !== true) return { skipped: true, reason: 'disabled' };
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-    await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', ['company-kr-analysis']);
-    const config = (await client.query('SELECT value_json FROM working_memory WHERE key=$1', [COMPANY_ANALYSIS_CONFIG])).rows[0]?.value_json || {};
-    const input = await companyAnalysisSnapshot(client, now);
-    const latest = (await client.query("SELECT * FROM tasks WHERE payload->'company_kr_analysis'->>'version'='1' ORDER BY (status IN ('queued','in_progress','paused','blocked')) DESC,created_at DESC LIMIT 1")).rows[0];
-    const plan = analysisPlan(config, input, latest, { ...shanghaiClock(now), manual, retry });
-    if (!plan.run) {
-      if (latest) await markCompanyAnalysis(client, latest, latest.status, latest.error_message);
-      await client.query('COMMIT');
-      return { skipped: true, reason: plan.reason, task_id: latest?.id ?? null };
-    }
-    input.trigger = plan.trigger;
-    const { createTask: defaultCreateTask } = await import('../actions.js');
-    const taskCreator = createTask || defaultCreateTask;
-    const sourceId = `company-kr-analysis:${input.day}:${input.formal_hash}:${latest?.id || 'initial'}${retry && latest?.status === 'failed' ? `:${randomUUID()}` : ''}`;
-    const title = `公司经营KR分析 ${input.day} ${input.formal_hash.slice(0, 8)}`;
-    const creation = await taskCreator({ db: client, source: 'scheduler', source_id: sourceId, title,
-      description: '只读正式目标与经营证据，输出供主理人确认的独立建议。', priority: 'P2', task_type: 'qiumi_task',
-      trigger_source: 'company_kr_analysis', allow_unscoped: true, delivery_type: 'report',
-      payload: { company_kr_analysis: input, qiumi_source: { title,
-        // 路由只读固定指令；经营快照可能包含设备名或执行块，派发后才交给专用分析员。
-        body: `${COMPANY_ANALYSIS_PARAMS}\n\n只读公司经营KR的正式目标与经营证据，输出供主理人确认的独立建议。` } } });
-    if (!creation?.success || !creation.task?.id) fail(creation?.error || '分析任务登记失败');
-    await markCompanyAnalysis(client, creation.task, 'queued');
-    await client.query('COMMIT');
-    return { success: true, task_id: creation.task.id, trigger: plan.trigger, snapshot_id: input.snapshot_id };
-  } catch (error) { await client.query('ROLLBACK'); throw error; }
-  finally { client.release(); }
 }
 
 export function parseCompanyAnalysis(text, input) {

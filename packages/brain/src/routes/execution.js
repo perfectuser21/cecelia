@@ -1036,69 +1036,6 @@ router.post('/execution-callback', executionCallbackRateLimit, internalAuthOrLoo
 
       // 旧拆解已退役：在途回执仍正常收尾，不再自动创建旧审查或改写审核状态。
 
-      // 5c. Review 闭环：发现问题 → 自动创建修复 Task
-      try {
-        const taskResult = await pool.query('SELECT task_type, project_id, goal_id, title FROM tasks WHERE id = $1', [task_id]);
-        const taskRow = taskResult.rows[0];
-
-        if (taskRow?.task_type === 'review') {
-          console.log(`[execution-callback] Review task completed, checking for issues...`);
-
-          // 解析结果，查找 L1/L2 问题
-          const resultStr = typeof result === 'string' ? result : JSON.stringify(result || {});
-          const hasL1 = /L1[：:]/i.test(resultStr) || /\bL1\b.*问题/i.test(resultStr);
-          const hasL2 = /L2[：:]/i.test(resultStr) || /\bL2\b.*问题/i.test(resultStr);
-
-          if (hasL1 || hasL2) {
-            console.log(`[execution-callback] Review found issues (L1: ${hasL1}, L2: ${hasL2}), creating fix task...`);
-
-            // 提取问题描述作为 PRD
-            const issueLevel = hasL1 ? 'L1 (阻塞级)' : 'L2 (功能级)';
-            const prdContent = `# PRD - 修复 Review 发现的问题
-
-## 背景
-Review 任务 "${taskRow.title}" 发现了 ${issueLevel} 问题需要修复。
-
-## 问题描述
-${resultStr.substring(0, 2000)}
-
-## 目标
-修复 Review 发现的所有 ${issueLevel} 问题。
-
-## 验收标准
-- [ ] 所有 L1 问题已修复
-- [ ] 所有 L2 问题已修复
-- [ ] 修复后代码通过测试
-- [ ] 再次 Review 无新问题
-
-## 技术要点
-根据 Review 报告中的具体建议进行修复。`;
-
-            const { createTask: createFixTask } = await import('../actions.js');
-            await createFixTask({
-              title: `修复: ${taskRow.title.replace(/^(每日质检|Review)[：:]\s*/i, '')}`,
-              description: `Review 发现 ${issueLevel} 问题，需要修复`,
-              task_type: 'dev',
-              priority: hasL1 ? 'P0' : 'P1',
-              project_id: taskRow.project_id,
-              goal_id: taskRow.goal_id,
-              prd_content: prdContent,
-              payload: {
-                triggered_by: 'review',
-                review_task_id: task_id,
-                issue_level: hasL1 ? 'L1' : 'L2'
-              }
-            });
-
-            console.log(`[execution-callback] Created fix task for review issues`);
-          } else {
-            console.log(`[execution-callback] Review passed, no L1/L2 issues found`);
-          }
-        }
-      } catch (reviewErr) {
-        console.error(`[execution-callback] Review handling error: ${reviewErr.message}`);
-      }
-
       // architecture_design完成后，验证既有design任务的交付情况。
       try {
         const adRow = await pool.query(
@@ -1154,8 +1091,8 @@ ${resultStr.substring(0, 2000)}
       // 5c8. 断链 #4: code_review 完成 → 根据 decision 路由
       // scope=initiative 的 code_review 根据 decision 决定后续：
       // - PASS（默认）→ initiative_verify
-      // - NEEDS_FIX → 创建修复 dev task（代码问题，不进 verify）
-      // - CRITICAL_BLOCK / TEST_BLOCK → cecelia_events P0告警，停止 pipeline
+      // - NEEDS_FIX / TEST_BLOCK → 留存问题事件，不衍生开发任务
+      // - CRITICAL_BLOCK → cecelia_events P0告警，停止 pipeline
       try {
         const crRow = await pool.query(
           'SELECT task_type, project_id, goal_id, title, payload FROM tasks WHERE id = $1',
@@ -1182,63 +1119,16 @@ ${resultStr.substring(0, 2000)}
               })]
             );
             console.warn(`[execution-callback] 断链#4 CRITICAL_BLOCK: initiative pipeline blocked, project=${projectId}`);
-          } else if (hasTestBlock) {
-            // 集成测试失败：创建修复 task（与 NEEDS_FIX 修复 task 独立，不计入轮次）
-            const existingTestFix = await pool.query(
-              `SELECT id FROM tasks WHERE project_id = $1 AND task_type = 'dev' AND status IN ('queued', 'in_progress') AND payload->>'fix_type' = 'integration_test_failure' LIMIT 1`,
-              [projectId]
-            );
-            if (existingTestFix.rows.length === 0) {
-              await createCrFollowTask({
-                title: `[修复] 集成测试失败 — ${crTask.title}`,
-                description: `Initiative 集成测试失败（TEST_BLOCK），需修复集成测试后重新走 code_review。\n原始 code_review task_id: ${task_id}\n请检查最后一个 dev task 的集成测试日志，修复测试失败原因。`,
-                priority: 'P0',
+          } else if (hasTestBlock || decision === 'NEEDS_FIX') {
+            // 审查问题保留在原回执及事件账，不自动扩出新的开发任务。
+            await pool.query(
+              `INSERT INTO cecelia_events (event_type, source, payload) VALUES ($1, $2, $3)`,
+              ['initiative_pipeline_blocked', 'execution_callback', JSON.stringify({
                 project_id: projectId,
-                goal_id: crTask.goal_id,
-                task_type: 'dev',
-                trigger_source: 'execution_callback_auto',
-                payload: { fix_type: 'integration_test_failure', parent_task_id: task_id }
-              });
-              console.log(`[execution-callback] 断链#4 TEST_BLOCK: 创建集成测试修复 dev task project=${projectId}`);
-            } else {
-              console.log(`[execution-callback] 断链#4 TEST_BLOCK: 已有集成测试修复 task，跳过 project=${projectId}`);
-            }
-          } else if (decision === 'NEEDS_FIX') {
-            // 代码问题: 检查修复轮次上限，防止死循环
-            const MAX_FIX_ROUNDS = 3;
-            const fixCountRow = await pool.query(
-              `SELECT COUNT(*)::int as cnt FROM tasks WHERE project_id = $1 AND task_type = 'dev' AND payload->>'fix_type' = 'code_review_issues'`,
-              [projectId]
+                alert_type: hasTestBlock ? 'test_block' : 'needs_fix',
+                code_review_task_id: task_id,
+              })]
             );
-            const fixRound = fixCountRow.rows[0]?.cnt || 0;
-            const nextFixRound = fixRound + 1;
-            if (nextFixRound > MAX_FIX_ROUNDS) {
-              await pool.query(
-                `INSERT INTO cecelia_events (event_type, source, payload) VALUES ($1, $2, $3)`,
-                ['initiative_max_fixes_exceeded', 'execution_callback', JSON.stringify({
-                  project_id: projectId, fix_round: fixRound, code_review_task_id: task_id
-                })]
-              );
-              console.warn(`[execution-callback] 断链#4 NEEDS_FIX: 超过 ${MAX_FIX_ROUNDS} 轮修复 → P0告警 project=${projectId}`);
-            } else {
-              const existingFix = await pool.query(
-                `SELECT id FROM tasks WHERE project_id = $1 AND task_type = 'dev' AND status IN ('queued', 'in_progress') AND title LIKE '[修复]%' LIMIT 1`,
-                [projectId]
-              );
-              if (existingFix.rows.length === 0) {
-                await createCrFollowTask({
-                  title: `[修复] code_review 问题修复 R${nextFixRound} — ${crTask.title}`,
-                  description: `Initiative code_review 发现代码问题（NEEDS_FIX），需修复后重新走 code_review。\n原始 code_review task_id: ${task_id}\n修复轮次: ${nextFixRound}/${MAX_FIX_ROUNDS}\n修复清单参见 code_review 报告。`,
-                  priority: 'P1',
-                  project_id: projectId,
-                  goal_id: crTask.goal_id,
-                  task_type: 'dev',
-                  trigger_source: 'execution_callback_auto',
-                  payload: { fix_type: 'code_review_issues', parent_task_id: task_id, revision_round: nextFixRound }
-                });
-                console.log(`[execution-callback] 断链#4 NEEDS_FIX R${nextFixRound}: 创建修复 dev task project=${projectId}`);
-              }
-            }
           } else {
             // PASS: 创建 initiative_verify
             const existingIv = await pool.query(
@@ -1259,46 +1149,6 @@ ${resultStr.substring(0, 2000)}
                 payload: { parent_task_id: task_id, code_review_task_id: task_id }
               });
               console.log(`[execution-callback] 断链#4 PASS: initiative_verify created project=${projectId}`);
-            }
-          }
-        } else if (crTask?.task_type === 'code_review' && crPayload.scope === 'daily') {
-          // 漏点④: daily 巡检 code_review 完成 → 按 decision/L1-L2 计数自动立案修复 dev task
-          // daily 任务无 project_id/goal_id（非 initiative），修复 task 用 repo_path 定位、走 auto_fix 系统源。
-          // 严重度优先：l1_count>0 或 CRITICAL_BLOCK → P0；否则 NEEDS_FIX / l2_count>0 → P1；其余（PASS 且无问题）→ 不立案。
-          const resultObj = typeof result === 'object' && result !== null ? result : {};
-          const decision = resultObj.decision || 'PASS';
-          const l1Count = Number(resultObj.l1_count) || 0;
-          const l2Count = Number(resultObj.l2_count) || 0;
-          const repoPath = crPayload.repo_path || null;
-          const hasCritical = decision === 'CRITICAL_BLOCK' || l1Count > 0;
-          const hasFixable = hasCritical || decision === 'NEEDS_FIX' || l2Count > 0;
-
-          if (!hasFixable) {
-            console.log(`[execution-callback] daily code_review=${task_id} decision=${decision} L1=${l1Count} L2=${l2Count}，无需修复，skip`);
-          } else if (!repoPath) {
-            console.warn(`[execution-callback] daily code_review=${task_id} 缺 repo_path，无法立案修复 task，skip`);
-          } else {
-            // 幂等：同 repo 已有未完成的 daily 修复 task 时不重复立案
-            const existingDailyFix = await pool.query(
-              `SELECT id FROM tasks WHERE task_type = 'dev' AND status IN ('queued', 'in_progress', 'dispatched')
-                 AND payload->>'fix_type' = 'daily_review_issues' AND payload->>'repo_path' = $1 LIMIT 1`,
-              [repoPath]
-            );
-            if (existingDailyFix.rows.length > 0) {
-              console.log(`[execution-callback] 漏点④ daily 修复 task 已存在（repo=${repoPath}），跳过`);
-            } else {
-              const priority = hasCritical ? 'P0' : 'P1';
-              const repoName = repoPath.split('/').pop() || repoPath;
-              const { createTask: createDailyFixTask } = await import('../actions.js');
-              await createDailyFixTask({
-                title: `[修复] daily 巡检发现 ${priority} 问题 — ${repoName}`,
-                description: `每日代码巡检（code_review）发现需修复的问题：decision=${decision}，L1=${l1Count}，L2=${l2Count}。\n仓库: ${repoPath}\n原始 code_review task_id: ${task_id}\n修复清单见巡检报告 docs/reviews/CODE-REVIEW-REPORT-*.md，按 L1（必修）/L2（建议修）优先级修复。`,
-                priority,
-                task_type: 'dev',
-                trigger_source: 'auto_fix',
-                payload: { fix_type: 'daily_review_issues', repo_path: repoPath, code_review_task_id: task_id, l1_count: l1Count, l2_count: l2Count, decision },
-              });
-              console.log(`[execution-callback] 漏点④ daily code_review→修复立案: ${priority} dev task created (repo=${repoPath}, decision=${decision}, L1=${l1Count}, L2=${l2Count})`);
             }
           }
         } else if (crTask?.task_type === 'code_review') {
@@ -1361,7 +1211,7 @@ ${resultStr.substring(0, 2000)}
 
       // 5c10. 断链 #6: initiative_verify 完成 → 根据 verdict 处理结论
       // - APPROVED → project status = 'completed'
-      // - NEEDS_REVISION (≤3轮) → 创建修订 dev task
+      // - NEEDS_REVISION (≤3轮) → 记录修订需求事件
       // - NEEDS_REVISION (>3轮) → cecelia_events P0告警
       // - REJECTED → cecelia_events P0告警
       try {
@@ -1376,7 +1226,6 @@ ${resultStr.substring(0, 2000)}
           const verdict = resultObj.verdict || 'APPROVED';
           const revisionRound = ivTask.payload?.revision_round || 0;
           const MAX_REVISION_ROUNDS = 3;
-          const { createTask: createIvFollowTask } = await import('../actions.js');
 
           if (verdict === 'APPROVED') {
             await pool.query(
@@ -1395,23 +1244,12 @@ ${resultStr.substring(0, 2000)}
               );
               console.warn(`[execution-callback] 断链#6 NEEDS_REVISION: 超过 ${MAX_REVISION_ROUNDS} 轮 → P0告警 project=${projectId}`);
             } else {
-              const existingFix = await pool.query(
-                `SELECT id FROM tasks WHERE project_id = $1 AND task_type = 'dev' AND status IN ('queued', 'in_progress') AND title LIKE '[修订]%' LIMIT 1`,
-                [projectId]
+              await pool.query(
+                `INSERT INTO cecelia_events (event_type, source, payload) VALUES ($1, $2, $3)`,
+                ['initiative_revision_required', 'execution_callback', JSON.stringify({
+                  project_id: projectId, revision_round: revisionRound, initiative_verify_task_id: task_id,
+                })]
               );
-              if (existingFix.rows.length === 0) {
-                await createIvFollowTask({
-                  title: `[修订] initiative_verify 问题修复 R${nextRevisionRound} — ${ivTask.title}`,
-                  description: `Initiative verify 发现问题（NEEDS_REVISION），第 ${nextRevisionRound} 轮修订。\n修订清单参见 initiative_verify 报告。\n原始 task_id: ${task_id}`,
-                  priority: 'P1',
-                  project_id: projectId,
-                  goal_id: ivTask.goal_id,
-                  task_type: 'dev',
-                  trigger_source: 'execution_callback_auto',
-                  payload: { fix_type: 'initiative_verify_revision', parent_task_id: task_id, revision_round: nextRevisionRound }
-                });
-                console.log(`[execution-callback] 断链#6 NEEDS_REVISION R${nextRevisionRound}: 修订 dev task created project=${projectId}`);
-              }
             }
           } else if (verdict === 'REJECTED') {
             await pool.query(

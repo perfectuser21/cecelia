@@ -1,4 +1,3 @@
-import { trustedN8nWebhookUrl } from './lib/n8n-webhook-url.js';
 import {assertActiveDevelopmentTask} from './lib/task-type-registry.js';
 import { COMPANY_KR_SQL_GUARD, isCompanyKr } from './lib/company-kr-metrics.js';
 import { randomUUID } from 'node:crypto';
@@ -13,9 +12,6 @@ import {
   RESEARCH_TASK_TYPES as _R, REVIEW_TASK_TYPES as _V, CODING_TASK_TYPES as _K,
   NO_GOAL_TASK_TYPES, LAYER_RETIRED_TASK_TYPES,
 } from './lib/task-type-registry.js';
-
-const N8N_API_URL = process.env.N8N_API_URL || 'http://localhost:5679';
-const N8N_API_KEY = process.env.N8N_API_KEY || '';
 
 /**
  * Check if a task type is a system/internal task that doesn't require goal_id
@@ -536,39 +532,6 @@ async function updateGoal({ goal_id, status, progress }) {
 }
 
 /**
- * Trigger n8n webhook
- */
-async function triggerN8n({ webhook_path, data }) {
-  try {
-    const headers = {
-      'Content-Type': 'application/json',
-      ...(N8N_API_KEY ? { 'X-N8N-API-KEY': N8N_API_KEY } : {})
-    };
-
-    const url = trustedN8nWebhookUrl(N8N_API_URL, webhook_path);
-
-    const response = await fetch(url, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(data || {}),
-      redirect: 'error',
-      signal: AbortSignal.timeout(10000),
-    });
-
-    const responseData = await response.text();
-    console.log('[Action] Triggered n8n webhook:', webhook_path);
-
-    return {
-      success: response.ok,
-      status: response.status,
-      response: responseData
-    };
-  } catch (err) {
-    return { success: false, error: err.message };
-  }
-}
-
-/**
  * Update working memory
  */
 async function setMemory({ key, value }) {
@@ -646,7 +609,6 @@ export {
   updateTask,
   createGoal,
   updateGoal,
-  triggerN8n,
   setMemory,
   batchUpdateTasks
 };

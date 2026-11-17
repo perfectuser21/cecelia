@@ -21,7 +21,7 @@ import { finalizeTask } from './lib/task-terminal.js';
 import { sortTasksByWeight } from './task-weight.js';
 import { handleTaskFailure } from './quarantine.js';
 import { shouldBypassBackpressure } from './slot-allocator.js';
-import { TICK_DISPATCH_EXCLUDED } from './lib/task-type-registry.js';
+import { CODING_TASK_TYPES, TICK_DISPATCH_EXCLUDED } from './lib/task-type-registry.js';
 
 // 日志 helper：[tick] 前缀（保持与原 tick.js 输出一致），Asia/Shanghai 时间戳。
 function tickLog(...args) {
@@ -187,7 +187,15 @@ export async function selectNextDispatchableTask(goalIds, excludeIds = [], optio
  */
 export async function autoCreateTasksFromCortex(rcaResult, context = {}) {
   const createTaskActions = (rcaResult.recommended_actions || [])
-    .filter((a) => a.type === 'create_task' && a.params?.title);
+    .filter((a) => {
+      if (a.type !== 'create_task' || !a.params?.title) return false;
+      const params = a.params;
+      const payload = params.payload || {};
+      const taskTypes = [params.task_type || 'dev', params.requested_task_type, payload.requested_task_type];
+      return !taskTypes.some(type => type === 'coding_workflow' || CODING_TASK_TYPES.includes(type))
+        && ![params.mutation_intent, payload.mutation_intent].some(intent => ['write', 'unknown'].includes(intent))
+        && params.coding_workflow == null && payload.coding_workflow == null;
+    });
 
   if (createTaskActions.length === 0) return [];
 
@@ -198,7 +206,7 @@ export async function autoCreateTasksFromCortex(rcaResult, context = {}) {
         title: action.params.title,
         description: action.params.description || '',
         priority: action.params.priority || 'P1',
-        task_type: action.params.task_type || 'dev',
+        task_type: action.params.task_type,
         trigger_source: 'cortex',
         goal_id: action.params.goal_id || context.goal_id || null,
         project_id: action.params.project_id || context.project_id || null,

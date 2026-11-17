@@ -1,6 +1,5 @@
 import { Router } from 'express';
 import pool from '../db.js';
-import { createTask } from '../actions.js';
 import { TASK_TYPE_AGENT_MAP } from '../tick-helpers.js';
 import { classifyLearningType } from './shared.js';
 import { generateL0Summary } from '../memory-utils.js';
@@ -203,7 +202,7 @@ router.post('/tasks/:task_id/feedback', async (req, res) => {
  *
  * LEARNINGS 路由入口：dev workflow 将 LEARNINGS.md 提取内容发送到此处。
  * 丘脑分拣：
- *   - issues_found（已知 bug）→ 创建 fix task（任务线）
+ *   - issues_found（已知 bug）→ 原回执事件留账
  *   - next_steps_suggested（经验/预防措施）→ 写 learnings 表（成长线 → 反刍 → NotebookLM）
  *
  * 新增（migration 151）：自动填充 source_branch、source_pr、repo、learning_type 字段
@@ -232,26 +231,6 @@ router.post('/learnings-received', async (req, res) => {
     } = req.body;
 
     const results = { tasks_created: [], learnings_inserted: [] };
-
-    // 1. issues_found → 创建 fix task（任务线）
-    for (const issue of issues_found) {
-      if (!issue || typeof issue !== 'string') continue;
-      try {
-        const taskResult = await createTask({
-          title: `Fix: ${issue.slice(0, 120)}`,
-          description: `来源：LEARNINGS_RECEIVED（分支 ${branch_name || 'unknown'}${pr_number ? ` / PR #${pr_number}` : ''}）\n\n${issue}`,
-          task_type: 'dev',
-          priority: 'P1',
-          trigger_source: 'learnings_received',
-          payload: { branch_name, pr_number, task_id, source: 'learnings_received' },
-        });
-        if (taskResult?.task?.id) {
-          results.tasks_created.push(taskResult.task.id);
-        }
-      } catch (taskErr) {
-        console.warn(`[learnings-received] createTask failed for issue: ${taskErr.message}`);
-      }
-    }
 
     // 2. next_steps_suggested → 写 learnings 表（成长线）
     // 先批量插入（source_branch/source_pr/repo + task_id 立即填充），learning_type 异步补填
@@ -324,6 +303,9 @@ router.post('/learnings-received', async (req, res) => {
         `INSERT INTO cecelia_events (event_type, source, payload) VALUES ($1, $2, $3)`,
         ['learnings_received', 'dev_workflow', JSON.stringify({
           issues_count: issues_found.length,
+          issues_found,
+          task_id,
+          repo,
           steps_count: next_steps_suggested.length,
           tasks_created: results.tasks_created.length,
           learnings_inserted: results.learnings_inserted.length,

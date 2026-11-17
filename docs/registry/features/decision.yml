@@ -294,7 +294,7 @@ features:
     runtime: {}
   - feature_id: monitor_loop
     name: 监控自愈
-    purpose: 30s 间隔检测并自动修复卡住任务
+    purpose: 30s 检测卡住任务并执行规则恢复；诊断不自主创建开发任务
     maturity: 2
     code:
       root: packages/brain/src
@@ -318,7 +318,6 @@ features:
         auth: none
     tests:
       unit:
-        - packages/brain/src/__tests__/auto-fix-circuit-breaker.test.js
         - packages/brain/src/__tests__/auto-fix.test.js
         - packages/brain/src/__tests__/auto-learning.test.js
         - packages/brain/src/__tests__/auto-rca.test.js
@@ -354,7 +353,6 @@ features:
         maturity: 2
         tests:
           unit:
-            - packages/brain/src/__tests__/auto-fix-circuit-breaker.test.js
             - packages/brain/src/__tests__/auto-fix.test.js
             - packages/brain/src/__tests__/auto-learning.test.js
             - packages/brain/src/__tests__/auto-rca.test.js

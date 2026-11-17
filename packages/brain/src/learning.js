@@ -117,66 +117,6 @@ export async function recordLearning(analysis) {
       routedToId: learning.id,
     });
 
-    // 强制绑定：RCA learning 触发 dev task（Insight-to-Action 闭环）
-    // T9: 加 confidence 门槛——低置信 RCA 只落 learning 不建任务，防任务队列噪音
-    const INSIGHT_TASK_MIN_CONFIDENCE = 0.7;
-    if ((analysis.confidence ?? 0) >= INSIGHT_TASK_MIN_CONFIDENCE) {
-      try {
-        const taskDedup = await pool.query(
-          `SELECT id FROM tasks WHERE payload->>'insight_learning_id' = $1 AND status != 'cancelled' LIMIT 1`,
-          [learning.id]
-        );
-        if (taskDedup.rows.length === 0) {
-          // 仓库与范围只继承触发任务的持久化路由，不能从 RCA 文案猜测目标仓库。
-          const source = task_id ? await pool.query('SELECT payload FROM tasks WHERE id = $1', [task_id]) : { rows: [] };
-          const { repo, map_scope: mapScope } = source.rows[0]?.payload || {};
-          if (typeof repo !== 'string' || !repo.trim() || !Array.isArray(mapScope)
-              || mapScope.length === 0 || mapScope.some(scope => typeof scope !== 'string' || !scope.trim())) {
-            await pool.query(`UPDATE learnings SET metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb WHERE id = $1`,
-              [learning.id, JSON.stringify({ insight_task_status: 'blocked', insight_task_reason: 'source_route_context_missing' })]);
-          } else {
-            const created = await createTask({
-              source: 'discovery',
-              source_id: `learning-repair:${learning.id}`,
-              repo_hint: repo,
-              map_scope_hint: mapScope,
-              mutation_intent: 'write',
-              declared_change_kind: 'bugfix',
-              title: `[Insight修复] ${title.slice(0, 120)} [${learning.id}]`,
-              description: `由 RCA Learning 自动生成的修复任务。\n\nlearning_id: ${learning.id}\n\n${content}`,
-              priority: 'P2',
-              task_type: 'dev',
-              trigger_source: 'cortex',
-              payload: {
-                insight_learning_id: learning.id,
-                event_type: triggerEvent,
-              },
-            });
-            if (!created?.success || !created.task?.id) throw new Error('insight_task_creation_not_confirmed');
-            // success 也可能是去重结果；只有本 learning、同源仓库与范围才能闭环。
-            const repairPayload = created.task.payload;
-            const expectedScope = [...new Set(mapScope.map(scope => scope.trim()))].sort();
-            if (repairPayload?.insight_learning_id !== learning.id || repairPayload.repo !== repo.trim()
-                || JSON.stringify(repairPayload.map_scope) !== JSON.stringify(expectedScope)) {
-              throw new Error('insight_task_context_mismatch');
-            }
-            await pool.query(
-              `UPDATE learnings SET applied = true, applied_at = NOW() WHERE id = $1`,
-              [learning.id]
-            );
-            console.log(`[learning] Auto-created repair task for RCA learning ${learning.id}`);
-          }
-        }
-      } catch (taskErr) {
-        await pool.query(`UPDATE learnings SET metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb WHERE id = $1`,
-          [learning.id, JSON.stringify({ insight_task_status: 'blocked', insight_task_reason: taskErr.message })])
-          .catch(auditErr => console.warn(`[learning] Failed to record blocked task reason: ${auditErr.message}`));
-        console.warn(`[learning] Failed to create task for learning ${learning.id} (non-fatal):`, taskErr.message);
-      }
-    } else {
-      console.log(`[learning] Skip insight task creation: confidence=${analysis.confidence} < ${INSIGHT_TASK_MIN_CONFIDENCE}`);
-    }
-
     // 写 memory_stream 记录，建立闭环链条（failure_pattern → memory_stream active）
     try {
       const memContent = `[故障记录] ${title}\n\n${rcaAnalysis.root_cause || ''}`;

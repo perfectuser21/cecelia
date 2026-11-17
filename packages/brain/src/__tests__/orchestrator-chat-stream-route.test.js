@@ -26,7 +26,7 @@ vi.mock('../tick.js', () => ({
 }));
 vi.mock('../actions.js', () => ({
   createTask: vi.fn(), updateTask: vi.fn(), createGoal: vi.fn(),
-  updateGoal: vi.fn(), triggerN8n: vi.fn(), setMemory: vi.fn(),
+  updateGoal: vi.fn(), setMemory: vi.fn(),
   batchUpdateTasks: vi.fn(),
 }));
 vi.mock('../focus.js', () => ({
