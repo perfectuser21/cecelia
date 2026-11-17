@@ -1,6 +1,8 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.445.247
+**Brain 版本**: 1.445.248
+
+为单Activity Skill Worker显式注册冻结的宿主stdio MCP工具；保留凭据目录deny、全局never及独立Checker，仅授权固定invoke。每次核验来源、身份与截止，断连停止排队调用，超时保留unknown不重放。
 
 清退已停 n8n 的周期采集与旧平台采集注册，删除无运行消费者的 Skill A/B 评估框架、覆盖率配置弱断言及历史迁移措辞检查；保留非 n8n 采集、现役成熟度、历史投影、Notion 任务通道与真实数据库迁移验证。
 
