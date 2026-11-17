@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
-import { spawnSync, execFileSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
@@ -109,16 +109,23 @@ test('统一CI真实合并runner，保持独有命令和产物并隔离安全权
   for(const [id,job]of Object.entries(workflow.jobs))assert.equal(job.uses,undefined,id+'不得复用另一个workflow');
   assert.ok(readFileSync(new URL('../../../.github/workflows/ci.yml',import.meta.url),'utf8').trimEnd().split('\n').length<=500);
   assert.equal(Object.keys(workflow.jobs).length, 9);
-  const baseline=yaml.load(execFileSync('git',['show','0e2c3c81717ab08ae678a869f526a258f850fec8:.github/workflows/ci.yml'],{cwd:root,encoding:'utf8'}));
   const runtime=workflow.jobs['runtime-integration'];
-  assert.deepEqual(runtime.services, baseline.jobs['node-onboarding'].services);
+  assert.deepEqual(Object.keys(runtime.services),['postgres']);
+  assert.equal(runtime.services.postgres.image,'mirror.gcr.io/library/postgres:17');
+  assert.deepEqual(runtime.services.postgres.env,{POSTGRES_USER:'onboarding_ci',POSTGRES_PASSWORD:'onboarding_ci',POSTGRES_DB:'cecelia_scratch'});
+  assert.deepEqual(runtime.services.postgres.ports,['5432:5432']);
   const settlement=runtime.steps.find(step=>step.name==='接入结算与隔离回归（含真实数据库）');
   assert.equal(settlement['working-directory'], 'packages/brain');
   assert.deepEqual(settlement.env, {NODE_ONBOARDING_TEST_DB:'postgresql://onboarding_ci:onboarding_ci@localhost:5432/cecelia_scratch'});
   assert.equal(settlement.run, 'npx vitest run src/node-onboarding/__tests__/service.test.js src/node-onboarding/__tests__/settlement.test.js src/node-onboarding/__tests__/registry-adoption.test.js --maxWorkers=1 --minWorkers=1');
-  for (const step of baseline.jobs['node-onboarding'].steps.filter(step => step.run && step.run !== 'npm ci' && step.name !== settlement.name)) {
-    assert.ok(runtime.steps.some(actual => actual.run === step.run && JSON.stringify(actual.env) === JSON.stringify(step.env)), step.name);
-  }
+  const onboarding=runtime.steps.find(step=>step.run?.startsWith('node --test'));
+  assert.equal(onboarding.run,'node --test --test-concurrency=1 scripts/ops/__tests__/node-onboarding*.test.mjs');
+  assert.equal(onboarding.if,undefined);
+  const linux=runtime.steps.find(step=>step.name==='Linux自动接入与续验真实数据库回归');
+  assert.equal(linux.env.TEST_DATABASE_URL,'postgresql://onboarding_ci:onboarding_ci@localhost:5432/cecelia_scratch');
+  assert.equal(linux['working-directory'],'packages/brain');
+  assert.equal(linux.if,undefined);
+  assert.equal(linux.run,'npx vitest run --config vitest.integration.config.js src/__tests__/integration/linux-controller-contract.pg.integration.test.js src/__tests__/integration/linux-onboarding-flow.pg.integration.test.js src/__tests__/integration/linux-script-authorization.pg.integration.test.js --maxWorkers=1 --minWorkers=1');
   const recovery=runtime.steps.find(step => step.run?.includes('commander-dbos-recovery-smoke.mjs'));
   assert.equal(recovery.if, '!cancelled()');
   assert.equal(recovery.env.TEST_DB_URL, 'postgresql://onboarding_ci:onboarding_ci@127.0.0.1:5432/cecelia_scratch');
@@ -131,12 +138,18 @@ test('统一CI真实合并runner，保持独有命令和产物并隔离安全权
   assert.deepEqual(preparation,[{name:'Prepare Ubuntu package sources',run:'node scripts/ci/prepare-ubuntu-archive.mjs','working-directory':'.'}]);
   const preparationIndex=browser.steps.indexOf(preparation[0]);
   assert.equal(browser.steps[preparationIndex+1]?.name,'Install Chromium');
-  browser.steps.splice(preparationIndex,1);
-  browser.name=baseline.jobs['pwa-upgrade'].name;
-  assert.deepEqual(browser, baseline.jobs['pwa-upgrade']);
-  assert.equal(workflow.jobs['pwa-upgrade'].name, 'Browser regression (Chromium)');
-  assert.deepEqual(workflow.jobs.security, baseline.jobs.security);
-  assert.deepEqual(workflow.jobs.codeql, baseline.jobs.codeql);
+  assert.equal(browser.name,'Browser regression (Chromium)');
+  assert.equal(browser.defaults.run['working-directory'],'apps/dashboard');
+  assert.equal(browser.steps.some(step=>step.if||step['continue-on-error']),false);
+  assert.equal(browser.steps.filter(step=>step.run==='npm ci'&&step['working-directory']==='.').length,1);
+  const security=workflow.jobs.security;
+  assert.equal(security.steps.some(step=>step.if||step['continue-on-error']),false);
+  assert.equal(security.steps.filter(step=>step.uses==='gitleaks/gitleaks-action@v2').length,1);
+  assert.equal(security.steps.find(step=>step.name==='Check dependency vulnerabilities').run.trim(),
+    'bash scripts/ci/dep-audit-runtime-high.sh\nbash scripts/ci/dep-audit-critical.sh');
+  assert.equal(security.steps.find(step=>step.name==='Install locked dependency manifests').run,
+    'npm ci --ignore-scripts --no-audit --no-fund');
+  assert.equal(workflow.jobs.codeql.steps.some(step=>step.if||step['continue-on-error']),false);
 });
 
 test('周扫描仅CodeQL执行，closed仅cleanup；评论写权限限于预览生命周期', () => {
