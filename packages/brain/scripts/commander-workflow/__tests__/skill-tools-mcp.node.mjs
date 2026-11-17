@@ -6,6 +6,16 @@ import path from 'node:path';
 import {createHash} from 'node:crypto';
 import {prepareHostTools,createHostToolCaller,hostToolsArgs} from '../skill-tools-mcp.mjs';
 const hash=p=>createHash('sha256').update(fs.readFileSync(p)).digest('hex');
+async function assertStopped(pid){
+ const deadline=Date.now()+2000;
+ while(Date.now()<deadline){
+  try{process.kill(pid,0);}catch(e){if(e.code==='ESRCH')return;throw e;}
+  // Linux僵尸已退出但等待init回收，不能把它当作仍执行的工具。
+  if(process.platform==='linux'){try{if(/\) Z /.test(fs.readFileSync(`/proc/${pid}/stat`,'utf8')))return;}catch(e){if(e.code==='ENOENT')return;throw e;}}
+  await new Promise(r=>setTimeout(r,20));
+ }
+ assert.fail(`工具子孙进程未在2s内退出: ${pid}`);
+}
 function fixture(t,source){
  const cwd=fs.mkdtempSync(path.join(os.tmpdir(),'host-tools-test-'));t.after(()=>fs.rmSync(cwd,{recursive:true,force:true}));
  fs.writeFileSync(path.join(cwd,'tool.mjs'),source??`console.log(JSON.stringify({state:'terminal',result:{exit_code:0},secret:'FAKE_SECRET',stdout:'FAKE_SECRET',stderr:'FAKE_SECRET'}))`);
@@ -28,8 +38,8 @@ test('每次调用核验固定身份、所有文件hash与deadline，拒绝任�
 });
 test('timeout杀掉工具进程组，保留unknown且不重放',async t=>{
  const {binding,cwd}=fixture(t,`import fs from 'node:fs';import {spawn} from 'node:child_process';const child=spawn(process.execPath,['-e','setInterval(()=>{},1000)']);fs.writeFileSync('pids.json',JSON.stringify([process.pid,child.pid]));setInterval(()=>{},1000);`);
- const caller=createHostToolCaller({...binding,timeout_ms:250}),a={kind:'phone',action_name:'timeout',args:[]};
- await assert.rejects(caller.call(a),/host_tool_unknown/);for(const pid of JSON.parse(fs.readFileSync(path.join(cwd,'pids.json')))){await new Promise(r=>setTimeout(r,80));assert.throws(()=>process.kill(pid,0));}
+ const caller=createHostToolCaller({...binding,timeout_ms:1500}),a={kind:'phone',action_name:'timeout',args:[]};
+ await assert.rejects(caller.call(a),/host_tool_unknown/);for(const pid of JSON.parse(fs.readFileSync(path.join(cwd,'pids.json'))))await assertStopped(pid);
  await assert.rejects(caller.call(a),/host_tool_unknown/);
 });
 test('stdio MCP只注册固定工具参数，不放开Codex认证配置',t=>{
@@ -49,7 +59,7 @@ for(const mode of ['EOF','SIGTERM'])test(`stdio ${mode}不执行已排队动作�
  server.stdin.write(request(2));if(mode==='EOF')server.stdin.end();else server.kill('SIGTERM');
  await Promise.race([once(server,'close'),new Promise((_,reject)=>{const timer=setTimeout(()=>reject(Error('server_leaked')),2500);timer.unref();})]);
  assert.equal(fs.readFileSync(path.join(cwd,'starts'),'utf8'),'call1\n');
- for(const pid of JSON.parse(fs.readFileSync(path.join(cwd,'pids.json'))))assert.throws(()=>process.kill(pid,0));
+ for(const pid of JSON.parse(fs.readFileSync(path.join(cwd,'pids.json'))))await assertStopped(pid);
  assert.equal(JSON.parse(fs.readFileSync(path.join(binding.directory,'call1.json'))).state,'unknown');
  assert(!fs.existsSync(path.join(binding.directory,'call2.json')));
 });
