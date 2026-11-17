@@ -7,13 +7,12 @@
  */
 import { existsSync } from 'fs';
 import { defaultExecAsync, buildHostCmd } from './host-exec.js';
-import { summarizeLiveness } from './ops-liveness.js';
 import { statusFromCollectorState } from './ops-alarm-ledger.js';
 
 import { OWN_LABEL_RE, parseLaunchctlList, parsePlistDump, computeNextRunUTC, extractOpenclawAgents, extractOpenclawSkills, inferAgentOrg, inferAgentRoleType, parseGhaCron, OPENCLAW_CONFIG_CMD, OPENCLAW_CRON_CMD, parseOpenclawCrons, PLIST_DUMP_CMD, parseCrontab, CRONTAB_CMD_MMV, CRONTAB_CMD_USVPS, CRONTAB_HOST_EXPECT, parseCrontabWithHost, GHA_CRON_CMD } from './ops-collector-hosts.js';
 export { OWN_LABEL_RE, parseLaunchctlList, parsePlistDump, computeNextRunUTC, extractOpenclawAgents, extractOpenclawSkills, inferAgentOrg, inferAgentRoleType, parseGhaCron, OPENCLAW_CONFIG_CMD, OPENCLAW_CRON_CMD, parseOpenclawCrons, PLIST_DUMP_CMD, parseCrontab, CRONTAB_CMD_MMV, CRONTAB_CMD_USVPS, CRONTAB_HOST_EXPECT, parseCrontabWithHost, GHA_CRON_CMD };
-import { parseN8nRuns, isBusinessWorkflow, summarizeRuns, N8N_RUNS_CMD, DISCO_STAGES, DISCO_MIN_RUNS, DISCO_CONVERGED_RATE, parseEvalScore, inferDiscoStage, rollupAgentMaturity, rollupWorkflowMaturity, parseN8nExecutionStages, aggregateStageStats, STAGE_TO_SKILL, N8N_STAGE_DATA_CMD, buildEvalRecord, detectPostcondition, countStages, parseN8nWorkflows, resolveWorkflowAgents, buildStageFlow, buildWorkflowMermaid, buildWorkflowPageBlocks, N8N_LIST_CMD } from './ops-collector-n8n.js';
-export { parseN8nRuns, isBusinessWorkflow, summarizeRuns, N8N_RUNS_CMD, DISCO_STAGES, DISCO_MIN_RUNS, DISCO_CONVERGED_RATE, parseEvalScore, inferDiscoStage, rollupAgentMaturity, rollupWorkflowMaturity, parseN8nExecutionStages, aggregateStageStats, STAGE_TO_SKILL, N8N_STAGE_DATA_CMD, buildEvalRecord, detectPostcondition, countStages, parseN8nWorkflows, resolveWorkflowAgents, buildStageFlow, buildWorkflowMermaid, buildWorkflowPageBlocks, N8N_LIST_CMD };
+import { DISCO_STAGES, DISCO_MIN_RUNS, DISCO_CONVERGED_RATE, parseEvalScore, inferDiscoStage, rollupAgentMaturity, rollupWorkflowMaturity, detectPostcondition, buildStageFlow, buildWorkflowMermaid, buildWorkflowPageBlocks } from './ops-collector-n8n.js';
+export { DISCO_STAGES, DISCO_MIN_RUNS, DISCO_CONVERGED_RATE, parseEvalScore, inferDiscoStage, rollupAgentMaturity, rollupWorkflowMaturity, detectPostcondition, buildStageFlow, buildWorkflowMermaid, buildWorkflowPageBlocks };
 
 export const INTERVAL_MS = parseInt(process.env.OPS_COLLECTOR_INTERVAL_MS || String(5 * 60 * 1000), 10);
 
@@ -281,100 +280,6 @@ export async function runOpsCollector(pool, opts = {}) {
       const [status, code] = classifyError(e);
       await writeHeartbeat(pool, 'crontab', 'us-vps', status, code, e.message);
       results.crontab_usvps = { ok: false };
-    }
-
-    // —— 腿5: n8n run 执行历史@hk-vps（每次跑的记录 + 流程健康汇总）——
-    try {
-      const rawRuns = await run(N8N_RUNS_CMD);
-      let runList;
-      try { runList = JSON.parse(rawRuns || '[]'); } catch { throw new Error(`parse_error: n8n run 导出非法 JSON（前100字符: ${String(rawRuns).slice(0, 100)}）`); }
-      const runs = parseN8nRuns(runList, 'hk-vps');
-      if (runs.length === 0) throw new Error('parse_error: n8n 执行历史解析出 0 条（0=可疑，禁当真空）');
-      for (const r of runs) {
-        await pool.query(
-          `INSERT INTO ops_runs (source, run_id, wf_id, status, mode, machine, started_at, stopped_at, duration_sec)
-           VALUES ('n8n',$1,$2,$3,$4,$5,$6,$7,$8)
-           ON CONFLICT (source, run_id) DO UPDATE SET
-             status=EXCLUDED.status, stopped_at=EXCLUDED.stopped_at, duration_sec=EXCLUDED.duration_sec`,
-          [r.run_id, r.wf_id, r.status, r.mode, r.machine, r.started_at, r.stopped_at, r.duration_sec]);
-      }
-      // 回填每条流程的健康汇总 + 机器
-      const byWf = new Map();
-      for (const r of runs) {
-        if (!byWf.has(r.wf_id)) byWf.set(r.wf_id, []);
-        byWf.get(r.wf_id).push(r);
-      }
-      for (const [wfId, list] of byWf) {
-        const s = summarizeRuns(list);
-        // 活性判定：这条流程还会不会跑（按它自己的历史节奏，不是一刀切阈值）。
-        // 只写机器列，人工列（owner/note/priority/starred/enable_intent）不在 SET 里，
-        // 采集永远不会冲掉主理人在 Notion 上填的东西。
-        const lv = summarizeLiveness(list, Date.now());
-        await pool.query(
-          `UPDATE ops_workflows SET machine='hk-vps', run_total=$1, run_success_rate=$2,
-             run_avg_sec=$3, last_run_at=$4, last_run_status=$5,
-             baseline_interval_sec=$6, liveness=$7, silent_sec=$8,
-             warn_after_sec=$9, dead_after_sec=$10, liveness_at=NOW(), updated_at=NOW()
-           WHERE source='n8n' AND wf_id=$11`,
-          [s.total, s.success_rate, s.avg_duration_sec, s.last_run_at, s.last_status,
-           lv.baseline_interval_sec, lv.liveness, lv.silent_sec,
-           lv.warn_after_sec, lv.dead_after_sec, wfId]);
-      }
-      // 阶段级归因（刀8-A）：逐 skill 的真实运行次数/成功率/耗时。
-      // 失败不影响 run 记录本身——归因是增益不是前提。
-      try {
-        // 阶段数据体积大（~80KB/条），单独放宽超时——默认 20s 拉 120 条必 ETIMEDOUT
-        // （2026-09-08 生产实证：拉 300 条 ≈24MB 超时，归因整段跳过）
-        const rawStages = await exec(buildHostCmd(N8N_STAGE_DATA_CMD, inContainer, opts.keyExistsFn), { timeoutMs: 120_000 });
-        const execList = JSON.parse(rawStages || '[]') || [];
-        const parsed = execList.map((x) => parseN8nExecutionStages(x));
-        const stats = aggregateStageStats(parsed, STAGE_TO_SKILL);
-        for (const [skillName, st] of stats) {
-          await pool.query(
-            `UPDATE ops_skills SET runs=$1, run_success=$2, run_success_rate=$3,
-               run_avg_sec=$4, run_stats_at=$5, updated_at=NOW()
-             WHERE source='openclaw' AND name=$6`,
-            [st.runs, st.success, st.success_rate, st.avg_sec, collectedAt, skillName]);
-        }
-        results.stage_attribution = { ok: true, skills: stats.size, executions: parsed.length };
-      } catch (e) {
-        console.warn('[ops-collector] 阶段归因失败（不影响 run 记录）:', e.message?.slice(0, 160));
-        results.stage_attribution = { ok: false };
-      }
-      await writeHeartbeat(pool, 'n8n-runs', 'hk-vps', 'ok', null, null, collectedAt);
-      results.n8n_runs = { ok: true, runs: runs.length, workflows: byWf.size };
-    } catch (e) {
-      const [status, code] = classifyError(e);
-      await writeHeartbeat(pool, 'n8n-runs', 'hk-vps', status, code, e.message);
-      results.n8n_runs = { ok: false };
-    }
-
-    // —— 腿4: n8n workflow@hk-vps（业务流程，非"谁召唤谁"）——
-    // 解析失败整份丢弃沿用上轮+stale（同 OpenClaw 腿契约）；agent 归属走传递闭包。
-    try {
-      const raw = await run(N8N_LIST_CMD);
-      let all;
-      try { all = JSON.parse(raw); } catch { throw new Error(`parse_error: n8n 导出非法 JSON（前100字符: ${String(raw).slice(0, 100)}）`); }
-      const rows = parseN8nWorkflows(all);
-      if (rows.length === 0) throw new Error('parse_error: n8n 解析出 0 条流程（0=可疑，禁当真空）');
-      for (const r of rows) {
-        await pool.query(
-          `INSERT INTO ops_workflows (source, wf_id, name, active, node_count, stage_count, uses_agents, meta, updated_at)
-           VALUES ('n8n',$1,$2,$3,$4,$5,$6,$7,$8)
-           ON CONFLICT (source, wf_id) DO UPDATE SET
-             name=EXCLUDED.name, active=EXCLUDED.active, node_count=EXCLUDED.node_count,
-             stage_count=EXCLUDED.stage_count, uses_agents=EXCLUDED.uses_agents,
-             meta=EXCLUDED.meta, updated_at=EXCLUDED.updated_at`,
-          [r.wf_id, r.name, r.active, r.node_count, r.stage_count,
-           JSON.stringify(resolveWorkflowAgents(r.wf_id, all)), JSON.stringify(r.meta), collectedAt]
-        );
-      }
-      await writeHeartbeat(pool, 'n8n', 'hk-vps', 'ok', null, null, collectedAt);
-      results.n8n = { ok: true, workflows: rows.length };
-    } catch (e) {
-      const [status, code] = classifyError(e);
-      await writeHeartbeat(pool, 'n8n', 'hk-vps', status, code, e.message);
-      results.n8n = { ok: false };
     }
 
     return { ok: true, results };

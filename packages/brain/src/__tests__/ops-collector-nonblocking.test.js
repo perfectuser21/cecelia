@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { once } from 'node:events';
 import { setTimeout as delay } from 'node:timers/promises';
-import { runOpsCollector, __resetOpsCollectorForTest, INTERVAL_MS, N8N_LIST_CMD, CRONTAB_CMD_USVPS } from '../ops-collector.js';
+import { runOpsCollector, __resetOpsCollectorForTest, INTERVAL_MS, OPENCLAW_CRON_CMD, CRONTAB_CMD_USVPS } from '../ops-collector.js';
 import { NOW, values, commandValue, fakePool } from './fixtures/ops-collector-command-values.mjs';
 
 beforeEach(() => __resetOpsCollectorForTest());
@@ -29,13 +29,13 @@ function event(child, name) {
 async function waitFile(path) {
   const end = Date.now() + 10000;
   while (!existsSync(path)) {
-    if (Date.now() >= end) throw Error('native fixture did not reach N8N command');
+    if (Date.now() >= end) throw Error('native fixture did not reach OpenClaw cron command');
     await delay(10);
   }
 }
 
 describe('Ops collector actual command lifecycle', () => {
-  it('serves HTTP and heartbeat while its real default transport waits for N8N output', async () => {
+  it('serves HTTP and heartbeat while its real default transport waits for OpenClaw cron output', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'ops-collector-http-'));
     const bin = join(directory, 'bin');
     mkdirSync(bin);
@@ -48,7 +48,7 @@ const args = process.argv.slice(2), remote = args.at(-1);
 const command = args.includes('root@172.17.0.1') ? ${JSON.stringify(CRONTAB_CMD_USVPS)} : remote;
 if (!Object.hasOwn(values, command)) throw Error('unrecognized fixed fixture command');
 async function main() {
- if (command === ${JSON.stringify(N8N_LIST_CMD)}) {
+ if (command === ${JSON.stringify(OPENCLAW_CRON_CMD)}) {
   fs.writeFileSync(path.join(root, 'started.json'), JSON.stringify({ pid: process.pid }), { flag: 'wx' });
   const end = Date.now() + 6000;
   while (!fs.existsSync(path.join(root, 'release'))) {
@@ -91,10 +91,10 @@ main().catch(() => { process.exitCode = 1; });
         rmSync(directory, { recursive: true, force: true });
       }
     }
-    expect(responseError, 'HTTP must respond before the N8N command is released; ' + stderr).toBeUndefined();
+    expect(responseError, 'HTTP must respond before the OpenClaw cron command is released; ' + stderr).toBeUndefined();
     expect(response.status).toBe(200);
-    expect(result.result.results.n8n).toEqual({ ok: true, workflows: 1 });
-    expect(result.queries.some(query => query.sql.includes('INSERT INTO ops_workflows') && query.params[0] === 'fixture-workflow')).toBe(true);
+    expect(result.result.results.openclaw_crons).toEqual({ ok: true, schedules: 1 });
+    expect(result.queries.some(query => query.sql.includes('INSERT INTO ops_schedule_entries') && query.params[0] === 'openclaw')).toBe(true);
   }, 20000);
 
   it('awaits all async command output without changing sync snapshots or command order', async () => {
@@ -111,8 +111,8 @@ main().catch(() => { process.exitCode = 1; });
     };
     const sync = await run(false), asynchronous = await run(true);
     expect(asynchronous).toEqual(sync);
-    expect(sync.calls).toHaveLength(11);
-    expect(sync.calls.filter(call => call.options).map(call => call.options)).toEqual([{ timeoutMs: 120000 }]);
+    expect(sync.calls).toHaveLength(8);
+    expect(sync.calls.filter(call => call.options)).toEqual([]);
     expect(sync.calls.filter(call => call.command === CRONTAB_CMD_USVPS)).toHaveLength(1);
   });
 
@@ -145,7 +145,7 @@ main().catch(() => { process.exitCode = 1; });
     await expect(runOpsCollector({ query: async () => { throw Error('fixture database failure'); } }, { exec: commandValue, inContainer: false, now: NOW })).rejects.toThrow('fixture database failure');
     const pool = fakePool();
     const exec = command => {
-      if (command === N8N_LIST_CMD) {
+      if (command === 'launchctl list') {
         const rejected = Promise.reject(Error('fixture connection timed out'));
         rejected.catch(() => {});
         return rejected;
@@ -153,8 +153,8 @@ main().catch(() => { process.exitCode = 1; });
       return Promise.resolve(commandValue(command));
     };
     const result = await runOpsCollector(pool, { exec, inContainer: false, now: NOW + INTERVAL_MS + 1 });
-    expect(result.results.n8n.ok).toBe(false);
-    const heartbeat = pool.queries.find(query => query.sql.includes('INSERT INTO ops_source_heartbeats') && query.params[0] === 'n8n');
-    expect(heartbeat.params.slice(0, 6)).toEqual(['n8n', 'hk-vps', null, 'unreachable', 'ssh_or_exec_failed', 'fixture connection timed out']);
+    expect(result.results.launchd.ok).toBe(false);
+    const heartbeat = pool.queries.find(query => query.sql.includes('INSERT INTO ops_source_heartbeats') && query.params[0] === 'launchd');
+    expect(heartbeat.params.slice(0, 6)).toEqual(['launchd', 'local', null, 'unreachable', 'ssh_or_exec_failed', 'fixture connection timed out']);
   });
 });

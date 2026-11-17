@@ -1,6 +1,6 @@
 import {
   PLIST_DUMP_CMD, OPENCLAW_CONFIG_CMD, OPENCLAW_CRON_CMD, GHA_CRON_CMD,
-  CRONTAB_CMD_MMV, CRONTAB_CMD_USVPS, N8N_RUNS_CMD, N8N_STAGE_DATA_CMD, N8N_LIST_CMD,
+  CRONTAB_CMD_MMV, CRONTAB_CMD_USVPS,
 } from '../../ops-collector.js';
 
 export const NOW = 1794272400000;
@@ -13,9 +13,6 @@ export const values = new Map([
   [GHA_CRON_CMD, ''],
   [CRONTAB_CMD_MMV, 'aad001\n*/5 * * * * /fixture/run.sh # fixture'],
   [CRONTAB_CMD_USVPS, 'ubuntu-s-fixture\n*/5 * * * * /fixture/run.sh # fixture'],
-  [N8N_RUNS_CMD, JSON.stringify([{ id: 'fixture-run', workflowId: 'fixture-workflow', status: 'success', mode: 'manual', startedAt: new Date(NOW - 10000).toISOString(), stoppedAt: new Date(NOW - 8000).toISOString() }])],
-  [N8N_STAGE_DATA_CMD, '[]'],
-  [N8N_LIST_CMD, JSON.stringify([{ id: 'fixture-workflow', name: 'fixture', active: true, nodes: [{ name: '阶段一', type: 'fixture' }], connections: {} }])],
 ]);
 
 export function fakePool() {

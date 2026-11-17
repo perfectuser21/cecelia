@@ -29,7 +29,7 @@ async function collectWithFailure(error) {
     },
   });
   expect(result.results.launchd.ok).toBe(false);
-  expect(result.results.n8n).toEqual({ ok: true, workflows: 1 });
+  expect(result.results.openclaw_crons).toEqual({ ok: true, schedules: 1 });
   return pool.queries.find(query => query.sql.includes('INSERT INTO ops_source_heartbeats') && query.params[0] === 'launchd').params.slice(3, 5);
 }
 
