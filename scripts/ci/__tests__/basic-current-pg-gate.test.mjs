@@ -10,7 +10,6 @@ import {commandsFor} from '../run-basic-check.mjs';
 import {validateTestDatabaseUrl} from '../../../packages/brain/src/__tests__/integration/suggestion-plan-db-url-guard.mjs';
 
 const required = [
-  'src/__tests__/integration/acceptance-classification.pg.integration.test.js',
   'src/__tests__/integration/device-job-foundation.pg.integration.test.js',
   'src/__tests__/integration/graph-multi-repo-current.pg.integration.test.js',
   'src/__tests__/integration/org-map-current-contracts.pg.integration.test.js',
@@ -67,11 +66,11 @@ test('只有指定的 CI 集成步骤才显式接收测试数据库地址', asyn
   } finally { rmSync(directory,{recursive:true,force:true}); }
 });
 
-test('无 PR 交付 PG 回归从实际 PR 集成入口静态引入，删除或缺文件必须失败', () => {
+test('交付与验收分类 PG 回归从实际 PR 集成入口静态引入，删除或缺文件必须失败', () => {
   selected();
   const dir = resolve(dirname(fileURLToPath(import.meta.url)), '../../../packages/brain/src/__tests__/integration');
   const entry = readFileSync(join(dir, 'workflow-common-terminal.pg.integration.test.js'), 'utf8');
-  const requiredImports = ['./project-progress-no-pr.pg.integration.test.js', './metrics-pr-merged-no-pr.pg.integration.test.js', './postdeploy-snapshot.pg.integration.test.js', './retired-auto-qiumi-lock.pg.integration.test.js', './retired-auto-sweeper-race.pg.integration.test.js'];
+  const requiredImports = ['./acceptance-classification.pg.integration.test.js', './project-progress-no-pr.pg.integration.test.js', './metrics-pr-merged-no-pr.pg.integration.test.js', './postdeploy-snapshot.pg.integration.test.js', './retired-auto-qiumi-lock.pg.integration.test.js', './retired-auto-sweeper-race.pg.integration.test.js'];
   const check = (text, exists) => {
     const imports = parse(text, { ecmaVersion: 'latest', sourceType: 'module' }).body
       .filter(node => node.type === 'ImportDeclaration').map(node => node.source.value);
