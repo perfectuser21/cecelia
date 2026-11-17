@@ -25,6 +25,7 @@ export async function createRuntime({profile,run,verifySource=async()=>{},ledger
       if(!profile.files[activity.runtime.entry])throw Error('skill_profile_unfrozen');
     }else if(!profile.files[spec.skill]||!profile.files[config.tools]||!path.isAbsolute(config.codex?.command??'')
       ||hash(config.codex.command)!==config.codex.command_sha256)throw Error('skill_profile_unfrozen');
+    if(activity.runtime?.executor_kind!=='code'&&config.host_tools&&(!profile.codex_auth||!profile.files[config.host_tools.entry]))throw Error('skill_profile_unfrozen');
     return spec;
   }
   async function verifyFrozenSources(){
@@ -171,6 +172,7 @@ export async function createRuntime({profile,run,verifySource=async()=>{},ledger
       const workerActivity={...activity,runtime:{...activity.runtime,entry:fileURLToPath(new URL('./skill-worker.mjs',import.meta.url)),argv:[],interactive:false}};
       const transport=await startSupervisedActivity(directory,options.identity,workerActivity,{identity:options.identity,activity_key:activity.key,activity_contract:activityContract(activity),cwd:profile.cwd,
         codex:config.codex,codex_auth:profile.codex_auth,...(ledger?{ledger_directory:ledger.directory,ledger_policy:ledger.policy}:{}),thread_file:threadFile,...(group===undefined?{}:{session_group:group}),work_dir:directory,skill_text:fs.readFileSync(path.resolve(profile.cwd,spec.skill),'utf8'),
+        ...(config.host_tools?{host_tools:{config:config.host_tools,cwd:profile.cwd,files:profile.files,deadline_ms:options.deadlineMs}}:{}),
         tools_text:fs.readFileSync(path.resolve(profile.cwd,config.tools),'utf8'),context:{...run.input,...input}},options,options.deadlineMs);
       const result=await verifiedResult(activity,input,transport,options.signal);settleAttempt(attempt,result,transport,directory);
       return result;
