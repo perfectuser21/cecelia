@@ -42,7 +42,7 @@ function assembly(source) {
 const dormantModules = [
   './src/emotion.js', './src/emotion-system.js', './src/dopamine.js',
   './src/task-generator-scheduler.js', './src/acceptance-public-server.js',
-  './src/routes/acceptance.js', './src/routes/strategy-tree.js',
+  './src/routes/acceptance.js', './src/routes/strategy-tree.js', './src/capability-scanner.js',
 ];
 function violations(model) {
   return [
@@ -71,8 +71,8 @@ describe('真实Brain启动装配的退役边界', () => {
     ];
     for (const [path, module] of expected) expect(model.mounts.some(m => m.path === path && m.handlers.includes(module)), `${path} 必须绑定 ${module}`).toBe(true);
   });
-  it('保留任务恢复、意识loop、Notion同步与健康扫描和既有队列调度', () => {
-    for (const name of ['initTickLoop', 'initConsciousnessGuard', 'runStartupRecovery', 'reAttachActiveExecutors', 'syncOrphanTasksOnStartup', 'cleanupStaleClaims', 'scheduleLegacyNotionPush', 'startProjectionJobsLoop', 'createAttemptCleanupLoop', 'startScanLoop', 'scanEvolutionIfNeeded', 'startNightlyOrchestratorScheduler']) {
+  it('保留任务恢复、意识loop、Notion同步与必要健康诊断与既有队列调度', () => {
+    for (const name of ['initTickLoop', 'initConsciousnessGuard', 'runStartupRecovery', 'reAttachActiveExecutors', 'syncOrphanTasksOnStartup', 'cleanupStaleClaims', 'scheduleLegacyNotionPush', 'startProjectionJobsLoop', 'createAttemptCleanupLoop', 'startProbeLoop', 'scanEvolutionIfNeeded', 'startNightlyOrchestratorScheduler']) {
       expect(model.calls.some(call => call.name === name && call.module), `${name} 必须调用实际导入绑定`).toBe(true);
     }
   });

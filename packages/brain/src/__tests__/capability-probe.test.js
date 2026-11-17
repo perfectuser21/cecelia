@@ -19,6 +19,7 @@ vi.mock('../executor.js', () => ({
 
 vi.mock('../alerting.js', () => ({
   sendAlert: vi.fn(),
+  raise: vi.fn(),
 }));
 
 vi.mock('../cortex.js', () => ({
@@ -58,7 +59,7 @@ describe('capability-probe', () => {
       }
     });
 
-    it('should include db, dispatch, auto_fix, notify probes', async () => {
+    it('should include db, dispatch, notify diagnostic probes', async () => {
       const pool = (await import('../db.js')).default;
       pool.query.mockResolvedValue({
         rows: [{ task_count: 10, recent_runs: 5, learning_count: 100 }],
@@ -70,7 +71,7 @@ describe('capability-probe', () => {
 
       expect(names).toContain('db');
       expect(names).toContain('dispatch');
-      expect(names).toContain('auto_fix');
+      expect(names).not.toContain('auto_fix');
       expect(names).toContain('notify');
     });
   });
@@ -104,24 +105,20 @@ describe('capability-probe', () => {
     });
   });
 
-  describe('probeMonitorLoop self-heal', () => {
-    it('should call startMonitorLoop and return ok=true when running=false', async () => {
+  describe('probeMonitorLoop diagnostics', () => {
+    it('未运行时保留失败诊断，不由探针启动monitor', async () => {
       const monitorLoop = await import('../monitor-loop.js');
-      // First call returns running=false (simulating startup failure), second returns true
-      monitorLoop.getMonitorStatus
-        .mockReturnValueOnce({ running: false, interval_ms: 30000, cycle_count: 0, last_cycle_at: null })
-        .mockReturnValue({ running: true, interval_ms: 30000, cycle_count: 0, last_cycle_at: null });
-
-      const pool = (await import('../db.js')).default;
-      pool.query.mockResolvedValue({ rows: [] });
-
-      const { runProbes } = await import('../capability-probe.js');
-      const results = await runProbes();
-      const monitorResult = results.find(r => r.name === 'monitor_loop');
-
-      expect(monitorResult).toBeDefined();
-      expect(monitorResult.ok).toBe(true);
-      expect(monitorLoop.startMonitorLoop).toHaveBeenCalledTimes(1);
+      monitorLoop.getMonitorStatus.mockReturnValue({ running: false, interval_ms: 30000, cycle_count: 0, last_cycle_at: null });
+      const { PROBES, runProbeCycle } = await import('../capability-probe.js');
+      const original = PROBES.slice();
+      PROBES.splice(0, PROBES.length, original.find(probe => probe.name === 'monitor_loop'));
+      vi.useFakeTimers();
+      try {
+        const [result] = await runProbeCycle();
+        expect(result.ok).toBe(false);
+        expect(result.detail).toContain('running=false');
+        expect(monitorLoop.startMonitorLoop.mock.calls.length).toBe(0);
+      } finally { PROBES.splice(0, PROBES.length, ...original); vi.clearAllTimers(); vi.useRealTimers(); }
     });
 
     it('should return ok=true without calling startMonitorLoop when already running', async () => {
@@ -140,25 +137,19 @@ describe('capability-probe', () => {
       expect(monitorLoop.startMonitorLoop).not.toHaveBeenCalled();
     });
 
-    it('should return ok=false with detail when startMonitorLoop throws during self-heal', async () => {
+    it('状态读取异常保留错误，不启动monitor', async () => {
       const monitorLoop = await import('../monitor-loop.js');
-      monitorLoop.getMonitorStatus.mockReturnValue({ running: false, interval_ms: 30000, cycle_count: 0, last_cycle_at: null });
-      monitorLoop.startMonitorLoop.mockImplementation(() => {
-        throw new Error('setInterval unavailable');
-      });
-
-      const pool = (await import('../db.js')).default;
-      pool.query.mockResolvedValue({ rows: [] });
-
-      const { runProbes } = await import('../capability-probe.js');
-      const results = await runProbes();
-      const monitorResult = results.find(r => r.name === 'monitor_loop');
-
-      expect(monitorResult).toBeDefined();
-      expect(monitorResult.ok).toBe(false);
-      expect(monitorResult.detail).toContain('self_heal_error');
-      // error field should be null (handled inside probe, not propagated to runProbes catch)
-      expect(monitorResult.error).toBeNull();
+      monitorLoop.getMonitorStatus.mockImplementationOnce(() => { throw new Error('status unavailable'); });
+      const { PROBES, runProbes } = await import('../capability-probe.js');
+      const original = PROBES.slice();
+      PROBES.splice(0, PROBES.length, original.find(probe => probe.name === 'monitor_loop'));
+      vi.useFakeTimers();
+      try {
+        const [result] = await runProbes();
+        expect(result.ok).toBe(false);
+        expect(result.error).toBe('status unavailable');
+        expect(monitorLoop.startMonitorLoop).not.toHaveBeenCalled();
+      } finally { PROBES.splice(0, PROBES.length, ...original); vi.clearAllTimers(); vi.useRealTimers(); }
     });
 
     it('should return ok=false when running=true but loop is stuck (last_cycle_at is stale)', async () => {

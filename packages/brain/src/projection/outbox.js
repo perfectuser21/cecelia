@@ -39,8 +39,12 @@ export async function runProjectionOutbox(pool, {
      SET status='processing', leased_at=NOW(), updated_at=NOW()
      WHERE id IN (
        SELECT id FROM projection_outbox
-       WHERE (status IN ('pending','failed') AND available_at <= NOW())
-          OR (status='processing' AND leased_at < NOW()-INTERVAL '10 minutes')
+       WHERE ((status IN ('pending','failed') AND available_at <= NOW())
+           OR (status='processing' AND leased_at < NOW()-INTERVAL '10 minutes'))
+         AND NOT EXISTS (
+           SELECT 1 FROM projection_targets
+           WHERE projection_targets.target=projection_outbox.target AND enabled=false
+         )
        ORDER BY CASE WHEN entity_type='projects' THEN 0 ELSE 1 END,
                 created_at ASC
        LIMIT $1 FOR UPDATE SKIP LOCKED

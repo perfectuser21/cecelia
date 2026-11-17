@@ -33,8 +33,5 @@ describe('capability-probe high-level probes', () => {
     expect(names).not.toContain('self_drive_health');
   });
 
-  it('should have at least 10 probes total', async () => {
-    const { PROBES } = await import('../capability-probe.js');
-    expect(PROBES.length).toBeGreaterThanOrEqual(10);
-  });
+
 });
