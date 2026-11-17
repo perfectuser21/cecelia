@@ -100,7 +100,6 @@ jobs:
       - name: Install test tools
         run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends ripgrep jq zsh libxml2-utils
       - name: Install locked dependencies
-        if: matrix.component != 'image'
         run: npm ci --ignore-scripts --no-audit --no-fund
       - uses: ./.github/actions/dockerhub-mirror
         if: matrix.component == 'image'
