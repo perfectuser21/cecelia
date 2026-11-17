@@ -46,7 +46,8 @@ export function commandsFor(component, shard) {
           'src/__tests__/integration/graph-multi-repo-current.pg.integration.test.js',
           'src/__tests__/integration/org-map-current-contracts.pg.integration.test.js',
           'src/__tests__/integration/task-ability-compatibility.pg.integration.test.js',
-          'src/__tests__/integration/reasoning-governance-contract.pg.integration.test.js', '--reporter=dot'), ciScratchDatabase: true },
+          'src/__tests__/integration/reasoning-governance-contract.pg.integration.test.js',
+          'src/__tests__/integration/acceptance-classification.pg.integration.test.js', '--reporter=dot'), ciScratchDatabase: true },
         step('.', 'node', '--test', 'scripts/ci/__tests__/runtime-signal.integration.test.mjs'),
         step('.', 'node', 'scripts/ci/basic-runtime-smoke.mjs'),
       ];

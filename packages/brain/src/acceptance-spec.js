@@ -132,3 +132,19 @@ export function deriveSets(cells) {
     byKey: new Map(cells.map((c) => [c.check_key, c])),
   };
 }
+
+/** 裁决只消费建单已保存的分类；未知保留null，错误类型不得当作非hard放行。 */
+export function readAcceptanceClassification(detail) {
+  if (detail == null) return { scenario_class: null, is_hard: null };
+  if (typeof detail !== 'object' || Array.isArray(detail)) {
+    throw new Error('invalid acceptance classification: detail');
+  }
+  const { scenario_class = null, hard = null } = detail;
+  if (scenario_class !== null && typeof scenario_class !== 'string') {
+    throw new Error('invalid acceptance classification: scenario_class');
+  }
+  if (hard !== null && typeof hard !== 'boolean') {
+    throw new Error('invalid acceptance classification: hard');
+  }
+  return { scenario_class, is_hard: hard };
+}

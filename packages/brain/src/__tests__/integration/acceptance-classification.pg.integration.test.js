@@ -16,6 +16,7 @@ vi.mock('../../actions.js', () => ({ createTask: vi.fn(async ({ db, ...input }) 
   return { task: rows[0] };
 }) }));
 const schema = `acceptance_classification_${randomUUID().replaceAll('-', '')}`;
+if (!['localhost', '127.0.0.1', '::1'].includes(DB_DEFAULTS.host)) throw new Error('local scratch database required');
 const pool = new pg.Pool({ ...DB_DEFAULTS, database: 'cecelia_scratch', max: 2,
   options: `-c search_path=${schema}`, connectionTimeoutMillis: 3000 });
 const app = express(); app.use(express.json()); app.use(createAcceptanceInternalRouter({ pool }));
@@ -27,7 +28,6 @@ const finish = () => request(app).patch(`/runs/${runKey}/adjudicate-run`).send({
 const checks = () => pool.query('SELECT * FROM acceptance_checks ORDER BY check_key');
 
 beforeAll(async () => {
-  if (!['localhost', '127.0.0.1', '::1'].includes(DB_DEFAULTS.host)) throw new Error('local scratch database required');
   expect((await pool.query('SELECT current_database() AS db')).rows[0].db).toBe('cecelia_scratch');
   await pool.query(`CREATE SCHEMA "${schema}"`);
   vi.stubEnv('ACCEPTANCE_TENANT_ALLOWLIST', 'fixture-owner');
