@@ -20,6 +20,16 @@ import express from 'express';
 import request from 'supertest';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 
+// 本文件验证验收路由分流与SAVEPOINT；任务总入口治理有独立合同。
+// 显式保留SQL边界，既有23505/去重断言仍由各测试的mock client决定。
+vi.mock('../../../packages/brain/src/actions.js', () => ({
+  createTask: async ({ db, payload, status }) => {
+    const { rows } = await db.query('INSERT INTO tasks(payload,status) VALUES($1,$2) RETURNING *',
+      [JSON.stringify(payload), status]);
+    return { task: rows[0] };
+  },
+}));
+
 // D4 功能代码完成后这个 import 应能正常 resolve。
 // 测试阶段不存在该导出时，vitest 会在 describe 外报 import error，
 // 届时用 try/catch dynamic import + skip 保护即可。
@@ -116,7 +126,7 @@ describe('FR-1: PATCH /runs/:run_key/checks/:check_key/adjudicate — 400 校验
   it('[BEHAVIOR-1] 合法请求 → HTTP 200，adjudication 含四字段', async () => {
     let writtenAdjudication = null;
     const run = { ...BASE_RUN, status: 'human_complete' };
-    const check = { id: 'chk-1', check_key: 'S1-c1', run_id: run.id, adjudication: null, scenario_class: 'normal' };
+    const check = { id: 'chk-1', check_key: 'S1-c1', run_id: run.id, adjudication: null, detail: { scenario_class: 'normal' } };
     const client = makeClient((sql, params) => {
       if (/SELECT.*acceptance_runs.*WHERE run_key/i.test(sql)) return { rows: [run] };
       if (/SELECT.*acceptance_checks.*WHERE run_id.*AND check_key/i.test(sql)) return { rows: [check] };
@@ -156,8 +166,7 @@ describe('FR-2: hard 格裁决绿 — unverifiable_this_version 例外不开 P0'
       run_id: run.id,
       adjudication: null,
       // hard:true 但 scenario_class = 'unverifiable_this_version'
-      scenario_class: 'unverifiable_this_version',
-      is_hard: true,
+      detail: { scenario_class: 'unverifiable_this_version', hard: true },
     };
     const insertedTasks = [];
     let unverifiableUpdated = false;
@@ -199,8 +208,7 @@ describe('FR-2: hard 格裁决绿 — unverifiable_this_version 例外不开 P0'
       check_key: 'S1-c1',
       run_id: run.id,
       adjudication: null,
-      scenario_class: 'normal',
-      is_hard: true,
+      detail: { scenario_class: 'normal', hard: true },
     };
     const insertedBuckets = [];
 
@@ -245,8 +253,7 @@ describe('FR-3: PATCH /runs/:run_key/adjudicate-run — 哑火路径', () => {
       check_key: `S${Math.floor(i / 4) + 1}-c${(i % 4) + 1}`,
       run_id: run.id,
       adjudication: { verdict: '红', by: 'staff', reason: 'x', at: new Date().toISOString() },
-      scenario_class: 'normal',
-      is_hard: false,
+      detail: { scenario_class: 'normal', hard: false },
     }));
 
     const insertedBuckets = [];
@@ -300,8 +307,7 @@ describe('FR-3: PATCH /runs/:run_key/adjudicate-run — 哑火路径', () => {
       adjudication: i < 13
         ? { verdict: '红', by: 'staff', reason: 'fail', at: new Date().toISOString() }
         : { verdict: '绿', by: 'staff', reason: 'ok', at: new Date().toISOString() },
-      scenario_class: 'normal',
-      is_hard: false,
+      detail: { scenario_class: 'normal', hard: false },
     }));
 
     const insertedBuckets = [];
@@ -352,8 +358,7 @@ describe('FR-3: PATCH /runs/:run_key/adjudicate-run — 哑火路径', () => {
       adjudication: i === 0
         ? { verdict: '红', by: 'staff', reason: 'fail', at: new Date().toISOString() }
         : { verdict: '绿', by: 'staff', reason: 'ok', at: new Date().toISOString() },
-      scenario_class: i === 6 ? 'trace_q4' : 'normal',
-      is_hard: false,
+      detail: { scenario_class: i === 6 ? 'trace_q4' : 'normal', hard: false },
     }));
 
     const insertedBuckets = [];
@@ -471,16 +476,14 @@ describe('FR-5: SAVEPOINT — 23505 冲突不毒化外层事务', () => {
         check_key: 'S1-c1',
         run_id: run.id,
         adjudication: { verdict: '红', by: 'staff', reason: 'x', at: new Date().toISOString() },
-        scenario_class: 'normal',
-        is_hard: false,
+        detail: { scenario_class: 'normal', hard: false },
       },
       ...Array.from({ length: 35 }, (_, i) => ({
         id: `chk-sp-${i + 2}`,
         check_key: `S${Math.floor((i + 1) / 4) + 2}-c${((i + 1) % 4) + 1}`,
         run_id: run.id,
         adjudication: { verdict: '绿', by: 'staff', reason: 'ok', at: new Date().toISOString() },
-        scenario_class: 'normal',
-        is_hard: false,
+        detail: { scenario_class: 'normal', hard: false },
       })),
     ];
 
@@ -549,8 +552,7 @@ describe('FR-5: SAVEPOINT — 23505 冲突不毒化外层事务', () => {
       adjudication: i === 0
         ? { verdict: '红', by: 'staff', reason: 'fail', at: new Date().toISOString() }
         : { verdict: '绿', by: 'staff', reason: 'ok', at: new Date().toISOString() },
-      scenario_class: i === 6 ? 'trace_q4' : 'normal', // Q4 格触发 trace
-      is_hard: false,
+      detail: { scenario_class: i === 6 ? 'trace_q4' : 'normal', hard: false },
     }));
 
     const insertedBuckets = [];

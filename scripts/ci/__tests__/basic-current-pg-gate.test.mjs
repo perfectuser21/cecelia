@@ -10,6 +10,7 @@ import {commandsFor} from '../run-basic-check.mjs';
 import {validateTestDatabaseUrl} from '../../../packages/brain/src/__tests__/integration/suggestion-plan-db-url-guard.mjs';
 
 const required = [
+  'src/__tests__/integration/acceptance-classification.pg.integration.test.js',
   'src/__tests__/integration/task-lease-device-pool.pg.integration.test.js',
   'src/__tests__/integration/executor-startup-headed-owner.pg.integration.test.js',
   'src/__tests__/integration/suggestion-plan-callback.pg.integration.test.js',

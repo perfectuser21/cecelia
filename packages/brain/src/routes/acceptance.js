@@ -6,7 +6,7 @@
 import express from 'express';
 import rateLimit from 'express-rate-limit';
 import { computeRunStatus } from '../acceptance-state.js';
-import { findDuplicateCheckKeys } from '../acceptance-spec.js';
+import { findDuplicateCheckKeys, readAcceptanceClassification } from '../acceptance-spec.js';
 import { registerAiResultsRoute } from './acceptance-ai.js';
 import { registerReviewClosureRoutes } from './acceptance-review.js';
 import { checkCreateGate, checkFrozenStamps } from './acceptance-gates.js';
@@ -481,14 +481,14 @@ export function createAcceptanceInternalRouter({ pool }) {
 
       // 获取 check
       const { rows: checkRows } = await client.query(
-        'SELECT id, check_key, run_id, adjudication, scenario_class, is_hard FROM acceptance_checks WHERE run_id = $1 AND check_key = $2',
+        'SELECT id, check_key, run_id, adjudication, detail FROM acceptance_checks WHERE run_id = $1 AND check_key = $2',
         [run.id, req.params.check_key]
       );
       if (checkRows.length === 0) {
         await safeRollback(client);
         return res.status(404).json({ error: 'check not found' });
       }
-      const check = checkRows[0];
+      const check = { ...checkRows[0], ...readAcceptanceClassification(checkRows[0].detail) };
 
       // 写入 adjudication（四字段，at 由服务端注入）
       const adjudication = {
@@ -599,10 +599,11 @@ export function createAcceptanceInternalRouter({ pool }) {
       const run = runRows[0];
 
       // 获取所有格
-      const { rows: checks } = await client.query(
-        'SELECT id, check_key, adjudication, scenario_class, is_hard FROM acceptance_checks WHERE run_id = $1',
+      const { rows: checkRows } = await client.query(
+        'SELECT id, check_key, adjudication, detail FROM acceptance_checks WHERE run_id = $1',
         [run.id]
       );
+      const checks = checkRows.map(check => ({ ...check, ...readAcceptanceClassification(check.detail) }));
 
       const detail = run.detail || {};
       const aiStatus = detail.ai_status;

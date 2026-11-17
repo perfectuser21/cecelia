@@ -41,7 +41,8 @@ export function commandsFor(component, shard, context = {}) {
           'src/__tests__/integration/executor-startup-headed-owner.pg.integration.test.js',
           'src/__tests__/integration/suggestion-plan-callback.pg.integration.test.js',
           'src/__tests__/integration/managed-script-profile.pg.integration.test.js',
-          'src/__tests__/integration/workflow-common-terminal.pg.integration.test.js', '--reporter=dot'), ciScratchDatabase: true },
+          'src/__tests__/integration/workflow-common-terminal.pg.integration.test.js',
+          'src/__tests__/integration/acceptance-classification.pg.integration.test.js', '--reporter=dot'), ciScratchDatabase: true },
         step('.', 'node', '--test', 'scripts/ci/__tests__/runtime-signal.integration.test.mjs'),
         step('.', 'node', 'scripts/ci/basic-runtime-smoke.mjs'),
       ];

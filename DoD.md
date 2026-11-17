@@ -1,8 +1,6 @@
-- [ ] 复核133份待定烟测，清退6份失效入口和20份重复脚本；同步分类、写目标及分类器fixture，保留现役业务和权限资源边界。
-  Test: manual:bash -c 'node --test packages/brain/scripts/smoke/__tests__/*.node-test.mjs scripts/ci/__tests__/basic-task-static-readers.test.mjs'
-- [ ] 原生路由、派发、共享时钟、交接、资源预算等替代测试仍由默认unit收集且通过。
-  Test: manual:npm exec -w packages/brain -- vitest run src/routes/__tests__/abilities.test.js src/__tests__/dispatch-fail-autoblock.test.js src/orchestrator/__tests__/handoff-schemas.test.js src/__tests__/slot-allocator.test.js
-- [ ] 删除迁移494外层包装后，真实PG文件仍被unit排除、由deep完整选中；其他PG边界保持。
-  Test: manual:npm exec -w packages/brain -- vitest run ../../tests/brain-ci-pg-layering.test.ts
-- [ ] 默认scripts、事实、版本与DoD门禁通过，独立复审后正常PR与完整CI交付。
-  Test: manual:node scripts/ci/run-basic-check.mjs scripts
+- [ ] 在cecelia_scratch隔离schema以现役17列表调用真实裁决HTTP入口；无分类API三格可定案并持久化，不新增数据库列。
+  Test: manual:cd packages/brain && DB_NAME=cecelia_scratch npx --no-install vitest run --config ../../scripts/ci/deep-integration.config.mjs src/__tests__/integration/acceptance-classification.pg.integration.test.js
+- [ ] 从已有detail.scenario_class和detail.hard读取；缺失/null保持未知，布尔hard与trace分类执行原规则，错误类型失败并回滚。
+  Test: manual:cd packages/brain && DB_NAME=cecelia_scratch npx --no-install vitest run --config ../../scripts/ci/deep-integration.config.mjs src/__tests__/integration/acceptance-classification.pg.integration.test.js
+- [ ] 回归接入必需brain-integration门；Brain版本同步，不修改迁移或生产schema，不发布镜像。
+  Test: manual:node scripts/ci/run-basic-check.mjs brain-integration
