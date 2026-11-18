@@ -150,10 +150,26 @@ const MAIN_AUTO_DEPLOY_CI_COHORT={...PREVIEW_RETIREMENT_CI_COHORT,
  'existing-ops-stage-source.js':'b380c14e87c34072f26bdd8d2fa2421b9a4fb71f16358746f70de293beee489d',
  'existing-ops-stage-modes.js':'cf4e0fd23c57d96accbf9bbce5379a6a5cd9aa5ce54f1621d37227e3af719452',
  'existing-ops-ci-build-dedup-source.js':'43b2c598bd899b1906296728e9c46b24229743b551aa0599ef1599fab4e5f5de'};
-const currentMemberCount=Object.keys(MAIN_AUTO_DEPLOY_CI_COHORT).length;
-export const ciVersionGuardCohorts=()=>[...COHORTS,COMMANDER_CI_COHORT,SKILL_RETIREMENT_CI_COHORT,PLANNER_RETIREMENT_CI_COHORT,COMMANDER_AUDIT_CI_COHORT,SCRIPT_CLEANUP_CI_COHORT,SCRIPT_CLEANUP_PROFILE_COHORT,RESOURCE_RETIREMENT_CI_COHORT,WORKFLOW_REGISTRATION_CI_COHORT,BUSINESS_SMOKE_RETIREMENT_CI_COHORT,FIXED_CHECKS_CI_COHORT,FOUNDATION_RELEASE_CI_COHORT,FOUNDATION_FIXED_CHECKS_CI_COHORT,CLOSEOUT_CI_COHORT,DORMANT_BOUNDARIES_CI_COHORT,CHECKER_REPAIR_CI_COHORT,BUILD_DEDUP_CI_COHORT,PREVIEW_RETIREMENT_CI_COHORT,MAIN_AUTO_DEPLOY_CI_COHORT];
+// 相同workflow下新增精确挂载修复整组，已合并MAIN完整AST不覆盖。
+const BIND_MOUNT_CI_COHORT={...MAIN_AUTO_DEPLOY_CI_COHORT,
+ 'existing-ops-stage-source.js':'cd0a120216039506fca69264499f7363bea3c1aa12362a51e351898527b3b0e1',
+ 'existing-ops-stage-modes.js':'c80320cb64104e6516cd9b1d2c47b99bfe4e9938eb3574b32a31f39d5aeb3338',
+ 'existing-ops-ci-build-dedup-source.js':'db96c415f4806094e6def39bbacc80b21664f1b661cd79f6d1ce961b11cf7d47'};
+const currentMemberCount=Object.keys(BIND_MOUNT_CI_COHORT).length;
+export const ciVersionGuardCohorts=()=>[...COHORTS,COMMANDER_CI_COHORT,SKILL_RETIREMENT_CI_COHORT,PLANNER_RETIREMENT_CI_COHORT,COMMANDER_AUDIT_CI_COHORT,SCRIPT_CLEANUP_CI_COHORT,SCRIPT_CLEANUP_PROFILE_COHORT,RESOURCE_RETIREMENT_CI_COHORT,WORKFLOW_REGISTRATION_CI_COHORT,BUSINESS_SMOKE_RETIREMENT_CI_COHORT,FIXED_CHECKS_CI_COHORT,FOUNDATION_RELEASE_CI_COHORT,FOUNDATION_FIXED_CHECKS_CI_COHORT,CLOSEOUT_CI_COHORT,DORMANT_BOUNDARIES_CI_COHORT,CHECKER_REPAIR_CI_COHORT,BUILD_DEDUP_CI_COHORT,PREVIEW_RETIREMENT_CI_COHORT,MAIN_AUTO_DEPLOY_CI_COHORT,BIND_MOUNT_CI_COHORT];
 export function registerCiRetirementGuardTests({root,base,scan}){
  describe('当前来源完整闭包及执行防复活',()=>{
+  it('挂载修复与原85 MAIN完整只读组分别有效，三成员混配与执行拒绝',()=>{
+   const helper=path.join(root,'existing-ops-ci-build-dedup-source.js'),current=base();expect(current.get(helper)).toContain('BIND_MOUNT_INPUTS');
+   const previous=new Map(Object.keys(MAIN_AUTO_DEPLOY_CI_COHORT).map(name=>{const file=path.join(root,name);return [file,execFileSync('git',['--no-replace-objects','show','85f24b00af99063cf27919cdcf79675d6d33e6a3:'+path.relative(path.resolve(root,'../../../..'),file)],{cwd:root,encoding:'utf8',maxBuffer:1024*1024})];}));
+   for(const source of [current,previous])expect(scan(source)).toEqual([]);
+   for(const name of ['existing-ops-stage-source.js','existing-ops-stage-modes.js','existing-ops-ci-build-dedup-source.js']){
+    const file=path.join(root,name),mixed=new Map(current);mixed.set(file,previous.get(file));expect(scan(mixed).some(hit=>hit.rule==='E1')).toBe(true);
+    const reverse=new Map(previous);reverse.set(file,current.get(file));expect(scan(reverse).some(hit=>hit.rule==='E1')).toBe(true);
+   }
+   const executed=new Map(current);executed.set(helper,executed.get(helper)+'\neval(BIND_MOUNT_INPUTS);');expect(scan(executed).some(hit=>hit.rule==='E1')).toBe(true);
+  });
+
   it('main自动发布完整只读组与原Preview清退组独立，旧新成员混配及执行拒绝',()=>{
    const helper=path.join(root,'existing-ops-ci-build-dedup-source.js'),current=base();
    expect(current.get(helper)).toContain('MAIN_AUTO_DEPLOY_INPUTS');
