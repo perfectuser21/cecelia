@@ -27,7 +27,6 @@ const representative = [
   'scripts/__tests__/brain-deploy-build-same-version.test.sh',
   'scripts/__tests__/preview-env-start.test.sh',
   'scripts/__tests__/preview-reaper.test.sh',
-  'scripts/__tests__/preview-start-request-retry.test.sh',
   'scripts/__tests__/preview-agent-install.test.sh',
   'scripts/__tests__/preview-host-release.test.sh',
   'scripts/__tests__/codex-remote-launch.test.sh',

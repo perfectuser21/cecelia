@@ -198,7 +198,7 @@ function loadWorkflows() {
 
 function mainEvents(workflow) {
   const main = {branches: ['main']};
-  return isDeepStrictEqual(workflow.on?.pull_request, {...main,types:['opened','synchronize','reopened','closed']}) && isDeepStrictEqual(workflow.on?.push, main);
+  return isDeepStrictEqual(workflow.on?.pull_request, {...main,types:['opened','synchronize','reopened']}) && isDeepStrictEqual(workflow.on?.push, main);
 }
 
 // 只接受当前已审核的完整shell形状；不是通用shell解释器，也不扫描注释、heredoc或死分支。

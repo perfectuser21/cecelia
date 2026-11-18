@@ -54,19 +54,3 @@ describe('preview-agent — 存在性与形状', () => {
     expect(src()).toMatch(/5241/);
   });
 });
-
-describe('preview-agent — CI 指向执行机', () => {
-  const wf = () => readFileSync(join(ROOT, '.github/workflows/ci.yml'), 'utf8').split('  preview-deploy:')[1].split('  preview-cleanup:')[0];
-
-  it('workflow 默认地址指向 MMV 的代理端口，不再指 us-vps', () => {
-    const s = wf();
-    expect(s).toMatch(/100\.71\.151\.105:5241/);
-    expect(s).not.toMatch(/100\.79\.41\.61:5221/);
-  });
-
-  it('未引入新 secret —— 沿用既有 DEPLOY_TOKEN', () => {
-    const s = wf();
-    expect(s).toMatch(/secrets\.DEPLOY_TOKEN/);
-    expect(s).not.toMatch(/PREVIEW_SSH_KEY/);
-  });
-});

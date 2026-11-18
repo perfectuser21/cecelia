@@ -45,14 +45,6 @@ else
   echo "  ✅ 没有 workflow 把 Brain API 指回旧本机 (${OLD_IP}:${BRAIN_PORT})"
 fi
 
-# 反向守卫：预览执行必须留在执行机，不许被"统一指 us-vps"顺手搬回去
-PREVIEW_SECTION=$(sed -n '/^  preview-deploy:/,/^  ci-passed:/p' "$WORKFLOWS_DIR/ci.yml")
-if printf '%s\n' "$PREVIEW_SECTION" | grep -q "$NEW_IP"; then
-  echo "  ❌ 预览job指向了us-vps，违反执行机隔离"; FAIL=1
-else
-  echo "  ✅ 预览job保留执行机地址边界"
-fi
-
 echo ""
 if [ "$FAIL" -eq 0 ]; then
   echo "✅ 全部通过"
