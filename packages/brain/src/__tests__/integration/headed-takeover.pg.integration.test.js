@@ -118,6 +118,7 @@ it('owner在执行中和完成后均不阻止人赢title/due_at及Notion同步�
  }
 });
 it('真实终态helper在外层COMMIT后保存handoff，跨session元数据可编辑但证据不可覆写',async()=>{
+ await pool.query("UPDATE tasks SET review_status='approved' WHERE id=$1",[task]);
  const {takeOverHeadedTask}=await import('../../lib/headed-task-owner.js');await takeOverHeadedTask(pool,request());
  const {registerTaskPatchRoute}=await import('../../routes/task-task-patch.js');
  const router=express.Router();registerTaskPatchRoute(router,{pool,terminalStatuses:['completed','failed','cancelled']});

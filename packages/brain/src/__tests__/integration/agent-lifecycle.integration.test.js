@@ -177,6 +177,8 @@ describe('Agent Lifecycle — queued → in_progress → completed（真实 Post
 
     const prUrl = 'https://github.com/perfectuser21/cecelia/pull/9999';
 
+    // 本地 PG 夹具代表 PR 同步器已记录的合并，测试不访问外部 GitHub。
+    await testPool.query('UPDATE tasks SET pr_url=$1, pr_merged_at=NOW() WHERE id=$2', [prUrl, taskId]);
     const res = await request(app)
       .patch(`/api/brain/tasks/${taskId}`)
       .send({
@@ -190,11 +192,12 @@ describe('Agent Lifecycle — queued → in_progress → completed（真实 Post
 
     // DB 直查验证状态持久化
     const dbRes = await testPool.query(
-      'SELECT status, pr_url FROM tasks WHERE id = $1',
+      'SELECT status, completed_at, pr_url FROM tasks WHERE id = $1',
       [taskId]
     );
     expect(dbRes.rows[0].status).toBe('completed');
     expect(dbRes.rows[0].pr_url).toBe(prUrl);
+    expect(dbRes.rows[0].completed_at).toBeInstanceOf(Date);
   });
 
   // ── 场景 4: 重复查询 — GET 返回最终状态 ───────────────────────────────────

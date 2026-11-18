@@ -8,7 +8,7 @@ import { judgeUnit } from '../../crystal-judge.js';
 const schema = `reasoning_${randomUUID().replaceAll('-', '')}`;
 let pool;
 beforeAll(async () => {
-  const url = new URL(process.env.TEST_DATABASE_URL || process.env.DATABASE_URL);
+  const url = new URL(process.env.TEST_DB_URL || process.env.TEST_DATABASE_URL || process.env.DATABASE_URL);
   if (!['127.0.0.1', 'localhost'].includes(url.hostname) || !url.pathname.endsWith('_scratch')) {
     throw new Error('此测试只允许本机独占scratch PostgreSQL');
   }

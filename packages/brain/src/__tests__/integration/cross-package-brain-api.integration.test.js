@@ -128,7 +128,7 @@ async function createTestTask(app, overrides = {}) {
         map_scope_hint: ['F1'],
         branch: 'cp-cross-package-fixture',
         base_sha: 'a'.repeat(40),
-        // A2：夹具仓库非 runner 支持仓库，按有头账本行（harness_initiative）入账
+        // A2：夹具仓库非 runner 支持仓库，按有头账本行（dev）入账
         payload: { headed_manual: 'true' },
       }
     : {};
@@ -286,15 +286,15 @@ describe('Cross-Package Brain API — 核心端点合约验证（真实 PostgreS
       expect(ids).not.toContain(queuedCodingTaskId);
     });
 
-    it('task_type=harness_initiative 过滤：包含统一路由后的 coding 任务', async () => {
+    it('task_type=dev 过滤：包含统一路由后的 coding 任务', async () => {
       const res = await request(app)
-        .get('/api/brain/tasks?task_type=harness_initiative&limit=50')
+        .get('/api/brain/tasks?task_type=dev&limit=50')
         .expect(200);
 
       expect(Array.isArray(res.body)).toBe(true);
       expect(res.body.map(task => task.id)).toContain(queuedCodingTaskId);
       const taskTypes = res.body.map(t => t.task_type);
-      expect(taskTypes.every(tt => tt === 'harness_initiative')).toBe(true);
+      expect(taskTypes.every(tt => tt === 'dev')).toBe(true);
     });
 
     it('task_type=research 过滤：所有结果都是 research 类型', async () => {

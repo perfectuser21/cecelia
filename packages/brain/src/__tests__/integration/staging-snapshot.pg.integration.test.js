@@ -26,7 +26,7 @@ it('实际候选快照保留非空父子数据并恢复有效外键', async () =
       INSERT INTO ${schema}.learnings VALUES (4,3);`);
     const source = readFileSync(resolve(import.meta.dirname, '../../../../../scripts/lib/brain-staging.sh'), 'utf8');
     // 运行脚本中的真实导出命令，包装器只将连接及表名空间限制到测试库和独占schema。
-    const body = source.match(/docker exec cecelia-node-brain sh -ec '([\s\S]*?)' \| docker exec -i/);
+    const body = source.match(/docker exec cecelia-node-brain sh -ec '([^']+)' \| candidate_docker exec -i /);
     expect(body).not.toBeNull();
     const binary = spawnSync('which', ['pg_dump'], {encoding:'utf8'}).stdout.trim();
     expect(binary).not.toBe('');
