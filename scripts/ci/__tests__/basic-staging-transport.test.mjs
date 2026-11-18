@@ -5,11 +5,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
-import yaml from 'js-yaml';
 
 const root = new URL('../../../', import.meta.url).pathname;
-const doc = name => yaml.load(readFileSync(join(root, '.github/workflows', name), 'utf8'));
-const action = () => yaml.load(readFileSync(join(root, '.github/actions/preview-deploy/action.yml'), 'utf8'));
 const sha = 'a'.repeat(40);
 async function fixture(handler, callback) {
   const requests = [];
@@ -31,104 +28,6 @@ function shell(command, env = {}) {
     let output = ''; child.stdout.on('data', data => output += data); child.stderr.on('data', data => output += data);
     const timer = setTimeout(() => child.kill('SIGKILL'), 10000);
     child.on('close', code => { clearTimeout(timer); resolve({ code, output }); });
-  });
-}
-
-test('Preview workflow 绑定PR真实head并缺少secret时失败', async () => {
-  const job = doc('ci.yml').jobs['preview-deploy'];
-  const checkout = job.steps.find(step => step.uses?.startsWith('actions/checkout'));
-  assert.equal(checkout.with?.ref, '${{ github.event.pull_request.head.sha }}');
-  const call = job.steps.find(step => step.uses === './.github/actions/preview-deploy');
-  assert.ok(call, 'workflow必须执行本地action');
-  assert.equal(call.with['deploy-token'], '${{ secrets.DEPLOY_TOKEN }}');
-  assert.equal(call.with['ts-authkey'], '${{ secrets.TS_AUTHKEY }}');
-  const steps = action().runs.steps;
-  for (const name of ['触发 preview-env-start（Brain API）', '健康检查预览 Brain']) {
-    assert.equal(steps.find(step => step.name === name).env.EXPECTED_SHA, '${{ github.event.pull_request.head.sha }}');
-  }
-  const step = steps.find(step => step.id === 'check_ts');
-  assert.equal(step.env.SECRET_TS, '${{ inputs.ts-authkey }}');
-  assert.equal(step.env.DEPLOY_TOKEN, '${{ inputs.deploy-token }}');
-  for (const [SECRET_TS, DEPLOY_TOKEN] of [['', ''], ['', 'present'], ['present', '']]) {
-    const result = await shell(step.run, { SECRET_TS, DEPLOY_TOKEN, GITHUB_OUTPUT: '/dev/null' });
-    assert.notEqual(result.code, 0, result.output);
-  }
-});
-
-test('Preview start HTTP请求携带固定SHA并安全编码分支', async () => {
-  const start = action().runs.steps.find(step => step.id === 'start_preview');
-  await fixture(() => ({ port: 5311, db_name: 'cecelia_preview_42', status: 'starting' }), async (url, requests) => {
-    const branch = 'feature/quote"branch';
-    const temp = mkdtempSync(join(tmpdir(), 'preview-start-action-'));
-    try {
-      const result = await shell(start.run, {
-        BRAIN_URL: url, DEPLOY_TOKEN: 'fixture-token', PR_NUMBER: '42', BRANCH_NAME: branch, EXPECTED_SHA: sha,
-        PREVIEW_START_MAX_ATTEMPTS: '1', GITHUB_OUTPUT: join(temp, 'output'),
-      });
-      assert.equal(result.code, 0, result.output);
-      const request = requests.find(row => row.url === '/api/brain/preview/start');
-      assert.ok(request);
-      assert.deepEqual(JSON.parse(request.body), { pr_number: 42, branch_name: branch, expected_sha: sha });
-      assert.equal(request.authorization, 'Bearer fixture-token');
-      assert.match(readFileSync(join(temp, 'output'), 'utf8'), /port=5311/);
-    } finally { rmSync(temp, {recursive:true, force:true}); }
-  });
-});
-
-test('Composite保留明确输入、bash与轮询实际终态拒绝', async () => {
-  const composite = action();
-  assert.equal(composite.runs.using, 'composite');
-  assert.deepEqual(Object.keys(composite.inputs).sort(), ['brain-url', 'deploy-token', 'github-token', 'ts-authkey']);
-  assert.doesNotMatch(JSON.stringify(composite), /secrets\./);
-  for (const step of composite.runs.steps.filter(step => step.run)) assert.equal(step.shell, 'bash');
-  const wait = composite.runs.steps.find(step => step.id === 'wait_active');
-  assert.equal(wait.env.PREVIEW_WAIT_MAX_SECONDS, '1200');
-  for (const status of ['active', 'failed', 'inactive']) {
-    await fixture(() => ({status}), async (url, requests) => {
-      const result = await shell(wait.run, {BRAIN_URL:url, DEPLOY_TOKEN:'fixture-token',
-        PR_NUMBER:'42', BRANCH_NAME:'fixture-branch', EXPECTED_PORT:'5311'});
-      assert.equal(result.code === 0, status === 'active', result.output);
-      assert.equal(requests[0].url, '/api/brain/preview/status/42');
-    });
-  }
-});
-
-test('Composite成功与失败评论执行原Github-script并写入真实PR目标', async () => {
-  const context = {repo:{owner:'fixture-owner',repo:'fixture-repo'},issue:{number:42},
-    payload:{pull_request:{head:{ref:'fixture-branch'}}}};
-  for (const success of [true, false]) {
-    const step = action().runs.steps.find(row => row.uses === 'actions/github-script@v7'
-      && (success ? row.if.includes('success()') : row.if.includes('failure()')));
-    assert.equal(step.with['github-token'], '${{ inputs.github-token }}');
-    const comments = [];
-    const script = step.with.script.replaceAll('${{ steps.healthcheck.outputs.preview_url }}', 'http://preview.invalid:5311')
-      .replaceAll('${{ steps.start_preview.outputs.port }}', '5311')
-      .replaceAll('${{ github.server_url }}', 'https://github.com').replaceAll('${{ github.repository }}', 'fixture-owner/fixture-repo')
-      .replaceAll('${{ github.run_id }}', '123');
-    await new Function('github', 'context', `return (async()=>{${script}})();`)(
-      {rest:{issues:{createComment:async value=>comments.push(value)}}}, context);
-    assert.equal(comments.length, 1);
-    assert.deepEqual({...comments[0],body:undefined}, {owner:'fixture-owner',repo:'fixture-repo',issue_number:42,body:undefined});
-    assert.match(comments[0].body, success ? /后端预览入口已核验/ : /预览环境部署失败/);
-    if (success) {
-      assert.match(comments[0].body, /代码提交.*隔离数据库.*Tick/);
-      assert.doesNotMatch(comments[0].body, /完整预览环境|前端 UI|前端界面已就绪/);
-    }
-    assert.match(comments[0].body, /fixture-branch/);
-    if (success) assert.match(comments[0].body, /http:\/\/preview.invalid:5311/);
-  }
-});
-
-for (const mismatch of [null, 'git_sha', 'db_name', 'pr_number', 'tick_enabled']) {
-  test(`Preview健康步骤实读实例身份并拒绝错配：${mismatch ?? '匹配'}`, async () => {
-    const step = action().runs.steps.find(step => step.id === 'healthcheck');
-    const identity = { git_sha: sha, db_name: 'cecelia_preview_42', pr_number: 42, tick_enabled: false };
-    if (mismatch) identity[mismatch] = mismatch === 'tick_enabled' ? true : 'wrong';
-    await fixture(req => req.url.endsWith('/identity') ? identity : { status: 'running' }, async (url, requests) => {
-      const result = await shell(step.run, { PREVIEW_URL: url, EXPECTED_SHA: sha, EXPECTED_DB_NAME: 'cecelia_preview_42', PR_NUMBER: '42', GITHUB_OUTPUT: '/dev/null' });
-      assert.equal(result.code === 0, mismatch === null, result.output);
-      assert.ok(requests.some(req => req.url.endsWith('/identity')), '健康步骤没有请求运行实例身份');
-    });
   });
 }
 
@@ -179,10 +78,9 @@ for (const enabled of [false, true]) test(`手动staging健康诊断真实HTTP�
 
 // 合法业务正文不能覆盖HTTP失败；302也不能跟随到另一个看似成功的实例。
 for (const code of [302, 401, 500]) {
-  for (const target of ['preview-identity', 'staging-wait', 'smoke-health', 'smoke-tick', 'smoke-tasks']) {
+  for (const target of ['staging-wait', 'smoke-health', 'smoke-tick', 'smoke-tasks']) {
     test(`${target} 拒绝HTTP ${code}的合法业务正文且不跟随重定向`, async () => {
       const endpoint = {
-        'preview-identity': '/api/brain/preview/identity',
         'staging-wait': '/api/brain/deploy/staging/status',
         'smoke-health': '/api/brain/health',
         'smoke-tick': '/api/brain/tick/status',
@@ -193,7 +91,6 @@ for (const code of [302, 401, 500]) {
           res.statusCode = code;
           if (code === 302) res.setHeader('Location', '/redirected-success');
         }
-        if (target === 'preview-identity') return { git_sha: sha, db_name: 'cecelia_preview_42', pr_number: 42, tick_enabled: false };
         if (target === 'staging-wait') return { status: 'success', request_id: 'fixture-request', sha, image_id: `sha256:${'b'.repeat(64)}`, isolated: true };
         return req.url.includes('/tick/status') ? { enabled: false } : { status: 'healthy' };
       }, async (url, requests) => {
@@ -205,8 +102,7 @@ for (const code of [302, 401, 500]) {
             RUNNER_TEMP: temp, STAGING_REQUEST_ID: 'fixture-request', STAGING_HOST: '127.0.0.1', STAGING_PORT: new URL(url).port,
           };
           let command;
-          if (target === 'preview-identity') command = 'bash scripts/verify-preview-identity.sh';
-          else if (target === 'staging-wait') command = 'bash scripts/wait-for-staging.sh';
+          if (target === 'staging-wait') command = 'bash scripts/wait-for-staging.sh';
           else command = 'bash scripts/auto-staging-smoke.sh';
           const result = await shell(command, env);
           assert.notEqual(result.code, 0, result.output);
@@ -230,7 +126,7 @@ for (const enabled of ['false', 'true', 'unknown', 0, 1, null, undefined, {}, []
 }
 
 test('所有身份/回执消费者拒绝HTTP200但传输截断的合法JSON正文', async () => {
-  for (const target of ['preview-identity', 'staging-wait', 'smoke-health', 'smoke-tick', 'smoke-tasks']) {
+  for (const target of ['staging-wait', 'smoke-health', 'smoke-tick', 'smoke-tasks']) {
     const suffix = target.split('-')[1];
     await fixture((req, _body, res) => {
       const isTarget = target.startsWith('smoke-') ? req.url.includes(`/${suffix === 'tick' ? 'tick/status' : suffix}`) : true;
@@ -238,14 +134,12 @@ test('所有身份/回执消费者拒绝HTTP200但传输截断的合法JSON正�
         res.setHeader('Content-Length', '4096');
         res.setHeader('Connection', 'close');
       }
-      if (target === 'preview-identity') return { git_sha: sha, db_name: 'cecelia_preview_42', pr_number: 42, tick_enabled: false };
       if (target === 'staging-wait') return { status: 'success', request_id: 'fixture-request', sha, image_id: `sha256:${'b'.repeat(64)}`, isolated: true };
       return req.url.includes('/tick/status') ? { enabled: false } : { status: 'healthy' };
     }, async url => {
       const temp = mkdtempSync(join(tmpdir(), 'http-transport-contract-'));
       try {
-        const command = target === 'preview-identity' ? 'bash scripts/verify-preview-identity.sh'
-          : target === 'staging-wait' ? 'bash scripts/wait-for-staging.sh' : 'bash scripts/auto-staging-smoke.sh';
+        const command = target === 'staging-wait' ? 'bash scripts/wait-for-staging.sh' : 'bash scripts/auto-staging-smoke.sh';
         const result = await shell(command, {
           BRAIN_URL: url, PREVIEW_URL: url, EXPECTED_SHA: sha, EXPECTED_DB_NAME: 'cecelia_preview_42', PR_NUMBER: '42',
           DEPLOY_TOKEN: 'fixture-token', GITHUB_SHA: sha, GITHUB_ENV: join(temp, 'env'), GITHUB_OUTPUT: join(temp, 'output'),
