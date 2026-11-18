@@ -54,7 +54,7 @@ export function isolatedExistingOpsGitFixture({revision=fixtureGit('rev-parse','
    return cache.get(path);
   };
   if(requireRuntime){
-   const runtime=readNativeConsumerRuntime();assert.equal(runtime.files.length,17);
+   const runtime=readNativeConsumerRuntime();assert.equal(runtime.files.length,16);
    for(const file of runtime.files)assert.equal(createHash('sha256').update(read(file.path)).digest('hex'),file.sha256,`fixture HEAD differs from loaded collector: ${file.path}`);
   }
   return {dir,revision:selected,tree,entries,paths:entries.map(e=>e.path),read,git,close};

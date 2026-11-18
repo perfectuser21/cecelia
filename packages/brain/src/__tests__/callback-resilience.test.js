@@ -14,6 +14,8 @@ const mockPool = vi.hoisted(() => ({
   connect: vi.fn(() => mockClient),
 }));
 vi.mock('../db.js', () => ({ default: mockPool }));
+const cooldownControl = vi.hoisted(() => vi.fn(async () => {}));
+vi.mock('../lib/callback-cooldown.js', () => ({ CALLBACK_COOLDOWN_MS: 5000, waitForCallbackCooldown: cooldownControl }));
 
 vi.mock('../executor.js', () => ({
   getActiveProcesses: vi.fn(() => []),
@@ -294,5 +296,66 @@ describe('execution-callback 终态幂等：迟到回调返回 200', () => {
       c => typeof c[0] === 'string' && c[0].includes('UPDATE tasks')
     );
     expect(updateCall).toBeDefined();
+  });
+});
+
+
+describe('execution-callback 冷却与释放顺序', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    cooldownControl.mockReset().mockResolvedValue(undefined);
+    setupDefaultMocks();
+    const fallback = mockPool.query.getMockImplementation();
+    mockPool.query.mockImplementation((sql, params) => {
+      if (typeof sql === 'string' && sql.includes('task_type')) {
+        return Promise.resolve({ rows: [{ task_type: 'architecture_design', title: '扫描', payload: { mode: 'scan' } }] });
+      }
+      // 本场景没有订阅、依赖或待恢复子任务；不能把默认任务行冒充依赖集合。
+      if (typeof sql === 'string' && sql.trim().startsWith('SELECT') && !sql.includes('SELECT status FROM tasks')) {
+        return Promise.resolve({ rows: [], rowCount: 0 });
+      }
+      return fallback(sql, params);
+    });
+  });
+
+  it('提交并释放数据库后进入冷却，冷却完成前不补槽也不提前响应', async () => {
+    let finishCooldown;
+    const gate = new Promise(resolve => { finishCooldown = resolve; });
+    cooldownControl.mockReturnValueOnce(gate);
+    const { runTickSafe } = await import('../tick.js');
+    const { removeActiveProcess } = await import('../executor.js');
+    let replied = false;
+    const pending = mockReqRes('POST', '/execution-callback', {
+      task_id: 'cooldown-completed', run_id: 'cooldown-run', status: 'AI Done', result: { result: '扫描完成' },
+    }).then(response => { replied = true; return response; });
+    try {
+      await vi.waitFor(() => expect(cooldownControl).toHaveBeenCalledOnce());
+      expect(mockClient.query.mock.calls.some(([sql]) => sql === 'COMMIT')).toBe(true);
+      expect(mockClient.release).toHaveBeenCalledOnce();
+      expect(removeActiveProcess).toHaveBeenCalledWith('cooldown-completed');
+      expect(mockClient.release.mock.invocationCallOrder[0]).toBeLessThan(cooldownControl.mock.invocationCallOrder[0]);
+      expect(runTickSafe).not.toHaveBeenCalled();
+      expect(replied).toBe(false);
+      expect(mockPool.query.mock.calls.some(([sql]) => sql.includes('processed_at = NOW()'))).toBe(false);
+    } finally { finishCooldown(); }
+    const response = await pending;
+    expect(response.statusCode).toBe(200);
+    expect(runTickSafe).toHaveBeenCalledOnce();
+    expect(runTickSafe).toHaveBeenCalledWith('execution-callback');
+    expect(response.body.next_tick).toEqual({ actions_taken: [] });
+    expect(mockPool.query.mock.calls.some(([sql]) => sql.includes('processed_at = NOW()'))).toBe(true);
+  });
+
+  it('冷却失败沿原异常边界结算回执，不调用下一次tick', async () => {
+    cooldownControl.mockRejectedValueOnce(new Error('isolated clock failure'));
+    const { runTickSafe } = await import('../tick.js');
+    const response = await mockReqRes('POST', '/execution-callback', {
+      task_id: 'cooldown-failed', run_id: 'cooldown-error-run', status: 'AI Done', result: { result: '扫描完成' },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.body.next_tick).toBeNull();
+    expect(runTickSafe).not.toHaveBeenCalled();
+    expect(mockClient.release).toHaveBeenCalledOnce();
+    expect(mockPool.query.mock.calls.some(([sql]) => sql.includes('processed_at = NOW()'))).toBe(true);
   });
 });

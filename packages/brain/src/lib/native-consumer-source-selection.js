@@ -8,7 +8,7 @@ import {stepSha256} from '../../scripts/sync-steps-from-workspace.mjs';
 const SHA=/^[a-f0-9]{40}$/;
 const native=q=>q.repo===EXISTING_OPS_REPO&&q.scope===EXISTING_OPS_SCOPE&&SHA.test(q.revision||'');
 const eligible=w=>w.payload?.definition_scope==='consumer_evidence'&&w.payload.source_scope===EXISTING_OPS_SCOPE
- &&!Object.hasOwn(w.payload,'source_set')&&!w.payload.registration_protocol&&EXISTING_OPS_IDENTITIES.some(i=>i.workflow_id===w.workflow_id);
+ &&!Object.hasOwn(w.payload,'source_set')&&!w.payload.registration_protocol&&w.workflow_id===EXISTING_OPS_IDENTITIES[1].workflow_id;
 const validPath=p=>typeof p==='string'&&p.length>0&&!p.includes('\\')&&!p.includes('\0')&&!p.split('/').some(s=>!s||s==='.'||s==='..');
 const digest=value=>stepSha256(JSON.parse(JSON.stringify(value)));
 const closureHash=digest(readNativeConsumerRuntime().files);
@@ -46,7 +46,8 @@ async function buildProof(q,fetchFn,resolveToken){
  };
  await assertNativeConsumerRuntime(readSource);
  const proof=await buildExistingOpsSources({...q,paths:[...entries.values()].filter(e=>e.type==='blob').map(e=>e.path),readSource});
- if(proof.consumers.length!==EXISTING_OPS_IDENTITIES.length||proof.consumers.some(c=>c.status!=='verified'||c.gaps.length))throw Error('source_unknown');
+ const active=proof.consumers.filter(c=>c.workflow_id===EXISTING_OPS_IDENTITIES[1].workflow_id&&c.workflow_key==='factory_f3_ops');
+ if(active.length!==1||active[0].status!=='verified'||active[0].gaps.length)throw Error('source_unknown');
  return {repo:q.repo,revision:q.revision,tree:tree.sha,collector_sha256:closureHash,proof};
 }
 async function cachedProof(q,{fetchFn=globalThis.fetch,resolveToken=resolveGitHubToken}={}){
@@ -86,7 +87,7 @@ export async function selectNativeConsumerDefinition(db,q,rows,prepared){
   const ids=rows.flatMap(w=>Array.isArray(w.payload.activities)?w.payload.activities.map(a=>a.activity_version_id):[]).filter(id=>/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(id||''));
   const activities=(await db.query('SELECT * FROM activity_definition_versions WHERE id=ANY($1::uuid[])',[ids])).rows;
   if(activities.some(a=>Object.hasOwn(a.payload,'source_set')))return null;
-  const source={repo:q.repo,commit:q.revision,path:identity.workflow_key==='factory_f2_ops'?'.github/workflows/brain-ci-deploy.yml':'.github/workflows/nightly-regression.yml'};
+  const source={repo:q.repo,commit:q.revision,path:'.github/workflows/nightly-regression.yml'};
   const contract={key:identity.workflow_key,definition_scope:'consumer_evidence',executable:false,source_basis:'fixed_git_tree'};
   const activityPayload={activity_id:identity.activity_id,definition_key:`${identity.workflow_key}.${identity.slot_key}`,source_scope:EXISTING_OPS_SCOPE,
    definition_scope:'consumer_evidence',registration_sha256:registry.registry_sha256,contract,steps:[],implementation_bindings:consumer.bindings,

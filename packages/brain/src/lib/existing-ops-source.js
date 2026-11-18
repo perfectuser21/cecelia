@@ -3,7 +3,7 @@ import { collectBasicDiagnosticInputs, basicCiSelectorEnabled, collectBasicCiSou
 import { createHash } from 'node:crypto';
 import { posix } from 'node:path';
 import yaml from 'js-yaml';
-import { runtimeSelectorEnabled, collectRuntimeSources, ciEntrySelectorEnabled, collectCiEntrySources, stagingSelectorVersion, collectIsolatedStagingSources } from './existing-ops-runtime-source.js';
+import { runtimeSelectorEnabled, collectRuntimeSources, ciEntrySelectorEnabled, collectCiEntrySources } from './existing-ops-runtime-source.js';
 import { buildSelectorEnabled, collectBuildSources, reviewedAContext } from './existing-ops-build-source.js';
 let parse;
 async function requireParser() {
@@ -21,7 +21,6 @@ export const EXISTING_OPS_RUNTIME_SELECTOR_SCHEMA = 1;
 export const EXISTING_OPS_BUILD_SELECTOR_SCHEMA = 1;
 export const EXISTING_OPS_AGGREGATE_SELECTOR_SCHEMA = 1;
 export const EXISTING_OPS_GOLDSET_SELECTOR_SCHEMA = 1;
-export const EXISTING_OPS_STAGING_SELECTOR_SCHEMA = 2;
 export const EXISTING_OPS_IDENTITIES = Object.freeze([
   { workflow_id: '7743d66a-d3e0-4ebf-b82d-3f5d2d769fb1', workflow_key: 'factory_f2_ops', capability_id: '2fa4d085-1451-4f3f-8fa1-b6d4bacdb1b6', activity_id: '0ab79a73-1ec3-4ddc-bb88-1433568ae2e2', reference_id: 'a83b69b9-f426-4958-8cef-7560659ef6f8', slot_key: 'step_1', sequence_no: 1,
     unverified_reference_ids: ['3584783c-b847-4eb7-8920-76834cafba38', '5d963288-2dde-4b08-9f8c-5cd7d391a76f', 'c9a31a17-0751-4cad-a982-99325461fdf3'] },
@@ -44,28 +43,6 @@ function nodes(root) {
   visit(root); return result;
 }
 const ast = text => parse(text, { ecmaVersion: 'latest', sourceType: 'module' });
-/** 只接受现行runner的直接try/for数据流；注释、字符串及未执行支路不能提供证据。 */
-function migrationInputProven(text) {
-  if (!text) return false;
-  const program = ast(text);
-  const declarations = program.body.filter(n => n.type === 'VariableDeclaration').flatMap(n => n.declarations);
-  const directory = declarations.find(n => n.id.name === 'MIGRATIONS_DIR')?.init;
-  if (!call(directory, 'path', 'join') || directory.arguments[0]?.name !== '__dirname' || !literal(directory.arguments[1], '..') || !literal(directory.arguments[2], 'migrations') || directory.arguments.length !== 3) return false;
-  const fn = program.body.find(n => n.type === 'ExportNamedDeclaration' && n.declaration?.type === 'FunctionDeclaration' && n.declaration.id.name === 'runMigrations')?.declaration;
-  const body = fn?.body.body.find(n => n.type === 'TryStatement')?.block.body;
-  if (!body) return false;
-  const files = body.filter(n => n.type === 'VariableDeclaration').flatMap(n => n.declarations).find(n => n.id.name === 'files')?.init;
-  const filter = files?.callee?.object, discovery = filter?.callee?.object, predicate = filter?.arguments?.[0];
-  if (files?.type !== 'CallExpression' || files.callee?.property?.name !== 'sort' || files.arguments.length !== 0
-    || filter?.type !== 'CallExpression' || filter.callee?.property?.name !== 'filter' || filter.arguments.length !== 1
-    || !call(discovery, 'fs', 'readdirSync') || discovery.arguments.length !== 1 || discovery.arguments[0]?.name !== 'MIGRATIONS_DIR'
-    || predicate?.type !== 'ArrowFunctionExpression' || predicate.params.length !== 1 || !call(predicate.body, predicate.params[0].name, 'endsWith') || !literal(predicate.body.arguments[0], '.sql')) return false;
-  const loop = body.find(n => n.type === 'ForOfStatement' && n.right?.name === 'files' && n.left?.declarations?.[0]?.id?.name === 'file');
-  const sql = loop?.body.body.filter(n => n.type === 'VariableDeclaration').flatMap(n => n.declarations).find(n => n.id.name === 'sql')?.init;
-  if (!call(sql, 'fs', 'readFileSync') || !call(sql.arguments[0], 'path', 'join') || sql.arguments[0].arguments[0]?.name !== 'MIGRATIONS_DIR' || sql.arguments[0].arguments[1]?.name !== 'file') return false;
-  const query = loop.body.body.find(n => n.type === 'TryStatement')?.block.body.find(n => n.type === 'ExpressionStatement' && n.expression?.type === 'AwaitExpression' && call(n.expression.argument, 'client', 'query') && n.expression.argument.arguments[0]?.name === 'sql');
-  return Boolean(query);
-}
 function literalSqlInputs(text) {
   const program = ast(text);
   if (!program.body.some(n => n.type === 'ImportDeclaration' && ['node:fs', 'fs'].includes(n.source.value) && n.specifiers.some(s => s.type === 'ImportSpecifier' && s.imported.name === 'readFileSync' && s.local.name === 'readFileSync'))) return [];
@@ -182,43 +159,6 @@ function integrationConfigInputs(text) {
   if(declaration?.init?.type!=='ArrayExpression'||declaration.init.elements.some(n=>n?.type!=='Literal'||typeof n.value!=='string'))throw Error('integration_inputs_unproven');
   return declaration.init.elements.map(n=>`packages/brain/${n.value}`).filter(sourcePath);
 }
-function deployRouteProven(text) {
-  const handler = nodes(ast(text)).find(n => call(n, 'router', 'post') && literal(n.arguments[0], '/deploy'))?.arguments.at(-1);
-  if (!handler?.body || !['FunctionExpression', 'ArrowFunctionExpression'].includes(handler.type)) return false;
-  const declarations = handler.body.body.filter(n => n.type === 'VariableDeclaration').flatMap(n => n.declarations);
-  const script = declarations.find(n => n.id?.name === 'scriptDir')?.init;
-  const args = declarations.find(n => n.id?.name === 'args')?.init;
-  const spawn = declarations.find(n => n.id?.name === 'child')?.init;
-  const legacyArgs=args?.type==='ArrayExpression'&&literal(args.elements[0],'bash')&&args.elements[1]?.name==='scriptDir'
-    &&spawn?.arguments[0]?.type==='MemberExpression'&&spawn.arguments[0].object?.name==='args'&&literal(spawn.arguments[0].property,0)
-    &&call(spawn.arguments[1],'args','slice')&&literal(spawn.arguments[1].arguments[0],1);
-  const literalExecutable=args?.type==='ArrayExpression'&&args.elements.length===1&&args.elements[0]?.name==='scriptDir'
-    &&literal(spawn?.arguments[0],'bash')&&spawn.arguments[1]?.name==='args';
-  return script?.type === 'TemplateLiteral' && script.expressions.length === 1 && script.expressions[0]?.name === 'repoRoot'
-    && script.quasis[0].value.cooked === '' && script.quasis[1].value.cooked === '/scripts/deploy-local.sh'
-    && spawn?.type === 'CallExpression' && spawn.callee?.name === 'spawn' && (legacyArgs||literalExecutable);
-}
-// 已审 main auto-staging 的完整请求入口和 /deploy 注册调用；未知控制流不猜消费边。
-const STAGING_WORKFLOW_SHA = 'b2c144bf52ac63e57578fae06eee53dd4b98d1f4ca8b7094f173c59187412599';
-const STAGING_ROUTE_AST_SHA = '5550255ec26208d228aabe0a57d72a179f4ed67a63ddd5aa979894def466b1f3';
-const STAGING_PREFIX_SHA = 'd3480aafdf688ddf2fa0c554ef4778a3ee367b00b296dbd4c664fb27213a9f19';
-function stagingRouteProven(text) {
-  const program = ast(text), isDeploy = n => call(n, 'router', 'post') && literal(n.arguments[0], '/deploy');
-  const matches = program.body.filter(n => n.type === 'ExpressionStatement').map(n => n.expression).filter(isDeploy);
-  return matches.length === 1 && nodes(program).filter(isDeploy).length === 1
-    && hash(JSON.stringify(matches[0], (key, value) => ['start', 'end', 'raw'].includes(key) ? undefined : value)) === STAGING_ROUTE_AST_SHA;
-}
-async function collectStagingSources({ read, requireProof, relations, revision, route }) {
-  const workflowPath = '.github/workflows/auto-staging-deploy.yml', scriptPath = 'scripts/staging-deploy.sh';
-  const workflow = await read(workflowPath), script = await read(scriptPath);
-  requireProof(workflow && hash(workflow) === STAGING_WORKFLOW_SHA, 'staging_request_unproven');
-  requireProof(route && stagingRouteProven(route), 'staging_route_unproven');
-  // 字节0起包含目录推导和完整顶层 source 行；仅证明实际导入，不宣称后缀业务成功。
-  requireProof(script && hash(Buffer.from(script, 'utf8').subarray(0, 1182)) === STAGING_PREFIX_SHA, 'staging_auth_source_unproven');
-  relations.push({ consumer_path: workflowPath, input_path: 'packages/brain/src/routes/ops.js', kind: 'reviewed_staging_deploy_request', revision },
-    { consumer_path: 'packages/brain/src/routes/ops.js', input_path: scriptPath, kind: 'reviewed_staging_script_exec', revision },
-    { consumer_path: scriptPath, input_path: 'scripts/lib/internal-auth-token.sh', kind: 'bash_source_call', revision });
-}
 function workflowRuns(text) {
   const doc = yaml.load(text), runs = [];
   if (!doc?.jobs || typeof doc.jobs !== 'object') return runs;
@@ -277,31 +217,9 @@ export async function buildExistingOpsSources({ scope, repo, revision, paths, re
       // 部分链路不得留下可认领的成功绑定。
       bindings: gaps.length ? [] : [...bindings.values()].sort((a, b) => a.path.localeCompare(b.path)), input_relations: gaps.length ? [] : relations });
   }
-  await build(EXISTING_OPS_IDENTITIES[0], async ({ read, requireProof, relations }) => {
-    const deployment = await read('.github/workflows/brain-ci-deploy.yml');
-    const trigger = await read('scripts/ci/gate3-trigger-deploy.sh');
-    const route = await read('packages/brain/src/routes/ops.js');
-    const local = await read('scripts/deploy-local.sh');
-    const deploy = await read('scripts/brain-deploy.sh');
-    const migrate = await read('packages/brain/src/migrate.js');
-    const auth = await read('scripts/lib/internal-auth-token.sh');
-    requireProof(deployment && workflowRuns(deployment).some(r => shellLines(r.run).some(line => /^HTTP_CODE=\$\(bash scripts\/ci\/gate3-trigger-deploy\.sh "\$\{BRAIN_URL\}"\)$/.test(line))), 'deployment_entry_unproven');
-    requireProof(trigger && shellLines(trigger).some(line => /-X POST "\$\{BRAIN_URL\}\/api\/brain\/deploy"/.test(line)), 'deploy_request_unproven');
-    requireProof(route && deployRouteProven(route), 'deploy_route_unproven');
-    requireProof(local && shellLines(local).includes('bash "$MAIN_SCRIPTS/brain-deploy.sh"'), 'deployment_script_unproven');
-    requireProof(deploy && shellLines(deploy).some(line => /\bnode src\/migrate\.js(?:\)|\s|$)/.test(line) && !line.startsWith('echo ')), 'migration_execution_unproven');
-    requireProof(auth && deploy && shellLines(deploy).includes('source "$SCRIPT_DIR/lib/internal-auth-token.sh"') && shellLines(deploy).some(line=>/^ensure_cecelia_internal_token "\$CECELIA_INTERNAL_ENV_FILE" \|\| exit 1$/.test(line)), 'deployment_auth_helper_unproven');
-    if(auth)relations.push({consumer_path:'scripts/brain-deploy.sh',input_path:'scripts/lib/internal-auth-token.sh',kind:'bash_source_call',revision});
-    const schemaPath = 'packages/brain/src/lib/existing-ops-source.js';
-    const schema = tree.has(schemaPath) ? await readSource(schemaPath, revision) : '';
-    const stagingVersion=schema?stagingSelectorVersion(schema,ast):0;
-    if(stagingVersion===1)await collectStagingSources({read,requireProof,relations,revision,route});
-    if(stagingVersion===2)await collectIsolatedStagingSources({read,requireProof,relations,revision,route,parse:ast});
-    const inputProven = migrationInputProven(migrate);
-    if (requireProof(inputProven, 'migration_input_unproven')) for (const path of paths.filter(path => /^packages\/brain\/migrations\/[^/]+\.sql$/.test(path))) {
-      if (await read(path)) relations.push({ consumer_path: 'packages/brain/src/migrate.js', input_path: path, kind: 'migration_sql', selector: 'top_level_sql_sorted', revision });
-    }
-  });
+  // F2部署入口已退役；保留历史身份，不再采集或认领任何部署来源。
+  consumers.push({ ...EXISTING_OPS_IDENTITIES[0], definition_scope: 'consumer_evidence',
+    status: 'unknown', gaps: [{ code: 'consumer_retired' }], bindings: [], input_relations: [] });
   await build(EXISTING_OPS_IDENTITIES[1], async ({ read, requireProof, relations }) => {
     const nightly = await read('.github/workflows/nightly-regression.yml');
     const ci = await read('.github/workflows/ci.yml');
