@@ -12,30 +12,35 @@ const output = (title) => JSON.stringify({ meeting_summary: '季度资源决议'
 async function readKrs(title) {
   return (await pool.query('SELECT title, objective_id, status, owner_role, metadata FROM key_results WHERE title=$1 OR title=$2 ORDER BY title', [title, `${title}-default`])).rows;
 }
-describe('真实 strategy_session HTTP callback → PostgreSQL KR', () => {
+describe('真实 strategy_session HTTP 回调保留执行结果，禁止自动创建 KR', () => {
   for (const goalKind of ['objective', 'unknown', 'null']) {
-    it(`${goalKind} goal_id：真实任务终态、KR关联、默认值和重放幂等`, async () => {
+    it(`${goalKind} goal_id：真实任务终态、原始回执和重放幂等`, async () => {
       let goalId = goalKind === 'unknown' ? randomUUID() : null;
       if (goalKind === 'objective') goalId = (await pool.query("INSERT INTO objectives(title,status) VALUES($1,'active') RETURNING id", [`callback-objective-${randomUUID()}`])).rows[0].id;
       const task = await sourceTask('strategy_session', { goalId });
       const title = `callback-kr-${randomUUID()}`;
-      const response = await callback(task, { output: `会议记录\n${output(title)}\n结束` });
+      const result = { output: `会议记录\n${output(title)}\n结束` };
+      const response = await callback(task, result);
       expect(response.status, JSON.stringify(response.body)).toBe(200);
       expect(response.body.new_status).toBe('completed');
       const stored = await readTask(task.id);
       expect(stored.status).toBe('completed');
       expect(stored.completed_at).toBeInstanceOf(Date);
       expect(stored.claimed_by).toBeNull();
-      expect(stored.payload.meeting_summary).toBe('季度资源决议');
-      expect(await readKrs(title)).toEqual([
-        { title, objective_id: goalKind === 'objective' ? goalId : null, status: 'pending', owner_role: 'cto', metadata: { priority: 'P0', domain: 'engineering' } },
-        { title: `${title}-default`, objective_id: goalKind === 'objective' ? goalId : null, status: 'pending', owner_role: null, metadata: { priority: 'P1', domain: null } },
-      ]);
-      const repeat = await callback(task, output(title));
-      expect(repeat.status).toBe(200); expect(repeat.body.duplicate).toBe(true);
-      expect(await readKrs(title)).toHaveLength(2);
-      const queue = await pool.query('SELECT processed_at FROM callback_queue WHERE task_id=$1', [task.id]);
-      expect(queue.rowCount).toBe(2); expect(queue.rows.every(r => r.processed_at)).toBe(true);
+      expect(stored.payload.last_run_result).toMatchObject({ run_id: task.runId, status: 'AI Done' });
+      expect(stored.payload).not.toHaveProperty('meeting_summary');
+      expect(await readKrs(title)).toEqual([]);
+      const repeat = await callback(task, result);
+      expect(repeat.status).toBe(200);
+      expect(repeat.body.duplicate).toBe(true);
+      expect(await readTask(task.id)).toEqual(stored);
+      expect(await readKrs(title)).toEqual([]);
+      const queue = await pool.query('SELECT result_json, processed_at FROM callback_queue WHERE task_id=$1', [task.id]);
+      expect(queue.rowCount).toBe(2);
+      for (const receipt of queue.rows) {
+        expect(receipt.result_json).toEqual(result);
+        expect(receipt.processed_at).toBeInstanceOf(Date);
+      }
     });
   }
   for (const invalid of ['invalid JSON {"krs":[}', '{"krs":[]}', '会议未产生决议']) {
@@ -46,7 +51,8 @@ describe('真实 strategy_session HTTP callback → PostgreSQL KR', () => {
       expect(response.status).toBe(200);
       const stored = await readTask(task.id);
       expect(stored.status).toBe('completed');
-      expect(stored.payload.strategy_raw_output).toBe(invalid);
+      expect(stored.payload.last_run_result.result_summary).toBe(invalid);
+      expect(stored.payload).not.toHaveProperty('strategy_raw_output');
       expect((await pool.query('SELECT count(*)::int AS n FROM key_results')).rows[0].n).toBe(before);
     });
   }
