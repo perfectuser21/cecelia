@@ -165,7 +165,7 @@ export const NIGHTLY_STATUS_INPUTS={
  'scripts/brain-image-retention/docker.mjs':'3588f732e156fa7cf97407f938b674a9ca88861002a1e0bbb167fa176fd8d67f',
  'scripts/brain-image-retention/process.mjs':'dc6311ce2ada55e4bb4116e8c49b04ffebe3a85eced06ae983876371e1d8e6f5',
  'scripts/brain-image-retention-settlement.test.mjs':'a682c780cc51250de4415f8333c6b2e64e5b7f2777a687a1b2f84d34fc386efd',
- 'scripts/__tests__/fixtures/deploy-settlement-process.mjs':'d773a529bd9839ae6d172648ecd88befcdb08e2aa90b17438bd85126987578fd',
+ 'scripts/__tests__/fixtures/deploy-settlement-process.mjs':'c4a0af891a38ebb8a19df5c62ddbf80c87669b6eeafe051817525f1bf5ca04bc',
  '.github/workflows/heartbeat-sentinel.yml':'2d55237fda93fd03de91cdfe0d2f27f216aa22c72038a56b82d89b9a9d70c366',
  'scripts/ci/__tests__/basic-alert-failure-propagation.test.mjs':'a97b336ee8f5b48dec974a2c06fdab92e7de31d5fb923bffde02e674312c9c4c',
  'packages/brain/src/__tests__/nightly-regression-config.test.js':'21b6da67c353f46fc140522e1606a9f0669731689ce19a3d989ecdbb1ad96c37',

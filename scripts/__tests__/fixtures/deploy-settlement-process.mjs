@@ -50,4 +50,3 @@ if(s.mode==='hang'&&a[0]==='info'){
  const save=()=>writeFile(statePath,JSON.stringify(state));await save();
  return {root,state,save,store,ledger:createDeploymentLedger({store,docker,settlementTimeoutMs}),calls:async()=> (await readFile(join(root,'calls'),'utf8')).trim().split('\n').map(JSON.parse)};
 }
-
