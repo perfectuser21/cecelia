@@ -103,3 +103,16 @@ export const BIND_MOUNT_INPUTS={
  'packages/brain/src/__tests__/deploy-root-guard.test.js':'45c0add857032273de821451ed9a5f45b1ef97a9cf2999501053d0b44abd1951',
  'scripts/ci/__tests__/basic-deploy-root-mounts.test.mjs':'c0bca7021f6144bb175ee67aa3e0b934881a20c99efb6b6229f1ba41307031dc',
 };
+
+// Builder协议以既有真实回归的已审字节作为类型标记，不猜测未知版本。
+export const CANDIDATE_BUILDER_MARKER='scripts/ci/__tests__/basic-brain-candidate-host.test.mjs';
+export const CANDIDATE_BUILDER_LEGACY_INPUTS={
+ 'packages/brain/Dockerfile':'977505fc83d033b115e0d0048d0239a9b82628daf446679811a43e4a1772cedf',
+};
+export const CANDIDATE_BUILDER_INPUTS={
+ 'scripts/brain-build.sh':'7f15b390721d25523023a63b15f0dd48793b720ad3a29f0655cef0ac256b5f13',
+ 'packages/brain/Dockerfile':'aaa8aeb233e5db637e87c1f1bcecaa4588605e8b2c9a81483600b6f5826a6e1e',
+ 'scripts/ci/run-basic-check.mjs':'7046018e346afbf77042cb6d9f1d3ba6f567bab3cf88ba169db70ed4bce9688c',
+ 'scripts/ci/__tests__/basic-fixed-core.test.mjs':'16e18d9a685db4a59722b742bc73f1e17c44d07d0e807eee108b12c38db2bde8',
+ 'scripts/ci/__tests__/basic-brain-candidate-host.test.mjs':'7fe5134563e43af1a539c4de195bec2e33ef172257479053cb5404cdb41753ac',
+};
