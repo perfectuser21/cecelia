@@ -1,8 +1,7 @@
 /**
  * Unit test for cicd-C：brain-deploy.sh 的通用 post-deploy smoke 阶段。
  *
- * 范畴：纯文件结构 / 关键不变量校验。真实环境跑 smoke 由 CI 的 real-env-smoke job
- * (cicd-B) 覆盖；本测试保留部署完成后的通用冒烟入口合同。
+ * 范畴：纯文件结构校验，不证明真实生产业务完成。
  */
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -26,8 +25,10 @@ describe('post-deploy smoke contract', () => {
 
   it('brain-deploy.sh healthy check 后调 run_post_deploy_smoke', () => {
     const txt = readFileSync(DEPLOY_SH, 'utf8');
-    expect(txt).toMatch(/\[11\/11\] Post-deploy smoke/);
-    expect(txt).toContain('run_post_deploy_smoke');
+    const healthy = txt.indexOf('=== Deploy SUCCESS:');
+    const smokeCall = txt.indexOf('    run_post_deploy_smoke || true');
+    expect(healthy).toBeGreaterThan(-1);
+    expect(smokeCall).toBeGreaterThan(healthy);
     // smoke non-fatal — deploy 已成功不能因 smoke 回滚
     expect(txt).toMatch(/run_post_deploy_smoke[^\n]*\|\| true/);
   });
