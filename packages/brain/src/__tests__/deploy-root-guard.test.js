@@ -8,7 +8,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { execSync, spawnSync } from 'child_process';
-import { mkdtempSync, rmSync, appendFileSync, writeFileSync, readFileSync, readdirSync, mkdirSync, chmodSync, statSync, existsSync } from 'fs';
+import { mkdtempSync, rmSync, appendFileSync, writeFileSync, readFileSync, readdirSync, mkdirSync, chmodSync, statSync, lstatSync, existsSync } from 'fs';
 import { createHash } from 'crypto';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -89,6 +89,22 @@ function fakeCommand(name, content) {
   return `${bin}:${process.env.PATH}`;
 }
 
+function restoreRuntimeInputs(body = ':', extraEnv = {}) {
+  const helper = new URL('../../../../scripts/lib/deploy-runtime-inputs.sh', import.meta.url).pathname;
+  return spawnSync('bash', ['-c', `set -euo pipefail
+MAIN_ROOT="$1"
+source "$2"
+deploy_runtime_inputs_backup "$MAIN_ROOT"
+${body}
+if deploy_runtime_inputs_restore; then
+  exit 0
+else
+  printf 'WORKERS_BACKUP=%s\\n' "$WORKERS_CONFIG_BACKUP"
+  exit 1
+fi
+`, '_', clone, helper], { cwd: clone, encoding: 'utf8', env: { ...process.env, ...extraEnv } });
+}
+
 function sha256(path) {
   return createHash('sha256').update(readFileSync(path)).digest('hex');
 }
@@ -161,6 +177,125 @@ describe('deploy-root-guard', () => {
     } else {
       expect(sha256(sample)).toBe(sampleHash);
     }
+  });
+
+  it.each([
+    ['unchanged', ':'],
+    ['mode-only', 'chmod 0600 "$WORKERS_CONFIG_INPUT"'],
+    ['bytes-different', 'printf changed-by-git > "$WORKERS_CONFIG_INPUT"'],
+  ])('恢复输入%s：mv拒绝时只有完全未变输入可以保持原inode完成', (kind, mutate) => {
+    const worker = seedWorkersConfig();
+    const before = statSync(worker.path);
+    const calls = join(base, 'mv-calls');
+    const path = fakeCommand('mv', 'printf "mv\\n" >> "$STUB_MV_LOG"\nexit 9');
+    const r = restoreRuntimeInputs(mutate, { PATH: path, STUB_MV_LOG: calls });
+    const backupNames = readdirSync(join(clone, '.runtime')).filter(name => name.startsWith('.workers-config-deploy-'));
+    if (kind === 'unchanged') {
+      expect(r.status, r.stdout + r.stderr).toBe(0);
+      expect(readFileSync(worker.path)).toEqual(worker.bytes);
+      expect(statSync(worker.path).mode & 0o777).toBe(worker.mode);
+      expect(statSync(worker.path).ino).toBe(before.ino);
+      expect(existsSync(calls)).toBe(false);
+      expect(backupNames).toEqual([]);
+      expect(r.stdout).toContain('无需替换');
+    } else {
+      expect(r.status).not.toBe(0);
+      expect(existsSync(calls)).toBe(true);
+      expect(backupNames).toHaveLength(1);
+      const backup = join(clone, '.runtime', backupNames[0]);
+      expect(readFileSync(backup)).toEqual(worker.bytes);
+      expect(statSync(backup).mode & 0o777).toBe(0o600);
+      expect(r.stdout + r.stderr).toContain('运行时worker配置恢复失败');
+      if (kind === 'mode-only') expect(statSync(worker.path).mode & 0o777).toBe(0o600);
+    }
+  });
+
+  it('只有权限不同仍走原严格原子恢复，成功后权限与原始输入一致', () => {
+    const worker = seedWorkersConfig();
+    const inode = statSync(worker.path).ino;
+    const r = restoreRuntimeInputs('chmod 0600 "$WORKERS_CONFIG_INPUT"');
+    expect(r.status, r.stdout + r.stderr).toBe(0);
+    expect(readFileSync(worker.path)).toEqual(worker.bytes);
+    expect(statSync(worker.path).mode & 0o777).toBe(worker.mode);
+    expect(statSync(worker.path).ino).not.toBe(inode);
+    expect(r.stdout).not.toContain('无需替换');
+  });
+
+  it.each(['file', 'directory'])('目的路径为%s符号链接时拒绝恢复，保留原备份及链接目标', kind => {
+    const worker = seedWorkersConfig();
+    const target = join(clone, 'symlink-target');
+    if (kind === 'file') { writeFileSync(target, worker.bytes); chmodSync(target, worker.mode); }
+    else mkdirSync(target);
+    const r = restoreRuntimeInputs('rm "$WORKERS_CONFIG_INPUT"; ln -s "$MAIN_ROOT/symlink-target" "$WORKERS_CONFIG_INPUT"');
+    expect(r.status).not.toBe(0);
+    expect(lstatSync(worker.path).isSymbolicLink()).toBe(true);
+    const backups = readdirSync(join(clone, '.runtime')).filter(name => name.startsWith('.workers-config-deploy-'));
+    expect(backups).toHaveLength(1);
+    const backup = join(clone, '.runtime', backups[0]);
+    expect(readFileSync(backup)).toEqual(worker.bytes);
+    expect(statSync(backup).mode & 0o777).toBe(0o600);
+    if (kind === 'file') expect(readFileSync(target)).toEqual(worker.bytes);
+    else expect(readdirSync(target)).toEqual([]);
+  });
+
+  it('完全未变时清理备份失败仍拒绝、保留备份引用且不换inode', () => {
+    const worker = seedWorkersConfig();
+    const inode = statSync(worker.path).ino;
+    const path = fakeCommand('rm', 'if [[ "${@: -1}" == */.workers-config-deploy-* ]]; then exit 9; fi\nexec /bin/rm "$@"');
+    const r = restoreRuntimeInputs(':', { PATH: path });
+    expect(r.status).not.toBe(0);
+    expect(statSync(worker.path).ino).toBe(inode);
+    const backups = readdirSync(join(clone, '.runtime')).filter(name => name.startsWith('.workers-config-deploy-'));
+    expect(backups).toHaveLength(1);
+    const backup = join(clone, '.runtime', backups[0]);
+    expect(readFileSync(backup)).toEqual(worker.bytes);
+    expect(statSync(backup).mode & 0o777).toBe(0o600);
+    expect(r.stdout).toContain(`WORKERS_BACKUP=${backup}`);
+  });
+
+  it.each(['cmp', 'stat'])('%s无法读回证明恢复结果时不得误绿，保留原始备份', command => {
+    const worker = seedWorkersConfig();
+    const inode = statSync(worker.path).ino;
+    const marker = join(clone, 'after-backup');
+    const path = fakeCommand(command, `if [[ -f "$FAILURE_MARKER" ]]; then exit 2; fi\nexec /usr/bin/${command} "$@"`);
+    const r = restoreRuntimeInputs('touch "$MAIN_ROOT/after-backup"', { PATH: path, FAILURE_MARKER: marker });
+    expect(r.status).not.toBe(0);
+    expect(readFileSync(worker.path)).toEqual(worker.bytes);
+    expect(statSync(worker.path).mode & 0o777).toBe(worker.mode);
+    expect(statSync(worker.path).ino).not.toBe(inode);
+    expect(r.stdout).not.toContain('无需替换');
+    const backups = readdirSync(join(clone, '.runtime')).filter(name => name.startsWith('.workers-config-deploy-'));
+    expect(backups).toHaveLength(1);
+    expect(readFileSync(join(clone, '.runtime', backups[0]))).toEqual(worker.bytes);
+    expect(statSync(join(clone, '.runtime', backups[0])).mode & 0o777).toBe(0o600);
+  });
+
+  it('复制工具继承源权限时仍把失败恢复原始备份限制为600', () => {
+    const worker = seedWorkersConfig();
+    let path = fakeCommand('cp', '/bin/cp "$@" || exit $?\nif [[ "$2" == */.workers-config-deploy-* ]]; then /bin/chmod 0640 "$2"; fi');
+    path = fakeCommand('mv', 'exit 9');
+    const r = restoreRuntimeInputs('printf changed-by-git > "$WORKERS_CONFIG_INPUT"', { PATH: path });
+    expect(r.status).not.toBe(0);
+    const backups = readdirSync(join(clone, '.runtime')).filter(name => name.startsWith('.workers-config-deploy-'));
+    expect(backups).toHaveLength(1);
+    const backup = join(clone, '.runtime', backups[0]);
+    expect(readFileSync(backup)).toEqual(worker.bytes);
+    expect(statSync(backup).mode & 0o777).toBe(0o600);
+  });
+
+  it('worker备份无法限制为600时拒绝Git变更并保留原始输入证据', () => {
+    const worker = seedWorkersConfig();
+    const head = sh(`git -C "${clone}" rev-parse HEAD`).trim();
+    let path = fakeCommand('cp', '/bin/cp "$@" || exit $?\nif [[ "$2" == */.workers-config-deploy-* ]]; then /bin/chmod 0640 "$2"; fi');
+    path = fakeCommand('chmod', 'if [[ "$1" == 600 && "${@: -1}" == */.workers-config-deploy-* ]]; then exit 9; fi\nexec /bin/chmod "$@"');
+    const r = runDeploy({ CECELIA_DEPLOY_AUTORESET: '1', EXPECTED_SHA: worker.passed, PATH: path });
+    expect(r.status).not.toBe(0);
+    expect(sh(`git -C "${clone}" rev-parse HEAD`).trim()).toBe(head);
+    expect(readFileSync(worker.path)).toEqual(worker.bytes);
+    const backups = readdirSync(join(clone, '.runtime')).filter(name => name.startsWith('.workers-config-deploy-'));
+    expect(backups).toHaveLength(1);
+    expect(readFileSync(join(clone, '.runtime', backups[0]))).toEqual(worker.bytes);
+    expect(r.stdout + r.stderr).toContain('运行时worker配置备份权限设置失败');
   });
 
   it('非main历史的SHA不得在生产部署根执行', () => {

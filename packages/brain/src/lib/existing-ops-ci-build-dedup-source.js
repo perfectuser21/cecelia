@@ -116,3 +116,10 @@ export const CANDIDATE_BUILDER_INPUTS={
  'scripts/ci/__tests__/basic-fixed-core.test.mjs':'16e18d9a685db4a59722b742bc73f1e17c44d07d0e807eee108b12c38db2bde8',
  'scripts/ci/__tests__/basic-brain-candidate-host.test.mjs':'7fe5134563e43af1a539c4de195bec2e33ef172257479053cb5404cdb41753ac',
 };
+
+// Builder族内以真实root回归的已审版本区分幂等恢复，旧Builder合同不变。
+export const RUNTIME_IDEMPOTENCE_MARKER='packages/brain/src/__tests__/deploy-root-guard.test.js';
+export const RUNTIME_IDEMPOTENCE_INPUTS={
+ 'scripts/lib/deploy-runtime-inputs.sh':'c57401abf7c8286d2eec132e46748563ba853e9bb29187136d47016aec6eb710',
+ 'packages/brain/src/__tests__/deploy-root-guard.test.js':'2fbb67aae7046f00e16e8be19f739cdd0d854cddd36bc25e6a3e6a3d37c85f76',
+};

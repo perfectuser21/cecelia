@@ -7,6 +7,8 @@ import {collectBasicCiSources,collectDeepCiSources} from '../existing-ops-stage-
 import {readFixedExistingOpsGitFixture} from './helpers/fixed-existing-ops-git-fixture.js';
 const root=fileURLToPath(new URL('../../../../../',import.meta.url)),workflow='.github/workflows/ci.yml';
 const historical=['85f24b00af99063cf27919cdcf79675d6d33e6a3','f10e1da6b32c03febe0ac6080715e56615af0175'].map(readFixedExistingOpsGitFixture);
+const previousBuilder=readFixedExistingOpsGitFixture('e5e8202bf0ee76d7826fdec5474dfe506a86f537');
+const runtimeHelper='scripts/lib/deploy-runtime-inputs.sh',runtimeMarker='packages/brain/src/__tests__/deploy-root-guard.test.js';
 const marker='scripts/ci/__tests__/basic-brain-candidate-host.test.mjs',dockerfile='packages/brain/Dockerfile';
 const controls=['scripts/brain-build.sh',dockerfile,'scripts/ci/run-basic-check.mjs','scripts/ci/__tests__/basic-fixed-core.test.mjs',marker];
 const paths=execFileSync('git',['ls-files','-z','--cached','--others','--exclude-standard'],{cwd:root,encoding:'utf8'}).split('\0').filter(p=>p&&existsSync(root+p));
@@ -18,9 +20,9 @@ async function collect({overrides={},missing,deep=false,fixture}={}){
  if(deep)await collectDeepCiSources(request);else await collectBasicCiSources({...request,ci:await source(workflow)});
  return relations;
 }
-it('新Builder、旧BIND与旧MAIN同workflow各自完整来源有效',async()=>{
+it('新Runtime、旧Builder、旧BIND与旧MAIN同workflow各自完整来源有效',async()=>{
  expect(read('scripts/brain-build.sh')).toContain('buildx');
- for(const deep of [false,true])for(const fixture of [undefined,...historical]){
+ for(const deep of [false,true])for(const fixture of [undefined,previousBuilder,...historical]){
   const relations=await collect({deep,fixture});expect(relations).not.toHaveLength(0);
   expect(relations.some(row=>row.kind==='preview_only_fixed_git_ui_selector')).toBe(false);
   if(!deep&&!fixture)expect(relations).toContainEqual(expect.objectContaining({consumer_path:'scripts/ci/run-basic-check.mjs',input_path:dockerfile,kind:'reviewed_image_builder_capability'}));
@@ -47,4 +49,17 @@ it('未知或缺失的typed marker不能被猜作旧组或回退组',async()=>{
   await expect(collect({deep,overrides:{[marker]:'export const BUILDER_PROFILE="trust-me";'}})).rejects.toThrow('basic_ci_source_unproven');
   await expect(collect({deep,missing:marker})).rejects.toThrow();
  }
+});
+
+it('Runtime幂等修复两成员必须完整，旧Builder不可混入新helper或新回归',async()=>{
+ for(const deep of [false,true])for(const target of [runtimeHelper,runtimeMarker]){
+  expect(read(target)).not.toBe(previousBuilder.read(target));
+  await expect(collect({deep,overrides:{[target]:previousBuilder.read(target)}})).rejects.toThrow('basic_ci_source_unproven');
+  await expect(collect({deep,fixture:previousBuilder,overrides:{[target]:read(target)}})).rejects.toThrow('basic_ci_source_unproven');
+  await expect(collect({deep,missing:target})).rejects.toThrow();
+  await expect(collect({deep,overrides:{[target]:read(target)+'\n# unknown runtime'}})).rejects.toThrow();
+ }
+});
+it('Builder族内未知root回归不能猜测为旧Builder或新Runtime',async()=>{
+ for(const deep of [false,true])await expect(collect({deep,overrides:{[runtimeMarker]:'export const RUNTIME_FIX="trust-me";'}})).rejects.toThrow('basic_ci_source_unproven');
 });
