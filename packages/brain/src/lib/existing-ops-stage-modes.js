@@ -1,5 +1,5 @@
 /** 经审B补丁的完整模式变体；不读候选自身声明来扩大允许范围。 */
-import {workflowHash,CI_BUILD_DEDUP_WORKFLOW,CI_BUILD_DEDUP_INPUTS,PREVIEW_RETIREMENT_WORKFLOW,PREVIEW_RETIREMENT_INPUTS,MAIN_AUTO_DEPLOY_WORKFLOW,MAIN_AUTO_DEPLOY_INPUTS,BIND_MOUNT_MARKER,BIND_MOUNT_LEGACY_INPUTS,BIND_MOUNT_INPUTS,CANDIDATE_BUILDER_MARKER,CANDIDATE_BUILDER_LEGACY_INPUTS,CANDIDATE_BUILDER_INPUTS} from './existing-ops-ci-build-dedup-source.js';
+import {workflowHash,CI_BUILD_DEDUP_WORKFLOW,CI_BUILD_DEDUP_INPUTS,PREVIEW_RETIREMENT_WORKFLOW,PREVIEW_RETIREMENT_INPUTS,MAIN_AUTO_DEPLOY_WORKFLOW,MAIN_AUTO_DEPLOY_INPUTS,BIND_MOUNT_MARKER,BIND_MOUNT_LEGACY_INPUTS,BIND_MOUNT_INPUTS,CANDIDATE_BUILDER_MARKER,CANDIDATE_BUILDER_LEGACY_INPUTS,CANDIDATE_BUILDER_INPUTS,RUNTIME_IDEMPOTENCE_MARKER,RUNTIME_IDEMPOTENCE_INPUTS} from './existing-ops-ci-build-dedup-source.js';
 import {STAGE_ENVELOPES} from './existing-ops-stage-envelopes.js';
 const SKILLS_PROFILE = {
   "key": "zenithjoy-skills",
@@ -112,11 +112,18 @@ export const REVIEWED_PREVIEW_RETIREMENT={...REVIEWED_CI_BUILD_DEDUP,...PREVIEW_
 export const REVIEWED_MAIN_AUTO_DEPLOY={...REVIEWED_PREVIEW_RETIREMENT,...MAIN_AUTO_DEPLOY_INPUTS,...BIND_MOUNT_LEGACY_INPUTS,...CANDIDATE_BUILDER_LEGACY_INPUTS};
 export const REVIEWED_BIND_MOUNT={...REVIEWED_MAIN_AUTO_DEPLOY,...BIND_MOUNT_INPUTS};
 export const REVIEWED_CANDIDATE_BUILDER={...REVIEWED_BIND_MOUNT,...CANDIDATE_BUILDER_INPUTS};
+export const REVIEWED_RUNTIME_IDEMPOTENCE={...REVIEWED_CANDIDATE_BUILDER,...RUNTIME_IDEMPOTENCE_INPUTS};
 export async function mainAutoDeployProfile(paths,read){
  if(!Array.isArray(paths))reject();
  const text=await read(CANDIDATE_BUILDER_MARKER);if(typeof text!=='string')reject();
  const digest=createHash('sha256').update(text).digest('hex');
- if(digest===CANDIDATE_BUILDER_INPUTS[CANDIDATE_BUILDER_MARKER])return REVIEWED_CANDIDATE_BUILDER;
+ if(digest===CANDIDATE_BUILDER_INPUTS[CANDIDATE_BUILDER_MARKER]){
+  const runtime=await read(RUNTIME_IDEMPOTENCE_MARKER);if(typeof runtime!=='string')reject();
+  const runtimeDigest=createHash('sha256').update(runtime).digest('hex');
+  if(runtimeDigest===RUNTIME_IDEMPOTENCE_INPUTS[RUNTIME_IDEMPOTENCE_MARKER])return REVIEWED_RUNTIME_IDEMPOTENCE;
+  if(runtimeDigest===REVIEWED_CANDIDATE_BUILDER[RUNTIME_IDEMPOTENCE_MARKER])return REVIEWED_CANDIDATE_BUILDER;
+  reject();
+ }
  if(digest!==MAIN_AUTO_DEPLOY_INPUTS[CANDIDATE_BUILDER_MARKER])reject();
  return paths.includes(BIND_MOUNT_MARKER)?REVIEWED_BIND_MOUNT:REVIEWED_MAIN_AUTO_DEPLOY;
 }
@@ -134,7 +141,7 @@ export async function collectReviewedCloseoutDeep({read,paths,relation}){
  const profile=paths.includes(REPAIR_PROFILE_PATH)?await checkerRepairProfile(read,paths):REVIEWED_CLOSEOUT;
  for(const [path,digest] of Object.entries(profile)){if(digest===null){if(paths.includes(path))reject();continue;}const bytes=await read(path);if(createHash('sha256').update(bytes).digest('hex')!==digest)reject();}
  relation('packages/brain/src/lib/existing-ops-stage-modes.js',CLOSEOUT_PROFILE_PATH,'reviewed_deep_ci_source_profile');
- if([REVIEWED_CANDIDATE_BUILDER,REVIEWED_BIND_MOUNT,REVIEWED_MAIN_AUTO_DEPLOY,REVIEWED_PREVIEW_RETIREMENT,REVIEWED_CI_BUILD_DEDUP,REVIEWED_CHECKER_REPAIR].includes(profile))relation('packages/brain/src/lib/existing-ops-stage-modes.js',REPAIR_PROFILE_PATH,'reviewed_deep_ci_source_profile');
+ if([REVIEWED_RUNTIME_IDEMPOTENCE,REVIEWED_CANDIDATE_BUILDER,REVIEWED_BIND_MOUNT,REVIEWED_MAIN_AUTO_DEPLOY,REVIEWED_PREVIEW_RETIREMENT,REVIEWED_CI_BUILD_DEDUP,REVIEWED_CHECKER_REPAIR].includes(profile))relation('packages/brain/src/lib/existing-ops-stage-modes.js',REPAIR_PROFILE_PATH,'reviewed_deep_ci_source_profile');
  for(const [consumer,input] of [['scripts/ci/deep-integration.config.mjs','scripts/ci/debt-pg.config.mjs'],['scripts/ci/debt-pg.config.mjs','scripts/ci/debt-pg-tests.json'],['scripts/ci/debt-pg.config.mjs','packages/brain/vitest.config.js']])relation(consumer,input,'reviewed_deep_postgres_config_input');
 }
 
@@ -148,6 +155,6 @@ export async function collectReviewedDormantDeep({read,paths,relation}){
  const profile=paths.includes(REPAIR_PROFILE_PATH)?await checkerRepairProfile(read,paths):REVIEWED_DORMANT_BOUNDARIES;
  for(const [path,digest] of Object.entries(profile)){if(digest===null){if(paths.includes(path))reject();continue;}const bytes=await read(path);if(createHash('sha256').update(bytes).digest('hex')!==digest)reject();}
  relation('packages/brain/src/lib/existing-ops-stage-modes.js',DORMANT_PROFILE_PATH,'reviewed_deep_ci_source_profile');
- if([REVIEWED_CANDIDATE_BUILDER,REVIEWED_BIND_MOUNT,REVIEWED_MAIN_AUTO_DEPLOY,REVIEWED_PREVIEW_RETIREMENT,REVIEWED_CI_BUILD_DEDUP,REVIEWED_CHECKER_REPAIR].includes(profile))relation('packages/brain/src/lib/existing-ops-stage-modes.js',REPAIR_PROFILE_PATH,'reviewed_deep_ci_source_profile');
+ if([REVIEWED_RUNTIME_IDEMPOTENCE,REVIEWED_CANDIDATE_BUILDER,REVIEWED_BIND_MOUNT,REVIEWED_MAIN_AUTO_DEPLOY,REVIEWED_PREVIEW_RETIREMENT,REVIEWED_CI_BUILD_DEDUP,REVIEWED_CHECKER_REPAIR].includes(profile))relation('packages/brain/src/lib/existing-ops-stage-modes.js',REPAIR_PROFILE_PATH,'reviewed_deep_ci_source_profile');
  for(const [consumer,input] of [['scripts/ci/deep-integration.config.mjs','scripts/ci/debt-pg.config.mjs'],['scripts/ci/debt-pg.config.mjs','scripts/ci/debt-pg-tests.json'],['scripts/ci/debt-pg.config.mjs','packages/brain/vitest.config.js']])relation(consumer,input,'reviewed_deep_postgres_config_input');
 }
