@@ -71,7 +71,7 @@ NODE
   echo "PASS: 真实部署outcome=${outcome}保持原结算与状态写回"
 done
 
-# 通用成功收尾也供 launchd 使用，不能只靠 Docker sidecar 的 drain 回归替代。
+# 宿主成功收尾不能只靠 Docker sidecar 的 drain 回归替代。
 # 原样执行生产脚本的整个通用健康检查尾段；不会执行上面的构建/迁移/启动步骤。
 sed -n '/^drain_cancel_with_retry() {$/,/^}$/p' "$ROOT/scripts/brain-deploy.sh" > "$FIXTURE/drain-function.sh"
 sed -n '/^echo "Waiting for health check\.\.\."$/,$p' "$ROOT/scripts/brain-deploy.sh" > "$FIXTURE/health-tail.sh"
@@ -79,7 +79,8 @@ sed -n '/^echo "Waiting for health check\.\.\."$/,$p' "$ROOT/scripts/brain-deplo
 for scenario in ready retry never-ready; do
   calls="$FIXTURE/$scenario.calls"
   (
-    export ROOT_DIR="$FIXTURE" HOST_HOME="$FIXTURE/home" DEPLOY_MODE=launchd VERSION=9.9.9
+    export ROOT_DIR="$FIXTURE" HOST_HOME="$FIXTURE/home" DEPLOY_MODE=docker VERSION=9.9.9
+    export VERSIONS_FILE="$FIXTURE/no-versions" COMPOSE_FILE=docker-compose.us-vps.yml ENV_REGION=us
     export EXPECTED_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
     export DRAIN_CALLS="$calls" DRAIN_SCENARIO="$scenario"
     sleep() { :; }

@@ -1853,16 +1853,6 @@
       "role": "verification"
     },
     {
-      "owner_path": "packages/brain/src/cron/drift-sentinel.js",
-      "path": "packages/brain/src/cron/__tests__/drift-sentinel.test.js",
-      "role": "verification"
-    },
-    {
-      "owner_path": "packages/brain/src/cron/drift-sentinel.js",
-      "path": "docs/learnings/cp-10120706-drift-deploy-detached.md",
-      "role": "documentation"
-    },
-    {
       "owner_path": "packages/brain/src/dispatcher.js",
       "path": "packages/brain/src/__tests__/dispatcher-dedup-queued-mutual-lock.test.js",
       "role": "verification"

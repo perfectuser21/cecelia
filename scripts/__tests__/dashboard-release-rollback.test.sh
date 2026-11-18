@@ -3,7 +3,7 @@
 #
 # 验证共享契约（spec §1）在 cecelia 落地：
 #   promote v1 → promote v2 → rollback-cecelia.sh → live dist/ 回到 v1 + 指针回拨。
-# 用 CECELIA_DEPLOY_ROOT 测试钩子在隔离临时目录自洽跑，绝不碰真生产 / 真 HK。
+# 用 CECELIA_DEPLOY_ROOT 测试钩子在隔离临时目录自洽跑，绝不碰真生产。
 
 set -uo pipefail
 PASS=0; FAIL=0
@@ -70,9 +70,9 @@ stage_version() {
 }
 
 run_promote() {
-    # SKIP_HK/SKIP_FINGERPRINT：CI ubuntu 无 hk-vps/无 5211，promote fatal 化后不跳必红
+    # SKIP_FINGERPRINT：隔离fixture不启动5211，服务终验由独立真实HTTP回归覆盖
     CECELIA_DEPLOY_ROOT="$ROOT" CECELIA_SKIP_BRAIN_PROMOTE=1 \
-        CECELIA_SKIP_HK=1 CECELIA_SKIP_FINGERPRINT=1 \
+        CECELIA_SKIP_FINGERPRINT=1 \
         bash "$PROMOTE" >/dev/null 2>&1
 }
 
@@ -228,7 +228,7 @@ for i in 1 2 3 4 5 6 7 8; do
     echo "V$i" > "$D2/.dist-staging/index.html"
     { echo "staging_dist=$D2/.dist-staging"; echo "staging_port=5223"; echo "commit=t"; } > "$D2/.staging-pending"
     CECELIA_DEPLOY_ROOT="$R2" CECELIA_SKIP_BRAIN_PROMOTE=1 \
-        CECELIA_SKIP_HK=1 CECELIA_SKIP_FINGERPRINT=1 bash "$PROMOTE" >/dev/null 2>&1
+        CECELIA_SKIP_FINGERPRINT=1 bash "$PROMOTE" >/dev/null 2>&1
 done
 # 8 次 promote → 留存的是被换下的旧版 v1..v7（共 7 个），按 5 份上限删到最近 5（v3..v7）。
 RETAINED=$(ls -1 "$D2/.dist-releases/" 2>/dev/null | grep -c '^prod-cecelia-v')

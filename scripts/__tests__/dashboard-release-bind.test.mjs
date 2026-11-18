@@ -46,7 +46,7 @@ exit "\${FAIL_RSYNC:-0}"
 `, { mode: 0o755 });
   const run = (script, args = [], extra = {}) => {
     const env = { ...process.env, PATH: `${root}/bin:${process.env.PATH}`, CECELIA_DEPLOY_ROOT: root,
-      CECELIA_SKIP_HK: '1', CECELIA_SKIP_BRAIN_PROMOTE: '1', CECELIA_SKIP_GIT_TAG: '1', ...extra };
+      CECELIA_SKIP_BRAIN_PROMOTE: '1', CECELIA_SKIP_GIT_TAG: '1', ...extra };
     delete env.CECELIA_SKIP_FRONTEND_RECREATE; delete env.CECELIA_SKIP_FINGERPRINT;
     return spawnSync('bash', [join(repo, 'scripts', script), ...args], { env, encoding: 'utf8' });
   };
@@ -121,17 +121,21 @@ test('release-only retention never deletes the currently mounted old release', t
   assert.ok(existsSync(join(f.release(1), 'frozen-sentinel')), 'retention removed the active mount source');
 });
 
-for (const mode of ['success', 'rsync-failure', 'fingerprint-failure']) {
-  test(`HK同步与指纹验收真实promote边界：${mode}`, t => {
-    const f = fixture(t);
-    const r = f.promote(2, { CECELIA_SKIP_HK: '', FAIL_RSYNC: mode === 'rsync-failure' ? '1' : '0', FAIL_FINGERPRINT: mode === 'fingerprint-failure' ? '1' : '0' });
-    assert.equal(r.status, mode === 'success' ? 0 : 1, r.stdout + r.stderr);
-    assert.deepEqual(f.read('rsync.args').split('\0').slice(0, -1), ['-az', '--delete', '-e', 'ssh -o ConnectTimeout=10', `${f.dash}/dist/`, 'hk-vps:/opt/cecelia/frontend/dist/']);
-    assert.equal(f.read('order.log'), 'rsync\nfingerprint\n');
-    assert.equal(f.read('fingerprint.log'), 'checked\n');
-    // 远端或终验失败不能伪报成功；本地已上线产物与指针不能被误回滚。
-    assert.equal(f.read('mounted-source'), f.release(2));
-    assert.equal(JSON.parse(f.read('apps/dashboard/dist/build-info.json')).git_sha, 'new');
-    assert.match(f.read('.production-release'), /current=prod-cecelia-v2/);
-  });
-}
+test('本机终验失败不能伪报成功，保留已部署产物及指针', t => {
+  const f = fixture(t);
+  const r = f.promote(2, { FAIL_FINGERPRINT: '1' });
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  assert.equal(f.read('fingerprint.log'), 'checked\n');
+  assert.equal(f.read('mounted-source'), f.release(2));
+  assert.equal(JSON.parse(f.read('apps/dashboard/dist/build-info.json')).git_sha, 'new');
+  assert.match(f.read('.production-release'), /current=prod-cecelia-v2/);
+});
+
+test('本机promote保留SHA终验且默认不再触达香港同步端', t => {
+  const f = fixture(t);
+  const r = f.promote(2, { CECELIA_SKIP_HK: '', FAIL_RSYNC: '1' });
+  succeeded(r);
+  assert.equal(existsSync(join(f.root, 'rsync.args')), false, '香港同步已退役，不应调用rsync');
+  assert.equal(f.read('fingerprint.log'), 'checked\n');
+  assert.equal(f.read('mounted-source'), f.release(2));
+});

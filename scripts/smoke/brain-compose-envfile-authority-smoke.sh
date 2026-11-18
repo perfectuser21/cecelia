@@ -5,7 +5,7 @@
 #   docker-compose.yml node-brain 的 environment: 段写了
 #     - KERNEL_FLEET_BRIDGE_TOKEN=${KERNEL_FLEET_BRIDGE_TOKEN:-}
 #   compose 里 environment 优先级高于 env_file——`${VAR:-}` 从调用方 shell/--env-file 插值，
-#   任何不带 `--env-file .env.docker` 的 `compose up`（brain-docker-up.sh / brain-rollback.sh）
+#   任何不带 `--env-file .env.docker` 的 `compose up`（brain-deploy.sh / brain-rollback.sh）
 #   都会把 .env.docker 里的 token 盖成空串 → production-transport fail-closed
 #   → evaluator callback 503 无限重试 → run 48d57838 controller lease 过期判死、dbe7ca64 launch 即死。
 #

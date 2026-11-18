@@ -291,3 +291,29 @@ jobs:
         env:
           NEEDS_JSON: ${{ toJSON(needs) }}
         run: node scripts/ci/check-basic-results.mjs
+  brain-deploy:
+    name: Brain生产发布
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs['ci-passed'].result == 'success'
+    needs: [ci-passed]
+    runs-on: ubuntu-latest
+    timeout-minutes: 100
+    permissions: {contents: read}
+    env:
+      BRAIN_URL: http://100.79.41.61:5221
+      GITHUB_SHA: ${{ github.sha }}
+      DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
+      REQUIRE_EXACT_SHA: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: '${{ github.sha }}', fetch-depth: 0, persist-credentials: false}
+      - uses: tailscale/github-action@v2
+        with: {authkey: '${{ secrets.TS_AUTHKEY }}'}
+      - name: 发起本次SHA的隔离验收与生产发布
+        run: |
+          code=$(bash scripts/ci/gate3-trigger-deploy.sh "$BRAIN_URL" "$GITHUB_SHA")
+          case "$code" in
+            202|409) ;;
+            *) echo "::error::发布请求失败 HTTP $code"; exit 1 ;;
+          esac
+      - name: 核验生产SHA与原生发布收据
+        run: bash scripts/ci/gate3-wait-deploy.sh "$BRAIN_URL" "$GITHUB_SHA"

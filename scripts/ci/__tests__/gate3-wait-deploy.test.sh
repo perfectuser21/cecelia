@@ -124,5 +124,11 @@ new_state "$(js running "$B")"
 { js running "$B"; js success "$B"; } > "$ST/queue"
 run_sut "running+后代sha→真实终态后成功" 0 "包含本次提交" 0
 
+# 自动发布必须核验本次精确SHA，不能借后续未验收提交的收据通过。
+new_state "$(js success "$B")"
+REQUIRE_EXACT_SHA=1 MAX_RETRIGGER=0 run_sut "精确模式拒绝后代sha" 1 "::error::" 0
+new_state "$(js success "$A")"
+REQUIRE_EXACT_SHA=1 run_sut "精确模式接受本次已结算sha" 0 "包含本次提交" 0
+
 echo ""
 if [ "$FAIL" -eq 0 ]; then echo "✅ gate3-wait-deploy 全部通过"; else echo "❌ gate3-wait-deploy 有失败"; exit 1; fi

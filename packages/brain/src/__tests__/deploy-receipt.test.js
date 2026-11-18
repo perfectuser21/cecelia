@@ -170,6 +170,14 @@ describe('deploy webhook 回执接线（T4）', () => {
     expect(capturedSpawnArgs[2].env.EXPECTED_SHA).toBe(sha);
   });
 
+  it('旧PM2回退鉴权后明确退役，不改源码、不安装依赖、不伪报成功',async()=>{
+    expect((await request(app).post('/api/brain/deploy/rollback').send({stable_sha:'a'.repeat(40)})).status).toBe(401);
+    const res=await request(app).post('/api/brain/deploy/rollback').set('Authorization','Bearer tok').send({stable_sha:'a'.repeat(40)});
+    expect(res.status).toBe(410);expect(res.body.error).toBe('pm2_rollback_retired');
+    expect(execSyncMock).not.toHaveBeenCalled();expect(execFileMock).not.toHaveBeenCalled();
+    expect(capturedSpawnArgs).toBeNull();expect(recordActionReceipt).not.toHaveBeenCalled();
+  });
+
   it('deployment mutation route bounds request rate before side effects',async()=>{
     for(let i=0;i<30;i++)expect((await request(app).post('/api/brain/deploy').send({})).status).toBe(401);
     const limited=await request(app).post('/api/brain/deploy').send({});

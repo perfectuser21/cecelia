@@ -1,19 +1,14 @@
 #!/usr/bin/env bash
-# install.sh — 将 cecelia-run.sh 和 plist 安装到系统
+# install.sh — 安装 cecelia-run 链接
 # 运行：sudo bash packages/brain/deploy/install.sh
 #
-# 做三件事：
+# 安装内容：
 #   1. ~/bin/cecelia-run → symlink 指向 git 源文件
-#   2. 安装 plist 到 /Library/LaunchDaemons/（需要 root）
-#   3. 重新加载 launchd 服务
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 GIT_SCRIPT="$REPO_ROOT/packages/brain/scripts/cecelia-run.sh"
-PLIST_SRC="$REPO_ROOT/packages/brain/deploy/com.cecelia.brain.plist"
-PLIST_DST="/Library/LaunchDaemons/com.cecelia.brain.plist"
 SYMLINK="/Users/administrator/bin/cecelia-run"
 
 echo "=== Cecelia Brain 安装脚本 ==="
@@ -34,36 +29,7 @@ fi
 ln -s "$GIT_SCRIPT" "$SYMLINK"
 echo "✅ symlink 创建：$SYMLINK → $GIT_SCRIPT"
 
-# 3. 安装 plist（需要 root）
-if [[ "$(id -u)" != "0" ]]; then
-  echo "❌ 安装 plist 需要 root 权限，请用 sudo 运行此脚本"
-  exit 1
-fi
-
-cp "$PLIST_SRC" "$PLIST_DST"
-chown root:wheel "$PLIST_DST"
-chmod 644 "$PLIST_DST"
-echo "✅ plist 已安装：$PLIST_DST"
-
-# 4. 重新加载服务
-if launchctl list com.cecelia.brain &>/dev/null; then
-  launchctl unload "$PLIST_DST" 2>/dev/null || true
-  echo "✅ 旧服务已卸载"
-fi
-launchctl load "$PLIST_DST"
-echo "✅ 服务已重新加载"
-
-# --- Install watchdog to ~/bin (SSOT: packages/brain/deploy/cecelia-watchdog.sh) ---
-echo ""
-echo "📋 Installing Cecelia watchdog..."
-mkdir -p "$HOME/bin"
-cp "$SCRIPT_DIR/cecelia-watchdog.sh" "$HOME/bin/cecelia-watchdog.sh"
-chmod +x "$HOME/bin/cecelia-watchdog.sh"
-echo "✅ watchdog 已部署到 ~/bin/cecelia-watchdog.sh"
-echo "   （通过 crontab '* * * * * \$HOME/bin/cecelia-watchdog.sh' 调用）"
-
 echo ""
 echo "=== 安装完成 ==="
 echo "CECELIA_RUN_PATH 现在指向: $GIT_SCRIPT"
 echo "~/bin/cecelia-run 是 symlink，指向同一文件"
-echo "Brain 服务已重启"

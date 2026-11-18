@@ -25,7 +25,7 @@ VERSION=$(node -e '
   process.stdout.write(String(pkg.version));
 ' "$BRAIN_DIR/package.json")
 
-# 蓝绿切换 + Bark 告警工具（顶层 source，保证 Docker/launchd 两模式都有 send_bark/bluegreen_swap）
+# 蓝绿切换 + Bark 告警工具（顶层 source，供 Docker 发布与失败恢复共用）
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/lib/bluegreen.sh"
 # shellcheck disable=SC1091
@@ -295,16 +295,8 @@ if [[ "$SHA_CHECK_ONLY" == true ]]; then
     exit 0
 fi
 
-# ── 部署模式检测：Docker vs launchd ─────────────────────────────────────────
+# Brain 正式发布只使用 Docker，旧裸跑模式已退役。
 DEPLOY_MODE="docker"
-LAUNCHD_SERVICE="com.cecelia.brain"
-LAUNCHD_PLIST="${HOME}/Library/LaunchAgents/${LAUNCHD_SERVICE}.plist"
-
-if ! docker info >/dev/null 2>&1 || ! docker inspect cecelia-node-brain >/dev/null 2>&1; then
-    if [[ -f "$LAUNCHD_PLIST" ]]; then
-        DEPLOY_MODE="launchd"
-    fi
-fi
 
 # ── Compose 文件选择：Linux(us-vps) 用专属文件，其余(macOS/mmv)用默认文件 ────
 # COMPOSE_FILE 允许环境变量显式覆盖（测试/未来手动指定用），缺省按 uname -s 自动探测。
@@ -530,96 +522,6 @@ if [[ "$DEPLOY_MODE" == "docker" ]]; then
 
 fi  # end Docker mode
 
-# ─── launchd 模式 ────────────────────────────────────────────────────────────
-
-if [[ "$DEPLOY_MODE" == "launchd" ]]; then
-
-    if [[ "$DRY_RUN" == false ]]; then
-        retention_begin "$VERSION" "${EXPECTED_SHA:-$(git -C "$ROOT_DIR" rev-parse HEAD)}" || exit 1
-    fi
-
-    # 1. Build image: SKIPPED (not using Docker)
-    echo "[1/7] Building image... SKIPPED (launchd mode, no Docker)"
-    echo ""
-
-    # 2. Run migrations directly
-    echo "[2/7] Running migrations..."
-    if [[ "$DRY_RUN" == true ]]; then
-        echo "  [dry-run] node $BRAIN_DIR/src/migrate.js"
-    else
-        (cd "$BRAIN_DIR" && node src/migrate.js)
-    fi
-    echo ""
-
-    # 3. Run self-check directly
-    echo "[3/7] Running self-check..."
-    if [[ "$DRY_RUN" == true ]]; then
-        echo "  [dry-run] node $BRAIN_DIR/src/selfcheck.js"
-    else
-        (cd "$BRAIN_DIR" && node src/selfcheck.js)
-    fi
-    echo ""
-
-    # 4. Run tests (SKIPPED - tests run in CI)
-    echo "[4/7] Running tests... SKIPPED (CI already validated)"
-    echo ""
-
-    # 5. Record version
-    echo "[5/7] Recording version..."
-    if [[ "$DRY_RUN" == false ]]; then
-        LAST_RECORDED=""
-        if [[ -f "$VERSIONS_FILE" ]]; then
-          LAST_RECORDED=$(tail -1 "$VERSIONS_FILE" 2>/dev/null || echo "")
-        fi
-        if [[ "$LAST_RECORDED" == "${VERSION}" ]]; then
-          echo "  Version ${VERSION} already recorded, skipping duplicate write."
-        else
-          echo "${VERSION}" >> "$VERSIONS_FILE"
-          tail -5 "$VERSIONS_FILE" > "$VERSIONS_FILE.tmp" && mv "$VERSIONS_FILE.tmp" "$VERSIONS_FILE"
-          echo "  Stored in .brain-versions"
-        fi
-    else
-        echo "  [dry-run] echo $VERSION >> .brain-versions"
-    fi
-    echo ""
-
-    # 6. Git tag (skip if tag exists)
-    echo "[6/7] Git tagging..."
-    TAG="brain-v${VERSION}"
-    if [[ "$DRY_RUN" == true ]]; then
-        echo "  [dry-run] git tag $TAG"
-    elif git rev-parse "$TAG" >/dev/null 2>&1; then
-        echo "  Tag ${TAG} already exists, skipping."
-    else
-        git tag "$TAG"
-        echo "  Created tag: ${TAG}"
-    fi
-    echo ""
-
-    # 7. Restart via launchd
-    echo "[7/8] Restarting Brain via launchd (kickstart -k)..."
-    # swap 前：drain 旧 Brain（停派发 + 等 in_progress 回调收尾）
-    echo "  drain 旧 Brain（等 in_progress 归零，超时 ${DRAIN_TIMEOUT_SECS}s）..."
-    drain_before_swap
-    echo ""
-
-    if [[ "$DRY_RUN" == true ]]; then
-        echo "  [dry-run] launchctl kickstart -k gui/$(id -u)/${LAUNCHD_SERVICE}"
-    else
-        # 先 kill 游离 Brain 进程（launchd 外启动的进程 kickstart -k 无法 kill）
-        # 使用完整路径 /usr/sbin/lsof 避免 launchd 最小 PATH 中找不到 lsof（code=127）
-        STALE_PID=$(PATH="/usr/sbin:$PATH" lsof -ti:5221 2>/dev/null | head -1 || echo "")
-        LAUNCHD_PID=$(launchctl list "${LAUNCHD_SERVICE}" 2>/dev/null | grep -E '^\s*[0-9]+' | awk '{print $1}' | head -1)
-        if [[ -n "$STALE_PID" && "$STALE_PID" != "$LAUNCHD_PID" ]]; then
-            echo "  发现游离 Brain 进程 PID=${STALE_PID}（launchd 记录=${LAUNCHD_PID}），先终止..."
-            kill "$STALE_PID" 2>/dev/null && sleep 2 || true
-        fi
-        launchctl kickstart -k "gui/$(id -u)/${LAUNCHD_SERVICE}" || \
-            launchctl start "${LAUNCHD_SERVICE}" 2>/dev/null || true
-    fi
-
-fi  # end launchd mode
-
 # ─── dry-run 提前退出 ────────────────────────────────────────────────────────
 if [[ "$DRY_RUN" == true ]]; then
     echo ""
@@ -627,7 +529,7 @@ if [[ "$DRY_RUN" == true ]]; then
     exit 0
 fi
 
-# ─── 通用：等待健康检查（Docker 和 launchd 都需要）──────────────────────────
+# ─── 部署后等待健康检查──────────────────────────
 
 echo ""
 echo "Waiting for health check..."
@@ -725,15 +627,13 @@ while [ $TRIES -lt $MAX_TRIES ]; do
       fi
       DEPLOY_SUCCESS=true
       echo "  Updated $BRIDGE_DST (v${VERSION})"
-      # 重启 bridge（launchd 或 systemd）
-      if [[ "$DEPLOY_MODE" == "launchd" ]]; then
-        BRIDGE_SERVICE="com.cecelia.bridge"
-        BRIDGE_PLIST="${HOME}/Library/LaunchAgents/${BRIDGE_SERVICE}.plist"
-        if [[ -f "$BRIDGE_PLIST" ]]; then
-          launchctl kickstart -k "gui/$(id -u)/${BRIDGE_SERVICE}" 2>/dev/null && \
-            echo "  Bridge restarted via launchd" || \
-            echo "  NOTE: Bridge launchd restart skipped (service may not be running)"
-        fi
+      # 重启 bridge：按自身服务管理方式，与 Brain 的 Docker 发布模式无关。
+      BRIDGE_SERVICE="com.cecelia.bridge"
+      BRIDGE_PLIST="${HOME}/Library/LaunchAgents/${BRIDGE_SERVICE}.plist"
+      if [[ "$(uname -s)" == Darwin && -f "$BRIDGE_PLIST" ]]; then
+        launchctl kickstart -k "gui/$(id -u)/${BRIDGE_SERVICE}" 2>/dev/null && \
+          echo "  Bridge restarted via launchd" || \
+          echo "  NOTE: Bridge launchd restart skipped (service may not be running)"
       elif systemctl is-active cecelia-bridge >/dev/null 2>&1; then
         if command -v sudo >/dev/null 2>&1; then
           SUDO_CMD="sudo -n"
@@ -778,10 +678,6 @@ echo "[FAIL] Health check timed out after 60s."
 # 环境守卫：部署后 5221 未响应 = 控制面 outage 风险，Bark 告警（issue 8ae2e116）
 send_bark "部署后自检失败：Brain 5221 (/api/brain/tick/status) 60s 未响应，v${VERSION} 可能未起来，请立即检查"
 
-if [[ "$DEPLOY_MODE" == "launchd" ]]; then
-    echo "  Brain failed to start. Check logs: tail -50 $ROOT_DIR/logs/brain-error.log"
-    echo "  Manual restart: launchctl kickstart -k gui/$(id -u)/${LAUNCHD_SERVICE}"
-else
     echo "[FAIL] Rolling back..."
     if [ -f "$VERSIONS_FILE" ] && [ "$(wc -l < "$VERSIONS_FILE")" -ge 2 ]; then
         PREV_VERSION=$(tail -2 "$VERSIONS_FILE" | head -1)
@@ -795,6 +691,5 @@ else
         docker compose ${RETENTION_COMPOSE_ARGS[@]+"${RETENTION_COMPOSE_ARGS[@]}"} --env-file "$ROOT_DIR/.env.docker" \
           -f "$ROOT_DIR/${COMPOSE_FILE}" stop node-brain
     fi
-fi
 
 exit 1

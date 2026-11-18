@@ -74,6 +74,15 @@ if [[ "$RUN_GUARD" == true ]]; then
         echo "🔒 部署根守卫（专用根自愈）: fetch + checkout -f + reset --hard origin/$BASE_BRANCH"
         git -C "$MAIN_ROOT" fetch origin "$BASE_BRANCH" \
             || { echo "❌ 部署根守卫: git fetch origin $BASE_BRANCH 失败，拒绝部署"; exit 1; }
+        DEPLOY_ROOT_REF="origin/$BASE_BRANCH"
+        if [[ -n "${EXPECTED_SHA:-}" ]]; then
+            if [[ ! "$EXPECTED_SHA" =~ ^[a-f0-9]{40}$ ]] \
+                || ! git -C "$MAIN_ROOT" merge-base --is-ancestor "$EXPECTED_SHA" "origin/$BASE_BRANCH"; then
+                echo "❌ 发布SHA不是已合并的完整提交，拒绝部署" >&2
+                exit 1
+            fi
+            DEPLOY_ROOT_REF="$EXPECTED_SHA"
+        fi
         # 宿主 cron 每分钟原子更新此样本。deploy-local 在 Brain 容器内运行，
         # 不能在这里重跑 sampler：容器 df / 采到的是 overlay，不是宿主根盘。
         # Git 旧树仍跟踪该文件；checkout/reset 前保存宿主真值，之后原子放回。
@@ -113,7 +122,7 @@ if [[ "$RUN_GUARD" == true ]]; then
             echo "❌ 部署根守卫: checkout $BASE_BRANCH 失败，拒绝部署" >&2
             exit 1
         fi
-        if ! git -C "$MAIN_ROOT" reset --hard "origin/$BASE_BRANCH"; then
+        if ! git -C "$MAIN_ROOT" reset --hard "$DEPLOY_ROOT_REF"; then
             restore_host_disk_sample || exit 1
             echo "❌ 部署根守卫: reset --hard origin/$BASE_BRANCH 失败，拒绝部署" >&2
             exit 1
@@ -135,6 +144,15 @@ if [[ "$RUN_GUARD" == true ]]; then
             || { echo "❌ 部署根守卫: git pull --ff-only 失败（分叉/网络），拒绝部署"; exit 1; }
     fi
     echo ""
+fi
+
+# 根目录脚本、依赖和镜像必须来自同一已验收提交，不能随main前进混用源码。
+if [[ "$DRY_RUN" != true && -n "${EXPECTED_SHA:-}" ]]; then
+    if [[ ! "$EXPECTED_SHA" =~ ^[a-f0-9]{40}$ ]] \
+        || [[ "$(git -C "$MAIN_ROOT" rev-parse HEAD)" != "$EXPECTED_SHA" ]]; then
+        echo "❌ 发布SHA与部署根不一致，拒绝执行" >&2
+        exit 1
+    fi
 fi
 
 # Restore the deployment root itself; CI-generated files are not Git-tracked.
@@ -160,7 +178,7 @@ fi
 # 隔离守卫：CECELIA_DEPLOY_ROOT 测试模式禁 curl 真生产——否则真生产落后 main 时
 # NEED_BRAIN=true 会在隔离根真点火 brain-deploy.sh（staging-gate smoke 实证）。
 SHA_MISMATCH=false
-ORIGIN_SHA=$(git -C "$MAIN_ROOT" rev-parse --verify "origin/$BASE_BRANCH^{commit}" 2>/dev/null || echo "")
+ORIGIN_SHA="${EXPECTED_SHA:-$(git -C "$MAIN_ROOT" rev-parse --verify "origin/$BASE_BRANCH^{commit}" 2>/dev/null || echo "")}"
 PROD_SHA="${CECELIA_PROD_GIT_SHA:-${GIT_SHA:-}}"
 if [[ -z "$PROD_SHA" && -z "${CECELIA_DEPLOY_ROOT:-}" ]]; then
     PROD_SHA=$(curl -sf --max-time 5 \
