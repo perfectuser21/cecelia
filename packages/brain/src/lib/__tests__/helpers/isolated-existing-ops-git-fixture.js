@@ -54,7 +54,7 @@ export function isolatedExistingOpsGitFixture({revision=fixtureGit('rev-parse','
    return cache.get(path);
   };
   if(requireRuntime){
-   const runtime=readNativeConsumerRuntime();assert.equal(runtime.files.length,16);
+   const runtime=readNativeConsumerRuntime();assert.equal(runtime.files.length,17);
    for(const file of runtime.files)assert.equal(createHash('sha256').update(read(file.path)).digest('hex'),file.sha256,`fixture HEAD differs from loaded collector: ${file.path}`);
   }
   return {dir,revision:selected,tree,entries,paths:entries.map(e=>e.path),read,git,close};
@@ -68,7 +68,6 @@ const controllerPaths=[
  'packages/brain/src/lib/native-consumer-source-selection.js',
  'packages/brain/src/lib/implementation-ci-snapshot.js',
  'packages/brain/src/routes/implementation-ci.js',
- 'packages/brain/src/lib/native-consumer-runtime.js',
  'packages/brain/src/lib/consumer-source-set.js',
  'packages/brain/src/lib/implementation-ci-pilot-manifest.js',
 ];
