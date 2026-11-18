@@ -136,3 +136,31 @@ it.each([['input',{label:7},null,'foundation_input_schema_mismatch'],['key',{lab
  expect((await fixture.pool.query('SELECT * FROM task_runs WHERE task_id=$1',[taskId])).rows).toHaveLength(0);
  expect((await fixture.pool.query('SELECT status,claimed_by FROM tasks WHERE id=$1',[taskId])).rows[0]).toEqual({status:'queued',claimed_by:null});
 },30000);
+
+
+it('通用Foundation正式API：受控启用暂停版本后catalog ready并正常登记Task',async()=>{
+ fixture=await foundationHttpFixture();
+ const {registration,release}=await fixture.publish({environment:'production'});
+ const id=registration.workflow_id;
+ expect(id.startsWith('b1000000')).toBe(false);
+ expect(fixture.key.startsWith('foundation_')).toBe(true);
+ const {migrationTable}=await import('../fixtures/minimum-definition-schema.js');
+ await fixture.pool.query(migrationTable('553_task_leases_device_pools.sql','task_leases'));
+ const actor='fixture:runtime-owner';
+ await fixture.pool.query("UPDATE tasks SET claimed_by=$2,claimed_at=NOW(),payload=$3 WHERE id=$1",[fixture.task,actor,{actor,workflow_runtime_scope:[id]}]);
+ await fixture.pool.query("INSERT INTO task_leases(task_id,claimer,claimed_at,lease_seconds,lease_until) SELECT id,claimed_by,claimed_at,3600,NOW()+interval '1 hour' FROM tasks WHERE id=$1",[fixture.task]);
+ await fixture.pool.query("UPDATE workflows SET status='paused' WHERE id=$1",[id]);
+ const gate=(await fixture.request(`/releases/${release.id}/gate`)).body;
+ const input={status:'active',actor,task_id:fixture.task,reason:'隔离协议启用验收',release_id:release.id,observation_id:gate.current_observation_id,workflow_definition_version_id:registration.current_definition_version_id,snapshot_sha256:release.payload.workflows[0].payload_sha256};
+ const route=`/workflow-foundation/workflows/${id}/runtime-status`;
+ expect((await fixture.request(route,input,{auth:false})).status).toBe(401);
+ const request={workflow_id:id,release_id:release.id,input:{label:'正式启用后派单'},idempotency_key:'activation'};
+ expect((await fixture.request('/workflow-foundation/tasks',request)).body.error).toBe('foundation_workflow_not_active');
+ const activated=await fixture.request(route,input);
+ expect(activated,JSON.stringify(activated)).toMatchObject({status:200,body:{workflow:{id,status:'active'}}});
+ expect((await fixture.request('/workflow-foundation/catalog')).body.workflows.find(w=>w.release_id===release.id).status).toBe('ready');
+ expect((await fixture.request('/workflow-foundation/tasks',request)).status).toBe(201);
+ const events=await fixture.pool.query("SELECT payload FROM task_events WHERE task_id=$1 AND event_type='foundation_runtime_status_changed'",[fixture.task]);
+ expect(events.rows).toHaveLength(1);expect(events.rows[0].payload).toMatchObject({...input,workflow_id:id,prior_status:'paused'});
+ expect((await fixture.request(route,{...input,status:'paused'})).body.workflow.status).toBe('paused');
+},30000);
