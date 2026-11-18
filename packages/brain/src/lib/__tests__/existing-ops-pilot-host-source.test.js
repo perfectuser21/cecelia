@@ -4,6 +4,7 @@ import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {parse} from 'acorn';
 import {collectBasicCiSources,collectDeepCiSources} from '../existing-ops-stage-source.js';
+import {reviewedPilotControls,REVIEWED_FOUNDATION_RELEASE,REVIEWED_FIXED_CHECKS,REVIEWED_NIGHTLY_STATUS} from '../existing-ops-stage-modes.js';
 import {readFixedExistingOpsGitFixture} from './helpers/fixed-existing-ops-git-fixture.js';
 const root=fileURLToPath(new URL('../../../../../',import.meta.url));
 const old=readFixedExistingOpsGitFixture('0431a8d3242783f1d94221cb5471ac40dda7fbd6');
@@ -34,4 +35,9 @@ it('新helper与旧CLI不能混配，新CLI无helper不能借旧0431组通过',a
   await expect(collect({deep,overrides:{[cli]:old.read(cli)}})).rejects.toThrow();
   await expect(collect({deep,fixture:old,overrides:{[cli]:read(cli)}})).rejects.toThrow();
  }
+});
+
+it('固定Pilot双源不得混入其他历史profile或伪造当前profile',()=>{
+ for(const profile of [REVIEWED_FOUNDATION_RELEASE,REVIEWED_FIXED_CHECKS,{...REVIEWED_NIGHTLY_STATUS}])
+  expect(()=>reviewedPilotControls(profile,[cli,helper])).toThrow('basic_ci_source_unproven');
 });
