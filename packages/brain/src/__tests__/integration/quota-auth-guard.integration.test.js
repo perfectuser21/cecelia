@@ -1,21 +1,4 @@
-/**
- * Quota Guard + Auth Circuit Breaker 集成测试
- *
- * 覆盖路径：
- *   Path 1: checkQuotaGuard() — 无用量数据时 fail-open（允许调度）
- *   Path 2: checkQuotaGuard() — 正常用量时允许所有任务
- *   Path 3: checkQuotaGuard() — 低余量时仅允许 P0/P1
- *   Path 4: checkQuotaGuard() — 严重超量时暂停全部调度
- *   Path 5: Auth Circuit Breaker — markAuthFailure/isAuthFailed 状态机
- *   Path 6: Auth Circuit Breaker — 指数退避逻辑（失败次数 → 退避时长）
- *
- * 测试策略：
- *   - Quota Guard 测试：使用 vi.doMock + vi.resetModules() 控制 getAccountUsage 返回值
- *   - Auth 状态机测试：直接测试内存状态机（markAuthFailure/isAuthFailed），mock DB pool
- *   - mock db.js pool（auth 状态机 DB 写入为 fire-and-forget）
- *
- * 关联模块：quota-guard.js, account-usage.js
- */
+/** 现役执行回调的认证熔断与指数退避；隔离DB及凭据文件。 */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
@@ -44,124 +27,11 @@ vi.mock('os', () => ({
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe('Quota Guard 调度守卫集成测试', () => {
-  beforeEach(async () => {
-    vi.clearAllMocks();
-    vi.resetModules();
-    mockPool.query.mockResolvedValue({ rows: [] });
-  });
-
-  afterEach(() => {
-    vi.clearAllMocks();
-  });
-
-  // ─── 辅助：构建 account-usage mock（所有测试复用相同结构）────────────────
-  function mockAccountUsage(getAccountUsageResult) {
-    vi.doMock('../../account-usage.js', () => ({
-      getAccountUsage: vi.fn().mockResolvedValue(getAccountUsageResult),
-      isAuthFailed: vi.fn().mockReturnValue(false),
-      isSpendingCapped: vi.fn().mockReturnValue(false),
-      markAuthFailure: vi.fn(),
-      markSpendingCap: vi.fn(),
-      resetAuthFailureCount: vi.fn(),
-      _resetAuthFailures: vi.fn(),
-      loadAuthFailuresFromDB: vi.fn().mockResolvedValue(undefined),
-      loadSpendingCapsFromDB: vi.fn().mockResolvedValue(undefined),
-      getSpendingCapStatus: vi.fn().mockReturnValue([]),
-      isAllAccountsSpendingCapped: vi.fn().mockReturnValue(false),
-      selectBestAccount: vi.fn().mockResolvedValue({ accountId: 'account1', model: 'sonnet' }),
-      selectBestAccountForHaiku: vi.fn().mockResolvedValue('account1'),
-    }));
-  }
-
-  // ─── Path 1: 无用量数据 → fail-open ───────────────────────────────────────
-
-  describe('Path 1: 无用量数据时 fail-open', () => {
-    it('getAccountUsage 返回空对象 → allow=true, reason=no_usage_data', async () => {
-      mockAccountUsage({});
-      const { checkQuotaGuard } = await import('../../quota-guard.js');
-      const result = await checkQuotaGuard();
-      expect(result.allow).toBe(true);
-      expect(result.reason).toBe('no_usage_data');
-      expect(result.bestPct).toBe(0);
-    });
-
-    it('getAccountUsage 抛错 → fail-open, reason=check_error', async () => {
-      vi.doMock('../../account-usage.js', () => ({
-        getAccountUsage: vi.fn().mockRejectedValue(new Error('DB connection failed')),
-        isAuthFailed: vi.fn().mockReturnValue(false),
-        isSpendingCapped: vi.fn().mockReturnValue(false),
-        markAuthFailure: vi.fn(),
-        markSpendingCap: vi.fn(),
-        resetAuthFailureCount: vi.fn(),
-        _resetAuthFailures: vi.fn(),
-        loadAuthFailuresFromDB: vi.fn().mockResolvedValue(undefined),
-        loadSpendingCapsFromDB: vi.fn().mockResolvedValue(undefined),
-        getSpendingCapStatus: vi.fn().mockReturnValue([]),
-        isAllAccountsSpendingCapped: vi.fn().mockReturnValue(false),
-        selectBestAccount: vi.fn().mockResolvedValue({ accountId: 'account1', model: 'sonnet' }),
-        selectBestAccountForHaiku: vi.fn().mockResolvedValue('account1'),
-      }));
-      const { checkQuotaGuard } = await import('../../quota-guard.js');
-      const result = await checkQuotaGuard();
-      expect(result.allow).toBe(true);
-      expect(result.reason).toBe('check_error');
-    });
-  });
-
-  // ─── Path 2: 正常用量 → 允许所有 ─────────────────────────────────────────
-
-  describe('Path 2: 正常用量时允许所有任务', () => {
-    it('所有账号 five_hour_pct <= 90% → allow=true, priorityFilter=null', async () => {
-      mockAccountUsage({ account1: { five_hour_pct: 45 }, account2: { five_hour_pct: 60 } });
-      const { checkQuotaGuard } = await import('../../quota-guard.js');
-      const result = await checkQuotaGuard();
-      expect(result.allow).toBe(true);
-      expect(result.priorityFilter).toBeNull();
-      expect(result.reason).toBe('quota_ok');
-      expect(result.bestPct).toBe(45);
-    });
-  });
-
-  // ─── Path 3: 低余量 → 仅 P0/P1 ───────────────────────────────────────────
-
-  describe('Path 3: 低余量时仅允许 P0/P1', () => {
-    it('最优账号 five_hour_pct=91% → allow=true, priorityFilter=[P0,P1]', async () => {
-      mockAccountUsage({ account1: { five_hour_pct: 91 }, account2: { five_hour_pct: 95 } });
-      const { checkQuotaGuard } = await import('../../quota-guard.js');
-      const result = await checkQuotaGuard();
-      expect(result.allow).toBe(true);
-      expect(result.priorityFilter).toEqual(['P0', 'P1']);
-      expect(result.reason).toBe('quota_low');
-      expect(result.bestPct).toBe(91);
-    });
-  });
-
-  // ─── Path 4: 严重超量 → 暂停全部 ─────────────────────────────────────────
-
-  describe('Path 4: 严重超量时暂停全部调度', () => {
-    it('最优账号 five_hour_pct=99% → allow=false, reason=quota_critical', async () => {
-      mockAccountUsage({ account1: { five_hour_pct: 99 }, account2: { five_hour_pct: 100 } });
-      const { checkQuotaGuard } = await import('../../quota-guard.js');
-      const result = await checkQuotaGuard();
-      expect(result.allow).toBe(false);
-      expect(result.reason).toBe('quota_critical');
-      expect(result.bestPct).toBe(99);
-    });
-  });
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Auth Circuit Breaker 测试：直接用 account-usage.js 内存状态机
-// 不使用 vi.resetModules()，避免模块实例分裂
-// ─────────────────────────────────────────────────────────────────────────────
-
 describe('Auth Circuit Breaker 状态机集成测试', () => {
   let markAuthFailure, isAuthFailed, resetAuthFailureCount, _resetAuthFailures;
 
   beforeEach(async () => {
     vi.clearAllMocks();
-    // 清除 Quota Guard 测试中 vi.doMock 注册的 account-usage mock
     vi.doUnmock('../../account-usage.js');
     vi.resetModules();
     mockPool.query.mockResolvedValue({ rows: [] });

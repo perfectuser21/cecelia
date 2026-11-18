@@ -74,7 +74,7 @@ vi.mock('../circuit-breaker.js', () => ({
 vi.mock('../events/taskEvents.js', () => ({ publishTaskStarted: vi.fn() }));
 vi.mock('../tick-stats.js', () => ({ incrementActionsToday: vi.fn(async () => {}) }));
 vi.mock('../account-usage.js', () => ({ proactiveTokenCheck: vi.fn(async () => {}) }));
-vi.mock('../quota-guard.js', () => ({ checkQuotaGuard: async () => ({ allow: true, priorityFilter: null, bestPct: 10 }) }));
+
 vi.mock('../pre-flight-check.js', () => ({
   preFlightCheck: async () => ({ passed: true, issues: [], suggestions: [] }),
   alertOnPreFlightFail: vi.fn(async () => {}),
@@ -117,7 +117,6 @@ beforeEach(() => {
   mockScriptDispatch.mockResolvedValue({outcome:'proceed'});
   routeQiumiTask.mockResolvedValue({ outcome: 'agent', model: 'm', runId: 'r1', payloadPatch: {} });
 });
-
 
 describe('受控代码选择不使用 AI 预算',()=>{
  it('AI 池满仍实际派发一条明确代码任务',async()=>{

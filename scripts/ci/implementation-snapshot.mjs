@@ -2,11 +2,10 @@ import {INFRA_CONSUMER_SCOPE,buildInfraConsumerSources,registerInfraConsumerSour
 /** 仅scratch：复用中央身份和正式投影器，固定git产生两侧不可变图。 */
 import {createImplementationScratch} from './implementation-scratch.mjs';
 export {createImplementationScratch} from './implementation-scratch.mjs';
-import { registerCompanyKrWorkflow,activityContract } from '../../packages/brain/src/lib/company-kr-registration.js';
 import {fixedLocalGit,readFixedLocalGitBlob,fixedLocalSourceOptions} from './fixed-local-git.mjs';
 import { loadActivityContracts } from '../../packages/brain/src/lib/activity-contract-loader.js';
 import { storeActivityContracts,REGISTRATIONS_SQL } from '../../packages/brain/src/lib/activity-contract-store.js';
-import { readFixedImplementationBinding,validateFixedImplementationBindings } from '../../packages/brain/src/workflow-authoring/fixed-git-source.js';
+import { validateFixedImplementationBindings } from '../../packages/brain/src/workflow-authoring/fixed-git-source.js';
 import { exportImplementationSnapshot } from '../../packages/brain/src/lib/implementation-ci-snapshot.js';
 import { stepSha256 } from '../../packages/brain/scripts/sync-steps-from-workspace.mjs';
 import { lintImplementationRegistry } from './registry-lint.mjs';
@@ -223,6 +222,7 @@ export async function advanceExistingOpsScratchManifest(db,query){
 }
 
 export async function buildPrImplementationSnapshot(db,registry,revision,repoRoot){
+  if(registry.scope==='cecelia-kr'&&registry.repo==='perfectuser21/cecelia')throw ciFailure('KR_ANALYSIS_RETIRED','公司KR自动分析候选登记已退役',410);
   const read=path=>fixedLocalGit(repoRoot,['show',`${revision}:${path}`],{encoding:'utf8'});
   if(registry.scope===EXISTING_OPS_SCOPE){
     await validateImplementationSnapshotForDatabase(db,registry);
@@ -250,26 +250,7 @@ export async function buildPrImplementationSnapshot(db,registry,revision,repoRoo
     await advanceExistingOpsScratchManifest(db,{scope:registry.scope,repo:registry.repo,revision});
     return exportImplementationSnapshot(db,{scope:registry.scope,repo:registry.repo,revision});
   }
-  if(registry.repo==='perfectuser21/cecelia'){
-    const text=read('packages/brain/config/company-kr-workflow.json'),spec=JSON.parse(text);
-    const workflow=registry.canonical.workflows.find(w=>w.key===spec.key&&w.capability_id===spec.capability_id);
-    if(!workflow)throw ciFailure('WORKFLOW_REGISTRATION_MISSING');
-    const sourceOptions=fixedLocalSourceOptions(repoRoot,registry.repo);
-    const readBinding=async b=>{
-      const result=await readFixedImplementationBinding(b,sourceOptions);
-      if(result.resolved_source)b.resolved_source=result.resolved_source;
-      return result.content;
-    };
-    const activities=[];
-    for(const [index,a] of spec.activities.entries()){
-      const activity={...activityContract(a,index+1,spec),from:spec.capability};
-      activities.push({activity,bindings:await validateFixedImplementationBindings(activity,{repo:registry.repo,commit:revision},sourceOptions)});
-    }
-    const lint=lintImplementationRegistry(registry,[{workflow,activities}],{capabilities:{[spec.capability]:{}}});
-    if(lint.gaps.length)throw ciFailure('REGISTRY_UNKNOWN',JSON.stringify(lint.gaps));
-    await registerCompanyKrWorkflow(db,{spec,revision,readSource:async()=>text,readBinding,definitionsOnly:true});
-    return exportImplementationSnapshot(db,{scope:registry.scope,repo:registry.repo,revision});
-  }
+
   const registrations=(await db.query(REGISTRATIONS_SQL,[registry.repo])).rows;
   if(!registrations.length||registrations.some(w=>!w.source_capability||w.source_path!==`product-map/contracts/${w.source_capability}.yaml`))
     throw ciFailure('PR_ADAPTER_MISSING','该repo没有固定契约adapter；需要显式登记来源');

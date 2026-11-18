@@ -10,5 +10,4 @@ fi
 cd "$BRAIN_DIR"
 node ../../node_modules/vitest/vitest.mjs run --config vitest.integration.config.js \
   src/__tests__/integration/shared-activities.pg.integration.test.js \
-  src/__tests__/integration/company-kr-registration.pg.integration.test.js \
   --maxWorkers=1 --minWorkers=1

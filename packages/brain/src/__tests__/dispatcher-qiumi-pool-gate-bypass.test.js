@@ -91,7 +91,7 @@ vi.mock('../circuit-breaker.js', () => ({
 vi.mock('../events/taskEvents.js', () => ({ publishTaskStarted: vi.fn() }));
 vi.mock('../tick-stats.js', () => ({ incrementActionsToday: vi.fn(async () => {}) }));
 vi.mock('../account-usage.js', () => ({ proactiveTokenCheck: vi.fn(async () => {}) }));
-vi.mock('../quota-guard.js', () => ({ checkQuotaGuard: async () => ({ allow: true, priorityFilter: null, bestPct: 10 }) }));
+
 vi.mock('../pre-flight-check.js', () => ({
   preFlightCheck: async () => ({ passed: true, issues: [], suggestions: [] }),
   alertOnPreFlightFail: vi.fn(async () => {}),

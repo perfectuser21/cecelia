@@ -12,7 +12,7 @@ function current(snapshot, expectedContainerId) {
 function previousVersion(tags, version, gitSha) {
   return tags.includes(`cecelia-brain:${version}`) || tags.includes(`cecelia-brain:prev-${version}-${gitSha.slice(0, 12)}`);
 }
-export function createDeploymentLedger({ store, docker, health, now = Date.now, expectedContainerId }) {
+export function createDeploymentLedger({ store, docker, health, now = Date.now, expectedContainerId, settlementTimeoutMs = 8000 }) {
   if (expectedContainerId !== undefined && !/^[a-f0-9]{64}$/.test(expectedContainerId)) throw fail('INVALID_CONTAINER_ID');
   const name = id => { if (!UUID.test(id)) throw fail('INVALID_DEPLOYMENT'); return `deployment-${id}.json`; };
   async function state() {
@@ -121,9 +121,21 @@ export function createDeploymentLedger({ store, docker, health, now = Date.now, 
     return finish(pending.deployment_id, atTarget ? 'success' : 'recovered');
   }
   // 只读已完成部署：证明当前实例仍对应最近成功收据，不代表最近请求已成功。
-  async function settlement(runtimeSha) {
+  async function settlement(runtimeSha, { timeoutMs = settlementTimeoutMs, signal } = {}) {
     if (!/^[a-f0-9]{40}$/.test(runtimeSha ?? '')) throw fail('DEPLOY_RUNTIME_UNKNOWN');
-    return store.withLock(async lease => {
+    if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > 30000) throw fail('INVALID_SETTLEMENT_BUDGET');
+    const controller = new AbortController(), deadline = Date.now() + timeoutMs;
+    const abort = () => controller.abort(fail('DEPLOY_STATUS_ABORTED'));
+    signal?.addEventListener('abort', abort, { once: true });
+    if (signal?.aborted) abort();
+    const timer = setTimeout(() => controller.abort(fail('DEPLOY_STATUS_TIMEOUT')), timeoutMs);
+    try { return await store.withLock(async held => {
+      const lease = { ...held, deadline, signal: controller.signal, assertHeld: async () => {
+        await held.assertHeld();
+        if (Date.now() >= deadline) throw fail('DEPLOY_STATUS_TIMEOUT');
+        controller.signal.throwIfAborted();
+      } };
+      await lease.assertHeld();
       const before = await state(), receipt = before.successes[0];
       if (before.pending !== null || !receipt || receipt.outcome !== 'success'
           || !UUID.test(receipt.deployment_id ?? '') || !IMAGE.test(receipt.image_id ?? '')
@@ -132,17 +144,19 @@ export function createDeploymentLedger({ store, docker, health, now = Date.now, 
       const row = await store.read(name(receipt.deployment_id));
       if (!row || digest(row.receipt) !== digest(receipt) || row.request.deployment_id !== receipt.deployment_id || row.request.git_sha !== runtimeSha
           || row.request.version !== receipt.version || (row.target_image_id && row.target_image_id !== receipt.image_id)) throw fail('DEPLOY_RECEIPT_MISMATCH');
-      const first = current(await docker.snapshot(lease));
+      const snapshot = () => docker.deploymentSnapshot ? docker.deploymentSnapshot(receipt.image_id, lease) : docker.snapshot(lease);
+      const first = current(await snapshot());
       const observed = await docker.containerHealth(first.container_id, lease);
-      const last = current(await docker.snapshot(lease));
+      const last = current(await snapshot());
       if (first.container_id !== last.container_id || first.id !== last.id || last.id !== receipt.image_id
           || first.git_sha !== runtimeSha || last.git_sha !== runtimeSha
           || observed.status !== 'healthy' || observed.git_sha !== runtimeSha || observed.version !== receipt.version)
         throw fail('DEPLOY_CURRENT_MISMATCH');
       const after = await state();
       if (digest(before) !== digest(after)) throw fail('DEPLOY_HISTORY_CHANGED');
+      await lease.assertHeld();
       return { ...receipt, container_id: last.container_id };
-    });
+    }); } finally { clearTimeout(timer); signal?.removeEventListener('abort', abort); }
   }
   return Object.freeze({ begin, rollback, finish, reconcile, settlement });
 

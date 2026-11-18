@@ -6,7 +6,7 @@
  *   2. 守卫叫了路径 — drillFn 返回 fired:true → KV 写 last_verified_at，不开 P1
  *   3. 守卫未叫路径 — drillFn 返回 fired:false → P1 Issue + Bark + raise P1
  *   4. drillTestPyramidGuard — 孤儿文件注入 → 守卫 exit 1（已验火）
- *   5. GUARD_REGISTRY — 6 个守卫，2 个 auto，4 个 manual-only
+ *   5. GUARD_REGISTRY — 5 个守卫，2 个 auto，3 个 manual-only
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -33,6 +33,9 @@ const { mockPool } = vi.hoisted(() => ({
     }),
   },
 }));
+
+// 演习测试绝不执行真实gh/宿主命令；真实孤儿注入只在/tmp运行。
+vi.mock('child_process', () => ({ execSync: vi.fn(() => { throw new Error('external drill command forbidden'); }) }));
 
 vi.mock('../db.js', () => ({ default: mockPool }));
 
@@ -183,12 +186,12 @@ describe('drillTestPyramidGuard', () => {
 // ── 5. GUARD_REGISTRY 台账结构 ─────────────────────────────────────────────
 
 describe('GUARD_REGISTRY', () => {
-  it('共 6 个守卫：2 auto + 4 manual-only', () => {
-    expect(GUARD_REGISTRY).toHaveLength(6);
+  it('共 5 个守卫：2 auto + 3 manual-only', () => {
+    expect(GUARD_REGISTRY).toHaveLength(5);
     const auto = GUARD_REGISTRY.filter((g) => g.auto);
     const manual = GUARD_REGISTRY.filter((g) => !g.auto);
     expect(auto).toHaveLength(2);
-    expect(manual).toHaveLength(4);
+    expect(manual).toHaveLength(3);
   });
 
   it('所有 auto 守卫有 drillFn', () => {

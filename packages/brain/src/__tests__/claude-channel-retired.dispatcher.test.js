@@ -57,7 +57,6 @@ vi.mock('../circuit-breaker.js', () => ({
   getAllStates: vi.fn().mockReturnValue({})
 }));
 
-
 const mockUpdateTask = vi.fn().mockResolvedValue({ success: true });
 vi.mock('../actions.js', () => ({
   updateTask: (...args) => mockUpdateTask(...args),
@@ -110,11 +109,6 @@ vi.mock('../quarantine.js', () => ({
   checkExpiredQuarantineTasks: vi.fn().mockResolvedValue([])
 }));
 
-// quota-guard: fail-open（不限制优先级），避免测试 DB 调用干扰 mock 序列
-vi.mock('../quota-guard.js', () => ({
-  checkQuotaGuard: vi.fn().mockResolvedValue({ allow: true, priorityFilter: null, reason: 'quota_ok', bestPct: 0 }),
-}));
-
 // account-usage: mock proactiveTokenCheck 避免真实 DB 调用消耗 mock 序列
 vi.mock('../account-usage.js', () => ({
   proactiveTokenCheck: vi.fn().mockResolvedValue(undefined),
@@ -124,7 +118,6 @@ vi.mock('../account-usage.js', () => ({
   markAuthFailure: vi.fn().mockResolvedValue(undefined),
   getAuthFailedAccounts: vi.fn().mockReturnValue([]),
 }));
-
 
 const TASK = {
   id: 'task-claude-bound', title: 'Claude bound task title',

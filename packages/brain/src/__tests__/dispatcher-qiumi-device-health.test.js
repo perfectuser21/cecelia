@@ -62,7 +62,7 @@ vi.mock('../circuit-breaker.js', () => ({
 vi.mock('../events/taskEvents.js', () => ({ publishTaskStarted: vi.fn() }));
 vi.mock('../tick-stats.js', () => ({ incrementActionsToday: vi.fn(async () => {}) }));
 vi.mock('../account-usage.js', () => ({ proactiveTokenCheck: vi.fn(async () => {}) }));
-vi.mock('../quota-guard.js', () => ({ checkQuotaGuard: async () => ({ allow: true, priorityFilter: null, bestPct: 10 }) }));
+
 vi.mock('../pre-flight-check.js', () => ({
   preFlightCheck: async () => ({ passed: true, issues: [], suggestions: [] }),
   alertOnPreFlightFail: vi.fn(async () => {}),
@@ -75,7 +75,6 @@ import { routeQiumiTask, persistDecision } from '../routing/qiumi-router.js';
 import { buildQiumiSource } from '../lib/qiumi-source.js';
 import { recordDispatchResult } from '../dispatch-stats.js';
 import { dispatchQiumiTask } from '../dispatcher.js';
-
 
 const candidate = { id: 'q1', task_type: 'qiumi_task', status: 'queued', priority: 'P2', title: '在手机上发一条视频', created_at: new Date().toISOString() };
 const fullRow = { ...candidate, payload: { qiumi_source: buildQiumiSource({ title: '在手机上发一条视频' }) } };

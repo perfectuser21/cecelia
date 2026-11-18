@@ -9,12 +9,13 @@ import { deployFixture } from './helpers/deploy-owned-fs.js';
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, unlinkSync, rmSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
+import { mkdtempSync, unlinkSync, rmSync, mkdirSync, writeFileSync, readFileSync, existsSync } from 'fs';
 import { parse } from 'acorn';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import express from 'express';
 import request from 'supertest';
+import { setup as settlementFixture, sha as settlementSha } from '../../../../scripts/__tests__/fixtures/deploy-settlement-process.mjs';
 
 const { settlementMock, retentionRuntimeMock } = vi.hoisted(() => ({ settlementMock: vi.fn(), retentionRuntimeMock: vi.fn() }));
 vi.mock('../../../../scripts/brain-image-retention/runtime.mjs', () => ({ createRuntime: retentionRuntimeMock }));
@@ -62,8 +63,11 @@ vi.mock('../routes/shared.js', () => ({
   getActiveExecutionPaths: vi.fn(),
   INVENTORY_CONFIG: {},
 }));
-vi.mock('child_process', () => ({
+vi.mock('child_process', async importOriginal => {
+  const actual = await importOriginal();
+  return { ...actual,
   spawn: (...args) => {
+    if(args[0]==='flock'||(args[0]===process.execPath&&args[1]?.[0]?.endsWith('/process-supervisor.mjs')))return actual.spawn(...args);
     capturedSpawnArgs = args;
     return {
       unref: vi.fn(),
@@ -72,12 +76,13 @@ vi.mock('child_process', () => ({
   },
   execSync: execSyncMock,
   execFile: execFileMock,
-}));
+};});
 
 describe('deploy webhook 回执接线（T4）', () => {
   const ORIG_REPO_ROOT = process.env.REPO_ROOT;
   let app;
   let tmpRepoRoot;
+  const settlementCleanups=[];
 
   beforeEach(async () => {
     vi.clearAllMocks();
@@ -119,7 +124,8 @@ describe('deploy webhook 回执接线（T4）', () => {
     expect((await request(app).get('/api/brain/deploy/dev/status')).status).toBe(404);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    for(const cleanup of settlementCleanups.splice(0))await cleanup();
     delete process.env.DEPLOY_TOKEN;
     if (tmpRepoRoot) {
       try { rmSync(tmpRepoRoot, { recursive: true, force: true }); } catch { /* noop */ }
@@ -143,6 +149,45 @@ describe('deploy webhook 回执接线（T4）', () => {
     settlementMock.mockImplementation(async()=>{deployState.status='running';return {outcome:'success'};});
     const res=await request(app).get('/api/brain/deploy/status');
     expect(res.body.status).toBe('running');expect(res.body.settled).toBe(false);
+  });
+  it('真实HTTP状态查询用累计预算终止Docker读取并返回unsettled，恢复后可证明结算',async()=>{
+    const fixture=await settlementFixture({after:fn=>settlementCleanups.push(fn)},{settlementTimeoutMs:650});
+    retentionRuntimeMock.mockResolvedValue({ledger:fixture.ledger});
+    const oldSha=process.env.GIT_SHA;process.env.GIT_SHA=settlementSha;
+    try{
+      fixture.state.delay=180;await fixture.save();
+      const started=Date.now(),res=await request(app).get('/api/brain/deploy/status');
+      expect(res.status).toBe(200);expect(res.body.settled).toBe(false);expect(res.body.settlement).toBeNull();
+      expect(Date.now()-started).toBeLessThan(1800);
+      await fixture.store.withLock(lease=>lease.assertHeld());
+      fixture.state.delay=0;await fixture.save();
+      const recovered=await request(app).get('/api/brain/deploy/status');
+      expect(recovered.body.settled).toBe(true);expect(recovered.body.settlement.git_sha).toBe(settlementSha);
+      expect(settlementMock).not.toHaveBeenCalled();
+    }finally{if(oldSha===undefined)delete process.env.GIT_SHA;else process.env.GIT_SHA=oldSha;}
+  });
+  it('真实HTTP连接断开取消真实悬挂Docker后代并释放锁',async()=>{
+    const fixture=await settlementFixture({after:fn=>settlementCleanups.push(fn)});
+    retentionRuntimeMock.mockResolvedValue({ledger:fixture.ledger});
+    fixture.state.mode='hang';await fixture.save();
+    const oldSha=process.env.GIT_SHA;process.env.GIT_SHA=settlementSha;
+    try{
+      const pending=request(app).get('/api/brain/deploy/status'),finished=pending.then(()=>{},()=>{});
+      const pidPath=join(fixture.root,'descendant.pid');
+      for(let i=0;i<100&&!existsSync(pidPath);i++)await new Promise(r=>setTimeout(r,20));
+      expect(existsSync(pidPath)).toBe(true);pending.abort();await finished;
+      let unlocked=false;
+      for(let i=0;i<100&&!unlocked;i++){
+        try{await fixture.store.withLock(lease=>lease.assertHeld());unlocked=true;}
+        catch(error){if(error.code!=='IMAGE_RETENTION_BUSY')throw error;await new Promise(r=>setTimeout(r,20));}
+      }
+      expect(unlocked).toBe(true);
+      const pid=Number(readFileSync(pidPath,'utf8'));
+      const {execFileSync:actualExec}=await import('node:child_process');
+      let state='';try{state=actualExec('ps',['-o','stat=','-p',String(pid)],{encoding:'utf8',stdio:['ignore','pipe','ignore']}).trim();}catch{}
+      expect(state===''||state.startsWith('Z')).toBe(true);
+      expect(settlementMock).not.toHaveBeenCalled();
+    }finally{if(oldSha===undefined)delete process.env.GIT_SHA;else process.env.GIT_SHA=oldSha;}
   });
   it.each(['running','rolling_back','failed','rollback_failed'])('状态%s不能被历史ledger覆盖',async status=>{
     const {deployState}=await import('../routes/ops.js');deployState.status=status;
