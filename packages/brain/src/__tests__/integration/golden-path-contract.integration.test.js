@@ -146,7 +146,7 @@ describe('Golden Path contract real PostgreSQL lifecycle', () => {
         reviewer: 'integration-owner',
       });
       expect(signedV1.task).toMatchObject({
-        task_type: 'harness_initiative',
+        task_type: 'dev',
         payload: {
           gp_contract_id: submittedV1.contract_version.id,
           routing_receipt_id: expect.any(String),

@@ -136,7 +136,7 @@ vi.mock('./shared.js', () => ({
   INVENTORY_CONFIG: {},
 }));
 
-vi.mock('child_process', () => ({ exec: vi.fn(), execSync: vi.fn() }));
+vi.mock('child_process', async (importOriginal) => ({ ...await importOriginal(), exec: vi.fn(), execSync: vi.fn() }));
 
 // fleet-resource-cache mock — /select 端点产能闸需要 getTotalEffectiveSlots
 vi.mock('../../fleet-resource-cache.js', () => ({
@@ -279,22 +279,22 @@ describe('Golden Path E2E — Brain 2 条核心链路（真实 PostgreSQL）', (
       expect(dbRes.rows[0].status).toBe('in_progress');
     });
 
-    it('PATCH /api/brain/tasks/:id — 更新为 completed + metadata 字段', async () => {
+    it('PATCH /api/brain/tasks/:id — 研究任务持久化完成结果', async () => {
       expect(createdTaskId).toBeDefined();
 
       const res = await request(app)
         .patch(`/api/brain/tasks/${createdTaskId}`)
-        .send({ status: 'completed', pr_url: 'https://github.com/test/pr/1' })
+        .send({ status: 'completed', result: { findings: 'fixture complete' } })
         .expect(200);
 
       expect(res.body.status).toBe('completed');
 
-      // 直接查 DB 验证状态持久化（tasks 表用 status / pr_url 字段存储完成信息）
+      // 研究任务的交付物是研究结果。
       const dbRes = await testPool.query(
-        'SELECT status, pr_url FROM tasks WHERE id = $1',
+        'SELECT status, success_metrics FROM tasks WHERE id = $1',
         [createdTaskId]
       );
-      expect(dbRes.rows[0].status).toBe('completed');
+      expect(dbRes.rows[0]).toMatchObject({ status: 'completed', success_metrics: { findings: 'fixture complete' } });
     });
   });
 

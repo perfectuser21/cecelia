@@ -1,4 +1,21 @@
-import {afterEach,it,expect} from 'vitest';
+import {afterAll,afterEach,it,expect,vi} from 'vitest';
+
+// 深度回归有两座隔离库。API 的私有 schema 与 DBOS 宿主必须使用同一座 scratch。
+vi.hoisted(() => {
+ if (process.env.CI !== 'true' || !process.env.TEST_DB_URL) return;
+ const target = new URL(process.env.TEST_DB_URL);
+ if (!['postgres:', 'postgresql:'].includes(target.protocol) ||
+     !['localhost', '127.0.0.1'].includes(target.hostname) ||
+     target.pathname !== '/cecelia_scratch' || target.search || target.hash) {
+   throw Error('foundation_fixture_requires_local_scratch');
+ }
+ vi.stubEnv('DB_NAME', 'cecelia_scratch');
+ vi.stubEnv('DB_HOST', target.hostname);
+ vi.stubEnv('DB_PORT', target.port || '5432');
+ vi.stubEnv('DB_USER', decodeURIComponent(target.username));
+ vi.stubEnv('DB_PASSWORD', decodeURIComponent(target.password));
+});
+afterAll(() => vi.unstubAllEnvs());
 import {workflowFoundationDatabase} from '../fixtures/workflow-foundation-db.js';
 import fs from 'node:fs';
 import path from 'node:path';

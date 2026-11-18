@@ -8,7 +8,6 @@ const boundary = vi.hoisted(() => ({
   thalamus: vi.fn(async () => ({ actions: [] })),
   decision: vi.fn(async () => ({ actions: [] })),
   rumination: vi.fn(async () => undefined),
-  plan: vi.fn(async () => undefined),
   query: vi.fn(async () => ({ rows: [{ id: 'isolated-kr' }] })),
 }));
 vi.mock('../../thalamus.js', () => ({ processEvent: boundary.thalamus, EVENT_TYPES: { TICK: 'tick' } }));
@@ -97,12 +96,11 @@ describe('现役意识图真实 PostgreSQL checkpoint 跨进程恢复', () => {
       const reader = saver();
       const fresh = buildConsciousnessGraph().compile({ checkpointer: reader });
       const result = await fresh.invoke(null, { ...thread, durability: 'sync' });
-      expect(result.completed_steps).toEqual(['thalamus', 'decision', 'rumination', 'plan']);
+      expect(result.completed_steps).toEqual(['thalamus', 'decision', 'rumination']);
       expect(result.errors).toEqual([]);
       expect(boundary.thalamus).toHaveBeenCalledTimes(1);
       expect(boundary.decision).toHaveBeenCalledTimes(1);
       expect(boundary.rumination).toHaveBeenCalledTimes(1);
-      expect(boundary.plan).toHaveBeenCalledTimes(1);
       expect((await fresh.getState(thread)).next).toEqual([]);
       const stored = await admin.query('SELECT count(*)::int AS total FROM public.checkpoints WHERE thread_id=$1',
         [thread.configurable.thread_id]);

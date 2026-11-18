@@ -3,13 +3,13 @@
  * consciousness.graph.js — checkpoint/resume 集成测试
  *
  * 验证：
- *   1. 图可编译，4 个节点顺序执行，completed_steps.length === 4
+ *   1. 图可编译，3 个节点顺序执行，completed_steps.length === 3
  *   2. MemorySaver checkpoint/resume：第一次 invoke 存 checkpoint；
  *      第二次 invoke（模拟崩溃恢复，同 thread_id）→ LangGraph 从 checkpoint 读状态
  *
  * mock 策略：
  *   - MemorySaver 替代 PgCheckpointer（不需要真 DB 连接）
- *   - 所有 LLM 底层依赖 mock（thalamus/decision/rumination/planner/guidance/pool）
+ *   - 所有 LLM 底层依赖 mock（thalamus/decision/rumination/guidance/pool）
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { MemorySaver } from '@langchain/langgraph';
@@ -18,14 +18,12 @@ const {
   mockThalamusProcessEvent,
   mockGenerateDecision,
   mockRunRumination,
-  mockPlanNextTask,
   mockSetGuidance,
   mockPool,
 } = vi.hoisted(() => ({
   mockThalamusProcessEvent: vi.fn(),
   mockGenerateDecision: vi.fn(),
   mockRunRumination: vi.fn(),
-  mockPlanNextTask: vi.fn(),
   mockSetGuidance: vi.fn(),
   mockPool: { query: vi.fn() },
 }));
@@ -62,13 +60,13 @@ describe('consciousness-graph integration — checkpoint/resume', () => {
     mockPool.query.mockResolvedValue({ rows: [] });
   });
 
-  it('完整 invoke：completed_steps 顺序正确，长度为 4', async () => {
+  it('完整 invoke：completed_steps 顺序正确，长度为 3', async () => {
     const graph = await getCompiledConsciousnessGraph();
     const result = await graph.invoke(
       { completed_steps: [], errors: [], run_ts: '2026-05-05T00:00:00.000Z' },
       { configurable: { thread_id: 'integration:1' } }
     );
-    expect(result.completed_steps).toEqual(['thalamus', 'decision', 'rumination', 'plan']);
+    expect(result.completed_steps).toEqual(['thalamus', 'decision', 'rumination']);
     expect(result.errors).toHaveLength(0);
   });
 
@@ -88,7 +86,7 @@ describe('consciousness-graph integration — checkpoint/resume', () => {
 
     // 第二次：null input → LangGraph 用 checkpoint state
     const result2 = await graph.invoke(null, threadConfig);
-    expect(result2.completed_steps).toHaveLength(4);
+    expect(result2.completed_steps).toEqual(['thalamus', 'decision', 'rumination']);
   });
 
   it('getState()：checkpoint 包含 completed_steps', async () => {
@@ -99,6 +97,6 @@ describe('consciousness-graph integration — checkpoint/resume', () => {
       threadConfig
     );
     const state = await graph.getState(threadConfig);
-    expect(state.values.completed_steps).toHaveLength(4);
+    expect(state.values.completed_steps).toEqual(['thalamus', 'decision', 'rumination']);
   });
 });
