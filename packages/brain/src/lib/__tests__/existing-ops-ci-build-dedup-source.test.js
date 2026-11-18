@@ -27,7 +27,7 @@ it('优化后的完整CI控制组和历史完整控制组均保持Basic与Deep�
  }
 });
 it('新旧CI与来源控制测试不得混配，候选自报摘要不能授权',async()=>{
- for(const deep of [false,true])for(const member of [workflow,test]){
+ for(const deep of [false,true])for(const member of [workflow,test,'scripts/ci/__tests__/basic-fixed-core.test.mjs']){
   await expect(collect({deep,overrides:{[member]:previous.read(member)}})).rejects.toThrow('basic_ci_source_unproven');
   await expect(collect({deep,fixture:previous,overrides:{[member]:read(member)}})).rejects.toThrow('basic_ci_source_unproven');
   await expect(collect({deep,missing:member})).rejects.toThrow();

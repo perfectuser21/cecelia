@@ -1,4 +1,5 @@
 /** 经审B补丁的完整模式变体；不读候选自身声明来扩大允许范围。 */
+import {workflowHash,CI_BUILD_DEDUP_WORKFLOW,CI_BUILD_DEDUP_INPUTS} from './existing-ops-ci-build-dedup-source.js';
 import {STAGE_ENVELOPES} from './existing-ops-stage-envelopes.js';
 const SKILLS_PROFILE = {
   "key": "zenithjoy-skills",
@@ -105,12 +106,21 @@ export const REPAIR_PROFILE_PATH='packages/brain/src/lib/existing-ops-checker-re
 const repairSha='b9e11b26b52fc0f189542585581af7aa4d259ada5859bb88b8e7659c1905a776',repairText=readFileSync(new URL('./existing-ops-checker-repair-profile.json',import.meta.url),'utf8');
 if(createHash('sha256').update(repairText).digest('hex')!==repairSha)reject();
 export const REVIEWED_CHECKER_REPAIR={...JSON.parse(repairText),[REPAIR_PROFILE_PATH]:repairSha};
+// 复用历史完整清单，只有这三项已审差异；历史profile与身份保持不变。
+export const REVIEWED_CI_BUILD_DEDUP={...REVIEWED_CHECKER_REPAIR,...CI_BUILD_DEDUP_INPUTS};
+async function checkerRepairProfile(read){
+ const digest=workflowHash(await read('.github/workflows/ci.yml'));
+ if(digest===CI_BUILD_DEDUP_WORKFLOW)return REVIEWED_CI_BUILD_DEDUP;
+ if(digest==='68d48d86c12927eb533101cd0c47cd446dfa3e456cf733643d68e9ee72c7671a')return REVIEWED_CHECKER_REPAIR;
+ reject();
+}
+
 export async function collectReviewedCloseoutDeep({read,paths,relation}){
  if(!paths?.includes(CLOSEOUT_PROFILE_PATH))reject();
- const profile=paths.includes(REPAIR_PROFILE_PATH)?REVIEWED_CHECKER_REPAIR:REVIEWED_CLOSEOUT;
+ const profile=paths.includes(REPAIR_PROFILE_PATH)?await checkerRepairProfile(read):REVIEWED_CLOSEOUT;
  for(const [path,digest] of Object.entries(profile)){if(digest===null){if(paths.includes(path))reject();continue;}const bytes=await read(path);if(createHash('sha256').update(bytes).digest('hex')!==digest)reject();}
  relation('packages/brain/src/lib/existing-ops-stage-modes.js',CLOSEOUT_PROFILE_PATH,'reviewed_deep_ci_source_profile');
- if(profile===REVIEWED_CHECKER_REPAIR)relation('packages/brain/src/lib/existing-ops-stage-modes.js',REPAIR_PROFILE_PATH,'reviewed_deep_ci_source_profile');
+ if([REVIEWED_CI_BUILD_DEDUP,REVIEWED_CHECKER_REPAIR].includes(profile))relation('packages/brain/src/lib/existing-ops-stage-modes.js',REPAIR_PROFILE_PATH,'reviewed_deep_ci_source_profile');
  for(const [consumer,input] of [['scripts/ci/deep-integration.config.mjs','scripts/ci/debt-pg.config.mjs'],['scripts/ci/debt-pg.config.mjs','scripts/ci/debt-pg-tests.json'],['scripts/ci/debt-pg.config.mjs','packages/brain/vitest.config.js']])relation(consumer,input,'reviewed_deep_postgres_config_input');
 }
 
@@ -121,9 +131,9 @@ if(createHash('sha256').update(dormantText).digest('hex')!==dormantSha)reject();
 export const REVIEWED_DORMANT_BOUNDARIES={...JSON.parse(dormantText),[DORMANT_PROFILE_PATH]:dormantSha};
 export async function collectReviewedDormantDeep({read,paths,relation}){
  if(!paths?.includes(DORMANT_PROFILE_PATH))reject();
- const profile=paths.includes(REPAIR_PROFILE_PATH)?REVIEWED_CHECKER_REPAIR:REVIEWED_DORMANT_BOUNDARIES;
+ const profile=paths.includes(REPAIR_PROFILE_PATH)?await checkerRepairProfile(read):REVIEWED_DORMANT_BOUNDARIES;
  for(const [path,digest] of Object.entries(profile)){if(digest===null){if(paths.includes(path))reject();continue;}const bytes=await read(path);if(createHash('sha256').update(bytes).digest('hex')!==digest)reject();}
  relation('packages/brain/src/lib/existing-ops-stage-modes.js',DORMANT_PROFILE_PATH,'reviewed_deep_ci_source_profile');
- if(profile===REVIEWED_CHECKER_REPAIR)relation('packages/brain/src/lib/existing-ops-stage-modes.js',REPAIR_PROFILE_PATH,'reviewed_deep_ci_source_profile');
+ if([REVIEWED_CI_BUILD_DEDUP,REVIEWED_CHECKER_REPAIR].includes(profile))relation('packages/brain/src/lib/existing-ops-stage-modes.js',REPAIR_PROFILE_PATH,'reviewed_deep_ci_source_profile');
  for(const [consumer,input] of [['scripts/ci/deep-integration.config.mjs','scripts/ci/debt-pg.config.mjs'],['scripts/ci/debt-pg.config.mjs','scripts/ci/debt-pg-tests.json'],['scripts/ci/debt-pg.config.mjs','packages/brain/vitest.config.js']])relation(consumer,input,'reviewed_deep_postgres_config_input');
 }
