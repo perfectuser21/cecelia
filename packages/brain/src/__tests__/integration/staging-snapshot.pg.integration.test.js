@@ -4,8 +4,26 @@ import { randomUUID } from 'node:crypto';
 import { readFileSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { DB_DEFAULTS } from '../../db-config.js';
+
+// CI 从本作业的 PG service 取客户端，本机用已安装的同主版本客户端。
+function snapshotClient(name, dir, serverMajor) {
+  const service = process.env.SNAPSHOT_POSTGRES_CONTAINER;
+  let executable;
+  if (service) {
+    expect(service).toMatch(/^[a-f0-9]{64}$/);
+    executable = join(dir, `service-${name}`);
+    writeFileSync(executable, `#!/bin/sh
+exec docker exec -i -e PGHOST=127.0.0.1 -e PGPORT=5432 -e PGDATABASE -e PGUSER -e PGPASSWORD "$SNAPSHOT_POSTGRES_CONTAINER" ${name} "$@"
+`, {mode: 0o755});
+  } else {
+    executable = execFileSync('which', [name], {encoding: 'utf8'}).trim();
+  }
+  const version = execFileSync(executable, ['--version'], {encoding: 'utf8'});
+  expect(version, `${name} must match PostgreSQL ${serverMajor}`).toMatch(new RegExp(`PostgreSQL\\) ${serverMajor}\\.`));
+  return executable;
+}
 
 it('实际候选快照保留非空父子数据并恢复有效外键', async () => {
   // 仅操作本测试独占schema；本机只使用scratch，CI使用隔离service数据库。
@@ -28,17 +46,18 @@ it('实际候选快照保留非空父子数据并恢复有效外键', async () =
     // 运行脚本中的真实导出命令，包装器只将连接及表名空间限制到测试库和独占schema。
     const body = source.match(/docker exec cecelia-node-brain sh -ec '([^']+)' \| candidate_docker exec -i /);
     expect(body).not.toBeNull();
-    const binary = spawnSync('which', ['pg_dump'], {encoding:'utf8'}).stdout.trim();
-    expect(binary).not.toBe('');
+    const version = await client.query("SELECT current_setting('server_version_num')::int / 10000 AS major");
+    const pgDump = snapshotClient('pg_dump', dir, version.rows[0].major);
+    const pgRestore = snapshotClient('pg_restore', dir, version.rows[0].major);
     writeFileSync(join(dir, 'pg_dump'), `#!/usr/bin/env bash\nset -euo pipefail\nargs=()\nwhile (($#)); do\n case "$1" in -h|-p|-U|-d) shift 2;; --exclude-table-data=*) args+=("--exclude-table-data=$TEST_SCHEMA.\${1#*=}"); shift;; *) args+=("$1"); shift;; esac\ndone\nexec "$REAL_PG_DUMP" "\${args[@]}" --schema="$TEST_SCHEMA"\n`, {mode:0o755});
-    const env = {...process.env, PATH:`${dir}:${process.env.PATH}`, REAL_PG_DUMP:binary,
+    const env = {...process.env, PATH:`${dir}:${process.env.PATH}`, REAL_PG_DUMP:pgDump,
       TEST_SCHEMA:schema, DB_NAME:'cecelia', DB_HOST:'unused', DB_USER:'unused', DB_PASSWORD:DB_DEFAULTS.password || '',
       PGHOST:DB_DEFAULTS.host, PGPORT:String(DB_DEFAULTS.port), PGUSER:DB_DEFAULTS.user,
       PGDATABASE:DB_DEFAULTS.database, PGPASSWORD:DB_DEFAULTS.password || ''};
     const dump = spawnSync('bash', ['-ec', body[1]], {env, timeout:20000, maxBuffer:8*1024*1024});
     expect(dump.status, dump.stderr?.toString()).toBe(0);
     await client.query(`DROP SCHEMA ${schema} CASCADE`);
-    const restored = spawnSync('pg_restore', ['--exit-on-error','--no-owner','--no-acl','-d',DB_DEFAULTS.database],
+    const restored = spawnSync(pgRestore, ['--exit-on-error','--no-owner','--no-acl','-d',DB_DEFAULTS.database],
       {env, input:dump.stdout, encoding:'utf8', timeout:20000});
     expect(restored.status, restored.stderr).toBe(0);
     expect((await client.query(`SELECT a.id, c.id AS parent_id FROM ${schema}.capture_atoms a JOIN ${schema}.captures c ON c.id=a.capture_id`)).rows).toEqual([{id:2,parent_id:1}]);
