@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.445.258
+**Brain 版本**: 1.445.259
 
 为单Activity Skill Worker显式注册冻结的宿主stdio MCP工具；保留凭据目录deny、全局never及独立Checker，仅授权固定invoke。每次核验来源、身份与截止，断连停止排队调用，超时保留unknown不重放。
 
