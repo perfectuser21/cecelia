@@ -113,14 +113,6 @@ export const REVIEWED_MAIN_AUTO_DEPLOY={...REVIEWED_PREVIEW_RETIREMENT,...MAIN_A
 export const REVIEWED_BIND_MOUNT={...REVIEWED_MAIN_AUTO_DEPLOY,...BIND_MOUNT_INPUTS};
 export const REVIEWED_CANDIDATE_BUILDER={...REVIEWED_BIND_MOUNT,...CANDIDATE_BUILDER_INPUTS};
 export const REVIEWED_RUNTIME_IDEMPOTENCE={...REVIEWED_CANDIDATE_BUILDER,...RUNTIME_IDEMPOTENCE_INPUTS};
-// 仅现役部署控制组允许快照工具使用该次作业的 PostgreSQL service。
-const nightlyWorkflow = '.github/workflows/nightly-regression.yml';
-const nightlyServiceBindingDigest = '8022df106a2629739ea33d36b8db0d5dbe0e0b722fe6e5bbe272b7b58263b55d';
-export function reviewedInputMatches(profile, path, actualDigest) {
-  return actualDigest === profile[path] || (
-    profile === REVIEWED_RUNTIME_IDEMPOTENCE && path === nightlyWorkflow && actualDigest === nightlyServiceBindingDigest
-  );
-}
 export async function mainAutoDeployProfile(paths,read){
  if(!Array.isArray(paths))reject();
  const text=await read(CANDIDATE_BUILDER_MARKER);if(typeof text!=='string')reject();
@@ -147,7 +139,7 @@ async function checkerRepairProfile(read,paths){
 export async function collectReviewedCloseoutDeep({read,paths,relation}){
  if(!paths?.includes(CLOSEOUT_PROFILE_PATH))reject();
  const profile=paths.includes(REPAIR_PROFILE_PATH)?await checkerRepairProfile(read,paths):REVIEWED_CLOSEOUT;
- for(const [path,digest] of Object.entries(profile)){if(digest===null){if(paths.includes(path))reject();continue;}const bytes=await read(path);if(!reviewedInputMatches(profile,path,createHash('sha256').update(bytes).digest('hex')))reject();}
+ for(const [path,digest] of Object.entries(profile)){if(digest===null){if(paths.includes(path))reject();continue;}const bytes=await read(path);if(createHash('sha256').update(bytes).digest('hex')!==digest)reject();}
  relation('packages/brain/src/lib/existing-ops-stage-modes.js',CLOSEOUT_PROFILE_PATH,'reviewed_deep_ci_source_profile');
  if([REVIEWED_RUNTIME_IDEMPOTENCE,REVIEWED_CANDIDATE_BUILDER,REVIEWED_BIND_MOUNT,REVIEWED_MAIN_AUTO_DEPLOY,REVIEWED_PREVIEW_RETIREMENT,REVIEWED_CI_BUILD_DEDUP,REVIEWED_CHECKER_REPAIR].includes(profile))relation('packages/brain/src/lib/existing-ops-stage-modes.js',REPAIR_PROFILE_PATH,'reviewed_deep_ci_source_profile');
  for(const [consumer,input] of [['scripts/ci/deep-integration.config.mjs','scripts/ci/debt-pg.config.mjs'],['scripts/ci/debt-pg.config.mjs','scripts/ci/debt-pg-tests.json'],['scripts/ci/debt-pg.config.mjs','packages/brain/vitest.config.js']])relation(consumer,input,'reviewed_deep_postgres_config_input');
@@ -161,7 +153,7 @@ export const REVIEWED_DORMANT_BOUNDARIES={...JSON.parse(dormantText),[DORMANT_PR
 export async function collectReviewedDormantDeep({read,paths,relation}){
  if(!paths?.includes(DORMANT_PROFILE_PATH))reject();
  const profile=paths.includes(REPAIR_PROFILE_PATH)?await checkerRepairProfile(read,paths):REVIEWED_DORMANT_BOUNDARIES;
- for(const [path,digest] of Object.entries(profile)){if(digest===null){if(paths.includes(path))reject();continue;}const bytes=await read(path);if(!reviewedInputMatches(profile,path,createHash('sha256').update(bytes).digest('hex')))reject();}
+ for(const [path,digest] of Object.entries(profile)){if(digest===null){if(paths.includes(path))reject();continue;}const bytes=await read(path);if(createHash('sha256').update(bytes).digest('hex')!==digest)reject();}
  relation('packages/brain/src/lib/existing-ops-stage-modes.js',DORMANT_PROFILE_PATH,'reviewed_deep_ci_source_profile');
  if([REVIEWED_RUNTIME_IDEMPOTENCE,REVIEWED_CANDIDATE_BUILDER,REVIEWED_BIND_MOUNT,REVIEWED_MAIN_AUTO_DEPLOY,REVIEWED_PREVIEW_RETIREMENT,REVIEWED_CI_BUILD_DEDUP,REVIEWED_CHECKER_REPAIR].includes(profile))relation('packages/brain/src/lib/existing-ops-stage-modes.js',REPAIR_PROFILE_PATH,'reviewed_deep_ci_source_profile');
  for(const [consumer,input] of [['scripts/ci/deep-integration.config.mjs','scripts/ci/debt-pg.config.mjs'],['scripts/ci/debt-pg.config.mjs','scripts/ci/debt-pg-tests.json'],['scripts/ci/debt-pg.config.mjs','packages/brain/vitest.config.js']])relation(consumer,input,'reviewed_deep_postgres_config_input');

@@ -8,14 +8,30 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { DB_DEFAULTS } from '../../db-config.js';
 
 // CI 从本作业的 PG service 取客户端，本机用已安装的同主版本客户端。
-function snapshotClient(name, dir, serverMajor) {
-  const service = process.env.SNAPSHOT_POSTGRES_CONTAINER;
+function snapshotService(serverAddress) {
+  const expected = process.env.CI_PG_SERVER_ADDRESS;
+  if (!expected) return;
+  expect(serverAddress).toBe(expected);
+
+  const docker = (...args) => execFileSync('docker', args, {encoding: 'utf8'}).trim();
+  const candidates = docker('ps', '--quiet', '--no-trunc', '--filter', `publish=${DB_DEFAULTS.port}/tcp`);
+  expect(candidates, '数据库宿主端口必须关联运行中的容器').not.toBe('');
+  const format = '{{.Id}} {{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}';
+  const matches = docker('inspect', '--format', format, ...candidates.split(/\s+/))
+    .split('\n')
+    .map(row => row.trim().split(/\s+/))
+    .filter(([, ...addresses]) => addresses.includes(expected));
+  expect(matches, '数据库端口和服务地址必须唯一标识容器').toHaveLength(1);
+  return matches[0][0];
+}
+
+function snapshotClient(name, dir, serverMajor, service) {
   let executable;
   if (service) {
     expect(service).toMatch(/^[a-f0-9]{64}$/);
     executable = join(dir, `service-${name}`);
     writeFileSync(executable, `#!/bin/sh
-exec docker exec -i -e PGHOST=127.0.0.1 -e PGPORT=5432 -e PGDATABASE -e PGUSER -e PGPASSWORD "$SNAPSHOT_POSTGRES_CONTAINER" ${name} "$@"
+exec docker exec -i -e PGHOST=127.0.0.1 -e PGPORT=5432 -e PGDATABASE -e PGUSER -e PGPASSWORD "${service}" ${name} "$@"
 `, {mode: 0o755});
   } else {
     executable = execFileSync('which', [name], {encoding: 'utf8'}).trim();
@@ -46,9 +62,10 @@ it('实际候选快照保留非空父子数据并恢复有效外键', async () =
     // 运行脚本中的真实导出命令，包装器只将连接及表名空间限制到测试库和独占schema。
     const body = source.match(/docker exec cecelia-node-brain sh -ec '([^']+)' \| candidate_docker exec -i /);
     expect(body).not.toBeNull();
-    const version = await client.query("SELECT current_setting('server_version_num')::int / 10000 AS major");
-    const pgDump = snapshotClient('pg_dump', dir, version.rows[0].major);
-    const pgRestore = snapshotClient('pg_restore', dir, version.rows[0].major);
+    const {rows: [server]} = await client.query("SELECT current_setting('server_version_num')::int / 10000 AS major, host(inet_server_addr()) AS address");
+    const service = snapshotService(server.address);
+    const pgDump = snapshotClient('pg_dump', dir, server.major, service);
+    const pgRestore = snapshotClient('pg_restore', dir, server.major, service);
     writeFileSync(join(dir, 'pg_dump'), `#!/usr/bin/env bash\nset -euo pipefail\nargs=()\nwhile (($#)); do\n case "$1" in -h|-p|-U|-d) shift 2;; --exclude-table-data=*) args+=("--exclude-table-data=$TEST_SCHEMA.\${1#*=}"); shift;; *) args+=("$1"); shift;; esac\ndone\nexec "$REAL_PG_DUMP" "\${args[@]}" --schema="$TEST_SCHEMA"\n`, {mode:0o755});
     const env = {...process.env, PATH:`${dir}:${process.env.PATH}`, REAL_PG_DUMP:pgDump,
       TEST_SCHEMA:schema, DB_NAME:'cecelia', DB_HOST:'unused', DB_USER:'unused', DB_PASSWORD:DB_DEFAULTS.password || '',
