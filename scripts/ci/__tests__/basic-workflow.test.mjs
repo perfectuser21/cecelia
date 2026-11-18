@@ -331,3 +331,14 @@ test('凭据扫描不允许checkout持久化令牌或吞掉审计失败',()=>{
     const job=structuredClone(workflow.jobs.security);mutate(job);assert.throws(()=>assertSecurityContracts(job));
   }
 });
+
+
+test('自动Preview已退役，PR关闭不再触发任何CI或写预览评论',()=>{
+  assert.equal(workflow.jobs['preview-deploy'],undefined);
+  assert.equal(workflow.jobs['preview-cleanup'],undefined);
+  assert.ok(!workflow.on.pull_request.types.includes('closed'));
+  for(const [id,job]of Object.entries(workflow.jobs)){
+    assert.notEqual(job.permissions?.['pull-requests'],'write',id);
+    assert.ok(!(job.steps??[]).some(step=>/preview-(deploy|cleanup)|preview-ui/.test(step.uses??step.run??'')),id);
+  }
+});
