@@ -11,7 +11,9 @@ const root=fileURLToPath(new URL('../../../../../',import.meta.url));
 const workflow='.github/workflows/ci.yml',control='scripts/ci/__tests__/basic-workflow.test.mjs';
 const previous=readFixedExistingOpsGitFixture('ff56a157a53bdcc6ff9a612b8d03ca6be741feef');
 const retired=['.github/actions/preview-deploy/action.yml','.github/actions/preview-cleanup/action.yml','scripts/ci/preview-ui.mjs',
- 'scripts/ci/__tests__/basic-preview-deploy.test.mjs','scripts/ci/__tests__/basic-preview-cleanup.test.mjs','scripts/ci/__tests__/basic-preview-ui.test.mjs'];
+ 'scripts/ci/__tests__/basic-preview-deploy.test.mjs','scripts/ci/__tests__/basic-preview-cleanup.test.mjs','scripts/ci/__tests__/basic-preview-ui.test.mjs',
+ 'scripts/request-preview-start.sh','scripts/verify-preview-identity.sh','scripts/wait-preview-active.sh',
+ 'scripts/__tests__/preview-start-request-retry.test.sh','scripts/__tests__/preview-wait-restart-recovery.test.sh'];
 const paths=execFileSync('git',['ls-files','-z','--cached','--others','--exclude-standard'],{cwd:root,encoding:'utf8'}).split('\0').filter(p=>p&&existsSync(root+p));
 const read=p=>readFileSync(root+p,'utf8');
 const ast=text=>parse(text,{ecmaVersion:'latest',sourceType:'module'});

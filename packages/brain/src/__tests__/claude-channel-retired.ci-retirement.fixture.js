@@ -144,6 +144,19 @@ const currentMemberCount=Object.keys(BUILD_DEDUP_CI_COHORT).length;
 export const ciVersionGuardCohorts=()=>[...COHORTS,COMMANDER_CI_COHORT,SKILL_RETIREMENT_CI_COHORT,PLANNER_RETIREMENT_CI_COHORT,COMMANDER_AUDIT_CI_COHORT,SCRIPT_CLEANUP_CI_COHORT,SCRIPT_CLEANUP_PROFILE_COHORT,RESOURCE_RETIREMENT_CI_COHORT,WORKFLOW_REGISTRATION_CI_COHORT,BUSINESS_SMOKE_RETIREMENT_CI_COHORT,FIXED_CHECKS_CI_COHORT,FOUNDATION_RELEASE_CI_COHORT,FOUNDATION_FIXED_CHECKS_CI_COHORT,CLOSEOUT_CI_COHORT,DORMANT_BOUNDARIES_CI_COHORT,CHECKER_REPAIR_CI_COHORT,BUILD_DEDUP_CI_COHORT];
 export function registerCiRetirementGuardTests({root,base,scan}){
  describe('当前来源完整闭包及执行防复活',()=>{
+  it('Preview清退完整只读组与原共享构建组均有效，任一新旧成员混配和执行仍拒绝',()=>{
+   const helper=path.join(root,'existing-ops-ci-build-dedup-source.js'),current=base();
+   expect(current.get(helper)).toContain('PREVIEW_RETIREMENT_INPUTS');
+   const previous=new Map(Object.keys(BUILD_DEDUP_CI_COHORT).map(name=>{const file=path.join(root,name);return [file,execFileSync('git',['--no-replace-objects','show','ff56a157a53bdcc6ff9a612b8d03ca6be741feef:'+path.relative(path.resolve(root,'../../../..'),file)],{cwd:root,encoding:'utf8',maxBuffer:1024*1024})];}));
+   for(const sources of [current,previous])expect(scan(sources)).toEqual([]);
+   for(const name of ['existing-ops-stage-source.js','existing-ops-stage-modes.js','existing-ops-ci-build-dedup-source.js']){
+    const file=path.join(root,name),mixed=new Map(current);mixed.set(file,previous.get(file));expect(scan(mixed).some(hit=>hit.rule==='E1')).toBe(true);
+    const reverse=new Map(previous);reverse.set(file,current.get(file));expect(scan(reverse).some(hit=>hit.rule==='E1')).toBe(true);
+    const missing=new Map(current);missing.delete(file);expect(scan(missing).some(hit=>hit.rule==='E1')).toBe(true);
+   }
+   const changed=new Map(current);changed.set(helper,changed.get(helper)+'\neval(PREVIEW_RETIREMENT_INPUTS);');expect(scan(changed).some(hit=>hit.rule==='E1')).toBe(true);
+  });
+
   it('共享构建现役完整只读闭包及原checker组保持兼容，依赖缺失或执行滥用仍拒绝',()=>{
    const helper=path.join(root,'existing-ops-ci-build-dedup-source.js'),current=base();
    current.set(helper,readFileSync(helper,'utf8'));

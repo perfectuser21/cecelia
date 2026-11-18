@@ -126,7 +126,7 @@ it('现役十项PG控制闭包固定读取；缺失、篡改及旧新成员拼�
  const pg=relations.filter(row=>row.kind==='reviewed_pr_postgres_test_selector');
  expect(pg).toHaveLength(10);
  expect(pg.map(row=>row.input_path)).toContain('packages/brain/src/__tests__/integration/reasoning-governance-contract.pg.integration.test.js');
- const controls=[profile,'scripts/ci/preview-ui.mjs','scripts/ci/__tests__/basic-fixed-core.test.mjs','scripts/ci/__tests__/basic-preview-ui.test.mjs','scripts/ci/run-basic-check.mjs','scripts/ci/ops-checks.mjs','scripts/ci/deep-integration.config.mjs','scripts/ci/debt-pg.config.mjs','scripts/ci/debt-pg-tests.json','scripts/ci/__tests__/basic-current-pg-gate.test.mjs','tests/brain-ci-pg-layering.test.ts'];
+ const controls=[profile,'scripts/ci/__tests__/basic-fixed-core.test.mjs','scripts/ci/run-basic-check.mjs','scripts/ci/ops-checks.mjs','scripts/ci/deep-integration.config.mjs','scripts/ci/debt-pg.config.mjs','scripts/ci/debt-pg-tests.json','scripts/ci/__tests__/basic-current-pg-gate.test.mjs','tests/brain-ci-pg-layering.test.ts'];
  for(const member of controls){
   await expect(observe({},member)).rejects.toThrow();
   for(const text of ['',read(member)+'\n/* unknown control */'])await expect(observe({[member]:text})).rejects.toThrow('basic_ci_source_unproven');
@@ -180,7 +180,7 @@ it('固定核心CI只证明实际11矩阵与Scripts版本门，不再生成Plan�
  await collectBasicCiSources({read,ci:await read('.github/workflows/ci.yml'),revision:'f'.repeat(40),relations,parse:ast,paths});
  expect(relations.some(r=>r.input_path==='scripts/ci/basic-scope.mjs'||r.kind==='required_basic_ci_plan')).toBe(false);
  expect(relations).toContainEqual(expect.objectContaining({consumer_path:'.github/workflows/ci.yml',input_path:'scripts/ci/check-brain-version-bump.sh',kind:'required_scripts_lane_brain_version_increment_guard'}));
- expect(relations).toContainEqual(expect.objectContaining({consumer_path:'.github/workflows/ci.yml',input_path:'scripts/ci/preview-ui.mjs',kind:'preview_only_fixed_git_ui_selector'}));
+ expect(relations.some(row=>row.input_path==='scripts/ci/preview-ui.mjs'||row.kind==='preview_only_fixed_git_ui_selector')).toBe(false);
  expect(relations.filter(r=>r.kind==='reviewed_pr_postgres_test_selector')).toHaveLength(10);
 });
 
