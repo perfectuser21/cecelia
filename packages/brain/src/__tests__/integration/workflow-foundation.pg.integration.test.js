@@ -138,7 +138,7 @@ it.each([['input',{label:7},null,'foundation_input_schema_mismatch'],['key',{lab
 },30000);
 
 
-it('通用Foundation正式API：受控启用暂停版本后catalog ready并正常登记Task',async()=>{
+async function activationFixture(){
  fixture=await foundationHttpFixture();
  const {registration,release}=await fixture.publish({environment:'production'});
  const id=registration.workflow_id;
@@ -153,6 +153,13 @@ it('通用Foundation正式API：受控启用暂停版本后catalog ready并正�
  const gate=(await fixture.request(`/releases/${release.id}/gate`)).body;
  const input={status:'active',actor,task_id:fixture.task,reason:'隔离协议启用验收',release_id:release.id,observation_id:gate.current_observation_id,workflow_definition_version_id:registration.current_definition_version_id,snapshot_sha256:release.payload.workflows[0].payload_sha256};
  const route=`/workflow-foundation/workflows/${id}/runtime-status`;
+ return {registration,release,id,actor,input,route};
+}
+
+it('通用Foundation正式API：受控启用暂停版本后catalog ready并正常登记Task',async()=>{
+ const {registration,release,id,actor,input,route}=await activationFixture();
+ const database=(await fixture.pool.query('SELECT current_database() AS name,current_schema() AS schema')).rows[0];
+ expect(database.name).toBe('cecelia_scratch');expect(database.schema).toBe(fixture.schema);
  expect((await fixture.request(route,input,{auth:false})).status).toBe(401);
  const request={workflow_id:id,release_id:release.id,input:{label:'正式启用后派单'},idempotency_key:'activation'};
  expect((await fixture.request('/workflow-foundation/tasks',request)).body.error).toBe('foundation_workflow_not_active');
@@ -163,4 +170,77 @@ it('通用Foundation正式API：受控启用暂停版本后catalog ready并正�
  const events=await fixture.pool.query("SELECT payload FROM task_events WHERE task_id=$1 AND event_type='foundation_runtime_status_changed'",[fixture.task]);
  expect(events.rows).toHaveLength(1);expect(events.rows[0].payload).toMatchObject({...input,workflow_id:id,prior_status:'paused'});
  expect((await fixture.request(route,{...input,status:'paused'})).body.workflow.status).toBe('paused');
+},30000);
+
+
+it('Foundation激活逐项拒绝坏治理和发布身份，漂移时仍允许有权暂停',async()=>{
+ const {release,id,input,route}=await activationFixture();
+ const current=(await fixture.pool.query('SELECT * FROM workflow_definition_versions WHERE id=$1',[input.workflow_definition_version_id])).rows[0];
+ const originalTask=(await fixture.pool.query('SELECT * FROM tasks WHERE id=$1',[fixture.task])).rows[0];
+ const deny=async (body=input)=>{
+  const result=await fixture.request(route,body);
+  expect(result.status,JSON.stringify(result)).toBeGreaterThanOrEqual(400);
+  expect((await fixture.pool.query('SELECT status FROM workflows WHERE id=$1',[id])).rows[0].status).toBe('paused');
+  expect((await fixture.pool.query("SELECT * FROM task_events WHERE event_type='foundation_runtime_status_changed'")).rows).toHaveLength(0);
+  expect((await fixture.pool.query("SELECT * FROM tasks WHERE payload->>'commander_protocol'='commander-foundation-v1'")).rows).toHaveLength(0);
+ };
+ for(const bad of [{actor:'other'},{workflow_definition_version_id:fixture.task},{snapshot_sha256:'0'.repeat(64)},{observation_id:fixture.task},{release_id:fixture.task},{target:'other/key'},{profile:{}}])await deny({...input,...bad});
+ for(const patch of [{actor:'other',workflow_runtime_scope:[id]},{actor:input.actor,workflow_runtime_scope:[]}]){
+  await fixture.pool.query('UPDATE tasks SET payload=$2 WHERE id=$1',[fixture.task,patch]);await deny();
+ }
+ await fixture.pool.query('UPDATE tasks SET payload=$2 WHERE id=$1',[fixture.task,originalTask.payload]);
+ for(const sql of ["UPDATE tasks SET claimed_by='other' WHERE id=$1","UPDATE tasks SET status='queued' WHERE id=$1","UPDATE task_leases SET lease_until=NOW()-interval '1 second' WHERE task_id=$1","UPDATE task_leases SET claimer='other' WHERE task_id=$1","UPDATE task_leases SET claimed_at=claimed_at-interval '1 second' WHERE task_id=$1","UPDATE task_leases SET released_at=NOW() WHERE task_id=$1"]){
+  await fixture.pool.query(sql,[fixture.task]);await deny();
+  await fixture.pool.query("UPDATE tasks SET claimed_by=$2,status='in_progress' WHERE id=$1",[fixture.task,input.actor]);
+  await fixture.pool.query("UPDATE task_leases l SET claimer=t.claimed_by,claimed_at=t.claimed_at,lease_until=NOW()+interval '1 hour',released_at=NULL FROM tasks t WHERE l.task_id=t.id AND t.id=$1",[fixture.task]);
+ }
+ await fixture.pool.query("UPDATE workflows SET source_repo='other/repo' WHERE id=$1",[id]);await deny();
+ await fixture.pool.query('UPDATE workflows SET source_repo=$2 WHERE id=$1',[id,current.source_repo]);
+ await fixture.pool.query("UPDATE workflows SET current_definition_version_id=NULL WHERE id=$1",[id]);await deny();
+ await fixture.pool.query('UPDATE workflows SET current_definition_version_id=$2 WHERE id=$1',[id,current.id]);
+ // 身份不合法不能通过暂停逃逸；发布漂移则不应阻止安全停用。
+ await fixture.pool.query("UPDATE workflows SET status='retired' WHERE id=$1",[id]);
+ expect((await fixture.request(route,{...input,status:'paused'})).status).toBeGreaterThanOrEqual(400);
+ await fixture.pool.query("UPDATE workflows SET status='paused' WHERE id=$1",[id]);
+ const badPayload=structuredClone(current.payload);delete badPayload.contract.runtime;
+ const badDefinition=(await fixture.pool.query(`INSERT INTO workflow_definition_versions(workflow_id,payload,contract_sha256,payload_sha256,source_repo,source_path,source_commit)
+  SELECT workflow_id,$2,contract_sha256,$3,source_repo,source_path,source_commit FROM workflow_definition_versions WHERE id=$1 RETURNING id`,[current.id,badPayload,'d'.repeat(64)])).rows[0];
+ await fixture.pool.query('UPDATE workflows SET current_definition_version_id=$2 WHERE id=$1',[id,badDefinition.id]);
+ await deny();await deny({...input,status:'paused'});
+ await fixture.pool.query('UPDATE workflows SET current_definition_version_id=$2 WHERE id=$1',[id,current.id]);
+ const {randomUUID}=await import('node:crypto');
+ async function clonedRelease(patch){
+  const row=(await fixture.pool.query(`INSERT INTO release_versions(release_key,manifest_sha256,request_sha256,environment,target,actor,payload)
+   SELECT $2,manifest_sha256,request_sha256,$3,$4,actor,$5 FROM release_versions WHERE id=$1 RETURNING *`,[release.id,randomUUID(),patch.environment??release.environment,patch.target??release.target,patch.payload??release.payload])).rows[0];
+  const observed=await fixture.request(`/releases/${row.id}/observations`,{event_key:randomUUID(),attempt_key:randomUUID(),environment:row.environment,target:row.target,components:row.payload.components,collector:'fixture-collector',observed_at:new Date().toISOString(),evidence_ref:'fixture:bounded-negative-release'});
+  expect(observed.status).toBe(201);
+  return {...input,release_id:row.id,observation_id:observed.body.observation.id};
+ }
+ for(const patch of [{environment:'scratch'},{target:'fixture-host/other'},{target:'fixture-host'}])await deny(await clonedRelease(patch));
+ for(const mutate of [
+  p=>{p.components=p.components.filter(c=>c.kind!=='repo');},
+  p=>{p.components=p.components.filter(c=>c.path!=='profile.json');},
+  p=>{p.components=p.components.filter(c=>c.path!=='work.mjs');},
+  p=>{p.components.push({...p.components.find(c=>c.path==='work.mjs'),path:'unbound.mjs'});},
+ ]){const payload=structuredClone(release.payload);mutate(payload);await deny(await clonedRelease({payload}));}
+ // 真实release gate从新观测组件计算gaps/actual_matches；不改不可变旧证据。
+ const drift=await fixture.request(`/releases/${release.id}/observations`,{event_key:randomUUID(),attempt_key:randomUUID(),environment:release.environment,target:release.target,components:release.payload.components.filter(c=>c.kind==='repo'),collector:'fixture-collector',observed_at:new Date().toISOString(),evidence_ref:'fixture:actual-drift'});
+ expect(drift.status).toBe(201);await deny();
+ expect((await fixture.request(`/releases/${release.id}/gate`)).body).toMatchObject({deployed:false,actual_matches:false});
+ expect((await fixture.request(route,{status:'paused',actor:input.actor,task_id:fixture.task,reason:'故障暂停'})).status).toBe(200);
+},30000);
+
+
+it('Foundation激活写事件或读回失败必须回滚状态及事件',async()=>{
+ const {id,input,route}=await activationFixture();
+ await fixture.pool.query(`CREATE FUNCTION deny_activation_event() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'fixture-event-write-failed'; END $$ LANGUAGE plpgsql;
+  CREATE TRIGGER deny_activation_event BEFORE INSERT ON task_events FOR EACH ROW EXECUTE FUNCTION deny_activation_event()`);
+ expect((await fixture.request(route,input)).status).toBe(500);
+ expect((await fixture.pool.query('SELECT status FROM workflows WHERE id=$1',[id])).rows[0].status).toBe('paused');
+ await fixture.pool.query('DROP TRIGGER deny_activation_event ON task_events');
+ await fixture.pool.query(`CREATE FUNCTION deny_activation_readback() RETURNS trigger AS $$ BEGIN NEW.status='paused'; RETURN NEW; END $$ LANGUAGE plpgsql;
+  CREATE TRIGGER deny_activation_readback BEFORE UPDATE ON workflows FOR EACH ROW EXECUTE FUNCTION deny_activation_readback()`);
+ expect((await fixture.request(route,input)).body.error).toBe('foundation_runtime_status_readback_failed');
+ expect((await fixture.pool.query("SELECT * FROM task_events WHERE event_type='foundation_runtime_status_changed'")).rows).toHaveLength(0);
+ expect((await fixture.pool.query('SELECT status FROM workflows WHERE id=$1',[id])).rows[0].status).toBe('paused');
 },30000);
