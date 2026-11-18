@@ -98,6 +98,98 @@ test('退出旧API集成跑道，只有现役Brain PG组件可启动数据库', 
 });
 
 
+
+// 只约束必需实际命令、隔离库和失败传播，不冻结完整job或历史commit。
+const requiredRuntimeChecks=[
+  {
+    "name": "真实采集与凭据生命周期回归",
+    "run": "node --test --test-concurrency=1 scripts/ops/__tests__/node-onboarding*.test.mjs"
+  },
+  {
+    "name": "接入结算与隔离回归（含真实数据库）",
+    "run": "npx vitest run src/node-onboarding/__tests__/service.test.js src/node-onboarding/__tests__/settlement.test.js src/node-onboarding/__tests__/registry-adoption.test.js --maxWorkers=1 --minWorkers=1",
+    "env": {
+      "NODE_ONBOARDING_TEST_DB": "postgresql://onboarding_ci:onboarding_ci@localhost:5432/cecelia_scratch"
+    },
+    "working-directory": "packages/brain"
+  },
+  {
+    "name": "Linux自动接入与续验真实数据库回归",
+    "run": "npx vitest run --config vitest.integration.config.js src/__tests__/integration/linux-controller-contract.pg.integration.test.js src/__tests__/integration/linux-onboarding-flow.pg.integration.test.js src/__tests__/integration/linux-script-authorization.pg.integration.test.js --maxWorkers=1 --minWorkers=1",
+    "env": {
+      "TEST_DATABASE_URL": "postgresql://onboarding_ci:onboarding_ci@localhost:5432/cecelia_scratch"
+    },
+    "working-directory": "packages/brain"
+  },
+  {
+    "name": "Verify real process recovery without replay",
+    "run": "node packages/brain/scripts/smoke/commander-dbos-recovery-smoke.mjs",
+    "env": {
+      "TEST_DB_URL": "postgresql://onboarding_ci:onboarding_ci@127.0.0.1:5432/cecelia_scratch"
+    },
+    "if": "!cancelled()"
+  },
+  {
+    "name": "Verify Commander decisions and activity recovery",
+    "run": "node packages/brain/scripts/smoke/commander-foundation-smoke.mjs",
+    "env": {
+      "TEST_DB_URL": "postgresql://onboarding_ci:onboarding_ci@127.0.0.1:5432/cecelia_scratch"
+    },
+    "if": "!cancelled()"
+  },
+  {
+    "name": "Verify bounded checker repair and host recovery",
+    "run": "node packages/brain/scripts/smoke/commander-repair-smoke.mjs",
+    "env": {
+      "TEST_DB_URL": "postgresql://onboarding_ci:onboarding_ci@127.0.0.1:5432/cecelia_scratch"
+    },
+    "if": "!cancelled()"
+  },
+  {
+    "name": "Verify Workflow registration to Brain and real DBOS execution",
+    "run": "npx vitest run --config vitest.integration.config.js src/__tests__/integration/workflow-foundation.pg.integration.test.js src/__tests__/integration/foundation-legacy-entrances.pg.integration.test.js --maxWorkers=1 --minWorkers=1",
+    "env": {
+      "DB_NAME": "cecelia_scratch",
+      "DB_HOST": "127.0.0.1",
+      "DB_PORT": "5432",
+      "DB_USER": "onboarding_ci",
+      "DB_PASSWORD": "onboarding_ci",
+      "TEST_DB_URL": "postgresql://onboarding_ci:onboarding_ci@127.0.0.1:5432/cecelia_scratch"
+    },
+    "if": "!cancelled()",
+    "working-directory": "packages/brain"
+  },
+  {
+    "name": "Verify audited Commander failure boundaries",
+    "run": "npx vitest run --config vitest.integration.config.js src/orchestrator/__tests__/commander-foundation-audit.pg.integration.test.js src/durable/__tests__/commander-action-store.pg.integration.test.js --maxWorkers=1 --minWorkers=1",
+    "env": {
+      "TEST_DB_URL": "postgresql://onboarding_ci:onboarding_ci@127.0.0.1:5432/cecelia_scratch"
+    },
+    "if": "!cancelled()",
+    "working-directory": "packages/brain"
+  }
+];
+function assertRuntimeContracts(job){
+  for(const required of requiredRuntimeChecks){
+    const matching=job.steps.filter(step=>step.name===required.name);
+    assert.equal(matching.length,1,required.name+'必须恰好执行一次');
+    const step=matching[0];
+    for(const key of ['run','env','if','working-directory'])assert.deepEqual(step[key],required[key],required.name+':'+key);
+    assert.ok(!step['continue-on-error'],required.name+'不能吞失败');
+  }
+}
+function assertSecurityContracts(job){
+  const checkout=job.steps.find(step=>step.uses==='actions/checkout@v4');
+  assert.equal(checkout.with['persist-credentials'],false);
+  assert.equal(checkout.with['fetch-depth'],0);
+  const scan=job.steps.find(step=>step.uses==='gitleaks/gitleaks-action@v2');
+  assert.ok(scan&&scan.if===undefined&&!scan['continue-on-error']);
+  assert.equal(scan.env.GITHUB_TOKEN,'${{ github.token }}');
+  const audit=job.steps.find(step=>step.name==='Check dependency vulnerabilities');
+  assert.equal(audit.run.trim(),'bash scripts/ci/dep-audit-runtime-high.sh\nbash scripts/ci/dep-audit-critical.sh');
+  assert.ok(audit.if===undefined&&!audit['continue-on-error']);
+}
+
 test('统一CI真实合并runner，保持独有命令和产物并隔离安全权限', () => {
   const files=readdirSync(new URL('../../../.github/workflows/',import.meta.url)).filter(file=>/\.ya?ml$/.test(file));
   assert.deepEqual(files.filter(file=>{
@@ -110,6 +202,7 @@ test('统一CI真实合并runner，保持独有命令和产物并隔离安全权
   assert.ok(readFileSync(new URL('../../../.github/workflows/ci.yml',import.meta.url),'utf8').trimEnd().split('\n').length<=500);
   assert.equal(Object.keys(workflow.jobs).length, 9);
   const runtime=workflow.jobs['runtime-integration'];
+  assertRuntimeContracts(runtime);
   assert.deepEqual(Object.keys(runtime.services),['postgres']);
   assert.equal(runtime.services.postgres.image,'mirror.gcr.io/library/postgres:17');
   assert.deepEqual(runtime.services.postgres.env,{POSTGRES_USER:'onboarding_ci',POSTGRES_PASSWORD:'onboarding_ci',POSTGRES_DB:'cecelia_scratch'});
@@ -140,16 +233,17 @@ test('统一CI真实合并runner，保持独有命令和产物并隔离安全权
   assert.equal(browser.steps[preparationIndex+1]?.name,'Install Chromium');
   assert.equal(browser.name,'Browser regression (Chromium)');
   assert.equal(browser.defaults.run['working-directory'],'apps/dashboard');
-  assert.equal(browser.steps.some(step=>step.if||step['continue-on-error']),false);
+  assert.equal(browser.steps.some(step=>Object.hasOwn(step,'if')||step['continue-on-error']),false);
   assert.equal(browser.steps.filter(step=>step.run==='npm ci'&&step['working-directory']==='.').length,1);
   const security=workflow.jobs.security;
-  assert.equal(security.steps.some(step=>step.if||step['continue-on-error']),false);
+  assertSecurityContracts(security);
+  assert.equal(security.steps.some(step=>Object.hasOwn(step,'if')||step['continue-on-error']),false);
   assert.equal(security.steps.filter(step=>step.uses==='gitleaks/gitleaks-action@v2').length,1);
   assert.equal(security.steps.find(step=>step.name==='Check dependency vulnerabilities').run.trim(),
     'bash scripts/ci/dep-audit-runtime-high.sh\nbash scripts/ci/dep-audit-critical.sh');
   assert.equal(security.steps.find(step=>step.name==='Install locked dependency manifests').run,
     'npm ci --ignore-scripts --no-audit --no-fund');
-  assert.equal(workflow.jobs.codeql.steps.some(step=>step.if||step['continue-on-error']),false);
+  assert.equal(workflow.jobs.codeql.steps.some(step=>Object.hasOwn(step,'if')||step['continue-on-error']),false);
 });
 
 test('周扫描仅CodeQL执行，closed仅cleanup；评论写权限限于预览生命周期', () => {
@@ -219,4 +313,21 @@ test('真实YAML事件表达式隔离closed/weekly，普通PR push manual严格�
   assert.notEqual(group(closed),group(context('pull_request','synchronize')));
   assert.notEqual(group(scheduled),group(context('push')));
   assert.equal(evaluate(workflow.concurrency['cancel-in-progress'].match(/\$\{\{([\s\S]+)\}\}/)[1],closed),false);
+});
+
+for(const mutate of [
+  job=>{job.steps.find(step=>step.name==='Verify Commander decisions and activity recovery').run='echo PASS';},
+  job=>{job.steps=job.steps.filter(step=>step.name!=='Verify bounded checker repair and host recovery');},
+  job=>{job.steps.find(step=>step.name==='接入结算与隔离回归（含真实数据库）').if='false';},
+  job=>{job.steps.find(step=>step.name==='Verify Workflow registration to Brain and real DBOS execution').env.DB_NAME='cecelia';},
+])test('现役集成合同拒绝空跑、删步骤、禁用和生产库',()=>{
+  const job=structuredClone(workflow.jobs['runtime-integration']);mutate(job);
+  assert.throws(()=>assertRuntimeContracts(job));
+});
+test('凭据扫描不允许checkout持久化令牌或吞掉审计失败',()=>{
+  for(const mutate of [job=>{job.steps.find(step=>step.uses==='actions/checkout@v4').with['persist-credentials']=true;},
+    job=>{job.steps.find(step=>step.name==='Check dependency vulnerabilities')['continue-on-error']=true;},
+    job=>{job.steps.find(step=>step.name==='Check dependency vulnerabilities').if=false;}]){
+    const job=structuredClone(workflow.jobs.security);mutate(job);assert.throws(()=>assertSecurityContracts(job));
+  }
 });
