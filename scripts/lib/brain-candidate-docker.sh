@@ -1,9 +1,19 @@
 #!/usr/bin/env bash
 # 候选可借用可信 SSH Docker context；不修改默认 daemon 或全局 Docker 环境。
+# US生产Brain容器只有SSH挂载，没有宿主context元数据；首次旧webhook拉取新main时也适用。
+# 显式context优先；显式空HOST仍允许测试/独立宿主选择本地daemon。
+if [[ "${ENV_REGION:-}" == us && -f /.dockerenv && -z "${BRAIN_CANDIDATE_DOCKER_CONTEXT:-}" && -z "${BRAIN_CANDIDATE_DOCKER_HOST+x}" ]]; then
+    export BRAIN_CANDIDATE_DOCKER_HOST=ssh://administrator@100.71.151.105
+fi
 candidate_docker() {
-    local context="${BRAIN_CANDIDATE_DOCKER_CONTEXT:-}" endpoint
+    local context="${BRAIN_CANDIDATE_DOCKER_CONTEXT:-}" endpoint="${BRAIN_CANDIDATE_DOCKER_HOST:-}"
     if [[ -z "$context" ]]; then
-        docker "$@"
+        if [[ -n "$endpoint" ]]; then
+            [[ "$endpoint" =~ ^ssh://[a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+(:[0-9]+)?$ ]] || { echo '候选 Docker 端点必须使用固定 SSH 主机' >&2; return 1; }
+            docker --host "$endpoint" "$@"
+        else
+            docker "$@"
+        fi
         return
     fi
     [[ "$context" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$ ]] || { echo '非法候选 Docker context' >&2; return 1; }

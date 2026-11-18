@@ -39,6 +39,7 @@ deployed_contains() {
   local deployed="$1"
   case "$deployed" in ""|unknown|null) return 1 ;; esac
   [ "$deployed" = "$TARGET_SHA" ] && return 0
+  [ "${REQUIRE_EXACT_SHA:-0}" = 1 ] && return 1
   if ! git -C "$REPO_DIR" cat-file -e "${deployed}^{commit}" 2>/dev/null; then
     local left limit limiter
     left=$((DEADLINE - $(date +%s))); [ "$left" -gt 0 ] || return 1

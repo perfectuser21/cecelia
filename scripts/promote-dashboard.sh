@@ -10,8 +10,8 @@
 #
 # deploy-local.sh 把新版本停在 staging + 写 .staging-pending 后，主理人/harness 跑本脚本放行。
 # 没有 .staging-pending（release/full 模式）→ 拒绝运行，避免误推陈旧产物。
-# deploy 模式会同步 HK（hk-vps:/opt/cecelia/frontend/dist）并做部署终验（sha 对账）。
-# HK 失败/终验红：本机不回滚（已原子换入），退出非零 = "本机已上线但对账红"。
+# deploy 模式只部署本机并做部署终验（sha 对账）。
+# 终验红：本机不回滚（已原子换入），退出非零 = "本机已上线但对账红"。
 #
 # 退出码： 0=成功  1=无待放行 / 源缺失 / 失败
 
@@ -243,18 +243,6 @@ do_deploy() {
     fi
     rm -f "$PENDING_FILE" "$SLOT_LOG_FILE" "$DASH_DIR/.staging-notify.log" 2>/dev/null || true
 
-    # ── HK 同步：rsync 本机 live dist → HK /opt/cecelia/frontend/dist/ ───────────
-    if [[ -z "${CECELIA_SKIP_HK:-}" ]]; then
-        echo "🌏 同步 HK（hk-vps）..."
-        local HK_DEST="hk-vps:/opt/cecelia/frontend/dist/"
-        if rsync -az --delete -e "ssh -o ConnectTimeout=10" "$DIST_DIR/" "$HK_DEST" 2>&1; then
-            echo "✅ HK 已同步：$HK_DEST"
-        else
-            echo "❌ HK rsync 失败（本机 5211 已上线不回滚；Bark 由下方指纹校验兜底发）"
-            PROMOTE_FAIL=1
-        fi
-    fi
-
     # ── 部署后终验：build-info sha 对账（优先）/ index hash（回退）────────────
     if [[ -z "${CECELIA_SKIP_FINGERPRINT:-}" ]]; then
         local FP_SCRIPT="$MAIN_ROOT/scripts/check-deploy-fingerprint.sh"
@@ -271,10 +259,10 @@ do_deploy() {
     fi
 
     if [[ "$PROMOTE_FAIL" == "1" ]]; then
-        echo "🔴 deploy 结束：本机 5211 已上线 ${tag}，但 HK 同步/终验对账红（见上方）——退出非零"
+        echo "🔴 deploy 结束：本机 5211 已上线 ${tag}，但终验对账红（见上方）——退出非零"
         exit 1
     fi
-    echo "🎉 deploy 完成：本机 5211 已上线 ${tag}，HK 已同步，staging 已停、标记已清。"
+    echo "🎉 deploy 完成：本机 5211 已上线 ${tag}，staging 已停、标记已清。"
 }
 
 # ── arg parse ──────────────────────────────────────────────────────────────────

@@ -91,7 +91,7 @@ if [[ -n "$OLD_ID" ]]; then
 fi
 
 # 从干净快照构建；远端只构建候选，生产 tag 等同 ID/SHA 的导入校验通过后更新。
-if [[ -n "${BRAIN_CANDIDATE_DOCKER_CONTEXT:-}" ]]; then
+if [[ -n "${BRAIN_CANDIDATE_DOCKER_CONTEXT:-}" || -n "${BRAIN_CANDIDATE_DOCKER_HOST:-}" ]]; then
   candidate_docker build --platform linux/amd64 --iidfile "$TEMP_BUILD/.candidate-image-id" \
     -t "${IMAGE_REPO}:candidate-${BUILD_SHA}" \
     --build-arg "GIT_SHA=${BUILD_SHA}" \
