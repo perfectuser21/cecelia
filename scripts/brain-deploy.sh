@@ -594,11 +594,11 @@ while [ $TRIES -lt $MAX_TRIES ]; do
 
     # 8. Update cecelia-run on host (self-update: keeps executor in sync with repo)
     echo ""
-    echo "[8/8] Updating cecelia-run on host..."
+    echo "[8/10] Updating cecelia-run on host..."
     CECELIA_RUN_SRC="$ROOT_DIR/packages/brain/scripts/cecelia-run.sh"
     CECELIA_RUN_DST="${HOST_HOME}/bin/cecelia-run"
     if [[ -f "$CECELIA_RUN_SRC" ]]; then
-      # macOS cp identical files 返 rc=1，set -e 会中止后续 Phase 9-11；|| true 兜底
+      # macOS cp identical files 返 rc=1，set -e 会中止后续 Phase 9-10；|| true 兜底
       cp "$CECELIA_RUN_SRC" "$CECELIA_RUN_DST" 2>&1 || true
       chmod +x "$CECELIA_RUN_DST" 2>/dev/null || true
       echo "  Updated $CECELIA_RUN_DST (v${VERSION})"
@@ -608,7 +608,7 @@ while [ $TRIES -lt $MAX_TRIES ]; do
 
     # 9. Update cecelia-bridge on host (self-update: keeps bridge timeout config in sync)
     echo ""
-    echo "[9/9] Updating cecelia-bridge on host..."
+    echo "[9/10] Updating cecelia-bridge on host..."
     BRIDGE_SRC="$ROOT_DIR/packages/brain/scripts/cecelia-bridge.js"
     BRIDGE_DST="${HOST_HOME}/bin/cecelia-bridge.js"
     if [[ -f "$BRIDGE_SRC" ]]; then
@@ -650,20 +650,8 @@ while [ $TRIES -lt $MAX_TRIES ]; do
       echo "  WARN: $BRIDGE_SRC not found, skipping bridge update"
     fi
 
-    # 10. Trigger Notion sync to catch missed webhook events during restart
     echo ""
-    echo "[10/11] Triggering post-deploy Notion sync..."
-    SYNC_RESPONSE=$(curl -sf --max-time 30 -X POST http://localhost:5221/api/brain/notion-sync/run 2>&1) || true
-    if [[ -n "$SYNC_RESPONSE" ]]; then
-      SYNCED=$(echo "$SYNC_RESPONSE" | node -e "try{const r=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));const f=r.fromNotion||{};const t=r.toNotion||{};console.log('fromNotion synced='+( f.synced||0)+' toNotion synced='+(t.synced||0)+' failed='+(t.failed||0))}catch(e){console.log('(parse error)'+ e.message)}" 2>/dev/null || echo "$SYNC_RESPONSE" | head -c 200)
-      echo "  Notion sync triggered: $SYNCED"
-    else
-      echo "  WARN: Notion sync call failed or timed out (non-blocking)"
-    fi
-
-    # 11. Post-deploy smoke：跑最近合并 PR 引入的 packages/brain/scripts/smoke/*.sh
-    echo ""
-    echo "[11/11] Post-deploy smoke..."
+    echo "[10/10] Post-deploy smoke..."
     run_post_deploy_smoke || true   # smoke non-fatal — deploy 已成功
 
     exit 0
