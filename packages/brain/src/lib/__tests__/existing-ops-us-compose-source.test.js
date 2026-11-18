@@ -84,18 +84,19 @@ it('读取失败向上报告，不能生成成功关系',async()=>{
 });
 
 import { readFileSync } from 'node:fs';
-// 读取当前完整 remote 组合，不执行 guard/host 模块；历史样本保持原字节。
+// 固定85完整历史remote组；不能把随后实际compose变更冒认成历史执行证明。
+const outreach = readFixedExistingOpsGitFixture('85f24b00af99063cf27919cdcf79675d6d33e6a3');
 const outreachInputs = {
-  'packages/brain/src/openclaw-guards.js': readFileSync(new URL('../../openclaw-guards.js', import.meta.url), 'utf8'),
-  'packages/brain/src/host-exec.js': readFileSync(new URL('../../host-exec.js', import.meta.url), 'utf8'),
+  'packages/brain/src/openclaw-guards.js': outreach.read('packages/brain/src/openclaw-guards.js'),
+  'packages/brain/src/host-exec.js': outreach.read('packages/brain/src/host-exec.js'),
 };
-const outreachCompose = readFileSync(new URL('../../../../../docker-compose.us-vps.yml', import.meta.url), 'utf8');
+const outreachCompose = outreach.read('docker-compose.us-vps.yml');
 const currentProof = async (patch = {}, text = outreachCompose) => {
   const relations = [];
   const passed = await proveReviewedUsCompose({text, read: path => Object.hasOwn(patch, path) ? patch[path] : outreachInputs[path], relations, revision});
   return {passed, relations};
 };
-it('当前outreach去抖完整remote组合受审，真实字节摘要与完整两条来源关系匹配', async () => {
+it('85历史outreach去抖完整remote组合受审，真实字节摘要与完整两条来源关系匹配', async () => {
   expect(hash(outreachCompose)).toBe(composeHashes.remote);
   expect(hash(outreachInputs['packages/brain/src/openclaw-guards.js'])).toBe('05c28b3d6957c9bc364743fde291a4648389385eb62151032f8faf93a2c617e4');
   expect(hash(outreachInputs['packages/brain/src/host-exec.js'])).toBe(hashes['packages/brain/src/host-exec.js']);
@@ -133,4 +134,10 @@ it('outreach完整新组通过compose子collector并产生remote来源关系', a
     consumer_path: 'packages/brain/src/openclaw-guards.js', input_path: 'packages/brain/src/host-exec.js',
     kind: 'reviewed_us_openclaw_static_import',
   }));
+});
+
+it('本次BIND compose不能继承历史outreach的F2来源证明', async () => {
+  const current = readFileSync(new URL('../../../../../docker-compose.us-vps.yml', import.meta.url), 'utf8');
+  expect(current).not.toBe(outreachCompose);
+  expect(await currentProof({}, current)).toEqual({passed: false, relations: []});
 });

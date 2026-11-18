@@ -68,6 +68,27 @@ function seedTrackedHostSample() {
   return samplePath;
 }
 
+function seedWorkersConfig() {
+  const directory = join(clone, 'packages/workflows/staff');
+  mkdirSync(directory, { recursive: true });
+  const path = join(directory, 'workers.config.json');
+  writeFileSync(path, '{"workers":["source-v1"]}\n');
+  sh(`git -C "${clone}" add packages/workflows/staff/workers.config.json && git -C "${clone}" ${GIT_ID} commit -q -m 'workers v1' && git -C "${clone}" push -q origin main`);
+  const passed = sh(`git -C "${clone}" rev-parse HEAD`).trim();
+  writeFileSync(path, '{"workers":["source-v2"]}\n');
+  sh(`git -C "${clone}" add packages/workflows/staff/workers.config.json && git -C "${clone}" ${GIT_ID} commit -q -m 'workers v2' && git -C "${clone}" push -q origin main`);
+  writeFileSync(path, '{\r\n  "workers": ["actual-runtime"], "enabled": false\r\n}\r\n');
+  chmodSync(path, 0o640);
+  return { path, passed, bytes: readFileSync(path), mode: statSync(path).mode & 0o777 };
+}
+
+function fakeCommand(name, content) {
+  const bin = join(base, 'fake-bin');
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(join(bin, name), '#!/usr/bin/env bash\n' + content + '\n', { mode: 0o755 });
+  return `${bin}:${process.env.PATH}`;
+}
+
 function sha256(path) {
   return createHash('sha256').update(readFileSync(path)).digest('hex');
 }
@@ -82,6 +103,66 @@ describe('deploy-root-guard', () => {
     expect(sh(`git -C "${clone}" rev-parse HEAD`).trim()).toBe(passed);
     expect(readFileSync(join(clone,'tracked.txt'),'utf8')).toBe('v1\n');
   });
+  it('固定已通过CI的SHA后，实际workers配置原始字节和权限不得被Git替换', () => {
+    const worker = seedWorkersConfig();
+    const r = runDeploy({ CECELIA_DEPLOY_AUTORESET: '1', EXPECTED_SHA: worker.passed });
+    expect(r.status, r.stdout + r.stderr).toBe(0);
+    expect(sh(`git -C "${clone}" rev-parse HEAD`).trim()).toBe(worker.passed);
+    expect(readFileSync(worker.path)).toEqual(worker.bytes);
+    expect(statSync(worker.path).mode & 0o777).toBe(worker.mode);
+    expect(r.stdout).toContain('运行时worker配置已恢复');
+    expect(readdirSync(join(clone, '.runtime')).filter(name => name.startsWith('.workers-config-deploy-'))).toEqual([]);
+  });
+
+  it.each(['checkout', 'reset'])('%s失败仍恢复磁盘样本和workers原始配置，拒绝部署', command => {
+    const worker = seedWorkersConfig();
+    const sample = seedTrackedHostSample();
+    const sampleHash = sha256(sample);
+    const path = fakeCommand('git', `if [[ "$3" == ${command} ]]; then exit 9; fi\nexec /usr/bin/git "$@"`);
+    const r = runDeploy({ CECELIA_DEPLOY_AUTORESET: '1', EXPECTED_SHA: worker.passed, PATH: path });
+    expect(r.status).not.toBe(0);
+    expect(r.stdout + r.stderr).toContain(`${command}`);
+    expect(readFileSync(worker.path)).toEqual(worker.bytes);
+    expect(statSync(worker.path).mode & 0o777).toBe(worker.mode);
+    expect(sha256(sample)).toBe(sampleHash);
+    expect(r.stdout).toContain('宿主磁盘采样已恢复');
+    expect(r.stdout).toContain('运行时worker配置已恢复');
+  });
+
+  it('workers备份失败时在Git变更前拒绝，原始输入不丢失', () => {
+    const worker = seedWorkersConfig();
+    const head = sh(`git -C "${clone}" rev-parse HEAD`).trim();
+    const path = fakeCommand('cp', 'if [[ "$1" == */workers.config.json ]]; then exit 9; fi\nexec /bin/cp "$@"');
+    const r = runDeploy({ CECELIA_DEPLOY_AUTORESET: '1', EXPECTED_SHA: worker.passed, PATH: path });
+    expect(r.status).not.toBe(0);
+    expect(r.stdout + r.stderr).toContain('运行时worker配置备份失败');
+    expect(sh(`git -C "${clone}" rev-parse HEAD`).trim()).toBe(head);
+    expect(readFileSync(worker.path)).toEqual(worker.bytes);
+    expect(statSync(worker.path).mode & 0o777).toBe(worker.mode);
+  });
+
+  it.each(['host-disk.json', 'workers.config.json'])('%s恢复失败也执行另一项恢复，并保留失败输入600权限备份', file => {
+    const worker = seedWorkersConfig();
+    const sample = seedTrackedHostSample();
+    const sampleHash = sha256(sample);
+    const path = fakeCommand('mv', `if [[ "\${@: -1}" == */${file} ]]; then exit 9; fi\nexec /bin/mv "$@"`);
+    const r = runDeploy({ CECELIA_DEPLOY_AUTORESET: '1', EXPECTED_SHA: worker.passed, PATH: path });
+    expect(r.status).not.toBe(0);
+    const prefix = file === 'host-disk.json' ? '.host-disk-deploy-' : '.workers-config-deploy-';
+    const backups = readdirSync(join(clone, '.runtime')).filter(name => name.startsWith(prefix));
+    expect(backups).toHaveLength(1);
+    const backup = join(clone, '.runtime', backups[0]);
+    expect(statSync(backup).mode & 0o777).toBe(0o600);
+    expect(sha256(backup)).toBe(file === 'host-disk.json' ? sampleHash : createHash('sha256').update(worker.bytes).digest('hex'));
+    if (file === 'host-disk.json') {
+      expect(readFileSync(worker.path)).toEqual(worker.bytes);
+      expect(statSync(worker.path).mode & 0o777).toBe(worker.mode);
+      expect(existsSync(sample)).toBe(false);
+    } else {
+      expect(sha256(sample)).toBe(sampleHash);
+    }
+  });
+
   it('非main历史的SHA不得在生产部署根执行', () => {
     sh(`git -C "${clone}" checkout -q -b cp-unmerged`);
     appendFileSync(join(clone,'tracked.txt'),'not merged\n');

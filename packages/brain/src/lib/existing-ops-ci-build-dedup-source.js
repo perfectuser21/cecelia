@@ -87,3 +87,19 @@ export const MAIN_AUTO_DEPLOY_INPUTS={
  'packages/brain/scripts/setup-pm2.sh':null,
  'packages/brain/ecosystem.config.cjs':null,
 };
+
+// 相同CI下只接受各自完整的旧挂载组与新挂载修复组，不以未知成员回退。
+export const BIND_MOUNT_MARKER='scripts/ci/__tests__/basic-deploy-root-mounts.test.mjs';
+export const BIND_MOUNT_HELPER='scripts/lib/deploy-runtime-inputs.sh';
+export const BIND_MOUNT_LEGACY_INPUTS={
+ 'docker-compose.us-vps.yml':'7d152cec3fea0f50cab0a707bd7830a01c620953ffcc99851be27e384aca405b',
+ 'scripts/lib/deploy-runtime-inputs.sh':null,
+ 'scripts/ci/__tests__/basic-deploy-root-mounts.test.mjs':null,
+};
+export const BIND_MOUNT_INPUTS={
+ 'docker-compose.us-vps.yml':'2781316cd25ea94566d9fb9ee3208f60d6c9357188b646bba0d317e64283c205',
+ 'scripts/lib/deploy-runtime-inputs.sh':'a2329e0ede4ed19f8cd8ab1200e0340ad438432c713894de32b442ec606cc62e',
+ 'scripts/deploy-local.sh':'d5ca8f439fac2cd70d719074f4b28af0b1e7a8341bae8e49c67dbad4a883bce6',
+ 'packages/brain/src/__tests__/deploy-root-guard.test.js':'45c0add857032273de821451ed9a5f45b1ef97a9cf2999501053d0b44abd1951',
+ 'scripts/ci/__tests__/basic-deploy-root-mounts.test.mjs':'c0bca7021f6144bb175ee67aa3e0b934881a20c99efb6b6229f1ba41307031dc',
+};

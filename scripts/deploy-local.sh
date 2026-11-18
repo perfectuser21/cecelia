@@ -83,51 +83,20 @@ if [[ "$RUN_GUARD" == true ]]; then
             fi
             DEPLOY_ROOT_REF="$EXPECTED_SHA"
         fi
-        # 宿主 cron 每分钟原子更新此样本。deploy-local 在 Brain 容器内运行，
-        # 不能在这里重跑 sampler：容器 df / 采到的是 overlay，不是宿主根盘。
-        # Git 旧树仍跟踪该文件；checkout/reset 前保存宿主真值，之后原子放回。
-        HOST_DISK_SAMPLE="$MAIN_ROOT/.runtime/host-disk.json"
-        HOST_DISK_BACKUP=""
-        if [[ -f "$HOST_DISK_SAMPLE" ]]; then
-            if ! HOST_DISK_BACKUP=$(mktemp "$MAIN_ROOT/.runtime/.host-disk-deploy-XXXXXX"); then
-                echo "❌ 部署根守卫: 宿主磁盘采样备份失败，拒绝覆盖" >&2
-                exit 1
-            fi
-            if ! cp "$HOST_DISK_SAMPLE" "$HOST_DISK_BACKUP"; then
-                rm -f "$HOST_DISK_BACKUP"
-                echo "❌ 部署根守卫: 宿主磁盘采样备份失败，拒绝覆盖" >&2
-                exit 1
-            fi
-        fi
-        restore_host_disk_sample() {
-            if [[ -n "$HOST_DISK_BACKUP" ]]; then
-                if ! mv -f "$HOST_DISK_BACKUP" "$HOST_DISK_SAMPLE"; then
-                    rm -f "$HOST_DISK_SAMPLE" || true
-                    echo "❌ 部署根守卫: 宿主磁盘采样恢复失败，拒绝部署；原样备份保留在 $HOST_DISK_BACKUP" >&2
-                    return 1
-                fi
-                echo "✅ 宿主磁盘采样已恢复（宿主 cron 继续更新）"
-            elif [[ -f "$HOST_DISK_SAMPLE" ]] \
-                && git -C "$MAIN_ROOT" ls-files --error-unmatch -- .runtime/host-disk.json >/dev/null 2>&1 \
-                && git -C "$MAIN_ROOT" diff --quiet -- .runtime/host-disk.json; then
-                # 重置前没有活样本：删除 Git 带回的历史值，容量闸按缺样本拒绝。
-                if ! rm -f "$HOST_DISK_SAMPLE"; then
-                    echo "❌ 部署根守卫: 无法清除 Git 历史磁盘样本，拒绝部署" >&2
-                    return 1
-                fi
-            fi
-        }
+        # 只在实际专用根自愈时加载；隔离smoke不需要发布运行输入helper。
+        source "$SCRIPT_DIR/lib/deploy-runtime-inputs.sh"
+        deploy_runtime_inputs_backup "$MAIN_ROOT" || exit 1
         if ! git -C "$MAIN_ROOT" checkout -f "$BASE_BRANCH"; then
-            restore_host_disk_sample || exit 1
+            deploy_runtime_inputs_restore || exit 1
             echo "❌ 部署根守卫: checkout $BASE_BRANCH 失败，拒绝部署" >&2
             exit 1
         fi
         if ! git -C "$MAIN_ROOT" reset --hard "$DEPLOY_ROOT_REF"; then
-            restore_host_disk_sample || exit 1
+            deploy_runtime_inputs_restore || exit 1
             echo "❌ 部署根守卫: reset --hard origin/$BASE_BRANCH 失败，拒绝部署" >&2
             exit 1
         fi
-        restore_host_disk_sample || exit 1
+        deploy_runtime_inputs_restore || exit 1
     else
         # 可能是活人仓：绝不自动改动，任何异常状态硬红（禁止静默降级用脏代码部署）
         CURRENT_BRANCH=$(git -C "$MAIN_ROOT" symbolic-ref --short HEAD 2>/dev/null || echo "DETACHED")

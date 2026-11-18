@@ -63,8 +63,7 @@ services:
       - /root/cecelia/packages/config:/config:ro
       # HEARTBEAT.md (read-write for GET/PUT API)
       - /root/cecelia/HEARTBEAT.md:/HEARTBEAT.md:rw
-      # workers.config.json (read-write for PUT /staff/workers API)
-      - /root/cecelia/packages/workflows/staff/workers.config.json:/root/cecelia/packages/workflows/staff/workers.config.json:rw
+      # workers配置由下方部署根rw挂载提供；Git管理的单文件子挂载会阻塞checkout unlink。
       # Worktree 根目录（Brain spawn harness/pipeline 容器时要 mount 宿主 worktree）
       - /root/cecelia/.claude/worktrees:/root/cecelia/.claude/worktrees:rw
       - /root/worktrees:/root/worktrees:rw
