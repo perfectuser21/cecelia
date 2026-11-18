@@ -1,6 +1,7 @@
 /** 仅已知完整历史组与经独审的现役源码整组取得只读数据资格。 */
 import {describe,it,expect} from 'vitest';
 import path from 'node:path';
+import {readFileSync} from 'node:fs';
 import {execFileSync} from 'node:child_process';
 const COHORTS=[
   {
@@ -138,6 +139,23 @@ const currentMemberCount=Object.keys(CHECKER_REPAIR_CI_COHORT).length;
 export const ciVersionGuardCohorts=()=>[...COHORTS,COMMANDER_CI_COHORT,SKILL_RETIREMENT_CI_COHORT,PLANNER_RETIREMENT_CI_COHORT,COMMANDER_AUDIT_CI_COHORT,SCRIPT_CLEANUP_CI_COHORT,SCRIPT_CLEANUP_PROFILE_COHORT,RESOURCE_RETIREMENT_CI_COHORT,WORKFLOW_REGISTRATION_CI_COHORT,BUSINESS_SMOKE_RETIREMENT_CI_COHORT,FIXED_CHECKS_CI_COHORT,FOUNDATION_RELEASE_CI_COHORT,FOUNDATION_FIXED_CHECKS_CI_COHORT,CLOSEOUT_CI_COHORT,DORMANT_BOUNDARIES_CI_COHORT,CHECKER_REPAIR_CI_COHORT];
 export function registerCiRetirementGuardTests({root,base,scan}){
  describe('当前来源完整闭包及执行防复活',()=>{
+  it('共享构建现役完整只读闭包及原checker组保持兼容，依赖缺失或执行滥用仍拒绝',()=>{
+   const helper=path.join(root,'existing-ops-ci-build-dedup-source.js'),current=base();
+   current.set(helper,readFileSync(helper,'utf8'));
+   const previous=new Map(Object.keys(CHECKER_REPAIR_CI_COHORT).map(name=>{const file=path.join(root,name);return [file,execFileSync('git',['--no-replace-objects','show','a4395e4685c15a12c4abdb7679f3b96492e1839f:'+path.relative(path.resolve(root,'../../../..'),file)],{cwd:root,encoding:'utf8',maxBuffer:1024*1024})];}));
+   for(const source of [current,previous])for(const kind of ['build','stage','native-evidence'])expect(scan(source,path.join(root,'existing-ops-'+kind+'-envelopes.js'))).toEqual([]);
+   for(const name of ['existing-ops-stage-source.js','existing-ops-stage-modes.js']){
+    const file=path.join(root,name),mixed=new Map(current);mixed.set(file,previous.get(file));expect(scan(mixed).some(hit=>hit.rule==='E1')).toBe(true);
+    const reverse=new Map(previous);reverse.set(file,current.get(file));expect(scan(reverse).some(hit=>hit.rule==='E1')).toBe(true);
+   }
+   const missing=new Map(current);missing.delete(helper);expect(scan(missing).some(hit=>hit.rule==='E1')).toBe(true);
+   for(const suffix of ['\nexport const unknownConsumer=true;','\neval(CI_BUILD_DEDUP_INPUTS);','\nspawn("claude",["-p"]);']){
+    const changed=new Map(current);changed.set(helper,changed.get(helper)+suffix);expect(scan(changed).some(hit=>hit.rule==='E1')).toBe(true);
+   }
+   const external=new Map(current);external.set(path.join(root,'unknown-build-reader.js'),"import {CI_BUILD_DEDUP_INPUTS} from './existing-ops-ci-build-dedup-source.js'; eval(CI_BUILD_DEDUP_INPUTS);");
+   expect(scan(external).some(hit=>hit.rule==='E1')).toBe(true);
+  });
+
   it('Commander审计CI完整闭包只读通过，CI或测试选择摘要漂移仍拒绝',()=>{
    const current=base(),member=path.join(root,'existing-ops-stage-source.js');
    expect(current.size).toBe(currentMemberCount);expect(scan(current)).toEqual([]);
