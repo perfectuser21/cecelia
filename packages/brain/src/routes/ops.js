@@ -2562,14 +2562,19 @@ router.get('/deploy/status', async (req, res) => {
   // FR-02/Gate3 SHA 对账：deploy status 附带当前运行实例的 git_sha（构建期烙入）
   const gitSha = process.env.GIT_SHA || 'unknown';
   let settlement = null;
+  const controller = new AbortController();
+  const cancel = () => { if (!res.writableEnded) controller.abort(); };
+  res.once('close', cancel);
   // running/rollback/failed 不能被上一份成功收据覆盖；锁忙或核验未知保持未结算。
   if (['idle', 'success', 'succeeded'].includes(deployState.status)) {
     try {
       const { createRuntime } = await loadDeploymentRetentionRuntime();
       const runtime = await createRuntime();
-      if (runtime) settlement = await runtime.ledger.settlement(gitSha);
+      if (runtime) settlement = await runtime.ledger.settlement(gitSha, { signal: controller.signal });
     } catch { /* 只读失败不放行，也不新建或修复部署账。 */ }
   }
+  res.removeListener('close', cancel);
+  if (controller.signal.aborted) return;
   if (!['idle', 'success', 'succeeded'].includes(deployState.status)) settlement = null;
   res.json({ ...deployState, git_sha: gitSha, settled: settlement !== null, settlement });
 });

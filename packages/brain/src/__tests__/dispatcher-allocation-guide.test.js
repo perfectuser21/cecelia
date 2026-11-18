@@ -85,9 +85,7 @@ vi.mock('../llm-capacity.js', () => ({
     },
   }),
 }));
-vi.mock('../quota-guard.js', () => ({
-  checkQuotaGuard: vi.fn().mockResolvedValue({ allow: true, priorityFilter: null, reason: 'quota_ok', bestPct: 0 }),
-}));
+
 vi.mock('../pre-flight-check.js', () => ({
   preFlightCheck: vi.fn().mockResolvedValue({ passed: true, issues: [], suggestions: [] }),
   getPreFlightStats: vi.fn().mockResolvedValue({ totalChecked: 0, passed: 0, failed: 0, passRate: '0%' }),

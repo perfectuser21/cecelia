@@ -220,52 +220,12 @@ node scripts/seven-ring-audit.js 2>&1
 
 ---
 
-### 守卫6：quota-guard（API 配额守卫）
-
-| 项目 | 内容 |
-|------|------|
-| **文件** | `packages/brain/src/quota-guard.js` |
-| **触发频率** | Brain 调度热路径，1 分钟缓存 |
-| **正常职责** | 最优账号 five_hour_pct > 98% → 暂停全部调度；> 90% → 仅派 P0/P1 |
-
-**怎么安全弄死（kill_method）**
-
-```bash
-# 临时在 account_usage 表插入超配额假数据（仅 staging DB）
-psql $DATABASE_URL -c "
-  INSERT INTO account_usage (account_id, five_hour_pct, updated_at)
-  VALUES ('drill-account', 99.5, NOW())
-  ON CONFLICT (account_id) DO UPDATE SET five_hour_pct=99.5, updated_at=NOW();
-"
-# 清除 quota-guard 缓存（重启 Brain 或等 1 分钟）
-# 观察 Brain tick 日志：应出现 "QUOTA CRITICAL: all dispatch paused"
-```
-
-**期望守卫反应**
-
-| 指标 | 期望值 |
-|------|--------|
-| 谁来叫 | quota-guard（调度层日志）|
-| 几分钟内 | <1 分钟（缓存 TTL 后下次调度） |
-| 以什么方式叫 | Brain tick 日志中 allow=false + 调度暂停 |
-
-**怎么恢复**
-
-```bash
-psql $DATABASE_URL -c "DELETE FROM account_usage WHERE account_id='drill-account';"
-# 等缓存 TTL（1 分钟）自动绿
-```
-
-**上次验火日期**：未验火
-
----
-
 ## 演习调度建议
 
 | 周期 | 演习内容 |
 |------|---------|
 | 月度（自动，Brain 调度） | `guard-drill` scheduler job 自动轮选 auto 守卫（守卫1/守卫2），全流程演习 |
-| 季度 | 手动验火 manual-only 守卫（守卫3-6），更新本文档"上次验火日期" |
+| 季度 | 手动验火 manual-only 守卫（守卫3-5），更新本文档"上次验火日期" |
 | 故障后 24h 内 | 必验受影响守卫是否已能感知同类问题 |
 
 ### 自动演习（刀4-T4，2026-07-14 起生效）
@@ -273,7 +233,7 @@ psql $DATABASE_URL -c "DELETE FROM account_usage WHERE account_id='drill-account
 Brain scheduler-jobs 每 60s 轮询，`guard-drill` job 自带 **30天 gate**（月度节奏）：
 - **守卫1（heartbeat-sentinel）**：`gh workflow run heartbeat-sentinel.yml --field probe_url="http://127.0.0.1:19999"` → 轮询 5min 等新 Issue
 - **守卫2（test-pyramid-guard）**：注入孤儿测试文件 → `node scripts/test-pyramid-guard.mjs --root <tmpdir>` 验 exit 1
-- 守卫3-6：标记 `auto: false`（manual-only），不参与自动轮转
+- 守卫3-5：标记 `auto: false`（manual-only），不参与自动轮转
 
 **守卫未叫路径**：若 `drillFn` 返回 `fired: false` → 自动开 P1 Issue（issues 表）+ Bark 推送 + `raise('P1', ...)`.
 

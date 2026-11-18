@@ -81,7 +81,8 @@ function nativeTestSelectorProven(text) {
   return include?.type === 'ArrayExpression' && include.elements.some(n => literal(n, 'src/**/*.{test,spec}.?(c|m)[jt]s?(x)'));
 }
 /** 仅证明现有毕业池，避免逐个远程读取整个 unit 树。未知配置/语法不能扩大认领。 */
-function regressionSelectors(text, skillExcludes = null) {
+export async function regressionSelectors(text, skillExcludes = null) {
+  await requireParser();
   const program = ast(text);
   const imported = program.body.find(n => n.type === 'ImportDeclaration' && literal(n.source, 'vitest/config'));
   if (!imported?.specifiers.some(n => n.type === 'ImportSpecifier' && n.imported.name === 'defineConfig' && n.local.name === 'defineConfig')) throw Error('selector_import_unproven');
@@ -96,11 +97,23 @@ function regressionSelectors(text, skillExcludes = null) {
   };
   const test = property(object, 'test');
   const postgres = integrationConfigInputs(text).map(path => path.slice('packages/brain/'.length));
+  const inactive = () => {
+    const name = 'INACTIVE_CONSCIOUSNESS_TESTS';
+    const rows = program.body.filter(n => n.type === 'ExportNamedDeclaration' && n.declaration?.type === 'VariableDeclaration')
+      .flatMap(n => n.declaration.declarations.filter(d => d.id?.name === name).map(d => ({ statement: n.declaration, d })));
+    if (rows.length !== 1 || rows[0].statement.kind !== 'const' || rows[0].d.init?.type !== 'ArrayExpression'
+        || rows[0].d.init.elements.some(n => n?.type !== 'Literal' || typeof n.value !== 'string')) throw Error('selector_inactive_unproven');
+    const exclude = property(test, 'exclude');
+    const allowed = new Set([rows[0].d.id, ...(exclude.elements ?? []).filter(n => n?.type === 'SpreadElement' && n.argument?.name === name).map(n => n.argument)]);
+    if (nodes(program).some(n => n.type === 'Identifier' && n.name === name && !allowed.has(n))) throw Error('selector_inactive_unproven');
+    return rows[0].d.init.elements.map(n => n.value);
+  };
   const array = node => {
     if (node?.type !== 'ArrayExpression') throw Error('selector_array_unproven');
     return node.elements.flatMap(n => {
       if (n?.type === 'Literal' && typeof n.value === 'string') return [n.value];
       if (n?.type === 'SpreadElement' && n.argument?.name === 'POSTGRES_INTEGRATION_TESTS') return postgres;
+      if (n?.type === 'SpreadElement' && n.argument?.name === 'INACTIVE_CONSCIOUSNESS_TESTS') return inactive();
       if (skillExcludes && skillExcludeSpread(n, program, 'brain')) return skillExcludes;
       throw Error('selector_literal_unproven');
     });
@@ -311,7 +324,7 @@ export async function buildExistingOpsSources({ scope, repo, revision, paths, re
     const aggregate = schemaText && ciEntrySelectorEnabled(schemaText, ast, 'EXISTING_OPS_AGGREGATE_SELECTOR_SCHEMA');
     const goldset = schemaText && ciEntrySelectorEnabled(schemaText, ast, 'EXISTING_OPS_GOLDSET_SELECTOR_SCHEMA');
     if (!basicCi && (aggregate || goldset)) await collectCiEntrySources({ aggregate, goldset, parse: ast, read, ci, revision, relations, requireProof });
-    const selectors = expanded && config ? regressionSelectors(config, skillExcludes) : null;
+    const selectors = expanded && config ? await regressionSelectors(config, skillExcludes) : null;
     if(basicCi)await collectBasicDiagnosticInputs({paths,read,parse:ast,revision,relations});
     if (selectors) for (const path of paths.filter(path => path.startsWith('tests/regression/') && !path.split('/').some(part => part.startsWith('.'))
       && selectors.include.some(pattern => pattern.test(path)) && !selectors.exclude.some(pattern => pattern.test(path)))) {

@@ -188,7 +188,7 @@ async function drillHeartbeatSentinel() {
 // ── 守卫台账 ───────────────────────────────────────────────────────────────
 
 /**
- * 所有 6 个守卫的注册台账。
+ * 所有 5 个守卫的注册台账。
  * auto: true  → 月度自动轮转演习
  * auto: false → manual-only，跳过自动演习（仅台账可见）
  */
@@ -235,14 +235,7 @@ export const GUARD_REGISTRY = [
     boundary: 'manual-only',
     note: '需改临时 json 文件；见 runbook 守卫5',
   },
-  {
-    id: 'quota-guard',
-    name: 'API 配额守卫',
-    file: 'packages/brain/src/quota-guard.js',
-    auto: false,
-    boundary: 'manual-only',
-    note: '需要 staging DB 插入假配额数据；见 runbook 守卫6',
-  },
+
 ];
 
 const AUTO_GUARDS = GUARD_REGISTRY.filter((g) => g.auto);

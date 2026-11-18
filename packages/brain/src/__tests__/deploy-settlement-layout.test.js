@@ -49,7 +49,12 @@ async function invoke(layout, { present = true, outcome = 'success', status = 'i
     const readDeployStatusFile = () => null;
     export const handler = ${handler};`);
   // 用真实Node解析动态import，避免测试runner改写缺失模块的错误身份。
-  const script = `const {handler}=await import(${JSON.stringify(pathToFileURL(route).href)});await handler({}, {json:value=>process.stdout.write(JSON.stringify(value))});`;
+  const script = `import {EventEmitter} from 'node:events';
+const {handler}=await import(${JSON.stringify(pathToFileURL(route).href)});
+const response=new EventEmitter();response.writableEnded=false;
+response.json=value=>{response.writableEnded=true;process.stdout.write(JSON.stringify(value));};
+await handler({},response);
+if(response.listenerCount('close')!==0)throw Error('response close listener was not removed');`;
   const child = spawnSync(process.execPath, ['--input-type=module', '-e', script], {
     encoding: 'utf8', env: { ...process.env, GIT_SHA: sha }, timeout: 10000,
   });

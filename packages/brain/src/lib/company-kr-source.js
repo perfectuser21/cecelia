@@ -1,7 +1,10 @@
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { readFileSync } from 'node:fs';
 import { stepSha256 } from '../../scripts/sync-steps-from-workspace.mjs';
 import { resolveGitHubToken } from '../github-credentials.js';
+// 仅为历史定义/投影读取保留，不再提供自动分析登记写入。
+export const companyKrSpec=JSON.parse(readFileSync(new URL('../../config/company-kr-workflow.json',import.meta.url),'utf8'));
 const root=fileURLToPath(new URL('../../../../',import.meta.url));
 const repo='perfectuser21/cecelia',path='packages/brain/config/company-kr-workflow.json';
 export async function readCompanyKrFile(revision,filePath=path) {

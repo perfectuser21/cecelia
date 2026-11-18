@@ -1,5 +1,36 @@
 {
   "version": 1,
   "meaning": "仅记录维护集合中未被真实自动配置接收的文件；配置选中不代表用例未skip或实际通过；root手动配置不计自动覆盖。",
-  "tests": []
+  "tests": [
+    {
+      "file": "packages/brain/src/__tests__/consciousness-graph.test.js",
+      "category": "legacy_spec",
+      "reason": "决策6f1c9431：生产已停用的独立后台思考图，保留源码及专项历史测试，退出默认CI；通用checkpoint和关闭态保护仍自动执行。",
+      "manualRoot": false
+    },
+    {
+      "file": "packages/brain/src/__tests__/consciousness-loop.test.js",
+      "category": "legacy_spec",
+      "reason": "决策6f1c9431：生产已停用的独立后台思考图，保留源码及专项历史测试，退出默认CI；通用checkpoint和关闭态保护仍自动执行。",
+      "manualRoot": false
+    },
+    {
+      "file": "packages/brain/src/__tests__/integration/consciousness-checkpoint.pg.integration.test.js",
+      "category": "legacy_spec",
+      "reason": "决策6f1c9431：生产已停用的独立后台思考图，保留源码及专项历史测试，退出默认CI；通用checkpoint和关闭态保护仍自动执行。",
+      "manualRoot": false
+    },
+    {
+      "file": "packages/brain/src/__tests__/integration/consciousness-graph.integration.test.js",
+      "category": "legacy_spec",
+      "reason": "决策6f1c9431：生产已停用的独立后台思考图，保留源码及专项历史测试，退出默认CI；通用checkpoint和关闭态保护仍自动执行。",
+      "manualRoot": false
+    },
+    {
+      "file": "packages/brain/src/workflows/__tests__/consciousness.graph.test.js",
+      "category": "legacy_spec",
+      "reason": "决策6f1c9431：生产已停用的独立后台思考图，保留源码及专项历史测试，退出默认CI；通用checkpoint和关闭态保护仍自动执行。",
+      "manualRoot": false
+    }
+  ]
 }

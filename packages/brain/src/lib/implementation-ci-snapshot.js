@@ -10,7 +10,6 @@ import {preparePilotManifestAdvance,advancePilotManifest} from './implementation
 import { stepSha256 } from '../../scripts/sync-steps-from-workspace.mjs';
 import { validateImplementationQuery } from './implementation-consumers.js';
 import { syncActivityContracts,CONTRACT_REPO } from '../activity-contract-sync.js';
-import { registerCompanyKrWorkflow } from './company-kr-registration.js';
 import { resolveGitHubToken } from '../github-credentials.js';
 import { TREE_NODES_SQL } from './tree-nodes-sql.js';
 import { EXISTING_OPS_SCOPE,EXISTING_OPS_REPO,EXISTING_OPS_IDENTITIES } from './existing-ops-source.js';
@@ -392,6 +391,7 @@ async function reuseConcurrentSnapshot(pool,q,checkMain,conflict,waitMs){
 export async function refreshImplementationSnapshot(pool,input,{fetchFn=globalThis.fetch,resolveToken=resolveGitHubToken,
   readBinding,authoringSourceOptions,conflictWaitMs=5000,allowRepos=(process.env.CECELIA_IMPLEMENTATION_CI_REPOS??`${CONTRACT_REPO},perfectuser21/cecelia`).split(',').map(r=>r.trim()).filter(Boolean)}={}){
   const q=validateSnapshotQuery(input);
+  if(q.scope==='cecelia-kr'&&q.repo==='perfectuser21/cecelia')throw ciFailure('KR_ANALYSIS_RETIRED','公司KR自动分析登记已退役；正式指标同步不受影响',410);
   const consumer=input?.workspace_consumer;
   if(consumer!==undefined&&(q.scope!==EXISTING_OPS_SCOPE||q.repo!==EXISTING_OPS_REPO
     ||!consumer||Object.keys(consumer).sort().join(',')!=='brain_revisions,run_id,workspace_revision'
@@ -462,9 +462,7 @@ export async function refreshImplementationSnapshot(pool,input,{fetchFn=globalTh
       }
       await registerExistingOpsSources(pool,{...q,paths,readSource:readFile,checkMain,workspaceConsumerProof,expectedRegistrySha256:registry.registry_sha256,actor:'implementation-ci-main-refresh'});
     }else{
-      const text=await readFile('packages/brain/config/company-kr-workflow.json'),spec=JSON.parse(text);
-      await registerCompanyKrWorkflow(pool,{spec,revision:q.revision,readSource:async()=>text,beforeCommit:checkMain,definitionsOnly:true,
-        readBinding:readBinding||(b=>{if(b.repo!==q.repo)throw ciFailure('CROSS_REPO_SNAPSHOT_MISSING');return readFile(b.path,b.revision);})});
+      throw ciFailure('SYNC_ADAPTER_MISSING','该scope没有现役main同步adapter',422);
     }
   }
   await checkMain();await advancePilotManifest(pool,pilotPlan,checkMain);return exportImplementationSnapshot(pool,q,{nativeConsumerSourceOptions:{fetchFn,resolveToken}});

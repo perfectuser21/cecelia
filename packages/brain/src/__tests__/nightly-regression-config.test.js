@@ -33,16 +33,6 @@ describe('现役深度数据库回归', () => {
   });
 });
 
-describe('刀C Release Gate', () => {
-  it('check-nightly-green.sh 指向存活的刀A workflow 文件', () => {
-    const SH = read('scripts/ci/check-nightly-green.sh');
-    const m = SH.match(/WORKFLOW_FILE="([^"]+)"/);
-    expect(m).toBeTruthy();
-    // 被守文件必须真实存在（防刀A改名后闸空转）
-    expect(() => read(`.github/workflows/${m[1]}`)).not.toThrow();
-  });
-});
-
 describe('三把刀 workflow YAML 必须可解析（07-10 实锤：顶格 **markdown** 在 run 块里被当 alias，0-job startup failure，刀A/刀B 完全失效）', () => {
   it.each([
     '.github/workflows/nightly-regression.yml',

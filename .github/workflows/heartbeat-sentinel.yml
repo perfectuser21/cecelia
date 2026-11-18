@@ -5,8 +5,8 @@ name: Heartbeat Sentinel
 #
 # 探测两项：
 #   1. /api/brain/health 可达且 healthy
-#   2. GitHub 官方 main Deep Regression 最近 completed run 成功且在26h内
-#      这是源码深回归回执，不代表生产业务或旧 smoke nightly 已运行。
+#   2. GitHub 官方 main Deep Regression 定时运行在26h内出现，未完成不超过2h
+#      只检测停跑/卡住；回归失败由 Nightly 自身报告，不影响生产健康结论。
 #
 # 任一失败 -> 开 GitHub Issue（标题含 [heartbeat-sentinel]，已有 open 同款不重复开）
 #           + Bark 推送（BARK_URL secret）
@@ -34,14 +34,14 @@ env:
 
 jobs:
   probe:
-    name: 反向探测生产 Brain
+    name: 生产健康与定时回归活性
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       actions: read
     outputs:
       health_ok: ${{ steps.health.outputs.ok }}
-      # kv_* 仅为历史输出兼容名；实际证据为官方 Deep Regression run。
+      # kv_* 仅为历史输出兼容名；实际证据为官方 Deep Regression 定时活性。
       kv_ok: ${{ steps.kv.outputs.ok }}
       probe_url: ${{ steps.resolve.outputs.url }}
       kv_age_minutes: ${{ steps.kv.outputs.age_minutes }}
@@ -75,7 +75,7 @@ jobs:
           if [[ ! "${RESPONSE##*$'\n'}" =~ ^2[0-9][0-9]$ ]]; then
             echo "ok=false" >> "$GITHUB_OUTPUT"
             echo "detail=不可达（curl 超时/连接拒绝）" >> "$GITHUB_OUTPUT"
-            exit 0
+            exit 1
           fi
 
           RESPONSE=${RESPONSE%$'\n'*}
@@ -85,9 +85,11 @@ jobs:
           else
             echo "ok=false" >> "$GITHUB_OUTPUT"
             echo "detail=响应异常 status=$STATUS" >> "$GITHUB_OUTPUT"
+            exit 1
           fi
 
-      - name: 探测 main Deep Regression 官方回执时效
+      - name: 探测 main Deep Regression 定时运行活性
+        if: always()
         id: kv
         env:
           GH_TOKEN: ${{ github.token }}
@@ -96,11 +98,11 @@ jobs:
           fail_probe() {
             echo "ok=false" >> "$GITHUB_OUTPUT"
             echo "age_minutes=-1" >> "$GITHUB_OUTPUT"
-            echo "detail=Deep Regression 官方回执缺失、失败或无效" >> "$GITHUB_OUTPUT"
+            echo "detail=Deep Regression 定时运行缺失、超期、卡住或证据无效" >> "$GITHUB_OUTPUT"
             exit 1
           }
           [[ -n "${GH_TOKEN:-}" && "${GITHUB_REPOSITORY:-}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || fail_probe
-          API_URL="https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/nightly-regression.yml/runs?branch=main&status=completed&per_page=1"
+          API_URL="https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/nightly-regression.yml/runs?branch=main&event=schedule&per_page=1"
           RESPONSE=$(curl -sf --max-time 15 -w $'\n%{http_code}' \
             -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
             "$API_URL" 2>/dev/null) || fail_probe
@@ -118,16 +120,23 @@ jobs:
               assert isinstance(run, dict)
               assert run.get("path") == ".github/workflows/nightly-regression.yml"
               assert run.get("head_branch") == "main"
-              assert run.get("status") == "completed" and run.get("conclusion") == "success"
+              assert run.get("event") == "schedule"
+              status = run.get("status")
+              assert status in ("completed", "queued", "in_progress", "waiting", "pending", "requested")
+              if status == "completed":
+                  assert run.get("conclusion") in ("success", "failure", "timed_out", "cancelled")
+              else:
+                  assert run.get("conclusion") is None
               run_id, sha = run.get("id"), run.get("head_sha")
               assert type(run_id) is int and run_id > 0
               assert isinstance(sha, str) and re.fullmatch("[a-f0-9]{40}", sha)
-              stamp = run.get("updated_at")
+              stamp = run.get("created_at")
               assert isinstance(stamp, str) and re.search(r"(?:Z|[+-]\d{2}:\d{2})$", stamp)
-              finished = datetime.datetime.fromisoformat(stamp.replace("Z", "+00:00"))
-              assert finished.tzinfo is not None
-              age = (datetime.datetime.now(datetime.timezone.utc) - finished).total_seconds()
+              created = datetime.datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+              assert created.tzinfo is not None
+              age = (datetime.datetime.now(datetime.timezone.utc) - created).total_seconds()
               assert 0 <= age <= 26 * 3600
+              assert status == "completed" or age <= 2 * 3600
               url = "https://github.com/" + os.environ["GITHUB_REPOSITORY"] + "/actions/runs/" + str(run_id)
               assert run.get("html_url") == url
           except (AssertionError, ValueError, TypeError, KeyError, OverflowError):
@@ -165,7 +174,7 @@ jobs:
           set -euo pipefail
 
           TODAY=$(date -u +%Y-%m-%d)
-          TITLE="${ISSUE_TITLE_PREFIX} 生产探测失败 — ${TODAY}"
+          TITLE="${ISSUE_TITLE_PREFIX} 哨兵探测异常 — ${TODAY}"
 
           EXISTING=$(gh api "repos/${REPO}/issues?state=open&labels=${ISSUE_LABEL}&per_page=50" \
             --jq "[.[] | select(.title==\"${TITLE}\")] | length")
@@ -178,7 +187,7 @@ jobs:
               BODY="$BODY"$'\n'"- ❌ \`/api/brain/health\` 不可达或 unhealthy"
             fi
             if [ "$KV_OK" != "true" ]; then
-              BODY="$BODY"$'\n'"- ❌ main Deep Regression 无26h内有效成功回执（${KV_AGE}min）"
+              BODY="$BODY"$'\n'"- ❌ main Deep Regression 定时运行缺失、超期或未在2h内完成（${KV_AGE}min）"
             fi
 
             gh issue create \
@@ -208,11 +217,11 @@ jobs:
             FAILURES="${FAILURES}Brain /health 不可达; "
           fi
           if [ "$KV_OK" != "true" ]; then
-            FAILURES="${FAILURES}Deep Regression 失败或回执超期 ${KV_AGE}min; "
+            FAILURES="${FAILURES}Deep Regression 定时运行停跑或卡住 ${KV_AGE}min; "
           fi
 
           TITLE="心跳哨兵告警"
-          BODY="生产探测失败: ${FAILURES}目标=${PROBE_URL}"
+          BODY="哨兵探测异常: ${FAILURES}目标=${PROBE_URL}"
 
           if [[ -n "${BARK_URL:-}" ]]; then
             ENCODED_TITLE=$(python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.argv[1], safe=''))" "$TITLE")
