@@ -12,8 +12,12 @@ test('三份现役页面合同在PR及main变更时进入既有PWA job', () => {
   const workflow = yaml.load(readFileSync(new URL('../../../.github/workflows/ci.yml', import.meta.url), 'utf8'));
   for (const event of ['pull_request', 'push']) assert.equal(workflow.on[event].paths, undefined);
   assert.equal(workflow.jobs['pwa-upgrade'].if, "github.event_name != 'schedule' && github.event.action != 'closed'");
-  const step = workflow.jobs['pwa-upgrade'].steps.find(step => step.name === 'Verify current cockpit inbox and destination routes');
-  assert.ok(step?.run.includes('vite build --outDir .dist-pwa-e2e'));
+  const job = workflow.jobs['pwa-upgrade'];
+  const step = job.steps.find(step => step.name === 'Verify current cockpit inbox and destination routes');
+  const build = job.steps.find(step => step.name === 'Build shared browser acceptance artifact');
+  assert.equal(build.run,'GIT_SHA="$GITHUB_SHA" npx --no-install vite build --outDir .dist-pwa-e2e');
+  assert.ok(job.steps.indexOf(build)<job.steps.indexOf(step));
+  for (const required of [build, step]) assert.ok(!required.if && !required['continue-on-error']);
   assert.ok(step.run.includes('node e2e/playwright-cli.mjs test --config ../../tests/regression/manual-ui/playwright.config.ts'));
 });
 test('真实Playwright收集三文件五条页面回归，不以源码断言替代浏览器用例', () => {

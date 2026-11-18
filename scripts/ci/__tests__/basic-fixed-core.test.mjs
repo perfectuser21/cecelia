@@ -46,3 +46,16 @@ test('MCP保留显式执行入口，不自动加入核心；旧API无独立核�
   assert.throws(()=>commandsFor('api'),/未知/);
   assert.deepEqual(commandsFor('dashboard').map(step=>step.cwd.split('/').slice(-2).join('/')),['apps/api','apps/dashboard','apps/dashboard']);
 });
+
+
+test('image没有宿主依赖消费者，其余核心矩阵必须先安装根锁定依赖',()=>{
+  const job=workflow.jobs.checks;
+  const install=job.steps.find(step=>step.name==='Install locked dependencies');
+  assert.equal(install.if,"matrix.component != 'image'");
+  assert.equal(install.run,'npm ci --ignore-scripts --no-audit --no-fund');
+  assert.equal(install['working-directory']??'.','.');
+  assert.ok(job.steps.indexOf(install)<job.steps.findIndex(step=>step.name==='Run actual checks'));
+  assert.deepEqual(commandsFor('image').map(({command,args})=>({command,args})),[
+    {command:'docker',args:['build','-f','packages/brain/Dockerfile','-t','cecelia-brain:ci-basic','.']},
+  ]);
+});

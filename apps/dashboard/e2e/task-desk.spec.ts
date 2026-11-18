@@ -1,10 +1,10 @@
 import { createServer, type Server } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { extname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { expect, test, type Page } from '@playwright/test';
+import { dashboardBuild } from './shared-build.mjs';
 
-const root = fileURLToPath(new URL('../.dist-task-desk-e2e/', import.meta.url));
+const { root } = dashboardBuild('.dist-task-desk-e2e', 'task-desk-e2e');
 const taskId = 'a73a7e69-5b08-460f-a290-8f8371403ac8';
 const captureId = 'b73a7e69-5b08-460f-a290-8f8371403ac8';
 let server: Server;

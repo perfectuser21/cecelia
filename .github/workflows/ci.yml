@@ -100,6 +100,7 @@ jobs:
       - name: Install test tools
         run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends ripgrep jq zsh libxml2-utils
       - name: Install locked dependencies
+        if: matrix.component != 'image'
         run: npm ci --ignore-scripts --no-audit --no-fund
       - uses: ./.github/actions/dockerhub-mirror
         if: matrix.component == 'image'
@@ -190,6 +191,9 @@ jobs:
     name: Browser regression (Chromium)
     runs-on: ubuntu-latest
     timeout-minutes: 16
+    env:
+      DASHBOARD_E2E_DIST: .dist-pwa-e2e
+      EXPECTED_BUILD_VERSION: ${{ github.sha }}
     defaults:
       run:
         working-directory: apps/dashboard
@@ -206,14 +210,14 @@ jobs:
       - name: Install Chromium
         timeout-minutes: 9
         run: node e2e/playwright-cli.mjs install chromium --with-deps
+      - name: Build shared browser acceptance artifact
+        run: GIT_SHA="$GITHUB_SHA" npx --no-install vite build --outDir .dist-pwa-e2e
       - name: Verify stale PWA upgrade
-        run: npm run test:pwa-upgrade
+        run: npm run test:pwa-upgrade:built
       - name: Verify task desk receipts
-        run: npm run test:task-desk
+        run: npm run test:task-desk:built
       - name: Verify current cockpit inbox and destination routes
-        run: |
-          GIT_SHA="$GITHUB_SHA" npx --no-install vite build --outDir .dist-pwa-e2e
-          node e2e/playwright-cli.mjs test --config ../../tests/regression/manual-ui/playwright.config.ts
+        run: node e2e/playwright-cli.mjs test --config ../../tests/regression/manual-ui/playwright.config.ts
     if: github.event_name != 'schedule' && github.event.action != 'closed'
   codeql:
     name: CodeQL (${{ matrix.language }})

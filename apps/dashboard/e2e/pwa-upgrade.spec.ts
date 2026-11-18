@@ -3,11 +3,11 @@ import { readFile } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, test } from '@playwright/test';
+import { dashboardBuild } from './shared-build.mjs';
 
 const dashboardRoot = fileURLToPath(new URL('..', import.meta.url));
 const legacyRoot = join(dashboardRoot, 'e2e/fixtures/legacy-pwa');
-const currentRoot = join(dashboardRoot, '.dist-pwa-e2e');
-const buildVersion = 'pwa-upgrade-e2e';
+const { root: currentRoot, version: buildVersion } = dashboardBuild('.dist-pwa-e2e', 'pwa-upgrade-e2e');
 
 const contentTypes: Record<string, string> = {
   '.css': 'text/css',

@@ -227,10 +227,10 @@ function browserLane(workflow, text = browserConfig()) {
   if (!mainEvents(workflow)) return false;
   return knownStep(workflow, 'pwa-upgrade', {run:'npm ci'}) &&
     knownStep(workflow, 'pwa-upgrade', {cwd:'apps/dashboard', run:'node e2e/playwright-cli.mjs install chromium --with-deps'}) &&
-    knownStep(workflow, 'pwa-upgrade', {cwd:'apps/dashboard', run:[
-      'GIT_SHA="$GITHUB_SHA" npx --no-install vite build --outDir .dist-pwa-e2e',
-      'node e2e/playwright-cli.mjs test --config ../../tests/regression/manual-ui/playwright.config.ts',
-    ].join('\n')});
+    knownStep(workflow, 'pwa-upgrade', {cwd:'apps/dashboard',
+      run:'GIT_SHA="$GITHUB_SHA" npx --no-install vite build --outDir .dist-pwa-e2e'}) &&
+    knownStep(workflow, 'pwa-upgrade', {cwd:'apps/dashboard',
+      run:'node e2e/playwright-cli.mjs test --config ../../tests/regression/manual-ui/playwright.config.ts'});
 }
 
 function automaticLanes({basic, nightly, browser}) {
@@ -354,7 +354,7 @@ test('已接既有PWA job的三份真实浏览器合同必须计入自动跑道'
   assert.ok(automaticLanes(loadWorkflows()).includes('browser'));
 });
 
-for(const mutation of ['--list','if false','heredoc','错误cwd','job-if-false','step-if-false','仅手动','漏路径','任意config']) {
+for(const mutation of ['--list','if false','heredoc','错误cwd','job-if-false','step-if-false','仅手动','漏路径','任意config','省略共享构建','构建仅列出']) {
  test(`browser自动接入拒绝${mutation}`,()=>{
   const workflow=loadWorkflows().browser,job=workflow.jobs['pwa-upgrade'];
   const step=job.steps.find(row=>row.name==='Verify current cockpit inbox and destination routes');
@@ -366,6 +366,8 @@ for(const mutation of ['--list','if false','heredoc','错误cwd','job-if-false',
   if(mutation==='step-if-false')step.if=false;
   if(mutation==='仅手动')workflow.on={workflow_dispatch:{}};
   if(mutation==='漏路径')workflow.on.pull_request.paths=[];
+  if(mutation==='省略共享构建')job.steps=job.steps.filter(row=>row.name!=='Build shared browser acceptance artifact');
+  if(mutation==='构建仅列出')job.steps.find(row=>row.name==='Build shared browser acceptance artifact').run='echo build';
   if(mutation==='任意config')step.run=step.run.replace('manual-ui/playwright.config.ts','other/playwright.config.ts');
   assert.equal(browserLane(workflow),false);
  });
