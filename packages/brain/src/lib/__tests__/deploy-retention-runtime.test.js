@@ -38,7 +38,12 @@ describe('deploy/status real image layout', () => {
     const oldSha = process.env.GIT_SHA;
     process.env.GIT_SHA = 'a'.repeat(40);
     try {
-      const script = `const {handler}=await import(${JSON.stringify(pathToFileURL(filename).href)});await handler({}, {json:value=>console.log(JSON.stringify(value))});`;
+      const script = `import {EventEmitter} from 'node:events';
+const {handler}=await import(${JSON.stringify(pathToFileURL(filename).href)});
+const response=new EventEmitter();response.writableEnded=false;
+response.json=value=>{response.writableEnded=true;console.log(JSON.stringify(value));};
+await handler({},response);
+if(response.listenerCount('close')!==0)throw Error('response close listener was not removed');`;
       const child = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', env: process.env, timeout: 10000 });
       if (child.status !== 0) throw new Error(child.stderr || 'image layout probe failed');
       return JSON.parse(child.stdout);
