@@ -256,45 +256,14 @@ describe('createTask - goal_id validation', () => {
     });
   });
 
-  describe('execution_callback_harness exemption', () => {
-    it('should allow harness_fix without goal_id when triggered by execution_callback_harness', async () => {
-      // Bug fix: execution_callback_harness was missing from systemSources,
-      // causing harness_generate → harness_fix auto-creation to silently fail
-      const result = await createTestTask({
-        title: 'Test Task - Harness Fix',
-        description: 'Harness fix auto-created by Brain execution callback',
-        priority: 'P1',
-        task_type: 'harness_fix',
-        trigger_source: 'execution_callback_harness',
-        payload: { sprint_dir: 'sprints/sprint-1', harness_mode: true, fix_round: 1 }
-      });
-
-      expect(result.success).toBe(true);
-      expect(result.task.goal_id).toBeNull();
-      // 现役路由把旧harness输入归入coding_workflow，保留无goal豁免。
-      expect(result.task.task_type).toBe('coding_workflow');
-      expect(result.task.trigger_source).toBe('execution_callback_harness');
-      const receipt = await client.query('SELECT canonical_task_type FROM work_routing_receipts WHERE task_id=$1', [result.task.id]);
-      expect(receipt.rows).toEqual([{ canonical_task_type: 'coding_workflow' }]);
-    });
-
-    it('should allow harness_fix without goal_id when triggered by execution_callback_harness (duplicate check)', async () => {
-      const result = await createTestTask({
-        title: 'Test Task - Harness Fix 2',
-        description: 'Harness fix auto-created by Brain execution callback',
-        priority: 'P1',
-        task_type: 'harness_fix',
-        trigger_source: 'execution_callback_harness',
-        payload: { sprint_dir: 'sprints/sprint-1', harness_mode: true, fix_round: 2 }
-      });
-
-      expect(result.success).toBe(true);
-      expect(result.task.goal_id).toBeNull();
-      // 现役路由把旧harness输入归入coding_workflow，保留无goal豁免。
-      expect(result.task.task_type).toBe('coding_workflow');
-      expect(result.task.trigger_source).toBe('execution_callback_harness');
-      const receipt = await client.query('SELECT canonical_task_type FROM work_routing_receipts WHERE task_id=$1', [result.task.id]);
-      expect(receipt.rows).toEqual([{ canonical_task_type: 'coding_workflow' }]);
-    });
+  it('旧 Harness 回调提交 harness_fix 时拒绝建单', async () => {
+    const title = `retired-harness-${crypto.randomUUID()}`;
+    await expect(createTestTask({
+      title,
+      task_type: 'harness_fix',
+      trigger_source: 'execution_callback_harness',
+    })).rejects.toThrow('task_type_retired: harness_fix');
+    const tasks = await client.query('SELECT id FROM tasks WHERE title=$1', [title]);
+    expect(tasks.rows).toEqual([]);
   });
 });
