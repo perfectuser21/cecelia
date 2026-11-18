@@ -1,3 +1,4 @@
+import {setFoundationRuntimeStatus} from '../workflow-foundation/runtime-status.js';
 import {failFoundationPreflight} from '../workflow-foundation/preflight.js';
 import {Router,json} from 'express';
 import {rateLimit} from 'express-rate-limit';
@@ -10,6 +11,7 @@ import {reconcileFoundationTask} from '../workflow-foundation/reconcile.js';
 export function createWorkflowFoundationRouter({pool=defaultPool,services={}}={}){
  const router=Router();router.use(rateLimit(TASK_MUTATION_RATE_LIMIT_OPTIONS),internalAuthOrLoopback,json({limit:'2mb'}));
  const handle=fn=>async(req,res)=>{try{const result=await fn(req);res.status(result.created?201:200).json(result);}catch(error){res.status(error.status??500).json({error:error.code??'foundation_unavailable'});}};
+ router.post('/workflows/:id/runtime-status',handle(req=>setFoundationRuntimeStatus(pool,req.params.id,req.body)));
  router.get('/catalog',handle(()=>listFoundationCatalog(pool)));
  router.post('/tasks',handle(req=>createFoundationTask(pool,req.body,services)));
  router.post('/claim',handle(req=>claimFoundationTask(pool,req.body,services)));

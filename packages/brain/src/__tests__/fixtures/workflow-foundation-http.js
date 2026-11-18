@@ -24,10 +24,12 @@ export async function foundationHttpFixture(options={}){
  fs.writeFileSync(config,JSON.stringify({schema_version:1,brain_url:base,machine_id:'fixture-host',bundle_root:db.bundleRoot,state_root:db.stateRoot}),{mode:0o600});
  async function request(route,body,{auth=true}={}){
   const response=await fetch(base+'/api/brain'+route,{method:body===undefined?'GET':'POST',headers:{'Content-Type':'application/json',...(auth?{'X-Internal-Token':token}:{})},body:body===undefined?undefined:JSON.stringify(body)});
-  return {status:response.status,body:await response.json()};
+  const text=await response.text();
+  return {status:response.status,body:response.headers.get('content-type')?.includes('application/json')?JSON.parse(text):{unparsed:text}};
  }
- async function publish({observe=true}={}){
+ async function publish({observe=true,environment}={}){
   const registration=await db.register(),spec=await db.releaseSpec(registration);
+  if(environment!==undefined)spec.environment=environment;
   const created=await request('/releases',spec);
   if(created.status!==201)throw Error('fixture_release:'+JSON.stringify(created));
   const release=created.body.release;
