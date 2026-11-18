@@ -7,7 +7,6 @@ name: CI
       - opened
       - synchronize
       - reopened
-      - closed
   push:
     branches:
       - main
@@ -22,7 +21,7 @@ name: CI
 permissions:
   contents: read
 concurrency:
-  group: ci-${{ github.event_name == 'pull_request' && github.event.action == 'closed' && format('closed-pr-{0}', github.event.pull_request.number) || github.event_name == 'schedule' && 'weekly-codeql' || github.event_name == 'pull_request' && github.event.pull_request.user.login == 'dependabot[bot]' && 'dependabot' || github.ref }}
+  group: ci-${{ github.event_name == 'schedule' && 'weekly-codeql' || github.event_name == 'pull_request' && github.event.pull_request.user.login == 'dependabot[bot]' && 'dependabot' || github.ref }}
   queue: ${{ github.event_name == 'pull_request' && github.event.pull_request.user.login == 'dependabot[bot]' && 'max' || 'single' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' && github.event.action != 'closed' && github.event.pull_request.user.login != 'dependabot[bot]' }}
 jobs:
@@ -241,39 +240,6 @@ jobs:
       - uses: github/codeql-action/analyze@v4
         with:
           category: /language:${{ matrix.language }}
-  preview-deploy:
-    name: Deploy Preview Environment
-    if: github.event_name == 'pull_request' && github.event.action != 'closed' && (github.actor != 'dependabot[bot]' && github.event.pull_request.head.repo.full_name == github.repository && !contains(github.event.pull_request.labels.*.name, 'harness') && !startsWith(github.head_ref, 'auto-version-bump-'))
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
-    permissions: {contents: read, pull-requests: write}
-    steps:
-      - name: Checkout 代码
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.head.sha }}
-          fetch-depth: 0
-          persist-credentials: false
-      - name: Check fixed PR changes for preview
-        id: preview_scope
-        env: {EVENT_NAME: '${{ github.event_name }}', EVENT_ACTION: '${{ github.event.action }}', BASE_SHA: '${{ github.event.pull_request.base.sha }}', HEAD_SHA: '${{ github.event.pull_request.head.sha }}'}
-        run: node scripts/ci/preview-ui.mjs --base "$BASE_SHA" --head "$HEAD_SHA"
-      - name: 执行原预览步骤
-        if: steps.preview_scope.outputs.preview_ui == 'true'
-        uses: ./.github/actions/preview-deploy
-        with: {ts-authkey: '${{ secrets.TS_AUTHKEY }}', deploy-token: '${{ secrets.DEPLOY_TOKEN }}', brain-url: '${{ secrets.BRAIN_DEPLOY_URL || ''http://100.71.151.105:5241'' }}', github-token: '${{ secrets.GITHUB_TOKEN }}'}
-  preview-cleanup:
-    name: Cleanup Preview Environment
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions: {contents: read, pull-requests: write}
-    steps:
-      - name: Checkout 代码
-        uses: actions/checkout@v4
-      - name: 执行原预览步骤
-        uses: ./.github/actions/preview-cleanup
-        with: {ts-authkey: '${{ secrets.TS_AUTHKEY }}', deploy-token: '${{ secrets.DEPLOY_TOKEN }}', brain-url: '${{ secrets.BRAIN_DEPLOY_URL || ''http://100.71.151.105:5241'' }}', github-token: '${{ secrets.GITHUB_TOKEN }}'}
-    if: github.event_name == 'pull_request' && github.event.action == 'closed'
   foundation-release-verification:
     name: Foundation正式发布验证
     if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.foundation_release_verification == true
