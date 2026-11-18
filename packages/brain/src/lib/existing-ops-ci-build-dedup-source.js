@@ -70,6 +70,7 @@ export const MAIN_AUTO_DEPLOY_INPUTS={
  'packages/brain/src/cron/drift-sentinel.js':null,
  'packages/brain/src/cron/__tests__/drift-sentinel.test.js':null,
  'packages/brain/src/cron/__tests__/drift-sentinel-state.test.js':null,
+ 'tests/regression/drift-sentinel-init/tick-runner-drift-sentinel-wiring.test.js':null,
  '.github/workflows/deploy.yml':null,
  '.github/workflows/brain-ci-deploy.yml':null,
  'packages/brain/deploy/com.cecelia.brain.plist':null,

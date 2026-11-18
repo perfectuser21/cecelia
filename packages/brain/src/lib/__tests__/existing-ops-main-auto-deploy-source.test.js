@@ -9,7 +9,7 @@ import {readFixedExistingOpsGitFixture} from './helpers/fixed-existing-ops-git-f
 const root=fileURLToPath(new URL('../../../../../',import.meta.url)),workflow='.github/workflows/ci.yml';
 const previous=readFixedExistingOpsGitFixture('5a70db6350f9372e01f7098d2abd49a05990bf64');
 const retired=['scripts/post-merge-deploy.sh','scripts/deploy.sh','scripts/ci/assert-deploy-effect.sh','scripts/ci/__tests__/assert-deploy-effect.test.sh',
- 'packages/brain/src/cron/drift-sentinel.js','packages/brain/src/cron/__tests__/drift-sentinel.test.js','packages/brain/src/cron/__tests__/drift-sentinel-state.test.js','.github/workflows/deploy.yml','.github/workflows/brain-ci-deploy.yml',
+ 'packages/brain/src/cron/drift-sentinel.js','packages/brain/src/cron/__tests__/drift-sentinel.test.js','packages/brain/src/cron/__tests__/drift-sentinel-state.test.js','tests/regression/drift-sentinel-init/tick-runner-drift-sentinel-wiring.test.js','.github/workflows/deploy.yml','.github/workflows/brain-ci-deploy.yml',
  'packages/brain/deploy/com.cecelia.brain.plist','scripts/brain-docker-up.sh','scripts/brain-docker-down.sh','scripts/brain-docker-smoke.sh','scripts/brain-reload.sh',
  'scripts/deploy-workspace/deploy-hk.sh','scripts/deploy-workspace/docker-compose.hk.yml','scripts/deploy-workspace/nginx.conf','scripts/deploy-workspace/nginx-core.conf',
  'packages/brain/deploy/cecelia-watchdog.sh','packages/brain/src/__tests__/deploy-rollback.test.js','packages/brain/scripts/setup-pm2.sh','packages/brain/ecosystem.config.cjs'];
