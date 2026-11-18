@@ -8,7 +8,7 @@
 // （真 Postgres，禁 mock db.js 边），由 brain-integration 跑。
 //
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   normalizeRunStatus,
   buildRunContext,
@@ -80,5 +80,20 @@ describe('buildRunResult — exit code + 产物引用落 result jsonb', () => {
     const r = buildRunResult({ exitCode: 1 });
     expect(r.exit_code).toBe(1);
     expect(r.artifacts).toEqual([]);
+  });
+});
+
+import { attachRunsToWorkflow } from '../task-run.js';
+
+describe('历史Run关联归属保护', () => {
+  it('真实Run只补workflow，冲突归属拒绝，禁止改终态或时间', async () => {
+    const db = { query: vi.fn().mockResolvedValueOnce({ rows: [{ id: 'r', workflow_id: 'other' }] }) };
+    await expect(attachRunsToWorkflow({ workflowId: 'w', taskIds: ['t'] }, { pool: db })).rejects.toThrow('归属');
+    expect(db.query).toHaveBeenCalledTimes(1);
+    db.query.mockReset().mockResolvedValue({ rows: [] });
+    await attachRunsToWorkflow({ workflowId: 'w', taskIds: ['t'] }, { pool: db });
+    const update = db.query.mock.calls.find(([sql]) => sql.includes('UPDATE task_runs'))[0];
+    expect(update).not.toMatch(/SET[^]*?(status|started_at|ended_at|result)\s*=/);
+    expect(update).toContain('workflow_id IS NULL');
   });
 });

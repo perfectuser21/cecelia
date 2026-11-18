@@ -81,7 +81,7 @@ vi.mock('../circuit-breaker.js', () => ({
 vi.mock('../events/taskEvents.js', () => ({ publishTaskStarted: vi.fn() }));
 vi.mock('../tick-stats.js', () => ({ incrementActionsToday: vi.fn(async () => {}) }));
 vi.mock('../account-usage.js', () => ({ proactiveTokenCheck: vi.fn(async () => {}) }));
-vi.mock('../quota-guard.js', () => ({ checkQuotaGuard: async () => ({ allow: true, priorityFilter: null, bestPct: 10 }) }));
+
 vi.mock('../pre-flight-check.js', () => ({
   preFlightCheck: async () => ({ passed: true, issues: [], suggestions: [] }),
   alertOnPreFlightFail: vi.fn(async () => {}),
@@ -566,7 +566,6 @@ it.each([false,true])('限定Commander核验不查旧Bridge、不进qiumi；终�
  expect(result).toMatchObject(reject?{dispatched:false,terminal:true}:{dispatched:true,task_id:task.id});
 });
 
-
 it.each([
   {task_type:'initiative_plan',payload:{}},
   {task_type:'scope_plan',payload:{}},
@@ -634,7 +633,6 @@ describe('退役拆解任务自动派发', () => {
   });
 });
 
-
 it('秋米专用任务携带同名字段仍走其真实派发分支', async () => {
   const row={...fullRow,payload:{...fullRow.payload,decomposition:'true'}};
   _candidatePool=[{...candidate,payload:row.payload}];
@@ -646,7 +644,6 @@ it('秋米专用任务携带同名字段仍走其真实派发分支', async () =
   expect(mockQuery.mock.calls.some(([sql])=>sql.includes('blocked_reason = $3'))).toBe(false);
 });
 
-
 it('独立 Cortex RCA 即使含同名标记仍走自身处理，不走拆解', async () => {
   const row={...candidate,task_type:'research',payload:{requires_cortex:true,decomposition:'true'}};
   _candidatePool=[row]; wireQueries({row});
@@ -655,7 +652,6 @@ it('独立 Cortex RCA 即使含同名标记仍走自身处理，不走拆解', a
   expect(mockTriggerCeceliaRun).not.toHaveBeenCalled();
   expect(mockQuery.mock.calls.some(([sql])=>sql.includes('blocked_reason = $3'))).toBe(false);
 });
-
 
 it('选中后 payload 变为旧拆解，不启动、不回队三振且仅停放自己的 claim', async () => {
   const selected={...candidate,task_type:'research',created_at:'2020-01-01T00:00:00.000Z',payload:{decomposition:'known'}};
@@ -676,7 +672,6 @@ it('选中后 payload 变为旧拆解，不启动、不回队三振且仅停放�
   expect(park[0]).toContain('claimed_at = $7::timestamptz');
   expect(park[1][6]).toBe('2026-11-07 00:00:00.123456+00');
 });
-
 
 it.each(['owner_changed','database_error'])('旧拆解竞态 %s 不得无条件回滚或计熔断', async (mode) => {
   const selected={...candidate,task_type:'research',created_at:'2020-01-01T00:00:00.000Z',payload:{decomposition:'known'}};
@@ -701,7 +696,6 @@ it.each(['owner_changed','database_error'])('旧拆解竞态 %s 不得无条件�
   expect(mockQuery.mock.calls.some(([s])=>/UPDATE tasks SET claimed_by = NULL WHERE id = \$1/.test(s))).toBe(false);
   if(mode==='database_error') expect(result.stateUnknown).toBe(true);
 });
-
 
 it('旧拆解停放后事件失败仍不启动，也不伪造未停放', async () => {
   _candidatePool=[{...candidate,task_type:'dev',payload:{decomposition:'true'}}];

@@ -4,6 +4,8 @@ import { fail } from './policy.mjs';
 const LIMIT = 2 * 1024 * 1024;
 export async function runDockerProcess(executable, args, lease, timeoutMs) {
   await lease.assertHeld();
+  const remaining = lease.deadline === undefined ? timeoutMs : Math.min(timeoutMs, lease.deadline - Date.now());
+  if (remaining <= 0) throw fail('DEPLOY_STATUS_TIMEOUT');
   return new Promise((resolve, reject) => {
     let text = '', stderr = '', size = 0, failure, result, killTimer, settled = false;
     const child = spawn(process.execPath, [fileURLToPath(new URL('./process-supervisor.mjs', import.meta.url)), executable, ...args], {
@@ -12,6 +14,7 @@ export async function runDockerProcess(executable, args, lease, timeoutMs) {
     });
     const finish = error => {
       if (settled) return; settled = true; clearTimeout(timer); clearTimeout(killTimer);
+      lease.signal?.removeEventListener('abort', abort);
       if (error) reject(Object.assign(error, { exitCode: result, stdout: text, stderr })); else resolve(text);
     };
     const stop = code => {
@@ -26,7 +29,10 @@ export async function runDockerProcess(executable, args, lease, timeoutMs) {
         finish(fail('DOCKER_TERMINATION_UNCONFIRMED'));
       }, 1000);
     };
-    const timer = setTimeout(() => stop('DOCKER_TIMEOUT'), timeoutMs);
+    const abort = () => stop(lease.signal.reason?.code || 'DEPLOY_STATUS_ABORTED');
+    const timer = setTimeout(() => stop(lease.deadline !== undefined && remaining < timeoutMs ? 'DEPLOY_STATUS_TIMEOUT' : 'DOCKER_TIMEOUT'), remaining);
+    lease.signal?.addEventListener('abort', abort, { once: true });
+    if (lease.signal?.aborted) abort();
     child.stdout.on('data', data => { size += data.length; if (size > LIMIT) stop('DOCKER_OUTPUT_LIMIT'); else text += data.toString(); });
     child.stderr.on('data', data => { size += data.length; if (size > LIMIT) stop('DOCKER_OUTPUT_LIMIT'); else stderr += data.toString(); });
     child.on('message', message => {

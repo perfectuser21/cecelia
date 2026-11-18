@@ -83,10 +83,12 @@ for (const [status, body, ok] of [
   const f = fixture(t); writeFileSync(f.env.GITHUB_OUTPUT, '');
   const result = await run(sentinel.jobs.probe.steps.find(s => s.id === 'health').run, { ...f.env, PROBE_URL: url });
   const output = readFileSync(f.env.GITHUB_OUTPUT, 'utf8');
-  assert.equal(result.status === 0 && output.includes('ok=true'), ok, result.out + output);
+  assert.equal(result.status === 0, ok, result.out + output);
+  assert.equal(output.includes('ok=true'), ok, result.out + output);
+  if (!ok) assert.equal(condition(barkStep.if,{result:'failure',outputs:{health_ok:'false',kv_ok:'true'}}),true);
 });
 const deepRun = changes => ({id:41742520265,path:'.github/workflows/nightly-regression.yml',head_branch:'main',
-  head_sha:'a'.repeat(40),status:'completed',conclusion:'success',updated_at:new Date(Date.now()-3600000).toISOString(),
+  event:'schedule',created_at:new Date(Date.now()-3600000).toISOString(),head_sha:'a'.repeat(40),status:'completed',conclusion:'success',updated_at:new Date(Date.now()-3600000).toISOString(),
   html_url:'https://github.com/fixture/repo/actions/runs/41742520265',...changes});
 const deepBody = run => ({total_count:1,workflow_runs:[run]});
 const deepCases = [
@@ -94,17 +96,20 @@ const deepCases = [
   ['302绿色JSON',302,()=>deepBody(deepRun()),false],['500绿色JSON',500,()=>deepBody(deepRun()),false],
   ['空列表',200,()=>({total_count:0,workflow_runs:[]}),false],['缺列表',200,()=>({total_count:1}),false],
   ['false JSON',200,()=>false,false],['无效JSON',200,()=>'{bad',false],
-  ['未来',200,()=>deepBody(deepRun({updated_at:new Date(Date.now()+3600000).toISOString()})),false],
-  ['过期',200,()=>deepBody(deepRun({updated_at:new Date(Date.now()-27*3600000).toISOString()})),false],
-  ['无时区',200,()=>deepBody(deepRun({updated_at:new Date(Date.now()-1000).toISOString().slice(0,-1)})),false],
-  ['无效时间',200,()=>deepBody(deepRun({updated_at:'invalid'})),false],
+  ['未来',200,()=>deepBody(deepRun({created_at:new Date(Date.now()+3600000).toISOString()})),false],
+  ['过期',200,()=>deepBody(deepRun({created_at:new Date(Date.now()-27*3600000).toISOString()})),false],
+  ['无时区',200,()=>deepBody(deepRun({created_at:new Date(Date.now()-1000).toISOString().slice(0,-1)})),false],
+  ['无效时间',200,()=>deepBody(deepRun({created_at:'invalid'})),false],
   ['错误workflow',200,()=>deepBody(deepRun({path:'.github/workflows/smoke-e2e-nightly.yml'})),false],
   ['非main',200,()=>deepBody(deepRun({head_branch:'feature/other'})),false],
-  ['未完成',200,()=>deepBody(deepRun({status:'in_progress'})),false],
+  ['两小时内运行中',200,()=>deepBody(deepRun({status:'in_progress',conclusion:null})),true],
+  ['两小时内排队',200,()=>deepBody(deepRun({status:'queued',conclusion:null})),true],
+  ['运行超过两小时',200,()=>deepBody(deepRun({status:'in_progress',conclusion:null,created_at:new Date(Date.now()-3*3600000).toISOString()})),false],
+  ['非定时人工成功不能充当活性',200,()=>deepBody(deepRun({event:'workflow_dispatch'})),false],
   ['失败后旧green',200,()=>({total_count:2,workflow_runs:[deepRun({conclusion:'failure'}),deepRun({id:2,updated_at:new Date().toISOString()})]}),false],
-  ['最近完成失败',200,()=>deepBody(deepRun({conclusion:'failure'})),false],
+  ['最近完成失败由Nightly自身报告',200,()=>deepBody(deepRun({conclusion:'failure'})),true],
   ['合法字段却跳过',200,()=>deepBody(deepRun({conclusion:'skipped'})),false],
-  ...['id','path','head_branch','head_sha','status','conclusion','updated_at','html_url'].map(field=>
+  ...['id','path','head_branch','head_sha','status','conclusion','created_at','event','html_url'].map(field=>
     ['缺'+field,200,()=>{const run=deepRun();delete run[field];return deepBody(run);},false]),
   ...[0,-1,true,'41742520265'].map(id=>['非法runId '+id,200,()=>deepBody(deepRun({id})),false]),
   ['非法SHA',200,()=>deepBody(deepRun({head_sha:'fixture-sha'})),false],
@@ -121,7 +126,7 @@ for(const [name,status,body,ok] of deepCases) test(`哨兵真实Deep回归源 ${
  assert.equal(calls,1);
  assert.equal(result.status===0,ok,result.out+output);
  assert.equal(output.includes('ok=true'),ok,result.out+output);
- assert.equal(readFileSync(request,'utf8'),'https://api.github.com/repos/fixture/repo/actions/workflows/nightly-regression.yml/runs?branch=main&status=completed&per_page=1');
+ assert.equal(readFileSync(request,'utf8'),'https://api.github.com/repos/fixture/repo/actions/workflows/nightly-regression.yml/runs?branch=main&event=schedule&per_page=1');
  assert.ok(!result.out.includes('isolated-deep-token'));
 });
 test('哨兵Deep回归HTTP传输截断不能通过',async t=>{
@@ -144,20 +149,6 @@ test('哨兵 Bark 302 不能声明推送成功', async t => {
   assert.notEqual(result.status, 0, result.out);
   assert.doesNotMatch(result.out, /Bark ok/);
 });
-for (const status of [200, 302, 500]) test(`nightly真实HTTP ${status}绿色JSON证据`, async t => {
-  let calls = 0;
-  const url = await server(t, (_req, res) => {
-    calls++; res.statusCode = status;
-    res.end(JSON.stringify({ total_count: 1, workflow_runs: [{ id: 1, conclusion: 'success', updated_at: new Date(Date.now() - 3600000).toISOString(), head_sha: 'fixture-sha', html_url: 'https://example.invalid/1' }] }));
-  });
-  // 仅改写网络目的地，真实 curl 参数和真实响应状态保留。
-  const f = fixture(t, { curl: 'args=(); for arg in "$@"; do case "$arg" in https://api.github.com/*) arg="$FIXTURE_URL";; esac; args+=("$arg"); done; exec /usr/bin/curl "${args[@]}"' });
-  const result = await run('bash scripts/ci/check-nightly-green.sh', { ...f.env, FIXTURE_URL: url, GITHUB_TOKEN: 'isolated-fixture', GITHUB_REPOSITORY: 'fixture/repo', BYPASS_NIGHTLY_GATE: '' });
-  assert.equal(calls, 1);
-  assert.equal(result.status === 0, status === 200, result.out);
-  if (status !== 200) assert.doesNotMatch(result.out, /Release Gate 通过/);
-});
-
 test('哨兵缺少Bark配置必须明确失败，不能缺key跳过却显示告警成功', async t => {
   const f=fixture(t);
   const result=await run(barkStep.run,{...f.env,BARK_URL:'',BARK_TOKEN:'',HEALTH_OK:'true',KV_OK:'false',KV_AGE:'2000',PROBE_URL:'fixture'});
@@ -238,3 +229,40 @@ for (const input of ['', 'http://fixture.invalid/a?x=1&y=2']) test(`解析URL保
   assert.equal(result.status, 0, result.out);
   assert.equal(readFileSync(f.env.GITHUB_OUTPUT, 'utf8'), `url=${input || 'http://default.invalid'}\n`);
 });
+
+for (const [healthStatus, staleNightly] of [[500, false], [200, true]]) {
+ test(`真实两步probe保留独立证据 health=${healthStatus} nightly超期=${staleNightly}`, async t => {
+  const requests=[];
+  const url=await server(t,(req,res)=>{
+    requests.push(req.url);
+    if(req.url==='/api/brain/health'){
+      res.statusCode=healthStatus;res.end(JSON.stringify({status:'healthy'}));
+    }else{
+      const created_at=new Date(Date.now()-(staleNightly?27:1)*3600000).toISOString();
+      res.end(JSON.stringify(deepBody(deepRun({created_at}))));
+    }
+  });
+  const f=fixture(t,{curl:'args=(); for arg in "$@"; do case "$arg" in https://api.github.com/*) arg="$FIXTURE_URL/deep";; esac; args+=("$arg"); done; exec /usr/bin/curl "${args[@]}"'});
+  const healthOutput=join(f.dir,'health-output'), nightlyOutput=join(f.dir,'nightly-output');
+  writeFileSync(healthOutput,'');writeFileSync(nightlyOutput,'');
+  const health=await run(sentinel.jobs.probe.steps.find(step=>step.id==='health').run,
+    {...f.env,PROBE_URL:url,GITHUB_OUTPUT:healthOutput});
+  const nightly=sentinel.jobs.probe.steps.find(step=>step.id==='kv');
+  // Actions无if的后续step隐含success()；显式always()在前序失败后继续执行。
+  const allowed=nightly.if
+    ? Function('always','success',`return (${nightly.if})`)(()=>true,()=>health.status===0)
+    : health.status===0;
+  const receipt=allowed?await run(nightly.run,{...f.env,FIXTURE_URL:url,GH_TOKEN:'isolated-fixture',GITHUB_REPOSITORY:'fixture/repo',GITHUB_OUTPUT:nightlyOutput}):null;
+  assert.deepEqual(requests,['/api/brain/health','/deep'],'任一探针失败不能阻断另一探针的真实HTTP');
+  assert.equal(health.status===0,healthStatus===200);
+  assert.equal(receipt?.status===0,!staleNightly);
+  const outputs={health_ok:readFileSync(healthOutput,'utf8').includes('ok=true')?'true':'false',
+    kv_ok:readFileSync(nightlyOutput,'utf8').includes('ok=true')?'true':'false'};
+  assert.deepEqual(outputs,{health_ok:healthStatus===200?'true':'false',kv_ok:staleNightly?'false':'true'});
+  const probe={result:health.status!==0||receipt.status!==0?'failure':'success',outputs};
+  assert.equal(probe.result,'failure');
+  assert.equal(condition(issueStep.if,probe),true);
+  assert.equal(condition(barkStep.if,probe),true);
+  assert.equal(condition(closeStep.if,probe),false);
+ });
+}

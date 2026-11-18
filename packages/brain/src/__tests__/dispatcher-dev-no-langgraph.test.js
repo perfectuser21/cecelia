@@ -74,9 +74,7 @@ vi.mock('../actions.js', () => ({
 vi.mock('../account-usage.js', () => ({
   proactiveTokenCheck: vi.fn().mockResolvedValue({ ok: true }),
 }));
-vi.mock('../quota-guard.js', () => ({
-  checkQuotaGuard: vi.fn().mockResolvedValue({ allowed: true }),
-}));
+
 vi.mock('../tick-status.js', () => ({
   logTickDecision: vi.fn().mockResolvedValue(undefined),
 }));

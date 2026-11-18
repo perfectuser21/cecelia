@@ -29,10 +29,7 @@ vi.mock('../../token-budget-planner.js', async (importOriginal) => ({
   ...(await importOriginal()),
   calculateBudgetState: async () => ({ state: 'abundant', avg_remaining_pct: 100, pool_c_scale: 1 }),
 }));
-vi.mock('../../quota-guard.js', async (importOriginal) => ({
-  ...(await importOriginal()),
-  checkQuotaGuard: async () => ({ allow: true, priorityFilter: null, bestPct: 0, reason: 'test' }),
-}));
+
 // agent 步（internal handler 桩）走 dispatcher 的 bridge 健康检查：CI 上没有 cecelia-bridge，替身成「可用」。
 // script 步本身不走这道检查（surface=script 豁免），这里只服务 agent 桩。
 vi.mock('../../executor.js', async (importOriginal) => {

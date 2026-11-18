@@ -60,9 +60,7 @@ vi.mock('../tick-stats.js', () => ({
 vi.mock('../account-usage.js', () => ({
   proactiveTokenCheck: vi.fn(async () => {}),
 }));
-vi.mock('../quota-guard.js', () => ({
-  checkQuotaGuard: async () => ({ allow: true, priorityFilter: null, bestPct: 10 }),
-}));
+
 const mockUpdateTask = vi.fn(async () => ({ success: true }));
 vi.mock('../actions.js', () => ({
   updateTask: (...args) => mockUpdateTask(...args),

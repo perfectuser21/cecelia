@@ -74,11 +74,7 @@ vi.mock('../quota-cooling.js', () => ({
 }));
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Mock: quota-guard（通过）
 // ─────────────────────────────────────────────────────────────────────────────
-vi.mock('../quota-guard.js', () => ({
-  checkQuotaGuard: vi.fn().mockResolvedValue({ allow: true, priorityFilter: null, reason: 'quota_ok', bestPct: 0 }),
-}));
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Mock: account-usage

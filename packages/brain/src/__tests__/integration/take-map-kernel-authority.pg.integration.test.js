@@ -77,9 +77,7 @@ vi.mock('../../events/taskEvents.js', () => ({ publishTaskStarted: vi.fn() }));
 vi.mock('../../dispatch-stats.js', () => ({ recordDispatchResult: vi.fn() }));
 vi.mock('../../tick-stats.js', () => ({ incrementActionsToday: vi.fn(async () => {}) }));
 vi.mock('../../account-usage.js', () => ({ proactiveTokenCheck: vi.fn(async () => {}) }));
-vi.mock('../../quota-guard.js', () => ({
-  checkQuotaGuard: vi.fn(async () => ({ allow: true, priorityFilter: null, bestPct: 0 })),
-}));
+
 vi.mock('../../pre-flight-check.js', () => ({
   preFlightCheck: vi.fn(async () => ({ passed: true, issues: [], suggestions: [] })),
   alertOnPreFlightFail: vi.fn(),

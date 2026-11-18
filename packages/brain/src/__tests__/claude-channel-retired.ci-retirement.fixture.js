@@ -165,10 +165,28 @@ const RUNTIME_IDEMPOTENCE_CI_COHORT={...CANDIDATE_BUILDER_CI_COHORT,
  'existing-ops-stage-source.js':'1c62ddc337712382d05d9e97c185651ba50f8a2d88722e085541342f5d6e3e07',
  'existing-ops-stage-modes.js':'76d7d1757cfa7d9c49fc16e1865eb39381e951ef3e041d2885df8b334d49b43b',
  'existing-ops-ci-build-dedup-source.js':'320c809e89c6a530bc5ac6f5ff99dbfc9bdebe602b9fe2051fe765717e5bacf0'};
-const currentMemberCount=Object.keys(RUNTIME_IDEMPOTENCE_CI_COHORT).length;
-export const ciVersionGuardCohorts=()=>[...COHORTS,COMMANDER_CI_COHORT,SKILL_RETIREMENT_CI_COHORT,PLANNER_RETIREMENT_CI_COHORT,COMMANDER_AUDIT_CI_COHORT,SCRIPT_CLEANUP_CI_COHORT,SCRIPT_CLEANUP_PROFILE_COHORT,RESOURCE_RETIREMENT_CI_COHORT,WORKFLOW_REGISTRATION_CI_COHORT,BUSINESS_SMOKE_RETIREMENT_CI_COHORT,FIXED_CHECKS_CI_COHORT,FOUNDATION_RELEASE_CI_COHORT,FOUNDATION_FIXED_CHECKS_CI_COHORT,CLOSEOUT_CI_COHORT,DORMANT_BOUNDARIES_CI_COHORT,CHECKER_REPAIR_CI_COHORT,BUILD_DEDUP_CI_COHORT,PREVIEW_RETIREMENT_CI_COHORT,MAIN_AUTO_DEPLOY_CI_COHORT,BIND_MOUNT_CI_COHORT,CANDIDATE_BUILDER_CI_COHORT,RUNTIME_IDEMPOTENCE_CI_COHORT];
+// 本轮只读新组含实际KR快照caller变更；旧组与旧caller完整身份保留。
+const NIGHTLY_STATUS_CI_COHORT={...RUNTIME_IDEMPOTENCE_CI_COHORT,
+ 'existing-ops-source.js':'14a3fc474d12f5ed4b11146965346b67f48896a3692864747099a14bb96523d6',
+ 'existing-ops-stage-source.js':'b367afd9c48e6cb9367f2891424768acddf5fb8138a62a2dc6b04881eaeeac9e',
+ 'existing-ops-stage-modes.js':'24ba81faf9f071b910d5748bd8356a0bbee083b1ea0ae0d467dcc8532c75cdb7',
+ 'existing-ops-ci-build-dedup-source.js':'6959517043a70fde518527a4adf1cda19dc384227adcc455348393bde477ae91',
+ '../../../../scripts/ci/implementation-snapshot.mjs':'ab7c86c889005fa73bef240a2f8f585f290f6dee8c264f59a46539f04cf8096d'};
+const currentMemberCount=Object.keys(NIGHTLY_STATUS_CI_COHORT).length;
+export const ciVersionGuardCohorts=()=>[...COHORTS,COMMANDER_CI_COHORT,SKILL_RETIREMENT_CI_COHORT,PLANNER_RETIREMENT_CI_COHORT,COMMANDER_AUDIT_CI_COHORT,SCRIPT_CLEANUP_CI_COHORT,SCRIPT_CLEANUP_PROFILE_COHORT,RESOURCE_RETIREMENT_CI_COHORT,WORKFLOW_REGISTRATION_CI_COHORT,BUSINESS_SMOKE_RETIREMENT_CI_COHORT,FIXED_CHECKS_CI_COHORT,FOUNDATION_RELEASE_CI_COHORT,FOUNDATION_FIXED_CHECKS_CI_COHORT,CLOSEOUT_CI_COHORT,DORMANT_BOUNDARIES_CI_COHORT,CHECKER_REPAIR_CI_COHORT,BUILD_DEDUP_CI_COHORT,PREVIEW_RETIREMENT_CI_COHORT,MAIN_AUTO_DEPLOY_CI_COHORT,BIND_MOUNT_CI_COHORT,CANDIDATE_BUILDER_CI_COHORT,RUNTIME_IDEMPOTENCE_CI_COHORT,NIGHTLY_STATUS_CI_COHORT];
 export function registerCiRetirementGuardTests({root,base,scan}){
  describe('当前来源完整闭包及执行防复活',()=>{
+  it('Nightly活性与status新完整组保留13d Runtime，四成员混配与执行拒绝',()=>{
+   const helper=path.join(root,'existing-ops-ci-build-dedup-source.js'),current=base();expect(current.get(helper)).toContain('NIGHTLY_STATUS_INPUTS');
+   const previous=new Map(Object.keys(RUNTIME_IDEMPOTENCE_CI_COHORT).map(name=>{const file=path.join(root,name);return [file,execFileSync('git',['--no-replace-objects','show','13d576c6a6223ff305e4734b37d46600e02fe48b:'+path.relative(path.resolve(root,'../../../..'),file)],{cwd:root,encoding:'utf8',maxBuffer:1024*1024})];}));
+   for(const source of [current,previous])expect(scan(source)).toEqual([]);
+   for(const name of ['existing-ops-stage-source.js','existing-ops-stage-modes.js','existing-ops-ci-build-dedup-source.js','../../../../scripts/ci/implementation-snapshot.mjs']){
+    const file=path.join(root,name),mixed=new Map(current);mixed.set(file,previous.get(file));expect(scan(mixed).some(hit=>hit.rule==='E1')).toBe(true);
+    const reverse=new Map(previous);reverse.set(file,current.get(file));expect(scan(reverse).some(hit=>hit.rule==='E1')).toBe(true);
+   }
+   const executed=new Map(current);executed.set(helper,executed.get(helper)+'\neval(NIGHTLY_STATUS_INPUTS);');expect(scan(executed).some(hit=>hit.rule==='E1')).toBe(true);
+  });
+
   it('Runtime幂等完整只读组保留e5旧Builder，混配与执行仍拒绝',()=>{
    const helper=path.join(root,'existing-ops-ci-build-dedup-source.js'),current=base();expect(current.get(helper)).toContain('RUNTIME_IDEMPOTENCE_INPUTS');
    const previous=new Map(Object.keys(CANDIDATE_BUILDER_CI_COHORT).map(name=>{const file=path.join(root,name);return [file,execFileSync('git',['--no-replace-objects','show','e5e8202bf0ee76d7826fdec5474dfe506a86f537:'+path.relative(path.resolve(root,'../../../..'),file)],{cwd:root,encoding:'utf8',maxBuffer:1024*1024})];}));

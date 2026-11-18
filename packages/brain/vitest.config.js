@@ -4,6 +4,15 @@ import { defineConfig } from 'vitest/config';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+// 决策 6f1c9431：独立后台思考图生产已关闭，源码及专项用例保留，默认 CI 不启用。
+export const INACTIVE_CONSCIOUSNESS_TESTS = [
+  'src/__tests__/consciousness-graph.test.js',
+  'src/__tests__/consciousness-loop.test.js',
+  'src/workflows/__tests__/consciousness.graph.test.js',
+  'src/__tests__/integration/consciousness-graph.integration.test.js',
+  'src/__tests__/integration/consciousness-checkpoint.pg.integration.test.js',
+];
+
 export const POSTGRES_INTEGRATION_TESTS = [
   'src/durable/__tests__/commander-action-store.pg.integration.test.js',
   'src/orchestrator/__tests__/commander-foundation-audit.pg.integration.test.js',
@@ -59,7 +68,6 @@ export const POSTGRES_INTEGRATION_TESTS = [
   'src/linux-pool/__tests__/integration/active-grants.test.js',
   'src/linux-pool/__tests__/integration/onboarding-revocation.test.js',
 
-  'src/__tests__/integration/company-kr-registration.pg.integration.test.js',
   'src/app-server/__tests__/integration/store.test.js',
   'src/__tests__/integration/execution-directory.pg.integration.test.js',
   'src/__tests__/integration/execution-baseline.pg.integration.test.js',
@@ -178,6 +186,7 @@ export default defineConfig({
     // 以下测试需要真实 PostgreSQL 连接或有其他 CI 环境 pre-existing 失败
     // brain-unit 跑纯单元测试（有 vi.mock('db.js') 的），集成测试走 brain-integration
     exclude: [
+      ...INACTIVE_CONSCIOUSNESS_TESTS,
       // 旧准入兼容合同只由显式legacy CLI执行。
       '../../scripts/ci/legacy/**',
       // 根tests中的五个symlink只保兼容调用；自动收集使用src/__tests__唯一真实owner。

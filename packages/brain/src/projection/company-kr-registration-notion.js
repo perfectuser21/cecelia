@@ -1,7 +1,7 @@
 /** 公司KR登记的定向镜子：复用现有库，仅投影已登记的这一条工作流。 */
 import { notionReq as defaultNotionReq } from '../recurring-notion-sync.js';
 import { configuredCompanyToken } from './company-kr-notion.js';
-import { companyKrSpec } from '../lib/company-kr-registration.js';
+import { companyKrSpec } from '../lib/company-kr-source.js';
 import { propsDigest } from '../lib/notion-projection-engine.js';
 
 /** 流程页（带正文说明）与运行明细页；Step/Activity 归六层目录投影。 */

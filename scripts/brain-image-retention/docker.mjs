@@ -31,6 +31,22 @@ export function createDockerAdapter({ root, dataPath = '/run/cecelia-docker-data
           ? x.Config.Env.find(value => value.startsWith('GIT_SHA=')).slice(8) : null })),
       containers: containers.map(x => ({ id: x.Id, image_id: x.Image, name: x.Name, running: x.State?.Running })) };
   }
+  // 状态读取只证明固定生产实例及收据镜像；janitor仍使用完整库存snapshot。
+  async function deploymentSnapshot(imageId, lease) {
+    if (!IMAGE.test(imageId)) throw fail('INVALID_IMAGE');
+    await identity(lease);
+    const values = JSON.parse(await run(['inspect', 'cecelia-node-brain', imageId], lease));
+    if (!Array.isArray(values) || values.length !== 2) throw fail('DOCKER_SNAPSHOT_INCOMPLETE');
+    const [container, image] = values;
+    if (!/^[a-f0-9]{64}$/.test(container?.Id ?? '') || container.Name !== '/cecelia-node-brain'
+        || container.Image !== imageId || container.State?.Running !== true || image?.Id !== imageId)
+      throw fail('DEPLOY_CURRENT_MISMATCH');
+    const env = image.Config?.Env;
+    if (!Array.isArray(env) || env.some(value => typeof value !== 'string') || env.filter(value => value.startsWith('GIT_SHA=')).length !== 1)
+      throw fail('CURRENT_IMAGE_UNKNOWN');
+    return { images: [{ id: image.Id, tags: image.RepoTags, git_sha: env.find(value => value.startsWith('GIT_SHA=')).slice(8) }],
+      containers: [{ id: container.Id, name: container.Name, image_id: container.Image, running: container.State.Running }] };
+  }
   async function containerHealth(id, lease) {
     if (!/^[a-f0-9]{64}$/.test(id)) throw fail('INVALID_CONTAINER_ID');
     const output = await run(['exec', id, 'curl', '-q', '-fsm', '10', '--max-filesize', '262144', '-w', '\n%{http_code}', 'http://127.0.0.1:5221/api/brain/health'], lease);
@@ -57,5 +73,5 @@ export function createDockerAdapter({ root, dataPath = '/run/cecelia-docker-data
     await identity(lease);
     return run(['image', 'rm', id], lease);
   }
-  return Object.freeze({ snapshot, remove, absent, containerHealth });
+  return Object.freeze({ snapshot, deploymentSnapshot, remove, absent, containerHealth });
 }
