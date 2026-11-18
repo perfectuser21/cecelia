@@ -41,7 +41,7 @@ export function reviewedADataRanges(src,{file,sources,root,parse,shape,rows,deco
 
 export function registerReviewedAGuardTests({ BRAIN_ROOT, findClaudeInvocations }) {
  const root=path.join(BRAIN_ROOT,'src/lib');
- const names=['source','workspace-source','build-source','build-envelopes','runtime-source','us-compose-source','stage-source','stage-envelopes','stage-modes','ci-build-dedup-source','provenance-envelope','provenance-core-envelope','provenance-entry-envelopes','provenance-local-envelopes','native-evidence-source','native-evidence-envelopes'];
+ const names=['source','workspace-source','build-source','build-envelopes','runtime-source','stage-source','stage-envelopes','stage-modes','ci-build-dedup-source','provenance-envelope','provenance-core-envelope','provenance-entry-envelopes','provenance-local-envelopes','native-evidence-source','native-evidence-envelopes'];
  const files=names.map(n=>path.join(root,`existing-ops-${n}.js`));
  const data=path.join(root,'existing-ops-build-envelopes.js');
  const snapshot=path.join(BRAIN_ROOT,'../../scripts/ci/implementation-snapshot.mjs');

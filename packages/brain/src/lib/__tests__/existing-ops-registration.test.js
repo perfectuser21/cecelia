@@ -1,5 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { registerExistingOpsSources, validateExistingOpsRegistry } from '../existing-ops-registration.js';
+import * as collector from '../existing-ops-source.js';
+import { stepSha256 } from '../../../scripts/sync-steps-from-workspace.mjs';
 import { EXISTING_OPS_IDENTITIES } from '../existing-ops-source.js';
 
 const root = 'aaaaaaaa-f0f0-4000-8000-000000000001';
@@ -44,4 +46,33 @@ describe('existing factory registration admission before source or database acce
       expect(() => validateExistingOpsRegistry(changed)).toThrow('OPS_REGISTRY_IDENTITY_INVALID');
     }
   });
+});
+
+it('F2退役不阻F3追加来源历史，且从不写F2定义',async()=>{
+ const [f2,f3]=EXISTING_OPS_IDENTITIES;
+ const registry={workflows:EXISTING_OPS_IDENTITIES.map(i=>({id:i.workflow_id,key:i.workflow_key,capability_id:i.capability_id})),
+ references:EXISTING_OPS_IDENTITIES.flatMap(i=>[i.reference_id,...i.unverified_reference_ids].map((id,n)=>({id,workflow_id:i.workflow_id,activity_id:n? id:i.activity_id,slot_key:`step_${n+1}`,sequence_no:n+1,active:true}))),
+ activities:[],steps:[],capabilities:EXISTING_OPS_IDENTITIES.map(i=>({id:i.capability_id,parent_journey_id:root})),value_streams:[{id:root}]};
+ const rows=[];
+ const db={release(){},async query(sql,args){
+  if(sql.startsWith('INSERT INTO ')){rows.push({id:`definition-${rows.length}`,payload:args[1],owner:args[0]});return {rows:[]};}
+  if(sql.startsWith('SELECT * FROM activity_definition_versions')||sql.startsWith('SELECT * FROM workflow_definition_versions'))return {rows:[rows.find(r=>r.owner===args[0])]};
+  for(const [table,key]of [['workflow_activity_refs','references'],['workflows','workflows'],['activities','activities'],['steps','steps'],['capabilities','capabilities'],['value_streams','value_streams']])if(sql.startsWith(`SELECT * FROM ${table} `))return {rows:registry[key]};
+  return {rows:[]};
+ }};
+ const spy=vi.spyOn(collector,'buildExistingOpsSources').mockResolvedValue({consumers:[{...f2,status:'unknown',gaps:[{code:'consumer_retired'}],bindings:[],input_relations:[]},{...f3,status:'verified',gaps:[],bindings:[{path:'f3-source'}],input_relations:[]}],workflows:[{workflow_id:f3.workflow_id,coverage:{}}]});
+ try{
+  const result=await registerExistingOpsSources({connect:async()=>db},{...options(),expectedRegistrySha256:stepSha256(registry)});
+  expect(result.definitions.workflows.map(w=>w.owner)).toEqual([f3.workflow_id]);
+  expect(rows.map(r=>r.owner)).toEqual([f3.activity_id,f3.workflow_id]);
+  expect(result.executable).toBe(false);
+ }finally{spy.mockRestore();}
+});
+
+it('F3缺失、重复、unknown或有缺口都不能因F2退役获准登记',async()=>{
+ const f3={...EXISTING_OPS_IDENTITIES[1],status:'verified',gaps:[],bindings:[{path:'f3-source'}],input_relations:[]};
+ for(const consumers of [[],[f3,f3],[{...f3,status:'unknown'}],[{...f3,gaps:[{code:'source_unavailable'}]}]]){
+  const spy=vi.spyOn(collector,'buildExistingOpsSources').mockResolvedValue({consumers});
+  try{await expect(registerExistingOpsSources({connect(){throw Error('UNEXPECTED_APPEND');}},options())).rejects.toMatchObject({code:'OPS_SOURCE_UNKNOWN'});}finally{spy.mockRestore();}
+ }
 });

@@ -201,7 +201,7 @@ it('当前聚合真实读源：退休F2及未审现役F3失败关闭，不借历
  const proof=await buildExistingOpsSources({scope:'cecelia-factory',repo:'perfectuser21/cecelia',paths:inputs.paths,revision:inputs.revision,readSource:inputs.read});
  const [f2,f3]=proof.consumers;
  expect(f2.status).toBe('unknown');expect(f2.bindings).toEqual([]);expect(f2.input_relations).toEqual([]);
- expect(f2.gaps).toContainEqual(expect.objectContaining({code:'deployment_entry_unproven'}));
+ expect(f2.gaps).toEqual([{code:'consumer_retired'}]);
  expect(f3.status).toBe('unknown');expect(f3.bindings).toEqual([]);expect(f3.input_relations).toEqual([]);
  expect(f3.gaps).toEqual(['native_build_execution_unproven','native_publish_execution_unproven','native_stage_execution_unproven'].map(code=>({code})));
  const relations=[];await collectBasicCiSources({...inputs,ci:await inputs.read('.github/workflows/ci.yml'),relations,parse:ast});await collectDeepCiSources({...inputs,relations});

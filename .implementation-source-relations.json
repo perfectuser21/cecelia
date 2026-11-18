@@ -133,11 +133,6 @@
       "role": "documentation"
     },
     {
-      "owner_path": "packages/brain/src/lib/existing-ops-runtime-source.js",
-      "path": "packages/brain/src/lib/__tests__/existing-ops-us-compose-source.test.js",
-      "role": "verification"
-    },
-    {
       "owner_path": "packages/brain/scripts/coding-workflow/runner/run-once.mjs",
       "path": "packages/brain/scripts/smoke/coding-workflow-runner-smoke.sh",
       "role": "verification"
@@ -790,11 +785,6 @@
     {
       "owner_path": "scripts/brain-deploy.sh",
       "path": "packages/brain/src/__tests__/brain-staging-admission.test.js",
-      "role": "verification"
-    },
-    {
-      "owner_path": "scripts/wait-for-staging.sh",
-      "path": "packages/brain/src/__tests__/staging-request-receipt.test.js",
       "role": "verification"
     },
     {

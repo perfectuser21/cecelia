@@ -15,6 +15,9 @@ const mockPool = vi.hoisted(() => ({
   connect: vi.fn(() => mockClient),
 }));
 vi.mock('../../db.js', () => ({ default: mockPool }));
+vi.mock('../../lib/callback-cooldown.js', async original => ({
+  ...await original(), waitForCallbackCooldown: vi.fn(async () => {}),
+}));
 
 // Mock executor
 vi.mock('../../executor.js', () => ({
@@ -148,15 +151,6 @@ beforeEach(() => {
   boundary.forbidden.length = 0;
   vi.stubEnv('CECELIA_INTERNAL_TOKEN', 'owned-callback-token');
   vi.stubGlobal('fetch', () => boundary.deny('fetch'));
-  // 此组只验事务；仅将当前callback的5s冷却计时改为微任务，不启动真实scheduler。
-  const realTimeout = globalThis.setTimeout;
-  vi.spyOn(globalThis, 'setTimeout').mockImplementation((fn, ms, ...args) => {
-    if (ms === 5000 && new Error().stack.includes('/routes/execution.js')) {
-      queueMicrotask(() => fn(...args));
-      return undefined;
-    }
-    return realTimeout(fn, ms, ...args);
-  });
 });
 afterEach(() => {
   vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.restoreAllMocks();

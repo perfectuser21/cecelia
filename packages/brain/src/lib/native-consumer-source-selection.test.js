@@ -96,3 +96,25 @@ it('单个请求15秒预算仍生效，不因整体预算扩大而放任挂起�
  clock();const options=source(16000);
  expect(await prepareNativeConsumerSelection(pool,q,options)).toBeNull();expect(options.state.calls).toBe(1);
 },60000);
+
+it('当前F3历史歧义能在F2退役时取得固定源码证明',async()=>{
+ const collector=await import('./existing-ops-source.js');
+ const current=await import('./native-consumer-source-selection.js');
+ const runtime=(await import('./native-consumer-runtime.js')).readNativeConsumerRuntime();
+ const {readFileSync}=await import('node:fs');
+ const texts=new Map(runtime.files.map(f=>[f.path,readFileSync(join(root,f.path),'utf8')]));
+ const entries=runtime.files.map(f=>({path:f.path,type:'blob',mode:'100644',sha:createHash('sha1').update(`blob ${Buffer.byteLength(texts.get(f.path))}\0`).update(texts.get(f.path)).digest('hex')}));
+ const [f2,f3]=collector.EXISTING_OPS_IDENTITIES;
+ const spy=vi.spyOn(collector,'buildExistingOpsSources').mockResolvedValue({consumers:[{...f2,status:'unknown',gaps:[{code:'consumer_retired'}],bindings:[],input_relations:[]},{...f3,status:'verified',gaps:[],bindings:[{path:'f3-source'}],input_relations:[]}]});
+ const fetchFn=async url=>({ok:true,json:async()=>url.includes('/git/commits/')?{sha:q.revision,tree:{sha:tree}}:{sha:tree,truncated:false,tree:entries},text:async()=>texts.get(decodeURIComponent(url.split('/contents/')[1].split('?')[0]))});
+ try{
+  const proof=await current.prepareNativeConsumerSelection(pool,q,{fetchFn,resolveToken:async()=>'isolated-fixture-token'});
+  expect(proof?.proof.consumers.find(c=>c.workflow_id===f3.workflow_id).status).toBe('verified');
+  expect(proof.proof.consumers.find(c=>c.workflow_id===f2.workflow_id).bindings).toEqual([]);
+  await expect(current.selectNativeConsumerDefinition({query(){throw Error('F2_DATABASE_ACCESS');}},q,[{workflow_id:f2.workflow_id,payload:{definition_scope:'consumer_evidence',source_scope:q.scope}},{workflow_id:f2.workflow_id,payload:{definition_scope:'consumer_evidence',source_scope:q.scope}}],proof)).resolves.toBeNull();
+  for(const consumers of [[],[{...f3,status:'unknown',gaps:[]}],[{...f3,status:'verified',gaps:[{code:'source_unavailable'}]}],[{...f3,status:'verified',gaps:[]},{...f3,status:'verified',gaps:[]}]]){
+   spy.mockResolvedValue({consumers});
+   expect(await current.prepareNativeConsumerSelection(pool,q,{fetchFn,resolveToken:async()=>'isolated-fixture-token'})).toBeNull();
+  }
+ }finally{spy.mockRestore();}
+});

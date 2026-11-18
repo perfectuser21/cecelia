@@ -63,7 +63,8 @@ export async function registerExistingOpsSources(pool, options) {
   };
   await checkSource();
   const proof = await buildExistingOpsSources(options);
-  if (proof.consumers.some(c => c.status !== 'verified')) throw fail('OPS_SOURCE_UNKNOWN');
+  const active = proof.consumers.filter(c => c.workflow_id === EXISTING_OPS_IDENTITIES[1].workflow_id && c.workflow_key === 'factory_f3_ops');
+  if (active.length !== 1 || active[0].status !== 'verified' || active[0].gaps.length) throw fail('OPS_SOURCE_UNKNOWN');
   return withConsumerEvidenceTransaction(pool,'existing-factory-consumer-evidence',async db=>{
     await db.query('SELECT id FROM workflows WHERE id=ANY($1::uuid[]) ORDER BY id FOR UPDATE', [ids]);
     await db.query('SELECT id FROM workflow_activity_refs WHERE workflow_id=ANY($1::uuid[]) ORDER BY id FOR UPDATE', [ids]);
@@ -75,8 +76,8 @@ export async function registerExistingOpsSources(pool, options) {
     if (before.registry_sha256 !== options.expectedRegistrySha256) throw fail('OPS_REGISTRY_CONFLICT');
     validateExistingOpsRegistry(before);
     const definitions = { workflows: [], activities: [] };
-    for (const consumer of proof.consumers) {
-      const source = { repo: options.repo, commit: options.revision, path: consumer.workflow_key === 'factory_f2_ops' ? '.github/workflows/brain-ci-deploy.yml' : '.github/workflows/nightly-regression.yml' };
+    for (const consumer of active) {
+      const source = { repo: options.repo, commit: options.revision, path: '.github/workflows/nightly-regression.yml' };
       const contract = { key: consumer.workflow_key, definition_scope: 'consumer_evidence', executable: false, source_basis: 'fixed_git_tree' };
       let activityPayload = {
         activity_id: consumer.activity_id, definition_key: `${consumer.workflow_key}.${consumer.slot_key}`, source_scope: EXISTING_OPS_SCOPE,
