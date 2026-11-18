@@ -104,15 +104,10 @@ describe('/api/brain/health uptime_seconds 字段', () => {
       error: null,
     });
     __poolMock.query.mockReset();
-    __poolMock.query.mockImplementation((sql) => {
-      // 注：harness_planner 已退役（PR retire-harness-planner），active_pipelines 改用 harness_initiative
-      if (/harness_initiative/.test(sql)) {
-        return Promise.resolve({ rows: [{ cnt: 0 }] });
-      }
-      if (/harness_evaluate/.test(sql)) {
-        return Promise.resolve({ rows: [{ passed: 0, failed: 0, last_run_at: null }] });
-      }
-      return Promise.resolve({ rows: [] });
+    __poolMock.query.mockImplementation(async (sql) => {
+      if (sql.includes('AS cnt')) return { rows: [{ cnt: 0 }] };
+      if (sql.includes('AS passed')) return { rows: [{ passed: 0, failed: 0, last_run_at: null }] };
+      throw new Error('未覆盖健康接口查询：' + sql);
     });
   });
 

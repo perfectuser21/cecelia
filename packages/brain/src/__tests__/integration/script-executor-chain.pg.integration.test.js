@@ -1,15 +1,14 @@
 // 此执行器测试注入模拟传输；真实隔离入口由 runtime-isolation.test.js 验证。
-vi.mock('../../runtime-safety.js', () => ({ assertExternalExecutionAllowed: () => {} }));
+vi.mock('../../runtime-safety.js', async (importOriginal) => ({ ...await importOriginal(), assertExternalExecutionAllowed: () => {} }));
 /**
  * executor=script 端到端 —— 真 PostgreSQL + 真 dispatcher/executor + 真远端 runner
  * （链 bf5088a3 棒3 PR B，任务 5cdbd52a）。
  *
  * 传输替身＋账号配额/七日预算与桥健康外围隔离；dispatcher、allocator、PG和runner真跑。假传输把「ssh <target> <远端命令>」改成本机 `sh -c <远端命令>`（HOME 指向临时目录），
  * 所以远端 runner 脚本、.pid/.exit 三件套、超时杀进程组都是真的在跑，只是没有网络。
- * agent 步 = 既有 internal handler 执行路径的桩（不调模型）。
  *
  * 断言：
- *   ① script → agent → script 三步链由 dispatcher 自动串完，hard 依赖门控生效（前一步没 completed 后一步不派）；
+ *   ① 脚本 依赖链由 dispatcher 自动串完，hard 依赖门控生效（前一步没 completed 后一步不派）；
  *      tasks 每步一行、task_runs 每步一行，stdout 经收割落 tasks.result.script。
  *   ② 失败：按 retry-policy 重排一次，再失败即 failed，带 exit code / 截断 stderr / attempts 记录。
  *   ③ 违规 payload（us-vps）绕过建单入口直插库也不会被派发，终态 failed。
@@ -36,10 +35,16 @@ vi.mock('../../quota-guard.js', async (importOriginal) => ({
 }));
 // agent 步（internal handler 桩）走 dispatcher 的 bridge 健康检查：CI 上没有 cecelia-bridge，替身成「可用」。
 // script 步本身不走这道检查（surface=script 豁免），这里只服务 agent 桩。
-vi.mock('../../executor.js', async (importOriginal) => ({
-  ...(await importOriginal()),
-  checkCeceliaRunAvailable: async () => ({ available: true }),
-}));
+vi.mock('../../executor.js', async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    checkCeceliaRunAvailable: async () => ({ available: true }),
+    triggerCeceliaRun: task => task.task_type === 'research'
+      ? Promise.resolve({ success: true, runId: 'research-' + task.id })
+      : actual.triggerCeceliaRun(task),
+  };
+});
 vi.mock('../../account-usage.js', async (importOriginal) => ({
   ...(await importOriginal()),
   proactiveTokenCheck: async () => {},
@@ -49,8 +54,6 @@ let db;
 let home;
 let dispatcher;
 let scriptExec;
-let router;
-let handlerBackup;
 const remoteCalls = [];
 
 const fakeTransport = () => ({
@@ -75,14 +78,7 @@ beforeAll(async () => {
   await seedExecutionDirectoryPgFixture(db.pool);
   dispatcher = await import('../../dispatcher.js');
   scriptExec = await import('../../script-executor.js');
-  router = await import('../../task-router.js');
   scriptExec._setScriptTransport(fakeTransport());
-  // agent 步桩：既有 internal handler 路径（executor 0.6），handler 自己经 updateTaskResult→finalizeTask 落 completed。
-  handlerBackup = router.INTERNAL_TASK_HANDLERS.harness_intervention;
-  router.INTERNAL_TASK_HANDLERS.harness_intervention = async (task, deps) => {
-    await deps.updateTaskResult(task.id, { agent_step: 'stub-done' });
-    return { action: 'stub' };
-  };
 }, 240_000);
 
 // 预算闸读真实账号缓存；独立测试库没有 OAuth 凭据，显式种健康缓存而非借用运行机配额。
@@ -98,7 +94,6 @@ beforeEach(async () => {
 });
 
 afterAll(async () => {
-  if (router && handlerBackup) router.INTERNAL_TASK_HANDLERS.harness_intervention = handlerBackup;
   scriptExec?._resetScriptTransport?.();
   // 被测模块的默认池（db.js）也连着临时库：先关它，否则 DROP 时连接被强杀，pg 池抛 57P01 未处理错误。
   try { await (await import('../../db.js')).default.end(); } catch { /* 已关 */ }
@@ -139,10 +134,10 @@ async function tickUntil(predicate, max = 40) {
   throw new Error('tickUntil 超出上限');
 }
 
-describe.sequential('script → agent → script 三步链', () => {
+describe.sequential('script → research → script 三步链', () => {
   it('由 dispatcher 自动串完；hard 依赖门控生效；tasks 与 task_runs 每步一行', async () => {
     const t1 = await insertTask({ taskType: 'script_run', title: '链-脚本1', payload: scriptPayload(`printf 'step1' > "$HOME/marker.txt"; echo done-1`) });
-    const t2 = await insertTask({ taskType: 'harness_intervention', title: '链-agent', description: 'agent 步桩：走既有 internal handler 执行路径', payload: { action: 'spike' } });
+    const t2 = await insertTask({ taskType: 'research', title: '链-研究', description: '读取第一步产生的标记并确认脚本可以继续。', payload: {} });
     const t3 = await insertTask({ taskType: 'script_run', title: '链-脚本3', payload: scriptPayload(`cat "$HOME/marker.txt"; echo done-3`, { env: { SCRIPT_TOKEN: 'TOPSECRETVALUE' } }) });
     await dep(t2, t1);
     await dep(t3, t2);
@@ -151,8 +146,16 @@ describe.sequential('script → agent → script 三步链', () => {
     await tickUntil(async () => {
       const rows = await Promise.all([t1, t2, t3].map(statusOf));
       snapshots.push(rows.map((r) => r.status));
-      return rows.every((r) => r.status === 'completed');
+      return rows[1].status === 'in_progress';
     });
+
+    expect(snapshots.at(-1)).toEqual(['completed', 'in_progress', 'queued']);
+    const { finishRun } = await import('../../lib/task-run.js');
+    const { finalizeTask } = await import('../../lib/task-terminal.js');
+    const agentResult = { findings: 'fixture complete' };
+    expect((await finishRun({ runId: 'research-' + t2, status: 'completed', result: agentResult }, { pool: db.pool })).updated).toBe(true);
+    await finalizeTask(db.pool, t2, 'completed', { mergeResult: agentResult });
+    await tickUntil(async () => (await statusOf(t3)).status === 'completed');
 
     // 门控：任一快照里，前一步没 completed，后一步必须还是 queued
     for (const [s1, s2, s3] of snapshots) {
@@ -170,8 +173,7 @@ describe.sequential('script → agent → script 三步链', () => {
     expect(r1.result.script.stdout).toContain('done-1');
     expect(r3.result.script.stdout).toContain('step1');
     expect(r3.result.script.stdout).toContain('done-3');
-    // agent 步走的是既有 internal 路径
-    expect(r2.result).toMatchObject({ agent_step: 'stub-done' });
+    expect(r2.result).toMatchObject(agentResult);
 
     // task_runs：每步恰好一行
     const [runs1, runs2, runs3] = await Promise.all([t1, t2, t3].map(runsOf));
@@ -186,7 +188,7 @@ describe.sequential('script → agent → script 三步链', () => {
       expect(run.ended_at).not.toBeNull();
     }
     expect(runs1[0].run_id).toBe(`script-${t1}-a1`);
-    expect(runs2[0].status).toBe('success');
+    expect(runs2[0]).toMatchObject({ status: 'success', run_id: 'research-' + t2, result: agentResult });
 
     // 凭据不外泄：env 值不在 tasks.result / task_runs / task_events / ssh 命令行里，只有键名
     const leak = JSON.stringify([
