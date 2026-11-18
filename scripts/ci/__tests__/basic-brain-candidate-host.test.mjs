@@ -17,7 +17,7 @@ function cleanupFixture(t, overrides = {}) {
 import fs from 'node:fs';
 const args = process.argv.slice(2);
 fs.appendFileSync(process.env.DOCKER_LOG, JSON.stringify(args) + '\\n');
-const command = args[0] === '--context' ? args.slice(2) : args;
+const command = ['--context','--host'].includes(args[0]) ? args.slice(2) : args;
 if (command[0] === 'context') { console.log('ssh://administrator@mac-studio'); process.exit(0); }
 if (process.env.DISCONNECTED === '1') { console.error('Cannot connect to the Docker daemon'); process.exit(1); }
 if (command[0] === 'ps') console.log('cecelia-admission-brain');
@@ -51,7 +51,7 @@ import path from 'node:path';
 const original = process.argv.slice(2), e = process.env, fault = e.FAULT || '';
 fs.appendFileSync(e.DOCKER_LOG, JSON.stringify(original) + '\n');
 let a = original, host = 'local';
-if (a[0] === '--context') { host = a[1]; a = a.slice(2); }
+if (['--context','--host'].includes(a[0])) { host = a[0] === '--host' ? 'mac-studio' : a[1]; a = a.slice(2); }
 const fail = message => { console.error(message); process.exit(42); };
 if (a[0] === 'context') {
   if (fault === 'context-missing') fail('context not found');
@@ -279,4 +279,33 @@ test('候选 context 仅为调用方 shell 变量时，仍显式传入验证子�
   const result = f.run('set -euo pipefail; export -n BRAIN_CANDIDATE_DOCKER_CONTEXT; SCRIPT_DIR="$PWD/scripts"; ROOT_DIR="$PWD"; source scripts/lib/brain-staging.sh; stage_candidate "$EXPECTED_SHA" "$IMAGE" 1.0.0');
   assert.equal(result.status, 0, result.stderr + result.stdout);
   assert.equal(f.receipt().status, 'success');
+});
+
+
+test('容器内候选可使用固定SSH端点，不要求宿主Docker context文件', t => {
+  const host='ssh://administrator@100.71.151.105';
+  const f=cleanupFixture(t,{BRAIN_CANDIDATE_DOCKER_CONTEXT:'',BRAIN_CANDIDATE_DOCKER_HOST:host});
+  const result=f.run('stage_remove_container cecelia-admission-brain');
+  assert.equal(result.status,0,result.stderr);
+  assert.deepEqual(f.commands().filter(args=>args.includes('stop')),[['--host',host,'stop','cecelia-admission-brain']]);
+});
+test('候选端点禁止TCP与选项注入，失败前不得调用Docker', t => {
+  for(const host of ['tcp://public.invalid:2375','--host=evil','ssh://host\n--config=/tmp/evil']) {
+    const f=cleanupFixture(t,{BRAIN_CANDIDATE_DOCKER_CONTEXT:'',BRAIN_CANDIDATE_DOCKER_HOST:host});
+    assert.notEqual(f.run('stage_remove_container cecelia-admission-brain').status,0);
+  }
+});
+
+
+test('自动发布SSH端点贯穿真实构建、镜像导入与隔离数据库验收',t=>{
+  const f=fixture(t);
+  f.env.BRAIN_CANDIDATE_DOCKER_CONTEXT='';
+  f.env.BRAIN_CANDIDATE_DOCKER_HOST='ssh://administrator@100.71.151.105';
+  const result=f.run('set -euo pipefail; export BRAIN_CANDIDATE_DOCKER_HOST; bash scripts/brain-build.sh; SCRIPT_DIR="$PWD/scripts"; ROOT_DIR="$PWD"; source scripts/lib/brain-staging.sh; brain_release_lock; stage_candidate "$EXPECTED_SHA" "$IMAGE" 1.0.0');
+  assert.equal(result.status,0,result.stdout+result.stderr);
+  assert.equal(f.receipt().isolated,true);
+  const commands=f.commands();
+  assert.ok(commands.some(args=>args[0]==='--host'&&args.includes('build')));
+  assert.ok(commands.some(args=>args[0]==='--host'&&args.includes('pg_restore')));
+  assert.ok(!commands.some(args=>args[0]!=='--host'&&args.includes('pg_restore')));
 });

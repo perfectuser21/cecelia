@@ -73,6 +73,25 @@ function sha256(path) {
 }
 
 describe('deploy-root-guard', () => {
+  it('main前进后仍把发布根固定到已通过CI的完整SHA', () => {
+    const passed = sh(`git -C "${clone}" rev-parse HEAD`).trim();
+    appendFileSync(join(clone,'tracked.txt'),'untested next main\n');
+    sh(`git -C "${clone}" add tracked.txt && git -C "${clone}" ${GIT_ID} commit -q -m next && git -C "${clone}" push -q origin main`);
+    const r=runDeploy({CECELIA_DEPLOY_AUTORESET:'1',EXPECTED_SHA:passed});
+    expect(r.status,r.stdout+r.stderr).toBe(0);
+    expect(sh(`git -C "${clone}" rev-parse HEAD`).trim()).toBe(passed);
+    expect(readFileSync(join(clone,'tracked.txt'),'utf8')).toBe('v1\n');
+  });
+  it('非main历史的SHA不得在生产部署根执行', () => {
+    sh(`git -C "${clone}" checkout -q -b cp-unmerged`);
+    appendFileSync(join(clone,'tracked.txt'),'not merged\n');
+    sh(`git -C "${clone}" add tracked.txt && git -C "${clone}" ${GIT_ID} commit -q -m unmerged`);
+    const sha=sh(`git -C "${clone}" rev-parse HEAD`).trim();
+    const r=runDeploy({CECELIA_DEPLOY_AUTORESET:'1',EXPECTED_SHA:sha});
+    expect(r.status).not.toBe(0);
+    expect(r.stdout+r.stderr).toContain('发布SHA');
+  });
+
   it('部署根不在 main 分支 → 硬红 exit≠0', () => {
     sh(`git -C "${clone}" checkout -q -b cp-somework`);
     const r = runDeploy();

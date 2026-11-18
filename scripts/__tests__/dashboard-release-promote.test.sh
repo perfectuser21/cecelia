@@ -28,7 +28,7 @@ stage() {  # <root> <content>
 }
 run() {  # <root> args...
     local R="$1"; shift
-    CECELIA_DEPLOY_ROOT="$R" CECELIA_SKIP_BRAIN_PROMOTE=1 CECELIA_SKIP_FRONTEND_RECREATE=1 CECELIA_SKIP_HK=1 CECELIA_SKIP_FINGERPRINT=1 \
+    CECELIA_DEPLOY_ROOT="$R" CECELIA_SKIP_BRAIN_PROMOTE=1 CECELIA_SKIP_FRONTEND_RECREATE=1 CECELIA_SKIP_FINGERPRINT=1 \
         bash "$PROMOTE" "$@" >/dev/null 2>&1
 }
 
@@ -80,7 +80,7 @@ printf '%s\n' '#!/bin/sh' 'printf "called\\n" > "$BRAIN_DEPLOY_LOG"' > "$R/scrip
 chmod +x "$R/scripts/brain-deploy.sh"
 run "$R" --release-only
 if PATH="$R/fakebin:$PATH" DOCKER_LOG="$R/docker.log" BRAIN_DEPLOY_LOG="$R/brain-deploy.log" CECELIA_DEPLOY_ROOT="$R" \
-    CECELIA_SKIP_HK=1 CECELIA_SKIP_FINGERPRINT=1 \
+    CECELIA_SKIP_FINGERPRINT=1 \
     bash "$PROMOTE" --deploy prod-cecelia-v1 >/dev/null 2>&1; then
     pass "frontend 重绑命令执行成功"
 else
@@ -113,7 +113,7 @@ printf '%s\n' '#!/bin/sh' \
     'exit 0' > "$R/fakebin/docker"
 chmod +x "$R/fakebin/docker"
 if PATH="$R/fakebin:$PATH" DOCKER_COUNT="$R/docker-count" CECELIA_DEPLOY_ROOT="$R" \
-    CECELIA_SKIP_BRAIN_PROMOTE=1 CECELIA_SKIP_HK=1 CECELIA_SKIP_FINGERPRINT=1 \
+    CECELIA_SKIP_BRAIN_PROMOTE=1 CECELIA_SKIP_FINGERPRINT=1 \
     bash "$PROMOTE" --deploy prod-cecelia-v1 >/dev/null 2>&1; then
     fail "★ frontend 首次重绑失败却退出 0"
 else

@@ -81,10 +81,6 @@ const hostMutationMocks = vi.hoisted(() => ({
     isRecovering: false,
     phase: 0,
   }),
-  runDriftSentinel: vi.fn().mockResolvedValue({
-    skipped: true,
-    reason: 'test_noop',
-  }),
 }));
 
 const externalBoundaryMocks = vi.hoisted(() => ({
@@ -170,10 +166,6 @@ vi.mock('../../alertness/index.js', () => ({
 }));
 vi.mock('../../alertness/healing.js', () => ({
   getRecoveryStatus: hostMutationMocks.getRecoveryStatus,
-}));
-vi.mock('../../cron/drift-sentinel.js', () => ({
-  runDriftSentinel: hostMutationMocks.runDriftSentinel,
-  DRIFT_SENTINEL_INTERVAL_MS: 30 * 60 * 1000,
 }));
 vi.mock('../../slot-allocator.js', () => ({
   calculateSlotBudget: externalBoundaryMocks.calculateSlotBudget,
@@ -367,7 +359,6 @@ describe('consciousness tick runtime (real executeTick + mocked deps)', () => {
     expect(hostMutationMocks.pipelinePatrolTick).toHaveBeenCalledTimes(1);
     expect(hostMutationMocks.evaluateAlertness).toHaveBeenCalledTimes(1);
     expect(hostMutationMocks.getRecoveryStatus).toHaveBeenCalledTimes(1);
-    expect(hostMutationMocks.runDriftSentinel).toHaveBeenCalledTimes(1);
     expect(hostMutationMocks.cleanupMetrics).not.toHaveBeenCalled();
     expect(hostMutationMocks.emergencyCleanup).not.toHaveBeenCalled();
     expect(hostMutationMocks.checkRunaways.mock.results[0].value).toEqual({ actions: [] });
@@ -407,7 +398,6 @@ describe('consciousness tick runtime (real executeTick + mocked deps)', () => {
       { tick: pipelinePatrolTick },
       { evaluateAlertness },
       { getRecoveryStatus },
-      { runDriftSentinel },
     ] = await Promise.all([
       import('../../watchdog.js'),
       import('../../emergency-cleanup.js'),
@@ -416,7 +406,6 @@ describe('consciousness tick runtime (real executeTick + mocked deps)', () => {
       import('../../pipeline-patrol-plugin.js'),
       import('../../alertness/index.js'),
       import('../../alertness/healing.js'),
-      import('../../cron/drift-sentinel.js'),
     ]);
 
     expect(vi.isMockFunction(checkRunaways)).toBe(true);
@@ -426,7 +415,6 @@ describe('consciousness tick runtime (real executeTick + mocked deps)', () => {
     expect(vi.isMockFunction(pipelinePatrolTick)).toBe(true);
     expect(vi.isMockFunction(evaluateAlertness)).toBe(true);
     expect(vi.isMockFunction(getRecoveryStatus)).toBe(true);
-    expect(vi.isMockFunction(runDriftSentinel)).toBe(true);
     expect(checkRunaways()).toEqual({ actions: [] });
     expect(emergencyCleanup('test-task', 'test-slot')).toEqual({
       worktree: false,

@@ -5,7 +5,7 @@
  *
  * 1. GET /api/brain/deploy/status — 初始状态为 idle，字段结构正确
  * 2. POST /api/brain/deploy — 缺少 DEPLOY_TOKEN 或 token 不匹配时拒绝
- * 3. POST /api/brain/deploy/rollback — stable_sha 格式校验（缺失/非法/合法）
+ * 3. POST /api/brain/deploy/rollback — 旧PM2回退退役（无执行副作用）
  * 4. GET /api/brain/deploy/staging/status — staging 状态端点可访问
  *
  * 不进行真实部署（mock child_process.exec/execSync），只测 API 合约和 in-memory 状态机。
@@ -247,67 +247,14 @@ describe('Deploy / Rollback Flow — API 合约测试（in-memory 状态机，�
     });
   });
 
-  // ── Path 3: POST /api/brain/deploy/rollback — stable_sha 校验 ────────────
-
-  describe('POST /api/brain/deploy/rollback — stable_sha 参数校验', () => {
-    beforeAll(() => {
-      process.env.DEPLOY_TOKEN = 'test-rollback-token';
-    });
-
-    afterAll(() => {
-      delete process.env.DEPLOY_TOKEN;
-    });
-
-    it('缺少 stable_sha 返回 400', async () => {
-      const res = await request(app)
-        .post('/api/brain/deploy/rollback')
-        .set('Authorization', 'Bearer test-rollback-token')
-        .send({ reason: 'smoke test failure' })
-        .expect(400);
-
-      expect(res.body.error).toContain('stable_sha');
-    });
-
-    it('stable_sha 格式非法（含非十六进制字符）返回 400', async () => {
-      const res = await request(app)
-        .post('/api/brain/deploy/rollback')
-        .set('Authorization', 'Bearer test-rollback-token')
-        .send({ stable_sha: 'INVALID_SHA_XYZ', reason: 'test' })
-        .expect(400);
-
-      expect(res.body.error).toContain('stable_sha');
-    });
-
-    it('stable_sha 过短（< 7 字符）返回 400', async () => {
-      const res = await request(app)
-        .post('/api/brain/deploy/rollback')
-        .set('Authorization', 'Bearer test-rollback-token')
-        .send({ stable_sha: 'abc12', reason: 'test' })
-        .expect(400);
-
-      expect(res.body.error).toContain('stable_sha');
-    });
-
-    it('合法 stable_sha（7 位十六进制）且认证通过时返回 202', async () => {
-      const res = await request(app)
-        .post('/api/brain/deploy/rollback')
-        .set('Authorization', 'Bearer test-rollback-token')
-        .send({ stable_sha: 'dc4f493', reason: 'integration test rollback' })
-        .expect(202);
-
-      expect(res.body.status).toBe('accepted');
-      expect(res.body.message).toContain('dc4f493');
-    });
-
-    it('合法 stable_sha（40 位）且认证通过时返回 202', async () => {
-      const res = await request(app)
-        .post('/api/brain/deploy/rollback')
-        .set('Authorization', 'Bearer test-rollback-token')
-        .send({ stable_sha: 'dc4f493fe1234567890abcdef1234567890abcde', reason: 'full sha test' })
-        .expect(202);
-
-      expect(res.body.status).toBe('accepted');
-    });
+  // 旧PM2回退明确退役；保留现役状态、鉴权和staging查询回归。
+  it('旧PM2回退鉴权后返回410，不再受理源码checkout',async()=>{
+    process.env.DEPLOY_TOKEN='test-rollback-token';
+    try {
+      const res=await request(app).post('/api/brain/deploy/rollback')
+        .set('Authorization','Bearer test-rollback-token').send({stable_sha:'a'.repeat(40)});
+      expect(res.status).toBe(410);expect(res.body.error).toBe('pm2_rollback_retired');
+    } finally { delete process.env.DEPLOY_TOKEN; }
   });
 
   // ── Path 4: GET /api/brain/deploy/staging/status — staging 状态端点 ──────

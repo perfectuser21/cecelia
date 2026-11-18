@@ -145,10 +145,28 @@ const PREVIEW_RETIREMENT_CI_COHORT={...BUILD_DEDUP_CI_COHORT,
  'existing-ops-stage-source.js':'14869739a77975ba176c1e141eda79efbad10b9df51ebb771372b8e667c865b5',
  'existing-ops-stage-modes.js':'d700b70fd7d21e91c3d18b28b16bf9372455908b653d9bc0d181291005c5477c',
  'existing-ops-ci-build-dedup-source.js':'16bcaccb5ca70816da7668eb1daec26cbb115ac0084c636b1855ecb539cf8add'};
-const currentMemberCount=Object.keys(PREVIEW_RETIREMENT_CI_COHORT).length;
-export const ciVersionGuardCohorts=()=>[...COHORTS,COMMANDER_CI_COHORT,SKILL_RETIREMENT_CI_COHORT,PLANNER_RETIREMENT_CI_COHORT,COMMANDER_AUDIT_CI_COHORT,SCRIPT_CLEANUP_CI_COHORT,SCRIPT_CLEANUP_PROFILE_COHORT,RESOURCE_RETIREMENT_CI_COHORT,WORKFLOW_REGISTRATION_CI_COHORT,BUSINESS_SMOKE_RETIREMENT_CI_COHORT,FIXED_CHECKS_CI_COHORT,FOUNDATION_RELEASE_CI_COHORT,FOUNDATION_FIXED_CHECKS_CI_COHORT,CLOSEOUT_CI_COHORT,DORMANT_BOUNDARIES_CI_COHORT,CHECKER_REPAIR_CI_COHORT,BUILD_DEDUP_CI_COHORT,PREVIEW_RETIREMENT_CI_COHORT];
+// 唯一main自动发布控制组；授权静态只读关系，不声明真实部署执行。
+const MAIN_AUTO_DEPLOY_CI_COHORT={...PREVIEW_RETIREMENT_CI_COHORT,
+ 'existing-ops-stage-source.js':'b380c14e87c34072f26bdd8d2fa2421b9a4fb71f16358746f70de293beee489d',
+ 'existing-ops-stage-modes.js':'cf4e0fd23c57d96accbf9bbce5379a6a5cd9aa5ce54f1621d37227e3af719452',
+ 'existing-ops-ci-build-dedup-source.js':'86e85eb124f538082eb2fcf4818d12804d59e7eeb7873e685e68d8ece8b47053'};
+const currentMemberCount=Object.keys(MAIN_AUTO_DEPLOY_CI_COHORT).length;
+export const ciVersionGuardCohorts=()=>[...COHORTS,COMMANDER_CI_COHORT,SKILL_RETIREMENT_CI_COHORT,PLANNER_RETIREMENT_CI_COHORT,COMMANDER_AUDIT_CI_COHORT,SCRIPT_CLEANUP_CI_COHORT,SCRIPT_CLEANUP_PROFILE_COHORT,RESOURCE_RETIREMENT_CI_COHORT,WORKFLOW_REGISTRATION_CI_COHORT,BUSINESS_SMOKE_RETIREMENT_CI_COHORT,FIXED_CHECKS_CI_COHORT,FOUNDATION_RELEASE_CI_COHORT,FOUNDATION_FIXED_CHECKS_CI_COHORT,CLOSEOUT_CI_COHORT,DORMANT_BOUNDARIES_CI_COHORT,CHECKER_REPAIR_CI_COHORT,BUILD_DEDUP_CI_COHORT,PREVIEW_RETIREMENT_CI_COHORT,MAIN_AUTO_DEPLOY_CI_COHORT];
 export function registerCiRetirementGuardTests({root,base,scan}){
  describe('当前来源完整闭包及执行防复活',()=>{
+  it('main自动发布完整只读组与原Preview清退组独立，旧新成员混配及执行拒绝',()=>{
+   const helper=path.join(root,'existing-ops-ci-build-dedup-source.js'),current=base();
+   expect(current.get(helper)).toContain('MAIN_AUTO_DEPLOY_INPUTS');
+   const previous=new Map(Object.keys(PREVIEW_RETIREMENT_CI_COHORT).map(name=>{const file=path.join(root,name);return [file,execFileSync('git',['--no-replace-objects','show','5a70db6350f9372e01f7098d2abd49a05990bf64:'+path.relative(path.resolve(root,'../../../..'),file)],{cwd:root,encoding:'utf8',maxBuffer:1024*1024})];}));
+   for(const sources of [current,previous])expect(scan(sources)).toEqual([]);
+   for(const name of ['existing-ops-stage-source.js','existing-ops-stage-modes.js','existing-ops-ci-build-dedup-source.js']){
+    const file=path.join(root,name),mixed=new Map(current);mixed.set(file,previous.get(file));expect(scan(mixed).some(hit=>hit.rule==='E1')).toBe(true);
+    const reverse=new Map(previous);reverse.set(file,current.get(file));expect(scan(reverse).some(hit=>hit.rule==='E1')).toBe(true);
+    const missing=new Map(current);missing.delete(file);expect(scan(missing).some(hit=>hit.rule==='E1')).toBe(true);
+   }
+   const changed=new Map(current);changed.set(helper,changed.get(helper)+'\neval(MAIN_AUTO_DEPLOY_INPUTS);');expect(scan(changed).some(hit=>hit.rule==='E1')).toBe(true);
+  });
+
   it('Preview清退完整只读组与原共享构建组均有效，任一新旧成员混配和执行仍拒绝',()=>{
    const helper=path.join(root,'existing-ops-ci-build-dedup-source.js'),current=base();
    expect(current.get(helper)).toContain('PREVIEW_RETIREMENT_INPUTS');

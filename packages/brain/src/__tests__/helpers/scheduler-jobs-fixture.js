@@ -64,9 +64,6 @@ vi.mock('../../seven-ring-audit.js', () => ({
 vi.mock('../../guard-drill.js', () => ({
   runGuardDrill: vi.fn().mockResolvedValue({ skipped: true }),
 }));
-vi.mock('../../cron/drift-sentinel.js', () => ({
-  runDriftSentinel: vi.fn().mockResolvedValue({ skipped: true, reason: 'interval_not_reached' }),
-}));
 vi.mock('../../promise-map-nightly.js', () => ({
   runPromiseMapNightly: vi.fn().mockResolvedValue({ ok: true, passed: 4, failed: 0 }),
 }));
