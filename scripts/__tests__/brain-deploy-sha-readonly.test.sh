@@ -93,7 +93,6 @@ for scenario in ready retry never-ready; do
         */tick/drain-cancel)
           printf 'drain\n' >> "$DRAIN_CALLS"
           [[ "$DRAIN_SCENARIO" != retry || "$(wc -l < "$DRAIN_CALLS")" -ge 3 ]] ;;
-        */notion-sync/run) return 0 ;;
         *) echo 'FAIL: unexpected HTTP boundary' >&2; return 97 ;;
       esac
     }
