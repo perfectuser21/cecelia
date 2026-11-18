@@ -68,6 +68,16 @@ const result = value => { console.log(value); process.exit(0); };
 const receipt = () => fs.existsSync(e.RECEIPT) ? JSON.parse(fs.readFileSync(e.RECEIPT, 'utf8')) : null;
 const enforceCandidate = () => { if (host !== e.EXPECTED_CANDIDATE_HOST) fail('candidate went to production daemon'); };
 const enforceProduction = () => { if (host !== 'local') fail('production went to candidate daemon'); };
+if (a[0] === 'buildx') {
+  enforceCandidate();
+  if (fault === 'buildx-missing') fail('buildx plugin missing');
+  if (a[1] === 'version') result('github.com/docker/buildx v0.31.1');
+  if (a[1] !== 'build' || !a.includes('--load')) fail('cross-platform build must load immutable image');
+  if (!a.includes('--builder') || option('--builder') !== (e.BRAIN_CANDIDATE_DOCKER_CONTEXT || 'default')) fail('selected builder escaped candidate endpoint');
+  a = a.slice(1);
+} else if (a[0] === 'build' && host !== 'local') {
+  fail('remote legacy builder forbidden');
+}
 if (a[0] === 'build') {
   enforceCandidate();
   if (fault === 'build') fail('build failed');
@@ -223,7 +233,8 @@ for (const fault of ['', 'tag-race']) test(`远端构建冻结源码、linux/amd
   assert.equal(f.state('mac-studio').source, 'frozen-source');
   assert.equal(f.state('local').tags['cecelia-brain:1.0.0'], image);
   const commands = f.commands(), build = commands.find(a => a.includes('build'));
-  assert.deepEqual(build.slice(0, 5), ['--context', 'mac-studio', 'build', '--platform', 'linux/amd64']);
+  assert.deepEqual(build.slice(0, 9), ['--context', 'mac-studio', 'buildx', 'build', '--builder', 'mac-studio', '--load', '--platform', 'linux/amd64']);
+  assert.deepEqual(commands.find(a => a.includes('version')), ['--context', 'mac-studio', 'buildx', 'version']);
   assert.ok(build.includes('--iidfile'));
   assert.deepEqual(commands.find(a => a.includes('save')), ['--context', 'mac-studio', 'image', 'save', image]);
   const load = commands.findIndex(a => a[0] === 'image' && a[1] === 'load');
@@ -232,7 +243,7 @@ for (const fault of ['', 'tag-race']) test(`远端构建冻结源码、linux/amd
   assert.equal(commands.some(a => a[0] === 'build'), false);
 });
 
-for (const fault of ['context-missing', 'context-tcp', 'build', 'remote-id', 'remote-sha', 'remote-platform', 'save', 'load', 'local-id', 'local-sha', 'local-platform']) {
+for (const fault of ['context-missing', 'context-tcp', 'buildx-missing', 'build', 'remote-id', 'remote-sha', 'remote-platform', 'save', 'load', 'local-id', 'local-sha', 'local-platform']) {
   test(`远端构建 ${fault} 拒绝晋升，保留 US 原发布 tag`, t => {
     const f = fixture(t, fault), result = runBuild(f);
     assert.notEqual(result.status, 0, result.stdout + result.stderr);
@@ -241,6 +252,37 @@ for (const fault of ['context-missing', 'context-tcp', 'build', 'remote-id', 're
     assert.equal(f.commands().some(a => a[0] === 'build'), false);
   });
 }
+
+test('缺少buildx在修改任何US tag前拒绝，不回退legacy builder', t => {
+  const f = fixture(t, 'buildx-missing'), result = runBuild(f);
+  assert.notEqual(result.status, 0);
+  assert.deepEqual(f.state('local').tags, {'cecelia-brain:1.0.0': oldImage, 'cecelia-brain:latest': oldImage});
+  assert.equal(f.commands().some(a => a[0] === 'tag'), false);
+  assert.equal(f.commands().some(a => a.includes('build')), false);
+});
+
+test('正式Brain镜像安装并在构建期核实buildx，现有image CI也真正运行插件', () => {
+  const dockerfile = readFileSync(join(root, 'packages/brain/Dockerfile'), 'utf8');
+  assert.match(dockerfile, /apk add[^\n]*\bdocker-cli-buildx\b/);
+  assert.match(dockerfile, /&& docker buildx version/);
+});
+
+for (const kind of ['context', 'host']) test(`继承错误builder时仍绑定候选${kind}的默认builder`, t => {
+  const f = fixture(t);
+  f.env.BUILDX_BUILDER = 'production-builder';
+  f.env.DOCKER_CONTEXT = 'production-context';
+  f.env.DOCKER_BUILDKIT = '0';
+  if (kind === 'host') {
+    f.env.BRAIN_CANDIDATE_DOCKER_CONTEXT = '';
+    f.env.BRAIN_CANDIDATE_DOCKER_HOST = 'ssh://administrator@100.71.151.105';
+  }
+  const result = runBuild(f);
+  assert.equal(result.status, 0, result.stderr + result.stdout);
+  const build = f.commands().find(a => a.includes('build'));
+  assert.equal(build[build.indexOf('--builder') + 1], kind === 'context' ? 'mac-studio' : 'default');
+  assert.equal(f.state('local').tags['cecelia-brain:1.0.0'], image);
+  assert.equal(f.commands().some(a => a[0] === 'build'), false);
+});
 
 test('不配置 context 时，原本机构建路径不触发远程搬运', t => {
   const f = fixture(t, '', ''), result = runBuild(f);

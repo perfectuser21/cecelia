@@ -57,5 +57,6 @@ test('image没有宿主依赖消费者，其余核心矩阵必须先安装根锁
   assert.ok(job.steps.indexOf(install)<job.steps.findIndex(step=>step.name==='Run actual checks'));
   assert.deepEqual(commandsFor('image').map(({command,args})=>({command,args})),[
     {command:'docker',args:['build','-f','packages/brain/Dockerfile','-t','cecelia-brain:ci-basic','.']},
+    {command:'docker',args:['run','--rm','--entrypoint','docker','cecelia-brain:ci-basic','buildx','version']},
   ]);
 });

@@ -51,7 +51,10 @@ export function commandsFor(component, shard) {
         step('.', 'node', 'scripts/ci/basic-runtime-smoke.mjs'),
       ];
     case 'image':
-      return [step('.', 'docker', 'build', '-f', 'packages/brain/Dockerfile', '-t', 'cecelia-brain:ci-basic', '.')];
+      return [
+        step('.', 'docker', 'build', '-f', 'packages/brain/Dockerfile', '-t', 'cecelia-brain:ci-basic', '.'),
+        step('.', 'docker', 'run', '--rm', '--entrypoint', 'docker', 'cecelia-brain:ci-basic', 'buildx', 'version'),
+      ];
     case 'dashboard':
       return [vitest('apps/api'), vitest('apps/dashboard'), step('apps/dashboard', 'npm', 'run', 'build')];
     case 'mcp': return [vitest('packages/mcp-readonly')];

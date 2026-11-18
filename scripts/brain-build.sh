@@ -60,6 +60,11 @@ echo "  GIT_SHA=${BUILD_SHA}"
 #   - 新镜像额外打 cecelia-brain:${VERSION}-${sha12}，可按提交精确指认本次构建。
 # 构建后收敛：被顶替的镜像身上的 ${VERSION}-${sha12} 别名摘掉，只留一个 tag——
 # janitor 按镜像 id 删除，同仓库多 tag 时 docker 拒删（referenced in multiple repositories），多 tag 等于永久泄漏。
+# 插件缺失在任何生产tag变更前拒绝；显式buildx不允许回退legacy跨架构构建。
+CANDIDATE_BUILDER="${BRAIN_CANDIDATE_DOCKER_CONTEXT:-default}"
+if [[ -n "${BRAIN_CANDIDATE_DOCKER_CONTEXT:-}" || -n "${BRAIN_CANDIDATE_DOCKER_HOST:-}" ]]; then
+  candidate_docker buildx version || { echo '候选跨架构构建缺少buildx插件，拒绝发布' >&2; exit 1; }
+fi
 IMAGE_REPO="cecelia-brain"
 image_id_of() {
   local id
@@ -92,7 +97,7 @@ fi
 
 # 从干净快照构建；远端只构建候选，生产 tag 等同 ID/SHA 的导入校验通过后更新。
 if [[ -n "${BRAIN_CANDIDATE_DOCKER_CONTEXT:-}" || -n "${BRAIN_CANDIDATE_DOCKER_HOST:-}" ]]; then
-  candidate_docker build --platform linux/amd64 --iidfile "$TEMP_BUILD/.candidate-image-id" \
+  candidate_docker buildx build --builder "$CANDIDATE_BUILDER" --load --platform linux/amd64 --iidfile "$TEMP_BUILD/.candidate-image-id" \
     -t "${IMAGE_REPO}:candidate-${BUILD_SHA}" \
     --build-arg "GIT_SHA=${BUILD_SHA}" \
     -f "$TEMP_BUILD/packages/brain/Dockerfile" "$TEMP_BUILD"
