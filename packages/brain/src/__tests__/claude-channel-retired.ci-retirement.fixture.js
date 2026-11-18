@@ -175,10 +175,23 @@ const NIGHTLY_STATUS_CI_COHORT={...RUNTIME_IDEMPOTENCE_CI_COHORT,
  '../../../../scripts/ci/implementation-snapshot.mjs':'ab7c86c889005fa73bef240a2f8f585f290f6dee8c264f59a46539f04cf8096d'};
 // F2专属部署采集器已卸载，现役F3只读闭包不再包含它。
 delete NIGHTLY_STATUS_CI_COHORT['existing-ops-us-compose-source.js'];
+// Pilot收集器只新增已独审完整AST组合；旧Nightly组合继续独立核验。
+const PILOT_HOST_CI_COHORT={...NIGHTLY_STATUS_CI_COHORT,
+ 'existing-ops-stage-source.js':'97f9fb89aadb0a1193738427d0af51c83524fd5db241285a464ccdd80566c956',
+ 'existing-ops-stage-modes.js':'e301571af97f192bb17b1663c46b9bcf1762dd0635c48f9af36cfc1bd0c36719'};
 const currentMemberCount=Object.keys(NIGHTLY_STATUS_CI_COHORT).length;
-export const ciVersionGuardCohorts=()=>[...COHORTS,COMMANDER_CI_COHORT,SKILL_RETIREMENT_CI_COHORT,PLANNER_RETIREMENT_CI_COHORT,COMMANDER_AUDIT_CI_COHORT,SCRIPT_CLEANUP_CI_COHORT,SCRIPT_CLEANUP_PROFILE_COHORT,RESOURCE_RETIREMENT_CI_COHORT,WORKFLOW_REGISTRATION_CI_COHORT,BUSINESS_SMOKE_RETIREMENT_CI_COHORT,FIXED_CHECKS_CI_COHORT,FOUNDATION_RELEASE_CI_COHORT,FOUNDATION_FIXED_CHECKS_CI_COHORT,CLOSEOUT_CI_COHORT,DORMANT_BOUNDARIES_CI_COHORT,CHECKER_REPAIR_CI_COHORT,BUILD_DEDUP_CI_COHORT,PREVIEW_RETIREMENT_CI_COHORT,MAIN_AUTO_DEPLOY_CI_COHORT,BIND_MOUNT_CI_COHORT,CANDIDATE_BUILDER_CI_COHORT,RUNTIME_IDEMPOTENCE_CI_COHORT,NIGHTLY_STATUS_CI_COHORT];
+export const ciVersionGuardCohorts=()=>[...COHORTS,COMMANDER_CI_COHORT,SKILL_RETIREMENT_CI_COHORT,PLANNER_RETIREMENT_CI_COHORT,COMMANDER_AUDIT_CI_COHORT,SCRIPT_CLEANUP_CI_COHORT,SCRIPT_CLEANUP_PROFILE_COHORT,RESOURCE_RETIREMENT_CI_COHORT,WORKFLOW_REGISTRATION_CI_COHORT,BUSINESS_SMOKE_RETIREMENT_CI_COHORT,FIXED_CHECKS_CI_COHORT,FOUNDATION_RELEASE_CI_COHORT,FOUNDATION_FIXED_CHECKS_CI_COHORT,CLOSEOUT_CI_COHORT,DORMANT_BOUNDARIES_CI_COHORT,CHECKER_REPAIR_CI_COHORT,BUILD_DEDUP_CI_COHORT,PREVIEW_RETIREMENT_CI_COHORT,MAIN_AUTO_DEPLOY_CI_COHORT,BIND_MOUNT_CI_COHORT,CANDIDATE_BUILDER_CI_COHORT,RUNTIME_IDEMPOTENCE_CI_COHORT,NIGHTLY_STATUS_CI_COHORT,PILOT_HOST_CI_COHORT];
 export function registerCiRetirementGuardTests({root,base,scan}){
  describe('当前来源完整闭包及执行防复活',()=>{
+  it('Pilot双源收集器新旧完整只读组通过，双成员混配与执行拒绝',()=>{
+   const current=base(),previous=new Map(Object.keys(NIGHTLY_STATUS_CI_COHORT).map(name=>{const file=path.join(root,name);return [file,execFileSync('git',['--no-replace-objects','show','0431a8d3242783f1d94221cb5471ac40dda7fbd6:'+path.relative(path.resolve(root,'../../../..'),file)],{cwd:root,encoding:'utf8',maxBuffer:1024*1024})];}));
+   for(const source of [current,previous])expect(scan(source)).toEqual([]);
+   for(const name of ['existing-ops-stage-source.js','existing-ops-stage-modes.js']){
+    const file=path.join(root,name),mixed=new Map(current);mixed.set(file,previous.get(file));expect(scan(mixed).some(hit=>hit.rule==='E1')).toBe(true);
+    const reverse=new Map(previous);reverse.set(file,current.get(file));expect(scan(reverse).some(hit=>hit.rule==='E1')).toBe(true);
+    const executed=new Map(current);executed.set(file,executed.get(file)+'\neval(candidate);');expect(scan(executed).some(hit=>hit.rule==='E1')).toBe(true);
+   }
+  });
   it('Nightly活性与status新完整组保留13d Runtime，四成员混配与执行拒绝',()=>{
    const helper=path.join(root,'existing-ops-ci-build-dedup-source.js'),current=base();expect(current.get(helper)).toContain('NIGHTLY_STATUS_INPUTS');
    const previous=new Map(Object.keys(RUNTIME_IDEMPOTENCE_CI_COHORT).map(name=>{const file=path.join(root,name);return [file,execFileSync('git',['--no-replace-objects','show','13d576c6a6223ff305e4734b37d46600e02fe48b:'+path.relative(path.resolve(root,'../../../..'),file)],{cwd:root,encoding:'utf8',maxBuffer:1024*1024})];}));
