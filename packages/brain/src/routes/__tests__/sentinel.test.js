@@ -132,6 +132,19 @@ describe('GET /api/brain/sentinel/health — 调度哨兵灯（relay-baton4 item
     expect(res.body.healthy).toBe(false);
   });
 
+  it('同一来源每分钟最多300次查询，超额返回429且不再访问数据库', async () => {
+    vi.resetModules();
+    mockQuery.mockResolvedValue({ rows: [] });
+    const client = (await req())(await makeApp());
+    for (let i = 0; i < 300; i++) {
+      const response = await client.get('/api/brain/sentinel/health');
+      expect(response.status).toBe(200);
+    }
+    const blocked = await client.get('/api/brain/sentinel/health');
+    expect(blocked.status).toBe(429);
+    expect(mockQuery).toHaveBeenCalledTimes(300);
+  });
+
   it('age 由 SQL EXTRACT(EPOCH...) 计算（timestamp without time zone 不拿 JS 比）；DB 错误 → 500', async () => {
     mockQuery.mockResolvedValueOnce({ rows: [] });
     const app = await makeApp();
