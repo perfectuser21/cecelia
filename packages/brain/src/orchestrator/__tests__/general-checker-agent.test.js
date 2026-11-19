@@ -1,4 +1,8 @@
-import {test,expect} from 'vitest';
+import {test,expect,vi} from 'vitest';
+const dbos=vi.hoisted(()=>({initialized:false}));
+vi.mock('@dbos-inc/dbos-sdk',()=>({DBOS:{isInitialized:()=>dbos.initialized,registerStep:fn=>fn,registerWorkflow:fn=>fn,
+ startWorkflow:fn=>async value=>({getWorkflowInputs:async()=>[value],getResult:()=>fn(value)})}}));
+import {configureCommanderWorkflow,startCommanderWorkflow} from '../../durable/commander-workflow.js';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -18,7 +22,7 @@ function fixture({requirement='number equals 42',fact={number:42},mode='normal',
 const fs=require('fs'),cp=require('child_process'),path=require('path');
 let prompt='';process.stdin.on('data',b=>prompt+=b);process.stdin.on('end',()=>{
  const input=JSON.parse(fs.readFileSync(process.env.COMMANDER_ACTIVITY_INPUT_FILE));const r=input.checker_request;
- if(!r){fs.writeFileSync('evidence/fact.json',JSON.stringify({number:0}));fs.writeFileSync(process.argv[process.argv.indexOf('-o')+1],JSON.stringify({claimed:'passed',outputs:{number:0}}));console.log(JSON.stringify({type:'thread.started',thread_id:'execution-thread'}));return;}
+ if(!r){if('${mode}'!=='runner')fs.writeFileSync('evidence/fact.json',JSON.stringify({number:0}));fs.writeFileSync(process.argv[process.argv.indexOf('-o')+1],JSON.stringify({claimed:'passed',outputs:{number:0}}));console.log(JSON.stringify({type:'thread.started',thread_id:'execution-thread'}));return;}
  if('${mode}'==='hang'){setInterval(()=>{},1000);return;}
  fs.appendFileSync('checker-calls.jsonl',JSON.stringify({argv:process.argv,prompt,request:r})+'\\n');
  const arg=process.argv.find(a=>a.startsWith('mcp_servers.commander_checker_evidence.args='));
@@ -32,6 +36,7 @@ let prompt='';process.stdin.on('data',b=>prompt+=b);process.stdin.on('end',()=>{
  return {id:c.id,status:fact===null?'unknown':matches?'passed':'failed',reason:fact===null?'Evidence unavailable':matches?'Observed requirement':'Observed contradiction',expected:wanted,actual:fact,evidence:[{source:observed.evidence_ref,observation:{value:fact}}]};});
  const outcome=checks.some(c=>c.status==='unknown')?'unknown':checks.some(c=>c.status==='failed')?'failed':'passed';
  const result={identity:Object.fromEntries(['task_id','run_id','run_tag','workflow','activity','attempt'].map(k=>[k,r[k]])),nonce:r.nonce,outcome,checks,output:r.proposal?.outputs??{},retryable:false,external_effect:'none'};
+ if('${mode}'==='runner'&&r.phase==='end')result.output={number:42,description:'Verified in '+r.nonce};
  if('${mode}'==='empty')result.outcome='empty';
  if('${mode}'==='wrong-nonce')result.nonce='foreign';if('${mode}'==='invented-evidence')result.checks[0].evidence[0].source='/invented';
  result.output_json=JSON.stringify(result.output);delete result.output;
@@ -100,3 +105,20 @@ test('expired Checker cannot claim a stopped execution or pass from a hung model
  const result=JSON.parse(fs.readFileSync(path.join(child,'result.json')));expect(result.transport.execution_stopped).toBe(false);expect(result.transport.exit_code).not.toBe(0);
  }finally{f.close();}
 },10000);
+
+test('complete Commander runner uses one start and one end Checker, never rejudges wording',async()=>{
+ const f=fixture({mode:'runner'}),old=process.env.DBOS_DURABLE_ENABLED;try{
+ Object.assign(f.activity,{order:1,failure:{empty_ok:[],retryable:[],fatal:[],needs_human:{cases:[]}}});f.activity.runtime.entry='unused.mjs';
+ Object.assign(f.run,{schema_version:1,runtime_revision:'a'.repeat(64),commander_timeout_ms:1000});
+ const ledger=createRunLedger({directory:path.join(fs.realpathSync(f.cwd),'ledger'),identity:{task_id:f.run.task_id,run_id:f.run.run_id}});
+ const rt=await createRuntime({profile:f.profile,run:f.run,ledger}),records=new Map();
+ dbos.initialized=false;configureCommanderWorkflow({...rt,ledger,revision:f.run.runtime_revision,verifySource:async()=>{},
+ decide:async r=>Object.fromEntries([...['protocol','run_id','definition_sha256','sequence','state_sha256'].map(k=>[k,r[k]]),...Object.entries(r.allowed_actions[0]),['reason','Follow fixed contract']]),
+ actionStore:{reserve:async(identity,{deadline_ms})=>{const record={identity,deadline_ms,state:'reserved'};records.set(identity.action_id,record);return {created:true,record};},settle:async(identity,result)=>{records.get(identity.action_id).result=result;return result;}}});
+ dbos.initialized=true;process.env.DBOS_DURABLE_ENABLED='true';
+ const result=await (await startCommanderWorkflow(f.run)).handle.getResult();
+ const calls=fs.readFileSync(path.join(f.cwd,'checker-calls.jsonl'),'utf8').trim().split('\n').map(JSON.parse);
+ expect(calls.map(c=>c.request.phase)).toEqual(['start','end']);expect(result.status).toBe('completed');
+ expect(result.outputs.number).toBe(42);expect(ledger.snapshot().calls.filter(c=>c.role==='checker')).toHaveLength(2);
+ }finally{dbos.initialized=false;if(old===undefined)delete process.env.DBOS_DURABLE_ENABLED;else process.env.DBOS_DURABLE_ENABLED=old;f.close();}
+},20000);
