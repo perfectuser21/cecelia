@@ -93,7 +93,7 @@ for (const entry of ['cecelia-bridge.cjs', 'cecelia-bridge.js']) {
 describe('入口功能保留与部署依赖', () => {
   // 原「cjs图片清理/Read工具」「旧js任务触发保留GOAL_SETTINGS」用例已随 Claude 通道退役删除（任务 76a160b3）。
   it('部署js入口时同步生命周期模块至bin/lib', () => {
-    const deploy = readFileSync(path.resolve(scriptDir, '../../../scripts/brain-deploy.sh'), 'utf8');
+    const deploy = readFileSync(path.resolve(scriptDir, '../../../scripts/lib/brain-post-deploy.sh'), 'utf8');
     const begin = deploy.indexOf('    BRIDGE_SRC=');
     const end = deploy.indexOf('      # 重启 bridge', begin);
     const destination = mkdtempSync(path.resolve(scriptDir, '../src/__tests__/.bridge-deploy-'));
@@ -121,7 +121,7 @@ describe('入口功能保留与部署依赖', () => {
     } finally { rmSync(destination, { recursive: true, force: true }); }
   });
   it.each(['bridge-lifecycle.cjs', 'cecelia-bridge.js'])('部署复制%s失败必须退出并留下失败状态', (failedFile) => {
-    const deploy = readFileSync(path.resolve(scriptDir, '../../../scripts/brain-deploy.sh'), 'utf8');
+    const deploy = readFileSync(path.resolve(scriptDir, '../../../scripts/lib/brain-post-deploy.sh'), 'utf8');
     const begin = deploy.indexOf('    BRIDGE_SRC=');
     const end = deploy.indexOf('      # 重启 bridge', begin);
     const destination = mkdtempSync(path.resolve(scriptDir, '../src/__tests__/.bridge-deploy-'));

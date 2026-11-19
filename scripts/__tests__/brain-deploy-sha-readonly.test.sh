@@ -71,6 +71,13 @@ NODE
   echo "PASS: 真实部署outcome=${outcome}保持原结算与状态写回"
 done
 
+# 交接后parent仍存活：原EXIT函数必须完全不结算、不覆盖sidecar所属状态。
+printf 'sidecar-owned status\n' > "$FIXTURE/deploy-status.json"
+DEPLOY_SUCCESS=true BLUEGREEN_HANDOFF=1 STATUS_TARGET="$FIXTURE/deploy-status.json" STATUS_WRITER="$FUNCTION" \
+  bash -euc 'retention_finish() { echo forbidden-parent-finish >&2; return 99; }; VERSION=9.9.9; DEPLOY_STATUS_FILE="$STATUS_TARGET"; eval "$STATUS_WRITER"; _write_deploy_status'
+[[ "$(cat "$FIXTURE/deploy-status.json")" == 'sidecar-owned status' ]] || { echo 'FAIL: handoff parent覆盖终态'; exit 1; }
+echo 'PASS: handoff parent EXIT不收账、不覆盖sidecar终态'
+
 # 宿主成功收尾不能只靠 Docker sidecar 的 drain 回归替代。
 # 原样执行生产脚本的整个通用健康检查尾段；不会执行上面的构建/迁移/启动步骤。
 cp "$ROOT/scripts/lib/brain-drain-client.sh" "$FIXTURE/drain-function.sh"
@@ -85,7 +92,7 @@ for scenario in ready retry never-ready cancel-false cancel-wrong-id no-owned-dr
     export DRAIN_CALLS="$calls" DRAIN_SCENARIO="$scenario"
     sleep() { :; }
     activate_cecelia_map_manifest() { :; }
-    run_post_deploy_smoke() { :; }
+    complete_verified_host_release() { :; }
     send_bark() { :; }
     curl() {
       case "${@: -1}" in
@@ -102,7 +109,7 @@ for scenario in ready retry never-ready cancel-false cancel-wrong-id no-owned-dr
         *) echo 'FAIL: unexpected HTTP boundary' >&2; return 97 ;;
       esac
     }
-    export -f sleep activate_cecelia_map_manifest run_post_deploy_smoke send_bark curl
+    export -f sleep activate_cecelia_map_manifest complete_verified_host_release send_bark curl
     bash -euc 'source "$1"; if [[ "$DRAIN_SCENARIO" != no-owned-drain ]]; then BRAIN_DEPLOY_DRAIN_ID=11111111-1111-4111-8111-111111111111; fi; source "$2"' \
       _ "$FIXTURE/drain-function.sh" "$FIXTURE/health-tail.sh"
   ) > "$FIXTURE/$scenario-tail.log" 2>&1 && code=0 || code=$?

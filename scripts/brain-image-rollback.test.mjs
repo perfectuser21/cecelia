@@ -51,3 +51,14 @@ esac
   assert.equal((await store.read(`deployment-${deployment_id}.json`)).receipt.outcome, mode === 'failed-deploy' ? 'recovered' : 'success');
   assert.equal((await store.read('ledger.json')).successes.length, mode === 'failed-deploy' ? 0 : 1);
 });
+
+test('rollback无明确目标时拒绝：版本表不能授权猜测前驱或触碰Docker',async t=>{
+ const root=await realpath(await mkdtemp(join(tmpdir(),'rollback-explicit-')));t.after(()=>rm(root,{recursive:true,force:true}));
+ for(const dir of ['scripts/lib','bin'])await mkdir(join(root,dir),{recursive:true});
+ for(const file of ['brain-rollback.sh','lib/brain-image-retention.sh'])await copyFile(new URL(file,import.meta.url),join(root,'scripts',file));
+ await writeFile(join(root,'.brain-versions'),'0.8\n0.9\n1.0\n');
+ await writeFile(join(root,'bin/docker'),'#!/bin/sh\necho docker >> "$FIXTURE_CALLS"\nexit 37\n',{mode:0o755});
+ const result=await run('bash',[join(root,'scripts/brain-rollback.sh')],{env:{...process.env,PATH:join(root,'bin')+':'+process.env.PATH,FIXTURE_CALLS:join(root,'calls')},timeout:5000}).then(x=>({...x,code:0}),e=>e);
+ assert.notEqual(result.code,0);assert.match(result.stdout+result.stderr,/ROLLBACK_TARGET_REQUIRED/);
+ assert.equal(await readFile(join(root,'calls'),'utf8').catch(()=>''),'');
+});
