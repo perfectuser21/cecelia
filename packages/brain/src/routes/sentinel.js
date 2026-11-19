@@ -8,6 +8,7 @@
  *   这里只读展示，不告警。
  */
 import { Router } from 'express';
+import { rateLimit } from 'express-rate-limit';
 import pool from '../db.js';
 
 const router = Router();
@@ -18,7 +19,7 @@ const EXPECTED_KEY = 'scheduler_jobs_expected';
 // 一轮 job 串行 worst case ~25min（见 scheduler-jobs.js 重入守卫注释），30min 为过期线
 export const STALE_SECONDS = 1800;
 
-router.get('/health', async (_req, res) => {
+router.get('/health', rateLimit({ windowMs: 60_000, limit: 300, standardHeaders: 'draft-7', legacyHeaders: false }), async (_req, res) => {
   try {
     const { rows } = await pool.query(
       `SELECT key, value_json, EXTRACT(EPOCH FROM (now() - updated_at))::int AS age_seconds

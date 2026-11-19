@@ -30,7 +30,10 @@ const declaredExpectedRow = (names, count = names.length) => ({
 });
 
 describe('GET /api/brain/sentinel/health — 调度哨兵灯（relay-baton4 item1）', () => {
-  beforeEach(() => mockQuery.mockReset());
+  beforeEach(() => {
+    mockQuery.mockReset();
+    vi.resetModules();
+  });
 
   it('全部 job 新鲜且 ok → healthy=true，输出 name/ok/age_seconds/at', async () => {
     mockQuery.mockResolvedValueOnce({
