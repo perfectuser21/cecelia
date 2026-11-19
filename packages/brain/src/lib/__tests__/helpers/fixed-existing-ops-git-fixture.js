@@ -13,6 +13,8 @@ export function readFixedExistingOpsGitFixture(revision = FIXTURE_REVISION) {
   if (fixtureGit('rev-parse', '--verify', `${revision}^{commit}`).trim() !== revision) {
     throw Error('fixed Git fixture commit identity mismatch');
   }
+  try { fixtureGit('merge-base', '--is-ancestor', revision, 'refs/remotes/origin/main'); }
+  catch { throw Error('fixed Git fixture must be merged into origin/main'); }
   const tree = fixtureGit('rev-parse', `${revision}^{tree}`).trim();
   const entries = fixtureGit('ls-tree', '-rz', '--full-tree', revision).split('\0').filter(Boolean).map(line => {
     const [meta, path] = line.split('\t'), [mode, type, sha] = meta.split(' ');

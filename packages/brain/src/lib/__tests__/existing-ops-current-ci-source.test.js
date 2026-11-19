@@ -164,7 +164,7 @@ it('Foundation手动发布新封组完整固定，旧封组兼容且发布命令
  const before=readFixedExistingOpsGitFixture('6df58b83c8a0814fd16ff5b3d61f8acad33ef480');
  await expect(collectBasicCiSources({read:async path=>before.read(path),ci:before.read(workflow),revision:before.revision,relations:[],parse:ast,paths:before.paths})).resolves.toEqual(expect.any(Array));
  await expect(observe({'scripts/ci/__tests__/basic-workflow.test.mjs':before.read('scripts/ci/__tests__/basic-workflow.test.mjs')})).rejects.toThrow('basic_ci_source_unproven');
- for(const revision of ['a96a0abafd','7682eea73b8b898bbf9a9c802b963d8cdca4f04d']){
+ for(const revision of ['a96a0abafd','59f95eb8362cec20d59948e18f15c4d51f788a20']){
   const full=execFileSync('git',['rev-parse',revision+'^{commit}'],{cwd:root,encoding:'utf8'}).trim(),historical=readFixedExistingOpsGitFixture(full);
   await expect(collectBasicCiSources({read:async path=>historical.read(path),ci:historical.read(workflow),revision:full,relations:[],parse:ast,paths:historical.paths})).resolves.toEqual(expect.any(Array));
   await expect(observe({[workflow]:historical.read(workflow),'scripts/ci/__tests__/basic-workflow.test.mjs':historical.read('scripts/ci/__tests__/basic-workflow.test.mjs')})).rejects.toThrow('basic_ci_source_unproven');
