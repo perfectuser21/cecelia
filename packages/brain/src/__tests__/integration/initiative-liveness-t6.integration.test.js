@@ -46,7 +46,6 @@ vi.mock('../../slot-allocator.js', () => ({
   }),
   shouldBypassBackpressure: vi.fn(() => false),
 }));
-vi.mock('../../token-budget-planner.js', () => ({ shouldDowngrade: vi.fn(() => false) }));
 vi.mock('../../event-bus.js', () => ({
   emit: vi.fn().mockResolvedValue(undefined),
   ensureEventsTable: vi.fn().mockResolvedValue(undefined),

@@ -56,9 +56,6 @@ vi.mock('../slot-allocator.js', () => ({
   }),
 }));
 
-vi.mock('../token-budget-planner.js', () => ({
-  shouldDowngrade: vi.fn().mockReturnValue(false),
-}));
 
 vi.mock('../decision.js', () => ({
   compareGoalProgress: vi.fn().mockResolvedValue([]),

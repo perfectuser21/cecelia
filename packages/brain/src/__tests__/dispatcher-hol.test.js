@@ -46,10 +46,8 @@ vi.mock('../executor.js', () => ({
   getEffectiveMaxSeats: vi.fn(() => 12),
   getBudgetCap: vi.fn(() => ({ physical: 12, effective: 12 })),
   checkServerResources: vi.fn(() => ({ effectiveSlots: 12, metrics: { max_pressure: 0.1 } })),
-  getTokenPressure: vi.fn(async () => ({ token_pressure: 0, available_accounts: 3 })),
 }));
 
-vi.mock('../token-budget-planner.js', async (importOriginal) => ({ ...(await importOriginal()), shouldDowngrade: vi.fn(() => false) }));
 vi.mock('../fleet-resource-cache.js', () => ({
   getFleetStatus: vi.fn(() => []), getRemoteCapacity: vi.fn(() => ({ online: true, effectiveSlots: 2 })),
   getTotalEffectiveSlots: vi.fn(() => 12),
@@ -155,11 +153,10 @@ describe('dispatcher HOL blocking fix', () => {
     vi.clearAllMocks();
     mockQuery.mockReset();
 
-    const { getTokenPressure, checkServerResources } = await import('../executor.js');
+    const { checkServerResources } = await import('../executor.js');
     const { getRemoteCapacity } = await import('../fleet-resource-cache.js');
     const { getAccountUsage } = await import('../account-usage.js');
 
-    getTokenPressure.mockResolvedValue({ token_pressure: 0, available_accounts: 3 });
     checkServerResources.mockReturnValue({ effectiveSlots: 12, metrics: { max_pressure: 0.1 } });
     getRemoteCapacity.mockReturnValue({ online: true, effectiveSlots: 2 });
     getAccountUsage.mockResolvedValue({ account1: { account_id: 'account1', seven_day_pct: 0 } });
@@ -184,13 +181,12 @@ describe('dispatcher HOL blocking fix', () => {
   it('真实槽位预算链路：旧 Claude 满额不挡 Codex，机器无槽时仍拒绝', async () => {
     const actual = await vi.importActual('../slot-allocator.js');
     const { calculateSlotBudget } = await import('../slot-allocator.js');
-    const { getTokenPressure, checkServerResources, triggerCeceliaRun } = await import('../executor.js');
+    const { checkServerResources, triggerCeceliaRun } = await import('../executor.js');
 
     const { getRemoteCapacity } = await import('../fleet-resource-cache.js');
     const { getAccountUsage } = await import('../account-usage.js');
     actual._resetSlotBuffer();
     calculateSlotBudget.mockImplementation(actual.calculateSlotBudget);
-    getTokenPressure.mockResolvedValue({ token_pressure: 0, available_accounts: 3 });
     getAccountUsage.mockResolvedValue({ account1: { account_id: 'account1', seven_day_pct: 100, seven_day_sonnet_pct: 100 } });
 
     mockSelectNextDispatchableTask.mockImplementation(async (_goalIds, _skip, options) =>

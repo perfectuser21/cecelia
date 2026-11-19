@@ -5,7 +5,7 @@
 //
 // 现场（2026-09-20 实测，生产 us-vps）：
 //   ops_model_accounts 里两个 Claude 号 pct 恒 NULL、status=unknown、
-//   last_error='anthropic usage HTTP 429'；Grok key_expired。
+//   last_error='chatgpt wham usage HTTP 429'；Grok key_expired。
 //
 // 三条根因，逐条对应本文件的三组断言：
 //   ① 采集器没有自 gate。scheduler 的调度模型是「60s 轮询 + 模块自 gate」
@@ -56,12 +56,12 @@ function makePool({ lastCollectedAt = null, consecutiveFailures = 0, prevStatus 
 }
 
 const NOW = Date.parse('2026-09-20T02:00:00.000Z');
-const okUsage = JSON.stringify({ five_hour: { utilization: 42 }, seven_day: { utilization: 7 } });
+const okUsage = JSON.stringify({ five_hour: { usage_percent: 42 }, seven_day: { usage_percent: 7 } });
 
 function rateLimitError() {
   const err = new Error('Command failed');
   err.status = 4;
-  err.stderr = 'anthropic usage HTTP 429\n';
+  err.stderr = 'chatgpt wham usage HTTP 429\n';
   return err;
 }
 
@@ -104,7 +104,7 @@ describe('G5 step1 · 根因① 采集器自 gate（停止自造 429）', () => 
     const poolOnly = makePool({ lastCollectedAt: new Date(NOW - 1000).toISOString() });
     const execOnly = vi.fn(async () => okUsage);
     const rOnly = await runModelAccountsCollector(poolOnly, {
-      only: 'claude-account2', exec: execOnly, inContainer: false, now: () => NOW,
+      only: 'codex-team2', exec: execOnly, inContainer: false, now: () => NOW,
     });
     expect(rOnly.skipped).toBeFalsy();
     expect(execOnly).toHaveBeenCalledTimes(1);
@@ -152,7 +152,7 @@ describe('G5 step1 · 根因③ 失败不擦白历史读数（变异测试锚）
     const exec = vi.fn(async () => { throw flakyNetworkError(); });
 
     await runModelAccountsCollector(pool, {
-      only: 'claude-account1', exec, inContainer: false, now: () => NOW, retryDelayMs: 0,
+      only: 'codex-team1', exec, inContainer: false, now: () => NOW, retryDelayMs: 0,
     });
 
     const upserts = pool.upserts();
@@ -169,7 +169,7 @@ describe('G5 step1 · 根因③ 失败不擦白历史读数（变异测试锚）
     const exec = vi.fn(async () => okUsage);
 
     await runModelAccountsCollector(pool, {
-      only: 'claude-account1', exec, inContainer: false, now: () => NOW,
+      only: 'codex-team1', exec, inContainer: false, now: () => NOW,
     });
 
     const sql = pool.upserts()[0].sql;
@@ -189,7 +189,7 @@ describe('G5 step1 · 主理人判定：单次失败不算数（重试 + 连续 
     });
 
     const r = await runModelAccountsCollector(pool, {
-      only: 'claude-account1', exec, inContainer: false, now: () => NOW, retryDelayMs: 0,
+      only: 'codex-team1', exec, inContainer: false, now: () => NOW, retryDelayMs: 0,
     });
 
     expect(exec).toHaveBeenCalledTimes(3);
@@ -201,7 +201,7 @@ describe('G5 step1 · 主理人判定：单次失败不算数（重试 + 连续 
     const exec = vi.fn(async () => { throw rateLimitError(); });
 
     const r = await runModelAccountsCollector(pool, {
-      only: 'claude-account1', exec, inContainer: false, now: () => NOW, retryDelayMs: 0,
+      only: 'codex-team1', exec, inContainer: false, now: () => NOW, retryDelayMs: 0,
     });
 
     expect(exec).toHaveBeenCalledTimes(1);
@@ -213,12 +213,12 @@ describe('G5 step1 · 主理人判定：单次失败不算数（重试 + 连续 
     const pool = makePool({ lastCollectedAt: null });
     const exec = vi.fn(async () => {
       const err = new Error('Command failed');
-      err.stderr = "ENOENT: no such file or directory, open '~/.claude-account1/.credentials.json'\n";
+      err.stderr = "ENOENT: no such file or directory, open '~/.codex-team1/.credentials.json'\n";
       throw err;
     });
 
     const r = await runModelAccountsCollector(pool, {
-      only: 'claude-account1', exec, inContainer: false, now: () => NOW, retryDelayMs: 0,
+      only: 'codex-team1', exec, inContainer: false, now: () => NOW, retryDelayMs: 0,
     });
 
     expect(exec).toHaveBeenCalledTimes(1);
@@ -230,7 +230,7 @@ describe('G5 step1 · 主理人判定：单次失败不算数（重试 + 连续 
     const exec = vi.fn(async () => { throw flakyNetworkError(); });
 
     await runModelAccountsCollector(pool, {
-      only: 'claude-account1', exec, inContainer: false, now: () => NOW, retryDelayMs: 0,
+      only: 'codex-team1', exec, inContainer: false, now: () => NOW, retryDelayMs: 0,
     });
 
     const sql = pool.upserts()[0].sql;
@@ -245,7 +245,7 @@ describe('G5 step1 · 主理人判定：单次失败不算数（重试 + 连续 
     const exec = vi.fn(async () => { throw flakyNetworkError(); });
 
     await runModelAccountsCollector(pool, {
-      only: 'claude-account1', exec, inContainer: false, now: () => NOW, retryDelayMs: 0, onAlert,
+      only: 'codex-team1', exec, inContainer: false, now: () => NOW, retryDelayMs: 0, onAlert,
     });
 
     expect(onAlert).not.toHaveBeenCalled();
@@ -257,14 +257,14 @@ describe('G5 step1 · 主理人判定：单次失败不算数（重试 + 连续 
     const poolThird = makePool({ lastCollectedAt: null, consecutiveFailures: 3, prevStatus: 'unknown' });
     const onAlertThird = vi.fn();
     await runModelAccountsCollector(poolThird, {
-      only: 'claude-account1', exec, inContainer: false, now: () => NOW, retryDelayMs: 0, onAlert: onAlertThird,
+      only: 'codex-team1', exec, inContainer: false, now: () => NOW, retryDelayMs: 0, onAlert: onAlertThird,
     });
     expect(onAlertThird).toHaveBeenCalledTimes(1);
 
     const poolFourth = makePool({ lastCollectedAt: null, consecutiveFailures: 4, prevStatus: 'unknown' });
     const onAlertFourth = vi.fn();
     await runModelAccountsCollector(poolFourth, {
-      only: 'claude-account1', exec, inContainer: false, now: () => NOW, retryDelayMs: 0, onAlert: onAlertFourth,
+      only: 'codex-team1', exec, inContainer: false, now: () => NOW, retryDelayMs: 0, onAlert: onAlertFourth,
     });
     expect(onAlertFourth).not.toHaveBeenCalled();
   });
@@ -274,7 +274,7 @@ describe('G5 step1 · 主理人判定：单次失败不算数（重试 + 连续 
     const exec = vi.fn(async () => okUsage);
 
     await runModelAccountsCollector(pool, {
-      only: 'claude-account1', exec, inContainer: false, now: () => NOW,
+      only: 'codex-team1', exec, inContainer: false, now: () => NOW,
     });
 
     expect(pool.upserts()[0].sql).toMatch(/consecutive_failures\s*=\s*0/i);

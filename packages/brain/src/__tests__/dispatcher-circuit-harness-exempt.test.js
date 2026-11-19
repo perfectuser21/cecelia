@@ -57,7 +57,6 @@ vi.mock('../slot-allocator.js', () => ({
   }),
 }));
 
-vi.mock('../token-budget-planner.js', () => ({ shouldDowngrade: vi.fn(() => false) }));
 vi.mock('../event-bus.js', () => ({ emit: vi.fn().mockResolvedValue(undefined) }));
 
 const mockIsAllowed = vi.fn(() => true);

@@ -99,9 +99,6 @@ vi.mock('../dispatch-dedup.js', () => ({ findDuplicateSibling: vi.fn(() => null)
 vi.mock('../task-updater.js', () => ({ blockTask: vi.fn() }));
 vi.mock('../alerting.js', () => ({ raise: vi.fn() }));
 vi.mock('../anchor-check.js', () => ({ checkAnchor: vi.fn(() => ({ blocked: false })) }));
-vi.mock('../token-budget-planner.js', () => ({
-  shouldDowngrade: vi.fn((taskType, budgetState) => taskType === 'dev' && (budgetState === 'tight' || budgetState === 'critical')),
-}));
 
 describe('dispatcher allocation guide', () => {
   beforeEach(() => {

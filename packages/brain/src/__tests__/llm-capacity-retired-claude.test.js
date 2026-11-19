@@ -19,9 +19,20 @@ describe('退役 Claude 不影响可执行模型容量快照', () => {
     mocks.verdictFor.mockReturnValue({ verdict: 'unusable', reason: 'quota_full', pct: 100 });
   });
 
-  it('只有退休 Claude 可用时报告耗尽，而非健康', async () => {
+  it('刷新容量时不再调用退役 Claude 用量采集器', async () => {
+    mocks.usage.mockRejectedValue(new Error('retired_probe_must_not_run'));
+    await getLlmCapacitySnapshot({ forceRefresh: true });
+    expect(mocks.usage).not.toHaveBeenCalled();
+  });
+
+  it('容量快照只包含现役 Codex 和 Grok', async () => {
     const snapshot = await getLlmCapacitySnapshot({ forceRefresh: true });
-    expect(snapshot.vendors.claude.available_count).toBe(1);
+    expect(Object.keys(snapshot.vendors).sort()).toEqual(['codex', 'grok']);
+  });
+
+  it('现役账号全部不可用时报告耗尽', async () => {
+    const snapshot = await getLlmCapacitySnapshot({ forceRefresh: true });
+    expect(snapshot.vendors).not.toHaveProperty('claude');
     expect(snapshot.vendors.codex.available_count).toBe(0);
     expect(snapshot.vendors.grok.available_count).toBe(0);
     expect(snapshot.sentinel).toBe('exhausted');
@@ -66,12 +77,14 @@ describe('退役 Claude 不影响可执行模型容量快照', () => {
     expect(snapshot.healthy).toBe(false);
   });
 
-  it('旧 Claude 采集失败不污染健康状态，但保留错误明细', async () => {
+  it('旧采集器异常也不再启动，缓存命中同样不触发旧查询', async () => {
     mocks.usage.mockRejectedValue(new Error('retired_ledger_unreachable'));
     mocks.verdictFor.mockImplementation(name => ({ verdict: name === 'team1' ? 'usable' : 'unusable', reason: 'test', pct: 0 }));
     const snapshot = await getLlmCapacitySnapshot({ forceRefresh: true });
-    expect(snapshot.errors).toContain('claude:retired_ledger_unreachable');
-    expect(snapshot.vendors.claude.poller).toBe('error');
+    expect(snapshot.errors).toEqual([]);
+    expect(snapshot.vendors).not.toHaveProperty('claude');
+    expect(await getLlmCapacitySnapshot()).toBe(snapshot);
+    expect(mocks.usage).not.toHaveBeenCalled();
     expect(snapshot.sentinel).toBe('ok');
     expect(snapshot.healthy).toBe(true);
   });

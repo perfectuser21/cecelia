@@ -79,20 +79,20 @@ else ok('禁用的活也进台账并标 disabled');
     `INSERT INTO ops_model_accounts
        (account_id, provider, five_hour_pct, seven_day_pct, seven_day_reset_at,
         host_alias, forwardable, forward_targets, status, consecutive_failures)
-     VALUES ('claude-account1','claude',1,95,$1,'mmv',false,'[]'::jsonb,'ok',0)
+     VALUES ('codex-team1','codex',1,95,$1,'mmv',false,'[]'::jsonb,'ok',0)
      ON CONFLICT (account_id) DO UPDATE SET
        five_hour_pct=1, seven_day_pct=95, seven_day_reset_at=EXCLUDED.seven_day_reset_at,
        status='ok', consecutive_failures=0`,
     [soon],
   );
   const snap = await (createQuotaLedgerLoader({ pool }))();
-  const v = snap.verdictFor('account1');
+  const v = snap.verdictFor('team1');
   if (v.verdict !== 'usable') {
     fail(`7d=95% 但 10 分钟后重置，应豁免为 usable，实得 ${JSON.stringify(v)}`
        + '（多半是 LEDGER_SQL 又漏了列）');
   } else ok('经真 loader 的真 SELECT，soon-reset 豁免生效');
 }
 
-await pool.query("DELETE FROM ops_model_accounts WHERE account_id='claude-account1'");
+await pool.query("DELETE FROM ops_model_accounts WHERE account_id='codex-team1'");
 await pool.end();
 process.exit(bad === 0 ? 0 : 1);

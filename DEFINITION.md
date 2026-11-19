@@ -1,6 +1,8 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.445.265
+**Brain 版本**: 1.445.266
+
+清退停用Claude的容量快照、槽位展示及周期账号采集，探针仅接受现役服务商；保留现役账号派发与通用额度、数据库整数保障，历史账本不删除。
 
 为单Activity Skill Worker显式注册冻结的宿主stdio MCP工具；保留凭据目录deny、全局never及独立Checker，仅授权固定invoke。每次核验来源、身份与截止，断连停止排队调用，超时保留unknown不重放。
 

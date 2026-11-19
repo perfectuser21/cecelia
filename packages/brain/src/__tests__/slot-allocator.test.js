@@ -33,11 +33,6 @@ vi.mock('../executor.js', () => ({
     metrics: { max_pressure: 0.1 },
   })),
   getActiveProcessCount: vi.fn(() => 0),
-  getTokenPressure: vi.fn(() => Promise.resolve({
-    token_pressure: 0,
-    available_accounts: 3,
-    details: 'mock',
-  })),
 }));
 
 // Mock db.js
@@ -47,21 +42,7 @@ vi.mock('../db.js', () => ({
   },
 }));
 
-// Mock token-budget-planner.js — 防止 calculateBudgetState 调用 getAccountUsage/pool.query
-// 干扰 slot-allocator 测试的 mockResolvedValueOnce 调用顺序
-vi.mock('../token-budget-planner.js', () => ({
-  calculateBudgetState: vi.fn(() => Promise.resolve({
-    state: 'abundant',
-    avg_remaining_pct: 100,
-    pool_c_scale: 1.0,
-    autonomous_reserve_pct: 0.70,
-    user_reserve_pct: 0.30,
-    accounts: [],
-    budget_breakdown: {},
-  })),
-  shouldDowngrade: vi.fn(() => false),
-  getExecutorAffinity: vi.fn(() => ({ primary: 'claude', fallback: 'codex', no_downgrade: false })),
-}));
+
 
 // Mock os — 防止 os.freemem() 在全量测试 OOM 时返回低值触发背压，干扰 Backpressure 测试
 vi.mock('os', async (importOriginal) => {

@@ -64,7 +64,6 @@ vi.mock('../slot-allocator.js', () => ({
   calculateSlotBudget: async () => _budget,
   shouldBypassBackpressure: () => false,
 }));
-vi.mock('../token-budget-planner.js', () => ({ shouldDowngrade: () => false }));
 vi.mock('../event-bus.js', () => ({ emit: vi.fn(async () => {}) }));
 vi.mock('../circuit-breaker.js', () => ({
   isAllowed: () => true,

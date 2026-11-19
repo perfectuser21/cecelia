@@ -8,7 +8,6 @@ const mocks = vi.hoisted(() => ({
   triggerCeceliaRun: vi.fn(),
   selectNextDispatchableTask: vi.fn(),
   calculateSlotBudget: vi.fn(),
-  shouldDowngrade: vi.fn(),
 }));
 
 vi.mock('../db.js', () => ({ default: { query: mocks.query } }));
@@ -33,7 +32,6 @@ vi.mock('../slot-allocator.js', () => ({
   calculateSlotBudget: mocks.calculateSlotBudget,
   shouldBypassBackpressure: vi.fn(() => false),
 }));
-vi.mock('../token-budget-planner.js', () => ({ shouldDowngrade: mocks.shouldDowngrade }));
 vi.mock('../llm-capacity.js', async (importOriginal) => ({
   ...(await importOriginal()),
   getLlmCapacitySnapshot: vi.fn().mockResolvedValue({
@@ -135,7 +133,6 @@ describe('当前开发任务派发所有权', () => {
     mocks.triggerCeceliaRun.mockReset();
     mocks.selectNextDispatchableTask.mockReset();
     mocks.calculateSlotBudget.mockReset();
-    mocks.shouldDowngrade.mockReset();
     mocks.selectNextDispatchableTask.mockResolvedValue(null);
     mocks.triggerCeceliaRun.mockResolvedValue({ success: true, runId: 'run-t6-001' });
     mocks.calculateSlotBudget.mockResolvedValue({
@@ -144,7 +141,6 @@ describe('当前开发任务派发所有权', () => {
       user: { mode: 'absent', used: 0 },
       codex: { available: true, running: 0, max: 5 },
     });
-    mocks.shouldDowngrade.mockReturnValue(false);
   });
 
   it('存量 dev 缺 receipt 时 fail closed，绝不在 Dispatcher 内改写后执行', async () => {

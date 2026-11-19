@@ -6,16 +6,14 @@ vi.mock('../executor.js', () => ({
   getBudgetCap: () => ({ physical: 12, effective: 12 }),
   checkServerResources: vi.fn(() => ({ effectiveSlots: 12, metrics: { max_pressure: 0.1 } })),
   getActiveProcessCount: () => 0,
-  getTokenPressure: vi.fn(async () => ({ token_pressure: 0, available_accounts: 3 })),
 }));
 vi.mock('../db.js', () => ({ default: { query: vi.fn(async () => ({ rows: [{ count: '0' }] })) } }));
-vi.mock('../token-budget-planner.js', () => ({ calculateBudgetState: async () => ({ pool_c_scale: 1 }) }));
 vi.mock('../fleet-resource-cache.js', () => ({
   getFleetStatus: () => [], getRemoteCapacity: vi.fn(() => null), getTotalEffectiveSlots: vi.fn(() => 12),
 }));
 import { execSync } from 'child_process';
 import pool from '../db.js';
-import { checkServerResources, getTokenPressure } from '../executor.js';
+import { checkServerResources } from '../executor.js';
 import { getRemoteCapacity, getTotalEffectiveSlots } from '../fleet-resource-cache.js';
 import { calculateSlotBudget, getCodexMaxConcurrent, _resetSlotBuffer } from '../slot-allocator.js';
 
@@ -28,11 +26,9 @@ describe('资源硬零必须即时阻断派单', () => {
     pool.query.mockResolvedValue({ rows: [{ count: '0' }] });
     checkServerResources.mockReturnValue({ effectiveSlots: 12, metrics: { max_pressure: 0.1 } });
     getRemoteCapacity.mockReturnValue(null);
-    getTokenPressure.mockResolvedValue({ token_pressure: 0, available_accounts: 3 });
   });
 
-  it('旧 Claude 账号全满时仍按机器容量计算可派发额度', async () => {
-    getTokenPressure.mockResolvedValue({ token_pressure: 1, available_accounts: 0 });
+  it('按机器容量和现役Codex节点计算可派发额度', async () => {
     getRemoteCapacity.mockReturnValue({ online: true, effectiveSlots: 2 });
     const budget = await calculateSlotBudget();
     expect(budget.dispatchAllowed).toBe(true);

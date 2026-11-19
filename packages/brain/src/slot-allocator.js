@@ -11,7 +11,7 @@
  */
 
 import os from 'os';
-import { MAX_SEATS, checkServerResources, getActiveProcessCount as _getActiveProcessCount, getEffectiveMaxSeats, PHYSICAL_CAPACITY as _PHYSICAL_CAPACITY, getBudgetCap, getTokenPressure } from './executor.js';
+import { MAX_SEATS, checkServerResources, getActiveProcessCount as _getActiveProcessCount, getEffectiveMaxSeats, PHYSICAL_CAPACITY as _PHYSICAL_CAPACITY, getBudgetCap } from './executor.js';
 import pool from './db.js';
 import { deterministicScriptSql } from './lib/code-script-policy.js';
 import { BACKPRESSURE_BYPASS_TASK_TYPES, CODEX_SLOT_TASK_TYPES } from './lib/task-type-registry.js';
@@ -21,7 +21,6 @@ import {
   evaluateMemoryHealth,
   getBrainRssMB,
 } from './platform-utils.js';
-import { calculateBudgetState } from './token-budget-planner.js';
 import { getFleetStatus, getRemoteCapacity, getTotalEffectiveSlots } from './fleet-resource-cache.js';
 
 // ============================================================
@@ -404,14 +403,6 @@ async function calculateSlotBudget() {
   // Available = effective slots - actual running - user headroom
   const availableRaw = Math.max(0, effectiveSlots - totalRunning - userReserve);
 
-  // 保留旧预算状态用于兼容展示；Claude 额度不再缩减全局机器容量。
-  let budgetState = null;
-  try {
-    budgetState = await calculateBudgetState();
-  } catch (err) {
-    console.warn(`[slot-allocator] calculateBudgetState failed: ${err.message}, skipping`);
-  }
-
   // Apply slot change buffer (asymmetric: fast brake, slow recovery)
   const availableBuffered = applySlotBuffer(availableRaw);
 
@@ -454,14 +445,6 @@ async function calculateSlotBudget() {
   const codexMax = getCodexMaxConcurrent();
   const codexAvailable = codexRunning < codexMax;
 
-  // 旧 Claude token 指标仅供兼容展示，不决定其他执行器的准入。
-  let tokenInfo = { token_pressure: 0, available_accounts: 3, details: 'not queried' };
-  try {
-    tokenInfo = await getTokenPressure();
-  } catch {
-    // Token pressure fetch failed — continue without it
-  }
-
   // Capacity info from dual-layer model
   const capInfo = getBudgetCap();
   const dynamicCapacity = getTotalCapacity();
@@ -496,12 +479,8 @@ async function calculateSlotBudget() {
       maxPressure: resources.metrics.max_pressure,
       capacity_source: schedulerMode ? 'fleet_workers_http' : 'local_machine',
     },
-    tokenPressure: tokenInfo,
-    budgetState: budgetState ? {
-      state: budgetState.state,
-      avg_remaining_pct: budgetState.avg_remaining_pct,
-      pool_c_scale: budgetState.pool_c_scale,
-    } : null,
+    tokenPressure: null,
+    budgetState: null,
     dispatchAllowed: availableBuffered > 0,
     resourceAdmissionBlocked: effectiveSlots === 0 && codexMax === 0,
     backpressure,

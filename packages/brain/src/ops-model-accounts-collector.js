@@ -1,14 +1,14 @@
 /**
  * ops-model-accounts-collector.js — 模型账号配额+机器可达性采集器（工厂·F5 指挥舱 刀2）
  *
- * 只做可观测数据，不做派单决策。8 个静态模型账号（Claude Code x2 + Codex team x5 + Grok）
+ * 只做可观测数据，不做派单决策。6 个现役模型账号（Codex team x5 + Grok）
  * 的实时配额快照落 ops_model_accounts 表，端点只读投影。
  *
  * 铁律（INV-1 [不刷 refresh_token]）：Grok key 过期只标 key_expired，本采集器任何路径
  * 绝不调用/刷新 refresh_token（脚本刷新 = 整条链被撤销，只能人工 grok login --device-auth）。
  * ——本文件除本注释外不出现 refresh_token 字样，测试注入的 refreshToken 探针调用计数恒为 0。
  *
- * 采集侧沿用刀1 host-exec ssh 逃逸到 mmv 读凭据 + 调三家 usage API；真凭据在 mmv、
+ * 采集侧沿用刀1 host-exec ssh 逃逸到 mmv 读凭据 + 调两家 usage API；真凭据在 mmv、
  * 不进 CI，故 runModelAccountsCollector 暴露 fetchUsage/grokProbe 注入接缝，[integration]
  * 测试注入成功 fixture 走真 PG 写路径，缺省则走真实 host-exec（生产）。
  */
@@ -44,17 +44,11 @@ const RETRY_DELAY_MS = 1000;
 const FAILURE_STREAK_THRESHOLD = 3;
 
 /**
- * 8 个静态模型账号注册表（端点「恰好 8 条」的 ground truth）。
+ * 6 个现役模型账号注册表；历史行保留在数据库，不再采集。
  * 凭据全在 mmv；forwardable/forward_targets 只投影已登记的转发目的地。
  * 当前无已登记转发目的地；不表示provider能力限制，也不参与实际执行授权。
  */
 export const MODEL_ACCOUNTS = Object.freeze([
-  { account_id: 'claude-account1', provider: 'claude', plan: 'max', host_alias: 'mmv',
-    forwardable: false, forward_targets: [], credential_path: '~/.claude/.credentials.json',
-    runtime_account_id: 'account1' },
-  { account_id: 'claude-account2', provider: 'claude', plan: 'max', host_alias: 'mmv',
-    forwardable: false, forward_targets: [], credential_path: '~/.claude-account2/.credentials.json',
-    runtime_account_id: 'account2' },
   { account_id: 'codex-team1', provider: 'codex', plan: 'team', host_alias: 'mmv',
     forwardable: false, forward_targets: [], credential_path: '~/.codex-team1/auth.json',
     runtime_account_id: 'team1' },
@@ -77,7 +71,7 @@ export const MODEL_ACCOUNTS = Object.freeze([
 
 /**
  * 账号 id 双向映射（唯一来源，禁各处手写正则/拼串）。
- * 表侧 `claude-account1` / `codex-team1` / `grok`；运行时侧 `account1` / `team1` / `grok`。
+ * 表侧 `codex-team1` / `grok`；运行时侧 `team1` / `grok`。
  * `${provider}-${runtime}` 对 grok 得到 'grok-grok' —— 拼串规则必然要写特例，所以用显式字段。
  */
 const RUNTIME_TO_LEDGER = Object.freeze(
@@ -121,7 +115,7 @@ function toPct(v) {
 export const toPctForTest = toPct;
 
 /**
- * 三家 provider 共用的快照 schema。
+ * 现役 provider 共用的快照 schema，保留历史字段。
  *
  * `reset_at` 是 **5h 窗**的重置时刻，`seven_day_reset_at` 是 **7d 窗**的——两者
  * 必须分开存：0920 上产的配额闸只有前者，于是 7d 超阈值时拿不到"还有多久滚窗"，
@@ -137,25 +131,6 @@ const EMPTY_USAGE = Object.freeze({
   seven_day_sonnet_pct: null,
   seven_day_opus_pct: null,
 });
-
-/**
- * Anthropic OAuth usage JSON → 同一 schema。
- * 形如 { five_hour: {utilization, resets_at}, seven_day: {utilization, resets_at},
- *        seven_day_sonnet: {utilization}, seven_day_opus: {utilization} }。
- * 结构缺失不抛，缺字段返回 null（INV-5）。
- */
-export function parseAnthropicUsage(raw) {
-  const r = raw && typeof raw === 'object' ? raw : {};
-  return {
-    ...EMPTY_USAGE,
-    five_hour_pct: toPct(r.five_hour?.utilization),
-    seven_day_pct: toPct(r.seven_day?.utilization),
-    reset_at: r.five_hour?.resets_at ?? null,
-    seven_day_reset_at: r.seven_day?.resets_at ?? null,
-    seven_day_sonnet_pct: toPct(r.seven_day_sonnet?.utilization),
-    seven_day_opus_pct: toPct(r.seven_day_opus?.utilization),
-  };
-}
 
 /**
  * ChatGPT wham usage JSON → 同一 schema（字段名不同：usage_percent / reset_time）。
@@ -200,9 +175,9 @@ export function classifyGrokUsageError(err) {
 
 /** provider → parser 分派。 */
 function parseUsageByProvider(provider, raw) {
-  if (/grok/i.test(provider)) return parseGrokUsage(raw);
-  if (/codex/i.test(provider)) return parseChatgptWhamUsage(raw);
-  return parseAnthropicUsage(raw);
+  if (provider === 'grok') return parseGrokUsage(raw);
+  if (provider === 'codex') return parseChatgptWhamUsage(raw);
+  throw new Error('unsupported_provider');
 }
 
 /**
@@ -257,7 +232,7 @@ export function buildProbeCmd(acct, nodeBin = PROBE_NODE_BIN) {
 
 /**
  * 缺省真实采集：host-exec ssh 逃逸到 mmv 跑 model-accounts-usage-probe.js，
- * 探针在宿主读凭据、调三家 usage API，只回传归一后的 usage JSON。
+ * 探针在宿主读凭据、调两家 usage API，只回传归一后的 usage JSON。
  * 真凭据不进 CI（见合同「未覆盖真实链路清单」）——注入 fetchUsage/grokProbe 后本函数不被触及。
  * 探针非零退出时 exec 抛错，错误文本（stderr）交给上层分类：no_credential / grpc-status 7 → key_expired / 其余 unknown。
  */
@@ -362,7 +337,7 @@ async function upsertModelAccount(pool, acct, snapshot, status, lastError) {
 }
 
 /**
- * 采集器：遍历 8 个静态账号，取 usage → 映射 status/pct → 幂等 upsert 落 ops_model_accounts。
+ * 采集器：遍历现役账号，取 usage → 映射 status/pct → 幂等 upsert 落 ops_model_accounts。
  * 单账号失败只标该条（unknown/key_expired/no_credential + last_error），不阻塞整体。
  *
  * @param {import('pg').Pool} pool 真实连接池（写路径禁 mock）

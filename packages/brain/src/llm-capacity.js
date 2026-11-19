@@ -1,10 +1,7 @@
-import { CLAUDE_CHANNEL_RETIRED } from './lib/claude-channel.js';
 import { homedir } from 'os';
 import { join } from 'path';
-import { getAccountUsage } from './account-usage.js';
 
 const CACHE_TTL_MS = 60 * 1000;
-const USABLE_THRESHOLD = 90;
 
 // team1~5 auth.json 全在本机（07-21 拍板 a1c86e2e：t1=Pro 大池，跨机只发 token 不跨机执行）
 //
@@ -95,19 +92,6 @@ export function buildGrokLedgerFromQuota(quotaSnapshot) {
   return buildLedgerFromQuota('grok', GROK_ACCOUNTS, quotaSnapshot);
 }
 
-async function pollClaudeLedger() {
-  const usage = await getAccountUsage();
-  const accounts = Object.values(usage).map((row) => ({
-    vendor: 'claude',
-    name: row.account_id,
-    available: !(row.spendingCapped || row.authFailed || row.extraUsed || (row.five_hour_pct ?? 100) >= USABLE_THRESHOLD),
-    used_percent: row.five_hour_pct ?? 100,
-    seven_day_pct: row.seven_day_pct ?? null,
-    source: row.cached ? 'usage_cache' : 'usage_api',
-  }));
-  return buildVendorLedger('claude', accounts);
-}
-
 // 账本装载器懒建：模块顶层不碰 pool，单测才能不起库直接 import 纯函数。
 let _quotaLoader = null;
 async function loadQuotaSnapshot() {
@@ -144,32 +128,18 @@ async function pollGrokLedger() {
 export function chooseGuidedExecutor(taskType, budgetState, snapshot) {
   if (!snapshot?.vendors) return null;
   const vendors = snapshot?.vendors || {};
-  // Claude Code 无头通道已退役（任务 76a160b3）：claude 账号再多也不可选，等同 0 可用
-  const claudeAvailable = !CLAUDE_CHANNEL_RETIRED && (vendors.claude?.available_count || 0) > 0;
   const codexAvailable = (vendors.codex?.available_count || 0) > 0;
   const grokAvailable = (vendors.grok?.available_count || 0) > 0;
-  const prefersCodex = CLAUDE_CHANNEL_RETIRED || budgetState === 'tight' || budgetState === 'critical';
-  const primary = prefersCodex ? 'codex' : 'claude';
-  const fallback = prefersCodex ? 'claude' : 'codex';
 
-  if (primary === 'claude' && claudeAvailable) {
-    return { executor: 'claude', level: 'L1_primary_claude', reason: 'primary_vendor_available' };
-  }
-  if (primary === 'codex' && codexAvailable) {
+  if (codexAvailable) {
     return { executor: 'codex', level: 'L2_primary_codex', reason: 'primary_vendor_available' };
-  }
-  if (fallback === 'claude' && claudeAvailable) {
-    return { executor: 'claude', level: 'L3_cross_vendor_fallback', reason: 'primary_vendor_unavailable' };
-  }
-  if (fallback === 'codex' && codexAvailable) {
-    return { executor: 'codex', level: 'L3_cross_vendor_fallback', reason: 'primary_vendor_unavailable' };
   }
   if (grokAvailable) {
     return { executor: 'grok', level: 'L4_grok_fallback', reason: 'all_metered_vendors_unavailable' };
   }
 
   return {
-    executor: primary,
+    executor: 'codex',
     level: 'L4_fail_open',
     reason: 'llm_capacity_exhausted_fail_open',
   };
@@ -186,13 +156,6 @@ export async function getLlmCapacitySnapshot(opts = {}) {
   const vendors = {};
 
   try {
-    vendors.claude = await pollClaudeLedger();
-  } catch (error) {
-    errors.push(`claude:${error.message}`);
-    vendors.claude = buildVendorLedger('claude', [], error.message);
-  }
-
-  try {
     vendors.codex = await pollCodexLedger();
   } catch (error) {
     errors.push(`codex:${error.message}`);
@@ -206,19 +169,15 @@ export async function getLlmCapacitySnapshot(opts = {}) {
     vendors.grok = buildVendorLedger('grok', [], error.message);
   }
 
-  // 退役的 Claude CLI 不可被执行器选择；保留账本和错误供历史诊断，
-  // 但它既不能让现役容量假绿，也不能让现役容量因旧采集器失败而降级。
-  const activeEntries = Object.entries(vendors)
-    .filter(([vendor]) => vendor !== 'claude' || !CLAUDE_CHANNEL_RETIRED);
+  const activeEntries = Object.entries(vendors);
   // 账本装载器正常返回 degradedReason 时不会抛异常，依然必须显示降级。
   for (const [vendor, ledger] of activeEntries) {
     const detail = `${vendor}:${ledger.error}`;
     if (ledger.poller === 'error' && ledger.error && !errors.includes(detail)) errors.push(detail);
   }
   const activeLedgers = activeEntries.map(([, ledger]) => ledger);
-  const activeErrors = errors.filter((error) => !CLAUDE_CHANNEL_RETIRED || !error.startsWith('claude:'));
   const anyAvailable = activeLedgers.some((ledger) => ledger.available_count > 0);
-  const sentinel = activeErrors.length > 0 ? 'degraded' : (anyAvailable ? 'ok' : 'exhausted');
+  const sentinel = errors.length > 0 ? 'degraded' : (anyAvailable ? 'ok' : 'exhausted');
   const snapshot = {
     sampled_at: new Date().toISOString(),
     cache_ttl_ms: CACHE_TTL_MS,

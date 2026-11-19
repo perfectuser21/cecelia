@@ -99,10 +99,14 @@ describe('账号 id 映射：候选池与配额账本必须一一对上', () => 
     expect(`${grok.provider}-${grok.runtime_account_id}`).not.toBe(grok.account_id);
   });
 
-  it('候选池里每个 account 都能映射到一条账本行', () => {
+  it('现役候选能映射到账本，历史 Claude 候选不再进入采集注册表', () => {
     const ledgerIds = new Set(MODEL_ACCOUNTS.map((a) => a.account_id));
     for (const target of listVerifiedExecutionTargets()) {
       const ledgerId = runtimeToLedgerAccountId(target.account);
+      if (target.provider === 'claude') {
+        expect(ledgerId).toBeNull();
+        continue;
+      }
       expect(ledgerId, `候选 ${target.provider}:${target.account} 映射不到账本行`).toBeTruthy();
       expect(ledgerIds.has(ledgerId)).toBe(true);
     }

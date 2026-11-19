@@ -74,7 +74,7 @@ const REGISTRY = join(SRC, 'lib', 'task-type-registry.js');
 // - Task 6（补充五+补充六收尾）：`executor-contracts.js` 的 `EXECUTOR_KIND_FOR` 改从注册表
 //   `EXECUTOR_KIND_FOR_TASK_TYPE` 派生（+ 两个路径 sentinel），退出清单——清单变量从
 //   kind: map 12 条降到 11 条。补充五点名的 5 处未分配站点（agent-ops.js/content-pipeline.js/
-//   task-weight.js/tick-helpers.js/token-budget-planner.js）逐条评估：全部无法一对一映射到
+//   task-weight.js/tick-helpers.js）逐条评估：全部无法一对一映射到
 //   现有注册表字段（各自持有与"分类标签"正交的独立数据——展示文案/LLM prompt/数值权重/
 //   降级判据/供应商亲和度配置），标 long-lived: map + 理由，未改动这 5 个文件本身的代码
 //   （只改本清单注解）。至此清单里 **kind: enum 已在全部文件清零，只剩 kind: map**，
@@ -114,10 +114,6 @@ export const REMAINING_LEGACY_SITES = {
   'task-weight.js': ['25:TASK_TYPE_ADJUSTMENTS'],
   // routeTask保留research人工处理与通用任务技能路由，和静态skill映射的值不同。
   'tick-helpers.js': ['28:TASK_TYPE_AGENT_MAP'],
-  // kind: map（long-lived）— Task 6 评估：:58 EXECUTOR_AFFINITY 是
-  // task_type→{primary,fallback,no_downgrade} 的 LLM 供应商亲和度调优配置（Claude/Codex 选型 +
-  // 降级策略），与 model-profile.js 的模型路由同属运营调参数据，非分类标签，无匹配注册表字段
-  'token-budget-planner.js': ['58:EXECUTOR_AFFINITY'],
 };
 
 describe('task-type-registry 守卫', () => {

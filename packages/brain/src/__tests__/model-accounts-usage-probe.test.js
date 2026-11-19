@@ -1,18 +1,33 @@
 // model-accounts-usage-probe.test.js — 探针纯函数单测（归一化 + gRPC-web/protobuf 解帧）
 //
-// 探针在 mmv 宿主上跑真网络，CI 不碰真凭据；这里只锁三家响应 → collector parser 形状的映射，
+// 探针在 mmv 宿主上跑真网络，CI 不碰真凭据；这里只锁现役响应 → collector parser 形状的映射，
 // 以及 Grok 帧解析在成功 / 非成功 trailers 下的行为。
 import { describe, it, expect } from 'vitest';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import {
   normalizeWhamUsage,
-  normalizeAnthropicUsage,
   normalizeGrokUsage,
   readVarint,
   decodeProtoFields,
   stripGrpcWebFrames,
   expandHome,
 } from '../model-accounts-usage-probe.js';
-import { parseChatgptWhamUsage, parseAnthropicUsage, parseGrokUsage } from '../ops-model-accounts-collector.js';
+import { parseChatgptWhamUsage, parseGrokUsage } from '../ops-model-accounts-collector.js';
+
+describe('退役或未知 provider 不得读取凭据或回落到 Claude 探针', () => {
+  it.each(['claude', 'unknown-provider'])('%s 在凭据访问前拒绝', provider => {
+    const result = spawnSync(process.execPath, [
+      fileURLToPath(new URL('../model-accounts-usage-probe.js', import.meta.url)),
+      '--probe-run', provider, '/nonexistent-retired-provider-credential.json',
+    ], { encoding: 'utf8', timeout: 5000 });
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(64);
+    expect(result.stdout).toBe('');
+    expect(result.stderr).toContain('unsupported_provider');
+    expect(result.stderr).not.toContain('no_credential');
+  });
+});
 
 function varint(n) {
   const bytes = [];
@@ -81,18 +96,6 @@ describe('normalizeWhamUsage（2026-09-19 实测 wham 形状）', () => {
     const n = normalizeWhamUsage({ rate_limit: { primary_window: { used_percent: 9, limit_window_seconds: 18000, reset_after_seconds: 60 } } }, now);
     expect(n.five_hour.reset_time).toBe(new Date(now + 60_000).toISOString());
     expect(normalizeWhamUsage(null)).toEqual({ plan_type: null, five_hour: null, seven_day: null });
-  });
-});
-
-describe('normalizeAnthropicUsage', () => {
-  it('oauth/usage 形状原样透传，collector parser 读 utilization/resets_at', () => {
-    const raw = { five_hour: { utilization: 31, resets_at: '2026-09-19T09:40:00Z' }, seven_day: { utilization: 24 } };
-    // 这份 fixture 的 seven_day 没带 resets_at → seven_day_reset_at 为 null（不编造）
-    expect(parseAnthropicUsage(normalizeAnthropicUsage(raw))).toEqual({
-      five_hour_pct: 31, seven_day_pct: 24, reset_at: '2026-09-19T09:40:00Z',
-      seven_day_reset_at: null, seven_day_sonnet_pct: null, seven_day_opus_pct: null,
-    });
-    expect(normalizeAnthropicUsage(undefined)).toEqual({});
   });
 });
 

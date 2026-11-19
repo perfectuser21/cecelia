@@ -491,8 +491,6 @@ features:
         - packages/brain/src/__tests__/session-tracking.test.js
         - packages/brain/src/__tests__/staff-skills-api.test.js
         - packages/brain/src/__tests__/templates.test.js
-        - packages/brain/src/__tests__/token-budget-planner.test.js
-        - packages/brain/src/__tests__/token-pressure.test.js
       integration: []
       e2e: []
       regression: []
@@ -553,8 +551,6 @@ features:
             - packages/brain/src/__tests__/session-tracking.test.js
             - packages/brain/src/__tests__/staff-skills-api.test.js
             - packages/brain/src/__tests__/templates.test.js
-            - packages/brain/src/__tests__/token-budget-planner.test.js
-            - packages/brain/src/__tests__/token-pressure.test.js
           integration: []
           e2e: []
         status: active
