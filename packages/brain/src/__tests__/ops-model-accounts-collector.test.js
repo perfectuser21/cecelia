@@ -79,6 +79,22 @@ const SNAPSHOT_KEYS = [
 ];
 
 describe('ops-model-accounts-collector 纯函数', () => {
+  it('整轮采集只探测现役 Codex/Grok，停用 Claude 不再读取凭据或写入快照', async () => {
+    const probed = [];
+    const pool = makePool();
+    const result = await runModelAccountsCollector(pool, {
+      force: true,
+      fetchUsage: async account => {
+        probed.push(account.account_id);
+        return { five_hour: { usage_percent: 12 }, seven_day: { usage_percent: 32 } };
+      },
+    });
+    const activeIds = ['codex-team1', 'codex-team2', 'codex-team3', 'codex-team4', 'codex-team5', 'grok'];
+    expect(probed).toEqual(activeIds);
+    expect(result.results.map(row => row.account_id)).toEqual(activeIds);
+    expect(pool.upserts().map(({ params }) => params[0])).toEqual(activeIds);
+  });
+
   it('status 五态枚举齐全（ok|unknown|rate_limited|key_expired|no_credential）', () => {
     // rate_limited 于 0920 加入（任务 424d9dd2）：429 ≠ 配额耗尽，也 ≠ 查不到，
     // 必须单独一态，读侧才分得清「该退避」与「账号有问题」。

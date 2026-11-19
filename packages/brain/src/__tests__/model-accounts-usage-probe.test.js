@@ -3,6 +3,8 @@
 // 探针在 mmv 宿主上跑真网络，CI 不碰真凭据；这里只锁三家响应 → collector parser 形状的映射，
 // 以及 Grok 帧解析在成功 / 非成功 trailers 下的行为。
 import { describe, it, expect } from 'vitest';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import {
   normalizeWhamUsage,
   normalizeAnthropicUsage,
@@ -13,6 +15,20 @@ import {
   expandHome,
 } from '../model-accounts-usage-probe.js';
 import { parseChatgptWhamUsage, parseAnthropicUsage, parseGrokUsage } from '../ops-model-accounts-collector.js';
+
+describe('退役或未知 provider 不得读取凭据或回落到 Claude 探针', () => {
+  it.each(['claude', 'unknown-provider'])('%s 在凭据访问前拒绝', provider => {
+    const result = spawnSync(process.execPath, [
+      fileURLToPath(new URL('../model-accounts-usage-probe.js', import.meta.url)),
+      '--probe-run', provider, '/nonexistent-retired-provider-credential.json',
+    ], { encoding: 'utf8', timeout: 5000 });
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(64);
+    expect(result.stdout).toBe('');
+    expect(result.stderr).toContain('unsupported_provider');
+    expect(result.stderr).not.toContain('no_credential');
+  });
+});
 
 function varint(n) {
   const bytes = [];
