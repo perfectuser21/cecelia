@@ -3,22 +3,12 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-VERSIONS_FILE="$ROOT_DIR/.brain-versions"
 ENV_REGION="${ENV_REGION:-us}"
 source "$SCRIPT_DIR/lib/brain-image-retention.sh"
 
-# Determine target version
-if [ $# -ge 1 ]; then
-  TARGET="$1"
-else
-  # Auto: pick the second-to-last line in .brain-versions
-  if [ ! -f "$VERSIONS_FILE" ] || [ "$(wc -l < "$VERSIONS_FILE")" -lt 2 ]; then
-    echo "[ERROR] No previous version found in .brain-versions"
-    echo "Usage: $0 [version]"
-    exit 1
-  fi
-  TARGET=$(tail -2 "$VERSIONS_FILE" | head -1)
-fi
+# 显式目标是恢复原语；构建版本表不能证明哪个版本曾健康运行。
+[[ $# == 1 && -n "$1" ]] || { echo 'ROLLBACK_TARGET_REQUIRED：必须提供明确恢复目标' >&2; exit 1; }
+TARGET="$1"
 
 echo "=== Rolling back to cecelia-brain:${TARGET} ==="
 

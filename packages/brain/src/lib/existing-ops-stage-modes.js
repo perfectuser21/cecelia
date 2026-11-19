@@ -144,6 +144,22 @@ const CANDIDATE_CACHE_INPUTS={
  'scripts/lib/brain-staging.sh':'6098ce2dfce78eb444eaaea0f21c4edda29f68f7661bec7c3b6b1ec09deabd8d',
  'scripts/ci/__tests__/basic-brain-candidate-host.test.mjs':'c98a6753c143d73e07f93b4dbed8eb57fe51783a074014e107b108c21cf00b2b',
 };
+// 本次清退宿主重复回退及sidecar固定恢复；旧缓存与发布组不改字节。
+const DEPLOY_RECOVERY_MARKER='scripts/ci/__tests__/basic-brain-predecessor.test.mjs';
+const DEPLOY_RECOVERY_INPUTS={
+ 'scripts/ci/prepare-ubuntu-archive.mjs':'4ddadfe0b1c4f498f3248fee31591acbbcc01b07ff84763e65761d324fa35d93',
+ 'scripts/ci/__tests__/basic-ubuntu-archive.test.mjs':'34af9e13f4784f2d8d2b685787535e98b5ee99e31a476eaf5a58322b696555b9',
+ 'scripts/lib/brain-drain-client.sh':'2dab5aacee384f5e9c1ca9ae5dddf7a26a1ac725e87fc2bc93265f5da8c2ed2b',
+ 'scripts/brain-deploy.sh':'98630a4b6a4ad2bf77df9fa6bd640827cef0ad51ec765e6732a3d86af1de4fd3',
+ 'scripts/brain-rollback.sh':'8d5fb92bbe90c0d579a6b30ef3f8441ee083ff5de49152eef1561fe6c9fed137',
+ 'scripts/lib/bluegreen.sh':'236107eb668f6091daedbfff28e7643967c5f9e258db4fa06f7377b044c02b55',
+ 'scripts/lib/bluegreen-sidecar.sh':'434a84e5d3337c3fa7802edaef7840e4bf621dc8966dfa665c61443e72c67b9d',
+ 'scripts/lib/brain-post-deploy.sh':'444df152c293fc434de4525c1aa23dc48a00abddb97422b9bcd43509597c0af4',
+ 'scripts/__tests__/brain-deploy-sha-readonly.test.sh':'0cc563f7d11e9c8a6e506ecdcaf34f259e9f4451d3a5e7cf9b7241400c63ba8b',
+ 'scripts/ci/__tests__/basic-retired-cd-entrypoints.test.mjs':'6ad7c64659bab26fdc52dd96bc20178a9bd19a7c2203f168009f396450b2b071',
+ 'scripts/ci/__tests__/basic-brain-predecessor.test.mjs':'3ba6dce8b4693a42809ad51aacce3538a3347228be1e10966b0082f1f81c5cc6',
+ 'scripts/ci/__tests__/helpers/brain-deploy-predecessor.fixture.mjs':'943a0cf598bab07f731edc73fc82a75b4a14f615fe6a8268a7ac0ba0f8137ec4',
+};
 export function reviewedPilotControls(profile,paths){
  if(!paths?.includes(PILOT_HOST))return profile;
  if(profile!==REVIEWED_NIGHTLY_STATUS)reject();
@@ -154,6 +170,10 @@ const PG_LAYERING_DIGEST='2b6e813d5bc0f5fe546d25a996b21dc208dbb142c426de05fe5f24
 export async function reviewedPilotSourceControls(profile,paths,read){
  let controls=reviewedPilotControls(profile,paths);
  if(paths?.includes(PILOT_HOST)&&createHash('sha256').update(await read(CANDIDATE_BUILDER_MARKER)).digest('hex')===CANDIDATE_CACHE_INPUTS[CANDIDATE_BUILDER_MARKER])controls={...controls,...CANDIDATE_CACHE_INPUTS};
+ if(paths?.includes(DEPLOY_RECOVERY_MARKER)){
+  if(profile!==REVIEWED_NIGHTLY_STATUS||!paths.includes(PILOT_HOST)||createHash('sha256').update(await read(DEPLOY_RECOVERY_MARKER)).digest('hex')!==DEPLOY_RECOVERY_INPUTS[DEPLOY_RECOVERY_MARKER])reject();
+  controls={...controls,...DEPLOY_RECOVERY_INPUTS};
+ }
  if(paths?.includes(PILOT_HOST)&&createHash('sha256').update(await read(PG_LAYERING_PATH)).digest('hex')===PG_LAYERING_DIGEST)return {...controls,[PG_LAYERING_PATH]:PG_LAYERING_DIGEST};
  return controls;
 }
@@ -161,6 +181,10 @@ export function recordReviewedPilotSource({profile,paths,relation}){
  if(paths?.includes(PILOT_HOST)){
   if(profile!==REVIEWED_NIGHTLY_STATUS)reject();
   relation(PILOT_CLI,PILOT_HOST,'reviewed_pilot_foundation_host_source');
+  if(paths.includes(DEPLOY_RECOVERY_MARKER)){
+   relation('scripts/brain-deploy.sh','scripts/lib/brain-post-deploy.sh','reviewed_deploy_post_success_helper');
+   relation(DEPLOY_RECOVERY_MARKER,'scripts/ci/__tests__/helpers/brain-deploy-predecessor.fixture.mjs','reviewed_deploy_predecessor_fixture');
+  }
   if(paths.includes(PERSISTENT_DRAIN_CLIENT))relation('scripts/brain-deploy.sh',PERSISTENT_DRAIN_CLIENT,'reviewed_persistent_process_drain_client');
  }
 }

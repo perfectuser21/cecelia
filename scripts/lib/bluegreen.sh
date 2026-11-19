@@ -304,13 +304,15 @@ bluegreen_swap() {
     fi
     docker rm -f "$sidecar_name" >/dev/null 2>&1 || true  # 清理上次残留
 
-    # ── 打 blue-fallback 快照（sidecar compose up 失败时回退用）──────────────
-    # 在任何 rm -f 之前完成；tag 存在即可，不阻塞部署
+    # 实际blue的不可变ID是本次恢复目标；保护别名不承担目标绑定。
     local blue_img
-    blue_img=$(docker inspect "$blue" --format '{{.Image}}' 2>/dev/null || true)
-    if [[ -n "$blue_img" ]]; then
-      docker tag "$blue_img" "cecelia-brain:blue-fallback" 2>/dev/null || true
-      echo "[bluegreen] blue-fallback 已 tag: ${blue_img:0:20}..."
+    blue_img=$(docker inspect "$blue" --format '{{.Image}}') || { echo '[bluegreen] 实际blue镜像查询失败，保留blue' >&2; return 1; }
+    [[ "$blue_img" =~ ^sha256:[a-f0-9]{64}$ ]] || { echo '[bluegreen] 实际blue镜像ID非法，保留blue' >&2; return 1; }
+    # 现有retention/janitor仍识别此保留别名；写入失败不授权猜测tag恢复。
+    if docker tag "$blue_img" cecelia-brain:blue-fallback 2>/dev/null; then
+      echo "[bluegreen] 前驱保护别名已更新: ${blue_img:0:20}..."
+    else
+      echo '[bluegreen] 前驱保护别名未写入；恢复仍只绑定本次不可变ID' >&2
     fi
 
     # ── 读取 BARK_TOKEN（供 sidecar 告警用）──────────────────────────────────
@@ -323,7 +325,7 @@ bluegreen_swap() {
     # 使用 cecelia-brain 镜像（已含 docker-cli + docker-cli-compose），
     # 挂载 docker.sock 和部署根目录，等 blue 消失后执行 compose up。
     # sidecar 脚本（bluegreen-sidecar.sh）通过 root_dir 挂载可访问，
-    # 失败时自动用 blue-fallback tag 恢复（见 bluegreen-sidecar.sh）。
+    # 失败时按显式交接的实际blue镜像ID恢复（见 bluegreen-sidecar.sh）。
     # sidecar 的健康/收尾经既有 Docker socket 在固定容器内执行；网络配置保持现状。
     local retention_mounts=()
     if [[ -n "${CECELIA_IMAGE_DEPLOYMENT_ID:-}" ]]; then
@@ -343,12 +345,14 @@ bluegreen_swap() {
         -e "BRAIN_VERSION=${version}" \
         -e "CECELIA_RELEASE_IMAGE=${CECELIA_RELEASE_IMAGE:-}" \
         -e "EXPECTED_SHA=${expected_sha}" \
+        -e "CECELIA_PREVIOUS_IMAGE=${blue_img}" \
         -e "ENV_REGION=${env_region}" \
         -e "DEPLOY_ROOT=${root_dir}" \
         -e "CECELIA_INTERNAL_ENV_FILE=${CECELIA_INTERNAL_ENV_FILE}" \
         -e "BARK_TOKEN=${bark_token}" \
         "${CECELIA_RELEASE_IMAGE:-cecelia-brain:${version}}" \
         bash "${root_dir}/scripts/lib/bluegreen-sidecar.sh" >/dev/null 2>&1; then
+      BLUEGREEN_HANDOFF=1
       echo "[bluegreen] ✅ sidecar 已启动，将在 blue 删除后完成 compose up（失败自动回退 blue-fallback）"
     else
       echo "[bluegreen] ❌ sidecar 启动失败，终止切换（blue 保留，5221 不受影响）"

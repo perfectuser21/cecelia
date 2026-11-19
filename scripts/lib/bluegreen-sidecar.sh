@@ -109,9 +109,11 @@ _sidecar_health() {
     let fold=h=>h;
     try { const m=await import(process.env.CECELIA_RETENTION_POLICY||"/app/scripts/brain-image-retention/policy.mjs");
       if(typeof m.deployHealth==="function") fold=h=>({...h,...m.deployHealth(h)}); } catch {}
-    try { const h=fold(JSON.parse(data));
+    try { const h=fold(JSON.parse(data)), frozenTags=JSON.parse(tags);
+      const tagMatches=frozenTags.includes("cecelia-brain:"+h.version)
+        || (!version && frozenTags.includes("cecelia-brain:prev-"+h.version+"-"+sha.slice(0,12)));
       if(h.status!=="healthy" || h.git_sha!==sha || !/^[0-9]+\.[0-9]+\.[0-9]+$/.test(h.version)
-        || !JSON.parse(tags).includes("cecelia-brain:"+h.version) || (version && h.version!==version)) process.exit(1);
+        || !tagMatches || (version && h.version!==version)) process.exit(1);
     } catch {process.exit(1);}' "$TARGET_SHA" "$TARGET_TAGS" "$HEALTH_VERSION" || return 1
   _sidecar_same_target
 }
@@ -202,11 +204,15 @@ if [[ "$PRIMARY_SHA" != "GIT_SHA=$EXPECTED_SHA" || ! "$PRIMARY_IMAGE" =~ ^sha256
   _sidecar_log "[completion-fail] requested_image_sha_mismatch brain_version=${BRAIN_VERSION}"
   exit 1
 fi
-FALLBACK_IMAGE=""; FALLBACK_TAGS='[]'; FALLBACK_SHA=""
-if FALLBACK_METADATA=$(_sidecar_image cecelia-brain:blue-fallback 2>/dev/null); then
-  IFS='|' read -r FALLBACK_IMAGE FALLBACK_TAGS FALLBACK_SHA <<< "$FALLBACK_METADATA"
-  FALLBACK_SHA="${FALLBACK_SHA#GIT_SHA=}"
+FALLBACK_IMAGE="${CECELIA_PREVIOUS_IMAGE:-}"
+[[ "$FALLBACK_IMAGE" =~ ^sha256:[a-f0-9]{64}$ ]] || { _sidecar_log '[completion-fail] previous_image_id_required'; exit 1; }
+FALLBACK_METADATA=$(_sidecar_image "$FALLBACK_IMAGE") || exit 1
+IFS='|' read -r OBSERVED_PREVIOUS_IMAGE FALLBACK_TAGS FALLBACK_SHA <<< "$FALLBACK_METADATA"
+if [[ "$OBSERVED_PREVIOUS_IMAGE" != "$FALLBACK_IMAGE" || ! "$FALLBACK_SHA" =~ ^GIT_SHA=[a-f0-9]{40}$ ]]; then
+  _sidecar_log '[completion-fail] previous_image_identity_mismatch'
+  exit 1
 fi
+FALLBACK_SHA="${FALLBACK_SHA#GIT_SHA=}"
 
 # ── 等待 blue 容器消失（brain-deploy.sh 将 docker rm -f blue）───────────────
 echo "[sidecar] 等待 cecelia-node-brain 消失..."
@@ -220,10 +226,9 @@ echo "[sidecar] compose up node-brain (BRAIN_VERSION=${BRAIN_VERSION})..."
 if BRAIN_VERSION="$BRAIN_VERSION" ENV_REGION="$ENV_REGION" \
     docker compose ${RETENTION_COMPOSE_ARGS[@]+"${RETENTION_COMPOSE_ARGS[@]}"} --env-file "$DEPLOY_ROOT/.env.docker" \
       -f "$COMPOSE_FILE_PATH" up -d node-brain 2>&1; then
-  echo "[sidecar] ✅ compose up 成功 v${BRAIN_VERSION}"
-
   cancel_drain_after_up success || exit 1
   retention_finish success || { _retention_finish_failed success; exit 1; }
+  echo "[sidecar] ✅ compose up 成功且身份、健康、drain及收账已核验 v${BRAIN_VERSION}"
 
   exit 0
 else
@@ -232,18 +237,20 @@ fi
 
 echo "[sidecar] ❌ compose up 失败 exit=${PRIMARY_EXIT}，尝试 blue-fallback 恢复..."
 
-# ── 恢复路径：用 blue-fallback 镜像重启（bluegreen_swap 在起 sidecar 前已 tag）──
-# blue-fallback = 删 blue 前由 bluegreen_swap 打的 docker tag，是最后一次健康 blue 的快照。
+# ── 恢复路径：仅用本次交接且验真的实际blue不可变ID重启 ──
+# BRAIN_VERSION=blue-fallback只保留日志标识；compose镜像由冻结ID覆盖。
 # 退出码语义：fallback 成功 → exit 0（5221 已恢复）；fallback 也失败 → exit 1（5221 宕机）
-if CECELIA_RELEASE_IMAGE= BRAIN_VERSION=blue-fallback ENV_REGION="$ENV_REGION" \
+[[ "$FALLBACK_IMAGE" =~ ^sha256:[a-f0-9]{64}$ ]] || { echo '[sidecar] 缺少冻结前驱ID，拒绝猜测恢复' >&2; exit 1; }
+if CECELIA_RELEASE_IMAGE="$FALLBACK_IMAGE" BRAIN_VERSION=blue-fallback ENV_REGION="$ENV_REGION" \
     docker compose ${RETENTION_COMPOSE_ARGS[@]+"${RETENTION_COMPOSE_ARGS[@]}"} --env-file "$DEPLOY_ROOT/.env.docker" \
       -f "$COMPOSE_FILE_PATH" up -d node-brain 2>&1; then
+  cancel_drain_after_up recovered || exit 1
+  retention_finish recovered || { _retention_finish_failed recovered; exit 1; }
   echo "[sidecar] ✅ blue-fallback 恢复成功，5221 已恢复旧版本"
   _sidecar_bark "⚠️ 蓝绿 sidecar：v${BRAIN_VERSION} 新镜像启动失败，已回退 blue-fallback，5221 已恢复，请检查新镜像问题"
   _sidecar_log "[sidecar-partial-fail] primary_exit=${PRIMARY_EXIT} brain_version=${BRAIN_VERSION} recovered=blue-fallback"
 
-  cancel_drain_after_up recovered || exit 1
-  retention_finish recovered || { _retention_finish_failed recovered; exit 1; }
+
 
   exit 0  # 5221 已恢复，sidecar 整体视为成功
 else

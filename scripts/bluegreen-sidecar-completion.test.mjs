@@ -18,7 +18,10 @@ async function fixture(t, scenario = '') {
   await mkdir(join(root, 'ledger'), { mode: 0o700 });
   await copyFile(new URL('./lib/brain-image-retention.sh', import.meta.url), join(root, 'scripts/lib/brain-image-retention.sh'));
   const request = { deployment_id: deployment, version: '1.360.5', git_sha: sha };
-  const previous = { id: previousImage, git_sha: previousSha, tags: ['cecelia-brain:1.360.3'] };
+  const previousVersion=scenario.startsWith('fallback-prev-')?'1.360.5':'1.360.3';
+  const previousTags=scenario.startsWith('fallback-prev-')?['cecelia-brain:prev-'+(scenario==='fallback-prev-wrong-version'?'1.360.4':previousVersion)+'-'+(scenario==='fallback-prev-wrong-sha'?'c'.repeat(12):previousSha.slice(0,12))]:['cecelia-brain:1.360.3'];
+  const primaryTags=scenario==='primary-prev-only'?['cecelia-brain:prev-1.360.5-'+sha.slice(0,12)]:['cecelia-brain:1.360.5'];
+  const previous = { id: previousImage, git_sha: previousSha, tags: previousTags };
   await writeFile(join(root, 'ledger/ledger.json'), JSON.stringify({ schema_version: 1, generation: 1, pending: { deployment_id: deployment, request, previous }, successes: [] }), { mode: 0o600 });
   await writeFile(join(root, `ledger/deployment-${deployment}.json`), JSON.stringify({ request, previous, receipt: null }), { mode: 0o600 });
   // 正式 CLI/runtime/adapter/ledger/store 全链执行，只有 Docker 进程边界替身。
@@ -33,6 +36,7 @@ async function fixture(t, scenario = '') {
     if(scenario==='docker-hang'){setInterval(()=>{},1000);return;}
     const exists=fs.existsSync(root+'/started'), recovered=fs.existsSync(root+'/fallback');
     let id=recovered?'${previousImage}':'${image}', s=recovered?'${previousSha}':'${sha}';
+    if(fs.existsSync(root+'/wrong-fallback')){id='sha256:'+ '9'.repeat(64);s='9'.repeat(40);}
     if(args[0]==='info') {
       if(scenario==='finish-fail')process.exit(1);
       if(scenario==='finish-flaky'&&!fs.existsSync(root+'/info-failed-once')){fs.writeFileSync(root+'/info-failed-once','');process.exit(1);}
@@ -45,11 +49,13 @@ async function fixture(t, scenario = '') {
       console.log(JSON.stringify([{Id:fixed,Name:'/cecelia-node-brain',Image:id,State:{Running:true}}]));process.exit(0);
     }
     if(args[0]==='image' && args[1]==='inspect' && !args.includes('--format')) {
-      console.log(JSON.stringify([{Id:id,RepoTags:['cecelia-brain:'+(recovered?'1.360.3':'1.360.5')],RepoDigests:[],Config:{Env:['GIT_SHA='+s]}}]));process.exit(0);
+      console.log(JSON.stringify([{Id:id,RepoTags:recovered?${JSON.stringify(previousTags)}:${JSON.stringify(primaryTags)},RepoDigests:[],Config:{Env:['GIT_SHA='+s]}}]));process.exit(0);
     }
     if(args[0]==='image' && args[1]==='inspect') {
-      const fallback=args.at(-1)==='cecelia-brain:blue-fallback';
-      console.log((fallback?'${previousImage}':'${image}')+'|'+JSON.stringify(['cecelia-brain:'+(fallback?'1.360.3':'1.360.5')])+'|GIT_SHA='+(fallback?'${previousSha}':'${sha}'));process.exit(0);
+      const fallback=args.at(-1)==='cecelia-brain:blue-fallback'||args.at(-1)==='${previousImage}';
+      if(scenario==='previous-id-mismatch'&&args.at(-1)==='${previousImage}'){console.log('sha256:'+ '9'.repeat(64)+'|[]|GIT_SHA='+ '9'.repeat(40));process.exit(0);}
+      if(scenario==='fallback-pre-freeze-poison'&&args.at(-1)==='cecelia-brain:blue-fallback'){console.log('sha256:'+ '9'.repeat(64)+'|[]|GIT_SHA='+ '9'.repeat(40));process.exit(0);}
+      console.log((fallback?'${previousImage}':'${image}')+'|'+JSON.stringify(fallback?${JSON.stringify(previousTags)}:${JSON.stringify(primaryTags)})+'|GIT_SHA='+(fallback?'${previousSha}':'${sha}'));process.exit(0);
     }
     if(args[0]==='inspect') {
       if(!exists)process.exit(1);
@@ -57,15 +63,15 @@ async function fixture(t, scenario = '') {
       console.log((drift?'${'4'.repeat(64)}':'${container}')+' '+(scenario==='wrong-image'?'${previousImage}':id)+' /cecelia-node-brain true node-brain');process.exit(0);
     }
     if(args[0]==='compose') {
-      if(process.env.BRAIN_VERSION==='blue-fallback') fs.writeFileSync(root+'/fallback','');
-      else if(scenario==='fallback')process.exit(7);
+      if(process.env.BRAIN_VERSION==='blue-fallback'){fs.writeFileSync(root+'/fallback','');if(scenario==='fallback-tag-drift'&&process.env.CECELIA_RELEASE_IMAGE!=='${previousImage}')fs.writeFileSync(root+'/wrong-fallback','');}
+      else if(scenario.startsWith('fallback'))process.exit(7);
       fs.writeFileSync(root+'/started','');process.exit(0);
     }
     if(args[0]==='exec') {
       if(!args.includes('${container}'))process.exit(91);
-      if(args.some(x=>x.endsWith('/healthz'))){const sealed=['sealed-degraded','sealed-open-breaker'].includes(scenario),dbDown=scenario==='unhealthy',code=(sealed||dbDown)?503:200;const body=JSON.stringify(dbDown?{status:'degraded',db:'error',tick:'dead'}:sealed?{status:'degraded',db:'connected',tick:'dead'}:{status:'ok',db:'connected',tick:'alive'});if(args.some(a=>/^-[a-zA-Z]*f/.test(a))&&code>=400)process.exit(22);process.stdout.write(body+(args.includes('-w')?'\\n'+code:''));return;}
+      if(args.some(x=>x.endsWith('/healthz'))){const sealed=['sealed-degraded','sealed-open-breaker'].includes(scenario),dbDown=['unhealthy','fallback-unhealthy'].includes(scenario),code=(sealed||dbDown)?503:200;const body=JSON.stringify(dbDown?{status:'degraded',db:'error',tick:'dead'}:sealed?{status:'degraded',db:'connected',tick:'dead'}:{status:'ok',db:'connected',tick:'alive'});if(args.some(a=>/^-[a-zA-Z]*f/.test(a))&&code>=400)process.exit(22);process.stdout.write(body+(args.includes('-w')?'\\n'+code:''));return;}
       if(args.some(x=>x.endsWith('/health'))) {
-        fs.writeFileSync(root+'/healthy','');console.log(JSON.stringify({status:['degraded','sealed-degraded','sealed-open-breaker'].includes(scenario)?'degraded':'healthy',...(scenario==='sealed-degraded'?{organs:{scheduler:{enabled:false},circuit_breaker:{open:[]}}}:{}),...(scenario==='sealed-open-breaker'?{organs:{scheduler:{enabled:false},circuit_breaker:{open:['cecelia-run']}}}:{}),version:recovered?'1.360.3':'1.360.5',git_sha:scenario==='wrong-sha'?'${previousSha}':s,...(scenario==='health-oversize'?{padding:'x'.repeat(300000)}:{})}));if(args.includes('-w'))process.stdout.write(scenario==='health-redirect'?'302':'200');return;
+        fs.writeFileSync(root+'/healthy','');console.log(JSON.stringify({status:['degraded','sealed-degraded','sealed-open-breaker'].includes(scenario)?'degraded':'healthy',...(scenario==='sealed-degraded'?{organs:{scheduler:{enabled:false},circuit_breaker:{open:[]}}}:{}),...(scenario==='sealed-open-breaker'?{organs:{scheduler:{enabled:false},circuit_breaker:{open:['cecelia-run']}}}:{}),version:recovered?${JSON.stringify(previousVersion)}:'1.360.5',git_sha:scenario==='wrong-sha'?'${previousSha}':s,...(scenario==='health-oversize'?{padding:'x'.repeat(300000)}:{})}));if(args.includes('-w'))process.stdout.write(scenario==='health-redirect'?'302':'200');return;
       }
       if(args.some(x=>x.endsWith('/drain-cancel'))) {
         if(scenario==='drain-fail')process.exit(22);
@@ -86,7 +92,7 @@ exec ${JSON.stringify(process.execPath)} "$@"
   // 缩短重试时钟；生产仍为90轮，错误路径保留多次尝试。
   await writeFile(join(root, 'bin/seq'), '#!/bin/sh\nprintf \"1\\n2\\n3\\n\"\n', { mode: 0o755 });
   await writeFile(join(root, 'bin/sleep'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
-  const env = { ...process.env, PATH: `${root}/bin:${process.env.PATH}`, NODE_OPTIONS: `--import=${root}/deny-http.mjs`, FIXTURE_ROOT: root, SCENARIO: scenario, BRAIN_VERSION: '1.360.5', EXPECTED_SHA: scenario === 'request-sha' ? previousSha : sha, ENV_REGION: 'us', DEPLOY_ROOT: root, CECELIA_INTERNAL_ENV_FILE: `${root}/internal.env`, CECELIA_IMAGE_DEPLOYMENT_ID: deployment, CECELIA_IMAGE_RETENTION_DIR: `${root}/ledger`, CECELIA_RETENTION_POLICY: `${root}/scripts/brain-image-retention/policy.mjs`, BARK_TOKEN: 'fixture-token' };
+  const env = { ...process.env, PATH: `${root}/bin:${process.env.PATH}`, NODE_OPTIONS: `--import=${root}/deny-http.mjs`, FIXTURE_ROOT: root, SCENARIO: scenario, BRAIN_VERSION: '1.360.5', CECELIA_PREVIOUS_IMAGE: scenario==='previous-missing'?'':scenario==='previous-invalid'?'not-an-id':previousImage, EXPECTED_SHA: scenario === 'request-sha' ? previousSha : sha, ENV_REGION: 'us', DEPLOY_ROOT: root, CECELIA_INTERNAL_ENV_FILE: `${root}/internal.env`, CECELIA_IMAGE_DEPLOYMENT_ID: deployment, CECELIA_IMAGE_RETENTION_DIR: `${root}/ledger`, CECELIA_RETENTION_POLICY: `${root}/scripts/brain-image-retention/policy.mjs`, BARK_TOKEN: 'fixture-token' };
   const result = await run('bash', [new URL('./lib/bluegreen-sidecar.sh', import.meta.url).pathname], { env, timeout: 20000 }).then(x => ({ ...x, code: 0 }), e => ({ ...e, code: e.code }));
   const text = async name => readFile(join(root, name), 'utf8').catch(() => '');
   return { ...result, root, sidecarLog: await text('logs/cecelia-deploy-sidecar-failures.log'), barks: await text('curl-calls'), calls: (await readFile(join(root, 'calls'), 'utf8')).trim().split('\n').map(JSON.parse), ledger: JSON.parse(await readFile(join(root, 'ledger/ledger.json'), 'utf8')) };
@@ -155,4 +161,44 @@ test('finish全部失败：重试有界、每次stderr落日志、最终告警�
   assert.ok(retries.length <= 10, '重试必须有界');
   assert.match(f.sidecarLog, /\[completion-fail\] retention_finish_unconfirmed outcome=success attempts=\d+ exit=1 stderr=\S+/);
   assert.match(f.barks, /api\.day\.app\/fixture-token\//, '最终失败必须告警，不能静默');
+});
+
+test('fallback可变tag漂移后仍用启动前冻结的不可变前驱ID恢复并真实收账',async t=>{
+ const f=await fixture(t,'fallback-tag-drift');assert.equal(f.code,0,f.stdout+f.stderr);
+ assert.equal(f.ledger.pending,null);assert.deepEqual(f.ledger.successes,[]);
+ const row=JSON.parse(await readFile(join(f.root,`ledger/deployment-${deployment}.json`),'utf8'));
+ assert.equal(row.receipt.image_id,previousImage);assert.equal(row.receipt.outcome,'recovered');
+});
+test('fallback compose返回成功但健康核验失败不能打印或告警已恢复',async t=>{
+ const f=await fixture(t,'fallback-unhealthy');assert.notEqual(f.code,0,f.stdout+f.stderr);
+ assert.doesNotMatch(f.stdout,/✅ blue-fallback 恢复成功/);assert.doesNotMatch(f.barks,/已恢复/);
+ assert.ok(f.ledger.pending);
+});
+test('primary compose返回成功但finish失败不能打印发布成功',async t=>{
+ const f=await fixture(t,'finish-fail');assert.notEqual(f.code,0);
+ assert.doesNotMatch(f.stdout,/✅ compose up 成功/);assert.ok(f.ledger.pending);
+});
+
+test('sidecar首次读取前全局fallback标签已被替换，仍只恢复本次传入实际blue ID',async t=>{
+ const f=await fixture(t,'fallback-pre-freeze-poison');assert.equal(f.code,0,f.stdout+f.stderr);
+ assert.equal(f.ledger.pending,null);assert.deepEqual(f.ledger.successes,[]);
+ const row=JSON.parse(await readFile(join(f.root,`ledger/deployment-${deployment}.json`),'utf8'));
+ assert.equal(row.receipt.image_id,previousImage);assert.equal(row.receipt.outcome,'recovered');
+ assert.ok(!f.calls.some(a=>a[0]==='image'&&a[1]==='inspect'&&a.at(-1)==='cecelia-brain:blue-fallback'),'运行时不得读取全局tag作为前驱真身');
+});
+
+for(const scenario of ['previous-missing','previous-invalid','previous-id-mismatch'])test(`sidecar前驱未知拒绝compose，不兼容猜tag：${scenario}`,async t=>{
+ const f=await fixture(t,scenario);assert.equal(f.code,1,f.stdout+f.stderr);
+ assert.equal(f.calls.some(a=>a[0]==='compose'),false);assert.ok(f.ledger.pending);
+});
+
+test('同版本不同SHA构建后仅剩精确prev-version-sha12标签的前驱仍可验真恢复',async t=>{
+ const f=await fixture(t,'fallback-prev-only');assert.equal(f.code,0,f.stdout+f.stderr);
+ assert.equal(f.ledger.pending,null);assert.deepEqual(f.ledger.successes,[]);
+ const row=JSON.parse(await readFile(join(f.root,`ledger/deployment-${deployment}.json`),'utf8'));
+ assert.equal(row.receipt.outcome,'recovered');assert.equal(row.receipt.image_id,previousImage);
+});
+for(const scenario of ['fallback-prev-wrong-version','fallback-prev-wrong-sha','primary-prev-only'])test(`prev标签严格合同拒绝错误版本/SHA与primary放宽：${scenario}`,async t=>{
+ const f=await fixture(t,scenario);assert.equal(f.code,1,f.stdout+f.stderr);assert.ok(f.ledger.pending);
+ assert.deepEqual(f.ledger.successes,[]);assert.equal(f.calls.some(a=>a.some(x=>x.endsWith('/drain-cancel'))),false);
 });
