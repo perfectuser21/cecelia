@@ -41,10 +41,25 @@ for(const branch of ['compose','health'])test(`${branch}失败且无版本历史
  assert.doesNotMatch(f.stdout,/Rolled back/);
 });
 
-test('sidecar接管后parent存活也不得再次compose、猜回滚或写部署终态',t=>{
- const r=runPredecessorScenario(t,'handoff-parent-survives');
+for(const scenario of ['handoff-parent-survives','handoff-parent-return-failure'])test(`sidecar接管后parent存活也不得再次compose、猜回滚或写部署终态：${scenario}`,t=>{
+ const r=runPredecessorScenario(t,scenario);
  assert.match(r.handoff_events,/sidecar-started/);assert.match(r.handoff_events,/blue-removed/);
- assert.notEqual(r.exit_code,0);assert.match(r.stdout+r.stderr,/HANDOFF_UNCONFIRMED/);
+ const sidecar=r.docker_calls.find(a=>a[0]==='run'&&a.includes('cecelia-bluegreen-sidecar'));
+ assert.ok(sidecar.includes('CECELIA_PREVIOUS_IMAGE='+r.actual_previous.image),'实际blue ID必须显式交给sidecar');
+ assert.equal(r.exit_code,75);assert.match(r.stdout+r.stderr,/HANDOFF_UNCONFIRMED/);
+ assert.doesNotMatch(r.curl_events,/drain-cancel/,'已经接管，parent不可解除sidecar暂停');
  assert.deepEqual(r.compose,[],'parent不得与sidecar竞争compose');assert.equal(r.status,null,'sidecar已接管，parent不能写第二个终态');
  assert.doesNotMatch(r.stdout,/Rolled back|Deploy SUCCESS/);
+});
+
+test('外部继承的handoff标志不能免除本次实际失败结算',t=>{
+ const r=runPredecessorScenario(t,'inherited-handoff');assert.notEqual(r.exit_code,0);
+ assert.equal(r.compose.length,1);assert.equal(r.status.status,'failed');
+ assert.doesNotMatch(r.stdout+r.stderr,/HANDOFF_UNCONFIRMED/);
+});
+
+for(const scenario of ['handoff-invalid-previous','handoff-failed-previous'])test(`实际blue身份未知必须保留生产，不启动sidecar：${scenario}`,t=>{
+ const r=runPredecessorScenario(t,scenario);assert.notEqual(r.exit_code,0);
+ assert.doesNotMatch(r.handoff_events,/sidecar-started|blue-removed/);
+ assert.deepEqual(r.compose,[]);assert.equal(r.final_production.image,r.actual_previous.image);
 });

@@ -207,6 +207,10 @@ export function runPredecessorScenario(t,scenario){
   let script=fs.readFileSync(root+'/scripts/brain-deploy.sh','utf8');
   assert.equal(script.split('DEPLOY_STATUS_FILE="/tmp/cecelia-deploy-status.json"').length,2);
   script=script.replace('DEPLOY_STATUS_FILE="/tmp/cecelia-deploy-status.json"','DEPLOY_STATUS_FILE="'+f.repo+'/deploy-status.json"');
+  if(scenario==='handoff-parent-return-failure'){
+   const source='source "$SCRIPT_DIR/lib/bluegreen.sh"';assert.ok(script.includes(source));
+   script=script.replace(source,source+"\neval \"$(declare -f bluegreen_swap | sed '1s/bluegreen_swap/fixture_bluegreen_swap/')\"\nbluegreen_swap() { fixture_bluegreen_swap \"$@\"; return 42; }");
+  }
   fs.writeFileSync(f.repo+'/scripts/brain-deploy.sh',script);
   const previous=f.env.OLD_IMAGE, phantom='sha256:'+'e'.repeat(64);
   const same=scenario.includes('same-version'),noHistory=scenario.endsWith('no-history');
@@ -236,7 +240,7 @@ if(original[0]==='inspect'){
  const ref=original[1]==='--format'?original.at(-1):original[1];
  if(ref==='cecelia-node-brain'){
   if(format==='{{.State.Status}}'){console.log(prod.status);process.exit(0);}
-  if(format==='{{.Image}}'){if(e.FULL_SCENARIO==='unknown-current-image')process.exit(43);console.log(prod.image);process.exit(0);}
+  if(format==='{{.Image}}'){if(e.FULL_SCENARIO==='handoff-invalid-previous'){console.log('not-an-immutable-id');process.exit(0);}if(e.FULL_SCENARIO==='handoff-failed-previous'){console.log(prod.image);process.exit(43);}if(e.FULL_SCENARIO==='unknown-current-image')process.exit(43);console.log(prod.image);process.exit(0);}
  }
  if(format==='{{.Id}}'&&full.images[ref]){console.log(ref);process.exit(0);}
 }
@@ -251,13 +255,13 @@ if(original[0]==='compose'){
   const at='let a = original, host =';assert.ok(fake.includes(at));fake=fake.replace(at,insert+'\n'+at);fs.writeFileSync(f.dir+'/bin/docker',fake,{mode:0o755});
   fs.writeFileSync(f.dir+'/bin/curl',`#!${process.execPath}
 if(!process.env.FULL_SCENARIO.startsWith('handoff-'))process.exit(7);
-const u=process.argv.at(-1);
+const u=process.argv.at(-1);require('node:fs').appendFileSync(process.env.FULL_CURL_LOG,u+'\\n');
 if(u.endsWith('/tick/drain')||u.endsWith('/tick/drain-status'))console.log(JSON.stringify({protocol:'brain-process-drain-v1',drain_id:'11111111-1111-4111-8111-111111111111',draining:true,safe_to_swap:true,remaining:0,blockers:[],independent_task_count:0}));
 else console.log('{"enabled":true}');
 `,{mode:0o755});
   fs.writeFileSync(f.dir+'/bin/timeout','#!/bin/sh\nif [ "$1" = -k ]; then shift 2; fi\nshift\nexec "$@"\n',{mode:0o755});fs.writeFileSync(f.dir+'/bin/ssh','#!/bin/sh\necho forbidden >&2\nexit 99\n',{mode:0o755});
-  f.env={...f.env,HOME:f.dir+'/home',HOST_HOME:f.dir+'/home',CECELIA_INTERNAL_ENV_FILE:f.dir+'/home/.credentials/cecelia-internal.env',CECELIA_IMAGE_RETENTION_DIR:f.dir+'/disabled-ledger',FULL_SCENARIO:scenario,FULL_COMPOSE_LOG:f.dir+'/compose.jsonl',FULL_COMPOSE_COUNT:f.dir+'/compose-count',FULL_HANDOFF_LOG:f.dir+'/handoff-events',SKIP_PRE_SWAP_SMOKE:'1',SKIP_POST_DEPLOY_SMOKE:'1'};
+  f.env={...f.env,HOME:f.dir+'/home',HOST_HOME:f.dir+'/home',CECELIA_INTERNAL_ENV_FILE:f.dir+'/home/.credentials/cecelia-internal.env',CECELIA_IMAGE_RETENTION_DIR:f.dir+'/disabled-ledger',FULL_SCENARIO:scenario,FULL_COMPOSE_LOG:f.dir+'/compose.jsonl',FULL_COMPOSE_COUNT:f.dir+'/compose-count',FULL_HANDOFF_LOG:f.dir+'/handoff-events',FULL_CURL_LOG:f.dir+'/curl-events',BLUEGREEN_HANDOFF:scenario==='inherited-handoff'?'1':'0',SKIP_PRE_SWAP_SMOKE:'1',SKIP_POST_DEPLOY_SMOKE:'1'};
   const result=spawnSync('bash',['scripts/brain-deploy.sh'],{cwd:f.repo,env:f.env,encoding:'utf8',timeout:45000});
   const compose=fs.existsSync(f.env.FULL_COMPOSE_LOG)?fs.readFileSync(f.env.FULL_COMPOSE_LOG,'utf8').trim().split('\n').map(JSON.parse):[];
-  return {handoff_events:fs.existsSync(f.dir+'/handoff-events')?fs.readFileSync(f.dir+'/handoff-events','utf8'):'',scenario,versions_input:same?['0.8.0','1.0.0']:['0.8.0','0.9.0'],actual_previous:{container_id:local.production.id,image:previous,version:priorVersion,git_sha:'a'.repeat(40)},never_deployed_version:same?null:'0.9.0',candidate:{version:'1.0.0',git_sha:f.sha,image:f.env.IMAGE},exit_code:result.status,signal:result.signal,compose,final_production:f.state('local').production,status:fs.existsSync(f.repo+'/deploy-status.json')?JSON.parse(fs.readFileSync(f.repo+'/deploy-status.json','utf8')):null,stdout:result.stdout,stderr:result.stderr};
+  return {docker_calls:f.commands(),curl_events:fs.existsSync(f.dir+'/curl-events')?fs.readFileSync(f.dir+'/curl-events','utf8'):'',handoff_events:fs.existsSync(f.dir+'/handoff-events')?fs.readFileSync(f.dir+'/handoff-events','utf8'):'',scenario,versions_input:same?['0.8.0','1.0.0']:['0.8.0','0.9.0'],actual_previous:{container_id:local.production.id,image:previous,version:priorVersion,git_sha:'a'.repeat(40)},never_deployed_version:same?null:'0.9.0',candidate:{version:'1.0.0',git_sha:f.sha,image:f.env.IMAGE},exit_code:result.status,signal:result.signal,compose,final_production:f.state('local').production,status:fs.existsSync(f.repo+'/deploy-status.json')?JSON.parse(fs.readFileSync(f.repo+'/deploy-status.json','utf8')):null,stdout:result.stdout,stderr:result.stderr};
 }

@@ -49,7 +49,9 @@ async function fixture(t, scenario = '') {
       console.log(JSON.stringify([{Id:id,RepoTags:['cecelia-brain:'+(recovered?'1.360.3':'1.360.5')],RepoDigests:[],Config:{Env:['GIT_SHA='+s]}}]));process.exit(0);
     }
     if(args[0]==='image' && args[1]==='inspect') {
-      const fallback=args.at(-1)==='cecelia-brain:blue-fallback';
+      const fallback=args.at(-1)==='cecelia-brain:blue-fallback'||args.at(-1)==='${previousImage}';
+      if(scenario==='previous-id-mismatch'&&args.at(-1)==='${previousImage}'){console.log('sha256:'+ '9'.repeat(64)+'|[]|GIT_SHA='+ '9'.repeat(40));process.exit(0);}
+      if(scenario==='fallback-pre-freeze-poison'&&args.at(-1)==='cecelia-brain:blue-fallback'){console.log('sha256:'+ '9'.repeat(64)+'|[]|GIT_SHA='+ '9'.repeat(40));process.exit(0);}
       console.log((fallback?'${previousImage}':'${image}')+'|'+JSON.stringify(['cecelia-brain:'+(fallback?'1.360.3':'1.360.5')])+'|GIT_SHA='+(fallback?'${previousSha}':'${sha}'));process.exit(0);
     }
     if(args[0]==='inspect') {
@@ -87,7 +89,7 @@ exec ${JSON.stringify(process.execPath)} "$@"
   // 缩短重试时钟；生产仍为90轮，错误路径保留多次尝试。
   await writeFile(join(root, 'bin/seq'), '#!/bin/sh\nprintf \"1\\n2\\n3\\n\"\n', { mode: 0o755 });
   await writeFile(join(root, 'bin/sleep'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
-  const env = { ...process.env, PATH: `${root}/bin:${process.env.PATH}`, NODE_OPTIONS: `--import=${root}/deny-http.mjs`, FIXTURE_ROOT: root, SCENARIO: scenario, BRAIN_VERSION: '1.360.5', EXPECTED_SHA: scenario === 'request-sha' ? previousSha : sha, ENV_REGION: 'us', DEPLOY_ROOT: root, CECELIA_INTERNAL_ENV_FILE: `${root}/internal.env`, CECELIA_IMAGE_DEPLOYMENT_ID: deployment, CECELIA_IMAGE_RETENTION_DIR: `${root}/ledger`, CECELIA_RETENTION_POLICY: `${root}/scripts/brain-image-retention/policy.mjs`, BARK_TOKEN: 'fixture-token' };
+  const env = { ...process.env, PATH: `${root}/bin:${process.env.PATH}`, NODE_OPTIONS: `--import=${root}/deny-http.mjs`, FIXTURE_ROOT: root, SCENARIO: scenario, BRAIN_VERSION: '1.360.5', CECELIA_PREVIOUS_IMAGE: scenario==='previous-missing'?'':scenario==='previous-invalid'?'not-an-id':previousImage, EXPECTED_SHA: scenario === 'request-sha' ? previousSha : sha, ENV_REGION: 'us', DEPLOY_ROOT: root, CECELIA_INTERNAL_ENV_FILE: `${root}/internal.env`, CECELIA_IMAGE_DEPLOYMENT_ID: deployment, CECELIA_IMAGE_RETENTION_DIR: `${root}/ledger`, CECELIA_RETENTION_POLICY: `${root}/scripts/brain-image-retention/policy.mjs`, BARK_TOKEN: 'fixture-token' };
   const result = await run('bash', [new URL('./lib/bluegreen-sidecar.sh', import.meta.url).pathname], { env, timeout: 20000 }).then(x => ({ ...x, code: 0 }), e => ({ ...e, code: e.code }));
   const text = async name => readFile(join(root, name), 'utf8').catch(() => '');
   return { ...result, root, sidecarLog: await text('logs/cecelia-deploy-sidecar-failures.log'), barks: await text('curl-calls'), calls: (await readFile(join(root, 'calls'), 'utf8')).trim().split('\n').map(JSON.parse), ledger: JSON.parse(await readFile(join(root, 'ledger/ledger.json'), 'utf8')) };
@@ -172,4 +174,17 @@ test('fallback compose返回成功但健康核验失败不能打印或告警已�
 test('primary compose返回成功但finish失败不能打印发布成功',async t=>{
  const f=await fixture(t,'finish-fail');assert.notEqual(f.code,0);
  assert.doesNotMatch(f.stdout,/✅ compose up 成功/);assert.ok(f.ledger.pending);
+});
+
+test('sidecar首次读取前全局fallback标签已被替换，仍只恢复本次传入实际blue ID',async t=>{
+ const f=await fixture(t,'fallback-pre-freeze-poison');assert.equal(f.code,0,f.stdout+f.stderr);
+ assert.equal(f.ledger.pending,null);assert.deepEqual(f.ledger.successes,[]);
+ const row=JSON.parse(await readFile(join(f.root,`ledger/deployment-${deployment}.json`),'utf8'));
+ assert.equal(row.receipt.image_id,previousImage);assert.equal(row.receipt.outcome,'recovered');
+ assert.ok(!f.calls.some(a=>a[0]==='image'&&a[1]==='inspect'&&a.at(-1)==='cecelia-brain:blue-fallback'),'运行时不得读取全局tag作为前驱真身');
+});
+
+for(const scenario of ['previous-missing','previous-invalid','previous-id-mismatch'])test(`sidecar前驱未知拒绝compose，不兼容猜tag：${scenario}`,async t=>{
+ const f=await fixture(t,scenario);assert.equal(f.code,1,f.stdout+f.stderr);
+ assert.equal(f.calls.some(a=>a[0]==='compose'),false);assert.ok(f.ledger.pending);
 });
