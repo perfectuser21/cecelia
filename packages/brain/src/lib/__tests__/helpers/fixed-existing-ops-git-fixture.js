@@ -1,3 +1,4 @@
+import {readExistingOpsGitTree} from './read-existing-ops-git-tree.js';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
@@ -9,21 +10,8 @@ export const fixtureGit = (...args) => execFileSync('git', ['--no-replace-object
 });
 
 export function readFixedExistingOpsGitFixture(revision = FIXTURE_REVISION) {
-  if (!/^[a-f0-9]{40}$/.test(revision)) throw Error('fixed Git fixture requires a full commit SHA');
-  if (fixtureGit('rev-parse', '--verify', `${revision}^{commit}`).trim() !== revision) {
-    throw Error('fixed Git fixture commit identity mismatch');
-  }
+  const snapshot=readExistingOpsGitTree(fixtureGit,revision);
   try { fixtureGit('merge-base', '--is-ancestor', revision, 'refs/remotes/origin/main'); }
   catch { throw Error('fixed Git fixture must be merged into origin/main'); }
-  const tree = fixtureGit('rev-parse', `${revision}^{tree}`).trim();
-  const entries = fixtureGit('ls-tree', '-rz', '--full-tree', revision).split('\0').filter(Boolean).map(line => {
-    const [meta, path] = line.split('\t'), [mode, type, sha] = meta.split(' ');
-    return { path, mode, type, sha };
-  });
-  const cache = new Map();
-  const read = path => {
-    if (!cache.has(path)) cache.set(path, fixtureGit('show', `${revision}:${path}`));
-    return cache.get(path);
-  };
-  return { revision, tree, entries, paths: entries.map(entry => entry.path), read };
+  return snapshot;
 }

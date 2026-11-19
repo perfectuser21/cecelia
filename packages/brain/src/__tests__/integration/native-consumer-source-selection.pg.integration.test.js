@@ -2,7 +2,7 @@ import {afterEach,beforeEach,expect,it} from 'vitest';
 import {versionsDatabase} from '../fixtures/definition-versions-db.js';
 import {minimumMapSchema} from '../fixtures/minimum-map-schema.js';
 import {EXISTING_OPS_IDENTITIES,buildExistingOpsSources as buildCurrentSources} from '../../lib/existing-ops-source.js';
-import {readFixedExistingOpsGitFixture,fixtureGit} from '../../lib/__tests__/helpers/fixed-existing-ops-git-fixture.js';
+import {readCurrentExistingOpsGitFixture} from '../../lib/__tests__/helpers/current-existing-ops-git-fixture.js';
 import {isolatedExistingOpsGitFixture} from '../../lib/__tests__/helpers/isolated-existing-ops-git-fixture.js';
 import * as registration from '../../lib/existing-ops-registration.js';
 import * as currentRegistration from '../../lib/existing-ops-registration.js';
@@ -14,7 +14,7 @@ import {createImplementationCiRouter} from '../../routes/implementation-ci.js';
 import {randomUUID} from 'node:crypto';
 import express from 'express';
 import request from 'supertest';
-const sourceFixture=readFixedExistingOpsGitFixture(fixtureGit('rev-parse','HEAD').trim());
+const sourceFixture=readCurrentExistingOpsGitFixture();
 const {revision,paths,tree:treeSha,entries}=sourceFixture;
 const readSource=async path=>sourceFixture.read(path);
 import yaml from 'js-yaml';
@@ -164,7 +164,7 @@ it.each(['registry','current'])('进入RR前%s变化以数据库重读为准，�
 });
 
 it('私有Git篡改实际workflow权限不能继承历史资格，当前登记拒绝且历史current和地图全部零写',async()=>{
- const current=readFixedExistingOpsGitFixture(fixtureGit('rev-parse','HEAD').trim()),before=await history();
+ const current=readCurrentExistingOpsGitFixture(),before=await history();
  const workflow='.github/workflows/ci.yml',original=current.read(workflow),doc=yaml.load(original);
  const permission='permissions:\n  contents: read';expect(original.split(permission)).toHaveLength(2);
  expect(doc.permissions.contents).toBe('read');doc.permissions.contents='write';

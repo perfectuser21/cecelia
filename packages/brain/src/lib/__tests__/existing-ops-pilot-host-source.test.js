@@ -8,11 +8,15 @@ import {reviewedPilotControls,REVIEWED_FOUNDATION_RELEASE,REVIEWED_FIXED_CHECKS,
 import {readFixedExistingOpsGitFixture} from './helpers/fixed-existing-ops-git-fixture.js';
 const root=fileURLToPath(new URL('../../../../../',import.meta.url));
 const old=readFixedExistingOpsGitFixture('0431a8d3242783f1d94221cb5471ac40dda7fbd6');
+const stable=readFixedExistingOpsGitFixture('99041a42de8ad78a8891678c570b14bc2e3c7c95');
+const deploy='scripts/brain-deploy.sh',drain='scripts/lib/brain-drain-client.sh';
 const cli='scripts/ci/pilot-release-verification.mjs',helper='scripts/ci/pilot-foundation-bindings.mjs';
 const paths=execFileSync('git',['ls-files','-z','--cached','--others','--exclude-standard'],{cwd:root,encoding:'utf8'}).split('\0').filter(p=>p&&existsSync(root+p));
 const read=p=>readFileSync(root+p,'utf8');
-async function collect({deep=false,fixture,missing,overrides={}}={}){
- const tree=(fixture?.paths??paths).filter(p=>p!==missing),source=async p=>{
+// 评审输入组合：当前输入移除排空helper，部署与验收脚本回放稳定main字节；不是历史Git快照。
+const parent={revision:'f'.repeat(40),paths:paths.filter(p=>p!==drain),read:p=>[deploy,'scripts/__tests__/brain-deploy-sha-readonly.test.sh'].includes(p)?stable.read(p):read(p)};
+async function collect({deep=false,fixture,missing,overrides={},extraPaths=[]}={}){
+ const tree=[...new Set([...(fixture?.paths??paths),...extraPaths])].filter(p=>p!==missing),source=async p=>{
   if(!tree.includes(p))throw Error('missing fixed input');return overrides[p]??(fixture?fixture.read(p):read(p));
  };
  const relations=[],request={read:source,paths:tree,revision:fixture?.revision??'f'.repeat(40),relations,parse:s=>parse(s,{ecmaVersion:'latest',sourceType:'module'})};
@@ -54,7 +58,6 @@ it('当前十一项真实PG只接受固定runner，旧十项组与任何未知�
 });
 
 it('PG分层回归只接受新旧两个精确版本，当前Pilot完整组继续有效',async()=>{
- const stable=readFixedExistingOpsGitFixture('99041a42de8ad78a8891678c570b14bc2e3c7c95');
  const target='tests/brain-ci-pg-layering.test.ts';
  for(const deep of [false,true]){
   expect(await collect({deep,overrides:{[target]:stable.read(target)}})).not.toHaveLength(0);
@@ -62,4 +65,19 @@ it('PG分层回归只接受新旧两个精确版本，当前Pilot完整组继续
   await expect(collect({deep,missing:target})).rejects.toThrow();
   await expect(collect({deep,overrides:{[target]:read(target)+'\n// unknown PG controls'}})).rejects.toThrow('basic_ci_source_unproven');
  }
+});
+it('持久排空客户端与旧部署评审组合分别接受，Basic和Deep消费真实部署依赖边',async()=>{
+ for(const deep of [false,true]){
+  const current=await collect({deep});
+  expect(current).toContainEqual(expect.objectContaining({consumer_path:deploy,input_path:drain,kind:'reviewed_persistent_process_drain_client'}));
+  expect(await collect({deep,fixture:parent})).not.toHaveLength(0);
+  expect(await collect({deep,fixture:parent,overrides:{'tests/brain-ci-pg-layering.test.ts':stable.read('tests/brain-ci-pg-layering.test.ts')}})).not.toHaveLength(0);
+ }
+});
+for(const deep of [false,true])it(`拒绝${deep?'Deep':'Basic'}持久排空来源缺失、篡改或父子混配`,async()=>{
+ await expect(collect({deep,missing:drain})).rejects.toThrow();
+ for(const path of [deploy,drain])await expect(collect({deep,overrides:{[path]:read(path)+'\n# unreviewed'}})).rejects.toThrow();
+ await expect(collect({deep,overrides:{[deploy]:parent.read(deploy)}})).rejects.toThrow();
+ await expect(collect({deep,fixture:parent,overrides:{[deploy]:read(deploy)}})).rejects.toThrow();
+ await expect(collect({deep,fixture:parent,extraPaths:[drain],overrides:{[drain]:read(drain)}})).rejects.toThrow();
 });

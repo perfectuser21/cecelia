@@ -73,10 +73,10 @@ done
 
 # 宿主成功收尾不能只靠 Docker sidecar 的 drain 回归替代。
 # 原样执行生产脚本的整个通用健康检查尾段；不会执行上面的构建/迁移/启动步骤。
-sed -n '/^drain_cancel_with_retry() {$/,/^}$/p' "$ROOT/scripts/brain-deploy.sh" > "$FIXTURE/drain-function.sh"
+cp "$ROOT/scripts/lib/brain-drain-client.sh" "$FIXTURE/drain-function.sh"
 sed -n '/^echo "Waiting for health check\.\.\."$/,$p' "$ROOT/scripts/brain-deploy.sh" > "$FIXTURE/health-tail.sh"
 [[ -s "$FIXTURE/drain-function.sh" && -s "$FIXTURE/health-tail.sh" ]]
-for scenario in ready retry never-ready; do
+for scenario in ready retry never-ready cancel-false cancel-wrong-id no-owned-drain; do
   calls="$FIXTURE/$scenario.calls"
   (
     export ROOT_DIR="$FIXTURE" HOST_HOME="$FIXTURE/home" DEPLOY_MODE=docker VERSION=9.9.9
@@ -92,15 +92,28 @@ for scenario in ready retry never-ready; do
         */tick/status) [[ "$DRAIN_SCENARIO" != never-ready ]] ;;
         */tick/drain-cancel)
           printf 'drain\n' >> "$DRAIN_CALLS"
-          [[ "$DRAIN_SCENARIO" != retry || "$(wc -l < "$DRAIN_CALLS")" -ge 3 ]] ;;
+          [[ "$*" == *'--data {"drain_id":"11111111-1111-4111-8111-111111111111"}'* ]] || return 98
+          [[ "$DRAIN_SCENARIO" != retry || "$(wc -l < "$DRAIN_CALLS")" -ge 3 ]] || return 22
+          case "$DRAIN_SCENARIO" in
+            cancel-false) printf '{"success":false}' ;;
+            cancel-wrong-id) printf '{"success":true,"drain_id":"22222222-2222-4222-8222-222222222222"}' ;;
+            *) printf '{"success":true,"drain_id":"11111111-1111-4111-8111-111111111111"}' ;;
+          esac ;;
         *) echo 'FAIL: unexpected HTTP boundary' >&2; return 97 ;;
       esac
     }
     export -f sleep activate_cecelia_map_manifest run_post_deploy_smoke send_bark curl
-    bash -euc 'source "$1"; source "$2"' _ "$FIXTURE/drain-function.sh" "$FIXTURE/health-tail.sh"
+    bash -euc 'source "$1"; if [[ "$DRAIN_SCENARIO" != no-owned-drain ]]; then BRAIN_DEPLOY_DRAIN_ID=11111111-1111-4111-8111-111111111111; fi; source "$2"' \
+      _ "$FIXTURE/drain-function.sh" "$FIXTURE/health-tail.sh"
   ) > "$FIXTURE/$scenario-tail.log" 2>&1 && code=0 || code=$?
   if [[ "$scenario" == never-ready ]]; then
     [[ "$code" == 1 && ! -e "$calls" ]] || { echo 'FAIL: unhealthy tail canceled drain or succeeded'; exit 1; }
+  elif [[ "$scenario" == cancel-false || "$scenario" == cancel-wrong-id ]]; then
+    [[ "$code" == 1 && -e "$calls" && "$(wc -l < "$calls")" -eq 5 ]] || {
+      cat "$FIXTURE/$scenario-tail.log"; echo "FAIL: $scenario 未拒绝错误恢复结果"; exit 1;
+    }
+  elif [[ "$scenario" == no-owned-drain ]]; then
+    [[ "$code" == 0 && ! -e "$calls" ]] || { echo 'FAIL: 无本次排空身份仍取消其它暂停'; exit 1; }
   else
     expected=1
     [[ "$scenario" != retry ]] || expected=3

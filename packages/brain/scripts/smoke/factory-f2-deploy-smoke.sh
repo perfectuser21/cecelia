@@ -105,7 +105,7 @@ DEPLOY_FIXTURE="$(mktemp -d -t factory-f2-deploy.XXXXXX)"
 trap 'rm -rf "$DEPLOY_FIXTURE"' EXIT
 mkdir -p "$DEPLOY_FIXTURE/scripts/lib" "$DEPLOY_FIXTURE/packages/brain" "$DEPLOY_FIXTURE/home"
 cp scripts/brain-deploy.sh "$DEPLOY_FIXTURE/scripts/brain-deploy.sh"
-for helper in bluegreen.sh url-encode.sh internal-auth-token.sh brain-image-retention.sh brain-staging.sh; do
+for helper in bluegreen.sh url-encode.sh internal-auth-token.sh brain-image-retention.sh brain-staging.sh brain-candidate-docker.sh brain-drain-client.sh; do
   cp "scripts/lib/$helper" "$DEPLOY_FIXTURE/scripts/lib/$helper"
 done
 printf '{"name":"@cecelia/brain","version":"9.9.9"}\n' > "$DEPLOY_FIXTURE/packages/brain/package.json"
