@@ -6,12 +6,13 @@ const keyring = '/usr/share/keyrings/ubuntu-archive-keyring.gpg';
 const sourceFile = '/etc/apt/sources.list.d/ubuntu.sources';
 const archive = 'https://archive.ubuntu.com/ubuntu';
 const securityArchive = 'https://security.ubuntu.com/ubuntu';
+const awsArchive = 'http://us-east-2.ec2.archive.ubuntu.com/ubuntu';
 // 仅识别旧脚本写入的源，以便按suite恢复；不再选择第三方镜像。
 const previousMirror = 'https://mirrors.edge.kernel.org/ubuntu';
 const indirect = uri => /^mirror\+file:\/etc\/apt\/apt-mirrors(?:-security)?\.txt$/.test(uri)
   || /^https?:\/\/azure\.archive\.ubuntu\.com\/ubuntu\/?$/.test(uri);
 const official = uri => /^https?:\/\/(?:archive|security)\.ubuntu\.com\/ubuntu\/?$/.test(uri);
-const supported = uri => indirect(uri) || official(uri) || uri === previousMirror || uri === previousMirror + '/';
+const supported = uri => indirect(uri) || official(uri) || uri === awsArchive || uri === awsArchive + '/' || uri === previousMirror || uri === previousMirror + '/';
 
 // 拒绝诊断不打印原始行：只有公开Ubuntu域可展示去凭据/query/hash后的结构。
 function uriRefusal(code, uri, file, line, field, priority) {
@@ -31,7 +32,7 @@ function validateNativeMirrors(uri, readMirrorList) {
   try { text = readMirrorList(uri.slice('mirror+file:'.length)); }
   catch { throw Error('ubuntu_source_mirror_list_unreadable'); }
   if (typeof text !== 'string' || !text.trim() || text.length > 65536) throw Error('ubuntu_source_mirror_list_unsupported');
-  const trusted = new Set(['http://azure.archive.ubuntu.com/ubuntu', archive, securityArchive]);
+  const trusted = new Set(['http://azure.archive.ubuntu.com/ubuntu', awsArchive, archive, securityArchive]);
   const seen = new Set();
   for (const [index, raw] of text.split(/\r?\n/).entries()) {
     const line = raw.trim();
