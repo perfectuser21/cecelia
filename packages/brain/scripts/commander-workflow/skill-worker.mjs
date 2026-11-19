@@ -11,7 +11,7 @@ import {codexWorkerArgs} from './skill-protocol.mjs';
 import {createRunLedger,normalizeTurns} from '../../src/orchestrator/commander-usage-ledger.js';
 import {prepareHostTools,hostToolsArgs} from './skill-tools-mcp.mjs';
 import {sessionGroup,readSessionThread} from './session-group.mjs';
-import {checkerPrompt} from './checker-agent-protocol.mjs';
+import {checkerPrompt,checkerOutputSchema,decodeCheckerOutput} from './checker-agent-protocol.mjs';
 import {prepareCheckerEvidence,checkerEvidenceArgs} from './checker-evidence.mjs';
 const chunks=[];for await(const c of process.stdin)chunks.push(c);
 const request=JSON.parse(Buffer.concat(chunks).toString()),{codex,identity,thread_file,work_dir,skill_text,tools_text,context}=request;
@@ -46,9 +46,10 @@ env.COMMANDER_ACTIVITY_KEY=request.activity_key;env.COMMANDER_ACTIVITY_INPUT_FIL
 let partial='',thread=previous?.thread_id;
 const argv=codexWorkerArgs(codex,thread,output,auth);
 if(checking){
- const binding=prepareCheckerEvidence({config:request.checker_evidence,cwd:request.cwd,request:request.checker_request,directory:path.join(work_dir,'evidence-reads'),deadlineMs:request.deadline_ms});
+ const binding=prepareCheckerEvidence({config:request.checker_evidence,cwd:request.cwd,files:request.checker_files,request:request.checker_request,directory:path.join(work_dir,'evidence-reads'),deadlineMs:request.deadline_ms,denied:[auth.auth.home,work_dir]});
  const file=path.join(work_dir,'checker-evidence-binding.json');durableWrite(file,binding);
- argv.splice(argv.length-1,0,...checkerEvidenceArgs(file,createHash('sha256').update(fs.readFileSync(file)).digest('hex'),auth.auth.home,binding.directory));
+ const schemaFile=path.join(work_dir,'checker-output.schema.json');durableWrite(schemaFile,checkerOutputSchema(request.checker_request));
+ argv.splice(argv.length-1,0,'--output-schema',schemaFile,...checkerEvidenceArgs(file,createHash('sha256').update(fs.readFileSync(file)).digest('hex'),auth.auth.home,binding.directory));
 }
 if(request.host_tools){
  if(!auth)throw Error('host_tool_auth_required');
@@ -97,7 +98,7 @@ try {
   if(partial.trim()){recordEvent(partial);partial='';}
   if(protocolFailure)throw protocolFailure;
   if(code!==0||!thread)throw Error('skill_codex_execution_failed');
-  const proposal=JSON.parse(fs.readFileSync(output,'utf8'));
+  const value=JSON.parse(fs.readFileSync(output,'utf8')),proposal=checking?decodeCheckerOutput(value):value;
   process.stdout.write(JSON.stringify({proposal,thread_id:thread}));
 }catch(error){failed=error;throw error;}
 finally{
