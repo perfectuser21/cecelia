@@ -115,6 +115,25 @@ async function main() {
     assert.equal(claimed.claimed_by, 'basic-ci-owner');
     await request(`/tasks/${task.id}/claim`, 'POST', { claimer: 'another-ci-owner' }, [409]);
     await request(`/tasks/${task.id}`, 'PATCH', { status: 'in_progress' });
+    const beforeDrain = (await pool.query('SELECT * FROM tasks WHERE id=$1', [task.id])).rows;
+    const pause = await request('/tick/drain', 'POST');
+    try {
+      assert.equal(pause.protocol, 'brain-process-drain-v1', '发布排空必须确认进程归属协议');
+      assert.match(pause.drain_id, /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/);
+      const ready = await request('/tick/drain-status');
+      assert.equal(ready.drain_id, pause.drain_id);
+      assert.equal(ready.safe_to_swap, true, '独立有头任务不应阻塞 Brain 切换');
+      assert.equal(ready.remaining, 0);
+      assert.equal(ready.draining, true, '读到排空完成后仍须保持暂停');
+      assert.ok(ready.independent_task_count >= 1);
+      assert.equal((await request('/tick/status')).draining, true);
+      assert.deepEqual((await pool.query('SELECT * FROM tasks WHERE id=$1', [task.id])).rows, beforeDrain);
+    } finally {
+      assert.equal((await request('/tick/drain-cancel', 'POST', { drain_id: pause.drain_id })).success, true);
+    }
+    const resumed = await request('/tick/drain-status');
+    assert.equal(resumed.draining, false);
+    assert.equal(resumed.safe_to_swap, false, '未暂停时不能签发切换许可');
     const result = { actor: 'basic-ci-owner', evidence: randomUUID() };
     await request(`/tasks/${task.id}`, 'PATCH', { status: 'completed', result });
     const persisted = (await pool.query('SELECT title,task_type,status,result,completed_at FROM tasks WHERE id=$1', [task.id])).rows[0];
@@ -133,7 +152,7 @@ async function main() {
     assert.deepEqual((await request(`/kv/${key}`)).value, value);
     const stored = (await pool.query('SELECT value_json FROM working_memory WHERE key=$1', [key])).rows[0];
     assert.deepEqual(stored.value_json, value);
-    process.stdout.write(`历史决策留存、真实服务启动、任务创建/领取/防抢领/完成、KV读写及 PG 持久化通过：${task.id}\n日志：${log}\n`);
+    process.stdout.write(`历史决策留存、真实服务启动、排空归属及持续暂停、任务创建/领取/防抢领/完成、KV读写及 PG 持久化通过：${task.id}\n日志：${log}\n`);
   } finally {
     let cleanupError;
     if (child?.pid && !closed) {
