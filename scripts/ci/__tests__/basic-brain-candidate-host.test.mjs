@@ -105,7 +105,7 @@ if (a[0] === 'image') {
     const prefix = host === 'local' ? 'local-' : 'remote-';
     const tamper = !state.tags[ref] && id === e.IMAGE;
     const format = option('--format');
-    if (format === '{{json .}}') result(JSON.stringify({Id:id,RepoTags:Object.keys(state.tags).filter(tag=>state.tags[tag]===id),RepoDigests:fault==='digest'?['repo@sha256:digest']:[],Config:{Env:['GIT_SHA='+value.sha]}}));
+    if (format === '{{json .}}') result(JSON.stringify({Id:id,RepoTags:Object.keys(state.tags).filter(tag=>state.tags[tag]===id),RepoDigests:fault==='self-digest'?['cecelia-brain@'+id]:fault==='digest'?['repo@sha256:digest']:[],Config:{Env:['GIT_SHA='+value.sha]}}));
     if (format === '{{.Id}}') result(tamper && fault === prefix + 'id' ? e.OLD_IMAGE : id);
     if (format.includes('Architecture')) result(tamper && fault === prefix + 'platform' ? 'linux/arm64' : value.platform);
     if (format.includes('Config.Env')) result('GIT_SHA=' + (tamper && fault === prefix + 'sha' ? 'c'.repeat(40) : value.sha));
@@ -443,4 +443,11 @@ test('实际staging cleanup拒绝坏绑定，合法旧receipt明确无镜像所�
  const legacy=f.run('bash scripts/staging-deploy.sh --cleanup');assert.equal(legacy.status,0,legacy.stderr);
  assert.match(legacy.stdout,/无候选镜像所有权绑定/);
  assert.equal(f.commands().some(a=>a.includes('rm')&&a.includes(image)),false);
+});
+
+test('Docker29 buildx本仓唯一自指digest不阻止本次独占镜像回收',t=>{
+ const f=fixture(t,'self-digest');freshCandidate(f);
+ const result=runBuild(f);assert.equal(result.status,0,result.stderr+result.stdout);
+ assert.equal(f.state('mac-studio').images[image],undefined,'真实Docker本仓自指digest导致候选遗留');
+ assert.deepEqual(f.commands().filter(a=>a.includes('rm')&&a.includes(image)),[['--context','mac-studio','image','rm',image]]);
 });
