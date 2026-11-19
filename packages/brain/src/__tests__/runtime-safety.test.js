@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import vm from 'node:vm';
 const { readFileSync: readSource } = await vi.importActual('node:fs');
 
-const io = vi.hoisted(() => ({ read: vi.fn(), spawn: vi.fn(), select: vi.fn(), fetch: vi.fn() }));
+const io = vi.hoisted(() => ({ read: vi.fn(), spawn: vi.fn(), select: vi.fn(), fetch: vi.fn(), query: vi.fn() }));
+vi.mock('../db.js', () => ({ default: { query: io.query } }));
 vi.mock('fs', () => ({ readFileSync: io.read }));
 vi.mock('child_process', () => ({ spawn: io.spawn }));
 vi.mock('../model-profile.js', () => ({ getActiveProfile: () => ({ config: {} }) }));
@@ -10,10 +11,12 @@ vi.mock('../account-usage.js', () => ({ selectBestAccount: io.select, markAuthFa
 vi.mock('../llm-capacity.js', () => ({ CODEX_ACCOUNTS: [] }));
 vi.mock('../langfuse-reporter.js', () => ({ reportCall: vi.fn().mockResolvedValue(undefined) }));
 import { callLLM, callLLMStream } from '../llm-caller.js';
+import { beginBrainLaunch, ownsBrainLaunch, finishBrainLaunch, _resetDrainState } from '../drain.js';
 import { isIsolatedRuntime, assertExternalExecutionAllowed } from '../runtime-safety.js';
 
 beforeEach(() => {
   vi.clearAllMocks();
+  _resetDrainState();
   for (const key of ['NODE_ENV', 'VITEST', 'BRAIN_PREVIEW', 'BRAIN_EVALUATOR_MODE', 'DB_NAME', 'PGDATABASE', 'DATABASE_URL', 'CECELIA_LLM_DISABLED']) vi.stubEnv(key, '');
   io.read.mockReturnValue('{"api_key":"fixture-only"}');
   io.select.mockResolvedValue({ accountId: 'account1' });
@@ -104,8 +107,24 @@ describe('隔离环境不能通过手动派发绕过启动保护', () => {
   ])('%s 的 %s 在访问执行依赖之前拒绝', async (file, name) => {
     const source = readSource(new URL(`../${file}`, import.meta.url), 'utf8');
     const expression = source.match(new RegExp(`async function ${name}\\([^]*?^\\}`, 'm'))[0];
-    const context = { assertExternalExecutionAllowed: () => assertExternalExecutionAllowed({ NODE_ENV: 'test' }) };
-    const fn = vm.runInNewContext(`(${expression})`, context);
+    const admissions = [];
+    const context = {
+      assertExternalExecutionAllowed: () => assertExternalExecutionAllowed({ NODE_ENV: 'test' }),
+      ownsBrainLaunch, finishBrainLaunch,
+      beginBrainLaunch: id => { const token = beginBrainLaunch(id); admissions.push(token); return token; },
+    };
+    // 提取并执行真实外层准入和真实内层隔离门，不用模拟函数替代隔离断言。
+    const admitted = file === 'executor.js'
+      ? source.match(/async function triggerAdmittedCeceliaRun\([^]*?^\}/m)[0] : '';
+    const fn = vm.runInNewContext(`(() => { ${admitted}; return (${expression}); })()`, context);
     await expect(fn({ id: 'fixture', payload: {} })).rejects.toMatchObject({ code: 'EXECUTION_RUNTIME_ISOLATED' });
+    expect(io.query).not.toHaveBeenCalled();
+    expect(io.read).not.toHaveBeenCalled(); expect(io.select).not.toHaveBeenCalled();
+    expect(io.fetch).not.toHaveBeenCalled(); expect(io.spawn).not.toHaveBeenCalled();
+    if (file === 'executor.js') {
+      expect(admissions).toHaveLength(1);
+      expect(typeof admissions[0]).toBe('symbol');
+      expect(ownsBrainLaunch(admissions[0], 'fixture')).toBe(false);
+    }
   });
 });

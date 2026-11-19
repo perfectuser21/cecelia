@@ -18,6 +18,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
+import { ownsBrainLaunch } from '../../drain.js';
 import { checkDeviceLockForManualDispatch } from '../manual-dispatch-device-gate.js';
 
 // ── Mock ──────────────────────────────────────────────────
@@ -191,7 +192,11 @@ beforeEach(() => {
     return Promise.resolve({ rows: [], rowCount: 0 });
   });
   mockCheckAvailable.mockResolvedValue({ available: true });
-  mockTriggerCeceliaRun.mockResolvedValue({ success: true, runId: 'run-manual-1', executor: 'local' });
+  mockTriggerCeceliaRun.mockImplementation(async (task, options) => {
+    expect(ownsBrainLaunch(options?.drainAdmission, task.id)).toBe(true);
+    expect(ownsBrainLaunch(options.drainAdmission, 'another-task')).toBe(false);
+    return { success: true, runId: 'run-manual-1', executor: 'local' };
+  });
   mockReleaseDeviceLocksHeldBy.mockResolvedValue(1);
 });
 
@@ -259,7 +264,9 @@ describe('POST /dispatch-now — 设备锁站岗（Issue e03fc740）', () => {
     expect(mockAcquireDeviceLock).toHaveBeenCalledWith(currentTask.id, SERIAL, 90);
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ success: true, taskId: currentTask.id });
-    expect(mockTriggerCeceliaRun).toHaveBeenCalledWith(expect.objectContaining({ id: currentTask.id }));
+    const admission = mockTriggerCeceliaRun.mock.calls[0][1].drainAdmission;
+    expect(mockTriggerCeceliaRun).toHaveBeenCalledWith(expect.objectContaining({ id: currentTask.id }), { drainAdmission: admission });
+    expect(ownsBrainLaunch(admission, currentTask.id)).toBe(false); // 路由结束必须释放原准入。
   });
 
   it('分支4 无 device_serial：acquireDeviceLock 从不被调用，零行为变化', async () => {
@@ -378,7 +385,9 @@ describe('POST /api/brain/tasks/:id/dispatch — 设备锁站岗（Issue e03fc74
     expect(mockAcquireDeviceLock).toHaveBeenCalledWith(currentTask.id, SERIAL, 90);
     expect(res.status).toBe(202);
     expect(res.body).toMatchObject({ task_id: currentTask.id });
-    expect(mockTriggerCeceliaRun).toHaveBeenCalledWith(expect.objectContaining({ id: currentTask.id }));
+    const admission = mockTriggerCeceliaRun.mock.calls[0][1].drainAdmission;
+    expect(mockTriggerCeceliaRun).toHaveBeenCalledWith(expect.objectContaining({ id: currentTask.id }), { drainAdmission: admission });
+    expect(ownsBrainLaunch(admission, currentTask.id)).toBe(false); // 路由结束必须释放原准入。
   });
 
   it('分支4 无 device_serial：acquireDeviceLock 从不被调用，零行为变化', async () => {
