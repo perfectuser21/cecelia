@@ -18,7 +18,9 @@ async function fixture(t, scenario = '') {
   await mkdir(join(root, 'ledger'), { mode: 0o700 });
   await copyFile(new URL('./lib/brain-image-retention.sh', import.meta.url), join(root, 'scripts/lib/brain-image-retention.sh'));
   const request = { deployment_id: deployment, version: '1.360.5', git_sha: sha };
-  const previous = { id: previousImage, git_sha: previousSha, tags: ['cecelia-brain:1.360.3'] };
+  const previousTags=scenario.startsWith('fallback-prev-')?['cecelia-brain:prev-'+(scenario==='fallback-prev-wrong-version'?'1.360.4':'1.360.3')+'-'+(scenario==='fallback-prev-wrong-sha'?'c'.repeat(12):previousSha.slice(0,12))]:['cecelia-brain:1.360.3'];
+  const primaryTags=scenario==='primary-prev-only'?['cecelia-brain:prev-1.360.5-'+sha.slice(0,12)]:['cecelia-brain:1.360.5'];
+  const previous = { id: previousImage, git_sha: previousSha, tags: previousTags };
   await writeFile(join(root, 'ledger/ledger.json'), JSON.stringify({ schema_version: 1, generation: 1, pending: { deployment_id: deployment, request, previous }, successes: [] }), { mode: 0o600 });
   await writeFile(join(root, `ledger/deployment-${deployment}.json`), JSON.stringify({ request, previous, receipt: null }), { mode: 0o600 });
   // 正式 CLI/runtime/adapter/ledger/store 全链执行，只有 Docker 进程边界替身。
@@ -46,13 +48,13 @@ async function fixture(t, scenario = '') {
       console.log(JSON.stringify([{Id:fixed,Name:'/cecelia-node-brain',Image:id,State:{Running:true}}]));process.exit(0);
     }
     if(args[0]==='image' && args[1]==='inspect' && !args.includes('--format')) {
-      console.log(JSON.stringify([{Id:id,RepoTags:['cecelia-brain:'+(recovered?'1.360.3':'1.360.5')],RepoDigests:[],Config:{Env:['GIT_SHA='+s]}}]));process.exit(0);
+      console.log(JSON.stringify([{Id:id,RepoTags:recovered?${JSON.stringify(previousTags)}:${JSON.stringify(primaryTags)},RepoDigests:[],Config:{Env:['GIT_SHA='+s]}}]));process.exit(0);
     }
     if(args[0]==='image' && args[1]==='inspect') {
       const fallback=args.at(-1)==='cecelia-brain:blue-fallback'||args.at(-1)==='${previousImage}';
       if(scenario==='previous-id-mismatch'&&args.at(-1)==='${previousImage}'){console.log('sha256:'+ '9'.repeat(64)+'|[]|GIT_SHA='+ '9'.repeat(40));process.exit(0);}
       if(scenario==='fallback-pre-freeze-poison'&&args.at(-1)==='cecelia-brain:blue-fallback'){console.log('sha256:'+ '9'.repeat(64)+'|[]|GIT_SHA='+ '9'.repeat(40));process.exit(0);}
-      console.log((fallback?'${previousImage}':'${image}')+'|'+JSON.stringify(['cecelia-brain:'+(fallback?'1.360.3':'1.360.5')])+'|GIT_SHA='+(fallback?'${previousSha}':'${sha}'));process.exit(0);
+      console.log((fallback?'${previousImage}':'${image}')+'|'+JSON.stringify(fallback?${JSON.stringify(previousTags)}:${JSON.stringify(primaryTags)})+'|GIT_SHA='+(fallback?'${previousSha}':'${sha}'));process.exit(0);
     }
     if(args[0]==='inspect') {
       if(!exists)process.exit(1);
@@ -187,4 +189,15 @@ test('sidecar首次读取前全局fallback标签已被替换，仍只恢复本�
 for(const scenario of ['previous-missing','previous-invalid','previous-id-mismatch'])test(`sidecar前驱未知拒绝compose，不兼容猜tag：${scenario}`,async t=>{
  const f=await fixture(t,scenario);assert.equal(f.code,1,f.stdout+f.stderr);
  assert.equal(f.calls.some(a=>a[0]==='compose'),false);assert.ok(f.ledger.pending);
+});
+
+test('同版本不同SHA构建后仅剩精确prev-version-sha12标签的前驱仍可验真恢复',async t=>{
+ const f=await fixture(t,'fallback-prev-only');assert.equal(f.code,0,f.stdout+f.stderr);
+ assert.equal(f.ledger.pending,null);assert.deepEqual(f.ledger.successes,[]);
+ const row=JSON.parse(await readFile(join(f.root,`ledger/deployment-${deployment}.json`),'utf8'));
+ assert.equal(row.receipt.outcome,'recovered');assert.equal(row.receipt.image_id,previousImage);
+});
+for(const scenario of ['fallback-prev-wrong-version','fallback-prev-wrong-sha','primary-prev-only'])test(`prev标签严格合同拒绝错误版本/SHA与primary放宽：${scenario}`,async t=>{
+ const f=await fixture(t,scenario);assert.equal(f.code,1,f.stdout+f.stderr);assert.ok(f.ledger.pending);
+ assert.deepEqual(f.ledger.successes,[]);assert.equal(f.calls.some(a=>a.some(x=>x.endsWith('/drain-cancel'))),false);
 });
