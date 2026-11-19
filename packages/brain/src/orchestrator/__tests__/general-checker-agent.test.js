@@ -5,6 +5,7 @@ import path from 'node:path';
 import {createHash,randomUUID} from 'node:crypto';
 import {createRuntime} from '../../../scripts/commander-workflow/skill-adapter.mjs';
 import {digest} from '../commander-decision.js';
+import {createRunLedger} from '../commander-usage-ledger.js';
 const hash=p=>createHash('sha256').update(fs.readFileSync(p)).digest('hex');
 function fixture({requirement='number equals 42',fact={number:42},mode='normal',emptyAllowed=false}={}){
  const cwd=fs.mkdtempSync(path.join(os.tmpdir(),'general-checker-'));fs.chmodSync(cwd,0o700);
@@ -64,6 +65,16 @@ test('contract-declared and independently evidenced empty remains a legitimate e
  const records=fs.readdirSync(path.join(f.cwd,'control',f.run.run_id,'checks')).map(p=>JSON.parse(fs.readFileSync(path.join(f.cwd,'control',f.run.run_id,'checks',p))));
  expect(records[0].verified.outcome).toBe('empty');}finally{f.close();}
  const bad=fixture({mode:'empty'});try{await expect(bad.check()).rejects.toThrow('checker_result_invalid');}finally{bad.close();}
+},10000);
+test('unknown preconditions block executor dispatch and Checker calls use the existing ledger',async()=>{
+ const f=fixture({fact:null});try{
+ const ledger=createRunLedger({directory:path.join(fs.realpathSync(f.cwd),'ledger'),identity:{task_id:f.run.task_id,run_id:f.run.run_id}});
+ const runtime=await createRuntime({profile:f.profile,run:f.run,ledger});
+ await expect(runtime.executeActivity(f.activity,{run_tag:f.run.input.run_tag},{identity:{task_id:f.run.task_id,run_id:f.run.run_id,activity_key:f.activity.key,action_id:'must-not-execute'},cwd:f.cwd,deadlineMs:Date.now()+5000})).rejects.toThrow('checker_start_unknown');
+ const snapshot=ledger.snapshot();expect(snapshot.calls).toHaveLength(1);expect(snapshot.calls[0].role).toBe('checker');expect(snapshot.calls[0].status).toBe('completed');
+ expect(fs.existsSync(path.join(f.cwd,'control',f.run.run_id,'actions','must-not-execute'))).toBe(false);
+ expect(fs.existsSync(path.join(f.cwd,'evidence','fact.json'))).toBe(false);
+ }finally{f.close();}
 },10000);
 test('actual execution followed by failed Checker preserves feedback without model-granted replay',async()=>{
  const f=fixture();try{const runtime=await createRuntime({profile:f.profile,run:f.run});
