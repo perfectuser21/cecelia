@@ -64,14 +64,15 @@ const RUNNER='scripts/ci/run-basic-check.mjs',CONFIG='scripts/ci/deep-integratio
 const nodes=n=>!n||typeof n!=='object'?[]:[...(n.type?[n]:[]),...Object.values(n).flatMap(v=>Array.isArray(v)?v.flatMap(nodes):nodes(v))];
 const reject=()=>{throw Error('basic_ci_source_unproven');};
 export async function collectReviewedBusinessPgSources({read,parse,relation,profile=BUSINESS_PROFILE_PATH}){
- const cases=nodes(parse(await read(RUNNER))).filter(n=>n.type==='SwitchCase'&&n.test?.value==='brain-integration');
+ const runner=await read(RUNNER),expectedCount=createHash('sha256').update(runner).digest('hex')===PILOT_HOST_INPUTS[RUNNER]?11:10;
+ const cases=nodes(parse(runner)).filter(n=>n.type==='SwitchCase'&&n.test?.value==='brain-integration');
  if(cases.length!==1)reject();
  const steps=nodes(cases[0]).filter(n=>n.type==='CallExpression'&&n.callee?.name==='step'&&n.arguments[1]?.value==='npx');
  if(steps.length!==1||steps[0].arguments.some(n=>n.type!=='Literal'||typeof n.value!=='string'))reject();
  const args=steps[0].arguments.map(n=>n.value);
  if(JSON.stringify(args.slice(0,7))!==JSON.stringify(['packages/brain','npx','--no-install','vitest','run','--config','../../'+CONFIG])||args.at(-1)!=='--reporter=dot')reject();
  const tests=args.slice(7,-1);
- if(tests.length!==10||new Set(tests).size!==10||tests.some(p=>!/^src\/__tests__\/integration\/[a-z0-9-]+\.pg\.integration\.test\.js$/.test(p)))reject();
+ if(tests.length!==expectedCount||new Set(tests).size!==expectedCount||tests.some(p=>!/^src\/__tests__\/integration\/[a-z0-9-]+\.pg\.integration\.test\.js$/.test(p)))reject();
  relation('packages/brain/src/lib/existing-ops-stage-modes.js',profile,'reviewed_basic_ci_source_profile');
  relation(RUNNER,CONFIG,'reviewed_pr_postgres_config_selector');
  for(const p of tests){const input='packages/brain/'+p;if(!await read(input))reject();relation(RUNNER,input,'reviewed_pr_postgres_test_selector');}
@@ -116,7 +117,11 @@ export const REVIEWED_RUNTIME_IDEMPOTENCE={...REVIEWED_CANDIDATE_BUILDER,...RUNT
 export const REVIEWED_NIGHTLY_STATUS={...REVIEWED_RUNTIME_IDEMPOTENCE,...NIGHTLY_STATUS_INPUTS};
 const PILOT_CLI='scripts/ci/pilot-release-verification.mjs',PILOT_HOST='scripts/ci/pilot-foundation-bindings.mjs';
 const PILOT_HOST_INPUTS={
- 'scripts/ci/basic-runtime-smoke.mjs':'b504bb194303f933341f6c698d60f8b8ffb307c3c9573ad962a5b27101afabc9',
+ 'scripts/ci/run-basic-check.mjs':'b9f9c449e750861f896d2f8f771d2486207bbddfdefabb5fd043897294984f31',
+ 'packages/brain/src/scheduler-jobs.js':'b6558bd7d3ff9a253d900a99a005992f4385f8cef86b218553b8fe72696a3b16',
+ 'packages/brain/src/guard-drill.js':null,
+ 'packages/brain/src/__tests__/guard-drill.test.js':null,
+ 'scripts/ci/basic-runtime-smoke.mjs':'d1360c4d2bdf45f04a4a24b182d13cd40de4cfd0a6a4a865c8a0f09bf4c50e28',
  '.github/workflows/nightly-regression.yml':'2870f299ccf14127015c5c3788239d30a6632356c8f1354556a61b48e7564657',
  'scripts/brain-deploy.sh':'bd73713dd2efdc4d923358c1751893e7161ced1457a8b6f2b7fb6fc89b7fab0c',
  'scripts/ci/__tests__/basic-ops-coverage.test.mjs':'258c37f9c4a197da08b5c73ff7c056490ff7e48382e8a9f3b87f97107fd441d5',

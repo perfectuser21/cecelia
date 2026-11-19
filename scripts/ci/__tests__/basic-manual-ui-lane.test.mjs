@@ -20,8 +20,8 @@ test('三份现役页面合同在PR及main变更时进入既有PWA job', () => {
   for (const required of [build, step]) assert.ok(!required.if && !required['continue-on-error']);
   assert.ok(step.run.includes('node e2e/playwright-cli.mjs test --config ../../tests/regression/manual-ui/playwright.config.ts'));
 });
-test('真实Playwright收集三文件五条页面回归，不以源码断言替代浏览器用例', () => {
+test('真实Playwright收集三文件四条页面回归，不以源码断言替代浏览器用例', () => {
   const result = spawnSync(process.execPath, ['apps/dashboard/e2e/playwright-cli.mjs', 'test', '--config', 'tests/regression/manual-ui/playwright.config.ts', '--list'], { cwd: root, encoding: 'utf8', timeout: 30000 });
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /Total: 5 tests in 3 files/);
+  assert.match(result.stdout, /Total: 4 tests in 3 files/);
 });

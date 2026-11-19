@@ -1,3 +1,4 @@
+import { beginBrainLaunch, ownsBrainLaunch, finishBrainLaunch } from './drain.js';
 import { prepareInvocationDispatch, invocationTaskPrompt, invocationBridgeRequired,runInvocationActivities,reconcileInvocationLiveness } from './invocations/runtime.js';
 import {createInvocationActivityExecutor} from './invocations/activity-worker.js';
 import {finishRun as finishInvocationRun} from './lib/task-run.js';
@@ -726,6 +727,10 @@ const suspectProcesses = new Map();
 /** 外部 run 镜像心跳陈旧留痕账本（每陈旧窗口一次；见 lib/external-mirror-liveness.js） */
 const externalStaleNoted = createStaleLedger();
 
+function hasInvocationController(entry) {
+  return entry?.source === 'shared-activity-runner' && typeof entry.invocationController?.then === 'function';
+}
+
 /**
  * Get the number of actively tracked processes (with liveness check)
  * Now also counts ALL claude processes on the system (headed + headless)
@@ -734,7 +739,7 @@ function getActiveProcessCount() {
   // Prune dead processes first
   for (const [taskId, entry] of activeProcesses) {
     // Bridge entries without PID — skip pruning (liveness probe handles them)
-    if (entry.bridge && !entry.pid) continue;
+    if ((entry.bridge || entry.docker || hasInvocationController(entry)) && !entry.pid) continue;
     if (!isProcessAlive(entry.pid)) {
       console.log(`[executor] Pruning dead process: task=${taskId} pid=${entry.pid}`);
       activeProcesses.delete(taskId);
@@ -774,7 +779,7 @@ function isProcessAlive(pid) {
  */
 function killProcess(taskId) {
   const entry = activeProcesses.get(taskId);
-  if (!entry) return false;
+  if (!entry || hasInvocationController(entry)) return false;
 
   // Guard: null pid would cause process.kill(0) which sends SIGTERM to own process group
   if (!entry.pid) {
@@ -810,6 +815,7 @@ function killProcess(taskId) {
  * @returns {Promise<{killed: boolean, stage: string}>}
  */
 async function killProcessTwoStage(taskId, pgid, waitMs = 10000) {
+  if (hasInvocationController(activeProcesses.get(taskId))) return { killed: false, stage: 'shared_controller_running' };
   if (!pgid) return { killed: false, stage: 'no_pgid' };
 
   // Stage 1: SIGTERM to process group
@@ -1078,6 +1084,7 @@ async function requeueTask(taskId, reason, evidence = {}) {
  * Remove a task from activeProcesses (called when execution-callback received)
  */
 function removeActiveProcess(taskId) {
+  if (hasInvocationController(activeProcesses.get(taskId))) return false;
   if (activeProcesses.has(taskId)) {
     activeProcesses.delete(taskId);
     console.log(`[executor] Cleaned up activeProcess for task=${taskId}`);
@@ -1097,7 +1104,8 @@ function getActiveProcesses() {
       pid: entry.pid,
       runId: entry.runId,
       startedAt: entry.startedAt,
-      alive: isProcessAlive(entry.pid),
+      alive: hasInvocationController(entry) || isProcessAlive(entry.pid),
+      source: entry.source ?? 'executor',
     });
   }
   return result;
@@ -2524,7 +2532,18 @@ async function triggerLocalCodexExec(task) {
  * 内层分派完成后统一经 run 原语落一行 task_runs（一次执行 = 一行，幂等；fail-open 不拖垮执行）。
  * openclaw-agent 等自己已 startRun 的分支先落（source 更精确），这里只是幂等兜底。
  */
-async function triggerCeceliaRun(task) {
+async function triggerCeceliaRun(task, options = {}) {
+  const borrowed = ownsBrainLaunch(options.drainAdmission, task?.id);
+  const admission = borrowed ? options.drainAdmission : beginBrainLaunch(task?.id);
+  if (!admission) return { success: false, reason: 'draining', error: 'draining', admissionRejected: true };
+  try {
+    return await triggerAdmittedCeceliaRun(task);
+  } finally {
+    if (!borrowed) finishBrainLaunch(admission);
+  }
+}
+
+async function triggerAdmittedCeceliaRun(task) {
   assertExternalExecutionAllowed();
   // 必须早于所有桥接、技能覆盖与运行账写入；旧任务不会产生假 run。
   if (isRetiredDecomposition(task)) {
@@ -3001,9 +3020,7 @@ async function probeTaskLiveness() {
     // ──────────────────────────────────────────────────────────────────────
 
     // Clean up activeProcesses entry
-    if (entry) {
-      activeProcesses.delete(task.id);
-    }
+    if (entry) removeActiveProcess(task.id);
 
     // Auto-fail the task with enhanced diagnostics
     const pid = entry?.pid || null;

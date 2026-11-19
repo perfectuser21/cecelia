@@ -29,7 +29,7 @@ vi.mock('../quota-cooling.js', () => ({
   getQuotaCoolingState: vi.fn(() => ({ active: false })),
 }));
 
-vi.mock('../drain.js', () => ({
+vi.mock('../drain.js', async (original) => ({ ...await original(),
   isDraining: vi.fn(() => false),
   getDrainStartedAt: vi.fn(() => null),
 }));
@@ -175,7 +175,7 @@ describe('dispatcher HOL blocking fix', () => {
     expect(result.dispatched).toBe(true);
     expect(result.task_id).toBe('codex-available');
     const { triggerCeceliaRun } = await import('../executor.js');
-    expect(triggerCeceliaRun).toHaveBeenCalledWith(expect.objectContaining({ id: 'codex-available', task_type: 'codex_dev' }));
+    expect(triggerCeceliaRun).toHaveBeenCalledWith(expect.objectContaining({ id: 'codex-available', task_type: 'codex_dev' }), { drainAdmission: expect.any(Symbol) });
   });
 
   it('真实槽位预算链路：旧 Claude 满额不挡 Codex，机器无槽时仍拒绝', async () => {
@@ -195,7 +195,7 @@ describe('dispatcher HOL blocking fix', () => {
     const { dispatchNextTask } = await import('../dispatcher.js');
     const result = await dispatchNextTask([]);
     expect(result.dispatched).toBe(true);
-    expect(triggerCeceliaRun).toHaveBeenCalledWith(expect.objectContaining({ id: 'codex-real-budget', task_type: 'codex_dev' }));
+    expect(triggerCeceliaRun).toHaveBeenCalledWith(expect.objectContaining({ id: 'codex-real-budget', task_type: 'codex_dev' }), { drainAdmission: expect.any(Symbol) });
 
     actual._resetSlotBuffer();
     checkServerResources.mockReturnValue({ effectiveSlots: 0, metrics: { max_pressure: 1 } });

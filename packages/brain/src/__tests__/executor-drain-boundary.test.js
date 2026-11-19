@@ -37,6 +37,7 @@ beforeEach(async () => {
   io.query.mockReset().mockImplementation(async (sql, params) => {
     if (sql.includes('INSERT INTO working_memory')) io.persisted = structuredClone(params[1]);
     if (sql.includes('DELETE FROM working_memory')) io.persisted = null;
+    if (sql.includes('SELECT value_json FROM working_memory')) return { rows: io.persisted ? [{ value_json: io.persisted }] : [] };
     return { rows: [], rowCount: 1 };
   });
   vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ ok: true, status: 'healthy', accounts: [{ tokenExpired: false, primaryUsedPct: 0 }] }) })));
@@ -65,6 +66,7 @@ describe('真实执行入口的发布排空边界', () => {
     try {
       await drain.drainTick();
       const status = await drain.getDrainStatus();
+      expect(status.blockers).toContainEqual(expect.objectContaining({ kind: 'launch' }));
       expect(status.remaining).toBeGreaterThan(0);
       expect(status.safe_to_swap).toBe(false);
     } finally {
@@ -81,7 +83,20 @@ describe('真实执行入口的发布排空边界', () => {
     expect(executor.getActiveProcesses().map(entry => entry.taskId)).toContain(task.id);
     await drain.drainTick();
     const status = await drain.getDrainStatus();
+    expect(status.blockers).toContainEqual(expect.objectContaining({ kind: 'shared_controller', task_id: task.id }));
     expect(status.remaining).toBeGreaterThan(0);
     expect(status.safe_to_swap).toBe(false);
   });
+  it('回调清理和无PID kill不能删尚未完成的共享Controller', async () => {
+    await executor.triggerCeceliaRun(task);
+    executor.removeActiveProcess(task.id);
+    executor.killProcess(task.id);
+    expect(executor.getActiveProcesses().map(entry => entry.taskId)).toContain(task.id);
+    await drain.drainTick();
+    expect((await drain.getDrainStatus()).safe_to_swap).toBe(false);
+    io.activity.resolve({ receipt: { fixture: true } });
+    await new Promise(resolve => setImmediate(resolve));
+    expect(executor.getActiveProcesses().map(entry => entry.taskId)).not.toContain(task.id);
+  });
+
 });

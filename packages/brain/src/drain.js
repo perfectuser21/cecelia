@@ -1,234 +1,143 @@
-/**
- * Brain v2 Phase D Part 1.2 — drain 子系统抽出。
- *
- * 原在 tick.js L210-L213（state）+ L3273-L3387（drainTick / getDrainStatus / cancelDrain
- * / _getDrainState / _resetDrainState），瘦身抽出独立模块。
- *
- * 模块状态封装（caller 通过 getter 函数读取，不直接访问私有 let）：
- * - `_draining` / `_drainStartedAt` / `_postDrainCooldown` / `_postDrainCooldownTimer`
- *
- * tick.js 通过 re-export 维持既有 caller 兼容（drain.test.js / executor 不变）。
- */
-
+import { randomUUID } from 'node:crypto';
 import pool from './db.js';
+import { collectBrainDrainScope } from './brain-drain-scope.js';
 
-// ─── 模块状态（私有）─────────────────────────────────────────────────────
+const PROTOCOL = 'brain-process-drain-v1';
+const DRAIN_STATE_KEY = 'tick_draining';
+export const DRAIN_RESTORE_MAX_AGE_MS = 15 * 60 * 1000;
+const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 let _draining = false;
 let _drainStartedAt = null;
-let _postDrainCooldown = false;
-let _postDrainCooldownTimer = null;
+let _drainId = null;
+let revision = 0;
+const launches = new Map();
 
-// working_memory 持久化 key（07-19 bug fix：draining 此前纯内存，Brain 容器
-// 重启——最常见是 Gate3 部署触发——会静默清零，用户明确要求的"停止后台自动
-// 派发"因此反复失效。持久化到 working_memory，与 tick_enabled 同款模式，
-// Brain 启动时靠 restoreDrainState() 读回内存态。auto-complete / cancelDrain
-// 时同步清库，避免"已经不需要 drain 了"却在下次重启时被误恢复。）
-const DRAIN_STATE_KEY = 'tick_draining';
-
-// restore 时的过期上限（Issue cc28d1af 根因D，2026-08-04 一夜 4 次实证）：
-// 部署链 swap 后的无条件 drain-cancel 会在端口切换窗口 curl 静默失败，残留的
-// drain 行被新容器无条件恢复 → 派发瘫痪到有人发现。drain 的合法生命周期 =
-// pre-swap 等待（120s 超时）+ swap 数分钟；超过 15 分钟的必是残留，不恢复并清库。
-export const DRAIN_RESTORE_MAX_AGE_MS = 15 * 60 * 1000;
-
-async function persistDrainState() {
-  await pool.query(`
-    INSERT INTO working_memory (key, value_json, updated_at)
-    VALUES ($1, $2, NOW())
-    ON CONFLICT (key) DO UPDATE SET value_json = $2, updated_at = NOW()
-  `, [DRAIN_STATE_KEY, { draining: true, drain_started_at: _drainStartedAt }]);
+let controlTail = Promise.resolve();
+function writeControl(operation) {
+  const result = controlTail.then(operation);
+  controlTail = result.catch(() => {});
+  return result;
+}
+function persistDrainState() {
+  const value = { draining: true, drain_started_at: _drainStartedAt, drain_id: _drainId, protocol: PROTOCOL };
+  return writeControl(() => pool.query(`INSERT INTO working_memory (key,value_json,updated_at)
+    VALUES ($1,$2,NOW()) ON CONFLICT (key)
+    DO UPDATE SET value_json=$2,updated_at=NOW()`, [DRAIN_STATE_KEY, value]));
+}
+function clearPersistedDrainState(id) {
+  return pool.query(`DELETE FROM working_memory WHERE key=$1
+    AND (value_json->>'drain_id') IS NOT DISTINCT FROM $2::text`, [DRAIN_STATE_KEY, id ?? null]);
 }
 
-async function clearPersistedDrainState() {
-  await pool.query(`DELETE FROM working_memory WHERE key = $1`, [DRAIN_STATE_KEY]);
-}
-
-/**
- * Restore drain state from DB on Brain startup — call once during init.
- * If a drain was active before the process restarted (e.g. Gate3 deploy),
- * re-activates the in-memory flag so dispatch stays paused.
- */
 export async function restoreDrainState() {
-  const result = await pool.query(
-    `SELECT value_json FROM working_memory WHERE key = $1`,
-    [DRAIN_STATE_KEY]
-  );
-  const saved = result.rows[0]?.value_json;
-  if (!saved?.draining) return;
-
-  // 过期自愈：drain_started_at 缺失/不可解析/超过上限 → 判为部署残留，
-  // 不恢复内存态并清掉持久化行（fail-safe：宁可少 drain 也不无限瘫痪派发）
-  const startedMs = Date.parse(saved.drain_started_at ?? '');
-  const age = Number.isNaN(startedMs) ? Infinity : Date.now() - startedMs;
-  if (age > DRAIN_RESTORE_MAX_AGE_MS) {
-    log(`[tick] Stale drain state ignored on restore (started_at=${saved.drain_started_at ?? 'null'}, age>${Math.round(DRAIN_RESTORE_MAX_AGE_MS / 60000)}min) — clearing residue`);
-    await clearPersistedDrainState();
-    return;
+  const before = revision;
+  const saved = (await pool.query('SELECT value_json FROM working_memory WHERE key = $1', [DRAIN_STATE_KEY])).rows[0]?.value_json;
+  if (revision !== before || saved?.draining !== true) return;
+  if (saved.drain_id == null) {
+    const started = Date.parse(saved.drain_started_at ?? '');
+    if (!Number.isFinite(started) || Date.now() - started > DRAIN_RESTORE_MAX_AGE_MS) {
+      await writeControl(() => clearPersistedDrainState(null));
+      return;
+    }
   }
-
+  revision++;
   _draining = true;
-  _drainStartedAt = saved.drain_started_at;
+  _drainStartedAt = saved.drain_started_at ?? null;
+  _drainId = typeof saved.drain_id === 'string' && UUID.test(saved.drain_id) ? saved.drain_id : randomUUID();
+  if (saved.drain_id !== _drainId) await persistDrainState();
+}
+export function isDraining() { return _draining; }
+export function getDrainStartedAt() { return _drainStartedAt; }
+
+export function beginBrainLaunch(taskId) {
+  if (_draining) return null;
+  const token = Symbol('brain-launch');
+  launches.set(token, { taskId, startedAt: new Date().toISOString() });
+  return token;
+}
+export function ownsBrainLaunch(token, taskId) {
+  const entry = launches.get(token);
+  return Boolean(entry && (!entry.taskId || entry.taskId === taskId));
+}
+export function finishBrainLaunch(token) { launches.delete(token); }
+
+function response(blockers = [], independent = 0) {
+  return {
+    protocol: PROTOCOL, drain_id: _drainId, draining: _draining, drain_started_at: _drainStartedAt,
+    safe_to_swap: _draining && blockers.length === 0,
+    remaining: blockers.length, blockers,
+    in_progress_tasks: blockers.filter(item => item.task_id).map(item => ({ id: item.task_id })),
+    independent_task_count: independent,
+  };
 }
 
-// ─── Getter API（供 tick.js 等 caller 读取状态）────────────────────────
-export function isDraining() {
-  // 运行期超龄自愈（09-29 实证，两次部署后派发停摆一上午）：restoreDrainState 的 15 分钟上限只在启动时生效，
-  // 部署 swap 后 drain-cancel 一旦静默失败，新容器会把刚设不久的 drain 恢复，之后再无任何解除路径
-  // （auto-complete 要求 in_progress=0，被有头任务/人审卡死的任务钉住，且只挂在 HTTP 路由）。
-  // drain 的合法生命周期 = pre-swap 等待 + swap 数分钟，超过上限的一律按残留解除。
-  if (_draining && isDrainExpired()) {
-    log(`[tick] Drain expired at runtime (started_at=${_drainStartedAt}, >${Math.round(DRAIN_RESTORE_MAX_AGE_MS / 60000)}min) — auto-cancelled, resuming dispatch`);
-    _draining = false;
-    _drainStartedAt = null;
-    clearPersistedDrainState().catch((err) => log(`[tick] clear stale drain state failed: ${err.message}`));
-  }
-  return _draining;
-}
-
-function isDrainExpired() {
-  const startedMs = Date.parse(_drainStartedAt ?? '');
-  return Number.isNaN(startedMs) || Date.now() - startedMs > DRAIN_RESTORE_MAX_AGE_MS;
-}
-export function getDrainStartedAt() {
-  return _drainStartedAt;
-}
-export function isPostDrainCooldown() {
-  return _postDrainCooldown;
-}
-
-// ─── 日志：[drain] 前缀 + Asia/Shanghai 时间戳，与 tick.js tickLog 同风格 ─
-function log(...args) {
-  const ts = new Date().toLocaleTimeString('zh-CN', {
-    timeZone: 'Asia/Shanghai',
-    hour12: false,
-  });
-  console.log(`[${ts}]`, ...args);
-}
-
-/**
- * Start graceful drain — stop dispatching new tasks, let in_progress finish.
- * When all in_progress tasks complete (checked via getDrainStatus), enter
- * post-drain cooldown (dispatch rate → 1 for 5 minutes).
- */
 export async function drainTick() {
-  if (_draining) {
-    return { success: true, already_draining: true, draining: true, drain_started_at: _drainStartedAt };
+  const already = _draining;
+  let persistence;
+  if (!already) {
+    revision++;
+    _draining = true;
+    _drainStartedAt = new Date().toISOString();
+    _drainId = randomUUID();
+    persistence = persistDrainState();
   }
-
-  _draining = true;
-  _drainStartedAt = new Date().toISOString();
-  log(`[tick] Drain mode activated at ${_drainStartedAt}`);
-  await persistDrainState();
-
-  // Count in_progress tasks for initial status (no auto-complete on activation)
-  const inProgressResult = await pool.query(
-    "SELECT id, title, started_at FROM tasks WHERE status = 'in_progress' ORDER BY started_at"
-  );
-
-  return {
-    success: true,
-    draining: true,
-    drain_started_at: _drainStartedAt,
-    in_progress_tasks: inProgressResult.rows.map((t) => ({
-      id: t.id,
-      title: t.title,
-      started_at: t.started_at,
-    })),
-    remaining: inProgressResult.rows.length,
-  };
+  const id = _drainId;
+  const startedRevision = revision;
+  await persistence;
+  const status = await getDrainStatus();
+  if (!_draining || _drainId !== id || revision !== startedRevision) {
+    return { ...status, success: false, safe_to_swap: false, reason: 'drain_identity_changed' };
+  }
+  return { success: true, ...(already ? { already_draining: true } : {}), ...status };
 }
 
-/**
- * Get drain status — shows draining flag + in_progress tasks.
- * Auto-completes drain when no in_progress tasks remain (enter post-drain cooldown).
- */
 export async function getDrainStatus() {
-  if (!_draining) {
-    return { draining: false, in_progress_tasks: [], remaining: 0 };
-  }
-
-  const inProgressResult = await pool.query(
-    "SELECT id, title, status, started_at FROM tasks WHERE status = 'in_progress' ORDER BY started_at"
-  );
-
-  const tasks = inProgressResult.rows;
-
-  // Auto-complete drain: if no in_progress tasks remain, enter post-drain cooldown
-  // (NOT disableTick — that would kill the entire tick loop, causing system-wide stop)
-  if (tasks.length === 0) {
-    log('[tick] Drain complete — no in_progress tasks remain, entering post-drain cooldown (dispatch rate → 1)');
-    const drainEnd = new Date().toISOString();
-    const startedAt = _drainStartedAt;
-    _draining = false;
-    _drainStartedAt = null;
-    await clearPersistedDrainState();
-
-    // Set post-drain cooldown: dispatch rate limited to 1 for 5 minutes
-    _postDrainCooldown = true;
-    if (_postDrainCooldownTimer) clearTimeout(_postDrainCooldownTimer);
-    _postDrainCooldownTimer = setTimeout(() => {
-      _postDrainCooldown = false;
-      _postDrainCooldownTimer = null;
-      log('[tick] Post-drain cooldown expired — dispatch rate restored to normal');
-    }, 5 * 60 * 1000); // 5 minutes
-    if (_postDrainCooldownTimer.unref) _postDrainCooldownTimer.unref();
-
-    return {
-      draining: false,
-      drain_completed: true,
-      post_drain_cooldown: true,
-      drain_started_at: startedAt,
-      drain_ended_at: drainEnd,
-      in_progress_tasks: [],
-      remaining: 0,
-    };
-  }
-
-  return {
-    draining: true,
-    drain_started_at: _drainStartedAt,
-    in_progress_tasks: tasks.map((t) => ({
-      id: t.id,
-      title: t.title,
-      started_at: t.started_at,
-    })),
-    remaining: tasks.length,
+  if (!_draining) return { ...response(), safe_to_swap: false };
+  const id = _drainId;
+  const observedLaunches = new Map(launches);
+  const { rows } = await pool.query(`SELECT id,title,status,executor_kind,payload,claimed_by,claimed_at,started_at
+    FROM tasks WHERE status IN ('in_progress','dispatched') ORDER BY started_at`);
+  const { getActiveProcesses } = await import('./executor.js');
+  const stored = (await pool.query('SELECT value_json FROM working_memory WHERE key = $1', [DRAIN_STATE_KEY])).rows[0]?.value_json;
+  for (const [token, launch] of launches) observedLaunches.set(token, launch);
+  const scope = collectBrainDrainScope(rows, getActiveProcesses(), [...observedLaunches.values()]);
+  if (stored?.draining !== true || stored.drain_id !== id) scope.blockers.push({
+    kind: 'unknown', reason: 'drain_persistence_unconfirmed',
+  });
+  if (!_draining || _drainId !== id) return {
+    ...response(scope.blockers, scope.independent_task_count), safe_to_swap: false, reason: 'drain_identity_changed',
   };
+  return response(scope.blockers, scope.independent_task_count);
 }
 
-/**
- * Cancel drain mode — resume normal dispatching.
- *
- * 无条件清持久化状态（不只在 _draining===true 时才清）：部署脚本的健康检查可能在
- * restoreDrainState() 把旧容器持久化的排空状态读回内存之前就先发来 drain-cancel，
- * 此时若只在 _draining===true 时才清库，会让这次 cancel 变成 no-op——旧持久化行
- * 留在 DB 里，随后 restoreDrainState() 一执行就把它误当"刚发生的排空"恢复进内存，
- * 派单卡到 15 分钟运行期超龄自愈（任务 30861749；见 restoreDrainState() 迁移到
- * listenWithRetry() 之前那处改动，这里是纵深防御第二层）。
- */
-export async function cancelDrain() {
-  const wasDraining = _draining;
+export async function cancelDrain(expectedDrainId) {
+  if (_draining && expectedDrainId !== undefined && expectedDrainId !== _drainId) {
+    return { success: false, reason: 'drain_identity_changed', drain_id: _drainId };
+  }
+  const cancellingRevision = ++revision;
+  const activeId = _drainId;
+  const active = _draining;
+  const cancelled = await writeControl(async () => {
+    const stored = (await pool.query('SELECT value_json FROM working_memory WHERE key = $1', [DRAIN_STATE_KEY])).rows[0]?.value_json;
+    const storedActive = stored?.draining === true;
+    const storedId = storedActive ? stored.drain_id ?? null : null;
+    if (storedActive && ((active && storedId !== activeId) ||
+        (expectedDrainId !== undefined && storedId !== expectedDrainId))) {
+      return { success: false, reason: 'drain_identity_changed', drain_id: storedId };
+    }
+    await clearPersistedDrainState(active ? activeId : storedId);
+    const id = active ? activeId : storedId;
+    return { success: true, was_draining: active || storedActive,
+      ...((active || storedActive) && id ? { drain_id: id } : {}) };
+  });
+  if (!cancelled.success) return cancelled;
+  if (revision !== cancellingRevision) return { success: false, reason: 'drain_identity_changed' };
   _draining = false;
   _drainStartedAt = null;
-  await clearPersistedDrainState();
-
-  if (wasDraining) {
-    log('[tick] Drain mode cancelled, resuming normal dispatch');
-  }
-  return { success: true, was_draining: wasDraining };
+  _drainId = null;
+  return cancelled;
 }
-
-// ─── 测试 hook ───────────────────────────────────────────────────────────
-export function _getDrainState() {
-  return { draining: _draining, drainStartedAt: _drainStartedAt, postDrainCooldown: _postDrainCooldown };
-}
-
+export function _getDrainState() { return { draining: _draining, drainStartedAt: _drainStartedAt, drainId: _drainId }; }
 export function _resetDrainState() {
-  _draining = false;
-  _drainStartedAt = null;
-  _postDrainCooldown = false;
-  if (_postDrainCooldownTimer) {
-    clearTimeout(_postDrainCooldownTimer);
-    _postDrainCooldownTimer = null;
-  }
+  revision++; _draining = false; _drainStartedAt = null; _drainId = null; launches.clear();
 }

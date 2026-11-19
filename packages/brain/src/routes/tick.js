@@ -94,8 +94,8 @@ router.get('/tick/drain-status', async (req, res) => {
  */
 router.post('/tick/drain-cancel', async (req, res) => {
   try {
-    const result = await cancelDrain();
-    res.json(result);
+    const result = await cancelDrain(req.body?.drain_id);
+    res.status(result.success ? 200 : 409).json(result);
   } catch (err) {
     res.status(500).json({ error: 'Failed to cancel drain', details: err.message });
   }

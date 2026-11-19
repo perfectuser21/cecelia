@@ -64,4 +64,39 @@ describe('真实 PG 发布排空归属与持久暂停', () => {
     expect(status.blockers.map(x => x.task_id).sort()).toEqual([local, unknown, shared].sort());
     expect(await rows()).toEqual(before);
   });
+  it('内存未恢复时精确取消核对真实持久ID，不能删除另一轮暂停', async () => {
+    const started = await drainTick();
+    _resetDrainState();
+    const mismatch = await cancelDrain(randomUUID());
+    expect(mismatch).toMatchObject({ success: false, reason: 'drain_identity_changed' });
+    expect((await state.pool.query("SELECT value_json FROM working_memory WHERE key='tick_draining'")).rows[0].value_json.drain_id).toBe(started.drain_id);
+    const cancelled = await cancelDrain(started.drain_id);
+    expect(cancelled).toMatchObject({ success: true, drain_id: started.drain_id });
+    expect((await state.pool.query("SELECT * FROM working_memory WHERE key='tick_draining'")).rows).toEqual([]);
+    expect(await cancelDrain(started.drain_id)).toEqual({ success: true, was_draining: false });
+  });
+
+  it('真实PG延迟INSERT与并发取消结束后，不残留可在重启恢复的暂停行', async () => {
+    let enter, release;
+    const entered = new Promise(resolve => { enter = resolve; });
+    const held = new Promise(resolve => { release = resolve; });
+    const actualQuery = state.pool.query.bind(state.pool);
+    state.pool.query = async (sql, params) => {
+      if (sql.includes('INSERT INTO working_memory')) { enter(); await held; }
+      return actualQuery(sql, params);
+    };
+    try {
+      const starting = drainTick();
+      await entered;
+      let cancelled = false;
+      const cancelling = cancelDrain().then(result => { cancelled = true; return result; });
+      await new Promise(resolve => setImmediate(resolve));
+      const overtook = cancelled;
+      release(); await Promise.all([starting, cancelling]);
+      expect(overtook).toBe(false);
+      expect(isDraining()).toBe(false);
+      expect((await actualQuery("SELECT * FROM working_memory WHERE key='tick_draining'")).rows).toEqual([]);
+    } finally { release(); state.pool.query = actualQuery; }
+  });
+
 });

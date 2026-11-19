@@ -40,7 +40,7 @@ vi.mock('../dispatch-helpers.js', () => ({
 }));
 
 vi.mock('../quota-cooling.js', () => ({ isGlobalQuotaCooling: () => false, getQuotaCoolingState: () => ({ until: null }) }));
-vi.mock('../drain.js', () => ({ isDraining: () => false, getDrainStartedAt: () => null }));
+vi.mock('../drain.js', async (original) => ({ ...await original(), isDraining: () => false, getDrainStartedAt: () => null }));
 vi.mock('../slot-allocator.js', () => ({
   harnessSlotCheck: vi.fn().mockResolvedValue({ allow: true, reason: 'ok' }),
   calculateSlotBudget: async () => ({

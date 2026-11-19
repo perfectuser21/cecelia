@@ -67,8 +67,8 @@ vi.mock('../alertness/index.js', () => ({
 // ──────────────────────────────────────────────────────────────
 // Mock: drain.js
 // ──────────────────────────────────────────────────────────────
-vi.mock('../drain.js', () => ({
-  isPostDrainCooldown: vi.fn().mockReturnValue(false),
+vi.mock('../drain.js', async (original) => ({ ...await original(),
+
 }));
 
 // ──────────────────────────────────────────────────────────────
@@ -198,7 +198,7 @@ describe('T2 Liveness 回归 — 07-10 事故：四刀均不杀 alive 任务', (
       }));
 
       vi.doMock('../drain.js', () => ({
-        isPostDrainCooldown: vi.fn().mockReturnValue(false),
+
       }));
 
       const mod = await import('../tick-helpers.js');
@@ -420,7 +420,7 @@ describe('单元用例', () => {
       }));
 
       vi.doMock('../drain.js', () => ({
-        isPostDrainCooldown: vi.fn().mockReturnValue(false),
+
       }));
 
       const mod = await import('../tick-helpers.js');

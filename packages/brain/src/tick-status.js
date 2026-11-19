@@ -18,7 +18,7 @@ import { getAllStates } from './circuit-breaker.js';
 import { getCurrentAlertness } from './alertness/index.js';
 import { getQuarantineStats } from './quarantine.js';
 import { tickState } from './tick-state.js';
-import { isDraining, getDrainStartedAt, isPostDrainCooldown } from './drain.js';
+import { isDraining, getDrainStartedAt } from './drain.js';
 import { isTickWatchdogActive } from './tick-watchdog.js';
 
 // 常量（与 tick.js 同源；D2 阶段允许并存，后续可统一收口到 tick-constants.js）
@@ -102,7 +102,6 @@ async function getTickStatus() {
     loop_running: tickState.loopTimer !== null,
     draining: isDraining(),
     drain_started_at: getDrainStartedAt(),
-    post_drain_cooldown: isPostDrainCooldown(),
     tick_watchdog_active: isTickWatchdogActive(),
     interval_minutes: TICK_INTERVAL_MINUTES,
     loop_interval_ms: TICK_LOOP_INTERVAL_MS,

@@ -49,7 +49,6 @@ gp-assertion-output-smoke.sh
 gp-assertion-toolchain-smoke.sh
 graph-photo-layer-smoke.sh
 graph-query-api-smoke.sh
-guard-drill-smoke.sh
 healthz-smoke.sh
 impact-contract-smoke.sh
 inbox-p1-migration-verify.sh
@@ -93,7 +92,6 @@ ops-skill-versions-smoke.sh
 ops-workflows-smoke.sh
 orchestrator-remote-launch-smoke.sh
 org-units-smoke.sh
-owner-cockpit-smoke.sh
 preview-capacity-gate-and-destroyer-smoke.sh
 preview-env-smoke.sh
 preview-ledger-activate-smoke.sh

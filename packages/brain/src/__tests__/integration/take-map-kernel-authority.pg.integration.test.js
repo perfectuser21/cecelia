@@ -64,7 +64,7 @@ vi.mock('../../quota-cooling.js', () => ({
   isGlobalQuotaCooling: vi.fn(() => false),
   getQuotaCoolingState: vi.fn(() => ({})),
 }));
-vi.mock('../../drain.js', () => ({
+vi.mock('../../drain.js', async (original) => ({ ...await original(),
   isDraining: vi.fn(() => false),
   getDrainStartedAt: vi.fn(() => null),
 }));

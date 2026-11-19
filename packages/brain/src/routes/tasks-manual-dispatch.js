@@ -1,3 +1,4 @@
+import { brainLaunchHandler } from '../lib/brain-launch-handler.js';
 import { isExternalWorkerTask } from '../lib/task-type-registry.js';
 import {isFoundationTask,NON_FOUNDATION_TASK_SQL} from '../lib/foundation-task-guard.js';
 import { rateLimit } from 'express-rate-limit';
@@ -18,9 +19,9 @@ export function registerTaskManualDispatchRoutes(router) {
 /**
  * POST /api/brain/tasks/:id/dispatch
  * 手动派发单个任务（用户从前端点击"派发"按钮）
- * 跳过自动调度的 drain/billing/slot 检查，但保留执行器可用性检查
+ * 与自动派发共用发布排空准入；保留执行器可用性检查
  */
-router.post('/tasks/:id/dispatch', rateLimit(TASK_MUTATION_RATE_LIMIT_OPTIONS), async (req, res) => {
+router.post('/tasks/:id/dispatch', rateLimit(TASK_MUTATION_RATE_LIMIT_OPTIONS), brainLaunchHandler(req => req.params.id, async (req, res, admission) => {
   let deviceLockTaskId = null; // 已抢设备锁的任务 id（失败路径需释放）
   try {
     const { id } = req.params;
@@ -77,7 +78,7 @@ router.post('/tasks/:id/dispatch', rateLimit(TASK_MUTATION_RATE_LIMIT_OPTIONS), 
     if (reviewPlan.guarded) {
       const dispatched = await dispatchManualRegistryReview(task, pool, {
         tag:'tasks/:id/dispatch', deviceGate:checkDeviceLockForManualDispatch,
-        checkAvailable:checkCeceliaRunAvailable, trigger:triggerCeceliaRun,
+        checkAvailable:checkCeceliaRunAvailable, trigger:task => triggerCeceliaRun(task, { drainAdmission: admission }),
       });
       return res.status(dispatched.status).json(dispatched.body);
     }
@@ -119,7 +120,7 @@ router.post('/tasks/:id/dispatch', rateLimit(TASK_MUTATION_RATE_LIMIT_OPTIONS), 
     }
 
     // 5. 触发执行
-    const execResult = await triggerCeceliaRun(task);
+    const execResult = await triggerCeceliaRun(task, { drainAdmission: admission });
     if (!execResult.success) {
       // 同上：回滚 queued 时释放已抢的设备锁
       await pool.query(`UPDATE tasks SET status = 'queued', claimed_by = NULL, claimed_at = NULL, updated_at = NOW() WHERE id = $1`, [id]);
@@ -151,7 +152,7 @@ router.post('/tasks/:id/dispatch', rateLimit(TASK_MUTATION_RATE_LIMIT_OPTIONS), 
     console.error('[API] tasks/:id/dispatch error:', err.message);
     res.status(500).json({ error: err.message });
   }
-});
+}));
 
 
 /**

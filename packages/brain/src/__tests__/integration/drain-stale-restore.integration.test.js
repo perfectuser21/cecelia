@@ -1,32 +1,28 @@
-/**
- * drain-stale-restore.integration.test.js
- *
- * 回归测试：restoreDrainState 对过期 drain 残留必须自愈（真 postgres，禁 mock pool）
- *
- * Task: 468ef3d7-a503-4ab0-9834-33a58988a623 · Issue cc28d1af 根因D 第3/4次复发
- *
- * 历史 bug：brain-deploy.sh 换容器后的无条件 drain-cancel 在端口切换窗口
- * curl -sf 静默失败（||true 吞错）→ working_memory 里的 tick_draining 残留
- * → 新 Brain 启动 restoreDrainState() 无条件恢复任意年龄的 drain → 派发瘫痪
- * 直到人工发现（2026-08-04 一夜 4 次实证）。
- *
- * 修法：restore 时若 drain_started_at 距今超过 DRAIN_RESTORE_MAX_AGE_MS（15min），
- * 判为部署残留：不恢复内存态 + 清掉持久化行 + 打日志。drain 的合法生命周期
- * = pre-swap 等待（≤120s 超时）+ swap 数分钟，15 分钟远超合法上限。
- */
+/** 旧无ID部署残留保留15分钟恢复自愈；新协议暂停必须等显式cancel。 */
 
-import { describe, it, expect, beforeEach, afterAll } from 'vitest';
-import pool from '../../db.js';
+import { describe, it, expect, beforeAll, beforeEach, afterEach, afterAll, vi } from 'vitest';
+import { createIntakeTestDatabase } from '../fixtures/task-intake-db.js';
+const state = vi.hoisted(() => ({ pool: null }));
+vi.mock('../../db.js', () => ({ default: { query: (...args) => state.pool.query(...args) } }));
 import { restoreDrainState, isDraining, _resetDrainState } from '../../drain.js';
+const pool = { query: (...args) => state.pool.query(...args) };
+let fixture;
+beforeAll(async () => {
+  fixture = await createIntakeTestDatabase();
+  await fixture.pool.query(`CREATE TABLE ${fixture.schema}.working_memory (LIKE public.working_memory INCLUDING ALL)`);
+});
+afterEach(async () => {
+  try { await state.pool.query('ROLLBACK'); } finally { state.pool.release(); _resetDrainState(); }
+});
 
 const KEY = 'tick_draining';
 
-async function seedDrainRow(startedAtIso) {
+async function seedDrainRow(startedAtIso, drainId) {
   await pool.query(
     `INSERT INTO working_memory (key, value_json, updated_at)
      VALUES ($1, $2, NOW())
      ON CONFLICT (key) DO UPDATE SET value_json = $2, updated_at = NOW()`,
-    [KEY, { draining: true, drain_started_at: startedAtIso }]
+    [KEY, { draining: true, drain_started_at: startedAtIso, ...(drainId ? { drain_id: drainId } : {}) }]
   );
 }
 
@@ -39,15 +35,12 @@ async function readDrainRow() {
 
 beforeEach(async () => {
   _resetDrainState();
-  await pool.query(`DELETE FROM working_memory WHERE key = $1`, [KEY]);
+  state.pool = await fixture.pool.connect(); await state.pool.query('BEGIN');
 });
 
-afterAll(async () => {
-  await pool.query(`DELETE FROM working_memory WHERE key = $1`, [KEY]);
-  await pool.end();
-});
+afterAll(async () => { await fixture?.close(); });
 
-describe('restoreDrainState — 过期 drain 残留自愈', () => {
+describe('restoreDrainState — 仅旧协议残留自愈', () => {
   it('过期残留（20 分钟前）→ 不恢复 draining 且持久化行被清掉', async () => {
     const stale = new Date(Date.now() - 20 * 60 * 1000).toISOString();
     await seedDrainRow(stale);
@@ -76,4 +69,12 @@ describe('restoreDrainState — 过期 drain 残留自愈', () => {
     expect(isDraining()).toBe(false);
     expect(await readDrainRow()).toBeNull();
   });
+  it('新协议带ID暂停超过15分钟，重启仍保持暂停和原ID', async () => {
+    const id = '00000000-0000-4000-8000-000000000001';
+    await seedDrainRow(new Date(Date.now() - 60 * 60 * 1000).toISOString(), id);
+    await restoreDrainState();
+    expect(isDraining()).toBe(true);
+    expect((await readDrainRow()).drain_id).toBe(id);
+  });
+
 });

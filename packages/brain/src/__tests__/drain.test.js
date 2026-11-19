@@ -72,40 +72,32 @@ describe('drain.js — working_memory 持久化', () => {
     expect(deleteCall[1][0]).toBe('tick_draining');
   });
 
-  it('getDrainStatus() auto-complete（无 in_progress 任务）时应清除持久化记录', async () => {
+  it('getDrainStatus() 无任务也保持暂停和持久记录，直到显式取消', async () => {
     await drainTick();
-    mockQuery.mockReset();
-    mockQuery.mockResolvedValue({ rows: [] }); // 无 in_progress 任务
-
+    mockQuery.mockClear();
     await getDrainStatus();
-
-    const deleteCall = mockQuery.mock.calls.find(([sql]) => sql.includes('DELETE FROM working_memory'));
-    expect(deleteCall).toBeTruthy();
-    expect(deleteCall[1][0]).toBe('tick_draining');
-    expect(_getDrainState().draining).toBe(false);
+    expect(mockQuery.mock.calls.some(([sql]) => sql.includes('DELETE FROM working_memory'))).toBe(false);
+    expect(_getDrainState().draining).toBe(true);
   });
+
 });
 
-describe('drain.js — 运行期超龄自愈（09-29 部署后 drain-cancel 失败，派发停摆）', () => {
+describe('drain.js — 新协议排空保持至显式取消', () => {
   beforeEach(() => { vi.useRealTimers(); });
 
-  it('isDraining()：排空超过 DRAIN_RESTORE_MAX_AGE_MS → 自动解除并清持久化行，派发恢复', async () => {
+  it('新ID排空超过旧TTL仍暂停，不能按年龄重新开放派发', async () => {
     vi.resetModules();
     mockQuery.mockReset();
     mockQuery.mockResolvedValue({ rows: [] });
     const mod = await import('../drain.js');
     vi.useFakeTimers({ now: new Date('2026-09-29T03:13:19.000Z') });
-    await mod.drainTick();
-    expect(mod.isDraining()).toBe(true);
-    mockQuery.mockClear();
-
-    vi.setSystemTime(new Date(Date.parse('2026-09-29T03:13:19.000Z') + mod.DRAIN_RESTORE_MAX_AGE_MS + 1000));
-    expect(mod.isDraining(), '超龄排空仍在拦派发——一次部署就能让产线永久停摆').toBe(false);
-    await Promise.resolve();
-    const del = mockQuery.mock.calls.find(([sql]) => sql.includes('DELETE FROM working_memory'));
-    expect(del, '超龄解除必须同步清库，否则下次重启又被恢复').toBeTruthy();
-    expect(mod._getDrainState().draining).toBe(false);
-    vi.useRealTimers();
+    try {
+      await mod.drainTick();
+      mockQuery.mockClear();
+      vi.advanceTimersByTime(mod.DRAIN_RESTORE_MAX_AGE_MS + 1000);
+      expect(mod.isDraining()).toBe(true);
+      expect(mockQuery.mock.calls.some(([sql]) => sql.includes('DELETE FROM working_memory'))).toBe(false);
+    } finally { vi.useRealTimers(); }
   });
 
   it('isDraining()：未超龄的正常排空（部署 pre-swap 等待期）保持生效', async () => {

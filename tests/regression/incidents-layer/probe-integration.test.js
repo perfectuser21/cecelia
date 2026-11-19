@@ -80,7 +80,7 @@ function launchdOutput(disabled = false) {
   const outputs = new Map([
     ['launchctl print-disabled system', disabled ? '"com.cecelia.bridge" => disabled' : ''],
     ['launchctl print system/com.cecelia.bridge', 'state = running'],
-    ...['bridge-keepalive', 'token-refresh', 'pf-firewall', 'smoke-nightly', 'guard-drill', 'coding-workflow-runner']
+    ...['bridge-keepalive', 'token-refresh', 'pf-firewall', 'smoke-nightly', 'coding-workflow-runner']
       .map(name => [`launchctl print system/com.cecelia.${name}`, 'state = running']),
     ['nc -z -G 3 localhost 3457', ''],
   ]);

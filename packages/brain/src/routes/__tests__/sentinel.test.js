@@ -34,7 +34,7 @@ describe('GET /api/brain/sentinel/health — 调度哨兵灯（relay-baton4 item
 
   it('全部 job 新鲜且 ok → healthy=true，输出 name/ok/age_seconds/at', async () => {
     mockQuery.mockResolvedValueOnce({
-      rows: [jobRow('arch-review'), jobRow('daily-backup'), expectedRow(2)],
+      rows: [jobRow('arch-review'), jobRow('daily-backup'), declaredExpectedRow(['arch-review', 'daily-backup'])],
     });
     const res = await (await req())(await makeApp()).get('/api/brain/sentinel/health');
     expect(res.status).toBe(200);
@@ -48,14 +48,14 @@ describe('GET /api/brain/sentinel/health — 调度哨兵灯（relay-baton4 item
   });
 
   it('job 数少于 expected → healthy=false', async () => {
-    mockQuery.mockResolvedValueOnce({ rows: [jobRow('arch-review'), expectedRow(5)] });
+    mockQuery.mockResolvedValueOnce({ rows: [jobRow('arch-review'), declaredExpectedRow(['arch-review', 'daily-backup', 'receipt-collector', 'machine-vitals', 'ops-collector'])] });
     const res = await (await req())(await makeApp()).get('/api/brain/sentinel/health');
     expect(res.body.healthy).toBe(false);
   });
 
   it('某 job age_seconds 超 1800 → healthy=false', async () => {
     mockQuery.mockResolvedValueOnce({
-      rows: [jobRow('arch-review', { age_seconds: 7200 }), expectedRow(1)],
+      rows: [jobRow('arch-review', { age_seconds: 7200 }), declaredExpectedRow(['arch-review'])],
     });
     const res = await (await req())(await makeApp()).get('/api/brain/sentinel/health');
     expect(res.body.healthy).toBe(false);
@@ -65,7 +65,7 @@ describe('GET /api/brain/sentinel/health — 调度哨兵灯（relay-baton4 item
     mockQuery.mockResolvedValueOnce({
       rows: [
         { key: 'scheduler_job_last_run:strategy-trigger', value_json: { at: 'x', ok: false, error: 'boom' }, age_seconds: 30 },
-        expectedRow(1),
+        declaredExpectedRow(['strategy-trigger']),
       ],
     });
     const res = await (await req())(await makeApp()).get('/api/brain/sentinel/health');

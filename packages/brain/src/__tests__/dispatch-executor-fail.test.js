@@ -323,7 +323,7 @@ describe('现役执行体按实际依赖使用bridge可用性闸', () => {
     mockTriggerCeceliaRun.mockResolvedValueOnce({success:true,taskId:task.id,runId:'owned-openclaw-run'});
     const {dispatchNextTask}=await import('../tick.js');
     expect(await dispatchNextTask(['goal-1'])).toMatchObject({dispatched:true,task_id:task.id});
-    expect(mockTriggerCeceliaRun).toHaveBeenCalledWith(expect.objectContaining({task_type:'qiumi_task'}));
+    expect(mockTriggerCeceliaRun).toHaveBeenCalledWith(expect.objectContaining({task_type:'qiumi_task'}), { drainAdmission: expect.any(Symbol) });
     expect(executor.checkCeceliaRunAvailable).not.toHaveBeenCalled();
     expect(mockUpdateTask.mock.calls.filter(([row])=>row?.status==='queued')).toHaveLength(0);
     executor.checkCeceliaRunAvailable.mockResolvedValue({available:true});

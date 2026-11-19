@@ -60,7 +60,7 @@ vi.mock('../circuit-breaker.js', () => ({
 // ─────────────────────────────────────────────────────────────────────────────
 // Mock: drain（未 draining）
 // ─────────────────────────────────────────────────────────────────────────────
-vi.mock('../drain.js', () => ({
+vi.mock('../drain.js', async (original) => ({ ...await original(),
   isDraining: vi.fn().mockReturnValue(false),
   getDrainStartedAt: vi.fn().mockReturnValue(null),
 }));

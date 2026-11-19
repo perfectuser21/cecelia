@@ -9,7 +9,7 @@ export const captureId = 'b73a7e69-5b08-460f-a290-8f8371403ac8';
 export const initiativeId = 'c73a7e69-5b08-460f-a290-8f8371403ac8';
 export const content = '隔离浏览器保留的真实记录';
 export const initiative = { id: initiativeId, title: '浏览器去向验收立项', status: 'planning', created_at: '2026-10-01T00:00:00Z', description: '归位去向与反向链' };
-export const test = base.extend<{ api: { patches: unknown[]; failGuards: boolean } }, { origin: string }>({
+export const test = base.extend<{ api: { patches: unknown[] } }, { origin: string }>({
   origin: [async ({}, use) => {
     const server = createServer(async (request, response) => {
       const pathname = new URL(request.url ?? '/', 'http://localhost').pathname;
@@ -29,7 +29,7 @@ export const test = base.extend<{ api: { patches: unknown[]; failGuards: boolean
     await new Promise<void>((resolve, reject) => server.close(e => e ? reject(e) : resolve()));
   }, { scope: 'worker' }],
   api: [async ({ context, origin }, use, info) => {
-    const api = { patches: [] as unknown[], failGuards: false };
+    const api = { patches: [] as unknown[] };
     let capture = { id: captureId, content, source: 'dashboard', status: 'captured', destination_type: null as string | null, destination_id: null as string | null, created_at: '2026-10-01T00:00:00Z' };
     const escaped: string[] = [];
     const pageErrors: string[] = [];
@@ -45,7 +45,6 @@ export const test = base.extend<{ api: { patches: unknown[]; failGuards: boolean
         const status = url.searchParams.get('status');
         return reply({ tasks: [{ id: `fixture-${status}`, title: `隔离任务-${status}`, status, created_at: '2026-10-01T00:00:00Z' }] });
       }
-      if (path === '/api/brain/guard-drill/status') return api.failGuards ? route.abort('failed') : reply({ guards: [{ stale: false }, { stale: false }, { stale: true }] });
       if (path === '/api/brain/design-docs') return reply({ docs: [{ id: 'fixture-diary', title: '隔离晨报', content: '浏览器点开后的晨报正文', created_at: '2026-10-01T00:00:00Z' }] });
       if (path === `/api/brain/captures/${captureId}` && request.method() === 'PATCH') {
         const patch = request.postDataJSON(); api.patches.push(patch); capture = { ...capture, ...patch }; return reply(capture);

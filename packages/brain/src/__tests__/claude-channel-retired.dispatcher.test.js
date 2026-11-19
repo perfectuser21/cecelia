@@ -170,7 +170,7 @@ describe('dispatcher：claude 通道退役按 no_executor 收口', () => {
     await dispatchNextTask(['goal-1']);
 
     expect(mockCheckAvailable).toHaveBeenCalledWith(expect.objectContaining({ id: TASK.id }));
-    expect(mockTriggerCeceliaRun).toHaveBeenCalledWith(expect.objectContaining({ id: TASK.id }));
+    expect(mockTriggerCeceliaRun).toHaveBeenCalledWith(expect.objectContaining({ id: TASK.id }), { drainAdmission: expect.any(Symbol) });
   });
 
   it('executor 返回 claude_channel_retired → no_executor 收口，释放 claim，不计熔断/autoblock', async () => {

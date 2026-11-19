@@ -38,10 +38,6 @@ vi.mock('../alertness/index.js', () => ({
   ALERTNESS_LEVELS: { CALM: 0, AWARE: 1, ALERT: 2, PANIC: 4 },
 }));
 
-const mockIsPostDrainCooldown = vi.fn();
-vi.mock('../drain.js', () => ({
-  isPostDrainCooldown: (...args) => mockIsPostDrainCooldown(...args),
-}));
 
 const mockAssessTaskLiveness = vi.fn();
 vi.mock('../executor-contracts.js', () => ({
@@ -61,7 +57,6 @@ describe('tick-helpers', () => {
     vi.clearAllMocks();
     mockCheckServerResources.mockReturnValue({ metrics: { max_pressure: 0.3 } });
     mockGetCurrentAlertness.mockReturnValue({ level: 0, levelName: 'CALM' });
-    mockIsPostDrainCooldown.mockReturnValue(false);
     mockHandleTaskFailure.mockResolvedValue({ quarantined: false, failure_count: 1 });
     // 默认：超时任务按 brain-local dead 处理（旧测试未设 executor_kind，兼容原有断言）
     mockAssessTaskLiveness.mockResolvedValue({ verdict: 'dead', onStale: 'fail', kind: 'brain-local' });
@@ -195,14 +190,6 @@ describe('tick-helpers', () => {
       mockQuery.mockResolvedValueOnce({ rows: [{ value_json: { current_rate: 5 } }] });
       mockQuery.mockResolvedValueOnce({ rows: [] });
       mockCheckServerResources.mockReturnValue({ metrics: { max_pressure: 0.95 } });
-      const r = await getRampedDispatchMax(9);
-      expect(r).toBe(1);
-    });
-
-    it('post-drain cooldown → 强制 1', async () => {
-      mockQuery.mockResolvedValueOnce({ rows: [{ value_json: { current_rate: 5 } }] });
-      mockQuery.mockResolvedValueOnce({ rows: [] });
-      mockIsPostDrainCooldown.mockReturnValue(true);
       const r = await getRampedDispatchMax(9);
       expect(r).toBe(1);
     });

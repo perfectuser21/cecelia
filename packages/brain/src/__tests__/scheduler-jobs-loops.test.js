@@ -72,7 +72,7 @@ describe('scheduler-jobs loop 幂等与重入守卫', () => {
     expect(scheduleDailyBackup).toHaveBeenCalledTimes(2);
     const expectedWrites = pool.query.mock.calls.filter(([, args]) => args?.[0] === 'scheduler_jobs_expected');
     expect(expectedWrites).toHaveLength(2);
-    expect(expectedWrites.map(([, args]) => JSON.parse(args[1]))).toEqual([{ count: JOBS.length }, { count: JOBS.length }]);
+    expect(expectedWrites.map(([, args]) => JSON.parse(args[1]))).toEqual([{ count: JOBS.length, names: JOBS.map(job => job.name) }, { count: JOBS.length, names: JOBS.map(job => job.name) }]);
   });
 });
 

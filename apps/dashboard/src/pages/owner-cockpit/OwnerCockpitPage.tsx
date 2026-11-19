@@ -5,17 +5,15 @@
  * Sprint:  sprints/07162300-owner-cockpit
  *
  * 功能：
- * - 四指标 Header（来自真实 Brain API）
  * - 作战板（in_progress/queued/blocked 任务）
  * - 晨报 Feed（design_docs type=diary）
- * - 演习状态条（guard-drill）
  * - 导览区（已有页面快捷入口）
  * - 移动端响应式（375px 单列）
  */
 
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Activity, Layers, AlertCircle, Shield, ChevronDown, ChevronRight, ExternalLink, Clock, Zap, BarChart2, Settings, Map, FileText, Video, Brain, Target, BookOpen, Radio, Inbox, Database, Users, Code } from 'lucide-react';
+import { Activity, Layers, AlertCircle, ChevronDown, ChevronRight, ExternalLink, Clock, Zap, BarChart2, Settings, Map, FileText, Video, Brain, Target, BookOpen, Radio, Inbox, Database, Users, Code } from 'lucide-react';
 
 // 相对路径走代理（本机 5211 frontend-proxy / HK / vite dev 均已配 /api/brain 转发）。
 // 禁止硬编码 localhost:5221——浏览器端 localhost=用户设备，手机/公网打开会全空（task 935499cb）。
@@ -29,21 +27,6 @@ interface Task {
   status: string;
   priority?: string | number | null;
   created_at?: string;
-}
-
-interface GuardDrillStatus {
-  guards: Array<{
-    id: string;
-    name: string;
-    stale: boolean;
-    last_drill_at: string | null;
-  }>;
-  last_run: {
-    fired: boolean;
-    guard_name?: string;
-    ran_at?: string;
-  } | null;
-  last_run_at: string | null;
 }
 
 interface DiaryDoc {
@@ -184,44 +167,6 @@ function DiaryItem({ doc }: { doc: DiaryDoc }) {
   );
 }
 
-// ======== 演习状态条 ========
-
-function DrillStatusBar({ status }: { status: GuardDrillStatus | null }) {
-  if (!status) {
-    return (
-      <div data-testid="drill-status-bar" className="bg-slate-800 rounded-lg p-3 text-sm text-slate-400">
-        演习状态加载中...
-      </div>
-    );
-  }
-
-  const staleCount = status.guards.filter(g => g.stale).length;
-  const totalGuards = status.guards.length;
-  const lastRun = status.last_run;
-  const lastRunAt = status.last_run_at;
-
-  return (
-    <div data-testid="drill-status-bar" className="bg-slate-800 rounded-lg p-3 flex items-center gap-3 flex-wrap">
-      <Shield className="w-4 h-4 text-yellow-400 flex-shrink-0" />
-      <span className="text-sm text-slate-300">
-        守卫演习：{totalGuards} 个守卫，{staleCount > 0 ? (
-          <span className="text-red-400 font-medium">{staleCount} 个过期</span>
-        ) : (
-          <span className="text-green-400 font-medium">全部新鲜</span>
-        )}
-      </span>
-      {lastRun && (
-        <span className="text-xs text-slate-500">
-          上次演习：{lastRun.guard_name ?? '--'}，{lastRun.fired ? '触发' : '未触发'}
-        </span>
-      )}
-      {lastRunAt && (
-        <span className="text-xs text-slate-600">{fmtDate(lastRunAt)}</span>
-      )}
-    </div>
-  );
-}
-
 // ======== 导览区 ========
 
 const NAV_LINKS = [
@@ -265,18 +210,16 @@ export default function OwnerCockpitPage() {
   const [inProgressTasks, setInProgressTasks] = useState<Task[]>([]);
   const [queuedTasks, setQueuedTasks] = useState<Task[]>([]);
   const [blockedTasks, setBlockedTasks] = useState<Task[]>([]);
-  const [drillStatus, setDrillStatus] = useState<GuardDrillStatus | null>(null);
   const [diaryDocs, setDiaryDocs] = useState<DiaryDoc[]>([]);
   const [loadError, setLoadError] = useState<Record<string, string>>({});
 
   useEffect(() => {
     async function fetchAll() {
       // 并行 fetch 所有 API
-      const [ipTasksRes, queuedRes, blockedRes, drillRes, diaryRes] = await Promise.allSettled([
+      const [ipTasksRes, queuedRes, blockedRes, diaryRes] = await Promise.allSettled([
         fetch(`${BRAIN_URL}/api/brain/tasks?status=in_progress&limit=20`).then(r => r.json()),
         fetch(`${BRAIN_URL}/api/brain/tasks?status=queued&limit=10`).then(r => r.json()),
         fetch(`${BRAIN_URL}/api/brain/tasks?status=blocked&limit=5`).then(r => r.json()),
-        fetch(`${BRAIN_URL}/api/brain/guard-drill/status`).then(r => r.json()),
         fetch(`${BRAIN_URL}/api/brain/design-docs?type=diary&limit=7`).then(r => r.json()),
       ]);
 
@@ -295,10 +238,6 @@ export default function OwnerCockpitPage() {
         setBlockedTasks(Array.isArray(d) ? d : (d?.tasks ?? []));
       }
 
-      if (drillRes.status === 'fulfilled') {
-        setDrillStatus(drillRes.value);
-      }
-
       if (diaryRes.status === 'fulfilled') {
         const d = diaryRes.value;
         setDiaryDocs(Array.isArray(d) ? d : (d?.docs ?? d?.data ?? []));
@@ -307,10 +246,6 @@ export default function OwnerCockpitPage() {
 
     fetchAll().catch(e => console.error('[OwnerCockpit] fetchAll error:', e));
   }, []);
-
-  // canary-green-days: guard 中连续未 stale 的计数（简化：返回非过期守卫数）
-  const greenGuards = drillStatus?.guards.filter(g => !g.stale).length ?? null;
-  const canaryGreenDays = greenGuards != null ? fmtNum(greenGuards) : '--';
 
   // gate-fires: blocked 任务数（关卡拦截次数）
   const gateFires = fmtNum(blockedTasks.length);
@@ -349,16 +284,7 @@ export default function OwnerCockpitPage() {
           </div>
         </div>
 
-        {/* === 四指标 Header === */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
-          <MetricCard
-            slug="canary-green-days"
-            label="金丝雀绿天"
-            value={canaryGreenDays}
-            sub="守卫健康数"
-            icon={<Shield className="w-5 h-5" />}
-            color="text-yellow-400"
-          />
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
           <MetricCard
             slug="gate-fires"
             label="关卡触发"
@@ -384,9 +310,6 @@ export default function OwnerCockpitPage() {
             color="text-red-400"
           />
         </div>
-
-        {/* === 演习状态条 === */}
-        <DrillStatusBar status={drillStatus} />
 
         {/* === 主体：作战板 + 晨报 === */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
