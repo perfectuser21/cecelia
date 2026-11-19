@@ -35,5 +35,13 @@ function processBirth(pid){
  }catch{return null;}
 }
 const sameProcess=(pid,birth)=>typeof birth==='string'&&processBirth(pid)===birth;
+function observeProcess(pid,birth){
+ if(!Number.isSafeInteger(pid)||pid<1||typeof birth!=='string')return 'unknown';
+ const current=processBirth(pid);
+ if(current!==null)return current===birth?'matching':'reused';
+ // 身份探测失败不证明死亡；只有系统明确 ESRCH 才确认 PID 已不存在。
+ try{process.kill(pid,0);}catch(error){if(error.code==='ESRCH')return 'absent';}
+ return 'unknown';
+}
 function validResult(r,m){return r.protocol==='activity-supervisor-result/v1'&&r.nonce===m.nonce&&digest(r.binding)===digest(m.binding)&&r.deadline===m.deadline&&typeof r.transport?.stdout==='string'&&r.transport_sha256===digest(r.transport);}
-module.exports={protectedText,protectedRead,processBirth,sameProcess,digest,validResult};
+module.exports={protectedText,protectedRead,processBirth,sameProcess,observeProcess,digest,validResult};

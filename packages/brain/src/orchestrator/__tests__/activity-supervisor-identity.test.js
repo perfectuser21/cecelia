@@ -13,12 +13,15 @@ vi.mock('../activity-supervisor-state.cjs',async()=>{
  const {createRequire}=await import('node:module'),{fileURLToPath}=await import('node:url');
  const file=fileURLToPath(new URL('../activity-supervisor-state.cjs',import.meta.url));
  const realRequire=createRequire(file),module={exports:{}};
- const runtime={...process,platform:'darwin'};
+ const runtime={...process,platform:'darwin',kill(pid,signal){
+  if(probe.mode==='absent'&&probe.calls>1)throw Object.assign(Error('no such process'),{code:'ESRCH'});
+  return process.kill(pid,signal);
+ }};
  vm.runInNewContext(fs.readFileSync(file,'utf8'),{module,Buffer,require(name){
   if(name==='node:process')return runtime;
   if(name==='node:child_process')return {...realRequire(name),spawnSync(){
    probe.calls++;
-   const failed=probe.mode==='initial-unknown'||(probe.calls>1&&(probe.mode==='always-unknown'||probe.mode==='transient'&&probe.calls===2));
+   const failed=probe.mode==='initial-unknown'||(probe.calls>1&&(['always-unknown','absent'].includes(probe.mode)||probe.mode==='transient'&&probe.calls===2));
    if(failed)return {status:null,stdout:'',error:Object.assign(Error('probe timeout'),{code:'ETIMEDOUT'})};
    return {status:0,stdout:probe.mode==='reused'&&probe.calls>1?'99:88':'12:34'};
   }};
@@ -47,9 +50,14 @@ async function fixture(mode,{deadline=Date.now()+4000,grace=0}={}){
  const manifest={protocol:'activity-supervisor/v1',binding,nonce:'fixed-fixture-nonce',deadline,cleanup_grace_s:grace,pid:child.pid,birth:'darwin:12:34'};
  durableWrite(path.join(directory,'manifest.json'),manifest);
  const f={root,directory,child,binding,manifest,timers:[]};fixtures.push(f);probe.mode=mode;probe.calls=0;
- f.finish=(delay=120,corrupt=false)=>f.timers.push(setTimeout(()=>{
+ f.finish=(delay=120,corrupt=null)=>f.timers.push(setTimeout(()=>{
   const transport={stdout:'{"status":"completed"}',stderr:'',exit_code:0,execution_stopped:true};
-  durableWrite(path.join(directory,'result.json'),{protocol:'activity-supervisor-result/v1',nonce:corrupt?'wrong':manifest.nonce,binding,deadline,transport,transport_sha256:realState.digest(transport)});
+  const result={protocol:'activity-supervisor-result/v1',nonce:manifest.nonce,binding,deadline,transport,transport_sha256:realState.digest(transport)};
+  if(corrupt==='binding')result.binding={...binding,action_id:'another-action'};
+  else if(corrupt==='nonce')result.nonce='wrong';
+  else if(corrupt==='digest')result.transport_sha256='wrong';
+  else if(corrupt==='deadline')result.deadline++;
+  durableWrite(path.join(directory,'result.json'),result);
  },delay));
  return f;
 }
@@ -81,13 +89,18 @@ test('明确出生身份变化仍拒绝，不向复用PID发送信号',async()=>
  expect(()=>process.kill(f.child.pid,0)).not.toThrow();
 });
 
+test('只有明确ESRCH的消失证据才提前拒绝，仍不宣称所有子动作停止',async()=>{
+ const f=await fixture('absent');
+ await expect(waitSupervisedActivity(f.directory,f.binding)).rejects.toMatchObject({message:'activity_supervisor_unconfirmed',executionStopped:false});
+});
+
 test('初次身份未确认仍fail closed，不能以unknown接管现有运行',async()=>{
  const f=await fixture('initial-unknown');
  await expect(waitSupervisedActivity(f.directory,f.binding)).rejects.toThrow('activity_supervisor_missing');
  expect(fs.existsSync(path.join(f.directory,'cancel.json'))).toBe(false);
 });
 
-test('等待期间错误nonce结果仍拒绝，不把出现result文件当成功',async()=>{
- const f=await fixture('healthy');f.finish(60,true);
+test.each(['nonce','binding','digest','deadline'])('等待期间错误%s结果仍拒绝，不把出现result文件当成功',async corrupt=>{
+ const f=await fixture('healthy');f.finish(60,corrupt);
  await expect(waitSupervisedActivity(f.directory,f.binding)).rejects.toThrow('activity_supervisor_result_invalid');
 });
