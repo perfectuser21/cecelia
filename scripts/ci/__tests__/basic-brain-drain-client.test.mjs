@@ -53,7 +53,22 @@ process.stdout.write(typeof value==='string'?value:JSON.stringify(value));
 `);
     writeFileSync(join(directory, 'curl'), `#!/bin/sh\nexec ${shellQuote(process.execPath)} ${shellQuote(curl)} "$@"\n`, { mode: 0o755 });
     writeFileSync(join(directory, 'sleep'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
-    writeFileSync(join(directory, 'docker'), '#!/bin/sh\ncase "$DOCKER_STATE" in\n running) echo true;;\n stopped) echo false;;\n *) exit 1;;\nesac\n', { mode: 0o755 });
+    writeFileSync(join(directory, 'docker'), `#!/bin/sh
+case "$DOCKER_STATE" in
+  failed) exit 1;;
+esac
+if [ "$1" = container ] && [ "$2" = ls ]; then
+  [ "$DOCKER_STATE" = absent ] || echo cecelia-node-brain
+elif [ "$1" = inspect ]; then
+  case "$DOCKER_STATE" in
+    running) echo running;;
+    stopped) echo exited;;
+    *) echo restarting;;
+  esac
+else
+  exit 1
+fi
+`, { mode: 0o755 });
     const harness = join(directory, 'run.sh');
     writeFileSync(harness, `#!/bin/bash\nset -uo pipefail\nDRY_RUN=false\nDRAIN_TIMEOUT_SECS=5\nSCRIPT_DIR=${shellQuote(join(root, 'scripts'))}\nROOT_DIR=${shellQuote(root)}\nsend_bark() { :; }\n${actualHelpers()}\nif ${command} ${shellQuote(drainId)}; then\n  echo 'SWAP_REACHED'\nelse\n  status=$?\n  echo 'SWAP_BLOCKED'\n  exit "$status"\nfi\n`);
     const result = spawnSync('/bin/bash', [harness], {
@@ -88,6 +103,9 @@ for (const [name, scenario] of [
   ['POST返回401', { postHttpFail: 22 }],
   ['POST是畸形JSON', { post: '{broken' }],
   ['POST缺新进程协议', { post: { remaining: 0 } }],
+  ['POST表示已有其它暂停', { post: { ...busy, already_draining: true } }],
+  ['容器状态查询失败', { dockerState: 'failed' }],
+  ['旧容器正在重启，归属未知', { dockerState: 'restarting' }],
   ['状态查询HTTP失败', { pollHttpFail: true }],
   ['状态是畸形JSON', { poll: '{broken' }],
   ['状态只有旧计数', { poll: { remaining: 0 } }],
@@ -116,6 +134,18 @@ test('HTTP200但取消结果不是success不能当恢复成功', () => {
 test('取消请求全部失败必须返回失败', () => {
   rejected(exercise({ cancelHttpFail: true }, 'drain_cancel_with_retry'));
 });
+
+test('取消响应若携带另一代身份，不能当恢复成功', () => {
+  rejected(exercise({ cancelResponse: { success: true, drain_id: otherId } }, 'drain_cancel_with_retry'));
+});
+
+for (const state of ['absent', 'stopped']) {
+  test(`实际容器${state}已经确认，才可无需排空启动`, () => {
+    const result = exercise({ dockerState: state, healthFail: true });
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.equal(result.calls.length, 0);
+  });
+}
 
 test('取消得到明确success才完成恢复', () => {
   const result = exercise({}, 'drain_cancel_with_retry');

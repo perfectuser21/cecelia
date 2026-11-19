@@ -168,75 +168,7 @@ activate_cecelia_map_manifest() {
     echo "[map-activation] Cecelia manifest 与 projection 已激活"
 }
 
-# ── drain_before_swap：swap 前停派发 + 等回调收尾 ────────────────────────────
-# 调用 POST /api/brain/tick/drain → 轮询 drain-status.remaining === 0
-# 超时（DRAIN_TIMEOUT_SECS，默认 120s）→ 告警 + 继续（non-fatal，不阻止部署）
-# Brain 未在线时静默跳过（首次部署/迁移场景无需 drain）
-DRAIN_TIMEOUT_SECS="${DRAIN_TIMEOUT_SECS:-120}"
-
-# drain-cancel 带重试（Issue cc28d1af 根因D 第3/4次复发，2026-08-04）：
-# 单发 curl -sf ||true 会在 swap 端口切换窗口静默失败 → drain 残留被新容器恢复
-# → 派发瘫痪。重试 5 次×5s 跨过切换窗口；全败也不阻塞部署（drain.js restore
-# 过期自愈是最终兜底）。
-drain_cancel_with_retry() {
-    local attempt
-    for attempt in 1 2 3 4 5; do
-        if curl -sf --max-time 5 -X POST "http://localhost:5221/api/brain/tick/drain-cancel" >/dev/null 2>&1; then
-            echo "  [drain] drain-cancel 成功（第 ${attempt} 次尝试）"
-            return 0
-        fi
-        sleep 5
-    done
-    echo "  [drain] WARN: drain-cancel 5 次均失败——依赖 Brain 启动时的过期自愈兜底（restoreDrainState 15min 上限）"
-    return 0
-}
-
-drain_before_swap() {
-    local brain_url="http://localhost:5221"
-
-    if [[ "$DRY_RUN" == true ]]; then
-        echo "  [dry-run] POST ${brain_url}/api/brain/tick/drain  # 进入 drain 模式"
-        echo "  [dry-run] poll GET ${brain_url}/api/brain/tick/drain-status (timeout=${DRAIN_TIMEOUT_SECS}s)"
-        return 0
-    fi
-
-    # Brain 不在线则跳过（首次部署无旧实例）
-    if ! curl -sf --max-time 3 "${brain_url}/api/brain/tick/status" >/dev/null 2>&1; then
-        echo "  [drain] Brain 未响应，跳过 drain（首次部署或离线场景）"
-        return 0
-    fi
-
-    echo "  [drain] 发送 drain 请求..."
-    local drain_resp
-    drain_resp=$(curl -sf --max-time 10 -X POST "${brain_url}/api/brain/tick/drain" 2>&1) || {
-        echo "  [drain] drain 请求失败（non-fatal），继续部署"
-        return 0
-    }
-    echo "  [drain] drain 已激活: $(echo "$drain_resp" | grep -o '"remaining":[0-9]*' | head -1 || echo 'ok')"
-
-    # 轮询等待 in_progress 归零
-    local elapsed=0 remaining=-1
-    while [[ "$elapsed" -lt "$DRAIN_TIMEOUT_SECS" ]]; do
-        local status_resp
-        status_resp=$(curl -sf --max-time 5 "${brain_url}/api/brain/tick/drain-status" 2>/dev/null || echo "")
-        if [[ -n "$status_resp" ]]; then
-            remaining=$(echo "$status_resp" | grep -o '"remaining":[0-9]*' | grep -o '[0-9]*' | head -1 || echo "-1")
-            if [[ "$remaining" == "0" ]]; then
-                echo "  [drain] ✅ in_progress 已归零（${elapsed}s），可安全 swap"
-                return 0
-            fi
-            echo "  [drain] 等待中... remaining=${remaining} (${elapsed}s/${DRAIN_TIMEOUT_SECS}s)"
-        fi
-        sleep 5
-        elapsed=$((elapsed + 5))
-    done
-
-    # 超时：告警但继续
-    local warn_msg="brain-deploy drain 超时 ${DRAIN_TIMEOUT_SECS}s，remaining=${remaining}，强制继续 swap——可能有回调丢失，请检查 in_progress 任务"
-    echo "  [drain] ⚠️  $warn_msg"
-    send_bark "$warn_msg"
-    return 0  # non-fatal，继续部署
-}
+source "$SCRIPT_DIR/lib/brain-drain-client.sh"
 
 # ── 参数解析 ─────────────────────────────────────────────────────────────────
 DRY_RUN=false
@@ -433,9 +365,13 @@ if [[ "$DEPLOY_MODE" == "docker" ]]; then
     echo "[7/8] Starting container..."
 
     # 幂等检查：容器已在目标 image SHA 则跳过 recreate（避免 SIGTERM 中断长跑 Initiative）
+    OLD_CONTAINER_STATE=absent
+    if [[ "$DRY_RUN" == false ]]; then
+        OLD_CONTAINER_STATE=$(brain_previous_container_state) || { echo "[FAIL] 无法确认旧容器状态" >&2; exit 1; }
+    fi
     CURRENT_IMG=$(docker inspect cecelia-node-brain --format '{{.Image}}' 2>/dev/null || echo "")
     TARGET_IMG=$(docker inspect "${CECELIA_RELEASE_IMAGE:-cecelia-brain:${VERSION}}" --format '{{.Id}}' 2>/dev/null || echo "")
-    if [[ "$DRY_RUN" == false && -n "$CURRENT_IMG" && -n "$TARGET_IMG" && "$CURRENT_IMG" == "$TARGET_IMG" ]]; then
+    if [[ "$DRY_RUN" == false && "$OLD_CONTAINER_STATE" == running && -n "$CURRENT_IMG" && -n "$TARGET_IMG" && "$CURRENT_IMG" == "$TARGET_IMG" ]]; then
         echo "  [skip] 容器已在 v${VERSION}（image SHA 一致），跳过 recreate"
         activate_cecelia_map_manifest
         DEPLOY_SUCCESS=true
@@ -450,13 +386,13 @@ if [[ "$DEPLOY_MODE" == "docker" ]]; then
     if [[ "$DRY_RUN" == true ]]; then
         # dry-run：断言 drain → bluegreen_swap 的正确调用顺序
         echo "  [7/8] drain 旧 Brain（等 in_progress 归零，超时 ${DRAIN_TIMEOUT_SECS}s）..."
-        drain_before_swap
+        drain_before_swap || exit 1
         echo ""
         echo "  [dry-run] bluegreen_swap TARGET_VERSION=${VERSION} BLUE=cecelia-node-brain GREEN=cecelia-node-brain-green PORT=5233"
-    elif docker inspect cecelia-node-brain >/dev/null 2>&1; then
+    elif [[ "$OLD_CONTAINER_STATE" == running ]]; then
         # blue 在跑 → swap 前先 drain（停派发 + 等 in_progress 回调收尾）
         echo "  [7/8] drain 旧 Brain（等 in_progress 归零，超时 ${DRAIN_TIMEOUT_SECS}s）..."
-        drain_before_swap
+        drain_before_swap || exit 1
         echo ""
 
         # blue 是 bridge 网络（docker ps 显示 0.0.0.0:5221->5221），green 用 bridge + -p 5233:5221，
@@ -468,7 +404,9 @@ if [[ "$DEPLOY_MODE" == "docker" ]]; then
         if ! GREEN_RUN_ARGS=$(bluegreen_green_run_args cecelia-node-brain "$GREEN_ENV_FILE"); then
             rm -f "$GREEN_ENV_FILE"
             echo "[FAIL] 读取旧 Brain 容器 env/卷失败，终止部署"
-            drain_cancel_with_retry
+            if [[ -n "$BRAIN_DEPLOY_DRAIN_ID" ]]; then
+                drain_cancel_with_retry || exit 1
+            fi
             exit 1
         fi
         export GREEN_RUN_ARGS
@@ -481,13 +419,14 @@ if [[ "$DEPLOY_MODE" == "docker" ]]; then
             echo "[FAIL] green canary 未通过，已保留旧生产容器(5221 不受影响)，终止部署"
             # blue 仍在运行且已进入 drain 模式 → 恢复正常派发
             echo "  [drain] green 未通过，恢复旧 Brain 派发..."
-            drain_cancel_with_retry
+            if [[ -n "$BRAIN_DEPLOY_DRAIN_ID" ]]; then
+                drain_cancel_with_retry || exit 1
+            fi
             exit 1
         fi
         rm -f "$GREEN_ENV_FILE"
     else
-        # 无 blue（首次部署）→ 无 outage 风险，跳过 drain + canary 直接起
-        echo "  [首次部署] 无旧生产容器，跳过 drain + canary，直接起新容器"
+        echo "  已确认旧容器不存在或已停止，启动新容器"
     fi
 
     if [[ "$DRY_RUN" == true ]]; then
@@ -534,13 +473,10 @@ while [ $TRIES -lt $MAX_TRIES ]; do
     echo ""
     echo "=== Deploy SUCCESS: cecelia-brain v${VERSION} is healthy (${DEPLOY_MODE}) ==="
 
-    # swap 成功后无条件 drain-cancel（Issue cc28d1af 根因D）：
-    # drain_before_swap 的 drain 状态持久化在 working_memory（共享DB），僵尸 in_progress
-    # 任务会让 drain 永远等不完 → 120s 超时"继续部署"后不取消 → 新容器 restoreDrainState
-    # 恢复 draining → 派发永久瘫痪（0729 16:48 / 0730 10:21 两次实证，均由合并PR自动部署触发）。
-    # 部署已收尾，pre-swap 的 drain 使命已结束，新实例不应继承——best-effort 取消。
-    echo "  [drain] swap 成功，取消 pre-swap drain（新实例不继承排水状态）..."
-    drain_cancel_with_retry
+    if [[ -n "$BRAIN_DEPLOY_DRAIN_ID" ]]; then
+        echo "  [drain] swap 成功，确认解除本次排空..."
+        drain_cancel_with_retry || exit 1
+    fi
 
     # S6: FR-05 SHA 回读断言（Gate3 C-05）
     # 部署完成后读 /health.git_sha 与 EXPECTED_SHA 对比，不等则 ROLLBACK exit 1
