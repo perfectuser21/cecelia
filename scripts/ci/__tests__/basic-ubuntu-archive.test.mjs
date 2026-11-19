@@ -14,7 +14,7 @@ for (const [jobName, installName] of [['checks', 'Install test tools'], ['pwa-up
     const job = workflow.jobs[jobName];
     const install = job.steps.findIndex(step => step.name === installName);
     const preparation = job.steps.findIndex(step => step.run === 'node scripts/ci/prepare-ubuntu-archive.mjs');
-    assert.ok(preparation >= 0 && preparation < install, 'the failing Azure mirror must be removed before package installation');
+    assert.ok(preparation >= 0 && preparation < install, 'trusted Ubuntu source validation must run before package installation');
     const step = job.steps[preparation];
     assert.equal(step.if, undefined);
     assert.equal(step['continue-on-error'], undefined);
@@ -29,20 +29,18 @@ const stanza = (suite, uri = 'mirror+file:/etc/apt/apt-mirrors.txt') =>
   `Types: deb\nURIs: ${uri}\nSuites: ${suite}\nComponents: main restricted universe multiverse\nSigned-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n`;
 const thirdParty = '# Separate package owner\nTypes: deb\nURIs: https://packages.example.test/repo\nSuites: stable\nComponents: main\nSigned-By: /usr/share/keyrings/third-party.gpg\n';
 
-test('Ubuntu mirror selection is removed while suites, signing and third-party sources remain unchanged', () => {
+test('Ubuntu native mirror selection, suites, signing and third-party sources remain unchanged', () => {
   const primary = stanza('noble noble-updates noble-backports');
   const security = stanza('noble-security', 'mirror+file:/etc/apt/apt-mirrors-security.txt');
   const input = primary + '\n' + security + '\n' + thirdParty;
-  const actual = prepareUbuntuSources(input);
-  assert.equal(actual, primary.replace('mirror+file:/etc/apt/apt-mirrors.txt', 'https://archive.ubuntu.com/ubuntu')
-    + '\n' + security.replace('mirror+file:/etc/apt/apt-mirrors-security.txt', 'https://security.ubuntu.com/ubuntu')
-    + '\n' + thirdParty);
-  assert.equal(prepareUbuntuSources(actual), actual);
+  const actual = prepareUbuntuSources(input,nativeOptions);
+  assert.equal(actual,input);
+  assert.equal(prepareUbuntuSources(actual,nativeOptions), actual);
 });
 
-test('Azure Ubuntu URIs use the official security endpoint while retaining security suites', () => {
+test('Azure Ubuntu URI and security suites remain intact', () => {
   assert.equal(prepareUbuntuSources(stanza('noble-security', 'http://azure.archive.ubuntu.com/ubuntu')),
-    stanza('noble-security', 'https://security.ubuntu.com/ubuntu'));
+    stanza('noble-security', 'http://azure.archive.ubuntu.com/ubuntu'));
 });
 
 test('official Ubuntu archive and security sources remain unchanged', () => {
@@ -56,7 +54,7 @@ test('official Ubuntu archive and security sources remain unchanged', () => {
 
 test('Windows line endings and comments are retained', () => {
   const input = ('# Ubuntu archive\n' + stanza('noble')).replaceAll('\n', '\r\n');
-  assert.equal(prepareUbuntuSources(input), input.replace('mirror+file:/etc/apt/apt-mirrors.txt', 'https://archive.ubuntu.com/ubuntu'));
+  assert.equal(prepareUbuntuSources(input,nativeOptions), input);
 });
 
 test('unsupported Ubuntu sources fail before any source file can be written', () => {
@@ -90,13 +88,11 @@ test('CLI refuses a non-Actions process with a nonzero exit', () => {
   assert.equal(child.stdout, '');
 });
 
-test('Ubuntu archive and security suites do not share the failed third-party mirror', () => {
+test('Ubuntu archive and security native mirror failover stays independent of third-party stanzas', () => {
   const input = stanza('noble noble-updates noble-backports') + '\n'
     + stanza('noble-security', 'mirror+file:/etc/apt/apt-mirrors-security.txt') + '\n' + thirdParty;
-  const expected = stanza('noble noble-updates noble-backports', 'https://archive.ubuntu.com/ubuntu') + '\n'
-    + stanza('noble-security', 'https://security.ubuntu.com/ubuntu') + '\n' + thirdParty;
-  assert.equal(prepareUbuntuSources(input), expected);
-  assert.equal(prepareUbuntuSources(expected), expected);
+  assert.equal(prepareUbuntuSources(input,nativeOptions), input);
+  assert.equal(prepareUbuntuSources(input,nativeOptions), input);
 });
 
 test('previously prepared kernel mirror sources recover to official endpoints by suite', () => {
@@ -128,6 +124,19 @@ test('native indirect source cannot hide an untrusted, malformed or unreadable m
 });
 test('untrusted suite, signing and duplicate fields remain rejected on native sources',()=>{
  for(const input of [stanza('bookworm'),stanza('resolute noble-updates'),stanza('resolute-security resolute'),stanza('resolute').replace('ubuntu-archive-keyring.gpg','wrong.gpg'),stanza('resolute')+'URIs: https://archive.ubuntu.com/ubuntu\n',stanza('resolute','mirror+file:/tmp/apt-mirrors.txt')]) {
-  assert.throws(()=>prepareUbuntuSources(input,nativeOptions),/ubuntu_source/);
+  assert.throws(()=>prepareUbuntuSources(input,{...nativeOptions,expectedCodename:'resolute'}),/ubuntu_source/);
  }
+});
+
+test('native suites follow actual runner codename without a hardcoded Ubuntu generation list',()=>{
+ for(const codename of ['resolute','futureubuntu']){
+  const input=stanza(`${codename} ${codename}-updates ${codename}-backports`)+'\n'+stanza(`${codename}-security`);
+  assert.equal(prepareUbuntuSources(input,{...nativeOptions,expectedCodename:codename}),input);
+  assert.throws(()=>prepareUbuntuSources(input,{...nativeOptions,expectedCodename:'otherubuntu'}),/ubuntu_source_suites/);
+ }
+});
+
+test('trusted native mirror priority changes remain byte-for-byte upstream-owned',()=>{
+ const input=stanza('resolute');const list=nativeMirrors.replace('priority:1','priority:20').replace('priority:2\n','priority:10\n');
+ assert.equal(prepareUbuntuSources(input,{readMirrorList:()=>list,expectedCodename:'resolute'}),input);
 });
