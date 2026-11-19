@@ -214,13 +214,23 @@ export function runPredecessorScenario(t,scenario){
   fs.writeFileSync(f.repo+'/.brain-versions',noHistory?'1.0.0\n':same?'0.8.0\n1.0.0\n':'0.8.0\n0.9.0\n');
   fs.writeFileSync(f.repo+'/.env.docker','TEST_ONLY=1\n');
   fs.mkdirSync(f.dir+'/home/.credentials',{recursive:true});fs.writeFileSync(f.dir+'/home/.credentials/cecelia-internal.env','CECELIA_INTERNAL_TOKEN='+'fixture_only_internal_token_1234567890'+'\n',{mode:0o600});
-  const local=f.state('local');local.images[phantom]={sha:'e'.repeat(40),platform:'linux/amd64'};local.tags['cecelia-brain:'+phantomVersion]=phantom;local.tags['cecelia-brain:'+priorVersion]=previous;local.production={id:'1'.repeat(64),image:previous,status:'exited',version:priorVersion};
+  const local=f.state('local');local.images[phantom]={sha:'e'.repeat(40),platform:'linux/amd64'};local.tags['cecelia-brain:'+phantomVersion]=phantom;local.tags['cecelia-brain:'+priorVersion]=previous;local.production={id:'1'.repeat(64),image:previous,status:scenario.startsWith('handoff-')?'running':'exited',version:priorVersion};
   fs.writeFileSync(f.dir+'/state/local.json',JSON.stringify(local));
   let fake=fs.readFileSync(f.dir+'/bin/docker','utf8');
   const insert=String.raw`
 const disk=e.STATE_DIR+'/local.json',full=JSON.parse(fs.readFileSync(disk,'utf8'));
 if(original[0]==='run'&&original.includes('--rm')&&original.includes('host'))process.exit(0);
 const prod=full.production,format=original[original.indexOf('--format')+1];
+if(e.FULL_SCENARIO.startsWith('handoff-')){
+ if(original[0]==='run'&&original.includes('--name')){fs.appendFileSync(e.FULL_HANDOFF_LOG,original.includes('cecelia-bluegreen-sidecar')?'sidecar-started\n':'green-started\n');process.exit(0);}
+ if(original[0]==='rm'){if(original.includes('cecelia-node-brain')){fs.appendFileSync(e.FULL_HANDOFF_LOG,'blue-removed\n');full.production.status='absent';fs.writeFileSync(disk,JSON.stringify(full));}process.exit(0);}
+ if(original[0]==='inspect'&&original.includes('cecelia-node-brain')){
+  if(format.includes('NetworkSettings.Networks')){console.log('host');process.exit(0);}
+  if(format.includes('.Mounts'))process.exit(0);
+  if(format.includes('.Config.Env')){console.log('DB_NAME=cecelia');process.exit(0);}
+ }
+}
+
 if(original[0]==='container'&&original[1]==='ls'){if(e.FULL_SCENARIO==='unknown-container-query')process.exit(43);console.log('cecelia-node-brain');process.exit(0);}
 if(original[0]==='inspect'){
  const ref=original[1]==='--format'?original.at(-1):original[1];
@@ -239,9 +249,15 @@ if(original[0]==='compose'){
 }
 `;
   const at='let a = original, host =';assert.ok(fake.includes(at));fake=fake.replace(at,insert+'\n'+at);fs.writeFileSync(f.dir+'/bin/docker',fake,{mode:0o755});
-  fs.writeFileSync(f.dir+'/bin/curl','#!/bin/sh\nexit 7\n',{mode:0o755});fs.writeFileSync(f.dir+'/bin/ssh','#!/bin/sh\necho forbidden >&2\nexit 99\n',{mode:0o755});
-  f.env={...f.env,HOME:f.dir+'/home',HOST_HOME:f.dir+'/home',CECELIA_INTERNAL_ENV_FILE:f.dir+'/home/.credentials/cecelia-internal.env',CECELIA_IMAGE_RETENTION_DIR:f.dir+'/disabled-ledger',FULL_SCENARIO:scenario,FULL_COMPOSE_LOG:f.dir+'/compose.jsonl',FULL_COMPOSE_COUNT:f.dir+'/compose-count',SKIP_POST_DEPLOY_SMOKE:'1'};
+  fs.writeFileSync(f.dir+'/bin/curl',`#!${process.execPath}
+if(!process.env.FULL_SCENARIO.startsWith('handoff-'))process.exit(7);
+const u=process.argv.at(-1);
+if(u.endsWith('/tick/drain')||u.endsWith('/tick/drain-status'))console.log(JSON.stringify({protocol:'brain-process-drain-v1',drain_id:'11111111-1111-4111-8111-111111111111',draining:true,safe_to_swap:true,remaining:0,blockers:[],independent_task_count:0}));
+else console.log('{"enabled":true}');
+`,{mode:0o755});
+  fs.writeFileSync(f.dir+'/bin/timeout','#!/bin/sh\nif [ "$1" = -k ]; then shift 2; fi\nshift\nexec "$@"\n',{mode:0o755});fs.writeFileSync(f.dir+'/bin/ssh','#!/bin/sh\necho forbidden >&2\nexit 99\n',{mode:0o755});
+  f.env={...f.env,HOME:f.dir+'/home',HOST_HOME:f.dir+'/home',CECELIA_INTERNAL_ENV_FILE:f.dir+'/home/.credentials/cecelia-internal.env',CECELIA_IMAGE_RETENTION_DIR:f.dir+'/disabled-ledger',FULL_SCENARIO:scenario,FULL_COMPOSE_LOG:f.dir+'/compose.jsonl',FULL_COMPOSE_COUNT:f.dir+'/compose-count',FULL_HANDOFF_LOG:f.dir+'/handoff-events',SKIP_PRE_SWAP_SMOKE:'1',SKIP_POST_DEPLOY_SMOKE:'1'};
   const result=spawnSync('bash',['scripts/brain-deploy.sh'],{cwd:f.repo,env:f.env,encoding:'utf8',timeout:45000});
   const compose=fs.existsSync(f.env.FULL_COMPOSE_LOG)?fs.readFileSync(f.env.FULL_COMPOSE_LOG,'utf8').trim().split('\n').map(JSON.parse):[];
-  return {scenario,versions_input:same?['0.8.0','1.0.0']:['0.8.0','0.9.0'],actual_previous:{container_id:local.production.id,image:previous,version:priorVersion,git_sha:'a'.repeat(40)},never_deployed_version:same?null:'0.9.0',candidate:{version:'1.0.0',git_sha:f.sha,image:f.env.IMAGE},exit_code:result.status,signal:result.signal,compose,final_production:f.state('local').production,status:fs.existsSync(f.repo+'/deploy-status.json')?JSON.parse(fs.readFileSync(f.repo+'/deploy-status.json','utf8')):null,stdout:result.stdout,stderr:result.stderr};
+  return {handoff_events:fs.existsSync(f.dir+'/handoff-events')?fs.readFileSync(f.dir+'/handoff-events','utf8'):'',scenario,versions_input:same?['0.8.0','1.0.0']:['0.8.0','0.9.0'],actual_previous:{container_id:local.production.id,image:previous,version:priorVersion,git_sha:'a'.repeat(40)},never_deployed_version:same?null:'0.9.0',candidate:{version:'1.0.0',git_sha:f.sha,image:f.env.IMAGE},exit_code:result.status,signal:result.signal,compose,final_production:f.state('local').production,status:fs.existsSync(f.repo+'/deploy-status.json')?JSON.parse(fs.readFileSync(f.repo+'/deploy-status.json','utf8')):null,stdout:result.stdout,stderr:result.stderr};
 }

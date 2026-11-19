@@ -40,3 +40,11 @@ for(const branch of ['compose','health'])test(`${branch}失败且无版本历史
  assert.ok(!f.compose.some(c=>c.args.includes('stop')));
  assert.doesNotMatch(f.stdout,/Rolled back/);
 });
+
+test('sidecar接管后parent存活也不得再次compose、猜回滚或写部署终态',t=>{
+ const r=runPredecessorScenario(t,'handoff-parent-survives');
+ assert.match(r.handoff_events,/sidecar-started/);assert.match(r.handoff_events,/blue-removed/);
+ assert.notEqual(r.exit_code,0);assert.match(r.stdout+r.stderr,/HANDOFF_UNCONFIRMED/);
+ assert.deepEqual(r.compose,[],'parent不得与sidecar竞争compose');assert.equal(r.status,null,'sidecar已接管，parent不能写第二个终态');
+ assert.doesNotMatch(r.stdout,/Rolled back|Deploy SUCCESS/);
+});
