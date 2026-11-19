@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {spawn} from 'node:child_process';
+import processState from '../activity-supervisor-state.cjs';
 import {randomUUID,createHash} from 'node:crypto';
 import pg from 'pg';
 import os from 'node:os';
@@ -41,9 +42,21 @@ function fixture(name,deadline){
  const manifest={profile:{cwd:dir,adapter:'adapter.mjs',files:{'adapter.mjs':createHash('sha256').update(adapter).digest('hex')},commander:{provider:'adapter'}},run:{schema_version:1,task_id:task,run_id:randomUUID(),deadline_ms:Date.now()+deadline,commander_timeout_ms:2000,input:{run_tag:randomUUID(),target:'original'},contract:{workflow:'isolated-runtime-audit',activities:[activity('first',1),activity('second',2)]}}};
  fs.writeFileSync(path.join(dir,'manifest.json'),JSON.stringify(manifest,null,2));runs.push(manifest.run.run_id);return {dir,manifest};
 }
-function launch(f,supervise=false,tag='host',connection=url){
+function launch(f,supervise=false,tag='host',connection=url,publishGate=false){
  const fd=fs.openSync(path.join(f.dir,tag+'.log'),'a',0o600);
- const proc=spawn(process.execPath,[brain+'/scripts/commander-workflow/'+(supervise?'supervise':'host')+'.mjs','--manifest',path.join(f.dir,'manifest.json'),'--result',path.join(f.dir,'result.json')],{detached:true,stdio:['ignore',fd,fd],env:{...process.env,DBOS_DURABLE_ENABLED:'true',COMMANDER_DATABASE_URL:connection,COMMANDER_DATABASE_SCHEMA:'commander_workflow_actions',COMMANDER_DBOS_SCHEMA:'commander_workflow_dbos'}});fs.closeSync(fd);return proc;
+ const proc=spawn(process.execPath,[...(publishGate?['--import',path.join(f.dir,'publish-gate.mjs')]:[]),brain+'/scripts/commander-workflow/'+(supervise?'supervise':'host')+'.mjs','--manifest',path.join(f.dir,'manifest.json'),'--result',path.join(f.dir,'result.json')],{detached:true,stdio:['ignore',fd,fd],env:{...process.env,DBOS_DURABLE_ENABLED:'true',COMMANDER_DATABASE_URL:connection,COMMANDER_DATABASE_SCHEMA:'commander_workflow_actions',COMMANDER_DBOS_SCHEMA:'commander_workflow_dbos'}});fs.closeSync(fd);return proc;
+}
+// 只阻住真实supervisor首次发布child身份，不替换spawn、PG执行或恢复逻辑。
+function holdFirstChildPublication(f){
+ const stateModule=path.join(brain,'src/orchestrator/activity-supervisor-state.cjs');
+ const source=`import fs from 'node:fs';import {createRequire} from 'node:module';
+const state=createRequire(import.meta.url)(${JSON.stringify(stateModule)}),original=state.processBirth;
+let first=true;state.processBirth=pid=>{if(first){first=false;const birth=original(pid);
+fs.writeFileSync(${JSON.stringify(path.join(f.dir,'publish-entered'))},JSON.stringify({pid,birth}));
+const limit=Date.now()+15000;while(!fs.existsSync(${JSON.stringify(path.join(f.dir,'publish-release'))})){
+if(Date.now()>limit)throw Error('audit_publish_gate_timeout');Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,20);}return birth;}
+return original(pid);};`;
+ fs.writeFileSync(path.join(f.dir,'publish-gate.mjs'),source);
 }
 function alive(pid){try{process.kill(pid,0);return true;}catch{return false;}}
 function kill(pid){if(pid){try{process.kill(pid,'SIGKILL');}catch{}}}
@@ -77,10 +90,32 @@ test.skipIf(!enabled).each(['input','task_id','contract','playbook','playbook_re
  }finally{kill(first?.pid);kill(second?.pid);}
 },25000);
 test.skipIf(!enabled)('SIGSTOP宿主可安全接管且旧动作不重发',async()=>{
- const f=fixture('heartbeat',30000);let proc,pid;
- try{proc=launch(f,true);await until(()=>fs.existsSync(path.join(f.dir,'started')));pid=read(path.join(f.dir,'result.json.supervisor.json')).child.pid;process.kill(pid,'SIGSTOP');fs.writeFileSync(path.join(f.dir,'resume'),'1');await until(()=>proc.signalCode!==null||proc.exitCode!==null,18000);
+ const f=fixture('heartbeat',30000);let proc,pid;holdFirstChildPublication(f);
+ try{
+ proc=launch(f,true,'host',url,true);
+ await until(()=>fs.existsSync(path.join(f.dir,'started'))&&fs.existsSync(path.join(f.dir,'publish-entered')));
+ const stateFile=path.join(f.dir,'result.json.supervisor.json'),initial=read(stateFile),spawned=read(path.join(f.dir,'publish-entered'));
+ expect(initial.starts).toBe(1);expect(initial.child).toBeNull();
+ expect(processState.sameProcess(spawned.pid,spawned.birth)).toBe(true);
+ const run=normalizeCommanderRun(loadCommanderManifest(path.join(f.dir,'manifest.json')).run);
+ fs.writeFileSync(path.join(f.dir,'publish-release'),'1');
+ await until(()=>{
+  const state=read(stateFile),child=state.child,heartbeatFile=stateFile+'.heartbeat.json';
+  if(state.starts!==1||state.identity.run_id!==run.run_id||state.identity.task_id!==run.task_id||state.identity.definition_sha256!==run.definition_sha256)return false;
+  if(!child||child.pid!==spawned.pid||child.birth!==spawned.birth||typeof child.nonce!=='string'||!alive(child.pid)||!processState.sameProcess(child.pid,child.birth)||!fs.existsSync(heartbeatFile))return false;
+  const heartbeat=read(heartbeatFile);
+  if(heartbeat.pid!==child.pid||heartbeat.birth!==child.birth||heartbeat.nonce!==child.nonce)return false;
+  pid=child.pid;return true;
+ });
+ process.kill(pid,'SIGSTOP');fs.writeFileSync(path.join(f.dir,'resume'),'1');await until(()=>proc.signalCode!==null||proc.exitCode!==null,18000);
  expect(proc.exitCode).toBe(0);expect(read(path.join(f.dir,'result.json')).status).toBe('completed');expect(read(path.join(f.dir,'result.json.supervisor.json')).starts).toBe(2);expect(alive(pid)).toBe(false);expect(fs.readFileSync(path.join(f.dir,'effects.jsonl'),'utf8').trim().split('\n')).toHaveLength(2);
- }catch(error){error.message+='\n'+fs.readFileSync(path.join(f.dir,'result.json.supervisor.json.log'),'utf8');throw error;}finally{kill(pid);const p=path.join(f.dir,'result.json.supervisor.json');if(fs.existsSync(p))kill(read(p).child?.pid);kill(proc?.pid);}
+ }catch(error){error.message+='\n'+fs.readFileSync(path.join(f.dir,'result.json.supervisor.json.log'),'utf8');throw error;}finally{
+ const entered=path.join(f.dir,'publish-entered'),stateFile=path.join(f.dir,'result.json.supervisor.json');
+ const owned=[fs.existsSync(entered)?read(entered):null,fs.existsSync(stateFile)?read(stateFile).child:null].filter(Boolean);
+ for(const child of owned)if(processState.sameProcess(child.pid,child.birth))kill(child.pid);
+ kill(proc?.pid);fs.writeFileSync(path.join(f.dir,'publish-release'),'1');
+ await until(()=>(!proc||proc.signalCode!==null||proc.exitCode!==null)&&owned.every(child=>!processState.sameProcess(child.pid,child.birth)));
+ }
 },23000);
 test.skipIf(!enabled)('期限到达停止卡死宿主并关闭DBOS pending',async()=>{
  const f=fixture('deadline',3000);let proc,pid;
