@@ -22,7 +22,7 @@ function fixture({requirement='number equals 42',fact={number:42},mode='normal',
 const fs=require('fs'),cp=require('child_process'),path=require('path');
 let prompt='';process.stdin.on('data',b=>prompt+=b);process.stdin.on('end',()=>{
  const input=JSON.parse(fs.readFileSync(process.env.COMMANDER_ACTIVITY_INPUT_FILE));const r=input.checker_request;
- if(!r){if('${mode}'!=='runner')fs.writeFileSync('evidence/fact.json',JSON.stringify({number:0}));fs.writeFileSync(process.argv[process.argv.indexOf('-o')+1],JSON.stringify({claimed:'passed',outputs:{number:0}}));console.log(JSON.stringify({type:'thread.started',thread_id:'execution-thread'}));return;}
+ if(!r){if('${mode}'!=='runner')fs.writeFileSync('evidence/fact.json',JSON.stringify({number:0}));if('${mode}'==='unknown-after-exec')fs.rmSync('evidence/fact.json');fs.writeFileSync(process.argv[process.argv.indexOf('-o')+1],JSON.stringify({claimed:'passed',outputs:{number:0}}));console.log(JSON.stringify({type:'thread.started',thread_id:'execution-thread'}));return;}
  if('${mode}'==='hang'){setInterval(()=>{},1000);return;}
  fs.appendFileSync('checker-calls.jsonl',JSON.stringify({argv:process.argv,prompt,request:r})+'\\n');
  const arg=process.argv.find(a=>a.startsWith('mcp_servers.commander_checker_evidence.args='));
@@ -32,7 +32,8 @@ let prompt='';process.stdin.on('data',b=>prompt+=b);process.stdin.on('end',()=>{
  if(raw.status!==0)throw Error('actual_evidence_server_failed:'+raw.stderr);
  const response=JSON.parse(raw.stdout.trim().split('\\n').at(-1));if(response.error)throw Error(JSON.stringify(response.error));
  const observed=JSON.parse(response.result.content[0].text),fact=observed.status==='available'?JSON.parse(observed.text):null;
- const checks=r.criteria.map(c=>{const wanted=c.requirement;const matches=typeof wanted!=='string'?true:wanted.startsWith('number equals ')?fact?.number===Number(wanted.slice(14)):fact?.color===wanted.slice(9);
+ const checks=r.criteria.map(c=>{const wanted=c.requirement;let matches=typeof wanted!=='string'?true:wanted.startsWith('number equals ')?fact?.number===Number(wanted.slice(14)):fact?.color===wanted.slice(9);
+ if(r.proposal?.schema_version===1&&typeof wanted==='string'&&wanted.startsWith('number equals '))matches=matches&&r.proposal.outputs.number===fact?.number;
  return {id:c.id,status:fact===null?'unknown':matches?'passed':'failed',reason:fact===null?'Evidence unavailable':matches?'Observed requirement':'Observed contradiction',expected:wanted,actual:fact,evidence:[{source:observed.evidence_ref,observation:{value:fact}}]};});
  const outcome=checks.some(c=>c.status==='unknown')?'unknown':checks.some(c=>c.status==='failed')?'failed':'passed';
  const result={identity:Object.fromEntries(['task_id','run_id','run_tag','workflow','activity','attempt'].map(k=>[k,r[k]])),nonce:r.nonce,outcome,checks,output:r.proposal?.outputs??{},retryable:false,external_effect:'none'};
@@ -122,3 +123,72 @@ test('complete Commander runner uses one start and one end Checker, never rejudg
  expect(result.outputs.number).toBe(42);expect(ledger.snapshot().calls.filter(c=>c.role==='checker')).toHaveLength(2);
  }finally{dbos.initialized=false;if(old===undefined)delete process.env.DBOS_DURABLE_ENABLED;else process.env.DBOS_DURABLE_ENABLED=old;f.close();}
 },20000);
+
+test('same-attempt admission rejects changed input, cancellation, and source drift before execution',async()=>{
+ for(const mutation of ['input','cancel','source','deadline','attempt','contract']){
+ const f=fixture({mode:'runner'});try{
+ const rt=await createRuntime({profile:f.profile,run:f.run}),input={run_tag:f.run.input.run_tag,action_id:'bound',execution_attempt:1};
+ await rt.checkActivity(f.activity,null,{phase:'start',input,remaining_ms:mutation==='deadline'?1000:5000});
+ const control=new AbortController();if(mutation==='input')input.extra='changed';if(mutation==='cancel')control.abort();
+ if(mutation==='contract')f.activity.title='Changed frozen activity';
+ if(mutation==='source')fs.appendFileSync(path.join(f.cwd,'skill.txt'),' drift');if(mutation==='deadline')await new Promise(r=>setTimeout(r,1100));
+ await expect(rt.executeActivity(f.activity,input,{identity:{task_id:f.run.task_id,run_id:f.run.run_id,activity_key:f.activity.key,action_id:'bound',attempt:mutation==='attempt'?2:1},cwd:f.cwd,signal:control.signal,deadlineMs:Date.now()+5000})).rejects.toThrow(/checker_admission_|commander_source_drift/);
+ expect(fs.existsSync(path.join(f.cwd,'control',f.run.run_id,'actions','bound'))).toBe(false);
+ expect(fs.readFileSync(path.join(f.cwd,'checker-calls.jsonl'),'utf8').trim().split('\n')).toHaveLength(1);
+ }finally{f.close();}}
+},15000);
+test('end admission requires the actual returned object and unchanged nonce receipts',async()=>{
+ for(const mutation of ['copy','mutate','receipt']){
+ const f=fixture({mode:'runner'});try{
+ const rt=await createRuntime({profile:f.profile,run:f.run}),input={run_tag:f.run.input.run_tag,action_id:'bound',execution_attempt:1};
+ const result=await rt.executeActivity(f.activity,input,{identity:{task_id:f.run.task_id,run_id:f.run.run_id,activity_key:f.activity.key,action_id:'bound'},cwd:f.cwd,deadlineMs:Date.now()+8000});
+ let supplied=result;if(mutation==='copy')supplied=structuredClone(result);if(mutation==='mutate')result.outputs.number=99;
+ if(mutation==='receipt')fs.appendFileSync(result.evidence[0],' ');
+ await expect(rt.checkActivity(f.activity,supplied,{phase:'end',input,remaining_ms:3000})).rejects.toThrow('checker_admission_unbound');
+ expect(fs.readFileSync(path.join(f.cwd,'checker-calls.jsonl'),'utf8').trim().split('\n')).toHaveLength(2);
+ }finally{f.close();}}
+},15000);
+test('fresh runtime recovery reads new evidence once, then its own completion callback consumes it',async()=>{
+ const f=fixture({mode:'runner'});try{
+ const input={run_tag:f.run.input.run_tag,action_id:'bound',execution_attempt:1},options={identity:{task_id:f.run.task_id,run_id:f.run.run_id,activity_key:f.activity.key,action_id:'bound'},cwd:f.cwd,deadlineMs:Date.now()+8000};
+ const first=await createRuntime({profile:f.profile,run:f.run});await first.executeActivity(f.activity,input,options);
+ const recovered=await createRuntime({profile:f.profile,run:f.run});const observation=await recovered.inspectActivity(f.activity,input,options);
+ expect(observation.state).toBe('completed');expect((await recovered.checkActivity(f.activity,observation.result,{phase:'end',input,remaining_ms:3000})).verdict).toBe('pass');
+ const calls=fs.readFileSync(path.join(f.cwd,'checker-calls.jsonl'),'utf8').trim().split('\n').map(JSON.parse);
+ expect(calls.map(c=>c.request.phase)).toEqual(['start','end','end']);expect(calls[1].request.nonce).not.toBe(calls[2].request.nonce);
+ }finally{f.close();}
+},10000);
+
+test.each(['normal','unknown-after-exec'])('Agent %s feedback cannot bypass one-shot admission for a later callback',async mode=>{
+ const f=fixture({mode});try{
+ const rt=await createRuntime({profile:f.profile,run:f.run}),input={run_tag:f.run.input.run_tag,action_id:'bound',execution_attempt:1};
+ const result=await rt.executeActivity(f.activity,input,{identity:{task_id:f.run.task_id,run_id:f.run.run_id,activity_key:f.activity.key,action_id:'bound'},cwd:f.cwd,deadlineMs:Date.now()+8000});
+ await rt.checkActivity(f.activity,result,{phase:'end',input,remaining_ms:3000});
+ await rt.checkActivity(f.activity,structuredClone(result),{phase:'end',input:{...input,action_id:'other',extra:'changed'},remaining_ms:3000});
+ expect(fs.readFileSync(path.join(f.cwd,'checker-calls.jsonl'),'utf8').trim().split('\n')).toHaveLength(3);
+ }finally{f.close();}
+},10000);
+test('serialized completed result is independently checked once after restart without rewriting business output',async()=>{
+ const f=fixture({mode:'runner'});try{
+ const input={run_tag:f.run.input.run_tag,action_id:'bound',execution_attempt:1},options={identity:{task_id:f.run.task_id,run_id:f.run.run_id,activity_key:f.activity.key,action_id:'bound'},cwd:f.cwd,deadlineMs:Date.now()+8000};
+ const first=await createRuntime({profile:f.profile,run:f.run});const saved=JSON.stringify(await first.executeActivity(f.activity,input,options));
+ const second=await createRuntime({profile:f.profile,run:f.run}),result=JSON.parse(saved);
+ expect((await second.checkActivity(f.activity,result,{phase:'end',input,remaining_ms:3000})).verdict).toBe('pass');
+ expect(JSON.stringify(result)).toBe(saved);
+ const calls=fs.readFileSync(path.join(f.cwd,'checker-calls.jsonl'),'utf8').trim().split('\n').map(JSON.parse);
+ expect(calls.map(c=>c.request.phase)).toEqual(['start','end','end']);
+ expect(calls[2].request.proposal.outputs).toEqual(result.outputs);
+ expect(calls[2].prompt).toContain('不得改写');
+ }finally{f.close();}
+},10000);
+
+test('fresh check of a serialized wrong delivered output fails even when current facts meet the Contract',async()=>{
+ const f=fixture({mode:'runner'});try{
+ const rt=await createRuntime({profile:f.profile,run:f.run}),input={run_tag:f.run.input.run_tag};
+ const result={schema_version:1,run_tag:input.run_tag,status:'completed',outputs:{number:8},metrics:{},evidence:[]};
+ const check=await rt.checkActivity(f.activity,JSON.parse(JSON.stringify(result)),{phase:'end',input,remaining_ms:3000});
+ expect(check.verdict).toBe('fail');expect(check.evidence.some(c=>c.status==='failed')).toBe(true);
+ expect(fs.readFileSync(path.join(f.cwd,'checker-calls.jsonl'),'utf8').trim().split('\n')).toHaveLength(1);
+ expect(fs.existsSync(path.join(f.cwd,'control',f.run.run_id,'actions'))).toBe(false);
+ }finally{f.close();}
+},5000);

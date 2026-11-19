@@ -37,6 +37,7 @@ export function checkerPrompt(request){
   '逐条输出 passed、failed 或 unknown，解释原因；证据不足、工具不可用或事实不确定为 unknown，不捏造事实。模型不控制进程停止、业务副作用或重放。',
   '仅输出符合指定JSON Schema的JSON：identity完整原样、nonce、outcome（任一unknown则unknown，否则任一failed则failed，否则passed）、checks、output_json。output_json是实际输出对象的JSON编码字符串。合同failure.empty_ok明确允许且事实证实合法空结果、全部规范条款均满足时，end允许outcome=empty。每个check含id/status/reason/expected/actual/evidence；expected和actual用文字描述事实，evidence每项source必须是本次工具返回的evidence_ref，observation.summary记录实际观察。',
   '条件或可选条款须按原合同条件判断适用性；不适用以passed并引用条件及事实说明，不能凭自称N/A跳过义务。output从原始事实产生并符合合同输出，不能直接复制执行者声称通过。',
+  '若proposal.schema_version=1且含outputs，这是已经持久化的Activity结果：验收对象是原交付proposal.outputs本身。必须同时核对原outputs与合同、当前原始事实一致；不能只因当前事实满足合同就放过错误原outputs。不得改写原outputs；nonce、解释措辞、取证时间等仅写checks/evidence，不加入业务outputs。output_json保留原outputs，失败仍给具体矛盾。',
   '禁止借用执行Agent会话。每项判据必须有本次读取回执；读取缺失也应引用工具的unavailable回执。',
   `最终identity必须严格等于以下对象，禁止添加phase/action_id等其它字段：${JSON.stringify(Object.fromEntries(identityKeys.map(k=>[k,request[k]])))}`,
   '每项evidence.observation必须是包含非空summary的JSON对象，不能是字符串。例如 {"source":"工具返回的evidence_ref","observation":{"summary":"observed_value为42"}}。只报告本次criteria列表，每项恰一次。',
