@@ -1,8 +1,3 @@
-// ops-model-accounts-collector.test.js — 采集器纯函数单测（brain-unit 无 DB 段）
-//
-// 配对 lint（lint-test-pairing）要求新增 packages/brain/src 源文件配套 *.test.js。
-// 覆盖现役 parser、采集调用与写库参数；真实列类型及 loader 由
-// integration/account-quota-ledger.pg.integration.test.js 验证。
 import { describe, it, expect } from 'vitest';
 import {
   MODEL_ACCOUNT_STATUS,

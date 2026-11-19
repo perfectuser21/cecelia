@@ -24,10 +24,7 @@ import { join } from 'node:path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createTempMigratedDb } from '../helpers/temp-migrated-db.js';
 
-// 仅隔离账号配额、账号七日预算与桥接健康等外围；slot allocator、dispatcher、PG和script并发槽全部真跑。
-vi.mock('../../token-budget-planner.js', async (importOriginal) => ({
-  ...(await importOriginal()),
-}));
+// slot allocator、dispatcher、PG和script并发槽全部真跑。
 
 // agent 步（internal handler 桩）走 dispatcher 的 bridge 健康检查：CI 上没有 cecelia-bridge，替身成「可用」。
 // script 步本身不走这道检查（surface=script 豁免），这里只服务 agent 桩。

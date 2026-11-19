@@ -1,12 +1,3 @@
-/**
- * Slot Buffer 与机器资源准入回归
- *
- * 覆盖：
- * - applySlotBuffer ±2/tick 平滑逻辑
- * - calculateSlotBudget 机器资源准入与旧用量采集隔离
- * - getSlotStatus API 的退役字段为空
- */
-
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // vi.hoisted 创建的引用不是 ESM live binding，对 vi.unmock() 免疫

@@ -1,7 +1,5 @@
-import { shouldDowngrade } from './token-budget-planner.js';
 import { chooseGuidedExecutor, summarizeLlmCapacity } from './llm-capacity.js';
 import { GUIDED_TASK_TYPES as GUIDED } from './lib/task-type-registry.js';
-import { CLAUDE_CHANNEL_RETIRED } from './lib/claude-channel.js';
 
 export const DISPATCH_ALLOCATION_GUIDE_VERSION = 'dispatch-allocation-guide/v2';
 
@@ -28,10 +26,8 @@ export function applyDispatchAllocationGuide(task, opts = {}) {
     return { task, changed: false, payloadPatch: null, reason: 'explicit_override_preserved' };
   }
 
-  // Claude Code 无头通道已退役（任务 76a160b3）：无容量快照时同样不落 claude
-  const legacyExecutor = CLAUDE_CHANNEL_RETIRED || shouldDowngrade(taskType, budgetState) ? 'codex' : 'claude';
   const routed = chooseGuidedExecutor(taskType, budgetState, llmCapacity);
-  const selectedExecutor = routed?.executor || legacyExecutor;
+  const selectedExecutor = routed?.executor || 'codex';
   const allocation = {
     selector: DISPATCH_ALLOCATION_GUIDE_VERSION,
     path: 'dispatcher.pre_trigger',
@@ -40,13 +36,11 @@ export function applyDispatchAllocationGuide(task, opts = {}) {
     selected_executor: selectedExecutor,
     continuation_level: routed?.level || 'legacy',
     llm_capacity: summarizeLlmCapacity(llmCapacity),
-    reason: routed?.reason || (selectedExecutor === 'codex' ? `budget_state=${budgetState}` : 'default_claude'),
+    reason: routed?.reason || `budget_state=${budgetState}`,
     decided_at: now().toISOString(),
   };
 
-  const payloadPatch = selectedExecutor === 'claude'
-    ? { allocation }
-    : { executor: selectedExecutor, allocation };
+  const payloadPatch = { executor: selectedExecutor, allocation };
 
   return {
     task: {

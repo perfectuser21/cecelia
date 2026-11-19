@@ -48,7 +48,6 @@ vi.mock('../executor.js', () => ({
   checkServerResources: vi.fn(() => ({ effectiveSlots: 12, metrics: { max_pressure: 0.1 } })),
 }));
 
-vi.mock('../token-budget-planner.js', async (importOriginal) => ({ ...(await importOriginal()), shouldDowngrade: vi.fn(() => false) }));
 vi.mock('../fleet-resource-cache.js', () => ({
   getFleetStatus: vi.fn(() => []), getRemoteCapacity: vi.fn(() => ({ online: true, effectiveSlots: 2 })),
   getTotalEffectiveSlots: vi.fn(() => 12),

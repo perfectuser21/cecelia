@@ -114,4 +114,12 @@ describe('dispatch-allocation-guide', () => {
     expect(res.reason).toBe('explicit_override_preserved');
     expect(res.task).toBe(task);
   });
+
+  it('显式机器路由保留原任务，不写入自动执行器或分配账本', () => {
+    const task = { task_type: 'dev', payload: { machine: 'mac-studio', context: 'keep' } };
+    const result = applyDispatchAllocationGuide(task, { budgetState: 'critical' });
+    expect(result).toEqual({ task, changed: false, payloadPatch: null, reason: 'explicit_override_preserved' });
+    expect(task.payload).toEqual({ machine: 'mac-studio', context: 'keep' });
+  });
+
 });
