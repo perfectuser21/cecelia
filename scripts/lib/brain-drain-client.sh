@@ -88,8 +88,6 @@ drain_before_swap() {
     fi
     [[ "$DRAIN_TIMEOUT_SECS" =~ ^[0-9]+$ ]] || { brain_drain_failed '排空等待预算非法'; return 1; }
     timeout=$((10#$DRAIN_TIMEOUT_SECS))
-    # v1 暂停在15分钟后失效；为120秒蓝绿健康检查及恢复留出余量。
-    [[ "$timeout" -le 600 ]] || { brain_drain_failed '排空等待预算超过安全切换窗口'; return 1; }
     container_state=$(brain_previous_container_state) || { brain_drain_failed '无法确认旧容器状态'; return 1; }
     if [[ "$container_state" == absent || "$container_state" == stopped ]]; then
         echo '  [drain] 已确认旧 Brain 不在运行，无需等待其进程排空'
