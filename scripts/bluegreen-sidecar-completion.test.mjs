@@ -33,6 +33,7 @@ async function fixture(t, scenario = '') {
     if(scenario==='docker-hang'){setInterval(()=>{},1000);return;}
     const exists=fs.existsSync(root+'/started'), recovered=fs.existsSync(root+'/fallback');
     let id=recovered?'${previousImage}':'${image}', s=recovered?'${previousSha}':'${sha}';
+    if(fs.existsSync(root+'/wrong-fallback')){id='sha256:'+ '9'.repeat(64);s='9'.repeat(40);}
     if(args[0]==='info') {
       if(scenario==='finish-fail')process.exit(1);
       if(scenario==='finish-flaky'&&!fs.existsSync(root+'/info-failed-once')){fs.writeFileSync(root+'/info-failed-once','');process.exit(1);}
@@ -57,13 +58,13 @@ async function fixture(t, scenario = '') {
       console.log((drift?'${'4'.repeat(64)}':'${container}')+' '+(scenario==='wrong-image'?'${previousImage}':id)+' /cecelia-node-brain true node-brain');process.exit(0);
     }
     if(args[0]==='compose') {
-      if(process.env.BRAIN_VERSION==='blue-fallback') fs.writeFileSync(root+'/fallback','');
-      else if(scenario==='fallback')process.exit(7);
+      if(process.env.BRAIN_VERSION==='blue-fallback'){fs.writeFileSync(root+'/fallback','');if(scenario==='fallback-tag-drift'&&process.env.CECELIA_RELEASE_IMAGE!=='${previousImage}')fs.writeFileSync(root+'/wrong-fallback','');}
+      else if(scenario.startsWith('fallback'))process.exit(7);
       fs.writeFileSync(root+'/started','');process.exit(0);
     }
     if(args[0]==='exec') {
       if(!args.includes('${container}'))process.exit(91);
-      if(args.some(x=>x.endsWith('/healthz'))){const sealed=['sealed-degraded','sealed-open-breaker'].includes(scenario),dbDown=scenario==='unhealthy',code=(sealed||dbDown)?503:200;const body=JSON.stringify(dbDown?{status:'degraded',db:'error',tick:'dead'}:sealed?{status:'degraded',db:'connected',tick:'dead'}:{status:'ok',db:'connected',tick:'alive'});if(args.some(a=>/^-[a-zA-Z]*f/.test(a))&&code>=400)process.exit(22);process.stdout.write(body+(args.includes('-w')?'\\n'+code:''));return;}
+      if(args.some(x=>x.endsWith('/healthz'))){const sealed=['sealed-degraded','sealed-open-breaker'].includes(scenario),dbDown=['unhealthy','fallback-unhealthy'].includes(scenario),code=(sealed||dbDown)?503:200;const body=JSON.stringify(dbDown?{status:'degraded',db:'error',tick:'dead'}:sealed?{status:'degraded',db:'connected',tick:'dead'}:{status:'ok',db:'connected',tick:'alive'});if(args.some(a=>/^-[a-zA-Z]*f/.test(a))&&code>=400)process.exit(22);process.stdout.write(body+(args.includes('-w')?'\\n'+code:''));return;}
       if(args.some(x=>x.endsWith('/health'))) {
         fs.writeFileSync(root+'/healthy','');console.log(JSON.stringify({status:['degraded','sealed-degraded','sealed-open-breaker'].includes(scenario)?'degraded':'healthy',...(scenario==='sealed-degraded'?{organs:{scheduler:{enabled:false},circuit_breaker:{open:[]}}}:{}),...(scenario==='sealed-open-breaker'?{organs:{scheduler:{enabled:false},circuit_breaker:{open:['cecelia-run']}}}:{}),version:recovered?'1.360.3':'1.360.5',git_sha:scenario==='wrong-sha'?'${previousSha}':s,...(scenario==='health-oversize'?{padding:'x'.repeat(300000)}:{})}));if(args.includes('-w'))process.stdout.write(scenario==='health-redirect'?'302':'200');return;
       }
@@ -155,4 +156,20 @@ test('finish全部失败：重试有界、每次stderr落日志、最终告警�
   assert.ok(retries.length <= 10, '重试必须有界');
   assert.match(f.sidecarLog, /\[completion-fail\] retention_finish_unconfirmed outcome=success attempts=\d+ exit=1 stderr=\S+/);
   assert.match(f.barks, /api\.day\.app\/fixture-token\//, '最终失败必须告警，不能静默');
+});
+
+test('fallback可变tag漂移后仍用启动前冻结的不可变前驱ID恢复并真实收账',async t=>{
+ const f=await fixture(t,'fallback-tag-drift');assert.equal(f.code,0,f.stdout+f.stderr);
+ assert.equal(f.ledger.pending,null);assert.deepEqual(f.ledger.successes,[]);
+ const row=JSON.parse(await readFile(join(f.root,`ledger/deployment-${deployment}.json`),'utf8'));
+ assert.equal(row.receipt.image_id,previousImage);assert.equal(row.receipt.outcome,'recovered');
+});
+test('fallback compose返回成功但健康核验失败不能打印或告警已恢复',async t=>{
+ const f=await fixture(t,'fallback-unhealthy');assert.notEqual(f.code,0,f.stdout+f.stderr);
+ assert.doesNotMatch(f.stdout,/✅ blue-fallback 恢复成功/);assert.doesNotMatch(f.barks,/已恢复/);
+ assert.ok(f.ledger.pending);
+});
+test('primary compose返回成功但finish失败不能打印发布成功',async t=>{
+ const f=await fixture(t,'finish-fail');assert.notEqual(f.code,0);
+ assert.doesNotMatch(f.stdout,/✅ compose up 成功/);assert.ok(f.ledger.pending);
 });
