@@ -116,7 +116,8 @@ export const REVIEWED_RUNTIME_IDEMPOTENCE={...REVIEWED_CANDIDATE_BUILDER,...RUNT
 export const REVIEWED_NIGHTLY_STATUS={...REVIEWED_RUNTIME_IDEMPOTENCE,...NIGHTLY_STATUS_INPUTS};
 const PILOT_CLI='scripts/ci/pilot-release-verification.mjs',PILOT_HOST='scripts/ci/pilot-foundation-bindings.mjs';
 const PILOT_HOST_INPUTS={
- 'scripts/brain-deploy.sh':'61752f4790a74da56d90650587a23d5bf70e6af2935d3e4b257eba0cf6c9ee6d',
+ 'scripts/brain-deploy.sh':'bd73713dd2efdc4d923358c1751893e7161ced1457a8b6f2b7fb6fc89b7fab0c',
+ 'scripts/ci/__tests__/basic-ops-coverage.test.mjs':'258c37f9c4a197da08b5c73ff7c056490ff7e48382e8a9f3b87f97107fd441d5',
  'scripts/__tests__/brain-deploy-sha-readonly.test.sh':'ead9cef418952105e60633ecb3121a7d6355d567e2d716b20601cb0197a9679a',
  [PILOT_CLI]:'96287d46c2b7de3fbc7757d04818e4b09d62c0e726d3d619282bd183aa9ba2a3',
  [PILOT_HOST]:'a7388d9dbcd5da7aa8253981800d1097cddd1c388f8cccb3c25d0ab4dcf570d4',
