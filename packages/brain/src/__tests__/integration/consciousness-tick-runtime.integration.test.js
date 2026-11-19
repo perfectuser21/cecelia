@@ -230,7 +230,6 @@ vi.mock('../../executor.js', () => ({
   PHYSICAL_CAPACITY: 3,
   getEffectiveMaxSeats: vi.fn().mockReturnValue(3),
   getBudgetCap: vi.fn().mockReturnValue({ cap: 3, physical: 3, budget: 3, effective: 3, reason: 'mock' }),
-  getTokenPressure: vi.fn().mockResolvedValue({ token_pressure: 0, available_accounts: 3, details: 'mock' }),
   getTotalCapacity: vi.fn().mockReturnValue(3),
   getBillingPause: vi.fn().mockReturnValue({ active: false }),
 }));

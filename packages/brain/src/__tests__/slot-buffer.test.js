@@ -1,10 +1,10 @@
 /**
- * Slot Buffer + Token Pressure Integration Tests
+ * Slot Buffer 与机器资源准入回归
  *
  * 覆盖：
  * - applySlotBuffer ±2/tick 平滑逻辑
- * - calculateSlotBudget token pressure 集成
- * - getSlotStatus API 中的 token 字段
+ * - calculateSlotBudget 机器资源准入与旧用量采集隔离
+ * - getSlotStatus API 的退役字段为空
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -136,66 +136,17 @@ describe('calculateSlotBudget token 集成', () => {
     });
   });
 
-  it('token_pressure=0 → Pool C 不受 token 限制', async () => {
+  it.each([
+    { token_pressure: 0, available_accounts: 3 },
+    { token_pressure: 1, available_accounts: 0 },
+    { token_pressure: 1, available_accounts: 1 },
+  ])('不读取旧账号状态 $token_pressure/$available_accounts，按机器容量准入', async (legacy) => {
+    getTokenPressure.mockResolvedValue(legacy);
     const budget = await calculateSlotBudget();
-    // Dynamic model: absent, effectiveSlots=12, totalRunning=0, userReserve=0 → 12
-    expect(budget.taskPool.budget).toBe(12);
-    expect(budget.tokenPressure.token_pressure).toBe(0);
-  });
-
-  it('旧 Claude 指标显示全部耗尽时，只作展示，不拦其他执行器', async () => {
-    getTokenPressure.mockResolvedValue({
-      token_pressure: 1.0, available_accounts: 0, details: 'all exhausted',
-    });
-
-    const budget = await calculateSlotBudget();
-    // 账号级准入由执行器自身的额度与容量合同负责。
+    expect(getTokenPressure).not.toHaveBeenCalled();
     expect(budget.taskPool.budget).toBe(12);
     expect(budget.dispatchAllowed).toBe(true);
-    expect(budget.tokenPressure.token_pressure).toBe(1.0);
-    expect(budget.tokenPressure.available_accounts).toBe(0);
-  });
-
-  it('token_pressure=1.0 + available_accounts=1 → dispatchAllowed=true（仍有账户可用）', async () => {
-    getTokenPressure.mockResolvedValue({
-      token_pressure: 1.0, available_accounts: 1, details: '1 account recovering',
-    });
-
-    const budget = await calculateSlotBudget();
-    // Still has available accounts — dispatch allowed
-    expect(budget.taskPool.budget).toBe(12);
-    expect(budget.dispatchAllowed).toBe(true);
-    expect(budget.tokenPressure.token_pressure).toBe(1.0);
-    expect(budget.tokenPressure.available_accounts).toBe(1);
-  });
-
-  it('token_pressure=0.9 → Pool C 不受影响（token 仅监控）', async () => {
-    getTokenPressure.mockResolvedValue({
-      token_pressure: 0.9, available_accounts: 1, details: 'barely available',
-    });
-
-    const budget = await calculateSlotBudget();
-    expect(budget.taskPool.budget).toBe(12); // unaffected
-  });
-
-  it('token_pressure=0.7 → Pool C 不受影响（token 仅监控）', async () => {
-    getTokenPressure.mockResolvedValue({
-      token_pressure: 0.7, available_accounts: 1, details: '1 account ok',
-    });
-
-    const budget = await calculateSlotBudget();
-    expect(budget.taskPool.budget).toBe(12); // unaffected
-  });
-
-  it('返回值应包含 tokenPressure 字段', async () => {
-    getTokenPressure.mockResolvedValue({
-      token_pressure: 0.3, available_accounts: 2, details: '2 accounts ok',
-    });
-
-    const budget = await calculateSlotBudget();
-    expect(budget.tokenPressure).toBeDefined();
-    expect(budget.tokenPressure.token_pressure).toBe(0.3);
-    expect(budget.tokenPressure.available_accounts).toBe(2);
+    expect(budget.tokenPressure).toBeNull();
   });
 
   it('pressure 只取 hardware 压力（token 不再参与 combined）', async () => {
@@ -212,11 +163,12 @@ describe('calculateSlotBudget token 集成', () => {
     expect(budget.pressure).toBe(0.3);
   });
 
-  it('getTokenPressure 异常 → 不影响正常计算', async () => {
+  it('旧用量函数会抛异常时也不再调用它', async () => {
     getTokenPressure.mockRejectedValue(new Error('DB down'));
 
     const budget = await calculateSlotBudget();
     expect(budget.taskPool.budget).toBeGreaterThan(0);
+    expect(getTokenPressure).not.toHaveBeenCalled();
   });
 
   it('hardware 压力骤升至硬零，当次停派，持续压力保持关闭', async () => {
@@ -253,10 +205,9 @@ describe('getSlotStatus token 字段', () => {
     });
   });
 
-  it('pressure 字段应包含 token 子对象', async () => {
+  it('pressure.token 保留字段但明确为空', async () => {
     const status = await getSlotStatus();
-    expect(status.pressure.token).toBeDefined();
-    expect(status.pressure.token.token_pressure).toBe(0.4);
-    expect(status.pressure.token.available_accounts).toBe(2);
+    expect(status.pressure.token).toBeNull();
+    expect(getTokenPressure).not.toHaveBeenCalled();
   });
 });

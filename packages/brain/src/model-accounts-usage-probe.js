@@ -3,7 +3,7 @@
  *
  * 用法（由 ops-model-accounts-collector.js 经 host-exec ssh 投递，脚本本体 base64 走 stdin）：
  *   node --input-type=module - -- --probe-run <provider> <credential_path>
- * 只读凭据文件里的当前 access token / key，调三家官方 usage 接口，**只向 stdout 回传 usage JSON**，
+ * 只读凭据文件里的当前 access token / key，调现役 provider 的 usage 接口，**只向 stdout 回传 usage JSON**，
  * 凭据本身绝不回传、绝不打印。
  *
  * 铁律（INV-1）：任何路径不读、不用、不刷新凭据里的 refresh 类字段（Grok 严格复用检测轮换，
@@ -22,11 +22,6 @@ const FIVE_HOUR_MAX_WINDOW_SECONDS = 6 * 3600;
 export function expandHome(p) {
   const s = String(p || '');
   return s.startsWith('~/') ? `${homedir()}${s.slice(1)}` : s;
-}
-
-/** Anthropic oauth/usage 已是 collector parser 认的形状（five_hour.utilization / resets_at），原样透传。 */
-export function normalizeAnthropicUsage(raw) {
-  return raw && typeof raw === 'object' ? raw : {};
 }
 
 function epochOrAfterToIso(win, now = Date.now()) {
@@ -187,18 +182,6 @@ function readCredential(path) {
   }
 }
 
-async function probeClaude(path) {
-  const creds = readCredential(path);
-  const token = creds?.claudeAiOauth?.accessToken;
-  if (!token) fail(2, 'no_credential: accessToken missing');
-  const r = await fetch('https://api.anthropic.com/api/oauth/usage', {
-    headers: { Authorization: `Bearer ${token}`, 'anthropic-beta': 'oauth-2025-04-20', Accept: 'application/json' },
-    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-  });
-  if (!r.ok) fail(4, `anthropic usage HTTP ${r.status}`);
-  return normalizeAnthropicUsage(await r.json());
-}
-
 async function probeCodex(path) {
   const auth = readCredential(path);
   const token = auth?.tokens?.access_token;
@@ -242,9 +225,9 @@ async function main(argv) {
   if (!provider || !path) fail(64, 'usage: -- --probe-run <provider> <credential_path>');
   const p = String(provider).toLowerCase();
   let out;
-  if (/grok/.test(p)) out = await probeGrok(path);
-  else if (/codex/.test(p)) out = await probeCodex(path);
-  else out = await probeClaude(path);
+  if (p === 'grok') out = await probeGrok(path);
+  else if (p === 'codex') out = await probeCodex(path);
+  else fail(64, 'unsupported_provider');
   process.stdout.write(`${JSON.stringify(out)}\n`);
 }
 

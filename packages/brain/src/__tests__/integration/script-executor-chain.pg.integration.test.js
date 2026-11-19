@@ -27,7 +27,6 @@ import { createTempMigratedDb } from '../helpers/temp-migrated-db.js';
 // 仅隔离账号配额、账号七日预算与桥接健康等外围；slot allocator、dispatcher、PG和script并发槽全部真跑。
 vi.mock('../../token-budget-planner.js', async (importOriginal) => ({
   ...(await importOriginal()),
-  calculateBudgetState: async () => ({ state: 'abundant', avg_remaining_pct: 100, pool_c_scale: 1 }),
 }));
 
 // agent 步（internal handler 桩）走 dispatcher 的 bridge 健康检查：CI 上没有 cecelia-bridge，替身成「可用」。

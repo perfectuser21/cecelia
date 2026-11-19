@@ -114,10 +114,10 @@ export const REMAINING_LEGACY_SITES = {
   'task-weight.js': ['25:TASK_TYPE_ADJUSTMENTS'],
   // routeTask保留research人工处理与通用任务技能路由，和静态skill映射的值不同。
   'tick-helpers.js': ['28:TASK_TYPE_AGENT_MAP'],
-  // kind: map（long-lived）— Task 6 评估：:58 EXECUTOR_AFFINITY 是
+  // kind: map（long-lived）— Task 6 评估：:13 EXECUTOR_AFFINITY 是
   // task_type→{primary,fallback,no_downgrade} 的 LLM 供应商亲和度调优配置（Claude/Codex 选型 +
   // 降级策略），与 model-profile.js 的模型路由同属运营调参数据，非分类标签，无匹配注册表字段
-  'token-budget-planner.js': ['58:EXECUTOR_AFFINITY'],
+  'token-budget-planner.js': ['13:EXECUTOR_AFFINITY'],
 };
 
 describe('task-type-registry 守卫', () => {

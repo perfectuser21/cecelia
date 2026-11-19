@@ -14,7 +14,7 @@ vi.mock('../../db.js', () => ({ default: {
 vi.mock('../../executor.js', () => ({
   MAX_SEATS: 12, PHYSICAL_CAPACITY: 12,
   checkServerResources: () => ({}), getActiveProcessCount: () => 0,
-  getEffectiveMaxSeats: () => 12, getBudgetCap: () => ({}), getTokenPressure: async () => ({}),
+  getEffectiveMaxSeats: () => 12, getBudgetCap: () => ({}),
 }));
 
 it('动态 Codex 与原生任务各计一次，其他执行器及已完成任务不占槽', async () => {
