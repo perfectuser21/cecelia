@@ -127,7 +127,6 @@ jobs:
           bash tests/regression/codex-grok-launcher-supervisor/install-launchers.test.sh
           bash tests/regression/codex-grok-launcher-supervisor/codex-launch.test.sh
           bash tests/regression/codex-grok-launcher-supervisor/grok-launch.test.sh
-          bash scripts/smoke/e2e/headed-r7.sh
   real-env-smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 20

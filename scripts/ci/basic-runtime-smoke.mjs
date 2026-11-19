@@ -40,6 +40,20 @@ async function main() {
   process.once('SIGTERM', cancel);
   try {
     assert.equal((await pool.query('SELECT current_database() AS name')).rows[0].name, 'cecelia_scratch');
+    const retention = await pool.connect();
+    try {
+      await retention.query('BEGIN');
+      const id = randomUUID();
+      const before = await retention.query(
+        "INSERT INTO decisions (id,topic,decision,created_at) VALUES ($1,$2,$3,NOW()-INTERVAL '90 days') RETURNING id,topic,decision,created_at",
+        [id, 'CI durable decision', 'retain historical decision'],
+      );
+      assert.equal((await retention.query('SELECT cleanup_decisions(30) AS n')).rows[0].n, 0, '决策台账不能按年龄删除');
+      const after = await retention.query('SELECT id,topic,decision,created_at FROM decisions WHERE id=$1', [id]);
+      assert.deepEqual(after.rows, before.rows, '历史决策内容必须完整保留');
+    } finally {
+      try { await retention.query('ROLLBACK'); } finally { retention.release(); }
+    }
     controller.signal.throwIfAborted();
     // 由操作系统分配端口，绝不连接已有的 Brain，也不清理别人的进程。
     const socket = createServer();
@@ -119,7 +133,7 @@ async function main() {
     assert.deepEqual((await request(`/kv/${key}`)).value, value);
     const stored = (await pool.query('SELECT value_json FROM working_memory WHERE key=$1', [key])).rows[0];
     assert.deepEqual(stored.value_json, value);
-    process.stdout.write(`真实服务启动、任务创建/领取/防抢领/完成、KV读写及 PG 持久化通过：${task.id}\n日志：${log}\n`);
+    process.stdout.write(`历史决策留存、真实服务启动、任务创建/领取/防抢领/完成、KV读写及 PG 持久化通过：${task.id}\n日志：${log}\n`);
   } finally {
     let cleanupError;
     if (child?.pid && !closed) {

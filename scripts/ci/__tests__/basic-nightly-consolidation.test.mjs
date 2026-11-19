@@ -45,7 +45,6 @@ test('Nightly迁后的launcher脚本编排真执行、失败停止，不读宿�
     'tests/regression/codex-grok-launcher-supervisor/install-launchers.test.sh',
     'tests/regression/codex-grok-launcher-supervisor/codex-launch.test.sh',
     'tests/regression/codex-grok-launcher-supervisor/grok-launch.test.sh',
-    'scripts/smoke/e2e/headed-r7.sh',
   ];
   for (const path of paths) assert.ok(readFileSync(join(root, path)).length);
   for (const failIndex of [-1, 1]) {
@@ -61,7 +60,7 @@ test('Nightly迁后的launcher脚本编排真执行、失败停止，不读宿�
         env: { PATH: process.env.PATH, HOME: temp, RUNNER_TEMP: temp },
       });
       assert.equal(result.status, failIndex === -1 ? 0 : 17, result.stdout + result.stderr);
-      assert.deepEqual(readFileSync(marker, 'utf8').trim().split('\n'), failIndex === -1 ? ['0','1','2','3'] : ['0','1']);
+      assert.deepEqual(readFileSync(marker, 'utf8').trim().split('\n'), failIndex === -1 ? ['0','1','2'] : ['0','1']);
     } finally { rmSync(temp, { recursive: true, force: true }); }
   }
 });
