@@ -142,25 +142,44 @@ test('trusted native mirror priority changes remain byte-for-byte upstream-owned
 });
 
 test('rejected public Ubuntu URI reports only safe fixed-file coordinates and URL structure',()=>{
- const uri='http://user:private_token@us-east-2.ec2.archive.ubuntu.com/ubuntu/?secret=private_query#private_fragment';
+ const uri='http://user:private_token@unrecognized.archive.ubuntu.com/ubuntu/?secret=private_query#private_fragment';
  let rejected;try{prepareUbuntuSources(stanza('resolute',uri));}catch(e){rejected=e;}
  assert.ok(rejected);assert.match(rejected.message,/ubuntu_source_uri_unsupported/);
  assert.match(rejected.message, /"file":"\/etc\/apt\/sources.list.d\/ubuntu.sources"/);
  assert.match(rejected.message,/"line":2/);assert.match(rejected.message,/"protocol":"http:"/);
- assert.match(rejected.message,/"hostname":"us-east-2.ec2.archive.ubuntu.com"/);
+ assert.match(rejected.message,/"hostname":"unrecognized.archive.ubuntu.com"/);
  assert.match(rejected.message,/"pathname":"\/ubuntu\/"/);
  assert.doesNotMatch(rejected.message,/user|private_token|private_query|private_fragment|secret=/);
 });
 test('native mirror refusal reports public endpoint and numeric priority without relaxing trust',()=>{
- const text=nativeMirrors+'http://us-east-2.ec2.archive.ubuntu.com/ubuntu/\tpriority:1\n';
+ const text=nativeMirrors+'http://unrecognized.archive.ubuntu.com/ubuntu/\tpriority:1\n';
  let rejected;try{prepareUbuntuSources(stanza('resolute'),{readMirrorList:()=>text});}catch(e){rejected=e;}
  assert.ok(rejected);assert.match(rejected.message,/"file":"\/etc\/apt\/apt-mirrors.txt"/);
  assert.match(rejected.message,/"line":4/);assert.match(rejected.message,/"priority":1/);
- assert.match(rejected.message,/"hostname":"us-east-2.ec2.archive.ubuntu.com"/);
+ assert.match(rejected.message,/"hostname":"unrecognized.archive.ubuntu.com"/);
 });
 test('unknown URI diagnostics expose only type and length, not host, path or credentials',()=>{
  const uri='https://unknown_user:private_token@unknown.invalid/private_path?secret=private_query#private_fragment';
  let rejected;try{prepareUbuntuSources(stanza('resolute',uri));}catch(e){rejected=e;}
  assert.ok(rejected);assert.match(rejected.message,/"type":"uri"/);assert.match(rejected.message,new RegExp('"length":'+uri.length));
  assert.doesNotMatch(rejected.message,/unknown_user|private_token|unknown.invalid|private_path|private_query|private_fragment/);
+});
+
+// 真实runner诊断：ubuntu26/20261116.88，apt-mirrors.txt:1 priority:1；
+// 三源列表的其余两行按runner-images官方main构造，不声称拿到了exact-tag文件。
+const awsNativeMirrors = 'http://us-east-2.ec2.archive.ubuntu.com/ubuntu/\tpriority:1\nhttps://archive.ubuntu.com/ubuntu/\tpriority:2\nhttps://security.ubuntu.com/ubuntu/\tpriority:3\n';
+test('confirmed AWS runner native three-source failover remains byte-for-byte intact',()=>{
+ const input=stanza('resolute resolute-updates resolute-backports')+'\n'+stanza('resolute-security')+'\n'+thirdParty;
+ assert.equal(prepareUbuntuSources(input,{readMirrorList:()=>awsNativeMirrors,expectedCodename:'resolute'}),input);
+});
+for(const uri of ['http://us-east-2.ec2.archive.ubuntu.com/ubuntu','http://us-east-2.ec2.archive.ubuntu.com/ubuntu/'])test(`exact confirmed AWS direct source remains intact: ${uri}`,()=>{
+ const input=stanza('resolute',uri)+'\n'+stanza('resolute-security',uri);
+ assert.equal(prepareUbuntuSources(input,{expectedCodename:'resolute'}),input);
+});
+test('AWS addition does not generalize regions, hostname suffixes or invalid priority',()=>{
+ for(const uri of ['http://us-east-1.ec2.archive.ubuntu.com/ubuntu/','http://us-east-2.ec2.archive.ubuntu.com.evil.invalid/ubuntu/']) {
+  assert.throws(()=>prepareUbuntuSources(stanza('resolute',uri)),/ubuntu_source_uri_unsupported/);
+  assert.throws(()=>prepareUbuntuSources(stanza('resolute'),{readMirrorList:()=>awsNativeMirrors.replace('http://us-east-2.ec2.archive.ubuntu.com/ubuntu/',uri)}),/ubuntu_source/);
+ }
+ assert.throws(()=>prepareUbuntuSources(stanza('resolute'),{readMirrorList:()=>awsNativeMirrors.replace('priority:1','priority:0')}),/ubuntu_source/);
 });
