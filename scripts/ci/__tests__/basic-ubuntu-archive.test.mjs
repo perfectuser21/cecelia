@@ -105,3 +105,29 @@ test('previously prepared kernel mirror sources recover to official endpoints by
   assert.equal(prepareUbuntuSources(input), stanza('noble noble-updates', 'https://archive.ubuntu.com/ubuntu')
     + '\n' + stanza('noble-security', 'https://security.ubuntu.com/ubuntu'));
 });
+
+const nativeMirrors = 'http://azure.archive.ubuntu.com/ubuntu/\tpriority:1\nhttps://archive.ubuntu.com/ubuntu/\tpriority:2\nhttps://security.ubuntu.com/ubuntu/\tpriority:3\n';
+const nativeOptions = { readMirrorList: path => {
+  assert.ok(['/etc/apt/apt-mirrors.txt', '/etc/apt/apt-mirrors-security.txt'].includes(path));
+  return nativeMirrors;
+} };
+test('trusted Ubuntu26 native failover preserves exact URIs, suites, key and third-party stanzas', () => {
+  const input=stanza('resolute resolute-updates resolute-backports')+'\n'+stanza('resolute-security')+'\n'+thirdParty;
+  assert.equal(prepareUbuntuSources(input,nativeOptions),input);
+  assert.equal(prepareUbuntuSources(input,nativeOptions),input);
+});
+for(const uri of ['http://azure.archive.ubuntu.com/ubuntu/','https://azure.archive.ubuntu.com/ubuntu'])test(`trusted direct Azure source is preserved without singleton rewrite: ${uri}`,()=>{
+ const input=stanza('resolute resolute-updates',uri)+'\n'+stanza('resolute-security',uri);
+ assert.equal(prepareUbuntuSources(input),input);
+});
+test('native indirect source cannot hide an untrusted, malformed or unreadable mirror list',()=>{
+ for(const text of [nativeMirrors+'https://evil.invalid/ubuntu/\tpriority:0\n',nativeMirrors.replace('priority:1','priority:0'),nativeMirrors.replace('http://azure.archive.ubuntu.com','http://azure.archive.ubuntu.com.evil.invalid'),'']) {
+  assert.throws(()=>prepareUbuntuSources(stanza('resolute'),{readMirrorList:()=>text}),/ubuntu_source/);
+ }
+ assert.throws(()=>prepareUbuntuSources(stanza('resolute'),{readMirrorList:()=>{throw Error('unreadable');}}),/ubuntu_source/);
+});
+test('untrusted suite, signing and duplicate fields remain rejected on native sources',()=>{
+ for(const input of [stanza('bookworm'),stanza('resolute noble-updates'),stanza('resolute-security resolute'),stanza('resolute').replace('ubuntu-archive-keyring.gpg','wrong.gpg'),stanza('resolute')+'URIs: https://archive.ubuntu.com/ubuntu\n',stanza('resolute','mirror+file:/tmp/apt-mirrors.txt')]) {
+  assert.throws(()=>prepareUbuntuSources(input,nativeOptions),/ubuntu_source/);
+ }
+});
