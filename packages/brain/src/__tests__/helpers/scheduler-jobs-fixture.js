@@ -61,9 +61,6 @@ vi.mock('../../postdeploy-verifier.js', () => ({
 vi.mock('../../seven-ring-audit.js', () => ({
   runSevenRingAuditJob: vi.fn().mockResolvedValue({ skipped: true }),
 }));
-vi.mock('../../guard-drill.js', () => ({
-  runGuardDrill: vi.fn().mockResolvedValue({ skipped: true }),
-}));
 vi.mock('../../promise-map-nightly.js', () => ({
   runPromiseMapNightly: vi.fn().mockResolvedValue({ ok: true, passed: 4, failed: 0 }),
 }));

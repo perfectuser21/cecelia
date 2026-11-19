@@ -20,7 +20,7 @@ import { validateScriptPayload } from './lib/script-task-spec.js';
 import { finalizeTask } from './lib/task-terminal.js';
 import { assertDispatchRoutingReceipt } from './lib/dispatch-receipt-authority.js';
 import { isGlobalQuotaCooling, getQuotaCoolingState } from './quota-cooling.js';
-import { isDraining, getDrainStartedAt } from './drain.js';
+import { isDraining, getDrainStartedAt, beginBrainLaunch, finishBrainLaunch } from './drain.js';
 import {
   triggerCeceliaRun,
   checkCeceliaRunAvailable,
@@ -486,6 +486,16 @@ async function routeAndPersistQiumi(task, deps = {}) {
  * @returns {Object} - Dispatch result with actions taken
  */
 export async function dispatchNextTask(goalIds, options = {}) {
+  const admission = beginBrainLaunch();
+  if (!admission) {
+    await recordDispatchResult(pool, false, 'draining');
+    return { dispatched: false, reason: 'draining', actions: [] };
+  }
+  try { return await dispatchAdmittedTask(goalIds, { ...options, drainAdmission: admission }); }
+  finally { finishBrainLaunch(admission); }
+}
+
+async function dispatchAdmittedTask(goalIds, options = {}) {
   const codeOnly = options.codeOnly === true;
   let qiumiOnlyBypass = false;
   const actions = [];
@@ -1166,7 +1176,7 @@ export async function dispatchNextTask(goalIds, options = {}) {
 
   await enforceDispatchRoutingReceipt(taskToDispatch);
 
-  execResult = await triggerCeceliaRun(taskToDispatch);
+  execResult = await triggerCeceliaRun(taskToDispatch, { drainAdmission: options.drainAdmission });
 
   // 选中后 payload 可能并发变为旧拆解；不能当普通故障回队、三振或覆盖新认领。
   if (!execResult.success && execResult.reason === RETIRED_DECOMPOSITION) {

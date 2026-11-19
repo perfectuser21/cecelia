@@ -38,7 +38,7 @@ vi.mock('../quota-cooling.js', () => ({
   isGlobalQuotaCooling: vi.fn(() => false),
   getQuotaCoolingState: vi.fn(() => ({ active: false })),
 }));
-vi.mock('../drain.js', () => ({
+vi.mock('../drain.js', async (original) => ({ ...await original(),
   isDraining: vi.fn(() => false),
   getDrainStartedAt: vi.fn(() => null),
 }));
@@ -177,7 +177,7 @@ describe('dispatcher allocation guide', () => {
           budget_state: 'tight',
         }),
       }),
-    }));
+    }), { drainAdmission: expect.any(Symbol) });
 
     // 顶层 provider 必须与 payload.executor 同步（PR#4155 防御语义，引导员不得丢失）
     expect(mockTriggerCeceliaRun.mock.calls[0][0].provider).toBe('codex');
@@ -259,6 +259,6 @@ describe('dispatcher allocation guide', () => {
           reason: 'primary_vendor_available',
         }),
       }),
-    }));
+    }), { drainAdmission: expect.any(Symbol) });
   });
 });

@@ -114,7 +114,7 @@ it('Workflow发布和注册执行只认可本次完整必需CI步骤，禁用换
 });
 
 
-it('现役十项PG控制闭包固定读取；缺失、篡改及旧新成员拼接均拒绝',async()=>{
+it('现役十一项PG控制闭包固定读取；缺失、篡改及旧新成员拼接均拒绝',async()=>{
  const {readFileSync,existsSync}=await import('node:fs'),{execFileSync}=await import('node:child_process'),{fileURLToPath}=await import('node:url');
  const root=fileURLToPath(new URL('../../../../../',import.meta.url));
  const paths=execFileSync('git',['ls-files','-z','--cached','--others','--exclude-standard'],{cwd:root,encoding:'utf8'}).split('\0').filter(p=>p&&existsSync(new URL(p,'file://'+root)));
@@ -124,7 +124,7 @@ it('现役十项PG控制闭包固定读取；缺失、篡改及旧新成员拼�
  const relations=await observe();
  expect(relations).toContainEqual(expect.objectContaining({consumer_path:'packages/brain/src/lib/existing-ops-stage-modes.js',input_path:profile,kind:'reviewed_basic_ci_source_profile'}));
  const pg=relations.filter(row=>row.kind==='reviewed_pr_postgres_test_selector');
- expect(pg).toHaveLength(10);
+ expect(pg).toHaveLength(11);
  expect(pg.map(row=>row.input_path)).toContain('packages/brain/src/__tests__/integration/reasoning-governance-contract.pg.integration.test.js');
  const controls=[profile,'scripts/ci/__tests__/basic-fixed-core.test.mjs','scripts/ci/run-basic-check.mjs','scripts/ci/ops-checks.mjs','scripts/ci/deep-integration.config.mjs','scripts/ci/debt-pg.config.mjs','scripts/ci/debt-pg-tests.json','scripts/ci/__tests__/basic-current-pg-gate.test.mjs','tests/brain-ci-pg-layering.test.ts'];
  for(const member of controls){
@@ -181,7 +181,7 @@ it('固定核心CI只证明实际11矩阵与Scripts版本门，不再生成Plan�
  expect(relations.some(r=>r.input_path==='scripts/ci/basic-scope.mjs'||r.kind==='required_basic_ci_plan')).toBe(false);
  expect(relations).toContainEqual(expect.objectContaining({consumer_path:'.github/workflows/ci.yml',input_path:'scripts/ci/check-brain-version-bump.sh',kind:'required_scripts_lane_brain_version_increment_guard'}));
  expect(relations.some(row=>row.input_path==='scripts/ci/preview-ui.mjs'||row.kind==='preview_only_fixed_git_ui_selector')).toBe(false);
- expect(relations.filter(r=>r.kind==='reviewed_pr_postgres_test_selector')).toHaveLength(10);
+ expect(relations.filter(r=>r.kind==='reviewed_pr_postgres_test_selector')).toHaveLength(11);
 });
 
 

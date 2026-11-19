@@ -41,3 +41,25 @@ it('固定Pilot双源不得混入其他历史profile或伪造当前profile',()=>
  for(const profile of [REVIEWED_FOUNDATION_RELEASE,REVIEWED_FIXED_CHECKS,{...REVIEWED_NIGHTLY_STATUS}])
   expect(()=>reviewedPilotControls(profile,[cli,helper])).toThrow('basic_ci_source_unproven');
 });
+
+it('当前十一项真实PG只接受固定runner，旧十项组与任何未知混配继续拒绝', async () => {
+ const runner='scripts/ci/run-basic-check.mjs';
+ for(const deep of [false,true]){
+  const current=await collect({deep});
+  if(!deep)expect(current).toContainEqual(expect.objectContaining({consumer_path:runner,input_path:'packages/brain/src/__tests__/integration/drain-process-scope.pg.integration.test.js',kind:'reviewed_pr_postgres_test_selector'}));
+  await expect(collect({deep,overrides:{[runner]:read(runner)+'\n// unreviewed runner'}})).rejects.toThrow('basic_ci_source_unproven');
+  await expect(collect({deep,overrides:{[runner]:old.read(runner)}})).rejects.toThrow('basic_ci_source_unproven');
+  await expect(collect({deep,fixture:old,overrides:{[runner]:read(runner)}})).rejects.toThrow('basic_ci_source_unproven');
+ }
+});
+
+it('PG分层回归只接受新旧两个精确版本，父Pilot完整组继续有效',async()=>{
+ const parent=readFixedExistingOpsGitFixture('bf42598df190e9676b50391ce71de0a8e5a1b4e4');
+ const target='tests/brain-ci-pg-layering.test.ts';
+ for(const deep of [false,true]){
+  expect(await collect({deep,fixture:parent})).not.toHaveLength(0);
+  expect(await collect({deep})).not.toHaveLength(0);
+  await expect(collect({deep,missing:target})).rejects.toThrow();
+  await expect(collect({deep,overrides:{[target]:read(target)+'\n// unknown PG controls'}})).rejects.toThrow('basic_ci_source_unproven');
+ }
+});

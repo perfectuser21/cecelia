@@ -1,3 +1,4 @@
+import { brainLaunchHandler } from '../lib/brain-launch-handler.js';
 import { CALLBACK_COOLDOWN_MS, waitForCallbackCooldown } from '../lib/callback-cooldown.js';
 import { createHash } from 'node:crypto';
 import { decompReviewInputError, applyDecompReview, recordVerifiedDecompRun } from '../lib/decomp-review-callback.js';
@@ -2528,7 +2529,7 @@ router.get('/work/streams', async (_req, res) => {
 // ============================================================
 // 用途：/dev 工作流注册 Codex 审查任务后立即触发，不依赖调度器状态
 // 调用 executor.triggerCeceliaRun() 直接执行（完全独立于 tick loop）
-router.post('/dispatch-now', rateLimit(TASK_MUTATION_RATE_LIMIT_OPTIONS), async (req, res) => {
+router.post('/dispatch-now', rateLimit(TASK_MUTATION_RATE_LIMIT_OPTIONS), brainLaunchHandler(req => req.body?.task_id, async (req, res, admission) => {
   let deviceLockTaskId = null; // 已抢设备锁的任务 id（失败路径需释放）
   try {
     const { task_id } = req.body;
@@ -2584,7 +2585,7 @@ router.post('/dispatch-now', rateLimit(TASK_MUTATION_RATE_LIMIT_OPTIONS), async 
     task = reviewPlan.task;
     if (reviewPlan.guarded) {
       const dispatched = await dispatchManualRegistryReview(task, pool, {
-        tag:'dispatch-now', deviceGate:checkDeviceLockForManualDispatch, trigger:triggerCeceliaRun,
+        tag:'dispatch-now', deviceGate:checkDeviceLockForManualDispatch, trigger:task => triggerCeceliaRun(task, { drainAdmission: admission }),
       });
       return res.status(dispatched.status).json(dispatched.body);
     }
@@ -2608,7 +2609,7 @@ router.post('/dispatch-now', rateLimit(TASK_MUTATION_RATE_LIMIT_OPTIONS), async 
     );
 
     // 直接触发执行（不经过 tick loop）
-    const execResult = await triggerCeceliaRun(task);
+    const execResult = await triggerCeceliaRun(task, { drainAdmission: admission });
 
     if (execResult.success) {
       console.log(`[dispatch-now] Task ${task_id} dispatched successfully (executor: ${execResult.executor || 'local'})`);
@@ -2638,6 +2639,6 @@ router.post('/dispatch-now', rateLimit(TASK_MUTATION_RATE_LIMIT_OPTIONS), async 
     console.error(`[dispatch-now] Error: ${err.message}`);
     res.status(500).json({ error: 'Failed to dispatch', details: err.message });
   }
-});
+}));
 
 export default router;

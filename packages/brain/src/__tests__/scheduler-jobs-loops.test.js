@@ -14,7 +14,7 @@ describe('scheduler-jobs loop 幂等与重入守卫', () => {
     vi.useRealTimers();
   });
 
-  it('start 时写入 scheduler_jobs_expected 预期数（供死人开关比对）', async () => {
+  it('start 发布实际 JOBS 的预期数与唯一具名声明', async () => {
     const pool = makePool();
     startSchedulerJobsLoop(pool);
     await Promise.resolve();
@@ -23,7 +23,7 @@ describe('scheduler-jobs loop 幂等与重入守卫', () => {
       ([sql, params]) => sql.includes('working_memory') && Array.isArray(params) && params[0] === 'scheduler_jobs_expected',
     );
     expect(call).toBeTruthy();
-    expect(JSON.parse(call[1][1])).toEqual({ count: JOBS.length });
+    expect(JSON.parse(call[1][1])).toEqual({ count: JOBS.length, names: JOBS.map(job => job.name) });
   });
 
   it('重复调用 startSchedulerJobsLoop 返回同一 timer', () => {
@@ -72,7 +72,7 @@ describe('scheduler-jobs loop 幂等与重入守卫', () => {
     expect(scheduleDailyBackup).toHaveBeenCalledTimes(2);
     const expectedWrites = pool.query.mock.calls.filter(([, args]) => args?.[0] === 'scheduler_jobs_expected');
     expect(expectedWrites).toHaveLength(2);
-    expect(expectedWrites.map(([, args]) => JSON.parse(args[1]))).toEqual([{ count: JOBS.length }, { count: JOBS.length }]);
+    expect(expectedWrites.map(([, args]) => JSON.parse(args[1]))).toEqual([{ count: JOBS.length, names: JOBS.map(job => job.name) }, { count: JOBS.length, names: JOBS.map(job => job.name) }]);
   });
 });
 

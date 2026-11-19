@@ -38,6 +38,7 @@ export function commandsFor(component, shard) {
         step('packages/brain', 'node', 'src/migrate.js'),
         { ...step('packages/brain', 'npx', '--no-install', 'vitest', 'run', '--config', '../../scripts/ci/deep-integration.config.mjs',
           'src/__tests__/integration/task-lease-device-pool.pg.integration.test.js',
+          'src/__tests__/integration/drain-process-scope.pg.integration.test.js',
           'src/__tests__/integration/executor-startup-headed-owner.pg.integration.test.js',
           'src/__tests__/integration/suggestion-plan-callback.pg.integration.test.js',
           'src/__tests__/integration/managed-script-profile.pg.integration.test.js',

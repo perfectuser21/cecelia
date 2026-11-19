@@ -7,7 +7,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 // 被测模块（vitest hoists vi.mock before imports，所以静态 import 安全）
 import _router from '../routes/execution.js';
-import { Router } from 'express';
+import express, { Router } from 'express';
+import { drainTick, getDrainStatus, _resetDrainState, ownsBrainLaunch } from '../drain.js';
 import { registerTaskManualDispatchRoutes } from '../routes/tasks-manual-dispatch.js';
 
 // Mock pool
@@ -20,7 +21,15 @@ vi.mock('../db.js', () => ({
 const mockTriggerCeceliaRun = vi.fn();
 vi.mock('../executor.js', () => ({
   triggerCeceliaRun: (...args) => mockTriggerCeceliaRun(...args),
-  checkCeceliaRunAvailable: vi.fn().mockResolvedValue(true),
+  checkCeceliaRunAvailable: vi.fn().mockResolvedValue({ available: true }),
+  getActiveProcesses: () => [],
+}));
+
+const mockDeviceGate = vi.fn().mockResolvedValue({ pass: true, acquired: false });
+const mockReleaseDevice = vi.fn();
+vi.mock('../lib/manual-dispatch-device-gate.js', () => ({
+  checkDeviceLockForManualDispatch: (...args) => mockDeviceGate(...args),
+  releaseDeviceLockNonFatal: (...args) => mockReleaseDevice(...args),
 }));
 
 // Mock other imports that execution.js needs
@@ -200,7 +209,7 @@ describe('POST /api/brain/dispatch-now', () => {
       success: true,
       taskId: 'test-task-id',
     }));
-    expect(mockTriggerCeceliaRun).toHaveBeenCalledWith(mockTask);
+    expect(mockTriggerCeceliaRun).toHaveBeenCalledWith(mockTask, { drainAdmission: expect.any(Symbol) });
   });
 
   it('should reject already completed tasks', async () => {
@@ -280,4 +289,65 @@ describe('POST /dispatch-now — S2 锚点闸', () => {
     );
     expect(inProgressUpdate).toBeUndefined();
   });
+});
+
+
+describe('真实HTTP人工入口共享排空准入', () => {
+  const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return { promise, resolve }; };
+  async function withServer(fn) {
+    const app = express(); app.use(express.json());
+    const manual = Router(); registerTaskManualDispatchRoutes(manual);
+    app.use(_router); app.use(manual);
+    const server = app.listen(0, '127.0.0.1');
+    await new Promise(resolve => server.once('listening', resolve));
+    try { await fn(`http://127.0.0.1:${server.address().port}`); }
+    finally { await new Promise(resolve => server.close(resolve)); }
+  }
+  for (const path of ['/dispatch-now', '/tasks/task-id/dispatch']) {
+    it(`${path} 排空后503，零任务查询、零认领、零设备锁操作`, async () => {
+      _resetDrainState(); mockQuery.mockReset(); mockQuery.mockResolvedValue({ rows: [] });
+      await drainTick(); mockQuery.mockClear(); mockDeviceGate.mockClear(); mockReleaseDevice.mockClear(); mockTriggerCeceliaRun.mockClear();
+      try {
+        await withServer(async base => {
+          const response = await fetch(base + path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ task_id: 'task-id' }) });
+          expect(response.status).toBe(503); expect(await response.json()).toMatchObject({ error: 'draining' });
+          expect(mockQuery).not.toHaveBeenCalled(); expect(mockDeviceGate).not.toHaveBeenCalled();
+          expect(mockReleaseDevice).not.toHaveBeenCalled(); expect(mockTriggerCeceliaRun).not.toHaveBeenCalled();
+        });
+      } finally { _resetDrainState(); }
+    });
+    it(`${path} 排空前已接受且读取挂起，继续接管而不误回退认领或释放锁`, async () => {
+      _resetDrainState(); mockQuery.mockReset(); mockDeviceGate.mockClear(); mockReleaseDevice.mockClear(); mockTriggerCeceliaRun.mockReset();
+      const entered = deferred(), release = deferred(); let stored;
+      const task = { id: 'task-id', title: '测试', task_type: 'dev', status: 'queued', created_at: '2026-07-01T00:00:00Z', claimed_by: 'original-owner', payload: {} };
+      mockDeviceGate.mockResolvedValue({ pass: true, acquired: true });
+      mockQuery.mockImplementation(async (sql, params) => {
+        if (sql.includes('SELECT *') && sql.includes('WHERE id = $1')) { entered.resolve(); await release.promise; return { rows: [task] }; }
+        if (sql.includes('INSERT INTO working_memory')) stored = params[1];
+        if (sql.includes('SELECT value_json FROM working_memory')) return { rows: stored ? [{ value_json: stored }] : [] };
+        if (sql.includes("status = 'in_progress'") || (sql.includes("UPDATE tasks SET status = $1") && params[0] === "in_progress")) task.status = 'in_progress';
+        return { rows: [], rowCount: 1 };
+      });
+      mockTriggerCeceliaRun.mockImplementation(async (received, opts) => {
+        expect(ownsBrainLaunch(opts.drainAdmission, received.id)).toBe(true);
+        return { success: true, runId: 'accepted-run', executor: 'local' };
+      });
+      try {
+        await withServer(async base => {
+          const request = fetch(base + path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ task_id: task.id }) });
+          await entered.promise;
+          await drainTick();
+          const blocked = await getDrainStatus();
+          expect(blocked.safe_to_swap).toBe(false); expect(blocked.blockers.some(x => x.kind === 'launch')).toBe(true);
+          release.resolve();
+          const response = await request;
+          expect([200, 202]).toContain(response.status);
+          expect(mockTriggerCeceliaRun).toHaveBeenCalledTimes(1);
+          expect(task.status).toBe('in_progress'); expect(task.claimed_by).toBe('original-owner');
+          expect(mockReleaseDevice).not.toHaveBeenCalled();
+          expect(mockQuery.mock.calls.some(([sql]) => sql.includes("status = 'queued'") || sql.includes("status = 'failed'"))).toBe(false);
+        });
+      } finally { release.resolve(); _resetDrainState(); mockDeviceGate.mockResolvedValue({ pass: true, acquired: false }); }
+    });
+  }
 });

@@ -20,7 +20,7 @@ vi.mock('../quota-cooling.js', () => ({
   isGlobalQuotaCooling: vi.fn(() => false),
   getQuotaCoolingState: vi.fn(() => ({ active: false })),
 }));
-vi.mock('../drain.js', () => ({
+vi.mock('../drain.js', async (original) => ({ ...await original(),
   isDraining: vi.fn(() => false),
   getDrainStartedAt: vi.fn(() => null),
 }));
@@ -219,7 +219,8 @@ describe('dispatchNextTask — 设备锁接线（G5 横切件 task 104ab89f）',
     expect(result.dispatched).toBe(true);
     expect(result.task_id).toBe(PHONE_TASK.id);
     expect(mockTriggerCeceliaRun).toHaveBeenCalledWith(
-      expect.objectContaining({ id: PHONE_TASK.id })
+      expect.objectContaining({ id: PHONE_TASK.id }),
+      { drainAdmission: expect.any(Symbol) }
     );
   });
 

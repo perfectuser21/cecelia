@@ -105,7 +105,6 @@ describe('Tick Drain Mode', () => {
 
     const found = status.in_progress_tasks.find(t => t.id === task.rows[0].id);
     expect(found).toBeTruthy();
-    expect(found.title).toBe('Running task');
   });
 
   it('should cancel drain and resume normal state', async () => {
@@ -124,7 +123,7 @@ describe('Tick Drain Mode', () => {
     expect(result.was_draining).toBe(false);
   });
 
-  it('should auto-complete drain when no in_progress tasks remain', async () => {
+  it('should hold drain when no in_progress tasks remain', async () => {
     const existing = await pool.query("SELECT id FROM tasks WHERE status = 'in_progress'");
     expect(existing.rows).toEqual([]);
 
@@ -133,14 +132,12 @@ describe('Tick Drain Mode', () => {
     expect(drainResult.draining).toBe(true);
     expect(drainResult.remaining).toBe(0);
 
-    // Now getDrainStatus should auto-complete
     const status = await getDrainStatus();
-    expect(status.draining).toBe(false);
-    expect(status.drain_completed).toBe(true);
+    expect(status.draining).toBe(true);
+    expect(status.safe_to_swap).toBe(true);
     expect(status.remaining).toBe(0);
 
-    // Drain state should be reset
-    expect(_getDrainState().draining).toBe(false);
+    expect(_getDrainState().draining).toBe(true);
   });
 
   it('should not report draining when drain is not active', async () => {

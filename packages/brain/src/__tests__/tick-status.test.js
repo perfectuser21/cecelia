@@ -45,10 +45,9 @@ vi.mock('../tick-state.js', () => ({
   },
 }));
 
-vi.mock('../drain.js', () => ({
+vi.mock('../drain.js', async (original) => ({ ...await original(),
   isDraining: () => false,
   getDrainStartedAt: () => null,
-  isPostDrainCooldown: () => false,
 }));
 
 vi.mock('../tick-watchdog.js', () => ({

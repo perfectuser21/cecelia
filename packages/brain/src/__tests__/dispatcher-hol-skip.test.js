@@ -26,7 +26,7 @@ vi.mock('../quota-cooling.js', () => ({
   isGlobalQuotaCooling: vi.fn(() => false),
   getQuotaCoolingState: vi.fn(() => ({ active: false })),
 }));
-vi.mock('../drain.js', () => ({
+vi.mock('../drain.js', async (original) => ({ ...await original(),
   isDraining: vi.fn(() => false),
   getDrainStartedAt: vi.fn(() => null),
 }));
@@ -175,12 +175,10 @@ describe('dispatchNextTask — no_executor HOL skip (issue 0014cd42)', () => {
     expect(result.dispatched).toBe(true);
     expect(result.task_id).toBe(OPENCLAW_TASK.id);
     expect(mockTriggerCeceliaRun).toHaveBeenCalledWith(
-      expect.objectContaining({ id: OPENCLAW_TASK.id, task_type: 'qiumi_task' })
-    );
+      expect.objectContaining({ id: OPENCLAW_TASK.id, task_type: 'qiumi_task' }), { drainAdmission: expect.any(Symbol) });
     // dev 候选没有被派发
     expect(mockTriggerCeceliaRun).not.toHaveBeenCalledWith(
-      expect.objectContaining({ id: DEV_TASK.id })
-    );
+      expect.objectContaining({ id: DEV_TASK.id }), { drainAdmission: expect.any(Symbol) });
   });
 
   it('用例 B：被 no_executor 跳过的候选 claim 已释放 + status revert 回 queued', async () => {

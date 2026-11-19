@@ -40,7 +40,7 @@ vi.mock('../event-bus.js', () => ({
   ensureEventsTable: vi.fn().mockResolvedValue(undefined),
 }));
 
-vi.mock('../drain.js', () => ({
+vi.mock('../drain.js', async (original) => ({ ...await original(),
   restoreDrainState: vi.fn().mockResolvedValue(undefined),
 }));
 

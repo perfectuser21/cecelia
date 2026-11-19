@@ -24,7 +24,6 @@ import sentinelRouter from './routes/sentinel.js';
 import dispatchRouter from './routes/dispatch.js';
 import previewRouter from './routes/preview.js';
 import kvRouter from './routes/kv.js';
-import guardDrillRouter from './routes/guard-drill.js';
 import releaseGateRouter from './routes/release-gate.js';
 import opsPanoramaRouter from './routes/ops-panorama.js';
 import impactContractsRouter from './routes/impact-contracts.js';
@@ -82,8 +81,6 @@ router.use('/preview', previewRouter);
 // 轻量键值存取 — GET/POST /kv/:key（working_memory 表，供七环巡检/ci-patrol 等脚本快照存取）
 router.use('/kv', kvRouter);
 
-// 月度守卫演习台账 — GET /guard-drill/status，POST /guard-drill/trigger
-router.use('/guard-drill', guardDrillRouter);
 
 // 发布准入查账 — GET /release-gate/:pathId（只读，POST/PUT/PATCH → 405）
 router.use('/release-gate', releaseGateRouter);

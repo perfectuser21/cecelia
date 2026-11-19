@@ -24,12 +24,20 @@ const expectedRow = (count) => ({
   age_seconds: 3600,
 });
 
+const declaredExpectedRow = (names, count = names.length) => ({
+  ...expectedRow(count),
+  value_json: { count, names },
+});
+
 describe('GET /api/brain/sentinel/health — 调度哨兵灯（relay-baton4 item1）', () => {
-  beforeEach(() => mockQuery.mockReset());
+  beforeEach(() => {
+    mockQuery.mockReset();
+    vi.resetModules();
+  });
 
   it('全部 job 新鲜且 ok → healthy=true，输出 name/ok/age_seconds/at', async () => {
     mockQuery.mockResolvedValueOnce({
-      rows: [jobRow('arch-review'), jobRow('daily-backup'), expectedRow(2)],
+      rows: [jobRow('arch-review'), jobRow('daily-backup'), declaredExpectedRow(['arch-review', 'daily-backup'])],
     });
     const res = await (await req())(await makeApp()).get('/api/brain/sentinel/health');
     expect(res.status).toBe(200);
@@ -43,14 +51,14 @@ describe('GET /api/brain/sentinel/health — 调度哨兵灯（relay-baton4 item
   });
 
   it('job 数少于 expected → healthy=false', async () => {
-    mockQuery.mockResolvedValueOnce({ rows: [jobRow('arch-review'), expectedRow(5)] });
+    mockQuery.mockResolvedValueOnce({ rows: [jobRow('arch-review'), declaredExpectedRow(['arch-review', 'daily-backup', 'receipt-collector', 'machine-vitals', 'ops-collector'])] });
     const res = await (await req())(await makeApp()).get('/api/brain/sentinel/health');
     expect(res.body.healthy).toBe(false);
   });
 
   it('某 job age_seconds 超 1800 → healthy=false', async () => {
     mockQuery.mockResolvedValueOnce({
-      rows: [jobRow('arch-review', { age_seconds: 7200 }), expectedRow(1)],
+      rows: [jobRow('arch-review', { age_seconds: 7200 }), declaredExpectedRow(['arch-review'])],
     });
     const res = await (await req())(await makeApp()).get('/api/brain/sentinel/health');
     expect(res.body.healthy).toBe(false);
@@ -60,7 +68,7 @@ describe('GET /api/brain/sentinel/health — 调度哨兵灯（relay-baton4 item
     mockQuery.mockResolvedValueOnce({
       rows: [
         { key: 'scheduler_job_last_run:strategy-trigger', value_json: { at: 'x', ok: false, error: 'boom' }, age_seconds: 30 },
-        expectedRow(1),
+        declaredExpectedRow(['strategy-trigger']),
       ],
     });
     const res = await (await req())(await makeApp()).get('/api/brain/sentinel/health');
@@ -72,6 +80,72 @@ describe('GET /api/brain/sentinel/health — 调度哨兵灯（relay-baton4 item
     const res = await (await req())(await makeApp()).get('/api/brain/sentinel/health');
     expect(res.body.expected).toBeNull();
     expect(res.body.healthy).toBe(false);
+  });
+
+  it('仅判定现役声明，旧 guard-drill 失败且过期的心跳不污染健康或现役列表', async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [
+      jobRow('daily-backup'),
+      jobRow('guard-drill', { value_json: { at: 'old-run', ok: false }, age_seconds: 86400 }),
+      declaredExpectedRow(['daily-backup']),
+    ] });
+    const res = await (await req())(await makeApp()).get('/api/brain/sentinel/health');
+    expect(res.status).toBe(200);
+    expect(res.body.expected).toBe(1);
+    expect(res.body.healthy).toBe(true);
+    expect(res.body.jobs.map(job => job.name)).toEqual(['daily-backup']);
+  });
+
+  it('另一条新鲜历史心跳不能冒充缺失的现役任务', async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [jobRow('guard-drill'), declaredExpectedRow(['daily-backup'])] });
+    const res = await (await req())(await makeApp()).get('/api/brain/sentinel/health');
+    expect(res.body.healthy).toBe(false);
+    expect(res.body.jobs).toEqual([]);
+  });
+
+  it('现役失败即不健康，历史心跳再新鲜也不能补偿', async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [
+      jobRow('daily-backup', { value_json: { at: 'failed-run', ok: false }, age_seconds: 30 }),
+      jobRow('guard-drill'), declaredExpectedRow(['daily-backup']),
+    ] });
+    const res = await (await req())(await makeApp()).get('/api/brain/sentinel/health');
+    expect(res.body.healthy).toBe(false);
+    expect(res.body.jobs.map(job => job.name)).toEqual(['daily-backup']);
+  });
+
+  it.each([
+    { count: 2, names: ['daily-backup', 'daily-backup'] },
+    { count: 1, names: ['daily-backup', 'arch-review'] },
+    { count: 0, names: [] },
+    { count: '1', names: ['daily-backup'] },
+    { count: 1, names: [null] },
+    { count: 1, names: [''] },
+  ])('声明重复、缺项或格式不符不能假绿：%o', async declaration => {
+    mockQuery.mockResolvedValueOnce({ rows: [
+      jobRow('daily-backup'), jobRow('arch-review'),
+      { key: 'scheduler_jobs_expected', value_json: declaration, age_seconds: 0 },
+    ] });
+    const res = await (await req())(await makeApp()).get('/api/brain/sentinel/health');
+    expect(res.body.healthy).toBe(false);
+  });
+
+  it('旧 count-only 声明保留数字展示，但不能确认健康', async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [jobRow('daily-backup'), expectedRow(1)] });
+    const res = await (await req())(await makeApp()).get('/api/brain/sentinel/health');
+    expect(res.body.expected).toBe(1);
+    expect(res.body.healthy).toBe(false);
+  });
+
+  it('同一来源每分钟最多300次查询，超额返回429且不再访问数据库', async () => {
+    vi.resetModules();
+    mockQuery.mockResolvedValue({ rows: [] });
+    const client = (await req())(await makeApp());
+    for (let i = 0; i < 300; i++) {
+      const response = await client.get('/api/brain/sentinel/health');
+      expect(response.status).toBe(200);
+    }
+    const blocked = await client.get('/api/brain/sentinel/health');
+    expect(blocked.status).toBe(429);
+    expect(mockQuery).toHaveBeenCalledTimes(300);
   });
 
   it('age 由 SQL EXTRACT(EPOCH...) 计算（timestamp without time zone 不拿 JS 比）；DB 错误 → 500', async () => {

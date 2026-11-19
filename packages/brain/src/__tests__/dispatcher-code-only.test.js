@@ -47,7 +47,7 @@ vi.mock('../dispatch-helpers.js', () => ({
 }));
 
 vi.mock('../quota-cooling.js', () => ({ isGlobalQuotaCooling: () => _cooling, getQuotaCoolingState: () => ({ until: null }) }));
-vi.mock('../drain.js', () => ({ isDraining: () => _drain, getDrainStartedAt: () => null }));
+vi.mock('../drain.js', async (original) => ({ ...await original(), isDraining: () => _drain, getDrainStartedAt: () => null }));
 
 // 默认总闸关着：池满（budget 4 / used 4）
 const closedBudget = () => ({

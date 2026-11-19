@@ -29,7 +29,6 @@ import { runGpShelfLife } from './gp-shelf-life.js';
 import { maybeRefreshMapProjections } from './map-projection-refresh.js';
 import { runPostdeployVerifier } from './postdeploy-verifier.js';
 import { runSevenRingAuditJob } from './seven-ring-audit.js';
-import { runGuardDrill } from './guard-drill.js';
 
 import { runFactoryCycle } from './lib/factory-cycle.js';
 import { runDiskGuard } from './cron/disk-guard.js';
@@ -114,7 +113,6 @@ export const JOBS = [
   { name: 'launchd-patrol', cadence: { everySec: 900 }, needsPool: false, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runLaunchdPatrol, description: '宿主 launchd 服务巡检（自带15min gate，manifest核对，异常P1+Bark，a5a6209a）' },
   { name: 'postdeploy-verifier', cadence: { everySec: 300 }, needsPool: true, timeoutMs: 2 * 60 * 1000, handler: runPostdeployVerifier, description: '第5环部署验证（自带5min节流gate，扫 pending_postdeploy 任务执行 postdeploy_check.command，通过→completed，失败3次→P1）' },
   { name: 'seven-ring-audit', cadence: { everySec: 86400 }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runSevenRingAuditJob, description: '七环对账日巡检（自带24h冷却，逐环核对测试入册/调度在跑/指纹新鲜/账本写对/产出消费/告警活着/面板新鲜，棘轮只许降，刀3-T6）' },
-  { name: 'guard-drill', cadence: { everySec: 2592000 }, needsPool: true, timeoutMs: 10 * 60 * 1000, handler: runGuardDrill, description: '月度守卫演习（自带30天gate，轮选 auto 守卫全流程弄死→验红→恢复，未叫→P1+Bark，刀4-T4）' },
 
   { name: 'disk-guard', cadence: { everySec: 900 }, needsPool: false, timeoutMs: 120_000, handler: runDiskGuard, description: '磁盘哨兵（15min自gate，宿主SSH逃逸df检测，80/85/90%三级响应，[disk_check]日志）' },
   { name: 'promise-map-nightly', cadence: { cron: '0 2 * * *', tz: 'UTC' }, needsPool: false, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runPromiseMapNightly, description: 'MJ5 S4 承诺地图保鲜对账（每日 UTC 02:00，4 条断言，失败 Bark，刀4）' },
@@ -157,7 +155,7 @@ export const JOBS = [
         `📉 ${account_id} 配额采集连续 ${consecutive_failures} 轮失败（status=${status}）：${last_error ?? 'n/a'}`,
       ).catch(() => {}),
     }),
-    description: '模型账号配额采集（8 账号：Claude×2/Codex×5/Grok，host-exec 到 mmv 跑 usage 探针只回 usage JSON→ops_model_accounts，G1 刀2；PR #5411 漏接线，task eb2f582f）。自 gate 5min + 单轮总预算 60s + 异步 exec（不阻塞事件循环）+ 失败不擦白 pct、连续 3 轮才告警（刀0 止血，task 424d9dd2）',
+    description: '模型账号配额采集（注册6项：Codex×5/Grok；host-exec 到 mmv 读取 usage 后写入 ops_model_accounts；5min 自 gate、单轮60s预算、失败保留读数与连续失败告警）',
   },
   { name: 'openclaw-guards', cadence: { everySec: 300 }, needsPool: true, timeoutMs: 180_000, handler: (pool) => runOpenclawGuards(pool, { raiseFn: raiseAlert }), description: 'us-vps 零执行守卫（决策95477a66收编）：网关内存回收/配置漂移还原/agent教义补种/会话跑场探活路由/触达线活性告警，5min自gate，前身为宿主散装crontab' },
   { name: 'feishu-task-ledger', cadence: { everySec: 3600 }, needsPool: true, timeoutMs: 120_000, handler: (pool) => maybeRunFeishuTaskLedger(pool), description: '飞书群交办入账（决策1c6679cd）：群里派给秋米的活经三道判据（@对象/语义/重发去重）入 tasks 账并投影 Notion，自 gate 60min' },
@@ -327,7 +325,7 @@ export function startSchedulerJobsLoop(pool) {
   if (loopTimer) return loopTimer;
   startCompletionJobsLoop(pool, COMPLETION_JOBS, runSchedulerJobsOnce);
   // 供死人开关比对：预期 job 数写库，加 job 自动同步，哨兵脚本无需硬编码
-  writeSentinelRaw(pool, 'scheduler_jobs_expected', { count: JOBS.length });
+  writeSentinelRaw(pool, 'scheduler_jobs_expected', { count: JOBS.length, names: JOBS.map(job => job.name) });
   loopTimer = setInterval(() => {
     // 重入守卫：一轮 job 最长可达 ~20min（4×5min timeout），慢 handler 会让
     // 60s tick 叠加并发调用同一 handler，踩中各模块自 gate 的先查后写(TOCTOU)竞态。

@@ -17,7 +17,6 @@ import { killProcess, checkServerResources } from './executor.js';
 import { handleTaskFailure } from './quarantine.js';
 import { emit } from './event-bus.js';
 import { getCurrentAlertness, ALERTNESS_LEVELS } from './alertness/index.js';
-import { isPostDrainCooldown } from './drain.js';
 import { assessTaskLiveness } from './executor-contracts.js';
 import { isRetiredDevelopmentTask } from './lib/task-type-registry.js';
 
@@ -227,12 +226,6 @@ export async function getRampedDispatchMax(effectiveDispatchMax) {
 
   // Cap at effectiveDispatchMax
   newRate = Math.min(newRate, effectiveDispatchMax);
-
-  // Post-drain cooldown: limit dispatch rate to 1 for 5 minutes after drain completes
-  if (isPostDrainCooldown() && newRate > 1) {
-    newRate = 1;
-    reason = 'post_drain_cooldown';
-  }
 
   // Save new state
   await pool.query(`

@@ -17,10 +17,10 @@ const controls=[
  'packages/brain/src/__tests__/consciousness-loop-disabled.test.js',
  'packages/brain/src/lib/implementation-ci-snapshot.js','scripts/ci/implementation-snapshot.mjs',
  'packages/brain/src/lib/company-kr-source.js','packages/brain/src/projection/company-kr-registration-notion.js','packages/brain/src/lib/__tests__/implementation-ci-snapshot.test.js',
- 'packages/brain/src/guard-drill.js','packages/brain/src/__tests__/guard-drill.test.js',
  'packages/brain/scripts/smoke/shared-activities-smoke.sh','packages/brain/src/__tests__/integration/shared-activities.pg.integration.test.js',
 ];
 const retired=[
+ 'packages/brain/src/guard-drill.js','packages/brain/src/__tests__/guard-drill.test.js',
  'scripts/ci/check-nightly-green.sh','scripts/ci/__tests__/check-nightly-green.test.sh','scripts/ci/__tests__/basic-nightly-time-evidence.test.mjs',
  'packages/brain/src/lib/company-kr-registration.js','packages/brain/src/lib/__tests__/company-kr-registration.test.js',
  'packages/brain/src/__tests__/integration/company-kr-fixed-source.pg.integration.test.js','packages/brain/src/__tests__/integration/company-kr-registration.pg.integration.test.js',

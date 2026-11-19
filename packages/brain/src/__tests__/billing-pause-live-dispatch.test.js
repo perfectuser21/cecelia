@@ -18,7 +18,7 @@ vi.mock('../slot-allocator.js',()=>({
  harnessSlotCheck:vi.fn(),
 }));
 vi.mock('../quota-cooling.js',()=>({isGlobalQuotaCooling:()=>false,getQuotaCoolingState:()=>({active:false})}));
-vi.mock('../drain.js',()=>({isDraining:()=>false,getDrainStartedAt:()=>null}));
+vi.mock('../drain.js',async original=>({...await original(),isDraining:()=>false,getDrainStartedAt:()=>null}));
 vi.mock('../guidance.js',()=>({getGuidance:async()=>null}));
 vi.mock('../circuit-breaker.js',()=>({isAllowed:()=>true,recordFailure:vi.fn(),recordSuccess:vi.fn()}));
 vi.mock('../alertness/index.js',async original=>({...await original(),canDispatch:()=>true}));
