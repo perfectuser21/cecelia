@@ -83,7 +83,7 @@ NODE
     metadata=$(candidate_docker image inspect --format '{{json .}}' "$tag") || return 1
     target=$(CANDIDATE_METADATA="$metadata" node - "$file" "$expected_image" <<'NODE'
 const fs=require('fs');try{const d=JSON.parse(fs.readFileSync(process.argv[2])),m=JSON.parse(process.env.CANDIDATE_METADATA);
-if(!/^sha256:[a-f0-9]{64}$/.test(m.Id)||d.preexisting.includes(m.Id)||(d.image&&d.image!==m.Id)||(process.argv[3]&&m.Id!==process.argv[3])||!Array.isArray(m.RepoTags)||m.RepoTags.length!==1||m.RepoTags[0]!==d.tag||!Array.isArray(m.RepoDigests)||m.RepoDigests.length||!m.Config?.Env?.includes('GIT_SHA='+d.sha))process.exit(1);
+if(!/^sha256:[a-f0-9]{64}$/.test(m.Id)||d.preexisting.includes(m.Id)||(d.image&&d.image!==m.Id)||(process.argv[3]&&m.Id!==process.argv[3])||!Array.isArray(m.RepoTags)||m.RepoTags.length!==1||m.RepoTags[0]!==d.tag||!Array.isArray(m.RepoDigests)||!(m.RepoDigests.length===0||(m.RepoDigests.length===1&&m.RepoDigests[0]==='cecelia-brain@'+m.Id))||!m.Config?.Env?.includes('GIT_SHA='+d.sha))process.exit(1);
 console.log(m.Id);}catch{process.exit(1)}
 NODE
     ) || { echo '候选副本保留：镜像非本次独占或元数据未知' >&2; return 0; }

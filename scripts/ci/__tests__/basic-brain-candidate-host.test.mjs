@@ -105,7 +105,7 @@ if (a[0] === 'image') {
     const prefix = host === 'local' ? 'local-' : 'remote-';
     const tamper = !state.tags[ref] && id === e.IMAGE;
     const format = option('--format');
-    if (format === '{{json .}}') result(JSON.stringify({Id:id,RepoTags:Object.keys(state.tags).filter(tag=>state.tags[tag]===id),RepoDigests:fault==='self-digest'?['cecelia-brain@'+id]:fault==='digest'?['repo@sha256:digest']:[],Config:{Env:['GIT_SHA='+value.sha]}}));
+    if (format === '{{json .}}') result(JSON.stringify({Id:id,RepoTags:Object.keys(state.tags).filter(tag=>state.tags[tag]===id),RepoDigests:fault==='self-digest'?['cecelia-brain@'+id]:fault==='foreign-self-digest'?['other-repo@'+id]:fault==='wrong-self-digest'?['cecelia-brain@'+e.OLD_IMAGE]:fault==='multiple-self-digests'?['cecelia-brain@'+id,'other-repo@'+id]:fault==='digest'?['repo@sha256:digest']:[],Config:{Env:['GIT_SHA='+value.sha]}}));
     if (format === '{{.Id}}') result(tamper && fault === prefix + 'id' ? e.OLD_IMAGE : id);
     if (format.includes('Architecture')) result(tamper && fault === prefix + 'platform' ? 'linux/arm64' : value.platform);
     if (format.includes('Config.Env')) result('GIT_SHA=' + (tamper && fault === prefix + 'sha' ? 'c'.repeat(40) : value.sha));
@@ -376,7 +376,7 @@ for (const fault of ['', 'health', 'load']) test(`本次独占跨机候选镜像
   const deletes=f.commands().filter(a=>a.includes('rm')&&a.includes(image));
   assert.deepEqual(deletes,[['--context','mac-studio','image','rm',image]]);
 });
-for (const fault of ['same-daemon','extra-tag','digest','referenced','container-query','daemon-drift','info-failed-text']) test(`无法证明独占所有权时保留候选镜像：${fault}`,t=>{
+for (const fault of ['same-daemon','extra-tag','digest','referenced','container-query','daemon-drift','info-failed-text','foreign-self-digest','wrong-self-digest','multiple-self-digests']) test(`无法证明独占所有权时保留候选镜像：${fault}`,t=>{
  const f=fixture(t,fault);freshCandidate(f);
  f.run('set -euo pipefail; export BRAIN_CANDIDATE_OWNERSHIP_FILE="$PWD/logs/brain-candidate-11111111-2222-3333-4444-555555555555.json"; bash scripts/brain-build.sh; SCRIPT_DIR="$PWD/scripts"; ROOT_DIR="$PWD"; source scripts/lib/brain-staging.sh; stage_candidate "$EXPECTED_SHA" "$IMAGE" 1.0.0');
  assert.ok(f.state('mac-studio').images[image]);

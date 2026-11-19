@@ -140,9 +140,9 @@ const CANDIDATE_CACHE_INPUTS={
  'scripts/brain-build.sh':'ab7d115536f0a59e0ed382ff9b53392d5ba0124e729f76a4b03dd866938bf061',
  'scripts/brain-deploy.sh':'4466ff61442d1853f5380baad33be6aea3f90d29cb6ee94dff07c239e04abf80',
  'scripts/staging-deploy.sh':'96042c7754e8eeaf770405227517c09b55d0300481370d6887912fbc1b815049',
- 'scripts/lib/brain-candidate-docker.sh':'e7a935d2aeb6bbbf1445b2ae73a77d2391449c0b8dfe86f8c4f9ac733237c59b',
+ 'scripts/lib/brain-candidate-docker.sh':'55e2955d9dad60d6a69c2471e161a9cc47e4d976e5e684f10412bfddb735177a',
  'scripts/lib/brain-staging.sh':'6098ce2dfce78eb444eaaea0f21c4edda29f68f7661bec7c3b6b1ec09deabd8d',
- 'scripts/ci/__tests__/basic-brain-candidate-host.test.mjs':'8b41fadb442f60eb93d806d2446c357af85ea7ec694e38d8d96b2c9836bcba68',
+ 'scripts/ci/__tests__/basic-brain-candidate-host.test.mjs':'c98a6753c143d73e07f93b4dbed8eb57fe51783a074014e107b108c21cf00b2b',
 };
 export function reviewedPilotControls(profile,paths){
  if(!paths?.includes(PILOT_HOST))return profile;
