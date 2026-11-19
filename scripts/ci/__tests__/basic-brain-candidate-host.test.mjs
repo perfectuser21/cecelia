@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, copyFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, copyFileSync, existsSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -58,7 +58,7 @@ if (a[0] === 'context') {
   console.log(fault === 'context-tcp' ? 'tcp://mac-studio:2375' : 'ssh://administrator@mac-studio');
   process.exit(0);
 }
-if (a[0] === 'info') process.exit(0);
+if (a[0] === 'info') { if(fault==='info-failed-text'&&fs.existsSync(e.RECEIPT)){console.log(host==='local'?'production-daemon':'candidate-daemon');process.exit(42);} console.log(host === 'local' || fault === 'same-daemon' ? 'production-daemon' : (fault === 'daemon-drift' && fs.existsSync(e.RECEIPT) ? 'changed-daemon' : 'candidate-daemon')); process.exit(0); }
 const stateFile = path.join(e.STATE_DIR, host + '.json');
 const state = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
 const save = () => fs.writeFileSync(stateFile, JSON.stringify(state));
@@ -82,21 +82,30 @@ if (a[0] === 'build') {
   enforceCandidate();
   if (fault === 'build') fail('build failed');
   const sha = option('--build-arg').replace('GIT_SHA=', '');
+  if(host!=='local') {
+    const tag=option('-t'),logs=path.join(e.STATE_DIR,'../repo/logs');
+    const owners=fs.readdirSync(logs).filter(x=>x.endsWith('.json')).map(x=>JSON.parse(fs.readFileSync(path.join(logs,x),'utf8')));
+    const owner=owners.find(x=>x.tag===tag);
+    if(!owner||owner.sha!==sha||owner.image||owner.candidate!==(fault==='same-daemon'?'production-daemon':'candidate-daemon')||owner.production!=='production-daemon'||JSON.stringify([...owner.preexisting].sort())!==JSON.stringify(Object.keys(state.images).sort())) fail('ownership was not recorded before build');
+  }
   state.images[e.IMAGE] = { sha, platform: 'linux/amd64' };
+  if(fault==='extra-tag') state.tags['other:shared']=e.IMAGE;
   state.source = fs.readFileSync(path.join(a.at(-1), 'marker.txt'), 'utf8');
   if (fs.existsSync(path.join(a.at(-1), 'UNTRACKED_SECRET'))) fail('dirty source leak');
   for (let n = 0; n < a.length; n++) if (a[n] === '-t') state.tags[a[n + 1]] = e.IMAGE;
   if (a.includes('--iidfile')) fs.writeFileSync(option('--iidfile'), e.IMAGE + '\n');
   if (fault === 'tag-race') for (const tag of Object.keys(state.tags)) state.tags[tag] = e.OLD_IMAGE;
-  save(); process.exit(0);
+  save(); if(fault==='partial-build') fail('build loaded image then failed'); process.exit(0);
 }
 if (a[0] === 'image') {
+  if (a[1] === 'ls') { if (fault === 'inventory') fail('inventory unavailable'); result(Object.keys(state.images).join('\n')); }
   if (a[1] === 'inspect') {
     const ref = a.at(-1), id = state.tags[ref] || ref, value = state.images[id];
     if (!value) fail('No such image');
     const prefix = host === 'local' ? 'local-' : 'remote-';
     const tamper = !state.tags[ref] && id === e.IMAGE;
     const format = option('--format');
+    if (format === '{{json .}}') result(JSON.stringify({Id:id,RepoTags:Object.keys(state.tags).filter(tag=>state.tags[tag]===id),RepoDigests:fault==='self-digest'?['cecelia-brain@'+id]:fault==='foreign-self-digest'?['other-repo@'+id]:fault==='wrong-self-digest'?['cecelia-brain@'+e.OLD_IMAGE]:fault==='multiple-self-digests'?['cecelia-brain@'+id,'other-repo@'+id]:fault==='digest'?['repo@sha256:digest']:[],Config:{Env:['GIT_SHA='+value.sha]}}));
     if (format === '{{.Id}}') result(tamper && fault === prefix + 'id' ? e.OLD_IMAGE : id);
     if (format.includes('Architecture')) result(tamper && fault === prefix + 'platform' ? 'linux/arm64' : value.platform);
     if (format.includes('Config.Env')) result('GIT_SHA=' + (tamper && fault === prefix + 'sha' ? 'c'.repeat(40) : value.sha));
@@ -117,11 +126,12 @@ if (a[0] === 'image') {
     const loaded = JSON.parse(input); state.images[loaded.id] = loaded.image; save(); process.exit(0);
   }
   if (a[1] === 'prune') { enforceProduction(); process.exit(0); }
-  if (a[1] === 'rm') { delete state.tags[a[2]]; save(); process.exit(0); }
+  if (a[1] === 'rm') { if(fault==='rm-failed') fail('delete failed'); if (a[2].startsWith('sha256:')) { delete state.images[a[2]]; for(const tag of Object.keys(state.tags)) if(state.tags[tag]===a[2]) delete state.tags[tag]; } else delete state.tags[a[2]]; save(); if(fault==='rm-lost') fail('delete response lost'); process.exit(0); }
 }
 if (a[0] === 'tag') { enforceProduction(); state.tags[a[2]] = a[1]; save(); process.exit(0); }
 if (a[0] === 'images') result('1GB');
 if (a[0] === 'ps') {
+  if (a.includes('-aq')) { if(fault==='container-query') fail('container query failed'); result(fault==='referenced'?'foreign-container':''); }
   if (contains('cecelia-bluegreen-sidecar')) { enforceProduction(); result(''); }
   enforceCandidate();
   if (fault === 'cleanup-list' && state.verified) fail('candidate connection lost');
@@ -151,6 +161,7 @@ if (a[0] === 'run') {
 }
 if (a[0] === 'inspect') {
   enforceCandidate();
+  if (a[1] === 'foreign-container') result(e.IMAGE);
   if (!state.containers[a[1]]) fail('No such container');
   if (contains('staging.request')) result(fault === 'owner' ? 'another-request' : state.containers[a[1]]);
   if (contains('cecelia.staging')) result(fault === 'label' ? 'unowned' : 'admission-v1');
@@ -192,7 +203,7 @@ function fixture(t, fault = '', context = 'mac-studio') {
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   for (const path of ['bin', 'state', 'fixture-hooks', 'repo/scripts/lib', 'repo/packages/brain', 'repo/logs']) mkdirSync(join(dir, path), { recursive: true });
   const repo = join(dir, 'repo');
-  for (const file of ['brain-build.sh', 'staging-verify.sh', 'lib/brain-staging.sh', 'lib/brain-candidate-docker.sh']) copyFileSync(join(root, 'scripts', file), join(repo, 'scripts', file));
+  for (const file of ['brain-build.sh', 'staging-deploy.sh', 'staging-verify.sh', 'lib/brain-staging.sh', 'lib/brain-candidate-docker.sh']) copyFileSync(join(root, 'scripts', file), join(repo, 'scripts', file));
   writeFileSync(join(dir, 'bin/docker'), `#!${process.execPath}\n${dockerFixture}`, { mode: 0o755 });
   for (const name of ['sleep', 'flock']) writeFileSync(join(dir, 'bin', name), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
   writeFileSync(join(dir, 'bin/df'), '#!/bin/sh\nprintf "Filesystem 1024-blocks Used Available Capacity Mounted\\nfixture 30000000 5000000 25000000 10%% /\\n"\n', { mode: 0o755 });
@@ -350,4 +361,93 @@ test('自动发布SSH端点贯穿真实构建、镜像导入与隔离数据库�
   assert.ok(commands.some(args=>args[0]==='--host'&&args.includes('build')));
   assert.ok(commands.some(args=>args[0]==='--host'&&args.includes('pg_restore')));
   assert.ok(!commands.some(args=>args[0]!=='--host'&&args.includes('pg_restore')));
+});
+
+function freshCandidate(f) {
+  const file=join(f.dir,'state/mac-studio.json'),state=f.state('mac-studio');
+  delete state.images[image];writeFileSync(file,JSON.stringify(state));
+}
+for (const fault of ['', 'health', 'load']) test(`本次独占跨机候选镜像在成功或失败后精确回收：${fault||'success'}`,t=>{
+  const f=fixture(t,fault);freshCandidate(f);
+  const result=f.run('set -euo pipefail; export BRAIN_CANDIDATE_OWNERSHIP_FILE="$PWD/logs/brain-candidate-11111111-2222-3333-4444-555555555555.json"; bash scripts/brain-build.sh; SCRIPT_DIR="$PWD/scripts"; ROOT_DIR="$PWD"; source scripts/lib/brain-staging.sh; stage_candidate "$EXPECTED_SHA" "$IMAGE" 1.0.0');
+  assert.equal(result.status===0,fault==='');
+  assert.equal(f.state('mac-studio').images[image],undefined,'本次候选镜像遗留在构建daemon');
+  assert.ok(f.state('local').images[image],'生产镜像不得被候选回收删除');
+  const deletes=f.commands().filter(a=>a.includes('rm')&&a.includes(image));
+  assert.deepEqual(deletes,[['--context','mac-studio','image','rm',image]]);
+});
+for (const fault of ['same-daemon','extra-tag','digest','referenced','container-query','daemon-drift','info-failed-text','foreign-self-digest','wrong-self-digest','multiple-self-digests']) test(`无法证明独占所有权时保留候选镜像：${fault}`,t=>{
+ const f=fixture(t,fault);freshCandidate(f);
+ f.run('set -euo pipefail; export BRAIN_CANDIDATE_OWNERSHIP_FILE="$PWD/logs/brain-candidate-11111111-2222-3333-4444-555555555555.json"; bash scripts/brain-build.sh; SCRIPT_DIR="$PWD/scripts"; ROOT_DIR="$PWD"; source scripts/lib/brain-staging.sh; stage_candidate "$EXPECTED_SHA" "$IMAGE" 1.0.0');
+ assert.ok(f.state('mac-studio').images[image]);
+ assert.equal(f.commands().some(a=>a.includes('rm')&&a.includes(image)),false);
+});
+
+test('独立build成功及部分构建失败都精确清理；失败退出码不被cleanup覆盖',t=>{
+ for(const fault of ['', 'partial-build']) {
+  const f=fixture(t,fault);freshCandidate(f);const result=runBuild(f);
+  assert.equal(result.status,fault?42:0,result.stderr+result.stdout);
+  assert.equal(f.state('mac-studio').images[image],undefined);
+  assert.ok(f.commands().some(a=>a.includes('rm')&&a.includes(image)));
+ }
+});
+test('完整预存ID集合保护同ID重建，不回收已存在无tag镜像',t=>{
+ const f=fixture(t);const result=runBuild(f);assert.equal(result.status,0,result.stderr);
+ assert.ok(f.state('mac-studio').images[image]);
+ assert.equal(f.commands().some(a=>a.includes('rm')&&a.includes(image)),false);
+});
+test('构建前inventory未知必须失败，不能创建镜像或追认清理',t=>{
+ const f=fixture(t,'inventory');freshCandidate(f);const result=runBuild(f);
+ assert.notEqual(result.status,0);assert.equal(f.commands().some(a=>a.includes('build')),false);
+ assert.equal(f.commands().some(a=>a.includes('rm')&&a.includes(image)),false);
+});
+test('同SHA每次build使用不同UUIDtag；ownership记录在build前且延续到stage',t=>{
+ const f=fixture(t);freshCandidate(f);
+ assert.equal(f.run('export BRAIN_CANDIDATE_OWNERSHIP_FILE="$PWD/logs/brain-candidate-11111111-2222-3333-4444-555555555555.json"; bash scripts/brain-build.sh').status,0);
+ const record=JSON.parse(readFileSync(join(f.repo,'logs/brain-candidate-11111111-2222-3333-4444-555555555555.json'),'utf8'));
+ assert.equal(record.sha,f.sha);assert.equal(record.image,image);assert.ok(!record.preexisting.includes(image));
+ assert.equal(record.candidate,'candidate-daemon');assert.equal(record.production,'production-daemon');
+ assert.ok(f.state('mac-studio').images[image]);
+ const result=f.run('set -euo pipefail; export BRAIN_CANDIDATE_OWNERSHIP_FILE="$PWD/logs/brain-candidate-11111111-2222-3333-4444-555555555555.json"; SCRIPT_DIR="$PWD/scripts"; ROOT_DIR="$PWD"; source scripts/lib/brain-staging.sh; stage_candidate "$EXPECTED_SHA" "$IMAGE" 1.0.0');
+ assert.equal(result.status,0,result.stderr);assert.equal(existsSync(join(f.repo,'logs/brain-candidate-11111111-2222-3333-4444-555555555555.json')),false);
+ assert.equal(runBuild(f).status,0);
+ const tags=f.commands().filter(a=>a.includes('build')).map(a=>a[a.indexOf('-t')+1]);
+ assert.equal(tags.length,2);assert.notEqual(tags[0],tags[1]);
+ for(const tag of tags)assert.match(tag,/^cecelia-brain:candidate-[a-f0-9]{40}-[a-f0-9-]{36}$/);
+});
+
+for(const fault of ['rm-failed','rm-lost'])test(`删除结果未知不能重复发送，保留原stage结果：${fault}`,t=>{
+ const f=fixture(t,fault);freshCandidate(f);
+ const result=f.run('set -euo pipefail; export BRAIN_CANDIDATE_OWNERSHIP_FILE="$PWD/logs/brain-candidate-11111111-2222-3333-4444-555555555555.json"; bash scripts/brain-build.sh; SCRIPT_DIR="$PWD/scripts"; ROOT_DIR="$PWD"; source scripts/lib/brain-staging.sh; stage_candidate "$EXPECTED_SHA" "$IMAGE" 1.0.0; candidate_image_cleanup "$EXPECTED_SHA" "$IMAGE" || true');
+ assert.equal(result.status,0,result.stderr);
+ assert.equal(f.commands().filter(a=>a.includes('rm')&&a.includes(image)).length,1);
+ const receipt=JSON.parse(readFileSync(join(f.repo,'logs/brain-candidate-11111111-2222-3333-4444-555555555555.json'),'utf8'));
+ assert.equal(receipt.delete_attempted,true);assert.equal(receipt.cleanup_status,'delete_unknown');
+ assert.equal(Boolean(f.state('mac-studio').images[image]),fault==='rm-failed');
+ assert.equal(realpathSync(f.receipt().candidate_ownership_file),realpathSync(join(f.repo,'logs/brain-candidate-11111111-2222-3333-4444-555555555555.json')));
+ const cleanup=f.run('bash scripts/staging-deploy.sh --cleanup');
+ assert.notEqual(cleanup.status,0);
+ assert.equal(f.commands().filter(a=>a.includes('rm')&&a.includes(image)).length,1);
+ assert.ok(f.receipt(),'未确认回收必须保留原绑定');
+});
+
+test('实际staging cleanup拒绝坏绑定，合法旧receipt明确无镜像所有权',t=>{
+ const f=fixture(t);
+ for(const value of ['{',JSON.stringify({candidate_ownership_file:null}),JSON.stringify({candidate_ownership_file:'/tmp/foreign.json',sha:f.sha,image_id:image})]) {
+  writeFileSync(f.env.RECEIPT,value);
+  const result=f.run('bash scripts/staging-deploy.sh --cleanup');
+  assert.notEqual(result.status,0,result.stdout+result.stderr);
+  assert.equal(readFileSync(f.env.RECEIPT,'utf8'),value);
+ }
+ writeFileSync(f.env.RECEIPT,JSON.stringify({sha:f.sha,image_id:image}));
+ const legacy=f.run('bash scripts/staging-deploy.sh --cleanup');assert.equal(legacy.status,0,legacy.stderr);
+ assert.match(legacy.stdout,/无候选镜像所有权绑定/);
+ assert.equal(f.commands().some(a=>a.includes('rm')&&a.includes(image)),false);
+});
+
+test('Docker29 buildx本仓唯一自指digest不阻止本次独占镜像回收',t=>{
+ const f=fixture(t,'self-digest');freshCandidate(f);
+ const result=runBuild(f);assert.equal(result.status,0,result.stderr+result.stdout);
+ assert.equal(f.state('mac-studio').images[image],undefined,'真实Docker本仓自指digest导致候选遗留');
+ assert.deepEqual(f.commands().filter(a=>a.includes('rm')&&a.includes(image)),[['--context','mac-studio','image','rm',image]]);
 });

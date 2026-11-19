@@ -29,7 +29,18 @@ BUILD_TMP_ROOT="${BRAIN_BUILD_TMPDIR:-$ROOT_DIR/.brain-build-tmp}"
 mkdir -p "$BUILD_TMP_ROOT"
 TEMP_BUILD=$(mktemp -d "$BUILD_TMP_ROOT/cecelia-brain-build-XXXXXX")
 # shellcheck disable=SC2064
-trap "rm -rf '$TEMP_BUILD'" EXIT
+CANDIDATE_OWNERSHIP_CREATED=false
+CANDIDATE_HANDOFF=false
+[[ -z "${BRAIN_CANDIDATE_OWNERSHIP_FILE:-}" ]] || CANDIDATE_HANDOFF=true
+build_exit() {
+  local status=$?
+  if [[ "$CANDIDATE_OWNERSHIP_CREATED" == true && ( "$status" != 0 || "$CANDIDATE_HANDOFF" == false ) ]]; then
+    candidate_image_cleanup "${BUILD_SHA:-}" || echo '候选镜像所有权未确认或回收失败，保留副本' >&2
+  fi
+  rm -rf "$TEMP_BUILD"
+  exit "$status"
+}
+trap build_exit EXIT
 
 # v1.2.0: fetch 最新 origin/main 后用 FETCH_HEAD 作 archive 源
 echo "  Fetch origin/${DEPLOY_BRANCH}..."
@@ -97,11 +108,21 @@ fi
 
 # 从干净快照构建；远端只构建候选，生产 tag 等同 ID/SHA 的导入校验通过后更新。
 if [[ -n "${BRAIN_CANDIDATE_DOCKER_CONTEXT:-}" || -n "${BRAIN_CANDIDATE_DOCKER_HOST:-}" ]]; then
+  mkdir -p "$ROOT_DIR/logs"
+  BRAIN_CANDIDATE_OWNERSHIP_FILE="${BRAIN_CANDIDATE_OWNERSHIP_FILE:-$ROOT_DIR/logs/brain-candidate-$(node -e 'process.stdout.write(require("crypto").randomUUID())').json}"
+  CANDIDATE_TAG="${IMAGE_REPO}:candidate-${BUILD_SHA}-$(node -e 'process.stdout.write(require("crypto").randomUUID())')"
+  candidate_image_prepare "$BRAIN_CANDIDATE_OWNERSHIP_FILE" "$CANDIDATE_TAG" "$BUILD_SHA"
+  CANDIDATE_OWNERSHIP_CREATED=true
   candidate_docker buildx build --builder "$CANDIDATE_BUILDER" --load --platform linux/amd64 --iidfile "$TEMP_BUILD/.candidate-image-id" \
-    -t "${IMAGE_REPO}:candidate-${BUILD_SHA}" \
+    -t "$CANDIDATE_TAG" \
     --build-arg "GIT_SHA=${BUILD_SHA}" \
     -f "$TEMP_BUILD/packages/brain/Dockerfile" "$TEMP_BUILD"
   CANDIDATE_ID=$(cat "$TEMP_BUILD/.candidate-image-id")
+  node - "$BRAIN_CANDIDATE_OWNERSHIP_FILE" "$CANDIDATE_ID" <<'NODE'
+const fs=require('fs'),p=process.argv[2],d=JSON.parse(fs.readFileSync(p));
+if(!/^sha256:[a-f0-9]{64}$/.test(process.argv[3]))process.exit(1);
+d.image=process.argv[3];fs.writeFileSync(p+'.image',JSON.stringify(d),{flag:'wx',mode:0o600});fs.renameSync(p+'.image',p);
+NODE
   candidate_verify_image candidate_docker "$CANDIDATE_ID" "$BUILD_SHA"
   # 用 ID 导出不携带可变发布 tag；任一端失败均拒绝晋升。
   candidate_docker image save "$CANDIDATE_ID" | docker image load
@@ -144,7 +165,4 @@ echo "  ${IMAGE_REPO}:latest"
 [[ -n "${PREV_TAG:-}" ]] && echo "  (旧镜像保活) ${PREV_TAG}"
 echo "  Size: $(docker images "cecelia-brain:${VERSION}" --format '{{.Size}}')"
 
-# Build 完成后清理 dangling 镜像，防止虚拟磁盘膨胀
-echo ""
-echo "=== 清理 dangling 镜像 ==="
-docker image prune -f --filter "dangling=true" 2>/dev/null || true
+# 候选镜像仅由本人构建票据精确回收；不执行全局镜像清扫。

@@ -135,6 +135,15 @@ const PERSISTENT_DRAIN_CLIENT_INPUTS={
  'scripts/brain-deploy.sh':'3286c4ee9f58d38637ec682f482519500526b9711fa2925866412953b47fc428',
  [PERSISTENT_DRAIN_CLIENT]:'2dab5aacee384f5e9c1ca9ae5dddf7a26a1ac725e87fc2bc93265f5da8c2ed2b',
 };
+// 候选缓存回收仅接受本次完整控制组；旧 Builder/Pilot 字节与身份保持。
+const CANDIDATE_CACHE_INPUTS={
+ 'scripts/brain-build.sh':'ab7d115536f0a59e0ed382ff9b53392d5ba0124e729f76a4b03dd866938bf061',
+ 'scripts/brain-deploy.sh':'4466ff61442d1853f5380baad33be6aea3f90d29cb6ee94dff07c239e04abf80',
+ 'scripts/staging-deploy.sh':'96042c7754e8eeaf770405227517c09b55d0300481370d6887912fbc1b815049',
+ 'scripts/lib/brain-candidate-docker.sh':'55e2955d9dad60d6a69c2471e161a9cc47e4d976e5e684f10412bfddb735177a',
+ 'scripts/lib/brain-staging.sh':'6098ce2dfce78eb444eaaea0f21c4edda29f68f7661bec7c3b6b1ec09deabd8d',
+ 'scripts/ci/__tests__/basic-brain-candidate-host.test.mjs':'c98a6753c143d73e07f93b4dbed8eb57fe51783a074014e107b108c21cf00b2b',
+};
 export function reviewedPilotControls(profile,paths){
  if(!paths?.includes(PILOT_HOST))return profile;
  if(profile!==REVIEWED_NIGHTLY_STATUS)reject();
@@ -143,7 +152,8 @@ export function reviewedPilotControls(profile,paths){
 const PG_LAYERING_PATH='tests/brain-ci-pg-layering.test.ts';
 const PG_LAYERING_DIGEST='2b6e813d5bc0f5fe546d25a996b21dc208dbb142c426de05fe5f24e45b06f774';
 export async function reviewedPilotSourceControls(profile,paths,read){
- const controls=reviewedPilotControls(profile,paths);
+ let controls=reviewedPilotControls(profile,paths);
+ if(paths?.includes(PILOT_HOST)&&createHash('sha256').update(await read(CANDIDATE_BUILDER_MARKER)).digest('hex')===CANDIDATE_CACHE_INPUTS[CANDIDATE_BUILDER_MARKER])controls={...controls,...CANDIDATE_CACHE_INPUTS};
  if(paths?.includes(PILOT_HOST)&&createHash('sha256').update(await read(PG_LAYERING_PATH)).digest('hex')===PG_LAYERING_DIGEST)return {...controls,[PG_LAYERING_PATH]:PG_LAYERING_DIGEST};
  return controls;
 }
@@ -158,7 +168,7 @@ export async function mainAutoDeployProfile(paths,read){
  if(!Array.isArray(paths))reject();
  const text=await read(CANDIDATE_BUILDER_MARKER);if(typeof text!=='string')reject();
  const digest=createHash('sha256').update(text).digest('hex');
- if(digest===CANDIDATE_BUILDER_INPUTS[CANDIDATE_BUILDER_MARKER]){
+ if(digest===CANDIDATE_BUILDER_INPUTS[CANDIDATE_BUILDER_MARKER]||(paths.includes(PILOT_HOST)&&digest===CANDIDATE_CACHE_INPUTS[CANDIDATE_BUILDER_MARKER])){
   const runtime=await read(RUNTIME_IDEMPOTENCE_MARKER);if(typeof runtime!=='string')reject();
   const runtimeDigest=createHash('sha256').update(runtime).digest('hex');
   if(runtimeDigest===RUNTIME_IDEMPOTENCE_INPUTS[RUNTIME_IDEMPOTENCE_MARKER]){

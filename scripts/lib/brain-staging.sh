@@ -41,9 +41,9 @@ stage_remove_network() {
 
 stage_receipt() {
     local status="$1"
-    STAGE_STATUS="$status" SHA="$sha" IMAGE="$image" VERSION="$version" STAGE_REQUEST="$request_id" STAGE_PHASE="${phase:-preflight}" STAGE_EXIT="${exit_status:-0}" VERIFY_FILE="$verification_file" node -e '
+    STAGE_STATUS="$status" SHA="$sha" IMAGE="$image" VERSION="$version" STAGE_REQUEST="$request_id" STAGE_PHASE="${phase:-preflight}" STAGE_EXIT="${exit_status:-0}" VERIFY_FILE="$verification_file" CANDIDATE_OWNERSHIP="${BRAIN_CANDIDATE_OWNERSHIP_FILE:-}" node -e '
       const fs=require("fs"),p=process.argv[1],e=process.env;
-      fs.writeFileSync(p+".new",JSON.stringify({status:e.STAGE_STATUS,request_id:e.STAGE_REQUEST,sha:e.SHA,image_id:e.IMAGE,version:e.VERSION,phase:e.STAGE_PHASE,exit_code:Number(e.STAGE_EXIT),isolated:e.STAGE_STATUS==="success",database:fs.existsSync(e.VERIFY_FILE)?JSON.parse(fs.readFileSync(e.VERIFY_FILE,"utf8")):null,verified_at:new Date().toISOString()}));fs.renameSync(p+".new",p);
+      fs.writeFileSync(p+".new",JSON.stringify({candidate_ownership_file:e.CANDIDATE_OWNERSHIP,status:e.STAGE_STATUS,request_id:e.STAGE_REQUEST,sha:e.SHA,image_id:e.IMAGE,version:e.VERSION,phase:e.STAGE_PHASE,exit_code:Number(e.STAGE_EXIT),isolated:e.STAGE_STATUS==="success",database:fs.existsSync(e.VERIFY_FILE)?JSON.parse(fs.readFileSync(e.VERIFY_FILE,"utf8")):null,verified_at:new Date().toISOString()}));fs.renameSync(p+".new",p);
     ' "$ROOT_DIR/logs/brain-staging-receipt.json"
 }
 
@@ -59,7 +59,7 @@ stage_candidate() (
     phase=preflight exit_status=0
     verification_file="$ROOT_DIR/logs/brain-staging-$request_id.database.json"
     stage_receipt running
-    trap 'exit_status=$?; if [[ "$exit_status" != 0 ]]; then stage_remove_container "$app" "$request_id" || true; stage_remove_container "$db" "$request_id" || true; stage_remove_network "$request_id" || true; stage_receipt failed || true; fi; exit "$exit_status"' EXIT
+    trap 'exit_status=$?; if [[ "$exit_status" != 0 ]]; then stage_remove_container "$app" "$request_id" || true; stage_remove_container "$db" "$request_id" || true; stage_remove_network "$request_id" || true; stage_receipt failed || true; fi; candidate_image_cleanup "$sha" "$image" || echo "候选副本未回收，保留检查" >&2; exit "$exit_status"' EXIT
     local actual_sha
     actual_sha=$(candidate_docker image inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$image" | sed -n 's/^GIT_SHA=//p')
     [[ "$actual_sha" == "$sha" ]] || { echo '候选镜像 SHA 不符' >&2; return 1; }
@@ -133,6 +133,7 @@ stage_candidate() (
     stage_remove_container "$app" "$request_id"
     stage_remove_container "$db" "$request_id"
     stage_remove_network "$request_id"
+    candidate_image_cleanup "$sha" "$image" || echo "候选副本未回收，保留检查" >&2
     phase=verified
     stage_receipt success
     echo "STAGING_VERIFIED sha=$sha image=$image request=$request_id"
