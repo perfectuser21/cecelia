@@ -129,10 +129,16 @@ const PILOT_HOST_INPUTS={
  [PILOT_CLI]:'96287d46c2b7de3fbc7757d04818e4b09d62c0e726d3d619282bd183aa9ba2a3',
  [PILOT_HOST]:'a7388d9dbcd5da7aa8253981800d1097cddd1c388f8cccb3c25d0ab4dcf570d4',
 };
+const PERSISTENT_DRAIN_CLIENT='scripts/lib/brain-drain-client.sh';
+const PERSISTENT_DRAIN_CLIENT_INPUTS={
+ 'scripts/__tests__/brain-deploy-sha-readonly.test.sh':'2e8fca5f4b7901ba8072879df0e60c9756632cf6584a23069440545963515586',
+ 'scripts/brain-deploy.sh':'3286c4ee9f58d38637ec682f482519500526b9711fa2925866412953b47fc428',
+ [PERSISTENT_DRAIN_CLIENT]:'2dab5aacee384f5e9c1ca9ae5dddf7a26a1ac725e87fc2bc93265f5da8c2ed2b',
+};
 export function reviewedPilotControls(profile,paths){
  if(!paths?.includes(PILOT_HOST))return profile;
  if(profile!==REVIEWED_NIGHTLY_STATUS)reject();
- return {...profile,...PILOT_HOST_INPUTS};
+ return {...profile,...PILOT_HOST_INPUTS,...(paths.includes(PERSISTENT_DRAIN_CLIENT)?PERSISTENT_DRAIN_CLIENT_INPUTS:{})};
 }
 const PG_LAYERING_PATH='tests/brain-ci-pg-layering.test.ts';
 const PG_LAYERING_DIGEST='2b6e813d5bc0f5fe546d25a996b21dc208dbb142c426de05fe5f24e45b06f774';
@@ -145,6 +151,7 @@ export function recordReviewedPilotSource({profile,paths,relation}){
  if(paths?.includes(PILOT_HOST)){
   if(profile!==REVIEWED_NIGHTLY_STATUS)reject();
   relation(PILOT_CLI,PILOT_HOST,'reviewed_pilot_foundation_host_source');
+  if(paths.includes(PERSISTENT_DRAIN_CLIENT))relation('scripts/brain-deploy.sh',PERSISTENT_DRAIN_CLIENT,'reviewed_persistent_process_drain_client');
  }
 }
 export async function mainAutoDeployProfile(paths,read){
