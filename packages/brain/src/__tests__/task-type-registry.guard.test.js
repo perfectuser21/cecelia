@@ -113,7 +113,7 @@ export const REMAINING_LEGACY_SITES = {
   // 调参轴（另两个已知独立轴：model-profile.js 的模型路由、role-registry.js 的角色归属）
   'task-weight.js': ['25:TASK_TYPE_ADJUSTMENTS'],
   // routeTask保留research人工处理与通用任务技能路由，和静态skill映射的值不同。
-  'tick-helpers.js': ['28:TASK_TYPE_AGENT_MAP'],
+  'tick-helpers.js': ['27:TASK_TYPE_AGENT_MAP'],
 };
 
 describe('task-type-registry 守卫', () => {

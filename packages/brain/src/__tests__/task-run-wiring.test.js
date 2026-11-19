@@ -290,12 +290,27 @@ describe('fail-open — 留痕失败绝不拖垮执行主链', () => {
 });
 
 describe('执行路径接线钉子（漏接即红）', () => {
-  it('executor：triggerCeceliaRun 是经 startRunForExecResult 的漏斗包装，内层改名', () => {
+  it('executor：真实准入外层调用隔离内层，执行结果仍经 startRunForExecResult 漏斗', () => {
     const src = read('src/executor.js');
     expect(src).toMatch(/from '\.\/lib\/task-run\.js'/);
-    expect(src).toMatch(/async function triggerCeceliaRun\(task\)\s*\{\s*assertExternalExecutionAllowed\(\);[\s\S]*?if \(isRetiredDecomposition\(task\)\)\s*\{[\s\S]*?return \{ success: false,[\s\S]*?\}\s*const execResult = await _triggerCeceliaRunInner\(task\);/);
-    expect(src).toMatch(/startRunForExecResult\(\{ task, execResult, source \}\)/);
-    expect(src).toMatch(/async function _triggerCeceliaRunInner\(task\)/);
+    const wrapper = src.match(/^async function triggerCeceliaRun\(task, options = \{\}\) \{[\s\S]*?^\}/m)?.[0];
+    const admitted = src.match(/^async function triggerAdmittedCeceliaRun\(task\) \{[\s\S]*?^\}/m)?.[0];
+    expect(wrapper).toBeDefined();
+    expect(admitted).toBeDefined();
+    // 范围限定为各自真实函数体，不允许跨到其它函数找到同名调用蒙过。
+    expect(wrapper).toContain('const borrowed = ownsBrainLaunch(options.drainAdmission, task?.id);');
+    expect(wrapper).toContain('const admission = borrowed ? options.drainAdmission : beginBrainLaunch(task?.id);');
+    expect(wrapper).toMatch(/if \(!admission\) return \{ success: false, reason: 'draining'/);
+    expect(wrapper).toMatch(/try \{\s*return await triggerAdmittedCeceliaRun\(task\);\s*\} finally \{\s*if \(!borrowed\) finishBrainLaunch\(admission\);\s*\}/);
+    expect(admitted).toMatch(/^async function triggerAdmittedCeceliaRun\(task\)\s*\{\s*assertExternalExecutionAllowed\(\);/);
+    expect(admitted).toMatch(/if \(isRetiredDecomposition\(task\)\)\s*\{\s*return \{ success: false,/);
+    const execution = 'const execResult = await _triggerCeceliaRunInner(task);';
+    const run = 'const runId = await startRunForExecResult({ task, execResult, source });';
+    expect(admitted).toContain(execution);
+    expect(admitted).toContain(run);
+    expect(admitted.indexOf(execution)).toBeGreaterThan(admitted.indexOf('if (isRetiredDecomposition(task))'));
+    expect(admitted.indexOf(run)).toBeGreaterThan(admitted.indexOf(execution));
+    expect(src).toMatch(/^async function _triggerCeceliaRunInner\(task\)/m);
   });
 
   it('dispatcher：兜底 startRunForExecResult，且 dispatched 事件带 task_id（裸跑检测 join 键）', () => {

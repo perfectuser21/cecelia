@@ -134,6 +134,13 @@ export function reviewedPilotControls(profile,paths){
  if(profile!==REVIEWED_NIGHTLY_STATUS)reject();
  return {...profile,...PILOT_HOST_INPUTS};
 }
+const PG_LAYERING_PATH='tests/brain-ci-pg-layering.test.ts';
+const PG_LAYERING_DIGEST='2b6e813d5bc0f5fe546d25a996b21dc208dbb142c426de05fe5f24e45b06f774';
+export async function reviewedPilotSourceControls(profile,paths,read){
+ const controls=reviewedPilotControls(profile,paths);
+ if(paths?.includes(PILOT_HOST)&&createHash('sha256').update(await read(PG_LAYERING_PATH)).digest('hex')===PG_LAYERING_DIGEST)return {...controls,[PG_LAYERING_PATH]:PG_LAYERING_DIGEST};
+ return controls;
+}
 export function recordReviewedPilotSource({profile,paths,relation}){
  if(paths?.includes(PILOT_HOST)){
   if(profile!==REVIEWED_NIGHTLY_STATUS)reject();
@@ -172,7 +179,7 @@ async function checkerRepairProfile(read,paths){
 export async function collectReviewedCloseoutDeep({read,paths,relation}){
  if(!paths?.includes(CLOSEOUT_PROFILE_PATH))reject();
  const profile=paths.includes(REPAIR_PROFILE_PATH)?await checkerRepairProfile(read,paths):REVIEWED_CLOSEOUT;
- for(const [path,digest] of Object.entries(reviewedPilotControls(profile,paths))){if(digest===null){if(paths.includes(path))reject();continue;}const bytes=await read(path);if(createHash('sha256').update(bytes).digest('hex')!==digest)reject();}
+ for(const [path,digest] of Object.entries(await reviewedPilotSourceControls(profile,paths,read))){if(digest===null){if(paths.includes(path))reject();continue;}const bytes=await read(path);if(createHash('sha256').update(bytes).digest('hex')!==digest)reject();}
  recordReviewedPilotSource({profile,paths,relation});
  relation('packages/brain/src/lib/existing-ops-stage-modes.js',CLOSEOUT_PROFILE_PATH,'reviewed_deep_ci_source_profile');
  if([REVIEWED_NIGHTLY_STATUS,REVIEWED_RUNTIME_IDEMPOTENCE,REVIEWED_CANDIDATE_BUILDER,REVIEWED_BIND_MOUNT,REVIEWED_MAIN_AUTO_DEPLOY,REVIEWED_PREVIEW_RETIREMENT,REVIEWED_CI_BUILD_DEDUP,REVIEWED_CHECKER_REPAIR].includes(profile))relation('packages/brain/src/lib/existing-ops-stage-modes.js',REPAIR_PROFILE_PATH,'reviewed_deep_ci_source_profile');
@@ -187,7 +194,7 @@ export const REVIEWED_DORMANT_BOUNDARIES={...JSON.parse(dormantText),[DORMANT_PR
 export async function collectReviewedDormantDeep({read,paths,relation}){
  if(!paths?.includes(DORMANT_PROFILE_PATH))reject();
  const profile=paths.includes(REPAIR_PROFILE_PATH)?await checkerRepairProfile(read,paths):REVIEWED_DORMANT_BOUNDARIES;
- for(const [path,digest] of Object.entries(reviewedPilotControls(profile,paths))){if(digest===null){if(paths.includes(path))reject();continue;}const bytes=await read(path);if(createHash('sha256').update(bytes).digest('hex')!==digest)reject();}
+ for(const [path,digest] of Object.entries(await reviewedPilotSourceControls(profile,paths,read))){if(digest===null){if(paths.includes(path))reject();continue;}const bytes=await read(path);if(createHash('sha256').update(bytes).digest('hex')!==digest)reject();}
  recordReviewedPilotSource({profile,paths,relation});
  relation('packages/brain/src/lib/existing-ops-stage-modes.js',DORMANT_PROFILE_PATH,'reviewed_deep_ci_source_profile');
  if([REVIEWED_NIGHTLY_STATUS,REVIEWED_RUNTIME_IDEMPOTENCE,REVIEWED_CANDIDATE_BUILDER,REVIEWED_BIND_MOUNT,REVIEWED_MAIN_AUTO_DEPLOY,REVIEWED_PREVIEW_RETIREMENT,REVIEWED_CI_BUILD_DEDUP,REVIEWED_CHECKER_REPAIR].includes(profile))relation('packages/brain/src/lib/existing-ops-stage-modes.js',REPAIR_PROFILE_PATH,'reviewed_deep_ci_source_profile');
