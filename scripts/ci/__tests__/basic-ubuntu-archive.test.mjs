@@ -140,3 +140,27 @@ test('trusted native mirror priority changes remain byte-for-byte upstream-owned
  const input=stanza('resolute');const list=nativeMirrors.replace('priority:1','priority:20').replace('priority:2\n','priority:10\n');
  assert.equal(prepareUbuntuSources(input,{readMirrorList:()=>list,expectedCodename:'resolute'}),input);
 });
+
+test('rejected public Ubuntu URI reports only safe fixed-file coordinates and URL structure',()=>{
+ const uri='http://user:private_token@us-east-2.ec2.archive.ubuntu.com/ubuntu/?secret=private_query#private_fragment';
+ let rejected;try{prepareUbuntuSources(stanza('resolute',uri));}catch(e){rejected=e;}
+ assert.ok(rejected);assert.match(rejected.message,/ubuntu_source_uri_unsupported/);
+ assert.match(rejected.message, /"file":"\/etc\/apt\/sources.list.d\/ubuntu.sources"/);
+ assert.match(rejected.message,/"line":2/);assert.match(rejected.message,/"protocol":"http:"/);
+ assert.match(rejected.message,/"hostname":"us-east-2.ec2.archive.ubuntu.com"/);
+ assert.match(rejected.message,/"pathname":"\/ubuntu\/"/);
+ assert.doesNotMatch(rejected.message,/user|private_token|private_query|private_fragment|secret=/);
+});
+test('native mirror refusal reports public endpoint and numeric priority without relaxing trust',()=>{
+ const text=nativeMirrors+'http://us-east-2.ec2.archive.ubuntu.com/ubuntu/\tpriority:1\n';
+ let rejected;try{prepareUbuntuSources(stanza('resolute'),{readMirrorList:()=>text});}catch(e){rejected=e;}
+ assert.ok(rejected);assert.match(rejected.message,/"file":"\/etc\/apt\/apt-mirrors.txt"/);
+ assert.match(rejected.message,/"line":4/);assert.match(rejected.message,/"priority":1/);
+ assert.match(rejected.message,/"hostname":"us-east-2.ec2.archive.ubuntu.com"/);
+});
+test('unknown URI diagnostics expose only type and length, not host, path or credentials',()=>{
+ const uri='https://unknown_user:private_token@unknown.invalid/private_path?secret=private_query#private_fragment';
+ let rejected;try{prepareUbuntuSources(stanza('resolute',uri));}catch(e){rejected=e;}
+ assert.ok(rejected);assert.match(rejected.message,/"type":"uri"/);assert.match(rejected.message,new RegExp('"length":'+uri.length));
+ assert.doesNotMatch(rejected.message,/unknown_user|private_token|unknown.invalid|private_path|private_query|private_fragment/);
+});
