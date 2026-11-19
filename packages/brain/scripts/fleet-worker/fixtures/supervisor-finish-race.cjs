@@ -10,18 +10,21 @@ async function owner(root,deadline){
 async function probe(trigger){
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'supervisor-finish-'));
  const spool=path.join(root,'run','spool'),resultFile=path.join(spool,'result.json'),deadline=Date.now()+15000;
- const trace=[],originalSame=state.sameProcess;let calls=0,child;
+ const trace=[],originalSame=state.sameProcess,originalObserve=state.observeProcess;let calls=0,child;
  const pause=ms=>Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,ms);
- state.sameProcess=(pid,birth)=>{
+ const probe=(observe,pid,birth)=>{
   const row={call:++calls,result_before:fs.existsSync(resultFile)};
   if(calls===trigger){
    fs.writeFileSync(path.join(root,'release'),'yes',{mode:0o600});
    const until=Date.now()+5000;
    while(Date.now()<until&&originalSame(pid,birth))pause(10);
   }
-  row.same_process=originalSame(pid,birth);row.result_after=fs.existsSync(resultFile);trace.push(row);
-  return row.same_process;
+  const observed=observe(pid,birth);
+  row.same_process=observed===true||observed==='matching';row.result_after=fs.existsSync(resultFile);trace.push(row);
+  return observed;
  };
+ state.sameProcess=(pid,birth)=>probe(originalSame,pid,birth);
+ state.observeProcess=(pid,birth)=>probe(originalObserve,pid,birth);
  try{
   fs.writeFileSync(path.join(root,'work.mjs'),`import fs from 'node:fs';for await(const c of process.stdin){}fs.appendFileSync('effects','x');while(!fs.existsSync('release'))await new Promise(r=>setTimeout(r,10));console.log(JSON.stringify({schema_version:1,status:'completed',outputs:{answer:42}}));`,{mode:0o600});
   child=fork(__filename,['--owner',root,String(deadline)],{stdio:['ignore','ignore','inherit','ipc']});
