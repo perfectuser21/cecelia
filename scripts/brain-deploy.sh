@@ -385,13 +385,12 @@ if [[ "$DEPLOY_MODE" == "docker" ]]; then
     # （bluegreen.sh 已在脚本顶层 source）
     if [[ "$DRY_RUN" == true ]]; then
         # dry-run：断言 drain → bluegreen_swap 的正确调用顺序
-        echo "  [7/8] drain 旧 Brain（等 in_progress 归零，超时 ${DRAIN_TIMEOUT_SECS}s）..."
+        echo "  [7/8] drain 旧 Brain（等待本机执行排空，超时 ${DRAIN_TIMEOUT_SECS}s 终止发布）..."
         drain_before_swap || exit 1
         echo ""
         echo "  [dry-run] bluegreen_swap TARGET_VERSION=${VERSION} BLUE=cecelia-node-brain GREEN=cecelia-node-brain-green PORT=5233"
     elif [[ "$OLD_CONTAINER_STATE" == running ]]; then
-        # blue 在跑 → swap 前先 drain（停派发 + 等 in_progress 回调收尾）
-        echo "  [7/8] drain 旧 Brain（等 in_progress 归零，超时 ${DRAIN_TIMEOUT_SECS}s）..."
+        echo "  [7/8] drain 旧 Brain（等待本机执行排空，超时 ${DRAIN_TIMEOUT_SECS}s 终止发布）..."
         drain_before_swap || exit 1
         echo ""
 
