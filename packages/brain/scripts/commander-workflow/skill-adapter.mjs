@@ -7,6 +7,8 @@ import {startSupervisedActivity,waitSupervisedActivity,inspectSupervisor,durable
 import {verifySkillReadback,verifySkillFailure,sameIdentity} from './skill-protocol.mjs';
 import {parseActivityResult} from '../../src/orchestrator/activity-contract.js';
 import {sessionGroup,sessionThreadFile} from './session-group.mjs';
+import {checkerCriteria,verifyCheckerResult} from './checker-agent-protocol.mjs';
+import {checkerEvidenceReceipts} from './checker-evidence.mjs';
 const hash=file=>createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 const reasonCode=error=>/^[a-zA-Z0-9][a-zA-Z0-9_.:/@+-]{0,255}$/.test(error.code??error.message)?error.code??error.message:'skill_observation_failed';
 export async function createRuntime({profile,run,verifySource=async()=>{},ledger}) {
@@ -18,7 +20,10 @@ export async function createRuntime({profile,run,verifySource=async()=>{},ledger
   function specFor(activity){
     const spec=config.activities?.[activity.key],checker=spec?.checker;
     sessionGroup(spec?.session_group,activity.runtime?.executor_kind??'agent');
-    if(!spec||!profile.files[checker?.entry]||!path.isAbsolute(checker?.command??'')
+    if(checker?.mode==='agent'){
+      if(!profile.codex_auth||checker.entry!==undefined||checker.start_checks!==undefined||checker.required_checks!==undefined)throw Error('checker_profile_invalid');
+      checkerCriteria(activityContract(activity),'start');
+    }else if(!spec||!profile.files[checker?.entry]||!path.isAbsolute(checker?.command??'')
       ||['start_checks','required_checks'].some(k=>!Array.isArray(checker[k])||!checker[k].length||new Set(checker[k]).size!==checker[k].length)
       ||hash(checker.command)!==checker.command_sha256)throw Error('skill_profile_unfrozen');
     if(activity.runtime?.executor_kind==='code'){
@@ -54,6 +59,19 @@ export async function createRuntime({profile,run,verifySource=async()=>{},ledger
       child.stdin.on('error',()=>{});child.stdin.end(JSON.stringify(request));if(signal?.aborted)cancel();
     });
   }
+  async function agentCheckerTransport(activity,checker,request,signal){
+    const finalizer=activity.runtime?.phase==='finalize',runDeadline=finalizer?run.cleanup_deadline_ms:run.deadline_ms;
+    if(!Number.isFinite(runDeadline)||!Number.isInteger(checker.timeout_ms)||checker.timeout_ms<1)throw Error('checker_deadline_invalid');
+    const deadline=Math.min(runDeadline,Date.now()+checker.timeout_ms),directory=path.join(root,'checker-agents',request.nonce);
+    const identity={task_id:run.task_id,run_id:run.run_id,activity_key:activity.key,action_id:request.nonce};
+    const checkerActivity={key:activity.key,budget:{max_duration_s:Math.max(0.001,(deadline-Date.now())/1000),heartbeat_s:1},runtime:{protocol:'json-stdio-v1',phase:'source',entry:fileURLToPath(new URL('./skill-worker.mjs',import.meta.url)),argv:[],interactive:false}};
+    const transport=await startSupervisedActivity(directory,identity,checkerActivity,{role:'checker',identity,activity_key:activity.key,activity_contract:request.activity_contract,
+      cwd:profile.cwd,codex:config.codex,codex_auth:profile.codex_auth,...(ledger?{ledger_directory:ledger.directory,ledger_policy:ledger.policy}:{}),
+      thread_file:path.join(directory,'thread.json'),work_dir:directory,context:request.context,
+      checker_request:request,checker_evidence:checker.evidence,deadline_ms:deadline},{cwd:profile.cwd,signal},deadline);
+    if(transport.execution_stopped===false||transport.external_effect==='unknown'||transport.exit_signal||transport.reason_code)throw Error('checker_execution_unconfirmed');
+    return {...transport,checker_directory:directory};
+  }
   async function readback(activity,input,phase,proposal,signal){
     const observation=ledger?.beginObservation({kind:'checker',activity_key:activity.key,...(input.action_id?{action_id:input.action_id}:{}),phase});
     try{const value=await performReadback(activity,input,phase,proposal,signal);
@@ -69,26 +87,32 @@ export async function createRuntime({profile,run,verifySource=async()=>{},ledger
   }
   async function performReadback(activity,input,phase,proposal,signal){
     const spec=specFor(activity),checker=spec.checker;
+    const criteria=checker.mode==='agent'?checkerCriteria(activityContract(activity),phase):undefined;
     const request={task_id:run.task_id,run_id:run.run_id,run_tag:run.input.run_tag,workflow:spec.workflow??run.contract.workflow,
       activity:spec.activity??activity.key,activity_contract:activityContract(activity),attempt:activity.runtime?.executor_kind==='code'?1:(input.execution_attempt??1),nonce:randomUUID(),phase,
-      checks:phase==='start'?checker.start_checks:checker.required_checks,proposal,context:{...run.input,...input}};
+      checks:criteria?criteria.map(c=>c.id):phase==='start'?checker.start_checks:checker.required_checks,...(criteria?{criteria}:{}),proposal,context:{...run.input,...input}};
     fs.mkdirSync(path.join(root,'checks'),{recursive:true,mode:0o700});
     const evidenceFile=path.join(root,'checks',request.nonce+'.json');
     durableWrite(evidenceFile,{request,status:'pending'});
     try {await verifyFrozenSources();}
     catch(error){durableWrite(evidenceFile,{request,status:'source_rejected',reason:error.message});throw error;}
-    const transport=await checkerTransport(checker,request,signal);
+    const transport=checker.mode==='agent'?await agentCheckerTransport(activity,checker,request,signal):await checkerTransport(checker,request,signal);
     const transportReason=transport.spawn_error?'skill_checker_spawn_failed':transport.timed_out?'skill_checker_timeout'
       :transport.cancelled?'skill_checker_cancelled':transport.stdout_truncated?'skill_checker_output_limit'
         :transport.exit_code!==0?'skill_checker_failed':null;
     if(transportReason){durableWrite(evidenceFile,{request,transport,status:'transport_error',reason:transportReason});throw Error(transportReason);}
     let observed;
-    try {observed=JSON.parse(transport.stdout);}
+    try {observed=JSON.parse(transport.stdout);if(checker.mode==='agent')observed=observed.proposal;}
     catch{durableWrite(evidenceFile,{request,transport,status:'parse_error',reason:'skill_checker_invalid_json'});throw Error('skill_checker_invalid_json');}
     // 验证前保留原始检查结果，来源漂移也不得删除已发生副作用的证据。
     durableWrite(evidenceFile,{request,observed,transport,status:'observed'});
     let verified;
     try {await verifyFrozenSources();
+      if(checker.mode==='agent'){
+        const binding=JSON.parse(fs.readFileSync(path.join(transport.checker_directory,'checker-evidence-binding.json')));
+        verified=verifyCheckerResult(observed,request,checkerEvidenceReceipts(binding));
+        durableWrite(evidenceFile,{request,observed,transport,verified,status:'verified'});return verified;
+      }
       if(phase==='end'&&observed.outcome==='failed'){
         const failure=verifySkillFailure(observed,request);
         throw Object.assign(Error('skill_check_failed'),{checkerFailure:failure,evidenceFile});
@@ -125,6 +149,9 @@ export async function createRuntime({profile,run,verifySource=async()=>{},ledger
     const {proposal,thread_id}=JSON.parse(transport.stdout);
     try{
       const verified=await readback(activity,input,'end',proposal,signal);
+      if(verified.outcome==='failed'||verified.outcome==='unknown')return {
+        schema_version:1,run_tag:input.run_tag,...(input.line_key===undefined?{}:{line_key:input.line_key}),status:'needs_review',failure_class:'needs_human',outputs:{},metrics:{},
+        evidence:verified.checks.flatMap(c=>c.evidence.map(e=>e.source)),execution_stopped:true,reason_code:verified.outcome==='unknown'?'checker_evidence_unknown':'skill_check_failed',checker_result:verified};
       return {schema_version:1,run_tag:input.run_tag,...(input.line_key===undefined?{}:{line_key:input.line_key}),status:verified.outcome==='empty'?'empty':'completed',
         outputs:verified.output,metrics:{},evidence:verified.checks.flatMap(c=>c.evidence.map(e=>e.source)),execution_stopped:true};
     }catch(error){
@@ -153,12 +180,13 @@ export async function createRuntime({profile,run,verifySource=async()=>{},ledger
       if(phase==='end'&&feedback&&feedback.activity_key===activity.key&&sameIdentity(verifiedFeedback.get(feedback.evidence_ref),feedback))
         return {verdict:'fail',reason:'skill_check_failed',evidence:feedback.failed_checks};
       const verified=await readback(activity,input,phase,result,signal);
+      if(specFor(activity).checker.mode==='agent')return {verdict:verified.outcome==='passed'&&(phase==='start'||sameIdentity(verified.output,result?.outputs))?'pass':verified.outcome==='unknown'?'unknown':'fail',reason:'independent_checker_'+verified.outcome,evidence:verified.checks};
       return {verdict:phase==='start'||sameIdentity(verified.output,result?.outputs)?'pass':'fail',evidence:verified.checks};
     },
     async executeActivity(activity,input,options){
       if(activity.runtime?.executor_kind!=='code')input={...input,execution_attempt:options.identity.attempt??1};
       // 单独再核授权；旧完整Runner的finalize宽松策略不能赋予执行权。
-      try{await readback(activity,input,'start',null,options.signal);}catch(e){e.executionStopped=true;throw e;}
+      try{const start=await readback(activity,input,'start',null,options.signal);if(start.outcome!=='passed')throw Error('checker_start_'+start.outcome);}catch(e){e.executionStopped=true;throw e;}
       const spec=specFor(activity),directory=actionDir(options.identity);
       const attempt=ledger?.beginAttempt({activity_key:activity.key,action_id:options.identity.action_id,attempt:options.identity.attempt??1,kind:activity.runtime?.executor_kind??'agent'});
       try{

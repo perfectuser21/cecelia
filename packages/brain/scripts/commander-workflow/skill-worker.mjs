@@ -11,19 +11,23 @@ import {codexWorkerArgs} from './skill-protocol.mjs';
 import {createRunLedger,normalizeTurns} from '../../src/orchestrator/commander-usage-ledger.js';
 import {prepareHostTools,hostToolsArgs} from './skill-tools-mcp.mjs';
 import {sessionGroup,readSessionThread} from './session-group.mjs';
+import {checkerPrompt} from './checker-agent-protocol.mjs';
+import {prepareCheckerEvidence,checkerEvidenceArgs} from './checker-evidence.mjs';
 const chunks=[];for await(const c of process.stdin)chunks.push(c);
 const request=JSON.parse(Buffer.concat(chunks).toString()),{codex,identity,thread_file,work_dir,skill_text,tools_text,context}=request;
+const checking=request.role==='checker';
 if(createHash('sha256').update(fs.readFileSync(codex.command)).digest('hex')!==codex.command_sha256)throw Error('skill_codex_source_drift');
 const auth=prepareCodexAuth(request.codex_auth,{codex});
 const group=sessionGroup(request.session_group);
-const previous=readSessionThread(thread_file,{run_id:identity.run_id,auth_identity:auth?.identity,session_group:group});
-const feedback=(identity.attempt??1)>1?context.checker_feedback:undefined;
-if((identity.attempt??1)>1&&(!feedback||feedback.protocol!=='checker-feedback/v1'||feedback.activity_key!==request.activity_key
+const previous=checking?undefined:readSessionThread(thread_file,{run_id:identity.run_id,auth_identity:auth?.identity,session_group:group});
+if(checking&&(!auth||request.host_tools||fs.existsSync(thread_file)))throw Error('checker_session_invalid');
+const feedback=!checking&&(identity.attempt??1)>1?context.checker_feedback:undefined;
+if(!checking&&(identity.attempt??1)>1&&(!feedback||feedback.protocol!=='checker-feedback/v1'||feedback.activity_key!==request.activity_key
   ||feedback.attempt!==identity.attempt-1||!previous||previous.thread_id!==feedback.thread_id))throw Error('skill_repair_thread_unavailable');
 const output=path.join(work_dir,'proposal.json'),transcript=fs.openSync(path.join(work_dir,'agent.jsonl'),'a',0o600);
 const activityInput=path.join(work_dir,'activity-input.json');
 const promptContext=projectModelInput(context,{sourceFile:activityInput,sourceField:'context.verification.runtime_sha256'});
-const prompt=['你只执行本次指定的单Activity，不推进其他Activity。运输方式 codex-cli，拥有工具；最终输出JSON提案不代表验收。',
+const prompt=checking?checkerPrompt(request.checker_request):['你只执行本次指定的单Activity，不推进其他Activity。运输方式 codex-cli，拥有工具；最终输出JSON提案不代表验收。',
   '禁止修改冻结Skill/合同/工具实现/独立检查器，禁止自行重跑已提交动作。',
   `本次动作身份：${JSON.stringify(identity)}`,`当前Activity：${request.activity_key}`,
   ...(request.activity_contract===undefined?[]:[`冻结Activity Contract：\n${JSON.stringify(request.activity_contract)}`,
@@ -37,10 +41,15 @@ const prompt=['你只执行本次指定的单Activity，不推进其他Activity�
 const env={PATH:process.env.PATH,HOME:process.env.HOME,TMPDIR:process.env.TMPDIR,LANG:process.env.LANG};
 for(const key of codex.env_keys??[])if(process.env[key]!==undefined)env[key]=process.env[key];
 durableWrite(activityInput,{identity,activity_key:request.activity_key,
-  ...(request.activity_contract===undefined?{}:{activity_contract:request.activity_contract}),transport:'codex-cli',context});
+  ...(request.activity_contract===undefined?{}:{activity_contract:request.activity_contract}),...(checking?{checker_request:request.checker_request}:{}),transport:'codex-cli',context});
 env.COMMANDER_ACTIVITY_KEY=request.activity_key;env.COMMANDER_ACTIVITY_INPUT_FILE=activityInput;
 let partial='',thread=previous?.thread_id;
 const argv=codexWorkerArgs(codex,thread,output,auth);
+if(checking){
+ const binding=prepareCheckerEvidence({config:request.checker_evidence,cwd:request.cwd,request:request.checker_request,directory:path.join(work_dir,'evidence-reads'),deadlineMs:request.deadline_ms});
+ const file=path.join(work_dir,'checker-evidence-binding.json');durableWrite(file,binding);
+ argv.splice(argv.length-1,0,...checkerEvidenceArgs(file,createHash('sha256').update(fs.readFileSync(file)).digest('hex'),auth.auth.home,binding.directory));
+}
 if(request.host_tools){
  if(!auth)throw Error('host_tool_auth_required');
  const config=request.host_tools,binding=prepareHostTools({config:config.config,cwd:config.cwd,files:config.files,identity,activityKey:request.activity_key,inputFile:activityInput,directory:path.join(work_dir,'host-tools'),deadlineMs:config.deadline_ms});
@@ -59,7 +68,7 @@ let model='unknown';for(let i=0;i<(codex.args??[]).length;i++){
  else if(['-m','--model'].includes(arg))model=codex.args[++i]||'unknown';else if(arg.startsWith('--model='))model=arg.slice(8)||'unknown';
 }
 let call;
-try{call=ledger?.beginCall({role:'activity',activity_key:request.activity_key,action_id:identity.action_id,attempt:identity.attempt??1,provider:'codex',model,auth_mode:request.codex_auth?.mode??'unknown'});}
+try{call=ledger?.beginCall({role:checking?'checker':'activity',activity_key:request.activity_key,action_id:identity.action_id,attempt:identity.attempt??1,provider:'codex',model,auth_mode:request.codex_auth?.mode??'unknown'});}
 catch(error){process.stdout.write(JSON.stringify({protocol:'skill-worker-failure/v1',reason_code:error.code??error.message,execution_stopped:true,dispatch_status:'not_started'}));fs.closeSync(transcript);throw error;}
 const nativePath=call?path.join(call.directory,'native.jsonl'):null,nativeFd=call?fs.openSync(nativePath,'wx',0o600):null;
 const events=[];let spawned=false,closed=false,failed,endedAt,spawnFailure,protocolFailure;
