@@ -19,6 +19,17 @@ describe('退役 Claude 不影响可执行模型容量快照', () => {
     mocks.verdictFor.mockReturnValue({ verdict: 'unusable', reason: 'quota_full', pct: 100 });
   });
 
+  it('刷新容量时不再调用退役 Claude 用量采集器', async () => {
+    mocks.usage.mockRejectedValue(new Error('retired_probe_must_not_run'));
+    await getLlmCapacitySnapshot({ forceRefresh: true });
+    expect(mocks.usage).not.toHaveBeenCalled();
+  });
+
+  it('容量快照只包含现役 Codex 和 Grok', async () => {
+    const snapshot = await getLlmCapacitySnapshot({ forceRefresh: true });
+    expect(Object.keys(snapshot.vendors).sort()).toEqual(['codex', 'grok']);
+  });
+
   it('只有退休 Claude 可用时报告耗尽，而非健康', async () => {
     const snapshot = await getLlmCapacitySnapshot({ forceRefresh: true });
     expect(snapshot.vendors.claude.available_count).toBe(1);
