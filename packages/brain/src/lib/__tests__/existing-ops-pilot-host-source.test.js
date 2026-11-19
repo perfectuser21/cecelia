@@ -14,7 +14,8 @@ const cli='scripts/ci/pilot-release-verification.mjs',helper='scripts/ci/pilot-f
 const paths=execFileSync('git',['ls-files','-z','--cached','--others','--exclude-standard'],{cwd:root,encoding:'utf8'}).split('\0').filter(p=>p&&existsSync(root+p));
 const read=p=>readFileSync(root+p,'utf8');
 // 评审输入组合：当前输入移除排空helper，部署与验收脚本回放稳定main字节；不是历史Git快照。
-const parent={revision:'f'.repeat(40),paths:paths.filter(p=>p!==drain),read:p=>[deploy,'scripts/__tests__/brain-deploy-sha-readonly.test.sh'].includes(p)?stable.read(p):read(p)};
+const cacheInputs=['scripts/brain-build.sh','scripts/staging-deploy.sh','scripts/lib/brain-candidate-docker.sh','scripts/lib/brain-staging.sh','scripts/ci/__tests__/basic-brain-candidate-host.test.mjs'];
+const parent={revision:'f'.repeat(40),paths:paths.filter(p=>p!==drain),read:p=>[deploy,'scripts/__tests__/brain-deploy-sha-readonly.test.sh',...cacheInputs].includes(p)?stable.read(p):read(p)};
 async function collect({deep=false,fixture,missing,overrides={},extraPaths=[]}={}){
  const tree=[...new Set([...(fixture?.paths??paths),...extraPaths])].filter(p=>p!==missing),source=async p=>{
   if(!tree.includes(p))throw Error('missing fixed input');return overrides[p]??(fixture?fixture.read(p):read(p));
@@ -80,4 +81,18 @@ for(const deep of [false,true])it(`拒绝${deep?'Deep':'Basic'}持久排空来�
  await expect(collect({deep,overrides:{[deploy]:parent.read(deploy)}})).rejects.toThrow();
  await expect(collect({deep,fixture:parent,overrides:{[deploy]:read(deploy)}})).rejects.toThrow();
  await expect(collect({deep,fixture:parent,extraPaths:[drain],overrides:{[drain]:read(drain)}})).rejects.toThrow();
+});
+
+it('候选缓存回收的完整来源与已发布f098组分别有效，单成员缺失或混配拒绝',async()=>{
+ const prior=readFixedExistingOpsGitFixture('f098854a1e16621576685052ef41b00a9622daa6');
+ for(const deep of [false,true]){
+  expect(await collect({deep})).not.toHaveLength(0);
+  expect(await collect({deep,fixture:prior})).not.toHaveLength(0);
+  for(const member of [...cacheInputs,deploy]){
+   await expect(collect({deep,missing:member})).rejects.toThrow();
+   await expect(collect({deep,overrides:{[member]:prior.read(member)}})).rejects.toThrow();
+   // 旧组未将这两个独立stage脚本登记为来源输入，不能倒称已有历史保护。
+   if(!['scripts/staging-deploy.sh','scripts/lib/brain-staging.sh'].includes(member))await expect(collect({deep,fixture:prior,overrides:{[member]:read(member)}})).rejects.toThrow();
+  }
+ }
 });

@@ -46,6 +46,9 @@ _write_deploy_status() {
     if [[ "${DRY_RUN:-false}" == true || "${SHA_CHECK_ONLY:-false}" == true ]]; then
         return 0
     fi
+    if [[ -n "${BRAIN_CANDIDATE_OWNERSHIP_FILE:-}" ]]; then
+        candidate_image_cleanup "${EXPECTED_SHA:-}" "${CECELIA_RELEASE_IMAGE:-}" || echo '候选副本未回收，保留检查' >&2
+    fi
     local retention_failed=false
     if [[ "$DEPLOY_SUCCESS" == "true" ]]; then
         retention_finish success || { DEPLOY_SUCCESS=false; retention_failed=true; }
@@ -285,6 +288,7 @@ if [[ "$DEPLOY_MODE" == "docker" ]]; then
     if [[ "$DRY_RUN" == true ]]; then
         echo "  [dry-run] bash $SCRIPT_DIR/brain-build.sh"
     else
+        export BRAIN_CANDIDATE_OWNERSHIP_FILE="$ROOT_DIR/logs/brain-candidate-$(node -e 'process.stdout.write(require("crypto").randomUUID())').json"
         bash "$SCRIPT_DIR/brain-build.sh"
     fi
     echo ""
