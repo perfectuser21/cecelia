@@ -11,7 +11,7 @@ export function durableWrite(file,value){
  fs.renameSync(temp,file);const dir=fs.openSync(path.dirname(file),'r');try{fs.fsyncSync(dir);}finally{fs.closeSync(dir);}
 }
 import state from './activity-supervisor-state.cjs';
-const {protectedText,protectedRead,processBirth,sameProcess,digest,validResult}=state;
+const {protectedText,protectedRead,processBirth,sameProcess,observeProcess,digest,validResult}=state;
 const read=file=>protectedRead(file,3);
 export function inspectSupervisor(directory,binding){
  const manifest=read(path.join(directory,'manifest.json'));
@@ -37,9 +37,9 @@ export async function waitSupervisedActivity(directory,binding,{signal,onHeartbe
    }
   }
   const resultFile=path.join(directory,'result.json');
-  const running=fs.existsSync(resultFile)||sameProcess(manifest.pid,manifest.birth);
+  const identity=fs.existsSync(resultFile)?'result':observeProcess(manifest.pid,manifest.birth);
   if(fs.existsSync(resultFile)){const value=read(resultFile);if(!validResult(value,manifest))throw Error('activity_supervisor_result_invalid');return value.transport;}
-  if(!running||Date.now()>manifest.deadline+(manifest.cleanup_grace_s+2)*1000)throw Error('activity_supervisor_unconfirmed');
+  if(identity==='absent'||identity==='reused'||Date.now()>manifest.deadline+(manifest.cleanup_grace_s+2)*1000)throw Error('activity_supervisor_unconfirmed');
   await new Promise(resolve=>setTimeout(resolve,25));
  }}catch(error){cancel();throw Object.assign(error,{executionStopped:false});}finally{signal?.removeEventListener('abort',cancel);}
 }

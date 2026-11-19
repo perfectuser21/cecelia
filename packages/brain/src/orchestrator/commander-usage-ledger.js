@@ -61,7 +61,7 @@ function metadata(value,group){
   :group==='attempts'?['activity_key','action_id','attempt','kind','started_at_ms']:['activity_key','action_id','attempt','attempt_id','kind','phase','started_at_ms'];
  keys(value,allowed);const meta=copy(value);delete meta.started_at_ms;
  for(const [k,v] of Object.entries(meta))if(['attempt','decision_sequence'].includes(k)?!Number.isSafeInteger(v)||v<0:typeof v!=='string'||!token.test(v))fail('usage_ledger_metadata_invalid');
- if(group==='calls'&&(!['commander','activity'].includes(meta.role)||!meta.provider||!meta.model))fail('usage_ledger_metadata_invalid');
+ if(group==='calls'&&(!['commander','activity','checker'].includes(meta.role)||!meta.provider||!meta.model))fail('usage_ledger_metadata_invalid');
  if(group==='attempts'&&(!meta.activity_key||!meta.action_id||!Number.isSafeInteger(meta.attempt)||meta.attempt<1||!meta.kind))fail('usage_ledger_metadata_invalid');
  if(group==='observations'&&!meta.kind)fail('usage_ledger_metadata_invalid');
  return meta;
