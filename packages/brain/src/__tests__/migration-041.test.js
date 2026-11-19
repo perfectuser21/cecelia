@@ -1,7 +1,4 @@
-/**
- * Migration 041 Tests
- * Verifies that auto-cleanup SQL functions were created by migration 041.
- */
+/** 运营记录清理与决策长期留存。 */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { pool, beginScratch, finishScratch, baseSchema, applyMigration } from './helpers/debt-03-scratch.js';
@@ -11,6 +8,7 @@ beforeAll(async () => {
     CREATE TABLE decision_log(id serial PRIMARY KEY, created_at timestamptz DEFAULT now());
     CREATE TABLE decisions(id serial PRIMARY KEY, decision text, status text, created_at timestamptz DEFAULT now());`);
   await applyMigration('041_auto_cleanup_metrics.sql');
+  await applyMigration('560_durable_decision_retention.sql');
 });
 afterAll(finishScratch);
 
