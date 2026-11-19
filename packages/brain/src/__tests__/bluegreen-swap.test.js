@@ -41,7 +41,9 @@ case "$1" in
     ;;
   inspect)
     # bluegreen_guard_blue 用 --format '{{.State.Status}}'
-    if echo "$@" | grep -q 'State.Status'; then
+    if [[ "$*" == *'{{.Image}}'* ]]; then
+      echo 'sha256:${'1'.repeat(64)}'
+    elif echo "$@" | grep -q 'State.Status'; then
       echo "${blueState}"
     else
       # bluegreen_swap poll 用 '{{if .State.Health}}...'
@@ -407,6 +409,7 @@ function runSidecar(dir, log, deployRoot, extraEnv = {}) {
         PATH: `${dir}:${process.env.PATH}`,
         HOME: dir,
         BRAIN_VERSION: '9.9.9',
+        CECELIA_PREVIOUS_IMAGE: 'sha256:'+'1'.repeat(64),
         EXPECTED_SHA: 'a'.repeat(40),
         ENV_REGION: 'us',
         DEPLOY_ROOT: deployRoot,

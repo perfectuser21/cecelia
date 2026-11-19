@@ -18,7 +18,8 @@ async function fixture(t, scenario = '') {
   await mkdir(join(root, 'ledger'), { mode: 0o700 });
   await copyFile(new URL('./lib/brain-image-retention.sh', import.meta.url), join(root, 'scripts/lib/brain-image-retention.sh'));
   const request = { deployment_id: deployment, version: '1.360.5', git_sha: sha };
-  const previousTags=scenario.startsWith('fallback-prev-')?['cecelia-brain:prev-'+(scenario==='fallback-prev-wrong-version'?'1.360.4':'1.360.3')+'-'+(scenario==='fallback-prev-wrong-sha'?'c'.repeat(12):previousSha.slice(0,12))]:['cecelia-brain:1.360.3'];
+  const previousVersion=scenario.startsWith('fallback-prev-')?'1.360.5':'1.360.3';
+  const previousTags=scenario.startsWith('fallback-prev-')?['cecelia-brain:prev-'+(scenario==='fallback-prev-wrong-version'?'1.360.4':previousVersion)+'-'+(scenario==='fallback-prev-wrong-sha'?'c'.repeat(12):previousSha.slice(0,12))]:['cecelia-brain:1.360.3'];
   const primaryTags=scenario==='primary-prev-only'?['cecelia-brain:prev-1.360.5-'+sha.slice(0,12)]:['cecelia-brain:1.360.5'];
   const previous = { id: previousImage, git_sha: previousSha, tags: previousTags };
   await writeFile(join(root, 'ledger/ledger.json'), JSON.stringify({ schema_version: 1, generation: 1, pending: { deployment_id: deployment, request, previous }, successes: [] }), { mode: 0o600 });
@@ -70,7 +71,7 @@ async function fixture(t, scenario = '') {
       if(!args.includes('${container}'))process.exit(91);
       if(args.some(x=>x.endsWith('/healthz'))){const sealed=['sealed-degraded','sealed-open-breaker'].includes(scenario),dbDown=['unhealthy','fallback-unhealthy'].includes(scenario),code=(sealed||dbDown)?503:200;const body=JSON.stringify(dbDown?{status:'degraded',db:'error',tick:'dead'}:sealed?{status:'degraded',db:'connected',tick:'dead'}:{status:'ok',db:'connected',tick:'alive'});if(args.some(a=>/^-[a-zA-Z]*f/.test(a))&&code>=400)process.exit(22);process.stdout.write(body+(args.includes('-w')?'\\n'+code:''));return;}
       if(args.some(x=>x.endsWith('/health'))) {
-        fs.writeFileSync(root+'/healthy','');console.log(JSON.stringify({status:['degraded','sealed-degraded','sealed-open-breaker'].includes(scenario)?'degraded':'healthy',...(scenario==='sealed-degraded'?{organs:{scheduler:{enabled:false},circuit_breaker:{open:[]}}}:{}),...(scenario==='sealed-open-breaker'?{organs:{scheduler:{enabled:false},circuit_breaker:{open:['cecelia-run']}}}:{}),version:recovered?'1.360.3':'1.360.5',git_sha:scenario==='wrong-sha'?'${previousSha}':s,...(scenario==='health-oversize'?{padding:'x'.repeat(300000)}:{})}));if(args.includes('-w'))process.stdout.write(scenario==='health-redirect'?'302':'200');return;
+        fs.writeFileSync(root+'/healthy','');console.log(JSON.stringify({status:['degraded','sealed-degraded','sealed-open-breaker'].includes(scenario)?'degraded':'healthy',...(scenario==='sealed-degraded'?{organs:{scheduler:{enabled:false},circuit_breaker:{open:[]}}}:{}),...(scenario==='sealed-open-breaker'?{organs:{scheduler:{enabled:false},circuit_breaker:{open:['cecelia-run']}}}:{}),version:recovered?${JSON.stringify(previousVersion)}:'1.360.5',git_sha:scenario==='wrong-sha'?'${previousSha}':s,...(scenario==='health-oversize'?{padding:'x'.repeat(300000)}:{})}));if(args.includes('-w'))process.stdout.write(scenario==='health-redirect'?'302':'200');return;
       }
       if(args.some(x=>x.endsWith('/drain-cancel'))) {
         if(scenario==='drain-fail')process.exit(22);

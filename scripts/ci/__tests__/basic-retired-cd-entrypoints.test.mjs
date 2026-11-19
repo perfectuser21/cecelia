@@ -87,7 +87,7 @@ test('Docker发布后的Bridge按自身plist恢复，不依赖已删除Brain裸�
   t.after(() => rmSync(directory, {recursive: true, force: true}));
   mkdirSync(join(directory, 'Library/LaunchAgents'), {recursive: true});
   writeFileSync(join(directory, 'Library/LaunchAgents/com.cecelia.bridge.plist'), '<plist/>');
-  const source = read('scripts/brain-deploy.sh');
+  const source = read('scripts/lib/brain-post-deploy.sh');
   const begin = source.indexOf('      # 重启 bridge');
   const end = source.indexOf('\n    else\n      echo "  WARN: $BRIDGE_SRC', begin);
   assert.equal(begin >= 0 && end > begin, true);

@@ -10,10 +10,11 @@ import { resolve } from 'node:path';
 // __dirname = tests/packages/brain → 上 3 层到 repo root
 const REPO_ROOT = resolve(__dirname, '../../..');
 const DEPLOY_SH = resolve(REPO_ROOT, 'scripts/brain-deploy.sh');
+const POST_DEPLOY_SH = resolve(REPO_ROOT, 'scripts/lib/brain-post-deploy.sh');
 
 describe('post-deploy smoke contract', () => {
-  it('brain-deploy.sh 含 run_post_deploy_smoke 函数定义', () => {
-    const txt = readFileSync(DEPLOY_SH, 'utf8');
+  it('入口source的真实收尾helper包含smoke函数', () => {
+    const txt = readFileSync(POST_DEPLOY_SH, 'utf8');
     expect(txt).toMatch(/^run_post_deploy_smoke\(\) \{/m);
     // 必须支持 SKIP env + RECENT_PRS env（mock / 紧急部署）
     expect(txt).toContain('SKIP_POST_DEPLOY_SMOKE');
@@ -23,14 +24,13 @@ describe('post-deploy smoke contract', () => {
     expect(txt).toContain('packages/brain/scripts/smoke/');
   });
 
-  it('brain-deploy.sh healthy check 后调 run_post_deploy_smoke', () => {
-    const txt = readFileSync(DEPLOY_SH, 'utf8');
-    const healthy = txt.indexOf('=== Deploy SUCCESS:');
-    const smokeCall = txt.indexOf('    run_post_deploy_smoke || true');
-    expect(healthy).toBeGreaterThan(-1);
-    expect(smokeCall).toBeGreaterThan(healthy);
-    // smoke non-fatal — deploy 已成功不能因 smoke 回滚
-    expect(txt).toMatch(/run_post_deploy_smoke[^\n]*\|\| true/);
+  it('入口完成manifest验真后才调用宿主收尾，收尾沿用non-fatal smoke', () => {
+    const entry = readFileSync(DEPLOY_SH, 'utf8'), helper=readFileSync(POST_DEPLOY_SH,'utf8');
+    expect(entry).toContain('source "$SCRIPT_DIR/lib/brain-post-deploy.sh"');
+    const healthy=entry.indexOf('echo "Waiting for health check..."');
+    const verified=entry.indexOf('    activate_cecelia_map_manifest',healthy);
+    const completion=entry.indexOf('    complete_verified_host_release',verified);
+    expect(healthy).toBeGreaterThan(0);expect(verified).toBeGreaterThan(healthy);expect(completion).toBeGreaterThan(verified);
+    expect(helper).toMatch(/run_post_deploy_smoke[^\n]*\|\| true/);
   });
-
 });

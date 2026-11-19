@@ -15,7 +15,8 @@ const paths=execFileSync('git',['ls-files','-z','--cached','--others','--exclude
 const read=p=>readFileSync(root+p,'utf8');
 // 评审输入组合：当前输入移除排空helper，部署与验收脚本回放稳定main字节；不是历史Git快照。
 const cacheInputs=['scripts/brain-build.sh','scripts/staging-deploy.sh','scripts/lib/brain-candidate-docker.sh','scripts/lib/brain-staging.sh','scripts/ci/__tests__/basic-brain-candidate-host.test.mjs'];
-const parent={revision:'f'.repeat(40),paths:paths.filter(p=>p!==drain),read:p=>[deploy,'scripts/__tests__/brain-deploy-sha-readonly.test.sh',...cacheInputs].includes(p)?stable.read(p):read(p)};
+const recoveryNew=['scripts/ci/__tests__/basic-brain-predecessor.test.mjs','scripts/ci/__tests__/helpers/brain-deploy-predecessor.fixture.mjs','scripts/lib/brain-post-deploy.sh'];
+const parent={revision:'f'.repeat(40),paths:paths.filter(p=>p!==drain&&!recoveryNew.includes(p)),read:p=>[deploy,'scripts/__tests__/brain-deploy-sha-readonly.test.sh','scripts/ci/__tests__/basic-retired-cd-entrypoints.test.mjs',...cacheInputs].includes(p)?stable.read(p):read(p)};
 async function collect({deep=false,fixture,missing,overrides={},extraPaths=[]}={}){
  const tree=[...new Set([...(fixture?.paths??paths),...extraPaths])].filter(p=>p!==missing),source=async p=>{
   if(!tree.includes(p))throw Error('missing fixed input');return overrides[p]??(fixture?fixture.read(p):read(p));
@@ -94,5 +95,23 @@ it('候选缓存回收的完整来源与已发布f098组分别有效，单成员
    // 旧组未将这两个独立stage脚本登记为来源输入，不能倒称已有历史保护。
    if(!['scripts/staging-deploy.sh','scripts/lib/brain-staging.sh'].includes(member))await expect(collect({deep,fixture:prior,overrides:{[member]:read(member)}})).rejects.toThrow();
   }
+ }
+});
+
+it('恢复清退完整组真实消费新helper，当前十成员缺失/未知拒绝，e38旧组保留',async()=>{
+ const prior=readFixedExistingOpsGitFixture('e38df977718bc673e0a22b12e363dbd964ed7699');
+ const members=["scripts/lib/brain-drain-client.sh","scripts/brain-deploy.sh","scripts/brain-rollback.sh","scripts/lib/bluegreen.sh","scripts/lib/bluegreen-sidecar.sh","scripts/lib/brain-post-deploy.sh","scripts/__tests__/brain-deploy-sha-readonly.test.sh","scripts/ci/__tests__/basic-retired-cd-entrypoints.test.mjs","scripts/ci/__tests__/basic-brain-predecessor.test.mjs","scripts/ci/__tests__/helpers/brain-deploy-predecessor.fixture.mjs"];
+ for(const deep of [false,true]){
+  const current=await collect({deep});expect(current).toContainEqual(expect.objectContaining({consumer_path:deploy,input_path:'scripts/lib/brain-post-deploy.sh',kind:'reviewed_deploy_post_success_helper'}));
+  expect(await collect({deep,fixture:prior})).not.toHaveLength(0);
+  for(const member of members){
+   await expect(collect({deep,missing:member})).rejects.toThrow();
+   await expect(collect({deep,overrides:{[member]:read(member)+'\n// unreviewed recovery bytes\n'}})).rejects.toThrow();
+   if(prior.paths.includes(member)&&prior.read(member)!==read(member))await expect(collect({deep,overrides:{[member]:prior.read(member)}})).rejects.toThrow();
+  }
+  // 旧组只对它真实固定的三个成员断言反向拒绝，不倒称已有新helper保护。
+  for(const member of [deploy,'scripts/__tests__/brain-deploy-sha-readonly.test.sh','scripts/ci/__tests__/basic-retired-cd-entrypoints.test.mjs'])
+   await expect(collect({deep,fixture:prior,overrides:{[member]:read(member)}})).rejects.toThrow();
+  await expect(collect({deep,fixture:prior,extraPaths:[recoveryNew[0]],overrides:{[recoveryNew[0]]:read(recoveryNew[0])}})).rejects.toThrow();
  }
 });
