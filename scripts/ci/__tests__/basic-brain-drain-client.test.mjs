@@ -70,7 +70,7 @@ else
 fi
 `, { mode: 0o755 });
     const harness = join(directory, 'run.sh');
-    writeFileSync(harness, `#!/bin/bash\nset -uo pipefail\nDRY_RUN=false\nDRAIN_TIMEOUT_SECS=5\nSCRIPT_DIR=${shellQuote(join(root, 'scripts'))}\nROOT_DIR=${shellQuote(root)}\nsend_bark() { :; }\n${actualHelpers()}\nif ${command} ${shellQuote(drainId)}; then\n  echo 'SWAP_REACHED'\nelse\n  status=$?\n  echo 'SWAP_BLOCKED'\n  exit "$status"\nfi\n`);
+    writeFileSync(harness, `#!/bin/bash\nset -uo pipefail\nDRY_RUN=false\nDRAIN_TIMEOUT_SECS=${shellQuote(scenario.timeout ?? 5)}\nSCRIPT_DIR=${shellQuote(join(root, 'scripts'))}\nROOT_DIR=${shellQuote(root)}\nsend_bark() { :; }\n${actualHelpers()}\nif ${command} ${shellQuote(drainId)}; then\n  echo 'SWAP_REACHED'\nelse\n  status=$?\n  echo 'SWAP_BLOCKED'\n  exit "$status"\nfi\n`);
     const result = spawnSync('/bin/bash', [harness], {
       encoding: 'utf8', timeout: 15000,
       env: { PATH: `${directory}:${dirname(process.execPath)}:/usr/bin:/bin:/usr/sbin:/sbin`, HOME: directory,
@@ -95,6 +95,12 @@ test('同一代进程协议明确就绪，才允许走到切换', () => {
   assert.equal(result.status, 0, result.stdout + result.stderr);
   assert.match(result.stdout, /SWAP_REACHED/);
   assert.equal(result.calls.filter(x => x.url.endsWith('/tick/drain-cancel')).length, 0);
+});
+
+test('持久暂停协议允许较长的配置预算，同代就绪后立即切换', () => {
+  const result = exercise({ timeout: 601 });
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.match(result.stdout, /SWAP_REACHED/);
 });
 
 for (const [name, scenario] of [
