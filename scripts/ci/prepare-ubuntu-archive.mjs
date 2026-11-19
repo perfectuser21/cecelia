@@ -13,6 +13,18 @@ const indirect = uri => /^mirror\+file:\/etc\/apt\/apt-mirrors(?:-security)?\.tx
 const official = uri => /^https?:\/\/(?:archive|security)\.ubuntu\.com\/ubuntu\/?$/.test(uri);
 const supported = uri => indirect(uri) || official(uri) || uri === previousMirror || uri === previousMirror + '/';
 
+// 拒绝诊断不打印原始行：只有公开Ubuntu域可展示去凭据/query/hash后的结构。
+function uriRefusal(code, uri, file, line, field, priority) {
+  let detail = { type: 'uri', length: uri.length };
+  try {
+    const url = new URL(uri);
+    if (['http:', 'https:'].includes(url.protocol) && (url.hostname === 'ubuntu.com' || url.hostname.endsWith('.ubuntu.com')))
+      detail = { protocol: url.protocol, hostname: url.hostname, pathname: url.pathname };
+  } catch {}
+  return Error(code + ' ' + JSON.stringify({ file, line, field, ...detail,
+    ...(Number.isSafeInteger(priority) ? { priority } : {}) }));
+}
+
 // 校验固定runner原生list，不把经过签名验证的多源failover改成单端点。
 function validateNativeMirrors(uri, readMirrorList) {
   let text;
@@ -21,20 +33,23 @@ function validateNativeMirrors(uri, readMirrorList) {
   if (typeof text !== 'string' || !text.trim() || text.length > 65536) throw Error('ubuntu_source_mirror_list_unsupported');
   const trusted = new Set(['http://azure.archive.ubuntu.com/ubuntu', archive, securityArchive]);
   const seen = new Set();
-  for (const line of text.split(/\r?\n/).map(line => line.trim()).filter(line => line && !line.startsWith('#'))) {
+  for (const [index, raw] of text.split(/\r?\n/).entries()) {
+    const line = raw.trim();
+    if (!line || line.startsWith('#')) continue;
     const match = /^(\S+)[ \t]+priority:([1-9][0-9]*)$/.exec(line);
     const url = match?.[1].replace(/\/$/, '');
-    if (!match || !trusted.has(url)) throw Error('ubuntu_source_mirror_list_unsupported');
+    if (!match || !trusted.has(url)) throw uriRefusal('ubuntu_source_mirror_list_unsupported', line.split(/\s+/)[0], uri.slice('mirror+file:'.length), index + 1, 'mirror_uri', match ? Number(match[2]) : undefined);
     seen.add(url);
   }
   if (!seen.size) throw Error('ubuntu_source_mirror_list_unsupported');
 }
 
 export function prepareUbuntuSources(text, { readMirrorList = path => fs.readFileSync(path, 'utf8'), expectedCodename } = {}) {
-  let ubuntu = 0;
+  let ubuntu = 0, offset = 0;
   let ubuntuCodename;
   const validatedMirrors = new Set();
   const result = text.split(/(\r?\n[ \t]*\r?\n)/).map(paragraph => {
+    const start = offset; offset += paragraph.length;
     const entries = [...paragraph.matchAll(/^([A-Za-z][A-Za-z-]*):[ \t]*([^\r\n]*)/gm)];
     const fields = Object.fromEntries(entries.map(match => [match[1], match[2].trim()]));
     const uris = fields.URIs?.split(/\s+/) ?? [];
@@ -44,7 +59,8 @@ export function prepareUbuntuSources(text, { readMirrorList = path => fs.readFil
       || /^[ \t]+\S/m.test(paragraph)
       || ['Types', 'URIs', 'Suites', 'Components'].some(field => !fields[field])
       || fields['Signed-By'] !== keyring) throw Error('ubuntu_source_format_unsupported');
-    if (!uris.every(supported)) throw Error('ubuntu_source_uri_unsupported');
+    const unsupportedURI = uris.find(uri => !supported(uri));
+    if (unsupportedURI) throw uriRefusal('ubuntu_source_uri_unsupported', unsupportedURI, sourceFile, text.slice(0, start + entries.find(entry => entry[1] === 'URIs').index).split('\n').length, 'URIs');
     const suites = fields.Suites.split(/\s+/);
     const parsedSuites = suites.map(suite => /^([a-z][a-z0-9]*)(?:-(updates|backports|security))?$/.exec(suite));
     const codename = parsedSuites[0]?.[1];

@@ -147,8 +147,8 @@ const CANDIDATE_CACHE_INPUTS={
 // 本次清退宿主重复回退及sidecar固定恢复；旧缓存与发布组不改字节。
 const DEPLOY_RECOVERY_MARKER='scripts/ci/__tests__/basic-brain-predecessor.test.mjs';
 const DEPLOY_RECOVERY_INPUTS={
- 'scripts/ci/prepare-ubuntu-archive.mjs':'f06014a9df7853b496d529948e803fe8aad6a04e6ab850ec7dbb1b420697830d',
- 'scripts/ci/__tests__/basic-ubuntu-archive.test.mjs':'b7a5b19a989df4575bf4b2870105a5d0ccbfb06652920023119d3ae6b57c27d3',
+ 'scripts/ci/prepare-ubuntu-archive.mjs':'8433f2c0e45998f82ff41f10b13d2779012d7e376400746ce1372f330de0972c',
+ 'scripts/ci/__tests__/basic-ubuntu-archive.test.mjs':'4e815192d3e1cdf073519a1d315450a659878cc87b5efc6dd0c84dcd26803458',
  'scripts/lib/brain-drain-client.sh':'2dab5aacee384f5e9c1ca9ae5dddf7a26a1ac725e87fc2bc93265f5da8c2ed2b',
  'scripts/brain-deploy.sh':'98630a4b6a4ad2bf77df9fa6bd640827cef0ad51ec765e6732a3d86af1de4fd3',
  'scripts/brain-rollback.sh':'8d5fb92bbe90c0d579a6b30ef3f8441ee083ff5de49152eef1561fe6c9fed137',
