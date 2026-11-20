@@ -9,7 +9,7 @@ function setup(body='【执行设置——启动前落实】\nAI账号：team2\n
  const requests=[];let stored;
  const pool={query:vi.fn(async(sql,params=[])=>{
   if(sql.includes('SELECT')&&sql.includes('FROM tasks'))return {rows:[task],rowCount:1};
-  if(sql.includes('UPDATE tasks')&&sql.includes("'native_agent'")){task.result.native_agent=JSON.parse(params[1]);return {rows:[task],rowCount:1};}
+  if(sql.includes('UPDATE tasks')&&sql.includes("jsonb_build_object('native_agent'")){task.result.native_agent=JSON.parse(params[1]);return {rows:[task],rowCount:1};}
   if(sql.includes("SET status='cancelled'")){task.status='cancelled';return {rows:[task],rowCount:1};}
   if(sql.includes("SET status='blocked'")){task.status='blocked';return {rows:[task],rowCount:1};}
   return {rows:[],rowCount:1};
@@ -23,7 +23,7 @@ function setup(body='【执行设置——启动前落实】\nAI账号：team2\n
 }
 test('完整Notion正文/固定账号/模型/技能/毫秒预算送达原生入口，不使用description短副本',async()=>{
  const f=setup();const result=await triggerNativeAgent(f.task,f.deps);
- expect(result).toMatchObject({success:true,executor:'native-agent'});
+ expect(result,JSON.stringify(result)).toMatchObject({success:true,executor:'native-agent'});
  expect(f.requests[0].request).toMatchObject({protocol:'native-agent/v1',action:'start',tenant:'tenant-a',department:'media',role:'agent',account_ref:'team2',model:'openai/gpt-6.1-sol',thinking:'high',skill_ids:['fixture-skill'],timeout_ms:1800000});
  expect(f.requests[0].request.prompt).toContain('固定业务账号保持不变，结尾验收必须保留。');
  expect(f.requests[0].request.prompt.length).toBeGreaterThan(3000);
@@ -65,4 +65,18 @@ test('原binding取消只发原run cancel，确认已知进程组退出后才写
  expect(f.requests.map(x=>x.request.action)).toEqual(['start','cancel']);
  expect(f.requests[1].request.run_id).toBe(f.requests[0].request.run_id);
  expect(f.task.status).toBe('cancelled');
+});
+test('普通Notion正文无需用户填写内部参数，使用部署受信默认且不调用分类模型',async()=>{
+ const f=setup('请整理一次资料并回填本页，保留全部原始来源与结论。');
+ f.task.payload={qiumi_source:{body:'请整理一次资料并回填本页，保留全部原始来源与结论。'}};f.task.kind='agent';
+ Object.assign(f.deps.env,{BRAIN_NATIVE_AGENT_DEFAULT_ACCOUNT_REF:'trusted-team',BRAIN_NATIVE_AGENT_DEFAULT_MODEL:'gpt-6.2-sol',BRAIN_NATIVE_AGENT_DEFAULT_THINKING:'high',BRAIN_NATIVE_AGENT_DEFAULT_TIMEOUT_SEC:'1800',BRAIN_NATIVE_AGENT_DEFAULT_DEPARTMENT:'main'});
+ const result=await triggerNativeAgent(f.task,f.deps);
+ expect(result,JSON.stringify(result)).toMatchObject({success:true});
+ expect(f.requests[0].request).toMatchObject({account_ref:'trusted-team',model:'gpt-6.2-sol',thinking:'high',timeout_ms:1800000,department:'main',role:'agent'});
+});
+test('用户显式账号和模型优先于部署默认，不能为了启动静默换号换模型',async()=>{
+ const f=setup();Object.assign(f.deps.env,{BRAIN_NATIVE_AGENT_DEFAULT_ACCOUNT_REF:'other-team',BRAIN_NATIVE_AGENT_DEFAULT_MODEL:'gpt-6.2-sol'});
+ const result=await triggerNativeAgent(f.task,f.deps);
+ expect(result,JSON.stringify(result)).toMatchObject({success:true});
+ expect(f.requests[0].request).toMatchObject({account_ref:'team2',model:'openai/gpt-6.1-sol'});
 });
