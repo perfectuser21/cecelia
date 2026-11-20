@@ -3,7 +3,7 @@ const state=vi.hoisted(()=>({query:vi.fn(),notion:vi.fn(),create:vi.fn()}));
 vi.mock('../db.js',()=>({default:{query:state.query}}));
 vi.mock('../recurring-notion-sync.js',()=>({notionReq:state.notion,getToken:()=> 'isolated-notion-fixture'}));
 vi.mock('../work-routing-store.js',()=>({createRoutedTask:state.create}));
-import {ingestDelegatedPage} from '../notion-push-sync.js';
+import {ingestDelegatedPage,pullNotionTasksForTest,pullMarkedNotionTasks} from '../notion-push-sync.js';
 import {runGtdSyncOnce} from '../notion-gtd-sync.js';
 const EN='aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',ZH='11111111-2222-3333-4444-555555555555';
 const paragraph=text=>({type:'paragraph',paragraph:{rich_text:[{plain_text:text}]}});
@@ -24,10 +24,10 @@ describe('Notion完整交办经Brain原生Agent接入',()=>{
   });
   expect(await ingestDelegatedPage({query:state.query},'fixture',page,{env})).toMatchObject({kind:'qiumi_task'});
   const request=state.create.mock.calls[0][1];
-  expect(request).toMatchObject({requested_task_type:'qiumi_task',mutation_intent:'none',task:{executor_kind:'external-worker',status:'queued'},metadata:{source:'notion_gtd',tenant_id:'isolated-tenant',notion_page_id:EN,notion_zh_page_id:ZH,headed_manual:false,next_run_at:'2026-12-01T01:00:00.000Z',native_agent_content:{protocol:'notion-complete-body/v1',complete:true,empty_body:false,page_ids:[EN,ZH]}}});
+  expect(request).toMatchObject({requested_task_type:'qiumi_task',mutation_intent:'none',task:{executor_kind:'external-worker',status:'queued'},metadata:{source:'notion_gtd',tenant_id:'isolated-tenant',notion_page_id:EN,notion_zh_page_id:ZH,headed_manual:false,next_run_at:'2026-12-01T09:00:00+08:00',native_agent_content:{protocol:'notion-complete-body/v1',complete:true,empty_body:false,page_ids:[EN,ZH]}}});
   expect(request.description).toBe(first+'\n'+tail);
   expect(request.metadata.qiumi_source.body).toBe(first+'\n'+tail);
-  expect(state.query.mock.calls).toEqual(expect.arrayContaining([[expect.stringContaining('due_at=$2'),['15f42776-8d1b-430d-b27a-38a480b93151','2026-12-01T02:00:00.000Z']]]));
+  expect(state.query.mock.calls).toEqual(expect.arrayContaining([[expect.stringContaining('due_at=$2'),['15f42776-8d1b-430d-b27a-38a480b93151','2026-12-01T10:00:00+08:00']]]));
  });
  it.each(['en_failed','request_failed','nested_failed','cursor_missing','body_truncated'])('正文%s时不按标题接单，不写Brain接管回执',async mode=>{
   state.notion.mockImplementation(async(_token,path,method)=>{
@@ -67,5 +67,32 @@ describe('Notion完整交办经Brain原生Agent接入',()=>{
    syncEnToZh:async()=>({created:0}),pullMarked:async()=>({ingested:0}),applyOwnerStops:async()=>({}),pushQiumiStatus:async()=>({}),
   });
   expect(result.zhToEn).toMatchObject({error:'isolated full body unavailable'});
+ });
+});
+
+describe('现役Notion拉取有界分页与历史过滤',()=>{
+ it.each([pullNotionTasksForTest,pullMarkedNotionTasks])('过滤已接手历史且读完后页新单 %s',async pull=>{
+  const other={...structuredClone(page),id:'bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee'};
+  for(const p of [other])p.properties.Description.rich_text=[{plain_text:'[en-native]'}];
+  const first={...structuredClone(other),id:EN};let queried=0;
+  state.notion.mockImplementation(async(_token,path,method,body)=>{
+   if(method==='PATCH')return {};
+   if(path.includes('/blocks/'))return {results:[],has_more:false};
+   if(body?.filter?.property==='备注')return {results:[],has_more:false};
+   if(path.includes('/databases/')){
+    const filters=body.filter.and;
+    expect(filters).toEqual(expect.arrayContaining(['brain:','run:notion-','[n8n_retired]'].map(mark=>({property:'Description',rich_text:{does_not_contain:mark}}))));
+    if(filters.some(f=>f.rich_text?.contains==='[zh:'))return {results:[],has_more:false};
+    queried++;return body.start_cursor==='next-page'?{results:[other],has_more:false}:{results:[first],has_more:true,next_cursor:'next-page'};
+   }
+   throw Error('unexpected request '+path);
+  });
+  await pull({query:state.query},'fixture',{env});
+  expect(queried).toBe(2);expect(state.create).toHaveBeenCalledTimes(2);
+ });
+ it.each([pullNotionTasksForTest,pullMarkedNotionTasks])('缺游标不得报告空成功 %s',async pull=>{
+  state.notion.mockResolvedValue({results:[],has_more:true,next_cursor:null});
+  const result=await pull({query:state.query},'fixture',{env});
+  expect(result.error).toContain('cursor');expect(state.create).not.toHaveBeenCalled();
  });
 });
