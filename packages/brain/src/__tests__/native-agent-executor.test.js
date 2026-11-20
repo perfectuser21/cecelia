@@ -105,3 +105,9 @@ test('首个host响应未知也先持有Brain租约，不把真实已起会话�
  expect(await triggerNativeAgent(f.task,f.deps)).toMatchObject({success:false,dispatchUncertain:true});
  expect(f.deps.setLease).toHaveBeenCalledWith(f.pool,f.task.id,2700);
 });
+test('TaskRun终态未确认不能只凭host完成就终态Task或释放资源',async()=>{
+ const f=setup(),transport=f.deps.transport;f.deps.finishRun=async()=>({updated:false});
+ f.deps.transport=async(...args)=>({...await transport(...args),status:'completed',launch_state:'stopped',execution_stopped:true,result:{child_exited:true,exit_code:0,stdout:'',stderr:''}});
+ expect(await triggerNativeAgent(f.task,f.deps)).toMatchObject({success:false,dispatchUncertain:true});
+ expect(f.task.status).toBe('in_progress');
+});
