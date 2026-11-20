@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import {createHash,randomUUID} from 'node:crypto';
+import {createHash,randomUUID,scryptSync} from 'node:crypto';
 import {spawn,spawnSync} from 'node:child_process';
 const brainRoot=path.resolve(import.meta.dirname,'../../..');
 const bundleFiles=['scripts/native-agent/bundle.mjs','scripts/native-agent/config.mjs','scripts/native-agent/store.mjs','scripts/native-agent/process.mjs','scripts/native-agent/worker.mjs','scripts/native-agent/cli.mjs','scripts/coding-workflow/lib/codex-auth.mjs','src/orchestrator/activity-supervisor-state.cjs'];
@@ -170,4 +170,23 @@ test('P1固定Codex工具权限显式deny监督state/config/release并保认证d
  const f=fixture(t),r=f.request();await f.call(r);await f.poll(r,v=>v?.launch_state==='stopped');
  const policy=f.launches()[0].argv.find(x=>x.startsWith('permissions='));assert.ok(policy);
  for(const authority of [f.config.state_dir,f.file,fs.realpathSync(brainRoot),f.config.profiles[0].codex_home])assert.ok(policy.includes(JSON.stringify(authority)+'="deny"'),authority+' not denied');
+});
+
+const apiIdentitySalt='0123456789abcdef'.repeat(4);
+const expectedApiIdentity=key=>scryptSync(key,'cecelia/native-agent/api-account/v1:'+apiIdentitySalt,32,{N:32768,r:8,p:1,maxmem:64*1024*1024}).toString('hex');
+test('API身份使用域隔离scrypt指纹时真实CLI固定账号执行并冻结相同身份',async t=>{
+ const f=fixture(t),identity=expectedApiIdentity('fixture-native-account-a');
+ f.config.profiles[0].auth_identity_sha256=identity;f.config.profiles[0].auth_identity_salt=apiIdentitySalt;f.save();
+ const r=f.request(),x=await f.call(r);assert.equal(x.code,0,x.err+x.out);
+ const done=await f.poll(r,v=>v.launch_state==='stopped');
+ assert.equal(done.status,'completed');assert.equal(done.frozen.auth_identity_sha256,identity);
+ assert.notEqual(identity,hash('fixture-native-account-a'));
+ assert.equal(JSON.parse(done.result.stdout).account,'account-a');
+ assert.equal(f.launches().length,1);
+});
+test('API身份旧直接SHA256值明确拒绝，不兼容放行或启动child',async t=>{
+ const f=fixture(t);f.config.profiles[0].auth_identity_sha256=hash('fixture-native-account-a');f.save();
+ const x=await f.call(f.request());assert.notEqual(x.code,0);
+ assert.equal(x.value.error,'native_agent_auth_identity_mismatch');assert.equal(x.value.launch_state,'not_started');
+ assert.equal(f.launches().length,0);
 });
