@@ -14,6 +14,7 @@ import {registerTaskStatusRoutes} from '../../routes/tasks-status.js';
 import {processExecutionCallback} from '../../callback-processor.js';
 import {triggerNativeAgent,requestNativeAgentCancellation} from '../../native-agent-executor.js';
 import {createRunReconciliationRouter} from '../../routes/run-reconciliation.js';
+import {updateTask,batchUpdateTasks} from '../../actions.js';
 import {blockTask,unblockTask,updateTaskStatus} from '../../task-updater.js';
 let fixture,app,previousToken;
 beforeEach(async()=>{
@@ -137,4 +138,18 @@ test('被拒通用写入后原run仍能inspect、登记取消并进入原复核�
  expect(r.status).toBe(503);expect(r.body.error).toBe('native_agent_cleanup_stop_unknown');
  expect(reviewTransport).toHaveBeenCalledWith(h.binding.host,expect.objectContaining({action:'inspect',run_id:h.runId}));
  expect((await read(h.id)).status).toBe('blocked');
+});
+
+for(const action of ['single','batch'])test(`通用${action} action不能改写原生运行且批量原子拒绝`,async()=>{
+ const h=await seed(),ordinary=await seed({record:false});
+ const operation=action==='single'?()=>updateTask({task_id:h.id,status:'failed'}):()=>batchUpdateTasks({filter:{status:'in_progress'},update:{status:'failed'}});
+ await expect(operation()).rejects.toThrow('native_agent_control_owned');
+ expect((await read(h.id)).status).toBe('in_progress');
+ expect((await read(ordinary.id)).status).toBe('in_progress');
+});
+test('普通伪nativeJSON不阻断单项与批量action',async()=>{
+ const h=await seed({record:false});
+ expect(await updateTask({task_id:h.id,status:'failed'})).toMatchObject({success:true});
+ expect(await batchUpdateTasks({filter:{status:'failed'},update:{status:'queued'}})).toMatchObject({success:true,count:1});
+ expect((await read(h.id)).status).toBe('queued');
 });
