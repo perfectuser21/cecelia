@@ -10,13 +10,15 @@ function setup(body='【执行设置——启动前落实】\nAI账号：team2\n
  const pool={query:vi.fn(async(sql,params=[])=>{
   if(sql.includes('SELECT')&&sql.includes('FROM tasks'))return {rows:[task],rowCount:1};
   if(sql.includes('UPDATE tasks')&&sql.includes("'native_agent'")){task.result.native_agent=JSON.parse(params[1]);return {rows:[task],rowCount:1};}
+  if(sql.includes("SET status='cancelled'")){task.status='cancelled';return {rows:[task],rowCount:1};}
   if(sql.includes("SET status='blocked'")){task.status='blocked';return {rows:[task],rowCount:1};}
   return {rows:[],rowCount:1};
  })};
- const deps={pool,env,resolveHost:async()=>host,startRun:async()=>({created:true}),setLease:async()=>{},recordEvent:async()=>{},
+ const deps={pool,env,resolveHost:async()=>host,startRun:async()=>({created:true}),setLease:async()=>{},recordEvent:async()=>{},finishRun:async()=>({updated:true}),releaseLocks:async()=>{},
+  finalizeTask:async(_pool,_id,status)=>{task.status=status;return {rowCount:1,task};},
   transport:async(actualHost,request)=>{requests.push({host:actualHost,request});if(request.action==='start')stored=request;
    return {...stored,...request,protocol:'native-agent/v1',status:'running',launch_state:'running',execution_stopped:false,summary:'执行中',evidence:[],
-    frozen:{config_digest:sha,profile_digest:sha,command_digest:sha,skills_digest:sha,source_digest:sha}};}};
+    frozen:{config_digest:sha,profile_digest:sha,command_digest:sha,skills_digest:sha,source_digest:sha,auth_identity_sha256:sha}};}};
  return {task,pool,deps,requests};
 }
 test('完整Notion正文/固定账号/模型/技能/毫秒预算送达原生入口，不使用description短副本',async()=>{
@@ -45,4 +47,22 @@ test('host返回另一run身份只能标未知，不把它当成已接受的原�
  const result=await triggerNativeAgent(f.task,f.deps);
  expect(result).toMatchObject({success:false,dispatchUncertain:true});
  expect(f.task.status).toBe('in_progress');
+});
+
+test('完成字样没有原child退出证明时不得完成或释放资源',async()=>{
+ const f=setup(),transport=f.deps.transport;
+ f.deps.transport=async(...args)=>({...await transport(...args),status:'completed',launch_state:'running',execution_stopped:false});
+ const result=await triggerNativeAgent(f.task,f.deps);
+ expect(result).toMatchObject({success:false,dispatchUncertain:true});
+ expect(f.task.status).toBe('in_progress');
+});
+test('原binding取消只发原run cancel，确认已知进程组退出后才写cancelled',async()=>{
+ const f=setup();expect((await triggerNativeAgent(f.task,f.deps)).success).toBe(true);
+ f.task.result.native_agent.cancel_requested=true;
+ const transport=f.deps.transport;
+ f.deps.transport=async(...args)=>({...await transport(...args),status:'cancelled',launch_state:'stopped',execution_stopped:true,termination_scope:'known_process_group',result:{child_exited:true,exit_code:null,signal:'SIGTERM',stdout:'',stderr:''}});
+ await triggerNativeAgent(f.task,f.deps);
+ expect(f.requests.map(x=>x.request.action)).toEqual(['start','cancel']);
+ expect(f.requests[1].request.run_id).toBe(f.requests[0].request.run_id);
+ expect(f.task.status).toBe('cancelled');
 });
