@@ -1,4 +1,8 @@
 import {beforeAll,afterAll,expect,test,vi} from 'vitest';
+import express from 'express';
+import request from 'supertest';
+import {createRunReconciliationRouter} from '../../routes/run-reconciliation.js';
+import {applyOwnerDecisionResolution} from '../../lib/owner-decision-resolve.js';
 import {randomUUID} from 'node:crypto';
 import {createIntakeTestDatabase} from '../fixtures/task-intake-db.js';
 import {createNativeAgentHostFixture} from '../helpers/native-agent-host-fixture.js';
@@ -9,7 +13,7 @@ import {triggerNativeAgent} from '../../native-agent-executor.js';
 let fixture,host;
 beforeAll(async()=>{
  fixture=await createIntakeTestDatabase();state.pool=fixture.pool;host=createNativeAgentHostFixture();
- for(const name of ['task_runs','workflows','task_events','device_locks','task_leases','working_memory','ops_agents','phone_registry'])await state.pool.query(`CREATE TABLE ${fixture.schema}.${name} (LIKE public.${name} INCLUDING ALL)`);
+ for(const name of ['task_runs','workflows','task_events','device_locks','task_leases','working_memory','ops_agents','phone_registry','pending_actions'])await state.pool.query(`CREATE TABLE ${fixture.schema}.${name} (LIKE public.${name} INCLUDING ALL)`);
 });
 afterAll(async()=>{host?.close();await fixture?.close();});
 const read=async id=>(await state.pool.query('SELECT * FROM tasks WHERE id=$1',[id])).rows[0];
@@ -66,4 +70,38 @@ test('伪造result native绑定没有同TaskRun服务端证据，不授权inspec
  expect(result).toMatchObject({success:false,dispatchUncertain:true,reason:'native_agent_binding_unconfirmed'});
  expect(transport).not.toHaveBeenCalled();expect((await read(id)).status).toBe('in_progress');
  const {requestNativeAgentCancellation}=await import('../../native-agent-executor.js');expect(await requestNativeAgentCancellation(state.pool,id)).toEqual({matched:false});
+});
+test('真实设备运行停止后，独立受信review匹配原run与设备epoch才能终态并解锁',async()=>{
+ const id=randomUUID(),serial='native-review-'+id;
+ await state.pool.query("INSERT INTO phone_registry(serial,nickname,enabled,host) VALUES($1,$1,true,'fixture-host')",[serial]);
+ await state.pool.query("INSERT INTO device_locks(device_name,device_type) VALUES($1,'phone')",[serial]);
+ await state.pool.query("INSERT INTO tasks(id,title,task_type,status,tenant_id,executor_kind,payload) VALUES($1,$2,'qiumi_task','queued','fixture-native','external-worker',$3)",[id,'资源复核 '+id,{native_agent_content:{protocol:'notion-complete-body/v1',complete:true,empty_body:false,page_ids:['fixture-page']},resource_health_override:true,qiumi_source:{body:'【执行参数】\n设备：'+serial+'\n【执行参数结束】\nNATIVE_REVIEW '+id}}]);
+ expect(await dispatchQiumiTask(await read(id),{env:host.env})).toMatchObject({outcome:'proceed'});
+ await triggerNativeAgent(await read(id),deps());const stopped=await poll(id);
+ expect(stopped.status).toBe('blocked');expect(stopped.result.native_agent.needs_review).toBe(true);
+ const runId=stopped.result.native_agent.request.run_id;
+ const pending=(await state.pool.query("SELECT id FROM pending_actions WHERE params->>'task_id'=$1 AND status='pending_approval'",[id])).rows[0];
+ expect(pending).toBeTruthy();
+ await expect(applyOwnerDecisionResolution(state.pool,{taskId:id,choice:'B',by:'arbitrary-agent',via:'approve',pendingActionId:pending.id})).rejects.toMatchObject({code:'native_agent_cleanup_review_required'});
+ expect((await read(id)).status).toBe('blocked');
+ const devices=(await state.pool.query('SELECT device_name,xmin::text AS acquisition_version FROM device_locks WHERE locked_by=$1',[id])).rows;
+ const body={task_id:id,pending_action_id:pending.id,expected_devices:devices,cleanup_confirmed:true,effects_reviewed:true,evidence:[{kind:'independent_operator_readback',ref:'fixture:owned-device-clean',detail:'隔离测试无手机动作，独立核对原进程退出与隔离设备账本'}]};
+ const app=express();app.use(express.json());app.use('/runs',createRunReconciliationRouter({pool:state.pool,nativeTransport:host.transport}));
+ const previous=process.env.CECELIA_INTERNAL_TOKEN;
+ try{
+  delete process.env.CECELIA_INTERNAL_TOKEN;
+  expect((await request(app).post('/runs/'+runId+'/native-resource-reconciliation').send(body)).status).toBe(503);
+  process.env.CECELIA_INTERNAL_TOKEN='isolated-operator-review-token';
+  expect((await request(app).post('/runs/'+runId+'/native-resource-reconciliation').send(body)).status).toBe(401);
+  const bad=await request(app).post('/runs/'+runId+'/native-resource-reconciliation').set('Authorization','Bearer isolated-operator-review-token').send({...body,expected_devices:devices.map(x=>({...x,acquisition_version:'1'}))});
+  expect(bad.status,JSON.stringify(bad.body)).toBe(409);
+  expect((await read(id)).status).toBe('blocked');
+  const good=await request(app).post('/runs/'+runId+'/native-resource-reconciliation').set('Authorization','Bearer isolated-operator-review-token').send(body);
+  expect(good.status,JSON.stringify(good.body)).toBe(200);
+  expect((await read(id)).status).toBe('completed_no_pr');
+  expect((await state.pool.query('SELECT locked_by FROM device_locks WHERE device_name=$1',[serial])).rows[0].locked_by).toBeNull();
+  const run=(await state.pool.query('SELECT * FROM task_runs WHERE task_id=$1',[id])).rows[0];
+  expect(run.status).toBe('success');expect(run.result.native_agent_resource_settlement).toMatchObject({basis:'operator-cleanup-review',task_id:id,run_id:runId,review:{actor:'authenticated-operator'}});
+  expect((await state.pool.query("SELECT count(*)::int AS n FROM task_events WHERE task_id=$1 AND event_type='native_agent_cleanup_reviewed'",[id])).rows[0].n).toBe(1);
+ }finally{if(previous===undefined)delete process.env.CECELIA_INTERNAL_TOKEN;else process.env.CECELIA_INTERNAL_TOKEN=previous;}
 });
