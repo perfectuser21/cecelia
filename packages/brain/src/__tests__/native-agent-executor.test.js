@@ -111,3 +111,13 @@ test('TaskRun终态未确认不能只凭host完成就终态Task或释放资源',
  expect(await triggerNativeAgent(f.task,f.deps)).toMatchObject({success:false,dispatchUncertain:true});
  expect(f.task.status).toBe('in_progress');
 });
+test('既有绑定删掉资源字段不能降级成纯文本运行，资源真值由原TaskRun冻结',async()=>{
+ const f=setup(),query=f.pool.query.getMockImplementation();let context;
+ f.pool.query.mockImplementation((sql,...args)=>sql.startsWith('SELECT device_name')?Promise.resolve({rows:[{device_name:'original-phone',acquisition_version:'123'}]}):sql.includes('SELECT context FROM task_runs')?Promise.resolve({rows:[{context}],rowCount:1}):query(sql,...args));
+ f.deps.startRun=async input=>{context={...input.context,source:input.source};return {id:'20000000-0000-4000-8000-000000000002'};};
+ await triggerNativeAgent(f.task,f.deps);expect(context.native_agent.resource_bound).toBe(true);
+ f.task.result.native_agent.device_locks=[];f.task.result.native_agent.resources={};
+ const result=await triggerNativeAgent(f.task,f.deps);
+ expect(result).toMatchObject({success:false,dispatchUncertain:true,reason:'native_agent_binding_unconfirmed'});
+ expect(f.requests).toHaveLength(1);
+});
