@@ -18,13 +18,19 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
+function nonNativeTaskRead(sql, params) {
+  if (/ AS native_owned$/.test(sql)) return { rows: [{ native_owned: false }] };
+  if (sql === 'SELECT id FROM tasks WHERE id=$1 FOR UPDATE') return { rows: [{ id: params[0] }] };
+  return { rows: [] };
+}
+
 // ─── Mock DB pool（支持事务：pool.query + pool.connect + client）─────────────
 const mockClient = {
-  query: vi.fn().mockResolvedValue({ rows: [] }),
+  query: vi.fn(nonNativeTaskRead),
   release: vi.fn(),
 };
 const mockPool = {
-  query: vi.fn().mockResolvedValue({ rows: [] }),
+  query: vi.fn(nonNativeTaskRead),
   connect: vi.fn().mockResolvedValue(mockClient),
 };
 vi.mock('../../db.js', () => ({ default: mockPool }));
@@ -114,6 +120,7 @@ vi.mock('../../code-review-trigger.js', () => ({
 // 按实际SQL语义返回任务事实，不让新增owner SELECT消耗旧顺序响应。
 function taskReads(task){
  mockPool.query.mockImplementation(async sql=>{
+  if (/ AS native_owned$/.test(sql)) return { rows: [{ native_owned: false }] };
   if(sql.includes("payload->'headed_takeover' AS headed_takeover"))return {rows:[{headed_takeover:null}]};
   if(/^SELECT (pr_url, payload|task_type, pr_url, payload)/.test(sql))return {rows:[task]};
   if(sql.includes("payload->>'failure_class' AS failure_class"))return {rows:[task]};
@@ -124,8 +131,8 @@ describe('callback-processor 集成测试', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     // 默认 mock：pool.query 返回空，pool.connect 返回 mock client
-    mockPool.query.mockResolvedValue({ rows: [] });
-    mockClient.query.mockResolvedValue({ rows: [] });
+    mockPool.query.mockImplementation(nonNativeTaskRead);
+    mockClient.query.mockImplementation(nonNativeTaskRead);
     mockPool.connect.mockResolvedValue(mockClient);
   });
 
@@ -209,6 +216,7 @@ describe('callback-processor 集成测试', () => {
       let relayRead = false;
       mockClient.query.mockResolvedValue({ rows: [], rowCount: 1 });
       mockPool.query.mockImplementation(async (sql) => {
+        if (/ AS native_owned$/.test(sql)) return { rows: [{ native_owned: false }] };
         if (sql.includes("payload->'headed_takeover' AS headed_takeover")) return { rows: [{ headed_takeover: null }] };
         if (/^SELECT (pr_url, payload|task_type, pr_url, payload)/.test(sql)) return { rows: [{ task_type: 'dev', pr_url: null, payload: {} }] };
         if (sql.includes('SELECT retry_count FROM tasks')) {

@@ -17,7 +17,6 @@ import { spawnSync } from 'node:child_process';
 const ROOT = path.resolve(import.meta.dirname, '../../');
 const CUTOVER = path.join(ROOT, 'scripts/ops/qiumi-cutover.sh');
 const INFLIGHT = path.join(ROOT, 'scripts/ops/qiumi-inflight-check.mjs');
-const ALLOWLIST = path.join(ROOT, 'config/smoke/smoke-allowlist.txt');
 const RUNBOOK = path.resolve(ROOT, '../../docs/runbooks/qiumi-cutover.md');
 
 const read = (p) => fs.readFileSync(p, 'utf8');
@@ -394,14 +393,6 @@ describe('qiumi-cutover.sh 守卫', () => {
     expect(fs.existsSync(marker)).toBe(false);
 
     fs.rmSync(tmp, { recursive: true, force: true });
-  });
-
-  it('smoke 已登记 allowlist 且保持字母序', () => {
-    const lines = read(ALLOWLIST).split('\n').filter(Boolean);
-    const i = lines.indexOf('qiumi-routing-smoke.sh');
-    expect(i).toBeGreaterThan(-1);
-    expect(lines[i - 1] <= lines[i]).toBe(true);
-    expect(lines[i + 1] === undefined || lines[i] <= lines[i + 1]).toBe(true);
   });
 
   it('runbook 写明影子跑、重建容器与回滚', () => {

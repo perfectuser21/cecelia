@@ -3,7 +3,7 @@ const effects = vi.hoisted(() => ({
   forbidden: [], query: vi.fn(), block: vi.fn(), emit: vi.fn(), terminal: vi.fn(), verifyPr: vi.fn(),
   deny(kind) { effects.forbidden.push(kind); throw Error('forbidden_'+kind); },
 }));
-vi.mock('../../../db.js', () => ({ default: { query: effects.query, connect: () => effects.deny('db_connect') } }));
+vi.mock('../../../db.js',async()=>({default:(await import('./task-mutation-pool.js')).taskMutationFixturePool((...args)=>effects.query(...args))}));
 vi.mock('../../../task-updater.js', () => ({ blockTask: effects.block }));
 vi.mock('../../../actions.js', () => ({ createTask: () => effects.deny('create_task'), updateTask: () => effects.deny('update_task') }));
 vi.mock('../../../tick-helpers.js', () => ({ routeTask: () => effects.deny('route_task'), TASK_TYPE_AGENT_MAP: {} }));

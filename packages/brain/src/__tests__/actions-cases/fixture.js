@@ -1,6 +1,6 @@
 import { vi } from 'vitest';
 const mockQuery = vi.hoisted(() => vi.fn());
-vi.mock('../../db.js', () => ({ default: { query: mockQuery } }));
+vi.mock('../../db.js', () => ({ default: { query: mockQuery,connect:async()=>({query:mockQuery,release:()=>{}}) } }));
 
 const mockCreateRoutedTask = vi.hoisted(() => vi.fn());
 vi.mock('../../work-routing-store.js', () => ({ createRoutedTask: mockCreateRoutedTask }));
@@ -38,6 +38,9 @@ export function resetActions() {
 }
 export function mockTaskMutation(rows, rowCount = rows.length) {
     mockQuery.mockImplementation(async sql => {
+      if (/^(BEGIN|COMMIT|ROLLBACK)$/.test(sql))return {rows:[]};
+      if(sql.includes('AS native_owned'))return {rows:[{native_owned:false}]};
+      if(sql.includes('FOR UPDATE'))return {rows:sql.includes('ORDER BY id')?rows:[]};
       if (/SELECT id, payload, result FROM tasks/.test(sql)) return { rows: [] };
       if (/UPDATE tasks/.test(sql)) return { rows, rowCount };
       throw new Error(`Unexpected task mutation query: ${sql}`);

@@ -11,7 +11,6 @@
  * 到上限仍忙 → failed(device_busy_expired)。执行超时（timeout_sec）只管真正跑起来的那次 run，排队不占它。
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { EventEmitter } from 'node:events';
 
 vi.mock('../lib/ssh-args.js', () => ({ SSH_BASE_ARGS: Object.freeze(['-o', 'BatchMode=yes']) }));
 vi.mock('../lib/task-event-log.js', () => ({ recordTaskEventSafe: vi.fn().mockResolvedValue(true) }));
@@ -20,8 +19,8 @@ vi.mock('../machine-registry.js', () => ({
   sshTargetFor: vi.fn(() => 'administrator@10.0.0.9'),
 }));
 import { recordTaskEventSafe } from '../lib/task-event-log.js';
-import { buildQiumiSource } from '../lib/qiumi-source.js';
-import { triggerOpenclawAgent, reapOpenclawAgentRuns } from '../openclaw-agent-executor.js';
+
+import { reapOpenclawAgentRuns } from '../openclaw-agent-executor.js';
 import { parseDeviceBusyMarker, planDeviceBusy, DEVICE_BUSY_RETRY_MS } from '../lib/qiumi-device-busy.js';
 import { deviceBusyNote, deviceBusyExpiredNote } from '../lib/qiumi-schedule.js';
 
@@ -162,45 +161,5 @@ describe('中文「OpenClaw结果」等待提示', () => {
   it('到截止仍忙：⌛ 到截止时间仍未轮到手机（一直被 <owner> 占用），未执行', () => {
     expect(deviceBusyExpiredNote({ owner: 'harvest-cron' })).toBe('⌛ 到截止时间仍未轮到手机（一直被 harvest-cron 占用），未执行');
     expect(deviceBusyExpiredNote({ owner: null })).toBe('⌛ 到截止时间仍未轮到手机（一直被 其他运行 占用），未执行');
-  });
-});
-
-describe('executor prompt：设备提示段带 DEVICE_BUSY 约定', () => {
-  function spawnMock() {
-    const child = new EventEmitter();
-    child.stdout = new EventEmitter(); child.stderr = new EventEmitter();
-    child.stdin = { end: vi.fn() }; child.kill = vi.fn();
-    const fn = vi.fn(() => { setImmediate(() => { child.stdout.emit('data', Buffer.from('DISPATCHED\n')); child.emit('close', 0); }); return child; });
-    fn.child = child;
-    return fn;
-  }
-  const pool = { query: vi.fn().mockResolvedValue({ rows: [], rowCount: 1 }) };
-  const taskWith = (hint) => ({
-    id: TID, task_type: 'qiumi_task',
-    payload: { run_id: 'qiumi-160d1a2a-1', qiumi_department: 'main', qiumi_source: buildQiumiSource({ title: 't' }), qiumi_route: { device_hint: hint } },
-  });
-
-  it.each([
-    ['台账定案', { is_device: true, serial: 'S9', host: 'xian-m1', profile: 'p9', nickname: '小彩', account: null }],
-    ['未定案', { is_device: true, serial: 'S9', host: 'xian-m1' }],
-  ])('%s：不要抢锁、最后一行只输出 DEVICE_BUSY owner=… serial=…、Brain 自动排队重试', async (_, hint) => {
-    const spawnFn = spawnMock();
-    await triggerOpenclawAgent(taskWith(hint), { spawnFn, pool });
-    const body = String(spawnFn.child.stdin.end.mock.calls[0][0]);
-    expect(body).toContain('不要抢锁');
-    expect(body).toContain('DEVICE_BUSY owner=<持有者> serial=<序列号>');
-    expect(body).toContain('Brain 会自动排队重试');
-  });
-
-  it('执行超时只管真正运行的那次：排队等了 40 分钟的回队任务重派，--timeout 仍是完整的 timeout_sec', async () => {
-    const spawnFn = spawnMock();
-    const t = taskWith({ is_device: true, serial: 'S9', host: 'xian-m1' });
-    Object.assign(t.payload, {
-      timeout_sec: 1800, device_busy_attempts: 8,
-      device_busy: { first_at: new Date(Date.now() - 40 * MIN).toISOString(), attempts: 8 },
-    });
-    await triggerOpenclawAgent(t, { spawnFn, pool });
-    const remote = String(spawnFn.mock.calls[0][1].at(-1));
-    expect(remote).toMatch(/--timeout 1800\b/);
   });
 });

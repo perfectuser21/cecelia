@@ -17,11 +17,12 @@
  * 心跳与落租约时同步把任务持有的设备锁 expires_at 拉到 lease_until。
  */
 import { EXECUTOR_CONTRACTS, resolveLivenessKind } from '../executor-contracts.js';
-import { releaseDeviceLocksHeldBy } from '../device-lock-helpers.js';
+import { releaseDeviceLocksHeldBy, unresolvedNativeAgentSql } from '../device-lock-helpers.js';
 import { afterTerminalTransition, finalizeTask } from './task-terminal.js';
 import { recordTaskEventSafe } from './task-event-log.js';
 import { TASK_TYPE_REGISTRY, isExternalWorkerTask } from './task-type-registry.js';
 import { validClaimEpoch } from './task-lease-finish.js';
+import { transaction } from '../execution-directory/store.js';
 const externalWorkerTypes = Object.keys(TASK_TYPE_REGISTRY).filter(task_type => isExternalWorkerTask({ task_type }));
 
 export const LEASE_MIN_SECONDS = 30;
@@ -78,6 +79,7 @@ async function claimAndStart(pool, { taskId, claimer, kind, forceKind, seconds, 
   const db = await pool.connect();
   try {
     await db.query('BEGIN');
+    await db.query('SELECT id FROM tasks WHERE id=$1 FOR UPDATE', [taskId]);
     const { rows } = await db.query(
       `UPDATE tasks SET claimed_by = $1, claimed_at = NOW(),
               executor_kind = CASE WHEN $4 THEN $3 ELSE COALESCE(executor_kind, $3) END,
@@ -86,6 +88,7 @@ async function claimAndStart(pool, { taskId, claimer, kind, forceKind, seconds, 
                 jsonb_build_array(jsonb_build_object('from', status, 'to', 'in_progress', 'source', 'claim', 'changed_at', NOW()))
                 ELSE status_history END
         WHERE id = $2 AND claimed_by IS NULL AND status IN ('queued', 'in_progress')
+          AND NOT ${unresolvedNativeAgentSql('tasks.id::text')}
           AND payload->>'commander_protocol' IS DISTINCT FROM 'commander-v2' AND payload->>'commander_protocol' IS DISTINCT FROM 'commander-foundation-v1'
         RETURNING id, claimed_by, claimed_at, claimed_at::text AS claim_epoch, executor_kind, status, started_at`,
       [claimer, taskId, kind, forceKind],
@@ -124,26 +127,30 @@ export async function claimTaskWithLease(pool, { taskId, claimer, executorKind, 
   // 执行机 coding workflow runner 认领必须落下自己的 kind（executor-contracts 据此当外部执行体，启动同步不打回）
   const forceKind = ['coding-workflow-runner', 'external-worker'].includes(kind);
   if (start === true) return claimAndStart(pool, { taskId, claimer, kind, forceKind, seconds, expire });
-  const result = await pool.query(
+  return transaction(pool, async db => {
+  await db.query('SELECT id FROM tasks WHERE id=$1 FOR UPDATE', [taskId]);
+  const result = await db.query(
     `UPDATE tasks SET claimed_by = $1, claimed_at = NOW(),
             executor_kind = CASE WHEN $4 THEN $3 ELSE COALESCE(executor_kind, $3) END
       WHERE id = $2 AND claimed_by IS NULL AND payload->>'commander_protocol' IS DISTINCT FROM 'commander-v2' AND payload->>'commander_protocol' IS DISTINCT FROM 'commander-foundation-v1'
+        AND NOT ${unresolvedNativeAgentSql('tasks.id::text')}
       RETURNING id, claimed_by, claimed_at, claimed_at::text AS claim_epoch, executor_kind`,
     [claimer, taskId, kind, forceKind],
   );
   if (!result.rows?.length) {
-    const existing = await pool.query('SELECT claimed_by, claimed_at FROM tasks WHERE id = $1', [taskId]);
+    const existing = await db.query('SELECT claimed_by, claimed_at FROM tasks WHERE id = $1', [taskId]);
     if (!existing.rows?.length) return { status: 404, body: { error: 'Task not found', id: taskId } };
     return { status: 409, body: { error: 'Task already claimed', claimed_by: existing.rows[0].claimed_by, claimed_at: existing.rows[0].claimed_at } };
   }
   const body = { ...result.rows[0] };
   if (seconds !== null) {
-    const lease = await upsertLease(pool, { taskId, claimer, source: 'claim', onExpire: expire, seconds });
+    const lease = await upsertLease(db, { taskId, claimer, source: 'claim', onExpire: expire, seconds });
     body.lease_until = lease?.lease_until ?? null;
     body.lease_seconds = lease?.lease_seconds ?? seconds;
     body.on_lease_expire = lease?.on_expire ?? expire;
   }
   return { status: 200, body };
+  });
 }
 
 /** 仅供服务端授权事务衔接既有真实claim；不重新认领，不复活任何旧租约。 */
@@ -207,9 +214,12 @@ export async function heartbeatTaskLease(pool, { taskId, claimer, leaseSeconds, 
 /** 领单方主动关租约（正常收尾可选调用；不关也会在过期时按终态收掉）。 */
 export async function releaseTaskLease(pool, { taskId, claimer, reason, claimEpoch } = {}) {
   if (claimEpoch !== undefined && !validClaimEpoch(claimEpoch)) return { released: false };
-  const { rows } = await pool.query(
+  return transaction(pool, async db => {
+  await db.query('SELECT id FROM tasks WHERE id=$1 FOR UPDATE', [taskId]);
+  const { rows } = await db.query(
     `WITH owned_task AS MATERIALIZED (
        SELECT id,task_type,claimed_at FROM tasks WHERE id=$1
+         AND NOT ${unresolvedNativeAgentSql('tasks.id::text')}
          AND (NOT(task_type=ANY($5::text[])) OR
            (claimed_by=$2 AND claimed_at=$4::timestamptz AND status='in_progress')) FOR UPDATE
      )
@@ -221,6 +231,7 @@ export async function releaseTaskLease(pool, { taskId, claimer, reason, claimEpo
     [taskId, claimer ?? null, String(reason || 'released_by_claimer').slice(0, 200), claimEpoch ?? null, externalWorkerTypes],
   );
   return { released: Boolean(rows?.length) };
+  });
 }
 
 /** Brain 自派执行（openclaw-agent）落租约：claimer 为空，过期先探活。 */
@@ -286,6 +297,13 @@ export async function reapExpiredLeases(pool, deps = {}) {
   let events = [];
   const processRow = async (pool, row) => {
     if (['commander-v2','commander-foundation-v1'].includes(row.payload?.commander_protocol)) { out.skipped++; return; }
+    const native = await pool.query(`SELECT 1 FROM tasks WHERE id=$1 AND ${unresolvedNativeAgentSql('tasks.id::text')}`, [row.task_id]);
+    if (native.rows.length) {
+      const renewed = await pool.query(`UPDATE task_leases SET lease_until=NOW()+($2::int * INTERVAL '1 second'),
+        extend_count=extend_count+1 WHERE task_id=$1 AND released_at IS NULL RETURNING lease_until`, [row.task_id, BRAIN_LEASE_EXTEND_SECONDS]);
+      if (renewed.rows[0]?.lease_until) await syncDeviceLocks(pool, row.task_id, renewed.rows[0].lease_until);
+      events.push(['native_agent_lease_retained_unsettled', { source: row.source }]); out.extended++; return;
+    }
     if (!row.id || !ACTIVE.includes(row.status)) {
       await markReleased(pool, row.task_id, 'task_terminal');
       out.released++;

@@ -11,7 +11,7 @@
  * 路由与 surface 对照（surface 是注册表字段，route 是本模块判定）：
  *   codex-review   → surface 'codex-review'   （REVIEW 族 → triggerCodexReview 独立 Codex 审查池）
  *   internal       → surface 'brain-internal' （Brain 进程内联 handler / staging_e2e native）
- *   openclaw-agent → surface 'openclaw-agent' （ssh MMV 起 openclaw agent）
+ *   native-agent   → surface 'native-agent' （固定宿主、账号和配置的原生会话）
  *   script         → surface 'script'         （ssh 跑场机执行确定性脚本）
  *   codex-bridge   → surface 'codex-bridge'   （location=xian / xian_m1 → 西安 Codex Bridge）
  *   external-mirror → surface 'external'（workflow_run 外部起跑账本镜像，只以 in_progress/终态入账，queued 建单即拒）
@@ -35,6 +35,7 @@ export const SURFACE_FOR_ROUTE = Object.freeze({
   'codex-review': 'codex-review',
   internal: 'brain-internal',
   'openclaw-agent': 'openclaw-agent',
+  'native-agent':'native-agent',
   script: 'script',
   'codex-bridge': 'codex-bridge',
   'local-codex': 'codex-review',
@@ -81,7 +82,7 @@ export function resolveDispatchRoute(task, { dynamic = null } = {}) {
   if (REVIEW.has(type)) return ok('codex-review', 'codex-review-local');
   if (type === 'staging_e2e') return ok('internal', 'brain-local');
   if (isCommanderVerification(task)) return ok('openclaw-agent', 'openclaw-agent');
-  if (type === 'qiumi_task') return ok('openclaw-agent', 'openclaw-agent');
+  if (type === 'qiumi_task') return ok('native-agent', 'native-agent');
   if (type === 'script_run') return ok('script', 'script');
   // 显式 override（payload.machine/executor）：executor=claude 强制落退役收口；其余（codex / 只给 machine）
   // 由 resolveExecutor 在派发时决定，解析失败在派发点 loud-fail，不在建单时猜。

@@ -2,14 +2,17 @@ import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
-import {dirname, join} from 'node:path';
+import {dirname, join, relative} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {spawnSync} from 'node:child_process';
 import {opsChecks} from '../ops-checks.mjs';
 import {commandsFor} from '../run-basic-check.mjs';
+import glob from 'fast-glob';
+import brainConfig from '../../../packages/brain/vitest.config.js';
 
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 const representative = [
+  'packages/brain/scripts/native-agent/__tests__/native-agent.node-test.mjs',
   'scripts/dispatch-worker.test.mjs',
   'scripts/brain-image-retention.test.mjs',
   'scripts/brain-image-deploy.test.mjs',
@@ -61,6 +64,7 @@ test('旧实际行为测试的代表文件都拥有 Ops 命令入口', () => {
 });
 
 const fixtureFiles = [
+  'packages/brain/scripts/native-agent/__tests__/fixture.node-test.mjs',
   'scripts/__tests__/dashboard-release-fixture.test.sh',
   'scripts/dispatch-worker.test.mjs',
   'scripts/brain-image-retention.test.mjs',
@@ -182,4 +186,13 @@ test('默认Ops完整执行现役安全fixture且无重复入口', () => {
   }
   assert.equal(new Set(active).size, active.length, 'Ops入口不能重复执行');
   assert.ok(!active.some(path => /cecelia-runner|runner-credential-single-chain/.test(path)));
+});
+
+
+test('原生Node测试由Ops实际执行，不能被Vitest误收集成空套件',()=>{
+  const brain=join(root,'packages/brain');
+  const collected=new Set(glob.sync(brainConfig.test.include,{cwd:brain,ignore:brainConfig.test.exclude}));
+  const native=paths(opsChecks(root)).filter(p=>p.startsWith('packages/brain/scripts/native-agent/__tests__/'));
+  assert.ok(native.length>0);
+  for(const file of native)assert.ok(!collected.has(relative(brain,join(root,file))),`${file}被Vitest重复误收集`);
 });

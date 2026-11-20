@@ -265,7 +265,7 @@ Runner 按冻结合同顺序执行，每步先检查前置条件、再调用执�
 
 Commander 在 run 开始唤醒，结束休眠，接收 progress/question/error/stall/check_result，只能 answer、steer、abort、none。它不能判定状态或批准外部动作。不可达时记录 unavailable，按代码规则继续；一次失败检查最多给一次恢复机会，指导进入固定 Skill 下一回合，再次独立验收。没有安全恢复适配器就待审，未知副作用只允许只读恢复。旧执行停止未知时跳过现场清场、保留占用；根进程退出不能证明脱离子进程或远程动作停止。
 
-受保护 profile 的 `commander` 配置使用 `{kind:"openclaw",skill:{entry,version},timeout_s,budget}`，或 `{kind:"process",entry,argv,skill,timeout_s,budget}`；入口、Skill 和所有依赖必须列入 `files` 的 SHA-256。预算含 max_steers、max_recovery_turns（0或1）、max_calls、timeout_ms；若指定 max_cost，须同时提供每次调用预留上界 max_call_cost。Skill 正文真身在 zenithjoy-skills 的 runner-commander@1.0.0，业务仓通过 `.skills-source.json` 固定。没有可用配置会记录 unavailable，不把它当业务失败。OpenClaw沿现场既有登录调用，不创建账号或改凭据。
+受保护 profile 的 `commander` 配置使用 `{kind:"openclaw",skill:{entry,version},timeout_s,budget}`，或 `{kind:"process",entry,argv,skill,timeout_s,budget}`；入口、Skill 和所有依赖必须列入 `files` 的 SHA-256。预算含 max_steers、max_recovery_turns（0或1）、max_calls、timeout_ms；若指定 max_cost，须同时提供每次调用预留上界 max_call_cost。Skill 正文真身在 zenithjoy-skills 的 runner-commander@1.0.0，业务仓通过 `.skills-source.json` 固定。没有可用配置会记录 unavailable，不把它当业务失败。新监督使用已冻结的 process 传输；历史 kind=openclaw 配置明确记录 unavailable，不再启动 Gateway 会话。
 
 标准进程默认使用原 JSON/EOF 协议；agent adapter 显式设 `runtime.interactive=true` 后才使用 JSONL 输入。stderr 的 `activity-agent-event/v1` progress/question/error 由 Runner 转给 Commander，纠正写入下一行 stdin；adapter须实际消费，不能把发送成功当成执行成功。stall 根据最后一次真实进展计算，不以心跳冒充进展。
 

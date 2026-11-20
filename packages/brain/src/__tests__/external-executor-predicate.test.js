@@ -24,7 +24,8 @@ describe('isExternallyExecuted —— 外部执行体统一谓词', () => {
     expect(isExternallyExecuted({ task_type: 'device_job', executor_kind: null })).toBe(true);
   });
 
-  it('qiumi_task（MMV 上 openclaw agent 执行）→ true，即使 executor_kind 尚未落库（ssh 派发在途）', () => {
+  it('qiumi_task（固定主机原生Agent执行，旧OpenClaw记录仍可读）→ true，即使 executor_kind 尚未落库（ssh 派发在途）', () => {
+    expect(isExternallyExecuted({ task_type: 'qiumi_task', executor_kind: 'external-worker' })).toBe(true);
     expect(isExternallyExecuted({ task_type: 'qiumi_task', executor_kind: 'openclaw-agent' })).toBe(true);
     expect(isExternallyExecuted({ task_type: 'qiumi_task', executor_kind: null })).toBe(true);
   });
@@ -68,6 +69,6 @@ describe('外部执行体集合从注册表派生，不手抄', () => {
       EXTERNALLY_EXECUTED_TASK_TYPES.map((t) => TASK_TYPE_REGISTRY[t].executor).filter(Boolean),
     )].sort();
     expect([...EXTERNALLY_EXECUTED_KINDS].sort()).toEqual(expected);
-    expect([...EXTERNALLY_EXECUTED_KINDS].sort()).toEqual(['app-server-controller','openclaw-agent', 'preview-janitor', 'script']);
+    expect([...EXTERNALLY_EXECUTED_KINDS].sort()).toEqual(['app-server-controller','native-agent','openclaw-agent', 'preview-janitor', 'script']);
   });
 });

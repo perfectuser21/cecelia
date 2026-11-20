@@ -13,8 +13,8 @@ import request from 'supertest';
 const mockQuery = vi.fn();
 const mockBlockTask = vi.fn().mockResolvedValue({ success: true });
 
-vi.mock('../../db.js', () => ({
-  default: { query: (...args) => mockQuery(...args) },
+vi.mock('../../db.js', async () => ({
+  default:(await import('./helpers/task-mutation-pool.js')).taskMutationFixturePool((...args)=>mockQuery(...args)),
 }));
 
 vi.mock('../../task-updater.js', () => ({

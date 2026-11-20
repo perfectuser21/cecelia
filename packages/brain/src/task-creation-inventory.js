@@ -62,17 +62,13 @@ export const TASK_CREATION_INVENTORY = Object.freeze([
   { module: 'routes/task-tasks.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
   { module: 'routes/tasks.js', source: 'api', creates_executable_task: false, migration_status: 'retired' },
   { module: 'routes/tasks-manual-dispatch.js', source: 'api', creates_executable_task: true, migration_status: 'routed' },
-  // 秋米路由（PR3）：判定为设备任务时派生 device_job 子任务。迁移 421 的回执不可变触发器
-  // 挡死带回执行的 task_type 原地转换，只能另建一条子任务（见计划补充五）。
-  // 子任务由手机领单器真领真跑，所以 creates_executable_task=true。
-  { module: 'routing/qiumi-router.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
   { module: 'image-retention-controller.js', source: 'scheduler', creates_executable_task: true, migration_status: 'routed' },
   { module: 'preview-cache-controller.js', source: 'scheduler', creates_executable_task: true, migration_status: 'routed' },
   { module: 'task-intake.js', source: 'api', creates_executable_task: true, migration_status: 'routed' },
   { module: 'lib/company-kr-analysis.js', source: 'scheduler', creates_executable_task: false, migration_status: 'retired' },
   // 已登记任务的后续核验仍经factory-cycle注入actions边界；台账自主推进已退役。
   { module: 'lib/workflow-assembly-reconcile-tasks.js', source: 'scheduler', creates_executable_task: true, migration_status: 'routed' },
-  { module: 'lib/commander-v2-control.js', source: 'scheduler', creates_executable_task: true, migration_status: 'routed' },
+  { module: 'lib/commander-v2-control.js', source: 'scheduler', creates_executable_task: false, migration_status: 'retired' },
   { module: 'lib/commander-improvement.js', source: 'scheduler', creates_executable_task: true, migration_status: 'routed' },
   { module: 'lib/factory-cycle.js', source: 'scheduler', creates_executable_task: true, migration_status: 'routed' },
   // factory-judge 本身不直连写入口：createTask 由 factory-cycle 注入（actions.js 边界），故不单独算可执行建单边界。

@@ -135,6 +135,8 @@ vi.mock('../../projection/notion.js', () => ({
 // 与 disk-guard 同理：纯路由行为单测绝不碰真机，且假 pool 喂出来的 run_id 会让
 // 每行都卡满 ssh ConnectTimeout，整轮串行 job 被拖垮。
 // 收割逻辑本身由 openclaw-agent-executor.test.js 覆盖。
+vi.mock('../../native-agent-executor.js',()=>({reapNativeAgentRuns:vi.fn().mockResolvedValue({observed:0,unknown:0})}));
+
 vi.mock('../../openclaw-agent-executor.js', () => ({
   reapOpenclawAgentRuns: vi.fn().mockResolvedValue({ reaped: 0, completed: 0, failed: 0 }),
 }));

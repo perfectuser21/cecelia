@@ -17,8 +17,8 @@ import request from 'supertest';
 
 const mockQuery = vi.fn();
 
-vi.mock('../../db.js', () => ({
-  default: { query: (...args) => mockQuery(...args) },
+vi.mock('../../db.js', async () => ({
+  default:(await import('./helpers/task-mutation-pool.js')).taskMutationFixturePool((...args)=>mockQuery(...args)),
 }));
 
 describe('PATCH /api/brain/tasks/:task_id — canceled 状态出口 [BEHAVIOR]', () => {

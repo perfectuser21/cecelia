@@ -8,10 +8,19 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Mock pool
-const mockQuery = vi.fn();
-vi.mock('../db.js', () => ({
-  default: { query: (...args) => mockQuery(...args) },
-}));
+const { mockQuery, mockDb } = vi.hoisted(() => {
+  const mockQuery = vi.fn();
+  const query = vi.fn(async (sql, params) => {
+    if (/^(BEGIN|COMMIT|ROLLBACK)$/.test(sql)) return { rows: [] };
+    if (sql === 'SELECT id FROM tasks WHERE id=$1 FOR UPDATE') return { rows: [{ id: params[0] }] };
+    if (/ AS native_owned$/.test(sql)) return { rows: [{ native_owned: false }] };
+    if (sql === "SELECT payload->'headed_takeover' AS headed_takeover FROM tasks WHERE id=$1") return { rows: [{ headed_takeover: null }] };
+    return mockQuery(sql, params);
+  });
+  const client = { query, release: vi.fn() };
+  return { mockQuery, mockDb: { query, connect: vi.fn(async () => client) } };
+});
+vi.mock('../db.js', () => ({ default: mockDb }));
 
 // Mock domain-detector (route import chain)
 vi.mock('../domain-detector.js', () => ({
@@ -56,6 +65,7 @@ function mockReqRes(params, body) {
 
 describe('POST /tasks/:id/claim (C1)', () => {
   beforeEach(() => {
+    vi.clearAllMocks();
     mockQuery.mockReset();
   });
 

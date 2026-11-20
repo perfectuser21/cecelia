@@ -149,7 +149,8 @@ export function parseExecParams(body, env = {}) {
     present: false, agent: null, model: null, modelRaw: null, timeoutSec: null,
     acceptance: null, device: null, thinking: null, errors: [],
   };
-  const selection = resolveRequestedAiAccount(body, env.aiAccountMap);
+  const selected = requestedAiAccount(body);
+  const selection = env.nativeAgent ? (!selected ? { profileId: null } : selected.length === 1 && selected[0] && selected[0].length <= 256 ? { profileId: selected[0] } : { error: 'bad_ai_account' }) : resolveRequestedAiAccount(body, env.aiAccountMap);
   if (selection.error) out.errors.push(selection.error);
   else if (selection.profileId) out.aiAccount = selection.profileId;
   const m = String(body ?? '').match(BLOCK_RE);
@@ -170,7 +171,7 @@ export function parseExecParams(body, env = {}) {
       else out.errors.push('bad_agent');
     } else if (field === 'model') {
       out.modelRaw = value;
-      out.model = resolveModel(value, allowlist);
+      out.model = env.nativeAgent ? value : resolveModel(value, allowlist);
       if (!out.model) out.errors.push('unknown_model');
     } else if (field === 'timeout') {
       out.timeoutSec = parseTimeout(value);

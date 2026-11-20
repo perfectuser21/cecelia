@@ -38,6 +38,10 @@ export function commandsFor(component, shard) {
         step('packages/brain', 'node', 'src/migrate.js'),
         { ...step('packages/brain', 'npx', '--no-install', 'vitest', 'run', '--config', '../../scripts/ci/deep-integration.config.mjs',
           'src/__tests__/integration/task-lease-device-pool.pg.integration.test.js',
+          'src/__tests__/integration/native-agent-resource-lease.pg.integration.test.js',
+          'src/__tests__/integration/native-agent-api-control.pg.integration.test.js',
+          'src/__tests__/integration/native-agent-flow.pg.integration.test.js',
+          'src/__tests__/integration/native-agent-notion-flow.pg.integration.test.js',
           'src/__tests__/integration/drain-process-scope.pg.integration.test.js',
           'src/__tests__/integration/executor-startup-headed-owner.pg.integration.test.js',
           'src/__tests__/integration/suggestion-plan-callback.pg.integration.test.js',
@@ -55,6 +59,8 @@ export function commandsFor(component, shard) {
       return [
         step('.', 'docker', 'build', '-f', 'packages/brain/Dockerfile', '-t', 'cecelia-brain:ci-basic', '.'),
         step('.', 'docker', 'run', '--rm', '--entrypoint', 'docker', 'cecelia-brain:ci-basic', 'buildx', 'version'),
+        step('.', 'docker', 'run', '--rm', '--entrypoint', 'node', 'cecelia-brain:ci-basic', '--input-type=module', '-e',
+          'import {computeBundleDigest} from "./scripts/native-agent/bundle.mjs";if(!/^[a-f0-9]{64}$/.test(computeBundleDigest("/app")))process.exit(1)'),
       ];
     case 'dashboard':
       return [vitest('apps/api'), vitest('apps/dashboard'), step('apps/dashboard', 'npm', 'run', 'build')];

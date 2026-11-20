@@ -48,7 +48,7 @@ describe('现役任务类型注册表与历史枚举分离',()=>{
     expect(R.isRetiredDevelopmentTask({task_type:'harness_initiative_extra'})).toBe(false);
   });
   it('当前运营和接力消费者仍具备明确免锚/执行配置',()=>{
-    expect(R.getTaskType('qiumi_task')).toMatchObject({surface:'openclaw-agent',executor:'openclaw-agent',tick_dispatchable:true,push_to_notion:false});
+    expect(R.getTaskType('qiumi_task')).toMatchObject({surface:'native-agent',executor:'native-agent',tick_dispatchable:true,push_to_notion:false});
     expect(R.ANCHOR_EXEMPT_TASK_TYPES).toContain('qiumi_task');
     expect(R.getTaskType('project')).toMatchObject({kind:'workflow',tick_dispatchable:false});
     expect(R.getTaskType('script_run')).toMatchObject({surface:'script',executor:'script'});

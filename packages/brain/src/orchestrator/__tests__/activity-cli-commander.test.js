@@ -31,12 +31,11 @@ async function run(enabled,offline=false,mode='success'){
   return {code,err,result:JSON.parse(out),calls};
  }finally{await fs.rm(root,{recursive:true,force:true});}
 }
-test('真实CLI同run唤醒并休眠Commander，任务input不能注入命令或Skill',async()=>{
+test('真实CLI旧Gateway监督明确不可用，任务input不能注入启动配置',async()=>{
  const r=await run(true);expect(r.code,r.err).toBe(0);expect(r.result.outputs.answer).toBe(42);
- expect(r.calls.length).toBeGreaterThanOrEqual(2);
- expect(r.calls[0].agentId).toBe('work-commander');
- expect(r.calls[0].message).toContain('公共 Runner Commander');
- expect(r.calls[0].message).not.toContain('evil.mjs');
+ expect(r.calls).toHaveLength(0);
+ expect(r.result.commander_status).toBe('unavailable');
+ expect(r.result.commander_events.some(e=>e.event_type==='COMMANDER_UNAVAILABLE')).toBe(true);
  expect(r.result.commander_events.at(-1).event_type).toBe('COMMANDER_SLEEP');
  expect(r.result.commander_events.map(e=>e.cursor)).toEqual([...r.result.commander_events.map(e=>e.cursor)].sort((a,b)=>a-b));
 });
@@ -57,9 +56,10 @@ test('登记的retryable失败由代码映射retry并有限重试，保留原执
 test.each(['fatal','unregistered'])('%s失败不得映射为可重试状态',async mode=>{
  const r=await run(true,false,mode);expect(r.code).toBe(2);expect(r.result.activities[0].attempts).toHaveLength(1);
 });
-test('真实CLI失败后Commander纠偏进入下一agent回合且逐条留记录',async()=>{
+test('真实CLI旧监督不可用不会伪造纠偏，代码有限重试仍保留',async()=>{
  const r=await run(true,false,'retryable-steer');expect(r.code,r.err).toBe(0);
- expect(r.result.activities[0].attempts[1].outputs.guidance).toEqual(['按A4修正']);
- expect(r.result.commander_events.some(e=>e.event_type==='COMMANDER_EXCHANGE'&&e.action?.action==='steer')).toBe(true);
- expect(r.result.activities[0].commander_interventions).toBe(1);
+ expect(r.result.activities[0].attempts[1].outputs.guidance).toEqual([]);
+ expect(r.result.commander_events.some(e=>e.event_type==='COMMANDER_UNAVAILABLE')).toBe(true);
+ expect(r.calls).toHaveLength(0);
+ expect(r.result.activities[0].commander_interventions).toBe(0);
 });

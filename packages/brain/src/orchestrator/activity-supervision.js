@@ -1,23 +1,10 @@
-import fs from 'node:fs';
-import path from 'node:path';
-import {fileURLToPath} from 'node:url';
-import {createHash} from 'node:crypto';
 import {runActivityContract} from './activity-runtime.js';
 import {callActivityProcess} from './activity-process.js';
 import {createCommanderBridge} from './runner-commander-bridge.js';
 import {createOpenClawCommanderTransport} from './runner-commander-transport.js';
 
-const sourceRoot=fileURLToPath(new URL('../../../../',import.meta.url));
-const skillEntry='packages/brain/skills/runner-commander/SKILL.md';
 export function trustedCommanderTransport(){
- const lock=JSON.parse(fs.readFileSync(path.join(sourceRoot,'.skills-source.json'),'utf8'));
- const state=JSON.parse(fs.readFileSync(path.join(sourceRoot,'.skills-source-state.json'),'utf8'));
- if(lock.repository!=='perfectuser21/zenithjoy-skills'||state.revision!==lock.revision||!state.files?.[skillEntry])throw Error('commander_skill_source_unverified');
- const bytes=fs.readFileSync(path.join(sourceRoot,skillEntry),'utf8');
- if(createHash('sha256').update(bytes).digest('hex')!==state.files[skillEntry])throw Error('commander_skill_source_mismatch');
- const version=bytes.match(/^ {2}version:\s*(\S+)\s*$/m)?.[1];
- if(!version)throw Error('commander_skill_version_required');
- return createOpenClawCommanderTransport({cwd:sourceRoot,profile:{kind:'openclaw',timeout_s:60,skill:{entry:skillEntry,version}},files:{[skillEntry]:state.files[skillEntry]}});
+ return createOpenClawCommanderTransport();
 }
 
 /** CLI 与 coding workflow 共用同一 Activity 循环；监督配置来自可信合同与源码固定技能。 */

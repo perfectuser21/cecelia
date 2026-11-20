@@ -578,11 +578,6 @@
       "role": "documentation"
     },
     {
-      "owner_path": "packages/brain/src/lib/openclaw-session-binding.js",
-      "path": "packages/brain/src/lib/__tests__/openclaw-session-binding.test.js",
-      "role": "verification"
-    },
-    {
       "owner_path": "packages/brain/src/routing/env.js",
       "path": "packages/brain/src/routing/__tests__/env.test.js",
       "role": "verification"

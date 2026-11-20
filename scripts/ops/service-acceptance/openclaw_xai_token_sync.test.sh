@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 共享宿主OpenClaw服务专项，非Cecelia产品默认PR检查；运维可显式执行本验收。
 # openclaw_xai_token_sync.test.sh — grok token 同步器守卫
 #
 # 背景（2026-09-22 实证）：OpenClaw 的 xai 插件不注册任何登录方式，唯一通路是

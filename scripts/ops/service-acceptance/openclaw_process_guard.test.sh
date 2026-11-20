@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 共享宿主OpenClaw服务专项，非Cecelia产品默认PR检查；运维可显式执行本验收。
 # openclaw_process_guard.test.sh — MMV OpenClaw 进程守卫
 #
 # 背景（2026-09-22 实测）：MCP 运行时不回收，网关重启后 18 小时堆了 474 个进程、

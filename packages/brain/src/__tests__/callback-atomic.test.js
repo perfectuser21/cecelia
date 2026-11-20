@@ -26,8 +26,8 @@ describe('execution-callback atomicity', () => {
 
     expect(result.statusCode).toBe(200);
     expect(result.body.duplicate).not.toBe(true);
-    expect(transactionPhases()).toEqual(['BEGIN', 'UPDATE', 'INSERT', 'COMMIT']);
-    const params = mockClient.query.mock.calls[2][1];
+    expect(transactionPhases()).toEqual(['BEGIN', 'LOCK', 'UPDATE', 'INSERT', 'COMMIT']);
+    const params = mockClient.query.mock.calls.find(([sql]) => sql.includes('INSERT INTO decision_log'))[1];
     expect(params[0]).toBe('execution-callback');
     expect(JSON.parse(params[2])).toEqual({ task_id: 'task-tx-1', run_id: 'run-tx-1', status: 'AI Done', iterations: 1 });
     expect(params.slice(4)).toEqual(['success', 'run-tx-1', 'AI Done']);
@@ -46,7 +46,7 @@ describe('execution-callback atomicity', () => {
     });
     expect(response.statusCode).toBe(200);
     expect(response.body).toMatchObject({ success: true, duplicate: true, reason: 'callback_compare_and_set_rejected' });
-    expect(transactionPhases()).toEqual(['BEGIN', 'UPDATE', 'COMMIT']);
+    expect(transactionPhases()).toEqual(['BEGIN', 'LOCK', 'UPDATE', 'COMMIT']);
     expect(mockClient.release).toHaveBeenCalledOnce();
   });
 
@@ -62,22 +62,24 @@ describe('execution-callback atomicity', () => {
   });
 
   it('UPDATE成功后INSERT日志失败必须ROLLBACK而不能COMMIT', async () => {
-    mockClient.query.mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [], rowCount: 1 })
-      .mockRejectedValueOnce(Error('owned decision log failure'));
+    mockClient.query.mockImplementation(async sql => {
+      if (sql.includes('INSERT INTO decision_log')) throw Error('owned decision log failure');
+      return { rows: [], rowCount: sql.includes('UPDATE tasks') ? 1 : null };
+    });
     const response = await mockReqRes('POST', '/execution-callback', {
       task_id: 'task-insert-failure', run_id: 'run-insert-failure', status: 'AI Done',
     });
     expect(response.statusCode).toBe(500);
-    expect(transactionPhases()).toEqual(['BEGIN', 'UPDATE', 'INSERT', 'ROLLBACK']);
+    expect(transactionPhases()).toEqual(['BEGIN', 'LOCK', 'UPDATE', 'INSERT', 'ROLLBACK']);
     expect(mockClient.release).toHaveBeenCalledOnce();
   });
 
   it('should ROLLBACK on transaction error', async () => {
     // Make the UPDATE inside transaction fail
-    mockClient.query
-      .mockResolvedValueOnce({}) // BEGIN
-      .mockRejectedValueOnce(new Error('DB write error')); // UPDATE fails
+    mockClient.query.mockImplementation(async sql => {
+      if (sql.includes('UPDATE tasks')) throw new Error('DB write error');
+      return { rows: [] };
+    });
 
     const result = await mockReqRes('POST', '/execution-callback', {
       task_id: 'task-tx-fail',
@@ -93,9 +95,10 @@ describe('execution-callback atomicity', () => {
   });
 
   it('should always release client even on error', async () => {
-    mockClient.query
-      .mockResolvedValueOnce({}) // BEGIN
-      .mockRejectedValueOnce(new Error('fail'));
+    mockClient.query.mockImplementation(async sql => {
+      if (sql.includes('UPDATE tasks')) throw new Error('fail');
+      return { rows: [] };
+    });
 
     await mockReqRes('POST', '/execution-callback', {
       task_id: 'task-release',

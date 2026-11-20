@@ -21,6 +21,13 @@ vi.mock('../db.js', () => ({
 
 
 function mockTaskMutation(pool, rows) {
+  const query = vi.fn(async (sql, params) => {
+    if (/^(BEGIN|COMMIT|ROLLBACK)$/.test(sql)) return { rows: [] };
+    if (sql === 'SELECT id FROM tasks WHERE id=$1 FOR UPDATE') return { rows: [{ id: params[0] }] };
+    if (/ AS native_owned$/.test(sql)) return { rows: [{ native_owned: false }] };
+    return pool.query(sql, params);
+  });
+  pool.connect = vi.fn(async () => ({ query, release: vi.fn() }));
   pool.query.mockImplementation(async sql => {
     if (/^\s*SELECT id, payload, result FROM tasks/.test(sql)) return { rows: [] };
     if (/^\s*SELECT \* FROM tasks/.test(sql)) return { rows };

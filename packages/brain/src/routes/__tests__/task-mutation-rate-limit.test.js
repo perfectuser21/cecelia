@@ -6,7 +6,7 @@ import { registerTaskPatchRoute } from '../task-task-patch.js';
 import { rateLimit } from 'express-rate-limit';
 
 const effects = vi.hoisted(() => ({ query: vi.fn(), terminal: vi.fn() }));
-vi.mock('../../db.js', () => ({ default: { query: effects.query } }));
+vi.mock('../../db.js',async()=>({default:(await import('./helpers/task-mutation-pool.js')).taskMutationFixturePool((...args)=>effects.query(...args))}));
 vi.mock('../../lib/task-terminal.js', async importOriginal => ({
   ...await importOriginal(),
   afterTerminalTransition: effects.terminal,

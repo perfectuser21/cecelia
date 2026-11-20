@@ -5,13 +5,14 @@
  */
 
 import pool from './db.js';
+import {withNativeAgentMutationGuard} from './lib/native-agent-task-control.js';
 import { publishTaskStarted, publishTaskCompleted, publishTaskFailed, publishTaskProgress } from './events/taskEvents.js';
 import { emit } from './event-bus.js';
 import {
   assertOwnerDecisionProtocol, OwnerDecisionProtocolError, OWNER_DECISION_REASON,
   openOwnerDecisionPendingAction, closeOwnerDecisionPendingAction,
 } from './lib/owner-decision.js';
-import { finalizeTask, isTerminalStatus } from './lib/task-terminal.js';
+import { finalizeTask, isTerminalStatus, afterTerminalTransition } from './lib/task-terminal.js';
 
 // Security: Whitelist of allowed columns for dynamic updates
 const ALLOWED_COLUMNS = ['assigned_to', 'priority', 'payload', 'error', 'artifacts', 'run_id', 'error_message'];
@@ -23,7 +24,7 @@ const TERMINAL_SET_COLUMNS = ['assigned_to', 'priority', 'error_message'];
  * 终态 → 唯一收口 finalizeTask（写完自动接棒）。返回 RETURNING * 行。
  * completed_at 用 'now' 覆盖：与本函数历史行为一致（executor 回写以本次为准）。
  */
-async function finalizeViaHub(taskId, status, additionalFields) {
+async function finalizeViaHub(taskId, status, additionalFields, db) {
   const set = { completed_at: status === 'completed' || status === 'completed_no_pr' ? 'now' : undefined };
   if (set.completed_at === undefined) delete set.completed_at;
   let mergePayload = null;
@@ -36,7 +37,7 @@ async function finalizeViaHub(taskId, status, additionalFields) {
       console.warn(`[task-updater] Ignoring non-whitelisted column: ${key}`);
     }
   }
-  const out = await finalizeTask(pool, taskId, status, { set, mergePayload, returning: ['*'] });
+  const out = await finalizeTask(db, taskId, status, { set, mergePayload, relay:false, returning: ['*'] });
   return out.task;
 }
 
@@ -56,7 +57,7 @@ export async function updateTaskStatus(taskId, status, additionalFields = {}) {
 
     let updatedTask;
     if (isTerminalStatus(status)) {
-      updatedTask = await finalizeViaHub(taskId, status, additionalFields);
+      updatedTask = await withNativeAgentMutationGuard(pool,taskId,db=>finalizeViaHub(taskId,status,additionalFields,db));
     } else {
       // Build UPDATE query dynamically（非终态：queued / in_progress / pending_postdeploy）
       const updates = ['status = $2'];
@@ -105,13 +106,15 @@ export async function updateTaskStatus(taskId, status, additionalFields = {}) {
         RETURNING *
       `;
 
-      const result = await pool.query(updateQuery, params);
+      const result = await withNativeAgentMutationGuard(pool,taskId,db=>db.query(updateQuery,params));
       updatedTask = result.rows[0];
     }
 
     if (!updatedTask) {
       throw new Error(`Task ${taskId} not found`);
     }
+
+    if(isTerminalStatus(status))await afterTerminalTransition(pool,taskId,status);
 
     // 终态/非活跃态 → 即时释放设备锁（低延迟优化；正确性由 recovery-loop sweeper 兜底）
     if (!['queued', 'in_progress'].includes(status)) {
@@ -129,40 +132,6 @@ export async function updateTaskStatus(taskId, status, additionalFields = {}) {
     return { success: true, task: updatedTask };
   } catch (err) {
     console.error(`[task-updater] Failed to update task ${taskId}:`, err.message);
-    console.error('[task-updater] Stack:', err.stack);
-    return { success: false, error: err.message };
-  }
-}
-
-/**
- * Update task progress (without changing status)
- * @param {string} taskId - Task ID
- * @param {Object} progressData - Progress data to merge into payload
- * @returns {Promise<Object>} - Update result
- */
-export async function updateTaskProgress(taskId, progressData) {
-  try {
-    const result = await pool.query(`
-      UPDATE tasks
-      SET
-        payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb,
-        updated_at = NOW()
-      WHERE id = $1
-      RETURNING *
-    `, [taskId, JSON.stringify(progressData)]);
-
-    if (result.rows.length === 0) {
-      throw new Error(`Task ${taskId} not found`);
-    }
-
-    const updatedTask = result.rows[0];
-
-    // Broadcast to WebSocket clients
-    broadcastTaskUpdate(updatedTask);
-
-    return { success: true, task: updatedTask };
-  } catch (err) {
-    console.error(`[task-updater] Failed to update task progress ${taskId}:`, err.message);
     console.error('[task-updater] Stack:', err.stack);
     return { success: false, error: err.message };
   }
@@ -233,7 +202,7 @@ export async function blockTask(taskId, { reason, detail = null, until = null } 
       ? JSON.stringify(typeof detail === 'string' ? { message: detail } : detail)
       : null;
 
-    const result = await pool.query(`
+    const result = await withNativeAgentMutationGuard(pool,taskId,db=>db.query(`
       UPDATE tasks
       SET status = 'blocked',
           blocked_at = NOW(),
@@ -243,7 +212,7 @@ export async function blockTask(taskId, { reason, detail = null, until = null } 
           updated_at = NOW()
       WHERE id = $1 AND status IN ('queued', 'in_progress', 'failed')
       RETURNING *
-    `, [taskId, reason || null, blockedDetail, blockedUntil]);
+    `, [taskId, reason || null, blockedDetail, blockedUntil]));
 
     if (result.rows.length === 0) {
       throw new Error(`Task ${taskId} not found or not in blockable state`);
@@ -298,7 +267,7 @@ export async function blockTask(taskId, { reason, detail = null, until = null } 
  */
 export async function unblockTask(taskId, { db = pool } = {}) {
   try {
-    const result = await db.query(`
+    const result = await withNativeAgentMutationGuard(db,taskId,client=>client.query(`
       UPDATE tasks
       SET status = 'queued',
           claimed_by = NULL,
@@ -327,7 +296,7 @@ export async function unblockTask(taskId, { db = pool } = {}) {
             AND status = 'pending'
         )
       RETURNING *
-    `, [taskId]);
+    `, [taskId]));
 
     if (result.rows.length === 0) {
       throw new Error(`Task ${taskId} not found or not in blocked state`);

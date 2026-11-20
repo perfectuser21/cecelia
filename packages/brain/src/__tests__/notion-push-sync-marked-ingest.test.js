@@ -35,11 +35,11 @@ const zhPage = {
 describe('ingestDelegatedPage：[zh:] 标记行 → qiumi_task', () => {
   beforeEach(() => { mockQuery.mockReset(); mockNotionReq.mockReset(); mockCreateRoutedTask.mockReset(); });
 
-  it('createRoutedTask 参数：qiumi_task/none/operations/manual/openclaw-agent/queued，payload 带页id与完整原始信息，不写 notion_id', async () => {
+  it('createRoutedTask 参数：qiumi_task/none/operations/manual/external-worker/queued，payload 带页id与完整原始信息，不写 notion_id', async () => {
     mockNotionReq
-      .mockResolvedValueOnce({ results: [{ type: 'paragraph', paragraph: { rich_text: [{ plain_text: '正文' }] } }] }) // en 正文
+      .mockResolvedValueOnce({ results: [{ type: 'paragraph', paragraph: { rich_text: [{ plain_text: '正文' }] } }], has_more: false }) // en 正文
       .mockResolvedValueOnce(zhPage)   // GET zh page
-      .mockResolvedValueOnce({ results: [{ type: 'paragraph', paragraph: { rich_text: [{ plain_text: '中文正文' }] } }] }) // zh 正文
+      .mockResolvedValueOnce({ results: [{ type: 'paragraph', paragraph: { rich_text: [{ plain_text: '中文正文' }] } }], has_more: false }) // zh 正文
       .mockResolvedValue({});          // PATCH zh / PATCH en
     mockCreateRoutedTask.mockResolvedValue({ task: { id: '15f42776-8d1b-430d-b27a-38a480b93151' } });
     mockQuery.mockResolvedValue({ rows: [] });
@@ -52,7 +52,7 @@ describe('ingestDelegatedPage：[zh:] 标记行 → qiumi_task', () => {
     expect(req).toMatchObject({
       source: 'inbox', source_id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
       requested_task_type: 'qiumi_task', mutation_intent: 'none', declared_domain: 'operations',
-      task: { priority: 'P1', status: 'queued', trigger_source: 'manual', executor_kind: 'openclaw-agent' },
+      task: { priority: 'P1', status: 'queued', trigger_source: 'manual', executor_kind: 'external-worker' },
     });
     expect(req.metadata).toMatchObject({
       source: 'notion_gtd', origin: 'zh',
@@ -87,9 +87,9 @@ describe('ingestDelegatedPage：[zh:] 标记行 → qiumi_task', () => {
 
   it('QIUMI_DISPATCH_ENABLED 未开 → 入账写 headed_manual=true（第一道闸，任务落地即不被 tick 抢跑）', async () => {
     mockNotionReq
-      .mockResolvedValueOnce({ results: [] })
+      .mockResolvedValueOnce({ results: [], has_more: false })
       .mockResolvedValueOnce(zhPage)
-      .mockResolvedValueOnce({ results: [] })
+      .mockResolvedValueOnce({ results: [], has_more: false })
       .mockResolvedValue({});
     mockCreateRoutedTask.mockResolvedValue({ task: { id: 'c1c1c1c1-1111-2222-3333-444444444444' } });
     mockQuery.mockResolvedValue({ rows: [] });
@@ -100,9 +100,9 @@ describe('ingestDelegatedPage：[zh:] 标记行 → qiumi_task', () => {
 
   it('QIUMI_DISPATCH_ENABLED=true → 入账不再写 headed_manual=true（门放开，PR3 路由接管派发）', async () => {
     mockNotionReq
-      .mockResolvedValueOnce({ results: [] })
+      .mockResolvedValueOnce({ results: [], has_more: false })
       .mockResolvedValueOnce(zhPage)
-      .mockResolvedValueOnce({ results: [] })
+      .mockResolvedValueOnce({ results: [], has_more: false })
       .mockResolvedValue({});
     mockCreateRoutedTask.mockResolvedValue({ task: { id: 'c2c2c2c2-1111-2222-3333-444444444444' } });
     mockQuery.mockResolvedValue({ rows: [] });
@@ -117,8 +117,9 @@ describe('ingestDelegatedPage：[zh:] 标记行 → qiumi_task', () => {
 
   it('[en-native] 行 → origin=en，中文页 id 从中文表按 [en:<id32>] 反查', async () => {
     mockNotionReq
-      .mockResolvedValueOnce({ results: [] })  // en 正文
-      .mockResolvedValueOnce({ results: [zhPage] }) // 中文表 query by 备注 contains [en:]
+      .mockResolvedValueOnce({ results: [], has_more: false })  // en 正文
+      .mockResolvedValueOnce({ results: [zhPage], has_more: false }) // 中文表 query by 备注 contains [en:]
+      .mockResolvedValueOnce({ results: [], has_more: false }) // zh 正文完整且为空
       .mockResolvedValue({});
     mockCreateRoutedTask.mockResolvedValue({ task: { id: 'b7efdbff-0ab0-46f3-8009-64c8cb9898d6' } });
     mockQuery.mockResolvedValue({ rows: [] });
@@ -128,25 +129,25 @@ describe('ingestDelegatedPage：[zh:] 标记行 → qiumi_task', () => {
     expect(mockCreateRoutedTask.mock.calls[0][1].metadata).toMatchObject({ origin: 'en', tenant_id: 'default' });
   });
 
-  it('已带 brain: 的行幂等跳过；非标记行仍走原 dev 分支（零行为变化）', async () => {
+  it('已带 brain: 的行幂等跳过；非标记行走同一原生接单入口', async () => {
     const { ingestDelegatedPage } = await import('../notion-push-sync.js');
     expect(await ingestDelegatedPage({ query: mockQuery }, 'tok', enPage(`[zh:${ZH32}] · brain:15f42776-8d1b-430d-b27a-38a480b93151 ✓已接管`), { env: {} }))
       .toEqual({ taskId: null, kind: 'skipped' });
-    mockNotionReq.mockResolvedValueOnce({ results: [] }).mockResolvedValue({});
+    mockNotionReq.mockResolvedValueOnce({ results: [], has_more: false }).mockResolvedValue({});
     mockCreateRoutedTask.mockResolvedValue({ task: { id: 'dddddddd-1111-2222-3333-444444444444' } });
     mockQuery.mockResolvedValue({ rows: [] });
     const r = await ingestDelegatedPage({ query: mockQuery }, 'tok', enPage('普通排单'), { env: {} });
-    expect(r.kind).toBe('dev');
-    expect(mockCreateRoutedTask.mock.calls[0][1]).toMatchObject({ requested_task_type: 'dev', repo_hint: 'cecelia', mutation_intent: 'write' });
-    expect(mockCreateRoutedTask.mock.calls[0][1].metadata).not.toHaveProperty('dedup_by_notion_page'); // 存量路径不得进豁免
-    expect(mockQuery.mock.calls.some((c) => /status='blocked'/.test(c[0]))).toBe(true); // 原分支落 blocked 不变
+    expect(r.kind).toBe('qiumi_task');
+    expect(mockCreateRoutedTask.mock.calls[0][1]).toMatchObject({ requested_task_type: 'qiumi_task', task: expect.objectContaining({executor_kind:'external-worker'}), mutation_intent: 'none' });
+    expect(mockCreateRoutedTask.mock.calls[0][1].metadata).toMatchObject({dedup_by_notion_page:'true',native_agent_content:{complete:true,empty_body:true}});
+    expect(mockQuery.mock.calls.some((c) => /status='blocked'/.test(c[0]))).toBe(false);
   });
 
   it('正文为空（Description 只剩同步标记）→ 兜底描述含标题且 ≥20 字符，不会被 pre-flight 判「太短」连吃三振', async () => {
     mockNotionReq
-      .mockResolvedValueOnce({ results: [] })  // en 正文为空
+      .mockResolvedValueOnce({ results: [], has_more: false })  // en 正文为空
       .mockResolvedValueOnce(zhPage)           // GET zh page
-      .mockResolvedValueOnce({ results: [] })  // zh 正文为空
+      .mockResolvedValueOnce({ results: [], has_more: false })  // zh 正文为空
       .mockResolvedValue({});
     mockCreateRoutedTask.mockResolvedValue({ task: { id: '15f42776-8d1b-430d-b27a-38a480b93151' } });
     mockQuery.mockResolvedValue({ rows: [] });
@@ -161,8 +162,8 @@ describe('ingestDelegatedPage：[zh:] 标记行 → qiumi_task', () => {
 
   it('正文与标题都空（英文 Name 只有 [P1] 前缀、反查不到中文行）→ 兜底描述用页 id 填充，仍 ≥20 字符', async () => {
     mockNotionReq
-      .mockResolvedValueOnce({ results: [] })  // en 正文为空
-      .mockResolvedValueOnce({ results: [] })  // 中文表 [en:] 反查未命中 → zh=null
+      .mockResolvedValueOnce({ results: [], has_more: false })  // en 正文为空
+      .mockResolvedValueOnce({ results: [], has_more: false })  // 中文表 [en:] 反查未命中 → zh=null
       .mockResolvedValue({});
     mockCreateRoutedTask.mockResolvedValue({ task: { id: 'b7efdbff-0ab0-46f3-8009-64c8cb9898d6' } });
     mockQuery.mockResolvedValue({ rows: [] });
@@ -176,7 +177,7 @@ describe('ingestDelegatedPage：[zh:] 标记行 → qiumi_task', () => {
   });
 
   it('pullMarkedNotionTasks 只查带标记的 Delegated 行', async () => {
-    mockNotionReq.mockResolvedValueOnce({ results: [] }).mockResolvedValueOnce({ results: [] });
+    mockNotionReq.mockResolvedValueOnce({ results: [], has_more: false }).mockResolvedValueOnce({ results: [], has_more: false });
     const { pullMarkedNotionTasks } = await import('../notion-push-sync.js');
     const r = await pullMarkedNotionTasks({ query: mockQuery }, 'tok', { env: {} });
     expect(r).toEqual({ ingested: 0, skipped: 0 });
@@ -187,9 +188,9 @@ describe('ingestDelegatedPage：[zh:] 标记行 → qiumi_task', () => {
 
   it('writeStatusReceipt：超长正文(8000字)回执必须保留完整 brain: 标记尾巴（不被 1900 截断吃掉），第二轮幂等跳过不再 PATCH', async () => {
     mockNotionReq
-      .mockResolvedValueOnce({ results: [{ type: 'paragraph', paragraph: { rich_text: [{ plain_text: '正文' }] } }] }) // en 正文
+      .mockResolvedValueOnce({ results: [{ type: 'paragraph', paragraph: { rich_text: [{ plain_text: '正文' }] } }], has_more: false }) // en 正文
       .mockResolvedValueOnce(zhPage)   // GET zh page
-      .mockResolvedValueOnce({ results: [{ type: 'paragraph', paragraph: { rich_text: [{ plain_text: '中文正文' }] } }] }) // zh 正文
+      .mockResolvedValueOnce({ results: [{ type: 'paragraph', paragraph: { rich_text: [{ plain_text: '中文正文' }] } }], has_more: false }) // zh 正文
       .mockResolvedValue({});          // PATCH zh / PATCH en
     mockCreateRoutedTask.mockResolvedValue({ task: { id: '15f42776-8d1b-430d-b27a-38a480b93151' } });
     mockQuery.mockResolvedValue({ rows: [] });
@@ -204,7 +205,7 @@ describe('ingestDelegatedPage：[zh:] 标记行 → qiumi_task', () => {
     // 第二轮：页面 Description 已是写回后的 content（含完整 brain: 标记）→ 应被幂等跳过，不再 PATCH/建任务
     mockNotionReq.mockReset();
     mockCreateRoutedTask.mockReset();
-    mockNotionReq.mockResolvedValueOnce({ results: [enPage(content)] }).mockResolvedValueOnce({ results: [] });
+    mockNotionReq.mockResolvedValueOnce({ results: [enPage(content)], has_more: false }).mockResolvedValueOnce({ results: [], has_more: false });
     const r2 = await pullMarkedNotionTasks({ query: mockQuery }, 'tok', { env: {} });
     expect(r2).toEqual({ ingested: 0, skipped: 1 });
     expect(mockCreateRoutedTask).not.toHaveBeenCalled();
@@ -240,9 +241,9 @@ describe('双闸守卫：QIUMI_DISPATCH_ENABLED 未开时 qiumi_task 不可被 t
   it('门关 → 入账产物 payload.headed_manual === true', async () => {
     mockQuery.mockReset(); mockNotionReq.mockReset(); mockCreateRoutedTask.mockReset();
     mockNotionReq
-      .mockResolvedValueOnce({ results: [] })
+      .mockResolvedValueOnce({ results: [], has_more: false })
       .mockResolvedValueOnce(zhPage)
-      .mockResolvedValueOnce({ results: [] })
+      .mockResolvedValueOnce({ results: [], has_more: false })
       .mockResolvedValue({});
     mockCreateRoutedTask.mockResolvedValue({ task: { id: 'c3c3c3c3-1111-2222-3333-444444444444' } });
     mockQuery.mockResolvedValue({ rows: [] });
@@ -288,7 +289,7 @@ describe('旧 Workflow relation 执行桥退役', () => {
     page.properties['Plan Date'] = { date: { start: channel === 'future' ? '2099-01-01' : '2000-01-01' } };
     const execFn = vi.fn(); const fetchFn = vi.fn(); const readTemplateFn = vi.fn();
     mockQuery.mockResolvedValue({ rows: [{ wf_id: 'old', dispatch: { channel, machine: 'xian-mac-m4', command: 'old-command', webhook_url: 'https://retired.invalid' } }] });
-    mockNotionReq.mockResolvedValue({ results: [] });
+    mockNotionReq.mockResolvedValue({ results: [], has_more: false });
     const { ingestDelegatedPage } = await import('../notion-push-sync.js');
     const result = await ingestDelegatedPage({ query: mockQuery }, 'tok', page, { execFn, fetchFn, readTemplateFn, env: { N8N_V4_WEBHOOK_URL: 'https://retired.invalid' } });
     expect(result).toEqual({ taskId: null, kind: 'retired' });
@@ -305,7 +306,7 @@ describe('旧 Workflow relation 执行桥退役', () => {
   });
   it('现代 marked 行带 Workflow relation 仍走 Brain 账房并回执', async () => {
     const page = enPage('[en-native] 明确任务'); page.properties.Workflow = { relation: [{ id: 'legacy-workflow' }] };
-    mockNotionReq.mockResolvedValue({ results: [] }); mockQuery.mockResolvedValue({ rows: [] });
+    mockNotionReq.mockResolvedValue({ results: [], has_more: false }); mockQuery.mockResolvedValue({ rows: [] });
     mockCreateRoutedTask.mockResolvedValue({ task: { id: 'modern-task' } });
     const { ingestDelegatedPage } = await import('../notion-push-sync.js');
     expect(await ingestDelegatedPage({ query: mockQuery }, 'tok', page, { env: {} })).toEqual({ taskId: 'modern-task', kind: 'qiumi_task' });

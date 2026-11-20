@@ -4,13 +4,13 @@
  * 调用三个工具适配器（conversation-capture-claude/codex/grok.js）拿到全部 session，
  * 过滤出"最后一条消息距今 ≥15 分钟"（判定为已结束）的 session，逐个：
  *   ① 原始文本写一条 capture（nature=null）
- *   ② 调 MMV OpenClaw Codex 生成 topic 摘要，写另一条 capture（nature='session_summary'）
+ *   ② 仅在调用方显式注入摘要器时生成 topic 摘要，写另一条 capture（nature='session_summary'）
  * 10 分钟自 gate（接 scheduler-jobs.js），零静默失败——失败必计入 errors。
  *
  * 2026-10-11（任务 c8b27bc5）：Brain 已迁 us-vps 容器，会话文件只在 MMV 上——容器内默认走
  * 远端模式（ssh mmv 只读跑同一份适配器，conversation-capture-remote.js）；本地模式 claude
  * 目录缺失计失败，杜绝"目录不在 → 静默 0 → 全绿"。未登记出处的会话以 transcript
- * entrypoint=cli（交互 TTY）判为有头真人会话。摘要入库后交 headed-session-handoff 收尾。
+ * entrypoint=cli（交互 TTY）判为有头真人会话。交 headed-session-handoff 收尾；默认使用原文摘录，不自动启动模型。
  *
  * 与 PR#4135 版本的区别：从"逐条消息 + 只支持 Claude Code"改为"按 session 分组 +
  * 15 分钟闲置判定 + 三工具"。
@@ -23,7 +23,6 @@
 import crypto from 'crypto';
 import fs from 'fs';
 import { pushCapture } from './capture-inbox.js';
-import { callConversationSummary } from './conversation-summary-openclaw.js';
 import { extractJsonObject } from './json-utils.js';
 import { extractClaudeSessions, CLAUDE_PROJECTS_DIR } from './conversation-capture-claude.js';
 import { extractCodexSessions } from './conversation-capture-codex.js';
@@ -64,7 +63,8 @@ const SUMMARY_PROMPT = (rawText) => `你是 Cecelia 的对话摘要助手。以�
 ${rawText}
 ---`;
 
-export async function summarizeSession(rawText, llm = callConversationSummary) {
+export async function summarizeSession(rawText, llm = null) {
+  if (llm === null) return null;
   try {
     const { text } = await llm('thalamus', SUMMARY_PROMPT(rawText), { maxTokens: 256 });
     const parsed = extractJsonObject(text);
@@ -125,7 +125,7 @@ async function collectSessions(sinceMs, { mode, exec, inContainer }) {
 }
 
 export async function runConversationCapture(pool, {
-  llm = callConversationSummary,
+  llm = null,
   mode,
   exec,
   inContainer = fs.existsSync('/.dockerenv'),
