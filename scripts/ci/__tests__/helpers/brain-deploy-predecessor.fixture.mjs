@@ -200,7 +200,7 @@ function fixture(t, fault = '', context = 'mac-studio') {
 }
 const runBuild = f => f.run('bash scripts/brain-build.sh');
 
-export function runPredecessorScenario(t,scenario){
+export function runPredecessorScenario(t,scenario,{prepare}={}){
  const f=fixture(t);
   fs.cpSync(root+'/scripts/lib',f.repo+'/scripts/lib',{recursive:true});
   fs.cpSync(root+'/scripts/brain-image-retention',f.repo+'/scripts/brain-image-retention',{recursive:true});
@@ -261,6 +261,7 @@ else console.log('{"enabled":true}');
 `,{mode:0o755});
   fs.writeFileSync(f.dir+'/bin/timeout','#!/bin/sh\nif [ "$1" = -k ]; then shift 2; fi\nshift\nexec "$@"\n',{mode:0o755});fs.writeFileSync(f.dir+'/bin/ssh','#!/bin/sh\necho forbidden >&2\nexit 99\n',{mode:0o755});
   f.env={...f.env,HOME:f.dir+'/home',HOST_HOME:f.dir+'/home',CECELIA_INTERNAL_ENV_FILE:f.dir+'/home/.credentials/cecelia-internal.env',CECELIA_IMAGE_RETENTION_DIR:f.dir+'/disabled-ledger',FULL_SCENARIO:scenario,FULL_COMPOSE_LOG:f.dir+'/compose.jsonl',FULL_COMPOSE_COUNT:f.dir+'/compose-count',FULL_HANDOFF_LOG:f.dir+'/handoff-events',FULL_CURL_LOG:f.dir+'/curl-events',BLUEGREEN_HANDOFF:scenario==='inherited-handoff'?'1':'0',SKIP_PRE_SWAP_SMOKE:'1',SKIP_POST_DEPLOY_SMOKE:'1'};
+  prepare?.(f);
   const result=spawnSync('bash',['scripts/brain-deploy.sh'],{cwd:f.repo,env:f.env,encoding:'utf8',timeout:45000});
   const compose=fs.existsSync(f.env.FULL_COMPOSE_LOG)?fs.readFileSync(f.env.FULL_COMPOSE_LOG,'utf8').trim().split('\n').map(JSON.parse):[];
   return {docker_calls:f.commands(),curl_events:fs.existsSync(f.dir+'/curl-events')?fs.readFileSync(f.dir+'/curl-events','utf8'):'',handoff_events:fs.existsSync(f.dir+'/handoff-events')?fs.readFileSync(f.dir+'/handoff-events','utf8'):'',scenario,versions_input:same?['0.8.0','1.0.0']:['0.8.0','0.9.0'],actual_previous:{container_id:local.production.id,image:previous,version:priorVersion,git_sha:'a'.repeat(40)},never_deployed_version:same?null:'0.9.0',candidate:{version:'1.0.0',git_sha:f.sha,image:f.env.IMAGE},exit_code:result.status,signal:result.signal,compose,final_production:f.state('local').production,status:fs.existsSync(f.repo+'/deploy-status.json')?JSON.parse(fs.readFileSync(f.repo+'/deploy-status.json','utf8')):null,stdout:result.stdout,stderr:result.stderr};
