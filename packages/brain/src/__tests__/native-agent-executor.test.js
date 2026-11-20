@@ -2,7 +2,7 @@ import {randomUUID} from 'node:crypto';
 import {expect,test,vi} from 'vitest';
 import {triggerNativeAgent} from '../native-agent-executor.js';
 const sha='a'.repeat(64), host={machine_id:'us-mac-m4',cli_path:'/owned/releases/a/scripts/native-agent/cli.mjs',config_path:'/owned/releases/a/operator-config.json',bundle_sha256:sha};
-const env={BRAIN_NATIVE_AGENT_MACHINE_ID:'us-mac-m4',BRAIN_NATIVE_AGENT_RELEASE_ROOT:'/owned/releases'};
+const env={BRAIN_NATIVE_AGENT_DEFAULT_ACCOUNT_REF:'',BRAIN_NATIVE_AGENT_DEFAULT_MODEL:'',BRAIN_NATIVE_AGENT_DEFAULT_THINKING:'',BRAIN_NATIVE_AGENT_DEFAULT_TIMEOUT_SEC:'',BRAIN_NATIVE_AGENT_MACHINE_ID:'us-mac-m4',BRAIN_NATIVE_AGENT_RELEASE_ROOT:'/owned/releases'};
 function setup(body='【执行设置——启动前落实】\nAI账号：team2\n【执行参数】\n执行Agent：media\n模型：openai/gpt-6.1-sol\n思考强度：high\n超时：30分钟\n【执行参数结束】\n'+ '正文'.repeat(1600)+'\n固定业务账号保持不变，结尾验收必须保留。'){
  const task={id:randomUUID(),title:'业务任务',task_type:'qiumi_task',tenant_id:'tenant-a',status:'in_progress',executor_kind:'external-worker',claimed_by:'native-test',
   payload:{qiumi_department:'media',qiumi_kind:'agent',model:'openai/gpt-6.1-sol',thinking:'high',timeout_sec:1800,qiumi_source:{title:'业务任务',body,skill_ids:['fixture-skill'],notion_page_id:'page'}},result:{}};
@@ -11,14 +11,15 @@ function setup(body='【执行设置——启动前落实】\nAI账号：team2\n
   if(sql.includes('SELECT')&&sql.includes('FROM tasks'))return {rows:[task],rowCount:1};
   if(sql.includes('UPDATE tasks')&&sql.includes("jsonb_build_object('native_agent'")){task.result.native_agent=JSON.parse(params[1]);return {rows:[task],rowCount:1};}
   if(sql.includes("SET status='cancelled'")){task.status='cancelled';return {rows:[task],rowCount:1};}
+  if(sql.includes('INSERT INTO pending_actions'))return {rows:[{id:'30000000-0000-4000-8000-000000000003'}],rowCount:1};
   if(sql.includes("SET status='blocked'")){task.status='blocked';return {rows:[task],rowCount:1};}
   return {rows:[],rowCount:1};
  })};
- const deps={pool,env,resolveHost:async()=>host,startRun:async()=>({created:true}),setLease:async()=>{},recordEvent:async()=>{},finishRun:async()=>({updated:true}),releaseLocks:async()=>{},
+ const deps={pool,env:{...env},resolveHost:async()=>host,startRun:async()=>({created:true,id:'20000000-0000-4000-8000-000000000002'}),setLease:async()=>{},recordEvent:async()=>{},finishRun:async()=>({updated:true}),releaseLocks:async()=>{},
   finalizeTask:async(_pool,_id,status)=>{task.status=status;return {rowCount:1,task};},
   transport:async(actualHost,request)=>{requests.push({host:actualHost,request});if(request.action==='start')stored=request;
-   return {...stored,...request,protocol:'native-agent/v1',status:'running',launch_state:'running',execution_stopped:false,summary:'执行中',evidence:[],
-    frozen:{config_digest:sha,profile_digest:sha,command_digest:sha,skills_digest:sha,source_digest:sha,auth_identity_sha256:sha}};}};
+   return {...stored,...request,protocol:'native-agent/v1',actual_cli_model:'gpt-6.2-sol',status:'running',launch_state:'running',execution_stopped:false,summary:'执行中',evidence:[],
+    frozen:{config_digest:sha,profile_digest:sha,command_digest:sha,skills_digest:sha,source_digest:sha,auth_identity_sha256:sha,stdin_digest:sha,codex_config_sha256:sha,codex_config_present:true}};}};
  return {task,pool,deps,requests};
 }
 test('完整Notion正文/固定账号/模型/技能/毫秒预算送达原生入口，不使用description短副本',async()=>{
@@ -91,4 +92,11 @@ for(const outcome of ['cancelled','timed_out','failed'])test(`${outcome}已知�
  await triggerNativeAgent(f.task,f.deps);
  expect(locked).toBe(true);
  expect(f.task.status).toBe('blocked');
+});
+test('显式设备必须在首个native start前取得实际设备锁，繁忙不能启动',async()=>{
+ const f=setup();f.task.payload.device_serial='owned-phone';f.task.payload.qiumi_route={source:'native-agent',device_hint:{serial:'owned-phone'}};
+ const acquired=[];f.deps.acquireDeviceLock=async(...args)=>{acquired.push(args);return {result:'locked'};};
+ const result=await triggerNativeAgent(f.task,f.deps);
+ expect(acquired).toHaveLength(1);expect(acquired[0].slice(0,2)).toEqual([f.task.id,'owned-phone']);
+ expect(result).toMatchObject({success:false,reason:'native_agent_device_locked'});expect(f.requests).toEqual([]);
 });
