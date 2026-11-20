@@ -133,7 +133,10 @@ async function workflow(f,decide){
 }
 test('混合agent source及code finalize只为Agent调用模型，独立验收后资源归位',async()=>{
  const f=fixture(),source=addAgent(f);f.activity={...f.activity,order:2,runtime:{...f.activity.runtime,phase:'finalize'}};f.run.contract.activities=[source,f.activity];
- const out=await workflow(f);expect(out.status).toBe('completed');expect(out.cleanup_status).toBe('completed');
+ const out=await workflow(f);expect(out.status,JSON.stringify({run_reason:out.reason,cleanup:out.cleanup_status,
+    attempts:out.attempt_history?.map(x=>({activity:x.activity_key,status:x.status,reason:x.reason_code,rows:x.activities?.map(y=>({
+      key:y.key,validator:y.validator_verdict,results:y.attempts?.map(z=>({status:z.status,reason:z.reason_code,transport:z.transport}))
+    }))}))})).toBe('completed');expect(out.cleanup_status).toBe('completed');
  expect(fs.readFileSync(path.join(f.root,'model-calls'),'utf8').trim().split('\n')).toHaveLength(1);
  expect(fs.readFileSync(path.join(f.root,'executions.jsonl'),'utf8').trim().split('\n')).toHaveLength(1);
  expect(fs.existsSync(path.join(f.root,'owned-resource'))).toBe(false);
