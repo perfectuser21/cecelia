@@ -102,6 +102,13 @@ describe.sequential('原生运行真账保护租约与设备', () => {
     expect(await sweepStaleDeviceLocks(pool)).toBe(0);
     expect((await row('device_locks', phone)).locked_by).toBe(h.id);
   });
+  it('旧not_started证明不匹配现持设备epoch时仍保留其租约', async () => {
+    const h = await holder(); await notStarted(h);
+    await pool.query('UPDATE device_locks SET locked_at=clock_timestamp() WHERE device_name=$1', [phone]);
+    expect(await releaseTaskLease(pool, { taskId: h.id })).toEqual({ released: false });
+    expect((await reapExpiredLeases(pool)).extended).toBe(1);
+    expect((await row('device_locks', phone)).locked_by).toBe(h.id);
+  });
   it('not_started外观但错nonce不解除租约和设备隔离', async () => {
     const h = await holder(); await notStarted(h, { request_nonce: randomUUID() });
     expect(await sweepStaleDeviceLocks(pool)).toBe(0);
