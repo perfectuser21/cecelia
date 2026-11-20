@@ -114,6 +114,45 @@ describe('runCommanderWatchdog', () => {
     return { fn, seen };
   }
 
+  it('旧 run 心跳过期只告警，不再查询、收养或启动 OpenClaw cron', async () => {
+    const pool = makePool([
+      [/FROM tasks[\s\S]*commander_heartbeat_at/, { rows: [RUN] }],
+      [/UPDATE tasks/, (sql, params) => ({ rows: [{ id: params[0] }], rowCount: 1 })],
+    ]);
+    const ssh = sshStub();
+    const bark = vi.fn().mockResolvedValue(true);
+    const result = await runCommanderWatchdog(pool, { execFileFn: ssh.fn, bark, gateMs: 0 });
+    expect(ssh.fn).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ scanned: 1, relaunched: 0, adopted: 0, barked: 1, failed: 0 });
+    expect(bark).toHaveBeenCalledTimes(1);
+    expect(bark.mock.calls[0][1]).toContain('cmd09300200');
+  });
+
+  it('巡检不伪造心跳、接班时间或escort身份，成功告警只记去重时间', async () => {
+    const stale = { ...RUN, payload: { ...RUN.payload, commander_relaunch_count: 2 } };
+    const pool = makePool([
+      [/FROM tasks[\s\S]*commander_heartbeat_at/, { rows: [stale] }],
+      [/UPDATE tasks/, (sql, params) => ({ rows: [{ id: params[0] }], rowCount: 1 })],
+    ]);
+    const now = Date.parse('2026-11-20T02:00:00Z');
+    await runCommanderWatchdog(pool, { execFileFn: sshStub().fn, bark: vi.fn().mockResolvedValue(true), gateMs: 0, now });
+    const updates = pool.calls.filter(call => /UPDATE tasks/.test(call.sql)).map(call => JSON.parse(call.params[1]));
+    expect(updates).toEqual([{ commander_bark_at: new Date(now).toISOString() }]);
+    expect(pool.calls.find(call => /INSERT INTO task_events/.test(call.sql)).params[1]).toBe('commander_heartbeat_stale');
+  });
+
+  it.each(['false', 'error'])('Bark未发送成功（%s）不记已告警、心跳或接班成功', async kind => {
+    const stale = { ...RUN, payload: { ...RUN.payload, commander_relaunch_count: 2 } };
+    const pool = makePool([
+      [/FROM tasks[\s\S]*commander_heartbeat_at/, { rows: [stale] }],
+      [/UPDATE tasks/, (sql, params) => ({ rows: [{ id: params[0] }], rowCount: 1 })],
+    ]);
+    const bark = kind === 'false' ? vi.fn().mockResolvedValue(false) : vi.fn().mockRejectedValue(new Error('owned notification failed'));
+    const result = await runCommanderWatchdog(pool, { execFileFn: sshStub().fn, bark, gateMs: 0 });
+    expect(result).toMatchObject({ relaunched: 0, adopted: 0, barked: 0, failed: 1 });
+    expect(pool.calls.some(call => /UPDATE tasks/.test(call.sql))).toBe(false);
+  });
+
   it('心跳过期（判据在 SQL）→ 先 rm 旧 escort 再 add 同名 escort，新 id 回写 payload，计数 +1，task_events commander_relaunched；不 Bark', async () => {
     const pool = makePool([
       [/FROM tasks[\s\S]*commander_heartbeat_at/, (sql, params) => {
