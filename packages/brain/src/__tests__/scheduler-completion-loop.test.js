@@ -103,6 +103,44 @@ describe('脚本收尾独立周期', () => {
     expect(SERIAL_JOBS).not.toContain(job('notion-gtd-sync'));
   });
 
+  it('原生Agent收尾不被慢串行轮拖住，每30秒观察且不同时进入串行队列', async () => {
+    const native = job('native-agent-reaper');
+    hang(job('machine-vitals'));
+    startSchedulerJobsLoop(pool);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(native.handler).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(native.handler).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(native.handler).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(job('machine-vitals').handler).toHaveBeenCalledTimes(1);
+    expect(native.handler).toHaveBeenCalledTimes(3);
+    expect(COMPLETION_JOBS).toContain(native);
+    expect(SERIAL_JOBS).not.toContain(native);
+  });
+
+  it('原生收尾观察超时和stop/start不重入，真实观察结束后继续原周期', async () => {
+    const native = job('native-agent-reaper');
+    native.timeoutMs = 100;
+    const first = hang(native);
+    hang(job('machine-vitals'));
+    startSchedulerJobsLoop(pool);
+    await vi.advanceTimersByTimeAsync(130_000);
+    expect(native.handler).toHaveBeenCalledTimes(1);
+    expect(pool.query.mock.calls.some(([, args]) => args?.[0] === 'scheduler_job_last_run:native-agent-reaper'
+      && JSON.parse(args[1]).timedOut === true)).toBe(true);
+    stopSchedulerJobsLoop();
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(native.handler).toHaveBeenCalledTimes(1);
+    startSchedulerJobsLoop(pool);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(native.handler).toHaveBeenCalledTimes(1);
+    first.resolve({ observed: 1, unknown: 0 });
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(native.handler).toHaveBeenCalledTimes(2);
+  });
+
   it('OpenClaw手机真实完成不被串行慢job拖住，且只在独立循环运行', async () => {
     hang(job('machine-vitals'));
     startSchedulerJobsLoop(pool);
