@@ -80,3 +80,15 @@ test('用户显式账号和模型优先于部署默认，不能为了启动静�
  expect(result,JSON.stringify(result)).toMatchObject({success:true});
  expect(f.requests[0].request).toMatchObject({account_ref:'team2',model:'openai/gpt-6.1-sol'});
 });
+for(const outcome of ['cancelled','timed_out','failed'])test(`${outcome}已知进程组退出不证明设备外部清理，原设备锁必须保留待核`,async()=>{
+ const f=setup(),query=f.pool.query.getMockImplementation();let locked=true;
+ f.pool.query.mockImplementation((sql,...args)=>sql.startsWith('SELECT device_name')?Promise.resolve({rows:[{device_name:'owned-phone',acquisition_version:'123'}]}):query(sql,...args));
+ f.deps.releaseLocks=async()=>{locked=false;};
+ expect((await triggerNativeAgent(f.task,f.deps)).success).toBe(true);
+ f.task.result.native_agent.cancel_requested=outcome==='cancelled';
+ const transport=f.deps.transport;
+ f.deps.transport=async(...args)=>({...await transport(...args),status:outcome,launch_state:'stopped',execution_stopped:true,termination_scope:'known_process_group',result:{child_exited:true,exit_code:null,signal:'SIGTERM',stdout:'',stderr:''}});
+ await triggerNativeAgent(f.task,f.deps);
+ expect(locked).toBe(true);
+ expect(f.task.status).toBe('blocked');
+});

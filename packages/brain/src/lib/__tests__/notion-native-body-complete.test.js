@@ -9,3 +9,8 @@ test('严格模式嵌套块失败同样拒绝；其他非执行消费者仍可�
  await expect(readPageContent('page',{request,requireComplete:true})).rejects.toThrow('fixture nested unavailable');
  expect(await readPageContent('page',{request})).toBe('执行约束在子块');
 });
+test('严格任务正文不能把截断或未读取更深块当作完整输入',async()=>{
+ const request=async()=>({results:[{id:'more',type:'toggle',has_children:true,toggle:{rich_text:[{plain_text:'完整要求'.repeat(30)}]}}],has_more:false});
+ await expect(readPageContent('page',{request,requireComplete:true,maxChars:20})).rejects.toThrow();
+ await expect(readPageContent('page',{request,requireComplete:true,maxDepth:0})).rejects.toThrow();
+});
