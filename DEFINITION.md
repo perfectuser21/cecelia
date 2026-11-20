@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.445.272
+**Brain 版本**: 1.445.273
 
 通用 Checker 独立读取冻结的 Activity Contract 和只读事实，逐条验收。监督恢复保留原截止，结果未知时不重放执行。
 
