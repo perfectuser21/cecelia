@@ -22,7 +22,7 @@ function fixture({requirement='number equals 42',fact={number:42},mode='normal',
 const fs=require('fs'),cp=require('child_process'),path=require('path');
 let prompt='';process.stdin.on('data',b=>prompt+=b);process.stdin.on('end',async()=>{
  const input=JSON.parse(fs.readFileSync(process.env.COMMANDER_ACTIVITY_INPUT_FILE));const r=input.checker_request;
- const refScenario=['final-ref-recheck','final-ref-always-wrong'].includes('${mode}');
+ const refScenario=['final-ref-recheck','final-ref-always-wrong','final-timeout-recheck'].includes('${mode}');
  const mediated='${mode}'.startsWith('mediated-');
  const repairScenario='${mode}'.startsWith('readonly-repair')||mediated;
  if(!r&&repairScenario){
@@ -60,7 +60,8 @@ let prompt='';process.stdin.on('data',b=>prompt+=b);process.stdin.on('end',async
  if('${mode}'==='empty')result.outcome='empty';
  if(refScenario&&r.phase==='end'){
   const endings=fs.readFileSync('checker-calls.jsonl','utf8').trim().split('\\n').map(JSON.parse).filter(call=>call.request.phase==='end');
-  if('${mode}'==='final-ref-always-wrong'||endings.length===1)result.checks[0].evidence[0].source='/invented';
+  if('${mode}'==='final-timeout-recheck'&&endings.length===1){setInterval(()=>{},1000);return;}
+  if('${mode}'==='final-ref-always-wrong'||('${mode}'==='final-ref-recheck'&&endings.length===1))result.checks[0].evidence[0].source='/invented';
  }
  if('${mode}'==='wrong-nonce')result.nonce='foreign';if('${mode}'==='invented-evidence')result.checks[0].evidence[0].source='/invented';
  result.output_json=JSON.stringify(result.output);delete result.output;
@@ -181,7 +182,7 @@ test.each([
  }finally{f.close();}
 },20000);
 
-test.each([['final-ref-recheck','completed'],['final-ref-always-wrong','needs_review']])('rechecks original proposal without re-executing the Activity: %s',async(mode,status)=>{
+test.each([['final-ref-recheck','completed'],['final-ref-always-wrong','needs_review'],['final-timeout-recheck','completed']])('rechecks original proposal without re-executing the Activity: %s',async(mode,status)=>{
  const f=fixture({mode});try{
   const runtime=await createRuntime({profile:f.profile,run:f.run});
   const deadline=Date.now()+10000;

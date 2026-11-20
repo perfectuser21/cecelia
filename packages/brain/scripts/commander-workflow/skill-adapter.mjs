@@ -93,7 +93,9 @@ export async function createRuntime({profile,run,verifySource=async()=>{},ledger
       cwd:profile.cwd,codex:config.codex,codex_auth:profile.codex_auth,...(ledger?{ledger_directory:ledger.directory,ledger_policy:ledger.policy}:{}),
       thread_file:path.join(directory,'thread.json'),work_dir:directory,context:request.context,
       checker_request:request,checker_evidence:checker.evidence,checker_files:profile.files,deadline_ms:deadline},{cwd:profile.cwd,signal},deadline);
-    if(transport.execution_stopped===false||transport.external_effect==='unknown'||transport.exit_signal||transport.reason_code)throw Error('checker_execution_unconfirmed');
+    if(transport.execution_stopped===false||transport.external_effect==='unknown'||transport.exit_signal||transport.reason_code){
+      throw new Error('checker_execution_unconfirmed',{cause:transport.reason_code});
+    }
     return {...transport,checker_directory:directory};
   }
   async function readback(activity,input,phase,proposal,signal,deadlineMs){
@@ -176,9 +178,11 @@ export async function createRuntime({profile,run,verifySource=async()=>{},ledger
       try {
         verified=await readback(activity,input,'end',proposal,signal,deadlineMs);
       } catch(error) {
-        // A rejected evidence citation grants no execution right. Check the same proposal
-        // once more in a fresh read-only Checker under the original Activity deadline.
-        if(specFor(activity).checker.mode!=='agent'||error.message!=='checker_evidence_unbound'||
+        // Recheck the original proposal once after a citation error or Checker timeout.
+        // The retry is read-only and keeps the Activity deadline.
+        const mayRecheck=error.message==='checker_evidence_unbound'||
+          (error.message==='checker_execution_unconfirmed'&&error.cause==='activity_timeout');
+        if(specFor(activity).checker.mode!=='agent'||!mayRecheck||
           signal?.aborted||Date.now()>=deadlineMs)throw error;
         verified=await readback(activity,input,'end',proposal,signal,deadlineMs);
       }
