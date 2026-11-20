@@ -6,6 +6,7 @@ import {spawn} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
 import {durableWrite} from '../../src/orchestrator/activity-supervisor.js';
+import {isolatedCodexArgs} from './checker-evidence.mjs';
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
 const hash=p=>sha(fs.readFileSync(p));
 const json=v=>JSON.stringify(v);
@@ -82,13 +83,42 @@ export function createHostToolCaller(binding,{isStopping=()=>false}={}){
   }finally{fs.closeSync(fd);fs.unlinkSync(lock);}
  }};
 }
-export function hostToolsArgs(bindingFile,bindingHash,directory,authHome){
+// Only an empty journal or the frozen adapter's explicit pre-dispatch refusals
+// establish that another invocation cannot repeat a previous effect.
+export function hostToolsDidNotDispatch(workDir,identity){
+ try{
+  const root=fs.realpathSync(workDir),bindingPath=path.join(root,'host-tools-binding.json'),directory=path.join(root,'host-tools');
+  const binding=JSON.parse(fs.readFileSync(bindingPath,'utf8'));
+  if(binding.directory!==directory||json(binding.identity)!==json(identity)||fs.realpathSync(directory)!==directory)return false;
+  verify(binding);
+  const names=fs.readdirSync(directory);
+  const files=names.filter(name=>name.endsWith('.json'));
+  if(names.length!==files.length*3)return false;
+  const bindingHash=hash(bindingPath);
+  return files.every(name=>{
+   if(!safeName(name.slice(0,-5)))return false;
+   const file=path.join(directory,name);
+   for(const p of [file,file+'.stdout',file+'.stderr']){
+    const stat=fs.lstatSync(p);
+    if(!stat.isFile()||stat.nlink!==1||stat.size>1024*1024)return false;
+   }
+   const record=JSON.parse(fs.readFileSync(file,'utf8')),stdout=fs.readFileSync(file+'.stdout');
+   const parsed=JSON.parse(stdout.toString('utf8')),result=parsed.result;
+   return record.binding_sha256===bindingHash&&/^[a-f0-9]{64}$/.test(record.request_sha256??'')&&
+    record.state==='terminal'&&record.response?.evidence_ref===file&&record.response.exit_code===2&&
+    record.response.stdout_sha256===sha(stdout)&&parsed.state==='terminal'&&result?.exit_code===2&&
+    result.data?.phase==='pre_dispatch'&&result.data.dispatched===false&&result.data.external_effect==='none';
+  });
+ }catch{return false;}
+}
+export function hostToolsArgs(bindingFile,bindingHash,directory,authHome,{mediated=false}={}){
  if(!path.isAbsolute(authHome??''))fail('host_tool_auth_required');
  const toml=v=>v&&typeof v==='object'&&!Array.isArray(v)?`{${Object.entries(v).map(([k,x])=>`${json(k)}=${toml(x)}`).join(',')}}`:json(v);
  // 与prepareCodexAuth相同的权限基线，只额外deny宿主回执；完整对象避免CLI把路径中的点拆成键。
- const permissions={commander_activity:{extends:':workspace',filesystem:{[authHome]:'deny',[path.join(process.env.HOME,'.credentials')]:'deny',[directory]:'deny'},network:{enabled:true}}};
+ const permissions={commander_activity:{extends:mediated?':read-only':':workspace',
+  filesystem:{[authHome]:'deny',[path.join(process.env.HOME,'.credentials')]:'deny',[directory]:'deny'},network:{enabled:!mediated}}};
  const server=fileURLToPath(import.meta.url),prefix='mcp_servers.commander_host_tools';
- return ['-c',`${prefix}.command=${json(process.execPath)}`,'-c',`${prefix}.args=${json([server,bindingFile,bindingHash])}`,
+ return [...(mediated?isolatedCodexArgs():[]),'-c',`${prefix}.command=${json(process.execPath)}`,'-c',`${prefix}.args=${json([server,bindingFile,bindingHash])}`,
   '-c',`${prefix}.enabled_tools=["invoke"]`,'-c',`${prefix}.tool_timeout_sec=430`,'-c',`${prefix}.tools.invoke.approval_mode="approve"`,
   '-c',`permissions=${toml(permissions)}`];
 }

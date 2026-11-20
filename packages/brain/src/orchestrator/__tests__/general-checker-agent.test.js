@@ -20,9 +20,27 @@ function fixture({requirement='number equals 42',fact={number:42},mode='normal',
  // It is not evidence that a real model can interpret natural-language contracts.
  fs.writeFileSync(executable,`#!${process.execPath}
 const fs=require('fs'),cp=require('child_process'),path=require('path');
-let prompt='';process.stdin.on('data',b=>prompt+=b);process.stdin.on('end',()=>{
+let prompt='';process.stdin.on('data',b=>prompt+=b);process.stdin.on('end',async()=>{
  const input=JSON.parse(fs.readFileSync(process.env.COMMANDER_ACTIVITY_INPUT_FILE));const r=input.checker_request;
- if(!r){if('${mode}'!=='runner')fs.writeFileSync('evidence/fact.json',JSON.stringify({number:0}));if('${mode}'==='unknown-after-exec')fs.rmSync('evidence/fact.json');fs.writeFileSync(process.argv[process.argv.indexOf('-o')+1],JSON.stringify({claimed:'passed',outputs:{number:0}}));console.log(JSON.stringify({type:'thread.started',thread_id:'execution-thread'}));return;}
+ const refScenario=['final-ref-recheck','final-ref-always-wrong'].includes('${mode}');
+ const mediated='${mode}'.startsWith('mediated-');
+ const repairScenario='${mode}'.startsWith('readonly-repair')||mediated;
+ if(!r&&repairScenario){
+  if('${mode}'==='readonly-repair-missing')fs.rmSync('evidence/fact.json');
+  if(mediated&&('${mode}'!=='mediated-empty'||input.identity.attempt>1)){
+   const arg=process.argv.find(a=>a.startsWith('mcp_servers.commander_host_tools.args='));
+   const [server,bindingFile]=JSON.parse(arg.slice(arg.indexOf('=')+1));
+   const {createHostToolCaller}=await import(require('node:url').pathToFileURL(server));
+   const binding=JSON.parse(fs.readFileSync(bindingFile));
+   try{await createHostToolCaller(binding).call({kind:'fixture',action_name:'attempt-'+input.identity.attempt,args:[input.identity.attempt===1?'initial':'apply']});}
+   catch(error){if(error.message!=='host_tool_unknown')throw error;}
+   if('${mode}'==='mediated-tampered')fs.appendFileSync(path.join(binding.directory,'attempt-1.json.stdout'),' ');
+  }
+  fs.appendFileSync('executor-calls.jsonl',JSON.stringify({argv:process.argv,prompt})+'\\n');
+  fs.writeFileSync(process.argv[process.argv.indexOf('-o')+1],JSON.stringify({outputs:{number:input.identity.attempt>1&&('${mode}'==='readonly-repair'||mediated)?42:0}}));
+  console.log(JSON.stringify({type:'thread.started',thread_id:'execution-thread'}));return;
+ }
+ if(!r){if(refScenario)fs.appendFileSync('execution-count.txt','1');if('${mode}'!=='runner'&&!refScenario)fs.writeFileSync('evidence/fact.json',JSON.stringify({number:0}));if('${mode}'==='unknown-after-exec')fs.rmSync('evidence/fact.json');fs.writeFileSync(process.argv[process.argv.indexOf('-o')+1],JSON.stringify({claimed:'passed',outputs:{number:refScenario?42:0}}));console.log(JSON.stringify({type:'thread.started',thread_id:'execution-thread'}));return;}
  if('${mode}'==='hang'){setInterval(()=>{},1000);return;}
  fs.appendFileSync('checker-calls.jsonl',JSON.stringify({argv:process.argv,prompt,request:r})+'\\n');
  const arg=process.argv.find(a=>a.startsWith('mcp_servers.commander_checker_evidence.args='));
@@ -33,12 +51,17 @@ let prompt='';process.stdin.on('data',b=>prompt+=b);process.stdin.on('end',()=>{
  const response=JSON.parse(raw.stdout.trim().split('\\n').at(-1));if(response.error)throw Error(JSON.stringify(response.error));
  const observed=JSON.parse(response.result.content[0].text),fact=observed.status==='available'?JSON.parse(observed.text):null;
  const checks=r.criteria.map(c=>{const wanted=c.requirement;let matches=typeof wanted!=='string'?true:wanted.startsWith('number equals ')?fact?.number===Number(wanted.slice(14)):fact?.color===wanted.slice(9);
+ if(repairScenario&&r.phase==='end'&&c.id==='end_criterion')matches=matches&&r.proposal?.outputs?.number===fact?.number;
  if(r.proposal?.schema_version===1&&typeof wanted==='string'&&wanted.startsWith('number equals '))matches=matches&&r.proposal.outputs.number===fact?.number;
  return {id:c.id,status:fact===null?'unknown':matches?'passed':'failed',reason:fact===null?'Evidence unavailable':matches?'Observed requirement':'Observed contradiction',expected:wanted,actual:fact,evidence:[{source:observed.evidence_ref,observation:{value:fact}}]};});
  const outcome=checks.some(c=>c.status==='unknown')?'unknown':checks.some(c=>c.status==='failed')?'failed':'passed';
  const result={identity:Object.fromEntries(['task_id','run_id','run_tag','workflow','activity','attempt'].map(k=>[k,r[k]])),nonce:r.nonce,outcome,checks,output:r.proposal?.outputs??{},retryable:false,external_effect:'none'};
  if('${mode}'==='runner'&&r.phase==='end')result.output={number:42,description:'Verified in '+r.nonce};
  if('${mode}'==='empty')result.outcome='empty';
+ if(refScenario&&r.phase==='end'){
+  const endings=fs.readFileSync('checker-calls.jsonl','utf8').trim().split('\\n').map(JSON.parse).filter(call=>call.request.phase==='end');
+  if('${mode}'==='final-ref-always-wrong'||endings.length===1)result.checks[0].evidence[0].source='/invented';
+ }
  if('${mode}'==='wrong-nonce')result.nonce='foreign';if('${mode}'==='invented-evidence')result.checks[0].evidence[0].source='/invented';
  result.output_json=JSON.stringify(result.output);delete result.output;
  fs.writeFileSync(process.argv[process.argv.indexOf('-o')+1],JSON.stringify(result));console.log(JSON.stringify({type:'thread.started',thread_id:'checker-'+r.nonce}));
@@ -92,6 +115,90 @@ test('actual execution followed by failed Checker preserves feedback without mod
  expect(result.checker_result.checks[0].evidence[0].source).toBeTruthy();
  }finally{f.close();}
 },15000);
+test('a frozen read-only Activity can resume the original Agent with actual Checker feedback',async()=>{
+ const f=fixture({mode:'readonly-repair'});try{
+ f.activity.runtime.checker_repair={max_attempts:3,retry_safe:true,effect_scope:'read_only'};
+ const rt=await createRuntime({profile:f.profile,run:f.run});
+ const input={run_tag:f.run.input.run_tag};
+ const options=(attempt)=>({identity:{task_id:f.run.task_id,run_id:f.run.run_id,
+  activity_key:f.activity.key,action_id:'readonly-repair-'+attempt,attempt},
+  cwd:f.cwd,deadlineMs:f.run.deadline_ms});
+ const first=await rt.executeActivity(f.activity,input,options(1));
+ expect(first.checker_feedback).toMatchObject({retryable:true,external_effect:'none',thread_id:'execution-thread',
+  failed_checks:[{id:'end_criterion',reason:'Observed contradiction'}]});
+ const second=await rt.executeActivity(f.activity,{...input,checker_feedback:first.checker_feedback},options(2));
+ expect(second.status).toBe('completed');expect(second.outputs.number).toBe(42);
+ const calls=fs.readFileSync(path.join(f.cwd,'executor-calls.jsonl'),'utf8').trim().split('\n').map(JSON.parse);
+ expect(calls).toHaveLength(2);
+ for(const call of calls){
+  expect(call.argv.join(' ')).toContain(':read-only');
+  expect(call.argv).toContain('shell_tool');
+  expect(call.argv).not.toContain('--ephemeral');
+ }
+ expect(calls[1].argv).toContain('resume');expect(calls[1].argv).toContain('execution-thread');
+ expect(calls[1].prompt).toContain('Observed contradiction');
+ }finally{f.close();}
+},20000);
+
+test.each([
+ ['mediated-empty',true],
+ ['mediated-rejected',true],
+ ['mediated-effect',false],
+ ['mediated-unknown',false],
+ ['mediated-tampered',false],
+])('write-capable Agent resumes only with a complete no-effect broker witness: %s',async(mode,retryable)=>{
+ const f=fixture({mode});
+ try{
+  const entry=path.join(f.cwd,'host.cjs');
+  fs.writeFileSync(entry,`const fs=require('node:fs'),command=process.argv[4];
+ if(command==='initial'&&'${mode}'==='mediated-unknown'){fs.appendFileSync('host-effects.txt','1');process.stdout.write('invalid');return;}
+ if(command==='initial'&&['mediated-rejected','mediated-tampered'].includes('${mode}')){
+  process.stdout.write(JSON.stringify({state:'terminal',result:{exit_code:2,data:{phase:'pre_dispatch',dispatched:false,external_effect:'none'}}}));process.exitCode=2;
+ }else{fs.appendFileSync('host-effects.txt','1');process.stdout.write(JSON.stringify({state:'terminal',result:{exit_code:0}}));}`);
+  f.profile.files['host.cjs']=hash(entry);
+  f.profile.skill_runtime.host_tools={command:process.execPath,command_sha256:hash(process.execPath),entry:'host.cjs',
+   timeout_ms:3000,kinds:['fixture'],response_paths:['state','result.exit_code','result.data']};
+  f.activity.runtime.checker_repair={max_attempts:3,retry_safe:true,effect_scope:'host_tools'};
+  const rt=await createRuntime({profile:f.profile,run:f.run}),input={run_tag:f.run.input.run_tag};
+  const options=attempt=>({identity:{task_id:f.run.task_id,run_id:f.run.run_id,activity_key:f.activity.key,
+    action_id:'mediated-'+attempt,attempt},cwd:f.cwd,deadlineMs:f.run.deadline_ms});
+  const first=await rt.executeActivity(f.activity,input,options(1));
+  expect(first.checker_feedback?.retryable).toBe(retryable);
+  if(retryable){
+   expect(first.checker_feedback.external_effect).toBe('none');
+   const second=await rt.executeActivity(f.activity,{...input,checker_feedback:first.checker_feedback},options(2));
+   expect(second.status).toBe('completed');
+  }
+  const calls=fs.readFileSync(path.join(f.cwd,'executor-calls.jsonl'),'utf8').trim().split('\n').map(JSON.parse);
+  expect(calls).toHaveLength(retryable?2:1);
+  const effects=path.join(f.cwd,'host-effects.txt');
+  if(mode==='mediated-tampered')expect(fs.existsSync(effects)).toBe(false);
+  else expect(fs.readFileSync(effects,'utf8')).toBe('1');
+  expect(calls[0].argv).toContain('shell_tool');
+  expect(calls[0].argv.indexOf('--ignore-rules')).toBeGreaterThan(calls[0].argv.indexOf('exec'));
+  expect(calls[0].argv.join(' ')).toContain('"network"={"enabled"=false}');
+  if(retryable)expect(calls[1].argv).toContain('execution-thread');
+ }finally{f.close();}
+},20000);
+
+test.each([['final-ref-recheck','completed'],['final-ref-always-wrong','needs_review']])('rechecks original proposal without re-executing the Activity: %s',async(mode,status)=>{
+ const f=fixture({mode});try{
+  const runtime=await createRuntime({profile:f.profile,run:f.run});
+  const deadline=Date.now()+10000;
+  const result=await runtime.executeActivity(f.activity,{run_tag:f.run.input.run_tag},{
+   identity:{task_id:f.run.task_id,run_id:f.run.run_id,activity_key:f.activity.key,action_id:'original'},
+   cwd:f.cwd,deadlineMs:deadline});
+  const calls=fs.readFileSync(path.join(f.cwd,'checker-calls.jsonl'),'utf8').trim().split('\n').map(JSON.parse);
+  expect(result.status).toBe(status);
+  expect(calls.map(c=>c.request.phase)).toEqual(['start','end','end']);
+  expect(calls[1].request.proposal).toEqual({claimed:'passed',outputs:{number:42}});
+  expect(calls[2].request.proposal).toEqual(calls[1].request.proposal);
+  expect(calls[2].request.nonce).not.toBe(calls[1].request.nonce);
+  expect(fs.readFileSync(path.join(f.cwd,'execution-count.txt'),'utf8')).toBe('1');
+  if(status==='completed')expect(result.outputs.number).toBe(42);
+ }finally{f.close();}
+},15000);
+
 test('Checker supervisor uses the existing Activity deadline, not a fresh run-sized allowance',async()=>{
  const f=fixture();try{const runtime=await createRuntime({profile:f.profile,run:f.run}),start=Date.now();
  await runtime.checkActivity(f.activity,{outputs:{}},{phase:'end',input:{run_tag:f.run.input.run_tag},remaining_ms:1500});
@@ -123,6 +230,62 @@ test('complete Commander runner uses one start and one end Checker, never rejudg
  expect(result.outputs.number).toBe(42);expect(ledger.snapshot().calls.filter(c=>c.role==='checker')).toHaveLength(2);
  }finally{dbos.initialized=false;if(old===undefined)delete process.env.DBOS_DURABLE_ENABLED;else process.env.DBOS_DURABLE_ENABLED=old;f.close();}
 },20000);
+
+test.each([
+ ['readonly-repair',2,'completed',null],
+ ['readonly-repair-exhausted',3,'needs_review','checker_repair_exhausted'],
+ ['readonly-repair-missing',1,'needs_review','commander_activity_unverified'],
+])('Commander and actual Checker use the read-only repair policy: %s',async(mode,attempts,status,escalationReason)=>{
+ const f=fixture({mode}),old=process.env.DBOS_DURABLE_ENABLED;
+ try{
+  f.activity.order=1;
+  f.activity.failure={empty_ok:[],retryable:[],fatal:[],needs_human:{cases:[]}};
+  f.activity.runtime.entry='unused.mjs';
+  f.activity.runtime.checker_repair={max_attempts:3,retry_safe:true,effect_scope:'read_only'};
+  f.activity.budget.max_duration_s=20;
+  Object.assign(f.run,{schema_version:1,runtime_revision:'b'.repeat(64),commander_timeout_ms:1000,deadline_ms:Date.now()+22000});
+  const ledger=createRunLedger({directory:path.join(fs.realpathSync(f.cwd),'ledger'),identity:{task_id:f.run.task_id,run_id:f.run.run_id}});
+  const runtime=await createRuntime({profile:f.profile,run:f.run,ledger});
+  const records=new Map(),decisions=[];
+  dbos.initialized=false;
+  configureCommanderWorkflow({...runtime,ledger,revision:f.run.runtime_revision,verifySource:async()=>{},
+   decide:async request=>{
+    decisions.push(request);
+    return Object.fromEntries([...['protocol','run_id','definition_sha256','sequence','state_sha256'].map(k=>[k,request[k]]),
+     ...Object.entries(request.allowed_actions[0]),['reason','Follow frozen contract']]);
+   },
+   actionStore:{reserve:async(identity,{deadline_ms})=>{
+    const record={identity,deadline_ms,state:'reserved'};
+    records.set(identity.action_id,record);
+    return {created:true,record};
+   },settle:async(identity,result)=>{records.get(identity.action_id).result=result;return result;}}});
+  dbos.initialized=true;process.env.DBOS_DURABLE_ENABLED='true';
+  const result=await (await startCommanderWorkflow(f.run)).handle.getResult();
+  expect(result.status).toBe(status);
+  const calls=fs.readFileSync(path.join(f.cwd,'executor-calls.jsonl'),'utf8').trim().split('\n').map(JSON.parse);
+  expect(calls).toHaveLength(attempts);
+  expect(records.size).toBe(attempts);
+  expect(new Set([...records.values()].map(record=>record.deadline_ms)).size).toBe(1);
+  const failure=decisions.find(request=>request.failure)?.failure;
+  if(escalationReason){
+   expect(failure?.reason).toBe(escalationReason);
+   expect(failure?.attempt_history).toHaveLength(attempts);
+   expect(failure?.checker_feedback?.attempt).toBe(attempts);
+  }else{
+   expect(failure).toBeUndefined();
+   expect(result.outputs.number).toBe(42);
+  }
+  for(const call of calls.slice(1)){
+   expect(call.argv).toContain('resume');
+   expect(call.argv).toContain('execution-thread');
+   expect(call.prompt).toContain('Observed contradiction');
+  }
+ }finally{
+  dbos.initialized=false;
+  if(old===undefined)delete process.env.DBOS_DURABLE_ENABLED;else process.env.DBOS_DURABLE_ENABLED=old;
+  f.close();
+ }
+},25000);
 
 test('same-attempt admission rejects changed input, cancellation, and source drift before execution',async()=>{
  for(const mutation of ['input','cancel','source','deadline','attempt','contract']){

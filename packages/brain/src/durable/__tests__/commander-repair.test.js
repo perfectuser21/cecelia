@@ -78,7 +78,7 @@ test('第二轮仅有reserved意图但读回未知，不发第三轮或重放第
  env.actionStore.reserve=async(id,opts)=>id.attempt===2?{created:false,record:{identity:id,state:'reserved',deadline_ms:opts.deadline_ms}}:original(id,opts);
  expect((await run(repairRun())).status).toBe('needs_review');expect(env.executeActivity).toHaveBeenCalledTimes(1);expect(env.inspectActivity).toHaveBeenCalledTimes(1);
 });
-test.each([{max_attempts:4,retry_safe:true},{max_attempts:3,retry_safe:false},{max_attempts:3,retry_safe:true,unbounded:true}])('冻结返工配置拒绝非法策略 %j',policy=>{
+test.each([{max_attempts:4,retry_safe:true},{max_attempts:3,retry_safe:false},{max_attempts:3,retry_safe:true,unbounded:true},{max_attempts:3,retry_safe:true,effect_scope:'write'}])('冻结返工配置拒绝非法策略 %j',policy=>{
  const r=repairRun();r.contract.activities[0].runtime.checker_repair=policy;expect(()=>normalizeCommanderRun(r)).toThrow('commander_repair_policy_invalid');
 });
 test('Code和finalizer不能沿用Agent返工策略',()=>{

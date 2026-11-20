@@ -100,13 +100,16 @@ export function checkerEvidenceReceipts(binding){
   const receipt=JSON.parse(fs.readFileSync(file));if(receipt.evidence_ref!==file||receipt.nonce!==binding.nonce||receipt.request_sha256!==binding.request_sha256)fail('checker_evidence_unbound');return receipt;
  });
 }
-export function checkerEvidenceArgs(file,sha,authHome,directory){
+export function isolatedCodexArgs({ephemeral=false}={}){
+ return ['--ignore-rules',...(ephemeral?['--ephemeral']:[]),'--disable','shell_tool','--disable','unified_exec',
+  ...['apps','plugins','hooks','browser_use','computer_use','standalone_web_search','image_generation','multi_agent','request_permissions_tool','skill_mcp_dependency_install'].flatMap(f=>['--disable',f]),
+  '-c','approval_policy="never"','-c','web_search="disabled"'];
+}
+export function checkerEvidenceArgs(file,sha,authHome,directory,{ephemeral=true}={}){
  const json=JSON.stringify,toml=v=>v&&typeof v==='object'&&!Array.isArray(v)?`{${Object.entries(v).map(([k,x])=>`${json(k)}=${toml(x)}`).join(',')}}`:json(v);
  const permissions={commander_checker:{extends:':read-only',filesystem:{[authHome]:'deny',[path.join(process.env.HOME,'.credentials')]:'deny',[directory]:'deny'},network:{enabled:false}}};
  const prefix='mcp_servers.commander_checker_evidence';
- return ['--ignore-rules','--ephemeral','--disable','shell_tool','--disable','unified_exec',
-  ...['apps','plugins','hooks','browser_use','computer_use','standalone_web_search','image_generation','multi_agent','request_permissions_tool','skill_mcp_dependency_install'].flatMap(f=>['--disable',f]),
-  '-c','approval_policy="never"','-c','web_search="disabled"','-c','default_permissions="commander_checker"','-c',`permissions=${toml(permissions)}`,
+ return [...isolatedCodexArgs({ephemeral}),'-c','default_permissions="commander_checker"','-c',`permissions=${toml(permissions)}`,
   '-c',`${prefix}.command=${json(process.execPath)}`,'-c',`${prefix}.args=${json([fileURLToPath(import.meta.url),file,sha])}`,
   '-c',`${prefix}.enabled_tools=["read_file","read_fact"]`,'-c',`${prefix}.tools.read_file.approval_mode="approve"`,'-c',`${prefix}.tools.read_fact.approval_mode="approve"`];
 }

@@ -10,7 +10,10 @@ import {sessionGroup,sessionThreadFile} from './session-group.mjs';
 import {digest} from '../../src/orchestrator/commander-decision.js';
 import {checkerCriteria,verifyCheckerResult} from './checker-agent-protocol.mjs';
 import {checkerEvidenceReceipts} from './checker-evidence.mjs';
+import {hostToolsDidNotDispatch} from './skill-tools-mcp.mjs';
 const hash=file=>createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+const readOnlyEffects=activity=>activity.runtime?.checker_repair?.effect_scope==='read_only';
+const mediatedEffects=activity=>activity.runtime?.checker_repair?.effect_scope==='host_tools';
 const reasonCode=error=>/^[a-zA-Z0-9][a-zA-Z0-9_.:/@+-]{0,255}$/.test(error.code??error.message)?error.code??error.message:'skill_observation_failed';
 export async function createRuntime({profile,run,verifySource=async()=>{},ledger}) {
   const config=profile.skill_runtime;
@@ -45,6 +48,8 @@ export async function createRuntime({profile,run,verifySource=async()=>{},ledger
     }else if(!spec||!profile.files[checker?.entry]||!path.isAbsolute(checker?.command??'')
       ||['start_checks','required_checks'].some(k=>!Array.isArray(checker[k])||!checker[k].length||new Set(checker[k]).size!==checker[k].length)
       ||hash(checker.command)!==checker.command_sha256)throw Error('skill_profile_unfrozen');
+    if((readOnlyEffects(activity)||mediatedEffects(activity))&&checker.mode!=='agent')throw Error('skill_repair_profile_invalid');
+    if(mediatedEffects(activity)&&!config.host_tools)throw Error('skill_repair_profile_invalid');
     if(activity.runtime?.executor_kind==='code'){
       if(!profile.files[activity.runtime.entry])throw Error('skill_profile_unfrozen');
     }else if(!profile.files[spec.skill]||!profile.files[config.tools]||!path.isAbsolute(config.codex?.command??'')
@@ -155,7 +160,7 @@ export async function createRuntime({profile,run,verifySource=async()=>{},ledger
       reason_code:transport.reason_code??'code_worker_failed'};
     return result;
   }
-  async function verifiedResult(activity,input,transport,signal,deadlineMs){
+  async function verifiedResult(activity,input,transport,signal,deadlineMs,identity){
     if(activity.runtime?.executor_kind==='code')return codeResult(input,transport);
     if(transport.execution_stopped===false||transport.external_effect==='unknown')return {
       schema_version:1,run_tag:input.run_tag,...(input.line_key===undefined?{}:{line_key:input.line_key}),
@@ -167,11 +172,24 @@ export async function createRuntime({profile,run,verifySource=async()=>{},ledger
     }
     const {proposal,thread_id}=JSON.parse(transport.stdout);
     try{
-      const verified=await readback(activity,input,'end',proposal,signal,deadlineMs);
+      let verified;
+      try {
+        verified=await readback(activity,input,'end',proposal,signal,deadlineMs);
+      } catch(error) {
+        // A rejected evidence citation grants no execution right. Check the same proposal
+        // once more in a fresh read-only Checker under the original Activity deadline.
+        if(specFor(activity).checker.mode!=='agent'||error.message!=='checker_evidence_unbound'||
+          signal?.aborted||Date.now()>=deadlineMs)throw error;
+        verified=await readback(activity,input,'end',proposal,signal,deadlineMs);
+      }
       if(verified.outcome==='failed'||verified.outcome==='unknown'){
+        const retryable=verified.outcome==='failed'&&
+          (readOnlyEffects(activity)||(mediatedEffects(activity)&&hostToolsDidNotDispatch(actionDir(identity),identity)))&&
+          verified.checks.every(check=>check.status!=='unknown')&&typeof thread_id==='string'&&Boolean(thread_id.trim());
         const feedback={protocol:'checker-feedback/v1',activity_key:activity.key,attempt:input.execution_attempt??1,outcome:verified.outcome,
           failed_checks:verified.checks.filter(c=>c.status!=='passed').map(({id,status,expected,actual,reason,evidence})=>({id,status,expected,actual,reason,evidence})),
-          evidence_ref:verified.evidence_ref,previous_proposal:proposal,thread_id,retryable:false,retry_reason:'trusted_execution_effects_unavailable'};
+          evidence_ref:verified.evidence_ref,previous_proposal:proposal,thread_id,retryable,
+          ...(retryable?{external_effect:'none'}:{retry_reason:'trusted_execution_effects_unavailable'})};
         verifiedFeedback.set(feedback.evidence_ref,structuredClone(feedback));
         return rememberCheck(activity,input,'end',verified,deadlineMs,{
         schema_version:1,run_tag:input.run_tag,...(input.line_key===undefined?{}:{line_key:input.line_key}),status:'needs_review',failure_class:'needs_human',outputs:{},metrics:{},
@@ -223,7 +241,7 @@ export async function createRuntime({profile,run,verifySource=async()=>{},ledger
       try{
       if(activity.runtime?.executor_kind==='code'){
         const transport=await startSupervisedActivity(directory,options.identity,activity,input,options,options.deadlineMs);
-        const result=await verifiedResult(activity,input,transport,options.signal,options.deadlineMs);settleAttempt(attempt,result,transport,directory);
+        const result=await verifiedResult(activity,input,transport,options.signal,options.deadlineMs,options.identity);settleAttempt(attempt,result,transport,directory);
         return result;
       }
       const group=sessionGroup(spec.session_group),threadFile=sessionThreadFile(root,group);
@@ -231,9 +249,10 @@ export async function createRuntime({profile,run,verifySource=async()=>{},ledger
       const workerActivity={...activity,runtime:{...activity.runtime,entry:fileURLToPath(new URL('./skill-worker.mjs',import.meta.url)),argv:[],interactive:false}};
       const transport=await startSupervisedActivity(directory,options.identity,workerActivity,{identity:options.identity,activity_key:activity.key,activity_contract:activityContract(activity),cwd:profile.cwd,
         codex:config.codex,codex_auth:profile.codex_auth,...(ledger?{ledger_directory:ledger.directory,ledger_policy:ledger.policy}:{}),thread_file:threadFile,...(group===undefined?{}:{session_group:group}),work_dir:directory,skill_text:fs.readFileSync(path.resolve(profile.cwd,spec.skill),'utf8'),
-        ...(config.host_tools?{host_tools:{config:config.host_tools,cwd:profile.cwd,files:profile.files,deadline_ms:options.deadlineMs}}:{}),
+        ...(readOnlyEffects(activity)?{read_only_evidence:spec.checker.evidence,checker_files:profile.files,deadline_ms:options.deadlineMs}
+          :config.host_tools?{host_tools:{config:config.host_tools,cwd:profile.cwd,files:profile.files,deadline_ms:options.deadlineMs}}:{}),
         tools_text:fs.readFileSync(path.resolve(profile.cwd,config.tools),'utf8'),context:{...run.input,...input}},options,options.deadlineMs);
-      const result=await verifiedResult(activity,input,transport,options.signal,options.deadlineMs);settleAttempt(attempt,result,transport,directory);
+      const result=await verifiedResult(activity,input,transport,options.signal,options.deadlineMs,options.identity);settleAttempt(attempt,result,transport,directory);
       return result;
       }catch(error){if(attempt&&error.executionStopped===true)ledger.finishAttempt(attempt.attempt_id,{status:'not_started',reason_code:reasonCode(error)});throw error;}
     },
@@ -242,7 +261,7 @@ export async function createRuntime({profile,run,verifySource=async()=>{},ledger
       const directory=actionDir(options.identity);
       const observation=ledger?.beginObservation({kind:'recovery_readback',activity_key:activity.key,action_id:options.identity.action_id});
       try{specFor(activity);await verifyFrozenSources();inspectSupervisor(directory,options.identity);const transport=await waitSupervisedActivity(directory,options.identity,{signal:options.signal,reconnecting:true});
-        const result=await verifiedResult(activity,input,transport,options.signal,options.deadlineMs);
+        const result=await verifiedResult(activity,input,transport,options.signal,options.deadlineMs,options.identity);
         const original=ledger?.snapshot?.().attempts.find(a=>a.action_id===options.identity.action_id&&a.attempt===(options.identity.attempt??1)&&a.status==='prepared');
         settleAttempt(original,result,transport,directory);
         if(observation)ledger.endObservation(observation.observation_id,{status:result.execution_stopped===true?'completed':'unknown',evidence_ref:path.join(directory,'result.json')});

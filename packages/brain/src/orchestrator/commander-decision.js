@@ -37,7 +37,8 @@ export function normalizeCommanderRun(value) {
     || a.runtime.interactive || a.runtime.detached || (a.runtime.max_attempts ?? 1) !== 1 || a.runtime.recovery_safe)) fail('commander_activity_unsupported');
   for (const a of contract.activities) {
     const policy=a.runtime.checker_repair;
-    if (policy !== undefined && (!object(policy) || Object.keys(policy).some(k=>!['max_attempts','retry_safe'].includes(k))
+    if (policy !== undefined && (!object(policy) || Object.keys(policy).some(k=>!['max_attempts','retry_safe','effect_scope'].includes(k))
+      || (policy.effect_scope !== undefined && !['read_only','host_tools'].includes(policy.effect_scope))
       || ![2,3].includes(policy.max_attempts) || policy.retry_safe!==true
       || a.runtime.executor_kind!=='agent' || a.runtime.phase!=='source')) fail('commander_repair_policy_invalid');
   }
