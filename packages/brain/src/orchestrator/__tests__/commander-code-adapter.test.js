@@ -121,26 +121,30 @@ function addAgent(f){
  config.activities.source={skill:'skill.txt',checker:{...config.activities.cleanup.checker,entry:'source-check.cjs'}};
  return {...f.activity,key:'source',order:1,runtime:{...f.activity.runtime,executor_kind:'agent'}};
 }
-async function workflow(f,decide){
+async function workflow(f,decide,{businessMs=10000,cleanupMs=15000}={}){
  sdk.initialized=false;sdk.inputs.clear();process.env.DBOS_DURABLE_ENABLED='true';
  const runtime=await createRuntime(f),records=new Map();
  configureCommanderWorkflow({...runtime,cwd:f.root,revision:'a'.repeat(64),verifySource:async()=>{},decide:decide??(async req=>{
   const {protocol,run_id,definition_sha256,sequence,state_sha256}=req;return {protocol,run_id,definition_sha256,sequence,state_sha256,...req.allowed_actions[0],reason:'fixture'};
  }),actionStore:{reserve:async(identity,{deadline_ms})=>{const record={identity,state:'reserved',deadline_ms};records.set(identity.action_id,record);return {created:true,record};},settle:async(id,result)=>{records.get(id.action_id).result=result;return result;}}});
  sdk.initialized=true;
- try{return await (await startCommanderWorkflow({...f.run,schema_version:1,runtime_revision:'a'.repeat(64),deadline_ms:Date.now()+10000,cleanup_deadline_ms:Date.now()+15000,commander_timeout_ms:500})).handle.getResult();}
+ const now=Date.now();
+ try{return await (await startCommanderWorkflow({...f.run,schema_version:1,runtime_revision:'a'.repeat(64),deadline_ms:now+businessMs,cleanup_deadline_ms:now+cleanupMs,commander_timeout_ms:500})).handle.getResult();}
  finally{sdk.initialized=false;}
 }
 test('混合agent source及code finalize只为Agent调用模型，独立验收后资源归位',async()=>{
- const f=fixture(),source=addAgent(f);f.activity={...f.activity,order:2,runtime:{...f.activity.runtime,phase:'finalize'}};f.run.contract.activities=[source,f.activity];
- const out=await workflow(f);expect(out.status,JSON.stringify({run_reason:out.reason,cleanup:out.cleanup_status,
+ const f=fixture(),source=addAgent(f);
+ // 此用例验证跨执行器交接，给真实子进程及多轮独立 Checker 留出慢速宿主启动时间。
+ source.budget={...source.budget,max_duration_s:20};
+ f.activity={...f.activity,order:2,runtime:{...f.activity.runtime,phase:'finalize'}};f.run.contract.activities=[source,f.activity];
+ const out=await workflow(f,undefined,{businessMs:30000,cleanupMs:35000});expect(out.status,JSON.stringify({run_reason:out.reason,cleanup:out.cleanup_status,
     attempts:out.attempt_history?.map(x=>({activity:x.activity_key,status:x.status,reason:x.reason_code,rows:x.activities?.map(y=>({
       key:y.key,validator:y.validator_verdict,results:y.attempts?.map(z=>({status:z.status,reason:z.reason_code,transport:z.transport}))
     }))}))})).toBe('completed');expect(out.cleanup_status).toBe('completed');
  expect(fs.readFileSync(path.join(f.root,'model-calls'),'utf8').trim().split('\n')).toHaveLength(1);
  expect(fs.readFileSync(path.join(f.root,'executions.jsonl'),'utf8').trim().split('\n')).toHaveLength(1);
  expect(fs.existsSync(path.join(f.root,'owned-resource'))).toBe(false);
-});
+},40000);
 test('Commander模型不可用但无在途，Code收尾真释放资源，业务失败保持',async()=>{
  const f=fixture(),source=addAgent(f);f.activity={...f.activity,order:2,runtime:{...f.activity.runtime,phase:'finalize'}};f.run.contract.activities=[source,f.activity];
  const out=await workflow(f,async()=>{throw Error('quota_exhausted');});
