@@ -29,6 +29,12 @@ async function defaultFetchInProgress(dbPool) {
   return r.rows;
 }
 
+async function defaultRecoverPausedFoundationTasks(dbPool) {
+  const { getCurrentResponseLevel } = await import('./alertness/escalation.js');
+  const { recoverPausedFoundationTasks } = await import('./workflow-foundation/claim.js');
+  return recoverPausedFoundationTasks(dbPool, getCurrentResponseLevel());
+}
+
 /**
  * 单次恢复执行：现役恢复网各自独立 try-catch，末尾无条件 log 可观测行。
  * 函数依赖可注入（测试用）；生产默认走动态 import。
@@ -40,6 +46,7 @@ async function defaultFetchInProgress(dbPool) {
  * @param {Function} [opts.fetchInProgress]
  * @param {Function} [opts.probeTaskLiveness]
  * @param {Function} [opts.sweepStaleDeviceLocks]
+ * @param {Function} [opts.recoverPausedFoundationTasks]
  * @returns {Promise<{staleReleased:number, tasksTimedOut:number, orphansRequeued:number}>}
  */
 export async function runRecoveryOnce(opts = {}) {
@@ -106,6 +113,15 @@ export async function runRecoveryOnce(opts = {}) {
     if (swept > 0) console.log(`[recovery-loop] released ${swept} stale device lock(s)`);
   } catch (err) {
     console.warn(`[recovery-loop] sweepStaleDeviceLocks failed (non-fatal): ${err.message}`);
+  }
+
+  // 自动暂停发生在领取前，恢复时原任务和冻结发布仍由 Foundation 领取。
+  try {
+    const recover = opts.recoverPausedFoundationTasks || defaultRecoverPausedFoundationTasks;
+    const recovered = await recover(dbPool);
+    if (recovered > 0) console.log(`[recovery-loop] foundationPausedRecovered=${recovered}`);
+  } catch (err) {
+    console.warn(`[recovery-loop] recoverPausedFoundationTasks failed (non-fatal): ${err.message}`);
   }
 
   // 7. 无条件可观测性：每次执行都打一行"我在跑"，即使全 0
