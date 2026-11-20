@@ -6,8 +6,9 @@ const env={BRAIN_NATIVE_AGENT_DEFAULT_ACCOUNT_REF:'',BRAIN_NATIVE_AGENT_DEFAULT_
 function setup(body='【执行设置——启动前落实】\nAI账号：team2\n【执行参数】\n执行Agent：media\n模型：openai/gpt-6.1-sol\n思考强度：high\n超时：30分钟\n【执行参数结束】\n'+ '正文'.repeat(1600)+'\n固定业务账号保持不变，结尾验收必须保留。'){
  const task={id:randomUUID(),title:'业务任务',task_type:'qiumi_task',tenant_id:'tenant-a',status:'in_progress',executor_kind:'external-worker',claimed_by:'native-test',
   payload:{native_agent_content:{protocol:'notion-complete-body/v1',complete:true,empty_body:false,page_ids:['fixture-page']},qiumi_department:'media',qiumi_kind:'agent',model:'openai/gpt-6.1-sol',thinking:'high',timeout_sec:1800,qiumi_source:{title:'业务任务',body,skill_ids:['fixture-skill'],notion_page_id:'page'}},result:{}};
- const requests=[];let stored;
+ const requests=[];let stored,serverContext;
  const pool={query:vi.fn(async(sql,params=[])=>{
+  if(sql.includes('SELECT context FROM task_runs'))return {rows:[{context:serverContext}],rowCount:1};
   if(sql.includes('SELECT')&&sql.includes('FROM tasks'))return {rows:[task],rowCount:1};
   if(sql.includes('UPDATE tasks')&&sql.includes("jsonb_build_object('native_agent'")){task.result.native_agent=JSON.parse(params[1]);return {rows:[task],rowCount:1};}
   if(sql.includes("SET status='cancelled'")){task.status='cancelled';return {rows:[task],rowCount:1};}
@@ -15,7 +16,7 @@ function setup(body='【执行设置——启动前落实】\nAI账号：team2\n
   if(sql.includes("SET status='blocked'")){task.status='blocked';return {rows:[task],rowCount:1};}
   return {rows:[],rowCount:1};
  })};
- const deps={pool,env:{...env},resolveHost:async()=>host,startRun:async()=>({created:true,id:'20000000-0000-4000-8000-000000000002'}),setLease:async()=>{},recordEvent:async()=>{},finishRun:async()=>({updated:true}),releaseLocks:async()=>{},
+ const deps={pool,env:{...env},resolveHost:async()=>host,startRun:async input=>{serverContext={...input.context,source:input.source};return {created:true,id:'20000000-0000-4000-8000-000000000002'};},setLease:async()=>{},recordEvent:async()=>{},finishRun:async()=>({updated:true}),releaseLocks:async()=>{},
   finalizeTask:async(_pool,_id,status)=>{task.status=status;return {rowCount:1,task};},
   transport:async(actualHost,request)=>{requests.push({host:actualHost,request});if(request.action==='start')stored=request;
    return {...stored,...request,protocol:'native-agent/v1',actual_cli_model:'gpt-6.2-sol',status:'running',launch_state:'running',execution_stopped:false,summary:'执行中',evidence:[],
@@ -120,4 +121,11 @@ test('既有绑定删掉资源字段不能降级成纯文本运行，资源真�
  const result=await triggerNativeAgent(f.task,f.deps);
  expect(result).toMatchObject({success:false,dispatchUncertain:true,reason:'native_agent_binding_unconfirmed'});
  expect(f.requests).toHaveLength(1);
+});
+test('服务端仍有同Task原生Run时，外部JSON抹绑定也不能重新启动或伪not_started',async()=>{
+ const f=setup();await triggerNativeAgent(f.task,f.deps);const query=f.pool.query.getMockImplementation();
+ f.task.result.native_agent=null;
+ f.pool.query.mockImplementation((sql,...args)=>sql.includes(' AS native_owned')?Promise.resolve({rows:[{native_owned:true}],rowCount:1}):query(sql,...args));
+ expect(await triggerNativeAgent(f.task,f.deps)).toMatchObject({success:false,dispatchUncertain:true,reason:'native_agent_binding_unconfirmed'});
+ expect(f.requests).toHaveLength(1);expect(f.task.status).toBe('in_progress');
 });

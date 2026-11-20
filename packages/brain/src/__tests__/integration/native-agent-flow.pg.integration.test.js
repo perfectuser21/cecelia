@@ -109,13 +109,16 @@ test('真实设备运行停止后，独立受信review匹配原run与设备epoch
   expect((await state.pool.query("SELECT count(*)::int AS n FROM task_events WHERE task_id=$1 AND event_type='native_agent_cleanup_reviewed'",[id])).rows[0].n).toBe(1);
  }finally{if(previous===undefined)delete process.env.CECELIA_INTERNAL_TOKEN;else process.env.CECELIA_INTERNAL_TOKEN=previous;}
 });
-test('同host固定账号并发预约限1：满额queued不启动，原run取消不被闸，释放后原排队单可执行',async()=>{
+test('同host不同固定账号共用宿主限1：满额queued不启动，原run取消不被闸，释放后原排队单可执行',async()=>{
+ const secondHost=createNativeAgentHostFixture({accountRef:'fixture-second-account'});
+ try{
  const ids=[randomUUID(),randomUUID()],local={...deps(),env:{...host.env,QIUMI_MMV_CONCURRENCY:'1'}};
+ const byTask=new Map([[ids[0],local],[ids[1],{...local,env:{...secondHost.env,QIUMI_MMV_CONCURRENCY:'1'},resolveHost:async()=>secondHost.host,transport:secondHost.transport}]]);
  for(const id of ids){
   await state.pool.query("INSERT INTO tasks(id,title,task_type,status,tenant_id,executor_kind,payload) VALUES($1,$2,'qiumi_task','queued','fixture-native','external-worker',$3)",[id,'容量预约 '+id,{native_agent_content:{protocol:'notion-complete-body/v1',complete:true,empty_body:false,page_ids:['fixture-page']},qiumi_source:{body:'NATIVE_HANG '+id}}]);
   expect(await dispatchQiumiTask(await read(id),{env:local.env})).toMatchObject({outcome:'proceed'});
  }
- const results=await Promise.all(ids.map(async id=>triggerNativeAgent(await read(id),local)));
+ const results=await Promise.all(ids.map(async id=>triggerNativeAgent(await read(id),byTask.get(id))));
  expect(results.filter(x=>x.nativeCapacityWait===true)).toHaveLength(1);
  const rows=await Promise.all(ids.map(read)),active=rows.find(t=>t.result?.native_agent),waiting=rows.find(t=>!t.result?.native_agent);
  expect(active).toBeTruthy();expect(waiting.status).toBe('queued');expect(waiting.claimed_by).toBeNull();
@@ -123,8 +126,32 @@ test('同host固定账号并发预约限1：满额queued不启动，原run取消
  const {requestNativeAgentCancellation}=await import('../../native-agent-executor.js');
  expect(await requestNativeAgentCancellation(state.pool,active.id)).toEqual({matched:true});
  expect((await poll(active.id)).status).toBe('cancelled');
- const next=await triggerNativeAgent(await read(waiting.id),local);expect(next.runId).toBeTruthy();expect(next.nativeCapacityWait).not.toBe(true);
+ const next=await triggerNativeAgent(await read(waiting.id),byTask.get(waiting.id));expect(next.runId).toBeTruthy();expect(next.nativeCapacityWait).not.toBe(true);
  expect(await requestNativeAgentCancellation(state.pool,waiting.id)).toEqual({matched:true});
  expect((await poll(waiting.id)).status).toBe('cancelled');
  expect((await state.pool.query('SELECT count(*)::int AS n FROM task_runs WHERE task_id=ANY($1::uuid[])',[ids])).rows[0].n).toBe(2);
+ }finally{secondHost.close();}
+});
+test('原生host明确未启动的参数拒绝应精确归还本人设备，不留下无复核出口的资源锁',async()=>{
+ const id=randomUUID(),serial='native-rejected-'+id;
+ await state.pool.query("INSERT INTO phone_registry(serial,nickname,enabled,host) VALUES($1,$1,true,'fixture-host')",[serial]);
+ await state.pool.query("INSERT INTO device_locks(device_name,device_type) VALUES($1,'phone')",[serial]);
+ await state.pool.query("INSERT INTO tasks(id,title,task_type,status,tenant_id,executor_kind,payload) VALUES($1,$2,'qiumi_task','queued','fixture-native','external-worker',$3)",[id,'零启动归还 '+id,{native_agent_content:{protocol:'notion-complete-body/v1',complete:true,empty_body:false,page_ids:['fixture-page']},resource_health_override:true,qiumi_source:{body:'【执行参数】\n设备：'+serial+'\n模型：fixture-not-permitted\n【执行参数结束】\nNATIVE_PRESTART '+id}}]);
+ expect(await dispatchQiumiTask(await read(id),{env:host.env})).toMatchObject({outcome:'proceed'});
+ expect(await triggerNativeAgent(await read(id),deps())).toMatchObject({success:false,nativePreflightBlocked:true});
+ expect(host.launches().some(x=>x.text.includes('NATIVE_PRESTART'))).toBe(false);
+ expect((await state.pool.query('SELECT locked_by FROM device_locks WHERE device_name=$1',[serial])).rows[0].locked_by).toBeNull();
+ expect((await read(id)).status).toBe('blocked');
+});
+test('真TaskRun仍在途但Task JSON绑定丢失时不得重复建Run或启动，状态保持未知供原身份修复',async()=>{
+ const id=randomUUID();await state.pool.query("INSERT INTO tasks(id,title,task_type,status,tenant_id,executor_kind,payload) VALUES($1,$2,'qiumi_task','queued','fixture-native','external-worker',$3)",[id,'遗失控制绑定 '+id,{native_agent_content:{protocol:'notion-complete-body/v1',complete:true,empty_body:false,page_ids:['fixture-page']},qiumi_source:{body:'NATIVE_HANG '+id}}]);
+ await dispatchQiumiTask(await read(id),{env:host.env});await triggerNativeAgent(await read(id),deps());
+ const original=(await read(id)).result.native_agent;
+ await state.pool.query("UPDATE tasks SET result=result-'native_agent' WHERE id=$1",[id]);
+ expect(await triggerNativeAgent(await read(id),deps())).toMatchObject({success:false,dispatchUncertain:true,reason:'native_agent_binding_unconfirmed'});
+ expect((await read(id)).status).toBe('in_progress');
+ expect((await state.pool.query('SELECT count(*)::int AS n FROM task_runs WHERE task_id=$1',[id])).rows[0].n).toBe(1);
+ // 只恢复本人隔离夹具保存的真身，才能按原run停止；不是生产修复入口。
+ await state.pool.query("UPDATE tasks SET result=jsonb_set(result,'{native_agent}',$2::jsonb,true) WHERE id=$1",[id,original]);
+ const {requestNativeAgentCancellation}=await import('../../native-agent-executor.js');await requestNativeAgentCancellation(state.pool,id);expect((await poll(id)).status).toBe('cancelled');
 });
