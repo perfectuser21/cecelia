@@ -128,3 +128,17 @@ test('资源原生任务待复核时Notion取消只登记原run意图，独立�
  expect(input.zh.properties.状态.status.name).toBe('淘汰');expect(input.en.properties.Status.status.name).toBe('Cancelled');
  expect(host.launches().filter(entry=>entry.text.includes(serial))).toHaveLength(1);
 });
+test('普通取消读后Task被并发更新时拒绝旧写入，不覆盖新的Task控制拍',async()=>{
+ const input=setup('NATIVE_DONE');
+ const {taskId}=await ingestDelegatedPage(state.pool,'isolated-notion-fixture',input.en,{env:{QIUMI_DISPATCH_ENABLED:'true',NOTION_TENANT_MAP:JSON.stringify({'c69c40c2-ba63-8271-badf-01c5410d8929':'fixture-native'})}});
+ input.zh.properties.状态.status.name='淘汰';await applyOwnerStops(state.pool,'isolated-notion-fixture');
+ let edited=false;
+ const racing={query:async(sql,args)=>{
+  if(!edited&&String(sql).includes("UPDATE tasks SET status='cancelled'")){
+   edited=true;await state.pool.query("UPDATE tasks SET description='concurrent-owner-edit',updated_at=NOW() WHERE id=$1",[taskId]);
+  }
+  return state.pool.query(sql,args);
+ }};
+ expect(await applyProjectionCommands(racing)).toMatchObject({applied:0,rejected:1,failed:0});
+ expect(edited).toBe(true);expect(await read(taskId)).toMatchObject({status:'queued',description:'concurrent-owner-edit'});
+});
