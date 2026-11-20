@@ -6,13 +6,13 @@ import {createNativeAgentHostFixture} from '../helpers/native-agent-host-fixture
 const state=vi.hoisted(()=>({pool:null}));
 vi.mock('../../db.js',()=>({default:{query:(...args)=>state.pool.query(...args),connect:(...args)=>state.pool.connect(...args)}}));
 import {ingestDelegatedPage,pullNotionTasksForTest} from '../../notion-push-sync.js';
-import {applyOwnerStops,pushQiumiStatus} from '../../notion-gtd-sync.js';
+import {applyOwnerStops,pushQiumiStatus,runGtdSyncOnce} from '../../notion-gtd-sync.js';
 import {applyProjectionCommands} from '../../projection/commands.js';
 import {dispatchQiumiTask} from '../../dispatcher.js';
 import {triggerNativeAgent} from '../../native-agent-executor.js';
 import {reconcileNativeAgentResources} from '../../lib/native-agent-resource-reconciliation.js';
 let fixture,host,server,base;
-const pages=new Map(),bodies=new Map(),writes=[],children=new Map(),sourceIds=new Map();
+const pages=new Map(),bodies=new Map(),writes=[],children=new Map(),sourceIds=new Map(),pageCreates=[];
 const nativeFetch=globalThis.fetch;
 const read=async id=>(await state.pool.query('SELECT * FROM tasks WHERE id=$1',[id])).rows[0];
 const string=items=>(items??[]).map(item=>item.plain_text??item.text?.content??'').join('');
@@ -29,11 +29,17 @@ beforeAll(async()=>{
      if(filter.and)return filter.and.every(item=>matches(page,item));
      const property=page.properties[filter.property];
      if(filter.status)return property?.status?.name===filter.status.equals;
+     if(filter.checkbox)return Boolean(property?.checkbox)===filter.checkbox.equals;
+     if(filter.rich_text?.is_empty)return !string(property?.rich_text);
+     if(filter.rich_text?.does_not_contain)return !string(property?.rich_text).includes(filter.rich_text.does_not_contain);
      if(filter.rich_text?.contains)return string(property?.rich_text).includes(filter.rich_text.contains);
      if(filter.rich_text?.starts_with)return string(property?.rich_text).startsWith(filter.rich_text.starts_with);
      throw Error('fixture_query_filter_unknown');
     };
-    result={results:[...pages.values()].filter(page=>matches(page,body.filter)),has_more:false};
+    const all=[...pages.values()].filter(page=>matches(page,body.filter)),start=Number(body.start_cursor??0),end=start+(body.page_size??100);
+    result={results:all.slice(start,end),has_more:end<all.length,next_cursor:end<all.length?String(end):null};
+   }else if(req.method==='POST'&&url.pathname==='/pages'){
+    result={id:randomUUID(),properties:body.properties};pages.set(result.id,result);bodies.set(result.id,'');pageCreates.push(body);
    }else if(url.pathname.startsWith('/blocks/')){
     const id=url.pathname.split('/')[2];
     if(req.method==='PATCH'){
@@ -179,7 +185,9 @@ async function seedEnglishNative(page){
 }
 test('无内部标记的普通英文Delegated经现pull入口原生执行，原页显示真实结果且重复拉取不重复接单',async()=>{
  const body='请整理本次摘要。'.repeat(300)+'\n人工备注：这段不得被机器结果覆盖。';
- const page=englishPage(body);await pullNotionTasksForTest(state.pool,'isolated-notion-fixture',{env:englishEnv});
+ const page=englishPage(body),createdBefore=pageCreates.length;
+ const round=await runGtdSyncOnce(state.pool,{token:'isolated-notion-fixture',env:englishEnv});
+ expect(round.ingest).toMatchObject({ingested:1});expect(pageCreates).toHaveLength(createdBefore);
  const tasks=await linkedEnglishTask(page);expect(tasks).toHaveLength(1);
  const queued=tasks[0];expect(queued).toMatchObject({task_type:'qiumi_task',status:'queued',executor_kind:'external-worker'});expect(queued.payload.native_agent_content.complete).toBe(true);
  expect(queued.payload.qiumi_source.body).toBe(body);
