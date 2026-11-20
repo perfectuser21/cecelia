@@ -96,6 +96,10 @@ test('真实设备运行停止后，独立受信review匹配原run与设备epoch
   const bad=await request(app).post('/runs/'+runId+'/native-resource-reconciliation').set('Authorization','Bearer isolated-operator-review-token').send({...body,expected_devices:devices.map(x=>({...x,acquisition_version:'1'}))});
   expect(bad.status,JSON.stringify(bad.body)).toBe(409);
   expect((await read(id)).status).toBe('blocked');
+  const unknownApp=express();unknownApp.use(express.json());unknownApp.use('/runs',createRunReconciliationRouter({pool:state.pool,nativeTransport:async()=>({...stopped.result.native_agent.receipt,status:'unknown',launch_state:'unknown',execution_stopped:false})}));
+  const unknown=await request(unknownApp).post('/runs/'+runId+'/native-resource-reconciliation').set('Authorization','Bearer isolated-operator-review-token').send(body);
+  expect(unknown.status).toBe(503);expect((await read(id)).status).toBe('blocked');
+  expect((await state.pool.query('SELECT locked_by FROM device_locks WHERE device_name=$1',[serial])).rows[0].locked_by).toBe(id);
   const good=await request(app).post('/runs/'+runId+'/native-resource-reconciliation').set('Authorization','Bearer isolated-operator-review-token').send(body);
   expect(good.status,JSON.stringify(good.body)).toBe(200);
   expect((await read(id)).status).toBe('completed_no_pr');
@@ -104,4 +108,23 @@ test('真实设备运行停止后，独立受信review匹配原run与设备epoch
   expect(run.status).toBe('success');expect(run.result.native_agent_resource_settlement).toMatchObject({basis:'operator-cleanup-review',task_id:id,run_id:runId,review:{actor:'authenticated-operator'}});
   expect((await state.pool.query("SELECT count(*)::int AS n FROM task_events WHERE task_id=$1 AND event_type='native_agent_cleanup_reviewed'",[id])).rows[0].n).toBe(1);
  }finally{if(previous===undefined)delete process.env.CECELIA_INTERNAL_TOKEN;else process.env.CECELIA_INTERNAL_TOKEN=previous;}
+});
+test('同host固定账号并发预约限1：满额queued不启动，原run取消不被闸，释放后原排队单可执行',async()=>{
+ const ids=[randomUUID(),randomUUID()],local={...deps(),env:{...host.env,QIUMI_MMV_CONCURRENCY:'1'}};
+ for(const id of ids){
+  await state.pool.query("INSERT INTO tasks(id,title,task_type,status,tenant_id,executor_kind,payload) VALUES($1,$2,'qiumi_task','queued','fixture-native','external-worker',$3)",[id,'容量预约 '+id,{native_agent_content:{protocol:'notion-complete-body/v1',complete:true,empty_body:false,page_ids:['fixture-page']},qiumi_source:{body:'NATIVE_HANG '+id}}]);
+  expect(await dispatchQiumiTask(await read(id),{env:local.env})).toMatchObject({outcome:'proceed'});
+ }
+ const results=await Promise.all(ids.map(async id=>triggerNativeAgent(await read(id),local)));
+ expect(results.filter(x=>x.nativeCapacityWait===true)).toHaveLength(1);
+ const rows=await Promise.all(ids.map(read)),active=rows.find(t=>t.result?.native_agent),waiting=rows.find(t=>!t.result?.native_agent);
+ expect(active).toBeTruthy();expect(waiting.status).toBe('queued');expect(waiting.claimed_by).toBeNull();
+ expect((await state.pool.query('SELECT count(*)::int AS n FROM task_runs WHERE task_id=ANY($1::uuid[])',[ids])).rows[0].n).toBe(1);
+ const {requestNativeAgentCancellation}=await import('../../native-agent-executor.js');
+ expect(await requestNativeAgentCancellation(state.pool,active.id)).toEqual({matched:true});
+ expect((await poll(active.id)).status).toBe('cancelled');
+ const next=await triggerNativeAgent(await read(waiting.id),local);expect(next.runId).toBeTruthy();expect(next.nativeCapacityWait).not.toBe(true);
+ expect(await requestNativeAgentCancellation(state.pool,waiting.id)).toEqual({matched:true});
+ expect((await poll(waiting.id)).status).toBe('cancelled');
+ expect((await state.pool.query('SELECT count(*)::int AS n FROM task_runs WHERE task_id=ANY($1::uuid[])',[ids])).rows[0].n).toBe(2);
 });
