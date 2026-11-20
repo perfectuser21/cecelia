@@ -48,9 +48,16 @@ test('宽权限源配置、漂移的已发布字节或配置均拒绝，不修�
 test('默认SSH stdin路径实际运行安装程序，传输不把包源码拼进命令参数',async t=>{
  const module=await import('../../../packages/brain/scripts/native-agent-release.mjs'),f=await fixture(t),{spawn}=await import('node:child_process');
  const result=await module.publishNativeAgentRelease({brainRoot:path.resolve('packages/brain'),env:{BRAIN_NATIVE_AGENT_MACHINE_ID:'us-mac-m4',BRAIN_NATIVE_AGENT_RELEASE_ROOT:f.root,BRAIN_NATIVE_AGENT_CONFIG_PATH:f.configPath},spawnFn:(_command,_args,options)=>spawn(process.execPath,['--input-type=module','-'],options)});
- assert.equal(JSON.parse(await fs.readFile(result.config_path,'utf8')).bundle_sha256,result.bundle_sha256);
+ const snapshot=JSON.parse(await fs.readFile(result.config_path,'utf8'));
+ assert.equal(snapshot.profiles.main?.account_ref,'fixed-account','必须使用本次fixture配置，不能落回真实operator');
+ assert.equal(snapshot.bundle_sha256,result.bundle_sha256);
  assert.equal(await fs.readFile(path.join(result.directory,'scripts/native-agent/cli.mjs'),'utf8'),await fs.readFile('packages/brain/scripts/native-agent/cli.mjs','utf8'));
 });
 test('共享可写目录中的配置不能成为原生账号权限真身',async t=>{
  const install=await api(),f=await fixture(t);await fs.chmod(path.dirname(f.configPath),0o777);await assert.rejects(install(f),/protect|permission|config/);
+});
+
+test('旧未知配置覆盖项明确拒绝，不静默使用宿主默认operator',async t=>{
+ const module=await import('../../../packages/brain/scripts/native-agent-release.mjs'),f=await fixture(t);
+ await assert.rejects(module.publishNativeAgentRelease({brainRoot:path.resolve('packages/brain'),env:{BRAIN_NATIVE_AGENT_MACHINE_ID:'us-mac-m4',BRAIN_NATIVE_AGENT_RELEASE_ROOT:f.root,BRAIN_NATIVE_AGENT_CONFIG_PATH:f.configPath},transport:async()=>{throw Error('must_not_transport');}}),/native_agent_config_override_unknown/);
 });
