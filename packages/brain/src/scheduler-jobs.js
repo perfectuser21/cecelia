@@ -221,7 +221,7 @@ const PROJECTION_JOB_NAME_SET = new Set([
 export const PROJECTION_JOBS = JOBS.filter(job => PROJECTION_JOB_NAME_SET.has(job.name));
 // GTD幂等初始化、窄授权手机派发和收尾共用独立循环，避免重启入口排在慢job后。
 // recurring-tasks 也在这里：定时到点建单不能排在串行慢轮后面（轮长 3-9 分钟 = 定时误差，任务 942491c2）。
-const COMPLETION_JOB_NAMES = new Set(['common-runner-dispatch', 'script-reaper', 'managed-script-reaper', 'node-onboarding', 'node-execution-onboarding', 'phone-rpa-dispatch', 'openclaw-agent-reaper', 'notion-gtd-sync', 'recurring-tasks', 'workflow-assembly-reconcile', 'workflow-commander-dispatch']);
+const COMPLETION_JOB_NAMES = new Set(['common-runner-dispatch', 'script-reaper', 'managed-script-reaper', 'node-onboarding', 'node-execution-onboarding', 'phone-rpa-dispatch', 'openclaw-agent-reaper', 'native-agent-reaper', 'notion-gtd-sync', 'recurring-tasks', 'workflow-assembly-reconcile', 'workflow-commander-dispatch']);
 export const COMPLETION_JOBS = JOBS.filter(job => COMPLETION_JOB_NAMES.has(job.name));
 export const SERIAL_JOBS = JOBS.filter(job => !PROJECTION_JOB_NAME_SET.has(job.name) && !COMPLETION_JOB_NAMES.has(job.name));
 

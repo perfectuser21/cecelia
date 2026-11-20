@@ -136,3 +136,13 @@ it('原生执行端仅接受有限完整来源；15项PG与真实发布和镜像
   await expect(collect({deep,fixture:prior,extraPaths:[nativeMarker],overrides:{[nativeMarker]:read(nativeMarker)}})).rejects.toThrow();
  }
 });
+
+it('原生快速收割只追加已审scheduler字节，main274完整组与缺失漂移保护保留',async()=>{
+ const prior=readFixedExistingOpsGitFixture('59635bb16d2243a51a6ea07f5cbafaca3fa4aac7'),scheduler='packages/brain/src/scheduler-jobs.js';
+ for(const deep of [false,true]){
+  expect(await collect({deep,fixture:prior})).not.toHaveLength(0);
+  expect(await collect({deep})).not.toHaveLength(0);
+  await expect(collect({deep,missing:scheduler})).rejects.toThrow();
+  await expect(collect({deep,overrides:{[scheduler]:read(scheduler)+'\n// unknown completion loop'}})).rejects.toThrow();
+ }
+});

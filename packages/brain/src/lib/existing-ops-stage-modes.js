@@ -185,6 +185,7 @@ const NATIVE_AGENT_INPUTS={
  "packages/brain/scripts/native-agent/__tests__/native-agent.node-test.mjs": "2861842166d54814e261bb7947d85c5bd4fd7ddb43318337188c4ba2272fc2ab"
 };
 const NATIVE_AGENT_BUNDLE=["packages/brain/scripts/native-agent/bundle.mjs","packages/brain/scripts/native-agent/config.mjs","packages/brain/scripts/native-agent/store.mjs","packages/brain/scripts/native-agent/process.mjs","packages/brain/scripts/native-agent/worker.mjs","packages/brain/scripts/native-agent/cli.mjs","packages/brain/scripts/coding-workflow/lib/codex-auth.mjs","packages/brain/src/orchestrator/activity-supervisor-state.cjs"];
+const NATIVE_COMPLETION_INPUTS={'packages/brain/src/scheduler-jobs.js':'f2f96adc084cab4bec958dfb1d124529b09e58f7078aa8eee110d45851beea2d'};
 export function reviewedPilotControls(profile,paths){
  if(!paths?.includes(PILOT_HOST))return profile;
  if(profile!==REVIEWED_NIGHTLY_STATUS)reject();
@@ -201,7 +202,9 @@ export async function reviewedPilotSourceControls(profile,paths,read){
  }
  if(paths?.includes(NATIVE_AGENT_MARKER)){
   if(profile!==REVIEWED_NIGHTLY_STATUS||!paths.includes(PILOT_HOST)||!paths.includes(DEPLOY_RECOVERY_MARKER))reject();
-  return {...controls,...NATIVE_AGENT_INPUTS};
+  const nativeControls={...controls,...NATIVE_AGENT_INPUTS};
+  if(createHash('sha256').update(await read('packages/brain/src/scheduler-jobs.js')).digest('hex')===NATIVE_COMPLETION_INPUTS['packages/brain/src/scheduler-jobs.js'])return {...nativeControls,...NATIVE_COMPLETION_INPUTS};
+  return nativeControls;
  }
  if(paths?.includes(PILOT_HOST)&&createHash('sha256').update(await read(PG_LAYERING_PATH)).digest('hex')===PG_LAYERING_DIGEST)return {...controls,[PG_LAYERING_PATH]:PG_LAYERING_DIGEST};
  return controls;
