@@ -6,8 +6,8 @@ vi.mock('../runtime-safety.js',async original=>({...await original(),assertExter
 vi.mock('../openclaw-agent-executor.js',()=>({triggerOpenclawAgent:async()=>{throw Error('retired OpenClaw launch reached');}}));
 let executor;
 beforeEach(async()=>{
- vi.resetModules();io.query.mockReset().mockResolvedValue({rows:[],rowCount:0});
- for(const name of ['MACHINE_ID','CLI_PATH','CONFIG_PATH','BUNDLE_SHA256'])vi.stubEnv('BRAIN_NATIVE_AGENT_'+name,'');
+ vi.resetModules();io.query.mockReset().mockImplementation(async(sql)=>sql.includes('SELECT * FROM tasks')?{rows:[task()],rowCount:1}:{rows:[],rowCount:1});
+ for(const name of ['MACHINE_ID','RELEASE_ROOT','CLI_PATH','CONFIG_PATH','BUNDLE_SHA256'])vi.stubEnv('BRAIN_NATIVE_AGENT_'+name,'');
  executor=await import('../executor.js');
 });
 afterEach(()=>vi.unstubAllEnvs());
@@ -22,5 +22,5 @@ test('旧OpenClaw在途任务只能原身份读回收尾，统一入口不得重
 });
 test('独立核验旧transport标签不授权新OpenClaw会话，必须明确native准入失败',async()=>{
  await expect(executor.triggerCeceliaRun(task({task_type:'research',payload:{verification_transport:'openclaw-agent-v1'}})))
-  .resolves.toMatchObject({success:false,reason:'native_agent_unconfigured'});
+  .resolves.toMatchObject({success:false,reason:'native_agent_verification_binding_required'});
 });
