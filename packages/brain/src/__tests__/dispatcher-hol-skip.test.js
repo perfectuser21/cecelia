@@ -6,7 +6,7 @@
  * Root cause: dispatchNextTask() 在候选 claim 成功后才查 checkCeceliaRunAvailable()，
  * bridge 不可用时 revert + 释放 claim 后直接 return {reason:'no_executor'}，不试下一个
  * 候选。结果：队头一个需要 bridge 的任务（普通任务）反复占位，
- * 不需要 bridge 的 OpenClaw 任务被堵死 13 小时。
+ * 不需要 bridge 的 原生Agent任务被堵死 13 小时。
  * 且 no_executor 只写 working_memory / decision_log，无 console 日志，完全静默。
  *
  * 修复语义：
@@ -97,13 +97,17 @@ const DEV_TASK = {
   payload: {},
   created_at: '2026-07-16T00:00:00Z',
 };
-const OPENCLAW_TASK = {
+const NATIVE_TASK = {
   id: '22222222-0000-0000-0000-000000000002',
   task_type: 'qiumi_task',
   project_id: null,
   priority: 'P1',
-  title: 'OpenClaw task that does NOT need bridge',
-  payload: {run_id:'owned-qiumi-route',model:'openai/gpt-5.6-terra',qiumi_route:{source:'jev'}},
+  title: 'Native Agent task that does NOT need bridge',
+  executor_kind: 'external-worker',
+  payload: {
+    qiumi_source: { title: '整理隔离测试报告', body: '整理隔离测试报告，读取本次任务资料并交出摘要。' },
+    native_agent_content: { protocol: 'notion-complete-body/v1', complete: true, empty_body: false, page_ids: ['aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'] },
+  },
 };
 
 /** 生成 N 个都需要 bridge 的 dev 候选 */
@@ -153,6 +157,10 @@ describe('dispatchNextTask — no_executor HOL skip (issue 0014cd42)', () => {
         const row = candidates.find((c) => c.id === params[0]);
         return Promise.resolve({ rows: row ? [row] : [] });
       }
+      if (sql.includes('kind = $3, dept = $4')) {
+        expect(params.slice(2)).toEqual(['agent', 'main']);
+        return Promise.resolve({ rows: [], rowCount: 1 });
+      }
       if (/SET payload = COALESCE\(payload/.test(sql)) {
         expect(params[3]).toBe('2026-11-07 00:00:00.123456+00');
         return Promise.resolve({ rows: [], rowCount: 1 });
@@ -165,24 +173,24 @@ describe('dispatchNextTask — no_executor HOL skip (issue 0014cd42)', () => {
     mockTriggerCeceliaRun.mockResolvedValue({ success: true, pid: 12345, runId: 'run-hol-1' });
   });
 
-  it('用例 A（复现 bug）：队头 dev 任务 no_executor → 跳过，第二个 现役 OpenClaw 任务被派发', async () => {
-    candidates = [DEV_TASK, OPENCLAW_TASK];
+  it('用例 A（复现 bug）：队头 dev 任务 no_executor → 跳过，第二个 现役原生Agent 任务被派发', async () => {
+    candidates = [DEV_TASK, NATIVE_TASK];
 
     const { dispatchNextTask } = await import('../dispatcher.js');
     const result = await dispatchNextTask([]);
 
-    // 修前：返回 { dispatched:false, reason:'no_executor' }，OpenClaw 候选永远轮不上
+    // 修前：返回 { dispatched:false, reason:'no_executor' }，原生Agent候选永远轮不上
     expect(result.dispatched).toBe(true);
-    expect(result.task_id).toBe(OPENCLAW_TASK.id);
+    expect(result.task_id).toBe(NATIVE_TASK.id);
     expect(mockTriggerCeceliaRun).toHaveBeenCalledWith(
-      expect.objectContaining({ id: OPENCLAW_TASK.id, task_type: 'qiumi_task' }), { drainAdmission: expect.any(Symbol) });
+      expect.objectContaining({ id: NATIVE_TASK.id, task_type: 'qiumi_task' }), { drainAdmission: expect.any(Symbol) });
     // dev 候选没有被派发
     expect(mockTriggerCeceliaRun).not.toHaveBeenCalledWith(
       expect.objectContaining({ id: DEV_TASK.id }), { drainAdmission: expect.any(Symbol) });
   });
 
   it('用例 B：被 no_executor 跳过的候选 claim 已释放 + status revert 回 queued', async () => {
-    candidates = [DEV_TASK, OPENCLAW_TASK];
+    candidates = [DEV_TASK, NATIVE_TASK];
 
     const { dispatchNextTask } = await import('../dispatcher.js');
     const result = await dispatchNextTask([]);
@@ -195,8 +203,8 @@ describe('dispatchNextTask — no_executor HOL skip (issue 0014cd42)', () => {
     expect(updateTask.mock.calls).toEqual(
       expect.arrayContaining([[{ task_id: DEV_TASK.id, status: 'queued' }]])
     );
-    // 派发成功的 OpenClaw 候选的 claim 不能被释放
-    expect(releasedClaimIds).not.toContain(OPENCLAW_TASK.id);
+    // 派发成功的 原生Agent候选的 claim 不能被释放
+    expect(releasedClaimIds).not.toContain(NATIVE_TASK.id);
   });
 
   it('用例 C1：全部候选都需 bridge 且 bridge 挂 → 最终 return no_executor，每个候选 claim 都已释放', async () => {
@@ -226,7 +234,7 @@ describe('dispatchNextTask — no_executor HOL skip (issue 0014cd42)', () => {
   });
 
   it('用例 D：no_executor 跳过必须有 console 日志（不再静默）', async () => {
-    candidates = [DEV_TASK, OPENCLAW_TASK];
+    candidates = [DEV_TASK, NATIVE_TASK];
     const logSpy = vi.spyOn(console, 'log');
 
     try {

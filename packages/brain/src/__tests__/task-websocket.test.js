@@ -21,14 +21,14 @@ import { WebSocket as WS } from 'ws';
 import { createServer } from 'http';
 let pool;
 let websocketService;
-let updateTaskStatus, updateTaskProgress;
+let updateTaskStatus;
 
 beforeAll(async () => {
   vi.resetModules();
   pool = (await import('../db.js')).default;
   await assertScratchIdentity(pool);
   websocketService = (await import('../websocket.js')).default;
-  ({ updateTaskStatus, updateTaskProgress } = await import('../task-updater.js'));
+  ({ updateTaskStatus } = await import('../task-updater.js'));
 });
 
 /**
@@ -176,23 +176,6 @@ describe('Task WebSocket Integration', () => {
     expect(msg.data.taskId).toBe(testTaskId);
     expect(msg.data.status).toBe('failed');
     expect(msg.data.error).toBeTruthy();
-  });
-
-  it('should broadcast on progress update for in_progress task', async () => {
-    // Set task to in_progress first (so broadcastTaskUpdate triggers task:started)
-    await updateTaskStatus(testTaskId, 'in_progress');
-
-    const { ws, nextMessage } = await createClient(serverPort);
-    clients.push(ws);
-
-    await updateTaskProgress(testTaskId, {
-      current_step: 5,
-      step_name: 'Writing code'
-    });
-    const msg = await nextMessage();
-
-    expect(msg.event).toBe('task:started');
-    expect(msg.data.taskId).toBe(testTaskId);
   });
 
   it('should include timestamp in broadcast', async () => {

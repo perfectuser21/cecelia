@@ -60,7 +60,7 @@ describe('projection command processor', () => {
   it('cancel loses authority after its read: reject a zero-row write without an applied event', async () => {
     query
       .mockResolvedValueOnce({ rows: [{ id: 'cancel-race', command_type: 'cancel_requested', entity_id: 'task-race', payload: {} }] })
-      .mockResolvedValueOnce({ rows: [{ id: 'task-race', status: 'queued' }] })
+      .mockResolvedValueOnce({ rows: [{ id: 'task-race', status: 'queued', native_control_epoch: '9' }] })
       .mockResolvedValueOnce({ rows: [], rowCount: 0 })
       .mockResolvedValue({ rows: [] });
     expect(await applyProjectionCommands({ query })).toEqual({ applied: 0, rejected: 1, failed: 0 });

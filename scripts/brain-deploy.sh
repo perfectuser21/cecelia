@@ -237,6 +237,15 @@ if [[ "$DEPLOY_MODE" == "docker" ]]; then
         echo "[dry-run] staging 同 SHA/镜像/隔离验证先于生产迁移"
     fi
 
+    # 新执行端先发布固定字节；失败不得排空/替换现役Brain。旧历史fixture无此配置。
+    if [[ -f "$ROOT_DIR/packages/brain/config/native-agent.json" ]]; then
+        if [[ "$DRY_RUN" == true ]]; then
+            echo "  [dry-run] publish verified native Agent bundle"
+        else
+            node "$ROOT_DIR/packages/brain/scripts/native-agent-release.mjs"
+        fi
+    fi
+
     # 2. Run migrations in a temporary container
     echo "[2/7] Running migrations..."
     if [[ "$DRY_RUN" == true ]]; then

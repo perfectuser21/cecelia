@@ -27,7 +27,7 @@ export async function dispatchManualQiumi(task, pool, deps = {}) {
         WHERE id = $1 AND claimed_by = $2 AND status = 'in_progress'`,
       [task.id, owner, JSON.stringify(note)],
     ).catch(() => {}); // 写库仍不可用时保持原运行，不再启动第二次。
-    return response(202, { run_id: runId, executor: 'openclaw-agent', execution_state: 'unknown', detail: note.message });
+    return response(202, { run_id: runId, executor: 'native-agent', execution_state: 'unknown', detail: note.message });
   };
   const claimed = await pool.query(
     `UPDATE tasks SET claimed_by = $2, claimed_at = NOW(), updated_at = NOW()
@@ -54,11 +54,11 @@ export async function dispatchManualQiumi(task, pool, deps = {}) {
       await releaseClaim();
       return response(409, { error: 'task_changed_during_routing' });
     }
-    if (!current.payload?.run_id || !current.payload?.qiumi_department) {
+    if (current.payload?.provider!=='native-agent' || !current.payload?.qiumi_department) {
       await releaseClaim();
       return response(422, { error: 'qiumi_route_incomplete' });
     }
-    runId = current.payload.run_id;
+    runId = current.result?.native_agent?.request?.run_id??current.payload.run_id??null;
     const deviceGate = await (deps.deviceGate ?? checkDeviceLockForManualDispatch)(current, 'manual-qiumi-dispatch');
     if (!deviceGate.pass) {
       await releaseClaim();
@@ -73,7 +73,7 @@ export async function dispatchManualQiumi(task, pool, deps = {}) {
       return response(409, { error: 'phone_dispatch_policy_changed', detail: '手机派发授权已关闭或改变，任务保留在队列' });
     }
     const started = await pool.query(
-      `UPDATE tasks SET status = 'in_progress', executor_kind = 'openclaw-agent',
+      `UPDATE tasks SET status = 'in_progress', executor_kind = 'external-worker',
         started_at = COALESCE(started_at, NOW()), updated_at = NOW(),
         metadata = COALESCE(metadata, '{}'::jsonb) || '{"manually_dispatched":true}'::jsonb
         WHERE id = $1 AND status = 'queued' AND claimed_by = $2${deps.beforeStart ? " AND payload = $3::jsonb AND COALESCE(notion_props, '{}'::jsonb) = $4::jsonb" : ''}${deps.policySnapshot ? ' AND EXISTS (SELECT 1 FROM working_memory WHERE key = $5 AND value_json = $6::jsonb)' : ''} RETURNING *`,
@@ -87,6 +87,12 @@ export async function dispatchManualQiumi(task, pool, deps = {}) {
     }
     starting = true;
     const result = await trigger(started.rows[0]);
+    runId=result.runId??runId;
+    if(result.nativeCapacityWait||(result.nativePreflightBlocked&&result.execution_state==='not_started')){
+      if(deviceAcquired&&deviceGate.acquisitionVersion)await pool.query(`UPDATE device_locks SET locked_by=NULL,locked_at=NULL,expires_at=NULL
+        WHERE device_name=$1 AND locked_by=$2::text AND xmin::text=$3`,[current.payload.device_serial,task.id,deviceGate.acquisitionVersion]);
+      await releaseClaim();return response(result.nativeCapacityWait?409:422,{error:result.reason,execution_state:result.nativeCapacityWait?'queued':'not_started'});
+    }
     if (!result.success) {
       if (result.retiredBeforeStart && result.reason === 'retired_decomposition') {
         if (!isDeepStrictEqual(current.payload ?? {}, started.rows[0].payload ?? {})) {
@@ -144,7 +150,7 @@ export async function dispatchManualQiumi(task, pool, deps = {}) {
     }
     return response(202, {
       title: task.title, run_id: result.runId ?? current.payload.run_id,
-      executor: 'openclaw-agent', execution_state: 'accepted', dispatched_at: new Date().toISOString(),
+      executor: 'native-agent', execution_state: 'accepted', dispatched_at: new Date().toISOString(),
     });
   } catch (error) {
     if (starting) {

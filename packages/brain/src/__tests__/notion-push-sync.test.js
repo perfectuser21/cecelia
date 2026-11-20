@@ -569,9 +569,11 @@ describe('pullNotionTasks — Notion Delegated → Brain 接手', () => {
     };
   }
 
-  it('Delegated 无 brain 标记 → INSERT 任务(blocked) + PATCH 回执进 Description', async () => {
+  it('Delegated 无 brain 标记 → 创建原生任务(queued) + PATCH 回执进 Description', async () => {
     const mod = await import('../notion-push-sync.js');
     mockNotionReq.mockImplementation(async (token, path, method) => {
+      if(String(path).includes('/databases/c69c40c2'))return {results:[],has_more:false};
+      if(String(path).includes('/children'))return {results:[],has_more:false};
       if (String(path).includes('/query')) {
         return { results: [notionPage({ id: 'np-1', name: '[P1] 测试：给我修个东西' })] };
       }
@@ -593,8 +595,7 @@ describe('pullNotionTasks — Notion Delegated → Brain 接手', () => {
     );
     // 接手后落 blocked 等执行路由
     const upd = mockQuery.mock.calls.find((c) => /UPDATE tasks SET status='blocked'/.test(c[0]));
-    expect(upd).toBeTruthy();
-    expect(upd[1]).toContain('new-task-uuid-1');
+    expect(upd).toBeUndefined();
     const patch = mockNotionReq.mock.calls.find((c) => c[1] === '/pages/np-1' && c[2] === 'PATCH');
     expect(patch).toBeTruthy();
     const descText = JSON.stringify(patch[3]);
@@ -604,6 +605,8 @@ describe('pullNotionTasks — Notion Delegated → Brain 接手', () => {
   it('Description 已含 brain: 标记 → 幂等跳过（不重复建任务）', async () => {
     const mod = await import('../notion-push-sync.js');
     mockNotionReq.mockImplementation(async (token, path) => {
+      if(String(path).includes('/databases/c69c40c2'))return {results:[],has_more:false};
+      if(String(path).includes('/children'))return {results:[],has_more:false};
       if (String(path).includes('/query')) {
         return { results: [notionPage({ id: 'np-2', name: '旧单', desc: 'brain:existing-id ✓已接管' })] };
       }
@@ -616,6 +619,8 @@ describe('pullNotionTasks — Notion Delegated → Brain 接手', () => {
   it('无前缀标题 → priority 缺省 P2，标题原样', async () => {
     const mod = await import('../notion-push-sync.js');
     mockNotionReq.mockImplementation(async (token, path) => {
+      if(String(path).includes('/databases/c69c40c2'))return {results:[],has_more:false};
+      if(String(path).includes('/children'))return {results:[],has_more:false};
       if (String(path).includes('/query')) {
         return { results: [notionPage({ id: 'np-3', name: '随手排的活' })] };
       }
@@ -638,6 +643,8 @@ describe('pullNotionTasks — Notion Delegated → Brain 接手', () => {
     // ③repo_hint 缺失即 repo_unknown ④blocked 落库须带 blocked_at（chk 约束）
     const mod = await import('../notion-push-sync.js');
     mockNotionReq.mockImplementation(async (token, path) => {
+      if(String(path).includes('/databases/c69c40c2'))return {results:[],has_more:false};
+      if(String(path).includes('/children'))return {results:[],has_more:false};
       if (String(path).includes('/query')) {
         return { results: [notionPage({ id: 'np-4', name: '参数完备单' })] };
       }
@@ -650,12 +657,13 @@ describe('pullNotionTasks — Notion Delegated → Brain 接手', () => {
       expect.anything(),
       expect.objectContaining({
         source: 'inbox',
-        mutation_intent: 'write',
-        repo_hint: 'cecelia',
+        mutation_intent: 'none',
+        requested_task_type: 'qiumi_task',
+        task: expect.objectContaining({executor_kind:'external-worker',status:'queued'}),
       }),
     );
     const upd = mockQuery.mock.calls.find((c) => /UPDATE tasks SET status='blocked'/.test(c[0]));
-    expect(upd[0]).toMatch(/blocked_at=NOW\(\)/);
+    expect(upd).toBeUndefined();
   });
 });
 
@@ -926,9 +934,10 @@ describe('Notion 排单正文 → 任务 prompt', () => {
   it('普通排单：页面正文非空 → description=正文', async () => {
     const mod = await import('../notion-push-sync.js');
     mockNotionReq.mockImplementation(async (t, path) => {
+      if(String(path).includes('/databases/c69c40c2'))return {results:[],has_more:false};
       if (String(path).includes('/query')) return { results: [plainPage()] };
       if (String(path).includes('/children')) {
-        return { results: [textBlock('paragraph', '修登录页报错'), textBlock('bulleted_list_item', '先复现')] };
+        return { results: [textBlock('paragraph', '修登录页报错'), textBlock('bulleted_list_item', '先复现')],has_more:false };
       }
       return {};
     });
@@ -937,15 +946,16 @@ describe('Notion 排单正文 → 任务 prompt', () => {
     await mod.pullNotionTasksForTest({ query: mockQuery }, 'fake-token');
     expect(mockCreateRoutedTask).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ description: '修登录页报错\n先复现' }),
+      expect.objectContaining({ description: expect.stringContaining('修登录页报错\n先复现'),metadata:expect.objectContaining({qiumi_source:expect.objectContaining({body:'修登录页报错\n先复现'})}) }),
     );
   });
 
-  it('普通排单：无正文 → description 回落原固定文案', async () => {
+  it('普通排单：完整空正文 → 明确标题执行与空正文证明', async () => {
     const mod = await import('../notion-push-sync.js');
     mockNotionReq.mockImplementation(async (t, path) => {
+      if(String(path).includes('/databases/c69c40c2'))return {results:[],has_more:false};
       if (String(path).includes('/query')) return { results: [plainPage({ id: 'np-c2' })] };
-      if (String(path).includes('/children')) return { results: [] };
+      if (String(path).includes('/children')) return { results: [],has_more:false };
       return {};
     });
     mockQuery.mockResolvedValue({ rows: [] });
@@ -953,16 +963,17 @@ describe('Notion 排单正文 → 任务 prompt', () => {
     await mod.pullNotionTasksForTest({ query: mockQuery }, 'fake-token');
     expect(mockCreateRoutedTask).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ description: '来自 Notion Tasks 编排（主理人排单）' }),
+      expect.objectContaining({ description:expect.stringContaining('页面正文为空'),metadata:expect.objectContaining({native_agent_content:expect.objectContaining({complete:true,empty_body:true})}) }),
     );
   });
 
 
 
 
-  it('正文拉取抛错 → 排单仍正常走完（不阻塞）', async () => {
+  it('正文拉取抛错 → 不接单、不写接管回执', async () => {
     const mod = await import('../notion-push-sync.js');
     mockNotionReq.mockImplementation(async (t, path) => {
+      if(String(path).includes('/databases/c69c40c2'))return {results:[],has_more:false};
       if (String(path).includes('/query')) return { results: [plainPage({ id: 'np-c3' })] };
       if (String(path).includes('/children')) throw new Error('Notion GET /blocks → 502: bad gateway');
       return {};
@@ -970,14 +981,8 @@ describe('Notion 排单正文 → 任务 prompt', () => {
     mockQuery.mockResolvedValue({ rows: [] });
     mockCreateRoutedTask.mockResolvedValue({ task: { id: 'task-content-3' } });
     await mod.pullNotionTasksForTest({ query: mockQuery }, 'fake-token');
-    // 排单照常完成：建任务 + 回执 PATCH，description 回落固定文案
-    expect(mockCreateRoutedTask).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({ description: '来自 Notion Tasks 编排（主理人排单）' }),
-    );
-    const patch = mockNotionReq.mock.calls.find((c) => c[1] === '/pages/np-c3' && c[2] === 'PATCH');
-    expect(patch).toBeTruthy();
-    expect(JSON.stringify(patch[3])).toContain('brain:task-content-3');
+    expect(mockCreateRoutedTask).not.toHaveBeenCalled();
+    expect(mockNotionReq.mock.calls.some(c=>c[2]==='PATCH')).toBe(false);
   });
 });
 

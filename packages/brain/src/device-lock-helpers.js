@@ -9,6 +9,7 @@
  * 原子多行 UPDATE all-or-nothing，防死锁。
  */
 import defaultPool from './db.js';
+import { transaction } from './execution-directory/store.js';
 
 const TTL_MIN = 1;
 const TTL_MAX = 240;
@@ -70,6 +71,49 @@ function unresolvedCommonRunner(holder, lock = 'device_locks') {
     )))`;
 }
 
+/** 原生运输真账拥有资源；Task标签或进程退出均不能代替同运行的清场证明。 */
+export function unresolvedNativeAgentSql(holder, lock) {
+  const identity = `jsonb_build_object('task_id',nt.id::text,'run_id',nr.run_id,
+    'input_digest',nt.result->'native_agent'->'request'->>'input_digest',
+    'request_nonce',nt.result->'native_agent'->'request'->>'request_nonce',
+    'host',nt.result->'native_agent'->'host')`;
+  const deviceSettled = alias => `nr.result->'native_agent_resource_settlement'->'devices' @>
+    jsonb_build_array(jsonb_build_object('device_name',${alias}.device_name,'acquisition_version',${alias}.xmin::text))`;
+  const deviceProof = lock ? `AND ${deviceSettled(lock)}` : `AND NOT EXISTS (
+    SELECT 1 FROM device_locks native_lock WHERE native_lock.locked_by=nt.id::text
+      AND NOT COALESCE(${deviceSettled('native_lock')},false))`;
+  const settlement = "nr.result->'native_agent_resource_settlement'";
+  const reviewed = `(${settlement}->>'basis'='operator-cleanup-review'
+    AND nr.status IN ('success','failed','timeout','cancelled')
+    AND ${settlement}->>'task_run_id'=nr.id::text
+    AND ${settlement}->>'receipt_sha256' ~ '^[a-f0-9]{64}$'
+    AND ${settlement}->>'pending_action_id' ~* '^[a-f0-9-]{36}$'
+    AND ${settlement}->'review' @> '{"actor":"authenticated-operator","cleanup_confirmed":true,"effects_reviewed":true}'::jsonb
+    AND jsonb_array_length(CASE WHEN jsonb_typeof(${settlement}->'review'->'evidence')='array'
+      THEN ${settlement}->'review'->'evidence' ELSE '[]'::jsonb END)>0
+    AND EXISTS (SELECT 1 FROM task_events review_event
+      WHERE review_event.id::text=${settlement}->>'review_event_id' AND review_event.task_id=nt.id
+        AND review_event.event_type='native_agent_cleanup_reviewed'
+        AND review_event.payload @> (${identity} || jsonb_build_object('task_run_id',nr.id::text,
+          'receipt_sha256',${settlement}->>'receipt_sha256','devices',${settlement}->'devices',
+          'pending_action_id',${settlement}->>'pending_action_id','review',${settlement}->'review'))))`;
+  return `EXISTS (SELECT 1 FROM tasks nt JOIN task_runs nr ON nr.task_id=nt.id
+    WHERE nt.id::text=${holder} AND nr.context->>'source'='native-agent'
+      AND nr.run_id=nt.result->'native_agent'->'request'->>'run_id'
+      AND nt.result->'native_agent'->'request'->>'task_id'=nt.id::text
+      AND nt.result->'native_agent'->'request'->>'input_digest' ~ '^[a-f0-9]{64}$'
+      AND nt.result->'native_agent'->'request'->>'request_nonce' ~* '^[a-f0-9-]{36}$'
+      AND jsonb_typeof(nt.result->'native_agent'->'host')='object'
+      AND nr.context->'native_agent' @> ${identity}
+      AND (${lock ? "nr.context->'native_agent'->'resource_bound'='true'::jsonb" :
+    "nr.context->'native_agent'->'resource_bound'='true'::jsonb OR nr.ended_at IS NULL OR nt.status IN ('queued','in_progress')"})
+      AND NOT COALESCE(nr.ended_at IS NOT NULL
+        AND nr.result->>'actor'='native-agent'
+        AND nr.result->'native_agent_resource_settlement' @> (${identity} || jsonb_build_object(
+          'protocol','native-agent-resource-settlement/v1'))
+        AND ((nr.status='failed' AND ${settlement}->>'basis'='not-started') OR ${reviewed}) ${deviceProof},false))`;
+}
+
 function clampTtl(ttlMinutes) {
   const n = Number(ttlMinutes);
   if (!Number.isFinite(n)) return TTL_DEFAULT;
@@ -100,6 +144,7 @@ export async function acquireDeviceLock(taskId, deviceName, ttlMinutes = TTL_DEF
           OR (
             expires_at IS NOT NULL AND expires_at < NOW()
             AND NOT ${unresolvedCommonRunner('device_locks.locked_by')}
+            AND NOT ${unresolvedNativeAgentSql('device_locks.locked_by', 'device_locks')}
             AND NOT EXISTS (
               SELECT 1 FROM tasks t
                WHERE t.id::text = device_locks.locked_by AND t.status = 'in_progress'
@@ -129,12 +174,16 @@ export async function acquireDeviceLock(taskId, deviceName, ttlMinutes = TTL_DEF
 
 /** 释放某任务持有的全部设备锁（无锁时 no-op）。 */
 export async function releaseDeviceLocksHeldBy(taskId, pool = defaultPool) {
-  const { rowCount } = await pool.query(
+  return transaction(pool, async db => {
+  await db.query('SELECT id FROM tasks WHERE id::text=$1 FOR UPDATE', [String(taskId)]);
+  const { rowCount } = await db.query(
     `UPDATE device_locks SET locked_by = NULL, locked_at = NULL, expires_at = NULL WHERE locked_by = $1
-      AND NOT ${unresolvedCommonRunner('device_locks.locked_by')}`,
+      AND NOT ${unresolvedCommonRunner('device_locks.locked_by')}
+      AND NOT ${unresolvedNativeAgentSql('device_locks.locked_by', 'device_locks')}`,
     [String(taskId)],
   );
   return rowCount;
+  });
 }
 
 /**
@@ -154,6 +203,7 @@ export async function sweepStaleDeviceLocks(pool = defaultPool) {
          FROM tasks t JOIN device_locks l ON t.id::text = l.locked_by
         WHERE t.status IS DISTINCT FROM 'queued' AND t.status IS DISTINCT FROM 'in_progress'
           AND NOT ${unresolvedCommonRunner('l.locked_by','l')}
+          AND NOT ${unresolvedNativeAgentSql('l.locked_by', 'l')}
         FOR UPDATE OF t, l SKIP LOCKED
      ), orphan AS MATERIALIZED (
        SELECT l.device_name, l.locked_by, l.xmin::text AS lock_version

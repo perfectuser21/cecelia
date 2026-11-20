@@ -2,7 +2,8 @@ import {timingSafeEqual} from 'node:crypto';
 import { rateLimit } from 'express-rate-limit';
 import { TASK_MUTATION_RATE_LIMIT_OPTIONS } from './task-mutation-rate-limit.js';
 import {takeOverHeadedTask,headedOwner,headedPostcommitPool} from '../lib/headed-task-owner.js';
-const METADATA_FIELDS=new Set(['title','description','priority','due_at','notion_id','notion_synced_at']);
+import {assertNativeAgentResultWritable,assertNoNativeAgentOwner} from '../lib/native-agent-task-control.js';
+const METADATA_FIELDS=new Set(['title','priority','due_at','notion_id','notion_synced_at']);
 function authenticate(req){
  const expected=process.env.CECELIA_INTERNAL_TOKEN;
  if(!expected)throw Object.assign(Error('INTERNAL_AUTH_NOT_CONFIGURED'),{statusCode:503});
@@ -38,16 +39,19 @@ export function headedTaskMutation(pool,operation){
      checked=true;
      const id=req.params.id??req.params.task_id;
      const enriched=initialRead?sql.replace(/SELECT/i,"SELECT payload->'headed_takeover' AS headed_takeover,"):"SELECT payload->'headed_takeover' AS headed_takeover FROM tasks WHERE id=$1";
-     const result=await pool.query(enriched,initialRead?params:[id]);
-     if(!result.rows[0]?.headed_takeover||metadataOnly)return initialRead?result:pool.query(sql,params);
+     if(metadataOnly)return pool.query(initialRead?enriched:sql,params);
      send=res.json.bind(res);res.json=value=>{status=res.statusCode;body=value;return res;};
      try{
-     authenticate(req);
      db=await pool.connect();await db.query('BEGIN');
      await db.query('SELECT id FROM tasks WHERE id=$1 FOR UPDATE',[id]);
+     if(req.method==='DELETE'||req.body?.status!==undefined||req.body?.description!==undefined)await assertNoNativeAgentOwner(db,id);
+     const fresh=(await db.query("SELECT payload->'headed_takeover' AS headed_takeover FROM tasks WHERE id=$1",[id])).rows[0];
+     if(fresh?.headed_takeover){
+     authenticate(req);
      owner=await headedOwner(db,id);
      if(!owner||String(req.headers['x-session-id']??'')!==owner.session_id)throw Object.assign(Error('headed_session_mismatch'),{statusCode:409});
      await db.query("SELECT set_config('cecelia.headed_owner_generation',$1,true)",[owner.generation]);
+     }
      }catch(error){ownerFailure=error;throw error;}
      return db.query(initialRead?enriched:sql,params);
     }
@@ -57,12 +61,13 @@ export function headedTaskMutation(pool,operation){
    afterCommit:async callback=>{if(!db)return callback(pool);afterCommit.push(callback);return null;},
   };
   try{
+   assertNativeAgentResultWritable(req.body?.result);
    await operation(req,res,requestPool);
    if(ownerFailure)throw ownerFailure;
    if(db){
     if(status>=400)await db.query('ROLLBACK');else{
      await db.query('COMMIT');
-     for(const callback of afterCommit){const hook=await callback(headedPostcommitPool(pool,owner));if(hook?.relay&&body&&typeof body==='object')body.relay=hook.relay;}
+     for(const callback of afterCommit){const hook=await callback(owner?headedPostcommitPool(pool,owner):pool);if(hook?.relay&&body&&typeof body==='object')body.relay=hook.relay;}
     }
     res.json=send;res.status(status??200);send(body??{ok:true});
    }

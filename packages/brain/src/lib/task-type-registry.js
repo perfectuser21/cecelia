@@ -133,7 +133,7 @@ export const TASK_TYPE_REGISTRY = Object.freeze({
   workflow_run:             workflow(T('external', false, false, null, 'none', true, true, 'none', true, [])),
   device_job:               T('device', false, false, null, 'external-worker', false, false, 'none', true, []),
   project:                  workflow(T('brain-internal', false, false, null, 'none', true, false, 'none', true, [])),
-  qiumi_task:               T('openclaw-agent', false, false, 'openclaw-agent', 'openclaw-agent', false, true, 'none', true, [V, ANC, OCPASS]),
+  qiumi_task:               T('native-agent', false, false, 'native-agent', 'external-worker', false, true, 'none', true, [V, ANC, OCPASS]),
   workflow_dispatch:        workflow(T('openclaw-agent', false, false, 'openclaw-agent', 'openclaw-agent', false, false, 'none', true, [V, ANC])),
   skill_factory_run:        T('external', false, false, 'openclaw-agent', 'external-worker', true, false, 'none', true, [V, ANC, CX, NOGOAL]),
   coding_workflow:          workflow(T('external', false, false, 'coding-workflow-runner', 'external-worker', true, false, 'none', true, [V, CM, ANC, GPIMPL])),
@@ -227,7 +227,7 @@ export const EXTERNAL_WATCHDOG_TASK_TYPES = Object.freeze(
   Object.entries(TASK_TYPE_REGISTRY).filter(([, e]) => e.watchdog === 'external-worker').map(([k]) => k),
 );
 
-const REMOTE_EXECUTION_SURFACES = new Set(['device', 'openclaw-agent', 'script', 'preview-janitor', 'image-janitor', 'app-server']);
+const REMOTE_EXECUTION_SURFACES = new Set(['device', 'native-agent', 'openclaw-agent', 'script', 'preview-janitor', 'image-janitor', 'app-server']);
 
 export const EXTERNALLY_EXECUTED_TASK_TYPES = Object.freeze(
   Object.entries(TASK_TYPE_REGISTRY).filter(([, e]) => e.db && REMOTE_EXECUTION_SURFACES.has(e.surface)).map(([k]) => k),

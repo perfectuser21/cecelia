@@ -1,3 +1,4 @@
+import {assertNativeAgentResultWritable} from './lib/native-agent-task-control.js';
 import { decompReviewInputError, applyDecompReview, recordVerifiedDecompRun } from './lib/decomp-review-callback.js';
 import { guardInvocationCallback } from './invocations/runtime.js';
 import {assertAutomaticTaskOwner} from './lib/headed-task-owner.js';
@@ -54,6 +55,7 @@ export async function processExecutionCallback(data, pool) {
   } = data;
 
   if (!task_id) throw new Error('task_id is required');
+  assertNativeAgentResultWritable(result);
   await assertAutomaticTaskOwner(pool, task_id);
   await guardInvocationCallback(pool, data);
 
@@ -106,6 +108,8 @@ export async function processExecutionCallback(data, pool) {
   const runCallback = { taskId: task_id, runId: run_id, status, exitCode: exit_code, result, prUrl: resolvedPrUrl, error: stderr };
   try {
     await client.query('BEGIN');
+    await client.query('SELECT id FROM tasks WHERE id=$1 FOR UPDATE',[task_id]);
+    await assertAutomaticTaskOwner(client,task_id);
 
     const isCompleted = newStatus === 'completed';
     findingsValue = extractFindingsValue(result);

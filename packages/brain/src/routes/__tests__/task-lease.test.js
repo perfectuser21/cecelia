@@ -48,7 +48,8 @@ describe('POST /tasks/:id/heartbeat', () => {
 describe('POST /tasks/:id/lease/release', () => {
   beforeEach(() => vi.clearAllMocks());
   it('领单方主动释放 → 200', async () => {
-    mockPool.query.mockResolvedValueOnce({ rows: [{ task_id: 't1' }], rowCount: 1 });
+    mockPool.query.mockResolvedValueOnce({ rows: [{ id: 't1' }] })
+      .mockResolvedValueOnce({ rows: [{ task_id: 't1' }], rowCount: 1 });
     const res = await request(app()).post('/tasks/t1/lease/release').send({ claimer: 'runner', reason: 'finished' });
     expect(res.status).toBe(200);
     expect(res.body.released).toBe(true);

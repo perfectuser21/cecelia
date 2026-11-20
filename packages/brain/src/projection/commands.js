@@ -1,4 +1,5 @@
 import {NON_FOUNDATION_TASK_SQL} from '../lib/foundation-task-guard.js';
+import {nativeAgentOwnerSql} from '../lib/native-agent-authority.js';
 const ALLOWED_COMMANDS = new Set([
   'start_requested',
   'cancel_requested',
@@ -50,7 +51,7 @@ async function fail(pool, command, error) {
 
 async function applyOne(pool, command) {
   const { rows } = await pool.query(
-    'SELECT id, status FROM tasks WHERE id=$1 FOR UPDATE',
+    'SELECT id, status, xmin::text AS native_control_epoch FROM tasks WHERE id=$1 FOR UPDATE',
     [command.entity_id]
   );
   const task = rows[0];
@@ -75,19 +76,30 @@ async function applyOne(pool, command) {
       [task.id]
     );
   } else if (command.command_type === 'cancel_requested') {
-    if (!['queued', 'pending', 'blocked', 'paused'].includes(task.status)) {
+    const nativeRequest = ['in_progress', 'blocked'].includes(task.status)
+      ? await (await import('../native-agent-executor.js')).requestNativeAgentCancellation(pool, task.id)
+      : { matched: false };
+    const nativeCancel = nativeRequest.matched === true;
+    if (!nativeCancel && nativeRequest.nativeOwned === true) {
+      await finish(pool, command.id, 'rejected', 'native_cancel_binding_unconfirmed');
+      return 'rejected';
+    }
+    if (!nativeCancel && !['queued', 'pending', 'blocked', 'paused'].includes(task.status)) {
       await finish(pool, command.id, 'rejected', `active_or_terminal:${task.status}`);
       return 'rejected';
     }
-    // The earlier SELECT may have autocommitted; authority belongs to this write.
-    const { rowCount } = await pool.query(
-      `UPDATE tasks SET status='cancelled', updated_at=NOW()
-       WHERE id=$1 AND status = ANY($2::text[]) AND ${NON_FOUNDATION_TASK_SQL} RETURNING id`,
-      [task.id, ['queued', 'pending', 'blocked', 'paused']]
-    );
-    if (rowCount !== 1) {
-      await finish(pool, command.id, 'rejected', 'task_changed_before_cancel');
-      return 'rejected';
+    if (!nativeCancel) {
+      // The earlier SELECT may have autocommitted; authority belongs to this write.
+      const { rowCount } = await pool.query(
+        `UPDATE tasks SET status='cancelled', updated_at=NOW()
+         WHERE id=$1 AND status = ANY($2::text[]) AND xmin::text=$3
+           AND NOT ${nativeAgentOwnerSql('tasks.id')} AND ${NON_FOUNDATION_TASK_SQL} RETURNING id`,
+        [task.id, ['queued', 'pending', 'blocked', 'paused'], task.native_control_epoch]
+      );
+      if (rowCount !== 1) {
+        await finish(pool, command.id, 'rejected', 'task_changed_before_cancel');
+        return 'rejected';
+      }
     }
   } else if (command.command_type === 'annotate_requested') {
     const annotation = String(command.payload?.annotation ?? '').trim();

@@ -81,11 +81,10 @@ const candidate = { id: 'q1', task_type: 'qiumi_task', status: 'queued', priorit
 const fullRow = { ...candidate, payload: { qiumi_source: buildQiumiSource({ title: '给张三发个私信确认收货地址' }) } };
 
 /** 按 SQL 形状回答，不靠调用次序——dispatchNextTask 前面还有若干条真查询 */
-function wireQueries({ running = 0, claimed = true, row = fullRow } = {}) {
+function wireQueries({ claimed = true, row = fullRow } = {}) {
   mockQuery.mockImplementation(async (sql) => {
     if (/UPDATE tasks SET claimed_by = \$1/.test(sql)) return { rows: claimed ? [{ id: 'q1' }] : [] };
     if (/SELECT \* FROM tasks WHERE id = \$1/.test(sql)) return { rows: [row] };
-    if (/count\(\*\)::int AS n FROM tasks/.test(sql) && /openclaw-agent/.test(sql)) return { rows: [{ n: running }] };
     return { rows: [] };
   });
 }
@@ -110,7 +109,7 @@ describe('dispatchQiumiTask：三态出口', () => {
     wireQueries();
     routeQiumiTask.mockResolvedValue({ outcome: 'fail', reason: 'device_uncertain', detail: 'p=0.6' });
 
-    await dispatchQiumiTask(candidate, { env: { mmvConcurrency: 2 }, actions: [], holSkipIds: [] });
+    await dispatchQiumiTask(candidate, { actions: [], holSkipIds: [] });
 
     const routed = routeQiumiTask.mock.calls[0][0];
     expect(routed.payload, '路由拿到的是候选行不是库里整行——便宜闸读不到 qiumi_source').toBeTruthy();
@@ -126,7 +125,7 @@ describe('dispatchQiumiTask：三态出口', () => {
     wireQueries();
     routeQiumiTask.mockRejectedValue(new Error('loadRegistryPool boom'));
 
-    const r = await dispatchQiumiTask(candidate, { env: { mmvConcurrency: 2 }, actions: [], holSkipIds: [] });
+    const r = await dispatchQiumiTask(candidate, { actions: [], holSkipIds: [] });
 
     expect(r).toMatchObject({ outcome: 'skip' });
     expect(sqlsOf().some((s) => /UPDATE tasks SET claimed_by = NULL/.test(s)), 'claim 泄漏：这条任务再也起不来').toBe(true);
@@ -138,7 +137,7 @@ describe('dispatchQiumiTask：三态出口', () => {
     routeQiumiTask.mockResolvedValue({ outcome: 'agent', engine: 'terra', payloadPatch: {} });
     persistDecision.mockRejectedValueOnce(new Error('db down'));
 
-    await expect(dispatchQiumiTask(candidate, { env: { mmvConcurrency: 2 }, actions: [], holSkipIds: [] }))
+    await expect(dispatchQiumiTask(candidate, { actions: [], holSkipIds: [] }))
       .resolves.toMatchObject({ outcome: 'skip' });
   });
 
@@ -146,7 +145,7 @@ describe('dispatchQiumiTask：三态出口', () => {
     wireQueries();
     routeQiumiTask.mockResolvedValue({ outcome: 'fail', reason: 'device_uncertain', detail: 'conf=0.6' });
 
-    const r = await dispatchQiumiTask(candidate, { env: { mmvConcurrency: 2 }, actions: [], holSkipIds: [] });
+    const r = await dispatchQiumiTask(candidate, { actions: [], holSkipIds: [] });
 
     expect(r.outcome).toBe('return');
     expect(r.result).toMatchObject({ dispatched: false, reason: 'device_uncertain', task_id: 'q1' });
@@ -159,7 +158,7 @@ describe('dispatchQiumiTask：三态出口', () => {
     wireQueries();
     routeQiumiTask.mockResolvedValue({ outcome: 'unresolved', reason: 'device_unresolved', detail: { reason: 'no_match', candidates: [] }, note: 'n' });
 
-    const r = await dispatchQiumiTask(candidate, { env: { mmvConcurrency: 2 }, actions: [], holSkipIds: [] });
+    const r = await dispatchQiumiTask(candidate, { actions: [], holSkipIds: [] });
 
     expect(r.outcome).toBe('return');
     expect(r.result).toMatchObject({ dispatched: false, reason: 'device_unresolved', task_id: 'q1' });
@@ -175,7 +174,7 @@ describe('dispatchQiumiTask：三态出口', () => {
       payloadPatch: { qiumi_route: { source: 'native-agent' } },
     });
 
-    const r = await dispatchQiumiTask(candidate, { env: { mmvConcurrency: 2 }, actions: [], holSkipIds: [] });
+    const r = await dispatchQiumiTask(candidate, { actions: [], holSkipIds: [] });
 
     expect(r.outcome).toBe('proceed');
     expect(persistDecision).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ id: 'q1' }), expect.objectContaining({ outcome: 'agent' }));
@@ -205,7 +204,7 @@ describe('dispatchNextTask：接线点在 claim 之后、标 in_progress 之前'
     ).toBeLessThan(mockUpdateTask.mock.invocationCallOrder[0]);
   });
 
-  it('claim 没抢到 → 不路由（省掉一次 Jev 调用）', async () => {
+  it('claim 没抢到 → 不路由（未取得claim不能路由）', async () => {
     _candidatePool = [candidate];
     wireQueries({ claimed: false });
 
@@ -259,14 +258,13 @@ describe('原生qiumi任务不受旧Bridge准入影响', () => {
 describe('同机串行（任务 5ad81457）：同一台手机已有秋米任务在跑 → 本轮不派，保持 queued 换下一个', () => {
   const hint = (serial) => ({ source: 'native-agent', device_hint: { is_device: true, serial, host: 'us-mac-m4' } });
   const routedRow = (serial, extra = {}) => ({
-    ...fullRow, payload: { ...fullRow.payload, run_id: 'qiumi-q1-1', qiumi_route: hint(serial), ...extra },
+    ...fullRow, payload: { ...fullRow.payload, qiumi_route: hint(serial), ...extra },
   });
   /** busySerial：库里另一张 in_progress 秋米任务占着的序列号 */
   function wire(row, busySerial) {
     routeQiumiTask.mockResolvedValue({outcome:'agent',payloadPatch:{qiumi_route:row.payload?.qiumi_route}});
     mockQuery.mockImplementation(async (sql, params) => {
       if (/SELECT \* FROM tasks WHERE id = \$1/.test(sql)) return { rows: [row] };
-      if (/count\(\*\)::int AS n FROM tasks/.test(sql) && /openclaw-agent/.test(sql)) return { rows: [{ n: 1 }] };
       if (/device_hint/.test(sql) && /in_progress/.test(sql)) {
         return { rows: params?.[1] === busySerial ? [{ id: 'q0-busy', started_at: null }] : [] };
       }
@@ -277,7 +275,7 @@ describe('同机串行（任务 5ad81457）：同一台手机已有秋米任务�
   it('已路由的任务：同 serial 已有 in_progress → skip、放 claim、进 holSkipIds、记 task_events', async () => {
     wire(routedRow('S1'), 'S1');
     const holSkipIds = [];
-    const r = await dispatchQiumiTask(candidate, { env: { mmvConcurrency: 2 }, actions: [], holSkipIds });
+    const r = await dispatchQiumiTask(candidate, { actions: [], holSkipIds });
     expect(r).toEqual({ outcome: 'skip' });
     expect(holSkipIds).toContain('q1');
     expect(sqlsOf().some((s) => /claimed_by = NULL/.test(s)), 'claim 泄漏').toBe(true);
@@ -291,13 +289,13 @@ describe('同机串行（任务 5ad81457）：同一台手机已有秋米任务�
 
   it('不同 serial → 照派（proceed）', async () => {
     wire(routedRow('S2'), 'S1');
-    const r = await dispatchQiumiTask(candidate, { env: { mmvConcurrency: 2 }, actions: [], holSkipIds: [] });
+    const r = await dispatchQiumiTask(candidate, { actions: [], holSkipIds: [] });
     expect(r).toEqual({ outcome: 'proceed' });
   });
 
   it('没有 serial（非设备活）→ 不查同机闸，照派', async () => {
-    wire({ ...fullRow, payload: { ...fullRow.payload, run_id: 'qiumi-q1-1', qiumi_route: { source: 'jev' } } }, 'S1');
-    const r = await dispatchQiumiTask(candidate, { env: { mmvConcurrency: 2 }, actions: [], holSkipIds: [] });
+    wire({ ...fullRow, payload: { ...fullRow.payload, qiumi_route: { source: 'native-agent' } } }, 'S1');
+    const r = await dispatchQiumiTask(candidate, { actions: [], holSkipIds: [] });
     expect(r).toEqual({ outcome: 'proceed' });
     expect(sqlsOf().some((s) => /device_hint/.test(s) && /in_progress/.test(s))).toBe(false);
   });
@@ -309,7 +307,7 @@ describe('同机串行（任务 5ad81457）：同一台手机已有秋米任务�
       payloadPatch: { run_id: 'qiumi-q1-2', qiumi_route: hint('S1') },
     });
     const holSkipIds = [];
-    const r = await dispatchQiumiTask(candidate, { env: { mmvConcurrency: 2 }, actions: [], holSkipIds });
+    const r = await dispatchQiumiTask(candidate, { actions: [], holSkipIds });
     expect(persistDecision).toHaveBeenCalled();
     expect(r).toEqual({ outcome: 'skip' });
     expect(holSkipIds).toContain('q1');

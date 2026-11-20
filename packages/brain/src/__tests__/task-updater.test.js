@@ -7,7 +7,17 @@ import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
 // ── mock 区 ──────────────────────────────────────────────
 
 // hoisted 确保 task-updater.js 加载时获得同一 pool 实例
-const mockPool = vi.hoisted(() => ({ query: vi.fn() }));
+const { mockPool, taskQuery, transactionQuery } = vi.hoisted(() => {
+  const taskQuery = vi.fn();
+  const transactionQuery = vi.fn(async (sql, params) => {
+    if (/^(BEGIN|COMMIT|ROLLBACK)$/.test(sql)) return { rows: [] };
+    if (sql === 'SELECT id FROM tasks WHERE id=$1 FOR UPDATE') return { rows: [{ id: params[0] }] };
+    if (/ AS native_owned$/.test(sql)) return { rows: [{ native_owned: false }] };
+    return taskQuery(sql, params);
+  });
+  const client = { query: transactionQuery, release: vi.fn() };
+  return { taskQuery, transactionQuery, mockPool: { query: transactionQuery, connect: vi.fn(async () => client) } };
+});
 
 vi.mock('../db.js', () => ({ default: mockPool }));
 
@@ -28,13 +38,12 @@ vi.mock('../event-bus.js', () => ({ emit: mockEmit }));
 
 // ── 导入被测模块（必须在 vi.mock 之后）──────────────────
 // isolate:false 修复：不在顶层 await import，改为 beforeAll + vi.resetModules()
-let updateTaskStatus, updateTaskProgress, broadcastTaskState, blockTask, unblockTask, unblockExpiredTasks;
+let updateTaskStatus, broadcastTaskState, blockTask, unblockTask, unblockExpiredTasks;
 
 beforeAll(async () => {
   vi.resetModules();
   const mod = await import('../task-updater.js');
   updateTaskStatus = mod.updateTaskStatus;
-  updateTaskProgress = mod.updateTaskProgress;
   broadcastTaskState = mod.broadcastTaskState;
   blockTask = mod.blockTask;
   unblockTask = mod.unblockTask;
@@ -69,38 +78,43 @@ describe('task-updater', () => {
 
     it('应当成功更新状态为 in_progress 并广播 TaskStarted', async () => {
       const task = makeTask({ status: 'in_progress' });
-      mockPool.query.mockResolvedValueOnce({ rows: [task] });
+      taskQuery.mockResolvedValueOnce({ rows: [task] });
 
       const result = await updateTaskStatus('task-001', 'in_progress');
 
       expect(result.success).toBe(true);
       expect(result.task).toEqual(task);
+      expect(mockPool.connect).toHaveBeenCalledOnce();
+      expect(transactionQuery.mock.calls.slice(0, 3).map(call => call[0])).toEqual([
+        'BEGIN', 'SELECT id FROM tasks WHERE id=$1 FOR UPDATE', expect.stringContaining(' AS native_owned'),
+      ]);
+      expect(transactionQuery.mock.calls.at(-1)[0]).toBe('COMMIT');
       // SQL 应包含 started_at = NOW()
-      const sql = mockPool.query.mock.calls[0][0];
+      const sql = taskQuery.mock.calls[0][0];
       expect(sql).toContain('started_at = NOW()');
       expect(mockPublishTaskStarted).toHaveBeenCalledOnce();
     });
 
     it('pending_postdeploy允许写入并返回，不能提前发完成事件', async () => {
       const task = makeTask({ status: 'pending_postdeploy' });
-      mockPool.query.mockResolvedValueOnce({ rows: [task] });
+      taskQuery.mockResolvedValueOnce({ rows: [task] });
       const result = await updateTaskStatus('task-001', 'pending_postdeploy');
       expect(result.success).toBe(true);
       expect(result.task.status).toBe('pending_postdeploy');
-      expect(mockPool.query.mock.calls[0][1]).toEqual(['task-001', 'pending_postdeploy']);
-      expect(mockPool.query.mock.calls[0][0]).not.toContain('completed_at = NOW()');
+      expect(taskQuery.mock.calls[0][1]).toEqual(['task-001', 'pending_postdeploy']);
+      expect(taskQuery.mock.calls[0][0]).not.toContain('completed_at = NOW()');
       expect(mockPublishTaskCompleted).not.toHaveBeenCalled();
       expect(mockPublishTaskFailed).not.toHaveBeenCalled();
     });
 
     it('应当成功更新状态为 completed 并广播 TaskCompleted', async () => {
       const task = makeTask({ status: 'completed', payload: { result: 'ok' } });
-      mockPool.query.mockResolvedValueOnce({ rows: [task] });
+      taskQuery.mockResolvedValueOnce({ rows: [task] });
 
       const result = await updateTaskStatus('task-001', 'completed');
 
       expect(result.success).toBe(true);
-      const sql = mockPool.query.mock.calls[0][0];
+      const sql = taskQuery.mock.calls[0][0];
       expect(sql).toContain('completed_at = NOW()');
       // 终态必须清除 claimed_by / claimed_at，防止僵尸锁
       expect(sql).toContain('claimed_by = NULL');
@@ -110,13 +124,13 @@ describe('task-updater', () => {
 
     it('应当成功更新状态为 failed 并广播 TaskFailed', async () => {
       const task = makeTask({ status: 'failed', payload: { error: '超时' } });
-      mockPool.query.mockResolvedValueOnce({ rows: [task] });
+      taskQuery.mockResolvedValueOnce({ rows: [task] });
 
       const result = await updateTaskStatus('task-001', 'failed');
 
       expect(result.success).toBe(true);
       // 终态必须清除 claimed_by / claimed_at，防止僵尸锁
-      const sql = mockPool.query.mock.calls[0][0];
+      const sql = taskQuery.mock.calls[0][0];
       expect(sql).toContain('claimed_by = NULL');
       expect(sql).toContain('claimed_at = NULL');
       expect(mockPublishTaskFailed).toHaveBeenCalledOnce();
@@ -124,7 +138,7 @@ describe('task-updater', () => {
 
     it('应当成功更新状态为 queued 且有 progress 时广播 TaskProgress', async () => {
       const task = makeTask({ status: 'queued', payload: { progress: 50 } });
-      mockPool.query.mockResolvedValueOnce({ rows: [task] });
+      taskQuery.mockResolvedValueOnce({ rows: [task] });
 
       const result = await updateTaskStatus('task-001', 'queued');
 
@@ -134,7 +148,7 @@ describe('task-updater', () => {
 
     it('应当成功更新状态为 queued 且无 progress 时不广播 TaskProgress', async () => {
       const task = makeTask({ status: 'queued', payload: {} });
-      mockPool.query.mockResolvedValueOnce({ rows: [task] });
+      taskQuery.mockResolvedValueOnce({ rows: [task] });
 
       const result = await updateTaskStatus('task-001', 'queued');
 
@@ -146,7 +160,7 @@ describe('task-updater', () => {
 
     it('应当正确合并白名单内的附加字段', async () => {
       const task = makeTask({ status: 'in_progress', assigned_to: 'agent-1' });
-      mockPool.query.mockResolvedValueOnce({ rows: [task] });
+      taskQuery.mockResolvedValueOnce({ rows: [task] });
 
       const result = await updateTaskStatus('task-001', 'in_progress', {
         assigned_to: 'agent-1',
@@ -154,33 +168,33 @@ describe('task-updater', () => {
       });
 
       expect(result.success).toBe(true);
-      const sql = mockPool.query.mock.calls[0][0];
+      const sql = taskQuery.mock.calls[0][0];
       expect(sql).toContain('assigned_to = $3');
       expect(sql).toContain('priority = $4');
-      const params = mockPool.query.mock.calls[0][1];
+      const params = taskQuery.mock.calls[0][1];
       expect(params).toEqual(['task-001', 'in_progress', 'agent-1', 'P0']);
     });
 
     it('应当合并 payload 字段为 JSONB', async () => {
       const task = makeTask({ status: 'in_progress', payload: { run_id: 'r1' } });
-      mockPool.query.mockResolvedValueOnce({ rows: [task] });
+      taskQuery.mockResolvedValueOnce({ rows: [task] });
 
       const result = await updateTaskStatus('task-001', 'in_progress', {
         payload: { run_id: 'r1' },
       });
 
       expect(result.success).toBe(true);
-      const sql = mockPool.query.mock.calls[0][0];
+      const sql = taskQuery.mock.calls[0][0];
       expect(sql).toContain('COALESCE(payload');
       expect(sql).toContain('::jsonb');
-      const params = mockPool.query.mock.calls[0][1];
+      const params = taskQuery.mock.calls[0][1];
       // payload 应被 JSON.stringify
       expect(params[2]).toBe(JSON.stringify({ run_id: 'r1' }));
     });
 
     it('应当忽略非白名单字段并继续执行', async () => {
       const task = makeTask({ status: 'in_progress' });
-      mockPool.query.mockResolvedValueOnce({ rows: [task] });
+      taskQuery.mockResolvedValueOnce({ rows: [task] });
 
       const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
@@ -193,7 +207,7 @@ describe('task-updater', () => {
         expect.stringContaining('Ignoring non-whitelisted column: sql_injection')
       );
       // SQL 不应包含 sql_injection
-      const sql = mockPool.query.mock.calls[0][0];
+      const sql = taskQuery.mock.calls[0][0];
       expect(sql).not.toContain('sql_injection');
       warnSpy.mockRestore();
     });
@@ -207,13 +221,13 @@ describe('task-updater', () => {
 
       expect(result.success).toBe(false);
       expect(result.error).toContain('Invalid status');
-      expect(mockPool.query).not.toHaveBeenCalled();
+      expect(transactionQuery).not.toHaveBeenCalled();
       errorSpy.mockRestore();
     });
 
     it('应当处理任务不存在（返回空行）', async () => {
       const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-      mockPool.query.mockResolvedValueOnce({ rows: [] });
+      taskQuery.mockResolvedValueOnce({ rows: [] });
 
       const result = await updateTaskStatus('nonexistent', 'queued');
 
@@ -224,7 +238,7 @@ describe('task-updater', () => {
 
     it('应当处理数据库查询异常', async () => {
       const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-      mockPool.query.mockRejectedValueOnce(new Error('connection refused'));
+      taskQuery.mockRejectedValueOnce(new Error('connection refused'));
 
       const result = await updateTaskStatus('task-001', 'queued');
 
@@ -237,18 +251,18 @@ describe('task-updater', () => {
 
     it('应当在无附加字段时正常工作', async () => {
       const task = makeTask({ status: 'queued' });
-      mockPool.query.mockResolvedValueOnce({ rows: [task] });
+      taskQuery.mockResolvedValueOnce({ rows: [task] });
 
       const result = await updateTaskStatus('task-001', 'queued');
 
       expect(result.success).toBe(true);
-      const params = mockPool.query.mock.calls[0][1];
+      const params = taskQuery.mock.calls[0][1];
       expect(params).toEqual(['task-001', 'queued']);
     });
 
     it('应当同时处理 payload 和其他白名单字段', async () => {
       const task = makeTask({ status: 'in_progress' });
-      mockPool.query.mockResolvedValueOnce({ rows: [task] });
+      taskQuery.mockResolvedValueOnce({ rows: [task] });
 
       const result = await updateTaskStatus('task-001', 'in_progress', {
         payload: { step: 1 },
@@ -257,7 +271,7 @@ describe('task-updater', () => {
       });
 
       expect(result.success).toBe(true);
-      const params = mockPool.query.mock.calls[0][1];
+      const params = taskQuery.mock.calls[0][1];
       // params: [taskId, status, payload_json, assigned_to, error]
       expect(params.length).toBe(5);
       expect(params[0]).toBe('task-001');
@@ -269,62 +283,17 @@ describe('task-updater', () => {
   });
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  // updateTaskProgress
-  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-  describe('updateTaskProgress', () => {
-    it('应当成功更新进度并广播', async () => {
-      const task = makeTask({ status: 'in_progress', payload: { progress: 75, current_run_id: 'r1' } });
-      mockPool.query.mockResolvedValueOnce({ rows: [task] });
-
-      const result = await updateTaskProgress('task-001', { progress: 75 });
-
-      expect(result.success).toBe(true);
-      expect(result.task).toEqual(task);
-      // 检查 SQL 包含 COALESCE payload 合并
-      const sql = mockPool.query.mock.calls[0][0];
-      expect(sql).toContain('COALESCE(payload');
-      // 参数应包含 JSON 字符串
-      const params = mockPool.query.mock.calls[0][1];
-      expect(params[0]).toBe('task-001');
-      expect(params[1]).toBe(JSON.stringify({ progress: 75 }));
-    });
-
-    it('应当处理任务不存在', async () => {
-      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-      mockPool.query.mockResolvedValueOnce({ rows: [] });
-
-      const result = await updateTaskProgress('nonexistent', { progress: 50 });
-
-      expect(result.success).toBe(false);
-      expect(result.error).toContain('not found');
-      errorSpy.mockRestore();
-    });
-
-    it('应当处理数据库异常', async () => {
-      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-      mockPool.query.mockRejectedValueOnce(new Error('timeout'));
-
-      const result = await updateTaskProgress('task-001', { progress: 50 });
-
-      expect(result.success).toBe(false);
-      expect(result.error).toContain('timeout');
-      errorSpy.mockRestore();
-    });
-  });
-
-  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   // broadcastTaskState
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
   describe('broadcastTaskState', () => {
     it('应当查询任务并广播当前状态 (in_progress)', async () => {
       const task = makeTask({ status: 'in_progress', payload: { current_run_id: 'r1' } });
-      mockPool.query.mockResolvedValueOnce({ rows: [task] });
+      taskQuery.mockResolvedValueOnce({ rows: [task] });
 
       await broadcastTaskState('task-001');
 
-      expect(mockPool.query).toHaveBeenCalledWith(
+      expect(taskQuery).toHaveBeenCalledWith(
         expect.stringContaining('SELECT * FROM tasks'),
         ['task-001']
       );
@@ -333,7 +302,7 @@ describe('task-updater', () => {
 
     it('应当查询任务并广播当前状态 (completed)', async () => {
       const task = makeTask({ status: 'completed', payload: { run_id: 'r2' } });
-      mockPool.query.mockResolvedValueOnce({ rows: [task] });
+      taskQuery.mockResolvedValueOnce({ rows: [task] });
 
       await broadcastTaskState('task-001');
 
@@ -342,7 +311,7 @@ describe('task-updater', () => {
 
     it('应当查询任务并广播当前状态 (failed)', async () => {
       const task = makeTask({ status: 'failed', payload: { error: '崩溃' } });
-      mockPool.query.mockResolvedValueOnce({ rows: [task] });
+      taskQuery.mockResolvedValueOnce({ rows: [task] });
 
       await broadcastTaskState('task-001');
 
@@ -350,7 +319,7 @@ describe('task-updater', () => {
     });
 
     it('应当在任务不存在时静默处理（不抛异常）', async () => {
-      mockPool.query.mockResolvedValueOnce({ rows: [] });
+      taskQuery.mockResolvedValueOnce({ rows: [] });
       const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
       await broadcastTaskState('nonexistent');
@@ -365,7 +334,7 @@ describe('task-updater', () => {
     });
 
     it('应当在数据库异常时静默处理', async () => {
-      mockPool.query.mockRejectedValueOnce(new Error('connection lost'));
+      taskQuery.mockRejectedValueOnce(new Error('connection lost'));
       const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
       await broadcastTaskState('task-001');
@@ -382,7 +351,7 @@ describe('task-updater', () => {
   describe('broadcastTaskUpdate 行为（通过 broadcastTaskState 间接测试）', () => {
     it('应当从 payload.current_run_id 提取 runId', async () => {
       const task = makeTask({ status: 'in_progress', payload: { current_run_id: 'run-abc' } });
-      mockPool.query.mockResolvedValueOnce({ rows: [task] });
+      taskQuery.mockResolvedValueOnce({ rows: [task] });
 
       await broadcastTaskState('task-001');
 
@@ -395,7 +364,7 @@ describe('task-updater', () => {
 
     it('应当回退到 payload.run_id 当 current_run_id 不存在时', async () => {
       const task = makeTask({ status: 'in_progress', payload: { run_id: 'run-fallback' } });
-      mockPool.query.mockResolvedValueOnce({ rows: [task] });
+      taskQuery.mockResolvedValueOnce({ rows: [task] });
 
       await broadcastTaskState('task-001');
 
@@ -408,7 +377,7 @@ describe('task-updater', () => {
 
     it('应当在 payload 为 null 时 runId 为 null', async () => {
       const task = makeTask({ status: 'in_progress', payload: null });
-      mockPool.query.mockResolvedValueOnce({ rows: [task] });
+      taskQuery.mockResolvedValueOnce({ rows: [task] });
 
       await broadcastTaskState('task-001');
 
@@ -421,7 +390,7 @@ describe('task-updater', () => {
 
     it('应当将 failed 任务的 error 传递给 publishTaskFailed', async () => {
       const task = makeTask({ status: 'failed', payload: { error: '内存不足', run_id: 'r1' } });
-      mockPool.query.mockResolvedValueOnce({ rows: [task] });
+      taskQuery.mockResolvedValueOnce({ rows: [task] });
 
       await broadcastTaskState('task-001');
 
@@ -430,7 +399,7 @@ describe('task-updater', () => {
 
     it('应当在 failed 且无 error 时使用默认 "Unknown error"', async () => {
       const task = makeTask({ status: 'failed', payload: {} });
-      mockPool.query.mockResolvedValueOnce({ rows: [task] });
+      taskQuery.mockResolvedValueOnce({ rows: [task] });
 
       await broadcastTaskState('task-001');
 
@@ -440,7 +409,7 @@ describe('task-updater', () => {
     it('应当对 completed 任务传递完整 payload 给 publishTaskCompleted', async () => {
       const payload = { result: 'success', artifacts: ['file.js'] };
       const task = makeTask({ status: 'completed', payload });
-      mockPool.query.mockResolvedValueOnce({ rows: [task] });
+      taskQuery.mockResolvedValueOnce({ rows: [task] });
 
       await broadcastTaskState('task-001');
 
@@ -452,7 +421,7 @@ describe('task-updater', () => {
         status: 'some_other_status',
         payload: { progress: true, current_step: '42' },
       });
-      mockPool.query.mockResolvedValueOnce({ rows: [task] });
+      taskQuery.mockResolvedValueOnce({ rows: [task] });
 
       await broadcastTaskState('task-001');
 
@@ -465,7 +434,7 @@ describe('task-updater', () => {
         status: 'some_other_status',
         payload: { progress: true, current_step: 'abc' },
       });
-      mockPool.query.mockResolvedValueOnce({ rows: [task] });
+      taskQuery.mockResolvedValueOnce({ rows: [task] });
 
       await broadcastTaskState('task-001');
 
@@ -477,7 +446,7 @@ describe('task-updater', () => {
         status: 'some_other_status',
         payload: { progress: true, current_step: '200' },
       });
-      mockPool.query.mockResolvedValueOnce({ rows: [task] });
+      taskQuery.mockResolvedValueOnce({ rows: [task] });
 
       await broadcastTaskState('task-001');
 
@@ -489,7 +458,7 @@ describe('task-updater', () => {
         status: 'some_other_status',
         payload: { progress: true, current_step: '-10' },
       });
-      mockPool.query.mockResolvedValueOnce({ rows: [task] });
+      taskQuery.mockResolvedValueOnce({ rows: [task] });
 
       await broadcastTaskState('task-001');
 
@@ -501,7 +470,7 @@ describe('task-updater', () => {
         status: 'some_other_status',
         payload: {},
       });
-      mockPool.query.mockResolvedValueOnce({ rows: [task] });
+      taskQuery.mockResolvedValueOnce({ rows: [task] });
 
       await broadcastTaskState('task-001');
 
@@ -516,7 +485,7 @@ describe('task-updater', () => {
         status: 'some_other_status',
         payload: { progress: 30 },
       });
-      mockPool.query.mockResolvedValueOnce({ rows: [task] });
+      taskQuery.mockResolvedValueOnce({ rows: [task] });
 
       await broadcastTaskState('task-001');
 
@@ -533,13 +502,13 @@ describe('task-updater', () => {
     it('应当将 in_progress 任务改为 blocked 并设置 blocked 字段', async () => {
       const until = new Date(Date.now() + 30 * 60 * 1000);
       const task = makeTask({ status: 'blocked', blocked_reason: 'rate_limit', blocked_until: until.toISOString() });
-      mockPool.query.mockResolvedValueOnce({ rows: [task] });
+      taskQuery.mockResolvedValueOnce({ rows: [task] });
 
       const result = await blockTask('task-001', { reason: 'rate_limit', until });
 
       expect(result.success).toBe(true);
       expect(result.task.status).toBe('blocked');
-      const sql = mockPool.query.mock.calls[0][0];
+      const sql = taskQuery.mock.calls[0][0];
       expect(sql).toContain("status = 'blocked'");
       expect(sql).toContain('blocked_at = NOW()');
       expect(sql).toContain('blocked_reason = $2');
@@ -550,7 +519,7 @@ describe('task-updater', () => {
     it('应当将 failed 任务改为 blocked', async () => {
       const until = new Date(Date.now() + 60 * 60 * 1000);
       const task = makeTask({ status: 'blocked', blocked_reason: 'network' });
-      mockPool.query.mockResolvedValueOnce({ rows: [task] });
+      taskQuery.mockResolvedValueOnce({ rows: [task] });
 
       const result = await blockTask('task-001', { reason: 'network', until });
 
@@ -559,7 +528,7 @@ describe('task-updater', () => {
 
     it('应当在任务不存在或状态不合法时返回失败', async () => {
       const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-      mockPool.query.mockResolvedValueOnce({ rows: [] });
+      taskQuery.mockResolvedValueOnce({ rows: [] });
 
       const result = await blockTask('task-001', { reason: 'rate_limit', until: new Date() });
 
@@ -570,7 +539,7 @@ describe('task-updater', () => {
 
     it('应当在数据库异常时返回失败', async () => {
       const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-      mockPool.query.mockRejectedValueOnce(new Error('db error'));
+      taskQuery.mockRejectedValueOnce(new Error('db error'));
 
       const result = await blockTask('task-%s-%d', { reason: 'rate_limit', until: new Date() });
 
@@ -591,26 +560,26 @@ describe('task-updater', () => {
   describe('unblockTask', () => {
     it('应当将 blocked 任务改为 queued 并清空 blocked 字段', async () => {
       const task = makeTask({ status: 'queued', blocked_at: null, blocked_reason: null, blocked_until: null });
-      mockPool.query.mockResolvedValueOnce({ rows: [task] });
+      taskQuery.mockResolvedValueOnce({ rows: [task] });
 
       const result = await unblockTask('task-001');
 
       expect(result.success).toBe(true);
       expect(result.task.status).toBe('queued');
-      const sql = mockPool.query.mock.calls[0][0];
+      const sql = taskQuery.mock.calls[0][0];
       expect(sql).toContain("status = 'queued'");
       expect(sql).toContain('blocked_at = NULL');
       expect(sql).toContain('blocked_reason = NULL');
       expect(sql).toContain('blocked_until = NULL');
       // WHERE 子句确保只有 blocked 状态可被释放
       expect(sql).toContain("status = 'blocked'");
-      const params = mockPool.query.mock.calls[0][1];
+      const params = taskQuery.mock.calls[0][1];
       expect(params[0]).toBe('task-001');
     });
 
     it('应当在任务不在 blocked 状态时返回失败', async () => {
       const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-      mockPool.query.mockResolvedValueOnce({ rows: [] });
+      taskQuery.mockResolvedValueOnce({ rows: [] });
 
       const result = await unblockTask('task-001');
 
@@ -621,7 +590,7 @@ describe('task-updater', () => {
 
     it('应当在数据库异常时返回失败', async () => {
       const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-      mockPool.query.mockRejectedValueOnce(new Error('connection lost'));
+      taskQuery.mockRejectedValueOnce(new Error('connection lost'));
 
       const result = await unblockTask('task-001');
 
@@ -638,14 +607,14 @@ describe('task-updater', () => {
   describe('安全性', () => {
     it('ALLOWED_COLUMNS 白名单应阻止 SQL 注入列名', async () => {
       const task = makeTask({ status: 'queued' });
-      mockPool.query.mockResolvedValueOnce({ rows: [task] });
+      taskQuery.mockResolvedValueOnce({ rows: [task] });
       vi.spyOn(console, 'warn').mockImplementation(() => {});
 
       await updateTaskStatus('task-001', 'queued', {
         'status; DROP TABLE tasks; --': 'evil',
       });
 
-      const sql = mockPool.query.mock.calls[0][0];
+      const sql = taskQuery.mock.calls[0][0];
       expect(sql).not.toContain('DROP TABLE');
       vi.restoreAllMocks();
     });
@@ -655,7 +624,7 @@ describe('task-updater', () => {
       for (const status of validStatuses) {
         vi.clearAllMocks();
         const task = makeTask({ status });
-        mockPool.query.mockResolvedValueOnce({ rows: [task] });
+        taskQuery.mockResolvedValueOnce({ rows: [task] });
         const result = await updateTaskStatus('task-001', status);
         expect(result.success).toBe(true);
       }
@@ -669,12 +638,12 @@ describe('task-updater', () => {
       }
 
       const task = makeTask({ status: 'queued' });
-      mockPool.query.mockResolvedValueOnce({ rows: [task] });
+      taskQuery.mockResolvedValueOnce({ rows: [task] });
 
       const result = await updateTaskStatus('task-001', 'queued', fields);
 
       expect(result.success).toBe(true);
-      const sql = mockPool.query.mock.calls[0][0];
+      const sql = taskQuery.mock.calls[0][0];
       // payload 使用 COALESCE 合并，其余直接赋值
       for (const col of allowedCols) {
         if (col === 'payload') {
@@ -701,19 +670,19 @@ describe('blockTask', () => {
       blocked_at: new Date().toISOString(), blocked_reason: 'billing_cap',
       blocked_detail: 'cap reached', blocked_until: until.toISOString(),
     };
-    mockPool.query.mockResolvedValueOnce({ rows: [task] });
+    taskQuery.mockResolvedValueOnce({ rows: [task] });
 
     const result = await blockTask('task-001', { reason: 'billing_cap', detail: 'cap reached', until });
 
     expect(result.success).toBe(true);
     expect(result.task.status).toBe('blocked');
-    const sql = mockPool.query.mock.calls[0][0];
+    const sql = taskQuery.mock.calls[0][0];
     expect(sql).toContain("status = 'blocked'");
     expect(sql).toContain('blocked_at = NOW()');
     expect(sql).toContain('blocked_reason = $2');
     expect(sql).toContain('blocked_detail = $3');
     expect(sql).toContain('blocked_until = $4');
-    const params = mockPool.query.mock.calls[0][1];
+    const params = taskQuery.mock.calls[0][1];
     expect(params[1]).toBe('billing_cap');
     expect(params[2]).toBe('{"message":"cap reached"}');
     expect(params[3]).toBe(until.toISOString());
@@ -721,7 +690,7 @@ describe('blockTask', () => {
 
   it('应当 emit task:blocked 事件', async () => {
     const task = { id: 'task-001', title: '任务', status: 'blocked' };
-    mockPool.query.mockResolvedValueOnce({ rows: [task] });
+    taskQuery.mockResolvedValueOnce({ rows: [task] });
 
     await blockTask('task-001', { reason: 'rate_limit' });
 
@@ -733,7 +702,7 @@ describe('blockTask', () => {
 
   it('任务不存在时返回 { success: false }', async () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    mockPool.query.mockResolvedValueOnce({ rows: [] });
+    taskQuery.mockResolvedValueOnce({ rows: [] });
 
     const result = await blockTask('nonexistent', { reason: 'manual' });
 
@@ -744,11 +713,11 @@ describe('blockTask', () => {
 
   it('until 为 null 时 blocked_until 写入 null', async () => {
     const task = { id: 'task-001', title: '任务', status: 'blocked', blocked_until: null };
-    mockPool.query.mockResolvedValueOnce({ rows: [task] });
+    taskQuery.mockResolvedValueOnce({ rows: [task] });
 
     await blockTask('task-001', { reason: 'manual', until: null });
 
-    const params = mockPool.query.mock.calls[0][1];
+    const params = taskQuery.mock.calls[0][1];
     expect(params[3]).toBeNull();
   });
 });
@@ -761,13 +730,13 @@ describe('unblockTask', () => {
       id: 'task-001', title: '任务', status: 'queued',
       blocked_at: null, blocked_reason: null, blocked_detail: null, blocked_until: null,
     };
-    mockPool.query.mockResolvedValueOnce({ rows: [task] });
+    taskQuery.mockResolvedValueOnce({ rows: [task] });
 
     const result = await unblockTask('task-001');
 
     expect(result.success).toBe(true);
     expect(result.task.status).toBe('queued');
-    const sql = mockPool.query.mock.calls[0][0];
+    const sql = taskQuery.mock.calls[0][0];
     expect(sql).toContain("status = 'queued'");
     expect(sql).toContain('blocked_at = NULL');
     expect(sql).toContain('blocked_reason = NULL');
@@ -781,7 +750,7 @@ describe('unblockTask', () => {
 
   it('应当 emit task:unblocked 事件', async () => {
     const task = { id: 'task-001', title: '任务', status: 'queued' };
-    mockPool.query.mockResolvedValueOnce({ rows: [task] });
+    taskQuery.mockResolvedValueOnce({ rows: [task] });
 
     await unblockTask('task-001');
 
@@ -792,7 +761,7 @@ describe('unblockTask', () => {
 
   it('任务不存在时返回 { success: false }', async () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    mockPool.query.mockResolvedValueOnce({ rows: [] });
+    taskQuery.mockResolvedValueOnce({ rows: [] });
 
     const result = await unblockTask('nonexistent');
 
@@ -806,7 +775,7 @@ describe('unblockExpiredTasks', () => {
   beforeEach(() => { vi.clearAllMocks(); });
 
   it('无过期任务时返回空数组', async () => {
-    mockPool.query.mockResolvedValueOnce({ rows: [] });
+    taskQuery.mockResolvedValueOnce({ rows: [] });
 
     const result = await unblockExpiredTasks();
 
@@ -815,7 +784,7 @@ describe('unblockExpiredTasks', () => {
 
   it('应当扫描 blocked_until < NOW() 并逐一解除阻塞', async () => {
     // 第一次 query：查出过期任务
-    mockPool.query.mockResolvedValueOnce({
+    taskQuery.mockResolvedValueOnce({
       rows: [
         { id: 'task-001', title: '任务A', blocked_reason: 'billing_cap' },
         { id: 'task-002', title: '任务B', blocked_reason: 'rate_limit' },
@@ -824,7 +793,7 @@ describe('unblockExpiredTasks', () => {
     // 后续每次 unblockTask 调用一次 pool.query
     // unblockTask 成功后还会补一次 pending_actions 关闭查询（守卫 2，链 bf5088a3 棒5）
     const unblocked = { status: 'queued' };
-    mockPool.query
+    taskQuery
       .mockResolvedValueOnce({ rows: [{ id: 'task-001', title: '任务A', ...unblocked }] })
       .mockResolvedValueOnce({ rowCount: 0, rows: [] })
       .mockResolvedValueOnce({ rows: [{ id: 'task-002', title: '任务B', ...unblocked }] })
@@ -836,14 +805,14 @@ describe('unblockExpiredTasks', () => {
     expect(result[0].task_id).toBe('task-001');
     expect(result[1].task_id).toBe('task-002');
     // 扫描 SQL 应包含 blocked_until < NOW()
-    const scanSql = mockPool.query.mock.calls[0][0];
+    const scanSql = taskQuery.mock.calls[0][0];
     expect(scanSql).toContain('blocked_until < NOW()');
     expect(scanSql).toContain("status = 'blocked'");
   });
 
   it('数据库异常时返回空数组（不抛出）', async () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    mockPool.query.mockRejectedValueOnce(new Error('connection lost'));
+    taskQuery.mockRejectedValueOnce(new Error('connection lost'));
 
     const result = await unblockExpiredTasks();
 

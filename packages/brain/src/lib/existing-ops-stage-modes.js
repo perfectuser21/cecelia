@@ -64,7 +64,7 @@ const RUNNER='scripts/ci/run-basic-check.mjs',CONFIG='scripts/ci/deep-integratio
 const nodes=n=>!n||typeof n!=='object'?[]:[...(n.type?[n]:[]),...Object.values(n).flatMap(v=>Array.isArray(v)?v.flatMap(nodes):nodes(v))];
 const reject=()=>{throw Error('basic_ci_source_unproven');};
 export async function collectReviewedBusinessPgSources({read,parse,relation,profile=BUSINESS_PROFILE_PATH}){
- const runner=await read(RUNNER),expectedCount=createHash('sha256').update(runner).digest('hex')===PILOT_HOST_INPUTS[RUNNER]?11:10;
+ const runner=await read(RUNNER),digest=createHash('sha256').update(runner).digest('hex'),expectedCount=digest===NATIVE_AGENT_INPUTS[RUNNER]?15:digest===PILOT_HOST_INPUTS[RUNNER]?11:10;
  const cases=nodes(parse(runner)).filter(n=>n.type==='SwitchCase'&&n.test?.value==='brain-integration');
  if(cases.length!==1)reject();
  const steps=nodes(cases[0]).filter(n=>n.type==='CallExpression'&&n.callee?.name==='step'&&n.arguments[1]?.value==='npx');
@@ -160,6 +160,31 @@ const DEPLOY_RECOVERY_INPUTS={
  'scripts/ci/__tests__/basic-brain-predecessor.test.mjs':'3ba6dce8b4693a42809ad51aacce3538a3347228be1e10966b0082f1f81c5cc6',
  'scripts/ci/__tests__/helpers/brain-deploy-predecessor.fixture.mjs':'943a0cf598bab07f731edc73fc82a75b4a14f615fe6a8268a7ac0ba0f8137ec4',
 };
+const NATIVE_AGENT_MARKER='packages/brain/config/native-agent.json';
+const NATIVE_AGENT_INPUTS={
+ "packages/brain/config/native-agent.json": "bb44c10fa839af43e9a3e740ef3573ed6e4806cc22c8caa73876b8b2ef0a75dc",
+ "scripts/ci/run-basic-check.mjs": "be28cd7275aca52331e45b385f9f842a65b97bc209b5ff891e5d4cba282fd267",
+ "scripts/ci/ops-checks.mjs": "9230590fa0f20ff718fe4b7dbf2992f4b8d94e6a1b250003f36368295bf9e0e4",
+ "scripts/brain-deploy.sh": "8aeef5d054ddafd69c4d7d09beb43be8747418c9cf927bb17f4e68b9a9bf8d37",
+ "packages/brain/src/scheduler-jobs.js": "188e8286890326949defb4615b1d39076174b353edb7f27c9d05a1b85e4607fb",
+ "packages/brain/Dockerfile": "766bfccba1fc57da3b28bd0730c06df74fa2b8ab3922e213e9a743db580430f1",
+ "scripts/ci/__tests__/basic-ops-coverage.test.mjs": "d11d246ac9759f343ba77a21bbbc0159d2de3bca6b019ba7fac0d003514f0230",
+ "scripts/ci/__tests__/helpers/brain-deploy-predecessor.fixture.mjs": "16ba0317da37c90f81fd1c3e7a6608036b35bdebb0a58aeec5f7356edb1817b9",
+ "scripts/ci/__tests__/basic-native-agent-deploy.test.mjs": "5380a708fac0578697a1ce62a950cc5c03f15ce6900db80b0f3cee214a395a54",
+ "packages/brain/scripts/native-agent-release.mjs": "8fd7191c3ba28363c36391387fc659e3019c8b3cdc38bf54ca5dc4940620cab4",
+ "tests/brain-ci-pg-layering.test.ts": "caa9b44da2c08084ae8d9e71c6e8f01cc7f252f9cc40e04c0ef2e8f64cfdd62c",
+ "packages/brain/scripts/native-agent/bundle.mjs": "6147ea6dbaa1ee91893f05478feb1c095f91224e8c3c9b8490587bb554d054a4",
+ "packages/brain/scripts/native-agent/config.mjs": "c24884add1822b15511d3d433d9f908a7ad039441f41f106dfe335c2b95b845a",
+ "packages/brain/scripts/native-agent/store.mjs": "9b64fb2814e3c7803cd5a285f727597392730daed4521b8fdc5aa9ddc0ec3982",
+ "packages/brain/scripts/native-agent/process.mjs": "ce94d7d127f5e72e03bb3372eb01ab56d80ffb160110b9ccde85c80f49e2b5a4",
+ "packages/brain/scripts/native-agent/worker.mjs": "301b9d5206054d14c1c7c7d2b9d39d54d5772e5593c4df316d378fd32d384dc4",
+ "packages/brain/scripts/native-agent/cli.mjs": "b0f3b68c3f3ec2690acd73bd6bee643525127a0ef50c4eb0be33f8709234fca4",
+ "packages/brain/scripts/coding-workflow/lib/codex-auth.mjs": "15bda8001eb742902dba602cb8a4706abf1dbdf62e35405153d2c8f02d46521d",
+ "packages/brain/src/orchestrator/activity-supervisor-state.cjs": "e094eee3477d42d30465effd56ce390f011cf7653ae7ddbdd34ab30a038484a6",
+ "scripts/ci/__tests__/basic-fixed-core.test.mjs": "6bd8b0c52467785f700909ddd10b886527e71a5e194ce7ea5026542cd5a4814e",
+ "packages/brain/scripts/native-agent/__tests__/native-agent.node-test.mjs": "ce7e3c3761049595f5513502dafc97d98c3b64cf2ed2de47c9f7efc0641f31c4"
+};
+const NATIVE_AGENT_BUNDLE=["packages/brain/scripts/native-agent/bundle.mjs","packages/brain/scripts/native-agent/config.mjs","packages/brain/scripts/native-agent/store.mjs","packages/brain/scripts/native-agent/process.mjs","packages/brain/scripts/native-agent/worker.mjs","packages/brain/scripts/native-agent/cli.mjs","packages/brain/scripts/coding-workflow/lib/codex-auth.mjs","packages/brain/src/orchestrator/activity-supervisor-state.cjs"];
 export function reviewedPilotControls(profile,paths){
  if(!paths?.includes(PILOT_HOST))return profile;
  if(profile!==REVIEWED_NIGHTLY_STATUS)reject();
@@ -174,6 +199,10 @@ export async function reviewedPilotSourceControls(profile,paths,read){
   if(profile!==REVIEWED_NIGHTLY_STATUS||!paths.includes(PILOT_HOST)||createHash('sha256').update(await read(DEPLOY_RECOVERY_MARKER)).digest('hex')!==DEPLOY_RECOVERY_INPUTS[DEPLOY_RECOVERY_MARKER])reject();
   controls={...controls,...DEPLOY_RECOVERY_INPUTS};
  }
+ if(paths?.includes(NATIVE_AGENT_MARKER)){
+  if(profile!==REVIEWED_NIGHTLY_STATUS||!paths.includes(PILOT_HOST)||!paths.includes(DEPLOY_RECOVERY_MARKER))reject();
+  return {...controls,...NATIVE_AGENT_INPUTS};
+ }
  if(paths?.includes(PILOT_HOST)&&createHash('sha256').update(await read(PG_LAYERING_PATH)).digest('hex')===PG_LAYERING_DIGEST)return {...controls,[PG_LAYERING_PATH]:PG_LAYERING_DIGEST};
  return controls;
 }
@@ -181,6 +210,14 @@ export function recordReviewedPilotSource({profile,paths,relation}){
  if(paths?.includes(PILOT_HOST)){
   if(profile!==REVIEWED_NIGHTLY_STATUS)reject();
   relation(PILOT_CLI,PILOT_HOST,'reviewed_pilot_foundation_host_source');
+  if(paths.includes(NATIVE_AGENT_MARKER)){
+   const release='packages/brain/scripts/native-agent-release.mjs',bundle='packages/brain/scripts/native-agent/bundle.mjs';
+   relation('scripts/brain-deploy.sh',release,'reviewed_native_agent_release_entry');
+   relation(release,bundle,'reviewed_native_agent_release_bundle');
+   relation(RUNNER,bundle,'reviewed_native_agent_image_bundle_check');
+   relation('scripts/ci/ops-checks.mjs','packages/brain/scripts/native-agent/__tests__/native-agent.node-test.mjs','reviewed_native_agent_host_test_selector');
+   for(const input of NATIVE_AGENT_BUNDLE)if(input!==bundle)relation(bundle,input,'reviewed_native_agent_bundle_member');
+  }
   if(paths.includes(DEPLOY_RECOVERY_MARKER)){
    relation('scripts/brain-deploy.sh','scripts/lib/brain-post-deploy.sh','reviewed_deploy_post_success_helper');
    relation(DEPLOY_RECOVERY_MARKER,'scripts/ci/__tests__/helpers/brain-deploy-predecessor.fixture.mjs','reviewed_deploy_predecessor_fixture');

@@ -2,8 +2,6 @@ import {afterEach,beforeEach,expect,test,vi} from 'vitest';
 const io=vi.hoisted(()=>({query:vi.fn()}));
 vi.mock('../db.js',()=>({default:{query:(...args)=>io.query(...args)}}));
 vi.mock('../runtime-safety.js',async original=>({...await original(),assertExternalExecutionAllowed:()=>{}}));
-// 唯一旧边界禁止真实SSH；实际被测件仍是统一执行漏斗。
-vi.mock('../openclaw-agent-executor.js',()=>({triggerOpenclawAgent:async()=>{throw Error('retired OpenClaw launch reached');}}));
 let executor;
 beforeEach(async()=>{
  vi.resetModules();io.query.mockReset().mockImplementation(async(sql)=>sql.includes('SELECT * FROM tasks')?{rows:[task()],rowCount:1}:{rows:[],rowCount:1});

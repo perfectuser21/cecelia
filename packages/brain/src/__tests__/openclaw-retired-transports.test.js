@@ -5,20 +5,19 @@ import {join} from 'node:path';
 import {createHash} from 'node:crypto';
 import './helpers/scheduler-jobs-fixture.js';
 import {JOBS} from '../scheduler-jobs.js';
-import {callConversationSummary} from '../conversation-summary-openclaw.js';
-import {summarizeSession} from '../conversation-capture.js';
+const {summarizeSession}=await vi.importActual('../conversation-capture.js');
 import {createOpenClawCommanderTransport} from '../orchestrator/runner-commander-transport.js';
 vi.mock('../lib/ssh-exec.js',()=>({sshRun:vi.fn(),sshWithStdin:vi.fn(async()=>'{"finalAssistantVisibleText":"old summary"}')}));
 import {sshWithStdin} from '../lib/ssh-exec.js';
 
-it('默认scheduler退出会话自动摘要，保留其它采集与历史收尾',()=>{
+it('默认scheduler保留原始会话采集与历史收尾',()=>{
  const names=JOBS.map(j=>j.name);
- expect(names).not.toContain('conversation-capture');
+ expect(names).toContain('conversation-capture');
  expect(names).toContain('notion-capture-ingest');
  expect(names).toContain('openclaw-agent-reaper');
 });
-it('旧摘要通道明确不可用且零SSH，显式注入摘要器仍处理完整正文',async()=>{
- await expect(callConversationSummary('unused','完整原文')).rejects.toThrow('conversation_summary_unavailable');
+it('默认摘要关闭且零SSH，显式注入摘要器仍处理完整正文',async()=>{
+ expect(await summarizeSession('完整原文')).toBeNull();
  expect(sshWithStdin).not.toHaveBeenCalled();
  const llm=vi.fn(async()=>({text:'{"topics":["保留显式摘要能力"]}'}));
  expect(await summarizeSession('完整原文',llm)).toBe('1. 保留显式摘要能力');

@@ -99,9 +99,6 @@ provider-neutral-phase4a-node-smoke.sh
 qiumi-dispatch-smoke.sh
 qiumi-entry-smoke.sh
 qiumi-foundation-smoke.sh
-qiumi-model-allowlist-smoke.sh
-qiumi-phone-agent-smoke.sh
-qiumi-routing-smoke.sh
 quality-test-pyramid-smoke.sh
 ratchet-registry-smoke.sh
 registry-photo-layer-smoke.sh
@@ -132,7 +129,6 @@ warroom-line-command-smoke.sh
 warroom-smoke.sh
 workbench-projection-smoke.sh
 scheduler-liveness-smoke.sh
-task-kind-column-smoke.sh
 task-run-outlets-smoke.sh
 task-governance-guards-smoke.sh
 script-executor-contract-smoke.sh

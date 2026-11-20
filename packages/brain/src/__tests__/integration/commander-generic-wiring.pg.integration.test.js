@@ -13,8 +13,9 @@ import {readPublishedPilotWorkflow} from '../../../../../scripts/ci/__tests__/fi
 const releaseWorkflowSource=readPublishedPilotWorkflow().toString('utf8');
 import { createReleasesRouter } from '../../routes/releases.js';
 import { createWorkflowCommanderRouter } from '../../routes/workflow-commander.js';
-import { TASK_CREATION_INVENTORY } from '../../task-creation-inventory.js';
-import { prepareCommander } from '../../lib/commander-v2-dispatch.js';
+import { makeEnvelope } from '../../lib/commander-v2-contract.js';
+import { writeControl } from '../../lib/commander-v2-store.js';
+import { startRun } from '../../lib/task-run.js';
 import { createRelease, recordReleaseObservation } from '../../lib/release-index.js';
 import { releaseEvidenceDatabase } from '../fixtures/release-evidence-db.js';
 
@@ -49,9 +50,11 @@ it('正式server挂载的HTTP回调鉴权后写真实运行事件，重放不重
   const contract = { key: 'report', input_schema: { type: 'object' }, resources: {}, recovery: { max_attempts: 1, total_timeout_sec: 1200, cleanup_timeout_sec: 60, retry_safe: false } };
   const id = randomUUID();
   await db.query("INSERT INTO tasks(id,title,status,task_type,payload) VALUES($1,'报告正式回调','queued','workflow_dispatch',$2)", [id, { commander_protocol: 'commander-v2', workflow_key: 'report', workflow_input: {}, workflow_definition: definition }]);
-  await prepareCommander(db, id, { frozenContract: async () => ({ definition, contract }), ready: async envelope => ({ protocol: 'commander-v2', ready: true, ...envelope.definition }) });
-  const row = (await db.query('SELECT result FROM tasks WHERE id=$1', [id])).rows[0];
-  const envelope = row.result.workflow_control.envelope;
+  const task=(await db.query('SELECT * FROM tasks WHERE id=$1',[id])).rows[0];
+  const envelope=makeEnvelope(task,definition,contract,undefined,new Date());
+  await startRun({taskId:id,runId:envelope.run_id,source:'workflow-commander-v2',definition:envelope.definition,context:{commander_envelope:envelope}},{pool:db});
+  await writeControl(db,id,{phase:'running',envelope,last_seq:0,execution_stopped:false,launch_state:'sent',history:[]});
+  await db.query("UPDATE tasks SET status='in_progress',claimed_by='workflow-commander-v2',claimed_at=NOW(),executor_kind='openclaw-agent',payload=payload||jsonb_build_object('run_id',$2::text) WHERE id=$1",[id,envelope.run_id]);
   const event = { protocol: envelope.protocol, run_id: envelope.run_id, attempt: envelope.attempt, owner_epoch: envelope.owner_epoch, seq: 1, type: 'started', data: { session: 'http-child' } };
   process.env.CECELIA_INTERNAL_TOKEN = 'fixture-http-only';
   const app = express(), mount = mountedEndpoint(); app.use(mount, createWorkflowCommanderRouter(db));
@@ -66,9 +69,7 @@ it('正式server挂载的HTTP回调鉴权后写真实运行事件，重放不重
   expect((await db.query('SELECT result FROM tasks WHERE id=$1', [id])).rows[0].result.workflow_control.last_seq).toBe(1);
   expect((await send({ ...event, seq: 2, owner_epoch: 0 })).status).toBe(409);
   expect(await events()).toHaveLength(1);
-  expect(TASK_CREATION_INVENTORY.filter(item => item.module === 'lib/commander-v2-control.js')).toEqual([
-    { module: 'lib/commander-v2-control.js', source: 'scheduler', creates_executable_task: true, migration_status: 'routed' },
-  ]);
+
 });
 it('历史固定发布workflow前置脚本接受登记scope，拒绝跨仓、未知scope和非当前main', () => {
   const workflow = yaml.load(releaseWorkflowSource), job = workflow.jobs.snapshot;

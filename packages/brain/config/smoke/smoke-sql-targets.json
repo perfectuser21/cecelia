@@ -214,13 +214,6 @@
     "evidence": "实际SQL/写调用源码行 90；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。",
     "source_commit": "d664db65c9"
   },
-  "task-kind-column-smoke.sh": {
-    "kind": "readonly",
-    "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
-    "evidence": "ALTER仅readFile源码断言；TASK_KIND_SMOKE_DB_URL所有psql实际均SELECT列/约束/NULL行数。",
-    "sha256": "655649c9bb752fa5ae45e2b72e308fe0ba751fee1c19597ba5f2634b2935eff8",
-    "source_commit": "d664db65c9"
-  },
   "task-run-outlets-smoke.sh": {
     "kind": "readonly",
     "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",

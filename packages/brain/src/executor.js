@@ -38,7 +38,7 @@ import { getTaskLocation } from './task-router.js';
 import { isCommanderVerification } from './lib/commander-verification-transport.js';
 import { resolveExecutor } from './routing/resolve-executor.js';
 import { loadCache as _loadCache, getCachedLocation, getCachedConfig, refreshCache as _refreshCache } from './task-type-config-cache.js';
-import { updateTaskStatus, updateTaskProgress as _updateTaskProgress } from './task-updater.js';
+import { updateTaskStatus } from './task-updater.js';
 import { finalizeTask } from './lib/task-terminal.js';
 import { loadSkillContent } from './execution-shared.js';
 import { REVIEW_TASK_TYPES } from './lib/review-task-types.js';
@@ -2590,13 +2590,15 @@ async function _triggerCeceliaRunInner(task) {
     return runStagingE2E(task);
   }
 
-  // 0.7 秋米非设备任务（PR3）→ openclaw-agent 执行体：ssh 到主力 worker 起 `openclaw agent`。
-  //     不占 claude/codex 槽位，也绝不在 us-vps 本地跑（铁律 96054a8b）。
-  //     动态 import：executor.js 是热路径，秋米链路只在真有 qiumi_task 时才拉起来。
-  if (task.task_type === 'qiumi_task' || isCommanderVerification(task)) {
-    console.log(`[executor] 路由决策: task_type=qiumi_task → openclaw-agent executor (run_id=${task.payload?.run_id})`);
-    const { triggerOpenclawAgent } = await import('./openclaw-agent-executor.js');
-    return triggerOpenclawAgent(task);
+  // Notion自然语言任务和独立核验不再开启Gateway会话。
+  if(isCommanderVerification(task)){
+    const reason='native_agent_verification_binding_required';
+    await pool.query(`UPDATE tasks SET status='blocked',blocked_reason=$2,blocked_at=NOW(),blocked_until=NULL,claimed_by=NULL,claimed_at=NULL WHERE id=$1 AND status IN ('queued','in_progress')`,[task.id,reason]);
+    return {success:false,reason,taskTerminal:true,nativePreflightBlocked:true};
+  }
+  if (task.task_type === 'qiumi_task') {
+    const { triggerNativeAgent } = await import('./native-agent-executor.js');
+    return triggerNativeAgent(task);
   }
 
   // 0.8 executor=script（链 bf5088a3 棒3）：确定性脚本步 → Brain 经 ssh 在跑场机执行 payload.cmd，

@@ -1,4 +1,5 @@
 import {randomUUID} from 'node:crypto';
+import {assertNoNativeAgentOwner} from './native-agent-task-control.js';
 const UUID=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const conflict=message=>Object.assign(Error(message),{statusCode:409});
 export async function headedOwner(pool,taskId){
@@ -8,6 +9,7 @@ export async function assertAutomaticTaskOwner(pool,taskId){
  const task=(await pool.query("SELECT payload->'headed_takeover' AS headed_takeover, payload->>'commander_protocol' AS commander_protocol FROM tasks WHERE id=$1",[taskId])).rows[0];
  if(task?.headed_takeover)throw conflict('headed_task_owned');
  if(task?.commander_protocol==='commander-v2')throw conflict('commander_control_owned');
+ await assertNoNativeAgentOwner(pool,taskId);
 }
 /** 外层已COMMIT：仅真实saveHandoff的原task UPDATE借用独立授权小事务。 */
 export function headedPostcommitPool(pool,owner){

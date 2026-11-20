@@ -1,8 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import {createHash,randomUUID} from 'node:crypto';
-import {execFile} from 'node:child_process';
-import {promisify} from 'node:util';
+import {createHash} from 'node:crypto';
 import {callActivityProcess} from './activity-process.js';
 
 /** 只调用受保护 profile 指定的固定进程；没有请求提供的命令、地址或凭据。 */
@@ -38,54 +36,9 @@ export function createCommanderTransport({profile,cwd,files={}}={}){
  return transport;
 }
 
-/** 与现役 Gateway agent 协议一致；CLI 沿用现场已有登录，不读取或推断凭据。 */
-export function createOpenClawCommanderTransport({profile,cwd,files={},execute=promisify(execFile)}={}){
- let pending=null;
- const transport=async request=>{
-  if(pending)throw Error('commander_previous_turn_unknown');
-  if(!profile?.skill?.entry||!profile.skill.version||!path.isAbsolute(cwd??'')||typeof request.run_id!=='string'||!request.run_id)throw Error('commander_profile_unconfigured');
-  const entry=profile.skill.entry,root=fs.realpathSync(cwd);
-  if(path.isAbsolute(entry)||entry.split('/').includes('..'))throw Error('commander_entry_invalid');
-  const full=fs.realpathSync(path.join(root,entry));
-  if(!full.startsWith(root+path.sep))throw Error('commander_entry_invalid');
-  const content=fs.readFileSync(full,'utf8');
-  if(createHash('sha256').update(content).digest('hex')!==files[entry])throw Error('commander_source_mismatch');
-  const seconds=profile.timeout_s??60;
-  if(!Number.isSafeInteger(seconds)||seconds<1||seconds>300)throw Error('commander_profile_invalid');
-  const requestId=randomUUID(),session=createHash('sha256').update(request.run_id).digest('hex');
-  const params={agentId:'work-commander',sessionKey:`agent:work-commander:runner:${session}`,thinking:'low',timeout:seconds,modelRun:true,idempotencyKey:requestId,
-   message:'你是公共Runner的观察与纠偏Commander。只分析提供的证据，不调用工具，不执行任何外部动作，不判断状态、顺序或通过与否。只输出JSON action=answer|steer|abort|none；answer和steer带text，abort带reason。\n'
-    +`固定Commander Skill ${profile.skill.version}，sha256=${files[entry]}：\n${content}\n运行上下文：\n${JSON.stringify(request)}`};
-  const turn={requestId,run_id:request.run_id};pending=turn;
-  let output;
-  try{output=await execute('openclaw',['gateway','call','agent','--expect-final','--json','--timeout',String(seconds*1000),'--params',JSON.stringify(params)],{timeout:seconds*1000,maxBuffer:1024*1024});}
-  catch{throw Error('commander_gateway_unavailable');}
-  let body;try{body=JSON.parse(output.stdout);}catch{throw Error('commander_gateway_reply_invalid');}
-  if(!['ok','completed','success'].includes(body?.status)||body.error||body.ok===false)throw Error('commander_gateway_final_required');
-  if(body.runId!==requestId)throw Error('commander_gateway_identity_invalid');
-  // 只有对应终态可证明本次Commander已返回；未知时不派第二个并发回合。
-  if(pending===turn)pending=null;
-  const payloads=body.result?.payloads??body.payloads;
-  if(!Array.isArray(payloads))throw Error('commander_gateway_reply_invalid');
-  let action;try{action=JSON.parse(payloads.map(p=>p.text??'').join('\n').trim());}catch{throw Error('commander_gateway_reply_invalid');}
-  if(!action||typeof action!=='object'||Array.isArray(action))throw Error('commander_gateway_reply_invalid');
-  return action;
- };
- // 连接错误不意味着远端停止：只查询原requestId，不再次调用agent。
- transport.reconcile=async({run_id}={})=>{
-  if(!pending)return {execution_stopped:true};
-  if(pending.run_id!==run_id)return {execution_stopped:false};
-  const prior=pending;
-  let body;
-  try{
-   const result=await execute('openclaw',['gateway','call','agent.wait','--json','--timeout','5000','--params',JSON.stringify({runId:prior.requestId,timeoutMs:1000})],{timeout:5000,maxBuffer:1024*1024});
-   body=JSON.parse(result.stdout);
-  }catch{return {execution_stopped:false};}
-  const terminal=['ok','error'].includes(body?.status)&&Number.isFinite(body.endedAt)&&body.endedAt>0
-   &&body.pendingError!==true&&body.yielded!==true&&(!body.runId||body.runId===prior.requestId);
-  if(!terminal||pending!==prior)return {execution_stopped:false};
-  pending=null;
-  return {execution_stopped:true};
- };
+/** 旧Gateway配置保留明确不可用状态；不能创建新会话或证明旧会话停止。 */
+export function createOpenClawCommanderTransport(){
+ const transport=async()=>{throw Error('commander_openclaw_unavailable');};
+ transport.reconcile=async()=>({execution_stopped:false});
  return transport;
 }

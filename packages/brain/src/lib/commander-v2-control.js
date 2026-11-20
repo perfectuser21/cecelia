@@ -10,7 +10,6 @@ import { finalizeTask, afterTerminalTransition } from './task-terminal.js';
 import { recordCommanderFailure } from './commander-v2-failures.js';
 import { readSystemRunEvidence } from './capability-system-evidence.js';
 import { verificationMetadata, isCommanderVerification, verifiedRuntime } from './commander-verification-transport.js';
-import { createRoutedTask } from '../work-routing-store.js';
 import { commanderRuntimeHelpers, validateExecutionLocation } from './commander-runtime-location.js';
 export function verificationRequest(task, c) {
   const e = c.envelope;
@@ -27,12 +26,14 @@ export function verificationRequest(task, c) {
     metadata: verificationMetadata(fixed),
     task: { status: 'queued', priority: 'P1', parent_task_id: task.id, created_by: 'workflow-commander-v2', trigger_source: 'brain_auto' } };
 }
-async function ensureVerification(db, task, c, deps) {
-  if (c.verify_task_id) return;
-  const created = await (deps.createVerify ?? ((client, spec) => createRoutedTask(client, spec, null, { transaction: 'existing' })))(db, verificationRequest(task, c));
-  c.verify_task_id = created.task?.id;
-  requireCommander(c.verify_task_id && c.verify_task_id !== task.id, '独立核验建单失败', 409);
+async function ensureVerification(db, task, c) {
+  if(c.verify_task_id)return true;
+  c.phase='blocked';c.needs_review=true;c.resume_condition='native_agent_verification_binding_required';
+  c.failure={...(c.failure??{}),reason:'native_agent_verification_binding_required'};
+  await event(db,task.id,'commander_verification_blocked',{run_id:c.envelope.run_id,reason:c.resume_condition});
+  return false;
 }
+
 function callbackVerification(vt) {
   const raw = isCommanderVerification(vt) ? vt.result?.receipt?.text : vt.payload?.last_run_result?.result_summary;
   if (typeof raw !== 'string' || Buffer.byteLength(raw) > 50000) return null;
@@ -86,7 +87,7 @@ async function advanceVerification(pool, taskId, deps) {
   const outcome = await transaction(pool, taskId, async (db, task) => {
     const c = task.result?.workflow_control;
     if (c?.phase !== 'awaiting_verify' && !(c?.phase === 'blocked' && c.verification)) return;
-    await ensureVerification(db, task, c, deps);
+    if(!await ensureVerification(db, task, c, deps)){await writeControl(db,taskId,c);return;}
     const vt = (await db.query('SELECT * FROM tasks WHERE id=$1', [c.verify_task_id])).rows[0];
     let v = readVerification(vt, task, c);
     if (!v) { await writeControl(db, taskId, c); return; }

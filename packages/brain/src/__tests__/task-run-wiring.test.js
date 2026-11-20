@@ -320,10 +320,8 @@ describe('执行路径接线钉子（漏接即红）', () => {
     expect(src).not.toMatch(/recordDispatchResult\(pool, true\)/);
   });
 
-  it('openclaw-agent：ssh 起成功后 startRun，收割终态后 finishRun', () => {
+  it('历史openclaw-agent收割终态仍经finishRun记账', () => {
     const src = read('src/openclaw-agent-executor.js');
-    expect(src).toMatch(/source: 'openclaw-agent'/);
-    expect(src).toMatch(/await startRun\(/);
     expect(src).toMatch(/await finishRun\(/);
   });
 

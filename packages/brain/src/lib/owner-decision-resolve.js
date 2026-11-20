@@ -155,6 +155,9 @@ async function writeOwnerDecisionPayload(db, taskId, ownerDecision) {
  */
 export async function applyOwnerDecisionResolution(db, { taskId, choice = null, by, via, pendingActionId = null }) {
   const task = await lockBlockedOwnerDecision(db, taskId);
+  const native=(await db.query(`SELECT id FROM task_runs WHERE task_id::text=$1 AND context->>'source'='native-agent'
+    AND context#>>'{native_agent,task_id}'=$1 AND context#>>'{native_agent,resource_bound}'='true' AND ended_at IS NULL`,[taskId])).rows;
+  if(native.length)throw new OwnerDecisionResolveError('原生资源任务须独立受信清场复核，普通批准不能重新派发',{status:409,code:'native_agent_cleanup_review_required'});
   const detail = task.blocked_detail;
   if (detail.waiting_on !== 'human') {
     throw new OwnerDecisionResolveError(

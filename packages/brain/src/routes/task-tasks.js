@@ -1,6 +1,6 @@
 import {authoringMutationError} from '../workflow-authoring/task-guard.js';
 import {assertActiveDevelopmentTask} from '../lib/task-type-registry.js';
-import {registerHeadedTakeoverRoute} from './task-headed-takeover.js';
+import {registerHeadedTakeoverRoute,headedTaskMutation} from './task-headed-takeover.js';
 import {assertGpuExecutionSupported} from '../lib/gpu-execution-contract.js';
 /**
  * Task Tasks route — 对应 tasks 表（Cecelia 执行任务）
@@ -543,7 +543,7 @@ registerTaskDependencyRoutes(router, { pool });
 // DELETE /tasks/:id — 软删除（status='cancelled'）。复用 PATCH 同一套 TERMINAL_STATUSES
 // 状态机保护：不存在 → 404；已终态（completed/cancelled）→ 409（防误删历史记录，幂等）；
 // 其余 → UPDATE status='cancelled'，200 返回更新后整行。
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', headedTaskMutation(pool,async (req, res, pool) => {
   try {
     const current = await pool.query('SELECT status,payload,result FROM tasks WHERE id = $1', [req.params.id]);
     if (!current.rows.length) {
@@ -573,7 +573,7 @@ router.delete('/:id', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: 'Failed to delete task', details: err.message });
   }
-});
+}));
 
 // POST /tasks/:id/claim — C1 atomic claim，防止并行 dispatch 重复派发。
 // 统一领单（派发总闸 G，任务 c5f6e683）：外部执行者带 lease_seconds（30~14400）即落租约，

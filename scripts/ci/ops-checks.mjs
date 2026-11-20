@@ -50,6 +50,7 @@ export function opsChecks(root) {
   const shell = filesIn(cwd, 'scripts/__tests__');
   const preview = filesIn(cwd, 'scripts/preview-agent/__tests__');
   const ops = filesIn(cwd, 'scripts/ops/__tests__', true);
+  const native = filesIn(cwd, 'packages/brain/scripts/native-agent/__tests__');
   const smoke = filesIn(cwd, 'scripts/smoke');
   for (const file of [...SAFE_SMOKES, STAGING_SMOKE]) {
     if (!smoke.includes(file)) throw new Error(`Ops 隔离 smoke 缺失：${file}`);
@@ -58,6 +59,7 @@ export function opsChecks(root) {
     ...ROOT_NODE.flatMap(expression => select(scripts, expression, `scripts/${expression.source}`)),
     ...ROOT_SHELL.flatMap(expression => select(shell, expression, `scripts/__tests__/${expression.source}`)),
     ...select(preview, /\.test\.mjs$/, 'preview-agent Node'),
+    ...select(native, /\.node-test\.mjs$/, '原生Agent host Node'),
     ...select(ops, /\.test\.sh$/, 'Ops Shell（含子目录）'),
     ...select(shell, /^dashboard-release-bind.*\.test\.mjs$/, 'Dashboard 发布/回档真实fixture'),
     ...SAFE_SMOKES, STAGING_SMOKE,

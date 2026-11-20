@@ -61,15 +61,6 @@ describe.skipIf(!DB_AVAILABLE)('commander-watchdog — pg 集成（真实 SQL，
     const id = await insertRun({ payload: { serial, source: 'cron', wf_id: 'device-boundary', leads: 1 }, status: 'completed' });
     await client.query(`UPDATE tasks SET completed_at = $2::timestamptz AT TIME ZONE 'UTC' WHERE id = $1`, [id, new Date(completedAt).toISOString()]);
   }
-  const ssh = () => vi.fn((command, args, options, callback) => {
-    expect(command).toBe('ssh');
-    const remote = args.at(-1);
-    if (remote === 'openclaw cron list --json') return callback(null, '{"jobs":[]}', '');
-    if (remote.startsWith('openclaw cron rm ')) return callback(null, '{}', '');
-    if (remote.startsWith('openclaw cron add ')) return callback(null, '{"id":"esc-it-0001"}', '');
-    throw new Error('unexpected record-only SSH command');
-  });
-
   it('心跳：tag 命中写 payload；账本 run_id LIKE %-<TAG>__% 命中；serial 唯一命中；起跑登记落 working_memory 后被心跳合并', async () => {
     const byTag = await insertRun({ payload: { serial: 'S-TAG', source: 'cron', tag: 'cmd09300201' } });
     const byLedger = await insertRun({ payload: { serial: 'S-LED', source: 'cron' } });
@@ -90,58 +81,49 @@ describe.skipIf(!DB_AVAILABLE)('commander-watchdog — pg 集成（真实 SQL，
     expect(p['S-LATE']).toMatchObject({ escort_id: 'e-launch', host: 'xian-m1' });
   });
 
-  it('看门狗 SQL：起跑 30min 心跳 20min 前 → 拉；心跳 5min 前不拉；刚起跑 5min 不拉；已 Bark 不拉；接班 3 次不拉', async () => {
-    const stale = await insertRun({ payload: { serial: 'S1', source: 'cron', tag: 'cmdA', host: 'xian-m4', profile: 'p', commander_heartbeat_at: new Date(Date.now() - 20 * 60e3).toISOString() } });
-    const fresh = await insertRun({ payload: { serial: 'S2', source: 'cron', tag: 'cmdB', host: 'xian-m4', profile: 'p', commander_heartbeat_at: new Date(Date.now() - 5 * 60e3).toISOString() } });
-    const young = await insertRun({ payload: { serial: 'S3', source: 'cron', tag: 'cmdC', host: 'xian-m4', profile: 'p' }, dueAgo: '5 minutes' });
-    const barked = await insertRun({ payload: { serial: 'S4', source: 'cron', tag: 'cmdD', host: 'xian-m4', profile: 'p', commander_relaunch_count: 3, commander_bark_at: new Date().toISOString() } });
-    const never = await insertRun({ payload: { serial: 'S5', source: 'cron', tag: 'cmdE', host: 'xian-m4', profile: 'p' } });
-    const execFileFn = ssh();
+  it('看门狗真实SQL：只告警过期旧run，保留心跳、escort与历史接班信息，不再调用cron', async () => {
+    const oldHeartbeat = new Date(Date.now() - 20 * 60e3).toISOString();
+    const stale = await insertRun({ payload: { serial: 'S1', source: 'cron', tag: 'cmdA', host: 'xian-m4', escort_id: 'old-escort', commander_heartbeat_at: oldHeartbeat } });
+    const fresh = await insertRun({ payload: { serial: 'S2', source: 'cron', tag: 'cmdB', commander_heartbeat_at: new Date(Date.now() - 5 * 60e3).toISOString() } });
+    const young = await insertRun({ payload: { serial: 'S3', source: 'cron', tag: 'cmdC' }, dueAgo: '5 minutes' });
+    const barked = await insertRun({ payload: { serial: 'S4', source: 'cron', tag: 'cmdD', commander_bark_at: new Date().toISOString() } });
+    const never = await insertRun({ payload: { serial: 'S5', source: 'cron', tag: 'cmdE' } });
+    const exhausted = await insertRun({ payload: { source: 'cron', tag: 'cmdF', commander_relaunch_count: 3 } });
+    const falseFresh = await insertRun({ payload: { source: 'cron', tag: 'cmdG', commander_relaunched_at: new Date().toISOString() } });
+    const ids = [stale, fresh, young, barked, never, exhausted, falseFresh];
+    const { rows: before } = await client.query('SELECT id, payload FROM tasks WHERE id = ANY($1::uuid[])', [ids]);
+    const original = Object.fromEntries(before.map(row => [row.id, row.payload]));
+    const execFileFn = vi.fn(() => { throw new Error('retired cron must not run'); });
     const bark = vi.fn().mockResolvedValue(true);
     const out = await runCommanderWatchdog(client, { execFileFn, bark, gateMs: 0 });
-    expect(out.relaunched).toBe(2);
-    const { rows } = await client.query(`SELECT id, payload FROM tasks WHERE id = ANY($1::uuid[])`, [[stale, fresh, young, barked, never]]);
-    const p = Object.fromEntries(rows.map((r) => [r.id, r.payload]));
-    expect(p[stale]).toMatchObject({ escort_id: 'esc-it-0001', commander_relaunch_count: 1 });
-    expect(p[never]).toMatchObject({ escort_id: 'esc-it-0001', commander_relaunch_count: 1 });
-    expect(p[fresh].escort_id).toBeUndefined();
-    expect(p[young].escort_id).toBeUndefined();
-    expect(p[barked].commander_relaunch_count).toBe(3);
-    const ev = await client.query(`SELECT event_type FROM task_events WHERE task_id = ANY($1::uuid[])`, [[stale, never]]);
-    expect(ev.rows.map((r) => r.event_type)).toEqual(['commander_relaunched', 'commander_relaunched']);
-    expect(bark).not.toHaveBeenCalled();
-    // 刚接班的（commander_relaunched_at 新）下一轮不再拉
-    const again = await runCommanderWatchdog(client, { execFileFn: ssh(), bark, gateMs: 0 });
-    expect(again.relaunched).toBe(0);
+    expect(out).toMatchObject({ scanned: 4, relaunched: 0, adopted: 0, barked: 4, failed: 0 });
+    expect(execFileFn).not.toHaveBeenCalled();
+    const { rows: after } = await client.query('SELECT id, payload FROM tasks WHERE id = ANY($1::uuid[])', [ids]);
+    for (const row of after) {
+      const { commander_bark_at, ...rest } = row.payload;
+      const { commander_bark_at: oldBark, ...oldRest } = original[row.id];
+      expect(rest).toEqual(oldRest);
+      if ([stale, never, exhausted, falseFresh].includes(row.id)) expect(commander_bark_at).toBeTruthy();
+      else expect(commander_bark_at).toBe(oldBark);
+    }
+    const ev = await client.query('SELECT event_type FROM task_events WHERE task_id = ANY($1::uuid[])', [[stale, never, exhausted, falseFresh]]);
+    expect(ev.rows.map(row => row.event_type)).toEqual(Array(4).fill('commander_heartbeat_stale'));
+    expect(await runCommanderWatchdog(client, { execFileFn, bark, gateMs: 0 })).toMatchObject({ scanned: 0, relaunched: 0, barked: 0 });
+    expect(bark).toHaveBeenCalledTimes(4);
   });
 
-  it.each([
-    ['transport', '', 'cron_list_unavailable'],
-    ['malformed', '{bad-json', 'cron_list_invalid'],
-    ['missing-jobs', '{}', 'cron_list_invalid'],
-    ['add-receipt-is-not-list', '{"id":"esc-it-0001"}', 'cron_list_invalid'],
-  ])('未知列表 %s：真实PG保留旧escort且仅落失败事件', async (kind, reply, error) => {
-    const id = await insertRun({ payload: { serial: 'S-UNKNOWN', source: 'cron', tag: 'cmdUnknown',
-      host: 'xian-m4', profile: 'p', escort_id: 'esc-old-known' } });
-    const commands = [];
-    const execFileFn = vi.fn((command, args, options, callback) => {
-      expect(command).toBe('ssh');
-      const remote = args.at(-1); commands.push(remote);
-      if (remote === 'openclaw cron list --json') return callback(kind === 'transport' ? new Error('owned transport failure') : null, reply, '');
-      if (remote.startsWith('openclaw cron rm ')) return callback(null, '{}', '');
-      if (remote.startsWith('openclaw cron add ')) return callback(null, '{"id":"esc-it-0001"}', '');
-      throw new Error('unexpected record-only SSH command');
-    });
-    const bark = vi.fn().mockResolvedValue(true);
-    expect(await runCommanderWatchdog(client, { execFileFn, bark, gateMs: 0 })).toMatchObject({ failed: 1, relaunched: 0, adopted: 0 });
-    expect(commands).toEqual(['openclaw cron list --json']);
-    const { rows: [stored] } = await client.query('SELECT payload FROM tasks WHERE id=$1', [id]);
-    expect(stored.payload.escort_id).toBe('esc-old-known');
-    expect(stored.payload.commander_relaunch_count).toBeUndefined();
-    expect(stored.payload.commander_relaunched_at).toBeTruthy();
-    const { rows: events } = await client.query('SELECT event_type, payload FROM task_events WHERE task_id=$1', [id]);
-    expect(events).toEqual([{ event_type: 'commander_relaunch_failed', payload: expect.objectContaining({ error, tag: 'cmdUnknown' }) }]);
-    expect(bark).not.toHaveBeenCalled();
+  it.each(['false', 'error'])('通知失败（%s）不伪记告警、心跳或恢复，真实PG下一轮仍可巡检', async kind => {
+    const id = await insertRun({ payload: { source: 'cron', tag: 'cmdFailure', host: 'xian-m4', escort_id: 'old' } });
+    const { rows: [before] } = await client.query('SELECT payload FROM tasks WHERE id=$1', [id]);
+    const execFileFn = vi.fn(() => { throw new Error('retired cron must not run'); });
+    const bark = kind === 'false' ? vi.fn().mockResolvedValue(false) : vi.fn().mockRejectedValue(new Error('owned failure'));
+    expect(await runCommanderWatchdog(client, { execFileFn, bark, gateMs: 0 })).toMatchObject({ scanned: 1, failed: 1, relaunched: 0, barked: 0 });
+    const { rows: [after] } = await client.query('SELECT payload FROM tasks WHERE id=$1', [id]);
+    expect(after.payload).toEqual(before.payload);
+    const { rows: events } = await client.query('SELECT event_type FROM task_events WHERE task_id=$1', [id]);
+    expect(events).toEqual([]);
+    expect(execFileFn).not.toHaveBeenCalled();
+    expect(await runCommanderWatchdog(client, { execFileFn, bark: vi.fn().mockResolvedValue(true), gateMs: 0 })).toMatchObject({ scanned: 1, barked: 1 });
   });
 
   it.each(['actual-clock', 'beijing-midnight'])('趋势 SQL（%s）：按北京自然日分组，连续两天零线索的 wf 叫、有线索的不叫；phone_registry 24h 无 completed 叫', async (scenario) => {

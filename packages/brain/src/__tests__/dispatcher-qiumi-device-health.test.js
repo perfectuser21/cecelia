@@ -1,12 +1,4 @@
-/**
- * dispatcher-qiumi-device-health.test.js — 任务 5bf2512a 审查修复：
- * 秋米路由到手机（decision.outcome==='device'，派生 device_job）这条出口也要过资源健康闸。
- * - 定到的手机 offline/restricted → 不 persistDecision（不派生 device_job）、放 claim、记 resource_unhealthy，
- *   进 resourceSkipIds（不占 HOL 名额），返回 skip
- * - 账号维度：按 serial 查 phone_registry.douyin_accounts 当前号，号被风控同样挡
- * - 被挡后同一张单下一轮先复查那台手机，仍不健康就不再打 Jev（防每 tick 白路由）
- * - 闸 / 台账查询出错 → fail-safe 照常落库派生
- */
+// 原生秋米任务按手机serial与当前账号健康准入，纯路由不触发旧设备子任务。
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const mockQuery = vi.fn();
@@ -72,12 +64,11 @@ vi.mock('../dispatch-dedup.js', () => ({ findDuplicateSibling: vi.fn(async () =>
 
 import { routeQiumiTask, persistDecision } from '../routing/qiumi-router.js';
 import { buildQiumiSource } from '../lib/qiumi-source.js';
-import { recordDispatchResult } from '../dispatch-stats.js';
 import { dispatchQiumiTask } from '../dispatcher.js';
 
 const candidate = { id: 'q1', task_type: 'qiumi_task', status: 'queued', priority: 'P2', title: '在手机上发一条视频', created_at: new Date().toISOString() };
 const fullRow = { ...candidate, payload: { qiumi_source: buildQiumiSource({ title: '在手机上发一条视频' }) } };
-const deviceDecision = { outcome: 'device', serial: 'S9', workflowRef: 'wf-1', payloadPatch: {} };
+const deviceDecision = { outcome: 'agent', payloadPatch: { qiumi_route: { source: 'native-agent', device_hint: { is_device: true, serial: 'S9' } } } };
 
 let healthRows;
 let healthError;
@@ -87,7 +78,6 @@ let registryError;
 function wire() {
   mockQuery.mockImplementation(async (sql) => {
     if (/SELECT \* FROM tasks WHERE id = \$1/.test(sql)) return { rows: [fullRow] };
-    if (/count\(\*\)::int AS n FROM tasks/.test(sql) && /openclaw-agent/.test(sql)) return { rows: [{ n: 0 }] };
     if (/FROM resource_health/.test(sql)) {
       if (healthError) throw healthError;
       return { rows: healthRows };
@@ -120,16 +110,16 @@ beforeEach(async () => {
 });
 
 describe('秋米 device 出口接资源健康闸', () => {
-  it('定到的手机 offline → 不 persistDecision、放 claim、记 resource_unhealthy、进 resourceSkipIds 不进 holSkipIds', async () => {
+  it('定到的手机 offline → 不启动、放 claim、记 resource_unhealthy、进 resourceSkipIds 不进 holSkipIds', async () => {
     routeQiumiTask.mockResolvedValue(deviceDecision);
     healthRows = [{ resource_type: 'phone', resource_key: 'S9', status: 'offline', reason: 'adb 掉线', observed_at: now() }];
     const holSkipIds = [];
     const resourceSkipIds = [];
-    const r = await dispatchQiumiTask(candidate, { env: { mmvConcurrency: 2 }, actions: [], holSkipIds, resourceSkipIds });
+    const r = await dispatchQiumiTask(candidate, { actions: [], holSkipIds, resourceSkipIds });
     expect(r).toMatchObject({ outcome: 'skip', resource: true });
-    expect(persistDecision, '手机掉线还派生 device_job——活照样派给坏手机').not.toHaveBeenCalled();
+    expect(mockTriggerCeceliaRun).not.toHaveBeenCalled();
     expect(sqlsOf().some((s) => /claimed_by = NULL/.test(s)), 'claim 泄漏').toBe(true);
-    expect(recordDispatchResult).toHaveBeenCalledWith(expect.anything(), false, 'resource_unhealthy', undefined, 'q1');
+    expect(mockQuery.mock.calls.some(([sql,args])=>String(sql).includes('INSERT INTO task_events')&&args?.[1]==='resource_health_blocked')).toBe(true);
     expect(resourceSkipIds).toContain('q1');
     expect(holSkipIds).not.toContain('q1');
   });
@@ -138,63 +128,62 @@ describe('秋米 device 出口接资源健康闸', () => {
     routeQiumiTask.mockResolvedValue(deviceDecision);
     registryRows = [{ douyin_accounts: [{ id: 'other', current: false }, { id: 'acc-77', current: true }] }];
     healthRows = [{ resource_type: 'account', resource_key: 'douyin:acc-77', status: 'restricted', reason: '切换要人脸', observed_at: now() }];
-    const r = await dispatchQiumiTask(candidate, { env: { mmvConcurrency: 2 }, actions: [], holSkipIds: [], resourceSkipIds: [] });
+    const r = await dispatchQiumiTask(candidate, { actions: [], holSkipIds: [], resourceSkipIds: [] });
     expect(r).toMatchObject({ outcome: 'skip', resource: true });
-    expect(persistDecision).not.toHaveBeenCalled();
+    expect(mockTriggerCeceliaRun).not.toHaveBeenCalled();
   });
 
-  it('手机与账号都健康 → 照常 persistDecision 派生 device_job', async () => {
+  it('手机与账号都健康 → 完成路由后准入原生执行', async () => {
     routeQiumiTask.mockResolvedValue(deviceDecision);
     registryRows = [{ douyin_accounts: [{ id: 'acc-77', current: true }] }];
     healthRows = [{ resource_type: 'phone', resource_key: 'S9', status: 'healthy', reason: null, observed_at: now() }];
-    const r = await dispatchQiumiTask(candidate, { env: { mmvConcurrency: 2 }, actions: [], holSkipIds: [], resourceSkipIds: [] });
-    expect(r.outcome).toBe('return');
-    expect(r.result.reason).toBe('qiumi_routed_device');
+    const r = await dispatchQiumiTask(candidate, { actions: [], holSkipIds: [], resourceSkipIds: [] });
+    expect(r.outcome).toBe('proceed');
     expect(persistDecision).toHaveBeenCalled();
   });
 
-  it('健康表查询出错 → fail-safe 照常派生', async () => {
+  it('健康表查询出错 → fail-safe 保留准入', async () => {
     routeQiumiTask.mockResolvedValue(deviceDecision);
     healthError = new Error('relation "resource_health" does not exist');
-    const r = await dispatchQiumiTask(candidate, { env: { mmvConcurrency: 2 }, actions: [], holSkipIds: [], resourceSkipIds: [] });
-    expect(r.outcome).toBe('return');
+    const r = await dispatchQiumiTask(candidate, { actions: [], holSkipIds: [], resourceSkipIds: [] });
+    expect(r.outcome).toBe('proceed');
     expect(persistDecision).toHaveBeenCalled();
   });
 
-  it('台账查询出错 → 只按手机 serial 判，手机健康照常派生', async () => {
+  it('台账查询出错 → 只按手机 serial 判，手机健康照常准入', async () => {
     routeQiumiTask.mockResolvedValue(deviceDecision);
     registryError = new Error('phone_registry boom');
-    const r = await dispatchQiumiTask(candidate, { env: { mmvConcurrency: 2 }, actions: [], holSkipIds: [], resourceSkipIds: [] });
-    expect(r.outcome).toBe('return');
+    const r = await dispatchQiumiTask(candidate, { actions: [], holSkipIds: [], resourceSkipIds: [] });
+    expect(r.outcome).toBe('proceed');
     expect(persistDecision).toHaveBeenCalled();
   });
 
-  it('被挡后下一轮：先复查那台手机，仍掉线 → 不再打 Jev 直接让位；恢复后才重新路由', async () => {
+  it('被挡后下一轮：先复查那台手机，仍掉线 → 仍让位，恢复后准入', async () => {
     routeQiumiTask.mockResolvedValue(deviceDecision);
     healthRows = [{ resource_type: 'phone', resource_key: 'S9', status: 'offline', reason: 'adb 掉线', observed_at: now() }];
-    await dispatchQiumiTask(candidate, { env: { mmvConcurrency: 2 }, actions: [], holSkipIds: [], resourceSkipIds: [] });
+    await dispatchQiumiTask(candidate, { actions: [], holSkipIds: [], resourceSkipIds: [] });
     expect(routeQiumiTask).toHaveBeenCalledTimes(1);
 
-    const r2 = await dispatchQiumiTask(candidate, { env: { mmvConcurrency: 2 }, actions: [], holSkipIds: [], resourceSkipIds: [] });
+    const r2 = await dispatchQiumiTask(candidate, { actions: [], holSkipIds: [], resourceSkipIds: [] });
     expect(r2).toMatchObject({ outcome: 'skip', resource: true });
-    expect(routeQiumiTask, '手机还掉线又去打 Jev——每 tick 白路由').toHaveBeenCalledTimes(1);
+    expect(mockTriggerCeceliaRun).not.toHaveBeenCalled();
 
     healthRows = [{ resource_type: 'phone', resource_key: 'S9', status: 'healthy', reason: null, observed_at: now() }];
-    const r3 = await dispatchQiumiTask(candidate, { env: { mmvConcurrency: 2 }, actions: [], holSkipIds: [], resourceSkipIds: [] });
-    expect(routeQiumiTask).toHaveBeenCalledTimes(2);
-    expect(r3.outcome).toBe('return');
-    expect(persistDecision).toHaveBeenCalledTimes(1);
+    const r3 = await dispatchQiumiTask(candidate, { actions: [], holSkipIds: [], resourceSkipIds: [] });
+    expect(routeQiumiTask).toHaveBeenCalledTimes(3);
+    expect(r3.outcome).toBe('proceed');
+    expect(persistDecision).toHaveBeenCalledTimes(3);
   });
 
   it('agent 出口被健康闸挡 → 也进 resourceSkipIds 不进 holSkipIds', async () => {
     routeQiumiTask.mockResolvedValue({
       outcome: 'agent', model: 'm', runId: 'qiumi-q1-2',
-      payloadPatch: { run_id: 'qiumi-q1-2', qiumi_route: { source: 'jev', device_hint: { is_device: true, serial: 'S9' } } },
+      payloadPatch: { run_id: 'qiumi-q1-2', qiumi_route: { source: 'native-agent', device_hint: { is_device: true, serial: 'S9' } } },
     });
     healthRows = [{ resource_type: 'phone', resource_key: 'S9', status: 'restricted', reason: 'x', observed_at: now() }];
     const holSkipIds = [];
     const resourceSkipIds = [];
-    const r = await dispatchQiumiTask(candidate, { env: { mmvConcurrency: 2 }, actions: [], holSkipIds, resourceSkipIds });
+    const r = await dispatchQiumiTask(candidate, { actions: [], holSkipIds, resourceSkipIds });
     expect(r).toMatchObject({ outcome: 'skip', resource: true });
     expect(resourceSkipIds).toContain('q1');
     expect(holSkipIds).toEqual([]);

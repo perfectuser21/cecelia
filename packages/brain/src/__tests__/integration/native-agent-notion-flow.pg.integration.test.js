@@ -179,7 +179,7 @@ async function linkedEnglishTask(page){return (await state.pool.query("SELECT * 
 function blockTextTree(id){
  return (children.get(id)??[]).map(block=>({...block,[block.type]:{...block[block.type],children:blockTextTree(block.id)}}));
 }
-const englishEnv={QIUMI_DISPATCH_ENABLED:'true',NOTION_TENANT_MAP:JSON.stringify({'c69c40c2-ba63-8271-badf-01c5410d8929':'fixture-native'})};
+const englishEnv={QIUMI_DISPATCH_ENABLED:'true',NOTION_TENANT_MAP:JSON.stringify({'d5bc40c2-ba63-82ef-965a-8153b7ad81a0':'fixture-native'})};
 async function seedEnglishNative(page){
  const id=randomUUID();await state.pool.query("INSERT INTO tasks(id,title,task_type,status,tenant_id,executor_kind,payload) VALUES($1,$2,'qiumi_task','queued','fixture-native','external-worker',$3)",[id,'原生英文交办 '+id,{source:'notion_gtd',notion_page_id:page.id,native_agent_content:{protocol:'notion-complete-body/v1',complete:true,empty_body:false,page_ids:[page.id]},qiumi_source:{title:'原生英文交办',body:bodies.get(page.id)}}]);return id;
 }
@@ -193,7 +193,7 @@ test('无内部标记的普通英文Delegated经现pull入口原生执行，原�
  expect(queued.payload.qiumi_source.body).toBe(body);
  await pullNotionTasksForTest(state.pool,'isolated-notion-fixture',{env:englishEnv});expect(await linkedEnglishTask(page)).toHaveLength(1);
  expect(await dispatchQiumiTask(await read(queued.id),{env:host.env})).toMatchObject({outcome:'proceed'});
- await triggerNativeAgent(await read(queued.id),{pool:state.pool,env:host.env,resolveHost:async()=>host.host,transport:host.transport});expect((await poll(queued.id)).status).toBe('completed_no_pr');
+ await triggerNativeAgent(await read(queued.id),{pool:state.pool,env:host.env,resolveHost:async()=>host.host,transport:host.transport});const executed=await poll(queued.id);expect({status:executed.status,reason:executed.blocked_reason,detail:executed.blocked_detail}).toMatchObject({status:'completed_no_pr'});
  await pushQiumiStatus(state.pool,'isolated-notion-fixture');
  expect(page.properties.Status.status.name).toBe('Done');expect(JSON.stringify(blockTextTree(page.id))).toContain('实际fixture执行结果：完整输入已处理');
  expect(bodies.get(page.id)).toBe(body);expect(host.launches().filter(entry=>entry.text.includes(body))).toHaveLength(1);

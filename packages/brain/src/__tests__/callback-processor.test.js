@@ -15,13 +15,19 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { processExecutionCallback } from '../callback-processor.js';
 
+function nonNativeTaskRead(sql, params) {
+  if (/ AS native_owned$/.test(sql)) return { rows: [{ native_owned: false }] };
+  if (sql === 'SELECT id FROM tasks WHERE id=$1 FOR UPDATE') return { rows: [{ id: params[0] }] };
+  return { rows: [] };
+}
+
 // ─── Mock DB pool（支持事务：pool.query + pool.connect + client）─────────────
 const mockClient = {
-  query: vi.fn().mockResolvedValue({ rows: [] }),
+  query: vi.fn(nonNativeTaskRead),
   release: vi.fn(),
 };
 const mockPool = {
-  query: vi.fn().mockResolvedValue({ rows: [] }),
+  query: vi.fn(nonNativeTaskRead),
   connect: vi.fn().mockResolvedValue(mockClient),
 };
 vi.mock('../db.js', () => ({ default: mockPool }));
@@ -116,8 +122,8 @@ import { handleTaskFailure, classifyFailure } from '../quarantine.js';
 describe('callback-processor — WHERE 守卫白名单（harness_evaluate 84% verdict 修复）', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockPool.query.mockResolvedValue({ rows: [] });
-    mockClient.query.mockResolvedValue({ rows: [] });
+    mockPool.query.mockImplementation(nonNativeTaskRead);
+    mockClient.query.mockImplementation(nonNativeTaskRead);
     mockPool.connect.mockResolvedValue(mockClient);
   });
 
@@ -209,7 +215,7 @@ describe('callback-processor — WHERE 守卫白名单（harness_evaluate 84% ve
 describe('callback-processor — docker contract status mapping', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockPool.query.mockResolvedValue({ rows: [] });
+    mockPool.query.mockImplementation(nonNativeTaskRead);
     mockClient.query.mockResolvedValue({ rows: [], rowCount: 1 });
     mockPool.connect.mockResolvedValue(mockClient);
   });
@@ -551,7 +557,7 @@ describe('processExecutionCallback — HTTP authority materialization（callback
     vi.clearAllMocks();
     mockPool.connect.mockResolvedValue(mockClient);
     // 默认所有 pool.query 返回空（各测试内部覆盖需要的 SQL）
-    mockPool.query.mockResolvedValue({ rows: [] });
+    mockPool.query.mockImplementation(nonNativeTaskRead);
     // 默认所有 client.query 返回空（各测试内部覆盖 UPDATE）
     mockClient.query.mockImplementation(async (sql) => {
       if (sql === 'BEGIN' || sql === 'COMMIT') return {};
@@ -565,6 +571,7 @@ describe('processExecutionCallback — HTTP authority materialization（callback
   it('SQL $5（pr_url 参数）必须为 canonical URL，不得为 null（修复前为 null 因为 callback pr_url=null）', async () => {
     // 配置 pool.query：resolveCanonicalPrUrl / maybeMarkCompletedNoPr 的 SELECT 均返回含 existing_pr_url 的 task
     mockPool.query.mockImplementation(async (sql) => {
+        if (/ AS native_owned$/.test(sql)) return { rows: [{ native_owned: false }] };
       if (typeof sql === 'string' && sql.includes('payload') && /FROM\s+tasks/i.test(sql) && !sql.includes('failure_class') && !sql.includes('status')) {
         return { rows: [{ task_type: 'dev', pr_url: null, payload: { existing_pr_url: CANONICAL_URL } }] };
       }
@@ -602,6 +609,7 @@ describe('processExecutionCallback — HTTP authority materialization（callback
 
   it('lastRunResult.pr_url 必须为 canonical URL（$3 JSON），不得为 null', async () => {
     mockPool.query.mockImplementation(async (sql) => {
+        if (/ AS native_owned$/.test(sql)) return { rows: [{ native_owned: false }] };
       if (typeof sql === 'string' && sql.includes('payload') && /FROM\s+tasks/i.test(sql) && !sql.includes('failure_class') && !sql.includes('status')) {
         return { rows: [{ task_type: 'dev', pr_url: null, payload: { existing_pr_url: CANONICAL_URL } }] };
       }
@@ -639,6 +647,7 @@ describe('processExecutionCallback — HTTP authority materialization（callback
 
   it('status 必须为 completed（不是 completed_no_pr），retry_count 不增长', async () => {
     mockPool.query.mockImplementation(async (sql) => {
+        if (/ AS native_owned$/.test(sql)) return { rows: [{ native_owned: false }] };
       if (typeof sql === 'string' && sql.includes('payload') && /FROM\s+tasks/i.test(sql) && !sql.includes('failure_class') && !sql.includes('status')) {
         return { rows: [{ task_type: 'dev', pr_url: null, payload: { existing_pr_url: CANONICAL_URL } }] };
       }

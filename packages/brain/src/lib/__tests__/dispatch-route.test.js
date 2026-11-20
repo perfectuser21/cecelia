@@ -46,7 +46,7 @@ describe('resolveDispatchRoute：按 executor 分支顺序判真实路由', () =
 
   it('有执行者的专用路由：kernel / openclaw / script / 审查池 / 内联 handler', () => {
     expect(route('golden_path_proposal')).toMatchObject({ route: 'retired-development', available: false });
-    expect(route('qiumi_task')).toMatchObject({ route: 'openclaw-agent', available: true });
+    expect(route('qiumi_task')).toMatchObject({ route: 'native-agent', available: true });
     expect(route('script_run')).toMatchObject({ route: 'script', available: true });
     expect(route('code_review')).toMatchObject({ route: 'codex-review', available: true });
 

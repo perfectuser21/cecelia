@@ -28,9 +28,9 @@ const task = (over = {}) => ({
 describe('openclaw-agent 合同', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('登记为合法 executor_kind，且 qiumi_task 打标为它', () => {
+  it('旧执行体保留历史探活，新qiumi任务使用原生执行入口', () => {
     expect(VALID_EXECUTOR_KINDS).toContain('openclaw-agent');
-    expect(EXECUTOR_KIND_FOR.qiumi_task).toBe('openclaw-agent');
+    expect(EXECUTOR_KIND_FOR.qiumi_task).toBe('native-agent');
     expect(EXECUTOR_KIND_FOR.__bridge_path).toBe('bridge'); // sentinel 保留
     expect(EXECUTOR_CONTRACTS['openclaw-agent']).toMatchObject({ staleMinutes: 45, onStale: 'fail' });
   });

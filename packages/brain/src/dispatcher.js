@@ -47,19 +47,18 @@ import { applyDispatchAllocationGuide } from './dispatch-allocation-guide.js';
 import { getLlmCapacitySnapshot } from './llm-capacity.js';
 import { acquireDeviceLock, releaseDeviceLocksHeldBy } from './device-lock-helpers.js';
 import { resourceHealthGate } from './lib/resource-health-gate.js';
-import { qiumiRouteHealthGate, rememberBlockedRoute, recallBlockedRoute, forgetBlockedRoute } from './lib/qiumi-resource-health.js';
+import { qiumiRouteHealthGate } from './lib/qiumi-resource-health.js';
 import { routeQiumiTask, persistDecision } from './routing/qiumi-router.js';
-import { qiumiEnv } from './routing/env.js';
 import { routeSerialOf, findSameSerialBusy } from './routing/qiumi-serial-gate.js';
 import { dispatchScriptTask, SCRIPT_BREAKER_KEY } from './script-executor.js';
 import { CLAUDE_CHANNEL_RETIRED_CODE } from './lib/claude-channel.js';
 
 /**
- * openclaw-agent 表面（qiumi_task）由 Brain 经 ssh 直派 MMV，不经 cecelia-bridge：
- * cecelia-run 熔断与 bridge 健康检查对它都是误伤（2026-09-23 生产实证 task 72b010e9）。
- * 判据只从注册表 surface 派生，不手抄名单（铁律 76cb816c）。
+ * Brain固定宿主执行面不走Coding Bridge；qiumi使用原生运输并受宿主并发闸约束。
+ * 旧Gateway/核验标签只保历史判别，其新执行入口已经退役。
+ * 判据由注册表surface派生。
  */
-const isOpenclawSurface = task => isCommanderVerification(task) || getTaskType(task?.task_type)?.surface === 'openclaw-agent';
+const isOpenclawSurface = task => isCommanderVerification(task) || ['openclaw-agent','native-agent'].includes(getTaskType(task?.task_type)?.surface);
 /** script 表面（script_run，棒 3）同样是 Brain 经 ssh 直派跑场机，不经 cecelia-bridge；熔断 key 独立，互不牵连。 */
 const isScriptSurface = (type) => getTaskType(type)?.surface === 'script';
 
@@ -303,179 +302,24 @@ export async function dispatchQiumiTask(task, deps = {}) {
 }
 
 async function routeAndPersistQiumi(task, deps = {}) {
-  const env = deps.env ?? qiumiEnv();
-  const actions = deps.actions ?? [];
-  const holSkipIds = deps.holSkipIds ?? [];
-  const resourceSkipIds = deps.resourceSkipIds ?? [];
-
-  const releaseClaim = async () => (await import('./lib/manual-qiumi-dispatch.js')).releaseQiumiClaim(pool, task.id, deps.claimOwner);
-
-  // 资源健康闸挡下（任务 5bf2512a）：放 claim、保持 queued、进 resourceSkipIds——不占 HOL 让位名额，
-  // 手机/账号掉线可能持续几天，占名额会让队首积压的单把整个派发器卡死。
-  const blockedByHealth = async (sick) => {
-    await releaseClaim();
-    await recordDispatchResult(pool, false, 'resource_unhealthy', undefined, task.id);
-    tickLog(`[dispatch] 资源不健康 ${sick.summary}，qiumi task ${task.id} 本轮不派`);
-    resourceSkipIds.push(task.id);
-    return { outcome: 'skip', resource: true };
-  };
-
-  // openclaw-agent 有自己的熔断（MMV 起 agent 连败时才开），与 cecelia-run（bridge）互不牵连。
-  // 放在最前面：熔断开着就别读全行、别打 Jev、别写 run_id——每 tick 白路由一次就是本刀要修的病。
-  if (!isAllowed('openclaw-agent')) {
-    await releaseClaim();
-    await recordDispatchResult(pool, false, 'openclaw_agent_circuit_open', undefined, task.id);
-    tickLog(`[dispatch] HOL skip: openclaw-agent breaker open, skipping qiumi task ${task.id}`);
-    holSkipIds.push(task.id);
-    return { outcome: 'skip' };
+  const fullTask=(await pool.query('SELECT * FROM tasks WHERE id = $1',[task.id])).rows[0]??task;
+  const release=async()=> (await import('./lib/manual-qiumi-dispatch.js')).releaseQiumiClaim(pool,task.id,deps.claimOwner);
+  // 旧run不能仅因重新排队便以新原生会话重发；保留原身份供独立收尾核对。
+  if(fullTask.executor_kind==='openclaw-agent'&&fullTask.payload?.run_id){
+    await pool.query(`UPDATE tasks SET status='blocked',blocked_reason='native_agent_legacy_run_requires_review',blocked_at=NOW(),blocked_until=NULL,claimed_by=NULL,claimed_at=NULL WHERE id=$1 AND status='queued'`,[task.id]);
+    return {outcome:'return',result:{dispatched:false,reason:'native_agent_legacy_run_requires_review',task_id:task.id}};
   }
-
-  // 选单 SQL 只取部分列，便宜闸要读 payload.qiumi_source → 先把整行捞回来
-  const fullRow = await pool.query('SELECT * FROM tasks WHERE id = $1', [task.id]);
-  const fullTask = fullRow.rows[0] ?? task;
-
-  // 机器闸：MMV 这台机器的 openclaw-agent 上限（默认 2），不是租户配额。
-  // 放在路由之前——闸满就退回，省掉一次 Jev/terra 调用。
-  // 只数 qiumi_task：与收割器（reapOpenclawAgentRuns）的候选口径一致。日后别的类型挂上同一个
-  // executor_kind，它会占着闸位却永远不被收割，闸就再也空不出来。
-  const { rows } = await pool.query(
-    `SELECT count(*)::int AS n FROM tasks
-      WHERE executor_kind = 'openclaw-agent' AND status = 'in_progress' AND task_type = 'qiumi_task'`,
-  );
-  if ((rows[0]?.n ?? 0) >= env.mmvConcurrency) {
-    await releaseClaim();
-    // 照 codex pool 的 HOL 语义：P0 停整轮（高优信号不许被绕过），非 P0 让位换下一个候选
-    if (task.priority === 'P0') {
-      await recordDispatchResult(pool, false, 'openclaw_agent_pool_full', undefined, task.id);
-      return {
-        outcome: 'return',
-        result: { dispatched: false, reason: 'openclaw_agent_pool_full', task_id: task.id, actions },
-      };
-    }
-    tickLog(`[dispatch] HOL skip: openclaw-agent pool full (${rows[0]?.n ?? 0}/${env.mmvConcurrency}), skipping ${task.priority} qiumi task ${task.id}`);
-    holSkipIds.push(task.id);
-    return { outcome: 'skip' };
+  const decision=await routeQiumiTask(fullTask,{pool,env:{...(deps.env??process.env),nativeAgent:true}});
+  await persistDecision(pool,fullTask,decision);
+  if(decision.outcome!=='agent')return {outcome:'return',result:{dispatched:false,reason:decision.reason??'qiumi_route_failed',task_id:task.id}};
+  const payload={...(fullTask.payload??{}),...decision.payloadPatch};
+  const serial=routeSerialOf(payload);
+  if(serial&&await findSameSerialBusy(pool,task.id,serial)){
+    await release();(deps.holSkipIds??[]).push(task.id);return {outcome:'skip'};
   }
-
-  // 同机串行闸（任务 5ad81457）：同一台手机已有秋米任务在跑 → 本轮不派，保持 queued、放 claim，
-  // 按 HOL skip 语义换下一个候选（P0 也只让位不停整轮：挡它的是一台手机，不是整个池子）。
-  const serialBusy = async (payload) => {
-    const serial = routeSerialOf(payload);
-    const busy = await findSameSerialBusy(pool, task.id, serial);
-    if (!busy) return null;
-    await releaseClaim();
-    await recordDispatchResult(pool, false, 'qiumi_device_busy', undefined, task.id);
-    tickLog(`[dispatch] HOL skip: 手机 ${serial} 正被秋米任务 ${busy.id} 占用，qiumi task ${task.id} 本轮不派`);
-    holSkipIds.push(task.id);
-    return { outcome: 'skip' };
-  };
-
-  // 路由幂等：上一 tick 已判定并写了 run_id/model/qiumi_route，只是 spawn 前被打回 queued
-  // （历史上是 cecelia-run 熔断，见本刀 Task 1）。决策不变就不重打 Jev、不换 run_id——
-  // 执行体的 ALREADY 探针按 run_id 防重起，换了 run_id 它就认不出上一轮可能已起的 agent。
-  if (fullTask.payload?.qiumi_route && fullTask.payload?.run_id) {
-    const held = await serialBusy(fullTask.payload);
-    if (held) return held;
-    tickLog(`[dispatch] qiumi task ${task.id} 已有路由决策 run_id=${fullTask.payload.run_id}，跳过 Jev 直接派发`);
-    return { outcome: 'proceed' };
-  }
-
-  // 手机忙回队（收割器见 DEVICE_BUSY，lib/qiumi-device-busy.js）：路由保留、run_id 已清。
-  // 不重打 Jev，只换一个新 run_id——上一轮的 .exit 已落地，沿用旧 run_id 会被 ALREADY 探针当成跑完。
-  if (fullTask.payload?.qiumi_route && !fullTask.payload?.run_id && Number(fullTask.payload?.device_busy_attempts) > 0) {
-    const held = await serialBusy(fullTask.payload);
-    if (held) return held;
-    const runId = `qiumi-${String(task.id).slice(0, 8)}-${Date.now()}`;
-    await pool.query(
-      `UPDATE tasks SET payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object('run_id', $2::text), updated_at = NOW()
-        WHERE id = $1 AND status = 'queued'`,
-      [task.id, runId],
-    );
-    tickLog(`[dispatch] qiumi task ${task.id} 手机忙回队第 ${fullTask.payload.device_busy_attempts} 次重试，保留路由、新 run_id=${runId}`);
-    return { outcome: 'proceed' };
-  }
-
-  // 上一轮路由定到的手机/账号不健康被挡过：先只复查那台手机，仍不健康就不再打 Jev（防每 tick 白路由）
-  const memoSerial = recallBlockedRoute(task.id);
-  if (memoSerial) {
-    const stillSick = await qiumiRouteHealthGate(fullTask, memoSerial, { pool, tag: 'dispatch-qiumi-recheck' });
-    if (stillSick.blocked) return blockedByHealth(stillSick);
-    forgetBlockedRoute(task.id);
-  }
-
-  const decision = await routeQiumiTask(fullTask, {
-    pool,
-    env,
-    fetchFn: deps.fetchFn,
-    // 懒加载：terra 兜底才真的需要 llm-caller，Jev 正常时不把这条重依赖拉进来
-    callLLMFn: deps.callLLMFn ?? (async (...args) => (await import('./llm-caller.js')).callLLM(...args)),
-  });
-  // device 出口：persistDecision 会直接派生 device_job 交手机领单器（dispatcher 之外认领），
-  // 所以健康闸必须在落库之前——手机或它当前账号不健康就不派生、不落库，下一轮复查。
-  if (decision.outcome === 'device' && decision.serial) {
-    const sick = await qiumiRouteHealthGate(fullTask, decision.serial, {
-      pool, payload: { ...(fullTask.payload ?? {}), ...(decision.payloadPatch ?? {}) }, tag: 'dispatch-qiumi-device',
-    });
-    if (sick.blocked) {
-      rememberBlockedRoute(task.id, decision.serial);
-      return blockedByHealth(sick);
-    }
-  }
-
-  await persistDecision(pool, fullTask, decision);
-
-  // 已派生 device_job 子任务交给手机领单器、父任务挂 blocked（persistDecision 里连 claim
-  // 一起释放了，见 routing/qiumi-router.js 的 delegateDeviceJob），dispatcher 到此为止
-  if (decision.outcome === 'device') {
-    await recordDispatchResult(pool, false, 'qiumi_routed_device', undefined, task.id);
-    return {
-      outcome: 'return',
-      result: {
-        dispatched: false,
-        reason: 'qiumi_routed_device',
-        task_id: task.id,
-        actions: [...actions, { action: 'qiumi-device-delegated', task_id: task.id, serial: decision.serial }],
-      },
-    };
-  }
-
-  // 手机定不下（台账没有唯一命中）：persistDecision 已转 blocked(device_unresolved) 并放了 claim，不 spawn
-  if (decision.outcome === 'unresolved') {
-    await recordDispatchResult(pool, false, 'qiumi_device_unresolved', undefined, task.id);
-    return {
-      outcome: 'return',
-      result: {
-        dispatched: false,
-        reason: 'qiumi_device_unresolved',
-        task_id: task.id,
-        actions: [...actions, { action: 'qiumi-device-unresolved', task_id: task.id, detail: decision.detail ?? null }],
-      },
-    };
-  }
-
-  // 判定失败（设备含糊 fail-closed / Jev+terra 均不可用）已落 failed，不 spawn
-  if (decision.outcome === 'fail') {
-    await recordDispatchResult(pool, false, 'qiumi_route_failed', undefined, task.id);
-    return {
-      outcome: 'return',
-      result: {
-        dispatched: false,
-        reason: 'qiumi_route_failed',
-        task_id: task.id,
-        actions: [...actions, { action: 'qiumi-route-failed', task_id: task.id, error: decision.reason }],
-      },
-    };
-  }
-
-  // agent：model/run_id 已由 persistDecision 写进 payload，主流程标 in_progress 后读全行即可拿到。
-  // 新定到的手机正忙 → 决策已落库，本轮让位；下一轮走上面的路由幂等分支再过一次同机闸。
-  const held = await serialBusy(decision.payloadPatch);
-  if (held) return held;
-  // 新定到的手机/账号不健康（任务 5bf2512a）→ 决策已落库，本轮让位；下一轮候选循环的资源健康闸再判。
-  const routedPayload = { ...(fullTask.payload ?? {}), ...(decision.payloadPatch ?? {}) };
-  const sick = await qiumiRouteHealthGate(fullTask, routeSerialOf(routedPayload), { pool, payload: routedPayload, tag: 'dispatch-qiumi' });
-  if (sick.blocked) return blockedByHealth(sick);
-  return { outcome: 'proceed' };
+  const sick=await qiumiRouteHealthGate(fullTask,serial,{pool,payload,tag:'dispatch-native-qiumi'});
+  if(sick.blocked){await release();(deps.resourceSkipIds??[]).push(task.id);return {outcome:'skip',resource:true};}
+  return {outcome:'proceed'};
 }
 
 /**
@@ -594,7 +438,7 @@ async function dispatchAdmittedTask(goalIds, options = {}) {
           onlyTaskTypes: [...OPENCLAW_PASSTHROUGH_TASK_TYPES], includeCommanderVerification: true,
         });
         if (qiumiProbe) {
-          tickLog(`[tick] qiumi bypass: task_pool 已满但队列有 qiumi_task=${qiumiProbe.id}，穿透 MMV 不占 fleet 槽位，放行（仅选 qiumi_task）`);
+          tickLog(`[tick] qiumi bypass: task_pool 已满但队列有 qiumi_task=${qiumiProbe.id}，使用固定主机原生运输、受宿主并发闸约束，不占通用 fleet 槽位（仅选 qiumi_task）`);
           qiumiOnlyBypass = true;
         }
       } catch (probeErr) {
@@ -1178,6 +1022,12 @@ async function dispatchAdmittedTask(goalIds, options = {}) {
 
   execResult = await triggerCeceliaRun(taskToDispatch, { drainAdmission: options.drainAdmission });
 
+  if(taskToDispatch.task_type==='qiumi_task'){
+    try{await recordDispatchResult(pool,execResult.success===true,execResult.reason??'native_agent_'+(execResult.status??'accepted'),undefined,nextTask.id);}
+    catch(error){console.warn(`[dispatch] native observation stats unavailable: ${error.message}`);}
+    return {dispatched:execResult.success===true,reason:execResult.reason??null,task_id:nextTask.id,run_id:execResult.runId??null,execution_unknown:execResult.dispatchUncertain===true,needs_review:execResult.needs_review===true,actions};
+  }
+
   // 选中后 payload 可能并发变为旧拆解；不能当普通故障回队、三振或覆盖新认领。
   if (!execResult.success && execResult.reason === RETIRED_DECOMPOSITION) {
     let parked = false;
@@ -1222,7 +1072,7 @@ async function dispatchAdmittedTask(goalIds, options = {}) {
     return {dispatched:false,reason:'wait:capacity',task_id:nextTask.id,actions};
   }
 
-  if (!execResult.success && isCommanderVerification(nextTask) && execResult.reason === 'commander_verification_rejected' && execResult.taskTerminal === true) {
+  if (!execResult.success && isCommanderVerification(nextTask) && ['commander_verification_rejected','native_agent_verification_binding_required'].includes(execResult.reason) && execResult.taskTerminal === true) {
     await recordDispatchResult(pool, false, execResult.reason, undefined, nextTask.id);
     return { dispatched: false, reason: execResult.reason, task_id: nextTask.id, terminal: true, actions };
   }
@@ -1311,6 +1161,8 @@ async function dispatchAdmittedTask(goalIds, options = {}) {
       } catch (raiseErr) {
         console.error(`[dispatch] raise failed for needs_rebase (task ${nextTask.id}): ${raiseErr.message}`);
       }
+    } else if (nextTask.task_type==='qiumi_task') {
+      console.warn('[dispatch] native task retains its explicit observation/review state');
     } else if (execResult.configError) {
       console.warn(`[dispatch] configError detected (reason=${execResult.reason}) — skipping cecelia-run breaker count`);
     } else if (execResult.reason === 'spawn_deduplicated') {
@@ -1379,7 +1231,7 @@ async function dispatchAdmittedTask(goalIds, options = {}) {
   // 这里已经在 try 内、postClaimException 的覆盖范围里，而 agent 早就 spawn 出去了——
   // 所以必须自己吞掉异常：一旦让它冒到兜底，就会放 claim + 标 status='failed'，
   // 下个 tick 把同一个还在跑的任务再派一遍（比丢一笔事后记账糟得多）。
-  if (isOpenclawSurface(nextTask) || isScriptSurface(nextTask.task_type)) {
+  if (nextTask.task_type!=='qiumi_task' && (isOpenclawSurface(nextTask) || isScriptSurface(nextTask.task_type))) {
     const breakerKey = isOpenclawSurface(nextTask) ? 'openclaw-agent' : SCRIPT_BREAKER_KEY;
     try {
       await recordSuccess(breakerKey);

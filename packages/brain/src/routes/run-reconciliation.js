@@ -1,6 +1,7 @@
-import { Router } from 'express';
+import {reconcileNativeAgentResources} from '../lib/native-agent-resource-reconciliation.js';
+import { Router, json } from 'express';
 import defaultPool from '../db.js';
-import { internalAuthOrLoopback } from '../middleware/internal-auth.js';
+import { internalAuth, internalAuthOrLoopback } from '../middleware/internal-auth.js';
 import { getRunDefinitionBinding } from '../lib/run-definition-binding.js';
 import { reconcileRunEvidence } from '../lib/run-reconciliation.js';
 import { sendReleaseError } from './releases.js';
@@ -22,8 +23,15 @@ export async function readRunReconciliation(pool,runId){
     await client.query('COMMIT');return result;
   }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
 }
-export function createRunReconciliationRouter({pool=defaultPool}={}){
+export function createRunReconciliationRouter({pool=defaultPool,nativeTransport}={}){
   const router=Router();
+  router.post('/:run_id/native-resource-reconciliation',json({limit:'32kb'}),(req,res,next)=>{
+    if(!process.env.CECELIA_INTERNAL_TOKEN)return res.status(503).json({error:'native_agent_cleanup_auth_unconfigured'});
+    return internalAuth(req,res,next);
+  },async(req,res)=>{
+    try{res.json(await reconcileNativeAgentResources(pool,req.params.run_id,req.body,{principal:'authenticated-operator',...(nativeTransport?{transport:nativeTransport}:{})}));}
+    catch(error){res.status(error.status??503).json({error:error.code??'native_agent_cleanup_unknown'});}
+  });
   router.get('/:run_id/reconciliation',internalAuthOrLoopback,async(req,res)=>{
     try{res.json(await readRunReconciliation(pool,req.params.run_id));}catch(error){sendReleaseError(res,error);}
   });return router;

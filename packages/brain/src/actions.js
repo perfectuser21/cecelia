@@ -1,3 +1,5 @@
+import {withNativeAgentMutationGuard,assertNoNativeAgentOwner} from './lib/native-agent-task-control.js';
+import {transaction} from './execution-directory/store.js';
 import {assertActiveDevelopmentTask} from './lib/task-type-registry.js';
 import { COMPANY_KR_SQL_GUARD, isCompanyKr } from './lib/company-kr-metrics.js';
 import { randomUUID } from 'node:crypto';
@@ -338,11 +340,12 @@ async function updateTask({ task_id, status, priority }) {
   } else if (status === 'queued') {
     whereClause += ` AND status NOT IN ('completed', 'cancelled')`;
   }
-  const result = await pool.query(`
+  const write=db=>db.query(`
     UPDATE tasks SET ${updates.join(', ')}
     WHERE ${whereClause}
     RETURNING *
   `, values);
+  const result = status?await withNativeAgentMutationGuard(pool,task_id,write):await write(pool);
 
   if (result.rows.length === 0) {
     const error = status === 'in_progress'
@@ -569,6 +572,8 @@ async function batchUpdateTasks({ filter, update }) {
 
   await assertAuthoringCompletion(pool, update.status, whereClause, values);
 
+  const filterValues=[...values];
+
   // Build update
   const updates = [];
   if (update.status) {
@@ -584,11 +589,13 @@ async function batchUpdateTasks({ filter, update }) {
     return { success: false, error: 'No updates provided' };
   }
 
-  const result = await pool.query(`
-    UPDATE tasks SET ${updates.join(', ')}
-    WHERE ${whereClause}
-    RETURNING id
-  `, values);
+  const result = await transaction(pool,async db=>{
+    const locked=await db.query(`SELECT id FROM tasks WHERE ${whereClause} ORDER BY id FOR UPDATE`,filterValues);
+    if(update.status)for(const row of locked.rows)await assertNoNativeAgentOwner(db,row.id);
+    await assertAuthoringCompletion(db,update.status,whereClause,filterValues);
+    return db.query(`UPDATE tasks SET ${updates.join(', ')}
+      WHERE ${whereClause} AND id=ANY($${values.length+1}::uuid[]) RETURNING id`,[...values,locked.rows.map(row=>row.id)]);
+  });
 
   // 终态收口（lib/task-terminal.js）：批量写成终态的每一行都必经钩子
   if (update.status && isTerminalStatus(update.status)) {

@@ -18,6 +18,12 @@ function createResponse() {
 }
 
 function captureHandler(pool) {
+  pool.connect??=async()=>({query:async(sql,params)=>{
+    if(/^(BEGIN|COMMIT|ROLLBACK)/.test(sql)||sql.includes('FOR UPDATE'))return {rows:[]};
+    if(sql.includes('AS native_owned'))return {rows:[{native_owned:false}]};
+    if(sql==="SELECT payload->'headed_takeover' AS headed_takeover FROM tasks WHERE id=$1")return {rows:[]};
+    return pool.query(sql,params);
+  },release:()=>{}});
   let handler;
   const router = {
     patch: vi.fn((path, ...handlers) => {

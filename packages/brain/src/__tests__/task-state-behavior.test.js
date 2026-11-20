@@ -8,7 +8,6 @@
  * - 非法状态被拒绝（VALID_STATUSES 白名单）
  * - 非白名单字段被忽略（安全验证）
  * - blockTask → task:blocked 事件 + unblockTask → queued 恢复
- * - updateTaskProgress 进度更新 + payload 合并
  * - 失败任务（retry_count < 3）→ decision.generateDecision 生成 retry 动作链路
  * - 阻塞任务检测链路（stale in_progress > 24h → getBlockedTasks 检测）
  */
@@ -17,7 +16,17 @@ import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
 
 // ─── Mocks（顶层，vitest 提升）──────────────────────────────────────────────────
 
-const mockPool = vi.hoisted(() => ({ query: vi.fn() }));
+const { mockPool, taskQuery, transactionQuery } = vi.hoisted(() => {
+  const taskQuery = vi.fn();
+  const transactionQuery = vi.fn(async (sql, params) => {
+    if (/^(BEGIN|COMMIT|ROLLBACK)$/.test(sql)) return { rows: [] };
+    if (sql === 'SELECT id FROM tasks WHERE id=$1 FOR UPDATE') return { rows: [{ id: params[0] }] };
+    if (/ AS native_owned$/.test(sql)) return { rows: [{ native_owned: false }] };
+    return taskQuery(sql, params);
+  });
+  const client = { query: transactionQuery, release: vi.fn() };
+  return { taskQuery, transactionQuery, mockPool: { query: transactionQuery, connect: vi.fn(async () => client) } };
+});
 vi.mock('../db.js', () => ({ default: mockPool }));
 
 const mockPublishTaskStarted = vi.fn();
@@ -36,13 +45,12 @@ vi.mock('../event-bus.js', () => ({ emit: mockEmit }));
 
 // ─── Imports ────────────────────────────────────────────────────────────────
 
-let updateTaskStatus, updateTaskProgress, blockTask, unblockTask;
+let updateTaskStatus, blockTask, unblockTask;
 
 beforeAll(async () => {
   vi.resetModules();
   const mod = await import('../task-updater.js');
   updateTaskStatus = mod.updateTaskStatus;
-  updateTaskProgress = mod.updateTaskProgress;
   blockTask = mod.blockTask;
   unblockTask = mod.unblockTask;
 });
@@ -67,13 +75,13 @@ describe('updateTaskStatus — 状态机转换链路', () => {
 
   it('queued → in_progress：SQL 含 started_at=NOW()，发布 publishTaskStarted', async () => {
     const task = makeTask({ status: 'in_progress' });
-    mockPool.query.mockResolvedValueOnce({ rows: [task] });
+    taskQuery.mockResolvedValueOnce({ rows: [task] });
 
     const result = await updateTaskStatus('task-sm-001', 'in_progress');
 
     expect(result.success).toBe(true);
     // SQL 应包含 started_at
-    const queryCall = mockPool.query.mock.calls[0];
+    const queryCall = taskQuery.mock.calls[0];
     expect(queryCall[0]).toContain('started_at = NOW()');
     // 状态正确
     expect(queryCall[1][1]).toBe('in_progress');
@@ -85,12 +93,12 @@ describe('updateTaskStatus — 状态机转换链路', () => {
 
   it('in_progress → completed：SQL 含 completed_at=NOW()，发布 publishTaskCompleted', async () => {
     const task = makeTask({ status: 'completed' });
-    mockPool.query.mockResolvedValueOnce({ rows: [task] });
+    taskQuery.mockResolvedValueOnce({ rows: [task] });
 
     const result = await updateTaskStatus('task-sm-001', 'completed');
 
     expect(result.success).toBe(true);
-    const queryCall = mockPool.query.mock.calls[0];
+    const queryCall = taskQuery.mock.calls[0];
     expect(queryCall[0]).toContain('completed_at = NOW()');
     expect(mockPublishTaskCompleted).toHaveBeenCalledWith(
       task.id,
@@ -104,7 +112,7 @@ describe('updateTaskStatus — 状态机转换链路', () => {
       status: 'failed',
       payload: { error: 'timeout after 30s' },
     });
-    mockPool.query.mockResolvedValueOnce({ rows: [task] });
+    taskQuery.mockResolvedValueOnce({ rows: [task] });
 
     const result = await updateTaskStatus('task-sm-001', 'failed', {
       error: 'timeout after 30s'
@@ -123,11 +131,11 @@ describe('updateTaskStatus — 状态机转换链路', () => {
 
     expect(result.success).toBe(false);
     expect(result.error).toContain('Invalid status');
-    expect(mockPool.query).not.toHaveBeenCalled(); // 不应触及 DB
+    expect(transactionQuery).not.toHaveBeenCalled(); // 不应触及 DB
   });
 
   it('任务不存在（DB 返回空行）→ success=false + Task not found', async () => {
-    mockPool.query.mockResolvedValueOnce({ rows: [] });
+    taskQuery.mockResolvedValueOnce({ rows: [] });
 
     const result = await updateTaskStatus('non-existent-task', 'in_progress');
 
@@ -137,7 +145,7 @@ describe('updateTaskStatus — 状态机转换链路', () => {
 
   it('非白名单字段被忽略（SQL 注入防护）', async () => {
     const task = makeTask({ status: 'completed' });
-    mockPool.query.mockResolvedValueOnce({ rows: [task] });
+    taskQuery.mockResolvedValueOnce({ rows: [task] });
 
     await updateTaskStatus('task-sm-001', 'completed', {
       priority: 'P0',        // 白名单 - 允许
@@ -145,7 +153,7 @@ describe('updateTaskStatus — 状态机转换链路', () => {
       payload: { progress: 100 }, // payload 特殊处理 - 允许
     });
 
-    const queryCall = mockPool.query.mock.calls[0];
+    const queryCall = taskQuery.mock.calls[0];
     const sql = queryCall[0];
     // 非白名单字段不出现在 SQL 中
     expect(sql).not.toContain('sql_inject');
@@ -165,29 +173,6 @@ describe('updateTaskStatus — 状态机转换链路', () => {
   });
 });
 
-describe('updateTaskProgress — 进度更新链路', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
-  it('进度更新合并 payload，不改变 status', async () => {
-    const task = makeTask({
-      status: 'in_progress',
-      payload: { progress: 50, current_step: '3' },
-    });
-    mockPool.query.mockResolvedValueOnce({ rows: [task] });
-
-    const result = await updateTaskProgress('task-sm-001', { progress: 50, current_step: '3' });
-
-    expect(result.success).toBe(true);
-    const queryCall = mockPool.query.mock.calls[0];
-    expect(queryCall[0]).toContain('COALESCE(payload,');
-    // status 不在 UPDATE 中
-    expect(queryCall[0]).not.toContain('status =');
-    expect(queryCall[1]).toContain(JSON.stringify({ progress: 50, current_step: '3' }));
-  });
-});
-
 describe('blockTask / unblockTask — 阻塞恢复链路', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -199,7 +184,7 @@ describe('blockTask / unblockTask — 阻塞恢复链路', () => {
       blocked_reason: 'billing_cap',
       blocked_detail: '月度配额耗尽',
     });
-    mockPool.query.mockResolvedValueOnce({ rows: [blockedTask] });
+    taskQuery.mockResolvedValueOnce({ rows: [blockedTask] });
 
     const result = await blockTask('task-sm-001', {
       reason: 'billing_cap',
@@ -209,7 +194,7 @@ describe('blockTask / unblockTask — 阻塞恢复链路', () => {
 
     expect(result.success).toBe(true);
     // SQL 应更新 blocked_reason
-    const queryCall = mockPool.query.mock.calls[0];
+    const queryCall = taskQuery.mock.calls[0];
     expect(queryCall[0]).toContain('blocked');
     // emit task:blocked 事件（3 参数：event, source, data）
     expect(mockEmit).toHaveBeenCalledWith(
@@ -221,12 +206,12 @@ describe('blockTask / unblockTask — 阻塞恢复链路', () => {
 
   it('unblockTask：任务恢复到 queued，emit task:unblocked 事件', async () => {
     const unblockedTask = makeTask({ status: 'queued' });
-    mockPool.query.mockResolvedValueOnce({ rows: [unblockedTask] });
+    taskQuery.mockResolvedValueOnce({ rows: [unblockedTask] });
 
     const result = await unblockTask('task-sm-001');
 
     expect(result.success).toBe(true);
-    const queryCall = mockPool.query.mock.calls[0];
+    const queryCall = taskQuery.mock.calls[0];
     // 恢复为 queued
     expect(queryCall[0]).toMatch(/status\s*=\s*['"]queued['"]/);
   });
@@ -332,7 +317,7 @@ describe('Task 状态机事件映射完整性', () => {
 
     for (const { status, eventCheck } of statusEventMap) {
       vi.clearAllMocks();
-      mockPool.query.mockResolvedValueOnce({
+      taskQuery.mockResolvedValueOnce({
         rows: [makeTask({ status })]
       });
 
@@ -343,7 +328,7 @@ describe('Task 状态机事件映射完整性', () => {
 
   it('queued 状态不发布 started/completed/failed 事件', async () => {
     const task = makeTask({ status: 'queued', payload: {} });
-    mockPool.query.mockResolvedValueOnce({ rows: [task] });
+    taskQuery.mockResolvedValueOnce({ rows: [task] });
 
     await updateTaskStatus('task-queued', 'queued');
 

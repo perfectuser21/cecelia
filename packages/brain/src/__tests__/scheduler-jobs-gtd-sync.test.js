@@ -68,17 +68,16 @@ describe('notion-gtd-sync 调度', () => {
     ensureGtdSyncLoop({ query: vi.fn() }, { env, setIntervalFn });
     await expect(tick()).resolves.toBeUndefined();
     const out = await gtdSyncJobHandler({ query: vi.fn() }, { env, setIntervalFn });
-    for (const step of ['zhToEn', 'enToZh', 'ingest', 'stops', 'push']) {
+    for (const step of ['zhToEn', 'ingest', 'stops', 'push']) {
       expect(out.lastRun[step]).toEqual({ error: 'notion_token_missing' });
     }
     expect(mockNotionReq).not.toHaveBeenCalled();
   });
 
-  it('runGtdSyncOnce 顺序：zh→en, en→zh, 入账, 急停, 回写；单步失败不阻断后续', async () => {
+  it('runGtdSyncOnce 顺序：zh→en, 入账, 急停, 回写；单步失败不阻断后续', async () => {
     const mod = await import('../notion-gtd-sync.js');
     const deps = {
       syncZhToEn: vi.fn().mockRejectedValue(new Error('notion down')),
-      syncEnToZh: vi.fn().mockResolvedValue({ created: 0, skipped: 0 }),
       pullMarked: vi.fn().mockResolvedValue({ ingested: 1, skipped: 0 }),
       applyOwnerStops: vi.fn().mockResolvedValue({ cancelled: 0, held: 0, resumed: 0, ignored: [] }),
       pushQiumiStatus: vi.fn().mockResolvedValue({ pushed: 1, skippedHuman: 0, skippedNoMap: 0 }),
@@ -87,7 +86,7 @@ describe('notion-gtd-sync 调度', () => {
     expect(r.zhToEn).toMatchObject({ error: 'notion down' });
     expect(r.ingest).toEqual({ ingested: 1, skipped: 0 });
     expect(r.push.pushed).toBe(1);
-    const order = [deps.syncZhToEn, deps.syncEnToZh, deps.pullMarked, deps.applyOwnerStops, deps.pushQiumiStatus]
+    const order = [deps.syncZhToEn, deps.pullMarked, deps.applyOwnerStops, deps.pushQiumiStatus]
       .map((f) => f.mock.invocationCallOrder[0]);
     expect(order).toEqual([...order].sort((a, b) => a - b));
   });
@@ -113,11 +112,10 @@ describe('notion-gtd-sync 调度', () => {
     expect(mockNotionReq).toHaveBeenCalledTimes(1);
   });
 
-  it('并存期窗口对 en→zh 同样生效：runGtdSyncOnce 把 QIUMI_SYNC_SINCE 透传给 syncEnToZh', async () => {
+  it('中文团队任务保留创建时间窗口，英文交办不另造中文页', async () => {
     const mod = await import('../notion-gtd-sync.js');
     const deps = {
       syncZhToEn: vi.fn().mockResolvedValue({ created: 0, skipped: 0, repaired: 0 }),
-      syncEnToZh: vi.fn().mockResolvedValue({ created: 0, skipped: 0, repaired: 0 }),
       pullMarked: vi.fn().mockResolvedValue({ ingested: 0, skipped: 0 }),
       applyOwnerStops: vi.fn().mockResolvedValue({ cancelled: 0, held: 0, resumed: 0, ignored: [] }),
       pushQiumiStatus: vi.fn().mockResolvedValue({ pushed: 0, skippedHuman: 0, skippedNoMap: 0 }),
@@ -125,7 +123,7 @@ describe('notion-gtd-sync 调度', () => {
     const env = { QIUMI_SYNC_SINCE: '2026-09-23T00:00:00.000Z' };
     await mod.runGtdSyncOnce({ query: vi.fn() }, { token: 'tok', env, ...deps });
     expect(deps.syncZhToEn.mock.calls[0][2].sinceIso).toBe('2026-09-23T00:00:00.000Z');
-    expect(deps.syncEnToZh.mock.calls[0][2].sinceIso).toBe('2026-09-23T00:00:00.000Z');
+    expect(deps.pullMarked).toHaveBeenCalledOnce();
   });
 
   it('一轮永不返回 → 超过整轮超时后释放 inFlight、下一次 tick 真的再跑、lastRun 记 round_timeout+步名、liveness_at 不前进（09-24 卡死复现）', async () => {
@@ -139,7 +137,7 @@ describe('notion-gtd-sync 调度', () => {
       const hung = new Promise(() => {}); // 第一轮：某步永不返回
       const runOnce = vi.fn()
         .mockImplementationOnce(async (_pool, opts) => { opts.onStep?.('入账'); return hung; })
-        .mockResolvedValueOnce({ zhToEn: {}, enToZh: {}, ingest: {}, stops: {}, push: {}, at: '2026-09-24T02:00:00.000Z' });
+        .mockResolvedValueOnce({ zhToEn: {}, ingest: {}, stops: {}, push: {}, at: '2026-09-24T02:00:00.000Z' });
       ensureGtdSyncLoop({ query: vi.fn() }, { env, setIntervalFn, runOnce });
 
       const first = tick();               // 第一轮开始，挂住
@@ -165,9 +163,9 @@ describe('notion-gtd-sync 调度', () => {
     const ok = (v) => vi.fn().mockResolvedValue(v);
     await mod.runGtdSyncOnce({ query: vi.fn() }, {
       token: 'tok', env: {}, onStep: (s) => steps.push(s),
-      syncZhToEn: ok({}), syncEnToZh: ok({}), pullMarked: ok({}), applyOwnerStops: ok({}), pushQiumiStatus: ok({}),
+      syncZhToEn: ok({}), pullMarked: ok({}), applyOwnerStops: ok({}), pushQiumiStatus: ok({}),
     });
-    expect(steps).toEqual(['zh→en', 'en→zh', '入账', '急停', '回写', null]);
+    expect(steps).toEqual(['zh→en', '入账', '急停', '回写', null]);
   });
 
   it('被超时放弃的那一轮迟到的 onStep 不得改写下一轮的步名', async () => {
@@ -202,19 +200,18 @@ describe('notion-gtd-sync 调度', () => {
       const mod = await import('../notion-gtd-sync.js');
       let release;
       const zhToEn = vi.fn(() => new Promise((r) => { release = r; }));
-      const enToZh = vi.fn().mockResolvedValue({});
       const rest = { pullMarked: vi.fn().mockResolvedValue({}), applyOwnerStops: vi.fn().mockResolvedValue({}), pushQiumiStatus: vi.fn().mockResolvedValue({}) };
       let tick;
       const setIntervalFn = vi.fn((cb) => { tick = cb; return { unref: vi.fn() }; });
       const env = { QIUMI_SYNC_ENABLED: 'true', QIUMI_SYNC_SINCE: '2026-09-23T00:00:00.000Z', QIUMI_SYNC_ROUND_TIMEOUT_MS: '1000' };
-      const runOnce = (pool, opts) => mod.runGtdSyncOnce(pool, { ...opts, token: 'tok', syncZhToEn: zhToEn, syncEnToZh: enToZh, ...rest });
+      const runOnce = (pool, opts) => mod.runGtdSyncOnce(pool, { ...opts, token: 'tok', syncZhToEn: zhToEn, ...rest });
       mod.ensureGtdSyncLoop({ query: vi.fn() }, { env, setIntervalFn, runOnce });
       const first = tick();
       await vi.advanceTimersByTimeAsync(1001);
       await first;                                   // 第一轮超时，卡在 zh→en
       release({ created: 0, skipped: 0, repaired: 0 }); // 旧轮第一步这才返回
       await vi.advanceTimersByTimeAsync(0);          // 让旧轮跑到下一步边界
-      expect(enToZh).not.toHaveBeenCalled();         // 边界处停下，不再写
+      expect(rest.pullMarked).not.toHaveBeenCalled();         // 边界处停下，不再写
       const out = await mod.gtdSyncJobHandler({ query: vi.fn() }, { env, setIntervalFn });
       expect(out.lastRun).toMatchObject({ error: 'round_timeout', step: 'zh→en' }); // 迟到结果没覆盖
       expect(out.liveness_at).toBe('2026-09-24T03:00:00.000Z');

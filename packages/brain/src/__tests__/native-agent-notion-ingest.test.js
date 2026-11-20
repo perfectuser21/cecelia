@@ -64,7 +64,7 @@ describe('Notion完整交办经Brain原生Agent接入',()=>{
   state.notion.mockRejectedValue(new Error('isolated full body unavailable'));
   const result=await runGtdSyncOnce({query:state.query},{token:'fixture',
    syncZhToEn:async(_pool,token,options)=>{await options.fetchPageContent(token,ZH);return {created:1};},
-   syncEnToZh:async()=>({created:0}),pullMarked:async()=>({ingested:0}),applyOwnerStops:async()=>({}),pushQiumiStatus:async()=>({}),
+   pullMarked:async()=>({ingested:0}),applyOwnerStops:async()=>({}),pushQiumiStatus:async()=>({}),
   });
   expect(result.zhToEn).toMatchObject({error:'isolated full body unavailable'});
  });

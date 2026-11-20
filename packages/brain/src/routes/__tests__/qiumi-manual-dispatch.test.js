@@ -37,7 +37,7 @@ describe('qiumi-manual-dispatch：手机单任务派发与 coding Bridge 分离'
     mocks.route.mockImplementation(async () => {
       expect(task.status).toBe('queued');
       expect(task.claimed_by).toBeTruthy();
-      task.payload = { run_id: 'qiumi-fixed-run', qiumi_department: 'skill-factory', qiumi_route: {} };
+      task.payload = { provider:'native-agent',run_id: 'qiumi-fixed-run', qiumi_department: 'skill-factory', qiumi_route: {} };
       return { outcome: 'proceed' };
     });
     mocks.trigger.mockImplementation(async (routed) => ({
@@ -115,7 +115,7 @@ describe('qiumi-manual-dispatch：手机单任务派发与 coding Bridge 分离'
   });
 
   it('SSH 响应不确定，保留运行交结果收割，不能回队重复派单', async () => {
-    mocks.trigger.mockResolvedValue({ success: false, dispatchUncertain: true, reason: 'openclaw_agent_spawn_failed', error: 'SSH timeout' });
+    mocks.trigger.mockResolvedValue({ success: false, dispatchUncertain: true, reason: 'native_agent_execution_unknown', error: 'SSH timeout' });
     const r = await request(app).post('/api/brain/tasks/phone-task/dispatch').send({});
     expect(r.status).toBe(202);
     expect(r.body.execution_state).toBe('unknown');

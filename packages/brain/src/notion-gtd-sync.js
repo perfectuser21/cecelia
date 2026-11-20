@@ -4,15 +4,16 @@
  * 人从 Notion 进、机器从 Brain 进、Notion 永远是投影。
  *  - zh→en：中文「委派 ∧ 任务号空 ∧ 未归档 ∧ 创建时间≥since」→ 英文库建行（Description 前缀 [zh:<id32>]）
  *           → 中文任务号写 en:<id32> 占位（谁先写谁赢，与旧 us-vps 脚本并存期互斥）
- *  - en→zh：英文原生 Delegated（无 [zh:]、无 brain:、无 [en-native]）→ 中文表建行（备注 [en:<id32>]，任务号 en:占位）
- *  - 入账（Task 4）：notion-push-sync.ingestDelegatedPage 认标记 → Brain qiumi_task
+ *  - 入账：普通英文 Delegated 严格读取完整正文 → Brain qiumi_task，无需内部标记；不复制中文页。
  *  - 回写/急停（Task 5）：pushQiumiStatus / applyOwnerStops
  * 铁律：中文「收集/下一个行动/阻塞」永不写、除急停外永不读（ZH_QUERY_FILTER 只含 委派）；
  *       「淘汰」仅在 Brain 任务已 cancelled 时回写，急停读到已终态任务的淘汰页不再触发变更（见 lib/qiumi-status-map.js 文件头）。
  * 页 id 只放 payload，不碰 tasks.notion_id（canonical 投影 projection/notion.js 会覆盖它）。
  */
 import { notionReq as defaultNotionReq, getToken } from './recurring-notion-sync.js';
-import { pullMarkedNotionTasks, fetchNotionPageContent } from './notion-push-sync.js';
+import { pullNotionTasks, fetchNotionPageContent } from './notion-push-sync.js';
+import {pushEnglishTask, readEnglishControls, acknowledgeEnglishControls, resultTextOf} from './lib/notion-english-task-sync.js';
+export {resultTextOf} from './lib/notion-english-task-sync.js';
 import { withBackoff } from './lib/notion-backoff.js';
 import {
   QIUMI_STATUS_MAP, ZH_HUMAN_ONLY_STATUSES, OWNER_HOLD_REASON, zhPriorityToBrain, zhWriteFor, enStatusFor,
@@ -108,21 +109,6 @@ export function buildEnPageFromZh(zh, pageContent = '') {
   return { parent: { database_id: EN_TASKS_DB }, properties };
 }
 
-export function buildZhPageFromEn(en, pageContent = '') {
-  const title = en.name.replace(/^\[P[0-3]\]\s*/, '');
-  const remark = [`[en:${en.id32}]`, en.description, pageContent].filter(Boolean).join(' ');
-  const properties = {
-    '名称': { title: text(title) },
-    '备注': { rich_text: text(remark) },
-    '状态': { status: { name: '委派' } },
-    'OpenClaw任务号': { rich_text: text(`en:${en.id32}`) },
-  };
-  if (en.planDate) properties['预期开始时间'] = { date: { start: en.planDate } };
-  if (en.planEnd) properties['预期结束时间'] = { date: { start: en.planEnd } };
-  if (en.delegatedBy) properties['委派人'] = { select: { name: en.delegatedBy } };
-  return { parent: { database_id: GTD_DB_ID }, properties };
-}
-
 async function queryAll(notionReq, token, dbId, filter, sorts) {
   const results = [];
   let cursor = null;
@@ -178,14 +164,14 @@ export async function syncZhToEn(pool, token, {
 
 export const PUSH_QIUMI_QUERY = `
     WITH receipts AS (
-      SELECT id, status, error_message, blocked_reason, blocked_detail, result, notion_props, updated_at,
+      SELECT id, title, status, error_message, blocked_reason, blocked_detail, result, notion_props, updated_at,
              payload->>'notion_zh_page_id' AS zh_page_id,
              payload->>'notion_page_id' AS en_page_id,
              payload->>'next_run_at' AS next_run_at, payload->'device_busy' AS device_busy,
              md5(jsonb_build_array(status, error_message, blocked_reason, blocked_detail, result,
-                                  payload->>'next_run_at', payload->'device_busy')::text) AS receipt_fingerprint
+                                  payload->>'next_run_at', payload->'device_busy', notion_props->>'qiumi_control_feedback')::text) AS receipt_fingerprint
         FROM tasks
-       WHERE payload->>'notion_zh_page_id' IS NOT NULL
+       WHERE (payload->>'notion_zh_page_id' IS NOT NULL OR payload->>'notion_page_id' IS NOT NULL)
          -- 中文行只由 qiumi_task 父任务回写；device_job 子任务不能覆盖或二次入账。
          AND task_type = 'qiumi_task'
     )
@@ -202,10 +188,6 @@ const readableReason = (value) => typeof value === 'string' ? value.trim()
     : '';
 const reasonTextOf = (t) => readableReason(t.error_message) || readableReason(t.blocked_detail) || readableReason(t.blocked_reason);
 
-export const resultTextOf = (result) => {
-  const r = result?.receipt ?? result ?? {};
-  return String(r.finalAssistantVisibleText ?? r.text ?? r.summary ?? '').slice(0, 1900);
-};
 const bizToday = () => new Date(Date.now() - 4 * 3600 * 1000).toISOString().slice(0, 10); // 业务日早 4 点切
 
 /** Brain → 中文页（zh 通道 ≤50/轮）+ 英文页 Status。人工态行只更指纹不写页。 */
@@ -266,6 +248,17 @@ async function pushOneQiumiRow(pool, token, t, { notionReq, today, now }) {
   const map = QIUMI_STATUS_MAP[t.status];
   if (!map || !map.zh) { await stamp(); return 'nomap'; }
   try {
+    if (!t.zh_page_id && t.en_page_id) {
+      const outcome = await pushEnglishTask(token, t, notionReq);
+      if (outcome === 'human') await stamp('english_human_status');
+      else {
+        await pool.query(`UPDATE tasks SET notion_props=COALESCE(notion_props,'{}'::jsonb)
+          || jsonb_build_object('qiumi_pushed_en_status',$2::text) WHERE id=$1`,
+        [t.id, enStatusFor(t.status, {blockedReason: t.blocked_reason})]);
+        await stamp();
+      }
+      return outcome;
+    }
     const zhPage = await withBackoff(() => notionReq(token, `/pages/${t.zh_page_id}`, 'GET'));
     // 主理人删掉（归档）的中文行永远写不进去（400 Can't edit archived），09-28 实测 48h 重试 586 次。
     if (zhPage?.archived || zhPage?.in_trash) { await stamp(); return 'gone'; }
@@ -314,46 +307,12 @@ export async function applyOwnerStops(pool, token, { notionReq = defaultNotionRe
   // 委派（旧页/主理人手拖）与排队中（系统对 queued 任务写的新页）同属「恢复与改期」组
   const [discarded, holds, delegated, queued] = groups.map((pages) => pages.map(parseZhPage));
   const redelegated = [...new Map([...delegated, ...queued].map((zh) => [zh.id, zh])).values()];
+  const english = await readEnglishControls(pool, token, notionReq);
+  for (const control of english) (control.action === 'cancel' ? discarded : holds).push(control.page);
   const ownerStats = await applyOwnerChanges(pool, [discarded, holds, redelegated], { now });
+  await acknowledgeEnglishControls(pool, token, english, ownerStats, notionReq);
   const deviceStats = await rerouteUnresolvedDevices(pool, token, { notionReq, parsePage: parseZhPage });
   return { ...ownerStats, ...deviceStats };
-}
-
-/**
- * 英文库 Delegated 原生行 → 中文表回填。
- * 英文 Tasks 库不是秋米专属：主理人自己的排单、排班员 v1a 的排期行、OpenClaw 已派发行都住在里面。
- * 只按 Status=Delegated 捞，会把这些统统镜像成中文 GTD 行——中文表是主理人每天看的台面，
- * 污染它比漏同步严重得多。故四道跳过（标记行/原生标记/已入账 + 下面三条）全部 fail-closed。
- */
-export async function syncEnToZh(pool, token, {
-  notionReq = defaultNotionReq, fetchPageContent, now = () => new Date(), sinceIso = null,
-} = {}) {
-  const filter = { and: [{ property: 'Status', status: { equals: 'Delegated' } }] };
-  // ③ 并存期窗口：与 syncZhToEn 同源，英文库存量 Delegated 行不进本刀
-  if (sinceIso) filter.and.push({ timestamp: 'created_time', created_time: { on_or_after: sinceIso } });
-  const pages = await queryAll(notionReq, token, EN_TASKS_DB, filter);
-  const nowMs = now().getTime();
-  let created = 0; let skipped = 0; let repaired = 0;
-  for (const page of pages) {
-    const en = parseEnPage(page);
-    // ① OpenClaw 已派发行：英文库自有工作流的中间态，不是人新写的原生任务
-    // ② Plan Date 在未来：排班员的排期意图，到点后再回填（与 ingestDelegatedPage 的时间窗同语义）
-    if (en.zhId32 || en.enNative || en.brainTaskId || !en.name
-      || en.opcDispatched
-      || (en.planDate && new Date(en.planDate).getTime() > nowMs)
-      || (sinceIso && en.createdAt && en.createdAt < sinceIso)) { skipped += 1; continue; }
-    const mirrored = await findByMark(notionReq, token, GTD_DB_ID, '备注', `[en:${en.id32}]`);
-    // 建行与打标记非原子：中文行已在（上一轮 POST 成功、PATCH 挂了）就只补英文页的 [en-native]
-    if (!mirrored) {
-      const content = fetchPageContent ? await fetchPageContent(token, en.id) : '';
-      await withBackoff(() => notionReq(token, '/pages', 'POST', buildZhPageFromEn(en, content)));
-    }
-    await withBackoff(() => notionReq(token, `/pages/${en.id}`, 'PATCH', {
-      properties: { Description: { rich_text: text(`${en.description} ${EN_NATIVE_MARK}`.trim()) } },
-    }));
-    if (mirrored) repaired += 1; else created += 1;
-  }
-  return { created, skipped, repaired };
 }
 
 /** 单步失败只 warn 不抛：一条通道挂掉不能拖垮同一轮里剩下的四条。 */
@@ -367,17 +326,17 @@ const safe = async (label, fn) => {
 };
 
 /**
- * 一轮完整同步，顺序固定：zh→en → en→zh → 入账 → 急停 → 回写。
+ * 一轮完整同步，顺序固定：zh→en → 完整英文接单 → 急停 → 回写。
  * 顺序要紧：先把人写的行同步成英文行，再入账拿 task id，急停排在回写前——
  * 否则本轮刚被主理人拖到「淘汰」的行会先被回写成别的状态，人机互踩。
  */
 export async function runGtdSyncOnce(pool, {
   token = null, env = process.env, notionReq = defaultNotionReq,
-  syncZhToEn: zhToEnFn = syncZhToEn, syncEnToZh: enToZhFn = syncEnToZh,
-  pullMarked = pullMarkedNotionTasks, applyOwnerStops: stopsFn = applyOwnerStops,
+  syncZhToEn: zhToEnFn = syncZhToEn,
+  pullMarked: ingestFn = pullNotionTasks, applyOwnerStops: stopsFn = applyOwnerStops,
   pushQiumiStatus: pushFn = pushQiumiStatus, onStep = () => {}, isAbandoned = () => false,
 } = {}) {
-  // 取 token 也算一步：凭据没配/取不到时整轮五步统一报 notion_token_missing 并返回，
+  // 取 token 也算一步：凭据没配/取不到时整轮四步统一报 notion_token_missing 并返回，
   // 不抛——抛出去会穿过定时回调变成未捕获 rejection，整个循环从此哑掉。
   let tok = token;
   if (!tok) {
@@ -390,23 +349,25 @@ export async function runGtdSyncOnce(pool, {
   }
   if (!tok) {
     const e = Object.freeze({ error: 'notion_token_missing' });
-    return { zhToEn: e, enToZh: e, ingest: e, stops: e, push: e, at: new Date().toISOString() };
+    return { zhToEn: e, ingest: e, stops: e, push: e, at: new Date().toISOString() };
   }
   const sinceIso = env.QIUMI_SYNC_SINCE || null;
-  const common = { notionReq, fetchPageContent: fetchNotionPageContent };
-  // 超时后旧轮不能与新轮并发写（syncEnToZh 查后建非原子，两轮并发会在中文表建重复行）；
+  const common = {
+    notionReq,
+    fetchPageContent: (token, pageId) => fetchNotionPageContent(token, pageId, { requireComplete: true }),
+  };
+  // 超时后旧轮不能与新轮并发写（旧轮不能继续占用同一同步入口）；
   // 每步边界检查 isAbandoned，被放弃的轮最多再跑完当前步。
   // 每步前上报步名：整轮超时时唯一能说出"卡在哪"的证据（09-24 卡死 8.4h 事后无法复原就是缺这个）
-  const stepNames = ['zh→en', 'en→zh', '入账', '急停', '回写'];
+  const stepNames = ['zh→en', '入账', '急停', '回写'];
   const stepFns = [
     () => zhToEnFn(pool, tok, { ...common, sinceIso }),
-    () => enToZhFn(pool, tok, { ...common, sinceIso }),
-    () => pullMarked(pool, tok, { env }),
+    () => ingestFn(pool, tok, { env }),
     () => stopsFn(pool, tok, { notionReq }),
     () => pushFn(pool, tok, { notionReq }),
   ];
   const out = {};
-  const keys = ['zhToEn', 'enToZh', 'ingest', 'stops', 'push'];
+  const keys = ['zhToEn', 'ingest', 'stops', 'push'];
   for (let i = 0; i < stepNames.length; i += 1) {
     if (isAbandoned()) {
       onStep(null);

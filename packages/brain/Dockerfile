@@ -89,6 +89,10 @@ COPY --from=deps /repo/package-lock.json /repo/package-lock.json
 # 源代码
 COPY packages/brain/server.js ./
 COPY packages/brain/src/ ./src/
+# 原生Agent只在受管worker执行；Brain保留固定发布包与校验代码。
+COPY packages/brain/scripts/native-agent/ ./scripts/native-agent/
+COPY packages/brain/scripts/native-agent-release.mjs ./scripts/
+COPY packages/brain/scripts/coding-workflow/lib/codex-auth.mjs ./scripts/coding-workflow/lib/
 # 与同一冻结Git构建源绑定的说明书；不从宿主可变工作区补读。
 COPY docs/instruction-book/ ./docs/instruction-book/
 ENV INSTRUCTION_BOOK_DOCS_ROOT=/app/docs/instruction-book

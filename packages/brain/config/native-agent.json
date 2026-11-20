@@ -1,0 +1,12 @@
+{
+  "protocol": "brain-native-agent-deployment/v1",
+  "machine_role": "primary",
+  "release_root": "/Users/administrator/.local/share/cecelia/native-agent/releases",
+  "operator_config": "/Users/administrator/.config/cecelia/native-agent/profiles.json",
+  "default_account_ref": "brain-default",
+  "default_model": "gpt-6.2-sol",
+  "default_thinking": "medium",
+  "default_timeout_sec": 1800,
+  "default_department": "main",
+  "default_role": "agent"
+}

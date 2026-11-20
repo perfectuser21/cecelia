@@ -26,7 +26,7 @@ it('非原生或身份不匹配的在途任务仍拒绝取消，不伪造终态'
 it.each([true,false])('原生资源等待复核的取消不落普通blocked终态（authority=%s）',async matched=>{
  const query=vi.fn()
   .mockResolvedValueOnce({rows:[{id:'cmd-review',command_type:'cancel_requested',entity_id:'task-review',payload:{source:'qiumi_owner_stop'}}]})
-  .mockResolvedValueOnce({rows:[{id:'task-review',status:'blocked',blocked_reason:'owner_decision',executor_kind:'external-worker',result:{native_agent:{needs_review:true}}}]})
+  .mockResolvedValueOnce({rows:[{id:'task-review',status:'blocked',native_control_epoch:'9',blocked_reason:'owner_decision',executor_kind:'external-worker',result:{native_agent:{needs_review:true}}}]})
   .mockResolvedValue({rows:[],rowCount:1});
  state.request.mockResolvedValue(matched?{matched:true}:{matched:false,nativeOwned:true});
  expect(await applyProjectionCommands({query})).toEqual(matched?{applied:1,rejected:0,failed:0}:{applied:0,rejected:1,failed:0});
@@ -35,7 +35,7 @@ it.each([true,false])('原生资源等待复核的取消不落普通blocked终�
 it('普通blocked任务取消保留原语义，不误交原生运行器',async()=>{
  const query=vi.fn()
   .mockResolvedValueOnce({rows:[{id:'cmd-normal',command_type:'cancel_requested',entity_id:'task-normal',payload:{}}]})
-  .mockResolvedValueOnce({rows:[{id:'task-normal',status:'blocked',blocked_reason:'dependency',executor_kind:'other-worker',result:{}}]})
+  .mockResolvedValueOnce({rows:[{id:'task-normal',status:'blocked',native_control_epoch:'9',blocked_reason:'dependency',executor_kind:'other-worker',result:{}}]})
   .mockResolvedValue({rows:[],rowCount:1});
  expect(await applyProjectionCommands({query})).toEqual({applied:1,rejected:0,failed:0});
  expect(query.mock.calls.some(([sql])=>/UPDATE tasks SET status='cancelled'/.test(String(sql)))).toBe(true);
@@ -44,7 +44,7 @@ it('普通blocked任务取消保留原语义，不误交原生运行器',async()
 it('只有伪原生标签但没有server-run归属的blocked任务仍可按普通任务取消',async()=>{
  const query=vi.fn()
   .mockResolvedValueOnce({rows:[{id:'cmd-fake',command_type:'cancel_requested',entity_id:'task-fake',payload:{}}]})
-  .mockResolvedValueOnce({rows:[{id:'task-fake',status:'blocked',blocked_reason:'owner_decision',executor_kind:'external-worker',result:{native_agent:{needs_review:true}}}]})
+  .mockResolvedValueOnce({rows:[{id:'task-fake',status:'blocked',native_control_epoch:'9',blocked_reason:'owner_decision',executor_kind:'external-worker',result:{native_agent:{needs_review:true}}}]})
   .mockResolvedValue({rows:[],rowCount:1});
  expect(await applyProjectionCommands({query})).toEqual({applied:1,rejected:0,failed:0});
  expect(query.mock.calls.some(([sql])=>/UPDATE tasks SET status='cancelled'/.test(String(sql)))).toBe(true);

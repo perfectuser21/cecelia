@@ -6,8 +6,8 @@
  *
  * 根因：dispatchNextTask 的槽位总闸 `!slotBudget.dispatchAllowed` 复查仍不通过时
  * 整轮 return；而 qiumi_task 的专用出口 dispatchQiumiTask 在后面的候选循环里，根本走不到。
- * 但 qiumi_task 穿透 MMV 的 OpenClaw 网关执行，不占 fleet 槽位，自带 MMV 并发上限
- * (env.mmvConcurrency) 与同机串行闸，不该被 fleet 槽位拦住。
+ * qiumi_task 使用固定主机原生运输，不占通用 fleet 槽位；原生预约事务受宿主总并发上限
+ * (QIUMI_MMV_CONCURRENCY) 与设备串行锁约束，独立宿主容量不能被通用 fleet 槽位替代。
  *
  * 修复语义：总闸关着 → 先探测队列里有没有 qiumi_task 候选；有 → 置
  * qiumiOnlyBypass，继续往下走，且候选循环只选 qiumi_task（onlyTaskTypes:['qiumi_task']，
@@ -137,7 +137,7 @@ describe('任务池总闸关着：秋米任务旁路放行（任务 6e63bedf）'
 
     const r = await dispatchNextTask(null);
 
-    expect(r.reason, '总闸关着就把秋米任务一并拦了——它穿透 MMV 不占 fleet 槽位').not.toMatch(/^pool_/);
+    expect(r.reason, '总闸关着就把秋米任务一并拦了——它使用独立宿主原生运输并受宿主并发闸约束').not.toMatch(/^pool_/);
     expect(routeQiumiTask).toHaveBeenCalledTimes(1);
     expect(mockUpdateTask).toHaveBeenCalledWith({ task_id: 'q1', status: 'in_progress' });
   });

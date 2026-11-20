@@ -1,25 +1,11 @@
-/**
- * commander-watchdog.test.js — Commander 看门狗 + 心跳 + Bark 阈值（任务 17ea4536，决策 3c98fb36）。
- *
- * 09-30 事故：escort 02:52 被移除后 5 小时无人陪跑。钉死：
- *  - 心跳按 TAG / 账本 run_id / serial 三级定位在途 run，写 payload.commander_heartbeat_at（+tag/host/escort_id）
- *  - 看门狗：在途 run 心跳缺失/超 15min → ssh MMV 重新登记同名 escort（接班消息：只读账本与日志接上，不重发起），
- *    新 id 回写 payload，task_events commander_relaunched；同一 run 接班 ≥3 次 → Bark 一次并停止再拉
- *  - 趋势：同一 wf 连续 2 个自然日零线索 → 每日一次 Bark；一台 serial 24h 无 completed → Bark
- * 外部命令（ssh / Bark）全部桩成可断言的 spy，绝不真发。
- */
+/** 心跳与趋势保留；失联巡检不得复活旧执行器。 */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { sshTargetFor, resolvePrimaryWorkerId } from '../machine-registry.js';
 import {
   recordCommanderHeartbeat,
   runCommanderWatchdog,
   runWorkflowTrendBark,
-  buildEscortRelaunchRemote,
   DEFAULT_HEARTBEAT_STALE_MS,
-  MAX_RELAUNCH,
 } from '../commander-watchdog.js';
-
-const GATEWAY = sshTargetFor(resolvePrimaryWorkerId());
 
 function makePool(handlers) {
   const calls = [];
@@ -85,20 +71,6 @@ describe('recordCommanderHeartbeat', () => {
   });
 });
 
-describe('buildEscortRelaunchRemote', () => {
-  it('同名 escort-<host>-<TAG>，消息注明接班只读接上不重发起，带 Brain 单号；远端串单引号安全', () => {
-    const remote = buildEscortRelaunchRemote({ host: 'xian-m4', tag: 'cmd09300200', serial: 'ANGYVB4402004137', profile: 'legacy', taskId: 'task-run-1', relaunchCount: 2 });
-    expect(remote).toContain("cron add --timeout 90000 --name 'escort-xian-m4-cmd09300200' --agent media");
-    expect(remote).toContain("--session 'session:escort-xian-m4-cmd09300200' --every 10m");
-    expect(remote).toContain('接班');
-    expect(remote).toContain('只读账本与日志接上');
-    expect(remote).toContain('不重新发起');
-    expect(remote).toContain('Brain单=task-run-1');
-    expect(remote).toContain('cmdr-escort.txt');
-    expect(remote).not.toMatch(/[^\\]'[^ ]*"/); // 不混引号
-  });
-});
-
 describe('runCommanderWatchdog', () => {
   beforeEach(() => vi.clearAllMocks());
 
@@ -153,125 +125,26 @@ describe('runCommanderWatchdog', () => {
     expect(pool.calls.some(call => /UPDATE tasks/.test(call.sql))).toBe(false);
   });
 
-  it('心跳过期（判据在 SQL）→ 先 rm 旧 escort 再 add 同名 escort，新 id 回写 payload，计数 +1，task_events commander_relaunched；不 Bark', async () => {
-    const pool = makePool([
-      [/FROM tasks[\s\S]*commander_heartbeat_at/, (sql, params) => {
-        expect(sql).toMatch(/COALESCE\(started_at, due_at, created_at\) < NOW\(\)/);
-        expect(sql).toMatch(/commander_heartbeat_at/);
-        expect(sql).toMatch(/commander_relaunch_count/);
-        expect(params[0]).toBe(DEFAULT_HEARTBEAT_STALE_MS);
-        expect(params[1]).toBe(MAX_RELAUNCH);
-        return { rows: [RUN] };
-      }],
-      [/UPDATE tasks/, (sql, params) => ({ rows: [{ id: params[0] }], rowCount: 1 })],
-    ]);
-    const ssh = sshStub();
-    const bark = vi.fn().mockResolvedValue(true);
-    const out = await runCommanderWatchdog(pool, { execFileFn: ssh.fn, bark, gateMs: 0, now: Date.parse('2026-09-30T03:10:00Z') });
-    expect(out.relaunched).toBe(1);
-    expect(ssh.seen).toHaveLength(3);
-    expect(ssh.seen[0].target).toBe(GATEWAY);
-    expect(ssh.seen[0].remote).toBe('openclaw cron list --json');
-    expect(ssh.seen[1].remote).toContain('cron rm old-escort-id-0000');
-    expect(ssh.seen[2].remote).toContain("cron add --timeout 90000 --name 'escort-xian-m4-cmd09300200'");
-    const upd = pool.calls.find((c) => /UPDATE tasks/.test(c.sql) && c.params[0] === 'task-run-1');
-    const merged = JSON.parse(upd.params[1]);
-    expect(merged).toMatchObject({ escort_id: 'esc-relaunched-1111', commander_relaunch_count: 1, commander_relaunched_at: '2026-09-30T03:10:00.000Z' });
-    const ev = pool.calls.find((c) => /INSERT INTO task_events/.test(c.sql));
-    expect(ev.params[1]).toBe('commander_relaunched');
-    expect(bark).not.toHaveBeenCalled();
+  it('巡检扫描只认真实心跳和已告警标记，不让历史接班时间冒充心跳', async () => {
+    const pool = makePool([[/FROM tasks[\s\S]*commander_heartbeat_at/, (sql, params) => {
+      expect(sql).toMatch(/COALESCE\(started_at, due_at, created_at\) < NOW\(\)/);
+      expect(sql).not.toMatch(/commander_relaunched_at|commander_relaunch_count/);
+      expect(sql).toMatch(/commander_bark_at/);
+      expect(params).toEqual([DEFAULT_HEARTBEAT_STALE_MS]);
+      return { rows: [] };
+    }]]);
+    expect(await runCommanderWatchdog(pool, { gateMs: 0 })).toMatchObject({ scanned: 0, relaunched: 0 });
   });
 
-  it('第 3 次接班 → Bark 一次（含 TAG/机器/单号），payload.commander_bark_at 落下，之后不再拉', async () => {
-    const stale = { ...RUN, payload: { ...RUN.payload, commander_relaunch_count: 2 } };
-    const pool = makePool([
-      [/FROM tasks[\s\S]*commander_heartbeat_at/, { rows: [stale] }],
-      [/UPDATE tasks/, (sql, params) => ({ rows: [{ id: params[0] }], rowCount: 1 })],
-    ]);
-    const ssh = sshStub();
-    const bark = vi.fn().mockResolvedValue(true);
-    const out = await runCommanderWatchdog(pool, { execFileFn: ssh.fn, bark, gateMs: 0 });
-    expect(out.relaunched).toBe(1);
-    expect(out.barked).toBe(1);
-    expect(bark).toHaveBeenCalledTimes(1);
-    expect(bark.mock.calls[0][0]).toMatch(/Commander/);
-    expect(bark.mock.calls[0][1]).toMatch(/cmd09300200/);
-    expect(bark.mock.calls[0][1]).toMatch(/xian-m4/);
-    const merged = JSON.parse(pool.calls.find((c) => /UPDATE tasks/.test(c.sql)).params[1]);
-    expect(merged.commander_relaunch_count).toBe(3);
-    expect(merged.commander_bark_at).toBeTruthy();
-  });
-
-  it('缺 tag/host 时从 working_memory commander_launch:<TAG> / task_runs / phone_registry 补齐；都补不到 → 跳过并留痕，不发 ssh', async () => {
-    const bare = { id: 'task-bare', task_type: 'device_job', title: 'x', payload: { serial: 'ANGYVB4402004137', source: 'cron' } };
-    const pool = makePool([
-      [/FROM tasks[\s\S]*commander_heartbeat_at/, { rows: [bare] }],
-      [/FROM task_runs/, { rows: [{ run_id: 'social-keyword-leadgen-crontab-cmd09300222__a1.discovery', ended_at: null }] }],
-      [/FROM phone_registry/, { rows: [{ host: 'xian-m4', profile: 'legacy' }] }],
-      [/FROM working_memory/, { rows: [{ value_json: { escort_id: 'esc-from-launch', host: 'xian-m4' } }] }],
-      [/UPDATE tasks/, (sql, params) => ({ rows: [{ id: params[0] }], rowCount: 1 })],
-    ]);
-    const ssh = sshStub();
-    const out = await runCommanderWatchdog(pool, { execFileFn: ssh.fn, bark: vi.fn(), gateMs: 0 });
-    expect(out.relaunched).toBe(1);
-    expect(ssh.seen[1].remote).toContain('cron rm esc-from-launch');
-    expect(ssh.seen[2].remote).toContain("--name 'escort-xian-m4-cmd09300222'");
-
-    const pool2 = makePool([
-      [/FROM tasks[\s\S]*commander_heartbeat_at/, { rows: [{ ...bare, id: 'task-nohost', payload: { source: 'cron' } }] }],
-      [/UPDATE tasks/, (sql, params) => ({ rows: [{ id: params[0] }], rowCount: 1 })],
-    ]);
-    const ssh2 = sshStub();
-    const out2 = await runCommanderWatchdog(pool2, { execFileFn: ssh2.fn, bark: vi.fn(), gateMs: 0 });
-    expect(out2.relaunched).toBe(0);
-    expect(out2.skipped).toBe(1);
-    expect(ssh2.fn).not.toHaveBeenCalled();
-    const ev = pool2.calls.find((c) => /INSERT INTO task_events/.test(c.sql));
-    expect(ev.params[1]).toBe('commander_relaunch_skipped');
-  });
-
-  it('同名 escort 仍在 cron 表（wf-run 自带看门狗刚重拉过）→ 收养其 id 不再 add；连续收养 2 次心跳仍缺 → 转 rm+add', async () => {
-    const pool = makePool([
-      [/FROM tasks[\s\S]*commander_heartbeat_at/, { rows: [RUN] }],
-      [/UPDATE tasks/, (sql, params) => ({ rows: [{ id: params[0] }], rowCount: 1 })],
-    ]);
-    const ssh = sshStub(undefined, [{ id: 'esc-by-wfrun-77', name: 'escort-xian-m4-cmd09300200' }, { id: 'other', name: 'escort-xian-m1-cmd09300200' }]);
-    const out = await runCommanderWatchdog(pool, { execFileFn: ssh.fn, bark: vi.fn(), gateMs: 0 });
-    expect(out.adopted).toBe(1);
-    expect(out.relaunched).toBe(0);
-    expect(ssh.seen).toHaveLength(1);
-    const merged = JSON.parse(pool.calls.find((c) => /UPDATE tasks/.test(c.sql)).params[1]);
-    expect(merged).toMatchObject({ escort_id: 'esc-by-wfrun-77', commander_adopt_count: 1 });
-    expect(merged.commander_relaunch_count).toBeUndefined();
-    expect(pool.calls.find((c) => /INSERT INTO task_events/.test(c.sql)).params[1]).toBe('commander_adopted');
-
-    const pool2 = makePool([
-      [/FROM tasks[\s\S]*commander_heartbeat_at/, { rows: [{ ...RUN, payload: { ...RUN.payload, commander_adopt_count: 2, escort_id: 'esc-by-wfrun-77' } }] }],
-      [/UPDATE tasks/, (sql, params) => ({ rows: [{ id: params[0] }], rowCount: 1 })],
-    ]);
-    const ssh2 = sshStub(undefined, [{ id: 'esc-by-wfrun-77', name: 'escort-xian-m4-cmd09300200' }]);
-    const out2 = await runCommanderWatchdog(pool2, { execFileFn: ssh2.fn, bark: vi.fn(), gateMs: 0 });
-    expect(out2.relaunched).toBe(1);
-    expect(ssh2.seen.map((s) => s.remote.split(' ').slice(0, 3).join(' '))).toEqual(['openclaw cron rm', 'openclaw cron add']);
-    expect(ssh2.seen[0].remote).toContain('cron rm esc-by-wfrun-77');
-  });
-
-  it('ssh add 失败 / 回包无 id → 不改计数，不 Bark，留痕 commander_relaunch_failed', async () => {
-    const pool = makePool([
-      [/FROM tasks[\s\S]*commander_heartbeat_at/, { rows: [RUN] }],
-      [/UPDATE tasks/, (sql, params) => ({ rows: [{ id: params[0] }], rowCount: 1 })],
-    ]);
-    const ssh = sshStub('gateway busy');
+  it('全局巡检节流仍生效，窗口内不再读库或通知', async () => {
+    const pool = makePool([]);
     const bark = vi.fn();
-    const out = await runCommanderWatchdog(pool, { execFileFn: ssh.fn, bark, gateMs: 0 });
-    expect(out.relaunched).toBe(0);
-    expect(out.failed).toBe(1);
+    const now = Date.parse('2026-11-20T08:00:00Z');
+    await runCommanderWatchdog(pool, { bark, gateMs: 0, now });
+    const calls = pool.calls.length;
+    expect(await runCommanderWatchdog(pool, { bark, gateMs: 300000, now: now + 1000 })).toMatchObject({ skipped_reason: 'interval_gate' });
+    expect(pool.calls).toHaveLength(calls);
     expect(bark).not.toHaveBeenCalled();
-    expect(pool.calls.some((c) => /INSERT INTO task_events/.test(c.sql) && c.params[1] === 'commander_relaunch_failed')).toBe(true);
-    // 失败也要推后下次尝试（commander_relaunched_at），否则每 5 分钟对网关狂敲
-    const upd = pool.calls.find((c) => /UPDATE tasks/.test(c.sql));
-    expect(JSON.parse(upd.params[1]).commander_relaunched_at).toBeTruthy();
-    expect(JSON.parse(upd.params[1]).commander_relaunch_count).toBeUndefined();
   });
 });
 

@@ -81,3 +81,19 @@ test('公共入口将一次纠正交给固定Skill下一回合，第二次独立
  expect(saved.receipt.activities[0].commander_interventions).toBe(1);
  }finally{r?.close();fs.rmSync(f.root,{recursive:true,force:true});}
 });
+
+test('旧OpenClaw监督profile明确不可用且零Gateway执行，代码验收不冒充监督成功',async()=>{
+ const f=fixture();let r;const previousPath=process.env.PATH;
+ try{
+  const gateway=path.join(f.root,'openclaw');
+  fs.writeFileSync(gateway,`#!/bin/sh\nprintf invoked >> '${path.join(f.root,'gateway-started')}'\nexit 2\n`,{mode:0o700});
+  process.env.PATH=f.root+path.delimiter+previousPath;
+  f.profile.commander={kind:'openclaw',skill:{entry:'commander.md',version:'1'},timeout_s:1};
+  r=createWorkflowRunner(f.options);const id=f.id();await r.start(id);
+  const result=await terminal(r,id);
+  expect(result.status).toBe('completed');expect(result.commander_status).toBe('unavailable');
+  expect(f.events.some(e=>e.event_type==='COMMANDER_UNAVAILABLE')).toBe(true);
+  expect(fs.existsSync(path.join(f.root,'gateway-started'))).toBe(false);
+  expect(fs.readFileSync(path.join(f.root,'effects'),'utf8')).toBe('work');
+ }finally{process.env.PATH=previousPath;r?.close();fs.rmSync(f.root,{recursive:true,force:true});}
+});
