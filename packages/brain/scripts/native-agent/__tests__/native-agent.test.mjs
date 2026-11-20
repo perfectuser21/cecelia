@@ -7,7 +7,7 @@ import {createHash,randomUUID} from 'node:crypto';
 import {spawn,spawnSync} from 'node:child_process';
 const brainRoot=path.resolve(import.meta.dirname,'../../..');
 const bundleFiles=['scripts/native-agent/bundle.mjs','scripts/native-agent/config.mjs','scripts/native-agent/store.mjs','scripts/native-agent/process.mjs','scripts/native-agent/worker.mjs','scripts/native-agent/cli.mjs','scripts/coding-workflow/lib/codex-auth.mjs','src/orchestrator/activity-supervisor-state.cjs'];
-const bundleDigest=root=>hash(JSON.stringify(bundleFiles.map(p=>[p,fs.existsSync(path.join(root,p))?hash(fs.readFileSync(path.join(root,p))):'missing']))));
+const bundleDigest=root=>hash(JSON.stringify(bundleFiles.map(p=>[p,fs.existsSync(path.join(root,p))?hash(fs.readFileSync(path.join(root,p))):'missing'])));
 const hash=x=>createHash('sha256').update(x).digest('hex');
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 function fixture(t,{timeout=10000,copyBundle=false}={}){
