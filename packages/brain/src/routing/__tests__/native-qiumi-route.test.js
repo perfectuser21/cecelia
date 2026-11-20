@@ -12,3 +12,14 @@ test('native显式设备无唯一台账身份必须停放，不能成为无锁�
  const result=await routeQiumiTask({id:'10000000-0000-4000-8000-000000000001',payload:{native_agent_content:{protocol:'notion-complete-body/v1',complete:true,empty_body:false,page_ids:['fixture-page']},qiumi_source:{body:'【执行参数】\n设备：fixture-phone\n【执行参数结束】\n操作手机'}}},{pool,env:{nativeAgent:true,departments:['main'],deviceKeywords:[]}});
  expect(result).toMatchObject({outcome:'unresolved',reason:'device_unresolved'});
 });
+const relationTask=body=>({id:'10000000-0000-4000-8000-000000000001',payload:{native_agent_content:{protocol:'notion-complete-body/v1',complete:true,empty_body:false,page_ids:['fixture-page']},qiumi_source:{body,agent_workflow_ids:['20000000-0000-4000-8000-000000000002']}}});
+test('已登记的非部门Agent relation必须原样送受信角色匹配，不能静默换成main',async()=>{
+ const registry={query:async sql=>({rows:sql.includes('FROM ops_agents')?[{name:'explicit-special-agent',notion_id:'20000000-0000-4000-8000-000000000002'}]:[],rowCount:0})};
+ expect(await routeQiumiTask(relationTask('请按指定执行者处理'),{pool:registry,env:{nativeAgent:true}})).toMatchObject({outcome:'agent',department:'explicit-special-agent',payloadPatch:{qiumi_department:'explicit-special-agent'}});
+});
+test('有未识别Agent/旧Workflow relation时明确停放，不能伪普通main任务',async()=>{
+ expect(await routeQiumiTask(relationTask('指定关系必须保留'),{pool,env:{nativeAgent:true}})).toMatchObject({outcome:'blocked',reason:'native_agent_agent_binding_required'});
+});
+test('正文显式Agent优先于未知relation，但不改变固定账号/模型选择',async()=>{
+ expect(await routeQiumiTask(relationTask('【执行参数】\n执行Agent：main\n【执行参数结束】\n由main处理'),{pool,env:{nativeAgent:true}})).toMatchObject({outcome:'agent',department:'main'});
+});
