@@ -10,6 +10,7 @@ import {commandsFor} from '../run-basic-check.mjs';
 
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 const representative = [
+  'packages/brain/scripts/native-agent/__tests__/native-agent.test.mjs',
   'scripts/dispatch-worker.test.mjs',
   'scripts/brain-image-retention.test.mjs',
   'scripts/brain-image-deploy.test.mjs',
@@ -61,6 +62,7 @@ test('旧实际行为测试的代表文件都拥有 Ops 命令入口', () => {
 });
 
 const fixtureFiles = [
+  'packages/brain/scripts/native-agent/__tests__/fixture.test.mjs',
   'scripts/__tests__/dashboard-release-fixture.test.sh',
   'scripts/dispatch-worker.test.mjs',
   'scripts/brain-image-retention.test.mjs',
