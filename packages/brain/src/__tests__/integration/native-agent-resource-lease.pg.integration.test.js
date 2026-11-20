@@ -120,4 +120,39 @@ describe.sequential('原生运行真账保护租约与设备', () => {
       expect((await row('device_locks', phone)).locked_by).toBe(h.id);
     } finally { await owner.query('ROLLBACK'); owner.release(); }
   });
+  it.each(['device_release', 'lease_release', 'claim', 'claim_start'])('reservation等锁提交后%s必须重新读取native真账', async action => {
+    const h = await holder({ evidence: false });
+    const owner = await pool.connect(), contender = await pool.connect();
+    const connection = { query: (...args) => contender.query(...args), connect: async () => ({ query: (...args) => contender.query(...args), release() {} }) };
+    let operation;
+    try {
+      await owner.query('BEGIN');
+      await owner.query('SELECT id FROM tasks WHERE id=$1 FOR UPDATE', [h.id]);
+      await acquireDeviceLock(h.id, phone, 1, owner);
+      await startRun({ taskId: h.id, runId: h.request.run_id, source: 'native-agent', context: { native_agent: { ...h.request, host, resource_bound: true } } }, { pool: owner });
+      await owner.query('UPDATE tasks SET result=result WHERE id=$1', [h.id]);
+      let ended = false;
+      operation = (action === 'device_release' ? releaseDeviceLocksHeldBy(h.id, connection)
+        : action === 'lease_release' ? releaseTaskLease(connection, { taskId: h.id })
+          : claimTaskWithLease(connection, { taskId: h.id, claimer: 'other', leaseSeconds: 60, start: action === 'claim_start' }))
+        .finally(() => { ended = true; });
+      for (let i = 0; i < 100 && !ended; i++) {
+        const wait = (await pool.query('SELECT wait_event_type FROM pg_stat_activity WHERE pid=$1', [contender.processID])).rows[0];
+        if (wait?.wait_event_type === 'Lock') break;
+        await new Promise(resolve => setTimeout(resolve, 2));
+      }
+      await owner.query('COMMIT');
+      const result = await operation;
+      if (action === 'device_release') expect(result).toBe(0);
+      else if (action === 'lease_release') expect(result).toEqual({ released: false });
+      else expect(result.status).toBe(409);
+      expect((await row('device_locks', phone)).locked_by).toBe(h.id);
+      expect((await row('task_leases', h.id)).released_at).toBeNull();
+      expect((await row('tasks', h.id)).claimed_by).toBeNull();
+    } finally {
+      await owner.query('ROLLBACK');
+      if (operation) await operation.catch(() => {});
+      owner.release(); contender.release();
+    }
+  });
 });
