@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { sessionDedupeKey, summarizeSession } from '../conversation-capture.js';
 
 describe('sessionDedupeKey', () => {
@@ -27,6 +27,14 @@ describe('sessionDedupeKey', () => {
 });
 
 describe('summarizeSession', () => {
+  it('未显式提供摘要器时直接返回null，不启动推理也不逐会话告警', async () => {
+    const warn=vi.spyOn(console,'warn').mockImplementation(()=>{});
+    try {
+      expect(await summarizeSession('完整原文')).toBeNull();
+      expect(await summarizeSession('另一会话',null)).toBeNull();
+      expect(warn).not.toHaveBeenCalled();
+    } finally { warn.mockRestore(); }
+  });
   it('LLM 返回合法 JSON topics 时，拼成编号列表文本', async () => {
     const fakeLlm = async () => ({ text: JSON.stringify({ topics: ['话题一', '话题二', '话题三'] }) });
     const result = await summarizeSession('原始内容', fakeLlm);
