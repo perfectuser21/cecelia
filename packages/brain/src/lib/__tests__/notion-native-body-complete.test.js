@@ -14,3 +14,11 @@ test('严格任务正文不能把截断或未读取更深块当作完整输入',
  await expect(readPageContent('page',{request,requireComplete:true,maxChars:20})).rejects.toThrow();
  await expect(readPageContent('page',{request,requireComplete:true,maxDepth:0})).rejects.toThrow();
 });
+for(const response of [undefined,{}, {results:[],has_more:true,next_cursor:null},{results:[{type:'toggle',has_children:true,toggle:{rich_text:[]}}],has_more:false}])test('严格完整读取拒绝损坏响应和不可下钻块：'+JSON.stringify(response),async()=>{
+ await expect(readPageContent('page',{request:async()=>response,requireComplete:true})).rejects.toThrow('native_agent_body_incomplete');
+});
+test('重复分页cursor必须明确阻塞，不能无限分页或把重复片段当完整',async()=>{
+ let calls=0;const request=async()=>{if(++calls>3)throw Error('fixture excessive pagination');return {results:[],has_more:true,next_cursor:'same'};};
+ await expect(readPageContent('page',{request,requireComplete:true})).rejects.toThrow('native_agent_body_incomplete');
+ expect(calls).toBe(2);
+});

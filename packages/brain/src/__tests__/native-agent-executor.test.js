@@ -5,7 +5,7 @@ const sha='a'.repeat(64), host={machine_id:'us-mac-m4',cli_path:'/owned/releases
 const env={BRAIN_NATIVE_AGENT_DEFAULT_ACCOUNT_REF:'',BRAIN_NATIVE_AGENT_DEFAULT_MODEL:'',BRAIN_NATIVE_AGENT_DEFAULT_THINKING:'',BRAIN_NATIVE_AGENT_DEFAULT_TIMEOUT_SEC:'',BRAIN_NATIVE_AGENT_MACHINE_ID:'us-mac-m4',BRAIN_NATIVE_AGENT_RELEASE_ROOT:'/owned/releases'};
 function setup(body='【执行设置——启动前落实】\nAI账号：team2\n【执行参数】\n执行Agent：media\n模型：openai/gpt-6.1-sol\n思考强度：high\n超时：30分钟\n【执行参数结束】\n'+ '正文'.repeat(1600)+'\n固定业务账号保持不变，结尾验收必须保留。'){
  const task={id:randomUUID(),title:'业务任务',task_type:'qiumi_task',tenant_id:'tenant-a',status:'in_progress',executor_kind:'external-worker',claimed_by:'native-test',
-  payload:{qiumi_department:'media',qiumi_kind:'agent',model:'openai/gpt-6.1-sol',thinking:'high',timeout_sec:1800,qiumi_source:{title:'业务任务',body,skill_ids:['fixture-skill'],notion_page_id:'page'}},result:{}};
+  payload:{native_agent_content:{protocol:'notion-complete-body/v1',complete:true,empty_body:false,page_ids:['fixture-page']},qiumi_department:'media',qiumi_kind:'agent',model:'openai/gpt-6.1-sol',thinking:'high',timeout_sec:1800,qiumi_source:{title:'业务任务',body,skill_ids:['fixture-skill'],notion_page_id:'page'}},result:{}};
  const requests=[];let stored;
  const pool={query:vi.fn(async(sql,params=[])=>{
   if(sql.includes('SELECT')&&sql.includes('FROM tasks'))return {rows:[task],rowCount:1};
@@ -19,7 +19,7 @@ function setup(body='【执行设置——启动前落实】\nAI账号：team2\n
   finalizeTask:async(_pool,_id,status)=>{task.status=status;return {rowCount:1,task};},
   transport:async(actualHost,request)=>{requests.push({host:actualHost,request});if(request.action==='start')stored=request;
    return {...stored,...request,protocol:'native-agent/v1',actual_cli_model:'gpt-6.2-sol',status:'running',launch_state:'running',execution_stopped:false,summary:'执行中',evidence:[],
-    frozen:{config_digest:sha,profile_digest:sha,command_digest:sha,skills_digest:sha,source_digest:sha,auth_identity_sha256:sha,stdin_digest:sha,codex_config_sha256:sha,codex_config_present:true}};}};
+    frozen:{config_digest:sha,profile_digest:sha,command_digest:sha,skills_digest:sha,source_digest:sha,auth_identity_sha256:sha,stdin_digest:sha,codex_config_sha256:sha,codex_config_present:true,permissions_digest:sha}};}};
  return {task,pool,deps,requests};
 }
 test('完整Notion正文/固定账号/模型/技能/毫秒预算送达原生入口，不使用description短副本',async()=>{
@@ -69,7 +69,7 @@ test('原binding取消只发原run cancel，确认已知进程组退出后才写
 });
 test('普通Notion正文无需用户填写内部参数，使用部署受信默认且不调用分类模型',async()=>{
  const f=setup('请整理一次资料并回填本页，保留全部原始来源与结论。');
- f.task.payload={qiumi_source:{body:'请整理一次资料并回填本页，保留全部原始来源与结论。'}};f.task.kind='agent';
+ f.task.payload={native_agent_content:{protocol:'notion-complete-body/v1',complete:true,empty_body:false,page_ids:['fixture-page']},qiumi_source:{body:'请整理一次资料并回填本页，保留全部原始来源与结论。'}};f.task.kind='agent';
  Object.assign(f.deps.env,{BRAIN_NATIVE_AGENT_DEFAULT_ACCOUNT_REF:'trusted-team',BRAIN_NATIVE_AGENT_DEFAULT_MODEL:'gpt-6.2-sol',BRAIN_NATIVE_AGENT_DEFAULT_THINKING:'high',BRAIN_NATIVE_AGENT_DEFAULT_TIMEOUT_SEC:'1800',BRAIN_NATIVE_AGENT_DEFAULT_DEPARTMENT:'main'});
  const result=await triggerNativeAgent(f.task,f.deps);
  expect(result,JSON.stringify(result)).toMatchObject({success:true});
@@ -99,4 +99,9 @@ test('显式设备必须在首个native start前取得实际设备锁，繁忙�
  const result=await triggerNativeAgent(f.task,f.deps);
  expect(acquired).toHaveLength(1);expect(acquired[0].slice(0,2)).toEqual([f.task.id,'owned-phone']);
  expect(result).toMatchObject({success:false,reason:'native_agent_device_locked'});expect(f.requests).toEqual([]);
+});
+test('首个host响应未知也先持有Brain租约，不把真实已起会话交给通用过期回收',async()=>{
+ const f=setup();f.deps.setLease=vi.fn(async()=>{});f.deps.transport=async()=>{throw Error('lost response');};
+ expect(await triggerNativeAgent(f.task,f.deps)).toMatchObject({success:false,dispatchUncertain:true});
+ expect(f.deps.setLease).toHaveBeenCalledWith(f.pool,f.task.id,2700);
 });
