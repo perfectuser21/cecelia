@@ -115,3 +115,22 @@ it('恢复清退完整组真实消费新helper，当前十二成员缺失/未知
   await expect(collect({deep,fixture:prior,extraPaths:[recoveryNew[0]],overrides:{[recoveryNew[0]]:read(recoveryNew[0])}})).rejects.toThrow();
  }
 });
+
+const nativeMarker='packages/brain/config/native-agent.json';
+const nativeMembers=[nativeMarker,'scripts/ci/run-basic-check.mjs','scripts/ci/ops-checks.mjs','scripts/brain-deploy.sh','packages/brain/src/scheduler-jobs.js','packages/brain/Dockerfile','scripts/ci/__tests__/basic-ops-coverage.test.mjs','scripts/ci/__tests__/helpers/brain-deploy-predecessor.fixture.mjs','scripts/ci/__tests__/basic-native-agent-deploy.test.mjs','packages/brain/scripts/native-agent-release.mjs','packages/brain/scripts/native-agent/__tests__/native-agent.test.mjs',...['bundle.mjs','config.mjs','store.mjs','process.mjs','worker.mjs','cli.mjs'].map(p=>'packages/brain/scripts/native-agent/'+p),'packages/brain/scripts/coding-workflow/lib/codex-auth.mjs','packages/brain/src/orchestrator/activity-supervisor-state.cjs'];
+it('原生执行端仅接受有限完整来源；14项PG与真实发布和镜像消费边，main272历史仍有效',async()=>{
+ const prior=readFixedExistingOpsGitFixture('2a921e107cc042e6bfafd367ae4735281957d35e');
+ for(const deep of [false,true]){
+  expect(await collect({deep,fixture:prior})).not.toHaveLength(0);
+  const current=await collect({deep});
+  expect(current).toContainEqual(expect.objectContaining({consumer_path:deploy,input_path:'packages/brain/scripts/native-agent-release.mjs',kind:'reviewed_native_agent_release_entry'}));
+  expect(current).toContainEqual(expect.objectContaining({consumer_path:'scripts/ci/run-basic-check.mjs',input_path:'packages/brain/scripts/native-agent/bundle.mjs',kind:'reviewed_native_agent_image_bundle_check'}));
+  if(!deep){const pg=current.filter(r=>r.kind==='reviewed_pr_postgres_test_selector');expect(pg).toHaveLength(14);for(const name of ['resource-lease','flow','notion-flow'])expect(pg).toContainEqual(expect.objectContaining({input_path:'packages/brain/src/__tests__/integration/native-agent-'+name+'.pg.integration.test.js'}));}
+  for(const member of nativeMembers){
+   await expect(collect({deep,missing:member})).rejects.toThrow();
+   await expect(collect({deep,overrides:{[member]:read(member)+'\n# unknown native source'}})).rejects.toThrow();
+   if(prior.paths.includes(member)&&prior.read(member)!==read(member))await expect(collect({deep,overrides:{[member]:prior.read(member)}})).rejects.toThrow();
+  }
+  await expect(collect({deep,fixture:prior,extraPaths:[nativeMarker],overrides:{[nativeMarker]:read(nativeMarker)}})).rejects.toThrow();
+ }
+});
