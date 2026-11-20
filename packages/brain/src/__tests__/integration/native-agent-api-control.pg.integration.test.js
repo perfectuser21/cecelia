@@ -153,3 +153,10 @@ test('普通伪nativeJSON不阻断单项与批量action',async()=>{
  expect(await batchUpdateTasks({filter:{status:'failed'},update:{status:'queued'}})).toMatchObject({success:true,count:1});
  expect((await read(h.id)).status).toBe('queued');
 });
+
+test('description隐式解除preflight阻塞也不能抢占真实native所有权',async()=>{
+ const h=await seed({status:'blocked'});
+ await state.pool.query("UPDATE tasks SET blocked_reason='pre_flight_rejected' WHERE id=$1",[h.id]);
+ const r=await request(app).patch('/tasks/'+h.id).send({description:'修改正文'});
+ expect(r.status).toBe(409);expect((await read(h.id)).status).toBe('blocked');
+});
