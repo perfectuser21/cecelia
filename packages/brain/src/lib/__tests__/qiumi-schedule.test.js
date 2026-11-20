@@ -86,8 +86,8 @@ describe('中文行解析与中英镜像', () => {
     expect(body.properties['Plan Date'].date).toEqual({ start: '2026-10-03T17:00:00.000+08:00', end: '2026-10-03T18:00:00.000+08:00' });
     expect(body.properties['Delegated By'].select.name).toBe('media');
   });
-  it('buildZhPageFromEn：英文 Plan Date 区间 → 中文预期开始/结束时间，Delegated By → 委派人', async () => {
-    const { parseEnPage, buildZhPageFromEn } = await import('../../notion-gtd-sync.js');
+  it('英文原生页保留计划区间和委派人，不依赖已退役的中文复制', async () => {
+    const { parseEnPage } = await import('../../notion-gtd-sync.js');
     const en = parseEnPage({
       id: EN_ID,
       properties: {
@@ -97,11 +97,10 @@ describe('中文行解析与中英镜像', () => {
         'Delegated By': { select: { name: 'main' } },
       },
     });
-    const props = buildZhPageFromEn(en).properties;
-    expect(props['预期开始时间'].date.start).toBe('2026-10-04T09:00:00.000+08:00');
-    expect(props['预期结束时间'].date.start).toBe('2026-10-04T10:00:00.000+08:00');
-    expect(props['委派人'].select.name).toBe('main');
-    expect(props).not.toHaveProperty('预期完成日期');
+    expect(en.planDate).toBe('2026-10-04T09:00:00.000+08:00');
+    expect(en.planEnd).toBe('2026-10-04T10:00:00.000+08:00');
+    expect(en.delegatedBy).toBe('main');
+    expect(en.zhId32).toBeNull();
   });
 });
 
@@ -112,7 +111,7 @@ describe('入账：开始时间未到 → 进库但不派', () => {
     mockNotionReq.mockImplementation(async (_t, path, method) => {
       if (path === `/pages/${ZH_ID}` && method === 'GET') return zh;
       if (path.startsWith('/users/')) return users[path.slice(7)] ?? {};
-      if (path.startsWith('/blocks/')) return { results: [] };
+      if (path.startsWith('/blocks/')) return { results: [], has_more:false };
       return {};
     });
     mockCreateRoutedTask.mockResolvedValue({ task: { id: TID } });

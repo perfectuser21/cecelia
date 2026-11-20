@@ -144,10 +144,10 @@ router.patch('/tasks/:task_id', rateLimit(TASK_MUTATION_RATE_LIMIT_OPTIONS), hea
       }
     }
 
-    // 非产 PR 的执行面（openclaw-agent）不许写 completed：完成闸按 PR 语义设计，
+    // 非产 PR 的执行面（native-agent）不许写 completed：完成闸按 PR 语义设计，
     // 这类任务的销账态是 completed_no_pr。只限该执行面——talk/research 等存量类型
     // 今天 PATCH completed 合法，不动。
-    if (status === 'completed' && !isStatusNoop && getTaskType(task.task_type)?.surface === 'openclaw-agent') {
+    if (status === 'completed' && !isStatusNoop && getTaskType(task.task_type)?.surface === 'native-agent') {
       return res.status(409).json({
         success: false,
         error: `task_type '${task.task_type}' 不产 PR，完成态必须写 completed_no_pr`,

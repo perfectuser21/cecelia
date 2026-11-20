@@ -3,7 +3,7 @@ import express from 'express';
 import request from 'supertest';
 
 const { query } = vi.hoisted(() => ({ query: vi.fn() }));
-vi.mock('../db.js', () => ({ default: { query } }));
+vi.mock('../db.js', () => ({ default: { query, connect:async()=>({query,release(){}}) } }));
 vi.mock('../lib/task-terminal.js', () => ({
   afterTerminalTransition: vi.fn().mockResolvedValue({}),
   isRelayTerminalStatus: (s) => ['completed', 'completed_no_pr'].includes(s),
@@ -21,7 +21,7 @@ beforeAll(async () => {
   const { default: actions } = await import('../routes/actions.js');
   app.use('/api/brain', tasks);
   const nested = express.Router();
-  registerTaskPatchRoute(nested, { pool: { query }, terminalStatuses: ['completed', 'failed'] });
+  registerTaskPatchRoute(nested, { pool: { query, connect:async()=>({query,release(){}}) }, terminalStatuses: ['completed', 'failed'] });
   app.use('/nested', nested);
   app.use('/api/brain', execution);
   app.use('/api/brain', actions);
@@ -31,6 +31,7 @@ beforeEach(() => {
     result: { workflow_authoring: { stage: 'verify', outputs: {} } } };
   query.mockReset();
   query.mockImplementation(async (sql) => {
+    if(sql.includes(' AS native_owned'))return {rows:[{native_owned:false}]};
     if (/SELECT[\s\S]*FROM tasks/.test(sql)) return { rows: [task] };
     if (/UPDATE tasks/.test(sql)) return { rows: [{ ...task, updated_at: 'now' }] };
     return { rows: [] };

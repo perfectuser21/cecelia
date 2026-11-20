@@ -16,7 +16,7 @@ const fixtureDir=path.join(brain,'scripts/smoke/fixtures/commander-foundation');
 
 // 在私有空schema用仓库真实表迁移建账，不依赖开发机public库已有结构。
 async function addFoundationTaskSchema(db){
- for(const [file,table] of [['283_skill_registry_and_journey_step_links.sql','skill_registry'],['000_base_schema.sql','cecelia_events'],['268_task_events.sql','task_events']])await db.query(migrationTable(file,table));
+ for(const [file,table] of [['283_skill_registry_and_journey_step_links.sql','skill_registry'],['000_base_schema.sql','cecelia_events'],['268_task_events.sql','task_events'],['065_device_locks.sql','device_locks']])await db.query(migrationTable(file,table));
  await db.query(migrationSql('413_work_routing_receipts.sql'));
  await db.query('CREATE TABLE initiative_runs(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),current_task_id uuid,orchestrator_version text)');
  await db.query(migrationTable('409_harness_gap_ledger.sql','harness_gaps'));

@@ -173,8 +173,8 @@ const NATIVE_AGENT_INPUTS={
  "scripts/ci/__tests__/basic-native-agent-deploy.test.mjs": "5380a708fac0578697a1ce62a950cc5c03f15ce6900db80b0f3cee214a395a54",
  "packages/brain/scripts/native-agent-release.mjs": "8fd7191c3ba28363c36391387fc659e3019c8b3cdc38bf54ca5dc4940620cab4",
  "tests/brain-ci-pg-layering.test.ts": "caa9b44da2c08084ae8d9e71c6e8f01cc7f252f9cc40e04c0ef2e8f64cfdd62c",
- "packages/brain/scripts/native-agent/bundle.mjs": "6147ea6dbaa1ee91893f05478feb1c095f91224e8c3c9b8490587bb554d054a4",
- "packages/brain/scripts/native-agent/config.mjs": "c24884add1822b15511d3d433d9f908a7ad039441f41f106dfe335c2b95b845a",
+ "packages/brain/scripts/native-agent/bundle.mjs": "0686f14f99ce0bb842133c4df0f42a83e5fc64bbe0fc308389ab4aca83154e45",
+ "packages/brain/scripts/native-agent/config.mjs": "998832cc568844a1bbfb8676d2f6cf6148e5102f036851372461d1110233238d",
  "packages/brain/scripts/native-agent/store.mjs": "9b64fb2814e3c7803cd5a285f727597392730daed4521b8fdc5aa9ddc0ec3982",
  "packages/brain/scripts/native-agent/process.mjs": "ce94d7d127f5e72e03bb3372eb01ab56d80ffb160110b9ccde85c80f49e2b5a4",
  "packages/brain/scripts/native-agent/worker.mjs": "301b9d5206054d14c1c7c7d2b9d39d54d5772e5593c4df316d378fd32d384dc4",
@@ -182,7 +182,7 @@ const NATIVE_AGENT_INPUTS={
  "packages/brain/scripts/coding-workflow/lib/codex-auth.mjs": "15bda8001eb742902dba602cb8a4706abf1dbdf62e35405153d2c8f02d46521d",
  "packages/brain/src/orchestrator/activity-supervisor-state.cjs": "e094eee3477d42d30465effd56ce390f011cf7653ae7ddbdd34ab30a038484a6",
  "scripts/ci/__tests__/basic-fixed-core.test.mjs": "6bd8b0c52467785f700909ddd10b886527e71a5e194ce7ea5026542cd5a4814e",
- "packages/brain/scripts/native-agent/__tests__/native-agent.node-test.mjs": "ce7e3c3761049595f5513502dafc97d98c3b64cf2ed2de47c9f7efc0641f31c4"
+ "packages/brain/scripts/native-agent/__tests__/native-agent.node-test.mjs": "2861842166d54814e261bb7947d85c5bd4fd7ddb43318337188c4ba2272fc2ab"
 };
 const NATIVE_AGENT_BUNDLE=["packages/brain/scripts/native-agent/bundle.mjs","packages/brain/scripts/native-agent/config.mjs","packages/brain/scripts/native-agent/store.mjs","packages/brain/scripts/native-agent/process.mjs","packages/brain/scripts/native-agent/worker.mjs","packages/brain/scripts/native-agent/cli.mjs","packages/brain/scripts/coding-workflow/lib/codex-auth.mjs","packages/brain/src/orchestrator/activity-supervisor-state.cjs"];
 export function reviewedPilotControls(profile,paths){

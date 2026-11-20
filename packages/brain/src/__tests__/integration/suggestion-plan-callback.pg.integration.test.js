@@ -91,6 +91,13 @@ beforeAll(async () => {
     CREATE TABLE decision_log (id bigserial PRIMARY KEY, trigger text, input_summary text, llm_output_json jsonb,
       action_result_json jsonb, status text);
     CREATE TABLE workflows (id uuid PRIMARY KEY);
+    CREATE TABLE task_events (
+      id bigserial PRIMARY KEY, task_id uuid, event_type text NOT NULL, payload jsonb,
+      created_at timestamptz NOT NULL DEFAULT now()
+    );
+    CREATE TABLE device_locks (
+      device_name text PRIMARY KEY, locked_by text, locked_at timestamptz, expires_at timestamptz
+    );
     CREATE TABLE task_runs (id bigserial PRIMARY KEY, task_id uuid, run_id text UNIQUE, status text, context jsonb,
       workflow_id uuid, ended_at timestamptz, result jsonb, error_message text, updated_at timestamptz);
   `);
@@ -101,7 +108,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   vi.clearAllMocks();
-  await pool.query('TRUNCATE callback_queue, decision_log, task_runs, suggestions, tasks RESTART IDENTITY');
+  await pool.query('TRUNCATE callback_queue, decision_log, task_runs, task_events, device_locks, suggestions, tasks RESTART IDENTITY');
   taskId = randomUUID(); suggestionId = randomUUID(); runId = randomUUID();
   await pool.query('INSERT INTO suggestions(id,status) VALUES($1,$2)', [suggestionId, 'in_progress']);
   await pool.query('INSERT INTO tasks(id,task_type,status,payload) VALUES($1,$2,$3,$4)',

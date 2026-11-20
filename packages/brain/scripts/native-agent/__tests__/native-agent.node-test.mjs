@@ -5,6 +5,7 @@ import path from 'node:path';
 import os from 'node:os';
 import {createHash,randomUUID,scryptSync} from 'node:crypto';
 import {spawn,spawnSync} from 'node:child_process';
+import {apiKeyIdentityFingerprint} from '../bundle.mjs';
 const brainRoot=path.resolve(import.meta.dirname,'../../..');
 const bundleFiles=['scripts/native-agent/bundle.mjs','scripts/native-agent/config.mjs','scripts/native-agent/store.mjs','scripts/native-agent/process.mjs','scripts/native-agent/worker.mjs','scripts/native-agent/cli.mjs','scripts/coding-workflow/lib/codex-auth.mjs','src/orchestrator/activity-supervisor-state.cjs'];
 const bundleDigest=root=>hash(JSON.stringify(bundleFiles.map(p=>[p,fs.existsSync(path.join(root,p))?hash(fs.readFileSync(path.join(root,p))):'missing'])));
@@ -31,7 +32,7 @@ process.stdin.on('end',()=>{
 `,{mode:0o755});
  let sourceRoot=brainRoot;if(copyBundle){sourceRoot=path.join(root,'bundle');for(const f of bundleFiles){const dest=path.join(sourceRoot,f);fs.mkdirSync(path.dirname(dest),{recursive:true,mode:0o700});if(fs.existsSync(path.join(brainRoot,f)))fs.copyFileSync(path.join(brainRoot,f),dest);}}
  const cli=path.join(sourceRoot,'scripts/native-agent/cli.mjs');
- const config={bundle_sha256:bundleDigest(sourceRoot),protocol:'native-agent-config/v1',state_dir:path.join(root,'state'),profiles:[{tenant:'tenant-a',department:'department-a',role:'agent-a',account_ref:'account-a',codex_home:path.join(root,'auth'),auth_mode:'api-only',auth_identity_sha256:hash('fixture-native-account-a'),codex_config_sha256:hash(''),codex_config_present:false,home:path.join(root,'home'),command,command_sha256:hash(fs.readFileSync(command)),cwd:path.join(root,'cwd'),models:['fixture-model'],model_aliases:{'fixture-model':'fixture-model'},thinking:['high'],timeout_ms:timeout,terminate_grace_ms:100,skill_roots:[path.join(root,'skills')],skills:{'skill-a':{path:skill,sha256:hash(fs.readFileSync(skill))}}}]};
+ const config={bundle_sha256:bundleDigest(sourceRoot),protocol:'native-agent-config/v1',state_dir:path.join(root,'state'),profiles:[{tenant:'tenant-a',department:'department-a',role:'agent-a',account_ref:'account-a',codex_home:path.join(root,'auth'),auth_mode:'api-only',auth_identity_salt:'0123456789abcdef'.repeat(4),auth_identity_sha256:apiKeyIdentityFingerprint('fixture-native-account-a','0123456789abcdef'.repeat(4)),codex_config_sha256:hash(''),codex_config_present:false,home:path.join(root,'home'),command,command_sha256:hash(fs.readFileSync(command)),cwd:path.join(root,'cwd'),models:['fixture-model'],model_aliases:{'fixture-model':'fixture-model'},thinking:['high'],timeout_ms:timeout,terminate_grace_ms:100,skill_roots:[path.join(root,'skills')],skills:{'skill-a':{path:skill,sha256:hash(fs.readFileSync(skill))}}}]};
  const file=path.join(root,'config.json');fs.writeFileSync(file,JSON.stringify(config),{mode:0o600});
  const request=(prompt='fixture complete body')=>({protocol:'native-agent/v1',action:'start',tenant:'tenant-a',department:'department-a',role:'agent-a',account_ref:'account-a',task_id:randomUUID(),run_id:randomUUID(),request_nonce:randomUUID(),input_digest:hash(prompt),prompt,model:'fixture-model',thinking:'high',skill_ids:['skill-a'],timeout_ms:timeout,deadline_ms:Date.now()+timeout});
  const control=(r,action)=>Object.fromEntries(Object.entries({...r,action}).filter(([k])=>!['prompt','model','thinking','skill_ids','timeout_ms','deadline_ms'].includes(k)));
@@ -184,9 +185,15 @@ test('API身份使用域隔离scrypt指纹时真实CLI固定账号执行并冻�
  assert.equal(JSON.parse(done.result.stdout).account,'account-a');
  assert.equal(f.launches().length,1);
 });
-test('API身份旧直接SHA256值明确拒绝，不兼容放行或启动child',async t=>{
- const f=fixture(t);f.config.profiles[0].auth_identity_sha256=hash('fixture-native-account-a');f.save();
- const x=await f.call(f.request());assert.notEqual(x.code,0);
- assert.equal(x.value.error,'native_agent_auth_identity_mismatch');assert.equal(x.value.launch_state,'not_started');
- assert.equal(f.launches().length,0);
+test('API身份旧SHA、缺失或畸形salt及漂移salt均零启动拒绝',async t=>{
+ const f=fixture(t),p=f.config.profiles[0];
+ for(const [identity,salt] of [[hash('fixture-native-account-a'),apiIdentitySalt],[expectedApiIdentity('fixture-native-account-a'),undefined],[expectedApiIdentity('fixture-native-account-a'),'00'],[expectedApiIdentity('fixture-native-account-a'),'ff'.repeat(32)]]){
+  p.auth_identity_sha256=identity;p.auth_identity_salt=salt;f.save();
+  const x=await f.call(f.request());assert.notEqual(x.code,0);
+  assert.equal(x.value.error,'native_agent_auth_identity_mismatch');
+  // 整份受信配置无效时尚未读取原run，保守unknown，不能用零新启动冒充旧run已停止。
+  const expectedState=salt===undefined||salt==='00'?'unknown':'not_started';
+  assert.equal(x.value.launch_state,expectedState);assert.equal(x.value.execution_stopped,expectedState==='not_started');
+  assert.equal(f.launches().length,0);
+ }
 });

@@ -160,3 +160,13 @@ test('description隐式解除preflight阻塞也不能抢占真实native所有权
  const r=await request(app).patch('/tasks/'+h.id).send({description:'修改正文'});
  expect(r.status).toBe(409);expect((await read(h.id)).status).toBe('blocked');
 });
+
+test('现役qiumi任务无真实native owner仍须completed_no_pr销账',async()=>{
+ const h=await seed({record:false});
+ const rejected=await request(app).patch('/engine/tasks/'+h.id).send({status:'completed'});
+ expect(rejected.status).toBe(409);expect(rejected.body.code).toBe('USE_COMPLETED_NO_PR');
+ expect((await read(h.id)).status).toBe('in_progress');
+ const accepted=await request(app).patch('/engine/tasks/'+h.id).send({status:'completed_no_pr'});
+ expect(accepted.status).toBe(200);expect((await read(h.id)).status).toBe('completed_no_pr');
+ expect((await read(h.id)).completed_at).not.toBeNull();
+});

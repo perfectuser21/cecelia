@@ -19,7 +19,7 @@ describe.sequential('旧拆解未启动的手机锁版本',()=>{
     const faultPool={query:async(...args)=>{const r=await pool.query(...args);if(String(args[0]).includes('WITH owned_task AS'))throw Error('response lost after commit');return r;}};
     const result=await dispatchManualQiumi({id,task_type:'qiumi_task'},faultPool,{
       deviceGate,
-      route:async()=>{await pool.query("UPDATE tasks SET task_type='architecture_scan',payload=$2 WHERE id=$1",[id,{run_id:'test-run',qiumi_department:'test',device_serial:serial}]);return {outcome:'proceed'};},
+      route:async()=>{await pool.query("UPDATE tasks SET task_type='architecture_scan',payload=$2 WHERE id=$1",[id,{provider:'native-agent',run_id:'test-run',qiumi_department:'test',device_serial:serial}]);return {outcome:'proceed'};},
       trigger:async()=>({success:false,reason:'retired_decomposition',retiredBeforeStart:true}),
     });
     expect(result).toMatchObject({status:409,body:{execution_state:'not_started',parked:null,state_unknown:true}});
@@ -35,7 +35,7 @@ describe.sequential('旧拆解未启动的手机锁版本',()=>{
     };
     const result=await dispatchManualQiumi({id,task_type:'qiumi_task'},pool,{
       deviceGate,
-      route:async()=>{await pool.query("UPDATE tasks SET task_type='architecture_scan',payload=$2 WHERE id=$1",[id,{run_id:'test-run',qiumi_department:'test',device_serial:a}]);return {outcome:'proceed'};},
+      route:async()=>{await pool.query("UPDATE tasks SET task_type='architecture_scan',payload=$2 WHERE id=$1",[id,{provider:'native-agent',run_id:'test-run',qiumi_department:'test',device_serial:a}]);return {outcome:'proceed'};},
       trigger:async()=>({success:false,reason:'retired_decomposition',retiredBeforeStart:true}),
     });
     expect(result).toMatchObject({status:409,body:{execution_state:'not_started',parked:false}});
@@ -48,7 +48,7 @@ describe.sequential('旧拆解未启动的手机锁版本',()=>{
     let newerVersion;
     const result=await dispatchManualQiumi({id,task_type:'qiumi_task'},pool,{
       deviceGate,
-      route:async()=>{await pool.query("UPDATE tasks SET task_type='architecture_scan',payload=$2 WHERE id=$1",[id,{run_id:'test-run',qiumi_department:'test',device_serial:serial}]);return {outcome:'proceed'};},
+      route:async()=>{await pool.query("UPDATE tasks SET task_type='architecture_scan',payload=$2 WHERE id=$1",[id,{provider:'native-agent',run_id:'test-run',qiumi_department:'test',device_serial:serial}]);return {outcome:'proceed'};},
       trigger:async()=>{if(reenter){const r=await acquireDeviceLock(id,serial,30,pool);expect(r.result).toBe('acquired');newerVersion=r.lock.acquisition_version;}return {success:false,reason:'retired_decomposition',retiredBeforeStart:true};},
     });
     const task=(await pool.query('SELECT status,claimed_by,blocked_reason,result FROM tasks WHERE id=$1',[id])).rows[0];

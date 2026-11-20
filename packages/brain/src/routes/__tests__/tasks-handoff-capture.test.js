@@ -2,7 +2,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 const boundary = vi.hoisted(() => ({ query: vi.fn() }));
-vi.mock('../../db.js', () => ({ default: { query: boundary.query } }));
+vi.mock('../../db.js',async()=>({default:(await import('./helpers/task-mutation-pool.js')).taskMutationFixturePool((...args)=>boundary.query(...args))}));
 vi.mock('../../event-bus.js', () => ({ emit: vi.fn() }));
 vi.mock('../../task-updater.js', () => ({ blockTask: vi.fn() }));
 import { registerTaskStatusRoutes } from '../tasks-status.js';

@@ -138,6 +138,8 @@ function setupDispatch(task) {
     const sql = String(statement).replace(/\s+/g, ' ').trim();
     if (/^UPDATE tasks SET claimed_by = \$1/.test(sql)) return {rows:[{id:task.id,claim_stamp:'owned-claim'}],rowCount:1};
     if (/^SELECT \* FROM tasks WHERE id/.test(sql)) return {rows:[task],rowCount:1};
+    if(/^SELECT name, notion_id FROM ops_agents/.test(sql)||/^SELECT device_name AS serial, host FROM device_locks/.test(sql)||/^SELECT serial, nickname, aliases, host, profile, model, owner, role, douyin_accounts, wechat, enabled FROM phone_registry/.test(sql))return {rows:[],rowCount:0};
+    if(/^UPDATE tasks SET payload = COALESCE/.test(sql)&&typeof values[1]==='string'){task.payload={...task.payload,...JSON.parse(values[1])};return {rows:[task],rowCount:1};}
     if (/^SELECT count\(\*\)::int AS n FROM tasks/.test(sql)) return {rows:[{n:0}],rowCount:1};
     if (/^SELECT value_json FROM working_memory WHERE key/.test(sql)) return {rows:[],rowCount:0};
     if (/^SELECT metadata FROM tasks WHERE id/.test(sql)) return {rows:[{metadata:{}}],rowCount:1};
@@ -315,15 +317,15 @@ describe('Bug #5: processCortexTask 失败时调用 handleTaskFailure', () => {
 
 describe('现役执行体按实际依赖使用bridge可用性闸', () => {
   beforeEach(() => { vi.clearAllMocks(); });
-  it('bridge不可用时OpenClaw任务仍可派发且不回滚claim', async () => {
+  it('bridge不可用时原生任务仍按固定宿主路由派发且不回滚claim', async () => {
     const executor = await import('../executor.js');
     executor.checkCeceliaRunAvailable.mockResolvedValue({available:false,error:'Bridge not running'});
-    const task={id:'openclaw-direct',title:'现役OpenClaw任务',description:'独立远端执行体',task_type:'qiumi_task',status:'queued',priority:'P1',payload:{run_id:'owned-qiumi-route',model:'openai/gpt-5.6-terra',qiumi_route:{source:'jev'}}};
+    const task={id:'native-direct',title:'固定主机原生任务',description:'独立远端执行体',task_type:'qiumi_task',status:'queued',priority:'P1',payload:{native_agent_content:{protocol:'notion-complete-body/v1',complete:true,empty_body:false,page_ids:['owned-notion-page']},qiumi_source:{body:'整理一次资料并按原任务交付'}}};
     setupDispatch(task);
-    mockTriggerCeceliaRun.mockResolvedValueOnce({success:true,taskId:task.id,runId:'owned-openclaw-run'});
+    mockTriggerCeceliaRun.mockResolvedValueOnce({success:true,taskId:task.id,runId:'owned-native-run'});
     const {dispatchNextTask}=await import('../tick.js');
     expect(await dispatchNextTask(['goal-1'])).toMatchObject({dispatched:true,task_id:task.id});
-    expect(mockTriggerCeceliaRun).toHaveBeenCalledWith(expect.objectContaining({task_type:'qiumi_task'}), { drainAdmission: expect.any(Symbol) });
+    expect(mockTriggerCeceliaRun).toHaveBeenCalledWith(expect.objectContaining({task_type:'qiumi_task',payload:expect.objectContaining({provider:'native-agent',qiumi_route:expect.objectContaining({source:'native-agent'})})}), { drainAdmission: expect.any(Symbol) });
     expect(executor.checkCeceliaRunAvailable).not.toHaveBeenCalled();
     expect(mockUpdateTask.mock.calls.filter(([row])=>row?.status==='queued')).toHaveLength(0);
     executor.checkCeceliaRunAvailable.mockResolvedValue({available:true});

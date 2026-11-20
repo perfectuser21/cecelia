@@ -172,6 +172,7 @@ export async function mockReqRes(method, routePath, body = {}) {
 export function transactionPhases() {
   return mockClient.query.mock.calls.map(([sql]) => {
     if (['BEGIN', 'COMMIT', 'ROLLBACK'].includes(sql)) return sql;
+    if (sql === 'SELECT id FROM tasks WHERE id=$1 FOR UPDATE') return 'LOCK';
     if (sql.includes('UPDATE tasks')) return 'UPDATE';
     if (sql.includes('INSERT INTO decision_log')) return 'INSERT';
     return 'UNEXPECTED';

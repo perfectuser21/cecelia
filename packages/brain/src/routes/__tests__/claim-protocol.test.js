@@ -12,7 +12,7 @@ import request from 'supertest';
 
 const mockPool = vi.hoisted(() => ({ query: vi.fn() }));
 
-vi.mock('../../db.js', () => ({ default: mockPool }));
+vi.mock('../../db.js',async()=>({default:(await import('./helpers/task-mutation-pool.js')).taskMutationFixturePool((...args)=>mockPool.query(...args))}));
 vi.mock('../../lib/task-terminal.js', async original => ({
   ...await original(), afterTerminalTransition: vi.fn(async () => ({ relay: null })),
 }));
@@ -198,7 +198,7 @@ describe('A. tasks.js PATCH /:task_id → in_progress: 自动写 claimed_by + ex
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ success: true, task_id: 'task-1', status: 'completed' });
     const { afterTerminalTransition } = await import('../../lib/task-terminal.js');
-    expect(afterTerminalTransition).toHaveBeenCalledWith(mockPool, 'task-1', 'completed', { sessionId: null });
+    expect(afterTerminalTransition).toHaveBeenCalledWith((await import('../../db.js')).default, 'task-1', 'completed', { sessionId: null });
     const updateCall = mockPool.query.mock.calls.find(([sql]) =>
       typeof sql === 'string' && sql.includes('UPDATE tasks SET')
     );

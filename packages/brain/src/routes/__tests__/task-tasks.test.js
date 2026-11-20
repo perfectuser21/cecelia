@@ -20,7 +20,7 @@ const KR_A = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const KR_B = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 const mockPool = vi.hoisted(() => ({ query: vi.fn() }));
 const mockCreateRoutedTask = vi.hoisted(() => vi.fn());
-vi.mock('../../db.js', () => ({ default: mockPool }));
+vi.mock('../../db.js',async()=>({default:(await import('./helpers/task-mutation-pool.js')).taskMutationFixturePool((...args)=>mockPool.query(...args))}));
 vi.mock('../../domain-detector.js', () => ({ detectDomain: () => ({ domain: 'agent_ops' }) }));
 vi.mock('../../work-routing-store.js', () => ({ createRoutedTask: mockCreateRoutedTask }));
 
@@ -122,7 +122,7 @@ describe('task-tasks routes — PATCH 参数对齐', () => {
     const res = await request(app).patch('/tasks/task-priority').send({ priority: 'P0' });
 
     expect(res.status).toBe(200);
-    expect(mockPool.query.mock.calls[0][0]).toContain("payload->'headed_takeover'");
+    expect(mockPool.query.mock.calls[0][0]).toMatch(/^UPDATE tasks SET priority/);
     const writes=mockPool.query.mock.calls.filter(([sql])=>/^UPDATE tasks/.test(sql));
     expect(writes).toHaveLength(1);expect(writes[0][1]).toEqual(['P0', 'task-priority']);
   });

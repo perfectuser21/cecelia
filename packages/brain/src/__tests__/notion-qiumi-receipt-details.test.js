@@ -32,12 +32,15 @@ describe('员工任务阻断回执', () => {
     expect(patch.properties['状态'].status.name).toBe('受阻');
   });
 
-  it('同状态原因或结果更新也能被查询；指纹不包含 updated_at', () => {
+  it('同状态原因、结果和人控反馈更新能被查询；普通投影记账不触发重推', () => {
     expect(PUSH_QIUMI_QUERY).toMatch(/receipt_fingerprint/);
     expect(PUSH_QIUMI_QUERY).toMatch(/qiumi_pushed_receipt/);
     expect(PUSH_QIUMI_QUERY).toMatch(/md5\(jsonb_build_array\(/);
     expect(PUSH_QIUMI_QUERY).toMatch(/blocked_detail/);
-    expect(PUSH_QIUMI_QUERY.match(/md5\(jsonb_build_array\([\s\S]*?\)::text\)/)?.[0]).not.toMatch(/updated_at|notion_props/);
+    const fingerprint = PUSH_QIUMI_QUERY.match(/md5\(jsonb_build_array\([\s\S]*?\)::text\)/)?.[0];
+    expect(fingerprint).toContain("notion_props->>'qiumi_control_feedback'");
+    // 只有面向人的新反馈参与内容指纹，已推状态/指纹/hold等投影记账不应自激重推。
+    expect(fingerprint.replace("notion_props->>'qiumi_control_feedback'", '')).not.toMatch(/updated_at|notion_props/);
   });
 
   it.each([['阻塞', false, '阻塞'], ['进行中', true, null]])('人工 hold 和归档页都保存当前指纹：%s archived=%s', async (status, archived, hold) => {

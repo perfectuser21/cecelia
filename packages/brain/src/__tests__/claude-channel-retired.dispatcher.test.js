@@ -214,9 +214,11 @@ describe('dispatcher：claude 通道退役按 no_executor 收口', () => {
     expect(mockRecordDispatchResult).not.toHaveBeenCalledWith(expect.anything(), false, 'executor_failed', undefined, TASK.id);
   });
 
-  it('完整 dispatchNextTask：claude 候选被拒后下一个是 qiumi 候选 → 同 tick 派出 qiumi', async () => {
-    // 上一 tick 已路由过的秋米单（路由幂等）：直接 proceed 到 trigger，不再打路由器
-    const QIUMI = { ...TASK, id: 'task-qiumi-next', title: 'Qiumi next task title', task_type: 'qiumi_task', payload: { qiumi_route: { engine: 'terra' }, run_id: 'run-q' } };
+  it('完整 dispatchNextTask：claude 候选被拒后合法秋米正文经原生路由在同 tick 派出', async () => {
+    const QIUMI = { ...TASK, id: 'task-qiumi-next', title: 'Qiumi next task title', task_type: 'qiumi_task', payload: {
+      native_agent_content: { protocol: 'notion-complete-body/v1', complete: true, empty_body: false, page_ids: ['fixture-page'] },
+      qiumi_source: { body: '整理资料并回填本页。' },
+    } };
     const queue = [TASK, QIUMI];
     serveQueue(queue);
 
@@ -226,6 +228,9 @@ describe('dispatcher：claude 通道退役按 no_executor 收口', () => {
     expect(mockTriggerCeceliaRun.mock.calls.map(([t]) => t.id)).toEqual([TASK.id, QIUMI.id]);
     expect(result.dispatched).toBe(true);
     expect(result.task_id).toBe(QIUMI.id);
+    const routeWrite = mockQuery.mock.calls.find(([sql, params]) => /SET payload = COALESCE/.test(String(sql)) && params?.[0] === QIUMI.id);
+    expect(routeWrite).toBeDefined();
+    expect(JSON.parse(routeWrite[1][1])).toMatchObject({ provider: 'native-agent', qiumi_route: { source: 'native-agent' } });
     expect(mockUpdateTask).toHaveBeenCalledWith({ task_id: TASK.id, status: 'queued' });
     expect(mockRecordFailure).not.toHaveBeenCalled();
     expect(failedDispatchEvents()).toHaveLength(0);

@@ -5,7 +5,19 @@ import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 
-const mockPool = vi.hoisted(() => ({ query: vi.fn() }));
+const { mockPool, mockClient, ownerRead } = vi.hoisted(() => {
+  const ownerRead = vi.fn();
+  const mockPool = { query: vi.fn(), connect: vi.fn() };
+  const mockClient = { query: vi.fn(async (sql, params) => {
+    if (/^(BEGIN|COMMIT|ROLLBACK)$/.test(sql)) return { rows: [] };
+    if (sql === 'SELECT id FROM tasks WHERE id=$1 FOR UPDATE') return { rows: [{ id: params[0] }] };
+    if (/ AS native_owned$/.test(sql)) return { rows: [{ native_owned: false }] };
+    if (sql === "SELECT payload->'headed_takeover' AS headed_takeover FROM tasks WHERE id=$1") return ownerRead(sql, params);
+    return mockPool.query(sql, params);
+  }), release: vi.fn() };
+  mockPool.connect.mockResolvedValue(mockClient);
+  return { mockPool, mockClient, ownerRead };
+});
 const mockCreateRoutedTask = vi.hoisted(() => vi.fn());
 vi.mock('../../db.js', () => ({ default: mockPool }));
 vi.mock('../../work-routing-store.js', () => ({ createRoutedTask: mockCreateRoutedTask }));
@@ -48,6 +60,9 @@ describe('task-tasks routes', () => {
 
   beforeEach(() => {
     mockPool.query.mockReset();
+    mockClient.query.mockClear();
+    mockPool.connect.mockClear();
+    ownerRead.mockReset().mockResolvedValue({ rows: [{ headed_takeover: null }] });
     mockCreateRoutedTask.mockReset();
     mockCreateRoutedTask.mockImplementation(async (_pool, routed) => ({
       task: {
@@ -373,7 +388,7 @@ describe('task-tasks routes', () => {
       mockUnownedPatch([]);
       const res = await request(app).patch('/tasks/missing').send({ title: 'x' });
       expect(res.status).toBe(404);
-      expect(mockPool.query.mock.calls[0][0]).toContain("payload->'headed_takeover'");
+      expect(mockPool.connect).not.toHaveBeenCalled();
       expect(mockPool.query.mock.calls.filter(([sql])=>/^UPDATE tasks/.test(sql))).toHaveLength(1);
     });
 
@@ -383,7 +398,7 @@ describe('task-tasks routes', () => {
 
       const res = await request(app).patch('/tasks/t1').send({ okr_initiative_id: initId });
       expect(res.status).toBe(200);
-      expect(mockPool.query.mock.calls[0][0]).toContain("payload->'headed_takeover'");
+      expect(mockClient.query.mock.calls.some(([sql]) => sql.includes("payload->'headed_takeover'"))).toBe(true);
       const [sql, params] = mockPool.query.mock.calls.find(([sql])=>/^UPDATE tasks/.test(sql));
       expect(sql).toContain('okr_initiative_id = $1');
       expect(params).toContain(initId);
@@ -394,16 +409,16 @@ describe('task-tasks routes', () => {
 
       const res = await request(app).patch('/tasks/t1').send({ okr_initiative_id: null });
       expect(res.status).toBe(200);
-      expect(mockPool.query.mock.calls[0][0]).toContain("payload->'headed_takeover'");
+      expect(mockClient.query.mock.calls.some(([sql]) => sql.includes("payload->'headed_takeover'"))).toBe(true);
       const [sql, params] = mockPool.query.mock.calls.find(([sql])=>/^UPDATE tasks/.test(sql));
       expect(sql).toContain('okr_initiative_id');
       expect(params).toContain(null);
     });
     it('owner读取失败时不能继续UPDATE',async()=>{
-      mockPool.query.mockRejectedValueOnce(new Error('owner lookup unavailable'));
+      ownerRead.mockRejectedValueOnce(new Error('owner lookup unavailable'));
       const res=await request(app).patch('/tasks/t1').send({okr_initiative_id:null});
-      expect(res.status).toBe(500);expect(mockPool.query).toHaveBeenCalledTimes(1);
-      expect(mockPool.query.mock.calls[0][0]).toContain("payload->'headed_takeover'");
+      expect(res.status).toBe(500);expect(ownerRead).toHaveBeenCalledTimes(1);
+      expect(mockClient.query.mock.calls.some(([sql]) => sql.includes("payload->'headed_takeover'"))).toBe(true);
       expect(mockPool.query.mock.calls.some(([sql])=>/^UPDATE tasks/.test(sql))).toBe(false);
     });
   });

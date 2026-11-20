@@ -2,7 +2,7 @@ import {beforeEach,expect,it,vi} from 'vitest';
 import express from 'express';
 import request from 'supertest';
 const query=vi.hoisted(()=>vi.fn());
-vi.mock('../../db.js',()=>({default:{query}}));
+vi.mock('../../db.js',async()=>({default:(await import('./helpers/task-mutation-pool.js')).taskMutationFixturePool((...args)=>query(...args))}));
 let app;
 beforeEach(async()=>{query.mockReset();app=express();app.use(express.json());const {default:router}=await import('../task-tasks.js');app.use('/tasks',router);});
 it('普通DELETE不能取消DBOS仍在运行的foundation任务',async()=>{
