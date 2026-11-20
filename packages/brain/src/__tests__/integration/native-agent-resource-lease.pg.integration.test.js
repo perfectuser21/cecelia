@@ -39,6 +39,23 @@ async function notStarted(h, overrides = {}) {
   } } }, { pool, emit: async () => {} });
   await pool.query("UPDATE tasks SET status='blocked' WHERE id=$1", [h.id]);
 }
+async function reviewed(h, variant = 'valid') {
+  const run = (await pool.query('SELECT id FROM task_runs WHERE run_id=$1', [h.request.run_id])).rows[0];
+  const reviewEventId = randomUUID();
+  const proof = { protocol: 'native-agent-resource-settlement/v1', basis: 'operator-cleanup-review',
+    ...h.request, host, devices: h.devices, task_run_id: run.id, review_event_id: reviewEventId,
+    pending_action_id: randomUUID(), receipt_sha256: 'b'.repeat(64),
+    review: { actor: 'authenticated-operator', cleanup_confirmed: true, effects_reviewed: true, evidence: ['independent-device-readback'] } };
+  const event = structuredClone(proof);
+  if (variant === 'wrong_run') event.run_id = randomUUID();
+  if (variant === 'wrong_epoch') event.devices[0].acquisition_version = '0';
+  if (variant === 'wrong_actor') event.review.actor = 'agent';
+  if (variant === 'no_evidence') event.review.evidence = [];
+  if (variant !== 'missing_event') await pool.query('INSERT INTO task_events(id,task_id,event_type,payload) VALUES($1,$2,$3,$4)',
+    [reviewEventId, h.id, 'native_agent_cleanup_reviewed', event]);
+  await finishRun({ runId: h.request.run_id, status: 'success', result: { actor: 'native-agent', native_agent_resource_settlement: proof } }, { pool, emit: async () => {} });
+  await pool.query("UPDATE tasks SET status='completed_no_pr' WHERE id=$1", [h.id]);
+}
 
 describe.sequential('原生运行真账保护租约与设备', () => {
   it.each(['unknown', 'dead'])('离线或身份不明不能failLost并释放设备：%s', async verdict => {
@@ -111,6 +128,19 @@ describe.sequential('原生运行真账保护租约与设备', () => {
   });
   it('not_started外观但错nonce不解除租约和设备隔离', async () => {
     const h = await holder(); await notStarted(h, { request_nonce: randomUUID() });
+    expect(await sweepStaleDeviceLocks(pool)).toBe(0);
+    expect((await reapExpiredLeases(pool)).extended).toBe(1);
+  });
+  it('真实运行已结束后，同运行独立复核事件与精确epoch允许正常解除', async () => {
+    const h = await holder(); await reviewed(h);
+    expect(await releaseDeviceLocksHeldBy(h.id, pool)).toBe(1);
+    expect((await reapExpiredLeases(pool)).released).toBe(1);
+    expect((await row('tasks', h.id)).status).toBe('completed_no_pr');
+    expect((await acquireDeviceLock(await seedTask(pool), phone, 1, pool)).result).toBe('acquired');
+  });
+  it.each(['missing_event', 'wrong_run', 'wrong_epoch', 'wrong_actor', 'no_evidence'])('普通TaskRun JSON不能冒充独立清场证明：%s', async variant => {
+    const h = await holder(); await reviewed(h, variant);
+    expect(await releaseDeviceLocksHeldBy(h.id, pool)).toBe(0);
     expect(await sweepStaleDeviceLocks(pool)).toBe(0);
     expect((await reapExpiredLeases(pool)).extended).toBe(1);
   });
