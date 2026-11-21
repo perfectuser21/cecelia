@@ -25,6 +25,10 @@ let prompt='';process.stdin.on('data',b=>prompt+=b);process.stdin.on('end',async
  const refScenario=['final-ref-recheck','final-ref-always-wrong','final-timeout-recheck'].includes('${mode}');
  const mediated='${mode}'.startsWith('mediated-');
  const repairScenario='${mode}'.startsWith('readonly-repair')||mediated;
+ if(!r&&'${mode}'==='delivery'){
+  fs.writeFileSync(process.argv[process.argv.indexOf('-o')+1],JSON.stringify({outputs:{number:42},handoff:{run:{source:'evidence/fact.json'}}}));
+  console.log(JSON.stringify({type:'thread.started',thread_id:'execution-thread'}));return;
+ }
  if(!r&&repairScenario){
   if('${mode}'==='readonly-repair-missing')fs.rmSync('evidence/fact.json');
   if(mediated&&('${mode}'!=='mediated-empty'||input.identity.attempt>1)){
@@ -45,7 +49,7 @@ let prompt='';process.stdin.on('data',b=>prompt+=b);process.stdin.on('end',async
  fs.appendFileSync('checker-calls.jsonl',JSON.stringify({argv:process.argv,prompt,request:r})+'\\n');
  const arg=process.argv.find(a=>a.startsWith('mcp_servers.commander_checker_evidence.args='));
  const serverArgs=JSON.parse(arg.slice(arg.indexOf('=')+1));
- const rpc=[{jsonrpc:'2.0',id:1,method:'initialize'},{jsonrpc:'2.0',id:2,method:'tools/call',params:{name:'read_file',arguments:{path:'evidence/fact.json'}}}];
+ const rpc=[{jsonrpc:'2.0',id:1,method:'initialize'},{jsonrpc:'2.0',id:2,method:'tools/call',params:{name:'read_file',arguments:{path:r.proposal?.delivery_evidence?.run?.source?.archive_path??'evidence/fact.json'}}}];
  const raw=cp.spawnSync(process.execPath,serverArgs,{input:rpc.map(JSON.stringify).join('\\n')+'\\n',encoding:'utf8'});
  if(raw.status!==0)throw Error('actual_evidence_server_failed:'+raw.stderr);
  const response=JSON.parse(raw.stdout.trim().split('\\n').at(-1));if(response.error)throw Error(JSON.stringify(response.error));
@@ -386,3 +390,39 @@ test('完工验收模式只启动一次 Checker，并拒绝遗留的开工验收
   expect(calls.map(call=>call.request.phase)).toEqual(['end']);
  }finally{f.close();}
 },20000);
+
+test.each([['number','source',null],['number','receipt','receipt'],['total','source','total']])('同一个交件入口按契约归档或拒绝缺项：%s／%s',async(requiredOutput,requiredEvidence,missing)=>{
+ const f=fixture({mode:'delivery'});
+ try{
+  const {run,profile,activity}=f;
+  const object=properties=>({type:'object',properties,required:Object.keys(properties),additionalProperties:false});
+  activity.acceptance.document.delivery={
+   schema:object({outputs:object({[requiredOutput]:{type:'integer'}}),evidence:object({run:object({[requiredEvidence]:{type:'string'}})})})
+  };
+  activity.acceptance.source.contract_digest=digest(activity.acceptance.document);
+  const runtime=await createRuntime({profile,run});
+  const input={run_tag:run.input.run_tag,execution_attempt:1,action_id:'deliver-once'};
+  const result=await runtime.executeActivity(activity,input,{identity:{task_id:run.task_id,run_id:run.run_id,activity_key:activity.key,action_id:input.action_id},cwd:f.cwd,deadlineMs:run.deadline_ms});
+  const base=path.join(f.cwd,'control',run.run_id,'actions',input.action_id);
+  const calls=()=>fs.readFileSync(path.join(f.cwd,'checker-calls.jsonl'),'utf8').trim().split('\n').map(JSON.parse);
+  if(!missing){
+   expect(result.status).toBe('completed');
+   const handoff=JSON.parse(fs.readFileSync(path.join(base,'handoff','manifest.json'),'utf8'));
+   expect(handoff.outputs).toEqual({number:42});
+   expect(handoff.identity).toMatchObject({run_id:run.run_id,activity_key:activity.key});
+   const source=handoff.evidence.run.source;
+   expect(hash(path.join(base,'handoff',source.file))).toBe(source.sha256);
+   expect(calls().at(-1).request.proposal.delivery_sha256).toBe(digest(handoff));
+   const reviewed=calls().at(-1).request.proposal.delivery_evidence.run.source;
+   expect(reviewed.archive_path).toMatch(/handoff\/files\//);
+   const receipts=fs.readdirSync(path.join(base,'handoff','files'));
+   expect(receipts).toEqual([source.sha256]);
+  }else{
+   expect(result).toMatchObject({status:'needs_review',reason_code:'skill_handoff_incomplete',outputs:{}});
+   expect(calls().map(c=>c.request.phase)).toEqual(['start']);
+   expect(JSON.parse(fs.readFileSync(result.evidence[0],'utf8')).message).toContain(missing);
+   expect(await runtime.checkActivity(activity,structuredClone(result),{phase:'end',input})).toMatchObject({verdict:'unknown',reason:'skill_handoff_incomplete'});
+   expect(calls()).toHaveLength(1);
+  }
+ }finally{f.close();}
+},15000);
