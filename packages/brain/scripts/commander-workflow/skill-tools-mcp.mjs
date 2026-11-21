@@ -111,6 +111,43 @@ export function hostToolsDidNotDispatch(workDir,identity){
   });
  }catch{return false;}
 }
+// 核对宿主调用是否已收束。外部业务结果仍由本轮独立探针核验。
+export function hostToolsAreQuiescent(workDir,identity,deadlineMs){
+ try{
+  const root=fs.realpathSync(workDir),directory=path.join(root,'host-tools');
+  const bindingFile=path.join(root,'host-tools-binding.json'),inputFile=path.join(root,'activity-input.json');
+  const privateDirectory=file=>{
+   const s=fs.lstatSync(file);return s.isDirectory()&&s.uid===process.getuid()&&!(s.mode&0o077);
+  };
+  if(!privateDirectory(root)||!privateDirectory(directory))return false;
+  const read=file=>{
+   const fd=fs.openSync(file,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW);
+   try{
+    const s=fs.fstatSync(fd);
+    if(!s.isFile()||s.nlink!==1||s.uid!==process.getuid()||(s.mode&0o077)||s.size>1024*1024)fail('host_tool_receipt_unprotected');
+    return fs.readFileSync(fd);
+   }finally{fs.closeSync(fd);}
+  };
+  const bindingBytes=read(bindingFile),binding=JSON.parse(bindingBytes),inputBytes=read(inputFile),input=JSON.parse(inputBytes);
+  if(binding.directory!==directory||fs.realpathSync(binding.input_file)!==inputFile||binding.input_sha256!==sha(inputBytes)
+    ||binding.deadline_ms!==deadlineMs||binding.activity_key!==input.activity_key
+    ||json(binding.identity)!==json(identity)||json(input.identity)!==json(identity))return false;
+  const names=fs.readdirSync(directory).sort(),records=names.filter(name=>name.endsWith('.json'));
+  if(names.length!==records.length*3)return false;
+  const bindingHash=sha(bindingBytes);
+  const terminal=records.every(name=>{
+   if(!safeName(name.slice(0,-5)))return false;
+   const file=path.join(directory,name),record=JSON.parse(read(file)),stdout=read(file+'.stdout');
+   read(file+'.stderr');
+   const state=JSON.parse(stdout).state;
+   return record.binding_sha256===bindingHash&&/^[a-f0-9]{64}$/.test(record.request_sha256??'')
+    &&record.state==='terminal'&&record.response?.state==='terminal'&&record.response.evidence_ref===file
+    &&Number.isInteger(record.response.exit_code)&&record.response.stdout_sha256===sha(stdout)
+    &&(state===undefined||state==='terminal');
+  });
+  return terminal&&json(names)===json(fs.readdirSync(directory).sort());
+ }catch{return false;}
+}
 export function hostToolsArgs(bindingFile,bindingHash,directory,authHome,{mediated=false}={}){
  if(!path.isAbsolute(authHome??''))fail('host_tool_auth_required');
  const toml=v=>v&&typeof v==='object'&&!Array.isArray(v)?`{${Object.entries(v).map(([k,x])=>`${json(k)}=${toml(x)}`).join(',')}}`:json(v);

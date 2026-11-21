@@ -22,14 +22,15 @@ export function inspectSupervisor(directory,binding){
  else if(!running)throw Error('activity_supervisor_missing');
  return manifest;
 }
-export async function waitSupervisedActivity(directory,binding,{signal,onHeartbeat,onAgentEvent,reconnecting=false}={}){
+export async function waitSupervisedActivity(directory,binding,{signal,onHeartbeat,onAgentEvent,reconnecting=false,observeOnly=false}={}){
  const manifest=inspectSupervisor(directory,binding);let cursor=0;
  const cancel=()=>durableWrite(path.join(directory,'cancel.json'),{nonce:manifest.nonce});
- signal?.addEventListener('abort',cancel,{once:true});if(signal?.aborted)cancel();
+ if(!observeOnly){signal?.addEventListener('abort',cancel,{once:true});if(signal?.aborted)cancel();}
  try{while(true){
+  if(observeOnly&&signal?.aborted)throw Error('activity_observation_cancelled');
   // 已接回的非交互 Activity 不再唤醒 Commander；监督进程的原始 stderr 保留全部证据。
   const eventsFile=path.join(directory,'events.jsonl');
-  if(!reconnecting&&fs.existsSync(eventsFile)){
+  if(!reconnecting&&!observeOnly&&fs.existsSync(eventsFile)){
    const lines=protectedText(eventsFile,3).split('\n');
    while(cursor<lines.length-1){const event=JSON.parse(lines[cursor++]);
     if(event.kind==='heartbeat')await onHeartbeat?.(event.value);
@@ -41,7 +42,7 @@ export async function waitSupervisedActivity(directory,binding,{signal,onHeartbe
   if(fs.existsSync(resultFile)){const value=read(resultFile);if(!validResult(value,manifest))throw Error('activity_supervisor_result_invalid');return value.transport;}
   if(identity==='absent'||identity==='reused'||Date.now()>manifest.deadline+(manifest.cleanup_grace_s+2)*1000)throw Error('activity_supervisor_unconfirmed');
   await new Promise(resolve=>setTimeout(resolve,25));
- }}catch(error){cancel();throw Object.assign(error,{executionStopped:false});}finally{signal?.removeEventListener('abort',cancel);}
+ }}catch(error){if(!observeOnly)cancel();throw Object.assign(error,{executionStopped:false});}finally{signal?.removeEventListener('abort',cancel);}
 }
 export async function startSupervisedActivity(directory,binding,activity,input,options,deadline){
  if(options.signal?.aborted)throw Object.assign(Error('run_cancelled'),{executionStopped:true});

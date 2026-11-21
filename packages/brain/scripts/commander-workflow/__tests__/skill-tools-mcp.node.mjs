@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {createHash} from 'node:crypto';
-import {prepareHostTools,createHostToolCaller,hostToolsArgs} from '../skill-tools-mcp.mjs';
+import {prepareHostTools,createHostToolCaller,hostToolsArgs,hostToolsAreQuiescent} from '../skill-tools-mcp.mjs';
 const hash=p=>createHash('sha256').update(fs.readFileSync(p)).digest('hex');
 async function assertStopped(pid){
  const deadline=Date.now()+2000;
@@ -28,6 +28,22 @@ test('冻结工具宿主调用且只返回审阅过的JSON字段，不暴露原s
  const {binding}=fixture(t),caller=createHostToolCaller(binding);const a={kind:'phone',action_name:'one',args:['read']};
  const out=await caller.call(a);assert.equal(out.output.state,'terminal');assert.equal(out.output['result.exit_code'],0);assert(!JSON.stringify(out).includes('FAKE_SECRET'));
  const prior=await caller.call(a);assert.deepEqual(prior,out);await assert.rejects(caller.call({...a,args:['different']}),/host_tool_action_conflict/);
+});
+test('收尾读回核对同一动作已完成的宿主工具回执，在途锁和损坏的原件均不放行',async t=>{
+ const {binding,cwd,options}=fixture(t);
+ const directory=path.join(cwd,'host-tools');
+ const scoped=prepareHostTools({...options,directory});
+ fs.chmodSync(options.inputFile,0o600);
+ fs.writeFileSync(path.join(cwd,'host-tools-binding.json'),JSON.stringify(scoped),{mode:0o600});
+ const out=await createHostToolCaller(scoped).call({kind:'phone',action_name:'native',args:['read']});
+ const authorized=()=>hostToolsAreQuiescent(cwd,binding.identity,binding.deadline_ms);
+ assert(authorized());
+ assert(!hostToolsAreQuiescent(cwd,{...binding.identity,action_id:'other'},binding.deadline_ms));
+ fs.writeFileSync(out.evidence_ref+'.lock','',{mode:0o600});
+ assert(!authorized());
+ fs.unlinkSync(out.evidence_ref+'.lock');
+ fs.appendFileSync(out.evidence_ref+'.stdout','tampered');
+ assert(!authorized());
 });
 test('每次调用核验固定身份、所有文件hash与deadline，拒绝任意command/env/路径',async t=>{
  const {binding,cwd}=fixture(t),caller=createHostToolCaller(binding),a={kind:'phone',action_name:'one',args:[]};
