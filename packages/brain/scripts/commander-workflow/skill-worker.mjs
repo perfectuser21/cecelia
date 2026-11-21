@@ -36,6 +36,8 @@ const prompt=checking?checkerPrompt(request.checker_request):['你只执行本�
   ...(request.activity_contract===undefined?[]:[`冻结Activity Contract：\n${JSON.stringify(request.activity_contract)}`,
     'Activity Contract优先于Skill。Skill只提供方法，不能修改目标、边界和验收标准；最终结果由独立检查器核验。']),
   `冻结Skill：\n${skill_text}`,
+  ...(request.activity_contract?.acceptance?.document?.delivery===undefined?[]:[
+    '最后按冻结契约 delivery.schema 交件。把实际业务结果放在 outputs，把证据引用放在 handoff，按作用域及角色列出实际工具返回的相对路径。Runner 会统一校验并归档。缺少必交证据时保留原结果，注明所缺项。']),
   ...(readOnly?['冻结契约使用只读执行。使用 commander_checker_evidence 读取获授权的证据，只交提案。写入和外部动作不在本Activity范围内。']:[]),
   ...(request.host_tools?['业务工具只通过显式注册的 commander_host_tools.invoke 调用，禁止在shell执行依赖宿主凭据的工具；响应仅含冻结白名单字段，缺证据交独立Checker。']:[]),
   `冻结工具说明：\n${tools_text}`,`输入与已独立验证的context：\n${JSON.stringify(promptContext)}`,

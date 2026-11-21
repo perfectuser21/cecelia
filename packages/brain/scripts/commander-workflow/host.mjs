@@ -17,7 +17,7 @@ import {digest,normalizeCommanderRun} from '../../src/orchestrator/commander-dec
 import {isMainModule,databaseConfig,ownerKey,withWorkflowClient,assertStoredRun} from './runtime-support.mjs';
 import {startHostHeartbeat} from './host-heartbeat.mjs';
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
-const runtimeFiles = ['runtime-support.mjs','host-heartbeat.mjs','supervisor-closeout.mjs','supervise.mjs','skill-adapter.mjs','skill-worker.mjs','skill-protocol.mjs','skill-tools-mcp.mjs','session-group.mjs','../../src/orchestrator/activity-supervisor.js','../../src/orchestrator/activity-supervisor-state.cjs','host.mjs','../../src/durable/commander-workflow.js','../../src/durable/commander-action-store.js',
+const runtimeFiles = ['runtime-support.mjs','host-heartbeat.mjs','supervisor-closeout.mjs','supervise.mjs','skill-adapter.mjs','activity-handoff.mjs','checker-evidence.mjs','checker-agent-protocol.mjs','skill-worker.mjs','skill-protocol.mjs','skill-tools-mcp.mjs','session-group.mjs','../../src/orchestrator/activity-supervisor.js','../../src/orchestrator/activity-supervisor-state.cjs','host.mjs','../../src/durable/commander-workflow.js','../../src/durable/commander-action-store.js',
   '../../src/orchestrator/commander-usage-ledger.js','../../src/orchestrator/commander-usage-ledger-summary.js',
   '../../src/orchestrator/commander-repair.js','../../src/orchestrator/commander-decision.js','../../src/orchestrator/commander-codex.js',
   '../coding-workflow/lib/codex-judge.mjs','../coding-workflow/lib/claude.mjs','../coding-workflow/lib/codex-session.mjs',

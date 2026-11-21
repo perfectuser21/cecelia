@@ -71,7 +71,7 @@ export async function readCheckerFact(binding,request){
   ...(reason?{status:'unavailable',reason}:{status:value.status,source:value.source,...(value.status==='available'?{facts:value.facts}:{reason:/^[a-z0-9_]{1,100}$/.test(value.reason)?value.reason:'provider_unavailable'})})};
  durableWrite(evidence_ref,receipt);return {receipt};
 }
-export function readCheckerEvidence(binding,request){
+export function readCheckerEvidence(binding,request,{includeBytes=false}={}){
  if(Date.now()>=binding.deadline_ms)fail('checker_evidence_deadline');
  if(!request||Object.keys(request).join(',')!=='path'||!relative(request.path))fail('checker_evidence_path_invalid');
  const file=path.resolve(binding.cwd,request.path);
@@ -92,7 +92,7 @@ export function readCheckerEvidence(binding,request){
  const receipt={nonce:binding.nonce,request_sha256:binding.request_sha256,evidence_ref,status,path:request.path,
   ...(status==='available'?{sha256:hash(bytes),bytes:bytes.length,...(mime?{mime_type:mime}:{text:bytes.toString('utf8')})}:{reason})};
  durableWrite(evidence_ref,receipt);
- return {receipt,...(mime?{image:{type:'image',mimeType:mime,data:bytes.toString('base64')}}:{})};
+ return {receipt,...(includeBytes&&bytes?{bytes}:{}),...(mime&&!includeBytes?{image:{type:'image',mimeType:mime,data:bytes.toString('base64')}}:{})};
 }
 export function checkerEvidenceReceipts(binding){
  return fs.readdirSync(binding.directory).filter(f=>f.endsWith('.json')).map(f=>{
