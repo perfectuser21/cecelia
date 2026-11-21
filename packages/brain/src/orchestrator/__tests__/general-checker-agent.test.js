@@ -26,8 +26,9 @@ let prompt='';process.stdin.on('data',b=>prompt+=b);process.stdin.on('end',async
  const refScenario=['final-ref-recheck','final-ref-always-wrong','final-timeout-recheck'].includes('${mode}');
  const mediated='${mode}'.startsWith('mediated-');
  const repairScenario='${mode}'.startsWith('readonly-repair')||mediated;
- if(!r&&'${mode}'==='delivery'){
-  fs.writeFileSync(process.argv[process.argv.indexOf('-o')+1],JSON.stringify({outputs:{number:42},handoff:{run:{source:'evidence/fact.json'}}}));
+ if(!r&&['delivery','delivery-existing-evidence'].includes('${mode}')){
+  const field='${mode}'==='delivery'?'handoff':'evidence';
+  fs.writeFileSync(process.argv[process.argv.indexOf('-o')+1],JSON.stringify({outputs:{number:42},[field]:{run:{source:'evidence/fact.json'}}}));
   console.log(JSON.stringify({type:'thread.started',thread_id:'execution-thread'}));return;
  }
  if(!r&&repairScenario){
@@ -392,8 +393,14 @@ test('完工验收模式只启动一次 Checker，并拒绝遗留的开工验收
  }finally{f.close();}
 },20000);
 
-test.each([['number','source',null],['number','receipt','receipt'],['total','source','total']])('同一个交件入口按契约归档或拒绝缺项：%s／%s',async(requiredOutput,requiredEvidence,missing)=>{
- const f=fixture({mode:'delivery'});
+test.each([
+ ['delivery','number','source',null],
+ ['delivery-existing-evidence','number','source',null],
+ ['delivery','number','receipt','receipt'],
+ ['delivery-existing-evidence','number','receipt','receipt'],
+ ['delivery','total','source','total']
+])('同一个交件入口按契约归档或拒绝缺项：%s／%s／%s',async(mode,requiredOutput,requiredEvidence,missing)=>{
+ const f=fixture({mode});
  try{
   const {run,profile,activity}=f;
   const object=properties=>({type:'object',properties,required:Object.keys(properties),additionalProperties:false});
@@ -446,5 +453,22 @@ test('逐项交付必须按输出 ID 配齐证据，拒绝缺失或多列的证�
   delete args.proposal.handoff['video-two'];
   const result=archiveActivityHandoff(args);
   expect(result.evidence['video-one'].raw.sha256).toBeTruthy();
+ }finally{f.close();}
+});
+
+test('交件可归档 100 条输出各自的 4 项证据和 5 项共享证据',()=>{
+ const f=fixture();
+ try{
+  const directory=path.join(f.cwd,'action');
+  fs.mkdirSync(directory);
+  const roles=count=>Object.fromEntries(Array.from({length:count},(_,index)=>[`role-${index}`,'evidence/fact.json']));
+  const outputs={rows:Array.from({length:100},(_,index)=>({id:`row-${index}`}))};
+  const handoff={run:roles(5),...Object.fromEntries(outputs.rows.map(({id})=>[id,roles(4)]))};
+  const result=archiveActivityHandoff({
+   delivery:{schema:{type:'object'},item_scope:{collection:'rows',id_field:'id'}},
+   identity:{run_id:f.run.run_id,activity_key:f.activity.key},proposal:{outputs,handoff},
+   config:{roots:['evidence']},cwd:f.cwd,directory,deadlineMs:f.run.deadline_ms
+  });
+  expect(Object.values(result.evidence).reduce((count,group)=>count+Object.keys(group).length,0)).toBe(405);
  }finally{f.close();}
 });
