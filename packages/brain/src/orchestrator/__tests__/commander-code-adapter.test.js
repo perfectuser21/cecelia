@@ -160,3 +160,42 @@ test('源活动外部执行未知则禁止Code finalizer，资源及执行次数
  const out=await workflow(f);expect(out.business_pass).toBe(false);expect(out.cleanup_status).toBe('blocked');
  expect(fs.existsSync(path.join(f.root,'owned-resource'))).toBe(true);expect(fs.existsSync(path.join(f.root,'executions.jsonl'))).toBe(false);
 });
+
+test('源活动超时后凭同动作原生终态证据自动归位，业务失败并且源动作只执行一次',async()=>{
+ const f=fixture();
+ const files={
+  'slow-source.js':`const fs=require('node:fs'),{spawn}=require('node:child_process');
+   let stdin='';process.stdin.on('data',part=>stdin+=part);
+   process.stdin.on('end',()=>{
+    const {action_id}=JSON.parse(stdin);fs.appendFileSync('source-dispatches',action_id+'\\n');
+    const native=spawn(process.execPath,['-e',"setTimeout(()=>require('node:fs').writeFileSync('native-stopped',process.argv[1]),5300)",action_id],{detached:true,stdio:'ignore'});
+    native.unref();setInterval(()=>{},1000);
+   });`,
+  'stop-check.cjs':`const fs=require('node:fs');let stdin='';process.stdin.on('data',part=>stdin+=part);
+   process.stdin.on('end',()=>{
+    const {identity,nonce}=JSON.parse(stdin);
+    const poll=setInterval(()=>{
+     if(!fs.existsSync('native-stopped')||fs.readFileSync('native-stopped','utf8')!==identity.action_id)return;
+     clearInterval(poll);console.log(JSON.stringify({identity,nonce,execution_stopped:true,evidence:{source:'native-stopped'}}));
+    },25);
+   });`,
+ };
+ for(const [name,source] of Object.entries(files)){
+  const file=path.join(f.root,name);fs.writeFileSync(file,source);f.profile.files[name]=sha(file);
+ }
+ const cleanup=f.profile.skill_runtime.activities.cleanup;
+ f.profile.skill_runtime.activities.source={checker:cleanup.checker,stop_checker:{command:process.execPath,
+  command_sha256:sha(process.execPath),entry:'stop-check.cjs',timeout_ms:4500}};
+ const source={...f.activity,key:'source',runtime:{...f.activity.runtime,entry:'slow-source.js'}};
+ f.activity={...f.activity,order:2,runtime:{...f.activity.runtime,phase:'finalize'}};f.run.contract.activities=[source,f.activity];
+ const out=await workflow(f,undefined,{businessMs:5200,cleanupMs:20000});
+ expect(out).toMatchObject({status:'needs_review',business_pass:false,cleanup_status:'completed'});
+ expect(out.attempt_history.find(attempt=>attempt.activity_key==='source')?.execution_unknown).toBe(true);
+ const dispatches=fs.readFileSync(path.join(f.root,'source-dispatches'),'utf8').trim().split('\n');
+ expect(dispatches).toHaveLength(1);
+ const proof=JSON.parse(fs.readFileSync(out.cleanup_stop_evidence,'utf8'));
+ expect(proof.observed).toMatchObject({identity:{action_id:dispatches[0]},execution_stopped:true,evidence:{source:'native-stopped'}});
+ expect(proof.request.nonce).toBe(proof.observed.nonce);
+ expect(fs.readFileSync(path.join(f.root,'executions.jsonl'),'utf8').trim().split('\n')).toHaveLength(1);
+ expect(fs.existsSync(path.join(f.root,'owned-resource'))).toBe(false);
+},25000);

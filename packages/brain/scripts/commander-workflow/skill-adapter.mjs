@@ -11,7 +11,7 @@ import {sessionGroup,sessionThreadFile} from './session-group.mjs';
 import {digest} from '../../src/orchestrator/commander-decision.js';
 import {checkerCriteria,verifyCheckerResult} from './checker-agent-protocol.mjs';
 import {checkerEvidenceReceipts} from './checker-evidence.mjs';
-import {hostToolsDidNotDispatch} from './skill-tools-mcp.mjs';
+import {hostToolsAreQuiescent,hostToolsDidNotDispatch} from './skill-tools-mcp.mjs';
 import {archiveActivityHandoff} from './activity-handoff.mjs';
 const hash=file=>createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 const readOnlyEffects=activity=>activity.runtime?.checker_repair?.effect_scope==='read_only';
@@ -307,6 +307,35 @@ export async function createRuntime({profile,run,verifySource=async()=>{},ledger
       const result=await verifiedResult(activity,input,transport,options.signal,options.deadlineMs,options.identity);settleAttempt(attempt,result,transport,directory);
       return result;
       }catch(error){if(attempt&&error.executionStopped===true)ledger.finishAttempt(attempt.attempt_id,{status:'not_started',reason_code:reasonCode(error)});throw error;}
+    },
+    async inspectActivityStop(activity,context,{identity,signal,deadlineMs,cleanupDeadlineMs}){
+      const checker=config.activities?.[activity.key]?.stop_checker;
+      if(checker===undefined)return undefined;
+      const directory=actionDir(identity),nonce=randomUUID();
+      const request={protocol:'commander-stop-check/v1',identity,nonce,source_deadline_ms:deadlineMs,cleanup_deadline_ms:cleanupDeadlineMs,context};
+      const evidenceFile=path.join(directory,'stop-'+nonce+'.json');
+      if(activity.runtime.phase!=='source'||identity.activity_key!==activity.key||identity.task_id!==run.task_id||identity.run_id!==run.run_id
+        ||!/^[a-f0-9]{64}$/.test(identity.action_id??'')||typeof checker?.entry!=='string'
+        ||!Object.hasOwn(profile.files,checker.entry)||path.isAbsolute(checker.entry)||!path.isAbsolute(checker.command??'')
+        ||!Number.isSafeInteger(checker.timeout_ms)||checker.timeout_ms<1||checker.timeout_ms>120000)throw Error('skill_stop_checker_invalid');
+      const eligible=()=>!signal?.aborted&&Date.now()>=deadlineMs&&Date.now()<cleanupDeadlineMs;
+      if(!eligible())throw Error('skill_stop_checker_deadline');
+      await verifyFrozenSources();
+      if(hash(checker.command)!==checker.command_sha256||inspectSupervisor(directory,identity).deadline!==deadlineMs)throw Error('skill_stop_checker_unbound');
+      const worker=await waitSupervisedActivity(directory,identity,{signal,observeOnly:true});
+      const hostToolsStopped=()=>activity.runtime.executor_kind==='code'||!config.host_tools||readOnlyEffects(activity)
+        ||hostToolsAreQuiescent(directory,identity,deadlineMs);
+      if(!Number.isSafeInteger(worker.ended_at_ms)||!hostToolsStopped()||!eligible())throw Error('skill_stop_checker_unconfirmed');
+      const transport=await checkerTransport({command:checker.command,entry:checker.entry,timeout_ms:checker.timeout_ms},request,signal);
+      if(transport.exit_code!==0||transport.spawn_error||transport.timed_out||transport.cancelled||transport.stdout_truncated||transport.signal)
+        throw Error('skill_stop_checker_unconfirmed');
+      const observed=JSON.parse(transport.stdout);
+      await verifyFrozenSources();
+      if(!eligible()||!hostToolsStopped()||hash(checker.command)!==checker.command_sha256||observed?.execution_stopped!==true||observed.nonce!==nonce
+        ||!sameIdentity(observed.identity,identity)||!observed.evidence||typeof observed.evidence!=='object'
+        ||Array.isArray(observed.evidence)||!Object.keys(observed.evidence).length)throw Error('skill_stop_checker_unconfirmed');
+      durableWrite(evidenceFile,{request,observed,supervisor_result:path.join(directory,'result.json')});
+      return {identity,execution_stopped:true,evidence_ref:evidenceFile};
     },
     async inspectActivity(activity,input,options){
       if(activity.runtime?.executor_kind!=='code')input={...input,execution_attempt:options.identity.attempt??1};
