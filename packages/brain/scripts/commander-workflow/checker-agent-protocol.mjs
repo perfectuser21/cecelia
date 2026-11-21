@@ -12,7 +12,7 @@ export function contractCriterionValues(document){
  }
  return values;
 }
-export function checkerCriteria(contract,phase){
+export function checkerCriteria(contract,phase,{allowEmptyPhase=false}={}){
  const a=contract?.acceptance;
  if(!object(a)||!object(a.source)||!object(a.document)||!Array.isArray(a.criteria)||!a.criteria.length
   ||!['repo','path','activity_ref'].every(k=>text(a.source[k]))
@@ -28,7 +28,7 @@ export function checkerCriteria(contract,phase){
    ||(typeof c.requirement==='string'&&!c.requirement.trim()))throw Error('checker_contract_incomplete');
   pointers.add(c.source_pointer);
  }
- const result=a.criteria.filter(c=>c.phase===phase);if(!result.length)throw Error('checker_contract_incomplete');return structuredClone(result);
+ const result=a.criteria.filter(c=>c.phase===phase);if(!result.length&&!allowEmptyPhase)throw Error('checker_contract_incomplete');return structuredClone(result);
 }
 export function checkerPrompt(request){
  return ['你是独立 General Checker，只验收，不执行或修复业务，不推进 Activity。',
