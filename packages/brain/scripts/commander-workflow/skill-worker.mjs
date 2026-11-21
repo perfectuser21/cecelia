@@ -55,7 +55,7 @@ if(checking){
  const binding=prepareCheckerEvidence({config:request.checker_evidence,cwd:request.cwd,files:request.checker_files,request:request.checker_request,directory:path.join(work_dir,'evidence-reads'),deadlineMs:request.deadline_ms,denied:[auth.auth.home,work_dir]});
  const file=path.join(work_dir,'checker-evidence-binding.json');durableWrite(file,binding);
  const schemaFile=path.join(work_dir,'checker-output.schema.json');durableWrite(schemaFile,checkerOutputSchema(request.checker_request));
- argv.splice(argv.length-1,0,'--output-schema',schemaFile,...checkerEvidenceArgs(file,createHash('sha256').update(fs.readFileSync(file)).digest('hex'),auth.auth.home,binding.directory));
+ argv.splice(argv.length-1,0,'--output-schema',schemaFile,...checkerEvidenceArgs(file,createHash('sha256').update(fs.readFileSync(file)).digest('hex'),auth.auth.home,binding.directory,{archive:Boolean(binding.archive?.length)}));
 }
 if(readOnly){
  const evidenceRequest={...identity,run_tag:context.run_tag,nonce:identity.action_id,activity:request.activity_key,
