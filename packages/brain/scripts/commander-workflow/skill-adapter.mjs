@@ -41,9 +41,15 @@ export async function createRuntime({profile,run,verifySource=async()=>{},ledger
   function specFor(activity){
     const spec=config.activities?.[activity.key],checker=spec?.checker;
     sessionGroup(spec?.session_group,activity.runtime?.executor_kind??'agent');
+    const phasePolicy=checker?.phase_policy;
+    if(phasePolicy!==undefined&&(phasePolicy!=='completion_only'||checker.mode!=='agent'))throw Error('checker_profile_invalid');
     if(checker?.mode==='agent'){
       if(!profile.codex_auth||checker.entry!==undefined||checker.start_checks!==undefined||checker.required_checks!==undefined)throw Error('checker_profile_invalid');
-      const contract=activityContract(activity);checkerCriteria(contract,'start');
+      const contract=activityContract(activity);
+      if(phasePolicy==='completion_only'){
+        if(checkerCriteria(contract,'start',{allowEmptyPhase:true}).length)throw Error('checker_start_requirements_unassigned');
+        checkerCriteria(contract,'end');
+      }else checkerCriteria(contract,'start');
       if((spec.allow_empty===true)!==(Array.isArray(contract.acceptance.document.failure?.empty_ok)&&contract.acceptance.document.failure.empty_ok.length>0))throw Error('checker_empty_policy_mismatch');
     }else if(!spec||!profile.files[checker?.entry]||!path.isAbsolute(checker?.command??'')
       ||['start_checks','required_checks'].some(k=>!Array.isArray(checker[k])||!checker[k].length||new Set(checker[k]).size!==checker[k].length)
@@ -223,7 +229,9 @@ export async function createRuntime({profile,run,verifySource=async()=>{},ledger
   return {
     async checkActivity(activity,result,{phase,input,signal,remaining_ms}){
       if(input.recovery_mode==='readback_only'&&phase==='start')return {verdict:'pass',reason:'recovery_has_no_new_execution'};
-      const cached=phase==='end'&&specFor(activity).checker.mode==='agent'&&await consumeCheck(activity,input,phase,signal,result);
+      const {checker}=specFor(activity);
+      if(phase==='start'&&checker.phase_policy==='completion_only')return {verdict:'pass',reason:'no_activity_start_criteria'};
+      const cached=phase==='end'&&checker.mode==='agent'&&await consumeCheck(activity,input,phase,signal,result);
       if(cached)return {verdict:['passed','empty'].includes(cached.outcome)?'pass':cached.outcome==='unknown'?'unknown':'fail',reason:'independent_checker_'+cached.outcome,evidence:cached.checks};
       const feedback=result?.checker_feedback;
       if(phase==='end'&&specFor(activity).checker.mode!=='agent'&&feedback&&feedback.activity_key===activity.key&&sameIdentity(verifiedFeedback.get(feedback.evidence_ref),feedback))
@@ -238,9 +246,18 @@ export async function createRuntime({profile,run,verifySource=async()=>{},ledger
     async executeActivity(activity,input,options){
       if(activity.runtime?.executor_kind!=='code')input={...input,execution_attempt:options.identity.attempt??1};
       // 单独再核授权；旧完整Runner的finalize宽松策略不能赋予执行权。
-      try{const start=specFor(activity).checker.mode==='agent'&&input.action_id===options.identity.action_id&&await consumeCheck(activity,input,'start',options.signal)
-        ||await readback(activity,input,'start',null,options.signal,options.deadlineMs);if(start.outcome!=='passed')throw Error('checker_start_'+start.outcome);}catch(e){e.executionStopped=true;throw e;}
-      const spec=specFor(activity),directory=actionDir(options.identity);
+      let spec;
+      try{
+        spec=specFor(activity);
+        if(spec.checker.phase_policy==='completion_only'){
+          await verifyFrozenSources();
+        }else{
+          const start=spec.checker.mode==='agent'&&input.action_id===options.identity.action_id&&await consumeCheck(activity,input,'start',options.signal)
+            ||await readback(activity,input,'start',null,options.signal,options.deadlineMs);
+          if(start.outcome!=='passed')throw Error('checker_start_'+start.outcome);
+        }
+      }catch(e){e.executionStopped=true;throw e;}
+      const directory=actionDir(options.identity);
       const attempt=ledger?.beginAttempt({activity_key:activity.key,action_id:options.identity.action_id,attempt:options.identity.attempt??1,kind:activity.runtime?.executor_kind??'agent'});
       try{
       if(activity.runtime?.executor_kind==='code'){

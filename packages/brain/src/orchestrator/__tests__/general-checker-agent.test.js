@@ -215,9 +215,18 @@ test('expired Checker cannot claim a stopped execution or pass from a hung model
  }finally{f.close();}
 },10000);
 
-test('complete Commander runner uses one start and one end Checker, never rejudges wording',async()=>{
+test.each([
+ [undefined,['start','end']],
+ ['completion_only',['end']],
+])('Commander uses exactly the configured Checker phases: %s',async(phasePolicy,phases)=>{
  const f=fixture({mode:'runner'}),old=process.env.DBOS_DURABLE_ENABLED;try{
  Object.assign(f.activity,{order:1,failure:{empty_ok:[],retryable:[],fatal:[],needs_human:{cases:[]}}});f.activity.runtime.entry='unused.mjs';
+ if(phasePolicy==='completion_only'){
+  f.profile.skill_runtime.activities[f.activity.key].checker.phase_policy=phasePolicy;
+  delete f.activity.acceptance.document.preconditions;
+  f.activity.acceptance.source.contract_digest=digest(f.activity.acceptance.document);
+  f.activity.acceptance.criteria=f.activity.acceptance.criteria.filter(c=>c.phase==='end');
+ }
  Object.assign(f.run,{schema_version:1,runtime_revision:'a'.repeat(64),commander_timeout_ms:1000});
  const ledger=createRunLedger({directory:path.join(fs.realpathSync(f.cwd),'ledger'),identity:{task_id:f.run.task_id,run_id:f.run.run_id}});
  const rt=await createRuntime({profile:f.profile,run:f.run,ledger}),records=new Map();
@@ -227,8 +236,8 @@ test('complete Commander runner uses one start and one end Checker, never rejudg
  dbos.initialized=true;process.env.DBOS_DURABLE_ENABLED='true';
  const result=await (await startCommanderWorkflow(f.run)).handle.getResult();
  const calls=fs.readFileSync(path.join(f.cwd,'checker-calls.jsonl'),'utf8').trim().split('\n').map(JSON.parse);
- expect(calls.map(c=>c.request.phase)).toEqual(['start','end']);expect(result.status).toBe('completed');
- expect(result.outputs.number).toBe(42);expect(ledger.snapshot().calls.filter(c=>c.role==='checker')).toHaveLength(2);
+ expect(calls.map(c=>c.request.phase)).toEqual(phases);expect(result.status).toBe('completed');
+ expect(result.outputs.number).toBe(42);expect(ledger.snapshot().calls.filter(c=>c.role==='checker')).toHaveLength(phases.length);
  }finally{dbos.initialized=false;if(old===undefined)delete process.env.DBOS_DURABLE_ENABLED;else process.env.DBOS_DURABLE_ENABLED=old;f.close();}
 },20000);
 
@@ -356,3 +365,24 @@ test('fresh check of a serialized wrong delivered output fails even when current
  expect(fs.existsSync(path.join(f.cwd,'control',f.run.run_id,'actions'))).toBe(false);
  }finally{f.close();}
 },5000);
+
+test('完工验收模式只启动一次 Checker，并拒绝遗留的开工验收条款',async()=>{
+ const f=fixture({mode:'runner'});
+ try{
+  const {activity}=f,checker=f.profile.skill_runtime.activities[activity.key].checker;
+  checker.phase_policy='completion_only';
+  const runtime=await createRuntime({profile:f.profile,run:f.run});
+  const input={run_tag:f.run.input.run_tag,action_id:'test-single-check',execution_attempt:1};
+  const options={identity:{task_id:f.run.task_id,run_id:f.run.run_id,activity_key:activity.key,action_id:input.action_id},cwd:f.cwd,deadlineMs:Date.now()+10000};
+  await expect(runtime.checkActivity(activity,null,{phase:'start',input})).rejects.toThrow('checker_start_requirements_unassigned');
+  delete activity.acceptance.document.preconditions;
+  activity.acceptance.source.contract_digest=digest(activity.acceptance.document);
+  activity.acceptance.criteria=activity.acceptance.criteria.filter(c=>c.phase==='end');
+  expect(await runtime.checkActivity(activity,null,{phase:'start',input})).toMatchObject({verdict:'pass'});
+  const result=await runtime.executeActivity(activity,input,options);
+  expect(result.status).toBe('completed');
+  expect(await runtime.checkActivity(activity,result,{phase:'end',input})).toMatchObject({verdict:'pass'});
+  const calls=fs.readFileSync(path.join(f.cwd,'checker-calls.jsonl'),'utf8').trim().split('\n').map(JSON.parse);
+  expect(calls.map(call=>call.request.phase)).toEqual(['end']);
+ }finally{f.close();}
+},20000);
