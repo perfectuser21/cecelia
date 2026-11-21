@@ -35,6 +35,7 @@ async function addFoundationTaskSchema(db){
   ADD COLUMN IF NOT EXISTS executor_kind text,ADD COLUMN IF NOT EXISTS parent_task_id uuid,ADD COLUMN IF NOT EXISTS sequence_no integer,
   ADD COLUMN IF NOT EXISTS kind text,ADD COLUMN IF NOT EXISTS blocked_reason text,ADD COLUMN IF NOT EXISTS blocked_detail jsonb,
   ADD COLUMN IF NOT EXISTS result jsonb,ADD COLUMN IF NOT EXISTS claimed_by text,ADD COLUMN IF NOT EXISTS claimed_at timestamptz,
+  ADD COLUMN IF NOT EXISTS status_history jsonb DEFAULT '[]'::jsonb,
   ADD COLUMN IF NOT EXISTS error_message text,ADD COLUMN IF NOT EXISTS summary text,ADD COLUMN IF NOT EXISTS blocked_until timestamptz,ADD COLUMN IF NOT EXISTS notion_synced_at timestamptz,ADD COLUMN IF NOT EXISTS driver_heartbeat_at timestamptz`);
 }
 

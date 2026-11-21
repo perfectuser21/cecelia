@@ -36,6 +36,37 @@ export async function claimFoundationTask(pool,input,services={}){
   return {job};
  });
 }
+export async function recoverPausedFoundationTasks(db, responseLevel) {
+  if (responseLevel !== 'auto_recovery') return 0;
+
+  const result = await db.query(`
+    WITH eligible AS (
+      SELECT id FROM tasks
+      WHERE task_type = 'workflow_dispatch'
+        AND payload->>'commander_protocol' = $1
+        AND status = 'paused'
+        AND error_message = 'escalation_graceful_degrade'
+        AND status_history->-1->>'source' = 'escalation_graceful_degrade'
+        AND status_history->-1->>'to' = 'paused'
+        AND claimed_by IS NULL AND claimed_at IS NULL AND started_at IS NULL
+        AND NOT COALESCE(result ? 'foundation_runner', false)
+      ORDER BY updated_at, id
+      LIMIT 5 FOR UPDATE SKIP LOCKED
+    )
+    UPDATE tasks
+    SET status = 'queued',
+        error_message = NULL,
+        updated_at = NOW(),
+        status_history = status_history || jsonb_build_array(jsonb_build_object(
+          'from', 'paused', 'to', 'queued', 'changed_at', NOW(),
+          'source', 'foundation_preclaim_recovery'
+        ))
+    FROM eligible
+    WHERE tasks.id = eligible.id
+  `, [FOUNDATION_PROTOCOL]);
+  return result.rowCount ?? 0;
+}
+
 export async function prepareFoundationTask(pool,taskId,input){
  validateMachineRequest(input,['machine_id','run_id','profile_document','runtime_revision','definition_sha256']);
  return foundationTransaction(pool,'foundation-task:'+taskId,async db=>{

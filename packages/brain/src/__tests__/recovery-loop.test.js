@@ -41,6 +41,22 @@ import { runRecoveryOnce, startRecoveryLoop, stopRecoveryLoop } from '../recover
 const fakePool = { query: async () => ({ rows: [] }) };
 
 describe('recovery-loop', () => {
+  it('现役恢复循环保留派发前暂停的 Foundation 任务恢复入口', async () => {
+    const recoverPausedFoundationTasks = vi.fn(async () => 1);
+
+    await runRecoveryOnce({
+      pool: fakePool,
+      cleanupStaleClaims: async () => ({ cleaned: 0 }),
+      fetchInProgress: async () => [],
+      autoFailTimedOutTasks: async () => [],
+      probeTaskLiveness: async () => [],
+      recoverPausedFoundationTasks,
+    });
+
+    expect(recoverPausedFoundationTasks).toHaveBeenCalledTimes(1);
+    expect(recoverPausedFoundationTasks).toHaveBeenCalledWith(fakePool);
+  });
+
   it('一次执行调用全部五条恢复网（含probe、解封和设备锁清理）', async () => {
     const cleanupStaleClaims = vi.fn(async () => ({ cleaned: 2 }));
     const autoFailTimedOutTasks = vi.fn(async () => [{ action: 'auto-requeue-timeout' }]);
