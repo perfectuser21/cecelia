@@ -10,6 +10,22 @@ const isRecord=value=>value!==null&&typeof value==='object'&&!Array.isArray(valu
 const checksum=bytes=>createHash('sha256').update(bytes).digest('hex');
 const requireHandoff=(ok,reason)=>{if(!ok)throw Error(reason);};
 
+function requireItemEvidence(itemScope,{outputs,evidence}){
+  if(itemScope===undefined)return;
+  requireHandoff(isRecord(itemScope)&&typeof itemScope.collection==='string'&&typeof itemScope.id_field==='string'
+    &&Object.hasOwn(outputs,itemScope.collection),'delivery_item_scope_invalid');
+  const items=outputs[itemScope.collection];
+  requireHandoff(Array.isArray(items),'delivery_item_collection_invalid');
+  const expected=new Set(['run']);
+  for(const item of items){
+    const id=isRecord(item)&&Object.hasOwn(item,itemScope.id_field)?item[itemScope.id_field]:undefined;
+    requireHandoff(typeof id==='string'&&id.length>0&&id.length<=128&&!expected.has(id),'delivery_item_id_invalid');
+    requireHandoff(Object.hasOwn(evidence,id),'delivery_item_evidence_missing:'+id);
+    expected.add(id);
+  }
+  for(const scope of Object.keys(evidence))requireHandoff(expected.has(scope),'delivery_item_evidence_unexpected:'+scope);
+}
+
 function syncDirectory(directory){
   const file=fs.openSync(directory,'r');
   try{fs.fsyncSync(file);}finally{fs.closeSync(file);}
@@ -25,6 +41,7 @@ export function archiveActivityHandoff({delivery,identity,proposal,config,cwd,di
     const error=validate.errors[0];
     throw Error('delivery_schema_mismatch:'+error.instancePath+':'+(error.params.missingProperty??error.keyword));
   }
+  requireItemEvidence(delivery.item_scope,payload);
   const entries=Object.entries(payload.evidence).flatMap(([scope,group])=>{
     requireHandoff(isRecord(group),'delivery_evidence_scope_invalid');
     return Object.entries(group).map(([role,source])=>({scope,role,source}));

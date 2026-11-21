@@ -8,6 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {createHash,randomUUID} from 'node:crypto';
 import {createRuntime} from '../../../scripts/commander-workflow/skill-adapter.mjs';
+import {archiveActivityHandoff} from '../../../scripts/commander-workflow/activity-handoff.mjs';
 import {digest} from '../commander-decision.js';
 import {createRunLedger} from '../commander-usage-ledger.js';
 const hash=p=>createHash('sha256').update(fs.readFileSync(p)).digest('hex');
@@ -426,3 +427,24 @@ test.each([['number','source',null],['number','receipt','receipt'],['total','sou
   }
  }finally{f.close();}
 },15000);
+
+test('逐项交付必须按输出 ID 配齐证据，拒绝缺失或多列的证据组',()=>{
+ const f=fixture();
+ try{
+  const directory=path.join(f.cwd,'action');
+  fs.mkdirSync(directory);
+  const args={
+   delivery:{schema:{type:'object'},item_scope:{collection:'Video',id_field:'video_id'}},
+   identity:{run_id:f.run.run_id,activity_key:f.activity.key},
+   proposal:{outputs:{Video:[{video_id:'video-one'}]},handoff:{run:{},'video-two':{raw:'evidence/fact.json'}}},
+   config:{roots:['evidence']},cwd:f.cwd,directory,deadlineMs:f.run.deadline_ms
+  };
+  expect(()=>archiveActivityHandoff(args)).toThrow('delivery_item_evidence_missing:video-one');
+  expect(fs.existsSync(path.join(directory,'handoff'))).toBe(false);
+  args.proposal.handoff['video-one']=args.proposal.handoff['video-two'];
+  expect(()=>archiveActivityHandoff(args)).toThrow('delivery_item_evidence_unexpected:video-two');
+  delete args.proposal.handoff['video-two'];
+  const result=archiveActivityHandoff(args);
+  expect(result.evidence['video-one'].raw.sha256).toBeTruthy();
+ }finally{f.close();}
+});
