@@ -8,6 +8,7 @@ import {prepareCheckerEvidence,readCheckerEvidence} from './checker-evidence.mjs
 
 const isRecord=value=>value!==null&&typeof value==='object'&&!Array.isArray(value);
 const checksum=bytes=>createHash('sha256').update(bytes).digest('hex');
+const MAX_EVIDENCE_REFERENCES=512;
 const requireHandoff=(ok,reason)=>{if(!ok)throw Error(reason);};
 
 function requireItemEvidence(itemScope,{outputs,evidence}){
@@ -34,7 +35,10 @@ function syncDirectory(directory){
 export function archiveActivityHandoff({delivery,identity,proposal,config,cwd,directory,deadlineMs,denied=[]}){
   const schema=delivery.schema;
   requireHandoff(isRecord(schema)&&schema.type==='object'&&Buffer.byteLength(JSON.stringify(schema))<=32768,'delivery_schema_invalid');
-  const payload={outputs:proposal.outputs,evidence:proposal.handoff};
+  // The existing execution envelope may already carry the declared evidence map.
+  // When handoff is present, validate that field directly, including explicit null.
+  const submittedEvidence=Object.hasOwn(proposal,'handoff')?proposal.handoff:proposal.evidence;
+  const payload={outputs:proposal.outputs,evidence:submittedEvidence};
   requireHandoff(isRecord(payload.outputs)&&isRecord(payload.evidence),'delivery_outputs_or_evidence_missing');
   const validate=new Ajv({strict:true,allErrors:false}).compile(schema);
   if(!validate(payload)){
@@ -46,7 +50,7 @@ export function archiveActivityHandoff({delivery,identity,proposal,config,cwd,di
     requireHandoff(isRecord(group),'delivery_evidence_scope_invalid');
     return Object.entries(group).map(([role,source])=>({scope,role,source}));
   });
-  requireHandoff(entries.length<=100,'delivery_evidence_count_exceeded');
+  requireHandoff(entries.length<=MAX_EVIDENCE_REFERENCES,'delivery_evidence_count_exceeded');
   const bindingHash=digest({identity,delivery,payload});
   const actionDirectory=fs.realpathSync(directory);
   const final=path.join(actionDirectory,'handoff'), manifestPath=path.join(final,'manifest.json');
