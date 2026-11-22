@@ -124,7 +124,7 @@ export async function createRuntime({profile,run,verifySource=async()=>{},ledger
     const criteria=checker.mode==='agent'?checkerCriteria(activityContract(activity),phase):undefined;
     const evidence=archiveRoot&&criteria?{...checker.evidence,roots:[...checker.evidence.roots,archiveRoot],archive_root:archiveRoot}:checker.evidence;
     const verifiedStops=phase==='start'&&activity.runtime?.phase==='finalize'
-      ? (ledger?.snapshot().observations??[]).filter(item=>item.kind==='execution_stop_verified'&&item.status==='completed')
+      ? (ledger?.snapshot?.().observations??[]).filter(item=>item.kind==='execution_stop_verified'&&item.status==='completed')
         .map(({activity_key,action_id,attempt})=>({activity_key,action_id,attempt,execution_stopped:true}))
       : [];
     const request={task_id:run.task_id,run_id:run.run_id,run_tag:run.input.run_tag,workflow:spec.workflow??run.contract.workflow,
