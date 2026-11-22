@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {createHash,randomUUID} from 'node:crypto';
 import {createRuntime} from '../../../scripts/commander-workflow/skill-adapter.mjs';
+import {createRunLedger} from '../commander-usage-ledger.js';
 const roots=[];
 afterEach(()=>{for(const root of roots.splice(0))fs.rmSync(root,{recursive:true,force:true});});
 const sha=file=>createHash('sha256').update(fs.readFileSync(file)).digest('hex');
@@ -163,6 +164,12 @@ test('源活动外部执行未知则禁止Code finalizer，资源及执行次数
 
 test('源活动超时后凭同动作原生终态证据自动归位，业务失败并且源动作只执行一次',async()=>{
  const f=fixture();
+ f.ledger=createRunLedger({directory:path.join(fs.realpathSync(f.root),'ledger'),identity:{task_id:f.run.task_id,run_id:f.run.run_id}});
+ const checkerFile=path.join(f.root,'check.cjs');
+ const checkerSource=fs.readFileSync(checkerFile,'utf8');
+ fs.writeFileSync(checkerFile,checkerSource.replace("good=r.phase==='start'||released",
+  "good=r.phase==='start'?(r.activity!=='cleanup'||r.verified_execution_stops?.some(stop=>stop.execution_stopped&&stop.action_id===fs.readFileSync('source-dispatches','utf8').trim())):released"));
+ f.profile.files['check.cjs']=sha(checkerFile);
  const files={
   'slow-source.js':`const fs=require('node:fs'),{spawn}=require('node:child_process');
    let stdin='';process.stdin.on('data',part=>stdin+=part);
@@ -196,6 +203,17 @@ test('源活动超时后凭同动作原生终态证据自动归位，业务失�
  const proof=JSON.parse(fs.readFileSync(out.cleanup_stop_evidence,'utf8'));
  expect(proof.observed).toMatchObject({identity:{action_id:dispatches[0]},execution_stopped:true,evidence:{source:'native-stopped'}});
  expect(proof.request.nonce).toBe(proof.observed.nonce);
+ const recorded=f.ledger.snapshot();
+ expect(recorded.attempts.find(entry=>entry.action_id===dispatches[0]).status).toBe('prepared');
+ expect(recorded.observations).toEqual(expect.arrayContaining([expect.objectContaining({
+  kind:'execution_stop_verified',activity_key:'source',action_id:dispatches[0],attempt:1,status:'completed',evidence_ref:out.cleanup_stop_evidence,
+ })]));
+ const checks=fs.readdirSync(path.join(f.root,'control',f.run.run_id,'checks')).map(name=>
+  JSON.parse(fs.readFileSync(path.join(f.root,'control',f.run.run_id,'checks',name),'utf8')).request);
+ expect(checks.find(check=>check.activity==='cleanup'&&check.phase==='start').verified_execution_stops).toEqual([{
+  activity_key:'source',action_id:dispatches[0],attempt:1,execution_stopped:true,
+ }]);
+ expect(checks.find(check=>check.activity==='source'&&check.phase==='start').verified_execution_stops).toBeUndefined();
  expect(fs.readFileSync(path.join(f.root,'executions.jsonl'),'utf8').trim().split('\n')).toHaveLength(1);
  expect(fs.existsSync(path.join(f.root,'owned-resource'))).toBe(false);
 },25000);
