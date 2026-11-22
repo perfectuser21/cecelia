@@ -106,6 +106,19 @@ test('contract-declared and independently evidenced empty remains a legitimate e
  expect(records[0].verified.outcome).toBe('empty');}finally{f.close();}
  const bad=fixture({mode:'empty'});try{await expect(bad.check()).rejects.toThrow('checker_result_invalid');}finally{bad.close();}
 },10000);
+test('契约声明但宿主缺少的工具在 Checker 和执行 Agent 启动前报告',async()=>{
+ const f=fixture();try{
+  const document=f.activity.acceptance.document;
+  document.required_host_tools=['media-inspect','media-frames'];
+  f.activity.acceptance.source.contract_digest=digest(document);
+  const runtime=await createRuntime({profile:f.profile,run:f.run});
+  const input={run_tag:f.run.input.run_tag};
+  const identity={task_id:f.run.task_id,run_id:f.run.run_id,activity_key:f.activity.key,action_id:'missing-tools'};
+  await expect(runtime.checkActivity(f.activity,null,{phase:'start',input})).rejects.toThrow('skill_host_tool_missing:media-inspect');
+  await expect(runtime.executeActivity(f.activity,input,{identity,cwd:f.cwd,deadlineMs:f.run.deadline_ms})).rejects.toThrow('skill_host_tool_missing:media-inspect');
+  expect(fs.existsSync(path.join(f.cwd,'checker-calls.jsonl'))).toBe(false);
+ }finally{f.close();}
+},10000);
 test('unknown preconditions block executor dispatch and Checker calls use the existing ledger',async()=>{
  const f=fixture({fact:null});try{
  const ledger=createRunLedger({directory:path.join(fs.realpathSync(f.cwd),'ledger'),identity:{task_id:f.run.task_id,run_id:f.run.run_id}});

@@ -119,6 +119,18 @@ export async function createRuntime({profile,run,verifySource=async()=>{},ledger
     if(!contract)throw Error('skill_activity_contract_unbound');
     return structuredClone(contract);
   }
+  function requireDeclaredHostTools(activity) {
+    const frozen = activityContract(activity);
+    const required = frozen.acceptance?.document?.required_host_tools;
+    if (required === undefined) return;
+    if (frozen.runtime?.executor_kind !== 'agent' || !Array.isArray(required)
+      || required.some(kind => typeof kind !== 'string' || !/^[a-zA-Z0-9_-]{1,100}$/.test(kind))
+      || new Set(required).size !== required.length) throw Error('skill_host_tool_requirements_invalid');
+    const kinds = config.host_tools?.kinds;
+    const registered = !readOnlyEffects(frozen) && Array.isArray(kinds) ? kinds : [];
+    const missing = required.find(kind => !registered.includes(kind));
+    if (missing) throw Error('skill_host_tool_missing:' + missing);
+  }
   async function performReadback(activity,input,phase,proposal,signal,deadlineMs,archiveRoot){
     const spec=specFor(activity),checker=spec.checker;
     const criteria=checker.mode==='agent'?checkerCriteria(activityContract(activity),phase):undefined;
@@ -260,6 +272,7 @@ export async function createRuntime({profile,run,verifySource=async()=>{},ledger
   return {
     async checkActivity(activity,result,{phase,input,signal,remaining_ms}){
       if(input.recovery_mode==='readback_only'&&phase==='start')return {verdict:'pass',reason:'recovery_has_no_new_execution'};
+      if (phase === 'start') requireDeclaredHostTools(activity);
       const {checker}=specFor(activity);
       if(phase==='start'&&checker.phase_policy==='completion_only')return {verdict:'pass',reason:'no_activity_start_criteria'};
       if(phase==='end'&&activityContract(activity).acceptance?.document?.delivery!==undefined&&['skill_handoff_incomplete','skill_readback_unconfirmed'].includes(result?.reason_code)){
@@ -283,6 +296,7 @@ export async function createRuntime({profile,run,verifySource=async()=>{},ledger
       // 单独再核授权；旧完整Runner的finalize宽松策略不能赋予执行权。
       let spec;
       try{
+        requireDeclaredHostTools(activity);
         spec=specFor(activity);
         if(spec.checker.phase_policy==='completion_only'){
           await verifyFrozenSources();
