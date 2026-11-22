@@ -9,6 +9,7 @@ import path from 'node:path';
 import {createHash,randomUUID} from 'node:crypto';
 import {createRuntime} from '../../../scripts/commander-workflow/skill-adapter.mjs';
 import {archiveActivityHandoff} from '../../../scripts/commander-workflow/activity-handoff.mjs';
+import {createHostToolCaller,prepareHostTools} from '../../../scripts/commander-workflow/skill-tools-mcp.mjs';
 import {checkerEvidenceReceipts,prepareCheckerEvidence,readCheckerArchive,readCheckerEvidence} from '../../../scripts/commander-workflow/checker-evidence.mjs';
 import {digest} from '../commander-decision.js';
 import {createRunLedger} from '../commander-usage-ledger.js';
@@ -452,6 +453,39 @@ test.each([
   }
  }finally{f.close();}
 },15000);
+
+test('只归档当前动作产生的已验证宿主工具 JSON 回执',async()=>{
+ const f=fixture();try{
+  const cwd=fs.realpathSync(f.cwd),directory=path.join(cwd,'action'),hostDir=path.join(directory,'host-tools');
+  fs.mkdirSync(directory,{mode:0o700});
+  const identity={run_id:f.run.run_id,activity_key:f.activity.key,action_id:'current-action'};
+  const inputFile=path.join(directory,'activity-input.json'),deadlineMs=f.run.deadline_ms;
+  fs.writeFileSync(inputFile,JSON.stringify({identity,activity_key:f.activity.key}),{mode:0o600});
+  const entry=path.join(cwd,'host.cjs');
+  fs.writeFileSync(entry,"process.stdout.write(JSON.stringify({state:'terminal',value:42}))",{mode:0o600});
+  const binding=prepareHostTools({config:{command:process.execPath,command_sha256:hash(process.execPath),entry:'host.cjs',
+    kinds:['fixture'],response_paths:['value'],timeout_ms:1000},cwd,files:{'host.cjs':hash(entry)},identity,
+    activityKey:f.activity.key,inputFile,directory:hostDir,deadlineMs});
+  fs.writeFileSync(path.join(directory,'host-tools-binding.json'),JSON.stringify(binding),{mode:0o600});
+  const result=await createHostToolCaller(binding).call({kind:'fixture',action_name:'produced',args:[]});
+  const source=path.relative(cwd,result.evidence_ref);
+  const args={delivery:{schema:{type:'object'}},identity,config:{roots:['evidence']},cwd,directory,deadlineMs};
+  const proposal=ref=>({outputs:{number:42},handoff:{run:{receipt:ref}}});
+  expect(()=>archiveActivityHandoff({...args,proposal:proposal(source+'.stdout')})).toThrow();
+  const foreign=path.join(cwd,'another-action','host-tools');
+  fs.mkdirSync(foreign,{recursive:true,mode:0o700});
+  fs.copyFileSync(result.evidence_ref,path.join(foreign,'produced.json'));
+  expect(()=>archiveActivityHandoff({...args,proposal:proposal('another-action/host-tools/produced.json')})).toThrow();
+  expect(()=>archiveActivityHandoff({...args,identity:{...identity,action_id:'other-action'},proposal:proposal(source)})).toThrow();
+  const raw=fs.readFileSync(result.evidence_ref+'.stdout');
+  fs.appendFileSync(result.evidence_ref+'.stdout',' ');
+  expect(()=>archiveActivityHandoff({...args,proposal:proposal(source)})).toThrow('delivery_host_receipt_unverified');
+  fs.writeFileSync(result.evidence_ref+'.stdout',raw);
+  const archived=archiveActivityHandoff({...args,proposal:proposal(source)});
+  expect(archived.evidence.run.receipt).toMatchObject({source,sha256:hash(result.evidence_ref)});
+  expect(JSON.parse(fs.readFileSync(path.join(directory,'handoff',archived.evidence.run.receipt.file))).response.output).toEqual({value:42});
+ }finally{f.close();}
+},10000);
 
 test('逐项交付必须按输出 ID 配齐证据，拒绝缺失或多列的证据组',()=>{
  const f=fixture();

@@ -5,6 +5,7 @@ import Ajv from 'ajv';
 import {canonical,digest} from '../../src/orchestrator/commander-decision.js';
 import {durableWrite} from '../../src/orchestrator/activity-supervisor.js';
 import {prepareCheckerEvidence,readCheckerEvidence} from './checker-evidence.mjs';
+import {hostToolsAreQuiescent} from './skill-tools-mcp.mjs';
 
 const isRecord=value=>value!==null&&typeof value==='object'&&!Array.isArray(value);
 const checksum=bytes=>createHash('sha256').update(bytes).digest('hex');
@@ -68,11 +69,26 @@ export function archiveActivityHandoff({delivery,identity,proposal,config,cwd,di
     return manifest;
   }
 
+  const cwdRoot=fs.realpathSync(cwd);
+  const receiptRoot=path.relative(cwdRoot,path.join(actionDirectory,'host-tools'));
+  const receiptPrefix=receiptRoot+path.sep;
+  const brokerReceipts=entries.filter(({source})=>typeof source==='string'&&source.startsWith(receiptPrefix));
+  let roots=config?.roots;
+  if(brokerReceipts.length){
+    // Accept the broker's terminal JSON envelope. Its raw process streams and
+    // other control files stay outside the Checker evidence roots.
+    requireHandoff(!path.isAbsolute(receiptRoot)&&!receiptRoot.split(path.sep).includes('..')
+      &&brokerReceipts.every(({source})=>/^[a-zA-Z0-9_-]{1,100}\.json$/.test(source.slice(receiptPrefix.length)))
+      &&hostToolsAreQuiescent(actionDirectory,identity,deadlineMs),'delivery_host_receipt_unverified');
+    requireHandoff(Array.isArray(roots),'checker_evidence_config_invalid');
+    roots=[...new Set([...roots,receiptRoot])];
+  }
+
   const temporary=fs.mkdtempSync(path.join(actionDirectory,'.handoff-'));
   try{
     fs.mkdirSync(path.join(temporary,'files'),{mode:0o700});
     const request={nonce:randomUUID(),identity,bindingHash};
-    const reader=prepareCheckerEvidence({config:{roots:config?.roots},cwd,request,
+    const reader=prepareCheckerEvidence({config:{roots},cwd,request,
       directory:path.join(temporary,'reads'),deadlineMs,denied});
     const fetched=new Map();
     const evidence=Object.create(null);
