@@ -42,24 +42,42 @@ export function archiveActivityHandoff({delivery,identity,proposal,config,cwd,di
   const payload={outputs:proposal.outputs,evidence:submittedEvidence};
   requireHandoff(isRecord(payload.outputs)&&isRecord(payload.evidence),'delivery_outputs_or_evidence_missing');
   const validate=new Ajv({strict:true,allErrors:false}).compile(schema);
-  if(!validate(payload)){
+  const assertDeliverySchema=()=>{
+    if(validate(payload))return;
     const error=validate.errors[0];
     throw Error('delivery_schema_mismatch:'+error.instancePath+':'+(error.params.missingProperty??error.keyword));
-  }
-  requireItemEvidence(delivery.item_scope,payload);
-  const entries=Object.entries(payload.evidence).flatMap(([scope,group])=>{
+  };
+  assertDeliverySchema();
+  const bindingHash=digest({identity,delivery,payload});
+  const supplied=Object.entries(payload.evidence).flatMap(([scope,group])=>{
     requireHandoff(isRecord(group),'delivery_evidence_scope_invalid');
     return Object.entries(group).map(([role,source])=>({scope,role,source}));
   });
-  requireHandoff(entries.length<=MAX_EVIDENCE_REFERENCES,'delivery_evidence_count_exceeded');
-  const bindingHash=digest({identity,delivery,payload});
+  requireHandoff(supplied.length<=MAX_EVIDENCE_REFERENCES,'delivery_evidence_count_exceeded');
+  // 裸文件名只标识原件，无法在本轮授权证据根读回。仅在剩余交件
+  // 仍满足冻结契约时记录该标识，且至少保留一份可归档的证据。
+  const unqualified=({source})=>typeof source==='string'&&/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,254}$/.test(source);
+  const unresolved=supplied.filter(unqualified);
+  const entries=supplied.filter(entry=>!unqualified(entry));
+  if(unresolved.length){
+    requireHandoff(entries.length>0,'delivery_evidence_unqualified');
+    const evidence=Object.create(null);
+    for(const {scope,role,source} of entries){
+      evidence[scope]??=Object.create(null);
+      evidence[scope][role]=source;
+    }
+    payload.evidence=evidence;
+    assertDeliverySchema();
+  }
+  requireItemEvidence(delivery.item_scope,payload);
   const actionDirectory=fs.realpathSync(directory);
   const final=path.join(actionDirectory,'handoff'), manifestPath=path.join(final,'manifest.json');
   if(fs.existsSync(final)){
     requireHandoff(fs.realpathSync(final)===final&&fs.realpathSync(manifestPath)===manifestPath,'delivery_archive_invalid');
     const manifest=JSON.parse(fs.readFileSync(manifestPath,'utf8'));
     requireHandoff(manifest.binding_sha256===bindingHash&&digest(manifest.outputs)===digest(payload.outputs)
-      &&digest(manifest.identity)===digest(identity),'delivery_replay_conflict');
+      &&digest(manifest.identity)===digest(identity)
+      &&digest(manifest.unresolved_evidence??[])===digest(unresolved),'delivery_replay_conflict');
     for(const {scope,role,source} of entries){
       const ref=manifest.evidence?.[scope]?.[role];
       requireHandoff(ref?.source===source&&/^[a-f0-9]{64}$/.test(ref.sha256)&&ref.file==='files/'+ref.sha256,'delivery_replay_conflict');
@@ -110,7 +128,8 @@ export function archiveActivityHandoff({delivery,identity,proposal,config,cwd,di
       evidence[scope]??=Object.create(null);
       evidence[scope][role]=fetched.get(source);
     }
-    const manifest=canonical({format:'activity-handoff/v1',identity,binding_sha256:bindingHash,outputs:payload.outputs,evidence});
+    const manifest=canonical({format:'activity-handoff/v1',identity,binding_sha256:bindingHash,outputs:payload.outputs,evidence,
+      ...(unresolved.length?{unresolved_evidence:unresolved}:{})});
     fs.rmSync(reader.directory,{recursive:true});
     syncDirectory(path.join(temporary,'files'));
     durableWrite(path.join(temporary,'manifest.json'),manifest);

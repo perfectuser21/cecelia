@@ -213,7 +213,8 @@ export async function createRuntime({profile,run,verifySource=async()=>{},ledger
         archiveRoot=path.join(parent,'files');
         const delivered=Object.fromEntries(Object.entries(manifest.evidence).map(([scope,group])=>[scope,
           Object.fromEntries(Object.entries(group).map(([role,item])=>[role,{...item,archive_path:path.join(parent,item.file)}]))]));
-        proposal={...proposal,delivery_sha256:digest(manifest),delivery_evidence:delivered};
+        proposal={...proposal,delivery_sha256:digest(manifest),delivery_evidence:delivered,
+          ...(manifest.unresolved_evidence?{unresolved_evidence:manifest.unresolved_evidence}:{})};
       }catch(error){
         const evidence=path.join(directory,'handoff-rejected.json');
         durableWrite(evidence,{message:error.message,proposal_sha256:digest(proposal),identity});
