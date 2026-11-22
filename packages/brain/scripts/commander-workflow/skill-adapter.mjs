@@ -123,9 +123,13 @@ export async function createRuntime({profile,run,verifySource=async()=>{},ledger
     const spec=specFor(activity),checker=spec.checker;
     const criteria=checker.mode==='agent'?checkerCriteria(activityContract(activity),phase):undefined;
     const evidence=archiveRoot&&criteria?{...checker.evidence,roots:[...checker.evidence.roots,archiveRoot],archive_root:archiveRoot}:checker.evidence;
+    const verifiedStops=phase==='start'&&activity.runtime?.phase==='finalize'
+      ? (ledger?.snapshot?.().observations??[]).filter(item=>item.kind==='execution_stop_verified'&&item.status==='completed')
+        .map(({activity_key,action_id,attempt})=>({activity_key,action_id,attempt,execution_stopped:true}))
+      : [];
     const request={task_id:run.task_id,run_id:run.run_id,run_tag:run.input.run_tag,workflow:spec.workflow??run.contract.workflow,
       activity:spec.activity??activity.key,activity_contract:activityContract(activity),attempt:activity.runtime?.executor_kind==='code'?1:(input.execution_attempt??1),nonce:randomUUID(),phase,
-      checks:criteria?criteria.map(c=>c.id):phase==='start'?checker.start_checks:checker.required_checks,...(criteria?{criteria,evidence_access:{roots:evidence.roots,provider_available:Boolean(evidence.provider)}}:{}),proposal,context:{...run.input,...input}};
+      checks:criteria?criteria.map(c=>c.id):phase==='start'?checker.start_checks:checker.required_checks,...(criteria?{criteria,evidence_access:{roots:evidence.roots,provider_available:Boolean(evidence.provider)}}:{}),proposal,context:{...run.input,...input},...(verifiedStops.length?{verified_execution_stops:verifiedStops}:{})};
     fs.mkdirSync(path.join(root,'checks'),{recursive:true,mode:0o700});
     const evidenceFile=path.join(root,'checks',request.nonce+'.json');
     durableWrite(evidenceFile,{request,status:'pending'});
@@ -335,6 +339,9 @@ export async function createRuntime({profile,run,verifySource=async()=>{},ledger
         ||!sameIdentity(observed.identity,identity)||!observed.evidence||typeof observed.evidence!=='object'
         ||Array.isArray(observed.evidence)||!Object.keys(observed.evidence).length)throw Error('skill_stop_checker_unconfirmed');
       durableWrite(evidenceFile,{request,observed,supervisor_result:path.join(directory,'result.json')});
+      const observation=ledger?.beginObservation({kind:'execution_stop_verified',activity_key:activity.key,
+        action_id:identity.action_id,attempt:identity.attempt??1});
+      if(observation)ledger.endObservation(observation.observation_id,{status:'completed',evidence_ref:evidenceFile});
       return {identity,execution_stopped:true,evidence_ref:evidenceFile};
     },
     async inspectActivity(activity,input,options){
