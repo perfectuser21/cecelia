@@ -10,7 +10,7 @@ import {createHash,randomUUID} from 'node:crypto';
 import {createRuntime} from '../../../scripts/commander-workflow/skill-adapter.mjs';
 import {archiveActivityHandoff} from '../../../scripts/commander-workflow/activity-handoff.mjs';
 import {createHostToolCaller,prepareHostTools} from '../../../scripts/commander-workflow/skill-tools-mcp.mjs';
-import {checkerEvidenceReceipts,prepareCheckerEvidence,readCheckerArchive,readCheckerEvidence} from '../../../scripts/commander-workflow/checker-evidence.mjs';
+import {checkerEvidenceReceipts,prepareCheckerEvidence,readCheckerArchive,readCheckerBatch,readCheckerEvidence} from '../../../scripts/commander-workflow/checker-evidence.mjs';
 import {digest} from '../commander-decision.js';
 import {createRunLedger} from '../commander-usage-ledger.js';
 const hash=p=>createHash('sha256').update(fs.readFileSync(p)).digest('hex');
@@ -623,5 +623,24 @@ test('按作用域读取原件且只压缩与归档字节完全相同的重复�
   expect(()=>readCheckerArchive(binding,{scope:'missing'})).toThrow('checker_evidence_archive_scope_invalid');
   fs.writeFileSync(path.join(f.cwd,archive.archive_path),'changed');
   expect(()=>readCheckerEvidence(binding,{path:archive.archive_path})).toThrow('checker_evidence_archive_drift');
+ }finally{f.close();}
+});
+
+test('通用批量读取合并多个原件的字段投影，保留完整回执和越界校验',async()=>{
+ const f=fixture();
+ try{
+  fs.writeFileSync(path.join(f.cwd,'evidence','extra.json'),JSON.stringify({nested:{value:7},padding:'p'.repeat(30000)}));
+  const request={nonce:randomUUID()};
+  const binding=prepareCheckerEvidence({config:{roots:['evidence']},cwd:f.cwd,
+   directory:path.join(f.cwd,'output'),request,deadlineMs:Date.now()+5000});
+  const files=[{path:'evidence/fact.json'},{path:'evidence/extra.json',fields:['/nested/value','/absent']}];
+  const result=(await readCheckerBatch(binding,{files})).map(x=>JSON.parse(x.text));
+  expect(result).toHaveLength(2);
+  expect(result[1]).toMatchObject({status:'available',text_projection:{'/nested/value':7},missing_fields:['/absent']});
+  expect(result[1]).not.toHaveProperty('text');
+  expect(JSON.parse(checkerEvidenceReceipts(binding).find(r=>r.evidence_ref===result[1].evidence_ref).text).padding).toHaveLength(30000);
+  await expect(readCheckerBatch(binding,{files:[{path:'../foreign.json'}]})).rejects.toThrow('checker_evidence_path_invalid');
+  expect((await readCheckerBatch(binding,{files:[{path:'evidence/extra.json'}]})).map(x=>JSON.parse(x.text))[0])
+   .toMatchObject({status:'unavailable',reason:'checker_batch_response_limit'});
  }finally{f.close();}
 });

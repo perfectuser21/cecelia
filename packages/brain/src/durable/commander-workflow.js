@@ -45,7 +45,7 @@ function accepted(receipt, key) {
 }
 function unverifiedReason(receipt){
   const reason=receipt?.activities?.[0]?.attempts?.at(-1)?.reason_code;
-  return ['checker_archive_response_limit','checker_evidence_missing'].includes(reason)||/^usage_(?:(?:token|cost)_budget_(?:exceeded|unknown)|ledger_busy)$/.test(reason??'')?reason:'commander_activity_unverified';
+  return ['checker_archive_response_limit','checker_batch_response_limit','checker_evidence_missing'].includes(reason)||/^usage_(?:(?:token|cost)_budget_(?:exceeded|unknown)|ledger_busy)$/.test(reason??'')?reason:'commander_activity_unverified';
 }
 const execute = DBOS.registerStep(async (run, key, context, attempt = 1, feedback, activityDeadline) => {
   const env = environment(run);

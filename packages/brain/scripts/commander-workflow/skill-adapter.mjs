@@ -163,13 +163,15 @@ export async function createRuntime({profile,run,verifySource=async()=>{},ledger
         const binding=JSON.parse(fs.readFileSync(path.join(transport.checker_directory,'checker-evidence-binding.json')));
         const receipts=checkerEvidenceReceipts(binding);
         verified=verifyCheckerResult(observed,request,receipts,{allowEmpty:spec.allow_empty===true});
-        const limited=receipts.filter(r=>r.status==='unavailable'&&r.reason==='checker_archive_response_limit');
-        const affected=verified.checks.filter(c=>c.status==='unknown'&&c.evidence.some(e=>limited.some(r=>r.evidence_ref===e.source)));
-        const readLimit=affected.length?{reason:'checker_archive_response_limit',check_ids:affected.map(c=>c.id),
-          evidence_refs:limited.map(r=>r.evidence_ref)}:undefined;
+        const unknownChecks=verified.checks.filter(c=>c.status==='unknown');
+        const limits=new Map(receipts.filter(r=>r.status==='unavailable'&&['checker_archive_response_limit','checker_batch_response_limit'].includes(r.reason))
+          .map(r=>[r.evidence_ref,r.reason]));
+        const affected=unknownChecks.filter(c=>c.evidence.some(e=>limits.has(e.source)));
+        const limitRefs=[...new Set(affected.flatMap(c=>c.evidence.map(e=>e.source).filter(ref=>limits.has(ref))))];
+        const readLimit=limitRefs.length?{reason:limits.get(limitRefs[0]),check_ids:affected.map(c=>c.id),evidence_refs:limitRefs}:undefined;
         const missingByRef=new Map(receipts.filter(r=>r.status==='unavailable'&&r.reason==='not_found'&&typeof r.path==='string')
           .map(r=>[r.evidence_ref,r.path]));
-        const missingEvidence=verified.checks.filter(c=>c.status==='unknown').flatMap(c=>c.evidence
+        const missingEvidence=unknownChecks.flatMap(c=>c.evidence
           .filter(e=>missingByRef.has(e.source)).map(e=>({check_id:c.id,path:missingByRef.get(e.source),evidence_ref:e.source})));
         const diagnostics={...(readLimit?{read_limit:readLimit}:{}),...(missingEvidence.length?{missing_evidence:missingEvidence}:{})};
         durableWrite(evidenceFile,{request,observed,transport,verified,...diagnostics,status:'verified'});
