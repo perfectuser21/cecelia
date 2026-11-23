@@ -12,7 +12,7 @@ import {createRunLedger,normalizeTurns} from '../../src/orchestrator/commander-u
 import {prepareHostTools,hostToolsArgs} from './skill-tools-mcp.mjs';
 import {sessionGroup,readSessionThread} from './session-group.mjs';
 import {checkerPrompt,checkerOutputSchema,decodeCheckerOutput} from './checker-agent-protocol.mjs';
-import {prepareCheckerEvidence,checkerEvidenceArgs,createDeliveryReport,readDeliveryReport,requiredDeliveryReportGaps} from './checker-evidence.mjs';
+import {prepareCheckerEvidence,checkerEvidenceArgs,createDeliveryReport,deliveryReportText,readDeliveryReport,requiredDeliveryReportGaps} from './checker-evidence.mjs';
 const chunks=[];for await(const c of process.stdin)chunks.push(c);
 const request=JSON.parse(Buffer.concat(chunks).toString()),{codex,identity,thread_file,work_dir,skill_text,tools_text,context}=request;
 const checking=request.role==='checker',effectScope=checking?undefined:request.activity_contract?.runtime?.checker_repair?.effect_scope;
@@ -30,7 +30,7 @@ if(!checking&&(identity.attempt??1)>1&&(!feedback||feedback.protocol!=='checker-
 const output=path.join(work_dir,'proposal.json'),transcript=fs.openSync(path.join(work_dir,'agent.jsonl'),'a',0o600);
 const activityInput=path.join(work_dir,'activity-input.json');
 const promptContext=projectModelInput(context,{sourceFile:activityInput,sourceField:'context.verification.runtime_sha256'});
-const prompt=checking?checkerPrompt(request.checker_request):['你只执行本次指定的单Activity，不推进其他Activity。运输方式 codex-cli，拥有工具；最终输出JSON提案不代表验收。',
+let prompt=checking?undefined:['你只执行本次指定的单Activity，不推进其他Activity。运输方式 codex-cli，拥有工具；最终输出JSON提案不代表验收。',
   '禁止修改冻结Skill/合同/工具实现/独立检查器，禁止自行重跑已提交动作。',
   `本次动作身份：${JSON.stringify(identity)}`,`当前Activity：${request.activity_key}`,
   ...(request.activity_contract===undefined?[]:[`冻结Activity Contract：\n${JSON.stringify(request.activity_contract)}`,
@@ -67,6 +67,7 @@ if(checking){
    throw error;
   }
  }
+ prompt=checkerPrompt(request.checker_request,binding.delivery_report?deliveryReportText(binding):undefined);
  const file=path.join(work_dir,'checker-evidence-binding.json');durableWrite(file,binding);
  const schemaFile=path.join(work_dir,'checker-output.schema.json');durableWrite(schemaFile,checkerOutputSchema(request.checker_request));
  argv.splice(argv.length-1,0,'--output-schema',schemaFile,...checkerEvidenceArgs(file,createHash('sha256').update(fs.readFileSync(file)).digest('hex'),auth.auth.home,binding.directory,{archive:Boolean(binding.archive?.length),deliveryReport:Boolean(binding.delivery_report)}));

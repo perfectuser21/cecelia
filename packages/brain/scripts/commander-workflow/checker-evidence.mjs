@@ -6,9 +6,12 @@ import {fileURLToPath} from 'node:url';
 import {spawn} from 'node:child_process';
 import {digest} from '../../src/orchestrator/commander-decision.js';
 import {durableWrite} from '../../src/orchestrator/activity-supervisor.js';
+import {deliveryReportRef} from './checker-agent-protocol.mjs';
 const hash=b=>createHash('sha256').update(b).digest('hex');
 const fail=s=>{throw Error(s);};
 const maxResponseTextBytes=22000;
+const maxReportTextBytes=96*1024;
+const maxReportImageBytes=4*1024*1024;
 const relative=s=>typeof s==='string'&&s.length>0&&!path.isAbsolute(s)&&!s.split(/[\\/]/).some(p=>['..','.',''].includes(p))&&!s.includes('\0');
 function below(file,root){return file===root||file.startsWith(root+path.sep);}
 function verifyProvider(binding){
@@ -184,16 +187,20 @@ function readPointer(document,pointer){
  }
  return value;
 }
-function resolveReportArgument(value,source){
- if(Array.isArray(value))return value.map(item=>resolveReportArgument(item,source));
+function resolveReportArgument(value,source,optional){
+ if(Array.isArray(value))return value.map(item=>resolveReportArgument(item,source,optional));
  if(!value||typeof value!=='object')return value;
  if(Object.hasOwn(value,'$from')){
-  if(Object.keys(value).length!==1||!validPointer(value.$from))fail('checker_report_plan_invalid');
+  if(Object.keys(value).some(key=>key!=='$from'&&key!=='basename')||!validPointer(value.$from)||
+   (Object.hasOwn(value,'basename')&&value.basename!==true))fail('checker_report_plan_invalid');
   const resolved=readPointer(source,value.$from);
-  if(resolved===undefined)throw Object.assign(Error('checker_report_parameter_missing'),{reference:value.$from});
-  return resolved;
+  if(resolved===undefined||(optional&&(resolved===null||resolved==='')))
+   throw Object.assign(Error('checker_report_parameter_missing'),{reference:value.$from});
+  if(!value.basename)return resolved;
+  if(typeof resolved!=='string'||!resolved||resolved.includes('\\'))fail('checker_report_plan_invalid');
+  return path.posix.basename(resolved);
  }
- return Object.fromEntries(Object.entries(value).map(([key,item])=>[key,resolveReportArgument(item,source)]));
+ return Object.fromEntries(Object.entries(value).map(([key,item])=>[key,resolveReportArgument(item,source,optional)]));
 }
 function projectReceipt(receipt,fields){
  if(receipt.status!=='available'||!fields)return receipt;
@@ -243,57 +250,62 @@ export async function createDeliveryReport({binding,plan,request,file}){
  const requisites=request.criteria.map(c=>c.id);
  const files=Object.entries(plan?.files??{});
  const facts=Object.entries(plan?.facts??{});
- const names=new Set([...files,...facts].map(([name])=>name));
- if(!mappings||!names.size||names.size!==files.length+facts.length||names.size>32||facts.length>6||
+ const entries=[...files,...facts];
+ const names=new Set(entries.map(([name])=>name));
+ const required=new Set(entries.filter(([,item])=>item?.optional!==true).map(([name])=>name));
+ if(!mappings||!names.size||names.size!==files.length+facts.length||names.size>32||facts.length>8||
+  entries.some(([,item])=>Object.hasOwn(item??{},'optional')&&typeof item.optional!=='boolean')||
   files.some(([,item])=>!item||typeof item.scope!=='string'||typeof item.role!=='string'||
+   Object.hasOwn(item,'digest_only')&&(item.digest_only!==true||item.fields!==undefined)||
    item.fields!==undefined&&(!Array.isArray(item.fields)||!item.fields.length||item.fields.length>24||item.fields.some(field=>!validPointer(field))))||
   Object.keys(mappings).length!==requisites.length||requisites.some(key=>!Array.isArray(mappings[key])||
-   !mappings[key].length||mappings[key].some(name=>!names.has(name))))
+   !mappings[key].some(name=>required.has(name))||mappings[key].some(name=>!names.has(name))))
   fail('checker_report_plan_invalid');
 
- const evidence=[],images=[],fileValues=Object.create(null);
+ const evidence=[],images=new Map(),fileValues=Object.create(null);
  const digests=new Set((binding.archive??[]).map(ref=>ref.sha256));
- for(const [label,{scope,role,fields}] of files){
-  const refs=(binding.archive??[]).filter(ref=>(scope==='*'||ref.scope===scope)&&ref.role===role);
+ for(const [label,{scope,role,fields,optional,digest_only}] of files){
+  const refs=(binding.archive??[]).filter(ref=>(scope==='*'||ref.scope===scope)&&(role==='*'||ref.role===role));
   if(!refs.length){
    const evidence_ref=path.join(binding.directory,randomUUID()+'.json');
    const receipt={evidence_ref,nonce:binding.nonce,request_sha256:binding.request_sha256,status:'unavailable',
-    reason:'checker_report_role_missing',label,scope,role};
+    reason:'checker_report_role_missing',label,scope,role,...(optional?{optional_absent:true}:{})};
    durableWrite(evidence_ref,receipt);evidence.push(receipt);continue;
   }
-  for(const {scope,path:archiveFile} of refs){
+  for(const {scope,role,path:archiveFile} of refs){
    const {receipt,image}=readCheckerEvidence(binding,{path:archiveFile});
    if(refs.length===1&&receipt.status==='available'&&receipt.text!==undefined){
     try{fileValues[label]=JSON.parse(receipt.text);}catch{}
    }
-   const viewed=fields?projectReceipt(receipt,fields):archiveText(receipt,digests);
+   const {text: _rawText, ...metadata}=receipt;
+   const viewed=digest_only?{...metadata,representation:'digest_only'}:fields?projectReceipt(receipt,fields):archiveText(receipt,digests);
    if(viewed.missing_fields?.length){
     const evidence_ref=path.join(binding.directory,randomUUID()+'.json');
     const unavailable={...viewed,evidence_ref,status:'unavailable',reason:'checker_report_fields_missing',label,scope,role};
     durableWrite(evidence_ref,unavailable);evidence.push(unavailable);
    }else{
-    evidence.push({label,scope,...viewed});
-    if(image)images.push(image);
+    evidence.push({label,scope,role,...viewed});
+    if(image&&!digest_only)images.set(receipt.sha256,image);
    }
   }
  }
  const source={proposal:{outputs:request.proposal.outputs},context:request.context,files:fileValues};
- const observations=await Promise.all(facts.map(async ([label,{operation,args}])=>{
-  try{return {label,...(await readCheckerFact(binding,{operation,args:resolveReportArgument(args,source)})).receipt};}
+ const observations=await Promise.all(facts.map(async ([label,{operation,args,optional}])=>{
+  try{return {label,...(await readCheckerFact(binding,{operation,args:resolveReportArgument(args,source,optional)})).receipt};}
   catch(error){
    if(error.message!=='checker_report_parameter_missing')throw error;
    const evidence_ref=path.join(binding.directory,randomUUID()+'.json');
    const receipt={label,evidence_ref,nonce:binding.nonce,request_sha256:binding.request_sha256,
-    status:'unavailable',reason:error.message,operation,reference:error.reference};
+    status:'unavailable',reason:error.message,operation,reference:error.reference,...(optional?{optional_absent:true}:{})};
    durableWrite(evidence_ref,receipt);return receipt;
   }
  }));
  evidence.push(...observations);
  const report={format:'activity-delivery-report/v1',nonce:binding.nonce,run_id:request.run_id,activity:request.activity,
   outputs:request.proposal.outputs,criteria:mappings,evidence};
- if(Buffer.byteLength(JSON.stringify(report))>maxResponseTextBytes||images.reduce((total,image)=>total+image.data.length,0)>1024*1024)
+ if(Buffer.byteLength(JSON.stringify(report))>maxReportTextBytes||[...images.values()].reduce((total,image)=>total+image.data.length,0)>maxReportImageBytes)
   fail('checker_report_response_limit');
- const envelope={...report,images};
+ const envelope={...report,images:[...images.values()]};
  durableWrite(file,envelope);
  return {file,sha256:hash(fs.readFileSync(file))};
 }
@@ -307,13 +319,24 @@ export function readDeliveryReport(binding){
 }
 export function requiredDeliveryReportGaps(report){
  return Object.entries(report.criteria).flatMap(([check_id,labels])=>report.evidence
-  .filter(item=>item.status!=='available'&&labels.includes(item.label))
+  .filter(item=>item.status!=='available'&&!item.optional_absent&&labels.includes(item.label))
   .map(({label,evidence_ref,reason,path,scope,role,operation,missing_fields,reference})=>
    ({check_id,label,evidence_ref,reason,path,scope,role,operation,missing_fields,reference})));
 }
+export function deliveryReportText(binding){
+ const {images,evidence,criteria,...header}=readDeliveryReport(binding);
+ const entries=[...evidence.entries()];
+ const criteria_evidence=Object.fromEntries(Object.entries(criteria).map(([id,labels])=>[id,
+  entries.filter(([,entry])=>!entry.optional_absent&&labels.includes(entry.label)).map(([index])=>deliveryReportRef(index))]));
+ const records=entries.map(([index,{nonce,request_sha256,stdout_sha256,stderr_sha256,...item}])=>({
+  ...item,evidence_ref:deliveryReportRef(index),
+ }));
+ return {...header,criteria_evidence,evidence:records,
+  image_sha256:images.map(image=>hash(Buffer.from(image.data,'base64')))};
+}
 function sendDeliveryReport(binding){
- const {images,...report}=readDeliveryReport(binding);
- return [{type:'text',text:JSON.stringify(report)},...images];
+ const {run_id,activity,evidence,images}=readDeliveryReport(binding);
+ return [{type:'text',text:JSON.stringify({run_id,activity,evidence_count:evidence.length,image_count:images.length})},...images];
 }
 export function checkerEvidenceReceipts(binding){
  return fs.readdirSync(binding.directory).filter(f=>f.endsWith('.json')).map(f=>{

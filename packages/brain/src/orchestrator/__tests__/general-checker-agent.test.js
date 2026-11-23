@@ -10,7 +10,7 @@ import {createHash,randomUUID} from 'node:crypto';
 import {createRuntime} from '../../../scripts/commander-workflow/skill-adapter.mjs';
 import {archiveActivityHandoff} from '../../../scripts/commander-workflow/activity-handoff.mjs';
 import {createHostToolCaller,prepareHostTools} from '../../../scripts/commander-workflow/skill-tools-mcp.mjs';
-import {checkerEvidenceReceipts,prepareCheckerEvidence,readCheckerArchive,readCheckerBatch,readCheckerEvidence,createDeliveryReport} from '../../../scripts/commander-workflow/checker-evidence.mjs';
+import {checkerEvidenceReceipts,prepareCheckerEvidence,readCheckerArchive,readCheckerBatch,readCheckerEvidence,createDeliveryReport,requiredDeliveryReportGaps} from '../../../scripts/commander-workflow/checker-evidence.mjs';
 import {digest} from '../commander-decision.js';
 import {verifyCheckerResult} from '../../../scripts/commander-workflow/checker-agent-protocol.mjs';
 import {createRunLedger} from '../commander-usage-ledger.js';
@@ -66,7 +66,10 @@ let prompt='';process.stdin.on('data',b=>prompt+=b);process.stdin.on('end',async
  if(raw.status!==0)throw Error('actual_evidence_server_failed:'+raw.stderr);
  const response=JSON.parse(raw.stdout.trim().split('\\n').at(-1));if(response.error)throw Error(JSON.stringify(response.error));
  const payload=JSON.parse(response.result.content[0].text);
- const observed=report?payload.evidence[0]:payload;
+ const marker='\\n\\n--- 冻结交付报告 JSON ---\\n';
+ const inline=report?JSON.parse(prompt.split(marker)[1]):null;
+ const observed=report?inline.evidence[0]:payload;
+ if(report&&(payload.evidence_count!==inline.evidence.length||response.result.content.filter(item=>item.type==='text').length!==1))throw Error('report evidence records missing');
  const fact=observed.status==='available'?observed.text_projection?{number:observed.text_projection['/number']}:JSON.parse(observed.text):null;
  const checks=r.criteria.map(c=>{const wanted=c.requirement;let matches=typeof wanted!=='string'?true:wanted.startsWith('number equals ')?fact?.number===Number(wanted.slice(14)):fact?.color===wanted.slice(9);
  if(repairScenario&&r.phase==='end'&&c.id==='end_criterion')matches=matches&&r.proposal?.outputs?.number===fact?.number;
@@ -714,7 +717,7 @@ test('报告的只读事实参数从本轮交付和原件绑定，不靠 Checker
    proposal:{...document,delivery_evidence:{run:{source:{}}}}};
   const archiveRoot='evidence/archive';
   fs.mkdirSync(path.join(f.cwd,archiveRoot));
-  const contents=JSON.stringify({media:'this-run.mkv'});
+  const contents=JSON.stringify({media:'native/this-run.mkv'});
   const sourceHash=createHash('sha256').update(contents).digest('hex');
   const archivePath=path.join(archiveRoot,sourceHash);
   fs.writeFileSync(path.join(f.cwd,archivePath),contents);
@@ -723,9 +726,12 @@ test('报告的只读事实参数从本轮交付和原件绑定，不靠 Checker
    command:process.execPath,command_sha256:hash(process.execPath),entry,timeout_ms:3000}},cwd:f.cwd,
    files:{[entry]:hash(path.join(f.cwd,entry))},request,directory:path.join(f.cwd,'report-reads'),deadlineMs:Date.now()+5000});
   const file=path.join(f.cwd,'report.json');
-  await createDeliveryReport({binding,plan:{files:{src:{scope:'run',role:'source'}},facts:{result:{operation:'fixture.read',
-   args:{number:{$from:'/proposal/outputs/number'},media:{$from:'/files/src/media'}}}},criteria:{end:['src','result']}},request,file});
-  const result=JSON.parse(fs.readFileSync(file)).evidence.find(e=>e.label==='result');
+  await createDeliveryReport({binding,plan:{files:{src:{scope:'run',role:'*'},optional:{scope:'alternate',role:'source',optional:true}},facts:{result:{operation:'fixture.read',
+   args:{number:{$from:'/proposal/outputs/number'},media:{$from:'/files/src/media',basename:true}}},alternate:{operation:'fixture.read',optional:true,args:{id:{$from:'/proposal/outputs/alternate'}}}},criteria:{end:['src','result','optional','alternate']}},request,file});
+  const report=JSON.parse(fs.readFileSync(file));
+  const result=report.evidence.find(e=>e.label==='result');
+  expect(requiredDeliveryReportGaps(report)).toEqual([]);
+  expect(report.evidence.filter(e=>e.optional_absent).map(e=>e.label)).toEqual(['optional','alternate']);
   expect(result.facts).toEqual({number:42,media:'this-run.mkv'});
  }finally{f.close();}
 });
@@ -739,6 +745,24 @@ test('报告要引用每个必要原件，少引用独立事实不得通过',()=
   reason:'Verified enough',expected:42,actual:42,evidence:[{source:'submitted',observation:{summary:'submitted'}}]}]};
  expect(()=>verifyCheckerResult(value,request,receipts,{deliveryReport})).toThrow('checker_report_required_citation_missing');
 });
+test('分支不产出的证据保留缺项，仍必须引用实际存在的必需证据',()=>{
+ const identity={task_id:'task',run_id:'run',run_tag:'tag',workflow:'test',activity:'activity',attempt:1};
+ const request={...identity,nonce:'nonce',criteria:[{id:'check'}],proposal:{outputs:{number:42}}};
+ const receipts=[
+  {evidence_ref:'anchor',nonce:'nonce',request_sha256:digest(request),status:'available'},
+  {evidence_ref:'branch',nonce:'nonce',request_sha256:digest(request),status:'unavailable'},
+ ];
+ const evidence=receipts.map(r=>({label:r.evidence_ref,...r}));
+ evidence[1].optional_absent=true;
+ const deliveryReport={outputs:request.proposal.outputs,criteria:{check:['anchor','branch']},evidence};
+ const check={id:'check',status:'passed',reason:'Original ledger proves branch was not entered',expected:42,actual:42,evidence:[
+  {source:'anchor',observation:{summary:'same run'}}]};
+ const result={identity,nonce:'nonce',outcome:'passed',output:{number:42},checks:[check]};
+ expect(verifyCheckerResult(result,request,receipts,{deliveryReport}).outcome).toBe('passed');
+ delete evidence[1].optional_absent;
+ expect(()=>verifyCheckerResult(result,request,receipts,{deliveryReport})).toThrow('checker_report_evidence_unavailable');
+});
+
 test('接受同一报告内的补充证据，拒绝报告之外的引用',()=>{
  const identity={task_id:'task',run_id:'run',run_tag:'tag',workflow:'test',activity:'activity',attempt:1};
  const request={...identity,nonce:'nonce',criteria:[{id:'check'}],proposal:{outputs:{number:42}}};
@@ -758,7 +782,8 @@ test('报告超限写可追溯回执，不启动完工 Checker',async()=>{
  try{
   const {activity,profile,run}=f,document=activity.acceptance.document;
   document.delivery={schema:{type:'object'},report:{
-   files:{proof:{scope:'run',role:'source'}},criteria:{end_criterion:['proof'],failure:['proof']},
+   files:{proof:{scope:'run',role:'source'},repeated:{scope:'run',role:'source'},third:{scope:'run',role:'source'}},
+   criteria:{end_criterion:['proof','repeated','third'],failure:['proof']},
   }};
   activity.acceptance.source.contract_digest=digest(document);
   const runtime=await createRuntime({profile,run});
