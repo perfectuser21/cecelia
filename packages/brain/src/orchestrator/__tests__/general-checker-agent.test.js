@@ -487,6 +487,26 @@ test('只归档当前动作产生的已验证宿主工具 JSON 回执',async()=>
  }finally{f.close();}
 },10000);
 
+test('保留可归档原件，记录可选裸文件名，必需原件缺失仍拒绝',()=>{
+ const f=fixture();try{
+  const directory=path.join(f.cwd,'action');fs.mkdirSync(directory);
+  const fields={receipt:{type:'string'},native_identifier:{type:'string'}};
+  const schema=required=>({type:'object',required:['outputs','evidence'],properties:{
+   outputs:{type:'object'},evidence:{type:'object',required:['account'],properties:{
+    account:{type:'object',properties:fields,required,additionalProperties:false}}}}});
+  const proposal={outputs:{number:42},handoff:{account:{receipt:'evidence/fact.json',native_identifier:'remote-account.xml'}}};
+  const args={identity:{run_id:f.run.run_id,activity_key:f.activity.key},config:{roots:['evidence']},
+   cwd:f.cwd,directory,deadlineMs:f.run.deadline_ms,proposal};
+  expect(()=>archiveActivityHandoff({...args,delivery:{schema:schema(['receipt','native_identifier'])}})).toThrow();
+  expect(()=>archiveActivityHandoff({...args,proposal:{outputs:{number:42},handoff:{account:{native_identifier:'remote-account.xml'}}},
+    delivery:{schema:schema([])}})).toThrow('delivery_evidence_unqualified');
+  const manifest=archiveActivityHandoff({...args,delivery:{schema:schema(['receipt'])}});
+  expect(Object.keys(manifest.evidence.account)).toEqual(['receipt']);
+  expect(manifest.unresolved_evidence).toEqual([{scope:'account',role:'native_identifier',source:'remote-account.xml'}]);
+  expect(archiveActivityHandoff({...args,delivery:{schema:schema(['receipt'])}})).toEqual(manifest);
+ }finally{f.close();}
+});
+
 test('逐项交付必须按输出 ID 配齐证据，拒绝缺失或多列的证据组',()=>{
  const f=fixture();
  try{
