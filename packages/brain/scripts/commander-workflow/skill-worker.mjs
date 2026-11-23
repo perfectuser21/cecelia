@@ -12,7 +12,7 @@ import {createRunLedger,normalizeTurns} from '../../src/orchestrator/commander-u
 import {prepareHostTools,hostToolsArgs} from './skill-tools-mcp.mjs';
 import {sessionGroup,readSessionThread} from './session-group.mjs';
 import {checkerPrompt,checkerOutputSchema,decodeCheckerOutput} from './checker-agent-protocol.mjs';
-import {prepareCheckerEvidence,checkerEvidenceArgs} from './checker-evidence.mjs';
+import {prepareCheckerEvidence,checkerEvidenceArgs,createDeliveryReport} from './checker-evidence.mjs';
 const chunks=[];for await(const c of process.stdin)chunks.push(c);
 const request=JSON.parse(Buffer.concat(chunks).toString()),{codex,identity,thread_file,work_dir,skill_text,tools_text,context}=request;
 const checking=request.role==='checker',effectScope=checking?undefined:request.activity_contract?.runtime?.checker_repair?.effect_scope;
@@ -53,9 +53,13 @@ let partial='',thread=previous?.thread_id;
 const argv=codexWorkerArgs(codex,thread,output,auth);
 if(checking){
  const binding=prepareCheckerEvidence({config:request.checker_evidence,cwd:request.cwd,files:request.checker_files,request:request.checker_request,directory:path.join(work_dir,'evidence-reads'),deadlineMs:request.deadline_ms,denied:[auth.auth.home,work_dir]});
+ const plan=request.checker_request.phase==='end'&&request.activity_contract?.acceptance?.document?.delivery?.report;
+ if(plan&&request.checker_request.proposal?.delivery_sha256){
+  binding.delivery_report=await createDeliveryReport({binding,plan,request:request.checker_request,file:path.join(work_dir,'activity-delivery-report.json')});
+ }
  const file=path.join(work_dir,'checker-evidence-binding.json');durableWrite(file,binding);
  const schemaFile=path.join(work_dir,'checker-output.schema.json');durableWrite(schemaFile,checkerOutputSchema(request.checker_request));
- argv.splice(argv.length-1,0,'--output-schema',schemaFile,...checkerEvidenceArgs(file,createHash('sha256').update(fs.readFileSync(file)).digest('hex'),auth.auth.home,binding.directory,{archive:Boolean(binding.archive?.length)}));
+ argv.splice(argv.length-1,0,'--output-schema',schemaFile,...checkerEvidenceArgs(file,createHash('sha256').update(fs.readFileSync(file)).digest('hex'),auth.auth.home,binding.directory,{archive:Boolean(binding.archive?.length),deliveryReport:Boolean(binding.delivery_report)}));
 }
 if(readOnly){
  const evidenceRequest={...identity,run_tag:context.run_tag,nonce:identity.action_id,activity:request.activity_key,

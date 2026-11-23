@@ -10,7 +10,7 @@ import {createHash,randomUUID} from 'node:crypto';
 import {createRuntime} from '../../../scripts/commander-workflow/skill-adapter.mjs';
 import {archiveActivityHandoff} from '../../../scripts/commander-workflow/activity-handoff.mjs';
 import {createHostToolCaller,prepareHostTools} from '../../../scripts/commander-workflow/skill-tools-mcp.mjs';
-import {checkerEvidenceReceipts,prepareCheckerEvidence,readCheckerArchive,readCheckerBatch,readCheckerEvidence} from '../../../scripts/commander-workflow/checker-evidence.mjs';
+import {checkerEvidenceReceipts,prepareCheckerEvidence,readCheckerArchive,readCheckerBatch,readCheckerEvidence,createDeliveryReport} from '../../../scripts/commander-workflow/checker-evidence.mjs';
 import {digest} from '../commander-decision.js';
 import {createRunLedger} from '../commander-usage-ledger.js';
 const hash=p=>createHash('sha256').update(fs.readFileSync(p)).digest('hex');
@@ -28,7 +28,7 @@ let prompt='';process.stdin.on('data',b=>prompt+=b);process.stdin.on('end',async
  const refScenario=['final-ref-recheck','final-ref-always-wrong','final-timeout-recheck'].includes('${mode}');
  const mediated='${mode}'.startsWith('mediated-');
  const repairScenario='${mode}'.startsWith('readonly-repair')||mediated;
- if(!r&&['delivery','delivery-existing-evidence','delivery-timeout','delivery-read-limit','delivery-read-limit-persistent'].includes('${mode}')){
+ if(!r&&['delivery','delivery-existing-evidence','delivery-timeout','delivery-report','delivery-read-limit','delivery-read-limit-persistent'].includes('${mode}')){
   const field='${mode}'==='delivery-existing-evidence'?'evidence':'handoff';
   if('${mode}'.startsWith('delivery-read-limit'))fs.appendFileSync('execution-count.txt','1');
   fs.writeFileSync(process.argv[process.argv.indexOf('-o')+1],JSON.stringify({outputs:{number:42},[field]:{run:{source:'evidence/fact.json'}}}));
@@ -57,13 +57,16 @@ let prompt='';process.stdin.on('data',b=>prompt+=b);process.stdin.on('end',async
  const serverArgs=JSON.parse(arg.slice(arg.indexOf('=')+1));
  const archived=Boolean(r.proposal?.delivery_evidence);
  const recheck=archived&&r.evidence_recheck&&'${mode}'==='delivery-read-limit';
- const tool=recheck?{name:'read_file',arguments:{path:r.proposal.delivery_evidence.run.source.archive_path}}:
+ const report=r.phase==='end'&&r.activity_contract?.acceptance?.document?.delivery?.report;
+ const tool=report?{name:'read_report',arguments:{}}:recheck?{name:'read_file',arguments:{path:r.proposal.delivery_evidence.run.source.archive_path}}:
   archived?{name:'read_archive',arguments:{}}:{name:'read_file',arguments:{path:'evidence/fact.json'}};
  const rpc=[{jsonrpc:'2.0',id:1,method:'initialize'},{jsonrpc:'2.0',id:2,method:'tools/call',params:tool}];
  const raw=cp.spawnSync(process.execPath,serverArgs,{input:rpc.map(JSON.stringify).join('\\n')+'\\n',encoding:'utf8'});
  if(raw.status!==0)throw Error('actual_evidence_server_failed:'+raw.stderr);
  const response=JSON.parse(raw.stdout.trim().split('\\n').at(-1));if(response.error)throw Error(JSON.stringify(response.error));
- const observed=JSON.parse(response.result.content[0].text),fact=observed.status==='available'?JSON.parse(observed.text):null;
+ const payload=JSON.parse(response.result.content[0].text);
+ const observed=report?payload.evidence[0]:payload;
+ const fact=observed.status==='available'?observed.text_projection?{number:observed.text_projection['/number']}:JSON.parse(observed.text):null;
  const checks=r.criteria.map(c=>{const wanted=c.requirement;let matches=typeof wanted!=='string'?true:wanted.startsWith('number equals ')?fact?.number===Number(wanted.slice(14)):fact?.color===wanted.slice(9);
  if(repairScenario&&r.phase==='end'&&c.id==='end_criterion')matches=matches&&r.proposal?.outputs?.number===fact?.number;
  if(r.proposal?.schema_version===1&&typeof wanted==='string'&&wanted.startsWith('number equals '))matches=matches&&r.proposal.outputs.number===fact?.number;
@@ -646,5 +649,77 @@ test('通用批量读取合并多个原件的字段投影，保留完整回执�
   expect(partial).toContainEqual(expect.objectContaining({status:'available',path:'evidence/fact.json'}));
   expect(partial).toContainEqual(expect.objectContaining({status:'unavailable',reason:'checker_batch_response_limit',
    entries:[{path:'evidence/extra.json'}]}));
+ }finally{f.close();}
+});
+
+test('完成活动后生成唯一报告，独立 Checker 只读报告并核原交付',async()=>{
+ const f=fixture({mode:'delivery-report'});
+ try{
+  const {activity,profile,run}=f;
+  const document=activity.acceptance.document;
+  document.delivery={schema:{type:'object'},report:{
+   files:{result:{scope:'run',role:'source',fields:['/number']}},
+   criteria:{end_criterion:['result'],failure:['result']},
+  }};
+  activity.acceptance.source.contract_digest=digest(document);
+  const runtime=await createRuntime({profile,run});
+  const input={run_tag:run.input.run_tag,action_id:'report-delivery'};
+  const identity={task_id:run.task_id,run_id:run.run_id,activity_key:activity.key,action_id:input.action_id};
+  const result=await runtime.executeActivity(activity,input,{identity,cwd:f.cwd,deadlineMs:run.deadline_ms});
+  expect(result.status).toBe('completed');
+  expect(result.outputs).toEqual({number:42});
+  const calls=fs.readFileSync(path.join(f.cwd,'checker-calls.jsonl'),'utf8').trim().split('\n').map(JSON.parse);
+  expect(calls.map(c=>c.request.phase)).toEqual(['start','end']);
+  expect(calls[1].argv).toContain('mcp_servers.commander_checker_evidence.enabled_tools=["read_report"]');
+  const control=path.join(f.cwd,'control',run.run_id,'checker-agents',calls[1].request.nonce);
+  const report=JSON.parse(fs.readFileSync(path.join(control,'activity-delivery-report.json')));
+  expect(report.criteria).toEqual({end_criterion:['result'],failure:['result']});
+  expect(report.evidence[0]).toMatchObject({label:'result',text_projection:{'/number':42}});
+ }finally{f.close();}
+},15000);
+
+test('报告明确缺哪个原件，结果保留条款并禁止继续',async()=>{
+ const f=fixture({mode:'delivery-report'});
+ try{
+  const {activity,profile,run}=f,document=activity.acceptance.document;
+  document.delivery={schema:{type:'object'},report:{
+   files:{recording:{scope:'run',role:'original-recording'}},
+   criteria:{end_criterion:['recording'],failure:['recording']},
+  }};
+  activity.acceptance.source.contract_digest=digest(document);
+  const runtime=await createRuntime({profile,run});
+  const result=await runtime.executeActivity(activity,{run_tag:run.input.run_tag,action_id:'missing-report-input'},{
+   identity:{task_id:run.task_id,run_id:run.run_id,activity_key:activity.key,action_id:'missing-report-input'},cwd:f.cwd,deadlineMs:run.deadline_ms});
+  expect(result.status).toBe('needs_review');
+  expect(result.checker_feedback.missing_evidence).toContainEqual(
+   expect.objectContaining({check_id:'end_criterion',scope:'run',role:'original-recording'}));
+  expect(await runtime.checkActivity(activity,result,{phase:'end',input:{run_tag:run.input.run_tag,action_id:'missing-report-input',execution_attempt:1}}))
+   .toMatchObject({verdict:'unknown'});
+ }finally{f.close();}
+},15000);
+
+test('报告的只读事实参数从本轮交付和原件绑定，不靠 Checker 猜值',async()=>{
+ const f=fixture();
+ try{
+  const entry='provider.cjs';
+  fs.writeFileSync(path.join(f.cwd,entry), "let raw='';process.stdin.on('data',x=>raw+=x);process.stdin.on('end',()=>{const req=JSON.parse(raw);console.log(JSON.stringify({status:'available',source:'fixture',facts:req.args}));});");
+  const document={outputs:{number:42}};
+  const request={nonce:randomUUID(),run_id:f.run.run_id,activity:f.activity.key,criteria:[{id:'end'}],
+   proposal:{...document,delivery_evidence:{run:{source:{}}}}};
+  const archiveRoot='evidence/archive';
+  fs.mkdirSync(path.join(f.cwd,archiveRoot));
+  const contents=JSON.stringify({media:'this-run.mkv'});
+  const sourceHash=createHash('sha256').update(contents).digest('hex');
+  const archivePath=path.join(archiveRoot,sourceHash);
+  fs.writeFileSync(path.join(f.cwd,archivePath),contents);
+  request.proposal.delivery_evidence.run.source={sha256:sourceHash,archive_path:archivePath};
+  const binding=prepareCheckerEvidence({config:{roots:[archiveRoot],archive_root:archiveRoot,provider:{
+   command:process.execPath,command_sha256:hash(process.execPath),entry,timeout_ms:3000}},cwd:f.cwd,
+   files:{[entry]:hash(path.join(f.cwd,entry))},request,directory:path.join(f.cwd,'report-reads'),deadlineMs:Date.now()+5000});
+  const file=path.join(f.cwd,'report.json');
+  await createDeliveryReport({binding,plan:{files:{src:{scope:'run',role:'source'}},facts:{result:{operation:'fixture.read',
+   args:{number:{$from:'/proposal/outputs/number'},media:{$from:'/files/src/media'}}}},criteria:{end:['src','result']}},request,file});
+  const result=JSON.parse(fs.readFileSync(file)).evidence.find(e=>e.label==='result');
+  expect(result.facts).toEqual({number:42,media:'this-run.mkv'});
  }finally{f.close();}
 });

@@ -10,7 +10,7 @@ import {parseActivityResult} from '../../src/orchestrator/activity-contract.js';
 import {sessionGroup,sessionThreadFile} from './session-group.mjs';
 import {digest} from '../../src/orchestrator/commander-decision.js';
 import {checkerCriteria,verifyCheckerResult} from './checker-agent-protocol.mjs';
-import {checkerEvidenceReceipts} from './checker-evidence.mjs';
+import {checkerEvidenceReceipts,readDeliveryReport} from './checker-evidence.mjs';
 import {hostToolsAreQuiescent,hostToolsDidNotDispatch} from './skill-tools-mcp.mjs';
 import {archiveActivityHandoff} from './activity-handoff.mjs';
 const hash=file=>createHash('sha256').update(fs.readFileSync(file)).digest('hex');
@@ -162,17 +162,21 @@ export async function createRuntime({profile,run,verifySource=async()=>{},ledger
       if(checker.mode==='agent'){
         const binding=JSON.parse(fs.readFileSync(path.join(transport.checker_directory,'checker-evidence-binding.json')));
         const receipts=checkerEvidenceReceipts(binding);
-        verified=verifyCheckerResult(observed,request,receipts,{allowEmpty:spec.allow_empty===true});
+        const deliveryReport=binding.delivery_report?readDeliveryReport(binding):undefined;
+        verified=verifyCheckerResult(observed,request,receipts,{allowEmpty:spec.allow_empty===true,deliveryReport});
         const unknownChecks=verified.checks.filter(c=>c.status==='unknown');
         const limits=new Map(receipts.filter(r=>r.status==='unavailable'&&['checker_archive_response_limit','checker_batch_response_limit'].includes(r.reason))
           .map(r=>[r.evidence_ref,r.reason]));
         const affected=unknownChecks.filter(c=>c.evidence.some(e=>limits.has(e.source)));
         const limitRefs=[...new Set(affected.flatMap(c=>c.evidence.map(e=>e.source).filter(ref=>limits.has(ref))))];
         const readLimit=limitRefs.length?{reason:limits.get(limitRefs[0]),check_ids:affected.map(c=>c.id),evidence_refs:limitRefs}:undefined;
-        const missingByRef=new Map(receipts.filter(r=>r.status==='unavailable'&&r.reason==='not_found'&&typeof r.path==='string')
-          .map(r=>[r.evidence_ref,r.path]));
-        const missingEvidence=unknownChecks.flatMap(c=>c.evidence
-          .filter(e=>missingByRef.has(e.source)).map(e=>({check_id:c.id,path:missingByRef.get(e.source),evidence_ref:e.source})));
+        const missingByRef=new Map(receipts.filter(r=>r.status==='unavailable'&&
+          ['not_found','checker_report_role_missing','checker_report_fields_missing','checker_report_parameter_missing'].includes(r.reason))
+          .map(r=>[r.evidence_ref,r]));
+        const missingEvidence=unknownChecks.flatMap(c=>c.evidence.filter(e=>missingByRef.has(e.source)).map(e=>{
+          const {path,scope,role,missing_fields,reference}=missingByRef.get(e.source);
+          return {check_id:c.id,evidence_ref:e.source,...(path?{path}:{}),...(scope?{scope}:{}),...(role?{role}:{}),...(missing_fields?{missing_fields}:{}),...(reference?{reference}:{})};
+        }));
         const diagnostics={...(readLimit?{read_limit:readLimit}:{}),...(missingEvidence.length?{missing_evidence:missingEvidence}:{})};
         durableWrite(evidenceFile,{request,observed,transport,verified,...diagnostics,status:'verified'});
         return {...verified,evidence_ref:evidenceFile,...diagnostics};
