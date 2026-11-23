@@ -28,8 +28,9 @@ let prompt='';process.stdin.on('data',b=>prompt+=b);process.stdin.on('end',async
  const refScenario=['final-ref-recheck','final-ref-always-wrong','final-timeout-recheck'].includes('${mode}');
  const mediated='${mode}'.startsWith('mediated-');
  const repairScenario='${mode}'.startsWith('readonly-repair')||mediated;
- if(!r&&['delivery','delivery-existing-evidence','delivery-timeout'].includes('${mode}')){
+ if(!r&&['delivery','delivery-existing-evidence','delivery-timeout','delivery-read-limit','delivery-read-limit-persistent'].includes('${mode}')){
   const field='${mode}'==='delivery-existing-evidence'?'evidence':'handoff';
+  if('${mode}'.startsWith('delivery-read-limit'))fs.appendFileSync('execution-count.txt','1');
   fs.writeFileSync(process.argv[process.argv.indexOf('-o')+1],JSON.stringify({outputs:{number:42},[field]:{run:{source:'evidence/fact.json'}}}));
   console.log(JSON.stringify({type:'thread.started',thread_id:'execution-thread'}));return;
  }
@@ -55,7 +56,9 @@ let prompt='';process.stdin.on('data',b=>prompt+=b);process.stdin.on('end',async
  const arg=process.argv.find(a=>a.startsWith('mcp_servers.commander_checker_evidence.args='));
  const serverArgs=JSON.parse(arg.slice(arg.indexOf('=')+1));
  const archived=Boolean(r.proposal?.delivery_evidence);
- const tool=archived?{name:'read_archive',arguments:{}}:{name:'read_file',arguments:{path:'evidence/fact.json'}};
+ const recheck=archived&&r.evidence_recheck&&'${mode}'==='delivery-read-limit';
+ const tool=recheck?{name:'read_file',arguments:{path:r.proposal.delivery_evidence.run.source.archive_path}}:
+  archived?{name:'read_archive',arguments:{}}:{name:'read_file',arguments:{path:'evidence/fact.json'}};
  const rpc=[{jsonrpc:'2.0',id:1,method:'initialize'},{jsonrpc:'2.0',id:2,method:'tools/call',params:tool}];
  const raw=cp.spawnSync(process.execPath,serverArgs,{input:rpc.map(JSON.stringify).join('\\n')+'\\n',encoding:'utf8'});
  if(raw.status!==0)throw Error('actual_evidence_server_failed:'+raw.stderr);
@@ -268,7 +271,7 @@ test.each([
 test.each([
  ['readonly-repair',2,'completed',null],
  ['readonly-repair-exhausted',3,'needs_review','checker_repair_exhausted'],
- ['readonly-repair-missing',1,'needs_review','commander_activity_unverified'],
+ ['readonly-repair-missing',1,'needs_review','checker_evidence_missing'],
 ])('Commander and actual Checker use the read-only repair policy: %s',async(mode,attempts,status,escalationReason)=>{
  const f=fixture({mode}),old=process.env.DBOS_DURABLE_ENABLED;
  try{
@@ -305,6 +308,8 @@ test.each([
    expect(failure?.reason).toBe(escalationReason);
    expect(failure?.attempt_history).toHaveLength(attempts);
    expect(failure?.checker_feedback?.attempt).toBe(attempts);
+   if(mode==='readonly-repair-missing')expect(failure.checker_feedback.missing_evidence).toContainEqual(
+    expect.objectContaining({check_id:'end_criterion',path:'evidence/fact.json'}));
   }else{
    expect(failure).toBeUndefined();
    expect(result.outputs.number).toBe(42);
@@ -564,6 +569,29 @@ test('有真实交件的两次 Checker 超时后保留未知，不再拿空结�
  }finally{f.close();}
 },15000);
 
+test.each([['delivery-read-limit','completed'],['delivery-read-limit-persistent','needs_review']])('真实宿主读取上限只补验一次并保留因果链 %s',async(mode,status)=>{
+ const f=fixture({mode,fact:{number:42,padding:'p'.repeat(30000)}});
+ try{
+  const {activity,profile,run}=f;
+  activity.acceptance.document.delivery={schema:{type:'object'}};
+  activity.acceptance.source.contract_digest=digest(activity.acceptance.document);
+  const runtime=await createRuntime({profile,run});
+  const input={run_tag:run.input.run_tag,action_id:'large-delivery',execution_attempt:1};
+  const identity={task_id:run.task_id,run_id:run.run_id,activity_key:activity.key,action_id:input.action_id};
+  const result=await runtime.executeActivity(activity,input,{identity,cwd:f.cwd,deadlineMs:run.deadline_ms});
+  const calls=fs.readFileSync(path.join(f.cwd,'checker-calls.jsonl'),'utf8').trim().split('\n').map(JSON.parse).map(x=>x.request);
+  expect(calls.map(c=>c.phase)).toEqual(['start','end','end']);
+  expect(calls[2].proposal).toEqual(calls[1].proposal);
+  expect(calls[2].evidence_recheck).toMatchObject({reason:'checker_archive_response_limit',check_ids:['end_criterion','failure']});
+  expect(fs.readFileSync(path.join(f.cwd,'execution-count.txt'),'utf8')).toBe('1');
+  expect(result.status).toBe(status);
+  if(status==='needs_review'){
+   expect(result.checker_feedback).toMatchObject({retryable:false,retry_reason:'checker_archive_response_limit'});
+   expect(result.checker_feedback.failed_checks[0].id).toBe('end_criterion');
+  }
+ }finally{f.close();}
+},15000);
+
 test('按作用域读取原件且只压缩与归档字节完全相同的重复内嵌内容',()=>{
  const f=fixture();
  try{
@@ -584,8 +612,12 @@ test('按作用域读取原件且只压缩与归档字节完全相同的重复�
    request:{nonce:randomUUID(),proposal:{delivery_evidence:{camera:{report,archive},unrelated:{file:archive}}}},
    deadlineMs:Date.now()+5000
   });
-  const content=readCheckerArchive(binding,{scope:'camera'}).map(x=>JSON.parse(x.text));
+  const full=readCheckerArchive(binding,{scope:'camera'}).map(x=>JSON.parse(x.text));
+  expect(full).toEqual([expect.objectContaining({status:'unavailable',reason:'checker_archive_response_limit',
+   entries:[{scope:'camera',role:'report',path:report.archive_path},{scope:'camera',role:'archive',path:archive.archive_path}]})]);
+  const content=['report','archive'].flatMap(role=>readCheckerArchive(binding,{scope:'camera',roles:[role]})).map(x=>JSON.parse(x.text));
   expect(content.map(x=>x.role)).toEqual(['report','archive']);
+  expect(()=>readCheckerArchive(binding,{scope:'camera',roles:['file']})).toThrow('checker_evidence_archive_scope_invalid');
   expect(JSON.parse(content[0].text).result.stdout).toEqual({embedded:{archive_content_sha256:archive.sha256},distinct:'不同',other:copy});
   expect(checkerEvidenceReceipts(binding).find(x=>x.path===report.archive_path).text).toBe(receipt);
   expect(()=>readCheckerArchive(binding,{scope:'missing'})).toThrow('checker_evidence_archive_scope_invalid');
