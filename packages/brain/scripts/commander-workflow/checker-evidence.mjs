@@ -193,22 +193,29 @@ export async function readCheckerBatch(binding,request){
  const {files=[],facts=[]}=request;
  if(!Array.isArray(files)||!Array.isArray(facts)||!files.length&&!facts.length||files.length+facts.length>12||facts.length>6)
   fail('checker_evidence_request_invalid');
- if(files.some(item=>!item||Object.keys(item).some(k=>!['path','fields'].includes(k))||
+ if(files.some(item=>!item||typeof item.path!=='string'||Buffer.byteLength(item.path)>1024||Object.keys(item).some(k=>!['path','fields'].includes(k))||
   item.fields!==undefined&&(!Array.isArray(item.fields)||!item.fields.length||item.fields.length>24||
    item.fields.some(field=>typeof field!=='string'||!/^\/(?:[^~]|~[01]){1,255}$/.test(field)))))
   fail('checker_evidence_request_invalid');
  const archiveDigests=new Set((binding.archive??[]).map(ref=>ref.sha256));
- const fileContent=files.flatMap(({path,fields})=>{
+ const fileContent=files.map(({path,fields})=>{
   const {receipt,image}=readCheckerEvidence(binding,{path});
   const projected=fields?projectReceipt(receipt,fields):archiveText(receipt,archiveDigests);
-  return [{type:'text',text:JSON.stringify(projected)},...(image?[image]:[])];
+  return {entry:{path},items:[{type:'text',text:JSON.stringify(projected)},...(image?[image]:[])]};
  });
  const factContent=(await Promise.all(facts.map(fact=>readCheckerFact(binding,fact))))
-  .map(({receipt})=>({type:'text',text:JSON.stringify(receipt)}));
- const content=[...fileContent,...factContent];
- if(content.reduce((size,item)=>size+Buffer.byteLength(item.text??''),0)>maxResponseTextBytes||
-  content.reduce((size,item)=>size+(item.data?.length??0),0)>1024*1024)
-  return readLimitReceipt(binding,'checker_batch_response_limit',[...files,...facts]);
+  .map(({receipt},index)=>({entry:{operation:receipt.operation,index},items:[{type:'text',text:JSON.stringify(receipt)}]}));
+ const groups=[...fileContent,...factContent];
+ const textBudget=maxResponseTextBytes-Buffer.byteLength(JSON.stringify(groups.map(group=>group.entry)))-512;
+ const content=[],omitted=[];
+ let textBytes=0,imageBytes=0;
+ for(const {entry,items} of groups){
+  const size=items.reduce((bytes,item)=>bytes+Buffer.byteLength(item.text??''),0);
+  const images=items.reduce((bytes,item)=>bytes+(item.data?.length??0),0);
+  if(textBytes+size>textBudget||imageBytes+images>1024*1024){omitted.push(entry);continue;}
+  textBytes+=size;imageBytes+=images;content.push(...items);
+ }
+ if(omitted.length)content.push(...readLimitReceipt(binding,'checker_batch_response_limit',omitted));
  return content;
 }
 export function checkerEvidenceReceipts(binding){

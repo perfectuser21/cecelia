@@ -642,5 +642,9 @@ test('通用批量读取合并多个原件的字段投影，保留完整回执�
   await expect(readCheckerBatch(binding,{files:[{path:'../foreign.json'}]})).rejects.toThrow('checker_evidence_path_invalid');
   expect((await readCheckerBatch(binding,{files:[{path:'evidence/extra.json'}]})).map(x=>JSON.parse(x.text))[0])
    .toMatchObject({status:'unavailable',reason:'checker_batch_response_limit'});
+  const partial=(await readCheckerBatch(binding,{files:[{path:'evidence/extra.json'},{path:'evidence/fact.json'}]})).map(x=>JSON.parse(x.text));
+  expect(partial).toContainEqual(expect.objectContaining({status:'available',path:'evidence/fact.json'}));
+  expect(partial).toContainEqual(expect.objectContaining({status:'unavailable',reason:'checker_batch_response_limit',
+   entries:[{path:'evidence/extra.json'}]}));
  }finally{f.close();}
 });
