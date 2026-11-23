@@ -101,6 +101,14 @@ export async function createRuntime({profile,run,verifySource=async()=>{},ledger
       cwd:profile.cwd,codex:config.codex,codex_auth:profile.codex_auth,...(ledger?{ledger_directory:ledger.directory,ledger_policy:ledger.policy}:{}),
       thread_file:path.join(directory,'thread.json'),work_dir:directory,context:request.context,
       checker_request:request,checker_evidence:evidence,checker_files:profile.files,deadline_ms:deadline},{cwd:profile.cwd,signal},deadline);
+    if(request.phase==='end'&&request.activity_contract.acceptance.document.delivery?.report){
+      const failureFile=path.join(fs.realpathSync(directory),'delivery-report-error.json');
+      if(fs.existsSync(failureFile)&&fs.realpathSync(failureFile)===failureFile){
+        const failure=JSON.parse(fs.readFileSync(failureFile,'utf8'));
+        if(failure.nonce===request.nonce&&failure.request_sha256===digest(request)&&/^checker_(?:report|evidence)_\w+$/.test(failure.reason))
+          throw Object.assign(Error(failure.reason),{reportFailure:failureFile});
+      }
+    }
     if(transport.execution_stopped===false||transport.external_effect==='unknown'||transport.exit_signal||transport.reason_code){
       throw new Error('checker_execution_unconfirmed',{cause:transport.reason_code});
     }
@@ -173,10 +181,16 @@ export async function createRuntime({profile,run,verifySource=async()=>{},ledger
         const missingByRef=new Map(receipts.filter(r=>r.status==='unavailable'&&
           ['not_found','checker_report_role_missing','checker_report_fields_missing','checker_report_parameter_missing'].includes(r.reason))
           .map(r=>[r.evidence_ref,r]));
-        const missingEvidence=unknownChecks.flatMap(c=>c.evidence.filter(e=>missingByRef.has(e.source)).map(e=>{
-          const {path,scope,role,missing_fields,reference}=missingByRef.get(e.source);
-          return {check_id:c.id,evidence_ref:e.source,...(path?{path}:{}),...(scope?{scope}:{}),...(role?{role}:{}),...(missing_fields?{missing_fields}:{}),...(reference?{reference}:{})};
-        }));
+        const missingEvidence=unknownChecks.flatMap(c=>{
+          const sources=new Set(c.evidence.map(e=>e.source));
+          for(const item of deliveryReport?.evidence??[]){
+            if(deliveryReport.criteria[c.id].includes(item.label))sources.add(item.evidence_ref);
+          }
+          return [...sources].filter(ref=>missingByRef.has(ref)).map(evidence_ref=>{
+            const {path,scope,role,missing_fields,reference}=missingByRef.get(evidence_ref);
+            return {check_id:c.id,evidence_ref,...(path?{path}:{}),...(scope?{scope}:{}),...(role?{role}:{}),...(missing_fields?{missing_fields}:{}),...(reference?{reference}:{})};
+          });
+        });
         const diagnostics={...(readLimit?{read_limit:readLimit}:{}),...(missingEvidence.length?{missing_evidence:missingEvidence}:{})};
         durableWrite(evidenceFile,{request,observed,transport,verified,...diagnostics,status:'verified'});
         return {...verified,evidence_ref:evidenceFile,...diagnostics};
@@ -287,7 +301,8 @@ export async function createRuntime({profile,run,verifySource=async()=>{},ledger
         external_effect:transport.external_effect==='unknown'?'unknown':failure.external_effect}:undefined;
       if(feedback)verifiedFeedback.set(feedback.evidence_ref,structuredClone(feedback));
       return {schema_version:1,run_tag:input.run_tag,...(input.line_key===undefined?{}:{line_key:input.line_key}),status:'needs_review',failure_class:'needs_human',outputs:{},metrics:{},
-        evidence:feedback?[feedback.evidence_ref]:[],execution_stopped:true,reason_code:feedback?'skill_check_failed':'skill_readback_unconfirmed',
+        evidence:feedback?[feedback.evidence_ref]:error.reportFailure?[error.reportFailure]:[],execution_stopped:true,
+        reason_code:feedback?'skill_check_failed':error.reportFailure?error.message:'skill_readback_unconfirmed',
         ...(feedback?{checker_feedback:feedback,...(feedback.external_effect==='unknown'?{external_effect:'unknown'}:{})}:{})};
     }
   }
@@ -302,7 +317,10 @@ export async function createRuntime({profile,run,verifySource=async()=>{},ledger
       if (phase === 'start') requireDeclaredHostTools(activity);
       const {checker}=specFor(activity);
       if(phase==='start'&&checker.phase_policy==='completion_only')return {verdict:'pass',reason:'no_activity_start_criteria'};
-      if(phase==='end'&&activityContract(activity).acceptance?.document?.delivery!==undefined&&['skill_handoff_incomplete','skill_readback_unconfirmed'].includes(result?.reason_code)){
+      const delivery=activityContract(activity).acceptance?.document?.delivery;
+      if(phase==='end'&&delivery!==undefined&&(['skill_handoff_incomplete','skill_readback_unconfirmed'].includes(result?.reason_code)||
+        delivery.report&&/^checker_(?:report|evidence)_\w+$/.test(result?.reason_code??'')&&result.evidence?.some(file=>file.endsWith('/delivery-report-error.json')))){
+
         parseActivityResult(result,input);
         return {verdict:'unknown',reason:result.reason_code,evidence:result.evidence};
       }

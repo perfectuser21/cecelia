@@ -12,6 +12,7 @@ import {archiveActivityHandoff} from '../../../scripts/commander-workflow/activi
 import {createHostToolCaller,prepareHostTools} from '../../../scripts/commander-workflow/skill-tools-mcp.mjs';
 import {checkerEvidenceReceipts,prepareCheckerEvidence,readCheckerArchive,readCheckerBatch,readCheckerEvidence,createDeliveryReport} from '../../../scripts/commander-workflow/checker-evidence.mjs';
 import {digest} from '../commander-decision.js';
+import {verifyCheckerResult} from '../../../scripts/commander-workflow/checker-agent-protocol.mjs';
 import {createRunLedger} from '../commander-usage-ledger.js';
 const hash=p=>createHash('sha256').update(fs.readFileSync(p)).digest('hex');
 function fixture({requirement='number equals 42',fact={number:42},mode='normal',emptyAllowed=false}={}){
@@ -723,3 +724,32 @@ test('报告的只读事实参数从本轮交付和原件绑定，不靠 Checker
   expect(result.facts).toEqual({number:42,media:'this-run.mkv'});
  }finally{f.close();}
 });
+
+test('报告要引用每个必要原件，少引用独立事实不得通过',()=>{
+ const identity={task_id:'task',run_id:'run',run_tag:'tag',workflow:'test',activity:'activity',attempt:1};
+ const request={...identity,nonce:'nonce',criteria:[{id:'check'}],proposal:{outputs:{number:42}}};
+ const receipts=['submitted','readback'].map(evidence_ref=>({evidence_ref,nonce:'nonce',request_sha256:digest(request),status:'available'}));
+ const deliveryReport={outputs:request.proposal.outputs,criteria:{check:['submitted','readback']},evidence:receipts.map(r=>({label:r.evidence_ref,...r}))};
+ const value={identity,nonce:'nonce',outcome:'passed',output:{number:42},checks:[{id:'check',status:'passed',
+  reason:'Verified enough',expected:42,actual:42,evidence:[{source:'submitted',observation:{summary:'submitted'}}]}]};
+ expect(()=>verifyCheckerResult(value,request,receipts,{deliveryReport})).toThrow('checker_report_required_citation_missing');
+});
+test('报告超限写可追溯回执，不启动完工 Checker',async()=>{
+ const f=fixture({mode:'delivery-report',fact:{number:42,padding:'x'.repeat(35000)}});
+ try{
+  const {activity,profile,run}=f,document=activity.acceptance.document;
+  document.delivery={schema:{type:'object'},report:{
+   files:{proof:{scope:'run',role:'source'}},criteria:{end_criterion:['proof'],failure:['proof']},
+  }};
+  activity.acceptance.source.contract_digest=digest(document);
+  const runtime=await createRuntime({profile,run});
+  const input={run_tag:run.input.run_tag,action_id:'oversized-report',execution_attempt:1};
+  const result=await runtime.executeActivity(activity,input,{
+   identity:{task_id:run.task_id,run_id:run.run_id,activity_key:activity.key,action_id:input.action_id},cwd:f.cwd,deadlineMs:run.deadline_ms});
+  expect(result).toMatchObject({status:'needs_review',reason_code:'checker_report_response_limit'});
+  expect(JSON.parse(fs.readFileSync(result.evidence[0]))).toMatchObject({reason:'checker_report_response_limit'});
+  const calls=fs.readFileSync(path.join(f.cwd,'checker-calls.jsonl'),'utf8').trim().split('\n').map(JSON.parse);
+  expect(calls.map(c=>c.request.phase)).toEqual(['start']);
+  expect(await runtime.checkActivity(activity,result,{phase:'end',input})).toMatchObject({verdict:'unknown',reason:'checker_report_response_limit'});
+ }finally{f.close();}
+},15000);

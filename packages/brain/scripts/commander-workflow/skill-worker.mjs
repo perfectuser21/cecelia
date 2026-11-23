@@ -55,7 +55,12 @@ if(checking){
  const binding=prepareCheckerEvidence({config:request.checker_evidence,cwd:request.cwd,files:request.checker_files,request:request.checker_request,directory:path.join(work_dir,'evidence-reads'),deadlineMs:request.deadline_ms,denied:[auth.auth.home,work_dir]});
  const plan=request.checker_request.phase==='end'&&request.activity_contract?.acceptance?.document?.delivery?.report;
  if(plan&&request.checker_request.proposal?.delivery_sha256){
-  binding.delivery_report=await createDeliveryReport({binding,plan,request:request.checker_request,file:path.join(work_dir,'activity-delivery-report.json')});
+  try{binding.delivery_report=await createDeliveryReport({binding,plan,request:request.checker_request,file:path.join(work_dir,'activity-delivery-report.json')});}
+  catch(error){
+   const reason=/^checker_(?:report|evidence)_\w+$/.test(error.message)?error.message:'checker_report_generation_failed';
+   durableWrite(path.join(work_dir,'delivery-report-error.json'),{reason,nonce:binding.nonce,request_sha256:binding.request_sha256});
+   throw error;
+  }
  }
  const file=path.join(work_dir,'checker-evidence-binding.json');durableWrite(file,binding);
  const schemaFile=path.join(work_dir,'checker-output.schema.json');durableWrite(schemaFile,checkerOutputSchema(request.checker_request));
