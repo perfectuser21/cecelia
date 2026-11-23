@@ -69,7 +69,7 @@ let prompt='';process.stdin.on('data',b=>prompt+=b);process.stdin.on('end',async
  const marker='\\n\\n--- 冻结交付报告 JSON ---\\n';
  const inline=report?JSON.parse(prompt.split(marker)[1]):null;
  const observed=report?inline.evidence[0]:payload;
- if(report&&(payload.evidence_count!==inline.evidence.length||response.result.content.filter(item=>item.type==='text').length!==1))throw Error('report evidence records missing');
+ if(report&&(payload.evidence_count!==inline.evidence.length||payload.evidence_refs[0].evidence_ref!==observed.evidence_ref||response.result.content.filter(item=>item.type==='text').length!==1))throw Error('report evidence records missing');
  const fact=observed.status==='available'?observed.text_projection?{number:observed.text_projection['/number']}:JSON.parse(observed.text):null;
  const checks=r.criteria.map(c=>{const wanted=c.requirement;let matches=typeof wanted!=='string'?true:wanted.startsWith('number equals ')?fact?.number===Number(wanted.slice(14)):fact?.color===wanted.slice(9);
  if(repairScenario&&r.phase==='end'&&c.id==='end_criterion')matches=matches&&r.proposal?.outputs?.number===fact?.number;

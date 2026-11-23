@@ -336,7 +336,8 @@ export function deliveryReportText(binding){
 }
 function sendDeliveryReport(binding){
  const {run_id,activity,evidence,images}=readDeliveryReport(binding);
- return [{type:'text',text:JSON.stringify({run_id,activity,evidence_count:evidence.length,image_count:images.length})},...images];
+ const evidence_refs=evidence.map(({label,status},index)=>({evidence_ref:deliveryReportRef(index),label,status}));
+ return [{type:'text',text:JSON.stringify({run_id,activity,evidence_count:evidence.length,image_count:images.length,evidence_refs})},...images];
 }
 export function checkerEvidenceReceipts(binding){
  return fs.readdirSync(binding.directory).filter(f=>f.endsWith('.json')).map(f=>{
