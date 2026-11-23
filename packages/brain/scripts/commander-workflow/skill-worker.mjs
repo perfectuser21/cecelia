@@ -12,7 +12,7 @@ import {createRunLedger,normalizeTurns} from '../../src/orchestrator/commander-u
 import {prepareHostTools,hostToolsArgs} from './skill-tools-mcp.mjs';
 import {sessionGroup,readSessionThread} from './session-group.mjs';
 import {checkerPrompt,checkerOutputSchema,decodeCheckerOutput} from './checker-agent-protocol.mjs';
-import {prepareCheckerEvidence,checkerEvidenceArgs,createDeliveryReport} from './checker-evidence.mjs';
+import {prepareCheckerEvidence,checkerEvidenceArgs,createDeliveryReport,readDeliveryReport,requiredDeliveryReportGaps} from './checker-evidence.mjs';
 const chunks=[];for await(const c of process.stdin)chunks.push(c);
 const request=JSON.parse(Buffer.concat(chunks).toString()),{codex,identity,thread_file,work_dir,skill_text,tools_text,context}=request;
 const checking=request.role==='checker',effectScope=checking?undefined:request.activity_contract?.runtime?.checker_repair?.effect_scope;
@@ -55,10 +55,15 @@ if(checking){
  const binding=prepareCheckerEvidence({config:request.checker_evidence,cwd:request.cwd,files:request.checker_files,request:request.checker_request,directory:path.join(work_dir,'evidence-reads'),deadlineMs:request.deadline_ms,denied:[auth.auth.home,work_dir]});
  const plan=request.checker_request.phase==='end'&&request.activity_contract?.acceptance?.document?.delivery?.report;
  if(plan&&request.checker_request.proposal?.delivery_sha256){
-  try{binding.delivery_report=await createDeliveryReport({binding,plan,request:request.checker_request,file:path.join(work_dir,'activity-delivery-report.json')});}
+  try{
+   binding.delivery_report=await createDeliveryReport({binding,plan,request:request.checker_request,file:path.join(work_dir,'activity-delivery-report.json')});
+   const gaps=requiredDeliveryReportGaps(readDeliveryReport(binding));
+   if(gaps.length)throw Object.assign(Error('checker_report_required_evidence_missing'),{gaps});
+  }
   catch(error){
    const reason=/^checker_(?:report|evidence)_\w+$/.test(error.message)?error.message:'checker_report_generation_failed';
-   durableWrite(path.join(work_dir,'delivery-report-error.json'),{reason,nonce:binding.nonce,request_sha256:binding.request_sha256});
+   durableWrite(path.join(work_dir,'delivery-report-error.json'),{reason,nonce:binding.nonce,request_sha256:binding.request_sha256,
+    ...(error.gaps?{missing_evidence:error.gaps}:{})});
    throw error;
   }
  }

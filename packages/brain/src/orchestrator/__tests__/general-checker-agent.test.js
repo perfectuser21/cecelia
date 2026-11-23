@@ -691,9 +691,14 @@ test('报告明确缺哪个原件，结果保留条款并禁止继续',async()=>
   const runtime=await createRuntime({profile,run});
   const result=await runtime.executeActivity(activity,{run_tag:run.input.run_tag,action_id:'missing-report-input'},{
    identity:{task_id:run.task_id,run_id:run.run_id,activity_key:activity.key,action_id:'missing-report-input'},cwd:f.cwd,deadlineMs:run.deadline_ms});
-  expect(result.status).toBe('needs_review');
-  expect(result.checker_feedback.missing_evidence).toContainEqual(
-   expect.objectContaining({check_id:'end_criterion',scope:'run',role:'original-recording'}));
+  expect(result).toMatchObject({status:'needs_review',reason_code:'checker_report_required_evidence_missing'});
+  expect(result.checker_feedback).toMatchObject({retryable:false,
+   missing_evidence:expect.arrayContaining([
+    expect.objectContaining({check_id:'end_criterion',scope:'run',role:'original-recording',reason:'checker_report_role_missing'}),
+   ])});
+  expect(JSON.parse(fs.readFileSync(result.evidence[0]))).toMatchObject({reason:'checker_report_required_evidence_missing'});
+  const calls=fs.readFileSync(path.join(f.cwd,'checker-calls.jsonl'),'utf8').trim().split('\n').map(JSON.parse);
+  expect(calls.map(c=>c.request.phase)).toEqual(['start']);
   expect(await runtime.checkActivity(activity,result,{phase:'end',input:{run_tag:run.input.run_tag,action_id:'missing-report-input',execution_attempt:1}}))
    .toMatchObject({verdict:'unknown'});
  }finally{f.close();}
@@ -734,6 +739,20 @@ test('报告要引用每个必要原件，少引用独立事实不得通过',()=
   reason:'Verified enough',expected:42,actual:42,evidence:[{source:'submitted',observation:{summary:'submitted'}}]}]};
  expect(()=>verifyCheckerResult(value,request,receipts,{deliveryReport})).toThrow('checker_report_required_citation_missing');
 });
+test('接受同一报告内的补充证据，拒绝报告之外的引用',()=>{
+ const identity={task_id:'task',run_id:'run',run_tag:'tag',workflow:'test',activity:'activity',attempt:1};
+ const request={...identity,nonce:'nonce',criteria:[{id:'check'}],proposal:{outputs:{number:42}}};
+ const receipts=['required','support','outside'].map(evidence_ref=>({evidence_ref,nonce:'nonce',request_sha256:digest(request),status:'available'}));
+ const deliveryReport={outputs:request.proposal.outputs,criteria:{check:['required']},evidence:receipts.slice(0,2).map(r=>({label:r.evidence_ref,...r}))};
+ const observation={summary:'same run'};
+ const check={id:'check',status:'passed',reason:'Confirmed',expected:42,actual:42,
+  evidence:[{source:'required',observation},{source:'support',observation}]};
+ const result={identity,nonce:'nonce',outcome:'passed',output:{number:42},checks:[check]};
+ expect(verifyCheckerResult(result,request,receipts,{deliveryReport}).outcome).toBe('passed');
+ check.evidence[1]={source:'outside',observation};
+ expect(()=>verifyCheckerResult(result,request,receipts,{deliveryReport})).toThrow('checker_report_citation_unbound');
+});
+
 test('报告超限写可追溯回执，不启动完工 Checker',async()=>{
  const f=fixture({mode:'delivery-report',fact:{number:42,padding:'x'.repeat(35000)}});
  try{

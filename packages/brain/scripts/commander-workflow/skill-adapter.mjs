@@ -106,7 +106,7 @@ export async function createRuntime({profile,run,verifySource=async()=>{},ledger
       if(fs.existsSync(failureFile)&&fs.realpathSync(failureFile)===failureFile){
         const failure=JSON.parse(fs.readFileSync(failureFile,'utf8'));
         if(failure.nonce===request.nonce&&failure.request_sha256===digest(request)&&/^checker_(?:report|evidence)_\w+$/.test(failure.reason))
-          throw Object.assign(Error(failure.reason),{reportFailure:failureFile});
+          throw Object.assign(Error(failure.reason),{reportFailure:failureFile,reportGaps:failure.missing_evidence});
       }
     }
     if(transport.execution_stopped===false||transport.external_effect==='unknown'||transport.exit_signal||transport.reason_code){
@@ -303,7 +303,12 @@ export async function createRuntime({profile,run,verifySource=async()=>{},ledger
       return {schema_version:1,run_tag:input.run_tag,...(input.line_key===undefined?{}:{line_key:input.line_key}),status:'needs_review',failure_class:'needs_human',outputs:{},metrics:{},
         evidence:feedback?[feedback.evidence_ref]:error.reportFailure?[error.reportFailure]:[],execution_stopped:true,
         reason_code:feedback?'skill_check_failed':error.reportFailure?error.message:'skill_readback_unconfirmed',
-        ...(feedback?{checker_feedback:feedback,...(feedback.external_effect==='unknown'?{external_effect:'unknown'}:{})}:{})};
+        ...(feedback?{checker_feedback:feedback,...(feedback.external_effect==='unknown'?{external_effect:'unknown'}:{})}:{}),
+        ...(error.reportFailure&&Array.isArray(error.reportGaps)&&error.reportGaps.length?{checker_feedback:{
+          protocol:'checker-feedback/v1',activity_key:activity.key,attempt:input.execution_attempt??1,
+          outcome:'unknown',failed_checks:[],evidence_ref:error.reportFailure,previous_proposal:proposal,thread_id,
+          retryable:false,retry_reason:error.message,missing_evidence:error.reportGaps,
+        }}:{})};
     }
   }
   function settleAttempt(attempt,result,transport,directory){

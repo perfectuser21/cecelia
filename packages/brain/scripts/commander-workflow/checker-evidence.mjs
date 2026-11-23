@@ -305,6 +305,12 @@ export function readDeliveryReport(binding){
  if(report.nonce!==binding.nonce)fail('checker_report_source_drift');
  return report;
 }
+export function requiredDeliveryReportGaps(report){
+ return Object.entries(report.criteria).flatMap(([check_id,labels])=>report.evidence
+  .filter(item=>item.status!=='available'&&labels.includes(item.label))
+  .map(({label,evidence_ref,reason,path,scope,role,operation,missing_fields,reference})=>
+   ({check_id,label,evidence_ref,reason,path,scope,role,operation,missing_fields,reference})));
+}
 function sendDeliveryReport(binding){
  const {images,...report}=readDeliveryReport(binding);
  return [{type:'text',text:JSON.stringify(report)},...images];
