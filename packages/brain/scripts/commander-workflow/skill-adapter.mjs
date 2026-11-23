@@ -10,7 +10,7 @@ import {parseActivityResult} from '../../src/orchestrator/activity-contract.js';
 import {sessionGroup,sessionThreadFile} from './session-group.mjs';
 import {digest} from '../../src/orchestrator/commander-decision.js';
 import {checkerCriteria,verifyCheckerResult} from './checker-agent-protocol.mjs';
-import {checkerEvidenceReceipts} from './checker-evidence.mjs';
+import {checkerEvidenceReceipts,readDeliveryReport} from './checker-evidence.mjs';
 import {hostToolsAreQuiescent,hostToolsDidNotDispatch} from './skill-tools-mcp.mjs';
 import {archiveActivityHandoff} from './activity-handoff.mjs';
 const hash=file=>createHash('sha256').update(fs.readFileSync(file)).digest('hex');
@@ -101,14 +101,22 @@ export async function createRuntime({profile,run,verifySource=async()=>{},ledger
       cwd:profile.cwd,codex:config.codex,codex_auth:profile.codex_auth,...(ledger?{ledger_directory:ledger.directory,ledger_policy:ledger.policy}:{}),
       thread_file:path.join(directory,'thread.json'),work_dir:directory,context:request.context,
       checker_request:request,checker_evidence:evidence,checker_files:profile.files,deadline_ms:deadline},{cwd:profile.cwd,signal},deadline);
+    if(request.phase==='end'&&request.activity_contract.acceptance.document.delivery?.report){
+      const failureFile=path.join(fs.realpathSync(directory),'delivery-report-error.json');
+      if(fs.existsSync(failureFile)&&fs.realpathSync(failureFile)===failureFile){
+        const failure=JSON.parse(fs.readFileSync(failureFile,'utf8'));
+        if(failure.nonce===request.nonce&&failure.request_sha256===digest(request)&&/^checker_(?:report|evidence)_\w+$/.test(failure.reason))
+          throw Object.assign(Error(failure.reason),{reportFailure:failureFile,reportGaps:failure.missing_evidence});
+      }
+    }
     if(transport.execution_stopped===false||transport.external_effect==='unknown'||transport.exit_signal||transport.reason_code){
       throw new Error('checker_execution_unconfirmed',{cause:transport.reason_code});
     }
     return {...transport,checker_directory:directory};
   }
-  async function readback(activity,input,phase,proposal,signal,deadlineMs,archiveRoot){
+  async function readback(activity,input,phase,proposal,signal,deadlineMs,archiveRoot,evidenceRecheck){
     const observation=ledger?.beginObservation({kind:'checker',activity_key:activity.key,...(input.action_id?{action_id:input.action_id}:{}),phase});
-    try{const value=await performReadback(activity,input,phase,proposal,signal,deadlineMs,archiveRoot);
+    try{const value=await performReadback(activity,input,phase,proposal,signal,deadlineMs,archiveRoot,evidenceRecheck);
       if(observation)ledger.endObservation(observation.observation_id,{status:'passed'});return value;
     }catch(error){if(observation)ledger.endObservation(observation.observation_id,{status:'failed',reason_code:reasonCode(error)});throw error;}
   }
@@ -131,7 +139,7 @@ export async function createRuntime({profile,run,verifySource=async()=>{},ledger
     const missing = required.find(kind => !registered.includes(kind));
     if (missing) throw Error('skill_host_tool_missing:' + missing);
   }
-  async function performReadback(activity,input,phase,proposal,signal,deadlineMs,archiveRoot){
+  async function performReadback(activity,input,phase,proposal,signal,deadlineMs,archiveRoot,evidenceRecheck){
     const spec=specFor(activity),checker=spec.checker;
     const criteria=checker.mode==='agent'?checkerCriteria(activityContract(activity),phase):undefined;
     const evidence=archiveRoot&&criteria?{...checker.evidence,roots:[...checker.evidence.roots,archiveRoot],archive_root:archiveRoot}:checker.evidence;
@@ -141,7 +149,7 @@ export async function createRuntime({profile,run,verifySource=async()=>{},ledger
       : [];
     const request={task_id:run.task_id,run_id:run.run_id,run_tag:run.input.run_tag,workflow:spec.workflow??run.contract.workflow,
       activity:spec.activity??activity.key,activity_contract:activityContract(activity),attempt:activity.runtime?.executor_kind==='code'?1:(input.execution_attempt??1),nonce:randomUUID(),phase,
-      checks:criteria?criteria.map(c=>c.id):phase==='start'?checker.start_checks:checker.required_checks,...(criteria?{criteria,evidence_access:{roots:evidence.roots,provider_available:Boolean(evidence.provider)}}:{}),proposal,context:{...run.input,...input},...(verifiedStops.length?{verified_execution_stops:verifiedStops}:{})};
+      checks:criteria?criteria.map(c=>c.id):phase==='start'?checker.start_checks:checker.required_checks,...(criteria?{criteria,evidence_access:{roots:evidence.roots,provider_available:Boolean(evidence.provider)}}:{}),proposal,context:{...run.input,...input},...(verifiedStops.length?{verified_execution_stops:verifiedStops}:{}),...(evidenceRecheck?{evidence_recheck:evidenceRecheck}:{})};
     fs.mkdirSync(path.join(root,'checks'),{recursive:true,mode:0o700});
     const evidenceFile=path.join(root,'checks',request.nonce+'.json');
     durableWrite(evidenceFile,{request,status:'pending'});
@@ -161,8 +169,31 @@ export async function createRuntime({profile,run,verifySource=async()=>{},ledger
     try {await verifyFrozenSources();
       if(checker.mode==='agent'){
         const binding=JSON.parse(fs.readFileSync(path.join(transport.checker_directory,'checker-evidence-binding.json')));
-        verified=verifyCheckerResult(observed,request,checkerEvidenceReceipts(binding),{allowEmpty:spec.allow_empty===true});
-        durableWrite(evidenceFile,{request,observed,transport,verified,status:'verified'});return {...verified,evidence_ref:evidenceFile};
+        const receipts=checkerEvidenceReceipts(binding);
+        const deliveryReport=binding.delivery_report?readDeliveryReport(binding):undefined;
+        verified=verifyCheckerResult(observed,request,receipts,{allowEmpty:spec.allow_empty===true,deliveryReport});
+        const unknownChecks=verified.checks.filter(c=>c.status==='unknown');
+        const limits=new Map(receipts.filter(r=>r.status==='unavailable'&&['checker_archive_response_limit','checker_batch_response_limit'].includes(r.reason))
+          .map(r=>[r.evidence_ref,r.reason]));
+        const affected=unknownChecks.filter(c=>c.evidence.some(e=>limits.has(e.source)));
+        const limitRefs=[...new Set(affected.flatMap(c=>c.evidence.map(e=>e.source).filter(ref=>limits.has(ref))))];
+        const readLimit=limitRefs.length?{reason:limits.get(limitRefs[0]),check_ids:affected.map(c=>c.id),evidence_refs:limitRefs}:undefined;
+        const missingByRef=new Map(receipts.filter(r=>r.status==='unavailable'&&
+          ['not_found','checker_report_role_missing','checker_report_fields_missing','checker_report_parameter_missing'].includes(r.reason))
+          .map(r=>[r.evidence_ref,r]));
+        const missingEvidence=unknownChecks.flatMap(c=>{
+          const sources=new Set(c.evidence.map(e=>e.source));
+          for(const item of deliveryReport?.evidence??[]){
+            if(deliveryReport.criteria[c.id].includes(item.label))sources.add(item.evidence_ref);
+          }
+          return [...sources].filter(ref=>missingByRef.has(ref)).map(evidence_ref=>{
+            const {path,scope,role,missing_fields,reference}=missingByRef.get(evidence_ref);
+            return {check_id:c.id,evidence_ref,...(path?{path}:{}),...(scope?{scope}:{}),...(role?{role}:{}),...(missing_fields?{missing_fields}:{}),...(reference?{reference}:{})};
+          });
+        });
+        const diagnostics={...(readLimit?{read_limit:readLimit}:{}),...(missingEvidence.length?{missing_evidence:missingEvidence}:{})};
+        durableWrite(evidenceFile,{request,observed,transport,verified,...diagnostics,status:'verified'});
+        return {...verified,evidence_ref:evidenceFile,...diagnostics};
       }
       if(phase==='end'&&observed.outcome==='failed'){
         const failure=verifySkillFailure(observed,request);
@@ -224,7 +255,7 @@ export async function createRuntime({profile,run,verifySource=async()=>{},ledger
       }
     }
     try{
-      let verified;
+      let verified,rechecked=false;
       try {
         verified=await readback(activity,input,'end',proposal,signal,deadlineMs,archiveRoot);
       } catch(error) {
@@ -234,20 +265,29 @@ export async function createRuntime({profile,run,verifySource=async()=>{},ledger
           (error.message==='checker_execution_unconfirmed'&&error.cause==='activity_timeout');
         if(specFor(activity).checker.mode!=='agent'||!mayRecheck||
           signal?.aborted||Date.now()>=deadlineMs)throw error;
+        rechecked=true;
         verified=await readback(activity,input,'end',proposal,signal,deadlineMs,archiveRoot);
       }
+      if(!rechecked&&verified.read_limit&&!signal?.aborted&&Date.now()<deadlineMs){
+        const prior=verified;
+        try {verified=await readback(activity,input,'end',proposal,signal,deadlineMs,archiveRoot,prior.read_limit);}
+        catch(error) {verified={...prior,recheck_error:reasonCode(error)};}
+      }
       if(verified.outcome==='failed'||verified.outcome==='unknown'){
+        const unresolvedReason=verified.read_limit?.reason??(verified.missing_evidence?'checker_evidence_missing':undefined);
         const retryable=verified.outcome==='failed'&&
           (readOnlyEffects(activity)||(mediatedEffects(activity)&&hostToolsDidNotDispatch(actionDir(identity),identity)))&&
           verified.checks.every(check=>check.status!=='unknown')&&typeof thread_id==='string'&&Boolean(thread_id.trim());
         const feedback={protocol:'checker-feedback/v1',activity_key:activity.key,attempt:input.execution_attempt??1,outcome:verified.outcome,
           failed_checks:verified.checks.filter(c=>c.status!=='passed').map(({id,status,expected,actual,reason,evidence})=>({id,status,expected,actual,reason,evidence})),
           evidence_ref:verified.evidence_ref,previous_proposal:proposal,thread_id,retryable,
-          ...(retryable?{external_effect:'none'}:{retry_reason:'trusted_execution_effects_unavailable'})};
+          ...(retryable?{external_effect:'none'}:{retry_reason:unresolvedReason??'trusted_execution_effects_unavailable'}),
+          ...(verified.read_limit?{read_limit:verified.read_limit}:{}),...(verified.missing_evidence?{missing_evidence:verified.missing_evidence}:{}),
+          ...(verified.recheck_error?{recheck_error:verified.recheck_error}:{})};
         verifiedFeedback.set(feedback.evidence_ref,structuredClone(feedback));
         return rememberCheck(activity,input,'end',verified,deadlineMs,{
         schema_version:1,run_tag:input.run_tag,...(input.line_key===undefined?{}:{line_key:input.line_key}),status:'needs_review',failure_class:'needs_human',outputs:{},metrics:{},
-        evidence:[verified.evidence_ref],execution_stopped:true,reason_code:verified.outcome==='unknown'?'checker_evidence_unknown':'skill_check_failed',checker_result:verified,checker_feedback:feedback});
+        evidence:[verified.evidence_ref],execution_stopped:true,reason_code:verified.outcome==='unknown'?(unresolvedReason??'checker_evidence_unknown'):'skill_check_failed',checker_result:verified,checker_feedback:feedback});
       }
       return rememberCheck(activity,input,'end',verified,deadlineMs,{schema_version:1,run_tag:input.run_tag,...(input.line_key===undefined?{}:{line_key:input.line_key}),status:verified.outcome==='empty'?'empty':'completed',
         outputs:verified.output,metrics:{},evidence:verified.checks.flatMap(c=>c.evidence.map(e=>e.source)),execution_stopped:true});
@@ -261,8 +301,14 @@ export async function createRuntime({profile,run,verifySource=async()=>{},ledger
         external_effect:transport.external_effect==='unknown'?'unknown':failure.external_effect}:undefined;
       if(feedback)verifiedFeedback.set(feedback.evidence_ref,structuredClone(feedback));
       return {schema_version:1,run_tag:input.run_tag,...(input.line_key===undefined?{}:{line_key:input.line_key}),status:'needs_review',failure_class:'needs_human',outputs:{},metrics:{},
-        evidence:feedback?[feedback.evidence_ref]:[],execution_stopped:true,reason_code:feedback?'skill_check_failed':'skill_readback_unconfirmed',
-        ...(feedback?{checker_feedback:feedback,...(feedback.external_effect==='unknown'?{external_effect:'unknown'}:{})}:{})};
+        evidence:feedback?[feedback.evidence_ref]:error.reportFailure?[error.reportFailure]:[],execution_stopped:true,
+        reason_code:feedback?'skill_check_failed':error.reportFailure?error.message:'skill_readback_unconfirmed',
+        ...(feedback?{checker_feedback:feedback,...(feedback.external_effect==='unknown'?{external_effect:'unknown'}:{})}:{}),
+        ...(error.reportFailure&&Array.isArray(error.reportGaps)&&error.reportGaps.length?{checker_feedback:{
+          protocol:'checker-feedback/v1',activity_key:activity.key,attempt:input.execution_attempt??1,
+          outcome:'unknown',failed_checks:[],evidence_ref:error.reportFailure,previous_proposal:proposal,thread_id,
+          retryable:false,retry_reason:error.message,missing_evidence:error.reportGaps,
+        }}:{})};
     }
   }
   function settleAttempt(attempt,result,transport,directory){
@@ -276,7 +322,10 @@ export async function createRuntime({profile,run,verifySource=async()=>{},ledger
       if (phase === 'start') requireDeclaredHostTools(activity);
       const {checker}=specFor(activity);
       if(phase==='start'&&checker.phase_policy==='completion_only')return {verdict:'pass',reason:'no_activity_start_criteria'};
-      if(phase==='end'&&activityContract(activity).acceptance?.document?.delivery!==undefined&&['skill_handoff_incomplete','skill_readback_unconfirmed'].includes(result?.reason_code)){
+      const delivery=activityContract(activity).acceptance?.document?.delivery;
+      if(phase==='end'&&delivery!==undefined&&(['skill_handoff_incomplete','skill_readback_unconfirmed'].includes(result?.reason_code)||
+        delivery.report&&/^checker_(?:report|evidence)_\w+$/.test(result?.reason_code??'')&&result.evidence?.some(file=>file.endsWith('/delivery-report-error.json')))){
+
         parseActivityResult(result,input);
         return {verdict:'unknown',reason:result.reason_code,evidence:result.evidence};
       }

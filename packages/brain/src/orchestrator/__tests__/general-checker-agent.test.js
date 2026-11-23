@@ -10,8 +10,9 @@ import {createHash,randomUUID} from 'node:crypto';
 import {createRuntime} from '../../../scripts/commander-workflow/skill-adapter.mjs';
 import {archiveActivityHandoff} from '../../../scripts/commander-workflow/activity-handoff.mjs';
 import {createHostToolCaller,prepareHostTools} from '../../../scripts/commander-workflow/skill-tools-mcp.mjs';
-import {checkerEvidenceReceipts,prepareCheckerEvidence,readCheckerArchive,readCheckerEvidence} from '../../../scripts/commander-workflow/checker-evidence.mjs';
+import {checkerEvidenceReceipts,prepareCheckerEvidence,readCheckerArchive,readCheckerBatch,readCheckerEvidence,createDeliveryReport,requiredDeliveryReportGaps} from '../../../scripts/commander-workflow/checker-evidence.mjs';
 import {digest} from '../commander-decision.js';
+import {verifyCheckerResult} from '../../../scripts/commander-workflow/checker-agent-protocol.mjs';
 import {createRunLedger} from '../commander-usage-ledger.js';
 const hash=p=>createHash('sha256').update(fs.readFileSync(p)).digest('hex');
 function fixture({requirement='number equals 42',fact={number:42},mode='normal',emptyAllowed=false}={}){
@@ -28,8 +29,9 @@ let prompt='';process.stdin.on('data',b=>prompt+=b);process.stdin.on('end',async
  const refScenario=['final-ref-recheck','final-ref-always-wrong','final-timeout-recheck'].includes('${mode}');
  const mediated='${mode}'.startsWith('mediated-');
  const repairScenario='${mode}'.startsWith('readonly-repair')||mediated;
- if(!r&&['delivery','delivery-existing-evidence','delivery-timeout'].includes('${mode}')){
+ if(!r&&['delivery','delivery-existing-evidence','delivery-timeout','delivery-report','delivery-read-limit','delivery-read-limit-persistent'].includes('${mode}')){
   const field='${mode}'==='delivery-existing-evidence'?'evidence':'handoff';
+  if('${mode}'.startsWith('delivery-read-limit'))fs.appendFileSync('execution-count.txt','1');
   fs.writeFileSync(process.argv[process.argv.indexOf('-o')+1],JSON.stringify({outputs:{number:42},[field]:{run:{source:'evidence/fact.json'}}}));
   console.log(JSON.stringify({type:'thread.started',thread_id:'execution-thread'}));return;
  }
@@ -55,12 +57,20 @@ let prompt='';process.stdin.on('data',b=>prompt+=b);process.stdin.on('end',async
  const arg=process.argv.find(a=>a.startsWith('mcp_servers.commander_checker_evidence.args='));
  const serverArgs=JSON.parse(arg.slice(arg.indexOf('=')+1));
  const archived=Boolean(r.proposal?.delivery_evidence);
- const tool=archived?{name:'read_archive',arguments:{}}:{name:'read_file',arguments:{path:'evidence/fact.json'}};
+ const recheck=archived&&r.evidence_recheck&&'${mode}'==='delivery-read-limit';
+ const report=r.phase==='end'&&r.activity_contract?.acceptance?.document?.delivery?.report;
+ const tool=report?{name:'read_report',arguments:{}}:recheck?{name:'read_file',arguments:{path:r.proposal.delivery_evidence.run.source.archive_path}}:
+  archived?{name:'read_archive',arguments:{}}:{name:'read_file',arguments:{path:'evidence/fact.json'}};
  const rpc=[{jsonrpc:'2.0',id:1,method:'initialize'},{jsonrpc:'2.0',id:2,method:'tools/call',params:tool}];
  const raw=cp.spawnSync(process.execPath,serverArgs,{input:rpc.map(JSON.stringify).join('\\n')+'\\n',encoding:'utf8'});
  if(raw.status!==0)throw Error('actual_evidence_server_failed:'+raw.stderr);
  const response=JSON.parse(raw.stdout.trim().split('\\n').at(-1));if(response.error)throw Error(JSON.stringify(response.error));
- const observed=JSON.parse(response.result.content[0].text),fact=observed.status==='available'?JSON.parse(observed.text):null;
+ const payload=JSON.parse(response.result.content[0].text);
+ const marker='\\n\\n--- 冻结交付报告 JSON ---\\n';
+ const inline=report?JSON.parse(prompt.split(marker)[1]):null;
+ const observed=report?inline.evidence[0]:payload;
+ if(report&&(payload.evidence_count!==inline.evidence.length||payload.evidence_refs[0].evidence_ref!==observed.evidence_ref||response.result.content.filter(item=>item.type==='text').length!==1))throw Error('report evidence records missing');
+ const fact=observed.status==='available'?observed.text_projection?{number:observed.text_projection['/number']}:JSON.parse(observed.text):null;
  const checks=r.criteria.map(c=>{const wanted=c.requirement;let matches=typeof wanted!=='string'?true:wanted.startsWith('number equals ')?fact?.number===Number(wanted.slice(14)):fact?.color===wanted.slice(9);
  if(repairScenario&&r.phase==='end'&&c.id==='end_criterion')matches=matches&&r.proposal?.outputs?.number===fact?.number;
  if(r.proposal?.schema_version===1&&typeof wanted==='string'&&wanted.startsWith('number equals '))matches=matches&&r.proposal.outputs.number===fact?.number;
@@ -268,7 +278,7 @@ test.each([
 test.each([
  ['readonly-repair',2,'completed',null],
  ['readonly-repair-exhausted',3,'needs_review','checker_repair_exhausted'],
- ['readonly-repair-missing',1,'needs_review','commander_activity_unverified'],
+ ['readonly-repair-missing',1,'needs_review','checker_evidence_missing'],
 ])('Commander and actual Checker use the read-only repair policy: %s',async(mode,attempts,status,escalationReason)=>{
  const f=fixture({mode}),old=process.env.DBOS_DURABLE_ENABLED;
  try{
@@ -305,6 +315,8 @@ test.each([
    expect(failure?.reason).toBe(escalationReason);
    expect(failure?.attempt_history).toHaveLength(attempts);
    expect(failure?.checker_feedback?.attempt).toBe(attempts);
+   if(mode==='readonly-repair-missing')expect(failure.checker_feedback.missing_evidence).toContainEqual(
+    expect.objectContaining({check_id:'end_criterion',path:'evidence/fact.json'}));
   }else{
    expect(failure).toBeUndefined();
    expect(result.outputs.number).toBe(42);
@@ -564,6 +576,29 @@ test('有真实交件的两次 Checker 超时后保留未知，不再拿空结�
  }finally{f.close();}
 },15000);
 
+test.each([['delivery-read-limit','completed'],['delivery-read-limit-persistent','needs_review']])('真实宿主读取上限只补验一次并保留因果链 %s',async(mode,status)=>{
+ const f=fixture({mode,fact:{number:42,padding:'p'.repeat(30000)}});
+ try{
+  const {activity,profile,run}=f;
+  activity.acceptance.document.delivery={schema:{type:'object'}};
+  activity.acceptance.source.contract_digest=digest(activity.acceptance.document);
+  const runtime=await createRuntime({profile,run});
+  const input={run_tag:run.input.run_tag,action_id:'large-delivery',execution_attempt:1};
+  const identity={task_id:run.task_id,run_id:run.run_id,activity_key:activity.key,action_id:input.action_id};
+  const result=await runtime.executeActivity(activity,input,{identity,cwd:f.cwd,deadlineMs:run.deadline_ms});
+  const calls=fs.readFileSync(path.join(f.cwd,'checker-calls.jsonl'),'utf8').trim().split('\n').map(JSON.parse).map(x=>x.request);
+  expect(calls.map(c=>c.phase)).toEqual(['start','end','end']);
+  expect(calls[2].proposal).toEqual(calls[1].proposal);
+  expect(calls[2].evidence_recheck).toMatchObject({reason:'checker_archive_response_limit',check_ids:['end_criterion','failure']});
+  expect(fs.readFileSync(path.join(f.cwd,'execution-count.txt'),'utf8')).toBe('1');
+  expect(result.status).toBe(status);
+  if(status==='needs_review'){
+   expect(result.checker_feedback).toMatchObject({retryable:false,retry_reason:'checker_archive_response_limit'});
+   expect(result.checker_feedback.failed_checks[0].id).toBe('end_criterion');
+  }
+ }finally{f.close();}
+},15000);
+
 test('按作用域读取原件且只压缩与归档字节完全相同的重复内嵌内容',()=>{
  const f=fixture();
  try{
@@ -584,8 +619,12 @@ test('按作用域读取原件且只压缩与归档字节完全相同的重复�
    request:{nonce:randomUUID(),proposal:{delivery_evidence:{camera:{report,archive},unrelated:{file:archive}}}},
    deadlineMs:Date.now()+5000
   });
-  const content=readCheckerArchive(binding,{scope:'camera'}).map(x=>JSON.parse(x.text));
+  const full=readCheckerArchive(binding,{scope:'camera'}).map(x=>JSON.parse(x.text));
+  expect(full).toEqual([expect.objectContaining({status:'unavailable',reason:'checker_archive_response_limit',
+   entries:[{scope:'camera',role:'report',path:report.archive_path},{scope:'camera',role:'archive',path:archive.archive_path}]})]);
+  const content=['report','archive'].flatMap(role=>readCheckerArchive(binding,{scope:'camera',roles:[role]})).map(x=>JSON.parse(x.text));
   expect(content.map(x=>x.role)).toEqual(['report','archive']);
+  expect(()=>readCheckerArchive(binding,{scope:'camera',roles:['file']})).toThrow('checker_evidence_archive_scope_invalid');
   expect(JSON.parse(content[0].text).result.stdout).toEqual({embedded:{archive_content_sha256:archive.sha256},distinct:'不同',other:copy});
   expect(checkerEvidenceReceipts(binding).find(x=>x.path===report.archive_path).text).toBe(receipt);
   expect(()=>readCheckerArchive(binding,{scope:'missing'})).toThrow('checker_evidence_archive_scope_invalid');
@@ -593,3 +632,168 @@ test('按作用域读取原件且只压缩与归档字节完全相同的重复�
   expect(()=>readCheckerEvidence(binding,{path:archive.archive_path})).toThrow('checker_evidence_archive_drift');
  }finally{f.close();}
 });
+
+test('通用批量读取合并多个原件的字段投影，保留完整回执和越界校验',async()=>{
+ const f=fixture();
+ try{
+  fs.writeFileSync(path.join(f.cwd,'evidence','extra.json'),JSON.stringify({nested:{value:7},padding:'p'.repeat(30000)}));
+  const request={nonce:randomUUID()};
+  const binding=prepareCheckerEvidence({config:{roots:['evidence']},cwd:f.cwd,
+   directory:path.join(f.cwd,'output'),request,deadlineMs:Date.now()+5000});
+  const files=[{path:'evidence/fact.json'},{path:'evidence/extra.json',fields:['/nested/value','/absent']}];
+  const result=(await readCheckerBatch(binding,{files})).map(x=>JSON.parse(x.text));
+  expect(result).toHaveLength(2);
+  expect(result[1]).toMatchObject({status:'available',text_projection:{'/nested/value':7},missing_fields:['/absent']});
+  expect(result[1]).not.toHaveProperty('text');
+  expect(JSON.parse(checkerEvidenceReceipts(binding).find(r=>r.evidence_ref===result[1].evidence_ref).text).padding).toHaveLength(30000);
+  await expect(readCheckerBatch(binding,{files:[{path:'../foreign.json'}]})).rejects.toThrow('checker_evidence_path_invalid');
+  expect((await readCheckerBatch(binding,{files:[{path:'evidence/extra.json'}]})).map(x=>JSON.parse(x.text))[0])
+   .toMatchObject({status:'unavailable',reason:'checker_batch_response_limit'});
+  const partial=(await readCheckerBatch(binding,{files:[{path:'evidence/extra.json'},{path:'evidence/fact.json'}]})).map(x=>JSON.parse(x.text));
+  expect(partial).toContainEqual(expect.objectContaining({status:'available',path:'evidence/fact.json'}));
+  expect(partial).toContainEqual(expect.objectContaining({status:'unavailable',reason:'checker_batch_response_limit',
+   entries:[{path:'evidence/extra.json'}]}));
+ }finally{f.close();}
+});
+
+test('完成活动后生成唯一报告，独立 Checker 只读报告并核原交付',async()=>{
+ const f=fixture({mode:'delivery-report'});
+ try{
+  const {activity,profile,run}=f;
+  const document=activity.acceptance.document;
+  document.delivery={schema:{type:'object'},report:{
+   files:{result:{scope:'run',role:'source',fields:['/number']}},
+   criteria:{end_criterion:['result'],failure:['result']},
+  }};
+  activity.acceptance.source.contract_digest=digest(document);
+  const runtime=await createRuntime({profile,run});
+  const input={run_tag:run.input.run_tag,action_id:'report-delivery'};
+  const identity={task_id:run.task_id,run_id:run.run_id,activity_key:activity.key,action_id:input.action_id};
+  const result=await runtime.executeActivity(activity,input,{identity,cwd:f.cwd,deadlineMs:run.deadline_ms});
+  expect(result.status).toBe('completed');
+  expect(result.outputs).toEqual({number:42});
+  const calls=fs.readFileSync(path.join(f.cwd,'checker-calls.jsonl'),'utf8').trim().split('\n').map(JSON.parse);
+  expect(calls.map(c=>c.request.phase)).toEqual(['start','end']);
+  expect(calls[1].argv).toContain('mcp_servers.commander_checker_evidence.enabled_tools=["read_report"]');
+  const control=path.join(f.cwd,'control',run.run_id,'checker-agents',calls[1].request.nonce);
+  const report=JSON.parse(fs.readFileSync(path.join(control,'activity-delivery-report.json')));
+  expect(report.criteria).toEqual({end_criterion:['result'],failure:['result']});
+  expect(report.evidence[0]).toMatchObject({label:'result',text_projection:{'/number':42}});
+ }finally{f.close();}
+},15000);
+
+test('报告明确缺哪个原件，结果保留条款并禁止继续',async()=>{
+ const f=fixture({mode:'delivery-report'});
+ try{
+  const {activity,profile,run}=f,document=activity.acceptance.document;
+  document.delivery={schema:{type:'object'},report:{
+   files:{recording:{scope:'run',role:'original-recording'}},
+   criteria:{end_criterion:['recording'],failure:['recording']},
+  }};
+  activity.acceptance.source.contract_digest=digest(document);
+  const runtime=await createRuntime({profile,run});
+  const result=await runtime.executeActivity(activity,{run_tag:run.input.run_tag,action_id:'missing-report-input'},{
+   identity:{task_id:run.task_id,run_id:run.run_id,activity_key:activity.key,action_id:'missing-report-input'},cwd:f.cwd,deadlineMs:run.deadline_ms});
+  expect(result).toMatchObject({status:'needs_review',reason_code:'checker_report_required_evidence_missing'});
+  expect(result.checker_feedback).toMatchObject({retryable:false,
+   missing_evidence:expect.arrayContaining([
+    expect.objectContaining({check_id:'end_criterion',scope:'run',role:'original-recording',reason:'checker_report_role_missing'}),
+   ])});
+  expect(JSON.parse(fs.readFileSync(result.evidence[0]))).toMatchObject({reason:'checker_report_required_evidence_missing'});
+  const calls=fs.readFileSync(path.join(f.cwd,'checker-calls.jsonl'),'utf8').trim().split('\n').map(JSON.parse);
+  expect(calls.map(c=>c.request.phase)).toEqual(['start']);
+  expect(await runtime.checkActivity(activity,result,{phase:'end',input:{run_tag:run.input.run_tag,action_id:'missing-report-input',execution_attempt:1}}))
+   .toMatchObject({verdict:'unknown'});
+ }finally{f.close();}
+},15000);
+
+test('报告的只读事实参数从本轮交付和原件绑定，不靠 Checker 猜值',async()=>{
+ const f=fixture();
+ try{
+  const entry='provider.cjs';
+  fs.writeFileSync(path.join(f.cwd,entry), "let raw='';process.stdin.on('data',x=>raw+=x);process.stdin.on('end',()=>{const req=JSON.parse(raw);console.log(JSON.stringify({status:'available',source:'fixture',facts:req.args}));});");
+  const document={outputs:{number:42}};
+  const request={nonce:randomUUID(),run_id:f.run.run_id,activity:f.activity.key,criteria:[{id:'end'}],
+   proposal:{...document,delivery_evidence:{run:{source:{}}}}};
+  const archiveRoot='evidence/archive';
+  fs.mkdirSync(path.join(f.cwd,archiveRoot));
+  const contents=JSON.stringify({media:'native/this-run.mkv'});
+  const sourceHash=createHash('sha256').update(contents).digest('hex');
+  const archivePath=path.join(archiveRoot,sourceHash);
+  fs.writeFileSync(path.join(f.cwd,archivePath),contents);
+  request.proposal.delivery_evidence.run.source={sha256:sourceHash,archive_path:archivePath};
+  const binding=prepareCheckerEvidence({config:{roots:[archiveRoot],archive_root:archiveRoot,provider:{
+   command:process.execPath,command_sha256:hash(process.execPath),entry,timeout_ms:3000}},cwd:f.cwd,
+   files:{[entry]:hash(path.join(f.cwd,entry))},request,directory:path.join(f.cwd,'report-reads'),deadlineMs:Date.now()+5000});
+  const file=path.join(f.cwd,'report.json');
+  await createDeliveryReport({binding,plan:{files:{src:{scope:'run',role:'*'},optional:{scope:'alternate',role:'source',optional:true}},facts:{result:{operation:'fixture.read',
+   args:{number:{$from:'/proposal/outputs/number'},media:{$from:'/files/src/media',basename:true}}},alternate:{operation:'fixture.read',optional:true,args:{id:{$from:'/proposal/outputs/alternate'}}}},criteria:{end:['src','result','optional','alternate']}},request,file});
+  const report=JSON.parse(fs.readFileSync(file));
+  const result=report.evidence.find(e=>e.label==='result');
+  expect(requiredDeliveryReportGaps(report)).toEqual([]);
+  expect(report.evidence.filter(e=>e.optional_absent).map(e=>e.label)).toEqual(['optional','alternate']);
+  expect(result.facts).toEqual({number:42,media:'this-run.mkv'});
+ }finally{f.close();}
+});
+
+test('报告要引用每个必要原件，少引用独立事实不得通过',()=>{
+ const identity={task_id:'task',run_id:'run',run_tag:'tag',workflow:'test',activity:'activity',attempt:1};
+ const request={...identity,nonce:'nonce',criteria:[{id:'check'}],proposal:{outputs:{number:42}}};
+ const receipts=['submitted','readback'].map(evidence_ref=>({evidence_ref,nonce:'nonce',request_sha256:digest(request),status:'available'}));
+ const deliveryReport={outputs:request.proposal.outputs,criteria:{check:['submitted','readback']},evidence:receipts.map(r=>({label:r.evidence_ref,...r}))};
+ const value={identity,nonce:'nonce',outcome:'passed',output:{number:42},checks:[{id:'check',status:'passed',
+  reason:'Verified enough',expected:42,actual:42,evidence:[{source:'submitted',observation:{summary:'submitted'}}]}]};
+ expect(()=>verifyCheckerResult(value,request,receipts,{deliveryReport})).toThrow('checker_report_required_citation_missing');
+});
+test('分支不产出的证据保留缺项，仍必须引用实际存在的必需证据',()=>{
+ const identity={task_id:'task',run_id:'run',run_tag:'tag',workflow:'test',activity:'activity',attempt:1};
+ const request={...identity,nonce:'nonce',criteria:[{id:'check'}],proposal:{outputs:{number:42}}};
+ const receipts=[
+  {evidence_ref:'anchor',nonce:'nonce',request_sha256:digest(request),status:'available'},
+  {evidence_ref:'branch',nonce:'nonce',request_sha256:digest(request),status:'unavailable'},
+ ];
+ const evidence=receipts.map(r=>({label:r.evidence_ref,...r}));
+ evidence[1].optional_absent=true;
+ const deliveryReport={outputs:request.proposal.outputs,criteria:{check:['anchor','branch']},evidence};
+ const check={id:'check',status:'passed',reason:'Original ledger proves branch was not entered',expected:42,actual:42,evidence:[
+  {source:'anchor',observation:{summary:'same run'}}]};
+ const result={identity,nonce:'nonce',outcome:'passed',output:{number:42},checks:[check]};
+ expect(verifyCheckerResult(result,request,receipts,{deliveryReport}).outcome).toBe('passed');
+ delete evidence[1].optional_absent;
+ expect(()=>verifyCheckerResult(result,request,receipts,{deliveryReport})).toThrow('checker_report_evidence_unavailable');
+});
+
+test('接受同一报告内的补充证据，拒绝报告之外的引用',()=>{
+ const identity={task_id:'task',run_id:'run',run_tag:'tag',workflow:'test',activity:'activity',attempt:1};
+ const request={...identity,nonce:'nonce',criteria:[{id:'check'}],proposal:{outputs:{number:42}}};
+ const receipts=['required','support','outside'].map(evidence_ref=>({evidence_ref,nonce:'nonce',request_sha256:digest(request),status:'available'}));
+ const deliveryReport={outputs:request.proposal.outputs,criteria:{check:['required']},evidence:receipts.slice(0,2).map(r=>({label:r.evidence_ref,...r}))};
+ const observation={summary:'same run'};
+ const check={id:'check',status:'passed',reason:'Confirmed',expected:42,actual:42,
+  evidence:[{source:'required',observation},{source:'support',observation}]};
+ const result={identity,nonce:'nonce',outcome:'passed',output:{number:42},checks:[check]};
+ expect(verifyCheckerResult(result,request,receipts,{deliveryReport}).outcome).toBe('passed');
+ check.evidence[1]={source:'outside',observation};
+ expect(()=>verifyCheckerResult(result,request,receipts,{deliveryReport})).toThrow('checker_report_citation_unbound');
+});
+
+test('报告超限写可追溯回执，不启动完工 Checker',async()=>{
+ const f=fixture({mode:'delivery-report',fact:{number:42,padding:'x'.repeat(35000)}});
+ try{
+  const {activity,profile,run}=f,document=activity.acceptance.document;
+  document.delivery={schema:{type:'object'},report:{
+   files:{proof:{scope:'run',role:'source'},repeated:{scope:'run',role:'source'},third:{scope:'run',role:'source'}},
+   criteria:{end_criterion:['proof','repeated','third'],failure:['proof']},
+  }};
+  activity.acceptance.source.contract_digest=digest(document);
+  const runtime=await createRuntime({profile,run});
+  const input={run_tag:run.input.run_tag,action_id:'oversized-report',execution_attempt:1};
+  const result=await runtime.executeActivity(activity,input,{
+   identity:{task_id:run.task_id,run_id:run.run_id,activity_key:activity.key,action_id:input.action_id},cwd:f.cwd,deadlineMs:run.deadline_ms});
+  expect(result).toMatchObject({status:'needs_review',reason_code:'checker_report_response_limit'});
+  expect(JSON.parse(fs.readFileSync(result.evidence[0]))).toMatchObject({reason:'checker_report_response_limit'});
+  const calls=fs.readFileSync(path.join(f.cwd,'checker-calls.jsonl'),'utf8').trim().split('\n').map(JSON.parse);
+  expect(calls.map(c=>c.request.phase)).toEqual(['start']);
+  expect(await runtime.checkActivity(activity,result,{phase:'end',input})).toMatchObject({verdict:'unknown',reason:'checker_report_response_limit'});
+ }finally{f.close();}
+},15000);
