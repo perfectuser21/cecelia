@@ -1,11 +1,13 @@
-# 修复普通任务标识被误识别为设备意图
+# 默认CI与按需真实资格/预览边界清理
 
-Task: ad48434f-e2d5-4464-8c60-034ef11b7665
+Task: 1da79bcb-9cb6-4c19-a751-b6853d730a7e
 GP-Anchor: none(infra)
 
-- [ ] 含adb的UUID/普通标识不能触发手机设备意图，真实独立adb命令及显式设备要求仍严格验真。
-  Test: manual:cd packages/brain && npx --no-install vitest run src/routing/__tests__/native-qiumi-route.test.js src/routing/__tests__/cheap-gates.test.js
-- [ ] 固定含adb任务ID的普通任务经真实dispatcher/PG原生运行账本，不重复启动保护保持；前置路由和运行绑定有明确断言。
+- [ ] 默认夜间发现不登记三个人工预览服务及两条按需真实Codex专项；明确旗标仍能选择原实现，现役非模型PG合同继续收集。
+  Test: manual:node --test scripts/ci/__tests__/basic-manual-integration-boundary.test.mjs
+- [ ] 旧radius联动适配和专属检查无现役消费者，清退同时保留当前graph/radius与cascade-report功能，通用孤岛闸回归使用现役叶子。
+  Test: manual:cd packages/brain && npx --no-install vitest run src/__tests__/cascade-list.test.js src/__tests__/island-gate.test.mjs
+- [ ] 来源封组仅接受完整经审控制，历史56版本有效，缺失、漂移与新旧混配不能获得许可。
+  Test: manual:cd packages/brain && npx --no-install vitest run src/lib/__tests__/existing-ops-ci-manual-boundary-source.test.js
+- [ ] 保留当前必需PR和真实数据库合同，不新增workflow/job，独立真实Notion到原生Agent产物与回执证据已写验收Task。
   Test: manual:node scripts/ci/run-basic-check.mjs brain-integration
-- [ ] 只读noexec镜像完成/取消合同和来源防复活仍通过，main自动发布后核对生产SHA、版本和业务回执。
-  Test: manual:node scripts/ci/run-basic-check.mjs image

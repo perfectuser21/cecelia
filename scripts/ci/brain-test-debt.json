@@ -31,6 +31,24 @@
       "category": "legacy_spec",
       "reason": "决策6f1c9431：生产已停用的独立后台思考图，保留源码及专项历史测试，退出默认CI；通用checkpoint和关闭态保护仍自动执行。",
       "manualRoot": false
+    },
+    {
+      "file": "packages/brain/src/__tests__/integration/invocation-browser-preview.test.js",
+      "category": "external_resource",
+      "reason": "人工长驻预览服务，等待人工浏览和结束信号，不提供自动浏览器断言；退出默认回归，显式INVOCATION_BROWSER_PREVIEW=1仍可启动原实现。真实Chromium驱动及普通PG合同保留自动执行。",
+      "manualRoot": false
+    },
+    {
+      "file": "packages/brain/src/__tests__/integration/authoring-browser-preview.pg.integration.test.js",
+      "category": "external_resource",
+      "reason": "人工长驻预览服务，等待人工浏览和结束信号，不提供自动浏览器断言；退出默认回归，显式AUTHORING_BROWSER_PREVIEW=1仍可启动原实现。真实Chromium驱动及普通PG合同保留自动执行。",
+      "manualRoot": false
+    },
+    {
+      "file": "packages/brain/src/__tests__/integration/workflow-assembly-native-browser.pg.integration.test.js",
+      "category": "external_resource",
+      "reason": "人工长驻预览服务，等待人工浏览和结束信号，不提供自动浏览器断言；退出默认回归，显式META_NATIVE_BROWSER=1仍可启动原实现。真实Chromium驱动及普通PG合同保留自动执行。",
+      "manualRoot": false
     }
   ]
 }

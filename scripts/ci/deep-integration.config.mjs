@@ -1,6 +1,14 @@
 import brainConfig, { POSTGRES_INTEGRATION_TESTS, INACTIVE_CONSCIOUSNESS_TESTS } from '../../packages/brain/vitest.config.js';
 import { privatePgTests, brainRelativePgPath } from './debt-pg.config.mjs';
 
+// 长驻浏览器验收服务不是默认回归；显式授权后仍可选择原文件启动。
+const manualPreviewFiles = [
+  ['INVOCATION_BROWSER_PREVIEW', 'invocation-browser-preview.test.js'],
+  ['AUTHORING_BROWSER_PREVIEW', 'authoring-browser-preview.pg.integration.test.js'],
+  ['META_NATIVE_BROWSER', 'workflow-assembly-native-browser.pg.integration.test.js'],
+].filter(([flag]) => process.env[flag] !== '1')
+  .map(([, file]) => `src/__tests__/integration/${file}`);
+
 // 与单测配置共享数据库测试清单，新增集成测试由目录约定自动发现。
 export default {
   ...brainConfig,
@@ -12,6 +20,6 @@ export default {
       'src/__tests__/migration-370-gp-governance-decisions.test.js',
       'src/__tests__/nightly-orchestrator.integration.test.js',
       'src/**/integration/**/*.{test,spec}.?(c|m)[jt]s?(x)'],
-    exclude: ['**/node_modules/**', ...INACTIVE_CONSCIOUSNESS_TESTS, ...privatePgTests.map(brainRelativePgPath)],
+    exclude: ['**/node_modules/**', ...manualPreviewFiles, ...INACTIVE_CONSCIOUSNESS_TESTS, ...privatePgTests.map(brainRelativePgPath)],
   },
 };

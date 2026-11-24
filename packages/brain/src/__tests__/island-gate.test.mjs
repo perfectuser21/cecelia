@@ -111,8 +111,8 @@ describe('B4 — action-hint 三分类逻辑', () => {
 // 而它被 cascade-list.js(生产代码)引用。修法: 出边为零时补仓内入边静态扫描;
 // 测试文件不算入边源(只被自己单测引用的仍是孤岛,闸保牙)。
 describe('B9 — 入边盲区回归锁', () => {
-  it('radius-client.js(真实仓内叶子,被 cascade-list 引用)→ exit 0 且日志含 in-edge', () => {
-    const { exitCode, stdout, stderr } = runGate('packages/brain/src/lib/radius-client.js');
+  it('native-agent-authority.js(真实零import叶子,被现役执行器引用)→ exit 0 且日志含 in-edge', () => {
+    const { exitCode, stdout, stderr } = runGate('packages/brain/src/lib/native-agent-authority.js');
     const combined = stdout + stderr;
     expect(exitCode).toBe(0);
     expect(combined).toMatch(/in-edge/);
