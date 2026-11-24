@@ -1,5 +1,5 @@
 # 记忆系统 (memory) - Feature 详情
-# 更新时间: 2026-11-14
+# 更新时间: 2026-11-25
 # Schema: v2.0.0
 
 system_id: memory
@@ -46,7 +46,6 @@ features:
         - packages/brain/src/__tests__/eviction.test.js
         - packages/brain/src/__tests__/memory-capabilities-search.test.js
         - packages/brain/src/__tests__/memory-closure-chain.test.js
-        - packages/brain/src/__tests__/memory-consolidator-wiring.test.js
         - packages/brain/src/__tests__/memory-retriever-chat.test.js
         - packages/brain/src/__tests__/memory-retriever-l1.test.js
         - packages/brain/src/__tests__/memory-retriever-quota.test.js
@@ -73,7 +72,6 @@ features:
             - packages/brain/src/__tests__/eviction.test.js
             - packages/brain/src/__tests__/memory-capabilities-search.test.js
             - packages/brain/src/__tests__/memory-closure-chain.test.js
-            - packages/brain/src/__tests__/memory-consolidator-wiring.test.js
             - packages/brain/src/__tests__/memory-retriever-chat.test.js
             - packages/brain/src/__tests__/memory-retriever-l1.test.js
             - packages/brain/src/__tests__/memory-retriever-quota.test.js
