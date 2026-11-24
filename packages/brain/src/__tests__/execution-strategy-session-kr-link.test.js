@@ -13,6 +13,35 @@ async function readKrs(title) {
   return (await pool.query('SELECT title, objective_id, status, owner_role, metadata FROM key_results WHERE title=$1 OR title=$2 ORDER BY title', [title, `${title}-default`])).rows;
 }
 describe('真实 strategy_session HTTP 回调保留执行结果，禁止自动创建 KR', () => {
+  it('回调锁住任务时，进度记录与任务终态在同一事务提交且不等待自身外键锁', async () => {
+    const task = await sourceTask('strategy_session');
+    const result = { output: '本次会议仅保存结论，不创建任何 KR。' };
+    const response = await callback(task, result);
+    expect(response.status, JSON.stringify(response.body)).toBe(200);
+    expect((await readTask(task.id)).status).toBe('completed');
+    const ledger = (await pool.query('SELECT status, findings FROM progress_ledger WHERE task_id=$1 AND run_id=$2', [task.id, task.runId])).rows;
+    expect(ledger).toEqual([{ status: 'completed', findings: result }]);
+  });
+  it('可选进度记录被数据库拒绝时，回调仍提交原始执行结果且不留下失败事务', async () => {
+    const task = await sourceTask('strategy_session'), suffix = randomUUID().replaceAll('-', '');
+    const name = `reject_callback_progress_${suffix}`;
+    await pool.query(`CREATE FUNCTION ${name}() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN IF NEW.task_id = '${task.id}'::uuid THEN RAISE EXCEPTION 'owned progress fixture rejects insert'; END IF; RETURN NEW; END $$`);
+    await pool.query(`CREATE TRIGGER ${name} BEFORE INSERT ON progress_ledger FOR EACH ROW EXECUTE FUNCTION ${name}()`);
+    try {
+      const result = '进度台账故障也必须保留这份原始回执。';
+      const response = await callback(task, result);
+      expect(response.status, JSON.stringify(response.body)).toBe(200);
+      expect(await readTask(task.id)).toMatchObject({ status: 'completed', payload: { last_run_result: { result_summary: result } } });
+      expect((await pool.query('SELECT id FROM progress_ledger WHERE task_id=$1', [task.id])).rows).toEqual([]);
+      const repeated = await callback(task, result);
+      expect(repeated.status).toBe(200);
+      expect(repeated.body.duplicate).toBe(true);
+    } finally {
+      await pool.query(`DROP TRIGGER ${name} ON progress_ledger`);
+      await pool.query(`DROP FUNCTION ${name}()`);
+    }
+  });
   for (const goalKind of ['objective', 'unknown', 'null']) {
     it(`${goalKind} goal_id：真实任务终态、原始回执和重放幂等`, async () => {
       let goalId = goalKind === 'unknown' ? randomUUID() : null;
