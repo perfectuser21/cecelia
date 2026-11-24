@@ -44,14 +44,17 @@ export async function createRuntime({profile,run,verifySource=async()=>{},ledger
     const spec=config.activities?.[activity.key],checker=spec?.checker;
     sessionGroup(spec?.session_group,activity.runtime?.executor_kind??'agent');
     const phasePolicy=checker?.phase_policy;
-    if(phasePolicy!==undefined&&(phasePolicy!=='completion_only'||checker.mode!=='agent'))throw Error('checker_profile_invalid');
+    if(phasePolicy!==undefined&&(!['completion_only','completion_with_inputs'].includes(phasePolicy)||checker.mode!=='agent'))throw Error('checker_profile_invalid');
     if(checker?.mode==='agent'){
       if(!profile.codex_auth||checker.entry!==undefined||checker.start_checks!==undefined||checker.required_checks!==undefined)throw Error('checker_profile_invalid');
       const contract=activityContract(activity);
       if(phasePolicy==='completion_only'){
         if(checkerCriteria(contract,'start',{allowEmptyPhase:true}).length)throw Error('checker_start_requirements_unassigned');
         checkerCriteria(contract,'end');
-      }else checkerCriteria(contract,'start');
+      }else{
+        checkerCriteria(contract,'start');
+        if(phasePolicy==='completion_with_inputs')checkerCriteria(contract,'end');
+      }
       if((spec.allow_empty===true)!==(Array.isArray(contract.acceptance.document.failure?.empty_ok)&&contract.acceptance.document.failure.empty_ok.length>0))throw Error('checker_empty_policy_mismatch');
     }else if(!spec||!profile.files[checker?.entry]||!path.isAbsolute(checker?.command??'')
       ||['start_checks','required_checks'].some(k=>!Array.isArray(checker[k])||!checker[k].length||new Set(checker[k]).size!==checker[k].length)
@@ -133,14 +136,17 @@ export async function createRuntime({profile,run,verifySource=async()=>{},ledger
   }
   async function performReadback(activity,input,phase,proposal,signal,deadlineMs,archiveRoot){
     const spec=specFor(activity),checker=spec.checker;
-    const criteria=checker.mode==='agent'?checkerCriteria(activityContract(activity),phase):undefined;
+    const contract=activityContract(activity);
+    const completionWithInputs=phase==='end'&&checker.phase_policy==='completion_with_inputs';
+    const criteria=checker.mode==='agent'?checkerCriteria(contract,phase):undefined;
+    if(completionWithInputs)criteria.unshift(...checkerCriteria(contract,'start'));
     const evidence=archiveRoot&&criteria?{...checker.evidence,roots:[...checker.evidence.roots,archiveRoot],archive_root:archiveRoot}:checker.evidence;
-    const verifiedStops=phase==='start'&&activity.runtime?.phase==='finalize'
+    const verifiedStops=(phase==='start'||completionWithInputs)&&activity.runtime?.phase==='finalize'
       ? (ledger?.snapshot?.().observations??[]).filter(item=>item.kind==='execution_stop_verified'&&item.status==='completed')
         .map(({activity_key,action_id,attempt})=>({activity_key,action_id,attempt,execution_stopped:true}))
       : [];
     const request={task_id:run.task_id,run_id:run.run_id,run_tag:run.input.run_tag,workflow:spec.workflow??run.contract.workflow,
-      activity:spec.activity??activity.key,activity_contract:activityContract(activity),attempt:activity.runtime?.executor_kind==='code'?1:(input.execution_attempt??1),nonce:randomUUID(),phase,
+      activity:spec.activity??activity.key,activity_contract:contract,attempt:activity.runtime?.executor_kind==='code'?1:(input.execution_attempt??1),nonce:randomUUID(),phase,
       checks:criteria?criteria.map(c=>c.id):phase==='start'?checker.start_checks:checker.required_checks,...(criteria?{criteria,evidence_access:{roots:evidence.roots,provider_available:Boolean(evidence.provider)}}:{}),proposal,context:{...run.input,...input},...(verifiedStops.length?{verified_execution_stops:verifiedStops}:{})};
     fs.mkdirSync(path.join(root,'checks'),{recursive:true,mode:0o700});
     const evidenceFile=path.join(root,'checks',request.nonce+'.json');
@@ -276,6 +282,7 @@ export async function createRuntime({profile,run,verifySource=async()=>{},ledger
       if (phase === 'start') requireDeclaredHostTools(activity);
       const {checker}=specFor(activity);
       if(phase==='start'&&checker.phase_policy==='completion_only')return {verdict:'pass',reason:'no_activity_start_criteria'};
+      if(phase==='start'&&checker.phase_policy==='completion_with_inputs')return {verdict:'pass',reason:'input_criteria_checked_at_completion'};
       if(phase==='end'&&activityContract(activity).acceptance?.document?.delivery!==undefined&&['skill_handoff_incomplete','skill_readback_unconfirmed'].includes(result?.reason_code)){
         parseActivityResult(result,input);
         return {verdict:'unknown',reason:result.reason_code,evidence:result.evidence};
@@ -299,7 +306,7 @@ export async function createRuntime({profile,run,verifySource=async()=>{},ledger
       try{
         requireDeclaredHostTools(activity);
         spec=specFor(activity);
-        if(spec.checker.phase_policy==='completion_only'){
+        if(spec.checker.phase_policy!==undefined){
           await verifyFrozenSources();
         }else{
           const start=spec.checker.mode==='agent'&&input.action_id===options.identity.action_id&&await consumeCheck(activity,input,'start',options.signal)
