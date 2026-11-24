@@ -35,7 +35,7 @@ beforeEach(async()=>{
 afterEach(async()=>{await fixture?.close();});
 const post=(path,value)=>request(app).post(`/api/brain/invocations${path}`).send(value);
 describe('真实scratch调用账本与并发',()=>{
- it.runIf(process.env.INVOCATION_REAL_CODEX==='1')('Activity单调和Workflow整调经真实Codex进程产生结构化输出',async()=>{
+ if(process.env.INVOCATION_REAL_CODEX==='1')it('Activity单调和Workflow整调经真实Codex进程产生结构化输出',async()=>{
   const dir=mkdtempSync(join(tmpdir(),'invocation-fixed-skill-'));
   const git=args=>execFileSync('git',args,{cwd:dir,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
   try{
