@@ -5,10 +5,10 @@ import { isAbsolute } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { runStandaloneSkill } from './run.mjs';
 
-export function readOwnedFile(path) {
+export function readOwnedFile(path, { maxBytes = 1_048_576 } = {}) {
   if (!isAbsolute(path) || realpathSync(path) !== path) throw Error('standalone_file_path_invalid');
   const stat = lstatSync(path);
-  if (!stat.isFile() || stat.uid !== process.getuid() || stat.nlink !== 1 || (stat.mode & 0o022) || stat.size > 1048576) {
+  if (!stat.isFile() || stat.uid !== process.getuid() || stat.nlink !== 1 || (stat.mode & 0o022) || stat.size > maxBytes) {
     throw Error('standalone_file_untrusted');
   }
   return readFileSync(path);

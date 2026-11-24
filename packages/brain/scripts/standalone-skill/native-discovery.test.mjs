@@ -1,9 +1,34 @@
 import assert from 'node:assert/strict';
-import { test } from 'vitest';
-import { createDiscoveryServices, confirmDiscovery } from './native-discovery.mjs';
+import { test, vi } from 'vitest';
+import { mkdtempSync, realpathSync, rmSync, truncateSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { digest } from '../../src/orchestrator/commander-decision.js';
+import { readOwnedFile } from './launch.mjs';
+import { createDiscoveryServices, confirmDiscovery, createProvider } from './native-discovery.mjs';
 
 const id = '1234567890123456789';
 const video = { videoId:id,videoUrl:'https://www.douyin.com/video/'+id,keyword:'AI办公',metrics:{digest:'abc'} };
+
+test('已固定的发布 Profile 可读取完整定义，通用文件及超限 Profile 仍拒绝', async () => {
+  const directory = mkdtempSync(join(realpathSync(tmpdir()), 'native-profile-size-'));
+  vi.stubEnv('CECELIA_INTERNAL_TOKEN','fixture');
+  vi.stubEnv('BRAIN_INTERNAL_TOKEN','fixture');
+  try {
+    const profile = {cwd:directory, release:{ definitions:'a'.repeat(2_500_000) }};
+    const path = join(directory,'profile.json');
+    writeFileSync(path, JSON.stringify(profile), {mode:0o600});
+    assert.throws(() => readOwnedFile(path), /standalone_file_untrusted/);
+    const job = { input:{binding_key:'fixture'}, tenant_id:'default' };
+    const options = { bindings:{ fixture:{ tenant_id:'default', profile:path, profile_sha256:digest(profile) } } };
+    await assert.rejects(createProvider(job,options), /standalone_provider_toolkit_unfrozen/);
+    truncateSync(path, 8 * 1024 * 1024 + 1);
+    await assert.rejects(createProvider(job,options), /standalone_file_untrusted/);
+  } finally {
+    vi.unstubAllEnvs();
+    rmSync(directory,{recursive:true,force:true});
+  }
+});
 
 test('业务读回只认本轮指定、实测已持久化的一条候选', async () => {
   const call = async () => ({ok:true,result:{ok:true,result:{metrics_verified:true,metrics_digest:'abc',handoff:{video_id:id,video_url:video.videoUrl}}}});
@@ -69,8 +94,9 @@ test.each(['101','103'])('%s 按派单身份起跑并核证，103 只验收宿�
         assert.equal(body.identity.run_id,runId);
         return {attested:true};
       },
-      runModel:async({modelOutput})=>{
+      runModel:async({modelOutput,prompt})=>{
         calls.push('agent');
+        if(scoring){assert.match(prompt,/score_input/);assert.match(prompt,/score_submit/);}
         if(!scoring)writeFileSync(modelOutput,JSON.stringify({video}),{mode:0o600});
       },
     });
