@@ -613,8 +613,20 @@ export async function ingestDelegatedPage(pool, token, page, opts = {}) {
   if (/run:notion-/.test(desc)) return { taskId: null, kind: 'skipped' }; // OpenClaw 已派发，幂等跳过
 
   const en = parseEnPage(page);
-  if (en.enNative && desc.includes(NOTION_LEADGEN_101_MARK)) {
+  if (desc.includes(NOTION_LEADGEN_101_MARK)) {
+    if (en.zhId32) {
+      await writeStatusReceipt(token, page, desc, '101 未派发：请选择英文 Tasks 源页', 'Blocked');
+      return { taskId: null, kind: 'blocked' };
+    }
     const env = opts.env ?? process.env;
+    const tenantId = tenantFor(env, NOTION_TASKS_DB);
+    const previous = (await pool.query(`SELECT id FROM tasks WHERE task_type='workflow_dispatch'
+      AND payload->>'source'='notion_leadgen_101' AND payload->>'notion_page_id'=$1 AND tenant_id=$2 LIMIT 1`,
+    [page.id, tenantId])).rows[0];
+    if (previous) {
+      await writeStatusReceipt(token, page, desc, `brain:${previous.id} ✓已接管`);
+      return { taskId: previous.id, kind: 'workflow_dispatch' };
+    }
     const now = opts.now ?? (() => new Date());
     const at = now();
     const end = toEndIso(en.planEnd);
@@ -627,7 +639,7 @@ export async function ingestDelegatedPage(pool, token, page, opts = {}) {
     const body = await fetchNotionPageContent(token, page.id, { requireComplete: true });
     try {
       const received = await dispatchNotionLeadgen101(pool, {
-        pageId: page.id, title: name, body, tenantId: tenantFor(env, NOTION_TASKS_DB), bindings,
+        pageId: page.id, title: name, body, tenantId, bindings,
       }, { createTask: opts.createFoundationTask });
       await writeStatusReceipt(token, page, desc, `brain:${received.taskId} ✓已接管`);
       return received;

@@ -324,8 +324,21 @@ describe('Notion 101 explicit dispatch through the existing published Worker', (
     release_id: '61a9990e-d7ca-4c67-8a5e-f552879418fc',
     binding_key: 'yuesheng_cloud',
   } }) };
-  const page = () => ({ ...enPage('[en-native] [leadgen-101]'), id: '3bf10100-1bcb-4572-b187-09b864390021' });
-  beforeEach(() => { mockQuery.mockReset(); mockNotionReq.mockReset(); mockCreateRoutedTask.mockReset(); });
+  const page = () => ({ ...enPage('[leadgen-101]'), id: '3bf10100-1bcb-4572-b187-09b864390021' });
+  beforeEach(() => { mockQuery.mockReset().mockResolvedValue({ rows: [] }); mockNotionReq.mockReset(); mockCreateRoutedTask.mockReset(); });
+
+  it('repairs the source acknowledgement after a successful commit without rereading the changed page body', async () => {
+    const { ingestDelegatedPage } = await import('../notion-push-sync.js');
+    const createFoundationTask = vi.fn();
+    const id = '9c00babb-5f42-487f-9068-3969a83b6d42';
+    mockQuery.mockResolvedValueOnce({ rows: [{ id }] });
+    mockNotionReq.mockResolvedValueOnce({});
+    expect(await ingestDelegatedPage({ query: mockQuery }, 'tok', page(), { env, createFoundationTask }))
+      .toEqual({ taskId: id, kind: 'workflow_dispatch' });
+    expect(mockNotionReq.mock.calls[0][2]).toBe('PATCH');
+    expect(mockNotionReq.mock.calls[0][3].properties.Description.rich_text[0].text.content).toContain('brain:' + id);
+    expect(createFoundationTask).not.toHaveBeenCalled();
+  });
 
   it('before Plan Date keeps the source row scheduled and creates no executable task', async () => {
     const { ingestDelegatedPage } = await import('../notion-push-sync.js');
