@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { getRunDefinitionBinding } from '../lib/run-definition-binding.js';
+import { afterTerminalTransition, finalizeTask } from '../lib/task-terminal.js';
 import { finishRun } from '../lib/task-run.js';
 import { digest } from '../orchestrator/commander-decision.js';
 import { UUID, requireFoundation, onlyKeys } from './contracts.js';
@@ -107,7 +108,7 @@ function checkedReceipt(receipt) {
 export async function finishStandaloneNotionTask(pool, input) {
   validateMachineRequest(input, ['machine_id', 'receipt']);
   const receipt = checkedReceipt(input.receipt);
-  return foundationTransaction(pool, 'notion-standalone:' + input.machine_id, async db => {
+  const outcome = await foundationTransaction(pool, 'notion-standalone:' + input.machine_id, async db => {
     const task = (await db.query(`SELECT * FROM tasks WHERE ${boundSource} AND id=$1 FOR UPDATE`, [receipt.task_id])).rows[0];
     const claim = task?.result?.standalone_claim;
     requireFoundation(claim?.run_id === receipt.run_id && claim.machine_id === input.machine_id, 'standalone_claim_conflict');
@@ -115,7 +116,7 @@ export async function finishStandaloneNotionTask(pool, input) {
     const stored = task.result.standalone_receipt;
     if (stored) {
       requireFoundation(task.status === status && digest(stored) === digest(receipt), 'standalone_receipt_conflict');
-      return { status };
+      return { status, replayed:true };
     }
     requireFoundation(task.status === 'in_progress' && task.claimed_by === 'standalone:' + input.machine_id, 'standalone_claim_conflict');
 
@@ -130,15 +131,20 @@ export async function finishStandaloneNotionTask(pool, input) {
       const closed = await finishRun({ runId: receipt.run_id, status: 'success', result: receipt },
         { pool: db, strict: true, emit: async () => {} });
       requireFoundation(closed.updated, 'standalone_run_unconfirmed');
+      const result=await finalizeTask(db,task.id,'completed',{
+        relay:false, onlyIfStatus:'in_progress', mergeResult:{standalone_receipt:receipt},
+        standaloneReconciliation:{runId:receipt.run_id},
+      });
+      requireFoundation(result.rowCount===1,'standalone_run_unconfirmed');
+    } else {
+      await db.query(`UPDATE tasks SET status='blocked',error_message=$2,updated_at=NOW(),
+        blocked_reason='needs_review',blocked_at=NOW(),
+        status_history=COALESCE(status_history,'[]'::jsonb)||jsonb_build_array(jsonb_build_object('from',status,'to','blocked','source','standalone_notions','changed_at',NOW())),
+        result=result||jsonb_build_object('standalone_receipt',$3::jsonb) WHERE id=$1`,
+      [task.id, receipt.reason, JSON.stringify(receipt)]);
     }
-
-    await db.query(`UPDATE tasks SET status=$2::varchar,error_message=$3,updated_at=NOW(),
-      blocked_reason=CASE WHEN $2::varchar='blocked' THEN 'needs_review' ELSE NULL END,
-      blocked_at=CASE WHEN $2::varchar='blocked' THEN NOW() ELSE NULL END,
-      completed_at=CASE WHEN $2::varchar='completed' THEN NOW() ELSE NULL END,
-      status_history=COALESCE(status_history,'[]'::jsonb)||jsonb_build_array(jsonb_build_object('from',status,'to',$2::varchar,'source','standalone_notions','changed_at',NOW())),
-      result=result||jsonb_build_object('standalone_receipt',$4::jsonb) WHERE id=$1`,
-    [task.id, status, receipt.reason ?? null, JSON.stringify(receipt)]);
-    return { status };
+    return { status, replayed:false };
   });
+  if (outcome.status === 'completed' && !outcome.replayed) await afterTerminalTransition(pool,receipt.task_id,outcome.status);
+  return { status:outcome.status };
 }

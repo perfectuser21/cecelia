@@ -718,7 +718,7 @@ async function ingestDelegatedBatch(pool, token, opts, marks) {
       for (const page of pages) {
         try {
           const result = await ingestDelegatedPage(pool, token, page, opts);
-          if (['qiumi_task', 'workflow_dispatch'].includes(result.kind)) ingested += 1; else skipped += 1;
+          if (result.taskId != null) ingested += 1; else skipped += 1;
         } catch (error) {
           failed += 1;
           await logSyncError(pool, error.message);
