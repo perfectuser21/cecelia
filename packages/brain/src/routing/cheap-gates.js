@@ -51,6 +51,14 @@ function escapeRegExp(s) {
   return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+// ASCII工具名须是独立token；UUID、哈希及标识符中的同字母片段不是设备意图。
+function deviceKeywordHit(text, keyword) {
+  if (/^[A-Za-z0-9_]+$/.test(keyword)) {
+    return new RegExp(`(?<![A-Za-z0-9_])${escapeRegExp(keyword)}(?![A-Za-z0-9_])`, 'i').test(text);
+  }
+  return text.includes(keyword);
+}
+
 /**
  * 按**用户在 Notion 的选择顺序**取首个命中的注册表行（不是遍历池——池是
  * ORDER BY name，用户选两个时赢的会是字母序靠前的那个，反直觉）。
@@ -102,7 +110,7 @@ export function cheapGates(task, pool, env) {
     const d = env.departments.find((dep) => new RegExp(`(?:${DEPT_LEAD_WORDS})\\s*${escapeRegExp(dep)}(?![A-Za-z0-9_])`, 'i').test(text));
     if (d) { out.department = d; out.matchedBy.push('text:department'); }
   }
-  if (!out.isDevice && env.deviceKeywords.some((k) => text.includes(k))) { out.isDevice = true; out.matchedBy.push('text:keyword'); }
+  if (!out.isDevice && env.deviceKeywords.some((k) => deviceKeywordHit(text, k))) { out.isDevice = true; out.matchedBy.push('text:keyword'); }
   // 模型不再从正文文字里猜（任务 0d4215f2）：「调用Agent：」曾被当成「用 agent」命中 grok-4.20-multi-agent。
   // 模型只认正文【执行参数】块，见 routing/exec-params.js；hardModel 恒为 null，字段保留给既有读方。
   for (const [re, eng] of ENGINE_RES) if (re.test(text)) { out.hardEngine = eng; out.matchedBy.push('text:engine'); break; }
