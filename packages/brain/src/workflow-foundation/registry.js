@@ -1,3 +1,4 @@
+import {resolveStandaloneDiscoveryRelease,validateStandaloneDiscoveryInput} from './standalone-release.js';
 import {createRoutedTask} from '../work-routing-store.js';
 import {getRelease,getReleaseGate} from '../lib/release-index.js';
 import {digest} from '../orchestrator/commander-decision.js';
@@ -48,8 +49,8 @@ export async function createFoundationTask(pool,input,services={}){
  return foundationTransaction(pool,sourceId,async db=>{
   const existing=(await db.query("SELECT * FROM tasks WHERE payload->'foundation_request'->>'source_id'=$1 LIMIT 1",[sourceId])).rows[0];
   if(existing){requireFoundation(existing.payload.foundation_request.request_sha256===requestHash&&(!notionPageId||existing.payload.notion_page_id===notionPageId&&existing.tenant_id===notionTenantId),'foundation_idempotency_conflict');return {task:existing,created:false};}
-  const fixed=await resolveFoundationRelease(db,input);validateFoundationInput(fixed.runtime,input.input);
-  if(notionPageId)requireFoundation(fixed.row.key==='douyin_video_discovery','foundation_notion_workflow_invalid',400);
+  const fixed=await (notionPageId?resolveStandaloneDiscoveryRelease:resolveFoundationRelease)(db,input);
+  if(notionPageId)validateStandaloneDiscoveryInput(input.input);else validateFoundationInput(fixed.runtime,input.input);
   const metadata={commander_protocol:FOUNDATION_PROTOCOL,workflow_key:fixed.row.key,workflow_input:input.input,workflow_definition:fixed.definition,foundation_request:{source_id:sourceId,request_sha256:requestHash,machine_id:fixed.machine_id,runtime:fixed.runtime},
    ...(notionPageId?{notion_page_id:notionPageId,tenant_id:notionTenantId,source:'notion_leadgen_101'}:{})};
   const createTask=services.createTask??createRoutedTask;

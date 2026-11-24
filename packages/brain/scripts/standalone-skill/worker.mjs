@@ -25,8 +25,12 @@ export async function runStandaloneWorkerOnce({ machineId, request, provider, re
   try {
     const services = await provider(job);
     receipt = await runStandaloneSkill(identity, services);
-  } catch {
-    receipt = { ...identity, status: 'needs_review', reason: 'standalone_start_unconfirmed', evidence: [] };
+  } catch (error) {
+    const known = ['standalone_provider_binding_missing','standalone_provider_profile_drift',
+      'standalone_profile_mismatch','standalone_provider_toolkit_unfrozen','standalone_provider_toolkit_drift',
+      'standalone_provider_brain_credentials_unavailable'];
+    receipt = { ...identity, status: 'needs_review',
+      reason: known.includes(error.message) ? error.message : 'standalone_start_unconfirmed', evidence: [] };
   }
   await receipts.save(receipt);
   await send(receipt);

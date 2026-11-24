@@ -71,10 +71,10 @@ it('认证API登记→冻结Release→幂等Task→真实Worker/DBOS/产物→�
 },90000);
 
 it('同一 Notion 页并发仅登记一个轻量任务并保留租户与原页，改输入须拒绝',async()=>{
- fixture=await foundationHttpFixture({workflowKey:'douyin_video_discovery'});
+ fixture=await foundationHttpFixture({workflowKey:'douyin_video_discovery',releaseTarget:'mmv'});
  const {registration,release}=await fixture.publish();
  const page=randomUUID();
- const input={workflow_id:registration.workflow_id,release_id:release.id,input:{label:'隔离 Notion 验收'},idempotency_key:'notion-101:'+page};
+ const input={workflow_id:registration.workflow_id,release_id:release.id,input:{binding_key:'test_phone',business:{keyword:'验收',max_candidates:1}},idempotency_key:'notion-101:'+page};
  const source={notionPageId:page,notionTenantId:'tenant-fixture'};
  const submit=(body=input,authority=source)=>createFoundationTask(fixture.pool,body,authority);
  const results=await Promise.all([submit(),submit()]);
@@ -84,28 +84,28 @@ it('同一 Notion 页并发仅登记一个轻量任务并保留租户与原页�
  expect((await fixture.pool.query("SELECT id,tenant_id,payload FROM tasks WHERE payload->>'notion_page_id'=$1",[page])).rows).toEqual([
   expect.objectContaining({id:taskId,tenant_id:'tenant-fixture',payload:expect.objectContaining({source:'notion_leadgen_101',notion_page_id:page})})
  ]);
- await expect(submit({...input,input:{label:'输入漂移'}})).rejects.toMatchObject({code:'foundation_idempotency_conflict'});
+ await expect(submit({...input,input:{binding_key:'test_phone',business:{keyword:'输入漂移',max_candidates:1}}})).rejects.toMatchObject({code:'foundation_idempotency_conflict'});
  await expect(submit(input,{...source,notionTenantId:'other'})).rejects.toMatchObject({code:'foundation_idempotency_conflict'});
 },30000);
 
 it('Notion 单只可由指定直执行宿主领取，同一领取不重做，可信终态回到原单',async()=>{
- fixture=await foundationHttpFixture({workflowKey:'douyin_video_discovery',directInput:true});
+ fixture=await foundationHttpFixture({workflowKey:'douyin_video_discovery',releaseTarget:'mmv',directInput:true});
  const {registration,release}=await fixture.publish();
  const notionPageId=randomUUID();
  const {task}=await createFoundationTask(fixture.pool,{
-  workflow_id:registration.workflow_id,release_id:release.id,input:{label:'直执行隔离验收',business:{keyword:'验收',max_candidates:1}},
+  workflow_id:registration.workflow_id,release_id:release.id,input:{binding_key:'test_phone',business:{keyword:'验收',max_candidates:1}},
   idempotency_key:'notion-101:'+notionPageId
  },{notionPageId,notionTenantId:'tenant-fixture'});
- expect((await fixture.request('/workflow-foundation/claim',{machine_id:'fixture-host',task_id:task.id})).body).toEqual({job:null});
+ expect((await fixture.request('/workflow-foundation/claim',{machine_id:'us-mac-m4',task_id:task.id})).body).toEqual({job:null});
  expect((await fixture.request('/workflow-foundation/standalone/claim',{machine_id:'other'})).body).toEqual({job:null});
- const take=()=>fixture.request('/workflow-foundation/standalone/claim',{machine_id:'fixture-host'});
+ const take=()=>fixture.request('/workflow-foundation/standalone/claim',{machine_id:'us-mac-m4'});
  const pair=await Promise.all([take(),take()]);
  const jobs=pair.map(value=>value.body.job).filter(Boolean);
  expect(jobs,JSON.stringify(pair)).toHaveLength(1);
  const job=jobs[0];
- expect(job).toMatchObject({task_id:task.id,machine_id:'fixture-host',release_id:release.id});
+ expect(job).toMatchObject({task_id:task.id,machine_id:'us-mac-m4',release_id:release.id});
  const receipt={task_id:task.id,run_id:job.run_id,status:'completed',summary:'隔离读回成功',evidence:['fixture:readback']};
- const finish=()=>fixture.request('/workflow-foundation/standalone/finish',{machine_id:'fixture-host',receipt});
+ const finish=()=>fixture.request('/workflow-foundation/standalone/finish',{machine_id:'us-mac-m4',receipt});
  expect((await finish()).body.error).toBe('standalone_run_unconfirmed');
  const sourceCommit='b'.repeat(40);
  const startBody={

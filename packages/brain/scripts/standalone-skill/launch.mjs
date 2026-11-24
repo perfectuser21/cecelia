@@ -20,7 +20,8 @@ export async function loadStandaloneProvider(configPath) {
   if (createHash('sha256').update(bytes).digest('hex') !== config.provider_sha256) {
     throw Error('standalone_provider_digest_mismatch');
   }
-  return import(pathToFileURL(config.provider).href);
+  const provider = await import(pathToFileURL(config.provider).href);
+  return {...provider, ...(provider.createProvider ? {createProvider:job=>provider.createProvider(job,config.options)} : {})};
 }
 
 export async function launchStandaloneSkill(configPath) {

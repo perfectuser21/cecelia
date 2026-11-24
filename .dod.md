@@ -12,3 +12,5 @@ GP-Anchor: none(infra)
   Test: manual:cd packages/brain && npx --no-install vitest run scripts/standalone-skill/run.test.mjs scripts/standalone-skill/worker.test.mjs
 - [ ] Notion 建单仅由指定直执行宿主领取，旧 Commander 入口无法领取。真实隔离 PG 验证领取、固定启动、原单结算。
   Test: manual:cd packages/brain && npx --no-install vitest run --config vitest.integration.config.js src/__tests__/integration/workflow-foundation.pg.integration.test.js
+- [ ] 独立适配器使用现有手机运行时发布证据固定本轮，先登记起跑再启动工具，业务入库只以工具独立读回确认。
+  Test: manual:cd packages/brain && npx --no-install vitest run scripts/standalone-skill/native-discovery.test.mjs

@@ -4,7 +4,8 @@ import { finishRun } from '../lib/task-run.js';
 import { digest } from '../orchestrator/commander-decision.js';
 import { UUID, requireFoundation, onlyKeys } from './contracts.js';
 import { validateMachineRequest } from './claim.js';
-import { foundationTransaction, resolveFoundationRelease } from './registry.js';
+import { foundationTransaction } from './registry.js';
+import { resolveStandaloneDiscoveryRelease } from './standalone-release.js';
 
 const boundSource = "payload->>'source'='notion_leadgen_101' AND task_type='workflow_dispatch'";
 
@@ -20,7 +21,7 @@ export async function claimStandaloneNotionTask(pool, input) {
       AND payload#>>'{foundation_request,machine_id}'=$1 ORDER BY created_at,id LIMIT 1 FOR UPDATE SKIP LOCKED`, [machine])).rows[0];
     if (!row) return { job: null };
 
-    const fixed = await resolveFoundationRelease(db, row.payload.workflow_definition);
+    const fixed = await resolveStandaloneDiscoveryRelease(db, row.payload.workflow_definition);
     requireFoundation(fixed.row.key === 'douyin_video_discovery' && fixed.machine_id === machine
       && fixed.definition.workflow_definition_version_id === row.payload.workflow_definition.workflow_definition_version_id
       && fixed.definition.snapshot_sha256 === row.payload.workflow_definition.snapshot_sha256, 'standalone_release_changed');
