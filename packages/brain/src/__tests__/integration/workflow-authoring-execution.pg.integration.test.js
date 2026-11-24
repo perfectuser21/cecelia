@@ -67,7 +67,7 @@ it('alpha租户真实HTTP自动链固定实际租户，Activity停用后拒派�
  expect((await f.pool.query("SELECT count(*)::int n FROM tasks WHERE payload?'invocation'")).rows[0].n).toBe(1);
 });
 
-it.runIf(process.env.AUTHORING_REAL_CODEX==='1')('固定Git纯Skill经实际Codex与默认HTTPdriver完成资格，真实目录调用回读ABC',async()=>{
+if(process.env.AUTHORING_REAL_CODEX==='1')it('固定Git纯Skill经实际Codex与默认HTTPdriver完成资格，真实目录调用回读ABC',async()=>{
  f=await authoringExecutionDatabase();const dir=mkdtempSync(join(tmpdir(),'authoring-fixed-skill-'));
  const git=args=>execFileSync('git',args,{cwd:dir,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
  try{

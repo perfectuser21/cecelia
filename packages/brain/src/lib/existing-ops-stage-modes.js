@@ -70,6 +70,11 @@ export const CI_NOEXEC_PROFILE_PATH='packages/brain/src/lib/existing-ops-ci-noex
 const noexecSha='16458cf588aa073f29dc4526763b864cfa20f22b55f02842c161fd5296a66363',noexecText=readFileSync(new URL('./existing-ops-ci-noexec-profile.json',import.meta.url),'utf8');
 if(createHash('sha256').update(noexecText).digest('hex')!==noexecSha)throw Error('basic_ci_source_unproven');
 export const CI_NOEXEC_INPUTS={...JSON.parse(noexecText),[CI_NOEXEC_PROFILE_PATH]:noexecSha};
+// 手动专项边界独立封组，保留已发布noexec及business原身份。
+export const CI_MANUAL_BOUNDARY_PROFILE_PATH='packages/brain/src/lib/existing-ops-ci-manual-boundary-profile.json';
+const manualBoundarySha='2709d6add86db1742a9abf96aa37a8971933ecca0144de4c5c99aa54a43cea94',manualBoundaryText=readFileSync(new URL('./existing-ops-ci-manual-boundary-profile.json',import.meta.url),'utf8');
+if(createHash('sha256').update(manualBoundaryText).digest('hex')!==manualBoundarySha)throw Error('basic_ci_source_unproven');
+export const CI_MANUAL_BOUNDARY_INPUTS={...JSON.parse(manualBoundaryText),[CI_MANUAL_BOUNDARY_PROFILE_PATH]:manualBoundarySha};
 const RUNNER='scripts/ci/run-basic-check.mjs',CONFIG='scripts/ci/deep-integration.config.mjs';
 const nodes=n=>!n||typeof n!=='object'?[]:[...(n.type?[n]:[]),...Object.values(n).flatMap(v=>Array.isArray(v)?v.flatMap(nodes):nodes(v))];
 const reject=()=>{throw Error('basic_ci_source_unproven');};
@@ -205,6 +210,7 @@ const PG_LAYERING_PATH='tests/brain-ci-pg-layering.test.ts';
 const PG_LAYERING_DIGEST='2b6e813d5bc0f5fe546d25a996b21dc208dbb142c426de05fe5f24e45b06f774';
 export async function reviewedPilotSourceControls(profile,paths,read){
  let controls=reviewedPilotControls(profile,paths);
+ if(paths?.includes(CI_MANUAL_BOUNDARY_PROFILE_PATH)&&(profile!==REVIEWED_NIGHTLY_STATUS||!paths.includes(CI_NOEXEC_PROFILE_PATH)||!paths.includes(CI_BUSINESS_GUARDS_PROFILE_PATH)))reject();
  if(paths?.includes(CI_NOEXEC_PROFILE_PATH)&&!paths.includes(CI_BUSINESS_GUARDS_PROFILE_PATH))reject();
  if(paths?.includes(PILOT_HOST)&&(paths.includes(CI_BUSINESS_GUARDS_PROFILE_PATH)||createHash('sha256').update(await read(CANDIDATE_BUILDER_MARKER)).digest('hex')===CANDIDATE_CACHE_INPUTS[CANDIDATE_BUILDER_MARKER]))controls={...controls,...CANDIDATE_CACHE_INPUTS};
  if(paths?.includes(DEPLOY_RECOVERY_MARKER)){
@@ -214,7 +220,7 @@ export async function reviewedPilotSourceControls(profile,paths,read){
  if(paths?.includes(NATIVE_AGENT_MARKER)){
   if(profile!==REVIEWED_NIGHTLY_STATUS||!paths.includes(PILOT_HOST)||!paths.includes(DEPLOY_RECOVERY_MARKER))reject();
   const nativeControls={...controls,...NATIVE_AGENT_INPUTS};
-  if(paths.includes(CI_BUSINESS_GUARDS_PROFILE_PATH))return {...nativeControls,...CI_BUSINESS_GUARDS_INPUTS,...(paths.includes(CI_NOEXEC_PROFILE_PATH)?CI_NOEXEC_INPUTS:{})};
+  if(paths.includes(CI_BUSINESS_GUARDS_PROFILE_PATH))return {...nativeControls,...CI_BUSINESS_GUARDS_INPUTS,...(paths.includes(CI_NOEXEC_PROFILE_PATH)?CI_NOEXEC_INPUTS:{}),...(paths.includes(CI_MANUAL_BOUNDARY_PROFILE_PATH)?CI_MANUAL_BOUNDARY_INPUTS:{})};
   if(createHash('sha256').update(await read('packages/brain/src/scheduler-jobs.js')).digest('hex')===NATIVE_COMPLETION_INPUTS['packages/brain/src/scheduler-jobs.js'])return {...nativeControls,...NATIVE_COMPLETION_INPUTS};
   return nativeControls;
  }
@@ -248,6 +254,12 @@ export function recordReviewedPilotSource({profile,paths,relation}){
    relation(RUNNER,contract,'reviewed_noexec_native_image_contract');
    relation(contract,fixture,'reviewed_noexec_native_image_fixture');
    relation(fixture,command,'reviewed_noexec_native_image_static_command');
+  }
+  if(paths.includes(CI_MANUAL_BOUNDARY_PROFILE_PATH)){
+   relation('packages/brain/src/lib/existing-ops-stage-modes.js',CI_MANUAL_BOUNDARY_PROFILE_PATH,'reviewed_basic_ci_source_profile');
+   relation(RUNNER,'scripts/ci/__tests__/basic-manual-integration-boundary.test.mjs','reviewed_manual_integration_boundary_contract');
+   for(const name of ['workflow-authoring-execution.pg.integration.test.js','invocations.pg.integration.test.js'])relation(CONFIG,'packages/brain/src/__tests__/integration/'+name,'reviewed_manual_codex_case_registration');
+   for(const name of ['invocation-browser-preview.test.js','authoring-browser-preview.pg.integration.test.js','workflow-assembly-native-browser.pg.integration.test.js'])relation(CONFIG,'packages/brain/src/__tests__/integration/'+name,'reviewed_opt_in_preview_entry');
   }
   if(paths.includes(NATIVE_AGENT_MARKER)){
    const release='packages/brain/scripts/native-agent-release.mjs',bundle='packages/brain/scripts/native-agent/bundle.mjs';
