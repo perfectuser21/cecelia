@@ -56,6 +56,8 @@ describe('Brain PostgreSQL test layering', () => {
         'src/__tests__/integration/native-agent-api-control.pg.integration.test.js',
         'src/__tests__/integration/native-agent-flow.pg.integration.test.js',
         'src/__tests__/integration/native-agent-notion-flow.pg.integration.test.js',
+        'src/__tests__/integration/native-agent-scheduler.pg.integration.test.js',
+        'src/__tests__/integration/staging-native-business.pg.integration.test.js',
         'src/__tests__/integration/drain-process-scope.pg.integration.test.js',
         'src/__tests__/integration/executor-startup-headed-owner.pg.integration.test.js',
         'src/__tests__/integration/suggestion-plan-callback.pg.integration.test.js',
@@ -67,6 +69,7 @@ describe('Brain PostgreSQL test layering', () => {
         'src/__tests__/integration/task-ability-compatibility.pg.integration.test.js',
         'src/__tests__/integration/reasoning-governance-contract.pg.integration.test.js', '--reporter=dot',
       ]},
+      {command: 'node', args: ['scripts/ci/run-debt-pg.mjs', '--file', 'packages/brain/src/__tests__/execution-strategy-session-kr-link.test.js']},
       {command: 'node', args: ['--test', 'scripts/ci/__tests__/runtime-signal.integration.test.mjs']},
       {command: 'node', args: ['scripts/ci/basic-runtime-smoke.mjs']},
     ]);

@@ -1,12 +1,14 @@
 /** 真实execution HTTP事务/参数合同；数据库及后置依赖均record-only。 */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { mockClient, mockPool, mockReqRes, transactionPhases, callbackPoolResponse } from './helpers/callback-atomic-fixture.js';
+import { mockClient, mockPool, mockReqRes, transactionPhases, callbackPoolResponse, callbackClientResponse } from './helpers/callback-atomic-fixture.js';
+import { recordProgressStep } from '../progress-ledger.js';
+const realProgress = await vi.importActual('../progress-ledger.js');
 
 describe('execution-callback atomicity', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockClient.query.mockImplementation(async sql => ({ rows: [],
-      rowCount: sql.includes('UPDATE tasks') || sql.includes('INSERT INTO decision_log') ? 1 : null }));
+    mockClient.query.mockImplementation(callbackClientResponse);
+    vi.mocked(recordProgressStep).mockImplementation(realProgress.recordProgressStep);
     mockPool.query.mockImplementation(callbackPoolResponse);
   });
 
@@ -26,7 +28,10 @@ describe('execution-callback atomicity', () => {
 
     expect(result.statusCode).toBe(200);
     expect(result.body.duplicate).not.toBe(true);
-    expect(transactionPhases()).toEqual(['BEGIN', 'LOCK', 'UPDATE', 'INSERT', 'COMMIT']);
+    expect(transactionPhases()).toEqual(['BEGIN', 'LOCK', 'UPDATE', 'INSERT', 'PROGRESS_SAVEPOINT', 'PROGRESS', 'PROGRESS_RELEASE', 'COMMIT']);
+    const progress = mockClient.query.mock.calls.find(([sql]) => sql.includes('INSERT INTO progress_ledger'))[1];
+    expect(progress.slice(0, 6)).toEqual(['task-tx-1', 'run-tx-1', 1, 'task_execution', 'execution', 'completed']);
+    expect(JSON.parse(progress[11])).toEqual({ result: 'success' });
     const params = mockClient.query.mock.calls.find(([sql]) => sql.includes('INSERT INTO decision_log'))[1];
     expect(params[0]).toBe('execution-callback');
     expect(JSON.parse(params[2])).toEqual({ task_id: 'task-tx-1', run_id: 'run-tx-1', status: 'AI Done', iterations: 1 });
@@ -37,6 +42,22 @@ describe('execution-callback atomicity', () => {
     expect(clientCalls[0][0]).toBe('BEGIN');
     const commitCalls = clientCalls.filter(c => typeof c[0] === 'string' && c[0] === 'COMMIT');
     expect(commitCalls.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('可选进度SQL失败只回滚保存点，仍提交任务和回执事务', async () => {
+    mockClient.query.mockImplementation(async sql => {
+      if (sql.includes('INSERT INTO progress_ledger')) throw Error('owned progress insert failure');
+      return callbackClientResponse(sql);
+    });
+    const response = await mockReqRes('POST', '/execution-callback', {
+      task_id: 'task-progress-failure', run_id: 'run-progress-failure', status: 'AI Done', result: '原始完成回执',
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.body.new_status).toBe('completed');
+    expect(transactionPhases()).toEqual(['BEGIN', 'LOCK', 'UPDATE', 'INSERT', 'PROGRESS_SAVEPOINT', 'PROGRESS', 'PROGRESS_ROLLBACK', 'PROGRESS_RELEASE', 'COMMIT']);
+    const update = mockClient.query.mock.calls.find(([sql]) => sql.includes('UPDATE tasks'))[1];
+    expect(JSON.parse(update[2]).result_summary).toBe('原始完成回执');
+    expect(mockClient.release).toHaveBeenCalledOnce();
   });
 
   it('UPDATE零行提交后返回CAS duplicate，绝不INSERT日志', async () => {
@@ -170,8 +191,8 @@ describe('execution-callback atomicity', () => {
 describe('execution-callback findings storage (D1/D2/D3)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockClient.query.mockImplementation(async sql => ({ rows: [],
-      rowCount: sql.includes('UPDATE tasks') || sql.includes('INSERT INTO decision_log') ? 1 : null }));
+    mockClient.query.mockImplementation(callbackClientResponse);
+    vi.mocked(recordProgressStep).mockImplementation(realProgress.recordProgressStep);
     mockPool.query.mockImplementation(callbackPoolResponse);
   });
 

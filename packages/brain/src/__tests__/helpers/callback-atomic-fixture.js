@@ -172,13 +172,22 @@ export async function mockReqRes(method, routePath, body = {}) {
 export function transactionPhases() {
   return mockClient.query.mock.calls.map(([sql]) => {
     if (['BEGIN', 'COMMIT', 'ROLLBACK'].includes(sql)) return sql;
+    if (sql === 'SAVEPOINT callback_progress') return 'PROGRESS_SAVEPOINT';
+    if (sql === 'ROLLBACK TO SAVEPOINT callback_progress') return 'PROGRESS_ROLLBACK';
+    if (sql === 'RELEASE SAVEPOINT callback_progress') return 'PROGRESS_RELEASE';
     if (sql === 'SELECT id FROM tasks WHERE id=$1 FOR UPDATE') return 'LOCK';
     if (sql.includes('UPDATE tasks')) return 'UPDATE';
     if (sql.includes('INSERT INTO decision_log')) return 'INSERT';
+    if (sql.includes('INSERT INTO progress_ledger')) return 'PROGRESS';
     return 'UNEXPECTED';
   });
 }
 export { mockClient, mockPool };
+
+export async function callbackClientResponse(sql) {
+  if (sql.includes('INSERT INTO progress_ledger')) return { rows: [{ id: 'owned-progress' }], rowCount: 1 };
+  return { rows: [], rowCount: sql.includes('UPDATE tasks') || sql.includes('INSERT INTO decision_log') ? 1 : null };
+}
 
 export async function callbackPoolResponse(sql) {
   const text = String(sql).trim().replace(/^\/\*[\s\S]*?\*\/\s*/, '');
