@@ -5,7 +5,19 @@
  */
 import { describe, it, expect, beforeAll, afterEach, afterAll, vi } from 'vitest';
 
-process.env.NODE_ENV = process.env.NODE_ENV || 'test';
+// 本文件的真实探针会扫描 in_progress；连接前必须显式限定 CI 私有测试库。
+const nightly = process.env.GITHUB_ACTIONS === 'true'
+  && process.env.GITHUB_JOB === 'brain-integration'
+  && process.env.GITHUB_WORKFLOW === 'Deep Regression';
+const allowedDatabases = nightly ? ['cecelia_scratch', 'cecelia_test'] : ['cecelia_scratch'];
+if (process.env.CI !== 'true' || process.env.POSTGRES_INTEGRATION !== '1'
+    || !allowedDatabases.includes(process.env.DB_NAME)
+    || !['127.0.0.1', 'localhost', '::1'].includes(process.env.DB_HOST)
+    || !/^\d+$/.test(process.env.DB_PORT ?? '')
+    || Number(process.env.DB_PORT) < 1 || Number(process.env.DB_PORT) > 65535) {
+  throw Error('external liveness requires isolated CI PostgreSQL');
+}
+process.env.NODE_ENV = 'test';
 
 let pool;
 let probeTaskLiveness;
@@ -15,6 +27,10 @@ const seededIds = [];
 
 beforeAll(async () => {
   pool = (await import('../../db.js')).default;
+  const identity = (await pool.query('SELECT current_database() AS database_name')).rows[0];
+  if (identity?.database_name !== process.env.DB_NAME || !allowedDatabases.includes(identity?.database_name)) {
+    throw Error('external liveness database identity mismatch');
+  }
   const executor = await import('../../executor.js');
   probeTaskLiveness = executor.probeTaskLiveness;
   syncOrphanTasksOnStartup = executor.syncOrphanTasksOnStartup;
@@ -22,7 +38,7 @@ beforeAll(async () => {
 });
 
 afterEach(async () => {
-  suspectProcesses.clear();
+  suspectProcesses?.clear();
   while (seededIds.length) {
     const id = seededIds.pop();
     await pool.query('DELETE FROM task_runs WHERE task_id = $1', [id]);
