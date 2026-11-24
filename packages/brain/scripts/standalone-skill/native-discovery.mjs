@@ -10,7 +10,8 @@ import { readOwnedFile } from './launch.mjs';
 import { durableWrite } from '../../src/orchestrator/activity-supervisor.js';
 
 const execute = promisify(execFile);
-const key = 'douyin_video_discovery';
+const discoveryKey = 'douyin_video_discovery';
+const scoringKey = 'douyin_comment_scoring';
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
 const same = (left, right, hash) => hash(left) === hash(right);
 
@@ -33,12 +34,20 @@ export async function createDiscoveryServices(job, {profile, skillPath, stateRoo
   const source = cfg?.snapshot;
   const resource = cfg?.resources;
   const input = job.input;
+  const key = job.workflow_key ?? discoveryKey;
+  const scoring = key === scoringKey;
+  const stage = scoring ? '103' : '101';
+  const businessRange = scoring ? { source_run: input?.business?.source_run } : {};
+  const keyword = input?.business?.keyword;
+  const approvedKeywords = scoring ? [] : [keyword];
+  const validBusiness = scoring ? /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,119}$/.test(businessRange.source_run ?? '')
+    && resource?.profile === 'mmv-scoring' && resource.serial === 'none' && resource.account === 'none'
+    : key === discoveryKey && typeof keyword === 'string' && input?.business?.max_candidates === 1;
   if (cfg?.primary_host !== 'codex-exec-v1' || cfg.workflow_key !== key || resource?.machine !== job.machine_id
     || source?.release?.id !== job.release_id || source.workflow_version?.id !== job.definition?.workflow_definition_version_id
-    || source.deployment?.observation_id !== job.definition?.observation_id || input?.business?.max_candidates !== 1) {
+    || source.deployment?.observation_id !== job.definition?.observation_id || !validBusiness) {
     throw Error('standalone_profile_mismatch');
   }
-  const keyword = input.business.keyword;
   const { hash, agentInput, preparePublicDomainSnapshot, startStandaloneSkillRuntime, callStandaloneSkillTool } = toolkit;
   const skill = cfg.standalone_skill;
   const { max_duration_s:work, cleanup_grace_s:grace } = domain.budget;
@@ -56,21 +65,23 @@ export async function createDiscoveryServices(job, {profile, skillPath, stateRoo
   const start = Math.floor(Date.now()/1000);
   const deadline = (start+work)*1000, cleanupDeadline = (start+work+grace)*1000;
   const company = cfg.company;
-  const selectedInput = { task_id:job.task_id, run_tag:job.run_id, profile:resource.profile, serial:resource.serial, line:resource.line, limit:1 };
+  const selectedInput = { task_id:job.task_id, run_tag:job.run_id, profile:resource.profile, serial:resource.serial, line:resource.line, limit:1, ...businessRange };
   const scope = {
     ...agentInput({
       ...cfg.env, LEADGEN_EXECUTION_MODE:'agent', WF_BRAIN_WORKFLOW:key, WF_BRAIN_TASK_ID:job.task_id, WFR_TAG:job.run_id,
       P:resource.profile, SERIAL:resource.serial, LEADGEN_LINE:resource.line, LEADGEN_LIMIT:'1',
+      ...(scoring ? { LEADGEN_SOURCE_RUN:businessRange.source_run } : {}),
       WF_RUN_START_TS:String(start), WF_RUN_MAX_SECONDS:String(work+grace),
     }),
     source_commit:source.deployment.source_commit, expected_account:resource.account, company,
-    machine_id:job.machine_id, approved_keywords:[keyword],
+    machine_id:job.machine_id, approved_keywords:approvedKeywords,
   };
   const references = Object.fromEntries(source.activities.map(({reference})=>[reference.slot_key,{
     reference_id:reference.reference_id, activity_id:reference.activity_id, activity_definition_version_id:reference.activity_version_id,
   }]));
   const auth = runModel ? null : prepareCodexAuth(codex.auth,{codex:{args:[],env_keys:[]}});
   if (!runModel && (!auth || !isAbsolute(codex.command) || !codex.model)) throw Error('standalone_codex_unconfigured');
+  let nativeHost;
 
   return {
     async startHost() {
@@ -84,7 +95,7 @@ export async function createDiscoveryServices(job, {profile, skillPath, stateRoo
       const binding = started.binding;
       const identity = {
         protocol:'codex-exec-v1', task_id:job.task_id, run_id:job.run_id, claimer:job.claimer, claimed_at:job.claimed_at, machine_id:job.machine_id,
-        profile_sha256:hash(profile), skill, task_run_id:started.task_run_id, approved_keywords:[keyword],
+        profile_sha256:hash(profile), skill, task_run_id:started.task_run_id, approved_keywords:approvedKeywords,
         run_binding:{ run_binding_id:binding.id, source_kind:binding.source_kind, workflow_id:binding.workflow_id,
           workflow_definition_version_id:binding.workflow_definition_version_id,attempt_key:binding.attempt_key,activities:references },
         input:selectedInput,
@@ -99,17 +110,19 @@ export async function createDiscoveryServices(job, {profile, skillPath, stateRoo
       ].map(field=>[field,snapshot.standalone_skill[field]]));
       const reply = await post('workflow-foundation/standalone/attest',{machine_id:job.machine_id,identity:attestation});
       if (reply.attested !== true) throw Error('standalone_attestation_unconfirmed');
-      return startStandaloneSkillRuntime({runDirectory:dir,environment:{...prepared.env,...phoneEnv}});
+      nativeHost=await startStandaloneSkillRuntime({runDirectory:dir,environment:{...prepared.env,...phoneEnv}});
+      return nativeHost;
     },
     async runAgent({connectionPath}) {
       if (runModel) return runModel({connectionPath,modelOutput});
       const prompt = [
-        '执行冻结的 101 视频采集 Skill。只执行指定关键词的一条候选。先读取 skill/SKILL.md 和 references/101.md。',
+        `执行冻结的 ${stage} Skill。先读取 skill/SKILL.md 和 skill/references/${stage}.md。只处理本单的一条候选。`,
         '通过以下本轮工具连接执行，不直接读取宿主凭据或访问业务数据库。',
         JSON.stringify({tool_command:[process.execPath,join(dir,'runtime','standalone-skill-runtime.mjs'),'call',connectionPath],
-          tool_protocol:'在命令尾追加 inspect、phone 或 business，并将参数对象通过 stdin 传入。读回指标需保留候选输入。',
-          metrics_command:[process.execPath,join(dir,'runtime','standalone-skill-runtime.mjs'),'metrics',dir],keyword}),
-        '最终只返回 JSON 对象 {"video": <提交给 discover 的同一个 video 对象>}。没有入库候选时返回 {"video":null}。',
+          tool_protocol:`在命令尾追加 ${scoring ? 'inspect 或 business' : 'inspect、phone 或 business'}，并将参数对象通过 stdin 传入。`,
+          ...(scoring ? businessRange : {metrics_command:[process.execPath,join(dir,'runtime','standalone-skill-runtime.mjs'),'metrics',dir],keyword})}),
+        scoring ? '按 Skill 核定批次，走评分、标记和配送的可信读回。评分回执不明时只读回原操作。以工具实际回执为准。'
+          : '最终只返回 JSON 对象 {"video": <提交给 discover 的同一个 video 对象>}。没有入库候选时返回 {"video":null}。',
       ].join('\n');
       const remaining = deadline-Date.now();
       if (remaining < 1000) throw Error('standalone_work_deadline');
@@ -119,6 +132,15 @@ export async function createDiscoveryServices(job, {profile, skillPath, stateRoo
       });
     },
     async verifyBusiness({connectionPath}) {
+      if (scoring) {
+        const proof=await nativeHost?.readEvidence?.();
+        const comments=proof?.comment_ids,leads=proof?.lead_ids,delivery=Object.entries(proof?.delivery_states ?? {});
+        if (!Array.isArray(comments)||comments.length!==1||!uuid.test(comments[0])||!Array.isArray(leads)||leads.length>1
+          ||leads.some(id=>!uuid.test(id))||delivery.length!==leads.length
+          ||delivery.some(([id,status])=>!uuid.test(id)||!['confirmed','excluded'].includes(status))) return null;
+        return {summary:'一条指定来源评论已完成评分与标记，实际配送状态已读回',
+          evidence:[`leadgen:comment:${comments[0]}`,...leads.map(id=>`leadgen:lead:${id}`),...delivery.map(([id,status])=>`leadgen:delivery:${id}:${status}`)]};
+      }
       const result = JSON.parse(readOwnedFile(modelOutput));
       return confirmDiscovery(result.video, keyword, (operation,payload)=>callStandaloneSkillTool(connectionPath,operation,payload));
     },
