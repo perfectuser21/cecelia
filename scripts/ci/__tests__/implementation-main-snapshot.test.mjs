@@ -1,3 +1,4 @@
+import './implementation-factory-retirement.test.mjs';
 import './factory-workflow-config-source.test.mjs';
 import './implementation-main-transport.test.mjs';
 import {bundle} from './fixtures/admission-bundle.mjs';
@@ -6,11 +7,11 @@ import {runRegisteredAssertions} from '../implementation-gate.mjs';
 import './brain-source-only-deploy.test.mjs';
 import './fixed-local-source.test.mjs';
 import './fixed-local-git.test.mjs';
-import './implementation-source-ready.test.mjs';
+
 import {test} from 'node:test';
-import {runImplementationMainGate} from '../implementation-main-gate.mjs';
-import {readNativeConsumerRuntime} from '../../../packages/brain/src/lib/native-consumer-runtime.js';
-import {sealRecoveryBundle,publishRecoveryBaseline,recoveryRuntimeAt} from '../implementation-source-recovery.mjs';
+
+
+
 import {publishMainSnapshots} from '../implementation-main-snapshot.mjs';
 import {createHash} from 'node:crypto';
 import assert from 'node:assert/strict';
@@ -80,32 +81,31 @@ test('夹具通过正式schema/digest与双scope身份校验',()=>{
  const s=bundle(head).snapshot;assert.equal(validateImplementationSnapshot(s),s);assert.equal(extractImplementationAdmissionSnapshots(s,['cecelia-kr','cecelia-factory']).length,2);
 });
 test('真实HTTP409响应不能落正式head.json或上传为快照',async t=>{
- const r=await executeProvider(t,{initial:{parentMissing:true,childMissing:true},refresh:{'cecelia-kr':{status:409,body:{error:{code:'MAP_MANIFEST_ACTIVE_CONFLICT'}}}}});
+ const r=await executeProvider(t,{initial:{parentMissing:true},refresh:{'cecelia-kr':{status:409,body:{error:{code:'MAP_MANIFEST_ACTIVE_CONFLICT'}}}}});
  assert.notEqual(r.code,0);assert.equal(existsSync(join(r.dir,'evidence/head.json')),false,'错误响应不许成为正式artifact');
  assert.ok(existsSync(join(r.dir,'evidence/diagnostics')));
 });
-test('父verified而companion unknown必须顺序补真实factory来源后发布双scope',async t=>{
- const r=await executeProvider(t,{initial:{childMissing:true}});assert.equal(r.code,0,r.stderr);
- assert.deepEqual(r.calls.filter(c=>c.method==='POST').map(c=>c.scope),['cecelia-factory']);
- const s=JSON.parse(readFileSync(join(r.dir,'evidence/head.json'))).snapshot;assert.equal(extractImplementationAdmissionSnapshots(s,['cecelia-kr','cecelia-factory']).length,2);
+test('factory companion缺来源时明确退休且不向该scope POST，不发布宽松父证据',async t=>{
+ const r=await executeProvider(t,{initial:{childMissing:true}});assert.notEqual(r.code,0);assert.match(r.stderr,/FACTORY_COLLECTION_RETIRED/);
+ assert.deepEqual(r.calls.filter(c=>c.method==='POST'),[]);assert.equal(existsSync(join(r.dir,'evidence/head.json')),false);
 });
-test('父和factory缺来源时按父后子刷新且最后GET完整bundle',async t=>{
- const r=await executeProvider(t,{initial:{parentMissing:true,childMissing:true}});assert.equal(r.code,0,r.stderr);
- assert.deepEqual(r.calls.filter(c=>c.method==='POST').map(c=>c.scope),['cecelia-kr','cecelia-factory']);assert.equal(r.calls.at(-1).method,'GET');assert.equal(r.calls.at(-1).scope,'cecelia-kr');
+test('父scope缺来源时刷新并保留既有封印companion',async t=>{
+ const r=await executeProvider(t,{initial:{parentMissing:true}});assert.equal(r.code,0,r.stderr);
+ assert.deepEqual(r.calls.filter(c=>c.method==='POST').map(c=>c.scope),['cecelia-kr']);assert.equal(r.calls.at(-1).method,'GET');assert.equal(r.calls.at(-1).scope,'cecelia-kr');
 });
-test('同SHA父CAS409后只复用已验证赢家，再补factory并发布',async t=>{
- const r=await executeProvider(t,{initial:{parentMissing:true,childMissing:true},refresh:{'cecelia-kr':{status:409,body:{error:{code:'MAP_MANIFEST_ACTIVE_CONFLICT'}}}},after:{'cecelia-kr':{parentMissing:false}}});
+test('同SHA父CAS409后只复用已验证赢家并保留既有companion',async t=>{
+ const r=await executeProvider(t,{initial:{parentMissing:true},refresh:{'cecelia-kr':{status:409,body:{error:{code:'MAP_MANIFEST_ACTIVE_CONFLICT'}}}},after:{'cecelia-kr':{parentMissing:false}}});
  assert.equal(r.code,0,r.stderr);assert.equal(r.calls.filter(c=>c.method==='POST'&&c.scope==='cecelia-kr').length,1);
  assert.equal(JSON.parse(readFileSync(join(r.dir,'evidence/head.json'))).snapshot.status,'verified');
 });
 test('HEAD已非main时不刷新不发布，不改用latest',async t=>{
- const r=await executeProvider(t,{initial:{parentMissing:true,childMissing:true},moved:true});assert.notEqual(r.code,0);assert.equal(r.calls.filter(c=>c.method==='POST').length,0);assert.equal(existsSync(join(r.dir,'evidence/head.json')),false);assert.match(r.stderr,/MAIN_MOVED/);
+ const r=await executeProvider(t,{initial:{parentMissing:true},moved:true});assert.notEqual(r.code,0);assert.equal(r.calls.filter(c=>c.method==='POST').length,0);assert.equal(existsSync(join(r.dir,'evidence/head.json')),false);assert.match(r.stderr,/MAIN_MOVED/);
 });
 test('refresh MAIN_MOVED冲突不能按CAS赢家吞掉',async t=>{
- const r=await executeProvider(t,{initial:{childMissing:true},refresh:{'cecelia-factory':{status:409,body:{error:{code:'IMPLEMENTATION_CI_MAIN_MOVED'}}}},after:{'cecelia-factory':{childMissing:false}}});assert.notEqual(r.code,0);assert.equal(existsSync(join(r.dir,'evidence/head.json')),false);
+ const r=await executeProvider(t,{initial:{parentMissing:true},refresh:{'cecelia-kr':{status:409,body:{error:{code:'IMPLEMENTATION_CI_MAIN_MOVED'}}}},after:{'cecelia-kr':{parentMissing:false}}});assert.notEqual(r.code,0);assert.equal(existsSync(join(r.dir,'evidence/head.json')),false);
 });
 test('刷新2xx后仍UNKNOWN拒发布',async t=>{
- const r=await executeProvider(t,{initial:{childMissing:true},after:{'cecelia-factory':{childMissing:true}}});assert.notEqual(r.code,0);assert.equal(existsSync(join(r.dir,'evidence/head.json')),false);
+ const r=await executeProvider(t,{initial:{parentMissing:true},after:{'cecelia-kr':{parentMissing:true}}});assert.notEqual(r.code,0);assert.equal(existsSync(join(r.dir,'evidence/head.json')),false);
 });
 test('HTTP错误体仅留诊断，GET失败也不能留正式base',async t=>{
  const r=await executeProvider(t,{getError:true});assert.notEqual(r.code,0);assert.equal(existsSync(join(r.dir,'evidence/base.json')),false);assert.equal(existsSync(join(r.dir,'evidence/head.json')),false);
@@ -114,15 +114,15 @@ test('HTTP错误体仅留诊断，GET失败也不能留正式base',async t=>{
 
 test('2xx错误对象、摘要篡改和错revision不能成为正式快照',async t=>{
  for(const options of [
-  {refresh:{'cecelia-factory':{body:{error:{code:'provider-error'}}}}},
+  {refresh:{'cecelia-kr':{body:{error:{code:'provider-error'}}}}},
   {mutateFinal:body=>({...body,snapshot:{...body.snapshot,snapshot_sha256:'0'.repeat(64)}})},
   {mutateFinal:()=>bundle('c'.repeat(40))},
  ]){
-  const r=await executeProvider(t,{initial:{childMissing:true},...options});assert.notEqual(r.code,0);assert.equal(existsSync(join(r.dir,'evidence/head.json')),false);
+  const r=await executeProvider(t,{initial:{parentMissing:true},...options});assert.notEqual(r.code,0);assert.equal(existsSync(join(r.dir,'evidence/head.json')),false);
  }
 });
 test('未知409不能假设并发赢家，保留原冲突',async t=>{
- const r=await executeProvider(t,{initial:{childMissing:true},refresh:{'cecelia-factory':{status:409,body:{error:{code:'OPS_REGISTRY_CHANGED'}}}},after:{'cecelia-factory':{childMissing:false}}});assert.notEqual(r.code,0);assert.match(r.stderr,/OPS_REGISTRY_CHANGED/);assert.equal(existsSync(join(r.dir,'evidence/head.json')),false);
+ const r=await executeProvider(t,{initial:{parentMissing:true},refresh:{'cecelia-kr':{status:409,body:{error:{code:'OPS_REGISTRY_CHANGED'}}}},after:{'cecelia-kr':{parentMissing:false}}});assert.notEqual(r.code,0);assert.match(r.stderr,/OPS_REGISTRY_CHANGED/);assert.equal(existsSync(join(r.dir,'evidence/head.json')),false);
 });
 test('当前完整bundle无refresh，历史base合法unknown companion明确仅父验证',async t=>{
  const r=await executeProvider(t);assert.equal(r.code,0,r.stderr);assert.equal(r.calls.filter(c=>c.method==='POST').length,0);
@@ -197,27 +197,27 @@ test('历史artifact必须精确官方run来源和成功provider job，错误体
 });
 test('真实缺manifest派生unmapped只在同scope缺失且manifest=null时正规刷新',async t=>{
  const gaps=[{code:'scope_manifest_missing'},{code:'workflow_capability_unmapped',workflow_key:'G5'}];
- const r=await executeProvider(t,{initial:{parentMissing:true,parentGaps:gaps,childMissing:true}});assert.equal(r.code,0,r.stderr);
- assert.deepEqual(r.calls.filter(c=>c.method==='POST').map(c=>c.scope),['cecelia-kr','cecelia-factory']);
+ const r=await executeProvider(t,{initial:{parentMissing:true,parentGaps:gaps}});assert.equal(r.code,0,r.stderr);
+ assert.deepEqual(r.calls.filter(c=>c.method==='POST').map(c=>c.scope),['cecelia-kr']);
  for(const initial of [{parentMissing:true,parentGaps:[gaps[1]]},{parentMissing:true,parentGaps:gaps,parentManifest:{id:'existing'}},{parentMissing:true,parentGaps:[...gaps,{code:'unrecognized_gap'}]}]){
   const r=await executeProvider(t,{initial});assert.notEqual(r.code,0);assert.equal(r.calls.filter(c=>c.method==='POST').length,0);assert.equal(existsSync(join(r.dir,'evidence/head.json')),false);
  }
 });
 test('仅已证实manifest CAS409可复用赢家，其他activity冲突保留原错误',async t=>{
  for(const code of ['ACTIVITY_CONTRACT_SNAPSHOT_CHANGED','IMPLEMENTATION_CI_ACTIVITY_CONTRACT_SNAPSHOT_CHANGED']){
-  const r=await executeProvider(t,{initial:{childMissing:true},refresh:{'cecelia-factory':{status:409,body:{error:{code}}}},after:{'cecelia-factory':{childMissing:false}}});
+  const r=await executeProvider(t,{initial:{parentMissing:true},refresh:{'cecelia-kr':{status:409,body:{error:{code}}}},after:{'cecelia-kr':{parentMissing:false}}});
   assert.notEqual(r.code,0);assert.match(r.stderr,new RegExp(code));assert.equal(existsSync(join(r.dir,'evidence/head.json')),false);
  }
 });
 
 test('官方dispatch base=head当前缺来源先正规刷新，再同一完整bundle发布两份输入',async t=>{
- const r=await executeProvider(t,{baseEqualsHead:true,initial:{parentMissing:true,childMissing:true}});assert.equal(r.code,0,r.stderr);
- assert.deepEqual(r.calls.filter(c=>c.method==='POST').map(c=>[c.scope,c.revision]),[['cecelia-kr',head],['cecelia-factory',head]]);
+ const r=await executeProvider(t,{baseEqualsHead:true,initial:{parentMissing:true}});assert.equal(r.code,0,r.stderr);
+ assert.deepEqual(r.calls.filter(c=>c.method==='POST').map(c=>[c.scope,c.revision]),[['cecelia-kr',head]]);
  assert.deepEqual(JSON.parse(readFileSync(join(r.dir,'evidence/base.json'))),JSON.parse(readFileSync(join(r.dir,'evidence/head.json'))));
  assert.doesNotMatch(readFileSync(join(r.dir,'gh-calls.jsonl'),'utf8'),/artifacts/);
- const failed=await executeProvider(t,{baseEqualsHead:true,initial:{parentMissing:true,childMissing:true},moved:true});
+ const failed=await executeProvider(t,{baseEqualsHead:true,initial:{parentMissing:true},moved:true});
  assert.notEqual(failed.code,0);assert.equal(failed.calls.some(c=>c.method==='POST'),false);assert.equal(existsSync(join(failed.dir,'evidence/head.json')),false);
- const drift=await executeProvider(t,{baseEqualsHead:true,initial:{parentMissing:true,childMissing:true},movedAfterPost:true});
+ const drift=await executeProvider(t,{baseEqualsHead:true,initial:{parentMissing:true},movedAfterPost:true});
  assert.notEqual(drift.code,0);assert.match(drift.stderr,/MAIN_MOVED/);assert.equal(drift.calls.filter(c=>c.method==='POST').length,1);assert.equal(existsSync(join(drift.dir,'evidence/base.json')),false);assert.equal(existsSync(join(drift.dir,'evidence/head.json')),false);
 });
 
@@ -235,49 +235,14 @@ test('历史artifact创建时间缺失或非法不能参与选择',async t=>{
  }
 });
 
-// 真 e7e 回执：父先 verified，factory 200 后旧部署定时器切回父 current。
-const regressedParent={parentMissing:true,parentGaps:[{code:'scope_manifest_missing'},{code:'workflow_capability_unmapped'}],parentManifest:null};
-const regressionOptions={initial:{childMissing:true},after:{'cecelia-factory':regressedParent}};
-test('首轮factory成功后父scope回退，仅额外刷新父scope一次',async t=>{
- const r=await executeProvider(t,regressionOptions);assert.equal(r.code,0,r.stderr);
- assert.deepEqual(r.calls.filter(c=>c.method==='POST').map(c=>c.scope),['cecelia-factory','cecelia-kr']);
- const published=JSON.parse(readFileSync(join(r.dir,'evidence/head.json'))).snapshot;
- assert.equal(published.status,'verified');assert.equal(published.admission_companion.snapshot.status,'verified');
-});
-test('补偿后再次回退有界失败且无正式文件',async t=>{
- let repairReads=0;
- const r=await executeProvider(t,{...regressionOptions,mutateFinal:(b,{posts})=>posts===2&&++repairReads>1?bundle(head,regressedParent):b});
- assert.notEqual(r.code,0);assert.match(r.stderr,/SNAPSHOT_UNKNOWN/);
- assert.deepEqual(r.calls.filter(c=>c.method==='POST').map(c=>c.scope),['cecelia-factory','cecelia-kr']);
- assert.equal(existsSync(join(r.dir,'evidence/head.json')),false);assert.equal(existsSync(join(r.dir,'evidence/base.json')),false);
-});
-test('回退缺口不受支持或身份摘要非法时不追加刷新',async t=>{
- const variants=[
-  {after:{'cecelia-factory':{...regressedParent,parentGaps:[{code:'unrecognized_gap'}]}}},
-  {after:{'cecelia-factory':{...regressedParent,parentGaps:[{code:'workflow_capability_unmapped'}]}}},
-  {after:{'cecelia-factory':{...regressedParent,parentManifest:{id:'present'}}}},
-  {mutateFinal:b=>({snapshot:seal({...b.snapshot,revision:'c'.repeat(40)})})},
-  {mutateFinal:b=>({snapshot:{...b.snapshot,snapshot_sha256:'0'.repeat(64)}})}
- ];
- for(const variant of variants){
-  const r=await executeProvider(t,{...regressionOptions,...variant});assert.notEqual(r.code,0);
-  assert.deepEqual(r.calls.filter(c=>c.method==='POST').map(c=>c.scope),['cecelia-factory']);
-  assert.equal(existsSync(join(r.dir,'evidence/head.json')),false);
- }
-});
-test('补偿计划前或补偿POST后main漂移拒绝发布',async t=>{
- for(const [variant,count] of [[{mutateFinal:(b,{dir})=>{writeFileSync(join(dir,'main-sha'),'c'.repeat(40));return b;}},1],[{moveOnPostNumber:2},2]]){
-  const r=await executeProvider(t,{...regressionOptions,...variant});assert.notEqual(r.code,0);assert.match(r.stderr,/MAIN_MOVED/);
-  assert.equal(r.calls.filter(c=>c.method==='POST').length,count);assert.equal(existsSync(join(r.dir,'evidence/head.json')),false);
- }
-});
-test('补偿POST失败或仍UNKNOWN不可再重试',async t=>{
- for(const variant of [{refresh:{'cecelia-kr':{status:409,body:{error:{code:'UNRELATED_CONFLICT'}}}}},{after:{...regressionOptions.after,'cecelia-kr':regressedParent}}]){
-  const r=await executeProvider(t,{...regressionOptions,...variant});assert.notEqual(r.code,0);
-  assert.deepEqual(r.calls.filter(c=>c.method==='POST').map(c=>c.scope),['cecelia-factory','cecelia-kr']);
-  assert.equal(existsSync(join(r.dir,'evidence/head.json')),false);
- }
-});
+
+
+
+
+
+
+
+
 
 // 捕捉 publisher 吞掉 transport/readMain 原因而无法判定 POST 是否完成的回归。
 for(const scenario of ['fetch-rejection','body-interruption','read-main'])test(`脱敏诊断：${scenario}保留真实阶段且不重试或发布`,async t=>{
@@ -289,7 +254,7 @@ for(const scenario of ['fetch-rejection','body-interruption','read-main'])test(`
   readMain:()=>{if(scenario==='read-main')throw error;return head;},
   fetchFn:async(url,options)=>{
    calls.push(options.method);
-   if(options.method==='GET')return new Response(JSON.stringify(bundle(head,{childMissing:true})));
+   if(options.method==='GET')return new Response(JSON.stringify(bundle(head,{parentMissing:true})));
    if(scenario==='fetch-rejection')throw error;
    return {status:200,ok:true,text:async()=>{throw error;}};
   }
@@ -307,7 +272,7 @@ for(const scenario of ['fetch-rejection','body-interruption','read-main'])test(`
  if(scenario==='read-main')assert.deepEqual(calls,[]);
  else{
   assert.deepEqual(calls,['GET','POST']);assert.equal(failure.operation.method,'POST');
-  assert.equal(failure.operation.scope,'cecelia-factory');assert.equal(failure.operation.revision,head);
+  assert.equal(failure.operation.scope,'cecelia-kr');assert.equal(failure.operation.revision,head);
   assert.equal(failure.operation.fetch_invoked,true);assert.equal(failure.operation.post_outcome,'UNKNOWN');
   assert.equal(failure.operation.response_received,scenario==='body-interruption');
   assert.equal(failure.operation.http_status,scenario==='body-interruption'?200:null);
@@ -375,73 +340,18 @@ test('审查R2：非Error拒绝值也不能被诊断IO覆盖',async t=>{
 import './prepare-fixed-skill-cache.test.mjs';
 
 import './implementation-infra-artifact.test.mjs';
-import './implementation-source-recovery.test.mjs';
+
 
 test('恢复CLI没有正式base时拒绝且绝不回落中央refresh',async t=>{
- const r=await executeProvider(t,{sourceRecovery:true,artifact:{missing:true},initial:{parentMissing:true,childMissing:true}});
- assert.notEqual(r.code,0);assert.match(r.stderr,/IMPLEMENTATION_CI_BASE_ARTIFACT_MISSING/);
+ const r=await executeProvider(t,{sourceRecovery:true,artifact:{missing:true},initial:{parentMissing:true}});
+ assert.notEqual(r.code,0);assert.match(r.stderr,/IMPLEMENTATION_CI_FACTORY_COLLECTION_RETIRED/);
  assert.equal(r.calls.length,0);assert.equal(existsSync(join(r.dir,'evidence/head.json')),false);
 });
-for(const [eventName,enabled,ref] of [['push','true','refs/heads/main'],['workflow_dispatch','false','refs/heads/main'],['workflow_call','true','refs/heads/main'],['workflow_dispatch','true','refs/heads/not-main']])test(`实际main入口拒绝${eventName}/${enabled}/${ref}降级`,async t=>{
- const dir=mkdtempSync(join(tmpdir(),'source-only-main-'));t.after(()=>rmSync(dir,{recursive:true,force:true}));
- const git=(...args)=>execFileSync('git',args,{cwd:dir,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
- git('init','-q');git('config','user.name','Fixture');git('config','user.email','fixture@example.invalid');git('config','core.hooksPath','/dev/null');git('remote','add','origin',`https://github.com/${repo}.git`);
- writeFileSync(join(dir,'tracked'),'base');git('add','.');git('commit','-qm','base');const fixedBase=git('rev-parse','HEAD');
- writeFileSync(join(dir,'tracked'),'head');git('commit','-qam','head');const fixedHead=git('rev-parse','HEAD');
- writeFileSync(join(dir,'base.json'),JSON.stringify(bundle(fixedBase)));
- writeFileSync(join(dir,'head.json'),JSON.stringify({snapshot:sealRecoveryBundle(bundle(fixedHead).snapshot,{base_revision:fixedBase,head_revision:fixedHead})}));
- writeFileSync(join(dir,'event.json'),JSON.stringify({inputs:{source_baseline_recovery:enabled}}));
- const overrides={GITHUB_EVENT_NAME:eventName,GITHUB_REF:ref,GITHUB_RUN_ID:'12',GITHUB_EVENT_PATH:join(dir,'event.json')},old={};
- for(const [k,v]of Object.entries(overrides)){old[k]=process.env[k];process.env[k]=v;}
- try{
-  await assert.rejects(runImplementationMainGate({repoRoot:dir,scope:'cecelia-kr',base:fixedBase,head:fixedHead,mode:'main',snapshotBase:join(dir,'base.json'),snapshotHead:join(dir,'head.json'),outputDir:join(dir,'out'),mainScopes:JSON.stringify({schema_version:1,scopes:['cecelia-kr','cecelia-factory']})}),/SOURCE_RECOVERY_DISPATCH_REQUIRED/);
-  assert.equal(existsSync(join(dir,'out/receipt.json')),false);
- }finally{for(const [k,v]of Object.entries(old))if(v===undefined)delete process.env[k];else process.env[k]=v;}
-});
 
-test('显式来源恢复成功仅向生产中央GET，既不POST也不部署',async t=>{
- const dir=mkdtempSync(join(tmpdir(),'recovery-get-only-'));t.after(()=>rmSync(dir,{recursive:true,force:true}));
- const source=join(dir,'source');mkdirSync(source);
- const git=(...args)=>execFileSync('git',args,{cwd:source,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
- git('init','-q');git('config','user.name','Fixture');git('config','user.email','fixture@example.invalid');git('config','core.hooksPath','/dev/null');
- for(const {path}of readNativeConsumerRuntime().files){mkdirSync(join(source,path,'..'),{recursive:true});writeFileSync(join(source,path),readFileSync(join(root,path)));}
- git('add','.');git('commit','-qm','base');const base=git('rev-parse','HEAD');
- writeFileSync(join(source,'read-only-source'),'candidate');git('add','.');git('commit','-qm','head');const head=git('rev-parse','HEAD');
- const baseline=bundle(base),identity={...recoveryRuntimeAt(source,base),git_sha:base};
- const readiness={status:'source_only',runtime_status:'not_deployed',base_revision:base,revision:head,runtime:identity};
- const requests=[];
- const result=await publishRecoveryBaseline({repoRoot:source,base,head,brainUrl:'http://fixture.invalid',token:'fixture',output:join(dir,'output'),baseline,readiness},{
-  github:async endpoint=>{assert.equal(endpoint,`repos/${repo}/commits/main`);return {sha:head};},
-  verifyAuthority:async()=>({repo,base_revision:base,direct_base_revision:base,head_revision:head}),
-  inspectRuntime:async()=>readiness,
-  fetchFn:async(url,options)=>{requests.push({url:String(url),method:options.method});return new Response(JSON.stringify(baseline));},
-  compile:async()=>bundle(head).snapshot,
-  runGate:async options=>{assert.match(options.outputDir,/source-recovery-verification-/);return {receipt:{verdict:'PASS'}};},
- });
- assert.equal(result.status,'source_only');assert.equal(result.runtime_status,'not_deployed');
- assert.equal(requests.length,2);assert.ok(requests.every(request=>request.method==='GET'&&request.url.includes('/implementation-ci/snapshot')));
- assert.ok(requests.every(request=>!request.url.includes('/deploy')));
- assert.equal(existsSync(join(dir,'output/head.json')),true);
-});
 
-for(const fault of ['fullgate','runtime_drift','central_drift'])test(`真实publisher编译成功但${fault}失败时不发布正式head`,async t=>{
- const dir=mkdtempSync(join(tmpdir(),'recovery-publish-order-'));t.after(()=>rmSync(dir,{recursive:true,force:true}));
- const source=join(dir,'source');mkdirSync(source);
- const git=(...args)=>execFileSync('git',args,{cwd:source,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
- git('init','-q');git('config','user.name','Fixture');git('config','user.email','fixture@example.invalid');git('config','core.hooksPath','/dev/null');git('remote','add','origin',`https://github.com/${repo}.git`);
- for(const {path}of readNativeConsumerRuntime().files){mkdirSync(join(source,path,'..'),{recursive:true});writeFileSync(join(source,path),readFileSync(join(root,path)));}
- git('add','.');git('commit','-qm','base');const base=git('rev-parse','HEAD');writeFileSync(join(source,'reviewed-test'),'fixed');git('add','.');git('commit','-qm','head');const head=git('rev-parse','HEAD');
- const baseline=bundle(base),identity={...recoveryRuntimeAt(source,base),git_sha:base},readiness={status:'source_only',runtime_status:'not_deployed',base_revision:base,revision:head,runtime:identity};
- let compiled=false,executed=false,reads=0,observations=0;
- await assert.rejects(publishRecoveryBaseline({repoRoot:source,base,head,brainUrl:'http://fixture.invalid',token:'fixture',output:join(dir,'output'),baseline,readiness},{
-  github:async()=>({sha:head}),verifyAuthority:async()=>({repo,base_revision:base,direct_base_revision:base,head_revision:head}),
-  inspectRuntime:async()=>{observations++;return {...readiness,runtime:fault==='runtime_drift'&&observations===2?{...identity,git_sha:'f'.repeat(40)}:identity};},
-  fetchFn:async()=>{reads++;const value=structuredClone(baseline);if(fault==='central_drift'&&reads===2){const {snapshot_sha256,...body}=value.snapshot;body.map={manifest:null,observed_drift:true};value.snapshot=seal(body);}return new Response(JSON.stringify(value));},
-  compile:async()=>{compiled=true;return bundle(head).snapshot;},
-  runGate:async options=>{executed=true;mkdirSync(options.outputDir,{recursive:true});writeFileSync(join(options.outputDir,'receipt.json'),JSON.stringify({verdict:fault==='fullgate'?'FAIL':'PASS'}));return {receipt:{verdict:fault==='fullgate'?'FAIL':'PASS'}};},
- }),{code:{fullgate:'SOURCE_RECOVERY_FULL_GATE_FAILED',runtime_drift:'SOURCE_RECOVERY_RUNTIME_CHANGED',central_drift:'SOURCE_RECOVERY_CENTRAL_CHANGED'}[fault]});
- assert.equal(compiled,true);assert.equal(executed,true);assert.equal(existsSync(join(dir,'output/head.json')),false);assert.equal(existsSync(join(dir,'output/base.json')),false);assert.equal(existsSync(join(dir,'output/diagnostics/source-only-verification/receipt.json')),true);
-});
+
+
+
 
 test('上传前回归的真实子进程不继承中央或部署凭据',async t=>{
  const dir=mkdtempSync(join(tmpdir(),'recovery-env-'));t.after(()=>rmSync(dir,{recursive:true,force:true}));
@@ -456,34 +366,3 @@ test('上传前回归的真实子进程不继承中央或部署凭据',async t=>
 });
 
 // 编译入口回归：DB边界模拟空manifest；Git基线 checkout、入口顺序和清场均真实执行。
-for(const fault of ['', 'projection', 'head_projection', 'close'])test(`来源compiler必须投影双scope固定base且清场:${fault||'success'}`,t=>{
- const dir=mkdtempSync(join(tmpdir(),'recovery-compile-test-'));t.after(()=>rmSync(dir,{recursive:true,force:true}));
- const git=(...args)=>execFileSync('git',args,{cwd:dir,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
- git('init','-q');git('config','user.name','Fixture');git('config','user.email','fixture@example.invalid');git('config','core.hooksPath','/dev/null');
- writeFileSync(join(dir,'fixed-source'),'baseline');git('add','.');git('commit','-qm','base');const base=git('rev-parse','HEAD');
- writeFileSync(join(dir,'fixed-source'),'candidate');git('commit','-qam','candidate');const head=git('rev-parse','HEAD');
- writeFileSync(join(dir,'base.json'),JSON.stringify(bundle(base)));writeFileSync(join(dir,'candidate.json'),JSON.stringify(bundle(head,{parentMissing:true,parentGaps:[{code:'manifest_source_mismatch'}]}).snapshot));writeFileSync(join(dir,'final.json'),JSON.stringify(bundle(head).snapshot));
- const mocked=`import assert from 'node:assert/strict';import{readFileSync,writeFileSync}from'node:fs';import{execFileSync}from'node:child_process';
- const dir=${JSON.stringify(dir)},base=${JSON.stringify(base)},fault=${JSON.stringify(fault)},imports=new Set(),projected=new Set();let checkout;
- export async function createImplementationScratch(){return{db:{},close:async()=>{writeFileSync(dir+'/closed',String(checkout));if(fault==='close')throw Error('CLOSE_FAILED');}};}
- export async function importImplementationSnapshot(db,s){imports.add(s.scope);}
- export async function projectImplementationSnapshot(db,s,root){
-  checkout=root;writeFileSync(dir+'/checkout',root);assert.equal(imports.size,2);const expected=s.revision;assert.ok([base,${JSON.stringify(head)}].includes(expected));
-  assert.equal(execFileSync('git',['rev-parse','HEAD'],{cwd:root,encoding:'utf8'}).trim(),expected);assert.equal(readFileSync(root+'/fixed-source','utf8'),expected===base?'baseline':'candidate');
-  if(fault==='projection'||fault==='head_projection'&&expected!==base)throw Error('PROJECTION_FAILED');projected.add(expected+s.scope);if(expected!==base)writeFileSync(dir+'/projected-'+s.scope,'true');
- }
- export async function buildPrImplementationSnapshot(db,s){if(!['cecelia-kr','cecelia-factory'].every(scope=>projected.has(base+scope)))throw Error('OPS_MANIFEST_IDENTITY_INVALID');writeFileSync(dir+'/built',s.scope);const value=JSON.parse(readFileSync(dir+'/candidate.json'));return s.scope==='cecelia-factory'?value.admission_companion.snapshot:value;}`;
- writeFileSync(join(dir,'snapshot-mock.mjs'),mocked);
- const target=new URL('../implementation-snapshot.mjs',import.meta.url).href,apiTarget=new URL('../../../packages/brain/src/lib/implementation-ci-snapshot.js',import.meta.url).href;
- writeFileSync(join(dir,'api-mock.mjs'),`export * from ${JSON.stringify(apiTarget+'?original')};import{readFileSync,existsSync}from'node:fs';import assert from'node:assert/strict';export async function exportImplementationSnapshot(){const dir=${JSON.stringify(dir)};for(const scope of ['cecelia-kr','cecelia-factory'])assert.equal(existsSync(dir+'/projected-'+scope),true);return JSON.parse(readFileSync(dir+'/final.json'));}`);
- writeFileSync(join(dir,'loader.mjs'),`export async function resolve(s,c,next){const r=await next(s,c);return r.url===${JSON.stringify(target)}?{url:new URL('./snapshot-mock.mjs',import.meta.url).href,shortCircuit:true}:r.url===${JSON.stringify(apiTarget)}?{url:new URL('./api-mock.mjs',import.meta.url).href,shortCircuit:true}:r;}`);
- writeFileSync(join(dir,'register.mjs'),"import{register}from'node:module';register('./loader.mjs',import.meta.url);");
- const runner=`import{readFileSync,existsSync}from'node:fs';import assert from'node:assert/strict';import{compileRecoveryCandidate}from${JSON.stringify(new URL('../implementation-source-recovery.mjs',import.meta.url).href)};
- const dir=${JSON.stringify(dir)},fault=${JSON.stringify(fault)};
- const run=()=>compileRecoveryCandidate({repoRoot:dir,head:${JSON.stringify(head)},baseline:JSON.parse(readFileSync(dir+'/base.json'))});
- if(fault)await assert.rejects(run(),new RegExp(fault==='close'?'CLOSE_FAILED':'PROJECTION_FAILED'));else await run();
- assert.equal(existsSync(dir+'/closed'),true);assert.equal(existsSync(readFileSync(dir+'/checkout','utf8')),false);
- if(fault==='projection')assert.equal(existsSync(dir+'/built'),false);`;
- const result=spawnSync(process.execPath,['--import',join(dir,'register.mjs'),'--input-type=module','-e',runner],{cwd:root,encoding:'utf8'});
- assert.equal(result.status,0,result.stderr);
-});

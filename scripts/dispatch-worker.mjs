@@ -13,7 +13,6 @@ export const USABLE_THRESHOLD = 90;
 export const ACCOUNT_POOL = [
   { vendor: 'codex', name: 'team1', home: join(homedir(), '.codex-team1') },
   { vendor: 'codex', name: 'team2', home: join(homedir(), '.codex-team2') },
-  // 单 Claude 账号即 controller 主线，不下场当 worker
   { vendor: 'grok', name: 'grok', home: join(homedir(), '.grok') },
 ];
 
@@ -27,10 +26,6 @@ export function detectQuotaWall(text) {
 export function buildCommand(vendor, account, brief, dir) {
   if (vendor === 'codex') {
     return { cmd: 'codex', args: ['exec', '--cd', dir, '--sandbox', 'workspace-write', '--skip-git-repo-check', brief], env: { CODEX_HOME: account.home }, cwd: dir };
-  }
-  if (vendor === 'claude') {
-    // 必须用真身：裸 claude 被 claude-launch.sh alias 劫持，headless 报 _claude_launch not found
-    return { cmd: '/opt/homebrew/bin/claude', args: ['-p', '--dangerously-skip-permissions', brief], env: { CLAUDE_CONFIG_DIR: account.home }, cwd: dir };
   }
   if (vendor === 'grok') {
     return { cmd: join(homedir(), '.grok/bin/grok'), args: ['-p', brief, '--cwd', dir, '--always-approve'], env: {}, cwd: dir };
@@ -74,16 +69,6 @@ export async function queryUsage(account) {
       });
       if (!r.ok) return fail;
       const pct = (await r.json()).rate_limit?.primary_window?.used_percent ?? 100;
-      return { account, usable: pct < USABLE_THRESHOLD, usedPercent: pct };
-    }
-    if (account.vendor === 'claude') {
-      const c = JSON.parse(readFileSync(join(account.home, '.credentials.json'), 'utf8'));
-      const r = await fetch('https://api.anthropic.com/api/oauth/usage', {
-        headers: { Authorization: `Bearer ${c.claudeAiOauth?.accessToken}`, 'anthropic-beta': 'oauth-2025-04-20', Accept: 'application/json' },
-        signal: AbortSignal.timeout(8000),
-      });
-      if (!r.ok) return fail;
-      const pct = (await r.json()).five_hour?.utilization ?? 100;
       return { account, usable: pct < USABLE_THRESHOLD, usedPercent: pct };
     }
     return fail;

@@ -1,9 +1,9 @@
 /**
- * 统一领单租约 + 设备锁跟租约走 + 设备池（派发总闸 G，任务 c5f6e683）——真 PG。
+ * 统一领单租约 + 设备锁跟租约走（派发总闸 G，任务 c5f6e683）——真 PG。
  *
  * 钉住：claim 带租约落 task_leases；heartbeat 续约并把设备锁 expires_at 拉到租约；
  * reaper 按任务类型现有语义回队 / 判 lost 并放设备锁；Brain 租约（openclaw-agent）过期先探活；
- * 设备锁不再被持有者 in_progress 无限压住；设备池按 priority 依次试锁，不可用换下一台。
+ * 设备锁不再被持有者 in_progress 无限压住；设备池表及历史迁移保留。
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { taskLeaseFixture, seedTask } from '../helpers/task-lease-pg-fixture.js';
@@ -13,10 +13,8 @@ import { acquireDeviceLock } from '../../device-lock-helpers.js';
 import {
   claimTaskWithLease, heartbeatTaskLease, releaseTaskLease, setBrainLease, reapExpiredLeases,
 } from '../../lib/task-lease.js';
-import { listPoolCandidates, selectDeviceFromPool } from '../../lib/device-pool.js';
 
 const PHONE = 'ANGYVB4311010223';
-const PHONE_2 = 'e6c7ef34';
 let fx;
 let pool;
 
@@ -322,79 +320,6 @@ describe.sequential('设备锁跟租约走（不再被 in_progress 无限压住�
     expect((await acquireDeviceLock(await seedTask(pool), PHONE, 30, pool)).result).toBe('locked');
   });
 });
-
-describe.sequential('设备池：同平台同账号类型一池，派发从池里选可用的一台', () => {
-  const gate = (task) => acquireDeviceLock(task.id, task.payload.device_serial, 30, pool).then((r) => (
-    r.result === 'acquired' ? { pass: true, acquired: true }
-      : r.result === 'unknown_device' ? { pass: false, status: 422, body: { error: 'unknown_device' } }
-        : { pass: false, status: 409, body: { error: 'device_locked', locked_by: r.holder?.locked_by } }
-  ));
-
-  async function addSecondMember(priority = 20) {
-    await pool.query(
-      `INSERT INTO device_pool_members (pool_key, serial, account_ref, priority) VALUES ('douyin.internal', $1, 'Ai效率笔记', $2)`,
-      [PHONE_2, priority],
-    );
-  }
-
-  it('迁移种子：douyin.internal 池里是小彩（Ai办公室），机器/profile 取手机台账（553 把台账 host 对齐生产 xian-m4）', async () => {
-    const c = await listPoolCandidates(pool, 'douyin.internal');
-    expect(c).toEqual([expect.objectContaining({ serial: PHONE, account_ref: 'Ai办公室', machine: 'xian-m4', profile: 'xiaolongxia' })]);
-  });
-
-  it('首选空闲 → 选它并持锁；payload 里写的是选中的 serial', async () => {
-    const task = { id: await seedTask(pool), payload: {} };
-    const r = await selectDeviceFromPool(pool, 'douyin.internal', task, { lockGate: gate });
-    expect(r.ok).toBe(true);
-    expect(r.member.serial).toBe(PHONE);
-    expect((await lockRow(PHONE)).locked_by).toBe(task.id);
-  });
-
-  it('首选被别的在途 run 占着 → 自动换下一台；不接管别人的锁', async () => {
-    await addSecondMember();
-    const other = await seedTask(pool, { status: 'in_progress' });
-    expect((await acquireDeviceLock(other, PHONE, 30, pool)).result).toBe('acquired');
-    const task = { id: await seedTask(pool), payload: {} };
-    const r = await selectDeviceFromPool(pool, 'douyin.internal', task, { lockGate: gate });
-    expect(r.ok).toBe(true);
-    expect(r.member.serial).toBe(PHONE_2);
-    expect(r.member.account_ref).toBe('Ai效率笔记');
-    expect(r.tried).toEqual([expect.objectContaining({ serial: PHONE, status: 409 })]);
-    expect((await lockRow(PHONE)).locked_by).toBe(other);
-  });
-
-  it('全被占 → all_busy（调用方只等不接管）', async () => {
-    await addSecondMember();
-    for (const s of [PHONE, PHONE_2]) {
-      expect((await acquireDeviceLock(await seedTask(pool, { status: 'in_progress' }), s, 30, pool)).result).toBe('acquired');
-    }
-    const r = await selectDeviceFromPool(pool, 'douyin.internal', { id: await seedTask(pool), payload: {} }, { lockGate: gate });
-    expect(r).toMatchObject({ ok: false, reason: 'all_busy' });
-    expect(r.tried).toHaveLength(2);
-  });
-
-  it('成员停用 / 手机台账停用 / 池停用 都不进候选；空池 → pool_empty', async () => {
-    await addSecondMember();
-    await pool.query(`UPDATE device_pool_members SET enabled = false WHERE serial = $1`, [PHONE]);
-    await pool.query(`UPDATE phone_registry SET enabled = false WHERE serial = $1`, [PHONE_2]);
-    expect(await listPoolCandidates(pool, 'douyin.internal')).toEqual([]);
-    const r = await selectDeviceFromPool(pool, 'douyin.internal', { id: await seedTask(pool), payload: {} }, { lockGate: gate });
-    expect(r).toMatchObject({ ok: false, reason: 'pool_empty' });
-    await pool.query(`UPDATE device_pool_members SET enabled = true; UPDATE phone_registry SET enabled = true; UPDATE device_pools SET enabled = false`);
-    expect(await listPoolCandidates(pool, 'douyin.internal')).toEqual([]);
-    expect((await selectDeviceFromPool(pool, 'no.such', { id: await seedTask(pool), payload: {} }, { lockGate: gate })).reason).toBe('pool_empty');
-  });
-
-  it('门闸说资源不健康（409 resource_unhealthy）也算不可用，换下一台', async () => {
-    await addSecondMember();
-    const sick = async (task) => (task.payload.device_serial === PHONE
-      ? { pass: false, status: 409, body: { error: 'resource_unhealthy' } } : gate(task));
-    const r = await selectDeviceFromPool(pool, 'douyin.internal', { id: await seedTask(pool), payload: {} }, { lockGate: sick });
-    expect(r.member.serial).toBe(PHONE_2);
-    expect(r.tried[0].error).toBe('resource_unhealthy');
-  });
-});
-
 
 describe.sequential('租约 fixture 与现役统一终态 SQL 一致', () => {
   it('059 迁移在私有 schema 建真实 task_runs，任务外键级联清理', async () => {

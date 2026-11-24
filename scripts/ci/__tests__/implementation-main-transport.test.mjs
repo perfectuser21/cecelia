@@ -6,9 +6,14 @@ import {mkdtempSync,writeFileSync,readFileSync,existsSync,rmSync} from 'node:fs'
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {fileURLToPath,pathToFileURL} from 'node:url';
-import {bundle} from './fixtures/admission-bundle.mjs';
+import {stepSha256} from '../../../packages/brain/scripts/sync-steps-from-workspace.mjs';
 const root=fileURLToPath(new URL('../../../',import.meta.url));
-const head='a'.repeat(40),repo='perfectuser21/cecelia';
+const head='a'.repeat(40),repo='perfectuser21/zenithjoy-workspace';
+// 运输合同使用现役ZenithJoy父scope；来源资格由独立真实PG发布合同覆盖。
+function bundle(missing=false){
+ const snapshot={schema_version:1,scope:'zenithjoy',repo,revision:head,status:missing?'unknown':'verified',gaps:missing?[{code:'definition_snapshot_missing'}]:[],map:{manifest:null},canonical:{workflows:[],journeys:[]},definitions:{workflows:[],activities:[]},assertions:[]};
+ return {snapshot:{...snapshot,snapshot_sha256:stepSha256(snapshot)}};
+}
 async function transportRun(t,{phase='headers',delay=400,cleanupFailure=false,cleanupOnly=false,primaryUndefined=false,lateBody=false,nativeSignalDetached=false,firstSignalEarly=false,abortDestroyFailure=false}={}){
  const dir=mkdtempSync(join(tmpdir(),'publisher-transport-'));t.after(()=>rmSync(dir,{recursive:true,force:true}));
  const calls=[];let missing=true;
@@ -16,7 +21,7 @@ async function transportRun(t,{phase='headers',delay=400,cleanupFailure=false,cl
   let raw='';for await(const chunk of req)raw+=chunk;
   const q=req.method==='POST'?JSON.parse(raw):Object.fromEntries(new URL(req.url,'http://fixture').searchParams);
   const call={method:req.method,...q,received_at:Date.now()};calls.push(call);res.once('close',()=>{call.closed_at=Date.now();});
-  const value=req.method==='POST'?{snapshot:bundle(head).snapshot.admission_companion.snapshot}:bundle(head,{childMissing:missing});
+  const value=bundle(req.method==='POST'?false:missing);
   const text=JSON.stringify(value);
   if(req.method!=='POST'){res.writeHead(200,{'content-type':'application/json'});res.end(text);return;}
   if(cleanupFailure){req.socket.destroy();return;}
@@ -26,7 +31,7 @@ async function transportRun(t,{phase='headers',delay=400,cleanupFailure=false,cl
  });
  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
  t.after(()=>{server.closeAllConnections();return new Promise(resolve=>server.close(resolve));});
- const options={brainUrl:`http://127.0.0.1:${server.address().port}`,token:'isolated-test-token',scope:'cecelia-kr',repo,base:head,head,output:join(dir,'evidence')};
+ const options={brainUrl:`http://127.0.0.1:${server.address().port}`,token:'isolated-test-token',scope:'zenithjoy',repo,base:head,head,output:join(dir,'evidence')};
  // 独立child压缩旧运输期限与原signal；真实socket/timer，不改生产预算或全局环境。
  const childSource=`
  import {appendFileSync} from 'node:fs';
@@ -63,9 +68,9 @@ nodeTest('私有HTTP运输夹具隔离并发，保留全部十项真实socket回
 for(const phase of ['headers','body'])test(`真实运输${phase}慢于旧期限但早于总deadline仍发布一次`,async t=>{
  const r=await transportRun(t,{phase});assert.equal(r.code,0,r.stderr);
  assert.equal(r.calls.filter(c=>c.method==='POST').length,1);
- assert.deepEqual(r.calls.filter(c=>c.method==='POST').map(c=>c.scope),['cecelia-factory']);
+ assert.deepEqual(r.calls.filter(c=>c.method==='POST').map(c=>c.scope),['zenithjoy']);
  const proof=JSON.parse(readFileSync(join(r.dir,'evidence/diagnostics/publication.json')));
- assert.equal(proof.status,'verified');assert.deepEqual(proof.admission_scopes,['cecelia-kr','cecelia-factory']);
+ assert.equal(proof.status,'verified');assert.deepEqual(proof.admission_scopes,['zenithjoy']);
  assert.ok(existsSync(join(r.dir,'evidence/base.json')));assert.ok(existsSync(join(r.dir,'evidence/head.json')));
 });
 for(const phase of ['headers','body'])test(`真实运输${phase}超过总deadline仍UNKNOWN且不重发`,async t=>{

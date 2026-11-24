@@ -15,7 +15,6 @@ circuit-breaker-reset-smoke.sh
 claude-headed-dispatch-smoke.sh
 codex-cred-isolation-smoke.sh
 coding-workflow-runner-smoke.sh
-coding-source-compat-smoke.sh
 company-key-results-smoke.sh
 session-provenance-smoke.sh
 conversation-capture-multitool-smoke.sh

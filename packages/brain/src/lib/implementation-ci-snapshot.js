@@ -1,10 +1,8 @@
 import {INFRA_CONSUMER_SCOPE} from './infra-consumer-source.js';
 import {readInfraSnapshot,validateInfraSnapshot,refreshInfraSnapshot} from './infra-consumer-snapshot.js';
-import {prepareNativeConsumerSelection,selectNativeConsumerDefinition} from './native-consumer-source-selection.js';
 import {isNativeMaintenanceObservationDefinition} from './native-maintenance-snapshot.js';
-import {assertNativeConsumerRuntime} from './native-consumer-runtime.js';
 import {manifestMatchesImplementationSource} from './implementation-context.js';
-import {hasFrozenConsumerSource,sealedConsumerVersion,collectWorkspaceConsumerSourceSet,isTrustedWorkspaceConsumerSource,sealedBrainConsumerDefinition,consumerSourceAdmissionScope} from './consumer-source-set.js';
+import {hasFrozenConsumerSource,sealedConsumerVersion,sealedBrainConsumerDefinition,consumerSourceAdmissionScope} from './consumer-source-set.js';
 /** 中央定义只读导出；身份由登记表给出，历史来源不以latest补齐。 */
 import {preparePilotManifestAdvance,advancePilotManifest} from './implementation-ci-pilot-manifest.js';
 import { stepSha256 } from '../../scripts/sync-steps-from-workspace.mjs';
@@ -13,7 +11,7 @@ import { syncActivityContracts,CONTRACT_REPO } from '../activity-contract-sync.j
 import { resolveGitHubToken } from '../github-credentials.js';
 import { TREE_NODES_SQL } from './tree-nodes-sql.js';
 import { EXISTING_OPS_SCOPE,EXISTING_OPS_REPO,EXISTING_OPS_IDENTITIES } from './existing-ops-source.js';
-import { readExistingOpsRegistry,registerExistingOpsSources,validateExistingOpsRegistry,prepareExistingOpsManifestAdvance } from './existing-ops-registration.js';
+import { readExistingOpsRegistry,validateExistingOpsRegistry } from './existing-ops-registration.js';
 import { validateAuthoringAdapterConfig,selectAuthoringDefinitions,checkAuthoringSnapshot,verifyAuthoringSnapshotSources } from '../workflow-authoring/ci-adapter.js';
 export const ciFailure=(code,message,status=422)=>Object.assign(Error(message||code),{code:`IMPLEMENTATION_CI_${code}`,status});
 export function isImplementationScratchDatabase(database,env=process.env){
@@ -228,7 +226,7 @@ function validateSnapshot(snapshot,admissionScope={allowScratch:false}){
 /** 默认同步验证不接受scratch准入；异步入口只由实际数据库身份派生权限。 */
 export function validateImplementationSnapshot(snapshot){return validateSnapshot(snapshot);}
 export async function validateImplementationSnapshotForDatabase(db,snapshot){return validateSnapshot(snapshot,await consumerSourceAdmissionScope(db));}
-export async function readImplementationSnapshotInTransaction(db,q,nativeProof){
+export async function readImplementationSnapshotInTransaction(db,q){
   if(q.scope===INFRA_CONSUMER_SCOPE)return readInfraSnapshot(db,q);
   const factory=q.scope===EXISTING_OPS_SCOPE;
   const gaps=[],gap=(code,details={})=>gaps.push({code,...details});
@@ -269,8 +267,7 @@ export async function readImplementationSnapshotInTransaction(db,q,nativeProof){
     const current=rows.find(r=>r.id===workflows.find(w=>w.id===id)?.current_definition_version_id);
     if(current)selected.push(current);
     else if(rows.length===1)selected.push(rows[0]);
-    else {const matched=!authoring&&!crossConsumer&&await selectNativeConsumerDefinition(db,q,rows,nativeProof);
-      if(matched)selected.push(matched);else gap('definition_snapshot_ambiguous',{workflow_id:id,revision:q.revision});}
+    else gap('definition_snapshot_ambiguous',{workflow_id:id,revision:q.revision});
   }
   if(crossConsumer)for(const w of selected)if(w.source_repo!==anchor.repo||w.source_commit!==anchor.revision
     ||w.payload_sha256!==stepSha256({source:{repo:w.source_repo,path:w.source_path,commit:w.source_commit},payload:w.payload}))gap('consumer_source_digest_mismatch',{workflow_id:w.workflow_id});
@@ -339,15 +336,14 @@ export async function readImplementationSnapshotInTransaction(db,q,nativeProof){
     definitions:{workflows:selected,activities},map:{manifest,repositories,source_basis:manifestBasis},assertion_source:'current_registration',assertions});
   return {...body,snapshot_sha256:digest(body)};
 }
-export async function exportImplementationSnapshot(pool,input,{nativeConsumerSourceOptions}={}){
+export async function exportImplementationSnapshot(pool,input){
   const q=validateSnapshotQuery(input);
-  const nativeProof=await prepareNativeConsumerSelection(pool,{...q,scope:companionParent(q)?EXISTING_OPS_SCOPE:q.scope},nativeConsumerSourceOptions);
   const db=await pool.connect();
   try{
     await db.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
-    let result=await readImplementationSnapshotInTransaction(db,q,nativeProof);
+    let result=await readImplementationSnapshotInTransaction(db,q);
     if(companionParent(q)||crossCompanionParent(q)){
-      const snapshot=await readImplementationSnapshotInTransaction(db,{...q,scope:EXISTING_OPS_SCOPE},nativeProof);
+      const snapshot=await readImplementationSnapshotInTransaction(db,{...q,scope:EXISTING_OPS_SCOPE});
       const companion={schema_version:1,purpose:'admission_only',scope:EXISTING_OPS_SCOPE,repo:q.repo,revision:q.revision,
         ...(crossCompanionParent(q)?{source_basis:'cross_repo_source_set',registry_source:snapshot.registry_source||{repo:EXISTING_OPS_REPO,revision:null},source_set:snapshot.source_set||[]}:{}),snapshot};
       const {snapshot_sha256:_snapshotSha256,...body}=result;
@@ -392,14 +388,7 @@ export async function refreshImplementationSnapshot(pool,input,{fetchFn=globalTh
   readBinding,authoringSourceOptions,conflictWaitMs=5000,allowRepos=(process.env.CECELIA_IMPLEMENTATION_CI_REPOS??`${CONTRACT_REPO},perfectuser21/cecelia`).split(',').map(r=>r.trim()).filter(Boolean)}={}){
   const q=validateSnapshotQuery(input);
   if(q.scope==='cecelia-kr'&&q.repo==='perfectuser21/cecelia')throw ciFailure('KR_ANALYSIS_RETIRED','公司KR自动分析登记已退役；正式指标同步不受影响',410);
-  const consumer=input?.workspace_consumer;
-  if(consumer!==undefined&&(q.scope!==EXISTING_OPS_SCOPE||q.repo!==EXISTING_OPS_REPO
-    ||!consumer||Object.keys(consumer).sort().join(',')!=='brain_revisions,run_id,workspace_revision'
-    ||!/^[a-f0-9]{40}$/.test(consumer.workspace_revision||'')||!Array.isArray(consumer.brain_revisions)
-    ||consumer.brain_revisions.length<1||consumer.brain_revisions.length>2
-    ||consumer.brain_revisions.some(r=>typeof r!=='string'||!/^[a-f0-9]{40}$/.test(r))
-    ||new Set(consumer.brain_revisions).size!==consumer.brain_revisions.length
-    ||!Number.isSafeInteger(consumer.run_id)||consumer.run_id<=0))throw ciFailure('CONSUMER_REFRESH_INPUT_INVALID');
+  if(q.scope===EXISTING_OPS_SCOPE)throw ciFailure('FACTORY_COLLECTION_RETIRED','工厂消费者来源采集已退役；既有历史仍可只读查询',410);
   if(!allowRepos.includes(q.repo))throw ciFailure('REFRESH_UNCONFIGURED','main同步repo未授权',503);
   if(![CONTRACT_REPO,'perfectuser21/cecelia'].includes(q.repo))throw ciFailure('SYNC_ADAPTER_MISSING','该repo缺少固定main同步adapter',422);
   const checkRegistration=async()=>{
@@ -418,14 +407,14 @@ export async function refreshImplementationSnapshot(pool,input,{fetchFn=globalTh
   await checkMain();
   const registration=(await pool.query('SELECT adapter_config FROM map_scope_repositories WHERE scope_key=$1',[q.scope])).rows;
   if(registration.length===1&&registration[0].adapter_config?.definition_protocol){
-    const snapshot=await exportImplementationSnapshot(pool,q,{nativeConsumerSourceOptions:{fetchFn,resolveToken}});
+    const snapshot=await exportImplementationSnapshot(pool,q);
     await verifyAuthoringSnapshotSources(snapshot,{fetchFn,resolveToken:async()=>token,...authoringSourceOptions});
-    await checkMain();const after=await exportImplementationSnapshot(pool,q,{nativeConsumerSourceOptions:{fetchFn,resolveToken}});
+    await checkMain();const after=await exportImplementationSnapshot(pool,q);
     if(after.snapshot_sha256!==snapshot.snapshot_sha256)throw ciFailure('AUTHORING_SNAPSHOT_CHANGED','来源核验期间登记或地图变化',409);
     return after;
   }
   if(q.scope===INFRA_CONSUMER_SCOPE)return refreshInfraSnapshot(pool,q,{fetchFn,token,checkMain,readFile:async path=>{const response=await fetchFn(implementationGitHubUrl(q.repo,{path,revision:q.revision}),{redirect:'error',headers:{Accept:'application/vnd.github.raw',Authorization:`Bearer ${token}`},signal:AbortSignal.timeout(15000)});if(!response.ok)throw ciFailure('SOURCE_UNAVAILABLE');return response.text();}});
-  const pilotPlan=q.scope===EXISTING_OPS_SCOPE ? await prepareExistingOpsManifestAdvance(pool,q) : await preparePilotManifestAdvance(pool,q);
+  const pilotPlan=await preparePilotManifestAdvance(pool,q);
   if(q.repo===CONTRACT_REPO){
     try{await syncActivityContracts(pool,{fetchFn,resolveToken:async()=>token,expectedRevision:q.revision,beforeCommit:checkMain,synchronizeSteps:true,readBinding});}
     catch(error){
@@ -433,39 +422,8 @@ export async function refreshImplementationSnapshot(pool,input,{fetchFn=globalTh
       return reuseConcurrentSnapshot(pool,q,checkMain,error,conflictWaitMs);
     }
   }
-  else{
-    const readFile=async(path,revision=q.revision)=>{
-      const response=await fetchFn(implementationGitHubUrl(q.repo,{path,revision}),{redirect:'error',headers:{Accept:'application/vnd.github.raw',Authorization:`Bearer ${token}`},signal:AbortSignal.timeout(15000)});
-      if(!response.ok)throw ciFailure('SOURCE_UNAVAILABLE',`固定源码不可读: ${path}`);return response.text();
-    };
-    if(q.scope===EXISTING_OPS_SCOPE){
-      const headers={Accept:'application/vnd.github+json',Authorization:`Bearer ${token}`};
-      const commitResponse=await fetchFn(`https://api.github.com/repos/perfectuser21/cecelia/git/commits/${q.revision}`,{redirect:'error',headers,signal:AbortSignal.timeout(15000)});
-      if(!commitResponse.ok)throw ciFailure('SOURCE_COMMIT_UNAVAILABLE');
-      const commit=await commitResponse.json();
-      if(commit.sha!==q.revision||!/^[a-f0-9]{40}$/.test(commit.tree?.sha||''))throw ciFailure('SOURCE_COMMIT_MISMATCH');
-      const response=await fetchFn(`https://api.github.com/repos/perfectuser21/cecelia/git/trees/${commit.tree.sha}?recursive=1`,{redirect:'error',headers,signal:AbortSignal.timeout(15000)});
-      if(!response.ok)throw ciFailure('SOURCE_TREE_UNAVAILABLE');
-      const tree=await response.json();
-      if(tree.truncated||tree.sha!==commit.tree.sha||!Array.isArray(tree.tree))throw ciFailure('SOURCE_TREE_INCOMPLETE');
-      await assertNativeConsumerRuntime(readFile,tree);
-      const paths=tree.tree.filter(n=>n.type==='blob').map(n=>n.path),registry=await readExistingOpsRegistry(pool);
-      let workspaceConsumerProof;
-      if(consumer!==undefined){
-        const {unverified_reference_ids:_unverifiedReferenceIds,...identity}=EXISTING_OPS_IDENTITIES.find(i=>i.workflow_key==='factory_f3_ops');
-        workspaceConsumerProof=await collectWorkspaceConsumerSourceSet({
-          workspace:{repo:CONTRACT_REPO,revision:consumer.workspace_revision},
-          brain:{repo:EXISTING_OPS_REPO,revisions:consumer.brain_revisions},identity,
-          anchor:{repo:q.repo,revision:q.revision},run_id:consumer.run_id
-        },{fetchFn,resolveToken:async()=>token});
-        if(!isTrustedWorkspaceConsumerSource(workspaceConsumerProof))throw ciFailure('CONSUMER_MAIN_SOURCE_UNKNOWN');
-      }
-      await registerExistingOpsSources(pool,{...q,paths,readSource:readFile,checkMain,workspaceConsumerProof,expectedRegistrySha256:registry.registry_sha256,actor:'implementation-ci-main-refresh'});
-    }else{
-      throw ciFailure('SYNC_ADAPTER_MISSING','该scope没有现役main同步adapter',422);
-    }
-  }
-  await checkMain();await advancePilotManifest(pool,pilotPlan,checkMain);return exportImplementationSnapshot(pool,q,{nativeConsumerSourceOptions:{fetchFn,resolveToken}});
+  else throw ciFailure('SYNC_ADAPTER_MISSING','该scope没有现役main同步adapter',422);
+  await checkMain();await advancePilotManifest(pool,pilotPlan,checkMain);return exportImplementationSnapshot(pool,q);
 }
 
 /** 唯一登记键的窄入口；不接收路径、扫描命令或任意adapter参数。 */

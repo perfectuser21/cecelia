@@ -1,16 +1,16 @@
 /**
  * 旧 tick-runner executeTick 接线回归；替换依赖，仅验证 plugin 接线。
  *
- * 验证 D1.7c plugin 拆解后，executeTick 一次调用确实把 7 个 plugin 全 wire 上：
- *   - dept-heartbeat / kr-progress-sync / heartbeat / goal-eval
- *   - pipeline-patrol / kr-health-daily / cleanup-worker
+ * 验证 executeTick 一次调用仍执行保留的 plugin：
+ *   - dept-heartbeat / kr-progress-sync / heartbeat
+ *   - pipeline-patrol / cleanup-worker
  *
  * 同时验证：
  *   - dispatcher.dispatchNextTask 被调（行动层入口）
  *   - tickState 时间戳被推进（运行确实跑过感知层）
  *
  * 设计要点：
- *   - 全 mock 模式 — pool/spawn/7 plugin/dispatcher/heavy modules 全 stub，
+ *   - 全 mock 模式 — pool/spawn/plugin/dispatcher/heavy modules 全 stub，
  *     不真连 PG/Docker/网络
  *   - 测试关注"wire 是否对"，不测 plugin 内部逻辑（plugin 自有单测）
  *   - 不开 MINIMAL_MODE — 必须能完整跑过感知层并触达行动层
@@ -49,7 +49,7 @@ const mockPool = {
 };
 vi.mock('../../db.js', () => ({ default: mockPool }));
 
-// ─── Mock 7 个 plugin（KEY assertion 目标） ─────────────────────────────────
+// ─── Mock 保留的 plugin（KEY assertion 目标） ─────────────────────────────────
 vi.mock('../../dept-heartbeat.js', () => ({
   tick: vi.fn().mockResolvedValue({ triggered: 0, skipped: 0, results: [] }),
 }));
@@ -62,9 +62,6 @@ vi.mock('../../heartbeat-plugin.js', () => ({
 
 vi.mock('../../pipeline-patrol-plugin.js', () => ({
   tick: vi.fn().mockResolvedValue({ scanned: 0 }),
-}));
-vi.mock('../../kr-health-daily-plugin.js', () => ({
-  tick: vi.fn().mockResolvedValue({ action: null, summary: null, issues_count: 0 }),
 }));
 vi.mock('../../cleanup-worker-plugin.js', () => ({
   tick: vi.fn().mockResolvedValue({ removed: 0 }),
@@ -214,7 +211,7 @@ vi.mock('../../tick-helpers.js', () => ({
   getRampedDispatchMax: vi.fn().mockReturnValue(1),
 }));
 
-// 保留真实 executeTick 与 7 个 plugin wire；隔离用户机器、凭据和外部服务边界。
+// 保留真实 executeTick 与保留的 plugin wire；隔离用户机器、凭据和外部服务边界。
 vi.mock('../../zombie-cleaner.js', () => ({
   runZombieCleanup: vi.fn().mockResolvedValue({ slotsReclaimed: 0, worktreesRemoved: 0 }),
 }));
@@ -259,7 +256,7 @@ describe('tick-runner executeTick — full tick wire-up', () => {
     }
   });
 
-  it('意识启用时仍运行反刍和记忆压缩，退休日报日记没有调用', async () => {
+  it('意识启用时仍运行反刍，旧Tick不再重复压缩对话或生成退休日报日记', async () => {
     const guard = await import('../../consciousness-guard.js');
     try {
       guard.isConsciousnessEnabled.mockReturnValue(true);
@@ -273,7 +270,7 @@ describe('tick-runner executeTick — full tick wire-up', () => {
       const { routeDailyReport } = await import('../../durable/daily-report-router.js');
       const { generateDailyDiaryIfNeeded } = await import('../../diary-scheduler.js');
       expect(runRumination).toHaveBeenCalledTimes(1);
-      expect(runConversationConsolidator).toHaveBeenCalledTimes(1);
+      expect(runConversationConsolidator).not.toHaveBeenCalled();
       expect(routeDailyReport).not.toHaveBeenCalled();
       expect(generateDailyDiaryIfNeeded).not.toHaveBeenCalled();
       for (const [sql] of mockPool.query.mock.calls) expect(String(sql)).not.toMatch(/daily_logs|source_type\s*=\s*'narrative'/i);
@@ -282,7 +279,7 @@ describe('tick-runner executeTick — full tick wire-up', () => {
     }
   });
 
-  it('一次 executeTick：7 个 plugin .tick 都被调；dispatcher 被调；tickState 时间戳前移', async () => {
+  it('一次 executeTick：保留的 plugin 和 dispatcher 执行；tickState 时间戳前移', async () => {
     const before = Date.now() - 1; // 防同毫秒赋值导致 ">" 比较失败
 
     // 重新 import 各 mock 拿到 spy reference
@@ -290,7 +287,6 @@ describe('tick-runner executeTick — full tick wire-up', () => {
     const krProgress = await import('../../kr-progress-sync-plugin.js');
     const heartbeat = await import('../../heartbeat-plugin.js');
     const patrol = await import('../../pipeline-patrol-plugin.js');
-    const krHealth = await import('../../kr-health-daily-plugin.js');
     const cleanup = await import('../../cleanup-worker-plugin.js');
     const dispatcher = await import('../../dispatcher.js');
 
@@ -320,12 +316,11 @@ describe('tick-runner executeTick — full tick wire-up', () => {
       expect(String(sql)).not.toMatch(/topic_suggestions|topic_selection_log|daily_topic_selection/i);
     }
 
-    // ── 7 个 plugin .tick 必须全被调 ─────────────────────────────────────
+    // ── 保留的 plugin .tick 必须全被调 ─────────────────────────────────────
     expect(dept.tick).toHaveBeenCalled();
     expect(krProgress.tick).toHaveBeenCalled();
     expect(heartbeat.tick).toHaveBeenCalled();
     expect(patrol.tick).toHaveBeenCalled();
-    expect(krHealth.tick).toHaveBeenCalled();
     expect(cleanup.tick).toHaveBeenCalled();
 
     // ── dispatcher 被调（行动层入口） ────────────────────────────────────

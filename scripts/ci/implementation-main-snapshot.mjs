@@ -1,11 +1,12 @@
 /** 可信 main 的中央快照发布器；HTTP 错误只作诊断，完整验证后才发布正式文件。 */
 import {createHash} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
-import {mkdirSync,writeFileSync,renameSync,existsSync,realpathSync,mkdtempSync,rmSync,readFileSync} from 'node:fs';
+import {mkdirSync,writeFileSync,renameSync,existsSync,realpathSync} from 'node:fs';
 import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {Agent} from 'undici';
-import {validateImplementationSnapshot,extractImplementationAdmissionSnapshots} from '../../packages/brain/src/lib/implementation-ci-snapshot.js';
+import {readPublishedArtifact,validatePublishedSnapshot} from './implementation-published-artifact.mjs';
+export {readPublishedArtifact,validatePublishedSnapshot} from './implementation-published-artifact.mjs';
 import {publishRecoveryBaseline} from './implementation-source-recovery.mjs';
 const SHA=/^[a-f0-9]{40}$/;
 const REFRESHABLE=new Set(['definition_snapshot_missing','scope_manifest_missing','manifest_source_mismatch']);
@@ -37,6 +38,7 @@ const SAFE_CODES=new Set([
  'IMPLEMENTATION_CI_CONSUMER_SOURCE_SET_INVALID',
  'IMPLEMENTATION_CI_CROSS_REPO_SNAPSHOT_MISSING',
  'IMPLEMENTATION_CI_DEFINITION_DIGEST_MISMATCH',
+ 'IMPLEMENTATION_CI_FACTORY_COLLECTION_RETIRED',
  'IMPLEMENTATION_CI_FACTORY_CANONICAL_REGISTRY_MISMATCH',
  'IMPLEMENTATION_CI_FACTORY_EXECUTION_BOUNDARY_INVALID',
  'IMPLEMENTATION_CI_FACTORY_REGISTRY_DIGEST_MISMATCH',
@@ -89,48 +91,6 @@ function exceptionDiagnostic(error,depth=0){
   ...(cause?{cause:exceptionDiagnostic(cause,depth+1)}:{})};
 }
 
-export function validatePublishedSnapshot(body,{scope,repo,revision,complete=false}){
- if(body?.error)throw fail('IMPLEMENTATION_CI_SNAPSHOT_PROVIDER_FAILED',{provider_code:body.error.code??null});
- const s=validateImplementationSnapshot(body?.snapshot);
- if(s.scope!==scope||s.repo!==repo||s.revision!==revision)throw fail('IMPLEMENTATION_CI_SNAPSHOT_IDENTITY_MISMATCH');
- if(!['verified','unknown'].includes(s.status)||!Array.isArray(s.gaps)||(s.status==='verified')!==(s.gaps.length===0))throw fail('IMPLEMENTATION_CI_SNAPSHOT_STATUS_INVALID');
- if(complete){
-  if(s.status!=='verified')throw fail('IMPLEMENTATION_CI_SNAPSHOT_UNKNOWN');
-  if(scope==='cecelia-kr'&&repo==='perfectuser21/cecelia')extractImplementationAdmissionSnapshots(s,['cecelia-kr','cecelia-factory']);
- }
- return s;
-}
-/** 中央只保留当前 active manifest；旧 SHA 只能回退到同 SHA 的正式 provider 产物。 */
-export function readPublishedArtifact({repo,revision,diagnostics,scope}){
- const gh=(endpoint,binary=false)=>execFileSync('gh',['api',endpoint],{encoding:binary?undefined:'utf8',timeout:60000,maxBuffer:16*1024*1024,stdio:['ignore','pipe','pipe']});
- const json=endpoint=>JSON.parse(gh(endpoint));
- const infra=scope==='cecelia-infra',job=infra?'snapshot-infra':'snapshot-main';
- const name=`implementation-${infra?'infra-':''}snapshot-${revision}`,prefix=`repos/${repo}/actions`;
- const collection=json(`${prefix}/artifacts?name=${name}&per_page=100`);
- if(!Array.isArray(collection.artifacts)||!Number.isInteger(collection.total_count)||collection.total_count<0||collection.total_count>100||collection.total_count!==collection.artifacts.length)throw fail('IMPLEMENTATION_CI_BASE_ARTIFACT_MISSING');
- const valid=item=>Number.isSafeInteger(item?.id)&&item.id>0&&item.name===name&&item.expired===false
-  &&typeof item.created_at==='string'&&item.created_at.trim()!==''&&Number.isFinite(Date.parse(item.created_at))
-  &&item.workflow_run?.head_sha===revision&&item.workflow_run.head_branch==='main'
-  &&Number.isSafeInteger(item.workflow_run.id)&&item.workflow_run.id>0
-  &&Number.isSafeInteger(item.workflow_run.repository_id)&&item.workflow_run.repository_id===item.workflow_run.head_repository_id;
- const candidate=collection.artifacts.filter(valid).sort((a,b)=>Date.parse(b.created_at)-Date.parse(a.created_at)||b.id-a.id)[0];
- if(!candidate)throw fail('IMPLEMENTATION_CI_BASE_ARTIFACT_MISSING');
- const artifact=json(`${prefix}/artifacts/${candidate.id}`);
- if(!valid(artifact)||artifact.id!==candidate.id||artifact.workflow_run.id!==candidate.workflow_run.id)throw fail('IMPLEMENTATION_CI_ARTIFACT_ORIGIN_INVALID');
- const runId=artifact.workflow_run.id,run=json(`${prefix}/runs/${runId}`);
- if(run.id!==runId||run.head_sha!==revision||run.head_branch!=='main'||!['push','workflow_dispatch'].includes(run.event)
-  ||run.path!=='.github/workflows/implementation-impact.yml'||run.repository?.full_name!==repo||run.head_repository?.full_name!==repo)throw fail('IMPLEMENTATION_CI_ARTIFACT_ORIGIN_INVALID');
- const jobs=json(`${prefix}/runs/${runId}/jobs?per_page=100`);
- if(!Number.isInteger(jobs.total_count)||jobs.total_count<0||jobs.total_count>100||!Array.isArray(jobs.jobs)||jobs.total_count!==jobs.jobs.length
-  ||!jobs.jobs.some(j=>j.name===job&&j.status==='completed'&&j.conclusion==='success'))throw fail('IMPLEMENTATION_CI_SNAPSHOT_PROVIDER_FAILED');
- const temporary=mkdtempSync(join(diagnostics,'historical-artifact-'));
- try{
-  const archive=join(temporary,'snapshot.zip');writeFileSync(archive,gh(`${prefix}/artifacts/${artifact.id}/zip`,true));
-  const body=JSON.parse(execFileSync('unzip',['-p',archive,'head.json'],{encoding:'utf8',timeout:30000,maxBuffer:16*1024*1024,stdio:['ignore','pipe','pipe']}));
-  writeFileSync(join(diagnostics,infra?`historical-infra-${revision}-source.json`:'historical-base-source.json'),JSON.stringify({repo,revision,artifact_id:artifact.id,run_id:runId,provider_job:job,provider_status:'success'})+'\n');
-  return body;
- }finally{rmSync(temporary,{recursive:true,force:true});}
-}
 function refreshable(snapshot){
  const derivedMissing=snapshot.map?.manifest===null&&snapshot.gaps.some(g=>g.code==='scope_manifest_missing');
  return snapshot.gaps.length>0&&snapshot.gaps.every(g=>REFRESHABLE.has(g.code)||derivedMissing&&g.code==='workflow_capability_unmapped');
@@ -206,6 +166,7 @@ export async function publishMainSnapshots({brainUrl,token,scope,repo,base,head,
     if(!before)throw fail('IMPLEMENTATION_CI_ADMISSION_COMPANION_MISSING');
     if(before.status==='verified'&&before.gaps.length===0)continue;
     if(!refreshable(before))throw fail('IMPLEMENTATION_CI_SNAPSHOT_NOT_REFRESHABLE');
+    if(target==='cecelia-factory')throw fail('IMPLEMENTATION_CI_FACTORY_COLLECTION_RETIRED');
     await main();let conflict;
     try{
      const refreshed=await request('POST',target,head);
@@ -248,10 +209,7 @@ if(process.argv[1]&&realpathSync(process.argv[1])===realpathSync(fileURLToPath(i
  const options={brainUrl:process.env.BRAIN_URL,token:process.env.CECELIA_INTERNAL_TOKEN,scope:process.env.MAP_SCOPE,repo:process.env.SOURCE_REPO,base:process.env.BASE,head:process.env.HEAD};
  const run=async()=>{
   if(process.env.SOURCE_BASELINE_RECOVERY!=='true')return publishMainSnapshots(options);
-  if(options.repo!=='perfectuser21/cecelia'||options.scope!=='cecelia-kr')throw fail('IMPLEMENTATION_CI_REPOSITORY_INPUT_INVALID');
-  const output='evidence',diagnostics=join(output,'diagnostics');mkdirSync(diagnostics,{recursive:true});
-  const baseline=readPublishedArtifact({repo:options.repo,revision:options.base,scope:options.scope,diagnostics});
-  return publishRecoveryBaseline({...options,repoRoot:'tooling',output,baseline,readiness:JSON.parse(readFileSync('evidence/source-readiness/receipt.json','utf8'))});
+  return publishRecoveryBaseline(options);
  };
  run()
   .then(result=>process.stdout.write(JSON.stringify(result)+'\n')).catch(error=>{process.stderr.write(`${safeCode(readProperty(error,'code'))??'IMPLEMENTATION_CI_PUBLISH_FAILED'}\n`);process.exitCode=1;});

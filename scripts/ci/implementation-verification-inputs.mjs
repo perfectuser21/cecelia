@@ -1,6 +1,5 @@
 /** 派生verification输入的固定Git事实；事实层不授予入口、owner或执行资格。 */
 import {createHash} from 'node:crypto';
-import {readFileSync} from 'node:fs';
 import yaml from 'js-yaml';
 
 import {parse} from 'acorn';
@@ -186,62 +185,9 @@ const SLIM_BASIC_ENTRY_PROTOCOLS=[
 const COMMANDER_FOUNDATION_BASIC_CI="d20caae43b3156bde1b07d141c3bd54b888da847e9c78e3b21e1440fd848e59a";
 const ENTRY_PROTOCOLS_BY_WORKFLOW={[CURRENT_BASIC_CI]:CURRENT_BASIC_ENTRY_PROTOCOLS,[SLIM_BASIC_CI]:SLIM_BASIC_ENTRY_PROTOCOLS,
  [COMMANDER_FOUNDATION_BASIC_CI]:[SLIM_BASIC_ENTRY_PROTOCOLS[1]]};
-const SKILL_RETIREMENT_ENTRY_PROTOCOL = {
-  "packages/brain/vitest.config.js": "7fbba49f1b01db8020bcc233d5866fc6351f72e8dd7137fc8807372ed7f27971",
-  "scripts/ci/basic-scope.mjs": "dcc7b67cc8dd5df9a370754be400bd276c98c7e747acdfdd8b3f52dc8416c3c4",
-  "scripts/ci/run-basic-check.mjs": "a7eb0c2f679385f6f5d79127b226972bc3f9bcfd488363273fcdc1268547483d",
-  "scripts/ci/check-basic-results.mjs": "7b788eb490d0713542688ab88bbf0be5ffd458c8475dd8a6a4e91fe630e582ce",
-  "scripts/ci/basic-runtime-smoke.mjs": "b386b8c0c8631de5b6a0eec19494835f48c6ca3822a4533ee154ce8767a21eec",
-  "scripts/ci/ops-checks.mjs": "c3cf7da7f7dcbb1e4cd8112abdcab3c7ffc854adb371f65fd13158fe96aac510",
-  "scripts/ci/run-isolated-staging-smoke.mjs": "fa19da1eaf14621a75d95763229fa8d6de40ce3e55940401458346da37f8fbaf",
-  "apps/api/vitest.config.ts": "dbb1e74af497db63cbd2326c5378bb05ca036e1a4590dc2061dce2e5257e776a",
-  "scripts/ci/check-brain-version-bump.sh": "361c35c33c2d0d404d9365c51478212e50ebe84df6a65eacca473ea57bffa0eb",
-  ".github/actions/skills-source/action.yml": "f106e23e090e1fd1aca6c035f63478365cf4aae2e6b4f2d379569c0a22f18169",
-  "scripts/ci/check-skill-source-identity.py": "ebc6b90fbe187b49c31101a5dba997d133fd45825cfcaa3549aad30581d747c1",
-  "scripts/ci/__tests__/basic-skill-identity.test.mjs": "da2687bd8adc80808a580a7955d2c0c619a3defb694b1ecf3d72e8fa58ab163d",
-  "apps/dashboard/vitest.config.ts": "a5899ed07ee4aa8ff262f7da361d695ef8eb26005571c5e09988aac53c1cc261",
-  "scripts/ci/prepare-ubuntu-archive.mjs": "209dcc9a05110f433d9a53586d657d0f7d7da20c008d85147ffc7e11dd76ac88",
-  "scripts/ci/__tests__/basic-ubuntu-archive.test.mjs": "404af7e10ae55b4c25136ce6d20c4af086f49f399cc7b6b6b5da02884d7c79bf",
-  "scripts/skill_source_ownership.py": "20fca16bcf474588e9e4d0add00a66c5885b3d85a82275fb9082a0787e72b9a7",
-  "scripts/ci/resource-canary-scope.mjs": "c7f1e565ae6fb3a1d70f76e95ef301220aab45648473b60e45e7ebc530096d2b",
-  "scripts/ci/__tests__/basic-resource-canary-scope.test.mjs": "77d4feda65d9a810dd2308fd2cf9927ca94fd592f582727c9bfa24553c8e4763",
-  "scripts/ci/__tests__/basic-resource-canary.test.mjs": "27b46ce34355a9891c11a72368d19d618a7b44f28f6ca578afadc924212564df",
-  "scripts/ci/__tests__/basic-results.test.mjs": "1b41f80bbc2ecadd85b90b1b918a1bd065637ef9db067bf02f0d1218265d9802",
-  "scripts/ci/__tests__/basic-workflow.test.mjs": "bcdb34d8d3bacfb2cc5a011a7b97edb70d99357c8eed2de4e7a95451b40e6182",
-  "vitest.config.js": "3400f6ba2d5886c139535b28dc0ffde32cf50838c22f1946a1bba4415e695a71",
-  "packages/brain/src/workflows/__tests__/impact-contract-evaluator-receipts.skill-source.test.js": null, "packages/brain/src/__tests__/golden-path-skill-snapshot.skill-source.test.js": null, "packages/brain/src/__tests__/ci-defense.skill-source.test.ts": null, "packages/brain/src/__tests__/golden-path-contract-task.skill-source.test.js": null, "tests/contract-e2e-extractor.skill-source.test.ts": null, "packages/brain/vitest.skill-source.config.mjs": null, "vitest.skill-source.config.mjs": null, "scripts/ci/run-skill-source-check.mjs": null, "scripts/ci/skill-source-tests.mjs": null, "scripts/ci/__tests__/basic-skill-source-coverage.test.mjs": null
-};
-const PLANNER_RETIREMENT_ENTRY_PROTOCOL = {...SKILL_RETIREMENT_ENTRY_PROTOCOL,
-  "packages/brain/vitest.config.js": "1fe8d41c6d6f0761c553248ff320b5255a9276e2143ae9305b5183a844f0a7b8",
-  "packages/brain/src/planner.js": null, "packages/brain/src/__tests__/planner.test.js": null, "packages/brain/src/__tests__/planner-learning-penalty.test.js": null};
-const SKILL_RETIREMENT_CI = '7195c295058535d0a014e66343803d144647f2991120fe274ca8036728cb2ea9';
-const COMMANDER_AUDIT_ENTRY_PROTOCOL={...PLANNER_RETIREMENT_ENTRY_PROTOCOL,'packages/brain/vitest.config.js':'cf3307a3508e5feb473951fb645197d74a714c2c8decc44ec6bfe690982b17b5'};
-const SCRIPT_PROFILE_PATH='packages/brain/src/lib/existing-ops-script-cleanup-profile.json', SCRIPT_PROFILE_SHA='fc9b4df6a9c128f5186571e9a89f3a45c818171544730f88b1c5d5977247a98f', scriptProfileText=readFileSync(new URL('../../packages/brain/src/lib/existing-ops-script-cleanup-profile.json',import.meta.url),'utf8');
-if(sha(scriptProfileText)!==SCRIPT_PROFILE_SHA) fail('SCRIPT_PROFILE_MISMATCH');
-const SCRIPT_CLEANUP_ENTRY_PROTOCOL={...JSON.parse(scriptProfileText),[SCRIPT_PROFILE_PATH]:SCRIPT_PROFILE_SHA};
-const RESOURCE_PROFILE_PATH='packages/brain/src/lib/existing-ops-resource-retirement-profile.json', RESOURCE_PROFILE_SHA='0189fe174fa8ee2b734e4a05b42f296f83d7ebb36acd162813db266bce9252f3', resourceProfileText=readFileSync(new URL('../../packages/brain/src/lib/existing-ops-resource-retirement-profile.json',import.meta.url),'utf8');
-if(sha(resourceProfileText)!==RESOURCE_PROFILE_SHA) fail('RESOURCE_PROFILE_MISMATCH');
-const RESOURCE_RETIREMENT_ENTRY_PROTOCOL={...JSON.parse(resourceProfileText),[RESOURCE_PROFILE_PATH]:RESOURCE_PROFILE_SHA};
-const BUSINESS_PROFILE_PATH='packages/brain/src/lib/existing-ops-business-smoke-retirement-profile.json', BUSINESS_PROFILE_SHA='18e8a6aff7886a7875468d923010ef1936fb100b497abc17f9e09c05b83218bd', businessProfileText=readFileSync(new URL('../../packages/brain/src/lib/existing-ops-business-smoke-retirement-profile.json',import.meta.url),'utf8');
-if(sha(businessProfileText)!==BUSINESS_PROFILE_SHA) fail('BUSINESS_PROFILE_MISMATCH');
-const BUSINESS_SMOKE_RETIREMENT_ENTRY_PROTOCOL={...JSON.parse(businessProfileText),[BUSINESS_PROFILE_PATH]:BUSINESS_PROFILE_SHA};
-const FIXED_PROFILE_PATH='packages/brain/src/lib/existing-ops-fixed-checks-profile.json', FIXED_SHA='9cca439f60bccb91b84726e4a59d4f9b1f58782bab25fd135a68974262000aa2',fixedText=readFileSync(new URL('../../packages/brain/src/lib/existing-ops-fixed-checks-profile.json',import.meta.url),'utf8');
-if(sha(fixedText)!==FIXED_SHA)fail('FIXED_PROFILE_MISMATCH');
-const FIXED_CHECKS_ENTRY_PROTOCOL={...JSON.parse(fixedText),[FIXED_PROFILE_PATH]:FIXED_SHA};
-const FOUNDATION_PROFILE_PATH='packages/brain/src/lib/existing-ops-foundation-release-profile.json', FOUNDATION_PROFILE_SHA='1ff02f908373ff61365f413433f2ed1c61450e4c3ab813920631db38da862b57', foundationProfileText=readFileSync(new URL('../../packages/brain/src/lib/existing-ops-foundation-release-profile.json',import.meta.url),'utf8');
-if(sha(foundationProfileText)!==FOUNDATION_PROFILE_SHA) fail('FOUNDATION_PROFILE_MISMATCH');
-const FOUNDATION_RELEASE_ENTRY_PROTOCOL={...JSON.parse(foundationProfileText),[FOUNDATION_PROFILE_PATH]:FOUNDATION_PROFILE_SHA};
-const FOUNDATION_FIXED_CHECKS_ENTRY_PROTOCOL={...FIXED_CHECKS_ENTRY_PROTOCOL,[FOUNDATION_PROFILE_PATH]:FOUNDATION_PROFILE_SHA,'scripts/ci/__tests__/basic-workflow.test.mjs':'2d969e97dd0a72f8555400b041ec3772d1d85f0321b27bb7a4cac18d9458f807','scripts/ci/foundation-release-snapshot.mjs':FOUNDATION_RELEASE_ENTRY_PROTOCOL['scripts/ci/foundation-release-snapshot.mjs'],'scripts/ci/__tests__/foundation-release-readiness.test.mjs':'b0b806af90f3675c88e8e79d2d7f46fe9b2f801ab3cfdf1afb3d7f982fa782fc','scripts/ci/pilot-release-verification.mjs':FOUNDATION_RELEASE_ENTRY_PROTOCOL['scripts/ci/pilot-release-verification.mjs']};
-const CLOSEOUT_PROFILE_PATH='packages/brain/src/lib/existing-ops-closeout-profile.json',CLOSEOUT_SHA='7ccb681d2e3aa696bee74e109e028fb55b42b6ac29419d20d7e82fb908297c19',closeoutText=readFileSync(new URL('../../packages/brain/src/lib/existing-ops-closeout-profile.json',import.meta.url),'utf8');
-if(sha(closeoutText)!==CLOSEOUT_SHA)fail('CLOSEOUT_PROFILE_MISMATCH');
-const CLOSEOUT_ENTRY_PROTOCOL={...JSON.parse(closeoutText),[CLOSEOUT_PROFILE_PATH]:CLOSEOUT_SHA};
-const DORMANT_PROFILE_PATH='packages/brain/src/lib/existing-ops-dormant-boundaries-profile.json',DORMANT_SHA='c4e0d5cdda063ac3425146327b38562af8361f694b720e77066f91176a4dfd2a',dormantText=readFileSync(new URL('../../packages/brain/src/lib/existing-ops-dormant-boundaries-profile.json',import.meta.url),'utf8');
-if(sha(dormantText)!==DORMANT_SHA)fail('DORMANT_PROFILE_MISMATCH');
-const DORMANT_ENTRY_PROTOCOL={...JSON.parse(dormantText),[DORMANT_PROFILE_PATH]:DORMANT_SHA};
-const REPAIR_PROFILE_PATH='packages/brain/src/lib/existing-ops-checker-repair-profile.json',REPAIR_SHA='b9e11b26b52fc0f189542585581af7aa4d259ada5859bb88b8e7659c1905a776',repairText=readFileSync(new URL('../../packages/brain/src/lib/existing-ops-checker-repair-profile.json',import.meta.url),'utf8');
-if(sha(repairText)!==REPAIR_SHA)fail('CHECKER_REPAIR_PROFILE_MISMATCH');
-const CHECKER_REPAIR_ENTRY_PROTOCOL={...JSON.parse(repairText),[REPAIR_PROFILE_PATH]:REPAIR_SHA};
-const entryProtocolsFor = digest => digest === '68d48d86c12927eb533101cd0c47cd446dfa3e456cf733643d68e9ee72c7671a' ? [CHECKER_REPAIR_ENTRY_PROTOCOL] : digest === 'ec07185a4dd09572373d2f82de3ae5de4adcdec4e68f6c5fa35fa17f6a02bd3a' ? [DORMANT_ENTRY_PROTOCOL,CLOSEOUT_ENTRY_PROTOCOL] : digest === 'f0c62163548023720101d8608e3cbf156e5939b4721039f0606225c0fea3c5d0' ? [FOUNDATION_FIXED_CHECKS_ENTRY_PROTOCOL] : digest === 'b85efe37ad0cb363d9e0436758e45eb17355b21ad56c6053b60308b280f8fdb2' ? [FOUNDATION_RELEASE_ENTRY_PROTOCOL] : digest === '7569948b26aef8374c7f81935c29655a225375102e73992617309c3a8c8bcfa5' ? [FIXED_CHECKS_ENTRY_PROTOCOL] : digest === '763f9075175442249e9500a3d6c55936e2b7c424344f9319baac5fe08ccd5128' ? [RESOURCE_RETIREMENT_ENTRY_PROTOCOL] : digest === '1ac9c420d1ff0a6a681d486dd117c7c935b0c55f0e14f4ba98e2e730be68204a' ? [RESOURCE_RETIREMENT_ENTRY_PROTOCOL,BUSINESS_SMOKE_RETIREMENT_ENTRY_PROTOCOL] : digest === '014b5b54984ff322b0783c6070113199673efd53bb900ea9934d038de3cd5e5d' ? [COMMANDER_AUDIT_ENTRY_PROTOCOL,SCRIPT_CLEANUP_ENTRY_PROTOCOL] : digest === SKILL_RETIREMENT_CI ? [SKILL_RETIREMENT_ENTRY_PROTOCOL,PLANNER_RETIREMENT_ENTRY_PROTOCOL] : ENTRY_PROTOCOLS_BY_WORKFLOW[digest];
+// 历史factory资格cohort已退役；共享事实读取只承认既有基础入口封印。
+// 不读取调用者工作树的旧profile，也不以删除profile为由授予未知入口资格。
+const entryProtocolsFor = digest => ENTRY_PROTOCOLS_BY_WORKFLOW[digest];
 const functionalEntry=entry=>Boolean(entryProtocolsFor(entry?.canonical_sha256??''));
 const UNIT_CONFIGS=[
  {component:'brain',directory:'packages/brain',path:'packages/brain/vitest.config.js'},
@@ -255,7 +201,6 @@ function unitConfigs(path,entry){
  return UNIT_CONFIGS.filter(c=>path.startsWith(c.directory+'/')||c.component==='brain'&&/^(?:tests|sprints)\//.test(path));
 }
 function componentSelected(entry,component,paths){
- if(entry?.fixedChecks)return ['brain','dashboard','ops','scripts','image'].includes(component);
  if(functionalEntry(entry))return legacyPlanChecks(paths).some(row=>row.component===(component==='brain'?'brain-unit':component));
  return false;
 }
@@ -281,7 +226,6 @@ function unitEntry(read,side){
  const signature=sha(JSON.stringify(canonical(doc)));if(!entryProtocolsFor(signature))return null;
  const support=[workflow.reference];let selected;
  for(const seals of entryProtocolsFor(signature)){
-  if(read(side,REPAIR_PROFILE_PATH)?seals!==CHECKER_REPAIR_ENTRY_PROTOCOL:read(side,DORMANT_PROFILE_PATH)?seals!==DORMANT_ENTRY_PROTOCOL:read(side,CLOSEOUT_PROFILE_PATH)?seals!==CLOSEOUT_ENTRY_PROTOCOL:read(side,FIXED_PROFILE_PATH)?seals!==(read(side,FOUNDATION_PROFILE_PATH)?FOUNDATION_FIXED_CHECKS_ENTRY_PROTOCOL:FIXED_CHECKS_ENTRY_PROTOCOL):read(side,FOUNDATION_PROFILE_PATH)?seals!==FOUNDATION_RELEASE_ENTRY_PROTOCOL:read(side,BUSINESS_PROFILE_PATH)&&seals!==BUSINESS_SMOKE_RETIREMENT_ENTRY_PROTOCOL)continue;
   const files=[];let matches=true;
   for(const [path,expected] of Object.entries(seals)){
    const file=read(side,path);if(expected===null){if(file){matches=false;break;}continue;}if(file?.reference.sha256!==expected){matches=false;break;}
@@ -291,7 +235,7 @@ function unitEntry(read,side){
  }
  if(!selected)return null;
  support.push(...selected.map(({file})=>file.reference));
- return {profile:'basic',closeout:['68d48d86c12927eb533101cd0c47cd446dfa3e456cf733643d68e9ee72c7671a','ec07185a4dd09572373d2f82de3ae5de4adcdec4e68f6c5fa35fa17f6a02bd3a'].includes(signature),fixedChecks:['68d48d86c12927eb533101cd0c47cd446dfa3e456cf733643d68e9ee72c7671a','ec07185a4dd09572373d2f82de3ae5de4adcdec4e68f6c5fa35fa17f6a02bd3a','7569948b26aef8374c7f81935c29655a225375102e73992617309c3a8c8bcfa5','f0c62163548023720101d8608e3cbf156e5939b4721039f0606225c0fea3c5d0'].includes(signature),canonical_sha256:signature,workflow:workflow.reference,support,
+ return {profile:'basic',canonical_sha256:signature,workflow:workflow.reference,support,
   declaration_only:true,execution_status:'not_evaluated'};
 }
 function runnerSelector(path,entry,paths){
@@ -303,7 +247,7 @@ function runnerSelector(path,entry,paths){
    ||direct('scripts/__tests__',/^dashboard-release-bind.*\.test\.mjs$/)||direct('scripts/preview-agent/__tests__',/\.test\.mjs$/)
    ||direct('docker/cecelia-runner/__tests__',/\.test\.(?:cjs|sh)$/)||/^scripts\/ops\/__tests__\/.+\.test\.sh$/.test(path)
    ||['brain-compose-envfile-authority','brain-deploy-service-isolation','dashboard-sha-reconcile','deploy-chain-wounds','deploy-local-npm-cache','gate3-brain-deploy','runner-credential-single-chain','dashboard-staging-gate'].some(n=>path===`scripts/smoke/${n}-smoke.sh`);
-  if(ops){if(entry.closeout&&path==='scripts/smoke/deploy-chain-wounds-smoke.sh')return null;if(entry.fixedChecks)return !path.startsWith('docker/cecelia-runner/')&&!path.endsWith('/runner-credential-single-chain-smoke.sh')?{component:'ops',kind:'basic_ops_regular_test',owner:'scripts/ci/ops-checks.mjs'}:null;const domain=legacyDomainForTest(path),domains=legacyDomainsForChanges(paths);return componentSelected(entry,'ops',paths)&&domain&&(!domains||domains.has(domain))?{component:'ops',kind:'basic_ops_regular_test',owner:'scripts/ci/ops-checks.mjs'}:null;}
+  if(ops){const domain=legacyDomainForTest(path),domains=legacyDomainsForChanges(paths);return componentSelected(entry,'ops',paths)&&domain&&(!domains||domains.has(domain))?{component:'ops',kind:'basic_ops_regular_test',owner:'scripts/ci/ops-checks.mjs'}:null;}
  }
  if(direct('scripts/ci/__tests__',/^(basic-.*|run-basic-check|brain-source-only-deploy)\.test\.mjs$/))return {component:'scripts',kind:'basic_regular_node_test',owner:BASIC_RUNNER};
 

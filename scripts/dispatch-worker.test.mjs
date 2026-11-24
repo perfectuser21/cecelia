@@ -1,11 +1,13 @@
 import { test } from 'node:test';
+import fs from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join as pjoin } from 'node:path';
 import {
   detectQuotaWall, buildCommand, pickAccounts, dispatchWithRotation,
-  ACCOUNT_POOL, USABLE_THRESHOLD,
+  ACCOUNT_POOL, USABLE_THRESHOLD, queryUsage,
 } from './dispatch-worker.mjs';
 
 test('detectQuotaWall: 命中 07-16 实测 codex 撞墙原文', () => {
@@ -37,12 +39,25 @@ test('buildCommand: codex 用 CODEX_HOME + exec --cd --sandbox workspace-write',
   assert.equal(c.cwd, '/w');
 });
 
-test('buildCommand: claude 用真身路径 + CLAUDE_CONFIG_DIR（绝不用裸 claude）', () => {
-  const c = buildCommand('claude', { home: '/h/.claude' }, '任务书', '/w');
-  assert.equal(c.cmd, '/opt/homebrew/bin/claude');
-  assert.deepEqual(c.args, ['-p', '--dangerously-skip-permissions', '任务书']);
-  assert.equal(c.env.CLAUDE_CONFIG_DIR, '/h/.claude');
-  assert.equal(c.cwd, '/w');
+test('已退役 Claude 不构建执行命令', () => {
+  assert.throws(() => buildCommand('claude', { home: '/unused' }, '任务书', '/w'), /unknown vendor/);
+});
+
+test('已退役 Claude 额度查询拒绝且不读文件、不请求网络', async (t) => {
+  let reads = 0;
+  let requests = 0;
+  t.mock.method(fs, 'readFileSync', () => { reads++; throw new Error('文件读取被隔离'); });
+  t.mock.method(globalThis, 'fetch', async () => { requests++; throw new Error('网络请求被隔离'); });
+  syncBuiltinESMExports();
+  try {
+    const account = { vendor: 'claude', home: '/unused' };
+    assert.deepEqual(await queryUsage(account), { account, usable: false, usedPercent: 100 });
+    assert.equal(reads, 0);
+    assert.equal(requests, 0);
+  } finally {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  }
 });
 
 test('buildCommand: grok 用 -p --cwd --always-approve', () => {
@@ -59,7 +74,7 @@ test('buildCommand: 未知 vendor 抛错', () => {
 const U = (vendor, name, usable, usedPercent) => ({ account: { vendor, name, home: `/h/${name}` }, usable, usedPercent });
 
 test('pickAccounts: used_percent 升序，过滤不可用', () => {
-  const got = pickAccounts([U('codex','team2',false,100), U('codex','team1',true,0), U('claude','account2',true,13)], { vendor: 'auto' });
+  const got = pickAccounts([U('codex','team2',false,100), U('codex','team1',true,0), U('codex','account2',true,13)], { vendor: 'auto' });
   assert.deepEqual(got.map((u) => u.account.name), ['team1', 'account2']);
 });
 
@@ -69,7 +84,7 @@ test('pickAccounts: grok 恒可用垫底（usedPercent=Infinity）', () => {
 });
 
 test('pickAccounts: vendor 偏好过滤', () => {
-  const got = pickAccounts([U('codex','team1',true,0), U('claude','account2',true,13)], { vendor: 'claude' });
+  const got = pickAccounts([U('codex','team1',true,0), U('grok','account2',true,13)], { vendor: 'grok' });
   assert.deepEqual(got.map((u) => u.account.name), ['account2']);
 });
 

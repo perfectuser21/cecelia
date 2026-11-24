@@ -1,18 +1,25 @@
-# 修复 Notion 101 派单的业务绑定
+# 默认CI剩余死分支与重复执行清理
 
-Task: 8b4954b4-29b2-449f-9e6a-3a70d8bc67bd
+Task: 0e08424b-4724-48d3-82c9-058e44f732ce
 GP-Anchor: none(infra)
 
-- [ ] Notion 101 到点后使用已登记的 101 业务版本与轻量直执行宿主。过期和缺失绑定可见，其他委派路由保持。
-  Test: manual:cd packages/brain && npx --no-install vitest run src/__tests__/notion-leadgen-dispatch.test.js src/__tests__/notion-push-sync-marked-ingest.test.js
-- [ ] 同一页在真实隔离 PostgreSQL 中并发起单只生成一条任务，回执只更新源页并保留失败原因。
-  Test: manual:cd packages/brain && npx --no-install vitest run --config vitest.integration.config.js src/__tests__/integration/workflow-foundation.pg.integration.test.js
-  Test: manual:cd packages/brain && npx --no-install vitest run src/__tests__/notion-gtd-sync-push-and-stops.test.js src/__tests__/notion-qiumi-receipt-details.test.js
-- [ ] 独立执行入口只发起一次 Agent，收尾前读取原业务结果，以原 run 的可信清理凭证确认释放；回执中断后仅重送原回执。
-  Test: manual:cd packages/brain && npx --no-install vitest run scripts/standalone-skill/run.test.mjs scripts/standalone-skill/worker.test.mjs
-- [ ] Notion 建单仅由指定直执行宿主领取，旧 Commander 入口无法领取。真实隔离 PG 验证领取、固定启动、原单结算。
-  Test: manual:cd packages/brain && npx --no-install vitest run --config vitest.integration.config.js src/__tests__/integration/workflow-foundation.pg.integration.test.js
-- [ ] 独立适配器使用现有手机运行时发布证据固定本轮，先登记起跑再启动工具，业务入库只以工具独立读回确认。
-  Test: manual:cd packages/brain && npx --no-install vitest run scripts/standalone-skill/native-discovery.test.mjs
-- [ ] 四条获客 Workflow 的 Notion 标记各自绑定固定发布、原页和输入范围。仅登记了该流程的宿主可领取，未配置时原页明确回执。
-  Test: manual:cd packages/brain && npx --no-install vitest run src/__tests__/notion-push-sync-marked-ingest.test.js
+- [ ] Codex/Grok账号派发保留，Claude不可达命令和OAuth读取分支清退，旧平台拒绝且不访问文件或网络。
+  Test: manual:node --test scripts/dispatch-worker.test.mjs
+- [ ] 租约与设备锁的真实PG合同保留，无现役派发消费者的旧选台入口及专属断言成组清退。
+  Test: manual:cd packages/brain && npx --no-install vitest run --config vitest.integration.config.js src/__tests__/integration/task-lease-device-pool.pg.integration.test.js
+- [ ] 夜间汇总及其导入叶不重复执行，PR固定合同继续收集，自动覆盖清单准确反映真实导入保障。
+  Test: manual:node --test scripts/ci/__tests__/basic-brain-test-debt.test.mjs
+  Test: manual:node --test scripts/ci/__tests__/basic-integration-once.test.mjs
+- [ ] 无工作流消费者的旧Skill身份复合动作和n8n能力映射清退，现役构建源恢复与Skill真身所有权仍有效。
+  Test: manual:node scripts/ci/run-basic-check.mjs scripts
+
+- [ ] 仅清除旧Tick的孤立KR/Harness巡检与重复会话整理接线，现役调度和独立会话整理保持，剩余Tick合同继续执行。
+  Test: manual:cd packages/brain && npx --no-install vitest run --config vitest.integration.config.js src/__tests__/integration/tick-runner-full-tick.integration.test.js src/__tests__/integration/consciousness-tick-runtime.integration.test.js
+
+- [ ] 旧factory新采集入口返回410且不触发token、网络或数据库写入；历史唯一快照可读，歧义保持拒绝，不猜测最新版本。
+  Test: manual:cd packages/brain && npx --no-install vitest run --config ../../scripts/ci/deep-integration.config.mjs src/__tests__/integration/native-consumer-source-selection.pg.integration.test.js
+- [ ] 保留Foundation/ZenithJoy共享快照与固定发布产物读回、Infra现役登记、consumer evidence不可执行边界；启动与通用CLI不再依赖已退来源收集器。
+  Test: manual:cd packages/brain && npx --no-install vitest run --config ../../scripts/ci/deep-integration.config.mjs src/__tests__/integration/infra-consumer-source.pg.integration.test.js
+  Test: manual:node --test scripts/ci/__tests__/implementation-factory-retirement.test.mjs
+- [ ] 旧来源图模板与豁免清退，保留实际Claude通道禁用守卫与共享source_set合同。
+  Test: manual:cd packages/brain && npx --no-install vitest run src/__tests__/claude-channel-retired.guard.test.js src/lib/__tests__/workspace-ci-source-bundle.test.js src/lib/__tests__/consumer-source-set.test.js

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import {parse} from 'acorn';
 import {mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync, symlinkSync, realpathSync, lstatSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join, relative, dirname} from 'node:path';
@@ -21,9 +22,29 @@ const yaml = require('js-yaml');
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 const brainRoot = join(root, 'packages/brain');
 const categories = new Set(['isolated_fixture', 'external_resource', 'legacy_spec', 'unknown']);
-const select = (config, cwd) => glob.sync(config.test.include, {
-  cwd, absolute: true, ignore: ['**/node_modules/**', ...(config.test.exclude || [])],
-}).map(file => relative(root, file));
+function select(config, cwd) {
+  const files = glob.sync(config.test.include, {
+    cwd, absolute: true, ignore: ['**/node_modules/**', ...(config.test.exclude || [])],
+  });
+  // 静态test导入会被真实Vitest入口执行；独立发现排除不等于未覆盖。
+  // 保留原维护目录白名单；不追动态/条件导入或普通helper，也不把JS parser用于TS/JSX。
+  const allowed = new Set(glob.sync(maintainedPatterns, {cwd, absolute: true, ignore: ['**/node_modules/**']}));
+  const visited = new Set(files);
+  for (let index = 0; index < files.length; index++) {
+    const file = files[index];
+    if (!/\.[cm]?js$/.test(file)) continue;
+    let ast;
+    try { ast = parse(readFileSync(file, 'utf8'), {ecmaVersion: 'latest', sourceType: 'module'}); }
+    catch { continue; }
+    for (const node of ast.body) {
+      const source = node.type === 'ImportDeclaration' ? node.source.value : null;
+      if (!source?.startsWith('.') || !/\.(test|spec)\.[cm]?js$/.test(source)) continue;
+      const dependency = join(dirname(file), source);
+      if (allowed.has(dependency) && !visited.has(dependency)) { visited.add(dependency); files.push(dependency); }
+    }
+  }
+  return files.map(file => relative(root, file));
+}
 
 function assertDebtMatches({maintained, selected, manualRoot, entries, canonicalRoot}) {
   assert.ok(maintained.length > 0, '维护测试集合不能为空');
@@ -374,4 +395,33 @@ for(const mutation of ['--list','if false','heredoc','错误cwd','job-if-false',
 }
 test('browser自动接入拒绝固定配置字节漂移，不能借同名任意config取得资格',()=>{
  assert.equal(browserLane(loadWorkflows().browser,browserConfig()+'\n// drift\n'),false);
+});
+
+
+test('自动库存包含顶层静态test导入闭包，但动态/条件/helper字符串不能冒充执行',()=>{
+  const directory=mkdtempSync(join(tmpdir(),'brain-test-import-closure-'));
+  mkdirSync(join(directory,'src'));
+  const sourceRoot=join(directory,'src');
+  try{
+    const wrapper=join(sourceRoot,'wrapper.test.js'),leaf=join(sourceRoot,'leaf.test.js'),nested=join(sourceRoot,'nested.spec.mjs');
+    writeFileSync(leaf,"import './nested.spec.mjs';\n");writeFileSync(nested,'export const value=1;');
+    const selected=()=>select({test:{include:['src/wrapper.test.js'],exclude:[]}},directory);
+    for(const source of ["import './leaf.test.js';", "import {value} from './leaf.test.js';"]){
+      writeFileSync(wrapper,source);
+      assert.ok(selected().includes(relative(root,leaf)),'真实静态test导入必须计入自动覆盖');
+      assert.ok(selected().includes(relative(root,nested)),'静态test闭包必须递归');
+    }
+    for(const source of ["if(false)import('./leaf.test.js');", "const p='./leaf.test.js';", "import './helper.js';"]){
+      writeFileSync(wrapper,source);writeFileSync(join(sourceRoot,'helper.js'),"const p='./leaf.test.js';");
+      assert.ok(!selected().includes(relative(root,leaf)),'条件/动态/非test helper不得吞掉债务');
+    }
+    writeFileSync(join(directory,'outside.test.js'),'export const value=1;');
+    writeFileSync(wrapper,"import '../outside.test.js';");
+    assert.ok(!selected().includes(relative(root,join(directory,'outside.test.js'))),'静态import不得扩大维护目录白名单');
+    writeFileSync(wrapper,"import './missing.test.js';");
+    assert.ok(!selected().includes(relative(root,join(sourceRoot,'missing.test.js'))));
+    // 选中的TS入口本身已覆盖，不能用JS parser硬解析TS或扩大维护目录。
+    writeFileSync(join(sourceRoot,'typed.test.ts'),'const value: number = 1;');
+    assert.ok(select({test:{include:['src/typed.test.ts']}},directory).includes(relative(root,join(sourceRoot,'typed.test.ts'))));
+  }finally{rmSync(directory,{recursive:true,force:true});}
 });

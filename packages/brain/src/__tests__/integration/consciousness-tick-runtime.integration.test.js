@@ -197,7 +197,6 @@ vi.mock('../../credential-expiry-checker.js', () => ({
 vi.mock('../../rumination.js', () => ({ runRumination: vi.fn().mockResolvedValue({ accumulator: 0 }) }));
 vi.mock('../../diary-scheduler.js', () => ({ generateDailyDiaryIfNeeded: vi.fn().mockResolvedValue({}) }));
 
-vi.mock('../../conversation-consolidator.js', () => ({ runConversationConsolidator: vi.fn().mockResolvedValue({}) }));
 vi.mock('../../evolution-scanner.js', () => ({
   scanEvolutionIfNeeded: vi.fn().mockResolvedValue({}),
 }));

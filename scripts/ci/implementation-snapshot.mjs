@@ -1,6 +1,5 @@
 import {INFRA_CONSUMER_SCOPE,buildInfraConsumerSources,registerInfraConsumerSources,readInfraConsumerRegistry,prepareInfraManifestAdvance} from '../../packages/brain/src/lib/infra-consumer-source.js';
 /** 仅scratch：复用中央身份和正式投影器，固定git产生两侧不可变图。 */
-import {createImplementationScratch} from './implementation-scratch.mjs';
 export {createImplementationScratch} from './implementation-scratch.mjs';
 import {fixedLocalGit,readFixedLocalGitBlob,fixedLocalSourceOptions} from './fixed-local-git.mjs';
 import { loadActivityContracts } from '../../packages/brain/src/lib/activity-contract-loader.js';
@@ -10,19 +9,12 @@ import { exportImplementationSnapshot } from '../../packages/brain/src/lib/imple
 import { stepSha256 } from '../../packages/brain/scripts/sync-steps-from-workspace.mjs';
 import { lintImplementationRegistry } from './registry-lint.mjs';
 import { classifyAssertionRef } from '../../packages/brain/src/lib/gp-assertion-command.js';
-import {fileURLToPath} from 'node:url';
-import {collectScratchWorkspaceConsumerSourceSet,readWorkspaceConsumerBrainRevisions} from '../../packages/brain/src/lib/consumer-source-set.js';
-import {tmpdir} from 'node:os';
-import {join} from 'node:path';
-import { realpathSync,mkdtempSync,rmSync } from 'node:fs';
+import { realpathSync } from 'node:fs';
 import { validateImplementationSnapshot,validateImplementationSnapshotForDatabase,implementationSourceOwners,ciFailure,isImplementationScratchDatabase } from '../../packages/brain/src/lib/implementation-ci-snapshot.js';
 import { runProjection } from '../../packages/brain/src/map/projector.js';
 import { digestMapManifest,validateMapManifest } from '../../packages/brain/src/lib/map-manifest-schema.js';
 import { replaceRepoEdges } from '../../packages/brain/src/lib/graph-store.js';
-import { EXISTING_OPS_SCOPE,buildExistingOpsSources } from '../../packages/brain/src/lib/existing-ops-source.js';
-import { collectWorkspaceInputEdges } from '../../packages/brain/src/lib/existing-ops-workspace-source.js';
-import { readExistingOpsRegistry,registerExistingOpsSources,prepareExistingOpsManifestAdvance } from '../../packages/brain/src/lib/existing-ops-registration.js';
-import {preparePilotManifestAdvance,advancePilotManifest} from '../../packages/brain/src/lib/implementation-ci-pilot-manifest.js';
+import { EXISTING_OPS_SCOPE } from '../../packages/brain/src/lib/existing-ops-source.js';
 
 const TABLE_KEYS={map_scope_repositories:['scope_key','repo']};
 async function insertRow(db,table,row,{immutable=false,preserve=[]}={}){
@@ -98,47 +90,13 @@ export function definitionEdges(s){
   return edges;
 }
 export async function verifySnapshotSource(s,repoRoot,{db}={}){
+  if(s.scope===EXISTING_OPS_SCOPE)throw ciFailure('FACTORY_COLLECTION_RETIRED','工厂消费者来源重验已退役；既有历史仍可只读查询',410);
   if(db)await validateImplementationSnapshotForDatabase(db,s);else validateImplementationSnapshot(s);
   if(s.scope===INFRA_CONSUMER_SCOPE){
     const paths=fixedLocalGit(repoRoot,['ls-tree','-rz','--name-only',s.revision],{encoding:'utf8'}).split('\0').filter(Boolean);
     const proof=await buildInfraConsumerSources({...s,paths,readSource:async path=>readFixedLocalGitBlob(repoRoot,{revision:s.revision,path}).toString('utf8')});
     const activity=s.definitions.activities[0];
     if(stepSha256(activity?.payload.implementation_bindings)!==stepSha256(proof.bindings)||stepSha256(activity?.payload.input_relations)!==stepSha256(proof.input_relations))throw ciFailure('CONSUMER_SOURCE_MISMATCH');
-    return s;
-  }
-  if(s.scope===EXISTING_OPS_SCOPE&&s.repo==='perfectuser21/zenithjoy-workspace'){
-    const proof=await scratchWorkspaceProof(db,s.revision,repoRoot,s.registry_source);
-    const nativeRoot=fileURLToPath(new URL('../../',import.meta.url)),anchor=s.registry_source;
-    const paths=fixedLocalGit(nativeRoot,['ls-tree','-rz','--name-only',anchor.revision],{encoding:'utf8'}).replace(/\0$/,'').split('\0');
-    const native=await buildExistingOpsSources({scope:s.scope,repo:anchor.repo,revision:anchor.revision,paths,
-      readSource:async path=>readFixedLocalGitBlob(nativeRoot,{revision:anchor.revision,path}).toString('utf8')});
-    for(const consumer of native.consumers){
-      const activity=s.definitions.activities.find(a=>a.activity_id===consumer.activity_id);
-      const extra=consumer.activity_id===proof.consumer.activity_id?proof.consumer.bindings:[];
-      const expected=[...new Map([...consumer.bindings,...extra].map(b=>[JSON.stringify([b.repo,b.revision,b.path]),b])).values()];
-      const actual=activity?.payload.implementation_bindings||[];
-      const relations=[...consumer.input_relations,...(extra.length?proof.consumer.input_relations:[])];
-      if(consumer.status!=='verified'||actual.length!==expected.length
-        ||expected.some(binding=>!actual.some(b=>stepSha256(b)===stepSha256(binding)))
-        ||stepSha256(activity?.payload.input_relations)!==stepSha256(relations))throw ciFailure('CONSUMER_SOURCE_MISMATCH');
-    }
-    return s;
-  }
-  if(s.scope===EXISTING_OPS_SCOPE){
-    const paths=fixedLocalGit(repoRoot,['ls-tree','-rz','--name-only',s.revision],{encoding:'utf8'}).replace(/\0$/,'').split('\0');
-    const readSource=async path=>fixedLocalGit(repoRoot,['show',`${s.revision}:${path}`],{encoding:'utf8'});
-    const proof=await buildExistingOpsSources({scope:s.scope,repo:s.repo,revision:s.revision,paths,readSource});
-    if(proof.consumers.some(c=>c.status!=='verified'||c.gaps.length))throw ciFailure('CONSUMER_SOURCE_MISMATCH');
-    for(const consumer of proof.consumers){
-      const workflow=s.definitions.workflows.find(w=>w.workflow_id===consumer.workflow_id);
-      const activity=s.definitions.activities.find(a=>a.activity_id===consumer.activity_id);
-      if(!workflow||!activity||workflow.payload.definition_scope!=='consumer_evidence'||activity.payload.definition_scope!=='consumer_evidence'||
-        workflow.payload.source_scope!==s.scope||activity.payload.source_scope!==s.scope||workflow.payload.contract.executable!==false||
-        stepSha256(activity.payload.implementation_bindings)!==stepSha256(consumer.bindings)||
-        stepSha256(activity.payload.input_relations)!==stepSha256(consumer.input_relations)||
-        workflow.payload.registration_sha256!==s.consumer_registry?.registry_sha256||activity.payload.registration_sha256!==s.consumer_registry?.registry_sha256)
-        throw ciFailure('CONSUMER_SOURCE_MISMATCH');
-    }
     return s;
   }
   return verifyGeneratedSource(s,repoRoot);
@@ -160,18 +118,8 @@ export async function projectImplementationSnapshot(db,s,repoRoot){
   await validateImplementationSnapshotForDatabase(db,s);
   s=await verifySnapshotSource(s,repoRoot,{db});
   const edges=definitionEdges(s); // 在写隔离扫描图之前先拒绝无效定义路径。
-  const cross=s.scope===EXISTING_OPS_SCOPE&&s.repo==='perfectuser21/zenithjoy-workspace';
   const registryRepo=s.map.repositories[0].repo;
-  await scanFixedImplementationGraph(db,cross?s.repo:registryRepo,repoRoot,s.revision,edges,undefined,s.repo);
-  if(cross){
-    const nativeRoot=fileURLToPath(new URL('../../',import.meta.url)),dir=mkdtempSync(join(tmpdir(),'implementation-native-graph-'));
-    try{
-      fixedLocalGit(nativeRoot,['clone','--shared','--no-checkout','--quiet',nativeRoot,dir],{localClone:true});
-      fixedLocalGit(dir,['checkout','--quiet','--detach',s.registry_source.revision]);
-      const nativeEdges=definitionEdges({...s,repo:s.registry_source.repo,revision:s.registry_source.revision,assertions:[]});
-      await scanFixedImplementationGraph(db,registryRepo,dir,s.registry_source.revision,nativeEdges,'cecelia',s.registry_source.repo);
-    }finally{rmSync(dir,{recursive:true,force:true});}
-  }
+  await scanFixedImplementationGraph(db,registryRepo,repoRoot,s.revision,edges);
   const manifest=structuredClone(s.map.manifest.manifest);
   // 组织UUID仍来自登记；仅本次隔离扫描的source_revision重新钉到实际Git。
   for(const node of [...manifest.value_streams,...manifest.capabilities])if(node.brain_binding?.source_repo===s.repo)node.brain_binding.source_revision=s.revision;
@@ -193,12 +141,13 @@ export async function projectImplementationSnapshot(db,s,repoRoot){
  * Production continues to use the authenticated manifest store unchanged.
  */
 export async function advanceExistingOpsScratchManifest(db,query){
+  if(query.scope===EXISTING_OPS_SCOPE)throw ciFailure('FACTORY_COLLECTION_RETIRED','工厂消费者来源地图推进已退役',410);
   const checkScratch=async()=>{
     const name=(await db.query('SELECT current_database() name')).rows[0].name;
     if(!isImplementationScratchDatabase(name))throw ciFailure('SCRATCH_REQUIRED');
   };
   await checkScratch();
-  const plan=await (query.scope===INFRA_CONSUMER_SCOPE?prepareInfraManifestAdvance:prepareExistingOpsManifestAdvance)(db,query);
+  const plan=await prepareInfraManifestAdvance(db,query);
   if(!plan)return;
   if(!validateMapManifest(plan.manifest).valid)throw ciFailure('SCRATCH_MANIFEST_INVALID');
   const client=await db.connect(),digest=digestMapManifest(plan.manifest);
@@ -224,25 +173,7 @@ export async function advanceExistingOpsScratchManifest(db,query){
 export async function buildPrImplementationSnapshot(db,registry,revision,repoRoot){
   if(registry.scope==='cecelia-kr'&&registry.repo==='perfectuser21/cecelia')throw ciFailure('KR_ANALYSIS_RETIRED','公司KR自动分析候选登记已退役',410);
   const read=path=>fixedLocalGit(repoRoot,['show',`${revision}:${path}`],{encoding:'utf8'});
-  if(registry.scope===EXISTING_OPS_SCOPE){
-    await validateImplementationSnapshotForDatabase(db,registry);
-    if(registry.status!=='verified'||registry.gaps.length||registry.snapshot_scope!=='consumer_evidence')throw ciFailure('REGISTRY_UNKNOWN');
-    // 候选只落既有真实scratch，绝不把PR来源登记到中央生产库。
-    const checkScratch=async()=>{const name=(await db.query('SELECT current_database() name')).rows[0].name;if(!isImplementationScratchDatabase(name))throw ciFailure('SCRATCH_REQUIRED');};
-    await checkScratch();
-    const cross=registry.repo==='perfectuser21/zenithjoy-workspace';
-    const anchor=cross?registry.registry_source:{repo:registry.repo,revision};
-    if(!anchor||anchor.repo!=='perfectuser21/cecelia')throw ciFailure('CONSUMER_SOURCE_MISMATCH');
-    const nativeRoot=cross?fileURLToPath(new URL('../../',import.meta.url)):repoRoot;
-    const paths=fixedLocalGit(nativeRoot,['ls-tree','-rz','--name-only',anchor.revision],{encoding:'utf8'}).replace(/\0$/,'').split('\0');
-    const nativeRead=path=>fixedLocalGit(nativeRoot,['show',`${anchor.revision}:${path}`],{encoding:'utf8'});
-    const workspaceConsumerProof=cross?await scratchWorkspaceProof(db,revision,repoRoot,anchor):undefined;
-    const before=await readExistingOpsRegistry(db);
-    await registerExistingOpsSources(db,{scope:registry.scope,repo:anchor.repo,revision:anchor.revision,paths,readSource:nativeRead,workspaceConsumerProof,mode:'scratch_candidate',
-      expectedRegistrySha256:before.registry_sha256,actor:'implementation-ci-scratch-candidate'});
-    await advanceExistingOpsScratchManifest(db,{scope:registry.scope,repo:anchor.repo,revision:anchor.revision});
-    return exportImplementationSnapshot(db,{scope:registry.scope,repo:registry.repo,revision});
-  }
+  if(registry.scope===EXISTING_OPS_SCOPE)throw ciFailure('FACTORY_COLLECTION_RETIRED','工厂消费者来源候选采集已退役',410);
   if(registry.scope===INFRA_CONSUMER_SCOPE){
     const paths=fixedLocalGit(repoRoot,['ls-tree','-rz','--name-only',revision],{encoding:'utf8'}).split('\0').filter(Boolean);
     const before=await readInfraConsumerRegistry(db);
@@ -266,33 +197,14 @@ export async function buildPrImplementationSnapshot(db,registry,revision,repoRoo
   return {...body,snapshot_sha256:stepSha256(body)};
 }
 
-async function scratchWorkspaceProof(db,revision,repoRoot,anchor){
- if(!db)throw ciFailure('SCRATCH_REQUIRED');
- const workspace={repo:'perfectuser21/zenithjoy-workspace',revision},nativeRoot=fileURLToPath(new URL('../../',import.meta.url));
- const readSource=async source=>readFixedLocalGitBlob(source.repo===workspace.repo?repoRoot:nativeRoot,source);
- const revisions=await readWorkspaceConsumerBrainRevisions(workspace,readSource);
- const {EXISTING_OPS_IDENTITIES}=await import('../../packages/brain/src/lib/existing-ops-source.js');
- const {unverified_reference_ids,...identity}=EXISTING_OPS_IDENTITIES.find(i=>i.workflow_key==='factory_f3_ops');
- const proof=await collectScratchWorkspaceConsumerSourceSet(db,{workspace,brain:{repo:'perfectuser21/cecelia',revisions},identity,anchor},{readSource});
- if(proof.status!=='verified')throw ciFailure('CONSUMER_SOURCE_MISMATCH');return proof;
-}
-
-async function scanFixedImplementationGraph(db,repo,root,revision,edges,sourceName,sourceRepo){
+async function scanFixedImplementationGraph(db,repo,root,revision,edges){
  // Frozen-definition readers do not need the scanner's root dependencies.
  const {scanRepo}=await import('../scan/scan-graph.mjs');
  const staging=`ci-scan:${repo}`;
- const result=await scanRepo({name:staging,root:realpathSync(root),...(sourceName?{sourceName}:{})},db);
+ const result=await scanRepo({name:staging,root:realpathSync(root)},db);
  if(result.error||result.skipped||result.sourceRevision!==revision)throw ciFailure('GRAPH_SCAN_FAILED',result.error?.message||'scan revision mismatch');
  const raw=(await db.query('SELECT src_path,dst_path,edge_type,detail FROM graph_edges WHERE repo=$1',[staging])).rows;
  const byKey=new Map(raw.map(e=>[JSON.stringify([e.src_path,e.dst_path,e.edge_type]),e]));
- // 仅本机CI scratch升级原生输入解析；不改冻结definition或中央生产graph。
- if(sourceRepo==='perfectuser21/cecelia'){
-  const {parse}=await import('acorn');
-  const paths=fixedLocalGit(root,['ls-tree','-rz','--name-only',revision],{encoding:'utf8'}).split('\0').filter(Boolean);
-  const inputs=await collectWorkspaceInputEdges({revision,paths,parse:text=>parse(text,{ecmaVersion:'latest',sourceType:'module'}),
-    readSource:async path=>fixedLocalGit(root,['show',`${revision}:${path}`],{encoding:'utf8'})});
-  for(const edge of inputs)byKey.set(JSON.stringify([edge.src_path,edge.dst_path,edge.edge_type]),edge);
- }
  for(const edge of edges){const key=JSON.stringify([edge.src_path,edge.dst_path,edge.edge_type]);if(!byKey.has(key))byKey.set(key,edge);}
- await replaceRepoEdges(db,repo,[...byKey.values()],{sourceRevision:revision,scannerVersion:'implementation-ci-v2-workspace-inputs'});
+ await replaceRepoEdges(db,repo,[...byKey.values()],{sourceRevision:revision,scannerVersion:'implementation-ci-v3-frozen-definition'});
 }
