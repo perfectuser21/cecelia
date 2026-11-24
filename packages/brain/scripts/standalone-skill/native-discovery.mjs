@@ -13,6 +13,7 @@ const execute = promisify(execFile);
 // 发布 Profile 包含完整冻结定义和已核验部署文件清单。
 const maxProfileBytes = 8 * 1024 * 1024;
 const discoveryKey = 'douyin_video_discovery';
+const collectionKey = 'douyin_video_processing';
 const scoringKey = 'douyin_comment_scoring';
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
 const same = (left, right, hash) => hash(left) === hash(right);
@@ -38,13 +39,19 @@ export async function createDiscoveryServices(job, {profile, skillPath, stateRoo
   const input = job.input;
   const key = job.workflow_key ?? discoveryKey;
   const scoring = key === scoringKey;
-  const stage = scoring ? '103' : '101';
-  const businessRange = scoring ? { source_run: input?.business?.source_run } : {};
+  const collection = key === collectionKey;
+  const hasSource = scoring || collection;
+  const stage = scoring ? '103' : collection ? '102' : '101';
+  const businessRange = hasSource ? { source_run: input?.business?.source_run } : {};
   const keyword = input?.business?.keyword;
-  const approvedKeywords = scoring ? [] : [keyword];
-  const validBusiness = scoring ? /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,119}$/.test(businessRange.source_run ?? '')
-    && resource?.profile === 'mmv-scoring' && resource.serial === 'none' && resource.account === 'none'
-    : key === discoveryKey && typeof keyword === 'string' && input?.business?.max_candidates === 1;
+  const approvedKeywords = hasSource ? [] : [keyword];
+  const validSource = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,119}$/.test(businessRange.source_run ?? '')
+    && businessRange.source_run !== job.run_id;
+  const validResource = scoring
+    ? resource?.profile === 'mmv-scoring' && resource.serial === 'none' && resource.account === 'none'
+    : [resource?.profile,resource?.serial,resource?.account].every(value => typeof value === 'string' && value !== '' && value !== 'none');
+  const validBusiness = validResource && (hasSource ? validSource
+    : key === discoveryKey && typeof keyword === 'string' && input?.business?.max_candidates === 1);
   if (cfg?.primary_host !== 'codex-exec-v1' || cfg.workflow_key !== key || resource?.machine !== job.machine_id
     || source?.release?.id !== job.release_id || source.workflow_version?.id !== job.definition?.workflow_definition_version_id
     || source.deployment?.observation_id !== job.definition?.observation_id || !validBusiness) {
@@ -72,7 +79,7 @@ export async function createDiscoveryServices(job, {profile, skillPath, stateRoo
     ...agentInput({
       ...cfg.env, LEADGEN_EXECUTION_MODE:'agent', WF_BRAIN_WORKFLOW:key, WF_BRAIN_TASK_ID:job.task_id, WFR_TAG:job.run_id,
       P:resource.profile, SERIAL:resource.serial, LEADGEN_LINE:resource.line, LEADGEN_LIMIT:'1',
-      ...(scoring ? { LEADGEN_SOURCE_RUN:businessRange.source_run } : {}),
+      ...(hasSource ? { LEADGEN_SOURCE_RUN:businessRange.source_run } : {}),
       WF_RUN_START_TS:String(start), WF_RUN_MAX_SECONDS:String(work+grace),
     }),
     source_commit:source.deployment.source_commit, expected_account:resource.account, company,
@@ -121,8 +128,9 @@ export async function createDiscoveryServices(job, {profile, skillPath, stateRoo
         '通过以下本轮工具连接执行，不直接读取宿主凭据或访问业务数据库。',
         JSON.stringify({tool_command:[process.execPath,join(dir,'runtime','standalone-skill-runtime.mjs'),'call',connectionPath],
           tool_protocol:`在命令尾追加 ${scoring ? 'inspect 或 business' : 'inspect、phone 或 business'}，并将参数对象通过 stdin 传入。`,
-          ...(scoring ? businessRange : {metrics_command:[process.execPath,join(dir,'runtime','standalone-skill-runtime.mjs'),'metrics',dir],keyword})}),
+          ...(hasSource ? businessRange : {metrics_command:[process.execPath,join(dir,'runtime','standalone-skill-runtime.mjs'),'metrics',dir],keyword})}),
         scoring ? '按 Skill 调用 score_input 取得冻结评论和政策。由当前 Agent 评分，用 score_submit 提交结论。随后核验原评分、标记及配送。提交回执不明时只读回原操作。'
+          : collection ? '按 Skill 从本轮固定的 101 来源领取视频，完成资格与评论采样、持久化并做真实范围读回。部分提交保留已有结果。'
           : '最终只返回 JSON 对象 {"video": <提交给 discover 的同一个 video 对象>}。没有入库候选时返回 {"video":null}。',
       ].join('\n');
       if (runModel) return runModel({connectionPath,modelOutput,prompt});
@@ -142,6 +150,19 @@ export async function createDiscoveryServices(job, {profile, skillPath, stateRoo
           ||delivery.some(([id,status])=>!uuid.test(id)||!['confirmed','excluded'].includes(status))) return null;
         return {summary:'一条指定来源评论已完成评分与标记，实际配送状态已读回',
           evidence:[`leadgen:comment:${comments[0]}`,...leads.map(id=>`leadgen:lead:${id}`),...delivery.map(([id,status])=>`leadgen:delivery:${id}:${status}`)]};
+      }
+      if (collection) {
+        const proof = await nativeHost?.readEvidence?.();
+        const videoId = proof?.video_id, comments = proof?.comment_ids;
+        if (proof?.source_run !== businessRange.source_run || typeof videoId !== 'string'
+          || !/^\d{16,24}$/.test(videoId) || proof.video_url !== 'https://www.douyin.com/video/' + videoId
+          || proof.qualification !== 'matched' || !['sampled','exhausted'].includes(proof.coverage)
+          || !Number.isInteger(proof.sample_target) || proof.sample_target < 1 || proof.sample_target > 5
+          || !Array.isArray(comments) || !comments.length || comments.length > proof.sample_target
+          || new Set(comments).size !== comments.length || !comments.every(value => uuid.test(value))
+          || proof.coverage === 'sampled' && comments.length !== proof.sample_target) return null;
+        return { summary:'已按指定视频完成资格判断及评论采集，评论已持久化读回',
+          evidence:[proof.video_url,...comments.map(id=>`leadgen:comment:${id}`)] };
       }
       const result = JSON.parse(readOwnedFile(modelOutput));
       return confirmDiscovery(result.video, keyword, (operation,payload)=>callStandaloneSkillTool(connectionPath,operation,payload));
