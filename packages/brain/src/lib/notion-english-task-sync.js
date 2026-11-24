@@ -3,7 +3,7 @@ import {syncTaskProgress} from '../projection/task-progress.js';
 import {enStatusFor} from './qiumi-status-map.js';
 
 export const resultTextOf = (result) => {
-  const receipt = result?.receipt ?? result ?? {};
+  const receipt = result?.standalone_receipt ?? result?.receipt ?? result ?? {};
   return String(receipt.finalAssistantVisibleText ?? receipt.text ?? receipt.summary ?? '').slice(0, 1900);
 };
 
@@ -14,11 +14,11 @@ export async function pushEnglishTask(token, task, request) {
   const status = enStatusFor(task.status, {blockedReason: task.blocked_reason});
   const previous = task.notion_props?.qiumi_pushed_en_status ?? 'Delegated';
   if (![previous, status].includes(current)) return 'human';
-  const receipt = task.result?.receipt ?? task.result ?? {};
+  const receipt = task.result?.standalone_receipt ?? task.result?.receipt ?? task.result ?? {};
   const feedback = ['queued', 'in_progress', 'blocked'].includes(task.status)
     ? task.notion_props?.qiumi_control_feedback : null;
   const foundationReason = task.result?.foundation_reconciliation ? task.error_message ?? task.blocked_detail?.reason : null;
-  const summary = [resultTextOf(task.result), foundationReason, feedback].filter(Boolean).join('\n');
+  const summary = [resultTextOf(task.result), task.result?.standalone_receipt?.reason ?? foundationReason, feedback].filter(Boolean).join('\n');
   const evidence = Array.isArray(receipt.evidence) ? receipt.evidence.map(item => typeof item === 'string' ? item : item?.ref).filter(ref => typeof ref === 'string') : [];
   await syncTaskProgress(token, task.en_page_id, {
     title: task.title, description: task.title, status,

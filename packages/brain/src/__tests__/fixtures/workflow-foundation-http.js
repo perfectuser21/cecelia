@@ -4,6 +4,7 @@ import path from 'node:path';
 import {randomUUID,createHash} from 'node:crypto';
 import {spawn,spawnSync} from 'node:child_process';
 import {createReleasesRouter} from '../../routes/releases.js';
+import {createRunDefinitionsRouter} from '../../routes/run-definitions.js';
 import {createWorkflowFoundationRouter} from '../../routes/workflow-foundation.js';
 import {workflowFoundationDatabase} from './workflow-foundation-db.js';
 import processState from '../../orchestrator/activity-supervisor-state.cjs';
@@ -17,6 +18,7 @@ export async function foundationHttpFixture(options={}){
  const env={...process.env,COMMANDER_DATABASE_URL:url,COMMANDER_DATABASE_SCHEMA:db.schema,COMMANDER_DBOS_SCHEMA:db.dbosSchema,DBOS_DURABLE_ENABLED:'true',CECELIA_INTERNAL_TOKEN:token};
  const app=express();app.use(express.json());
  app.use('/api/brain/releases',createReleasesRouter({pool:db.pool,trustedCollectors:['fixture-collector']}));
+ app.use('/api/brain/runs',createRunDefinitionsRouter({pool:db.pool}));
  app.use('/api/brain/workflow-foundation',createWorkflowFoundationRouter({pool:db.pool,services:{env}}));
  const server=await new Promise(resolve=>{const s=app.listen(0,'127.0.0.1',()=>resolve(s));});
  const base=`http://127.0.0.1:${server.address().port}`,children=[];

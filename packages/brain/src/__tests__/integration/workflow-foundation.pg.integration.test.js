@@ -19,6 +19,8 @@ afterAll(() => vi.unstubAllEnvs());
 import {workflowFoundationDatabase} from '../fixtures/workflow-foundation-db.js';
 import fs from 'node:fs';
 import {randomUUID} from 'node:crypto';
+import {runStandaloneWorkerOnce} from '../../../scripts/standalone-skill/worker.mjs';
+import {digest} from '../../orchestrator/commander-decision.js';
 import {createFoundationTask} from '../../workflow-foundation/registry.js';
 import path from 'node:path';
 import {foundationHttpFixture,until} from '../fixtures/workflow-foundation-http.js';
@@ -69,7 +71,7 @@ it('认证API登记→冻结Release→幂等Task→真实Worker/DBOS/产物→�
 },90000);
 
 it('同一 Notion 页并发仅登记一个轻量任务并保留租户与原页，改输入须拒绝',async()=>{
- fixture=await foundationHttpFixture({workflowKey:'douyin_video_discovery_lightweight'});
+ fixture=await foundationHttpFixture({workflowKey:'douyin_video_discovery'});
  const {registration,release}=await fixture.publish();
  const page=randomUUID();
  const input={workflow_id:registration.workflow_id,release_id:release.id,input:{label:'隔离 Notion 验收'},idempotency_key:'notion-101:'+page};
@@ -84,6 +86,77 @@ it('同一 Notion 页并发仅登记一个轻量任务并保留租户与原页�
  ]);
  await expect(submit({...input,input:{label:'输入漂移'}})).rejects.toMatchObject({code:'foundation_idempotency_conflict'});
  await expect(submit(input,{...source,notionTenantId:'other'})).rejects.toMatchObject({code:'foundation_idempotency_conflict'});
+},30000);
+
+it('Notion 单只可由指定直执行宿主领取，同一领取不重做，可信终态回到原单',async()=>{
+ fixture=await foundationHttpFixture({workflowKey:'douyin_video_discovery',directInput:true});
+ const {registration,release}=await fixture.publish();
+ const notionPageId=randomUUID();
+ const {task}=await createFoundationTask(fixture.pool,{
+  workflow_id:registration.workflow_id,release_id:release.id,input:{label:'直执行隔离验收',business:{keyword:'验收',max_candidates:1}},
+  idempotency_key:'notion-101:'+notionPageId
+ },{notionPageId,notionTenantId:'tenant-fixture'});
+ expect((await fixture.request('/workflow-foundation/claim',{machine_id:'fixture-host',task_id:task.id})).body).toEqual({job:null});
+ expect((await fixture.request('/workflow-foundation/standalone/claim',{machine_id:'other'})).body).toEqual({job:null});
+ const take=()=>fixture.request('/workflow-foundation/standalone/claim',{machine_id:'fixture-host'});
+ const pair=await Promise.all([take(),take()]);
+ const jobs=pair.map(value=>value.body.job).filter(Boolean);
+ expect(jobs,JSON.stringify(pair)).toHaveLength(1);
+ const job=jobs[0];
+ expect(job).toMatchObject({task_id:task.id,machine_id:'fixture-host',release_id:release.id});
+ const receipt={task_id:task.id,run_id:job.run_id,status:'completed',summary:'隔离读回成功',evidence:['fixture:readback']};
+ const finish=()=>fixture.request('/workflow-foundation/standalone/finish',{machine_id:'fixture-host',receipt});
+ expect((await finish()).body.error).toBe('standalone_run_unconfirmed');
+ const sourceCommit='b'.repeat(40);
+ const startBody={
+  task_id:task.id,claimer:job.claimer,claimed_at:job.claimed_at,
+  definition:{...job.definition,attempt_key:task.id+':1',actor:job.claimer},
+  standalone:{
+   scope:{workflow_key:'douyin_video_discovery',source_commit:sourceCommit,approved_keywords:['验收'],limit:1,company:{company_id:randomUUID(),tenant_id:randomUUID(),version:1,policy_id:'fixture'}},
+   skill:{name:'douyin-leadgen-direct',version:'1.0.0',source_commit:sourceCommit,path:'skill/SKILL.md',sha256:'b'.repeat(64)},
+  }
+ };
+ const start=body=>fixture.request('/runs/'+job.run_id+'/start-skill',body);
+ expect((await start({...startBody,standalone:{...startBody.standalone,scope:{...startBody.standalone.scope,limit:2}}})).status).toBe(409);
+ let localReceipt, modelCalls=0;
+ const finished=await runStandaloneWorkerOnce({
+  machineId:job.machine_id,
+  request:async(action,body)=>action==='claim'?{job}:(await fixture.request('/workflow-foundation/standalone/finish',body)).body,
+  provider:async incoming=>{
+   expect(incoming).toEqual(job);
+   return {
+    startHost:async()=>{
+     const started=await start(startBody);
+     expect(started.status,JSON.stringify(started.body)).toBe(201);
+     const binding=started.body.binding;
+     const identity={
+      protocol:'codex-exec-v1',task_id:task.id,run_id:job.run_id,machine_id:job.machine_id,claimer:job.claimer,
+      claimed_at:job.claimed_at,profile_sha256:'a'.repeat(64),skill:startBody.standalone.skill,
+      company:startBody.standalone.scope.company,approved_keywords:['验收'],task_run_id:started.body.task_run_id,
+      scope_sha256:digest({...startBody.standalone.scope,task_id:task.id}),
+      run_binding:{run_binding_id:binding.id,workflow_id:binding.workflow_id,workflow_definition_version_id:binding.workflow_definition_version_id,attempt_key:binding.attempt_key,activities:Object.fromEntries(
+       release.payload.workflows[0].payload.activities.map(a=>[a.slot_key,{reference_id:a.reference_id,activity_id:a.activity_id,activity_definition_version_id:a.activity_version_id}])
+      )},
+     };
+     const attest=identity=>fixture.request('/workflow-foundation/standalone/attest',{machine_id:job.machine_id,identity});
+     expect((await attest({...identity,scope_sha256:'0'.repeat(64)})).status).toBe(409);
+     expect((await attest(identity)).body).toEqual({attested:true});
+     return {connectionPath:'fixture:socket',close:async()=>({
+      task_id:job.task_id,run_id:job.run_id,local_released:true,central_released:true,native_return_unknown:false
+     })};
+    },
+    runAgent:async()=>{modelCalls++;},
+    verifyBusiness:async()=>({summary:receipt.summary,evidence:receipt.evidence}),
+   };
+  },
+  receipts:{pending:async()=>null,save:async value=>{localReceipt=value;},sent:async()=>{}},
+ });
+ expect(finished).toEqual({status:'completed'});
+ expect(localReceipt).toEqual(receipt);
+ expect(modelCalls).toBe(1);
+ expect((await finish()).body).toEqual({status:'completed'});
+ const row=(await fixture.pool.query('SELECT status,payload,result FROM tasks WHERE id=$1',[task.id])).rows[0];
+ expect(row).toMatchObject({status:'completed',payload:{notion_page_id:notionPageId},result:{standalone_receipt:receipt}});
 },30000);
 
 it('自动暂停的原工单恢复到相同冻结发布，只生成一个运行，人工暂停和在途任务保持原状',async()=>{

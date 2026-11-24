@@ -10,7 +10,7 @@ function skillValid(skill){
   &&typeof skill.path==='string'&&skill.path.split('/').every(v=>/^[A-Za-z0-9_.-]+$/.test(v)&&v!=='.'&&v!=='..');
 }
 export async function startStandaloneSkillRun(pool,runId,input){
- evidenceText(runId,'run_id');evidenceObject(input,['task_id','claimer','claimed_at','definition']);
+ evidenceText(runId,'run_id');evidenceObject(input,['task_id','claimer','claimed_at','definition','standalone']);
  evidenceText(input.task_id,'task_id',UUID);evidenceText(input.claimer,'claimer');evidenceText(input.claimed_at,'claimed_at');
  evidenceObject(input.definition,definitionFields);const definition=input.definition;
  evidenceText(definition.runtime_snapshot_sha256,'runtime_snapshot_sha256',HASH);
@@ -18,12 +18,26 @@ export async function startStandaloneSkillRun(pool,runId,input){
  const client=await pool.connect();
  try{
   await client.query('BEGIN');
-  const task=(await client.query('SELECT id,status,payload,claimed_by,claimed_at FROM tasks WHERE id=$1 FOR UPDATE',[input.task_id])).rows[0];
+  const task=(await client.query('SELECT id,status,payload,result,claimed_by,claimed_at FROM tasks WHERE id=$1 FOR UPDATE',[input.task_id])).rows[0];
   conflict(task?.status==='in_progress'&&task.claimed_at&&task.claimed_by===input.claimer&&Number.isFinite(Date.parse(input.claimed_at))
    &&new Date(task.claimed_at).toISOString()===new Date(input.claimed_at).toISOString(),'任务持有者或claim已变化');
-  const scope=task.payload?.scope;
-  conflict(task.payload?.execution_mode==='standalone-skill'&&skillValid(task.payload.skill)&&scope&&typeof scope==='object'&&!Array.isArray(scope)
+  const reservation=task.result?.standalone_claim;
+  const notion=task.payload?.source==='notion_leadgen_101';
+  if(input.standalone!==undefined)evidenceObject(input.standalone,['scope','skill']);
+  conflict(notion===Boolean(input.standalone),'起跑来源与独立Skill授权不符');
+  const scope=input.standalone?.scope??task.payload?.scope,skill=input.standalone?.skill??task.payload?.skill;
+  conflict((notion||task.payload?.execution_mode==='standalone-skill')&&skillValid(skill)&&scope&&typeof scope==='object'&&!Array.isArray(scope)
    &&(scope.task_id===undefined||scope.task_id===task.id),'任务不是完整的独立Skill授权');
+  if(notion){
+   const original=reservation?.definition,keyword=task.payload.workflow_input?.business?.keyword;
+   conflict(reservation?.run_id===runId&&reservation.claimer===input.claimer
+    &&['release_id','observation_id','workflow_id','workflow_definition_version_id','snapshot_sha256'].every(key=>original?.[key]===definition[key])
+    &&evidenceHash(original.expected_path)===evidenceHash(definition.expected_path)
+    &&definition.attempt_key===task.id+':1'
+    &&scope.limit===1&&typeof keyword==='string'&&evidenceHash(scope.approved_keywords)===evidenceHash([keyword]),'原始派单或业务范围已变化');
+   conflict(!task.payload.scope||evidenceHash(task.payload.scope)===evidenceHash(scope)&&evidenceHash(task.payload.skill)===evidenceHash(skill),'起跑后不能修改范围或Skill');
+   await client.query("UPDATE tasks SET payload=payload||$2::jsonb WHERE id=$1",[task.id,JSON.stringify({execution_mode:'standalone-skill',scope,skill})]);
+  }
   const release=await getRelease(client,definition.release_id);
   const workflow=release.payload.workflows.find(w=>w.id===definition.workflow_definition_version_id&&w.workflow_id===definition.workflow_id);
   conflict(workflow&&scope.workflow_key===workflow.payload.key&&scope.source_commit===workflow.source_commit,'任务范围与固定Workflow来源不符');
@@ -31,7 +45,7 @@ export async function startStandaloneSkillRun(pool,runId,input){
   conflict(other.length===0,'任务已有未结束执行，不能另起一轮');
   const current=(await client.query('SELECT task_id,status,ended_at,context FROM task_runs WHERE run_id=$1 FOR UPDATE',[runId])).rows[0];
   conflict(!current||current.task_id===task.id&&current.status==='running'&&current.ended_at===null,'已结束执行不能重新起跑');
-  const context={executor_kind:'codex-exec-v1',executor:input.claimer,claimed_at:new Date(task.claimed_at).toISOString(),skill:task.payload.skill,scope};
+  const context={executor_kind:'codex-exec-v1',executor:input.claimer,claimed_at:new Date(task.claimed_at).toISOString(),skill,scope};
   conflict(!current||current.context?.source==='standalone-skill'&&Object.entries(context).every(([key,value])=>current.context[key]!==undefined&&evidenceHash(current.context[key])===evidenceHash(value)),'已有run的执行者、Skill或范围不同');
   const run=await startRun({taskId:task.id,runId,source:'standalone-skill',context,definition},{pool,transactionClient:client});
   await client.query('COMMIT');

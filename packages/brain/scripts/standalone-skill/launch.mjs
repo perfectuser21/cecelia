@@ -5,7 +5,7 @@ import { isAbsolute } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { runStandaloneSkill } from './run.mjs';
 
-function readOwnedFile(path) {
+export function readOwnedFile(path) {
   if (!isAbsolute(path) || realpathSync(path) !== path) throw Error('standalone_file_path_invalid');
   const stat = lstatSync(path);
   if (!stat.isFile() || stat.uid !== process.getuid() || stat.nlink !== 1 || (stat.mode & 0o022) || stat.size > 1048576) {
@@ -14,13 +14,17 @@ function readOwnedFile(path) {
   return readFileSync(path);
 }
 
-export async function launchStandaloneSkill(configPath) {
+export async function loadStandaloneProvider(configPath) {
   const config = JSON.parse(readOwnedFile(configPath));
   const bytes = readOwnedFile(config.provider);
   if (createHash('sha256').update(bytes).digest('hex') !== config.provider_sha256) {
     throw Error('standalone_provider_digest_mismatch');
   }
-  const { identity, startHost, runAgent, verifyBusiness } = await import(pathToFileURL(config.provider).href);
+  return import(pathToFileURL(config.provider).href);
+}
+
+export async function launchStandaloneSkill(configPath) {
+  const { identity, startHost, runAgent, verifyBusiness } = await loadStandaloneProvider(configPath);
   if (![startHost, runAgent, verifyBusiness].every(method => typeof method === 'function')) {
     throw Error('standalone_provider_invalid');
   }

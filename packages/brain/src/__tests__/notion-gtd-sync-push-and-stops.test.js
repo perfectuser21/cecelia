@@ -51,8 +51,8 @@ describe('pushQiumiStatus', () => {
       zh_page_id: null, status: 'blocked', blocked_reason: 'foundation_needs_review',
       blocked_detail: { reason: 'device_confirmation_required' },
       result: {
-        summary: '原运行待检查', foundation_reconciliation: { status: 'blocked' },
-        evidence: [{ ref: 'dbos:commander-foundation:run-101' }],
+        standalone_receipt: { summary: '原运行待检查', reason: 'device_confirmation_required',
+          evidence: ['standalone:run-101'] },
       },
     });
     const query = vi.fn().mockResolvedValueOnce({ rows: [row] }).mockResolvedValue({ rows: [] });
@@ -67,7 +67,7 @@ describe('pushQiumiStatus', () => {
     expect((await pushQiumiStatus({ query }, 'tok', deps)).pushed).toBe(1);
     const calls = JSON.stringify(mockNotionReq.mock.calls);
     expect(calls).toContain('device_confirmation_required');
-    expect(calls).toContain('dbos:commander-foundation:run-101');
+    expect(calls).toContain('standalone:run-101');
     expect(calls).toContain('Blocked');
     expect(calls).not.toContain(ZH);
   });

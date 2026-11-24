@@ -15,6 +15,7 @@ export async function claimFoundationTask(pool,input,services={}){
  validateMachineRequest(input,['machine_id','task_id']);if(input.task_id!==undefined)requireFoundation(UUID.test(input.task_id),'foundation_identity_invalid',400);
  return foundationTransaction(pool,'foundation-claim:'+input.machine_id,async db=>{
   const row=(await db.query(`SELECT * FROM tasks WHERE task_type='workflow_dispatch' AND payload->>'commander_protocol'=$1
+   AND payload->>'source' IS DISTINCT FROM 'notion_leadgen_101'
    AND payload->'foundation_request'->>'machine_id'=$2 AND status IN ('queued','in_progress')
    AND ($3::uuid IS NULL OR id=$3::uuid) ORDER BY (status='in_progress') DESC,created_at,id FOR UPDATE SKIP LOCKED LIMIT 1`,[FOUNDATION_PROTOCOL,input.machine_id,input.task_id??null])).rows[0];
   if(!row)return {job:null};

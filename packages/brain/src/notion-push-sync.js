@@ -648,7 +648,7 @@ export async function ingestDelegatedPage(pool, token, page, opts = {}) {
         notion_leadgen_binding_unavailable: '该公司没有可用的 101 执行绑定',
         notion_leadgen_input_invalid: '请填写公司、关键词和候选上限 1',
         foundation_release_not_ready: '101 执行版本尚未就绪',
-        foundation_notion_workflow_invalid: '配置没有指向轻量版 101',
+        foundation_notion_workflow_invalid: '配置没有指向 101 视频发现',
         foundation_idempotency_conflict: '此 Notion 页已起单，需按原任务处理',
       };
       const reason = reasons[error.code];
