@@ -65,11 +65,16 @@ export const CI_BUSINESS_GUARDS_PROFILE_PATH='packages/brain/src/lib/existing-op
 const businessGuardsSha='9f99a1761cadeb0cff8fdf839ddf7db3e5f2e812c1d6c71560c7e98450faa96c',businessGuardsText=readFileSync(new URL('./existing-ops-ci-business-guards-profile.json',import.meta.url),'utf8');
 if(createHash('sha256').update(businessGuardsText).digest('hex')!==businessGuardsSha)throw Error('basic_ci_source_unproven');
 export const CI_BUSINESS_GUARDS_INPUTS={...JSON.parse(businessGuardsText),[CI_BUSINESS_GUARDS_PROFILE_PATH]:businessGuardsSha};
+// noexec候选验收独立封组；已发布业务门禁原身份保持。
+export const CI_NOEXEC_PROFILE_PATH='packages/brain/src/lib/existing-ops-ci-noexec-profile.json';
+const noexecSha='16458cf588aa073f29dc4526763b864cfa20f22b55f02842c161fd5296a66363',noexecText=readFileSync(new URL('./existing-ops-ci-noexec-profile.json',import.meta.url),'utf8');
+if(createHash('sha256').update(noexecText).digest('hex')!==noexecSha)throw Error('basic_ci_source_unproven');
+export const CI_NOEXEC_INPUTS={...JSON.parse(noexecText),[CI_NOEXEC_PROFILE_PATH]:noexecSha};
 const RUNNER='scripts/ci/run-basic-check.mjs',CONFIG='scripts/ci/deep-integration.config.mjs';
 const nodes=n=>!n||typeof n!=='object'?[]:[...(n.type?[n]:[]),...Object.values(n).flatMap(v=>Array.isArray(v)?v.flatMap(nodes):nodes(v))];
 const reject=()=>{throw Error('basic_ci_source_unproven');};
 export async function collectReviewedBusinessPgSources({read,parse,relation,profile=BUSINESS_PROFILE_PATH}){
- const runner=await read(RUNNER),digest=createHash('sha256').update(runner).digest('hex'),expectedCount=digest===CI_BUSINESS_GUARDS_INPUTS[RUNNER]?18:digest===NATIVE_AGENT_INPUTS[RUNNER]?15:digest===PILOT_HOST_INPUTS[RUNNER]?11:10;
+ const runner=await read(RUNNER),digest=createHash('sha256').update(runner).digest('hex'),expectedCount=[CI_BUSINESS_GUARDS_INPUTS[RUNNER],CI_NOEXEC_INPUTS[RUNNER]].includes(digest)?18:digest===NATIVE_AGENT_INPUTS[RUNNER]?15:digest===PILOT_HOST_INPUTS[RUNNER]?11:10;
  const cases=nodes(parse(runner)).filter(n=>n.type==='SwitchCase'&&n.test?.value==='brain-integration');
  if(cases.length!==1)reject();
  const steps=nodes(cases[0]).filter(n=>n.type==='CallExpression'&&n.callee?.name==='step'&&n.arguments[1]?.value==='npx');
@@ -77,7 +82,7 @@ export async function collectReviewedBusinessPgSources({read,parse,relation,prof
  const args=steps[0].arguments.map(n=>n.value);
  if(JSON.stringify(args.slice(0,7))!==JSON.stringify(['packages/brain','npx','--no-install','vitest','run','--config','../../'+CONFIG])||args.at(-1)!=='--reporter=dot')reject();
  const tests=args.slice(7,-1);
- if(tests.length!==expectedCount||new Set(tests).size!==expectedCount||tests.some(p=>!/^src\/__tests__\/integration\/[a-z0-9-]+\.pg\.integration\.test\.js$/.test(p)&&!(digest===CI_BUSINESS_GUARDS_INPUTS[RUNNER]&&p==='src/__tests__/integration/external-exec-orphan-liveness.integration.test.js')))reject();
+ if(tests.length!==expectedCount||new Set(tests).size!==expectedCount||tests.some(p=>!/^src\/__tests__\/integration\/[a-z0-9-]+\.pg\.integration\.test\.js$/.test(p)&&!([CI_BUSINESS_GUARDS_INPUTS[RUNNER],CI_NOEXEC_INPUTS[RUNNER]].includes(digest)&&p==='src/__tests__/integration/external-exec-orphan-liveness.integration.test.js')))reject();
  relation('packages/brain/src/lib/existing-ops-stage-modes.js',profile,'reviewed_basic_ci_source_profile');
  relation(RUNNER,CONFIG,'reviewed_pr_postgres_config_selector');
  for(const p of tests){const input='packages/brain/'+p;if(!await read(input))reject();relation(RUNNER,input,'reviewed_pr_postgres_test_selector');}
@@ -200,6 +205,7 @@ const PG_LAYERING_PATH='tests/brain-ci-pg-layering.test.ts';
 const PG_LAYERING_DIGEST='2b6e813d5bc0f5fe546d25a996b21dc208dbb142c426de05fe5f24e45b06f774';
 export async function reviewedPilotSourceControls(profile,paths,read){
  let controls=reviewedPilotControls(profile,paths);
+ if(paths?.includes(CI_NOEXEC_PROFILE_PATH)&&!paths.includes(CI_BUSINESS_GUARDS_PROFILE_PATH))reject();
  if(paths?.includes(PILOT_HOST)&&(paths.includes(CI_BUSINESS_GUARDS_PROFILE_PATH)||createHash('sha256').update(await read(CANDIDATE_BUILDER_MARKER)).digest('hex')===CANDIDATE_CACHE_INPUTS[CANDIDATE_BUILDER_MARKER]))controls={...controls,...CANDIDATE_CACHE_INPUTS};
  if(paths?.includes(DEPLOY_RECOVERY_MARKER)){
   if(profile!==REVIEWED_NIGHTLY_STATUS||!paths.includes(PILOT_HOST)||createHash('sha256').update(await read(DEPLOY_RECOVERY_MARKER)).digest('hex')!==DEPLOY_RECOVERY_INPUTS[DEPLOY_RECOVERY_MARKER])reject();
@@ -208,7 +214,7 @@ export async function reviewedPilotSourceControls(profile,paths,read){
  if(paths?.includes(NATIVE_AGENT_MARKER)){
   if(profile!==REVIEWED_NIGHTLY_STATUS||!paths.includes(PILOT_HOST)||!paths.includes(DEPLOY_RECOVERY_MARKER))reject();
   const nativeControls={...controls,...NATIVE_AGENT_INPUTS};
-  if(paths.includes(CI_BUSINESS_GUARDS_PROFILE_PATH))return {...nativeControls,...CI_BUSINESS_GUARDS_INPUTS};
+  if(paths.includes(CI_BUSINESS_GUARDS_PROFILE_PATH))return {...nativeControls,...CI_BUSINESS_GUARDS_INPUTS,...(paths.includes(CI_NOEXEC_PROFILE_PATH)?CI_NOEXEC_INPUTS:{})};
   if(createHash('sha256').update(await read('packages/brain/src/scheduler-jobs.js')).digest('hex')===NATIVE_COMPLETION_INPUTS['packages/brain/src/scheduler-jobs.js'])return {...nativeControls,...NATIVE_COMPLETION_INPUTS};
   return nativeControls;
  }
@@ -235,6 +241,13 @@ export function recordReviewedPilotSource({profile,paths,relation}){
     ['packages/brain/scripts/native-agent/staging-business.mjs','packages/brain/src/__tests__/helpers/native-agent-host-fixture.js','reviewed_native_business_isolated_fixture'],
     [CANDIDATE_BUILDER_MARKER,'scripts/ci/__tests__/helpers/brain-candidate-docker.fixture.mjs','reviewed_candidate_docker_fixture'],
    ])relation(consumer,input,kind);
+  }
+  if(paths.includes(CI_NOEXEC_PROFILE_PATH)){
+   const fixture='packages/brain/src/__tests__/helpers/native-agent-host-fixture.js',command='packages/brain/src/__tests__/helpers/native-agent-command-fixture.cjs',contract='packages/brain/scripts/native-agent/__tests__/candidate-fixture.node-test.mjs';
+   relation('packages/brain/src/lib/existing-ops-stage-modes.js',CI_NOEXEC_PROFILE_PATH,'reviewed_basic_ci_source_profile');
+   relation(RUNNER,contract,'reviewed_noexec_native_image_contract');
+   relation(contract,fixture,'reviewed_noexec_native_image_fixture');
+   relation(fixture,command,'reviewed_noexec_native_image_static_command');
   }
   if(paths.includes(NATIVE_AGENT_MARKER)){
    const release='packages/brain/scripts/native-agent-release.mjs',bundle='packages/brain/scripts/native-agent/bundle.mjs';
