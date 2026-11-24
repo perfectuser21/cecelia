@@ -10,7 +10,11 @@ it('通过 docker exec 读取候选自身 API 和数据库身份，宿主 curl �
   writeFileSync(join(dir,'curl'),'#!/bin/sh\nexit 99\n',{mode:0o755});
   writeFileSync(join(dir,'docker'),`#!/bin/sh
 printf '%s\\n' "$*" >> "$CALLS"
-test "$1" = exec && test "$2" = cecelia-admission-brain || exit 98
+test "$1" = exec || exit 98
+case "$*" in
+ *staging-business.mjs*) echo 'STAGING_BUSINESS_RECEIPT {"protocol":"brain-staging-business/v1","status":"passed","git_sha":"${sha}","task_id":"11111111-1111-4111-8111-111111111111","run_id":"22222222-2222-4222-8222-222222222222","task_status":"completed_no_pr","run_status":"success","artifact_verified":true,"artifact_sha256":"${'c'.repeat(64)}","execution_stopped":true,"external_services":"not_evaluated"}'; exit 0;;
+esac
+test "$2" = cecelia-admission-brain || exit 98
 case "$*" in
  *current_database*) echo '{"database":"cecelia_staging","host":"stage-db","tasks_table":true}';;
  *health*) echo '{"status":"healthy","git_sha":"${sha}","version":"fixture","runtime":{"isolated":true,"background_automation":false}}';;

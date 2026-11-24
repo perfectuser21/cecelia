@@ -6,13 +6,14 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { createStore } from './brain-image-retention/storage.mjs';
 import { createDeploymentLedger } from './brain-image-retention/ledger.mjs';
+const proof=id=>({protocol:'brain-release-readback/v1',status:'passed',container_id:id,task_count:0,task_sample_sha256:'e'.repeat(64),scope:'read_only',external_services:'not_evaluated'});
 const image=n=>'sha256:'+String(n).repeat(64),sha=n=>String(n).repeat(40);
 async function setup(t){
  const root=await realpath(await mkdtemp(join(tmpdir(),'image-ledger-')));t.after(()=>rm(root,{recursive:true,force:true}));
  const store=createStore(root),state={current:1,health:1,business:'pass'};
  const docker={snapshot:async()=>({containers:[{id:'a'.repeat(64),name:'/cecelia-node-brain',running:true,image_id:image(state.current)}],
   images:[1,2,3].map(n=>({id:image(n),tags:[`cecelia-brain:1.0.${n}`],git_sha:sha(n)}))})};
- docker.containerBusinessReadback=async(id)=>{if(state.business!=='pass')throw Error('DEPLOY_BUSINESS_UNAVAILABLE');return {protocol:'brain-release-readback/v1',container_id:id,task_readback:'verified'};};
+ docker.containerBusinessReadback=async(id)=>{if(state.business!=='pass')throw Error('DEPLOY_BUSINESS_UNAVAILABLE');return proof(id);};
  const health=async()=>({version:`1.0.${state.health}`,git_sha:sha(state.health),status:'healthy'});
  return {store,state,docker,health,ledger:createDeploymentLedger({store,docker,health}),request:{deployment_id:randomUUID(),version:'1.0.2',git_sha:sha(2)}};
 }
@@ -30,8 +31,8 @@ test('成功证明落盘后ledger提交回执丢失，原intent对账不重复�
  const x=await setup(t);await x.ledger.begin(x.request);x.state.current=x.state.health=2;
  const save=x.store.save;let lost=true;
  const store={...x.store,save:async(name,value,lease)=>{await save(name,value,lease);if(name==='ledger.json'&&!value.pending&&lost){lost=false;throw Error('lost acknowledgement');}}};
- const ledger=createDeploymentLedger({store,docker:{snapshot:async()=>assert.fail('恢复不重做已封存证明')},health:async()=>assert.fail()});
- const actual=createDeploymentLedger({store,docker:{snapshot:async()=>({containers:[{name:'/cecelia-node-brain',running:true,image_id:image(2)}],images:[{id:image(2),tags:['cecelia-brain:1.0.2'],git_sha:sha(2)}]})},health:async()=>({status:'healthy',version:'1.0.2',git_sha:sha(2)})});
+ const ledger=createDeploymentLedger({store,docker:x.docker,health:x.health});
+ const actual=createDeploymentLedger({store,docker:x.docker,health:x.health});
  await assert.rejects(actual.finish(x.request.deployment_id,'success'),/lost acknowledgement/);
  assert.equal((await ledger.finish(x.request.deployment_id,'success')).image_id,image(2));
  assert.equal((await x.store.read('ledger.json')).successes.length,1);
@@ -87,7 +88,7 @@ for (const duringHealth of [false, true]) {
 // 才复用 finish 的完整核验补收账；核验不过/仍在新鲜期/恢复中一律不改状态。
 async function reconcileSetup(t,{ageMs}){
  const x=await setup(t);let clock=Date.parse('2026-10-09T19:51:00Z');
- const ledger=createDeploymentLedger({store:x.store,docker:{snapshot:async()=>({containers:[{id:'a'.repeat(64),name:'/cecelia-node-brain',running:true,image_id:image(x.state.current)}],images:[1,2,3].map(n=>({id:image(n),tags:[`cecelia-brain:1.0.${n}`],git_sha:sha(n)}))})},
+ const ledger=createDeploymentLedger({store:x.store,docker:{containerBusinessReadback:x.docker.containerBusinessReadback,snapshot:async()=>({containers:[{id:'a'.repeat(64),name:'/cecelia-node-brain',running:true,image_id:image(x.state.current)}],images:[1,2,3].map(n=>({id:image(n),tags:[`cecelia-brain:1.0.${n}`],git_sha:sha(n)}))})},
   health:async()=>({version:`1.0.${x.state.health}`,git_sha:sha(x.state.health),status:'healthy'}),now:()=>clock});
  await ledger.begin(x.request);clock+=ageMs;return {...x,ledger};
 }

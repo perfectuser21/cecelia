@@ -76,7 +76,7 @@ async function fixture(t, scenario = '') {
       }
       if(args.some(x=>x.includes('/tasks?limit=1'))) {
         if(scenario==='business-read-fail')process.exit(22);
-        console.log(JSON.stringify(scenario==='business-read-invalid'?{error:'fixture failed'}:[]));return;
+        process.stdout.write(JSON.stringify(scenario==='business-read-invalid'?{error:'fixture failed'}:[])+(args.includes('-w')?'\\n200':''));return;
       }
       if(args.some(x=>x.endsWith('/drain-cancel'))) {
         if(scenario==='drain-fail')process.exit(22);

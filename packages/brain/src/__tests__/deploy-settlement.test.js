@@ -11,7 +11,7 @@ async function fixture(){
  const root=await realpath(await mkdtemp(join(tmpdir(),'deployment-settled-')));dirs.push(root);const store=createStore(root);
  const state={image,sha,container:id,healthy:true,snapshots:0,drift:false};
  const health=async()=>({status:state.healthy?'healthy':'unhealthy',git_sha:state.sha,version:'1.2.3'});
- const docker={snapshot:async lease=>{await lease.assertHeld();state.snapshots++;return {containers:[{id:state.drift&&state.snapshots%2===0?'d'.repeat(64):state.container,name:'/cecelia-node-brain',running:true,image_id:state.image}],images:[{id:state.image,git_sha:state.sha,tags:['cecelia-brain:1.2.3']}]};},containerHealth:async(_id,lease)=>{await lease.assertHeld();return health();}};
+ const docker={containerBusinessReadback:async container=>({protocol:'brain-release-readback/v1',status:'passed',container_id:container,task_count:0,task_sample_sha256:'e'.repeat(64),scope:'read_only',external_services:'not_evaluated'}),snapshot:async lease=>{await lease.assertHeld();state.snapshots++;return {containers:[{id:state.drift&&state.snapshots%2===0?'d'.repeat(64):state.container,name:'/cecelia-node-brain',running:true,image_id:state.image}],images:[{id:state.image,git_sha:state.sha,tags:['cecelia-brain:1.2.3']}]};},containerHealth:async(_id,lease)=>{await lease.assertHeld();return health();}};
  const ledger=createDeploymentLedger({store,docker,health});const request={deployment_id:randomUUID(),git_sha:sha,version:'1.2.3'};
  await ledger.begin(request);await ledger.finish(request.deployment_id,'success');state.snapshots=0;
  return {store,state,ledger,request};

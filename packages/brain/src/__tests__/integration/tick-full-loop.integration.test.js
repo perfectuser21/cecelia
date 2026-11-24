@@ -1,5 +1,5 @@
 /**
- * Integration Test: Tick Full Loop（真实 DB 环境）
+ * 调度候选选择回归（真实 DB）；历史文件名保留，不作为完整任务执行闭环。
  *
  * 使用真实 PostgreSQL（cecelia 数据库）测试 selectNextDispatchableTask：
  *   1. P0 任务优先于 P2 被选中（P2 不被选中）
@@ -56,7 +56,7 @@ async function cleanupTasks(ids) {
   }
 }
 
-describe('Tick Full Loop 集成测试（真实 DB）', () => {
+describe('调度候选选择集成测试（真实 DB）', () => {
   beforeAll(async () => {
     await testPool.query('SELECT 1');
   });

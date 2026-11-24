@@ -42,6 +42,8 @@ export function commandsFor(component, shard) {
           'src/__tests__/integration/native-agent-api-control.pg.integration.test.js',
           'src/__tests__/integration/native-agent-flow.pg.integration.test.js',
           'src/__tests__/integration/native-agent-notion-flow.pg.integration.test.js',
+          'src/__tests__/integration/native-agent-scheduler.pg.integration.test.js',
+          'src/__tests__/integration/staging-native-business.pg.integration.test.js',
           'src/__tests__/integration/drain-process-scope.pg.integration.test.js',
           'src/__tests__/integration/executor-startup-headed-owner.pg.integration.test.js',
           'src/__tests__/integration/suggestion-plan-callback.pg.integration.test.js',
@@ -52,6 +54,7 @@ export function commandsFor(component, shard) {
           'src/__tests__/integration/org-map-current-contracts.pg.integration.test.js',
           'src/__tests__/integration/task-ability-compatibility.pg.integration.test.js',
           'src/__tests__/integration/reasoning-governance-contract.pg.integration.test.js', '--reporter=dot'), ciScratchDatabase: true },
+        step('.', 'node', 'scripts/ci/run-debt-pg.mjs', '--file', 'packages/brain/src/__tests__/execution-strategy-session-kr-link.test.js'),
         step('.', 'node', '--test', 'scripts/ci/__tests__/runtime-signal.integration.test.mjs'),
         step('.', 'node', 'scripts/ci/basic-runtime-smoke.mjs'),
       ];
@@ -60,7 +63,7 @@ export function commandsFor(component, shard) {
         step('.', 'docker', 'build', '-f', 'packages/brain/Dockerfile', '-t', 'cecelia-brain:ci-basic', '.'),
         step('.', 'docker', 'run', '--rm', '--entrypoint', 'docker', 'cecelia-brain:ci-basic', 'buildx', 'version'),
         step('.', 'docker', 'run', '--rm', '--entrypoint', 'node', 'cecelia-brain:ci-basic', '--input-type=module', '-e',
-          'import {computeBundleDigest} from "./scripts/native-agent/bundle.mjs";if(!/^[a-f0-9]{64}$/.test(computeBundleDigest("/app")))process.exit(1)'),
+          'import {computeBundleDigest} from "./scripts/native-agent/bundle.mjs";if(!/^[a-f0-9]{64}$/.test(computeBundleDigest("/app")))process.exit(1);await import("./scripts/native-agent/staging-business.mjs");await import("./src/__tests__/helpers/native-agent-host-fixture.js")'),
       ];
     case 'dashboard':
       return [vitest('apps/api'), vitest('apps/dashboard'), step('apps/dashboard', 'npm', 'run', 'build')];

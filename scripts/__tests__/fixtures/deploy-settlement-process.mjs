@@ -35,6 +35,7 @@ if(s.mode==='hang'&&a[0]==='info'){
  else if(a[0]==='image'&&a[1]==='inspect')value=[image];
  else if(a[0]==='container'&&a[1]==='inspect')value=[container];
  else if(a[0]==='inspect')value=[container,image];
+ else if(a[0]==='exec'&&a.some(x=>x.includes('/tasks?limit=1'))){if(s.mode==='business-503')process.exit(22);value=(s.mode==='business-invalid'?'bad json':s.mode==='business-object'?'{"error":"unavailable"}':'[]')+'\\n'+(s.mode==='business-redirect'?'302':'200');}
  else if(a[0]==='exec')value=JSON.stringify({status:'healthy',version:'1.0.1',git_sha:s.mode==='bad-health'?'f'.repeat(40):${JSON.stringify(sha)}})+'\\n200';
  else process.exit(2);
  fs.writeFileSync(p,JSON.stringify(s));process.stdout.write(typeof value==='string'?value:JSON.stringify(value));

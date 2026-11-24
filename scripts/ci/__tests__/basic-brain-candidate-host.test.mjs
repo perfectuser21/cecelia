@@ -176,7 +176,7 @@ if (a[0] === 'stop' || a[0] === 'rm') {
   process.exit(0);
 }
 if (a[0] === 'exec') {
-  const name = a[1] === '-i' ? a[2] : a[1];
+  const name = a.find(value => ['cecelia-node-brain','cecelia-admission-brain','cecelia-admission-db'].includes(value));
   if (name === 'cecelia-node-brain') {
     enforceProduction();
     if (contains('pg_total_relation_size')) result('100000000');
@@ -190,6 +190,7 @@ if (a[0] === 'exec') {
   if (contains('/health')) result(JSON.stringify({status:'healthy',git_sha:fault === 'health' ? 'c'.repeat(40) : e.EXPECTED_SHA,version:'1.0.0',runtime:{isolated:true,background_automation:false}}));
   if (contains('tick/status')) result('{"enabled":false}');
   if (contains('/tasks?')) result('[]');
+  if (contains('staging-business.mjs')) result('STAGING_BUSINESS_RECEIPT '+JSON.stringify({protocol:'brain-staging-business/v1',status:'passed',git_sha:e.EXPECTED_SHA,task_id:'11111111-1111-4111-8111-111111111111',run_id:'22222222-2222-4222-8222-222222222222',task_status:'completed_no_pr',run_status:'success',artifact_verified:true,artifact_sha256:'c'.repeat(64),execution_stopped:true,external_services:'not_evaluated'}));
   if (contains('current_database')) {
     state.verified = true; save();
     result(JSON.stringify({database:fault === 'db-readback' ? 'cecelia' : 'cecelia_staging',host:'stage-db',tasks_table:true}));
@@ -307,7 +308,8 @@ for (const context of ['mac-studio', '']) test(`隔离验收完整闭环；清�
   assert.equal(result.status, 0, result.stderr + result.stdout);
   assert.equal(f.receipt().status, 'success');
   assert.equal(f.receipt().phase, 'verified');
-  assert.deepEqual(f.receipt().database, { database: 'cecelia_staging', host: 'stage-db', tasks_table: true });
+  assert.deepEqual({...f.receipt().database,business:undefined}, { database: 'cecelia_staging', host: 'stage-db', tasks_table: true,business:undefined });
+  assert.equal(f.receipt().database.business.artifact_verified,true);
   assert.deepEqual(f.state(context || 'local').containers, {});
   assert.equal(f.state(context || 'local').network, null);
   const commands = f.commands();

@@ -83,6 +83,10 @@ case "$1" in
    fi
    exit 0
   fi
+  if [[ "$*" == *staging-business.mjs* ]]; then
+   echo staging-business >> "$EVENTS"
+   printf 'STAGING_BUSINESS_RECEIPT {"protocol":"brain-staging-business/v1","status":"passed","git_sha":"%s","task_id":"11111111-1111-4111-8111-111111111111","run_id":"22222222-2222-4222-8222-222222222222","task_status":"completed_no_pr","run_status":"success","artifact_verified":true,"artifact_sha256":"${'c'.repeat(64)}","execution_stopped":true,"external_services":"not_evaluated"}' "$SHA"; exit 0
+  fi
   if [[ "$*" == *health* ]]; then
    echo staging-health >> "$EVENTS"
    actual="$SHA"; [[ "$MODE" != wrong-sha ]] || actual=cccccccccccccccccccccccccccccccccccccccc
@@ -124,7 +128,7 @@ it('固定sidecar已退出不阻塞正常候选路径',()=>{
 });
 it('初始化只有socket服务时继续等待，正式TCP就绪后才恢复与迁移',()=>{
  const result=run('socket-bootstrap');expect(result.status,result.stderr+result.stdout).toBe(88);
- expect(result.events.split('\n').filter(Boolean)).toEqual(['build','temporary-socket-rejected','database-tcp-ready','staging-restore','staging-migrate','staging-health','production-migrate']);
+ expect(result.events.split('\n').filter(Boolean)).toEqual(['build','temporary-socket-rejected','database-tcp-ready','staging-restore','staging-migrate','staging-health','staging-business','production-migrate']);
  expect(result.receipt.status).toBe('success');expect(result.remaining).toEqual([]);
 });
 it('只有临时socket、正式TCP一直未启动时拒绝导出和生产迁移',()=>{
@@ -135,8 +139,8 @@ it('只有临时socket、正式TCP一直未启动时拒绝导出和生产迁移'
 });
 it('同一镜像通过隔离候选验收后才开始生产迁移',()=>{
  const result=run('success');expect(result.status,result.stderr+result.stdout).toBe(88);
- expect(result.events.split('\n').filter(Boolean)).toEqual(['build','staging-migrate','staging-health','production-migrate']);
- expect(result.remaining).toEqual([]);expect(result.receipt.database).toEqual({database:'cecelia_staging',host:'stage-db',tasks_table:true});
+ expect(result.events.split('\n').filter(Boolean)).toEqual(['build','staging-migrate','staging-health','staging-business','production-migrate']);
+ expect(result.remaining).toEqual([]);expect(result.receipt.database).toMatchObject({database:'cecelia_staging',host:'stage-db',tasks_table:true,business:{status:'passed',artifact_verified:true,execution_stopped:true}});
  expect(result.commands).toContain('--internal');expect(result.commands).toContain('BRAIN_PREVIEW=1');
  const candidates=result.commands.split('\n').filter(line=>line.startsWith('run ')&&!line.includes('.env.docker'));
  expect(candidates.length).toBe(3);for(const command of candidates){expect(command).not.toMatch(/--env-file|CECELIA_INTERNAL_TOKEN|CECELIA_INTERNAL_ENV_FILE|synthetic_production_token|\.credentials|--network host/);}
