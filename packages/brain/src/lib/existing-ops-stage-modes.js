@@ -62,7 +62,7 @@ if(createHash('sha256').update(text).digest('hex')!==SHA)throw Error('basic_ci_s
 export const REVIEWED_BUSINESS_SMOKE_RETIREMENT={...JSON.parse(text),[BUSINESS_PROFILE_PATH]:SHA};
 // 本轮业务门禁使用独立完整封组；历史profile和hash保持原样。
 export const CI_BUSINESS_GUARDS_PROFILE_PATH='packages/brain/src/lib/existing-ops-ci-business-guards-profile.json';
-const businessGuardsSha='d492645040241b12cbb879e749b9cc536d5ce2ae2823dafb4b28ba3198667645',businessGuardsText=readFileSync(new URL('./existing-ops-ci-business-guards-profile.json',import.meta.url),'utf8');
+const businessGuardsSha='21824f80ecb288cacb1a511f8cbbe3b73bb1b1ceb2107a761876068db22fc214',businessGuardsText=readFileSync(new URL('./existing-ops-ci-business-guards-profile.json',import.meta.url),'utf8');
 if(createHash('sha256').update(businessGuardsText).digest('hex')!==businessGuardsSha)throw Error('basic_ci_source_unproven');
 export const CI_BUSINESS_GUARDS_INPUTS={...JSON.parse(businessGuardsText),[CI_BUSINESS_GUARDS_PROFILE_PATH]:businessGuardsSha};
 const RUNNER='scripts/ci/run-basic-check.mjs',CONFIG='scripts/ci/deep-integration.config.mjs';

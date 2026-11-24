@@ -14,7 +14,7 @@
   "scripts/__tests__/fixtures/deploy-settlement-process.mjs": "1c35e052d2954a5335fded7a259b4c07308f71ecb11e287c3b534f390cfc75fd",
   "scripts/ci/__tests__/helpers/brain-deploy-predecessor.fixture.mjs": "ace3824a443cb4d9366cb5002ac74eaa065e202f0a76466dbf51ee80e453167a",
   "scripts/staging-verify.sh": "0d17f4dd339cb75d103c833f3793c1fbe5cd965dfa33dafb25c4f8a0100e28da",
-  "packages/brain/scripts/native-agent/staging-business.mjs": "3d3bc130bf105860fed0624133b370086b9f1dd0d77bbf6af4984f554f1a5747",
+  "packages/brain/scripts/native-agent/staging-business.mjs": "200fbb9295234e15352d3fceb7f4ccf08c8b5cae7eb65bb16f41468074fe0258",
   "packages/brain/src/__tests__/helpers/native-agent-host-fixture.js": "d96f31d2f75948cca4c12a430e509786043b9123a8735713985fab9eb2705313",
   "packages/brain/src/__tests__/integration/native-agent-scheduler.pg.integration.test.js": "37236951455bb1f4ff8c59d3c0832e56682d2d6f14d783e8781d05556bc4742c",
   "packages/brain/src/__tests__/integration/staging-native-business.pg.integration.test.js": "6eedc2997165a7fd6eb3387e27b3af17d31bd477a3e952e850f0cf66a2f1a921",

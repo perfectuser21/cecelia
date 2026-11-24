@@ -25,7 +25,9 @@ export async function verifyStagingBusiness(env=process.env,{progress=()=>{},pro
  const tracked=pool=>{const clients=new Set();connections.set(pool,clients);pool.on('connect',client=>clients.add(client));pool.on('remove',client=>clients.delete(client));pool.on('error',error=>progress({phase:'pool-error',message:error.message}));return pool;};
  const bounded=async(promise,ms,label)=>{let timer;try{return await Promise.race([promise,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error(label+' timeout')),ms);})]);}finally{clearTimeout(timer);}};
  const closePool=async pool=>{if(!pool)return;progress({phase:'pool-shutdown',tracked_clients:connections.get(pool)?.size,total:pool.totalCount,waiting:pool.waitingCount});const ending=pool.end();try{await bounded(ending,1500,'pool shutdown');}catch(error){await bounded(Promise.allSettled([...(connections.get(pool)??[])].map(client=>client.end())),500,'owned client shutdown');throw error;}};
- const admin=tracked(new pg.Pool({host:env.DB_HOST,port:Number(env.DB_PORT||5432),database:env.DB_NAME,user:env.DB_USER,password:env.DB_PASSWORD||'',max:2,connectionTimeoutMillis:3000,query_timeout:6000,options:'-c statement_timeout=5000 -c lock_timeout=3000'}));
+ const connectionConfig=Object.freeze({host:env.DB_HOST,port:Number(env.DB_PORT||5432),database:env.DB_NAME,user:env.DB_USER,password:env.DB_PASSWORD||'',connectionTimeoutMillis:3000,query_timeout:6000});
+ // pg-pool将options.password设为不可枚举；只能复用原始显式配置，不能展开pool.options。
+ const admin=tracked(new pg.Pool({...connectionConfig,max:2,options:'-c statement_timeout=5000 -c lock_timeout=3000'}));
  const schema='release_business_'+randomUUID().replaceAll('-','');
  const previousOptions=process.env.PGOPTIONS;
  let owned=false,pool,host,defaultPool,failure,taskId,deps,trigger,cancelNative;
@@ -35,7 +37,7 @@ export async function verifyStagingBusiness(env=process.env,{progress=()=>{},pro
   assert.equal((await admin.query('SELECT current_database() AS name')).rows[0].name,env.DB_NAME);
   mark('create-schema',{schema});
   await admin.query(`CREATE SCHEMA ${schema}`);owned=true;
-  pool=tracked(new pg.Pool({...admin.options,options:`-c search_path=${schema} -c statement_timeout=5000 -c lock_timeout=3000`,max:3}));
+  pool=tracked(new pg.Pool({...connectionConfig,options:`-c search_path=${schema} -c statement_timeout=5000 -c lock_timeout=3000`,max:3}));
   for(const name of ['tasks','task_runs','workflows','task_events','device_locks','task_leases','working_memory','ops_agents','phone_registry','pending_actions','cecelia_events','initiative_runs']){
    mark('clone-table',{table:name});
    await admin.query(`CREATE TABLE ${schema}.${name} (LIKE public.${name} INCLUDING ALL)`);
