@@ -242,11 +242,12 @@ test('expired Checker cannot claim a stopped execution or pass from a hung model
 test.each([
  [undefined,['start','end']],
  ['completion_only',['end']],
+ ['completion_with_inputs',['end']],
 ])('Commander uses exactly the configured Checker phases: %s',async(phasePolicy,phases)=>{
  const f=fixture({mode:'runner'}),old=process.env.DBOS_DURABLE_ENABLED;try{
  Object.assign(f.activity,{order:1,failure:{empty_ok:[],retryable:[],fatal:[],needs_human:{cases:[]}}});f.activity.runtime.entry='unused.mjs';
+ if(phasePolicy)f.profile.skill_runtime.activities[f.activity.key].checker.phase_policy=phasePolicy;
  if(phasePolicy==='completion_only'){
-  f.profile.skill_runtime.activities[f.activity.key].checker.phase_policy=phasePolicy;
   delete f.activity.acceptance.document.preconditions;
   f.activity.acceptance.source.contract_digest=digest(f.activity.acceptance.document);
   f.activity.acceptance.criteria=f.activity.acceptance.criteria.filter(c=>c.phase==='end');
@@ -261,6 +262,9 @@ test.each([
  const result=await (await startCommanderWorkflow(f.run)).handle.getResult();
  const calls=fs.readFileSync(path.join(f.cwd,'checker-calls.jsonl'),'utf8').trim().split('\n').map(JSON.parse);
  expect(calls.map(c=>c.request.phase)).toEqual(phases);expect(result.status).toBe('completed');
+ if(phasePolicy==='completion_with_inputs'){
+  expect(calls[0].request.criteria).toEqual(f.activity.acceptance.criteria);
+ }
  expect(result.outputs.number).toBe(42);expect(ledger.snapshot().calls.filter(c=>c.role==='checker')).toHaveLength(phases.length);
  }finally{dbos.initialized=false;if(old===undefined)delete process.env.DBOS_DURABLE_ENABLED;else process.env.DBOS_DURABLE_ENABLED=old;f.close();}
 },20000);
