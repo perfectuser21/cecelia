@@ -144,8 +144,17 @@ test('原生host明确未启动的参数拒绝应精确归还本人设备，不�
  expect((await read(id)).status).toBe('blocked');
 });
 test('真TaskRun仍在途但Task JSON绑定丢失时不得重复建Run或启动，状态保持未知供原身份修复',async()=>{
- const id=randomUUID();await state.pool.query("INSERT INTO tasks(id,title,task_type,status,tenant_id,executor_kind,payload) VALUES($1,$2,'qiumi_task','queued','fixture-native','external-worker',$3)",[id,'遗失控制绑定 '+id,{native_agent_content:{protocol:'notion-complete-body/v1',complete:true,empty_body:false,page_ids:['fixture-page']},qiumi_source:{body:'NATIVE_HANG '+id}}]);
- await dispatchQiumiTask(await read(id),{env:host.env});await triggerNativeAgent(await read(id),deps());
+ const id='00000adb-0000-4000-8000-000000000000';await state.pool.query("INSERT INTO tasks(id,title,task_type,status,tenant_id,executor_kind,payload) VALUES($1,$2,'qiumi_task','queued','fixture-native','external-worker',$3)",[id,'遗失控制绑定 '+id,{native_agent_content:{protocol:'notion-complete-body/v1',complete:true,empty_body:false,page_ids:['fixture-page']},qiumi_source:{body:'NATIVE_HANG '+id}}]);
+ const routed=await dispatchQiumiTask(await read(id),{env:host.env});expect(routed,JSON.stringify(routed)).toMatchObject({outcome:'proceed'});
+ const started=await triggerNativeAgent(await read(id),deps());expect(started.runId,JSON.stringify(started)).toBeTruthy();
+ expect(started.nativeCapacityWait).not.toBe(true);expect(started.nativePreflightBlocked).not.toBe(true);
+ const bound=await read(id);expect(bound.status).toBe('in_progress');expect(bound.result.native_agent.request.run_id).toBe(started.runId);
+ expect((await state.pool.query('SELECT run_id FROM task_runs WHERE task_id=$1',[id])).rows).toEqual([{run_id:started.runId}]);
+ let observed=started;
+ for(let i=0;i<40&&(observed.status!=='running'||host.launches().filter(x=>x.text.includes(id)).length!==1);i++){await new Promise(r=>setTimeout(r,50));observed=await triggerNativeAgent(await read(id),deps());}
+ expect(observed.status,JSON.stringify(observed)).toBe('running');
+ expect(host.launches().filter(x=>x.text.includes(id))).toHaveLength(1);
+ expect((await state.pool.query('SELECT ended_at FROM task_runs WHERE task_id=$1',[id])).rows).toEqual([{ended_at:null}]);
  const original=(await read(id)).result.native_agent;
  await state.pool.query("UPDATE tasks SET result=result-'native_agent' WHERE id=$1",[id]);
  expect(await triggerNativeAgent(await read(id),deps())).toMatchObject({success:false,dispatchUncertain:true,reason:'native_agent_binding_unconfirmed'});

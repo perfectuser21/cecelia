@@ -23,3 +23,11 @@ test('有未识别Agent/旧Workflow relation时明确停放，不能伪普通mai
 test('正文显式Agent优先于未知relation，但不改变固定账号/模型选择',async()=>{
  expect(await routeQiumiTask(relationTask('【执行参数】\n执行Agent：main\n【执行参数结束】\n由main处理'),{pool,env:{nativeAgent:true}})).toMatchObject({outcome:'agent',department:'main'});
 });
+for(const id of ['adblock','native_adb_worker','abcadb123','a'.repeat(29)+'adb'+'b'.repeat(32),'abcADB123','00000adb-0000-4000-8000-000000000000','00000abc-adb0-4000-8000-000000000000','00000abc-0000-4adb-8000-000000000000','00000abc-0000-4000-8adb-000000000000','00000abc-0000-4000-8000-000000000adb'])test(`任务标识里的adb不是设备意图：${id}`,async()=>{
+ const task={id,tenant_id:'fixture',payload:{native_agent_content:{protocol:'notion-complete-body/v1',complete:true,empty_body:false,page_ids:['fixture-page']},qiumi_source:{body:'NATIVE_HANG '+id}}};
+ expect(await routeQiumiTask(task,{pool,env:{nativeAgent:true}})).toMatchObject({outcome:'agent',department:'main',payloadPatch:{provider:'native-agent'}});
+});
+for(const body of ['adb shell 检查设备','ADB shell 检查设备','用adb检查设备','/usr/bin/adb shell','adb.exe shell','`adb shell`','adb -s requested-device shell'])test(`真实ADB请求未指定唯一设备仍停放：${body}`,async()=>{
+ const task={id:'10000000-0000-4000-8000-000000000001',payload:{native_agent_content:{protocol:'notion-complete-body/v1',complete:true,empty_body:false,page_ids:['fixture-page']},qiumi_source:{body}}};
+ expect(await routeQiumiTask(task,{pool,env:{nativeAgent:true}})).toMatchObject({outcome:'unresolved',reason:'device_unresolved'});
+});
