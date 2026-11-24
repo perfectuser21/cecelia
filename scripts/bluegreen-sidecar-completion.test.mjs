@@ -17,6 +17,7 @@ async function fixture(t, scenario = '') {
   await mkdir(join(root, 'bin'));
   await mkdir(join(root, 'ledger'), { mode: 0o700 });
   await copyFile(new URL('./lib/brain-image-retention.sh', import.meta.url), join(root, 'scripts/lib/brain-image-retention.sh'));
+  await copyFile(new URL('./lib/url-encode.sh', import.meta.url), join(root, 'scripts/lib/url-encode.sh'));
   const request = { deployment_id: deployment, version: '1.360.5', git_sha: sha };
   const previousVersion=scenario.startsWith('fallback-prev-')?'1.360.5':'1.360.3';
   const previousTags=scenario.startsWith('fallback-prev-')?['cecelia-brain:prev-'+(scenario==='fallback-prev-wrong-version'?'1.360.4':previousVersion)+'-'+(scenario==='fallback-prev-wrong-sha'?'c'.repeat(12):previousSha.slice(0,12))]:['cecelia-brain:1.360.3'];
@@ -72,6 +73,10 @@ async function fixture(t, scenario = '') {
       if(args.some(x=>x.endsWith('/healthz'))){const sealed=['sealed-degraded','sealed-open-breaker'].includes(scenario),dbDown=['unhealthy','fallback-unhealthy'].includes(scenario),code=(sealed||dbDown)?503:200;const body=JSON.stringify(dbDown?{status:'degraded',db:'error',tick:'dead'}:sealed?{status:'degraded',db:'connected',tick:'dead'}:{status:'ok',db:'connected',tick:'alive'});if(args.some(a=>/^-[a-zA-Z]*f/.test(a))&&code>=400)process.exit(22);process.stdout.write(body+(args.includes('-w')?'\\n'+code:''));return;}
       if(args.some(x=>x.endsWith('/health'))) {
         fs.writeFileSync(root+'/healthy','');console.log(JSON.stringify({status:['degraded','sealed-degraded','sealed-open-breaker'].includes(scenario)?'degraded':'healthy',...(scenario==='sealed-degraded'?{organs:{scheduler:{enabled:false},circuit_breaker:{open:[]}}}:{}),...(scenario==='sealed-open-breaker'?{organs:{scheduler:{enabled:false},circuit_breaker:{open:['cecelia-run']}}}:{}),version:recovered?${JSON.stringify(previousVersion)}:'1.360.5',git_sha:scenario==='wrong-sha'?'${previousSha}':s,...(scenario==='health-oversize'?{padding:'x'.repeat(300000)}:{})}));if(args.includes('-w'))process.stdout.write(scenario==='health-redirect'?'302':'200');return;
+      }
+      if(args.some(x=>x.includes('/tasks?limit=1'))) {
+        if(scenario==='business-read-fail')process.exit(22);
+        console.log(JSON.stringify(scenario==='business-read-invalid'?{error:'fixture failed'}:[]));return;
       }
       if(args.some(x=>x.endsWith('/drain-cancel'))) {
         if(scenario==='drain-fail')process.exit(22);
@@ -201,4 +206,14 @@ test('同版本不同SHA构建后仅剩精确prev-version-sha12标签的前驱�
 for(const scenario of ['fallback-prev-wrong-version','fallback-prev-wrong-sha','primary-prev-only'])test(`prev标签严格合同拒绝错误版本/SHA与primary放宽：${scenario}`,async t=>{
  const f=await fixture(t,scenario);assert.equal(f.code,1,f.stdout+f.stderr);assert.ok(f.ledger.pending);
  assert.deepEqual(f.ledger.successes,[]);assert.equal(f.calls.some(a=>a.some(x=>x.endsWith('/drain-cancel'))),false);
+});
+
+for(const scenario of ['business-read-fail','business-read-invalid'])test(`固定业务只读验收${scenario}必须阻止成功收账但不回滚线上`,async t=>{
+ const f=await fixture(t,scenario);
+ assert.equal(f.code,1,f.stdout+f.stderr);
+ assert.equal(f.ledger.pending.deployment_id,deployment);
+ assert.deepEqual(f.ledger.successes,[]);
+ assert.ok(f.calls.some(args=>args.some(arg=>arg.includes('/tasks?limit=1'))),'未调用固定业务读取');
+ assert.equal(f.calls.filter(args=>args[0]==='compose').length,1,'业务验收失败不得隐式回滚');
+ assert.ok(!f.calls.some(args=>['rm','stop','run'].includes(args[0])));
 });
