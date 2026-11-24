@@ -1,3 +1,4 @@
+import { NOTION_LEADGEN_101_MARK, dispatchNotionLeadgen101 } from './notion-leadgen-dispatch.js';
 import {syncTaskProgress,findCreatedTaskPage,TASK_PROGRESS_FIELDS} from './projection/task-progress.js';
 import {syncManagedBodyBlock} from './projection/workflow-body.js';
 import { notionReq, getToken } from './recurring-notion-sync.js';
@@ -317,6 +318,7 @@ export const PUSH_TASKS_QUERY = `
            )
        AND NOT (t.task_type = ANY(ARRAY[${PUSH_EXCLUDED_TASK_TYPES.map((t) => `'${t}'`).join(',')}]::text[]))
        AND t.task_type <> 'project'
+       AND COALESCE(t.payload->>'source','') <> 'notion_leadgen_101'
        AND (
          t.status IN ('queued','in_progress','blocked')
          OR (t.status IN ('completed','failed','canceled','cancelled')
@@ -611,6 +613,38 @@ export async function ingestDelegatedPage(pool, token, page, opts = {}) {
   if (/run:notion-/.test(desc)) return { taskId: null, kind: 'skipped' }; // OpenClaw 已派发，幂等跳过
 
   const en = parseEnPage(page);
+  if (en.enNative && desc.includes(NOTION_LEADGEN_101_MARK)) {
+    const env = opts.env ?? process.env;
+    const now = opts.now ?? (() => new Date());
+    const at = now();
+    const end = toEndIso(en.planEnd);
+    if (end && !isFuture(end, at)) {
+      await writeStatusReceipt(token, page, desc, '101 未派发：已超过计划截止时间', 'Blocked');
+      return { taskId: null, kind: 'blocked' };
+    }
+    if (isFuture(toStartIso(en.planDate), at)) return { taskId: null, kind: 'scheduled' };
+    const bindings = JSON.parse(env.NOTION_LEADGEN_101_BINDINGS ?? '{}');
+    const body = await fetchNotionPageContent(token, page.id, { requireComplete: true });
+    try {
+      const received = await dispatchNotionLeadgen101(pool, {
+        pageId: page.id, title: name, body, tenantId: tenantFor(env, NOTION_TASKS_DB), bindings,
+      }, { createTask: opts.createFoundationTask });
+      await writeStatusReceipt(token, page, desc, `brain:${received.taskId} ✓已接管`);
+      return received;
+    } catch (error) {
+      const reasons = {
+        notion_leadgen_binding_unavailable: '该公司没有可用的 101 执行绑定',
+        notion_leadgen_input_invalid: '请填写公司、关键词和候选上限 1',
+        foundation_release_not_ready: '101 执行版本尚未就绪',
+        foundation_notion_workflow_invalid: '配置没有指向轻量版 101',
+        foundation_idempotency_conflict: '此 Notion 页已起单，需按原任务处理',
+      };
+      const reason = reasons[error.code];
+      if (!reason) throw error;
+      await writeStatusReceipt(token, page, desc, `101 未派发：${reason}`, 'Blocked');
+      return { taskId: null, kind: 'blocked' };
+    }
+  }
   if (en.zhId32 || en.enNative) {
     return ingestQiumiPage(pool, token, page, en, { env: opts.env ?? process.env, ...(opts.now ? { now: opts.now } : {}) });
   }
@@ -659,7 +693,7 @@ async function ingestDelegatedBatch(pool, token, opts, marks) {
       for (const page of pages) {
         try {
           const result = await ingestDelegatedPage(pool, token, page, opts);
-          if (result.kind === 'qiumi_task') ingested += 1; else skipped += 1;
+          if (['qiumi_task', 'workflow_dispatch'].includes(result.kind)) ingested += 1; else skipped += 1;
         } catch (error) {
           failed += 1;
           await logSyncError(pool, error.message);
@@ -694,7 +728,7 @@ function defaultSshExec(args) {
 }
 
 // 状态回执尾巴（⚠/⏸/🕐/▶）可被下一轮覆盖——剥离后再拼，防 desc 滚雪球
-const STATUS_TAIL_RE = /\s*·?\s*(?:▶ 已派发|⚠ 派发[未失][成败]|⏸ 排队|🕐 已排期)[\s\S]*$/;
+const STATUS_TAIL_RE = /\s*·?\s*(?:101 未派发：|▶ 已派发|⚠ 派发[未失][成败]|⏸ 排队|🕐 已排期)[\s\S]*$/;
 function stripStatusTail(desc) {
   return String(desc || '').replace(STATUS_TAIL_RE, '').trim();
 }
@@ -704,13 +738,14 @@ function stripStatusTail(desc) {
  * 永远完整：长正文时若对 `base + tail` 整串 slice(0,1900)，超长 base 会把尾巴挤出
  * 截断窗口，下一轮 `/brain:/` 判不出已接手 → 每轮重复入账（PR2 审查 Important #1）。
  */
-async function writeStatusReceipt(token, page, desc, status) {
+async function writeStatusReceipt(token, page, desc, status, notionStatus) {
   const base = stripStatusTail(desc);
   const tail = base ? ` · ${status}` : status;
   const content = `${base.slice(0, Math.max(0, 1900 - tail.length))}${tail}`;
   await notionReq(token, `/pages/${page.id}`, 'PATCH', {
     properties: {
       Description: { rich_text: [{ type: 'text', text: { content } }] },
+      ...(notionStatus ? { Status: { status: { name: notionStatus } } } : {}),
     },
   });
 }

@@ -1,11 +1,10 @@
-# 修复普通任务标识被误识别为设备意图
+# 修复 Notion 101 派单的业务绑定
 
-Task: ad48434f-e2d5-4464-8c60-034ef11b7665
+Task: 8b4954b4-29b2-449f-9e6a-3a70d8bc67bd
 GP-Anchor: none(infra)
 
-- [ ] 含adb的UUID/普通标识不能触发手机设备意图，真实独立adb命令及显式设备要求仍严格验真。
-  Test: manual:cd packages/brain && npx --no-install vitest run src/routing/__tests__/native-qiumi-route.test.js src/routing/__tests__/cheap-gates.test.js
-- [ ] 固定含adb任务ID的普通任务经真实dispatcher/PG原生运行账本，不重复启动保护保持；前置路由和运行绑定有明确断言。
-  Test: manual:node scripts/ci/run-basic-check.mjs brain-integration
-- [ ] 只读noexec镜像完成/取消合同和来源防复活仍通过，main自动发布后核对生产SHA、版本和业务回执。
-  Test: manual:node scripts/ci/run-basic-check.mjs image
+- [ ] Notion 101 到点后使用宿主登记的轻量版本及租户绑定。过期和缺失绑定可见，其他委派路由保持。
+  Test: manual:cd packages/brain && npx --no-install vitest run src/__tests__/notion-leadgen-dispatch.test.js src/__tests__/notion-push-sync-marked-ingest.test.js
+- [ ] 同一页在真实隔离 PostgreSQL 中并发起单只生成一条任务，回执只更新源页并保留失败原因。
+  Test: manual:cd packages/brain && npx --no-install vitest run --config vitest.integration.config.js src/__tests__/integration/workflow-foundation.pg.integration.test.js
+  Test: manual:cd packages/brain && npx --no-install vitest run src/__tests__/notion-gtd-sync-push-and-stops.test.js src/__tests__/notion-qiumi-receipt-details.test.js

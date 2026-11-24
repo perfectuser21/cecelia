@@ -18,6 +18,8 @@ vi.hoisted(() => {
 afterAll(() => vi.unstubAllEnvs());
 import {workflowFoundationDatabase} from '../fixtures/workflow-foundation-db.js';
 import fs from 'node:fs';
+import {randomUUID} from 'node:crypto';
+import {createFoundationTask} from '../../workflow-foundation/registry.js';
 import path from 'node:path';
 import {foundationHttpFixture,until} from '../fixtures/workflow-foundation-http.js';
 import processState from '../../orchestrator/activity-supervisor-state.cjs';
@@ -65,6 +67,24 @@ it('认证API登记→冻结Release→幂等Task→真实Worker/DBOS/产物→�
  expect((await fixture.request(`/workflow-foundation/tasks/${taskId}/reconcile`,{machine_id:'fixture-host',run_id:run})).body.status).toBe('completed');
  expect((await fixture.request(`/workflow-foundation/tasks/${taskId}/reconcile`,{machine_id:'fixture-host',run_id:run,status:'completed'})).status).toBe(400);
 },90000);
+
+it('同一 Notion 页并发仅登记一个轻量任务并保留租户与原页，改输入须拒绝',async()=>{
+ fixture=await foundationHttpFixture({workflowKey:'douyin_video_discovery_lightweight'});
+ const {registration,release}=await fixture.publish();
+ const page=randomUUID();
+ const input={workflow_id:registration.workflow_id,release_id:release.id,input:{label:'隔离 Notion 验收'},idempotency_key:'notion-101:'+page};
+ const source={notionPageId:page,notionTenantId:'tenant-fixture'};
+ const submit=(body=input,authority=source)=>createFoundationTask(fixture.pool,body,authority);
+ const results=await Promise.all([submit(),submit()]);
+ const taskId=results[0].task.id;
+ expect(results.map(x=>x.created).sort()).toEqual([false,true]);
+ expect(results[1].task.id).toBe(taskId);
+ expect((await fixture.pool.query("SELECT id,tenant_id,payload FROM tasks WHERE payload->>'notion_page_id'=$1",[page])).rows).toEqual([
+  expect.objectContaining({id:taskId,tenant_id:'tenant-fixture',payload:expect.objectContaining({source:'notion_leadgen_101',notion_page_id:page})})
+ ]);
+ await expect(submit({...input,input:{label:'输入漂移'}})).rejects.toMatchObject({code:'foundation_idempotency_conflict'});
+ await expect(submit(input,{...source,notionTenantId:'other'})).rejects.toMatchObject({code:'foundation_idempotency_conflict'});
+},30000);
 
 it('自动暂停的原工单恢复到相同冻结发布，只生成一个运行，人工暂停和在途任务保持原状',async()=>{
  fixture=await foundationHttpFixture();

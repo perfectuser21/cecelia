@@ -35,7 +35,7 @@ describe('pushQiumiStatus', () => {
     // 状态推来推去——子 queued 把行推回「委派」（下一轮同步当新行二次入账）、子完成抢在
     // 父任务之前写「已完成」、子失败写「推迟」并清空 OpenClaw任务号（急停与重排的唯一锚）。
     // 历史子任务不能代表原Notion任务页；SQL层只允许父qiumi_task回写。
-    expect(PUSH_QIUMI_QUERY, 'device_job 行会被推送去改中文表').toMatch(/AND task_type = 'qiumi_task'/);
+    expect(PUSH_QIUMI_QUERY, 'device_job 行会被推送去改中文表').toMatch(/AND \(task_type = 'qiumi_task'\s+OR \(task_type = 'workflow_dispatch' AND payload->>'source' = 'notion_leadgen_101'/);
     const zhPatch = mockNotionReq.mock.calls.find((c) => c[1] === `/pages/${ZH}` && c[2] === 'PATCH')[3];
     expect(zhPatch.properties['状态'].status.name).toBe('已完成');
     expect(zhPatch.properties['已完成'].checkbox).toBe(true);
@@ -45,6 +45,33 @@ describe('pushQiumiStatus', () => {
     expect(query.mock.calls.at(-1)[0]).toMatch(/qiumi_pushed_status/);
     expect(query.mock.calls.at(-1)[1]).toEqual([TID, 'completed_no_pr', null, null]);
   });
+  it('轻量执行失败的原因和证据写回英文源页', async () => {
+    const { pushQiumiStatus } = await import('../notion-gtd-sync.js');
+    const row = taskRow({
+      zh_page_id: null, status: 'blocked', blocked_reason: 'foundation_needs_review',
+      blocked_detail: { reason: 'device_confirmation_required' },
+      result: {
+        summary: '原运行待检查', foundation_reconciliation: { status: 'blocked' },
+        evidence: [{ ref: 'dbos:commander-foundation:run-101' }],
+      },
+    });
+    const query = vi.fn().mockResolvedValueOnce({ rows: [row] }).mockResolvedValue({ rows: [] });
+    let receiptBlock;
+    mockNotionReq.mockImplementation(async (_, route, method, payload) => {
+      if (route === `/pages/${EN}` && method === 'GET') return { properties: { Status: { status: { name: 'Delegated' } } } };
+      if (route === `/blocks/${EN}/children` && method === 'PATCH') receiptBlock = { ...payload.children[0], id: 'progress' };
+      if (route.startsWith(`/blocks/${EN}/children?`)) return { results: receiptBlock ? [receiptBlock] : [], has_more: false };
+      if (route.startsWith('/blocks/progress/children?')) return { results: receiptBlock.toggle.children, has_more: false };
+      return {};
+    });
+    expect((await pushQiumiStatus({ query }, 'tok', deps)).pushed).toBe(1);
+    const calls = JSON.stringify(mockNotionReq.mock.calls);
+    expect(calls).toContain('device_confirmation_required');
+    expect(calls).toContain('dbos:commander-foundation:run-101');
+    expect(calls).toContain('Blocked');
+    expect(calls).not.toContain(ZH);
+  });
+
   it('中文当前状态是人工态（阻塞/淘汰/收集/下一个行动）→ 不写中文页，指纹带 qiumi_human_hold 保留标记', async () => {
     const { pushQiumiStatus } = await import('../notion-gtd-sync.js');
     for (const human of ['阻塞', '淘汰', '收集', '下一个行动']) {
