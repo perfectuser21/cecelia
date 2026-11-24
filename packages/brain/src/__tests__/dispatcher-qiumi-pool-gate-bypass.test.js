@@ -218,3 +218,28 @@ it('普通任务在统一池满额时保持排队，独立额度不扩大选单�
   expect(mockUpdateTask).not.toHaveBeenCalled();
   expect(mockTriggerCeceliaRun).not.toHaveBeenCalled();
 });
+
+it('显式原生任务入口在通用池空闲时也不能认领普通任务', async () => {
+  _budget = { ...closedBudget(), dispatchAllowed: true, taskPool: { budget: 4, used: 0, available: 4 } };
+  _candidatePool = [normal];
+
+  const result = await dispatchNextTask(null, { nativeOnly: true });
+
+  expect(result).toMatchObject({ dispatched: false, reason: 'no_dispatchable_task' });
+  expect(mockUpdateTask).not.toHaveBeenCalled();
+  expect(mockTriggerCeceliaRun).not.toHaveBeenCalled();
+});
+
+it('显式原生任务入口在池满时不以普通高优先级任务驱逐其它执行体', async () => {
+  _candidatePool = [qiumi];
+  const original = mockQuery.getMockImplementation();
+  mockQuery.mockImplementation(async (sql, ...args) => {
+    if (/SELECT priority FROM tasks/.test(sql)) throw new Error('原生任务不得进入普通任务驱逐分支');
+    return original(sql, ...args);
+  });
+
+  await dispatchNextTask(null, { nativeOnly: true });
+
+  expect(mockQuery.mock.calls.some(([sql]) => /SELECT priority FROM tasks/.test(sql))).toBe(false);
+  expect(mockUpdateTask).toHaveBeenCalledWith({ task_id: 'q1', status: 'in_progress' });
+});

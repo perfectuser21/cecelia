@@ -24,6 +24,33 @@ it('US固定镜像策略进入默认停用Janitor合同且在体征采样之后'
 // 决策 ff2019e2：定时任务每次真实执行写一行 runs（带真实起止），模块自 gate 跳过的那一轮不记。
 describe('scheduler-jobs 写运行记录', () => {
   const runInserts = pool => pool.query.mock.calls.filter(([sql]) => /INSERT INTO runs/.test(sql));
+  it('显式业务失败同时写失败哨兵与运行账，保持活性且不阻断后续任务', async () => {
+    const pool = makePool();
+    const stamp = '2026-11-24T08:00:00.000Z';
+    const results = await runSchedulerJobsOnce(pool, [
+      { name: 'business-failed', handler: async () => ({ ok: false, error: 'notion_sync_failed: ingest,push', liveness_at: stamp }) },
+      { name: 'next-job', handler: async () => ({ processed: 1 }) },
+    ]);
+    expect(results[0]).toMatchObject({ ok: false, error: 'notion_sync_failed: ingest,push', liveness_at: stamp });
+    expect(results[1]).toMatchObject({ name: 'next-job', ok: true });
+    const sentinel = pool.query.mock.calls.find(([, args]) => args?.[0] === 'scheduler_job_last_run:business-failed');
+    expect(JSON.parse(sentinel[1][1])).toMatchObject({ ok: false, liveness_at: stamp });
+    expect(runInserts(pool)[0][1]).toContain('fail');
+    expect(runInserts(pool)[0][1]).toContain('notion_sync_failed: ingest,push');
+  });
+  it('失败结果即使带自跳过标记仍记失败，缺错误说明时保留明确诊断', async () => {
+    const pool = makePool();
+    const [result] = await runSchedulerJobsOnce(pool, [{ name: 'failed-skip', handler: async () => ({ ok: false, skipped: true }) }]);
+    expect(result).toMatchObject({ ok: false, error: 'handler_reported_failure' });
+    expect(runInserts(pool)).toHaveLength(1);
+    expect(runInserts(pool)[0][1]).toContain('fail');
+  });
+  it('成功结果的历史嵌套错误不升级为本轮失败', async () => {
+    const pool = makePool();
+    const [result] = await runSchedulerJobsOnce(pool, [{ name: 'recovered-job', handler: async () => ({ ok: true, previous: { error: 'old-failure' } }) }]);
+    expect(result.ok).toBe(true);
+    expect(runInserts(pool)[0][1]).toContain('pass');
+  });
   it('真跑的一轮写 runs：outcome=pass，起止是真实计时', async () => {
     const pool = makePool();
     await runSchedulerJobsOnce(pool, [{ name: 'real-job', handler: async () => { await new Promise(r => setTimeout(r, 20)); return { processed: 3 }; } }]);
