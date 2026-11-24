@@ -5,7 +5,7 @@ import { durableWrite } from '../../src/orchestrator/activity-supervisor.js';
 import { loadStandaloneProvider, readOwnedFile } from './launch.mjs';
 import { runStandaloneSkill } from './run.mjs';
 
-export async function runStandaloneWorkerOnce({ machineId, request, provider, receipts }) {
+export async function runStandaloneWorkerOnce({ machineId, request, provider, receipts, sources }) {
   const send = async receipt => {
     const result = await request('finish', { machine_id: machineId, receipt });
     const expected = receipt.status === 'completed' ? 'completed' : 'blocked';
@@ -17,7 +17,7 @@ export async function runStandaloneWorkerOnce({ machineId, request, provider, re
     await send(pending);
     return { status: 'reconciled' };
   }
-  const { job } = await request('claim', { machine_id: machineId });
+  const { job } = await request('claim', { machine_id: machineId, ...(sources === undefined ? {} : { sources }) });
   if (!job) return { status: 'idle' };
   const identity = { task_id: job.task_id, run_id: job.run_id };
   if (job.machine_id !== machineId || !identity.task_id || !identity.run_id) throw Error('standalone_worker_claim_mismatch');
@@ -69,6 +69,7 @@ async function main(configFile) {
   return runStandaloneWorkerOnce({
     machineId: config.machine_id,
     provider: createProvider,
+    sources: config.sources,
     receipts: diskReceipts(config.receipts_directory),
     request: async (action, body) => {
       const response = await fetch(new URL('api/brain/workflow-foundation/standalone/' + action, target), {

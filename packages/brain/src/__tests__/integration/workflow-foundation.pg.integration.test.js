@@ -88,17 +88,23 @@ it('同一 Notion 页并发仅登记一个轻量任务并保留租户与原页�
  await expect(submit(input,{...source,notionTenantId:'other'})).rejects.toMatchObject({code:'foundation_idempotency_conflict'});
 },30000);
 
-it('Notion 单只可由指定直执行宿主领取，同一领取不重做，可信终态回到原单',async()=>{
- fixture=await foundationHttpFixture({workflowKey:'douyin_video_discovery',releaseTarget:'mmv',directInput:true});
+it.each([
+ ['101','douyin_video_discovery',{keyword:'验收',max_candidates:1},['验收']],
+ ['102','douyin_video_processing',{source_run:'discovery-source-1'},[]],
+ ['103','douyin_comment_scoring',{source_run:'comment-source-1'},[]],
+ ['104','douyin_lead_outreach',{order_id:'recFixtureOrder'},[]],
+])('Notion %s 单只可由登记该流程的直执行宿主领取，可信终态回原页',async(stage,workflowKey,business,approvedKeywords)=>{
+ fixture=await foundationHttpFixture({workflowKey,releaseTarget:'mmv',directInput:true});
  const {registration,release}=await fixture.publish();
  const notionPageId=randomUUID();
  const {task}=await createFoundationTask(fixture.pool,{
-  workflow_id:registration.workflow_id,release_id:release.id,input:{binding_key:'test_phone',business:{keyword:'验收',max_candidates:1}},
-  idempotency_key:'notion-101:'+notionPageId
- },{notionPageId,notionTenantId:'tenant-fixture'});
+  workflow_id:registration.workflow_id,release_id:release.id,input:{binding_key:'test_phone',business},
+  idempotency_key:`notion-${stage}:${notionPageId}`
+ },{notionPageId,notionTenantId:'tenant-fixture',notionWorkflowKey:workflowKey});
  expect((await fixture.request('/workflow-foundation/claim',{machine_id:'us-mac-m4',task_id:task.id})).body).toEqual({job:null});
  expect((await fixture.request('/workflow-foundation/standalone/claim',{machine_id:'other'})).body).toEqual({job:null});
- const take=()=>fixture.request('/workflow-foundation/standalone/claim',{machine_id:'us-mac-m4'});
+ if(stage!=='101')expect((await fixture.request('/workflow-foundation/standalone/claim',{machine_id:'us-mac-m4'})).body).toEqual({job:null});
+ const take=()=>fixture.request('/workflow-foundation/standalone/claim',{machine_id:'us-mac-m4',sources:[`notion_leadgen_${stage}`]});
  const pair=await Promise.all([take(),take()]);
  const jobs=pair.map(value=>value.body.job).filter(Boolean);
  expect(jobs,JSON.stringify(pair)).toHaveLength(1);
@@ -112,12 +118,13 @@ it('Notion 单只可由指定直执行宿主领取，同一领取不重做，可
   task_id:task.id,claimer:job.claimer,claimed_at:job.claimed_at,
   definition:{...job.definition,attempt_key:task.id+':1',actor:job.claimer},
   standalone:{
-   scope:{workflow_key:'douyin_video_discovery',source_commit:sourceCommit,approved_keywords:['验收'],limit:1,company:{company_id:randomUUID(),tenant_id:randomUUID(),version:1,policy_id:'fixture'}},
+   scope:{workflow_key:workflowKey,source_commit:sourceCommit,approved_keywords:approvedKeywords,limit:1,...(stage==='101'?{}:business),company:{company_id:randomUUID(),tenant_id:randomUUID(),version:1,policy_id:'fixture'}},
    skill:{name:'douyin-leadgen-direct',version:'1.0.0',source_commit:sourceCommit,path:'skill/SKILL.md',sha256:'b'.repeat(64)},
   }
  };
  const start=body=>fixture.request('/runs/'+job.run_id+'/start-skill',body);
  expect((await start({...startBody,standalone:{...startBody.standalone,scope:{...startBody.standalone.scope,limit:2}}})).status).toBe(409);
+ if(stage!=='101')expect((await start({...startBody,standalone:{...startBody.standalone,scope:{...startBody.standalone.scope,[Object.keys(business)[0]]:'drift'}}})).status).toBe(409);
  let localReceipt, modelCalls=0;
  const finished=await runStandaloneWorkerOnce({
   machineId:job.machine_id,
@@ -132,7 +139,7 @@ it('Notion 单只可由指定直执行宿主领取，同一领取不重做，可
      const identity={
       protocol:'codex-exec-v1',task_id:task.id,run_id:job.run_id,machine_id:job.machine_id,claimer:job.claimer,
       claimed_at:job.claimed_at,profile_sha256:'a'.repeat(64),skill:startBody.standalone.skill,
-      company:startBody.standalone.scope.company,approved_keywords:['验收'],task_run_id:started.body.task_run_id,
+      company:startBody.standalone.scope.company,approved_keywords:approvedKeywords,task_run_id:started.body.task_run_id,
       scope_sha256:digest({...startBody.standalone.scope,task_id:task.id}),
       run_binding:{run_binding_id:binding.id,workflow_id:binding.workflow_id,workflow_definition_version_id:binding.workflow_definition_version_id,attempt_key:binding.attempt_key,activities:Object.fromEntries(
        release.payload.workflows[0].payload.activities.map(a=>[a.slot_key,{reference_id:a.reference_id,activity_id:a.activity_id,activity_definition_version_id:a.activity_version_id}])
@@ -156,7 +163,7 @@ it('Notion 单只可由指定直执行宿主领取，同一领取不重做，可
  expect(modelCalls).toBe(1);
  expect((await finish()).body).toEqual({status:'completed'});
  const row=(await fixture.pool.query('SELECT status,payload,result FROM tasks WHERE id=$1',[task.id])).rows[0];
- expect(row).toMatchObject({status:'completed',payload:{notion_page_id:notionPageId},result:{standalone_receipt:receipt}});
+ expect(row).toMatchObject({status:'completed',payload:{source:`notion_leadgen_${stage}`,notion_page_id:notionPageId},result:{standalone_receipt:receipt}});
 },30000);
 
 it('自动暂停的原工单恢复到相同冻结发布，只生成一个运行，人工暂停和在途任务保持原状',async()=>{

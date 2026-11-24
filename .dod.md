@@ -14,5 +14,5 @@ GP-Anchor: none(infra)
   Test: manual:cd packages/brain && npx --no-install vitest run --config vitest.integration.config.js src/__tests__/integration/workflow-foundation.pg.integration.test.js
 - [ ] 独立适配器使用现有手机运行时发布证据固定本轮，先登记起跑再启动工具，业务入库只以工具独立读回确认。
   Test: manual:cd packages/brain && npx --no-install vitest run scripts/standalone-skill/native-discovery.test.mjs
-- [ ] 四条获客 Workflow 的 Notion 标记分别处理。未登记执行端的 102～104 回写原页，避免通用 Agent 误接。
+- [ ] 四条获客 Workflow 的 Notion 标记各自绑定固定发布、原页和输入范围。仅登记了该流程的宿主可领取，未配置时原页明确回执。
   Test: manual:cd packages/brain && npx --no-install vitest run src/__tests__/notion-push-sync-marked-ingest.test.js

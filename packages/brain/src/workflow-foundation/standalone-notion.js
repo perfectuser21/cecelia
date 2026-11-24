@@ -6,12 +6,16 @@ import { digest } from '../orchestrator/commander-decision.js';
 import { UUID, requireFoundation, onlyKeys } from './contracts.js';
 import { validateMachineRequest } from './claim.js';
 import { foundationTransaction } from './registry.js';
-import { resolveStandaloneDiscoveryRelease } from './standalone-release.js';
+import { resolveStandaloneRelease } from './standalone-release.js';
+import { standaloneSourceList, standaloneSources, standaloneWorkflows } from './standalone-source.js';
 
-const boundSource = "payload->>'source'='notion_leadgen_101' AND task_type='workflow_dispatch'";
+const boundSource = `payload->>'source' IN (${standaloneSourceList}) AND task_type='workflow_dispatch'`;
 
 export async function claimStandaloneNotionTask(pool, input) {
-  validateMachineRequest(input, ['machine_id']);
+  validateMachineRequest(input, ['machine_id','sources']);
+  const sources = input.sources ?? [standaloneSources[0]];
+  requireFoundation(Array.isArray(sources) && sources.length > 0 && sources.length <= standaloneSources.length
+    && new Set(sources).size === sources.length && sources.every(source => standaloneSources.includes(source)), 'standalone_worker_sources_invalid', 400);
   const machine = input.machine_id;
   return foundationTransaction(pool, 'notion-standalone:' + machine, async db => {
     const active = await db.query(`SELECT id FROM tasks WHERE ${boundSource}
@@ -19,11 +23,13 @@ export async function claimStandaloneNotionTask(pool, input) {
     if (active.rows.length) return { job: null };
 
     const row = (await db.query(`SELECT * FROM tasks WHERE ${boundSource} AND status='queued' AND claimed_by IS NULL
-      AND payload#>>'{foundation_request,machine_id}'=$1 ORDER BY created_at,id LIMIT 1 FOR UPDATE SKIP LOCKED`, [machine])).rows[0];
+      AND payload#>>'{foundation_request,machine_id}'=$1 AND payload->>'source'=ANY($2::text[])
+      ORDER BY created_at,id LIMIT 1 FOR UPDATE SKIP LOCKED`, [machine,sources])).rows[0];
     if (!row) return { job: null };
 
-    const fixed = await resolveStandaloneDiscoveryRelease(db, row.payload.workflow_definition);
-    requireFoundation(fixed.row.key === 'douyin_video_discovery' && fixed.machine_id === machine
+    const stage = row.payload.source.slice(-3);
+    const fixed = await resolveStandaloneRelease(db, row.payload.workflow_definition, standaloneWorkflows[stage]);
+    requireFoundation(fixed.machine_id === machine
       && fixed.definition.workflow_definition_version_id === row.payload.workflow_definition.workflow_definition_version_id
       && fixed.definition.snapshot_sha256 === row.payload.workflow_definition.snapshot_sha256, 'standalone_release_changed');
     const claimedAt = new Date().toISOString();
@@ -31,6 +37,7 @@ export async function claimStandaloneNotionTask(pool, input) {
       claimer: 'standalone:' + machine, claimed_at: claimedAt,
       task_id: row.id, run_id: randomUUID(), machine_id: machine, tenant_id: row.tenant_id,
       release_id: fixed.definition.release_id, definition: fixed.definition, input: row.payload.workflow_input,
+      ...(stage === '101' ? {} : { workflow_key: fixed.row.key }),
     };
     await db.query(`UPDATE tasks SET status='in_progress',claimed_by=$2,claimed_at=$4::timestamptz,started_at=$4::timestamptz,updated_at=NOW(),
       status_history=COALESCE(status_history,'[]'::jsonb)||jsonb_build_array(jsonb_build_object('from','queued','to','in_progress','source','standalone_notions','changed_at',NOW())),

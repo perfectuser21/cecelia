@@ -35,7 +35,7 @@ describe('pushQiumiStatus', () => {
     // 状态推来推去——子 queued 把行推回「委派」（下一轮同步当新行二次入账）、子完成抢在
     // 父任务之前写「已完成」、子失败写「推迟」并清空 OpenClaw任务号（急停与重排的唯一锚）。
     // 历史子任务不能代表原Notion任务页；SQL层只允许父qiumi_task回写。
-    expect(PUSH_QIUMI_QUERY, 'device_job 行会被推送去改中文表').toMatch(/AND \(task_type = 'qiumi_task'\s+OR \(task_type = 'workflow_dispatch' AND payload->>'source' = 'notion_leadgen_101'/);
+    expect(PUSH_QIUMI_QUERY, 'device_job 行会被推送去改中文表').toMatch(/AND \(task_type = 'qiumi_task'\s+OR \(task_type = 'workflow_dispatch' AND payload->>'source' IN \('notion_leadgen_101', 'notion_leadgen_102', 'notion_leadgen_103', 'notion_leadgen_104'\)/);
     const zhPatch = mockNotionReq.mock.calls.find((c) => c[1] === `/pages/${ZH}` && c[2] === 'PATCH')[3];
     expect(zhPatch.properties['状态'].status.name).toBe('已完成');
     expect(zhPatch.properties['已完成'].checkbox).toBe(true);

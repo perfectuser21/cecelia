@@ -2,10 +2,10 @@ import { getRelease, getReleaseGate } from '../lib/release-index.js';
 import { digest } from '../orchestrator/commander-decision.js';
 import { UUID, onlyKeys, requireFoundation } from './contracts.js';
 
-export async function resolveStandaloneDiscoveryRelease(db, { workflow_id, release_id }) {
+export async function resolveStandaloneRelease(db, { workflow_id, release_id }, workflowKey) {
   requireFoundation(UUID.test(workflow_id ?? '') && UUID.test(release_id ?? ''), 'foundation_identity_invalid', 400);
   const row = (await db.query('SELECT id,key,name,status FROM workflows WHERE id=$1', [workflow_id])).rows[0];
-  requireFoundation(row?.key === 'douyin_video_discovery', 'foundation_notion_workflow_invalid', 400);
+  requireFoundation(row && row.key === workflowKey, 'foundation_notion_workflow_invalid', 400);
   requireFoundation(row.status === 'active', 'foundation_workflow_not_active');
   const release = await getRelease(db, release_id);
   requireFoundation(release.target === 'mmv', 'standalone_release_target_invalid');
@@ -30,11 +30,20 @@ export async function resolveStandaloneDiscoveryRelease(db, { workflow_id, relea
   };
 }
 
-export function validateStandaloneDiscoveryInput(input) {
+export function validateStandaloneInput(input, stage) {
   onlyKeys(input, ['binding_key','business']);
+  requireFoundation(/^[A-Za-z0-9_-]{1,100}$/.test(input.binding_key ?? ''), 'notion_leadgen_input_invalid', 400);
+  if (stage !== '101') {
+    const field = stage === '104' ? 'order_id' : 'source_run';
+    onlyKeys(input.business, [field]);
+    const value = input.business[field];
+    const valid = field === 'order_id' ? UUID.test(value ?? '') || /^rec[A-Za-z0-9]{1,50}$/.test(value ?? '')
+      : /^[A-Za-z0-9_-]{1,120}$/.test(value ?? '');
+    requireFoundation(typeof value === 'string' && valid, 'notion_leadgen_input_invalid', 400);
+    return;
+  }
   onlyKeys(input.business, ['keyword','max_candidates']);
   const keyword = input.business.keyword;
-  requireFoundation(/^[A-Za-z0-9_-]{1,100}$/.test(input.binding_key ?? '')
-    && typeof keyword === 'string' && keyword.trim() === keyword && keyword.length > 0 && keyword.length <= 80
+  requireFoundation(typeof keyword === 'string' && keyword.trim() === keyword && keyword.length > 0 && keyword.length <= 80
     && !/[\r\n\0]/.test(keyword) && input.business.max_candidates === 1, 'notion_leadgen_input_invalid', 400);
 }

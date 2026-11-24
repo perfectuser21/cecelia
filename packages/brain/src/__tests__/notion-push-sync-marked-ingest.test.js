@@ -420,4 +420,32 @@ describe('Notion 102、103、104 保留独立派单入口', () => {
     expect(mockNotionReq.mock.calls[1][1]).toBe('/pages/'+source.id);
     expect(mockNotionReq.mock.calls[1][3].properties.Description.rich_text[0].text.content).toContain(code + ' 未派发');
   });
+
+  it.each([
+    ['102', '来源运行：test-discovery', 'douyin_video_processing'],
+    ['103', '来源运行：test-collection', 'douyin_comment_scoring'],
+    ['104', '原订单：recTestOrder', 'douyin_lead_outreach'],
+  ])('%s 只读取对应发布绑定并在 Notion 原页记下 Brain 任务', async (stage, field, workflowKey) => {
+    const { ingestDelegatedPage } = await import('../notion-push-sync.js');
+    const page = { ...enPage(`[leadgen-${stage}]`), id:'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee' };
+    const tenant = 'tenant-yuesheng';
+    const id = '12345678-1234-4234-8234-123456781234';
+    const release = '12345678-4321-4234-8234-123456781234';
+    const bindings = { 悦升: { tenant_id: tenant, workflow_id: id, release_id: release, binding_key: 'approved' } };
+    mockNotionReq.mockResolvedValueOnce({ results: [{ type:'paragraph', paragraph:{ rich_text:[{ plain_text:`公司：悦升\n${field}` }] } }], has_more:false })
+      .mockResolvedValueOnce({});
+    const createFoundationTask = vi.fn(async () => ({ task: { id } }));
+    const result = await ingestDelegatedPage({ query:mockQuery }, 'tok', page, {
+      env: {
+        NOTION_TENANT_MAP: JSON.stringify({ d5bc40c2ba6382ef965a8153b7ad81a0: tenant }),
+        [`NOTION_LEADGEN_${stage}_BINDINGS`]: JSON.stringify(bindings),
+      },
+      now:()=>new Date('2026-09-25'), createFoundationTask,
+    });
+    expect(result).toEqual({ taskId:id, kind:'workflow_dispatch' });
+    expect(createFoundationTask.mock.calls[0][2]).toEqual({ notionPageId:page.id, notionTenantId:tenant, notionWorkflowKey:workflowKey });
+    expect(mockNotionReq.mock.calls[1][1]).toBe('/pages/'+page.id);
+    expect(mockNotionReq.mock.calls[1][3].properties.Description.rich_text[0].text.content).toContain(`brain:${id}`);
+    expect(mockCreateRoutedTask).not.toHaveBeenCalled();
+  });
 });

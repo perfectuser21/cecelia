@@ -1,6 +1,7 @@
 /** 独立 Skill 的登记入口：复用既有固定起跑事务，不派发模型或业务。 */
 import {UUID,evidenceHash,evidenceObject,evidenceText,getRelease,requireEvidence} from './release-index.js';
 import {startRun} from './task-run.js';
+import {standaloneSources} from '../workflow-foundation/standalone-source.js';
 const SHA=/^[a-f0-9]{40}$/,HASH=/^[a-f0-9]{64}$/;
 const definitionFields=['release_id','observation_id','workflow_id','workflow_definition_version_id','snapshot_sha256','runtime_snapshot_sha256','expected_path','attempt_key','actor'];
 const conflict=(ok,message)=>requireEvidence(ok,message,'SKILL_START_AUTHORITY',409);
@@ -22,19 +23,26 @@ export async function startStandaloneSkillRun(pool,runId,input){
   conflict(task?.status==='in_progress'&&task.claimed_at&&task.claimed_by===input.claimer&&Number.isFinite(Date.parse(input.claimed_at))
    &&new Date(task.claimed_at).toISOString()===new Date(input.claimed_at).toISOString(),'任务持有者或claim已变化');
   const reservation=task.result?.standalone_claim;
-  const notion=task.payload?.source==='notion_leadgen_101';
+  const source=task.payload?.source;
+  const notion=standaloneSources.includes(source);
   if(input.standalone!==undefined)evidenceObject(input.standalone,['scope','skill']);
   conflict(notion===Boolean(input.standalone),'起跑来源与独立Skill授权不符');
   const scope=input.standalone?.scope??task.payload?.scope,skill=input.standalone?.skill??task.payload?.skill;
   conflict((notion||task.payload?.execution_mode==='standalone-skill')&&skillValid(skill)&&scope&&typeof scope==='object'&&!Array.isArray(scope)
    &&(scope.task_id===undefined||scope.task_id===task.id),'任务不是完整的独立Skill授权');
   if(notion){
-   const original=reservation?.definition,keyword=task.payload.workflow_input?.business?.keyword;
+   const original=reservation?.definition,business=task.payload.workflow_input?.business;
+   const stage=source.slice(-3);
+   const matchesBusiness=stage==='101'
+    ? typeof business?.keyword==='string'&&evidenceHash(scope.approved_keywords)===evidenceHash([business.keyword])
+    : Array.isArray(scope.approved_keywords)&&scope.approved_keywords.length===0
+      && typeof business?.[stage==='104'?'order_id':'source_run']==='string'
+      && Object.entries(business).every(([key,value])=>scope[key]===value);
    conflict(reservation?.run_id===runId&&reservation.claimer===input.claimer
     &&['release_id','observation_id','workflow_id','workflow_definition_version_id','snapshot_sha256'].every(key=>original?.[key]===definition[key])
     &&evidenceHash(original.expected_path)===evidenceHash(definition.expected_path)
     &&definition.attempt_key===task.id+':1'
-    &&scope.limit===1&&typeof keyword==='string'&&evidenceHash(scope.approved_keywords)===evidenceHash([keyword]),'原始派单或业务范围已变化');
+    &&scope.limit===1&&matchesBusiness,'原始派单或业务范围已变化');
    conflict(!task.payload.scope||evidenceHash(task.payload.scope)===evidenceHash(scope)&&evidenceHash(task.payload.skill)===evidenceHash(skill),'起跑后不能修改范围或Skill');
    await client.query("UPDATE tasks SET payload=payload||$2::jsonb WHERE id=$1",[task.id,JSON.stringify({execution_mode:'standalone-skill',scope,skill})]);
   }

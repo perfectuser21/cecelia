@@ -1,4 +1,5 @@
-import { dispatchNotionLeadgen101, explicitLeadgenStages, inactiveLeadgenReason } from './notion-leadgen-dispatch.js';
+import { dispatchNotionLeadgen, explicitLeadgenStages, inactiveLeadgenReason } from './notion-leadgen-dispatch.js';
+import { standaloneSourceList } from './workflow-foundation/standalone-source.js';
 import {syncTaskProgress,findCreatedTaskPage,TASK_PROGRESS_FIELDS} from './projection/task-progress.js';
 import {syncManagedBodyBlock} from './projection/workflow-body.js';
 import { notionReq, getToken } from './recurring-notion-sync.js';
@@ -318,7 +319,7 @@ export const PUSH_TASKS_QUERY = `
            )
        AND NOT (t.task_type = ANY(ARRAY[${PUSH_EXCLUDED_TASK_TYPES.map((t) => `'${t}'`).join(',')}]::text[]))
        AND t.task_type <> 'project'
-       AND COALESCE(t.payload->>'source','') <> 'notion_leadgen_101'
+       AND COALESCE(t.payload->>'source','') NOT IN (${standaloneSourceList})
        AND (
          t.status IN ('queued','in_progress','blocked')
          OR (t.status IN ('completed','failed','canceled','cancelled')
@@ -626,10 +627,12 @@ export async function ingestDelegatedPage(pool, token, page, opts = {}) {
     }
     const env = opts.env ?? process.env;
     const tenantId = tenantFor(env, NOTION_TASKS_DB);
-    if (leadgenStage === '101') {
+    const bindingJson = env[`NOTION_LEADGEN_${leadgenStage}_BINDINGS`];
+    const configured = leadgenStage === '101' || Boolean(bindingJson);
+    if (configured) {
       const previous = (await pool.query(`SELECT id FROM tasks WHERE task_type='workflow_dispatch'
-        AND payload->>'source'='notion_leadgen_101' AND payload->>'notion_page_id'=$1 AND tenant_id=$2 LIMIT 1`,
-      [page.id, tenantId])).rows[0];
+        AND payload->>'source'=$3 AND payload->>'notion_page_id'=$1 AND tenant_id=$2 LIMIT 1`,
+      [page.id, tenantId, `notion_leadgen_${leadgenStage}`])).rows[0];
       if (previous) {
         await writeStatusReceipt(token, page, desc, `brain:${previous.id} ✓已接管`);
         return { taskId: previous.id, kind: 'workflow_dispatch' };
@@ -644,29 +647,30 @@ export async function ingestDelegatedPage(pool, token, page, opts = {}) {
     }
     if (isFuture(toStartIso(en.planDate), at)) return { taskId: null, kind: 'scheduled' };
     const body = await fetchNotionPageContent(token, page.id, { requireComplete: true });
-    if (leadgenStage !== '101') {
+    if (!configured) {
       await writeStatusReceipt(token, page, desc, `${leadgenStage} 未派发：${inactiveLeadgenReason(leadgenStage, body)}`, 'Blocked');
       return { taskId: null, kind: 'blocked' };
     }
-    const bindings = JSON.parse(env.NOTION_LEADGEN_101_BINDINGS ?? '{}');
+    const bindings = JSON.parse(bindingJson ?? '{}');
     try {
-      const received = await dispatchNotionLeadgen101(pool, {
-        pageId: page.id, title: name, body, tenantId, bindings,
+      const received = await dispatchNotionLeadgen(pool, {
+        stage: leadgenStage, pageId: page.id, title: name, body, tenantId, bindings,
       }, { createTask: opts.createFoundationTask });
       await writeStatusReceipt(token, page, desc, `brain:${received.taskId} ✓已接管`);
       return received;
     } catch (error) {
       const reasons = {
-        notion_leadgen_binding_unavailable: '该公司没有可用的 101 执行绑定',
-        notion_leadgen_input_invalid: '请填写公司、关键词和候选上限 1',
-        foundation_release_not_ready: '101 执行版本尚未就绪',
-        foundation_notion_workflow_invalid: '配置没有指向 101 视频发现',
-        standalone_release_target_invalid: '101 业务发布未落在 Mac Studio 对应的手机执行端',
+        notion_leadgen_binding_unavailable: '该公司没有可用的执行绑定',
+        notion_leadgen_input_invalid: leadgenStage === '101' ? '请填写公司、关键词和候选上限 1'
+          : `请填写公司和有效的${leadgenStage === '104' ? '原订单' : '来源运行'}`,
+        foundation_release_not_ready: '执行版本尚未就绪',
+        foundation_notion_workflow_invalid: '配置没有指向本单指定的 Workflow',
+        standalone_release_target_invalid: '业务发布未落在 Mac Studio 执行端',
         foundation_idempotency_conflict: '此 Notion 页已起单，需按原任务处理',
       };
       const reason = reasons[error.code];
       if (!reason) throw error;
-      await writeStatusReceipt(token, page, desc, `101 未派发：${reason}`, 'Blocked');
+      await writeStatusReceipt(token, page, desc, `${leadgenStage} 未派发：${reason}`, 'Blocked');
       return { taskId: null, kind: 'blocked' };
     }
   }
