@@ -10,6 +10,7 @@ import {commandsFor} from '../run-basic-check.mjs';
 import {validateTestDatabaseUrl} from '../../../packages/brain/src/__tests__/integration/suggestion-plan-db-url-guard.mjs';
 
 const required = [
+  'src/__tests__/integration/external-exec-orphan-liveness.integration.test.js',
   'src/__tests__/integration/device-job-foundation.pg.integration.test.js',
   'src/__tests__/integration/graph-multi-repo-current.pg.integration.test.js',
   'src/__tests__/integration/org-map-current-contracts.pg.integration.test.js',
@@ -23,7 +24,7 @@ const required = [
 function selected() {
   const steps = commandsFor('brain-integration');
   const step = steps.find(step => required.every(file => step.args.includes(file)));
-  assert.ok(step, '现役租约、外部owner及公共Runner终态PG合同必须实际进入PR跑道');
+  assert.ok(step, '现役租约、原生owner防孤儿误回队及公共Runner终态PG合同必须实际进入PR跑道');
   assert.ok(step.cwd.endsWith('/packages/brain'));
   assert.ok(step.args.includes('../../scripts/ci/deep-integration.config.mjs'));
   assert.equal(step.ciScratchDatabase, true);

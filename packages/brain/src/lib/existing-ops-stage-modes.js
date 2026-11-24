@@ -62,14 +62,14 @@ if(createHash('sha256').update(text).digest('hex')!==SHA)throw Error('basic_ci_s
 export const REVIEWED_BUSINESS_SMOKE_RETIREMENT={...JSON.parse(text),[BUSINESS_PROFILE_PATH]:SHA};
 // 本轮业务门禁使用独立完整封组；历史profile和hash保持原样。
 export const CI_BUSINESS_GUARDS_PROFILE_PATH='packages/brain/src/lib/existing-ops-ci-business-guards-profile.json';
-const businessGuardsSha='21824f80ecb288cacb1a511f8cbbe3b73bb1b1ceb2107a761876068db22fc214',businessGuardsText=readFileSync(new URL('./existing-ops-ci-business-guards-profile.json',import.meta.url),'utf8');
+const businessGuardsSha='e0119895d208ff411bd45e8dfad9d2cf893425d723596de206373b1755b5ee99',businessGuardsText=readFileSync(new URL('./existing-ops-ci-business-guards-profile.json',import.meta.url),'utf8');
 if(createHash('sha256').update(businessGuardsText).digest('hex')!==businessGuardsSha)throw Error('basic_ci_source_unproven');
 export const CI_BUSINESS_GUARDS_INPUTS={...JSON.parse(businessGuardsText),[CI_BUSINESS_GUARDS_PROFILE_PATH]:businessGuardsSha};
 const RUNNER='scripts/ci/run-basic-check.mjs',CONFIG='scripts/ci/deep-integration.config.mjs';
 const nodes=n=>!n||typeof n!=='object'?[]:[...(n.type?[n]:[]),...Object.values(n).flatMap(v=>Array.isArray(v)?v.flatMap(nodes):nodes(v))];
 const reject=()=>{throw Error('basic_ci_source_unproven');};
 export async function collectReviewedBusinessPgSources({read,parse,relation,profile=BUSINESS_PROFILE_PATH}){
- const runner=await read(RUNNER),digest=createHash('sha256').update(runner).digest('hex'),expectedCount=digest===CI_BUSINESS_GUARDS_INPUTS[RUNNER]?17:digest===NATIVE_AGENT_INPUTS[RUNNER]?15:digest===PILOT_HOST_INPUTS[RUNNER]?11:10;
+ const runner=await read(RUNNER),digest=createHash('sha256').update(runner).digest('hex'),expectedCount=digest===CI_BUSINESS_GUARDS_INPUTS[RUNNER]?18:digest===NATIVE_AGENT_INPUTS[RUNNER]?15:digest===PILOT_HOST_INPUTS[RUNNER]?11:10;
  const cases=nodes(parse(runner)).filter(n=>n.type==='SwitchCase'&&n.test?.value==='brain-integration');
  if(cases.length!==1)reject();
  const steps=nodes(cases[0]).filter(n=>n.type==='CallExpression'&&n.callee?.name==='step'&&n.arguments[1]?.value==='npx');
@@ -77,7 +77,7 @@ export async function collectReviewedBusinessPgSources({read,parse,relation,prof
  const args=steps[0].arguments.map(n=>n.value);
  if(JSON.stringify(args.slice(0,7))!==JSON.stringify(['packages/brain','npx','--no-install','vitest','run','--config','../../'+CONFIG])||args.at(-1)!=='--reporter=dot')reject();
  const tests=args.slice(7,-1);
- if(tests.length!==expectedCount||new Set(tests).size!==expectedCount||tests.some(p=>!/^src\/__tests__\/integration\/[a-z0-9-]+\.pg\.integration\.test\.js$/.test(p)))reject();
+ if(tests.length!==expectedCount||new Set(tests).size!==expectedCount||tests.some(p=>!/^src\/__tests__\/integration\/[a-z0-9-]+\.pg\.integration\.test\.js$/.test(p)&&!(digest===CI_BUSINESS_GUARDS_INPUTS[RUNNER]&&p==='src/__tests__/integration/external-exec-orphan-liveness.integration.test.js')))reject();
  relation('packages/brain/src/lib/existing-ops-stage-modes.js',profile,'reviewed_basic_ci_source_profile');
  relation(RUNNER,CONFIG,'reviewed_pr_postgres_config_selector');
  for(const p of tests){const input='packages/brain/'+p;if(!await read(input))reject();relation(RUNNER,input,'reviewed_pr_postgres_test_selector');}

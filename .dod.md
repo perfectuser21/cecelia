@@ -15,3 +15,5 @@ GP-Anchor: none(infra)
   Test: manual:node --test scripts/ci/__tests__/basic-release-business-gate.test.mjs
 - [ ] 现役sidecar固定只读验收失败时不报告成功，不隐式回滚生产数据库或外部效果。
   Test: manual:node --test scripts/bluegreen-sidecar-completion.test.mjs
+- [ ] 活性回收不得重置有真实原生TaskRun或未结算资源的任务；探针后并发接管必须以真实所有权和行版本CAS阻止旧回收写入，普通孤儿仍可回收。
+  Test: manual:node scripts/ci/run-basic-check.mjs brain-integration

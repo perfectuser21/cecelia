@@ -13,6 +13,7 @@ import brainIntegrationConfig from '../packages/brain/vitest.integration.config.
 import { REPO_ROOT } from './helpers/repo-root.js';
 
 const POSTGRES_TESTS = [
+  'src/__tests__/integration/external-exec-orphan-liveness.integration.test.js',
   'src/__tests__/integration/migration-494-vs-model-workflows.pg.integration.test.js',
   'src/__tests__/integration/account-quota-ledger.pg.integration.test.js',
   'src/__tests__/integration/escalation-cancel-pending-sql.integration.test.js',
@@ -57,6 +58,7 @@ describe('Brain PostgreSQL test layering', () => {
         'src/__tests__/integration/native-agent-flow.pg.integration.test.js',
         'src/__tests__/integration/native-agent-notion-flow.pg.integration.test.js',
         'src/__tests__/integration/native-agent-scheduler.pg.integration.test.js',
+        'src/__tests__/integration/external-exec-orphan-liveness.integration.test.js',
         'src/__tests__/integration/staging-native-business.pg.integration.test.js',
         'src/__tests__/integration/drain-process-scope.pg.integration.test.js',
         'src/__tests__/integration/executor-startup-headed-owner.pg.integration.test.js',

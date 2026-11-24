@@ -16,9 +16,9 @@ const observe=async(overrides={},selected=paths)=>{
  await collectDeepCiSources({read,revision:'f'.repeat(40),relations,paths:selected});
  return relations;
 };
-it('业务修复独立完整封组记录17项现役PG、私有回调入口与真实镜像/候选输入',async()=>{
+it('业务修复独立完整封组记录18项现役PG、私有回调入口与真实镜像/候选输入',async()=>{
  const relations=await observe();
- expect(relations.filter(r=>r.kind==='reviewed_pr_postgres_test_selector')).toHaveLength(17);
+ expect(relations.filter(r=>r.kind==='reviewed_pr_postgres_test_selector')).toHaveLength(18);
  for(const kind of ['reviewed_private_pg_callback_runner','reviewed_private_pg_callback_test','reviewed_native_business_image_import','reviewed_native_business_staging_probe','reviewed_candidate_docker_fixture'])expect(relations.some(r=>r.kind===kind)).toBe(true);
 });
 it('新业务封组任一缺失或漂移成员均不能继承入口资格',async()=>{
