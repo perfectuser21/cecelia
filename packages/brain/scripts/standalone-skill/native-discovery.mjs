@@ -10,6 +10,8 @@ import { readOwnedFile } from './launch.mjs';
 import { durableWrite } from '../../src/orchestrator/activity-supervisor.js';
 
 const execute = promisify(execFile);
+// 发布 Profile 包含完整冻结定义和已核验部署文件清单。
+const maxProfileBytes = 8 * 1024 * 1024;
 const discoveryKey = 'douyin_video_discovery';
 const scoringKey = 'douyin_comment_scoring';
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
@@ -153,7 +155,7 @@ export async function createProvider(job, options) {
   }
   const binding = Object.hasOwn(options.bindings,job.input.binding_key) ? options.bindings[job.input.binding_key] : null;
   if (!binding || binding.tenant_id !== job.tenant_id) throw Error('standalone_provider_binding_missing');
-  const profile = JSON.parse(readOwnedFile(binding.profile));
+  const profile = JSON.parse(readOwnedFile(binding.profile, { maxBytes: maxProfileBytes }));
   if (digest(profile) !== binding.profile_sha256) throw Error('standalone_provider_profile_drift');
   const root = profile.cwd;
   if (!isAbsolute(root) || realpathSync(root) !== root || !lstatSync(root).isDirectory()) throw Error('standalone_provider_root_invalid');
