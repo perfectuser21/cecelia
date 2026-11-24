@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { beforeAll, afterAll, expect, it, vi } from 'vitest';
 import { privatePgConfig, verifyPrivatePg } from '../../../../../scripts/ci/private-pg-contract.mjs';
+import { borrowedPgClient } from '../helpers/borrowed-pg-client.js';
 
 const boundary = vi.hoisted(() => ({ writer: null, forbidden: vi.fn(() => { throw new Error('禁止恢复测试进入文件/进程/派发边界'); }) }));
 vi.mock('child_process', () => ({ execSync: boundary.forbidden }));
@@ -21,7 +22,7 @@ vi.mock('../../work-routing-store.js', () => ({ createRoutedTask: boundary.forbi
 vi.mock('../../domain-detector.js', () => ({ detectDomain: boundary.forbidden }));
 vi.mock('../../role-registry.js', () => ({ getDomainRole: boundary.forbidden }));
 vi.mock('../../executor-contracts.js', () => ({ EXECUTOR_CONTRACTS: {}, resolveLivenessKind: boundary.forbidden }));
-vi.mock('../../device-lock-helpers.js', () => ({ releaseDeviceLocksHeldBy: boundary.forbidden }));
+vi.mock('../../device-lock-helpers.js', async original => ({ ...await original(), releaseDeviceLocksHeldBy: boundary.forbidden }));
 vi.mock('../../lib/task-event-log.js', () => ({ recordTaskEventSafe: boundary.forbidden }));
 
 let reader, writer, cleanupStaleClaims, updateTask, claimTaskWithLease;
@@ -112,7 +113,7 @@ it.each(['new-owner', 'same-owner-new-time', 'now-in-progress', 'new-owner-lock-
     } else {
       expect((await updateTask({ task_id: id, status: 'queued' })).success).toBe(true);
       const owner = change.startsWith('new-owner') ? 'new-owned-runner' : 'old-owned-runner';
-      expect((await claimTaskWithLease(writer, { taskId: id, claimer: owner })).status).toBe(200);
+      expect((await claimTaskWithLease(borrowedPgClient(writer), { taskId: id, claimer: owner })).status).toBe(200);
     }
     if (change === 'new-owner-lock-wait') {
       resume(); // 清理UPDATE在另连接未提交的认领行上真实等待，再检验MVCC重验。

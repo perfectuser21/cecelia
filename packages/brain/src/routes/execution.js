@@ -440,7 +440,8 @@ router.post('/execution-callback', executionCallbackRateLimit, internalAuthOrLoo
 
       // Record progress step for completed execution
       const isSuccessfulExecution = newStatus === 'completed' || newStatus === 'completed_no_pr';
-      if (deferReviewRun) await client.query('SAVEPOINT decomp_review_progress');
+      // Task 行锁已由当前事务持有，进度外键必须沿用此连接，不能等待另一连接反查自身锁。
+      await client.query('SAVEPOINT callback_progress');
       try {
         const { recordProgressStep } = await import('../progress-ledger.js');
         await recordProgressStep(task_id, run_id, {
@@ -463,14 +464,14 @@ router.post('/execution-callback', executionCallbackRateLimit, internalAuthOrLoo
             original_status: status
           },
           confidenceScore: isSuccessfulExecution ? 1.0 : 0.2
-        }, deferReviewRun ? client : undefined);
+        }, client);
         console.log(`[execution-callback] Progress step recorded for task ${task_id}`);
       } catch (progressErr) {
-        if (deferReviewRun) await client.query('ROLLBACK TO SAVEPOINT decomp_review_progress');
+        await client.query('ROLLBACK TO SAVEPOINT callback_progress');
         // Progress ledger errors should not break the main flow
         console.error(`[execution-callback] Progress step recording failed: ${progressErr.message}`);
       }
-      if (deferReviewRun) await client.query('RELEASE SAVEPOINT decomp_review_progress');
+      await client.query('RELEASE SAVEPOINT callback_progress');
 
       await client.query('COMMIT');
     } catch (txErr) {
