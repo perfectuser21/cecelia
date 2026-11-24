@@ -1,4 +1,3 @@
-import { createFoundationTask } from './workflow-foundation/registry.js';
 import { UUID } from './workflow-foundation/contracts.js';
 
 const invalid = code => Object.assign(new Error(code), { code });
@@ -44,13 +43,14 @@ export function inactiveLeadgenReason(stage, body) {
   }
 }
 
-export async function dispatchNotionLeadgen101(pool, { pageId, title, body, tenantId, bindings }, { createTask = createFoundationTask } = {}) {
+export async function dispatchNotionLeadgen101(pool, { pageId, title, body, tenantId, bindings }, { createTask } = {}) {
   if (!UUID.test(pageId) || !title || typeof body !== 'string') throw invalid('notion_leadgen_input_invalid');
   const { company, keyword } = readInput(body);
   const binding = bindings && Object.hasOwn(bindings, company) ? bindings[company] : null;
   if (!binding || binding.tenant_id !== tenantId || !UUID.test(binding.workflow_id) || !UUID.test(binding.release_id)
     || !/^[A-Za-z0-9_-]{1,100}$/.test(binding.binding_key ?? '')) throw invalid('notion_leadgen_binding_unavailable');
-  const { task } = await createTask(pool, {
+  const register = createTask ?? (await import('./workflow-foundation/registry.js')).createFoundationTask;
+  const { task } = await register(pool, {
     title: title.slice(0, 200),
     workflow_id: binding.workflow_id,
     release_id: binding.release_id,
