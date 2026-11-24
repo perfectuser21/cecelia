@@ -75,6 +75,14 @@ export const CI_MANUAL_BOUNDARY_PROFILE_PATH='packages/brain/src/lib/existing-op
 const manualBoundarySha='2b39b758572df8ed29620fe733d1c35bfcabefa9c413baf6b31fd923e4ef9bf6',manualBoundaryText=readFileSync(new URL('./existing-ops-ci-manual-boundary-profile.json',import.meta.url),'utf8');
 if(createHash('sha256').update(manualBoundaryText).digest('hex')!==manualBoundarySha)throw Error('basic_ci_source_unproven');
 export const CI_MANUAL_BOUNDARY_INPUTS={...JSON.parse(manualBoundaryText),[CI_MANUAL_BOUNDARY_PROFILE_PATH]:manualBoundarySha};
+// 现役残留清理另立完整控制组；所有既有发布身份保持。
+export const CI_RESIDUE_PROFILE_PATH='packages/brain/src/lib/existing-ops-ci-residue-profile.json';
+const residueSha='3f427594391b0d7ec676e48659ccf467d850aadf9231b9af8b1a7c7a8ac0b57f',residueText=readFileSync(new URL('./existing-ops-ci-residue-profile.json',import.meta.url),'utf8');
+if(createHash('sha256').update(residueText).digest('hex')!==residueSha)throw Error('basic_ci_source_unproven');
+export const CI_RESIDUE_INPUTS={...JSON.parse(residueText),[CI_RESIDUE_PROFILE_PATH]:residueSha};
+const RESIDUE_AGGREGATE='packages/brain/src/__tests__/integration/workflow-common-terminal.pg.integration.test.js';
+const RESIDUE_LEAVES=['acceptance-classification','project-progress-no-pr','metrics-pr-merged-no-pr','postdeploy-snapshot','retired-auto-qiumi-lock','retired-auto-sweeper-race'].map(name=>'packages/brain/src/__tests__/integration/'+name+'.pg.integration.test.js');
+
 const RUNNER='scripts/ci/run-basic-check.mjs',CONFIG='scripts/ci/deep-integration.config.mjs';
 const nodes=n=>!n||typeof n!=='object'?[]:[...(n.type?[n]:[]),...Object.values(n).flatMap(v=>Array.isArray(v)?v.flatMap(nodes):nodes(v))];
 const reject=()=>{throw Error('basic_ci_source_unproven');};
@@ -210,6 +218,11 @@ const PG_LAYERING_PATH='tests/brain-ci-pg-layering.test.ts';
 const PG_LAYERING_DIGEST='2b6e813d5bc0f5fe546d25a996b21dc208dbb142c426de05fe5f24e45b06f774';
 export async function reviewedPilotSourceControls(profile,paths,read){
  let controls=reviewedPilotControls(profile,paths);
+ const complete=group=>{if(Array.isArray(paths)&&Object.entries(group).some(([path,digest])=>digest!==null&&!paths.includes(path)))reject();return group;};
+ if(paths?.includes(CI_RESIDUE_PROFILE_PATH)){
+  if(profile!==REVIEWED_NIGHTLY_STATUS||![CI_MANUAL_BOUNDARY_PROFILE_PATH,CI_NOEXEC_PROFILE_PATH,CI_BUSINESS_GUARDS_PROFILE_PATH,PILOT_HOST,NATIVE_AGENT_MARKER,DEPLOY_RECOVERY_MARKER].every(path=>paths.includes(path))||RESIDUE_LEAVES.some(path=>!paths.includes(path)))reject();
+ }
+
  if(paths?.includes(CI_MANUAL_BOUNDARY_PROFILE_PATH)&&(profile!==REVIEWED_NIGHTLY_STATUS||!paths.includes(CI_NOEXEC_PROFILE_PATH)||!paths.includes(CI_BUSINESS_GUARDS_PROFILE_PATH)))reject();
  if(paths?.includes(CI_NOEXEC_PROFILE_PATH)&&!paths.includes(CI_BUSINESS_GUARDS_PROFILE_PATH))reject();
  if(paths?.includes(PILOT_HOST)&&(paths.includes(CI_BUSINESS_GUARDS_PROFILE_PATH)||createHash('sha256').update(await read(CANDIDATE_BUILDER_MARKER)).digest('hex')===CANDIDATE_CACHE_INPUTS[CANDIDATE_BUILDER_MARKER]))controls={...controls,...CANDIDATE_CACHE_INPUTS};
@@ -220,12 +233,12 @@ export async function reviewedPilotSourceControls(profile,paths,read){
  if(paths?.includes(NATIVE_AGENT_MARKER)){
   if(profile!==REVIEWED_NIGHTLY_STATUS||!paths.includes(PILOT_HOST)||!paths.includes(DEPLOY_RECOVERY_MARKER))reject();
   const nativeControls={...controls,...NATIVE_AGENT_INPUTS};
-  if(paths.includes(CI_BUSINESS_GUARDS_PROFILE_PATH))return {...nativeControls,...CI_BUSINESS_GUARDS_INPUTS,...(paths.includes(CI_NOEXEC_PROFILE_PATH)?CI_NOEXEC_INPUTS:{}),...(paths.includes(CI_MANUAL_BOUNDARY_PROFILE_PATH)?CI_MANUAL_BOUNDARY_INPUTS:{})};
-  if(createHash('sha256').update(await read('packages/brain/src/scheduler-jobs.js')).digest('hex')===NATIVE_COMPLETION_INPUTS['packages/brain/src/scheduler-jobs.js'])return {...nativeControls,...NATIVE_COMPLETION_INPUTS};
-  return nativeControls;
+  if(paths.includes(CI_BUSINESS_GUARDS_PROFILE_PATH))return complete({...nativeControls,...CI_BUSINESS_GUARDS_INPUTS,...(paths.includes(CI_NOEXEC_PROFILE_PATH)?CI_NOEXEC_INPUTS:{}),...(paths.includes(CI_MANUAL_BOUNDARY_PROFILE_PATH)?CI_MANUAL_BOUNDARY_INPUTS:{}),...(paths.includes(CI_RESIDUE_PROFILE_PATH)?CI_RESIDUE_INPUTS:{})});
+  if(createHash('sha256').update(await read('packages/brain/src/scheduler-jobs.js')).digest('hex')===NATIVE_COMPLETION_INPUTS['packages/brain/src/scheduler-jobs.js'])return complete({...nativeControls,...NATIVE_COMPLETION_INPUTS});
+  return complete(nativeControls);
  }
- if(paths?.includes(PILOT_HOST)&&createHash('sha256').update(await read(PG_LAYERING_PATH)).digest('hex')===PG_LAYERING_DIGEST)return {...controls,[PG_LAYERING_PATH]:PG_LAYERING_DIGEST};
- return controls;
+ if(paths?.includes(PILOT_HOST)&&createHash('sha256').update(await read(PG_LAYERING_PATH)).digest('hex')===PG_LAYERING_DIGEST)return complete({...controls,[PG_LAYERING_PATH]:PG_LAYERING_DIGEST});
+ return complete(controls);
 }
 export function recordReviewedPilotSource({profile,paths,relation}){
  if(paths?.includes(PILOT_HOST)){
@@ -260,6 +273,12 @@ export function recordReviewedPilotSource({profile,paths,relation}){
    relation(RUNNER,'scripts/ci/__tests__/basic-manual-integration-boundary.test.mjs','reviewed_manual_integration_boundary_contract');
    for(const name of ['workflow-authoring-execution.pg.integration.test.js','invocations.pg.integration.test.js'])relation(CONFIG,'packages/brain/src/__tests__/integration/'+name,'reviewed_manual_codex_case_registration');
    for(const name of ['invocation-browser-preview.test.js','authoring-browser-preview.pg.integration.test.js','workflow-assembly-native-browser.pg.integration.test.js'])relation(CONFIG,'packages/brain/src/__tests__/integration/'+name,'reviewed_opt_in_preview_entry');
+  }
+  if(paths.includes(CI_RESIDUE_PROFILE_PATH)){
+   relation('packages/brain/src/lib/existing-ops-stage-modes.js',CI_RESIDUE_PROFILE_PATH,'reviewed_basic_ci_source_profile');
+   for(const contract of ['basic-integration-once','basic-brain-test-debt'])relation(RUNNER,'scripts/ci/__tests__/'+contract+'.test.mjs','reviewed_residue_integration_contract');
+   relation('scripts/ci/__tests__/basic-brain-test-debt.test.mjs',RESIDUE_AGGREGATE,'reviewed_static_test_execution_inventory');
+   for(const leaf of RESIDUE_LEAVES)relation(RESIDUE_AGGREGATE,leaf,'reviewed_static_test_import_execution');
   }
   if(paths.includes(NATIVE_AGENT_MARKER)){
    const release='packages/brain/scripts/native-agent-release.mjs',bundle='packages/brain/scripts/native-agent/bundle.mjs';

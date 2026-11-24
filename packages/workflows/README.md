@@ -1,5 +1,7 @@
 # Cecelia Workflows
 
+> n8n 已停用。本目录保留其历史工作流和说明，不作为现役任务执行或 CI 入口；以下旧导入、恢复步骤仅供追溯。旧能力映射产物及生成器已清退，现役任务和流程经 Brain 登记。
+
 **Workflows + Staff 统一管理仓库（HR 部门）**
 
 这个仓库管理 Cecelia 系统的两大核心资源：
@@ -11,7 +13,6 @@
 **✅ 这个仓库包含**：
 - 所有 N8N workflow 定义（JSON 文件）
 - 员工配置（workers.config.json）
-- 能力映射配置（capability_mapping.json）
 - 导出/导入脚本
 - 版本管理和文档
 
@@ -29,7 +30,6 @@ cecelia-workflows/
 │   │   ├── cecelia/                   # Cecelia 相关
 │   │   ├── media/                     # 自媒体相关
 │   │   └── tools/                     # 基础工具
-│   ├── capability_mapping.json        # 能力映射配置
 │   ├── templates/                     # 模板库
 │   └── archive/                       # 归档
 │
@@ -62,7 +62,7 @@ cecelia-workflows/
 
 每个员工通过 `n8nKeywords` 关联到相应的 N8N workflows。
 
-## 当前 Workflows
+## 历史 Workflows
 
 ### 📁 Cecelia (5 个)
 - [Flow] Cecelia 任务启动器
@@ -90,14 +90,9 @@ cecelia-workflows/
 3. Git commit 和 push
 ```
 
-### 添加新能力
-```bash
-1. 在 N8N 创建新 workflows
-2. 更新 n8n/capability_mapping.json
-3. 导出: ./scripts/export-from-n8n.sh
-4. Git commit 和 push
-5. cecelia-workspace 自动显示新能力
-```
+### 新能力登记
+
+本目录不再生成 n8n 能力映射。Cecelia 的现役任务与 Workflow 通过 Brain 登记，当前检查和发布入口见 [CI/CD 说明](../../docs/current/CI_PIPELINE.md)。
 
 ### 恢复 workflow
 ```bash

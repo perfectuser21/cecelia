@@ -9,6 +9,11 @@ const manualPreviewFiles = [
 ].filter(([flag]) => process.env[flag] !== '1')
   .map(([, file]) => `src/__tests__/integration/${file}`);
 
+// 下列真实PG合同由workflow-common-terminal静态导入；只排除独立发现，汇总仍承接PR与deep。
+const aggregatedPgContracts = ['acceptance-classification', 'project-progress-no-pr',
+  'metrics-pr-merged-no-pr', 'postdeploy-snapshot', 'retired-auto-qiumi-lock', 'retired-auto-sweeper-race']
+  .map(name => `src/__tests__/integration/${name}.pg.integration.test.js`);
+
 // 与单测配置共享数据库测试清单，新增集成测试由目录约定自动发现。
 export default {
   ...brainConfig,
@@ -20,6 +25,6 @@ export default {
       'src/__tests__/migration-370-gp-governance-decisions.test.js',
       'src/__tests__/nightly-orchestrator.integration.test.js',
       'src/**/integration/**/*.{test,spec}.?(c|m)[jt]s?(x)'],
-    exclude: ['**/node_modules/**', ...manualPreviewFiles, ...INACTIVE_CONSCIOUSNESS_TESTS, ...privatePgTests.map(brainRelativePgPath)],
+    exclude: ['**/node_modules/**', ...aggregatedPgContracts, ...manualPreviewFiles, ...INACTIVE_CONSCIOUSNESS_TESTS, ...privatePgTests.map(brainRelativePgPath)],
   },
 };

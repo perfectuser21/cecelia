@@ -44,7 +44,7 @@ it('候选完整控制封组真实读取五项必需任务协议；单成员混�
  expect(relations).toContainEqual(expect.objectContaining({consumer_path:'scripts/ci/run-basic-check.mjs',input_path:'apps/api/vitest.config.ts',kind:'dashboard_features_unit_config'}));
  expect(relations.some(r=>r.kind==='reviewed_resource_canary_scope_plan'||r.kind==='strict_resource_plan_decoder'||r.kind==='reviewed_resource_control_node_test')).toBe(false);
  expect(relations.some(r=>r.kind==='registered_skill_ownership_resolver'||r.kind==='reviewed_skill_source_exclusion'||r.kind==='literal_url_workflow_verification_input')).toBe(false);
- for(const path of ['.github/actions/skills-source/action.yml','scripts/skill_source_ownership.py'])await expect(observe({[path]:(await read(path))+'\n# unknown source\n'})).rejects.toThrow('basic_ci_source_unproven');
+ for(const path of ['scripts/skill_source_ownership.py'])await expect(observe({[path]:(await read(path))+'\n# unknown source\n'})).rejects.toThrow('basic_ci_source_unproven');
  for(const member of ['scripts/ci/check-basic-results.mjs','scripts/ci/__tests__/basic-results.test.mjs','scripts/ci/__tests__/basic-workflow.test.mjs']){
   await expect(observe({[member]:''})).rejects.toThrow('basic_ci_source_unproven');
   await expect(observe({[member]:(await read(member))+'\n// unknown scope member\n'})).rejects.toThrow('basic_ci_source_unproven');
@@ -252,4 +252,12 @@ it('人工验收十项退出真实默认及Deep选择，迁移和公共正常验
  const selected=config=>glob.sync(config.test.include,{cwd,ignore:config.test.exclude});
  for(const file of retired){expect(pg).not.toContain(file);expect(selected(brain)).not.toContain(file);expect(selected(deep)).not.toContain(file);}
  for(const file of ['src/__tests__/integration/migration-392-acceptance-two-column.integration.test.js','src/__tests__/integration/migration-393-gp-harness-glue.integration.test.js','src/__tests__/integration/golden-path-contract.integration.test.js'])expect(pg).toContain(file);
+});
+
+it('206完整历史输入仍验证旧Skill composite，当前清退不伪造其消费者',async()=>{
+ const previous=readFixedExistingOpsGitFixture('206b2d17a85d1e5d0686aa193a8f94aabf35ddfa');
+ const observe=async overrides=>{const relations=[],read=async p=>overrides[p]??previous.read(p);await collectBasicCiSources({read,ci:await read('.github/workflows/ci.yml'),revision:previous.revision,relations,parse:ast,paths:previous.paths});return relations;};
+ await expect(observe({})).resolves.toBeInstanceOf(Array);
+ const path='.github/actions/skills-source/action.yml';
+ await expect(observe({[path]:previous.read(path)+'\n# unreviewed historical source\n'})).rejects.toThrow('basic_ci_source_unproven');
 });

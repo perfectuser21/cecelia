@@ -1,5 +1,7 @@
 # Cecelia Workflows - Complete Setup Guide
 
+> 历史 n8n 安装资料：n8n 已停用，本页不作为现役部署指南。旧能力映射及生成器已清退；当前 CI/CD 以仓库主工作流为准。
+
 ## Table of Contents
 
 1. [Overview](#overview)
@@ -65,7 +67,6 @@ cecelia-workflows/
 │   │   ├── media/             # Media automation
 │   │   └── tools/             # Utility workflows
 │   ├── templates/             # Workflow templates
-│   └── capability_mapping.json # Capability registry
 ├── staff/                      # Staff configurations
 │   └── workers.config.json    # Worker definitions
 ├── protocols/                  # Automation protocols

@@ -56,7 +56,6 @@ import * as heartbeatPlugin from './heartbeat-plugin.js';
 
 import { runRumination } from './rumination.js';
 
-import { runConversationConsolidator } from './conversation-consolidator.js';
 import { publishCognitiveState } from './events/taskEvents.js';
 import { runDailyConsolidationIfNeeded } from './consolidation.js';
 import { flushAlertsIfNeeded } from './alerting.js';
@@ -65,10 +64,8 @@ import { zombieSweep } from './zombie-sweep.js';
 import * as pipelinePatrolPlugin from './pipeline-patrol-plugin.js';
 
 import * as pausedRequeuPlugin from './paused-requeuer-plugin.js';
-import * as krHealthDailyPlugin from './kr-health-daily-plugin.js';
 import * as cleanupWorkerPlugin from './cleanup-worker-plugin.js';
 import { calculateAndWrite as calculateKR3Progress } from './kr3-progress-calculator.js';
-import { runSkillDriftPatrol, isInPatrolWindow } from './cron/skill-drift-patrol.js';
 import { runTestLifecyclePatrol, isInPatrolWindow as isInTestLifecyclePatrolWindow } from './test-lifecycle-patrol.js';
 import { runCredentialsHealthCheck } from './credentials-health-scheduler.js';
 import { scheduleDailyBackup } from './daily-backup-scheduler.js';
@@ -413,21 +410,6 @@ async function executeTick() {
     }
   } catch (krPluginErr) {
     console.error('[tick] kr-progress-sync plugin failed (non-fatal):', krPluginErr.message);
-  }
-
-  // [感知] KR 可信度日巡检：每 24h 一次，记录 warn/critical 状态供运维审计（D1.7c plugin）
-  // 维持 await 语义：本段原 inline 是 await 调用，plugin.tick 同步阻塞才能 push actionsTaken
-  try {
-    const krHealthResult = await krHealthDailyPlugin.tick({ tickState, tickLog });
-    if (krHealthResult && krHealthResult.action === 'kr_health_check') {
-      actionsTaken.push({
-        action: 'kr_health_check',
-        summary: krHealthResult.summary,
-        issues_count: krHealthResult.issues_count,
-      });
-    }
-  } catch (krHealthErr) {
-    console.error('[tick] KR health daily plugin failed (non-fatal):', krHealthErr.message);
   }
 
   // ═══════════════════════════════════════════════════════════════════
@@ -1221,12 +1203,6 @@ async function executeTick() {
   Promise.resolve().then(() => calculateKR3Progress(pool))
     .catch(e => console.warn('[tick] KR3 进度回写失败:', e.message));
 
-  // 10.19 对话压缩（每 tick，将长对话自动摘要写入 memory_stream，CONSCIOUSNESS_ENABLED=false 时跳过）
-  if (isConsciousnessEnabled()) {
-    Promise.resolve().then(() => runConversationConsolidator())
-      .catch(e => console.warn('[tick] 对话压缩失败:', e.message));
-  }
-
   // 10.21 凭据健康巡检（每天北京时间 03:00 = UTC 19:00，检查 NotebookLM/Claude OAuth/Codex/发布器，fire-and-forget）
   Promise.resolve().then(() => runCredentialsHealthCheck(pool))
     .catch(e => console.warn('[tick] 凭据健康巡检失败:', e.message));
@@ -1234,12 +1210,6 @@ async function executeTick() {
   // 10.22 每日 DB 备份调度（北京时间 02:00 = UTC 18:00，创建 trigger_backup 任务，幂等，fire-and-forget）
   Promise.resolve().then(() => scheduleDailyBackup(pool))
     .catch(e => console.warn('[tick] 每日备份调度失败:', e.message));
-
-  // 10.23 skill-drift 巡检（每天 UTC 02:00 = 北京时间 10:00，漂移 → P1 告警 + 写库，fire-and-forget）
-  if (isInPatrolWindow(now)) {
-    Promise.resolve().then(() => runSkillDriftPatrol(pool))
-      .catch(e => console.warn('[tick] skill-drift 巡检失败:', e.message));
-  }
 
   // 10.24 test 生命周期巡检（每天 UTC 02:00 = 北京时间 10:00，孤儿 test → orphan + 告警，fire-and-forget）
   if (isInTestLifecyclePatrolWindow(now)) {

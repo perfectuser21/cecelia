@@ -1,0 +1,15 @@
+{
+  "scripts/ci/deep-integration.config.mjs": "f4e62be0123ff4ba3405158ee86d2054d20e9e40ae27444081dd6ad4e345b8a1",
+  "scripts/ci/__tests__/basic-integration-once.test.mjs": "c6e641182cb01c0a70fbedb054422ecc63767bfa6a61a57e1a1c1e6d57ae3e08",
+  "scripts/ci/__tests__/basic-brain-test-debt.test.mjs": "abda7f231b7d0864ea1690bfda6859e0ed15cec748ce82128853940338e605fb",
+  "packages/brain/src/__tests__/integration/workflow-common-terminal.pg.integration.test.js": "84933eeb3929aaec119c057c0e2ee2fbcaca3f2e377ae5b00f804fd70aadac50",
+  "packages/brain/src/__tests__/integration/task-lease-device-pool.pg.integration.test.js": "8d3ceb18397914283ae749c6c6e7a12d775d357b2b5b3622a2937980219c287c",
+  ".github/actions/skills-source/action.yml": null,
+  "scripts/ci/check-skill-source-identity.py": null,
+  "scripts/ci/__tests__/basic-skill-identity.test.mjs": null,
+  "packages/workflows/scripts/sync-capability-map.sh": null,
+  "packages/workflows/n8n/capability_mapping.json": null,
+  "scripts/ci/__tests__/basic-capability-map.test.mjs": null,
+  "packages/brain/src/lib/device-pool.js": null,
+  "packages/brain/src/tick-runner.js": "67c50bab4d5f07c17bf9d565dd1b36d45554269a5bceab5549c52b5c9b921938"
+}
