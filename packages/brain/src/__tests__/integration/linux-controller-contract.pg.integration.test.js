@@ -14,7 +14,12 @@ let executor;
 beforeAll(async()=>{
  await admin.connect();await admin.query(`CREATE SCHEMA ${schema}`);
  await pool.query(`CREATE TABLE tasks(id UUID PRIMARY KEY,title TEXT,task_type TEXT,executor_kind TEXT CONSTRAINT tasks_executor_kind_check CHECK(executor_kind IN ('brain-local','image-janitor')),status TEXT,payload JSONB DEFAULT '{}',error_message TEXT,claimed_by TEXT,claimed_at TIMESTAMPTZ,started_at TIMESTAMPTZ,updated_at TIMESTAMPTZ DEFAULT now(),created_at TIMESTAMPTZ DEFAULT now());`);
- await pool.query('CREATE TABLE task_runs(task_id UUID,started_at TIMESTAMPTZ,ended_at TIMESTAMPTZ)');
+ // 真实探针会解析原生 TaskRun 所有权/资源结算子查询；独立 fixture 必须提供完整依赖。
+ await pool.query(`CREATE TABLE task_runs(id UUID PRIMARY KEY DEFAULT gen_random_uuid(),task_id UUID,
+   run_id TEXT,status TEXT,context JSONB DEFAULT '{}',result JSONB,started_at TIMESTAMPTZ,ended_at TIMESTAMPTZ);
+ CREATE TABLE task_events(id UUID PRIMARY KEY DEFAULT gen_random_uuid(),task_id UUID,event_type TEXT,
+   payload JSONB,created_at TIMESTAMPTZ DEFAULT now());
+ CREATE TABLE device_locks(device_name TEXT PRIMARY KEY,locked_by TEXT,locked_at TIMESTAMPTZ,expires_at TIMESTAMPTZ);`);
  await pool.query(readFileSync(new URL('../../../migrations/512_linux_pool_controller.sql',import.meta.url),'utf8'));
  executor=await import('../../executor.js');
 });

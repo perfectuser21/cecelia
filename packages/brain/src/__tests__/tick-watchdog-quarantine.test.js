@@ -23,7 +23,7 @@ let pool, requeueTask;
 
 beforeAll(async () => {
   vi.resetModules();
-  scratch = await openDebt08Scratch(['001_cecelia_architecture_upgrade.sql', '142_tasks_error_message.sql', '234_add_tasks_claim_columns.sql', '268_task_events.sql', '012_learnings_table.sql', '063_learnings_dedup.sql', '073_desire_system.sql', '079_rumination.sql', '083_layered_memory_summary.sql', '271_learnings_task_id_binding.sql']);
+  scratch = await openDebt08Scratch(['001_cecelia_architecture_upgrade.sql', '059_task_runs.sql', '065_device_locks.sql', '142_tasks_error_message.sql', '234_add_tasks_claim_columns.sql', '268_task_events.sql', '012_learnings_table.sql', '063_learnings_dedup.sql', '073_desire_system.sql', '079_rumination.sql', '083_layered_memory_summary.sql', '271_learnings_task_id_binding.sql']);
   pool = scratch.pool;
   vi.doMock('../db.js', () => ({ default: pool }));
   requeueTask = (await import('../executor.js')).requeueTask;
