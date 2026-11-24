@@ -1493,11 +1493,6 @@
       "role": "verification"
     },
     {
-      "owner_path": "packages/brain/src/tick-runner.js",
-      "path": "packages/brain/src/__tests__/integration/consciousness-tick-runtime.integration.test.js",
-      "role": "verification"
-    },
-    {
       "owner_path": "packages/brain/src/dispatcher.js",
       "path": "docs/learnings/cp-10101732-code-scheduling.md",
       "role": "documentation"
@@ -2385,6 +2380,11 @@
     {
       "owner_path": "packages/brain/scripts/fleet-worker/fleet-worker.cjs",
       "path": "tests/gp/f1/step3-installer-ships-worker-runtime.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/tick-loop.js",
+      "path": "packages/brain/src/__tests__/tick-http-scheduler.test.js",
       "role": "verification"
     }
   ]

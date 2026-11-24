@@ -23,7 +23,7 @@ test('任务执行器不再把任务完成当作正式发布指令', () => {
 });
 
 test('tick 与周期调度均不能根据 main 漂移自行发布', () => {
-  for (const path of ['packages/brain/src/tick-runner.js', 'packages/brain/src/scheduler-jobs.js']) {
+  for (const path of ['packages/brain/src/tick-scheduler.js', 'packages/brain/src/scheduler-jobs.js']) {
     assert.doesNotMatch(read(path), /runDriftSentinel|cron\/drift-sentinel\.js/);
   }
   assert.equal(existsSync(new URL('packages/brain/src/cron/drift-sentinel.js', root)), false);

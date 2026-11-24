@@ -22,7 +22,6 @@ export const TASK_CREATION_INVENTORY = Object.freeze([
   { module: 'credential-expiry-checker.js', source: 'scheduler', creates_executable_task: true, migration_status: 'routed' },
   { module: 'daily-backup-scheduler.js', source: 'scheduler', creates_executable_task: true, migration_status: 'routed' },
   { module: 'decision-executor.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
-  { module: 'dept-heartbeat.js', source: 'discovery', creates_executable_task: true, migration_status: 'routed' },
   { module: 'dispatch-helpers.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
   { module: 'golden-path-contracts.js', source: 'discovery', creates_executable_task: true, migration_status: 'routed' },
   { module: 'intent.js', source: 'discovery', creates_executable_task: true, migration_status: 'routed' },

@@ -1,0 +1,55 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import express from 'express';
+import request from 'supertest';
+const memory = vi.hoisted(() => new Map());
+const query = vi.hoisted(() => vi.fn(async (sql, params = []) => {
+  if (sql.includes('key_results')) return { rows: [] };
+  if (sql.startsWith('SELECT value_json')) return { rows: memory.has(params[0]) ? [{ value_json: memory.get(params[0]) }] : [] };
+  if (sql.startsWith('INSERT INTO working_memory')) memory.set(params[0], params[1]);
+  return { rows: [] };
+}));
+const release = vi.hoisted(() => vi.fn());
+vi.mock('../db.js', () => ({ default: { query, connect: async () => ({ query, release }) } }));
+// 负对照：残留旧执行器导入会在真实入口装配时失败。
+vi.mock('../tick-runner.js', () => { throw new Error('retired_tick_runner_imported'); });
+vi.mock('../dispatcher.js', () => ({ dispatchNextTask: vi.fn() }));
+vi.mock('../circuit-breaker.js', () => ({ isAllowed: () => true }));
+vi.mock('../guidance.js', () => ({ getGuidance: async () => null }));
+vi.mock('../alertness/index.js', () => ({ canDispatch: () => true, getCurrentAlertness: vi.fn(), setManualOverride: vi.fn(), clearManualOverride: vi.fn(), evaluateAlertness: vi.fn(), ALERTNESS_LEVELS: {}, LEVEL_NAMES: {} }));
+vi.mock('../executor.js', () => ({ MAX_SEATS: 4, INTERACTIVE_RESERVE: 1 }));
+vi.mock('../report-48h.js', () => ({ generate48hReport: vi.fn(), check48hReport: vi.fn(), REPORT_INTERVAL_MS: 1 }));
+vi.mock('../drain.js', () => ({ drainTick: vi.fn(), getDrainStatus: vi.fn(), cancelDrain: vi.fn(), _getDrainState: vi.fn(), _resetDrainState: vi.fn() }));
+vi.mock('../tick-watchdog.js', () => ({ startTickWatchdog: vi.fn(), stopTickWatchdog: vi.fn(), TICK_WATCHDOG_INTERVAL_MS: 1 }));
+vi.mock('../dispatch-helpers.js', () => ({ selectNextDispatchableTask: vi.fn(), processCortexTask: vi.fn() }));
+vi.mock('../tick-helpers.js', () => ({ routeTask: vi.fn(), autoFailTimedOutTasks: vi.fn(), getRampedDispatchMax: vi.fn() }));
+vi.mock('../tick-recovery.js', () => ({ _recordRecoveryAttempt: vi.fn(), tryRecoverTickLoop: vi.fn(), initTickLoop: vi.fn(), enableTick: vi.fn(), disableTick: vi.fn() }));
+vi.mock('../tick-status.js', () => ({ getTickStatus: vi.fn(), isStale: vi.fn(), getStartupErrors: vi.fn() }));
+vi.mock('../consciousness-loop.js', () => ({ startConsciousnessLoop: vi.fn() }));
+vi.mock('../recovery-loop.js', () => ({ startRecoveryLoop: vi.fn(), stopRecoveryLoop: vi.fn() }));
+vi.mock('../pipeline-patrol-loop.js', () => ({ startPipelinePatrolLoop: vi.fn(), stopPipelinePatrolLoop: vi.fn() }));
+vi.mock('../events/taskEvents.js', () => ({ publishCognitiveState: vi.fn() }));
+vi.mock('../capability-probe.js', () => ({ startProbeLoop: vi.fn() }));
+import { dispatchNextTask } from '../dispatcher.js';
+import { tickState, resetTickStateForTests } from '../tick-state.js';
+beforeEach(() => { memory.clear(); query.mockClear(); release.mockClear(); resetTickStateForTests(); dispatchNextTask.mockReset(); });
+describe('真实 HTTP → tick facade → loop → scheduler', () => {
+  it('无 KR 时仅派发原生任务，释放锁并写入真实统计', async () => {
+    const { default: router } = await import('../routes/tick.js');
+    dispatchNextTask.mockResolvedValueOnce({ dispatched: false, reason: 'no_dispatchable_task' }).mockResolvedValueOnce({ dispatched: true, task_id: 'native-task', run_id: 'native-run' });
+    const app = express();
+    app.use('/api/brain', router);
+    const started = Date.now();
+    const response = await request(app).post('/api/brain/tick');
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({ dispatched: true, dispatch_lane: 'native', task_id: 'native-task', run_id: 'native-run', guidance_found: false });
+    expect(dispatchNextTask.mock.calls).toEqual([[null, { codeOnly: true }], [null, { nativeOnly: true }]]);
+    expect(tickState.lastExecuteTime).toBeGreaterThanOrEqual(started);
+    expect(tickState.tickRunning).toBe(false);
+    expect(tickState.tickLockTime).toBeNull();
+    await vi.waitFor(() => expect(memory.get('tick_last')).toHaveProperty('timestamp'));
+    expect(memory.get('tick_execution_stats')).toMatchObject({ total_executions: 1, last_duration_ms: expect.any(Number) });
+    expect(memory.get('tick_execution_stats').last_duration_ms).toBeGreaterThanOrEqual(0);
+    expect(memory.get('tick_execution_stats').last_duration_ms).toBeLessThanOrEqual(Date.now() - started);
+    expect(release).toHaveBeenCalledTimes(1);
+  });
+});

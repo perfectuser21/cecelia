@@ -8,6 +8,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const INACTIVE_CONSCIOUSNESS_TESTS = [
   'src/__tests__/consciousness-graph.test.js',
   'src/__tests__/consciousness-loop.test.js',
+  'src/__tests__/consciousness-loop-timeout-lock.test.js',
   'src/workflows/__tests__/consciousness.graph.test.js',
   'src/__tests__/integration/consciousness-graph.integration.test.js',
   'src/__tests__/integration/consciousness-checkpoint.pg.integration.test.js',
@@ -186,14 +187,12 @@ export default defineConfig({
     // 以下测试需要真实 PostgreSQL 连接或有其他 CI 环境 pre-existing 失败
     // brain-unit 跑纯单元测试（有 vi.mock('db.js') 的），集成测试走 brain-integration
     exclude: [
+      // 真实 PostgreSQL 政策合同由 deep-integration.config.mjs 显式运行。
+      'src/__tests__/migration-370-gp-governance-decisions.test.js',
       ...INACTIVE_CONSCIOUSNESS_TESTS,
       // 旧准入兼容合同只由显式legacy CLI执行。
       '../../scripts/ci/legacy/**',
-      // 根tests中的五个symlink只保兼容调用；自动收集使用src/__tests__唯一真实owner。
-      '../../tests/dept-heartbeat-plugin.test.js',
-      '../../tests/heartbeat-plugin.test.js',
-      '../../tests/kr-progress-sync-plugin.test.js',
-      '../../tests/tick-runner.test.js',
+      // 根tests中的现役symlink只保兼容调用；自动收集使用src/__tests__唯一真实owner。
       '../../tests/tick-state.test.js',
       // 与 CI unit 一致：真实 PG 与建库迁移 fixture 只交集成层。
       'src/__tests__/integration/**',

@@ -3,12 +3,7 @@
  * Implements automatic task progression through periodic ticks
  */
 
-// D1.7b: executeTick body 移到 tick-runner.js 后，本文件保留：
-// 入口/状态管理（getTickStatus / runTickSafe / startTickLoop / initTickLoop /
-// enableTick / disableTick）+ test helpers。executeTick 用到的
-// 50+ 模块在 tick-runner.js 内 import；本文件只保留 getTickStatus 等还在用的
-// + re-export 给老 caller 的（dispatchNextTask / drainTick 等）。
-// Phase D2.4: pool 不再需要（getTickStatus / getStartupErrors 已搬到 tick-status.js，_recordRecoveryAttempt 已搬到 tick-recovery.js）
+// 现役 Tick 公共入口：循环调度、状态、恢复与派发。
 import { MAX_SEATS, INTERACTIVE_RESERVE } from './executor.js';
 // Phase D2.4: checkServerResources / calculateSlotBudget / getAllStates / getCurrentAlertness
 // / getQuarantineStats 跟 getTickStatus 一起搬到 tick-status.js
@@ -46,8 +41,6 @@ import {
 } from './tick-helpers.js';
 // Phase D Part 1.7a: tickState 已收口到 tick-state.js；本文件无直接读写需求
 // （test helper _resetLastXxxTime 通过下方 export {} from './tick-state.js' re-export）
-// Phase D Part 1.7b: executeTick 抽到 tick-runner.js
-import { executeTick } from './tick-runner.js';
 // Phase D2.2: runTickSafe / startTickLoop / stopTickLoop + 3 个常量抽到 tick-loop.js
 import {
   runTickSafe,
@@ -79,12 +72,7 @@ const DISPATCH_TIMEOUT_MINUTES = parseInt(process.env.DISPATCH_TIMEOUT_MINUTES |
 const MAX_CONCURRENT_TASKS = MAX_SEATS;
 // INTERACTIVE_RESERVE imported from executor.js (also used for threshold calculation)
 const AUTO_DISPATCH_MAX = Math.max(MAX_SEATS - INTERACTIVE_RESERVE, 1);
-const CLEANUP_INTERVAL_MS = parseInt(process.env.CECELIA_CLEANUP_INTERVAL_MS || String(60 * 60 * 1000), 10); // 1 hour
-const ZOMBIE_CLEANUP_INTERVAL_MS = parseInt(process.env.CECELIA_ZOMBIE_CLEANUP_INTERVAL_MS || String(20 * 60 * 1000), 10); // 20 minutes
 
-// D1.7b: AUTO_EXECUTE_CONFIDENCE / UNBLOCK_BATCH_LIMIT / QUARANTINE_RELEASE_LIMIT /
-// MAX_REQUEUE_PER_TICK / RECOVERY_DISPATCH_CAP 仅 executeTick body 用，已搬到 tick-runner.js
-const MAX_NEW_DISPATCHES_PER_TICK = 2; // burst limiter（仅 re-export，executeTick body 在 tick-runner.js 用）
 
 // Phase D2.3: TICK_AUTO_RECOVER_MINUTES + INIT_RECOVERY_INTERVAL_MS 已搬到 tick-recovery.js
 
@@ -101,17 +89,11 @@ const MAX_NEW_DISPATCHES_PER_TICK = 2; // burst limiter（仅 re-export，execut
 // _lastDispatchTime 已搬到 dispatcher.js（Phase D Part 1.5）— 私有计时器
 // _lastReportTime 已搬到 report-48h.js（Phase D Part 1.1）
 
-// D1.7b: CONSCIOUSNESS_RELOAD_INTERVAL_MS / CREDENTIAL_CHECK_INTERVAL_MS /
-// PIPELINE_WATCHDOG_INTERVAL_MS / CLEANUP_WORKER_INTERVAL_MS / ORPHAN_PR_WORKER_INTERVAL_MS
-// 仅 executeTick body 用，已搬到 tick-runner.js
-const ZOMBIE_SWEEP_INTERVAL_MS = parseInt(process.env.CECELIA_ZOMBIE_SWEEP_INTERVAL_MS || String(30 * 60 * 1000), 10); // 30 minutes（仅 re-export）
-const PIPELINE_PATROL_INTERVAL_MS = parseInt(process.env.CECELIA_PIPELINE_PATROL_INTERVAL_MS || String(5 * 60 * 1000), 10); // 5 minutes（仅 re-export）
 
-const GOAL_EVAL_INTERVAL_MS = parseInt(process.env.CECELIA_GOAL_EVAL_INTERVAL_MS || String(24 * 60 * 60 * 1000), 10); // 24 hours（仅 re-export）
 // D 阶段抽出汇总（详见 git log）：
 //   D1.1 report-48h.js / D1.2 drain.js / D1.3 tick-watchdog.js
 //   D1.4 dispatch-helpers.js / D1.5 dispatcher.js / D1.6 tick-helpers.js
-//   D1.7a tick-state.js / D1.7b tick-runner.js (executeTick body)
+//   D1.7a tick-state.js；旧执行器已退役
 //   D1.7c plugin1+plugin2 (8 scheduled jobs)
 //   D2.1 reset helpers → tick-state.js / D2.2 tick-loop.js
 //   D2.3 tick-recovery.js / D2.4 tick-status.js
@@ -127,7 +109,6 @@ export {
   getTickStatus,
   enableTick,
   disableTick,
-  executeTick,
   isStale,
   runTickSafe,
   startTickLoop,
@@ -157,13 +138,7 @@ export {
   DISPATCH_TIMEOUT_MINUTES,
   MAX_CONCURRENT_TASKS,
   AUTO_DISPATCH_MAX,
-  MAX_NEW_DISPATCHES_PER_TICK,
   getStartupErrors,
-  CLEANUP_INTERVAL_MS,
-  ZOMBIE_SWEEP_INTERVAL_MS,
-  ZOMBIE_CLEANUP_INTERVAL_MS,
-  PIPELINE_PATROL_INTERVAL_MS,
-  GOAL_EVAL_INTERVAL_MS,
   // 48h 简报
   check48hReport,
   generate48hReport,

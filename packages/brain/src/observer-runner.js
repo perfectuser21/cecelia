@@ -7,10 +7,9 @@
  * **本次 minimal 版**（E1）：
  * - observerState 单例 + 独立 30s setInterval
  * - 跑 evaluateAlertness / runLayer2HealthCheck / checkServerResources 写 observerState
- * - tick-runner.js 内 inline 调用**不改**（observer 是额外监控层，不替代 inline）
+ * - 观察循环独立于现役Tick调度，监控API读取最近采样缓存
  *
  * **后续 E2/E3**（不在本 PR 范围）：
- * - tick-runner.js 改读 cached observerState 替代 inline 调用
  * - 自适应决策（alertness 高时自动 drain / pause）
  *
  * 上游 PRD：docs/design/brain-v2-c8-d-e-handoff.md §6
@@ -30,7 +29,7 @@ const OBSERVER_INTERVAL_MS = parseInt(
 
 /**
  * Observer 状态单例。所有字段 nullable — 首次 tick 前为 null。
- * tick-runner.js 老 inline 调用是真值来源；observerState 是 cached 副本，仅给监控用。
+ * observerState 保存观察循环最近一次采样，供监控直接读取。
  */
 export const observerState = {
   alertness: null,        // { level, score, level_name, ... }

@@ -15,6 +15,12 @@
       "manualRoot": false
     },
     {
+      "file": "packages/brain/src/__tests__/consciousness-loop-timeout-lock.test.js",
+      "category": "legacy_spec",
+      "reason": "决策6f1c9431：生产已停用的独立后台思考图，保留源码及专项历史测试，退出默认CI；通用checkpoint和关闭态保护仍自动执行。",
+      "manualRoot": false
+    },
+    {
       "file": "packages/brain/src/__tests__/integration/consciousness-checkpoint.pg.integration.test.js",
       "category": "legacy_spec",
       "reason": "决策6f1c9431：生产已停用的独立后台思考图，保留源码及专项历史测试，退出默认CI；通用checkpoint和关闭态保护仍自动执行。",

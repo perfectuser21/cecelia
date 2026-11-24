@@ -8,12 +8,6 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-// Mock executeTick 以避免拉入 tick-runner 整个依赖图
-const mockExecuteTick = vi.fn();
-vi.mock('../tick-runner.js', () => ({
-  executeTick: (...args) => mockExecuteTick(...args),
-}));
-
 // Mock taskEvents.publishCognitiveState
 vi.mock('../events/taskEvents.js', () => ({
   publishCognitiveState: vi.fn(),
@@ -57,7 +51,6 @@ import { tickState, resetTickStateForTests } from '../tick-state.js';
 describe('tick-loop', () => {
   beforeEach(() => {
     resetTickStateForTests();
-    mockExecuteTick.mockReset();
     mockRunScheduler.mockReset();
     mockRecordTickExecution.mockReset();
     mockRecordTickExecution.mockResolvedValue(undefined);

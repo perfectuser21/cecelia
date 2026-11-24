@@ -12,7 +12,6 @@ const restored = [
   "tests/capability-probe-rumination.test.js",
   "packages/brain/src/__tests__/tasks-feedback.test.js",
   "packages/brain/src/__tests__/startup-sync.test.js",
-  "packages/brain/src/__tests__/dept-heartbeat.test.js",
   "packages/brain/src/__tests__/services/memory-service.test.js",
   "packages/brain/src/__tests__/code-review-trigger.test.js",
   "packages/brain/src/__tests__/executor-retry-strategy.test.js",

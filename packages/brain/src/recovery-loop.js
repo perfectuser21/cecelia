@@ -12,7 +12,7 @@ const RECOVERY_INTERVAL_MS = parseInt(
   10
 );
 
-// 每轮最多解封几个 blocked 任务。沿用死代码里的 5（tick-runner.js:179）：
+// 每轮最多解封5个blocked任务，保持恢复批次有界：
 // 解封是把任务放回 queued，一次放太多会让派发层瞬间被打满。
 // 积压 200+ 时按每 5 分钟 5 个的速度疏通，几小时排空，不会冲垮下游。
 const UNBLOCK_BATCH_LIMIT = 5;

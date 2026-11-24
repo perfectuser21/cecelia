@@ -1,8 +1,6 @@
 /**
  * tick-stats.js — tick 统计写入（Wave-2 断链修复）。
- * 原写入方在废弃的 executeTick（tick-runner.js L1494/L219）体内，
- * runScheduler 活路径从不写 → tick_execution_stats/tick_last/tick_actions_today
- * 冻在 2026-05-05。本模块抽出等价逻辑供活路径调用；tick-runner 保留不动（回滚用）。
+ * 由 runTickSafe 调用，维护 tick_execution_stats/tick_last。
  * 两个函数都吞错不抛：统计属旁路观测，绝不拖垮 tick 主循环。
  */
 import pool from './db.js';

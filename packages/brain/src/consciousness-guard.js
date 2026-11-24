@@ -7,7 +7,7 @@ export const GUARDED_MODULES = [
   'diary-scheduler', 'conversation-consolidator',
   'notebook-feeder',
   'proactive-mouth', 'evolution-synthesizer',
-  'dept-heartbeat', 'pending-followups',
+  'pending-followups',
   // evolution-scanner 不在此列：GitHub API 扫描，不消耗 LLM token，不受 consciousness 门控
 ];
 

@@ -6,13 +6,11 @@
 #   刀1 tick-helpers.js autoFailTimedOutTasks → 改用 assessTaskLiveness (alive/unknown fail-open)
 #   刀2 zombie-reaper.js reapZombies → 移除 exemptTypes SQL，改用 assessTaskLiveness 合同路由
 #   刀3 alertness/healing.js restartStuckExecutors → 改用 assessTaskLiveness 替代 PID 直查
-#   刀4 tick-runner.js dead task reset → 限定 executor_kind IN ('brain-local','bridge')
 #
 # 验证：
-#   1. 四刀源文件都正确 import assessTaskLiveness
+#   1. 三个现役源文件都正确 import assessTaskLiveness
 #   2. assessTaskLiveness(alive) → fail-open（不 kill）
 #   3. assessTaskLiveness(dead/brain-local) → kill
-#   4. executor_kind IN ('brain-local','bridge') 精确限定保持不变
 # Brain 在线时额外验证 tasks API
 
 set -euo pipefail
@@ -28,7 +26,6 @@ CONTRACTS_JS="$REPO_ROOT/packages/brain/src/executor-contracts.js"
 TICK_HELPERS="$REPO_ROOT/packages/brain/src/tick-helpers.js"
 ZOMBIE_REAPER="$REPO_ROOT/packages/brain/src/zombie-reaper.js"
 HEALING_JS="$REPO_ROOT/packages/brain/src/alertness/healing.js"
-TICK_RUNNER="$REPO_ROOT/packages/brain/src/tick-runner.js"
 
 # ── 刀1-3：import 接线核查 ──
 for SRC in "$TICK_HELPERS" "$ZOMBIE_REAPER" "$HEALING_JS"; do
@@ -39,13 +36,6 @@ for SRC in "$TICK_HELPERS" "$ZOMBIE_REAPER" "$HEALING_JS"; do
     fail "$NAME 未找到 assessTaskLiveness 引用（T2 接线漏掉？）"
   fi
 done
-
-# ── 刀4：tick-runner dead task reset 限定 executor_kind ──
-if grep -qE "executor_kind.*brain-local.*bridge|brain-local.*AND|executor_kind IN" "$TICK_RUNNER" 2>/dev/null; then
-  ok "tick-runner.js dead task reset 限定 executor_kind 精确范围"
-else
-  fail "tick-runner.js 未找到 executor_kind 精确限定（刀4 接线漏掉？）"
-fi
 
 # ── assessTaskLiveness 合同行为验证 ──
 if [[ ! -f "$CONTRACTS_JS" ]]; then
