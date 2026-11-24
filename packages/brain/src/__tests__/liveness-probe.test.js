@@ -12,6 +12,10 @@ import { CODEX_REVIEW_LOCK_DIR } from '../lib/codex-review-liveness.js';
 // Mock pool — hoisted so executor.js always gets this mockPool regardless of module cache order
 const mockPool = vi.hoisted(() => ({ query: vi.fn() }));
 vi.mock('../db.js', () => ({ default: mockPool }));
+// 此处只验证进程探活；真实 TaskRun owner/持锁接管由 PG 回归覆盖。
+vi.mock('../lib/native-agent-authority.js', async importOriginal => ({
+  ...await importOriginal(), hasNativeAgentOwner: async () => false,
+}));
 
 // Mock child_process
 vi.mock('child_process', () => ({

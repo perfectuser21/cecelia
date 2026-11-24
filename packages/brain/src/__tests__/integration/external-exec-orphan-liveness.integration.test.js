@@ -1,30 +1,9 @@
 /**
- * external-exec-orphan-liveness.integration.test.js [BEHAVIOR]
- *
- * 「活在别的机器上跑着，Brain 本机查不到进程就把它回队」——0929 两条同类现网 bug。
- *
- * ## A) 启动同步（syncOrphanTasksOnStartup）
- *   每次 Brain 部署重启，in_progress 且本机无进程的任务一律回 queued，且不清 claimed_by。
- *   device_job 执行在西安 Mac（领单器）、qiumi_task 执行在 MMV（openclaw agent，
- *   证据在 MMV ~/brain-runs/<run_id>.pid/.exit）——本机永远查不到进程 → 每次部署都被回队
- *   → device_job 会被中台 /api/schedule/claim 再领一次，同一活在真手机上重跑。
- *
- * ## B) 运行期活性探针（probeTaskLiveness）
- *   0929 15:43 qiumi 任务 87c9a08b（executor_kind=openclaw-agent，网关慢 4 分钟才起 agent）：
- *     15:40:05 openclaw_agent_spawned → 15:43:48 marked SUSPECT → 15:48:48 confirmed DEAD
- *     → 零 spawn 证据 → watchdog_safe_requeue；而 MMV 上 agent 实际在跑。
- *   探针只认本机三条 spawn 证据（activeProcesses / /tmp/cecelia-<id>.log / error_message），
- *   从不看 executor_kind——对外部执行体结构性恒判死。
- *
- * ## 契约
- *   外部执行体（注册表派生：device_job / qiumi_task / script_run，或 executor_kind 属其集合）：
- *   启动同步不回队、不动 claimed_by；运行期探针不判死不回队（openclaw-agent / script 交给
- *   各自收割器读远端 .exit，device_job 保留既有认领新鲜度 + 超时兜底，见
- *   liveness-external-executor-claim.integration.test.js）。其余任务类型行为不变。
- *
- * 禁 mock 被测边：真连 Postgres、真 executor.js、真 ps 探测（随机 UUID 天然无进程）。
+ * 真实 PG + executor + ps：专属远端合同不因本机无进程被回队；
+ * 已退役 OpenClaw/SSH 标签不能继续授予存活豁免。
+ * 原生执行所有权必须以服务端 TaskRun 为准，不靠 Task JSON 自我声明。
  */
-import { describe, it, expect, beforeAll, afterEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterEach, afterAll, vi } from 'vitest';
 
 process.env.NODE_ENV = process.env.NODE_ENV || 'test';
 
@@ -46,10 +25,13 @@ afterEach(async () => {
   suspectProcesses.clear();
   while (seededIds.length) {
     const id = seededIds.pop();
+    await pool.query('DELETE FROM task_runs WHERE task_id = $1', [id]);
     await pool.query('DELETE FROM task_events WHERE task_id = $1', [id]);
     await pool.query('DELETE FROM tasks WHERE id = $1', [id]);
   }
 });
+
+afterAll(async () => { await pool?.end(); });
 
 /** 造一条 in_progress 任务（started/claimed 在 minutesAgo 分钟前） */
 async function seedInProgress({
@@ -86,8 +68,8 @@ async function readTask(id) {
 
 const seedQiumi = (opts = {}) => seedInProgress({
   taskType: 'qiumi_task',
-  executorKind: 'openclaw-agent',
-  payload: { run_id: `qiumi-itest-${Date.now()}`, department: 'media' },
+  executorKind: 'external-worker',
+  payload: { provider: 'native-agent', run_id: `qiumi-itest-${Date.now()}`, department: 'media' },
   ...opts,
 });
 
@@ -115,7 +97,7 @@ describe('A) 启动同步不把外部执行体的活当孤儿回队 [BEHAVIOR]',
     expect(t.claimed_by).toBe('xian-mac-claimer');
   });
 
-  it('openclaw-agent 的 qiumi_task（MMV agent 在跑）→ 保持 in_progress，claimed_by 不动', async () => {
+  it('原生 qiumi_task 启动同步保持保守策略，claimed_by 不动', async () => {
     const id = await seedQiumi({ claimedBy: 'brain-dispatcher' });
     await syncOrphanTasksOnStartup();
 
@@ -141,27 +123,74 @@ describe('A) 启动同步不把外部执行体的活当孤儿回队 [BEHAVIOR]',
 });
 
 describe('B) 运行期活性探针不把外部执行体判死回队 [BEHAVIOR]', () => {
-  it('87c9a08b 原样复现：openclaw-agent 秋米任务起 4 分钟，双确认后仍 in_progress', async () => {
-    const id = await seedQiumi({ minutesAgo: 4 });
+  it('旧 OpenClaw 标签没有实际运行证据，双确认后回队', async () => {
+    const id = await seedQiumi({ executorKind: 'openclaw-agent', payload: { run_id: `legacy-${Date.now()}` }, minutesAgo: 4 });
     await probeTaskLiveness();
     await probeTaskLiveness();
 
     const t = await readTask(id);
-    expect(t.status).toBe('in_progress');
+    expect(t.status).toBe('queued');
+    expect(t.claimed_by).toBeNull();
     expect(suspectProcesses.has(id)).toBe(false);
     const ev = await pool.query(
       `SELECT 1 FROM task_events WHERE task_id = $1 AND event_type IN ('watchdog_safe_requeue', 'watchdog_headed_requeue')`,
       [id]
     );
-    expect(ev.rowCount).toBe(0);
+    expect(ev.rowCount).toBe(1);
   });
 
-  it('ssh 派发在途（executor_kind 尚未落库）的 qiumi_task 同样不判死', async () => {
+  it('旧 SSH 在途标签没有运行证据，不获得永久存活豁免', async () => {
     const id = await seedQiumi({ executorKind: null, minutesAgo: 4 });
     await probeTaskLiveness();
     await probeTaskLiveness();
 
-    expect((await readTask(id)).status).toBe('in_progress');
+    expect((await readTask(id)).status).toBe('queued');
+  });
+
+  it.each([false, true])('真实原生 TaskRun 未结算资源，本机无 PID 不能回队或清 claim ended=%s', async ended => {
+    const id = await seedQiumi({ executorKind: 'external-worker', claimedBy: 'native-owner', minutesAgo: 60 });
+    const runId = `native-owned-${id}`;
+    await pool.query(`UPDATE tasks SET payload=$2 WHERE id=$1`, [id, { provider: 'native-agent', run_id: runId }]);
+    await pool.query(`INSERT INTO task_runs(task_id,run_id,context) VALUES($1,$2,$3)`,
+      [id, runId, { source: 'native-agent', native_agent: { task_id: id, run_id: runId, resource_bound: true } }]);
+    if (ended) await pool.query("UPDATE task_runs SET ended_at=NOW(),status='cancelled' WHERE task_id=$1", [id]);
+    await probeTaskLiveness();
+    await probeTaskLiveness();
+    expect(await readTask(id)).toMatchObject({ status: 'in_progress', claimed_by: 'native-owner' });
+    expect((await pool.query('SELECT ended_at IS NOT NULL AS ended FROM task_runs WHERE task_id=$1', [id])).rows[0].ended).toBe(ended);
+    expect((await pool.query(`SELECT 1 FROM task_events WHERE task_id=$1 AND event_type LIKE 'watchdog%requeue'`, [id])).rowCount).toBe(0);
+  });
+
+  it('原生接管持行锁未提交：探针等待后不能用旧快照回队', async () => {
+    const id = await seedQiumi({ executorKind: null, minutesAgo: 60 });
+    await probeTaskLiveness();
+    const query = pool.query.bind(pool), owner = await pool.connect();
+    let intercepted = false, observedLockWait = false;
+    const spy = vi.spyOn(pool, 'query').mockImplementation(async (sql, params, ...rest) => {
+      if (!intercepted && typeof sql === 'string' && sql.includes("status = 'queued', claimed_by = NULL") && params?.[0] === id) {
+        intercepted = true;
+        await owner.query('BEGIN');
+        await owner.query(`INSERT INTO task_runs(task_id,run_id,context) VALUES($1,$2,$3)`,
+          [id, `native-takeover-${id}`, { source: 'native-agent', native_agent: { task_id: id, resource_bound: true } }]);
+        await owner.query("UPDATE tasks SET executor_kind='external-worker',claimed_by='new-native-owner' WHERE id=$1", [id]);
+        const update = query(sql, params, ...rest);
+        try {
+          for (let attempt = 0; attempt < 100; attempt++) {
+            const waiting = await owner.query(`SELECT 1 FROM pg_stat_activity WHERE datname=current_database()
+              AND wait_event_type='Lock' AND query LIKE 'UPDATE tasks SET status = ''queued'', claimed_by = NULL%'`);
+            if (waiting.rowCount) { observedLockWait = true; break; }
+            await new Promise(resolve => setTimeout(resolve, 10));
+          }
+        } finally { await owner.query('COMMIT'); }
+        return update;
+      }
+      return query(sql, params, ...rest);
+    });
+    try { await probeTaskLiveness(); } finally { spy.mockRestore(); await owner.query('ROLLBACK'); owner.release(); }
+    expect(intercepted).toBe(true);
+    expect(observedLockWait).toBe(true);
+    expect(await readTask(id)).toMatchObject({ status: 'in_progress', claimed_by: 'new-native-owner' });
+    expect((await query(`SELECT 1 FROM task_events WHERE task_id=$1 AND event_type LIKE 'watchdog%requeue'`, [id])).rowCount).toBe(0);
   });
 
   it('script_run 双确认后仍 in_progress（生死归 script-reaper）', async () => {
