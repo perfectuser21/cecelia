@@ -21,7 +21,7 @@ import request from 'supertest';
 // ─── Mock DB Pool ──────────────────────────────────────────────────────────
 
 vi.mock('../../db.js', () => ({
-  default: { query: vi.fn() },
+  default: { query: vi.fn(), connect: vi.fn() },
 }));
 
 // Mock domain-detector and quarantine for task-tasks.js dependencies
@@ -91,6 +91,17 @@ const SAMPLE_TASK = {
 describe('Brain Endpoint Contracts — Integration (mock DB)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    pool.query.mockReset();
+    pool.connect.mockImplementation(async () => ({
+      query: vi.fn(async (sql, params) => {
+        if (['BEGIN', 'COMMIT', 'ROLLBACK'].includes(sql)) return { rows: [] };
+        if (sql === 'SELECT id FROM tasks WHERE id=$1 FOR UPDATE') return { rows: [{ id: params[0] }] };
+        if (sql.endsWith(' AS native_owned')) return { rows: [{ native_owned: false }] };
+        if (sql === "SELECT payload->'headed_takeover' AS headed_takeover FROM tasks WHERE id=$1") return { rows: [{}] };
+        return pool.query(sql, params);
+      }),
+      release: vi.fn(),
+    }));
   });
 
   // ─── GET /api/brain/tasks — 任务列表（session-start 依赖）─────────────────
@@ -225,6 +236,10 @@ describe('Brain Endpoint Contracts — Integration (mock DB)', () => {
         .expect(200);
 
       expect(res.body.status).toBe('completed');
+      const db = await pool.connect.mock.results[0].value;
+      expect(db.query.mock.calls.filter(([sql]) => ['BEGIN', 'COMMIT', 'ROLLBACK'].includes(sql)).map(([sql]) => sql)).toEqual(['BEGIN', 'COMMIT']);
+      expect(db.query.mock.calls.some(([sql]) => sql.endsWith(' AS native_owned'))).toBe(true);
+      expect(db.release).toHaveBeenCalledOnce();
     });
 
     it('任务不存在时返回 404', async () => {
@@ -235,6 +250,9 @@ describe('Brain Endpoint Contracts — Integration (mock DB)', () => {
         .patch('/api/brain/tasks/nonexistent-id')
         .send({ status: 'completed' })
         .expect(404);
+      const db = await pool.connect.mock.results[0].value;
+      expect(db.query.mock.calls.filter(([sql]) => ['BEGIN', 'COMMIT', 'ROLLBACK'].includes(sql)).map(([sql]) => sql)).toEqual(['BEGIN', 'ROLLBACK']);
+      expect(db.release).toHaveBeenCalledOnce();
     });
   });
 });

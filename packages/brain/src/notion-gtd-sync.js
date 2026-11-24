@@ -471,6 +471,11 @@ export function ensureGtdSyncLoop(pool, {
 /** scheduler-jobs handler：只确保循环在跑并回报上次结果，立即返回，不阻塞 60s 串行轮。liveness_at = 最后一轮真正跑完的时刻。 */
 export async function gtdSyncJobHandler(pool, opts = {}) {
   const s = ensureGtdSyncLoop(pool, opts);
+  const failedSteps = !s.running ? (s.reason ? ['configuration'] : [])
+    : lastRun?.error ? ['round']
+      : ['zhToEn', 'ingest', 'stops', 'push'].filter(step => lastRun?.[step]?.error);
   // 没完成过任何一轮时用循环启动时刻兜底：开机首轮就挂住的循环也能按尺子在 900s 后翻 dead，而不是回退哨兵 at 永远 ok
-  return { loop: s.running ? 'running' : 'disabled', lastRun, liveness_at: lastCompletedAt ?? loopStartedAt };
+  return { loop: s.running ? 'running' : 'disabled', ok: failedSteps.length === 0,
+    ...(failedSteps.length ? { error: `notion_sync_failed: ${failedSteps.join(',')}` } : {}),
+    lastRun, liveness_at: lastCompletedAt ?? loopStartedAt };
 }

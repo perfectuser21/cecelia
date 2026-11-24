@@ -71,6 +71,18 @@ describe('Notion完整交办经Brain原生Agent接入',()=>{
 });
 
 describe('现役Notion拉取有界分页与历史过滤',()=>{
+ it('单页入账失败不能冒充成功空轮，保留失败计数供同步状态上报',async()=>{
+  state.create.mockRejectedValueOnce(new Error('isolated task intake unavailable'));
+  state.notion.mockImplementation(async(_token,path,method)=>{
+   if(path.includes('/databases/'))return {results:[page],has_more:false};
+   if(path===`/pages/${ZH}`)return zh;
+   if(path.includes('/blocks/'))return {results:[],has_more:false};
+   if(method==='PATCH')return {};
+   throw Error('unexpected isolated request '+path);
+  });
+  const result=await pullNotionTasksForTest({query:state.query},'fixture',{env});
+  expect(result).toMatchObject({ingested:0,failed:1,error:'notion_delegated_pages_failed'});
+ });
  it.each([pullNotionTasksForTest,pullMarkedNotionTasks])('过滤已接手历史且读完后页新单 %s',async pull=>{
   const other={...structuredClone(page),id:'bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee'};
   for(const p of [other])p.properties.Description.rich_text=[{plain_text:'[en-native]'}];

@@ -15,6 +15,44 @@ describe('notion-gtd-sync 调度', () => {
     vi.resetModules();
   });
 
+  it('当前同步轮失败显式报告业务失败，但保留真正完成的活性时间', async () => {
+    const mod = await import('../notion-gtd-sync.js');
+    let tick;
+    const env = { QIUMI_SYNC_ENABLED: 'true', QIUMI_SYNC_SINCE: '2026-09-23T00:00:00.000Z' };
+    const setIntervalFn = cb => { tick = cb; return { unref() {} }; };
+    const runOnce = (pool, opts) => mod.runGtdSyncOnce(pool, {
+      ...opts, token: 'isolated-token',
+      syncZhToEn: async () => ({ created: 0 }),
+      pullMarked: async () => ({ error: 'isolated Notion unavailable' }),
+      applyOwnerStops: async () => ({}),
+      pushQiumiStatus: async () => { throw new Error('isolated Notion write unavailable'); },
+    });
+    mod.ensureGtdSyncLoop({}, { env, setIntervalFn, runOnce });
+    await tick();
+    const result = await mod.gtdSyncJobHandler({}, { env, setIntervalFn });
+    expect(result).toMatchObject({ loop: 'running', ok: false, error: 'notion_sync_failed: ingest,push' });
+    expect(result.liveness_at).toBe(result.lastRun.at);
+    expect(result.lastRun.ingest.error).toBe('isolated Notion unavailable');
+  });
+
+  it('成功空轮恢复业务状态，关闭同步不把上一轮错误继续冒充当前失败', async () => {
+    const mod = await import('../notion-gtd-sync.js');
+    let tick, failed = true;
+    const env = { QIUMI_SYNC_ENABLED: 'true', QIUMI_SYNC_SINCE: '2026-09-23T00:00:00.000Z' };
+    const setIntervalFn = cb => { tick = cb; return { unref() {} }; };
+    const runOnce = async () => failed ? { ingest: { error: 'isolated failure' }, at: new Date().toISOString() }
+      : { zhToEn: {}, ingest: { ingested: 0 }, stops: {}, push: {}, at: new Date().toISOString() };
+    mod.ensureGtdSyncLoop({}, { env, setIntervalFn, runOnce });
+    await tick();
+    expect((await mod.gtdSyncJobHandler({}, { env, setIntervalFn })).ok).toBe(false);
+    expect(await mod.gtdSyncJobHandler({}, { env: {}, setIntervalFn })).toMatchObject({ loop: 'disabled', ok: true });
+    failed = false;
+    await tick();
+    const recovered = await mod.gtdSyncJobHandler({}, { env, setIntervalFn });
+    expect(recovered.ok).toBe(true);
+    expect(recovered.error).toBeUndefined();
+  });
+
   it('QIUMI_SYNC_ENABLED 未开 → 不起循环、不调 Notion', async () => {
     const { ensureGtdSyncLoop, gtdSyncJobHandler } = await import('../notion-gtd-sync.js');
     const setIntervalFn = vi.fn();

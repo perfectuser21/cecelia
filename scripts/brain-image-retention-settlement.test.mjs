@@ -43,3 +43,9 @@ for(const mode of ['container-drift','wrong-image','image-sha','bad-health','dae
  const x=await setup(t);x.state.mode=mode;await x.save();
  await assert.rejects(x.ledger.settlement(sha));
 });
+
+for(const mode of ['business-503','business-invalid','business-object','business-redirect'])test(`只读结算拒绝任务读取失败且不改生产账本：${mode}`,async t=>{
+ const x=await setup(t);x.state.mode=mode;await x.save();const before=await x.store.read('ledger.json');
+ await assert.rejects(x.ledger.settlement(sha),/DEPLOY_BUSINESS_UNAVAILABLE/);assert.deepEqual(await x.store.read('ledger.json'),before);
+ assert.ok((await x.calls()).some(a=>a.includes(container)&&a.some(x=>x.includes('/tasks?limit=1'))));
+});

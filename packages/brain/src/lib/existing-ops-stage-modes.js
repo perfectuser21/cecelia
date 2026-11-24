@@ -60,11 +60,16 @@ const SHA='18e8a6aff7886a7875468d923010ef1936fb100b497abc17f9e09c05b83218bd';
 const text=readFileSync(new URL('./existing-ops-business-smoke-retirement-profile.json',import.meta.url),'utf8');
 if(createHash('sha256').update(text).digest('hex')!==SHA)throw Error('basic_ci_source_unproven');
 export const REVIEWED_BUSINESS_SMOKE_RETIREMENT={...JSON.parse(text),[BUSINESS_PROFILE_PATH]:SHA};
+// 本轮业务门禁使用独立完整封组；历史profile和hash保持原样。
+export const CI_BUSINESS_GUARDS_PROFILE_PATH='packages/brain/src/lib/existing-ops-ci-business-guards-profile.json';
+const businessGuardsSha='9f99a1761cadeb0cff8fdf839ddf7db3e5f2e812c1d6c71560c7e98450faa96c',businessGuardsText=readFileSync(new URL('./existing-ops-ci-business-guards-profile.json',import.meta.url),'utf8');
+if(createHash('sha256').update(businessGuardsText).digest('hex')!==businessGuardsSha)throw Error('basic_ci_source_unproven');
+export const CI_BUSINESS_GUARDS_INPUTS={...JSON.parse(businessGuardsText),[CI_BUSINESS_GUARDS_PROFILE_PATH]:businessGuardsSha};
 const RUNNER='scripts/ci/run-basic-check.mjs',CONFIG='scripts/ci/deep-integration.config.mjs';
 const nodes=n=>!n||typeof n!=='object'?[]:[...(n.type?[n]:[]),...Object.values(n).flatMap(v=>Array.isArray(v)?v.flatMap(nodes):nodes(v))];
 const reject=()=>{throw Error('basic_ci_source_unproven');};
 export async function collectReviewedBusinessPgSources({read,parse,relation,profile=BUSINESS_PROFILE_PATH}){
- const runner=await read(RUNNER),digest=createHash('sha256').update(runner).digest('hex'),expectedCount=digest===NATIVE_AGENT_INPUTS[RUNNER]?15:digest===PILOT_HOST_INPUTS[RUNNER]?11:10;
+ const runner=await read(RUNNER),digest=createHash('sha256').update(runner).digest('hex'),expectedCount=digest===CI_BUSINESS_GUARDS_INPUTS[RUNNER]?18:digest===NATIVE_AGENT_INPUTS[RUNNER]?15:digest===PILOT_HOST_INPUTS[RUNNER]?11:10;
  const cases=nodes(parse(runner)).filter(n=>n.type==='SwitchCase'&&n.test?.value==='brain-integration');
  if(cases.length!==1)reject();
  const steps=nodes(cases[0]).filter(n=>n.type==='CallExpression'&&n.callee?.name==='step'&&n.arguments[1]?.value==='npx');
@@ -72,7 +77,7 @@ export async function collectReviewedBusinessPgSources({read,parse,relation,prof
  const args=steps[0].arguments.map(n=>n.value);
  if(JSON.stringify(args.slice(0,7))!==JSON.stringify(['packages/brain','npx','--no-install','vitest','run','--config','../../'+CONFIG])||args.at(-1)!=='--reporter=dot')reject();
  const tests=args.slice(7,-1);
- if(tests.length!==expectedCount||new Set(tests).size!==expectedCount||tests.some(p=>!/^src\/__tests__\/integration\/[a-z0-9-]+\.pg\.integration\.test\.js$/.test(p)))reject();
+ if(tests.length!==expectedCount||new Set(tests).size!==expectedCount||tests.some(p=>!/^src\/__tests__\/integration\/[a-z0-9-]+\.pg\.integration\.test\.js$/.test(p)&&!(digest===CI_BUSINESS_GUARDS_INPUTS[RUNNER]&&p==='src/__tests__/integration/external-exec-orphan-liveness.integration.test.js')))reject();
  relation('packages/brain/src/lib/existing-ops-stage-modes.js',profile,'reviewed_basic_ci_source_profile');
  relation(RUNNER,CONFIG,'reviewed_pr_postgres_config_selector');
  for(const p of tests){const input='packages/brain/'+p;if(!await read(input))reject();relation(RUNNER,input,'reviewed_pr_postgres_test_selector');}
@@ -195,7 +200,7 @@ const PG_LAYERING_PATH='tests/brain-ci-pg-layering.test.ts';
 const PG_LAYERING_DIGEST='2b6e813d5bc0f5fe546d25a996b21dc208dbb142c426de05fe5f24e45b06f774';
 export async function reviewedPilotSourceControls(profile,paths,read){
  let controls=reviewedPilotControls(profile,paths);
- if(paths?.includes(PILOT_HOST)&&createHash('sha256').update(await read(CANDIDATE_BUILDER_MARKER)).digest('hex')===CANDIDATE_CACHE_INPUTS[CANDIDATE_BUILDER_MARKER])controls={...controls,...CANDIDATE_CACHE_INPUTS};
+ if(paths?.includes(PILOT_HOST)&&(paths.includes(CI_BUSINESS_GUARDS_PROFILE_PATH)||createHash('sha256').update(await read(CANDIDATE_BUILDER_MARKER)).digest('hex')===CANDIDATE_CACHE_INPUTS[CANDIDATE_BUILDER_MARKER]))controls={...controls,...CANDIDATE_CACHE_INPUTS};
  if(paths?.includes(DEPLOY_RECOVERY_MARKER)){
   if(profile!==REVIEWED_NIGHTLY_STATUS||!paths.includes(PILOT_HOST)||createHash('sha256').update(await read(DEPLOY_RECOVERY_MARKER)).digest('hex')!==DEPLOY_RECOVERY_INPUTS[DEPLOY_RECOVERY_MARKER])reject();
   controls={...controls,...DEPLOY_RECOVERY_INPUTS};
@@ -203,6 +208,7 @@ export async function reviewedPilotSourceControls(profile,paths,read){
  if(paths?.includes(NATIVE_AGENT_MARKER)){
   if(profile!==REVIEWED_NIGHTLY_STATUS||!paths.includes(PILOT_HOST)||!paths.includes(DEPLOY_RECOVERY_MARKER))reject();
   const nativeControls={...controls,...NATIVE_AGENT_INPUTS};
+  if(paths.includes(CI_BUSINESS_GUARDS_PROFILE_PATH))return {...nativeControls,...CI_BUSINESS_GUARDS_INPUTS};
   if(createHash('sha256').update(await read('packages/brain/src/scheduler-jobs.js')).digest('hex')===NATIVE_COMPLETION_INPUTS['packages/brain/src/scheduler-jobs.js'])return {...nativeControls,...NATIVE_COMPLETION_INPUTS};
   return nativeControls;
  }
@@ -213,6 +219,23 @@ export function recordReviewedPilotSource({profile,paths,relation}){
  if(paths?.includes(PILOT_HOST)){
   if(profile!==REVIEWED_NIGHTLY_STATUS)reject();
   relation(PILOT_CLI,PILOT_HOST,'reviewed_pilot_foundation_host_source');
+  if(paths.includes(CI_BUSINESS_GUARDS_PROFILE_PATH)){
+   relation('packages/brain/src/lib/existing-ops-stage-modes.js',CI_BUSINESS_GUARDS_PROFILE_PATH,'reviewed_basic_ci_source_profile');
+   for(const [consumer,input,kind] of [
+    [RUNNER,'packages/brain/scripts/native-agent/staging-business.mjs','reviewed_native_business_image_import'],
+    [RUNNER,'packages/brain/src/__tests__/helpers/native-agent-host-fixture.js','reviewed_native_business_image_import'],
+    [RUNNER,'scripts/ci/run-debt-pg.mjs','reviewed_private_pg_callback_runner'],
+    ['scripts/ci/run-debt-pg.mjs','packages/brain/src/__tests__/execution-strategy-session-kr-link.test.js','reviewed_private_pg_callback_test'],
+    ['scripts/ci/run-debt-pg.mjs','scripts/ci/private-pg-backend.mjs','reviewed_private_pg_callback_fixture'],
+    ['scripts/ci/run-debt-pg.mjs','scripts/ci/private-pg-contract.mjs','reviewed_private_pg_callback_fixture'],
+    ['packages/brain/src/__tests__/execution-strategy-session-kr-link.test.js','packages/brain/src/__tests__/helpers/callback-closure-pg.js','reviewed_private_pg_callback_fixture'],
+    ['packages/brain/src/__tests__/integration/native-agent-scheduler.pg.integration.test.js','packages/brain/src/__tests__/fixtures/task-intake-db.js','reviewed_native_business_isolated_fixture'],
+    ['packages/brain/src/__tests__/helpers/native-agent-host-fixture.js','packages/brain/src/lib/native-agent-transport.js','reviewed_native_business_isolated_fixture'],
+    ['scripts/staging-verify.sh','packages/brain/scripts/native-agent/staging-business.mjs','reviewed_native_business_staging_probe'],
+    ['packages/brain/scripts/native-agent/staging-business.mjs','packages/brain/src/__tests__/helpers/native-agent-host-fixture.js','reviewed_native_business_isolated_fixture'],
+    [CANDIDATE_BUILDER_MARKER,'scripts/ci/__tests__/helpers/brain-candidate-docker.fixture.mjs','reviewed_candidate_docker_fixture'],
+   ])relation(consumer,input,kind);
+  }
   if(paths.includes(NATIVE_AGENT_MARKER)){
    const release='packages/brain/scripts/native-agent-release.mjs',bundle='packages/brain/scripts/native-agent/bundle.mjs';
    relation('scripts/brain-deploy.sh',release,'reviewed_native_agent_release_entry');
@@ -232,7 +255,7 @@ export async function mainAutoDeployProfile(paths,read){
  if(!Array.isArray(paths))reject();
  const text=await read(CANDIDATE_BUILDER_MARKER);if(typeof text!=='string')reject();
  const digest=createHash('sha256').update(text).digest('hex');
- if(digest===CANDIDATE_BUILDER_INPUTS[CANDIDATE_BUILDER_MARKER]||(paths.includes(PILOT_HOST)&&digest===CANDIDATE_CACHE_INPUTS[CANDIDATE_BUILDER_MARKER])){
+ if((paths.includes(CI_BUSINESS_GUARDS_PROFILE_PATH)&&digest===CI_BUSINESS_GUARDS_INPUTS[CANDIDATE_BUILDER_MARKER])||digest===CANDIDATE_BUILDER_INPUTS[CANDIDATE_BUILDER_MARKER]||(paths.includes(PILOT_HOST)&&digest===CANDIDATE_CACHE_INPUTS[CANDIDATE_BUILDER_MARKER])){
   const runtime=await read(RUNTIME_IDEMPOTENCE_MARKER);if(typeof runtime!=='string')reject();
   const runtimeDigest=createHash('sha256').update(runtime).digest('hex');
   if(runtimeDigest===RUNTIME_IDEMPOTENCE_INPUTS[RUNTIME_IDEMPOTENCE_MARKER]){

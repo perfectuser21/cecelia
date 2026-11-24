@@ -341,6 +341,7 @@ export async function dispatchNextTask(goalIds, options = {}) {
 
 async function dispatchAdmittedTask(goalIds, options = {}) {
   const codeOnly = options.codeOnly === true;
+  const nativeOnly = options.nativeOnly === true;
   let qiumiOnlyBypass = false;
   const actions = [];
   let llmCapacitySnapshot = null;
@@ -395,7 +396,7 @@ async function dispatchAdmittedTask(goalIds, options = {}) {
   }
   // 任务池总闸关着时，qiumi_task 仍可放行（穿透 MMV 网关，不占 fleet 槽位）；
   // 置位后候选循环只选 qiumi_task，普通任务照旧被总闸挡住。
-  if (!slotBudget.dispatchAllowed) {
+  if (!slotBudget.dispatchAllowed && !nativeOnly) {
     // Eviction: if a high-priority task is waiting, try to evict a low-priority one
     try {
       // Peek at the next queued task to check its priority
@@ -526,6 +527,7 @@ async function dispatchAdmittedTask(goalIds, options = {}) {
     const candidate = await selectNextDispatchableTask(goalIds, skipIds, {
       priorityFilter: null,
       ...(codeOnly ? {codeOnly:true} : {}),
+      ...(nativeOnly ? { onlyTaskTypes: ['qiumi_task'] } : {}),
       ...(qiumiOnlyBypass ? { onlyTaskTypes: [...OPENCLAW_PASSTHROUGH_TASK_TYPES], includeCommanderVerification: true } : {}),
     });
     if (!candidate) {

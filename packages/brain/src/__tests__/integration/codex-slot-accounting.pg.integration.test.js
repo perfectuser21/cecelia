@@ -41,6 +41,7 @@ it('动态 Codex 与原生任务各计一次，其他执行器及已完成任务
 it('同一 runner 新 claim 接手后，旧 claim 无法回滚任务或改变设备锁', async () => {
   const first = new pg.Client(privatePgConfig()), second = new pg.Client(privatePgConfig());
   const schema = `codex_claim_${randomUUID().replaceAll('-', '')}`;
+  const taskId = randomUUID();
   let firstConnected = false, secondConnected = false, owned = false;
   try {
     await first.connect(); firstConnected = true;
@@ -48,28 +49,29 @@ it('同一 runner 新 claim 接手后，旧 claim 无法回滚任务或改变设
     await second.connect(); secondConnected = true;
     await verifyPrivatePg(second);
     await first.query(`CREATE SCHEMA "${schema}"`); owned = true;
-    await first.query(`CREATE TABLE "${schema}".tasks (id text PRIMARY KEY, status text, claimed_by text, claimed_at timestamptz, updated_at timestamptz)`);
+    await first.query(`CREATE TABLE "${schema}".tasks (id uuid PRIMARY KEY, status text, claimed_by text, claimed_at timestamptz, updated_at timestamptz, payload jsonb, result jsonb)`);
     await first.query(`CREATE TABLE "${schema}".device_locks (device_name text PRIMARY KEY, locked_by text, locked_at timestamptz, expires_at timestamptz)`);
-    await first.query(`CREATE TABLE "${schema}".task_leases (task_id text, released_at timestamptz, lease_until timestamptz)`);
+    await first.query(`CREATE TABLE "${schema}".task_leases (task_id uuid, released_at timestamptz, lease_until timestamptz)`);
     // 抢锁现役隔离查询依赖 TaskRun；仅在本人 schema 补齐真实表，不回落 public。
-    await first.query(`CREATE TABLE "${schema}".task_runs (id uuid PRIMARY KEY, task_id text, run_id text, status text, ended_at timestamptz, context jsonb, result jsonb)`);
+    await first.query(`CREATE TABLE "${schema}".task_runs (id uuid PRIMARY KEY, task_id uuid, run_id text, status text, ended_at timestamptz, context jsonb, result jsonb)`);
+    await first.query(`CREATE TABLE "${schema}".task_events (LIKE public.task_events INCLUDING ALL)`);
     await second.query(`SET search_path TO "${schema}"`);
-    await first.query(`INSERT INTO "${schema}".tasks VALUES ('t', 'in_progress', 'runner', '2026-11-07 06:00:00.123456+00', NOW())`);
-    await first.query(`INSERT INTO "${schema}".device_locks VALUES ('phone', 't', NOW(), NOW() + interval '30 minutes')`);
-    const old = await first.query(`SELECT claimed_at::text AS stamp FROM "${schema}".tasks WHERE id='t'`);
-    await second.query(`UPDATE "${schema}".tasks SET claimed_at='2026-11-07 06:00:01.123456+00' WHERE id='t'`);
+    await first.query(`INSERT INTO "${schema}".tasks(id,status,claimed_by,claimed_at,updated_at) VALUES ($1, 'in_progress', 'runner', '2026-11-07 06:00:00.123456+00', NOW())`, [taskId]);
+    await first.query(`INSERT INTO "${schema}".device_locks VALUES ('phone', $1, NOW(), NOW() + interval '30 minutes')`, [taskId]);
+    const old = await first.query(`SELECT claimed_at::text AS stamp FROM "${schema}".tasks WHERE id=$1`, [taskId]);
+    await second.query(`UPDATE "${schema}".tasks SET claimed_at='2026-11-07 06:00:01.123456+00' WHERE id=$1`, [taskId]);
     const { acquireDeviceLock } = await import('../../device-lock-helpers.js');
-    expect((await acquireDeviceLock('t', 'phone', 30, second)).result).toBe('acquired');
+    expect((await acquireDeviceLock(taskId, 'phone', 30, second)).result).toBe('acquired');
     const stale = await first.query(`UPDATE "${schema}".tasks
       SET status='queued', claimed_by=NULL, claimed_at=NULL, updated_at=NOW()
       WHERE id=$1 AND status='in_progress' AND claimed_by=$2 AND claimed_at=$3::timestamptz`,
-    ['t', 'runner', old.rows[0].stamp]);
+    [taskId, 'runner', old.rows[0].stamp]);
     expect(stale.rowCount).toBe(0);
-    const task = await second.query(`SELECT status, claimed_by, claimed_at::text AS stamp FROM "${schema}".tasks WHERE id='t'`);
+    const task = await second.query(`SELECT status, claimed_by, claimed_at::text AS stamp FROM "${schema}".tasks WHERE id=$1`, [taskId]);
     expect(task.rows[0]).toMatchObject({ status: 'in_progress', claimed_by: 'runner' });
     expect(task.rows[0].stamp).not.toBe(old.rows[0].stamp);
     const lock = await second.query(`SELECT locked_by FROM "${schema}".device_locks WHERE device_name='phone'`);
-    expect(lock.rows[0].locked_by).toBe('t');
+    expect(lock.rows[0].locked_by).toBe(taskId);
   } finally {
     if (owned) await first.query(`DROP SCHEMA "${schema}" CASCADE`);
     if (secondConnected) await second.end();

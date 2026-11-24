@@ -10,6 +10,7 @@ import {commandsFor} from '../run-basic-check.mjs';
 import {validateTestDatabaseUrl} from '../../../packages/brain/src/__tests__/integration/suggestion-plan-db-url-guard.mjs';
 
 const required = [
+  'src/__tests__/integration/external-exec-orphan-liveness.integration.test.js',
   'src/__tests__/integration/device-job-foundation.pg.integration.test.js',
   'src/__tests__/integration/graph-multi-repo-current.pg.integration.test.js',
   'src/__tests__/integration/org-map-current-contracts.pg.integration.test.js',
@@ -23,7 +24,7 @@ const required = [
 function selected() {
   const steps = commandsFor('brain-integration');
   const step = steps.find(step => required.every(file => step.args.includes(file)));
-  assert.ok(step, '现役租约、外部owner及公共Runner终态PG合同必须实际进入PR跑道');
+  assert.ok(step, '现役租约、原生owner防孤儿误回队及公共Runner终态PG合同必须实际进入PR跑道');
   assert.ok(step.cwd.endsWith('/packages/brain'));
   assert.ok(step.args.includes('../../scripts/ci/deep-integration.config.mjs'));
   assert.equal(step.ciScratchDatabase, true);
@@ -34,6 +35,13 @@ function selected() {
 }
 
 test('现役关键PG合同在真实数据库迁移之后进入现有Brain集成跑道', selected);
+
+test('完成回调事务回归以原私有数据库入口进入每个PR，不能只留夜间', () => {
+  const steps = commandsFor('brain-integration');
+  const step = steps.find(row => row.command === 'node' && row.args[0] === 'scripts/ci/run-debt-pg.mjs');
+  assert.ok(step, '完成回调死锁回归没有进入必需PR集成检查');
+  assert.deepEqual(step.args, ['scripts/ci/run-debt-pg.mjs', '--file', 'packages/brain/src/__tests__/execution-strategy-session-kr-link.test.js']);
+});
 
 test('建议失败回执的独立 PG 回归文件存在且进入 PR 集成入口', () => {
   const file = 'src/__tests__/integration/suggestion-plan-callback.pg.integration.test.js';

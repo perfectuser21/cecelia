@@ -50,6 +50,11 @@ export const forwardedFeaturePatches = [];
 export async function startCallbackFixture() {
   ({ default: pool } = await import('../../db.js'));
   await verifyPrivatePg(pool, env);
+  // 本人私有数据库的锁等待必须有界；否则回调自身持锁后的跨连接写会拖住整组回归。
+  pool.options.statement_timeout = 3000;
+  const connection = await pool.connect();
+  try { await connection.query('SET statement_timeout = 3000'); }
+  finally { connection.release(); }
   if (!(await pool.query("SELECT 1 FROM schema_version WHERE version='557'")).rowCount) throw new Error('callback fixture requires full migrations through 557');
   // 只桥接旧厚度回写的精确传输意图；不访问5221。下游仍走真实journeys router及同一私有PG。
   // 其它fetch（包括模型、通知与外网）一律拒绝，不伪造服务成功响应。

@@ -44,10 +44,12 @@ beforeAll(async () => {
   await admin.query(`CREATE TABLE tasks (
     id uuid PRIMARY KEY,status text NOT NULL,priority text DEFAULT 'P2',
     payload jsonb DEFAULT '{}',result jsonb DEFAULT '{}',description text,updated_at timestamptz DEFAULT now(),
-    claimed_by text,started_at timestamptz
+    claimed_by text,started_at timestamptz,blocked_reason text,executor_kind text
   ); CREATE TABLE cecelia_events (
     id bigint GENERATED ALWAYS AS IDENTITY,event_type text,source text,payload jsonb
-  ); ${commandDdl}`);
+  ); CREATE TABLE task_runs(id uuid PRIMARY KEY,task_id uuid,run_id text,status text,context jsonb,result jsonb,ended_at timestamptz);
+  CREATE TABLE task_events(id uuid PRIMARY KEY,task_id uuid,event_type text,payload jsonb);
+  CREATE TABLE device_locks(device_name text PRIMARY KEY,locked_by text); ${commandDdl}`);
   previousFetch = globalThis.fetch;
   globalThis.fetch = (...args) => { forbiddenNetwork.push(args); throw Error('projection test forbids business network'); };
 });
@@ -108,14 +110,14 @@ it.each(['dispatch', 'delete'])('rejects cancellation when %s wins after the ini
   // Only scheduling is controlled. Every statement, including SELECT/UPDATE, reaches real PG.
   const boundary = { query: async (sql, params) => {
     const result = await projection.query(sql, params);
-    if (String(sql).startsWith('SELECT id, status FROM tasks')) {
+    if (sql === 'SELECT id, status, xmin::text AS native_control_epoch FROM tasks WHERE id=$1 FOR UPDATE') {
       observed(result.rows[0]); await release;
     }
     return result;
   } };
   const operation = applyProjectionCommands(boundary);
   try {
-    expect(await readComplete).toMatchObject({ id: entry.taskId, status: 'queued' });
+    expect(await readComplete).toMatchObject({ id: entry.taskId, status: 'queued', native_control_epoch: expect.stringMatching(/^\d+$/) });
     await competitor.query('BEGIN');
     // Representative dispatch CAS, not a claim of running the full dispatcher/executor.
     const claimed = winner === 'dispatch'

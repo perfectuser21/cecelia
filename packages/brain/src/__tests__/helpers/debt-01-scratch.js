@@ -16,6 +16,7 @@ export async function setupScratch() {
     '000_base_schema.sql', '001_cecelia_architecture_upgrade.sql',
     '005_schema_version_and_config.sql', '130_task_execution_metrics.sql',
     '133_pr_status.sql', '137_blocked_status.sql', '138_blocked_detail.sql',
+    '059_task_runs.sql', '065_device_locks.sql', '220_tasks_result_column.sql', '268_task_events.sql',
   ]) {
     await pool.query(await readFile(new URL(`../../../migrations/${file}`, import.meta.url), 'utf8'));
   }

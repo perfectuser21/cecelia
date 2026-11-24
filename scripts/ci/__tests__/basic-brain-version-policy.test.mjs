@@ -84,7 +84,7 @@ function versionFixture(t, { version = '1.0.0', fragment = false } = {}) {
   const run = (body = event, overrides = {}) => {
     const eventPath = join(directory, 'event.json');
     writeFileSync(eventPath, typeof body === 'string' ? body : JSON.stringify(body));
-    return spawnSync(process.execPath, ['--test', `--test-name-pattern=^${versionEntry}$`, versionTestPath], {
+    return spawnSync(process.execPath, ['--test', '--test-reporter=tap', `--test-name-pattern=^${versionEntry}$`, versionTestPath], {
       cwd: directory, encoding: 'utf8', timeout: 20000,
       env: { ...env, BRAIN_VERSION_POLICY_FIXTURE: '1', GITHUB_ACTIONS: 'true', GITHUB_EVENT_NAME: 'pull_request', GITHUB_EVENT_PATH: eventPath, ...overrides },
     });
@@ -162,7 +162,7 @@ test('真实guard拦截TERM也必须超时失败并收尾本人进程组', async
   f.event.pull_request.head.sha = f.git('rev-parse', 'HEAD');
   const eventPath = join(f.directory, 'event.json'), ready = join(f.directory, 'guard-ready');
   writeFileSync(eventPath, JSON.stringify(f.event));
-  const child = spawn(process.execPath, ['--test', `--test-name-pattern=^${versionEntry}$`, versionTestPath], {
+  const child = spawn(process.execPath, ['--test', '--test-reporter=tap', `--test-name-pattern=^${versionEntry}$`, versionTestPath], {
     cwd: f.directory, detached: true,
     env: { ...f.env, BRAIN_VERSION_POLICY_FIXTURE: '1', GITHUB_ACTIONS: 'true', GITHUB_EVENT_NAME: 'pull_request', GITHUB_EVENT_PATH: eventPath, VERSION_TEST_READY: ready },
     stdio: ['ignore', 'pipe', 'pipe'],

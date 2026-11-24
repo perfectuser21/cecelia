@@ -39,7 +39,7 @@ describe('定向手机派发：真实双连接 PG', () => {
     const task=fixture(id);
     await a.query("INSERT INTO tasks(id,title,task_type,status) VALUES($1,$2,'qiumi_task','queued')",[id,task.title]);
     const reply=await dispatchManualQiumi(task,a,{
-      route:async()=>{await a.query("UPDATE tasks SET task_type='architecture_scan',payload=$2 WHERE id=$1",[id,{run_id:'owned-run',qiumi_department:'test'}]);return {outcome:'proceed'};},
+      route:async()=>{await a.query("UPDATE tasks SET task_type='architecture_scan',payload=$2 WHERE id=$1",[id,{provider:'native-agent',run_id:'owned-run',qiumi_department:'test'}]);return {outcome:'proceed'};},
       trigger:async()=>{if(race) await b.query("UPDATE tasks SET claimed_by='new-owner' WHERE id=$1",[id]);return {success:false,reason:'retired_decomposition',retiredBeforeStart:true};},
     });
     expect(reply).toMatchObject({status:409,body:{execution_state:'not_started',parked:!race}});
@@ -56,7 +56,7 @@ describe('定向手机派发：真实双连接 PG', () => {
     const deps = (db) => ({
       route: async (claimed) => {
         expect(claimed.status).toBe('queued'); expect(claimed.claimed_by).toBeTruthy();
-        await db.query("UPDATE tasks SET payload=$2::jsonb WHERE id=$1", [task.id, JSON.stringify({ run_id: 'same-run', qiumi_department: 'skill-factory' })]);
+        await db.query("UPDATE tasks SET payload=$2::jsonb WHERE id=$1", [task.id, JSON.stringify({ provider: 'native-agent', run_id: 'same-run', qiumi_department: 'skill-factory' })]);
         return { outcome: 'proceed' };
       },
       trigger: async (started) => {
@@ -67,7 +67,7 @@ describe('定向手机派发：真实双连接 PG', () => {
     const replies = await Promise.all([dispatchManualQiumi(task, a, deps(a)), dispatchManualQiumi(task, b, deps(b))]);
     expect(replies.map((r) => r.status).sort()).toEqual([202, 409]); expect(starts).toBe(1);
     const row = (await a.query('SELECT * FROM tasks WHERE id=$1', [task.id])).rows[0];
-    expect(row.status).toBe('in_progress'); expect(row.executor_kind).toBe('openclaw-agent');
+    expect(row.status).toBe('in_progress'); expect(row.executor_kind).toBe('external-worker');
     expect(row.payload.run_id).toBe('same-run'); expect(row.claimed_by).toMatch(/^manual-qiumi:/);
   });
   it('旧 owner 清理不能移除新 owner 的 claim', async () => {
@@ -89,7 +89,7 @@ describe('定向手机派发：真实双连接 PG', () => {
     await a.query("UPDATE tasks SET payload=jsonb_set(payload, '{next_run_at}', $1::jsonb) WHERE id='future-phone'", [JSON.stringify(new Date(Date.now() + 3_600_000).toISOString())]);
     let starts = 0;
     const route = async task => {
-      await a.query(`UPDATE tasks SET payload=payload || $2::jsonb WHERE id=$1`, [task.id, { run_id: 'pump-fixed-run', qiumi_department: 'skill-factory', qiumi_route: { device_hint: { serial: 'blue', nickname: '小蓝' } } }]);
+      await a.query(`UPDATE tasks SET payload=payload || $2::jsonb WHERE id=$1`, [task.id, { provider: 'native-agent', run_id: 'pump-fixed-run', qiumi_department: 'skill-factory', qiumi_route: { device_hint: { serial: 'blue', nickname: '小蓝' } } }]);
       return { outcome: 'proceed' };
     };
     const deps = { anchor: () => ({ blocked: false }), dispatch: (task, db, guard) => dispatchManualQiumi(task, db, {
@@ -109,7 +109,7 @@ describe('定向手机派发：真实双连接 PG', () => {
     let starts = 0;
     const deps = { anchor: () => ({ blocked: false }), dispatch: (task, db, guard) => dispatchManualQiumi(task, db, {
       ...guard, route: async () => {
-        await a.query(`UPDATE tasks SET payload=payload || $2::jsonb WHERE id=$1`, [task.id, { run_id: 'cancelled-before-start', qiumi_department: 'skill-factory', qiumi_route: { device_hint: { serial: 'blue', nickname: '小蓝' } } }]);
+        await a.query(`UPDATE tasks SET payload=payload || $2::jsonb WHERE id=$1`, [task.id, { provider: 'native-agent', run_id: 'cancelled-before-start', qiumi_department: 'skill-factory', qiumi_route: { device_hint: { serial: 'blue', nickname: '小蓝' } } }]);
         await b.query("UPDATE working_memory SET value_json=jsonb_set(value_json,'{enabled}','false')");
         return { outcome: 'proceed' };
       }, trigger: async () => { starts++; return { success: true }; },
@@ -146,7 +146,7 @@ describe('定向手机派发：真实双连接 PG', () => {
     let starts = 0;
     const reply = await dispatchManualQiumi(task, a, {
       policySnapshot: { key: 'phone_rpa_dispatch', value: policy },
-      route: async () => { await a.query("UPDATE tasks SET payload='{\"run_id\":\"cas-run\",\"qiumi_department\":\"skill-factory\"}' WHERE id=$1", [task.id]); return { outcome: 'proceed' }; },
+      route: async () => { await a.query("UPDATE tasks SET payload='{\"provider\":\"native-agent\",\"run_id\":\"cas-run\",\"qiumi_department\":\"skill-factory\"}' WHERE id=$1", [task.id]); return { outcome: 'proceed' }; },
       beforeStart: async () => { await b.query("UPDATE working_memory SET value_json=jsonb_set(value_json,'{enabled}','false')"); return true; },
       trigger: async () => { starts++; return { success: true }; },
     });

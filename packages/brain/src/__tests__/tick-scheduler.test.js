@@ -122,10 +122,17 @@ describe('tick-scheduler', () => {
 
   it('目标资源忙且没有KR时如实返回代码等待原因', async () => {
     mockQuery.mockResolvedValue({ rows: [] });
-    mockDispatchNextTask.mockResolvedValue({ dispatched: false, reason: 'script_host_resource_unavailable', actions: [] });
+    mockDispatchNextTask.mockImplementation(async (_goals, options) => ({
+      dispatched: false,
+      reason: options?.codeOnly ? 'script_host_resource_unavailable' : 'no_dispatchable_task',
+      actions: [],
+    }));
     const result = await runScheduler();
     expect(result).toMatchObject({ dispatched: false, reason: 'no_goals', code_dispatch: { reason: 'script_host_resource_unavailable' } });
-    expect(mockDispatchNextTask).toHaveBeenCalledTimes(1);
+    expect(mockDispatchNextTask.mock.calls).toEqual([
+      [null, { codeOnly: true }],
+      [null, { nativeOnly: true }],
+    ]);
   });
 
   it('PANIC或人工禁派发不运行任何代码任务', async () => {
@@ -134,5 +141,20 @@ describe('tick-scheduler', () => {
     expect(result).toMatchObject({ dispatched: false, reason: 'alertness_disabled' });
     expect(mockDispatchNextTask).not.toHaveBeenCalled();
     expect(mockQuery).not.toHaveBeenCalled();
+  });
+
+  it('没有活跃KR的Notion原生任务仍由正式定时入口派发，且只授权原生任务候选', async () => {
+    mockQuery.mockResolvedValue({ rows: [] });
+    mockDispatchNextTask.mockImplementation(async (_goals, options) => options?.nativeOnly
+      ? { dispatched: true, task_id: 'native-without-kr', run_id: 'native-run', actions: [] }
+      : { dispatched: false, reason: 'no_dispatchable_task', actions: [] });
+
+    const result = await runScheduler();
+
+    expect(result).toMatchObject({ dispatched: true, task_id: 'native-without-kr', run_id: 'native-run' });
+    expect(mockDispatchNextTask.mock.calls).toEqual([
+      [null, { codeOnly: true }],
+      [null, { nativeOnly: true }],
+    ]);
   });
 });

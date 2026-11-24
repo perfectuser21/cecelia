@@ -296,7 +296,10 @@ export async function runSchedulerJobsOnce(pool, jobs = JOBS) {
         console.warn(`[scheduler-jobs] ${job.name} timed out after ${job.timeoutMs ?? DEFAULT_TIMEOUT_MS}ms`);
         record = { at, ok: false, timedOut: true };
       } else {
-        record = { at, ok: true, detail: summarize(result) };
+        const failed = result?.ok === false;
+        record = { at, ok: !failed, detail: summarize(result) };
+        if (failed) record.error = typeof result.error === 'string' && result.error.trim()
+          ? result.error.slice(0, 2000) : 'handler_reported_failure';
         // handler 自报的完成时刻（如 gtdSyncJobHandler 的内层循环最后一轮）。立即返回型 handler 的
         // 哨兵 `at` 每分钟都新，内层死了也新；scheduler-liveness 只认这个字段算活性。
         if (typeof result?.liveness_at === 'string') record.liveness_at = result.liveness_at;

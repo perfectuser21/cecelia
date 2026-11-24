@@ -94,6 +94,8 @@ async function probeWith(rows) {
   mockPool.query.mockReset();
   mockPool.query.mockImplementation(async (sql) => {
     if (/FROM tasks\s+WHERE status = 'in_progress'/.test(sql)) return { rows };
+    // 本 fixture 中零证据 UPDATE 实际命中；没有 owner/竞争写入。
+    if (/UPDATE tasks SET status = 'queued'/.test(sql)) return { rows: [], rowCount: 1 };
     return { rows: [], rowCount: 0 };
   });
   return probeTaskLiveness();

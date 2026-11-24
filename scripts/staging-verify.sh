@@ -21,9 +21,21 @@ database=$(candidate_docker exec "$STAGING_CONTAINER" node --input-type=module -
  const c=new pg.Client({...DB_DEFAULTS,query_timeout:15000});await c.connect();
  try { const {rows:[r]}=await c.query("SELECT current_database() AS database,to_regclass($1) IS NOT NULL AS tasks_table",["public.tasks"]);process.stdout.write(JSON.stringify({...r,host:DB_DEFAULTS.host})); }finally{await c.end();}
 ')
+business=$(candidate_docker exec -e EXPECTED_SHA="$EXPECTED_SHA" "$STAGING_CONTAINER" node scripts/native-agent/staging-business.mjs)
+business=$(printf '%s' "$business" | node -e '
+ const text=require("fs").readFileSync(0,"utf8"),rows=text.split("\n").filter(line=>line.startsWith("STAGING_BUSINESS_RECEIPT "));
+ if(rows.length!==1)throw Error("候选业务收据缺失或重复");
+ const b=JSON.parse(rows[0].slice("STAGING_BUSINESS_RECEIPT ".length));
+ if(b.protocol!=="brain-staging-business/v1"||b.status!=="passed"||b.git_sha!==process.env.EXPECTED_SHA
+   ||b.task_status!=="completed_no_pr"||b.run_status!=="success"||b.artifact_verified!==true||b.execution_stopped!==true
+   ||!/^[a-f0-9]{64}$/.test(b.artifact_sha256??"")||b.external_services!=="not_evaluated"||![b.task_id,b.run_id].every(id=>/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/.test(id)))throw Error("候选业务合同未通过");
+ process.stdout.write(JSON.stringify(b));
+')
+export STAGING_BUSINESS_RECEIPT="$business"
 printf '%s' "$database" | node -e '
  const fs=require("fs"),d=JSON.parse(fs.readFileSync(0,"utf8"));
  if(d.database!=="cecelia_staging"||d.host!=="stage-db"||d.tasks_table!==true)throw Error("候选数据库身份读回不符");
+ d.business=JSON.parse(process.env.STAGING_BUSINESS_RECEIPT);
  if(process.env.STAGING_VERIFY_OUTPUT)fs.writeFileSync(process.env.STAGING_VERIFY_OUTPUT,JSON.stringify(d));
 '
-echo 'STAGING_OK：候选同 SHA、隔离运行、关闭 tick 且任务 API 读回成功'
+echo 'STAGING_OK：固定来源、隔离数据库与原生任务/运行/产物/停止合同通过；外部服务未评估'

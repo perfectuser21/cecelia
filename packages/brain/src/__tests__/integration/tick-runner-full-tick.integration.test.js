@@ -1,5 +1,5 @@
 /**
- * Integration Test: tick-runner executeTick — 完整 1 次 tick 全 plugin wire
+ * 旧 tick-runner executeTick 接线回归；替换依赖，仅验证 plugin 接线。
  *
  * 验证 D1.7c plugin 拆解后，executeTick 一次调用确实把 7 个 plugin 全 wire 上：
  *   - dept-heartbeat / kr-progress-sync / heartbeat / goal-eval

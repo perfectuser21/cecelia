@@ -18,7 +18,7 @@ import {createStore} from ${JSON.stringify(new URL('./brain-image-retention/stor
 import {createDeploymentLedger} from ${JSON.stringify(new URL('./brain-image-retention/ledger.mjs', import.meta.url).href)};
 const image=n=>'sha256:'+String(n).repeat(64),sha=n=>String(n).repeat(40),current=()=>Number(fs.readFileSync(${JSON.stringify(statePath)},'utf8'));
 export const store=createStore(${JSON.stringify(join(root, 'state'))});
-export const ledger=createDeploymentLedger({store,docker:{snapshot:async()=>({containers:[{name:'/cecelia-node-brain',running:true,image_id:image(current())}],images:[1,2].map(n=>({id:image(n),tags:['cecelia-brain:1.0.'+n],git_sha:sha(n)}))})},health:async()=>({status:'healthy',version:'1.0.'+current(),git_sha:sha(current())})});`;
+export const ledger=createDeploymentLedger({store,docker:{containerBusinessReadback:async id=>({protocol:'brain-release-readback/v1',status:'passed',container_id:id,task_count:0,task_sample_sha256:'e'.repeat(64),scope:'read_only',external_services:'not_evaluated'}),snapshot:async()=>({containers:[{id:'a'.repeat(64),name:'/cecelia-node-brain',running:true,image_id:image(current())}],images:[1,2].map(n=>({id:image(n),tags:['cecelia-brain:1.0.'+n],git_sha:sha(n)}))})},health:async()=>({status:'healthy',version:'1.0.'+current(),git_sha:sha(current())})});`;
   await writeFile(join(root, 'fixture.mjs'), fixture);
   const { store, ledger } = await import(join(root, 'fixture.mjs'));
   const deployment_id = randomUUID();

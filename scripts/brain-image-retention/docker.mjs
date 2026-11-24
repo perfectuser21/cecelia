@@ -1,3 +1,4 @@
+import {createHash} from 'node:crypto';
 import { runDockerProcess } from './process.mjs';
 import { stat, statfs } from 'node:fs/promises';
 import { deployHealth, fail, IMAGE, US_MACHINE_ID } from './policy.mjs';
@@ -54,6 +55,19 @@ export function createDockerAdapter({ root, dataPath = '/run/cecelia-docker-data
     if (boundary < 0 || !/^2[0-9]{2}$/.test(output.slice(boundary + 1).trim()) || Buffer.byteLength(body) > 262144) throw fail('DEPLOY_HEALTH_UNAVAILABLE');
     return deployHealth(JSON.parse(body));
   }
+  async function containerBusinessReadback(id, lease) {
+    if (!/^[a-f0-9]{64}$/.test(id)) throw fail('INVALID_CONTAINER_ID');
+    let output;
+    try { output=await run(['exec',id,'curl','-q','-fsm','10','--max-filesize','262144','-w','\\n%{http_code}','http://127.0.0.1:5221/api/brain/tasks?limit=1'],lease); }
+    catch { throw fail('DEPLOY_BUSINESS_UNAVAILABLE'); }
+    const boundary=output.lastIndexOf('\n'),body=output.slice(0,boundary);let rows;
+    if(boundary<0||output.slice(boundary+1).trim()!=='200'||Buffer.byteLength(body)>262144)throw fail('DEPLOY_BUSINESS_UNAVAILABLE');
+    try{rows=JSON.parse(body);}catch{throw fail('DEPLOY_BUSINESS_UNAVAILABLE');}
+    if(!Array.isArray(rows)||rows.length>1||rows.some(t=>!t||typeof t!=='object'||Array.isArray(t)
+      ||!/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/.test(t.id??'')||typeof t.title!=='string'||typeof t.status!=='string'))throw fail('DEPLOY_BUSINESS_UNAVAILABLE');
+    return {protocol:'brain-release-readback/v1',status:'passed',container_id:id,task_count:rows.length,
+      task_sample_sha256:createHash('sha256').update(JSON.stringify(rows)).digest('hex'),scope:'read_only',external_services:'not_evaluated'};
+  }
   async function absent(id, lease) {
     if (!IMAGE.test(id)) throw fail('INVALID_IMAGE');
     await identity(lease);
@@ -73,5 +87,5 @@ export function createDockerAdapter({ root, dataPath = '/run/cecelia-docker-data
     await identity(lease);
     return run(['image', 'rm', id], lease);
   }
-  return Object.freeze({ snapshot, deploymentSnapshot, remove, absent, containerHealth });
+  return Object.freeze({ snapshot, deploymentSnapshot, remove, absent, containerHealth, containerBusinessReadback });
 }

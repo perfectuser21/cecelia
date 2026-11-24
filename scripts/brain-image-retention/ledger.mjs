@@ -72,6 +72,14 @@ export function createDeploymentLedger({ store, docker, health, now = Date.now, 
       return { deployment_id: pending.deployment_id, outcome: 'recovered', image_id };
     });
   }
+  async function businessReadback(containerId,lease){
+    if(typeof docker.containerBusinessReadback!=='function')throw fail('DEPLOY_BUSINESS_UNAVAILABLE');
+    const proof=await docker.containerBusinessReadback(containerId,lease);
+    if(proof?.protocol!=='brain-release-readback/v1'||proof.status!=='passed'||proof.container_id!==containerId
+      ||!Number.isInteger(proof.task_count)||proof.task_count<0||proof.task_count>1||!/^[a-f0-9]{64}$/.test(proof.task_sample_sha256??'')
+      ||proof.scope!=='read_only'||proof.external_services!=='not_evaluated')throw fail('DEPLOY_BUSINESS_UNAVAILABLE');
+    return proof;
+  }
   async function finish(id, outcome) {
     if (!['success', 'recovered'].includes(outcome)) throw fail('INVALID_DEPLOY_OUTCOME');
     return store.withLock(async lease => {
@@ -93,9 +101,18 @@ export function createDeploymentLedger({ store, docker, health, now = Date.now, 
         if (observed?.status !== 'healthy' || observed.git_sha !== expectedSha || !VERSION.test(observed.version ?? '')
             || !(outcome === 'recovered' ? previousVersion(row.previous.tags ?? [], observed.version, expectedSha) : after.tags.includes(`cecelia-brain:${observed.version}`))
             || (outcome === 'success' && observed.version !== row.request.version)) throw fail('DEPLOY_HEALTH_MISMATCH');
-        receipt = { deployment_id: id, outcome, image_id: after.id, version: observed.version, git_sha: expectedSha,
+        const business=outcome==='success'?await businessReadback(after.container_id,lease):null;
+        if(business){const final=current(await docker.snapshot(lease),expectedContainerId);if(final.container_id!==after.container_id||final.id!==after.id||final.git_sha!==after.git_sha)throw fail('DEPLOY_CONTAINER_MISMATCH');}
+        receipt = { deployment_id: id, outcome, image_id: after.id, version: observed.version, git_sha: expectedSha,...(business?{business_readback:business}:{}),
           confirmed_at: new Date(now()).toISOString(), actor: 'brain-deploy:us-vps' };
         await store.save(name(id), { ...row, receipt }, lease);
+      }
+      if(row.receipt&&outcome==='success'){
+        const before=current(await docker.snapshot(lease),expectedContainerId);
+        if(before.id!==receipt.image_id||before.git_sha!==receipt.git_sha)throw fail('DEPLOY_IMAGE_MISMATCH');
+        await businessReadback(before.container_id,lease);
+        const after=current(await docker.snapshot(lease),expectedContainerId);
+        if(before.container_id!==after.container_id||before.id!==after.id||before.git_sha!==after.git_sha)throw fail('DEPLOY_CONTAINER_MISMATCH');
       }
       const successes = outcome === 'success' ? [receipt, ...ledger.successes.filter(x => x.image_id !== receipt.image_id)].slice(0, 128) : ledger.successes;
       await store.save('ledger.json', { ...ledger, generation: ledger.generation + 1, pending: null, successes }, lease);
@@ -147,6 +164,7 @@ export function createDeploymentLedger({ store, docker, health, now = Date.now, 
       const snapshot = () => docker.deploymentSnapshot ? docker.deploymentSnapshot(receipt.image_id, lease) : docker.snapshot(lease);
       const first = current(await snapshot());
       const observed = await docker.containerHealth(first.container_id, lease);
+      await businessReadback(first.container_id,lease);
       const last = current(await snapshot());
       if (first.container_id !== last.container_id || first.id !== last.id || last.id !== receipt.image_id
           || first.git_sha !== runtimeSha || last.git_sha !== runtimeSha

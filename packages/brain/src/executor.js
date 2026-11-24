@@ -1,3 +1,4 @@
+import { hasNativeAgentOwner, nativeAgentOwnerSql } from './lib/native-agent-authority.js';
 import { beginBrainLaunch, ownsBrainLaunch, finishBrainLaunch } from './drain.js';
 import { prepareInvocationDispatch, invocationTaskPrompt, invocationBridgeRequired,runInvocationActivities,reconcileInvocationLiveness } from './invocations/runtime.js';
 import {createInvocationActivityExecutor} from './invocations/activity-worker.js';
@@ -869,6 +870,7 @@ async function killProcessTwoStage(taskId, pgid, waitMs = 10000) {
  * @returns {Promise<{requeued: boolean, quarantined?: boolean, retry_count?: number, next_run_at?: string}>}
  */
 async function requeueTask(taskId, reason, evidence = {}) {
+  if (await hasNativeAgentOwner(pool, taskId)) return { requeued: false, reason: 'native_agent_owned' };
   // liveness_dead = OOM/系统抢占（环境问题），给更多重试机会让系统恢复
   // 其他 watchdog kill（Crisis/高内存）= 资源耗尽，保持 2 次限制
   const LIVENESS_QUARANTINE_AFTER_KILLS = 3;
@@ -878,14 +880,14 @@ async function requeueTask(taskId, reason, evidence = {}) {
 
   // P0 #2: Only requeue tasks that are still in_progress (prevents reviving completed/failed tasks)
   const result = await pool.query(
-    'SELECT payload, task_type, project_id, title, started_at FROM tasks WHERE id = $1 AND status = $2',
+    'SELECT payload, task_type, project_id, title, started_at, xmin::text AS task_version FROM tasks WHERE id = $1 AND status = $2',
     [taskId, 'in_progress']
   );
   if (result.rows.length === 0) {
     // P0 FIX: 竞态条件 — 任务不是 in_progress（可能被 liveness probe 或 execution-callback 先改了状态）
     // 仍需递增 watchdog_retry_count 并在超限时 quarantine，否则死循环
     const fallbackResult = await pool.query(
-      'SELECT payload, status FROM tasks WHERE id = $1 AND status NOT IN ($2, $3, $4)',
+      'SELECT payload, status, xmin::text AS task_version FROM tasks WHERE id = $1 AND status NOT IN ($2, $3, $4)',
       [taskId, 'completed', 'cancelled', 'canceled']
     );
     if (fallbackResult.rows.length > 0) {
@@ -894,11 +896,11 @@ async function requeueTask(taskId, reason, evidence = {}) {
       const fbRetryCount = (fbPayload.watchdog_retry_count || 0) + 1;
       if (fbRetryCount >= QUARANTINE_AFTER_KILLS) {
         // 超限 → fallback quarantine（不管当前状态是什么）
-        await pool.query(
+        const fallbackUpdate = await pool.query(
           `UPDATE tasks SET status = 'quarantined',
            error_message = $2,
            payload = (COALESCE(payload, '{}'::jsonb) - 'failure_class') || $3::jsonb
-           WHERE id = $1 AND status NOT IN ('completed', 'cancelled', 'canceled')`,
+           WHERE id = $1 AND status NOT IN ('completed', 'cancelled', 'canceled') AND NOT ${nativeAgentOwnerSql('tasks.id')} AND xmin::text = $4`,
           [
             taskId,
             `[watchdog-fallback] reason=${reason} prev_status=${fbStatus} at ${new Date().toISOString()}`,
@@ -912,8 +914,10 @@ async function requeueTask(taskId, reason, evidence = {}) {
                 previous_status: fbStatus,
               }
             }),
+            fallbackResult.rows[0].task_version,
           ]
         );
+        if (fallbackUpdate.rowCount === 0) return { requeued: false, reason: 'status_changed' };
         console.log(`[executor] Fallback quarantine: task=${taskId} prev_status=${fbStatus} retries=${fbRetryCount}`);
         await recordTaskEventSafe(pool, taskId, 'watchdog_quarantine', {
           reason, disposition: 'fallback_quarantine', retry_count: fbRetryCount, previous_status: fbStatus,
@@ -921,11 +925,12 @@ async function requeueTask(taskId, reason, evidence = {}) {
         return { requeued: false, quarantined: true, reason: 'fallback_quarantine' };
       } else {
         // 未超限 → 仅递增 counter（不改状态，不 requeue）
-        await pool.query(
+        const counterUpdate = await pool.query(
           `UPDATE tasks SET payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb
-           WHERE id = $1`,
-          [taskId, JSON.stringify({ watchdog_retry_count: fbRetryCount })]
+           WHERE id = $1 AND NOT ${nativeAgentOwnerSql('tasks.id')} AND xmin::text = $3`,
+          [taskId, JSON.stringify({ watchdog_retry_count: fbRetryCount }), fallbackResult.rows[0].task_version]
         );
+        if (counterUpdate.rowCount === 0) return { requeued: false, reason: 'status_changed' };
         console.log(`[executor] Fallback counter increment: task=${taskId} prev_status=${fbStatus} retries=${fbRetryCount}`);
       }
     }
@@ -961,7 +966,7 @@ async function requeueTask(taskId, reason, evidence = {}) {
         `UPDATE tasks SET status = 'quarantined',
          error_message = $2,
          payload = (COALESCE(payload, '{}'::jsonb) - 'failure_class') || $3::jsonb
-         WHERE id = $1 AND status = 'in_progress'`,
+         WHERE id = $1 AND status = 'in_progress' AND NOT ${nativeAgentOwnerSql('tasks.id')} AND xmin::text = $4`,
         [
           taskId,
           `[watchdog] reason=${reason} at ${new Date().toISOString()}`,
@@ -975,6 +980,7 @@ async function requeueTask(taskId, reason, evidence = {}) {
               previous_status: 'in_progress',
             }
           }),
+          result.rows[0].task_version,
         ]
       );
       if (updateResult.rowCount === 0) {
@@ -1013,8 +1019,8 @@ async function requeueTask(taskId, reason, evidence = {}) {
   const updateResult = await pool.query(
     `UPDATE tasks SET status = 'queued', claimed_by = NULL, claimed_at = NULL, started_at = NULL,
      payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb
-     WHERE id = $1 AND status = 'in_progress'`,
-    [taskId, JSON.stringify({ ...watchdogInfo, next_run_at: nextRunAt })]
+     WHERE id = $1 AND status = 'in_progress' AND NOT ${nativeAgentOwnerSql('tasks.id')} AND xmin::text = $3`,
+    [taskId, JSON.stringify({ ...watchdogInfo, next_run_at: nextRunAt }), result.rows[0].task_version]
   );
 
   if (updateResult.rowCount === 0) {
@@ -2804,13 +2810,18 @@ async function probeTaskLiveness() {
 
   // Get all in_progress tasks from DB
   const result = await pool.query(`
-    SELECT id, title, payload, started_at, task_type, executor_kind, error_message, claimed_by, claimed_at, updated_at,
+    SELECT id, title, payload, started_at, task_type, executor_kind, error_message, claimed_by, claimed_at, updated_at, xmin::text AS task_version,
            ${EXTERNAL_ACTIVITY_AGE_SQL} AS external_activity_age_sec
     FROM tasks
     WHERE status = 'in_progress'
   `);
 
   for (const task of result.rows) {
+    // 原生宿主拥有独立进程；只有原 TaskRun 的停止/资源结算能撤销执行权。
+    if (await hasNativeAgentOwner(pool, task.id)) {
+      suspectProcesses.delete(task.id);
+      continue;
+    }
     if (isRetiredDevelopmentTask(task)) continue;
     if (task.payload?.commander_protocol === 'commander-v2') continue;
     if(await reconcileInvocationLiveness(pool,task,{entry:activeProcesses.get(task.id)})){
@@ -2997,9 +3008,13 @@ async function probeTaskLiveness() {
       const safeEventType = isHeadedManual ? 'watchdog_headed_requeue' : 'watchdog_safe_requeue';
       const safeUpdate = await pool.query(
         `UPDATE tasks SET status = 'queued', claimed_by = NULL, claimed_at = NULL, started_at = NULL
-         WHERE id = $1 AND status = 'in_progress'`,
-        [task.id]
+         WHERE id = $1 AND status = 'in_progress' AND NOT ${nativeAgentOwnerSql('tasks.id')} AND xmin::text = $2`,
+        [task.id, task.task_version]
       );
+      if (safeUpdate.rowCount === 0) {
+        suspectProcesses.delete(task.id);
+        continue;
+      }
       await recordTaskEventSafe(pool, task.id, safeEventType, {
         reason: 'no_spawn_evidence',
         headed_manual: isHeadedManual,

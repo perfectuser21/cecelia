@@ -26,11 +26,12 @@ describe('动态技能手动派发与并发数据库变更',()=>{
     await owner.query(`SET search_path TO "${schema}"`);
     await rival.query(`SET search_path TO "${schema}"`);
     await owner.query(`CREATE TABLE tasks (id uuid PRIMARY KEY,title text,status text,task_type text,
-      payload jsonb,metadata jsonb,claimed_by text,claimed_at timestamptz,started_at timestamptz,updated_at timestamptz)`);
+      payload jsonb,result jsonb,metadata jsonb,claimed_by text,claimed_at timestamptz,started_at timestamptz,updated_at timestamptz)`);
     await owner.query(`CREATE TABLE device_locks (device_name text PRIMARY KEY,locked_by text,locked_at timestamptz,expires_at timestamptz)`);
     await owner.query(`CREATE TABLE task_leases (task_id uuid,released_at timestamptz,lease_until timestamptz)`);
     // 设备锁隔离依赖真实 TaskRun 表；不让缺表错误抢先截断现役 CAS 安全断言。
     await owner.query(`CREATE TABLE task_runs (id uuid PRIMARY KEY,task_id uuid,run_id text,status text,ended_at timestamptz,context jsonb,result jsonb)`);
+    await owner.query(`CREATE TABLE task_events (LIKE public.task_events INCLUDING ALL)`);
     await owner.query(`CREATE TABLE skill_registry (name text,status text,task_types text[],dispatch_command text)`);
     io.query.mockImplementation((sql,args)=>owner.query(sql,args));
     app=express();app.use(express.json());
