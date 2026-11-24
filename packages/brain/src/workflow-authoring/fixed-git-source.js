@@ -152,7 +152,7 @@ export async function validateFixedImplementationBindings(contract, source, opti
     if(result.resolved_source)resolutions.set(JSON.stringify([binding.kind,binding.repo,binding.revision,binding.path]),result.resolved_source);
     return result.content;
   };
-  const verified=await validateImplementationBindings(contract,readBinding,source);
+  const verified=await validateImplementationBindings(contract,readBinding,source,{concurrency:options.bindingReadConcurrency});
   return verified.map(binding=>{
     const resolved=resolutions.get(JSON.stringify([binding.kind,binding.repo,binding.revision,binding.path]));
     return resolved?{...binding,resolved_source:resolved}:binding;

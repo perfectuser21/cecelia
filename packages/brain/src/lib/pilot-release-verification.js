@@ -19,7 +19,7 @@ export async function preparePilotReleaseValidation(snapshot,report,options={}){
  const state={snapshot_sha256:snapshot.snapshot_sha256,report_sha256:pilotPlanHash(report)};
  try{
   state.authoring=report.implementation_source_set&&isAuthoringReleaseSnapshot(snapshot)
-   ?{authoringSnapshot:snapshot,authoringProof:await prepareAuthoringReleaseProof(snapshot,options)}:{};
+   ?{authoringSnapshot:snapshot,authoringProof:await prepareAuthoringReleaseProof(snapshot,{...options,bindingReadConcurrency:6})}:{};
  }catch(error){state.error=error;}
  options.signal?.throwIfAborted();
  const token=Object.freeze({});preparedValidations.set(token,state);return token;
