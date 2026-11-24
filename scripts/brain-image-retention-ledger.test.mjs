@@ -9,11 +9,12 @@ import { createDeploymentLedger } from './brain-image-retention/ledger.mjs';
 const image=n=>'sha256:'+String(n).repeat(64),sha=n=>String(n).repeat(40);
 async function setup(t){
  const root=await realpath(await mkdtemp(join(tmpdir(),'image-ledger-')));t.after(()=>rm(root,{recursive:true,force:true}));
- const store=createStore(root),state={current:1,health:1};
+ const store=createStore(root),state={current:1,health:1,business:'pass'};
  const docker={snapshot:async()=>({containers:[{id:'a'.repeat(64),name:'/cecelia-node-brain',running:true,image_id:image(state.current)}],
   images:[1,2,3].map(n=>({id:image(n),tags:[`cecelia-brain:1.0.${n}`],git_sha:sha(n)}))})};
+ docker.containerBusinessReadback=async(id)=>{if(state.business!=='pass')throw Error('DEPLOY_BUSINESS_UNAVAILABLE');return {protocol:'brain-release-readback/v1',container_id:id,task_readback:'verified'};};
  const health=async()=>({version:`1.0.${state.health}`,git_sha:sha(state.health),status:'healthy'});
- return {store,state,ledger:createDeploymentLedger({store,docker,health}),request:{deployment_id:randomUUID(),version:'1.0.2',git_sha:sha(2)}};
+ return {store,state,docker,health,ledger:createDeploymentLedger({store,docker,health}),request:{deployment_id:randomUUID(),version:'1.0.2',git_sha:sha(2)}};
 }
 test('部署intent持久保护到真实健康版本SHA与容器镜像一致；同intent幂等',async t=>{
  const x=await setup(t);await x.ledger.begin(x.request);
@@ -216,4 +217,20 @@ test('pending rollback拒绝错误fullSHA/version，即使官方prev-only tag存
  const x=await previousTagSetup(t),before=await x.store.read('ledger.json');
  for(const change of [{git_sha:sha(2)},{version:'1.0.3'},{image_id:image(2)}])await assert.rejects(x.ledger.rollback({deployment_id:randomUUID(),version:'1.0.1',git_sha:sha(1),image_id:image(1),...change}),/ROLLBACK_TARGET_MISMATCH/);
  assert.deepEqual(await x.store.read('ledger.json'),before);
+});
+
+for(const sameImage of [false,true])test(`官方成功收账与陈旧pending补签必须重验业务读取（sameImage=${sameImage}）`,async t=>{
+ const x=await setup(t);let clock=Date.now();
+ const ledger=createDeploymentLedger({store:x.store,docker:x.docker,health:x.health,now:()=>clock});
+ if(sameImage)x.state.current=x.state.health=2;
+ await ledger.begin(x.request);x.state.current=x.state.health=2;x.state.business='fail';
+ const before=await x.store.read('ledger.json');
+ await assert.rejects(ledger.finish(x.request.deployment_id,'success'),/DEPLOY_BUSINESS_UNAVAILABLE/);
+ assert.deepEqual(await x.store.read('ledger.json'),before);
+ assert.equal((await x.store.read(`deployment-${x.request.deployment_id}.json`)).receipt,null);
+ clock+=3600000;
+ await assert.rejects(ledger.reconcile(),/DEPLOY_BUSINESS_UNAVAILABLE/);
+ assert.deepEqual(await x.store.read('ledger.json'),before);
+ x.state.business='pass';await ledger.reconcile();
+ assert.equal((await x.store.read('ledger.json')).successes.length,1);
 });

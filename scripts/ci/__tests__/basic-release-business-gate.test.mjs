@@ -16,7 +16,8 @@ const fs=require('fs'),args=process.argv.slice(2),mode=process.env.SCENARIO;
 fs.appendFileSync(process.env.CALLS,JSON.stringify(args)+'\\n');
 if(args.some(x=>x.includes('staging-business.mjs'))){
  if(mode==='business-failed')process.exit(37);
- const receipt={protocol:'brain-staging-business/v1',status:'passed',git_sha:process.env.EXPECTED_SHA,task_id:'11111111-1111-4111-8111-111111111111',run_id:'22222222-2222-4222-8222-222222222222',task_status:'completed_no_pr',run_status:'success',artifact_verified:true,execution_stopped:true,external_services:'not_evaluated'};
+ const receipt={protocol:'brain-staging-business/v1',status:'passed',git_sha:process.env.EXPECTED_SHA,task_id:'11111111-1111-4111-8111-111111111111',run_id:'22222222-2222-4222-8222-222222222222',task_status:'completed_no_pr',run_status:'success',artifact_verified:true,artifact_sha256:'c'.repeat(64),execution_stopped:true,external_services:'not_evaluated'};
+ if(mode==='business-missing-hash')delete receipt.artifact_sha256;
  if(mode==='business-wrong-sha')receipt.git_sha='b'.repeat(40);
  if(mode==='business-missing-artifact')receipt.artifact_verified=false;
  if(mode==='business-not-stopped')receipt.execution_stopped=false;
@@ -47,6 +48,14 @@ test('候选业务合同非零时真实验收脚本拒绝准入，不能只凭�
  assert.ok(r.calls.some(args=>args.some(x=>x.includes('staging-business.mjs'))),'没有真正调用固定业务合同');
 });
 
-for(const mode of ['business-wrong-sha','business-missing-artifact','business-not-stopped'])test(`候选业务收据${mode}不能授权生产发布`,()=>{
+for(const mode of ['business-wrong-sha','business-missing-artifact','business-not-stopped','business-missing-hash'])test(`候选业务收据${mode}不能授权生产发布`,()=>{
  const r=verify(mode);assert.notEqual(r.status,0,mode+'仍通过候选准入');
+});
+
+test('固定候选执行器在读取数据库前拒绝生产目标、开放Tick、来源漂移及外部凭据',async()=>{
+ const {verifyStagingBusiness}=await import('../../../packages/brain/scripts/native-agent/staging-business.mjs');
+ const safe={BRAIN_PREVIEW:'1',CECELIA_TICK_HARD_OFF:'1',DB_NAME:'cecelia_staging',DB_HOST:'stage-db',EXPECTED_SHA:sha,GIT_SHA:sha};
+ for(const patch of [{DB_NAME:'cecelia'},{DB_HOST:'remote'},{BRAIN_PREVIEW:'0'},{CECELIA_TICK_HARD_OFF:'0'},{GIT_SHA:'b'.repeat(40)},{NOTION_TOKEN:'fixture-credential'},{OPENAI_API_KEY:'fixture-credential'}]){
+  await assert.rejects(()=>verifyStagingBusiness({...safe,...patch}),/candidate|production credential/);
+ }
 });
