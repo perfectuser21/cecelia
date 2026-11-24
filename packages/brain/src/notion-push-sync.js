@@ -1,4 +1,4 @@
-import { NOTION_LEADGEN_101_MARK, dispatchNotionLeadgen101 } from './notion-leadgen-dispatch.js';
+import { dispatchNotionLeadgen101, explicitLeadgenStages, inactiveLeadgenReason } from './notion-leadgen-dispatch.js';
 import {syncTaskProgress,findCreatedTaskPage,TASK_PROGRESS_FIELDS} from './projection/task-progress.js';
 import {syncManagedBodyBlock} from './projection/workflow-body.js';
 import { notionReq, getToken } from './recurring-notion-sync.js';
@@ -613,30 +613,42 @@ export async function ingestDelegatedPage(pool, token, page, opts = {}) {
   if (/run:notion-/.test(desc)) return { taskId: null, kind: 'skipped' }; // OpenClaw 已派发，幂等跳过
 
   const en = parseEnPage(page);
-  if (desc.includes(NOTION_LEADGEN_101_MARK)) {
+  const stages = explicitLeadgenStages(desc);
+  if (stages.length > 1) {
+    await writeStatusReceipt(token, page, desc, '未派发：每个 Notion 页面只接一个获客 Workflow', 'Blocked');
+    return { taskId: null, kind: 'blocked' };
+  }
+  const [leadgenStage] = stages;
+  if (leadgenStage) {
     if (en.zhId32) {
-      await writeStatusReceipt(token, page, desc, '101 未派发：请选择英文 Tasks 源页', 'Blocked');
+      await writeStatusReceipt(token, page, desc, `${leadgenStage} 未派发：请选择英文 Tasks 源页`, 'Blocked');
       return { taskId: null, kind: 'blocked' };
     }
     const env = opts.env ?? process.env;
     const tenantId = tenantFor(env, NOTION_TASKS_DB);
-    const previous = (await pool.query(`SELECT id FROM tasks WHERE task_type='workflow_dispatch'
-      AND payload->>'source'='notion_leadgen_101' AND payload->>'notion_page_id'=$1 AND tenant_id=$2 LIMIT 1`,
-    [page.id, tenantId])).rows[0];
-    if (previous) {
-      await writeStatusReceipt(token, page, desc, `brain:${previous.id} ✓已接管`);
-      return { taskId: previous.id, kind: 'workflow_dispatch' };
+    if (leadgenStage === '101') {
+      const previous = (await pool.query(`SELECT id FROM tasks WHERE task_type='workflow_dispatch'
+        AND payload->>'source'='notion_leadgen_101' AND payload->>'notion_page_id'=$1 AND tenant_id=$2 LIMIT 1`,
+      [page.id, tenantId])).rows[0];
+      if (previous) {
+        await writeStatusReceipt(token, page, desc, `brain:${previous.id} ✓已接管`);
+        return { taskId: previous.id, kind: 'workflow_dispatch' };
+      }
     }
     const now = opts.now ?? (() => new Date());
     const at = now();
     const end = toEndIso(en.planEnd);
     if (end && !isFuture(end, at)) {
-      await writeStatusReceipt(token, page, desc, '101 未派发：已超过计划截止时间', 'Blocked');
+      await writeStatusReceipt(token, page, desc, `${leadgenStage} 未派发：已超过计划截止时间`, 'Blocked');
       return { taskId: null, kind: 'blocked' };
     }
     if (isFuture(toStartIso(en.planDate), at)) return { taskId: null, kind: 'scheduled' };
-    const bindings = JSON.parse(env.NOTION_LEADGEN_101_BINDINGS ?? '{}');
     const body = await fetchNotionPageContent(token, page.id, { requireComplete: true });
+    if (leadgenStage !== '101') {
+      await writeStatusReceipt(token, page, desc, `${leadgenStage} 未派发：${inactiveLeadgenReason(leadgenStage, body)}`, 'Blocked');
+      return { taskId: null, kind: 'blocked' };
+    }
+    const bindings = JSON.parse(env.NOTION_LEADGEN_101_BINDINGS ?? '{}');
     try {
       const received = await dispatchNotionLeadgen101(pool, {
         pageId: page.id, title: name, body, tenantId, bindings,

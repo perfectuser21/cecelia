@@ -391,3 +391,33 @@ describe('Notion 101 explicit dispatch through the existing published Worker', (
     expect(mockCreateRoutedTask).not.toHaveBeenCalled();
   });
 });
+
+describe('Notion 102、103、104 保留独立派单入口', () => {
+  beforeEach(() => { mockQuery.mockReset().mockResolvedValue({ rows: [] }); mockNotionReq.mockReset(); mockCreateRoutedTask.mockReset(); });
+
+  it('同时标两个阶段时拦截，且不会调任何执行器',async()=>{
+    const {ingestDelegatedPage}=await import('../notion-push-sync.js');
+    mockNotionReq.mockResolvedValueOnce({});
+    const result=await ingestDelegatedPage({query:mockQuery},'tok',enPage('[leadgen-101] [leadgen-102]'));
+    expect(result).toEqual({taskId:null,kind:'blocked'});
+    expect(mockCreateRoutedTask).not.toHaveBeenCalled();
+    expect(mockQuery).not.toHaveBeenCalled();
+    expect(mockNotionReq.mock.calls[0][3].properties.Description.rich_text[0].text.content).toContain('只接一个获客 Workflow');
+  });
+
+  it.each([
+    ['102','公司：悦升\n来源运行：verified-101'],
+    ['103','公司：悦升\n来源运行：verified-102'],
+    ['104','公司：悦升\n原订单：reczz28dTuRDYn9s'],
+  ])('%s 没有自己的已登记执行端时只回写原页', async (code, body) => {
+    const { ingestDelegatedPage } = await import('../notion-push-sync.js');
+    const source = enPage('[leadgen-' + code + ']');
+    mockNotionReq.mockResolvedValueOnce({results: [{type:'paragraph',paragraph:{rich_text:[{plain_text:body}]}}],has_more:false})
+      .mockResolvedValueOnce({});
+    const result = await ingestDelegatedPage({query:mockQuery},'tok',source,{env:{},now:()=>new Date('2026-09-25')});
+    expect(result).toEqual({taskId:null,kind:'blocked'});
+    expect(mockCreateRoutedTask).not.toHaveBeenCalled();
+    expect(mockNotionReq.mock.calls[1][1]).toBe('/pages/'+source.id);
+    expect(mockNotionReq.mock.calls[1][3].properties.Description.rich_text[0].text.content).toContain(code + ' 未派发');
+  });
+});
