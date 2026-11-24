@@ -35,6 +35,13 @@ function selected() {
 
 test('现役关键PG合同在真实数据库迁移之后进入现有Brain集成跑道', selected);
 
+test('完成回调事务回归以原私有数据库入口进入每个PR，不能只留夜间', () => {
+  const steps = commandsFor('brain-integration');
+  const step = steps.find(row => row.command === 'node' && row.args[0] === 'scripts/ci/run-debt-pg.mjs');
+  assert.ok(step, '完成回调死锁回归没有进入必需PR集成检查');
+  assert.deepEqual(step.args, ['scripts/ci/run-debt-pg.mjs', '--file', 'packages/brain/src/__tests__/execution-strategy-session-kr-link.test.js']);
+});
+
 test('建议失败回执的独立 PG 回归文件存在且进入 PR 集成入口', () => {
   const file = 'src/__tests__/integration/suggestion-plan-callback.pg.integration.test.js';
   assert.ok(selected().args.includes(file));
