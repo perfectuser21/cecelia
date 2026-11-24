@@ -3,7 +3,7 @@
 import {mkdirSync,writeFileSync,existsSync,realpathSync} from 'node:fs';
 import {join,resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {readPublishedArtifact,validatePublishedSnapshot} from './implementation-main-snapshot.mjs';
+import {readPublishedArtifact,validatePublishedSnapshot} from './implementation-published-artifact.mjs';
 import {loadCiAdmissionInputs,inspectCiAdmissionInputs} from './ci-admission-inputs.mjs';
 const scope='cecelia-infra',repo='perfectuser21/cecelia';
 const fail=code=>{throw Object.assign(Error(code),{code});};

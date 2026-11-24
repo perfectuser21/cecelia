@@ -1,6 +1,6 @@
 ---
 id: current-ci-pipeline
-version: 3.1.0
+version: 3.2.0
 updated: 2026-11-25
 authority: CURRENT_STATE
 ---
@@ -43,7 +43,7 @@ authority: CURRENT_STATE
 - 外置Skill正文、固定版本与关键词专属合同已退出本仓PR验收；普通单测不依赖本机私有正文。通用恢复器及Python所有权检查仍保留。
 - 本地quickcheck只做准备：Brain lint、共享前端的Dashboard构建；CI或根依赖变更另跑scripts。真实命令失败必须阻止push。
 
-原466份shell烟测已逐项审读，累计清退198份。最新一轮对93份待审项追溯建立目的、现役业务入口和断言效果：86份旧壳清退，必要边界迁入实际函数/路由、受控CLI与私有PG测试；7份保留（合同版本、invariants读回、部署节点profile、fleet回执schema、DBOS模块启动、内部模块健康账本、专属控制器权限）。现存268份；本轮93份均有明确处置，不再作为未核实项挂起。另清退两份无现役调用且硬读退役脚本的历史E2E副本。脚本文件数不是PR job数。现役模块、真实函数/HTTP/PG回归及部署扫描器保留。安全fixture会在执行前拒绝缺失的被测入口，避免把shell未执行造成的无副作用误判为安全验证通过。 当前18项PG选择由固定完整来源封组及静态输入闭包共同证明；添加新定义不会放宽对缺失、篡改或新旧控制字节混配的拒绝。
+原466份shell烟测已逐项审读，累计清退198份。最新一轮对93份待审项追溯建立目的、现役业务入口和断言效果：86份旧壳清退，必要边界迁入实际函数/路由、受控CLI与私有PG测试；7份保留（合同版本、invariants读回、部署节点profile、fleet回执schema、DBOS模块启动、内部模块健康账本、专属控制器权限）。该轮盘点后保留268份；本次继续清退依赖旧工厂收集器的 coding-source-compat 专项烟测，现存数量以实际目录为准。前述93份均有明确处置。另清退两份无现役调用且硬读退役脚本的历史E2E副本。脚本文件数不是PR job数。现役模块、真实函数/HTTP/PG回归及部署扫描器保留。安全fixture会在执行前拒绝缺失的被测入口，避免把shell未执行造成的无副作用误判为安全验证通过。 当前18项PG入口由CI固定选择并真实执行，夜间另执行完整数据库回归。旧factory来源封组矩阵已经退役，不能再将其静态来源判定当成业务执行证据。
 
 `fleet-worker-workspace` 与 `kernel-runtime-resource` 的实际验证保留，移除其已删除旧suite委托；受控shell回归核对完整现役suite集合和失败退出码，不点火真实Docker/PG。
 
@@ -67,7 +67,7 @@ authority: CURRENT_STATE
 
 数据库测试只连接本轮拥有的本机scratch或CI服务，拒绝默认生产连接。正式CD由主CI的 `brain-deploy` 执行：固定Git构建、同镜像导入校验、只读完整生产快照恢复到独立库、隔离迁移和任务/产物/进程停止验收，再排空旧Brain、切换、核验在线SHA与官方只读业务回执并结算。候选环境关闭对外调度；其收据不代表真实外部模型或全部业务已覆盖。Implementation impact、Learning月归档及合并文档清理不在当前自动CI/CD中。
 
-当前来源与执行资格需要固定Git、真实输入、owner和权限边界；历史工作流曾经绿色不能为新候选授予资格。退役历史接受矩阵不应通过宽松解析或默认成功替代。
+旧cecelia-factory的新证据采集、刷新及运行来源入口已经退役；历史版本读回仍保留，遇到歧义明确拒绝，不通过远程Git重编译或猜测最新版本消解。旧工厂来源图及其历史哈希接受矩阵退出默认CI和启动加载链。共享source_set、既有冻结发布产物、Foundation/ZenithJoy/Commander发布与Infra登记继续保留，consumer_evidence不能作为可执行流程。当前发布仍须固定Git、真实输入、owner和权限边界；历史工作流曾经绿色不能为新候选授予资格。
 
 ```bash
 npm ci --ignore-scripts

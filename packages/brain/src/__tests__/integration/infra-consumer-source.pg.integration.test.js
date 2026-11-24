@@ -252,7 +252,7 @@ const query=revision=>({scope,repo,revision});
 const source=revision=>({...query(revision),paths:sourcePaths,readSource:async path=>git(dir,'show',`${revision}:${path}`)+'\n',mode:'scratch_candidate',actor:'fixture'});
 async function registry(){return registration.readInfraConsumerRegistry(f.db);}
 async function register(extra={}){
- const fn=registration.registerInfraConsumerSources||registration.registerExistingOpsSources;
+ const fn=registration.registerInfraConsumerSources;
  return fn(f.db,{...source(base),expectedRegistrySha256:(await registry()).registry_sha256,...extra});
 }
 beforeEach(async()=>{
@@ -284,7 +284,7 @@ async function map(revision=base){
 }
 it('真实独立infra仅追加非执行来源：不冒factory，不修改桶current或引用；固定候选可重建',async()=>{
  // Existing factory-only API rejects this real owner before the dedicated lane exists.
- await expect((registration.registerInfraConsumerSources||registration.registerExistingOpsSources)(f.db,{...source(base),expectedRegistrySha256:registration.readInfraConsumerRegistry?(await registry()).registry_sha256:'a'.repeat(64)})).resolves.toMatchObject({executable:false});
+ await expect((registration.registerInfraConsumerSources)(f.db,{...source(base),expectedRegistrySha256:registration.readInfraConsumerRegistry?(await registry()).registry_sha256:'a'.repeat(64)})).resolves.toMatchObject({executable:false});
  const before=await registry();await map();
  await f.db.query("INSERT INTO activity_cells(journey_id,step_id,assertion_ref) VALUES($1,$2,$3)",[I.capability_id,activity,'scripts/smoke/infra-consumer-fixture.sh']);
  const receipt=await register();expect(receipt.executable).toBe(false);
@@ -301,9 +301,6 @@ it('真实独立infra仅追加非执行来源：不冒factory，不修改桶curr
  expect(await registry()).toEqual(before);
  await importImplementationSnapshot(f.db,rebuilt);expect(await registry()).toEqual(before);
 },60000);
-it('现有factory入口不能将infra物理owner当factory注册',async()=>{
- await expect(registration.registerExistingOpsSources(f.db,{...source(base),expectedRegistrySha256:'a'.repeat(64)})).rejects.toThrow('OPS_REGISTRATION_INPUT_INVALID');
-});
 it('缺登记与manifest保持unknown，不能因代码存在补造base凭证',async()=>{
  const snapshot=await exportImplementationSnapshot(f.db,query(base));expect(snapshot.status).toBe('unknown');
  expect(snapshot.gaps.map(g=>g.code)).toEqual(expect.arrayContaining(['definition_snapshot_missing','scope_manifest_missing']));

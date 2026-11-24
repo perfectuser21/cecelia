@@ -1,4 +1,3 @@
-import {CI_READER_PROFILES} from './claude-channel-retired.ci-retirement.fixture.js';
 /**
  * Claude Code 无头调用通道防复活守卫（任务 76a160b3，决策 067867c8）
  *
@@ -19,8 +18,6 @@ import {CI_READER_PROFILES} from './claude-channel-retired.ci-retirement.fixture
  */
 import { describe, it, expect } from 'vitest';
 import { parse } from 'acorn';
-import {registerReviewedAGuardTests,reviewedADataRanges} from './claude-channel-retired.reader-tuples.fixture.js';
-import { createHash } from 'node:crypto';
 import { readFileSync, readdirSync, lstatSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -74,51 +71,12 @@ function stripComments(src) {
     .map((line) => (/^\s*(\/\/|#|\*)/.test(line) ? '' : line.replace(/(^|[^:'"`\\])\/\/.*$/, '$1')));
 }
 
-// 只剥离已证明流入 Acorn 的固定模板值；模块其余内容仍经过所有原规则。
-const ENVELOPE_FILE = path.join(BRAIN_ROOT,'src/lib/existing-ops-build-envelopes.js');
 const parseModule = text => parse(text,{ecmaVersion:'latest',sourceType:'module'});
 function astRows(tree) {
   const rows=[];
   const visit=(node,parent=null)=>{if(!node||typeof node!=='object')return;if(node.type)rows.push({node,parent});for(const v of Object.values(node))if(Array.isArray(v))v.forEach(n=>visit(n,node));else if(v&&typeof v==='object')visit(v,node);};
   visit(tree);return rows;
 }
-const astShape = n => JSON.stringify(n,(k,v)=>['start','end','raw'].includes(k)?undefined:v);
-// 已独审的完整 runtime 指纹闭包：固定十五/十六/十七文件只读→SHA摘要/比较；没有模板执行或原文出口。
-// 仅此路径且整个模块 AST 相等时认可该消费者；任何语义改动都须重新审查。
-// 这不把 runtime 加入文件白名单，模块原 R1–R7/进程别名扫描照常执行。
-const HASH_RUNTIME_FILE = path.join(BRAIN_ROOT,'src/lib/native-consumer-runtime.js');
-const HASH_RUNTIME_SHA256 = ['9d673dcb89bf218ed3941b84b3d6fb9e9751bd7eb8059ba11f89e7c757f4bad8','3a5ef89274fc1338793b241fc52cf65574b1bd02a3db2bc4da6cdaaa55571395','1aa8ebb84d2ed237a295721c0624c71beba13aa2c32612bd835519afe7334952'];
-const provenFingerprintReader = (file,text) => file===HASH_RUNTIME_FILE
-  &&HASH_RUNTIME_SHA256.includes(createHash('sha256').update(astShape(parseModule(text))).digest('hex'));
-
-// V2 normalize 返回代码字符串投影；安全边界是完整已审 helper + 唯一已审 caller，
-// caller 只将投影交回旧 Acorn/matcher。未知消费者不能继承此资格。
-const STAGE_DATA=path.join(BRAIN_ROOT,'src/lib/existing-ops-stage-envelopes.js');
-const NATIVE_DATA=path.join(BRAIN_ROOT,'src/lib/existing-ops-native-evidence-envelopes.js');
-// 仅静态折叠有界字面量拼接；不求值标识符、调用或运行时表达式。
-function constantReferenceString(node,depth=0) {
-  if(!node||depth>32)return null;
-  if(node.type==='Literal'&&typeof node.value==='string')return node.value.length<=4096?node.value:null;
-  if(node.type==='TemplateLiteral'&&!node.expressions.length) {
-    const value=node.quasis.map(q=>q.value.cooked).join('');
-    return value.length<=4096?value:null;
-  }
-  if(node.type==='BinaryExpression'&&node.operator==='+') {
-    const left=constantReferenceString(node.left,depth+1),right=constantReferenceString(node.right,depth+1);
-    if(left!==null&&right!==null&&left.length+right.length<=4096)return left+right;
-  }
-  return null;
-}
-function decodedReferenceTexts(text) {
-  try{return [text,...astRows(parseModule(text)).flatMap(({node})=>{
-    if(node.type==='Literal'&&typeof node.value==='string')return [node.value];
-    if(node.type==='TemplateLiteral'&&!node.expressions.length)return [node.quasis.map(q=>q.value.cooked).join('')];
-    const value=constantReferenceString(node);
-    return value===null?[]:[value];
-  })];}
-  catch{return [text];} // 非 JS 文件仍保留原文本检查。
-}
-// 原正则仍保留；补充进程函数的显式本地别名，不能靠改名藏起真实启动。
 function aliasedProcessCalls(src) {
   try {
     const rows=astRows(parseModule(src)),aliases=new Set(['spawn','spawnSync','exec','execSync','execFile','execFileSync','fork']);
@@ -128,13 +86,8 @@ function aliasedProcessCalls(src) {
   }catch{return [];}
 }
 
-export function findClaudeInvocations(src, {file,sources}={}) {
+export function findClaudeInvocations(src) {
   const original=src;
-  const reviewedRanges=reviewedADataRanges(src,{file,sources,root:path.join(BRAIN_ROOT,'src/lib'),parse:parseModule,shape:astShape,rows:astRows,decoded:decodedReferenceTexts,provenFingerprintReader});
-  if(reviewedRanges){for(const [start,end] of reviewedRanges.reverse())src=src.slice(0,start)+src.slice(start,end).replace(/[^\n]/g,' ')+src.slice(end);}
-  else if([NATIVE_DATA,STAGE_DATA,ENVELOPE_FILE].includes(file)) {
-    return [{rule:'E1',line:1,text:'封套不在现役完整只读消费闭包'},...findClaudeInvocations(src)];
-  }
   const hits = [];
   stripComments(src).forEach((line, i) => {
     for (const rule of RULES) {
@@ -147,12 +100,9 @@ export function findClaudeInvocations(src, {file,sources}={}) {
 function scanOffenders() {
   const offenders = [];
   const files=SCAN_ROOTS.flatMap(root=>collectSources(root));
-  // JSON仅为整组只读身份输入，不加入可执行源码扫描集合。
-  const profiles=CI_READER_PROFILES.map(name=>path.join(BRAIN_ROOT,'src/lib',name));
-  const sources=new Map([...files,...collectSources(path.join(REPO_ROOT,"scripts")),...profiles].map(file=>[file,readFileSync(file,"utf8")]));
   for (const file of files) {
       if (isWhitelisted(file)) continue;
-      for (const hit of findClaudeInvocations(sources.get(file),{file,sources})) {
+      for (const hit of findClaudeInvocations(readFileSync(file,'utf8'))) {
         offenders.push(`${path.relative(REPO_ROOT, file)}:${hit.line} [${hit.rule}] ${hit.text}`);
       }
   }
@@ -195,6 +145,8 @@ describe('守卫自证：每条判据都会报警', () => {
     ['R1', "execFile('claude', ['-p', ...args], cb);"],
     ['R1', 'const r = spawnSync("/opt/homebrew/bin/claude", args);'],
     ['R1', "await doSpawn('claude');"],
+    ['R1', "import {spawn as launch} from 'node:child_process'; const again=launch;again('claude',['-p']);"],
+    ['R1', "import {execFile as run} from 'child_process';run('/opt/homebrew/bin/claude',['-p']);"],
     ['R2', "exec(`claude -p ${prompt}`);"],
     ['R2', "const cmd = 'cd /tmp && claude --print hi';"],
     ['R2', "const c = 'env A=1 claude --resume abc';"],
@@ -220,4 +172,3 @@ describe('守卫自证：每条判据都会报警', () => {
     expect(findClaudeInvocations(line)).toEqual([]);
   });
 });
-registerReviewedAGuardTests({ BRAIN_ROOT, findClaudeInvocations });

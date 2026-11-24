@@ -5,7 +5,7 @@ import {PUSH_TASKS_QUERY} from '../../notion-push-sync.js';
 let fixture;
 beforeEach(async()=>{fixture=await privateFixtureDatabase('taskprogress',async db=>{
  await db.query(`CREATE TABLE projects(id uuid PRIMARY KEY,notion_props jsonb);
- CREATE TABLE tasks(id uuid PRIMARY KEY,title text,status text,priority text,task_type text,kind text,description text,result jsonb,
+ CREATE TABLE tasks(id uuid PRIMARY KEY,title text,status text,priority text,task_type text,kind text,description text,result jsonb,payload jsonb DEFAULT '{}'::jsonb,
  project_id uuid,parent_task_id uuid,notion_id text,notion_props jsonb,updated_at timestamptz DEFAULT now());
  CREATE TABLE task_dependencies(from_task_id uuid,to_task_id uuid,edge_type text,gap_id uuid);`);
 });});

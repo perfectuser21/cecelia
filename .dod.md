@@ -16,5 +16,10 @@ GP-Anchor: none(infra)
 - [ ] 仅清除旧Tick的孤立KR/Harness巡检与重复会话整理接线，现役调度和独立会话整理保持，剩余Tick合同继续执行。
   Test: manual:cd packages/brain && npx --no-install vitest run --config vitest.integration.config.js src/__tests__/integration/tick-runner-full-tick.integration.test.js src/__tests__/integration/consciousness-tick-runtime.integration.test.js
 
-- [ ] 当前完整来源组与既有206/3a历史分别成立，未知控制、缺失、混配和已退入口复活不能获得当前来源资格。
-  Test: manual:cd packages/brain && npx --no-install vitest run src/lib/__tests__/existing-ops-ci-residue-source.test.js
+- [ ] 旧factory新采集入口返回410且不触发token、网络或数据库写入；历史唯一快照可读，歧义保持拒绝，不猜测最新版本。
+  Test: manual:cd packages/brain && npx --no-install vitest run --config ../../scripts/ci/deep-integration.config.mjs src/__tests__/integration/native-consumer-source-selection.pg.integration.test.js
+- [ ] 保留Foundation/ZenithJoy共享快照与固定发布产物读回、Infra现役登记、consumer evidence不可执行边界；启动与通用CLI不再依赖已退来源收集器。
+  Test: manual:cd packages/brain && npx --no-install vitest run --config ../../scripts/ci/deep-integration.config.mjs src/__tests__/integration/infra-consumer-source.pg.integration.test.js
+  Test: manual:node --test scripts/ci/__tests__/implementation-factory-retirement.test.mjs
+- [ ] 旧来源图模板与豁免清退，保留实际Claude通道禁用守卫与共享source_set合同。
+  Test: manual:cd packages/brain && npx --no-install vitest run src/__tests__/claude-channel-retired.guard.test.js src/lib/__tests__/workspace-ci-source-bundle.test.js src/lib/__tests__/consumer-source-set.test.js
