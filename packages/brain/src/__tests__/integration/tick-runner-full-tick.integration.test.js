@@ -273,7 +273,7 @@ describe('tick-runner executeTick — full tick wire-up', () => {
       const { routeDailyReport } = await import('../../durable/daily-report-router.js');
       const { generateDailyDiaryIfNeeded } = await import('../../diary-scheduler.js');
       expect(runRumination).toHaveBeenCalledTimes(1);
-      expect(runConversationConsolidator).toHaveBeenCalledTimes(1);
+      expect(runConversationConsolidator).not.toHaveBeenCalled();
       expect(routeDailyReport).not.toHaveBeenCalled();
       expect(generateDailyDiaryIfNeeded).not.toHaveBeenCalled();
       for (const [sql] of mockPool.query.mock.calls) expect(String(sql)).not.toMatch(/daily_logs|source_type\s*=\s*'narrative'/i);
@@ -325,7 +325,7 @@ describe('tick-runner executeTick — full tick wire-up', () => {
     expect(krProgress.tick).toHaveBeenCalled();
     expect(heartbeat.tick).toHaveBeenCalled();
     expect(patrol.tick).toHaveBeenCalled();
-    expect(krHealth.tick).toHaveBeenCalled();
+    expect(krHealth.tick).not.toHaveBeenCalled();
     expect(cleanup.tick).toHaveBeenCalled();
 
     // ── dispatcher 被调（行动层入口） ────────────────────────────────────
