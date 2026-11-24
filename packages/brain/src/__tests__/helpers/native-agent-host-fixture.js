@@ -14,15 +14,7 @@ export function createNativeAgentHostFixture({accountRef='fixture-account'}={}){
  const handoffPath=path.join(root,'handoffs');process.env.HANDOFF_DOCS_DIR=handoffPath;
  for(const name of ['home','auth','cwd','state','skills'])fs.mkdirSync(path.join(root,name),{mode:0o700});
  fs.writeFileSync(path.join(root,'auth/auth.json'),JSON.stringify({auth_mode:'apikey',OPENAI_API_KEY:'isolated-native-fixture'}),{mode:0o600});
- const command=path.join(root,'codex-fixture');
- fs.writeFileSync(command,`#!${process.execPath}
-const fs=require('fs');let text='';process.stdin.setEncoding('utf8');process.stdin.on('data',x=>text+=x);process.stdin.on('end',()=>{
-fs.appendFileSync(${JSON.stringify(path.join(root,'launches'))},JSON.stringify({pid:process.pid,text,argv:process.argv.slice(2)})+'\\n');
-if(text.includes('NATIVE_HANG')){setInterval(()=>{},1000);return;}
-const n=process.argv.indexOf('--output-last-message');if(n>=0)fs.writeFileSync(process.argv[n+1],'实际fixture执行结果：完整输入已处理');
-process.stdout.write(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:'实际fixture执行结果：完整输入已处理'}})+'\\n');
-if(text.includes('NATIVE_FAIL'))process.exitCode=7;
-});`,{mode:0o755});
+ const command=fileURLToPath(new URL('./native-agent-command-fixture.cjs',import.meta.url));
  const brainRoot=fileURLToPath(new URL('../../../',import.meta.url)),sha=computeBundleDigest(brainRoot);
  const config={protocol:'native-agent-config/v1',bundle_sha256:sha,state_dir:path.join(root,'state'),profiles:[{
   tenant:'fixture-native',department:'main',role:'agent',account_ref:accountRef,models:['fixture-model'],model_aliases:{'fixture-model':'fixture-model'},thinking:['medium'],timeout_ms:1800000,terminate_grace_ms:100,

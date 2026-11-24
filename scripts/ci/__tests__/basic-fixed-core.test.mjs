@@ -59,5 +59,6 @@ test('image没有宿主依赖消费者，其余核心矩阵必须先安装根锁
     {command:'docker',args:['build','-f','packages/brain/Dockerfile','-t','cecelia-brain:ci-basic','.']},
     {command:'docker',args:['run','--rm','--entrypoint','docker','cecelia-brain:ci-basic','buildx','version']},
     {command:'docker',args:['run','--rm','--entrypoint','node','cecelia-brain:ci-basic','--input-type=module','-e','import {computeBundleDigest} from "./scripts/native-agent/bundle.mjs";if(!/^[a-f0-9]{64}$/.test(computeBundleDigest("/app")))process.exit(1);await import("./scripts/native-agent/staging-business.mjs");await import("./src/__tests__/helpers/native-agent-host-fixture.js")']},
+    {command:'docker',args:['run','--rm','--network','none','--read-only','--tmpfs','/tmp:rw,size=256m','-e','CANDIDATE_NOEXEC_CONTRACT=1','--entrypoint','node','cecelia-brain:ci-basic','--test','scripts/native-agent/__tests__/candidate-fixture.node-test.mjs']},
   ]);
 });

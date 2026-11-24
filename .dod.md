@@ -1,19 +1,13 @@
-# 现役业务CI/CD回归修复
+# 修复候选镜像noexec业务验收
 
 Task: ad48434f-e2d5-4464-8c60-034ef11b7665
 GP-Anchor: none(infra)
 
-- [ ] 现役runScheduler在无KR时仅派发原生Notion任务，保留停止、可信资源、宿主容量和设备锁，普通AI任务不能超额。
-  Test: manual:cd packages/brain && npx --no-install vitest run src/__tests__/tick-scheduler.test.js src/__tests__/dispatcher-qiumi-pool-gate-bypass.test.js
-- [ ] 原生任务经正式调度入口、真实数据库及原生worker执行并保留唯一TaskRun和产物，回归进入必需CI。
-  Test: manual:node scripts/ci/run-basic-check.mjs brain-integration
-- [ ] Notion和在途Commander业务失败传至调度哨兵及运行账，活性继续如实报告，单job失败不阻止其它job。
-  Test: manual:cd packages/brain && npx --no-install vitest run src/__tests__/scheduler-jobs-results.test.js src/__tests__/scheduler-jobs-gtd-sync.test.js src/lib/__tests__/workflow-commander-result.test.js
-- [ ] 完成回调进度记录与Task完成同事务提交，进度写失败不导致自锁或丢失原始执行回执；夜间真实PG合同恢复。
-  Test: manual:node scripts/ci/run-debt-pg.mjs
-- [ ] 候选镜像固定业务合同验证Task、TaskRun、文件产物与进程停止；成功收据SHA不符或证据缺失时拒绝准入。
-  Test: manual:node --test scripts/ci/__tests__/basic-release-business-gate.test.mjs
-- [ ] 现役sidecar固定只读验收失败时不报告成功，不隐式回滚生产数据库或外部效果。
-  Test: manual:node --test scripts/bluegreen-sidecar-completion.test.mjs
-- [ ] 活性回收不得重置有真实原生TaskRun或未结算资源的任务；探针后并发接管必须以真实所有权和行版本CAS阻止旧回收写入，普通孤儿仍可回收。
+- [ ] 只读、禁网及/tmp noexec环境下，实际原生CLI/worker/child完成唯一运行并核实产物及退出，旧夹具必须真实报红。
+  Test: manual:node --test packages/brain/scripts/native-agent/__tests__/candidate-fixture.node-test.mjs
+- [ ] 原生挂起会话取消只影响原run并确认进程组退出；镜像必需CI实际执行合同而非只导入。
+  Test: manual:node --test scripts/ci/__tests__/basic-fixed-core.test.mjs
+- [ ] 镜像来源采用独立完整已审封组，历史身份保留，不放宽未知来源/执行边界。
+  Test: manual:cd packages/brain && npx --no-install vitest run src/lib/__tests__/existing-ops-ci-noexec-source.test.js
+- [ ] 当前调度、Notion和候选真实PG回归通过，生产按main CI自动发布入口验收并读回精确SHA及结算。
   Test: manual:node scripts/ci/run-basic-check.mjs brain-integration

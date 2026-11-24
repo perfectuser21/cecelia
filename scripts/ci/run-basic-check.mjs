@@ -65,6 +65,7 @@ export function commandsFor(component, shard) {
         step('.', 'docker', 'run', '--rm', '--entrypoint', 'docker', 'cecelia-brain:ci-basic', 'buildx', 'version'),
         step('.', 'docker', 'run', '--rm', '--entrypoint', 'node', 'cecelia-brain:ci-basic', '--input-type=module', '-e',
           'import {computeBundleDigest} from "./scripts/native-agent/bundle.mjs";if(!/^[a-f0-9]{64}$/.test(computeBundleDigest("/app")))process.exit(1);await import("./scripts/native-agent/staging-business.mjs");await import("./src/__tests__/helpers/native-agent-host-fixture.js")'),
+        step('.', 'docker', 'run', '--rm', '--network', 'none', '--read-only', '--tmpfs', '/tmp:rw,size=256m', '-e', 'CANDIDATE_NOEXEC_CONTRACT=1', '--entrypoint', 'node', 'cecelia-brain:ci-basic', '--test', 'scripts/native-agent/__tests__/candidate-fixture.node-test.mjs'),
       ];
     case 'dashboard':
       return [vitest('apps/api'), vitest('apps/dashboard'), step('apps/dashboard', 'npm', 'run', 'build')];

@@ -1,0 +1,7 @@
+{
+  "scripts/ci/run-basic-check.mjs": "23d71b31d7869ee11bfeac3afdfe10022951489048a631df26cf54d1671494d0",
+  "packages/brain/src/__tests__/helpers/native-agent-host-fixture.js": "e79ccebe26217160ea370a6cca43a445923fa627e98efa9b698ca3eb0d3284f2",
+  "packages/brain/src/__tests__/helpers/native-agent-command-fixture.cjs": "e620ba9ca197a7b46abe290e509395f0f09da051ed07aba5ab89a96ed1ef998f",
+  "packages/brain/scripts/native-agent/__tests__/candidate-fixture.node-test.mjs": "ddd5d9558af52da12a6f571cb936bd3b806da207dea7fb951c48c9479e3ab726",
+  "scripts/ci/__tests__/basic-fixed-core.test.mjs": "0f4d3de4289d3d8399f4adef0955d7d823a3507c8893d41df181baee68a3a986"
+}
