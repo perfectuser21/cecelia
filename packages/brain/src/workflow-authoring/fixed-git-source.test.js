@@ -194,6 +194,19 @@ describe('两业务仓中央Skill profile必须按仓库显式匹配',()=>{
 
 import * as fixedSources from './fixed-git-source.js';
 describe('请求内已验证Git对象复用',()=>{
+ it('发布核验的多个固定代码文件并行读取，并保持声明顺序',async()=>{
+  const inputs=Array.from({length:12},(_,index)=>({kind:'code',repo,revision,path:'file-'+index}));
+  let active=0,peak=0;
+  const readFile=async ({path})=>{
+   active++;peak=Math.max(peak,active);
+   await new Promise(resolve=>setImmediate(resolve));
+   active--;return 'source '+path;
+  };
+  const results=await validateFixedImplementationBindings({implementation_bindings:inputs},{repo,commit:revision},{readFile,bindingReadConcurrency:4});
+  expect(peak).toBe(4);
+  expect(results.map(row=>row.path)).toEqual(inputs.map(row=>row.path));
+  expect(results.every(row=>row.status==='verified')).toBe(true);
+ });
  function fixture(){
   const tree='d'.repeat(40),blobs=new Map(),entries=['one','two'].map(path=>{const b=Buffer.from('fixed '+path),sha=createHash('sha1').update(Buffer.concat([Buffer.from(`blob ${b.length}\0`),b])).digest('hex');blobs.set(sha,{sha,size:b.length,encoding:'base64',content:b.toString('base64')});return {path,sha,type:'blob',mode:'100644',size:b.length};});
   const documents={commit:{sha:revision,tree:{sha:tree}},tree:{sha:tree,tree:entries}},fetchFn=vi.fn(async url=>({ok:true,json:async()=>url.includes('/commits/')?documents.commit:url.includes('/trees/')?documents.tree:blobs.get(url.split('/').at(-1))}));

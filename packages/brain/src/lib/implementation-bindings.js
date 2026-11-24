@@ -1,7 +1,8 @@
 /** 固定revision的引用核验≠业务可用验收；无法确认的旧描述及符号明确unresolved。 */
 import { createHash } from 'node:crypto';
 import yaml from 'js-yaml';
-export async function validateImplementationBindings(contract,readBinding,source) {
+export async function validateImplementationBindings(contract,readBinding,source,{concurrency=1}={}) {
+  if(!Number.isSafeInteger(concurrency)||concurrency<1||concurrency>8)throw Error('实现绑定读取并发无效');
   const bindings=[];
   async function add(binding,location) {
     const declared = binding;
@@ -33,14 +34,23 @@ export async function validateImplementationBindings(contract,readBinding,source
       result.name=identity.name;result.version=String(identity.version);
     }
     if(binding.symbol){result.status='unresolved';result.reason='symbol_unverified';}
-    bindings.push(result);
+    return result;
   }
   const raw=(value,location)=>{if(value!==undefined&&value!==null)bindings.push({kind:'raw',raw:value,...location,status:'unresolved'});};
   async function visit(value,location) {
     if(value.implementation_bindings!==undefined&&!Array.isArray(value.implementation_bindings)) throw Error('implementation_bindings必须是数组');
-    for(const [index,binding] of (value.implementation_bindings||[]).entries()) await add(binding,{...location,field:'implementation_bindings',index});
+    const declared=value.implementation_bindings||[];
+    for(let offset=0;offset<declared.length;offset+=concurrency) {
+      const batch=declared.slice(offset,offset+concurrency);
+      const results=await Promise.allSettled(batch.map((binding,index)=>
+        add(binding,{...location,field:'implementation_bindings',index:offset+index})));
+      for(const result of results) {
+        if(result.status==='rejected')throw result.reason;
+        bindings.push(result.value);
+      }
+    }
     for(const field of ['runtime','implementation']) if(value[field]!==undefined) {
-      if(value[field]?.kind) await add(value[field],{...location,field});
+      if(value[field]?.kind) bindings.push(await add(value[field],{...location,field}));
       else raw(value[field],{...location,field});
     }
     if(value.execution?.via) raw(value.execution.via,{...location,field:'execution.via'});
