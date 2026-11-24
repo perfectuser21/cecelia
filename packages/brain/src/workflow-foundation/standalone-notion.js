@@ -18,13 +18,13 @@ export async function claimStandaloneNotionTask(pool, input) {
     && new Set(sources).size === sources.length && sources.every(source => standaloneSources.includes(source)), 'standalone_worker_sources_invalid', 400);
   const machine = input.machine_id;
   return foundationTransaction(pool, 'notion-standalone:' + machine, async db => {
-    const active = await db.query(`SELECT id FROM tasks WHERE ${boundSource}
-      AND result#>>'{standalone_claim,machine_id}'=$1 AND status IN ('in_progress','blocked') LIMIT 1`, [machine]);
-    if (active.rows.length) return { job: null };
-
-    const row = (await db.query(`SELECT * FROM tasks WHERE ${boundSource} AND status='queued' AND claimed_by IS NULL
+    // 103 has no phone resources. A review hold on the handset must not reserve the scorer.
+    const row = (await db.query(`SELECT candidate.* FROM tasks candidate WHERE ${boundSource} AND status='queued' AND claimed_by IS NULL
       AND payload#>>'{foundation_request,machine_id}'=$1 AND payload->>'source'=ANY($2::text[])
-      ORDER BY created_at,id LIMIT 1 FOR UPDATE SKIP LOCKED`, [machine,sources])).rows[0];
+      AND NOT EXISTS (SELECT 1 FROM tasks active WHERE ${boundSource}
+        AND active.result#>>'{standalone_claim,machine_id}'=$1 AND active.status IN ('in_progress','blocked')
+        AND (active.payload->>'source'=$3)=(candidate.payload->>'source'=$3))
+      ORDER BY created_at,id LIMIT 1 FOR UPDATE OF candidate SKIP LOCKED`, [machine,sources,'notion_leadgen_103'])).rows[0];
     if (!row) return { job: null };
 
     const stage = row.payload.source.slice(-3);

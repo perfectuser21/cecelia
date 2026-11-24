@@ -101,6 +101,9 @@ it.each([
   workflow_id:registration.workflow_id,release_id:release.id,input:{binding_key:'test_phone',business},
   idempotency_key:`notion-${stage}:${notionPageId}`
  },{notionPageId,notionTenantId:'tenant-fixture',notionWorkflowKey:workflowKey});
+ if(stage==='103')await fixture.pool.query(`UPDATE tasks SET task_type='workflow_dispatch',status='blocked',
+  payload=jsonb_build_object('source','notion_leadgen_101'),result=jsonb_build_object('standalone_claim',jsonb_build_object('machine_id','us-mac-m4'))
+  WHERE id=(SELECT id FROM tasks WHERE id<>$1 ORDER BY created_at LIMIT 1)`,[task.id]);
  expect((await fixture.request('/workflow-foundation/claim',{machine_id:'us-mac-m4',task_id:task.id})).body).toEqual({job:null});
  expect((await fixture.request('/workflow-foundation/standalone/claim',{machine_id:'other'})).body).toEqual({job:null});
  if(stage!=='101')expect((await fixture.request('/workflow-foundation/standalone/claim',{machine_id:'us-mac-m4'})).body).toEqual({job:null});
