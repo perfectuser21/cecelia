@@ -314,3 +314,138 @@ describe('旧 Workflow relation 执行桥退役', () => {
     expect(JSON.stringify(mockNotionReq.mock.calls)).toContain('brain:modern-task ✓已接管');
   });
 });
+
+describe('Notion 101 explicit dispatch through the existing published Worker', () => {
+  const tenant = 'default';
+  const body = '公司：悦升\n关键词：AI办公';
+  const env = { NOTION_LEADGEN_101_BINDINGS: JSON.stringify({ 悦升: {
+    tenant_id: tenant,
+    workflow_id: 'b1000000-0000-4000-8000-000000000101',
+    release_id: '61a9990e-d7ca-4c67-8a5e-f552879418fc',
+    binding_key: 'yuesheng_cloud',
+  } }) };
+  const page = () => ({ ...enPage('[leadgen-101]'), id: '3bf10100-1bcb-4572-b187-09b864390021' });
+  beforeEach(() => { mockQuery.mockReset().mockResolvedValue({ rows: [] }); mockNotionReq.mockReset(); mockCreateRoutedTask.mockReset(); });
+
+  it('repairs the source acknowledgement after a successful commit without rereading the changed page body', async () => {
+    const { ingestDelegatedPage } = await import('../notion-push-sync.js');
+    const createFoundationTask = vi.fn();
+    const id = '9c00babb-5f42-487f-9068-3969a83b6d42';
+    mockQuery.mockResolvedValueOnce({ rows: [{ id }] });
+    mockNotionReq.mockResolvedValueOnce({});
+    expect(await ingestDelegatedPage({ query: mockQuery }, 'tok', page(), { env, createFoundationTask }))
+      .toEqual({ taskId: id, kind: 'workflow_dispatch' });
+    expect(mockNotionReq.mock.calls[0][2]).toBe('PATCH');
+    expect(mockNotionReq.mock.calls[0][3].properties.Description.rich_text[0].text.content).toContain('brain:' + id);
+    expect(createFoundationTask).not.toHaveBeenCalled();
+  });
+
+  it('before Plan Date keeps the source row scheduled and creates no executable task', async () => {
+    const { ingestDelegatedPage } = await import('../notion-push-sync.js');
+    const createFoundationTask = vi.fn();
+    expect(await ingestDelegatedPage({ query: mockQuery }, 'tok', page(), {
+      env, createFoundationTask, now: () => new Date('2026-09-24T08:59:00.000+08:00'),
+    })).toEqual({ taskId: null, kind: 'scheduled' });
+    expect(createFoundationTask).not.toHaveBeenCalled();
+    expect(mockCreateRoutedTask).not.toHaveBeenCalled();
+    expect(mockNotionReq).not.toHaveBeenCalled();
+  });
+
+  it('after Plan Date end records the reason without starting a task', async () => {
+    const { ingestDelegatedPage } = await import('../notion-push-sync.js');
+    const createFoundationTask = vi.fn();
+    const source = page();
+    source.properties['Plan Date'].date.end = '2026-09-24T09:30:00+08:00';
+    mockNotionReq.mockResolvedValueOnce({});
+    expect(await ingestDelegatedPage({ query: mockQuery }, 'tok', source, {
+      env, createFoundationTask, now: () => new Date('2026-09-24T10:00:00+08:00'),
+    })).toEqual({ taskId: null, kind: 'blocked' });
+    expect(mockNotionReq.mock.calls[0][3].properties.Status.status.name).toBe('Blocked');
+    expect(createFoundationTask).not.toHaveBeenCalled();
+  });
+
+  it('uses trusted binding and writes acknowledgement to the actual source row', async () => {
+    const { ingestDelegatedPage } = await import('../notion-push-sync.js');
+    const createFoundationTask = vi.fn().mockResolvedValue({ task: { id: '9c00babb-5f42-487f-9068-3969a83b6d42' } });
+    mockNotionReq.mockResolvedValueOnce({results: [{type: 'paragraph', paragraph: {rich_text: [{plain_text: body}]}}], has_more: false})
+      .mockResolvedValueOnce({});
+    const source = page();
+    const result = await ingestDelegatedPage({ query: mockQuery }, 'tok', source, {
+      env, createFoundationTask, now: () => new Date('2026-09-24T09:00:00.000+08:00'),
+    });
+    expect(result).toEqual({taskId: '9c00babb-5f42-487f-9068-3969a83b6d42', kind: 'workflow_dispatch'});
+    expect(createFoundationTask.mock.calls[0][1].input).toEqual({binding_key: 'yuesheng_cloud', business: {keyword: 'AI办公', max_candidates: 1}});
+    expect(createFoundationTask.mock.calls[0][2]).toEqual({notionPageId: source.id, notionTenantId: tenant});
+    expect(mockNotionReq.mock.calls[1][3].properties.Description.rich_text[0].text.content).toContain('brain:' + result.taskId);
+    expect(mockCreateRoutedTask).not.toHaveBeenCalled();
+  });
+
+  it('missing trusted binding remains blocked and does not fall into the general Agent queue', async () => {
+    const { ingestDelegatedPage } = await import('../notion-push-sync.js');
+    const createFoundationTask = vi.fn();
+    mockNotionReq.mockResolvedValueOnce({results: [{type: 'paragraph', paragraph: {rich_text: [{plain_text: body}]}}], has_more: false})
+      .mockResolvedValueOnce({});
+    expect(await ingestDelegatedPage({ query: mockQuery }, 'tok', page(), {env: {}, createFoundationTask, now: () => new Date('2026-09-25')})).toEqual({taskId: null, kind: 'blocked'});
+    expect(mockNotionReq.mock.calls[1][3].properties.Status.status.name).toBe('Blocked');
+    expect(createFoundationTask).not.toHaveBeenCalled();
+    expect(mockCreateRoutedTask).not.toHaveBeenCalled();
+  });
+});
+
+describe('Notion 102、103、104 保留独立派单入口', () => {
+  beforeEach(() => { mockQuery.mockReset().mockResolvedValue({ rows: [] }); mockNotionReq.mockReset(); mockCreateRoutedTask.mockReset(); });
+
+  it('同时标两个阶段时拦截，且不会调任何执行器',async()=>{
+    const {ingestDelegatedPage}=await import('../notion-push-sync.js');
+    mockNotionReq.mockResolvedValueOnce({});
+    const result=await ingestDelegatedPage({query:mockQuery},'tok',enPage('[leadgen-101] [leadgen-102]'));
+    expect(result).toEqual({taskId:null,kind:'blocked'});
+    expect(mockCreateRoutedTask).not.toHaveBeenCalled();
+    expect(mockQuery).not.toHaveBeenCalled();
+    expect(mockNotionReq.mock.calls[0][3].properties.Description.rich_text[0].text.content).toContain('只接一个获客 Workflow');
+  });
+
+  it.each([
+    ['102','公司：悦升\n来源运行：verified-101'],
+    ['103','公司：悦升\n来源运行：verified-102'],
+    ['104','公司：悦升\n原订单：reczz28dTuRDYn9s'],
+  ])('%s 没有自己的已登记执行端时只回写原页', async (code, body) => {
+    const { ingestDelegatedPage } = await import('../notion-push-sync.js');
+    const source = enPage('[leadgen-' + code + ']');
+    mockNotionReq.mockResolvedValueOnce({results: [{type:'paragraph',paragraph:{rich_text:[{plain_text:body}]}}],has_more:false})
+      .mockResolvedValueOnce({});
+    const result = await ingestDelegatedPage({query:mockQuery},'tok',source,{env:{},now:()=>new Date('2026-09-25')});
+    expect(result).toEqual({taskId:null,kind:'blocked'});
+    expect(mockCreateRoutedTask).not.toHaveBeenCalled();
+    expect(mockNotionReq.mock.calls[1][1]).toBe('/pages/'+source.id);
+    expect(mockNotionReq.mock.calls[1][3].properties.Description.rich_text[0].text.content).toContain(code + ' 未派发');
+  });
+
+  it.each([
+    ['102', '来源运行：test-discovery', 'douyin_video_processing'],
+    ['103', '来源运行：test-collection', 'douyin_comment_scoring'],
+    ['104', '原订单：recTestOrder', 'douyin_lead_outreach'],
+  ])('%s 只读取对应发布绑定并在 Notion 原页记下 Brain 任务', async (stage, field, workflowKey) => {
+    const { ingestDelegatedPage } = await import('../notion-push-sync.js');
+    const page = { ...enPage(`[leadgen-${stage}]`), id:'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee' };
+    const tenant = 'tenant-yuesheng';
+    const id = '12345678-1234-4234-8234-123456781234';
+    const release = '12345678-4321-4234-8234-123456781234';
+    const bindings = { 悦升: { tenant_id: tenant, workflow_id: id, release_id: release, binding_key: 'approved' } };
+    mockNotionReq.mockResolvedValueOnce({ results: [{ type:'paragraph', paragraph:{ rich_text:[{ plain_text:`公司：悦升\n${field}` }] } }], has_more:false })
+      .mockResolvedValueOnce({});
+    const createFoundationTask = vi.fn(async () => ({ task: { id } }));
+    const result = await ingestDelegatedPage({ query:mockQuery }, 'tok', page, {
+      env: {
+        NOTION_TENANT_MAP: JSON.stringify({ d5bc40c2ba6382ef965a8153b7ad81a0: tenant }),
+        [`NOTION_LEADGEN_${stage}_BINDINGS`]: JSON.stringify(bindings),
+      },
+      now:()=>new Date('2026-09-25'), createFoundationTask,
+    });
+    expect(result).toEqual({ taskId:id, kind:'workflow_dispatch' });
+    expect(createFoundationTask.mock.calls[0][2]).toEqual({ notionPageId:page.id, notionTenantId:tenant, notionWorkflowKey:workflowKey });
+    expect(mockNotionReq.mock.calls[1][1]).toBe('/pages/'+page.id);
+    expect(mockNotionReq.mock.calls[1][3].properties.Description.rich_text[0].text.content).toContain(`brain:${id}`);
+    expect(mockCreateRoutedTask).not.toHaveBeenCalled();
+  });
+});

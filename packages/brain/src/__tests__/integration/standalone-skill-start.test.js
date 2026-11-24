@@ -8,7 +8,7 @@ import {createRunDefinitionsRouter} from '../../routes/run-definitions.js';
 let f,app,body,task;
 beforeEach(async()=>{
  f=await releaseEvidenceDatabase();
- await f.db.query("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS payload jsonb DEFAULT '{}'::jsonb, ADD COLUMN IF NOT EXISTS claimed_by text, ADD COLUMN IF NOT EXISTS claimed_at timestamptz");
+ await f.db.query("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS payload jsonb DEFAULT '{}'::jsonb, ADD COLUMN IF NOT EXISTS result jsonb, ADD COLUMN IF NOT EXISTS claimed_by text, ADD COLUMN IF NOT EXISTS claimed_at timestamptz");
  const release=(await createRelease(f.db,f.releaseInput)).release,observation=(await recordReleaseObservation(f.db,release.id,f.observationInput,{trustedCollector:'fixture-collector'})).observation;
  const definition=f.runInput(release,observation);delete definition.source_kind;delete definition.external_origin;
  const workflow=release.payload.workflows.find(w=>w.id===definition.workflow_definition_version_id);task=randomUUID();

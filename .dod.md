@@ -1,13 +1,18 @@
-# 默认CI与按需真实资格/预览边界清理
+# 修复 Notion 101 派单的业务绑定
 
-Task: 1da79bcb-9cb6-4c19-a751-b6853d730a7e
+Task: 8b4954b4-29b2-449f-9e6a-3a70d8bc67bd
 GP-Anchor: none(infra)
 
-- [ ] 默认夜间发现不登记三个人工预览服务及两条按需真实Codex专项；明确旗标仍能选择原实现，现役非模型PG合同继续收集。
-  Test: manual:node --test scripts/ci/__tests__/basic-manual-integration-boundary.test.mjs
-- [ ] 旧radius联动适配和专属检查无现役消费者，清退同时保留当前graph/radius与cascade-report功能，通用孤岛闸回归使用现役叶子。
-  Test: manual:cd packages/brain && npx --no-install vitest run src/__tests__/cascade-list.test.js src/__tests__/island-gate.test.mjs
-- [ ] 来源封组仅接受完整经审控制，历史56版本有效，缺失、漂移与新旧混配不能获得许可。
-  Test: manual:cd packages/brain && npx --no-install vitest run src/lib/__tests__/existing-ops-ci-manual-boundary-source.test.js
-- [ ] 保留当前必需PR和真实数据库合同，不新增workflow/job，独立真实Notion到原生Agent产物与回执证据已写验收Task。
-  Test: manual:node scripts/ci/run-basic-check.mjs brain-integration
+- [ ] Notion 101 到点后使用已登记的 101 业务版本与轻量直执行宿主。过期和缺失绑定可见，其他委派路由保持。
+  Test: manual:cd packages/brain && npx --no-install vitest run src/__tests__/notion-leadgen-dispatch.test.js src/__tests__/notion-push-sync-marked-ingest.test.js
+- [ ] 同一页在真实隔离 PostgreSQL 中并发起单只生成一条任务，回执只更新源页并保留失败原因。
+  Test: manual:cd packages/brain && npx --no-install vitest run --config vitest.integration.config.js src/__tests__/integration/workflow-foundation.pg.integration.test.js
+  Test: manual:cd packages/brain && npx --no-install vitest run src/__tests__/notion-gtd-sync-push-and-stops.test.js src/__tests__/notion-qiumi-receipt-details.test.js
+- [ ] 独立执行入口只发起一次 Agent，收尾前读取原业务结果，以原 run 的可信清理凭证确认释放；回执中断后仅重送原回执。
+  Test: manual:cd packages/brain && npx --no-install vitest run scripts/standalone-skill/run.test.mjs scripts/standalone-skill/worker.test.mjs
+- [ ] Notion 建单仅由指定直执行宿主领取，旧 Commander 入口无法领取。真实隔离 PG 验证领取、固定启动、原单结算。
+  Test: manual:cd packages/brain && npx --no-install vitest run --config vitest.integration.config.js src/__tests__/integration/workflow-foundation.pg.integration.test.js
+- [ ] 独立适配器使用现有手机运行时发布证据固定本轮，先登记起跑再启动工具，业务入库只以工具独立读回确认。
+  Test: manual:cd packages/brain && npx --no-install vitest run scripts/standalone-skill/native-discovery.test.mjs
+- [ ] 四条获客 Workflow 的 Notion 标记各自绑定固定发布、原页和输入范围。仅登记了该流程的宿主可领取，未配置时原页明确回执。
+  Test: manual:cd packages/brain && npx --no-install vitest run src/__tests__/notion-push-sync-marked-ingest.test.js

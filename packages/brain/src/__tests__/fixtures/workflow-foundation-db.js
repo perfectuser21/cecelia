@@ -33,14 +33,14 @@ async function addFoundationTaskSchema(db){
   ADD COLUMN IF NOT EXISTS execution_profile text,ADD COLUMN IF NOT EXISTS owner_role text,ADD COLUMN IF NOT EXISTS delivery_type text,
   ADD COLUMN IF NOT EXISTS created_by text,ADD COLUMN IF NOT EXISTS dept text,ADD COLUMN IF NOT EXISTS phase text,
   ADD COLUMN IF NOT EXISTS executor_kind text,ADD COLUMN IF NOT EXISTS parent_task_id uuid,ADD COLUMN IF NOT EXISTS sequence_no integer,
-  ADD COLUMN IF NOT EXISTS kind text,ADD COLUMN IF NOT EXISTS blocked_reason text,ADD COLUMN IF NOT EXISTS blocked_detail jsonb,
+  ADD COLUMN IF NOT EXISTS kind text,ADD COLUMN IF NOT EXISTS tenant_id text,ADD COLUMN IF NOT EXISTS blocked_reason text,ADD COLUMN IF NOT EXISTS blocked_detail jsonb,
   ADD COLUMN IF NOT EXISTS result jsonb,ADD COLUMN IF NOT EXISTS claimed_by text,ADD COLUMN IF NOT EXISTS claimed_at timestamptz,
   ADD COLUMN IF NOT EXISTS status_history jsonb DEFAULT '[]'::jsonb,
   ADD COLUMN IF NOT EXISTS error_message text,ADD COLUMN IF NOT EXISTS summary text,ADD COLUMN IF NOT EXISTS blocked_until timestamptz,ADD COLUMN IF NOT EXISTS notion_synced_at timestamptz,ADD COLUMN IF NOT EXISTS driver_heartbeat_at timestamptz`);
 }
 
 /** 隔离协议夹具：定义来源/CI报告是合成的，执行产物、PG、DBOS和宿主是真实的。 */
-export async function workflowFoundationDatabase({scenario='healthy',playbook}={}){
+export async function workflowFoundationDatabase({scenario='healthy',playbook,workflowKey,directInput}={}){
  const base=await releaseEvidenceDatabase(),f={...base,pool:base.db},root=fs.mkdtempSync(path.join(os.tmpdir(),'foundation-registration-'));
  const dbosSchema=`foundation_dbos_${randomUUID().replaceAll('-','')}`;
  let closed=false;
@@ -48,11 +48,11 @@ export async function workflowFoundationDatabase({scenario='healthy',playbook}={
   await addFoundationTaskSchema(f.pool);
   await f.pool.query(fs.readFileSync(path.join(brain,'migrations/558_commander_activity_actions.sql'),'utf8'));
   await f.pool.query(fs.readFileSync(path.join(brain,'migrations/559_commander_activity_attempts.sql'),'utf8'));
-  const cap=randomUUID(),vs=randomUUID(),task=randomUUID(),key=`foundation_${cap.slice(0,8)}`;
+  const cap=randomUUID(),vs=randomUUID(),task=randomUUID(),key=workflowKey??`foundation_${cap.slice(0,8)}`;
   await f.pool.query("INSERT INTO value_streams(id,name) VALUES($1,'隔离Foundation价值流')",[vs]);
   await f.pool.query("INSERT INTO capabilities(id,name,parent_journey_id,status) VALUES($1,'隔离Foundation能力',$2,'active')",[cap,vs]);
   await f.pool.query("INSERT INTO tasks(id,title,status,task_type,payload) VALUES($1,'隔离冻结登记','in_progress','research',$2)",[task,{workflow_authoring:true}]);
-  const inputSchema={type:'object',properties:{label:{type:'string'}},required:['label'],additionalProperties:false};
+  const inputSchema={type:'object',properties:{label:{type:'string'},...(directInput?{business:{type:'object',properties:{keyword:{type:'string'},max_candidates:{type:'integer'}},required:['keyword','max_candidates']}}:{})},required:['label'],additionalProperties:false};
   const activity=(key,order)=>({key,order,budget:{max_duration_s:15,heartbeat_s:1},acceptance:{description:'真实读回base=21或answer=42'},
    failure:{empty_ok:[],retryable:[],fatal:['error'],needs_human:{cases:['unknown']}},
    runtime:{phase:'source',protocol:'json-stdio-v1',entry:'work.mjs',argv:[key],executor_kind:'code'}});

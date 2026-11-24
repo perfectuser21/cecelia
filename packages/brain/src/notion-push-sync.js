@@ -1,3 +1,5 @@
+import { dispatchNotionLeadgen, explicitLeadgenStages, inactiveLeadgenReason } from './notion-leadgen-dispatch.js';
+import { standaloneSourceList } from './workflow-foundation/standalone-source.js';
 import {syncTaskProgress,findCreatedTaskPage,TASK_PROGRESS_FIELDS} from './projection/task-progress.js';
 import {syncManagedBodyBlock} from './projection/workflow-body.js';
 import { notionReq, getToken } from './recurring-notion-sync.js';
@@ -317,6 +319,7 @@ export const PUSH_TASKS_QUERY = `
            )
        AND NOT (t.task_type = ANY(ARRAY[${PUSH_EXCLUDED_TASK_TYPES.map((t) => `'${t}'`).join(',')}]::text[]))
        AND t.task_type <> 'project'
+       AND COALESCE(t.payload->>'source','') NOT IN (${standaloneSourceList})
        AND (
          t.status IN ('queued','in_progress','blocked')
          OR (t.status IN ('completed','failed','canceled','cancelled')
@@ -611,6 +614,66 @@ export async function ingestDelegatedPage(pool, token, page, opts = {}) {
   if (/run:notion-/.test(desc)) return { taskId: null, kind: 'skipped' }; // OpenClaw 已派发，幂等跳过
 
   const en = parseEnPage(page);
+  const stages = explicitLeadgenStages(desc);
+  if (stages.length > 1) {
+    await writeStatusReceipt(token, page, desc, '未派发：每个 Notion 页面只接一个获客 Workflow', 'Blocked');
+    return { taskId: null, kind: 'blocked' };
+  }
+  const [leadgenStage] = stages;
+  if (leadgenStage) {
+    if (en.zhId32) {
+      await writeStatusReceipt(token, page, desc, `${leadgenStage} 未派发：请选择英文 Tasks 源页`, 'Blocked');
+      return { taskId: null, kind: 'blocked' };
+    }
+    const env = opts.env ?? process.env;
+    const tenantId = tenantFor(env, NOTION_TASKS_DB);
+    const bindingJson = env[`NOTION_LEADGEN_${leadgenStage}_BINDINGS`];
+    const configured = leadgenStage === '101' || Boolean(bindingJson);
+    if (configured) {
+      const previous = (await pool.query(`SELECT id FROM tasks WHERE task_type='workflow_dispatch'
+        AND payload->>'source'=$3 AND payload->>'notion_page_id'=$1 AND tenant_id=$2 LIMIT 1`,
+      [page.id, tenantId, `notion_leadgen_${leadgenStage}`])).rows[0];
+      if (previous) {
+        await writeStatusReceipt(token, page, desc, `brain:${previous.id} ✓已接管`);
+        return { taskId: previous.id, kind: 'workflow_dispatch' };
+      }
+    }
+    const now = opts.now ?? (() => new Date());
+    const at = now();
+    const end = toEndIso(en.planEnd);
+    if (end && !isFuture(end, at)) {
+      await writeStatusReceipt(token, page, desc, `${leadgenStage} 未派发：已超过计划截止时间`, 'Blocked');
+      return { taskId: null, kind: 'blocked' };
+    }
+    if (isFuture(toStartIso(en.planDate), at)) return { taskId: null, kind: 'scheduled' };
+    const body = await fetchNotionPageContent(token, page.id, { requireComplete: true });
+    if (!configured) {
+      await writeStatusReceipt(token, page, desc, `${leadgenStage} 未派发：${inactiveLeadgenReason(leadgenStage, body)}`, 'Blocked');
+      return { taskId: null, kind: 'blocked' };
+    }
+    const bindings = JSON.parse(bindingJson ?? '{}');
+    try {
+      const received = await dispatchNotionLeadgen(pool, {
+        stage: leadgenStage, pageId: page.id, title: name, body, tenantId, bindings,
+      }, { createTask: opts.createFoundationTask });
+      await writeStatusReceipt(token, page, desc, `brain:${received.taskId} ✓已接管`);
+      return received;
+    } catch (error) {
+      const reasons = {
+        notion_leadgen_binding_unavailable: '该公司没有可用的执行绑定',
+        notion_leadgen_input_invalid: leadgenStage === '101' ? '请填写公司、关键词和候选上限 1'
+          : `请填写公司和有效的${leadgenStage === '104' ? '原订单' : '来源运行'}`,
+        foundation_release_not_ready: '执行版本尚未就绪',
+        foundation_notion_workflow_invalid: '配置没有指向本单指定的 Workflow',
+        standalone_release_target_invalid: '业务发布未落在 Mac Studio 执行端',
+        foundation_idempotency_conflict: '此 Notion 页已起单，需按原任务处理',
+      };
+      const reason = reasons[error.code];
+      if (!reason) throw error;
+      await writeStatusReceipt(token, page, desc, `${leadgenStage} 未派发：${reason}`, 'Blocked');
+      return { taskId: null, kind: 'blocked' };
+    }
+  }
   if (en.zhId32 || en.enNative) {
     return ingestQiumiPage(pool, token, page, en, { env: opts.env ?? process.env, ...(opts.now ? { now: opts.now } : {}) });
   }
@@ -659,7 +722,7 @@ async function ingestDelegatedBatch(pool, token, opts, marks) {
       for (const page of pages) {
         try {
           const result = await ingestDelegatedPage(pool, token, page, opts);
-          if (result.kind === 'qiumi_task') ingested += 1; else skipped += 1;
+          if (result.taskId != null) ingested += 1; else skipped += 1;
         } catch (error) {
           failed += 1;
           await logSyncError(pool, error.message);
@@ -694,7 +757,7 @@ function defaultSshExec(args) {
 }
 
 // 状态回执尾巴（⚠/⏸/🕐/▶）可被下一轮覆盖——剥离后再拼，防 desc 滚雪球
-const STATUS_TAIL_RE = /\s*·?\s*(?:▶ 已派发|⚠ 派发[未失][成败]|⏸ 排队|🕐 已排期)[\s\S]*$/;
+const STATUS_TAIL_RE = /\s*·?\s*(?:101 未派发：|▶ 已派发|⚠ 派发[未失][成败]|⏸ 排队|🕐 已排期)[\s\S]*$/;
 function stripStatusTail(desc) {
   return String(desc || '').replace(STATUS_TAIL_RE, '').trim();
 }
@@ -704,13 +767,14 @@ function stripStatusTail(desc) {
  * 永远完整：长正文时若对 `base + tail` 整串 slice(0,1900)，超长 base 会把尾巴挤出
  * 截断窗口，下一轮 `/brain:/` 判不出已接手 → 每轮重复入账（PR2 审查 Important #1）。
  */
-async function writeStatusReceipt(token, page, desc, status) {
+async function writeStatusReceipt(token, page, desc, status, notionStatus) {
   const base = stripStatusTail(desc);
   const tail = base ? ` · ${status}` : status;
   const content = `${base.slice(0, Math.max(0, 1900 - tail.length))}${tail}`;
   await notionReq(token, `/pages/${page.id}`, 'PATCH', {
     properties: {
       Description: { rich_text: [{ type: 'text', text: { content } }] },
+      ...(notionStatus ? { Status: { status: { name: notionStatus } } } : {}),
     },
   });
 }

@@ -1,0 +1,159 @@
+import { createHash } from 'node:crypto';
+import { digest } from '../../src/orchestrator/commander-decision.js';
+import { execFile } from 'node:child_process';
+import { mkdirSync, lstatSync, realpathSync, readFileSync } from 'node:fs';
+import { join, isAbsolute } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { promisify } from 'node:util';
+import { codexAuthEnvironment, prepareCodexAuth } from '../coding-workflow/lib/codex-auth.mjs';
+import { readOwnedFile } from './launch.mjs';
+import { durableWrite } from '../../src/orchestrator/activity-supervisor.js';
+
+const execute = promisify(execFile);
+const key = 'douyin_video_discovery';
+const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
+const same = (left, right, hash) => hash(left) === hash(right);
+
+export async function confirmDiscovery(video, keyword, call) {
+  const id = video?.videoId ?? video?.video_id;
+  if (typeof id !== 'string' || !/^\d{16,24}$/.test(id) || video.keyword !== keyword) return null;
+  const url = 'https://www.douyin.com/video/' + id;
+  if ((video.videoUrl ?? video.video_url) !== url || typeof video.metrics?.digest !== 'string') return null;
+  const observed = await call('business', { operation:'discover_readback', input:{video} });
+  const proof = observed?.result?.result;
+  if (observed?.ok !== true || observed.result?.ok !== true || proof?.metrics_verified !== true
+    || proof.metrics_digest !== video.metrics.digest
+    || (proof.handoff && (proof.handoff.video_id !== id || proof.handoff.video_url !== url))) return null;
+  return { summary:'已采集一条视频，业务数据与指标已入库读回', evidence:[url] };
+}
+
+export async function createDiscoveryServices(job, {profile, skillPath, stateRoot, phoneEnv={}, codex, toolkit}, {post, runModel} = {}) {
+  const domain = profile?.domain_adapter;
+  const cfg = domain?.config;
+  const source = cfg?.snapshot;
+  const resource = cfg?.resources;
+  const input = job.input;
+  if (cfg?.primary_host !== 'codex-exec-v1' || cfg.workflow_key !== key || resource?.machine !== job.machine_id
+    || source?.release?.id !== job.release_id || source.workflow_version?.id !== job.definition?.workflow_definition_version_id
+    || source.deployment?.observation_id !== job.definition?.observation_id || input?.business?.max_candidates !== 1) {
+    throw Error('standalone_profile_mismatch');
+  }
+  const keyword = input.business.keyword;
+  const { hash, agentInput, preparePublicDomainSnapshot, startStandaloneSkillRuntime, callStandaloneSkillTool } = toolkit;
+  const skill = cfg.standalone_skill;
+  const { max_duration_s:work, cleanup_grace_s:grace } = domain.budget;
+  if (!uuid.test(job.run_id) || !uuid.test(job.task_id) || !isAbsolute(stateRoot) || realpathSync(stateRoot) !== stateRoot
+    || !Number.isSafeInteger(work) || work < 1 || !Number.isSafeInteger(grace) || grace < 1
+    || skill?.path !== 'skill/SKILL.md' || hash(readOwnedFile(skillPath)) !== skill.sha256) throw Error('standalone_job_invalid');
+  const state = lstatSync(stateRoot);
+  if (!state.isDirectory() || state.uid !== process.getuid() || state.mode & 0o077) throw Error('standalone_state_root_untrusted');
+  const phoneKeys = new Set(['DOUYIN_PHONE_REGISTRY','DOUYIN_ACCOUNT_REGISTRY','DOUYIN_PHONE_TMP_ROOT','DOUYIN_PHONE_LOCK_ROOT']);
+  if (Object.entries(phoneEnv).some(([name,value])=>!phoneKeys.has(name)||typeof value!=='string'||/[\0\r\n]/.test(value))) {
+    throw Error('standalone_phone_env_invalid');
+  }
+  const dir = join(stateRoot, job.run_id);
+  const modelOutput = join(dir, 'agent-receipt.json');
+  const start = Math.floor(Date.now()/1000);
+  const deadline = (start+work)*1000, cleanupDeadline = (start+work+grace)*1000;
+  const company = cfg.company;
+  const selectedInput = { task_id:job.task_id, run_tag:job.run_id, profile:resource.profile, serial:resource.serial, line:resource.line, limit:1 };
+  const scope = {
+    ...agentInput({
+      ...cfg.env, LEADGEN_EXECUTION_MODE:'agent', WF_BRAIN_WORKFLOW:key, WF_BRAIN_TASK_ID:job.task_id, WFR_TAG:job.run_id,
+      P:resource.profile, SERIAL:resource.serial, LEADGEN_LINE:resource.line, LEADGEN_LIMIT:'1',
+      WF_RUN_START_TS:String(start), WF_RUN_MAX_SECONDS:String(work+grace),
+    }),
+    source_commit:source.deployment.source_commit, expected_account:resource.account, company,
+    machine_id:job.machine_id, approved_keywords:[keyword],
+  };
+  const references = Object.fromEntries(source.activities.map(({reference})=>[reference.slot_key,{
+    reference_id:reference.reference_id, activity_id:reference.activity_id, activity_definition_version_id:reference.activity_version_id,
+  }]));
+  const auth = runModel ? null : prepareCodexAuth(codex.auth,{codex:{args:[],env_keys:[]}});
+  if (!runModel && (!auth || !isAbsolute(codex.command) || !codex.model)) throw Error('standalone_codex_unconfigured');
+
+  return {
+    async startHost() {
+      mkdirSync(dir,{mode:0o700});
+      const started = await post('runs/'+job.run_id+'/start-skill',{
+        task_id:job.task_id, claimer:job.claimer, claimed_at:job.claimed_at,
+        definition:{...job.definition,runtime_snapshot_sha256:profile.metadata[source.activities[0].reference.slot_key].runtime_snapshot_sha256,
+          attempt_key:job.task_id+':1',actor:job.claimer},
+        standalone:{scope,skill},
+      });
+      const binding = started.binding;
+      const identity = {
+        protocol:'codex-exec-v1', task_id:job.task_id, run_id:job.run_id, claimer:job.claimer, claimed_at:job.claimed_at, machine_id:job.machine_id,
+        profile_sha256:hash(profile), skill, task_run_id:started.task_run_id, approved_keywords:[keyword],
+        run_binding:{ run_binding_id:binding.id, source_kind:binding.source_kind, workflow_id:binding.workflow_id,
+          workflow_definition_version_id:binding.workflow_definition_version_id,attempt_key:binding.attempt_key,activities:references },
+        input:selectedInput,
+      };
+      const prepared = preparePublicDomainSnapshot({identity,profile,runDirectory:dir,deadline_ms:deadline,cleanup_deadline_ms:cleanupDeadline,standaloneSkillPath:skillPath});
+      const snapshot = prepared.snapshot;
+      if (!same(scope,snapshot.standalone_skill.scope,hash)) throw Error('standalone_scope_drift');
+      durableWrite(join(dir,'run-definition.json'),{...snapshot,snapshot_sha256:hash(snapshot)});
+      const attestation = Object.fromEntries([
+        'protocol','task_id','run_id','claimer','claimed_at','machine_id','profile_sha256','skill','scope_sha256',
+        'run_binding','task_run_id','company','approved_keywords',
+      ].map(field=>[field,snapshot.standalone_skill[field]]));
+      const reply = await post('workflow-foundation/standalone/attest',{machine_id:job.machine_id,identity:attestation});
+      if (reply.attested !== true) throw Error('standalone_attestation_unconfirmed');
+      return startStandaloneSkillRuntime({runDirectory:dir,environment:{...prepared.env,...phoneEnv}});
+    },
+    async runAgent({connectionPath}) {
+      if (runModel) return runModel({connectionPath,modelOutput});
+      const prompt = [
+        '执行冻结的 101 视频采集 Skill。只执行指定关键词的一条候选。先读取 skill/SKILL.md 和 references/101.md。',
+        '通过以下本轮工具连接执行，不直接读取宿主凭据或访问业务数据库。',
+        JSON.stringify({tool_command:[process.execPath,join(dir,'runtime','standalone-skill-runtime.mjs'),'call',connectionPath],
+          tool_protocol:'在命令尾追加 inspect、phone 或 business，并将参数对象通过 stdin 传入。读回指标需保留候选输入。',
+          metrics_command:[process.execPath,join(dir,'runtime','standalone-skill-runtime.mjs'),'metrics',dir],keyword}),
+        '最终只返回 JSON 对象 {"video": <提交给 discover 的同一个 video 对象>}。没有入库候选时返回 {"video":null}。',
+      ].join('\n');
+      const remaining = deadline-Date.now();
+      if (remaining < 1000) throw Error('standalone_work_deadline');
+      await execute(codex.command,['exec',...auth.args,'--model',codex.model,'--skip-git-repo-check','--output-last-message',modelOutput,prompt],{
+        cwd:dir, env:codexAuthEnvironment({PATH:process.env.PATH,HOME:process.env.HOME,LANG:'C.UTF-8'},auth.auth),
+        timeout:remaining,maxBuffer:4*1024*1024,
+      });
+    },
+    async verifyBusiness({connectionPath}) {
+      const result = JSON.parse(readOwnedFile(modelOutput));
+      return confirmDiscovery(result.video, keyword, (operation,payload)=>callStandaloneSkillTool(connectionPath,operation,payload));
+    },
+  };
+}
+
+export async function createProvider(job, options) {
+  if (!process.env.CECELIA_INTERNAL_TOKEN || process.env.BRAIN_INTERNAL_TOKEN !== process.env.CECELIA_INTERNAL_TOKEN) {
+    throw Error('standalone_provider_brain_credentials_unavailable');
+  }
+  const binding = Object.hasOwn(options.bindings,job.input.binding_key) ? options.bindings[job.input.binding_key] : null;
+  if (!binding || binding.tenant_id !== job.tenant_id) throw Error('standalone_provider_binding_missing');
+  const profile = JSON.parse(readOwnedFile(binding.profile));
+  if (digest(profile) !== binding.profile_sha256) throw Error('standalone_provider_profile_drift');
+  const root = profile.cwd;
+  if (!isAbsolute(root) || realpathSync(root) !== root || !lstatSync(root).isDirectory()) throw Error('standalone_provider_root_invalid');
+  const modules = ['public-domain-snapshot.mjs','runtime-definition.mjs','standalone-skill-runtime.mjs','standalone-skill-ipc.mjs'];
+  if (modules.some(name=>!Object.hasOwn(profile.files ?? {},name))) throw Error('standalone_provider_toolkit_unfrozen');
+  for (const [entry,sha256] of Object.entries(profile.files)) {
+    if (isAbsolute(entry) || entry.split('/').some(part=>!part||part==='.'||part==='..')) throw Error('standalone_provider_toolkit_unfrozen');
+    const file = join(root,entry);
+    const info = lstatSync(file);
+    if (realpathSync(file)!==file || !info.isFile() || (info.mode & 0o022)
+      || createHash('sha256').update(readFileSync(file)).digest('hex')!==sha256) throw Error('standalone_provider_toolkit_drift');
+  }
+  const toolkit = Object.assign({}, ...await Promise.all(modules.map(name=>import(pathToFileURL(join(root,name)).href))));
+  return createDiscoveryServices(job,{profile,skillPath:binding.skill_path,stateRoot:options.state_root,
+    phoneEnv:binding.phone_env,codex:options.codex,toolkit},{
+    post:async (endpoint,body)=>{
+      const response=await fetch('http://127.0.0.1:5221/api/brain/'+endpoint,{
+        method:'POST',headers:{'content-type':'application/json','x-internal-token':process.env.CECELIA_INTERNAL_TOKEN},
+        body:JSON.stringify(body),signal:AbortSignal.timeout(15000),redirect:'error',
+      });
+      if (!response.ok) throw Error('standalone_provider_brain_'+response.status);
+      return response.json();
+    },
+  });
+}

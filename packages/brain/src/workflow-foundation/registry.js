@@ -1,3 +1,5 @@
+import {resolveStandaloneRelease,validateStandaloneInput} from './standalone-release.js';
+import {standaloneWorkflows} from './standalone-source.js';
 import {createRoutedTask} from '../work-routing-store.js';
 import {getRelease,getReleaseGate} from '../lib/release-index.js';
 import {digest} from '../orchestrator/commander-decision.js';
@@ -42,16 +44,25 @@ export async function createFoundationTask(pool,input,services={}){
  onlyKeys(input,['workflow_id','release_id','input','idempotency_key','title']);
  requireFoundation(typeof input.idempotency_key==='string'&&input.idempotency_key.length>0&&input.idempotency_key.length<=128,'foundation_idempotency_key_invalid',400);
  requireFoundation(input.title===undefined||typeof input.title==='string'&&input.title.length>0&&input.title.length<=200,'foundation_title_invalid',400);
- const requestHash=digest(input),sourceId='foundation:'+digest({workflow_id:input.workflow_id,key:input.idempotency_key});
+ const {notionPageId,notionTenantId,notionWorkflowKey=standaloneWorkflows['101']}=services;
+ const notionStage=notionPageId&&Object.keys(standaloneWorkflows).find(stage=>standaloneWorkflows[stage]===notionWorkflowKey);
+ if(notionPageId!==undefined)requireFoundation(UUID.test(notionPageId)&&typeof notionTenantId==='string'&&notionTenantId.length>0,'foundation_notion_binding_invalid',400);
+ const requestHash=digest(input),sourceId=notionPageId?'foundation:notion:'+notionPageId:'foundation:'+digest({workflow_id:input.workflow_id,key:input.idempotency_key});
  return foundationTransaction(pool,sourceId,async db=>{
   const existing=(await db.query("SELECT * FROM tasks WHERE payload->'foundation_request'->>'source_id'=$1 LIMIT 1",[sourceId])).rows[0];
-  if(existing){requireFoundation(existing.payload.foundation_request.request_sha256===requestHash,'foundation_idempotency_conflict');return {task:existing,created:false};}
-  const fixed=await resolveFoundationRelease(db,input);validateFoundationInput(fixed.runtime,input.input);
-  const metadata={commander_protocol:FOUNDATION_PROTOCOL,workflow_key:fixed.row.key,workflow_input:input.input,workflow_definition:fixed.definition,foundation_request:{source_id:sourceId,request_sha256:requestHash,machine_id:fixed.machine_id,runtime:fixed.runtime}};
+  if(existing){requireFoundation(existing.payload.foundation_request.request_sha256===requestHash&&(!notionPageId||existing.payload.notion_page_id===notionPageId&&existing.tenant_id===notionTenantId),'foundation_idempotency_conflict');return {task:existing,created:false};}
+  if(notionPageId)requireFoundation(notionStage,'foundation_notion_workflow_invalid',400);
+  const fixed=notionPageId?await resolveStandaloneRelease(db,input,notionWorkflowKey):await resolveFoundationRelease(db,input);
+  if(notionPageId)validateStandaloneInput(input.input,notionStage);else validateFoundationInput(fixed.runtime,input.input);
+  const metadata={commander_protocol:FOUNDATION_PROTOCOL,workflow_key:fixed.row.key,workflow_input:input.input,workflow_definition:fixed.definition,foundation_request:{source_id:sourceId,request_sha256:requestHash,machine_id:fixed.machine_id,runtime:fixed.runtime},
+   ...(notionPageId?{notion_page_id:notionPageId,tenant_id:notionTenantId,source:`notion_leadgen_${notionStage}`}:{})};
   const createTask=services.createTask??createRoutedTask;
   const routed=await createTask(db,{source:'api',source_id:sourceId,title:input.title??fixed.row.name,description:'执行已发布的固定Workflow版本',requested_task_type:'workflow_dispatch',artifact_kind:'execution',mutation_intent:'none',metadata,task:{kind:'workflow',status:'queued',priority:'P2'}},null,{transaction:'existing'});
   const task=routed.task??routed;
   requireFoundation(task?.id&&task.payload?.commander_protocol===FOUNDATION_PROTOCOL,'foundation_task_registration_failed');
-  return {task,created:true};
+  if(!notionPageId)return {task,created:true};
+  const updated=(await db.query('UPDATE tasks SET tenant_id=$2 WHERE id=$1 RETURNING *',[task.id,notionTenantId])).rows[0];
+  requireFoundation(updated?.id===task.id,'foundation_notion_task_binding_failed');
+  return {task:updated,created:true};
  });
 }

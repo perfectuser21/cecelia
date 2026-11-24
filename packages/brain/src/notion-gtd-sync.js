@@ -15,6 +15,7 @@ import { pullNotionTasks, fetchNotionPageContent } from './notion-push-sync.js';
 import {pushEnglishTask, readEnglishControls, acknowledgeEnglishControls, resultTextOf} from './lib/notion-english-task-sync.js';
 export {resultTextOf} from './lib/notion-english-task-sync.js';
 import { withBackoff } from './lib/notion-backoff.js';
+import { standaloneSourceList } from './workflow-foundation/standalone-source.js';
 import {
   QIUMI_STATUS_MAP, ZH_HUMAN_ONLY_STATUSES, OWNER_HOLD_REASON, zhPriorityToBrain, zhWriteFor, enStatusFor,
 } from './lib/qiumi-status-map.js';
@@ -173,7 +174,9 @@ export const PUSH_QIUMI_QUERY = `
         FROM tasks
        WHERE (payload->>'notion_zh_page_id' IS NOT NULL OR payload->>'notion_page_id' IS NOT NULL)
          -- 中文行只由 qiumi_task 父任务回写；device_job 子任务不能覆盖或二次入账。
-         AND task_type = 'qiumi_task'
+         AND (task_type = 'qiumi_task'
+           OR (task_type = 'workflow_dispatch' AND payload->>'source' IN (${standaloneSourceList})
+               AND payload->>'notion_page_id' IS NOT NULL AND payload->>'notion_zh_page_id' IS NULL))
     )
     SELECT * FROM receipts
      WHERE (notion_props->>'qiumi_pushed_receipt') IS DISTINCT FROM receipt_fingerprint
