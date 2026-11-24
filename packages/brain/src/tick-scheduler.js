@@ -63,7 +63,16 @@ export async function runScheduler() {
   const goalIds = rows.map(r => r.id);
 
   if (goalIds.length === 0) {
-    return { dispatched: false, reason: 'no_goals', code_dispatch: codeDispatch, elapsed_ms: Date.now() - start, guidance_found: guidanceFound };
+    // Notion交办不以KR存在为准入条件；只尝试明确的原生任务，不扩大普通AI候选。
+    const nativeDispatch = await dispatchNextTask(null, { nativeOnly: true });
+    return {
+      ...nativeDispatch,
+      reason: nativeDispatch.reason === 'no_dispatchable_task' ? 'no_goals' : nativeDispatch.reason,
+      ...(nativeDispatch.dispatched ? { dispatch_lane: 'native' } : {}),
+      code_dispatch: codeDispatch,
+      elapsed_ms: Date.now() - start,
+      guidance_found: guidanceFound,
+    };
   }
 
   // 4. 派发（调 dispatcher，不含任何 LLM）

@@ -652,7 +652,7 @@ async function delegatedPages(token, mark = null) {
 }
 
 async function ingestDelegatedBatch(pool, token, opts, marks) {
-  let ingested = 0, skipped = 0;
+  let ingested = 0, skipped = 0, failed = 0;
   try {
     for (const mark of marks) {
       const pages = await delegatedPages(token, mark);
@@ -661,12 +661,13 @@ async function ingestDelegatedBatch(pool, token, opts, marks) {
           const result = await ingestDelegatedPage(pool, token, page, opts);
           if (result.kind === 'qiumi_task') ingested += 1; else skipped += 1;
         } catch (error) {
+          failed += 1;
           await logSyncError(pool, error.message);
           console.warn(`[notion-pull] 页面 ${page.id} 入账失败: ${error.message}`);
         }
       }
     }
-    return { ingested, skipped };
+    return { ingested, skipped, ...(failed ? { failed, error: 'notion_delegated_pages_failed' } : {}) };
   } catch (error) {
     await logSyncError(pool, error.message);
     return { ingested, skipped, error: error.message };

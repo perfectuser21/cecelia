@@ -26,6 +26,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const mockQuery = vi.fn();
+let _cooling = false, _billing = false, _draining = false;
 vi.mock('../db.js', () => ({ default: { query: (...args) => mockQuery(...args) } }));
 
 vi.mock('../routing/qiumi-router.js', () => ({
@@ -38,7 +39,7 @@ vi.mock('../executor.js', () => ({
   triggerCeceliaRun: (...args) => mockTriggerCeceliaRun(...args),
   checkCeceliaRunAvailable: vi.fn(async () => ({ available: true })),
   killProcessTwoStage: vi.fn(async () => ({ killed: false })),
-  getBillingPause: () => ({ active: false }),
+  getBillingPause: () => ({ active: _billing }),
 }));
 
 vi.mock('../dispatch-stats.js', () => ({
@@ -63,8 +64,8 @@ vi.mock('../dispatch-helpers.js', () => ({
   processCortexTask: vi.fn(async () => ({ dispatched: false })),
 }));
 
-vi.mock('../quota-cooling.js', () => ({ isGlobalQuotaCooling: () => false, getQuotaCoolingState: () => ({ until: null }) }));
-vi.mock('../drain.js', async (original) => ({ ...await original(), isDraining: () => false, getDrainStartedAt: () => null }));
+vi.mock('../quota-cooling.js', () => ({ isGlobalQuotaCooling: () => _cooling, getQuotaCoolingState: () => ({ until: null }) }));
+vi.mock('../drain.js', async (original) => ({ ...await original(), isDraining: () => _draining, getDrainStartedAt: () => null }));
 
 // 默认总闸关着：池满（budget 4 / used 4）
 const closedBudget = () => ({
@@ -124,6 +125,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockQuery.mockReset();
   _candidatePool = [];
+  _cooling = false; _billing = false; _draining = false;
   _budget = closedBudget();
   wireQueries();
   // 让流程在「标 in_progress」处就地返回，用例到此为止
@@ -242,4 +244,17 @@ it('显式原生任务入口在池满时不以普通高优先级任务驱逐其�
 
   expect(mockQuery.mock.calls.some(([sql]) => /SELECT priority FROM tasks/.test(sql))).toBe(false);
   expect(mockUpdateTask).toHaveBeenCalledWith({ task_id: 'q1', status: 'in_progress' });
+});
+
+it.each(['quota_cooling','billing_pause','draining','resource_unavailable'])('显式原生任务入口保留%s停止门，不认领或启动候选', async reason => {
+  _candidatePool = [qiumi];
+  _cooling = reason === 'quota_cooling'; _billing = reason === 'billing_pause'; _draining = reason === 'draining';
+  if (reason === 'resource_unavailable') _budget.resourceAdmissionBlocked = true;
+
+  const result = await dispatchNextTask(null, { nativeOnly: true });
+
+  expect(result.reason).toBe(reason);
+  expect(mockSelectNextDispatchableTask).not.toHaveBeenCalled();
+  expect(mockUpdateTask).not.toHaveBeenCalled();
+  expect(mockTriggerCeceliaRun).not.toHaveBeenCalled();
 });

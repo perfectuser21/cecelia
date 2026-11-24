@@ -271,5 +271,7 @@ export async function runWorkflowCommanderDispatch(pool, deps = {}) {
   const controlled = await reconcileCommanderV2(pool, deps);
   const reaped = await reapWorkflowCommanderRuns(pool, deps);
   const dispatched = await dispatchWorkflowCommanderTasks(pool, deps);
-  return { reaped, dispatched, controlled };
+  const errors = controlled.filter(row => row.error).length;
+  return { reaped, dispatched, controlled,
+    ...(errors ? { ok: false, error: `commander_reconciliation_failed: ${errors}` } : {}) };
 }
