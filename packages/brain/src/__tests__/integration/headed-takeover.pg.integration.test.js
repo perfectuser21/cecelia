@@ -28,7 +28,7 @@ const handoffDocs=mkdtempSync(join(tmpdir(),'headed-takeover-handoff-'));
 beforeAll(async()=>{
  await admin.connect();await admin.query(`CREATE SCHEMA ${schema}`);
  await pool.query(`CREATE TABLE tasks(id uuid PRIMARY KEY,status text DEFAULT 'queued',task_type text DEFAULT 'data',executor_kind text DEFAULT 'bridge',claimed_by text,claimed_at timestamptz,started_at timestamptz,updated_at timestamptz DEFAULT now(),row_version integer DEFAULT 0,payload jsonb DEFAULT '{}',status_history jsonb DEFAULT '[]',result jsonb,completed_at timestamptz,quota_exhausted_at timestamptz,pr_url text,pr_status text,error_message text,blocked_detail jsonb);
- CREATE TABLE task_runs(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),task_id uuid REFERENCES tasks(id),run_id text,status text DEFAULT 'running',ended_at timestamptz);
+ CREATE TABLE task_runs(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),task_id uuid REFERENCES tasks(id),run_id text,status text DEFAULT 'running',ended_at timestamptz,context jsonb DEFAULT '{}',result jsonb);
  CREATE TABLE initiative_runs(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),current_task_id uuid REFERENCES tasks(id),phase text DEFAULT 'planning');
  CREATE TABLE harness_attempts(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),run_id uuid REFERENCES initiative_runs(id),status text DEFAULT 'queued');
  CREATE TABLE harness_attempt_cleanup_outbox(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),run_id uuid REFERENCES initiative_runs(id),status text DEFAULT 'pending');
