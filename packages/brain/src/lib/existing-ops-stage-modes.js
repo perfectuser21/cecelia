@@ -72,7 +72,7 @@ if(createHash('sha256').update(noexecText).digest('hex')!==noexecSha)throw Error
 export const CI_NOEXEC_INPUTS={...JSON.parse(noexecText),[CI_NOEXEC_PROFILE_PATH]:noexecSha};
 // 手动专项边界独立封组，保留已发布noexec及business原身份。
 export const CI_MANUAL_BOUNDARY_PROFILE_PATH='packages/brain/src/lib/existing-ops-ci-manual-boundary-profile.json';
-const manualBoundarySha='2709d6add86db1742a9abf96aa37a8971933ecca0144de4c5c99aa54a43cea94',manualBoundaryText=readFileSync(new URL('./existing-ops-ci-manual-boundary-profile.json',import.meta.url),'utf8');
+const manualBoundarySha='2b39b758572df8ed29620fe733d1c35bfcabefa9c413baf6b31fd923e4ef9bf6',manualBoundaryText=readFileSync(new URL('./existing-ops-ci-manual-boundary-profile.json',import.meta.url),'utf8');
 if(createHash('sha256').update(manualBoundaryText).digest('hex')!==manualBoundarySha)throw Error('basic_ci_source_unproven');
 export const CI_MANUAL_BOUNDARY_INPUTS={...JSON.parse(manualBoundaryText),[CI_MANUAL_BOUNDARY_PROFILE_PATH]:manualBoundarySha};
 const RUNNER='scripts/ci/run-basic-check.mjs',CONFIG='scripts/ci/deep-integration.config.mjs';

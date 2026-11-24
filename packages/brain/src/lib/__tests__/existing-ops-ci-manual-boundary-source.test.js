@@ -34,8 +34,9 @@ it('已发布56完整组保持Basic和Deep资格，新旧selector或新profile�
  const old=readFixedExistingOpsGitFixture('56b493acdb624ea8bd251f888d3a2d16f01375ac');
  const oldRelations=await collect(async p=>old.read(p),old.paths);
  expect(oldRelations.some(r=>r.kind==='reviewed_manual_integration_boundary_contract')).toBe(false);
- const config='scripts/ci/deep-integration.config.mjs';
- await expect(observe({[config]:old.read(config)})).rejects.toThrow('basic_ci_source_unproven');
- await expect(collect(async p=>p===config?source(p):old.read(p),old.paths)).rejects.toThrow('basic_ci_source_unproven');
+ for(const control of ['scripts/ci/deep-integration.config.mjs','scripts/ci/brain-test-debt.json']){
+  await expect(observe({[control]:old.read(control)})).rejects.toThrow('basic_ci_source_unproven');
+  await expect(collect(async p=>p===control?source(p):old.read(p),old.paths)).rejects.toThrow('basic_ci_source_unproven');
+ }
  await expect(collect(async p=>p===CI_MANUAL_BOUNDARY_PROFILE_PATH?source(p):old.read(p),[...old.paths,CI_MANUAL_BOUNDARY_PROFILE_PATH])).rejects.toThrow('basic_ci_source_unproven');
 });
