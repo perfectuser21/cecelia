@@ -7,7 +7,7 @@ import { beforeAll, afterAll, it, expect, vi } from 'vitest';
 import { DB_DEFAULTS } from '../../db-config.js';
 
 const state = vi.hoisted(() => ({ pool: null }));
-vi.mock('../../db.js', () => ({ default: { query: (...args) => state.pool.query(...args) } }));
+vi.mock('../../db.js', () => ({ default: { query: (...args) => state.pool.query(...args), connect: () => state.pool.connect() } }));
 vi.mock('../../domain-detector.js', () => ({ detectDomain: () => ({ domain: 'growth' }) }));
 vi.mock('../../task-updater.js', () => ({ blockTask: vi.fn() }));
 
@@ -25,8 +25,11 @@ beforeAll(async () => {
   await admin.connect();
   await admin.query(`CREATE SCHEMA ${schema}`);
   await pool.query(`CREATE TABLE tasks(id UUID PRIMARY KEY, claimed_by TEXT, claimed_at TIMESTAMPTZ,
-    payload JSONB DEFAULT '{}'::jsonb,
+    payload JSONB DEFAULT '{}'::jsonb, result JSONB DEFAULT '{}'::jsonb, status TEXT DEFAULT 'queued',
     executor_kind TEXT CONSTRAINT tasks_executor_kind_check CHECK (executor_kind IN ('headed-session','brain-local')))`);
+  await pool.query(`CREATE TABLE task_runs(id UUID PRIMARY KEY,task_id UUID,run_id TEXT,status TEXT,context JSONB,result JSONB,ended_at TIMESTAMPTZ);
+    CREATE TABLE task_events(id UUID PRIMARY KEY,task_id UUID,event_type TEXT,payload JSONB);
+    CREATE TABLE device_locks(device_name TEXT PRIMARY KEY,locked_by TEXT)`);
   await pool.query(sql('535_coding_workflow_runner_executor_kind.sql'));
   const { default: router } = await import('../../routes/task-tasks.js');
   claim = router.stack.find((l) => l.route?.path === '/:id/claim' && l.route.methods.post).route.stack[0].handle;
@@ -50,7 +53,8 @@ it('预置 headed-session 的 queued 任务被 coding-workflow-runner 认领后 
   const id = randomUUID();
   await pool.query("INSERT INTO tasks(id, executor_kind) VALUES($1, 'headed-session')", [id]);
   const res = await claimAs(id, { claimer: 'coding-workflow-runner@h', executor_kind: 'coding-workflow-runner' });
-  expect(res.code).toBe(200);
+  expect(res.code, JSON.stringify(res.body)).toBe(200);
+  expect((await pool.query('SELECT claimed_by FROM tasks WHERE id=$1', [id])).rows[0].claimed_by).toBe('coding-workflow-runner@h');
   expect(res.body.executor_kind).toBe('coding-workflow-runner');
   expect(await kindOf(id)).toBe('coding-workflow-runner');
 });

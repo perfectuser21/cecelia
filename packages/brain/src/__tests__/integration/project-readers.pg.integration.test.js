@@ -28,11 +28,30 @@ const otherProjectId = randomUUID();
 const keyword = `reader${randomUUID().replaceAll('-', '')}`;
 let client;
 let querySpy;
+let connectSpy;
+let borrowedTransactions=0;
 
 beforeAll(async () => {
   client = await pool.connect();
   await client.query('BEGIN');
   querySpy = vi.spyOn(pool, 'query').mockImplementation((...args) => client.query(...args));
+  // 现役PATCH按请求借事务连接；与夹具共用真实PG事务，用savepoint隔离其提交边界。
+  connectSpy = vi.spyOn(pool, 'connect').mockImplementation(async () => {
+    const savepoint = `project_reader_request_${++borrowedTransactions}`;
+    return {
+      query: async (sql, ...args) => {
+        const command = typeof sql === 'string' ? sql.trim().toUpperCase() : '';
+        if (command === 'BEGIN') return client.query(`SAVEPOINT ${savepoint}`);
+        if (command === 'COMMIT') return client.query(`RELEASE SAVEPOINT ${savepoint}`);
+        if (command === 'ROLLBACK') {
+          await client.query(`ROLLBACK TO SAVEPOINT ${savepoint}`);
+          return client.query(`RELEASE SAVEPOINT ${savepoint}`);
+        }
+        return client.query(sql, ...args);
+      },
+      release() {},
+    };
+  });
   await client.query(`INSERT INTO key_results(id,title,status,current_value,target_value)
     VALUES($1,$2,'in_progress',0,100)`, [krId, keyword]);
   await client.query(`INSERT INTO projects(id,name,status,kr_id,created_at,metadata)
@@ -49,6 +68,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   querySpy?.mockRestore();
+  connectSpy?.mockRestore();
   if (client) {
     await client.query('ROLLBACK');
     client.release();
