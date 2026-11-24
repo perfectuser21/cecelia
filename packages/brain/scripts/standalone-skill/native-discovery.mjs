@@ -116,16 +116,16 @@ export async function createDiscoveryServices(job, {profile, skillPath, stateRoo
       return nativeHost;
     },
     async runAgent({connectionPath}) {
-      if (runModel) return runModel({connectionPath,modelOutput});
       const prompt = [
         `执行冻结的 ${stage} Skill。先读取 skill/SKILL.md 和 skill/references/${stage}.md。只处理本单的一条候选。`,
         '通过以下本轮工具连接执行，不直接读取宿主凭据或访问业务数据库。',
         JSON.stringify({tool_command:[process.execPath,join(dir,'runtime','standalone-skill-runtime.mjs'),'call',connectionPath],
           tool_protocol:`在命令尾追加 ${scoring ? 'inspect 或 business' : 'inspect、phone 或 business'}，并将参数对象通过 stdin 传入。`,
           ...(scoring ? businessRange : {metrics_command:[process.execPath,join(dir,'runtime','standalone-skill-runtime.mjs'),'metrics',dir],keyword})}),
-        scoring ? '按 Skill 核定批次，走评分、标记和配送的可信读回。评分回执不明时只读回原操作。以工具实际回执为准。'
+        scoring ? '按 Skill 调用 score_input 取得冻结评论和政策。由当前 Agent 评分，用 score_submit 提交结论。随后核验原评分、标记及配送。提交回执不明时只读回原操作。'
           : '最终只返回 JSON 对象 {"video": <提交给 discover 的同一个 video 对象>}。没有入库候选时返回 {"video":null}。',
       ].join('\n');
+      if (runModel) return runModel({connectionPath,modelOutput,prompt});
       const remaining = deadline-Date.now();
       if (remaining < 1000) throw Error('standalone_work_deadline');
       await execute(codex.command,['exec',...auth.args,'--model',codex.model,'--skip-git-repo-check','--output-last-message',modelOutput,prompt],{

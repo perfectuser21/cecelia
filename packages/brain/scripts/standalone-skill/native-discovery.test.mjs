@@ -94,8 +94,9 @@ test.each(['101','103'])('%s 按派单身份起跑并核证，103 只验收宿�
         assert.equal(body.identity.run_id,runId);
         return {attested:true};
       },
-      runModel:async({modelOutput})=>{
+      runModel:async({modelOutput,prompt})=>{
         calls.push('agent');
+        if(scoring){assert.match(prompt,/score_input/);assert.match(prompt,/score_submit/);}
         if(!scoring)writeFileSync(modelOutput,JSON.stringify({video}),{mode:0o600});
       },
     });
