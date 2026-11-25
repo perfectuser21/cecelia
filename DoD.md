@@ -1,11 +1,12 @@
-# 历史导入 CLI 清退验收
+# Watchdog 旧晨报探针退役验收
 
-Task: a91420af-8042-4d73-9a41-be33f02d847d
+Task: 3a46d936-d100-426e-b46f-8baaa53fea68
 GP-Anchor: none(infra)
 
-- [ ] 四个已复核无调用的历史 CLI 均删除；引用核查未发现现行可执行调用，历史文档保留。
-  Test: manual:node --input-type=module -e "import assert from 'node:assert/strict'; import {existsSync} from 'node:fs'; assert(['seed-zenithjoy-initiatives.mjs','seed-features.js','sync-features-to-notion.mjs','migrate-from-notion.mjs'].every(p => !existsSync('packages/brain/scripts/'+p)))"
-- [ ] packages/brain/src 全部源码与开发基线字节相同，现役派发和 Notion 任务/项目同步未改。
-  Test: manual:node --input-type=module -e "import {execFileSync} from 'node:child_process'; execFileSync('git',['diff','--exit-code','513854937559cd845b227c9d2a2a6c7a2b1fee43','--','packages/brain/src'],{stdio:'inherit'})"
-- [ ] 当前 Scripts CI 全部通过，包含事实、版本、迁移编号、DoD 与基本 CI 源码回归；无真实 seed 或业务迁移执行。
+- [ ] 固定工作日 UTC 01:25，真实脚本不调用旧 OpenClaw 容器或发送晨报假警；Brain/HK 检查和每日存活报到仍有效。
+  Test: manual:bash scripts/ops/__tests__/watchdog/retired-brief.test.sh
+- [ ] 新回归被当前 Ops 自动收集，完整 Ops 与 Scripts 组件通过。
+  Test: manual:node scripts/ci/run-basic-check.mjs ops
   Test: manual:node scripts/ci/run-basic-check.mjs scripts
+- [ ] Brain 源码与基线相同，未扩大到派发、Notion、备份或运行服务改动。
+  Test: manual:node --input-type=module -e "import {execFileSync} from 'node:child_process'; execFileSync('git',['diff','--exit-code','3532a553e8242be019658498c59b9255d54946ea','--','packages/brain/src'],{stdio:'inherit'})"
