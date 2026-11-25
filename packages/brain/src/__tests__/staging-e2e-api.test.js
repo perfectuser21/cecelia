@@ -35,6 +35,19 @@ describe('POST /api/brain/staging/e2e', () => {
     expect(mockPool.query).not.toHaveBeenCalled();
   });
 
+  it.each([
+    { pr_url: 'https://github.com/perfectuser21/zenithjoy-workspace/pull/2588' },
+    { pr_url: 'https://github.com/perfectuser21/zenithjoy-workspace/pull/2588', base_repo: 'cecelia' },
+    { pr_url: 'https://pr/zj', base_repo: 'perfectuser21/zenithjoy' },
+  ])('已退役的客户入口返回 410，且不建任务', async (payload) => {
+    mockPool.query.mockResolvedValue({ rows: [] });
+    const app = await buildApp();
+    const response = await request(app).post('/api/brain/staging/e2e').send(payload);
+    expect(response.status).toBe(410);
+    expect(response.body.error).toBe('zenithjoy_staging_retired');
+    expect(mockCreateTask).not.toHaveBeenCalled();
+  });
+
   it('新建成功 → 200 {created:true}，payload 字段齐全', async () => {
     mockPool.query.mockResolvedValue({ rows: [] });
     const app = await buildApp();
