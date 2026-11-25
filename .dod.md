@@ -1,14 +1,12 @@
-# Brain 按需发布验收
+# Brain 单测长尾验收
 
-Task: 4fe1b714-3d51-4412-93d8-015177d9841d
+Task: d58332fd-4b31-45f5-8419-669daa776746
 GP-Anchor: none(infra)
 
-- [ ] 真实 Git 树累计核对，稳定原生收据支持无需发布；未知或异常保守回原链，身份不伪造。
-  Test: manual:node --test scripts/ci/__tests__/basic-brain-deploy-preflight.test.mjs
-  Test: manual:node --test scripts/ci/__tests__/basic-brain-deploy-certification.test.mjs
-- [ ] 实际 CI shell 路由对独立监控改动无 POST，对有效变更保留原 exact-SHA 发布与失败结果。
-  Test: manual:node --test scripts/ci/__tests__/basic-brain-deploy-routing.test.mjs
-- [ ] Scripts/Ops 完整回归通过，Brain 源码未改，保留唯一发布 job。
+- [ ] 原有 28 用例完整保留，六文件在实际 Vitest 中通过，fixture 每例隔离，controller 包含 helper。
+  Test: manual:cd packages/brain && npx --no-install vitest run scripts/coding-workflow/runner/__tests__/source-merge- --reporter=verbose
+- [ ] 原有 CI 和发布回归通过，生产源码与 workflow 不变。
   Test: manual:node scripts/ci/run-basic-check.mjs scripts
   Test: manual:node scripts/ci/run-basic-check.mjs ops
-  Test: manual:node --input-type=module -e "import {execFileSync} from 'node:child_process'; execFileSync('git',['diff','--exit-code','9dcb3692b6cebd11193fc6c872aa0470b2dfa142','--','packages/brain/src','packages/brain/package.json'],{stdio:'inherit'})"
+- [ ] AST 对账、Vitest 全量集合核对和 PR/main 实际性能证据完成；认证经独审后刷新，首次完整发布。
+  Test: manual:node --test scripts/ci/__tests__/basic-brain-deploy-certification.test.mjs
