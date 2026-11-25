@@ -73,7 +73,8 @@ if name=='bash' and len(args)==2 and args[0]=='-c' and re.fullmatch(
 if name=='timeout' and ((args[:2]==['20','ssh']) or (args[:3]==['25','bash','-c'])):
  os.execv(str(area/'bin'/args[1]),args[1:])
 if name=='curl':
- if args==['-s','-m','10','http://100.71.151.105:5221/api/brain/health']:
+ if args in [['-s','-m','10','http://100.71.151.105:5221/api/brain/health'],
+             ['-s','-m','10','http://127.0.0.1:5221/api/brain/health']]:
   print(json.dumps({'status':os.environ['FIXTURE_BRAIN']}));sys.exit(0)
  if len(args)==10 and args[:5]==['-s','-m','10','-X','POST'] and args[6:9]==['-H','Content-Type: application/json','-d']:
   body=json.loads(args[9]);url=args[5]
@@ -103,6 +104,8 @@ deny()
         assert not forbidden.exists(), '脚本试图执行未批准命令：' + (forbidden.read_text() if forbidden.exists() else '')
         assert result.returncode == 0, f'真实入口异常退出{result.returncode}: {result.stderr}'
         calls = [json.loads(line) for line in (area / 'calls.jsonl').read_text().splitlines()]
+        health_targets = [args[-1] for name,args in calls if name == 'curl' and '-X' not in args]
+        assert health_targets == ['http://127.0.0.1:5221/api/brain/health'], f'Brain 健康探针仍路由退役旧机：{health_targets}'
         assert not any(name == 'docker' for name, _ in calls), '退役晨报仍调用已不存在的 OpenClaw 容器'
         messages = [json.loads(args[-1]) for name,args in calls if name == 'curl' and '-X' in args]
         assert not any('晨报未按时成功' in json.dumps(message,ensure_ascii=False) for message in messages), '仍发送旧晨报假警'
