@@ -70,6 +70,8 @@ authority: CURRENT_STATE
 
 发布CLI的每次begin仅对明确的镜像台账锁忙等待最多30秒、尝试最多31次，保留同一部署UUID；其他错误及pending核验规则不变。该预算只约束锁竞争，已拿锁的快照遵循原事务时限；shell核验陈旧pending后可开启第二次begin。镜像在稳定工具安装完成后设置GIT_SHA，使持久builder可复用工具层，同时保留后续源码导入与运行期精确SHA校验；PR、main、夜间和CD仍各自执行原有构建及验收。
 
+每日数据库备份沿用现有Mac定时入口，经15432 SSH隧道读取美国宿主PG。运行真身为Git内 `scripts/ops/backup-cecelia-studio.mjs`，现场入口指向固定提交副本。新archive解析与双端SHA成功后，仅回收14天外、Mac同SHA的远端副本；保留Mac全部历史和回执，未知身份或并发冲突保全原件。该规则防止共享数据卷被每日远端副本持续占满；不新增CI工作流或定时任务。archive解析和文件同字节校验不等于已做真实数据库恢复演练。
+
 旧cecelia-factory的新证据采集、刷新及运行来源入口已经退役；历史版本读回仍保留，遇到歧义明确拒绝，不通过远程Git重编译或猜测最新版本消解。旧工厂来源图及其历史哈希接受矩阵退出默认CI和启动加载链。共享source_set、既有冻结发布产物、Foundation/ZenithJoy/Commander发布与Infra登记继续保留，consumer_evidence不能作为可执行流程。当前发布仍须固定Git、真实输入、owner和权限边界；历史工作流曾经绿色不能为新候选授予资格。
 
 ```bash
