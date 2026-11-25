@@ -9,6 +9,9 @@ const SHA = /^[a-f0-9]{40}$/;
 const HEX64 = /^[a-f0-9]{64}$/;
 const UUID = /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/;
 const VERSION = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/;
+const CERT_PATH = 'scripts/ci/brain-deploy-certification.json';
+const CERT_SCHEMA = 'brain-deploy-certification/v1';
+const CERT_POLICY = 'brain-deploy-git-tree-five-paths-v1';
 const DOCS = new Set(['.prd.md', '.dod.md', 'DoD.md']);
 const OPS = new Set(['scripts/ops/us-vps/opc-watchdog.sh', 'scripts/ops/__tests__/watchdog/retired-brief.test.sh']);
 const fail = code => { throw new Error(code); };
@@ -48,7 +51,7 @@ function identity(status, health) {
   if (business?.protocol !== 'brain-release-readback/v1' || business.status !== 'passed'
       || business.scope !== 'read_only' || business.container_id !== receipt.container_id
       || business.external_services !== 'not_evaluated' || !Number.isSafeInteger(business.task_count)
-      || business.task_count < 0 || !HEX64.test(business.task_sample_sha256 ?? '')) fail('business_unverified');
+      || business.task_count < 0 || business.task_count > 1 || !HEX64.test(business.task_sample_sha256 ?? '')) fail('business_unverified');
   if (health.status !== 'healthy' || health.git_sha !== receipt.git_sha || health.version !== receipt.version
       || health.runtime?.isolated !== false || health.runtime?.background_automation !== true) fail('health_unverified');
   return {
@@ -85,7 +88,25 @@ function projection(repoRoot, sha, timeout) {
     }
     if (certified) excluded.add(key); else included.push(entry.raw);
   }
-  return { hash: createHash('sha256').update(Buffer.concat(included)).digest('hex'), all, excluded };
+  const consumer = included.filter(raw => {
+    const tab = raw.indexOf(9); return !raw.subarray(tab + 1, raw.length - 1).equals(Buffer.from(CERT_PATH));
+  });
+  return { hash: createHash('sha256').update(Buffer.concat(included)).digest('hex'),
+    consumerHash: createHash('sha256').update(Buffer.concat(consumer)).digest('hex'), all, excluded };
+}
+function certification(repoRoot, tree, timeout) {
+  const entry = tree.all.get(Buffer.from(CERT_PATH).toString('hex'));
+  if (!entry || entry.type !== 'blob' || entry.mode !== '100644') fail('certification_unavailable');
+  const size = Number(git(repoRoot, ['cat-file', '-s', entry.oid], timeout).toString().trim());
+  if (!Number.isSafeInteger(size) || size < 1 || size > 65536) fail('certification_unavailable');
+  let value;
+  try { value = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(git(repoRoot, ['cat-file', 'blob', entry.oid], timeout))); }
+  catch { fail('certification_unavailable'); }
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+      || Object.keys(value).sort().join(',') !== 'consumer_tree_sha256,policy_id,schema'
+      || value.schema !== CERT_SCHEMA || value.policy_id !== CERT_POLICY
+      || !HEX64.test(value.consumer_tree_sha256 ?? '')) fail('certification_unavailable');
+  return { value, oid: entry.oid };
 }
 function changedExclusions(baseline, target) {
   const result = [];
@@ -101,7 +122,8 @@ function changedExclusions(baseline, target) {
 export async function runPreflight({ repoRoot, target, brainUrl, force = false, requestTimeoutMs = 10000, gitTimeoutMs = 10000 }) {
   const report = { schema: 'brain-deploy-preflight/v1', action: 'deploy', deploy_required: true,
     target_sha: target, actual_runtime_sha: null, observed_at: [],
-    host_ops_installation: 'not_evaluated', external_services: 'not_evaluated' };
+    host_ops_installation: 'not_evaluated', external_services: 'not_evaluated',
+    certification_status: 'unavailable' };
   try {
     if (force) fail('forced');
     if (!SHA.test(target ?? '')) fail('invalid_target');
@@ -121,6 +143,21 @@ export async function runPreflight({ repoRoot, target, brainUrl, force = false, 
     git(repoRoot, ['merge-base', '--is-ancestor', first.id.git_sha, target], gitTimeoutMs);
     const baseline = projection(repoRoot, first.id.git_sha, gitTimeoutMs);
     const current = projection(repoRoot, target, gitTimeoutMs);
+    // A successful deployment never renews this source audit certificate. Any new
+    // consumer/control-plane change expires it until an explicitly reviewed update.
+    report.observed_consumer_tree_sha256 = current.consumerHash;
+    report.baseline_consumer_tree_sha256 = baseline.consumerHash;
+    const baselineCert = certification(repoRoot, baseline, gitTimeoutMs);
+    const targetCert = certification(repoRoot, current, gitTimeoutMs);
+    Object.assign(report, { certification_schema: targetCert.value.schema,
+      certification_policy_id: targetCert.value.policy_id,
+      certification_consumer_tree_sha256: targetCert.value.consumer_tree_sha256 });
+    if (baselineCert.oid !== targetCert.oid) fail('certification_changed');
+    if (baseline.consumerHash !== baselineCert.value.consumer_tree_sha256
+        || current.consumerHash !== targetCert.value.consumer_tree_sha256) {
+      report.certification_status = 'expired'; fail('certification_expired');
+    }
+    report.certification_status = 'valid';
     const second = await observe();
     if (JSON.stringify(first.id) !== JSON.stringify(second.id)) fail('runtime_drift');
     if (baseline.hash !== current.hash) fail('brain_projection_changed');
@@ -132,7 +169,8 @@ export async function runPreflight({ repoRoot, target, brainUrl, force = false, 
     // Do not copy subprocess output, network bodies, credentials or arbitrary paths into logs.
     const known = new Set(['forced','invalid_target','invalid_brain_url','head_target_mismatch','unknown_commit',
       'runtime_drift','brain_projection_changed','native_unsettled','business_unverified','health_unverified',
-      'http_unavailable','response_too_large','invalid_json_shape','invalid_git_tree']);
+      'http_unavailable','response_too_large','invalid_json_shape','invalid_git_tree',
+      'certification_unavailable','certification_changed','certification_expired']);
     report.reason = known.has(error.message) ? error.message : 'preflight_unavailable';
   }
   return report;

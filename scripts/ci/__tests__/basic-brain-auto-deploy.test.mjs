@@ -19,8 +19,14 @@ test('只有main push源码通过后运行唯一Brain发布job',()=>{
   assert.equal(job.steps.some(s=>s['continue-on-error']),false);
   const checkout=job.steps.find(s=>s.uses==='actions/checkout@v4');
   assert.equal(checkout.with.ref,'${{ github.sha }}');assert.equal(checkout.with['persist-credentials'],false);
-  const trigger=job.steps.find(s=>s.run?.includes('gate3-trigger-deploy.sh'));
-  assert.ok(trigger);assert.match(trigger.run,/202\|409/);
-  assert.match(trigger.run,/\*\).*exit 1/s);
-  assert.equal(job.steps.find(s=>s.run?.includes('gate3-wait-deploy.sh')).run,'bash scripts/ci/gate3-wait-deploy.sh "$BRAIN_URL" "$GITHUB_SHA"');
+  const route=job.steps.find(s=>s.run?.includes('run-brain-deploy.sh'));
+  assert.equal(route.run,'bash scripts/ci/run-brain-deploy.sh "$BRAIN_URL" "$GITHUB_SHA" "$RUNNER_TEMP/brain-deploy-preflight/report.json"');
+  const router=readFileSync(new URL('../run-brain-deploy.sh',import.meta.url),'utf8');
+  assert.match(router,/gate3-trigger-deploy\.sh" "\$BRAIN_URL" "\$TARGET_SHA"/);
+  assert.match(router,/202\|409/);
+  assert.match(router,/\*\).*exit 1/s);
+  assert.match(router,/gate3-wait-deploy\.sh" "\$BRAIN_URL" "\$TARGET_SHA"/);
+  const evidence=job.steps.find(s=>s.uses==='actions/upload-artifact@v4');
+  assert.equal(evidence.if,'always()');
+  assert.equal(evidence.with['if-no-files-found'],'error');
 });

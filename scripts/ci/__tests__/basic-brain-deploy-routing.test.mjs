@@ -7,6 +7,7 @@ import {fileURLToPath} from 'node:url';
 import {spawn, execFileSync} from 'node:child_process';
 import {createServer} from 'node:http';
 import {once} from 'node:events';
+import {createHash} from 'node:crypto';
 import {parse} from 'yaml';
 
 const source = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
@@ -52,6 +53,15 @@ async function scenario(t, {brainChanged = false, force = false, invalidReceipt 
   put('packages/brain/server.js', 'export const current = 1;\n');
   put('scripts/ops/us-vps/opc-watchdog.sh', '#!/bin/bash\ntrue\n');
   git('add', '.'); git('commit', '-qm', 'fixture baseline');
+  const ignored = new Set(['.prd.md', '.dod.md', 'DoD.md',
+    'scripts/ops/us-vps/opc-watchdog.sh', 'scripts/ops/__tests__/watchdog/retired-brief.test.sh',
+    'scripts/ci/brain-deploy-certification.json']);
+  const consumerTree = execFileSync('git', ['ls-tree', '-rz', '--full-tree', 'HEAD'], {cwd: dir, env})
+    .toString('utf8').split('\0').filter(entry => entry && !ignored.has(entry.slice(entry.indexOf('\t') + 1)))
+    .map(entry => entry + '\0').join('');
+  put('scripts/ci/brain-deploy-certification.json', JSON.stringify({schema: 'brain-deploy-certification/v1',
+    policy_id: 'brain-deploy-git-tree-five-paths-v1', consumer_tree_sha256: createHash('sha256').update(consumerTree).digest('hex')}));
+  git('add', '.'); git('commit', '-qm', 'fixture explicit certification');
   const baseline = git('rev-parse', 'HEAD');
   put(brainChanged ? 'packages/brain/server.js' : 'scripts/ops/us-vps/opc-watchdog.sh', brainChanged ? 'export const current = 2;\n' : '#!/bin/bash\n: new-monitor\n');
   git('add', '.'); git('commit', '-qm', 'fixture target');
