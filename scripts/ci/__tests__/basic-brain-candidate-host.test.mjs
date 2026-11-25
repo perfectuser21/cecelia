@@ -87,6 +87,32 @@ function fixture(t, fault = '', context = 'mac-studio') {
 const runBuild = f => f.run('bash scripts/brain-build.sh');
 const runStage = f => f.run(`set -euo pipefail; SCRIPT_DIR="$PWD/scripts"; ROOT_DIR="$PWD"; source scripts/lib/brain-staging.sh; brain_release_lock; stage_candidate "$EXPECTED_SHA" "$IMAGE" 1.0.0`);
 
+test('完整快照导出实际使用低压缩，保留完整参数且stdout只有归档字节', t => {
+  const f = fixture(t), result = runStage(f);
+  assert.equal(result.status, 0, result.stderr + result.stdout);
+  const dump = f.commands().find(a => a[0] === 'exec' && a[1] === 'cecelia-node-brain' && a[2] === 'sh');
+  assert.ok(dump, '必须执行生产Brain的导出入口');
+  const captured = join(f.dir, 'dump-args.json');
+  writeFileSync(join(f.dir, 'bin/pg_dump'), `#!${process.execPath}
+import fs from 'node:fs';
+fs.writeFileSync(process.env.CAPTURE_DUMP, JSON.stringify({args: process.argv.slice(2), password: process.env.PGPASSWORD}));
+process.stdout.write(Buffer.from([80, 71, 68, 77, 80, 0, 255, 10]));
+`, {mode: 0o755});
+  for (const port of ['6543', undefined]) {
+    const env = {...f.env, CAPTURE_DUMP: captured, DB_NAME: 'cecelia', DB_USER: 'fixture-user',
+      DB_HOST: 'source.example.invalid', DB_PASSWORD: 'fixture-password'};
+    if (port) env.DB_PORT = port; else delete env.DB_PORT;
+    const exported = spawnSync('sh', dump.slice(3), {env, timeout: 10000});
+    assert.equal(exported.status, 0, exported.stderr.toString());
+    assert.deepEqual(exported.stdout, Buffer.from('PGDMP\0\xff\n', 'latin1'));
+    assert.deepEqual(JSON.parse(readFileSync(captured, 'utf8')), {
+      args: ['-h', 'source.example.invalid', '-p', port ?? '5432', '-U', 'fixture-user',
+        '-d', 'cecelia', '-Fc', '--no-owner', '--no-acl', '--compress=gzip:1'],
+      password: 'fixture-password',
+    });
+  }
+});
+
 for (const fault of ['', 'tag-race']) test(`远端构建冻结源码、linux/amd64、iidfile，镜像按 ID 回 US 后才更新 tag：${fault || '成功'}`, t => {
   const f = fixture(t, fault), result = runBuild(f);
   assert.equal(result.status, 0, result.stderr + result.stdout);

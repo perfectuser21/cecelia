@@ -1,12 +1,12 @@
-# 安全扫描归档清理验收
+# 完整快照低压缩验收
 
-Task: 18d0a206-4802-4963-9152-99d78f74b8e9
+Task: f2b022ae-61b4-402a-8c93-093ba6828b4f
 GP-Anchor: none(infra)
 
-- [ ] 默认安全查询保留，扫描只排两处退役归档；既有语言/触发/汇总保护保持，失败回归保留。
-  Test: manual:node --test scripts/ci/__tests__/basic-workflow.test.mjs
-- [ ] Scripts/Ops完整回归，Brain生产源码和CD恢复合同保持。
+- [ ] 真实导出 shell 使用低压缩完整快照，凭据只进环境，归档 stdout 不受日志污染；先红后绿。
+  Test: manual:node --test scripts/ci/__tests__/basic-brain-candidate-host.test.mjs
+- [ ] 导出或恢复失败继续拒绝准入；完整 Scripts/Ops 回归通过，workflow/job 数量不变。
   Test: manual:node scripts/ci/run-basic-check.mjs scripts
   Test: manual:node scripts/ci/run-basic-check.mjs ops
-- [ ] 消费者认证经完整审查后显式刷新；PR/main真实扫描不抽取归档，生产发布读回同SHA。
+- [ ] 同快照完整传输恢复对比验证数据/约束/索引一致；独立审查后显式续证，PR/main CI/CD 和生产同 SHA 读回。
   Test: manual:node --test scripts/ci/__tests__/basic-brain-deploy-certification.test.mjs
