@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdtemp, mkdir, writeFile, readFile, rm, chmod, symlink } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, rm, chmod, symlink, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync, spawn } from 'node:child_process';
 import { createServer } from 'node:http';
+import { createStore } from '../../brain-image-retention/storage.mjs';
+import { createDeploymentLedger } from '../../brain-image-retention/ledger.mjs';
 const entry = fileURLToPath(new URL('../brain-deploy-preflight.mjs', import.meta.url));
 const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
 async function fixture(t) {
@@ -154,4 +156,37 @@ test('HTTP错误、非JSON、超大响应和超时保守发布', async t => {
 test('报告写失败返回非零且不能输出无需发布绿灯', async t => {
   const f = await fixture(t); const result = await f.run(f.a,['--output',join(f.root,'missing','report.json')]);
   assert.notEqual(result.code,0); assert.doesNotMatch(result.github,/deploy_required=false/);
+});
+
+test('原生只读settlement与CLI联动保持真实磁盘ledger和deployment收据字节不变', async t => {
+  const f = await fixture(t), root = join(await realpath(f.root), '.git', 'native-ledger');
+  await mkdir(root, { mode: 0o700 }); const store = createStore(root);
+  const docker = {
+    snapshot: async () => ({ containers: [{ id: f.receipt.container_id, name: '/cecelia-node-brain', running: true, image_id: f.receipt.image_id }],
+      images: [{ id: f.receipt.image_id, git_sha: f.a, tags: ['cecelia-brain:1.2.3'] }] }),
+    containerHealth: async () => f.health, containerBusinessReadback: async () => f.receipt.business_readback,
+  };
+  const ledger = createDeploymentLedger({ store, docker, health: async () => f.health });
+  const request = { deployment_id: f.receipt.deployment_id, git_sha: f.a, version: '1.2.3' };
+  await ledger.begin(request); await ledger.finish(request.deployment_id, 'success');
+  f.ledger = join(root, 'ledger.json'); const deployment = join(root, `deployment-${request.deployment_id}.json`);
+  const before = await readFile(deployment);
+  f.respond = async (req,res,value) => {
+    try { res.end(JSON.stringify(req.url.endsWith('/status') ? { ...value, settlement: await ledger.settlement(f.a) } : value)); }
+    catch { res.end(JSON.stringify({ ...value, settled: false, settlement: null })); }
+  };
+  await f.put('.prd.md', 'only task documentation'); await assertDecision(f, false, f.commit());
+  assert.deepEqual(await readFile(deployment), before);
+});
+test('原生业务readback限定最多一条样本，伪造多条样本不能免发布', async t => {
+  const f = await fixture(t); f.receipt.business_readback.task_count = 2; await assertDecision(f, true);
+});
+test('二进制任务文档不纳入认证普通文本排除', async t => {
+  const f = await fixture(t); await f.put('.prd.md', Buffer.from([0,1,2])); await assertDecision(f, true, f.commit());
+});
+test('Git命令超时回原发布，不把未知产物变为绿色证明', async t => {
+  const f = await fixture(t), bin = join(f.root,'.git','slow-bin'); await mkdir(bin);
+  await writeFile(join(bin,'git'), '#!/bin/sh\nsleep 1\n', { mode: 0o755 });
+  const result = await f.run(f.a, ['--git-timeout-ms','10'], { PATH: bin + ':' + process.env.PATH });
+  assert.equal(result.code,0); assert.equal(result.report.deploy_required,true);
 });
