@@ -33,3 +33,26 @@ test('read_file refuses traversal, symlinks, and reading its own privileged rece
  expect(()=>tools.prepareCheckerEvidence({config:{roots:['reads']},cwd:f.cwd,request:f.request,directory:path.join(f.cwd,'reads'),deadlineMs:Date.now()+1000})).toThrow('checker_evidence_config_invalid');
  }finally{f.close();}
 });
+
+test('an already viewed image receipt can be retrieved without sending the image again',()=>{
+ const f=fixture();
+ try {
+  const imagePath='evidence/observed.png';
+  const unreadPath='evidence/not-viewed.png';
+  const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a7d8AAAAASUVORK5CYII=','base64');
+  for(const p of [imagePath,unreadPath])fs.writeFileSync(path.join(f.cwd,p),png);
+  const binding=f.binding();
+  expect(()=>tools.readCheckerImageReceipt(binding,{path:unreadPath})).toThrow('checker_evidence_image_receipt_missing');
+  const archiveRead=tools.readCheckerEvidence(binding,{path:unreadPath},{includeBytes:true});
+  expect(archiveRead.image).toBeUndefined();
+  expect(()=>tools.readCheckerImageReceipt(binding,{path:unreadPath})).toThrow('checker_evidence_image_receipt_missing');
+  const read=tools.readCheckerEvidence(binding,{path:imagePath});
+  expect(read.image?.mimeType).toBe('image/png');
+  expect(tools.readCheckerImageReceipt(binding,{path:imagePath})).toEqual(read.receipt);
+  expect(tools.checkerEvidenceReceipts(binding)).toHaveLength(2);
+  expect(()=>tools.readCheckerImageReceipt({...binding,nonce:'other-session'},{path:imagePath})).toThrow('checker_evidence_unbound');
+  fs.appendFileSync(path.join(f.cwd,imagePath),Buffer.from('updated'));
+  tools.readCheckerEvidence(binding,{path:imagePath});
+  expect(()=>tools.readCheckerImageReceipt(binding,{path:imagePath})).toThrow('checker_evidence_image_receipt_ambiguous');
+ } finally { f.close(); }
+});
