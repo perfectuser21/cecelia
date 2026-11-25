@@ -2,13 +2,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { copyFile, cp, mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
+import { copyFile, cp, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { promisify } from 'node:util';
 import { createStore } from './brain-image-retention/storage.mjs';
 import { US_MACHINE_ID } from './brain-image-retention/policy.mjs';
+import { beginWithContentionRetry } from './brain-image-retention/begin.mjs';
+import { createDeploymentLedger } from './brain-image-retention/ledger.mjs';
 
 const run = promisify(execFile);
 const previousSha = 'a'.repeat(40), targetSha = 'd'.repeat(40);
@@ -129,4 +131,129 @@ for (const entry of ['cli', 'shell']) test(`真实${entry}入口遇短暂flock�
     if (resultPromise) result = await resultPromise;
   }
   await assertDeployment(f, result, entry === 'cli' ? id : undefined);
+});
+
+const busy = () => Object.assign(new Error('IMAGE_RETENTION_BUSY'), { code: 'IMAGE_RETENTION_BUSY' });
+
+test('真实锁持续占用到预算：明确超时且inode、台账、holder及Docker均不变', async t => {
+  const f = await fixture(t), request = { deployment_id: randomUUID(), version: '1.0.2', git_sha: targetSha };
+  const ledger = createDeploymentLedger({ store: f.store,
+    docker: { snapshot: () => assert.fail('超时等待者不能进入Docker快照') } });
+  await f.store.withLock(async lease => {
+    const path = join(f.store.root, 'operation.lock'), before = await lstat(path);
+    const bytes = await readFile(join(f.store.root, 'ledger.json'), 'utf8');
+    await assert.rejects(beginWithContentionRetry(ledger, request, { waitMs: 80 }),
+      { code: 'IMAGE_RETENTION_BUSY_TIMEOUT' });
+    await lease.assertHeld();
+    const after = await lstat(path);
+    assert.deepEqual([after.dev, after.ino], [before.dev, before.ino], '超时不得删除或替换holder锁');
+    assert.equal(await readFile(join(f.store.root, 'ledger.json'), 'utf8'), bytes);
+    assert.deepEqual((await readdir(f.store.root)).sort(), ['config.json', 'ledger.json', 'operation.lock']);
+    assert.equal(await readIfPresent(f.env.BEGIN_DOCKER_LOG), '');
+  });
+  await f.store.withLock(lease => lease.assertHeld());
+});
+
+test('永久错误原对象立即透传；错误消息包含BUSY不能触发重试', async () => {
+  for (const code of ['UNTRUSTED_LOCK', 'LOCK_UNAVAILABLE', 'LOCK_IDENTITY_CHANGED',
+    'DEPLOYMENT_PENDING', 'DEPLOYMENT_CONFLICT', 'INVALID_DEPLOYMENT', undefined]) {
+    const error = Object.assign(new Error('IMAGE_RETENTION_BUSY'), { code });
+    let attempts = 0;
+    await assert.rejects(beginWithContentionRetry({ begin: async () => { attempts += 1; throw error; } }, {},
+      { sleep: () => assert.fail('永久错误不能等待') }), caught => caught === error);
+    assert.equal(attempts, 1);
+  }
+});
+
+test('预算0仅立即尝试一次，成功正常返回，BUSY明确超时', async () => {
+  const result = {}, request = {};
+  assert.equal(await beginWithContentionRetry({ begin: async body => {
+    assert.equal(body, request); return result;
+  } }, request, { waitMs: 0 }), result);
+  let attempts = 0;
+  await assert.rejects(beginWithContentionRetry({ begin: async () => { attempts += 1; throw busy(); } }, request,
+    { waitMs: 0, sleep: () => assert.fail('预算0不能sleep') }), { code: 'IMAGE_RETENTION_BUSY_TIMEOUT' });
+  assert.equal(attempts, 1);
+});
+
+test('非法等待预算在任何begin调用前拒绝', async () => {
+  for (const waitMs of [-1, 30001, 1.5, NaN, Infinity, '1000', null]) {
+    await assert.rejects(beginWithContentionRetry({ begin: () => assert.fail('非法预算不能调用begin') }, {},
+      { waitMs }), { code: 'INVALID_BEGIN_WAIT_BUDGET' });
+  }
+});
+
+test('sleep后单调deadline重查：刚好到期或oversleep均不能新增尝试', async () => {
+  for (const overshoot of [0, 50]) {
+    let clock = 0, attempts = 0;
+    await assert.rejects(beginWithContentionRetry({ begin: async () => { attempts += 1; throw busy(); } }, {}, {
+      waitMs: 80, now: () => clock, sleep: async ms => { assert.equal(ms, 80); clock += ms + overshoot; },
+    }), { code: 'IMAGE_RETENTION_BUSY_TIMEOUT' });
+    assert.equal(attempts, 1, 'deadline后不能再调用begin，即使该次可能拿锁');
+  }
+});
+
+test('同一单调预算不重置，每次sleep不超过剩余预算', async () => {
+  let clock = 0, attempts = 0;
+  const sleeps = [];
+  await assert.rejects(beginWithContentionRetry({ begin: async () => { attempts += 1; throw busy(); } }, {}, {
+    waitMs: 1500, now: () => clock, sleep: async ms => { sleeps.push(ms); clock += ms; },
+  }), { code: 'IMAGE_RETENTION_BUSY_TIMEOUT' });
+  assert.deepEqual(sleeps, [1000, 500]);
+  assert.equal(attempts, 2);
+});
+
+test('时钟冻结也最多31次尝试；默认预算不引入无限重试', async () => {
+  let attempts = 0, sleeps = 0;
+  await assert.rejects(beginWithContentionRetry({ begin: async () => { attempts += 1; throw busy(); } }, {}, {
+    now: () => 0, sleep: async ms => { assert.equal(ms, 1000); sleeps += 1; },
+  }), { code: 'IMAGE_RETENTION_BUSY_TIMEOUT' });
+  assert.equal(attempts, 31);
+  assert.equal(sleeps, 30);
+});
+
+test('每次重试保留同一个request，取得锁后的成功不被竞争deadline伪判失败', async () => {
+  let clock = 0, attempts = 0;
+  const request = Object.freeze({ deployment_id: randomUUID(), version: '1.0.2', git_sha: targetSha }), result = {};
+  const actual = await beginWithContentionRetry({ begin: async body => {
+    assert.equal(body, request);
+    attempts += 1;
+    if (attempts < 3) throw busy();
+    clock = 100000; // 已进入原事务的快照可超过锁竞争等待预算，不能假报失败。
+    return result;
+  } }, request, { now: () => clock, sleep: async ms => { clock += ms; } });
+  assert.equal(actual, result);
+  assert.equal(attempts, 3);
+});
+
+test('sleep自己的错误立即原样透传，不当作竞争或重发begin', async () => {
+  const error = new Error('sleep故障');
+  let attempts = 0;
+  await assert.rejects(beginWithContentionRetry({ begin: async () => { attempts += 1; throw busy(); } }, {}, {
+    sleep: async () => { throw error; },
+  }), caught => caught === error);
+  assert.equal(attempts, 1);
+});
+
+test('真实同SHA并发begin：第二部署必须被pending拒绝，不能重造身份或重复增代数', async t => {
+  const f = await fixture(t);
+  let snapshots = 0;
+  const docker = { snapshot: async () => {
+    snapshots += 1;
+    return { images: [{ id: image, git_sha: previousSha, tags: ['cecelia-brain:1.0.1'] }],
+      containers: [{ id: container, name: '/cecelia-node-brain', image_id: image, running: true }] };
+  } };
+  const ledger = createDeploymentLedger({ store: f.store, docker });
+  const requests = [randomUUID(), randomUUID()].map(deployment_id => ({ deployment_id, version: '1.0.2', git_sha: targetSha }));
+  const results = await Promise.allSettled(requests.map(request => beginWithContentionRetry(ledger, request)));
+  assert.equal(results.filter(x => x.status === 'fulfilled').length, 1);
+  const failed = results.find(x => x.status === 'rejected');
+  assert.equal(failed.reason.code, 'DEPLOYMENT_PENDING');
+  const winner = requests[results.findIndex(x => x.status === 'fulfilled')];
+  const state = await f.store.read('ledger.json');
+  assert.deepEqual(state.pending.request, winner);
+  assert.equal(state.generation, f.initialLedger.generation + 1);
+  assert.equal(snapshots, 1);
+  const rows = (await readdir(f.store.root)).filter(name => name.startsWith('deployment-'));
+  assert.deepEqual(rows, [`deployment-${winner.deployment_id}.json`]);
 });

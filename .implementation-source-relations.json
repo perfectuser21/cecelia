@@ -2386,6 +2386,11 @@
       "owner_path": "packages/brain/src/tick-loop.js",
       "path": "packages/brain/src/__tests__/tick-http-scheduler.test.js",
       "role": "verification"
+    },
+    {
+      "owner_path": "scripts/brain-image-retention/begin.mjs",
+      "path": "scripts/brain-image-retention-begin.test.mjs",
+      "role": "verification"
     }
   ]
 }
