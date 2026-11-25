@@ -16,7 +16,6 @@ source /root/.credentials/feishu.env 2>/dev/null || true
 source /root/.credentials/bark.env 2>/dev/null || true
 BRAIN_URL="http://100.71.151.105:5221/api/brain/health"
 GATEWAY_HOST=hk-ts
-BRIEF_JOB=f5e9d665-adeb-4a74-8c25-fc9e26c91cf7
 FAIL_THRESHOLD=3
 COOLDOWN_S=3600
 
@@ -88,27 +87,7 @@ if [ -n "$HKDISK" ]; then
   fi
 fi
 
-H=$((10#$(date -u +%H%M))); DOW=$(date -u +%u); TODAY=$(date -u +%F)
-
-# ── 3. 晨报时限（工作日北京 09:20-09:30 = UTC 01:20-01:30 检查一次）
-if [ "$DOW" -le 5 ] && [ "$H" -ge 120 ] && [ "$H" -lt 130 ] && [ ! -f "$STATE/briefchecked.$TODAY" ]; then
-  touch "$STATE/briefchecked.$TODAY"
-  BR=$(timeout 25 bash -c \
-      "docker exec openclaw-gateway openclaw cron get $BRIEF_JOB 2>/dev/null" 2>/dev/null | \
-      python3 -c '
-import json,sys,datetime
-j=json.load(sys.stdin); st=j.get("state",{})
-ts=st.get("lastRunAtMs",0)/1000
-d=datetime.datetime.utcfromtimestamp(ts).strftime("%Y-%m-%d") if ts else ""
-print(st.get("lastRunStatus","?")+"|"+d)' 2>/dev/null || echo "unreachable|")
-  BSTAT=${BR%%|*}; BDATE=${BR##*|}
-  if [ "$BSTAT" != ok ] || [ "$BDATE" != "$TODAY" ]; then
-    alert brief "OPC 晨报未按时成功：status=$BSTAT run_date=${BDATE:-无}（应于北京 08:45 起跑并成功）"
-  else
-    log "brief check ok"
-  fi
-  find $STATE -name 'briefchecked.*' -mtime +2 -delete 2>/dev/null
-fi
+H=$((10#$(date -u +%H%M))); TODAY=$(date -u +%F)
 
 # ── 4. 每日存活报到（北京 09:00-09:10 = UTC 01:00-01:10）
 if [ "$H" -ge 100 ] && [ "$H" -lt 110 ] && [ ! -f "$STATE/reported.$TODAY" ]; then
