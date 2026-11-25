@@ -11,7 +11,7 @@ const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8' 
 async function fixture(t) {
   const root = await mkdtemp(join(tmpdir(), 'brain-preflight-'));
   t.after(() => rm(root, { recursive: true, force: true }));
-  git(root, 'init', '-q'); git(root, 'config', 'user.email', 'fixture@example.invalid');
+  git(root, 'init', '-q', '-b', 'cp-fixture'); git(root, 'config', 'core.hooksPath', join(root, '.git', 'hooks')); git(root, 'config', 'user.email', 'fixture@example.invalid');
   git(root, 'config', 'user.name', 'Fixture'); git(root, 'config', 'core.filemode', 'true');
   const put = async (path, text = 'initial') => { await mkdir(dirname(join(root, path)), { recursive: true }); await writeFile(join(root, path), text); };
   const commit = () => { git(root, 'add', '-A'); git(root, 'commit', '-qm', 'fixture'); return git(root, 'rev-parse', 'HEAD'); };
