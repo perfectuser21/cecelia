@@ -1,12 +1,12 @@
-# Brain 单测长尾验收
+# 安全扫描归档清理验收
 
-Task: d58332fd-4b31-45f5-8419-669daa776746
+Task: 18d0a206-4802-4963-9152-99d78f74b8e9
 GP-Anchor: none(infra)
 
-- [ ] 原有 28 用例完整保留，六文件在实际 Vitest 中通过，fixture 每例隔离，controller 包含 helper。
-  Test: manual:cd packages/brain && npx --no-install vitest run scripts/coding-workflow/runner/__tests__/source-merge- --reporter=verbose
-- [ ] 原有 CI 和发布回归通过，生产源码与 workflow 不变。
+- [ ] 默认安全查询保留，扫描只排两处退役归档；既有语言/触发/汇总保护保持，失败回归保留。
+  Test: manual:node --test scripts/ci/__tests__/basic-workflow.test.mjs
+- [ ] Scripts/Ops完整回归，Brain生产源码和CD恢复合同保持。
   Test: manual:node scripts/ci/run-basic-check.mjs scripts
   Test: manual:node scripts/ci/run-basic-check.mjs ops
-- [ ] AST 对账、Vitest 全量集合核对和 PR/main 实际性能证据完成；认证经独审后刷新，首次完整发布。
+- [ ] 消费者认证经完整审查后显式刷新；PR/main真实扫描不抽取归档，生产发布读回同SHA。
   Test: manual:node --test scripts/ci/__tests__/basic-brain-deploy-certification.test.mjs

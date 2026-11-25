@@ -257,7 +257,9 @@ test('周扫描仅CodeQL执行，全部CI无PR评论写权限', () => {
   assert.equal(workflow.jobs.codeql.if,"github.event.action != 'closed'");
   assert.deepEqual(workflow.jobs.codeql.strategy.matrix.language,['actions','javascript-typescript','python']);
   const init=workflow.jobs.codeql.steps.find(step=>step.uses==='github/codeql-action/init@v4');
-  assert.deepEqual(init.with,{languages:'${{ matrix.language }}','build-mode':'none'});
+  const inputs = {...init.with};
+  delete inputs.config;
+  assert.deepEqual(inputs,{languages:'${{ matrix.language }}','build-mode':'none'});
   assert.deepEqual(workflow.jobs.codeql.steps.find(step=>step.uses==='github/codeql-action/analyze@v4').with,{category:'/language:${{ matrix.language }}'});
   assert.deepEqual(workflow.jobs.codeql.permissions,{contents:'read','security-events':'write'});
   assert.ok(workflow.concurrency.group.includes("'weekly-codeql'"));
