@@ -1,12 +1,11 @@
-# CI原生APT安装回归
+# 漏洞审计无重复安装验收
 
-Task: 0de62006-7ab2-42c4-918f-21d47e5234e7
+Task: 22da6cc5-ed6c-4ec3-b10f-f8cadba87e6c
 GP-Anchor: none(infra)
 
-- [ ] 实际workflow命令在官方us-west-2原生源下可抵达工具安装；update/install失败必须非零，先红后绿并永久留在Scripts CI。
-  Test: manual:node --test scripts/ci/__tests__/basic-ubuntu-native-install.test.mjs
-- [ ] 已无现役调用的源校验/旧镜像恢复及专属测试清退，保留Chromium真实安装和失败传播；完整Scripts/Ops通过。
-  Test: manual:node scripts/ci/run-basic-check.mjs scripts
-  Test: manual:node scripts/ci/run-basic-check.mjs ops
-- [ ] 独立消费者审查与显式续证通过；PR/main真实APT安装和全部检查成功，完整自动CD与生产业务读回成功。
+- [ ] 真实workflow入口经真实npm在无node_modules隔离夹具仍审计生产/开发包，未知漏洞和故障拒绝；先红后绿永久留CI。
+  Test: manual:node --test scripts/ci/__tests__/basic-security-lock-audit.test.mjs
+- [ ] 其余锁文件一致性与真实安装、严格结果聚合保留；工作流与原审计策略回归通过。
+  Test: manual:node --test scripts/ci/__tests__/basic-workflow.test.mjs scripts/ci/__tests__/basic-fixed-core.test.mjs scripts/ci/__tests__/basic-dependency-audit.test.mjs
+- [ ] 独立审查及显式续证通过，PR/main全绿、自动CD及生产读回通过。
   Test: manual:node --test scripts/ci/__tests__/basic-brain-deploy-certification.test.mjs
