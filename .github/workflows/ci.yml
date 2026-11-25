@@ -292,7 +292,7 @@ jobs:
           NEEDS_JSON: ${{ toJSON(needs) }}
         run: node scripts/ci/check-basic-results.mjs
   brain-deploy:
-    name: Brain生产发布
+    name: Brain发布与版本确认
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs['ci-passed'].result == 'success'
     needs: [ci-passed]
     runs-on: ubuntu-latest
@@ -303,17 +303,20 @@ jobs:
       GITHUB_SHA: ${{ github.sha }}
       DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
       REQUIRE_EXACT_SHA: '1'
+      FORCE_BRAIN_DEPLOY: ${{ vars.FORCE_BRAIN_DEPLOY || '0' }}
     steps:
       - uses: actions/checkout@v4
         with: {ref: '${{ github.sha }}', fetch-depth: 0, persist-credentials: false}
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
       - uses: tailscale/github-action@v2
         with: {authkey: '${{ secrets.TS_AUTHKEY }}'}
-      - name: 发起本次SHA的隔离验收与生产发布
-        run: |
-          code=$(bash scripts/ci/gate3-trigger-deploy.sh "$BRAIN_URL" "$GITHUB_SHA")
-          case "$code" in
-            202|409) ;;
-            *) echo "::error::发布请求失败 HTTP $code"; exit 1 ;;
-          esac
-      - name: 核验生产SHA与原生发布收据
-        run: bash scripts/ci/gate3-wait-deploy.sh "$BRAIN_URL" "$GITHUB_SHA"
+      - name: 核对现役版本并按需执行隔离验收与发布
+        run: bash scripts/ci/run-brain-deploy.sh "$BRAIN_URL" "$GITHUB_SHA" "$RUNNER_TEMP/brain-deploy-preflight/report.json"
+      - name: 保留发布判断与原生身份依据
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: brain-deploy-preflight-${{ github.sha }}
+          path: ${{ runner.temp }}/brain-deploy-preflight/report.json
+          if-no-files-found: error
