@@ -93,6 +93,7 @@ jobs:
         env: {BASE_REF: '${{ github.event.pull_request.base.sha || github.event.before }}', HEAD_REF: '${{ github.event.pull_request.head.sha || github.sha }}'}
         run: bash scripts/ci/check-brain-version-bump.sh
       - name: Install test tools
+        if: matrix.component != 'image' && matrix.component != 'dashboard'
         run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends ripgrep jq zsh libxml2-utils
       - name: Install locked dependencies
         if: matrix.component != 'image'

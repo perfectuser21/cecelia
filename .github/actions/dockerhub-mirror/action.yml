@@ -16,6 +16,7 @@ runs:
           echo "::error::dockerhub-mirror 只能用于 GitHub 托管 runner（当前 RUNNER_ENVIRONMENT=${RUNNER_ENVIRONMENT:-未知}）"
           exit 1
         fi
+        command -v jq >/dev/null 2>&1 || { echo "::error::运行器缺少 jq；未修改 Docker 配置"; exit 1; }
         CONF=/etc/docker/daemon.json
         if sudo test -f "$CONF"; then CUR=$(sudo cat "$CONF"); else CUR='{}'; fi
         printf '%s' "$CUR" | jq '. + {"registry-mirrors": ["https://mirror.gcr.io"]}' | sudo tee "$CONF" >/dev/null
