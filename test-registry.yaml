@@ -290,3 +290,10 @@ tests:
     ci: L3
     status: active
     note: "Ops真实shell、CLI与flock验证发布开始的锁竞争等待、请求身份及无副作用失败边界。"
+
+  - id: cecelia-studio-backup-retention
+    path: scripts/ops/__tests__/backups/backup-cecelia-studio.test.sh
+    type: integration
+    ci: L3
+    status: active
+    note: "真实隔离文件、进程与远端锁/预约验证新备份成功后14天保留，Mac历史和未知副本保全。"

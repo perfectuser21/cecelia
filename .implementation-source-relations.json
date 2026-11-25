@@ -2391,6 +2391,11 @@
       "owner_path": "scripts/brain-image-retention/begin.mjs",
       "path": "scripts/brain-image-retention-begin.test.mjs",
       "role": "verification"
+    },
+    {
+      "owner_path": "scripts/ops/backup-cecelia-studio.mjs",
+      "path": "scripts/ops/__tests__/backups/backup-cecelia-studio.test.sh",
+      "role": "verification"
     }
   ]
 }

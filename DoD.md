@@ -1,15 +1,14 @@
-# 发布锁竞争与构建缓存验收
+# 备份保留规则验收
 
-Task: a04f2ac5-0ff2-42ae-8023-f0d130cbb2e9
+Task: bb1086a4-3ede-47b5-9055-26a6274a3d4d
 GP-Anchor: none(infra)
 
-- [ ] 真实shell→CLI→flock短竞争后同一次部署成功，同UUID与generation只增加一次，旧代码先复现红。
-  Test: manual:node --test scripts/brain-image-retention-begin.test.mjs
-- [ ] 持续锁忙有界失败，不偷锁、不写账、不执行构建或切换；永久错误和pending保护不变。
-  Test: manual:node --test scripts/brain-image-retention-begin.test.mjs scripts/brain-image-retention.test.mjs scripts/brain-image-retention-ledger.test.mjs
-- [ ] 只读结算、janitor及Docker后代持锁保护继续通过。
-  Test: manual:node --test scripts/brain-image-retention-settlement.test.mjs scripts/brain-image-retention-engine.test.mjs scripts/brain-image-retention-docker.test.mjs
-- [ ] 固定源码双SHA真实构建证明稳定工具层缓存复用，最终唯一GIT_SHA及成品工具/原生fixture验证，保留完整镜像保障。
-  Test: manual:node scripts/ci/run-basic-check.mjs image
-- [ ] Ops选择器永久发现新增锁回归，Scripts/版本/事实/DoD校验不放宽。
+- [ ] 当前旧脚本真实逻辑在隔离CLI/文件fixture下复现过期远端副本未清理；实现后同一业务断言通过。
+  Test: manual:bash scripts/ops/__tests__/backups/backup-cecelia-studio.test.sh
+- [ ] 新备份解析和双SHA成功后，仅14天外、本地同SHA、精确身份的远端重复副本可回收；Mac历史及回执不变。
+  Test: manual:bash scripts/ops/__tests__/backups/backup-cecelia-studio.test.sh
+- [ ] archive/传输/hash/身份/锁/目录漂移等错误不删除未知文件，未批准命令及网络被fixture拒绝。
+  Test: manual:bash scripts/ops/__tests__/backups/backup-cecelia-studio.test.sh
+- [ ] 现有Ops自动发现并执行新测试，Script及现行DevGate不削减，固定版本入口部署后读回。
   Test: manual:node --test scripts/ci/__tests__/basic-ops-coverage.test.mjs
+  Test: manual:node scripts/ci/run-basic-check.mjs scripts
