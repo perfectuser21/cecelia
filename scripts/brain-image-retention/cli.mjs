@@ -1,5 +1,6 @@
 import { createRuntime, readHealth, ROOT } from './runtime.mjs';
 import { fail } from './policy.mjs';
+import { beginWithContentionRetry } from './begin.mjs';
 const [command, ...args] = process.argv.slice(2);
 try {
   if (!['begin', 'finish', 'rollback', 'reconcile'].includes(command) || args.length !== ({ begin: 3, finish: 2, rollback: 4, reconcile: 0 })[command]) throw fail('INVALID_COMMAND');
@@ -13,7 +14,7 @@ try {
     process.stdout.write('disabled\n');
   } else if (command === 'begin') {
     const [deployment_id, version, git_sha] = args;
-    const result = await runtime.ledger.begin({ deployment_id, version, git_sha });
+    const result = await beginWithContentionRetry(runtime.ledger, { deployment_id, version, git_sha });
     if (result.receipt) throw fail('DEPLOYMENT_ALREADY_FINISHED');
     process.stdout.write(`${deployment_id}\n`);
   } else if (command === 'rollback') {

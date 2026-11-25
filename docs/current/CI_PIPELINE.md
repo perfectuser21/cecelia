@@ -34,7 +34,7 @@ authority: CURRENT_STATE
 
 ## 实际组件边界
 
-- Brain普通单测、PG、源码HTTP生命周期和Docker构建是不同证据；PR镜像只build，不代表已启动生产服务。
+- Brain普通单测、PG、源码HTTP生命周期和Docker构建是不同证据；PR镜像验证构建、原生包导入与受限子进程完成/取消，不代表完整PG业务或生产验收。
 - 定时和手动Tick统一使用现役scheduler，旧executeTick及独占插件/专项回归清退；真实HTTP调度、恢复、原生任务与租约锁仍验证。纯mock callback十二项仅由unit执行，Python公司KR检查保留Ops唯一owner；反刍探针用真实函数返回保障替代源码字符串检查。休眠图开启态专项不进入默认CI，关闭态保护保留；migration370仅在真实PG跑道执行。
 - `apps/api`只保留Dashboard共享features和captures schema验证，不再有独立旧Core服务、Conductor、旧任务/OKR路由或后端编译入口。
 - 共享features与Dashboard在一个组件任务中依次使用各自React/Vitest环境，再构建Dashboard，不能混用React18/19测试环境。
@@ -67,6 +67,8 @@ authority: CURRENT_STATE
 ## 使用边界
 
 数据库测试只连接本轮拥有的本机scratch或CI服务，拒绝默认生产连接。正式CD由主CI的 `brain-deploy` 执行：固定Git构建、同镜像导入校验、只读完整生产快照恢复到独立库、隔离迁移和任务/产物/进程停止验收，再排空旧Brain、切换、核验在线SHA与官方只读业务回执并结算。候选环境关闭对外调度；其收据不代表真实外部模型或全部业务已覆盖。Implementation impact、Learning月归档及合并文档清理不在当前自动CI/CD中。
+
+发布CLI的每次begin仅对明确的镜像台账锁忙等待最多30秒、尝试最多31次，保留同一部署UUID；其他错误及pending核验规则不变。该预算只约束锁竞争，已拿锁的快照遵循原事务时限；shell核验陈旧pending后可开启第二次begin。镜像在稳定工具安装完成后设置GIT_SHA，使持久builder可复用工具层，同时保留后续源码导入与运行期精确SHA校验；PR、main、夜间和CD仍各自执行原有构建及验收。
 
 旧cecelia-factory的新证据采集、刷新及运行来源入口已经退役；历史版本读回仍保留，遇到歧义明确拒绝，不通过远程Git重编译或猜测最新版本消解。旧工厂来源图及其历史哈希接受矩阵退出默认CI和启动加载链。共享source_set、既有冻结发布产物、Foundation/ZenithJoy/Commander发布与Infra登记继续保留，consumer_evidence不能作为可执行流程。当前发布仍须固定Git、真实输入、owner和权限边界；历史工作流曾经绿色不能为新候选授予资格。
 
