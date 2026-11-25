@@ -238,8 +238,7 @@ test('统一CI真实合并runner，保持独有命令和产物并隔离安全权
   assert.equal(security.steps.filter(step=>step.uses==='gitleaks/gitleaks-action@v2').length,1);
   assert.equal(security.steps.find(step=>step.name==='Check dependency vulnerabilities').run.trim(),
     'bash scripts/ci/dep-audit-runtime-high.sh\nbash scripts/ci/dep-audit-critical.sh');
-  assert.equal(security.steps.find(step=>step.name==='Install locked dependency manifests').run,
-    'npm ci --ignore-scripts --no-audit --no-fund');
+  assert.equal(security.steps.find(step=>step.name==='Install locked dependency manifests'),undefined);
   assert.equal(workflow.jobs.codeql.steps.some(step=>Object.hasOwn(step,'if')||step['continue-on-error']),false);
 });
 
