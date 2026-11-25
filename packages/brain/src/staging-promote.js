@@ -15,10 +15,12 @@ export const PROMOTE_STATUS = {
 export const ZENITHJOY_STAGING_RETIRED = 'zenithjoy_staging_retired';
 
 const REPO_ALIAS = /^(?:(?:https?:\/\/github\.com\/|ssh:\/\/git@github\.com\/|git@github\.com:)?perfectuser21\/)?(cecelia|zenithjoy(?:-[a-z0-9._-]+)?)(?:\.git)?\/?$/i;
-const GITHUB_PR = /^https:\/\/github\.com\/([^/?#]+\/[^/?#]+)\/pull\/\d+(?:[/?#]|$)/i;
+const GITHUB_PR = /^https?:\/\/github\.com\/([^/?#]+\/[^/?#]+)\/pull\/\d+(?:[/?#]|$)/i;
 
 export function resolveLine(baseRepo) {
-  const repo = REPO_ALIAS.exec(String(baseRepo ?? '').trim())?.[1]?.toLowerCase();
+  const value = typeof baseRepo === 'string' ? baseRepo.trim() : '';
+  const alias = path.isAbsolute(value) ? path.basename(value) : value;
+  const repo = REPO_ALIAS.exec(alias)?.[1]?.toLowerCase();
   if (repo === 'cecelia') return 'internal';
   if (repo?.startsWith('zenithjoy')) return 'customer';
   return 'unknown';
@@ -27,8 +29,9 @@ export function resolveLine(baseRepo) {
 export function resolveStagingLine(payload = {}, resultPrUrl) {
   const { base_repo, baseRepo, pr_url, pr_urls } = payload ?? {};
   const urls = [resultPrUrl, pr_url, ...(Array.isArray(pr_urls) ? pr_urls : [])];
-  const repos = [base_repo, baseRepo, ...urls.map(url => GITHUB_PR.exec(String(url ?? ''))?.[1])]
-    .filter(repo => typeof repo === 'string' && repo.trim());
+  const prRepos = urls.filter(url => typeof url === 'string')
+    .map(url => GITHUB_PR.exec(url.trim())?.[1]);
+  const repos = [base_repo, baseRepo, ...prRepos].filter(repo => typeof repo === 'string' && repo.trim());
   const lines = repos.map(resolveLine);
   if (lines.includes('customer')) return 'customer';
   return lines.length && lines.every(line => line === 'internal') ? 'internal' : 'unknown';

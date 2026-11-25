@@ -175,6 +175,7 @@ describe('runStagingE2E', () => {
   it.each([
     { base_repo: 'perfectuser21/zenithjoy', pr_url: 'https://pr/zj' },
     { baseRepo: 'ZenithJoy', pr_url: 'https://pr/zj' },
+    { base_repo: '/Users/administrator/perfect21/zenithjoy-skills' },
     { pr_urls: ['https://github.com/perfectuser21/zenithjoy-workspace/pull/2588'] },
   ])('恢复旧客户任务时记录退役，保留历史核验', async (payload) => {
     const pool = makeMockPool();

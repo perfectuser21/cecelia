@@ -60,6 +60,10 @@ describe('POST /promote/:resultId — 放行回流幂等状态机', () => {
   it.each([
     { pr_url: 'https://github.com/perfectuser21/cecelia/pull/6995' },
     { task_payload: { base_repo: 'perfectuser21/cecelia' } },
+    {
+      pr_url: 'https://github.com/perfectuser21/cecelia/pull/6995',
+      task_payload: { base_repo: '/Users/administrator/perfect21/cecelia' },
+    },
   ])('按已存 Cecelia 仓库确认，运行内部晋级', async (row) => {
     mockPending(row);
     const res = await request(app).post(`/promote/${RID}`).send({});

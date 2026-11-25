@@ -85,13 +85,15 @@ describe('runStagingE2E 内部线 — repoRoot 用 REPO_ROOT + 验 5223', () => 
     expect(execCmds.some((c) => c.includes(':5222'))).toBe(false);
   });
 
-  it('internal line 经 runStagingE2E 时给 deploy 传 line=internal', async () => {
-    const pool = { query: vi.fn().mockResolvedValue({ rows: [] }) };
-    const deploy = vi.fn(() => ({ status: 'success', output: 'deployed', stagingPort: 5223 }));
-    const loadAcceptance = vi.fn(async () => ({ scenarios: [{ name: 's1', commands: [{ cmd: 'echo ok' }] }] }));
-    const task = { id: 't-int3', payload: { initiative_id: 'i1', pr_url: 'https://pr/int', base_repo: 'perfectuser21/cecelia' } };
+  it.each(['perfectuser21/cecelia', '/Users/administrator/perfect21/cecelia'])(
+    '内部仓库 %s 使用 Dashboard staging', async (baseRepo) => {
+      const pool = { query: vi.fn().mockResolvedValue({ rows: [] }) };
+      const deploy = vi.fn(() => ({ status: 'success', output: 'deployed', stagingPort: 5223 }));
+      const loadAcceptance = vi.fn(async () => ({ scenarios: [{ name: 's1', commands: [{ cmd: 'echo ok' }] }] }));
+      const task = { id: 't-int3', payload: { initiative_id: 'i1', pr_url: 'https://pr/int', base_repo: baseRepo } };
 
-    await runStagingE2E(task, { pool, deploy, loadAcceptance, exec: vi.fn(() => 'ok'), promoteExec: vi.fn(() => ({ ok: true, output: 'x' })) });
-    expect(deploy).toHaveBeenCalledWith(expect.objectContaining({ line: 'internal' }));
-  });
+      await runStagingE2E(task, { pool, deploy, loadAcceptance, exec: vi.fn(() => 'ok'), promoteExec: vi.fn(() => ({ ok: true, output: 'x' })) });
+      expect(deploy).toHaveBeenCalledWith(expect.objectContaining({ line: 'internal' }));
+    },
+  );
 });
