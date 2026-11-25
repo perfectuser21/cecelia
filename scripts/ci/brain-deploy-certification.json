@@ -1,5 +1,5 @@
 {
   "schema": "brain-deploy-certification/v1",
   "policy_id": "brain-deploy-git-tree-five-paths-v1",
-  "consumer_tree_sha256": "34af74b536b54e17b0705d53707bd32aca94c0cad1f796d2dc7fcaef7e91bd79"
+  "consumer_tree_sha256": "e786a176c5a6fda615782b963d75a1baec047eadc8860e3ca1b766762c0b5d04"
 }
