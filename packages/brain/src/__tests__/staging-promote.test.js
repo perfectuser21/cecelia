@@ -8,7 +8,7 @@ import {
 
 // ──────────────────────────────────────────────────────────────────────────
 // Slice 2：staging E2E PASS 后放行分流（决策 C 边界）
-// 内部线(cecelia) 自动 promote；客户线(zenithjoy) pending_promote+通知；base_repo 缺失=保守 pending。
+// 内部线(cecelia) 自动 promote；客户线(zenithjoy) 退役；base_repo 缺失=保守 pending。
 // ──────────────────────────────────────────────────────────────────────────
 
 describe('resolveLine — 客户线 vs 内部线判定（base_repo）', () => {
@@ -36,10 +36,10 @@ describe('decidePromote — PASS 后按线分流', () => {
     expect(d.action).toBe('auto');
     expect(d.promoteStatus).toBe(PROMOTE_STATUS.AUTO_PROMOTED);
   });
-  it('PASS + 客户线 → pending_promote（不自动）', () => {
+  it('PASS + 已退役的客户线 → 不进入晋级', () => {
     const d = decidePromote({ verdict: 'PASS', baseRepo: 'perfectuser21/zenithjoy-workspace' });
-    expect(d.action).toBe('pending');
-    expect(d.promoteStatus).toBe(PROMOTE_STATUS.PENDING_PROMOTE);
+    expect(d.action).toBe('none');
+    expect(d.promoteStatus).toBe(PROMOTE_STATUS.NA);
   });
   it('PASS + base_repo 缺失 → 保守 pending_promote（决策2）', () => {
     const d = decidePromote({ verdict: 'PASS', baseRepo: '' });

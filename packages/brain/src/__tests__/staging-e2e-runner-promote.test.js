@@ -49,21 +49,6 @@ describe('runStagingE2E PASS 后 promote 分流', () => {
     expect(upd).toBeTruthy();
   });
 
-  it('客户线(zenithjoy) PASS → 不 promote，落 pending_promote + 发通知', async () => {
-    const { pool, queries } = makeQueries();
-    const notify = vi.fn(async () => {});
-    const promoteExec = vi.fn(); // 不应被调用
-    const task = { id: 't-cust', payload: { initiative_id: 'i2', pr_url: 'https://pr/cust', base_repo: 'perfectuser21/zenithjoy-workspace' } };
-
-    const res = await runStagingE2E(task, { pool, ...passDeps(), notify, promoteExec });
-
-    expect(res.promoteStatus).toBe('pending_promote');
-    expect(promoteExec).not.toHaveBeenCalled(); // 客户线绝不自动 promote
-    expect(notify).toHaveBeenCalledTimes(1);     // 通知主理人
-    const upd = queries.find((q) => /UPDATE staging_e2e_results[\s\S]*promote_status/i.test(q.sql) && q.params.includes('pending_promote'));
-    expect(upd).toBeTruthy();
-  });
-
   it('base_repo 缺失 PASS → 保守 pending_promote，不自动 promote（决策2）', async () => {
     const { pool } = makeQueries();
     const promoteExec = vi.fn();

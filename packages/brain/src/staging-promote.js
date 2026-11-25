@@ -1,27 +1,10 @@
-/**
- * staging-promote.js — Slice 2（阶段2：staging E2E PASS 后人工放行闸 + production promote）
- *
- * spec: docs/superpowers/specs/2026-06-25-phase2-harness-to-production-design.md §3 Slice 2
- * 建立在 Slice 1 的 staging_e2e verdict 之上：
- * - 内部线（base_repo=cecelia）：PASS → 自动 promote（in-repo scripts/promote-dashboard.sh）。
- * - 客户线（base_repo=zenithjoy）：PASS → pending_promote + 飞书通知主理人，挂起等 confirm
- *   （回流接口 POST /api/brain/staging/promote/:resultId）。真打 zenithjoy 生产留 zenithjoy repo 放行闸，
- *   Cecelia 不跨 repo 伸手（决策1：跨 repo 边界）。
- * - base_repo 缺失 → 保守 pending（决策2：不误自动上线）。
- *
- * 纪律：
- * - pending = DB 状态行（staging_e2e_results.promote_status），**不碰 langgraph interrupt**，无进程挂等。
- * - 内部线 auto-promote 的真实脚本执行通过注入的 promoteExec 完成；测试必须 mock，绝不打真 :5211 live / 真 HK。
- * - promote 幂等：状态机 + 回流接口校验当前态。
- */
-
 import { execFileSync } from 'child_process';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
 // promote_status 状态机取值
 export const PROMOTE_STATUS = {
-  PENDING_PROMOTE: 'pending_promote', // 客户线等主理人 confirm
+  PENDING_PROMOTE: 'pending_promote', // 等主理人确认
   PROMOTING: 'promoting',             // 回流接口已接受，promote 进行中
   PROMOTED: 'promoted',               // promote 成功
   AUTO_PROMOTED: 'auto_promoted',     // 内部线自动 promote 成功（终态）
@@ -29,33 +12,39 @@ export const PROMOTE_STATUS = {
   NA: 'n_a',                          // verdict≠PASS，不进 promote
 };
 
-/**
- * 按 base_repo 判客户线 vs 内部线。
- * @param {string} baseRepo
- * @returns {'customer'|'internal'|'unknown'}
- */
+export const ZENITHJOY_STAGING_RETIRED = 'zenithjoy_staging_retired';
+
+const REPO_ALIAS = /^(?:(?:https?:\/\/github\.com\/|ssh:\/\/git@github\.com\/|git@github\.com:)?perfectuser21\/)?(cecelia|zenithjoy(?:-[a-z0-9._-]+)?)(?:\.git)?\/?$/i;
+const GITHUB_PR = /^https?:\/\/github\.com\/([^/?#]+\/[^/?#]+)\/pull\/\d+(?:[/?#]|$)/i;
+
 export function resolveLine(baseRepo) {
-  const r = String(baseRepo || '').toLowerCase();
-  if (!r) return 'unknown';
-  if (r.includes('zenithjoy')) return 'customer';
-  if (r.includes('cecelia')) return 'internal';
+  const value = typeof baseRepo === 'string' ? baseRepo.trim() : '';
+  const alias = path.isAbsolute(value) ? path.basename(value) : value;
+  const repo = REPO_ALIAS.exec(alias)?.[1]?.toLowerCase();
+  if (repo === 'cecelia') return 'internal';
+  if (repo?.startsWith('zenithjoy')) return 'customer';
   return 'unknown';
 }
 
-/**
- * PASS 后放行决策。
- * @param {{verdict:string, baseRepo:string}} o
- * @returns {{action:'none'|'auto'|'pending', promoteStatus:string, line:string}}
- */
+export function resolveStagingLine(payload = {}, resultPrUrl) {
+  const { base_repo, baseRepo, pr_url, pr_urls } = payload ?? {};
+  const urls = [resultPrUrl, pr_url, ...(Array.isArray(pr_urls) ? pr_urls : [])];
+  const prRepos = urls.filter(url => typeof url === 'string')
+    .map(url => GITHUB_PR.exec(url.trim())?.[1]);
+  const repos = [base_repo, baseRepo, ...prRepos].filter(repo => typeof repo === 'string' && repo.trim());
+  const lines = repos.map(resolveLine);
+  if (lines.includes('customer')) return 'customer';
+  return lines.length && lines.every(line => line === 'internal') ? 'internal' : 'unknown';
+}
+
 export function decidePromote({ verdict, baseRepo }) {
-  if (verdict !== 'PASS') {
-    return { action: 'none', promoteStatus: PROMOTE_STATUS.NA, line: resolveLine(baseRepo) };
-  }
   const line = resolveLine(baseRepo);
+  if (verdict !== 'PASS' || line === 'customer') {
+    return { action: 'none', promoteStatus: PROMOTE_STATUS.NA, line };
+  }
   if (line === 'internal') {
     return { action: 'auto', promoteStatus: PROMOTE_STATUS.AUTO_PROMOTED, line };
   }
-  // 客户线 + unknown（base_repo 缺失，决策2 保守）→ 挂 pending，不自动 promote
   return { action: 'pending', promoteStatus: PROMOTE_STATUS.PENDING_PROMOTE, line };
 }
 
