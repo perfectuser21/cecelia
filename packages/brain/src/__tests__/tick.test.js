@@ -6,7 +6,6 @@
 import { describe, it, expect } from 'vitest';
 // Phase D Part 1.6: routeTask + TASK_TYPE_AGENT_MAP 已搬到 tick-helpers.js
 import { routeTask, TASK_TYPE_AGENT_MAP } from '../tick-helpers.js';
-import { MAX_NEW_DISPATCHES_PER_TICK } from '../tick.js';
 
 describe('routeTask', () => {
   it('should route dev tasks to /dev', () => {
@@ -42,12 +41,6 @@ describe('routeTask', () => {
   it('should default to /dev for unknown task_type', () => {
     const task = { task_type: 'unknown_type' };
     expect(routeTask(task)).toBe('/dev');
-  });
-});
-
-describe('MAX_NEW_DISPATCHES_PER_TICK', () => {
-  it('should be 2 (default burst limiter cap)', () => {
-    expect(MAX_NEW_DISPATCHES_PER_TICK).toBe(2);
   });
 });
 

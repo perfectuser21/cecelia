@@ -88,7 +88,6 @@ vi.mock('../dispatch-stats.js', () => ({
   getDispatchStats: vi.fn().mockResolvedValue({}),
 }));
 vi.mock('../health-monitor.js', () => ({ runLayer2HealthCheck: vi.fn().mockResolvedValue({}) }));
-vi.mock('../dept-heartbeat.js', () => ({ triggerDeptHeartbeats: vi.fn().mockResolvedValue([]) }));
 vi.mock('../daily-review-scheduler.js', () => ({
   triggerDailyReview: vi.fn().mockResolvedValue(null),
   triggerContractScan: vi.fn().mockResolvedValue(null),
@@ -197,11 +196,4 @@ describe('dispatcher.js 源码 — billing pause 检查存在（D1.5 抽出后�
     expect(src).toContain('billing_pause');
   });
 
-  it('tick-runner.js 应有 quota_exhausted requeue 逻辑', async () => {
-    // D1.7b 后 executeTick 函数体（含 quota_exhausted requeue）移到 tick-runner.js
-    const fs = await import('node:fs');
-    const src = fs.readFileSync(new URL('../tick-runner.js', import.meta.url), 'utf-8');
-    expect(src).toContain("status = 'quota_exhausted'");
-    expect(src).toContain('quota_exhausted requeue');
-  });
 });

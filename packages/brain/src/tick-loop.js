@@ -5,10 +5,10 @@
  * 3 个相关常量（TICK_INTERVAL_MINUTES / TICK_LOOP_INTERVAL_MS / TICK_TIMEOUT_MS）。
  *
  * 设计原则：
- *  - executeTick 注入：runTickSafe(source, tickFn?) 默认用 tick-runner 的 executeTick，
+ *  - 调度函数注入：runTickSafe(source, tickFn?) 默认用 runScheduler，
  *    测试可注入 mock。
  *  - tickState 来自 tick-state.js（D1.7a）— loopTimer / tickRunning / tickLockTime / lastExecuteTime
- *  - tickLog 本地复刻（与 tick.js / tick-runner.js 同形态）；计数器独立，
+ *  - tickLog 本地复刻（与 tick.js 同形态）；计数器独立，
  *    每模块各自满 100 条打 [tick-summary]，互不污染。
  *
  * tick.js 通过 `import { ... } from './tick-loop.js'` 在 export 块统一 re-export，
@@ -16,7 +16,6 @@
  */
 import { tickState } from './tick-state.js';
 import { recordTickExecution } from './tick-stats.js';
-import { executeTick as _executeTick } from './tick-runner.js'; // Wave 2 废弃，保留供回滚
 import { runScheduler } from './tick-scheduler.js';
 import { startConsciousnessLoop } from './consciousness-loop.js';
 import { startRecoveryLoop, stopRecoveryLoop } from './recovery-loop.js';

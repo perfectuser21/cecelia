@@ -1,6 +1,6 @@
 ---
 id: current-ci-pipeline
-version: 3.2.0
+version: 3.3.0
 updated: 2026-11-25
 authority: CURRENT_STATE
 ---
@@ -35,6 +35,7 @@ authority: CURRENT_STATE
 ## 实际组件边界
 
 - Brain普通单测、PG、源码HTTP生命周期和Docker构建是不同证据；PR镜像只build，不代表已启动生产服务。
+- 定时和手动Tick统一使用现役scheduler，旧executeTick及独占插件/专项回归清退；真实HTTP调度、恢复、原生任务与租约锁仍验证。纯mock callback十二项仅由unit执行，Python公司KR检查保留Ops唯一owner；反刍探针用真实函数返回保障替代源码字符串检查。休眠图开启态专项不进入默认CI，关闭态保护保留；migration370仅在真实PG跑道执行。
 - `apps/api`只保留Dashboard共享features和captures schema验证，不再有独立旧Core服务、Conductor、旧任务/OKR路由或后端编译入口。
 - 共享features与Dashboard在一个组件任务中依次使用各自React/Vitest环境，再构建Dashboard，不能混用React18/19测试环境。
 - Ops按已审查的现役类别发现入口。无生产上游的旧spawn/host/Docker执行器及专属测试、无调用的汇总脚本均已清退；现役fleet执行器保留。

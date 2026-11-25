@@ -42,7 +42,6 @@ vi.mock('node:child_process', () => ({
 }));
 
 import { runLaunchdPatrol, __resetLaunchdPatrolForTest } from '../../../packages/brain/src/launchd-patrol.js';
-import { triggerDeptHeartbeats } from '../../../packages/brain/src/dept-heartbeat.js';
 import { recordFailure, getState, FAILURE_THRESHOLD } from '../../../packages/brain/src/circuit-breaker.js';
 
 beforeEach(() => {
@@ -106,21 +105,6 @@ describe('真实探针红信号经reporter到SQL边界', () => {
     expect(boundary.sendBark).toHaveBeenCalledOnce();
   });
 
-  it('部门任务创建失败经真实heartbeat handler写入错误证据', async () => {
-    const pool = { query: vi.fn(async sql => {
-      if (sql.includes('FROM dept_configs')) return { rows: [{ dept_name: 'audit-fixture', repo_path: '/fixture', max_llm_slots: 1 }] };
-      if (sql.includes('FROM tasks') || sql.includes('FROM key_results')) return { rows: [] };
-      return boundary.deny(`heartbeat_fixture_unexpected_sql: ${sql}`);
-    }) };
-    const createTask = vi.fn().mockRejectedValue(new Error('fixture_task_creation_failed'));
-    const result = await triggerDeptHeartbeats(pool, createTask);
-    expect(createTask).toHaveBeenCalledOnce();
-    expect(result).toEqual({ triggered: 0, skipped: 1, results: [{ dept: 'audit-fixture', created: false, reason: 'error' }] });
-    expectIncident('dept-heartbeat', 'heartbeat-silent:audit-fixture', 'p2', {
-      dept_name: 'audit-fixture', error: 'fixture_task_creation_failed',
-    });
-  });
-
   it('熔断达到阈值才写incident，并保留真实事件与SQL参数', async () => {
     const key = 'incident-fixture-threshold';
     for (let i = 1; i < FAILURE_THRESHOLD; i++) await recordFailure(key);
@@ -134,16 +118,9 @@ describe('真实探针红信号经reporter到SQL边界', () => {
     expect(boundary.raise).toHaveBeenCalledWith('P0', `circuit_open_${key}`, expect.any(String));
   });
 
-  it('健康launchd与已有心跳任务不写incident或发告警', async () => {
+  it('健康launchd不写incident或发告警', async () => {
     expect(await runLaunchdPatrol({ now: 2_000_000, inContainer: false, exec: launchdOutput() }))
       .toMatchObject({ ok: true, anomalies: [] });
-    const pool = { query: vi.fn(async sql => {
-      if (sql.includes('FROM dept_configs')) return { rows: [{ dept_name: 'healthy-fixture' }] };
-      if (sql.includes('FROM tasks')) return { rows: [{ id: 'existing-fixture-task' }] };
-      return boundary.deny(`heartbeat_fixture_unexpected_sql: ${sql}`);
-    }) };
-    const result = await triggerDeptHeartbeats(pool, boundary.deny);
-    expect(result).toMatchObject({ triggered: 0, skipped: 1 });
     expect(incidents()).toEqual([]);
     expect(boundary.raise).not.toHaveBeenCalled();
     expect(boundary.sendBark).not.toHaveBeenCalled();

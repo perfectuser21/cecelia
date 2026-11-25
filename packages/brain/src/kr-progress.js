@@ -13,7 +13,6 @@ import { isCompanyKr, COMPANY_KR_SQL_GUARD } from './lib/company-kr-metrics.js';
  *
  * 触发位置：
  *   - pr-callback-handler.js：PR 合并后
- *   - kr-progress-sync-plugin.js（经 tick-runner.js）：每小时定时同步（fallback，kr-verifier 优先）
  */
 
 import { computeKrProgressFromProjects } from './project-progress.js';

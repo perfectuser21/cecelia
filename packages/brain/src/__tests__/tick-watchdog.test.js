@@ -128,9 +128,6 @@ vi.mock('../health-monitor.js', () => ({
   runLayer2HealthCheck: vi.fn().mockResolvedValue(null),
 }));
 
-vi.mock('../dept-heartbeat.js', () => ({
-  triggerDeptHeartbeats: vi.fn().mockResolvedValue(null),
-}));
 
 vi.mock('../daily-review-scheduler.js', () => ({
   triggerDailyReview: vi.fn().mockResolvedValue(null),

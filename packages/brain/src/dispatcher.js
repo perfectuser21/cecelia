@@ -493,7 +493,7 @@ async function dispatchAdmittedTask(goalIds, options = {}) {
 
   // C1 fix (fabf6bd6): claim 成功后到 triggerCeceliaRun 判定之间任何未预期异常都会让 task 永久卡在
   // claimed_by 已设 + status=in_progress（graph 从未真正 invoke）。统一兜底释放 claim + 标 failed，
-  // 绝不 rethrow — dispatcher 调用方（tick-runner.js）没有包 try/catch。
+  // 先收口当前 claim 与任务终态，避免上层捕获异常后留下运行中任务。
   const postClaimException = async (err) => {
     console.error(`[dispatch] unexpected exception after claim, task=${nextTask?.id}: ${err.message}`);
     if (nextTask?.id) {

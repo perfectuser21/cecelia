@@ -13,7 +13,6 @@ export function getTickStatus(): Promise<{
 }>;
 export function enableTick(): Promise<{ success: boolean; enabled: boolean; loop_running: boolean }>;
 export function disableTick(source?: string): Promise<{ success: boolean; enabled: boolean; loop_running: boolean; source: string }>;
-export function executeTick(): Promise<Record<string, unknown>>;
 export function runTickSafe(source?: string, tickFn?: () => Promise<unknown>): Promise<Record<string, unknown>>;
 export function startTickLoop(): boolean;
 export function stopTickLoop(): boolean;

@@ -92,7 +92,7 @@ Brain (port 5221)
 
 | 能力 | 实现 | 说明 |
 |------|------|------|
-| LLM 去阻塞 | `src/tick-runner.js` | LLM 调用全部 fire-and-forget，thalamus 30s 超时，tick loop 不再阻塞 |
+| Tick 与 LLM 隔离 | `src/tick-scheduler.js` + `src/consciousness-guard.js` | 现役调度不等待 LLM；独立后台思考图保持休眠 |
 | Circuit Breaker 持久化 | `src/circuit-breaker.js` + migration 261 | 重启后自动从 DB 恢复熔断状态，消除每次重启的冷启动盲区 |
 | brain_guidance 表 | `src/guidance.js` + migration 262 | 两层架构握手基础设施，getGuidance/setGuidance/clearExpired API |
 

@@ -160,7 +160,7 @@ describe('execution-callback supertest：token 配置后缺头 401 / Bearer 200'
     mockPool = {
       query: vi.fn(async (sql) => {
         // 幂等短路：让路由在鉴权之后、事务之前返回 200（只验闸门，不验业务）
-        if (typeof sql === 'string' && sql.includes("trigger = 'execution-callback'") && sql.includes('SELECT id FROM decision_log')) {
+        if (typeof sql === 'string' && sql.includes("trigger = 'execution-callback'") && /^\s*SELECT\b/.test(sql) && /\bFROM\s+decision_log\b/.test(sql)) {
           return { rows: [{ id: 'dup' }] };
         }
         if (typeof sql === 'string' && sql.includes('INSERT INTO callback_queue')) return { rows: [{ id: 'cq-1' }] };
@@ -180,7 +180,7 @@ describe('execution-callback supertest：token 配置后缺头 401 / Bearer 200'
     });
   });
 
-  beforeEach(() => { mockPool.query.mockClear(); });
+  beforeEach(() => { mockPool.query.mockClear(); mockPool.connect.mockClear(); });
 
   afterAll(async () => {
     try {
@@ -197,6 +197,7 @@ describe('execution-callback supertest：token 配置后缺头 401 / Bearer 200'
     expect(res.status).toBe(401);
     expect(res.body.error?.code).toBe('UNAUTHORIZED');
     expect(mockPool.query).not.toHaveBeenCalled();
+    expect(mockPool.connect).not.toHaveBeenCalled();
   });
 
   it('错 token → 401', async () => {
@@ -204,6 +205,8 @@ describe('execution-callback supertest：token 配置后缺头 401 / Bearer 200'
     const res = await request(server).post('/api/brain/execution-callback')
       .set('Authorization', 'Bearer nope').send({ task_id: 't', run_id: 'r', status: 'completed' });
     expect(res.status).toBe(401);
+    expect(mockPool.query).not.toHaveBeenCalled();
+    expect(mockPool.connect).not.toHaveBeenCalled();
   });
 
   it('带 Bearer → 200 进入处理', async () => {
@@ -211,6 +214,11 @@ describe('execution-callback supertest：token 配置后缺头 401 / Bearer 200'
     const res = await request(server).post('/api/brain/execution-callback')
       .set('Authorization', `Bearer ${TOKEN}`).send({ task_id: 't', run_id: 'r', status: 'completed' });
     expect(res.status).toBe(200);
-    expect(res.body.success).toBe(true);
+    expect(res.body).toMatchObject({ success: true, duplicate: true });
+    expect(mockPool.query).toHaveBeenCalledWith(
+      expect.stringMatching(/SELECT id,[\s\S]*FROM decision_log/), ['r', 'completed'],
+    );
+    expect(mockPool.connect).not.toHaveBeenCalled();
+    expect(mockPool.query.mock.calls.some(([sql]) => /UPDATE\s+tasks\b/i.test(sql))).toBe(false);
   });
 });

@@ -6,12 +6,6 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { readFileSync } from 'fs';
-import { resolve, dirname } from 'path';
-import { fileURLToPath } from 'url';
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
-
 // ──────────────────────────────────────────────────────────────
 // Mock: executor-contracts.js（在 __tests__ 目录，相对路径 '../'）
 // ──────────────────────────────────────────────────────────────
@@ -77,20 +71,6 @@ vi.mock('../drain.js', async (original) => ({ ...await original(),
 vi.mock('../platform-utils.js', () => ({
   processExists: vi.fn().mockReturnValue(false),
 }));
-
-// ──────────────────────────────────────────────────────────────
-// 源码自省：tick-runner.js dead-reset 区块
-// ──────────────────────────────────────────────────────────────
-const TICK_RUNNER_PATH = resolve(__dirname, '../tick-runner.js');
-const TICK_RUNNER_SRC = readFileSync(TICK_RUNNER_PATH, 'utf8');
-
-function extractDeadTaskResetBlock(src) {
-  const startIdx = src.indexOf('6.6. Dead task reset');
-  if (startIdx === -1) throw new Error('找不到 "6.6. Dead task reset" 注释');
-  const endIdx = src.indexOf('// 7. Dispatch tasks', startIdx);
-  if (endIdx === -1) throw new Error('找不到 "// 7. Dispatch tasks" 结束标记');
-  return src.slice(startIdx, endIdx);
-}
 
 // ══════════════════════════════════════════════════════════════
 // 回归用例（07-10 事故参数：四刀均不杀活跃任务）
@@ -229,19 +209,6 @@ describe('T2 Liveness 回归 — 07-10 事故：四刀均不杀 alive 任务', (
 
       expect(killProcess).not.toHaveBeenCalled();
       expect(actions).toHaveLength(0);
-    });
-  });
-
-  // ──── 刀③: tick-runner SQL 回归 ──────────────────────────────
-  describe('刀③ tick-runner.js dead-reset SQL：executor_kind IN 白名单，不再 IS DISTINCT FROM', () => {
-    const block = extractDeadTaskResetBlock(TICK_RUNNER_SRC);
-
-    it('dead-reset 区块包含 executor_kind IN (\'brain-local\', \'bridge\')', () => {
-      expect(block).toMatch(/executor_kind\s+IN\s+\(\s*'brain-local'\s*,\s*'bridge'\s*\)/);
-    });
-
-    it('dead-reset 区块不再包含 IS DISTINCT FROM \'skill-relay\'', () => {
-      expect(block).not.toMatch(/IS DISTINCT FROM\s+'skill-relay'/);
     });
   });
 

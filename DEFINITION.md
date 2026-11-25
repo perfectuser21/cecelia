@@ -1,6 +1,8 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.445.294
+**Brain 版本**: 1.445.295
+
+现役Tick与手动HTTP统一使用runScheduler，清退无现役调用的旧executeTick回滚执行器、兼容导出和专属回归。保留原生任务派发、Notion、租约锁、恢复与镜像发布回退。纯mock回调只由unit执行，休眠后台思考专项退出默认CI；重复Python和源码字符串检查合并到实际行为保障。
 
 默认CI继续清退无现役消费者的Claude账号派发、旧设备池选台及专属能力映射/Skill复合动作；租约锁、原生任务、Notion和Skill真身所有权仍保留。夜间汇总测试与其导入叶只执行一次；旧Tick移除孤立KR/Harness巡检与重复会话整理接线，保留现役调度和独立会话整理。 旧cecelia-factory证据收集与历史CI来源矩阵退役，刷新及运行来源接口明确拒绝新采集；保留既有冻结快照读回、歧义拒绝、非执行证据隔离，以及Foundation、ZenithJoy和Commander共享发布能力。
 

@@ -3,12 +3,12 @@
  * 决策 105a5868（决策分档）· 链 bf5088a3 棒5 · 任务 3fad28e0
  *
  * 病根：tick 派发白名单是 `key_results WHERE status IN (active,in_progress,decomposing)` 的 id
- * （tick-runner.js / tick-scheduler.js）。任务挂 Objective id 会被 selectNextDispatchableTask
+ * （tick-scheduler.js）。任务挂 Objective id 会被 selectNextDispatchableTask
  * 静默过滤——永远 queued、没有任何日志（近 14 天 tick 派出的 39 个任务 goal_id 全为 NULL，无人察觉）。
  * 不给 goal_id 的行为保持不变（本守卫不强制必填，必填由 actions.createTask 按任务类型另管）。
  */
 
-/** tick 派发白名单里的 KR 状态（与 tick-runner.js 的 SQL 一致；KR 不在其中只提示、不拒绝）。 */
+/** tick 派发白名单里的 KR 状态（与现役scheduler SQL一致；KR不在其中只提示、不拒绝）。 */
 export const DISPATCHABLE_KR_STATUSES = ['active', 'in_progress', 'decomposing'];
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
