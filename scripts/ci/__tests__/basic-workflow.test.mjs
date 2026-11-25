@@ -264,6 +264,15 @@ test('周扫描仅CodeQL执行，全部CI无PR评论写权限', () => {
   assert.ok(workflow.concurrency['cancel-in-progress'].includes("github.event.action != 'closed'"));
 });
 
+test('CodeQL仅移除明确退役归档，当前源码和测试仍全量扫描', () => {
+  const init = workflow.jobs.codeql.steps.find(step => step.uses === 'github/codeql-action/init@v4');
+  const config = yaml.load(init.with.config ?? '{}');
+  assert.deepEqual(config, {'paths-ignore': ['sprints/archive/**', 'docs/archive/engine-tests-retired/**']});
+  assert.equal(Object.hasOwn(init.with, 'config-file'), false);
+  assert.equal(Object.hasOwn(init.with, 'queries'), false);
+  assert.equal(Object.hasOwn(init.with, 'packs'), false);
+});
+
 test('现役全量PR固定执行18个runner，不包含自动预览', () => {
   const selected = workflow.jobs.checks.strategy.matrix.include;
   assert.equal(selected.length, 11);
