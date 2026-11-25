@@ -1,12 +1,11 @@
-# CI原生APT安装回归
+# 退役 ZenithJoy 旧客户 staging
 
-Task: 0de62006-7ab2-42c4-918f-21d47e5234e7
+Task: 146c51f5-cbfa-494b-b43f-d392ae970d2f
 GP-Anchor: none(infra)
 
-- [ ] 实际workflow命令在官方us-west-2原生源下可抵达工具安装；update/install失败必须非零，先红后绿并永久留在Scripts CI。
-  Test: manual:node --test scripts/ci/__tests__/basic-ubuntu-native-install.test.mjs
-- [ ] 已无现役调用的源校验/旧镜像恢复及专属测试清退，保留Chromium真实安装和失败传播；完整Scripts/Ops通过。
-  Test: manual:node scripts/ci/run-basic-check.mjs scripts
-  Test: manual:node scripts/ci/run-basic-check.mjs ops
-- [ ] 独立消费者审查与显式续证通过；PR/main真实APT安装和全部检查成功，完整自动CD与生产业务读回成功。
-  Test: manual:node --test scripts/ci/__tests__/basic-brain-deploy-certification.test.mjs
+- [x] 已退役客户提交返回 410，缺失或与 PR 地址冲突的仓库字段不会绕过，且不会建单。
+  Test: manual:cd packages/brain && npx vitest run src/__tests__/staging-e2e-api.test.js
+- [x] 恢复旧客户任务只记录退役；不再访问旧 staging，保留历史 verdict 与晋级台账。内部 Brain 和 Dashboard 核验继续通过。
+  Test: manual:cd packages/brain && npx vitest run src/__tests__/staging-e2e-runner.test.js src/__tests__/staging-e2e-runner-dashboard-seam.test.js src/__tests__/staging-e2e-runner-promote.test.js
+- [x] 旧客户确认返回 410 且不改历史台账；内部确认按已存仓库身份运行 Cecelia 晋级。
+  Test: manual:cd packages/brain && npx vitest run src/routes/__tests__/staging-promote.test.js

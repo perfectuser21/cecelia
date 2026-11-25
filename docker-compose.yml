@@ -155,8 +155,6 @@ services:
       - HOST_PROMPT_DIR=/Users/administrator/claude-output/cecelia-prompts
       # ZenithJoy API — harness-sprint-state skill 写 sprint_states/journey_steps 用
       - BRAIN_API=http://host.docker.internal:5200
-      # ZenithJoy 蓝绿护栏：staging-e2e-runner.js 健康检查 :5201，需指向宿主（容器内 localhost 不通宿主端口）
-      - ZJ_STAGING_HOST=host.docker.internal
       # P0-fix: Brain 写发布回执到独立 zenithjoy 库（zenithjoy-db.js 依赖此变量）
       # 未设 → 静默落回 cecelia.zenithjoy schema（拆库目的失效）
       - ZENITHJOY_DB_NAME=zenithjoy

@@ -1,14 +1,11 @@
 /**
  * Staging E2E Runner（阶段2 Slice1）。
  *
- * harness sub_task 合并后，reportNode 派生一个 task_type='staging_e2e' 的 Brain 任务。
  * 本模块是该任务的 native 执行器（executor.triggerCeceliaRun 直接调用，
  * 独立于 langgraph / interrupt）：
  *   1. 复用 scripts/staging-deploy.sh 把 Brain 部署到 :5222；
  *   2. 加载 initiative_contracts.e2e_acceptance，在真 staging 实例上跑 contract E2E；
  *   3. verdict（PASS/FAIL/SKIP）落 staging_e2e_results 表，并写回 tasks.result。
- *
- * 不碰人工放行 / promote / report（Slice2/3）。
  *
  * verdict 语义：
  *   PASS  — 部署成功且全部 scenario 通过
@@ -23,14 +20,15 @@ import path from 'path';
 import pool from './db.js';
 import { updateTaskStatus } from './task-updater.js';
 import { normalizeAcceptance } from './staging-acceptance.js';
-import { resolveLine, decidePromote, runInternalPromote, defaultPromoteExec, getRepoRoot, PROMOTE_STATUS } from './staging-promote.js';
+import {
+  resolveLine, resolveStagingLine, decidePromote, runInternalPromote, defaultPromoteExec, getRepoRoot,
+  PROMOTE_STATUS, ZENITHJOY_STAGING_RETIRED,
+} from './staging-promote.js';
 import { sendFeishu, sendBark } from './notifier.js';
 
 export const STAGING_PORT = 5222;
 // A 方案：内部线交付 dashboard，staging 用 deploy-local.sh 起的 dashboard 预览端口。
 export const DASHBOARD_STAGING_PORT = 5223;
-// ZenithJoy 蓝绿护栏：:5200=生产，:5201=staging（ZenithJoy CI push:main→:5201 自动部署）。
-export const ZJ_STAGING_PORT = 5201;
 // ZenithJoy develop 环境端口占位（FR-06 / Sprint 07131922）。
 // 实际部署端口待 ZenithJoy 侧决策后更新，默认 5230。
 export const ZJ_DEV_PORT = process.env.ZJ_DEV_PORT ? parseInt(process.env.ZJ_DEV_PORT, 10) : 5230;
@@ -52,6 +50,9 @@ function cap(s) {
  * @returns {{status:'success'|'skipped'|'failed', reason:string|null, output:string}}
  */
 export async function deployStaging(opts = {}) {
+  if (opts.line === 'customer') {
+    return { status: 'skipped', reason: ZENITHJOY_STAGING_RETIRED, output: '' };
+  }
   const injectedExec = opts.exec;
   // 容器内 cwd=/app，部署脚本在 bind-mount 的 repo 根 scripts/；用绝对路径。
   // REPO_ROOT env（容器=bind-mount repo 根）优先；getRepoRoot() 仅本地直跑兜底（容器内返回 /）。
@@ -59,67 +60,7 @@ export async function deployStaging(opts = {}) {
   // A 方案：内部线交付 dashboard → 用 deploy-local.sh 构建 dashboard 到 staging（:5223）
   // + 写 .staging-pending（promote 步靠它）；非内部线沿用 staging-deploy.sh（brain :5222）。
   const internal = opts.line === 'internal';
-  const customer = opts.line === 'customer';
-  const stagingPort = internal ? DASHBOARD_STAGING_PORT : customer ? ZJ_STAGING_PORT : STAGING_PORT;
-
-  // ZenithJoy 蓝绿护栏：customer line 的 staging 由 ZenithJoy CI push:main→:5201 自动部署，
-  // Cecelia 不跨 repo 做部署（跨 repo 边界）；只做健康检查——起不来则 FAIL 护栏触发，:5200 不被触碰。
-  // 重试逻辑：ZenithJoy CI deploy 需 2-3 分钟，staging 检查在 merge 后立即触发，容器重启窗口内
-  // 单次 curl 失败即判死是误判。重试 maxAttempts 次（默认 5），间隔 retryDelayMs（默认 30s）。
-  // 默认总窗口：5×30s + 4×30s = 270s ≈ 4.5 分钟，覆盖 ZJ CI 全部部署时间。
-  //
-  // 健康检查语义（2026-07-07 增强）：
-  //   - :5201/health 必须返回 JSON { status: 'ok' } 才算健康。
-  //   - ZJ API server 旧版本无 /health 路由时，SPA fallback 返回 200+HTML（不含 "status":"ok"），
-  //     视为 zj_staging_html_fallback（服务起来了但版本太旧 / 路由未就绪），触发护栏。
-  //   - ECONNREFUSED（进程未起）仍触发 zj_staging_unhealthy。
-  if (customer && !opts.deployScript) {
-    const host = process.env.ZJ_STAGING_HOST || 'localhost';
-    const maxAttempts = opts.maxAttempts ?? 5;
-    const retryDelayMs = opts.retryDelayMs ?? 30_000;
-    const sleep = opts.sleep || ((ms) => new Promise((r) => setTimeout(r, ms)));
-    let lastErr;
-    let lastOut;
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      const healthUrl = `http://${host}:${ZJ_STAGING_PORT}/health`;
-      const curlArgs = ['-sf', '--connect-timeout', '30', '--max-time', '30', healthUrl];
-      try {
-        const raw = injectedExec
-          ? injectedExec(`curl ${curlArgs.join(' ')}`, { encoding: 'utf8', timeout: 45_000, maxBuffer: 1024 * 1024 })
-          : execFileSync('curl', curlArgs, { encoding: 'utf8', timeout: 45_000, maxBuffer: 1024 * 1024 });
-        const out = typeof raw === 'string' ? raw : String(raw);
-        lastOut = out;
-        // JSON 层验证：/health 必须返回含 "status":"ok" 的 JSON，防 SPA fallback 返回 HTML 误判健康。
-        let parsed;
-        try { parsed = JSON.parse(out.trim()); } catch { /* non-JSON → 视为不健康 */ }
-        if (parsed && parsed.status === 'ok') {
-          // SHA 兼容两种格式：新端点 { sha } / 旧格式 { build: { sha } }
-          const stagingSha = parsed.sha || parsed?.build?.sha || null;
-          const stagingBuildTime = parsed?.build?.buildTime || null;
-          const shaLine = stagingSha ? `\n[ZJ staging SHA: ${stagingSha}${stagingBuildTime ? ' buildTime:' + stagingBuildTime : ''}]` : '';
-          return { status: 'success', reason: null, output: cap(out + shaLine), stagingPort, stagingSha, zjSha: parsed.sha || null };
-        }
-        // 服务进程活着但 /health 未返回 ok JSON（旧版本 SPA fallback 或服务启动中）
-        const htmlHint = !parsed ? ' [非JSON,可能SPA fallback或旧版本未含/health端点]' : ` [status=${parsed.status}]`;
-        lastErr = new Error(`zj /health 未返回 ok${htmlHint}`);
-        if (attempt < maxAttempts) {
-          console.warn(`[staging-e2e] ZJ staging :${ZJ_STAGING_PORT} /health 响应非 ok（attempt ${attempt}/${maxAttempts}），${retryDelayMs / 1000}s 后重试${htmlHint}`);
-          await sleep(retryDelayMs);
-        }
-      } catch (err) {
-        lastErr = err;
-        if (attempt < maxAttempts) {
-          console.warn(`[staging-e2e] ZJ staging :${ZJ_STAGING_PORT} 健康检查失败（attempt ${attempt}/${maxAttempts}），${retryDelayMs / 1000}s 后重试`);
-          await sleep(retryDelayMs);
-        }
-      }
-    }
-    const errMsg = `${lastErr?.stdout ? String(lastErr.stdout) : ''}\n${lastErr?.stderr ? String(lastErr.stderr) : ''}\n${lastErr?.message || ''}`.trim();
-    // 如果最后一次是 HTML fallback（进程活但不健康），区分原因。
-    const reason = lastOut && !lastOut.trim().startsWith('{') ? 'zj_staging_html_fallback' : 'zj_staging_unhealthy';
-    const combined = `[尝试 ${maxAttempts} 次均失败，总等待 ${Math.round((maxAttempts - 1) * retryDelayMs / 1000)}s] ${errMsg}`;
-    return { status: 'failed', reason, output: cap(combined), stagingPort };
-  }
+  const stagingPort = internal ? DASHBOARD_STAGING_PORT : STAGING_PORT;
 
   let processSpec;
   if (opts.deployScript) {
@@ -176,7 +117,6 @@ export function runStagingCommand(command, opts = {}) {
   const host = opts.host || process.env.STAGING_HOST || 'host.docker.internal';
   // 端口重写按线区分。
   // 内部线 dashboard staging（port=5223）：5174(dashboard)→:5223，5221(brain) 保持活 brain。
-  // ZenithJoy staging（port=5201）：5200(production)→:5201（合同针对 production 写，重写到 staging）。
   // 非内部线 brain staging（port=5222）：5221→:5222（原行为）。
   let cmd;
   if (port === DASHBOARD_STAGING_PORT) {
@@ -185,10 +125,6 @@ export function runStagingCommand(command, opts = {}) {
       .replace(/127\.0\.0\.1:5174/g, `${host}:${port}`)
       .replace(/localhost:5221/g, `${host}:5221`)
       .replace(/127\.0\.0\.1:5221/g, `${host}:5221`);
-  } else if (port === ZJ_STAGING_PORT) {
-    cmd = command.cmd
-      .replace(/localhost:5200/g, `${host}:${port}`)
-      .replace(/127\.0\.0\.1:5200/g, `${host}:${port}`);
   } else {
     cmd = command.cmd
       .replace(/localhost:5221/g, `${host}:${port}`)
@@ -341,7 +277,7 @@ async function writeTaskResult(dbPool, taskId, resultObj) {
   await dbPool.query(
     `UPDATE tasks SET result = COALESCE(result, '{}'::jsonb) || $2::jsonb, updated_at = NOW()
      WHERE id = $1::uuid`,
-    [taskId, JSON.stringify({ staging_e2e: resultObj })]
+    [taskId, JSON.stringify(resultObj)]
   );
 }
 
@@ -373,7 +309,7 @@ function defaultGetSha(opts = {}) {
 /**
  * Slice2：staging E2E PASS 后放行分流（决策 C）。
  * 内部线 → 自动 promote（注入 promoteExec，绝不在测试里打真生产）；
- * 客户线/unknown → pending_promote + 飞书通知（挂 DB 状态行，不碰 interrupt）。
+ * 未指定仓库 → pending_promote + 飞书通知。
  * best-effort：任何失败只告警，不影响 verdict 已落库。
  * @returns {string} 最终 promote_status
  */
@@ -394,40 +330,12 @@ export async function checkInitiativeAggregate(dbPool, initiativeId) {
   return { allPass, testedSha };
 }
 
-export async function handlePromote(dbPool, { verdict, baseRepo, prUrl, initiativeId, deployOutput, zjSha }, opts = {}) {
+export async function handlePromote(dbPool, { verdict, baseRepo, prUrl, initiativeId }, opts = {}) {
   const decision = decidePromote({ verdict, baseRepo });
   const notify = opts.notify || sendFeishu;
-  const notifyBark = opts.notifyBark || sendBark;
   try {
     if (decision.action === 'none') {
       await updatePromoteStatus(dbPool, prUrl, PROMOTE_STATUS.NA);
-      // ZenithJoy customer line staging FAIL → 飞书 + Bark 双通知（护栏触发，:5200 未触碰）。
-      // SKIP（无合同/无 docker）不通知：不是真失败，是配置缺省。
-      if (verdict === 'FAIL' && decision.line === 'customer') {
-        try {
-          const deployStr = deployOutput ? String(deployOutput).trim() : '';
-          // zjSha 优先（新端点 /health 直接返回）；回退到 deployOutput 诊断行（旧格式兼容）
-          const shaFromOutput = deployStr.match(/\[ZJ staging SHA:\s*([0-9a-f]{7,40})[^\]]*\]/)?.[1];
-          const shaLine = (zjSha && zjSha !== 'unknown')
-            ? `\n候选: ${zjSha}`
-            : (shaFromOutput ? `\n最后已知 staging SHA: ${shaFromOutput.slice(0, 12)}` : '');
-          const outputSnippet = deployStr
-            ? `\n诊断: ${deployStr.slice(-400)}`
-            : '';
-          await notify(
-            `🚨 [ZJ 护栏触发] ZenithJoy staging :5201 失败，:5200 生产未触碰\n`
-            + `initiative: ${initiativeId || '?'}\nPR: ${prUrl || '?'}${shaLine}${outputSnippet}\n`
-            + `下一步: 检查 ZenithJoy CI deploy 日志，修复后重推 main 触发重跑`
-          );
-        } catch (e) {
-          console.warn(`[staging-e2e] ZJ 护栏触发通知失败（忽略）: ${e.message}`);
-        }
-        // Bark 移动通知（fire-and-forget，不阻塞主流程）。
-        notifyBark(
-          '🚨 ZJ 护栏触发',
-          `staging :5201 失败，:5200 生产未触碰。initiative: ${initiativeId || '?'}`,
-        ).catch(() => {});
-      }
       return PROMOTE_STATUS.NA;
     }
     if (decision.action === 'auto') {
@@ -453,12 +361,11 @@ export async function handlePromote(dbPool, { verdict, baseRepo, prUrl, initiati
       // repoRoot 用 REPO_ROOT env（容器=bind-mount repo 根，脚本存在）；裸 getRepoRoot() 容器内返回 / 找不到脚本。
       const promoteExec = opts.promoteExec || defaultPromoteExec(process.env.REPO_ROOT || getRepoRoot());
       const r = await runInternalPromote({ promoteExec });
-      // 自动 promote 成功用 auto_promoted（区分客户线 confirm 后的 promoted）；失败 promote_failed。
       const status = r.ok ? PROMOTE_STATUS.AUTO_PROMOTED : PROMOTE_STATUS.PROMOTE_FAILED;
       await updatePromoteStatus(dbPool, prUrl, status, r.output);
       return status;
     }
-    // pending：客户线 / base_repo 缺失 → 挂起 + 通知主理人
+    // 未指定仓库时由主理人确认。
     await updatePromoteStatus(dbPool, prUrl, PROMOTE_STATUS.PENDING_PROMOTE);
     try {
       await notify(
@@ -684,26 +591,35 @@ export async function runStagingE2E(task, opts = {}) {
         }
       }
     } else {
-      // Slice2：PASS 后放行分流（内部线 auto-promote / 客户线 pending+通知 / base_repo 缺失保守 pending）。
+      // PASS 后按仓库决定自动晋级或等待确认。
       // best-effort，不影响 verdict 已落库。
       promoteStatus = await handlePromote(
-        dbPool, { verdict, baseRepo, prUrl, initiativeId, deployOutput: base.deployOutput, zjSha: base.zjSha || null },
+        dbPool, { verdict, baseRepo, prUrl, initiativeId },
         { promoteExec: opts.promoteExec, notify: opts.notify },
       );
     }
     await writeTaskResult(dbPool, task.id, {
-      verdict, reason,
-      scenarios_total: extra.scenariosTotal ?? base.scenariosTotal,
-      scenarios_passed: extra.scenariosPassed ?? base.scenariosPassed,
-      pr_url: prUrl, initiative_id: initiativeId,
-      promote_status: promoteStatus,
-      ...(extra.regressionSmokeResult ? { regression_smoke_result: extra.regressionSmokeResult } : {}),
+      staging_e2e: {
+        verdict, reason,
+        scenarios_total: extra.scenariosTotal ?? base.scenariosTotal,
+        scenarios_passed: extra.scenariosPassed ?? base.scenariosPassed,
+        pr_url: prUrl, initiative_id: initiativeId,
+        promote_status: promoteStatus,
+        ...(extra.regressionSmokeResult ? { regression_smoke_result: extra.regressionSmokeResult } : {}),
+      },
     });
     await updateTaskStatus(task.id, 'completed');
     return { success: true, taskId: task.id, verdict, reason, promoteStatus };
   };
 
   try {
+    if (resolveStagingLine(p) === 'customer') {
+      const retirement = { verdict: 'SKIP', reason: ZENITHJOY_STAGING_RETIRED };
+      await writeTaskResult(dbPool, task.id, { staging_e2e_retirement: retirement });
+      const completion = await updateTaskStatus(task.id, 'completed');
+      if (!completion.success) throw new Error(completion.error);
+      return { success: true, taskId: task.id, ...retirement };
+    }
     if (!initiativeId) return await finalize('SKIP', 'no_initiative_id');
 
     // 1. 先加载合同（无合同则连 deploy 都不必跑）
@@ -714,7 +630,7 @@ export async function runStagingE2E(task, opts = {}) {
     //    非内部线走 staging-deploy.sh 部署 brain 到 :5222。
     const line = resolveLine(baseRepo);
 
-    // 刀3b（harness 跨 repo 化）：base_repo 非空但既非 cecelia 也非 zenithjoy = 第三方 repo。
+    // 显式指定第三方仓库时没有部署目标。
     // cecelia 没有它的 staging 部署目标——旧行为落进 deployStaging 的 else 分支跑
     // staging-deploy.sh，把 cecelia brain 部署到 :5222（错误目标）。显式策略：不抢锁、
     // 不跑任何 deploy，SKIP(unknown_line) + promote_status=pending_promote + 飞书通知主理人。
@@ -731,9 +647,7 @@ export async function runStagingE2E(task, opts = {}) {
 
     // Slice6: staging 单实例串行 — deploy 前抢 advisory lock，防 N 路并发互相 docker rm 顶掉。
     // 抢不到（别路正占同端口实例）→ SKIP staging_busy（不部署）；抢到 → finally 必释放。
-    // customer line 用 ZJ_STAGING_PORT(5201) 作锁 key，防并发 ZenithJoy staging E2E 互相干扰，
-    // 且不与 Cecelia Brain staging(STAGING_PORT=5222) 产生假冲突（两者独立端口、独立资源）。
-    const lockPort = line === 'internal' ? DASHBOARD_STAGING_PORT : line === 'customer' ? ZJ_STAGING_PORT : STAGING_PORT;
+    const lockPort = line === 'internal' ? DASHBOARD_STAGING_PORT : STAGING_PORT;
     const acquireLock = opts.acquireStagingLock || acquireStagingLock;
     const lock = await acquireLock(dbPool, lockPort);
     if (!lock) return await finalize('SKIP', 'staging_busy');
@@ -741,7 +655,6 @@ export async function runStagingE2E(task, opts = {}) {
     try {
       const dep = await deploy({ exec: opts.exec, cwd: opts.cwd, line });
       base.deployOutput = dep.output;
-      base.zjSha = dep.zjSha || null;
       if (dep.status === 'skipped') return await finalize('SKIP', dep.reason);
       if (dep.status === 'failed') return await finalize('FAIL', dep.reason || 'deploy_failed');
       base.deployedAt = new Date();

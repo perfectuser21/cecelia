@@ -3,9 +3,7 @@
  *
  * 覆盖：
  *   - deployStaging: success / skipped(STAGING_SKIP_REASON) / failed(throw)
- *   - deployStaging ZenithJoy customer line: :5201 健康 → success；:5201 挂 → failed（护栏触发）
  *   - runStagingCommand: :5221→:5222 端口重写 / 合法访问 /api/brain（无 planner_drift 拦截）/ 非 0 退出
- *   - runStagingCommand ZenithJoy: :5200→:5201 端口重写
  *   - runScenarios: 全 PASS / 部分 FAIL（failedScenarios 正确）
  *   - runStagingE2E: no_initiative_id / no_contract / deploy skip / deploy fail / PASS / scenario FAIL
  *     —— verdict 落 staging_e2e_results + 写回 tasks.result + 标 completed
@@ -28,7 +26,6 @@ const {
   checkInitiativeAggregate,
   STAGING_PORT,
   DASHBOARD_STAGING_PORT,
-  ZJ_STAGING_PORT,
 } = await import('../staging-e2e-runner.js');
 
 // 构造一个记录所有 query 的 mock pool
@@ -55,6 +52,13 @@ beforeEach(() => {
 
 // ─── deployStaging ───────────────────────────────────────────────────────────
 describe('deployStaging', () => {
+  it('直接调用已退役客户线返回 SKIP 且不执行部署', async () => {
+    const exec = vi.fn(() => 'unexpected deployment');
+    const result = await deployStaging({ line: 'customer', exec });
+    expect(result).toMatchObject({ status: 'skipped', reason: 'zenithjoy_staging_retired' });
+    expect(exec).not.toHaveBeenCalled();
+  });
+
   it('正常输出 → success', async () => {
     const exec = () => '=== Staging Deploy SUCCESS ===\n';
     const r = await deployStaging({ exec });
@@ -81,159 +85,6 @@ describe('deployStaging', () => {
     const r = await deployStaging({ exec });
     expect(r.status).toBe('failed');
     expect(r.reason).toBe('deploy_failed');
-  });
-});
-
-// ─── deployStaging — ZenithJoy customer line 蓝绿护栏 ─────────────────────────
-describe('deployStaging — ZenithJoy customer line（:5201 护栏）', () => {
-  it('客户健康检查使用配置主机的5201，不触碰生产5200或部署脚本', async () => {
-    const previous = process.env.ZJ_STAGING_HOST;
-    process.env.ZJ_STAGING_HOST = 'isolated-zj-host';
-    const exec = vi.fn(() => '{"status":"ok","sha":"fixture-sha"}');
-    try {
-      const result = await deployStaging({ exec, line: 'customer' });
-      expect(result.status).toBe('success');
-      expect(exec).toHaveBeenCalledTimes(1);
-      expect(exec.mock.calls[0][0]).toBe('curl -sf --connect-timeout 30 --max-time 30 http://isolated-zj-host:5201/health');
-      expect(result.stagingSha).toBe('fixture-sha');
-    } finally {
-      if (previous === undefined) delete process.env.ZJ_STAGING_HOST;
-      else process.env.ZJ_STAGING_HOST = previous;
-    }
-  });
-  it(':5201 健康响应 → success（护栏 pass，准备跑 E2E）', async () => {
-    let seen = null;
-    const exec = (cmd) => { seen = cmd; return '{"status":"ok"}'; };
-    const r = await deployStaging({ exec, line: 'customer' });
-    expect(r.status).toBe('success');
-    expect(r.stagingPort).toBe(ZJ_STAGING_PORT);
-    expect(seen).toContain(`:${ZJ_STAGING_PORT}`);
-  });
-
-  it(':5201 健康检查失败（连接拒绝）→ failed，reason=zj_staging_unhealthy（护栏触发,:5200 不被触碰）', async () => {
-    const exec = () => { const e = new Error('connect ECONNREFUSED'); e.status = 7; throw e; };
-    const r = await deployStaging({ exec, line: 'customer', maxAttempts: 1, sleep: async () => {} });
-    expect(r.status).toBe('failed');
-    expect(r.reason).toBe('zj_staging_unhealthy');
-    expect(r.stagingPort).toBe(ZJ_STAGING_PORT);
-  });
-
-  it(':5201 健康检查超时 → failed', async () => {
-    const exec = () => { const e = new Error('ETIMEDOUT'); e.status = 28; e.stderr = 'curl timeout'; throw e; };
-    const r = await deployStaging({ exec, line: 'customer', maxAttempts: 1, sleep: async () => {} });
-    expect(r.status).toBe('failed');
-    expect(r.reason).toBe('zj_staging_unhealthy');
-  });
-
-  it('opts.deployScript 有值时走 script（覆盖 customer 健康检查路径，供测试用）', async () => {
-    let seen = null;
-    const exec = (cmd) => { seen = cmd; return '=== Staging Deploy SUCCESS ===\n'; };
-    const r = await deployStaging({ exec, line: 'customer', deployScript: '/tmp/my-zj-deploy.sh' });
-    expect(r.status).toBe('success');
-    expect(seen).toContain('/tmp/my-zj-deploy.sh');
-  });
-
-  it('重试：第 1 次失败（容器重启窗口），第 2 次成功 → success（ZJ CI deploy 时序竞争修复）', async () => {
-    let callCount = 0;
-    const exec = () => {
-      callCount++;
-      if (callCount === 1) { const e = new Error('connect ECONNREFUSED'); e.status = 7; throw e; }
-      return '{"status":"ok"}';
-    };
-    const r = await deployStaging({ exec, line: 'customer', maxAttempts: 3, sleep: async () => {} });
-    expect(r.status).toBe('success');
-    expect(callCount).toBe(2);
-  });
-
-  it('重试：全部 maxAttempts 次均失败 → failed，reason=zj_staging_unhealthy', async () => {
-    let callCount = 0;
-    const exec = () => { callCount++; const e = new Error('ECONNREFUSED'); e.status = 7; throw e; };
-    const r = await deployStaging({ exec, line: 'customer', maxAttempts: 3, sleep: async () => {} });
-    expect(r.status).toBe('failed');
-    expect(r.reason).toBe('zj_staging_unhealthy');
-    expect(callCount).toBe(3);
-  });
-
-  it('默认 maxAttempts=5（覆盖 ZJ CI 2-3 分钟部署窗口）', async () => {
-    let callCount = 0;
-    const exec = () => { callCount++; const e = new Error('ECONNREFUSED'); e.status = 7; throw e; };
-    const r = await deployStaging({ exec, line: 'customer', sleep: async () => {} });
-    expect(r.status).toBe('failed');
-    expect(callCount).toBe(5);
-  });
-
-  it('默认 retryDelayMs=30000（30s 间隔，注入 sleep 验证延迟参数）', async () => {
-    const delays = [];
-    const exec = () => { const e = new Error('ECONNREFUSED'); e.status = 7; throw e; };
-    const sleep = async (ms) => { delays.push(ms); };
-    await deployStaging({ exec, line: 'customer', sleep });
-    expect(delays.length).toBe(4); // maxAttempts=5，间隔 4 次
-    delays.forEach(d => expect(d).toBe(30_000));
-  });
-
-  it('全部重试失败 → output 包含尝试次数和总等待时间', async () => {
-    const exec = () => { const e = new Error('connect ECONNREFUSED :5201'); e.status = 7; throw e; };
-    const r = await deployStaging({ exec, line: 'customer', maxAttempts: 3, retryDelayMs: 30_000, sleep: async () => {} });
-    expect(r.output).toMatch(/尝试 3 次均失败/);
-    expect(r.output).toMatch(/总等待 60s/);
-  });
-
-  // JSON 层健康验证：防 SPA fallback 误判，同时提取 SHA
-  it(':5201/health 返回 { status:"ok", sha } → success，zjSha + stagingSha 均携带', async () => {
-    const exec = () => '{"status":"ok","sha":"abc123def456","service":"zenithjoy-api"}';
-    const r = await deployStaging({ exec, line: 'customer', sleep: async () => {} });
-    expect(r.status).toBe('success');
-    expect(r.zjSha).toBe('abc123def456');
-    expect(r.stagingSha).toBe('abc123def456');
-    expect(r.output).toContain('[ZJ staging SHA: abc123def456');
-  });
-
-  it(':5201/health 返回旧格式 { status:"ok", build.sha } → success，stagingSha 兼容提取', async () => {
-    const healthJson = JSON.stringify({
-      status: 'ok',
-      build: { sha: '8ecf9249378936b1a27395eb5a7efcb179a3fd23', buildTime: '2026-07-07T08:14:34Z' },
-    });
-    const exec = () => healthJson;
-    const r = await deployStaging({ exec, line: 'customer', sleep: async () => {} });
-    expect(r.status).toBe('success');
-    expect(r.stagingSha).toBe('8ecf9249378936b1a27395eb5a7efcb179a3fd23');
-    expect(r.zjSha).toBeNull();
-    expect(r.output).toContain('[ZJ staging SHA: 8ecf9249378936b1a27395eb5a7efcb179a3fd23');
-    expect(r.output).toContain('buildTime:2026-07-07T08:14:34Z');
-  });
-
-  it(':5201/health 返回 {"status":"ok"} 无 sha → success，zjSha=null stagingSha=null', async () => {
-    const exec = () => '{"status":"ok"}';
-    const r = await deployStaging({ exec, line: 'customer', sleep: async () => {} });
-    expect(r.status).toBe('success');
-    expect(r.zjSha).toBeNull();
-    expect(r.stagingSha).toBeNull();
-  });
-
-  it(':5201/health 返回 HTML（SPA fallback）→ failed，reason=zj_staging_html_fallback（护栏触发）', async () => {
-    const exec = () => '<!DOCTYPE html><html><head><title>ZenithJoy</title></head><body>app</body></html>';
-    const r = await deployStaging({ exec, line: 'customer', maxAttempts: 1, sleep: async () => {} });
-    expect(r.status).toBe('failed');
-    expect(r.reason).toBe('zj_staging_html_fallback');
-  });
-
-  it(':5201/health 返回 {"status":"starting"} → failed，reason=zj_staging_unhealthy（非 ok JSON）', async () => {
-    const exec = () => '{"status":"starting"}';
-    const r = await deployStaging({ exec, line: 'customer', maxAttempts: 1, sleep: async () => {} });
-    expect(r.status).toBe('failed');
-    expect(r.reason).toBe('zj_staging_unhealthy');
-  });
-
-  it('重试：前两次返回 HTML，第三次返回 ok → success（冷启动期）', async () => {
-    let callCount = 0;
-    const exec = () => {
-      callCount++;
-      if (callCount < 3) return '<!DOCTYPE html><html>app</html>';
-      return '{"status":"ok"}';
-    };
-    const r = await deployStaging({ exec, line: 'customer', maxAttempts: 5, sleep: async () => {} });
-    expect(r.status).toBe('success');
-    expect(callCount).toBe(3);
   });
 });
 
@@ -287,21 +138,7 @@ describe('runStagingCommand', () => {
     expect(seen).toContain(`host.docker.internal:${STAGING_PORT}/api/brain/x`);
   });
 
-  // ZenithJoy 蓝绿护栏：合同里 :5200（production）→ :5201（staging）重写
-  it('ZenithJoy(port=ZJ_STAGING_PORT)：:5200→:5201（合同 production 端口重写到 staging）', () => {
-    let seen = null;
-    const exec = (cmd) => { seen = cmd; return 'ok'; };
-    runStagingCommand({ cmd: 'curl localhost:5200/health' }, { exec, port: ZJ_STAGING_PORT });
-    expect(seen).toContain(`host.docker.internal:${ZJ_STAGING_PORT}/health`);
-    expect(seen).not.toContain('localhost:5200');
-  });
 
-  it('ZenithJoy：127.0.0.1:5200 也重写到 :5201', () => {
-    let seen = null;
-    const exec = (cmd) => { seen = cmd; return 'ok'; };
-    runStagingCommand({ cmd: 'curl 127.0.0.1:5200/api/v1/test' }, { exec, port: ZJ_STAGING_PORT });
-    expect(seen).toContain(`host.docker.internal:${ZJ_STAGING_PORT}/api/v1/test`);
-  });
 });
 
 // ─── runScenarios ──────────────────────────────────────────────────────────────
@@ -335,6 +172,31 @@ describe('runStagingE2E', () => {
     return pool.calls.find((c) => /INSERT INTO staging_e2e_results/.test(c.sql));
   }
 
+  it.each([
+    { base_repo: 'perfectuser21/zenithjoy', pr_url: 'https://pr/zj' },
+    { baseRepo: 'ZenithJoy', pr_url: 'https://pr/zj' },
+    { pr_urls: ['https://github.com/perfectuser21/zenithjoy-workspace/pull/2588'] },
+  ])('恢复旧客户任务时记录退役，保留历史核验', async (payload) => {
+    const pool = makeMockPool();
+    const deploy = vi.fn(() => ({ status: 'skipped', reason: 'no_docker', output: '' }));
+    const loadAcceptance = vi.fn(async () => ACCEPTANCE);
+    const notify = vi.fn();
+    const r = await runStagingE2E(
+      { id: 'task-zj', payload: { ...payload, initiative_id: 'init-zj' } },
+      { pool, deploy, loadAcceptance, notify },
+    );
+    expect(r).toMatchObject({ success: true, verdict: 'SKIP', reason: 'zenithjoy_staging_retired' });
+    expect(deploy).not.toHaveBeenCalled();
+    expect(loadAcceptance).not.toHaveBeenCalled();
+    expect(notify).not.toHaveBeenCalled();
+    expect(pool.calls.some(({ sql }) => sql.includes('staging_e2e_results'))).toBe(false);
+    const write = pool.calls.find(({ sql }) => sql.includes('UPDATE tasks SET result'));
+    expect(JSON.parse(write.params[1])).toEqual({
+      staging_e2e_retirement: { verdict: 'SKIP', reason: 'zenithjoy_staging_retired' },
+    });
+    expect(updateTaskStatus).toHaveBeenCalledWith('task-zj', 'completed');
+  });
+
   it('无 initiative_id → SKIP no_initiative_id', async () => {
     const pool = makeMockPool();
     const r = await runStagingE2E({ id: 't', payload: {} }, { pool, deploy: vi.fn(), loadAcceptance: vi.fn() });
@@ -367,20 +229,6 @@ describe('runStagingE2E', () => {
     const r = await runStagingE2E(task, { pool, deploy, loadAcceptance: async () => ACCEPTANCE });
     expect(r.verdict).toBe('FAIL');
     expect(r.reason).toBe('deploy_failed');
-  });
-
-  it('ZenithJoy :5201 健康检查失败 → FAIL reason=zj_staging_unhealthy（原因透传，不被覆盖为 deploy_failed）', async () => {
-    const pool = makeMockPool();
-    const curlErr = 'curl: (7) Failed to connect to localhost port 5201: Connection refused';
-    const deploy = () => ({ status: 'failed', reason: 'zj_staging_unhealthy', output: curlErr, stagingPort: 5201 });
-    const notifyMsgs = [];
-    const notify = async (msg) => { notifyMsgs.push(msg); };
-    const zjTask = { id: 'task-zj', payload: { initiative_id: 'init-zj', pr_url: 'https://pr/zj', base_repo: 'perfectuser21/zenithjoy' } };
-    const r = await runStagingE2E(zjTask, { pool, deploy, loadAcceptance: async () => ACCEPTANCE, notify });
-    expect(r.verdict).toBe('FAIL');
-    expect(r.reason).toBe('zj_staging_unhealthy');
-    // 飞书通知含诊断输出（curl 错误）
-    expect(notifyMsgs.some((m) => m.includes('Connection refused'))).toBe(true);
   });
 
   it('部署成功 + scenario 全过 → PASS，verdict 落库 + 写回 tasks.result', async () => {
@@ -442,16 +290,6 @@ describe('runStagingE2E', () => {
       acquireStagingLock: async () => ({ release }),
     });
     expect(release).toHaveBeenCalledTimes(1);
-  });
-
-  it('Slice6 lockPort: customer line 用 ZJ_STAGING_PORT(5201) 作锁 key，不与 Cecelia Brain staging 冲突', async () => {
-    const pool = makeMockPool();
-    const capturedLockKey = [];
-    const acquireStagingLock = async (_, key) => { capturedLockKey.push(key); return { release: async () => {} }; };
-    const deploy = () => ({ status: 'skipped', reason: 'no_docker', output: '' });
-    const zjTask = { id: 'task-zj-lock', payload: { initiative_id: 'init-zj', pr_url: 'https://pr/zj-lock', base_repo: 'perfectuser21/zenithjoy' } };
-    await runStagingE2E(zjTask, { pool, deploy, loadAcceptance: async () => ACCEPTANCE, acquireStagingLock });
-    expect(capturedLockKey[0]).toBe(ZJ_STAGING_PORT);
   });
 
   it('Slice6 lockPort: default(brain) line 用 STAGING_PORT(5222) 作锁 key', async () => {
@@ -556,120 +394,7 @@ describe('Slice9: handlePromote initiative 级聚合 gate + SHA 锚定', () => {
   });
 });
 
-// ─── handlePromote — ZenithJoy customer line FAIL 护栏通知 ─────────────────────
-describe('handlePromote — ZenithJoy staging FAIL 护栏通知', () => {
-  it('FAIL + customer line → 飞书通知 + 返回 NA（:5200 不被触碰）', async () => {
-    const notifyMsgs = [];
-    const notify = async (msg) => { notifyMsgs.push(msg); };
-    const pool = { query: vi.fn(async () => ({ rows: [] })) };
-    const status = await handlePromote(
-      pool,
-      { verdict: 'FAIL', baseRepo: 'perfectuser21/zenithjoy', prUrl: 'https://github.com/pr/1', initiativeId: 'init-zj-1' },
-      { notify },
-    );
-    expect(status).toBe('n_a');
-    expect(notifyMsgs).toHaveLength(1);
-    expect(notifyMsgs[0]).toContain('ZJ 护栏触发');
-    expect(notifyMsgs[0]).toContain('5201');
-    expect(notifyMsgs[0]).toContain('5200');
-  });
-
-  it('FAIL + customer line → Bark 移动通知（双通知保证可达性）', async () => {
-    const barkCalls = [];
-    const notifyBark = async (title, body) => { barkCalls.push({ title, body }); };
-    const pool = { query: vi.fn(async () => ({ rows: [] })) };
-    await handlePromote(
-      pool,
-      { verdict: 'FAIL', baseRepo: 'perfectuser21/zenithjoy', prUrl: 'https://github.com/pr/9', initiativeId: 'init-zj-9' },
-      { notify: async () => {}, notifyBark },
-    );
-    expect(barkCalls).toHaveLength(1);
-    expect(barkCalls[0].title).toContain('ZJ 护栏触发');
-    expect(barkCalls[0].body).toContain('5201');
-    expect(barkCalls[0].body).toContain('5200');
-    expect(barkCalls[0].body).toContain('init-zj-9');
-  });
-
-  it('SKIP + customer line → 不发 Bark（配置缺省非真失败）', async () => {
-    const barkCalls = [];
-    const notifyBark = async (title, body) => { barkCalls.push({ title, body }); };
-    const pool = { query: vi.fn(async () => ({ rows: [] })) };
-    await handlePromote(
-      pool,
-      { verdict: 'SKIP', baseRepo: 'perfectuser21/zenithjoy', prUrl: 'p', initiativeId: 'i' },
-      { notify: async () => {}, notifyBark },
-    );
-    expect(barkCalls).toHaveLength(0);
-  });
-
-  it('FAIL + customer line + deployOutput → 通知含诊断输出（开发者无需查 CI 日志）', async () => {
-    const notifyMsgs = [];
-    const notify = async (msg) => { notifyMsgs.push(msg); };
-    const pool = { query: vi.fn(async () => ({ rows: [] })) };
-    const status = await handlePromote(
-      pool,
-      {
-        verdict: 'FAIL',
-        baseRepo: 'perfectuser21/zenithjoy',
-        prUrl: 'https://github.com/pr/2',
-        initiativeId: 'init-zj-2',
-        deployOutput: 'curl: (7) Failed to connect to localhost port 5201: Connection refused',
-      },
-      { notify },
-    );
-    expect(status).toBe('n_a');
-    expect(notifyMsgs).toHaveLength(1);
-    expect(notifyMsgs[0]).toContain('ZJ 护栏触发');
-    expect(notifyMsgs[0]).toContain('诊断');
-    expect(notifyMsgs[0]).toContain('Connection refused');
-  });
-
-  it('FAIL + customer line + zjSha → 通知含候选 SHA（方便定位哪个 ZJ 版本坏了）', async () => {
-    const notifyMsgs = [];
-    const notify = async (msg) => { notifyMsgs.push(msg); };
-    const pool = { query: vi.fn(async () => ({ rows: [] })) };
-    await handlePromote(
-      pool,
-      {
-        verdict: 'FAIL',
-        baseRepo: 'perfectuser21/zenithjoy',
-        prUrl: 'https://github.com/pr/3',
-        initiativeId: 'init-zj-3',
-        zjSha: '8ecf9249378936b1a27395eb5a7efcb179a3fd23',
-      },
-      { notify },
-    );
-    expect(notifyMsgs).toHaveLength(1);
-    expect(notifyMsgs[0]).toContain('候选');
-    expect(notifyMsgs[0]).toContain('8ecf9249378936b1a27395eb5a7efcb179a3fd23');
-  });
-
-  it('FAIL + customer line + zjSha=unknown → 通知不含候选行（避免"候选: unknown"干扰）', async () => {
-    const notifyMsgs = [];
-    const notify = async (msg) => { notifyMsgs.push(msg); };
-    const pool = { query: vi.fn(async () => ({ rows: [] })) };
-    await handlePromote(
-      pool,
-      { verdict: 'FAIL', baseRepo: 'perfectuser21/zenithjoy', prUrl: 'p', initiativeId: 'i', zjSha: 'unknown' },
-      { notify },
-    );
-    expect(notifyMsgs).toHaveLength(1);
-    expect(notifyMsgs[0]).not.toContain('候选');
-  });
-
-  it('SKIP + customer line → 不通知（配置缺省非真失败）', async () => {
-    const notifyMsgs = [];
-    const notify = async (msg) => { notifyMsgs.push(msg); };
-    const pool = { query: vi.fn(async () => ({ rows: [] })) };
-    const status = await handlePromote(
-      pool,
-      { verdict: 'SKIP', baseRepo: 'perfectuser21/zenithjoy', prUrl: 'p', initiativeId: 'i' },
-      { notify },
-    );
-    expect(status).toBe('n_a');
-    expect(notifyMsgs).toHaveLength(0);
-  });
-
+describe('handlePromote 内部分流', () => {
   it('FAIL + internal line → 不通知（内部线 Cecelia 失败，非 ZJ 护栏场景）', async () => {
     const notifyMsgs = [];
     const notify = async (msg) => { notifyMsgs.push(msg); };
@@ -681,35 +406,6 @@ describe('handlePromote — ZenithJoy staging FAIL 护栏通知', () => {
     );
     expect(status).toBe('n_a');
     expect(notifyMsgs).toHaveLength(0);
-  });
-
-  it('FAIL + deployOutput 含 ZJ staging SHA → 通知里出现最后已知 SHA（诊断可见）', async () => {
-    const notifyMsgs = [];
-    const notify = async (msg) => { notifyMsgs.push(msg); };
-    const pool = { query: vi.fn(async () => ({ rows: [] })) };
-    // deployOutput 模拟一次成功健康检查后的 output（含 SHA 诊断行），紧接着下一次失败
-    const deployOutput = 'ok\n[ZJ staging SHA: 8ecf9249378936b1a27395eb5a7efcb179a3fd23 buildTime:2026-07-07T08:14:34Z]';
-    await handlePromote(
-      pool,
-      { verdict: 'FAIL', baseRepo: 'perfectuser21/zenithjoy', prUrl: 'p', initiativeId: 'i', deployOutput },
-      { notify },
-    );
-    expect(notifyMsgs).toHaveLength(1);
-    expect(notifyMsgs[0]).toContain('最后已知 staging SHA: 8ecf9249');
-  });
-
-  it('FAIL + deployOutput 无 SHA → 通知不含 SHA 行（向前兼容）', async () => {
-    const notifyMsgs = [];
-    const notify = async (msg) => { notifyMsgs.push(msg); };
-    const pool = { query: vi.fn(async () => ({ rows: [] })) };
-    await handlePromote(
-      pool,
-      { verdict: 'FAIL', baseRepo: 'perfectuser21/zenithjoy', prUrl: 'p', initiativeId: 'i', deployOutput: 'curl: (7) ECONNREFUSED' },
-      { notify },
-    );
-    expect(notifyMsgs).toHaveLength(1);
-    expect(notifyMsgs[0]).not.toContain('最后已知 staging SHA');
-    expect(notifyMsgs[0]).toContain('ZJ 护栏触发');
   });
 });
 

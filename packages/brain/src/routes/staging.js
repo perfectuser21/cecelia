@@ -1,8 +1,13 @@
 import { Router } from 'express';
 import pool from '../db.js';
 import { createTask } from '../actions.js';
+import {
+  defaultPromoteExec, getRepoRoot, PROMOTE_STATUS, resolveStagingLine, runInternalPromote,
+  ZENITHJOY_STAGING_RETIRED,
+} from '../staging-promote.js';
 
 const router = Router();
+const LEGACY_CUSTOMER_STAGING_PORT = 5201;
 
 router.post('/promote/:resultId', async (req, res) => {
   const { resultId } = req.params;
@@ -12,11 +17,20 @@ router.post('/promote/:resultId', async (req, res) => {
     await client.query('BEGIN');
     // 行级锁 + 仅 pending_promote 可放行（幂等：并发/重复 confirm 只第一次生效）
     const sel = await client.query(
-      `SELECT id, initiative_id, pr_url, verdict, promote_status FROM staging_e2e_results WHERE id = $1::uuid FOR UPDATE`,
+      `SELECT r.pr_url, r.staging_port, r.promote_status, t.payload AS task_payload
+         FROM staging_e2e_results r
+         LEFT JOIN tasks t ON t.id = r.task_id
+        WHERE r.id = $1::uuid
+          FOR UPDATE OF r`,
       [resultId]
     );
     if (sel.rows.length === 0) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'staging_e2e_result not found' }); }
     const row = sel.rows[0];
+    const line = resolveStagingLine(row.task_payload, row.pr_url);
+    if (line === 'customer' || row.staging_port === LEGACY_CUSTOMER_STAGING_PORT) {
+      await client.query('ROLLBACK');
+      return res.status(410).json({ error: ZENITHJOY_STAGING_RETIRED });
+    }
     if (row.promote_status !== 'pending_promote') {
       await client.query('ROLLBACK');
       return res.status(409).json({ error: `not pending_promote (current=${row.promote_status})`, promote_status: row.promote_status });
@@ -24,19 +38,12 @@ router.post('/promote/:resultId', async (req, res) => {
     await client.query(`UPDATE staging_e2e_results SET promote_status = 'promoting' WHERE id = $1::uuid`, [resultId]);
     await client.query('COMMIT');
 
-    // 放行：本 repo 内部线跑 promote 脚本；客户线只记录确认（不跨 repo）。
-    const { resolveLine, runInternalPromote, defaultPromoteExec, getRepoRoot, PROMOTE_STATUS,
-             } = await import('../staging-promote.js');
-    const line = resolveLine(req.body?.base_repo || '');
     let finalStatus = PROMOTE_STATUS.PROMOTED;
     let output = 'owner confirmed';
     if (line === 'internal') {
       const r = await runInternalPromote({ promoteExec: defaultPromoteExec(getRepoRoot()) });
       finalStatus = r.ok ? PROMOTE_STATUS.PROMOTED : PROMOTE_STATUS.PROMOTE_FAILED;
       output = r.output;
-    } else {
-      // 客户线/unknown：决策1 不跨 repo 打 zenithjoy 生产，只标已放行
-      output = `owner confirmed (customer line: real zenithjoy prod promote handled by zenithjoy repo gate)`;
     }
     await pool.query(
       `UPDATE staging_e2e_results SET promote_status = $2, promote_output = $3, promoted_at = now(),
@@ -57,6 +64,9 @@ router.post('/promote/:resultId', async (req, res) => {
 router.post('/e2e', async (req, res) => {
   const { pr_url, pr_branch, sub_task_id, initiative_id, journey_id, base_repo, project_id } = req.body || {};
   if (!pr_url) return res.status(400).json({ error: 'pr_url 必填' });
+  if (resolveStagingLine(req.body) === 'customer') {
+    return res.status(410).json({ error: ZENITHJOY_STAGING_RETIRED });
+  }
   const payload = {
     pr_url,
     pr_branch: pr_branch || '',

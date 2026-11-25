@@ -17,7 +17,8 @@ vi.mock('../notifier.js', () => ({
   sendBark: vi.fn().mockResolvedValue(true),
 }));
 vi.mock('../staging-acceptance.js', () => ({ normalizeAcceptance: vi.fn(value => value) }));
-vi.mock('../staging-promote.js', () => ({
+vi.mock('../staging-promote.js', async (importActual) => ({
+  ...await importActual(),
   resolveLine: () => 'internal', decidePromote: () => ({ action: 'none', line: 'internal' }), runInternalPromote: vi.fn(), defaultPromoteExec: vi.fn(),
   getRepoRoot: () => '/repo', PROMOTE_STATUS: {},
 }));

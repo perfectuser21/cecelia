@@ -5,6 +5,7 @@ import request from 'supertest';
 // mock db: pool.connect() → client(query/release) + pool.query()
 const clientQuery = vi.fn();
 const poolQuery = vi.fn();
+const promote = vi.fn(() => ({ ok: true, output: 'mock promote' }));
 vi.mock('../../db.js', () => ({
   default: {
     query: (...a) => poolQuery(...a),
@@ -14,12 +15,14 @@ vi.mock('../../db.js', () => ({
 // staging-promote: 内部线 promote 用 mock，绝不跑真脚本
 vi.mock('../../staging-promote.js', async (orig) => {
   const actual = await orig();
-  return { ...actual, defaultPromoteExec: () => () => ({ ok: true, output: 'mock promote' }) };
+  return { ...actual, defaultPromoteExec: () => promote };
 });
 
 let app;
 beforeEach(async () => {
-  vi.clearAllMocks();
+  clientQuery.mockReset();
+  poolQuery.mockReset();
+  promote.mockClear();
   const routerMod = await import('../staging.js');
   app = express();
   app.use(express.json());
@@ -29,24 +32,54 @@ beforeEach(async () => {
 const RID = '11111111-1111-1111-1111-111111111111';
 
 // client.query 序列：BEGIN, SELECT FOR UPDATE, UPDATE promoting, COMMIT
-function mockPending(verdict = 'PASS') {
+function mockPending(row) {
   clientQuery
     .mockResolvedValueOnce({}) // BEGIN
-    .mockResolvedValueOnce({ rows: [{ id: RID, pr_url: 'https://pr/x', verdict, promote_status: 'pending_promote' }] }) // SELECT
+    .mockResolvedValueOnce({ rows: [{ id: RID, verdict: 'PASS', promote_status: 'pending_promote', ...row }] }) // SELECT
     .mockResolvedValueOnce({}) // UPDATE promoting
     .mockResolvedValueOnce({}); // COMMIT
   poolQuery.mockResolvedValue({ rows: [] }); // final UPDATE
 }
 
 describe('POST /promote/:resultId — 放行回流幂等状态机', () => {
-  it('客户线 pending_promote → promoted（决策1：不跨 repo 打 zenithjoy 生产，只记确认）', async () => {
-    mockPending();
-    const res = await request(app).post(`/promote/${RID}`).send({ base_repo: 'perfectuser21/zenithjoy-workspace' });
+  it.each([
+    [{ pr_url: 'https://github.com/perfectuser21/zenithjoy-workspace/pull/2588' }, {}],
+    [{ pr_url: 'https://github.com/perfectuser21/zenithjoy-workspace/pull/2588' }, { base_repo: 'cecelia' }],
+    [{ task_payload: { baseRepo: 'ZenithJoy' } }, {}],
+    [{ staging_port: 5201 }, {}],
+  ])('旧客户验收只读，确认返回 410', async (row, body) => {
+    mockPending(row);
+    const res = await request(app).post(`/promote/${RID}`).send(body);
+    expect(res.status).toBe(410);
+    expect(res.body.error).toBe('zenithjoy_staging_retired');
+    expect(promote).not.toHaveBeenCalled();
+    expect(poolQuery).not.toHaveBeenCalled();
+    expect(clientQuery.mock.calls.some(([sql]) => sql.startsWith('UPDATE'))).toBe(false);
+  });
+
+  it.each([
+    { pr_url: 'https://github.com/perfectuser21/cecelia/pull/6995' },
+    { task_payload: { base_repo: 'perfectuser21/cecelia' } },
+  ])('按已存 Cecelia 仓库确认，运行内部晋级', async (row) => {
+    mockPending(row);
+    const res = await request(app).post(`/promote/${RID}`).send({});
     expect(res.status).toBe(200);
     expect(res.body.promote_status).toBe('promoted');
-    // 没跑 promote 脚本（客户线），但最终 UPDATE 落 promoted
-    const finalUpd = poolQuery.mock.calls.find(([sql, p]) => /promote_status = \$2/.test(sql) && p.includes('promoted'));
-    expect(finalUpd).toBeTruthy();
+    expect(promote).toHaveBeenCalledOnce();
+    expect(poolQuery).toHaveBeenCalledWith(expect.any(String), [RID, 'promoted', 'mock promote', 'owner']);
+  });
+
+  it.each([
+    { task_payload: { base_repo: 'acme/other-product' } },
+    { pr_url: 'https://github.com/acme/other-product/pull/9', task_payload: { base_repo: 'cecelia' } },
+    { pr_url: 'https://github.com/perfectuser21/cecelia/pull/6995', task_payload: { base_repo: 'acme/other-product' } },
+  ])('第三方仓库确认只记台账', async (row) => {
+    mockPending(row);
+    const res = await request(app).post(`/promote/${RID}`).send({});
+    expect(res.status).toBe(200);
+    expect(res.body.promote_status).toBe('promoted');
+    expect(promote).not.toHaveBeenCalled();
+    expect(poolQuery).toHaveBeenCalledWith(expect.any(String), [RID, 'promoted', 'owner confirmed', 'owner']);
   });
 
   it('非 pending_promote（已 promoted）→ 409，防重复 promote（幂等）', async () => {
