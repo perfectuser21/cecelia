@@ -1,68 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdtemp, mkdir, writeFile, readFile, rm, chmod, symlink, realpath } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { execFileSync, spawn } from 'node:child_process';
-import { createServer } from 'node:http';
+import { mkdir, writeFile, readFile, rm, chmod, symlink, realpath } from 'node:fs/promises';
+import { join } from 'node:path';
 import { createStore } from '../../brain-image-retention/storage.mjs';
 import { createDeploymentLedger } from '../../brain-image-retention/ledger.mjs';
-const entry = fileURLToPath(new URL('../brain-deploy-preflight.mjs', import.meta.url));
-const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
-async function fixture(t) {
-  const root = await mkdtemp(join(tmpdir(), 'brain-preflight-'));
-  t.after(() => rm(root, { recursive: true, force: true }));
-  git(root, 'init', '-q', '-b', 'cp-fixture'); git(root, 'config', 'core.hooksPath', join(root, '.git', 'hooks')); git(root, 'config', 'user.email', 'fixture@example.invalid');
-  git(root, 'config', 'user.name', 'Fixture'); git(root, 'config', 'core.filemode', 'true');
-  const put = async (path, text = 'initial') => { await mkdir(dirname(join(root, path)), { recursive: true }); await writeFile(join(root, path), text); };
-  const commit = () => { git(root, 'add', '-A'); git(root, 'commit', '-qm', 'fixture'); return git(root, 'rev-parse', 'HEAD'); };
-  await put('packages/brain/server.js'); await put('.prd.md'); await put('scripts/ops/us-vps/opc-watchdog.sh');
-  const a = commit();
-  const receipt = { deployment_id: '12345678-1234-4234-9234-123456789abc', outcome: 'success',
-    git_sha: a, image_id: 'sha256:' + 'a'.repeat(64), container_id: 'b'.repeat(64), version: '1.2.3', confirmed_at: '2026-11-25T00:00:00.000Z',
-    business_readback: { protocol: 'brain-release-readback/v1', status: 'passed', container_id: 'b'.repeat(64), task_count: 0, task_sample_sha256: 'e'.repeat(64), scope: 'read_only', external_services: 'not_evaluated' } };
-  const state = { status: 'idle', git_sha: a, settled: true, settlement: receipt };
-  const health = { status: 'healthy', git_sha: a, version: '1.2.3', runtime: { isolated: false, background_automation: true } };
-  const ledger = join(root, 'ledger.json'); await writeFile(ledger, JSON.stringify(receipt));
-  // Native read-only ledger remains separate from the fixture repository commits.
-  git(root, 'config', 'core.excludesFile', join(root, '.git', 'exclude-fixture'));
-  await writeFile(join(root, '.git', 'exclude-fixture'), 'ledger.json\nreport*.json\ngithub-output\n');
-  const calls = []; let statusReads = 0;
-  const server = createServer((req, res) => {
-    calls.push([req.method, req.url]);
-    if (req.method !== 'GET') { res.writeHead(405); res.end(); return; }
-    const value = req.url === '/api/brain/deploy/status' ? (statusReads++, state) : req.url === '/api/brain/health' ? health : null;
-    if (!value) { res.writeHead(404); res.end(); return; }
-    if (f.respond) { f.respond(req, res, value, statusReads); return; }
-    res.setHeader('content-type', 'application/json'); res.end(JSON.stringify(value));
-  });
-  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-  t.after(() => new Promise(resolve => server.close(resolve)));
-  const f = { root, a, put, commit, state, receipt, health, calls, ledger, respond: null,
-    async run(target = git(root, 'rev-parse', 'HEAD'), extra = [], env = {}) {
-      const output = join(root, 'report.json'), github = join(root, 'github-output');
-      await rm(output, { force: true }); await rm(github, { force: true });
-      const child = spawn(process.execPath, [entry, '--repo-root', root, '--target', target,
-        '--brain-url', `http://127.0.0.1:${server.address().port}`, '--output', output, ...extra],
-      { env: { ...process.env, GITHUB_OUTPUT: github, FORCE_BRAIN_DEPLOY: '', ...env } });
-      let stdout = '', stderr = ''; child.stdout.on('data', d => stdout += d); child.stderr.on('data', d => stderr += d);
-      const code = await new Promise(resolve => child.on('close', resolve));
-      let report = null; try { report = JSON.parse(await readFile(output, 'utf8')); } catch {}
-      return { code, stdout, stderr, report, github: await readFile(github, 'utf8').catch(() => '') };
-    } };
-  return f;
-}
-async function assertDecision(f, wanted, target) {
-  const before = await readFile(f.ledger);
-  const result = await f.run(target);
-  assert.equal(result.code, 0, result.stderr);
-  assert.equal(result.report?.deploy_required, wanted, '真实发布决策不符合业务边界');
-  assert.match(result.github, new RegExp(`^deploy_required=${wanted}$`, 'm'));
-  assert.deepEqual(await readFile(f.ledger), before);
-  assert.equal(f.calls.filter(([method]) => method !== 'GET').length, 0);
-  return result.report;
-}
+import { fixture, git, assertDecision } from './helpers/brain-deploy-preflight-fixture.mjs';
 test('累计认证文档和宿主watchdog变化保留实际A，Brain变化D要求发布', async t => {
   const f = await fixture(t);
   await f.put('.prd.md', 'B'); const b = f.commit();
