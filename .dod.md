@@ -1,11 +1,12 @@
-# 漏洞审计无重复安装验收
+# CI宿主工具准备验收
 
-Task: 22da6cc5-ed6c-4ec3-b10f-f8cadba87e6c
+Task: df3410ee-b85e-4c7e-8473-5688e34f0ab4
 GP-Anchor: none(infra)
 
-- [ ] 真实workflow入口经真实npm在无node_modules隔离夹具仍审计生产/开发包，未知漏洞和故障拒绝；先红后绿永久留CI。
-  Test: manual:node --test scripts/ci/__tests__/basic-security-lock-audit.test.mjs
-- [ ] 其余锁文件一致性与真实安装、严格结果聚合保留；工作流与原审计策略回归通过。
-  Test: manual:node --test scripts/ci/__tests__/basic-workflow.test.mjs scripts/ci/__tests__/basic-fixed-core.test.mjs scripts/ci/__tests__/basic-dependency-audit.test.mjs
-- [ ] 独立审查及显式续证通过，PR/main全绿、自动CD及生产读回通过。
-  Test: manual:node --test scripts/ci/__tests__/basic-brain-deploy-certification.test.mjs
+- [ ] 实际workflow仅image/dashboard退出工具安装，其余9项原APT及错误传播保留。
+  Test: manual:node --test scripts/ci/__tests__/basic-host-tool-preparation.test.mjs scripts/ci/__tests__/basic-ubuntu-native-install.test.mjs
+- [ ] 实际mirror脚本缺jq在首次sudo前拒绝；成功路径原生jq配置正确且仅SIGHUP；非托管拒绝，先红后绿。
+  Test: manual:node --test scripts/ci/__tests__/basic-host-tool-preparation.test.mjs
+- [ ] 完整Scripts/Ops、独立审查、PR/main实际镜像/前端检查及完整自动CD/生产读回通过。
+  Test: manual:node scripts/ci/run-basic-check.mjs scripts
+  Test: manual:node scripts/ci/run-basic-check.mjs ops
