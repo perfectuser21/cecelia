@@ -1,12 +1,12 @@
-# CodeQL附加发布清理验收
+# CI原生APT安装回归
 
-Task: 2238edc0-850a-434b-a3e2-c542e7536ad7
+Task: 0de62006-7ab2-42c4-918f-21d47e5234e7
 GP-Anchor: none(infra)
 
-- [ ] 既有工作流契约先红后绿；只关闭附加数据库发布，语言/扫描/查询/SARIF/缓存/权限/触发保持。
-  Test: manual:node --test scripts/ci/__tests__/basic-workflow.test.mjs
-- [ ] Scripts/Ops和现行门禁通过，不增加workflow或job；消费者经独立审查后显式续证。
+- [ ] 实际workflow命令在官方us-west-2原生源下可抵达工具安装；update/install失败必须非零，先红后绿并永久留在Scripts CI。
+  Test: manual:node --test scripts/ci/__tests__/basic-ubuntu-native-install.test.mjs
+- [ ] 已无现役调用的源校验/旧镜像恢复及专属测试清退，保留Chromium真实安装和失败传播；完整Scripts/Ops通过。
   Test: manual:node scripts/ci/run-basic-check.mjs scripts
   Test: manual:node scripts/ci/run-basic-check.mjs ops
-- [ ] PR/main实际日志覆盖与告警/缓存上传成功，main无数据库打包/体积遥测；完整自动CD及生产业务读回成功。
+- [ ] 独立消费者审查与显式续证通过；PR/main真实APT安装和全部检查成功，完整自动CD与生产业务读回成功。
   Test: manual:node --test scripts/ci/__tests__/basic-brain-deploy-certification.test.mjs
