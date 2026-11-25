@@ -1,6 +1,7 @@
 #!/bin/bash
-# opc-watchdog.sh — OPC Dead-man Watchdog（独立故障域：us-vps）
-# V1.2 §3.6 落地：不依赖 OpenClaw/Brain/HK 消息链路；5 分钟探测；
+# opc-watchdog.sh — OPC Watchdog（us-vps，与生产 Brain 同机）
+# 不依赖 OpenClaw/Brain/HK 消息链路；5 分钟探测；
+# us-vps 整机不可达由既有 GitHub Heartbeat Sentinel 机外探测。
 # 连续 3 次失败经独立飞书 webhook 告警（冷却 1h）；每日北京 09:00 存活报到。
 # 端点固化为 /api/brain/health——禁止退化为 /api/health（假阴性前科，红线11案例）。
 # 真身在本仓库 scripts/ops/us-vps/opc-watchdog.sh；部署到 us-vps /opt/opc-watchdog/watchdog.sh
@@ -14,7 +15,7 @@ LOG=$BASE/watchdog.log
 source /root/.credentials/feishu.env 2>/dev/null || true
 # shellcheck disable=SC1091
 source /root/.credentials/bark.env 2>/dev/null || true
-BRAIN_URL="http://100.71.151.105:5221/api/brain/health"
+BRAIN_URL="http://127.0.0.1:5221/api/brain/health"
 GATEWAY_HOST=hk-ts
 FAIL_THRESHOLD=3
 COOLDOWN_S=3600
@@ -65,7 +66,7 @@ check(){ # $1=probe $2=ok(0=好/1=坏) $3=failtext
   fi
 }
 
-# ── 1. Brain（经 Tailscale，pf 允许 utun 入站）
+# ── 1. Brain（us-vps 本机生产健康；整机失联由机外哨兵覆盖）
 BJSON=$(curl -s -m 10 "$BRAIN_URL" 2>/dev/null || true)
 BSTATUS=$(echo "$BJSON" | python3 -c 'import json,sys;print(json.load(sys.stdin).get("status",""))' 2>/dev/null || echo "")
 if [ "$BSTATUS" = healthy ] || [ "$BSTATUS" = degraded ]; then
