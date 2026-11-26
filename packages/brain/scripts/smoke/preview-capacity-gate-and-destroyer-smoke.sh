@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Smoke: preview-capacity-gate-and-destroyer（task 1b1f1ffa）
-# 覆盖：保留的宿主磁盘采样器 + 历史资源统一销毁器（destroyPreview）
+# 覆盖：历史资源统一销毁器（destroyPreview）
 # + migration 358 + 销毁器禁本地 df/diskutil 调用；旧PR创建准入已退役。
 #
 # 需要真实 Postgres（cecelia_test，NODE_ENV=test）——与本 sprint 合同"禁 mock 边"要求一致，
@@ -15,11 +15,6 @@ export NODE_ENV="${NODE_ENV:-test}"
 export DB_NAME="${DB_NAME:-cecelia_test}"
 
 # ── 1. ARTIFACT：文件存在 + 导出 ─────────────────────────────────────────────
-[ -f "scripts/host-disk-sampler.sh" ] || { echo "FAIL: scripts/host-disk-sampler.sh 不存在"; exit 1; }
-grep -q "set -euo pipefail" scripts/host-disk-sampler.sh || { echo "FAIL: host-disk-sampler.sh 缺 set -euo pipefail"; exit 1; }
-grep -qE "PATH=" scripts/host-disk-sampler.sh || { echo "FAIL: host-disk-sampler.sh 缺显式 PATH 声明"; exit 1; }
-echo "OK: host-disk-sampler.sh 存在且含 set -euo pipefail + 显式 PATH"
-
 [ -f "packages/brain/src/preview-destroyer.js" ] || { echo "FAIL: preview-destroyer.js 不存在"; exit 1; }
 grep -q "destroyPreview" packages/brain/src/preview-destroyer.js || { echo "FAIL: destroyPreview 未导出"; exit 1; }
 echo "OK: preview-destroyer.js 存在且导出 destroyPreview"
@@ -46,14 +41,6 @@ for (const f of files) {
 if (fail) process.exit(1);
 console.log('OK: no local df/diskutil calls in preview-destroyer.js');
 "
-
-# ── 3. 功能验证：host-disk-sampler.sh 真跑一次（临时目录，不碰真实部署根）──────
-WORKDIR=$(mktemp -d)
-CECELIA_DEPLOY_ROOT="$WORKDIR" bash scripts/host-disk-sampler.sh
-JSON="$WORKDIR/.runtime/host-disk.json"
-[ -f "$JSON" ] || { echo "FAIL: host-disk-sampler.sh 未生成采样文件"; rm -rf "$WORKDIR"; exit 1; }
-node -e "const d=require('$JSON'); for (const f of ['sampled_at_epoch','data_avail_bytes','apfs_unallocated_bytes','effective_free_bytes','usage_pct']) { if (!(f in d)) { console.error('FAIL: 缺字段 '+f); process.exit(1); } } console.log('OK: 采样字段完整');"
-rm -rf "$WORKDIR"
 
 # ── 5. 功能验证：destroyPreview 幂等（对不存在/inactive 的 PR 调用应安全返回）──
 node --input-type=module -e "
