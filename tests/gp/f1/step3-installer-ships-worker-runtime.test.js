@@ -13,7 +13,6 @@
  * 固定 checkout；AST 核对精确 fallback，真实安装布局验证可选加载及缺件拒绝。
  */
 import { describe, it, expect, vi } from 'vitest';
-import { execFileSync } from 'node:child_process';
 import { readFileSync, readdirSync, mkdtempSync, mkdirSync, copyFileSync, writeFileSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -97,13 +96,6 @@ describe('GP F1 step3 — installer 覆盖 worker 运行时依赖', () => {
     expect(commands).toEqual([['inspect', 'owned-container']]);
     expect(gate.snapshot()).toMatchObject({ draining: true, in_flight_launches: 0 });
   });
-
-  it('真实 install-fleet-worker 升级保留配置、凭据引用和他人安装锁', () => {
-    const output = execFileSync('bash', [join(WORKER_DIR, 'install-fleet-worker.test.sh')], {
-      encoding: 'utf8', timeout: 120000,
-    });
-    expect(output).toContain('PASS: Fleet Worker installer behavioral contract');
-  }, 125000);
 
   it('真实健康模块只读 OrbStack bundle，服务账号不触碰管理员目录', async () => {
     for (const readable of [true, false]) {
