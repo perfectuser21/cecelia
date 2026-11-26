@@ -270,16 +270,16 @@ describe('routing store transaction contract', () => {
           WHERE task.id = $1`,
         [created.task_id],
       );
-      // A2：无头编码单改投 coding_workflow runner（不再带 kernel-v1 运行时投影）
+      // 现役编码请求交普通 Codex Agent；任务与回执不得恢复旧自主开发编排。
       expect(persisted.rows[0]).toMatchObject({
-        task_type: 'coding_workflow',
+        task_type: 'codex_dev',
         projected_receipt_id: created.routing_receipt_id,
-        runtime_orchestrator: 'coding-workflow-runner',
+        runtime_orchestrator: 'codex-bridge',
         harness_runtime: null,
-        pipeline: 'coding_workflow',
+        pipeline: 'agent_development',
         change_kind: 'bugfix',
         repo: 'cecelia',
-        receipt_orchestrator: 'coding-workflow-runner',
+        receipt_orchestrator: 'codex-bridge',
       });
 
       await client.query('SAVEPOINT immutable_probe');

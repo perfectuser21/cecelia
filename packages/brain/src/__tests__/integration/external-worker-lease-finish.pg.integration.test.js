@@ -106,10 +106,28 @@ describe.sequential('external business worker: actual PG owner/epoch/terminal tr
     expect(afterTransition).not.toHaveBeenCalled();
   });
 
-  it.each(['dev', 'coding_workflow', 'workflow_run'])('cannot complete protected/non-external type %s using an external executor label', async task_type => {
-    const id = await seed({ task_type }); const epoch = (await claim(id)).body.claim_epoch;
-    expect((await finish(id, epoch)).status).toBe(409);
+  it.each(['dev', 'workflow_run'])('cannot complete protected/non-external type %s using an external executor label', async task_type => {
+    const id = await seed({ task_type }); const claimed = await claim(id);
+    expect(claimed.status).toBe(200);
+    expect((await finish(id, claimed.body.claim_epoch))).toMatchObject({ status: 409, body: { error: 'lease_finish_not_allowed' } });
     expect((await row(id)).status).toBe('in_progress');
+    expect((await row(id)).result).toBeNull();
+    expect((await lease(id)).released_at).toBeNull();
+    expect(afterTransition).not.toHaveBeenCalled();
+  });
+
+  it('retired coding_workflow cannot acquire a lease or finish using an external executor label', async () => {
+    const id = await seed({ task_type: 'coding_workflow' }); const before = await row(id);
+    const claimed = await claim(id);
+    expect(claimed).toMatchObject({ status: 410, body: { error: 'task_type_retired' } });
+    expect(claimed.body.claim_epoch).toBeUndefined();
+    expect(await row(id)).toEqual(before);
+    expect(await lease(id)).toBeUndefined();
+    // A syntactically valid invented epoch still cannot grant terminal authority.
+    expect(await finish(id, '2026-11-14 10:00:00.123001+00')).toMatchObject({ status: 409, body: { error: 'lease_finish_not_allowed' } });
+    expect(await row(id)).toEqual(before);
+    expect(await lease(id)).toBeUndefined();
+    expect(afterTransition).not.toHaveBeenCalled();
   });
 
   it('Commander/common-runner authority cannot be supplied through an otherwise valid external task', async () => {

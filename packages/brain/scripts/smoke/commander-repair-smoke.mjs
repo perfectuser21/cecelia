@@ -8,6 +8,7 @@ import {spawn} from 'node:child_process';
 import {randomUUID,createHash} from 'node:crypto';
 import {fileURLToPath,pathToFileURL} from 'node:url';
 import pg from 'pg';
+import {captureReplayEvidence,assertReplayEvidence} from './commander-replay-evidence.mjs';
 const brain=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../..');
 const url=new URL(process.env.TEST_DB_URL??'');
 assert.equal(url.hostname,'127.0.0.1');assert.equal(url.pathname,'/cecelia_scratch');
@@ -70,10 +71,14 @@ export async function createRuntime(options){const runtime=await createSkill(opt
    const threads=fs.readdirSync(path.join(root,'control',run.run_id,'sessions')).map(n=>read(path.join(root,'control',run.run_id,'sessions',n,'thread.json')));
    assert(threads.some(t=>t.thread_id===first.thread_id));
   }
-  // 再启动同一manifest必须读回DBOS终态，既不增动作也不增模型调用。
-  const before=JSON.stringify(result.run_report.ledger);child=launch(root,'replay');await until(()=>child.exitCode!==null);assert.equal(child.exitCode,name==='exhaust'?2:0);
+  // 再启动同一manifest必须读回DBOS终态，并复查持久动作/业务产出。
+  // calls.jsonl只覆盖受控模式；真实订阅缺少计量时明确未评估。
+  const before=JSON.stringify(result.run_report.ledger);
+  const evidenceBefore=await captureReplayEvidence({root,runId:run.run_id,schema,pool,real});
+  child=launch(root,'replay');await until(()=>child.exitCode!==null);assert.equal(child.exitCode,name==='exhaust'?2:0);
   assert.equal(JSON.stringify(read(path.join(root,'result.json')).run_report.ledger),before);
-  const proof={scenario:name,real_codex:real,status:result.status,attempts:rows.length,same_thread:true,original_deadline:true,replay_no_new_calls:true,run_id:run.run_id,artifact_root:root};
+  const replay=assertReplayEvidence(evidenceBefore,await captureReplayEvidence({root,runId:run.run_id,schema,pool,real}));
+  const proof={scenario:name,real_codex:real,status:result.status,attempts:rows.length,same_thread:true,original_deadline:true,replay_no_new_calls:replay.calls,replay_call_verification:real?'not_evaluated_no_call_meter':'calls_jsonl_bytes',replay_no_new_actions:replay.actions,replay_no_new_business_effects:replay.artifact,run_id:run.run_id,artifact_root:root};
   fs.writeFileSync(path.join(root,'verification.json'),JSON.stringify(proof,null,2));return proof;
  }finally{if(child.exitCode===null&&child.signalCode===null)child.kill('SIGKILL');}
 }
