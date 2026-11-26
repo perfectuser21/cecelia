@@ -143,7 +143,7 @@ for (const [name, options] of [['POST denial', {rejectPost: true}], ['failed nat
 }
 
 test('one existing main release job keeps fixed SHA checkout and exact-SHA gate', () => {
-  assert.equal(Object.keys(workflow.jobs).length, 8);
+  assert.deepEqual(Object.keys(workflow.jobs).sort(), ['security','checks','runtime-integration','codeql','foundation-release-verification','ci-passed','brain-deploy'].sort());
   assert.match(deployJob.if, /github\.event_name == 'push'/);
   assert.match(deployJob.if, /refs\/heads\/main/);
   assert.match(deployJob.if, /ci-passed/);
