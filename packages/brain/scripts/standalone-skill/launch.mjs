@@ -14,14 +14,14 @@ export function readOwnedFile(path, { maxBytes = 1_048_576 } = {}) {
   return readFileSync(path);
 }
 
-export async function loadStandaloneProvider(configPath) {
+export async function loadStandaloneProvider(configPath, context) {
   const config = JSON.parse(readOwnedFile(configPath));
   const bytes = readOwnedFile(config.provider);
   if (createHash('sha256').update(bytes).digest('hex') !== config.provider_sha256) {
     throw Error('standalone_provider_digest_mismatch');
   }
   const provider = await import(pathToFileURL(config.provider).href);
-  return {...provider, ...(provider.createProvider ? {createProvider:job=>provider.createProvider(job,config.options)} : {})};
+  return {...provider, ...(provider.createProvider ? {createProvider:job=>provider.createProvider(job,config.options,context)} : {})};
 }
 
 export async function launchStandaloneSkill(configPath) {

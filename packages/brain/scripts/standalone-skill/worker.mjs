@@ -64,7 +64,7 @@ async function main(configFile) {
       || target.username || target.password || target.search || target.hash || !process.env.CECELIA_INTERNAL_TOKEN) {
     throw Error('standalone_worker_config_invalid');
   }
-  const { createProvider } = await loadStandaloneProvider(config.provider_config);
+  const { createProvider } = await loadStandaloneProvider(config.provider_config, { brainUrl: target.origin });
   if (typeof createProvider !== 'function') throw Error('standalone_provider_invalid');
   return runStandaloneWorkerOnce({
     machineId: config.machine_id,
