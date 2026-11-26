@@ -32,6 +32,7 @@ import { runSevenRingAuditJob } from './seven-ring-audit.js';
 
 import { runFactoryCycle } from './lib/factory-cycle.js';
 import { runDiskGuard } from './cron/disk-guard.js';
+import { LINUX_ROOT_DISK_INTERVAL_SEC, runLinuxRootDisk } from './cron/linux-root-disk.js';
 import { runPromiseMapNightly } from './promise-map-nightly.js';
 import { runRescanStalenessPatrol } from './cron/rescan-staleness-patrol.js';
 import { sampleMachineVitals } from './machine-vitals.js';
@@ -115,6 +116,7 @@ export const JOBS = [
   { name: 'postdeploy-verifier', cadence: { everySec: 300 }, needsPool: true, timeoutMs: 2 * 60 * 1000, handler: runPostdeployVerifier, description: '第5环部署验证（自带5min节流gate，扫 pending_postdeploy 任务执行 postdeploy_check.command，通过→completed，失败3次→P1）' },
   { name: 'seven-ring-audit', cadence: { everySec: 86400 }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runSevenRingAuditJob, description: '七环对账日巡检（自带24h冷却，逐环核对测试入册/调度在跑/指纹新鲜/账本写对/产出消费/告警活着/面板新鲜，棘轮只许降，刀3-T6）' },
 
+  { name: 'us-linux-root-disk', cadence: { everySec: LINUX_ROOT_DISK_INTERVAL_SEC }, needsPool: false, timeoutMs: 15_000, handler: runLinuxRootDisk, description: 'US Linux 根卷只读观测（生产部署挂载，80% P2 / 90% P1）' },
   { name: 'disk-guard', cadence: { everySec: 900 }, needsPool: false, timeoutMs: 120_000, handler: runDiskGuard, description: '磁盘哨兵（15min自gate，宿主SSH逃逸df检测，80/85/90%三级响应，[disk_check]日志）' },
   { name: 'promise-map-nightly', cadence: { cron: '0 2 * * *', tz: 'UTC' }, needsPool: false, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runPromiseMapNightly, description: 'MJ5 S4 承诺地图保鲜对账（每日 UTC 02:00，4 条断言，失败 Bark，刀4）' },
   { name: 'rescan-staleness-patrol', cadence: { everySec: 300 }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: (pool) => runRescanStalenessPatrol(pool), description: '地图照相层 rescan 停滞哨兵（自带5min gate，fact_snapshot_headers 账龄>30min即 P1+晨报AMBER，与派发闸账龄预算同源，P0 9dfd873a 案）' },

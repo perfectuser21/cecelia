@@ -54,6 +54,7 @@ export function commandsFor(component, shard) {
           'src/__tests__/integration/device-job-foundation.pg.integration.test.js',
           'src/__tests__/integration/graph-multi-repo-current.pg.integration.test.js',
           'src/__tests__/integration/org-map-current-contracts.pg.integration.test.js',
+          'src/__tests__/integration/directory-projection.pg.integration.test.js',
           'src/__tests__/integration/task-ability-compatibility.pg.integration.test.js',
           'src/__tests__/integration/reasoning-governance-contract.pg.integration.test.js', '--reporter=dot'), ciScratchDatabase: true },
         step('.', 'node', 'scripts/ci/run-debt-pg.mjs', '--file', 'packages/brain/src/__tests__/execution-strategy-session-kr-link.test.js'),

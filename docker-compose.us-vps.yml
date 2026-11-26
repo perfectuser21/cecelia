@@ -173,6 +173,7 @@ services:
       - HOST_HOME=/root
       # 部署根：us-vps 单一 checkout 同时充当 REPO_ROOT（见上方 volumes 注释）
       - REPO_ROOT=/root/cecelia
+      - CECELIA_LINUX_ROOT_DEVICE=${CECELIA_LINUX_ROOT_DEVICE:-/dev/vda1}
       # 专用部署根，deploy-local.sh 守卫自愈到 origin/main（脏/落后时硬 reset 而非静默降级）
       - CECELIA_DEPLOY_AUTORESET=1
       # Codex CLI 容器内位置（由 Dockerfile npm install -g @openai/codex 装到 /usr/local/bin/codex）

@@ -128,6 +128,43 @@ describe('六层目录真实PG边界', () => {
     expect(observed.stats).toMatchObject({runs7:27,success7:26,failed7:1,success_rate:26/27});
     expect(observed.stats.avg_duration_ms).toBeCloseTo(327000/27);
   });
+  it('目录读取大量回执时不把运行明细写入PG临时文件', async () => {
+    const workflow = randomUUID(), version = randomUUID(), task = randomUUID();
+    await client.query('BEGIN');
+    await client.query("SET LOCAL work_mem = '512kB'");
+    await client.query(`ALTER TABLE task_runs ADD PRIMARY KEY (id), ALTER COLUMN result SET STORAGE PLAIN;
+      ALTER TABLE runs ADD PRIMARY KEY (id), ALTER COLUMN detail SET STORAGE PLAIN`);
+    await client.query("INSERT INTO workflows VALUES($1,'运行','workflow_assembly_reconcile.internal',NULL)", [workflow]);
+    await client.query("INSERT INTO tasks(id,title,status,payload) VALUES($1,'任务','completed',jsonb_build_object('workflow_id',$2::text))", [task, workflow]);
+    await client.query(`INSERT INTO task_runs(id,run_id,task_id,started_at,ended_at,status,result)
+      SELECT gen_random_uuid(),'task-'||n,$1,now()-n*interval '1 minute',now(),'success',
+        jsonb_build_object('business_receipt','{"status":"deferred"}'::jsonb,'padding',repeat(md5(n::text),32))
+      FROM generate_series(1,1200) n`, [task]);
+    await client.query(`INSERT INTO runs(id,run_id,workflow_id,started_at,ended_at,outcome,duration_ms,detail)
+      SELECT gen_random_uuid(),'legacy-'||n,$1,now()-n*interval '1 minute',now(),'pass',1000,
+        jsonb_build_object('padding',repeat(md5(n::text),32))
+      FROM generate_series(1,1600) n`, [workflow]);
+    await client.query(`INSERT INTO runs(id,run_id,workflow_id,started_at,ended_at,outcome,duration_ms)
+      VALUES (gen_random_uuid(),'task-1',$1,now()-interval '1 second',now(),'pass',1000)`, [workflow]);
+    const protocol = 'workflow-assembly-native-v1';
+    await client.query('INSERT INTO workflow_definition_versions(id,workflow_id,payload) VALUES($1,$2,$3)',
+      [version, workflow, { protocol, contract: { key: 'workflow_assembly_reconcile.internal', version: '1.0.0' } }]);
+    await client.query(`UPDATE runs SET header_source='owner',executor_id='brain-native-maintenance',
+      detail=detail || jsonb_build_object('protocol',$1::text,'workflow_definition_version_id',$2::text) WHERE run_id='legacy-1'`,
+      [protocol, version]);
+    await client.query('ANALYZE');
+    const source = await loadDirectorySource({ query: async sql => {
+      const { rows: [planRow] } = await client.query(`EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${sql}`);
+      expect(planRow['QUERY PLAN'][0].Plan['Temp Written Blocks']).toBe(0);
+      return client.query(sql);
+    } });
+    expect(source.run_records).toHaveLength(1220);
+    expect(source.run_records.filter(r => r.run_id === 'task-1')).toEqual([
+      expect.objectContaining({ ledger: 'task_runs', result: expect.objectContaining({ business_receipt: { status: 'deferred' } }) }),
+    ]);
+    expect(source.run_records.find(r => r.run_id === 'legacy-1').context.bound_definition).toMatchObject({ id: version, version: '1.0.0' });
+    expect(source.run_summaries).toEqual([expect.objectContaining({ workflow_id: workflow, runs7: 1580, success7: 1580 })]);
+  });
   it('真实PG合并双运行账按run_id去重；deferred exit0与批次派发、排队和未来记录分开',async()=>{
     const phone=randomUUID(),batch=randomUUID(),phoneTask=randomUUID(),batchTask=randomUUID(),queued=randomUUID();
     await client.query("INSERT INTO workflows VALUES($1,'手机','phone',NULL),($2,'批次','batch',NULL)",[phone,batch]);
