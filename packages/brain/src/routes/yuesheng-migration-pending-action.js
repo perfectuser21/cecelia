@@ -1,8 +1,10 @@
+import rateLimit from 'express-rate-limit';
 import { transaction } from '../execution-directory/store.js';
 import { OWNER_DECISION_ACTION_TYPE, YUESHENG_MIGRATION_SOURCE } from '../lib/owner-decision.js';
 import { internalAuth, internalAuthOrLoopback } from '../middleware/internal-auth.js';
 import { actionParams, actionSignature, lockMaintenanceScope, route, taskId, validLeaseVersion, validSourceCommit } from '../lib/yuesheng-migration-scope.js';
 import { issueYueshengMigrationApproval } from '../lib/yuesheng-migration-approval.js';
+import { TASK_MUTATION_RATE_LIMIT_OPTIONS } from './task-mutation-rate-limit.js';
 
 const ACTION_FIELDS = 'id, action_type, params, status, source, created_at, expires_at';
 const failure = (status, code) => ({ status, body: { success: false, code } });
@@ -43,7 +45,7 @@ async function openPendingAction(pool, { lease_version, source_commit }) {
 }
 
 export function registerYueshengMigrationPendingAction(router, pool) {
-  router.post('/tasks/:id/yuesheng-adb-migration/pending-action', internalAuthOrLoopback, async (req, res) => {
+  router.post('/tasks/:id/yuesheng-adb-migration/pending-action', rateLimit(TASK_MUTATION_RATE_LIMIT_OPTIONS), internalAuthOrLoopback, async (req, res) => {
     if (req.params.id !== taskId) return res.status(404).json(failure(404, 'YUESHENG_MIGRATION_TASK_UNKNOWN').body);
     if (!validRequest(req.body)) return res.status(400).json(failure(400, 'YUESHENG_MIGRATION_REQUEST_INVALID').body);
     try {
@@ -53,7 +55,7 @@ export function registerYueshengMigrationPendingAction(router, pool) {
       return res.status(500).json(failure(500, 'YUESHENG_MIGRATION_ACTION_OPEN_FAILED').body);
     }
   });
-  router.post('/tasks/:id/yuesheng-adb-migration/approval', (req, res, next) => {
+  router.post('/tasks/:id/yuesheng-adb-migration/approval', rateLimit(TASK_MUTATION_RATE_LIMIT_OPTIONS), (req, res, next) => {
     if (!process.env.CECELIA_INTERNAL_TOKEN) {
       return res.status(503).json(failure(503, 'YUESHENG_MIGRATION_APPROVAL_AUTH_UNCONFIGURED').body);
     }
