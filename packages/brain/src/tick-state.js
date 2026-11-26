@@ -24,7 +24,6 @@ export const tickState = {
   lastGoalEvalTime: 0,          // goal outer loop evaluation
   lastZombieSweepTime: 0,       // zombie sweep
   lastZombieCleanupTime: 0,     // zombie 资源回收
-  lastPipelinePatrolTime: 0,    // pipeline patrol
   lastKrHealthDailyTime: 0,     // 每日 KR health
   lastCredentialCheckTime: 0,   // credential 过期检查
   lastCleanupWorkerTime: 0,     // R4 orphan worktree cleanup
@@ -54,7 +53,6 @@ export function resetTickStateForTests() {
   tickState.lastGoalEvalTime = 0;
   tickState.lastZombieSweepTime = 0;
   tickState.lastZombieCleanupTime = 0;
-  tickState.lastPipelinePatrolTime = 0;
   tickState.lastKrHealthDailyTime = 0;
   tickState.lastCredentialCheckTime = 0;
   tickState.lastCleanupWorkerTime = 0;
@@ -91,8 +89,6 @@ export function _resetLastHeartbeatTime() { tickState.lastHeartbeatTime = 0; }
 export function _resetLastGoalEvalTime() { tickState.lastGoalEvalTime = 0; }
 /** Reset zombie sweep timer — for testing only */
 export function _resetLastZombieSweepTime() { tickState.lastZombieSweepTime = 0; }
-/** Reset pipeline patrol timer — for testing only */
-export function _resetLastPipelinePatrolTime() { tickState.lastPipelinePatrolTime = 0; }
 /** Reset paused requeue timer — for testing only */
 export function _resetLastPausedRequeuTime() { tickState.lastPausedRequeuTime = 0; }
 /** Reset line-strategist dispatch timer — for testing only */
@@ -109,7 +105,6 @@ export default {
   _resetLastHeartbeatTime,
   _resetLastGoalEvalTime,
   _resetLastZombieSweepTime,
-  _resetLastPipelinePatrolTime,
   _resetLastPausedRequeuTime,
   _resetLastLineStrategistDispatchTime
 };

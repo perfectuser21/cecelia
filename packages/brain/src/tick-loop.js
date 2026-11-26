@@ -19,7 +19,6 @@ import { recordTickExecution } from './tick-stats.js';
 import { runScheduler } from './tick-scheduler.js';
 import { startConsciousnessLoop } from './consciousness-loop.js';
 import { startRecoveryLoop, stopRecoveryLoop } from './recovery-loop.js';
-import { startPipelinePatrolLoop, stopPipelinePatrolLoop } from './pipeline-patrol-loop.js';
 
 import { publishCognitiveState } from './events/taskEvents.js';
 import { startProbeLoop } from './capability-probe.js';
@@ -159,11 +158,6 @@ export function startTickLoop() {
   // pipeline 整体 spin 无人 cancel、普通任务超时无人收尾。由独立 loop 接回。
   startRecoveryLoop();
 
-  // Slice5 P1（2026-06-27）：启动独立 pipeline 巡航循环。runPipelinePatrol（/dev 卡住会话救援）+
-  // runHarnessInitiativePatrol（harness Planner/GAN 卡住 → 建 harness_intervention）原只挂废弃
-  // executeTick → 从不运行 → 干预通道整条死代码。由独立 loop 接回。
-  startPipelinePatrolLoop();
-
   // Wave-2 断链修复：capability-probe 复活（模块自带 1h interval + 幂等 guard）
   startProbeLoop();
 
@@ -182,9 +176,8 @@ export function stopTickLoop() {
 
   clearInterval(tickState.loopTimer);
   tickState.loopTimer = null;
-  // 同步停掉独立 harness 看门狗循环 + 恢复循环 + pipeline 巡航循环（保持 start/stop 对称）
+  // 同步停止独立任务恢复循环（保持 start/stop 对称）
   stopRecoveryLoop();
-  stopPipelinePatrolLoop();
 
   tickLog('[tick-loop] Stopped');
   return true;
