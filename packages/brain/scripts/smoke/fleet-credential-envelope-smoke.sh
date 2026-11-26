@@ -10,6 +10,9 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
     src/orchestrator/credential-broker.test.js \
     src/orchestrator/__tests__/run.test.js \
     src/orchestrator/remote-bridge-transport.test.js \
+    src/orchestrator/remote-bridge-transport-prepare-policy.test.js \
+    src/orchestrator/remote-bridge-transport-http-safety.test.js \
+    src/orchestrator/remote-bridge-transport-operations.test.js \
     src/orchestrator/production-transport.test.js \
     scripts/fleet-worker/credential-envelope.test.cjs \
     scripts/fleet-worker/attempt-runner.test.cjs \

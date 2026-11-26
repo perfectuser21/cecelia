@@ -20,6 +20,9 @@ fi
   scripts/fleet-worker/fleet-worker.test.js \
   src/orchestrator/providers/grok.test.js \
   src/orchestrator/production-transport.test.js \
-  src/orchestrator/remote-bridge-transport.test.js
+  src/orchestrator/remote-bridge-transport.test.js \
+  src/orchestrator/remote-bridge-transport-prepare-policy.test.js \
+  src/orchestrator/remote-bridge-transport-http-safety.test.js \
+  src/orchestrator/remote-bridge-transport-operations.test.js
 
 echo "PASS: Fleet Worker WorkspaceSpec and ownership contract regression"
