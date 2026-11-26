@@ -94,7 +94,8 @@
     {
       "path": "packages/brain/src/__tests__/rumination-dedup.test.js",
       "mode": "empty",
-      "status": "ready"
+      "status": "ready",
+      "default": false
     },
     {
       "path": "packages/brain/src/__tests__/cortex-memory.test.js",
@@ -159,7 +160,8 @@
     {
       "path": "packages/brain/src/__tests__/initiative-orchestration-migration.test.js",
       "mode": "empty",
-      "status": "ready"
+      "status": "ready",
+      "default": false
     },
     {
       "path": "packages/brain/src/__tests__/migration-030.test.js",

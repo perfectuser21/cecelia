@@ -73,6 +73,18 @@
       "category": "legacy_spec",
       "reason": "用户决定Cecelia Dashboard近期停用，保留前端及浏览器合同；退出默认PWA跑道，按需用apps/dashboard/e2e/playwright-cli.mjs及tests/regression/manual-ui/playwright.config.ts真实执行。",
       "manualRoot": true
+    },
+    {
+      "file": "packages/brain/src/__tests__/rumination-dedup.test.js",
+      "category": "legacy_spec",
+      "reason": "后台反刍按业务决定退出默认回归，保留真实去重合同与手动Ops能力；显式node scripts/ci/run-debt-pg.mjs --file packages/brain/src/__tests__/rumination-dedup.test.js仍可执行。",
+      "manualRoot": false
+    },
+    {
+      "file": "packages/brain/src/__tests__/initiative-orchestration-migration.test.js",
+      "category": "legacy_spec",
+      "reason": "仅验证057历史旧编排schema；当前正式Project/KR/Notion及全迁移合同仍自动执行。原迁移和测试保留，显式node scripts/ci/run-debt-pg.mjs --file packages/brain/src/__tests__/initiative-orchestration-migration.test.js仍可执行。",
+      "manualRoot": false
     }
   ]
 }
