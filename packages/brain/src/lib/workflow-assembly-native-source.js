@@ -2,7 +2,7 @@
 import {readFileSync} from 'node:fs';
 import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
-import {readFixedGitFile} from '../workflow-authoring/fixed-git-source.js';
+import {createFixedGitReadSession,readFixedGitFile} from '../workflow-authoring/fixed-git-source.js';
 import {createHash} from 'node:crypto';
 import {createRequire} from 'node:module';
 export const NATIVE_SPEC_PATH='packages/brain/config/workflow-assembly-native.json';
@@ -33,9 +33,10 @@ export async function prepareNativeSource({revision,readFile=readSource,deadline
   if(!/^[a-f0-9]{40}$/.test(revision??''))throw Error('native_source_revision_required');
   if(readFile===readSource && cache.has(revision))return cache.get(revision);
   const bindings=[];
+  const gitSession=createFixedGitReadSession();
   for(const path of NATIVE_SOURCE_PATHS){
     if(signal?.aborted||Date.now()>=deadline)throw Error('native_source_budget');
-    const text=await readFile(revision,path,{deadline,signal});
+    const text=await readFile(revision,path,{deadline,signal,gitSession});
     if(signal?.aborted||Date.now()>=deadline)throw Error('native_source_budget');
     if(text!==loaded.get(path))throw Error('native_source_runtime_mismatch');
     const sha=createHash('sha256').update(text).digest('hex');

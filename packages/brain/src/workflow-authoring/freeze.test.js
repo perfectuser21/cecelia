@@ -19,6 +19,18 @@ describe('显式 authoring 冻结来源协议',()=>{
     expect(()=>validateRequest(request)).not.toThrow();
     expect(()=>validateRequest({...request,registration_protocol:'arbitrary'})).toThrow();
   });
+  it('固定 Git 对象不可读时保留来源错误',async()=>{
+    const fetchFn=vi.fn(async()=>({ok:false,status:403}));
+    await expect(prepareDefinitionFreeze(definition(),{fetchFn,resolveToken:async()=> 'fixture'})).rejects.toMatchObject({
+      code:'definition_source_invalid',status:422,message:'冻结来源：GitHub对象不可读',
+    });
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+  });
+  it('成功读取的无效 JSON 保留解析错误',async()=>{
+    await expect(prepareDefinitionFreeze(definition(),{readFile:async()=>'{broken'})).rejects.toMatchObject({
+      code:'definition_source_invalid',status:422,message:'冻结来源文件不是JSON',
+    });
+  });
   it('核实完整文件、实现字节与固定commit，证明只匹配已核验定义',async()=>{
     const d=definition(),readFile=vi.fn(async s=>s.path===d.source.ref?document(d):'export const read = true;');
     const proof=await prepareDefinitionFreeze(d,{readFile});

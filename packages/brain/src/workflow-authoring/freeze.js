@@ -31,8 +31,9 @@ export async function prepareDefinitionFreeze(definition, options={}) {
     }
     return cache.get(key);
   };
+  const sourceText=await read(source);
   let document;
-  try{document=JSON.parse(await read(source));}catch{fail('冻结来源文件不是JSON','definition_source_invalid');}
+  try{document=JSON.parse(sourceText);}catch{fail('冻结来源文件不是JSON','definition_source_invalid');}
   const {source:_source,...expected}=definition;
   if(definitionDigest(document)!==definitionDigest(expected))fail('冻结来源内容与已验收完整定义不一致','definition_source_invalid');
   assertStepsHaveReadback(definition.activities);

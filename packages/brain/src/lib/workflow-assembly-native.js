@@ -24,11 +24,19 @@ export async function runNativeReconcile(pool,{request_key=randomUUID(),trigger=
   const query=(text,values)=>pool.query({text,values,query_timeout:3000});
   const runId='native:assembly:'+definitionDigest({scope:'global_admin',request_key});
   let current=(await query('SELECT w.current_definition_version_id,v.source_commit FROM workflows w JOIN workflow_definition_versions v ON v.id=w.current_definition_version_id AND v.workflow_id=w.id WHERE w.id=$1',[spec.id])).rows[0];
-  let source;
-  if(current){try{source=await prepareNativeSource({revision:current.source_commit,readFile:services.readSource,deadline,signal:services.signal});}catch(error){if(services.signal?.aborted||Date.now()>=deadline)throw error;}}
+  let source,deployedRevision=services.revision;
+  if(current){
+    try{
+      source=await prepareNativeSource({revision:current.source_commit,readFile:services.readSource,deadline,signal:services.signal});
+    }catch(error){
+      if(services.signal?.aborted||Date.now()>=deadline)throw error;
+      deployedRevision??=deployedNativeRevision();
+      if(current.source_commit===deployedRevision)throw error;
+    }
+  }
   // 首次和已部署实现升级共用同一owned CAS；不等待逐条人工补登记。
   if(!source){
-    source=await prepareNativeSource({revision:services.revision??deployedNativeRevision(),readFile:services.readSource,deadline,signal:services.signal});
+    source=await prepareNativeSource({revision:deployedRevision??deployedNativeRevision(),readFile:services.readSource,deadline,signal:services.signal});
     const registered=await registerNativeReconcile(pool,source,{deadline,signal:services.signal});
     current={current_definition_version_id:registered.workflow_definition_version_id,source_commit:source.commit};
   }
