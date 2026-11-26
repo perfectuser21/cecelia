@@ -1,8 +1,11 @@
 import test from 'node:test';
+import { execFileSync } from 'node:child_process';
 import assert from 'node:assert/strict';
 import { privatePgConfig, verifyPrivatePg, assertOwnedDatabase, assertVitestReport, dropOwnedScratch, restoreDump } from '../private-pg-contract.mjs';
 import { checked, cleanProcessEnv } from '../private-pg-backend.mjs';
 import deep from '../deep-integration.config.mjs';
+import brain from '../../../packages/brain/vitest.config.js';
+import { privatePgTests } from '../debt-pg.config.mjs';
 import privatePg from '../debt-pg.config.mjs';
 import { createRequire } from 'node:module';
 import { relative, resolve } from 'node:path';
@@ -108,5 +111,43 @@ test('现役strategy真实回调文件由自动私有PG选中，清债不能靠�
   for(const path of paths){
     assert.deepEqual(readManifest().tests.find(row=>row.path===path),{path,mode:'full',status:'ready'});
     assert.equal(selected.filter(file=>file===path).length,1);
+  }
+});
+
+test('two dormant contracts retain private ownership without falling into any default lane', () => {
+  const manual = ['rumination-dedup.test.js', 'initiative-orchestration-migration.test.js']
+    .map(name => 'packages/brain/src/__tests__/' + name);
+  const collect = config => glob.sync(config.test.include, { cwd: resolve(root, 'packages/brain'),
+    absolute: true, ignore: config.test.exclude }).map(path => relative(root, path));
+  assert.equal(privatePgTests.length, 45);
+  assert.equal(collect(privatePg).length, 43);
+  for (const file of manual) {
+    assert.ok(privatePgTests.includes(file));
+    for (const config of [brain, deep, privatePg]) assert.equal(collect(config).includes(file), false);
+  }
+});
+
+test('real Vitest discovery keeps both explicit contracts out of default unit/deep/private lanes', () => {
+  const files = ['rumination-dedup.test.js', 'initiative-orchestration-migration.test.js']
+    .map(name => resolve(root, 'packages/brain/src/__tests__', name));
+  for (const [config, explicit] of [['packages/brain/vitest.config.js', false],
+    ['scripts/ci/deep-integration.config.mjs', false], ['scripts/ci/debt-pg.config.mjs', false],
+    ['scripts/ci/debt-pg.config.mjs', true]]) {
+    const program = `
+      import {createVitest} from './packages/brain/node_modules/vitest/dist/node.js';
+      const ctx = await createVitest('test', {root:${JSON.stringify(resolve(root, 'packages/brain'))},
+        config:${JSON.stringify(resolve(root, config))}, watch:false, reporters:[]});
+      try { console.log('DISCOVERY=' + JSON.stringify((await ctx.globTestFiles()).map(([,file]) => file))); }
+      finally { await ctx.close(); }
+    `;
+    const output = execFileSync(process.execPath, ['--input-type=module', '-e', program], {
+      cwd: root, encoding: 'utf8', timeout: 30000, env: {PATH:process.env.PATH,
+        HOME:process.env.HOME, TMPDIR:process.env.TMPDIR, NODE_ENV:'test', CI:'true',
+        CECELIA_PRIVATE_PG_EXPLICIT_FILES:explicit ? '1' : '0'} });
+    const line = output.split('\n').find(line => line.startsWith('DISCOVERY='));
+    assert.ok(line, 'actual Vitest discovery must return a receipt');
+    const selected = JSON.parse(line.slice('DISCOVERY='.length));
+    for (const file of files) assert.equal(selected.includes(file), explicit, config);
+    if (config.endsWith('debt-pg.config.mjs')) assert.equal(selected.length, explicit ? 45 : 43);
   }
 });
