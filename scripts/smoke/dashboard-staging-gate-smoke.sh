@@ -215,7 +215,12 @@ DEV_PID_FILE="$DASH/.dev-preview.pid"
 if [[ -f "$DEVP" ]]; then
   pass "dev-preview.sh 存在"
   CECELIA_DEPLOY_ROOT="$ROOT_DIR" DEV_FIXTURE_DIST="$FIXTURE_NEW" DEV_PREVIEW_PORT="$DEV_PORT" bash "$DEVP" > "$TMP/d.log" 2>&1
+  D_RC=$?
   D_CODE=$(curl -s -o "$TMP/dev.html" -w "%{http_code}" "http://localhost:$DEV_PORT/" --max-time 8 2>/dev/null || echo 000)
+  if [[ "$D_RC" -ne 0 || "$D_CODE" != "200" ]]; then
+    echo "DEV diagnostics: exit=${D_RC} port=${DEV_PORT} HTTP=${D_CODE}"
+    tail -n 30 "$TMP/d.log" "$DASH/.dev-preview.log" 2>/dev/null | sed 's/^/    /'
+  fi
   [[ "$D_CODE" == "200" ]] && pass "dev 预览端口可达" || fail "dev 预览打不开（HTTP ${D_CODE}）"
   grep -q ">DEV<" "$TMP/dev.html" 2>/dev/null && pass "dev 预览是 DEV 旗（非 STAGING）" || fail "dev 预览旗文字不是 DEV"
   grep -q "#3b82f6" "$TMP/dev.html" 2>/dev/null && pass "DEV 旗是蓝色" || fail "DEV 旗颜色不对"
