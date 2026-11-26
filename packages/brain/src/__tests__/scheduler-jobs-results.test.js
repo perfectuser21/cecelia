@@ -2,17 +2,10 @@ import { describe, it, expect, vi } from "vitest";
 import { makePool } from "./helpers/scheduler-jobs-fixture.js";
 import { runNativeReconcile } from '../lib/workflow-assembly-native.js';
 import { runImageRetentionJanitor } from '../image-retention-scheduler.js';
-import { runPreviewCacheJanitor } from '../preview-cache-scheduler.js';
 import { runSchedulerJobsOnce, JOBS } from '../scheduler-jobs.js';
-it('专属cache scheduler需要pool并进入默认停用Janitor合同', async () => {
-  const job = JOBS.find(row => row.name === 'preview-owned-cache-janitor');
-  expect(job).toMatchObject({ needsPool: true });
-  const pool = {}; await job.handler(pool);
-  expect(runPreviewCacheJanitor).toHaveBeenCalledWith(pool);
-});
 it('机器体征始终先采集，Janitor网络等待不能排在体征前', () => {
   expect(JOBS[0].name).toBe('machine-vitals');
-  expect(JOBS.findIndex(job => job.name === 'preview-owned-cache-janitor')).toBeGreaterThan(0);
+  expect(JOBS.findIndex(job => job.name === 'us-brain-image-janitor')).toBeGreaterThan(0);
 });
 
 it('US固定镜像策略进入默认停用Janitor合同且在体征采样之后',async()=>{

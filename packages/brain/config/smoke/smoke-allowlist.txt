@@ -160,7 +160,6 @@ alertness-schema-smoke.sh
 activity-contract-runtime-smoke.sh
 invocations-smoke.sh
 
-preview-owned-cache-smoke.sh
 
 managed-script-capacity-smoke.sh
 node-onboarding-smoke.sh

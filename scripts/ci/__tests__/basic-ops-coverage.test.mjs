@@ -18,13 +18,10 @@ const representative = [
   'scripts/brain-image-deploy.test.mjs',
   'scripts/brain-image-rollback.test.mjs',
   'scripts/bluegreen-sidecar-completion.test.mjs',
-  'scripts/preview-cache.test.mjs',
-  'scripts/preview-cache-http.test.mjs',
   'scripts/__tests__/dashboard-release-bind.test.mjs',
   'scripts/__tests__/dashboard-release-promote.test.sh',
   'scripts/__tests__/dashboard-release-rollback.test.sh',
   'scripts/__tests__/brain-deploy-build-isolation.test.sh',
-  'scripts/preview-agent/__tests__/deploy-token.test.mjs',
   'scripts/__tests__/bluegreen-env-file.test.sh',
   'scripts/__tests__/bluegreen-bark-encode.test.sh',
   'scripts/__tests__/brain-deploy-build-same-version.test.sh',
@@ -68,9 +65,7 @@ const fixtureFiles = [
   'scripts/brain-image-deploy.test.mjs',
   'scripts/brain-image-rollback.test.mjs',
   'scripts/bluegreen-sidecar-completion.test.mjs',
-  'scripts/preview-cache.test.mjs',
   'scripts/__tests__/dashboard-release-bind.test.mjs',
-  'scripts/preview-agent/__tests__/fixture.test.mjs',
   'scripts/__tests__/bluegreen-fixture.test.sh',
   'scripts/__tests__/brain-deploy-fixture.test.sh',
   'scripts/__tests__/preview-fixture.test.sh',
@@ -122,9 +117,9 @@ test('独立fixture实际执行现役Node与Shell，结果确定排序且新增�
 
 test('关键目录不存在或任何关键测试类别为空都明确失败', t => {
   const directory = fixture(t);
-  rmSync(join(directory, 'scripts/preview-agent/__tests__'), {recursive: true});
+  rmSync(join(directory, 'packages/brain/scripts/native-agent/__tests__'), {recursive: true});
   assert.throws(() => opsChecks(directory), /目录|directory/i);
-  mkdirSync(join(directory, 'scripts/preview-agent/__tests__'), {recursive: true});
+  mkdirSync(join(directory, 'packages/brain/scripts/native-agent/__tests__'), {recursive: true});
   assert.throws(() => opsChecks(directory), /空|empty/i);
 });
 
@@ -178,7 +173,7 @@ printf 'ISOLATED_FIXTURE_OK\\n'
 // 历史实现不因未知PR或新执行内核变更重新进入现役默认。
 test('默认Ops完整执行现役安全fixture且无重复入口', () => {
   const active = paths(opsChecks(root));
-  for (const fixture of ['deadman-and-provider', 'keepalive-isolation', 'preview-agent-startup']) {
+  for (const fixture of ['deadman-and-provider', 'keepalive-isolation']) {
     assert.ok(active.includes(`scripts/ops/__tests__/credentials/${fixture}.test.sh`), `现役隔离fixture未收集：${fixture}`);
   }
   assert.equal(new Set(active).size, active.length, 'Ops入口不能重复执行');

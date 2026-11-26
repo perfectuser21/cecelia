@@ -12,13 +12,15 @@ it('现役Janitor注册表归镜像执行器，普通任务无附加能力', () 
 });
 it.each([
   { requested_task_type: 'janitor' },
+  { metadata: {policy: IMAGE_RETENTION_POLICY, machine_registry_id: IMAGE_RETENTION_MACHINE} },
+  { metadata: {policy: 'preview-owned-npm-cache-expiry-v1', machine: 'mmv'} },
   { task: {task_type: 'janitor'} },
   { executor_kind: 'preview-janitor' },
   { task: {executor_kind: 'preview-janitor'} },
   { executor_kind: 'image-janitor' },
   { task: {executor_kind: 'image-janitor'} },
 ])('外部保留类型不能降格绕过中央路由及writer：%o', async reserved => {
-  const request = {...image, requested_task_type: 'data', task: {}, ...reserved, metadata: {policy: 'preview-owned-npm-cache-expiry-v1', machine: 'mmv'}};
+  const request = {...image, mutation_intent: 'read_only', artifact_kind: 'execution', requested_task_type: 'data', task: {}, ...reserved, metadata: reserved.metadata ?? {}};
   for (const context of [{}, {previewCacheAuthority: 'spoofed'}, {imageRetentionAuthority: IMAGE_RETENTION_AUTHORITY}]) {
     expect(() => routeWork(request, [], context)).toThrow('janitor_authority_required');
     await expect(createRoutedTask({}, request, [], context)).rejects.toThrow('janitor_authority_required');

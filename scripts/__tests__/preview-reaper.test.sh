@@ -241,7 +241,7 @@ printf '#!/bin/bash\necho "MERGED"\n' >"$BIN/gh"; chmod +x "$BIN/gh"
 
 OUT=$(bash "$REAPER" 2>&1)
 if [ -d "$PREVIEW_BASE_DIR/.npm-cache-preview-107" ] \
-  && echo "$OUT" | grep -q "保留 npm cache.*preview-owned-npm-cache-expiry-v1"; then
+  && echo "$OUT" | grep -q "保留 npm cache.*等待历史资源核验"; then
   pass "MERGED PR 的独立 npm cache 被发现并保留"
 else
   fail "MERGED PR 的独立 npm cache 被旁路删除" "output=$OUT"
