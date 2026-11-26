@@ -25,7 +25,49 @@ const authoringPaths=new Set([
  'services/phone-adb-controller/patrol/contracts/batch.json',
  'services/phone-adb-controller/patrol/contracts/maintenance.json',
 ]);
+const singlePatrolContract='services/phone-adb-controller/patrol/contracts/single.json';
+const singlePatrolTest='services/phone-adb-controller/patrol/contracts/definitions.test.mjs';
+const phonePackagePaths=new Set(['dispatch.py','preflight.py','collector.py','ocr.swift','publish.mjs','mirror.mjs','runner.py'].map(name=>PATROL_PREFIX+name));
+const defaultPatrolCommand=/^\/usr\/bin\/python3 \/Users\/administrator\/\.local\/share\/phone-account-patrol\/releases\/([a-f0-9]{40})\/runner\.py phone --serial \{\{phone_serial\}\} --execution-script "\$0"$/;
+const scopedPatrolCommand=/^\/usr\/bin\/python3 \/Users\/administrator\/\.local\/share\/phone-account-patrol\/releases\/([a-f0-9]{40})\/runner\.py phone --serial ANGYVB4311010223 --execution-script "\$0"$/;
 const versionPattern=/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
+
+function singlePatrolCandidate(root,head,beforeText,afterText,headVersion,invalid){
+ const before=JSON.parse(beforeText),after=JSON.parse(afterText);
+ const current=defaultPatrolCommand.exec(before.runtime?.entrypoint)?.[1];
+ const commands=after.runtime?.script?.commands;
+ const revision=Array.isArray(commands)?scopedPatrolCommand.exec(commands.at(-1))?.[1]:undefined;
+ if(before.key!=='single-phone-account-patrol'||before.runtime?.script?.host!=='mmv'||!current||!revision||current===revision)invalid();
+ try{git(root,'merge-base','--is-ancestor',revision,head);}catch{invalid();}
+ const expected=structuredClone(before),newPaths=new Set();
+ expected.version=headVersion;
+ if(!Array.isArray(expected.runtime.script.commands)||!expected.runtime.script.commands.includes(before.runtime.entrypoint))invalid();
+ expected.runtime.script.commands.push(commands.at(-1));
+ for(const name of ['source_revision','phone_source_revision']){
+  const values=expected.input_schema?.properties?.[name]?.enum;
+  if(!Array.isArray(values)||!values.includes(current)||values.includes(revision))invalid();
+  values.push(revision);
+ }
+ if(!Array.isArray(expected.activities))invalid();
+ for(const activity of expected.activities){
+  const existing=activity.implementation_bindings??[];
+  if(!Array.isArray(existing))invalid();
+  const appended=new Map();
+  for(const item of [activity.implementation,...existing]){
+   if(item?.revision!==current)continue;
+   if(item.kind!=='code'||item.repo!==PATROL_REPO||!phonePackagePaths.has(item.path))invalid();
+   let bytes;
+   try{bytes=readFixedLocalGitBlob(root,{revision,path:item.path});}catch{invalid();}
+   if(!bytes.length)invalid();
+   newPaths.add(item.path);
+   appended.set(item.path,{...item,version:revision,revision,digest:'sha256:'+sha(bytes)});
+  }
+  if(appended.size)activity.implementation_bindings=[...existing,...appended.values()];
+ }
+ if(newPaths.size!==phonePackagePaths.size||JSON.stringify(canonical(expected))!==JSON.stringify(canonical(after)))invalid();
+ return {candidate_revision:revision,phone_serial:'ANGYVB4311010223',runtime_paths:[...newPaths].sort()};
+}
+
 function authoringVersionProof(root,base,head,path){
  const invalid=()=>fail(`PATROL_AUTHORING_VERSION_INVALID:${path}`);
  const fixedBytes=revision=>{
@@ -45,9 +87,11 @@ function authoringVersionProof(root,base,head,path){
  const firstDifference=original.findIndex((part,i)=>part!==updated[i]);
  if(firstDifference<0||updated[firstDifference]<original[firstDifference])invalid();
  const header=[...beforeText.matchAll(/^  "version": "([^"]+)",$/gm)];
- if(header.length!==1||header[0][1]!==baseVersion||
-    !after.equals(Buffer.from(beforeText.replace(header[0][0],`  "version": "${headVersion}",`))))invalid();
- return {path,kind:'fixed_authoring_version',base_version:baseVersion,head_version:headVersion,base_sha256:sha(before),head_sha256:sha(after)};
+ if(header.length!==1||header[0][1]!==baseVersion)invalid();
+ const proof={path,kind:'fixed_authoring_version',base_version:baseVersion,head_version:headVersion,base_sha256:sha(before),head_sha256:sha(after)};
+ if(after.equals(Buffer.from(beforeText.replace(header[0][0],`  "version": "${headVersion}",`))))return proof;
+ if(path!==singlePatrolContract)invalid();
+ return {...proof,kind:'fixed_single_patrol_candidate',...singlePatrolCandidate(root,head,beforeText,afterText,headVersion,invalid)};
 }
 const projectDoc=path=>/^\.(?:prd|dod)-cp-10101635-phone-account-patrol\.md$/.test(path)||path==='docs/learnings/cp-10101635-phone-account-patrol.md'||path==='.prd-cp-10121630-phone-patrol-openclaw.md'||path==='.dod-cp-10121630-phone-patrol-openclaw.md';
 function contractProof(root,revision,registration,{emptyAllowed=false}={}){
@@ -102,14 +146,19 @@ export async function runDevicePatrolGate(options){
   const before=contractProof(repoRoot,base,registration,{emptyAllowed:true}),after=contractProof(repoRoot,head,registration);
   const changed_files=git(repoRoot,'diff','--no-renames','--name-only','-z',base,head,'--').toString().split('\0').filter(Boolean);
   const paths=new Set([...before.bindings,...after.bindings].map(b=>b.path)),auxiliary=new Set([...before.auxiliary,...after.auxiliary].map(a=>a.path)),governance=[],coverage=[];
+  const authoring=new Map(changed_files.filter(path=>authoringPaths.has(path)).map(path=>[path,authoringVersionProof(repoRoot,base,head,path)]));
+  const scopedCandidate=authoring.get(singlePatrolContract)?.kind==='fixed_single_patrol_candidate';
+  const scopedTestBytes=scopedCandidate?readFixedLocalGitBlob(repoRoot,{revision:head,path:singlePatrolTest}):null;
   for(const path of changed_files){
    if(paths.has(path))coverage.push({path,kind:'code',bindings:after.bindings.filter(b=>b.path===path)});
    else if(auxiliary.has(path))coverage.push({path,kind:path===PATROL_PATH?'fixed_definition':'auxiliary',head_sha256:exists(repoRoot,head,path)?sha(read(repoRoot,head,path)):null});
-   else if(authoringPaths.has(path))coverage.push(authoringVersionProof(repoRoot,base,head,path));
+   else if(authoring.has(path))coverage.push(authoring.get(path));
+   else if(path===singlePatrolTest&&scopedTestBytes?.length)coverage.push({path,kind:'fixed_single_patrol_candidate_test',head_sha256:sha(scopedTestBytes)});
    else if(governancePaths.has(path)||projectDoc(path)){const proof=governanceProof(repoRoot,base,head,path);governance.push(proof);coverage.push(proof);}
    else fail(`PATROL_CHANGED_FILE_UNCLAIMED:${path}`);
   }
   const assertions=[runAssertion(repoRoot,PATROL_ASSERTION.replace('node --test ',''))];
+  if(scopedCandidate)assertions.push(runAssertion(repoRoot,singlePatrolTest));
   if(governance.some(g=>g.path==='.github/workflows/pr-review.yml'||g.path===REVIEW_TEST))assertions.push(runAssertion(repoRoot,REVIEW_TEST));
   if(governance.some(g=>g.path==='.github/workflows/implementation-impact.yml'))assertions.push(runAssertion(repoRoot,'scripts/ci/__tests__/implementation-impact-workflow.test.mjs'),runAssertion(repoRoot,'scripts/ci/__tests__/pilot-release-workflow.test.mjs'));
   if(git(repoRoot,'rev-parse','HEAD').toString().trim()!==head||git(repoRoot,'status','--porcelain=v1','--untracked-files=no').length)fail('PATROL_SOURCE_CHANGED_DURING_TEST');

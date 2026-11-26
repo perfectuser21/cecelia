@@ -95,6 +95,7 @@ test('拒绝额外内容、回退或非标准版头、文件模式变化、文�
 const singlePath='services/phone-adb-controller/patrol/contracts/single.json';
 const scopedTestPath='services/phone-adb-controller/patrol/contracts/definitions.test.mjs';
 const scopedFiles=Object.fromEntries(['dispatch.py','preflight.py','collector.py','ocr.swift','publish.mjs','mirror.mjs','runner.py'].map(name=>[name,`fixed test bytes for ${name}\n`]));
+scopedFiles['preflight.py']='READY = True\n';
 const existingPhone='864154c57e88e8085d2add741a79103a28891a44';
 const command=(revision,serial)=>`/usr/bin/python3 /Users/administrator/.local/share/phone-account-patrol/releases/${revision}/runner.py phone --serial ${serial} --execution-script "$0"`;
 
@@ -142,7 +143,12 @@ test('单机候选拒绝扩设备、改默认、篡改绑定和额外活动',asy
 
 test('新增固定单机的定义测试失败时不发成功凭证',async()=>{
  const fixture=scopedFixture(undefined,"import assert from 'node:assert/strict'; assert.ok(false);\n");
- try{await assert.rejects(runDevicePatrolGate(fixture.options),/PATROL_REGRESSION_FAILED/);}
+ try{
+  await assert.rejects(runDevicePatrolGate(fixture.options),/PATROL_REGRESSION_FAILED/);
+  const receipt=JSON.parse(readFileSync(join(fixture.options.outputDir,'receipt.json')));
+  assert.equal(receipt.assertions.find(r=>r.assertion_ref===PATROL_ASSERTION).exit_code,0);
+  assert.equal(receipt.assertions.find(r=>r.assertion_ref===`node --test ${scopedTestPath}`).exit_code,1);
+ }
  finally{rmSync(fixture.root,{recursive:true,force:true});}
 });
 
