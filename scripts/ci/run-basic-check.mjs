@@ -67,6 +67,8 @@ export function commandsFor(component, shard) {
     case 'image':
       return [
         step('.', 'docker', 'build', '-f', 'packages/brain/Dockerfile', '-t', 'cecelia-brain:ci-basic', '.'),
+        step('.', 'docker', 'run', '--rm', '--network', 'none', '-e', `EXPECTED_NODE_MAJOR=${process.versions.node.split('.')[0]}`, '--entrypoint', 'node', 'cecelia-brain:ci-basic', '--input-type=module', '-e',
+          'import assert from "node:assert/strict";assert.equal(Number(process.versions.node.split(".")[0]),Number(process.env.EXPECTED_NODE_MAJOR),"Brain image Node major must match CI")'),
         step('.', 'docker', 'run', '--rm', '--entrypoint', 'docker', 'cecelia-brain:ci-basic', 'buildx', 'version'),
         step('.', 'docker', 'run', '--rm', '--entrypoint', 'node', 'cecelia-brain:ci-basic', '--input-type=module', '-e',
           'import {computeBundleDigest} from "./scripts/native-agent/bundle.mjs";if(!/^[a-f0-9]{64}$/.test(computeBundleDigest("/app")))process.exit(1);await import("./scripts/native-agent/staging-business.mjs");await import("./src/__tests__/helpers/native-agent-host-fixture.js")'),
