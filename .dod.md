@@ -1,14 +1,11 @@
-# 清理定义文档历史流水账与无业务效果的文案互锁
+# 复核轻盈底座首次硬件诊断超时
 
-Task: 52288b4b-dde6-40a3-a2a5-9701668c07ad
+Task: 61a4d19f-ed29-453d-8b78-3f6e05c47f3c
 GP-Anchor: none(infra)
 
-- [x] 原定义文档只保当前源码事实和入口，版本、schema地板及路由后备值含义明确。
-  Test: manual:node scripts/facts-check.mjs
-  Test: manual:bash scripts/check-version-sync.sh
-- [x] 移除文档摘要grep后，真实镜像配置、版本与安装参数互锁继续执行。
-  Test: manual:bash packages/brain/scripts/fleet-worker/canonical-pin-consistency.test.sh
-- [x] 保留真实profile/config/rollout及文档版本漂移、治理回归；只清退历史文案专属断言。
-  Test: manual:node node_modules/vitest/vitest.mjs run --root packages/brain ../../tests/gp/f1/step3-runner-digest-pin-consistency.test.js ../../tests/check-version-sync.test.js src/lib/__tests__/implementation-ci-governance.test.js
-- [x] 事实权威仍由源码提取；错误版本或schema破坏能真实报错。
-  Test: manual:node --test scripts/ci/__tests__/basic-facts-authority.test.mjs
+- [x] 使用生产 HTTP 入口复现旧版拒绝原件完整的硬件诊断超时请求。
+  Test: manual:cd packages/brain && npx vitest run --config vitest.integration.config.js src/__tests__/integration/standalone-start-reconciliation.pg.integration.test.js --maxWorkers=1 --minWorkers=1
+- [x] 核对同一 TaskRun 时间窗口、原件 SHA256、诊断状态及两条连接关闭事件，证据不符时拒绝。
+  Test: manual:cd packages/brain && npx vitest run --config vitest.integration.config.js src/__tests__/integration/standalone-start-reconciliation.pg.integration.test.js --maxWorkers=1 --minWorkers=1
+- [x] 合法请求原子结束同一 Task 与 TaskRun，保留回执并拒绝自动重试。原有复核保持兼容。
+  Test: manual:cd packages/brain && npx vitest run --config vitest.integration.config.js src/__tests__/integration/standalone-start-reconciliation.pg.integration.test.js --maxWorkers=1 --minWorkers=1
