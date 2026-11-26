@@ -1,5 +1,6 @@
 import { FREEZE_PROTOCOL, prepareDefinitionFreeze } from './freeze.js';
 import { definitionDigest } from './contracts.js';
+import { createFixedGitReadSession } from './fixed-git-source.js';
 const KEYS=/^[a-z][a-z0-9_.-]{0,99}$/;
 const fail=message=>{throw Object.assign(new Error(message),{code:'IMPLEMENTATION_CI_AUTHORING_SOURCE_INVALID',status:409});};
 export function validateAuthoringAdapterConfig(config){
@@ -38,8 +39,9 @@ export function isAuthoringReleaseSnapshot(snapshot){
 /** 只核验已正式authoring登记的版本；CI不能另行登记未验收的新版本。 */
 export async function verifyAuthoringSnapshotSources(snapshot,options={}){
   if(!isAuthoringReleaseSnapshot(snapshot)||snapshot.status!=='verified')fail('authoring快照或地图尚未核验');
+  const gitSession=createFixedGitReadSession({reuseBlobs:true});
   for(const workflow of snapshot.definitions.workflows){
-    const definition=workflow.payload.contract,proof=await prepareDefinitionFreeze(definition,{...options,sharedVersions:snapshot.definitions.activities});
+    const definition=workflow.payload.contract,proof=await prepareDefinitionFreeze(definition,{...options,gitSession,sharedVersions:snapshot.definitions.activities});
     if(workflow.source_repo!==proof.source.repo||workflow.source_path!==proof.source.path||workflow.source_commit!==proof.source.commit)fail('冻结定义来源与实际文件不一致');
     for(const ref of workflow.payload.activities){
       const activity=snapshot.definitions.activities.find(a=>a.id===ref.activity_version_id&&a.activity_id===ref.activity_id);

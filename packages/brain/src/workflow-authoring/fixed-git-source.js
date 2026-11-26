@@ -9,8 +9,14 @@ const CENTRAL_REPO = 'perfectuser21/zenithjoy-skills';
 const DIGEST = /^[a-f0-9]{64}$/;
 const fail = message => { throw Object.assign(new Error(`冻结来源：${message}`), { code:'definition_source_invalid',status:422 }); };
 const gitSessions=new WeakMap();
-export function createFixedGitReadSession(){
-  const token=Object.freeze({});gitSessions.set(token,{objects:new Map(),bytes:0});return token;
+const objectCache=(maxObjects,maxBytes)=>({objects:new Map(),bytes:0,maxObjects,maxBytes});
+export function createFixedGitReadSession({reuseBlobs=false}={}){
+  const token=Object.freeze({});
+  gitSessions.set(token,{
+    metadata:objectCache(64,16*MAX_FILE),
+    ...(reuseBlobs?{blobs:objectCache(200,8*MAX_FILE),pending:new Map()}:{}),
+  });
+  return token;
 }
 
 export function validateGitSource({ repo, path, revision } = {}, { central = false } = {}) {
@@ -28,6 +34,7 @@ async function readGitFile(source, { fetchFn=globalThis.fetch, resolveToken=asyn
   if(gitSession!==undefined&&!memo)fail('Git读取会话不合法');
   const {repo,path,revision}=source,token=await resolveToken();
   check();
+  const credential=memo?.blobs?createHash('sha256').update(`${token}`).digest('hex'):null;
   async function get(kind,sha) {
     check();
     if (!SHA.test(sha || '')) fail('Git对象身份不合法');
@@ -47,20 +54,35 @@ async function readGitFile(source, { fetchFn=globalThis.fetch, resolveToken=asyn
     }
     const document=await response.json();check();return document;
   }
-  async function metadata(kind,sha,normalize){
-    check();const key=JSON.stringify([repo,revision,kind,sha]);
-    if(memo?.objects.has(key)){const value=memo.objects.get(key);check();return value;}
-    const value=normalize(await get(kind,sha));check();
-    // Metadata has a separate retention cap; reaching it only disables memoization.
-    const size=Buffer.byteLength(JSON.stringify(value));
-    if(memo&&memo.objects.size<64&&memo.bytes+size<=16*MAX_FILE){memo.objects.set(key,value);memo.bytes+=size;}
-    return value;
+  async function readObject(kind,sha,normalize){
+    check();
+    const key=JSON.stringify([repo,revision,kind,sha,credential]);
+    const cache=kind==='blobs'?memo?.blobs:memo?.metadata;
+    if(cache?.objects.has(key))return cache.objects.get(key);
+    const pending=memo?.pending,existing=pending?.get(key);
+    if(existing&&existing.signal===signal&&existing.deadline===deadline){
+      const value=await existing.result;
+      check();
+      return value;
+    }
+    const load=async()=>{
+      const value=normalize(await get(kind,sha));check();
+      if(cache&&!cache.objects.has(key)&&cache.objects.size<cache.maxObjects){
+        const size=Buffer.isBuffer(value)?value.length:Buffer.byteLength(JSON.stringify(value));
+        if(cache.bytes+size<=cache.maxBytes){cache.objects.set(key,value);cache.bytes+=size;}
+      }
+      return value;
+    };
+    if(!pending||existing)return load();
+    const result=load();
+    pending.set(key,{result,signal,deadline});
+    try{return await result;}finally{pending.delete(key);}
   }
-  const commit=await metadata('commits',revision,value=>{
+  const commit=await readObject('commits',revision,value=>{
     if(value.sha!==revision||!SHA.test(value.tree?.sha||''))fail('commit不匹配');
     return Object.freeze({sha:value.sha,tree:Object.freeze({sha:value.tree.sha})});
   });
-  const tree=await metadata('trees',commit.tree.sha,value=>{
+  const tree=await readObject('trees',commit.tree.sha,value=>{
     if(value.sha!==commit.tree.sha||value.truncated||!Array.isArray(value.tree)||value.tree.some(entry=>!entry||typeof entry!=='object'||Array.isArray(entry)))fail('tree不完整');
     const scalar=value=>typeof value==='string'||typeof value==='number'?value:undefined;
     return Object.freeze({sha:value.sha,tree:Object.freeze(value.tree.map(entry=>Object.freeze(Object.fromEntries(['path','sha','type','mode','size'].map(key=>[key,scalar(entry?.[key])])))))});
@@ -69,13 +91,15 @@ async function readGitFile(source, { fetchFn=globalThis.fetch, resolveToken=asyn
   if(entries.length===0&&allowMissing){check();return null;}
   if(entries.length!==1||entries[0].type!=='blob'||!['100644','100755'].includes(entries[0].mode))fail('文件缺失或不是常规文件');
   if(entries[0].size>MAX_FILE)fail('文件超过上限');
-  const blob=await get('blobs',entries[0].sha);
-  if(blob.sha!==entries[0].sha||blob.encoding!=='base64'||!Number.isSafeInteger(blob.size)||blob.size<1||blob.size>MAX_FILE
-    ||typeof blob.content!=='string'||blob.content.length>2*MAX_FILE)fail('blob格式或大小非法');
-  const bytes=Buffer.from(blob.content,'base64');
-  if(bytes.length!==blob.size||createHash('sha1').update(Buffer.concat([Buffer.from(`blob ${bytes.length}\0`),bytes])).digest('hex')!==blob.sha)fail('文件字节hash不匹配');
+  const bytes=await readObject('blobs',entries[0].sha,blob=>{
+    if(blob.sha!==entries[0].sha||blob.encoding!=='base64'||!Number.isSafeInteger(blob.size)||blob.size<1||blob.size>MAX_FILE
+      ||typeof blob.content!=='string'||blob.content.length>2*MAX_FILE)fail('blob格式或大小非法');
+    const decoded=Buffer.from(blob.content,'base64');
+    if(decoded.length!==blob.size||createHash('sha1').update(Buffer.concat([Buffer.from(`blob ${decoded.length}\0`),decoded])).digest('hex')!==blob.sha)fail('文件字节hash不匹配');
+    return decoded;
+  });
   check();
-  return bytes;
+  return memo?.blobs?Buffer.from(bytes):bytes;
 }
 
 export async function readFixedGitFile(source, options={}) {

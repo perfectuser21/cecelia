@@ -233,6 +233,19 @@ describe('请求内已验证Git对象复用',()=>{
   await expect(read(f,'two',{signal:controller.signal})).rejects.toMatchObject({code:'readiness_deadline_exceeded'});await expect(read(f,'two',{deadline:Date.now()-1})).rejects.toMatchObject({code:'readiness_deadline_exceeded'});expect(f.fetchFn).toHaveBeenCalledTimes(count);
   const live=new AbortController();await expect(read(f,'two',{resolveToken:async()=>{live.abort();return 'fixture';},signal:live.signal})).rejects.toMatchObject({code:'readiness_deadline_exceeded'});expect(f.fetchFn).toHaveBeenCalledTimes(count);
  });
+ it('快照内复用blob仍检查当前凭据和取消，拒绝的读取可以重试',async()=>{
+  const f=fixture(),gitSession=fixedSources.createFixedGitReadSession({reuseBlobs:true});
+  const fetchFn=vi.fn((url,options)=>options.headers.Authorization==='Bearer forbidden'?{ok:false,status:403}:f.fetchFn(url,options));
+  const options={gitSession,fetchFn};
+  expect(await read(f,'one',options)).toBe('fixed one');
+  await expect(read(f,'one',{...options,resolveToken:async()=> 'forbidden'})).rejects.toMatchObject({code:'definition_source_invalid'});
+  await expect(read(f,'one',{...options,resolveToken:async()=> 'forbidden'})).rejects.toMatchObject({code:'definition_source_invalid'});
+  expect(fetchFn.mock.calls.filter(([,options])=>options.headers.Authorization==='Bearer forbidden')).toHaveLength(2);
+  const controller=new AbortController();controller.abort();
+  await expect(read(f,'one',{...options,signal:controller.signal})).rejects.toMatchObject({code:'readiness_deadline_exceeded'});
+  expect(await read(f,'one',options)).toBe('fixed one');
+  expect(f.fetchFn).toHaveBeenCalledTimes(3);
+ });
  it('拒绝伪造metadata会话，repo/revision及新请求独立',async()=>{
   const f=fixture();await expect(read(f,'one',{gitSession:new Map()})).rejects.toThrow();expect(f.fetchFn).not.toHaveBeenCalled();await read(f);
   await expect(readFixedGitFile({repo:'perfectuser21/cecelia',revision:'e'.repeat(40),path:'one'},f.options)).rejects.toThrow();expect(f.fetchFn.mock.calls.filter(([u])=>u.includes('/commits/'))).toHaveLength(2);
