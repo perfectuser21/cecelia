@@ -227,9 +227,18 @@ function sourceValid(source){
 export function collectAuxiliarySourceEvidence(root,source){
  sourceValid(source);
  if(canonicalRepoIdentity(git(root,'remote','get-url','origin').toString().trim()).replace(/^github\.com\//,'')!==source.repo)fail('AUXILIARY_REPO_MISMATCH');
+ // 缓存只属于这次已绑定仓库的采集；完整SHA固定mode和字节，合法常规文件读取成功后才复用。
+ const committed=new Map();
+ const read=(rev,name)=>{
+  const key=`${rev}:${name}`;
+  if(committed.has(key))return committed.get(key);
+  const bytes=readCommitted(root,rev,name);
+  if(bytes!==null)committed.set(key,bytes);
+  return bytes;
+ };
  const body={schema_version:1,source:{repo:source.repo,base_revision:source.base_revision,head_revision:source.head_revision}};
  for(const side of ['base','head']){
-  const rev=source[`${side}_revision`],bytes=readCommitted(root,rev,SOURCE_RELATIONS_PATH);
+  const rev=source[`${side}_revision`],bytes=read(rev,SOURCE_RELATIONS_PATH);
   const frozen={source_revision:rev,manifest_sha256:bytes?bytesHash(bytes):null,relations:[]};
   if(bytes){
    if(bytes.length>1024*1024)fail('AUXILIARY_MANIFEST_TOO_LARGE');
@@ -238,12 +247,12 @@ export function collectAuxiliarySourceEvidence(root,source){
    const seen=new Set();
    for(const raw of manifest.relations){
     const row=relation(raw);if(row.role==='verification_config'&&source.repo!==configRepo(row))fail('AUXILIARY_CONFIG_REPO_INVALID');if(seen.has(row.path))fail('AUXILIARY_RELATION_DUPLICATE');seen.add(row.path);
-    const owner=readCommitted(root,rev,row.owner_path),auxiliary=readCommitted(root,rev,row.path);
+    const owner=read(rev,row.owner_path),auxiliary=read(rev,row.path);
     if(!owner||!auxiliary)fail('AUXILIARY_SOURCE_MISSING');
     let config={};
     if(row.role==='verification_config'){
      if(!configReader(row.owner_path))fail('AUXILIARY_CONFIG_READER_OWNER_MISSING');
-     const reader=readCommitted(root,rev,row.consumer_path),ci=readCommitted(root,rev,row.ci_path);if(!reader||!ci)fail('AUXILIARY_CONFIG_SOURCE_MISSING');
+     const reader=read(rev,row.consumer_path),ci=read(rev,row.ci_path);if(!reader||!ci)fail('AUXILIARY_CONFIG_SOURCE_MISSING');
      config={consumer_sha256:bytesHash(reader),ci_sha256:bytesHash(ci),consumer_evidence:configProof(reader,ci,auxiliary,row)};
     }
     frozen.relations.push({...row,owner_sha256:bytesHash(owner),sha256:bytesHash(auxiliary),...config});
