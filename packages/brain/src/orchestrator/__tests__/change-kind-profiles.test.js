@@ -2,12 +2,19 @@ import { describe, expect, it } from 'vitest';
 import { selectPipeline } from '../../work-router.js';
 
 describe('开发任务画像路由', () => {
-  it.each(['new_capability', 'capability_change', 'bugfix', 'parameter_only'])('%s：有头记账与无头Runner分别路由', change_kind => {
+  it.each([
+    ['new_capability', 'new-capability-v1'],
+    ['capability_change', 'capability-change-v1'],
+    ['bugfix', 'hotfix-v1'],
+    ['parameter_only', 'parameter-only-v1'],
+  ])('%s：保留画像%s，有头记账与无头Agent分别路由', (change_kind, profile) => {
     expect(selectPipeline({work_kind:'coding_mutation', change_kind, headed:true})).toMatchObject({
-      canonical_task_type:'dev', orchestrator:'headed-session', impact_contract_required:true,
+      change_kind, default_execution_profile:profile, execution_profile_override:null,
+      pipeline:'headed_development', canonical_task_type:'dev', orchestrator:'headed-session', impact_contract_required:true,
     });
     expect(selectPipeline({work_kind:'coding_mutation', change_kind})).toMatchObject({
-      canonical_task_type:'coding_workflow', orchestrator:'coding-workflow-runner', impact_contract_required:false,
+      change_kind, default_execution_profile:profile, execution_profile_override:null,
+      pipeline:'agent_development', canonical_task_type:'codex_dev', orchestrator:'codex-bridge', impact_contract_required:false,
     });
   });
 });

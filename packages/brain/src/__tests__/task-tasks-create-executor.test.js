@@ -1,10 +1,7 @@
 /**
- * POST /api/brain/tasks — B1 executor/mode 白名单回归测试（T6 88e0b448 终审补测）
- *
- * 背景：路由条令（07-08）规定 Claude=有头/Codex=无头都可派，B1 校验段
- * 曾对 executor=claude + mode=headed 返回 400，解锁后缺 route 层测试兜底。
- * 本文件锁死四个组合：
- *   claude+headed 合法 / codex+headed 合法 / claude+headless 合法 / mode 非白名单值仍 400。
+ * POST /api/brain/tasks — 现役开发路由与 executor/mode 入口校验。
+ * 普通用户开发交 codex_dev Agent；headed_manual 明确登记当前有头 dev 会话。
+ * mode 仅是执行偏好，不恢复已退役的 Claude 桥接或旧 Kernel 开发编排。
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -49,12 +46,15 @@ const routeFields = {
 beforeEach(() => {
   queryMock.mockReset();
   // 创建链路默认 mock：dedup SELECT 返回空（无重复），INSERT 返回新任务行
-  queryMock.mockImplementation(async (sql) => {
+  queryMock.mockImplementation(async (sql, values) => {
     if (/WITH authoritative_scope AS/.test(sql)) {
       return { rows: [{ node_key: 'F1' }] };
     }
     if (/INSERT INTO tasks/.test(sql)) {
-      return { rows: [{ id: 'task-new', title: 't', status: 'queued', task_type: 'harness_initiative', priority: 'P2', payload: {}, created_at: '2026-07-10T00:00:00Z' }] };
+      return { rows: [{
+        id: 'task-new', title: values[0], priority: values[2], task_type: values[3],
+        status: values[4], payload: JSON.parse(values[9]), created_at: '2026-07-10T00:00:00Z',
+      }] };
     }
     if (/INSERT INTO work_routing_receipts/.test(sql)) return { rows: [{ id: 'receipt-new' }] };
     if (/FROM map_scope_repositories/.test(sql)) {
@@ -63,6 +63,20 @@ beforeEach(() => {
     return { rows: [] };
   });
 });
+
+function expectDevelopmentRoute(res, { taskType, mode, pipeline, orchestrator }) {
+  expect(res.status, JSON.stringify(res.body)).toBe(201);
+  expect(res.body.task_type).toBe(taskType);
+  expect(res.body.payload).toMatchObject({ executor: 'codex', mode, orchestrator });
+  expect(res.body.payload).not.toHaveProperty('harness_runtime');
+  expect(res.body.payload).not.toHaveProperty('harness_mode');
+  const inserted = queryMock.mock.calls.find(([sql]) => /INSERT INTO tasks/.test(sql));
+  expect(inserted[1][3]).toBe(taskType);
+  const receipt = queryMock.mock.calls.find(([sql]) => /INSERT INTO work_routing_receipts/.test(sql));
+  expect(receipt[1][5]).toBe(pipeline);
+  expect(receipt[1][6]).toBe(taskType);
+  expect(receipt[1][12]).toBe(orchestrator);
+}
 
 describe('POST /api/brain/tasks — B1 executor/mode 白名单', () => {
   it('外部工作单护照可统一挂号且不进入编码写流程', async () => {
@@ -102,35 +116,47 @@ describe('POST /api/brain/tasks — B1 executor/mode 白名单', () => {
     }
   });
 
-  it('executor=claude + mode=headed → 不再 400（有头 claude 已解锁）', async () => {
+  it('有头用户会话显式登记 headed_manual，落 dev 账本并保留 headed 模式', async () => {
     const res = await request(makeApp())
       .post('/api/brain/tasks')
-      .send({ title: '有头dev任务', ...routeFields, payload: { executor: 'claude', mode: 'headed' } });
-    expect(res.status).toBe(201);
-    expect(res.body.error).toBeUndefined();
+      .send({ title: '有头dev任务', ...routeFields, payload: { executor: 'codex', mode: 'headed', headed_manual: true } });
+    expectDevelopmentRoute(res, { taskType: 'dev', mode: 'headed', pipeline: 'headed_development', orchestrator: 'headed-session' });
+    expect(res.body.payload.headed_manual).toBe('true');
   });
 
-  it('executor=codex + mode=headed → 由 Router 统一进入 Kernel Harness', async () => {
+  it('executor=codex + mode=headed 偏好仍由 Router 归入现役 Codex Agent', async () => {
     const res = await request(makeApp())
       .post('/api/brain/tasks')
       .send({ title: 'codex任务', ...routeFields, payload: { executor: 'codex', mode: 'headed' } });
-    expect(res.status).toBe(201);
-    expect(res.body.task_type).toBe('harness_initiative');
+    expectDevelopmentRoute(res, { taskType: 'codex_dev', mode: 'headed', pipeline: 'agent_development', orchestrator: 'codex-bridge' });
+    expect(res.body.payload).not.toHaveProperty('headed_manual');
   });
 
-  it('executor=claude + mode=headless → 合法', async () => {
+  it('无头用户开发进入现役 codex_dev Agent，保留 headless 模式', async () => {
     const res = await request(makeApp())
       .post('/api/brain/tasks')
-      .send({ title: '无头claude任务', ...routeFields, payload: { executor: 'claude', mode: 'headless' } });
-    expect(res.status).toBe(201);
+      .send({ title: '无头codex任务', ...routeFields, payload: { executor: 'codex', mode: 'headless' } });
+    expectDevelopmentRoute(res, { taskType: 'codex_dev', mode: 'headless', pipeline: 'agent_development', orchestrator: 'codex-bridge' });
+    expect(res.body.payload).not.toHaveProperty('headed_manual');
+  });
+
+  it.each(['headed', 'headless'])('退役 Claude 桥接请求 mode=%s 在落任务前拒绝', async mode => {
+    const res = await request(makeApp()).post('/api/brain/tasks').send({
+      title: '退役Claude请求', ...routeFields, payload: { executor: 'claude', mode },
+    });
+    expect(res.status).toBe(422);
+    expect(res.body).toMatchObject({ reason_code: 'no_executor_for_task_type', route: 'claude-retired', task_type: 'codex_dev' });
+    expect(queryMock.mock.calls.some(([sql]) => /INSERT INTO tasks|INSERT INTO work_routing_receipts/.test(sql))).toBe(false);
+    expect(queryMock.mock.calls.some(([sql]) => sql === 'ROLLBACK')).toBe(true);
   });
 
   it('mode=xxx 非白名单值 → 仍 400', async () => {
     const res = await request(makeApp())
       .post('/api/brain/tasks')
-      .send({ title: '非法mode任务', ...routeFields, payload: { executor: 'claude', mode: 'xxx' } });
+      .send({ title: '非法mode任务', ...routeFields, payload: { executor: 'codex', mode: 'xxx' } });
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/mode must be headless or headed/);
+    expect(queryMock).not.toHaveBeenCalled();
   });
 
   it('executor 非 claude/codex → 仍 400（白名单不回归）', async () => {
@@ -139,5 +165,6 @@ describe('POST /api/brain/tasks — B1 executor/mode 白名单', () => {
       .send({ title: '非法executor任务', ...routeFields, payload: { executor: 'gpt' } });
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/executor must be claude or codex/);
+    expect(queryMock).not.toHaveBeenCalled();
   });
 });

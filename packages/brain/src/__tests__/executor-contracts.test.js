@@ -46,7 +46,7 @@ async function runWithProbe(kind, probeResult, taskOverrides = {}) {
 // ─── VALID_EXECUTOR_KINDS ─────────────────────────────────────────────────────
 
 describe('VALID_EXECUTOR_KINDS', () => {
-  it('包含十三个现役执行体，覆盖公共runner和独立controller', () => {
+  it('包含十二个现役执行体，旧自主runner不再接受新执行', () => {
     expect(VALID_EXECUTOR_KINDS).toEqual(
       expect.arrayContaining([
         'brain-local',
@@ -61,10 +61,10 @@ describe('VALID_EXECUTOR_KINDS', () => {
         'image-janitor',
         'linux-pool-controller',
         'phone-ssh-controller',
-        'coding-workflow-runner',
       ])
     );
-    expect(VALID_EXECUTOR_KINDS).toHaveLength(13);
+    expect(VALID_EXECUTOR_KINDS).toHaveLength(12);
+    expect(VALID_EXECUTOR_KINDS).not.toContain('coding-workflow-runner');
   });
 });
 

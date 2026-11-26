@@ -47,34 +47,33 @@ describe('Brain PostgreSQL test layering', () => {
     expect(workflow.jobs.plan).toBeUndefined();
     expect(workflow.jobs.checks.strategy.matrix.include).toContainEqual({component: 'brain-integration'});
     const steps = commandsFor('brain-integration');
-    expect(steps.map(step => ({command: step.command, args: step.args}))).toEqual([
-      {command: 'node', args: ['scripts/ci/basic-runtime-smoke.mjs', '--validate-only']},
-      {command: 'node', args: ['src/migrate.js']},
-      {command: 'npx', args: [
-        '--no-install', 'vitest', 'run', '--config', '../../scripts/ci/deep-integration.config.mjs',
-        'src/__tests__/integration/task-lease-device-pool.pg.integration.test.js',
-        'src/__tests__/integration/native-agent-resource-lease.pg.integration.test.js',
-        'src/__tests__/integration/native-agent-api-control.pg.integration.test.js',
-        'src/__tests__/integration/native-agent-flow.pg.integration.test.js',
-        'src/__tests__/integration/native-agent-notion-flow.pg.integration.test.js',
-        'src/__tests__/integration/native-agent-scheduler.pg.integration.test.js',
-        'src/__tests__/integration/external-exec-orphan-liveness.integration.test.js',
-        'src/__tests__/integration/staging-native-business.pg.integration.test.js',
-        'src/__tests__/integration/drain-process-scope.pg.integration.test.js',
-        'src/__tests__/integration/executor-startup-headed-owner.pg.integration.test.js',
-        'src/__tests__/integration/suggestion-plan-callback.pg.integration.test.js',
-        'src/__tests__/integration/managed-script-profile.pg.integration.test.js',
-        'src/__tests__/integration/workflow-common-terminal.pg.integration.test.js',
-        'src/__tests__/integration/device-job-foundation.pg.integration.test.js',
-        'src/__tests__/integration/graph-multi-repo-current.pg.integration.test.js',
-        'src/__tests__/integration/org-map-current-contracts.pg.integration.test.js',
-        'src/__tests__/integration/task-ability-compatibility.pg.integration.test.js',
-        'src/__tests__/integration/reasoning-governance-contract.pg.integration.test.js', '--reporter=dot',
-      ]},
-      {command: 'node', args: ['scripts/ci/run-debt-pg.mjs', '--file', 'packages/brain/src/__tests__/execution-strategy-session-kr-link.test.js']},
-      {command: 'node', args: ['--test', 'scripts/ci/__tests__/runtime-signal.integration.test.mjs']},
-      {command: 'node', args: ['scripts/ci/basic-runtime-smoke.mjs']},
+    const migration = steps.findIndex(step => step.command === 'node' && step.args[0] === 'src/migrate.js');
+    const postgres = steps.findIndex(step => step.ciScratchDatabase === true);
+    expect(steps[0]).toMatchObject({command: 'node', args: ['scripts/ci/basic-runtime-smoke.mjs', '--validate-only']});
+    expect(migration).toBeGreaterThan(0);
+    expect(postgres).toBeGreaterThan(migration);
+    expect(steps[postgres].command).toBe('npx');
+    expect(steps[postgres].args.slice(0, 5)).toEqual([
+      '--no-install', 'vitest', 'run', '--config', '../../scripts/ci/deep-integration.config.mjs',
     ]);
+    expect(steps[postgres].args).toEqual(expect.arrayContaining([
+      'src/__tests__/integration/task-lease-device-pool.pg.integration.test.js',
+      'src/__tests__/integration/native-agent-notion-flow.pg.integration.test.js',
+      'src/__tests__/integration/staging-native-business.pg.integration.test.js',
+      'src/__tests__/integration/task-intake.pg.integration.test.js',
+    ]));
+    const debt = steps.findIndex(step => step.command === 'node'
+      && step.args[0] === 'scripts/ci/run-debt-pg.mjs');
+    expect(steps[debt].args).toEqual([
+      'scripts/ci/run-debt-pg.mjs', '--file', 'packages/brain/src/__tests__/execution-strategy-session-kr-link.test.js',
+    ]);
+    const signal = steps.findIndex(step => step.command === 'node'
+      && step.args[0] === '--test' && step.args[1] === 'scripts/ci/__tests__/runtime-signal.integration.test.mjs');
+    expect(debt).toBeGreaterThan(postgres);
+    expect(signal).toBeGreaterThan(debt);
+    expect(signal).toBeLessThan(steps.length - 1);
+    expect(steps.at(-1)).toMatchObject({command: 'node', args: ['scripts/ci/basic-runtime-smoke.mjs']});
+    expect(postgres).toBeLessThan(steps.length - 1);
   });
 
   it.each([

@@ -6,6 +6,7 @@
  * 契约：0条须 source_status 佐证；42P01→503 migration_pending 禁 200 空数组；stale 用服务端时钟。
  */
 import { Router } from 'express';
+import { rateLimit } from 'express-rate-limit';
 import pool from '../db.js';
 import { INTERVAL_MS } from '../ops-collector.js';
 import { MODEL_ACCOUNT_STATUS } from '../ops-model-accounts-collector.js';
@@ -13,6 +14,7 @@ import { statusFromCollectorState } from '../ops-alarm-ledger.js';
 import { importInventorySnapshot } from '../ops-alarm-import.js';
 import { internalAuthOrLoopback } from '../middleware/internal-auth.js';
 import { TREE_NODES_SQL } from '../lib/tree-nodes-sql.js';
+import { TASK_MUTATION_RATE_LIMIT_OPTIONS } from './task-mutation-rate-limit.js';
 
 // MODEL_ACCOUNT_STATUS 单源 import（INV-3 [枚举单份]）——只从 collector 引用，禁在此手抄字面量副本。
 export { MODEL_ACCOUNT_STATUS };
@@ -350,7 +352,7 @@ router.get('/model-accounts', handle(buildModelAccountsPayload)); // 8 模型账
 router.get('/alarms', handle(buildAlarmsPayload)); // 闹钟总账（扩 ops_schedule_entries，任务 fe10d1a0）
 
 // POST /agent-ops/alarms/import — 盘点静态快照一次性导入（E.4）。内部令牌鉴权；缺省 dry_run=true，必须显式 false 才写。
-router.post('/alarms/import', internalAuthOrLoopback, async (req, res) => {
+router.post('/alarms/import', rateLimit({ ...TASK_MUTATION_RATE_LIMIT_OPTIONS }), internalAuthOrLoopback, async (req, res) => {
   const items = req.body?.items;
   if (!Array.isArray(items) || items.length === 0 || items.length > 1000) {
     return res.status(400).json({ success: false, error: { code: 'bad_request', message: 'items 必须是 1~1000 条的数组' } });

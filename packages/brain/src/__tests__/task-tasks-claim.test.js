@@ -8,17 +8,20 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Mock pool
-const { mockQuery, mockDb } = vi.hoisted(() => {
+const { mockQuery, mockReadTask, mockDb } = vi.hoisted(() => {
   const mockQuery = vi.fn();
+  const mockReadTask = vi.fn();
   const query = vi.fn(async (sql, params) => {
     if (/^(BEGIN|COMMIT|ROLLBACK)$/.test(sql)) return { rows: [] };
     if (sql === 'SELECT id FROM tasks WHERE id=$1 FOR UPDATE') return { rows: [{ id: params[0] }] };
+    // 退休判定的锁内预读不消费旧业务UPDATE/冲突查询的响应队列。
+    if (sql === 'SELECT id, task_type, payload FROM tasks WHERE id=$1 FOR UPDATE') return mockReadTask(params[0]);
     if (/ AS native_owned$/.test(sql)) return { rows: [{ native_owned: false }] };
     if (sql === "SELECT payload->'headed_takeover' AS headed_takeover FROM tasks WHERE id=$1") return { rows: [{ headed_takeover: null }] };
     return mockQuery(sql, params);
   });
   const client = { query, release: vi.fn() };
-  return { mockQuery, mockDb: { query, connect: vi.fn(async () => client) } };
+  return { mockQuery, mockReadTask, mockDb: { query, connect: vi.fn(async () => client) } };
 });
 vi.mock('../db.js', () => ({ default: mockDb }));
 
@@ -67,6 +70,7 @@ describe('POST /tasks/:id/claim (C1)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockQuery.mockReset();
+    mockReadTask.mockReset().mockImplementation(id => ({ rows: [{ id, task_type: 'data', payload: {} }] }));
   });
 
   it('新 claim → 返回 200 + claimed_by/claimed_at', async () => {
@@ -102,21 +106,33 @@ describe('POST /tasks/:id/claim (C1)', () => {
     expect(res._json.claimed_by).toBe('runner-alpha');
   });
 
-  it('显式 executor_kind=coding-workflow-runner → 强制写入该 kind（覆盖历史残留的 headed-session）', async () => {
-    mockQuery.mockResolvedValueOnce({ rows: [{ id: 'task-1', claimed_by: 'cw', executor_kind: 'coding-workflow-runner' }] });
-    const { req, res } = mockReqRes({ id: 'task-1' }, { claimer: 'cw', executor_kind: 'coding-workflow-runner' });
+  it('显式旧runner kind认领返回410，不覆盖claim也不写租约', async () => {
+    const { req, res } = mockReqRes({ id: 'task-1' }, { claimer: 'cw', executor_kind: 'coding-workflow-runner', lease_seconds: 120 });
     await claimHandler(req, res);
-    expect(res._status).toBe(200);
-    const [sql, params] = mockQuery.mock.calls[0];
-    expect(sql).toMatch(/executor_kind = CASE WHEN \$4 THEN \$3 ELSE COALESCE\(executor_kind, \$3\) END/);
-    expect(params).toEqual(['cw', 'task-1', 'coding-workflow-runner', true]);
+    expect(res._status).toBe(410);
+    expect(res._json.error).toBe('executor_kind_retired');
+    expect(mockDb.query).not.toHaveBeenCalled();
+  });
+
+  it('旧自主任务在锁内预读后拒绝，普通执行者也不能复活', async () => {
+    mockReadTask.mockResolvedValueOnce({ rows: [{ id: 'retired', task_type: 'coding_workflow', payload: {} }] });
+    const { req, res } = mockReqRes({ id: 'retired' }, { claimer: 'ordinary-agent', lease_seconds: 120 });
+    await claimHandler(req, res);
+    expect(res._status).toBe(410);
+    expect(res._json.error).toBe('task_type_retired');
+    expect(mockQuery).not.toHaveBeenCalled();
+    expect(mockDb.query.mock.calls.some(([sql]) => /UPDATE tasks|INSERT INTO task_leases/.test(sql))).toBe(false);
   });
 
   it('其他 kind（含缺省 headed-session）保持 COALESCE：不覆盖已有 executor_kind', async () => {
     mockQuery.mockResolvedValueOnce({ rows: [{ id: 'task-1', claimed_by: 'r' }] });
     mockQuery.mockResolvedValueOnce({ rows: [{ id: 'task-2', claimed_by: 'r' }] });
-    await claimHandler(...Object.values(mockReqRes({ id: 'task-1' }, { claimer: 'r', executor_kind: 'brain-local' })));
-    await claimHandler(...Object.values(mockReqRes({ id: 'task-2' }, { claimer: 'r' })));
+    const first = mockReqRes({ id: 'task-1' }, { claimer: 'r', executor_kind: 'brain-local' });
+    const second = mockReqRes({ id: 'task-2' }, { claimer: 'r' });
+    await claimHandler(first.req, first.res);
+    await claimHandler(second.req, second.res);
+    expect(first.res._status).toBe(200);expect(second.res._status).toBe(200);
+    for (const [sql] of mockQuery.mock.calls) expect(sql).toMatch(/ELSE COALESCE\(executor_kind, \$3\) END/);
     expect(mockQuery.mock.calls[0][1]).toEqual(['r', 'task-1', 'brain-local', false]);
     expect(mockQuery.mock.calls[1][1]).toEqual(['r', 'task-2', 'headed-session', false]);
   });
@@ -168,8 +184,7 @@ describe('POST /tasks/:id/claim (C1)', () => {
     const r1 = mockReqRes({ id: 'task-1' }, { claimer: 'runner-A' });
     const r2 = mockReqRes({ id: 'task-1' }, { claimer: 'runner-B' });
 
-    await claimHandler(r1.req, r1.res);
-    await claimHandler(r2.req, r2.res);
+    await Promise.all([claimHandler(r1.req, r1.res), claimHandler(r2.req, r2.res)]);
 
     expect(r1.res._status).toBe(200);
     expect(r2.res._status).toBe(409);
