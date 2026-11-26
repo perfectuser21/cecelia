@@ -10,4 +10,4 @@ GP-Anchor: none(infra)
 - [ ] 集成源码通过完整 Scripts/Ops 与独立 review，正常 PR 严格 CI 合并。
   Test: manual:node scripts/ci/run-basic-check.mjs scripts && node scripts/ci/run-basic-check.mjs ops
 - [ ] 后继实际 main CD、native 发布与生产 Node22 验收由 Root 读回，源码合并不能代替生产成功。
-  Test: manual:gh run view --repo perfectuser21/cecelia
+  Test: manual:curl --fail http://localhost:5221/api/brain/health && gh run view --log --repo perfectuser21/cecelia
