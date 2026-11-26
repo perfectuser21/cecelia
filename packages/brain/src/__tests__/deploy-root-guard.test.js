@@ -8,12 +8,13 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { execSync, spawnSync } from 'child_process';
-import { mkdtempSync, rmSync, appendFileSync, writeFileSync, readFileSync, readdirSync, mkdirSync, chmodSync, statSync, lstatSync, existsSync } from 'fs';
+import { mkdtempSync, rmSync, appendFileSync, writeFileSync, readFileSync, readdirSync, mkdirSync, chmodSync, statSync, lstatSync, existsSync, copyFileSync, cpSync, realpathSync } from 'fs';
 import { createHash } from 'crypto';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
-const SCRIPT = new URL('../../../../scripts/deploy-local.sh', import.meta.url).pathname;
+const SOURCE_SCRIPT = new URL('../../../../scripts/deploy-local.sh', import.meta.url).pathname;
+let SCRIPT, currentSha;
 const GIT_ID = '-c user.email=t@t.t -c user.name=t';
 
 let base, clone;
@@ -30,6 +31,15 @@ beforeEach(() => {
   writeFileSync(join(clone, 'tracked.txt'), 'v1\n');
   sh(`git -C "${clone}" add tracked.txt && git -C "${clone}" ${GIT_ID} commit -q -m init`);
   sh(`git -C "${clone}" push -q -u origin main`);
+  currentSha = sh(`git -C "${clone}" rev-parse HEAD`).trim();
+  // Keep the real entry/order/store; only the private daemon boundary is replaced.
+  const entry = join(base, 'entry/scripts'), native = join(entry, 'brain-image-retention');
+  mkdirSync(native, { recursive: true }); SCRIPT = join(entry, 'deploy-local.sh'); copyFileSync(SOURCE_SCRIPT, SCRIPT);
+  cpSync(new URL('../../../../scripts/lib', import.meta.url), join(entry, 'lib'), { recursive: true });
+  for (const name of ['release-order.mjs', 'storage.mjs', 'policy.mjs']) copyFileSync(new URL(`../../../../scripts/brain-image-retention/${name}`, import.meta.url), join(native, name));
+  const store = join(base, 'native-store'); mkdirSync(store, { mode: 0o700 });
+  writeFileSync(join(native, 'runtime.mjs'), `import {createStore} from './storage.mjs';export const ROOT=${JSON.stringify(realpathSync(store))};export async function createRuntime(){return {store:createStore(ROOT),docker:{snapshot:async()=>({containers:[{id:'c'.repeat(64),name:'/cecelia-node-brain',running:true,image_id:'sha256:'+'b'.repeat(64)}],images:[{id:'sha256:'+'b'.repeat(64),git_sha:process.env.ORDER_CURRENT_SHA}]})}};}`);
+  fakeCommand('docker', '[[ "$1" == ps ]] || exit 91');
 });
 
 afterEach(() => { rmSync(base, { recursive: true, force: true }); });
@@ -41,6 +51,8 @@ function runDeploy(extraEnv = {}) {
       ...process.env,
       CECELIA_DEPLOY_ROOT: clone,
       CECELIA_DEPLOY_FORCE_GUARD: '1',
+      ORDER_CURRENT_SHA: currentSha,
+      PATH: `${join(base, 'fake-bin')}:${process.env.PATH}`,
       ...extraEnv,
     },
     encoding: 'utf8',
@@ -305,7 +317,8 @@ describe('deploy-root-guard', () => {
     const sha=sh(`git -C "${clone}" rev-parse HEAD`).trim();
     const r=runDeploy({CECELIA_DEPLOY_AUTORESET:'1',EXPECTED_SHA:sha});
     expect(r.status).not.toBe(0);
-    expect(r.stdout+r.stderr).toContain('发布SHA');
+    expect(r.stdout+r.stderr).toContain('DEPLOY_TARGET_UNMERGED');
+    expect(sh(`git -C "${clone}" rev-parse HEAD`).trim()).toBe(sha);
   });
 
   it('部署根不在 main 分支 → 硬红 exit≠0', () => {
@@ -360,7 +373,7 @@ describe('deploy-root-guard', () => {
     const samplePath = seedTrackedHostSample();
     const beforeSha = sha256(samplePath);
     const fakeBin = join(base, 'fake-bin');
-    mkdirSync(fakeBin);
+    mkdirSync(fakeBin, { recursive: true });
     writeFileSync(join(fakeBin, 'mktemp'), '#!/usr/bin/env bash\nexit 9\n');
     chmodSync(join(fakeBin, 'mktemp'), 0o755);
     const r = runDeploy({ CECELIA_DEPLOY_AUTORESET: '1', PATH: `${fakeBin}:${process.env.PATH}` });
@@ -373,7 +386,7 @@ describe('deploy-root-guard', () => {
     const samplePath = seedTrackedHostSample();
     const beforeSha = sha256(samplePath);
     const fakeBin = join(base, 'fake-bin');
-    mkdirSync(fakeBin);
+    mkdirSync(fakeBin, { recursive: true });
     writeFileSync(join(fakeBin, 'mv'), '#!/usr/bin/env bash\nexit 9\n');
     chmodSync(join(fakeBin, 'mv'), 0o755);
     const r = runDeploy({ CECELIA_DEPLOY_AUTORESET: '1', PATH: `${fakeBin}:${process.env.PATH}` });

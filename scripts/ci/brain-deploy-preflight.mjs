@@ -137,10 +137,13 @@ export async function runPreflight({ repoRoot, target, brainUrl, force = false, 
     };
     const first = await observe(); report.actual_runtime_sha = first.id.git_sha;
     if (git(repoRoot, ['rev-parse', '--verify', 'HEAD^{commit}'], gitTimeoutMs).toString().trim() !== target) fail('head_target_mismatch');
-    for (const sha of [target, first.id.git_sha]) {
-      if (git(repoRoot, ['rev-parse', '--verify', `${sha}^{commit}`], gitTimeoutMs).toString().trim() !== sha) fail('unknown_commit');
-    }
-    git(repoRoot, ['merge-base', '--is-ancestor', first.id.git_sha, target], gitTimeoutMs);
+    try {
+      for (const sha of [target, first.id.git_sha]) {
+        if (git(repoRoot, ['rev-parse', '--verify', `${sha}^{commit}`], gitTimeoutMs).toString().trim() !== sha) fail('unknown_commit');
+      }
+    } catch { fail('unknown_commit'); }
+    try { git(repoRoot, ['merge-base', '--is-ancestor', first.id.git_sha, target], gitTimeoutMs); }
+    catch (error) { fail(error.status === 1 ? 'target_stale' : 'order_unknown'); }
     const baseline = projection(repoRoot, first.id.git_sha, gitTimeoutMs);
     const current = projection(repoRoot, target, gitTimeoutMs);
     // A successful deployment never renews this source audit certificate. Any new
@@ -166,11 +169,14 @@ export async function runPreflight({ repoRoot, target, brainUrl, force = false, 
       baseline_tree_hash: baseline.hash, target_tree_hash: current.hash,
       certified_excluded_changed_paths: changedExclusions(baseline, current), reason: 'stable_native_proof' });
   } catch (error) {
+    if (['target_stale','order_unknown','unknown_commit','invalid_target','head_target_mismatch'].includes(error.message)) {
+      report.action = 'rejected'; report.deploy_required = false;
+    }
     // Do not copy subprocess output, network bodies, credentials or arbitrary paths into logs.
     const known = new Set(['forced','invalid_target','invalid_brain_url','head_target_mismatch','unknown_commit',
       'runtime_drift','brain_projection_changed','native_unsettled','business_unverified','health_unverified',
       'http_unavailable','response_too_large','invalid_json_shape','invalid_git_tree',
-      'certification_unavailable','certification_changed','certification_expired']);
+      'certification_unavailable','certification_changed','certification_expired','target_stale','order_unknown']);
     report.reason = known.has(error.message) ? error.message : 'preflight_unavailable';
   }
   return report;

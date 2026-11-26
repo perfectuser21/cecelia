@@ -69,11 +69,20 @@ RUN_GUARD=true
 [[ "$DRY_RUN" == true ]] && RUN_GUARD=false
 
 if [[ "$RUN_GUARD" == true ]]; then
+    # Hold one real release lock before mutating the deployment checkout. FD9 is
+    # inherited by brain-deploy, including its candidate and production switch.
+    ROOT_DIR="$MAIN_ROOT"
+    source "$SCRIPT_DIR/lib/brain-staging.sh"
+    brain_release_lock
+    git -C "$MAIN_ROOT" fetch origin "$BASE_BRANCH" \
+        || { echo 'DEPLOY_ORDER_UNKNOWN' >&2; exit 1; }
+    ORDER_TARGET="${EXPECTED_SHA:-$(git -C "$MAIN_ROOT" rev-parse "origin/$BASE_BRANCH^{commit}")}"
+    node "$SCRIPT_DIR/brain-image-retention/release-order.mjs" "$MAIN_ROOT" "$ORDER_TARGET"
+    EXPECTED_SHA="$ORDER_TARGET"
+    export EXPECTED_SHA
     if [[ "${CECELIA_DEPLOY_AUTORESET:-0}" == "1" ]]; then
         # 专用部署根（机器独占，无人类工作）：自愈到 origin/main
         echo "🔒 部署根守卫（专用根自愈）: fetch + checkout -f + reset --hard origin/$BASE_BRANCH"
-        git -C "$MAIN_ROOT" fetch origin "$BASE_BRANCH" \
-            || { echo "❌ 部署根守卫: git fetch origin $BASE_BRANCH 失败，拒绝部署"; exit 1; }
         DEPLOY_ROOT_REF="origin/$BASE_BRANCH"
         if [[ -n "${EXPECTED_SHA:-}" ]]; then
             if [[ ! "$EXPECTED_SHA" =~ ^[a-f0-9]{40}$ ]] \

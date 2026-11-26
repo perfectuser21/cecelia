@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.445.318
+**Brain 版本**: 1.445.319
 
 工作流对账在单次固定源码核验内复用 Git commit 和 tree 读取。登记与部署提交相同时，读取失败保留原错误并结束本轮。定义冻结分别报告来源读取和已读文件的 JSON 解析错误。
 
@@ -109,6 +109,8 @@ Cecelia 负责登记、调度和核对工作；具体执行交给有授权的外
 正式已登记 Workflow 的按需发布验证由主 CI 中 `foundation-release-verification` 入口执行，报告见 [pilot-release-verification.mjs](scripts/ci/pilot-release-verification.mjs)。没有报告与真实产出，不以文件存在宣称发布就绪。
 
 ## 执行身份、镜像与资源保护
+
+自动发布在同一真实发布锁内核对原生容器/镜像身份、目标属于 main 及现役 SHA 到目标的祖先关系，见 [release-order.mjs](scripts/brain-image-retention/release-order.mjs)。旧、分叉、未知或未合并目标不能进入部署副作用；显式回滚仍走原有独立恢复入口。
 
 公共目录的 current version、机器身份、授权 scope 与过期时间由 [directory.js](packages/brain/src/execution-directory/directory.js) 核对；没有有效快照或授权时不得用旧固定节点列表兜底。
 

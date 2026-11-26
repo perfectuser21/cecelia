@@ -110,6 +110,20 @@ else console.log('{"enabled":true}');
 `,{mode:0o755});
   fs.writeFileSync(f.dir+'/bin/timeout','#!/bin/sh\nif [ "$1" = -k ]; then shift 2; fi\nshift\nexec "$@"\n',{mode:0o755});fs.writeFileSync(f.dir+'/bin/ssh','#!/bin/sh\necho forbidden >&2\nexit 99\n',{mode:0o755});
   f.env={...f.env,HOME:f.dir+'/home',HOST_HOME:f.dir+'/home',CECELIA_INTERNAL_ENV_FILE:f.dir+'/home/.credentials/cecelia-internal.env',CECELIA_IMAGE_RETENTION_DIR:f.dir+'/disabled-ledger',FULL_SCENARIO:scenario,FULL_COMPOSE_LOG:f.dir+'/compose.jsonl',FULL_COMPOSE_COUNT:f.dir+'/compose-count',FULL_HANDOFF_LOG:f.dir+'/handoff-events',FULL_CURL_LOG:f.dir+'/curl-events',BLUEGREEN_HANDOFF:scenario==='inherited-handoff'?'1':'0',SKIP_PRE_SWAP_SMOKE:'1',SKIP_POST_DEPLOY_SMOKE:'1'};
+  // The legacy predecessor scenarios exercise switch/recovery, not admission.
+  // Give the new read-only admission guard a real store and the same private
+  // daemon state boundary, with a locally known Git identity; no production bypass.
+  fs.mkdirSync(f.dir+'/ordering-store',{mode:0o700});
+  fs.writeFileSync(f.repo+'/scripts/brain-image-retention/ordering-runtime.fixture.mjs',`
+import {readFile} from 'node:fs/promises';import {createStore} from './storage.mjs';
+export const ROOT=${JSON.stringify(fs.realpathSync(f.dir+'/ordering-store'))};
+export async function createRuntime(){return {store:createStore(ROOT),docker:{snapshot:async()=>{
+ if(['unknown-current-image','unknown-container-query','handoff-invalid-previous','handoff-failed-previous'].includes(process.env.FULL_SCENARIO))throw Error('private daemon identity unavailable');
+ const state=JSON.parse(await readFile(process.env.STATE_DIR+'/local.json','utf8')),p=state.production;
+ return {containers:[{id:p.id,name:'/cecelia-node-brain',running:p.status==='running',image_id:p.image}],images:[{id:p.image,git_sha:process.env.EXPECTED_SHA}]};
+}}};}`);
+  const orderModule=f.repo+'/scripts/brain-image-retention/release-order.mjs';
+  fs.writeFileSync(orderModule,fs.readFileSync(orderModule,'utf8').replace("from './runtime.mjs'","from './ordering-runtime.fixture.mjs'"));
   prepare?.(f);
   const result=spawnSync('bash',['scripts/brain-deploy.sh'],{cwd:f.repo,env:f.env,encoding:'utf8',timeout:45000});
   const compose=fs.existsSync(f.env.FULL_COMPOSE_LOG)?fs.readFileSync(f.env.FULL_COMPOSE_LOG,'utf8').trim().split('\n').map(JSON.parse):[];

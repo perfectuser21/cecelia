@@ -16,7 +16,8 @@ if node "$SCRIPT_DIR/brain-deploy-preflight.mjs" --repo-root "${REPO_DIR:-.}" \
   --target "$TARGET_SHA" --brain-url "$BRAIN_URL" --output "$REPORT"; then
   if ! jq -e --arg sha "$TARGET_SHA" '
     .schema == "brain-deploy-preflight/v1" and .target_sha == $sha and
-    ((.deploy_required == true and .action == "deploy") or
+    ((.action == "rejected" and .deploy_required == false) or
+     (.deploy_required == true and .action == "deploy") or
      (.deploy_required == false and (.action == "already_current" or .action == "no_brain_change") and
       (.actual_runtime_sha | test("^[a-f0-9]{40}$")) and
       (.baseline_tree_hash | test("^[a-f0-9]{64}$")) and .baseline_tree_hash == .target_tree_hash))
@@ -25,6 +26,10 @@ else
   fallback_report
 fi
 
+if [[ "$(jq -r '.action' "$REPORT")" == rejected ]]; then
+  echo '::error::DEPLOY_TARGET_REJECTED：目标次序未知或已落后现役，禁止重触发。' >&2
+  exit 1
+fi
 if [[ "$(jq -r '.deploy_required' "$REPORT")" == false ]]; then
   RUNTIME_SHA="$(jq -r '.actual_runtime_sha' "$REPORT")"
   echo "Brain 无需重发：目标 $TARGET_SHA；实际运行 $RUNTIME_SHA。宿主脚本安装另行核验。"

@@ -30,7 +30,7 @@ function runShell(script, cwd, env) {
   });
 }
 
-async function scenario(t, {brainChanged = false, force = false, invalidReceipt = false, rejectPost = false, failWait = false} = {}) {
+async function scenario(t, {brainChanged = false, force = false, invalidReceipt = false, rejectPost = false, failWait = false, stale = false} = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'brain-deploy-routing-'));
   t.after(() => rmSync(dir, {recursive: true, force: true}));
   mkdirSync(join(dir, 'home'));
@@ -65,8 +65,9 @@ async function scenario(t, {brainChanged = false, force = false, invalidReceipt 
   const baseline = git('rev-parse', 'HEAD');
   put(brainChanged ? 'packages/brain/server.js' : 'scripts/ops/us-vps/opc-watchdog.sh', brainChanged ? 'export const current = 2;\n' : '#!/bin/bash\n: new-monitor\n');
   git('add', '.'); git('commit', '-qm', 'fixture target');
-  const target = git('rev-parse', 'HEAD');
-  let actual = baseline;
+  let target = git('rev-parse', 'HEAD');
+  let actual = stale ? target : baseline;
+  if (stale) { git('reset', '--hard', baseline); target = baseline; }
   const requests = [];
   const receipt = () => ({deployment_id: '11111111-1111-4111-8111-111111111111', outcome: 'success',
     image_id: 'sha256:' + 'a'.repeat(64), container_id: 'b'.repeat(64), version: '1.445.296', git_sha: actual,
@@ -148,4 +149,13 @@ test('one existing main release job keeps fixed SHA checkout and exact-SHA gate'
   assert.match(deployJob.if, /ci-passed/);
   assert.equal(deployJob.env.REQUIRE_EXACT_SHA, '1');
   assert.ok(deployJob.steps.some(step => step.with?.ref === '${{ github.sha }}'));
+});
+
+test('actual main CI shell rejects older target without POST or waiter retry', async t => {
+  const s = await scenario(t, {stale: true});
+  assert.notEqual(s.result.code, 0, s.result.output);
+  assert.equal(s.requests.filter(r => r.method === 'POST').length, 0);
+  assert.notEqual(s.actual, s.target);
+  const report = JSON.parse(readFileSync(join(s.dir, 'runner/brain-deploy-preflight/report.json'), 'utf8'));
+  assert.equal(report.action, 'rejected'); assert.equal(report.reason, 'target_stale');
 });
