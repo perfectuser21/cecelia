@@ -13,6 +13,7 @@
 export const OWNER_DECISION_REASON = 'owner_decision';
 export const WAITING_ON = Object.freeze(['human', 'machine']);
 export const OWNER_DECISION_ACTION_TYPE = 'owner_decision';
+export const YUESHENG_MIGRATION_SOURCE = 'yuesheng_adb_migration';
 
 export class OwnerDecisionProtocolError extends Error {
   /** @param {{field: string, reason: string}[]} violations */
