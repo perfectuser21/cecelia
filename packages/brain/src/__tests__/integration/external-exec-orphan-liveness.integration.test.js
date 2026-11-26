@@ -181,7 +181,10 @@ describe('B) 运行期活性探针不把外部执行体判死回队 [BEHAVIOR]',
     const id = await seedQiumi({ executorKind: null, minutesAgo: 60 });
     await probeTaskLiveness();
     const query = pool.query.bind(pool), owner = await pool.connect();
-    let intercepted = false, observedLockWait = false;
+    const waiter = await pool.connect(), observer = await pool.connect();
+    const ownerPid = (await owner.query('SELECT pg_backend_pid() AS pid')).rows[0].pid;
+    const waiterPid = (await waiter.query('SELECT pg_backend_pid() AS pid')).rows[0].pid;
+    let intercepted = false, observedLockWait = false, ownerReleased = false;
     const spy = vi.spyOn(pool, 'query').mockImplementation(async (sql, params, ...rest) => {
       if (!intercepted && typeof sql === 'string' && sql.includes("status = 'queued', claimed_by = NULL") && params?.[0] === id) {
         intercepted = true;
@@ -189,20 +192,43 @@ describe('B) 运行期活性探针不把外部执行体判死回队 [BEHAVIOR]',
         await owner.query(`INSERT INTO task_runs(task_id,run_id,context) VALUES($1,$2,$3)`,
           [id, `native-takeover-${id}`, { source: 'native-agent', native_agent: { task_id: id, resource_bound: true } }]);
         await owner.query("UPDATE tasks SET executor_kind='external-worker',claimed_by='new-native-owner' WHERE id=$1", [id]);
-        const update = query(sql, params, ...rest);
+        // 在UPDATE发出前固定owner事务的统计快照，稳定覆盖旧轮询可能读到的旧query。
+        await owner.query('SELECT count(*) FROM pg_stat_activity WHERE datname=current_database()');
+        const outcome = promise => promise.then(value => ({ status: 'fulfilled', value }), reason => ({ status: 'rejected', reason }));
+        const update = outcome(waiter.query(sql, params, ...rest));
+        let observationError;
         try {
           for (let attempt = 0; attempt < 100; attempt++) {
-            const waiting = await owner.query(`SELECT 1 FROM pg_stat_activity WHERE datname=current_database()
-              AND wait_event_type='Lock' AND query LIKE 'UPDATE tasks SET status = ''queued'', claimed_by = NULL%'`);
-            if (waiting.rowCount) { observedLockWait = true; break; }
+            // 独立autocommit观察真实阻塞链，不复用owner事务缓存的query/state统计。
+            const waiting = await observer.query('SELECT $1::int = ANY(pg_blocking_pids($2::int)) AS blocked', [ownerPid, waiterPid]);
+            if (waiting.rows[0].blocked) { observedLockWait = true; break; }
             await new Promise(resolve => setTimeout(resolve, 10));
           }
-        } finally { await owner.query('COMMIT'); }
-        return update;
+        } catch (error) { observationError = error; }
+        // 即使观察失败，也先解除行锁并收束真实UPDATE，不能把在途client归还连接池。
+        const settled = await Promise.all([
+          outcome(owner.query('COMMIT').catch(async error => {
+            try { await owner.query('ROLLBACK'); }
+            catch (rollbackError) { owner.release(true); ownerReleased = true; throw new AggregateError([error, rollbackError]); }
+            throw error;
+          })),
+          update,
+        ]);
+        const errors = [observationError, ...settled.filter(result => result.status === 'rejected').map(result => result.reason)].filter(Boolean);
+        if (errors.length === 1) throw errors[0];
+        if (errors.length) throw new AggregateError(errors, 'takeover lock observation/update failed');
+        return settled[1].value;
       }
       return query(sql, params, ...rest);
     });
-    try { await probeTaskLiveness(); } finally { spy.mockRestore(); await owner.query('ROLLBACK'); owner.release(); }
+    try { await probeTaskLiveness(); } finally {
+      spy.mockRestore();
+      try { if (!ownerReleased) await owner.query('ROLLBACK'); }
+      finally {
+        try { if (!ownerReleased) owner.release(); }
+        finally { try { waiter.release(); } finally { observer.release(); } }
+      }
+    }
     expect(intercepted).toBe(true);
     expect(observedLockWait).toBe(true);
     expect(await readTask(id)).toMatchObject({ status: 'in_progress', claimed_by: 'new-native-owner' });

@@ -7,14 +7,14 @@ import {REQUIRED_JOBS,checkResults} from '../check-basic-results.mjs';
 
 const workflow=yaml.load(readFileSync(new URL('../../../.github/workflows/ci.yml',import.meta.url),'utf8'));
 const expected=[...Array.from({length:6},(_,i)=>({component:'brain-unit',shard:i+1})),
-  ...['brain-integration','image','dashboard','ops','scripts'].map(component=>({component}))];
+  ...['brain-integration','image','ops','scripts'].map(component=>({component}))];
 
-test('实际CI固定执行11个现役核心检查，不依赖plan或变更路径',()=>{
+test('实际CI固定执行10个现役核心检查，不依赖plan或变更路径',()=>{
   assert.equal(workflow.jobs.plan,undefined);
   assert.equal(workflow.jobs.checks.needs,undefined);
   assert.deepEqual(workflow.jobs.checks.strategy.matrix,{include:expected});
   for(const row of expected)assert.ok(commandsFor(row.component,row.shard).length);
-  assert.deepEqual(workflow.jobs['ci-passed'].needs,['security','checks','runtime-integration','pwa-upgrade','codeql']);
+  assert.deepEqual(workflow.jobs['ci-passed'].needs,['security','checks','runtime-integration','codeql']);
   assert.deepEqual(REQUIRED_JOBS,workflow.jobs['ci-passed'].needs);
   for(const failed of REQUIRED_JOBS)for(const result of ['failure','skipped','cancelled']){
     const needs=Object.fromEntries(REQUIRED_JOBS.map(id=>[id,{result:id===failed?result:'success'}]));
@@ -57,6 +57,7 @@ test('image没有宿主依赖消费者，其余核心矩阵必须先安装根锁
   assert.ok(job.steps.indexOf(install)<job.steps.findIndex(step=>step.name==='Run actual checks'));
   assert.deepEqual(commandsFor('image').map(({command,args})=>({command,args})),[
     {command:'docker',args:['build','-f','packages/brain/Dockerfile','-t','cecelia-brain:ci-basic','.']},
+    {command:'docker',args:['run','--rm','--network','none','-e',`EXPECTED_NODE_MAJOR=${process.versions.node.split('.')[0]}`,'--entrypoint','node','cecelia-brain:ci-basic','--input-type=module','-e','import assert from "node:assert/strict";assert.equal(Number(process.versions.node.split(".")[0]),Number(process.env.EXPECTED_NODE_MAJOR),"Brain image Node major must match CI")']},
     {command:'docker',args:['run','--rm','--entrypoint','docker','cecelia-brain:ci-basic','buildx','version']},
     {command:'docker',args:['run','--rm','--entrypoint','node','cecelia-brain:ci-basic','--input-type=module','-e','import {computeBundleDigest} from "./scripts/native-agent/bundle.mjs";if(!/^[a-f0-9]{64}$/.test(computeBundleDigest("/app")))process.exit(1);await import("./scripts/native-agent/staging-business.mjs");await import("./src/__tests__/helpers/native-agent-host-fixture.js")']},
     {command:'docker',args:['run','--rm','--network','none','--read-only','--tmpfs','/tmp:rw,size=256m','-e','CANDIDATE_NOEXEC_CONTRACT=1','--entrypoint','node','cecelia-brain:ci-basic','--test','scripts/native-agent/__tests__/candidate-fixture.node-test.mjs']},

@@ -7,18 +7,11 @@ import { fileURLToPath } from 'node:url';
 const require = createRequire(import.meta.url);
 const yaml = require('js-yaml');
 const root = fileURLToPath(new URL('../../../', import.meta.url));
-const paths = ['tests/regression/manual-ui/**', 'tests/regression/cockpit-route-wire/**', 'tests/regression/relay-07b2fd3b/**', 'tests/regression/capture-destination-link/**'];
-test('三份现役页面合同在PR及main变更时进入既有PWA job', () => {
+test('休眠页面退出默认跑道，浏览器合同仍保留显式Playwright入口', () => {
   const workflow = yaml.load(readFileSync(new URL('../../../.github/workflows/ci.yml', import.meta.url), 'utf8'));
-  for (const event of ['pull_request', 'push']) assert.equal(workflow.on[event].paths, undefined);
-  assert.equal(workflow.jobs['pwa-upgrade'].if, "github.event_name != 'schedule' && github.event.action != 'closed'");
-  const job = workflow.jobs['pwa-upgrade'];
-  const step = job.steps.find(step => step.name === 'Verify current cockpit inbox and destination routes');
-  const build = job.steps.find(step => step.name === 'Build shared browser acceptance artifact');
-  assert.equal(build.run,'GIT_SHA="$GITHUB_SHA" npx --no-install vite build --outDir .dist-pwa-e2e');
-  assert.ok(job.steps.indexOf(build)<job.steps.indexOf(step));
-  for (const required of [build, step]) assert.ok(!required.if && !required['continue-on-error']);
-  assert.ok(step.run.includes('node e2e/playwright-cli.mjs test --config ../../tests/regression/manual-ui/playwright.config.ts'));
+  assert.equal(workflow.jobs['pwa-upgrade'], undefined);
+  const config=readFileSync(new URL('../../../tests/regression/manual-ui/playwright.config.ts',import.meta.url),'utf8');
+  for(const name of ['cockpit-route-wire/e2e-verify.spec.ts','relay-07b2fd3b/inbox-e2e.spec.ts','capture-destination-link/capture-destination-link.spec.ts'])assert.ok(config.includes(name));
 });
 test('真实Playwright收集三文件四条页面回归，不以源码断言替代浏览器用例', () => {
   const result = spawnSync(process.execPath, ['apps/dashboard/e2e/playwright-cli.mjs', 'test', '--config', 'tests/regression/manual-ui/playwright.config.ts', '--list'], { cwd: root, encoding: 'utf8', timeout: 30000 });

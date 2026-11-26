@@ -6,7 +6,7 @@
 # （. = repo root，不是 packages/brain 子目录）
 
 # ── Stage 1: Dependencies ──
-FROM node:20-alpine AS deps
+FROM node:22-alpine AS deps
 WORKDIR /repo
 # 复制 workspace manifests
 COPY package.json package-lock.json ./
@@ -15,7 +15,7 @@ COPY packages/brain/package.json packages/brain/
 RUN npm ci --workspace=packages/brain --omit=dev --omit=optional --ignore-scripts
 
 # ── Stage 2: Runtime ──
-FROM node:20-alpine
+FROM node:22-alpine
 # v1.228.2 (2026-05-05): 加 docker-cli-compose（docker compose plugin）。
 # 旧版只装 docker-cli → 缺 'docker compose' 子命令 → brain-deploy.sh 调
 # `docker compose -f docker-compose.yml up -d` 报 "unknown shorthand flag: 'f' in -f"
@@ -25,7 +25,7 @@ FROM node:20-alpine
 # `createdb -T cecelia cecelia_preview_<PR>` 克隆生产快照做数据隔离，容器内此前没装过，
 # 实测(PR#3801) Step4 直接报 "createdb: command not found" 失败退出。
 # sqlite：feishu-task-ledger 只读查 OpenClaw 执行流水（判断秋米有没有真派 agent 去干活）。
-# 容器是 Node 20，node:sqlite 要 22.5+ 才内置；CLI 只占 ~1.5MB，且 -readonly 能防写穿第三方状态库。
+# sqlite CLI 的 -readonly 保留既有只读查询边界，不依赖 Node 内置模块。
 RUN apk add --no-cache curl bash python3 procps tini docker-cli docker-cli-compose docker-cli-buildx git openssh-client ca-certificates postgresql-client sqlite flock \
  && docker buildx version \
  && adduser -D -u 1001 cecelia

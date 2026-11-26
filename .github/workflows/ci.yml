@@ -60,7 +60,6 @@ jobs:
           - {component: brain-unit, shard: 6}
           - {component: brain-integration}
           - {component: image}
-          - {component: dashboard}
           - {component: ops}
           - {component: scripts}
     services:
@@ -185,35 +184,6 @@ jobs:
           --maxWorkers=1 --minWorkers=1
         if: '!cancelled()'
     if: github.event_name != 'schedule' && github.event.action != 'closed'
-  pwa-upgrade:
-    name: Browser regression (Chromium)
-    runs-on: ubuntu-latest
-    timeout-minutes: 16
-    env:
-      DASHBOARD_E2E_DIST: .dist-pwa-e2e
-      EXPECTED_BUILD_VERSION: ${{ github.sha }}
-    defaults:
-      run:
-        working-directory: apps/dashboard
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: {node-version: '20', cache: npm, cache-dependency-path: package-lock.json}
-      - name: Install workspace dependencies
-        run: npm ci --no-audit --no-fund
-        working-directory: .
-      - name: Install Chromium
-        timeout-minutes: 9
-        run: node e2e/playwright-cli.mjs install chromium --with-deps
-      - name: Build shared browser acceptance artifact
-        run: GIT_SHA="$GITHUB_SHA" npx --no-install vite build --outDir .dist-pwa-e2e
-      - name: Verify stale PWA upgrade
-        run: npm run test:pwa-upgrade:built
-      - name: Verify task desk receipts
-        run: npm run test:task-desk:built
-      - name: Verify current cockpit inbox and destination routes
-        run: node e2e/playwright-cli.mjs test --config ../../tests/regression/manual-ui/playwright.config.ts
-    if: github.event_name != 'schedule' && github.event.action != 'closed'
   codeql:
     name: CodeQL (${{ matrix.language }})
     if: github.event.action != 'closed'
@@ -278,7 +248,6 @@ jobs:
       - security
       - checks
       - runtime-integration
-      - pwa-upgrade
       - codeql
     if: always() && github.event_name != 'schedule' && github.event.action != 'closed'
     runs-on: ubuntu-latest

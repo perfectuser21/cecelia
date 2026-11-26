@@ -55,6 +55,24 @@
       "category": "external_resource",
       "reason": "人工长驻预览服务，等待人工浏览和结束信号，不提供自动浏览器断言；退出默认回归，显式META_NATIVE_BROWSER=1仍可启动原实现。真实Chromium驱动及普通PG合同保留自动执行。",
       "manualRoot": false
+    },
+    {
+      "file": "tests/regression/capture-destination-link/capture-destination-link.spec.ts",
+      "category": "legacy_spec",
+      "reason": "用户决定Cecelia Dashboard近期停用，保留前端及浏览器合同；退出默认PWA跑道，按需用apps/dashboard/e2e/playwright-cli.mjs及tests/regression/manual-ui/playwright.config.ts真实执行。",
+      "manualRoot": true
+    },
+    {
+      "file": "tests/regression/cockpit-route-wire/e2e-verify.spec.ts",
+      "category": "legacy_spec",
+      "reason": "用户决定Cecelia Dashboard近期停用，保留前端及浏览器合同；退出默认PWA跑道，按需用apps/dashboard/e2e/playwright-cli.mjs及tests/regression/manual-ui/playwright.config.ts真实执行。",
+      "manualRoot": true
+    },
+    {
+      "file": "tests/regression/relay-07b2fd3b/inbox-e2e.spec.ts",
+      "category": "legacy_spec",
+      "reason": "用户决定Cecelia Dashboard近期停用，保留前端及浏览器合同；退出默认PWA跑道，按需用apps/dashboard/e2e/playwright-cli.mjs及tests/regression/manual-ui/playwright.config.ts真实执行。",
+      "manualRoot": true
     }
   ]
 }
