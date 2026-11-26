@@ -1,7 +1,7 @@
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export const REQUIRED_JOBS = ['security', 'checks', 'runtime-integration', 'pwa-upgrade', 'codeql'];
+export const REQUIRED_JOBS = ['security', 'checks', 'runtime-integration', 'codeql'];
 
 export function checkResults(needs) {
   if (!needs || typeof needs !== 'object' || Array.isArray(needs)) throw new Error('CI 结果必须是对象');

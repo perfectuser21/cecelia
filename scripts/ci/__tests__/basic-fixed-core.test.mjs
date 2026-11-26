@@ -7,14 +7,14 @@ import {REQUIRED_JOBS,checkResults} from '../check-basic-results.mjs';
 
 const workflow=yaml.load(readFileSync(new URL('../../../.github/workflows/ci.yml',import.meta.url),'utf8'));
 const expected=[...Array.from({length:6},(_,i)=>({component:'brain-unit',shard:i+1})),
-  ...['brain-integration','image','dashboard','ops','scripts'].map(component=>({component}))];
+  ...['brain-integration','image','ops','scripts'].map(component=>({component}))];
 
-test('实际CI固定执行11个现役核心检查，不依赖plan或变更路径',()=>{
+test('实际CI固定执行10个现役核心检查，不依赖plan或变更路径',()=>{
   assert.equal(workflow.jobs.plan,undefined);
   assert.equal(workflow.jobs.checks.needs,undefined);
   assert.deepEqual(workflow.jobs.checks.strategy.matrix,{include:expected});
   for(const row of expected)assert.ok(commandsFor(row.component,row.shard).length);
-  assert.deepEqual(workflow.jobs['ci-passed'].needs,['security','checks','runtime-integration','pwa-upgrade','codeql']);
+  assert.deepEqual(workflow.jobs['ci-passed'].needs,['security','checks','runtime-integration','codeql']);
   assert.deepEqual(REQUIRED_JOBS,workflow.jobs['ci-passed'].needs);
   for(const failed of REQUIRED_JOBS)for(const result of ['failure','skipped','cancelled']){
     const needs=Object.fromEntries(REQUIRED_JOBS.map(id=>[id,{result:id===failed?result:'success'}]));

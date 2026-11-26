@@ -1,70 +1,17 @@
-import { test } from 'node:test';
-import { strict as assert } from 'node:assert';
-import { readFileSync } from 'node:fs';
-import { createRequire } from 'node:module';
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import yaml from 'js-yaml';
 
-const require = createRequire(import.meta.url);
-const yaml = require('js-yaml');
-const config = yaml.load(readFileSync(new URL('../../../.github/workflows/ci.yml', import.meta.url), 'utf8'));
-const job = config.jobs['pwa-upgrade'];
-
-test('slow system packages leave sufficient time for the browser acceptance suite', () => {
-  // Real CI: install took 392s; an independent successful run needed 290s for all other steps.
-  // Add 180s of headroom rather than allowing the observed combination to time out.
-  const observedInstall = 392;
-  const observedRemainder = 290;
-  const headroom = 180;
-  assert.ok(job['timeout-minutes'] * 60 >= observedInstall + observedRemainder + headroom,
-    'PWA job timeout must accommodate the observed slow installation and the full test suite');
+// Dashboard近期停用后没有默认浏览器job预算；保留现有独立CLI完整构建和验收。
+const workflow=yaml.load(readFileSync(new URL('../../../.github/workflows/ci.yml',import.meta.url),'utf8'));
+const dashboard=JSON.parse(readFileSync(new URL('../../../apps/dashboard/package.json',import.meta.url),'utf8'));
+test('停用前端不在默认CI安装Chromium或重复构建浏览器产物',()=>{
+ assert.equal(workflow.jobs['pwa-upgrade'],undefined);
+ assert.ok(workflow.jobs.checks.strategy.matrix.include.every(row=>row.component!=='dashboard'));
+ for(const job of Object.values(workflow.jobs))for(const step of job.steps??[])assert.doesNotMatch(step.run??'',/playwright-cli\.mjs install chromium|vite build --outDir \.dist-pwa-e2e/);
 });
-
-function assertMandatoryChecks(candidate) {
-  const install = candidate.steps.find(step => step.name === 'Install Chromium');
-  assert.ok(install && !install.if && !install['continue-on-error']);
-  assert.equal(install.run.trim(), 'node e2e/playwright-cli.mjs install chromium --with-deps');
-  assert.ok(install['timeout-minutes'] >= 7 && install['timeout-minutes'] <= 10,
-    'slow dependency installation needs a bounded 7–10 minute step budget');
-  assert.equal(candidate.env.DASHBOARD_E2E_DIST, '.dist-pwa-e2e');
-  assert.equal(candidate.env.EXPECTED_BUILD_VERSION, '${{ github.sha }}');
-  const expectedCommands = {
-    'Build shared browser acceptance artifact': ['GIT_SHA="$GITHUB_SHA" npx --no-install vite build --outDir .dist-pwa-e2e'],
-    'Verify stale PWA upgrade': ['npm run test:pwa-upgrade:built'],
-    'Verify task desk receipts': ['npm run test:task-desk:built'],
-    'Verify current cockpit inbox and destination routes': [
-      'node e2e/playwright-cli.mjs test --config ../../tests/regression/manual-ui/playwright.config.ts',
-    ],
-  };
-  for (const [name, commands] of Object.entries(expectedCommands)) {
-    const step = candidate.steps.find(step => step.name === name);
-    assert.ok(step && step.run && !step.if && !step['continue-on-error'], `${name} must remain mandatory`);
-    const lines = step.run.split('\n').map(line => line.trim());
-    for (const command of commands) assert.ok(lines.includes(command), `${name} must execute ${command}`);
-  }
-}
-
-test('system dependency installation stays bounded and does not skip browser checks', () => {
-  assertMandatoryChecks(job);
+test('独立PWA与交办台CLI保留真实build和Playwright执行，非默认假成功',()=>{
+ assert.equal(dashboard.scripts['test:pwa-upgrade'],'GIT_SHA=pwa-upgrade-e2e vite build --outDir .dist-pwa-e2e && node e2e/playwright-cli.mjs test e2e/pwa-upgrade.spec.ts');
+ assert.equal(dashboard.scripts['test:task-desk'],'GIT_SHA=task-desk-e2e vite build --outDir .dist-task-desk-e2e && node e2e/playwright-cli.mjs test e2e/task-desk.spec.ts');
 });
-
-for (const name of ['Install Chromium', 'Build shared browser acceptance artifact', 'Verify stale PWA upgrade', 'Verify task desk receipts', 'Verify current cockpit inbox and destination routes']) {
-  test(`a no-op cannot stand in for ${name}`, () => {
-    const mutated = structuredClone(job);
-    const step = mutated.steps.find(candidate => candidate.name === name);
-    step.run = `echo ${JSON.stringify(step.run)}`;
-    assert.throws(() => assertMandatoryChecks(mutated));
-  });
-  test(`an empty command cannot stand in for ${name}`, () => {
-    const mutated = structuredClone(job);
-    mutated.steps.find(candidate => candidate.name === name).run = '';
-    assert.throws(() => assertMandatoryChecks(mutated));
-  });
-}
-
-for (const fragment of ['playwright-cli.mjs test']) {
-  test(`cockpit check cannot omit ${fragment}`, () => {
-    const mutated = structuredClone(job);
-    const step = mutated.steps.find(candidate => candidate.name === 'Verify current cockpit inbox and destination routes');
-    step.run = step.run.split('\n').filter(line => !line.includes(fragment)).join('\n');
-    assert.throws(() => assertMandatoryChecks(mutated));
-  });
-}

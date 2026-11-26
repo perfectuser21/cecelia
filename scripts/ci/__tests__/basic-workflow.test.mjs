@@ -200,7 +200,7 @@ test('统一CI真实合并runner，保持独有命令和产物并隔离安全权
   }),['ci.yml']);
   for(const [id,job]of Object.entries(workflow.jobs))assert.equal(job.uses,undefined,id+'不得复用另一个workflow');
   assert.ok(readFileSync(new URL('../../../.github/workflows/ci.yml',import.meta.url),'utf8').trimEnd().split('\n').length<=500);
-  assert.equal(Object.keys(workflow.jobs).length, 8);
+  assert.equal(Object.keys(workflow.jobs).length, 7);
   const runtime=workflow.jobs['runtime-integration'];
   assertRuntimeContracts(runtime);
   assert.deepEqual(Object.keys(runtime.services),['postgres']);
@@ -226,12 +226,7 @@ test('统一CI真实合并runner，保持独有命令和产物并隔离安全权
   assert.equal(runtime.steps.filter(step => step.uses === 'actions/setup-node@v4').length, 1);
   assert.equal(runtime.steps.filter(step => step.run === 'npm ci --no-audit --no-fund').length, 1);
   assert.equal(runtime.steps.some(step => step['continue-on-error']), false);
-  const browser=structuredClone(workflow.jobs['pwa-upgrade']);
-  assert.equal(browser.steps.find(step=>step.name==='Install Chromium').run,'node e2e/playwright-cli.mjs install chromium --with-deps');
-  assert.equal(browser.name,'Browser regression (Chromium)');
-  assert.equal(browser.defaults.run['working-directory'],'apps/dashboard');
-  assert.equal(browser.steps.some(step=>Object.hasOwn(step,'if')||step['continue-on-error']),false);
-  assert.equal(browser.steps.filter(step=>step.run==='npm ci --no-audit --no-fund'&&step['working-directory']==='.').length,1);
+  assert.equal(workflow.jobs['pwa-upgrade'],undefined);
   const security=workflow.jobs.security;
   assertSecurityContracts(security);
   assert.equal(security.steps.some(step=>Object.hasOwn(step,'if')||step['continue-on-error']),false);
@@ -271,9 +266,9 @@ test('CodeQL仅移除明确退役归档，当前源码和测试仍全量扫描',
   assert.equal(Object.hasOwn(init.with, 'packs'), false);
 });
 
-test('现役全量PR固定执行18个runner，不包含自动预览', () => {
+test('现役全量PR固定执行16个runner，不包含自动预览', () => {
   const selected = workflow.jobs.checks.strategy.matrix.include;
-  assert.equal(selected.length, 11);
+  assert.equal(selected.length, 10);
   const expanded = Object.entries(workflow.jobs).filter(([id]) => !['foundation-release-verification','brain-deploy'].includes(id)).map(([id, job]) => {
     if (id === 'checks') return selected.length;
     const matrix = job.strategy?.matrix;
@@ -284,7 +279,7 @@ test('现役全量PR固定执行18个runner，不包含自动预览', () => {
     }
     return Object.values(matrix).reduce((count, axis) => count * axis.length, 1);
   });
-  assert.equal(expanded.reduce((sum, count) => sum + count, 0), 18);
+  assert.equal(expanded.reduce((sum, count) => sum + count, 0), 16);
 });
 
 

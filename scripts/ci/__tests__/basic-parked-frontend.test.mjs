@@ -20,7 +20,7 @@ test('剩余四必需组全部成功才允许源码过门，错误状态不能�
  const good=()=>Object.fromEntries(required.map(job=>[job,{result:'success'}]));
  assert.doesNotThrow(()=>checkResults(good()));
  for(const job of required){
-  for(const status of ['failure','cancelled','skipped']){
+  for(const status of ['failure','cancelled','skipped','pending','unknown']){
    const needs=good();needs[job].result=status;
    assert.throws(()=>checkResults(needs),new RegExp(job));
   }
