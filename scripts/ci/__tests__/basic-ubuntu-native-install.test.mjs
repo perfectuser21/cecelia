@@ -16,6 +16,8 @@ const mirrors='http://us-west-2.ec2.archive.ubuntu.com/ubuntu/\tpriority:1\nhttp
 for(const fault of ['', 'update','install'])test(`真实工具安装链保留官方区域源并传播APT结果：${fault||'成功'}`,t=>{
  const dir=mkdtempSync(join(tmpdir(),'native-apt-install-'));t.after(()=>rmSync(dir,{recursive:true,force:true}));
  const bin=join(dir,'bin'),log=join(dir,'apt.jsonl'),sources=join(dir,'ubuntu.sources');mkdirSync(bin);
+ for(const tool of ['rg','jq','zsh','xmllint'])writeFileSync(join(bin,tool),'#!/bin/sh\nexit 1\n',{mode:0o755});
+ const helper=join(dir,'scripts/ci/prepare-host-tools.sh');mkdirSync(dirname(helper),{recursive:true});copyFileSync(join(root,'scripts/ci/prepare-host-tools.sh'),helper);
  writeFileSync(join(dir,'package.json'),'{"type":"module"}');writeFileSync(sources,source);
  const preload=join(dir,'runner-profile.mjs');
  writeFileSync(preload,`import fs from 'node:fs';
@@ -30,7 +32,9 @@ fs.lstatSync=(p,...args)=>stat(p==='/etc/apt/sources.list.d/ubuntu.sources'?proc
 import fs from 'node:fs';
 const args=process.argv.slice(2);if(args[0]!=='apt-get')process.exit(90);
 fs.appendFileSync(process.env.APT_LOG,JSON.stringify(args)+'\\n');
-process.exit(args[1]===process.env.APT_FAULT?(args[1]==='update'?31:32):0);
+if(args[1]===process.env.APT_FAULT)process.exit(args[1]==='update'?31:32);
+if(args[1]==='install')for(const tool of ['rg','jq','zsh','xmllint'])fs.writeFileSync(new URL(tool,import.meta.url),'#!/bin/sh\\nexit 0\\n',{mode:0o755});
+process.exit(0);
 `,{mode:0o755});
  const job=workflow.jobs.checks,install=job.steps.findIndex(s=>s.name==='Install test tools');assert.ok(install>=0);
  const context={matrix:{component:'brain-unit',shard:3},github:{event_name:'push'}};

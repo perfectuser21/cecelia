@@ -245,7 +245,7 @@ const browserConfig = () => readFileSync(join(root, browserConfigPath), 'utf8');
 function browserLane(workflow, text = browserConfig()) {
   if (createHash('sha256').update(text).digest('hex') !== 'b65cbe46102070f1c4542c081c87bf6c0e85e7f0b34daf23b509532a74567cf3') return false;
   if (!mainEvents(workflow)) return false;
-  return knownStep(workflow, 'pwa-upgrade', {run:'npm ci'}) &&
+  return knownStep(workflow, 'pwa-upgrade', {run:'npm ci --no-audit --no-fund'}) &&
     knownStep(workflow, 'pwa-upgrade', {cwd:'apps/dashboard', run:'node e2e/playwright-cli.mjs install chromium --with-deps'}) &&
     knownStep(workflow, 'pwa-upgrade', {cwd:'apps/dashboard',
       run:'GIT_SHA="$GITHUB_SHA" npx --no-install vite build --outDir .dist-pwa-e2e'}) &&
