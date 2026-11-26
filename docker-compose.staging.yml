@@ -33,8 +33,6 @@ services:
       - /home/xx/.credentials:/home/cecelia/.credentials:ro
       # Workflows (read-only)
       - /home/xx/perfect21/cecelia/packages/workflows:/home/xx/perfect21/cecelia/packages/workflows:ro
-      # Config (read-only)
-      - /home/xx/perfect21/cecelia/packages/config:/config:ro
       # HEARTBEAT.md (read-write)
       - /home/xx/perfect21/cecelia/HEARTBEAT.md:/HEARTBEAT.md:rw
       # workers.config.json (read-write)
