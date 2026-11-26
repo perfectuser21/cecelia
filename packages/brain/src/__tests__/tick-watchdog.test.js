@@ -185,9 +185,6 @@ vi.mock('../zombie-sweep.js', () => ({
   zombieSweep: vi.fn().mockResolvedValue(null),
 }));
 
-vi.mock('../pipeline-patrol.js', () => ({
-  runPipelinePatrol: vi.fn().mockResolvedValue(null),
-}));
 
 vi.mock('../pre-flight-check.js', () => ({
   preFlightCheck: vi.fn().mockResolvedValue({ passed: true, issues: [], suggestions: [] }),
