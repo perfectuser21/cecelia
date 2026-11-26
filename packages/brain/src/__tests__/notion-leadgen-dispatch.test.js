@@ -105,3 +105,28 @@ describe('Notion 102–104 independent dispatch', () => {
     expect(createTask).not.toHaveBeenCalled();
   });
 });
+
+describe('explicit source tenant for independent 102 and 103', () => {
+  const sourceDatabaseId = 'd5bc40c2-ba63-82ef-965a-8153b7ad81a0';
+  const targetTenant = '8d760098-abb7-43d5-ae95-dad7936e657f';
+
+  it.each([['102','douyin_video_processing'],['103','douyin_comment_scoring']])(
+    'accepts only the administrator-declared stage %s on English Tasks', async (stage, workflowKey) => {
+      const { createTask, bindings } = fixture();
+      bindings.悦升 = { ...bindings.悦升, tenant_id: targetTenant, source_tenant_id: 'default', source_tenant_stage: stage };
+      const options = { stage, pageId, title: '悦升 '+stage, body: '公司：悦升\n来源运行：committed-source',
+        tenantId: 'default', sourceDatabaseId, bindings };
+      await expect(dispatchNotionLeadgen({}, options, { createTask })).resolves.toMatchObject({ kind: 'workflow_dispatch' });
+      expect(createTask.mock.calls[0][1].input.business).toEqual({ source_run: 'committed-source' });
+      expect(createTask.mock.calls[0][2]).toEqual({ notionPageId: pageId, notionTenantId: targetTenant, notionWorkflowKey: workflowKey });
+      createTask.mockClear();
+      await expect(dispatchNotionLeadgen({}, { ...options, sourceDatabaseId: '00000000-0000-4000-8000-000000000001' }, { createTask }))
+        .rejects.toThrow('notion_leadgen_binding_unavailable');
+      await expect(dispatchNotionLeadgen({}, { ...options, stage: stage === '102' ? '103' : '102' }, { createTask }))
+        .rejects.toThrow('notion_leadgen_binding_unavailable');
+      await expect(dispatchNotionLeadgen({}, { ...options, stage:'104', body:'公司：悦升\n原订单：recExample1' }, { createTask }))
+        .rejects.toThrow('notion_leadgen_binding_unavailable');
+      expect(createTask).not.toHaveBeenCalled();
+    },
+  );
+});

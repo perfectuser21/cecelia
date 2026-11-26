@@ -364,6 +364,24 @@ describe('Notion 101 explicit dispatch through the existing published Worker', (
     expect(createFoundationTask).not.toHaveBeenCalled();
   });
 
+  it.each(['102','103'])('repairs the %s receipt in the bound company tenant without dispatching twice',async stage=>{
+    const { ingestDelegatedPage } = await import('../notion-push-sync.js');
+    const source={...enPage('[leadgen-'+stage+']'),id:page().id,parent:{type:'database_id',database_id:sourceDatabase}};
+    const bindings=JSON.parse(scopedEnv().NOTION_LEADGEN_101_BINDINGS);
+    bindings.悦升.source_tenant_stage=stage;
+    const createFoundationTask=vi.fn();
+    const id='9c00babb-5f42-487f-9068-3969a83b6d42';
+    mockQuery.mockImplementation(async (_,values)=>({rows:values?.[1]===targetTenant&&values?.[2]==='notion_leadgen_'+stage?[{id}]:[]}));
+    mockNotionReq.mockImplementation(async (_,path,method)=>method==='GET'
+      ?{results:[{type:'paragraph',paragraph:{rich_text:[{plain_text:'公司：悦升\n来源运行：observed-source'}]}}],has_more:false}
+      :{});
+    expect(await ingestDelegatedPage({query:mockQuery},'tok',source,{
+      env:{['NOTION_LEADGEN_'+stage+'_BINDINGS']:JSON.stringify(bindings)},createFoundationTask,
+    })).toEqual({taskId:id,kind:'workflow_dispatch'});
+    expect(createFoundationTask).not.toHaveBeenCalled();
+    expect(mockQuery.mock.calls.map(([,values])=>values[1])).toEqual([targetTenant]);
+  });
+
   it('accepts a real English Tasks parent and preserves the target tenant on new 101 work', async () => {
     const { ingestDelegatedPage } = await import('../notion-push-sync.js');
     const source = {...page(),parent:{type:'database_id',database_id:sourceDatabase}};
