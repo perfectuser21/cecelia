@@ -258,10 +258,8 @@ describe.sequential('Take → Map → Kernel authority on PostgreSQL', () => {
     expect(partial.rows[0]).toEqual({ tasks: 0, receipts: 0 });
   });
 
-  // 无头 kernel 入口退役（任务 dacd75f3）+ 编码单改投 runner（A2，任务 eb9094ee）：合法 F1 无头编码单
-  // 原子落 coding_workflow（runner 认领，tick 不派）；存量无头 harness_initiative 的 drain 收口由
-  // retired-harness-dispatch.pg.integration（真实选单 SQL）覆盖——本文件的选单是 mock。
-  it('valid F1 routes atomically to coding_workflow for the runner with a validated receipt', async () => {
+  // 自动 coding_workflow 已退役；合法 F1 编码请求原子登记普通 Codex Agent 与可信路由回执。
+  it('valid F1 routes atomically to codex_dev with a validated agent-development receipt', async () => {
     const sourceId = `valid-${randomUUID()}`;
     const created = await createRoutedTask(testPool, {
       source: 'api',
@@ -278,6 +276,9 @@ describe.sequential('Take → Map → Kernel authority on PostgreSQL', () => {
     const persisted = await testPool.query(
       `SELECT task.task_type,task.status,task.claimed_by,
               task.payload->>'coding_workflow' AS coding_workflow,
+              task.payload->>'orchestrator' AS runtime_orchestrator,
+              MAX(receipt.pipeline) AS pipeline,
+              MAX(receipt.orchestrator) AS receipt_orchestrator,
               MAX(receipt.map_scope_validation_version) AS map_scope_validation_version,
               MAX(receipt.canonical_task_type) AS canonical_task_type,
               COUNT(receipt.id)::int AS receipts
@@ -288,12 +289,15 @@ describe.sequential('Take → Map → Kernel authority on PostgreSQL', () => {
       [created.task_id],
     );
     expect(persisted.rows[0]).toMatchObject({
-      task_type: 'coding_workflow',
+      task_type: 'codex_dev',
       status: 'queued',
       claimed_by: null,
-      coding_workflow: 'true',
+      coding_workflow: null,
+      runtime_orchestrator: 'codex-bridge',
+      pipeline: 'agent_development',
+      receipt_orchestrator: 'codex-bridge',
       map_scope_validation_version: 'active-business-node-v1',
-      canonical_task_type: 'coding_workflow',
+      canonical_task_type: 'codex_dev',
       receipts: 1,
     });
   });
