@@ -2,7 +2,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {validatePatrolSecretIgnore,runDevicePatrolGate} from '../implementation-device-patrol-gate.mjs';
 import {PATROL_SCOPE,PATROL_REPO,PATROL_PATH,PATROL_ASSERTION,patrolSourceProof,sha,canonical} from '../../../packages/brain/src/lib/device-patrol-admission.js';
-import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,rmSync} from 'node:fs';
+import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,rmSync,chmodSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join,dirname} from 'node:path';
 import {execFileSync} from 'node:child_process';
@@ -14,12 +14,14 @@ test('仅接受固定Git测试单行公开UUID误报，不扩大ignore范围',()
  assert.throws(()=>validatePatrolSecretIgnore('# prior\n','# prior\n'+row+'\n',()=>"api_key = 'real-secret'"));
 });
 
-function documentFixture(path){
+function documentFixture(path,{authoringBefore,authoringAfter,executable=false}={}){
  const root=mkdtempSync(join(tmpdir(),'patrol-governance-')),repo=join(root,'repo');mkdirSync(repo);
  const git=(...args)=>execFileSync('git',args,{cwd:repo,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
  const write=(path,value)=>{mkdirSync(dirname(join(repo,path)),{recursive:true});writeFileSync(join(repo,path),value);};
  git('init','--quiet');git('config','core.hooksPath',join(root,'isolated-fixture-hooks'));git('config','user.name','Governance fixture');git('config','user.email','fixture@example.invalid');git('remote','add','origin',`https://github.com/${PATROL_REPO}.git`);
- write('README.md','isolated source fixture\n');git('add','.');git('commit','--quiet','-m','actual empty scope');const base=git('rev-parse','HEAD'),baseTree=git('rev-parse',`${base}^{tree}`);
+ write('README.md','isolated source fixture\n');
+ if(authoringBefore!==undefined)write(path,authoringBefore);
+ git('add','.');git('commit','--quiet','-m','actual empty scope');const base=git('rev-parse','HEAD'),baseTree=git('rev-parse',`${base}^{tree}`);
  const assertionPath=PATROL_ASSERTION.replace('node --test ',''),contract={schema_version:1,scope:PATROL_SCOPE,capability_id:'2173a385-a743-41f3-bb7d-d0e4b1d51d4e',workflows:[
   {id:'66fe22f5-1a60-4e23-bcfb-7b4df2f0fbff',key:'single-phone-account-patrol',activities:[{id:'d51eefa1-0ffd-43d7-94ba-16ff6b4d3800',key:'device-readiness',bindings:['scripts/phone-account-patrol/preflight.py'],assertion_ref:PATROL_ASSERTION}]},
   {id:'7dfd3b5d-bc5a-4d96-b744-10d26bc7eb70',key:'phone-account-patrol-batch',activities:[{id:'b33c9f29-5c5f-4fb1-908c-475bb9566085',key:'enabled-phone-list',bindings:['scripts/phone-account-patrol/runner.py'],assertion_ref:PATROL_ASSERTION}]}],auxiliary_paths:[PATROL_PATH,assertionPath],maintenance_owner:'主理人',schedule:{time:'22:00',timezone:'Asia/Shanghai'}};
@@ -28,7 +30,9 @@ function documentFixture(path){
  git('add','.');git('commit','--quiet','-m','actual introduced source');const introduced=git('rev-parse','HEAD');
  const source=patrolSourceProof(contract,introduced,path=>execFileSync('git',['show',`${introduced}:${path}`],{cwd:repo}));
  const registration={provenance:{base_revision:base,introduced_revision:introduced,base_tree_sha:baseTree,base_paths:['README.md'],introduced_paths:git('ls-tree','-r','--name-only',introduced).split('\n'),compare_status:'ahead',actor:'isolated regression fixture'},source};
- write(path,'## 真实交付说明\n');git('add','.');git('commit','--quiet','-m','delivery documentation');const head=git('rev-parse','HEAD');
+ write(path,authoringAfter??'## 真实交付说明\n');git('add','.');
+ if(executable){chmodSync(join(repo,path),0o755);git('update-index','--chmod=+x',path);}
+ git('commit','--quiet','-m','delivery documentation');const head=git('rev-parse','HEAD');
  const snapshot=(revision,file)=>{const body={schema_version:1,scope:PATROL_SCOPE,repo:PATROL_REPO,purpose:'scope_identity_bootstrap_only',revision_basis:'requested_ci_input_not_source_attestation',status:'verified',gaps:[],revision,registration,registration_sha256:sha(JSON.stringify(canonical(registration)))};writeFileSync(file,JSON.stringify({...body,snapshot_sha256:sha(JSON.stringify(canonical(body)))}));};
  const snapshotBase=join(root,'base.json'),snapshotHead=join(root,'head.json');snapshot(base,snapshotBase);snapshot(head,snapshotHead);
  return {root,repo,options:{repoRoot:repo,scope:PATROL_SCOPE,mode:'pr',base,head,snapshotBase,snapshotHead,outputDir:join(root,'evidence')}};
@@ -39,6 +43,49 @@ test('真实Git交付Learning归开发治理，不作为手机Activity或扩大a
 });
 test('其它Learning不能借巡查交付治理认领',async()=>{
  for(const path of ['docs/learnings/cp-other-phone-account-patrol.md','docs/learnings/cp-10101635-phone-account-patrol.md.extra']){const fixture=documentFixture(path);try{await assert.rejects(runDevicePatrolGate(fixture.options),new RegExp(`PATROL_CHANGED_FILE_UNCLAIMED:${path}`));}finally{rmSync(fixture.root,{recursive:true,force:true});}}
+});
+
+const authoringPaths=[
+ 'services/phone-adb-controller/commander/contracts/workflow-commander.json',
+ 'services/phone-adb-controller/commander/contracts/workflow-report.json',
+ 'services/phone-adb-controller/patrol/contracts/single.json',
+ 'services/phone-adb-controller/patrol/contracts/batch.json',
+ 'services/phone-adb-controller/patrol/contracts/maintenance.json',
+];
+function authoringDocument(version,source='fixed-source'){
+ return JSON.stringify({version,source:{version:source}},null,2)+'\n';
+}
+test('固定的五份 authoring 版头逐一出具真实 Git 准入证据',async()=>{
+ for(const path of authoringPaths){
+  const authoringBefore=authoringDocument('1.7.9'),authoringAfter=authoringDocument('1.7.10');
+  const fixture=documentFixture(path,{authoringBefore,authoringAfter});
+  try{
+   const {report,receipt}=await runDevicePatrolGate(fixture.options);
+   assert.equal(receipt.verdict,'PASS');
+   assert.ok(report.source.changed_files.includes(path));
+   const row=report.file_coverage.find(row=>row.path===path);
+   assert.equal(row.kind,'fixed_authoring_version');
+   assert.equal(row.base_version,'1.7.9');
+   assert.equal(row.head_version,'1.7.10');
+   assert.equal(row.base_sha256,sha(Buffer.from(authoringBefore)));
+   assert.equal(row.head_sha256,sha(Buffer.from(authoringAfter)));
+  }finally{rmSync(fixture.root,{recursive:true,force:true});}
+ }
+});
+test('拒绝额外内容、回退或非标准版头、文件模式变化、文件新增及近似路径',async()=>{
+ const path=authoringPaths[0],authoringBefore=authoringDocument('1.7.9');
+ for(const [file,options] of [
+  [path,{authoringBefore,authoringAfter:authoringDocument('1.7.10','changed-source')}],
+  [path,{authoringBefore,authoringAfter:authoringDocument('1.7.8')}],
+  [path,{authoringBefore,authoringAfter:authoringDocument('1.7.010')}],
+  [path,{authoringBefore,authoringAfter:authoringDocument('1.7.10'),executable:true}],
+  [path,{authoringAfter:authoringDocument('1.7.10')}],
+  [path+'.extra',{authoringBefore,authoringAfter:authoringDocument('1.7.10')}],
+ ]){
+  const fixture=documentFixture(file,options);
+  try{await assert.rejects(runDevicePatrolGate(fixture.options),/PATROL_(?:AUTHORING_VERSION_INVALID|CHANGED_FILE_UNCLAIMED):/);}
+  finally{rmSync(fixture.root,{recursive:true,force:true});}
+ }
 });
 
 test('本次infra领跑PRD与DoD真实Git准入归开发治理，手机身份不变',async()=>{

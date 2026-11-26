@@ -8,6 +8,7 @@ import {tmpdir} from 'node:os';
 import {execFileSync} from 'node:child_process';
 import {canonical,sha as digest} from '../../../packages/brain/src/lib/device-patrol-admission.js';
 const sha='a'.repeat(40);
+const baselineOrigin='095d81687079f975c65f14babc27364b4da3e374';
 const run={head_sha:sha,head_branch:'main',event:'workflow_dispatch',path:'.github/workflows/implementation-impact.yml',conclusion:'success',repository:{full_name:'perfectuser21/cecelia'},head_repository:{full_name:'perfectuser21/cecelia'}};
 test('巡查身份artifact只能由固定已发布工具main可信baseline成功运行提供',()=>{
  assert.equal(validatePatrolBaselineRun(run,sha),run);
@@ -22,13 +23,26 @@ test('真实zip下载消费固定身份而不解包代码；摘要篡改拒绝',
   const snap={snapshot:{...body,snapshot_sha256:digest(JSON.stringify(canonical(body)))}};
   const fixture=join(root,'head.json'),zip=join(root,'input.zip');writeFileSync(fixture,JSON.stringify(snap));
   execFileSync('python3',['-c','import zipfile,sys; z=zipfile.ZipFile(sys.argv[1],"w"); z.write(sys.argv[2],"head.json"); z.writestr("execute.mjs","malicious"); z.close()',zip,fixture]);
-  const bytes=readFileSync(zip),artifact={id:12,expired:false,digest:'sha256:'+createHash('sha256').update(bytes).digest('hex'),workflow_run:{id:34,head_sha:sha,head_branch:'main'}};
+  const bytes=readFileSync(zip),artifact={id:12,expired:false,digest:'sha256:'+createHash('sha256').update(bytes).digest('hex'),workflow_run:{id:34,head_sha:baselineOrigin,head_branch:'main'}};
+  const compared=[];
   const execute=(bin,args,opts)=>{
    if(bin!=='gh')return execFileSync(bin,args,opts);const path=args[1];
    if(path.endsWith('/zip'))return bytes;
-   const value=path.includes('git/ref/')?{object:{sha}}:path.includes('/compare/')?{status:'identical',merge_base_commit:{sha}}:path.includes('artifacts?')?{artifacts:[artifact]}:run;return JSON.stringify(value);
+   if(path.includes('/compare/')){
+    const [origin,target]=path.split('/').at(-1).split('...');
+    compared.push(origin);
+    return JSON.stringify({status:origin===target?'identical':'ahead',merge_base_commit:{sha:origin}});
+   }
+   const value=path.includes('git/ref/')?{object:{sha}}:path.includes('artifacts?')?{artifacts:[artifact]}:{...run,head_sha:baselineOrigin};return JSON.stringify(value);
   };
   const out=join(root,'out');assert.equal(downloadPatrolBaseline(sha,out,{execute}).revision,base);assert.deepEqual(readdirSync(join(out,'base')),['base.json']);assert.equal(readFileSync(join(out,'head/head.json'),'utf8'),JSON.stringify(snap));
+  assert.deepEqual(compared,[sha,baselineOrigin]);
+  const origin=JSON.parse(readFileSync(join(out,'patrol-baseline-origin.json')));
+  assert.equal(origin.tooling_revision,sha);
+  assert.equal(origin.baseline_source_revision,baselineOrigin);
+  artifact.workflow_run.head_sha=sha;
+  assert.throws(()=>downloadPatrolBaseline(sha,out,{execute}),/PATROL_BASELINE_ARTIFACT_MISSING/);
+  artifact.workflow_run.head_sha=baselineOrigin;
   artifact.digest='sha256:'+'0'.repeat(64);assert.throws(()=>downloadPatrolBaseline(sha,out,{execute}),/DIGEST_MISMATCH/);
  }finally{rmSync(root,{recursive:true,force:true});}
 });
@@ -40,7 +54,8 @@ test('真实gh进程的大compare响应不溢出；仍拒绝非祖先与错误me
 const path=process.argv[3],padding='x'.repeat(2*1024*1024);
 let value;
 if(path.includes('/compare/')){
- value={status:process.env.PATROL_TEST_STATUS,merge_base_commit:{sha:process.env.PATROL_TEST_MERGE_BASE},files:[{patch:padding}]};
+ const queried=path.split('/').at(-1).split('...')[0];
+ value={status:queried==='${baselineOrigin}'?'ahead':process.env.PATROL_TEST_STATUS,merge_base_commit:{sha:queried==='${baselineOrigin}'?queried:process.env.PATROL_TEST_MERGE_BASE},files:[{patch:padding}]};
  if(process.argv.includes('--jq'))value={status:value.status,merge_base_commit:{sha:value.merge_base_commit.sha}};
 }else if(path.includes('/git/ref/'))value={object:{sha:'b'.repeat(40)},padding:process.env.PATROL_TEST_LARGE_REF==='true'?padding:''};
 else if(path.includes('/actions/artifacts?'))value={artifacts:[]};
