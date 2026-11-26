@@ -3,12 +3,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import crypto from 'node:crypto';
-import { fileURLToPath } from 'node:url';
 import { prepareCodexSession } from '../lib/codex-session.mjs';
-import { runActivityProcess } from './helpers/run-activity.mjs';
-import { gitPlain } from './helpers/git.mjs';
-import { FAKE_CLAUDE_EVAL } from './fixtures/fake-claude-eval.mjs';
 
 const SHA = 'a'.repeat(40);
 const cleanup = [];
@@ -140,35 +135,4 @@ describe('native judge无工具权限和stdin', () => {
     expect(s.args).toContain('--skip-git-repo-check');
     expect(text).toContain(`${JSON.stringify(path.join(os.homedir(), '.credentials'))}="deny"`);
   });
-});
-
-it.each([false, true])('真实evaluate进程预览桥与sticky漂移门（drift=%s），finally收割', async (drift) => {
-  const f = await fixture(); f.state.driftAfterBusiness = drift;
-  const api = http.createServer((_req, res) => res.end(JSON.stringify({ status: 'active', port: new URL(f.origin).port })));
-  await new Promise((resolve) => api.listen(0, '127.0.0.1', resolve)); cleanup.push(() => new Promise((resolve) => api.close(resolve)));
-  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'evaluate-bridge-')); cleanup.push(() => fs.rmSync(cwd, { recursive: true, force: true }));
-  gitPlain('init', '-q', cwd);
-  const dir = path.join(cwd, 'sprints/s1'); fs.mkdirSync(dir, { recursive: true });
-  const id = '11111111-2222-3333-4444-555555555555';
-  const intent = `---\ntask_id: ${id}\nstep: intent\nupstream: []\n---\n### I-1\n查API\n`;
-  fs.writeFileSync(path.join(dir, '01-intent.md'), intent);
-  fs.writeFileSync(path.join(dir, '02-spec.md'), `---\ntask_id: ${id}\nstep: spec\nupstream: ["01-intent.md#I-1"]\n---\n## QA 场景\n### Q-1\n对应: I-1\n操作: 查询API\n期望: 200\n`);
-  for (const name of ['03-build.md', '04-evidence.md']) fs.writeFileSync(path.join(dir, name), 'hidden');
-  const fixturePath = FAKE_CLAUDE_EVAL; fs.chmodSync(fixturePath, 0o755);
-  const r = await runActivityProcess(fileURLToPath(new URL('../activities/evaluate.mjs', import.meta.url)), {
-    run_tag: 'rt', task_id: id, worktree: cwd, sprint_dir: 'sprints/s1', intent_ids: ['I-1'],
-    intent_sha256: crypto.createHash('sha256').update(intent).digest('hex'), pr_number: 123, head_sha: SHA,
-  }, { CODING_WF_PROVIDER: 'codex', CODING_WF_CODEX_BIN: fixturePath, CODING_WF_CODEX_MODEL: 'gpt-6-sol', FAKE_EVAL_MODE: 'bridge', FAKE_EVAL_NATIVE: 'codex',
-    CODING_WF_PREVIEW_API: `http://127.0.0.1:${api.address().port}`, CODING_WF_PREVIEW_HOST: '127.0.0.1' });
-  if (drift) {
-    expect(r.result?.status, r.stderr).toBe('failed'); expect(r.result.reason_code).toBe('preview_stale');
-    const home = r.stderr.match(/FAKE_CURL_HOME: (.+)/)?.[1]; expect(fs.existsSync(home)).toBe(false);
-    expect(fs.existsSync(path.join(dir, '03-build.md'))).toBe(true); return;
-  }
-  expect(r.result?.status, r.stderr).toBe('completed');
-  expect(r.result.outputs.qa).toMatchObject({ provider: 'codex', model: 'gpt-6-sol' });
-  expect(r.result.outputs.qa.env).toMatchObject({ kind: 'preview', url: f.origin, sha: SHA, transport: 'unix_http_browser' });
-  expect(f.hits).toContain('/api/brain/check?q=Q-1');
-  const home = r.stderr.match(/FAKE_CURL_HOME: (.+)/)?.[1]; expect(home).toBeTruthy(); expect(fs.existsSync(home)).toBe(false);
-  expect(r.stderr).toContain('FAKE_HIDDEN_BUILD: true'); expect(fs.existsSync(path.join(dir, '03-build.md'))).toBe(true);
 });

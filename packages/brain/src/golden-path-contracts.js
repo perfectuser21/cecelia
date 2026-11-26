@@ -159,7 +159,7 @@ export async function createGoldenPathContractVersion(db, {
         AND payload->>'golden_path_id' = $1
         AND status IN ('queued', 'blocked', 'dispatched', 'in_progress')
       FOR UPDATE`,
-    [goldenPathId, [...GP_IMPLEMENTATION_TASK_TYPES,...RETIRED_DEVELOPMENT_TASK_TYPES.filter(type=>type==='harness_initiative')]],
+    [goldenPathId, [...GP_IMPLEMENTATION_TASK_TYPES,...RETIRED_DEVELOPMENT_TASK_TYPES.filter(type=>['harness_initiative','coding_workflow'].includes(type))]],
   );
   const runningTasks = activeTasks.filter(
     (task) => task.status === 'dispatched' || task.status === 'in_progress',
@@ -325,7 +325,7 @@ async function findHarnessTaskForContract(db, contractId) {
       ORDER BY created_at ASC
       LIMIT 1
       FOR UPDATE`,
-    [contractId, [...GP_IMPLEMENTATION_TASK_TYPES,...RETIRED_DEVELOPMENT_TASK_TYPES.filter(type=>type==='harness_initiative')]],
+    [contractId, [...GP_IMPLEMENTATION_TASK_TYPES,...RETIRED_DEVELOPMENT_TASK_TYPES.filter(type=>['harness_initiative','coding_workflow'].includes(type))]],
   );
   return rows[0] || null;
 }
@@ -509,20 +509,8 @@ export async function signAndLaunchGoldenPathContract(db, {
       phase: 'dev',
     },
   });
-  // 实现单默认无头 → coding_workflow runner（A2）。runner 不支持的仓库不建无头单：
-  // 降为有头待办（headed_manual），签字事务照常提交，不因执行面缺口回滚主理人签字。
-  let routed;
-  try {
-    routed = await createRoutedTask(db, routeRequest(taskPayload), null, { transaction: 'existing' });
-  } catch (error) {
-    if (error?.code !== 'runner_repo_unsupported') throw error;
-    routed = await createRoutedTask(
-      db,
-      routeRequest({ ...taskPayload, headed_manual: 'true' }),
-      null,
-      { transaction: 'existing' },
-    );
-  }
+  // 签字登记有头开发待办；不启动已退役的自主开发编排。
+  const routed = await createRoutedTask(db, routeRequest({ ...taskPayload, headed_manual: 'true' }), null, { transaction: 'existing' });
   const task = routed.task;
 
   const { rows: approvedPaths } = await db.query(

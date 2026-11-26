@@ -117,7 +117,7 @@ router.get('/health', moduleRouteRateLimit, async (req, res) => {
     const [tickStatus, cbStates, activePipelinesResult, evaluatorStatsResult, docker_runtime, xian_bridge_status] = await Promise.all([
       getTickStatus(),
       Promise.resolve(getAllCBStates()),
-      // 现役开发任务：交互式dev与自动coding_workflow
+      // 现役开发任务：交互式dev与普通Codex Agent
       pool.query("SELECT count(*)::integer AS cnt FROM tasks WHERE task_type = ANY($1::text[]) AND status='in_progress'", [CODING_MUTATION_TASK_TYPES]),
       pool.query(`
         SELECT

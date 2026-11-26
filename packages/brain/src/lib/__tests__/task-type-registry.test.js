@@ -32,10 +32,10 @@ describe('现役任务类型注册表与历史枚举分离',()=>{
     for(const type of historical) expect(R.DB_WHITELISTED_TASK_TYPES).toContain(type);
     expect(new Set(R.DB_WHITELISTED_TASK_TYPES).size).toBe(R.DB_WHITELISTED_TASK_TYPES.length);
   });
-  it('有头开发记账dev，无头coding_workflow由专属Runner消费',()=>{
+  it('有头开发记账dev，旧自主coding仅保留历史枚举',()=>{
     expect(R.getTaskType('dev')).toMatchObject({coding:true,pr:true,executor:'headed-session',surface:'none',watchdog:'none'});
-    expect(R.getTaskType('coding_workflow')).toMatchObject({coding:false,executor:'coding-workflow-runner',tick_dispatchable:false});
-    expect(R.GP_IMPLEMENTATION_TASK_TYPES).toEqual(['dev','coding_workflow']);
+    expect(R.getTaskType('coding_workflow')).toBeNull();
+    expect(R.GP_IMPLEMENTATION_TASK_TYPES).toEqual(['dev']);
     expect(R.TICK_DISPATCH_EXCLUDED).toContain('coding_workflow');
     expect(R.TICK_DISPATCH_EXCLUDED).toContain('project');
     expect(R.TICK_DISPATCH_EXCLUDED).not.toContain('qiumi_task');

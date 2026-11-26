@@ -43,7 +43,7 @@ const MON = 'monitor_long_running';  // monitor-loop HARNESS_TASK_TYPES
 const NKR = 'nightly_kr_bonus';      // nightly-orchestrator.js:122 scoreTask typeScore（KR 对齐加分名单）
 const GPSCOPE = 'gp_scope_task_types';
 const DEVDASH = 'dev_dashboard_query';  // routes/execution.js:3721 GET /api/brain/dev/tasks 查询名单 ['dev','review']
-const GPIMPL = 'gp_implementation';  // golden-path-contracts 现役签字实现单类型：有头dev与无头coding_workflow
+const GPIMPL = 'gp_implementation';  // golden-path-contracts 现役签字实现单类型：有头dev
 const WARROOM = 'warroom_feed_types';    // routes/warroom.js:36 FEED_TYPES（战情室 feed 纳入的"有实质执行"任务类型）
 const BP = 'backpressure_bypass';    // slot-allocator BACKPRESSURE_BYPASS_TASK_TYPES
 const CODEX = 'codex_slot';          // slot-allocator countCodexInProgress
@@ -63,11 +63,12 @@ const REVIEW_SKILL = 'review_skill_binding';
 const RECMUT = 'recurring_coding_mutation';
 
 export const RETIRED_DEVELOPMENT_CODE = 'task_type_retired';
-export const RETIRED_DEVELOPMENT_TASK_TYPES = Object.freeze(['sprint_planner', 'sprint_contract_propose', 'sprint_contract_review', 'sprint_generate', 'sprint_evaluate', 'sprint_fix', 'sprint_report', 'harness_planner', 'harness_contract_propose', 'harness_contract_review', 'harness_generate', 'harness_generator', 'harness_ci_watch', 'harness_evaluate', 'harness_fix', 'harness_deploy_watch', 'harness_report', 'harness_initiative', 'harness_task', 'harness_final_e2e', 'harness_intervention', 'golden_path_proposal', 'harness_controller']);
+export const RETIRED_DEVELOPMENT_TASK_TYPES = Object.freeze(['coding_workflow', 'sprint_planner', 'sprint_contract_propose', 'sprint_contract_review', 'sprint_generate', 'sprint_evaluate', 'sprint_fix', 'sprint_report', 'harness_planner', 'harness_contract_propose', 'harness_contract_review', 'harness_generate', 'harness_generator', 'harness_ci_watch', 'harness_evaluate', 'harness_fix', 'harness_deploy_watch', 'harness_report', 'harness_initiative', 'harness_task', 'harness_final_e2e', 'harness_intervention', 'golden_path_proposal', 'harness_controller']);
 export const RETIRED_CONTENT_TASK_TYPES = Object.freeze(['content-research', 'content-generate', 'content-review', 'content-export', 'content_publish', 'content-copywriting', 'content-copy-review', 'content-image-review', 'platform_scraper']);
 const retiredDevelopmentTypes = new Set([...RETIRED_DEVELOPMENT_TASK_TYPES, ...RETIRED_CONTENT_TASK_TYPES]);
 export function isRetiredDevelopmentTask(task) {
   return retiredDevelopmentTypes.has(task?.task_type)
+    || task?.payload?.coding_workflow === true || ['true','t'].includes(task?.payload?.coding_workflow)
     || task?.kernel_continuation === true || task?.payload?.kernel_continuation === true
     || task?.payload?.harness_mode === true || ['true','t'].includes(task?.payload?.harness_mode);
 }
@@ -136,7 +137,6 @@ export const TASK_TYPE_REGISTRY = Object.freeze({
   qiumi_task:               T('native-agent', false, false, 'native-agent', 'external-worker', false, true, 'none', true, [V, ANC, OCPASS]),
   workflow_dispatch:        workflow(T('openclaw-agent', false, false, 'openclaw-agent', 'openclaw-agent', false, false, 'none', true, [V, ANC])),
   skill_factory_run:        T('external', false, false, 'openclaw-agent', 'external-worker', true, false, 'none', true, [V, ANC, CX, NOGOAL]),
-  coding_workflow:          workflow(T('external', false, false, 'coding-workflow-runner', 'external-worker', true, false, 'none', true, [V, CM, ANC, GPIMPL])),
   script_run:               T('script', false, false, 'script', 'script', true, true, 'none', true, [V, SYS, ANC]),
   deploy_drill:      T('none', false, false, null, 'none', false, false, 'none', false, [ANC]),
   nightly:            T('none', false, false, null, 'none', false, false, 'none', false, [ANC]),

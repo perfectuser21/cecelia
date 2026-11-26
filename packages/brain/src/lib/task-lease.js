@@ -20,7 +20,7 @@ import { EXECUTOR_CONTRACTS, resolveLivenessKind } from '../executor-contracts.j
 import { releaseDeviceLocksHeldBy, unresolvedNativeAgentSql } from '../device-lock-helpers.js';
 import { afterTerminalTransition, finalizeTask } from './task-terminal.js';
 import { recordTaskEventSafe } from './task-event-log.js';
-import { TASK_TYPE_REGISTRY, isExternalWorkerTask } from './task-type-registry.js';
+import { TASK_TYPE_REGISTRY, isExternalWorkerTask, isRetiredDevelopmentTask } from './task-type-registry.js';
 import { validClaimEpoch } from './task-lease-finish.js';
 import { transaction } from '../execution-directory/store.js';
 const externalWorkerTypes = Object.keys(TASK_TYPE_REGISTRY).filter(task_type => isExternalWorkerTask({ task_type }));
@@ -79,7 +79,11 @@ async function claimAndStart(pool, { taskId, claimer, kind, forceKind, seconds, 
   const db = await pool.connect();
   try {
     await db.query('BEGIN');
-    await db.query('SELECT id FROM tasks WHERE id=$1 FOR UPDATE', [taskId]);
+    const current = await db.query('SELECT id, task_type, payload FROM tasks WHERE id=$1 FOR UPDATE', [taskId]);
+    if (isRetiredDevelopmentTask(current.rows?.[0])) {
+      await db.query('ROLLBACK');
+      return { status: 410, body: { error: 'task_type_retired' } };
+    }
     const { rows } = await db.query(
       `UPDATE tasks SET claimed_by = $1, claimed_at = NOW(),
               executor_kind = CASE WHEN $4 THEN $3 ELSE COALESCE(executor_kind, $3) END,
@@ -123,12 +127,13 @@ export async function claimTaskWithLease(pool, { taskId, claimer, executorKind, 
   const seconds = clampLeaseSeconds(leaseSeconds);
   if (start !== undefined && typeof start !== 'boolean') return { status: 400, body: { error: 'start must be boolean' } };
   if (start === true && seconds === null) return { status: 400, body: { error: 'start requires valid lease_seconds' } };
+  if (executorKind === 'coding-workflow-runner') return { status: 410, body: { error: 'executor_kind_retired' } };
   const kind = executorKind || 'headed-session';
-  // 执行机 coding workflow runner 认领必须落下自己的 kind（executor-contracts 据此当外部执行体，启动同步不打回）
-  const forceKind = ['coding-workflow-runner', 'external-worker'].includes(kind);
+  const forceKind = kind === 'external-worker';
   if (start === true) return claimAndStart(pool, { taskId, claimer, kind, forceKind, seconds, expire });
   return transaction(pool, async db => {
-  await db.query('SELECT id FROM tasks WHERE id=$1 FOR UPDATE', [taskId]);
+  const current = await db.query('SELECT id, task_type, payload FROM tasks WHERE id=$1 FOR UPDATE', [taskId]);
+  if (isRetiredDevelopmentTask(current.rows?.[0])) return { status: 410, body: { error: 'task_type_retired' } };
   const result = await db.query(
     `UPDATE tasks SET claimed_by = $1, claimed_at = NOW(),
             executor_kind = CASE WHEN $4 THEN $3 ELSE COALESCE(executor_kind, $3) END

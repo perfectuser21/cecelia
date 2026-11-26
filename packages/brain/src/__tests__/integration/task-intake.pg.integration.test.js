@@ -75,10 +75,11 @@ describe('真实HTTP与PostgreSQL收据', () => {
     const row = (await pool.query(`SELECT t.task_type,t.payload,r.* FROM tasks t
       JOIN work_routing_receipts r ON r.task_id=t.id WHERE t.id=$1`, [response.body.task_id])).rows[0];
     // A2：无头编码单改投 coding_workflow runner
-    expect(row.task_type).toBe('coding_workflow');
-    expect(row.payload.coding_workflow).toBe(true);
+    expect(row.task_type).toBe('codex_dev');
+    expect(row.payload.coding_workflow).toBeUndefined();
+    expect(row.payload.base_repo).toBe('perfectuser21/cecelia');
     expect(row).toMatchObject({ repo: 'cecelia', map_scope: ['F1'], change_kind: 'bugfix',
-      pipeline: 'coding_workflow', work_kind: 'coding_mutation', default_execution_profile: 'hotfix-v1' });
+      pipeline: 'agent_development', work_kind: 'coding_mutation', default_execution_profile: 'hotfix-v1' });
     expect(row.payload.routing_receipt_id).toBe(row.id);
     expect(row.evidence.base_sha).toMatch(/^[a-f0-9]{40}$/);
     expect(row.map_scope_validation_version).toBeTruthy();

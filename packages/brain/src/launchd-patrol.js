@@ -30,8 +30,6 @@ export const MUST_LOAD_DAEMONS = [
   'com.cecelia.token-refresh',
   'com.cecelia.pf-firewall',
   'com.cecelia.smoke-nightly',
-  // coding workflow runner（StartInterval=300）：认领带 payload.coding_workflow 开关的任务跑 coding 链
-  'com.cecelia.coding-workflow-runner',
 ];
 export const MUST_LISTEN_PORTS = [
   { port: 3457, name: 'cecelia-bridge' },
@@ -39,7 +37,7 @@ export const MUST_LISTEN_PORTS = [
   // HK 侧存活由容器 healthcheck(unless-stopped) 保障；机外探测另行接入（刀3-T6 范围）。
 ];
 // 仅声明用途（manifest 文档），运行逻辑不消费：不告警来自"不在必查名单"
-export const EXPECTED_DISABLED = ['com.cecelia.frontend', 'com.n8n'];
+export const EXPECTED_DISABLED = ['com.cecelia.frontend', 'com.n8n', 'com.cecelia.coding-workflow-runner'];
 
 const INTERVAL_MS = parseInt(
   process.env.LAUNCHD_PATROL_INTERVAL_MS || String(15 * 60 * 1000),

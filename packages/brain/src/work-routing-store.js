@@ -6,7 +6,6 @@ import { assertJanitorAuthority } from './janitor-authority.js';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 
-import {loadRepos,reposFile,resolveRepo as resolveRunnerRepo,resolveEntry} from '../scripts/coding-workflow/runner/lib/repos.mjs';
 import { routeWork } from './work-router.js';
 import { isCanonicalTaskBranch } from './orchestrator/workspace-spec.js';
 import {
@@ -73,10 +72,7 @@ function repositoryRoot(repo, repositoryFacts) {
   if (repo === 'zenithjoy-workspace' && process.env.REPO_ROOT_ZENITHJOY) {
     return process.env.REPO_ROOT_ZENITHJOY;
   }
-  const repos=loadRepos(reposFile());
-  if (resolveRunnerRepo(repo,repos)==='zenithjoy-skills') {
-    return process.env.REPO_ROOT_ZENITHJOY_SKILLS || fact?.path || resolveEntry(repos.find(entry=>entry.key==='zenithjoy-skills')).clone;
-  }
+  if (repo === 'zenithjoy-skills' && process.env.REPO_ROOT_ZENITHJOY_SKILLS) return process.env.REPO_ROOT_ZENITHJOY_SKILLS;
   return fact?.path || process.cwd();
 }
 
@@ -214,7 +210,7 @@ export async function createRoutedTask(db, request, repositoryFacts = null, opti
   try {
     if (ownsTransaction) await client.query('BEGIN');
     const facts = repositoryFacts ?? await loadRepositoryFacts(client);
-    // 借壳老形状归一（任务 0a70684f）：research+factory_dispatch → skill_factory_run，data+coding_workflow → coding_workflow。
+    // 借壳老形状归一（任务 0a70684f）：research+factory_dispatch → skill_factory_run；旧自主coding标记已在入口拒绝。
     // payload.requested_task_type 仍记调用方原值（下方取 request.requested_task_type），便于追溯。
     const borrowedPayload = { ...(request.metadata || {}), ...(request.task?.payload || {}) };
     const normalizedType = normalizeBorrowedTaskType(request.requested_task_type, borrowedPayload);
@@ -301,13 +297,10 @@ export async function createRoutedTask(db, request, repositoryFacts = null, opti
       ...(decision.evidence.branch ? { branch: decision.evidence.branch } : {}),
       ...(decision.evidence.base_sha ? { base_sha: decision.evidence.base_sha } : {}),
       ...(decision.pipeline === 'headed_development' ? {headed_manual:'true',orchestrator:'headed-session'} : {}),
-      // 无头编码单改投 runner（A2）：对齐 new-task.mjs 的 payload 形状，runner plan.mjs isSwitched 按类型认领
-      ...(decision.pipeline === 'coding_workflow' ? {
-        coding_workflow: true,
-        orchestrator: 'coding-workflow-runner',
-      } : {}),
+      ...(decision.pipeline === 'agent_development' ? { orchestrator: 'codex-bridge',
+        base_repo: decision.repo.includes('/') ? decision.repo : `perfectuser21/${decision.repo}` } : {}),
     };
-    // 调用方沿用旧 kernel 元数据（如 GP 签字 metadata）时不把 kernel-v1 标记带进 runner 单
+    // 调用方沿用旧 kernel 元数据（如 GP 签字 metadata）时不把 kernel-v1 标记带进现役开发单
     delete payload.harness_runtime;
     delete payload.harness_mode;
     if (existing.rows[0]) {

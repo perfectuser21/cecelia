@@ -4,8 +4,8 @@
 #   ① trigger_backup 以 queued 建 → 抛 no_executor_for_task_type，不落行
 #   ② workflow_run 以 in_progress 入账（外部镜像）照常
 #   ③ 旧借壳形状 research+factory_dispatch → 落 skill_factory_run（迁移 550 约束放行）
-#   ④ 旧借壳形状 data+coding_workflow → 落 coding_workflow，kind=workflow
-#   ⑤ 两个新类型都在 tick 排除名单、派发器 / runner 认得新类型
+#   ④ 旧自主coding借壳创建明确拒绝，不落行
+#   ⑤ 技能工厂独立类型及退役自主coding均排除tick
 # 全程一个事务内跑，结束回滚；不碰真机、不连生产库。
 set -euo pipefail
 if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-${BRAIN:-http://localhost:5221}}" "${DATABASE_URL:-postgresql://localhost/cecelia}"; then
@@ -24,7 +24,6 @@ import pg from 'pg';
 import { createRoutedTask } from './src/work-routing-store.js';
 import { TICK_DISPATCH_EXCLUDED } from './src/lib/task-type-registry.js';
 import { isFactoryTask } from './scripts/factory-dispatcher/factory-dispatcher.js';
-import { isSwitched } from './scripts/coding-workflow/runner/lib/plan.mjs';
 
 const client = new pg.Client({ connectionString: process.env.DATABASE_URL });
 const die = (m) => { console.error(`FAIL: ${m}`); process.exitCode = 1; throw new Error(m); };
@@ -61,11 +60,10 @@ try {
   if (!isFactoryTask({ ...frow, status: 'queued' })) die('factory-dispatcher 不认新类型');
   ok('③ research+factory_dispatch → skill_factory_run（迁移 550 约束放行，派发器认得）');
 
-  const coding = await create({ requested_task_type: 'data', mutation_intent: 'read_only', declared_domain: undefined, metadata: { coding_workflow: true, repo: 'cecelia' } });
-  const crow = (await client.query('SELECT task_type, kind, payload FROM tasks WHERE id = $1', [coding.task_id])).rows[0];
-  if (crow.task_type !== 'coding_workflow' || crow.kind !== 'workflow') die(`编码单没落新类型: ${JSON.stringify(crow)}`);
-  if (!isSwitched(crow)) die('coding-workflow-runner 不认新类型');
-  ok('④ data+coding_workflow → coding_workflow（kind=workflow，runner 认得）');
+  let retired;
+  try { await create({ requested_task_type: 'data', mutation_intent: 'read_only', declared_domain: undefined, metadata: { coding_workflow: true, repo: 'cecelia' } }); } catch (error) { retired=error; }
+  if (retired?.code !== 'task_type_retired') die('旧自主coding借壳未拒绝');
+  ok('④ data+coding_workflow 明确拒绝，不复活旧自主编排');
 
   for (const t of ['skill_factory_run', 'coding_workflow']) if (!TICK_DISPATCH_EXCLUDED.includes(t)) die(`${t} 不在 tick 排除名单`);
   ok('⑤ 两个新类型都按类型排除出 tick 主派发');

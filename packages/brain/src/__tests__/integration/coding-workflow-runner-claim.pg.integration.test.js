@@ -24,7 +24,7 @@ let claim;
 beforeAll(async () => {
   await admin.connect();
   await admin.query(`CREATE SCHEMA ${schema}`);
-  await pool.query(`CREATE TABLE tasks(id UUID PRIMARY KEY, claimed_by TEXT, claimed_at TIMESTAMPTZ,
+  await pool.query(`CREATE TABLE tasks(id UUID PRIMARY KEY, task_type TEXT DEFAULT 'data', claimed_by TEXT, claimed_at TIMESTAMPTZ,
     payload JSONB DEFAULT '{}'::jsonb, result JSONB DEFAULT '{}'::jsonb, status TEXT DEFAULT 'queued',
     executor_kind TEXT CONSTRAINT tasks_executor_kind_check CHECK (executor_kind IN ('headed-session','brain-local')))`);
   await pool.query(`CREATE TABLE task_runs(id UUID PRIMARY KEY,task_id UUID,run_id TEXT,status TEXT,context JSONB,result JSONB,ended_at TIMESTAMPTZ);
@@ -53,10 +53,10 @@ it('预置 headed-session 的 queued 任务被 coding-workflow-runner 认领后 
   const id = randomUUID();
   await pool.query("INSERT INTO tasks(id, executor_kind) VALUES($1, 'headed-session')", [id]);
   const res = await claimAs(id, { claimer: 'coding-workflow-runner@h', executor_kind: 'coding-workflow-runner' });
-  expect(res.code, JSON.stringify(res.body)).toBe(200);
-  expect((await pool.query('SELECT claimed_by FROM tasks WHERE id=$1', [id])).rows[0].claimed_by).toBe('coding-workflow-runner@h');
-  expect(res.body.executor_kind).toBe('coding-workflow-runner');
-  expect(await kindOf(id)).toBe('coding-workflow-runner');
+  expect(res.code, JSON.stringify(res.body)).toBe(410);
+  expect((await pool.query('SELECT claimed_by FROM tasks WHERE id=$1', [id])).rows[0].claimed_by).toBeNull();
+  expect(res.body.error).toBe('executor_kind_retired');
+  expect(await kindOf(id)).toBe('headed-session');
 });
 
 it('其他 kind 认领行为不变：已有 kind 不覆盖，空 kind 写入请求值或缺省 headed-session', async () => {

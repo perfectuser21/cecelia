@@ -21,7 +21,7 @@ const MIG = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'migration
 describe('coding-workflow-runner 执行体类型', () => {
   it('登记为合法 executor_kind', () => {
     expect(CODING_WORKFLOW_RUNNER_EXECUTOR_KIND).toBe('coding-workflow-runner');
-    expect(VALID_EXECUTOR_KINDS).toContain('coding-workflow-runner');
+    expect(VALID_EXECUTOR_KINDS).not.toContain('coding-workflow-runner');
   });
 
   it('属外部执行体：按持久化 executor_kind 判定，不影响普通 data 任务', () => {

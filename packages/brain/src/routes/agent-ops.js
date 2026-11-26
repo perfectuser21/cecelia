@@ -21,7 +21,6 @@ export const STALE_FACTOR = 3;
 
 export const SKILL_BY_TASK_TYPE = {
   dev: '/dev',
-  coding_workflow: 'coding-workflow-runner',
   ci_patrol: '/ci-patrol',
   code_review: '/code-review',
   arch_review: '/arch-review',

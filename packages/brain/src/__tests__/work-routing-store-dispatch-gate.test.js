@@ -82,10 +82,9 @@ describe('createRoutedTask：借壳老形状归一成独立新类型', () => {
 
   it('data + payload.coding_workflow=true（c8fab3c8 形状，漏 headed_manual）→ coding_workflow（kind=workflow）', async () => {
     const pool = makePool();
-    await createRoutedTask(pool, req({
+    await expect(createRoutedTask(pool, req({
       requested_task_type: 'data', mutation_intent: 'read_only', declared_domain: undefined, metadata: { coding_workflow: true },
-    }));
-    expect(insertedValue(pool, 'task_type')).toBe('coding_workflow');
-    expect(insertedValue(pool, 'kind')).toBe('workflow');
+    }))).rejects.toMatchObject({code:'task_type_retired'});
+    expect(pool.query).not.toHaveBeenCalled();
   });
 });

@@ -14,7 +14,6 @@ capture-triage-line-backlog-autotask-smoke.sh
 circuit-breaker-reset-smoke.sh
 claude-headed-dispatch-smoke.sh
 codex-cred-isolation-smoke.sh
-coding-workflow-runner-smoke.sh
 company-key-results-smoke.sh
 session-provenance-smoke.sh
 conversation-capture-multitool-smoke.sh
@@ -216,7 +215,6 @@ release-line-smoke.sh
 qiumi-status-map-smoke.sh
 leadgen-notion-registry-smoke.sh
 leadgen-physical-adb-routing-smoke.sh
-coding-workflow-spans-smoke.sh
 skill-factory-board-smoke.sh
 strategic-decisions-category-smoke.sh
 cw-bd2b1556-qa-smoke.sh
@@ -226,14 +224,12 @@ factory-ledger-smoke.sh
 workflow-commander-dispatch-smoke.sh
 factory-commander-route-smoke.sh
 dispatch-route-gate-smoke.sh
-coding-workflow-route-smoke.sh
 bypass-audit-smoke.sh
 task-lease-device-pool-smoke.sh
 
 coding-workflow-codex-smoke.sh
 
 
-coding-workflow-base-smoke.sh
 # 通用 Commander 合同、固定来源与独立核验运输回归
 commander-generic-smoke.sh
 

@@ -6,7 +6,6 @@ import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import yaml from 'js-yaml';
-import { smokeCiFailures } from '../../../packages/brain/scripts/coding-workflow/lib/qa-smoke.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const workflow = () => yaml.load(readFileSync(join(root, '.github/workflows/nightly-regression.yml'), 'utf8'));
@@ -32,8 +31,7 @@ for (const childExit of [0, 17]) test(`保留的真实分类器CLI执行私有�
     });
     assert.equal(result.status, childExit === 0 ? 0 : 1, result.stdout + result.stderr);
     assert.equal(readFileSync(marker, 'utf8'), 'actual');
-    assert.deepEqual(smokeCiFailures(result.stdout, 'company-key-results-smoke.sh'),
-      childExit === 0 ? { failed: false, ids: [] } : { failed: true, ids: ['T-2'] });
+    assert.match(result.stdout, childExit === 0 ? /PASS: company-key-results-smoke\.sh/ : /BASELINE FAIL/);
   } finally { rmSync(temp, { recursive: true, force: true }); }
 });
 

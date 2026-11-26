@@ -82,8 +82,8 @@ describe('物理仓库别名与authoring scope投影隔离', () => {
     expect(facts.map(f => [f.scope_key, f.repo])).toEqual(REGISTERED_REPOSITORIES.map(r => [r.scope_key, r.repo]));
     expect(resolveRepo({ repo_hint: hint }, facts)).toBe(repo);
     const decision = routeWork({ source: 'child', source_id: 'commander-repair:fixture', title: '冻结源码缺陷修补',
-      mutation_intent: 'write', declared_change_kind: 'bugfix', repo_hint: hint, map_scope_hint: ['F1'] }, facts);
-    expect(decision).toMatchObject({ repo, canonical_task_type: 'coding_workflow', map_scope: ['F1'] });
+      metadata: { headed_manual: 'true' }, mutation_intent: 'write', declared_change_kind: 'bugfix', repo_hint: hint, map_scope_hint: ['F1'] }, facts);
+    expect(decision).toMatchObject({ repo, canonical_task_type: 'dev', map_scope: ['F1'] });
   });
 
   it('投影仍按原登记身份可读，显式别名和path不被过滤', async () => {
@@ -152,8 +152,7 @@ describe('开发账本现役入口',()=>{
     const payload=JSON.parse(insertedValue(base,'payload'));
     expect(payload.headed_manual).toBe('true');expect(payload.orchestrator).toBe('headed-session');
     expect(payload).not.toHaveProperty('harness_runtime');expect(payload).not.toHaveProperty('harness_mode');
-    const {isSwitched}=await import('../../scripts/coding-workflow/runner/lib/plan.mjs');
-    expect(isSwitched({task_type:'dev',payload})).toBe(false);
+    expect(payload).not.toHaveProperty('coding_workflow');
   });
   it.each(['queued','in_progress','completed'])('旧类型以%s创建在事务或查库前拒绝',async status=>{
     const pool=makePool();
