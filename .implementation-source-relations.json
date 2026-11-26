@@ -98,7 +98,7 @@
       "role": "verification"
     },
     {
-      "owner_path": "scripts/lib/brain-staging.sh",
+      "owner_path": "scripts/lib/brain-snapshot.sh",
       "path": "packages/brain/src/__tests__/integration/staging-snapshot.pg.integration.test.js",
       "role": "verification"
     },
@@ -1840,6 +1840,16 @@
     {
       "owner_path": "scripts/ops/backup-cecelia-studio.mjs",
       "path": "scripts/ops/__tests__/backups/backup-cecelia-studio.test.sh",
+      "role": "verification"
+    },
+    {
+      "owner_path": "scripts/lib/brain-snapshot.sh",
+      "path": "scripts/ci/__tests__/basic-brain-candidate-host.test.mjs",
+      "role": "verification"
+    },
+    {
+      "owner_path": "scripts/brain-build.sh",
+      "path": "scripts/ci/__tests__/basic-build-timing.test.mjs",
       "role": "verification"
     }
   ]

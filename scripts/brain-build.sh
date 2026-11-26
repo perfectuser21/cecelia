@@ -77,6 +77,13 @@ if [[ -n "${BRAIN_CANDIDATE_DOCKER_CONTEXT:-}" || -n "${BRAIN_CANDIDATE_DOCKER_H
   candidate_docker buildx version || { echo '候选跨架构构建缺少buildx插件，拒绝发布' >&2; exit 1; }
 fi
 IMAGE_REPO="cecelia-brain"
+build_phase_begin() {
+  BUILD_PHASE_STARTED=$SECONDS
+  printf 'BUILD_TIMING {"phase":"%s","event":"begin","sha":"%s"}\n' "$1" "$BUILD_SHA"
+}
+build_phase_completed() {
+  printf 'BUILD_TIMING {"phase":"%s","event":"completed","sha":"%s","duration_seconds":%s}\n' "$1" "$BUILD_SHA" "$((SECONDS - BUILD_PHASE_STARTED))"
+}
 image_id_of() {
   local id
   id=$(docker image inspect --format '{{.Id}}' "$1" 2>/dev/null) || return 0
@@ -113,6 +120,7 @@ if [[ -n "${BRAIN_CANDIDATE_DOCKER_CONTEXT:-}" || -n "${BRAIN_CANDIDATE_DOCKER_H
   CANDIDATE_TAG="${IMAGE_REPO}:candidate-${BUILD_SHA}-$(node -e 'process.stdout.write(require("crypto").randomUUID())')"
   candidate_image_prepare "$BRAIN_CANDIDATE_OWNERSHIP_FILE" "$CANDIDATE_TAG" "$BUILD_SHA"
   CANDIDATE_OWNERSHIP_CREATED=true
+  build_phase_begin image_build
   candidate_docker buildx build --builder "$CANDIDATE_BUILDER" --load --platform linux/amd64 --iidfile "$TEMP_BUILD/.candidate-image-id" \
     -t "$CANDIDATE_TAG" \
     --build-arg "GIT_SHA=${BUILD_SHA}" \
@@ -124,13 +132,17 @@ if(!/^sha256:[a-f0-9]{64}$/.test(process.argv[3]))process.exit(1);
 d.image=process.argv[3];fs.writeFileSync(p+'.image',JSON.stringify(d),{flag:'wx',mode:0o600});fs.renameSync(p+'.image',p);
 NODE
   candidate_verify_image candidate_docker "$CANDIDATE_ID" "$BUILD_SHA"
+  build_phase_completed image_build
   # 用 ID 导出不携带可变发布 tag；任一端失败均拒绝晋升。
+  build_phase_begin image_transfer
   candidate_docker image save "$CANDIDATE_ID" | docker image load
   candidate_verify_image docker "$CANDIDATE_ID" "$BUILD_SHA"
+  build_phase_completed image_transfer
   docker tag "$CANDIDATE_ID" "${IMAGE_REPO}:${VERSION}"
   docker tag "$CANDIDATE_ID" "${IMAGE_REPO}:latest"
   if [[ -n "$EXTRA_TAG" ]]; then docker tag "$CANDIDATE_ID" "$EXTRA_TAG"; fi
 else
+  build_phase_begin image_build
   docker build \
   -t "${IMAGE_REPO}:${VERSION}" \
   -t "${IMAGE_REPO}:latest" \
@@ -138,6 +150,7 @@ else
   --build-arg "GIT_SHA=${BUILD_SHA}" \
   -f "$TEMP_BUILD/packages/brain/Dockerfile" \
   "$TEMP_BUILD"
+  build_phase_completed image_build
 fi
 
 # 收敛：被顶替的镜像（旧版本 tag 持有者 / 旧 latest）只留一个 tag，摘掉 ${VERSION}-${sha12} 别名（至少还剩一个 tag 时才摘）

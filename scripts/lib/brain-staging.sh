@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # 仅调用方持有共同发布锁时执行。候选仅拿隔离数据库，不继承生产凭据或挂载。
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/brain-candidate-docker.sh"
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/brain-snapshot.sh"
 brain_release_lock() {
     mkdir -p "$ROOT_DIR/logs"
     exec 9>"$ROOT_DIR/logs/brain-release.lock"
@@ -41,9 +42,9 @@ stage_remove_network() {
 
 stage_receipt() {
     local status="$1"
-    STAGE_STATUS="$status" SHA="$sha" IMAGE="$image" VERSION="$version" STAGE_REQUEST="$request_id" STAGE_PHASE="${phase:-preflight}" STAGE_EXIT="${exit_status:-0}" VERIFY_FILE="$verification_file" CANDIDATE_OWNERSHIP="${BRAIN_CANDIDATE_OWNERSHIP_FILE:-}" node -e '
-      const fs=require("fs"),p=process.argv[1],e=process.env;
-      fs.writeFileSync(p+".new",JSON.stringify({candidate_ownership_file:e.CANDIDATE_OWNERSHIP,status:e.STAGE_STATUS,request_id:e.STAGE_REQUEST,sha:e.SHA,image_id:e.IMAGE,version:e.VERSION,phase:e.STAGE_PHASE,exit_code:Number(e.STAGE_EXIT),isolated:e.STAGE_STATUS==="success",database:fs.existsSync(e.VERIFY_FILE)?JSON.parse(fs.readFileSync(e.VERIFY_FILE,"utf8")):null,verified_at:new Date().toISOString()}));fs.renameSync(p+".new",p);
+    STAGE_STATUS="$status" SHA="$sha" IMAGE="$image" VERSION="$version" STAGE_REQUEST="$request_id" STAGE_PHASE="${phase:-preflight}" STAGE_EXIT="${exit_status:-0}" VERIFY_FILE="$verification_file" CANDIDATE_OWNERSHIP="${BRAIN_CANDIDATE_OWNERSHIP_FILE:-}" STAGE_TIMINGS="${timing_entries:-}" node -e '
+      const fs=require("fs"),p=process.argv[1],e=process.env;const stages={};for(const item of e.STAGE_TIMINGS.split(",").filter(Boolean)){const [name,ms]=item.split(":");stages[name]={duration_ms:(stages[name]?.duration_ms||0)+Number(ms)};}
+      fs.writeFileSync(p+".new",JSON.stringify({timings:{request_id:e.STAGE_REQUEST,sha:e.SHA,stages},candidate_ownership_file:e.CANDIDATE_OWNERSHIP,status:e.STAGE_STATUS,request_id:e.STAGE_REQUEST,sha:e.SHA,image_id:e.IMAGE,version:e.VERSION,phase:e.STAGE_PHASE,exit_code:Number(e.STAGE_EXIT),isolated:e.STAGE_STATUS==="success",database:fs.existsSync(e.VERIFY_FILE)?JSON.parse(fs.readFileSync(e.VERIFY_FILE,"utf8")):null,verified_at:new Date().toISOString()}));fs.renameSync(p+".new",p);
     ' "$ROOT_DIR/logs/brain-staging-receipt.json"
 }
 
@@ -56,10 +57,12 @@ stage_candidate() (
     local postgres_image=pgvector/pgvector:pg17
     request_id="${STAGING_REQUEST_ID:-$(node -e 'process.stdout.write(require("crypto").randomUUID())')}"
     [[ "$request_id" =~ ^[a-f0-9-]{36}$ ]] || return 1
-    phase=preflight exit_status=0
+    phase=preflight exit_status=0 timing_entries= timing_phase=
     verification_file="$ROOT_DIR/logs/brain-staging-$request_id.database.json"
     stage_receipt running
-    trap 'exit_status=$?; if [[ "$exit_status" != 0 ]]; then stage_remove_container "$app" "$request_id" || true; stage_remove_container "$db" "$request_id" || true; stage_remove_network "$request_id" || true; stage_receipt failed || true; fi; candidate_image_cleanup "$sha" "$image" || echo "候选副本未回收，保留检查" >&2; exit "$exit_status"' EXIT
+    trap 'exit_status=$?; stage_timing_end || true; if [[ "$exit_status" != 0 ]]; then stage_timing_begin cleanup || true; stage_remove_container "$app" "$request_id" || true; stage_remove_container "$db" "$request_id" || true; stage_remove_network "$request_id" || true; stage_timing_end || true; stage_receipt failed || true; fi; candidate_image_cleanup "$sha" "$image" || echo "候选副本未回收，保留检查" >&2; exit "$exit_status"' EXIT
+    trap 'exit 143' TERM
+    trap 'exit 130' INT
     local actual_sha
     actual_sha=$(candidate_docker image inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$image" | sed -n 's/^GIT_SHA=//p')
     [[ "$actual_sha" == "$sha" ]] || { echo '候选镜像 SHA 不符' >&2; return 1; }
@@ -83,32 +86,17 @@ stage_candidate() (
         sleep 2
     done
     [[ "$ready" == true ]] || { echo '隔离数据库未就绪' >&2; return 1; }
-    phase=disk-budget
-    local estimated available
-    estimated=$(docker exec cecelia-node-brain node --input-type=module -e '
-      const {default:pg}=await import("pg");const {DB_DEFAULTS}=await import("./src/db-config.js");
-      const c=new pg.Client(DB_DEFAULTS);await c.connect();
-      try { const r=await c.query("SELECT COALESCE(sum(pg_total_relation_size(c.oid)),0)::text AS bytes FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname !~ $1 AND n.nspname<>$2 AND c.relkind=ANY($3)",["^pg_","information_schema",["r","m"]]);process.stdout.write(r.rows[0].bytes); }finally{await c.end();}
-    ')
-    available=$(candidate_docker exec "$db" df -Pk /var/lib/postgresql/data | awk 'NR==2 {print $4}')
-    [[ "$estimated" =~ ^[0-9]+$ && "$available" =~ ^[0-9]+$ ]] || return 1
-    (( available * 1024 > estimated * 2 + 5368709120 )) || { echo 'Docker盘不足以安全恢复候选快照' >&2; return 1; }
-    echo "[staging] snapshot_bytes=$estimated available_kib=$available"
-    echo '[staging] 只读完整快照 → 独立数据库；任一导出/恢复错误拒绝准入'
-    # 保留完整数据与外键关系；单表排除会使保留子表失去父行，严格恢复必须拒绝。
-    phase=snapshot-restore
-    docker exec cecelia-node-brain sh -ec '
-      test "$DB_NAME" = cecelia
-      export PGPASSWORD="$DB_PASSWORD"
-      exec pg_dump -h "$DB_HOST" -p "${DB_PORT:-5432}" -U "$DB_USER" -d "$DB_NAME" -Fc --no-owner --no-acl --compress=gzip:1
-    ' | candidate_docker exec -i "$db" pg_restore -h 127.0.0.1 --exit-on-error --no-owner --no-acl -U cecelia -d cecelia_staging
+    stage_snapshot_restore
     local env_args=(-e DB_HOST=stage-db -e DB_PORT=5432 -e DB_USER=cecelia -e DB_PASSWORD= \
         -e DB_NAME=cecelia_staging -e NODE_ENV=production -e BRAIN_PREVIEW=1 \
         -e CECELIA_TICK_ENABLED=false -e CECELIA_TICK_HARD_OFF=1 -e SKIP_MIGRATIONS=true \
         -e BRAIN_PORT=5222 -e HOME=/tmp)
     echo '[staging] 候选镜像迁移隔离数据库'
     phase=candidate-migration
+    stage_timing_begin migration
     candidate_docker run --rm --network "$network" "${env_args[@]}" "$image" node src/migrate.js
+    stage_timing_end
+    stage_timing_begin health_readback
     phase=candidate-start
     candidate_docker run -d --name "$app" --label cecelia.staging=admission-v1 --label "cecelia.staging.request=$request_id" --log-opt max-size=10m --log-opt max-file=2 --network "$network" --read-only --tmpfs /tmp:rw,size=256m \
         -p 127.0.0.1:5222:5222 "${env_args[@]}" \
@@ -129,11 +117,14 @@ stage_candidate() (
     phase=candidate-readback
     BRAIN_CANDIDATE_DOCKER_CONTEXT="${BRAIN_CANDIDATE_DOCKER_CONTEXT:-}" STAGING_VERIFY_OUTPUT="$verification_file" STAGING_CONTAINER="$app" EXPECTED_SHA="$sha" EXPECTED_VERSION="$version" bash "$SCRIPT_DIR/staging-verify.sh"
     # 同一发布锁内释放本次隔离快照；持久回执保留独立读回，不保留大体积运行资源。
+    stage_timing_end
     phase=cleanup
+    stage_timing_begin cleanup
     stage_remove_container "$app" "$request_id"
     stage_remove_container "$db" "$request_id"
     stage_remove_network "$request_id"
     candidate_image_cleanup "$sha" "$image" || echo "候选副本未回收，保留检查" >&2
+    stage_timing_end
     phase=verified
     stage_receipt success
     echo "STAGING_VERIFIED sha=$sha image=$image request=$request_id"
