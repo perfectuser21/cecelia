@@ -11,6 +11,8 @@ GP-Anchor: none(infra)
   Test: manual:node --test scripts/ci/__tests__/basic-nightly-health-attempt.test.mjs
 - [x] Nightly实际Start Brain Bash在第三次健康探测成功时输出3s，不读取无关i变量；原90次预算、触发和业务逻辑保留。
   Test: manual:node --test scripts/ci/__tests__/basic-nightly-health-attempt.test.mjs
+- [x] 仅实际child close且业务已验证并未abort时清理；超时/未知时保留产物并明确失败，真实writer退出后外层才清。
+  Test: manual:node --test packages/brain/scripts/smoke/__tests__/replay-fixture-cleanup.node-test.mjs
 - [ ] 独立review、正常PR必需CI及真实合并/后继发布由当前任务继续跟踪，不以本地通过声明发布完成。
   Test: manual:node scripts/ci/run-basic-check.mjs --list scripts
 
