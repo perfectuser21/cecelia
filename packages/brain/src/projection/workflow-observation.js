@@ -138,7 +138,7 @@ export function observeWorkflows(data) {
   return out;
 }
 
-/** SQL只读同一个source快照，不读取/投影凭据和整条任务指令。 */
+/** SQL只读同一个source快照，不读取/投影凭据和整条任务指令。去重和统计先缓存窄行，运行明细再按主键读取。 */
 export const WORKFLOW_OBSERVATION_PREFIX_SQL = `WITH
  task_associations AS (
    SELECT t.id AS task_id,w.id AS workflow_id FROM tasks t JOIN workflows w ON w.id::text=t.payload->>'workflow_id'
@@ -147,14 +147,14 @@ export const WORKFLOW_OBSERVATION_PREFIX_SQL = `WITH
  ),
  recent_task_ids AS (SELECT DISTINCT task_id FROM task_runs WHERE started_at>=now()-interval '7 days'),
  workflow_task_runs AS MATERIALIZED (
-   SELECT r.*,w.id AS resolved_workflow_id FROM task_runs r JOIN tasks t ON t.id=r.task_id
+   SELECT r.id,r.run_id,w.id AS resolved_workflow_id FROM task_runs r JOIN tasks t ON t.id=r.task_id
    JOIN workflows w ON w.id::text=COALESCE(r.workflow_id::text,
      CASE WHEN NOT COALESCE(r.context->'workflow_snapshot' ? 'workflow_id',false)
        OR lower(r.context->'workflow_snapshot'->>'workflow_id')=t.payload->>'workflow_id' THEN t.payload->>'workflow_id' END)
    WHERE (r.started_at>=now()-interval '30 days' OR r.ended_at IS NULL) AND r.started_at<=now()
  ),
  eligible_legacy_runs AS MATERIALIZED (
-   SELECT r.id,r.run_id,r.workflow_id,r.started_at,r.ended_at,r.outcome,r.duration_ms,r.notion_id,r.detail,r.header_source,r.executor_id,
+   SELECT r.id,r.run_id,r.workflow_id,r.started_at,r.outcome,r.duration_ms,
      row_number() OVER(PARTITION BY r.workflow_id ORDER BY r.started_at DESC,r.run_id DESC) AS position
    FROM runs r WHERE r.workflow_id IS NOT NULL AND r.started_at>=now()-interval '30 days' AND r.started_at<=now()
      AND NOT EXISTS(SELECT 1 FROM workflow_task_runs tr WHERE tr.run_id=r.run_id)
@@ -169,22 +169,24 @@ export const WORKFLOW_OBSERVATION_SQL = `
    WHERE t.created_at>=now()-interval '30 days' OR t.status IN ('queued','in_progress','blocked','paused')
      OR recent.task_id IS NOT NULL),'[]'::jsonb),
  'run_records',COALESCE((SELECT jsonb_agg(to_jsonb(x)) FROM (
-   SELECT r.id,r.run_id,r.task_id,r.resolved_workflow_id AS workflow_id,r.started_at,r.ended_at,r.status,NULL::text AS outcome,
+   SELECT r.id,r.run_id,r.task_id,tr.resolved_workflow_id AS workflow_id,r.started_at,r.ended_at,r.status,NULL::text AS outcome,
      NULL::bigint AS duration_ms,r.result,COALESCE(r.context,'{}'::jsonb) || jsonb_build_object('bound_definition',
        jsonb_build_object('id',v.id,'version',v.payload->'contract'->>'version','source_commit',v.source_commit)) AS context,
      r.notion_id,'task_runs'::text AS ledger
-     FROM workflow_task_runs r
-     LEFT JOIN run_definition_bindings b ON b.run_id=r.run_id AND b.workflow_id=r.resolved_workflow_id
+     FROM workflow_task_runs tr
+     JOIN task_runs r ON r.id=tr.id
+     LEFT JOIN run_definition_bindings b ON b.run_id=r.run_id AND b.workflow_id=tr.resolved_workflow_id
      LEFT JOIN workflow_definition_versions v ON v.id=b.workflow_definition_version_id AND v.workflow_id=b.workflow_id
    UNION ALL
-   SELECT r.id,r.run_id,NULL::uuid,r.workflow_id,r.started_at,r.ended_at,NULL::text,r.outcome,r.duration_ms,
+   SELECT r.id,r.run_id,NULL::uuid,r.workflow_id,r.started_at,legacy.ended_at,NULL::text,r.outcome,r.duration_ms,
      '{}'::jsonb,jsonb_build_object('bound_definition',jsonb_build_object('id',v.id,'version',v.payload->'contract'->>'version','source_commit',v.source_commit)),
-     r.notion_id,'runs'::text FROM eligible_legacy_runs r
+     legacy.notion_id,'runs'::text FROM eligible_legacy_runs r
+     JOIN runs legacy ON legacy.id=r.id
      LEFT JOIN run_definition_bindings b ON b.run_id=r.run_id AND b.workflow_id=r.workflow_id
      LEFT JOIN workflow_definition_versions v ON v.workflow_id=r.workflow_id AND (v.id=b.workflow_definition_version_id
-       OR (b.run_id IS NULL AND r.header_source='owner' AND r.executor_id='brain-native-maintenance'
-         AND r.detail->>'protocol'='workflow-assembly-native-v1' AND v.payload->>'protocol'='workflow-assembly-native-v1'
-         AND v.id::text=r.detail->>'workflow_definition_version_id' AND v.payload->'contract'->>'key'='workflow_assembly_reconcile.internal'))
+       OR (b.run_id IS NULL AND legacy.header_source='owner' AND legacy.executor_id='brain-native-maintenance'
+         AND legacy.detail->>'protocol'='workflow-assembly-native-v1' AND v.payload->>'protocol'='workflow-assembly-native-v1'
+         AND v.id::text=legacy.detail->>'workflow_definition_version_id' AND v.payload->'contract'->>'key'='workflow_assembly_reconcile.internal'))
      WHERE r.position<=20
  ) x),'[]'::jsonb),
  'run_summaries',COALESCE((SELECT jsonb_agg(to_jsonb(x)) FROM (

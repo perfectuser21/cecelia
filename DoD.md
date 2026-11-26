@@ -7,5 +7,7 @@ GP-Anchor: none(infra)
   Test: manual:npm test --workspace packages/brain -- src/cron/linux-root-disk.test.js
 - [ ] Staging、预览和 canary 不采样。Mac SSH 磁盘守卫与手动接口行为保留。
   Test: manual:npm test --workspace packages/brain -- src/cron/linux-root-disk.test.js src/cron/disk-guard.test.js src/routes/cron.test.js
+- [ ] 目录投影的运行账保留完整去重、回执及统计，避免宽行中间结果写入临时文件。
+  Test: manual:node scripts/ci/run-basic-check.mjs brain-integration
 - [ ] Brain 版本同步。
   Test: manual:bash scripts/check-version-sync.sh
