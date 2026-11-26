@@ -31,6 +31,34 @@ export async function confirmDiscovery(video, keyword, call) {
   return { summary:'已采集一条视频，业务数据与指标已入库读回', evidence:[url] };
 }
 
+const preparationModules = ['public-domain-snapshot.mjs','runtime-definition.mjs'];
+const runtimeModules = ['standalone-skill-runtime.mjs','standalone-skill-ipc.mjs'];
+
+function verifyToolkitFiles(root, files) {
+  for (const [entry, sha256] of Object.entries(files)) {
+    if (isAbsolute(entry) || entry.split('/').some(part=>!part||part==='.'||part==='..')) throw Error('standalone_provider_toolkit_unfrozen');
+    const file = join(root,entry);
+    const info = lstatSync(file,{throwIfNoEntry:false});
+    if (!info?.isFile() || realpathSync(file)!==file || (info.mode & 0o022)
+      || createHash('sha256').update(readFileSync(file)).digest('hex')!==sha256) throw Error('standalone_provider_toolkit_drift');
+  }
+}
+
+async function loadFrozenRuntime(directory, snapshot, profile) {
+  const root = join(directory,'runtime');
+  const files = profile.files ?? {};
+  const frozen = snapshot.files ?? {};
+  if (runtimeModules.some(name=>!Object.hasOwn(files,name))
+    || Object.entries(files).some(([name,hash])=>!Object.hasOwn(frozen,'runtime/'+name)||frozen['runtime/'+name]!==hash)) {
+    throw Error('standalone_provider_toolkit_unfrozen');
+  }
+  if (realpathSync(root)!==root) throw Error('standalone_provider_toolkit_drift');
+  verifyToolkitFiles(root,files);
+  // Native admission ties its module directory to the frozen runtime root.
+  const [native, ipc] = await Promise.all(runtimeModules.map(name=>import(pathToFileURL(join(root,name)).href)));
+  return {start:native.startStandaloneSkillRuntime,call:ipc.callStandaloneSkillTool};
+}
+
 export async function createDiscoveryServices(job, {profile, skillPath, stateRoot, phoneEnv={}, codex, toolkit}, {post, runModel} = {}) {
   const domain = profile?.domain_adapter;
   const cfg = domain?.config;
@@ -57,7 +85,7 @@ export async function createDiscoveryServices(job, {profile, skillPath, stateRoo
     || source.deployment?.observation_id !== job.definition?.observation_id || !validBusiness) {
     throw Error('standalone_profile_mismatch');
   }
-  const { hash, agentInput, preparePublicDomainSnapshot, startStandaloneSkillRuntime, callStandaloneSkillTool } = toolkit;
+  const { hash, agentInput, preparePublicDomainSnapshot } = toolkit;
   const skill = cfg.standalone_skill;
   const { max_duration_s:work, cleanup_grace_s:grace } = domain.budget;
   if (!uuid.test(job.run_id) || !uuid.test(job.task_id) || !isAbsolute(stateRoot) || realpathSync(stateRoot) !== stateRoot
@@ -90,7 +118,7 @@ export async function createDiscoveryServices(job, {profile, skillPath, stateRoo
   }]));
   const auth = runModel ? null : prepareCodexAuth(codex.auth,{codex:{args:[],env_keys:[]}});
   if (!runModel && (!auth || !isAbsolute(codex.command) || !codex.model)) throw Error('standalone_codex_unconfigured');
-  let nativeHost;
+  let nativeHost, callStandaloneSkillTool;
 
   return {
     async startHost() {
@@ -119,7 +147,9 @@ export async function createDiscoveryServices(job, {profile, skillPath, stateRoo
       ].map(field=>[field,snapshot.standalone_skill[field]]));
       const reply = await post('workflow-foundation/standalone/attest',{machine_id:job.machine_id,identity:attestation});
       if (reply.attested !== true) throw Error('standalone_attestation_unconfirmed');
-      nativeHost=await startStandaloneSkillRuntime({runDirectory:dir,environment:{...prepared.env,...phoneEnv}});
+      const runtime=await loadFrozenRuntime(dir,snapshot,profile);
+      nativeHost=await runtime.start({runDirectory:dir,environment:{...prepared.env,...phoneEnv}});
+      callStandaloneSkillTool=runtime.call;
       return nativeHost;
     },
     async runAgent({connectionPath}) {
@@ -180,16 +210,11 @@ export async function createProvider(job, options) {
   if (digest(profile) !== binding.profile_sha256) throw Error('standalone_provider_profile_drift');
   const root = profile.cwd;
   if (!isAbsolute(root) || realpathSync(root) !== root || !lstatSync(root).isDirectory()) throw Error('standalone_provider_root_invalid');
-  const modules = ['public-domain-snapshot.mjs','runtime-definition.mjs','standalone-skill-runtime.mjs','standalone-skill-ipc.mjs'];
-  if (modules.some(name=>!Object.hasOwn(profile.files ?? {},name))) throw Error('standalone_provider_toolkit_unfrozen');
-  for (const [entry,sha256] of Object.entries(profile.files)) {
-    if (isAbsolute(entry) || entry.split('/').some(part=>!part||part==='.'||part==='..')) throw Error('standalone_provider_toolkit_unfrozen');
-    const file = join(root,entry);
-    const info = lstatSync(file);
-    if (realpathSync(file)!==file || !info.isFile() || (info.mode & 0o022)
-      || createHash('sha256').update(readFileSync(file)).digest('hex')!==sha256) throw Error('standalone_provider_toolkit_drift');
+  if ([...preparationModules,...runtimeModules].some(name=>!Object.hasOwn(profile.files ?? {},name))) {
+    throw Error('standalone_provider_toolkit_unfrozen');
   }
-  const toolkit = Object.assign({}, ...await Promise.all(modules.map(name=>import(pathToFileURL(join(root,name)).href))));
+  verifyToolkitFiles(root,profile.files);
+  const toolkit = Object.assign({}, ...await Promise.all(preparationModules.map(name=>import(pathToFileURL(join(root,name)).href))));
   return createDiscoveryServices(job,{profile,skillPath:binding.skill_path,stateRoot:options.state_root,
     phoneEnv:binding.phone_env,codex:options.codex,toolkit},{
     post:async (endpoint,body)=>{

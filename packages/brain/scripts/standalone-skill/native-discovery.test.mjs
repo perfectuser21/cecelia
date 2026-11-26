@@ -43,10 +43,11 @@ test('只有原版本和原业务范围就绪才允许接触手机', async () =>
   await assert.rejects(createDiscoveryServices(job,{profile:{domain_adapter:{config:{snapshot:{release:{id:'other'}}}}}}),/standalone_profile_mismatch/);
 });
 
-test.each(['101','102','103'])('%s 按派单身份起跑并核证，已采集或评分的数据由宿主持久读回', async stage => {
-  const {writeFileSync,readFileSync,mkdtempSync,realpathSync,rmSync}=await import('node:fs');
+test.each([['101','bound'],['102','bound'],['103','bound'],['101','changed'],['101','unregistered']])('%s %s 经派单和 attestation 只加载本次冻结副本', async (stage,variant) => {
+  const {existsSync,mkdirSync,writeFileSync,readFileSync,mkdtempSync,realpathSync,rmSync}=await import('node:fs');
   const {tmpdir}=await import('node:os');
   const {join}=await import('node:path');
+  const {pathToFileURL}=await import('node:url');
   const {randomUUID,createHash}=await import('node:crypto');
   const root=mkdtempSync(join(realpathSync(tmpdir()),'native-direct-101-'));
   try {
@@ -64,7 +65,21 @@ test.each(['101','102','103'])('%s 按派单身份起跑并核证，已采集或
     const job={task_id:taskId,run_id:runId,machine_id:machine,release_id:release,claimer:'standalone:'+machine,claimed_at:new Date().toISOString(),
       definition:{workflow_definition_version_id:version,observation_id:observation},
       ...(hasSource?{workflow_key:key}:{}),input:{binding_key:'company',business:hasSource?{source_run:sourceRun}:{keyword:'AI办公',max_candidates:1}}};
-    const profile={metadata:{collect:{runtime_snapshot_sha256:'a'.repeat(64)}},domain_adapter:{budget:{max_duration_s:60,cleanup_grace_s:30},config:{
+    const installed=join(root,'installed'), runDir=join(root,runId), runRuntime=join(runDir,'runtime');
+    mkdirSync(installed,{mode:0o700});
+    const nativeEntry='standalone-skill-runtime.mjs', ipcEntry='standalone-skill-ipc.mjs';
+    const runtimeModule=`import {dirname,join} from 'node:path';
+      import {fileURLToPath} from 'node:url';
+      import {readFileSync,writeFileSync} from 'node:fs';
+      export async function startStandaloneSkillRuntime({runDirectory}) {
+        if (dirname(fileURLToPath(import.meta.url)) !== join(runDirectory,'runtime')) throw Error('EPOCH_ADMISSION_SCOPE');
+        if (readFileSync(join(runDirectory,'attested'),'utf8') !== JSON.parse(readFileSync(join(runDirectory,'run-definition.json'))).standalone_skill.run_id) throw Error('NOT_ATTESTED');
+        writeFileSync(join(runDirectory,'native-host-loaded'),'yes',{mode:0o600});
+        return {connectionPath:'fixture-connection',close:async()=>{},readEvidence:async()=>JSON.parse(readFileSync(join(runDirectory,'native-proof.json')))};
+      }`;
+    const ipcModule=`export async function callStandaloneSkillTool(){return {ok:true,result:{ok:true,result:{metrics_verified:true,metrics_digest:'abc'}}};}`;
+    const runtimeFiles={[nativeEntry]:Buffer.from(runtimeModule),[ipcEntry]:Buffer.from(ipcModule)};
+    const profile={cwd:installed,files:Object.fromEntries(Object.entries(runtimeFiles).map(([name,bytes])=>[name,hash(bytes)])),metadata:{collect:{runtime_snapshot_sha256:'a'.repeat(64)}},domain_adapter:{budget:{max_duration_s:60,cleanup_grace_s:30},config:{
       workflow_key:key,primary_host:'codex-exec-v1',company,standalone_skill:skill,
       resources:{machine,profile:scoring?'mmv-scoring':'bound',serial:scoring?'none':'fixture',line:'test',account:scoring?'none':'bound-account'},
       snapshot:{deployment:{source_commit:'b'.repeat(40),observation_id:observation},release:{id:release},workflow_version:{id:version},
@@ -73,19 +88,20 @@ test.each(['101','102','103'])('%s 按派单身份起跑并核证，已采集或
     let scope;
     const collectionProof={source_run:sourceRun,video_id:id,video_url:video.videoUrl,comment_ids:[commentId],
       coverage:'sampled',qualification:'matched',sample_target:1};
-    let readback=collectionProof;
+    for(const [name,bytes] of Object.entries(runtimeFiles)) writeFileSync(join(installed,name),bytes,{mode:0o600});
     const toolkit={
+      ...await import(pathToFileURL(join(installed,nativeEntry)).href),
+      ...await import(pathToFileURL(join(installed,ipcEntry)).href),
       hash,agentInput:env=>({task_id:env.WF_BRAIN_TASK_ID,limit:Number(env.LEADGEN_LIMIT),...(hasSource?{source_run:env.LEADGEN_SOURCE_RUN}:{})}),
-      preparePublicDomainSnapshot:({identity})=>({env:{},snapshot:{
-        standalone_skill:{...identity,company,scope,scope_sha256:hash(scope)},
-      }}),
-      startStandaloneSkillRuntime:async({runDirectory})=>{
-        calls.push('host');
-        assert.equal(JSON.parse(readFileSync(join(runDirectory,'run-definition.json'))).standalone_skill.run_id,runId);
-        return {connectionPath:'fixture-connection',close:async()=>{},...(scoring?{readEvidence:async()=>({comment_ids:[commentId],lead_ids:[leadId],delivery_states:{[outboxId]:'confirmed'}})}:collection?{readEvidence:async()=>readback}:{})};
+      preparePublicDomainSnapshot:({identity})=>{
+        mkdirSync(runRuntime,{mode:0o700});
+        for(const [name,bytes] of Object.entries(runtimeFiles)) writeFileSync(join(runRuntime,name),bytes,{mode:0o600});
+        const files=Object.fromEntries(Object.entries(profile.files).map(([name,digest])=>['runtime/'+name,digest]));
+        if(variant==='unregistered') delete files['runtime/'+nativeEntry];
+        return {env:{},snapshot:{files,standalone_skill:{...identity,company,scope,scope_sha256:hash(scope)}}};
       },
-      callStandaloneSkillTool:async()=>({ok:true,result:{ok:true,result:{metrics_verified:true,metrics_digest:'abc'}}}),
     };
+    const saveProof=proof=>writeFileSync(join(runDir,'native-proof.json'),JSON.stringify(proof),{mode:0o600});
     const services=await createDiscoveryServices(job,{profile,skillPath,stateRoot:root,toolkit},{
       post:async(path,body)=>{
         if (path.endsWith('/start-skill')) {
@@ -97,6 +113,9 @@ test.each(['101','102','103'])('%s 按派单身份起跑并核证，已采集或
         }
         calls.push('attest');
         assert.equal(body.identity.run_id,runId);
+        writeFileSync(join(runDir,'attested'),runId,{mode:0o600});
+        saveProof(scoring?{comment_ids:[commentId],lead_ids:[leadId],delivery_states:{[outboxId]:'confirmed'}}:collectionProof);
+        if(variant==='changed') writeFileSync(join(runRuntime,nativeEntry),"throw Error('unexpected import')");
         return {attested:true};
       },
       runModel:async({modelOutput,prompt})=>{
@@ -105,17 +124,25 @@ test.each(['101','102','103'])('%s 按派单身份起跑并核证，已采集或
         if(!hasSource)writeFileSync(modelOutput,JSON.stringify({video}),{mode:0o600});
       },
     });
+    if(variant!=='bound'){
+      const reason=variant==='changed'? /standalone_provider_toolkit_drift/:/standalone_provider_toolkit_unfrozen/;
+      await assert.rejects(services.startHost(),reason);
+      assert.equal(existsSync(join(runDir,'native-host-loaded')),false);
+      assert.deepEqual(calls,['start','attest']);
+      return;
+    }
     const host=await services.startHost();
+    assert.equal(readFileSync(join(runDir,'native-host-loaded'),'utf8'),'yes');
     await services.runAgent(host);
     const evidence=(await services.verifyBusiness(host)).evidence;
     if(scoring){assert.ok(evidence.some(value=>value.includes(commentId)));assert.ok(evidence.some(value=>value.includes(outboxId)));}
     else if(collection) {
       assert.deepEqual(evidence,[video.videoUrl,`leadgen:comment:${commentId}`]);
       for(const change of [{coverage:'partial'},{sample_target:2},{source_run:'other-source'},{qualification:'rejected'}]) {
-        readback={...collectionProof,...change};
+        saveProof({...collectionProof,...change});
         assert.equal(await services.verifyBusiness(host),null);
       }
     } else assert.deepEqual(evidence,[video.videoUrl]);
-    assert.deepEqual(calls,['start','attest','host','agent']);
+    assert.deepEqual(calls,['start','attest','agent']);
   } finally { rmSync(root,{recursive:true,force:true}); }
 });
