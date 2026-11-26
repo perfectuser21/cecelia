@@ -65,7 +65,7 @@ console.log(`[preview-agent] 部署令牌来源：${describeTokenSource(deployTo
 // 放进代理而不是另装一个 launchd：能不能起预览本就是代理的职责，一个服务负责到底，
 // 少一个会悄悄死掉又没人发现的独立组件。
 const AGENT_DIR = dirname(fileURLToPath(import.meta.url));
-// 发布后验活用：preview-host-release.sh 轮询 health，git_sha 等于目标才算切换成功
+// 运行身份供健康检查读回，git_sha 必须绑定实际运行快照。
 const GIT_SHA = resolveReleaseSha({ root: join(AGENT_DIR, '..') });
 const SAMPLER = join(AGENT_DIR, 'host-disk-sampler.sh');
 const SAMPLE_INTERVAL_MS = 60_000; // 远小于 180s 过期线，留足重试余量
