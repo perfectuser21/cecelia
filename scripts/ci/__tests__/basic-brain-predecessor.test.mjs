@@ -25,7 +25,7 @@ test('恢复compose自身失败不能被吞掉后打印Rolled back',t=>{
 test('当前镜像读取未知不能成为猜版本回退的授权',t=>{
  const f=runPredecessorScenario(t,'unknown-current-image');
  assert.equal(f.signal,null);assert.notEqual(f.exit_code,0);assert.equal(f.status.status,'failed');
- assert.equal(f.compose.length,1,'已知stopped不要求未知image被当成可自动恢复前驱');
+ assert.equal(f.compose.length,0,'现役镜像身份未知时自动准入必须在生产操作前拒绝');
  assert.doesNotMatch(f.stdout,/Rolled back/);
 });
 test('容器状态查询未知必须拒绝生产compose，不伪装成不存在',t=>{

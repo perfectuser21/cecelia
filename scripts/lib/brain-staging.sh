@@ -4,7 +4,11 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/brain-candidate-docker.sh"
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/brain-snapshot.sh"
 brain_release_lock() {
     mkdir -p "$ROOT_DIR/logs"
-    exec 9>"$ROOT_DIR/logs/brain-release.lock"
+    # A deploy-local child inherits the same open-file-description. Reopening would
+    # deadlock against its parent; a plain environment flag is never sufficient.
+    if ! node -e 'const fs=require("node:fs");try{const fd=fs.fstatSync(9),path=fs.statSync(process.argv[1]);process.exit(fd.isFile()&&fd.dev===path.dev&&fd.ino===path.ino?0:1)}catch{process.exit(1)}' "$ROOT_DIR/logs/brain-release.lock"; then
+        exec 9>"$ROOT_DIR/logs/brain-release.lock"
+    fi
     flock -x 9
     # 旧Brain自杀会释放FD9；固定sidecar仍运行时，切换事务尚未收尾。
     # 只读状态；查询失败也拒绝候选，不停止或接管sidecar。

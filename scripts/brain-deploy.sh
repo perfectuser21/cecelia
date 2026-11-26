@@ -193,6 +193,10 @@ if [[ "$DRY_RUN" == true ]]; then
 fi
 
 if [[ "$DRY_RUN" == false ]]; then
+    brain_release_lock
+    EXPECTED_SHA="${EXPECTED_SHA:-$(git -C "$ROOT_DIR" rev-parse HEAD)}"
+    git -C "$ROOT_DIR" fetch origin main || { echo 'DEPLOY_ORDER_UNKNOWN' >&2; exit 1; }
+    node "$SCRIPT_DIR/brain-image-retention/release-order.mjs" "$ROOT_DIR" "$EXPECTED_SHA"
     ensure_cecelia_internal_token "$CECELIA_INTERNAL_ENV_FILE" || exit 1
 fi
 
@@ -212,7 +216,6 @@ if [[ "$DEPLOY_MODE" == "docker" ]]; then
     fi
 
     if [[ "$DRY_RUN" == false ]]; then
-        brain_release_lock
         EXPECTED_SHA="${EXPECTED_SHA:-$(git -C "$ROOT_DIR" rev-parse HEAD)}"
         [[ "$EXPECTED_SHA" =~ ^[a-f0-9]{40}$ ]] || exit 1
         export EXPECTED_SHA

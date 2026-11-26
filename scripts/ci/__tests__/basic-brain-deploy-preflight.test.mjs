@@ -45,13 +45,14 @@ test('认证普通文本删除或新增可排除，未知重命名仍发布，�
   git(f.root, 'reset', '--hard', f.a); await f.put('.dod.md', 'new'); const target = f.commit();
   await f.put('packages/brain/server.js', 'uncommitted'); await assertDecision(f, false, target);
 });
-test('缺失SHA、未知commit、HEAD不符和非祖先均回原发布', async t => {
+test('缺失SHA、未知commit、HEAD不符和非祖先明确拒绝，不回原发布', async t => {
   const f = await fixture(t);
-  for (const target of ['', f.a.slice(0,12), 'f'.repeat(40)]) await assertDecision(f, true, target);
-  await f.put('.prd.md', 'next'); const next = f.commit(); await assertDecision(f, true, f.a);
+  const rejected = async target => { const proof = await assertDecision(f, false, target); assert.equal(proof.action, 'rejected'); };
+  for (const target of ['', f.a.slice(0,12), 'f'.repeat(40)]) await rejected(target);
+  await f.put('.prd.md', 'next'); const next = f.commit(); await rejected(f.a);
   f.state.git_sha = next; f.receipt.git_sha = next; f.health.git_sha = next;
-  git(f.root, 'reset', '--hard', f.a); await assertDecision(f, true, f.a);
-  f.state.git_sha = 'f'.repeat(40); f.receipt.git_sha = f.state.git_sha; f.health.git_sha = f.state.git_sha; await assertDecision(f, true);
+  git(f.root, 'reset', '--hard', f.a); await rejected(f.a);
+  f.state.git_sha = 'f'.repeat(40); f.receipt.git_sha = f.state.git_sha; f.health.git_sha = f.state.git_sha; await rejected();
 });
 test('任何不完整、失败、隔离或身份不一致的native证明都回原发布', async t => {
   const f = await fixture(t); const baseline = structuredClone([f.state,f.health]);

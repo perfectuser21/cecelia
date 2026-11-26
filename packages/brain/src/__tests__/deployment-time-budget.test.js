@@ -41,6 +41,13 @@ if [[ -n "$next" ]]; then echo "$next"; else echo $((n + \${1%.*})); fi > "$FIXT
 if (( GIT_DELAY_SECONDS > 0 )); then
   n=$(cat "$FIXTURE/clock"); echo $((n + GIT_DELAY_SECONDS)) > "$FIXTURE/clock"; exit 0
 fi
+if [[ "$GIT_DESCENDANT" == 1 ]]; then
+  case " $* " in
+    *" merge-base --is-ancestor $GITHUB_SHA $DESCENDANT_SHA "*) exit 0;;
+    *' merge-base --is-ancestor '*) exit 1;;
+    *) exit 0;;
+  esac
+fi
 [[ "$GIT_CONTAINS" == 1 ]]`);
   bin('curl', `n=$(cat "$FIXTURE/polls"); echo $((n + 1)) > "$FIXTURE/polls"
 printf '%s\\n' "$@" > "$FIXTURE/curlargs-$n"
@@ -53,7 +60,8 @@ while (($#)); do case "$1" in -o) out="$2"; shift;; -w) format="$2"; shift;; esa
 if [[ -n "$out" ]]; then printf '%s' "$body" > "$out"; else printf '%s' "$body"; fi
 case "$format" in '') :;; '%{http_code}') printf '200';; '\\n%{http_code}') printf '\\n200';; *) exit 64;; esac`);
   bin('status', 'exec curl fixture');
-  bin('trigger', 'echo 202');
+  bin('trigger', 'echo retrigger >> "$FIXTURE/trigger-calls"; echo 202');
+  writeFileSync(join(dir, 'trigger-calls'), '');
   return {
     dir,
     env: {
@@ -62,7 +70,7 @@ case "$format" in '') :;; '%{http_code}') printf '200';; '\\n%{http_code}') prin
       BRAIN_URL: 'http://fixture.invalid', EXPECTED_SHA: sha, GITHUB_SHA: sha, REPO_DIR: dir,
       // 与 main CD 一致；兼容祖先用例单独显式关闭精确模式，避免继承宿主环境改变覆盖路径。
       REQUIRE_EXACT_SHA: '1', POLL_INTERVAL_S: '', MAX_POLLS: '', MAX_RETRIGGER: '',
-      STATUS_CMD: '', TRIGGER_CMD: join(dir, 'bin/trigger'), HTTP_SECONDS: '0', GIT_DELAY_SECONDS: '0', GIT_CONTAINS: '0',
+      STATUS_CMD: '', TRIGGER_CMD: join(dir, 'bin/trigger'), HTTP_SECONDS: '0', GIT_DELAY_SECONDS: '0', GIT_CONTAINS: '0', GIT_DESCENDANT: '0', DESCENDANT_SHA: old,
     },
   };
 }
@@ -141,11 +149,14 @@ describe('deployment-time-budget：正式发布入口的有限预算与状态判
     expect(number(f, 'clock')).toBe(seconds);
   });
 
-  it('精确SHA模式拒绝后代成功收据，不发起祖先查询', async () => {
+  it('精确SHA模式不把后代收据当本次成功，次序拒绝后不重触发旧目标', async () => {
     const f = fixture();
     f.env.VALID = JSON.stringify({ ...valid, git_sha: old, settlement: { ...valid.settlement, git_sha: old } });
-    expect((await run(waitScript, f, { GIT_CONTAINS: '1', MAX_RETRIGGER: '0' })).status).toBe(1);
-    expect(readFileSync(join(f.dir, 'git-calls'), 'utf8')).toBe('');
+    const result = await run(waitScript, f, { GIT_DESCENDANT: '1', MAX_RETRIGGER: '2' });
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain('DEPLOY_TARGET_REJECTED');
+    expect(result.stdout).not.toContain('✅ SHA 比对通过');
+    expect(readFileSync(join(f.dir, 'trigger-calls'), 'utf8')).toBe('');
     expect(number(f, 'polls')).toBe(1);
   });
 

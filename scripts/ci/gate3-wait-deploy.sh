@@ -118,6 +118,15 @@ while [ "$POLL" -lt "$MAX_POLLS" ] && [ "$(date +%s)" -lt "$DEADLINE" ]; do
         exit 0
       fi
       if [ "$CONTAINS" != "是" ]; then
+        # A retry must never turn an older CI run into a rollback. Unknown Git
+        # objects/order are also rejected, rather than guessed to be deployable.
+        if ! [[ "$DEPLOYED" =~ ^[a-f0-9]{40}$ ]] \
+            || ! git -C "$REPO_DIR" cat-file -e "${DEPLOYED}^{commit}" 2>/dev/null \
+            || ! git -C "$REPO_DIR" cat-file -e "${TARGET_SHA}^{commit}" 2>/dev/null \
+            || ! git -C "$REPO_DIR" merge-base --is-ancestor "$DEPLOYED" "$TARGET_SHA" 2>/dev/null; then
+          echo "::error::DEPLOY_TARGET_REJECTED：现役新于目标、分叉或次序未知，禁止重触发"
+          exit 1
+        fi
         retrigger_or_fail "status=${STATUS} 但部署 sha $(short "$DEPLOYED") 不含本次提交"
       else
         echo "    ⏳ SHA在线但结算未确认，继续等待真实收据"

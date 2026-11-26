@@ -96,9 +96,9 @@ new_state "$(js running "$P")"
 { js running "$P"; js success "$B"; } > "$ST/on_trigger_1"
 run_sut "running旧→idle旧→重触发" 0 "包含本次提交" 1
 
-# T6 idle 旁支 sha（不含本次）→ 视为不含 → 重触发耗尽 → 失败
+# T6 旁支目标次序不明，直接拒绝，不能自动重触发回退
 new_state "$(js idle "$S")"
-run_sut "旁支sha→重触发耗尽失败" 1 "::error::" 2
+run_sut "旁支sha→拒绝且不重触发" 1 "DEPLOY_TARGET_REJECTED" 0
 
 # T7 idle 旧 sha 永远不变 → 重触发 2 次后 exit 1 且 ::error::
 new_state "$(js idle "$P")"

@@ -1,9 +1,9 @@
 import {afterEach,describe,expect,it} from 'vitest';
-import {mkdtempSync,mkdirSync,copyFileSync,writeFileSync,readFileSync,rmSync,existsSync,readdirSync} from 'node:fs';
+import {mkdtempSync,mkdirSync,copyFileSync,writeFileSync,readFileSync,rmSync,existsSync,readdirSync,realpathSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {resolve,join} from 'node:path';
-import {spawnSync} from 'node:child_process';
-const repo=resolve(import.meta.dirname,'../../../..'),sha='a'.repeat(40),digest=`sha256:${'b'.repeat(64)}`;
+import {spawnSync,execFileSync} from 'node:child_process';
+const repo=resolve(import.meta.dirname,'../../../..'),digest=`sha256:${'b'.repeat(64)}`;
 let dir;
 afterEach(()=>{if(dir)rmSync(dir,{recursive:true,force:true});});
 function run(mode){
@@ -12,6 +12,8 @@ function run(mode){
  for(const file of ['brain-deploy.sh','staging-deploy.sh','lib/brain-staging.sh','lib/brain-snapshot.sh','lib/brain-candidate-docker.sh','lib/brain-drain-client.sh','lib/brain-post-deploy.sh','staging-verify.sh']){
   const from=join(repo,'scripts',file);if(existsSync(from))copyFileSync(from,join(dir,'scripts',file));
  }
+ const deployEntry=join(dir,'scripts/brain-deploy.sh');
+ writeFileSync(deployEntry,readFileSync(deployEntry,'utf8').replace('DEPLOY_STATUS_FILE="/tmp/cecelia-deploy-status.json"',`DEPLOY_STATUS_FILE="${dir}/logs/deploy-status.json"`));
  writeFileSync(join(dir,'packages/brain/package.json'),JSON.stringify({version:'1.445.48'}));
  writeFileSync(join(dir,'scripts/lib/bluegreen.sh'),'send_bark(){ :; }\n');
  writeFileSync(join(dir,'scripts/lib/internal-auth-token.sh'),'ensure_cecelia_internal_token(){ :; }\n');
@@ -107,6 +109,14 @@ exit 0
  writeFileSync(join(dir,'bin/docker'),docker,{mode:0o755});
  writeFileSync(join(dir,'bin/sleep'),'#!/bin/sh\nexit 0\n',{mode:0o755});
  writeFileSync(join(dir,'bin/flock'),'#!/bin/sh\necho lock-acquired >> "$COMMANDS"\nexit 0\n',{mode:0o755});
+ // Preserve the real ordering/store code, with a private daemon and Git/main source.
+ const native=join(dir,'scripts/brain-image-retention');mkdirSync(native,{recursive:true});
+ for(const name of ['release-order.mjs','storage.mjs','policy.mjs'])copyFileSync(join(repo,'scripts/brain-image-retention',name),join(native,name));
+ const store=join(dir,'native-store');mkdirSync(store,{mode:0o700});
+ writeFileSync(join(native,'runtime.mjs'),`import {createStore} from './storage.mjs';export const ROOT=${JSON.stringify(realpathSync(store))};export async function createRuntime(){return {store:createStore(ROOT),docker:{snapshot:async()=>({containers:[{id:'c'.repeat(64),name:'/cecelia-node-brain',running:true,image_id:'sha256:'+'b'.repeat(64)}],images:[{id:'sha256:'+'b'.repeat(64),git_sha:process.env.SHA}]})}};}`);
+ const git=(...args)=>execFileSync('git',['-C',dir,...args],{encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
+ git('init','-q','-b','main');git('config','core.hooksPath','/dev/null');git('config','user.name','fixture');git('config','user.email','fixture@example.invalid');git('add','.');git('commit','-qm','private admission source');const sha=git('rev-parse','HEAD');
+ const origin=join(dir,'origin.git');git('init','--bare','-q',origin);git('remote','add','origin',origin);git('push','-q','origin','main');
  const env={...process.env,PATH:`${dir}/bin:${process.env.PATH}`,EXPECTED_SHA:sha,SHA:sha,DIGEST:digest,MODE:mode,
   EVENTS:join(dir,'events'),COMMANDS:join(dir,'commands'),STATE:join(dir,'state'),CECELIA_INTERNAL_TOKEN:'synthetic_production_token',CECELIA_INTERNAL_ENV_FILE:join(dir,'internal.env')};
  const result=spawnSync('bash',[join(dir,'scripts/brain-deploy.sh')],{env,encoding:'utf8',timeout:10000});
