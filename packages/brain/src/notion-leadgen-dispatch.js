@@ -1,6 +1,8 @@
 import { UUID } from './workflow-foundation/contracts.js';
 import { standaloneWorkflows } from './workflow-foundation/standalone-source.js';
 
+export const ENGLISH_TASKS_DB = 'd5bc40c2-ba63-82ef-965a-8153b7ad81a0';
+
 const invalid = code => Object.assign(new Error(code), { code });
 
 function readFields(body, allowedFields) {
@@ -50,14 +52,25 @@ export function inactiveLeadgenReason(stage, body) {
   }
 }
 
-export async function dispatchNotionLeadgen(pool, { stage, pageId, title, body, tenantId, bindings }, { createTask } = {}) {
+export function resolveNotionLeadgenBinding({ stage, pageId, title, body, tenantId, sourceDatabaseId, bindings }) {
   if (!Object.hasOwn(standaloneWorkflows, stage) || !UUID.test(pageId) || !title || typeof body !== 'string') {
     throw invalid('notion_leadgen_input_invalid');
   }
   const { company, business } = stage === '101' ? readInput(body) : readSourceInput(stage, body);
   const binding = bindings && Object.hasOwn(bindings, company) ? bindings[company] : null;
-  if (!binding || binding.tenant_id !== tenantId || !UUID.test(binding.workflow_id) || !UUID.test(binding.release_id)
+  if (!binding) throw invalid('notion_leadgen_binding_unavailable');
+  const tenantMatches = Object.hasOwn(binding, 'source_tenant_id')
+    ? stage === '101' && sourceDatabaseId === ENGLISH_TASKS_DB
+      && binding.source_tenant_id === tenantId && UUID.test(binding.tenant_id)
+    : binding.tenant_id === tenantId;
+  if (!tenantMatches || !UUID.test(binding.workflow_id) || !UUID.test(binding.release_id)
     || !/^[A-Za-z0-9_-]{1,100}$/.test(binding.binding_key ?? '')) throw invalid('notion_leadgen_binding_unavailable');
+  return { binding, business };
+}
+
+export async function dispatchNotionLeadgen(pool, params, { createTask } = {}) {
+  const { stage, pageId, title } = params;
+  const { binding, business } = resolveNotionLeadgenBinding(params);
   const register = createTask ?? (await import('./workflow-foundation/registry.js')).createFoundationTask;
   const { task } = await register(pool, {
     title: title.slice(0, 200),
@@ -65,6 +78,6 @@ export async function dispatchNotionLeadgen(pool, { stage, pageId, title, body, 
     release_id: binding.release_id,
     input: { binding_key: binding.binding_key, business },
     idempotency_key: `notion-${stage}:${pageId}`,
-  }, { notionPageId: pageId, notionTenantId: tenantId, ...(stage === '101' ? {} : { notionWorkflowKey: standaloneWorkflows[stage] }) });
+  }, { notionPageId: pageId, notionTenantId: binding.tenant_id, ...(stage === '101' ? {} : { notionWorkflowKey: standaloneWorkflows[stage] }) });
   return { taskId: task.id, kind: 'workflow_dispatch' };
 }

@@ -22,6 +22,7 @@ import {randomUUID} from 'node:crypto';
 import {runStandaloneWorkerOnce} from '../../../scripts/standalone-skill/worker.mjs';
 import {digest} from '../../orchestrator/commander-decision.js';
 import {createFoundationTask} from '../../workflow-foundation/registry.js';
+import {dispatchNotionLeadgen,ENGLISH_TASKS_DB} from '../../notion-leadgen-dispatch.js';
 import path from 'node:path';
 import {foundationHttpFixture,until} from '../fixtures/workflow-foundation-http.js';
 import processState from '../../orchestrator/activity-supervisor-state.cjs';
@@ -86,6 +87,24 @@ it('同一 Notion 页并发仅登记一个轻量任务并保留租户与原页�
  ]);
  await expect(submit({...input,input:{binding_key:'test_phone',business:{keyword:'输入漂移',max_candidates:1}}})).rejects.toMatchObject({code:'foundation_idempotency_conflict'});
  await expect(submit(input,{...source,notionTenantId:'other'})).rejects.toMatchObject({code:'foundation_idempotency_conflict'});
+},30000);
+
+it('真实英语 Tasks 101 的授权来源与目标租户分离，同页并发仍只有一个目标 task',async()=>{
+ fixture=await foundationHttpFixture({workflowKey:'douyin_video_discovery',releaseTarget:'mmv'});
+ const {registration,release}=await fixture.publish();
+ const pageId=randomUUID(), tenantId=randomUUID();
+ const opts={stage:'101',pageId,title:'隔离悦升101',body:'公司：悦升\n关键词：真实事务验收\n候选上限：1',
+  tenantId:'default',sourceDatabaseId:ENGLISH_TASKS_DB,bindings:{悦升:{source_tenant_id:'default',tenant_id:tenantId,
+   workflow_id:registration.workflow_id,release_id:release.id,binding_key:'approved-101'}}};
+ const submit=(request=opts)=>dispatchNotionLeadgen(fixture.pool,request);
+ const [first,second]=await Promise.all([submit(),submit()]);
+ expect(second.taskId).toBe(first.taskId);
+ await expect(submit({...opts,bindings:{悦升:{...opts.bindings.悦升,tenant_id:randomUUID()}}}))
+  .rejects.toMatchObject({code:'foundation_idempotency_conflict'});
+ const rows=(await fixture.pool.query("SELECT id,tenant_id,status,payload FROM tasks WHERE payload->>'notion_page_id'=$1",[pageId])).rows;
+ expect(rows).toEqual([expect.objectContaining({id:first.taskId,tenant_id:tenantId,status:'queued',
+  payload:expect.objectContaining({source:'notion_leadgen_101',notion_page_id:pageId})})]);
+ expect((await fixture.pool.query('SELECT count(*)::int AS count FROM task_runs WHERE task_id=$1',[first.taskId])).rows[0].count).toBe(0);
 },30000);
 
 it.each([

@@ -41,6 +41,43 @@ describe('Notion 101 fixed workflow dispatch', () => {
   });
 });
 
+describe('Notion 101 administrator-approved source tenant', () => {
+  const sourceDatabaseId = 'd5bc40c2-ba63-82ef-965a-8153b7ad81a0';
+  const targetTenant = '8d760098-abb7-43d5-ae95-dad7936e657f';
+  const parameters = { stage: '101', pageId, title: '悦升 101', body: defaultBody, tenantId: 'default', sourceDatabaseId };
+
+  it('allows the fixed English Tasks source and retains the actual provider tenant', async () => {
+    const { createTask, bindings } = fixture();
+    bindings.悦升 = { ...bindings.悦升, tenant_id: targetTenant, source_tenant_id: 'default' };
+    const result = await dispatchNotionLeadgen({}, { ...parameters, bindings }, { createTask });
+    expect(result.taskId).toBe('44444444-4444-4444-8444-444444444444');
+    expect(createTask.mock.calls[0][1]).toMatchObject({idempotency_key:'notion-101:' + pageId, release_id:firstRelease});
+    expect(createTask.mock.calls[0][2]).toEqual({notionPageId:pageId, notionTenantId:targetTenant});
+  });
+
+  it.each([
+    ['wrong source tenant', { tenantId: 'other' }],
+    ['wrong database', { sourceDatabaseId: '00000000-0000-4000-8000-000000000001' }],
+    ['no source database', { sourceDatabaseId: undefined }],
+    ['stage 102', { stage: '102', body: '公司：悦升\n来源运行：source-101' }],
+    ['different company', { body: defaultBody.replace('悦升', '其他公司') }],
+  ])('rejects %s without creating a task', async (_, override) => {
+    const { createTask, bindings } = fixture();
+    bindings.悦升 = { ...bindings.悦升, tenant_id: targetTenant, source_tenant_id: 'default' };
+    await expect(dispatchNotionLeadgen({}, { ...parameters, bindings, ...override }, { createTask }))
+      .rejects.toThrow('notion_leadgen_binding_unavailable');
+    expect(createTask).not.toHaveBeenCalled();
+  });
+
+  it('rejects an explicitly mapped non-UUID provider tenant', async () => {
+    const { createTask, bindings } = fixture();
+    bindings.悦升.source_tenant_id = 'default';
+    await expect(dispatchNotionLeadgen({}, { ...parameters, bindings }, { createTask }))
+      .rejects.toThrow('notion_leadgen_binding_unavailable');
+    expect(createTask).not.toHaveBeenCalled();
+  });
+});
+
 describe('Notion 102–104 independent dispatch', () => {
   it.each([
     ['102', '来源运行：comments-source-1', 'douyin_video_processing', { source_run: 'comments-source-1' }],
