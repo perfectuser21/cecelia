@@ -147,7 +147,7 @@ const requiredRuntimeChecks=[
   },
   {
     "name": "Verify Workflow registration to Brain and real DBOS execution",
-    "run": "npx vitest run --config vitest.integration.config.js src/__tests__/integration/workflow-foundation.pg.integration.test.js src/__tests__/integration/foundation-legacy-entrances.pg.integration.test.js --maxWorkers=1 --minWorkers=1",
+    "run": "npx vitest run --config vitest.integration.config.js src/__tests__/integration/workflow-foundation.pg.integration.test.js src/__tests__/integration/standalone-start-reconciliation.pg.integration.test.js src/__tests__/integration/foundation-legacy-entrances.pg.integration.test.js --maxWorkers=1 --minWorkers=1",
     "env": {
       "DB_NAME": "cecelia_scratch",
       "DB_HOST": "127.0.0.1",
