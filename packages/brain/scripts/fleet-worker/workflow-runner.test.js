@@ -7,6 +7,7 @@ const os=require('node:os');
 const path=require('node:path');
 const {randomUUID,createHash}=require('node:crypto');
 const {createWorkflowRunner,profileDigest}=require('./workflow-runner.cjs');
+const {drainWorkflowFixture,trackFixtureWorker}=require('./fixtures/drain-workflow-fixture.cjs');
 const hash=s=>createHash('sha256').update(s).digest('hex');
 function fixture(){
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'common-runner-'));
@@ -107,7 +108,7 @@ test('免清场只能由显式无资源且无finalize的固定profile声明',()=
 });
 
 test.each(['resume','startup finish race','recorder heartbeat crash','reserved heartbeat crash','missing receipt','damaged checkpoint','tampered profile','wrong identity','expired deadline','cancel requested','Commander pending','wrong supervisor birth','unprotected checkpoint','symlink manifest'])('OS Worker death: %s preserves one execution',async scenario=>{
- const f=fixture(),{fork}=require('node:child_process');let one,two;
+ const f=fixture(),{fork}=require('node:child_process');let one,two,supervisor;
  const ask=(child,action)=>new Promise(resolve=>{child.once('message',resolve);child.send({action,id:f.id});});
  const wait=async predicate=>{for(let i=0;i<300;i++){if(await predicate())return;await new Promise(r=>setTimeout(r,20));}throw Error('cold recovery timeout');};
  try{
@@ -118,8 +119,8 @@ test.each(['resume','startup finish race','recorder heartbeat crash','reserved h
  Object.assign(f.profile,{cleanup_required:false,resources:[]});f.profile.files['work.mjs']=hash(code);f.profile.files['skill.md']=hash('Return forty two');Object.assign(f.profile.metadata.work,{executor_kind:'agent',skill:{entry:'skill.md',version:'v1'}});f.profile.contract.activities[0].budget.max_duration_s=15;f.id.profile_sha256=profileDigest(f.profile);
  const config=path.join(f.root,'worker.json'),stateRoot=path.join(f.root,'state');fs.writeFileSync(config,JSON.stringify({stateRoot,machineId:'test',profiles:{demo:f.profile}}));
  const canResume=['resume','startup finish race','recorder heartbeat crash','reserved heartbeat crash'].includes(scenario);
- const start=(crash=false)=>fork(path.join(import.meta.dirname,scenario==='startup finish race'&&!crash?'fixtures/startup-finish-race.cjs':'fixtures/cold-recovery-worker.cjs'),[config,...(scenario==='startup finish race'&&!crash?[f.id.run_id]:[]),...(scenario.endsWith('heartbeat crash')?['real-recorder',...(crash?[scenario==='reserved heartbeat crash'?'crash-before-heartbeat':'crash-heartbeat']:[])]:[])],{stdio:['ignore','pipe','pipe','ipc']});
- one=start(true);const died=new Promise(resolve=>one.once('exit',(code,signal)=>resolve({code,signal})));await ask(one,'start');await wait(()=>fs.existsSync(path.join(f.root,'effects')));if(scenario==='resume')await wait(()=>fs.readFileSync(path.join(stateRoot,'events'),'utf8').includes('ACTIVITY_HEARTBEAT'));
+ const start=(crash=false)=>trackFixtureWorker(fork(path.join(import.meta.dirname,scenario==='startup finish race'&&!crash?'fixtures/startup-finish-race.cjs':'fixtures/cold-recovery-worker.cjs'),[config,...(scenario==='startup finish race'&&!crash?[f.id.run_id]:[]),...(scenario.endsWith('heartbeat crash')?['real-recorder',...(crash?[scenario==='reserved heartbeat crash'?'crash-before-heartbeat':'crash-heartbeat']:[])]:[])],{stdio:['ignore','pipe','pipe','ipc']}));
+ one=start(true);const died=new Promise(resolve=>one.once('exit',(code,signal)=>resolve({code,signal})));await ask(one,'start');await wait(()=>fs.existsSync(path.join(f.root,'effects')));const directory=path.join(stateRoot,f.id.run_id,'activity-supervisor');supervisor={...JSON.parse(fs.readFileSync(path.join(directory,'manifest.json'),'utf8')),directory};if(scenario==='resume')await wait(()=>fs.readFileSync(path.join(stateRoot,'events'),'utf8').includes('ACTIVITY_HEARTBEAT'));
  if(!scenario.endsWith('heartbeat crash'))one.kill('SIGKILL');assert.equal((await died).signal,'SIGKILL');
  const stateFile=path.join(stateRoot,f.id.run_id+'.json'),state=JSON.parse(fs.readFileSync(stateFile,'utf8'));
  if(scenario==='recorder heartbeat crash'){const rows=fs.readFileSync(path.join(stateRoot,f.id.run_id,'events.jsonl'),'utf8').trim().split('\n').map(JSON.parse);assert.equal(rows.at(-1).event.event_type,'ACTIVITY_HEARTBEAT');assert.ok(state.continuation);assert.equal(state.event_cursor,rows.at(-1).event.cursor);assert.ok(state.progress.cursor<state.event_cursor);}
@@ -142,7 +143,56 @@ test.each(['resume','startup finish race','recorder heartbeat crash','reserved h
  assert.equal(fs.readFileSync(path.join(f.root,'commander-calls'),'utf8'),beforeCalls);
  if(scenario.endsWith('heartbeat crash')){const events=fs.readFileSync(path.join(stateRoot,f.id.run_id,'events.jsonl'),'utf8').trim().split('\n').map(JSON.parse).filter(row=>row.kind==='event').map(row=>row.event);assert.equal(new Set(events.map(e=>e.cursor)).size,events.length);assert.equal(events.filter(e=>e.event_type==='ACTIVITY_STARTED').length,1);assert.equal(events.filter(e=>e.event_type==='ACTIVITY_FINISHED').length,1);if(scenario==='reserved heartbeat crash')assert.equal(events.some(e=>e.cursor===state.event_cursor),false);}
  const events=fs.readFileSync(path.join(stateRoot,'events'),'utf8').trim().split('\n').map(JSON.parse);assert.equal(events.filter(e=>e.event_type==='ACTIVITY_STARTED').length,1);assert.equal(events.filter(e=>e.event_type==='WF_RUN_STARTED').length,1);assert.equal(new Set(events.map(e=>e.cursor)).size,events.length);
- }finally{fs.writeFileSync(path.join(f.root,'release'),'yes');one?.kill('SIGKILL');two?.kill('SIGKILL');await new Promise(r=>setTimeout(r,100));fs.rmSync(f.root,{recursive:true,force:true});}
+ }finally{await drainWorkflowFixture({root:f.root,workers:[one,two],supervisor});}
+});
+
+test('fixture cleanup waits for the real detached supervisor final write',async()=>{
+ const f=fixture(),gate=fs.mkdtempSync(path.join(os.tmpdir(),'fixture-drain-gate-'));
+ const {startSupervisedActivity}=await import('../../src/orchestrator/activity-supervisor.js');
+ const pending=path.join(gate,'pending'),finish=path.join(gate,'finish');
+ const code=`import fs from 'node:fs';let s='';for await(const c of process.stdin)s+=c;const x=JSON.parse(s);fs.appendFileSync('effects','x');fs.writeFileSync(${JSON.stringify(pending)},'ready');while(!fs.existsSync('release'))await new Promise(r=>setTimeout(r,10));while(!fs.existsSync(${JSON.stringify(finish)}))await new Promise(r=>setTimeout(r,10));console.log(JSON.stringify({schema_version:1,run_tag:x.run_tag,status:'completed',outputs:{answer:42},metrics:{},evidence:[]}));`;
+ fs.writeFileSync(path.join(f.root,'work.mjs'),code);
+ const directory=path.join(f.root,'state','activity-supervisor'),binding={task_id:f.id.task_id,run_id:f.id.run_id};
+ const execution=startSupervisedActivity(directory,binding,f.profile.contract.activities[0],f.id.input,{cwd:f.root},Date.now()+5000);
+ execution.catch(()=>{});
+ const wait=async predicate=>{for(let i=0;i<300;i++){if(predicate())return;await new Promise(r=>setTimeout(r,10));}throw Error('fixture gate not reached');};
+ let cleanup,settled=false;
+ try{
+  await wait(()=>fs.existsSync(pending));
+  const supervisor={...JSON.parse(fs.readFileSync(path.join(directory,'manifest.json'),'utf8')),directory};
+  cleanup=drainWorkflowFixture({root:f.root,supervisor});cleanup.then(()=>{settled=true;},()=>{});
+  await wait(()=>fs.existsSync(pending));
+  // 受控业务门未打开时，清理必须仍在等待真实最终写者；不是用延迟代替清理屏障。
+  await new Promise(resolve=>setTimeout(resolve,200));
+  assert.equal(settled,false,'cleanup returned while owned supervisor still needs to publish');
+  assert.equal(fs.existsSync(directory),true);
+  fs.writeFileSync(finish,'yes');
+  const result=await cleanup;assert.equal(JSON.parse(result.transport.stdout).outputs.answer,42);
+  await execution.catch(()=>{});assert.equal(fs.existsSync(f.root),false);
+ }finally{
+  fs.writeFileSync(finish,'yes');
+  await execution.catch(()=>{});await cleanup?.catch(()=>{});
+  fs.rmSync(gate,{recursive:true,force:true});
+ }
+},10000);
+
+test('fixture cleanup rejects a symlink final receipt and keeps owned evidence',async()=>{
+ const f=fixture(),outside=fs.mkdtempSync(path.join(os.tmpdir(),'fixture-outside-receipt-'));
+ const directory=path.join(f.root,'state',f.id.run_id,'activity-supervisor');
+ fs.mkdirSync(directory,{recursive:true,mode:0o700});
+ const stateModule=require.resolve('../../src/orchestrator/activity-supervisor-state.cjs');
+ const script=`const {processBirth}=require(${JSON.stringify(stateModule)});console.log(JSON.stringify({pid:process.pid,birth:processBirth(process.pid)}));`;
+ const owner=JSON.parse(require('node:child_process').execFileSync(process.execPath,['-e',script],{encoding:'utf8'}));
+ const supervisor={...owner,directory,nonce:'fixture-nonce',binding:{run_id:f.id.run_id},deadline:Date.now()+5000,cleanup_grace_s:0};
+ const transport={stdout:'{}'},external=path.join(outside,'result.json');
+ fs.writeFileSync(external,JSON.stringify({protocol:'activity-supervisor-result/v1',nonce:supervisor.nonce,binding:supervisor.binding,deadline:supervisor.deadline,transport,transport_sha256:profileDigest(transport)}),{mode:0o600});
+ fs.symlinkSync(external,path.join(directory,'result.json'));
+ try{
+  await assert.rejects(drainWorkflowFixture({root:f.root,supervisor}),/ELOOP|symbolic|unprotected/);
+  assert.equal(fs.existsSync(f.root),true,'unsafe receipt must preserve fixture evidence');
+  assert.equal(fs.lstatSync(path.join(directory,'result.json')).isSymbolicLink(),true);
+  assert.equal(fs.existsSync(external),true);
+ }finally{fs.rmSync(f.root,{recursive:true,force:true});fs.rmSync(outside,{recursive:true,force:true});}
 });
 
 test('expired supervised attempt refuses all new process launch',async()=>{
