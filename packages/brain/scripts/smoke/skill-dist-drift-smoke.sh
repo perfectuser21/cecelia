@@ -4,7 +4,7 @@
 #   1. 清单脚本：同内容不同 mtime 哈希相同；改一个字节该 skill 与 tree_hash 变；悬空符号链接进 broken 不进 tree_hash
 #   2. 漂移检测：改一个 skill → drift；ssh 失败 → unreachable 且不产生 missing（不当零个 skill）
 #   3. 渲染：漂移 → 晨报 🟡 AMBER；一致 → 无行
-#   4. 接线：scheduler 注册 skill-dist-drift；晨报/日报接 skill-dist-report；同步脚本默认 dry-run 且 rsync -L
+#   4. 接线：scheduler 注册 skill-dist-drift；晨报及通用渲染器接 skill-dist-report；同步脚本默认 dry-run 且 rsync -L
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
@@ -72,7 +72,6 @@ node -e "
 const fs = require('fs');
 const checks = [
   ['src/scheduler-jobs.js', [\"name: 'skill-dist-drift'\", 'runSkillDistDrift(pool)']],
-  ['src/daily-report-generator.js', ['readSkillDistState(dbPool)', 'renderSkillDistSection']],
   ['src/morning-cockpit-bark.js', ['fetchSkillDistLine', 'renderSkillDistLine']],
   ['../../scripts/skill-sync-to-runners.sh', ['rsync -azL', '模式=\$MODE', 'MODE=\"dry-run\"']],
 ];
@@ -82,7 +81,7 @@ for (const [file, needles] of checks) {
   for (const n of needles) if (!src.includes(n)) { console.error('FAIL ' + file + ' 缺少: ' + n); fail = true; }
 }
 if (fail) process.exit(1);
-console.log('scheduler / 日报 / 晨报 / 同步脚本 全部接线 ✓');
+console.log('scheduler / 晨报 / 同步脚本 全部接线 ✓');
 "
 
 echo "[skill-dist-drift-smoke] PASS"

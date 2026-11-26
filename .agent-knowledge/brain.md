@@ -170,11 +170,9 @@ API：`GET /api/brain/pipelines/:id/stats` — 返回该 pipeline 各平台数�
 
 ---
 
-## 内容飞轮调度模块（2026-03-30 新增）
+## 内置日报（已退役）
 
-| 文件 | 职责 |
-|------|------|
-| `src/daily-report-generator.js` | 每日内容日报生成器：UTC 01:00（北京时间 09:00）触发，查询昨日 content-pipeline 完成数、各平台发布统计、数据回收、异常告警，写入 working_memory + 通过 notifier.js 推送飞书。幂等机制：working_memory key=daily_report_triggered_{DATE}。 |
+Brain 1.445.300 清退无现役触发入口的内置日报及其 DBOS 注册；公共 Runner、Commander 和晨报底层能力保留。历史日报记录不删除。
 
 ---
 
