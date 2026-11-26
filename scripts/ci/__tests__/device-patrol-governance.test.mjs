@@ -14,7 +14,7 @@ test('仅接受固定Git测试单行公开UUID误报，不扩大ignore范围',()
  assert.throws(()=>validatePatrolSecretIgnore('# prior\n','# prior\n'+row+'\n',()=>"api_key = 'real-secret'"));
 });
 
-function documentFixture(path,{authoringBefore,authoringAfter,executable=false}={}){
+function documentFixture(path,{authoringBefore,authoringAfter,executable=false,scopedFiles,additionalTest}={}){
  const root=mkdtempSync(join(tmpdir(),'patrol-governance-')),repo=join(root,'repo');mkdirSync(repo);
  const git=(...args)=>execFileSync('git',args,{cwd:repo,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
  const write=(path,value)=>{mkdirSync(dirname(join(repo,path)),{recursive:true});writeFileSync(join(repo,path),value);};
@@ -26,16 +26,20 @@ function documentFixture(path,{authoringBefore,authoringAfter,executable=false}=
   {id:'66fe22f5-1a60-4e23-bcfb-7b4df2f0fbff',key:'single-phone-account-patrol',activities:[{id:'d51eefa1-0ffd-43d7-94ba-16ff6b4d3800',key:'device-readiness',bindings:['scripts/phone-account-patrol/preflight.py'],assertion_ref:PATROL_ASSERTION}]},
   {id:'7dfd3b5d-bc5a-4d96-b744-10d26bc7eb70',key:'phone-account-patrol-batch',activities:[{id:'b33c9f29-5c5f-4fb1-908c-475bb9566085',key:'enabled-phone-list',bindings:['scripts/phone-account-patrol/runner.py'],assertion_ref:PATROL_ASSERTION}]}],auxiliary_paths:[PATROL_PATH,assertionPath],maintenance_owner:'主理人',schedule:{time:'22:00',timezone:'Asia/Shanghai'}};
  write(PATROL_PATH,JSON.stringify(contract));write('scripts/phone-account-patrol/preflight.py','READY = True\n');write('scripts/phone-account-patrol/runner.py','BATCH = True\n');
+ if(scopedFiles)for(const [name,bytes] of Object.entries(scopedFiles))write('scripts/phone-account-patrol/'+name,bytes);
  write(assertionPath,"import {test} from 'node:test'; import assert from 'node:assert/strict'; import {readFileSync} from 'node:fs'; test('actual isolated source bytes',()=>assert.equal(readFileSync('scripts/phone-account-patrol/preflight.py','utf8'),'READY = True\\n')); test('central read credential is unavailable to candidate assertions',()=>assert.equal(process.env.SKILLS_SOURCE_SSH_KEY,undefined));\n");
  git('add','.');git('commit','--quiet','-m','actual introduced source');const introduced=git('rev-parse','HEAD');
  const source=patrolSourceProof(contract,introduced,path=>execFileSync('git',['show',`${introduced}:${path}`],{cwd:repo}));
  const registration={provenance:{base_revision:base,introduced_revision:introduced,base_tree_sha:baseTree,base_paths:['README.md'],introduced_paths:git('ls-tree','-r','--name-only',introduced).split('\n'),compare_status:'ahead',actor:'isolated regression fixture'},source};
- write(path,authoringAfter??'## 真实交付说明\n');git('add','.');
+ write(path,typeof authoringAfter==='function'?authoringAfter(introduced):authoringAfter??'## 真实交付说明\n');
+ if(additionalTest!==undefined)write('services/phone-adb-controller/patrol/contracts/definitions.test.mjs',additionalTest);
+ git('add','.');
  if(executable){chmodSync(join(repo,path),0o755);git('update-index','--chmod=+x',path);}
  git('commit','--quiet','-m','delivery documentation');const head=git('rev-parse','HEAD');
  const snapshot=(revision,file)=>{const body={schema_version:1,scope:PATROL_SCOPE,repo:PATROL_REPO,purpose:'scope_identity_bootstrap_only',revision_basis:'requested_ci_input_not_source_attestation',status:'verified',gaps:[],revision,registration,registration_sha256:sha(JSON.stringify(canonical(registration)))};writeFileSync(file,JSON.stringify({...body,snapshot_sha256:sha(JSON.stringify(canonical(body)))}));};
- const snapshotBase=join(root,'base.json'),snapshotHead=join(root,'head.json');snapshot(base,snapshotBase);snapshot(head,snapshotHead);
- return {root,repo,options:{repoRoot:repo,scope:PATROL_SCOPE,mode:'pr',base,head,snapshotBase,snapshotHead,outputDir:join(root,'evidence')}};
+ const gateBase=scopedFiles?introduced:base;
+ const snapshotBase=join(root,'base.json'),snapshotHead=join(root,'head.json');snapshot(gateBase,snapshotBase);snapshot(head,snapshotHead);
+ return {root,repo,options:{repoRoot:repo,scope:PATROL_SCOPE,mode:'pr',base:gateBase,head,snapshotBase,snapshotHead,outputDir:join(root,'evidence')}};
 }
 test('真实Git交付Learning归开发治理，不作为手机Activity或扩大aux',async()=>{
  const path='docs/learnings/cp-10101635-phone-account-patrol.md',fixture=documentFixture(path);
@@ -86,6 +90,60 @@ test('拒绝额外内容、回退或非标准版头、文件模式变化、文�
   try{await assert.rejects(runDevicePatrolGate(fixture.options),/PATROL_(?:AUTHORING_VERSION_INVALID|CHANGED_FILE_UNCLAIMED):/);}
   finally{rmSync(fixture.root,{recursive:true,force:true});}
  }
+});
+
+const singlePath='services/phone-adb-controller/patrol/contracts/single.json';
+const scopedTestPath='services/phone-adb-controller/patrol/contracts/definitions.test.mjs';
+const scopedFiles=Object.fromEntries(['dispatch.py','preflight.py','collector.py','ocr.swift','publish.mjs','mirror.mjs','runner.py'].map(name=>[name,`fixed test bytes for ${name}\n`]));
+const existingPhone='864154c57e88e8085d2add741a79103a28891a44';
+const command=(revision,serial)=>`/usr/bin/python3 /Users/administrator/.local/share/phone-account-patrol/releases/${revision}/runner.py phone --serial ${serial} --execution-script "$0"`;
+
+function scopedFixture(mutate,additionalTest="import assert from 'node:assert/strict'; assert.ok(true);\n"){
+ const prior={
+  key:'single-phone-account-patrol',version:'0.1.393',
+  runtime:{entrypoint:command(existingPhone,'{{phone_serial}}'),script:{host:'mmv',cwd:null,env:{},commands:[command(existingPhone,'{{phone_serial}}')]}},
+  input_schema:{properties:{source_revision:{enum:[existingPhone]},phone_source_revision:{enum:[existingPhone]}}},
+  activities:Object.keys(scopedFiles).map(name=>({key:name,implementation:{kind:'code',repo:PATROL_REPO,path:'scripts/phone-account-patrol/'+name,revision:existingPhone,version:existingPhone,digest:'sha256:'+sha(name)}})),
+ };
+ const authoringAfter=revision=>{
+  const next=structuredClone(prior);next.version='0.1.394';
+  next.runtime.script.commands.push(command(revision,'ANGYVB4311010223'));
+  for(const key of ['source_revision','phone_source_revision'])next.input_schema.properties[key].enum.push(revision);
+  for(const row of next.activities)row.implementation_bindings=[{...row.implementation,revision,version:revision,digest:'sha256:'+sha(scopedFiles[row.key])}];
+  mutate?.(next);
+  return JSON.stringify(next,null,2)+'\n';
+ };
+ return documentFixture(singlePath,{authoringBefore:JSON.stringify(prior,null,2)+'\n',authoringAfter,scopedFiles,additionalTest});
+}
+
+test('单机真实 Git 固定包只追加小彩候选且执行指定的定义测试',async()=>{
+ const fixture=scopedFixture();
+ try{
+  const {report,receipt}=await runDevicePatrolGate(fixture.options);
+  assert.equal(receipt.verdict,'PASS');
+  assert.equal(report.file_coverage.find(row=>row.path===singlePath)?.kind,'fixed_single_patrol_candidate');
+  assert.ok(receipt.assertions.some(row=>row.assertion_ref===`node --test ${scopedTestPath}`&&row.exit_code===0));
+ }finally{rmSync(fixture.root,{recursive:true,force:true});}
+});
+
+test('单机候选拒绝扩设备、改默认、篡改绑定和额外活动',async()=>{
+ for(const mutate of [
+  next=>{next.runtime.script.commands[1]=next.runtime.script.commands[1].replace('ANGYVB4311010223','e6c7ef34');},
+  next=>{next.runtime.entrypoint=next.runtime.script.commands[1];},
+  next=>{next.activities[0].implementation_bindings[0].digest='sha256:'+'0'.repeat(64);},
+  next=>{next.activities[0].implementation_bindings.push({...next.activities[0].implementation_bindings[0],path:'scripts/phone-account-patrol/other.py'});},
+  next=>{next.activities.push(next.activities[0]);},
+ ]){
+  const fixture=scopedFixture(mutate);
+  try{await assert.rejects(runDevicePatrolGate(fixture.options),/PATROL_AUTHORING_VERSION_INVALID:/);}
+  finally{rmSync(fixture.root,{recursive:true,force:true});}
+ }
+});
+
+test('新增固定单机的定义测试失败时不发成功凭证',async()=>{
+ const fixture=scopedFixture(undefined,"import assert from 'node:assert/strict'; assert.ok(false);\n");
+ try{await assert.rejects(runDevicePatrolGate(fixture.options),/PATROL_REGRESSION_FAILED/);}
+ finally{rmSync(fixture.root,{recursive:true,force:true});}
 });
 
 test('本次infra领跑PRD与DoD真实Git准入归开发治理，手机身份不变',async()=>{
