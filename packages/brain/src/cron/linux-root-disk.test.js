@@ -20,7 +20,9 @@ function fixture() {
     env,
     now,
     readFile: vi.fn().mockResolvedValue(mountinfo),
-    statfs: vi.fn().mockResolvedValue({ blocks: 105, bfree: 7, bavail: 2, bsize: 4096 }),
+    execFile: vi.fn().mockResolvedValue({
+      stdout: 'Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/vda1 420 392 8 98% /root/cecelia\n',
+    }),
     raise: vi.fn().mockResolvedValue(undefined),
   };
 }
@@ -32,12 +34,12 @@ describe('US Linux 根卷容量调度', () => {
     await expect(job.handler(deps)).resolves.toEqual({
       device: '/dev/vda1', usedPercent: 98, availableBytes: 8192,
     });
-    expect(deps.statfs.mock.calls.map(([path]) => path)).toEqual(['/root/cecelia']);
+    expect(deps.execFile.mock.calls.map(([file, args]) => [file, args])).toEqual([['df', ['-Pk', '/root/cecelia']]]);
     expect(deps.raise).toHaveBeenCalledWith(
       'P1', 'disk_linux_root_critical', expect.stringContaining('98%'), expect.anything(),
     );
     await expect(job.handler({ ...deps, now: deps.now + 60_000 })).resolves.toMatchObject({ skipped: true });
-    expect(deps.statfs).toHaveBeenCalledOnce();
+    expect(deps.execFile).toHaveBeenCalledOnce();
     expect(deps.raise).toHaveBeenCalledOnce();
   });
 
@@ -49,7 +51,7 @@ describe('US Linux 根卷容量调度', () => {
     const deps = fixture();
     deps.readFile.mockResolvedValue(badMountinfo);
     await expect(job.handler(deps)).rejects.toThrow('/root/cecelia');
-    expect(deps.statfs).not.toHaveBeenCalled();
+    expect(deps.execFile).not.toHaveBeenCalled();
     expect(deps.raise).toHaveBeenCalledWith(
       'P1', 'disk_linux_root_unavailable', expect.stringContaining('/dev/vda1'), expect.anything(),
     );
@@ -59,17 +61,20 @@ describe('US Linux 根卷容量调度', () => {
     [{}, '未启用'],
     [{ ...env, DB_NAME: 'cecelia_staging' }, 'staging'],
     [{ ...env, BRAIN_PREVIEW: 'true' }, 'preview'],
+    [{ ...env, BRAIN_DEPLOY_CANARY: '1' }, 'canary'],
   ])('%j（%s）不采样、不告警', async (runtimeEnv) => {
     const deps = fixture();
     await expect(job.handler({ ...deps, env: runtimeEnv })).resolves.toMatchObject({ skipped: true });
     expect(deps.readFile).not.toHaveBeenCalled();
-    expect(deps.statfs).not.toHaveBeenCalled();
+    expect(deps.execFile).not.toHaveBeenCalled();
     expect(deps.raise).not.toHaveBeenCalled();
   });
 
   it.each([[80, 'P2'], [79, null]])('根卷已用 %d%% 时按阈值告警', async (usedPercent, level) => {
     const deps = fixture();
-    deps.statfs.mockResolvedValue({ blocks: 105, bfree: 105 - usedPercent, bavail: 100 - usedPercent, bsize: 4096 });
+    deps.execFile.mockResolvedValue({
+      stdout: `Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/vda1 105 ${usedPercent} ${100 - usedPercent} ${usedPercent}% /root/cecelia\n`,
+    });
     await expect(job.handler(deps)).resolves.toMatchObject({ usedPercent });
     if (level) {
       expect(deps.raise).toHaveBeenCalledWith(
@@ -78,5 +83,16 @@ describe('US Linux 根卷容量调度', () => {
     } else {
       expect(deps.raise).not.toHaveBeenCalled();
     }
+  });
+
+  it('挂载身份与 df 返回来源不一致时拒绝样本', async () => {
+    const deps = fixture();
+    deps.execFile.mockResolvedValue({
+      stdout: 'Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/sda 420 392 8 98% /root/cecelia\n',
+    });
+    await expect(job.handler(deps)).rejects.toThrow('/dev/vda1');
+    expect(deps.raise).toHaveBeenCalledWith(
+      'P1', 'disk_linux_root_unavailable', expect.stringContaining('/dev/vda1'), expect.anything(),
+    );
   });
 });
