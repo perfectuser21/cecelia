@@ -15,3 +15,14 @@ GP-Anchor: none(infra)
   Test: manual:node scripts/ci/run-basic-check.mjs scripts
 - [ ] 本次actual main CD成功且生产Brain真实Node22验真；Root接续采证前父Task保持in_progress，源码合并不等同生产完成。
   Test: manual:node scripts/ci/run-basic-check.mjs image
+
+## 悦升 101 末次清理握手复核
+
+- [x] 只允许原清理中已经正常结束的唯一 HOME 和特定观察顺序，最后一次 version 的未知握手须由完整叶账原字节支持。
+  Test: manual:cd packages/brain && npx --no-install vitest run --config vitest.integration.config.js src/__tests__/integration/standalone-start-reconciliation.pg.integration.test.js
+- [x] 拒绝缺失或被改写的叶账、未知出现在 HOME、未知命令及不匹配的桌面和中央锁。
+  Test: manual:cd packages/brain && npx --no-install vitest run --config vitest.integration.config.js src/__tests__/integration/standalone-start-reconciliation.pg.integration.test.js
+- [x] 已有探针结算、重放和隔离租约回归通过，保留原失败回执。
+  Test: manual:cd packages/brain && npx --no-install vitest run --config vitest.integration.config.js src/__tests__/integration/standalone-start-reconciliation.pg.integration.test.js
+
+Brain Task 594f3bdb-1363-456b-b033-2e1f095d1641

@@ -174,6 +174,7 @@ export async function reconcileStandaloneStartFailure(pool, runId, input, { prin
       observed_at:review.observed_at, evidence_sha256:review.evidence_sha256,
       host_proof_sha256:digest(host), revocation_sha256:digest(review.revocation), admission_code:review.admission_code,
       ...(hardwareTimeout ? { hardware_diagnostic_sha256:hardwareTimeout.sha256 } : {}),
+      ...(cleanup?.ledgerSha256 ? { cleanup_ledger_sha256:cleanup.ledgerSha256 } : {}),
       ...(cleanup ? { cleanup_diagnostic_sha256:cleanup.sha256, observed_central_lease_version:cleanup.leaseVersion,
         central_release_performed:releaseCentral } : {}) };
     const finished = await finishRun({runId,status:'failed',error:failureReason,result:{standalone_start_review:settlement}},

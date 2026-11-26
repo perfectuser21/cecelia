@@ -254,3 +254,58 @@ it('settles a fresh already-free central lock without rewriting it', async () =>
   expect((await f.state()).result.standalone_start_review.central_release_performed).toBe(false);
   expect((await f.run()).status).toBe('failed');
 });
+
+async function desktopCleanupWithLastAckMissing() {
+  const f = await desktopCleanupReview();
+  const adb = ['-H','127.0.0.1','-P','5045','-s','127.0.0.1:15555'];
+  const commands = [['version'],['version'],[...adb,'get-state'],['version'],
+    [...adb,'shell','cmd','package','resolve-activity','-a','android.intent.action.MAIN','-c','android.intent.category.HOME'],
+    ['version'],[...adb,'shell','input','keyevent','3'],['version']];
+  const fields = f.cleanup.leaves.leaves[0];
+  const leaves = commands.map((argv,index)=>({...fields,sequence:index+1,pid:fields.pid+index,
+    argv_sha256:createHash('sha256').update(JSON.stringify(argv)).digest('hex')}));
+  Object.assign(f.cleanup.leaves, {complete:false,requests_returned:false,leaves});
+  const ledger = leaves.flatMap(leaf=>{
+    const {sequence,argv_sha256,intent_at,boundary,pid,started_at}=leaf;
+    const intent={sequence,argv_sha256,intent_at,boundary};
+    return [{...intent,phase:'intent'},{...intent,pid,started_at,phase:'started'},{...leaf,phase:'exit'}];
+  });
+  ledger.push({...leaves.at(-1),phase:'unknown'});
+  const encodeLedger = () => f.seal(ledger.map(row=>JSON.stringify(row)).join('\n')+'\n');
+  const setLedger = () => Object.assign(f.body.review.cleanup_diagnostic,
+    f.seal(JSON.stringify(f.cleanup)),{terminal_ack_ledger:encodeLedger()});
+  setLedger();
+  return {...f,ledger,setLedger};
+}
+
+it('settles an exited final version probe with a missing ack after one completed HOME', async () => {
+  const f = await desktopCleanupWithLastAckMissing();
+  const result = await f.reconcile();
+  expect(result.status,JSON.stringify(result.body)).toBe(200);
+  expect(await f.state()).toMatchObject({status:'failed',result:{
+    standalone_receipt:f.receipt,
+    standalone_start_review:{cleanup_ledger_sha256:f.body.review.cleanup_diagnostic.terminal_ack_ledger.sha256},
+  }});
+  expect((await f.run()).status).toBe('failed');
+  expect((await f.readLock()).locked_by).toBeNull();
+});
+
+it('does not allow the HOME branch without its original terminal-only ledger', async () => {
+  const f = await desktopCleanupWithLastAckMissing();
+  const diagnostic = f.body.review.cleanup_diagnostic;
+  const original = structuredClone(diagnostic);
+  delete diagnostic.terminal_ack_ledger;
+  expect((await f.reconcile()).status).toBe(400);
+  Object.assign(diagnostic,structuredClone(original));
+  diagnostic.terminal_ack_ledger.sha256='0'.repeat(64);
+  expect((await f.reconcile()).status).toBe(400);
+  f.ledger.at(-1).sequence=7;
+  f.setLedger();
+  expect((await f.reconcile()).status).toBe(400);
+  f.ledger.at(-1).sequence=8;
+  f.cleanup.leaves.leaves[6].argv_sha256='1'.repeat(64);
+  f.setLedger();
+  expect((await f.reconcile()).status).toBe(400);
+  expect((await f.state()).status).toBe('blocked');
+  expect((await f.readLock()).locked_by).toBe(f.task.id);
+});
