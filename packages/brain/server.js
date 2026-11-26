@@ -91,6 +91,7 @@ import { createReleasesRouter } from './src/routes/releases.js';
 import { createRunsReadRouter } from './src/routes/runs-read.js';
 import { createRunDefinitionsRouter } from './src/routes/run-definitions.js';
 import { createRunReconciliationRouter } from './src/routes/run-reconciliation.js';
+import { createCloud101AdmissionRouter } from './src/routes/cloud-101-admission.js';
 import phoneRegistryRouter from './src/routes/phone-registry.js';
 import resourceHealthRouter from './src/routes/resource-health.js';
 import commanderHeartbeatRouter from './src/routes/commander-heartbeat.js';
@@ -315,6 +316,7 @@ app.use('/api/brain/graph', graphRoutes);
 // 旧 app 级 GET（available 语义 + 连字符转下划线取键）已删：与 kv.js 双实现分脑——
 // POST 原样写 -、GET 转 _ 读，写进去的键永远读不到。
 app.use('/api/brain/janitor', janitorRoutes);
+app.use('/api/brain/cloud-101-admission', createCloud101AdmissionRouter({ pool }));
 app.use('/api/brain/internal/app-server', createAppServerRouter({pool}));
 app.use('/api/brain/internal/crm', createCrmRouter({ pool }));
 app.use('/api/brain/internal/execution-directory',createExecutionBaselineRouter({pool}));
