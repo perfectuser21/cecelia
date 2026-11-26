@@ -1,4 +1,5 @@
 import {readImplementationSource} from './implementation-skill-source.mjs';
+import {fixedLocalGit,readFixedLocalGitBlob} from './fixed-local-git.mjs';
 /** 窄巡查准入：固定Git字节+中央身份+真实回归。不会伪报手机业务已运行。 */
 import {execFileSync,spawnSync} from 'node:child_process';
 import {readFileSync,writeFileSync,mkdirSync} from 'node:fs';
@@ -16,6 +17,38 @@ export function validatePatrolReviewWorkflow(bytes){
  if(sha(bytes)!==REVIEW_WORKFLOW_SHA256)fail('PATROL_REVIEW_CONTRACT_CHANGED');
 }
 const governancePaths=new Set(['.gitleaksignore','.github/workflows/pr-review.yml',REVIEW_TEST,'.github/workflows/phone-account-patrol.yml','.github/workflows/scripts/smoke/phone-account-patrol-smoke.sh','.github/workflows/scripts/smoke-baseline.txt','.github/workflows/implementation-impact.yml','scripts/ci/__tests__/implementation-impact-workflow.test.mjs','scripts/ci/__tests__/pilot-release-workflow.test.mjs']);
+// Mirrors Workspace's fixed authoring precheck. Keep the allowlist inside the trusted tool.
+const authoringPaths=new Set([
+ 'services/phone-adb-controller/commander/contracts/workflow-commander.json',
+ 'services/phone-adb-controller/commander/contracts/workflow-report.json',
+ 'services/phone-adb-controller/patrol/contracts/single.json',
+ 'services/phone-adb-controller/patrol/contracts/batch.json',
+ 'services/phone-adb-controller/patrol/contracts/maintenance.json',
+]);
+const versionPattern=/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
+function authoringVersionProof(root,base,head,path){
+ const invalid=()=>fail(`PATROL_AUTHORING_VERSION_INVALID:${path}`);
+ const fixedBytes=revision=>{
+  const mode=fixedLocalGit(root,['ls-tree','-z',revision,'--',path],{encoding:'utf8'});
+  if(!mode.startsWith('100644 blob '))invalid();
+  return readFixedLocalGitBlob(root,{revision,path});
+ };
+ const before=fixedBytes(base),after=fixedBytes(head);
+ const beforeText=before.toString('utf8'),afterText=after.toString('utf8');
+ let baseVersion,headVersion;
+ try{
+  baseVersion=JSON.parse(beforeText)?.version;
+  headVersion=JSON.parse(afterText)?.version;
+ }catch{invalid();}
+ if(typeof baseVersion!=='string'||typeof headVersion!=='string'||!versionPattern.test(baseVersion)||!versionPattern.test(headVersion))invalid();
+ const original=baseVersion.split('.').map(BigInt),updated=headVersion.split('.').map(BigInt);
+ const firstDifference=original.findIndex((part,i)=>part!==updated[i]);
+ if(firstDifference<0||updated[firstDifference]<original[firstDifference])invalid();
+ const header=[...beforeText.matchAll(/^  "version": "([^"]+)",$/gm)];
+ if(header.length!==1||header[0][1]!==baseVersion||
+    !after.equals(Buffer.from(beforeText.replace(header[0][0],`  "version": "${headVersion}",`))))invalid();
+ return {path,kind:'fixed_authoring_version',base_version:baseVersion,head_version:headVersion,base_sha256:sha(before),head_sha256:sha(after)};
+}
 const projectDoc=path=>/^\.(?:prd|dod)-cp-10101635-phone-account-patrol\.md$/.test(path)||path==='docs/learnings/cp-10101635-phone-account-patrol.md'||path==='.prd-cp-10121630-phone-patrol-openclaw.md'||path==='.dod-cp-10121630-phone-patrol-openclaw.md';
 function contractProof(root,revision,registration,{emptyAllowed=false}={}){
  if(!exists(root,revision,PATROL_PATH)){
@@ -72,6 +105,7 @@ export async function runDevicePatrolGate(options){
   for(const path of changed_files){
    if(paths.has(path))coverage.push({path,kind:'code',bindings:after.bindings.filter(b=>b.path===path)});
    else if(auxiliary.has(path))coverage.push({path,kind:path===PATROL_PATH?'fixed_definition':'auxiliary',head_sha256:exists(repoRoot,head,path)?sha(read(repoRoot,head,path)):null});
+   else if(authoringPaths.has(path))coverage.push(authoringVersionProof(repoRoot,base,head,path));
    else if(governancePaths.has(path)||projectDoc(path)){const proof=governanceProof(repoRoot,base,head,path);governance.push(proof);coverage.push(proof);}
    else fail(`PATROL_CHANGED_FILE_UNCLAIMED:${path}`);
   }

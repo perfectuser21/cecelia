@@ -6,17 +6,22 @@ import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {PATROL_SCOPE,PATROL_REPO,validatePatrolSnapshot} from '../../packages/brain/src/lib/device-patrol-admission.js';
 const REPO='perfectuser21/cecelia',BASE='73bd094ae34ecccb1514b09fd4fec8733b846769',INTRO='f0923e5396bade1986ba5452e766cabb5f4a30b3';
+const BASELINE_ORIGIN='095d81687079f975c65f14babc27364b4da3e374';
 const fail=()=>{throw Error('PATROL_BASELINE_ORIGIN_INVALID');};
 export function validatePatrolBaselineRun(run,tooling){
  if(!/^[a-f0-9]{40}$/.test(tooling)||run.head_sha!==tooling||run.head_branch!=='main'||run.event!=='workflow_dispatch'||run.path!=='.github/workflows/implementation-impact.yml'||run.conclusion!=='success'||run.repository?.full_name!==REPO||run.head_repository?.full_name!==REPO)fail();return run;
 }
 export function downloadPatrolBaseline(tooling,output,{execute=execFileSync}={}){
  const json=(path,args=[])=>JSON.parse(execute('gh',['api',`repos/${REPO}/${path}`,...args],{encoding:'utf8',maxBuffer:32*1024*1024}));
- const current=json('git/ref/heads/main').object.sha,compare=json(`compare/${tooling}...${current}`,['--jq','{status,merge_base_commit:{sha:.merge_base_commit.sha}}']);
- if(!['ahead','identical'].includes(compare.status)||compare.merge_base_commit?.sha!==tooling)fail();
- const artifact=json(`actions/artifacts?name=device-patrol-admission-${BASE}&per_page=100`).artifacts.filter(a=>!a.expired&&a.workflow_run?.head_sha===tooling&&a.workflow_run?.head_branch==='main').sort((a,b)=>b.id-a.id)[0];
+ const current=json('git/ref/heads/main').object.sha;
+ if(!/^[a-f0-9]{40}$/.test(tooling)||!/^[a-f0-9]{40}$/.test(current))fail();
+ for(const revision of new Set([tooling,BASELINE_ORIGIN])){
+  const compare=json(`compare/${revision}...${current}`,['--jq','{status,merge_base_commit:{sha:.merge_base_commit.sha}}']);
+  if(!['ahead','identical'].includes(compare.status)||compare.merge_base_commit?.sha!==revision)fail();
+ }
+ const artifact=json(`actions/artifacts?name=device-patrol-admission-${BASE}&per_page=100`).artifacts.filter(a=>!a.expired&&a.workflow_run?.head_sha===BASELINE_ORIGIN&&a.workflow_run?.head_branch==='main').sort((a,b)=>b.id-a.id)[0];
  if(!artifact)throw Error('PATROL_BASELINE_ARTIFACT_MISSING');
- validatePatrolBaselineRun(json(`actions/runs/${artifact.workflow_run.id}`),tooling);
+ validatePatrolBaselineRun(json(`actions/runs/${artifact.workflow_run.id}`),BASELINE_ORIGIN);
  const zip=execute('gh',['api',`repos/${REPO}/actions/artifacts/${artifact.id}/zip`],{maxBuffer:16*1024*1024});
  if(!artifact.digest||artifact.digest!==`sha256:${createHash('sha256').update(zip).digest('hex')}`)throw Error('PATROL_BASELINE_ARTIFACT_DIGEST_MISMATCH');
  mkdirSync(output,{recursive:true});const zipPath=join(output,'trusted-baseline.zip');writeFileSync(zipPath,zip);
@@ -25,7 +30,7 @@ export function downloadPatrolBaseline(tooling,output,{execute=execFileSync}={})
   const identity=validatePatrolSnapshot(snapshot.snapshot||snapshot);
   if(identity.scope!==PATROL_SCOPE||identity.repo!==PATROL_REPO||identity.revision!==BASE||identity.registration.provenance.base_revision!==BASE||identity.registration.provenance.introduced_revision!==INTRO)fail();
   for(const side of ['base','head']){mkdirSync(join(output,side),{recursive:true});writeFileSync(join(output,side,side==='base'?'base.json':'head.json'),JSON.stringify(snapshot));}
-  writeFileSync(join(output,'patrol-baseline-origin.json'),JSON.stringify({repo:REPO,tooling_revision:tooling,workflow_run_id:artifact.workflow_run.id,artifact_id:artifact.id,digest:artifact.digest,registration_sha256:identity.registration_sha256}));
+  writeFileSync(join(output,'patrol-baseline-origin.json'),JSON.stringify({repo:REPO,tooling_revision:tooling,baseline_source_revision:BASELINE_ORIGIN,workflow_run_id:artifact.workflow_run.id,artifact_id:artifact.id,digest:artifact.digest,registration_sha256:identity.registration_sha256}));
   return identity;
  }finally{rmSync(zipPath,{force:true});}
 }
