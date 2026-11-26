@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.445.300
+**Brain 版本**: 1.445.301
 
 清退旧启动冒烟与无调用的CI分类审计器；根服务身份和健康状态由现役运行验收承接。生产DBOS关闭且无历史实例后清退旧日报注册、实现和专项测试，保留公共Runner、Commander及真实PG恢复合同。
 
@@ -4936,7 +4936,7 @@ evaluator↔judge 无限空转（run 80459597 生产实证）。
 
 - `remote-bridge-transport.js` 的 `start` 操作此前和 `inspect`/`cancel`/`terminal` 共用通用 `timeoutMs`（`DEFAULT_REMOTE_BRIDGE_TIMEOUT_MS=60_000`），而 fleet-worker `attempt-runner.cjs` 内层 credential FIFO 写入超时也在同一量级——真实负载下（并发 attempt 抢 CPU/virtiofs）内层写入耗时逼近甚至撞上外层 60s，导致 Brain 侧先中止连接报 `remote_bridge_start_timeout`，掩盖 fleet-worker 自己更具体的 `attempt_*_credential_fifo_write_failed`。
 - 新增 `DEFAULT_REMOTE_BRIDGE_START_TIMEOUT_MS=120_000`，`start` 操作单独走这个预算，不再和轻量轮询操作共用桶；可用 `KERNEL_FLEET_START_TIMEOUT_MS` 环境变量覆盖，语义对齐已有的 `KERNEL_FLEET_PREPARE_TIMEOUT_MS`。
-- 回归测试：`remote-bridge-transport.test.js` 验证 start 用的是 `startTimeoutMs` 而非共享 `timeoutMs`；`production-transport.test.js` 验证新常量值与 env 覆盖生效。
+- 回归测试：`remote-bridge-transport-http-safety.test.js` 验证 start 用的是 `startTimeoutMs` 而非共享 `timeoutMs`；`production-transport.test.js` 验证新常量值与 env 覆盖生效。
 - 回退会恢复：`start` 超时预算重新被通用 60s 顶住，credential FIFO 写入偏慢时又开始报笼统的 `remote_bridge_start_timeout`。
 
 ## Brain 1.267.214 — 刀0.5 CI 修复版本 bump

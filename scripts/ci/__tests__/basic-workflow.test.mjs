@@ -224,14 +224,14 @@ test('统一CI真实合并runner，保持独有命令和产物并隔离安全权
   assert.equal(recovery.env.TEST_DB_URL, 'postgresql://onboarding_ci:onboarding_ci@127.0.0.1:5432/cecelia_scratch');
   assert.equal(runtime.steps.filter(step => step.uses === 'actions/checkout@v4').length, 1);
   assert.equal(runtime.steps.filter(step => step.uses === 'actions/setup-node@v4').length, 1);
-  assert.equal(runtime.steps.filter(step => step.run === 'npm ci').length, 1);
+  assert.equal(runtime.steps.filter(step => step.run === 'npm ci --no-audit --no-fund').length, 1);
   assert.equal(runtime.steps.some(step => step['continue-on-error']), false);
   const browser=structuredClone(workflow.jobs['pwa-upgrade']);
   assert.equal(browser.steps.find(step=>step.name==='Install Chromium').run,'node e2e/playwright-cli.mjs install chromium --with-deps');
   assert.equal(browser.name,'Browser regression (Chromium)');
   assert.equal(browser.defaults.run['working-directory'],'apps/dashboard');
   assert.equal(browser.steps.some(step=>Object.hasOwn(step,'if')||step['continue-on-error']),false);
-  assert.equal(browser.steps.filter(step=>step.run==='npm ci'&&step['working-directory']==='.').length,1);
+  assert.equal(browser.steps.filter(step=>step.run==='npm ci --no-audit --no-fund'&&step['working-directory']==='.').length,1);
   const security=workflow.jobs.security;
   assertSecurityContracts(security);
   assert.equal(security.steps.some(step=>Object.hasOwn(step,'if')||step['continue-on-error']),false);

@@ -10,6 +10,9 @@ npx vitest run \
   src/__tests__/codex-bridge-health.test.js \
   src/__tests__/codex-bridge-kernel-attempt.test.js \
   src/orchestrator/remote-bridge-transport.test.js \
+  src/orchestrator/remote-bridge-transport-prepare-policy.test.js \
+  src/orchestrator/remote-bridge-transport-http-safety.test.js \
+  src/orchestrator/remote-bridge-transport-operations.test.js \
   --silent
 
 echo "PASS: Kernel Bridge installer, service routes, and transport contract"

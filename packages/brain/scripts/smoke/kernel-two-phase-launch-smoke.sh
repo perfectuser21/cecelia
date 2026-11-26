@@ -12,6 +12,9 @@ cd "$ROOT_DIR/packages/brain"
 npx --no-install vitest run \
   scripts/fleet-worker/attempt-runner.test.cjs \
   src/orchestrator/remote-bridge-transport.test.js \
+  src/orchestrator/remote-bridge-transport-prepare-policy.test.js \
+  src/orchestrator/remote-bridge-transport-http-safety.test.js \
+  src/orchestrator/remote-bridge-transport-operations.test.js \
   src/orchestrator/expired-attempt-reconciler.test.js \
   --reporter=dot
 

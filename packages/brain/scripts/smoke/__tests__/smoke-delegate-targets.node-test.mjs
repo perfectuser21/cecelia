@@ -213,7 +213,7 @@ for (const [script, args] of [...delegates, ['-c', ['DB="$DATABASE_URL"; ' + gol
 
 
 for (const [wrapper, required] of [
-  ['fleet-worker-workspace', ['src/orchestrator/workspace-spec.test.js', 'src/orchestrator/__tests__/execution-contract.test.js', 'scripts/fleet-worker/workspace-manager.test.cjs', 'scripts/fleet-worker/attempt-runner.test.cjs', 'scripts/fleet-worker/fleet-worker.test.js', 'src/orchestrator/providers/grok.test.js', 'src/orchestrator/production-transport.test.js', 'src/orchestrator/remote-bridge-transport.test.js']],
+  ['fleet-worker-workspace', ['src/orchestrator/workspace-spec.test.js', 'src/orchestrator/__tests__/execution-contract.test.js', 'scripts/fleet-worker/workspace-manager.test.cjs', 'scripts/fleet-worker/attempt-runner.test.cjs', 'scripts/fleet-worker/fleet-worker.test.js', 'src/orchestrator/providers/grok.test.js', 'src/orchestrator/production-transport.test.js', 'src/orchestrator/remote-bridge-transport.test.js', 'src/orchestrator/remote-bridge-transport-prepare-policy.test.js', 'src/orchestrator/remote-bridge-transport-http-safety.test.js', 'src/orchestrator/remote-bridge-transport-operations.test.js']],
   ['kernel-runtime-resource', ['scripts/fleet-worker/attempt-resources.test.cjs', 'scripts/fleet-worker/attempt-runner.test.cjs']],
 ]) test(`owned resource wrappers: ${wrapper} delegates current suites and propagates their failure`, async () => {
   const temp = await mkdtemp(resolve(tmpdir(), 'owned-resource-delegation-'));
