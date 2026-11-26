@@ -3,8 +3,8 @@
 # 验证（全程假 pool / 假 notionReq，不打 Notion 不连库）：
 #   1. 停推：注册表无 active 推送行 → pushJourneys / pushJourneyFeatures / pushAdvancementItems 不捞行不调 Notion；两轮只 info 一次
 #   2. 探活：GET /databases in_trash:true / 404 → mirror_db_reachable 红并带 lost；200 → 绿；503 → degraded 不红
-#   3. 渲染：有失联 → 晨报 🔴 RED「镜子库失联：<title>×N」+ 日报板块；无失联 → 无行无板块
-#   4. 接线：迁移 480 归档两行；push-sync 不再含回收站库 id；晨报/日报接 mirror-db-report；守夜接 probeMirrorDbs
+#   3. 渲染：有失联 → 晨报 🔴 RED「镜子库失联：<title>×N」+ 通用告警板块；无失联 → 无行无板块
+#   4. 接线：迁移 480 归档两行；push-sync 不再含回收站库 id；晨报及通用渲染器接 mirror-db-report；守夜接 probeMirrorDbs
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
@@ -42,7 +42,7 @@ if (!a.ok || !a.degraded) { console.error('FAIL 503 应 degraded 不红: ' + JSO
 console.log('in_trash/404 红 / 200 绿 / 503 degraded ✓');
 "
 
-echo "[mirror-trash-guard-smoke] 3. 晨报行 / 日报板块两态"
+echo "[mirror-trash-guard-smoke] 3. 晨报行 / 通用告警板块两态"
 node --input-type=module -e "
 import { readMirrorDbState, renderMirrorDbLine, renderMirrorDbSection } from './src/lib/mirror-db-report.js';
 const lost = [{ title: 'AI Journey', table: 'journeys', dbId: 'a', reason: 'in_trash' }, { title: 'AI Feature', table: 'journey_features', dbId: 'b', reason: 'in_trash' }];
@@ -50,7 +50,7 @@ const poolWith = (results) => ({ query: async () => ({ rows: [{ value_json: { la
 const red = await readMirrorDbState(poolWith([{ key: 'mirror_db_reachable', ok: false, lost }]));
 const line = renderMirrorDbLine(red);
 if (line !== '🔴 RED 镜子库失联：AI Journey、AI Feature ×2（Notion 回收站/404，推送已停）') { console.error('FAIL 晨报行: ' + line); process.exit(1); }
-if (!/== 镜子库失联 ==/.test(renderMirrorDbSection(red))) { console.error('FAIL 日报板块缺标题'); process.exit(1); }
+if (!/== 镜子库失联 ==/.test(renderMirrorDbSection(red))) { console.error('FAIL 通用告警板块缺标题'); process.exit(1); }
 const green = await readMirrorDbState(poolWith([{ key: 'mirror_db_reachable', ok: true, lost: [] }]));
 if (green !== null || renderMirrorDbLine(green) !== null || renderMirrorDbSection(green) !== '') { console.error('FAIL 无失联应无行无板块'); process.exit(1); }
 const broken = await readMirrorDbState({ query: async () => { throw new Error('down'); } });
@@ -67,7 +67,6 @@ const checks = [
   ['src/notion-push-sync.js', [\"activePushDbId(pool, 'journeys')\", \"activePushDbId(pool, 'journey_features')\", 'stopNoticed']],
   ['src/lib/notion-projection-watch.js', ['probeMirrorDbs(active', \"key: 'mirror_db_reachable'\"]],
   ['src/morning-cockpit-bark.js', ['fetchMirrorDbLine', 'renderMirrorDbLine']],
-  ['src/daily-report-generator.js', ['readMirrorDbState(dbPool)', 'renderMirrorDbSection']],
 ];
 let fail = false;
 for (const [file, needles] of checks) {
@@ -77,7 +76,7 @@ for (const [file, needles] of checks) {
 const push = fs.readFileSync('src/notion-push-sync.js', 'utf8');
 for (const dead of ['358c40c2-ba63-8148-bde7-e313d789931a', '358c40c2-ba63-81e3-96c5-d762b3d34dff']) if (push.includes(dead)) { console.error('FAIL push-sync 仍硬编码回收站库 ' + dead); fail = true; }
 if (fail) process.exit(1);
-console.log('迁移 480 / push-sync / 守夜 / 晨报 / 日报 全部接线 ✓');
+console.log('迁移 480 / push-sync / 守夜 / 晨报 全部接线 ✓');
 "
 
 echo "[mirror-trash-guard-smoke] PASS"

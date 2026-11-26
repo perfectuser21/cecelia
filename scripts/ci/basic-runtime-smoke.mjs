@@ -93,7 +93,8 @@ async function main() {
       await new Promise((_, reject) => controller.signal.addEventListener('abort', () => reject(controller.signal.reason), {once: true}));
     }
     async function request(path, method = 'GET', body, expected = [200, 201]) {
-      const response = await fetch(`http://127.0.0.1:${port}/api/brain${path}`, {
+      const endpoint = path === '/' ? '/' : `/api/brain${path}`;
+      const response = await fetch(`http://127.0.0.1:${port}${endpoint}`, {
         method, headers: { 'Content-Type': 'application/json' },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10000)]),
       });
@@ -101,7 +102,11 @@ async function main() {
       assert.ok(expected.includes(response.status), `${method} ${path} 返回 ${response.status}：${JSON.stringify(json)}`);
       return json;
     }
-    const health = await request('/health');
+    const service = await request('/', 'GET', undefined, [200]);
+    assert.equal(service.service, 'cecelia-brain');
+    assert.equal(service.status, 'running');
+    const health = await request('/health', 'GET', undefined, [200]);
+    assert.ok(['healthy', 'degraded'].includes(health.status), '健康状态必须为 healthy 或 degraded');
     assert.equal(health.runtime?.isolated, true);
     assert.equal(health.runtime?.background_automation, false);
     const title = `CI 基础运行验收 ${randomUUID()}`;

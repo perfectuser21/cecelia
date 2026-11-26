@@ -17,10 +17,6 @@
 
 import { DBOS } from '@dbos-inc/dbos-sdk';
 import pg from 'pg';
-// C1：静态 import durable 模块 —— 其顶层 registerStep/registerWorkflow 在本模块加载时即执行，
-// 保证注册早于 DBOS.launch()。生产入口 server.js import 本模块时这条依赖链被拉起，注册先于 launch。
-// configureDurableDeps 在 launch 前注入业务 pool（业务查询用 brain 默认 pool）。
-import { configureDurableDeps } from './daily-report-durable.js';
 import brainPool from '../db.js';
 import {configureCommonRunnerDurableDeps} from './common-runner-durable.js';
 import {createCommonRunnerDispatcher} from '../lib/common-runner-dispatch.js';
@@ -51,7 +47,7 @@ export function ceceliaUrl() {
  *
  * I2：用 DBOS.isInitialized() 作为是否已 launch 的真值来源，避免本地 _launched 标志与 DBOS 内部状态 desync。
  * I3：sysPool 在 launch() reject 时必须 end()，否则连接泄漏。
- * C1：launch 之前注入业务 pool（注册早已在 module import 时完成）。
+ * launch 之前注入公共 Runner dispatcher（注册早已在 module import 时完成）。
  *
  * @param {object} [seams] - 测试注入 DBOS/pg 接缝；生产留空走真实实现。
  * @param {() => boolean} [seams._isInitialized]
@@ -68,8 +64,7 @@ export async function initDurable(seams = {}) {
   if (isInit()) return;
   const url = ceceliaUrl();
   const sysPool = makePool(url);
-  // C1：launch 前注入 durable workflow 的业务查询 pool
-  configureDurableDeps({ pool: brainPool });
+  // launch 前注入公共 Runner 的两类 dispatcher。
   configureCommonRunnerDurableDeps({dispatcher:createCommonRunnerDispatcher({pool:brainPool}),workflowDispatcher:createWorkflowCommonAdapter(brainPool).runnerDispatcher});
   setConfig({
     name: 'cecelia-brain',

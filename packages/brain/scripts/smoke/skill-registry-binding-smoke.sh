@@ -4,7 +4,7 @@
 #   1. 解析纯逻辑：账本改映射→解析变化；缺映射走硬编码；两边都无返回 undefined；账本读取失败回落硬编码不抛
 #   2. skill_override 最优先且不查库
 #   3. 迁移 470：加列幂等 + 回填 UPSERT 不覆盖其它列 + 回滚脚本在
-#   4. 接线：executor 经 resolveSkillWithLedger 解析；日报/晨报接漂移检测（缺映射 AMBER）
+#   4. 接线：executor 经 resolveSkillWithLedger 解析；晨报接漂移检测（缺映射 AMBER）
 #   5. （可选）SKILL_BINDING_SMOKE_DB_URL 指向已跑完迁移的库：账本与硬编码零漂移
 set -euo pipefail
 cd "$(dirname "$0")/../.."
@@ -52,7 +52,6 @@ node -e "
 const fs = require('fs');
 const checks = [
   ['src/executor.js', ['resolveSkillWithLedger(pool', 'resolveTaskTypeSkill(taskType, EXECUTOR_SKILL_MAP)']],
-  ['src/daily-report-generator.js', ['detectSkillBindingDrift(dbPool, EXECUTOR_SKILL_MAP)', 'renderSkillBindingSection']],
   ['src/morning-cockpit-bark.js', ['fetchSkillBindingLine', 'renderSkillBindingLine']],
 ];
 let fail = false;
@@ -61,7 +60,7 @@ for (const [file, needles] of checks) {
   for (const n of needles) if (!src.includes(n)) { console.error('FAIL ' + file + ' 缺少: ' + n); fail = true; }
 }
 if (fail) process.exit(1);
-console.log('executor 解析 / 日报 / 晨报 全部接线 ✓');
+console.log('executor 解析 / 晨报 全部接线 ✓');
 "
 
 if [ -n "${SKILL_BINDING_SMOKE_DB_URL:-}" ]; then

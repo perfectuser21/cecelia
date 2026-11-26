@@ -876,6 +876,8 @@ Cortex 反思拿到的是 null 字段，RCA 无任何上下文可用。
 
 ### [2026-03-10] CI 治理补洞 — frontend 注册 + taxonomy 精化（PR #763）
 
+**历史退役（2026-11-26）**：下列审计链及其专属配置已移除，旧建议仅保留历史，不再作为执行要求。现役 CI 使用 `.github/workflows/ci.yml` 的固定检查矩阵。
+
 **失败统计**：CI 失败 0 次，本地测试失败 0 次
 
 ### 根本原因
@@ -884,14 +886,16 @@ Inventory Audit 扫出两类历史欠账：
 1. `frontend/` 目录存在于仓库根部但未注册，Evolution Gate 真空无感知
 2. `apps/api/features/**` 组件测试不在任何 taxonomy pattern 内（15 个盲区文件）
 
-### 下次预防
+### 历史建议（已退役）
 
-- [ ] 新增根目录下的顶级目录时（如 `frontend/`、`mobile/`），同步注册到 routing-map.yml
-- [ ] taxonomy Coverage Score 跌破 98% 时，主动检查新增的组件测试目录是否有对应 pattern
-- [ ] `tests/alertness`、`tests/database`、`tests/frontend` 属于孤立测试（无子系统归属），后续需决策：
+- 新增根目录下的顶级目录时（如 `frontend/`、`mobile/`），同步注册到 routing-map.yml
+- taxonomy Coverage Score 跌破 98% 时，主动检查新增的组件测试目录是否有对应 pattern
+- `tests/alertness`、`tests/database`、`tests/frontend` 属于孤立测试（无子系统归属），后续需决策：
      合并到 brain/quality 子系统 or 建立 shared-tests 子系统
 
 ### [2026-03-10] CI Inventory Audit v1 — 存量测试覆盖盘点（PR #762）
+
+**历史退役（2026-11-26）**：下列审计链及其专属配置已移除，旧建议仅保留历史，不再作为执行要求。现役 CI 使用 `.github/workflows/ci.yml` 的固定检查矩阵。
 
 **失败统计**：CI 失败 0 次，本地测试失败 0 次
 
@@ -901,14 +905,16 @@ Evolution Gate 守住了增量，但没有扫清历史欠账。
 514 个测试文件中有 22 个无 taxonomy 匹配（4%），18 个不在任何注册子系统下。
 主要盲区：`frontend/` 目录（8 个测试）从未注册到 routing-map.yml。
 
-### 下次预防
+### 历史建议（已退役）
 
-- [ ] 审计脚本 `node scripts/ci-inventory-audit.mjs` 建议在每次 Sprint 开始前跑一次
-- [ ] `workspace` 子系统的 `apps/api/features/**` 组件测试需在 test-taxonomy 补 pattern
-- [ ] `brain` 声明了 l4 层但无实际 l4 测试文件——属于 routing-map 声明过于乐观，需修订
-- [ ] glob 模式匹配要同时测试直接路径（`foo/bar.test.ts`）和目录前缀（`foo/bar/**`）两种形式
+- 审计脚本 `node scripts/ci-inventory-audit.mjs` 建议在每次 Sprint 开始前跑一次
+- `workspace` 子系统的 `apps/api/features/**` 组件测试需在 test-taxonomy 补 pattern
+- `brain` 声明了 l4 层但无实际 l4 测试文件——属于 routing-map 声明过于乐观，需修订
+- glob 模式匹配要同时测试直接路径（`foo/bar.test.ts`）和目录前缀（`foo/bar/**`）两种形式
 
 ### [2026-03-10] CI Evolution Gate v1 — 检测未注册子系统和测试分类（PR #761）
+
+**历史退役（2026-11-26）**：下列审计链及其专属配置已移除，旧建议仅保留历史，不再作为执行要求。现役 CI 使用 `.github/workflows/ci.yml` 的固定检查矩阵。
 
 **失败统计**：CI 失败 0 次，本地测试失败 0 次
 
@@ -917,12 +923,12 @@ Evolution Gate 守住了增量，但没有扫清历史欠账。
 当开发者新增 `packages/*` 或 `apps/*` 目录时，CI 路由不会自动感知，新子系统可能悄悄绕过 L2/L3/L4 检查，成为"盲点"。
 同理，新增测试目录（如 `tests/performance/`）若无分类，CI 不知道应该在哪层运行它。
 
-### 下次预防
+### 历史建议（已退役）
 
-- [ ] 新增 `packages/*` 或 `apps/*` 目录时，**必须先**更新 `ci/routing-map.yml`，否则 L2 Evolution Check 报错拦截
-- [ ] 新增命名测试目录（`tests/`、`e2e/` 等）时，更新 `ci/test-taxonomy.yml` 并指定 l3/l4 层
-- [ ] `config` 类纯数据目录加 `ci_exempt: true` 避免误触发
-- [ ] script 的 `isTestDirCovered` 需剥离 `/**` 后缀后再做 regex 匹配，否则目录本身无法匹配 `foo/**` 模式
+- 新增 `packages/*` 或 `apps/*` 目录时，**必须先**更新 `ci/routing-map.yml`，否则 L2 Evolution Check 报错拦截
+- 新增命名测试目录（`tests/`、`e2e/` 等）时，更新 `ci/test-taxonomy.yml` 并指定 l3/l4 层
+- `config` 类纯数据目录加 `ci_exempt: true` 避免误触发
+- script 的 `isTestDirCovered` 需剥离 `/**` 后缀后再做 regex 匹配，否则目录本身无法匹配 `foo/**` 模式
 
 ### [2026-03-10] CI V4 审计修复 R2+R3 — push 路由精化 + Engine local-precheck（PR #760）
 

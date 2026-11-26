@@ -113,7 +113,6 @@ features:
         - packages/brain/src/__tests__/routes.test.js
         - packages/brain/src/__tests__/tick-status.test.js
         - packages/brain/src/__tests__/shepherd.test.js
-        - packages/brain/src/__tests__/smoke.test.js
         - packages/brain/src/__tests__/startup-recovery-enhanced.test.js
         - packages/brain/src/__tests__/startup-recovery.test.js
         - packages/brain/src/__tests__/startup-sync.test.js
@@ -182,7 +181,6 @@ features:
             - packages/brain/src/__tests__/routes.test.js
             - packages/brain/src/__tests__/tick-status.test.js
             - packages/brain/src/__tests__/shepherd.test.js
-            - packages/brain/src/__tests__/smoke.test.js
             - packages/brain/src/__tests__/startup-recovery-enhanced.test.js
             - packages/brain/src/__tests__/startup-recovery.test.js
             - packages/brain/src/__tests__/startup-sync.test.js
