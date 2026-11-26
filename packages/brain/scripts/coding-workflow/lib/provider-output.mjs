@@ -38,4 +38,3 @@ export function sessionCostUsd(stdout) {
   }
   return cost;
 }
-

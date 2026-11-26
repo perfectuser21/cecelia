@@ -40,7 +40,7 @@ import("./packages/brain/src/executor-contracts.js").then(async m => {
   }
   process.exit(0);
 }).catch(e => { console.error(e.message); process.exit(1); })
-' && ok "[结构] executor-contracts 十三 kind 各有 probe（进程级导入）" || fail "executor-contracts 结构断言失败"
+' && ok "[结构] executor-contracts 十二 kind 各有 probe（进程级导入）" || fail "executor-contracts 结构断言失败"
 
 node -e '
 import("./packages/brain/src/lib/codex-review-liveness.js").then(m => {

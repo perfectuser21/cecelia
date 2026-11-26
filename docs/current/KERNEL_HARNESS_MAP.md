@@ -1,6 +1,6 @@
 # 公共 Activity Runner 与历史 Kernel 地图
 
-现役内核为 `activity-runtime.js` 的 `runActivityContract`：代码固定活动顺序、执行检查与独立 validator、按合同路由、记录证据，Commander 仅监督/纠偏。受保护 workflow/profile 由公共 Runner 执行，编码走 `coding_workflow`。旧 Kernel、skill-relay、Fleet orchestrator prepare/start、建 relay run 与 attempt-run、非 dry-run CLI 已明确退役；历史读回、终态归档、在途隔离保留。GP 提案尚缺公共 Runner profile/验收绑定，拒绝新派，不能宣称已经迁移。
+现役内核为 `activity-runtime.js` 的 `runActivityContract`：代码固定活动顺序、执行检查与独立 validator、按合同路由、记录证据，Commander 仅监督/纠偏。受保护 workflow/profile 由公共 Runner 执行，用户编码任务走普通 `codex_dev` Agent；旧 `coding_workflow` 自主开发流水线已退役，有头开发继续走 `/dev`。旧 Kernel、skill-relay、Fleet orchestrator prepare/start、建 relay run 与 attempt-run、非 dry-run CLI 已明确退役；历史读回、终态归档、在途隔离保留。GP 提案尚缺公共 Runner profile/验收绑定，拒绝新派，不能宣称已经迁移。
 
 以下 Kernel 图为历史资料，不授权重新启动旧执行器。
 

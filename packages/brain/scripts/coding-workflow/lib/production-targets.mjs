@@ -7,4 +7,3 @@ export function productionMatchers(patterns = null) {
   const alt = patterns.join('|');
   return { target: new RegExp(alt), assign: new RegExp(`\\b[A-Za-z_][A-Za-z0-9_]*=['"]?\\S*(?:${alt})`) };
 }
-
