@@ -630,7 +630,7 @@ export async function ingestDelegatedPage(pool, token, page, opts = {}) {
     const bindingJson = env[`NOTION_LEADGEN_${leadgenStage}_BINDINGS`];
     const configured = leadgenStage === '101' || Boolean(bindingJson);
     const bindings = JSON.parse(bindingJson ?? '{}');
-    const scoped101 = leadgenStage === '101' && Object.values(bindings ?? {})
+    const scopedSource = ['101', '102', '103'].includes(leadgenStage) && Object.values(bindings ?? {})
       .some(binding => binding && Object.hasOwn(binding, 'source_tenant_id'));
     const request = {
       stage: leadgenStage, pageId: page.id, title: name, tenantId, bindings,
@@ -640,7 +640,7 @@ export async function ingestDelegatedPage(pool, token, page, opts = {}) {
     try {
       if (configured) {
         let receiptTenant = tenantId;
-        if (scoped101) {
+        if (scopedSource) {
           request.body = await readBody();
           receiptTenant = resolveNotionLeadgenBinding(request).binding.tenant_id;
         }

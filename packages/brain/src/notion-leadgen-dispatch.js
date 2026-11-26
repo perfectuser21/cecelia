@@ -60,8 +60,8 @@ export function resolveNotionLeadgenBinding({ stage, pageId, title, body, tenant
   const binding = bindings && Object.hasOwn(bindings, company) ? bindings[company] : null;
   if (!binding) throw invalid('notion_leadgen_binding_unavailable');
   const tenantMatches = Object.hasOwn(binding, 'source_tenant_id')
-    ? stage === '101' && sourceDatabaseId === ENGLISH_TASKS_DB
-      && binding.source_tenant_id === tenantId && UUID.test(binding.tenant_id)
+    ? (stage === '101' || ['102', '103'].includes(stage) && binding.source_tenant_stage === stage)
+      && sourceDatabaseId === ENGLISH_TASKS_DB && binding.source_tenant_id === tenantId && UUID.test(binding.tenant_id)
     : binding.tenant_id === tenantId;
   if (!tenantMatches || !UUID.test(binding.workflow_id) || !UUID.test(binding.release_id)
     || !/^[A-Za-z0-9_-]{1,100}$/.test(binding.binding_key ?? '')) throw invalid('notion_leadgen_binding_unavailable');
