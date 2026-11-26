@@ -30,7 +30,7 @@ async function blocked101({reason = 'standalone_start_unconfirmed', holdDevice =
     definition: { ...job.definition, attempt_key: task.id+':1', actor: job.claimer },
     standalone: {
       scope: { workflow_key: workflowKey, source_commit: sourceCommit, approved_keywords: ['验收'], limit: 1,
-        serial, company: { company_id: randomUUID(), tenant_id: task.tenant_id, version: 1, policy_id: 'fixture' } },
+        serial, line: 'fixture', company: { company_id: randomUUID(), tenant_id: task.tenant_id, version: 1, policy_id: 'fixture' } },
       skill: { name: 'douyin-leadgen-direct', version: '1.0.0', source_commit: sourceCommit, path: 'skill/SKILL.md', sha256: 'b'.repeat(64) },
     },
   });
@@ -255,12 +255,15 @@ it('settles a fresh already-free central lock without rewriting it', async () =>
   expect((await f.run()).status).toBe('failed');
 });
 
-async function desktopCleanupWithLastAckMissing() {
+async function desktopCleanupWithLastAckMissing(preflight = false) {
   const f = await desktopCleanupReview();
   const adb = ['-H','127.0.0.1','-P','5045','-s','127.0.0.1:15555'];
+  const probes = preflight
+    ? [[...adb,'shell','getprop','ro.product.model'],[...adb,'shell','dumpsys','telephony.registry']]
+    : [[...adb,'shell','cmd','package','resolve-activity','-a','android.intent.action.MAIN','-c','android.intent.category.HOME'],
+      [...adb,'shell','input','keyevent','3']];
   const commands = [['version'],['version'],[...adb,'get-state'],['version'],
-    [...adb,'shell','cmd','package','resolve-activity','-a','android.intent.action.MAIN','-c','android.intent.category.HOME'],
-    ['version'],[...adb,'shell','input','keyevent','3'],['version']];
+    probes[0],['version'],probes[1],['version']];
   const fields = f.cleanup.leaves.leaves[0];
   const leaves = commands.map((argv,index)=>({...fields,sequence:index+1,pid:fields.pid+index,
     argv_sha256:createHash('sha256').update(JSON.stringify(argv)).digest('hex')}));
@@ -275,6 +278,25 @@ async function desktopCleanupWithLastAckMissing() {
   const setLedger = () => Object.assign(f.body.review.cleanup_diagnostic,
     f.seal(JSON.stringify(f.cleanup)),{terminal_ack_ledger:encodeLedger()});
   setLedger();
+  if (preflight) {
+    const review=f.body.review, at=review.observed_at;
+    review.admission_code=review.revocation.reason='TOOL_RESULT_UNKNOWN';
+    const controller=[
+      {operation:'phone',code:'STANDALONE_NATIVE_COMMAND',controller_exit_code:124,at,diagnostic:{
+        stdout:'profile=fixture\nserial=fixture-physical-phone\nmodel=fixture\nstate=device\ncall_state=idle\n',
+        stderr:'NATIVE_INNER_EXECUTION_TERMINATION_UNKNOWN\nguarded command timeout: whole command and children terminated; owner lock retained\n',
+      }},
+      {operation:'phone',code:'STANDALONE_NATIVE_HOST_REVOKED',at},
+      {operation:'inspect',code:'STANDALONE_NATIVE_HOST_REVOKED',at},
+    ];
+    const scope=(await f.state()).payload.scope;
+    const {company_id,tenant_id,version}=scope.company;
+    const snapshot={company_id,tenant_id,version,line_key:scope.line,run_id:f.job.run_id,count:1};
+    review.cleanup_diagnostic.preflight_timeout={
+      ...f.seal(controller.map(row=>JSON.stringify(row)).join('\n')+'\n'),company_snapshot:snapshot,
+    };
+    return {...f,ledger,setLedger,controller};
+  }
   return {...f,ledger,setLedger};
 }
 
@@ -305,6 +327,34 @@ it('does not allow the HOME branch without its original terminal-only ledger', a
   f.ledger.at(-1).sequence=8;
   f.cleanup.leaves.leaves[6].argv_sha256='1'.repeat(64);
   f.setLedger();
+  expect((await f.reconcile()).status).toBe(400);
+  expect((await f.state()).status).toBe('blocked');
+  expect((await f.readLock()).locked_by).toBe(f.task.id);
+});
+
+it('settles the read-only preflight timeout and preserves the company snapshot fact', async () => {
+  const f=await desktopCleanupWithLastAckMissing(true);
+  const result=await f.reconcile();
+  expect(result.status,JSON.stringify(result.body)).toBe(200);
+  expect((await f.state()).result.standalone_start_review).toMatchObject({
+    admission_code:'TOOL_RESULT_UNKNOWN',
+    cleanup_ledger_sha256:f.body.review.cleanup_diagnostic.terminal_ack_ledger.sha256,
+    preflight_timeout_sha256:f.body.review.cleanup_diagnostic.preflight_timeout.sha256,
+    company_snapshot:f.body.review.cleanup_diagnostic.preflight_timeout.company_snapshot,
+  });
+  expect((await f.run()).status).toBe('failed');
+  expect((await f.readLock()).locked_by).toBeNull();
+});
+
+it('rejects an unrelated company snapshot or a non-timeout tool error', async () => {
+  const f=await desktopCleanupWithLastAckMissing(true);
+  const diagnostic=f.body.review.cleanup_diagnostic.preflight_timeout;
+  const original=structuredClone(diagnostic);
+  diagnostic.company_snapshot.company_id=randomUUID();
+  expect((await f.reconcile()).status).toBe(409);
+  Object.assign(diagnostic,original);
+  f.controller[0].controller_exit_code=1;
+  Object.assign(diagnostic,f.seal(f.controller.map(row=>JSON.stringify(row)).join('\n')+'\n'));
   expect((await f.reconcile()).status).toBe(400);
   expect((await f.state()).status).toBe('blocked');
   expect((await f.readLock()).locked_by).toBe(f.task.id);

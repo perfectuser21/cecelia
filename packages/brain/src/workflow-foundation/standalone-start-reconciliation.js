@@ -6,7 +6,7 @@ import { digest } from '../orchestrator/commander-decision.js';
 import { validateMachineRequest } from './claim.js';
 import { UUID, onlyKeys, requireFoundation } from './contracts.js';
 import { foundationTransaction } from './registry.js';
-import { desktopCleanupFailure, desktopUnknown, verifyDesktopCleanupProof } from './standalone-cleanup-review.js';
+import { desktopCleanupFailure, verifyDesktopCleanupProof } from './standalone-cleanup-review.js';
 
 const hash = /^[a-f0-9]{64}$/;
 const commit = /^[a-f0-9]{40}$/;
@@ -81,7 +81,7 @@ function verifyRequest(runId, input) {
     && host.protocol === 'standalone-skill-host-proof/v1' && revocation.protocol === 'standalone-skill-host-revocation/v1'
     && host.task_id === input.task_id && host.run_id === runId && [host.task_run_id,host.run_binding_id].every(x=>UUID.test(x??''))
     && commit.test(host.source_commit ?? '') && proofIdentity.every(key=>host[key]===revocation[key])
-    && revocation.reason === (desktopCleanup ? desktopUnknown : 'ADMISSION_REJECTED') && validPid(host.process_identity.pid) && validPid(host.process_identity.pgid)
+    && revocation.reason === (desktopCleanup ? review.admission_code : 'ADMISSION_REJECTED') && validPid(host.process_identity.pid) && validPid(host.process_identity.pgid)
     && validPid(host.process_identity.ppid) && Number.isSafeInteger(host.process_identity.uid) && host.process_identity.uid >= 0
     && typeof host.process_identity.start_identity === 'string' && host.process_identity.start_identity.length > 0
     && host.process_identity.start_identity.length <= 200 && revocation.pid === host.process_identity.pid
@@ -113,6 +113,12 @@ export async function reconcileStandaloneStartFailure(pool, runId, input, { prin
       && scope.source_commit === host.source_commit && scope.company?.tenant_id === task.tenant_id
       && attestation.scope_sha256 === digest({...scope,task_id:task.id})
       && task.blocked_at?.toISOString() === input.blocked_at);
+    const preflight = cleanup?.preflightProof;
+    if (preflight) {
+      const snapshot=preflight.snapshot;
+      check(snapshot.company_id===scope.company.company_id && snapshot.tenant_id===scope.company.tenant_id
+        && snapshot.version===scope.company.version && snapshot.line_key===scope.line);
+    }
     const run = (await db.query('SELECT * FROM task_runs WHERE id=$1 AND task_id=$2 AND run_id=$3 FOR UPDATE',[host.task_run_id,task.id,runId])).rows[0];
     check(run?.context?.source === 'standalone-skill' && run.context.executor_kind === 'codex-exec-v1'
       && run.context.executor === claim.claimer && run.context.claimed_at === claim.claimed_at
@@ -175,6 +181,7 @@ export async function reconcileStandaloneStartFailure(pool, runId, input, { prin
       host_proof_sha256:digest(host), revocation_sha256:digest(review.revocation), admission_code:review.admission_code,
       ...(hardwareTimeout ? { hardware_diagnostic_sha256:hardwareTimeout.sha256 } : {}),
       ...(cleanup?.ledgerSha256 ? { cleanup_ledger_sha256:cleanup.ledgerSha256 } : {}),
+      ...(preflight ? { preflight_timeout_sha256:preflight.sha256, company_snapshot:preflight.snapshot } : {}),
       ...(cleanup ? { cleanup_diagnostic_sha256:cleanup.sha256, observed_central_lease_version:cleanup.leaseVersion,
         central_release_performed:releaseCentral } : {}) };
     const finished = await finishRun({runId,status:'failed',error:failureReason,result:{standalone_start_review:settlement}},
