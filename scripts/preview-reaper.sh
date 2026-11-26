@@ -255,9 +255,9 @@ for pr in $UNIQUE_PRS; do
   # 3e. 清理预览专属 npm cache（不依赖 worktree 是否仍存在）
   NPM_CACHE_DIR="${PREVIEW_BASE_DIR}/.npm-cache-preview-${pr}"
   if [ -d "$NPM_CACHE_DIR" ]; then
-    # cache与writer共享专属归属/锁协议，仅Brain固定Janitor策略可执行删除。
+    # 旧专属cache保持历史归属与锁，回收必须另行逐资源核验。
     # legacy_unknown同样保留，reaper不追认、不绕开24h冷却或任务真账。
-    log "  保留 npm cache ${NPM_CACHE_DIR}：交由 preview-owned-npm-cache-expiry-v1"
+    log "  保留 npm cache ${NPM_CACHE_DIR}：等待历史资源核验"
   fi
 
   # 3f. 标记表为 inactive

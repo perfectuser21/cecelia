@@ -4,7 +4,6 @@ import { runImageRetentionJanitor } from './image-retention-scheduler.js';
 import { startCompletionJobsLoop, stopCompletionJobsLoop } from './scheduler-completion-loop.js';
 import { runPhoneRpaDispatch } from './lib/phone-rpa-dispatch.js';
 import {reconcileAppServers} from './app-server/controller.js';
-import { runPreviewCacheJanitor } from './preview-cache-scheduler.js';
 import { runCompanyKrWorkflow } from './projection/company-kr-workflow.js';
 import { runDirectoryJob } from './projection/directory-job.js';
 import { isSelfSkipped, schedulerOutcome, recordSchedulerRun, pruneSchedulerRuns } from './lib/workflow-runs.js';
@@ -98,7 +97,6 @@ export const JOBS = [
   { name: 'machine-vitals', cadence: { everySec: 60 }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: (pool) => sampleMachineVitals(pool), description: '本机体征采样（docker容器数/VM内存/盘，60s，harness admission 数据源，beeba317）' },
   { name: 'phone-rpa-dispatch', cadence: { everySec: 30 }, needsPool: true, timeoutMs: 120_000, handler: runPhoneRpaDispatch, description: '独立手机派发：默认关闭，显式since/设备授权，只接Notion新任务skill-factory；保留全局Tick关闭与独立回收' },
   { name: 'app-server-reconcile', cadence: { everySec: 60 }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: reconcileAppServers, description: '按持久HOME/代际身份恢复探查与取消；无授权不启动，不按TTL释放' },
-  { name: 'preview-owned-cache-janitor', cadence: { everySec: 60 }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runPreviewCacheJanitor, description: 'MMV专属npm cache过期回收：默认停用、真实任务与持久回执对账' },
   { name: 'us-brain-image-janitor', cadence: { everySec: 60 }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runImageRetentionJanitor, description: 'US固定Brain历史镜像保留：默认停用、每轮最多两项、未知只读精确ID对账' },
 
 

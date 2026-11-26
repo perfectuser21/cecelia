@@ -23,7 +23,6 @@ vi.mock('../../common-runner-executor.js', () => ({ runCommonRunnerTasks: vi.fn(
 vi.mock('../../image-retention-scheduler.js', () => ({ runImageRetentionJanitor: vi.fn().mockResolvedValue({ status: 'disabled' }) }));
 
 vi.mock('../../app-server/controller.js',()=>({reconcileAppServers:vi.fn().mockResolvedValue([])}));
-vi.mock('../../preview-cache-scheduler.js', () => ({ runPreviewCacheJanitor: vi.fn().mockResolvedValue({ status: 'disabled' }) }));
 
 vi.mock('../../projection/company-key-results.js', () => ({ runCompanyKrProjection: vi.fn(async () => ({ skipped: true })) }));
 // 目录真实handler会开独立连接并访问Notion；此文件仅验证调度，行为由directory单元与真实PG测试覆盖。

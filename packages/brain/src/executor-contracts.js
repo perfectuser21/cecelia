@@ -87,7 +87,9 @@ export function isExternallyExecuted(task) {
   // runner 认领时显式写入的 kind；task_type=data 是通用类型，只能按持久化 kind 判。
   if (task.executor_kind === CODING_WORKFLOW_RUNNER_EXECUTOR_KIND) return true;
   if (EXTERNALLY_EXECUTED_TASK_TYPES.includes(task.task_type)) return true;
-  return Boolean(task.executor_kind) && EXTERNALLY_EXECUTED_KINDS.includes(task.executor_kind);
+  // 历史缓存记录不再来自现役registry，仍不能被本机孤儿探针回队。
+  return task.executor_kind === 'preview-janitor'
+    || (Boolean(task.executor_kind) && EXTERNALLY_EXECUTED_KINDS.includes(task.executor_kind));
 }
 
 export const EXECUTOR_CONTRACTS = {

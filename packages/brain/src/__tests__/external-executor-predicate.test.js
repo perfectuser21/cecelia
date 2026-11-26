@@ -13,6 +13,7 @@ import { describe, it, expect } from 'vitest';
 import {
   isExternallyExecuted,
   EXTERNALLY_EXECUTED_KINDS,
+  assessTaskLiveness,
 } from '../executor-contracts.js';
 import {
   EXTERNALLY_EXECUTED_TASK_TYPES,
@@ -20,6 +21,11 @@ import {
 } from '../lib/task-type-registry.js';
 
 describe('isExternallyExecuted —— 外部执行体统一谓词', () => {
+  it('旧缓存执行记录仍由外部unknown合同保护，不能被本机孤儿收割回队', async () => {
+    const task = {id: 'history', task_type: 'data', executor_kind: 'preview-janitor', updated_at: '2000-01-01'};
+    expect(isExternallyExecuted(task)).toBe(true);
+    expect(await assessTaskLiveness(task, {})).toMatchObject({verdict: 'unknown', onStale: 'none'});
+  });
   it('device_job（西安 Mac 领单器执行）→ true', () => {
     expect(isExternallyExecuted({ task_type: 'device_job', executor_kind: null })).toBe(true);
   });
@@ -69,6 +75,6 @@ describe('外部执行体集合从注册表派生，不手抄', () => {
       EXTERNALLY_EXECUTED_TASK_TYPES.map((t) => TASK_TYPE_REGISTRY[t].executor).filter(Boolean),
     )].sort();
     expect([...EXTERNALLY_EXECUTED_KINDS].sort()).toEqual(expected);
-    expect([...EXTERNALLY_EXECUTED_KINDS].sort()).toEqual(['app-server-controller','native-agent','openclaw-agent', 'preview-janitor', 'script']);
+    expect([...EXTERNALLY_EXECUTED_KINDS].sort()).toEqual(['app-server-controller','image-janitor','native-agent','openclaw-agent', 'script']);
   });
 });

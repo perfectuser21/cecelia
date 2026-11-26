@@ -58,7 +58,6 @@ export const TASK_CREATION_INVENTORY = Object.freeze([
   { module: 'routes/tasks.js', source: 'api', creates_executable_task: false, migration_status: 'retired' },
   { module: 'routes/tasks-manual-dispatch.js', source: 'api', creates_executable_task: true, migration_status: 'routed' },
   { module: 'image-retention-controller.js', source: 'scheduler', creates_executable_task: true, migration_status: 'routed' },
-  { module: 'preview-cache-controller.js', source: 'scheduler', creates_executable_task: true, migration_status: 'routed' },
   { module: 'task-intake.js', source: 'api', creates_executable_task: true, migration_status: 'routed' },
   { module: 'lib/company-kr-analysis.js', source: 'scheduler', creates_executable_task: false, migration_status: 'retired' },
   // 已登记任务的后续核验仍经factory-cycle注入actions边界；台账自主推进已退役。

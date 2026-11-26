@@ -25,7 +25,7 @@ for (const [name, route] of [
 ]) {
   test(`${name}: actual readonly curl ignores startup POST and additional target`, async () => {
     const calls = [], additional = [];
-    const server = createHttpServer((req, res) => { calls.push([req.method, req.url]); res.end(name === 'janitor' ? JSON.stringify({ jobs: [{ id: 'preview-owned-npm-cache-expiry-v1', enabled: false, name: 'private-fixture' }] }) : '{}'); });
+    const server = createHttpServer((req, res) => { calls.push([req.method, req.url]); res.end(name === 'janitor' ? JSON.stringify({ jobs: [{ id: 'us-brain-image-retention-v1', enabled: false, name: 'private-fixture' }] }) : '{}'); });
     const extra = createHttpServer((req, res) => { additional.push([req.method, req.url]); res.end('{}'); });
     const temp = await mkdtemp(resolve(tmpdir(), 'company-http-curlrc-'));
     try {
