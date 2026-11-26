@@ -290,16 +290,28 @@ export async function readImplementationSnapshotInTransaction(db,q){
   const steps=(await db.query('SELECT * FROM steps WHERE activity_id=ANY($1::uuid[]) ORDER BY id',[activityIds])).rows;
   let manifest=null,manifestBasis='unknown';
   if(repositories.length===1){
-    const historical=(await db.query(`SELECT DISTINCT m.* FROM map_manifest_versions m JOIN map_projection_runs p ON p.manifest_version_id=m.id
-      WHERE m.scope_key=$1 AND p.scope_key=$1 AND p.fact_revisions->>$2=$3 AND p.status IN ('active','superseded') ORDER BY m.version DESC`,[q.scope,repositories[0].repo,anchor.revision])).rows.filter(r=>manifestMatchesImplementationSource(r.manifest,anchor.repo,anchor.revision));
     const current=(factory&&selected.length===EXISTING_OPS_IDENTITIES.length)||(selected.length&&selected.every(w=>{const c=workflows.find(c=>c.id===w.workflow_id);return c?.status!=='retired'&&c?.current_definition_version_id===w.id;}));
+    // Authoring maps bind the definition source in the manifest. The scan may use a different revision.
+    const projected=authoring&&!current
+      ? await db.query(`SELECT DISTINCT m.*,p.projection_digest FROM map_manifest_versions m JOIN map_projection_runs p
+        ON p.manifest_version_id=m.id AND p.scope_key=m.scope_key AND p.manifest_digest=m.digest AND p.status=m.status
+        WHERE m.scope_key=$1 AND p.status IN ('active','superseded')
+          AND p.fact_revisions->>$4 ~ '^[0-9a-f]{40}$'
+          AND m.manifest @> jsonb_build_object('capabilities',jsonb_build_array(jsonb_build_object(
+            'brain_binding',jsonb_build_object('source_repo',$2::text,'source_revision',$3::text))))`,[q.scope,anchor.repo,anchor.revision,repositories[0].repo])
+      : await db.query(`SELECT DISTINCT m.* FROM map_manifest_versions m JOIN map_projection_runs p ON p.manifest_version_id=m.id
+        WHERE m.scope_key=$1 AND p.scope_key=$1 AND p.fact_revisions->>$2=$3 AND p.status IN ('active','superseded') ORDER BY m.version DESC`,[q.scope,repositories[0].repo,anchor.revision]);
+    const historical=projected.rows.filter(r=>manifestMatchesImplementationSource(r.manifest,anchor.repo,anchor.revision));
     if(current){
       const active=(await db.query("SELECT * FROM map_manifest_versions WHERE scope_key=$1 AND status='active'",[q.scope])).rows;
       // 当前定义须绑定唯一当前完整地图；旧同SHA历史不以version排序替代显式active。
       if(active.length===1&&(!historical.length||historical.some(m=>m.id===active[0].id&&m.digest===active[0].digest))){
         manifest=active[0];manifestBasis=factory?'consumer_registry':'current_registration';
       }else if(active.length>1||historical.length)gap('manifest_snapshot_ambiguous',{revision:q.revision});
-    }else if(historical.length===1){manifest=historical[0];manifestBasis='historical_projection';}
+    }else if(historical.length===1){
+      const {projection_digest:_projectionDigest,...fixedManifest}=historical[0];
+      manifest=fixedManifest;manifestBasis='historical_projection';
+    }
     else if(historical.length>1)gap('manifest_snapshot_ambiguous',{revision:q.revision});
   }
   if(manifest&&!manifestMatchesImplementationSource(manifest.manifest,anchor.repo,anchor.revision))gap('manifest_source_mismatch',{revision:anchor.revision});

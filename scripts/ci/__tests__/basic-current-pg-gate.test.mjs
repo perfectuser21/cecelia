@@ -20,6 +20,7 @@ const required = [
   'src/__tests__/integration/executor-startup-headed-owner.pg.integration.test.js',
   'src/__tests__/integration/suggestion-plan-callback.pg.integration.test.js',
   'src/__tests__/integration/workflow-common-terminal.pg.integration.test.js',
+  'src/__tests__/integration/workflow-authoring-freeze.pg.integration.test.js',
 ];
 function selected() {
   const steps = commandsFor('brain-integration');
