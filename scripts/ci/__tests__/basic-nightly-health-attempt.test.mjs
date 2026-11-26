@@ -12,7 +12,7 @@ test('Nightly实际Start Brain步骤记录本次健康探测序号，不继承�
  try{
   const counter=join(directory,'calls');writeFileSync(counter,'0');
   const script=`set -euo pipefail\ndocker(){ :; }\nsleep(){ :; }\ncurl(){ local count; read -r count < "$COUNTER" || true; count=$((count+1)); printf '%s' "$count" > "$COUNTER"; [[ "$count" -eq 3 ]]; }\n${step.run}`;
-  const result=spawnSync('/bin/bash',['-c',script],{encoding:'utf8',env:{PATH:'/usr/bin:/bin',COUNTER:counter,i:'unrelated-parent-value'}});
+  const result=spawnSync('/bin/bash',['-c',script],{encoding:'utf8',env:{PATH:'/usr/bin:/bin',COUNTER:counter,GITHUB_WORKSPACE:directory,i:'unrelated-parent-value'}});
   assert.equal(result.status,0,result.stderr);assert.equal(readFileSync(counter,'utf8'),'3');assert.match(result.stdout,/Brain healthy in 3s/);
  }finally{rmSync(directory,{recursive:true,force:true});}
 });
