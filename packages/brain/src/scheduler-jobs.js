@@ -49,7 +49,6 @@ import { runProjectionOutbox } from './projection/outbox.js';
 import { runNotionKrProjection } from './projection/key-results.js';
 import { runNotionTaskCommandIngest } from './projection/notion.js';
 import { runOpsCollector } from './ops-collector.js';
-import { runOpenclawRunIngest } from './openclaw-run-ingest.js';
 import { runBypassAudit } from './bypass-audit.js';
 import { runRunsNotionPush } from './runs-notion-projection.js';
 import { runSkillFactoryBoardPush } from './skill-factory-board.js';
@@ -58,7 +57,6 @@ import { runWorkflowRunLostDeadline } from './workflow-run-lost-deadline.js';
 import { runCommanderWatchdog, runWorkflowTrendBark } from './commander-watchdog.js';
 import { runModelAccountsCollector } from './ops-model-accounts-collector.js';
 import { runOpenclawGuards } from './openclaw-guards.js';
-import { maybeRunFeishuTaskLedger } from './feishu-task-ledger.js';
 import { maybeRunCredentialFreshness } from './credential-freshness.js';
 import { raise as raiseAlert, flushAlertsIfNeeded } from './alerting.js';
 import { runOpsNotionPush } from './notion-push-sync.js';
@@ -143,10 +141,9 @@ export const JOBS = [
   { name: 'notion-company-key-results', cadence: { everySec: 300 }, needsPool: true, timeoutMs: 120000, handler: runCompanyKrWorkflow, description: '经营KR正式指标同步：5min回灌人工正式值并保留收据；自动分析与派单已退役' },
   { name: 'notion-kr-projection', cadence: { everySec: 300 }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runNotionKrProjection, description: 'Brain KR → 独立注册的只读镜子（5min 自 gate；经营 KR 库禁写；Current/Target/Progress 分列，02148cef）' },
   { name: 'ops-collector', cadence: { everySec: 300 }, needsPool: true, timeoutMs: 120_000, handler: (pool) => runOpsCollector(pool), description: '运行舱采集器（5min自gate，宿主launchctl+HK OpenClaw+GHA cron→ops_*投影，per-source心跳，G1 S1 刀1，task 6fcb5356）' },
-  { name: 'openclaw-run-ingest', cadence: { everySec: 300 }, needsPool: true, timeoutMs: 120_000, handler: (pool) => runOpenclawRunIngest(pool), description: 'OpenClaw cron 运行记录入 runs 表（决策 c7ff6e02/9ec7a010）：ssh mmv 只读查 task_runs 增量 upsert，连败≥3 发一次 Bark' },
   { name: 'runs-notion-push', cadence: { everySec: 120 }, needsPool: true, timeoutMs: 110_000, handler: (pool) => runRunsNotionPush(pool), description: '运行记录投影 Notion「最近执行」库（决策 9ec7a010）：OpenClaw 7天全量+失败30天，Brain 内部只放失败' },
   { name: 'skill-factory-board', cadence: { everySec: 60 }, needsPool: true, timeoutMs: 110_000, handler: (pool) => runSkillFactoryBoardPush(pool), description: '技能工厂看板投影 Notion（任务 1b3c0000）：阶段任务→一条流程一行（阶段/skill 版本/连续通过/运行结果/卡点/裁判/生产版本），自 gate 5 分钟，库按注册表 vessel 找，未登记跳过' },
-  { name: 'bypass-audit', cadence: { everySec: 300 }, needsPool: true, timeoutMs: 120_000, handler: (pool) => runBypassAudit(pool), description: '旁路报警（派发总闸 H，任务 865b502c）：ssh mmv 只读扫 OpenClaw message 调用记未经 Brain 的对外推送，按天汇总 runs bypass-audit:<日期>，对外类达阈值 Bark（自 gate 5 分钟）' },
+  { name: 'bypass-audit', cadence: { everySec: 300 }, needsPool: true, timeoutMs: 120_000, handler: (pool) => runBypassAudit(pool), description: '旁路报警（派发总闸 H，任务 865b502c）：保留手机旁路事件及历史计数，按天汇总 runs bypass-audit:<日期>，对外类达阈值 Bark（自 gate 5 分钟）' },
   {
     name: 'ops-model-accounts-collector', cadence: { everySec: 300 },
     needsPool: true,
@@ -161,7 +158,6 @@ export const JOBS = [
     description: '模型账号配额采集（注册6项：Codex×5/Grok；host-exec 到 mmv 读取 usage 后写入 ops_model_accounts；5min 自 gate、单轮60s预算、失败保留读数与连续失败告警）',
   },
   { name: 'openclaw-guards', cadence: { everySec: 300 }, needsPool: true, timeoutMs: 180_000, handler: (pool) => runOpenclawGuards(pool, { raiseFn: raiseAlert }), description: 'us-vps 零执行守卫（决策95477a66收编）：网关内存回收/配置漂移还原/agent教义补种/会话跑场探活路由/触达线活性告警，5min自gate，前身为宿主散装crontab' },
-  { name: 'feishu-task-ledger', cadence: { everySec: 3600 }, needsPool: true, timeoutMs: 120_000, handler: (pool) => maybeRunFeishuTaskLedger(pool), description: '飞书群交办入账（决策1c6679cd）：群里派给秋米的活经三道判据（@对象/语义/重发去重）入 tasks 账并投影 Notion，自 gate 60min' },
   { name: 'credential-freshness', cadence: { everySec: 86400 }, needsPool: true, timeoutMs: 120_000, handler: (pool) => maybeRunCredentialFreshness(pool), description: '凭据保鲜守卫：每日探活关键凭据(Tailscale/GitHub/飞书)+到期体检+auth key 自动续期。2026-09-16 实证 Tailscale API key 过期 18 天无人知、备用 PAT 元数据没写却已 401 —— 元数据只是声明，活性探测才是真相' },
   // 顺序要紧：先采集再推送，否则推的是上一轮的旧数（尤其 liveness 要用最新 last_run_at 算）
   { name: 'ops-notion-push', cadence: { everySec: 60 }, needsPool: true, timeoutMs: 120_000, handler: (pool) => runOpsNotionPush(pool), description: '运行舱四表推 Notion 驾驶舱（机器列单向覆盖含活性告警）。旧链挂在无人import的legacy-notion-push-scheduler上从不执行，致Notion停更两天，故单独接现代调度层' },

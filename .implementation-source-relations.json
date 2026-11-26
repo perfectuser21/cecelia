@@ -3,11 +3,6 @@
   "repo": "perfectuser21/cecelia",
   "relations": [
     {
-      "owner_path": "packages/brain/src/feishu-task-ledger.js",
-      "path": "packages/brain/src/__tests__/feishu-task-ledger.remote.test.js",
-      "role": "verification"
-    },
-    {
       "owner_path": "packages/brain/src/openclaw-guards.js",
       "path": "packages/brain/src/__tests__/openclaw-guards.remote.test.js",
       "role": "verification"

@@ -8,7 +8,7 @@
  *   phone_lock    —— 手机领锁：Brain 设备锁 API 被调用、持有者追不到 Brain 任务（执行机 crontab 经 brain-lock.sh 领锁）；
  *                    执行机控制器本地领锁也可经 POST /bypass-actions/report 上报
  *   phone_outward —— 手机对外动作（发布/私信/点赞/关注/评论）：执行机控制器上报
- *   openclaw_push —— OpenClaw 对外推送：Brain 只读扫 MMV OpenClaw 审计库的 message 工具调用
+ *   openclaw_push —— 既有历史事件与兼容上报；旧 SQLite 周期扫描已退役
  *
  * 「关联到 Brain」的判定一律在 Brain 侧做（执行机自报的 task_id 不直接采信）：
  *   tasks.id = 持有者/上报 task_id（uuid），或 tasks.payload.run_id = run（qiumi-/wfd- 等 Brain 生成的 run_id），
@@ -16,10 +16,7 @@
  * 事件落 cecelia_events（event_type='bypass_action'，source=类别），按天汇总写 runs 一行
  * bypass-audit:<上海日期>，经现有 runs → Notion「最近执行」投影出现，不直写 Notion。
  */
-import { existsSync } from 'fs';
-import { defaultExecAsync, buildHostCmd } from './host-exec.js';
 import { sendBark as defaultSendBark } from './notifier.js';
-import { buildMmvCmd, parseSqliteJson } from './openclaw-run-ingest.js';
 
 export const BYPASS_EVENT_TYPE = 'bypass_action';
 export const BYPASS_KINDS = ['phone_lock', 'phone_outward', 'openclaw_push'];
@@ -34,22 +31,14 @@ const ATTEMPT_SUFFIX_RE = /[-_]a\d+[-_]/;
 const RUN_ID_MAX = 200;
 const FIELD_MAX = 300;
 const GATE_INTERVAL_MS = 300_000;
-const SCAN_LOOKBACK_MS = 2 * 3600_000;
-const SCAN_OVERLAP_MS = 60_000;
-const SCAN_LIMIT = 500;
-const EXEC_TIMEOUT_MS = 60_000;
 const DAY_MS = 86400_000;
 const SH_OFFSET_MS = 8 * 3600_000;
 
-let lastScanAt = 0;
 let lastRollupAt = 0;
-let scanCursorMs = null;
 
-/** 测试用：重置自 gate 与扫描游标 */
+/** 测试用：重置汇总自 gate */
 export function _resetBypassAuditGates() {
-  lastScanAt = 0;
   lastRollupAt = 0;
-  scanCursorMs = null;
 }
 
 const isUuid = (v) => typeof v === 'string' && UUID_RE.test(v.trim());
@@ -138,56 +127,6 @@ export function noteDeviceLockAcquire(pool, { device, owner, taskId, runId, host
     kind: 'phone_lock', device, owner, task_id: taskId, run_id: runId, host,
     source: 'device-lock-api', action: 'lock-acquire', dedupe_key: `lock:${device}:${owner}`,
   });
-}
-
-/** OpenClaw 会话键 agent:<agent>:<会话>。Brain 派发的会话 = agent:<dept>:<run_id>；agent:<x>:main = 与主理人对话 */
-export function parseOpenclawSession(sessionKey) {
-  const m = /^agent:([^:]+):(.+)$/.exec(String(sessionKey ?? ''));
-  if (!m) return null;
-  return { agent: m[1], sessionId: m[2], conversation: m[2] === 'main' };
-}
-
-/** 只读 OpenClaw 审计库里 message 工具（对外发消息）的开始事件；数字直接内插，只收整数 */
-export function buildOpenclawPushSql({ sinceMs, limit = SCAN_LIMIT }) {
-  if (!Number.isSafeInteger(sinceMs)) throw new Error(`invalid_sinceMs: ${String(sinceMs)}`);
-  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 2000) throw new Error(`invalid_limit: ${String(limit)}`);
-  return [
-    'SELECT occurred_at,agent_id,session_key,tool_call_id,run_id,status FROM audit_events',
-    "WHERE kind='tool_action' AND action='tool.action.started' AND tool_name='message'",
-    `AND occurred_at >= ${sinceMs} ORDER BY occurred_at LIMIT ${limit}`,
-  ].join(' ');
-}
-
-/** 扫 MMV OpenClaw 审计库增量 message 调用 → 追不到 Brain run 的记 openclaw_push 旁路（自 gate 5 分钟） */
-export async function runOpenclawPushScan(pool, deps = {}) {
-  const exec = deps.exec ?? defaultExecAsync;
-  const inContainer = deps.inContainer ?? existsSync('/.dockerenv');
-  const nowMs = (deps.now ?? Date.now)();
-  if (lastScanAt && nowMs - lastScanAt < GATE_INTERVAL_MS) return { skipped: true };
-  lastScanAt = nowMs;
-
-  const sinceMs = scanCursorMs ?? nowMs - SCAN_LOOKBACK_MS;
-  const stdout = await exec(buildHostCmd(buildMmvCmd(buildOpenclawPushSql({ sinceMs })), inContainer), { timeoutMs: EXEC_TIMEOUT_MS });
-  const rows = parseSqliteJson(stdout);
-  const stats = { fetched: rows.length, recorded: 0, linked: 0, conversation: 0, deduped: 0 };
-  let maxSeen = null;
-  for (const row of rows) {
-    const at = Number(row.occurred_at);
-    if (Number.isFinite(at)) maxSeen = Math.max(maxSeen ?? at, at);
-    const s = parseOpenclawSession(row.session_key);
-    if (s?.conversation) { stats.conversation += 1; continue; }
-    const r = await recordBypassAction(pool, {
-      kind: 'openclaw_push', owner: row.session_key, run_id: s?.sessionId ?? null, host: 'mmv',
-      source: 'openclaw-audit', action: 'message',
-      dedupe_key: `openclaw:${row.tool_call_id || `${row.run_id}:${row.occurred_at}`}`,
-      detail: { agent_id: row.agent_id ?? null, openclaw_run_id: row.run_id ?? null, occurred_at_ms: Number.isFinite(at) ? at : null },
-    });
-    if (!r.bypass) stats.linked += 1;
-    else if (r.recorded) stats.recorded += 1;
-    else stats.deduped += 1;
-  }
-  if (maxSeen !== null) scanCursorMs = Math.max(sinceMs, maxSeen - SCAN_OVERLAP_MS);
-  return stats;
 }
 
 /** 上海日历日 YYYY-MM-DD */
@@ -285,16 +224,8 @@ export async function summarizeBypass(pool, { days = 7 } = {}) {
   return { days: d, rows, recent };
 }
 
-/** scheduler job 入口：扫描 OpenClaw 对外推送 + 按天汇总；扫描失败不挡汇总，但本轮记 fail */
+/** scheduler 入口：保留手机旁路事件汇总与历史计数，不再采集旧 OpenClaw SQLite。 */
 export async function runBypassAudit(pool, deps = {}) {
-  let scan;
-  let scanError = null;
-  try {
-    scan = await runOpenclawPushScan(pool, deps);
-  } catch (e) {
-    scanError = String(e?.message).slice(0, 300);
-    scan = { error: scanError };
-  }
   const rollup = await runBypassDailyRollup(pool, deps);
-  return { ok: !scanError, scan, rollup };
+  return { ok: true, rollup };
 }

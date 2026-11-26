@@ -1,11 +1,15 @@
-# Worker死亡恢复夹具的写入者收束验收
+# 清退旧OpenClaw周期读取与群聊补账
 
-Task: fb0def7a-9a6e-44a3-82cc-7c088276282e
+Task: 34abb43c-46c0-4c54-9154-702adb64fc98
 GP-Anchor: none(infra)
 
-- [ ] 真实detached supervisor持有最终写入门时不删除夹具；完成收据持久化并退出后才清理，使用同源protectedRead拒绝符号链接收据并保留现场，不能以固定延时或杀监督者代替。
-  Test: manual:npm test --workspace packages/brain -- scripts/fleet-worker/workflow-runner.test.js
-- [ ] 原33例与所有OS Worker死亡恢复/拒绝恢复场景保留，业务和Commander调用仍各一次；owned Worker退出后才删除目录。
-  Test: manual:npm test --workspace packages/brain -- scripts/fleet-worker/workflow-runner.test.js
-- [ ] 本次仅测试及fixture helper，无Brain运行源码或版本改写；事实与版本同步门保持通过。
-  Test: manual:node scripts/facts-check.mjs
+- [x] 真实默认调度轮退出OpenClaw运行采集与旧bot飞书补账，Notion及手机审计继续执行。
+  Test: manual:npx --no-install vitest run --root packages/brain src/__tests__/scheduler-jobs.test.js
+- [x] bypass入口零SQLite/SSH调用，手机事件、查询、汇总、Bark确认回执与锁权限边界保留。
+  Test: manual:npx --no-install vitest run --root packages/brain src/__tests__/bypass-audit.test.js src/__tests__/bypass-bark-receipt.test.js src/routes/__tests__/bypass-actions.test.js
+- [x] UTF16截断等价迁移，历史OpenClaw Runs投影仍可正确构造，历史数据与收结入口不改。
+  Test: manual:npx --no-install vitest run --root packages/brain src/lib/__tests__/truncate-text.test.js src/__tests__/runs-notion-projection.test.js
+- [x] Notion入账、员工飞书任务路由、native与手机Registry/grants回归保留；退役回归经业务变异证明。
+  Test: manual:npx --no-install vitest run --root packages/brain src/__tests__/notion-gtd-sync src/__tests__/notion-push-sync src/__tests__/p2p-query-dispatch.test.js src/__tests__/native-agent-executor.test.js src/phone-dispatch
+- [x] 当前manifest完整采集通过，默认1802/deep329；继承Worker fixture35例与外部新源码，版本事实及Scripts通过。
+  Test: manual:node scripts/ci/run-basic-check.mjs scripts

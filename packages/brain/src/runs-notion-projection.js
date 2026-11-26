@@ -8,7 +8,7 @@
  */
 import { resolveDbId, pushRegisteredRows, isPageGoneError, isWrongDatabaseError } from './lib/notion-projection-engine.js';
 import { getToken as defaultGetToken, notionReq as defaultNotionReq } from './recurring-notion-sync.js';
-import { truncateText } from './openclaw-run-ingest.js';
+import { truncateText } from './lib/truncate-text.js';
 
 const TEXT_MAX = 1900;
 const GATE_INTERVAL_MS = 120_000;

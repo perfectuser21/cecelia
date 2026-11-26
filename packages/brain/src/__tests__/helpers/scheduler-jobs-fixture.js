@@ -4,7 +4,6 @@ vi.mock('../../map-projection-refresh.js', () => ({ maybeRefreshMapProjections: 
 vi.mock('../../lib/factory-cycle.js', () => ({ runFactoryCycle: vi.fn().mockResolvedValue({ skipped: true, reason: 'fixture' }) }));
 vi.mock('../../cron/rescan-staleness-patrol.js', () => ({ runRescanStalenessPatrol: vi.fn().mockResolvedValue({ skipped: true, reason: 'fixture' }) }));
 vi.mock('../../projection/key-results.js', () => ({ runNotionKrProjection: vi.fn().mockResolvedValue({ skipped: true, reason: 'fixture' }) }));
-vi.mock('../../feishu-task-ledger.js', () => ({ maybeRunFeishuTaskLedger: vi.fn().mockResolvedValue({ skipped: true, reason: 'fixture' }) }));
 vi.mock('../../credential-freshness.js', () => ({ maybeRunCredentialFreshness: vi.fn().mockResolvedValue({ skipped: true, reason: 'fixture' }) }));
 vi.mock('../../notion-inlet-ingest.js', () => ({ runNotionInletIngest: vi.fn().mockResolvedValue({ skipped: true, reason: 'fixture' }) }));
 vi.mock('../../notion-gtd-sync.js', () => ({ gtdSyncJobHandler: vi.fn().mockResolvedValue({ skipped: true, reason: 'fixture' }) }));
@@ -230,11 +229,6 @@ vi.mock('../../ops-scheduler-liveness.js', () => ({
 vi.mock('../../ops-collector.js', async (importOriginal) => ({
   ...(await importOriginal()),
   runOpsCollector: vi.fn().mockResolvedValue({ skipped: true }),
-}));
-// openclaw-run-ingest 真实 handler 会 ssh mmv 读 sqlite——单测绝不碰真机；采集逻辑由 openclaw-run-ingest.test.js 覆盖。
-vi.mock('../../openclaw-run-ingest.js', async (importOriginal) => ({
-  ...(await importOriginal()),
-  runOpenclawRunIngest: vi.fn().mockResolvedValue({ skipped: true }),
 }));
 // runs-notion-push 真实 handler 会读 Notion 库注册并推送——单测绝不打 Notion；投影逻辑由 runs-notion-projection.test.js 覆盖。
 vi.mock('../../runs-notion-projection.js', async (importOriginal) => ({

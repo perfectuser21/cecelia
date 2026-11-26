@@ -7,9 +7,6 @@ import {
   normalizeRunId,
   findLinkedTask,
   recordBypassAction,
-  parseOpenclawSession,
-  buildOpenclawPushSql,
-  runOpenclawPushScan,
   shanghaiDay,
   runBypassDailyRollup,
   summarizeBypass,
@@ -116,53 +113,6 @@ describe('recordBypassAction：只记旁路，Brain 派发的不误报', () => {
   });
 });
 
-describe('OpenClaw 对外推送扫描', () => {
-  it('parseOpenclawSession：Brain 派发会话 agent:<dept>:<run_id>；main 主会话=与主理人对话不算；cron 会话照记', () => {
-    expect(parseOpenclawSession('agent:media:qiumi-865b502c-1791400000000')).toEqual({ agent: 'media', sessionId: 'qiumi-865b502c-1791400000000', conversation: false });
-    expect(parseOpenclawSession('agent:main:main')).toMatchObject({ conversation: true });
-    expect(parseOpenclawSession('agent:foundry:cron:f44680ed:run:')).toEqual({ agent: 'foundry', sessionId: 'cron:f44680ed:run:', conversation: false });
-    expect(parseOpenclawSession('garbage')).toBeNull();
-  });
-
-  it('buildOpenclawPushSql：只读 message 工具的 started 事件，数字内插只收整数', () => {
-    const sql = buildOpenclawPushSql({ sinceMs: 1791400000000 });
-    expect(sql).toContain("tool_name='message'");
-    expect(sql).toContain("action='tool.action.started'");
-    expect(sql).toContain('occurred_at >= 1791400000000');
-    expect(() => buildOpenclawPushSql({ sinceMs: '1 OR 1=1' })).toThrow();
-  });
-
-  it('runOpenclawPushScan：cron 会话记旁路，Brain 派发会话不记，主会话跳过；按 tool_call_id 去重', async () => {
-    const rows = [
-      { occurred_at: 1791400001000, agent_id: 'foundry', session_key: 'agent:foundry:cron:f44680ed:run:', tool_call_id: 'tc-1', run_id: 'r1', status: 'started' },
-      { occurred_at: 1791400002000, agent_id: 'media', session_key: 'agent:media:qiumi-865b502c-1791400000000', tool_call_id: 'tc-2', run_id: 'r2', status: 'started' },
-      { occurred_at: 1791400003000, agent_id: 'main', session_key: 'agent:main:main', tool_call_id: 'tc-3', run_id: 'r3', status: 'started' },
-    ];
-    const pool = makePool({
-      'FROM tasks': (_sql, params) => (params[1].includes('qiumi-865b502c-1791400000000')
-        ? { rows: [{ id: TASK_UUID, status: 'completed' }] } : { rows: [] }),
-      'INSERT INTO cecelia_events': { rows: [{ id: 1 }], rowCount: 1 },
-    });
-    const exec = vi.fn().mockResolvedValue(JSON.stringify(rows));
-    const r = await runOpenclawPushScan(pool, { exec, inContainer: false, now: () => 1791400100000 });
-    expect(exec).toHaveBeenCalledTimes(1);
-    expect(exec.mock.calls[0][0]).toContain('ssh');
-    expect(r).toMatchObject({ fetched: 3, recorded: 1, linked: 1, conversation: 1 });
-    const ins = pool.calls.filter((c) => c.sql.includes('INSERT INTO cecelia_events'));
-    expect(ins).toHaveLength(1);
-    expect(JSON.parse(ins[0].params[2])).toMatchObject({ kind: 'openclaw_push', dedupe_key: 'openclaw:tc-1', source: 'openclaw-audit', action: 'message' });
-  });
-
-  it('自 gate：5 分钟内第二次调用直接 skipped，不发 ssh', async () => {
-    const exec = vi.fn().mockResolvedValue('');
-    const pool = makePool();
-    await runOpenclawPushScan(pool, { exec, inContainer: false, now: () => 1791400100000 });
-    const r2 = await runOpenclawPushScan(pool, { exec, inContainer: false, now: () => 1791400160000 });
-    expect(r2).toEqual({ skipped: true });
-    expect(exec).toHaveBeenCalledTimes(1);
-  });
-});
-
 describe('按天汇总 + 阈值 Bark（决策 d3e7746c：系统类不推主理人，对外/动真人才 Bark）', () => {
   const NOW = Date.parse('2026-10-12T04:00:00Z'); // 上海 12:00
 
@@ -249,12 +199,12 @@ describe('接线入口', () => {
     expect(payload).toMatchObject({ kind: 'phone_lock', source: 'device-lock-api', action: 'lock-acquire', dedupe_key: 'lock:S9:harvest-fallback:xian-m4:1:2' });
   });
 
-  it('runBypassAudit：扫描失败不挡汇总，本轮 ok:false 让调度器记 fail', async () => {
+  it('runBypassAudit：不再读取旧SQLite，保留手机与历史事件汇总', async () => {
     const pool = makePool({ 'INSERT INTO runs': { rows: [], rowCount: 1 } });
     const exec = vi.fn().mockRejectedValue(new Error('ssh: connect timeout'));
     const r = await runBypassAudit(pool, { exec, inContainer: false, now: () => Date.parse('2026-10-12T04:00:00Z'), sendBark: vi.fn() });
-    expect(r.ok).toBe(false);
-    expect(r.scan.error).toMatch(/ssh/);
+    expect(r.ok).toBe(true);
+    expect(exec).not.toHaveBeenCalled();
     expect(r.rollup.day).toBe('2026-10-12');
   });
 });

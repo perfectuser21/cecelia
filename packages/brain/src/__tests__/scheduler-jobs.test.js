@@ -112,21 +112,6 @@ describe('scheduler-jobs 注册表', () => {
     }
   });
 
-  // 决策 c7ff6e02/9ec7a010：OpenClaw cron 运行记录入 runs 表，每 5 分钟；没注册 = runs 表永远没有 openclaw 行
-  it('JOBS 注册了 openclaw-run-ingest（5 分钟、needsPool、挨着 ops-collector、handler 真接线）', async () => {
-    const { runOpenclawRunIngest } = await import('../openclaw-run-ingest.js');
-    const names = JOBS.map((j) => j.name);
-    const j = JOBS.find((x) => x.name === 'openclaw-run-ingest');
-    expect(j).toBeTruthy();
-    expect(j.cadence.everySec).toBe(300);
-    expect(j.needsPool).toBe(true);
-    expect(j.timeoutMs).toBe(120_000);
-    expect(names.indexOf('openclaw-run-ingest')).toBe(names.indexOf('ops-collector') + 1);
-    const pool = makePool();
-    await runSchedulerJobsOnce(pool, [j]);
-    expect(runOpenclawRunIngest).toHaveBeenCalledWith(pool);
-  });
-
   // 任务 1b3c0000：技能工厂看板，调度器每 60s 调、handler 自 gate 5 分钟
   it('JOBS 注册了 skill-factory-board（挨着 runs-notion-push、needsPool、handler 真接线）', async () => {
     const { runSkillFactoryBoardPush } = await import('../skill-factory-board.js');
@@ -142,7 +127,7 @@ describe('scheduler-jobs 注册表', () => {
   });
 
   // 决策 9ec7a010：runs 投影到 Notion「最近执行」库，每 2 分钟；库未注册时 handler 安静跳过
-  it('JOBS 注册了 runs-notion-push（120 秒、needsPool、挨着 openclaw-run-ingest、handler 真接线）', async () => {
+  it('JOBS 注册了 runs-notion-push（120 秒、needsPool、挨着 ops-collector、handler 真接线）', async () => {
     const { runRunsNotionPush } = await import('../runs-notion-projection.js');
     const names = JOBS.map((j) => j.name);
     const j = JOBS.find((x) => x.name === 'runs-notion-push');
@@ -150,7 +135,7 @@ describe('scheduler-jobs 注册表', () => {
     expect(j.cadence.everySec).toBe(120);
     expect(j.needsPool).toBe(true);
     expect(j.timeoutMs).toBe(110_000);
-    expect(names.indexOf('runs-notion-push')).toBe(names.indexOf('openclaw-run-ingest') + 1);
+    expect(names.indexOf('runs-notion-push')).toBe(names.indexOf('ops-collector') + 1);
     const pool = makePool();
     await runSchedulerJobsOnce(pool, [j]);
     expect(runRunsNotionPush).toHaveBeenCalledWith(pool);
@@ -448,4 +433,20 @@ it('真实默认调度退役六类自主活动，仍执行任务、核验、Noti
     expect(JSON.parse(sentinel[1][1]), name).toMatchObject({ ok: true });
   }
   expect(results).toHaveLength(JOBS.length);
+});
+
+it('默认调度轮不再消费旧OpenClaw采集/补账，现役Notion与手机审计继续执行', async () => {
+  const pool = makePool();
+  const results = await runSchedulerJobsOnce(pool, JOBS);
+  const invoked = results.map(row => row.name);
+  expect(invoked).not.toContain('openclaw-run-ingest');
+  expect(invoked).not.toContain('feishu-task-ledger');
+  expect(invoked).toContain('notion-gtd-sync');
+  expect(invoked).toContain('bypass-audit');
+  const { gtdSyncJobHandler } = await import('../notion-gtd-sync.js');
+  const { runBypassAudit } = await import('../bypass-audit.js');
+  expect(gtdSyncJobHandler).toHaveBeenCalledWith(pool);
+  expect(runBypassAudit).toHaveBeenCalledWith(pool);
+  expect(schedulerBoundary.process).not.toHaveBeenCalled();
+  expect(schedulerBoundary.network).not.toHaveBeenCalled();
 });
