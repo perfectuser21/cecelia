@@ -166,10 +166,14 @@ export async function createDiscoveryServices(job, {profile, skillPath, stateRoo
       if (runModel) return runModel({connectionPath,modelOutput,prompt});
       const remaining = deadline-Date.now();
       if (remaining < 1000) throw Error('standalone_work_deadline');
-      await execute(codex.command,['exec',...auth.args,'--model',codex.model,'--skip-git-repo-check','--output-last-message',modelOutput,prompt],{
+      const execution = execute(codex.command,['exec',...auth.args,'--model',codex.model,'--skip-git-repo-check','--output-last-message',modelOutput,prompt],{
         cwd:dir, env:codexAuthEnvironment({PATH:process.env.PATH,HOME:process.env.HOME,LANG:'C.UTF-8'},auth.auth),
         timeout:remaining,maxBuffer:4*1024*1024,
       });
+      // Codex reads piped stdin to EOF even when the prompt is already in argv.
+      execution.child.stdin?.on('error',()=>{});
+      execution.child.stdin?.end();
+      await execution;
     },
     async verifyBusiness({connectionPath}) {
       if (scoring) {
