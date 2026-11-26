@@ -24,8 +24,10 @@ const GREEN_IP = '192.168.97.99';
 function makeMocks(dir, { curlOkPattern }) {
   const dockerLog = join(dir, 'docker.log');
   const curlLog = join(dir, 'curl.log');
+  const sleepLog = join(dir, 'sleep.log');
   writeFileSync(dockerLog, '');
   writeFileSync(curlLog, '');
+  writeFileSync(sleepLog, '');
   const docker = `#!/usr/bin/env bash
 echo "$@" >> "${dockerLog}"
 case "$1" in
@@ -48,7 +50,10 @@ exit 7
 `;
   writeFileSync(join(dir, 'docker'), docker); chmodSync(join(dir, 'docker'), 0o755);
   writeFileSync(join(dir, 'curl'), curl); chmodSync(join(dir, 'curl'), 0o755);
-  return { dockerLog, curlLog };
+  // 只替换模拟现场的墙钟等待；实际稳定探活仍执行三次并保留等待间隔。
+  writeFileSync(join(dir, 'sleep'), `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >> "${sleepLog}"\n`);
+  chmodSync(join(dir, 'sleep'), 0o755);
+  return { dockerLog, curlLog, sleepLog };
 }
 
 function makeDeployRoot(dir) {
@@ -92,13 +97,17 @@ describe('bluegreen GREEN_URL 双模式（Gate3 全红根因回归）', () => {
   afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
 
   it('green docker run 带 --network <blue 所在网络>', () => {
-    const { dockerLog } = makeMocks(dir, { curlOkPattern: 'localhost:5223' });
+    const { dockerLog, curlLog, sleepLog } = makeMocks(dir, { curlOkPattern: 'localhost:5223' });
     const { root } = makeDeployRoot(dir);
     runSwap(dir, { DEPLOY_ROOT_DIR: root });
     const runLine = readFileSync(dockerLog, 'utf8').split('\n')
       .find((l) => l.startsWith('run ') && l.includes('cecelia-node-brain-green'));
     expect(runLine).toBeTruthy();
     expect(runLine).toContain('--network cecelia_default');
+    expect(readFileSync(curlLog, 'utf8').trim().split('\n')).toEqual(
+      Array(3).fill('http://localhost:5223/api/brain/tick/status'),
+    );
+    expect(readFileSync(sleepLog, 'utf8').trim().split('\n')).toEqual(['2', '2']);
   });
 
   it('容器模式：localhost 不可达 → smoke BRAIN_URL 用 green_ip:5221', () => {

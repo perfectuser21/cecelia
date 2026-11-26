@@ -1,12 +1,13 @@
-# CI宿主工具准备验收
+# 模拟蓝绿发布回归提速验收
 
-Task: df3410ee-b85e-4c7e-8473-5688e34f0ab4
+Task: e97be8ae-d610-4f97-abc0-36110db96c1d
 GP-Anchor: none(infra)
 
-- [ ] 实际workflow仅image/dashboard退出工具安装，其余9项原APT及错误传播保留。
-  Test: manual:node --test scripts/ci/__tests__/basic-host-tool-preparation.test.mjs scripts/ci/__tests__/basic-ubuntu-native-install.test.mjs
-- [ ] 实际mirror脚本缺jq在首次sudo前拒绝；成功路径原生jq配置正确且仅SIGHUP；非托管拒绝，先红后绿。
-  Test: manual:node --test scripts/ci/__tests__/basic-host-tool-preparation.test.mjs
-- [ ] 完整Scripts/Ops、独立审查、PR/main实际镜像/前端检查及完整自动CD/生产读回通过。
-  Test: manual:node scripts/ci/run-basic-check.mjs scripts
-  Test: manual:node scripts/ci/run-basic-check.mjs ops
+- [ ] 完整9例及蓝绿切换17例通过，三次探活和两次等待保持。
+  Test: manual:npm test --workspace packages/brain -- src/__tests__/bluegreen-green-url.test.js src/__tests__/bluegreen-swap.test.js
+- [ ] 稳定探活失败重置、网络模式与生产脚本语义保持。
+  Test: manual:bash scripts/__tests__/bluegreen-stable-health.test.sh
+- [ ] 修改前后同机完整套件测量，降低连续探活门槛的真实变异必须报红。
+  Test: manual:npm test --workspace packages/brain -- src/__tests__/bluegreen-green-url.test.js
+- [ ] 完整CI及自动发布成功，生产版本SHA读回一致。
+  Test: manual:bash scripts/check-version-sync.sh
