@@ -136,7 +136,7 @@ function isolatedBrainSafety(t) {
   writeFileSync(join(f.directory, 'packages/brain/scripts/fleet-worker/private.test.sh'), 'exit 0\n');
   const suite = join(f.directory, smokeSafetyDirectory);
   mkdirSync(suite, { recursive: true });
-  const list = (shard = '3') => spawnSync(process.execPath,
+  const list = (shard = '6') => spawnSync(process.execPath,
     [join(f.ci, 'run-basic-check.mjs'), '--list', 'brain-unit', shard], { encoding: 'utf8' });
   const run = steps => {
     const env = { ...process.env };
@@ -150,7 +150,7 @@ function isolatedBrainSafety(t) {
   return { ...f, suite, list, run };
 }
 
-test('Brain六分片只在第三片显式执行全部顶层Smoke安全测试各一次，不递归fixtures', t => {
+test('Brain六分片只在第六片显式执行全部顶层Smoke安全测试各一次，不递归fixtures', t => {
   const f = isolatedBrainSafety(t);
   const marker = join(f.directory, 'executed');
   for (const name of ['z.node-test.mjs', 'a.node-test.mjs']) writeFileSync(join(f.suite, name),
@@ -163,7 +163,7 @@ test('Brain六分片只在第三片显式执行全部顶层Smoke安全测试各�
     const result = f.list(String(shard));
     assert.equal(result.status, 0, result.stderr);
     const steps = JSON.parse(result.stdout);
-    assert.equal(steps.length, shard === 3 ? 4 : 1);
+    assert.equal(steps.length, [1, 6].includes(shard) ? 2 : 1);
     assert.ok(steps.at(-1).args.includes(`--shard=${shard}/6`));
     suites.push(...steps.filter(step => step.command === 'node' && step.args[0] === '--test'));
   }
@@ -214,8 +214,9 @@ function executable(path, source) {
   chmodSync(path, 0o755);
 }
 
-for (const failure of [null, 'lint', 'fleet', 'smoke']) test(`第三片真实守卫链执行及失败传播：${failure ?? '全部成功'}`, t => {
+for (const failure of [null, 'lint', 'fleet', 'smoke']) test(`现行owner真实守卫链执行及失败传播：${failure ?? '全部成功'}`, t => {
   const f = isolatedBrainSafety(t);
+  writeFileSync(join(f.ci, '__tests__/basic-real.test.mjs'), '');
   const marker = join(f.directory, 'guard-events');
   const bin = join(f.directory, 'bin');
   mkdirSync(bin);
@@ -230,18 +231,20 @@ for (const failure of [null, 'lint', 'fleet', 'smoke']) test(`第三片真实守
   const run = shard => spawnSync(process.execPath, [join(f.ci, 'run-basic-check.mjs'), 'brain-unit', String(shard)],
     {cwd: f.directory, encoding: 'utf8', env});
   if (failure) {
-    const result = run(3);
+    const owner = failure === 'lint' ? 'scripts' : 'brain-unit';
+    const ownerShard = failure === 'fleet' ? '1' : '6';
+    const result = spawnSync(process.execPath, [join(f.ci, 'run-basic-check.mjs'), owner, ownerShard], {cwd: f.directory, encoding: 'utf8', env});
     assert.equal(result.status, failure === 'lint' ? 23 : failure === 'fleet' ? 29 : 1, result.stdout + result.stderr);
     const events = readFileSync(marker, 'utf8').trim().split('\n');
-    assert.deepEqual(events, failure === 'lint' ? ['lint'] : failure === 'fleet' ? ['lint','fleet'] : ['lint','fleet','smoke']);
+    assert.deepEqual(events, failure === 'lint' ? ['lint'] : failure === 'fleet' ? ['fleet'] : ['smoke']);
   } else {
     for (let shard = 1; shard <= 6; shard++) {
       const result = run(shard);
       assert.equal(result.status, 0, result.stdout + result.stderr);
       const events = readFileSync(marker, 'utf8').trim().split('\n');
-      assert.equal(events.filter(x => x === 'lint').length, shard < 3 ? 0 : 1);
-      assert.equal(events.filter(x => x === 'fleet').length, shard < 3 ? 0 : 1);
-      assert.equal(events.filter(x => x === 'smoke').length, shard < 3 ? 0 : 1);
+      assert.equal(events.filter(x => x === 'lint').length, 0);
+      assert.equal(events.filter(x => x === 'fleet').length, 1);
+      assert.equal(events.filter(x => x === 'smoke').length, shard < 6 ? 0 : 1);
     }
     const vitest = readFileSync(marker, 'utf8').trim().split('\n').filter(x => x.startsWith('vitest:'));
     assert.equal(vitest.length, 6);
@@ -249,7 +252,7 @@ for (const failure of [null, 'lint', 'fleet', 'smoke']) test(`第三片真实守
   }
 });
 
-for (const failure of [false, true]) test(`安装器经真实第三片CLI和GP Vitest只执行一次：${failure ? '退出29阻断' : '成功'}`, t => {
+for (const failure of [false, true]) test(`安装器经真实第一片CLI和GP Vitest只执行一次：${failure ? '退出29阻断' : '成功'}`, t => {
   const f = isolatedBrainSafety(t);
   const fleet = join(f.directory, 'packages/brain/scripts/fleet-worker');
   const sourceFleet = new URL('../../../packages/brain/scripts/fleet-worker/', import.meta.url);
@@ -283,9 +286,21 @@ for (const failure of [false, true]) test(`安装器经真实第三片CLI和GP V
       .map(quote).join(' ') + '\n');
   const env = {...process.env, PATH: bin + ':' + process.env.PATH, CI_GUARD_EVENTS: marker};
   delete env.NODE_TEST_CONTEXT;
-  const result = spawnSync(process.execPath, [join(f.ci, 'run-basic-check.mjs'), 'brain-unit', '3'],
+  const result = spawnSync(process.execPath, [join(f.ci, 'run-basic-check.mjs'), 'brain-unit', '1'],
     {cwd: f.directory, encoding: 'utf8', env, timeout: 30000});
   assert.equal(result.status, failure ? 29 : 0, result.stdout + result.stderr);
   assert.deepEqual(readFileSync(marker, 'utf8').trim().split('\n'),
-    failure ? ['installer'] : ['installer', 'smoke', 'vitest']);
+    failure ? ['installer'] : ['installer', 'vitest']);
+});
+
+test('全部额外检查各有唯一owner且第三片仅运行自身Vitest', async () => {
+  const {commandsFor} = await import(runner);
+  const all = ['scripts', 'ops'].flatMap(component => commandsFor(component));
+  for (let shard = 1; shard <= 6; shard++) all.push(...commandsFor('brain-unit', shard));
+  assert.equal(all.filter(step => step.command === 'npm' && step.args.join(' ') === 'run lint').length, 1);
+  assert.ok(commandsFor('scripts').some(step => step.command === 'npm' && step.args.includes('lint')));
+  assert.equal(commandsFor('brain-unit', 3).length, 1);
+  const fleet = readdirSync(new URL('../../../packages/brain/scripts/fleet-worker/', import.meta.url))
+    .filter(name => name.endsWith('.test.sh'));
+  for (const name of fleet) assert.equal(all.filter(step => step.args.includes(`packages/brain/scripts/fleet-worker/${name}`)).length, 1);
 });

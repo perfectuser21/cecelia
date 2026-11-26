@@ -93,8 +93,9 @@ jobs:
         env: {BASE_REF: '${{ github.event.pull_request.base.sha || github.event.before }}', HEAD_REF: '${{ github.event.pull_request.head.sha || github.sha }}'}
         run: bash scripts/ci/check-brain-version-bump.sh
       - name: Install test tools
-        if: matrix.component != 'image' && matrix.component != 'dashboard'
-        run: bash scripts/ci/prepare-host-tools.sh
+        if: matrix.component == 'scripts'
+        env: {COMPONENT: '${{ matrix.component }}'}
+        run: bash scripts/ci/prepare-host-tools.sh "$COMPONENT"
       - name: Install locked dependencies
         if: matrix.component != 'image'
         run: npm ci --ignore-scripts --no-audit --no-fund
