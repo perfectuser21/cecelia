@@ -1,4 +1,4 @@
-import { dispatchNotionLeadgen, explicitLeadgenStages, inactiveLeadgenReason } from './notion-leadgen-dispatch.js';
+import { dispatchNotionLeadgen, ENGLISH_TASKS_DB, explicitLeadgenStages, inactiveLeadgenReason, resolveNotionLeadgenBinding } from './notion-leadgen-dispatch.js';
 import { standaloneSourceList } from './workflow-foundation/standalone-source.js';
 import {syncTaskProgress,findCreatedTaskPage,TASK_PROGRESS_FIELDS} from './projection/task-progress.js';
 import {syncManagedBodyBlock} from './projection/workflow-body.js';
@@ -37,7 +37,7 @@ const INITIATIVE_CONTRACTS_DB = '185c40c2-ba63-828c-973f-81a9c4582cd6';
 
 // Notion 任务编排库（2026-09-13 双向·push 半边接线；库早已存在但 Brain 从未接）
 // PR2 起导出：notion-gtd-sync.js 的 EN_TASKS_DB 需与此同值（Task 4 起改为唯一真源）。
-export const NOTION_TASKS_DB = 'd5bc40c2-ba63-82ef-965a-8153b7ad81a0';
+export const NOTION_TASKS_DB = ENGLISH_TASKS_DB;
 // 旧 Workflow relation 执行桥已退役；现代 GTD 标记行仍由 ingestQiumiPage 入账。
 
 // 与中文 GTD 表一一对应的英文 Tasks 库 Status（2026-10-10）；与 lib/qiumi-status-map.js 的 en 列保持一致（测试钉住）。
@@ -629,33 +629,43 @@ export async function ingestDelegatedPage(pool, token, page, opts = {}) {
     const tenantId = tenantFor(env, NOTION_TASKS_DB);
     const bindingJson = env[`NOTION_LEADGEN_${leadgenStage}_BINDINGS`];
     const configured = leadgenStage === '101' || Boolean(bindingJson);
-    if (configured) {
-      const previous = (await pool.query(`SELECT id FROM tasks WHERE task_type='workflow_dispatch'
-        AND payload->>'source'=$3 AND payload->>'notion_page_id'=$1 AND tenant_id=$2 LIMIT 1`,
-      [page.id, tenantId, `notion_leadgen_${leadgenStage}`])).rows[0];
-      if (previous) {
-        await writeStatusReceipt(token, page, desc, `brain:${previous.id} ✓已接管`);
-        return { taskId: previous.id, kind: 'workflow_dispatch' };
-      }
-    }
-    const now = opts.now ?? (() => new Date());
-    const at = now();
-    const end = toEndIso(en.planEnd);
-    if (end && !isFuture(end, at)) {
-      await writeStatusReceipt(token, page, desc, `${leadgenStage} 未派发：已超过计划截止时间`, 'Blocked');
-      return { taskId: null, kind: 'blocked' };
-    }
-    if (isFuture(toStartIso(en.planDate), at)) return { taskId: null, kind: 'scheduled' };
-    const body = await fetchNotionPageContent(token, page.id, { requireComplete: true });
-    if (!configured) {
-      await writeStatusReceipt(token, page, desc, `${leadgenStage} 未派发：${inactiveLeadgenReason(leadgenStage, body)}`, 'Blocked');
-      return { taskId: null, kind: 'blocked' };
-    }
     const bindings = JSON.parse(bindingJson ?? '{}');
+    const scoped101 = leadgenStage === '101' && Object.values(bindings ?? {})
+      .some(binding => binding && Object.hasOwn(binding, 'source_tenant_id'));
+    const request = {
+      stage: leadgenStage, pageId: page.id, title: name, tenantId, bindings,
+      sourceDatabaseId: page.parent?.type === 'database_id' ? page.parent.database_id : undefined,
+    };
+    const readBody = () => fetchNotionPageContent(token, page.id, { requireComplete: true });
     try {
-      const received = await dispatchNotionLeadgen(pool, {
-        stage: leadgenStage, pageId: page.id, title: name, body, tenantId, bindings,
-      }, { createTask: opts.createFoundationTask });
+      if (configured) {
+        let receiptTenant = tenantId;
+        if (scoped101) {
+          request.body = await readBody();
+          receiptTenant = resolveNotionLeadgenBinding(request).binding.tenant_id;
+        }
+        const previous = (await pool.query(`SELECT id FROM tasks WHERE task_type='workflow_dispatch'
+          AND payload->>'source'=$3 AND payload->>'notion_page_id'=$1 AND tenant_id=$2 LIMIT 1`,
+        [page.id, receiptTenant, `notion_leadgen_${leadgenStage}`])).rows[0];
+        if (previous) {
+          await writeStatusReceipt(token, page, desc, `brain:${previous.id} ✓已接管`);
+          return { taskId: previous.id, kind: 'workflow_dispatch' };
+        }
+      }
+      const now = opts.now ?? (() => new Date());
+      const at = now();
+      const end = toEndIso(en.planEnd);
+      if (end && !isFuture(end, at)) {
+        await writeStatusReceipt(token, page, desc, `${leadgenStage} 未派发：已超过计划截止时间`, 'Blocked');
+        return { taskId: null, kind: 'blocked' };
+      }
+      if (isFuture(toStartIso(en.planDate), at)) return { taskId: null, kind: 'scheduled' };
+      request.body ??= await readBody();
+      if (!configured) {
+        await writeStatusReceipt(token, page, desc, `${leadgenStage} 未派发：${inactiveLeadgenReason(leadgenStage, request.body)}`, 'Blocked');
+        return { taskId: null, kind: 'blocked' };
+      }
+      const received = await dispatchNotionLeadgen(pool, request, { createTask: opts.createFoundationTask });
       await writeStatusReceipt(token, page, desc, `brain:${received.taskId} ✓已接管`);
       return received;
     } catch (error) {

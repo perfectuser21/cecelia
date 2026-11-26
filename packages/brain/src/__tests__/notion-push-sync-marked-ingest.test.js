@@ -340,6 +340,54 @@ describe('Notion 101 explicit dispatch through the existing published Worker', (
     expect(createFoundationTask).not.toHaveBeenCalled();
   });
 
+  const targetTenant = '8d760098-abb7-43d5-ae95-dad7936e657f';
+  const sourceDatabase = 'd5bc40c2-ba63-82ef-965a-8153b7ad81a0';
+  const scopedEnv = () => {
+    const bindings = JSON.parse(env.NOTION_LEADGEN_101_BINDINGS);
+    bindings.悦升 = { ...bindings.悦升, tenant_id: targetTenant, source_tenant_id: 'default' };
+    return { NOTION_LEADGEN_101_BINDINGS: JSON.stringify(bindings) };
+  };
+  const bodyResult = () => ({results:[{type:'paragraph',paragraph:{rich_text:[{plain_text:body}]}}],has_more:false});
+
+  it('checks the exact destination for receipt repair and never resubmits the existing task', async () => {
+    const { ingestDelegatedPage } = await import('../notion-push-sync.js');
+    const source = {...page(),parent:{type:'database_id',database_id:sourceDatabase}};
+    const id = '9c00babb-5f42-487f-9068-3969a83b6d42';
+    const createFoundationTask = vi.fn();
+    mockQuery.mockImplementation(async (_, values) => ({rows: values?.[1] === targetTenant ? [{id}] : []}));
+    mockNotionReq.mockImplementation(async (_, path, method) => method === 'GET' ? bodyResult() : {});
+    expect(await ingestDelegatedPage({query:mockQuery},'tok',source,{
+      env:scopedEnv(),createFoundationTask,now:()=>new Date('2026-09-25'),
+    })).toEqual({taskId:id,kind:'workflow_dispatch'});
+    expect(mockQuery.mock.calls.map(([,values])=>values[1])).toEqual([targetTenant]);
+    expect(mockNotionReq.mock.calls.filter(([, ,method])=>method==='PATCH')[0][3].properties.Description.rich_text[0].text.content).toContain('brain:'+id);
+    expect(createFoundationTask).not.toHaveBeenCalled();
+  });
+
+  it('accepts a real English Tasks parent and preserves the target tenant on new 101 work', async () => {
+    const { ingestDelegatedPage } = await import('../notion-push-sync.js');
+    const source = {...page(),parent:{type:'database_id',database_id:sourceDatabase}};
+    const id = '9c00babb-5f42-487f-9068-3969a83b6d42';
+    const createFoundationTask = vi.fn(async () => ({task:{id}}));
+    mockNotionReq.mockResolvedValueOnce(bodyResult()).mockResolvedValueOnce({});
+    expect(await ingestDelegatedPage({query:mockQuery},'tok',source,{
+      env:scopedEnv(),createFoundationTask,now:()=>new Date('2026-09-25'),
+    })).toEqual({taskId:id,kind:'workflow_dispatch'});
+    expect(createFoundationTask.mock.calls[0][2]).toEqual({notionPageId:source.id,notionTenantId:targetTenant});
+  });
+
+  it('does not recover or create a scoped task for a page outside English Tasks', async () => {
+    const { ingestDelegatedPage } = await import('../notion-push-sync.js');
+    const source = {...page(),parent:{type:'database_id',database_id:'00000000-0000-4000-8000-000000000001'}};
+    const createFoundationTask = vi.fn();
+    mockNotionReq.mockResolvedValueOnce(bodyResult()).mockResolvedValueOnce({});
+    expect(await ingestDelegatedPage({query:mockQuery},'tok',source,{
+      env:scopedEnv(),createFoundationTask,now:()=>new Date('2026-09-25'),
+    })).toEqual({taskId:null,kind:'blocked'});
+    expect(mockQuery).not.toHaveBeenCalled();
+    expect(createFoundationTask).not.toHaveBeenCalled();
+  });
+
   it('before Plan Date keeps the source row scheduled and creates no executable task', async () => {
     const { ingestDelegatedPage } = await import('../notion-push-sync.js');
     const createFoundationTask = vi.fn();
