@@ -63,3 +63,64 @@ it('中央实际字节被改不能沿用正确摘要和快照取得发布证明'
  fixture.files.set(`${fixture.resolved.repo}:${fixture.resolved.path}`,'---\nname: demo\nversion: 1\n---\nchanged\n');
  await expect(prepareAuthoringReleaseProof(fixture.snapshot,{readFile:fixture.readFile})).rejects.toThrow(/摘要/);
 });
+
+it('发布证明在同一快照的多个定义和并发绑定之间复用固定Git对象',async()=>{
+ const {snapshot,files,declared,resolved}=await centralFixture();
+ const previous='d'.repeat(40),codePaths=['code/first.js','code/second.js'],code='export const ready = true;\n';
+ const workflow=snapshot.definitions.workflows[0],definition=workflow.payload.contract;
+ definition.activities[0].implementation_bindings=codePaths.map(path=>({kind:'code',repo:declared.repo,path,revision:previous}));
+ const second=structuredClone(workflow);
+ second.workflow_id='66666666-6666-4666-8666-666666666666';
+ second.source_path='contracts/second.json';
+ second.payload.key='second.internal';
+ second.payload.contract.key=second.payload.key;
+ second.payload.contract.source.ref=second.source_path;
+ snapshot.definitions.workflows.push(second);
+ snapshot.canonical.workflows.push({...snapshot.canonical.workflows[0],id:second.workflow_id,key:second.payload.key,source_path:second.source_path});
+ snapshot.map.repositories[0].adapter_config.workflow_keys.push(second.payload.key);
+ for(const row of snapshot.definitions.workflows){
+  const {source,...document}=row.payload.contract;
+  files.set(`${source.repo}:${source.ref}`,JSON.stringify(document));
+ }
+ for(const path of codePaths)files.set(`${declared.repo}:${path}`,code);
+ snapshot.definitions.activities[0].payload.implementation_bindings=await validateFixedImplementationBindings(
+  definition.activities[0],{repo:declared.repo,commit:declared.revision},{readFile:s=>files.get(`${s.repo}:${s.path}`)});
+ const {snapshot_sha256:_,...body}=snapshot;
+ snapshot.snapshot_sha256=definitionDigest(body);
+
+ const documents=new Map(),mainTree='e'.repeat(40);
+ for(const [repo,revision,tree,paths] of [
+  [declared.repo,declared.revision,mainTree,[workflow.source_path,second.source_path,'.skills-source.json']],
+  [declared.repo,previous,'0'.repeat(40),codePaths],
+  [resolved.repo,resolved.revision,'f'.repeat(40),['distribution/catalog.json',resolved.path]],
+ ]){
+  documents.set(`${repo}/commits/${revision}`,{sha:revision,tree:{sha:tree}});
+  const entries=paths.map(path=>{
+   const bytes=Buffer.from(files.get(`${repo}:${path}`));
+   const sha=createHash('sha1').update(Buffer.concat([Buffer.from(`blob ${bytes.length}\0`),bytes])).digest('hex');
+   documents.set(`${repo}/blobs/${sha}`,{sha,size:bytes.length,encoding:'base64',content:bytes.toString('base64')});
+   return {path,sha,type:'blob',mode:'100644',size:bytes.length};
+  });
+  documents.set(`${repo}/trees/${tree}`,{sha:tree,tree:entries});
+ }
+ const requested=[];
+ const options={bindingReadConcurrency:6,resolveToken:async()=> 'fixture',fetchFn:async url=>{
+  const key=new URL(url).pathname.slice('/repos/'.length).replace('/git/','/');
+  requested.push(key);
+  await new Promise(resolve=>setImmediate(resolve));
+  if(!documents.has(key))throw Error('unexpected GitHub object');
+  return {ok:true,json:async()=>documents.get(key)};
+ }};
+ const proof=await prepareAuthoringReleaseProof(snapshot,options);
+ expect(assertAuthoringReleaseProof(snapshot,proof).map(r=>r.path).sort()).toEqual([...codePaths,declared.path].sort());
+ expect(requested.slice().sort()).toEqual([...documents.keys()].sort());
+
+ requested.length=0;
+ const next=await prepareAuthoringReleaseProof(snapshot,{...options,bindingReadConcurrency:1});
+ expect(assertAuthoringReleaseProof(snapshot,next)).toEqual(assertAuthoringReleaseProof(snapshot,proof));
+ expect(requested.slice().sort()).toEqual([...documents.keys()].sort());
+
+ const firstTree=documents.get(`${declared.repo}/trees/${mainTree}`);
+ firstTree.tree.find(entry=>entry.path===second.source_path).mode='120000';
+ await expect(prepareAuthoringReleaseProof(snapshot,options)).rejects.toThrow();
+});
