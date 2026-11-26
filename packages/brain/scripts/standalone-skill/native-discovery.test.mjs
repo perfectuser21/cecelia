@@ -43,7 +43,7 @@ test('只有原版本和原业务范围就绪才允许接触手机', async () =>
   await assert.rejects(createDiscoveryServices(job,{profile:{domain_adapter:{config:{snapshot:{release:{id:'other'}}}}}}),/standalone_profile_mismatch/);
 });
 
-test.each([['101','bound'],['102','bound'],['103','bound'],['101','changed'],['101','unregistered']])('%s %s 经派单和 attestation 只加载本次冻结副本', async (stage,variant) => {
+test.each([['101','bound'],['102','bound'],['103','bound'],['101','changed'],['101','unregistered'],['101','codex-stdin-eof']])('%s %s 经派单和 attestation 只加载本次冻结副本', async (stage,variant) => {
   const {existsSync,mkdirSync,writeFileSync,readFileSync,mkdtempSync,realpathSync,rmSync}=await import('node:fs');
   const {tmpdir}=await import('node:os');
   const {join}=await import('node:path');
@@ -52,6 +52,7 @@ test.each([['101','bound'],['102','bound'],['103','bound'],['101','changed'],['1
   const root=mkdtempSync(join(realpathSync(tmpdir()),'native-direct-101-'));
   try {
     const calls=[];
+    const realChild=variant==='codex-stdin-eof';
     const hash=value=>createHash('sha256').update(Buffer.isBuffer(value)?value:JSON.stringify(value)).digest('hex');
     const skillPath=join(root,'SKILL.md');
     writeFileSync(skillPath,'冻结Skill',{mode:0o600});
@@ -79,7 +80,7 @@ test.each([['101','bound'],['102','bound'],['103','bound'],['101','changed'],['1
       }`;
     const ipcModule=`export async function callStandaloneSkillTool(){return {ok:true,result:{ok:true,result:{metrics_verified:true,metrics_digest:'abc'}}};}`;
     const runtimeFiles={[nativeEntry]:Buffer.from(runtimeModule),[ipcEntry]:Buffer.from(ipcModule)};
-    const profile={cwd:installed,files:Object.fromEntries(Object.entries(runtimeFiles).map(([name,bytes])=>[name,hash(bytes)])),metadata:{collect:{runtime_snapshot_sha256:'a'.repeat(64)}},domain_adapter:{budget:{max_duration_s:60,cleanup_grace_s:30},config:{
+    const profile={cwd:installed,files:Object.fromEntries(Object.entries(runtimeFiles).map(([name,bytes])=>[name,hash(bytes)])),metadata:{collect:{runtime_snapshot_sha256:'a'.repeat(64)}},domain_adapter:{budget:{max_duration_s:realChild?3:60,cleanup_grace_s:30},config:{
       workflow_key:key,primary_host:'codex-exec-v1',company,standalone_skill:skill,
       resources:{machine,profile:scoring?'mmv-scoring':'bound',serial:scoring?'none':'fixture',line:'test',account:scoring?'none':'bound-account'},
       snapshot:{deployment:{source_commit:'b'.repeat(40),observation_id:observation},release:{id:release},workflow_version:{id:version},
@@ -102,7 +103,25 @@ test.each([['101','bound'],['102','bound'],['103','bound'],['101','changed'],['1
       },
     };
     const saveProof=proof=>writeFileSync(join(runDir,'native-proof.json'),JSON.stringify(proof),{mode:0o600});
-    const services=await createDiscoveryServices(job,{profile,skillPath,stateRoot:root,toolkit},{
+    let codex;
+    if(realChild){
+      const home=join(root,'codex-home'),command=join(root,'eof-codex.cjs');
+      mkdirSync(home,{mode:0o700});
+      writeFileSync(join(home,'auth.json'),JSON.stringify({auth_mode:'apikey',OPENAI_API_KEY:'fixture-only'}),{mode:0o600});
+      writeFileSync(command,`#!${process.execPath}
+        const assert=require('node:assert/strict'), fs=require('node:fs'), args=process.argv.slice(2);
+        assert.equal(args[0],'exec');
+        assert.match(args.at(-1),/执行冻结的 101 Skill/);
+        let input='';
+        process.stdin.setEncoding('utf8').on('data', chunk=>{input+=chunk;});
+        process.stdin.on('end',()=>{
+          assert.equal(input,'');
+          fs.writeFileSync(args[args.indexOf('--output-last-message')+1],${JSON.stringify(JSON.stringify({video}))},{mode:0o600});
+        });
+      `,{mode:0o700});
+      codex={command,model:'fixture',auth:{mode:'api-only',home}};
+    }
+    const services=await createDiscoveryServices(job,{profile,skillPath,stateRoot:root,toolkit,codex},{
       post:async(path,body)=>{
         if (path.endsWith('/start-skill')) {
           calls.push('start');
@@ -118,13 +137,13 @@ test.each([['101','bound'],['102','bound'],['103','bound'],['101','changed'],['1
         if(variant==='changed') writeFileSync(join(runRuntime,nativeEntry),"throw Error('unexpected import')");
         return {attested:true};
       },
-      runModel:async({modelOutput,prompt})=>{
+      runModel:realChild?undefined:async({modelOutput,prompt})=>{
         calls.push('agent');
         if(scoring){assert.match(prompt,/score_input/);assert.match(prompt,/score_submit/);}
         if(!hasSource)writeFileSync(modelOutput,JSON.stringify({video}),{mode:0o600});
       },
     });
-    if(variant!=='bound'){
+    if(variant!=='bound'&&!realChild){
       const reason=variant==='changed'? /standalone_provider_toolkit_drift/:/standalone_provider_toolkit_unfrozen/;
       await assert.rejects(services.startHost(),reason);
       assert.equal(existsSync(join(runDir,'native-host-loaded')),false);
@@ -134,6 +153,7 @@ test.each([['101','bound'],['102','bound'],['103','bound'],['101','changed'],['1
     const host=await services.startHost();
     assert.equal(readFileSync(join(runDir,'native-host-loaded'),'utf8'),'yes');
     await services.runAgent(host);
+    if(realChild)assert.deepEqual(JSON.parse(readFileSync(join(runDir,'agent-receipt.json'))),{video});
     const evidence=(await services.verifyBusiness(host)).evidence;
     if(scoring){assert.ok(evidence.some(value=>value.includes(commentId)));assert.ok(evidence.some(value=>value.includes(outboxId)));}
     else if(collection) {
@@ -143,6 +163,6 @@ test.each([['101','bound'],['102','bound'],['103','bound'],['101','changed'],['1
         assert.equal(await services.verifyBusiness(host),null);
       }
     } else assert.deepEqual(evidence,[video.videoUrl]);
-    assert.deepEqual(calls,['start','attest','agent']);
+    assert.deepEqual(calls,realChild?['start','attest']:['start','attest','agent']);
   } finally { rmSync(root,{recursive:true,force:true}); }
 });
