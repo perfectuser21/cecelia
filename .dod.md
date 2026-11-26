@@ -1,14 +1,14 @@
-# 清退无消费者的旧夜间任务标记调度器
+# 清理定义文档历史流水账与无业务效果的文案互锁
 
-Task: 230d4015-60e7-44c1-a59b-0b7bed33989b
+Task: 52288b4b-dde6-40a3-a2a5-9701668c07ad
 GP-Anchor: none(infra)
 
-- [x] 真实启动函数不启动旧编排，现役 Tick、Notion 同步及目录恢复接线保留。
-  Test: manual:node node_modules/vitest/vitest.mjs run --root packages/brain src/__tests__/server-dormant-boundaries.test.js
-- [x] 真实状态 HTTP 保留停用封套与现役队列统计；历史日报原路由与 getter 只读取旧记录。
-  Test: manual:node node_modules/vitest/vitest.mjs run --root packages/brain src/routes/__tests__/briefing-read-api.test.js
-- [x] 注册表只清退无消费者标签，普通任务资格与共享保护仍有效。
-  Test: manual:node node_modules/vitest/vitest.mjs run --root packages/brain src/__tests__/task-type-registry.guard.test.js src/lib/__tests__/task-type-registry.test.js
-- [x] 版本同步、事实与源码配置有效；旧专属 PG 入口随模块清退，GHA 夜间回归保留。
+- [x] 原定义文档只保当前源码事实和入口，版本、schema地板及路由后备值含义明确。
   Test: manual:node scripts/facts-check.mjs
   Test: manual:bash scripts/check-version-sync.sh
+- [x] 移除文档摘要grep后，真实镜像配置、版本与安装参数互锁继续执行。
+  Test: manual:bash packages/brain/scripts/fleet-worker/canonical-pin-consistency.test.sh
+- [x] 保留真实profile/config/rollout及文档版本漂移、治理回归；只清退历史文案专属断言。
+  Test: manual:node node_modules/vitest/vitest.mjs run --root packages/brain ../../tests/gp/f1/step3-runner-digest-pin-consistency.test.js ../../tests/check-version-sync.test.js src/lib/__tests__/implementation-ci-governance.test.js
+- [x] 事实权威仍由源码提取；错误版本或schema破坏能真实报错。
+  Test: manual:node --test scripts/ci/__tests__/basic-facts-authority.test.mjs
