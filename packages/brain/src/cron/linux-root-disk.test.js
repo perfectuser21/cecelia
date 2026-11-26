@@ -43,6 +43,23 @@ describe('US Linux 根卷容量调度', () => {
     expect(deps.raise).toHaveBeenCalledOnce();
   });
 
+  it('GNU df 显示同盘的文件绑定时仍接受已验证的根卷样本', async () => {
+    const deps = fixture();
+    deps.execFile.mockResolvedValue({
+      stdout: [
+        'Filesystem           1024-blocks    Used Available Capacity Mounted on',
+        '/dev/vda1             24299968  22559152   1724432  93% /HEARTBEAT.md',
+      ].join('\n'),
+    });
+    await expect(job.handler(deps)).resolves.toEqual({
+      device: '/dev/vda1', usedPercent: 93, availableBytes: 1765818368,
+    });
+    expect(deps.raise).toHaveBeenCalledOnce();
+    expect(deps.raise).toHaveBeenCalledWith(
+      'P1', 'disk_linux_root_critical', expect.stringContaining('93%'), expect.anything(),
+    );
+  });
+
   it.each([
     ['挂载缺失', mountinfo.split('\n').filter(line => !line.includes('254:1')).join('\n')],
     ['错误设备', mountinfo.replace('ext4 /dev/vda1', 'ext4 /dev/sda')],

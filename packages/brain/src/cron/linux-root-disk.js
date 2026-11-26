@@ -33,10 +33,11 @@ export async function runLinuxRootDisk({
     const { stdout } = await exec('df', ['-Pk', path], {
       env: { ...process.env, LC_ALL: 'C' }, timeout: 5_000, maxBuffer: 4_096,
     });
-    const [source, , , freeKiB, capacity, target] = stdout.trim().split('\n').at(-1).trim().split(/\s+/);
+    // GNU df 可显示同设备的另一绑定挂载。路径身份以前面核验的 mountinfo 为准。
+    const [source, , , freeKiB, capacity] = stdout.trim().split('\n').at(-1).trim().split(/\s+/);
     const availableBytes = Number(freeKiB) * 1024;
     const usedPercent = Number.parseInt(capacity, 10);
-    if (source !== device || target !== path || !/^-?\d+$/.test(freeKiB) ||
+    if (source !== device || !/^-?\d+$/.test(freeKiB) ||
         !/^\d+%$/.test(capacity) || !Number.isSafeInteger(availableBytes) || !Number.isSafeInteger(usedPercent)) {
       throw new Error(`根卷 ${device} 的 df 来源或容量输出无效`);
     }
