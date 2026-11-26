@@ -421,7 +421,6 @@ features:
         auth: none
     tests:
       unit:
-        - packages/brain/src/__tests__/check-okr-structure.test.js
         - packages/brain/src/__tests__/contracts/initiative-closer-contract.test.js
         - packages/brain/src/__tests__/initiative-lock.test.js
         - packages/brain/src/__tests__/initiative-orchestration-migration.test.js
@@ -436,9 +435,6 @@ features:
         - packages/brain/src/__tests__/promotion-job.test.js
         - packages/brain/src/__tests__/routes/task-goals.test.js
         - packages/brain/src/routes/__tests__/task-projects.test.js
-        - packages/brain/src/__tests__/validate-okr-cycle.test.js
-        - packages/brain/src/__tests__/validate-okr-spec-load.test.js
-        - packages/brain/src/__tests__/validate-okr-structure.test.js
       integration:
         - packages/brain/src/__tests__/integration/okr-decomposition-flow.integration.test.js
       e2e: []
@@ -450,7 +446,6 @@ features:
         maturity: 3
         tests:
           unit:
-            - packages/brain/src/__tests__/check-okr-structure.test.js
             - packages/brain/src/__tests__/contracts/initiative-closer-contract.test.js
             - packages/brain/src/__tests__/initiative-lock.test.js
             - packages/brain/src/__tests__/initiative-orchestration-migration.test.js
@@ -465,9 +460,6 @@ features:
             - packages/brain/src/__tests__/promotion-job.test.js
             - packages/brain/src/__tests__/routes/task-goals.test.js
             - packages/brain/src/routes/__tests__/task-projects.test.js
-            - packages/brain/src/__tests__/validate-okr-cycle.test.js
-            - packages/brain/src/__tests__/validate-okr-spec-load.test.js
-            - packages/brain/src/__tests__/validate-okr-structure.test.js
           integration:
             - packages/brain/src/__tests__/integration/okr-decomposition-flow.integration.test.js
           e2e: []

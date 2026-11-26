@@ -59,8 +59,6 @@ services:
           create_host_path: false
       # packages/workflows 不再单独叠只读挂载（09-28 事故，任务 ddee8737）：部署根守卫在本容器内对部署根
       # git checkout -f / reset --hard，只读子挂载让任何改到该目录的提交都部署失败。该目录随部署根整体可写。
-      # Config: OKR validation spec (read-only, mounted at /config for validate-okr-structure.js)
-      - /root/cecelia/packages/config:/config:ro
       # HEARTBEAT.md (read-write for GET/PUT API)
       - /root/cecelia/HEARTBEAT.md:/HEARTBEAT.md:rw
       # workers配置由下方部署根rw挂载提供；Git管理的单文件子挂载会阻塞checkout unlink。

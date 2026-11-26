@@ -114,13 +114,12 @@ packages/engine/
 │   ├── SKILL.md            主技能定义
 │   └── steps/              12 个步骤（00-11）
 │
-├── scripts/devgate/        6 个 DevGate 检查脚本
+├── scripts/devgate/        DevGate 检查脚本
 │   ├── check-dod-mapping.cjs       DoD→Test 映射
 │   ├── check-contract-drift.mjs    模块边界保护
 │   ├── check-executor-agents.mjs   Executor agent 完整性
 │   ├── check-llm-agents.mjs        LLM agent 完整性
-│   ├── check-skills-registry.mjs   Skills 注册表完整性
-│   └── check-okr-structure.mjs     OKR 结构验证
+│   └── check-skills-registry.mjs   Skills 注册表完整性
 │
 ├── features/
 │   └── feature-registry.yml        Feature 注册表 SSOT

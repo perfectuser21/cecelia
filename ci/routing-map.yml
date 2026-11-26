@@ -68,17 +68,6 @@ subsystems:
 
   # Legacy frontend/ 已退役；现役前端由 workspace 的 apps/dashboard 构建。
 
-  # ── Data / Config (CI-exempt) ─────────────────────────────────────────────
-
-  config:
-    root: packages/config
-    paths:
-      - packages/config/**
-    layers: []
-    deploy: false
-    ci_exempt: true
-    description: "纯数据目录（OKR validation spec），无可执行代码，无 CI 路由"
-
   # ── DevGate & CI Infrastructure ───────────────────────────────────────────
 
   devgate-core:
