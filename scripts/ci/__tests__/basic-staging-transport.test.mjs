@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer } from 'node:http';
@@ -30,27 +30,6 @@ function shell(command, env = {}) {
     child.on('close', code => { clearTimeout(timer); resolve({ code, output }); });
   });
 }
-
-test('预览实际checkout固定commit，即使远程分支已前进；非法SHA不触碰worktree', async () => {
-  const temp = mkdtempSync(join(tmpdir(), 'preview-checkout-'));
-  try {
-    const result = await shell(`
-      git init -q "$FIXTURE/origin"
-      git -C "$FIXTURE/origin" -c user.name=Fixture -c user.email=fixture@example.invalid commit --allow-empty -qm first
-      first=$(git -C "$FIXTURE/origin" rev-parse HEAD)
-      git clone -q "$FIXTURE/origin" "$FIXTURE/repo"
-      branch=$(git -C "$FIXTURE/origin" branch --show-current)
-      git -C "$FIXTURE/origin" -c user.name=Fixture -c user.email=fixture@example.invalid commit --allow-empty -qm second
-      bash scripts/preview-checkout.sh "$FIXTURE/repo" "$FIXTURE/worktree" "$branch" "$first"
-      test "$(git -C "$FIXTURE/worktree" rev-parse HEAD)" = "$first"
-      ! git -C "$FIXTURE/worktree" symbolic-ref -q HEAD
-      if bash scripts/preview-checkout.sh "$FIXTURE/repo" "$FIXTURE/unsafe" "$branch" bad; then exit 91; fi
-      test ! -e "$FIXTURE/unsafe"
-    `, { FIXTURE: temp });
-    assert.equal(result.code, 0, result.output);
-    assert.match(readFileSync(join(root, 'scripts/preview-env-start.sh'), 'utf8'), /bash "\$\{SCRIPT_DIR\}\/preview-checkout\.sh"/);
-  } finally { rmSync(temp, { recursive: true, force: true }); }
-});
 
 for (const enabled of [false, true]) test(`手动staging健康诊断真实HTTP执行，tick enabled=${enabled}`, async () => {
   // 直接验证保留的诊断工具，不依赖已退役的手动工作流。

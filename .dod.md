@@ -1,16 +1,15 @@
-# 自动发布拒绝旧提交覆盖已上线后继版本
+# 清退旧 PR Preview 生产者与无消费磁盘采样
 
-Task: f598d05b-cfb9-4e40-8f32-a2fbe7f77a29
+Task: ef0b3c59-9db5-42a0-95a3-c6a4ee6e3653
 GP-Anchor: none(infra)
 
-- [x] 自动与直接发布在真实共享锁内、任何reset/build/migrate/swap前核验目标main成员与现役祖先关系；旧、分叉、未知拒绝。
-  Test: manual:node --test scripts/ci/__tests__/basic-deploy-ordering.test.mjs
-- [x] 新远端main对象可先fetch再准入；未合并本地后代拒绝；已知身份但健康失败可正常向前修复。
-  Test: manual:node --test scripts/ci/__tests__/basic-deploy-ordering.test.mjs
-- [x] 父子FD继承重入不死锁且保持排他；显式回滚与原生成功收据保持。
-  Test: manual:node --test scripts/ci/__tests__/basic-deploy-ordering.test.mjs scripts/brain-image-retention-ledger.test.mjs
-- [x] 客户端明确拒绝时不POST，旧或未知顺序的waiter不能重触发；服务端独立准入为最终防线。
-  Test: manual:node --test scripts/ci/__tests__/basic-brain-deploy-preflight.test.mjs scripts/ci/__tests__/basic-brain-deploy-routing.test.mjs
-  Test: manual:bash scripts/ci/__tests__/gate3-wait-deploy.test.sh
-- [x] 版本、事实、候选与原前驱恢复场景保留；新缺陷回归进入默认Scripts集合。
+- [x] 真实 HTTP start 先鉴权，start/allocate 在既有 JSON 解析边界内返回410，准入与spawn零副作用。
+  Test: manual:npx --no-install vitest run --root packages/brain src/routes/__tests__/preview-source-identity.test.js
+- [x] 历史身份/status/stop/DELETE与原销毁保护保留，native staging端口分配继续验证。
+  Test: manual:npx --no-install vitest run --root packages/brain src/routes/__tests__/preview.test.js src/routes/__tests__/preview-source-identity.test.js src/__tests__/preview-manager.test.js src/__tests__/staging-e2e-runner-review-env-ssh.test.js
+- [x] 代理真实入口保令牌拒绝、loopback与cache挂载，零采样exec与零timer。
+  Test: manual:bash scripts/ops/__tests__/credentials/preview-agent-startup.test.sh
+- [x] Cache自有磁盘前后证据与强鉴权、intent/receipt保留，workers原始字节/权限恢复与失败闭锁保留。
+  Test: manual:node --test scripts/preview-cache.test.mjs scripts/preview-cache-http.test.mjs
+- [x] 本批完整Ops/Scripts通过；默认单测收集1804；运行态Mac代理及cron清理由独立运维交接核验。
   Test: manual:node scripts/ci/run-basic-check.mjs scripts

@@ -201,7 +201,6 @@ for (const [name, overrides] of [
   ['openclaw-cron-ledger-smoke.sh', { PGDATABASE: 'cecelia' }],
   ['journeys-bizarea-smoke.sh', { DB_NAME: 'cecelia' }],
   ['t10-capture-atom-routing-smoke.sh', { DB_NAME: 'cecelia' }],
-  ['preview-ledger-activate-smoke.sh', { DB_NAME: 'cecelia', PGDATABASE: 'cecelia_test' }],
   ['workflow-run-lost-deadline-smoke.sh', { DATABASE_URL: '', PGDATABASE: 'cecelia' }],
 ]) {
   test(`${name}: unused safe URI cannot hide the actual production connection`, async () => {

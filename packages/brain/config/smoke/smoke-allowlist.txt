@@ -91,8 +91,6 @@ ops-workflows-smoke.sh
 orchestrator-remote-launch-smoke.sh
 org-units-smoke.sh
 preview-capacity-gate-and-destroyer-smoke.sh
-preview-env-smoke.sh
-preview-ledger-activate-smoke.sh
 provider-neutral-phase4a-node-smoke.sh
 qiumi-dispatch-smoke.sh
 qiumi-entry-smoke.sh

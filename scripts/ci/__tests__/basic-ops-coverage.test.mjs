@@ -28,7 +28,6 @@ const representative = [
   'scripts/__tests__/bluegreen-env-file.test.sh',
   'scripts/__tests__/bluegreen-bark-encode.test.sh',
   'scripts/__tests__/brain-deploy-build-same-version.test.sh',
-  'scripts/__tests__/preview-env-start.test.sh',
   'scripts/__tests__/preview-reaper.test.sh',
   'scripts/__tests__/codex-remote-launch.test.sh',
   'scripts/__tests__/codex-request.test.sh',

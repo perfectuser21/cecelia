@@ -17,7 +17,6 @@ langfuse-trace-detail-smoke.sh
 
 # === 需要 Staging/Preview 真实部署环境 ===
 dashboard-staging-selfcheck-smoke.sh
-preview-environments-smoke.sh
 staging-e2e-permerge-smoke.sh
 staging-e2e-smoke.sh
 

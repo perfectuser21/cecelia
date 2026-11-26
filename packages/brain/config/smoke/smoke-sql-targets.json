@@ -149,12 +149,6 @@
     "evidence": "实际SQL/写调用源码行 16,17,29,44,51；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。",
     "source_commit": "d664db65c9"
   },
-  "preview-ledger-activate-smoke.sh": {
-    "kind": "write",
-    "connection": "host DB_HOST优先PGHOST；port实际PGPORT；dbname DB_NAME优先PGDATABASE默认cecelia_test；activation子脚本强制相同DB_HOST",
-    "evidence": "实际SQL/写调用源码行 63,74；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。",
-    "source_commit": "d664db65c9"
-  },
   "project-brief-smoke.sh": {
     "kind": "write",
     "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",

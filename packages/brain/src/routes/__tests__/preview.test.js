@@ -5,8 +5,8 @@ const mockAllocatePort = vi.fn();
 const mockMarkPreviewInactive = vi.fn();
 const mockGetPreview = vi.fn();
 const mockStopPreview = vi.fn();
-const mockAdmitPreview = vi.fn();
 const mockDestroyPreview = vi.fn();
+const mockSpawn = vi.fn(() => ({unref: vi.fn()}));
 
 vi.mock('../../db.js', () => ({ default: { query: mockQuery } }));
 vi.mock('../../preview-manager.js', () => ({
@@ -16,18 +16,13 @@ vi.mock('../../preview-manager.js', () => ({
   getPreview: mockGetPreview,
   stopPreview: mockStopPreview,
 }));
-// 本 sprint 接入：routes/preview.js 唯一调用 admitPreview()/destroyPreview()，
-// 不再单独调用无锁的 allocatePreview()（TOCTOU 修复，见合同 Risks #2）。
-vi.mock('../../capacity-gate.js', () => ({
-  admitPreview: mockAdmitPreview,
-}));
 vi.mock('../../preview-destroyer.js', () => ({
   destroyPreview: mockDestroyPreview,
 }));
 
 // preview.js uses spawn — mock child_process to avoid OS calls in tests
 vi.mock('child_process', () => ({
-  spawn: vi.fn(() => ({ unref: vi.fn() })),
+  spawn: mockSpawn,
 }));
 
 async function makeApp() {
@@ -40,56 +35,6 @@ async function makeApp() {
 }
 
 const getRequest = async () => (await import('supertest')).default;
-
-// ── POST /start ──────────────────────────────────────────────────────────────
-describe('POST /start', () => {
-  beforeEach(() => vi.clearAllMocks());
-
-  it('returns port and db_name on success', async () => {
-    mockAdmitPreview.mockResolvedValue({ admitted: true, port: 5300, db_name: 'cecelia_preview_1' });
-    const res = await (await getRequest())(await makeApp())
-      .post('/start')
-      .send({ pr_number: 1, branch_name: 'test-branch', base_repo: 'cecelia' });
-    expect(res.status).toBe(200);
-    expect(res.body.port).toBe(5300);
-    expect(res.body.db_name).toBe('cecelia_preview_1');
-    expect(res.body.status).toBe('starting');
-  });
-
-  it('returns 400 when missing pr_number', async () => {
-    const res = await (await getRequest())(await makeApp())
-      .post('/start')
-      .send({ branch_name: 'test-branch' });
-    expect(res.status).toBe(400);
-  });
-
-  it('returns 503 when admission rejected (capacity gate)', async () => {
-    mockAdmitPreview.mockResolvedValue({
-      admitted: false,
-      reason: 'too_many_active',
-      free_bytes: 60000000000,
-      projected_cost_bytes: 2147483648,
-      need_release_bytes: 0,
-    });
-    const res = await (await getRequest())(await makeApp())
-      .post('/start')
-      .send({ pr_number: 2, branch_name: 'test-branch' });
-    expect(res.status).toBe(503);
-    expect(res.body.reason).toBe('too_many_active');
-    expect(typeof res.body.free_bytes).toBe('number');
-    expect(typeof res.body.projected_cost_bytes).toBe('number');
-    expect(typeof res.body.need_release_bytes).toBe('number');
-  });
-
-  it('returns 500 when admitPreview throws an unexpected error', async () => {
-    mockAdmitPreview.mockRejectedValue(new Error('unexpected db error'));
-    const res = await (await getRequest())(await makeApp())
-      .post('/start')
-      .send({ pr_number: 3, branch_name: 'test-branch' });
-    expect(res.status).toBe(500);
-    expect(res.body.error).toMatch(/unexpected/);
-  });
-});
 
 // ── POST /stop/:pr ────────────────────────────────────────────────────────────
 describe('POST /stop/:pr_number', () => {
@@ -166,27 +111,6 @@ describe('GET /', () => {
   });
 });
 
-// ── 向后兼容 POST /allocate ───────────────────────────────────────────────────
-describe('POST /allocate (deprecated compat)', () => {
-  beforeEach(() => vi.clearAllMocks());
-
-  it('returns port on success', async () => {
-    mockAllocatePort.mockResolvedValue(5300);
-    const res = await (await getRequest())(await makeApp())
-      .post('/allocate')
-      .send({ pr_number: 1, branch_name: 'test-branch', base_repo: 'cecelia' });
-    expect(res.status).toBe(200);
-    expect(res.body.port).toBe(5300);
-  });
-
-  it('returns 400 when missing pr_number', async () => {
-    const res = await (await getRequest())(await makeApp())
-      .post('/allocate')
-      .send({ branch_name: 'test-branch' });
-    expect(res.status).toBe(400);
-  });
-});
-
 // ── 向后兼容 DELETE /:pr_number ──────────────────────────────────────────────
 describe('DELETE /:pr_number (deprecated compat)', () => {
   beforeEach(() => vi.clearAllMocks());
@@ -198,6 +122,7 @@ describe('DELETE /:pr_number (deprecated compat)', () => {
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ stopped: true });
     expect(mockMarkPreviewInactive).toHaveBeenCalledWith(1);
+    expect(mockSpawn).toHaveBeenCalledWith('bash', [expect.stringMatching(/preview-env-stop\.sh$/), '1', '5300', 'cecelia_preview_1'], expect.objectContaining({detached: true}));
   });
 
   it('returns stopped:true when no row found', async () => {

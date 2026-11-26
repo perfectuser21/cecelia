@@ -80,7 +80,6 @@ for (const [name, scriptExit, gateExit, summary, executed] of [
 
 const delegates = [
   ['packages/brain/scripts/model-accounts-seed-e2e.sh', []],
-  ['scripts/preview-ledger-activate.sh', ['cecelia_test', '123']],
 ];
 const aliasCall = /(?:"\$(?:\{)?PSQL(?:_EXECUTABLE)?(?:\})?"|\$(?:\{)?PSQL(?:_EXECUTABLE)?(?:\})?)(?=\s)/g;
 test('startup scanner recognizes quoted, unquoted and command-substitution SQL aliases', () => {
@@ -201,7 +200,7 @@ for (const [script, args] of [...delegates, ['-c', ['DB="$DATABASE_URL"; ' + gol
         assert.equal(redirects, 0, 'default psql startup configuration changed the actual endpoint');
         assert.equal(result.code, 0, result.output);
         const calls = await psqlCalls();
-        assert.equal(calls.length, script === 'scripts/preview-ledger-activate.sh' ? 2 : 1);
+        assert.equal(calls.length, 1);
         for (const call of calls) assert.equal(call[0], '-X');
       });
     } finally {

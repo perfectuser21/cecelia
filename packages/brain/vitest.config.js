@@ -109,7 +109,6 @@ export const POSTGRES_INTEGRATION_TESTS = [
   'src/__tests__/integration/migration-416-controller-session-nonblank.pg.integration.test.js',
   'src/__tests__/migration-333.test.js',
   'src/__tests__/autoblock-sql-integration.test.js',
-  'src/__tests__/integration/capacity-gate.test.js',
   'src/__tests__/integration/preview-destroyer.test.js',
   'src/__tests__/integration/migration-364-kernel-local-container-naming.integration.test.js',
   'src/__tests__/integration/migration-392-acceptance-two-column.integration.test.js',
@@ -237,8 +236,7 @@ export default defineConfig({
       // content_type 注册表加载缺少 content_type 字段 — 预先存在（main 上已失败）
       // 需要真实 PostgreSQL 连接的集成测试
       'src/__tests__/integration/pipeline-rescue.integration.test.js',
-      // capacity-gate/preview-destroyer: 真连 cecelia_test Postgres（禁 mock db.js），走 brain-integration
-      'src/__tests__/integration/capacity-gate.test.js',
+      // preview-destroyer: 真连 cecelia_test Postgres（禁 mock db.js），走 brain-integration
       'src/__tests__/integration/preview-destroyer.test.js',
       // 同上，毕业池 tests/regression/ 下的永久回归副本，同样需要真实 Postgres
       // dev-registry: 直连 pool.query 验 7 张新表，需真实 DB — 走 brain-integration
