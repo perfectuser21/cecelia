@@ -26,7 +26,6 @@ vi.mock('../tick-recovery.js', () => ({ _recordRecoveryAttempt: vi.fn(), tryReco
 vi.mock('../tick-status.js', () => ({ getTickStatus: vi.fn(), isStale: vi.fn(), getStartupErrors: vi.fn() }));
 vi.mock('../consciousness-loop.js', () => ({ startConsciousnessLoop: vi.fn() }));
 vi.mock('../recovery-loop.js', () => ({ startRecoveryLoop: vi.fn(), stopRecoveryLoop: vi.fn() }));
-vi.mock('../pipeline-patrol-loop.js', () => ({ startPipelinePatrolLoop: vi.fn(), stopPipelinePatrolLoop: vi.fn() }));
 vi.mock('../events/taskEvents.js', () => ({ publishCognitiveState: vi.fn() }));
 vi.mock('../capability-probe.js', () => ({ startProbeLoop: vi.fn() }));
 import { dispatchNextTask } from '../dispatcher.js';

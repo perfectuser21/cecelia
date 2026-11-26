@@ -8,8 +8,8 @@
  * 3. 验证存量 pipeline_rescue 任务可被真实任务列表接口查询
  * 4. 验证按 branch 和活跃状态查找已有 rescue 任务的真实 SQL
  *
- * 注：pipeline-patrol 主函数依赖文件系统（.dev-mode 文件），集成测试直接测底层
- * createRescueTask 函数和任务查询接口，不依赖文件系统扫描。
+ * 覆盖存量 pipeline_rescue 数据的真实存储、列表过滤与查询兼容；
+ * 不启动后台巡检，也不验证自动创建救援任务。
  *
  * 运行环境：CI brain-integration job（含真实 PostgreSQL 服务）
  */

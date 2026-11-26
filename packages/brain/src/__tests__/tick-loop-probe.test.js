@@ -1,38 +1,56 @@
-/**
- * probe 复活回归锁：startProbeLoop 自 Wave-2 后全仓零调用方（probe 死于 05-22），
- * 本测试锁定 startTickLoop 必须启动 probe loop（与其他现役循环同模式）。
- */
+/** 真实后台启动集合：保留调度、恢复与能力探针，不注册无业务消费者的定时器。 */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 vi.mock('../db.js', () => ({ default: { query: vi.fn().mockResolvedValue({ rows: [] }), connect: vi.fn() } }));
 vi.mock('../capability-probe.js', () => ({ startProbeLoop: vi.fn() }));
 vi.mock('../consciousness-loop.js', () => ({ startConsciousnessLoop: vi.fn() }));
 vi.mock('../recovery-loop.js', () => ({ startRecoveryLoop: vi.fn(), stopRecoveryLoop: vi.fn() }));
-vi.mock('../pipeline-patrol-loop.js', () => ({ startPipelinePatrolLoop: vi.fn(), stopPipelinePatrolLoop: vi.fn() }));
 vi.mock('../events/taskEvents.js', () => ({ publishCognitiveState: vi.fn() }));
 vi.mock('../tick-stats.js', () => ({ recordTickExecution: vi.fn().mockResolvedValue(undefined) }));
+vi.mock('../tick-scheduler.js', () => ({ runScheduler: vi.fn().mockResolvedValue({ actions_taken: [] }) }));
 
-import { startTickLoop, stopTickLoop } from '../tick-loop.js';
+import { startTickLoop, stopTickLoop, TICK_LOOP_INTERVAL_MS } from '../tick-loop.js';
 import { startProbeLoop } from '../capability-probe.js';
-import { startRecoveryLoop } from '../recovery-loop.js';
-import { startPipelinePatrolLoop } from '../pipeline-patrol-loop.js';
+import { startConsciousnessLoop } from '../consciousness-loop.js';
+import { startRecoveryLoop, stopRecoveryLoop } from '../recovery-loop.js';
+import { runScheduler } from '../tick-scheduler.js';
 
-beforeEach(() => vi.clearAllMocks());
-afterEach(() => stopTickLoop());
+beforeEach(() => {
+  vi.clearAllMocks();
+  vi.useFakeTimers();
+});
+afterEach(() => {
+  stopTickLoop();
+  vi.clearAllTimers();
+  vi.restoreAllMocks();
+  vi.useRealTimers();
+});
 
 describe('startTickLoop', () => {
-  it('启动时调用 startProbeLoop（probe 复活），且并排的兄弟 loop 都各启动一次', () => {
-    startTickLoop();
+  it('启动集合保留现役组件，实际只注册调度定时器并执行调度', async () => {
+    const intervals = vi.spyOn(globalThis, 'setInterval');
+    expect(startTickLoop()).toBe(true);
     expect(startProbeLoop).toHaveBeenCalledOnce();
-    // 锁定 probe 与其余并排启动的 loop 的架构约定：
-    // 未来若有人把 probe 挪走时顺手删了别的 loop，这里会炸
     expect(startRecoveryLoop).toHaveBeenCalledOnce();
-    expect(startPipelinePatrolLoop).toHaveBeenCalledOnce();
+    expect(startConsciousnessLoop).toHaveBeenCalledOnce();
+    // 兄弟组件在此为边界 mock；任何额外真实后台循环都会增加注册项。
+    expect(intervals.mock.calls.map(([, delay]) => delay)).toEqual([TICK_LOOP_INTERVAL_MS]);
+    await vi.advanceTimersByTimeAsync(TICK_LOOP_INTERVAL_MS);
+    expect(runScheduler).toHaveBeenCalledOnce();
+    expect(stopTickLoop()).toBe(true);
+    expect(stopRecoveryLoop).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(0);
   });
 
-  it('loop 已在跑时重复调用 startTickLoop 提前退出，startProbeLoop 幂等仍只调用一次', () => {
-    startTickLoop();
-    startTickLoop(); // 第二次调用应因 isRunning 提前 return false，不重复启动内部 loop
+  it('重复启动保持幂等，停止后能重新启动现役组件', () => {
+    expect(startTickLoop()).toBe(true);
+    expect(startTickLoop()).toBe(false);
     expect(startProbeLoop).toHaveBeenCalledOnce();
+    expect(startRecoveryLoop).toHaveBeenCalledOnce();
+    expect(stopTickLoop()).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(startTickLoop()).toBe(true);
+    expect(startProbeLoop).toHaveBeenCalledTimes(2);
+    expect(startRecoveryLoop).toHaveBeenCalledTimes(2);
   });
 });

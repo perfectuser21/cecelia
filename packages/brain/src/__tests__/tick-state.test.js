@@ -1,7 +1,7 @@
 /**
  * tick-state.test.js — Brain v2 Phase D1.7a 单元测试
  *
- * 验证 tickState 单例的 14 个 lastXxxTime 字段 + 5 个控制态字段全部存在，
+ * 验证 tickState 单例的 现役 lastXxxTime 字段 + 5 个控制态字段全部存在，
  * 且 resetTickStateForTests() 能正确归零。
  */
 
@@ -17,7 +17,6 @@ const REQUIRED_LAST_TIME_FIELDS = [
   'lastGoalEvalTime',
   'lastZombieSweepTime',
   'lastZombieCleanupTime',
-  'lastPipelinePatrolTime',
   'lastKrHealthDailyTime',
   'lastCredentialCheckTime',
   'lastCleanupWorkerTime',
@@ -37,7 +36,7 @@ describe('tick-state.js (D1.7a)', () => {
     resetTickStateForTests();
   });
 
-  it('exports tickState singleton with all 14 lastXxxTime fields', () => {
+  it('exports tickState singleton with all active lastXxxTime fields', () => {
     for (const field of REQUIRED_LAST_TIME_FIELDS) {
       expect(field in tickState, `missing field: ${field}`).toBe(true);
       expect(typeof tickState[field]).toBe('number');
