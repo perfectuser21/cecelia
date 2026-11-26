@@ -8,8 +8,10 @@ import { createProposal as _createProposal, approveProposal as _approveProposal,
 import { handleChat as _handleChat, handleChatStream as _handleChatStream } from '../orchestrator-chat.js';
 import { callLLM, callLLMStream as _callLLMStream } from '../llm-caller.js';
 import { ALLOWED_ACTIONS, checkIdempotency, saveIdempotency, internalLogDecision } from './shared.js';
+import { registerYueshengMigrationPendingAction } from './yuesheng-migration-pending-action.js';
 
 const router = Router();
+registerYueshengMigrationPendingAction(router, pool);
 
 // ==================== Pending Actions API（危险动作审批） ====================
 

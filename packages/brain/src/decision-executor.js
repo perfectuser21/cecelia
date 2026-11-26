@@ -25,7 +25,7 @@ import {
   OwnerDecisionResolveError,
   RESOLUTION_VIA,
 } from './lib/owner-decision-resolve.js';
-import { OWNER_DECISION_ACTION_TYPE } from './lib/owner-decision.js';
+import { OWNER_DECISION_ACTION_TYPE, YUESHENG_MIGRATION_SOURCE } from './lib/owner-decision.js';
 
 // ============================================================
 // Proposal Constants
@@ -907,6 +907,11 @@ async function selectProposalOption(actionId, optionId, reviewer = 'dashboard-us
     }
 
     const action = actionResult.rows[0];
+
+    if (action.source === YUESHENG_MIGRATION_SOURCE) {
+      await client.query('ROLLBACK');
+      return { success: false, error: 'Migration requires its maintenance approval path', status: 409 };
+    }
     const options = (typeof action.options === 'string' ? JSON.parse(action.options) : action.options) || [];
     const selected = options.find(o => o.id === optionId);
     if (!selected) {
@@ -964,9 +969,9 @@ async function expireStaleProposals() {
       AND expires_at < NOW()
       -- owner_decision 待办不按时间过期：截止后由 owner-decision-deadline sweeper 按协议处理，
       -- 否则不可逆决策顺延再催时，主理人已经没有可点的待办。
-      AND action_type <> 'owner_decision'
+      AND (action_type <> 'owner_decision' OR source = $1)
     RETURNING id
-  `);
+  `, [YUESHENG_MIGRATION_SOURCE]);
   if (result.rowCount > 0) {
     console.log(`[executor] Expired ${result.rowCount} stale proposals`);
   }
@@ -997,6 +1002,11 @@ async function approvePendingAction(actionId, reviewer = 'unknown', { choice = n
     }
 
     const action = actionResult.rows[0];
+
+    if (action.source === YUESHENG_MIGRATION_SOURCE) {
+      await client.query('ROLLBACK');
+      return { success: false, error: 'Migration requires its maintenance approval path', status: 409 };
+    }
 
     if (action.status !== 'pending_approval') {
       await client.query('ROLLBACK');
@@ -1072,8 +1082,9 @@ async function rejectPendingAction(actionId, reviewer = 'unknown', reason = '') 
       SET status = 'rejected', reviewed_by = $1, reviewed_at = NOW(),
           execution_result = $2
       WHERE id = $3 AND status = 'pending_approval'
+        AND source IS DISTINCT FROM $4
       RETURNING id, action_type, params, context
-    `, [reviewer, JSON.stringify({ rejected: true, reason }), actionId]);
+    `, [reviewer, JSON.stringify({ rejected: true, reason }), actionId, YUESHENG_MIGRATION_SOURCE]);
 
     if (result.rowCount === 0) {
       const existing = await client.query('SELECT status FROM pending_actions WHERE id = $1', [actionId]);
