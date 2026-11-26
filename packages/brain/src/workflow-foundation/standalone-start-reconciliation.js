@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { getRunDefinitionBinding } from '../lib/run-definition-binding.js';
 import { finishRun } from '../lib/task-run.js';
 import { finalizeTask } from '../lib/task-terminal.js';
@@ -14,12 +15,56 @@ const proofIdentity = ['task_id','run_id','task_run_id','run_binding_id','source
 const validPid = value => Number.isSafeInteger(value) && value > 0;
 const check = (ok, code = 'standalone_start_review_conflict') => requireFoundation(ok, code);
 const invalid = ok => requireFoundation(ok, 'standalone_start_review_invalid', 400);
+const hardwareSource = ['device-epoch-fence-diagnostics.mjs','adb-shell-v2-protocol.mjs','device-epoch-fence-reference.mjs'];
+const hardwareFiles = ['socket-0.raw','socket-1.raw','stdout.raw','stderr.raw'];
+const hardwareHash = value => typeof value === 'string' && hash.test(value);
+
+function verifyHardwareTimeout(review, taskId) {
+  const artifact = review.hardware_diagnostic;
+  if (review.admission_code === 'EPOCH_ADMISSION_SCOPE') {
+    invalid(artifact === undefined);
+    return null;
+  }
+  invalid(review.admission_code === 'EPOCH_DEVICE_IDENTITY');
+  onlyKeys(artifact,['stage','raw','sha256']);
+  const { raw, sha256 } = artifact;
+  invalid(artifact.stage === 'initial_hardware_serial' && typeof raw === 'string' && Buffer.byteLength(raw) <= 4096
+    && hardwareHash(sha256) && createHash('sha256').update(raw).digest('hex') === sha256);
+  let diagnostic;
+  try { diagnostic = JSON.parse(raw); } catch { invalid(false); }
+  onlyKeys(diagnostic,['protocol','query','scope','source','started_at','finished_at','events','files','wire_complete','exit_code',
+    'error_code','pending','open_sockets','original_execution_stopped','remote_quiescence','resource_authority']);
+  onlyKeys(diagnostic.scope,['endpoint','serial','maintenance_task_id']);
+  onlyKeys(diagnostic.source,hardwareSource);
+  onlyKeys(diagnostic.files,hardwareFiles);
+  const { scope, events } = diagnostic;
+  invalid(diagnostic.protocol === 'device-epoch-fence-diagnostic/v1' && diagnostic.query === 'hardware_serial'
+    && scope.maintenance_task_id === taskId && typeof scope.endpoint === 'string' && /^tcp:127\.0\.0\.1:[1-9][0-9]{0,4}$/.test(scope.endpoint)
+    && typeof scope.serial === 'string' && /^127\.0\.0\.1:[1-9][0-9]{0,4}$/.test(scope.serial)
+    && hardwareSource.every(key=>hardwareHash(diagnostic.source[key])) && hardwareFiles.every(key=>hardwareHash(diagnostic.files[key]))
+    && diagnostic.wire_complete === false && diagnostic.exit_code === 0 && diagnostic.error_code === 'DIAGNOSTIC_DEADLINE'
+    && diagnostic.pending === 0 && diagnostic.open_sockets === 0 && diagnostic.original_execution_stopped === false
+    && diagnostic.remote_quiescence === 'unknown' && diagnostic.resource_authority === 'not_attested'
+    && evidenceTime(diagnostic.started_at) && evidenceTime(diagnostic.finished_at) && Array.isArray(events) && events.length === 4);
+  const startedAt = Date.parse(diagnostic.started_at), finishedAt = Date.parse(diagnostic.finished_at);
+  let previousAt = startedAt;
+  for (const [index,event] of events.entries()) {
+    const closing = index % 2 === 1;
+    onlyKeys(event,closing?['index','event','at','had_error','peer_eof']:['index','event','at']);
+    const timestamp = Date.parse(event.at);
+    invalid(event.index === Math.floor(index/2) && event.event === (closing?'close':'eof')
+      && (!closing || event.had_error === false && event.peer_eof === true)
+      && evidenceTime(event.at) && timestamp >= previousAt && timestamp <= finishedAt);
+    previousAt = timestamp;
+  }
+  return {startedAt,finishedAt,sha256};
+}
 
 function verifyRequest(runId, input) {
   validateMachineRequest(input, ['task_id','machine_id','blocked_at','expected_receipt_sha256','expected_attestation_sha256','review']);
   const review = input.review;
   onlyKeys(review, ['protocol','observed_at','evidence_sha256','admission_code','host_process_exited','native_operations',
-    'business_effects','local_lock','host_proof','revocation']);
+    'business_effects','local_lock','host_proof','revocation','hardware_diagnostic']);
   const host = review.host_proof, revocation = review.revocation;
   onlyKeys(host, ['protocol',...proofIdentity,'run_directory','process_identity']);
   onlyKeys(revocation, ['protocol',...proofIdentity,'pid','reason','observed_at']);
@@ -28,7 +73,7 @@ function verifyRequest(runId, input) {
   invalid(UUID.test(runId ?? '') && UUID.test(input.task_id ?? '')
     && [input.expected_receipt_sha256,input.expected_attestation_sha256,review.evidence_sha256,host.snapshot_sha256].every(x=>typeof x==='string'&&hash.test(x))
     && [input.blocked_at,review.observed_at,revocation.observed_at].every(evidenceTime)
-    && review.protocol === 'standalone-pre-native-review/v1' && review.admission_code === 'EPOCH_ADMISSION_SCOPE'
+    && review.protocol === 'standalone-pre-native-review/v1'
     && review.host_process_exited === true && review.native_operations === 0 && review.business_effects === 0
     && review.local_lock.owner === runId && review.local_lock.review_required === true
     && host.protocol === 'standalone-skill-host-proof/v1' && revocation.protocol === 'standalone-skill-host-revocation/v1'
@@ -40,12 +85,13 @@ function verifyRequest(runId, input) {
     && host.process_identity.start_identity.length <= 200 && revocation.pid === host.process_identity.pid
     && typeof host.run_directory === 'string' && host.run_directory.startsWith('/') && host.run_directory.endsWith('/'+runId)
     && host.run_directory.length <= 1024 && !/[\r\n\0]/.test(host.run_directory));
+  return verifyHardwareTimeout(review,input.task_id);
 }
 
 /** Central checks use persistent authority only. Host exit, local fence and effect reads are the authorized operator's observation. */
 export async function reconcileStandaloneStartFailure(pool, runId, input, { principal, now = Date.now } = {}) {
   requireFoundation(principal === 'authenticated-operator', 'standalone_start_review_auth_required', 401);
-  verifyRequest(runId,input);
+  const hardwareTimeout = verifyRequest(runId,input);
   const requestSha = digest(input), review = input.review, host = review.host_proof;
   return foundationTransaction(pool, 'notion-standalone:'+input.machine_id, async db => {
     const task = (await db.query("SELECT * FROM tasks WHERE id=$1 AND task_type='workflow_dispatch' AND payload->>'source'='notion_leadgen_101' FOR UPDATE",[input.task_id])).rows[0];
@@ -67,6 +113,10 @@ export async function reconcileStandaloneStartFailure(pool, runId, input, { prin
     check(run?.context?.source === 'standalone-skill' && run.context.executor_kind === 'codex-exec-v1'
       && run.context.executor === claim.claimer && run.context.claimed_at === claim.claimed_at
       && digest(run.context.scope) === digest(scope) && digest(run.context.skill) === digest(task.payload.skill));
+    if (hardwareTimeout) {
+      check(hardwareTimeout.startedAt >= +run.started_at
+        && hardwareTimeout.finishedAt <= Date.parse(review.revocation.observed_at));
+    }
     const response = replayed => ({ task_id:task.id, run_id:runId, status:'failed', retry_safe:false, replayed });
     const previous = task.result.standalone_start_review;
     if (previous) {
@@ -108,7 +158,8 @@ export async function reconcileStandaloneStartFailure(pool, runId, input, { prin
       task_run_id:run.id, run_binding_id:binding.id, receipt_sha256:input.expected_receipt_sha256,
       attestation_sha256:input.expected_attestation_sha256, request_sha256:requestSha, retry_safe:false,
       observed_at:review.observed_at, evidence_sha256:review.evidence_sha256,
-      host_proof_sha256:digest(host), revocation_sha256:digest(review.revocation), admission_code:review.admission_code };
+      host_proof_sha256:digest(host), revocation_sha256:digest(review.revocation), admission_code:review.admission_code,
+      ...(hardwareTimeout ? { hardware_diagnostic_sha256:hardwareTimeout.sha256 } : {}) };
     const finished = await finishRun({runId,status:'failed',error:startFailure,result:{standalone_start_review:settlement}},
       {pool:db,strict:true,emit:async()=>{}});
     check(finished.updated,'standalone_start_review_write_unconfirmed');
