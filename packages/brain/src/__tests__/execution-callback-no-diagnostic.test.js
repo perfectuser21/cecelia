@@ -15,6 +15,11 @@ const mockPool = vi.hoisted(() => ({
   query: vi.fn(),
   connect: vi.fn(() => mockClient),
 }));
+// 业务回归隔离冷却时钟；固定5秒与释放/派发顺序由独立合同覆盖。
+vi.mock('../lib/callback-cooldown.js', async original => ({
+  ...await original(), waitForCallbackCooldown: vi.fn(async () => {}),
+}));
+
 vi.mock('../db.js', () => ({ default: mockPool }));
 
 vi.mock('../executor.js', () => ({

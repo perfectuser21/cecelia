@@ -10,6 +10,18 @@ import yaml from 'js-yaml';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const workflow = () => yaml.load(readFileSync(join(root, '.github/workflows/nightly-regression.yml'), 'utf8'));
 
+test('Nightly快照回归使用与PR同版且支持方法压缩的真实PG服务', () => {
+  const main = yaml.load(readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8'));
+  const imageExpression = main.jobs.checks.services.postgres.image;
+  const tags = [...imageExpression.matchAll(/mirror\.gcr\.io\/pgvector\/pgvector:pg(\d+)/g)];
+  assert.equal(tags.length, 1, 'PR实际服务表达式必须包含唯一固定PG版本');
+  const major = Number(tags[0][1]);
+  // PG16起支持--compress=method[:detail]；生产helper真实传递gzip:1。
+  assert.ok(major >= 16, '快照生产helper的方法压缩参数需要PG16或更新客户端');
+  assert.equal(workflow().jobs['brain-integration'].services.postgres.image, tags[0][0],
+    'Nightly绑定service内的pg_dump/pg_restore必须与已验证PR集成服务同版');
+});
+
 test('分类smoke工作流入口退役，现役Nightly仅保留两类真实测试与失败告警', () => {
   const doc = workflow();
   assert.deepEqual(Object.keys(doc.jobs).sort(), ['brain-integration', 'open-issue-on-failure', 'real-env-smoke']);

@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {createHash} from 'node:crypto';
+import {frozenNodeCommand} from '../../../src/orchestrator/__tests__/fixtures/frozen-node-command.js';
 import {prepareHostTools,createHostToolCaller,hostToolsArgs,hostToolsAreQuiescent} from '../skill-tools-mcp.mjs';
 const hash=p=>createHash('sha256').update(fs.readFileSync(p)).digest('hex');
 async function assertStopped(pid){
@@ -21,7 +22,7 @@ function fixture(t,source){
  fs.writeFileSync(path.join(cwd,'tool.mjs'),source??`console.log(JSON.stringify({state:'terminal',result:{exit_code:0},secret:'FAKE_SECRET',stdout:'FAKE_SECRET',stderr:'FAKE_SECRET'}))`);
  const inputFile=path.join(cwd,'activity-input.json'),identity={task_id:'task',run_id:'run',action_id:'action',attempt:1};
  fs.writeFileSync(inputFile,JSON.stringify({identity,activity_key:'collect'}));
- const options={config:{command:process.execPath,command_sha256:hash(process.execPath),entry:'tool.mjs',kinds:['phone'],timeout_ms:2000,response_paths:['state','result.exit_code']},cwd,files:{'tool.mjs':hash(path.join(cwd,'tool.mjs'))},identity,activityKey:'collect',inputFile,directory:path.join(cwd,'host-private'),deadlineMs:Date.now()+30000};
+ const options={config:{...frozenNodeCommand(cwd),entry:'tool.mjs',kinds:['phone'],timeout_ms:2000,response_paths:['state','result.exit_code']},cwd,files:{'tool.mjs':hash(path.join(cwd,'tool.mjs'))},identity,activityKey:'collect',inputFile,directory:path.join(cwd,'host-private'),deadlineMs:Date.now()+30000};
  return {cwd,options,binding:prepareHostTools(options)};
 }
 test('冻结工具宿主调用且只返回审阅过的JSON字段，不暴露原stdout/stderr',async t=>{
@@ -51,6 +52,7 @@ test('每次调用核验固定身份、所有文件hash与deadline，拒绝任�
  fs.writeFileSync(path.join(cwd,'tool.mjs'),'changed');await assert.rejects(caller.call(a),/host_tool_source_drift/);
  const second=fixture(t);fs.writeFileSync(second.options.inputFile,JSON.stringify({identity:{...second.options.identity,run_id:'wrong'},activity_key:'collect'}));await assert.rejects(createHostToolCaller(second.binding).call(a),/host_tool_identity_drift/);
  const third=fixture(t);await assert.rejects(createHostToolCaller({...third.binding,deadline_ms:Date.now()-1}).call(a),/host_tool_deadline/);
+ const fourth=fixture(t);fs.appendFileSync(fourth.binding.command,'# changed\n');await assert.rejects(createHostToolCaller(fourth.binding).call(a),/host_tool_source_drift/);
 });
 test('timeout杀掉工具进程组，保留unknown且不重放',async t=>{
  const {binding,cwd}=fixture(t,`import fs from 'node:fs';import {spawn} from 'node:child_process';const child=spawn(process.execPath,['-e','setInterval(()=>{},1000)']);fs.writeFileSync('pids.json',JSON.stringify([process.pid,child.pid]));setInterval(()=>{},1000);`);

@@ -22,7 +22,7 @@ permissions:
   contents: read
 concurrency:
   group: ci-${{ github.event_name == 'schedule' && 'weekly-codeql' || github.event_name == 'pull_request' && github.event.pull_request.user.login == 'dependabot[bot]' && 'dependabot' || github.ref }}
-  queue: ${{ github.event_name == 'pull_request' && github.event.pull_request.user.login == 'dependabot[bot]' && 'max' || 'single' }}
+  queue: ${{ (github.event_name == 'pull_request' && github.event.pull_request.user.login == 'dependabot[bot]' || (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main') && 'max' || 'single' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' && github.event.action != 'closed' && github.event.pull_request.user.login != 'dependabot[bot]' }}
 jobs:
   security:
